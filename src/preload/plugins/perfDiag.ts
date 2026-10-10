@@ -63,19 +63,26 @@ function fetchGpuStatus(): void {
 }
 function shortGpu(): string {
     if (!gpuStatus) return '未知';
-    // 取关键项: aggregated compositing/rasterization/display_compositor
-    const pick = (k: string): string => {
-        const m = gpuStatus.match(new RegExp(k + '\\\\?[^\\n]*?:\\s*([a-z_]+)', 'i'));
-        return m ? m[1] : '';
-    };
-    const parts: string[] = [];
-    const comp = pick('Compositing') || pick('compositing');
-    const raster = pick('Rasterization') || pick('rasterization');
-    const gl = pick('WebGL');
-    if (comp) parts.push('合成:' + comp);
-    if (raster) parts.push('光栅:' + raster);
-    if (gl) parts.push('WebGL:' + gl);
-    return parts.length ? parts.join(' ') : gpuStatus.slice(0, 60).replace(/\n/g, ' ');
+    try {
+        // [lc-1346] 解析 JSON 只报关键项（旧实现正则截断在原始 JSON 上, 看不全合成/光栅状态）
+        const obj = JSON.parse(gpuStatus) as Record<string, string>;
+        const rows: [string, string][] = [
+            ['gpu_compositing', '合成'],
+            ['rasterization', '光栅'],
+            ['direct_rendering_display_compositor', 'DRC'],
+            ['2d_canvas', '2D'],
+            ['webgl', 'WebGL'],
+        ];
+        const parts: string[] = [];
+        for (const [k, label] of rows) {
+            const v = obj[k];
+            if (!v) continue;
+            parts.push(v === 'enabled' ? `${label}✓` : `${label}:${v}`);
+        }
+        return parts.join(' ') || '无数据';
+    } catch {
+        return gpuStatus.slice(0, 50).replace(/\n/g, ' ');
+    }
 }
 
 // ── FPS 悬浮表（含慢帧归因） ──

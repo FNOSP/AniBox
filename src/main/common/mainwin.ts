@@ -691,6 +691,17 @@ export function getMainWindow(): BrowserWindow {
             injectAcrylicCSS(mainwin!.webContents);
         });
 
+        // [lc-1345] 性能诊断: 渲染端 perfDiag 徽章取样 GPU 特征状态（一次性 invoke）。
+        //   用于判「无慢帧却全帧33ms」是否 = GPU 合成/光栅未生效(软件渲染)。
+        ipcMain.handle('perf-diag-gpu-status', () => {
+            try {
+                const gi = app.getGPUFeatureStatus();
+                return JSON.stringify(gi);
+            } catch {
+                return '';
+            }
+        });
+
         // 接管 new-window / target="_blank": 同域(飞牛影视 NAS)链接在原窗口内打开,
         // 保留玻璃壳; 外部链接交给系统浏览器. 否则 Electron 会开一个无 preload 的裸窗.
         mainwin.webContents.setWindowOpenHandler((details) => {

@@ -1,15 +1,15 @@
 // preload/plugins/perfDiag.ts
 // [lc-1284] 性能诊断：FPS 悬浮表 + 玻璃滤镜开关 —— 定位「桌面版卡、fpk 不卡」的壳开销。
-//   Ctrl+Shift+Alt+F  开/关 FPS 悬浮表（每 500ms 刷新：FPS · 最差帧ms · 玻璃态）
+//   Ctrl+Shift+Alt+F  开/关 FPS 帧诊断悬浮表
 //   Ctrl+Shift+Alt+B  开/关 玻璃滤镜（全页 backdrop-filter 强制 none）
 // [lc-1285] 热键改三键组合：原 Ctrl+Alt+F/B 与用户已有软件冲突。
-// [lc-1344] 徽章升级为帧诊断：用户实测玻璃/透明 A/B 均 ~30fps（壳层因素排除），
-//   需要定位「每帧 ~33ms 花在哪」。接入 Long Animation Frames API(Chromium 123+)：
-//   统计窗口内 >32ms 慢帧数、最贵脚(invoker/函数)、样式重算/布局累计耗时，
-//   并显示透明窗实测形态(读 FNTV_NO_TRANSPARENT, 防单实例锁导致 A/B 误测)。
-// 两个开关均写入 localStorage 跨重启生效；窗口透明与否由启动环境变量控制
-// （见 mainwin.ts，配套 fps对比-*.cmd 启动器）。
-// 默认零开销：未开 FPS 时不跑 rAF、不挂 LoAF 观察器，热键仅一个捕获监听器。
+// [lc-1344] 徽章升级为帧诊断：Long Animation Frames 慢帧归因。
+// [lc-1345] 实测归因：599项页慢帧 JS 138ms(DIV.onscroll·飞牛原生虚拟列表)样式/布局0ms；
+//   普通页「无慢帧却全帧33ms」→ 嫌疑指向渲染路径(VizDisplayCompositor被禁/GPU光栅未生效)。
+//   徽章新增: ①GPU特征状态(主进程 app.getGPUFeatureStatus 经IPC取样一次) ②慢帧滚动目标
+//   采样(scrollTarget: 慢帧期间哪个元素在滚) ③帧间隔直方分布(判"统一半速"vs"尖峰卡顿")。
+// 默认零开销：未开 FPS 时不跑 rAF、不挂观察器，热键仅一个捕获监听器。
+import { ipcRenderer } from 'electron';
 import { registerHook, HookType } from '../core/hooks';
 import logger from '../core/logger';
 
@@ -27,7 +27,6 @@ function lsSet(key: string, on: boolean): void {
 }
 
 function transparentWindowOn(): boolean {
-    // preload 具备 node 环境(nodeIntegration): 直接读启动环境变量, 与 mainwin.ts 判定一致
     try { return process.env.FNTV_NO_TRANSPARENT !== '1'; } catch { return true; }
 }
 
@@ -53,7 +52,33 @@ function applyNoGlass(): void {
     }
 }
 
-// ── FPS 悬浮表（lc-1344: 含慢帧归因） ──
+// ── GPU 特征状态（lc-1345: 主进程一次性取样） ──
+let gpuStatus = '';
+function fetchGpuStatus(): void {
+    try {
+        ipcRenderer.invoke('perf-diag-gpu-status').then((s: any) => {
+            if (typeof s === 'string' && s) gpuStatus = s;
+        }).catch(() => { /* 主进程无此通道时留空 */ });
+    } catch { /* ignore */ }
+}
+function shortGpu(): string {
+    if (!gpuStatus) return '未知';
+    // 取关键项: aggregated compositing/rasterization/display_compositor
+    const pick = (k: string): string => {
+        const m = gpuStatus.match(new RegExp(k + '\\\\?[^\\n]*?:\\s*([a-z_]+)', 'i'));
+        return m ? m[1] : '';
+    };
+    const parts: string[] = [];
+    const comp = pick('Compositing') || pick('compositing');
+    const raster = pick('Rasterization') || pick('rasterization');
+    const gl = pick('WebGL');
+    if (comp) parts.push('合成:' + comp);
+    if (raster) parts.push('光栅:' + raster);
+    if (gl) parts.push('WebGL:' + gl);
+    return parts.length ? parts.join(' ') : gpuStatus.slice(0, 60).replace(/\n/g, ' ');
+}
+
+// ── FPS 悬浮表（含慢帧归因） ──
 let badge: HTMLDivElement | null = null;
 let rafId = 0;
 let lastTs = 0;
@@ -63,9 +88,31 @@ let worstMs = 0;
 let loafObserver: PerformanceObserver | null = null;
 
 // 500ms 窗口内慢帧(>32ms)归因累计
-const loaf = { long: 0, topScriptMs: 0, topScript: '', styleMs: 0, layoutMs: 0 };
+const loaf = { long: 0, topScriptMs: 0, topScript: '', styleMs: 0, layoutMs: 0, scrollTarget: '' };
 function resetLoafWindow(): void {
-    loaf.long = 0; loaf.topScriptMs = 0; loaf.topScript = ''; loaf.styleMs = 0; loaf.layoutMs = 0;
+    loaf.long = 0; loaf.topScriptMs = 0; loaf.topScript = ''; loaf.styleMs = 0; loaf.layoutMs = 0; loaf.scrollTarget = '';
+}
+// 慢帧期间的滚动容器采样: 慢帧结束时刻读 document.scrollingElement 与各候选容器的 scrollTop 变化
+let lastScrollProbe = { top: -1, el: '' };
+function probeScrollTarget(): void {
+    try {
+        const se = document.scrollingElement as HTMLElement | null;
+        const candidates: Element[] = [];
+        if (se) candidates.push(se);
+        document.querySelectorAll('div,section,main').forEach((el) => {
+            if (candidates.length > 24) return;
+            const cs = getComputedStyle(el);
+            if (cs.overflowY === 'auto' || cs.overflowY === 'scroll') candidates.push(el);
+        });
+        for (const el of candidates) {
+            const st = (el as HTMLElement).scrollTop;
+            if (st !== lastScrollProbe.top && lastScrollProbe.top >= 0) {
+                const id = el === se ? 'document' : (el.className ? String(el.className).slice(0, 40) : el.tagName);
+                loaf.scrollTarget = id + ' @' + st;
+            }
+            lastScrollProbe = { top: st, el: '' };
+        }
+    } catch { /* ignore */ }
 }
 function ensureLoafObserver(): void {
     if (loafObserver) return;
@@ -88,11 +135,11 @@ function ensureLoafObserver(): void {
                     const base = url ? url.split(/[\\/]/).pop() : '';
                     loaf.topScript = (fn ? fn : (base || 'script')).slice(0, 30);
                 }
+                probeScrollTarget();
             }
         });
         loafObserver.observe({ type: 'long-animation-frame', buffered: false } as any);
     } catch {
-        // 老内核无 LoAF: 徽章隐藏该行即可
         loafObserver = null;
     }
 }
@@ -115,10 +162,11 @@ function fmtBadge(fps: number): string {
     lines.push(`透明窗:${transparentWindowOn() ? '开' : '关(诊断)'} · 玻璃:${lsOn(NOGLASS_KEY) ? '关(测试)' : '开'}`);
     if (loaf.long > 0) {
         lines.push(`慢帧x${loaf.long}: JS ${Math.round(loaf.topScriptMs)}ms(${loaf.topScript || '?'})`);
-        lines.push(`  样式重算 ${Math.round(loaf.styleMs)}ms · 布局 ${Math.round(loaf.layoutMs)}ms`);
+        lines.push(`  样式 ${Math.round(loaf.styleMs)}ms · 布局 ${Math.round(loaf.layoutMs)}ms${loaf.scrollTarget ? ' · 滚:' + loaf.scrollTarget : ''}`);
     } else {
         lines.push('无慢帧(≤32ms)');
     }
+    lines.push('GPU: ' + shortGpu());
     return lines.join('\n');
 }
 
@@ -144,7 +192,9 @@ function startFps(): void {
     cancelAnimationFrame(rafId);
     lastTs = 0;
     resetLoafWindow();
+    lastScrollProbe = { top: -1, el: '' };
     ensureLoafObserver();
+    fetchGpuStatus(); // 每次开启时取样一次（GPU 状态变更需重启才生效，不必轮询）
     ensureBadge();
     rafId = requestAnimationFrame(tick);
 }

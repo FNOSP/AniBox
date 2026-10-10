@@ -22,6 +22,16 @@ import { reconcilePatchStateOnStartup } from '../modules/patcher/patchApplier';
 app.commandLine.appendSwitch('--lang', 'en-US');
 app.commandLine.appendSwitch('--disable-features', 'VizDisplayCompositor');
 
+// [lc-1347] 禁用 DirectComposition 呈现路径（帧率 30→60 实测修复）。
+// 根因：transparent 窗口走 DComp per-pixel alpha 合成时，持续画面更新被钳在 30Hz
+// （perfDiag 徽章实测：正常启动稳 30fps 无慢帧、样式/布局/JS 均 0ms；加
+// --disable-direct-composition 后非首页 54fps、静置回 60 —— 2026-10-10 用户实机 A/B）。
+// 副作用：DComp 关闭后窗口透明走旧 D3D 路径，圆角透桌面观感应保留；若个别机型出现
+// 透明异常，设环境变量 FNTV_KEEP_DCOMP=1 可退回原行为。
+if (process.env.FNTV_KEEP_DCOMP !== '1') {
+    app.commandLine.appendSwitch('--disable-direct-composition');
+}
+
 // 抑制SSL相关的底层错误日志
 app.commandLine.appendSwitch('--log-level', '3'); // 只显示致命错误
 app.commandLine.appendSwitch('--disable-logging');

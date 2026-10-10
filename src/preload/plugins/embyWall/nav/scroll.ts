@@ -21,6 +21,8 @@ import { S } from '../state';
 /* ========== 横滑滚轮 ========== */
 // 记录每个元素已绑定的 wheel 处理器，便于关闭开关时精确移除（removeEventListener 需同一引用）
 const _wtsBound = new WeakMap<HTMLElement, (ev: WheelEvent) => void>();
+// [lc-1349] 全文档扫描节流戳（见 wheelToScroll 内注释）
+let _lastSweepTs = 0;
 
 export function wheelToScroll(): void {
   // 关闭开关 → 解绑所有劫持监听，并清除我们附加在飞牛原生横滑箭头上的样式，
@@ -46,6 +48,14 @@ export function wheelToScroll(): void {
   // 一旦用 display:none 隐藏就会破坏该逻辑、且关闭后无法自行恢复。
   // 因此只以 opacity:0 + pointer-events:none 做「视觉隐藏」，**绝不碰 display**，
   // 这样关闭时清除上述样式即可让 fnOS 原生箭头完整恢复。
+  // [lc-1349] 1.2s 最小间隔节流: 全文档 div/section/main 逐个 getComputedStyle 的扫描
+  // 在数百卡片的虚拟列表页单次可达数十 ms; 滚动期间 DOM 每帧回收, 入口 observer 的
+  // 350ms 防抖仍连发, 与飞牛原生滚动处理(DIV.onscroll 单慢帧 138ms)抢主线程。
+  // 启动重试([2000,4000,8000])、5s 看门狗与路由切换后的首扫间隔均 > 1.2s 不受影响,
+  // 仅压掉滚动期间的连发。
+  const _now = Date.now();
+  if (_now - _lastSweepTs < 1200) return;
+  _lastSweepTs = _now;
   document.querySelectorAll('[class*="semi-color-bg-arrow-mask"]').forEach((e) => {
     const el = e as HTMLElement;
     el.style.opacity = '0';

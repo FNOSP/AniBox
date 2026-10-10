@@ -164,6 +164,17 @@ function setupObservers(): void {
   let flushScheduled = false;
   let collectScheduled = false;
 
+  // [lc-1349] 滚动让路: 虚拟列表(如 599 项媒体库)滚动期间每帧都有卡片节点回收重建,
+  // collect 会把它们全部置 0 并走 anime 入场 → 每秒几十批动画实例 + 样式重算,
+  // 与飞牛原生滚动处理(DIV.onscroll 实测单慢帧 138ms 纯 JS)抢主线程。
+  // 滚动进行中的新卡片直接显示(跳过动画) —— 入场动画只属于「进页面」的观感,
+  // 不属于「滚动加载」; 滚动停止 400ms 后恢复动画。scroll 不冒泡, 用捕获截获一切滚动容器。
+  let _scrollActiveUntil = 0;
+  try {
+    document.addEventListener('scroll', () => { _scrollActiveUntil = Date.now() + 400; },
+      { capture: true, passive: true });
+  } catch { /* ignore */ }
+
   const flush = (): void => {
     flushScheduled = false;
     const cards = pendingCards;
@@ -189,6 +200,8 @@ function setupObservers(): void {
   const collect = (): void => {
     collectScheduled = false;
     if (!isFntvTvPage()) return;
+    // [lc-1349] 滚动让路: 滚动进行中, 新卡片/弹窗直接显示, 完全跳过入场队列
+    const scrolling = Date.now() < _scrollActiveUntil;
     const grids = document.querySelectorAll(GRID_SEL) as any;
     grids.forEach((g: any) => {
       Array.from(g.children).forEach((c: any) => {
@@ -196,8 +209,12 @@ function setupObservers(): void {
         if (typeof c.className === 'string' && (c.className.includes('fnos-') || c.className.includes('fntv-'))) return;
         if (c.closest && c.closest('.trim-ui__app-layout--window')) return; // 视频预览不介入
         c.dataset.fntvIn = '1';
-        c.style.opacity = '0';
-        pendingCards.push(c);
+        if (scrolling) {
+          c.style.opacity = '1'; // 直接显示: 不置 0、不入队、不闪
+        } else {
+          c.style.opacity = '0';
+          pendingCards.push(c);
+        }
       });
     });
     document.querySelectorAll(MODAL_SEL).forEach((m: any) => {
@@ -209,8 +226,12 @@ function setupObservers(): void {
       if (m.dataset.fnosUi === '1') return;
       if (m.dataset.fntvAnim === '1') return;
       m.dataset.fntvAnim = '1';
-      m.style.opacity = '0';
-      pendingModals.push(m);
+      if (scrolling) {
+        m.style.opacity = '1'; // [lc-1349] 滚动让路: 同卡片, 直接显示
+      } else {
+        m.style.opacity = '0';
+        pendingModals.push(m);
+      }
     });
     if ((pendingCards.length || pendingModals.length) && !flushScheduled) {
       flushScheduled = true;

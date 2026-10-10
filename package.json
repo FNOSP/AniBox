@@ -116,7 +116,8 @@
             "**/*"
           ]
         }
-      ]
+      ],
+      "signAndEditExecutable": false
     },
     "mac": {
       "target": [

@@ -3,9 +3,13 @@
 //   Ctrl+Shift+Alt+F  开/关 FPS 悬浮表（每 500ms 刷新：FPS · 最差帧ms · 玻璃态）
 //   Ctrl+Shift+Alt+B  开/关 玻璃滤镜（全页 backdrop-filter 强制 none）
 // [lc-1285] 热键改三键组合：原 Ctrl+Alt+F/B 与用户已有软件冲突。
-// 两个开关均写入 localStorage 跨重启生效；窗口透明与否由启动环境变量 FNTV_NO_TRANSPARENT
-// 控制（见 mainwin.ts，配套 fps对比-*.cmd 启动器），无法运行时切换。
-// 默认零开销：未开 FPS 时不跑 rAF，热键仅一个捕获监听器。
+// [lc-1344] 徽章升级为帧诊断：用户实测玻璃/透明 A/B 均 ~30fps（壳层因素排除），
+//   需要定位「每帧 ~33ms 花在哪」。接入 Long Animation Frames API(Chromium 123+)：
+//   统计窗口内 >32ms 慢帧数、最贵脚(invoker/函数)、样式重算/布局累计耗时，
+//   并显示透明窗实测形态(读 FNTV_NO_TRANSPARENT, 防单实例锁导致 A/B 误测)。
+// 两个开关均写入 localStorage 跨重启生效；窗口透明与否由启动环境变量控制
+// （见 mainwin.ts，配套 fps对比-*.cmd 启动器）。
+// 默认零开销：未开 FPS 时不跑 rAF、不挂 LoAF 观察器，热键仅一个捕获监听器。
 import { registerHook, HookType } from '../core/hooks';
 import logger from '../core/logger';
 
@@ -20,6 +24,11 @@ function lsOn(key: string): boolean {
 }
 function lsSet(key: string, on: boolean): void {
     try { if (on) localStorage.setItem(key, '1'); else localStorage.removeItem(key); } catch { /* ignore */ }
+}
+
+function transparentWindowOn(): boolean {
+    // preload 具备 node 环境(nodeIntegration): 直接读启动环境变量, 与 mainwin.ts 判定一致
+    try { return process.env.FNTV_NO_TRANSPARENT !== '1'; } catch { return true; }
 }
 
 // 玻璃关闭态必须赶在首帧前生效 → 模块级立即注入（铁律例外；try/catch 保证不致插件加载失败，
@@ -44,13 +53,49 @@ function applyNoGlass(): void {
     }
 }
 
-// ── FPS 悬浮表 ──
+// ── FPS 悬浮表（lc-1344: 含慢帧归因） ──
 let badge: HTMLDivElement | null = null;
 let rafId = 0;
 let lastTs = 0;
 let windowStart = 0;
 let frames = 0;
 let worstMs = 0;
+let loafObserver: PerformanceObserver | null = null;
+
+// 500ms 窗口内慢帧(>32ms)归因累计
+const loaf = { long: 0, topScriptMs: 0, topScript: '', styleMs: 0, layoutMs: 0 };
+function resetLoafWindow(): void {
+    loaf.long = 0; loaf.topScriptMs = 0; loaf.topScript = ''; loaf.styleMs = 0; loaf.layoutMs = 0;
+}
+function ensureLoafObserver(): void {
+    if (loafObserver) return;
+    try {
+        loafObserver = new PerformanceObserver((list) => {
+            for (const raw of list.getEntries()) {
+                const e = raw as any;
+                if ((e.duration || 0) < 32) continue; // 只看超过 2 帧的慢帧
+                loaf.long++;
+                loaf.styleMs += (e.styleRecalcDuration || 0);
+                loaf.layoutMs += (e.layoutDuration || 0);
+                let top: any = null;
+                for (const s of (e.scripts || [])) {
+                    if (!top || (s.duration || 0) > (top.duration || 0)) top = s;
+                }
+                if (top && (top.duration || 0) > loaf.topScriptMs) {
+                    loaf.topScriptMs = top.duration || 0;
+                    const fn = top.sourceFunctionName || top.invoker || '';
+                    const url = String(top.sourceURL || '');
+                    const base = url ? url.split(/[\\/]/).pop() : '';
+                    loaf.topScript = (fn ? fn : (base || 'script')).slice(0, 30);
+                }
+            }
+        });
+        loafObserver.observe({ type: 'long-animation-frame', buffered: false } as any);
+    } catch {
+        // 老内核无 LoAF: 徽章隐藏该行即可
+        loafObserver = null;
+    }
+}
 
 function ensureBadge(): HTMLDivElement {
     if (badge && badge.isConnected) return badge;
@@ -65,7 +110,16 @@ function ensureBadge(): HTMLDivElement {
 }
 
 function fmtBadge(fps: number): string {
-    return `${fps} FPS · 最差 ${Math.round(worstMs)}ms\n玻璃: ${lsOn(NOGLASS_KEY) ? '关(测试)' : '开'}`;
+    const lines: string[] = [];
+    lines.push(`${fps} FPS · 最差 ${Math.round(worstMs)}ms`);
+    lines.push(`透明窗:${transparentWindowOn() ? '开' : '关(诊断)'} · 玻璃:${lsOn(NOGLASS_KEY) ? '关(测试)' : '开'}`);
+    if (loaf.long > 0) {
+        lines.push(`慢帧x${loaf.long}: JS ${Math.round(loaf.topScriptMs)}ms(${loaf.topScript || '?'})`);
+        lines.push(`  样式重算 ${Math.round(loaf.styleMs)}ms · 布局 ${Math.round(loaf.layoutMs)}ms`);
+    } else {
+        lines.push('无慢帧(≤32ms)');
+    }
+    return lines.join('\n');
 }
 
 function tick(ts: number): void {
@@ -80,6 +134,7 @@ function tick(ts: number): void {
         if (elapsed >= 500) {
             ensureBadge().textContent = fmtBadge(Math.round(frames * 1000 / elapsed));
             frames = 0; windowStart = ts; worstMs = 0;
+            resetLoafWindow();
         }
     }
     rafId = requestAnimationFrame(tick);
@@ -88,12 +143,15 @@ function tick(ts: number): void {
 function startFps(): void {
     cancelAnimationFrame(rafId);
     lastTs = 0;
+    resetLoafWindow();
+    ensureLoafObserver();
     ensureBadge();
     rafId = requestAnimationFrame(tick);
 }
 
 function stopFps(): void {
     cancelAnimationFrame(rafId);
+    if (loafObserver) { try { loafObserver.disconnect(); } catch { /* ignore */ } loafObserver = null; }
     if (badge) { badge.remove(); badge = null; }
 }
 
@@ -141,7 +199,7 @@ registerHook(HookType.OnReady, () => {
     }, true);
 
     if (lsOn(FPS_KEY)) startFps();
-    logger.info('[perfDiag] 已加载 — Ctrl+Shift+Alt+F=FPS表 Ctrl+Shift+Alt+B=玻璃开关');
+    logger.info('[perfDiag] 已加载 — Ctrl+Shift+Alt+F=FPS帧诊断表 Ctrl+Shift+Alt+B=玻璃开关');
 });
 
 // 模块级：玻璃关闭态注入（放在 registerHook 之后，遵循模块级铁律的注册优先原则）

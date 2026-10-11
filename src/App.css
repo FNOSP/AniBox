@@ -888,6 +888,8 @@ h3 {
   flex-direction: column;
   gap: 14px;
   min-height: 0;
+  overflow-y: auto; /* 播放器+信息卡+TMDB四节整体滚动 */
+  padding-right: 4px;
 }
 /* 内嵌 mpv 容器（PlayerView embedded 形态） */
 .player-embed {
@@ -945,15 +947,13 @@ h3 {
 }
 /* 原主仓库 TMDB 信息卡 */
 .tmdb-card {
-  flex: 1;
-  min-height: 0;
+  flex-shrink: 0;
   display: flex;
   gap: 16px;
   padding: 16px;
   border-radius: 14px;
   background: var(--bg-2);
   border: 1px solid var(--line);
-  overflow-y: auto;
 }
 .tmdb-poster {
   width: 132px;

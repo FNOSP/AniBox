@@ -858,12 +858,17 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   }, [seasons, seasonIdx]);
 
   // TMDB 完整详情（剧照/相似/更多/演职人员）：主仓库 fetchShowDetails 同款链路，失败静默降级
+  const tmdbTitle = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
   useEffect(() => {
     setTmdb(null);
-    if (!title) return;
+    if (!tmdbTitle) return;
     let alive = true;
     invoke<Record<string, unknown>>("tmdb_show_details", {
-      arg: { title, year: String(base.release_date || "").slice(0, 4), mediaType: base.type === "Movie" ? "movie" : "tv" },
+      arg: {
+        title: tmdbTitle,
+        year: String(base.release_date || "").slice(0, 4),
+        mediaType: base.type === "Movie" ? "movie" : "tv",
+      },
     })
       .then((d) => {
         if (alive && d && !d.error) setTmdb(d);
@@ -872,7 +877,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
     return () => {
       alive = false;
     };
-  }, [base.guid]);
+  }, [base.guid, tmdbTitle]);
 
   // 单集简介回填：原版剧集行带简介，episode/list 不含该字段，逐集拉 item 详情补（与轮播同一模式）
   useEffect(() => {

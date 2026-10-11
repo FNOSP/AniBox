@@ -43,8 +43,9 @@ fn year_of(s: &str) -> String {
 
 /// 主仓库 authFor：v4 JWT → Bearer 头；v3 → query 参数
 fn auth_params(key: &str) -> (Vec<(String, String)>, Vec<(String, String)>) {
+    // (query 参数, header)。v4 JWT 走 Bearer 头；v3 走 api_key query
     if key.starts_with("eyJ") {
-        (vec![], vec![])
+        (vec![], vec![("Authorization".into(), format!("Bearer {}", key))])
     } else {
         (vec![("api_key".into(), key.into())], vec![])
     }

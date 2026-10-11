@@ -260,9 +260,15 @@ body,
   flex-direction: column;
 }
 .view-pane {
-  display: none;
+  display: none !important; /* 双保险：非 active 的 pane 任何情况下不可见/不可点 */
+  visibility: hidden;
+  pointer-events: none;
   flex: 1;
   min-height: 0;
+}
+.view-pane.active {
+  visibility: visible;
+  pointer-events: auto;
 }
 .view-pane.active {
   display: flex;
@@ -563,15 +569,16 @@ body,
   letter-spacing: 0.3px;
 }
 .back {
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
-  border-radius: 50%;
-  font-size: 17px;
+  height: 34px;
+  min-width: 34px;
+  border-radius: 999px;
+  font-size: 13px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0;
+  padding: 0 12px;
+  white-space: nowrap;
+  gap: 2px;
 }
 h3 {
   margin: 0;

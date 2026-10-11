@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { IcoHome, IcoStar, IcoGrid, IcoMovie, IcoTv, IcoLive, IcoFolder, IcoSun, IcoMoon } from "./icons";
+import { IcoHome, IcoStar, IcoGrid, IcoMovie, IcoTv, IcoLive, IcoFolder, IcoAutoTheme } from "./icons";
 import "./App.css";
 
 type Config = {
@@ -148,7 +148,6 @@ function TitleBar({
   onHome,
   onRefresh,
   refreshing,
-  theme,
   onToggleTheme,
   overlay,
 }: {
@@ -159,7 +158,6 @@ function TitleBar({
   onHome?: () => void;
   onRefresh?: () => void;
   refreshing?: boolean;
-  theme?: "light" | "dark";
   onToggleTheme?: () => void;
   /** 悬浮在海报/视频上时：白字 + 顶部压暗渐变 */
   overlay?: boolean;
@@ -193,12 +191,8 @@ function TitleBar({
           </button>
         )}
         {onToggleTheme && (
-          <button
-            className="tb-icon"
-            title={theme === "dark" ? "切换浅色模式" : "切换深色模式"}
-            onClick={onToggleTheme}
-          >
-            {theme === "dark" ? <IcoSun size={15} /> : <IcoMoon size={15} />}
+          <button className="tb-icon" title="切换深浅模式" onClick={onToggleTheme}>
+            <IcoAutoTheme size={15} />
           </button>
         )}
         {!nav && <span className="tb-page">{title}</span>}
@@ -1631,7 +1625,6 @@ function App() {
         onHome={goHome}
         onRefresh={() => loadHome()}
         refreshing={homeLoading}
-        theme={theme}
         overlay={view === "home" || view === "player"}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
       />

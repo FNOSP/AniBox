@@ -993,11 +993,11 @@ h3 {
   padding: 4px 10px;
   border-radius: 999px;
 }
-:root .meta.rating {
+:root .meta-rating {
   color: #a06a00; /* 浅色表面金棕可读 */
   font-weight: 700;
 }
-html.dark .meta.rating {
+html.dark .meta-rating {
   color: var(--gold);
 }
 .type-chip {

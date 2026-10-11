@@ -936,7 +936,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
           ‹ 返回
         </button>
         <h1 className="detail-title">{title}</h1>
-        {rating && rating !== "0" && <span className="meta rating detail-rating">★ {rating}</span>}
+        {rating && rating !== "0" && <span className="meta meta-rating detail-rating">★ {rating}</span>}
       </div>
       <div className="detail-cols">
         <div className="detail-left">

@@ -182,7 +182,6 @@ function TitleBar({
         {!nav && <span className="tb-page">{title}</span>}
       </div>
       <div className="tb-center" data-tauri-drag-region>
-        <span className="tb-logo">▶</span>
         <span className="tb-brand">{title}</span>
       </div>
       <div className="tb-right" data-tauri-drag-region>

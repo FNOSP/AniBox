@@ -122,8 +122,7 @@ body,
   min-height: 40px;
   display: flex;
   align-items: stretch;
-  background: var(--bg-3);
-  border-bottom: 1px solid var(--line);
+  background: transparent;
   user-select: none;
   position: relative;
 }
@@ -156,10 +155,6 @@ body,
   align-items: stretch;
   justify-content: flex-end;
 }
-.tb-logo {
-  color: var(--accent);
-  font-size: 12px;
-}
 .tb-page {
   font-size: 13px;
   font-weight: 600;
@@ -181,7 +176,7 @@ body,
 }
 .tb-icon:hover {
   background: var(--hover-strong);
-  color: #fff;
+  color: var(--text-strong);
 }
 .tb-icon:disabled {
   opacity: 0.45;
@@ -199,11 +194,7 @@ body,
 }
 .tb-link:hover {
   background: var(--hover-strong);
-  color: #fff;
-}
-.tb-logo {
-  color: var(--accent);
-  font-size: 11px;
+  color: var(--text-strong);
 }
 .tb-buttons {
   display: flex;
@@ -220,7 +211,7 @@ body,
 }
 .tb-btn:hover {
   background: var(--hover);
-  color: #fff;
+  color: var(--text-strong);
 }
 .tb-btn.tb-close:hover {
   background: #e5484d;
@@ -476,7 +467,7 @@ body,
   color: var(--muted);
 }
 .refresh-btn:hover {
-  color: #fff;
+  color: var(--text-strong);
   border-color: rgba(108, 155, 255, 0.45);
 }
 .page-head {
@@ -1047,7 +1038,7 @@ h3 {
   margin-top: 0 !important;
 }
 .login-check:hover {
-  color: #fff;
+  color: var(--text-strong);
 }
 .login-check input {
   width: 14px;
@@ -1575,7 +1566,7 @@ button:active {
   -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--glass-border);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-  color: #fff;
+  color: var(--glass-text);
   font-size: 12px;
   user-select: none;
   overflow: hidden;
@@ -1684,7 +1675,7 @@ button:active {
 }
 .sa-expand:hover {
   background: var(--glass-btn-bg);
-  color: #fff;
+  color: var(--glass-text);
   transform: none;
 }
 .side-toast {

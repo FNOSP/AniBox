@@ -679,6 +679,22 @@ pub fn run() {
                     round_window(hwnd, size.width as i32, size.height as i32, (16.0 * scale) as i32);
                 }
             }
+            // 窗口以 visible:false 创建：延迟到透明化/圆角区域/模糊全部就位后再显示，
+            // 消除首帧残留（圆角外露白/旧画面）；show 后再补一次区域（尺寸可能已变）
+            let h2 = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                if let Some(win) = h2.get_webview_window("main") {
+                    #[cfg(target_os = "windows")]
+                    if let Some(hwnd) = winvisual::hwnd_isize_wv(&win) {
+                        let sz = win.inner_size().unwrap_or_default();
+                        let scale = win.scale_factor().unwrap_or(1.0);
+                        winvisual::round_window(hwnd, sz.width as i32, sz.height as i32, (16.0 * scale) as i32);
+                    }
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

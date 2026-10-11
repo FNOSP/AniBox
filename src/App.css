@@ -1344,6 +1344,120 @@ button:active {
   color: rgba(233, 235, 244, 0.55);
   text-transform: uppercase;
 }
+.lsc-hide {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 3;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.45);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 11px;
+  line-height: 1;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+.lib-strip-card:hover .lsc-hide {
+  opacity: 1;
+}
+.lsc-hide:hover {
+  background: rgba(229, 72, 77, 0.55);
+  border-color: rgba(255, 140, 140, 0.6);
+  color: #fff;
+}
+.lsc-manage {
+  align-self: center;
+  min-width: 78px;
+  height: 42px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s, background-color 0.15s, border-color 0.15s;
+}
+.lsc-manage:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+.lsc-pop-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: transparent;
+}
+.lsc-pop {
+  position: absolute;
+  left: 26px;
+  bottom: 132px;
+  z-index: 41;
+  width: 280px;
+  max-height: 46vh;
+  overflow-y: auto;
+  border-radius: 14px;
+  background: rgba(30, 34, 52, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  padding: 10px 12px;
+}
+.lsc-pop-head {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #fff;
+  padding: 4px 4px 8px;
+}
+.lsc-pop-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 6px;
+  border-radius: 9px;
+  cursor: pointer;
+  font-size: 13px;
+  color: rgba(233, 235, 244, 0.85);
+}
+.lsc-pop-row:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #fff;
+}
+.lsc-pop-row input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.lsc-pop-row span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lsc-pop-row .lsc-pop-cat {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+}
 
 .home-sec {
   margin-top: 30px;

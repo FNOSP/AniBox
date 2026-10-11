@@ -477,6 +477,8 @@ function PosterCard({
 
 function HomeView({
   libs,
+  hiddenLibs,
+  onToggleHiddenLib,
   continueList,
   carousel,
   carouselBds,
@@ -487,6 +489,8 @@ function HomeView({
   onOpenItem,
 }: {
   libs: Lib[];
+  hiddenLibs: string[];
+  onToggleHiddenLib: (guid: string) => void;
   continueList: PlayItem[];
   carousel: MediaItem[];
   carouselBds: Record<string, string>;
@@ -496,6 +500,8 @@ function HomeView({
   onPlay: (t: PlayTarget) => void;
   onOpenItem: (item: MediaItem) => void;
 }) {
+  const [manageOpen, setManageOpen] = useState(false);
+  const shownLibs = libs.filter((l) => !hiddenLibs.includes(l.guid));
   return (
     <main className="content home-full">
       {/* 全屏 hero 轮播 + 底部媒体库条（Emby 布局） */}
@@ -508,7 +514,7 @@ function HomeView({
           onDetail={onOpenItem}
         />
         <div className="lib-strip">
-          {libs.map((lib) => (
+          {shownLibs.map((lib) => (
             <div key={lib.guid} className="lib-strip-card" onClick={() => onOpenLib(lib)}>
               <div className="lsc-bg">
                 {lib.posters && lib.posters[0] ? (
@@ -520,9 +526,42 @@ function HomeView({
               <div className="lsc-shade" />
               <div className="lsc-title">{lib.title}</div>
               <div className="lsc-cat">{lib.category}</div>
+              <button
+                type="button"
+                className="lsc-hide"
+                title="首页不展示该库"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleHiddenLib(lib.guid);
+                }}
+              >
+                ✕
+              </button>
             </div>
           ))}
+          <div className="lsc-manage" title="管理首页媒体库展示" onClick={() => setManageOpen((v) => !v)}>
+            ⚙ 管理
+          </div>
         </div>
+        {manageOpen && (
+          <>
+            <div className="lsc-pop-mask" onClick={() => setManageOpen(false)} />
+            <div className="lsc-pop">
+              <div className="lsc-pop-head">首页媒体库展示</div>
+              {libs.map((lib) => (
+                <label key={lib.guid} className="lsc-pop-row">
+                  <input
+                    type="checkbox"
+                    checked={!hiddenLibs.includes(lib.guid)}
+                    onChange={() => onToggleHiddenLib(lib.guid)}
+                  />
+                  <span>{lib.title}</span>
+                  <span className="lsc-pop-cat">{lib.category}</span>
+                </label>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       {/* 继续观看 */}
@@ -577,8 +616,10 @@ function HomeView({
         </section>
       )}
 
-      {/* 按库顺序的剧集横排 */}
-      {libRows.map(({ lib, items }) =>
+      {/* 按库顺序的剧集横排（隐藏的库不展示） */}
+      {libRows
+        .filter(({ lib }) => !hiddenLibs.includes(lib.guid))
+        .map(({ lib, items }) =>
         items.length > 0 ? (
           <section className="home-sec" key={lib.guid}>
             <div className="section-head">
@@ -1155,6 +1196,26 @@ function App() {
   const [carouselBds, setCarouselBds] = useState<Record<string, string>>({});
   const [carouselLogos, setCarouselLogos] = useState<Record<string, string>>({});
   const [libRows, setLibRows] = useState<{ lib: Lib; items: MediaItem[] }[]>([]);
+  // 首页不展示的媒体库（仅影响首页媒体库条与按库横排；localStorage 持久化）
+  const [hiddenLibs, setHiddenLibs] = useState<string[]>(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem("fntv-hidden-libs") || "[]");
+      return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  });
+  const toggleHiddenLib = useCallback((guid: string) => {
+    setHiddenLibs((prev) => {
+      const next = prev.includes(guid) ? prev.filter((g) => g !== guid) : [...prev, guid];
+      try {
+        localStorage.setItem("fntv-hidden-libs", JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
   const [activeLib, setActiveLib] = useState<Lib | null>(null);
   const [detailItem, setDetailItem] = useState<MediaItem | null>(null);
   const [playTarget, setPlayTarget] = useState<PlayTarget | null>(null);
@@ -1301,6 +1362,8 @@ function App() {
           carouselBds={carouselBds}
           carouselLogos={carouselLogos}
           libRows={libRows}
+          hiddenLibs={hiddenLibs}
+          onToggleHiddenLib={toggleHiddenLib}
           onOpenLib={(l) => {
             setActiveLib(l);
             setView("lib");

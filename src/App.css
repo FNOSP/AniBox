@@ -205,6 +205,14 @@ body,
   opacity: 0.45;
   cursor: default;
 }
+.tb-icon.spinning {
+  animation: tb-spin 0.9s linear infinite;
+}
+@keyframes tb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .tb-link {
   border: none;
   background: transparent;

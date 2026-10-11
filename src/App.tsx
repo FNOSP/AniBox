@@ -183,7 +183,12 @@ function TitleBar({
           </button>
         )}
         {nav && onRefresh && (
-          <button className="tb-icon" title="刷新首页数据" onClick={onRefresh} disabled={refreshing}>
+          <button
+            className={`tb-icon${refreshing ? " spinning" : ""}`}
+            title="刷新首页数据"
+            onClick={onRefresh}
+            disabled={refreshing}
+          >
             ⟳
           </button>
         )}
@@ -1625,6 +1630,7 @@ function App() {
         }
         onHome={goHome}
         onRefresh={() => loadHome()}
+        refreshing={homeLoading}
         theme={theme}
         overlay={view === "home" || view === "player"}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}

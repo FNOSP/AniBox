@@ -260,19 +260,17 @@ body,
   flex-direction: column;
 }
 .view-pane {
-  display: none !important; /* 双保险：非 active 的 pane 任何情况下不可见/不可点 */
+  display: none; /* 非 active pane 隐藏（display:flex 只在 .active 上出现，无需 important） */
   visibility: hidden;
   pointer-events: none;
   flex: 1;
   min-height: 0;
 }
 .view-pane.active {
-  visibility: visible;
-  pointer-events: auto;
-}
-.view-pane.active {
   display: flex;
   flex-direction: column;
+  visibility: visible;
+  pointer-events: auto;
 }
 .main-row {
   display: flex;

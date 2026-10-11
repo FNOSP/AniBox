@@ -124,12 +124,12 @@ body,
   top: 0;
   left: 0;
   right: 0;
-  z-index: 30;
+  z-index: 50; /* 盖过所有内容层，串层元素（残留徽标/胶囊）不再透上来 */
   height: 40px;
   min-height: 40px;
   display: flex;
   align-items: stretch;
-  background: transparent;
+  background: var(--bg-3); /* 实体底：透明顶栏是串层可见的前提 */
   user-select: none;
 }
 /* 首页/播放页：悬浮在海报/视频上 —— 顶部压暗渐变保证白字可读 */

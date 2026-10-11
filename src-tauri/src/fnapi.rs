@@ -47,25 +47,27 @@ impl FnClient {
         self.call_inner(&base, path, method, token, body, 0).await
     }
 
-    async fn call_inner(
-        &self,
-        base: &str,
-        path: &str,
-        method: &str,
-        token: &str,
+    fn call_inner<'a>(
+        &'a self,
+        base: &'a str,
+        path: &'a str,
+        method: &'a str,
+        token: &'a str,
         body: Option<Value>,
         depth: u32,
-    ) -> Result<Value, String> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send + 'a>>
+    {
+        Box::pin(async move {
         if depth > 3 {
             return Err("重定向次数过多".into());
-        }
-        // POST/PUT 追加 nonce 并以最终序列化字符串为签名依据（字节级一致，见模块注释）
+        }        // POST/PUT 追加 nonce 并以最终序列化字符串为签名依据（字节级一致，见模块注释）
         let is_post = method.eq_ignore_ascii_case("post");
         let body_json: String = if is_post {
-            let mut obj = match body {
-                Some(Value::Object(m)) => m,
-                _ => serde_json::Map::new(),
-            };
+            let mut obj = body
+                .as_ref()
+                .and_then(|v| v.as_object())
+                .cloned()
+                .unwrap_or_default();
             obj.insert("nonce".into(), json!(crate::authx::rand6()));
             Value::Object(obj).to_string()
         } else {
@@ -135,5 +137,6 @@ impl FnClient {
             return Err(msg);
         }
         Ok(v.get("data").cloned().unwrap_or(Value::Null))
+        })
     }
 }

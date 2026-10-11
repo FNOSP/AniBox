@@ -1,6 +1,9 @@
 //! mpv 会话：spawn mpv.exe（--wid 指向嵌入子窗口）+ JSON IPC 命名管道控制。
 //! 控制协议与 Fntv-Plus 的 node-mpv-2 相同（newline-delimited JSON，request_id 应答配对）。
-//! 属性变化以 `mpv-event` Tauri 事件推给前端自绘控制栏。
+//!
+//! 连接模型：tokio 的 NamedPipeClient 不支持 try_clone，因此开两条连接——
+//! 连接 A 只读事件（mpv 向所有客户端广播事件）；连接 B 经 tokio::io::split 拆成
+//! 读写两半，写半发命令、读半收本连接的应答。
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -15,9 +18,17 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 pub struct MpvSession {
     pub embed_hwnd: isize,
     child: Mutex<Child>,
-    tx: mpsc::UnboundedSender<String>,
-    next_id: AtomicU64,
-    pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>,
+    tx: mpsc::UnboundedSender<(Value, oneshot::Sender<Value>)>,
+}
+
+async fn open_pipe(pipe: &str) -> Option<tokio::net::windows::named_pipe::NamedPipeClient> {
+    for _ in 0..60 {
+        match ClientOptions::new().open(pipe) {
+            Ok(c) => return Some(c),
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(150)).await,
+        }
+    }
+    None
 }
 
 impl MpvSession {
@@ -61,48 +72,66 @@ impl MpvSession {
             .spawn()
             .map_err(|e| format!("启动 mpv 失败 ({}): {}", exe, e))?;
 
-        // 等待 IPC 管道就绪
-        let mut client = None;
-        for _ in 0..60 {
-            match ClientOptions::new().open(&pipe) {
-                Ok(c) => {
-                    client = Some(c);
-                    break;
-                }
-                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(150)).await,
-            }
-        }
-        let client = client.ok_or_else(|| "连接 mpv IPC 管道超时".to_string())?;
+        // 连接 A：事件通道（mpv 向所有客户端广播事件）
+        let ev_client = open_pipe(&pipe)
+            .await
+            .ok_or_else(|| "连接 mpv IPC 管道超时".to_string())?;
+        // 连接 B：命令/应答通道
+        let cmd_client = open_pipe(&pipe)
+            .await
+            .ok_or_else(|| "连接 mpv IPC 管道超时(2)".to_string())?;
 
-        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-        let mut writer = client.try_clone().map_err(|e| format!("克隆管道失败: {}", e))?;
-        tokio::spawn(async move {
-            while let Some(line) = rx.recv().await {
-                if writer.write_all(line.as_bytes()).await.is_err() {
-                    break;
-                }
-                if writer.write_all(b"\n").await.is_err() {
-                    break;
-                }
-                let _ = writer.flush().await;
-            }
-        });
-
+        let (tx, mut rx) = mpsc::unbounded_channel::<(Value, oneshot::Sender<Value>)>();
         let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>> =
             Arc::new(Mutex::new(HashMap::new()));
-        let p2 = pending.clone();
+        let next_id = Arc::new(AtomicU64::new(1));
+
+        // 任务 A：转发属性/事件到前端
         let app2 = app;
         tokio::spawn(async move {
-            let mut lines = BufReader::new(client).lines();
+            let mut lines = BufReader::new(ev_client).lines();
             loop {
                 match lines.next_line().await {
                     Ok(Some(line)) => {
                         if let Ok(v) = serde_json::from_str::<Value>(&line) {
                             if v.get("event").is_some() {
                                 let _ = app2.emit("mpv-event", v);
-                            } else if let Some(id) = v.get("request_id").and_then(|i| i.as_u64()) {
-                                let mut map = p2.lock().await;
-                                if let Some(s) = map.remove(&id) {
+                            }
+                        }
+                    }
+                    _ => break,
+                }
+            }
+        });
+
+        // 任务 B1：命令写出端（写半）
+        let pending_w = pending.clone();
+        let nid_w = next_id.clone();
+        let (r_half, mut w_half) = tokio::io::split(cmd_client);
+        tokio::spawn(async move {
+            while let Some((cmd, cb)) = rx.recv().await {
+                let id = nid_w.fetch_add(1, Ordering::SeqCst);
+                pending_w.lock().await.insert(id, cb);
+                let msg = json!({ "command": cmd, "request_id": id }).to_string();
+                if w_half.write_all(msg.as_bytes()).await.is_err()
+                    || w_half.write_all(b"\n").await.is_err()
+                {
+                    break;
+                }
+                let _ = w_half.flush().await;
+            }
+        });
+
+        // 任务 B2：应答读端（读半）
+        let pending_r = pending.clone();
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(r_half).lines();
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        if let Ok(v) = serde_json::from_str::<Value>(&line) {
+                            if let Some(id) = v.get("request_id").and_then(|i| i.as_u64()) {
+                                if let Some(s) = pending_r.lock().await.remove(&id) {
                                     let _ = s.send(v);
                                 }
                             }
@@ -117,8 +146,6 @@ impl MpvSession {
             embed_hwnd,
             child: Mutex::new(child),
             tx,
-            next_id: AtomicU64::new(1),
-            pending,
         });
 
         // 观察控制栏需要的属性：time-pos / duration / pause / speed / volume
@@ -131,12 +158,9 @@ impl MpvSession {
     }
 
     pub async fn command(&self, cmd: Value) -> Result<Value, String> {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (otx, orx) = oneshot::channel();
-        self.pending.lock().await.insert(id, otx);
-        let msg = json!({ "command": cmd, "request_id": id }).to_string();
         self.tx
-            .send(msg)
+            .send((cmd, otx))
             .map_err(|_| "mpv 进程已退出".to_string())?;
         match tokio::time::timeout(std::time::Duration::from_secs(5), orx).await {
             Ok(Ok(v)) => {

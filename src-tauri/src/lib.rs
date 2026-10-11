@@ -11,7 +11,7 @@ mod win_embed;
 use config::Config;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use tokio::sync::{Mutex, RwLock};
 
 pub struct AppState {
@@ -268,6 +268,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
+        .setup(|app| {
+            // 启动时从磁盘读回配置（token/路径），否则每次重启都要重新登录
+            let cfg = tauri::async_runtime::block_on(config::load(app.handle()));
+            *app.state::<AppState>().config.blocking_write() = cfg;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_config,
             save_config,
@@ -298,10 +304,9 @@ pub fn run() {
                     }
                     *slot = None;
                 }
-                if let Ok(mut pc) = st.proxy_child.blocking_lock() {
-                    if let Some(c) = pc.as_mut() {
-                        let _ = c.kill();
-                    }
+                let mut pc = st.proxy_child.blocking_lock();
+                if let Some(c) = pc.as_mut() {
+                    let _ = c.kill();
                 }
             }
         });

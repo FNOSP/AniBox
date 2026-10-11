@@ -10,6 +10,28 @@ pub struct FnClient {
     http: reqwest::Client,
 }
 
+/// 服务器地址归一化：宽容处理用户输入（思路对齐主仓库 auth.ts）——
+/// 全角冒号转半角、去引号/空白、无协议头自动补 http://、去掉端口后的路径。
+/// 用户输入 `100.66.1.2`（裸 IP）即可用，等价 http://100.66.1.2（默认 80 端口）。
+pub fn normalize_server(input: &str) -> String {
+    let mut s = input.trim().to_string();
+    s = s.replace('：', ":");
+    s = s
+        .trim_matches(|c: char| c == '"' || c == '\'' || c == ' ')
+        .to_string();
+    let lower = s.to_lowercase();
+    if !lower.starts_with("http://") && !lower.starts_with("https://") {
+        s = format!("http://{}", s);
+    }
+    if let Some(idx) = s.find("://") {
+        let rest = &s[idx + 3..];
+        if let Some(slash) = rest.find('/') {
+            s = format!("{}//{}", &s[..idx + 3], &rest[..slash]);
+        }
+    }
+    s
+}
+
 pub fn new_client() -> FnClient {
     let http = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
@@ -43,7 +65,7 @@ impl FnClient {
         token: &str,
         body: Option<Value>,
     ) -> Result<Value, String> {
-        let base = base.trim_end_matches('/').to_string();
+        let base = normalize_server(base);
         self.call_inner(&base, path, method, token, body, 0).await
     }
 
@@ -94,7 +116,17 @@ impl FnClient {
             .header("Authx", authx)
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) fntv-tauri2");
 
-        let resp = req.send().await.map_err(|e| format!("网络错误: {}", e))?;
+        let resp = req.send().await.map_err(|e| {
+            if e.is_builder() {
+                "服务器地址格式无效。示例：http://192.168.31.170:18888 或 100.66.1.2:18888（英文冒号；不带端口时默认 80）".to_string()
+            } else if e.is_connect() {
+                "无法连接服务器：请确认 NAS 地址与端口、本机与 NAS 网络互通（Tailscale 需已连接）、防火墙放行".to_string()
+            } else if e.is_timeout() {
+                "连接超时：网络不可达或 NAS 未响应".to_string()
+            } else {
+                format!("网络错误: {}", e)
+            }
+        })?;
         let status = resp.status().as_u16();
 
         if matches!(status, 301 | 302 | 307 | 308) {

@@ -115,7 +115,7 @@ function LoginPage({ onDone }: { onDone: () => void }) {
         <input
           value={server}
           onChange={(e) => setServer(e.target.value)}
-          placeholder="如 http://192.168.31.170:18888"
+          placeholder="如 http://192.168.31.170:18888 或 100.66.1.2:18888"
           required
         />
         <label>用户名</label>

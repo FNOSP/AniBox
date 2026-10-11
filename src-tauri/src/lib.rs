@@ -58,6 +58,7 @@ async fn login(
     password: String,
 ) -> Result<Value, String> {
     let client = fnapi::new_client();
+    let server = fnapi::normalize_server(&server);
     let data = client
         .call(
             &server,
@@ -74,7 +75,7 @@ async fn login(
         .to_string();
 
     let mut cfg = state.config.read().await.clone();
-    cfg.server = server.trim_end_matches('/').to_string();
+    cfg.server = server;
     cfg.username = username;
     cfg.token = token;
     config::save(&app, &cfg).await?;

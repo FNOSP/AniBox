@@ -884,6 +884,7 @@ h3 {
   aspect-ratio: 16 / 9;
 }
 .player-embed .control-bar {
+  position: static; /* 全屏页的 absolute 在嵌入态会贴到窗口底 */
   padding: 8px 12px;
 }
 .player-cover {

@@ -295,6 +295,15 @@ async fn get_carousel_items(state: State<'_, AppState>) -> Result<Value, String>
 
 // ───────────────────────── 播放 / mpv 控制 ─────────────────────────
 
+/// 创建 mpv 内嵌子窗口；句柄 0（创建失败）必须拒绝，否则 mpv --wid=0 会弹出独立窗口
+fn new_embed(parent_hwnd: isize) -> Result<isize, String> {
+    let embed = win_embed::create_child(parent_hwnd);
+    if embed == 0 {
+        return Err("创建 mpv 内嵌子窗口失败".into());
+    }
+    Ok(embed)
+}
+
 #[tauri::command]
 async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> Result<(), String> {
     let cfg = state.config.read().await.clone();
@@ -313,12 +322,10 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
         Some(m) if !m.is_dead().await => m.clone(),
         Some(m) => {
             m.shutdown().await;
-            let embed = win_embed::create_child(parent_hwnd);
-            mpv::MpvSession::launch(app, &cfg.mpv_path, embed).await?
+            mpv::MpvSession::launch(app, &cfg.mpv_path, new_embed(parent_hwnd)?).await?
         }
         None => {
-            let embed = win_embed::create_child(parent_hwnd);
-            mpv::MpvSession::launch(app, &cfg.mpv_path, embed).await?
+            mpv::MpvSession::launch(app, &cfg.mpv_path, new_embed(parent_hwnd)?).await?
         }
     };
     *slot = Some(session.clone());
@@ -527,13 +534,43 @@ pub fn run() {
             });
         })
         .on_window_event(|window, event| {
-            // 窗口尺寸变化时重设圆角区域（区域坐标不随窗口自动缩放）
+            // 窗口尺寸变化时重设圆角区域；SetWindowRgn 开销大，拖拽中限频 + 尾随落定
             #[cfg(target_os = "windows")]
             if let tauri::WindowEvent::Resized(size) = event {
+                use std::sync::atomic::{AtomicBool, Ordering};
+                use std::time::{Duration, Instant};
                 use winvisual::{hwnd_isize, round_window};
-                if let Some(hwnd) = hwnd_isize(window) {
-                    let scale = window.scale_factor().unwrap_or(1.0);
-                    round_window(hwnd, size.width as i32, size.height as i32, (16.0 * scale) as i32);
+                static LAST_APPLY: std::sync::Mutex<(i32, i32, Option<Instant>)> =
+                    std::sync::Mutex::new((0, 0, None));
+                static TRAILING: AtomicBool = AtomicBool::new(false);
+                let (w, h) = (size.width as i32, size.height as i32);
+                let mut last = LAST_APPLY.lock().unwrap();
+                if (last.0, last.1) == (w, h) {
+                    return;
+                }
+                let due = match last.2 {
+                    None => true,
+                    Some(t) => t.elapsed() >= Duration::from_millis(120),
+                };
+                if due {
+                    if let Some(hwnd) = hwnd_isize(window) {
+                        let scale = window.scale_factor().unwrap_or(1.0);
+                        round_window(hwnd, w, h, (16.0 * scale) as i32);
+                    }
+                    *last = (w, h, Some(Instant::now()));
+                } else if !TRAILING.swap(true, Ordering::SeqCst) {
+                    let win2 = window.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(Duration::from_millis(160)).await;
+                        TRAILING.store(false, Ordering::SeqCst);
+                        if let Some(hwnd) = hwnd_isize(&win2) {
+                            let sz = win2.inner_size().unwrap_or_default();
+                            let scale = win2.scale_factor().unwrap_or(1.0);
+                            round_window(hwnd, sz.width as i32, sz.height as i32, (16.0 * scale) as i32);
+                            *LAST_APPLY.lock().unwrap() =
+                                (sz.width as i32, sz.height as i32, Some(Instant::now()));
+                        }
+                    });
                 }
             }
             let _ = window;

@@ -21,14 +21,9 @@ pub struct MpvSession {
     tx: mpsc::UnboundedSender<(Value, oneshot::Sender<Value>)>,
 }
 
-async fn open_pipe(pipe: &str) -> Option<tokio::net::windows::named_pipe::NamedPipeClient> {
-    for _ in 0..60 {
-        match ClientOptions::new().open(pipe) {
-            Ok(c) => return Some(c),
-            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(150)).await,
-        }
-    }
-    None
+async fn try_open_pipe(pipe: &str) -> Option<tokio::net::windows::named_pipe::NamedPipeClient> {
+    // 单次尝试：由 launch 的重试环统一控节奏（便于同时观察子进程是否已退出）
+    ClientOptions::new().open(pipe).ok()
 }
 
 impl MpvSession {
@@ -65,19 +60,41 @@ impl MpvSession {
             "--fullscreen=no".to_string(),
             "--volume=100".to_string(),
         ];
-        let child = tokio::process::Command::new(exe)
+        let mut child = tokio::process::Command::new(exe)
             .args(&args)
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| format!("启动 mpv 失败 ({}): {}", exe, e))?;
 
-        // 连接 A：事件通道（mpv 向所有客户端广播事件）
-        let ev_client = open_pipe(&pipe)
-            .await
-            .ok_or_else(|| "连接 mpv IPC 管道超时".to_string())?;
-        // 连接 B：命令/应答通道
-        let cmd_client = open_pipe(&pipe)
+        // 等待 IPC 管道出现（最长 20s）；期间若 mpv 进程退出则立刻带 stderr 报错，不留孤儿
+        use tokio::io::AsyncReadExt;
+        let mut ev_client = None;
+        let mut stderr_tail = String::new();
+        for _ in 0..200 {
+            if let Ok(Some(status)) = child.try_wait() {
+                if let Some(mut se) = child.stderr.take() {
+                    let mut buf = Vec::new();
+                    let _ = se.read_to_end(&mut buf).await;
+                    let lossy = String::from_utf8_lossy(&buf).to_string();
+                    let mut tail: Vec<_> = lossy.lines().rev().take(3).collect();
+                    tail.reverse();
+                    stderr_tail = tail.join(" | ");
+                }
+                return Err(format!("mpv 提前退出 ({}): {}", status, stderr_tail));
+            }
+            if let Some(c) = try_open_pipe(&pipe).await {
+                ev_client = Some(c);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let ev_client = ev_client.ok_or_else(|| {
+            let _ = child.start_kill();
+            format!("连接 mpv IPC 管道超时(20s) {}", stderr_tail)
+        })?;
+        // 连接 B：命令/应答通道（管道已存在，直连）
+        let cmd_client = try_open_pipe(&pipe)
             .await
             .ok_or_else(|| "连接 mpv IPC 管道超时(2)".to_string())?;
 

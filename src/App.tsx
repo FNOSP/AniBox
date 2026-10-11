@@ -55,6 +55,11 @@ type Episode = {
   duration?: number;
   air_date?: string;
   watched?: number;
+  /** item/{guid} 详情回填（原版剧集行有单集简介） */
+  overview?: string;
+  /** media_stream.resolutions[0] 去 p 尾（如 1080），原版标题旁的清晰度小徽标 */
+  quality?: string;
+  media_stream?: { resolutions?: string[] } | null;
 };
 
 type MpvEvent = { event: string; id?: number; data?: unknown };
@@ -79,11 +84,20 @@ function pick(o: Record<string, unknown>, keys: string[]): any {
 function fmtTime(sec: number | null | undefined): string {
   if (!sec || !isFinite(sec)) return "--:--";
   const s = Math.floor(sec % 60);
-  const m = Math.floor((sec / 60) % 60);
-  const h = Math.floor(sec / 3600);
-  const mm = String(m).padStart(2, "0");
+  const m = Math.floor(sec / 60);
+  const h = Math.floor(m / 60);
+  const mm = String(m % 60).padStart(2, "0");
   const ss = String(s).padStart(2, "0");
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+/** 时长口语化（原版剧集行样式）：1420 → 「23 分钟 40 秒」 */
+function fmtDur(sec: number | null | undefined): string {
+  if (!sec || !isFinite(sec) || sec <= 0) return "";
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  if (m <= 0) return `${s} 秒`;
+  return s > 0 ? `${m} 分钟 ${s} 秒` : `${m} 分钟`;
 }
 
 /** 图片统一走鉴权代理（WebView 直连 NAS 不带 Cookie 会全裂图）
@@ -832,9 +846,42 @@ function DetailView({
     if (!s) return;
     setEpisodes([]);
     invoke<Episode[]>("get_episodes", { guid: s.guid })
-      .then((eps) => setEpisodes(Array.isArray(eps) ? eps : []))
+      .then((eps) =>
+        setEpisodes(
+          (Array.isArray(eps) ? eps : []).map((e) => ({
+            ...e,
+            quality:
+              Array.isArray(e?.media_stream?.resolutions) && e.media_stream.resolutions[0]
+                ? String(e.media_stream.resolutions[0]).replace(/p$/i, "")
+                : undefined,
+          })),
+        ),
+      )
       .catch(() => {});
   }, [seasons, seasonIdx]);
+
+  // 单集简介回填：原版剧集行带简介，episode/list 不含该字段，逐集拉 item 详情补（与轮播同一模式）
+  useEffect(() => {
+    if (!episodes.length) return;
+    let alive = true;
+    Promise.allSettled(
+      episodes.map((ep) => invoke<Record<string, unknown>>("get_item_detail", { guid: ep.guid })),
+    ).then((rs) => {
+      if (!alive) return;
+      setEpisodes((prev) =>
+        prev.map((ep, i) => {
+          const r = rs[i];
+          if (r.status !== "fulfilled") return ep;
+          const ov = pick(r.value, ["overview"]);
+          if (!ov || ep.overview) return ep;
+          return { ...ep, overview: String(ov) };
+        }),
+      );
+    });
+    return () => {
+      alive = false;
+    };
+  }, [episodes.length]);
 
   const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
   const backdrop = (pick(data ?? {}, ["backdrops", "backdrop"]) as string) || base.poster || "";
@@ -912,34 +959,41 @@ function DetailView({
             )}
             <span className="muted">{episodes.length} 集</span>
           </div>
-          <div className="grid ep-grid">
+          <div className="ep-list">
             {episodes.map((ep) => {
               const progress =
                 ep.ts && ep.duration && ep.duration > 0 ? Math.min(100, (ep.ts / ep.duration) * 100) : 0;
+              const label =
+                ep.episode_number != null
+                  ? `第 ${ep.episode_number} 集${ep.title ? `. ${ep.title}` : ""}`
+                  : ep.title || "未命名剧集";
               return (
                 <div
                   key={ep.guid}
-                  className="card"
+                  className="ep-row"
                   onClick={() => onPlay({ guid: ep.guid, title: ep.title, tvTitle: title })}
                 >
-                  <div className="poster-box">
+                  <div className="ep-thumb">
                     {ep.poster ? (
-                      <img src={imgUrl(ep.poster)} loading="lazy" alt={ep.title} />
+                      <img src={imgUrl(ep.poster)} loading="lazy" alt={label} />
                     ) : (
                       <div className="poster-empty">🎞</div>
                     )}
-                    <div className="card-hover">
-                      <span className="play-pill">▶ 播放</span>
-                    </div>
+                    <span className="ep-play">▶</span>
                     {progress > 0 && (
                       <div className="progress">
                         <div style={{ width: `${progress}%` }} />
                       </div>
                     )}
-                    <span className="ep-badge">E{ep.episode_number ?? ""}</span>
                   </div>
-                  <div className="card-title">{ep.title}</div>
-                  {ep.air_date && <div className="card-sub">{ep.air_date}</div>}
+                  <div className="ep-body">
+                    <div className="ep-row-title">
+                      {label}
+                      {ep.quality && <span className="ep-quality">{ep.quality}</span>}
+                    </div>
+                    {ep.overview && <p className="ep-overview">{ep.overview}</p>}
+                    {fmtDur(ep.duration) && <div className="ep-duration">{fmtDur(ep.duration)}</div>}
+                  </div>
                 </div>
               );
             })}

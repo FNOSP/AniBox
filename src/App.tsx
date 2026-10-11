@@ -84,92 +84,91 @@ function imgUrl(p?: string | null): string {
   return `fntvimg://localhost${path}`;
 }
 
-/* ────────────────────────── 首页数据缓存（回首页秒出，后台静默刷新） ────────────────────────── */
-
-type CarouselItem = MediaItem & { backdrop?: string };
-type HomeCache = {
-  ts: number;
-  libs: Lib[];
-  continueList: PlayItem[];
-  carousel: CarouselItem[];
-};
-const HOME_CACHE_KEY = "fntv-home-cache-v1";
-const HOME_TTL = 30 * 60 * 1000;
-
-function readHomeCache(): HomeCache | null {
-  try {
-    const raw = localStorage.getItem(HOME_CACHE_KEY);
-    if (!raw) return null;
-    const c = JSON.parse(raw) as HomeCache;
-    if (!c || !Array.isArray(c.libs)) return null;
-    return c;
-  } catch {
-    return null;
+/** 库内容探测加载：库根(ancestor=parent=lib) → 仅 ancestor → 仅 parent，首个非空结果即用 */
+async function fetchLibItems(libGuid: string, parentGuid: string | null): Promise<MediaItem[]> {
+  const candidates: Array<[string | null, string | null]> =
+    parentGuid === null
+      ? [
+          [libGuid, libGuid],
+          [libGuid, null],
+          [null, libGuid],
+        ]
+      : [[libGuid, parentGuid]];
+  for (const [ancestor, parent] of candidates) {
+    try {
+      const d = await invoke<{ list: MediaItem[]; total: number }>("get_items", {
+        ancestorGuid: ancestor,
+        parentGuid: parent,
+        page: 1,
+      });
+      if ((d.list?.length ?? 0) > 0) return d.list;
+    } catch {
+      /* 尝试下一个形态 */
+    }
   }
-}
-
-function writeHomeCache(c: HomeCache): void {
-  try {
-    localStorage.setItem(HOME_CACHE_KEY, JSON.stringify(c));
-  } catch {
-    /* 配额满就放弃缓存 */
-  }
-}
-
-async function loadHomeData(): Promise<HomeCache> {
-  const [libData, cont, car] = await Promise.all([
-    invoke<Lib[]>("get_media_libs"),
-    invoke<PlayItem[]>("get_continue_watching").catch(() => [] as PlayItem[]),
-    invoke<{ list: MediaItem[]; total: number }>("get_carousel_items")
-      .then((d) => d?.list ?? [])
-      .catch(() => [] as MediaItem[]),
-  ]);
-  const rawCarousel = (Array.isArray(car) ? car : [])
-    .filter((it) => it && it.guid && it.title)
-    .slice(0, 8);
-  // 横版主图：并行拉详情的 backdrops，失败保持渐变兜底
-  const backdrops = await Promise.all(
-    rawCarousel.map(async (it) => {
-      try {
-        const d = await invoke<Record<string, unknown>>("get_item_detail", { guid: it.guid });
-        return (pick(d, ["backdrops", "backdrop"]) as string) || "";
-      } catch {
-        return "";
-      }
-    }),
-  );
-  const carousel: CarouselItem[] = rawCarousel.map((it, i) => ({
-    ...it,
-    backdrop: backdrops[i] || undefined,
-  }));
-  return {
-    ts: Date.now(),
-    libs: Array.isArray(libData) ? libData : [],
-    continueList: Array.isArray(cont) ? cont : [],
-    carousel,
-  };
+  return [];
 }
 
 /* ────────────────────────── 标题栏 ────────────────────────── */
 
-function TitleBar({ title }: { title: string }) {
+function TitleBar({
+  title,
+  nav,
+  sidebarOpen,
+  onToggleSidebar,
+  onHome,
+  onRefresh,
+  refreshing,
+}: {
+  title: string;
+  nav?: boolean;
+  sidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
+  onHome?: () => void;
+  onRefresh?: () => void;
+  refreshing?: boolean;
+}) {
   const win = getCurrentWindow();
   return (
     <div className="titlebar" data-tauri-drag-region>
-      <span className="tb-title" data-tauri-drag-region>
+      <div className="tb-left" data-tauri-drag-region>
+        {nav && onToggleSidebar && (
+          <button
+            className="tb-icon"
+            title={sidebarOpen ? "收起侧栏" : "展开侧栏"}
+            onClick={onToggleSidebar}
+          >
+            ☰
+          </button>
+        )}
+        {nav && onHome && (
+          <button className="tb-link" onClick={onHome}>
+            首页
+          </button>
+        )}
+        {nav && onRefresh && (
+          <button className="tb-icon" title="刷新首页数据" onClick={onRefresh} disabled={refreshing}>
+            ⟳
+          </button>
+        )}
+        {!nav && <span className="tb-page">{title}</span>}
+      </div>
+      <div className="tb-center" data-tauri-drag-region>
         <span className="tb-logo">▶</span>
-        {title}
-      </span>
-      <div className="tb-buttons">
-        <button className="tb-btn" title="最小化" onClick={() => win.minimize()}>
-          ─
-        </button>
-        <button className="tb-btn" title="最大化/还原" onClick={() => win.toggleMaximize()}>
-          ▢
-        </button>
-        <button className="tb-btn tb-close" title="关闭" onClick={() => win.close()}>
-          ✕
-        </button>
+        <span className="tb-brand">{title}</span>
+      </div>
+      <div className="tb-right" data-tauri-drag-region>
+        <div className="tb-buttons">
+          <button className="tb-btn" title="最小化" onClick={() => win.minimize()}>
+            ─
+          </button>
+          <button className="tb-btn" title="最大化/还原" onClick={() => win.toggleMaximize()}>
+            ▢
+          </button>
+          <button className="tb-btn tb-close" title="关闭" onClick={() => win.close()}>
+            ✕
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -255,6 +254,118 @@ function LoginPage({ onDone }: { onDone: () => void }) {
   );
 }
 
+/* ────────────────────────── 首页样式4轮播（全屏 hero） ────────────────────────── */
+
+const ACCENTS = ["#6eb5ff", "#d69b6a", "#b08fe0", "#5fb0a8", "#e08585"];
+
+function CarouselView({
+  items,
+  bds,
+  onPlay,
+  onDetail,
+}: {
+  items: MediaItem[];
+  bds: Record<string, string>;
+  onPlay: (t: PlayTarget) => void;
+  onDetail: (item: MediaItem) => void;
+}) {
+  const [index, setIndex] = useState(0);
+  const n = items.length;
+
+  useEffect(() => {
+    if (n < 2) return;
+    const t = setTimeout(() => setIndex((i) => (i + 1) % n), 6000);
+    return () => clearTimeout(t);
+  }, [index, n]);
+
+  if (n === 0) return null;
+  const cls = (i: number): string => {
+    let d = i - index;
+    if (d < 0) d += n;
+    if (d === 0) return "active";
+    if (d === 1) return "next";
+    if (d === n - 1) return "prev";
+    return d < n / 2 ? "far-right" : "far-left";
+  };
+  const yearOf = (it: MediaItem) => String(it.release_date || it.air_date || "").slice(0, 4);
+
+  return (
+    <div className="carousel-s4">
+      <div className="fntv-s4-track">
+        {items.map((it, i) => {
+          const state = cls(i);
+          const bd = bds[it.guid];
+          const accent = ACCENTS[i % ACCENTS.length];
+          const meta = [
+            yearOf(it),
+            (it.type || "").toLowerCase() === "movie" ? "MOVIE" : "TV SERIES",
+          ]
+            .filter(Boolean)
+            .join(" · ");
+          return (
+            <div
+              key={it.guid}
+              className={`fntv-s4-card ${state}`}
+              onClick={() => {
+                if (state !== "active") setIndex(i);
+              }}
+            >
+              <div
+                className="fntv-s4-bg"
+                style={
+                  bd
+                    ? { backgroundImage: `url(${imgUrl(bd)})` }
+                    : { backgroundImage: `linear-gradient(160deg, ${accent}55, #0b1219)` }
+                }
+              />
+              <div className="fntv-s4-info">
+                <div className="meta">{meta}</div>
+                <h3>{it.title}</h3>
+                <div className="desc">{it.overview || ""}</div>
+                <div className="fntv-s4-actions">
+                  <button
+                    className="fntv-s4-play"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onPlay({ guid: it.guid, title: it.title });
+                    }}
+                  >
+                    ▶ 开始播放
+                  </button>
+                  <button
+                    className="fntv-s4-detail"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDetail(it);
+                    }}
+                  >
+                    MORE
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="fntv-s4-dots">
+        {items.map((it, i) => (
+          <span
+            key={it.guid}
+            className={`fntv-s4-dot ${i === index ? "active" : ""}`}
+            onClick={() => setIndex(i)}
+          />
+        ))}
+      </div>
+      <button className="fntv-s4-nav prev" onClick={() => setIndex((i) => (i - 1 + n) % n)}>
+        ‹
+      </button>
+      <button className="fntv-s4-nav next" onClick={() => setIndex((i) => (i + 1) % n)}>
+        ›
+      </button>
+    </div>
+  );
+}
+
 /* ────────────────────────── 海报卡 ────────────────────────── */
 
 function PosterCard({
@@ -301,162 +412,53 @@ function PosterCard({
   );
 }
 
-/* ────────────────────────── 首页样式4轮播（3D 旋转木马，复刻主仓库 fntv-s4） ────────────────────────── */
-
-const ACCENTS = ["#6eb5ff", "#d69b6a", "#b08fe0", "#5fb0a8", "#e08585"];
-
-function CarouselView({
-  items,
-  onPlay,
-  onDetail,
-}: {
-  items: CarouselItem[];
-  onPlay: (t: PlayTarget) => void;
-  onDetail: (item: MediaItem) => void;
-}) {
-  const [index, setIndex] = useState(0);
-  const n = items.length;
-
-  // 5s 自动轮播；手动切换后因 index 变化自然重置计时
-  useEffect(() => {
-    if (n < 2) return;
-    const t = setTimeout(() => setIndex((i) => (i + 1) % n), 5000);
-    return () => clearTimeout(t);
-  }, [index, n]);
-
-  if (n === 0) return null;
-  const cls = (i: number): string => {
-    let d = i - index;
-    if (d < 0) d += n;
-    if (d === 0) return "active";
-    if (d === 1) return "next";
-    if (d === n - 1) return "prev";
-    return d < n / 2 ? "far-right" : "far-left";
-  };
-  const yearOf = (it: MediaItem) => String(it.release_date || it.air_date || "").slice(0, 4);
-
-  return (
-    <div className="carousel-s4">
-      <div className="fntv-s4-track">
-        {items.map((it, i) => {
-          const state = cls(i);
-          const accent = ACCENTS[i % ACCENTS.length];
-          const meta = [
-            yearOf(it),
-            (it.type || "").toLowerCase() === "movie" ? "MOVIE" : "TV SERIES",
-          ]
-            .filter(Boolean)
-            .join(" · ");
-          return (
-            <div
-              key={it.guid}
-              className={`fntv-s4-card ${state}`}
-              onClick={() => {
-                if (state !== "active") setIndex(i);
-              }}
-            >
-              <div
-                className="fntv-s4-bg"
-                style={
-                  it.backdrop
-                    ? { backgroundImage: `url(${imgUrl(it.backdrop)})` }
-                    : { backgroundImage: `linear-gradient(160deg, ${accent}55, #0b1219)` }
-                }
-              />
-              <div className="fntv-s4-info">
-                <div className="meta">{meta}</div>
-                <h3>{it.title}</h3>
-                <div className="desc">{it.overview || ""}</div>
-                <div className="fntv-s4-actions">
-                  <button
-                    className="fntv-s4-play"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onPlay({ guid: it.guid, title: it.title });
-                    }}
-                  >
-                    开始播放
-                  </button>
-                  <button
-                    className="fntv-s4-detail"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDetail(it);
-                    }}
-                  >
-                    更多详情
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <div className="fntv-s4-dots">
-        {items.map((it, i) => (
-          <span
-            key={it.guid}
-            className={`fntv-s4-dot ${i === index ? "active" : ""}`}
-            onClick={() => setIndex(i)}
-          />
-        ))}
-      </div>
-      <button className="fntv-s4-nav prev" onClick={() => setIndex((i) => (i - 1 + n) % n)}>
-        ‹
-      </button>
-      <button className="fntv-s4-nav next" onClick={() => setIndex((i) => (i + 1) % n)}>
-        ›
-      </button>
-    </div>
-  );
-}
-
 /* ────────────────────────── 首页 ────────────────────────── */
 
 function HomeView({
-  home,
-  homeLoading,
-  refreshing,
-  onRefresh,
+  libs,
+  continueList,
+  carousel,
+  carouselBds,
+  libRows,
   onOpenLib,
   onPlay,
-  onDetail,
+  onOpenItem,
 }: {
-  home: HomeCache | null;
-  homeLoading: boolean;
-  refreshing: boolean;
-  onRefresh: () => void;
+  libs: Lib[];
+  continueList: PlayItem[];
+  carousel: MediaItem[];
+  carouselBds: Record<string, string>;
+  libRows: { lib: Lib; items: MediaItem[] }[];
   onOpenLib: (lib: Lib) => void;
   onPlay: (t: PlayTarget) => void;
-  onDetail: (item: MediaItem) => void;
+  onOpenItem: (item: MediaItem) => void;
 }) {
-  const libs = home?.libs ?? [];
-  const continueList = home?.continueList ?? [];
-  const carousel = home?.carousel ?? [];
-
-  if (homeLoading && !home) {
-    return (
-      <main className="content home">
-        <div className="skel skel-carousel" />
-        <div className="section-head">
-          <h3>我的媒体库</h3>
-        </div>
-        <div className="libgrid">
-          {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="skel skel-libcard" />
+  return (
+    <main className="content home-full">
+      {/* 全屏 hero 轮播 + 底部媒体库条（Emby 布局） */}
+      <div className="hero-zone">
+        <CarouselView items={carousel} bds={carouselBds} onPlay={onPlay} onDetail={onOpenItem} />
+        <div className="lib-strip">
+          {libs.map((lib) => (
+            <div key={lib.guid} className="lib-strip-card" onClick={() => onOpenLib(lib)}>
+              <div className="lsc-bg">
+                {lib.posters && lib.posters[0] ? (
+                  <img src={imgUrl(lib.posters[0])} loading="lazy" alt={lib.title} />
+                ) : (
+                  <div className="poster-empty">🎞</div>
+                )}
+              </div>
+              <div className="lsc-shade" />
+              <div className="lsc-title">{lib.title}</div>
+              <div className="lsc-cat">{lib.category}</div>
+            </div>
           ))}
         </div>
-      </main>
-    );
-  }
+      </div>
 
-  return (
-    <main className="content home">
-      {carousel.length > 0 && (
-        <CarouselView items={carousel} onPlay={onPlay} onDetail={onDetail} />
-      )}
+      {/* 继续观看 */}
       {continueList.length > 0 && (
-        <>
+        <section className="home-sec">
           <div className="section-head">
             <h3>继续观看</h3>
           </div>
@@ -491,7 +493,11 @@ function HomeView({
                         <div style={{ width: `${progress}%` }} />
                       </div>
                     )}
-                    {sn != null && <span className="ep-badge">S{sn}E{en ?? ""}</span>}
+                    {sn != null && (
+                      <span className="ep-badge">
+                        S{sn}E{en ?? ""}
+                      </span>
+                    )}
                   </div>
                   <div className="card-title">{tvTitle || title}</div>
                   {tvTitle && <div className="card-sub">{title}</div>}
@@ -499,36 +505,28 @@ function HomeView({
               );
             })}
           </div>
-        </>
+        </section>
       )}
-      <div className="section-head">
-        <h3>我的媒体库</h3>
-        <span className="muted">{libs.length} 个库</span>
-        <span className="spacer" />
-        <button className="refresh-btn" onClick={onRefresh} disabled={refreshing}>
-          {refreshing ? "⟳ 刷新中…" : "⟳ 刷新"}
-        </button>
-      </div>
-      <div className="libgrid">
-        {libs.map((lib) => (
-          <div key={lib.guid} className="libcard" onClick={() => onOpenLib(lib)}>
-            <div className="libcard-bg">
-              {lib.posters && lib.posters[0] ? (
-                <img src={imgUrl(lib.posters[0])} loading="lazy" alt={lib.title} />
-              ) : (
-                <div className="poster-empty">🎞</div>
-              )}
+
+      {/* 按库顺序的剧集横排 */}
+      {libRows.map(({ lib, items }) =>
+        items.length > 0 ? (
+          <section className="home-sec" key={lib.guid}>
+            <div className="section-head">
+              <h3>{lib.title}</h3>
+              <span className="muted">{items.length} 项</span>
+              <span className="row-more" onClick={() => onOpenLib(lib)}>
+                全部 ›
+              </span>
             </div>
-            <div className="libcard-shade" />
-            <div className="libcard-info">
-              <div className="libcard-title">{lib.title}</div>
-              <div className="libcard-cat">{lib.category}</div>
+            <div className="hscroll">
+              {items.map((it) => (
+                <PosterCard key={it.guid} item={it} onOpen={onOpenItem} />
+              ))}
             </div>
-            <span className="libcard-arrow">›</span>
-          </div>
-        ))}
-      </div>
-      {libs.length === 0 && <div className="empty">没有媒体库</div>}
+          </section>
+        ) : null,
+      )}
     </main>
   );
 }
@@ -556,43 +554,11 @@ function LibView({
     async (parentGuid: string | null) => {
       setLoading(true);
       setErr("");
-      try {
-        // 请求形态兼容探测：库根(ancestor=parent=lib) → 仅 ancestor → 仅 parent
-        const candidates: Array<[string | null, string | null]> =
-          parentGuid === null
-            ? [
-                [lib.guid, lib.guid],
-                [lib.guid, null],
-                [null, lib.guid],
-              ]
-            : [[lib.guid, parentGuid]];
-        let list: MediaItem[] = [];
-        let t = 0;
-        let lastErr = "";
-        for (const [ancestor, parent] of candidates) {
-          try {
-            const data = await invoke<{ list: MediaItem[]; total: number }>("get_items", {
-              ancestorGuid: ancestor,
-              parentGuid: parent,
-              page: 1,
-            });
-            if ((data.list?.length ?? 0) > 0 || (data.total ?? 0) > 0) {
-              list = data.list ?? [];
-              t = data.total ?? 0;
-              break;
-            }
-          } catch (e) {
-            lastErr = String(e);
-          }
-        }
-        if (list.length === 0 && lastErr) throw new Error(lastErr);
-        setItems(list);
-        setTotal(t);
-      } catch (e) {
-        setErr(String(e));
-      } finally {
-        setLoading(false);
-      }
+      const list = await fetchLibItems(lib.guid, parentGuid);
+      setItems(list);
+      setTotal(list.length);
+      if (list.length === 0) setErr("该库暂无已识别条目");
+      setLoading(false);
     },
     [lib.guid],
   );
@@ -606,7 +572,6 @@ function LibView({
       onOpenItem(item);
       return;
     }
-    // 容器：钻取
     if (current) setStack((s) => [...s.slice(0, -1), { folder: current, items }]);
     else setStack((s) => [...s, { folder: item, items }]);
     await load(item.guid);
@@ -674,14 +639,19 @@ function DetailView({
   const poster = (pick(data ?? {}, ["posters", "poster"]) as string) || base.poster || "";
   const overview = String(pick(data ?? {}, ["overview"]) ?? base.overview ?? "");
   const rating = String(pick(data ?? {}, ["voteAverage", "vote_average"]) ?? base.vote_average ?? "");
-  const releaseDate = String(pick(data ?? {}, ["releaseDate", "release_date"]) ?? base.release_date ?? "");
+  const releaseDate = String(
+    pick(data ?? {}, ["releaseDate", "release_date"]) ?? base.release_date ?? "",
+  );
   const numSeasons = pick(data ?? {}, ["numberOfSeasons", "number_of_seasons"]);
   const isSeries = base.type === "TvSeries" || base.type === "TV";
   const resumeAt = base.ts && base.duration && base.ts > 0 && base.ts < base.duration;
 
   return (
     <main className="content detail-page">
-      <div className="hero" style={backdrop ? { backgroundImage: `url(${imgUrl(backdrop)})` } : undefined}>
+      <div
+        className="hero"
+        style={backdrop ? { backgroundImage: `url(${imgUrl(backdrop)})` } : undefined}
+      >
         <div className="hero-shade" />
         <button className="back hero-back" onClick={onBack}>
           ‹
@@ -706,7 +676,13 @@ function DetailView({
             <div className="hero-actions">
               <button
                 className="play-big"
-                onClick={() => onPlay({ guid: base.guid, title: base.title, tvTitle: (data?.tvTitle as string) || base.tv_title })}
+                onClick={() =>
+                  onPlay({
+                    guid: base.guid,
+                    title: base.title,
+                    tvTitle: (data?.tvTitle as string) || base.tv_title,
+                  })
+                }
               >
                 ▶ {resumeAt ? "续播" : "立即播放"}
                 {resumeAt && base.ts ? ` · ${fmtTime(base.ts)}` : ""}
@@ -724,7 +700,8 @@ function DetailView({
           </div>
           <div className="grid ep-grid">
             {episodes.map((ep) => {
-              const progress = ep.ts && ep.duration && ep.duration > 0 ? Math.min(100, (ep.ts / ep.duration) * 100) : 0;
+              const progress =
+                ep.ts && ep.duration && ep.duration > 0 ? Math.min(100, (ep.ts / ep.duration) * 100) : 0;
               return (
                 <div
                   key={ep.guid}
@@ -909,59 +886,146 @@ function PlayerView({ item, onBack }: { item: PlayTarget; onBack: () => void }) 
   );
 }
 
+/* ────────────────────────── 侧栏（保留现有样式） ────────────────────────── */
+
+function Sidebar({
+  libs,
+  activeGuid,
+  collapsed,
+  username,
+  server,
+  onHome,
+  onLib,
+}: {
+  libs: Lib[];
+  activeGuid: string | null;
+  collapsed?: boolean;
+  username?: string;
+  server?: string;
+  onHome: () => void;
+  onLib: (l: Lib) => void;
+}) {
+  return (
+    <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
+      <div className="side-logo" onClick={onHome} title="首页">
+        <span className="side-logo-mark">▶</span>
+        <div className="side-logo-text">
+          <div className="side-logo-name">FN·TV</div>
+          <div className="side-logo-sub">Tauri2 Edition</div>
+        </div>
+      </div>
+      <div className="side-item home-item" onClick={onHome}>
+        <span className="side-ico">🏠</span> 首页
+      </div>
+      <div className="side-head">媒体库</div>
+      {libs.map((lib) => (
+        <div
+          key={lib.guid}
+          className={`side-item ${activeGuid === lib.guid ? "active" : ""}`}
+          onClick={() => onLib(lib)}
+        >
+          <span className="side-ico">{lib.category === "TvSeries" ? "📺" : "🎬"}</span> {lib.title}
+        </div>
+      ))}
+      <div className="side-usercard">
+        <div className="side-avatar">{(username || "U").slice(0, 1).toUpperCase()}</div>
+        <div className="side-usermeta">
+          <div className="side-user-name">{username || "未登录"}</div>
+          <div className="side-user-server">{server ? server.replace(/^https?:\/\//, "") : "未连接"}</div>
+        </div>
+      </div>
+      <div className="side-ver">Fntv-Plus Tauri2 · v0.1.0</div>
+      <div
+        className="side-item logout"
+        onClick={async () => {
+          await invoke("logout");
+          window.location.reload();
+        }}
+      >
+        <span className="side-ico">⎋</span> 退出登录
+      </div>
+    </aside>
+  );
+}
+
 /* ────────────────────────── 根组件 ────────────────────────── */
 
 function App() {
   const [view, setView] = useState<"login" | "home" | "lib" | "detail" | "player">("login");
-  const [home, setHome] = useState<HomeCache | null>(null);
-  const [homeLoading, setHomeLoading] = useState(false);
-  const [username, setUserName] = useState("");
+  const [libs, setLibs] = useState<Lib[]>([]);
+  const [continueList, setContinueList] = useState<PlayItem[]>([]);
+  const [carousel, setCarousel] = useState<MediaItem[]>([]);
+  const [carouselBds, setCarouselBds] = useState<Record<string, string>>({});
+  const [libRows, setLibRows] = useState<{ lib: Lib; items: MediaItem[] }[]>([]);
   const [activeLib, setActiveLib] = useState<Lib | null>(null);
   const [detailItem, setDetailItem] = useState<MediaItem | null>(null);
   const [playTarget, setPlayTarget] = useState<PlayTarget | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => localStorage.getItem("fntv-sidebar-open") !== "0",
+  );
+  const [username, setUserName] = useState("");
+  const [server, setServer] = useState("");
 
-  // 打开首页：有缓存秒出（回首页零请求）；30 分钟内不重拉，过期/强制/启动时后台静默刷新
-  const openHome = useCallback((opts?: { force?: boolean; startup?: boolean }) => {
-    const force = opts?.force ?? false;
-    const startup = opts?.startup ?? false;
-    const cached = readHomeCache();
-    if (cached) {
-      setHome(cached);
-      setView("home");
-      if (!force && !startup && Date.now() - cached.ts < HOME_TTL) return;
-      loadHomeData()
-        .then((fresh) => {
-          setHome(fresh);
-          writeHomeCache(fresh);
-        })
-        .catch(() => {});
-      return;
-    }
-    // 无缓存（首次打开/退出后重登）：骨架屏同步加载一次
-    setHomeLoading(true);
-    setErr("");
-    setView("home");
-    loadHomeData()
-      .then((data) => {
-        setHome(data);
-        writeHomeCache(data);
+  useEffect(() => {
+    // 用户名 / 服务器地址：侧栏底部卡片展示用
+    invoke<Config>("get_config")
+      .then((c) => {
+        setUserName(c.username);
+        setServer(c.server);
       })
-      .catch((e) => setErr(String(e)))
-      .finally(() => setHomeLoading(false));
+      .catch(() => {});
   }, []);
 
-  // 手动刷新：按钮转圈，期间继续显示旧数据
-  const manualRefresh = useCallback(() => {
-    setRefreshing(true);
-    loadHomeData()
-      .then((f) => {
-        setHome(f);
-        writeHomeCache(f);
-      })
-      .catch((e) => setErr(String(e)))
-      .finally(() => setRefreshing(false));
+  // 首页数据一次性加载并常驻缓存：回首页零等待（轮播图过一会才出来的根因就是每次重拉）
+  const loadHome = useCallback(async () => {
+    setErr("");
+    try {
+      const [libData, cont, car] = await Promise.all([
+        invoke<Lib[]>("get_media_libs"),
+        invoke<PlayItem[]>("get_continue_watching").catch(() => [] as PlayItem[]),
+        invoke<{ list: MediaItem[]; total: number }>("get_carousel_items").catch(() => ({
+          list: [],
+          total: 0,
+        })),
+      ]);
+      const libsArr = Array.isArray(libData) ? libData : [];
+      const carList = (car?.list ?? []).filter((it) => it && it.guid && it.title).slice(0, 8);
+      const contArr = Array.isArray(cont) ? cont : [];
+      setLibs(libsArr);
+      setContinueList(contArr);
+      setCarousel(carList);
+      setLibRows(libsArr.map((l) => ({ lib: l, items: [] })));
+      setView("home");
+
+      // 横版主图补齐（缓存到 App 层，只拉一次）
+      Promise.allSettled(
+        carList.map((it) => invoke<Record<string, unknown>>("get_item_detail", { guid: it.guid })),
+      ).then((rs) => {
+        const map: Record<string, string> = {};
+        rs.forEach((r, i) => {
+          if (r.status === "fulfilled") {
+            const bd = pick(r.value, ["backdrops", "backdrop"]) as string | undefined;
+            if (bd) map[carList[i].guid] = bd;
+          }
+        });
+        setCarouselBds(map);
+      });
+
+      // 每个库的第一页剧集（并行，按库顺序填回）
+      libsArr.forEach((lib, idx) => {
+        fetchLibItems(lib.guid, null).then((items) => {
+          setLibRows((rows) => {
+            const next = [...rows];
+            if (next[idx]) next[idx] = { lib, items };
+            return next;
+          });
+        });
+      });
+    } catch (e) {
+      setErr(String(e));
+      setView("home");
+    }
   }, []);
 
   const play = useCallback((t: PlayTarget) => {
@@ -974,93 +1038,78 @@ function App() {
     setView("detail");
   }, []);
 
-  const logout = useCallback(async () => {
-    try {
-      localStorage.removeItem(HOME_CACHE_KEY);
-      await invoke("logout");
-    } finally {
-      window.location.reload();
-    }
-  }, []);
-
   useEffect(() => {
-    // 有会话直接进首页；check_session 内部覆盖 token 为空的情况，并顺手固化真实基址
-    invoke<Record<string, unknown>>("check_session")
-      .then(async (info) => {
-        const uname = String(pick(info, ["name", "username", "user"]) ?? "");
-        setUserName(uname);
-        try {
-          const c = await invoke<Config>("get_config");
-          if (c.username) setUserName(c.username);
-        } catch {
-          /* 用户名仅展示用 */
-        }
-        openHome({ startup: true });
-      })
+    invoke("check_session")
+      .then(() => loadHome())
       .catch(() => setView("login"));
-  }, [openHome]);
-
-  // 每 30 分钟自动后台刷新一次首页数据
-  useEffect(() => {
-    if (view === "login") return;
-    const iv = setInterval(() => {
-      loadHomeData()
-        .then((f) => {
-          setHome(f);
-          writeHomeCache(f);
-        })
-        .catch(() => {});
-    }, HOME_TTL);
-    return () => clearInterval(iv);
-  }, [view]);
-
-  const sidebar = (
-    <Sidebar
-      libs={home?.libs ?? []}
-      activeGuid={activeLib?.guid ?? null}
-      username={username}
-      view={view}
-      onHome={() => openHome()}
-      onLib={(l) => {
-        setActiveLib(l);
-        setView("lib");
-      }}
-      onLogout={logout}
-    />
-  );
+  }, [loadHome]);
 
   let body: ReactNode;
   if (view === "login") {
-    body = <LoginPage onDone={() => openHome({ force: true })} />;
+    body = <LoginPage onDone={() => loadHome()} />;
   } else if (view === "home") {
     body = (
       <div className="main-row">
-        {sidebar}
+        <Sidebar
+          libs={libs}
+          activeGuid={null}
+          collapsed={!sidebarOpen}
+          username={username}
+          server={server}
+          onHome={() => loadHome()}
+          onLib={(l) => {
+            setActiveLib(l);
+            setView("lib");
+          }}
+        />
         <HomeView
-          home={home}
-          homeLoading={homeLoading}
-          refreshing={refreshing}
-          onRefresh={manualRefresh}
+          libs={libs}
+          continueList={continueList}
+          carousel={carousel}
+          carouselBds={carouselBds}
+          libRows={libRows}
           onOpenLib={(l) => {
             setActiveLib(l);
             setView("lib");
           }}
           onPlay={play}
-          onDetail={openItem}
+          onOpenItem={openItem}
         />
       </div>
     );
   } else if (view === "lib" && activeLib) {
     body = (
       <div className="main-row">
-        {sidebar}
-        <LibView lib={activeLib} onBackHome={() => openHome()} onOpenItem={openItem} />
+        <Sidebar
+          libs={libs}
+          activeGuid={activeLib.guid}
+          collapsed={!sidebarOpen}
+          username={username}
+          server={server}
+          onHome={() => loadHome()}
+          onLib={(l) => {
+            setActiveLib(l);
+            setView("lib");
+          }}
+        />
+        <LibView lib={activeLib} onBackHome={() => loadHome()} onOpenItem={openItem} />
       </div>
     );
   } else if (view === "detail" && detailItem) {
     body = (
       <div className="main-row">
-        {sidebar}
+        <Sidebar
+          libs={libs}
+          activeGuid={activeLib?.guid ?? null}
+          collapsed={!sidebarOpen}
+          username={username}
+          server={server}
+          onHome={() => loadHome()}
+          onLib={(l) => {
+            setActiveLib(l);
+            setView("lib");
+          }}
+        />
         <DetailView
           base={detailItem}
           onPlay={play}
@@ -1081,67 +1130,22 @@ function App() {
 
   return (
     <div className="app-shell">
-      <TitleBar title="Fntv-Plus Tauri2" />
+      <TitleBar
+        title="Fntv-Plus Tauri2"
+        nav={view !== "login"}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={() =>
+          setSidebarOpen((v) => {
+            localStorage.setItem("fntv-sidebar-open", v ? "0" : "1");
+            return !v;
+          })
+        }
+        onHome={() => loadHome()}
+        onRefresh={() => loadHome()}
+      />
       {err && view !== "login" && <div className="err global-err">{err}</div>}
       {body}
     </div>
-  );
-}
-
-function Sidebar({
-  libs,
-  activeGuid,
-  username,
-  view,
-  onHome,
-  onLib,
-  onLogout,
-}: {
-  libs: Lib[];
-  activeGuid: string | null;
-  username: string;
-  view: string;
-  onHome: () => void;
-  onLib: (l: Lib) => void;
-  onLogout: () => void;
-}) {
-  const icoOf = (c: string): string => {
-    const k = (c || "").toLowerCase();
-    if (k === "tv" || k === "tvseries") return "📺";
-    if (k === "movie") return "🎬";
-    if (k === "mix") return "🎞";
-    return "🗂";
-  };
-  return (
-    <aside className="sidebar">
-      <div className="side-logo" onClick={onHome} title="首页">
-        <span className="side-logo-mark">▶</span>
-        <div className="side-logo-text">
-          <div className="side-logo-name">FN·TV</div>
-          <div className="side-logo-sub">Tauri2 Edition</div>
-        </div>
-      </div>
-      <div className={`side-item ${view === "home" ? "active" : ""}`} onClick={onHome}>
-        <span className="side-ico">🏠</span> 首页
-      </div>
-      <div className="side-head">媒体库</div>
-      {libs.map((lib) => (
-        <div
-          key={lib.guid}
-          className={`side-item ${activeGuid === lib.guid ? "active" : ""}`}
-          onClick={() => onLib(lib)}
-        >
-          <span className="side-ico">{icoOf(lib.category)}</span> {lib.title}
-        </div>
-      ))}
-      <div className="side-user">
-        <div className="side-avatar">{(username || "U").slice(0, 1).toUpperCase()}</div>
-        <div className="side-user-name">{username || "未登录"}</div>
-      </div>
-      <div className="side-item logout" onClick={onLogout}>
-        <span className="side-ico">⎋</span> 退出登录
-      </div>
-    </aside>
   );
 }
 

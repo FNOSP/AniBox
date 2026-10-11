@@ -381,6 +381,31 @@ body,
   gap: 12px;
   margin: 26px 0 16px;
 }
+.season-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.season-tab {
+  padding: 5px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: rgba(233, 235, 244, 0.7);
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.season-tab:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.07);
+}
+.season-tab.active {
+  background: linear-gradient(135deg, rgba(108, 155, 255, 0.28), rgba(143, 108, 255, 0.22));
+  border-color: rgba(108, 155, 255, 0.35);
+  color: #dfe8ff;
+}
 .section-head:first-child {
   margin-top: 4px;
 }
@@ -1181,6 +1206,17 @@ button:active {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.mist-logo {
+  /* 飞牛自带透明 logo（item API data.logos）替换文字标题；高度思路同 emby-crx 的 clamp */
+  height: clamp(2.2rem, -0.545rem + 5.2vw, 4.4rem);
+  max-width: min(70%, 640px);
+  object-fit: contain;
+  object-position: left center;
+  align-self: flex-start;
+  margin: 0.2em 0 0.5em;
+  filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.45));
+  user-select: none;
 }
 .mist-info p {
   color: #fff;

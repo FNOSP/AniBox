@@ -59,6 +59,13 @@ type Episode = {
 
 type MpvEvent = { event: string; id?: number; data?: unknown };
 
+type Season = {
+  guid: string;
+  title: string;
+  season_number?: number;
+  number_of_episodes?: number;
+};
+
 type PlayTarget = { guid: string; title: string; tvTitle?: string };
 
 function pick(o: Record<string, unknown>, keys: string[]): any {
@@ -88,29 +95,33 @@ function imgUrl(p?: string | null): string {
   return `fntvimg://localhost${path}`;
 }
 
-/** 库内容探测加载：库根(ancestor=parent=lib) → 仅 ancestor → 仅 parent，首个非空结果即用 */
-async function fetchLibItems(libGuid: string, parentGuid: string | null): Promise<MediaItem[]> {
-  const candidates: Array<[string | null, string | null]> =
-    parentGuid === null
-      ? [
-          [libGuid, libGuid],
-          [libGuid, null],
-          [null, libGuid],
-        ]
-      : [[libGuid, parentGuid]];
-  for (const [ancestor, parent] of candidates) {
-    try {
-      const d = await invoke<{ list: MediaItem[]; total: number }>("get_items", {
-        ancestorGuid: ancestor,
-        parentGuid: parent,
-        page: 1,
-      });
-      if ((d.list?.length ?? 0) > 0) return d.list;
-    } catch {
-      /* 尝试下一个形态 */
+/** item 详情图片字段取值（对齐主仓库 carousel/images.ts pickImg：字符串直取；
+ *  数组取首项的 path/url/字面量——新版 fnOS 实测为字符串，数组形态留作兼容） */
+function pickImgStr(d: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const k of keys) {
+    const v = d[k];
+    if (v == null || v === "") continue;
+    if (typeof v === "string") return v;
+    if (Array.isArray(v) && v.length) {
+      const first = v[0];
+      if (typeof first === "string") return first;
+      const obj = first as Record<string, unknown> | null;
+      const p = obj?.path ?? obj?.url;
+      if (typeof p === "string" && p) return p;
     }
   }
-  return [];
+  return undefined;
+}
+
+/** 库内容加载：库根=ancestor 查询（Episode 由服务端白名单滤掉）；文件夹钻取=parent 查询。
+ *  形状依据见 lib.rs get_items 注释（实测：库根传 parent_guid=库guid 返回 0 条，勿兜底）。 */
+async function fetchLibItems(libGuid: string, parentGuid: string | null): Promise<MediaItem[]> {
+  const d = await invoke<{ list: MediaItem[]; total: number }>("get_items", {
+    ancestorGuid: parentGuid === null ? libGuid : null,
+    parentGuid,
+    page: 1,
+  });
+  return d.list ?? [];
 }
 
 /* ────────────────────────── 标题栏 ────────────────────────── */
@@ -315,11 +326,13 @@ function LoginPage({ onDone }: { onDone: () => void }) {
 function CarouselView({
   items,
   bds,
+  logos,
   onPlay,
   onDetail,
 }: {
   items: MediaItem[];
   bds: Record<string, string>;
+  logos: Record<string, string>;
   onPlay: (t: PlayTarget) => void;
   onDetail: (item: MediaItem) => void;
 }) {
@@ -380,7 +393,17 @@ function CarouselView({
               <div className="mist-veil" />
               <div className="mist-info">
                 <div className="mist-meta">{meta}</div>
-                <h1>{it.title}</h1>
+                {logos[it.guid] ? (
+                  <img
+                    className="mist-logo"
+                    src={imgUrl(logos[it.guid])}
+                    alt={it.title}
+                    draggable={false}
+                    loading="lazy"
+                  />
+                ) : (
+                  <h1>{it.title}</h1>
+                )}
                 <div>
                   <p>{it.overview || ""}</p>
                 </div>
@@ -457,6 +480,7 @@ function HomeView({
   continueList,
   carousel,
   carouselBds,
+  carouselLogos,
   libRows,
   onOpenLib,
   onPlay,
@@ -466,6 +490,7 @@ function HomeView({
   continueList: PlayItem[];
   carousel: MediaItem[];
   carouselBds: Record<string, string>;
+  carouselLogos: Record<string, string>;
   libRows: { lib: Lib; items: MediaItem[] }[];
   onOpenLib: (lib: Lib) => void;
   onPlay: (t: PlayTarget) => void;
@@ -475,7 +500,13 @@ function HomeView({
     <main className="content home-full">
       {/* 全屏 hero 轮播 + 底部媒体库条（Emby 布局） */}
       <div className="hero-zone">
-        <CarouselView items={carousel} bds={carouselBds} onPlay={onPlay} onDetail={onOpenItem} />
+        <CarouselView
+          items={carousel}
+          bds={carouselBds}
+          logos={carouselLogos}
+          onPlay={onPlay}
+          onDetail={onOpenItem}
+        />
         <div className="lib-strip">
           {libs.map((lib) => (
             <div key={lib.guid} className="lib-strip-card" onClick={() => onOpenLib(lib)}>
@@ -637,7 +668,10 @@ function LibView({
   }, [load]);
 
   async function openItem(item: MediaItem) {
-    if (item.type === "Movie" || item.type === "Episode") {
+    // 只有未识别文件夹（Directory）继续逐层钻取；
+    // TV/Movie/Episode/Video 一律进详情页 —— 已识别剧集的「季/集」由详情页走
+    // season/list + episode/list 获取，item/list 白名单里根本没有 Season/Episode。
+    if (item.type !== "Directory") {
       onOpenItem(item);
       return;
     }
@@ -687,21 +721,38 @@ function DetailView({
   onBack: () => void;
 }) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
+  const [seasons, setSeasons] = useState<Season[]>([]);
+  const [seasonIdx, setSeasonIdx] = useState(0);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
   const [err, setErr] = useState("");
 
+  const isSeries = base.type === "TvSeries" || base.type === "TV";
+
   useEffect(() => {
     setData(null);
+    setSeasons([]);
+    setSeasonIdx(0);
     setEpisodes([]);
     invoke<Record<string, unknown>>("get_item_detail", { guid: base.guid })
       .then((d) => setData(d))
       .catch((e) => setErr(String(e)));
-    if (base.type === "TvSeries" || base.type === "TV") {
-      invoke<Episode[]>("get_episodes", { guid: base.guid })
-        .then((eps) => setEpisodes(Array.isArray(eps) ? eps : []))
+    // 层级：剧 → 季 → 集。episode/list 的入参是季 guid（传剧 guid 实测 data:null），
+    // 所以先 season/list/{剧guid}，选中季后再 episode/list/{季guid}。
+    if (isSeries) {
+      invoke<Season[]>("get_seasons", { guid: base.guid })
+        .then((ss) => setSeasons(Array.isArray(ss) ? ss : []))
         .catch(() => {});
     }
-  }, [base.guid]);
+  }, [base.guid, isSeries]);
+
+  useEffect(() => {
+    const s = seasons[seasonIdx];
+    if (!s) return;
+    setEpisodes([]);
+    invoke<Episode[]>("get_episodes", { guid: s.guid })
+      .then((eps) => setEpisodes(Array.isArray(eps) ? eps : []))
+      .catch(() => {});
+  }, [seasons, seasonIdx]);
 
   const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
   const backdrop = (pick(data ?? {}, ["backdrops", "backdrop"]) as string) || base.poster || "";
@@ -712,7 +763,6 @@ function DetailView({
     pick(data ?? {}, ["releaseDate", "release_date"]) ?? base.release_date ?? "",
   );
   const numSeasons = pick(data ?? {}, ["numberOfSeasons", "number_of_seasons"]);
-  const isSeries = base.type === "TvSeries" || base.type === "TV";
   const resumeAt = base.ts && base.duration && base.ts > 0 && base.ts < base.duration;
 
   return (
@@ -765,6 +815,19 @@ function DetailView({
         <>
           <div className="section-head">
             <h3>剧集</h3>
+            {seasons.length > 1 && (
+              <div className="season-tabs">
+                {seasons.map((s, i) => (
+                  <button
+                    key={s.guid}
+                    className={`season-tab ${i === seasonIdx ? "active" : ""}`}
+                    onClick={() => setSeasonIdx(i)}
+                  >
+                    {s.title || `第 ${s.season_number ?? i + 1} 季`}
+                  </button>
+                ))}
+              </div>
+            )}
             <span className="muted">{episodes.length} 集</span>
           </div>
           <div className="grid ep-grid">
@@ -1090,6 +1153,7 @@ function App() {
   const [continueList, setContinueList] = useState<PlayItem[]>([]);
   const [carousel, setCarousel] = useState<MediaItem[]>([]);
   const [carouselBds, setCarouselBds] = useState<Record<string, string>>({});
+  const [carouselLogos, setCarouselLogos] = useState<Record<string, string>>({});
   const [libRows, setLibRows] = useState<{ lib: Lib; items: MediaItem[] }[]>([]);
   const [activeLib, setActiveLib] = useState<Lib | null>(null);
   const [detailItem, setDetailItem] = useState<MediaItem | null>(null);
@@ -1143,12 +1207,16 @@ function App() {
         carList.map((it) => invoke<Record<string, unknown>>("get_item_detail", { guid: it.guid })),
       ).then((rs) => {
         const map: Record<string, string> = {};
+        const lmap: Record<string, string> = {};
         const enrich: Record<string, Partial<MediaItem>> = {};
         rs.forEach((r, i) => {
           if (r.status === "fulfilled") {
             const d = r.value;
-            const bd = pick(d, ["backdrops", "backdrop"]) as string | undefined;
+            const bd = pickImgStr(d, ["backdrops", "backdrop"]);
             if (bd) map[carList[i].guid] = bd;
+            // [lc-570 同源] 飞牛自带透明 logo（item API data.logos，详情页 hero 同一字段）
+            const lg = pickImgStr(d, ["logos", "logo"]);
+            if (lg) lmap[carList[i].guid] = lg;
             const ov = pick(d, ["overview"]);
             const va = pick(d, ["vote_average"]);
             const rd = pick(d, ["release_date", "air_date"]);
@@ -1161,6 +1229,7 @@ function App() {
           }
         });
         setCarouselBds(map);
+        setCarouselLogos(lmap);
         if (Object.keys(enrich).length) {
           setCarousel((prev) => prev.map((it) => (enrich[it.guid] ? { ...it, ...enrich[it.guid] } : it)));
         }
@@ -1230,6 +1299,7 @@ function App() {
           continueList={continueList}
           carousel={carousel}
           carouselBds={carouselBds}
+          carouselLogos={carouselLogos}
           libRows={libRows}
           onOpenLib={(l) => {
             setActiveLib(l);

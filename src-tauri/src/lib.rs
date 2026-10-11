@@ -125,43 +125,45 @@ async fn get_media_libs(state: State<'_, AppState>) -> Result<Value, String> {
         .await
 }
 
-/// 条目分页查询：请求体对齐 FlyNarwhal ItemListQueryRequest（旧的主仓库 ItemListRequest
-/// 形状对库根查询会返回空列表）。库根浏览传 ancestor_guid=parent_guid=库 guid；
-/// 文件夹钻取传 ancestor_guid=库 guid、parent_guid=文件夹 guid。
+/// 条目分页查询（形状经测试 NAS 实测 + FlyNarwhal 源码互证）：
+/// - 库根浏览：只传 ancestor_guid（parent_guid 传库 guid 服务端返回 0 条）；
+///   实测同库白名单 151 条 vs 无过滤 2635 条剧集混排 —— Episode 全靠白名单滤掉，
+///   tags.type 白名单不含 Season/Episode（对齐 FlyNarwhal libraryBrowseValues）。
+/// - 文件夹钻取（未识别 Directory/fv_*）：只传 parent_guid，exclude_grouped_video=0
+///   （FlyNarwhal 注释：钻取带 1 会让原始视频文件夹返回空），sort_title ASC 对齐网页。
 #[tauri::command]
 async fn get_items(
     state: State<'_, AppState>,
-    ancestor_guid: String,
+    ancestor_guid: Option<String>,
     parent_guid: Option<String>,
     page: Option<i64>,
 ) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let client = fnapi::new_client();
+    let browse_types = json!(["Movie", "TV", "Directory", "Video", "LiveChannel"]);
+    let body = if let Some(parent) = parent_guid {
+        json!({
+            "parent_guid": parent,
+            "exclude_grouped_video": 0,
+            "sort_type": "ASC",
+            "sort_column": "sort_title",
+            "page_size": 60,
+            "page": page.unwrap_or(1),
+            "tags": { "type": browse_types }
+        })
+    } else {
+        json!({
+            "ancestor_guid": ancestor_guid,
+            "exclude_grouped_video": 1,
+            "sort_type": "DESC",
+            "sort_column": "create_time",
+            "page_size": 60,
+            "page": page.unwrap_or(1),
+            "tags": { "type": browse_types }
+        })
+    };
     client
-        .call(
-            &cfg.server,
-            "/v/api/v1/item/list",
-            "POST",
-            &cfg.token,
-            Some(json!({
-                "ancestor_guid": ancestor_guid,
-                "parent_guid": parent_guid,
-                "exclude_grouped_video": 1,
-                "sort_type": "DESC",
-                "sort_column": "create_time",
-                "page_size": 60,
-                "page": page.unwrap_or(1),
-                "tags": {
-                    "type": [],
-                    "genres": null,
-                    "resolution": null,
-                    "color_range": null,
-                    "locate": null,
-                    "decade": null,
-                    "recognition_status": null
-                }
-            })),
-        )
+        .call(&cfg.server, "/v/api/v1/item/list", "POST", &cfg.token, Some(body))
         .await
 }
 
@@ -175,7 +177,17 @@ async fn get_continue_watching(state: State<'_, AppState>) -> Result<Value, Stri
         .await
 }
 
-/// 剧集列表：GET /v/api/v1/episode/list/{guid}
+/// 季列表：GET /v/api/v1/season/list/{剧guid}
+/// 注意：episode/list 的入参是**季** guid —— 传剧 guid 实测返回 data:null。
+#[tauri::command]
+async fn get_seasons(state: State<'_, AppState>, guid: String) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    let client = fnapi::new_client();
+    let path = format!("/v/api/v1/season/list/{}", guid);
+    client.call(&cfg.server, &path, "GET", &cfg.token, None).await
+}
+
+/// 集列表：GET /v/api/v1/episode/list/{guid} —— guid 必须是季 guid（见 get_seasons 注释）
 #[tauri::command]
 async fn get_episodes(state: State<'_, AppState>, guid: String) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
@@ -430,6 +442,7 @@ pub fn run() {
             get_items_global,
             get_items,
             get_continue_watching,
+            get_seasons,
             get_episodes,
             get_item_detail,
             get_carousel_items,

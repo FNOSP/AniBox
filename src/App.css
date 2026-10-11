@@ -97,8 +97,9 @@ body,
   display: flex;
   flex-direction: column;
   height: 100vh;
-  border: 1px solid var(--line);
-  border-radius: 12px;
+  /* 无描边：线条感来自本描边+Win11 系统窗口边框（后者已在 Rust 侧 DWMWA_BORDER_COLOR 关闭） */
+  border: none;
+  border-radius: 16px; /* 对齐主仓库 ACRYLIC_CSS 的窗口级 16px 圆角 */
   overflow: hidden;
   background: linear-gradient(160deg, var(--bg-1), var(--bg-0) 55%);
   animation: pageIn 0.28s ease;

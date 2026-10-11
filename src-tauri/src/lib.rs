@@ -428,6 +428,23 @@ pub fn run() {
             // 启动时从磁盘读回配置（token/路径），否则每次重启都要重新登录
             let cfg = tauri::async_runtime::block_on(config::load(app.handle()));
             *app.state::<AppState>().config.blocking_write() = cfg;
+            // Win11 会给窗口画一圈系统细边框 —— 用户眼中的「外面又包了一层线条」，
+            // DWMWA_BORDER_COLOR(34) 设为 DWMWA_COLOR_NONE(0xFFFFFFFE) 关掉（旧系统调用失败无副作用）
+            #[cfg(target_os = "windows")]
+            if let Some(win) = app.get_webview_window("main") {
+                use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
+                if let Ok(hwnd) = win.hwnd() {
+                    let color_none: u32 = 0xFFFF_FFFE;
+                    unsafe {
+                        DwmSetWindowAttribute(
+                            hwnd.0 as _,
+                            34, // DWMWA_BORDER_COLOR
+                            &color_none as *const u32 as *const core::ffi::c_void,
+                            4,
+                        );
+                    }
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

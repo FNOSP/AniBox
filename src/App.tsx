@@ -809,7 +809,7 @@ function LibView({
 
 /* ────────────────────────── 详情页（Netflix 风 hero） ────────────────────────── */
 
-function DetailView({ base }: { base: MediaItem }) {
+function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   // 内嵌播放：点集/播放按钮后在页内 mpv 播放（离开详情页自动 stop）
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
@@ -920,7 +920,12 @@ function DetailView({ base }: { base: MediaItem }) {
 
   return (
     <main className="content detail-full">
-      <h1 className="detail-title">{title}</h1>
+      <div className="detail-headrow">
+        <button className="back" onClick={onBack} title="返回上一页">
+          ‹ 返回
+        </button>
+        <h1 className="detail-title">{title}</h1>
+      </div>
       <div className="detail-cols">
         <div className="detail-left">
           {err && <div className="err">{err}</div>}
@@ -1692,7 +1697,7 @@ function App() {
           )}
           {view === "detail" && detailItem && (
             <div className="view-pane active">
-              <DetailView base={detailItem} />
+              <DetailView base={detailItem} onBack={() => setView(activeLib ? "lib" : "home")} />
             </div>
           )}
         </div>

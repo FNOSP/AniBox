@@ -846,6 +846,16 @@ h3 {
   padding: 54px 26px 16px; /* 顶部 = 悬浮标题栏40px + 14px 间距 */
   gap: 14px;
 }
+.detail-headrow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+.detail-headrow .back {
+  flex-shrink: 0;
+}
 .detail-title {
   margin: 0;
   font-size: 22px;

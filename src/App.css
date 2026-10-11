@@ -114,15 +114,52 @@ body,
   min-height: 0;
 }
 .sidebar {
-  width: 208px;
-  min-width: 208px;
-  background: var(--bg-1);
+  width: 224px;
+  min-width: 224px;
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1) 40%);
   border-right: 1px solid var(--line);
-  padding: 14px 10px;
+  padding: 12px 10px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 3px;
+}
+.side-logo {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 8px 10px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 10px;
+}
+.side-logo-mark {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  border-radius: 11px;
+  background: var(--accent-grad);
+  color: #fff;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 16px rgba(108, 155, 255, 0.4);
+}
+.side-logo-name {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  background: var(--accent-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+.side-logo-sub {
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 1px;
 }
 .side-head {
   font-size: 11px;
@@ -155,16 +192,67 @@ body,
   width: 18px;
   text-align: center;
 }
-.side-item.home-item {
+.side-user {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  margin-top: auto;
+}
+.side-avatar {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  border-radius: 50%;
+  background: var(--accent-grad);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.side-user-name {
+  font-size: 13px;
   font-weight: 600;
+  color: rgba(233, 235, 244, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .side-item.logout {
-  margin-top: auto;
   color: rgba(233, 235, 244, 0.4);
 }
 .side-item.logout:hover {
   background: rgba(229, 72, 77, 0.16);
   color: #ffb4b6;
+}
+
+/* ─────────────── 骨架屏（首页首次加载） ─────────────── */
+.skel {
+  border-radius: 14px;
+  background: linear-gradient(100deg, rgba(255, 255, 255, 0.05) 35%, rgba(255, 255, 255, 0.11) 50%, rgba(255, 255, 255, 0.05) 65%);
+  background-size: 240% 100%;
+  animation: shimmer 1.4s infinite linear;
+}
+@keyframes shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+.skel-carousel {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 62vh;
+  margin-bottom: 26px;
+}
+.skel-libcard {
+  aspect-ratio: 16 / 9;
 }
 
 /* ─────────────── 内容区 ─────────────── */
@@ -183,6 +271,19 @@ body,
 }
 .section-head:first-child {
   margin-top: 4px;
+}
+.section-head .spacer {
+  flex: 1;
+}
+.refresh-btn {
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  color: var(--muted);
+}
+.refresh-btn:hover {
+  color: #fff;
+  border-color: rgba(108, 155, 255, 0.45);
 }
 .page-head {
   display: flex;

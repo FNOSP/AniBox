@@ -84,6 +84,72 @@ function imgUrl(p?: string | null): string {
   return `fntvimg://localhost${path}`;
 }
 
+/* ────────────────────────── 首页数据缓存（回首页秒出，后台静默刷新） ────────────────────────── */
+
+type CarouselItem = MediaItem & { backdrop?: string };
+type HomeCache = {
+  ts: number;
+  libs: Lib[];
+  continueList: PlayItem[];
+  carousel: CarouselItem[];
+};
+const HOME_CACHE_KEY = "fntv-home-cache-v1";
+const HOME_TTL = 30 * 60 * 1000;
+
+function readHomeCache(): HomeCache | null {
+  try {
+    const raw = localStorage.getItem(HOME_CACHE_KEY);
+    if (!raw) return null;
+    const c = JSON.parse(raw) as HomeCache;
+    if (!c || !Array.isArray(c.libs)) return null;
+    return c;
+  } catch {
+    return null;
+  }
+}
+
+function writeHomeCache(c: HomeCache): void {
+  try {
+    localStorage.setItem(HOME_CACHE_KEY, JSON.stringify(c));
+  } catch {
+    /* 配额满就放弃缓存 */
+  }
+}
+
+async function loadHomeData(): Promise<HomeCache> {
+  const [libData, cont, car] = await Promise.all([
+    invoke<Lib[]>("get_media_libs"),
+    invoke<PlayItem[]>("get_continue_watching").catch(() => [] as PlayItem[]),
+    invoke<{ list: MediaItem[]; total: number }>("get_carousel_items")
+      .then((d) => d?.list ?? [])
+      .catch(() => [] as MediaItem[]),
+  ]);
+  const rawCarousel = (Array.isArray(car) ? car : [])
+    .filter((it) => it && it.guid && it.title)
+    .slice(0, 8);
+  // 横版主图：并行拉详情的 backdrops，失败保持渐变兜底
+  const backdrops = await Promise.all(
+    rawCarousel.map(async (it) => {
+      try {
+        const d = await invoke<Record<string, unknown>>("get_item_detail", { guid: it.guid });
+        return (pick(d, ["backdrops", "backdrop"]) as string) || "";
+      } catch {
+        return "";
+      }
+    }),
+  );
+  const carousel: CarouselItem[] = rawCarousel.map((it, i) => ({
+    ...it,
+    backdrop: backdrops[i] || undefined,
+  }));
+  return {
+    ts: Date.now(),
+    libs: Array.isArray(libData) ? libData : [],
+    continueList: Array.isArray(cont) ? cont : [],
+    carousel,
+  };
+}
+
 /* ────────────────────────── 标题栏 ────────────────────────── */
 
 function TitleBar({ title }: { title: string }) {
@@ -244,34 +310,12 @@ function CarouselView({
   onPlay,
   onDetail,
 }: {
-  items: MediaItem[];
+  items: CarouselItem[];
   onPlay: (t: PlayTarget) => void;
   onDetail: (item: MediaItem) => void;
 }) {
   const [index, setIndex] = useState(0);
-  const [backdrops, setBackdrops] = useState<Record<string, string>>({});
   const n = items.length;
-
-  // 横版主图补齐：逐条拉 item/{guid} 的 backdrops（主仓库同源数据），失败保持渐变兜底
-  useEffect(() => {
-    if (n === 0) return;
-    let alive = true;
-    Promise.allSettled(
-      items.map((it) => invoke<Record<string, unknown>>("get_item_detail", { guid: it.guid })),
-    ).then((rs) => {
-      const map: Record<string, string> = {};
-      rs.forEach((r, i) => {
-        if (r.status === "fulfilled") {
-          const bd = pick(r.value, ["backdrops", "backdrop"]) as string | undefined;
-          if (bd) map[items[i].guid] = bd;
-        }
-      });
-      if (alive) setBackdrops(map);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [items]);
 
   // 5s 自动轮播；手动切换后因 index 变化自然重置计时
   useEffect(() => {
@@ -296,7 +340,6 @@ function CarouselView({
       <div className="fntv-s4-track">
         {items.map((it, i) => {
           const state = cls(i);
-          const bd = backdrops[it.guid];
           const accent = ACCENTS[i % ACCENTS.length];
           const meta = [
             yearOf(it),
@@ -315,8 +358,8 @@ function CarouselView({
               <div
                 className="fntv-s4-bg"
                 style={
-                  bd
-                    ? { backgroundImage: `url(${imgUrl(bd)})` }
+                  it.backdrop
+                    ? { backgroundImage: `url(${imgUrl(it.backdrop)})` }
                     : { backgroundImage: `linear-gradient(160deg, ${accent}55, #0b1219)` }
                 }
               />
@@ -371,28 +414,41 @@ function CarouselView({
 /* ────────────────────────── 首页 ────────────────────────── */
 
 function HomeView({
-  libs,
-  continueList,
+  home,
+  homeLoading,
+  refreshing,
+  onRefresh,
   onOpenLib,
   onPlay,
   onDetail,
 }: {
-  libs: Lib[];
-  continueList: PlayItem[];
+  home: HomeCache | null;
+  homeLoading: boolean;
+  refreshing: boolean;
+  onRefresh: () => void;
   onOpenLib: (lib: Lib) => void;
   onPlay: (t: PlayTarget) => void;
   onDetail: (item: MediaItem) => void;
 }) {
-  const [carousel, setCarousel] = useState<MediaItem[]>([]);
-  useEffect(() => {
-    // 注意：get_carousel_items 返回 {list,total} 对象，list 才是条目数组
-    invoke<{ list: MediaItem[]; total: number }>("get_carousel_items")
-      .then((d) => {
-        const list = (d?.list ?? []).filter((it) => it && it.guid && it.title).slice(0, 8);
-        setCarousel(list);
-      })
-      .catch(() => {});
-  }, []);
+  const libs = home?.libs ?? [];
+  const continueList = home?.continueList ?? [];
+  const carousel = home?.carousel ?? [];
+
+  if (homeLoading && !home) {
+    return (
+      <main className="content home">
+        <div className="skel skel-carousel" />
+        <div className="section-head">
+          <h3>我的媒体库</h3>
+        </div>
+        <div className="libgrid">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="skel skel-libcard" />
+          ))}
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="content home">
@@ -448,6 +504,10 @@ function HomeView({
       <div className="section-head">
         <h3>我的媒体库</h3>
         <span className="muted">{libs.length} 个库</span>
+        <span className="spacer" />
+        <button className="refresh-btn" onClick={onRefresh} disabled={refreshing}>
+          {refreshing ? "⟳ 刷新中…" : "⟳ 刷新"}
+        </button>
       </div>
       <div className="libgrid">
         {libs.map((lib) => (
@@ -853,27 +913,55 @@ function PlayerView({ item, onBack }: { item: PlayTarget; onBack: () => void }) 
 
 function App() {
   const [view, setView] = useState<"login" | "home" | "lib" | "detail" | "player">("login");
-  const [libs, setLibs] = useState<Lib[]>([]);
-  const [continueList, setContinueList] = useState<PlayItem[]>([]);
+  const [home, setHome] = useState<HomeCache | null>(null);
+  const [homeLoading, setHomeLoading] = useState(false);
+  const [username, setUserName] = useState("");
   const [activeLib, setActiveLib] = useState<Lib | null>(null);
   const [detailItem, setDetailItem] = useState<MediaItem | null>(null);
   const [playTarget, setPlayTarget] = useState<PlayTarget | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState("");
 
-  const loadHome = useCallback(async () => {
-    setErr("");
-    try {
-      const [libData, cont] = await Promise.all([
-        invoke<Lib[]>("get_media_libs"),
-        invoke<PlayItem[]>("get_continue_watching").catch(() => [] as PlayItem[]),
-      ]);
-      setLibs(Array.isArray(libData) ? libData : []);
-      setContinueList(Array.isArray(cont) ? cont : []);
+  // 打开首页：有缓存秒出（回首页零请求）；30 分钟内不重拉，过期/强制/启动时后台静默刷新
+  const openHome = useCallback((opts?: { force?: boolean; startup?: boolean }) => {
+    const force = opts?.force ?? false;
+    const startup = opts?.startup ?? false;
+    const cached = readHomeCache();
+    if (cached) {
+      setHome(cached);
       setView("home");
-    } catch (e) {
-      setErr(String(e));
-      setView("home");
+      if (!force && !startup && Date.now() - cached.ts < HOME_TTL) return;
+      loadHomeData()
+        .then((fresh) => {
+          setHome(fresh);
+          writeHomeCache(fresh);
+        })
+        .catch(() => {});
+      return;
     }
+    // 无缓存（首次打开/退出后重登）：骨架屏同步加载一次
+    setHomeLoading(true);
+    setErr("");
+    setView("home");
+    loadHomeData()
+      .then((data) => {
+        setHome(data);
+        writeHomeCache(data);
+      })
+      .catch((e) => setErr(String(e)))
+      .finally(() => setHomeLoading(false));
+  }, []);
+
+  // 手动刷新：按钮转圈，期间继续显示旧数据
+  const manualRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadHomeData()
+      .then((f) => {
+        setHome(f);
+        writeHomeCache(f);
+      })
+      .catch((e) => setErr(String(e)))
+      .finally(() => setRefreshing(false));
   }, []);
 
   const play = useCallback((t: PlayTarget) => {
@@ -886,37 +974,73 @@ function App() {
     setView("detail");
   }, []);
 
+  const logout = useCallback(async () => {
+    try {
+      localStorage.removeItem(HOME_CACHE_KEY);
+      await invoke("logout");
+    } finally {
+      window.location.reload();
+    }
+  }, []);
+
   useEffect(() => {
-    // 有会话直接进首页；check_session 内部覆盖 token 为空的情况
-    invoke("check_session")
-      .then(() => loadHome())
+    // 有会话直接进首页；check_session 内部覆盖 token 为空的情况，并顺手固化真实基址
+    invoke<Record<string, unknown>>("check_session")
+      .then(async (info) => {
+        const uname = String(pick(info, ["name", "username", "user"]) ?? "");
+        setUserName(uname);
+        try {
+          const c = await invoke<Config>("get_config");
+          if (c.username) setUserName(c.username);
+        } catch {
+          /* 用户名仅展示用 */
+        }
+        openHome({ startup: true });
+      })
       .catch(() => setView("login"));
-  }, [loadHome]);
+  }, [openHome]);
+
+  // 每 30 分钟自动后台刷新一次首页数据
+  useEffect(() => {
+    if (view === "login") return;
+    const iv = setInterval(() => {
+      loadHomeData()
+        .then((f) => {
+          setHome(f);
+          writeHomeCache(f);
+        })
+        .catch(() => {});
+    }, HOME_TTL);
+    return () => clearInterval(iv);
+  }, [view]);
+
+  const sidebar = (
+    <Sidebar
+      libs={home?.libs ?? []}
+      activeGuid={activeLib?.guid ?? null}
+      username={username}
+      view={view}
+      onHome={() => openHome()}
+      onLib={(l) => {
+        setActiveLib(l);
+        setView("lib");
+      }}
+      onLogout={logout}
+    />
+  );
 
   let body: ReactNode;
   if (view === "login") {
-    body = (
-      <LoginPage
-        onDone={() => {
-          loadHome();
-        }}
-      />
-    );
+    body = <LoginPage onDone={() => openHome({ force: true })} />;
   } else if (view === "home") {
     body = (
       <div className="main-row">
-        <Sidebar
-          libs={libs}
-          activeGuid={null}
-          onHome={() => loadHome()}
-          onLib={(l) => {
-            setActiveLib(l);
-            setView("lib");
-          }}
-        />
+        {sidebar}
         <HomeView
-          libs={libs}
-          continueList={continueList}
+          home={home}
+          homeLoading={homeLoading}
+          refreshing={refreshing}
+          onRefresh={manualRefresh}
           onOpenLib={(l) => {
             setActiveLib(l);
             setView("lib");
@@ -929,30 +1053,14 @@ function App() {
   } else if (view === "lib" && activeLib) {
     body = (
       <div className="main-row">
-        <Sidebar
-          libs={libs}
-          activeGuid={activeLib.guid}
-          onHome={() => loadHome()}
-          onLib={(l) => {
-            setActiveLib(l);
-            setView("lib");
-          }}
-        />
-        <LibView lib={activeLib} onBackHome={() => loadHome()} onOpenItem={openItem} />
+        {sidebar}
+        <LibView lib={activeLib} onBackHome={() => openHome()} onOpenItem={openItem} />
       </div>
     );
   } else if (view === "detail" && detailItem) {
     body = (
       <div className="main-row">
-        <Sidebar
-          libs={libs}
-          activeGuid={activeLib?.guid ?? null}
-          onHome={() => loadHome()}
-          onLib={(l) => {
-            setActiveLib(l);
-            setView("lib");
-          }}
-        />
+        {sidebar}
         <DetailView
           base={detailItem}
           onPlay={play}
@@ -961,7 +1069,12 @@ function App() {
       </div>
     );
   } else if (view === "player" && playTarget) {
-    body = <PlayerView item={playTarget} onBack={() => setView(detailItem ? "detail" : activeLib ? "lib" : "home")} />;
+    body = (
+      <PlayerView
+        item={playTarget}
+        onBack={() => setView(detailItem ? "detail" : activeLib ? "lib" : "home")}
+      />
+    );
   } else {
     body = <div className="empty">…</div>;
   }
@@ -978,17 +1091,37 @@ function App() {
 function Sidebar({
   libs,
   activeGuid,
+  username,
+  view,
   onHome,
   onLib,
+  onLogout,
 }: {
   libs: Lib[];
   activeGuid: string | null;
+  username: string;
+  view: string;
   onHome: () => void;
   onLib: (l: Lib) => void;
+  onLogout: () => void;
 }) {
+  const icoOf = (c: string): string => {
+    const k = (c || "").toLowerCase();
+    if (k === "tv" || k === "tvseries") return "📺";
+    if (k === "movie") return "🎬";
+    if (k === "mix") return "🎞";
+    return "🗂";
+  };
   return (
     <aside className="sidebar">
-      <div className="side-item home-item" onClick={onHome}>
+      <div className="side-logo" onClick={onHome} title="首页">
+        <span className="side-logo-mark">▶</span>
+        <div className="side-logo-text">
+          <div className="side-logo-name">FN·TV</div>
+          <div className="side-logo-sub">Tauri2 Edition</div>
+        </div>
+      </div>
+      <div className={`side-item ${view === "home" ? "active" : ""}`} onClick={onHome}>
         <span className="side-ico">🏠</span> 首页
       </div>
       <div className="side-head">媒体库</div>
@@ -998,16 +1131,14 @@ function Sidebar({
           className={`side-item ${activeGuid === lib.guid ? "active" : ""}`}
           onClick={() => onLib(lib)}
         >
-          <span className="side-ico">{lib.category === "TvSeries" ? "📺" : "🎬"}</span> {lib.title}
+          <span className="side-ico">{icoOf(lib.category)}</span> {lib.title}
         </div>
       ))}
-      <div
-        className="side-item logout"
-        onClick={async () => {
-          await invoke("logout");
-          window.location.reload();
-        }}
-      >
+      <div className="side-user">
+        <div className="side-avatar">{(username || "U").slice(0, 1).toUpperCase()}</div>
+        <div className="side-user-name">{username || "未登录"}</div>
+      </div>
+      <div className="side-item logout" onClick={onLogout}>
         <span className="side-ico">⎋</span> 退出登录
       </div>
     </aside>

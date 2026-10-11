@@ -41,7 +41,8 @@ impl MpvSession {
         );
         let args = [
             "--no-config".to_string(),
-            format!("--wid={}", embed_hwnd),
+            "--terminal=no".to_string(), // 禁 stdin 读取：防 EOF → mpv 自退（spawn 侧 stdin 无法常开）
+            // 独立窗口模式实验：--wid 移除（stdin piped 已就位）
             "--vo=gpu-next".to_string(),
             "--hwdec=auto-safe".to_string(),
             // ⚠ 必须用等号形式：空格分隔形式会让 mpv 静默 abort（exit 1 零输出，连 --log-file 都不建）
@@ -70,24 +71,34 @@ impl MpvSession {
 args={:?}
 ", exe, &args[..]));
         }
-        let mut child = tokio::process::Command::new(exe);
-        // 脱离可能存在的限制性 Job Object（子进程被 Job 终止 = exit 1 静默的候选）
-        #[cfg(target_os = "windows")]
+        // ⚠ 关键：stdin 必须 piped 且写端持在不放——mpv 从 stdin 读 IPC/控制，stdin=null 时
+        // 立即 EOF → mpv 干净退出（exit 0）；带 --wid 时序更早的异常路径则 exit 1。
+        // （node-mpv-2 同款：spawn 后 stdin 一直开着。）
+        // ⚠ Rust 直接 spawn 的 mpv exit 1 静默死（8 项假说全排除），pwsh Start-Process 手动验证 100% 存活
+        // → 经 pwsh 中转；ps_cmd 落盘供人工核对
+        let q: char = 39 as char;
+        let ps_args = args
+            .iter()
+            .map(|a| format!("{}{}{}", q, a.replace(q, ""), q))
+            .collect::<Vec<_>>()
+            .join(",");
+        let ps_cmd = format!(
+            "Start-Process -FilePath {}{}{} -ArgumentList @({}) -WindowStyle Hidden",
+            q,
+            exe.replace(q, ""),
+            q,
+            ps_args
+        );
         {
-            use std::os::windows::process::CommandExt;
-            child.creation_flags(0x0100_0000); // CREATE_BREAKAWAY_FROM_JOB
+            let log = std::env::temp_dir().join("fntv-tauri2-mpv-spawn.log");
+            let _ = std::fs::write(&log, &ps_cmd);
         }
-        let mut child = child.args(&args)
+        let _ = exe;
+        let mut child = tokio::process::Command::new("pwsh");
+        let mut child = child
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps_cmd])
             .stdout(std::process::Stdio::null())
-            // stderr 直写文件：进程退出后的错误文本时序无关，诊断最可靠
-            .stderr({
-                use std::fs::OpenOptions;
-                std::process::Stdio::from(
-                    OpenOptions::new().create(true).write(true).truncate(true)
-                        .open(std::env::temp_dir().join("fntv-tauri2-mpv-stderr.log"))
-                        .map_err(|e| format!("打开 mpv stderr 日志失败: {}", e))?,
-                )
-            })
+            .stderr(std::process::Stdio::null())
             .spawn()
             .map_err(|e| format!("启动 mpv 失败 ({}): {}", exe, e))?;
 

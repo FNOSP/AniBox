@@ -554,6 +554,37 @@ function LibView({
     async (parentGuid: string | null) => {
       setLoading(true);
       setErr("");
+      // 虚拟库：收藏 / 全局分类浏览
+      if (lib.guid === "_fav") {
+        try {
+          const d = await invoke<{ total: number; list: MediaItem[] | null }>("get_favorites", {
+            page: 1,
+          });
+          setItems(d.list ?? []);
+          setTotal(d.total ?? 0);
+          if (!d.list?.length) setErr("还没有收藏");
+        } catch (e) {
+          setErr(String(e));
+        }
+        setLoading(false);
+        return;
+      }
+      if (lib.guid.startsWith("_cat:")) {
+        try {
+          const types = lib.guid.slice(5).split(",").filter(Boolean);
+          const d = await invoke<{ list: MediaItem[]; total: number }>("get_items_global", {
+            typeFilter: types,
+            page: 1,
+          });
+          setItems(d.list ?? []);
+          setTotal(d.total ?? 0);
+          if (!d.list?.length) setErr("该分类暂无已识别条目");
+        } catch (e) {
+          setErr(String(e));
+        }
+        setLoading(false);
+        return;
+      }
       const list = await fetchLibItems(lib.guid, parentGuid);
       setItems(list);
       setTotal(list.length);
@@ -888,12 +919,25 @@ function PlayerView({ item, onBack }: { item: PlayTarget; onBack: () => void }) 
 
 /* ────────────────────────── 侧栏（保留现有样式） ────────────────────────── */
 
+const SIDEBAR_CATS = [
+  { key: "全部", types: [] as string[], ico: "▦", sumKey: "total" },
+  { key: "电影", types: ["Movie"], ico: "◎", sumKey: "movie" },
+  { key: "电视节目", types: ["TV"], ico: "📺", sumKey: "tv" },
+  { key: "电视直播", types: ["Live"], ico: "🖥", sumKey: "live" },
+  { key: "其他", types: ["Video"], ico: "📁", sumKey: "video" },
+];
+
 function Sidebar({
   libs,
   activeGuid,
   collapsed,
   username,
   server,
+  sum,
+  favTotal,
+  onToggle,
+  onOpenFav,
+  onOpenCat,
   onHome,
   onLib,
 }: {
@@ -902,48 +946,81 @@ function Sidebar({
   collapsed?: boolean;
   username?: string;
   server?: string;
+  sum: Record<string, number>;
+  favTotal: number | null;
+  onToggle: () => void;
+  onOpenFav: () => void;
+  onOpenCat: (cat: { key: string; types: string[] }) => void;
   onHome: () => void;
   onLib: (l: Lib) => void;
 }) {
+  const [toast, setToast] = useState("");
+  const toastTimer = useRef<number | null>(null);
+  function showToast(msg: string) {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(""), 2200);
+  }
+  const icoOf = (c: string): string => {
+    const k = (c || "").toLowerCase();
+    if (k === "tv" || k === "tvseries") return "📺";
+    if (k === "mix") return "📚";
+    if (k === "others") return "📁";
+    if (k === "movie") return "🎬";
+    return "🎬";
+  };
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
-      <div className="side-logo" onClick={onHome} title="首页">
-        <span className="side-logo-mark">▶</span>
-        <div className="side-logo-text">
-          <div className="side-logo-name">FN·TV</div>
-          <div className="side-logo-sub">Tauri2 Edition</div>
-        </div>
-      </div>
-      <div className="side-item home-item" onClick={onHome}>
+      <div className={`side-item ${activeGuid === null ? "active" : ""}`} onClick={onHome}>
         <span className="side-ico">🏠</span> 首页
       </div>
-      <div className="side-head">媒体库</div>
+      <div className={`side-item ${activeGuid === "_fav" ? "active" : ""}`} onClick={onOpenFav}>
+        <span className="side-ico">🤍</span> 收藏
+        <span className="side-count">{favTotal ?? ""}</span>
+      </div>
       {libs.map((lib) => (
         <div
           key={lib.guid}
           className={`side-item ${activeGuid === lib.guid ? "active" : ""}`}
           onClick={() => onLib(lib)}
         >
-          <span className="side-ico">{lib.category === "TvSeries" ? "📺" : "🎬"}</span> {lib.title}
+          <span className="side-ico">{icoOf(lib.category)}</span> {lib.title}
+          <span className="side-count">{sum[lib.guid] ?? ""}</span>
         </div>
       ))}
-      <div className="side-usercard">
-        <div className="side-avatar">{(username || "U").slice(0, 1).toUpperCase()}</div>
-        <div className="side-usermeta">
-          <div className="side-user-name">{username || "未登录"}</div>
-          <div className="side-user-server">{server ? server.replace(/^https?:\/\//, "") : "未连接"}</div>
+      <div className="side-head">分类</div>
+      {SIDEBAR_CATS.map((c) => {
+        const cnt = sum[c.sumKey];
+        return (
+          <div key={c.key} className="side-item" onClick={() => onOpenCat(c)}>
+            <span className="side-ico">{c.ico}</span> {c.key}
+            <span className="side-count">{typeof cnt === "number" ? cnt : ""}</span>
+          </div>
+        );
+      })}
+      <div className="side-bottomcard">
+        <div className="side-userrow">
+          <div className="side-avatar">{(username || "U").slice(0, 1).toUpperCase()}</div>
+          <div className="side-usermeta">
+            <div className="side-user-name">{username || "未登录"}</div>
+            <div className="side-user-server">{server ? server.replace(/^https?:\/\//, "") : "未连接"}</div>
+          </div>
         </div>
+        <div className="side-collapse" onClick={onToggle}>
+          收起 ▾
+        </div>
+        <button className="side-cardbtn" onClick={() => showToast("设置面板在阶段3接入")}>
+          ⚙ 设置
+        </button>
+        <button className="side-cardbtn" onClick={() => showToast("观影记录页在阶段3接入")}>
+          ⏱ 观影记录
+        </button>
+        <button className="side-cardbtn" onClick={() => showToast("反馈渠道在阶段3接入")}>
+          💬 软件反馈建议
+        </button>
+        <div className="side-ver">v0.1.0</div>
       </div>
-      <div className="side-ver">Fntv-Plus Tauri2 · v0.1.0</div>
-      <div
-        className="side-item logout"
-        onClick={async () => {
-          await invoke("logout");
-          window.location.reload();
-        }}
-      >
-        <span className="side-ico">⎋</span> 退出登录
-      </div>
+      {toast && <div className="side-toast">{toast}</div>}
     </aside>
   );
 }
@@ -966,6 +1043,8 @@ function App() {
   );
   const [username, setUserName] = useState("");
   const [server, setServer] = useState("");
+  const [sum, setSum] = useState<Record<string, number>>({});
+  const [favTotal, setFavTotal] = useState<number | null>(null);
 
   useEffect(() => {
     // 用户名 / 服务器地址：侧栏底部卡片展示用
@@ -981,14 +1060,18 @@ function App() {
   const loadHome = useCallback(async () => {
     setErr("");
     try {
-      const [libData, cont, car] = await Promise.all([
+      const [libData, cont, car, sumData, favData] = await Promise.all([
         invoke<Lib[]>("get_media_libs"),
         invoke<PlayItem[]>("get_continue_watching").catch(() => [] as PlayItem[]),
         invoke<{ list: MediaItem[]; total: number }>("get_carousel_items").catch(() => ({
           list: [],
           total: 0,
         })),
+        invoke<Record<string, number>>("get_media_sum").catch(() => ({})),
+        invoke<{ total: number }>("get_favorites", { page: 1 }).catch(() => ({ total: 0 })),
       ]);
+      setSum(sumData ?? {});
+      setFavTotal(typeof favData?.total === "number" ? favData.total : 0);
       const libsArr = Array.isArray(libData) ? libData : [];
       const carList = (car?.list ?? []).filter((it) => it && it.guid && it.title).slice(0, 8);
       const contArr = Array.isArray(cont) ? cont : [];
@@ -1038,6 +1121,16 @@ function App() {
     setView("detail");
   }, []);
 
+  const openFav = useCallback(() => {
+    setActiveLib({ guid: "_fav", title: "收藏", category: "" });
+    setView("lib");
+  }, []);
+
+  const openCat = useCallback((cat: { key: string; types: string[] }) => {
+    setActiveLib({ guid: `_cat:${cat.types.join(",")}`, title: cat.key, category: "" });
+    setView("lib");
+  }, []);
+
   useEffect(() => {
     invoke("check_session")
       .then(() => loadHome())
@@ -1056,6 +1149,11 @@ function App() {
           collapsed={!sidebarOpen}
           username={username}
           server={server}
+          sum={sum}
+          favTotal={favTotal}
+          onToggle={() => setSidebarOpen((v) => !v)}
+          onOpenFav={openFav}
+          onOpenCat={openCat}
           onHome={() => loadHome()}
           onLib={(l) => {
             setActiveLib(l);
@@ -1086,6 +1184,11 @@ function App() {
           collapsed={!sidebarOpen}
           username={username}
           server={server}
+          sum={sum}
+          favTotal={favTotal}
+          onToggle={() => setSidebarOpen((v) => !v)}
+          onOpenFav={openFav}
+          onOpenCat={openCat}
           onHome={() => loadHome()}
           onLib={(l) => {
             setActiveLib(l);
@@ -1104,6 +1207,11 @@ function App() {
           collapsed={!sidebarOpen}
           username={username}
           server={server}
+          sum={sum}
+          favTotal={favTotal}
+          onToggle={() => setSidebarOpen((v) => !v)}
+          onOpenFav={openFav}
+          onOpenCat={openCat}
           onHome={() => loadHome()}
           onLib={(l) => {
             setActiveLib(l);

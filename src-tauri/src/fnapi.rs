@@ -33,11 +33,19 @@ pub fn normalize_server(input: &str) -> String {
 }
 
 pub fn new_client() -> FnClient {
+    // x-trim-client 头缺失时服务端会隐藏 IPTV 媒体库（飞鲸 auth_interceptor 同坑）
+    let mut extra = reqwest::header::HeaderMap::new();
+    extra.insert("x-trim-client", reqwest::header::HeaderValue::from_static("web"));
+    extra.insert(
+        "x-trim-client-version",
+        reqwest::header::HeaderValue::from_static("616"),
+    );
     let http = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(std::time::Duration::from_secs(8))
         .timeout(std::time::Duration::from_secs(20))
+        .default_headers(extra)
         .build()
         .expect("reqwest client build");
     FnClient { http }

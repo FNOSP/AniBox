@@ -184,6 +184,70 @@ async fn get_episodes(state: State<'_, AppState>, guid: String) -> Result<Value,
     client.call(&cfg.server, &path, "GET", &cfg.token, None).await
 }
 
+/// 媒体统计：GET /v/api/v1/mediadb/sum —— 一个接口给全所有计数
+/// （库 guid→数量、favorite、movie/tv/live/video 分类数、total）
+#[tauri::command]
+async fn get_media_sum(state: State<'_, AppState>) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    let client = fnapi::new_client();
+    client
+        .call(&cfg.server, "/v/api/v1/mediadb/sum", "GET", &cfg.token, None)
+        .await
+}
+
+/// 收藏列表：POST /v/api/v1/favorite/list（响应 {total,list} 同 item/list）
+#[tauri::command]
+async fn get_favorites(
+    state: State<'_, AppState>,
+    page: Option<i64>,
+) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    let client = fnapi::new_client();
+    client
+        .call(
+            &cfg.server,
+            "/v/api/v1/favorite/list",
+            "POST",
+            &cfg.token,
+            Some(json!({
+                "tags": { "type": [] },
+                "sort_type": "DESC",
+                "sort_column": "create_time",
+                "exclude_grouped_video": 1,
+                "page": page.unwrap_or(1),
+                "page_size": 60
+            })),
+        )
+        .await
+}
+
+/// 全局分类浏览：不带 ancestor/parent，按 tags.type 过滤（电影/电视节目/直播/其他）
+#[tauri::command]
+async fn get_items_global(
+    state: State<'_, AppState>,
+    type_filter: Option<Vec<String>>,
+    page: Option<i64>,
+) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    let client = fnapi::new_client();
+    client
+        .call(
+            &cfg.server,
+            "/v/api/v1/item/list",
+            "POST",
+            &cfg.token,
+            Some(json!({
+                "tags": { "type": type_filter.unwrap_or_default() },
+                "sort_type": "DESC",
+                "sort_column": "create_time",
+                "exclude_grouped_video": 1,
+                "page": page.unwrap_or(1),
+                "page_size": 60
+            })),
+        )
+        .await
+}
+
 /// 条目详情：端点与响应字段对齐 FlyNarwhal（GET /v/api/v1/item/{guid}，camelCase 字段）
 #[tauri::command]
 async fn get_item_detail(state: State<'_, AppState>, guid: String) -> Result<Value, String> {
@@ -361,6 +425,9 @@ pub fn run() {
             logout,
             check_session,
             get_media_libs,
+            get_media_sum,
+            get_favorites,
+            get_items_global,
             get_items,
             get_continue_watching,
             get_episodes,

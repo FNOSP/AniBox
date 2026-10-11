@@ -1488,3 +1488,12 @@ button:active {
 .home-sec .hscroll {
   margin: 0;
 }
+
+.side-userrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 2px 8px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}

@@ -134,6 +134,8 @@ function TitleBar({
   onHome,
   onRefresh,
   refreshing,
+  theme,
+  onToggleTheme,
 }: {
   title: string;
   nav?: boolean;
@@ -142,6 +144,8 @@ function TitleBar({
   onHome?: () => void;
   onRefresh?: () => void;
   refreshing?: boolean;
+  theme?: "light" | "dark";
+  onToggleTheme?: () => void;
 }) {
   const win = getCurrentWindow();
   return (
@@ -164,6 +168,15 @@ function TitleBar({
         {nav && onRefresh && (
           <button className="tb-icon" title="刷新首页数据" onClick={onRefresh} disabled={refreshing}>
             ⟳
+          </button>
+        )}
+        {onToggleTheme && (
+          <button
+            className="tb-icon"
+            title={theme === "dark" ? "切换浅色模式" : "切换深色模式"}
+            onClick={onToggleTheme}
+          >
+            {theme === "dark" ? "☀" : "🌙"}
           </button>
         )}
         {!nav && <span className="tb-page">{title}</span>}
@@ -1227,6 +1240,14 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(
     () => localStorage.getItem("fntv-sidebar-open") !== "0",
   );
+  // 深浅主题：默认浅色；html.dark 类由本状态驱动，首帧前 main.tsx 已按存储值预置防闪烁
+  const [theme, setTheme] = useState<"light" | "dark">(() =>
+    localStorage.getItem("fntv-theme") === "dark" ? "dark" : "light",
+  );
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    localStorage.setItem("fntv-theme", theme);
+  }, [theme]);
   const [username, setUserName] = useState("");
   const [server, setServer] = useState("");
   const [sum, setSum] = useState<Record<string, number>>({});
@@ -1440,6 +1461,8 @@ function App() {
         }
         onHome={() => loadHome()}
         onRefresh={() => loadHome()}
+        theme={theme}
+        onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
       />
       {err && view !== "login" && <div className="err global-err">{err}</div>}
       {body}

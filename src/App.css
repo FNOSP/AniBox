@@ -94,6 +94,7 @@ body,
 }
 
 .app-shell {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -119,13 +120,34 @@ body,
 /* ─────────────── 标题栏 ─────────────── */
 
 .titlebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
   height: 40px;
   min-height: 40px;
   display: flex;
   align-items: stretch;
   background: transparent;
   user-select: none;
-  position: relative;
+}
+/* 首页/播放页：悬浮在海报/视频上 —— 顶部压暗渐变保证白字可读 */
+.titlebar.overlay {
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.42), rgba(0, 0, 0, 0.14) 70%, transparent);
+}
+.titlebar.overlay .tb-brand,
+.titlebar.overlay .tb-page,
+.titlebar.overlay .tb-icon,
+.titlebar.overlay .tb-link,
+.titlebar.overlay .tb-btn {
+  color: #fff;
+}
+.titlebar.overlay .tb-icon:hover,
+.titlebar.overlay .tb-link:hover,
+.titlebar.overlay .tb-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
 }
 .tb-left {
   flex: 1;
@@ -231,7 +253,7 @@ body,
   min-width: 224px;
   background: linear-gradient(180deg, var(--bg-2), var(--bg-1) 40%);
   border-right: 1px solid var(--line);
-  padding: 12px 10px;
+  padding: 52px 10px 12px;
   overflow-y: auto;
   overflow-x: hidden;
   display: flex;
@@ -407,7 +429,7 @@ body,
 }
 .hero-skel {
   width: 100%;
-  height: calc(100vh - 250px);
+  height: calc(100vh - 210px);
   min-height: 300px;
   border-radius: 0;
 }
@@ -454,7 +476,7 @@ body,
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 22px 26px 46px;
+  padding: 62px 26px 46px;
 }
 .section-head {
   display: flex;
@@ -548,7 +570,12 @@ h3 {
   letter-spacing: 1px;
 }
 .global-err {
-  margin: 0 14px 8px;
+  position: absolute;
+  top: 48px;
+  left: 14px;
+  right: 14px;
+  z-index: 35;
+  margin: 0;
 }
 
 /* ─────────────── 海报卡 ─────────────── */
@@ -1291,7 +1318,7 @@ button:active {
 .mist-banner {
   position: relative;
   width: 100%;
-  height: calc(100vh - 40px); /* 全屏海报：仅让出 40px 自绘标题栏 */
+  height: 100vh; /* 标题栏为悬浮层，海报直铺到窗口上沿 */
   overflow: hidden;
   background: #0a0e14;
 }

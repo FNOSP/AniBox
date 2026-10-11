@@ -150,6 +150,7 @@ function TitleBar({
   refreshing,
   theme,
   onToggleTheme,
+  overlay,
 }: {
   title: string;
   nav?: boolean;
@@ -160,10 +161,12 @@ function TitleBar({
   refreshing?: boolean;
   theme?: "light" | "dark";
   onToggleTheme?: () => void;
+  /** 悬浮在海报/视频上时：白字 + 顶部压暗渐变 */
+  overlay?: boolean;
 }) {
   const win = getCurrentWindow();
   return (
-    <div className="titlebar" data-tauri-drag-region>
+    <div className={`titlebar${overlay ? " overlay" : ""}`} data-tauri-drag-region>
       <div className="tb-left" data-tauri-drag-region>
         {nav && onToggleSidebar && (
           <button
@@ -1623,6 +1626,7 @@ function App() {
         onHome={goHome}
         onRefresh={() => loadHome()}
         theme={theme}
+        overlay={view === "home" || view === "player"}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
       />
       {err && view !== "login" && <div className="err global-err">{err}</div>}

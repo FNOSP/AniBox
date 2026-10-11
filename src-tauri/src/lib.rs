@@ -299,9 +299,24 @@ async fn get_carousel_items(state: State<'_, AppState>) -> Result<Value, String>
 
 // ───────────────────────── 播放 / mpv 控制 ─────────────────────────
 
-/// 创建 mpv 内嵌子窗口；句柄 0（创建失败）必须拒绝，否则 mpv --wid=0 会弹出独立窗口
-fn new_embed(parent_hwnd: isize) -> Result<isize, String> {
-    let embed = win_embed::create_child(parent_hwnd);
+/// 在主线程执行 Win32 窗口操作：tao 窗口/子窗口必须在有消息泵的线程上创建与操作，
+/// 否则窗口不处理消息，mpv 的 D3D 交换链初始化会挂死（unable to create window → VO 全灭）
+fn on_main<R: Send + 'static>(
+    app: &AppHandle,
+    f: impl FnOnce() -> R + Send + 'static,
+) -> Result<R, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(f());
+    })
+    .map_err(|e| format!("主线程调度失败: {}", e))?;
+    rx.recv_timeout(std::time::Duration::from_secs(2))
+        .map_err(|e| format!("主线程执行超时: {}", e))
+}
+
+/// 创建 mpv 内嵌子窗口（主线程）；句柄 0（创建失败）必须拒绝，否则 mpv --wid=0 会弹出独立窗口
+fn new_embed(app: &AppHandle, parent_hwnd: isize) -> Result<isize, String> {
+    let embed = on_main(app, move || win_embed::create_child(parent_hwnd))?;
     if embed == 0 {
         return Err("创建 mpv 内嵌子窗口失败".into());
     }
@@ -326,19 +341,24 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
         Some(m) if !m.is_dead().await => m.clone(),
         Some(m) => {
             m.shutdown().await;
-            mpv::MpvSession::launch(app, &cfg.mpv_path, new_embed(parent_hwnd)?).await?
+            let embed = new_embed(&app, parent_hwnd)?;
+            mpv::MpvSession::launch(app.clone(), &cfg.mpv_path, embed).await?
         }
         None => {
-            mpv::MpvSession::launch(app, &cfg.mpv_path, new_embed(parent_hwnd)?).await?
+            let embed = new_embed(&app, parent_hwnd)?;
+            mpv::MpvSession::launch(app.clone(), &cfg.mpv_path, embed).await?
         }
     };
     *slot = Some(session.clone());
     drop(slot);
 
-    // 应用当前 bounds（登页时前端会更新），再载入
+    // 应用当前 bounds（登页时前端会更新），再载入（窗口操作一律主线程）
     let (x, y, w, h) = *state.bounds.lock().unwrap();
-    win_embed::set_bounds(session.embed_hwnd, x, y, w, h);
-    win_embed::set_visible(session.embed_hwnd, true);
+    let eh = session.embed_hwnd;
+    on_main(&app, move || {
+        win_embed::set_bounds(eh, x, y, w, h);
+        win_embed::set_visible(eh, true);
+    })?;
 
     let url = proxy::play_url(&cfg, &guid);
     session.command(json!(["loadfile", url, "replace"])).await?;
@@ -355,6 +375,7 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
 
 #[tauri::command]
 async fn player_set_bounds(
+    app: AppHandle,
     state: State<'_, AppState>,
     x: f64,
     y: f64,
@@ -365,19 +386,29 @@ async fn player_set_bounds(
     *state.bounds.lock().unwrap() = b;
     let slot = state.mpv.lock().await;
     if let Some(m) = slot.as_ref() {
-        win_embed::set_bounds(m.embed_hwnd, b.0, b.1, b.2, b.3);
+        let eh = m.embed_hwnd;
+        // app 来自 command 参数
+        on_main(&app, move || win_embed::set_bounds(eh, b.0, b.1, b.2, b.3))?;
     }
     Ok(())
 }
 
 #[tauri::command]
-async fn player_set_visible(state: State<'_, AppState>, visible: bool) -> Result<(), String> {
+async fn player_set_visible(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    visible: bool,
+) -> Result<(), String> {
     let slot = state.mpv.lock().await;
     if let Some(m) = slot.as_ref() {
-        win_embed::set_visible(m.embed_hwnd, visible);
-        if visible {
-            win_embed::keep_bottom(m.embed_hwnd);
-        }
+        let eh = m.embed_hwnd;
+        // app 来自 command 参数
+        on_main(&app, move || {
+            win_embed::set_visible(eh, visible);
+            if visible {
+                win_embed::keep_bottom(eh);
+            }
+        })?;
     }
     Ok(())
 }

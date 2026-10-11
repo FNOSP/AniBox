@@ -347,8 +347,8 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     // 三者叠加会拖垮合成（用户实测进播放页整机卡死），停止后由 player_stop 恢复
     #[cfg(target_os = "windows")]
     {
-        use winvisual::disable_acrylic;
-        disable_acrylic(parent_hwnd);
+        use winvisual::clear_backdrop;
+        clear_backdrop(parent_hwnd);
     }
     Ok(())
 }
@@ -391,10 +391,10 @@ async fn player_stop(app: AppHandle, state: State<'_, AppState>) -> Result<(), S
     // 播放结束：恢复主题染色（play_item 时被禁用的 SWCA 模糊）
     #[cfg(target_os = "windows")]
     if let Some(light) = *state.last_light.lock().unwrap() {
-        use winvisual::{hwnd_isize_wv, set_acrylic, tint_for};
+        use winvisual::{hwnd_isize_wv, set_backdrop};
         if let Some(win) = app.get_webview_window("main") {
             if let Some(hwnd) = hwnd_isize_wv(&win) {
-                set_acrylic(hwnd, tint_for(light));
+                set_backdrop(hwnd, !light);
             }
         }
     }
@@ -448,67 +448,19 @@ async fn mpv_set_rate(state: State<'_, AppState>, rate: f64) -> Result<(), Strin
 
 #[cfg(target_os = "windows")]
 mod winvisual {
-    const ACCENT_ENABLE_ACRYLICBLURBEHIND: u32 = 4;
-    const WCA_ACCENT_POLICY: u32 = 19;
-
-    #[repr(C)]
-    struct AccentPolicy {
-        state: u32,
-        flags: u32,
-        gradient_color: u32, // ABGR
-        animation_id: u32,
-    }
-
-    #[repr(C)]
-    struct WinCompAttribData {
-        attribute: u32,
-        data: *mut AccentPolicy,
-        size: usize,
-    }
-
-    /// 主题感知染色（ABGR）：浅色近白、深色近黑，alpha 控制玻璃厚度
-    pub fn tint_for(light: bool) -> u32 {
-        if light {
-            0x50FEFBFA // #FAFBFE @ 31%
-        } else {
-            0x591F1614 // #14161F @ 35%
-        }
-    }
-
-    fn module_handle(name: &str) -> isize {
-        use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-        let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
-        unsafe { GetModuleHandleW(wide.as_ptr()) as isize }
-    }
-
-    fn get_proc(module: isize, name: &str) -> Option<unsafe extern "system" fn() -> isize> {
-        use windows_sys::Win32::System::LibraryLoader::GetProcAddress;
-        let narrow: Vec<u8> = name.bytes().chain(std::iter::once(0)).collect();
-        unsafe { GetProcAddress(module as _, narrow.as_ptr()) }
-    }
-
-    /// 关闭 SWCA 特效（ACCENT_DISABLED）—— mpv 播放期间禁用全窗模糊，消合成死锁开销
-    pub fn disable_acrylic(hwnd: isize) {
+    /// 关闭系统底板（DWMSBT_NONE）—— mpv 播放期间禁用全窗模糊，消合成开销
+    pub fn clear_backdrop(hwnd: isize) {
+        use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
         unsafe {
-            let f = get_proc(module_handle("user32.dll"), "SetWindowCompositionAttribute");
-            if let Some(f) = f {
-                type SetFn = unsafe extern "system" fn(isize, *mut WinCompAttribData) -> i32;
-                let set: SetFn = std::mem::transmute(f);
-                let mut policy = AccentPolicy {
-                    state: 0, // ACCENT_DISABLED
-                    flags: 0,
-                    gradient_color: 0,
-                    animation_id: 0,
-                };
-                let mut data = WinCompAttribData {
-                    attribute: WCA_ACCENT_POLICY,
-                    data: &mut policy,
-                    size: std::mem::size_of::<AccentPolicy>(),
-                };
-                set(hwnd, &mut data);
-            }
-            disable_dwm_border(hwnd);
+            let none: u32 = 1; // DWMSBT_NONE
+            DwmSetWindowAttribute(
+                hwnd as _,
+                38, // DWMWA_SYSTEMBACKDROP_TYPE
+                &none as *const u32 as *const core::ffi::c_void,
+                4,
+            );
         }
+        disable_dwm_border(hwnd);
     }
 
     /// SWCA 会重新启用 DWM 边框（且边框跟随 SetWindowRgn 圆角轮廓 → 圆角外白线），必须在其后关掉
@@ -525,27 +477,27 @@ mod winvisual {
         }
     }
 
-    pub fn set_acrylic(hwnd: isize, tint_abgr: u32) {
+    /// DWM 系统亚克力底板（DWMSBT_TRANSIENTWINDOW）：DWM 原生绘制、无 SWCA 的 1px 白边；
+    /// 明暗由 DWMWA_USE_IMMERSIVE_DARK_MODE 跟随应用主题
+    pub fn set_backdrop(hwnd: isize, dark: bool) {
+        use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
         unsafe {
-            let f = get_proc(module_handle("user32.dll"), "SetWindowCompositionAttribute");
-            if let Some(f) = f {
-                type SetFn = unsafe extern "system" fn(isize, *mut WinCompAttribData) -> i32;
-                let set: SetFn = std::mem::transmute(f);
-                let mut policy = AccentPolicy {
-                    state: ACCENT_ENABLE_ACRYLICBLURBEHIND,
-                    flags: 0,
-                    gradient_color: tint_abgr,
-                    animation_id: 0,
-                };
-                let mut data = WinCompAttribData {
-                    attribute: WCA_ACCENT_POLICY,
-                    data: &mut policy,
-                    size: std::mem::size_of::<AccentPolicy>(),
-                };
-                set(hwnd, &mut data);
-            }
-            disable_dwm_border(hwnd);
+            let dark_flag: u32 = if dark { 1 } else { 0 };
+            DwmSetWindowAttribute(
+                hwnd as _,
+                20, // DWMWA_USE_IMMERSIVE_DARK_MODE
+                &dark_flag as *const u32 as *const core::ffi::c_void,
+                4,
+            );
+            let backdrop: u32 = 3; // DWMSBT_TRANSIENTWINDOW（亚克力）
+            DwmSetWindowAttribute(
+                hwnd as _,
+                38, // DWMWA_SYSTEMBACKDROP_TYPE
+                &backdrop as *const u32 as *const core::ffi::c_void,
+                4,
+            );
         }
+        disable_dwm_border(hwnd);
     }
 
     /// DWM 系统圆角（DWMWCP_ROUND）：抗锯齿完美、自动跟随窗口尺寸；
@@ -582,9 +534,9 @@ fn set_acrylic_tint(
     *state.last_light.lock().unwrap() = Some(light);
     #[cfg(target_os = "windows")]
     {
-        use winvisual::{hwnd_isize, set_acrylic, tint_for};
+        use winvisual::{hwnd_isize, set_backdrop};
         if let Some(hwnd) = hwnd_isize(&window) {
-            set_acrylic(hwnd, tint_for(light));
+            set_backdrop(hwnd, !light);
         }
     }
     #[cfg(not(target_os = "windows"))]
@@ -634,9 +586,9 @@ pub fn run() {
             // SWCA 动态模糊 + 窗口级圆角（默认浅色 tint；主题切换由前端 set_acrylic_tint 更新）
             #[cfg(target_os = "windows")]
             if let Some(win) = app.get_webview_window("main") {
-                use winvisual::{hwnd_isize_wv, set_acrylic, set_system_round_corner, tint_for};
+                use winvisual::{hwnd_isize_wv, set_backdrop, set_system_round_corner};
                 if let Some(hwnd) = hwnd_isize_wv(&win) {
-                    set_acrylic(hwnd, tint_for(true));
+                    set_backdrop(hwnd, false); // 默认浅色
                     set_system_round_corner(hwnd);
                 }
             }

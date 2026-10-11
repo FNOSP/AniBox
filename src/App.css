@@ -1139,8 +1139,8 @@ button:active {
   z-index: 1;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  padding: 0 4%;
+  justify-content: flex-end; /* 信息块贴底：居中会在上方留大片空白，贴近媒体库条只留隔离带 */
+  padding: 0 4% 138px; /* 138 = 媒体库条占位(卡99px+底边距14px) + ~25px 隔离带 */
   box-sizing: border-box;
   pointer-events: none;
 }

@@ -1539,6 +1539,7 @@ button:active {
   bottom: 22px;
   font-size: 15px;
   font-weight: 700;
+  color: #fff; /* 浮在图片+暗渐变遮罩上，两主题恒白（继承会吃主题深色字） */
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
 }
 .lsc-cat {

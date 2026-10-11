@@ -1525,89 +1525,70 @@ function App() {
     body = null; // 会话检查期不出任何视图
   } else if (view === "login") {
     body = <LoginPage onDone={() => loadHome()} />;
-  } else if (view === "home") {
-    body = (
-      <div className="main-row">
-        <Sidebar
-          activeGuid={null}
-          collapsed={!sidebarOpen}
-          username={username}
-          server={server}
-          sum={sum}
-          favTotal={favTotal}
-          onOpenFav={openFav}
-          onOpenCat={openCat}
-          onHome={goHome}
-        />
-        {homeLoading && !carousel.length ? (
-          <HomeSkeleton />
-        ) : (
-        <HomeView
-          libs={libs}
-          continueList={continueList}
-          carousel={carousel}
-          carouselBds={carouselBds}
-          carouselLogos={carouselLogos}
-          libRows={libRows}
-          hiddenLibs={hiddenLibs}
-          onToggleHiddenLib={toggleHiddenLib}
-          onOpenLib={(l) => {
-            setActiveLib(l);
-            setView("lib");
-          }}
-          onPlay={play}
-          onOpenItem={openItem}
-        />
-      )}
-      </div>
-    );
-  } else if (view === "lib" && activeLib) {
-    body = (
-      <div className="main-row">
-        <Sidebar
-          activeGuid={activeLib.guid}
-          collapsed={!sidebarOpen}
-          username={username}
-          server={server}
-          sum={sum}
-          favTotal={favTotal}
-          onOpenFav={openFav}
-          onOpenCat={openCat}
-          onHome={goHome}
-        />
-        <LibView lib={activeLib} onBackHome={goHome} onOpenItem={openItem} />
-      </div>
-    );
-  } else if (view === "detail" && detailItem) {
-    body = (
-      <div className="main-row">
-        <Sidebar
-          activeGuid={activeLib?.guid ?? null}
-          collapsed={!sidebarOpen}
-          username={username}
-          server={server}
-          sum={sum}
-          favTotal={favTotal}
-          onOpenFav={openFav}
-          onOpenCat={openCat}
-          onHome={goHome}
-        />
-        <DetailView
-          base={detailItem}
-          onPlay={play}
-          onBack={() => setView(activeLib ? "lib" : "home")}
-        />
-      </div>
-    );
-  } else if (view === "player" && playTarget) {
-    body = (
-      <PlayerView
-        item={playTarget}
-        onBack={() => setView(detailItem ? "detail" : activeLib ? "lib" : "home")}
-      />
-    );
   } else {
-    body = <div className="empty">…</div>;
+    // 首页常驻挂载：切到库/详情只隐藏不卸载（图片零重请求、滚动位置保留），player 全屏接管
+    const homeReady = carousel.length > 0;
+    body = (
+      <div className="main-row" style={view === "player" ? { display: "none" } : undefined}>
+        <Sidebar
+          activeGuid={view === "home" ? null : activeLib?.guid ?? null}
+          collapsed={!sidebarOpen}
+          username={username}
+          server={server}
+          sum={sum}
+          favTotal={favTotal}
+          onOpenFav={openFav}
+          onOpenCat={openCat}
+          onHome={goHome}
+        />
+        <div className="view-stack">
+          <div className={`view-pane${view === "home" ? " active" : ""}`}>
+            {homeReady ? (
+              <HomeView
+                libs={libs}
+                continueList={continueList}
+                carousel={carousel}
+                carouselBds={carouselBds}
+                carouselLogos={carouselLogos}
+                libRows={libRows}
+                hiddenLibs={hiddenLibs}
+                onToggleHiddenLib={toggleHiddenLib}
+                onOpenLib={(l) => {
+                  setActiveLib(l);
+                  setView("lib");
+                }}
+                onPlay={play}
+                onOpenItem={openItem}
+              />
+            ) : homeLoading ? (
+              <HomeSkeleton />
+            ) : null}
+          </div>
+          {view === "lib" && activeLib && (
+            <div className="view-pane active">
+              <LibView lib={activeLib} onBackHome={goHome} onOpenItem={openItem} />
+            </div>
+          )}
+          {view === "detail" && detailItem && (
+            <div className="view-pane active">
+              <DetailView
+                base={detailItem}
+                onPlay={play}
+                onBack={() => setView(activeLib ? "lib" : "home")}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    );
+    if (view === "player" && playTarget) {
+      body = (
+        <PlayerView
+          item={playTarget}
+          onBack={() => setView(detailItem ? "detail" : activeLib ? "lib" : "home")}
+        />
+      );
+    }
   }
 
   return (

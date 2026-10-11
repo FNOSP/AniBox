@@ -251,6 +251,23 @@ body,
 
 /* ─────────────── 侧栏 ─────────────── */
 
+/* 视图栈：首页常驻挂载，切页只切换 active（防图片重请求与状态丢失） */
+.view-stack {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.view-pane {
+  display: none;
+  flex: 1;
+  min-height: 0;
+}
+.view-pane.active {
+  display: flex;
+  flex-direction: column;
+}
 .main-row {
   display: flex;
   flex: 1;

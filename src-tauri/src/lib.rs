@@ -466,6 +466,20 @@ mod winvisual {
         unsafe { GetProcAddress(module as _, narrow.as_ptr()) }
     }
 
+    /// SWCA 会重新启用 DWM 边框（且边框跟随 SetWindowRgn 圆角轮廓 → 圆角外白线），必须在其后关掉
+    pub fn disable_dwm_border(hwnd: isize) {
+        use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
+        let color_none: u32 = 0xFFFF_FFFE; // DWMWA_COLOR_NONE
+        unsafe {
+            DwmSetWindowAttribute(
+                hwnd as _,
+                34, // DWMWA_BORDER_COLOR
+                &color_none as *const u32 as *const core::ffi::c_void,
+                4,
+            );
+        }
+    }
+
     pub fn set_acrylic(hwnd: isize, tint_abgr: u32) {
         unsafe {
             let f = get_proc(module_handle("user32.dll"), "SetWindowCompositionAttribute");
@@ -485,6 +499,7 @@ mod winvisual {
                 };
                 set(hwnd, &mut data);
             }
+            disable_dwm_border(hwnd);
         }
     }
 
@@ -496,6 +511,7 @@ mod winvisual {
             if !rgn.is_null() {
                 SetWindowRgn(hwnd as _, rgn, 1);
             }
+            disable_dwm_border(hwnd);
         }
     }
 

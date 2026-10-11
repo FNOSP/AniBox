@@ -56,11 +56,3 @@ export const IcoFolder = mk([
   "M5 2a3 3 0 0 0-3 3v3h20c0-2-1-4-3-4h-6.45a3 3 0 0 1-1.87-.66l-1.13-.9A2 2 0 0 0 8.3 2H5Z",
   "M22 10H2v9a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-9Z",
 ]);
-
-// 深浅切换图标 —— 手绘：描边圆环 + 右半实心（对比度造型，零特殊 SVG 特性）
-export const IcoAutoTheme = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" focusable="false" aria-hidden="true" className={className}>
-    <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" strokeWidth="2" />
-    <path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" />
-  </svg>
-);

@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { IcoHome, IcoStar, IcoGrid, IcoMovie, IcoTv, IcoLive, IcoFolder, IcoAutoTheme } from "./icons";
+import { IcoHome, IcoStar, IcoGrid, IcoMovie, IcoTv, IcoLive, IcoFolder } from "./icons";
 import "./App.css";
 
 type Config = {
@@ -192,7 +192,7 @@ function TitleBar({
         )}
         {onToggleTheme && (
           <button className="tb-icon" title="切换深浅模式" onClick={onToggleTheme}>
-            <IcoAutoTheme size={16} />
+            ◐
           </button>
         )}
         {!nav && <span className="tb-page">{title}</span>}

@@ -18,11 +18,7 @@
         "minWidth": 960,
         "minHeight": 640,
         "decorations": false,
-        "transparent": true,
-        "windowEffects": {
-          "effects": ["acrylic"],
-          "state": "followsWindowActiveState"
-        }
+        "transparent": true
       }
     ],
     "security": {

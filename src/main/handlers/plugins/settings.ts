@@ -10,7 +10,7 @@ import { fnosDialog } from '../../common/fnosDialog';
 import { getInstance as getUpdateChecker } from '../../../modules/updater/updateChecker';
 import { clearAllPatches } from '../../../modules/patcher/patchApplier';
 import { setMpvPlayerPath, setPotPlayerPath } from './media';
-import { writeMpvUserConfig, writeBiliSearchEnabled, writeBiliAggregateThreshold, writeBiliDanmakuStyle, writeBiliDanmakuBlockOnly, writeInterpConfig, getPortableConfigDir, writeDandanplayCredentials, writeDanmuApiConf, applyRenderPreset, ensureStatsKeyBinding } from './mpvConfig';
+import { writeMpvUserConfig, writeBiliSearchEnabled, writeBiliAggregateThreshold, writeBiliDanmakuStyle, writeBiliDanmakuBlockOnly, writeInterpConfig, getPortableConfigDir, writeDandanplayCredentials, writeDanmuApiConf, applyRenderPreset, ensureStatsKeyBinding, writeAqConfig, applyAqSettings, detectGpuTier, ensureAqMenuBinding, applyAudioLoudness } from './mpvConfig';
 import * as danmuApi from '../../common/danmuApi';
 import * as log from '../../../modules/logger';
 
@@ -591,6 +591,24 @@ async function handleSetBiliDanmakuStyle(_event: any, payload: any): Promise<voi
     }
 }
 
+// [lc-1302] 读取弹幕屏蔽类型真源文件（scripts/uosc_danmaku/danmaku_block_types.json）：
+// MPV 端弹幕屏蔽快捷键菜单（Ctrl+k）直接改写该文件且不回写 config，面板回填以本读取为准，
+// 保证「设置面板 ↔ 播放器」勾选状态一致。读 portable_config（MPV 实际读取的目录）。
+async function handleGetBiliDanmakuBlockTypesFile(): Promise<any> {
+    try {
+        const p = path.join(getPortableConfigDir(), 'scripts', 'uosc_danmaku', 'danmaku_block_types.json');
+        if (fs.existsSync(p)) {
+            const parsed = JSON.parse(fs.readFileSync(p, 'utf-8'));
+            if (Array.isArray(parsed)) {
+                return { blockTypes: parsed.filter((v: any) => typeof v === 'string') };
+            }
+        }
+    } catch (e) {
+        log.warn('读取 danmaku_block_types.json 失败:', e);
+    }
+    return { blockTypes: [] };
+}
+
 // [lc-486] 设置 MPV 插帧（AI 补帧）：写 config + 同步到 script-opts/fntv_interp.conf（供 fntv_interp.lua 读取）
 async function handleSetInterp(_event: any, payload: any): Promise<void> {
     const p = payload || {};
@@ -610,6 +628,32 @@ async function handleGetInterp(): Promise<any> {
         enabled: fnConfig.getMpvInterpEnabled(),
         engine: fnConfig.getMpvInterpEngine(),
         path: fnConfig.getMpvInterpEnginePath()
+    };
+}
+
+// [lc-1351] 设置「超分与补帧」自适应画质（超分/补帧模式 + RIFE 后端 + 4K 保护）：
+// 持久化到 config.json 并重写 script-opts/fntv_aq.conf 供 fntv_aq.lua 读取（含 GPU 档位）。
+async function handleSetAq(_event: any, payload: any): Promise<any> {
+    const p = payload || {};
+    const sr = typeof p.superresMode === 'string' ? p.superresMode : fnConfig.getMpvSuperresMode();
+    const sm = typeof p.smoothMode === 'string' ? p.smoothMode : fnConfig.getMpvSmoothMode();
+    const backend = typeof p.rifeBackend === 'string' ? p.rifeBackend : fnConfig.getMpvRifeBackend();
+    const protect4k = typeof p.protect4k === 'boolean' ? p.protect4k : fnConfig.getMpvAqProtect4k();
+    applyAqSettings(sr, sm, backend, protect4k);
+    log.info(`[超分与补帧] 已设置: superres=${sr}, smooth=${sm}, rife=${backend}, 4k保护=${protect4k}`);
+    return { ok: true };
+}
+
+// [lc-1351] 读取「超分与补帧」当前设置（面板回填）+ 显卡档位（提示文案用）
+async function handleGetAq(): Promise<any> {
+    let tier = 'auto';
+    try { tier = await detectGpuTier(); } catch { /* 探测失败保持 auto */ }
+    return {
+        superresMode: fnConfig.getMpvSuperresMode(),
+        smoothMode: fnConfig.getMpvSmoothMode(),
+        rifeBackend: fnConfig.getMpvRifeBackend(),
+        protect4k: fnConfig.getMpvAqProtect4k(),
+        gpuTier: tier
     };
 }
 
@@ -930,6 +974,13 @@ function init(): void {
     try { writeMpvUserConfig(fnConfig.getMpvDefaultShader(), fnConfig.getMpvIccEnabled() !== false); } catch (e) { log.warn('启动重放默认着色器失败', e); }
     // [lc-1069] 启动补写视频统计面板快捷键(F, 幂等)
     try { ensureStatsKeyBinding(); } catch (e) { log.warn('补写 stats 快捷键失败', e); }
+    // [lc-1351] 启动同步「超分与补帧」：补写 uosc 菜单绑定(幂等) + 把已保存模式写进 fntv_aq.conf
+    //（含 GPU 档位探测后的覆写；缺配置时 lua 侧全关，普通播放零额外负载）
+    try {
+        ensureAqMenuBinding();
+        writeAqConfig();
+        void detectGpuTier().then((t) => writeAqConfig(t));
+    } catch (e) { log.warn('启动同步超分与补帧配置失败', e); }
     registerHandler('settings:get', handleGetSettings, { useHandle: true });
     registerHandler('settings:set-download-proxy', handleSetDownloadProxy, { useHandle: true });
     registerHandler('settings:set-hide-play', handleSetHidePlay, { useHandle: true });
@@ -999,8 +1050,16 @@ function init(): void {
         return { ok: true, preset: fnConfig.getMpvRenderPreset() };
     }, { useHandle: true });
     registerHandler('settings:set-bili-danmaku-style', handleSetBiliDanmakuStyle, { useHandle: true });
+    registerHandler('settings:get-bili-danmaku-blocktypes-file', handleGetBiliDanmakuBlockTypesFile, { useHandle: true });
     registerHandler('settings:set-interp', handleSetInterp, { useHandle: true });
     registerHandler('settings:get-interp', handleGetInterp, { useHandle: true });
+    registerHandler('settings:set-aq', handleSetAq, { useHandle: true });
+    registerHandler('settings:get-aq', handleGetAq, { useHandle: true });
+    registerHandler('settings:set-audio-loudness', (_e: any, p: { mode: string }) => {
+        applyAudioLoudness(String((p && p.mode) || 'off'));
+        return { ok: true, mode: fnConfig.getMpvAudioLoudness() };
+    }, { useHandle: true });
+    registerHandler('settings:get-audio-loudness', () => ({ mode: fnConfig.getMpvAudioLoudness() }), { useHandle: true });
     registerHandler('settings:diagnostics', handleGetDiagnostics, { useHandle: true });
     registerHandler('settings:check-update', handleCheckUpdate, { useHandle: true });
     registerHandler('settings:rollback-patch', handleRollbackPatch, { useHandle: true });

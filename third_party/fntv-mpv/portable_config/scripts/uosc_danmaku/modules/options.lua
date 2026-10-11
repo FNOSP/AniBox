@@ -61,6 +61,13 @@ options = {
     vf_fps = false,
     -- 设置要使用的 fps 滤镜参数
     fps = "60/1.001",
+    -- [lc-1351] 渲染路径选择：auto=优先原生 ASS 副字幕轨（需自编译核心的
+    -- secondary-sub-ass-* 补丁属性，缺失时自动回退 OSD overlay）；overlay=强制
+    -- OSD 定时器路径（旧行为）；ass-track=强制轨道（诊断用，旧核心下不生效）
+    render_mode = "auto",
+    -- [lc-1351] 全屏宽银幕（画面上下带黑边）时把弹幕映射到完整输出画面
+    -- （secondary-sub-ass-full-viewport），弹幕贴着视频上沿排布，观感与旧 OSD 路径一致
+    fullscreen_blackbar = true,
     -- [lc-1301] lavfi ass 滤镜渲染（lc-1273 引入）默认关闭，走原版 OSD overlay 路径：
     -- 滤镜路径把弹幕烙进视频帧，文字按【视频分辨率】光栅化——显示分辨率高于视频分辨率时
     -- 整帧上采样，弹幕必糊；且每帧 hwdownload/hwupload 叠加 fps 补帧，弹幕一多就卡；

@@ -3911,53 +3911,93 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
       ipcRenderer.invoke('bili:open-danmaku-folder').catch((err) => log('bili:open-danmaku-folder failed', err));
     });
 
-    // ===== 插帧（AI 补帧）=====
-    // [lc-486] MPV 播放器插帧：uosc 控制栏有「插帧」按钮实时切换；此处提供应用侧默认配置
-    // （默认开启 + 引擎选择 + 引擎路径），写入 script-opts/fntv_interp.conf 供 fntv_interp.lua 读取。
-    const secInterp = section('插帧（AI 补帧）');
+    // ===== [lc-1351] 超分与补帧（自适应画质统一管理，安全模型对齐 mpv-Yaozhi）=====
+    //   空间增强(超分)与时间平滑(补帧)两项独立、默认关闭、保存选择；auto 档由 fntv_aq.lua 在
+    //   播放器内按 显卡档位/片源分辨率/帧率/输出负载/画面格式 决策并安全回退；Anime4K 等
+    //   动画着色器仍走「渲染画质/着色器」手动选择，不会被自动替换。
+    const secInterp = section('超分与补帧');
     const interpBody = secInterp.body;
 
-    const interpEnabledToggle = addToggle('默认开启插帧（启动即生效）');
-    interpBody.appendChild(interpEnabledToggle.parentElement as HTMLElement);
+    const aqIntro = document.createElement('div');
+    aqIntro.style.cssText = 'font-size:10.5px;color:var(--fnos-ui-sec);padding:0 0 6px;line-height:1.5;';
+    aqIntro.textContent = t('空间增强与时间平滑独立开关、默认关闭并保存选择。自动档按显卡档位、片源分辨率、帧率、输出负载与画面格式选择方案；实时过载自动回退，绝不先降采样再补帧。');
+    interpBody.appendChild(aqIntro);
 
-    const engineLabel = document.createElement('div');
-    engineLabel.textContent = t('插帧引擎');
-    engineLabel.style.cssText = 'color:var(--fnos-ui-muted);font-size:11.5px;margin:10px 0 5px;';
-    interpBody.appendChild(engineLabel);
+    const AQ_MODES: [string, string][] = [
+      ['off', '关闭'], ['auto', '自动'], ['performance', '性能'], ['quality', '质量'],
+    ];
+    const AQ_DESCS: Record<string, string> = {
+      off: '不启用，保持普通播放。',
+      auto: '按显卡档位与片源（分辨率/帧率/格式）自动选择，实时过载自动降级。',
+      performance: '性能优先：仅 SSim 轻量校正 / 原生平滑（display-resample）。',
+      quality: '质量优先：FSRCNNX+SSim；补帧在 RIFE 运行时就绪时走 AI 2×，否则原生平滑。',
+    };
+    let aqSr = 'off';
+    let aqSm = 'off';
+    let aqBackend = 'vulkan';
+    let aqProtect4k = true;
+    let aqGpuTier = 'auto';
 
-    const engineSel = document.createElement('select');
-    engineSel.id = 'fntv-interp-engine';
-    engineSel.style.cssText = 'width:100%;font-size:12px;color:var(--fnos-ui-text);background:var(--fnos-ui-input-bg);'
+    const mkAqSeg = (labelText: string): { wrap: HTMLElement; btns: Record<string, HTMLButtonElement>; desc: HTMLElement } => {
+      const label = document.createElement('div');
+      label.textContent = t(labelText);
+      label.style.cssText = 'color:var(--fnos-ui-muted);font-size:11.5px;margin:8px 0 5px;';
+      interpBody.appendChild(label);
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'display:flex;gap:6px;';
+      const btns: Record<string, HTMLButtonElement> = {};
+      for (const [k, text] of AQ_MODES) {
+        const b = document.createElement('button');
+        b.style.cssText = 'flex:1;padding:8px 0;border:1px solid var(--fnos-ui-border);border-radius:9px;cursor:pointer;'
+          + 'font-size:12px;font-weight:600;font-family:inherit;transition:all .15s ease;';
+        b.textContent = t(text);
+        btns[k] = b;
+        wrap.appendChild(b);
+      }
+      interpBody.appendChild(wrap);
+      const desc = document.createElement('div');
+      desc.style.cssText = 'font-size:10.5px;color:var(--fnos-ui-sec);padding:6px 0 0;line-height:1.5;min-height:30px;';
+      interpBody.appendChild(desc);
+      return { wrap, btns, desc };
+    };
+
+    const paintAqSeg = (seg: { btns: Record<string, HTMLButtonElement>; desc: HTMLElement }, cur: string): void => {
+      for (const k of Object.keys(seg.btns)) {
+        seg.btns[k].style.background = k === cur ? 'var(--fnos-ui-accent)' : 'transparent';
+        seg.btns[k].style.color = k === cur ? '#fff' : 'var(--fnos-ui-text)';
+        seg.btns[k].style.borderColor = k === cur ? 'var(--fnos-ui-accent)' : 'var(--fnos-ui-border)';
+      }
+      seg.desc.textContent = t(AQ_DESCS[cur] || '');
+    };
+
+    const segSr = mkAqSeg('空间增强（超分）');
+    const segSm = mkAqSeg('时间平滑（补帧）');
+
+    // RIFE 后端（仅在补帧质量/自动档且装了完整扩展包时真正生效；选择会保存）
+    const backendLabel = document.createElement('div');
+    backendLabel.textContent = t('RIFE 后端（AI 补帧运行时）');
+    backendLabel.style.cssText = 'color:var(--fnos-ui-muted);font-size:11.5px;margin:8px 0 5px;';
+    interpBody.appendChild(backendLabel);
+    const backendSel = document.createElement('select');
+    backendSel.style.cssText = 'width:100%;font-size:12px;color:var(--fnos-ui-text);background:var(--fnos-ui-input-bg);'
       + 'border:1px solid var(--fnos-ui-border);border-radius:7px;padding:6px 8px;cursor:pointer;';
     ([
-      ['auto', '自动（SVP → RIFE → 内置平滑运动）'],
-      ['builtin', 'MPV 内置平滑运动（无需额外引擎）'],
-      ['svp', 'SVP（需本机安装并运行 SmoothVideo Project）'],
-      ['rife', 'RIFE AI 补帧（需 rife-ncnn-vulkan 等运行时）'],
-      ['nvidia', 'N 卡 Smooth Motion（RTX50 驱动级，需在 NVIDIA App 开启）']
-    ] as [string, string][]).forEach(([k, label]) => {
+      ['vulkan', 'Vulkan（随包基础运行时）'],
+      ['tensorrt', 'TensorRT FP16（需安装完整 RTX 扩展包，仅兼容 NVIDIA RTX）'],
+    ] as [string, string][]).forEach(([k, text]) => {
       const o = document.createElement('option');
-      o.value = k; o.textContent = label;
-      engineSel.appendChild(o);
+      o.value = k; o.textContent = t(text);
+      backendSel.appendChild(o);
     });
-    interpBody.appendChild(engineSel);
+    interpBody.appendChild(backendSel);
 
-    const pathLabel = document.createElement('div');
-    pathLabel.textContent = t('引擎路径（SVP 目录 / RIFE 可执行文件，留空=自动探测）');
-    pathLabel.style.cssText = 'color:var(--fnos-ui-muted);font-size:11.5px;margin:10px 0 5px;';
-    interpBody.appendChild(pathLabel);
+    // 4K 补帧性能保护（默认开）
+    const aq4kToggle = addToggle('4K 补帧性能保护（4K 过载直接回退，不降采样）', interpBody);
 
-    const pathInput = document.createElement('input');
-    pathInput.type = 'text';
-    pathInput.placeholder = '例如：C:\\Program Files (x86)\\SVP 4';
-    pathInput.style.cssText = 'width:100%;font-size:12px;color:var(--fnos-ui-text);background:var(--fnos-ui-input-bg);'
-      + 'border:1px solid var(--fnos-ui-border);border-radius:7px;padding:6px 8px;';
-    interpBody.appendChild(pathInput);
-
-    const interpHint = document.createElement('div');
-    interpHint.style.cssText = 'font-size:10.5px;color:var(--fnos-ui-sec);padding:8px 0 0;line-height:1.5;';
-    interpHint.textContent = t('播放时可在 MPV 底部控制栏点「插帧」按钮实时开关。选 SVP/RIFE 需本机已安装对应引擎并配好，未安装时自动回退 MPV 内置平滑运动；选 N 卡需 RTX50+ 并在 NVIDIA App 开启「Smooth Motion（视频）」。');
-    interpBody.appendChild(interpHint);
+    const aqHint = document.createElement('div');
+    aqHint.style.cssText = 'font-size:10.5px;color:var(--fnos-ui-sub);padding:8px 0 0;line-height:1.5;';
+    aqHint.textContent = t('播放器内可通过 右键/「更多」菜单 →「超分与补帧…」实时切换（会话级）；HDR10/HDR10+ 走保留色彩的安全路径，HLG/杜比视界/原盘/VFR/倍速自动保护；Anime4K 等动画着色器仍在「着色器」中手动选择，不会被自动替换。');
+    interpBody.appendChild(aqHint);
 
     // ===== [lc-1069] 渲染画质（MPV 渲染预设三档）=====
     //   写入 mpv-user.conf 托管块；vo 变更需 MPV 进程重启生效 → 面板明示。
@@ -4028,25 +4068,98 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     secRender.el.id = 'sec-render';
     // 移交: 插帧卡在游离容器挂的行自行搬回 —— 渲染卡直接占位, 由下方 cats 归属播放分类
 
-    let _interpTimer: any = null;
-    const pushInterp = (): void => {
-      const payload = { enabled: interpEnabledToggle.checked, engine: engineSel.value, path: pathInput.value.trim() };
-      if (_interpTimer) clearTimeout(_interpTimer);
-      _interpTimer = setTimeout(() => {
-        ipcRenderer.invoke('settings:set-interp', payload).catch((err) => log('set-interp failed', err));
+    // [lc-1351] 超分与补帧：任一控件变化防抖 300ms 后保存（settings:set-aq → fntv_aq.conf）
+    let _aqTimer: any = null;
+    const pushAq = (): void => {
+      const payload = { superresMode: aqSr, smoothMode: aqSm, rifeBackend: aqBackend, protect4k: aqProtect4k };
+      if (_aqTimer) clearTimeout(_aqTimer);
+      _aqTimer = setTimeout(() => {
+        ipcRenderer.invoke('settings:set-aq', payload).catch((err) => log('set-aq failed', err));
       }, 300);
     };
-    interpEnabledToggle.addEventListener('change', pushInterp);
-    engineSel.addEventListener('change', pushInterp);
-    pathInput.addEventListener('input', pushInterp);
+    const bindAqSeg = (seg: { btns: Record<string, HTMLButtonElement>; desc: HTMLElement }, get: () => string, set: (v: string) => void): void => {
+      for (const k of Object.keys(seg.btns)) {
+        seg.btns[k].addEventListener('click', (e: Event) => {
+          e.stopPropagation();
+          set(k);
+          paintAqSeg(seg, get());
+          pushAq();
+        });
+      }
+    };
+    bindAqSeg(segSr, () => aqSr, (v) => { aqSr = v; });
+    bindAqSeg(segSm, () => aqSm, (v) => { aqSm = v; });
+    backendSel.addEventListener('change', () => { aqBackend = backendSel.value; pushAq(); });
+    aq4kToggle.addEventListener('change', () => { aqProtect4k = aq4kToggle.checked; pushAq(); });
 
-    ipcRenderer.invoke('settings:get-interp').then((r: any) => {
+    ipcRenderer.invoke('settings:get-aq').then((r: any) => {
       if (!r) return;
-      interpEnabledToggle.checked = !!r.enabled;
-      engineSel.value = r.engine || 'auto';
-      pathInput.value = r.path || '';
-    }).catch((err) => log('get-interp failed', err));
+      aqSr = r.superresMode || 'off';
+      aqSm = r.smoothMode || 'off';
+      aqBackend = r.rifeBackend || 'vulkan';
+      aqProtect4k = r.protect4k !== false;
+      aqGpuTier = r.gpuTier || 'auto';
+      paintAqSeg(segSr, aqSr);
+      paintAqSeg(segSm, aqSm);
+      backendSel.value = aqBackend;
+      aq4kToggle.checked = aqProtect4k;
+      const tierText = ({ low: '入门核显', balanced: '均衡', medium: '中档', high: '高档', upper_high: '旗舰', auto: '未知' } as Record<string, string>)[aqGpuTier] || aqGpuTier;
+      aqIntro.textContent = t('空间增强与时间平滑独立开关、默认关闭并保存选择。自动档按显卡档位、片源分辨率、帧率、输出负载与画面格式选择方案；实时过载自动回退，绝不先降采样再补帧。')
+        + t('（当前显卡档位：') + tierText + '）';
+    }).catch((err) => log('get-aq failed', err));
     /* 布局统一在末尾 layout 区追加 */
+
+    // ===== [lc-1355] 音频响度（增益 / 响度归一化）=====
+    //   写入 mpv-user.conf 托管块的 af 链，随下次播放生效；与「音频源码直通」互斥（直通时 af 自动失效）。
+    const secAudio = section('音频响度');
+    const audioBody = secAudio.body;
+
+    const audioDesc = document.createElement('div');
+    audioDesc.style.cssText = 'font-size:10.5px;color:var(--fnos-ui-sec);padding:0 0 6px;line-height:1.5;';
+    audioDesc.textContent = t('觉得整体偏轻可选增益档；不同片源忽大忽小可选响度归一化（EBU R128，把响度拉平到统一目标）。随下次播放生效。');
+    audioBody.appendChild(audioDesc);
+
+    const audioSeg = document.createElement('div');
+    audioSeg.style.cssText = 'display:flex;gap:6px;';
+    const AUDIO_MODES: [string, string][] = [
+      ['off', '关闭'], ['gain3', '+3dB'], ['gain6', '+6dB'], ['loudnorm', '响度归一化'],
+    ];
+    const audioBtns: Record<string, HTMLButtonElement> = {};
+    for (const [k, text] of AUDIO_MODES) {
+      const b = document.createElement('button');
+      b.style.cssText = 'flex:1;padding:8px 0;border:1px solid var(--fnos-ui-border);border-radius:9px;cursor:pointer;'
+        + 'font-size:12px;font-weight:600;font-family:inherit;transition:all .15s ease;';
+      b.textContent = t(text);
+      audioBtns[k] = b;
+      audioSeg.appendChild(b);
+    }
+    audioBody.appendChild(audioSeg);
+
+    const audioHint = document.createElement('div');
+    audioHint.style.cssText = 'font-size:10.5px;color:var(--fnos-ui-sub);padding:8px 0 0;line-height:1.5;';
+    audioHint.textContent = t('与「音频源码直通」互斥：直通开启时本档自动失效。增益档是固定放大（可能推高峰值），响度归一化按感知响度拉平、个别动态大的片源会有轻微起伏。');
+    audioBody.appendChild(audioHint);
+
+    let aqAudioMode = 'off';
+    const paintAudio = (cur: string): void => {
+      for (const k of Object.keys(audioBtns)) {
+        audioBtns[k].style.background = k === cur ? 'var(--fnos-ui-accent)' : 'transparent';
+        audioBtns[k].style.color = k === cur ? '#fff' : 'var(--fnos-ui-text)';
+        audioBtns[k].style.borderColor = k === cur ? 'var(--fnos-ui-accent)' : 'var(--fnos-ui-border)';
+      }
+    };
+    for (const k of Object.keys(audioBtns)) {
+      audioBtns[k].addEventListener('click', (e: Event) => {
+        e.stopPropagation();
+        aqAudioMode = k;
+        paintAudio(k);
+        ipcRenderer.invoke('settings:set-audio-loudness', { mode: k }).catch((err) => log('set-audio-loudness failed', err));
+      });
+    }
+    ipcRenderer.invoke('settings:get-audio-loudness').then((r: any) => {
+      aqAudioMode = (r && r.mode) || 'off';
+      paintAudio(aqAudioMode);
+    }).catch((err) => log('get-audio-loudness failed', err));
 
     // ===== 诊断信息（汇总运行态，减少"查日志"往返）=====
     const secDiag = section('诊断信息');
@@ -5269,7 +5382,7 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     const cats: Cat[] = [
       { id: 'general', label: '通用', els: [sec3.el, secLang.el, secSystem.el, secUpd.el] },
       { id: 'appearance', label: '外观', els: [secAppearance.el, secCarousel.el] },
-      { id: 'player', label: '播放', els: [sec2.el, secSkip.el, secInterp.el, secRender.el, secUX.el] },
+      { id: 'player', label: '播放', els: [sec2.el, secSkip.el, secInterp.el, secRender.el, secAudio.el, secUX.el] },
       // [lc-1226] 首张「弹幕来源与优先级」总览卡（三来源的角色与尝试顺序），
       //   随后三张源卡：内置降级源 → 弹弹play → 自建优选源，最后才是屏蔽/样式
       { id: 'danmaku', label: '弹幕', els: [secDmSources.el, secBili.el, secDandan.el, secDmApi.el, secDanmaku.el] },
@@ -5850,6 +5963,13 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
         const bt: string[] = Array.isArray(s.biliDanmakuBlockTypes) ? s.biliDanmakuBlockTypes : [];
         for (const b of blockToggles) b.input.checked = bt.includes(b.key);
         if (danBlacklist && danBlacklist.ta) danBlacklist.ta.value = s.biliDanmakuBlacklist || '';
+        // [lc-1302] MPV 端弹幕屏蔽快捷键菜单（Ctrl+k）与面板共用 danmaku_block_types.json 真源，
+        // 播放器里的改动不写回 config —— 回填以真源文件为准（读取失败保持 settings 回填值）
+        ipcRenderer.invoke('settings:get-bili-danmaku-blocktypes-file').then((r: any) => {
+          if (r && Array.isArray(r.blockTypes)) {
+            for (const b of blockToggles) b.input.checked = r.blockTypes.includes(b.key);
+          }
+        }).catch(() => {});
         // [lc-1018] 弹弹play 凭证回填（已保存则星号掩码只读显示，不回显明文）
         ddRealId = s.dandanplayAppId || '';
         ddRealSecret = s.dandanplayAppSecret || '';

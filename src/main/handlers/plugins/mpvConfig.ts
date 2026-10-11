@@ -136,10 +136,30 @@ function syncNewInterpFiles(): void {
     try {
         const srcDir = getPortableConfigDir();
         const dstDir = getMpvConfigDir();
-        // fntv_interp.lua 为应用全量托管（用户不应手改），始终覆盖以确保老用户拿到最新逻辑（如新增 nvidia 引擎档）；
-        // fntv_interp.conf 由各端 writeInterpConfig 负责全量写入，此处仅做缺失补位，不覆盖用户已生成的配置。
-        const always = ['scripts/fntv_interp.lua'];
-        const missingOnly = ['script-opts/fntv_interp.conf'];
+        // fntv_interp.lua / fntv_mediainfo.lua / fntv_format_badge.lua 为应用全量托管（用户不应手改），
+        // 始终覆盖以确保老用户拿到最新逻辑（如新增 nvidia 引擎档、起播格式标签、徽章错位协调）；
+        // 各 script-opts conf 由应用侧或脚本默认值负责，此处仅做缺失补位，不覆盖用户已生成的配置。
+        // [lc-1354] 字幕两件套同样全量托管：fntv_nas_sub.lua（NAS/在线字幕菜单，随版本迭代）
+        //   与 sub-assrt.lua（第三方射手网脚本原样捆绑）；token 配置只做缺失补位。
+        const always = ['scripts/fntv_interp.lua', 'scripts/fntv_mediainfo.lua', 'scripts/fntv_format_badge.lua', 'scripts/fntv_aq.lua',
+            'scripts/fntv_menu.lua', 'scripts/fntv_nas_sub.lua', 'scripts/sub-assrt.lua',
+            // [lc-1355] 功能补齐（对照 mpv-Yaozhi 杳知菜单）：第三方脚本应用全量托管（原样捆绑不改动）
+            'scripts/persist_properties.lua', 'scripts/seek-feedback.lua', 'scripts/autoload.lua',
+            'scripts/blacklist-extensions.lua', 'scripts/auto-save-state.lua', 'scripts/trackselect.lua',
+            'scripts/undoredo.lua', 'scripts/alist_speed_indicator.lua', 'scripts/sub-fonts-dir-auto.lua',
+            'scripts/fix-avsync.lua', 'scripts/uosc-subtitle-lines.lua', 'scripts/image-subs-brightness.lua',
+            'scripts/chapterskip.lua', 'scripts/evafast.lua', 'scripts/dynamic-crop.lua', 'scripts/pip.lua',
+            'scripts/mpv-cropscreen.lua', 'scripts/sub_export.lua', 'scripts/keybinding-manager.lua',
+            'scripts/recentmenu.lua', 'scripts/autosubsync/autosubsync.lua', 'scripts/autosubsync/main.lua',
+            'scripts/autosubsync/menu.lua', 'scripts/autosubsync/subtitle.lua'];
+        const missingOnly = ['script-opts/fntv_interp.conf', 'script-opts/fntv_format_badge.conf', 'script-opts/fntv_aq.conf',
+            'script-opts/sub_assrt.conf',
+            // [lc-1355] 移植脚本的默认配置只做缺失补位，不覆盖用户已生成的配置
+            'script-opts/persist_properties.conf', 'script-opts/autoload.conf', 'script-opts/blacklist_extensions.conf',
+            'script-opts/auto_save_state.conf', 'script-opts/trackselect.conf', 'script-opts/chapterskip.conf',
+            'script-opts/evafast.conf', 'script-opts/dynamic_crop.conf', 'script-opts/pip.conf',
+            'script-opts/mpv_cropscreen.conf', 'script-opts/sub_export.conf', 'script-opts/image_subs_brightness.conf',
+            'script-opts/recentmenu.conf', 'script-opts/alist_speed_indicator.conf'];
         const copy = (rel: string, overwrite: boolean) => {
             const src = path.join(srcDir, rel);
             const dst = path.join(dstDir, rel);
@@ -152,6 +172,19 @@ function syncNewInterpFiles(): void {
         };
         always.forEach((rel) => copy(rel, true));
         missingOnly.forEach((rel) => copy(rel, false));
+        // [lc-1353] 起播格式徽章位图资产（697 个文件）：以 runtime/manifest.json 为存在标记，
+        // 整目录缺失时一次性补拷（已存在则零开销，不逐个 stat）。
+        try {
+            const srcAssets = path.join(srcDir, 'script-assets', 'startup-format-logos');
+            const dstAssets = path.join(dstDir, 'script-assets', 'startup-format-logos');
+            if (fs.existsSync(path.join(srcAssets, 'runtime', 'manifest.json'))
+                && !fs.existsSync(path.join(dstAssets, 'runtime', 'manifest.json'))) {
+                copyDirectoryRecursive(srcAssets, dstAssets);
+                logger.info(`[徽章] 已同步位图资产到用户 MPV 目录: ${dstAssets}`);
+            }
+        } catch (e) {
+            logger.error('[徽章] 同步位图资产失败:', e);
+        }
         // [lc-490] 启动时按当前引擎同步 N 卡上下文配置（防止设置改过但 mpv-interp-nvidia.conf 状态不一致）
         writeInterpNvidiaContext(fnConfig.getMpvInterpEngine() === 'nvidia');
         // [lc-487] 控制栏「插帧」按钮升级为高亮 cycle: 版本
@@ -182,6 +215,174 @@ function syncUoscControls(): void {
         logger.info('[插帧] 已更新用户 uosc.conf 控制栏插帧按钮（高亮版）');
     } catch (e) {
         logger.error('[插帧] 更新 uosc.conf 失败:', e);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// [lc-1351] 「超分与补帧」自适应画质（参考 mpv-Yaozhi adaptive-quality / ai-interpolation 安全模型）
+//   统一管理空间增强(超分)与时间平滑(补帧)：两项独立开关、默认关闭、auto 档按
+//   显卡档位 + 片源分辨率/帧率 + 输出负载 + 画面格式 决策；安全边界（不先降采样再补帧、
+//   HDR/DV/HLG 保护、实时过载回退）由 fntv_aq.lua 在播放器内执行，此处只落盘配置。
+// ─────────────────────────────────────────────────────────────────────────
+
+// GPU 档位缓存：一次探测终身复用（显卡不会热更换；个别外接场景重启应用即可刷新）
+let cachedGpuTier: string | null = null;
+let gpuTierPromise: Promise<string> | null = null;
+
+/**
+ * 按显卡名称映射档位（对齐 mpv-Yaozhi 的 low/balanced/medium/high/upper_high 五档）
+ * upper_high = RTX 4080/4090/5080/5090（4K 高刷预算内）；high = 近代独显；medium = GTX10/16 系与 RTX20 系；
+ * low = 核显/老集显；balanced = 兜底（老独显/未知）。
+ */
+function tierFromGpuName(name: string): string {
+    const n = String(name || '').toLowerCase();
+    if (/rtx\s*(4090|4080|5090|5080)/.test(n)) return 'upper_high';
+    if (/rtx\s*(20[5-9]0)\b/.test(n) || /gtx\s*10[5-9]0/.test(n) || /gtx\s*16[5-9]0/.test(n)) return 'medium';
+    if (/arc\s*a?\d/.test(n)) return 'medium';
+    if (/rtx\s*\d{4}/.test(n)) return 'high';
+    if (/rx\s*[6-9]\d{3}/.test(n)) return 'high';
+    if (/rx\s*[4-5]\d{3}/.test(n)) return 'balanced';
+    if (/gtx\s*\d{3,4}/.test(n)) return 'medium';
+    if (/intel|iris|uhd|hd graphics|graphics 6[0-9]0|amd radeon\(tm\) (r[2-7]|graphics|6[0-9]{2}m)/.test(n)) return 'low';
+    return 'balanced';
+}
+
+/**
+ * 探测 GPU 档位：用 Electron 自带 GPU 信息（零额外进程，无 PowerShell/wmic 依赖）。
+ * 多显卡时取独立显卡（vendor 0x10DE/0x1002 优先，Intel iGPU 0x8086 靠后）中档位最高的那块。
+ * 失败返回 'auto'（fntv_aq.lua 侧按 balanced 兜底，不会误开重负载）。
+ */
+export function detectGpuTier(): Promise<string> {
+    if (cachedGpuTier) return Promise.resolve(cachedGpuTier);
+    if (gpuTierPromise) return gpuTierPromise;
+    gpuTierPromise = (async () => {
+        let tier = 'auto';
+        try {
+            const info: any = await app.getGPUInfo('complete');
+            const devs: any[] = Array.isArray(info && info.gpuDevice) ? info.gpuDevice : [];
+            let best = '';
+            const rank: Record<string, number> = { upper_high: 5, high: 4, medium: 3, balanced: 2, low: 1, auto: 0 };
+            for (const d of devs) {
+                const name = String(d && (d.deviceString || d.device || '') || '');
+                if (!name) continue;
+                const t = tierFromGpuName(name);
+                // vendor 判定独显优先级：NVIDIA(0x10DE=4318) / AMD(0x1002=4098) > Intel(0x8086)
+                const vid = Number(d && d.vendorId) || 0;
+                const discrete = vid === 0x10de || vid === 0x1002 ? 1 : 0;
+                const score = (rank[t] || 0) + discrete * 10;
+                const bestScore = (rank[best] || 0) + (best ? 10 : 0);
+                if (score > bestScore) best = t;
+            }
+            if (best && rank[best]) tier = best;
+            logger.info(`[超分与补帧] GPU 档位探测: tier=${tier} (devices=${devs.map((d: any) => d.deviceString || d.device || '?').join(' | ') || '无'})`);
+        } catch (e) {
+            logger.warn('[超分与补帧] GPU 档位探测失败，回退 auto:', e);
+        }
+        cachedGpuTier = tier;
+        return tier;
+    })();
+    return gpuTierPromise;
+}
+
+/**
+ * 写入「超分与补帧」配置到 script-opts/fntv_aq.conf（供 fntv_aq.lua 读取）。
+ * ⚠️ 双写 portable_config 与用户 MPV 目录（与 writeMpvUserConfig 的 lc-094 策略一致）。
+ * @param tier 显卡档位（detectGpuTier 结果；'auto' 时 lua 侧按 balanced 兜底）
+ */
+export function writeAqConfig(tier?: string): void {
+    try {
+        const sr = fnConfig.getMpvSuperresMode();
+        const sm = fnConfig.getMpvSmoothMode();
+        const backend = fnConfig.getMpvRifeBackend() === 'tensorrt' ? 'tensorrt' : 'vulkan';
+        const protect4k = fnConfig.getMpvAqProtect4k() !== false;
+        const lines = [
+            '# Fntv-Plus 「超分与补帧」自适应画质配置',
+            '# 由应用「设置面板 > 超分与补帧」写入，请勿手动编辑（修改会被覆盖）。',
+            '# 安全模型对齐 mpv-Yaozhi adaptive-quality：两项独立、默认关闭；',
+            '# 自动档在 fntv_aq.lua 内按 显卡档位/片源分辨率/帧率/输出负载/画面格式 决策并安全回退。',
+            '',
+            '# 空间增强（超分）：off / auto / performance / quality',
+            'superres_mode=' + sr,
+            '# 时间平滑（补帧）：off / auto / performance / quality',
+            'smooth_mode=' + sm,
+            '',
+            '# RIFE 后端：vulkan(随包/基础) / tensorrt(需完整扩展包, 仅兼容 NVIDIA RTX)',
+            'rife_backend=' + backend,
+            '# 显卡档位：low / balanced / medium / high / upper_high / auto（auto=lua 按 balanced 兜底）',
+            'tier=' + (tier || 'auto'),
+            '# 4K 补帧性能保护（默认开）：4K 片源不进入重负载方案，过载直接回退不降采样',
+            'protect_4k_smooth=' + (protect4k ? 'yes' : 'no'),
+            '# 通用色度增强（KrigBilateral，仅在像素预算内自动加载）',
+            'auto_chroma=yes',
+            '# 智能去色带（仅 8bit/非 HDR/低码率密度片源）',
+            'smart_deband=yes',
+            ''
+        ];
+        const content = lines.join('\n');
+        const dirs = [getPortableConfigDir(), getMpvConfigDir()];
+        for (const dir of dirs) {
+            try {
+                const scriptOptsDir = path.join(dir, 'script-opts');
+                if (!fs.existsSync(scriptOptsDir)) fs.mkdirSync(scriptOptsDir, { recursive: true });
+                const target = path.join(scriptOptsDir, 'fntv_aq.conf');
+                fs.writeFileSync(target, content, 'utf-8');
+                logger.info(`[超分与补帧] 配置已写入: ${target} (sr=${sr}, sm=${sm}, backend=${backend}, tier=${tier || 'auto'}, 4k保护=${protect4k})`);
+            } catch (e) {
+                logger.error(`[超分与补帧] 写入 fntv_aq.conf 失败: ${dir}`, e);
+            }
+        }
+    } catch (error) {
+        logger.error('[超分与补帧] 写入 fntv_aq.conf 失败:', error);
+    }
+}
+
+/** 应用侧「超分与补帧」设置变更：持久化 → 探测档位 → 重写 conf（档位探测异步，完成后补写 tier）。 */
+export function applyAqSettings(sr: string, sm: string, backend: string, protect4k: boolean): void {
+    fnConfig.setMpvSuperresMode(sr);
+    fnConfig.setMpvSmoothMode(sm);
+    fnConfig.setMpvRifeBackend(backend);
+    fnConfig.setMpvAqProtect4k(protect4k);
+    writeAqConfig(cachedGpuTier || 'auto');
+    void detectGpuTier().then((tier) => {
+        // 档位探测（首跑异步）完成后用真实档位覆写一次；缓存命中时 tier 相同，写盘幂等
+        writeAqConfig(tier);
+    });
+}
+
+/** [lc-1351→lc-1353] 确保 input.conf 含「Fntv-Plus」功能列表绑定（右键/更多菜单，静态平铺无二级入口）。
+ *  存量升级均幂等：① 无绑定 → 追加整块；② 旧「超分与补帧」单卡绑定 / 旧「功能菜单…」二级入口 →
+ *  删除旧行后追加整块。功能列表本身来自随包 input.conf（超分与补帧仍打开其模式子菜单）。 */
+export function ensureAqMenuBinding(): void {
+    const NEW_MARKER = 'fntv-menu-chapters';
+    const BLOCK = [
+        '_          script-message fntv-aq-menu                                                       #menu: Fntv-Plus > 超分与补帧…',
+        '_          script-message fntv_format_badge-toggle                                           #menu: Fntv-Plus > 起播格式标签',
+        '_          script-message-to uosc codex-open-music-mode-menu                                 #menu: Fntv-Plus > 音乐模式…',
+        '_          script-message-to ontop_mode cycle                                                #menu: Fntv-Plus > 置顶模式',
+        '_          script-message fntv-menu-chapters                                                 #menu: Fntv-Plus > 视频章节显示',
+        '_          script-message fntv-menu-fullscreen                                               #menu: Fntv-Plus > 起播自动全屏',
+        '_          script-message fntv-menu-minimize-pause                                           #menu: Fntv-Plus > 最小化暂停播放',
+        '_          script-message fntv-menu-audio-pt                                                 #menu: Fntv-Plus > 音频源码直通',
+        '_          script-message-to uosc codex-open-peak-menu                                       #menu: Fntv-Plus > HDR 输出与峰值亮度…',
+        '_          script-message-to uosc codex-open-black-level-menu                                #menu: Fntv-Plus > 黑位与输出范围…',
+        '_          script-message-to uosc codex-open-subtitle-color-menu                             #menu: Fntv-Plus > 字幕色彩模式…',
+        '_          script-message-to uosc codex-open-dock-animation-menu                             #menu: Fntv-Plus > 底栏动画…',
+    ].join('\n');
+    const dirs = [getPortableConfigDir(), getMpvConfigDir()];
+    for (const dir of dirs) {
+        try {
+            const target = path.join(dir, 'input.conf');
+            const existing = fs.existsSync(target) ? fs.readFileSync(target, 'utf-8') : '';
+            if (existing.indexOf(NEW_MARKER) >= 0) continue; // 已是平铺功能列表版
+            // 移除历史两代单入口行（超分与补帧… / 功能菜单…），再追加整块
+            const stripped = existing
+                .replace(/^.*script-binding fntv_aq\/menu.*\r?\n?/m, '')
+                .replace(/^.*script-binding fntv_menu\/menu.*\r?\n?/m, '');
+            fs.writeFileSync(target, stripped.replace(/\s*$/, '') + '\n' + BLOCK + '\n', 'utf-8');
+            logger.info('已补写「Fntv-Plus 功能列表」入口(input.conf): ' + target);
+        } catch (e: any) {
+            logger.warn('补写功能列表绑定失败 (' + dir + '):', e && e.message);
+        }
     }
 }
 
@@ -297,7 +498,10 @@ const MPV_RENDER_PRESETS: Record<string, string[]> = {
         'vo=gpu-next',
         'scale=ewa_lanczossharp',
         'dscale=hermite',
-        'cscale=ewa_lanczossoft',
+        // [lc-1350] libplacebo 已移除 ewa_lanczossoft 内核（新版 mpv 报
+        // "Failed mapping filter function, no libplacebo analog"），chroma 缩放
+        // 换用同为 EWA 系的 ewa_lanczossharp，观感一致且两边都有实现。
+        'cscale=ewa_lanczossharp',
         'deband=yes',
         'deband-iterations=2',
         'hdr-compute-peak=yes',
@@ -306,6 +510,18 @@ const MPV_RENDER_PRESETS: Record<string, string[]> = {
 
 const RENDER_BLOCK_BEGIN = '# ── Fntv-Plus 渲染预设 begin ──';
 const RENDER_BLOCK_END = '# ── Fntv-Plus 渲染预设 end ──';
+
+// [lc-1355] 音频响度档 → af 链（写入 mpv-user.conf 托管块）
+// loudnorm 输出恒为 192kHz（ffmpeg 滤镜特性），后接 aformat 拉回 48k 避免部分设备协商异常；
+// 与「音频源码直通」互斥：直通时 mpv 绕过 af，该档自动失效（面板提示文案已说明）。
+const MPV_LOUDNESS_AF: Record<string, string[]> = {
+    off: [],
+    gain3: ['af=volume=3dB'],
+    gain6: ['af=volume=6dB'],
+    loudnorm: ['af=loudnorm=I=-16:TP=-1.5:LRA=11,aformat=sample_rates=48000'],
+};
+const LOUDNESS_BLOCK_BEGIN = '# ── Fntv-Plus 音频响度 begin ──';
+const LOUDNESS_BLOCK_END = '# ── Fntv-Plus 音频响度 end ──';
 
 /**
  * 将「默认 MPV 着色器 + ICC 校色」写入 portable_config/mpv-user.conf。
@@ -339,6 +555,16 @@ function writeMpvUserConfig(shaderKey: string, iccEnabled: boolean): void {
         lines.push(RENDER_BLOCK_BEGIN, '# preset=' + presetKey);
         for (const pl of presetLines) lines.push(pl);
         lines.push(RENDER_BLOCK_END);
+
+        // [lc-1355] 追加音频响度托管块（同渲染预设策略：剥旧防堆叠，任意重写都带着当前档）
+        const loudKey = fnConfig.getMpvAudioLoudness();
+        const loudLines = MPV_LOUDNESS_AF[loudKey] || MPV_LOUDNESS_AF.off;
+        const lbIdx = lines.indexOf(LOUDNESS_BLOCK_BEGIN);
+        const leIdx = lines.indexOf(LOUDNESS_BLOCK_END);
+        if (lbIdx >= 0 && leIdx > lbIdx) lines.splice(lbIdx, leIdx - lbIdx + 1);
+        lines.push(LOUDNESS_BLOCK_BEGIN, '# mode=' + loudKey);
+        for (const ll of loudLines) lines.push(ll);
+        lines.push(LOUDNESS_BLOCK_END);
         const content = lines.join('\n') + '\n';
 
         // ⚠️ 关键修复：同时写入两个目录，确保无论 MPV 处于哪种模式都能生效：
@@ -795,6 +1021,13 @@ function init(): void {
 export function applyRenderPreset(preset: string): void {
     const p = preset === 'perf' || preset === 'quality' ? preset : 'balanced';
     fnConfig.setMpvRenderPreset(p);
+    writeMpvUserConfig(fnConfig.getMpvDefaultShader(), fnConfig.getMpvIccEnabled() !== false);
+}
+
+/** [lc-1355] 应用音频响度档：持久化 + 重写 mpv-user.conf（af 链随下次播放生效）。 */
+export function applyAudioLoudness(mode: string): void {
+    const m = mode === 'gain3' || mode === 'gain6' || mode === 'loudnorm' ? mode : 'off';
+    fnConfig.setMpvAudioLoudness(m);
     writeMpvUserConfig(fnConfig.getMpvDefaultShader(), fnConfig.getMpvIccEnabled() !== false);
 }
 

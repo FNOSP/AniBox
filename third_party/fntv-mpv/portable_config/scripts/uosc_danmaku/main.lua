@@ -34,6 +34,17 @@ PID = utils.getpid()
 DANMAKU = {sources = {}, count = 1}
 DELAYS = {}
 ENABLED, COMMENTS, DELAY = false, nil, 0
+-- [lc-1353] 底栏 switch 开关桥：把 ENABLED 镜像到 user-data 属性供 uosc cycle 开关
+-- 读写；外部（uosc 底栏开关）翻转属性时由观察器回调 toggle_danmaku_state（menu.lua）。
+SWITCH_PROPERTY = 'user-data/uosc_danmaku/danmaku-switch'
+function sync_danmaku_switch()
+    mp.set_property_bool(SWITCH_PROPERTY, ENABLED)
+end
+mp.observe_property(SWITCH_PROPERTY, 'bool', function(_, val)
+    if val ~= nil and val ~= ENABLED then
+        toggle_danmaku_state()
+    end
+end)
 DELAY_PROPERTY = string.format("user-data/%s/danmaku-delay", mp.get_script_name())
 mp.set_property_native(DELAY_PROPERTY, 0)
 HAS_DANMAKU = string.format("user-data/%s/has-danmaku", mp.get_script_name())
@@ -88,6 +99,9 @@ function get_danmaku_visibility()
     end
     return true
 end
+
+-- [lc-1353] 启动初值：开关初始态 = 持久化的用户偏好（ ENABLED 要到弹幕实际加载才置 true ）
+mp.set_property_bool(SWITCH_PROPERTY, get_danmaku_visibility())
 
 function set_danmaku_visibility(flag)
     local history = {}

@@ -48,7 +48,7 @@ end
 ---@param y number
 ---@param align number
 ---@param value string|number
----@param opts {size: number; font?: string; color?: string; bold?: boolean; italic?: boolean; border?: number; border_color?: string; shadow?: number; shadow_color?: string; rotate?: number; wrap?: number; opacity?: number|{primary?: number; border?: number, shadow?: number, main?: number}; clip?: string}
+---@param opts {size: number; font?: string; spacing?: number; scale_x?: number; color?: string; bold?: boolean; italic?: boolean; border?: number; border_color?: string; shadow?: number; shadow_color?: string; rotate?: number; wrap?: number; opacity?: number|{primary?: number; border?: number, shadow?: number, main?: number}; clip?: string}
 function ass_mt:txt(x, y, align, value, opts)
 	local border_size = opts.border or 0
 	local shadow_size = opts.shadow or 0
@@ -57,6 +57,10 @@ function ass_mt:txt(x, y, align, value, opts)
 	tags = tags .. '\\fn' .. (opts.font or config.font)
 	-- font size
 	tags = tags .. '\\fs' .. opts.size
+	-- optional horizontal condensation for exceptionally long single-line text
+	if opts.scale_x then tags = tags .. '\\fscx' .. opts.scale_x end
+	-- character spacing
+	if opts.spacing then tags = tags .. '\\fsp' .. opts.spacing end
 	-- bold
 	if opts.bold or (opts.bold == nil and options.font_bold) then tags = tags .. '\\b1' end
 	-- italic
@@ -193,11 +197,11 @@ end
 ---@param ay number
 ---@param bx number
 ---@param by number
----@param opts? {color?: string; border?: number; border_color?: string; opacity?: number|{primary?: number; border?: number, shadow?: number, main?: number}; clip?: string, radius?: number}
+---@param opts? {color?: string; border?: number; border_color?: string; opacity?: number|{primary?: number; border?: number, shadow?: number, main?: number}; clip?: string, radius?: number; blur?: number}
 function ass_mt:rect(ax, ay, bx, by, opts)
 	opts = opts or {}
 	local border_size = opts.border or 0
-	local tags = '\\pos(0,0)\\rDefault\\an7\\blur0'
+	local tags = '\\pos(0,0)\\rDefault\\an7\\blur' .. (opts.blur or 0)
 	-- border
 	tags = tags .. '\\bord' .. border_size
 	-- colors

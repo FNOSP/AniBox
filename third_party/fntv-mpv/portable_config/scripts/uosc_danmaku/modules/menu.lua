@@ -1753,6 +1753,7 @@ function toggle_danmaku_state()
         end
     end
     sync_danmaku_toggle_btn()
+    if sync_danmaku_switch then sync_danmaku_switch() end
 end
 
 -- 兼容旧 uosc 属性桥接(已弃用): 仅做状态同步, 不再回写 `set show_danmaku`(旧崩溃路径)。

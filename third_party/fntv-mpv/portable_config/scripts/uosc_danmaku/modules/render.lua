@@ -383,7 +383,255 @@ local function try_filter_path()
     return false
 end
 
-function render()
+-- ============================================================
+-- [lc-1351] 原生 ASS 副字幕轨渲染路径（render_mode=auto 时默认优先）
+-- 依赖自编译核心的三个补丁属性（mpv-Yaozhi 0010/0016/0017 补丁系列，已随
+-- v0.41.0-1011 核心内置；third_party/mpv-patches/）：
+--   secondary-sub-ass-full-viewport : 全屏宽银幕时弹幕映射到完整输出画面
+--   secondary-sub-ass-refresh-rate  : 副字幕按显示器刷新率独立重绘 + C 侧墙钟外推
+--                                     （弹幕摆脱视频帧率限制，24fps 片源不再 24Hz 抖动）
+--   secondary-ass-replace <id> <file>: 弹幕更新原位原子换轨（保留字体缓存、不闪烁）
+-- 弹幕以真实 ASS 轨（sub-add → secondary-sid）交给 libass 按帧 pts 插值 \move，
+-- 脚本侧零定时器。任一环节不可用即回退 OSD 定时器路径（旧核心行为不变）。
+-- 与 Yaozhi 原版的差异：事件仍来自本仓库的 ASS 转换管线（延迟/聚合/占比在
+-- write_render_file 中落地）；全屏黑边不切 overlay（直接 full-viewport，
+-- 与旧 OSD 路径观感一致且无切换闪烁）；消息系统沿用本仓库的堆叠实现。
+-- ============================================================
+local REFRESH_OPTION = 'secondary-sub-ass-refresh-rate'
+local FULL_VIEWPORT_OPTION = 'secondary-sub-ass-full-viewport'
+local native_refresh_available = mp.get_property_native(REFRESH_OPTION) ~= nil
+local native_full_viewport_available = mp.get_property_native(FULL_VIEWPORT_OPTION) ~= nil
+local native_replace_available = false
+for _, command in ipairs(mp.get_property_native('command-list') or {}) do
+    if command.name == 'secondary-ass-replace' then native_replace_available = true end
+end
+local ass_track_id, ass_track_path = nil, nil
+local ass_track_failed = false   -- 构建/挂载失败才毒化本场；二字幕占用是临时回退
+local ass_track_active = false   -- 当前渲染是否走轨道路径
+local changing_secondary = false
+local native_full_viewport_active = false
+local previous_secondary_sid, previous_secondary_visibility
+local previous_secondary_ass_override, previous_secondary_refresh
+local previous_secondary_full_viewport
+
+local function is_ass_track_mode()
+    return ass_track_active
+end
+
+local function is_disabled_sid(value)
+    if value == nil or value == false then return true end
+    local sid = tostring(value):lower()
+    return sid == "" or sid == "no" or sid == "auto" or sid == "0" or sid == "false"
+end
+
+local function has_external_secondary_subtitle()
+    local sid = mp.get_property_native("secondary-sid")
+    if is_disabled_sid(sid) then return false end
+    return not ass_track_id or tostring(sid) ~= tostring(ass_track_id)
+end
+
+local function get_osd_vertical_geometry()
+    local width, height = mp.get_osd_size()
+    if not width or width <= 0 or not height or height <= 0 then return nil end
+    local dimensions = mp.get_property_native('osd-dimensions', {})
+    if type(dimensions) ~= 'table' then return width, height, 0, height end
+    local dimensions_height = tonumber(dimensions.h)
+    local scale_y = dimensions_height and dimensions_height > 0 and height / dimensions_height or 1
+    local top = math.max(0, math.min(height, (tonumber(dimensions.mt) or 0) * scale_y))
+    local bottom = math.max(0, math.min(height, height - (tonumber(dimensions.mb) or 0) * scale_y))
+    if bottom <= top then return width, height, 0, height end
+    return width, height, top, bottom
+end
+
+local function should_use_fullscreen_blackbar_overlay()
+    if options.fullscreen_blackbar == false then return false end
+    if mp.get_property_native('fullscreen') ~= true then return false end
+    local width, _, picture_top = get_osd_vertical_geometry()
+    if not width then return false end
+    return picture_top >= 1
+end
+
+-- 副字幕重绘目标频率：显示器原生刷新；>180Hz 面板按 144 封顶整数分频
+-- （Yaozhi get_automatic_overlay_divisor 语义，防止超高分频外 Lua/ASS 重绘无上限）
+local function get_target_refresh_rate()
+    local display_fps = mp.get_property_number("display-fps")
+    if not display_fps or display_fps <= 0 then return 60 end
+    if display_fps <= 180.5 then return display_fps end
+    return display_fps / math.max(2, math.ceil(display_fps / 144 - 0.001))
+end
+
+local function set_secondary_property(name, value, native)
+    if value == nil then return end
+    changing_secondary = true
+    if native then
+        mp.set_property_native(name, value)
+    else
+        mp.set_property(name, value)
+    end
+    changing_secondary = false
+end
+
+local function clear_saved_secondary_state()
+    previous_secondary_sid = nil
+    previous_secondary_visibility = nil
+    previous_secondary_ass_override = nil
+    previous_secondary_full_viewport = nil
+    previous_secondary_refresh = nil
+end
+
+local function sync_native_refresh()
+    if not native_refresh_available or not ass_track_id then return end
+    if has_external_secondary_subtitle() then return end
+    local rate = ass_track_active and get_target_refresh_rate() or 0
+    if math.abs((mp.get_property_number(REFRESH_OPTION, 0) or 0) - rate) > 0.01 then
+        set_secondary_property(REFRESH_OPTION, rate, true)
+    end
+end
+
+local function sync_native_viewport()
+    sync_native_refresh()
+    if not native_full_viewport_available or not ass_track_id then return end
+    if has_external_secondary_subtitle() then return end
+    local enabled = ass_track_active and should_use_fullscreen_blackbar_overlay()
+    if mp.get_property_native(FULL_VIEWPORT_OPTION) ~= enabled then
+        set_secondary_property(FULL_VIEWPORT_OPTION, enabled, true)
+    end
+    native_full_viewport_active = enabled
+end
+
+local function save_secondary_state()
+    if previous_secondary_sid == nil then
+        previous_secondary_sid = mp.get_property_native("secondary-sid") or "no"
+        previous_secondary_visibility = mp.get_property("secondary-sub-visibility", "yes")
+        previous_secondary_ass_override = mp.get_property("secondary-sub-ass-override", "strip")
+        if native_full_viewport_available then
+            previous_secondary_full_viewport = mp.get_property_native(FULL_VIEWPORT_OPTION)
+        end
+        if native_refresh_available then
+            previous_secondary_refresh = mp.get_property_native(REFRESH_OPTION)
+        end
+    end
+end
+
+local function unload_ass_track(restore_secondary)
+    if native_refresh_available and previous_secondary_refresh ~= nil then
+        set_secondary_property(REFRESH_OPTION, previous_secondary_refresh, true)
+    end
+    if native_full_viewport_available and previous_secondary_full_viewport ~= nil then
+        set_secondary_property(FULL_VIEWPORT_OPTION, previous_secondary_full_viewport, true)
+    end
+    native_full_viewport_active = false
+    local track_id = ass_track_id
+    ass_track_id = nil
+    ass_track_path = nil
+    if track_id then
+        pcall(mp.commandv, "sub-remove", track_id)
+    end
+    if restore_secondary then
+        if previous_secondary_sid ~= nil then
+            set_secondary_property("secondary-sid", previous_secondary_sid, true)
+            set_secondary_property("secondary-sub-visibility", previous_secondary_visibility)
+            set_secondary_property("secondary-sub-ass-override", previous_secondary_ass_override)
+        end
+        clear_saved_secondary_state()
+    end
+    if ass_track_failed then
+        -- 毒化场合保留渲染文件供 OSD/滤镜路径复用；正常卸载与滤镜路径同生命周期
+    end
+end
+
+local function find_ass_track_id(existing_ids, path)
+    local tracks = mp.get_property_native("track-list") or {}
+    for _, track in ipairs(tracks) do
+        -- 只认领新挂载的外部轨；内嵌轨没有 external-filename，旧场同名轨也不认
+        if track.type == "sub" and track.external and not existing_ids[track.id]
+        and (track.title == "uosc_danmaku"
+            or (path and track["external-filename"] == path)) then
+            return track.id
+        end
+    end
+    return nil
+end
+
+local function fallback_track_to_osd(reason)
+    unload_ass_track(true)
+    ass_track_active = false
+    if reason then
+        msg.warn("[lc-1351] 原生 ASS 轨不可用(" .. tostring(reason) .. ")，回退 OSD 定时器渲染")
+    end
+    render()
+    if not pause then
+        timer:resume()
+    end
+end
+
+-- 尝试轨道路径：成功返回 true。内容变更（首次/延迟调整/重载）都会走这里：
+-- 已有轨且核心支持 secondary-ass-replace 时原位换轨，否则 sub-add 新轨并接管
+-- secondary-sid（保存并复原用户副字幕状态，弹幕隐藏/卸载时还原）。
+local function try_ass_track_path()
+    if not native_refresh_available then return false end
+    local requested = tostring(options.render_mode or "auto"):lower()
+    if requested == "overlay" then return false end
+    if ass_track_failed then return false end
+    if has_external_secondary_subtitle() then return false end
+    if not COMMENTS or #COMMENTS == 0 then return false end
+    if not write_render_file() then
+        ass_track_failed = true
+        return false
+    end
+
+    local track_path = get_render_ass_path()
+    if ass_track_id and native_replace_available then
+        local ok, result, err = pcall(mp.commandv, 'secondary-ass-replace', ass_track_id, track_path)
+        if ok and result ~= false and not (result == nil and err) then
+            ass_track_active = true
+            sync_native_viewport()
+            return true
+        end
+        msg.warn("[lc-1351] 原位换轨失败，改走 sub-add: " .. tostring(err or result))
+    end
+
+    save_secondary_state()
+    local existing_ids = {}
+    for _, track in ipairs(mp.get_property_native("track-list") or {}) do
+        if track.type == "sub" then existing_ids[track.id] = true end
+    end
+    local ok, result, command_err = pcall(mp.commandv, "sub-add", track_path, "auto", "uosc_danmaku")
+    if not ok or result == false or (result == nil and command_err) then
+        -- 与 Yaozhi 原版一致：挂载失败毒化本场（每次显示重试只会反复失败）
+        ass_track_failed = true
+        return false
+    end
+    local new_id = find_ass_track_id(existing_ids, track_path)
+    if not new_id then
+        ass_track_failed = true
+        return false
+    end
+    if ass_track_id and ass_track_id ~= new_id then
+        pcall(mp.commandv, "sub-remove", ass_track_id)
+    end
+    ass_track_id, ass_track_path = new_id, track_path
+    ass_track_active = true
+    set_secondary_property("secondary-sub-visibility", "yes")
+    set_secondary_property("secondary-sub-ass-override", "no")
+    set_secondary_property("secondary-sid", ass_track_id, true)
+    sync_native_viewport()
+    -- 轨道接管渲染：停掉 OSD 定时器并清掉残留 overlay
+    timer:kill()
+    overlay:remove()
+    if filter_active then
+        remove_danmaku_filter()
+    end
+    msg.info(string.format("[lc-1351] 弹幕走原生 ASS 副字幕轨 (id=%s, refresh=%.3fHz, full-viewport=%s)",
+        tostring(ass_track_id), get_target_refresh_rate(),
+        tostring(native_full_viewport_active)))
+    return true
+end
+
+function render(pos_arg)
+    -- [lc-1351] 轨道模式下 libass 按帧 pts 自渲染（seek/暂停/续播均自动对齐），
+    -- OSD 定时器路径整体旁路。此函数保留给 OSD 回退路径调用。
+    if ass_track_active then return end
     -- [lc-1273] 滤镜路径下无需逐 tick 重画：seek/暂停/续播的弹幕位置由 libass
     -- 按帧 pts 自行对齐。此函数保留给 OSD 回退路径（定时器/换文件/seek 调用）
     if filter_available then return end
@@ -471,6 +719,13 @@ end
 
 function show_danmaku_func()
     mp.set_property_bool(HAS_DANMAKU, true)
+    -- [lc-1351] 原生 ASS 轨优先：弹幕交给 libass 按显示刷新率重绘，脚本零定时器。
+    -- 轨道路径绝不能动视频管线（fps 补帧滤镜只在 OSD 路径下才有意义）。
+    if try_ass_track_path() then
+        ass_track_active = true
+        return
+    end
+    ass_track_active = false
     -- [lc-1273] fps 滤镜须先于 ass 滤镜入链：重复帧携带新 pts，libass 才能对每个重复帧
     -- 插值一次，弹幕才能随 fps 滤镜获得 60fps 平滑（顺序颠倒会退化为视频原始帧率）
     if options.vf_fps then
@@ -495,6 +750,14 @@ end
 -- [lc-1273] 弹幕延迟等「事件时间轴」变更后的刷新入口：滤镜路径重建文件并重挂
 -- （滤镜 init 时才会重新读文件）；OSD 路径直接重画。main.lua 延迟处理调用此函数。
 function rebuild_render()
+    -- [lc-1351] 轨道模式：重建渲染 ASS 并原位换轨（secondary-ass-replace）
+    if ass_track_active then
+        if not try_ass_track_path() then
+            ass_track_failed = true
+            fallback_track_to_osd("重建失败")
+        end
+        return
+    end
     if filter_available then
         if filter_active then
             try_filter_path()
@@ -505,6 +768,11 @@ function rebuild_render()
 end
 
 function hide_danmaku_func()
+    -- [lc-1351] 先卸载弹幕轨并复原用户副字幕状态（在清 overlay/停表之前）
+    if ass_track_id then
+        unload_ass_track(true)
+    end
+    ass_track_active = false
     remove_danmaku_filter()
     timer:kill()
     mp.set_property_bool(HAS_DANMAKU, false)
@@ -580,6 +848,11 @@ mp.observe_property('osd-height', 'number', function(_, value) osd_height = valu
 --   判据本身也没意义，直接按刷新率重建即可（下限 1ms 防呆）。
 --   [lc-1273] 滤镜路径下无定时器可调，跳过。
 mp.observe_property('display-fps', 'number', function(_, value)
+    -- [lc-1351] 轨道模式下不重建 OSD 定时器，只需把副字幕重绘率同步到新刷新率
+    if ass_track_active then
+        sync_native_refresh()
+        return
+    end
     if filter_available then return end
     if value ~= nil and value > 0 then
         local interval = 1 / value
@@ -596,13 +869,49 @@ mp.observe_property('pause', 'bool', function(_, value)
         pause = value
     end
     -- [lc-1273] 滤镜路径下弹幕随 pts 冻结（暂停即静止，行为正确），无需停/启定时器
-    if ENABLED and not filter_available then
+    -- [lc-1351] 轨道模式同理：0016 补丁的播放循环在暂停时自动冻结副字幕时钟
+    if ENABLED and not filter_available and not ass_track_active then
         if pause then
             timer:kill()
         elseif COMMENTS ~= nil then
             timer:resume()
         end
     end
+end)
+
+-- [lc-1351] 用户在弹幕轨占用副字幕槽时手动选择了真实第二字幕：临时回退 OSD
+-- 渲染（不毒化轨道路径，第二字幕关闭后下次显示自动回到轨道）；只复原可见性/
+-- 样式覆盖，不抢回 sid 选择权。
+mp.observe_property('secondary-sid', 'native', function(_, value)
+    if changing_secondary then return end
+    if ass_track_active and ass_track_id
+        and value ~= nil and not is_disabled_sid(value)
+        and tostring(value) ~= tostring(ass_track_id) then
+        local visibility = previous_secondary_visibility
+        local ass_override = previous_secondary_ass_override
+        unload_ass_track(false)
+        ass_track_active = false
+        set_secondary_property("secondary-sub-visibility", visibility)
+        set_secondary_property("secondary-sub-ass-override", ass_override)
+        clear_saved_secondary_state()
+        if ENABLED and COMMENTS ~= nil then
+            msg.verbose("[lc-1351] 检测到第二字幕占用，弹幕临时切换 OSD 兼容渲染")
+            render()
+            if not pause then
+                timer:resume()
+            end
+            show_message("检测到第二字幕，弹幕已切换兼容渲染", 3)
+        end
+    end
+end)
+
+-- [lc-1351] 全屏/画面几何变化：宽银幕黑边场景下开关 full-viewport（运行时属性，
+-- 无需重挂轨道），并同步副字幕重绘率
+mp.observe_property('fullscreen', 'bool', function()
+    if ass_track_active then sync_native_viewport() end
+end)
+mp.observe_property('osd-dimensions', 'native', function()
+    if ass_track_active then sync_native_viewport() end
 end)
 
 mp.register_event('playback-restart', function(event)
@@ -616,6 +925,12 @@ end)
 
 mp.add_hook("on_unload", 50, function()
     COMMENTS, DELAY = nil, 0
+    -- [lc-1351] 先卸载弹幕轨（sub-remove + 复原 secondary-sid/可见性/重绘率），
+    -- 再走既有的滤镜/文件清理。unload_ass_track 不删渲染文件，由下方统一删除。
+    if ass_track_id then
+        unload_ass_track(true)
+    end
+    ass_track_active = false
     timer:kill()
     overlay:remove()
     -- [lc-1273] 撤滤镜 + 清理渲染 ASS（与 danmaku-PID.ass 同生命周期）

@@ -21,7 +21,9 @@ defaults = {
 	timeline_line_width = 2,
 	timeline_size = 40,
 	progress = 'windowed',
-	progress_size = 2,
+	progress_size = 1.2,
+	progress_playing_only = false,
+	progress_minimized_track = true,
 	progress_line_width = 20,
 	timeline_persistency = '',
 	timeline_border = 1,
@@ -35,6 +37,9 @@ defaults = {
 	controls_margin = 8,
 	controls_spacing = 2,
 	controls_persistency = '',
+	button_tooltips = true,
+	idle_branding = true,
+	chapter_display = false,
 
 	volume = 'right',
 	volume_size = 40,
@@ -45,14 +50,20 @@ defaults = {
 	speed_persistency = '',
 	speed_step = 0.1,
 	speed_step_is_factor = false,
+	-- [lc-1352] 速度菜单预设倍速（逗号分隔；0.01–100，去重升序展示）
+	speed_menu_items = '0.5,0.75,1,1.25,1.5,2,3,4,5',
+	-- [lc-1352] 速度菜单末尾附加「自定义…」入口（打开内置命令行并预填 set speed）
+	speed_menu_custom = true,
 
 	menu_item_height = 36,
 	menu_min_width = 260,
 	menu_padding = 4,
+	menu_font = '',
 	menu_type_to_search = true,
 
 	top_bar = 'no-border',
 	top_bar_size = 40,
+	top_bar_text_scale = 1,
 	top_bar_persistency = '',
 	top_bar_controls = 'right',
 	top_bar_title = 'yes',
@@ -67,12 +78,19 @@ defaults = {
 
 	scale = 1,
 	scale_fullscreen = 1.3,
+	font = '',
 	font_scale = 1,
 	text_border = 1.2,
 	border_radius = 4,
 	color = '',
 	opacity = '',
 	animation_duration = 100,
+	dock_animation = true,
+	dock_animation_mode = 'classic',
+	dock_animation_in = 180,
+	dock_animation_out = 220,
+	dock_animation_smooth_in = 240,
+	dock_animation_smooth_out = 280,
 	refine = '',
 	flash_duration = 1000,
 	proximity_in = 40,
@@ -102,6 +120,7 @@ defaults = {
 	languages = 'slang,en',
 	subtitles_directory = '~~/subtitles',
 	disable_elements = '',
+	ziggy_path = 'default',
 }
 options = table_copy(defaults)
 function handle_options(changed_options)
@@ -118,6 +137,15 @@ end
 opt.read_options(options, 'uosc', handle_options)
 -- Normalize values
 options.proximity_out = math.max(options.proximity_out, options.proximity_in + 1)
+if not itable_index_of({1, 1.1, 1.15, 1.25, 1.5}, options.top_bar_text_scale) then
+	options.top_bar_text_scale = 1
+end
+options.dock_animation_mode = tostring(options.dock_animation_mode or 'classic'):lower()
+if options.dock_animation == false then
+	options.dock_animation_mode = 'off'
+elseif not itable_index_of({'smooth', 'classic', 'off'}, options.dock_animation_mode) then
+	options.dock_animation_mode = 'classic'
+end
 if options.chapter_ranges:sub(1, 4) == '^op|' then options.chapter_ranges = defaults.chapter_ranges end
 if options.total_time and options.destination_time == 'playtime-remaining' then
 	msg.warn('`total_time` is deprecated. Use `destination_time` instead.')
@@ -142,11 +170,28 @@ local config_defaults = {
 		foreground_text = serialize_rgba('000000').color,
 		background = serialize_rgba('000000').color,
 		background_text = serialize_rgba('ffffff').color,
+		window_border = serialize_rgba('000000').color,
 		curtain = serialize_rgba('111111').color,
 		success = serialize_rgba('a5e075').color,
 		error = serialize_rgba('ff616e').color,
 		match = serialize_rgba('69c5ff').color,
 		heatmap = serialize_rgba('00adee').color,
+		menu_background = serialize_rgba('10243a').color,
+		menu_foreground = serialize_rgba('829db5').color,
+		menu_text = serialize_rgba('e8f0f6').color,
+		menu_selection = serialize_rgba('6e9bc3').color,
+		menu_active = serialize_rgba('7aafd6').color,
+		menu_title = serialize_rgba('b7cfe2').color,
+		menu_title_text = serialize_rgba('17324a').color,
+		timeline_track = serialize_rgba('607986').color,
+		time_current = serialize_rgba('d8e7ed').color,
+		time_muted = serialize_rgba('a1b4be').color,
+		idle_brand_glow = serialize_rgba('789eb7').color,
+		idle_brand_outer = serialize_rgba('1c3148').color,
+		idle_brand_middle = serialize_rgba('27445f').color,
+		idle_brand_core = serialize_rgba('122238').color,
+		idle_brand_disc = serialize_rgba('d8edf4').color,
+		idle_brand_text = serialize_rgba('cde4ee').color,
 	},
 	opacity = {
 		timeline = 0.9,
@@ -177,7 +222,7 @@ config = {
 	-- sets max rendering frequency in case the
 	-- native rendering frequency could not be detected
 	render_delay = 1 / 60,
-	font = mp.get_property('options/osd-font'),
+	font = options.font ~= '' and options.font or mp.get_property('options/osd-font'),
 	osd_margin_x = mp.get_property('osd-margin-x'),
 	osd_margin_y = mp.get_property('osd-margin-y'),
 	osd_alignment_x = mp.get_property('osd-align-x'),
@@ -277,6 +322,11 @@ function update_config()
 			return clamp(0, tonumber(value) or config.opacity[key], 1)
 		end
 	))
+	if not options.chapter_display then
+		config.opacity.chapters = 0
+	elseif config.opacity.chapters <= 0 then
+		config.opacity.chapters = config_defaults.opacity.chapters
+	end
 
 	-- Color
 	config.color = table_assign({}, config_defaults.color, serialize_key_value_list(options.color, function(value)
@@ -298,6 +348,44 @@ function update_config()
 	update_load_types()
 end
 update_config()
+
+function persist_uosc_option(name, value)
+	local config_path = mp.command_native({'expand-path', '~~/script-opts/uosc.conf'})
+	local file = io.open(config_path, 'rb')
+	local content = file and file:read('*a') or ''
+	if file then file:close() end
+
+	local serialized = type(value) == 'boolean' and (value and 'yes' or 'no') or tostring(value)
+	local pattern_name = name:gsub('([^%w])', '%%%1')
+	local replaced
+	content, replaced = content:gsub(
+		'^([ \t]*' .. pattern_name .. '[ \t]*=)[^\r\n]*',
+		'%1' .. serialized,
+		1
+	)
+	if replaced == 0 then
+		content, replaced = content:gsub(
+			'([\r\n][ \t]*' .. pattern_name .. '[ \t]*=)[^\r\n]*',
+			'%1' .. serialized,
+			1
+		)
+	end
+	if replaced == 0 then
+		local newline = content:find('\r\n', 1, true) and '\r\n' or '\n'
+		if content ~= '' and not content:match('[\r\n]$') then content = content .. newline end
+		content = content .. name .. '=' .. serialized .. newline
+	end
+
+	file = io.open(config_path, 'wb')
+	if not file then
+		msg.error('Could not persist uosc option: ' .. tostring(config_path))
+		return false
+	end
+	file:write(content)
+	file:close()
+	msg.info(string.format('Persisted uosc option: %s=%s', name, serialized))
+	return true
+end
 
 -- Default menu items
 function create_default_menu_items()
@@ -334,7 +422,7 @@ function create_default_menu_items()
 				{
 					title = t('Aspect ratio'),
 					items = {
-						{title = t('Default'), value = 'set video-aspect-override "-1"'},
+						{title = t('Default'), value = 'set video-aspect-override no'},
 						{title = '16:9', value = 'set video-aspect-override "16:9"'},
 						{title = '4:3', value = 'set video-aspect-override "4:3"'},
 						{title = '2.35:1', value = 'set video-aspect-override "2.35:1"'},
@@ -346,7 +434,6 @@ function create_default_menu_items()
 				{title = t('Key bindings'), value = 'script-binding uosc/keybinds'},
 				{title = t('Show in directory'), value = 'script-binding uosc/show-in-directory'},
 				{title = t('Open config folder'), value = 'script-binding uosc/open-config-directory'},
-				{title = t('Update uosc'), value = 'script-binding uosc/update'},
 			},
 		},
 		{title = t('Quit'), value = 'quit'},
@@ -383,6 +470,7 @@ state = {
 	ime_active = mp.get_property_native('input-ime'),
 	chapters = {},
 	chapter_ranges = {},
+	current_clipboard_backend = mp.get_property_native('current-clipboard-backend'),
 	border = mp.get_property_native('border'),
 	title_bar = mp.get_property_native('title-bar'),
 	fullscreen = mp.get_property_native('fullscreen'),
@@ -428,7 +516,7 @@ state = {
 	radius = 0,
 }
 buttons = require('lib/buttons')
-thumbnail = {width = 0, height = 0, disabled = false}
+thumbnail = {width = 0, height = 0, disabled = false, ready = false}
 external = {} -- Properties set by external scripts
 key_binding_overwrites = {} -- Table of key_binding:mpv_command
 Elements = require('elements/Elements')
@@ -439,11 +527,14 @@ require('lib/utils')
 require('lib/text')
 require('lib/ass')
 require('lib/menus')
+dock_motion = require('lib/dock_motion')
 
 -- Determine path to ziggy
 do
 	local bin = 'ziggy-' .. (state.platform == 'windows' and 'windows.exe' or state.platform)
-	config.ziggy_path = os.getenv('MPV_UOSC_ZIGGY') or join_path(mp.get_script_directory(), join_path('bin', bin))
+	config.ziggy_path = os.getenv('MPV_UOSC_ZIGGY') or
+	options.ziggy_path == 'default' and join_path(mp.get_script_directory(), join_path('bin', bin)) or
+	utils.join_path(mp.command_native({ 'expand-path', options.ziggy_path }), bin)
 end
 
 --[[ STATE UPDATERS ]]
@@ -676,7 +767,8 @@ mp.observe_property('track-list', 'native', function(name, value)
 			else
 				types.video = types.video + 1
 			end
-		elseif types[track.type] then
+		elseif types[track.type] and not (track.type == 'sub' and track.external
+			and track.title == 'uosc_danmaku') then
 			types[track.type] = types[track.type] + 1
 		end
 	end
@@ -745,6 +837,7 @@ mp.observe_property('demuxer-cache-state', 'native', function(prop, cache_state)
 		set_state('cache_duration', not cache_state.eof and cache_state['cache-duration'] or nil)
 	else
 		cached_ranges = {}
+		set_state('cache_underrun', false)
 	end
 
 	if not (state.duration and (#cached_ranges > 0 or state.cache == 'yes' or
@@ -861,19 +954,187 @@ bind_command('audio', create_select_tracklist_type_menu_opener({
 bind_command('video', create_select_tracklist_type_menu_opener({
 	title = t('Video'), type = 'video', prop = 'vid', load_command = 'script-binding uosc/load-video',
 }))
+
+local function safe_playlist_url_title(filename)
+	local function basename(value)
+		value = url_decode(value or ''):gsub('[?#].*$', ''):gsub('[/\\]+$', '')
+		return value:match('([^/\\]+)$') or value
+	end
+
+	-- libarchive playlist entries embed the outer URL before "|". Showing
+	-- only the inner filename prevents WebDAV credentials and hosts leaking.
+	local archive_inner = filename:match('|/?([^|]+)$')
+	if filename:match('^archive://') and archive_inner then return basename(archive_inner) end
+
+	local url_path = filename:match('^https?://[^/]+(/.*)$')
+	local has_userinfo = filename:match('^%a[%a%d+%.%-]*://[^/]*@') ~= nil
+	local is_alist_path = url_path and (
+		url_path:match('^/dav/') or url_path:match('^/d/') or url_path:match('^/p/')
+	)
+	if has_userinfo or is_alist_path then return basename(url_path or filename) end
+
+	-- Never render URL userinfo even for unknown protocols.
+	local sanitized = filename:gsub('^(%a[%a%d+%.%-]*://)[^/@]*@', '%1')
+	return url_decode(sanitized)
+end
+
+local function current_online_quality_item()
+	-- mpv keeps path/video-params briefly after `stop`. Never let that stale
+	-- snapshot recreate a fake quality row on the idle/start page.
+	if mp.get_property_bool('idle-active', false) then return nil end
+	local path = mp.get_property('path', ''):gsub('^ytdl://', '')
+	local host = path:match('^https?://([^/:?#]+)')
+	if not host then return nil end
+	host = host:lower()
+	local supported = false
+	for _, domain in ipairs({'youtube.com', 'youtu.be', 'bilibili.com', 'b23.tv', 'douyin.com', 'iesdouyin.com', 'douyu.com', 'huya.com'}) do
+		if host == domain or host:sub(-#domain - 1) == '.' .. domain then supported = true; break end
+	end
+	if not supported then return nil end
+	local params = mp.get_property_native('video-params')
+	if type(params) ~= 'table' or not params.w or not params.h then return nil end
+	local label = string.format('%d×%d', params.w, params.h)
+	local fps = mp.get_property_number('container-fps', 0)
+	if fps > 0 then label = label .. string.format(' · %.0ffps', fps) end
+	return {title = '清晰度', hint = label, icon = 'high_quality', selectable = false, actions = {}}
+end
+
+local function online_media_is_live()
+	-- V12: online-media publishes an explicit capability bit. Prefer it over
+	-- reconstructing live state inside uosc, because content-type/kind updates
+	-- can arrive at a different time from the already-visible quality list.
+	if mp.get_property_bool('user-data/online-media/can-reload-live', false) then return true end
+
+	-- Compatibility fallback for older online-media.lua or a property refresh
+	-- that has not reached uosc yet. Dedicated Huya/Douyu/Douyin routes in the
+	-- current router are live-only, while Bilibili/YouTube can also be VOD.
+	local content_type = tostring(mp.get_property('user-data/online-media/content-type', '') or ''):lower()
+	if content_type == 'live' then return true end
+	local kind = tostring(mp.get_property('user-data/online-media/kind', '') or ''):lower()
+	if kind == 'live' or kind:match('%-live$') ~= nil then return true end
+	local platform = tostring(mp.get_property('user-data/online-media/platform', '') or ''):lower()
+	if platform == 'huya' or platform == 'douyu' or platform == 'douyin' then return true end
+	local url = tostring(mp.get_property('user-data/online-media/canonical-url', '') or ''):lower()
+	return url:match('^https?://live%.bilibili%.com[/?:]') ~= nil
+		or url:match('^https?://live%.douyin%.com[/?:]') ~= nil
+end
+
+local function online_quality_menu_item()
+	-- The idle/start page must never expose metadata from the file that was
+	-- just stopped, even if property change notifications arrive out of order.
+	if mp.get_property_bool('idle-active', false) then return nil end
+	if not mp.get_property_bool('user-data/online-media/matched', false) then
+		return current_online_quality_item()
+	end
+	local raw = mp.get_property_native('user-data/online-media/quality-options-json', '')
+	local qualities = type(raw) == 'string' and raw ~= '' and utils.parse_json(raw) or nil
+	if type(qualities) ~= 'table' or #qualities == 0 then return current_online_quality_item() end
+
+	local current_id = mp.get_property_native('user-data/online-media/quality-id', '')
+	local current_label = mp.get_property_native('user-data/online-media/quality', '')
+	-- 主行只写摘要（档位 · 分辨率 · 帧率），展开后的子项才是完整的一行；解析器
+	-- 没给摘要时退回完整标签，宁可长一点也不要空着。
+	local current_summary = mp.get_property_native('user-data/online-media/quality-summary', '')
+	local current_hint = current_summary ~= '' and current_summary or current_label
+	local items = {}
+	for _, quality in ipairs(qualities) do
+		local id = tostring(quality.id or '')
+		local label = tostring(quality.label or id)
+		if id ~= '' then
+			items[#items + 1] = {
+				title = label,
+				hint = quality.hint and tostring(quality.hint) or nil,
+				value = 'online-quality:' .. id,
+				active = id == current_id,
+				selectable = quality.selectable ~= false,
+				muted = quality.selectable == false,
+				actions = {},
+			}
+		end
+	end
+	if #items == 0 then return nil end
+
+	-- Live-only maintenance action: keep it inside the quality submenu so the
+	-- root/right-click menu stays clean. It is separated from quality rows and
+	-- reuses the resolver's current quality id rather than changing quality.
+	local is_live = online_media_is_live()
+	if is_live then
+		items[#items].separator = true
+		-- Only one logical pixel of breathing room is added on each side of the
+		-- separator.  Keep this deliberately tiny so the action remains visually
+		-- attached to the quality menu instead of becoming a detached footer.
+		items[#items].separator_breathe = 1
+		items[#items + 1] = {
+			title = '重新加载直播',
+			icon = 'refresh',
+			-- Render the refresh glyph at the same weak visual level as right-side
+			-- metadata such as "转码", with a slightly smaller footprint.
+			icon_hint = true,
+			icon_scale = 0.88,
+			value = 'online-live-reload',
+			actions = {},
+		}
+	end
+
+	-- Non-live media with a single quality still keeps the compact one-line
+	-- presentation. A live stream remains expandable because the reload action
+	-- is useful even when the platform only exposes one quality.
+	if #items == 1 then
+		return {
+			title = '清晰度',
+			hint = current_hint ~= '' and current_hint or items[1].title,
+			icon = 'high_quality',
+			selectable = false,
+			actions = {},
+		}
+	end
+
+	return {
+		title = '清晰度',
+		type = 'online-quality',
+		hint = current_hint ~= '' and current_hint or '最高可用',
+		icon = 'high_quality',
+		items = items,
+		actions = {},
+	}
+end
+
+local function playlist_online_quality_offset()
+	return online_quality_menu_item() and 1 or 0
+end
+
 bind_command('playlist', create_self_updating_menu_opener({
 	title = t('Playlist'),
 	type = 'playlist',
+	center_root_when_closed = true,
 	list_prop = 'playlist',
+	extra_props = {
+		'user-data/online-media/matched',
+		'user-data/online-media/quality-options-json',
+		'user-data/online-media/quality-id',
+		'user-data/online-media/quality',
+		'user-data/online-media/quality-summary',
+		'user-data/online-media/content-type',
+		'user-data/online-media/kind',
+		'user-data/online-media/can-reload-live',
+		'user-data/online-media/status',
+		'user-data/playlistmanager/titles',
+		'idle-active', 'path', 'video-params', 'container-fps',
+	},
 	footnote = t('Paste path or url to add.') .. ' ' .. t('%s to reorder.', 'ctrl+up/down/pgup/pgdn/home/end'),
 	serializer = function(playlist)
 		local items = {}
-		local force_filename = mp.get_property_native('osd-playlist-entry') == 'filename'
+		local quality_item = online_quality_menu_item()
+		if quality_item then
+			items[#items + 1] = quality_item
+		end
+		local playlist_titles = mp.get_property_native('user-data/playlistmanager/titles') or {}
 		for index, item in ipairs(playlist) do
+			local is_url = is_protocol(item.filename)
 			local title = type(item.title) == 'string' and #item.title > 0 and item.title or false
-			items[index] = {
-				title = (not force_filename and title) and title
-					or (is_protocol(item.filename) and item.filename or serialize_path(item.filename).basename),
+			items[#items + 1] = {
+				title = is_url and (playlist_titles[item.filename] or title or safe_playlist_url_title(item.filename)) or
+				serialize_path(item.filename).basename,
 				hint = tostring(index),
 				active = item.current,
 				value = index,
@@ -881,19 +1142,35 @@ bind_command('playlist', create_self_updating_menu_opener({
 		end
 		return items
 	end,
-	on_activate = function(event) mp.commandv('set', 'playlist-pos-1', tostring(event.value)) end,
+	on_activate = function(event)
+		if type(event.value) == 'string' and event.value:match('^online%-quality:') then
+			mp.commandv('script-message-to', 'online_media', 'online-media-select-quality',
+				event.value:gsub('^online%-quality:', ''))
+		elseif event.value == 'online-live-reload' then
+			mp.commandv('script-message-to', 'online_media', 'online-media-reload-live')
+		elseif type(event.value) == 'number' then
+			mp.commandv('set', 'playlist-pos-1', tostring(event.value))
+		end
+	end,
 	on_paste = function(event) mp.commandv('loadfile', tostring(event.value), 'append') end,
 	on_key = function(event)
-		if event.id == 'ctrl+c' and event.selected_item then
+		if event.id == 'ctrl+c' and event.selected_item
+				and type(event.selected_item.value) == 'number' then
 			local payload = mp.get_property_native('playlist/' .. (event.selected_item.value - 1) .. '/filename')
 			set_clipboard(payload)
 		end
 	end,
 	on_move = function(event)
-		local from, to = event.from_index, event.to_index
+		local offset = playlist_online_quality_offset()
+		if event.from_index <= offset or event.to_index <= offset then return false end
+		local from, to = event.from_index - offset, event.to_index - offset
 		mp.commandv('playlist-move', tostring(from - 1), tostring(to - (to > from and 0 or 1)))
 	end,
-	on_remove = function(event) mp.commandv('playlist-remove', tostring(event.value - 1)) end,
+	on_remove = function(event)
+		if type(event.value) == 'number' then
+			mp.commandv('playlist-remove', tostring(event.value - 1))
+		end
+	end,
 }))
 bind_command('chapters', create_self_updating_menu_opener({
 	title = t('Chapters'),
@@ -952,9 +1229,42 @@ bind_command('show-in-directory', function()
 		end
 	end
 end)
-bind_command('stream-quality', open_stream_quality_menu)
+
+-- The bottom-bar `stream-quality` button is a separate entry point from the
+-- playlist's quality submenu.  Online media must use the same resolver-backed
+-- quality model here as well; otherwise maintenance actions appended to the
+-- playlist submenu (such as live reload) never appear in this direct menu.
+local native_open_stream_quality_menu = open_stream_quality_menu
+local function open_stream_quality_menu_yaozhi()
+	if mp.get_property_bool('user-data/online-media/matched', false) then
+		local menu = online_quality_menu_item()
+		if menu and type(menu.items) == 'table' and #menu.items > 0 then
+			menu.type = 'online-quality'
+			menu.title = '清晰度'
+			Menu:open(menu, function(event)
+				if event.type ~= 'activate' then return end
+				if type(event.value) == 'string' and event.value:match('^online%-quality:') then
+					mp.commandv('script-message-to', 'online_media', 'online-media-select-quality',
+						event.value:gsub('^online%-quality:', ''))
+				elseif event.value == 'online-live-reload' then
+					mp.commandv('script-message-to', 'online_media', 'online-media-reload-live')
+				end
+			end)
+			return
+		end
+	end
+
+	-- Keep uosc's native behavior for ordinary streams that are not routed by
+	-- online-media, so this integration does not change unrelated playback.
+	return native_open_stream_quality_menu()
+end
+
+bind_command('stream-quality', open_stream_quality_menu_yaozhi)
 bind_command('open-file', open_open_file_menu)
-bind_command('shuffle', function() set_state('shuffle', not state.shuffle) end)
+bind_command('shuffle', function()
+	set_state('shuffle', not state.shuffle)
+	mp.osd_message(state.shuffle and t('Shuffle ON') or t('Shuffle OFF'))
+end)
 bind_command('items', function()
 	if state.has_playlist then
 		mp.command('script-binding uosc/playlist')
@@ -1071,9 +1381,6 @@ bind_command('open-config-directory', function()
 		msg.error('Couldn\'t serialize config path "' .. config_path .. '".')
 	end
 end)
-bind_command('update', function()
-	if not Elements:has('updater') then require('elements/Updater'):new() end
-end)
 
 --[[ MESSAGE HANDLERS ]]
 
@@ -1081,12 +1388,30 @@ mp.register_script_message('show-submenu', function(id) toggle_menu_with_items({
 mp.register_script_message('show-submenu-blurred', function(id)
 	toggle_menu_with_items({submenu = id, mouse_nav = true})
 end)
+mp.register_script_message('menu-blurred-at', function(x, y)
+	local anchor_x, anchor_y = tonumber(x), tonumber(y)
+	if anchor_x and anchor_y then
+		toggle_menu_with_items({
+			mouse_nav = true,
+			anchor_x = anchor_x,
+			anchor_y = anchor_y,
+		})
+	else
+		toggle_menu_with_items({mouse_nav = true})
+	end
+end)
 mp.register_script_message('open-menu', function(json, submenu_id)
 	local data = utils.parse_json(json)
 	if type(data) ~= 'table' or type(data.items) ~= 'table' then
 		msg.error('open-menu: received json didn\'t produce a table with menu configuration')
 	else
-		open_command_menu(data, {submenu = submenu_id, on_close = data.on_close})
+		-- `mouse_nav` requested by the menu script opens the menu in pointer mode: no row is
+		-- pre-selected, and selection only starts once the pointer moves deliberately.
+		open_command_menu(data, {
+			submenu = submenu_id,
+			on_close = data.on_close,
+			mouse_nav = data.mouse_nav,
+		})
 	end
 end)
 mp.register_script_message('update-menu', function(json)
@@ -1136,6 +1461,111 @@ mp.register_script_message('set', function(name, value)
 	external[name] = value
 	Elements:trigger('external_prop_' .. name, value)
 end)
+local dock_animation_labels = {
+	smooth = '丝滑 Morph（新）',
+	classic = '经典 Morph（旧）',
+	off = '关闭动画',
+}
+local function publish_dock_animation_state()
+	local mode = options.dock_animation == false and 'off' or options.dock_animation_mode
+	if not dock_animation_labels[mode] then mode = 'classic' end
+	mp.set_property('user-data/uosc/dock-animation-mode', mode)
+	mp.set_property('user-data/uosc/dock-animation-label', dock_animation_labels[mode])
+end
+local function set_dock_animation_mode(value, quiet)
+	local mode = tostring(value or ''):lower()
+	if not dock_animation_labels[mode] then
+		msg.error('Invalid dock animation mode: ' .. tostring(value))
+		mp.osd_message('未知的底栏动画模式', 2)
+		return
+	end
+
+	options.dock_animation_mode = mode
+	options.dock_animation = mode ~= 'off'
+	dock_motion:set_mode(mode)
+	-- Mode-specific retracted visuals (notably the smooth-only mini progress)
+	-- must update immediately, without waiting for pause/fullscreen to change.
+	Elements:maybe('timeline', 'decide_progress_size')
+	persist_uosc_option('dock_animation', options.dock_animation)
+	persist_uosc_option('dock_animation_mode', mode)
+	publish_dock_animation_state()
+	request_render()
+	if quiet ~= 'yes' then mp.osd_message('底栏动画：' .. dock_animation_labels[mode], 2) end
+end
+mp.register_script_message('dock-animation-set', set_dock_animation_mode)
+mp.register_script_message('dock-animation-toggle', function()
+	local current = options.dock_animation == false and 'off' or options.dock_animation_mode
+	set_dock_animation_mode(current == 'smooth' and 'classic' or 'smooth')
+end)
+publish_dock_animation_state()
+local function publish_idle_branding_state()
+	local value = options.idle_branding and 'yes' or 'no'
+	mp.set_property('user-data/uosc/idle-branding', value)
+	mp.commandv('script-message-to', 'idle_branding_image', 'branding-state', value)
+	mp.commandv('script-message-to', 'startup_window', 'uosc-ready')
+end
+mp.register_script_message('idle-branding-toggle', function(value)
+	local requested = tostring(value or 'toggle'):lower()
+	local enabled
+	if requested == 'yes' or requested == 'on' or requested == 'true' or requested == '1' then
+		enabled = true
+	elseif requested == 'no' or requested == 'off' or requested == 'false' or requested == '0' then
+		enabled = false
+	else
+		enabled = not options.idle_branding
+	end
+
+	options.idle_branding = enabled
+	handle_options({idle_branding = true})
+	persist_uosc_option('idle_branding', enabled)
+	publish_idle_branding_state()
+	request_render()
+	mp.osd_message(enabled and 'Yaoplayer 启动界面：开启' or 'Yaoplayer 启动界面：关闭', 2)
+end)
+publish_idle_branding_state()
+local function publish_chapter_display_state()
+	mp.set_property(
+		'user-data/uosc/chapter-display',
+		options.chapter_display and 'yes' or 'no'
+	)
+end
+mp.register_script_message('chapter-display-toggle', function(value)
+	local requested = tostring(value or 'toggle'):lower()
+	if requested == 'yes' or requested == 'on' or requested == 'true' or requested == '1' then
+		options.chapter_display = true
+	elseif requested == 'no' or requested == 'off' or requested == 'false' or requested == '0' then
+		options.chapter_display = false
+	else
+		options.chapter_display = not options.chapter_display
+	end
+
+	handle_options({chapter_display = true})
+	persist_uosc_option('chapter_display', options.chapter_display)
+	publish_chapter_display_state()
+	if options.chapter_display then Elements:flash({'timeline'}) end
+	mp.osd_message(
+		options.chapter_display and '视频章节显示：开启' or '视频章节显示：关闭',
+		2
+	)
+end)
+publish_chapter_display_state()
+local function publish_top_bar_text_scale()
+	mp.set_property_native('user-data/uosc/top-bar-text-scale', options.top_bar_text_scale)
+end
+mp.register_script_message('top-bar-text-scale-set', function(value)
+	local scale = tonumber(value)
+	if not itable_index_of({1, 1.1, 1.15, 1.25, 1.5}, scale) then return end
+	if not persist_uosc_option('top_bar_text_scale', scale) then
+		mp.osd_message('标题大小保存失败，请检查个人配置目录是否可写', 3)
+		return
+	end
+	options.top_bar_text_scale = scale
+	handle_options({top_bar_text_scale = true})
+	publish_top_bar_text_scale()
+	Elements:flash({'top_bar'})
+end)
+publish_top_bar_text_scale()
+mp.register_script_message('idle-branding-refresh', request_render)
 mp.register_script_message('toggle-elements', function(elements) Elements:toggle(comma_split(elements)) end)
 mp.register_script_message('set-min-visibility', function(visibility, elements)
 	local fraction = tonumber(visibility)
@@ -1155,6 +1585,7 @@ local constructors = {
 	pause_indicator = require('elements/PauseIndicator'),
 	top_bar = require('elements/TopBar'),
 	timeline = require('elements/Timeline'),
+-- 	media_info = require('elements/MediaInfo'),
 	controls = options.controls and options.controls ~= 'never' and require('elements/Controls'),
 	volume = itable_index_of({'left', 'right'}, options.volume) and require('elements/Volume'),
 }

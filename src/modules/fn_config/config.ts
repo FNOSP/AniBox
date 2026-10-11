@@ -189,6 +189,13 @@ export interface Config {
     mpvInterpEnabled?: boolean;      // 默认开启插帧（启动即生效）
     mpvInterpEngine?: 'auto' | 'svp' | 'rife' | 'builtin' | 'nvidia'; // 插帧引擎
     mpvInterpEnginePath?: string;    // 引擎路径（SVP 目录 / rife-ncnn-vulkan 可执行文件路径）
+    // [lc-1351] MPV「超分与补帧」自适应画质（参考 mpv-Yaozhi adaptive-quality 安全模型）：
+    //   两项独立开关、默认关闭；auto 档按 显卡档位/片源分辨率/帧率/输出负载/画面格式 决策
+    mpvSuperresMode?: 'off' | 'auto' | 'performance' | 'quality';  // 空间增强（超分）模式
+    mpvSmoothMode?: 'off' | 'auto' | 'performance' | 'quality';    // 时间平滑（补帧）模式
+    mpvRifeBackend?: 'vulkan' | 'tensorrt';                        // RIFE 后端（tensorrt 需完整扩展包）
+    mpvAqProtect4k?: boolean;                                      // 4K 补帧性能保护（默认开）
+    mpvAudioLoudness?: 'off' | 'gain3' | 'gain6' | 'loudnorm';     // 音频响度档（默认 off）
     // 自定义登录页背景图路径（留空=使用默认 resource/login/image/bg-login.webp）
     loginBgPath?: string;
     // 用户点击「稍后提醒/应用补丁/下载」后不再自动弹窗更新的时间戳（毫秒）；缺失/0=未设置（每次启动都弹）
@@ -997,6 +1004,63 @@ export function setMpvInterpEnginePath(p: string): void {
     fs.writeFileSync(getConfigPath(), JSON.stringify(config, null, 2));
 }
 
+// [lc-1351] 「超分与补帧」自适应画质设置（写入 script-opts/fntv_aq.conf 供 fntv_aq.lua 读取）
+// 模式取值：off 关闭 / auto 自动（按显卡档位与片源自适应）/ performance 性能优先 / quality 质量优先
+export type AqMode = 'off' | 'auto' | 'performance' | 'quality';
+function normalizeAqMode(v: unknown): AqMode {
+    return v === 'auto' || v === 'performance' || v === 'quality' ? v : 'off';
+}
+export function getMpvSuperresMode(): AqMode {
+    const config: Config = readConfig() || {};
+    return normalizeAqMode(config.mpvSuperresMode); // 未设置视为关（默认关闭）
+}
+export function setMpvSuperresMode(mode: string): void {
+    const config: Config = readConfig() || {};
+    config.mpvSuperresMode = normalizeAqMode(mode);
+    fs.writeFileSync(getConfigPath(), JSON.stringify(config, null, 2));
+}
+export function getMpvSmoothMode(): AqMode {
+    const config: Config = readConfig() || {};
+    return normalizeAqMode(config.mpvSmoothMode); // 未设置视为关（默认关闭）
+}
+export function setMpvSmoothMode(mode: string): void {
+    const config: Config = readConfig() || {};
+    config.mpvSmoothMode = normalizeAqMode(mode);
+    fs.writeFileSync(getConfigPath(), JSON.stringify(config, null, 2));
+}
+export function getMpvRifeBackend(): 'vulkan' | 'tensorrt' {
+    const config: Config = readConfig() || {};
+    return config.mpvRifeBackend === 'tensorrt' ? 'tensorrt' : 'vulkan';
+}
+export function setMpvRifeBackend(backend: string): void {
+    const config: Config = readConfig() || {};
+    config.mpvRifeBackend = backend === 'tensorrt' ? 'tensorrt' : 'vulkan';
+    fs.writeFileSync(getConfigPath(), JSON.stringify(config, null, 2));
+}
+export function getMpvAqProtect4k(): boolean {
+    const config: Config = readConfig() || {};
+    return config.mpvAqProtect4k !== false; // 未设置视为开启
+}
+export function setMpvAqProtect4k(enabled: boolean): void {
+    const config: Config = readConfig() || {};
+    config.mpvAqProtect4k = !!enabled;
+    fs.writeFileSync(getConfigPath(), JSON.stringify(config, null, 2));
+}
+
+// [lc-1355] MPV 音频响度档（写入 mpv-user.conf 托管块的 af 链，随下次播放生效）
+// off=不干预（默认） / gain3=+3dB / gain6=+6dB / loudnorm=EBU R128 响度归一化（跨片源拉平）
+export type AudioLoudness = 'off' | 'gain3' | 'gain6' | 'loudnorm';
+export function getMpvAudioLoudness(): AudioLoudness {
+    const config: Config = readConfig() || {};
+    const v = config.mpvAudioLoudness;
+    return v === 'gain3' || v === 'gain6' || v === 'loudnorm' ? v : 'off';
+}
+export function setMpvAudioLoudness(v: string): void {
+    const config: Config = readConfig() || {};
+    config.mpvAudioLoudness = v === 'gain3' || v === 'gain6' || v === 'loudnorm' ? v : 'off';
+    fs.writeFileSync(getConfigPath(), JSON.stringify(config, null, 2));
+}
+
 // 获取「B站弹幕聚合阈值」（默认 1500；<=0 表示禁用聚合）
 export function getMpvBiliAggregateThreshold(): number {
     const config: Config = readConfig() || {};
@@ -1567,6 +1631,11 @@ Object.assign(module.exports, {
     getMpvInterpEnabled, setMpvInterpEnabled,
     getMpvInterpEngine, setMpvInterpEngine,
     getMpvInterpEnginePath, setMpvInterpEnginePath,
+    getMpvSuperresMode, setMpvSuperresMode,
+    getMpvSmoothMode, setMpvSmoothMode,
+    getMpvRifeBackend, setMpvRifeBackend,
+    getMpvAqProtect4k, setMpvAqProtect4k,
+    getMpvAudioLoudness, setMpvAudioLoudness,
     // 更新打烊时间戳
     getUpdateDismissedAt, setUpdateDismissedAt, getFullUpdateDismissedAt, setFullUpdateDismissedAt,
     // 热门剧更新数据源（TMDB / 豆瓣）

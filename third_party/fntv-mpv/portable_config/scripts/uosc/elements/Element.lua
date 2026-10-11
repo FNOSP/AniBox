@@ -113,8 +113,35 @@ function Element:get_visibility()
 	-- If anchor returns -1, it means all attached elements should force hide.
 	local anchor = self.anchor_id and Elements[self.anchor_id]
 	local anchor_visibility = anchor and anchor:get_visibility() or 0
+	-- Controls are animated as one dock. Their children inherit the shared
+	-- visual opacity instead of bypassing it with their individual proximity.
+	if self.anchor_id == 'controls' and dock_motion then
+		return anchor_visibility == -1 and 0 or math.max(anchor_visibility, self.min_visibility)
+	end
 
 	return anchor_visibility == -1 and 0 or math.max(self.proximity, anchor_visibility, self.min_visibility)
+end
+
+-- Return a rendered rectangle transformed by the shared controls-dock motion.
+-- The original element rectangle remains unchanged for proximity and clicks.
+---@param rect? Rect
+---@return Rect, {scale: number, translate_y: number}
+function Element:get_visual_rect(rect)
+	local source = rect or self
+	local transform = {scale = 1, translate_y = 0}
+	if self.anchor_id == 'controls' and dock_motion then
+		transform = dock_motion:get_controls_transform()
+	end
+	local center_x = source.ax + (source.bx - source.ax) / 2
+	local center_y = source.ay + (source.by - source.ay) / 2 + transform.translate_y
+	local half_width = (source.bx - source.ax) * transform.scale / 2
+	local half_height = (source.by - source.ay) * transform.scale / 2
+	return {
+		ax = center_x - half_width,
+		ay = center_y - half_height,
+		bx = center_x + half_width,
+		by = center_y + half_height,
+	}, transform
 end
 
 -- Call method if it exists

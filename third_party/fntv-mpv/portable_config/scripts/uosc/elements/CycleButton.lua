@@ -1,7 +1,7 @@
 local Button = require('elements/Button')
 
 ---@alias CycleState {value: any; icon: string; active?: boolean}
----@alias CycleButtonProps {prop: string; states: CycleState[]; anchor_id?: string; tooltip?: string}
+---@alias CycleButtonProps {prop: string; states: CycleState[]; anchor_id?: string; tooltip?: string; idle_icon?: string}
 
 local function yes_no_to_boolean(value)
 	if type(value) ~= 'string' then return value end
@@ -25,10 +25,13 @@ function CycleButton:init(id, props)
 	local is_state_prop = itable_index_of({'shuffle'}, props.prop)
 	self.prop = props.prop
 	self.states = props.states
+	self.idle_icon = props.idle_icon
+	self.is_idle = false
+	self.state_icon = self.states[1].icon
 
 	Button.init(self, id, props)
 
-	self.icon = self.states[1].icon
+	self.icon = self.state_icon
 	self.active = self.states[1].active
 	self.current_state_index = 1
 	self.on_click = function()
@@ -41,6 +44,9 @@ function CycleButton:init(id, props)
 				options[self.prop] = yes_no_to_boolean(new_value)
 			end
 			handle_options({[self.prop] = options[self.prop]})
+			if self.prop == 'button_tooltips' and persist_uosc_option then
+				persist_uosc_option(self.prop, options[self.prop])
+			end
 		elseif self.owner then
 			mp.commandv('script-message-to', self.owner, 'set', self.prop, new_value)
 		elseif is_state_prop then
@@ -60,9 +66,18 @@ function CycleButton:init(id, props)
 		value = type(value) == 'boolean' and (value and 'yes' or 'no') or tostring(value or '')
 		local index = itable_find(self.states, function(state) return state.value == value end)
 		self.current_state_index = index or 1
-		self.icon = self.states[self.current_state_index].icon
+		self.state_icon = self.states[self.current_state_index].icon
+		self.icon = self.idle_icon and self.is_idle and self.idle_icon or self.state_icon
 		self.active = self.states[self.current_state_index].active
 		request_render()
+	end
+
+	if self.idle_icon then
+		self:observe_mp_property('idle-active', 'bool', function(_, value)
+			self.is_idle = value == true
+			self.icon = self.is_idle and self.idle_icon or self.state_icon
+			request_render()
+		end)
 	end
 
 	local prop_parts = split(self.prop, '@')

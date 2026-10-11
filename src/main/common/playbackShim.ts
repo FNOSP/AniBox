@@ -192,6 +192,16 @@ class PlaybackShim {
             this.handleNasSubtitleFile(req, res);
             return;
         }
+        // [lc-1354] fnOS 在线字幕搜索：MPV 字幕菜单"在线搜索"经此让 fnOS 服务端按媒体元数据联网搜
+        if (pathname === '/nas-subtitle-search') {
+            this.handleNasSubtitleSearch(req, res);
+            return;
+        }
+        // [lc-1354] fnOS 在线字幕下载：按 trim_id 让服务端抓取并登记为外挂字幕流，随后直接取回本地
+        if (pathname === '/nas-subtitle-download') {
+            this.handleNasSubtitleDownload(req, res);
+            return;
+        }
         // [lc-1257] MPV smart_skip 面板打点 → 本地 4 值存储同步（POST JSON）
         if (pathname === '/skip-manual' && req.method === 'POST') {
             this.handleSkipManualSync(req, res);
@@ -260,6 +270,12 @@ class PlaybackShim {
         depth = 0,
         onConnectFail?: (err: NodeJS.ErrnoException) => void,
     ): void {
+        // [lc-1350] 响应已死（客户端早已断开，如兜底代理异步解析直链期间播放器跑了）就不再发起上游请求，
+        // 否则会对着一个已死的响应白白拉流。
+        if (res.destroyed || res.writableEnded) {
+            log.warn(`[playbackShim][${sid || '?'}] ✗ 客户端已断开/响应已结束，放弃代理`);
+            return;
+        }
         const t = url.parse(target);
         const isHttps = (t.protocol || 'http:') === 'https:';
         const headers: any = { ...req.headers, host: t.host || '' };
@@ -300,6 +316,7 @@ class PlaybackShim {
 
         let upstreamBytes = 0;
         let responded = false;
+        let clientClosed = false; // [lc-1350] 区分「客户端先断、我们掐上游」与「上游自身故障」
         const markResponded = () => { responded = true; };
 
         const requester = isHttps ? https : http;
@@ -336,6 +353,19 @@ class PlaybackShim {
                 const complete = cl ? upstreamBytes >= Number(cl) : true;
                 log.key(`[playbackShim][${sid || '?'}] ✓ 上游流结束 | 已转发 ${upstreamBytes} 字节 status=${pres.statusCode} ${cl ? `(目标 ${cl}, ${complete ? '完整' : '不完整'})` : '(流式)'}`);
             };
+
+            // [lc-1350] 上游中断兜底：客户端断开时会主动 destroy 上游，pres 必收到 ECONNRESET，
+            // pipe/嗅探路径此前都没挂 pres 'error' 监听——不接住就是未捕获异常。顺带兜住上游真故障：
+            // 中途断流时不能让 res 悬着（播放器会一直等到超时），掐掉它让播放器按断流自行重连。
+            pres.on('error', (err: Error) => {
+                if (clientClosed || res.destroyed) return;
+                log.warn(`[playbackShim][${sid || '?'}] ✗ 上游流中断: ${err.message}`);
+                if (!responded && !res.headersSent) {
+                    this.fail502(res, sid, `上游流中断 (${(err as NodeJS.ErrnoException).code || 'unknown'})`);
+                    return;
+                }
+                try { res.destroy(); } catch { /* noop */ }
+            });
 
             // [lc-997] 上游未给出可信 media 类型时，先扣住响应头，用首包魔数嗅探真实容器再回写。
             //   仅当 Range 从 0 开始(能拿到文件头)时可行；拖动产生的后续 Range 请求沿用既有判定。
@@ -390,12 +420,20 @@ class PlaybackShim {
             });
         });
 
-        const onClientGone = () => { try { p.destroy(); } catch { /* noop */ } };
+        const onClientGone = () => {
+            clientClosed = true;
+            try { p.destroy(); } catch { /* noop */ }
+        };
+        // [lc-1350] 客户端断开必须无条件掐断上游，不能再拿 responded 挡：
+        // responded 在上游响应头到达时即置真（毫秒级），而播放器「读几百 KB 就弃连」的探测/拖动
+        // 请求几乎都发生在那之后。旧逻辑对此不回收，pipe 路径里 pipe 之前挂的计数 data 监听器
+        // 会让上游保持 flowing——数据被全速读入后直接丢弃、零背压，一条被弃的 `bytes=X-` 请求
+        // 就会持续拉完整个文件尾（86GB 实测把 NAS 千兆打满、关掉播放器也不停）。
+        // 用 writableEnded 区分「没发完就断」与「正常发完」：正常完成后 close 同样触发，绝不误杀。
         res.on('close', () => {
-            if (!responded && !res.writableEnded) {
-                log.warn(`[playbackShim][${sid || '?'}] ✗ PotPlayer 中途断开 | 已转发 ${upstreamBytes} 字节 range=${range || '(无)'}`);
-                onClientGone();
-            }
+            if (res.writableEnded) return;
+            log.warn(`[playbackShim][${sid || '?'}] ✗ 客户端中途断开，掐断上游 | 已转发 ${upstreamBytes} 字节 range=${range || '(无)'} responded=${responded}`);
+            onClientGone();
         });
         // [lc-1004] req 的 'close' 在 Node ≥16 是「请求已完整接收」，不是「客户端跑了」：
         // 无 body 的 GET 收到后 ~1ms 就触发，把还在等上游响应的 socket destroy 掉，
@@ -406,6 +444,12 @@ class PlaybackShim {
 
         p.on('error', (err) => {
             const code = (err as NodeJS.ErrnoException).code;
+            if (clientClosed) {
+                // [lc-1350] 上游 ECONNRESET 是我们自己 destroy 造成的（客户端先断开），不是连接故障：
+                // 放行会走 onConnectFail 误触发「Go proxy 不可达」降级，每发弃连的探测都白解析一遍直链。
+                log.debug(`[playbackShim][${sid || '?'}] 客户端已断开，掐断上游产生的 ${code} 忽略`);
+                return;
+            }
             const connectFail = code === 'ECONNRESET' || code === 'socket hang up' || code === 'ECONNREFUSED';
             if (connectFail) {
                 log.debug(`[playbackShim][${sid || '?'}] 上游连接异常(${code}): ${err.message}`);
@@ -1120,6 +1164,77 @@ class PlaybackShim {
             });
         }).catch((e) => {
             log.warn(`[playbackShim][nas-subtitle-file] 异常: ${e?.message || e}`);
+            this.json(res, 500, { ok: false, error: String(e?.message || e) });
+        });
+    }
+
+    /**
+     * [lc-1354] 处理 /nas-subtitle-search：fnOS 服务端联网搜索在线字幕候选。
+     * 请求不带关键词——fnOS 按媒体自身元数据（片名/年份/季集）搜索（与 FlyNarwhal 同款），
+     * lan 由菜单侧选择（zh-CN / en）。
+     */
+    private handleNasSubtitleSearch(req: http.IncomingMessage, res: http.ServerResponse): void {
+        const u = url.parse(req.url || '', true);
+        const q = (u.query || {}) as Record<string, string | undefined>;
+        const p = this.nasFnParams(res, q);
+        if (!p) return;
+        const lan = (q.lan || 'zh-CN').toString();
+        p.api.searchSubtitlesOnline(p.itemGuid, lan).then((r) => {
+            if (!r.success || !r.data) {
+                log.warn(`[playbackShim][nas-subtitle-search] 搜索失败 lan=${lan}: ${r.message}`);
+                this.json(res, 200, { ok: false, error: r.message || 'fnOS 在线字幕搜索失败' });
+                return;
+            }
+            const items: any[] = (r.data as any).subtitles || [];
+            log.info(`[playbackShim][nas-subtitle-search] itemGuid=${p.itemGuid} lan=${lan} 候选 ${items.length} 条`);
+            this.json(res, 200, { ok: true, items });
+        }).catch((e) => {
+            log.warn(`[playbackShim][nas-subtitle-search] 异常: ${e?.message || e}`);
+            this.json(res, 500, { ok: false, error: String(e?.message || e) });
+        });
+    }
+
+    /**
+     * [lc-1354] 处理 /nas-subtitle-download：按 trim_id 让 fnOS 服务端抓取并登记为外挂字幕流。
+     * 下载响应自带新流的 guid/title/format，直接用它取回本地（不查 stream/list 缓存——
+     * 5 分钟 TTL 会看不到刚登记的流）；成功后顺手清 stream/list 缓存让菜单立刻可见。
+     */
+    private handleNasSubtitleDownload(req: http.IncomingMessage, res: http.ServerResponse): void {
+        const u = url.parse(req.url || '', true);
+        const q = (u.query || {}) as Record<string, string | undefined>;
+        const p = this.nasFnParams(res, q);
+        if (!p) return;
+        const trimId = (q.trimId || '').toString();
+        if (!trimId) {
+            this.json(res, 400, { ok: false, error: '缺少 trimId 参数' });
+            return;
+        }
+        p.api.downloadSubtitleOnline(p.itemGuid, trimId).then((r) => {
+            if (!r.success || !r.data) {
+                log.warn(`[playbackShim][nas-subtitle-download] 下载失败 trimId=${trimId}: ${r.message}`);
+                this.json(res, 200, { ok: false, error: r.message || 'fnOS 在线字幕下载失败' });
+                return;
+            }
+            const s: any = r.data;
+            const guid = String(s.guid || '');
+            if (!guid) {
+                this.json(res, 200, { ok: false, error: 'fnOS 未返回新字幕流的 guid' });
+                return;
+            }
+            const lang = String(s.language || '').trim();
+            const name = String(s.title || '').trim() || lang || '在线字幕';
+            return p.api.downloadSubtitle([{ id: guid, name, format: String(s.format || 'srt') }]).then((paths) => {
+                p.api.invalidateStreamListCache(p.itemGuid);
+                if (!paths || paths.length === 0) {
+                    log.warn(`[playbackShim][nas-subtitle-download] 已登记但取回失败 guid=${guid}`);
+                    this.json(res, 200, { ok: false, error: '字幕已登记到 fnOS，但取回本地失败' });
+                    return;
+                }
+                log.info(`[playbackShim][nas-subtitle-download] 就绪 trimId=${trimId} guid=${guid} -> ${paths[0]}`);
+                this.json(res, 200, { ok: true, path: paths[0], title: name, guid });
+            });
+        }).catch((e) => {
+            log.warn(`[playbackShim][nas-subtitle-download] 异常: ${e?.message || e}`);
             this.json(res, 500, { ok: false, error: String(e?.message || e) });
         });
     }

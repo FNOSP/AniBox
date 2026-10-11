@@ -1,0 +1,25 @@
+Fntv-Plus 捆绑的第三方 GLSL 着色器来源与许可
+================================================
+
+SSimDownscaler.glsl
+  作者: igv (Agudov Muin) · https://gist.github.com/igv/36508af3ffc84410fe39761d6969be10
+  许可: MIT License（文件头声明）
+
+SSimSuperRes.glsl
+  作者: igv · https://gist.github.com/igv/2364ffa6e81540f29cb7ab4c9bc05b6b
+  许可: MIT License（文件头声明）
+
+KrigBilateral.glsl
+  作者: igv · https://gist.github.com/igv/a015fc885d5c22e6891820ad89555637
+  许可: MIT License（文件头声明）
+
+FSRCNNX_x2_8-0-4-1.glsl
+FSRCNNX_x2_16-0-4-1.glsl
+  作者: igv · https://github.com/igv/FSRCNN-TensorFlow/releases/tag/1.1
+  许可: GNU LGPL v3.0（文件头声明）
+
+Anime4K 系列（Anime4K_*.glsl）
+  作者: bloc97 · https://github.com/bloc97/Anime4K
+  许可: MIT License
+
+以上着色器均按其原始许可随包分发，保留各自文件头的版权声明。

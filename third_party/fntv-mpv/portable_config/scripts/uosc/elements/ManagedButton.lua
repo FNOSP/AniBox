@@ -13,18 +13,23 @@ function ManagedButton:new(id, props) return Class.new(self, id, props) --[[@as 
 function ManagedButton:init(id, props)
 	---@type string | table | nil
 	self.command = nil
+	---@type string | table | nil
+	self.secondary_command = nil
 	---@type boolean
 	self.hide = nil
 	---@type fun(hide: boolean) | nil
 	self.on_hide = nil
-	Button.init(self, id, table_assign({}, props, {on_click = function() execute_command(self.command) end}))
+	Button.init(self, id, table_assign({}, props, {
+		on_click = function() execute_command(self.command) end,
+		on_secondary_click = function() execute_command(self.secondary_command) end,
+	}))
 	self:update(buttons:get(props.name))
 	self:register_disposer(buttons:subscribe(props.name, function(data) self:update(data) end))
 end
 
 function ManagedButton:update(data)
 	local hide_before = self.hide
-	for _, prop in ipairs({'icon', 'active', 'badge', 'command', 'tooltip', 'hide'}) do
+	for _, prop in ipairs({'icon', 'active', 'badge', 'command', 'secondary_command', 'tooltip', 'hide'}) do
 		self[prop] = data[prop]
 	end
 	self.is_clickable = self.command ~= nil

@@ -727,6 +727,85 @@ function serialize_chapter_ranges(normalized_chapters)
 	for i, normalized in ipairs(normalized_chapters) do chapters[i] = table_assign({}, normalized) end
 
 	for i, chapter in ipairs(chapters) do
+		-- Paired ranges injected by skip-segments.lua. Explicit end markers keep
+		-- the colored range intact even when the media has chapters inside it.
+		local auto_source, auto_kind, auto_id = chapter.lowercase_title:match(
+			'^%[autoskip:(website)%] (intro) start %((.-)%)$'
+		)
+		if not auto_kind then
+			auto_source, auto_kind, auto_id = chapter.lowercase_title:match(
+				'^%[autoskip:(website)%] (outro) start %((.-)%)$'
+			)
+		end
+		if not auto_kind then
+			auto_source, auto_kind, auto_id = chapter.lowercase_title:match(
+				'^%[autoskip:(manual)%] (intro) start %((.-)%)$'
+			)
+		end
+		if not auto_kind then
+			auto_source, auto_kind, auto_id = chapter.lowercase_title:match(
+				'^%[autoskip:(manual)%] (outro) start %((.-)%)$'
+			)
+		end
+		-- Backward compatibility with chapters injected by older script versions.
+		if not auto_kind then
+			auto_kind, auto_id = chapter.lowercase_title:match(
+				'^%[autoskip%] (intro) start %((.-)%)$'
+			)
+			if not auto_kind then
+				auto_kind, auto_id = chapter.lowercase_title:match(
+					'^%[autoskip%] (outro) start %((.-)%)$'
+				)
+			end
+			auto_source = 'website'
+		end
+		if auto_kind and auto_id then
+			local range_name = auto_source == 'manual'
+				and (auto_kind == 'intro' and 'manual_intros' or 'manual_outros')
+				or (auto_kind == 'intro' and 'website_intros' or 'website_outros')
+			local range_config = config.chapter_ranges[range_name]
+			if not range_config then
+				range_config = auto_kind == 'intro'
+					and (config.chapter_ranges.openings or config.chapter_ranges.intros)
+					or (config.chapter_ranges.outros or config.chapter_ranges.endings)
+			end
+			if range_config then
+				for j = i + 1, #chapters do
+					local end_chapter = chapters[j]
+					local end_source, end_kind, end_id = end_chapter.lowercase_title:match(
+						'^%[autoskip:(' .. auto_source .. ')%] (intro) end %((.-)%)$'
+					)
+					if not end_kind then
+						end_source, end_kind, end_id = end_chapter.lowercase_title:match(
+							'^%[autoskip:(' .. auto_source .. ')%] (outro) end %((.-)%)$'
+						)
+					end
+					if not end_kind and auto_source == 'website' then
+						end_kind, end_id = end_chapter.lowercase_title:match(
+							'^%[autoskip%] (intro) end %((.-)%)$'
+						)
+						if not end_kind then
+							end_kind, end_id = end_chapter.lowercase_title:match(
+								'^%[autoskip%] (outro) end %((.-)%)$'
+							)
+						end
+						end_source = 'website'
+					end
+					if end_source == auto_source and end_kind == auto_kind and end_id == auto_id then
+						ranges[#ranges + 1] = table_assign({
+							start = chapter.time,
+							['end'] = end_chapter.time,
+							autoskip_source = auto_source,
+							autoskip_kind = auto_kind,
+							autoskip_id = auto_id,
+						}, range_config)
+						end_chapter.is_end_only = true
+						break
+					end
+				end
+			end
+		end
+
 		-- Simple ranges
 		for _, meta in ipairs(simple_ranges) do
 			if config.chapter_ranges[meta.name] then
@@ -925,17 +1004,79 @@ function call_ziggy_async(args, callback)
 	end
 end
 
----@return string|nil
-function get_clipboard()
-	local data, err = mp.get_property('clipboard/text')
-	if data then
-		return data
-	end
-	if err and err ~= 'property not found' and err ~= 'property unavailable' then
-		mp.commandv('show-text', 'Get clipboard error: ' .. err)
-		return nil
+---@param url string
+---@param method string
+---@param callback fun(error: string|nil, data: table|nil)
+---@return fun() abort Function to abort the request.
+function http_request_async(method, url, headers, body, callback)
+	local args = { 'curl', '-s', '-L',  '-X', method, url }
+
+	if headers then
+		for k, v in pairs(headers) do
+			table.insert(args, '-H')
+			table.insert(args, string.format('%s: %s', k, v))
+		end
 	end
 
+	if body then
+		table.insert(args, '-d')
+		table.insert(args, utils.format_json(body))
+	end
+
+	local abort_signal = mp.command_native_async({
+		name = 'subprocess',
+		capture_stdout = true,
+		capture_stderr = true,
+		playback_only = false,
+		args = args
+	}, function(success, res, error)
+		local error = error ~= '' and error or res and res.stderr ~= '' and res.stderr or nil
+		if not success or not res or res.status ~= 0 then
+			msg.error('HTTP request failed: ' .. (res.stderr or 'unknown error'))
+			callback(error, nil)
+			return
+		end
+
+		local data = utils.parse_json(res.stdout)
+		callback(error, data)
+	end)
+
+	return function()
+		mp.abort_async_command(abort_signal)
+	end
+end
+
+---@return string|nil
+function get_clipboard()
+	if state.current_clipboard_backend then
+		if state.platform == 'windows' or state.platform == 'darwin' then
+			return mp.get_property('clipboard/text', '')
+		end
+		if state.platform == 'linux' then
+			-- Wayland
+			if os.getenv('WAYLAND_DISPLAY') or os.getenv('WAYLAND_SOCKET') then
+				if state.current_clipboard_backend == "wayland" or mp.get_property_native("focused") then
+					return mp.get_property('clipboard/text', '')
+				end
+				local res = utils.subprocess({
+					args = { 'wl-paste', '-n' },
+					playback_only = false,
+				})
+				if not res.error then
+					return res.stdout
+				end
+			end
+			-- X11
+			local res = utils.subprocess({
+				args = { 'xclip', '-selection', 'clipboard', '-out' },
+				playback_only = false,
+			})
+			if not res.error then
+				return res.stdout
+			end
+		end
+	end
+	-- Fallback to ziggy
 	local err, data = call_ziggy({'get-clipboard'})
 	if err then
 		mp.commandv('show-text', 'Get clipboard error. See console for details.')
@@ -948,17 +1089,23 @@ end
 ---@return string|nil payload String that was copied to clipboard.
 function set_clipboard(payload)
 	payload = tostring(payload)
-
-	local success, err = mp.set_property('clipboard/text', payload)
-	if success then
-		mp.commandv('show-text', t('Copied to clipboard') .. ': ' .. payload, 3000)
-		return payload
+	if state.current_clipboard_backend then
+		if state.platform == 'windows' or state.platform == 'darwin' then
+			return mp.commandv('set', 'clipboard/text', payload)
+		end
+		if state.platform == 'linux' then
+			-- Wayland
+			if os.getenv('WAYLAND_DISPLAY') or os.getenv('WAYLAND_SOCKET') then
+				return utils.subprocess({ args = { 'wl-copy' }, stdin_data = payload })
+			end
+			-- X11
+			return utils.subprocess({
+				args = { 'xclip', '-silent', '-selection', 'clipboard', '-in' },
+				stdin_data = payload
+			})
+		end
 	end
-	if err and err ~= 'property not found' and err ~= 'property unavailable' then
-		mp.commandv('show-text', 'Set clipboard error: ' .. err)
-		return nil
-	end
-
+	-- Fallback to ziggy
 	local err, data = call_ziggy({'set-clipboard', payload})
 	if err then
 		mp.commandv('show-text', 'Set clipboard error. See console for details.')
@@ -1017,15 +1164,67 @@ function render()
 	-- Actual rendering
 	local ass = assdraw.ass_new()
 
-	-- Idle indicator
-	if state.is_idle and not Manager.disabled.idle_indicator then
+	-- Advance the shared bottom-dock motion once per frame before Timeline and
+	-- Controls read it. The module schedules only the frames still needed.
+	dock_motion:update()
+
+	-- mpv-Yaozhi idle branding. The published state is also used by the
+	-- command menu, so render from the same source of truth.
+	local idle_branding_enabled = mp.get_property_native(
+		'user-data/uosc/idle-branding',
+		options.idle_branding and 'yes' or 'no'
+	) ~= 'no'
+	local foreground_overlay_open = mp.get_property_bool('user-data/file_browser/open', false)
+		or Menu:is_open() ~= nil
+		-- 统计面板打开时同样让位，避免与统计文字重叠
+		-- （与 idle-branding-image.lua 的 foreground_overlay_open 保持一致）
+		or mp.get_property_native('user-data/stats/visible') == 'yes'
+	if state.is_idle and idle_branding_enabled and not foreground_overlay_open
+		and not Manager.disabled.idle_indicator then
 		local smaller_side = math.min(display.width, display.height)
-		local center_x, center_y, icon_size = display.width / 2, display.height / 2, math.max(smaller_side / 4, 56)
-		ass:icon(center_x, center_y - icon_size / 4, icon_size, 'not_started', {
-			color = fg, opacity = config.opacity.idle_indicator,
-		})
-		ass:txt(center_x, center_y + icon_size / 2, 8, t('Drop files or URLs to play here'), {
-			size = icon_size / 4, color = fg, opacity = config.opacity.idle_indicator,
+		local center_x = display.width / 2
+		local radius = clamp(46 * state.scale, smaller_side * 0.09, 74 * state.scale)
+		local center_y = display.height / 2 - radius * 0.28
+		local opacity = config.opacity.idle_indicator
+		local image_active = mp.get_property_native(
+			'user-data/idle-branding-image/active',
+			'no'
+		) == 'yes'
+		local image_height = math.max(0, tonumber((mp.get_property_native(
+			'user-data/idle-branding-image/display-height',
+			'0'
+		))) or 0)
+		local image_mode = mp.get_property_native(
+			'user-data/idle-branding-image/mode',
+			'default'
+		)
+		if image_active then
+			center_y = tonumber((mp.get_property_native(
+				'user-data/idle-branding-image/center-y',
+				tostring(center_y)
+			))) or center_y
+		end
+
+		-- The image is the complete mark. Do not synthesize a surrounding card.
+		-- Reserve its expected height while the overlay script is starting so
+		-- the fixed wordmark is not initially painted underneath the image.
+		local mark_half_height = image_active and image_height / 2 or radius
+		-- The built-in asset has intentional transparent breathing room. Anchor
+		-- the wordmark to its visible lower edge instead of the canvas edge.
+		if image_mode == 'default' then mark_half_height = mark_half_height * 0.758 end
+		local brand_name = '{\\1c&H' .. config.color.idle_brand_glow .. '&}mpv-'
+			.. '{\\1c&H' .. config.color.idle_brand_text .. '&}Yaozhi'
+		ass:txt(center_x, center_y + mark_half_height + 8 * state.scale, 8, brand_name, {
+			font = 'Segoe UI',
+			size = clamp(22 * state.scale, mark_half_height * 0.42, 34 * state.scale),
+			spacing = 0.35 * state.scale,
+			bold = false,
+			border = math.max(0.8, options.text_border * state.scale),
+			border_color = bg,
+			shadow = math.max(0.8, 1.2 * state.scale),
+			shadow_color = bg,
+			color = config.color.idle_brand_text,
+			opacity = {primary = opacity, border = opacity, shadow = opacity * 0.55},
 		})
 	end
 

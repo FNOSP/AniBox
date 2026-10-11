@@ -64,6 +64,55 @@ export interface Subtitle {
 }
 
 /**
+ * 在线字幕搜索请求（fnOS 影视 POST /v/api/v1/subtitle/search）
+ * 客户端不带关键词：fnOS 服务端按媒体自身的元数据（片名/年份/季集）联网搜索
+ */
+export interface SubtitleSearchRequest {
+    /** 字幕语言，fnOS 支持 zh-CN / en */
+    lan: string;
+    /** 媒体文件唯一标识（与 stream/list 的 itemGuid 同值） */
+    media_guid: string;
+}
+
+/**
+ * 在线字幕搜索结果条目
+ */
+export interface SubtitleSearchItem {
+    /** 字幕文件名（可能为压缩包） */
+    filename: string;
+    /** 下载次数 */
+    download: number;
+    /** 来源站内部 ID */
+    source_id: string;
+    /** 来源站名 */
+    source: string;
+    /** 取回标识，透传给 /subtitle/download */
+    trim_id: string;
+    /** 字幕格式，如 srt、ass、zip */
+    format: string;
+}
+
+/**
+ * 在线字幕搜索响应
+ */
+export interface SubtitleSearchResponse {
+    lan: string;
+    subtitles: SubtitleSearchItem[];
+}
+
+/**
+ * 在线字幕下载请求（fnOS 影视 POST /v/api/v1/subtitle/download）
+ * 服务端抓取字幕并登记为该媒体的外挂字幕流
+ */
+export interface SubtitleDownloadOnlineRequest {
+    media_guid: string;
+    /** 搜索结果里拿到的 trim_id */
+    trim_id: string;
+    /** 1 = 同步等待服务端抓取完成后返回 */
+    sync_download: number;
+}
+
+/**
  * 字幕下载结果
  */
 export interface SubtitleDownloadResult {

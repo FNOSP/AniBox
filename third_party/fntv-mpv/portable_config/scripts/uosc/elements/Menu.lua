@@ -1,32 +1,184 @@
 local Element = require('elements/Element')
+local menu_layout = require('lib/menu-layout')
 
 ---@alias MenuAction {name: string; icon: string; label?: string; filter_hidden?: boolean;}
+---@alias MenuSearchAction {name: string; icon: string; label?: string;}
 
 -- Menu data structure accepted by `Menu:open(menu)`.
----@alias MenuData {id?: string; type?: string; title?: string; hint?: string; footnote: string; search_style?: 'on_demand' | 'palette' | 'disabled';  item_actions?: MenuAction[]; item_actions_place?: 'inside' | 'outside'; callback?: string[]; keep_open?: boolean; bold?: boolean; italic?: boolean; muted?: boolean; separator?: boolean; align?: 'left'|'center'|'right'; items?: MenuDataChild[]; selected_index?: integer; on_search?: string|string[]; on_paste?: string|string[]; on_move?: string|string[]; on_close?: string|string[]; search_debounce?: number|string; search_submenus?: boolean; search_suggestion?: string; search_submit?: boolean; bind_keys?: string[]}
+---@alias MenuData {id?: string; type?: string; title?: string; hint?: string; min_width?: number; min_width_px?: boolean; fixed_columns?: boolean; uniform_title_size?: boolean; hint_max_ratio?: number; hint_fit_ratio?: number; hint_ellipsis_ratio?: number; hint_force_ellipsis_when_scaled?: boolean; center_root_when_closed?: boolean; footnote: string; content_padding_bottom?: number; search_style?: 'on_demand' | 'palette' | 'disabled'; search_action?: MenuSearchAction; search_cursor_blink?: boolean; search_focus_indicator?: boolean; item_actions?: MenuAction[]; item_actions_place?: 'inside' | 'outside'; callback?: string[]; keep_open?: boolean; bold?: boolean; italic?: boolean; muted?: boolean; separator?: boolean; align?: 'left'|'center'|'right'; items?: MenuDataChild[]; selected_index?: integer; on_search?: string|string[]; on_search_action?: string|string[]; on_paste?: string|string[]; on_move?: string|string[]; on_close?: string|string[]; search_debounce?: number|string; search_submenus?: boolean; search_suggestion?: string; search_submit?: boolean; back_on_escape?: boolean; bind_keys?: string[]}
 ---@alias MenuDataChild MenuDataItem|MenuData
----@alias MenuDataItem {title?: string; hint?: string; icon?: string; value: any; actions?: MenuAction[]; actions_place?: 'inside' | 'outside'; active?: boolean; keep_open?: boolean; selectable?: boolean; bold?: boolean; italic?: boolean; muted?: boolean; separator?: boolean; align?: 'left'|'center'|'right'}
----@alias MenuOptions {mouse_nav?: boolean;}
+---@alias MenuDataItem {title?: string; hint?: string; icon?: string; value: any; actions?: MenuAction[]; actions_place?: 'inside' | 'outside'; active?: boolean; keep_open?: boolean; selectable?: boolean; bold?: boolean; italic?: boolean; muted?: boolean; opacity?: number; icon_hint?: boolean; icon_scale?: number; separator?: boolean; separator_breathe?: number; align?: 'left'|'center'|'right'; search_exact_hint?: boolean}
+---@alias MenuOptions {mouse_nav?: boolean; anchor_x?: number; anchor_y?: number; item_height?: number; font_scale?: number;}
 
 -- Internal data structure created from `MenuData`.
----@alias MenuStack {id?: string; type?: string; title?: string; hint?: string; footnote: string; search_style?: 'on_demand' | 'palette' | 'disabled';  item_actions?: MenuAction[]; item_actions_place?: 'inside' | 'outside'; callback?: string[]; selected_index?: number; action_index?: number; keep_open?: boolean; bold?: boolean; italic?: boolean; muted?: boolean; separator?: boolean; align?: 'left'|'center'|'right'; items: MenuStackChild[]; on_search?: string|string[]; on_paste?: string|string[]; on_move?: string|string[]; on_close?: string|string[]; search_debounce?: number|string; search_submenus?: boolean; search_suggestion?: string; search_submit?: boolean; bind_keys?: string[]; parent_menu?: MenuStack; submenu_path: integer[]; active?: boolean; width: number; height: number; top: number; scroll_y: number; scroll_height: number; title_width: number; hint_width: number; max_width: number; is_root?: boolean; fling?: Fling, search?: Search, ass_safe_title?: string}
+---@alias MenuStack {id?: string; type?: string; title?: string; hint?: string; footnote: string; min_width?: number; min_width_px?: boolean; fixed_columns?: boolean; uniform_title_size?: boolean; hint_max_ratio?: number; hint_fit_ratio?: number; hint_ellipsis_ratio?: number; hint_force_ellipsis_when_scaled?: boolean; center_root_when_closed?: boolean; content_padding_bottom?: number; search_style?: 'on_demand' | 'palette' | 'disabled'; search_action?: MenuSearchAction; search_cursor_blink?: boolean; search_focus_indicator?: boolean; item_actions?: MenuAction[]; item_actions_place?: 'inside' | 'outside'; callback?: string[]; selected_index?: number; action_index?: number; keep_open?: boolean; bold?: boolean; italic?: boolean; muted?: boolean; separator?: boolean; align?: 'left'|'center'|'right'; items: MenuStackChild[]; on_search?: string|string[]; on_search_action?: string|string[]; on_paste?: string|string[]; on_move?: string|string[]; on_close?: string|string[]; search_debounce?: number|string; search_submenus?: boolean; search_suggestion?: string; search_submit?: boolean; back_on_escape?: boolean; bind_keys?: string[]; parent_menu?: MenuStack; submenu_path: integer[]; active?: boolean; width: number; height: number; top: number; scroll_y: number; scroll_height: number; title_width: number; hint_width: number; max_title_width: number; max_hint_width: number; max_item_width: number; max_width: number; is_root?: boolean; fling?: Fling, search?: Search, ass_safe_title?: string}
 ---@alias MenuStackChild MenuStackItem|MenuStack
----@alias MenuStackItem {title?: string; hint?: string; icon?: string; value: any; actions?: MenuAction[]; actions_place?: 'inside' | 'outside'; active?: boolean; keep_open?: boolean; selectable?: boolean; bold?: boolean; italic?: boolean; muted?: boolean; separator?: boolean; align?: 'left'|'center'|'right'; title_width: number; hint_width: number; ass_safe_hint?: string}
+---@alias MenuStackItem {title?: string; hint?: string; icon?: string; value: any; actions?: MenuAction[]; actions_place?: 'inside' | 'outside'; active?: boolean; keep_open?: boolean; selectable?: boolean; bold?: boolean; italic?: boolean; muted?: boolean; opacity?: number; icon_hint?: boolean; icon_scale?: number; separator?: boolean; separator_breathe?: number; align?: 'left'|'center'|'right'; title_width: number; hint_width: number; ass_safe_hint?: string}
 ---@alias Fling {y: number, distance: number, time: number, easing: fun(x: number), duration: number, update_cursor?: boolean}
 ---@alias Search {query: string; cursor: number; timeout: unknown; min_top: number; max_width: number; source: {width: number; top: number; scroll_y: number; selected_index?: integer; items?: MenuStackChild[]}}
 
 ---@alias MenuEventActivate {type: 'activate'; index: number; value: any; action?: string; modifiers?: string; alt: boolean; ctrl: boolean; shift: boolean; is_pointer: boolean; keep_open?: boolean; menu_id: string;}
 ---@alias MenuEventMove {type: 'move'; from_index: number; to_index: number; menu_id: string;}
 ---@alias MenuEventSearch {type: 'search'; query: string; menu_id: string;}
+---@alias MenuEventSearchAction {type: 'search_action'; action: string; query: string; menu_id: string; is_pointer: boolean;}
 ---@alias MenuEventKey {type: 'key'; id: string; key: string; modifiers?: string; alt: boolean; ctrl: boolean; shift: boolean; menu_id: string; selected_item?: {index: number; value: any; action?: string;}}
 ---@alias MenuEventPaste {type: 'paste'; value: string; menu_id: string; selected_item?: {index: number; value: any; action?: string;}}
 ---@alias MenuEventBack {type: 'back';}
 ---@alias MenuEventClose {type: 'close';}
----@alias MenuEvent MenuEventActivate | MenuEventMove | MenuEventSearch | MenuEventKey | MenuEventPaste | MenuEventBack | MenuEventClose
+---@alias MenuEvent MenuEventActivate | MenuEventMove | MenuEventSearch | MenuEventSearchAction | MenuEventKey | MenuEventPaste | MenuEventBack | MenuEventClose
 ---@alias MenuCallback fun(data: MenuEvent)
 
 ---@class Menu : Element
 local Menu = class(Element)
+
+-- Menu motion stays local because the global animation duration can be disabled.
+-- A short, shallow alpha transition softens context-menu open/close without
+-- re-enabling the legacy wide submenu slide animations.
+local menu_open_opacity = 0.82
+local menu_open_duration = 80
+local menu_close_duration = 60
+local wheel_scroll_rows = 2
+-- Ignore the few pixels a mouse commonly travels while a button is being
+-- released. A menu that replaced the clicked row must stay neutral until the
+-- pointer movement is deliberate, otherwise the new row under the pointer can
+-- inherit that click and immediately open its submenu.
+local mouse_nav_activation_distance = 4
+local wheel_scroll_duration = 0.09
+local wheel_hover_suppression = 0.12
+local search_cursor_blink_interval = 0.55
+
+local function is_file_navigation_menu(menu)
+	local menu_type = tostring(menu.type or '')
+	return menu_type == 'open-file' or menu_type:match('^load%-') ~= nil
+end
+
+local function uses_uniform_title_size(menu)
+	return menu.uniform_title_size
+		or menu.type == 'playlist'
+		or menu.type == 'sub'
+		or menu.type == 'audio'
+		or menu.type == 'video'
+		or menu.type == 'menu_subtitle'
+		or menu.type == 'recent_menu'
+		or is_file_navigation_menu(menu)
+end
+
+local function uses_fixed_columns(menu)
+	return menu.fixed_columns
+		or (uses_uniform_title_size(menu) and (menu.max_hint_width or 0) > 0)
+end
+
+-- The default ratio keeps metadata from crowding long titles, but it should
+-- not discard the first glyph of a long hint when the title on that row is
+-- short. Let the hint borrow genuinely unused title space while preserving
+-- the configured ratio as the floor for rows where both columns are long.
+local function get_hint_reserve(menu, item, fixed_columns, available_width, item_padding)
+	if available_width <= 0 or (item.hint_width or 0) <= 0 then return 0 end
+	local hint_width = fixed_columns and menu.max_hint_width or item.hint_width
+	local title_width = fixed_columns and menu.max_title_width or item.title_width
+	local hint_max_ratio = clamp(menu.hint_max_ratio or 0.58, 0.30, 0.85)
+	local ratio_cap = available_width * hint_max_ratio
+	local unused_title_space = available_width
+		- (title_width or 0) - item_padding * 0.5
+	local adaptive_cap = math.max(ratio_cap, unused_title_space)
+	return math.min(
+		available_width,
+		math.min(hint_width + item_padding * 1.5, adaptive_cap)
+	)
+end
+
+local function get_responsive_width_bounds(menu)
+	if menu.type == 'recent_menu' then return nil, nil end
+
+	local scale = math.max(state.scale, 0.01)
+	local logical_display_width = display.width / scale
+	local logical_content_width = (
+		is_file_navigation_menu(menu) and menu.max_item_width
+		or menu.max_width
+		or 0
+	) / scale
+	local minimum_width, maximum_width
+
+	if is_file_navigation_menu(menu) then
+		-- Directory titles are often much longer than the visible file rows.
+		-- Size from row content and let the centered title ellipsize instead of
+		-- turning the browser into a wide empty panel.
+		maximum_width = math.min(logical_display_width * 0.60, 760)
+		minimum_width = math.min(math.max(logical_content_width * 1.04, 560), maximum_width)
+	elseif menu.type == 'online-quality' then
+		-- 直播完整标签包含分辨率/编码/FPS/码率/协议；确认的转码身份复用右侧 hint/value 列显示。
+		-- 按真实内容动态扩展，但仍给窗口留出边缘；宁可进入完整页，也不把正确字段截掉。
+		maximum_width = math.min(logical_display_width * 0.72, 980)
+		minimum_width = math.min(math.max(logical_content_width * 1.04, 520), maximum_width)
+	elseif menu.type == 'playlist' then
+		if menu.center_root_when_closed then
+			-- Online playlists add a quality submenu.  Keep enough horizontal room
+			-- for that panel and ellipsize unusually long media titles instead of
+			-- letting the root consume nearly the whole viewport.
+			maximum_width = math.min(logical_display_width * 0.60, 840)
+			minimum_width = math.min(math.max(logical_content_width * 1.12, 680), maximum_width)
+		else
+			maximum_width = math.min(logical_display_width * 0.72, 1020)
+			minimum_width = math.min(math.max(logical_content_width * 1.22, 680), maximum_width)
+		end
+	elseif menu.uniform_title_size and (menu.search or menu.search_style == 'palette') then
+		maximum_width = math.min(logical_display_width * 0.60, 640)
+		minimum_width = math.min(math.max(logical_content_width * 1.06, 480), maximum_width)
+	elseif uses_uniform_title_size(menu) and (menu.max_hint_width or 0) > 0 then
+		maximum_width = math.min(logical_display_width * 0.56, 600)
+		minimum_width = math.min(math.max(logical_content_width * 1.04, 440), maximum_width)
+	end
+
+	return minimum_width and minimum_width * scale or nil,
+		maximum_width and maximum_width * scale or nil
+end
+
+local function utf8_prefix_for_width(value, max_width, opts)
+	local prefix = ''
+	for char in value:gmatch('[%z\1-\127\194-\244][\128-\191]*') do
+		local candidate = prefix .. char
+		if text_width(candidate, opts) > max_width then break end
+		prefix = candidate
+	end
+	return prefix
+end
+
+-- Calculate the size needed to fit text, then add a visible ellipsis after
+-- reaching the readable minimum instead of ending abruptly.
+local function fit_text_to_width(value, max_width, base_size, min_size, opts, policy)
+	if not value or value == '' or max_width <= 0 then return base_size, nil end
+
+	-- libass can render mixed Latin/CJK labels a little wider than the width
+	-- estimated from cached glyph metrics. Fit overflowing labels against a
+	-- conservative budget so they do not reach the hard clip at runtime.
+	local fit_ratio = policy and policy.fit_ratio or 0.92
+	local fit_width = max_width * fit_ratio
+	local measure_opts = table_assign({}, opts or {}, {size = base_size})
+	local width = text_width(value, measure_opts)
+	if width <= fit_width then return base_size, nil end
+
+	local fitted_size = math.max(min_size, math.floor(base_size * fit_width / width))
+	measure_opts.size = fitted_size
+	local force_ellipsis = policy and (
+		(policy.force_ellipsis_when_scaled and fitted_size < base_size)
+		or (policy.force_ellipsis_at_floor and fitted_size <= min_size + 1)
+	)
+	if text_width(value, measure_opts) <= fit_width and not force_ellipsis then
+		return fitted_size, nil
+	end
+
+	local ellipsis = '…'
+	-- Once text has reached its readable minimum, leave a larger final guard.
+	-- Very long Latin runs can accumulate enough metric error to push the
+	-- ellipsis itself outside the clip even when the measured prefix fits.
+	local ellipsis_ratio = policy and policy.ellipsis_ratio or fit_ratio * 0.88
+	local prefix_width = math.max(
+		0,
+		max_width * ellipsis_ratio - text_width(ellipsis, measure_opts)
+	)
+	local prefix = utf8_prefix_for_width(value, prefix_width, measure_opts)
+	return fitted_size, ass_escape(prefix .. ellipsis)
+end
 
 ---@param data MenuData
 ---@param callback MenuCallback
@@ -108,6 +260,12 @@ function Menu:init(data, callback, opts)
 	self.opts = opts or {}
 	self.offset_x = 0 -- Used for submenu transition animation.
 	self.mouse_nav = self.opts.mouse_nav -- Stops pre-selecting items
+	self.mouse_nav_origin_x = nil
+	self.mouse_nav_origin_y = nil
+	-- Mouse-opened context menus keep the click position as their visual
+	-- anchor. Keyboard-opened menus leave these unset and remain centered.
+	self.anchor_x = tonumber(self.opts.anchor_x)
+	self.anchor_y = tonumber(self.opts.anchor_y)
 	self.item_height = nil
 	self.min_width = nil
 	self.item_spacing = 1
@@ -119,7 +277,7 @@ function Menu:init(data, callback, opts)
 	self.font_size_hint = nil
 	self.scroll_step = nil -- Item height + item spacing.
 	self.scroll_height = nil -- Items + spacings - container height.
-	self.opacity = 0 -- Used to fade in/out.
+	self.opacity = menu_open_opacity -- Used to fade in/out.
 	self.type = data.type
 	---@type MenuStack Root MenuStack.
 	self.root = nil
@@ -134,6 +292,24 @@ function Menu:init(data, callback, opts)
 	self.is_closing = false
 	self.drag_last_y = nil
 	self.is_dragging = false
+	self.scrollbar_hide_timer = mp.add_timeout(0.8, function() request_render() end)
+	self.scrollbar_hide_timer:kill()
+	self:register_disposer(function() self.scrollbar_hide_timer:kill() end)
+	self.search_cursor_visible = true
+	self.search_cursor_timer = mp.add_periodic_timer(search_cursor_blink_interval, function()
+		local menu = self.current
+		if menu and menu.search and menu.search_cursor_blink and not menu.selected_index
+			and not self.is_closing then
+			self.search_cursor_visible = not self.search_cursor_visible
+			request_render()
+		elseif not self.search_cursor_visible then
+			self.search_cursor_visible = true
+			request_render()
+		end
+	end)
+	self:register_disposer(function() self.search_cursor_timer:kill() end)
+	self.pointer_menu = nil
+	self.pointer_index = nil
 
 	if utils.shared_script_property_set then
 		utils.shared_script_property_set('uosc-menu-type', self.type or 'undefined')
@@ -142,9 +318,17 @@ function Menu:init(data, callback, opts)
 	self:update(data)
 
 	for _, menu in ipairs(self.all) do self:scroll_to_index(menu.selected_index, menu.id) end
-	if self.mouse_nav then self.current.selected_index = nil end
+	if self.mouse_nav then
+		self.current.selected_index = nil
+		-- A replacement menu can appear directly under the stationary pointer.
+		-- Keep it neutral until the pointer moves deliberately, otherwise the row
+		-- at that screen coordinate is selected and its submenu opens immediately.
+		self.mouse_nav_origin_x = cursor.x
+		self.mouse_nav_origin_y = cursor.y
+		self.current.hover_suppressed_until = math.huge
+	end
 
-	self:tween_property('opacity', 0, 1)
+	self:tween_property('opacity', self.opacity, 1, menu_open_duration)
 	self:enable_key_bindings()
 	Elements:maybe('curtain', 'register', self.id)
 
@@ -175,7 +359,12 @@ function Menu:update(data)
 	local new_by_id = {}
 	local menus_to_serialize = {{new_root, data}}
 	local old_current_id = self.current and self.current.id
-	local menu_state_props = {'selected_index', 'action_index', 'scroll_y', 'fling', 'search'}
+	-- `hover_suppressed_until` 也是「这次打开期间的指针状态」：菜单被 update-menu 重建时
+	-- 必须和 selected_index 一起保留，否则「指针模式打开」的菜单会在重建那一刻丢掉
+	-- 「还没有高亮」的中立状态——静止的指针立刻把光标下那一行选中。脚本在菜单打开后补
+	-- 一次状态（如账号检查回来）就会触发重建，用户看到的就是高亮被拽走。
+	local menu_state_props = {'selected_index', 'action_index', 'scroll_y', 'fling', 'search',
+		'page_anchor', 'hover_suppressed_until'}
 	local internal_props_set = create_set(itable_append({'is_root', 'submenu_path', 'id', 'items'}, menu_state_props))
 
 	table_assign_exclude(new_root, data, internal_props_set)
@@ -293,36 +482,70 @@ function Menu:update_items(items)
 end
 
 function Menu:update_content_dimensions()
-	self.item_height = round(options.menu_item_height * state.scale)
+	local logical_display_height = display.height / math.max(state.scale, 0.01)
+	local density_scale = logical_display_height < 600 and 0.86
+		or logical_display_height < 800 and 0.86
+		or logical_display_height < 900 and 0.94
+		or 1
+	local menu_item_height = tonumber(self.opts.item_height) or options.menu_item_height
+	local menu_font_scale = tonumber(self.opts.font_scale) or 1
+	self.item_height = round(menu_item_height * state.scale * density_scale)
 	self.min_width = round(options.menu_min_width * state.scale)
 	self.separator_size = round(1 * state.scale)
 	self.scrollbar_size = round(2 * state.scale)
 	self.padding = round(options.menu_padding * state.scale)
 	self.gap = round(2 * state.scale)
-	self.font_size = round(self.item_height * 0.48 * options.font_scale)
+	self.cascade_gap = math.max(4, round(7 * state.scale))
+	self.viewport_edge = math.max(6, round(10 * state.scale))
+	self.font_size = round(self.item_height * 0.46 * options.font_scale
+		* menu_font_scale)
 	self.font_size_hint = self.font_size - 1
+	self.font = options.menu_font ~= '' and options.menu_font or config.font
 	self.item_padding = round((self.item_height - self.font_size) * 0.6)
 	self.scroll_step = self.item_height + self.item_spacing
 
-	local title_opts = {size = self.font_size, italic = false, bold = false}
-	local hint_opts = {size = self.font_size_hint}
+	local title_opts = {size = self.font_size, font = self.font, italic = false, bold = false}
+	-- Uniform lists render hints at the title size, so measuring every hint at
+	-- that size prevents the first glyph from being clipped in mixed CJK rows.
+	local hint_opts = {size = self.font_size, font = self.font}
+	self.ellipsis_width = text_width('…', title_opts)
 
 	for _, menu in ipairs(self.all) do
 		title_opts.bold, title_opts.italic = true, false
 		local max_width = text_width(menu.title, title_opts) + 2 * self.item_padding
+		local max_title_width = 0
+		local max_hint_width = 0
+		local max_icon_width = 0
+		local max_item_width = 0
 
 		-- Estimate width of a widest item
 		for _, item in ipairs(menu.items) do
 			local icon_width = item.icon and self.font_size or 0
-			item.title_width = text_width(item.title, title_opts)
-			item.hint_width = text_width(item.hint, hint_opts)
+			-- Keep a small guard around measured glyphs. libass fallback fonts
+			-- can be wider than the cached metrics, especially for CJK/Latin mixes.
+			item.title_width = math.ceil(text_width(item.title, title_opts) * 1.06)
+			item.hint_width = math.ceil(text_width(item.hint, hint_opts) * 1.08)
+			max_title_width = math.max(max_title_width, item.title_width)
+			max_hint_width = math.max(max_hint_width, item.hint_width)
+			max_icon_width = math.max(max_icon_width, icon_width)
 			local spacings_in_item = 1 + (item.title_width > 0 and 1 or 0)
 				+ (item.hint_width > 0 and 1 or 0) + (icon_width > 0 and 1 or 0)
 			local estimated_width = item.title_width + item.hint_width + icon_width
 				+ (self.item_padding * spacings_in_item)
+			max_item_width = math.max(max_item_width, estimated_width)
 			if estimated_width > max_width then max_width = estimated_width end
 		end
 
+		menu.max_title_width = max_title_width
+		menu.max_hint_width = max_hint_width
+		if uses_fixed_columns(menu) and max_hint_width > 0 then
+			local column_spacings = 3 + (max_icon_width > 0 and 1 or 0)
+			local fixed_column_width = max_title_width + max_hint_width + max_icon_width
+				+ self.item_padding * column_spacings
+			max_item_width = math.max(max_item_width, fixed_column_width)
+			max_width = math.max(max_width, fixed_column_width)
+		end
+		menu.max_item_width = max_item_width
 		menu.max_width = max_width
 	end
 
@@ -342,18 +565,76 @@ function Menu:update_dimensions()
 
 	for _, menu in ipairs(self.all) do
 		local width = math.max(menu.search and menu.search.max_width or 0, menu.max_width)
-		menu.width = round(clamp(min_width, width, width_available))
+		local preferred_width, maximum_width = get_responsive_width_bounds(menu)
+		if maximum_width then width = math.min(width, maximum_width) end
+		if preferred_width then width = math.max(width, preferred_width) end
+		local menu_min_width = menu.min_width and (
+			menu.min_width_px and round(menu.min_width)
+			or round(menu.min_width * state.scale)
+		) or min_width
+		menu.width = round(clamp(math.min(menu_min_width, width_available), width, width_available))
 		local title_height = (menu.is_root and menu.title or menu.search) and
 			self.scroll_step + self.separator_size + 1 or 0
-		local footnote_height = self.font_size * 1.5
+		if menu == self.current and menu.parent_menu then title_height = title_height + self.scroll_step end
+		-- Do not reserve an invisible footer. The default command menu has no
+		-- footnote, so unconditional reserve made its top/bottom margins uneven.
+		local footnote_height = menu.footnote and self.font_size * 1.5 or 0
 		local max_height = height_available - title_height - footnote_height
-		local content_height = self.scroll_step * #menu.items
-		menu.height = math.min(content_height - self.item_spacing, max_height)
+		local page_top, page_title_height
+		if menu == self.current and menu.page_anchor then
+			-- Drill into the panel the pointer actually used. 普通子菜单保持父面板宽度；清晰度
+			-- 菜单例外——它的完整媒体参数比播放列表宽，不能因为进入完整页又被父宽二次截断。
+			local anchor = menu.page_anchor
+			local anchored_width = math.min(anchor.width, display.width - self.viewport_edge * 2)
+			if menu.type == 'online-quality' then
+				anchored_width = math.min(
+					math.max(anchored_width, menu.width + self.padding * 2),
+					display.width - self.viewport_edge * 2
+				)
+			end
+			menu.width = anchored_width - self.padding * 2
+			page_title_height = ((menu.is_root and menu.title or menu.search) and self.scroll_step or 0)
+				+ (menu.parent_menu and self.scroll_step or 0)
+			local minimum_height = page_title_height + self.item_height + self.padding * 2 + footnote_height
+			page_top = clamp(self.viewport_edge, anchor.ay,
+				math.max(self.viewport_edge, display.height - self.viewport_edge - minimum_height))
+			max_height = display.height - self.viewport_edge - page_top
+				- page_title_height - self.padding * 2 - footnote_height
+		end
+		local content_padding_bottom = round((menu.content_padding_bottom or 0) * state.scale)
+		local content_height = self.scroll_step * #menu.items + content_padding_bottom
+		local full_content_height = content_height - self.item_spacing
+		menu.height = math.min(full_content_height, max_height)
+		if full_content_height > max_height then
+			-- A viewport ending between two rows exposes a clipped half-row at
+			-- rest. Quantize overflowing menus to complete rows; scrolling
+			-- remains responsible for revealing the remaining items.
+			local visible_rows = math.floor((max_height + self.item_spacing) / self.scroll_step)
+			if visible_rows > 0 then
+				menu.height = visible_rows * self.scroll_step - self.item_spacing
+			end
+		end
 		menu.top = clamp(
 			title_height + margin + self.padding,
 			menu.search and math.min(menu.search.min_top, menu.search.source.top) or height_available,
 			round((height_available - menu.height + title_height) / 2)
 		)
+		if self.anchor_y then
+			local anchor_gap = round(8 * state.scale)
+			local draw_title = menu.is_root and menu.title or menu.search
+			local title_panel_height = (draw_title and self.scroll_step or 0)
+				+ (menu == self.current and menu.parent_menu and self.scroll_step or 0)
+			local outer_height = title_panel_height + menu.height + self.padding * 2
+			local maximum_top = math.max(anchor_gap,
+				display.height - anchor_gap - outer_height)
+			-- Start beside the click and pull the complete panel back inside the
+			-- viewport when it would cross the lower edge. This keeps long menus
+			-- close to the pointer instead of snapping all the way to the top.
+			local outer_top = clamp(anchor_gap,
+				self.anchor_y + anchor_gap, maximum_top)
+			menu.top = outer_top + title_panel_height + self.padding
+		end
+		if page_top then menu.top = page_top + page_title_height + self.padding end
 		if menu.search then
 			menu.search.min_top = math.min(menu.search.min_top, menu.top)
 			menu.search.max_width = math.max(menu.search.max_width, menu.width)
@@ -362,12 +643,84 @@ function Menu:update_dimensions()
 		self:set_scroll_to(menu.scroll_y, menu.id) -- clamps scroll_y to scroll limits
 	end
 
+	-- Rendering used to walk the complete submenu tree on every frame just to
+	-- reserve cascade width. Cache it whenever dimensions change so short menu
+	-- fades and scroll flings do not multiply that work.
+	local function cache_cascade_width(menu)
+		local max_child_width = 0
+		for _, item in ipairs(menu.items) do
+			if item.items then
+				max_child_width = math.max(max_child_width,
+					self.gap + cache_cascade_width(item --[[@as MenuStack]]))
+			end
+		end
+		menu.cascade_width = menu.width + self.padding * 2 + max_child_width
+		return menu.cascade_width
+	end
+	cache_cascade_width(self.root)
+
 	self:update_coordinates()
 end
 
 -- Updates element coordinates to match padding box of currently open (sub)menu.
 function Menu:update_coordinates()
-	local ax = round((display.width - self.current.width) / 2 - self.padding) + self.offset_x
+	local ax = round((display.width - self.current.width) / 2 - self.padding)
+	-- Entered submenus use one complete page, with a visible back row. Hover
+	-- previews still cascade. This also keeps arbitrarily deep trees usable in
+	-- narrow windows without moving ancestors underneath the pointer.
+	if self.current.parent_menu then
+		local width = self.current.width + self.padding * 2
+		ax = self.current.page_anchor and self.current.page_anchor.ax
+			or self.anchor_x and self.anchor_x + self.viewport_edge or ax
+		ax = menu_layout.clamp_panel(ax, 0, width, 0, display.width, display.height, self.viewport_edge)
+		self:set_coordinates(ax, self.current.top - self.padding,
+			ax + width, self.current.top + self.current.height + self.padding)
+		return
+	end
+	if self.anchor_x then
+		local anchor_gap = round(8 * state.scale)
+		local root_outer_width = self.root.width + self.padding * 2
+		local root_left = self.anchor_x + anchor_gap
+		if root_left + root_outer_width > display.width - anchor_gap then
+			root_left = self.anchor_x - root_outer_width - anchor_gap
+		end
+
+		-- The renderer places every parent immediately to the left of the
+		-- current submenu. Preserve the click-anchored root position, then
+		-- move the complete visible chain only as much as edge avoidance needs.
+		local distance_from_root = 0
+		local parent = self.current.parent_menu
+		while parent do
+			distance_from_root = distance_from_root
+				+ parent.width + self.padding * 2 + self.gap
+			parent = parent.parent_menu
+		end
+		local current_outer_width = self.current.width + self.padding * 2
+		local chain_width = distance_from_root + current_outer_width
+		local maximum_root_left = math.max(anchor_gap,
+			display.width - anchor_gap - chain_width)
+		root_left = clamp(anchor_gap, root_left, maximum_root_left)
+		ax = root_left + distance_from_root
+	elseif self.root.center_root_when_closed and self.current.parent_menu then
+		-- Once the online-quality submenu is open, treat the visible parent and
+		-- child as one composition.  When the pair fits, centering the chain
+		-- preserves the complete playlist instead of centering only the child and
+		-- clipping most of the long parent panel off the left edge.
+		local distance_from_root = 0
+		local parent = self.current.parent_menu
+		while parent do
+			distance_from_root = distance_from_root
+				+ parent.width + self.padding * 2 + self.gap
+			parent = parent.parent_menu
+		end
+		local chain_width = distance_from_root
+			+ self.current.width + self.padding * 2
+		local edge = round(2 * state.scale)
+		if chain_width <= display.width - edge * 2 then
+			ax = round((display.width - chain_width) / 2) + distance_from_root
+		end
+	end
+	ax = ax + self.offset_x
 	self:set_coordinates(
 		ax, self.current.top - self.padding,
 		ax + self.current.width + self.padding * 2, self.current.top + self.current.height + self.padding
@@ -404,7 +757,9 @@ function Menu:set_offset_x(offset)
 	self:set_coordinates(self.ax + delta, self.ay, self.bx + delta, self.by)
 end
 
-function Menu:fadeout(callback) self:tween_property('opacity', 1, 0, callback) end
+function Menu:fadeout(callback)
+	self:tween_property('opacity', self.opacity, 0, menu_close_duration, callback)
+end
 
 -- If `menu_id` is provided, will return menu with that id or `nil`. If `menu_id` is `nil`, will return current menu.
 ---@param menu_id? string
@@ -569,8 +924,13 @@ end
 function Menu:activate_menu(id)
 	local menu = self:get_menu(id)
 	if menu then
+		if menu.is_root then
+			for _, entry in ipairs(self.all) do entry.page_anchor = nil end
+		elseif not menu.page_anchor and menu.parent_menu.page_anchor then
+			menu.page_anchor = menu.parent_menu.page_anchor
+		end
 		self.current = menu
-		self:update_coordinates()
+		self:update_dimensions()
 		self:reset_navigation()
 		self:search_ensure_key_bindings()
 		local parent = menu.parent_menu
@@ -621,7 +981,11 @@ function Menu:back()
 	local parent = current.parent_menu
 
 	if parent then
-		self:slide_in_menu(parent.id, display.width / 2 - current.width / 2 - parent.width / 2 + self.offset_x)
+		if current.page_anchor then
+			self:activate_menu(parent.id)
+		else
+			self:slide_in_menu(parent.id, display.width / 2 - current.width / 2 - parent.width / 2 + self.offset_x)
+		end
 	else
 		self.callback({type = 'back'})
 	end
@@ -638,8 +1002,11 @@ function Menu:activate_selected_item(shortcut, is_pointer)
 			if not self.mouse_nav then
 				self:select_index(1, item.id)
 			end
+			if item.inline_submenu then self:anchor_inline_page(menu, item) end
 			self:activate_menu(item.id)
-			self:tween(self.offset_x + menu.width / 2, 0, function(offset) self:set_offset_x(offset) end)
+			if not item.page_anchor then
+				self:tween(self.offset_x + menu.width / 2, 0, function(offset) self:set_offset_x(offset) end)
+			end
 			self.opacity = 1 -- in case tween above canceled fade in animation
 		else
 			local actions = item.actions or menu.item_actions
@@ -685,7 +1052,7 @@ function Menu:move_selected_item_by(delta)
 	end
 end
 
-function Menu:on_display() self:update_dimensions() end
+function Menu:on_display() self:update_content_dimensions() end
 function Menu:on_prop_fullormaxed() self:update_content_dimensions() end
 function Menu:on_options() self:update_content_dimensions() end
 
@@ -701,7 +1068,7 @@ end
 ---@param shortcut? Shortcut
 function Menu:handle_cursor_up(shortcut)
 	if self.proximity_raw <= -self.padding and self.drag_last_y and not self.is_dragging then
-		self:activate_selected_item(shortcut, true)
+		self:activate_pointer_item(shortcut)
 	end
 	if self.is_dragging then
 		local distance = cursor:get_velocity().y / -3
@@ -721,11 +1088,72 @@ function Menu:handle_cursor_up(shortcut)
 	self.drag_last_y = nil
 end
 
+-- Keep each entered branch's origin so returning from a deeper page restores
+-- its parent in place. Returning to the root clears these per-session anchors.
+function Menu:anchor_inline_page(parent, child)
+	local rect = parent.rendered_rect
+	if not rect then return end
+	local anchor = {ax = rect.ax, ay = rect.ay, width = rect.bx - rect.ax}
+	if not parent.is_root then parent.page_anchor = anchor end
+	child.page_anchor = anchor
+end
+
+---@param shortcut? Shortcut
+---@param target_menu? MenuStack
+---@param target_index? integer
+function Menu:activate_pointer_item(shortcut, target_menu, target_index)
+	local menu = target_menu or self.pointer_menu or self.current
+	local index = target_index or self.pointer_index or menu.selected_index
+	local item = index and menu.items[index]
+	if not item then return end
+
+	-- Pointer navigation uses cascading panels. Hovering a submenu is enough to open it;
+	-- clicking the parent must not replace and recenter the current panel.
+	if item.items then
+		if item.inline_submenu then
+			self:anchor_inline_page(menu, item)
+			self:activate_menu(item.id)
+			self.mouse_nav = false
+			self.mouse_nav_origin_x, self.mouse_nav_origin_y = cursor.x, cursor.y
+		end
+		return
+	end
+
+	local actions = item.actions or menu.item_actions
+	local action = actions and menu.action_index and actions[menu.action_index]
+	self.callback({
+		type = 'activate',
+		index = index,
+		value = item.value,
+		is_pointer = true,
+		action = action and action.name,
+		keep_open = item.keep_open or menu.keep_open,
+		modifiers = shortcut and shortcut.modifiers or nil,
+		alt = shortcut and shortcut.alt or false,
+		ctrl = shortcut and shortcut.ctrl or false,
+		shift = shortcut and shortcut.shift or false,
+		menu_id = menu.id,
+	})
+end
+
 function Menu:on_global_mouse_move()
+	if self.mouse_nav_origin_x and self.mouse_nav_origin_y then
+		local dx = cursor.x - self.mouse_nav_origin_x
+		local dy = cursor.y - self.mouse_nav_origin_y
+		local threshold = math.max(mouse_nav_activation_distance,
+			mouse_nav_activation_distance * state.scale)
+		if dx * dx + dy * dy < threshold * threshold then return end
+		self.mouse_nav_origin_x = nil
+		self.mouse_nav_origin_y = nil
+	end
 	self.mouse_nav = true
+	-- A deliberate pointer move is the signal that hover selection may resume
+	-- after a replacement open or wheel fling. Until then, keep the row stable.
+	for _, menu in ipairs(self.all) do menu.hover_suppressed_until = 0 end
 	if self.drag_last_y then
 		self.is_dragging = self.is_dragging or math.abs(cursor.y - self.drag_last_y) >= 10
 		if self.is_dragging then
+			self:show_scrollbar()
 			local distance = self.drag_last_y - cursor.y
 			if distance ~= 0 then self:set_scroll_by(distance) end
 			self.drag_last_y = cursor.y
@@ -734,8 +1162,40 @@ function Menu:on_global_mouse_move()
 	request_render()
 end
 
-function Menu:handle_wheel_up() self:scroll_by(self.scroll_step * -3, nil, {update_cursor = true}) end
-function Menu:handle_wheel_down() self:scroll_by(self.scroll_step * 3, nil, {update_cursor = true}) end
+---@param menu_id? string
+function Menu:show_scrollbar(menu_id)
+	local menu = self:get_menu(menu_id)
+	if not menu or menu.scroll_height <= 0 then return end
+	menu.scrollbar_visible_until = mp.get_time() + 0.8
+	self.scrollbar_hide_timer:kill()
+	self.scrollbar_hide_timer:resume()
+	request_render()
+end
+
+---@param menu_id? string
+function Menu:handle_wheel_up(menu_id)
+	local menu = self:get_menu(menu_id)
+	if not menu or menu.scroll_height <= 0 then return end
+	self:show_scrollbar(menu_id)
+	menu.hover_suppressed_until = mp.get_time() + wheel_hover_suppression
+	self:scroll_by(self.scroll_step * -wheel_scroll_rows, menu_id, {
+		update_cursor = true,
+		duration = wheel_scroll_duration,
+		easing = ease_out_quart,
+	})
+end
+---@param menu_id? string
+function Menu:handle_wheel_down(menu_id)
+	local menu = self:get_menu(menu_id)
+	if not menu or menu.scroll_height <= 0 then return end
+	self:show_scrollbar(menu_id)
+	menu.hover_suppressed_until = mp.get_time() + wheel_hover_suppression
+	self:scroll_by(self.scroll_step * wheel_scroll_rows, menu_id, {
+		update_cursor = true,
+		duration = wheel_scroll_duration,
+		easing = ease_out_quart,
+	})
+end
 
 ---@param offset integer
 ---@param menu? MenuStack
@@ -867,13 +1327,15 @@ function search_items(items, query, recursive, prefix)
 		local prefixed_title = prefix and prefix .. ' / ' .. (item.title or '') or item.title
 
 		if item.selectable ~= false and not (item.items and recursive) and not seen[item] then
+			local exact_hint = item.search_exact_hint and item.hint
+				and item.hint:lower() == query
 			local bold = item.bold or options.font_bold
 			local font_color = item.active and fgt or bgt
 			local ass_safe_title = highlight_match(matched_title, positions, font_color, bold) or nil
 			local new_item = table_assign({}, item)
 			new_item.title = prefixed_title
 			new_item.ass_safe_title = prefix and prefix .. ' / ' .. (ass_safe_title or '') or ass_safe_title
-			new_item.score = score
+			new_item.score = exact_hint and 1000000 or score
 			result[#result + 1] = new_item
 			seen[item] = true
 		end
@@ -912,7 +1374,10 @@ function search_items(items, query, recursive, prefix)
 			end
 
 			if hint and not match then
-				if hint:find(query, 1, true) then
+				if item.search_exact_hint and hint == query then
+					match = true
+					score = 1000000
+				elseif hint:find(query, 1, true) then
 					match = true
 					score = 100
 				elseif concat(initials(hint)):find(query, 1, true) then
@@ -971,7 +1436,16 @@ function Menu:search_cursor_move(amount, word_mode)
 
 		menu.search.cursor = clamp(0, cursor, #query)
 	end
+	self:search_cursor_blink_reset()
 	request_render()
+end
+
+function Menu:search_cursor_blink_reset()
+	self.search_cursor_visible = true
+	if self.search_cursor_timer then
+		self.search_cursor_timer:kill()
+		self.search_cursor_timer:resume()
+	end
 end
 
 ---@param query string
@@ -1002,6 +1476,7 @@ end
 function Menu:search_trigger(menu_id, immediate)
 	local menu = self:get_menu(menu_id)
 	if not menu or not menu.search then return end
+	self:search_cursor_blink_reset()
 	if menu.search_debounce ~= 'submit' then
 		if menu.search.timeout then menu.search.timeout:kill() end
 		if menu.search.timeout and not immediate then
@@ -1152,6 +1627,7 @@ function Menu:search_init(menu_id)
 			items = not menu.on_search and menu.items or nil,
 		},
 	}
+	self:search_cursor_blink_reset()
 end
 
 ---@param menu_id? string
@@ -1292,7 +1768,9 @@ function Menu:handle_shortcut(shortcut, info)
 	elseif id == '/' or id == 'kp_divide' or id == 'ctrl+f' then
 		self:search_start()
 	elseif key == 'esc' then
-		if menu.search and menu.search_style ~= 'palette' then
+		if menu.back_on_escape then
+			self.callback({type = 'back'})
+		elseif menu.search and menu.search_style ~= 'palette' then
 			self:search_cancel()
 		else
 			self:close()
@@ -1360,6 +1838,9 @@ function Menu:command_or_event(command, params, event)
 end
 
 function Menu:render()
+	self.pointer_menu = nil
+	self.pointer_index = nil
+
 	for _, menu in ipairs(self.all) do
 		if menu.fling then
 			local time_delta = state.render_last_time - menu.fling.time
@@ -1369,69 +1850,243 @@ function Menu:render()
 		end
 	end
 
-	cursor:zone('primary_down', display, self:create_action(function() self:handle_cursor_down() end))
-	cursor:zone('primary_up', display, self:create_action(function(shortcut) self:handle_cursor_up(shortcut) end))
-	cursor:zone('wheel_down', self, function() self:handle_wheel_down() end)
-	cursor:zone('wheel_up', self, function() self:handle_wheel_up() end)
+	local function bind_zone(event, hitbox, callback)
+		if not self.is_closing then cursor:zone(event, hitbox, callback) end
+	end
+	bind_zone('primary_down', display, self:create_action(function() self:handle_cursor_down() end))
+	bind_zone('primary_up', display, self:create_action(function(shortcut) self:handle_cursor_up(shortcut) end))
 
 	local ass = assdraw.ass_new()
+	local now = mp.get_time()
 	local icon_size = self.font_size
+	local menu_bg = config.color.menu_background or bg
+	local menu_fg = config.color.menu_foreground or fg
+	local menu_text = config.color.menu_text or bgt
+	local menu_selection = config.color.menu_selection or fg
+	local menu_active = config.color.menu_active or config.color.match
+	local menu_title = config.color.menu_title or fg
+	local menu_title_text = config.color.menu_title_text or bg
 
 	---@param menu MenuStack
 	---@param x number
 	---@param pos number Horizontal position index. 0 = current menu, <0 parent menus, >1 submenu.
-	local function draw_menu(menu, x, pos)
+	local function draw_menu(menu, x, pos, direction, ancestors)
 		local is_current, is_parent, is_submenu = pos == 0, pos < 0, pos > 0
-		local menu_opacity = (pos == 0 and 1 or config.opacity.submenu ^ math.abs(pos)) * self.opacity
+		local back_height = is_current and menu.parent_menu and self.scroll_step or 0
+		local draw_title = menu.is_root and menu.title or menu.search
+		local title_height = (draw_title and self.scroll_step or 0) + back_height
+		local footer_height = menu.footnote and self.font_size * 1.5 or 0
+		local panel_y
+		x, panel_y = menu_layout.clamp_panel(x, menu.top - title_height - self.padding,
+			menu.width + self.padding * 2, menu.height + title_height + self.padding * 2 + footer_height,
+			display.width, display.height, self.viewport_edge)
+		local menu_opacity = (pos == 0 and 1 or config.opacity.submenu) * self.opacity
 		-- Scrollable content area coordinates
 		local content_rect = {
 			ax = x + self.padding,
-			ay = menu.top,
+			ay = panel_y + title_height + self.padding,
 			bx = x + self.padding + menu.width,
-			by = menu.top + menu.height,
+			by = panel_y + title_height + self.padding + menu.height,
 		}
+		local content_padding_bottom = round((menu.content_padding_bottom or 0) * state.scale)
 		-- local ax, ay, bx, by = x + self.padding, menu.top, x + menu.width + self.padding, menu.top + menu.height
-		local draw_title = menu.is_root and menu.title or menu.search
 		local scroll_clip = '\\clip(0,' .. content_rect.ay .. ',' .. display.width .. ',' .. content_rect.by .. ')'
 		local start_index = math.floor(menu.scroll_y / self.scroll_step) + 1
 		local end_index = math.ceil((menu.scroll_y + menu.height) / self.scroll_step)
 		local bg_rect = {
 			ax = x,
-			ay = content_rect.ay - (draw_title and self.scroll_step or 0) - self.padding,
+			ay = panel_y,
 			bx = content_rect.bx + self.padding,
 			by = content_rect.by + self.padding,
 		}
+		menu.rendered_rect = bg_rect
+		-- Every visible cascade level owns its selection independently. This
+		-- allows pointer retreat to collapse one level at a time (3 -> 2 -> 1)
+		-- instead of a descendant loss clearing the whole chain at once.
+		local hover_frozen = self.mouse_nav and (
+			(menu.fling and menu.fling.update_cursor)
+			or now < (menu.hover_suppressed_until or 0)
+			or (self.is_dragging and menu == self.current)
+		)
+		local blur_selected_index = self.mouse_nav and (is_current or is_submenu) and not hover_frozen
 		local blur_action_index = self.mouse_nav and menu.action_index ~= nil
+		local item_title_font_size = self.font_size
+		local uniform_title_size = uses_uniform_title_size(menu)
+		local fixed_columns = uses_fixed_columns(menu)
 
-		-- Background
-		ass:rect(bg_rect.ax, bg_rect.ay, bg_rect.bx, bg_rect.by, {
-			color = bg,
-			opacity = menu_opacity * config.opacity.menu,
-			radius = state.radius > 0 and math.min(state.radius + self.padding, state.radius * 3) or 0,
-		})
-
-		if is_parent then
-			cursor:zone('primary_down', bg_rect, self:create_action(function() self:slide_in_menu(menu.id, x) end))
+		-- A narrow menu with only short command labels looks oversized when it
+		-- inherits the full result-list font. Reduce only these compact panels;
+		-- playlists, tracks and search results keep their readable shared size.
+		local logical_menu_width = menu.width / math.max(state.scale, 0.01)
+		local narrow_file_fit_policy = is_file_navigation_menu(menu)
+			and logical_menu_width < 700
+			and {
+				fit_ratio = 0.86,
+				ellipsis_ratio = 0.85,
+				force_ellipsis_when_scaled = true,
+			}
+			or nil
+		-- Recent-history rows have a fixed right metadata column.  Use the
+		-- measured space up to that column instead of applying the generic
+		-- conservative ellipsis reserve a second time.
+		local title_fit_policy = menu.type == 'recent_menu'
+			and {fit_ratio = 0.98, ellipsis_ratio = 0.92, force_ellipsis_at_floor = true}
+			or narrow_file_fit_policy
+		if not uniform_title_size and logical_menu_width < 420 then
+			item_title_font_size = round(self.font_size * 0.90)
 		end
 
-		-- Scrollbar
-		if menu.scroll_height > 0 then
+		if uniform_title_size then
+			-- Search/result menus should stay comfortably readable. Once a
+			-- shared size reaches this floor, exceptionally long titles are
+			-- ellipsized instead of shrinking every row to a tiny font.
+			-- Playlists use a slightly lower floor than search results, but
+			-- still prioritize readability over showing every character of
+			-- an exceptionally long file name.
+			local logical_width = display.width / math.max(state.scale, 0.01)
+			-- Recent history often contains one exceptionally long ISO or release
+			-- name. Keep the whole list at the normal readable size and ellipsize
+			-- that title instead of shrinking every row to match it.
+			local recent_font_ratio = 1
+			local search_result_ratio = menu.search and menu.uniform_title_size and 0.92
+				or menu.uniform_title_size and 0.84
+			local min_font_ratio = menu.type == 'recent_menu' and recent_font_ratio
+				or search_result_ratio or 0.82
+			local min_font_size = math.max(round(8 * state.scale), round(self.font_size * min_font_ratio))
+			local base_content_width = math.max(0, menu.width - self.item_padding * 2)
+
+			-- Selected menu groups can share one size derived from their most
+			-- constrained title. This avoids a visibly uneven mix of large and
+			-- small labels while keeping the size stable as the list scrolls.
+			for _, item in ipairs(menu.items) do
+				if item.title then
+					local available_width = base_content_width
+						- (item.icon and icon_size + self.item_padding or 0)
+					if item.hint_width > 0 then
+						local width_before_hint = available_width - self.item_padding
+						local hint_reserve = get_hint_reserve(
+							menu, item, fixed_columns, width_before_hint, self.item_padding
+						)
+						available_width = width_before_hint - hint_reserve
+					end
+
+					local fitted_size = fit_text_to_width(
+						item.title,
+						math.max(0, available_width - round(2 * state.scale)),
+						self.font_size,
+						min_font_size,
+						{
+							font = self.font,
+							italic = item.italic,
+							bold = item.bold == true or item.active,
+						},
+						title_fit_policy
+					)
+					item_title_font_size = math.min(item_title_font_size, fitted_size)
+				end
+			end
+		end
+
+		-- A restrained rim and soft shadow separate surfaces from video.
+		-- Nested radii follow the actual inset, so the rim has an even weight
+		-- around corners instead of looking like a second frame.
+		local panel_radius = state.radius > 0 and state.radius + self.padding or 0
+		ass:rect(bg_rect.ax, bg_rect.ay + state.scale * 2, bg_rect.bx, bg_rect.by + state.scale * 2, {
+			color = '000000', opacity = menu_opacity * 0.32,
+			border = state.scale * 2, border_color = '000000',
+			radius = panel_radius, blur = state.scale * 5,
+			clip = '\\iclip(' .. bg_rect.ax .. ',' .. bg_rect.ay .. ',' .. bg_rect.bx .. ',' .. bg_rect.by .. ')',
+		})
+		ass:rect(bg_rect.ax, bg_rect.ay, bg_rect.bx, bg_rect.by, {
+			color = menu_bg,
+			border = math.max(0.5, state.scale * 0.65), border_color = menu_fg,
+			opacity = {primary = menu_opacity * config.opacity.menu, border = menu_opacity * 0.26},
+			radius = panel_radius,
+		})
+		-- Every visible cascade panel owns its wheel input. The recursive submenus
+		-- are not `self.current`, so binding only the element rectangle either
+		-- missed their wheel events or scrolled the root panel.
+		local target_menu_id = menu.id
+		bind_zone('wheel_down', bg_rect, self:create_action(function()
+			self:handle_wheel_down(target_menu_id)
+		end))
+		bind_zone('wheel_up', bg_rect, self:create_action(function()
+			self:handle_wheel_up(target_menu_id)
+		end))
+
+		if is_parent then
+			bind_zone('primary_down', bg_rect, self:create_action(function() self:slide_in_menu(menu.id, x) end))
+		end
+
+		-- Scrollbar: reveal only while scrolling/dragging or when the pointer
+		-- deliberately approaches the panel's right edge.
+		local scrollbar_hover_rect = {
+			ax = content_rect.bx - round(14 * state.scale),
+			ay = content_rect.ay,
+			bx = bg_rect.bx,
+			by = content_rect.by,
+		}
+		local show_scrollbar = self.is_dragging or menu.fling
+			or now < (menu.scrollbar_visible_until or 0)
+			or get_point_to_rectangle_proximity(cursor, scrollbar_hover_rect) <= 0
+		if menu.scroll_height > 0 and show_scrollbar then
 			local groove_height = menu.height - 2
-			local thumb_height = math.max((menu.height / (menu.scroll_height + menu.height)) * groove_height, 40)
+			local thumb_height = math.min(groove_height,
+				math.max((menu.height / (menu.scroll_height + menu.height)) * groove_height, 40))
 			local thumb_y = content_rect.ay + 1 + ((menu.scroll_y / menu.scroll_height) * (groove_height - thumb_height))
 			local sax = content_rect.bx - round(self.scrollbar_size / 2)
 			local sbx = sax + self.scrollbar_size
-			ass:rect(sax, thumb_y, sbx, thumb_y + thumb_height, {color = fg, opacity = menu_opacity * 0.8})
+			ass:rect(sax, thumb_y, sbx, thumb_y + thumb_height, {
+				color = config.color.match, opacity = menu_opacity * 0.8,
+			})
 		end
 
 		-- Draw submenu if selected
-		local submenu_rect, current_item = nil, is_current and menu.selected_index and menu.items[menu.selected_index]
+		local submenu_rect, current_item = nil,
+			not hover_frozen and (is_current or is_submenu)
+			and menu.selected_index and menu.items[menu.selected_index]
 		local submenu_is_hovered = false
+		ancestors = ancestors or {}
+		local branch = {}
+		for i, rect in ipairs(ancestors) do branch[i] = rect end
+		branch[#branch + 1] = bg_rect
+		-- Compute affordances for every visible row, including the first click
+		-- before the next hover render. Position and hit testing share this data.
+		for _, item in ipairs(menu.items) do
+			if item.items then
+				local full_preview_width = item.width + self.padding * 2
+				local preview_min_width = item.type == 'online-quality' and full_preview_width
+					or round(240 * state.scale) + self.padding * 2
+				item.preview_x, item.preview_direction, item.preview_width = menu_layout.submenu(bg_rect,
+					full_preview_width, display.width, self.viewport_edge,
+					self.cascade_gap, direction, ancestors, preview_min_width)
+				item.inline_submenu = item.preview_x == nil
+			end
+		end
 		if current_item and current_item.items then
-			submenu_rect = draw_menu(current_item --[[@as MenuStack]], bg_rect.bx + self.gap, 1)
-			cursor:zone('primary_down', submenu_rect, self:create_action(function(shortcut)
-				self:activate_selected_item(shortcut, true)
-			end))
+			-- Align cascading submenu with the hovered parent item instead of centering it independently.
+			local parent_item_ay = content_rect.ay - menu.scroll_y
+				+ self.scroll_step * (menu.selected_index - 1)
+			local original_top = current_item.top
+			-- Keep cascades clear of the viewport edge. A padding-only margin is
+			-- effectively invisible with compact themes and makes the last row look
+			-- clipped even when it technically fits by a few pixels.
+			local edge_margin = math.max(self.padding * 2, round(self.item_height / 2))
+			local min_top = edge_margin
+			local max_top = math.max(
+				min_top,
+				display.height - current_item.height - self.padding - edge_margin
+			)
+			current_item.top = clamp(min_top, parent_item_ay + self.padding, max_top)
+			if current_item.preview_x then
+				local original_width = current_item.width
+				current_item.width = current_item.preview_width - self.padding * 2
+				submenu_rect = draw_menu(current_item --[[@as MenuStack]], current_item.preview_x,
+					pos + 1, current_item.preview_direction, branch)
+				current_item.width = original_width
+				submenu_is_hovered = get_point_to_rectangle_proximity(cursor, submenu_rect) <= 0
+			end
+			current_item.top = original_top
 		end
 
 		---@type MenuAction|nil
@@ -1443,42 +2098,45 @@ function Menu:render()
 
 			local item_ay = content_rect.ay - menu.scroll_y + self.scroll_step * (index - 1)
 			local item_by = item_ay + self.item_height
+			local item_text_clip_by = math.min(
+				item_by + (index == #menu.items and content_padding_bottom or 0),
+				content_rect.by
+			)
 			local item_center_y = item_ay + (self.item_height / 2)
+			-- Optional menu-local separator breathing.  Shift only the content centers
+			-- by a tiny amount; row height, hitboxes, scrolling and global separators
+			-- remain untouched.  This is used by the live reload footer only.
+			local breathe = tonumber(item.separator_breathe) or 0
+			local prev_item = menu.items[index - 1]
+			local prev_breathe = prev_item and (tonumber(prev_item.separator_breathe) or 0) or 0
+			if breathe > 0 then item_center_y = item_center_y - round(breathe * state.scale) end
+			if prev_breathe > 0 then item_center_y = item_center_y + round(prev_breathe * state.scale) end
 			local item_clip = (item_ay < content_rect.ay or item_by > content_rect.by) and scroll_clip or nil
 			local content_ax, content_bx = content_rect.ax + self.item_padding,
 				content_rect.bx - self.item_padding
 			local is_selected = menu.selected_index == index
 			local item_rect_hitbox = {
-				ax = content_rect.ax,
+				ax = item.preview_x and item.preview_direction == -1 and bg_rect.ax - self.cascade_gap or content_rect.ax,
 				ay = math.max(item_ay, bg_rect.ay),
-				bx = bg_rect.bx + (item.items and self.gap or -self.padding), -- to bridge the submenu gap with cursor
+				bx = item.preview_x and item.preview_direction == 1 and bg_rect.bx + self.cascade_gap or content_rect.bx,
 				by = math.min(item_ay + self.scroll_step, bg_rect.by),
 			}
-
-			-- Select hovered item
-			if is_current and self.mouse_nav and item.selectable ~= false
-				-- Do not select items if cursor is moving towards a submenu
-				and (not submenu_rect or not cursor:direction_to_rectangle_distance(submenu_rect))
-				and (submenu_is_hovered or get_point_to_rectangle_proximity(cursor, item_rect_hitbox) <= 0) then
-				menu.selected_index = index
-				if not is_selected then
-					is_selected = true
-					request_render()
-				end
-			end
 
 			local has_background = is_selected or item.active
 			local next_item = menu.items[index + 1]
 			local next_is_active = next_item and next_item.active
 			local next_has_background = menu.selected_index == index + 1 or next_is_active
-			local font_color = item.active and fgt or bgt
+			-- Active/current rows should remain the clearest item in lists.
+			-- `menu_title_text` is reserved for the pale title bar.
+			local font_color = menu_text
 			local actions = is_selected and (item.actions or menu.item_actions) -- not nil = actions are visible
 			local action = actions and actions[menu.action_index] -- not nil = action is selected
 
 			if action then selected_action = action end
 
 			-- Separator
-			if item_by < content_rect.by and ((not has_background and not next_has_background) or item.separator) then
+			if not item.hide_separator and item_by < content_rect.by
+				and ((not has_background and not next_has_background) or item.separator) then
 				local ay, by = item_by, item_by + self.separator_size
 				if has_background then
 					ay, by = ay + self.separator_size, by + self.separator_size
@@ -1487,17 +2145,25 @@ function Menu:render()
 				end
 				ass:rect(
 					content_rect.ax + self.item_padding, ay, content_rect.bx - self.item_padding, by,
-					{color = fg, opacity = menu_opacity * (item.separator and 0.13 or 0.04)}
+					{color = menu_fg, opacity = menu_opacity * (item.separator and 0.16 or 0.055)}
 				)
 			end
 
 			-- Background
-			local highlight_opacity = 0 + (item.active and 0.8 or 0) + (is_selected and 0.15 or 0)
+			local highlight_opacity = item.active and (is_selected and 0.62 or 0.52)
+				or (is_selected and 0.34 or 0)
 			if highlight_opacity > 0 then
-				ass:rect(content_rect.ax, item_ay, content_rect.bx, item_by, {
-					radius = state.radius,
-					color = fg,
-					opacity = highlight_opacity * menu_opacity,
+				local touches_top = title_height == 0 and index == 1 and menu.scroll_y == 0
+				local touches_bottom = index == #menu.items and item_by == content_rect.by and not menu.footnote
+				local edge_row = touches_top or touches_bottom
+				ass:rect(edge_row and bg_rect.ax or content_rect.ax,
+					touches_top and bg_rect.ay or item_ay,
+					edge_row and bg_rect.bx or content_rect.bx,
+					touches_bottom and bg_rect.by or item_by, {
+					radius = edge_row and panel_radius or state.radius,
+					color = item.active and menu_active or menu_selection,
+					border = state.scale * 0.5, border_color = menu_active,
+					opacity = {primary = highlight_opacity * menu_opacity, border = menu_opacity * 0.15},
 					clip = item_clip,
 				})
 			end
@@ -1555,7 +2221,7 @@ function Menu:render()
 
 						-- Select action on cursor hover
 						if self.mouse_nav and get_point_to_rectangle_proximity(cursor, rect) <= 0 then
-							cursor:zone('primary_down', rect, self:create_action(function(shortcut)
+							bind_zone('primary_down', rect, self:create_action(function(shortcut)
 								self:activate_selected_item(shortcut, true)
 							end))
 							blur_action_index = false
@@ -1576,9 +2242,9 @@ function Menu:render()
 				local size = round(2 * state.scale)
 				local v_padding = math.min(state.radius, math.ceil(self.item_height / 3))
 				ass:rect(
-					content_rect.ax - size - 1, item_ay + v_padding,
-					content_rect.ax - 1, item_by - v_padding,
-					{radius = 1 * state.scale, color = fg, opacity = menu_opacity, clip = item_clip}
+					content_rect.ax + state.scale, item_ay + v_padding,
+					content_rect.ax + state.scale + size, item_by - v_padding,
+					{radius = state.scale, color = menu_active, opacity = menu_opacity, clip = item_clip}
 				)
 			end
 
@@ -1588,11 +2254,18 @@ function Menu:render()
 					local x = (not item.title and not item.hint and item.align == 'center')
 						and bg_rect.ax + (bg_rect.bx - bg_rect.ax) / 2
 						or content_bx - (icon_size / 2)
+					local icon_scale = tonumber(item.icon_scale) or 1
+					local icon_opacity = item.icon_hint
+						and (item.opacity or item.active and 0.8 or is_selected and 0.72 or 0.62)
+						or 1
 					if item.icon == 'spinner' then
-						ass:spinner(x, item_center_y, icon_size * 1.5, {color = font_color, opacity = menu_opacity * 0.8})
+						ass:spinner(x, item_center_y, icon_size * 1.5 * icon_scale, {
+							color = font_color, opacity = menu_opacity * 0.8 * icon_opacity,
+						})
 					else
-						ass:icon(x, item_center_y, icon_size * 1.5, item.icon, {
-							color = font_color, opacity = menu_opacity, clip = item_clip,
+						local icon = item.items and item.preview_direction == -1 and 'chevron_left' or item.icon
+						ass:icon(x, item_center_y, icon_size * 1.5 * icon_scale, icon, {
+							color = font_color, opacity = menu_opacity * icon_opacity, clip = item_clip,
 						})
 					end
 				end
@@ -1600,31 +2273,55 @@ function Menu:render()
 				title_clip_bx = math.min(content_bx, title_clip_bx)
 			end
 
+
 			local hint_clip_bx = title_clip_bx
 			if item.hint_width > 0 then
-				-- controls title & hint clipping proportional to the ratio of their widths
-				-- both title and hint get at least 50% of the width, unless they are smaller then that
+				-- Keep the right-side metadata fully readable. Proportional font
+				-- metrics can render a few pixels wider than text_width reports,
+				-- so reserve an extra padding buffer and clip the title earlier.
 				local width = content_bx - content_ax - self.item_padding
-				local title_min = math.min(item.title_width, width * 0.5)
-				local hint_min = math.min(item.hint_width, width * 0.5)
-				local title_ratio = item.title_width / (item.title_width + item.hint_width)
+				local hint_reserve = get_hint_reserve(
+					menu, item, fixed_columns, width, self.item_padding
+				)
+				local title_width = width - hint_reserve
 				title_clip_bx = math.min(
 					title_clip_bx,
-					round(content_ax + clamp(title_min, width * title_ratio, width - hint_min))
+					round(content_ax + math.max(0, title_width))
 				)
 			end
 
 			-- Hint
 			if item.hint then
 				item.ass_safe_hint = item.ass_safe_hint or ass_escape(item.hint)
-				local clip = '\\clip(' .. title_clip_bx + self.item_padding .. ','
+				local hint_font_size = uniform_title_size and item_title_font_size
+					or self.font_size_hint
+				local fitted_hint_size, fitted_hint = fit_text_to_width(
+					item.hint,
+					math.max(0, hint_clip_bx - title_clip_bx - round(2 * state.scale)),
+					hint_font_size,
+					uniform_title_size and hint_font_size
+						or math.max(round(8 * state.scale), round(self.font_size_hint * 0.82)),
+					{font = self.font},
+					menu.hint_fit_ratio and {
+						fit_ratio = menu.hint_fit_ratio,
+						ellipsis_ratio = menu.hint_ellipsis_ratio,
+						force_ellipsis_when_scaled = menu.hint_force_ellipsis_when_scaled,
+					} or nil
+				)
+				local clip = '\\clip(' .. title_clip_bx .. ','
 					.. math.max(item_ay, content_rect.ay) .. ',' .. hint_clip_bx .. ','
-					.. math.min(item_by, content_rect.by) .. ')'
-				ass:txt(content_bx, item_center_y, 6, item.ass_safe_hint, {
-					size = self.font_size_hint,
+					.. item_text_clip_by .. ')'
+				local is_webdav_placeholder = menu.type == "webdav_shortcut"
+					and (item.hint == "127.0.0.1:5244" or item.hint == "未设置")
+				ass:txt(content_bx, item_center_y, 6, fitted_hint or item.ass_safe_hint, {
+					size = fitted_hint_size,
+					font = self.font,
+					scale_x = fitted_hint and 94 or nil,
 					color = font_color,
 					wrap = 2,
-					opacity = 0.5 * menu_opacity,
+					opacity = (item.opacity or item.active and 0.8 or is_selected and 0.72 or 0.62)
+						* menu_opacity
+						* (is_webdav_placeholder and 0.68 or 1),
 					clip = clip,
 				})
 			end
@@ -1632,23 +2329,79 @@ function Menu:render()
 			-- Title
 			if item.title then
 				item.ass_safe_title = item.ass_safe_title or ass_escape(item.title)
+				local rendered_title = item.ass_safe_title
+				-- Fixed-column titles should already end well before this guard.
+				-- Keep it only as a final guarantee that metadata can never overlap.
+				local clip_bx = title_clip_bx
 				local clip = '\\clip(' .. content_rect.ax .. ',' .. math.max(item_ay, content_rect.ay) .. ','
-					.. title_clip_bx .. ',' .. math.min(item_by, content_rect.by) .. ')'
+					.. clip_bx .. ',' .. item_text_clip_by .. ')'
 				local title_x, align = content_ax, 4
 				if item.align == 'right' then
 					title_x, align = title_clip_bx, 6
 				elseif item.align == 'center' then
 					title_x, align = content_ax + (title_clip_bx - content_ax) / 2, 5
 				end
-				ass:txt(title_x, item_center_y, align, item.ass_safe_title, {
-					size = self.font_size,
+				local title_font_size, fitted_title = fit_text_to_width(
+					item.title,
+					math.max(0, title_clip_bx - content_ax - round(2 * state.scale)),
+					item_title_font_size,
+					uniform_title_size and item_title_font_size
+						or math.max(round(8 * state.scale), round(self.font_size * 0.82)),
+					{
+						font = self.font,
+						italic = item.italic,
+						bold = item.bold == true or item.active,
+					},
+					title_fit_policy
+				)
+				if fitted_title then rendered_title = fitted_title end
+				local title_style = {
+					size = title_font_size,
+					font = self.font,
+					scale_x = fitted_title and 94
+						or title_font_size < item_title_font_size and 97 or nil,
 					color = font_color,
 					italic = item.italic,
-					bold = item.bold,
+					bold = item.bold == true or item.active,
+					border = item.active and 0 or 0.28 * state.scale,
+					border_color = font_color,
 					wrap = 2,
-					opacity = menu_opacity * (item.muted and 0.5 or 1),
+					opacity = menu_opacity * (item.opacity or item.muted and 0.5
+						or item.active and 1 or is_selected and 1 or 0.92),
 					clip = clip,
-				})
+				}
+				ass:txt(title_x, item_center_y, align, rendered_title, title_style)
+			end
+
+			-- Select hovered item
+			if (is_current or is_submenu) and self.mouse_nav and not hover_frozen and item.selectable ~= false then
+				if submenu_is_hovered then
+					-- A deeper descendant already owns the pointer. Keep this ancestor
+					-- selected, but do not overwrite the deepest clickable target.
+					blur_selected_index = false
+				elseif submenu_rect and cursor:direction_to_rectangle_distance(submenu_rect)
+					or actions_rect and actions_rect.is_outside and cursor:direction_to_rectangle_distance(actions_rect) then
+					blur_selected_index = false
+				else
+					if get_point_to_rectangle_proximity(cursor, item_rect_hitbox) <= 0 then
+						blur_selected_index = false
+						self.pointer_menu = menu
+						self.pointer_index = index
+						menu.selected_index = index
+						if not is_selected then
+							is_selected = true
+							request_render()
+						end
+						if is_current or is_submenu then
+							local target_menu, target_index = menu, index
+							bind_zone('primary_down', item_rect_hitbox, self:create_action(function(shortcut)
+								-- Capture the exact panel and row at render time. Depending on shared
+								-- hover state here lets an ancestor steal a deep submenu click.
+								self:activate_pointer_item(shortcut, target_menu, target_index)
+							end))
+						end
+					end
+				end
 			end
 		end
 
@@ -1670,8 +2423,9 @@ function Menu:render()
 				color = fg, border = state.scale, border_color = bg, opacity = opacity,
 			})
 			if text then
-				ass:txt(icon_x + self.font_size * 0.75, icon_y, 4, text, {
+				ass:txt(icon_x + self.font_size * 0.75, icon_y - self.font_size * 0.5, 7, ass_escape(text), {
 					size = self.font_size,
+					font = self.font,
 					color = fg,
 					border = state.scale,
 					border_color = bg,
@@ -1681,53 +2435,131 @@ function Menu:render()
 			end
 		end
 
+		if back_height > 0 then
+			local back_rect = {ax = content_rect.ax, ay = bg_rect.ay + self.padding,
+				bx = content_rect.bx, by = bg_rect.ay + self.padding + back_height}
+			local cy = (back_rect.ay + back_rect.by) / 2
+			ass:icon(back_rect.ax + self.item_padding + icon_size / 2, cy, icon_size * 1.3,
+				'chevron_left', {color = menu_text, opacity = menu_opacity})
+			local text_x = back_rect.ax + self.item_padding * 2 + icon_size
+			local size, title = fit_text_to_width(menu.title or '返回', back_rect.bx - text_x - self.item_padding,
+				self.font_size, self.font_size, {font = self.font, bold = true})
+			ass:txt(text_x, cy, 4, title or ass_escape(menu.title or '返回'),
+				{size = size, font = self.font, bold = true, color = menu_text, opacity = menu_opacity})
+			ass:rect(back_rect.ax + self.item_padding, back_rect.by - self.separator_size,
+				back_rect.bx - self.item_padding, back_rect.by, {color = menu_fg, opacity = menu_opacity * 0.2})
+			bind_zone('primary_down', back_rect, self:create_action(function()
+				self:back()
+				self.mouse_nav = false
+				self.mouse_nav_origin_x, self.mouse_nav_origin_y = cursor.x, cursor.y
+			end))
+		end
+
 		-- Menu title
 		if draw_title then
 			local requires_submit = menu.search_debounce == 'submit'
+			-- Treat the title as the row immediately preceding the first item.
+			-- This keeps its four edges on the same content grid as every menu row;
+			-- the old hand-tuned offsets let it protrude above the outer panel while
+			-- remaining inset on the left and right.
 			local rect = {
 				ax = content_rect.ax,
-				ay = content_rect.ay - self.scroll_step - self.separator_size - 1,
+				ay = content_rect.ay - self.scroll_step,
 				bx = content_rect.bx,
-				by = content_rect.ay - self.separator_size - 1,
+				by = content_rect.ay - self.item_spacing,
 			}
+			local title_height = rect.by - rect.ay
 			-- Centers
 			rect.cx, rect.cy = round(rect.ax + (rect.bx - rect.ax) / 2), round(rect.ay + (rect.by - rect.ay) / 2)
+			local search_action_rect
+			local search_content_bx = rect.bx
+			local search_inner_padding = menu.search and round(10 * state.scale) or 0
+			if menu.search and menu.search_action then
+				local action_margin = round(5 * state.scale)
+				local action_max_size = title_height - action_margin * 2
+				local action_size = math.min(
+					action_max_size,
+					math.max(round(24 * state.scale), round(28 * state.scale))
+				)
+				local action_center_y = rect.cy
+				search_action_rect = {
+					ax = rect.bx - action_margin - action_size,
+					ay = action_center_y - action_size / 2,
+					bx = rect.bx - action_margin,
+					by = action_center_y + action_size / 2,
+				}
+				search_content_bx = search_action_rect.ax - self.gap
+			end
 
 			if menu.title and not menu.ass_safe_title then
 				menu.ass_safe_title = ass_escape(menu.title)
 			end
 
-			-- Separator
-			ass:rect(
-				rect.ax, rect.by, rect.bx, rect.by + self.separator_size, {color = fg, opacity = menu_opacity * 0.2}
-			)
+			-- Background
+			if menu.search then
+				ass:rect(rect.ax, rect.ay, rect.bx, rect.by, {
+					color = fg .. '\\1a&HFF', opacity = menu_opacity * 0.1,
+					radius = state.radius,
+					border = 1, border_color = fg, border_opacity = menu_opacity * 0.8
+				})
+				ass:texture(rect.ax, rect.ay, rect.bx, rect.by, 'n', {
+					size = 80, color = bg, opacity = menu_opacity * 0.1,
+					anchor_x = rect.ax, anchor_y = rect.ay,
+				})
+			elseif menu.type == 'playlist' then
+				-- Fill the top and side edges; keep the rounded lower transition.
+				ass:rect(bg_rect.ax, bg_rect.ay, bg_rect.bx, rect.by, {
+						color = menu_title, opacity = menu_opacity * 0.58,
+						radius = panel_radius,
+					})
+			else
+				-- The plain title is the panel's header, not a rounded tile inset
+				-- inside it. Extend below the clip to leave a straight lower edge
+				-- while its upper corners share the panel silhouette.
+				ass:rect(bg_rect.ax, bg_rect.ay, bg_rect.bx, rect.by + panel_radius, {
+					color = menu_title, opacity = menu_opacity * 0.58,
+					radius = panel_radius,
+					clip = '\\clip(' .. bg_rect.ax .. ',' .. bg_rect.ay .. ',' .. bg_rect.bx .. ',' .. rect.by .. ')',
+				})
+			end
 
 			-- Blur selection (also activates search input) when user clicks title
 			if is_current then
-				cursor:zone('primary_down', rect, function()
+				local input_rect = {
+					ax = rect.ax, ay = rect.ay,
+					bx = search_content_bx, by = rect.by,
+				}
+				bind_zone('primary_down', input_rect, function()
+					self:search_cursor_blink_reset()
 					self:select_index(nil)
 				end)
 			end
 
 			-- Title
 			if menu.search then
+				local search_font_size = uniform_title_size and item_title_font_size
+					or self.font_size
+				local search_text_bx = search_content_bx - search_inner_padding
 				-- Icon
-				local icon_size, icon_opacity = self.font_size * 1.3, menu_opacity * (requires_submit and 0.5 or 1)
+				local icon_size, icon_opacity = search_font_size * 1.3,
+					menu_opacity * (requires_submit and 0.5 or 1)
+				local icon_offset = round((menu.search_icon_margin or 0) * state.scale)
+					+ search_inner_padding
 				local icon_rect = {
-					ax = rect.ax,
+					ax = rect.ax + icon_offset,
 					ay = rect.ay,
-					bx = content_rect.ax + icon_size + self.item_padding * 1.5,
+					bx = content_rect.ax + icon_offset + icon_size + self.item_padding * 1.5,
 					by = rect.by,
 				}
 
 				if is_current and requires_submit then
-					cursor:zone('primary_down', icon_rect, function() self:search_submit() end)
+					bind_zone('primary_down', icon_rect, function() self:search_submit() end)
 					if get_point_to_rectangle_proximity(cursor, icon_rect) <= 0 then
 						icon_opacity = menu_opacity
 					end
 				end
 
-				ass:icon(rect.ax + icon_size / 2, rect.cy, icon_size, 'search', {
+				ass:icon(rect.ax + icon_offset + icon_size / 2, rect.cy, icon_size, 'search', {
 					color = fg,
 					opacity = icon_opacity,
 					clip = '\\clip(' ..
@@ -1735,15 +2567,18 @@ function Menu:render()
 				})
 
 				-- Query/Placeholder
-				local cursor_height_half, cursor_thickness = round(self.font_size * 0.6), round(self.font_size / 12)
-				local cursor_ax = rect.bx + 1
+				local cursor_height_half = round(search_font_size * 0.5)
+				local cursor_thickness = math.max(1, round(search_font_size / 14))
+				local cursor_ax = search_text_bx + 1
+				local placeholder_left = menu.search_placeholder_left_align
 				if menu.search.query ~= '' then
 					local opts = {
-						size = self.font_size,
+						size = search_font_size,
+						font = self.font,
 						color = bgt,
 						wrap = 2,
 						opacity = menu_opacity,
-						clip = '\\clip(' .. icon_rect.bx .. ',' .. rect.ay .. ',' .. rect.bx .. ',' .. rect.by .. ')',
+						clip = '\\clip(' .. icon_rect.bx .. ',' .. rect.ay .. ',' .. search_text_bx .. ',' .. rect.by .. ')',
 					}
 					local query, cursor = menu.search.query, menu.search.cursor
 					-- Add a ZWNBSP suffix to prevent libass from trimming trailing spaces
@@ -1757,22 +2592,27 @@ function Menu:render()
 					local placeholder = (menu.search_style == 'palette' and menu.ass_safe_title)
 						and menu.ass_safe_title
 						or (requires_submit and t('type & ctrl+enter to search') or t('type to search'))
-					ass:txt(rect.bx, rect.cy, 6, placeholder, {
-						size = self.font_size,
+					local p_align = placeholder_left and 4 or 6
+					local p_anchor = placeholder_left and icon_rect.bx or search_text_bx
+					local p_clip_left = placeholder_left and icon_rect.bx or rect.ax
+					ass:txt(p_anchor, rect.cy, p_align, placeholder, {
+						size = search_font_size,
+						font = self.font,
 						italic = true,
 						color = bgt,
 						wrap = 2,
 						opacity = menu_opacity * 0.4,
-						clip = '\\clip(' .. rect.ax .. ',' .. rect.ay .. ',' .. rect.bx .. ',' .. rect.by .. ')',
+						clip = '\\clip(' .. p_clip_left .. ',' .. rect.ay .. ',' .. search_text_bx .. ',' .. rect.by .. ')',
 					})
 				end
 
 				-- Selected input indicator for submittable searches.
 				-- (input is selected when `selected_index` is `nil`)
-				if menu.search_debounce == 'submit' and not menu.selected_index then
+				if menu.search_debounce == 'submit' and not menu.selected_index
+					and menu.search_focus_indicator ~= false then
 					local size_half = round(1 * state.scale)
 					ass:rect(
-						content_rect.ax, rect.by - size_half, content_rect.bx, rect.by + size_half,
+						content_rect.ax, rect.by - size_half, search_content_bx, rect.by + size_half,
 						{color = fg, opacity = menu_opacity}
 					)
 				end
@@ -1780,16 +2620,72 @@ function Menu:render()
 
 				-- Cursor
 				local cursor_bx = cursor_ax + cursor_thickness
+				local cursor_is_visible = not menu.search_cursor_blink or self.search_cursor_visible
 				ass:rect(cursor_ax, rect.cy - cursor_height_half, cursor_bx, rect.cy + cursor_height_half, {
-					color = fg,
-					opacity = menu_opacity * (input_is_blurred and 0.5 or 1),
+					color = menu_text,
+					opacity = menu_opacity * (input_is_blurred and 0.34
+						or cursor_is_visible and 0.82 or 0.08),
+					radius = cursor_thickness / 2,
 					clip = '\\clip(' .. cursor_ax .. ',' .. rect.ay .. ',' .. cursor_bx .. ',' .. rect.by .. ')',
 				})
+
+				if search_action_rect then
+					local is_hovered = is_current
+						and get_point_to_rectangle_proximity(cursor, search_action_rect) <= 0
+					if is_hovered then
+						ass:rect(
+							search_action_rect.ax, search_action_rect.ay,
+							search_action_rect.bx, search_action_rect.by,
+							{
+								color = menu_selection,
+								opacity = menu_opacity * 0.22,
+								radius = state.radius,
+							}
+						)
+					end
+					ass:icon(
+						(search_action_rect.ax + search_action_rect.bx) / 2,
+						(search_action_rect.ay + search_action_rect.by) / 2,
+						(search_action_rect.by - search_action_rect.ay) * 0.58,
+						menu.search_action.icon,
+						{color = menu_text, opacity = menu_opacity * (is_hovered and 0.96 or 0.66)}
+					)
+					if is_current then
+						bind_zone('primary_down', search_action_rect, self:create_action(function(shortcut)
+							self:command_or_event(menu.on_search_action, {menu.search_action.name, menu.id}, {
+								type = 'search_action',
+								action = menu.search_action.name,
+								query = menu.search.query,
+								menu_id = menu.id,
+								is_pointer = true,
+							})
+						end))
+					end
+				end
 			else
-				ass:txt(rect.cx, rect.cy, 5, menu.ass_safe_title, {
-					size = self.font_size,
+				local title_available_width = math.max(
+					0,
+					rect.bx - rect.ax - self.item_padding * 2
+				)
+				if is_file_navigation_menu(menu) and not narrow_file_fit_policy then
+					-- Centered directory titles need more breathing room than
+					-- list rows because libass clips overflow at both edges.
+					title_available_width = title_available_width * 0.86
+				end
+				local title_font_size, fitted_title = fit_text_to_width(
+					menu.title,
+					title_available_width,
+					self.font_size,
+					math.max(round(10 * state.scale), round(self.font_size * 0.82)),
+					{font = self.font, bold = true},
+					narrow_file_fit_policy
+				)
+				ass:txt(rect.cx, rect.cy, 5, fitted_title or menu.ass_safe_title, {
+					size = title_font_size,
+					font = self.font,
+					scale_x = (fitted_title or title_font_size < self.font_size) and 94 or nil,
 					bold = true,
-					color = bgt,
+					color = menu_title_text,
 					wrap = 2,
 					opacity = menu_opacity,
 					clip = '\\clip(' .. rect.ax .. ',' .. rect.ay .. ',' .. rect.bx .. ',' .. rect.by .. ')',
@@ -1797,27 +2693,46 @@ function Menu:render()
 			end
 		end
 
+		-- We are in mouse nav and cursor isn't hovering any item
+		if blur_selected_index then
+			menu.selected_index = nil
+		end
 		if blur_action_index then
 			menu.action_index = nil
 			request_render()
 		end
 
+		-- Return the bounds of this panel and its complete visible descendant
+		-- chain. Ancestors must treat the cursor as still inside their submenu
+		-- while it is over a grandchild panel, otherwise entering level three
+		-- clears level one's selection and instantly collapses the whole chain.
+		if submenu_rect then
+			return {
+				ax = math.min(bg_rect.ax, submenu_rect.ax),
+				ay = math.min(bg_rect.ay, submenu_rect.ay),
+				bx = math.max(bg_rect.bx, submenu_rect.bx),
+				by = math.max(bg_rect.by, submenu_rect.by),
+			}
+		end
 		return bg_rect
 	end
 
+	-- Most command trees reserve their widest submenu path to avoid a lateral
+	-- jump on hover.  A playlist's optional online-quality row is different:
+	-- its root is the primary surface and can contain a very long media title.
+	-- Keep that closed root centered; reserve the cascade only after the user
+	-- actually enters the quality submenu.
+	local center_closed_root = self.current.is_root
+		and self.current.center_root_when_closed
+	local cascade_width = (self.anchor_x or center_closed_root or self.current.parent_menu)
+		and (self.current.width + self.padding * 2)
+		or self.current.cascade_width
+		or (self.current.width + self.padding * 2)
+	local cascade_x = math.max(self.padding,
+		math.min(self.ax, display.width - self.padding - cascade_width))
+
 	-- Active menu
-	draw_menu(self.current, self.ax, 0)
-
-	-- Parent menus
-	local parent_menu = self.current.parent_menu
-	local parent_offset_x, parent_horizontal_index = self.ax, -1
-
-	while parent_menu do
-		parent_offset_x = parent_offset_x - parent_menu.width - self.padding * 2 - self.gap
-		draw_menu(parent_menu, parent_offset_x, parent_horizontal_index)
-		parent_horizontal_index = parent_horizontal_index - 1
-		parent_menu = parent_menu.parent_menu
-	end
+	draw_menu(self.current, cascade_x, 0)
 
 	return ass
 end

@@ -3,6 +3,8 @@ local Button = require('elements/Button')
 local CycleButton = require('elements/CycleButton')
 local ManagedButton = require('elements/ManagedButton')
 local Speed = require('elements/Speed')
+local TimeDisplay = require('elements/TimeDisplay')
+local SpeedButton = require('elements/SpeedButton')
 
 -- sizing:
 --   static - shrink, have highest claim on available space, disappear when there's not enough of it
@@ -12,7 +14,15 @@ local Speed = require('elements/Speed')
 -- scale - `options.controls_size` scale factor.
 -- ratio - Width/height ratio of a static or dynamic element.
 -- ratio_min Min ratio for 'dynamic' sized element.
----@alias ControlItem {element?: Element; kind: string; sizing: 'space' | 'static' | 'dynamic' | 'gap'; scale: number; ratio?: number; ratio_min?: number; hide: boolean; dispositions?: {[string]: boolean}[]}
+---@alias ControlItem {element?: Element; kind: string; sizing: 'space' | 'static' | 'dynamic' | 'gap'; scale: number; ratio?: number; ratio_min?: number; hide: boolean; narrow_priority?: integer; narrow_role?: 'open_file' | 'time' | 'previous' | 'stop' | 'play_pause' | 'next' | 'playlist' | 'stats'; dispositions?: {[string]: boolean}[]}
+
+-- Per-icon glyph width ratios. MaterialIconsRound glyphs fill different
+-- fractions of the em-square: narrow icons like more_vert are ~28% wide,
+-- wide icons like folder fill ~75%. Other icons default to 0.72.
+local icon_width_factor = {
+	more_vert = 0.28,
+	folder = 0.75,
+}
 
 ---@class Controls : Element
 local Controls = class(Element)
@@ -37,17 +47,17 @@ function Controls:init_options()
 	-- Serialize control elements
 	local shorthands = {
 		['play-pause'] = 'cycle:pause:pause:no/yes=play_arrow?' .. t('Play/Pause'),
-		menu = 'command:menu:script-binding uosc/menu-blurred?' .. t('Menu'),
-		subtitles = 'command:subtitles:script-binding uosc/subtitles#sub>0?' .. t('Subtitles'),
+		menu = 'command:menu_book:script-binding uosc/menu-blurred?' .. t('Menu'),
+		subtitles = 'command:closed_caption:script-binding uosc/subtitles#sub>1?' .. t('Subtitles'),
 		audio = 'command:graphic_eq:script-binding uosc/audio#audio>1?' .. t('Audio'),
 		['audio-device'] = 'command:speaker:script-binding uosc/audio-device?' .. t('Audio device'),
-		video = 'command:theaters:script-binding uosc/video#video>1?' .. t('Video'),
-		playlist = 'command:list_alt:script-binding uosc/playlist?' .. t('Playlist'),
-		chapters = 'command:bookmark:script-binding uosc/chapters#chapters>0?' .. t('Chapters'),
-		['editions'] = 'command:bookmarks:script-binding uosc/editions#editions>1?' .. t('Editions'),
+		video = 'command:smart_display:script-binding uosc/video#video>1?' .. t('Video'),
+		playlist = 'command:list_alt:script-binding uosc/playlist#playlist>1?' .. t('Playlist'),
+		chapters = 'command:library_books:script-binding uosc/chapters#chapters>1?' .. t('Chapters'),
+		['editions'] = 'command:movie_filter:script-binding uosc/editions#editions>1?' .. t('Editions'),
 		['stream-quality'] = 'command:high_quality:script-binding uosc/stream-quality?' .. t('Stream quality'),
-		['open-file'] = 'command:file_open:script-binding uosc/open-file?' .. t('Open file'),
-		['items'] = 'command:list_alt:script-binding uosc/items?' .. t('Playlist/Files'),
+		['open-file'] = 'command:folder:script-binding uosc/open-file?' .. t('Open file'),
+		['items'] = 'command:list_alt:script-binding uosc/items#playlist>1?' .. t('Playlist/Files'),
 		prev = 'command:arrow_back_ios:script-binding uosc/prev?' .. t('Previous'),
 		next = 'command:arrow_forward_ios:script-binding uosc/next?' .. t('Next'),
 		first = 'command:first_page:script-binding uosc/first?' .. t('First'),
@@ -129,10 +139,16 @@ function Controls:init_options()
 			control.sizing = 'space'
 		elseif kind == 'gap' then
 			table_assign(control, {sizing = 'gap', scale = 1, ratio = params[1] or 0.3, ratio_min = 0})
+		elseif kind == 'reserve' then
+			-- Invisible fixed-width slot used to balance asymmetric side groups
+			-- without adding another visible or clickable control.
+			table_assign(control, {
+				sizing = 'static', scale = tonumber(params[1]) or 1, ratio = 1,
+			})
 		elseif kind == 'command' then
-			if #params ~= 2 then
+			if #params < 2 or #params > 3 then
 				mp.error(string.format(
-					'command button needs 2 parameters, %d received: %s', #params, table.concat(params, '/')
+					'command button needs 2 or 3 parameters, %d received: %s', #params, table.concat(params, '/')
 				))
 			else
 				local element = Button:new('control_' .. i, {
@@ -140,10 +156,31 @@ function Controls:init_options()
 					icon = params[1],
 					anchor_id = 'controls',
 					on_click = function() mp.command(params[2]) end,
+					on_secondary_click = params[3] and function() mp.command(params[3]) end or nil,
 					tooltip = tooltip,
 					count_prop = 'sub',
 				})
 				table_assign(control, {element = element, sizing = 'static', scale = 1, ratio = 1})
+				if params[1] == 'skip_previous' then
+					control.narrow_role = 'previous'
+					control.narrow_priority = 2
+				elseif params[1] == 'skip_next' then
+					control.narrow_role = 'next'
+					control.narrow_priority = 2
+				end
+				if params[1] == 'stop' and params[2] == 'stop' then
+					control.narrow_role = 'stop'
+					control.narrow_priority = 3
+				elseif params[2]:find('script-binding uosc/playlist', 1, true) then
+					control.narrow_role = 'playlist'
+					control.narrow_priority = 3
+				elseif params[1] == 'folder'
+					and params[2]:find('script-binding uosc/open-file', 1, true) then
+					control.narrow_role = 'open_file'
+				elseif params[1] == 'analytics'
+					and params[2]:find('script-binding stats/', 1, true) then
+					control.narrow_role = 'stats'
+				end
 				if badge then self:register_badge_updater(badge, element) end
 			end
 		elseif kind == 'cycle' then
@@ -173,8 +210,14 @@ function Controls:init_options()
 					anchor_id = 'controls',
 					states = states,
 					tooltip = tooltip,
+					idle_icon = params[2] == 'pause' and 'play_arrow' or nil,
 				})
-				table_assign(control, {element = element, sizing = 'static', scale = 1, ratio = 1})
+				local scale = params[2] == 'pause' and 1.12 or 1
+				table_assign(control, {element = element, sizing = 'static', scale = scale, ratio = 1})
+				if params[2] == 'pause' then
+					control.narrow_role = 'play_pause'
+					control.narrow_priority = 3
+				end
 				if badge then self:register_badge_updater(badge, element) end
 			end
 		elseif kind == 'button' then
@@ -201,6 +244,15 @@ function Controls:init_options()
 			else
 				msg.error('there can only be 1 speed slider')
 			end
+		elseif kind == 'time' then
+			local element = TimeDisplay:new({anchor_id = 'controls', render_order = self.render_order})
+			table_assign(control, {
+				element = element, sizing = 'static', scale = 1, ratio = 3.8,
+				narrow_priority = 1, narrow_role = 'time',
+			})
+		elseif kind == 'speed-button' then
+			local element = SpeedButton:new({anchor_id = 'controls', render_order = self.render_order})
+			table_assign(control, {element = element, sizing = 'static', scale = 1, ratio = 3.8})
 		else
 			msg.error('unknown element kind "' .. kind .. '"')
 			break
@@ -268,9 +320,17 @@ function Controls:register_badge_updater(badge, element)
 		observable_name = 'track-list'
 		serializer = function(value)
 			local count = 0
-			for _, track in ipairs(value) do if track.type == prop then count = count + 1 end end
+			for _, track in ipairs(value) do
+				if track.type == prop and not (prop == 'sub' and track.external
+					and track.title == 'uosc_danmaku') then
+					count = count + 1
+				end
+			end
 			return count
 		end
+	elseif prop == 'playlist' then
+		observable_name = 'playlist-count'
+		serializer = function(count) return count end
 	else
 		local parts = split(prop, '@')
 		-- Support both new `prop@owner` and old `@prop` syntaxes
@@ -293,16 +353,61 @@ function Controls:register_badge_updater(badge, element)
 	end
 end
 
+function Controls:get_target_visibility()
+	if Elements:v('speed', 'dragging') then return 1 end
+	-- Only hide controls when the timeline is actively being pressed/dragged,
+	-- not when merely hovered. This keeps bottom buttons visible while the
+	-- user moves the mouse over the progress bar to seek or preview thumbnails.
+	local timeline = Elements.timeline
+	if timeline and timeline.pressed then return -1 end
+	return Element.get_visibility(self)
+end
+
 function Controls:get_visibility()
-	return Elements:v('speed', 'dragging') and 1 or Elements:maybe('timeline', 'get_is_hovered')
-		and -1 or Element.get_visibility(self)
+	local target = self:get_target_visibility()
+	if target == -1 then return -1 end
+	return dock_motion and dock_motion:get_controls_opacity() or target
+end
+
+function Controls:get_visual_transform()
+	return dock_motion and dock_motion:get_controls_transform()
+		or {scale = 1, translate_y = 0}
+end
+
+function Controls:get_visual_bounds()
+	local first, last
+	for _, control in ipairs(self.layout) do
+		local element = control.element
+		if not control.hide and element and element.enabled then
+			first = first or element
+			last = element
+		end
+	end
+	if not first or not last then return end
+
+	local function icon_edge(element, side)
+		local center = element.ax + (element.bx - element.ax) / 2
+		local visual_width = element.font_size or (element.by - element.ay) * 0.78
+		local glyph_width = visual_width * (icon_width_factor[element.icon] or 0.72)
+		return center + side * glyph_width / 2
+	end
+	return icon_edge(first, -1), icon_edge(last, 1)
 end
 
 function Controls:update_dimensions()
 	local window_border = Elements:v('window_border', 'size', 0)
-	local size = round(options.controls_size * state.scale)
-	local spacing = round(options.controls_spacing * state.scale)
-	local margin = round(options.controls_margin * state.scale)
+	local portrait_transport = display.height > display.width
+		and (state.is_video or state.is_audio)
+	-- A tall window can inherit a scale based on its large height even though
+	-- the bottom row is width-constrained. Cap that scale by portrait width so
+	-- the requested primary actions fit without becoming tiny on larger phones.
+	local controls_scale = state.scale
+	if portrait_transport then
+		controls_scale = math.min(controls_scale, math.max(0.82, display.width / 585))
+	end
+	local size = round(options.controls_size * controls_scale)
+	local spacing = round(options.controls_spacing * controls_scale)
+	local margin = round(options.controls_margin * controls_scale)
 
 	-- Disable when not enough space
 	local available_space = display.height - window_border * 2 - Elements:v('top_bar', 'size', 0)
@@ -317,24 +422,61 @@ function Controls:update_dimensions()
 
 	if not self.enabled then return end
 
-	-- Container
+	-- Portrait playback keeps a compact but complete primary row: open, time,
+	-- previous, stop, centered play/pause, next, playlist, and statistics. The
+	-- two flexible spaces let the existing optical centering logic anchor
+	-- play/pause to the window rather than to an asymmetric button group. Very
+	-- narrow windows still use priorities below to shed secondary items first.
+	if portrait_transport then
+		for _, control in ipairs(self.layout) do
+			if control.sizing ~= 'space' and not control.narrow_role then
+				control.hide = true
+				if control.element then control.element.enabled = false end
+			end
+		end
+	end
+
+	-- Container. Optically center the controls in the actually visible area
+	-- between the timeline and the bottom edge. A slight proportional bias
+	-- toward the bottom compensates for the timeline's strong visual edge while
+	-- still adapting to HiDPI/fullscreen scaling and custom timeline sizes.
 	self.bx = display.width - window_border - margin
-	self.by = Elements:v('timeline', 'ay', display.height - window_border) - margin
-	self.ax, self.ay = window_border + margin, self.by - size
+	local console_bottom = display.height - window_border
+	local center_y = console_bottom - margin - size / 2
+	local timeline = Elements.timeline
+	if timeline and timeline.enabled and timeline.by > timeline.ay then
+		local timeline_center_y = timeline.ay + (timeline.by - timeline.ay) / 2
+		local optical_center_ratio = 0.52
+		center_y = timeline_center_y
+			+ (console_bottom - timeline_center_y) * optical_center_ratio
+	end
+	self.ay = round(center_y - size / 2)
+	self.by = self.ay + size
+	self.ax = window_border + margin
 
 	-- Controls
 	local available_width, statics_width = self.bx - self.ax, 0
 	local min_content_width = statics_width
 	local max_dynamics_width, dynamic_units, spaces, gaps = 0, 0, 0, 0
+	local function effective_ratio(control)
+		-- The desktop time slot reserves room for long labels. In portrait, 2.8
+		-- button widths still fits the configured elapsed/remaining display and
+		-- leaves enough asymmetry budget to keep play/pause at screen center.
+		if portrait_transport and control.narrow_role == 'time' then return 2.8 end
+		return control.ratio
+	end
 
 	-- Calculate statics_width, min_content_width, and count spaces & gaps
 	for c, control in ipairs(self.layout) do
-		if control.sizing == 'space' then
+		if control.hide then
+			-- Portrait mode preselects its essential actions before fitting.
+		elseif control.sizing == 'space' then
 			spaces = spaces + 1
 		elseif control.sizing == 'gap' then
-			gaps = gaps + control.scale * control.ratio
+			gaps = gaps + control.scale * effective_ratio(control)
 		elseif control.sizing == 'static' then
-			local width = size * control.scale * control.ratio + (c ~= #self.layout and spacing or 0)
+			local width = size * control.scale * effective_ratio(control)
+				+ (c ~= #self.layout and spacing or 0)
 			statics_width = statics_width + width
 			min_content_width = min_content_width + width
 		elseif control.sizing == 'dynamic' then
@@ -346,29 +488,46 @@ function Controls:update_dimensions()
 		end
 	end
 
-	-- Hide & disable elements in the middle until we fit into available width
+	-- Hide & disable elements until we fit into available width. Secondary
+	-- controls still collapse from the middle out, but the transport trio stays
+	-- intact for as long as possible. If an extremely narrow window cannot fit
+	-- it, previous/next disappear together before play/pause.
 	if min_content_width > available_width then
+		local hide_order = {}
 		local i = math.ceil(#self.layout / 2 + 0.1)
 		for a = 0, #self.layout - 1, 1 do
 			i = i + (a * (a % 2 == 0 and 1 or -1))
-			local control = self.layout[i]
+			hide_order[#hide_order + 1] = i
+		end
 
-			if control.sizing ~= 'gap' and control.sizing ~= 'space' then
-				control.hide = true
-				if control.element then control.element.enabled = false end
-				if control.sizing == 'static' then
-					local width = size * control.scale * control.ratio
-					min_content_width = min_content_width - width - spacing
-					statics_width = statics_width - width - spacing
-				elseif control.sizing == 'dynamic' then
-					statics_width = statics_width - spacing
-					min_content_width = min_content_width - size * control.scale * control.ratio_min - spacing
-					max_dynamics_width = max_dynamics_width - size * control.scale * control.ratio
-					dynamic_units = dynamic_units - control.scale * control.ratio
+		local function hide_control(control)
+			control.hide = true
+			if control.element then control.element.enabled = false end
+			if control.sizing == 'static' then
+				local width = size * control.scale * effective_ratio(control)
+				min_content_width = min_content_width - width - spacing
+				statics_width = statics_width - width - spacing
+			elseif control.sizing == 'dynamic' then
+				statics_width = statics_width - spacing
+				min_content_width = min_content_width - size * control.scale * control.ratio_min - spacing
+				max_dynamics_width = max_dynamics_width - size * control.scale * control.ratio
+				dynamic_units = dynamic_units - control.scale * control.ratio
+			end
+		end
+
+		for priority = 0, 3 do
+			for _, index in ipairs(hide_order) do
+				local control = self.layout[index]
+				if not control.hide and control.sizing ~= 'gap' and control.sizing ~= 'space'
+					and (control.narrow_priority or 0) == priority then
+					hide_control(control)
 				end
 
-				if min_content_width < available_width then break end
+				-- Priority 2 is the previous/next pair: finish the entire pass so
+				-- the pair cannot degrade into a visually lopsided single button.
+				if priority ~= 2 and min_content_width < available_width then break end
 			end
+			if min_content_width < available_width then break end
 		end
 	end
 
@@ -378,28 +537,98 @@ function Controls:update_dimensions()
 	local empty_space_width = width_for_dynamics - max_dynamics_width
 	local width_for_gaps = math.min(empty_space_width, size * gaps)
 	local individual_space_width = spaces > 0 and ((empty_space_width - width_for_gaps) / spaces) or 0
+	individual_space_width = math.max(0, individual_space_width)
+
+	local function get_control_dimensions(control, space_width)
+		local sizing, scale, ratio = control.sizing, control.scale, effective_ratio(control)
+		local width, height = 0, 0
+		if sizing == 'space' then
+			width = space_width or 0
+		elseif sizing == 'gap' then
+			if width_for_gaps > 0 then width = width_for_gaps * (ratio / gaps) end
+		elseif sizing == 'static' then
+			height = size * scale
+			width = height * ratio
+		elseif sizing == 'dynamic' then
+			height = size * scale
+			width = max_dynamics_width < width_for_dynamics
+				and height * ratio or width_for_dynamics * ((scale * ratio) / dynamic_units)
+		end
+		return width, height
+	end
+
+	-- Equal flexible spaces center the whole middle group only when the left and
+	-- right button groups have identical widths. Anchor the play/pause control
+	-- to the actual screen center by redistributing the two surrounding spaces.
+	-- Clamping keeps both spaces non-negative on narrow windows.
+	local space_adjustments = {}
+	local anchor_index
+	for c, control in ipairs(self.layout) do
+		if not control.hide and control.element and control.element.prop == 'pause' then
+			anchor_index = c
+			break
+		end
+	end
+	if anchor_index and individual_space_width > 0 then
+		local space_before, space_after
+		for c = anchor_index - 1, 1, -1 do
+			local control = self.layout[c]
+			if not control.hide and control.sizing == 'space' then
+				space_before = c
+				break
+			end
+		end
+		for c = anchor_index + 1, #self.layout do
+			local control = self.layout[c]
+			if not control.hide and control.sizing == 'space' then
+				space_after = c
+				break
+			end
+		end
+
+		if space_before and space_after then
+			local current_x, anchor_center = self.ax, nil
+			for c, control in ipairs(self.layout) do
+				if not control.hide then
+					local width = get_control_dimensions(control, individual_space_width)
+					if c == anchor_index then
+						anchor_center = current_x + width / 2
+						break
+					end
+					current_x = current_x + width
+					if control.sizing == 'static' or control.sizing == 'dynamic' then
+						current_x = current_x + spacing
+					end
+				end
+			end
+
+			if anchor_center then
+				local target_center = self.ax + (self.bx - self.ax) / 2
+				local shift = math.max(-individual_space_width,
+					math.min(individual_space_width, target_center - anchor_center))
+				space_adjustments[space_before] = shift
+				space_adjustments[space_after] = -shift
+			end
+		end
+	end
 
 	for c, control in ipairs(self.layout) do
 		if not control.hide then
-			local sizing, element, scale, ratio = control.sizing, control.element, control.scale, control.ratio
-			local width, height = 0, 0
-
-			if sizing == 'space' then
-				if individual_space_width > 0 then width = individual_space_width end
-			elseif sizing == 'gap' then
-				if width_for_gaps > 0 then width = width_for_gaps * (ratio / gaps) end
-			elseif sizing == 'static' then
-				height = size * scale
-				width = height * ratio
-			elseif sizing == 'dynamic' then
-				height = size * scale
-				width = max_dynamics_width < width_for_dynamics
-					and height * ratio or width_for_dynamics * ((scale * ratio) / dynamic_units)
-			end
+			local sizing, element = control.sizing, control.element
+			local space_width = individual_space_width + (space_adjustments[c] or 0)
+			local width, height = get_control_dimensions(control, space_width)
 
 			local bx = current_x + width
-			if element then element:set_coordinates(round(current_x), round(self.by - height), bx, self.by) end
-			current_x = element and bx + spacing or bx
+			if element then
+				local center_y = self.ay + (self.by - self.ay) / 2
+				element:set_coordinates(
+					round(current_x),
+					round(center_y - height / 2),
+					bx,
+					round(center_y + height / 2)
+				)
+			end
+			current_x = (sizing == 'static' or sizing == 'dynamic') and bx + spacing or bx
 		end
 	end
 

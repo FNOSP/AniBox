@@ -109,25 +109,32 @@ function Speed:render()
 
 	if opacity <= 0 then return end
 
-	cursor:zone('primary_down', self, function()
-		self:handle_cursor_down()
-		cursor:once('primary_up', function() self:handle_cursor_up() end)
-	end)
-	cursor:zone('secondary_click', self, function() mp.set_property_native('speed', 1) end)
-	cursor:zone('wheel_down', self, function() self:handle_wheel_down() end)
-	cursor:zone('wheel_up', self, function() self:handle_wheel_up() end)
+	if opacity >= 0.08 then
+		cursor:zone('primary_down', self, function()
+			self:handle_cursor_down()
+			cursor:once('primary_up', function() self:handle_cursor_up() end)
+		end)
+		cursor:zone('secondary_click', self, function() mp.set_property_native('speed', 1) end)
+		cursor:zone('wheel_down', self, function() self:handle_wheel_down() end)
+		cursor:zone('wheel_up', self, function() self:handle_wheel_up() end)
+	end
 
 	local ass = assdraw.ass_new()
+	local visual, transform = self:get_visual_rect()
+	local visual_width = visual.bx - visual.ax
+	local visual_height = visual.by - visual.ay
+	local visual_font_size = self.font_size * transform.scale
+	local visual_notch_spacing = visual_width / (self.notches + 1)
 
 	-- Background
-	ass:rect(self.ax, self.ay, self.bx, self.by, {
+	ass:rect(visual.ax, visual.ay, visual.bx, visual.by, {
 		color = bg, radius = state.radius, opacity = opacity * config.opacity.speed,
 	})
 
 	-- Coordinates
-	local ax, ay = self.ax, self.ay
-	local bx, by = self.bx, ay + self.height
-	local half_width = (self.width / 2)
+	local ax, ay = visual.ax, visual.ay
+	local bx, by = visual.bx, ay + visual_height
+	local half_width = (visual_width / 2)
 	local half_x = ax + half_width
 
 	-- Notches
@@ -137,10 +144,10 @@ function Speed:render()
 		speed_at_center = clamp(0.01, speed_at_center, 100)
 	end
 	local nearest_notch_speed = round(speed_at_center / self.notch_every) * self.notch_every
-	local nearest_notch_x = half_x + (((nearest_notch_speed - speed_at_center) / self.notch_every) * self.notch_spacing)
-	local guide_size = math.floor(self.height / 7.5)
+	local nearest_notch_x = half_x + (((nearest_notch_speed - speed_at_center) / self.notch_every) * visual_notch_spacing)
+	local guide_size = math.floor(visual_height / 7.5)
 	local notch_by = by - guide_size
-	local notch_ay_big = ay + round(self.font_size * 1.1)
+	local notch_ay_big = ay + round(visual_font_size * 1.1)
 	local notch_ay_medium = notch_ay_big + ((notch_by - notch_ay_big) * 0.2)
 	local notch_ay_small = notch_ay_big + ((notch_by - notch_ay_big) * 0.4)
 	local from_to_index = math.floor(self.notches / 2)
@@ -149,7 +156,7 @@ function Speed:render()
 		local notch_speed = nearest_notch_speed + (i * self.notch_every)
 
 		if notch_speed >= 0 and notch_speed <= 100 then
-			local notch_x = nearest_notch_x + (i * self.notch_spacing)
+			local notch_x = nearest_notch_x + (i * visual_notch_spacing)
 			local notch_thickness = 1
 			local notch_ay = notch_ay_small
 			if (notch_speed % (self.notch_every * 10)) < 0.00000001 then
@@ -182,7 +189,7 @@ function Speed:render()
 	-- Speed value
 	local speed_text = (round(state.speed * 100) / 100) .. 'x'
 	ass:txt(half_x, ay + (notch_ay_big - ay) / 2, 5, speed_text, {
-		size = self.font_size,
+		size = visual_font_size,
 		color = bgt,
 		border = options.text_border * state.scale,
 		border_color = bg,

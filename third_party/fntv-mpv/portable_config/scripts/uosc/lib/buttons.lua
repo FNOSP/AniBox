@@ -1,4 +1,4 @@
----@alias ButtonData {icon: string; active?: boolean; badge?: string; command?: string | string[]; tooltip?: string;}
+---@alias ButtonData {icon: string; active?: boolean; badge?: string; command?: string | string[]; secondary_command?: string | string[]; tooltip?: string;}
 ---@alias ButtonSubscriber fun(data: ButtonData)
 
 local buttons = {

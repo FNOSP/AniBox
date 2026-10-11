@@ -72,6 +72,9 @@ end
 
 -- 核心：按引擎应用/关闭插帧（含 OSD 提示）
 local function apply(on)
+    -- [lc-1351] 手动占用广播：本脚本接管插帧链期间，fntv_aq.lua 的自适应平滑让路，
+    -- 避免两套脚本交替覆写 interpolation/video-sync 互相打架。
+    pcall(function() mp.commandv('script-message', 'fntv-interp-manual', on and 'yes' or 'no') end)
     if on then
         local eng = (conf.engine or 'auto'):lower()
 

@@ -5,6 +5,11 @@ local Element = require('elements/Element')
 ---@class TopBar : Element
 local TopBar = class(Element)
 
+local function is_internal_autoskip_chapter(chapter)
+	return chapter and chapter.title
+		and chapter.title:lower():find('^%[autoskip') ~= nil
+end
+
 function TopBar:new() return Class.new(self) --[[@as TopBar]] end
 function TopBar:init()
 	Element.init(self, 'top_bar', {render_order = 4})
@@ -21,28 +26,18 @@ function TopBar:init()
 	self.current_chapter = nil
 
 	local function maximized_command()
-		if state.platform == 'windows' then
-			mp.command(state.border
-				and (state.fullscreen and 'set fullscreen no;cycle window-maximized' or 'cycle window-maximized')
-				or 'set window-maximized no;cycle fullscreen')
-		else
-			mp.command(state.fullormaxed and 'set fullscreen no;set window-maximized no' or 'set window-maximized yes')
-		end
+		mp.command(state.fullormaxed and 'set fullscreen no;set window-maximized no' or 'set window-maximized yes')
 	end
 
 	local close = {icon = 'close', hover_bg = '2311e8', hover_fg = 'ffffff', command = function() mp.command('quit') end}
-	local max = {icon = 'crop_square', command = maximized_command}
-	local min = {icon = 'minimize', command = function() mp.command('cycle window-minimized') end}
-	-- [Fntv] 窗口置顶按钮：点击切换 mpv 的 ontop 属性；active 时高亮显示当前已置顶
-	local ontop = {icon = 'vertical_align_top', hover_bg = '2a6df0', hover_fg = 'ffffff', active = false,
-		command = function() mp.command('cycle ontop') end}
-	self.buttons = options.top_bar_controls == 'left' and {ontop, close, max, min} or {ontop, min, max, close}
-
-	-- [Fntv] 监听 ontop 属性，更新置顶按钮的高亮态并重绘
-	self:observe_mp_property('ontop', 'bool', function(_, val)
-		ontop.active = val
-		request_render()
-	end)
+	local max = {icon = 'crop_square', command = maximized_command, is_max = true}
+	-- [fntv] Material 的 minimize 字形在 em 框内偏下，icon_dy 按钮高占比上移做光学居中
+	local min = {icon = 'minimize', icon_dy = -0.10, command = function() mp.command('cycle window-minimized') end}
+	local pin = {
+		icon = 'push_pin',
+		command = function() mp.commandv('script-message-to', 'ontop_mode', 'cycle') end,
+	}
+	self.buttons = options.top_bar_controls == 'left' and {close, max, min, pin} or {pin, min, max, close}
 
 	self:register_observers()
 	self:decide_enabled()
@@ -156,18 +151,46 @@ function TopBar:select_current_chapter()
 	local new_chapter_index = current_chapter and current_chapter.index
 	if current_chapter_index ~= new_chapter_index then
 		self.current_chapter = current_chapter
-		if itable_has(config.top_bar_flash_on, 'chapter') then
+		if not is_internal_autoskip_chapter(current_chapter)
+			and itable_has(config.top_bar_flash_on, 'chapter') then
 			self:flash()
 		end
 		self:update_dimensions()
 	end
 end
 
+local function responsive_top_bar_scale()
+	local ui_scale = math.max(tonumber(state.scale) or 1, 0.01)
+	local logical_height = (tonumber(display.height) or 0) / ui_scale
+	local resolution_scale
+	if logical_height < 1080 then
+		-- Compact windows need a quieter title bar without becoming tiny. Grow
+		-- smoothly from an 0.8x floor at 540p to the established 1x at 1080p;
+		-- a 701px-high window lands near 0.86x (31px instead of 36px).
+		local compact_progress = math.min(1, math.max(0, (logical_height - 540) / 540))
+		resolution_scale = 0.8 + compact_progress * 0.2
+	else
+		-- Above 1080p, retain direct height scaling and progressively add the
+		-- requested high-resolution emphasis: about 1.556x at 1440p and 3x at
+		-- 4K (the former 2x 4K geometry enlarged by another 1.5x).
+		local height_ratio = logical_height / 1080
+		local four_k_progress = math.min(1, math.max(0, height_ratio - 1))
+		resolution_scale = height_ratio * (1 + four_k_progress * 0.5)
+	end
+	-- Resolution supplements DPI instead of replacing it. If Windows already
+	-- reports 200% HiDPI, physical dimensions are converted to logical height
+	-- first, so the result is not enlarged twice.
+	return ui_scale * resolution_scale
+end
+
 function TopBar:update_dimensions()
-	self.size = round(options.top_bar_size * state.scale)
-	self.title_spacing = round(1 * state.scale)
+	local top_bar_scale = responsive_top_bar_scale()
+	self.size = round(options.top_bar_size * top_bar_scale)
+	self.title_spacing = round(1 * top_bar_scale)
 	self.icon_size = round(self.size * 0.5)
 	self.font_size = math.floor((self.size - (math.ceil(self.size * 0.25) * 2)) * options.font_scale)
+	self.control_margin = math.floor((self.size - self.font_size) / 4)
+	self.font_size = math.max(1, round(self.font_size * (options.top_bar_text_scale or 1)))
 	self.alt_title_size = round(self.font_size * 1.2)
 	self.chapter_size = round(self.font_size * 1.1)
 	local window_border_size = Elements:v('window_border', 'size', 0)
@@ -175,7 +198,7 @@ function TopBar:update_dimensions()
 	if self.render_titles.alt and options.top_bar_alt_title_place == 'below' then
 		min_hitbox_height = min_hitbox_height + self.title_spacing + self.alt_title_size
 	end
-	if self.current_chapter then
+	if self.current_chapter and not is_internal_autoskip_chapter(self.current_chapter) then
 		min_hitbox_height = min_hitbox_height + self.title_spacing + self.chapter_size
 	end
 	self.ax = window_border_size
@@ -238,7 +261,7 @@ function TopBar:render()
 	-- `by` might be artificially extended so people with low proximity options
 	-- can still click on chapter button, so we can't use it for rendering.
 	local ax, ay, bx, by = self.ax, self.ay, self.bx, self.ay + self.size
-	local margin = math.floor((self.size - self.font_size) / 4)
+	local margin = self.control_margin
 
 	-- Window controls
 	if options.top_bar_controls then
@@ -252,12 +275,16 @@ function TopBar:render()
 		end
 
 		for _, button in ipairs(self.buttons) do
+			if button.is_max then
+				button.icon = state.fullscreen and 'close_fullscreen' or
+				(state.maximized and 'filter_none' or 'crop_square')
+			end
+
 			local rect = {ax = button_ax, ay = ay, bx = button_ax + self.size, by = by}
 			local is_hover = get_point_to_rectangle_proximity(cursor, rect) <= 0
-			local is_active = not not button.active
-			local opacity = (is_hover or is_active) and 1 or config.opacity.controls
-			local button_fg = is_hover and (button.hover_fg or bg) or (is_active and 'ffffff' or fg)
-			local button_bg = is_hover and (button.hover_bg or fg) or (is_active and (button.hover_bg or '2a6df0') or bg)
+			local opacity = is_hover and 1 or config.opacity.controls
+			local button_fg = is_hover and (button.hover_fg or bg) or fg
+			local button_bg = is_hover and (button.hover_bg or fg) or bg
 
 			cursor:zone('primary_down', rect, button.command)
 
@@ -269,10 +296,7 @@ function TopBar:render()
 				color = button_bg, opacity = visibility * opacity, radius = state.radius,
 			})
 
-			-- [Fntv] minimize 字形横线先天偏下, 单独上移约 15% 高度使其视觉居中
-			local icon_cx, icon_cy = bg_ax + bg_size / 2, bg_ay + bg_size / 2
-			if button.icon == 'minimize' then icon_cy = icon_cy - bg_size * 0.15 end
-			ass:icon(icon_cx, icon_cy, bg_size * 0.5, button.icon, {
+			ass:icon(bg_ax + bg_size / 2, bg_ay + bg_size / 2 + (button.icon_dy or 0) * bg_size, bg_size * 0.5, button.icon, {
 				color = button_fg,
 				border_color = button_bg,
 				opacity = visibility,
@@ -325,7 +349,7 @@ function TopBar:render()
 				local opts = {
 					size = self.font_size,
 					wrap = 2,
-					color = bgt,
+					color = config.color.menu_text or bgt,
 					opacity = visibility,
 					border = options.text_border * state.scale,
 					border_color = bg,
@@ -376,7 +400,7 @@ function TopBar:render()
 			end
 
 			-- Current chapter
-			if self.current_chapter then
+			if self.current_chapter and not is_internal_autoskip_chapter(self.current_chapter) then
 				local padding_half = round(padding / 2)
 				local prefix, postfix = left_aligned and '' or '└ ', left_aligned and ' ┘' or ''
 				local text = prefix .. self.current_chapter.index .. ': ' .. self.current_chapter.title .. postfix

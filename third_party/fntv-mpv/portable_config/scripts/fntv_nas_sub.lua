@@ -82,6 +82,9 @@ local function open_menu()
             value = { 'script-message-to', mp.get_script_name(), 'load', s.guid or '' },
         }
     end
+    -- [lc-1354] 在线搜索入口：fnOS 服务端按媒体元数据联网搜（客户端不带关键词）
+    items[#items + 1] = { title = '⌕ 在线搜索字幕（简体中文）', value = { 'script-message-to', mp.get_script_name(), 'search', 'zh-CN' } }
+    items[#items + 1] = { title = '⌕ 在线搜索字幕（English）', value = { 'script-message-to', mp.get_script_name(), 'search', 'en' } }
     items[#items + 1] = { title = '↻ 重新加载', italic = true, value = { 'script-message-to', mp.get_script_name(), 'open' } }
     mp.commandv('script-message-to', 'uosc', 'open-menu', utils.format_json({
         type = MENU_TYPE,
@@ -107,6 +110,71 @@ local function load_subtitle(guid)
     mp.osd_message('{\\an1}已加载字幕: ' .. (data.title or ''), 3)
 end
 
+-- [lc-1354] trim_id 等服务端生成 ID 防御性 percent-encode（正常是字母数字，只为拼 URL 兜底）
+local function enc(s)
+    return tostring(s):gsub('[^%w%-%._]', function(c)
+        return ('%%%02X'):format(c:byte())
+    end)
+end
+
+-- [lc-1354] fnOS 在线字幕搜索：shim 转发 POST /v/api/v1/subtitle/search，
+-- fnOS 服务端按媒体元数据联网搜，客户端不带关键词（与 FlyNarwhal 同款）。
+local function online_search(lan)
+    local ctx = current_fn_ctx()
+    if not ctx then return end
+    mp.osd_message('{\\an1}正在让 fnOS 联网搜索字幕…', 3)
+    local api = ('http://127.0.0.1:22347/nas-subtitle-search?itemGuid=%s&token=%s&domain=%s&lan=%s')
+        :format(ctx.itemGuid, ctx.token, ctx.domain, enc(lan or 'zh-CN'))
+    local data, err = fetch_json(api)
+    local list = {}
+    if data then list = data.items or {} end
+
+    local items = {}
+    if not data then
+        items[#items + 1] = { title = '在线搜索失败: ' .. (err or '未知错误'), selectable = false, muted = true }
+    elseif #list == 0 then
+        items[#items + 1] = { title = 'fnOS 未找到匹配的在线字幕，可换个语言再试', selectable = false, muted = true }
+    end
+    for _, s in ipairs(list) do
+        local bits = {}
+        if s.source and s.source ~= '' then bits[#bits + 1] = s.source end
+        if s.download and tonumber(s.download) > 0 then bits[#bits + 1] = ('下载 %s 次'):format(s.download) end
+        if s.format and s.format ~= '' then bits[#bits + 1] = s.format end
+        items[#items + 1] = {
+            title = (s.filename and s.filename ~= '') and s.filename or '(未命名)',
+            hint = #bits > 0 and table.concat(bits, ' · ') or nil,
+            value = { 'script-message-to', mp.get_script_name(), 'online-download', s.trim_id or '' },
+        }
+    end
+    items[#items + 1] = { title = '..', hint = '返回 NAS 字幕菜单', value = { 'script-message-to', mp.get_script_name(), 'open' } }
+    local lang_label = lan == 'en' and 'English' or '简体中文'
+    mp.commandv('script-message-to', 'uosc', 'open-menu', utils.format_json({
+        type = MENU_TYPE .. '-online',
+        title = ('在线字幕搜索（%s · %d 条）'):format(lang_label, #list),
+        items = items,
+    }))
+end
+
+-- [lc-1354] fnOS 在线字幕下载：shim 转发 POST /v/api/v1/subtitle/download（服务端抓取并登记），
+-- 拿回登记后的新字幕流 guid，主进程直接按 guid 取回本地，sub-add 挂载——
+-- 全程不依赖 stream/list 缓存（5 分钟 TTL 看不到刚登记的流）。
+local function online_download(trim_id)
+    local ctx = current_fn_ctx()
+    if not ctx or not trim_id or trim_id == '' then return end
+    mp.osd_message('{\\an1}正在下载在线字幕（fnOS 服务端抓取，可能要几秒）…', 5)
+    local api = ('http://127.0.0.1:22347/nas-subtitle-download?itemGuid=%s&token=%s&domain=%s&trimId=%s')
+        :format(ctx.itemGuid, ctx.token, ctx.domain, enc(trim_id))
+    local data, err = fetch_json(api)
+    if not data then
+        mp.osd_message('{\\an1}在线字幕下载失败: ' .. (err or '未知错误'), 4)
+        return
+    end
+    mp.commandv('sub-add', data.path, 'select', data.title or '')
+    mp.osd_message('{\\an1}已加载在线字幕: ' .. (data.title or ''), 3)
+end
+
 mp.register_script_message('fntv-nas-sub-open', open_menu)
 mp.register_script_message('open', open_menu)
 mp.register_script_message('load', load_subtitle)
+mp.register_script_message('search', online_search)
+mp.register_script_message('online-download', online_download)

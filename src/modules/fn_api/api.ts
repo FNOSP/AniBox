@@ -420,6 +420,49 @@ export class ApiService {
     }
 
     /**
+     * fnOS 在线字幕搜索（POST /v/api/v1/subtitle/search）
+     * 不带关键词：fnOS 服务端按媒体自身元数据（片名/年份/季集）联网搜索，
+     * 返回候选列表（文件名/来源/下载次数/trim_id）。参考 FlyNarwhal 同款用法。
+     * @param itemGuid - 媒体文件唯一标识（与 stream/list 同值）
+     * @param lan - 语言，fnOS 支持 zh-CN / en
+     */
+    searchSubtitlesOnline(itemGuid: string, lan: string): Promise<fn.ApiResponse<types.SubtitleSearchResponse>> {
+        const data: types.SubtitleSearchRequest = {
+            lan: lan,
+            media_guid: itemGuid,
+        };
+        // 服务端联网抓字幕站，比常规接口慢；25s 留出余量又不至于超过 Lua 侧 30s 的等待上限
+        return fn.request(this.baseURL, '/v/api/v1/subtitle/search', HttpMethod.POST, this.token, data, undefined, undefined, 25000);
+    }
+
+    /**
+     * fnOS 在线字幕下载（POST /v/api/v1/subtitle/download）
+     * 服务端按 trim_id 抓取字幕并登记为该媒体的外挂字幕流，返回新登记的 SubtitleStream
+     * （guid/title/format 等字段与 stream/list 的 subtitle_streams 同构）。
+     * @param itemGuid - 媒体文件唯一标识
+     * @param trimId - 搜索结果里的 trim_id
+     */
+    downloadSubtitleOnline(itemGuid: string, trimId: string): Promise<fn.ApiResponse<types.SubtitleStreamExtended>> {
+        const data: types.SubtitleDownloadOnlineRequest = {
+            media_guid: itemGuid,
+            trim_id: trimId,
+            sync_download: 1,
+        };
+        return fn.request(this.baseURL, '/v/api/v1/subtitle/download', HttpMethod.POST, this.token, data, undefined, undefined, 25000);
+    }
+
+    /**
+     * 清除指定媒体的 stream/list 缓存（含并发去重的 promise 缓存键）。
+     * 在线下载登记新字幕后调用，否则 NAS 字幕菜单最长 5 分钟内看不到新字幕
+     * （createCachedFunction 的 key 形如 `${baseURL}_getStreamList_["<guid>"]`）。
+     */
+    invalidateStreamListCache(itemGuid: string): void {
+        const key = `${this.baseURL}_getStreamList_${JSON.stringify([itemGuid])}`;
+        ApiService.cache.del(key);
+        ApiService.cache.del(`promise_${key}`);
+    }
+
+    /**
      * 下载字幕文件
      * @param subs - 字幕对象数组
      * @returns 返回下载成功的字幕文件路径数组

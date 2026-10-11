@@ -4,6 +4,7 @@
 mod authx;
 mod config;
 mod fnapi;
+mod imgproto;
 mod mpv;
 mod proxy;
 mod win_embed;
@@ -181,6 +182,30 @@ async fn get_item_detail(state: State<'_, AppState>, guid: String) -> Result<Val
     client.call(&cfg.server, &path, "GET", &cfg.token, None).await
 }
 
+/// 轮播数据：全局白名单查询（对齐主仓库 itemListApi.ts —— type:['Movie','TV']、
+/// 最近更新在前、排除未识别/直播/个人视频），不限定库。
+#[tauri::command]
+async fn get_carousel_items(state: State<'_, AppState>) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    let client = fnapi::new_client();
+    client
+        .call(
+            &cfg.server,
+            "/v/api/v1/item/list",
+            "POST",
+            &cfg.token,
+            Some(json!({
+                "tags": { "type": ["Movie", "TV"] },
+                "sort_type": "DESC",
+                "sort_column": "create_time",
+                "exclude_grouped_video": 1,
+                "page": 1,
+                "page_size": 24
+            })),
+        )
+        .await
+}
+
 // ───────────────────────── 播放 / mpv 控制 ─────────────────────────
 
 #[tauri::command]
@@ -304,6 +329,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
+        .register_asynchronous_uri_scheme_protocol("fntvimg", |ctx, request, responder| {
+            // 带会话鉴权的图片代理：WebView 里 <img> 直连 NAS 不带 Cookie 会全裂图
+            let app = ctx.app_handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let response = imgproto::handle(app, request).await;
+                responder.respond(response);
+            });
+        })
         .setup(|app| {
             // 启动时从磁盘读回配置（token/路径），否则每次重启都要重新登录
             let cfg = tauri::async_runtime::block_on(config::load(app.handle()));
@@ -321,6 +354,7 @@ pub fn run() {
             get_continue_watching,
             get_episodes,
             get_item_detail,
+            get_carousel_items,
             play_item,
             player_set_bounds,
             player_set_visible,

@@ -75,6 +75,15 @@ function fmtTime(sec: number | null | undefined): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
+/** 图片统一走鉴权代理（WebView 直连 NAS 不带 Cookie 会全裂图）
+ *  Windows 自定义协议形态：http://fntvimg.localhost/<poster 路径>；mac: fntvimg://localhost/<path> */
+function imgUrl(p?: string | null): string {
+  if (!p) return "";
+  const path = p.startsWith("/") ? p : `/${p}`;
+  if (navigator.userAgent.includes("Windows")) return `http://fntvimg.localhost${path}`;
+  return `fntvimg://localhost${path}`;
+}
+
 /* ────────────────────────── 标题栏 ────────────────────────── */
 
 function TitleBar({ title }: { title: string }) {
@@ -184,12 +193,10 @@ function LoginPage({ onDone }: { onDone: () => void }) {
 
 function PosterCard({
   item,
-  baseUrl,
   onOpen,
   subtitle,
 }: {
   item: MediaItem;
-  baseUrl: string;
   onOpen: (item: MediaItem) => void;
   subtitle?: string;
 }) {
@@ -200,7 +207,7 @@ function PosterCard({
     <div className="card" onClick={() => onOpen(item)} title={item.title}>
       <div className="poster-box">
         {item.poster ? (
-          <img src={`${baseUrl}/v/api/v1/sys/img${item.poster}`} loading="lazy" alt={item.title} />
+          <img src={imgUrl(item.poster)} loading="lazy" alt={item.title} />
         ) : (
           <div className="poster-empty">🎬</div>
         )}
@@ -228,23 +235,171 @@ function PosterCard({
   );
 }
 
+/* ────────────────────────── 首页样式4轮播（3D 旋转木马，复刻主仓库 fntv-s4） ────────────────────────── */
+
+const ACCENTS = ["#6eb5ff", "#d69b6a", "#b08fe0", "#5fb0a8", "#e08585"];
+
+function CarouselView({
+  items,
+  onPlay,
+  onDetail,
+}: {
+  items: MediaItem[];
+  onPlay: (t: PlayTarget) => void;
+  onDetail: (item: MediaItem) => void;
+}) {
+  const [index, setIndex] = useState(0);
+  const [backdrops, setBackdrops] = useState<Record<string, string>>({});
+  const n = items.length;
+
+  // 横版主图补齐：逐条拉 item/{guid} 的 backdrops（主仓库同源数据），失败保持渐变兜底
+  useEffect(() => {
+    if (n === 0) return;
+    let alive = true;
+    Promise.allSettled(
+      items.map((it) => invoke<Record<string, unknown>>("get_item_detail", { guid: it.guid })),
+    ).then((rs) => {
+      const map: Record<string, string> = {};
+      rs.forEach((r, i) => {
+        if (r.status === "fulfilled") {
+          const bd = pick(r.value, ["backdrops", "backdrop"]) as string | undefined;
+          if (bd) map[items[i].guid] = bd;
+        }
+      });
+      if (alive) setBackdrops(map);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [items]);
+
+  // 5s 自动轮播；手动切换后因 index 变化自然重置计时
+  useEffect(() => {
+    if (n < 2) return;
+    const t = setTimeout(() => setIndex((i) => (i + 1) % n), 5000);
+    return () => clearTimeout(t);
+  }, [index, n]);
+
+  if (n === 0) return null;
+  const cls = (i: number): string => {
+    let d = i - index;
+    if (d < 0) d += n;
+    if (d === 0) return "active";
+    if (d === 1) return "next";
+    if (d === n - 1) return "prev";
+    return d < n / 2 ? "far-right" : "far-left";
+  };
+  const yearOf = (it: MediaItem) => String(it.release_date || it.air_date || "").slice(0, 4);
+
+  return (
+    <div className="carousel-s4">
+      <div className="fntv-s4-track">
+        {items.map((it, i) => {
+          const state = cls(i);
+          const bd = backdrops[it.guid];
+          const accent = ACCENTS[i % ACCENTS.length];
+          const meta = [
+            yearOf(it),
+            (it.type || "").toLowerCase() === "movie" ? "MOVIE" : "TV SERIES",
+          ]
+            .filter(Boolean)
+            .join(" · ");
+          return (
+            <div
+              key={it.guid}
+              className={`fntv-s4-card ${state}`}
+              onClick={() => {
+                if (state !== "active") setIndex(i);
+              }}
+            >
+              <div
+                className="fntv-s4-bg"
+                style={
+                  bd
+                    ? { backgroundImage: `url(${imgUrl(bd)})` }
+                    : { backgroundImage: `linear-gradient(160deg, ${accent}55, #0b1219)` }
+                }
+              />
+              <div className="fntv-s4-info">
+                <div className="meta">{meta}</div>
+                <h3>{it.title}</h3>
+                <div className="desc">{it.overview || ""}</div>
+                <div className="fntv-s4-actions">
+                  <button
+                    className="fntv-s4-play"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onPlay({ guid: it.guid, title: it.title });
+                    }}
+                  >
+                    开始播放
+                  </button>
+                  <button
+                    className="fntv-s4-detail"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDetail(it);
+                    }}
+                  >
+                    更多详情
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="fntv-s4-dots">
+        {items.map((it, i) => (
+          <span
+            key={it.guid}
+            className={`fntv-s4-dot ${i === index ? "active" : ""}`}
+            onClick={() => setIndex(i)}
+          />
+        ))}
+      </div>
+      <button className="fntv-s4-nav prev" onClick={() => setIndex((i) => (i - 1 + n) % n)}>
+        ‹
+      </button>
+      <button className="fntv-s4-nav next" onClick={() => setIndex((i) => (i + 1) % n)}>
+        ›
+      </button>
+    </div>
+  );
+}
+
 /* ────────────────────────── 首页 ────────────────────────── */
 
 function HomeView({
   libs,
   continueList,
-  baseUrl,
   onOpenLib,
   onPlay,
+  onDetail,
 }: {
   libs: Lib[];
   continueList: PlayItem[];
-  baseUrl: string;
   onOpenLib: (lib: Lib) => void;
   onPlay: (t: PlayTarget) => void;
+  onDetail: (item: MediaItem) => void;
 }) {
+  const [carousel, setCarousel] = useState<MediaItem[]>([]);
+  useEffect(() => {
+    invoke<MediaItem[]>("get_carousel_items")
+      .then((d) => {
+        const list = (Array.isArray(d) ? d : [])
+          .filter((it) => it && it.guid && it.title)
+          .slice(0, 8);
+        setCarousel(list);
+      })
+      .catch(() => {});
+  }, []);
+
   return (
     <main className="content home">
+      {carousel.length > 0 && (
+        <CarouselView items={carousel} onPlay={onPlay} onDetail={onDetail} />
+      )}
       {continueList.length > 0 && (
         <>
           <div className="section-head">
@@ -269,7 +424,7 @@ function HomeView({
                 >
                   <div className="poster-box wide">
                     {poster ? (
-                      <img src={`${baseUrl}/v/api/v1/sys/img${poster}`} loading="lazy" alt={title} />
+                      <img src={imgUrl(poster)} loading="lazy" alt={title} />
                     ) : (
                       <div className="poster-empty">🎬</div>
                     )}
@@ -300,7 +455,7 @@ function HomeView({
           <div key={lib.guid} className="libcard" onClick={() => onOpenLib(lib)}>
             <div className="libcard-bg">
               {lib.posters && lib.posters[0] ? (
-                <img src={`${baseUrl}/v/api/v1/sys/img${lib.posters[0]}`} loading="lazy" alt={lib.title} />
+                <img src={imgUrl(lib.posters[0])} loading="lazy" alt={lib.title} />
               ) : (
                 <div className="poster-empty">🎞</div>
               )}
@@ -323,12 +478,10 @@ function HomeView({
 
 function LibView({
   lib,
-  baseUrl,
   onBackHome,
   onOpenItem,
 }: {
   lib: Lib;
-  baseUrl: string;
   onBackHome: () => void;
   onOpenItem: (item: MediaItem) => void;
 }) {
@@ -420,7 +573,7 @@ function LibView({
       {!loading && (
         <div className="grid">
           {items.map((it) => (
-            <PosterCard key={it.guid} item={it} baseUrl={baseUrl} onOpen={openItem} />
+            <PosterCard key={it.guid} item={it} onOpen={openItem} />
           ))}
         </div>
       )}
@@ -433,12 +586,10 @@ function LibView({
 
 function DetailView({
   base,
-  baseUrl,
   onPlay,
   onBack,
 }: {
   base: MediaItem;
-  baseUrl: string;
   onPlay: (t: PlayTarget) => void;
   onBack: () => void;
 }) {
@@ -471,7 +622,7 @@ function DetailView({
 
   return (
     <main className="content detail-page">
-      <div className="hero" style={backdrop ? { backgroundImage: `url(${baseUrl}/v/api/v1/sys/img${backdrop})` } : undefined}>
+      <div className="hero" style={backdrop ? { backgroundImage: `url(${imgUrl(backdrop)})` } : undefined}>
         <div className="hero-shade" />
         <button className="back hero-back" onClick={onBack}>
           ‹
@@ -479,7 +630,7 @@ function DetailView({
         <div className="hero-body">
           <div className="hero-poster">
             {poster ? (
-              <img src={`${baseUrl}/v/api/v1/sys/img${poster}`} alt={title} />
+              <img src={imgUrl(poster)} alt={title} />
             ) : (
               <div className="poster-empty">🎬</div>
             )}
@@ -523,7 +674,7 @@ function DetailView({
                 >
                   <div className="poster-box">
                     {ep.poster ? (
-                      <img src={`${baseUrl}/v/api/v1/sys/img${ep.poster}`} loading="lazy" alt={ep.title} />
+                      <img src={imgUrl(ep.poster)} loading="lazy" alt={ep.title} />
                     ) : (
                       <div className="poster-empty">🎞</div>
                     )}
@@ -702,7 +853,6 @@ function PlayerView({ item, onBack }: { item: PlayTarget; onBack: () => void }) 
 /* ────────────────────────── 根组件 ────────────────────────── */
 
 function App() {
-  const [cfg, setCfg] = useState<Config | null>(null);
   const [view, setView] = useState<"login" | "home" | "lib" | "detail" | "player">("login");
   const [libs, setLibs] = useState<Lib[]>([]);
   const [continueList, setContinueList] = useState<PlayItem[]>([]);
@@ -710,8 +860,6 @@ function App() {
   const [detailItem, setDetailItem] = useState<MediaItem | null>(null);
   const [playTarget, setPlayTarget] = useState<PlayTarget | null>(null);
   const [err, setErr] = useState("");
-
-  const baseUrl = cfg?.server ?? "";
 
   const loadHome = useCallback(async () => {
     setErr("");
@@ -740,19 +888,10 @@ function App() {
   }, []);
 
   useEffect(() => {
-    invoke<Config>("get_config").then(async (c) => {
-      setCfg(c);
-      if (c.token) {
-        try {
-          await invoke("check_session");
-          loadHome();
-        } catch {
-          setView("login");
-        }
-      } else {
-        setView("login");
-      }
-    });
+    // 有会话直接进首页；check_session 内部覆盖 token 为空的情况
+    invoke("check_session")
+      .then(() => loadHome())
+      .catch(() => setView("login"));
   }, [loadHome]);
 
   let body: ReactNode;
@@ -760,10 +899,7 @@ function App() {
     body = (
       <LoginPage
         onDone={() => {
-          invoke<Config>("get_config").then((c) => {
-            setCfg(c);
-            loadHome();
-          });
+          loadHome();
         }}
       />
     );
@@ -782,12 +918,12 @@ function App() {
         <HomeView
           libs={libs}
           continueList={continueList}
-          baseUrl={baseUrl}
           onOpenLib={(l) => {
             setActiveLib(l);
             setView("lib");
           }}
           onPlay={play}
+          onDetail={openItem}
         />
       </div>
     );
@@ -803,7 +939,7 @@ function App() {
             setView("lib");
           }}
         />
-        <LibView lib={activeLib} baseUrl={baseUrl} onBackHome={() => loadHome()} onOpenItem={openItem} />
+        <LibView lib={activeLib} onBackHome={() => loadHome()} onOpenItem={openItem} />
       </div>
     );
   } else if (view === "detail" && detailItem) {
@@ -820,7 +956,6 @@ function App() {
         />
         <DetailView
           base={detailItem}
-          baseUrl={baseUrl}
           onPlay={play}
           onBack={() => setView(activeLib ? "lib" : "home")}
         />

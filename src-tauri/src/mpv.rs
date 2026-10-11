@@ -1,266 +1,198 @@
-//! mpv 会话：spawn mpv.exe（--wid 指向嵌入子窗口）+ JSON IPC 命名管道控制。
-//! 控制协议与 Fntv-Plus 的 node-mpv-2 相同（newline-delimited JSON，request_id 应答配对）。
-//!
-//! 连接模型：tokio 的 NamedPipeClient 不支持 try_clone，因此开两条连接——
-//! 连接 A 只读事件（mpv 向所有客户端广播事件）；连接 B 经 tokio::io::split 拆成
-//! 读写两半，写半发命令、读半收本连接的应答。
+//! mpv 会话：libmpv 进程内嵌入（去进程化）。
+//! 历史：子进程 spawn 方案在应用内必死（exit 1/0 静默，lc-074~079 八项假说全排除未解），
+//! 改用 libmpv-2.dll 进程内加载——视频 wid 嵌入子窗口，控制走 C API，事件经 tauri emit。
+//! 前端协议不变：mpv-event {event:"property-change", id, data}；命令语义同 JSON IPC。
 
 use serde_json::{json, Value};
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::ffi::{c_char, c_int, c_void, CStr, CString};
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::windows::named_pipe::ClientOptions;
-use tokio::process::Child;
-use tokio::sync::{mpsc, oneshot, Mutex};
+
+use crate::libmpv;
 
 pub struct MpvSession {
     pub embed_hwnd: isize,
-    child: Mutex<Child>,
-    tx: mpsc::UnboundedSender<(Value, oneshot::Sender<Value>)>,
+    handle: Mutex<*mut c_void>,
+    dll_dir: String,
 }
 
-async fn try_open_pipe(pipe: &str) -> Option<tokio::net::windows::named_pipe::NamedPipeClient> {
-    // 单次尝试：由 launch 的重试环统一控节奏（便于同时观察子进程是否已退出）
-    ClientOptions::new().open(pipe).ok()
-}
+// mpv_handle 的 command/observe/wait_event 跨线程可用（client.h 线程安全集合）
+unsafe impl Send for MpvSession {}
+unsafe impl Sync for MpvSession {}
+
+/// 观察 id ↔ 属性名（前端 PlayerView 的 switch 依赖这些 id）
+const OBSERVED: [(u64, &str, c_int); 5] = [
+    (1, "time-pos", libmpv::MPV_FORMAT_DOUBLE),
+    (2, "duration", libmpv::MPV_FORMAT_DOUBLE),
+    (3, "pause", libmpv::MPV_FORMAT_FLAG),
+    (4, "speed", libmpv::MPV_FORMAT_DOUBLE),
+    (5, "volume", libmpv::MPV_FORMAT_DOUBLE),
+];
 
 impl MpvSession {
+    /// 创建 libmpv 实例并 wid 嵌入子窗口（实例常驻，播放/停止只切播放状态）
     pub async fn launch(
         app: AppHandle,
-        exe: &str,
+        mpv_path: &str,
         embed_hwnd: isize,
     ) -> Result<Arc<MpvSession>, String> {
-        let pipe = format!(
-            r"\\.\pipe\fntv-tauri-mpv-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0)
-        );
-        let args = [
-            "--no-config".to_string(),
-            "--terminal=no".to_string(), // 禁 stdin 读取：防 EOF → mpv 自退（spawn 侧 stdin 无法常开）
-            // 独立窗口模式实验：--wid 移除（stdin piped 已就位）
-            "--vo=gpu-next".to_string(),
-            "--hwdec=auto-safe".to_string(),
-            // ⚠ 必须用等号形式：空格分隔形式会让 mpv 静默 abort（exit 1 零输出，连 --log-file 都不建）
-            format!("--input-ipc-server={}", pipe.clone()),
-            "--osc=no".to_string(),
-            "--input-default-bindings=no".to_string(),
-            "--input-vo-keyboard=no".to_string(),
-            "--keep-open=yes".to_string(),
-            "--idle=yes".to_string(),
-            "--force-window=immediate".to_string(),
-            "--network-timeout=180".to_string(),
-            "--cache=yes".to_string(),
-            "--cache-secs=30".to_string(),
-            "--cache-pause=yes".to_string(),
-            "--demuxer-cache-wait=no".to_string(),
-            "--fullscreen=no".to_string(),
-            "--volume=100".to_string(),
-            // mpv 内部日志恒定 verbose 写文件（主仓库同款），不依赖 stderr——诊断兜底
-            "--log-file".to_string(),
-            std::env::temp_dir().join("fntv-tauri2-mpv.log").to_string_lossy().to_string(),
-        ];
-        // 调试：记录完整命令行（定位 spawn 环境差异）
-        {
-            let argv_log = std::env::temp_dir().join("fntv-tauri2-mpv-spawn.log");
-            let _ = std::fs::write(&argv_log, format!("exe={}
-args={:?}
-", exe, &args[..]));
+        let dll_dir = std::path::Path::new(mpv_path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let api = libmpv::api(&dll_dir)?;
+
+        { let _ = std::fs::OpenOptions::new().create(true).append(true).open(std::env::temp_dir().join("fntv-libmpv.log")).and_then(|mut f| std::io::Write::write_all(&mut f, format!("{}
+", "step1: dll loaded, calling mpv_create").as_bytes())); }
+        let h = unsafe { (api.create)() };
+        if h.is_null() {
+            return Err("mpv_create 失败".into());
         }
-        // ⚠ 关键：stdin 必须 piped 且写端持在不放——mpv 从 stdin 读 IPC/控制，stdin=null 时
-        // 立即 EOF → mpv 干净退出（exit 0）；带 --wid 时序更早的异常路径则 exit 1。
-        // （node-mpv-2 同款：spawn 后 stdin 一直开着。）
-        // ⚠ Rust 直接 spawn 的 mpv exit 1 静默死（8 项假说全排除），pwsh Start-Process 手动验证 100% 存活
-        // → 经 pwsh 中转；ps_cmd 落盘供人工核对
-        let q: char = 39 as char;
-        let ps_args = args
-            .iter()
-            .map(|a| format!("{}{}{}", q, a.replace(q, ""), q))
-            .collect::<Vec<_>>()
-            .join(",");
-        let ps_cmd = format!(
-            "Start-Process -FilePath {}{}{} -ArgumentList @({}) -WindowStyle Hidden",
-            q,
-            exe.replace(q, ""),
-            q,
-            ps_args
-        );
-        {
-            let log = std::env::temp_dir().join("fntv-tauri2-mpv-spawn.log");
-            let _ = std::fs::write(&log, &ps_cmd);
+
+        let wid_opt = CString::new(format!("{}", embed_hwnd)).unwrap();
+        let wid_key = CString::new("wid").unwrap();
+        unsafe { (api.set_option_string)(h, wid_key.as_ptr(), wid_opt.as_ptr()) };
+        for (k, v) in [
+            // ⚠ 已知问题（lc-081）：任何 D3D 视频输出（gpu-next/gpu/direct3d × wid/自建窗）在
+            // Tauri 进程内 access violation 崩溃（WebView2 --disable-gpu 也崩）——平台级冲突待专项。
+            // 暂用默认 vo=libmpv：解码/音频正常、无画面（应用稳定优先）。下轮攻 render API(GL) 或崩溃转储。
+
+            ("terminal", "no"),
+            ("osc", "no"),
+            ("input-default-bindings", "no"),
+            ("input-vo-keyboard", "no"),
+            ("force-window", "immediate"),
+            ("idle", "yes"),
+            ("keep-open", "yes"),
+            ("volume", "100"),
+        ] {
+            let k = CString::new(k).unwrap();
+            let v = CString::new(v).unwrap();
+            unsafe { (api.set_option_string)(h, k.as_ptr(), v.as_ptr()) };
         }
-        let _ = exe;
-        let mut child = tokio::process::Command::new("pwsh");
-        let mut child = child
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps_cmd])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map_err(|e| format!("启动 mpv 失败 ({}): {}", exe, e))?;
 
-        // 等待 IPC 管道出现（最长 20s）；期间若 mpv 进程退出则立刻带 stderr 报错，不留孤儿
-        let stderr_log = std::env::temp_dir().join("fntv-tauri2-mpv-stderr.log");
-        let mut ev_client = None;
-        let mut stderr_tail = String::new();
-        let read_tail = |p: &std::path::Path| -> String {
-            std::fs::read_to_string(p)
-                .unwrap_or_default()
-                .lines()
-                .rev()
-                .take(4)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect::<Vec<_>>()
-                .join(" | ")
-        };
-        for _ in 0..200 {
-            if let Ok(Some(status)) = child.try_wait() {
-                stderr_tail = read_tail(&stderr_log);
-                // wid 窗口存活诊断：IsWindow/GetClientRect 判定 mpv 死亡时目标窗口状态
-                #[cfg(target_os = "windows")]
-                {
-                    use windows_sys::Win32::UI::WindowsAndMessaging::{GetClientRect, IsWindow};
-                    let alive = unsafe { IsWindow(embed_hwnd as _) };
-                    let mut rc = windows_sys::Win32::Foundation::RECT { left: 0, top: 0, right: 0, bottom: 0 };
-                    let ok = unsafe { GetClientRect(embed_hwnd as _, &mut rc) };
-                    // Job 诊断：应用是否在限制性 Job 里（子进程被 Job 杀 = exit 1 静默候选）
-                    use windows_sys::Win32::System::JobObjects::IsProcessInJob;
-                    let mut in_job = 0i32;
-                    unsafe { IsProcessInJob(std::ptr::null_mut(), std::ptr::null_mut(), &mut in_job) };
-                    stderr_tail = format!(
-                        "{} [wid alive={} client={}x{} in_job={} argv_exe={}]",
-                        stderr_tail, alive, rc.right - rc.left, rc.bottom - rc.top, in_job, exe
-                    );
-                }
-                return Err(format!("mpv 提前退出 ({}): {}", status, stderr_tail));
-            }
-            if let Some(c) = try_open_pipe(&pipe).await {
-                ev_client = Some(c);
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        { let _ = std::fs::OpenOptions::new().create(true).append(true).open(std::env::temp_dir().join("fntv-libmpv.log")).and_then(|mut f| std::io::Write::write_all(&mut f, format!("{}
+", format!("step2: wid set, calling initialize h={:?}", h)).as_bytes())); }
+        let err = unsafe { (api.initialize)(h) };
+        if err != 0 {
+            unsafe { (api.terminate_destroy)(h) };
+            return Err(format!("mpv_initialize 失败: {}", libmpv::err_str(api, err)));
         }
-        let ev_client = ev_client.ok_or_else(|| {
-            let _ = child.start_kill();
-            format!("连接 mpv IPC 管道超时(20s) {}", read_tail(&stderr_log))
-        })?;
-        // 连接 B：命令/应答通道（管道已存在，直连）
-        let cmd_client = try_open_pipe(&pipe)
-            .await
-            .ok_or_else(|| "连接 mpv IPC 管道超时(2)".to_string())?;
 
-        let (tx, mut rx) = mpsc::unbounded_channel::<(Value, oneshot::Sender<Value>)>();
-        let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
-        let next_id = Arc::new(AtomicU64::new(1));
-
-        // 任务 A：转发属性/事件到前端
-        let app2 = app;
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(ev_client).lines();
-            loop {
-                match lines.next_line().await {
-                    Ok(Some(line)) => {
-                        if let Ok(v) = serde_json::from_str::<Value>(&line) {
-                            if v.get("event").is_some() {
-                                let _ = app2.emit("mpv-event", v);
-                            }
-                        }
-                    }
-                    _ => break,
-                }
-            }
-        });
-
-        // 任务 B1：命令写出端（写半）
-        let pending_w = pending.clone();
-        let nid_w = next_id.clone();
-        let (r_half, mut w_half) = tokio::io::split(cmd_client);
-        tokio::spawn(async move {
-            while let Some((cmd, cb)) = rx.recv().await {
-                let id = nid_w.fetch_add(1, Ordering::SeqCst);
-                pending_w.lock().await.insert(id, cb);
-                let msg = json!({ "command": cmd, "request_id": id }).to_string();
-                if w_half.write_all(msg.as_bytes()).await.is_err()
-                    || w_half.write_all(b"\n").await.is_err()
-                {
-                    break;
-                }
-                let _ = w_half.flush().await;
-            }
-        });
-
-        // 任务 B2：应答读端（读半）
-        let pending_r = pending.clone();
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(r_half).lines();
-            loop {
-                match lines.next_line().await {
-                    Ok(Some(line)) => {
-                        if let Ok(v) = serde_json::from_str::<Value>(&line) {
-                            if let Some(id) = v.get("request_id").and_then(|i| i.as_u64()) {
-                                if let Some(s) = pending_r.lock().await.remove(&id) {
-                                    let _ = s.send(v);
-                                }
-                            }
-                        }
-                    }
-                    _ => break,
-                }
-            }
-        });
-
+        { let _ = std::fs::OpenOptions::new().create(true).append(true).open(std::env::temp_dir().join("fntv-libmpv.log")).and_then(|mut f| std::io::Write::write_all(&mut f, format!("{}
+", format!("step3: initialize ok, spawning event thread h={:?}", h)).as_bytes())); }
         let session = Arc::new(MpvSession {
             embed_hwnd,
-            child: Mutex::new(child),
-            tx,
+            handle: Mutex::new(h),
+            dll_dir: dll_dir.clone(),
         });
 
-        // 观察控制栏需要的属性：time-pos / duration / pause / speed / volume
-        let _ = session.command(json!(["observe_property", 1, "time-pos"])).await;
-        let _ = session.command(json!(["observe_property", 2, "duration"])).await;
-        let _ = session.command(json!(["observe_property", 3, "pause"])).await;
-        let _ = session.command(json!(["observe_property", 4, "speed"])).await;
-        let _ = session.command(json!(["observe_property", 5, "volume"])).await;
+        // 观察属性（id 与前端 switch 对齐）
+        for (id, name, fmt) in OBSERVED {
+            let n = CString::new(name).unwrap();
+            unsafe { (api.observe_property)(h, id, n.as_ptr(), fmt) };
+        }
+
+        // 事件轮询线程 → tauri emit（前端协议：{event:"property-change", id, data}）
+        { let _ = std::fs::OpenOptions::new().create(true).append(true).open(std::env::temp_dir().join("fntv-libmpv.log")).and_then(|mut f| std::io::Write::write_all(&mut f, format!("{}
+", "step4: event thread entering loop").as_bytes())); }
+        let app2 = app.clone();
+        let sess_for_api = session.clone();
+        let sess2 = session.clone();
+        std::thread::spawn(move || loop {
+            let h = sess2.handle();
+            if h.is_null() {
+                break;
+            }
+            let api = libmpv::api(&sess_for_api.dll_dir).expect("libmpv api");
+            libmpv::trace("before wait_event");
+            let ev = unsafe { (api.wait_event)(h, 0.25) };
+            libmpv::trace("after wait_event");
+            if ev.is_null() {
+                continue;
+            }
+            let e = unsafe { &*ev };
+            if e.event_id == libmpv::MPV_EVENT_SHUTDOWN {
+                break;
+            }
+            if e.event_id != libmpv::MPV_EVENT_PROPERTY_CHANGE {
+                continue;
+            }
+            let prop = unsafe { &*(e.data as *const libmpv::MpvEventProperty) };
+            if prop.name.is_null() {
+                continue;
+            }
+            let name = unsafe { CStr::from_ptr(prop.name) }.to_string_lossy().to_string();
+            let Some((id, _, fmt)) = OBSERVED.iter().find(|(_, n, _)| *n == name) else {
+                continue;
+            };
+            let data = unsafe {
+                match *fmt {
+                    libmpv::MPV_FORMAT_DOUBLE => json!((*(prop.data as *const f64)) as f64),
+                    libmpv::MPV_FORMAT_FLAG => json!((*(prop.data as *const c_int)) != 0),
+                    _ => Value::Null,
+                }
+            };
+            let _ = app2.emit(
+                "mpv-event",
+                json!({ "event": "property-change", "id": id, "data": data }),
+            );
+        });
+
         Ok(session)
     }
 
-    pub async fn command(&self, cmd: Value) -> Result<Value, String> {
-        let (otx, orx) = oneshot::channel();
-        self.tx
-            .send((cmd, otx))
-            .map_err(|_| "mpv 进程已退出".to_string())?;
-        match tokio::time::timeout(std::time::Duration::from_secs(5), orx).await {
-            Ok(Ok(v)) => {
-                let err = v
-                    .get("error")
-                    .and_then(|e| e.as_str())
-                    .unwrap_or("success");
-                if err == "success" {
-                    Ok(v)
-                } else {
-                    Err(err.to_string())
-                }
-            }
-            _ => Err("mpv 响应超时".into()),
-        }
+    fn handle(&self) -> *mut c_void {
+        *self.handle.lock().unwrap()
     }
 
-    /// 进程是否已退出
+    fn api(&self) -> &'static libmpv::Api {
+        libmpv::api(&self.dll_dir).expect("libmpv api")
+    }
+
+    /// JSON 数组命令 → mpv_command（语义对齐原 JSON IPC）
+    pub async fn command(&self, cmd: Value) -> Result<Value, String> {
+        let arr = cmd.as_array().ok_or("命令必须是数组")?;
+        let cstrs: Vec<CString> = arr
+            .iter()
+            .map(|v| {
+                CString::new(match v {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .unwrap_or_default()
+            })
+            .collect();
+        let mut ptrs: Vec<*mut c_char> = cstrs.iter().map(|c| c.as_ptr() as *mut c_char).collect();
+        ptrs.push(std::ptr::null_mut());
+
+        let api = self.api();
+        libmpv::trace(&format!("before command {:?}", &cstrs.iter().map(|c| c.to_string_lossy()).collect::<Vec<_>>()));
+        let err = unsafe { (api.command)(self.handle(), ptrs.as_mut_ptr()) };
+        libmpv::trace(&format!("after command err={}", err));
+        if err != 0 {
+            return Err(libmpv::err_str(api, err));
+        }
+        Ok(json!({ "error": "success" }))
+    }
+
+    /// libmpv 常驻：随应用退出销毁，会话本身不「死亡」
     pub async fn is_dead(&self) -> bool {
-        let mut c = self.child.lock().await;
-        matches!(c.try_wait(), Ok(Some(_)))
+        false
+    }
+
+    /// 停止播放（回 idle），实例保留
+    pub async fn stop(&self) -> Result<(), String> {
+        self.command(json!(["stop"])).await.map(|_| ())
     }
 
     pub async fn shutdown(&self) {
-        if let Ok(mut c) = self.child.try_lock() {
-            let _ = c.kill().await;
+        let h = self.handle();
+        if !h.is_null() {
+            let api = self.api();
+            unsafe { (api.terminate_destroy)(h) };
         }
+        *self.handle.lock().unwrap() = std::ptr::null_mut();
         crate::win_embed::destroy(self.embed_hwnd);
     }
 }

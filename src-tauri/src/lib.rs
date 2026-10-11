@@ -4,6 +4,7 @@
 mod authx;
 mod config;
 mod fnapi;
+mod libmpv;
 mod imgproto;
 mod mpv;
 mod proxy;

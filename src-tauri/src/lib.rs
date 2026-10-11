@@ -597,6 +597,11 @@ pub fn run() {
                     }
                 }
             }
+            // dev 期开 DevTools 诊断口（9222），供外部 CDP 检查 DOM；正式打包不受影响（debug_assertions）
+            #[cfg(debug_assertions)]
+            if let Some(wv) = app.get_webview_window("main") {
+                let _ = wv.open_devtools();
+            }
             // SWCA 动态模糊 + 窗口级圆角（默认浅色 tint；主题切换由前端 set_acrylic_tint 更新）
             #[cfg(target_os = "windows")]
             if let Some(win) = app.get_webview_window("main") {

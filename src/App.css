@@ -628,7 +628,7 @@ h3 {
   flex: none;
 }
 .hscroll::-webkit-scrollbar {
-  height: 8px;
+  height: 7px;
 }
 .continue-card .poster-box {
   aspect-ratio: 16 / 10;
@@ -1101,17 +1101,18 @@ button:active {
 }
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 7px;
+  height: 7px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.13);
-  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.24);
+  border-radius: 99px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.42);
 }
-::-webkit-scrollbar-track {
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
   background: transparent;
 }
 
@@ -1294,7 +1295,7 @@ button:active {
   height: 6px;
 }
 .lib-strip::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.13);
+  background: rgba(255, 255, 255, 0.24);
   border-radius: 3px;
 }
 .lib-strip-card {
@@ -1470,6 +1471,14 @@ button:active {
 .home-sec .section-head {
   margin: 0 0 14px;
   padding: 0 26px;
+}
+/* 首页海报铺满右缘：清掉横排与标题的右侧内边距，细滚动条浮在贴边海报上方 */
+.home-full .home-sec .section-head {
+  padding-right: 0;
+}
+.home-full .hscroll {
+  margin-right: 0;
+  padding-right: 0;
 }
 .row-more {
   margin-left: auto;

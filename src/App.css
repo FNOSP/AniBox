@@ -442,8 +442,8 @@ body,
   border-radius: 0;
 }
 .lsc-skel {
-  width: 176px;
-  height: 99px;
+  width: 220px;
+  height: 124px;
   border-radius: 10px;
   flex-shrink: 0;
   margin-top: 14px;
@@ -1371,7 +1371,7 @@ button:active {
   display: flex;
   flex-direction: column;
   justify-content: flex-end; /* 信息块贴底：居中会在上方留大片空白，贴近媒体库条只留隔离带 */
-  padding: 0 4% 138px; /* 138 = 媒体库条占位(卡99px+底边距14px) + ~25px 隔离带 */
+  padding: 0 4% 163px; /* 163 = 媒体库条占位(卡124px+底边距14px) + ~25px 隔离带 */
   box-sizing: border-box;
   pointer-events: none;
 }
@@ -1505,8 +1505,8 @@ button:active {
 }
 .lib-strip-card {
   position: relative;
-  width: 176px;
-  min-width: 176px;
+  width: 220px;
+  min-width: 220px;
   aspect-ratio: 16 / 9;
   border-radius: 10px;
   overflow: hidden;
@@ -1616,7 +1616,7 @@ button:active {
 .lsc-pop {
   position: absolute;
   left: 26px;
-  bottom: 132px;
+  bottom: 152px;
   z-index: 41;
   width: 280px;
   max-height: 46vh;

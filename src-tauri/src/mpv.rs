@@ -70,8 +70,14 @@ impl MpvSession {
 args={:?}
 ", exe, &args[..]));
         }
-        let mut child = tokio::process::Command::new(exe)
-            .args(&args)
+        let mut child = tokio::process::Command::new(exe);
+        // 脱离可能存在的限制性 Job Object（子进程被 Job 终止 = exit 1 静默的候选）
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            child.creation_flags(0x0100_0000); // CREATE_BREAKAWAY_FROM_JOB
+        }
+        let mut child = child.args(&args)
             .stdout(std::process::Stdio::null())
             // stderr 直写文件：进程退出后的错误文本时序无关，诊断最可靠
             .stderr({
@@ -111,9 +117,13 @@ args={:?}
                     let alive = unsafe { IsWindow(embed_hwnd as _) };
                     let mut rc = windows_sys::Win32::Foundation::RECT { left: 0, top: 0, right: 0, bottom: 0 };
                     let ok = unsafe { GetClientRect(embed_hwnd as _, &mut rc) };
+                    // Job 诊断：应用是否在限制性 Job 里（子进程被 Job 杀 = exit 1 静默候选）
+                    use windows_sys::Win32::System::JobObjects::IsProcessInJob;
+                    let mut in_job = 0i32;
+                    unsafe { IsProcessInJob(std::ptr::null_mut(), std::ptr::null_mut(), &mut in_job) };
                     stderr_tail = format!(
-                        "{} [wid alive={} client={}x{}] argv_exe={}",
-                        stderr_tail, alive, rc.right - rc.left, rc.bottom - rc.top, exe
+                        "{} [wid alive={} client={}x{} in_job={} argv_exe={}]",
+                        stderr_tail, alive, rc.right - rc.left, rc.bottom - rc.top, in_job, exe
                     );
                 }
                 return Err(format!("mpv 提前退出 ({}): {}", status, stderr_tail));

@@ -838,122 +838,188 @@ h3 {
 
 /* ─────────────── 详情页 hero ─────────────── */
 
-.detail-page {
-  padding: 0 0 46px;
-}
-.hero {
-  position: relative;
-  min-height: 380px;
-  background-size: cover;
-  background-position: center 20%;
+/* 剧集详情（草稿版式：顶部通栏标题 + 左播放器/信息卡 + 右剧集竖排） */
+.detail-full {
+  height: 100%;
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  padding: 14px 26px 16px;
+  gap: 14px;
 }
-.hero-shade {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    180deg,
-    rgba(13, 15, 22, 0.25) 0%,
-    rgba(13, 15, 22, 0.55) 55%,
-    rgba(13, 15, 22, 0.96) 100%
-  );
+.detail-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
 }
-.hero-back {
-  position: absolute;
-  top: 18px;
-  left: 22px;
-  background: rgba(10, 12, 18, 0.55);
-  backdrop-filter: blur(8px);
-  z-index: 2;
-}
-.hero-body {
-  position: relative;
+.detail-cols {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  gap: 26px;
-  padding: 30px 30px 26px;
-  width: 100%;
-  align-items: flex-end;
+  gap: 18px;
 }
-.hero-poster {
-  width: 180px;
-  min-width: 180px;
-  aspect-ratio: 2 / 3;
+.detail-left {
+  flex: 1.65;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+}
+/* 内嵌 mpv 容器（PlayerView embedded 形态） */
+.player-embed {
+  display: flex;
+  flex-direction: column;
   border-radius: 14px;
   overflow: hidden;
-  border: 1px solid var(--line-strong);
-  box-shadow: var(--shadow-card);
+  background: #000;
+  flex-shrink: 0;
 }
-.hero-poster img {
+.player-embed .player-stage {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+}
+.player-embed .control-bar {
+  padding: 8px 12px;
+}
+.player-cover {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 14px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--ph-bg);
+  flex-shrink: 0;
+}
+.player-cover img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
 }
-.hero-info {
+.big-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 12px 26px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  transition: transform 0.15s ease, background-color 0.15s ease;
+}
+.player-cover:hover .big-play {
+  transform: translate(-50%, -50%) scale(1.05);
+  background: rgba(0, 0, 0, 0.7);
+}
+/* 原主仓库 TMDB 信息卡 */
+.tmdb-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  overflow-y: auto;
+}
+.tmdb-poster {
+  width: 132px;
+  min-width: 132px;
+  aspect-ratio: 2 / 3;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--ph-bg);
+  align-self: flex-start;
+}
+.tmdb-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.tmdb-info {
   flex: 1;
   min-width: 0;
-  padding-bottom: 4px;
 }
-.hero-info h2 {
-  margin: 0 0 10px;
-  font-size: 28px;
+.tmdb-name {
+  font-size: 16px;
   font-weight: 800;
-  letter-spacing: 0.4px;
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
+  color: var(--text-strong);
 }
 .meta-row {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  margin-bottom: 12px;
 }
 .meta {
   font-size: 12.5px;
-  color: rgba(233, 235, 244, 0.78);
-  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-2);
+  background: var(--hover);
   border: 1px solid var(--line);
   padding: 4px 10px;
   border-radius: 999px;
-  backdrop-filter: blur(6px);
 }
-.meta.rating {
-  color: var(--gold);
+:root .meta.rating {
+  color: #a06a00; /* 浅色表面金棕可读 */
   font-weight: 700;
+}
+html.dark .meta.rating {
+  color: var(--gold);
 }
 .type-chip {
-  color: #cfe0ff;
+  color: var(--accent);
   border-color: rgba(108, 155, 255, 0.4);
 }
-.hero-info .overview {
-  max-width: 760px;
-  margin-bottom: 18px;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.tmdb-info .meta-row {
+  margin: 10px 0 12px;
 }
-.hero-actions {
+.tmdb-overview {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13.5px;
+  line-height: 1.75;
+}
+/* 右列：剧集竖排 */
+.detail-right {
+  flex: 1;
+  min-width: 320px;
   display: flex;
-  gap: 12px;
+  flex-direction: column;
+  min-height: 0;
 }
-.play-big {
-  background: var(--accent-grad);
-  border: none;
-  color: #fff;
-  font-size: 14.5px;
-  font-weight: 700;
-  padding: 12px 26px;
-  border-radius: 999px;
-  cursor: pointer;
-  box-shadow: 0 8px 24px rgba(108, 155, 255, 0.42);
-  transition: transform 0.15s, filter 0.15s;
+.detail-right .section-head {
+  margin: 0 0 12px;
+  flex-shrink: 0;
 }
-.play-big:hover {
-  transform: translateY(-2px);
-  filter: brightness(1.08);
+.detail-right .ep-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 4px 8px 0;
+  gap: 18px;
 }
+.detail-right .ep-thumb {
+  width: 150px;
+  min-width: 150px;
+}
+.ep-row.playing .ep-row-title {
+  color: var(--accent);
+}
+
 /* 剧集行卡（复刻飞牛原版：左 16:9 剧照 + 右标题·清晰度徽标·两行简介·时长，无卡片底） */
 .ep-list {
   display: flex;

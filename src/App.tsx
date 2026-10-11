@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { IcoHome, IcoStar, IcoGrid, IcoMovie, IcoTv, IcoLive, IcoFolder, IcoAutoTheme } from "./icons";
+import { IcoHome, IcoStar, IcoGrid, IcoMovie, IcoTv, IcoLive, IcoFolder, IcoAutoThemeMask } from "./icons";
 import "./App.css";
 
 type Config = {
@@ -192,7 +192,7 @@ function TitleBar({
         )}
         {onToggleTheme && (
           <button className="tb-icon" title="切换深浅模式" onClick={onToggleTheme}>
-            <IcoAutoTheme size={16} />
+            <IcoAutoThemeMask size={16} />
           </button>
         )}
         {!nav && <span className="tb-page">{title}</span>}
@@ -809,19 +809,13 @@ function LibView({
 
 /* ────────────────────────── 详情页（Netflix 风 hero） ────────────────────────── */
 
-function DetailView({
-  base,
-  onPlay,
-  onBack,
-}: {
-  base: MediaItem;
-  onPlay: (t: PlayTarget) => void;
-  onBack: () => void;
-}) {
+function DetailView({ base }: { base: MediaItem }) {
+  // 内嵌播放：点集/播放按钮后在页内 mpv 播放（离开详情页自动 stop）
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [seasonIdx, setSeasonIdx] = useState(0);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
+  const [detailPlay, setDetailPlay] = useState<PlayTarget | null>(null);
   const [err, setErr] = useState("");
 
   const isSeries = base.type === "TvSeries" || base.type === "TV";
@@ -896,119 +890,117 @@ function DetailView({
   const numSeasons = pick(data ?? {}, ["numberOfSeasons", "number_of_seasons"]);
   const resumeAt = base.ts && base.duration && base.ts > 0 && base.ts < base.duration;
 
+
+  const startPlay = () => {
+    const ep = episodes[0];
+    setDetailPlay(
+      isSeries && ep
+        ? { guid: ep.guid, title: ep.title, tvTitle: title }
+        : { guid: base.guid, title: base.title, tvTitle: title },
+    );
+  };
+
   return (
-    <main className="content detail-page">
-      <div
-        className="hero"
-        style={backdrop ? { backgroundImage: `url(${imgUrl(backdrop)})` } : undefined}
-      >
-        <div className="hero-shade" />
-        <button className="back hero-back" onClick={onBack}>
-          ‹
-        </button>
-        <div className="hero-body">
-          <div className="hero-poster">
-            {poster ? (
-              <img src={imgUrl(poster)} alt={title} />
-            ) : (
-              <div className="poster-empty">🎬</div>
-            )}
-          </div>
-          <div className="hero-info">
-            <h2>{title}</h2>
-            <div className="meta-row">
-              {rating && rating !== "0" && <span className="meta rating">★ {rating}</span>}
-              {releaseDate && <span className="meta">{releaseDate.slice(0, 4)}</span>}
-              {isSeries && numSeasons ? <span className="meta">{numSeasons} 季</span> : null}
-              <span className="meta type-chip">{base.type}</span>
+    <main className="content detail-full">
+      <h1 className="detail-title">{title}</h1>
+      <div className="detail-cols">
+        <div className="detail-left">
+          {err && <div className="err">{err}</div>}
+          {detailPlay ? (
+            <PlayerView item={detailPlay} embedded />
+          ) : (
+            <div className="player-cover" onClick={startPlay}>
+              {backdrop ? <img src={imgUrl(backdrop)} alt={title} /> : <div className="poster-empty">🎬</div>}
+              <button className="big-play">▶ {resumeAt ? "续播" : "播放"}</button>
             </div>
-            {overview && <p className="overview">{overview}</p>}
-            <div className="hero-actions">
-              <button
-                className="play-big"
-                onClick={() =>
-                  onPlay({
-                    guid: base.guid,
-                    title: base.title,
-                    tvTitle: (data?.tvTitle as string) || base.tv_title,
-                  })
-                }
-              >
-                ▶ {resumeAt ? "续播" : "立即播放"}
-                {resumeAt && base.ts ? ` · ${fmtTime(base.ts)}` : ""}
-              </button>
+          )}
+          <div className="tmdb-card">
+            <div className="tmdb-poster">
+              {poster ? <img src={imgUrl(poster)} alt={title} /> : <div className="poster-empty">🎬</div>}
+            </div>
+            <div className="tmdb-info">
+              <div className="tmdb-name">{title}</div>
+              <div className="meta-row">
+                {rating && rating !== "0" && <span className="meta rating">★ {rating}</span>}
+                {releaseDate && <span className="meta">{releaseDate.slice(0, 4)}</span>}
+                {isSeries && numSeasons ? <span className="meta">{numSeasons} 季</span> : null}
+                <span className="meta type-chip">{base.type}</span>
+              </div>
+              {overview && <p className="tmdb-overview">{overview}</p>}
             </div>
           </div>
         </div>
-      </div>
-      {err && <div className="err">{err}</div>}
-      {isSeries && episodes.length > 0 && (
-        <>
-          <div className="section-head">
-            <h3>剧集</h3>
-            {seasons.length > 1 && (
-              <div className="season-tabs">
-                {seasons.map((s, i) => (
-                  <button
-                    key={s.guid}
-                    className={`season-tab ${i === seasonIdx ? "active" : ""}`}
-                    onClick={() => setSeasonIdx(i)}
-                  >
-                    {s.title || `第 ${s.season_number ?? i + 1} 季`}
-                  </button>
-                ))}
-              </div>
-            )}
-            <span className="muted">{episodes.length} 集</span>
-          </div>
-          <div className="ep-list">
-            {episodes.map((ep) => {
-              const progress =
-                ep.ts && ep.duration && ep.duration > 0 ? Math.min(100, (ep.ts / ep.duration) * 100) : 0;
-              const label =
-                ep.episode_number != null
-                  ? `第 ${ep.episode_number} 集${ep.title ? `. ${ep.title}` : ""}`
-                  : ep.title || "未命名剧集";
-              return (
-                <div
-                  key={ep.guid}
-                  className="ep-row"
-                  onClick={() => onPlay({ guid: ep.guid, title: ep.title, tvTitle: title })}
-                >
-                  <div className="ep-thumb">
-                    {ep.poster ? (
-                      <img src={imgUrl(ep.poster)} loading="lazy" alt={label} />
-                    ) : (
-                      <div className="poster-empty">🎞</div>
-                    )}
-                    <span className="ep-play">▶</span>
-                    {progress > 0 && (
-                      <div className="progress">
-                        <div style={{ width: `${progress}%` }} />
-                      </div>
-                    )}
-                  </div>
-                  <div className="ep-body">
-                    <div className="ep-row-title">
-                      {label}
-                      {ep.quality && <span className="ep-quality">{ep.quality}</span>}
-                    </div>
-                    {ep.overview && <p className="ep-overview">{ep.overview}</p>}
-                    {fmtDur(ep.duration) && <div className="ep-duration">{fmtDur(ep.duration)}</div>}
-                  </div>
+        {isSeries && (
+          <div className="detail-right">
+            <div className="section-head">
+              <h3>剧集</h3>
+              {seasons.length > 1 && (
+                <div className="season-tabs">
+                  {seasons.map((sn, i) => (
+                    <button
+                      key={sn.guid}
+                      className={`season-tab ${i === seasonIdx ? "active" : ""}`}
+                      onClick={() => setSeasonIdx(i)}
+                    >
+                      {sn.title || `第 ${sn.season_number ?? i + 1} 季`}
+                    </button>
+                  ))}
                 </div>
-              );
-            })}
+              )}
+              <span className="muted">{episodes.length} 集</span>
+            </div>
+            <div className="ep-list">
+              {episodes.map((ep) => {
+                const progress =
+                  ep.ts && ep.duration && ep.duration > 0 ? Math.min(100, (ep.ts / ep.duration) * 100) : 0;
+                const label =
+                  ep.episode_number != null
+                    ? `第 ${ep.episode_number} 集${ep.title ? `. ${ep.title}` : ""}`
+                    : ep.title || "未命名剧集";
+                const playing = detailPlay?.guid === ep.guid;
+                return (
+                  <div
+                    key={ep.guid}
+                    className={`ep-row${playing ? " playing" : ""}`}
+                    onClick={() =>
+                      setDetailPlay({ guid: ep.guid, title: ep.title, tvTitle: title })
+                    }
+                  >
+                    <div className="ep-thumb">
+                      {ep.poster ? (
+                        <img src={imgUrl(ep.poster)} loading="lazy" alt={label} />
+                      ) : (
+                        <div className="poster-empty">🎞</div>
+                      )}
+                      <span className="ep-play">{playing ? "◉" : "▶"}</span>
+                      {progress > 0 && (
+                        <div className="progress">
+                          <div style={{ width: `${progress}%` }} />
+                        </div>
+                      )}
+                    </div>
+                    <div className="ep-body">
+                      <div className="ep-row-title">
+                        {label}
+                        {ep.quality && <span className="ep-quality">{ep.quality}</span>}
+                      </div>
+                      {ep.overview && <p className="ep-overview">{ep.overview}</p>}
+                      {fmtDur(ep.duration) && <div className="ep-duration">{fmtDur(ep.duration)}</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </>
-      )}
+        )}
+      </div>
     </main>
   );
 }
 
 /* ────────────────────────── 播放页 ────────────────────────── */
 
-function PlayerView({ item, onBack }: { item: PlayTarget; onBack: () => void }) {
+function PlayerView({ item, onBack, embedded }: { item: PlayTarget; onBack?: () => void; embedded?: boolean }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const [timePos, setTimePos] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -1076,7 +1068,7 @@ function PlayerView({ item, onBack }: { item: PlayTarget; onBack: () => void }) 
   const shownTime = scrub ?? timePos;
 
   return (
-    <div className="player-page">
+    <div className={embedded ? "player-embed" : "player-page"}>
       <div
         className="player-stage"
         ref={stageRef}
@@ -1107,7 +1099,7 @@ function PlayerView({ item, onBack }: { item: PlayTarget; onBack: () => void }) 
           <span className="time">{fmtTime(duration)}</span>
         </div>
         <div className="btn-row">
-          <button onClick={onBack}>‹ 返回</button>
+          {!embedded && onBack && <button onClick={onBack}>‹ 返回</button>}
           <button className="big" onClick={() => invoke("mpv_toggle_pause").catch(() => {})}>
             {paused ? "▶" : "⏸"}
           </button>
@@ -1573,11 +1565,7 @@ function App() {
           )}
           {view === "detail" && detailItem && (
             <div className="view-pane active">
-              <DetailView
-                base={detailItem}
-                onPlay={play}
-                onBack={() => setView(activeLib ? "lib" : "home")}
-              />
+              <DetailView base={detailItem} />
             </div>
           )}
         </div>

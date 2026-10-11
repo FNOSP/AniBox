@@ -540,6 +540,7 @@ function HomeView({
   onOpenLib,
   onPlay,
   onOpenItem,
+  onScrolled,
 }: {
   libs: Lib[];
   hiddenLibs: string[];
@@ -552,11 +553,16 @@ function HomeView({
   onOpenLib: (lib: Lib) => void;
   onPlay: (t: PlayTarget) => void;
   onOpenItem: (item: MediaItem) => void;
+  /** 首页滚动状态上报：滚动后顶栏从 overlay 透明切回实底 */
+  onScrolled: (scrolled: boolean) => void;
 }) {
   const [manageOpen, setManageOpen] = useState(false);
   const shownLibs = libs.filter((l) => !hiddenLibs.includes(l.guid));
   return (
-    <main className="content home-full">
+    <main
+      className="content home-full"
+      onScroll={(e) => onScrolled(e.currentTarget.scrollTop > 8)}
+    >
       {/* 全屏 hero 轮播 + 底部媒体库条（Emby 布局） */}
       <div className="hero-zone">
         <CarouselView
@@ -1461,6 +1467,8 @@ function App() {
   }, [theme]);
   // 首页加载中（首次/手动刷新）：无数据时渲染骨架屏；已有数据时静默刷新不闪骨架
   const [homeLoading, setHomeLoading] = useState(false);
+  // 首页是否已滚动：滚动后 overlay 透明顶栏切实底（防内容从顶栏下穿过）
+  const [homeScrolled, setHomeScrolled] = useState(false);
   // 启动会话检查期：不渲染任何视图，避免带有效会话时闪登录页
   const [booting, setBooting] = useState(true);
   const [username, setUserName] = useState("");
@@ -1690,6 +1698,7 @@ function App() {
                 }}
                 onPlay={play}
                 onOpenItem={openItem}
+                onScrolled={setHomeScrolled}
               />
             ) : homeLoading ? (
               <HomeSkeleton />
@@ -1733,7 +1742,7 @@ function App() {
         onHome={goHome}
         onRefresh={() => loadHome()}
         refreshing={homeLoading}
-        overlay={view === "home" || view === "player"}
+        overlay={(view === "home" && !homeScrolled) || view === "player"}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
       />
       {err && view !== "login" && <div className="err global-err">{err}</div>}

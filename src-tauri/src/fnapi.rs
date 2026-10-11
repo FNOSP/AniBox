@@ -69,6 +69,43 @@ impl FnClient {
         self.call_inner(&base, path, method, token, body, 0).await
     }
 
+    /// 跟随 3xx 探测最终基址：fnOS 80 端口会把 /v/api/v1/* 302 到实际端口（实测 :17777）。
+    /// 重定向跨 host 时 reqwest/浏览器都会剥鉴权头，因此必须在登录/会话检查时把最终基址固化下来。
+    pub async fn resolve_final_base(&self, base: &str, token: &str) -> String {
+        let mut current = normalize_server(base);
+        for _ in 0..4 {
+            let url = format!("{}/v/api/v1/user/info", current);
+            let resp = self
+                .http
+                .get(&url)
+                .header("Authorization", token)
+                .header("Cookie", format!("mode=relay; Trim-MC-token={}", token))
+                .send()
+                .await;
+            let resp = match resp {
+                Ok(r) => r,
+                Err(_) => return current,
+            };
+            let st = resp.status().as_u16();
+            if matches!(st, 301 | 302 | 307 | 308) {
+                let loc = resp
+                    .headers()
+                    .get("location")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .to_string();
+                if loc.is_empty() {
+                    return current;
+                }
+                let (nb, _np) = split_redirect(&current, &loc);
+                current = nb;
+            } else {
+                return current;
+            }
+        }
+        current
+    }
+
     fn call_inner<'a>(
         &'a self,
         base: &'a str,

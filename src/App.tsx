@@ -385,11 +385,10 @@ function HomeView({
 }) {
   const [carousel, setCarousel] = useState<MediaItem[]>([]);
   useEffect(() => {
-    invoke<MediaItem[]>("get_carousel_items")
+    // 注意：get_carousel_items 返回 {list,total} 对象，list 才是条目数组
+    invoke<{ list: MediaItem[]; total: number }>("get_carousel_items")
       .then((d) => {
-        const list = (Array.isArray(d) ? d : [])
-          .filter((it) => it && it.guid && it.title)
-          .slice(0, 8);
+        const list = (d?.list ?? []).filter((it) => it && it.guid && it.title).slice(0, 8);
         setCarousel(list);
       })
       .catch(() => {});

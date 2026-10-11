@@ -75,6 +75,9 @@ async fn login(
         .ok_or_else(|| "登录响应缺少 token".to_string())?
         .to_string();
 
+    // 固化真实基址：80 端口会把 API 302 到实际端口（如 :17777），图片/播放都依赖它
+    let server = client.resolve_final_base(&server, &token).await;
+
     let mut cfg = state.config.read().await.clone();
     cfg.server = server;
     cfg.username = username;
@@ -92,15 +95,23 @@ async fn logout(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn check_session(state: State<'_, AppState>) -> Result<Value, String> {
-    let cfg = state.config.read().await.clone();
+async fn check_session(state: State<'_, AppState>, app: AppHandle) -> Result<Value, String> {
+    let mut cfg = state.config.read().await.clone();
     if cfg.token.is_empty() || cfg.server.is_empty() {
         return Err("未登录".into());
     }
     let client = fnapi::new_client();
-    client
+    let data = client
         .call(&cfg.server, "/v/api/v1/user/info", "GET", &cfg.token, None)
-        .await
+        .await?;
+    // 会话有效时顺手把重定向后的真实基址固化（老配置可能还停在 80 端口）
+    let final_base = client.resolve_final_base(&cfg.server, &cfg.token).await;
+    if final_base != cfg.server {
+        cfg.server = final_base;
+        let _ = config::save(&app, &cfg);
+        *state.config.write().await = cfg;
+    }
+    Ok(data)
 }
 
 // ───────────────────────── 媒体库 / 条目 ─────────────────────────

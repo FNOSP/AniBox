@@ -100,7 +100,7 @@ body,
   height: 100vh;
   /* 无描边：线条感来自本描边+Win11 系统窗口边框（后者已在 Rust 侧 DWMWA_BORDER_COLOR 关闭） */
   border: none;
-  border-radius: 16px; /* 对齐主仓库 ACRYLIC_CSS 的窗口级 16px 圆角 */
+  border-radius: 10px; /* 窗口形状由 DWM 系统圆角裁定(抗锯齿)；CSS 弧略大使其处于系统弧内侧 */
   overflow: hidden;
   background: linear-gradient(160deg, var(--bg-1), var(--bg-0) 55%);
   animation: pageIn 0.28s ease;

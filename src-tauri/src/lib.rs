@@ -548,16 +548,20 @@ mod winvisual {
         }
     }
 
-    /// 窗口级圆角裁剪（物理像素半径）：SWCA 模糊层与 webview 一起被裁进圆角
-    pub fn round_window(hwnd: isize, width: i32, height: i32, radius: i32) {
-        use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
+    /// DWM 系统圆角（DWMWCP_ROUND）：抗锯齿完美、自动跟随窗口尺寸；
+    /// SWCA 模糊层与 webview 一起被系统圆角化（SetWindowRgn 硬边裁剪有锯齿，弃用）
+    pub fn set_system_round_corner(hwnd: isize) {
+        use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
+        let pref: u32 = 2; // DWMWCP_ROUND
         unsafe {
-            let rgn = CreateRoundRectRgn(0, 0, width + 1, height + 1, radius * 2, radius * 2);
-            if !rgn.is_null() {
-                SetWindowRgn(hwnd as _, rgn, 1);
-            }
-            disable_dwm_border(hwnd);
+            DwmSetWindowAttribute(
+                hwnd as _,
+                33, // DWMWA_WINDOW_CORNER_PREFERENCE
+                &pref as *const u32 as *const core::ffi::c_void,
+                4,
+            );
         }
+        disable_dwm_border(hwnd);
     }
 
     pub fn hwnd_isize(win: &tauri::Window) -> Option<isize> {
@@ -600,48 +604,7 @@ pub fn run() {
                 responder.respond(response);
             });
         })
-        .on_window_event(|window, event| {
-            // 窗口尺寸变化时重设圆角区域；SetWindowRgn 开销大，拖拽中限频 + 尾随落定
-            #[cfg(target_os = "windows")]
-            if let tauri::WindowEvent::Resized(size) = event {
-                use std::sync::atomic::{AtomicBool, Ordering};
-                use std::time::{Duration, Instant};
-                use winvisual::{hwnd_isize, round_window};
-                static LAST_APPLY: std::sync::Mutex<(i32, i32, Option<Instant>)> =
-                    std::sync::Mutex::new((0, 0, None));
-                static TRAILING: AtomicBool = AtomicBool::new(false);
-                let (w, h) = (size.width as i32, size.height as i32);
-                let mut last = LAST_APPLY.lock().unwrap();
-                if (last.0, last.1) == (w, h) {
-                    return;
-                }
-                let due = match last.2 {
-                    None => true,
-                    Some(t) => t.elapsed() >= Duration::from_millis(120),
-                };
-                if due {
-                    if let Some(hwnd) = hwnd_isize(window) {
-                        let scale = window.scale_factor().unwrap_or(1.0);
-                        round_window(hwnd, w, h, (16.0 * scale) as i32);
-                    }
-                    *last = (w, h, Some(Instant::now()));
-                } else if !TRAILING.swap(true, Ordering::SeqCst) {
-                    let win2 = window.clone();
-                    tauri::async_runtime::spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(160)).await;
-                        TRAILING.store(false, Ordering::SeqCst);
-                        if let Some(hwnd) = hwnd_isize(&win2) {
-                            let sz = win2.inner_size().unwrap_or_default();
-                            let scale = win2.scale_factor().unwrap_or(1.0);
-                            round_window(hwnd, sz.width as i32, sz.height as i32, (16.0 * scale) as i32);
-                            *LAST_APPLY.lock().unwrap() =
-                                (sz.width as i32, sz.height as i32, Some(Instant::now()));
-                        }
-                    });
-                }
-            }
-            let _ = window;
-        })
+
         .setup(|app| {
             // 启动时从磁盘读回配置（token/路径），否则每次重启都要重新登录
             let cfg = tauri::async_runtime::block_on(config::load(app.handle()));
@@ -671,12 +634,10 @@ pub fn run() {
             // SWCA 动态模糊 + 窗口级圆角（默认浅色 tint；主题切换由前端 set_acrylic_tint 更新）
             #[cfg(target_os = "windows")]
             if let Some(win) = app.get_webview_window("main") {
-                use winvisual::{hwnd_isize_wv, round_window, set_acrylic, tint_for};
+                use winvisual::{hwnd_isize_wv, set_acrylic, set_system_round_corner, tint_for};
                 if let Some(hwnd) = hwnd_isize_wv(&win) {
                     set_acrylic(hwnd, tint_for(true));
-                    let size = win.inner_size().unwrap_or_default();
-                    let scale = win.scale_factor().unwrap_or(1.0);
-                    round_window(hwnd, size.width as i32, size.height as i32, (16.0 * scale) as i32);
+                    set_system_round_corner(hwnd);
                 }
             }
             // 窗口以 visible:false 创建：延迟到透明化/圆角区域/模糊全部就位后再显示，
@@ -685,12 +646,6 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(400)).await;
                 if let Some(win) = h2.get_webview_window("main") {
-                    #[cfg(target_os = "windows")]
-                    if let Some(hwnd) = winvisual::hwnd_isize_wv(&win) {
-                        let sz = win.inner_size().unwrap_or_default();
-                        let scale = win.scale_factor().unwrap_or(1.0);
-                        winvisual::round_window(hwnd, sz.width as i32, sz.height as i32, (16.0 * scale) as i32);
-                    }
                     let _ = win.show();
                     let _ = win.set_focus();
                 }

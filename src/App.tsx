@@ -962,7 +962,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
         {isSeries && (
           <div className="detail-right">
             <div className="section-head">
-              <h3>剧集</h3>
+              <h3>选集</h3>
               {seasons.length > 1 && (
                 <div className="season-tabs">
                   {seasons.map((sn, i) => (

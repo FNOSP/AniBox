@@ -113,11 +113,15 @@ async fn get_media_libs(state: State<'_, AppState>) -> Result<Value, String> {
         .await
 }
 
+/// 条目分页查询：请求体对齐 FlyNarwhal ItemListQueryRequest（旧的主仓库 ItemListRequest
+/// 形状对库根查询会返回空列表）。库根浏览传 ancestor_guid=parent_guid=库 guid；
+/// 文件夹钻取传 ancestor_guid=库 guid、parent_guid=文件夹 guid。
 #[tauri::command]
 async fn get_items(
     state: State<'_, AppState>,
-    parent_guid: String,
-    exclude_folder: Option<i64>,
+    ancestor_guid: String,
+    parent_guid: Option<String>,
+    page: Option<i64>,
 ) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let client = fnapi::new_client();
@@ -128,13 +132,44 @@ async fn get_items(
             "POST",
             &cfg.token,
             Some(json!({
+                "ancestor_guid": ancestor_guid,
                 "parent_guid": parent_guid,
-                "exclude_folder": exclude_folder.unwrap_or(0),
-                "sort_column": "sort_title",
-                "sort_type": "ASC"
+                "exclude_grouped_video": 1,
+                "sort_type": "DESC",
+                "sort_column": "create_time",
+                "page_size": 60,
+                "page": page.unwrap_or(1),
+                "tags": {
+                    "type": [],
+                    "genres": null,
+                    "resolution": null,
+                    "color_range": null,
+                    "locate": null,
+                    "decade": null,
+                    "recognition_status": null
+                }
             })),
         )
         .await
+}
+
+/// 继续观看：GET /v/api/v1/play/list（camelCase 字段）
+#[tauri::command]
+async fn get_continue_watching(state: State<'_, AppState>) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    let client = fnapi::new_client();
+    client
+        .call(&cfg.server, "/v/api/v1/play/list", "GET", &cfg.token, None)
+        .await
+}
+
+/// 剧集列表：GET /v/api/v1/episode/list/{guid}
+#[tauri::command]
+async fn get_episodes(state: State<'_, AppState>, guid: String) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    let client = fnapi::new_client();
+    let path = format!("/v/api/v1/episode/list/{}", guid);
+    client.call(&cfg.server, &path, "GET", &cfg.token, None).await
 }
 
 /// 条目详情：端点与响应字段对齐 FlyNarwhal（GET /v/api/v1/item/{guid}，camelCase 字段）
@@ -283,6 +318,8 @@ pub fn run() {
             check_session,
             get_media_libs,
             get_items,
+            get_continue_watching,
+            get_episodes,
             get_item_detail,
             play_item,
             player_set_bounds,

@@ -1281,7 +1281,7 @@ button:active {
 }
 .lib-strip {
   position: absolute;
-  left: 26px;
+  left: 4%; /* 与海报信息层（.mist-info padding 0 4%）左缘对齐，含「开始播放」按钮 */
   right: 26px;
   bottom: 14px;
   z-index: 20;
@@ -1389,7 +1389,12 @@ button:active {
   justify-content: center;
   cursor: pointer;
   user-select: none;
-  transition: color 0.15s, background-color 0.15s, border-color 0.15s;
+  opacity: 0; /* 悬停媒体库条才显示；全部库隐藏时加 .always 常显防找不到入口 */
+  transition: opacity 0.15s ease, color 0.15s, background-color 0.15s, border-color 0.15s;
+}
+.lib-strip:hover .lsc-manage,
+.lsc-manage.always {
+  opacity: 1;
 }
 .lsc-manage:hover {
   color: #fff;

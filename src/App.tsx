@@ -539,7 +539,11 @@ function HomeView({
               </button>
             </div>
           ))}
-          <div className="lsc-manage" title="管理首页媒体库展示" onClick={() => setManageOpen((v) => !v)}>
+          <div
+            className={`lsc-manage ${shownLibs.length === 0 ? "always" : ""}`}
+            title="管理首页媒体库展示"
+            onClick={() => setManageOpen((v) => !v)}
+          >
             ⚙ 管理
           </div>
         </div>

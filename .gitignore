@@ -23,3 +23,12 @@ dist-ssr
 *.sln
 *.sw?
 .devlog*.txt
+
+# 本地 commit 回退锚点日志（对齐主仓库，纯本地不入库）
+本地commit/
+本地commit/*
+
+# tsc -b 增量构建产物（tsconfig.node 复合工程会发射 vite.config 的 js/d.ts）
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts

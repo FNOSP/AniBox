@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { IcoHome, IcoStar, IcoGrid, IcoMovie, IcoTv, IcoLive, IcoFolder } from "./icons";
 import "./App.css";
 
 type Config = {
   server: string;
   username: string;
   token: string;
+  password: string;
+  auto_login: boolean;
   mpv_path: string;
   proxy_path: string;
   nas_proxy_enabled: boolean;
@@ -181,17 +185,24 @@ function LoginPage({ onDone }: { onDone: () => void }) {
   const [server, setServer] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(false);
+  const [autoLogin, setAutoLogin] = useState(false);
   const [mpvPath, setMpvPath] = useState("");
   const [proxyPath, setProxyPath] = useState("");
   const [showAdv, setShowAdv] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // 自动登录一次性闸门：失败后停在本页报错，绝不循环重试
+  const autoTried = useRef(false);
 
   useEffect(() => {
     invoke<Config>("get_config").then((c) => {
       setCfg(c);
       setServer(c.server);
       setUsername(c.username);
+      setPassword(c.password || "");
+      setRemember(!!c.password);
+      setAutoLogin(c.auto_login && !!c.password);
       setMpvPath(c.mpv_path);
       setProxyPath(c.proxy_path);
     });
@@ -203,7 +214,15 @@ function LoginPage({ onDone }: { onDone: () => void }) {
     setErr("");
     try {
       await invoke("save_config", {
-        config: { ...cfg, server: server.trim(), username, mpv_path: mpvPath, proxy_path: proxyPath },
+        config: {
+          ...cfg,
+          server: server.trim(),
+          username,
+          password: remember ? password : "",
+          auto_login: remember && autoLogin,
+          mpv_path: mpvPath,
+          proxy_path: proxyPath,
+        },
       });
       await invoke("login", { server: server.trim(), username, password });
       onDone();
@@ -213,6 +232,21 @@ function LoginPage({ onDone }: { onDone: () => void }) {
       setBusy(false);
     }
   }
+
+  // 启动自动登录：token 已由 check_session 把过关，走到登录页即代表失效；
+  // 记住了密码且开了自动登录 → 用记住的凭据静默重登一次（成功直接进首页）
+  useEffect(() => {
+    if (autoTried.current || !cfg) return;
+    if (!cfg.auto_login || !cfg.password || !cfg.server || !cfg.username) return;
+    autoTried.current = true;
+    setBusy(true);
+    invoke("login", { server: cfg.server, username: cfg.username, password: cfg.password })
+      .then(() => onDone())
+      .catch((e) => {
+        setErr("自动登录失败：" + String(e));
+        setBusy(false);
+      });
+  }, [cfg, onDone]);
 
   return (
     <div className="login-wrap">
@@ -234,6 +268,28 @@ function LoginPage({ onDone }: { onDone: () => void }) {
         <input value={username} onChange={(e) => setUsername(e.target.value)} required />
         <label>密码</label>
         <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+        <div className="login-opts">
+          <label className="login-check">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => {
+                setRemember(e.target.checked);
+                if (!e.target.checked) setAutoLogin(false);
+              }}
+            />
+            记住密码
+          </label>
+          <label className="login-check">
+            <input
+              type="checkbox"
+              checked={autoLogin}
+              disabled={!remember}
+              onChange={(e) => setAutoLogin(e.target.checked)}
+            />
+            自动登录
+          </label>
+        </div>
         <button type="button" className="linklike" onClick={() => setShowAdv(!showAdv)}>
           高级设置（mpv / 代理路径）
         </button>
@@ -254,9 +310,7 @@ function LoginPage({ onDone }: { onDone: () => void }) {
   );
 }
 
-/* ────────────────────────── 首页样式4轮播（全屏 hero） ────────────────────────── */
-
-const ACCENTS = ["#6eb5ff", "#d69b6a", "#b08fe0", "#5fb0a8", "#e08585"];
+/* ────────────────────────── 首页全屏海报轮播（复刻 emby-crx Misty banner） ────────────────────────── */
 
 function CarouselView({
   items,
@@ -270,75 +324,74 @@ function CarouselView({
   onDetail: (item: MediaItem) => void;
 }) {
   const [index, setIndex] = useState(0);
+  const [armed, setArmed] = useState(false);
   const n = items.length;
 
+  // 入场动画闸门：挂载后瞬间补 active，让首帧信息走 misty 同款上浮入场
+  useEffect(() => {
+    const t = setTimeout(() => setArmed(true), 80);
+    return () => clearTimeout(t);
+  }, []);
+
+  // 8s 自动轮播（emby-crx 同款节奏；页面隐藏时不切，避免回前台跳帧）
   useEffect(() => {
     if (n < 2) return;
-    const t = setTimeout(() => setIndex((i) => (i + 1) % n), 6000);
-    return () => clearTimeout(t);
-  }, [index, n]);
+    const t = setInterval(() => {
+      if (!document.hidden) setIndex((i) => (i + 1) % n);
+    }, 8000);
+    return () => clearInterval(t);
+  }, [n]);
 
   if (n === 0) return null;
-  const cls = (i: number): string => {
-    let d = i - index;
-    if (d < 0) d += n;
-    if (d === 0) return "active";
-    if (d === 1) return "next";
-    if (d === n - 1) return "prev";
-    return d < n / 2 ? "far-right" : "far-left";
-  };
   const yearOf = (it: MediaItem) => String(it.release_date || it.air_date || "").slice(0, 4);
 
   return (
-    <div className="carousel-s4">
-      <div className="fntv-s4-track">
+    <div className="mist-banner">
+      <div className="mist-body" style={{ transform: `translateX(-${index * 100}%)` }}>
         {items.map((it, i) => {
-          const state = cls(i);
           const bd = bds[it.guid];
-          const accent = ACCENTS[i % ACCENTS.length];
           const meta = [
             yearOf(it),
-            (it.type || "").toLowerCase() === "movie" ? "MOVIE" : "TV SERIES",
+            (it.type || "").toLowerCase() === "movie" ? "电影" : "剧集",
+            it.vote_average && it.vote_average !== "0" ? `★ ${it.vote_average}` : "",
           ]
             .filter(Boolean)
             .join(" · ");
           return (
-            <div
-              key={it.guid}
-              className={`fntv-s4-card ${state}`}
-              onClick={() => {
-                if (state !== "active") setIndex(i);
-              }}
-            >
-              <div
-                className="fntv-s4-bg"
-                style={
-                  bd
-                    ? { backgroundImage: `url(${imgUrl(bd)})` }
-                    : { backgroundImage: `linear-gradient(160deg, ${accent}55, #0b1219)` }
-                }
-              />
-              <div className="fntv-s4-info">
-                <div className="meta">{meta}</div>
-                <h3>{it.title}</h3>
-                <div className="desc">{it.overview || ""}</div>
-                <div className="fntv-s4-actions">
+            <div key={it.guid} className={`mist-item ${i === index && armed ? "active" : ""}`}>
+              {bd ? (
+                <img
+                  className="mist-cover"
+                  src={imgUrl(bd)}
+                  alt={it.title}
+                  draggable={false}
+                  loading={i === 0 ? "eager" : "lazy"}
+                />
+              ) : (
+                <div
+                  className="mist-cover mist-cover-fallback"
+                  style={
+                    it.poster
+                      ? { backgroundImage: `url(${imgUrl(it.poster)})` }
+                      : undefined
+                  }
+                />
+              )}
+              <div className="mist-veil" />
+              <div className="mist-info">
+                <div className="mist-meta">{meta}</div>
+                <h1>{it.title}</h1>
+                <div>
+                  <p>{it.overview || ""}</p>
+                </div>
+                <div className="mist-actions">
                   <button
-                    className="fntv-s4-play"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onPlay({ guid: it.guid, title: it.title });
-                    }}
+                    className="mist-play"
+                    onClick={() => onPlay({ guid: it.guid, title: it.title })}
                   >
                     ▶ 开始播放
                   </button>
-                  <button
-                    className="fntv-s4-detail"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDetail(it);
-                    }}
-                  >
+                  <button className="mist-more" onClick={() => onDetail(it)}>
                     MORE
                   </button>
                 </div>
@@ -347,21 +400,6 @@ function CarouselView({
           );
         })}
       </div>
-      <div className="fntv-s4-dots">
-        {items.map((it, i) => (
-          <span
-            key={it.guid}
-            className={`fntv-s4-dot ${i === index ? "active" : ""}`}
-            onClick={() => setIndex(i)}
-          />
-        ))}
-      </div>
-      <button className="fntv-s4-nav prev" onClick={() => setIndex((i) => (i - 1 + n) % n)}>
-        ‹
-      </button>
-      <button className="fntv-s4-nav next" onClick={() => setIndex((i) => (i + 1) % n)}>
-        ›
-      </button>
     </div>
   );
 }
@@ -920,74 +958,72 @@ function PlayerView({ item, onBack }: { item: PlayTarget; onBack: () => void }) 
 /* ────────────────────────── 侧栏（保留现有样式） ────────────────────────── */
 
 const SIDEBAR_CATS = [
-  { key: "全部", types: [] as string[], ico: "▦", sumKey: "total" },
-  { key: "电影", types: ["Movie"], ico: "◎", sumKey: "movie" },
-  { key: "电视节目", types: ["TV"], ico: "📺", sumKey: "tv" },
-  { key: "电视直播", types: ["Live"], ico: "🖥", sumKey: "live" },
-  { key: "其他", types: ["Video"], ico: "📁", sumKey: "video" },
+  { key: "全部", types: [] as string[], ico: <IcoGrid />, sumKey: "total" },
+  { key: "电影", types: ["Movie"], ico: <IcoMovie />, sumKey: "movie" },
+  { key: "电视节目", types: ["TV"], ico: <IcoTv />, sumKey: "tv" },
+  { key: "电视直播", types: ["Live"], ico: <IcoLive />, sumKey: "live" },
+  { key: "其他", types: ["Video"], ico: <IcoFolder />, sumKey: "video" },
 ];
 
 function Sidebar({
-  libs,
   activeGuid,
   collapsed,
   username,
   server,
   sum,
   favTotal,
-  onToggle,
   onOpenFav,
   onOpenCat,
   onHome,
-  onLib,
 }: {
-  libs: Lib[];
   activeGuid: string | null;
   collapsed?: boolean;
   username?: string;
   server?: string;
   sum: Record<string, number>;
   favTotal: number | null;
-  onToggle: () => void;
   onOpenFav: () => void;
   onOpenCat: (cat: { key: string; types: string[] }) => void;
   onHome: () => void;
-  onLib: (l: Lib) => void;
 }) {
   const [toast, setToast] = useState("");
   const toastTimer = useRef<number | null>(null);
+  // 快捷操作卡折叠态：持久化键与主仓库 embyWall.ts 相同（'1'=收起成图标行，缺省=展开）
+  const [cardFold, setCardFold] = useState(
+    () => localStorage.getItem("fntvSidebarActions.collapsed") === "1",
+  );
+  const [appVer, setAppVer] = useState("0.1.0");
+  useEffect(() => {
+    getVersion().then(setAppVer).catch(() => {});
+  }, []);
+  function setFold(v: boolean) {
+    setCardFold(v);
+    try {
+      localStorage.setItem("fntvSidebarActions.collapsed", v ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }
   function showToast(msg: string) {
     setToast(msg);
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(""), 2200);
   }
-  const icoOf = (c: string): string => {
-    const k = (c || "").toLowerCase();
-    if (k === "tv" || k === "tvseries") return "📺";
-    if (k === "mix") return "📚";
-    if (k === "others") return "📁";
-    if (k === "movie") return "🎬";
-    return "🎬";
-  };
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
       <div className={`side-item ${activeGuid === null ? "active" : ""}`} onClick={onHome}>
-        <span className="side-ico">🏠</span> 首页
+        <span className="side-ico">
+          <IcoHome />
+        </span>{" "}
+        首页
       </div>
       <div className={`side-item ${activeGuid === "_fav" ? "active" : ""}`} onClick={onOpenFav}>
-        <span className="side-ico">🤍</span> 收藏
+        <span className="side-ico">
+          <IcoStar />
+        </span>{" "}
+        收藏
         <span className="side-count">{favTotal ?? ""}</span>
       </div>
-      {libs.map((lib) => (
-        <div
-          key={lib.guid}
-          className={`side-item ${activeGuid === lib.guid ? "active" : ""}`}
-          onClick={() => onLib(lib)}
-        >
-          <span className="side-ico">{icoOf(lib.category)}</span> {lib.title}
-          <span className="side-count">{sum[lib.guid] ?? ""}</span>
-        </div>
-      ))}
       <div className="side-head">分类</div>
       {SIDEBAR_CATS.map((c) => {
         const cnt = sum[c.sumKey];
@@ -998,27 +1034,48 @@ function Sidebar({
           </div>
         );
       })}
-      <div className="side-bottomcard">
-        <div className="side-userrow">
-          <div className="side-avatar">{(username || "U").slice(0, 1).toUpperCase()}</div>
-          <div className="side-usermeta">
-            <div className="side-user-name">{username || "未登录"}</div>
-            <div className="side-user-server">{server ? server.replace(/^https?:\/\//, "") : "未连接"}</div>
+      {/* 底部：用户行 + 快捷操作卡 —— 结构与样式逐行复刻主仓库 embyWall.ts injectSettingsUI */}
+      <div className="side-userrow">
+        <div className="side-avatar">{(username || "U").slice(0, 1).toUpperCase()}</div>
+        <div className="side-usermeta">
+          <div className="side-user-name">{username || "未登录"}</div>
+          <div className="side-user-server">{server ? server.replace(/^https?:\/\//, "") : "未连接"}</div>
+        </div>
+      </div>
+      <div className="side-actions">
+        {cardFold ? (
+          <div className="sa-icons">
+            <button type="button" className="sa-ico" title="设置" onClick={() => showToast("设置面板在阶段3接入")}>
+              ⚙
+            </button>
+            <button type="button" className="sa-ico" title="观影记录" onClick={() => showToast("观影记录页在阶段3接入")}>
+              🕐
+            </button>
+            <button type="button" className="sa-ico" title="软件反馈建议" onClick={() => showToast("反馈渠道在阶段3接入")}>
+              💬
+            </button>
+            <button type="button" className="sa-ico sa-expand" title="展开快捷操作" onClick={() => setFold(false)}>
+              ∧
+            </button>
           </div>
-        </div>
-        <div className="side-collapse" onClick={onToggle}>
-          收起 ▾
-        </div>
-        <button className="side-cardbtn" onClick={() => showToast("设置面板在阶段3接入")}>
-          ⚙ 设置
-        </button>
-        <button className="side-cardbtn" onClick={() => showToast("观影记录页在阶段3接入")}>
-          ⏱ 观影记录
-        </button>
-        <button className="side-cardbtn" onClick={() => showToast("反馈渠道在阶段3接入")}>
-          💬 软件反馈建议
-        </button>
-        <div className="side-ver">v0.1.0</div>
+        ) : (
+          <>
+            <div className="sa-head" title="收起快捷操作" onClick={() => setFold(true)}>
+              收起
+              <span className="sa-chev" />
+            </div>
+            <button type="button" className="sa-btn" onClick={() => showToast("设置面板在阶段3接入")}>
+              ⚙ 设置
+            </button>
+            <button type="button" className="sa-btn" onClick={() => showToast("观影记录页在阶段3接入")}>
+              🕐 观影记录
+            </button>
+            <button type="button" className="sa-btn" onClick={() => showToast("反馈渠道在阶段3接入")}>
+              💬 软件反馈建议
+            </button>
+            <div className="sa-ver">v{appVer}</div>
+          </>
+        )}
       </div>
       {toast && <div className="side-toast">{toast}</div>}
     </aside>
@@ -1081,18 +1138,32 @@ function App() {
       setLibRows(libsArr.map((l) => ({ lib: l, items: [] })));
       setView("home");
 
-      // 横版主图补齐（缓存到 App 层，只拉一次）
+      // 轮播条目详情补齐（缓存到 App 层，只拉一次）：横版主图 + 简介/评分/年份回填
       Promise.allSettled(
         carList.map((it) => invoke<Record<string, unknown>>("get_item_detail", { guid: it.guid })),
       ).then((rs) => {
         const map: Record<string, string> = {};
+        const enrich: Record<string, Partial<MediaItem>> = {};
         rs.forEach((r, i) => {
           if (r.status === "fulfilled") {
-            const bd = pick(r.value, ["backdrops", "backdrop"]) as string | undefined;
+            const d = r.value;
+            const bd = pick(d, ["backdrops", "backdrop"]) as string | undefined;
             if (bd) map[carList[i].guid] = bd;
+            const ov = pick(d, ["overview"]);
+            const va = pick(d, ["vote_average"]);
+            const rd = pick(d, ["release_date", "air_date"]);
+            const patch: Partial<MediaItem> = {};
+            if (ov && !carList[i].overview) patch.overview = String(ov);
+            if (va && (!carList[i].vote_average || carList[i].vote_average === "0"))
+              patch.vote_average = String(va);
+            if (rd && !carList[i].release_date) patch.release_date = String(rd);
+            if (Object.keys(patch).length) enrich[carList[i].guid] = patch;
           }
         });
         setCarouselBds(map);
+        if (Object.keys(enrich).length) {
+          setCarousel((prev) => prev.map((it) => (enrich[it.guid] ? { ...it, ...enrich[it.guid] } : it)));
+        }
       });
 
       // 每个库的第一页剧集（并行，按库顺序填回）
@@ -1144,21 +1215,15 @@ function App() {
     body = (
       <div className="main-row">
         <Sidebar
-          libs={libs}
           activeGuid={null}
           collapsed={!sidebarOpen}
           username={username}
           server={server}
           sum={sum}
           favTotal={favTotal}
-          onToggle={() => setSidebarOpen((v) => !v)}
           onOpenFav={openFav}
           onOpenCat={openCat}
           onHome={() => loadHome()}
-          onLib={(l) => {
-            setActiveLib(l);
-            setView("lib");
-          }}
         />
         <HomeView
           libs={libs}
@@ -1179,21 +1244,15 @@ function App() {
     body = (
       <div className="main-row">
         <Sidebar
-          libs={libs}
           activeGuid={activeLib.guid}
           collapsed={!sidebarOpen}
           username={username}
           server={server}
           sum={sum}
           favTotal={favTotal}
-          onToggle={() => setSidebarOpen((v) => !v)}
           onOpenFav={openFav}
           onOpenCat={openCat}
           onHome={() => loadHome()}
-          onLib={(l) => {
-            setActiveLib(l);
-            setView("lib");
-          }}
         />
         <LibView lib={activeLib} onBackHome={() => loadHome()} onOpenItem={openItem} />
       </div>
@@ -1202,21 +1261,15 @@ function App() {
     body = (
       <div className="main-row">
         <Sidebar
-          libs={libs}
           activeGuid={activeLib?.guid ?? null}
           collapsed={!sidebarOpen}
           username={username}
           server={server}
           sum={sum}
           favTotal={favTotal}
-          onToggle={() => setSidebarOpen((v) => !v)}
           onOpenFav={openFav}
           onOpenCat={openCat}
           onHome={() => loadHome()}
-          onLib={(l) => {
-            setActiveLib(l);
-            setView("lib");
-          }}
         />
         <DetailView
           base={detailItem}

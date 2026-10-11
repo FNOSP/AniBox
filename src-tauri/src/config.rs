@@ -11,6 +11,12 @@ pub struct Config {
     pub username: String,
     #[serde(default)]
     pub token: String,
+    /// 记住的密码（勾选「记住密码」时随 config.json 落盘，与 token 同级；后续可迁 keyring 凭据库）
+    #[serde(default)]
+    pub password: String,
+    /// 启动自动登录：token 失效时用记住的密码静默重登（依赖 password 非空）
+    #[serde(default)]
+    pub auto_login: bool,
     #[serde(default = "default_mpv")]
     pub mpv_path: String,
     #[serde(default = "default_proxy")]
@@ -34,6 +40,8 @@ impl Default for Config {
             server: String::new(),
             username: String::new(),
             token: String::new(),
+            password: String::new(),
+            auto_login: false,
             mpv_path: default_mpv(),
             proxy_path: default_proxy(),
             nas_proxy_enabled: false,

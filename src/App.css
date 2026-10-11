@@ -132,6 +132,10 @@ body,
   background: var(--bg-3); /* 实体底：透明顶栏是串层可见的前提 */
   user-select: none;
 }
+.titlebar.ghost {
+  /* 详情页：顶栏下无穿层内容（评分胶囊类名撞车已修、页面不滚动），恢复透明玻璃观感 */
+  background: transparent;
+}
 /* 首页/播放页：悬浮在海报/视频上 —— 顶部压暗渐变保证白字可读 */
 .titlebar.overlay {
   background: linear-gradient(to bottom, rgba(0, 0, 0, 0.42), rgba(0, 0, 0, 0.14) 70%, transparent);

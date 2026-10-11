@@ -150,6 +150,7 @@ function TitleBar({
   refreshing,
   onToggleTheme,
   overlay,
+  ghost,
 }: {
   title: string;
   nav?: boolean;
@@ -161,10 +162,12 @@ function TitleBar({
   onToggleTheme?: () => void;
   /** 悬浮在海报/视频上时：白字 + 顶部压暗渐变 */
   overlay?: boolean;
+  /** 透明但保持主题色文字（详情页：顶栏下无穿层内容） */
+  ghost?: boolean;
 }) {
   const win = getCurrentWindow();
   return (
-    <div className={`titlebar${overlay ? " overlay" : ""}`} data-tauri-drag-region>
+    <div className={`titlebar${overlay ? " overlay" : ""}${ghost ? " ghost" : ""}`} data-tauri-drag-region>
       <div className="tb-left" data-tauri-drag-region>
         {nav && onToggleSidebar && (
           <button

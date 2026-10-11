@@ -485,6 +485,31 @@ function PosterCard({
   );
 }
 
+/* ────────────────────────── 首页骨架屏 ────────────────────────── */
+
+function HomeSkeleton() {
+  return (
+    <main className="content home-full">
+      <div className="skel hero-skel" />
+      <div className="skel-row">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="skel lsc-skel" />
+        ))}
+      </div>
+      {[0, 1].map((r) => (
+        <section className="home-sec" key={r}>
+          <div className="skel sec-title-skel" />
+          <div className="skel-row">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="skel card-skel" />
+            ))}
+          </div>
+        </section>
+      ))}
+    </main>
+  );
+}
+
 /* ────────────────────────── 首页 ────────────────────────── */
 
 function HomeView({
@@ -1247,6 +1272,10 @@ function App() {
     document.documentElement.classList.toggle("dark", theme === "dark");
     localStorage.setItem("fntv-theme", theme);
   }, [theme]);
+  // 首页加载中（首次/手动刷新）：无数据时渲染骨架屏；已有数据时静默刷新不闪骨架
+  const [homeLoading, setHomeLoading] = useState(false);
+  // 启动会话检查期：不渲染任何视图，避免带有效会话时闪登录页
+  const [booting, setBooting] = useState(true);
   const [username, setUserName] = useState("");
   const [server, setServer] = useState("");
   const [sum, setSum] = useState<Record<string, number>>({});
@@ -1262,9 +1291,10 @@ function App() {
       .catch(() => {});
   }, []);
 
-  // 首页数据一次性加载并常驻缓存：回首页零等待（轮播图过一会才出来的根因就是每次重拉）
+  // 首页数据完整加载（启动无缓存/手动刷新/登录后）：拉全量并回填
   const loadHome = useCallback(async () => {
     setErr("");
+    setHomeLoading(true);
     try {
       const [libData, cont, car, sumData, favData] = await Promise.all([
         invoke<Lib[]>("get_media_libs"),
@@ -1333,8 +1363,43 @@ function App() {
     } catch (e) {
       setErr(String(e));
       setView("home");
+    } finally {
+      setHomeLoading(false);
     }
   }, []);
+
+  // 回首页：数据还在内存就直接切视图（进详情/库再回来不重拉），否则完整加载
+  const goHome = useCallback(() => {
+    if (view === "home") return;
+    if (carousel.length > 0) setView("home");
+    else loadHome();
+  }, [view, carousel.length, loadHome]);
+
+  // 首页数据落盘（30 分钟 TTL）：重启/会话恢复时零请求直出；数据落定 1.5s 后快照
+  useEffect(() => {
+    if (view !== "home" || !carousel.length) return;
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(
+          "fntv-home-cache",
+          JSON.stringify({
+            t: Date.now(),
+            libs,
+            continueList,
+            carousel,
+            carouselBds,
+            carouselLogos,
+            sum,
+            favTotal,
+            libRows,
+          }),
+        );
+      } catch {
+        /* 配额满等忽略 */
+      }
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [view, libs, continueList, carousel, carouselBds, carouselLogos, sum, favTotal, libRows]);
 
   const play = useCallback((t: PlayTarget) => {
     setPlayTarget(t);
@@ -1358,12 +1423,51 @@ function App() {
 
   useEffect(() => {
     invoke("check_session")
-      .then(() => loadHome())
-      .catch(() => setView("login"));
+      .then(() => {
+        // 30 分钟内的落盘快照直接恢复（重启零请求直出）；否则完整加载（骨架屏）
+        let restored = false;
+        try {
+          const raw = localStorage.getItem("fntv-home-cache");
+          const c = raw ? JSON.parse(raw) : null;
+          if (
+            c &&
+            typeof c.t === "number" &&
+            Date.now() - c.t <= 30 * 60 * 1000 &&
+            Array.isArray(c.carousel) &&
+            c.carousel.length &&
+            Array.isArray(c.libs)
+          ) {
+            setLibs(c.libs);
+            setContinueList(Array.isArray(c.continueList) ? c.continueList : []);
+            setCarousel(c.carousel);
+            setCarouselBds(c.carouselBds ?? {});
+            setCarouselLogos(c.carouselLogos ?? {});
+            setSum(c.sum ?? {});
+            setFavTotal(typeof c.favTotal === "number" ? c.favTotal : 0);
+            setLibRows(
+              Array.isArray(c.libRows) && c.libRows.length
+                ? c.libRows
+                : c.libs.map((l: Lib) => ({ lib: l, items: [] })),
+            );
+            setView("home");
+            restored = true;
+          }
+        } catch {
+          /* 缓存损坏 → 走完整加载 */
+        }
+        if (!restored) loadHome();
+        setBooting(false);
+      })
+      .catch(() => {
+        setBooting(false);
+        setView("login");
+      });
   }, [loadHome]);
 
   let body: ReactNode;
-  if (view === "login") {
+  if (booting) {
+    body = null; // 会话检查期不出任何视图
+  } else if (view === "login") {
     body = <LoginPage onDone={() => loadHome()} />;
   } else if (view === "home") {
     body = (
@@ -1377,8 +1481,11 @@ function App() {
           favTotal={favTotal}
           onOpenFav={openFav}
           onOpenCat={openCat}
-          onHome={() => loadHome()}
+          onHome={goHome}
         />
+        {homeLoading && !carousel.length ? (
+          <HomeSkeleton />
+        ) : (
         <HomeView
           libs={libs}
           continueList={continueList}
@@ -1395,6 +1502,7 @@ function App() {
           onPlay={play}
           onOpenItem={openItem}
         />
+      )}
       </div>
     );
   } else if (view === "lib" && activeLib) {
@@ -1409,9 +1517,9 @@ function App() {
           favTotal={favTotal}
           onOpenFav={openFav}
           onOpenCat={openCat}
-          onHome={() => loadHome()}
+          onHome={goHome}
         />
-        <LibView lib={activeLib} onBackHome={() => loadHome()} onOpenItem={openItem} />
+        <LibView lib={activeLib} onBackHome={goHome} onOpenItem={openItem} />
       </div>
     );
   } else if (view === "detail" && detailItem) {
@@ -1426,7 +1534,7 @@ function App() {
           favTotal={favTotal}
           onOpenFav={openFav}
           onOpenCat={openCat}
-          onHome={() => loadHome()}
+          onHome={goHome}
         />
         <DetailView
           base={detailItem}
@@ -1458,7 +1566,7 @@ function App() {
             return !v;
           })
         }
-        onHome={() => loadHome()}
+        onHome={goHome}
         onRefresh={() => loadHome()}
         theme={theme}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}

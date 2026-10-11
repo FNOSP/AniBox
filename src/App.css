@@ -397,6 +397,38 @@ body,
   background-size: 240% 100%;
   animation: shimmer 1.4s infinite linear;
 }
+/* 首页骨架屏布局（hero 铺满 + 媒体库条行 + 两个横排分区） */
+.skel-row {
+  display: flex;
+  gap: 16px;
+  overflow: hidden;
+  padding-left: 26px;
+}
+.hero-skel {
+  width: 100%;
+  height: calc(100vh - 250px);
+  min-height: 300px;
+  border-radius: 0;
+}
+.lsc-skel {
+  width: 176px;
+  height: 99px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  margin-top: 14px;
+}
+.sec-title-skel {
+  width: 150px;
+  height: 18px;
+  border-radius: 6px;
+  margin: 0 0 14px 26px;
+}
+.card-skel {
+  width: 148px;
+  height: 250px;
+  border-radius: 14px;
+  flex-shrink: 0;
+}
 @keyframes shimmer {
   from {
     background-position: 120% 0;

@@ -1327,6 +1327,8 @@ function App() {
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
     localStorage.setItem("fntv-theme", theme);
+    // SWCA 模糊染色随主题切换（浅色近白/深色近黑）
+    invoke("set_acrylic_tint", { light: theme === "light" }).catch(() => {});
   }, [theme]);
   // 首页加载中（首次/手动刷新）：无数据时渲染骨架屏；已有数据时静默刷新不闪骨架
   const [homeLoading, setHomeLoading] = useState(false);

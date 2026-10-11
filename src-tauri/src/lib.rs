@@ -412,6 +412,108 @@ async fn mpv_set_rate(state: State<'_, AppState>, rate: f64) -> Result<(), Strin
 // ───────────────────────── 入口 ─────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+// ───────────────────────── 窗口视觉：SWCA 动态模糊 + OS 级圆角 ─────────────────────────
+// windowEffects 的 acrylic 在 Win11 走 DWM 系统底板（自带系统圆角/边框，lc-029 已弃用）。
+// 这里改用 SWCA（SetWindowCompositionAttribute， undocumented API，无系统边框副作用），
+// 再用 SetWindowRgn 把整个窗口（含模糊层）裁成圆角矩形——模糊不会从方角露出。
+
+#[cfg(target_os = "windows")]
+mod winvisual {
+    const ACCENT_ENABLE_ACRYLICBLURBEHIND: u32 = 4;
+    const WCA_ACCENT_POLICY: u32 = 19;
+
+    #[repr(C)]
+    struct AccentPolicy {
+        state: u32,
+        flags: u32,
+        gradient_color: u32, // ABGR
+        animation_id: u32,
+    }
+
+    #[repr(C)]
+    struct WinCompAttribData {
+        attribute: u32,
+        data: *mut AccentPolicy,
+        size: usize,
+    }
+
+    /// 主题感知染色（ABGR）：浅色近白、深色近黑，alpha 控制玻璃厚度
+    pub fn tint_for(light: bool) -> u32 {
+        if light {
+            0x50FEFBFA // #FAFBFE @ 31%
+        } else {
+            0x591F1614 // #14161F @ 35%
+        }
+    }
+
+    fn module_handle(name: &str) -> isize {
+        use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+        let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+        unsafe { GetModuleHandleW(wide.as_ptr()) as isize }
+    }
+
+    fn get_proc(module: isize, name: &str) -> Option<unsafe extern "system" fn() -> isize> {
+        use windows_sys::Win32::System::LibraryLoader::GetProcAddress;
+        let narrow: Vec<u8> = name.bytes().chain(std::iter::once(0)).collect();
+        unsafe { GetProcAddress(module as _, narrow.as_ptr()) }
+    }
+
+    pub fn set_acrylic(hwnd: isize, tint_abgr: u32) {
+        unsafe {
+            let f = get_proc(module_handle("user32.dll"), "SetWindowCompositionAttribute");
+            if let Some(f) = f {
+                type SetFn = unsafe extern "system" fn(isize, *mut WinCompAttribData) -> i32;
+                let set: SetFn = std::mem::transmute(f);
+                let mut policy = AccentPolicy {
+                    state: ACCENT_ENABLE_ACRYLICBLURBEHIND,
+                    flags: 0,
+                    gradient_color: tint_abgr,
+                    animation_id: 0,
+                };
+                let mut data = WinCompAttribData {
+                    attribute: WCA_ACCENT_POLICY,
+                    data: &mut policy,
+                    size: std::mem::size_of::<AccentPolicy>(),
+                };
+                set(hwnd, &mut data);
+            }
+        }
+    }
+
+    /// 窗口级圆角裁剪（物理像素半径）：SWCA 模糊层与 webview 一起被裁进圆角
+    pub fn round_window(hwnd: isize, width: i32, height: i32, radius: i32) {
+        use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
+        unsafe {
+            let rgn = CreateRoundRectRgn(0, 0, width + 1, height + 1, radius * 2, radius * 2);
+            if !rgn.is_null() {
+                SetWindowRgn(hwnd as _, rgn, 1);
+            }
+        }
+    }
+
+    pub fn hwnd_isize(win: &tauri::Window) -> Option<isize> {
+        win.hwnd().ok().map(|h| h.0 as isize)
+    }
+
+    pub fn hwnd_isize_wv(win: &tauri::WebviewWindow) -> Option<isize> {
+        win.hwnd().ok().map(|h| h.0 as isize)
+    }
+}
+
+#[tauri::command]
+fn set_acrylic_tint(window: tauri::Window, light: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use winvisual::{hwnd_isize, set_acrylic, tint_for};
+        if let Some(hwnd) = hwnd_isize(&window) {
+            set_acrylic(hwnd, tint_for(light));
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (window, light);
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -423,6 +525,18 @@ pub fn run() {
                 let response = imgproto::handle(app, request).await;
                 responder.respond(response);
             });
+        })
+        .on_window_event(|window, event| {
+            // 窗口尺寸变化时重设圆角区域（区域坐标不随窗口自动缩放）
+            #[cfg(target_os = "windows")]
+            if let tauri::WindowEvent::Resized(size) = event {
+                use winvisual::{hwnd_isize, round_window};
+                if let Some(hwnd) = hwnd_isize(window) {
+                    let scale = window.scale_factor().unwrap_or(1.0);
+                    round_window(hwnd, size.width as i32, size.height as i32, (16.0 * scale) as i32);
+                }
+            }
+            let _ = window;
         })
         .setup(|app| {
             // 启动时从磁盘读回配置（token/路径），否则每次重启都要重新登录
@@ -445,9 +559,21 @@ pub fn run() {
                     }
                 }
             }
+            // SWCA 动态模糊 + 窗口级圆角（默认浅色 tint；主题切换由前端 set_acrylic_tint 更新）
+            #[cfg(target_os = "windows")]
+            if let Some(win) = app.get_webview_window("main") {
+                use winvisual::{hwnd_isize_wv, round_window, set_acrylic, tint_for};
+                if let Some(hwnd) = hwnd_isize_wv(&win) {
+                    set_acrylic(hwnd, tint_for(true));
+                    let size = win.inner_size().unwrap_or_default();
+                    let scale = win.scale_factor().unwrap_or(1.0);
+                    round_window(hwnd, size.width as i32, size.height as i32, (16.0 * scale) as i32);
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            set_acrylic_tint,
             get_config,
             save_config,
             login,

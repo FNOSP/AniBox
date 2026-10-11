@@ -1100,20 +1100,20 @@ button:active {
   line-height: 1.55;
 }
 
+/* 全局隐藏滚动条（WebView2 的 Fluent 滚动条会无视 ::-webkit-scrollbar 自定义，
+   故标准属性 scrollbar-width:none 与 webkit 双保险；滚轮/触摸板滚动不受影响） */
+* {
+  scrollbar-width: none;
+}
 ::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
+  display: none;
+  width: 0;
+  height: 0;
 }
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.24);
-  border-radius: 99px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.42);
-}
+::-webkit-scrollbar-thumb,
 ::-webkit-scrollbar-track,
 ::-webkit-scrollbar-corner {
-  background: transparent;
+  display: none;
 }
 
 /* ═══════════ 首页全屏海报轮播（复刻 Nolovenodie/emby-crx Misty banner，数值逐条对齐 style.css） ═══════════ */

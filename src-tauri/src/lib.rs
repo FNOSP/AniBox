@@ -22,6 +22,8 @@ pub struct AppState {
     pub proxy_child: Mutex<Option<std::process::Child>>,
     /// 播放占位区域的物理像素矩形 (x, y, w, h)
     pub bounds: std::sync::Mutex<(i32, i32, i32, i32)>,
+    /// 最近一次前端主题（player_stop 后恢复 SWCA 染色用）
+    pub last_light: std::sync::Mutex<Option<bool>>,
 }
 
 impl Default for AppState {
@@ -31,6 +33,7 @@ impl Default for AppState {
             mpv: Mutex::new(None),
             proxy_child: Mutex::new(None),
             bounds: std::sync::Mutex::new((0, 0, 800, 450)),
+            last_light: std::sync::Mutex::new(None),
         }
     }
 }
@@ -339,6 +342,14 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
 
     let url = proxy::play_url(&cfg, &guid);
     session.command(json!(["loadfile", url, "replace"])).await?;
+
+    // 播放会话期间禁用 SWCA 全窗模糊：mpv 每帧视频 + DWM 全窗亚克力重模糊 + 圆角区域
+    // 三者叠加会拖垮合成（用户实测进播放页整机卡死），停止后由 player_stop 恢复
+    #[cfg(target_os = "windows")]
+    {
+        use winvisual::disable_acrylic;
+        disable_acrylic(parent_hwnd);
+    }
     Ok(())
 }
 
@@ -372,10 +383,20 @@ async fn player_set_visible(state: State<'_, AppState>, visible: bool) -> Result
 }
 
 #[tauri::command]
-async fn player_stop(state: State<'_, AppState>) -> Result<(), String> {
+async fn player_stop(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let slot = state.mpv.lock().await;
     if let Some(m) = slot.as_ref() {
         let _ = m.command(json!(["stop"])).await;
+    }
+    // 播放结束：恢复主题染色（play_item 时被禁用的 SWCA 模糊）
+    #[cfg(target_os = "windows")]
+    if let Some(light) = *state.last_light.lock().unwrap() {
+        use winvisual::{hwnd_isize_wv, set_acrylic, tint_for};
+        if let Some(win) = app.get_webview_window("main") {
+            if let Some(hwnd) = hwnd_isize_wv(&win) {
+                set_acrylic(hwnd, tint_for(light));
+            }
+        }
     }
     Ok(())
 }
@@ -466,6 +487,30 @@ mod winvisual {
         unsafe { GetProcAddress(module as _, narrow.as_ptr()) }
     }
 
+    /// 关闭 SWCA 特效（ACCENT_DISABLED）—— mpv 播放期间禁用全窗模糊，消合成死锁开销
+    pub fn disable_acrylic(hwnd: isize) {
+        unsafe {
+            let f = get_proc(module_handle("user32.dll"), "SetWindowCompositionAttribute");
+            if let Some(f) = f {
+                type SetFn = unsafe extern "system" fn(isize, *mut WinCompAttribData) -> i32;
+                let set: SetFn = std::mem::transmute(f);
+                let mut policy = AccentPolicy {
+                    state: 0, // ACCENT_DISABLED
+                    flags: 0,
+                    gradient_color: 0,
+                    animation_id: 0,
+                };
+                let mut data = WinCompAttribData {
+                    attribute: WCA_ACCENT_POLICY,
+                    data: &mut policy,
+                    size: std::mem::size_of::<AccentPolicy>(),
+                };
+                set(hwnd, &mut data);
+            }
+            disable_dwm_border(hwnd);
+        }
+    }
+
     /// SWCA 会重新启用 DWM 边框（且边框跟随 SetWindowRgn 圆角轮廓 → 圆角外白线），必须在其后关掉
     pub fn disable_dwm_border(hwnd: isize) {
         use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
@@ -525,7 +570,12 @@ mod winvisual {
 }
 
 #[tauri::command]
-fn set_acrylic_tint(window: tauri::Window, light: bool) -> Result<(), String> {
+fn set_acrylic_tint(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    light: bool,
+) -> Result<(), String> {
+    *state.last_light.lock().unwrap() = Some(light);
     #[cfg(target_os = "windows")]
     {
         use winvisual::{hwnd_isize, set_acrylic, tint_for};

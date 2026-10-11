@@ -1,0 +1,460 @@
+/* Fntv-Plus Tauri2 PoC —— 亚克力玻璃壳：body 透明由 DWM 系统背景材质透出 */
+
+:root {
+  font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  color: #e8eaf2;
+  --glass: rgba(22, 24, 32, 0.55);
+  --glass-strong: rgba(28, 30, 40, 0.72);
+  --line: rgba(255, 255, 255, 0.09);
+  --accent: #5b8cff;
+  --muted: rgba(232, 234, 242, 0.55);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+/* ── 标题栏 ── */
+.titlebar {
+  height: 38px;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--glass-strong);
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+}
+.tb-title {
+  padding-left: 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.tb-buttons {
+  display: flex;
+  height: 100%;
+}
+.tb-btn {
+  width: 46px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.tb-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+.tb-btn.tb-close:hover {
+  background: #e5484d;
+  color: #fff;
+}
+
+/* ── 主区域 ── */
+.main-row {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.sidebar {
+  width: 200px;
+  min-width: 200px;
+  background: var(--glass);
+  border-right: 1px solid var(--line);
+  padding: 12px 8px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.side-head {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 4px 10px 10px;
+  letter-spacing: 1px;
+}
+.side-item {
+  padding: 9px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: rgba(232, 234, 242, 0.85);
+}
+.side-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.side-item.active {
+  background: rgba(91, 140, 255, 0.22);
+  color: #cfe0ff;
+}
+.side-item.logout {
+  margin-top: auto;
+  color: rgba(232, 234, 242, 0.45);
+}
+.side-item.logout:hover {
+  background: rgba(229, 72, 77, 0.18);
+  color: #ffb4b6;
+}
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 22px 40px;
+}
+.lib-head,
+.detail-bar {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.detail-bar {
+  flex-direction: column;
+  align-items: stretch;
+  background: var(--glass);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.detail-bar h3 {
+  margin: 4px 0;
+}
+.overview {
+  margin: 0;
+  line-height: 1.6;
+}
+h3 {
+  margin: 0 0 0 0;
+  font-size: 17px;
+}
+.muted {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+/* ── 海报网格 ── */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 16px;
+}
+.card {
+  cursor: pointer;
+}
+.poster-box {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.card:hover .poster-box {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.poster-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.poster-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34px;
+  opacity: 0.4;
+}
+.card-hover {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 12, 18, 0.45);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.card:hover .card-hover {
+  opacity: 1;
+}
+.card-hover span {
+  background: var(--accent);
+  color: #fff;
+  padding: 7px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.rating {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: rgba(12, 14, 20, 0.75);
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #ffd479;
+}
+.ep-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(12, 14, 20, 0.75);
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+.progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.15);
+}
+.progress > div {
+  height: 100%;
+  background: var(--accent);
+}
+.card-title {
+  margin-top: 7px;
+  font-size: 13px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.empty {
+  color: var(--muted);
+  padding: 40px;
+  text-align: center;
+}
+
+/* ── 播放页（双层窗口：stage 透明，mpv 在下） ── */
+.player-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+.player-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: transparent; /* 视频从这里透出 */
+}
+.player-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+.player-err {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 40px;
+  text-align: center;
+}
+.control-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(14, 16, 24, 0.82);
+  backdrop-filter: blur(18px);
+  border-top: 1px solid var(--line);
+  padding: 10px 18px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.seek-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.seek-row input[type="range"] {
+  flex: 1;
+}
+.time {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 52px;
+  text-align: center;
+}
+.btn-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.btn-row .spacer {
+  flex: 1;
+}
+.ctl-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.now-playing {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vol {
+  width: 110px;
+}
+
+/* ── 登录页 ── */
+.login-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.login-card {
+  width: 380px;
+  background: var(--glass-strong);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 26px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+}
+.login-card h2 {
+  margin: 0 0 2px;
+  font-size: 18px;
+}
+.hint {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.login-card label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.linklike {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  text-align: left;
+  padding: 6px 0 0;
+  font-size: 12px;
+}
+.primary {
+  margin-top: 14px;
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  padding: 11px;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.primary:hover {
+  filter: brightness(1.1);
+}
+.primary:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ── 通用控件 ── */
+input,
+select {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #e8eaf2;
+  padding: 9px 12px;
+  font-size: 13px;
+  outline: none;
+}
+input:focus,
+select:focus {
+  border-color: rgba(91, 140, 255, 0.6);
+}
+input[type="range"] {
+  padding: 0;
+  height: 4px;
+  accent-color: var(--accent);
+  background: rgba(255, 255, 255, 0.14);
+  border: none;
+}
+button {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #e8eaf2;
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+.btn-row .big {
+  font-size: 16px;
+  min-width: 52px;
+}
+.err {
+  background: rgba(229, 72, 77, 0.16);
+  border: 1px solid rgba(229, 72, 77, 0.4);
+  color: #ffb4b6;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+::-webkit-scrollbar {
+  width: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

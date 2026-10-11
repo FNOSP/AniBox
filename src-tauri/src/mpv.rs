@@ -44,8 +44,8 @@ impl MpvSession {
             format!("--wid={}", embed_hwnd),
             "--vo=gpu-next".to_string(),
             "--hwdec=auto-safe".to_string(),
-            "--input-ipc-server".to_string(),
-            pipe.clone(),
+            // ⚠ 必须用等号形式：空格分隔形式会让 mpv 静默 abort（exit 1 零输出，连 --log-file 都不建）
+            format!("--input-ipc-server={}", pipe.clone()),
             "--osc=no".to_string(),
             "--input-default-bindings=no".to_string(),
             "--input-vo-keyboard=no".to_string(),
@@ -59,7 +59,17 @@ impl MpvSession {
             "--demuxer-cache-wait=no".to_string(),
             "--fullscreen=no".to_string(),
             "--volume=100".to_string(),
+            // mpv 内部日志恒定 verbose 写文件（主仓库同款），不依赖 stderr——诊断兜底
+            "--log-file".to_string(),
+            std::env::temp_dir().join("fntv-tauri2-mpv.log").to_string_lossy().to_string(),
         ];
+        // 调试：记录完整命令行（定位 spawn 环境差异）
+        {
+            let argv_log = std::env::temp_dir().join("fntv-tauri2-mpv-spawn.log");
+            let _ = std::fs::write(&argv_log, format!("exe={}
+args={:?}
+", exe, &args[..]));
+        }
         let mut child = tokio::process::Command::new(exe)
             .args(&args)
             .stdout(std::process::Stdio::null())

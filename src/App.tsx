@@ -816,6 +816,7 @@ function DetailView({ base }: { base: MediaItem }) {
   const [seasonIdx, setSeasonIdx] = useState(0);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
   const [detailPlay, setDetailPlay] = useState<PlayTarget | null>(null);
+  const [tmdb, setTmdb] = useState<Record<string, unknown> | null>(null);
   const [err, setErr] = useState("");
 
   const isSeries = base.type === "TvSeries" || base.type === "TV";
@@ -855,6 +856,23 @@ function DetailView({ base }: { base: MediaItem }) {
       )
       .catch(() => {});
   }, [seasons, seasonIdx]);
+
+  // TMDB 完整详情（剧照/相似/更多/演职人员）：主仓库 fetchShowDetails 同款链路，失败静默降级
+  useEffect(() => {
+    setTmdb(null);
+    if (!title) return;
+    let alive = true;
+    invoke<Record<string, unknown>>("tmdb_show_details", {
+      arg: { title, year: String(base.release_date || "").slice(0, 4), mediaType: base.type === "Movie" ? "movie" : "tv" },
+    })
+      .then((d) => {
+        if (alive && d && !d.error) setTmdb(d);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [base.guid]);
 
   // 单集简介回填：原版剧集行带简介，episode/list 不含该字段，逐集拉 item 详情补（与轮播同一模式）
   useEffect(() => {
@@ -929,6 +947,7 @@ function DetailView({ base }: { base: MediaItem }) {
               {overview && <p className="tmdb-overview">{overview}</p>}
             </div>
           </div>
+          {tmdb && <TmdbExtra tmdb={tmdb} />}
         </div>
         {isSeries && (
           <div className="detail-right">
@@ -995,6 +1014,114 @@ function DetailView({ base }: { base: MediaItem }) {
         )}
       </div>
     </main>
+  );
+}
+
+
+/* ────────────────────────── TMDB 扩展信息（剧照/相似/更多/演职人员） ──────────────────────────
+   复刻主仓库 embyWall/detail/tmdbCard.ts ⑥⑧⑨⑩ 四节；剧照走 fntvimg 代理（TMDB 原图 URL 的 path 部分不可用，
+   改用 image.tmdb.org 直链经 imgproto？——不行，imgproto 只映射 NAS sys/img。这里用 TMDB w500 直链 <img>，
+   WebView 可直连 TMDB 图片 CDN（无鉴权）。 */
+
+function TmdbExtra({ tmdb }: { tmdb: Record<string, unknown> }) {
+  const arr = (k: string): Record<string, unknown>[] =>
+    Array.isArray(tmdb[k]) ? (tmdb[k] as Record<string, unknown>[]) : [];
+  const strList = (k: string): string[] => (Array.isArray(tmdb[k]) ? (tmdb[k] as string[]) : []);
+  const stills = arr("backdrops").slice(0, 6);
+  const recs = arr("recommendations").slice(0, 8);
+  const cast = arr("cast").slice(0, 20);
+  const aliases = strList("aliases");
+  const keywords = strList("keywords");
+  const providers = strList("providers");
+  const popularity = Number(tmdb.popularity ?? 0);
+  const tmdbId = String(tmdb.tmdbId ?? "");
+  const imdb = String((tmdb.externalIds as Record<string, unknown> | undefined)?.imdb ?? "");
+  const wiki = String((tmdb.externalIds as Record<string, unknown> | undefined)?.wikidata ?? "");
+  const hasMore = aliases.length || keywords.length || providers.length || popularity > 0;
+  const links = [
+    { label: "TMDB", url: tmdbId ? `https://www.themoviedb.org/tv/${tmdbId}` : "" },
+    { label: "IMDb", url: imdb ? `https://www.imdb.com/title/${imdb}` : "" },
+    { label: "Wikidata", url: wiki ? `https://www.wikidata.org/wiki/${wiki}` : "" },
+  ].filter((l) => l.url);
+  return (
+    <>
+      {stills.length > 0 && (
+        <div className="tmdb-sec">
+          <div className="tmdb-sec-t">剧照</div>
+          <div className="tmdb-stills">
+            {stills.map((st) => (
+              <img key={String(st.file_path ?? st)} src={`https://image.tmdb.org/t/p/w500${st.file_path ?? st}`} loading="lazy" alt="" />
+            ))}
+          </div>
+        </div>
+      )}
+      {recs.length > 0 && (
+        <div className="tmdb-sec">
+          <div className="tmdb-sec-t">相似剧集</div>
+          <p className="tmdb-inline">
+            {recs.map((r, i) => (
+              <span key={String(r.tmdbId ?? i)}>
+                {i > 0 && <i> · </i>}
+                {String(r.title)}
+                {r.year ? ` (${r.year})` : ""}
+              </span>
+            ))}
+          </p>
+        </div>
+      )}
+      {hasMore && (
+        <div className="tmdb-sec">
+          <div className="tmdb-sec-t">更多</div>
+          {aliases.length > 0 && (
+            <div className="tmdb-mrow"><span className="tmdb-mk">别名</span><span className="tmdb-inline">{aliases.join(" · ")}</span></div>
+          )}
+          {keywords.length > 0 && (
+            <div className="tmdb-mrow"><span className="tmdb-mk">关键词</span><span className="tmdb-inline">{keywords.join(" · ")}</span></div>
+          )}
+          {providers.length > 0 && (
+            <div className="tmdb-mrow"><span className="tmdb-mk">在线看</span><span className="tmdb-inline">{providers.join(" · ")}</span></div>
+          )}
+          {popularity > 0 && (
+            <div className="tmdb-mrow"><span className="tmdb-mk">热度</span><span className="tmdb-inline">{Math.round(popularity).toLocaleString("zh-CN")}</span></div>
+          )}
+          <div className="tmdb-mrow">
+            <span className="tmdb-mk">编号</span>
+            <span className="tmdb-inline">
+              {tmdbId && `TMDB ${tmdbId}`}
+              {imdb && ` · Q${wiki.replace(/^Q/, "")}` && wiki && ` · ${wiki}`}
+              {imdb && ` · ${imdb}`}
+            </span>
+          </div>
+          {links.length > 0 && (
+            <div className="tmdb-links">
+              {links.map((l) => (
+                <a key={l.label} href={l.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+                  {l.label}
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {cast.length > 0 && (
+        <div className="tmdb-sec">
+          <div className="tmdb-sec-t">演职人员</div>
+          <div className="tmdb-cast">
+            {cast.map((c, i) => (
+              <div key={`${c.name}-${i}`} className="tmdb-cast-row">
+                {c.profile ? (
+                  <img className="tmdb-cast-ava" src={`https://image.tmdb.org/t/p/w185${c.profile}`} loading="lazy" alt="" />
+                ) : (
+                  <span className="tmdb-cast-ava tmdb-cast-empty">👤</span>
+                )}
+                <span className="tmdb-cast-name">{String(c.name)}</span>
+                {c.character ? <span className="tmdb-cast-role">饰 {String(c.character)}</span> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

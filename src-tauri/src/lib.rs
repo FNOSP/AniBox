@@ -7,6 +7,7 @@ mod fnapi;
 mod imgproto;
 mod mpv;
 mod proxy;
+mod tmdb;
 mod win_embed;
 
 use config::Config;
@@ -611,6 +612,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             set_acrylic_tint,
+            tmdb::tmdb_show_details,
             get_config,
             save_config,
             login,

@@ -1949,3 +1949,106 @@ button:active {
     transform: translateX(-50%) translateY(0);
   }
 }
+
+/* ─────────────── TMDB 扩展信息四节（剧照/相似/更多/演职人员，复刻主仓库 tmdbCard ⑥⑧⑨⑩） ─────────────── */
+.tmdb-sec {
+  border-radius: 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  padding: 14px 16px;
+}
+.tmdb-sec-t {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-strong);
+  margin-bottom: 10px;
+}
+.tmdb-stills {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.tmdb-stills img {
+  height: 128px;
+  min-width: 228px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.tmdb-inline {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.9;
+  min-width: 0;
+  word-break: break-all;
+}
+.tmdb-inline i {
+  color: var(--muted);
+  font-style: normal;
+  margin: 0 2px;
+}
+.tmdb-mrow {
+  display: flex;
+  gap: 18px;
+  padding: 5px 0;
+  font-size: 13px;
+}
+.tmdb-mk {
+  min-width: 44px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.tmdb-links {
+  display: flex;
+  gap: 16px;
+  margin-top: 10px;
+}
+.tmdb-links a {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.tmdb-links a:hover {
+  text-decoration: underline;
+}
+.tmdb-cast {
+  display: flex;
+  flex-direction: column;
+}
+.tmdb-cast-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13.5px;
+}
+.tmdb-cast-row:last-child {
+  border-bottom: none;
+}
+.tmdb-cast-ava {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--ph-bg);
+}
+.tmdb-cast-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+.tmdb-cast-name {
+  font-weight: 700;
+  color: var(--text-strong);
+  min-width: 72px;
+}
+.tmdb-cast-role {
+  color: var(--text-2);
+}

@@ -1450,7 +1450,7 @@ button:active {
   font-weight: bold;
   letter-spacing: 2px;
   font-family: inherit;
-  height: 2.4em;
+  height: 2.9em;
   font-size: clamp(0.72rem, -0.275rem + 2.5vw, 1.05rem);
   transition: transform 0.2s ease, background-color 0.2s ease;
 }

@@ -861,6 +861,10 @@ h3 {
 .detail-headrow .back {
   flex-shrink: 0;
 }
+.detail-rating {
+  flex-shrink: 0;
+  font-size: 13px;
+}
 .detail-title {
   margin: 0;
   font-size: 22px;

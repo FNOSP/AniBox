@@ -925,6 +925,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
           ‹ 返回
         </button>
         <h1 className="detail-title">{title}</h1>
+        {rating && rating !== "0" && <span className="meta rating detail-rating">★ {rating}</span>}
       </div>
       <div className="detail-cols">
         <div className="detail-left">
@@ -944,7 +945,6 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
             <div className="tmdb-info">
               <div className="tmdb-name">{title}</div>
               <div className="meta-row">
-                {rating && rating !== "0" && <span className="meta rating">★ {rating}</span>}
                 {releaseDate && <span className="meta">{releaseDate.slice(0, 4)}</span>}
                 {isSeries && numSeasons ? <span className="meta">{numSeasons} 季</span> : null}
                 <span className="meta type-chip">{base.type}</span>

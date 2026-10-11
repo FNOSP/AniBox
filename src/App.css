@@ -843,7 +843,7 @@ h3 {
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 14px 26px 16px;
+  padding: 54px 26px 16px; /* 顶部 = 悬浮标题栏40px + 14px 间距 */
   gap: 14px;
 }
 .detail-title {

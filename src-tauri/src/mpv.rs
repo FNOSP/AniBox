@@ -88,7 +88,7 @@ args={:?}
         // 等待 IPC 管道出现（最长 20s）；期间若 mpv 进程退出则立刻带 stderr 报错，不留孤儿
         let stderr_log = std::env::temp_dir().join("fntv-tauri2-mpv-stderr.log");
         let mut ev_client = None;
-        let stderr_tail;
+        let mut stderr_tail = String::new();
         let read_tail = |p: &std::path::Path| -> String {
             std::fs::read_to_string(p)
                 .unwrap_or_default()
@@ -104,6 +104,18 @@ args={:?}
         for _ in 0..200 {
             if let Ok(Some(status)) = child.try_wait() {
                 stderr_tail = read_tail(&stderr_log);
+                // wid 窗口存活诊断：IsWindow/GetClientRect 判定 mpv 死亡时目标窗口状态
+                #[cfg(target_os = "windows")]
+                {
+                    use windows_sys::Win32::UI::WindowsAndMessaging::{GetClientRect, IsWindow};
+                    let alive = unsafe { IsWindow(embed_hwnd as _) };
+                    let mut rc = windows_sys::Win32::Foundation::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                    let ok = unsafe { GetClientRect(embed_hwnd as _, &mut rc) };
+                    stderr_tail = format!(
+                        "{} [wid alive={} client={}x{}] argv_exe={}",
+                        stderr_tail, alive, rc.right - rc.left, rc.bottom - rc.top, exe
+                    );
+                }
                 return Err(format!("mpv 提前退出 ({}): {}", status, stderr_tail));
             }
             if let Some(c) = try_open_pipe(&pipe).await {

@@ -192,7 +192,7 @@ function TitleBar({
         )}
         {onToggleTheme && (
           <button className="tb-icon" title="切换深浅模式" onClick={onToggleTheme}>
-            <IcoAutoTheme size={15} />
+            <IcoAutoTheme size={16} />
           </button>
         )}
         {!nav && <span className="tb-page">{title}</span>}

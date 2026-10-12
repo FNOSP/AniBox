@@ -1212,14 +1212,34 @@ function PlayerView({
     };
   }, [syncBounds]);
 
-  // [lc-097] 形态切换（内嵌 ↔ 全页/全屏）后**多点补测**。
-  // 实测问题：切到全页形态时，挖洞与 mpv 宿主窗会停在旧的小矩形（页面已铺满、视频还缩在左上角），
-  // 表现为「要点一下画面才全屏」—— 说明那一次 ResizeObserver/rAF 没能落到后端。
-  // 这里按几个时间点强制重测（幂等、Rust 侧有去重），保证一定收敛到最终矩形。
+  // [lc-099] 逐帧同步（根治"视频区位置跟不上"这一类问题）。
+  // 背景：视频是原生子窗，"画面该在哪"完全依赖前端把占位矩形推给后端。此前用
+  // ResizeObserver + resize + scroll + 定时补测 这套**事件猜谜**式同步，必然存在遗漏/滞后 ——
+  // 「要点一下画面才生效」「切换全屏那一拍错位」都是它引起的（实测日志证实：Resized 先到、
+  // 前端重传后到，中间那一拍就是错的）。
+  // 改为：播放页存续期间按 rAF 每帧对比一次矩形，变了才推。每帧一次 getBoundingClientRect
+  // 的开销可忽略，且天然覆盖滚动/动画/布局变化/全屏切换，不再依赖任何事件的时序。
   useEffect(() => {
-    const ids = [0, 60, 160, 350, 700].map((ms) => window.setTimeout(syncBounds, ms));
-    return () => ids.forEach((id) => window.clearTimeout(id));
-  }, [embedded, syncBounds]);
+    let raf = 0;
+    let last = "";
+    const tick = () => {
+      const el = stageRef.current;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        const key = `${Math.round(r.left * dpr)},${Math.round(r.top * dpr)},${Math.round(
+          r.width * dpr,
+        )},${Math.round(r.height * dpr)}`;
+        if (key !== last) {
+          last = key;
+          syncBounds();
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [syncBounds]);
 
   // [lc-091] 收尾防抖：React18 StrictMode（main.tsx 开着）与快速重挂载会「setup→cleanup→setup」，
   // 旧写法在 cleanup 里立刻 player_set_visible(false)+player_stop，会把刚建立的播放状态打掉 ——

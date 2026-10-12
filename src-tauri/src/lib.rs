@@ -492,14 +492,15 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
         return Err("未登录".into());
     }
 
-    // [lc-102] 播放前**先要一次播放信息**（抄主仓库：`api.ts:191 POST /v/api/v1/play/info
-    // {item_guid}`）。Go 代理的 `/playvideo` 内部第一步也是它（`playvideo.go:19 fetchPlayInfo`），
-    // 失败就直接 `c.JSON(500, {"error":"Failed to get play info"})` —— 这正是我们日志里看到的那个
-    // `HTTP error 500 + type=application/json`（表现为"拉取半天没反应/错误不显示"）。
-    // 先自己问一次的好处：
-    //   ① 会话过期能在起 mpv 之前**静默重登**再试（Electron 版靠 refreshSessionCookie，见上）；
-    //   ② 容器 guid（TV/Season/Directory）本来就不可能拉流（`media.ts:901`）→ 直接给可执行提示；
-    //   ③ 失败文案直接用 NAS 返回的 msg，不再是笼统的"加载失败"。
+    // [lc-102/lc-103] 播放前**先要一次播放信息**（抄主仓库：`api.ts:191 POST /v/api/v1/play/info
+    // {item_guid}`）。Go 代理的 `/playvideo` 内部第一步也是它（`playvideo.go:19 fetchPlayInfo`
+    // → `GET /v/api/v1/stream/list/<guid>`），失败就 `c.JSON(500,"Failed to get play info")`。
+    //
+    // 【lc-103 实测根因】代理那条链**只能吃「具体媒体」的 guid**：
+    //   stream/list(原始 TV/剧集容器 guid) → 200 但 data 是空数组 ⇒ 代理判"获取播放信息失败或为空" ⇒ 500
+    //   stream/list(play/info 解析出的 Episode guid) → 2 条流 ✓
+    // 主仓库正是这么绕的：media.ts 先 `getPlayInfo(id)`，再拿 `response.data.guid` 去 getProxyUrl。
+    // 所以这里必须**用解析后的 guid** 去拼代理 URL —— 这是"拉取半天没反应/加载出错"的唯一原因。
     let _ = app.emit("mpv-load", json!({ "phase": "start" }));
     let client = fnapi::new_client();
     let probe_body = || json!({ "item_guid": guid });
@@ -519,13 +520,21 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
             Err(e) => libmpv::trace(&format!("[play/info] 重登失败: {e}")),
         }
     }
+    let mut play_guid = guid.clone();
     match probe {
         Ok(info) => {
             let t = info.get("type").and_then(|x| x.as_str()).unwrap_or("");
-            libmpv::trace(&format!("[play/info] ok type={t} guid={guid}"));
+            if let Some(g) = info.get("guid").and_then(|x| x.as_str()) {
+                if !g.is_empty() {
+                    play_guid = g.to_string();
+                }
+            }
+            libmpv::trace(&format!(
+                "[play/info] ok type={t} 原始={guid} → 拉流用={play_guid}"
+            ));
             if matches!(t, "TV" | "Season" | "Collection" | "Directory" | "Folder") {
                 return Err(format!(
-                    "「{t}」是合集/季/目录，不能直接拉流 —— 请在选集里点具体一集再播放"
+                    "「{t}」没有可播放的具体媒体 —— 请在选集里点具体一集再播放"
                 ));
             }
         }
@@ -572,7 +581,8 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     })?;
     apply_cutout(&app, &state, false);
 
-    let url = proxy::play_url(&cfg, &guid);
+    // [lc-103] 用**解析后**的 guid（Episode/Movie）去拉流，不是原始容器 guid
+    let url = proxy::play_url(&cfg, &play_guid);
     // [lc-101] 载入前**先探一次直链**：Go 代理解析失败时返回 `HTTP 500 + JSON 错误体`
     // （实测日志 `[e][curl] HTTP error 500` / `type=application/json`），而 mpv 侧只会给
     // "Failed to open" 这种笼统错误 ⇒ 用户看到的就是"半天没反应、错误不显示"。

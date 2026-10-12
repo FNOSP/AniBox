@@ -15,7 +15,7 @@ mod win_region;
 use config::Config;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{Mutex, RwLock};
 
 pub struct AppState {
@@ -456,12 +456,85 @@ fn apply_cutout(app: &AppHandle, state: &AppState, force: bool) {
     }
 }
 
+/// [lc-102] 静默重登 —— 等价于主仓库 Electron 版播放前的 `refreshSessionCookie`（media.ts:537）。
+/// 差别只在凭据来源：它从 Electron 的 `persist:fntv` 会话里读 Cookie 塞进代理 URL；
+/// 我们没有那个会话，但配置文件里存着账号密码（含「记住密码/自动登录」）⇒ 直接重登拿新 token，
+/// 新 token 会写回配置并用于后续代理 URL 的 `cookie=Trim-MC-token=...` 参数。
+async fn relogin(app: &AppHandle, cfg: &Config) -> Result<Config, String> {
+    let client = fnapi::new_client();
+    let server = fnapi::normalize_server(&cfg.server);
+    let data = client
+        .call(
+            &server,
+            "/v/api/v1/login",
+            "POST",
+            "",
+            Some(json!({ "app_name": "trimemedia-web", "username": cfg.username, "password": cfg.password })),
+        )
+        .await?;
+    let token = data
+        .get("token")
+        .and_then(|t| t.as_str())
+        .ok_or("重登响应缺少 token")?
+        .to_string();
+    let server = client.resolve_final_base(&server, &token).await;
+    let mut c = cfg.clone();
+    c.server = server;
+    c.token = token;
+    config::save(app, &c).await?;
+    Ok(c)
+}
+
 #[tauri::command]
 async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> Result<(), String> {
-    let cfg = state.config.read().await.clone();
+    let mut cfg = state.config.read().await.clone();
     if cfg.token.is_empty() {
         return Err("未登录".into());
     }
+
+    // [lc-102] 播放前**先要一次播放信息**（抄主仓库：`api.ts:191 POST /v/api/v1/play/info
+    // {item_guid}`）。Go 代理的 `/playvideo` 内部第一步也是它（`playvideo.go:19 fetchPlayInfo`），
+    // 失败就直接 `c.JSON(500, {"error":"Failed to get play info"})` —— 这正是我们日志里看到的那个
+    // `HTTP error 500 + type=application/json`（表现为"拉取半天没反应/错误不显示"）。
+    // 先自己问一次的好处：
+    //   ① 会话过期能在起 mpv 之前**静默重登**再试（Electron 版靠 refreshSessionCookie，见上）；
+    //   ② 容器 guid（TV/Season/Directory）本来就不可能拉流（`media.ts:901`）→ 直接给可执行提示；
+    //   ③ 失败文案直接用 NAS 返回的 msg，不再是笼统的"加载失败"。
+    let _ = app.emit("mpv-load", json!({ "phase": "start" }));
+    let client = fnapi::new_client();
+    let probe_body = || json!({ "item_guid": guid });
+    let mut probe = client
+        .call(&cfg.server, "/v/api/v1/play/info", "POST", &cfg.token, Some(probe_body()))
+        .await;
+    if probe.is_err() && !cfg.password.is_empty() {
+        libmpv::trace("[play/info] 失败，尝试用保存的密码静默重登后重试");
+        match relogin(&app, &cfg).await {
+            Ok(fresh) => {
+                *state.config.write().await = fresh.clone();
+                cfg = fresh;
+                probe = client
+                    .call(&cfg.server, "/v/api/v1/play/info", "POST", &cfg.token, Some(probe_body()))
+                    .await;
+            }
+            Err(e) => libmpv::trace(&format!("[play/info] 重登失败: {e}")),
+        }
+    }
+    match probe {
+        Ok(info) => {
+            let t = info.get("type").and_then(|x| x.as_str()).unwrap_or("");
+            libmpv::trace(&format!("[play/info] ok type={t} guid={guid}"));
+            if matches!(t, "TV" | "Season" | "Collection" | "Directory" | "Folder") {
+                return Err(format!(
+                    "「{t}」是合集/季/目录，不能直接拉流 —— 请在选集里点具体一集再播放"
+                ));
+            }
+        }
+        Err(e) => {
+            libmpv::trace(&format!("[play/info] 失败: {e}"));
+            return Err(format!("获取播放信息失败：{e}"));
+        }
+    }
+
     proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
 
     let main = app
@@ -500,6 +573,15 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     apply_cutout(&app, &state, false);
 
     let url = proxy::play_url(&cfg, &guid);
+    // [lc-101] 载入前**先探一次直链**：Go 代理解析失败时返回 `HTTP 500 + JSON 错误体`
+    // （实测日志 `[e][curl] HTTP error 500` / `type=application/json`），而 mpv 侧只会给
+    // "Failed to open" 这种笼统错误 ⇒ 用户看到的就是"半天没反应、错误不显示"。
+    // 这里把代理的原话当错误文案抛给前端（顺带预热连接）；探测期间前端显示"正在加载媒体…"。
+    let _ = app.emit("mpv-load", json!({ "phase": "start" }));
+    if let Err(e) = proxy::probe(&url).await {
+        libmpv::trace(&format!("[probe] 直链预检失败: {e}"));
+        return Err(e);
+    }
     session.command(json!(["loadfile", url, "replace"])).await?;
     // [lc-089] 换片后补一次「启用 mpv 自建子窗」：实例复用时立刻命中返回，仅 VO 重建才真需要
     win_embed::spawn_enable_mpv_child(session.embed_hwnd, 25);

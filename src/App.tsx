@@ -1155,20 +1155,68 @@ function PlayerView({
   onBig?: (on: boolean) => void;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
-  const [duration, setDuration] = useState(0);
   const [err, setErr] = useState("");
+  // [lc-101] 加载阶段状态机：把"半天没反应"变成可见进度，并让加载失败真正显示出来。
+  // 之前只认 duration(id=2)：等不到就永远停在「正在拉起 mpv…」；而 mpv 的失败信息全在
+  // start-file / file-loaded / end-file 事件里 —— 后端 lc-101 已把它们转成下面两个应用事件。
+  const [phase, setPhase] = useState<"spawn" | "loading" | "playing" | "buffering" | "failed">("spawn");
+  const [mpvErr, setMpvErr] = useState("");
+  const [waited, setWaited] = useState(0);
+  const t0Ref = useRef(Date.now());
 
   useEffect(() => {
-    const p = listen<MpvEvent>("mpv-event", (e) => {
+    t0Ref.current = Date.now();
+    setPhase("spawn");
+    setMpvErr("");
+    setWaited(0);
+  }, [item.guid]);
+
+  useEffect(() => {
+    const p1 = listen<MpvEvent>("mpv-event", (e) => {
       const ev = e.payload;
       if (ev.event !== "property-change") return;
-      // 只消费 duration（区分「正在拉起 mpv…」）；进度/播放态等归 mpv 侧 uosc 自己用
-      if (ev.id === 2) setDuration(typeof ev.data === "number" ? ev.data : 0);
+      // duration 到了说明文件已就绪（播放态）；进度/播放态本身仍归 mpv 侧 uosc 自己用
+      if (ev.id === 2 && typeof ev.data === "number" && ev.data > 0) setPhase("playing");
+      // id=7 paused-for-cache：NAS/代理慢时 mpv 在缓冲，必须让用户看到，而不是干等
+      if (ev.id === 7) setPhase((s) => (ev.data ? "buffering" : s === "buffering" ? "playing" : s));
+    });
+    const p2 = listen<{ phase: string }>("mpv-load", (e) => {
+      const ph = e.payload.phase;
+      if (ph === "start") setPhase((s) => (s === "failed" ? s : "loading"));
+      else if (ph === "loaded") setPhase("playing");
+    });
+    const p3 = listen<{ reason: string; error: string }>("mpv-end", (e) => {
+      setMpvErr(e.payload.error || `播放失败（${e.payload.reason}）`);
+      setPhase("failed");
     });
     return () => {
-      p.then((f) => f());
+      p1.then((f) => f());
+      p2.then((f) => f());
+      p3.then((f) => f());
     };
   }, []);
+
+  // [lc-101] 计时 + 超时：spawn/loading 阶段每 0.5s 刷新已等待秒数；
+  // 25s 仍未就绪 → 判定失败并直接给出排查清单（NAS 可达？代理 22346 在跑？直链 401/404？）
+  useEffect(() => {
+    const arm = phase === "spawn" || phase === "loading";
+    const id = window.setInterval(
+      () => setWaited(Math.round((Date.now() - t0Ref.current) / 1000)),
+      500,
+    );
+    const to = arm
+      ? window.setTimeout(() => {
+          setMpvErr(
+            "加载超时（25s）：mpv 已启动，但没等到媒体就绪。请检查 NAS 是否可达、Go 代理(22346)是否在跑、该条目直链是否 401/404。",
+          );
+          setPhase("failed");
+        }, 25000)
+      : 0;
+    return () => {
+      window.clearInterval(id);
+      if (to) window.clearTimeout(to);
+    };
+  }, [phase]);
 
   // [lc-097] 把视频占位矩形（主窗客户区物理像素）同步给后端 —— 它同时决定「挖洞」位置和
   // mpv 宿主窗位置。抽成 useCallback 是为了让「形态切换补测」那个 effect 也能复用。
@@ -1337,7 +1385,16 @@ function PlayerView({
         ref={stageRef}
       >
         {err && <div className="err player-err">{err}</div>}
-        {!duration && !err && <div className="player-loading">正在拉起 mpv…</div>}
+        {!err && mpvErr && <div className="err player-err">{mpvErr}</div>}
+        {!err && !mpvErr && phase !== "playing" && (
+          <div className="player-loading">
+            {phase === "buffering"
+              ? `缓冲中…（已等待 ${waited}s）`
+              : phase === "loading"
+                ? `正在加载媒体… ${waited}s`
+                : `正在启动 mpv… ${waited}s`}
+          </div>
+        )}
       </div>
     </div>
   );

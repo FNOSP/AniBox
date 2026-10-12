@@ -20,13 +20,17 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
 /// 观察 id ↔ 属性名（前端 switch 依赖这些 id；6=fullscreen 只用于镜像到 Tauri 窗口）
-const OBSERVED: [(u64, &str); 6] = [
+const OBSERVED: [(u64, &str); 9] = [
     (1, "time-pos"),
     (2, "duration"),
     (3, "pause"),
     (4, "speed"),
     (5, "volume"),
     (6, "fullscreen"),
+    // [lc-101] 加载/缓冲可见性：让页面能显示"缓冲中 / 空闲 / 播完"，而不是干等一个转圈
+    (7, "paused-for-cache"),
+    (8, "cache-buffering-state"),
+    (9, "idle-active"),
 ];
 
 pub struct MpvSession {
@@ -75,6 +79,10 @@ impl MpvSession {
             "--keep-open=yes".to_string(),
             "--force-window=immediate".to_string(),
             "--terminal=no".to_string(),
+            // [lc-101] 关掉 ytdl_hook：直链是我们的 Go 代理，永远不需要 yt-dlp；
+            // 但加载失败时 mpv 会自动跑 `ytdl_hook/on_load_fail`（实测会去叫 yt-dlp，白折腾 0.3s+
+            // 并污染日志）。关掉让失败路径干净。
+            "--ytdl=no".to_string(),
             format!("--log-file={}", log_path.to_string_lossy()),
         ];
         let q = '\'';
@@ -139,6 +147,8 @@ impl MpvSession {
             let app2 = app.clone();
             let pending2 = pending.clone();
             let fs_expect2 = fs_expect.clone();
+            // [lc-101] start-file → file-loaded 的耗时（"拉取半天"到底花在哪一步，有数可查）
+            let load_started2: Arc<Mutex<Option<std::time::Instant>>> = Arc::new(Mutex::new(None));
             std::thread::spawn(move || {
                 let first_event = std::sync::atomic::AtomicBool::new(true);
                 let reader = BufReader::new(read_file);
@@ -159,7 +169,64 @@ impl MpvSession {
                     let Some(ev) = v.get("event").and_then(|e| e.as_str()) else {
                         continue;
                     };
+                    // [lc-101] 不能只转发 property-change：mpv 的**加载失败/结束全在事件里**
+                    // （end-file 带 reason=error + 错误文本；eof/quit/stop 也走它）。
+                    // 之前这一行把它们一律 continue 丢掉 —— 这就是"错误直接不显示"的根因：
+                    // 页面永远停在"正在拉起 mpv…"，用户只看到无限转圈。
                     if ev != "property-change" {
+                        match ev {
+                            "start-file" => {
+                                *load_started2.lock().unwrap() = Some(std::time::Instant::now());
+                                let _ = app2.emit("mpv-load", json!({ "phase": "start" }));
+                            }
+                            "file-loaded" => {
+                                let took = load_started2
+                                    .lock()
+                                    .unwrap()
+                                    .take()
+                                    .map(|t| t.elapsed().as_millis())
+                                    .unwrap_or(0);
+                                crate::libmpv::trace(&format!("mpv file-loaded（媒体就绪，加载耗时 {took}ms）"));
+                                let _ = app2.emit("mpv-load", json!({ "phase": "loaded" }));
+                            }
+                            "end-file" => {
+                                let reason = v.get("reason").and_then(|r| r.as_str()).unwrap_or("");
+                                let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+                                // 用户主动切片/停止/重定向不算失败，别弹错；
+                                // 另外 "Opening failed or was aborted" / "Failed writing received
+                                // data…" 是 `loadfile replace` 打断上一次加载留下的产物（实测日志里
+                                // 与真实 500 混在一起），也不能拿去吓用户。
+                                let benign = matches!(reason, "eof" | "quit" | "stop" | "redirect")
+                                    || err.contains("aborted")
+                                    || err.contains("Failed writing received data");
+                                let is_fail = !benign && (reason == "error" || !err.is_empty());
+                                crate::libmpv::trace(&format!("mpv end-file reason={reason} error={err}"));
+                                if is_fail {
+                                    let msg = if err.is_empty() {
+                                        format!("播放失败（{reason}）")
+                                    } else {
+                                        format!("播放失败：{err}")
+                                    };
+                                    // ① 抛给页面（内嵌形态能看到 HTML 提示）
+                                    let _ = app2.emit("mpv-end", json!({ "reason": reason, "error": err }));
+                                    // ② 同时用 mpv 自己的 OSD 显示 —— 全页/全屏时「挖洞 = 整窗」，
+                                    //    WebView 被整块裁掉，页面 HTML 一律不可见，只有 mpv 画的才看得见。
+                                    let mut g = tx.lock().unwrap();
+                                    if let Some(f) = g.as_mut() {
+                                        let line = json!({
+                                            "command": ["show-text", msg, 8000]
+                                        })
+                                        .to_string()
+                                            + "\n";
+                                        let _ = f.write_all(line.as_bytes());
+                                        let _ = f.flush();
+                                    }
+                                } else {
+                                    let _ = app2.emit("mpv-load", json!({ "phase": "ended", "reason": reason }));
+                                }
+                            }
+                            _ => {}
+                        }
                         continue;
                     }
                     let Some(id) = v.get("id").and_then(|i| i.as_u64()) else {

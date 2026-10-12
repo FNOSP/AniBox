@@ -15,9 +15,9 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClassNameW, GetWindow, IsWindow,
-    RegisterClassW, SetWindowPos, ShowWindow, CS_HREDRAW, CS_VREDRAW, GW_CHILD, GW_HWNDNEXT,
-    HWND_BOTTOM, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE,
-    SW_SHOW, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
+    IsWindowVisible, RegisterClassW, SetWindowPos, ShowWindow, CS_HREDRAW, CS_VREDRAW, GW_CHILD,
+    GW_HWNDNEXT, HWND_BOTTOM, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+    SW_HIDE, SW_SHOW, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 
@@ -96,6 +96,12 @@ pub fn set_visible(hwnd: isize, visible: bool) {
     unsafe {
         ShowWindow(hwnd as HWND, if visible { SW_SHOW } else { SW_HIDE });
     }
+}
+
+/// 宿主窗当前是否真的可见（挖洞形态下「洞是否存在」直接跟随它，见 lib.rs::apply_cutout）
+pub fn is_visible(hwnd: isize) -> bool {
+    let h = hwnd as HWND;
+    !h.is_null() && unsafe { IsWindowVisible(h) } != 0
 }
 
 /// 重新置顶（仅供 `FNTV_CUTOUT=0` 回退形态：WebView 重绘/重排后偶尔会插到上面，显示时补一次）。

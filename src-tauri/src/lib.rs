@@ -28,8 +28,6 @@ pub struct AppState {
     pub last_light: std::sync::Mutex<Option<bool>>,
     /// [lc-088] 当前 mpv 宿主子窗句柄（裁洞时要把它排除在裁剪目标外）
     pub embed_hwnd: std::sync::Mutex<Option<isize>>,
-    /// [lc-088] 播放形态是否可见（决定是否真的挖洞；不可见时清除区域）
-    pub player_visible: std::sync::Mutex<bool>,
     /// [lc-088] 上次实际应用的裁洞状态（去重用，避免区域被反复重建）
     pub last_cutout: std::sync::Mutex<Option<(isize, Option<(i32, i32, i32, i32)>)>>,
 }
@@ -43,7 +41,6 @@ impl Default for AppState {
             bounds: std::sync::Mutex::new((0, 0, 800, 450)),
             last_light: std::sync::Mutex::new(None),
             embed_hwnd: std::sync::Mutex::new(None),
-            player_visible: std::sync::Mutex::new(false),
             last_cutout: std::sync::Mutex::new(None),
         }
     }
@@ -356,8 +353,13 @@ fn apply_cutout(app: &AppHandle, state: &AppState, force: bool) {
     let main_hwnd = hwnd.0 as isize;
 
     let embed = *state.embed_hwnd.lock().unwrap();
-    // 裁洞开启且播放形态可见时才挖洞；否则清除（视频让位给页面）
-    let hole = if cutout_on() && *state.player_visible.lock().unwrap() {
+    // [lc-091] 洞是否存在，**直接跟随 mpv 宿主窗的真实可见状态**，不再维护独立的 player_visible 标志。
+    // 原因：那个标志写在两条命令里（player_set_visible / play_item），前端 StrictMode 的
+    // setup→cleanup→setup 会并发轰出 visible=true/false/true，标志最终值取决于命令完成顺序，
+    // 一旦停在 false，洞就被清除且不会自动恢复 → 视频被 WebView 盖住、只见「正在拉起 mpv…」。
+    // 现在"洞 ⇔ 宿主窗可见"，两者永远同一来源，不会再各说各话。
+    let embed_visible = embed.map(win_embed::is_visible).unwrap_or(false);
+    let hole = if cutout_on() && embed_visible {
         Some(*state.bounds.lock().unwrap())
     } else {
         None
@@ -399,8 +401,10 @@ fn apply_cutout(app: &AppHandle, state: &AppState, force: bool) {
     };
     match win_region::apply_cutout(main_hwnd, &exclude, hole, radius) {
         Ok(log) => libmpv::trace(&format!(
-            "[cutout] on={} hole={:?} -> {}",
+            "[cutout] on={} embed={:?} embedVisible={} hole={:?} -> {}",
             cutout_on(),
+            embed,
+            embed_visible,
             hole,
             log.join(" | ")
         )),
@@ -437,9 +441,8 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     *slot = Some(session.clone());
     drop(slot);
 
-    // [lc-088] 登记宿主窗 + 置播放形态可见，再按「裁洞 / 置顶」两种形态摆放
+    // [lc-088] 登记宿主窗（挖洞时要排除它）；[lc-091] 不再写 player_visible —— 洞跟随宿主窗真实可见性
     *state.embed_hwnd.lock().unwrap() = Some(session.embed_hwnd);
-    *state.player_visible.lock().unwrap() = true;
 
     // 应用当前 bounds（登页时前端会更新），再载入（窗口操作一律主线程）
     let (x, y, w, h) = *state.bounds.lock().unwrap();
@@ -567,7 +570,6 @@ async fn player_set_visible(
     state: State<'_, AppState>,
     visible: bool,
 ) -> Result<(), String> {
-    *state.player_visible.lock().unwrap() = visible;
     let slot = state.mpv.lock().await;
     if let Some(m) = slot.as_ref() {
         let eh = m.embed_hwnd;
@@ -581,7 +583,7 @@ async fn player_set_visible(
         })?;
     }
     drop(slot);
-    apply_cutout(&app, &state, false);
+    apply_cutout(&app, &state, false); // 洞跟随宿主窗可见性
     Ok(())
 }
 
@@ -590,8 +592,11 @@ async fn player_stop(app: AppHandle, state: State<'_, AppState>) -> Result<(), S
     if let Ok(bar) = ensure_bar(&app) {
         let _ = bar.hide();
     }
-    // [lc-088] 播放形态结束 → 撤掉挖洞，WebView 恢复完整区域
-    *state.player_visible.lock().unwrap() = false;
+    // [lc-088] 播放形态结束 → 撤掉挖洞，WebView 恢复完整区域；[lc-091] 同时隐藏宿主窗，
+    // 让「洞 ⇔ 宿主窗可见」这条不变式成立（否则残留最后一帧浮在洞下方）
+    if let Some(eh) = *state.embed_hwnd.lock().unwrap() {
+        let _ = on_main(&app, move || win_embed::set_visible(eh, false));
+    }
     apply_cutout(&app, &state, false);
     let slot = state.mpv.lock().await;
     if let Some(m) = slot.as_ref() {
@@ -615,6 +620,17 @@ async fn mpv_toggle_pause(state: State<'_, AppState>) -> Result<(), String> {
     let slot = state.mpv.lock().await;
     if let Some(m) = slot.as_ref() {
         m.command(json!(["cycle", "pause"])).await?;
+    }
+    Ok(())
+}
+
+/// [lc-093] App 形态（内嵌小窗 / 全页全屏）→ mpv 的 `fullscreen` 属性镜像。
+/// uosc 用它当底栏双形态判据（小窗只留 播放暂停+上下一集 | 时间 | 全屏；全屏保持原样）。
+#[tauri::command]
+async fn mpv_set_ui_fullscreen(state: State<'_, AppState>, on: bool) -> Result<(), String> {
+    let slot = state.mpv.lock().await;
+    if let Some(m) = slot.as_ref() {
+        m.set_ui_fullscreen(on).await?;
     }
     Ok(())
 }
@@ -928,6 +944,7 @@ pub fn run() {
             player_set_visible,
             player_stop,
             mpv_toggle_pause,
+            mpv_set_ui_fullscreen,
             mpv_seek,
             mpv_set_volume,
             mpv_set_rate

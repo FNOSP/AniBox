@@ -37,6 +37,11 @@ pub struct MpvSession {
     pending: Arc<Mutex<HashMap<u64, std_mpsc::Sender<Value>>>>,
     next_id: Arc<AtomicU64>,
     pub pid: Arc<Mutex<Option<u32>>>,
+    /// [lc-093] 「App 全屏状态 → mpv fullscreen 属性」镜像的期望值。
+    /// 观测到的值与它相同 ⇒ 是我们自己写进去的 → 不再抛给前端（防回声死循环）。
+    /// 用「比对值」而非「布尔标记」：镜像值与当前值相同时 mpv 不发事件，残留的
+    /// 布尔标记会把之后一次真实的用户操作误吞。
+    fs_expect: Arc<Mutex<Option<bool>>>,
 }
 
 unsafe impl Send for MpvSession {}
@@ -113,12 +118,14 @@ impl MpvSession {
             Arc::new(Mutex::new(HashMap::new()));
         let next_id = Arc::new(AtomicU64::new(1));
         let pid_slot = Arc::new(Mutex::new(pid));
+        let fs_expect: Arc<Mutex<Option<bool>>> = Arc::new(Mutex::new(None));
         let session = Arc::new(MpvSession {
             embed_hwnd,
             tx: tx.clone(),
             pending: pending.clone(),
             next_id: next_id.clone(),
             pid: pid_slot.clone(),
+            fs_expect: fs_expect.clone(),
         });
 
         // ── 3) 读线程：事件 → tauri emit；回包 → 唤醒等待者
@@ -131,6 +138,7 @@ impl MpvSession {
                 .ok_or_else(|| "IPC 管道复制失败".to_string())?;
             let app2 = app.clone();
             let pending2 = pending.clone();
+            let fs_expect2 = fs_expect.clone();
             std::thread::spawn(move || {
                 let first_event = std::sync::atomic::AtomicBool::new(true);
                 let reader = BufReader::new(read_file);
@@ -158,17 +166,21 @@ impl MpvSession {
                         continue;
                     };
                     if id == 6 {
-                        // fullscreen：mpv 是 wid 子窗，让它自己全屏会把画面搞乱 →
-                        // 立刻复位为 no（直写管道，不等回包），并把请求抛给前端去全屏 Tauri 窗口
-                        if v.get("data").and_then(|d| d.as_bool()) == Some(true) {
-                            let _ = app2.emit("mpv-fullscreen", json!({ "on": true }));
-                            let mut g = tx.lock().unwrap();
-                            if let Some(f) = g.as_mut() {
-                                let _ = f.write_all(
-                                    b"{\"command\":[\"set\",\"fullscreen\",\"no\"]}\n",
-                                );
-                                let _ = f.flush();
-                            }
+                        // [lc-093] fullscreen 现在承载两件事：① App 形态（内嵌/全页）的镜像；
+                        // ② uosc 底栏双形态的判据（uosc 用 mp.get_property_bool('fullscreen')
+                        //    决定显示「极简组」还是「完整组」，见 portable_config/script-opts/uosc.conf）。
+                        // 嵌入窗（--wid）下 mpv 的 update_fullscreen_state 会 early-return，
+                        // 所以改这个属性只是状态标记，不会动窗口几何（已实测：几何不变）。
+                        let on = v.get("data").and_then(|d| d.as_bool()).unwrap_or(false);
+                        let mirrored = {
+                            let mut g = fs_expect2.lock().unwrap();
+                            let hit = *g == Some(on);
+                            *g = None; // 命中与否都清掉，避免过期期望吞掉后续的真实用户操作
+                            hit
+                        };
+                        if !mirrored {
+                            // 用户从 mpv 侧（按键 / uosc 全屏按钮）改的 → 抛给前端切「内嵌 ↔ 全页 + 窗口全屏」
+                            let _ = app2.emit("mpv-fullscreen", json!({ "on": on }));
                         }
                         continue;
                     }
@@ -257,6 +269,20 @@ impl MpvSession {
     /// 停止播放（回 idle），实例保留
     pub async fn stop(&self) -> Result<(), String> {
         self.command(json!(["stop"])).await.map(|_| ())
+    }
+
+    /// [lc-093] 把 App 形态（内嵌=false / 全页全屏=true）镜像到 mpv 的 `fullscreen` 属性。
+    /// 该属性是 uosc 底栏「极简 / 完整」双形态的判据；嵌入窗下它只是状态标记，不动窗口几何。
+    /// 写入前先记下期望值，观测线程据此识别「这是自己写的」而不回声给前端。
+    pub async fn set_ui_fullscreen(&self, on: bool) -> Result<(), String> {
+        *self.fs_expect.lock().unwrap() = Some(on);
+        let r = self
+            .command(json!(["set", "fullscreen", if on { "yes" } else { "no" }]))
+            .await;
+        if r.is_err() {
+            *self.fs_expect.lock().unwrap() = None; // 写失败 → 清掉期望，别吞后续真实事件
+        }
+        r.map(|_| ())
     }
 
     /// 退出 mpv 并销毁内嵌子窗

@@ -1207,14 +1207,34 @@ function PlayerView({
     };
   }, []);
 
+  // [lc-091] 收尾防抖：React18 StrictMode（main.tsx 开着）与快速重挂载会「setup→cleanup→setup」，
+  // 旧写法在 cleanup 里立刻 player_set_visible(false)+player_stop，会把刚建立的播放状态打掉 ——
+  // 后端拿到 6 条并发命令（true/play/false/stop/true/play），最终状态取决于完成顺序，
+  // 一旦停在 false 洞就被清除且不会恢复 → 视频被 WebView 盖住，只剩「正在拉起 mpv…」。
+  // 现在把收尾延后 150ms：期间若重新 setup 就取消，等于"重挂载不打断播放"。
+  const teardownRef = useRef<number | null>(null);
   useEffect(() => {
+    if (teardownRef.current) {
+      window.clearTimeout(teardownRef.current);
+      teardownRef.current = null;
+    }
     invoke("player_set_visible", { visible: true }).catch(() => {});
     invoke("play_item", { guid: item.guid }).catch((e) => setErr(String(e)));
     return () => {
-      invoke("player_set_visible", { visible: false }).catch(() => {});
-      invoke("player_stop").catch(() => {});
+      teardownRef.current = window.setTimeout(() => {
+        teardownRef.current = null;
+        invoke("player_set_visible", { visible: false }).catch(() => {});
+        invoke("player_stop").catch(() => {});
+      }, 150);
     };
   }, [item.guid]);
+
+  // [lc-093] 把「内嵌小窗 / 全页全屏」形态镜像到 mpv 的 fullscreen 属性 ——
+  // uosc 用它当底栏双形态判据：小窗只留 播放暂停+上下一集 | 时间 | 全屏；全屏保持原样。
+  // 单点驱动（只认 embedded），mpv 侧的回声由后端 fs_expect 吞掉，不会循环。
+  useEffect(() => {
+    invoke("mpv_set_ui_fullscreen", { on: !embedded }).catch(() => {});
+  }, [embedded]);
 
   // 全屏请求（mpv 侧事件 / 页面双击舞台）：内嵌形态 ↔ 全页形态 + 窗口全屏
   useEffect(() => {

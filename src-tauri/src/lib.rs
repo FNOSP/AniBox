@@ -485,6 +485,82 @@ async fn relogin(app: &AppHandle, cfg: &Config) -> Result<Config, String> {
     Ok(c)
 }
 
+
+/// [lc-105] 解析「真正要拉流的 guid」：`POST /v/api/v1/play/info {item_guid}` → 取回 `data.guid`
+/// （Episode/Movie）。**mpv 路径与页面内 `<video>` 路径共用这一份**（lc-102/103 实测结论：
+/// 代理只认具体媒体的 guid，给容器 guid 会 500）。会话失效时会用保存的密码静默重登一次。
+async fn resolve_play_guid(
+    app: &AppHandle,
+    state: &AppState,
+    cfg: &mut Config,
+    guid: &str,
+) -> Result<(String, String), String> {
+    let client = fnapi::new_client();
+    let body = || json!({ "item_guid": guid });
+    let mut probe = client
+        .call(&cfg.server, "/v/api/v1/play/info", "POST", &cfg.token, Some(body()))
+        .await;
+    if probe.is_err() && !cfg.password.is_empty() {
+        libmpv::trace("[play/info] 失败，尝试用保存的密码静默重登后重试");
+        match relogin(app, cfg).await {
+            Ok(fresh) => {
+                *state.config.write().await = fresh.clone();
+                *cfg = fresh;
+                probe = client
+                    .call(&cfg.server, "/v/api/v1/play/info", "POST", &cfg.token, Some(body()))
+                    .await;
+            }
+            Err(e) => libmpv::trace(&format!("[play/info] 重登失败: {e}")),
+        }
+    }
+    match probe {
+        Ok(info) => {
+            let t = info.get("type").and_then(|x| x.as_str()).unwrap_or("");
+            let mut g = guid.to_string();
+            if let Some(x) = info.get("guid").and_then(|x| x.as_str()) {
+                if !x.is_empty() {
+                    g = x.to_string();
+                }
+            }
+            libmpv::trace(&format!("[play/info] ok type={t} 原始={guid} → 拉流用={g}"));
+            if matches!(t, "TV" | "Season" | "Collection" | "Directory" | "Folder") {
+                return Err(format!(
+                    "「{t}」没有可播放的具体媒体 —— 请在选集里点具体一集再播放"
+                ));
+            }
+            Ok((g, t.to_string()))
+        }
+        Err(e) => {
+            libmpv::trace(&format!("[play/info] 失败: {e}"));
+            Err(format!("获取播放信息失败：{e}"))
+        }
+    }
+}
+
+/// [lc-105] **页面内播放（B站/爱奇艺式真内嵌）**的直链 + 元信息。
+/// 前端把返回的 url 直接喂给页面里的 `<video>` —— 视频成为 DOM 的一部分：
+/// 随页面滚动/圆角/裁剪，HTML 控件随便盖，没有窗口套窗口、没有挖洞。
+/// 代理吐的是标准 HTTP MP4 且支持 Range（lc-103 修好 guid 之后实测），浏览器可直接播。
+/// 浏览器不支持的容器（MKV 等）由前端 onError 回退到 mpv 路径。
+#[tauri::command]
+async fn player_source(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    guid: String,
+) -> Result<Value, String> {
+    let mut cfg = state.config.read().await.clone();
+    if cfg.token.is_empty() {
+        return Err("未登录".into());
+    }
+    proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
+    let (play_guid, t) = resolve_play_guid(&app, &state, &mut cfg, &guid).await?;
+    Ok(json!({
+        "url": proxy::play_url(&cfg, &play_guid),
+        "guid": play_guid,
+        "type": t,
+    }))
+}
+
 #[tauri::command]
 async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> Result<(), String> {
     let mut cfg = state.config.read().await.clone();
@@ -502,47 +578,7 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     // 主仓库正是这么绕的：media.ts 先 `getPlayInfo(id)`，再拿 `response.data.guid` 去 getProxyUrl。
     // 所以这里必须**用解析后的 guid** 去拼代理 URL —— 这是"拉取半天没反应/加载出错"的唯一原因。
     let _ = app.emit("mpv-load", json!({ "phase": "start" }));
-    let client = fnapi::new_client();
-    let probe_body = || json!({ "item_guid": guid });
-    let mut probe = client
-        .call(&cfg.server, "/v/api/v1/play/info", "POST", &cfg.token, Some(probe_body()))
-        .await;
-    if probe.is_err() && !cfg.password.is_empty() {
-        libmpv::trace("[play/info] 失败，尝试用保存的密码静默重登后重试");
-        match relogin(&app, &cfg).await {
-            Ok(fresh) => {
-                *state.config.write().await = fresh.clone();
-                cfg = fresh;
-                probe = client
-                    .call(&cfg.server, "/v/api/v1/play/info", "POST", &cfg.token, Some(probe_body()))
-                    .await;
-            }
-            Err(e) => libmpv::trace(&format!("[play/info] 重登失败: {e}")),
-        }
-    }
-    let mut play_guid = guid.clone();
-    match probe {
-        Ok(info) => {
-            let t = info.get("type").and_then(|x| x.as_str()).unwrap_or("");
-            if let Some(g) = info.get("guid").and_then(|x| x.as_str()) {
-                if !g.is_empty() {
-                    play_guid = g.to_string();
-                }
-            }
-            libmpv::trace(&format!(
-                "[play/info] ok type={t} 原始={guid} → 拉流用={play_guid}"
-            ));
-            if matches!(t, "TV" | "Season" | "Collection" | "Directory" | "Folder") {
-                return Err(format!(
-                    "「{t}」没有可播放的具体媒体 —— 请在选集里点具体一集再播放"
-                ));
-            }
-        }
-        Err(e) => {
-            libmpv::trace(&format!("[play/info] 失败: {e}"));
-            return Err(format!("获取播放信息失败：{e}"));
-        }
-    }
+    let (play_guid, _t) = resolve_play_guid(&app, &state, &mut cfg, &guid).await?;
 
     proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
 
@@ -1009,6 +1045,7 @@ pub fn run() {
             player_set_visible,
             player_stop,
             mpv_toggle_pause,
+            player_source,
             mpv_set_ui_fullscreen,
             mpv_seek,
             mpv_set_volume,

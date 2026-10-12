@@ -17,7 +17,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// 观察 id ↔ 属性名（前端 switch 依赖这些 id；6=fullscreen 只用于镜像到 Tauri 窗口）
 const OBSERVED: [(u64, &str); 9] = [
@@ -83,6 +83,9 @@ impl MpvSession {
             // 但加载失败时 mpv 会自动跑 `ytdl_hook/on_load_fail`（实测会去叫 yt-dlp，白折腾 0.3s+
             // 并污染日志）。关掉让失败路径干净。
             "--ytdl=no".to_string(),
+            // [lc-105] mpv 的 Windows 默认是 --player-operation-mode=pseudo-gui，它自带
+            // 「拖画面移动窗口」→ 用户反馈"能随意在坑里拖动"。嵌入场景一律关掉。
+            "--window-dragging=no".to_string(),
             format!("--log-file={}", log_path.to_string_lossy()),
         ];
         let q = '\'';
@@ -262,7 +265,18 @@ impl MpvSession {
                         json!({ "event": "property-change", "id": id, "data": v.get("data").cloned().unwrap_or(Value::Null) }),
                     );
                 }
-                crate::libmpv::trace("IPC 读线程结束（mpv 退出或管道断开）");
+                // [lc-104] mpv 退出（关窗 / 崩溃 / 被杀）→ **必须**隐藏宿主窗并撤洞。
+                // 否则页面里会留下一个"坑"：洞还在挖，但宿主窗后面没人画（子窗消失后不会自动擦底），
+                // 于是透出主窗的亚克力浅色底 —— 就是用户报的「把 mpv 窗口关闭后那里直接是个坑」。
+                crate::libmpv::trace("IPC 读线程结束（mpv 退出或管道断开）→ 隐藏宿主窗并撤洞");
+                let app3 = app2.clone();
+                let _ = app3.clone().run_on_main_thread(move || {
+                    let st = app3.state::<crate::AppState>();
+                    if let Some(eh) = *st.embed_hwnd.lock().unwrap() {
+                        crate::win_embed::set_visible(eh, false);
+                    }
+                    crate::apply_cutout(&app3, &st, true);
+                });
             });
         }
 

@@ -1156,6 +1156,36 @@ function PlayerView({
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const [err, setErr] = useState("");
+  // [lc-105] 页面内播放（B站/爱奇艺式真内嵌）：优先把代理直链交给页面里的 <video>，
+  // 视频成为 DOM 的一部分（随滚动/圆角/裁剪，HTML 控件随便盖，无窗口套窗口、无挖洞）。
+  // 浏览器播不了的容器（MKV/HEVC 等）→ onError → htmlFailed → 自动回退到 mpv 路径。
+  // 想强制用 mpv：localStorage["fntv-player"]="mpv"。
+  const [htmlSrc, setHtmlSrc] = useState<string | null>(null);
+  const [htmlFailed, setHtmlFailed] = useState(false);
+  const FORCE_MPV =
+    typeof localStorage !== "undefined" && localStorage.getItem("fntv-player") === "mpv";
+  const htmlMode = !FORCE_MPV && !!htmlSrc && !htmlFailed;
+  useEffect(() => {
+    let alive = true;
+    setHtmlSrc(null);
+    setHtmlFailed(false);
+    if (FORCE_MPV) return;
+    invoke<{ url: string; guid: string }>("player_source", { guid: item.guid })
+      .then((r) => {
+        if (alive && r && r.url) setHtmlSrc(r.url);
+        else if (alive) setHtmlFailed(true);
+      })
+      .catch((e) => {
+        if (alive) {
+          setHtmlFailed(true);
+          setErr(String(e));
+        }
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.guid]);
   // [lc-101] 加载阶段状态机：把"半天没反应"变成可见进度，并让加载失败真正显示出来。
   // 之前只认 duration(id=2)：等不到就永远停在「正在拉起 mpv…」；而 mpv 的失败信息全在
   // start-file / file-loaded / end-file 事件里 —— 后端 lc-101 已把它们转成下面两个应用事件。
@@ -1300,6 +1330,11 @@ function PlayerView({
       window.clearTimeout(teardownRef.current);
       teardownRef.current = null;
     }
+    // [lc-105] 页面内播放模式：不显示 mpv 宿主窗（否则页面里会留一个"坑"）
+    if (htmlMode) {
+      invoke("player_set_visible", { visible: false }).catch(() => {});
+      return;
+    }
     invoke("player_set_visible", { visible: true }).catch(() => {});
     invoke("play_item", { guid: item.guid }).catch((e) => setErr(String(e)));
     return () => {
@@ -1309,7 +1344,7 @@ function PlayerView({
         invoke("player_stop").catch(() => {});
       }, 150);
     };
-  }, [item.guid]);
+  }, [item.guid, htmlMode]);
 
   // [lc-093] 把「内嵌小窗 / 全页全屏」形态镜像到 mpv 的 fullscreen 属性 ——
   // uosc 用它当底栏双形态判据：小窗只留 播放暂停+上下一集 | 时间 | 全屏；全屏保持原样。
@@ -1384,9 +1419,19 @@ function PlayerView({
         className="player-stage"
         ref={stageRef}
       >
-        {err && <div className="err player-err">{err}</div>}
-        {!err && mpvErr && <div className="err player-err">{mpvErr}</div>}
-        {!err && !mpvErr && phase !== "playing" && (
+        {htmlMode && (
+          <video
+            className="player-video"
+            src={htmlSrc ?? undefined}
+            controls
+            autoPlay
+            playsInline
+            onError={() => setHtmlFailed(true)}
+          />
+        )}
+        {!htmlMode && err && <div className="err player-err">{err}</div>}
+        {!htmlMode && !err && mpvErr && <div className="err player-err">{mpvErr}</div>}
+        {!htmlMode && !err && !mpvErr && phase !== "playing" && (
           <div className="player-loading">
             {phase === "buffering"
               ? `缓冲中…（已等待 ${waited}s）`

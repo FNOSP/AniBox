@@ -2174,3 +2174,12 @@ button:active {
 .tmdb-cast-role {
   color: var(--text-2);
 }
+
+/* [lc-105] 页面内播放器（B站/爱奇艺式真内嵌）：视频是 DOM 的一部分，不占原生窗口 */
+.player-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #000;
+  object-fit: contain;
+}

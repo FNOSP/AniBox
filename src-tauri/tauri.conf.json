@@ -20,7 +20,8 @@
         "decorations": false,
         "transparent": true,
         "visible": false,
-        "shadow": false
+        "shadow": false,
+        "additionalBrowserArgs": "--autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI"
       }
     ],
     "security": {

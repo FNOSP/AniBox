@@ -682,10 +682,15 @@ pub fn run() {
                     }
                 }
             }
-            // dev 期开 DevTools 诊断口（9222），供外部 CDP 检查 DOM；正式打包不受影响（debug_assertions）
+            // dev 期开 DevTools（9222）：**改为按需开启**，不再每次启动都弹（用户反馈）。
+// 需要时用 `set FNTV_DEVTOOLS=1` 再跑 dev.cmd，或运行时在窗口里按 F12 / Ctrl+Shift+I。
+// [lc-115] 原来是无条件 open_devtools()，每次 dev 启动都会弹一个开发者工具窗。
             #[cfg(debug_assertions)]
-            if let Some(wv) = app.get_webview_window("main") {
-                let _ = wv.open_devtools();
+            if std::env::var("FNTV_DEVTOOLS").ok().as_deref() == Some("1") {
+                if let Some(wv) = app.get_webview_window("main") {
+                    let _ = wv.open_devtools();
+                    libmpv::trace("DevTools 已开启（FNTV_DEVTOOLS=1）");
+                }
             }
             // SWCA 动态模糊 + 窗口级圆角（默认浅色 tint；主题切换由前端 set_acrylic_tint 更新）
             #[cfg(target_os = "windows")]

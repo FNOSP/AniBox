@@ -1221,6 +1221,16 @@ html.dark .meta-rating {
   padding: 10px 16px 8px;
   flex-shrink: 0;
 }
+
+/* [lc-096] 全页/全屏形态下**隐藏顶条**：它占掉 36px 会把视频区变成 2195x1199(1.831)，
+   而 16:9 视频是 1.778 → 必然在左右留黑边，加上顶部这条黑带，观感就是"不是真全屏"。
+   让出这 36px 后视频区 = 整窗(2195x1235 = 1.7774 ≈ 16:9) → 满屏零黑边。
+   退出全屏仍有三条路：ESC（mpv 默认绑定 → 属性变化回传前端）、uosc 底栏的全屏按钮、双击画面。
+   （若将来想在满屏画面上保留 返回/标题，正道是用 uosc 的 top_bar 由 mpv 侧绘制 —— 页面 HTML 会被
+   挖洞裁掉，盖不到视频上。） */
+.player-page .player-topbar {
+  display: none;
+}
 .player-topbar .player-title {
   font-size: 14px;
   color: var(--muted);

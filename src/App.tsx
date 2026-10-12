@@ -81,16 +81,6 @@ function pick(o: Record<string, unknown>, keys: string[]): any {
   return undefined;
 }
 
-function fmtTime(sec: number | null | undefined): string {
-  if (!sec || !isFinite(sec)) return "--:--";
-  const s = Math.floor(sec % 60);
-  const m = Math.floor(sec / 60);
-  const h = Math.floor(m / 60);
-  const mm = String(m % 60).padStart(2, "0");
-  const ss = String(s).padStart(2, "0");
-  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
-}
-
 /** 时长口语化（原版剧集行样式）：1420 → 「23 分钟 40 秒」 */
 function fmtDur(sec: number | null | undefined): string {
   if (!sec || !isFinite(sec) || sec <= 0) return "";
@@ -1148,35 +1138,15 @@ function TmdbExtra({ tmdb }: { tmdb: Record<string, unknown> }) {
 
 function PlayerView({ item, onBack, embedded }: { item: PlayTarget; onBack?: () => void; embedded?: boolean }) {
   const stageRef = useRef<HTMLDivElement>(null);
-  const [timePos, setTimePos] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [paused, setPaused] = useState(true);
-  const [speed, setSpeed] = useState(1);
-  const [volume, setVolume] = useState(100);
-  const [scrub, setScrub] = useState<number | null>(null);
   const [err, setErr] = useState("");
 
   useEffect(() => {
     const p = listen<MpvEvent>("mpv-event", (e) => {
       const ev = e.payload;
       if (ev.event !== "property-change") return;
-      switch (ev.id) {
-        case 1:
-          setTimePos(typeof ev.data === "number" ? ev.data : 0);
-          break;
-        case 2:
-          setDuration(typeof ev.data === "number" ? ev.data : 0);
-          break;
-        case 3:
-          setPaused(!!ev.data);
-          break;
-        case 4:
-          setSpeed(typeof ev.data === "number" ? ev.data : 1);
-          break;
-        case 5:
-          setVolume(typeof ev.data === "number" ? ev.data : 100);
-          break;
-      }
+      // 目前只需要 duration：用来区分「正在拉起 mpv…」与已起播
+      if (ev.id === 2) setDuration(typeof ev.data === "number" ? ev.data : 0);
     });
     return () => {
       p.then((f) => f());
@@ -1211,89 +1181,52 @@ function PlayerView({ item, onBack, embedded }: { item: PlayTarget; onBack?: () 
     };
   }, [item.guid]);
 
-  const shownTime = scrub ?? timePos;
+  // 底栏与播放交互全部交给 mpv 侧的 uosc（主仓库同款 portable_config）：画在视频画面内、
+  // 鼠标动才出现、静置自动隐藏 —— 不占页面布局，画面永不位移（lc-083）。
+  // uosc 的全屏请求走 mpv fullscreen 属性 → Rust 事件 mpv-fullscreen → 全屏 Tauri 窗口
+  useEffect(() => {
+    const p = listen<{ on: boolean }>("mpv-fullscreen", (e) => {
+      getCurrentWindow().setFullscreen(!!e.payload.on).catch(() => {});
+    });
+    return () => {
+      p.then((f) => f());
+    };
+  }, []);
+  // ESC 退全屏：mpv 的 ESC→set fullscreen no 在 wid 子窗下不触发（键盘焦点在页面上）
+  useEffect(() => {
+    const onKey = async (ev: KeyboardEvent) => {
+      if (ev.key === "Escape" && (await getCurrentWindow().isFullscreen())) {
+        await getCurrentWindow().setFullscreen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <div className={embedded ? "player-embed" : "player-page"}>
-      <div
-        className="player-stage"
-        ref={stageRef}
-        onDoubleClick={async () =>
-          await getCurrentWindow().setFullscreen(!(await getCurrentWindow().isFullscreen()))
-        }
-      >
+      {/* 全页播放器：细顶条放返回（底栏/交互在 mpv 的 uosc 里，页面只在视频区外放 UI，
+          避免任何布局变化导致画面位移） */}
+      {!embedded && (
+        <div className="player-topbar">
+          {onBack && (
+            <button className="back" onClick={onBack} title="返回上一页">
+              ‹ 返回
+            </button>
+          )}
+          <span className="player-title">
+            {item.tvTitle ? `${item.tvTitle} · ` : ""}
+            {item.title}
+          </span>
+        </div>
+      )}
+      <div className="player-stage" ref={stageRef}>
         {err && <div className="err player-err">{err}</div>}
         {!duration && !err && <div className="player-loading">正在拉起 mpv…</div>}
-      </div>
-      <div className="control-bar">
-        <div className="seek-row">
-          <span className="time">{fmtTime(shownTime)}</span>
-          <input
-            type="range"
-            min={0}
-            max={duration || 100}
-            step={1}
-            value={shownTime}
-            onInput={(e) => setScrub(Number((e.target as HTMLInputElement).value))}
-            onPointerUp={(e) => {
-              const v = Number((e.target as HTMLInputElement).value);
-              setScrub(null);
-              invoke("mpv_seek", { seconds: v, absolute: true }).catch(() => {});
-            }}
-            disabled={!duration}
-          />
-          <span className="time">{fmtTime(duration)}</span>
-        </div>
-        <div className="btn-row">
-          {!embedded && onBack && <button onClick={onBack}>‹ 返回</button>}
-          <button className="big" onClick={() => invoke("mpv_toggle_pause").catch(() => {})}>
-            {paused ? "▶" : "⏸"}
-          </button>
-          <button onClick={() => invoke("mpv_seek", { seconds: -10, absolute: false }).catch(() => {})}>
-            −10s
-          </button>
-          <button onClick={() => invoke("mpv_seek", { seconds: 30, absolute: false }).catch(() => {})}>
-            +30s
-          </button>
-          <span className="spacer" />
-          <span className="ctl-label">速度</span>
-          <select
-            value={speed}
-            onChange={(e) => invoke("mpv_set_rate", { rate: Number(e.target.value) }).catch(() => {})}
-          >
-            {[0.5, 0.75, 1, 1.25, 1.5, 2, 3].map((r) => (
-              <option key={r} value={r}>
-                {r}x
-              </option>
-            ))}
-          </select>
-          <span className="ctl-label">音量</span>
-          <input
-            type="range"
-            className="vol"
-            min={0}
-            max={130}
-            value={volume}
-            onChange={(e) => invoke("mpv_set_volume", { volume: Number(e.target.value) }).catch(() => {})}
-          />
-          <button
-            title="全屏"
-            onClick={async () =>
-              await getCurrentWindow().setFullscreen(!(await getCurrentWindow().isFullscreen()))
-            }
-          >
-            ⛶
-          </button>
-        </div>
-        <div className="now-playing">
-          {item.tvTitle ? `${item.tvTitle} · ` : ""}
-          {item.title}
-        </div>
       </div>
     </div>
   );
 }
-
 /* ────────────────────────── 侧栏（保留现有样式） ────────────────────────── */
 
 const SIDEBAR_CATS = [

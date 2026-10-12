@@ -21,12 +21,14 @@ unsafe impl Send for MpvSession {}
 unsafe impl Sync for MpvSession {}
 
 /// 观察 id ↔ 属性名（前端 PlayerView 的 switch 依赖这些 id）
-const OBSERVED: [(u64, &str, c_int); 5] = [
+const OBSERVED: [(u64, &str, c_int); 6] = [
     (1, "time-pos", libmpv::MPV_FORMAT_DOUBLE),
     (2, "duration", libmpv::MPV_FORMAT_DOUBLE),
     (3, "pause", libmpv::MPV_FORMAT_FLAG),
     (4, "speed", libmpv::MPV_FORMAT_DOUBLE),
     (5, "volume", libmpv::MPV_FORMAT_DOUBLE),
+    // 6：不走前端属性通道，只用于把 uosc 的全屏请求镜像到 Tauri 窗口（见事件线程）
+    (6, "fullscreen", libmpv::MPV_FORMAT_FLAG),
 ];
 
 impl MpvSession {
@@ -68,9 +70,7 @@ impl MpvSession {
             ("vo", "gpu-next"),
             ("hwdec", "auto-safe"),
             ("terminal", "no"),
-            ("osc", "no"),
-            ("input-default-bindings", "no"),
-            ("input-vo-keyboard", "no"),
+            // 注意：不再禁 osc/input —— 底栏与鼠标键盘交互交给主仓库 portable_config（uosc）
             ("force-window", "immediate"),
             ("idle", "yes"),
             ("keep-open", "yes"),
@@ -80,6 +80,26 @@ impl MpvSession {
             let k = CString::new(k).unwrap();
             let v = CString::new(v).unwrap();
             unsafe { (api.set_option_string)(h, k.as_ptr(), v.as_ptr()) };
+        }
+
+        // [lc-083] 复用主仓库 mpv 便携配置（uosc 底栏/菜单/fntv_* 脚本/字体/input.conf 原样）：
+        // libmpv 默认不读任何配置文件，必须显式 config=yes + config-dir 才会加载。
+        // 与主仓库 mpv.exe（同目录 portable_config 自动生效）行为对齐；显式 API 选项优先于配置文件。
+        let portable = std::path::Path::new(&dll_dir).join("portable_config");
+        if portable.is_dir() {
+            let dir = portable.to_string_lossy().replace('\\', "/");
+            for (k, v) in [
+                ("config", "yes".to_string()),
+                ("config-dir", dir),
+                // libmpv 默认不自动加载 scripts/ 目录（与 mpv.exe 不同）——显式打开，
+                // 否则 uosc 底栏/菜单以及 fntv_* 脚本全都不生效
+                ("load-scripts", "yes".to_string()),
+            ] {
+                let k = CString::new(k).unwrap();
+                let v = CString::new(v).unwrap();
+                unsafe { (api.set_option_string)(h, k.as_ptr(), v.as_ptr()) };
+            }
+            libmpv::trace(&format!("portable_config enabled: {}", portable.display()));
         }
 
         // 诊断开关（免重编译 A/B，lc-082 攻视频输出崩溃用）：
@@ -136,7 +156,9 @@ impl MpvSession {
         let app2 = app.clone();
         let sess_for_api = session.clone();
         let sess2 = session.clone();
-        std::thread::spawn(move || loop {
+        std::thread::spawn(move || {
+            let mut fs_reset = false; // 上一次 fullscreen=yes 是我们自己复位的（吞掉随之而来的 false）
+            loop {
             let h = sess2.handle();
             if h.is_null() {
                 break;
@@ -178,10 +200,34 @@ impl MpvSession {
                     }
                 }
             };
+
+            // fullscreen（id 6）：mpv 是 wid 子窗口，让它自己全屏会把画面搞乱 ——
+            // 收到 uosc/双击的全屏请求后立刻复位 mpv 的 fullscreen，改为把事件抛给前端
+            // 去全屏 Tauri 窗口；我们自己复位产生的那次 false 事件要吞掉（fs_reset 标记）
+            if *id == 6 {
+                if data == json!(true) {
+                    fs_reset = true;
+                    let _ = app2.emit("mpv-fullscreen", json!({ "on": true }));
+                    let args: Vec<CString> = ["set", "fullscreen", "no"]
+                        .iter()
+                        .map(|s| CString::new(s.as_bytes().to_vec()).unwrap())
+                        .collect();
+                    let mut ptrs: Vec<*mut c_char> =
+                        args.iter().map(|c| c.as_ptr() as *mut c_char).collect();
+                    ptrs.push(std::ptr::null_mut());
+                    unsafe { (api.command)(h, ptrs.as_mut_ptr()) };
+                } else if fs_reset {
+                    fs_reset = false;
+                } else {
+                    let _ = app2.emit("mpv-fullscreen", json!({ "on": false }));
+                }
+                continue;
+            }
             let _ = app2.emit(
                 "mpv-event",
                 json!({ "event": "property-change", "id": id, "data": data }),
             );
+            }
         });
 
         Ok(session)

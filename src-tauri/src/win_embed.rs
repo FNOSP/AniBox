@@ -8,30 +8,20 @@ use std::sync::OnceLock;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, SetWindowPos, ShowWindow,
-    CS_HREDRAW, CS_VREDRAW, HWND_TOP, HTTRANSPARENT, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SWP_SHOWWINDOW, SW_HIDE, SW_SHOW, WM_NCHITTEST, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
-    WS_VISIBLE,
+    CS_HREDRAW, CS_VREDRAW, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+    SW_HIDE, SW_SHOW, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 
 static CLASS_REGISTERED: OnceLock<()> = OnceLock::new();
 const CLASS_NAME: &str = "FntvMpvHost\0";
 
-/// 鼠标穿透：窗口置于 WebView 之上，但命中测试返回 HTTRANSPARENT，
-/// 让悬停/点击/双击（如舞台双击全屏）继续由下方页面处理。
-unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    if msg == WM_NCHITTEST {
-        return HTTRANSPARENT as LRESULT;
-    }
-    unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
-}
-
 fn ensure_class() {
     CLASS_REGISTERED.get_or_init(|| unsafe {
         let cls: Vec<u16> = CLASS_NAME.encode_utf16().collect();
         let wc = WNDCLASSW {
             style: CS_HREDRAW | CS_VREDRAW,
-            lpfnWndProc: Some(wndproc),
+            lpfnWndProc: Some(DefWindowProcW),
             cbClsExtra: 0,
             cbWndExtra: 0,
             hInstance: GetModuleHandleW(std::ptr::null()),
@@ -72,8 +62,9 @@ pub fn create_child(parent_hwnd: isize) -> isize {
 ///
 /// lc-082 实测：WebView2 窗口化承载时其渲染子窗（Chrome_WidgetWin_*/Intermediate D3D Window）
 /// 始终盖在同一父窗口的兄弟子窗上，页面再怎么透明也透不出「下面的」自定义子窗口
-/// （页面隐藏后视频仍不可见）。因此 mpv 窗口必须置于 WebView **之上**；
-/// 配合 WM_NCHITTEST=HTTRANSPARENT 鼠标穿透，页面照常收到悬停/点击事件。
+/// （页面隐藏后视频仍不可见）。因此 mpv 窗口必须置于 WebView **之上**。
+/// lc-083：不再做鼠标穿透（HTTRANSPARENT）——底栏/交互交给 mpv 侧的 uosc（主仓库同款），
+/// uosc 需要鼠标事件（左键暂停、双击全屏、右键菜单、悬停出底栏）。
 pub fn set_bounds(hwnd: isize, x: i32, y: i32, w: i32, h: i32) {
     unsafe {
         SetWindowPos(

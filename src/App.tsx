@@ -814,9 +814,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [seasonIdx, setSeasonIdx] = useState(0);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
-  const [detailPlay, setDetailPlay] = useState<PlayTarget | null>(null);
   // [lc-085] 视频全屏（mpv 双击/全屏键触发）：内嵌形态 ↔ 全页播放器形态 + 窗口全屏
-  const [playBig, setPlayBig] = useState(false);
   const [tmdb, setTmdb] = useState<Record<string, unknown> | null>(null);
   const [err, setErr] = useState("");
 
@@ -915,13 +913,23 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   const resumeAt = base.ts && base.duration && base.ts > 0 && base.ts < base.duration;
 
 
-  const startPlay = () => {
+  // [lc-106] 独立 mpv 窗口模式：点播放直接拉起独立 mpv（与主仓库一致），页面留在详情页
+  const [playNote, setPlayNote] = useState("");
+  const [playing, setPlaying] = useState(false);
+  const [playingGuid, setPlayingGuid] = useState<string | null>(null);
+  const startPlay = async () => {
     const ep = episodes[0];
-    setDetailPlay(
-      isSeries && ep
-        ? { guid: ep.guid, title: ep.title, tvTitle: title }
-        : { guid: base.guid, title: base.title, tvTitle: title },
-    );
+    const guid = isSeries && ep ? ep.guid : base.guid;
+    setPlaying(true);
+    setPlayNote("正在打开独立播放器…");
+    try {
+      await invoke("play_item", { guid });
+      setPlayNote("已在独立播放器窗口播放（可回到本页继续浏览）");
+    } catch (e) {
+      setPlayNote(String(e));
+    } finally {
+      setPlaying(false);
+    }
   };
 
   return (
@@ -936,19 +944,13 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
       <div className="detail-cols">
         <div className="detail-left">
           {err && <div className="err">{err}</div>}
-          {detailPlay ? (
-            <PlayerView
-              item={detailPlay}
-              embedded={!playBig}
-              onBig={setPlayBig}
-              onBack={() => setPlayBig(false)}
-            />
-          ) : (
-            <div className="player-cover" onClick={startPlay}>
-              {backdrop ? <img src={imgUrl(backdrop)} alt={title} /> : <div className="poster-empty">🎬</div>}
-              <button className="big-play">▶ {resumeAt ? "续播" : "播放"}</button>
-            </div>
-          )}
+          {playNote && <div className="err player-err">{playNote}</div>}
+          <div className="player-cover" onClick={playing ? undefined : startPlay}>
+            {backdrop ? <img src={imgUrl(backdrop)} alt={title} /> : <div className="poster-empty">🎬</div>}
+            <button className="big-play" disabled={playing}>
+              {playing ? "⏳ 打开中…" : `▶ ${resumeAt ? "续播" : "播放"}`}
+            </button>
+          </div>
           <div className="tmdb-card">
             <div className="tmdb-poster">
               {poster ? <img src={imgUrl(poster)} alt={title} /> : <div className="poster-empty">🎬</div>}
@@ -992,14 +994,15 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                   ep.episode_number != null
                     ? `第 ${ep.episode_number} 集${ep.title ? `. ${ep.title}` : ""}`
                     : ep.title || "未命名剧集";
-                const playing = detailPlay?.guid === ep.guid;
+                const playing = playingGuid === ep.guid;
                 return (
                   <div
                     key={ep.guid}
                     className={`ep-row${playing ? " playing" : ""}`}
-                    onClick={() =>
-                      setDetailPlay({ guid: ep.guid, title: ep.title, tvTitle: title })
-                    }
+                    onClick={() => {
+                      setPlayingGuid(ep.guid);
+                      invoke("play_item", { guid: ep.guid }).catch((e) => setErr(String(e)));
+                    }}
                   >
                     <div className="ep-thumb">
                       {ep.poster ? (

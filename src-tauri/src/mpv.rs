@@ -1,4 +1,4 @@
-//! mpv 会话：**独立 mpv.exe 进程** + `--wid` 内嵌我们的子窗 + 命名管道 IPC（lc-087 定案）。
+//! mpv 会话：**独立 mpv.exe 进程 + 独立窗口**（lc-106：不再 --wid 内嵌，与主仓库一致）+ 命名管道 IPC。
 //!
 //! 为什么放弃进程内 libmpv（lc-080~086 的教训）：libmpv 内嵌(wid)模式下 mpv 不跑自己的消息循环 →
 //! 既不处理鼠标/键盘、也永远不置 `mouse-pos.hover` → uosc/OSC 底栏、悬停交互、右键菜单全废，
@@ -17,7 +17,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 /// 观察 id ↔ 属性名（前端 switch 依赖这些 id；6=fullscreen 只用于镜像到 Tauri 窗口）
 const OBSERVED: [(u64, &str); 9] = [
@@ -34,7 +34,6 @@ const OBSERVED: [(u64, &str); 9] = [
 ];
 
 pub struct MpvSession {
-    pub embed_hwnd: isize,
     /// IPC 写端（JSON 行）
     tx: Arc<Mutex<Option<std::fs::File>>>,
     /// request_id → 回包等待者
@@ -57,23 +56,14 @@ fn pipe_path(name: &str) -> String {
 
 impl MpvSession {
     /// 拉起独立 mpv 进程并连上 IPC（幂等：实例常驻，播放/停止只切播放状态）
-    pub async fn launch(
-        app: AppHandle,
-        mpv_path: &str,
-        embed_hwnd: isize,
-    ) -> Result<Arc<MpvSession>, String> {
+    pub async fn launch(app: AppHandle, mpv_path: &str) -> Result<Arc<MpvSession>, String> {
         let name = format!("fntv-tauri2-mpv-{}", std::process::id());
         let path = pipe_path(&name);
-        crate::libmpv::trace_reset(&format!(
-            "launch(mpv.exe) pid={} embed_hwnd={}",
-            std::process::id(),
-            embed_hwnd
-        ));
+        crate::libmpv::trace_reset(&format!("launch(mpv.exe) pid={}", std::process::id()));
 
         // ── 1) 启动 mpv.exe（pwsh 中转，-PassThru 拿 PID）
         let log_path = std::env::temp_dir().join("fntv-tauri2-mpv.log");
         let args = [
-            format!("--wid={}", embed_hwnd),
             format!("--input-ipc-server={}", path),
             "--idle=yes".to_string(),
             "--keep-open=yes".to_string(),
@@ -131,7 +121,6 @@ impl MpvSession {
         let pid_slot = Arc::new(Mutex::new(pid));
         let fs_expect: Arc<Mutex<Option<bool>>> = Arc::new(Mutex::new(None));
         let session = Arc::new(MpvSession {
-            embed_hwnd,
             tx: tx.clone(),
             pending: pending.clone(),
             next_id: next_id.clone(),
@@ -268,15 +257,8 @@ impl MpvSession {
                 // [lc-104] mpv 退出（关窗 / 崩溃 / 被杀）→ **必须**隐藏宿主窗并撤洞。
                 // 否则页面里会留下一个"坑"：洞还在挖，但宿主窗后面没人画（子窗消失后不会自动擦底），
                 // 于是透出主窗的亚克力浅色底 —— 就是用户报的「把 mpv 窗口关闭后那里直接是个坑」。
-                crate::libmpv::trace("IPC 读线程结束（mpv 退出或管道断开）→ 隐藏宿主窗并撤洞");
-                let app3 = app2.clone();
-                let _ = app3.clone().run_on_main_thread(move || {
-                    let st = app3.state::<crate::AppState>();
-                    if let Some(eh) = *st.embed_hwnd.lock().unwrap() {
-                        crate::win_embed::set_visible(eh, false);
-                    }
-                    crate::apply_cutout(&app3, &st, true);
-                });
+                // [lc-106] 独立窗口模式：mpv 自己的窗没了就是没了，无需处理页面上的"坑"。
+                crate::libmpv::trace("IPC 读线程结束（mpv 退出或管道断开）");
             });
         }
 
@@ -286,11 +268,6 @@ impl MpvSession {
                 .command(json!(["observe_property", id, prop]))
                 .await;
         }
-
-        // ── 5) [lc-089] 启用 mpv 自建子窗 —— mpv 在 --wid 嵌入时会主动 EnableWindow(0)，
-        // 而 Windows 命中测试跳过 disabled 窗口 → 鼠标永远进不了 mpv（点击全落到我们宿主窗）。
-        // mpv 建窗是异步的（VO 初始化后才出现），故轮询等待。详见 win_embed::enable_mpv_child。
-        crate::win_embed::spawn_enable_mpv_child(embed_hwnd, 75);
 
         Ok(session)
     }
@@ -378,6 +355,5 @@ impl MpvSession {
                 .await;
         }
         *self.tx.lock().unwrap() = None;
-        crate::win_embed::destroy(self.embed_hwnd);
     }
 }

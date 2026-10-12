@@ -86,6 +86,73 @@ pub fn trace(msg: &str) {
 ", msg).as_bytes()));
 }
 
+/// 每轮启动重建日志（truncate）——多轮 A/B 诊断不互相污染
+pub fn trace_reset(header: &str) {
+    let _ = std::fs::write(
+        std::env::temp_dir().join("fntv-libmpv.log"),
+        format!("=== {}
+", header),
+    );
+}
+
+/// 进程内 VEH 崩溃记录器：致命异常瞬间把 异常码/故障模块/偏移 写进诊断日志，
+/// 等价于崩溃转储的关键结论，无需外部调试器（本机无 cdb/procdump）。
+pub fn install_crash_logger() {
+    use windows_sys::Win32::System::Diagnostics::Debug::{
+        AddVectoredExceptionHandler, EXCEPTION_CONTINUE_SEARCH, EXCEPTION_POINTERS,
+    };
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleExW};
+
+    unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
+        if info.is_null() || unsafe { (*info).ExceptionRecord.is_null() } {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        let rec = unsafe { &*(*info).ExceptionRecord };
+        let code = rec.ExceptionCode as u32;
+        // 0xC0000005 AV / 0xC000001D 非法指令 / 0xC00000FD 栈溢出 / 0x80000003 int3 断言
+        if !matches!(code, 0xC000_0005 | 0xC000_001D | 0xC000_00FD | 0x8000_0003) {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        let addr = rec.ExceptionAddress as usize;
+        let (mut module, mut base) = (String::from("<unknown>"), 0usize);
+        let mut hmod: windows_sys::Win32::Foundation::HMODULE = std::ptr::null_mut();
+        // 0x4 FROM_ADDRESS | 0x2 UNCHANGED_REFCOUNT
+        if unsafe { GetModuleHandleExW(0x4 | 0x2, addr as *const u16, &mut hmod) } != 0 {
+            let mut buf = [0u16; 512];
+            let n = unsafe { GetModuleFileNameW(hmod, buf.as_mut_ptr(), buf.len() as u32) };
+            if n > 0 {
+                module = String::from_utf16_lossy(&buf[..n as usize]);
+            }
+            base = hmod as usize;
+        }
+        // AV 参数：ExceptionInformation[0] 0=read/1=write/8=exec，[1]=访问的地址
+        let detail = if code == 0xC000_0005 && rec.NumberParameters >= 2 {
+            let kind = match rec.ExceptionInformation[0] {
+                1 => "write",
+                8 => "exec",
+                _ => "read",
+            };
+            format!(" {} {:#x}", kind, rec.ExceptionInformation[1] as usize)
+        } else {
+            String::new()
+        };
+        trace(&format!(
+            "CRASH code={:#010x}{} at {:#x} in {} +{:#x}",
+            code,
+            detail,
+            addr,
+            module,
+            addr.wrapping_sub(base)
+        ));
+        EXCEPTION_CONTINUE_SEARCH
+    }
+
+    let handle = unsafe { AddVectoredExceptionHandler(1, Some(handler)) };
+    if handle.is_null() {
+        trace("CRASHLOGGER: AddVectoredExceptionHandler failed");
+    }
+}
+
 pub fn err_str(api: &Api, code: c_int) -> String {
     unsafe {
         let p = (api.error_string)(code);

@@ -901,7 +901,9 @@ h3 {
   flex-direction: column;
   border-radius: 14px;
   overflow: hidden;
-  background: #000;
+  /* 必须透明：mpv 是「webview 之下的兄弟子窗口」，视频靠页面透出；
+     此前的 #000 不透明底会把视频整块盖死（有声音无画面，lc-082 根因之一） */
+  background: transparent;
   flex-shrink: 0;
 }
 .player-embed .player-stage {
@@ -1172,10 +1174,8 @@ html.dark .meta-rating {
   text-align: center;
 }
 .control-bar {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  /* 视频窗口浮在 WebView 之上（lc-082：WebView2 窗口层不透出下方子窗口），
+     控制栏必须与舞台分离布局——原来全页播放器 absolute 贴底覆盖舞台，会被视频整条盖住 */
   background: rgba(12, 14, 21, 0.86);
   backdrop-filter: blur(20px);
   border-top: 1px solid var(--line);

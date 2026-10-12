@@ -384,6 +384,7 @@ async fn player_set_bounds(
     h: f64,
 ) -> Result<(), String> {
     let b = (x as i32, y as i32, w as i32, h as i32);
+    libmpv::trace(&format!("player_set_bounds {}x{}+{},{}", b.2, b.3, b.0, b.1));
     *state.bounds.lock().unwrap() = b;
     let slot = state.mpv.lock().await;
     if let Some(m) = slot.as_ref() {
@@ -407,7 +408,7 @@ async fn player_set_visible(
         on_main(&app, move || {
             win_embed::set_visible(eh, visible);
             if visible {
-                win_embed::keep_bottom(eh);
+                win_embed::keep_top(eh);
             }
         })?;
     }
@@ -557,6 +558,12 @@ mod winvisual {
     }
 }
 
+/// dev 诊断：eval 进来的 JS 用它把观测写回诊断日志（可视验证/自动化反馈通道）
+#[tauri::command]
+fn dev_log(msg: String) {
+    libmpv::trace(&format!("JS: {}", msg));
+}
+
 #[tauri::command]
 fn set_acrylic_tint(
     window: tauri::Window,
@@ -590,6 +597,9 @@ pub fn run() {
         })
 
         .setup(|app| {
+            // VEH 崩溃记录器：任意致命异常（D3D 视频输出崩因定位）写出异常码+故障模块+偏移，
+            // 落 %TEMP%/fntv-libmpv.log（lc-082 视频输出专项）
+            libmpv::install_crash_logger();
             // 启动时从磁盘读回配置（token/路径），否则每次重启都要重新登录
             let cfg = tauri::async_runtime::block_on(config::load(app.handle()));
             *app.state::<AppState>().config.blocking_write() = cfg;
@@ -634,10 +644,41 @@ pub fn run() {
                     let _ = win.set_focus();
                 }
             });
+            // dev 无人值守复现钩子（lc-082 视频输出崩溃专项）：FNTV_AUTOPLAY_TEST=<guid> 时
+            // 启动 5s 后直接走与前端相同的 play_item 真链路（含 bounds 预置），结果写诊断日志。
+            #[cfg(debug_assertions)]
+            if let Ok(guid) = std::env::var("FNTV_AUTOPLAY_TEST") {
+                let h3 = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
+                    libmpv::trace("AUTOPLAY: set bounds");
+                    match player_set_bounds(h3.clone(), h3.state::<AppState>(), 120.0, 120.0, 960.0, 540.0).await {
+                        Ok(_) => libmpv::trace("AUTOPLAY: play_item"),
+                        Err(e) => libmpv::trace(&format!("AUTOPLAY bounds err: {}", e)),
+                    }
+                    match play_item(h3.state::<AppState>(), h3.clone(), guid).await {
+                        Ok(_) => libmpv::trace("AUTOPLAY: play_item ok"),
+                        Err(e) => libmpv::trace(&format!("AUTOPLAY play_item err: {}", e)),
+                    }
+                });
+            }
+            // dev 诊断钩子：FNTV_EVAL_JS=<js> 启动 5s 后在主 webview 执行（配合 AUTOPLAY 做可视验证）
+            #[cfg(debug_assertions)]
+            if let Ok(js) = std::env::var("FNTV_EVAL_JS") {
+                let h4 = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
+                    if let Some(win) = h4.get_webview_window("main") {
+                        let _ = win.eval(&js);
+                        libmpv::trace("EVAL_JS executed");
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             set_acrylic_tint,
+            dev_log,
             tmdb::tmdb_show_details,
             get_config,
             save_config,

@@ -42,8 +42,14 @@ impl MpvSession {
             .unwrap_or_default();
         let api = libmpv::api(&dll_dir)?;
 
-        { let _ = std::fs::OpenOptions::new().create(true).append(true).open(std::env::temp_dir().join("fntv-libmpv.log")).and_then(|mut f| std::io::Write::write_all(&mut f, format!("{}
-", "step1: dll loaded, calling mpv_create").as_bytes())); }
+        // 本轮诊断日志重建：记录 pid + 开关组合（多轮 A/B 不互相污染）
+        let env_snapshot = ["FNTV_MPV_VO", "FNTV_MPV_HWDEC", "FNTV_MPV_GPUAPI", "FNTV_MPV_GPU_CTX", "FNTV_MPV_EXTRA"]
+            .iter()
+            .filter_map(|k| std::env::var(k).ok().map(|v| format!("{}={}", k, v)))
+            .collect::<Vec<_>>()
+            .join(" ");
+        libmpv::trace_reset(&format!("launch pid={} {}", std::process::id(), env_snapshot));
+        libmpv::trace("step1: dll loaded, calling mpv_create");
         let h = unsafe { (api.create)() };
         if h.is_null() {
             return Err("mpv_create 失败".into());
@@ -52,11 +58,15 @@ impl MpvSession {
         let wid_opt = CString::new(format!("{}", embed_hwnd)).unwrap();
         let wid_key = CString::new("wid").unwrap();
         unsafe { (api.set_option_string)(h, wid_key.as_ptr(), wid_opt.as_ptr()) };
+        // mpv 内部日志恒定写文件（主仓库同款），崩溃/异常时留现场
+        let mpv_log_path = std::env::temp_dir().join("fntv-mpv.log").to_string_lossy().to_string();
         for (k, v) in [
-            // ⚠ 已知问题（lc-081）：任何 D3D 视频输出（gpu-next/gpu/direct3d × wid/自建窗）在
-            // Tauri 进程内 access violation 崩溃（WebView2 --disable-gpu 也崩）——平台级冲突待专项。
-            // 暂用默认 vo=libmpv：解码/音频正常、无画面（应用稳定优先）。下轮攻 render API(GL) 或崩溃转储。
-
+            // D3D11 视频输出（lc-082 定案）：wid 子窗口 + gpu-next + d3d11va 硬解在本进程内完全正常
+            // （日志实证 first video frame shown）。此前「任何 D3D 输出都崩」是误判：
+            // 真因＝事件线程按预期格式解引用 data=NULL 的 property-change，Rust2024 的
+            // null 解引用前置检查 panic → 非 unwind abort（见下方事件循环注释）。
+            ("vo", "gpu-next"),
+            ("hwdec", "auto-safe"),
             ("terminal", "no"),
             ("osc", "no"),
             ("input-default-bindings", "no"),
@@ -65,22 +75,50 @@ impl MpvSession {
             ("idle", "yes"),
             ("keep-open", "yes"),
             ("volume", "100"),
+            ("log-file", mpv_log_path.as_str()),
         ] {
             let k = CString::new(k).unwrap();
             let v = CString::new(v).unwrap();
             unsafe { (api.set_option_string)(h, k.as_ptr(), v.as_ptr()) };
         }
 
-        { let _ = std::fs::OpenOptions::new().create(true).append(true).open(std::env::temp_dir().join("fntv-libmpv.log")).and_then(|mut f| std::io::Write::write_all(&mut f, format!("{}
-", format!("step2: wid set, calling initialize h={:?}", h)).as_bytes())); }
+        // 诊断开关（免重编译 A/B，lc-082 攻视频输出崩溃用）：
+        // FNTV_MPV_VO / FNTV_MPV_HWDEC / FNTV_MPV_GPUAPI / FNTV_MPV_GPU_CTX / FNTV_MPV_EXTRA("k=v;k=v")
+        let mut env_opts: Vec<(String, String)> = Vec::new();
+        for (env_k, opt_k) in [
+            ("FNTV_MPV_VO", "vo"),
+            ("FNTV_MPV_HWDEC", "hwdec"),
+            ("FNTV_MPV_GPUAPI", "gpu-api"),
+            ("FNTV_MPV_GPU_CTX", "gpu-context"),
+        ] {
+            if let Ok(v) = std::env::var(env_k) {
+                env_opts.push((opt_k.to_string(), v));
+            }
+        }
+        if let Ok(v) = std::env::var("FNTV_MPV_EXTRA") {
+            for pair in v.split(';').filter(|s| !s.trim().is_empty()) {
+                if let Some((k, val)) = pair.split_once('=') {
+                    env_opts.push((k.trim().to_string(), val.trim().to_string()));
+                }
+            }
+        }
+        for (k, v) in &env_opts {
+            let k = CString::new(k.as_str()).unwrap();
+            let v = CString::new(v.as_str()).unwrap();
+            unsafe { (api.set_option_string)(h, k.as_ptr(), v.as_ptr()) };
+        }
+        if !env_opts.is_empty() {
+            libmpv::trace(&format!("env opts applied: {:?}", env_opts));
+        }
+
+        libmpv::trace(&format!("step2: options set, calling initialize h={:?}", h));
         let err = unsafe { (api.initialize)(h) };
         if err != 0 {
             unsafe { (api.terminate_destroy)(h) };
             return Err(format!("mpv_initialize 失败: {}", libmpv::err_str(api, err)));
         }
 
-        { let _ = std::fs::OpenOptions::new().create(true).append(true).open(std::env::temp_dir().join("fntv-libmpv.log")).and_then(|mut f| std::io::Write::write_all(&mut f, format!("{}
-", format!("step3: initialize ok, spawning event thread h={:?}", h)).as_bytes())); }
+        libmpv::trace(&format!("step3: initialize ok, spawning event thread h={:?}", h));
         let session = Arc::new(MpvSession {
             embed_hwnd,
             handle: Mutex::new(h),
@@ -94,8 +132,7 @@ impl MpvSession {
         }
 
         // 事件轮询线程 → tauri emit（前端协议：{event:"property-change", id, data}）
-        { let _ = std::fs::OpenOptions::new().create(true).append(true).open(std::env::temp_dir().join("fntv-libmpv.log")).and_then(|mut f| std::io::Write::write_all(&mut f, format!("{}
-", "step4: event thread entering loop").as_bytes())); }
+        libmpv::trace("step4: event thread entering loop");
         let app2 = app.clone();
         let sess_for_api = session.clone();
         let sess2 = session.clone();
@@ -105,9 +142,7 @@ impl MpvSession {
                 break;
             }
             let api = libmpv::api(&sess_for_api.dll_dir).expect("libmpv api");
-            libmpv::trace("before wait_event");
             let ev = unsafe { (api.wait_event)(h, 0.25) };
-            libmpv::trace("after wait_event");
             if ev.is_null() {
                 continue;
             }
@@ -123,14 +158,24 @@ impl MpvSession {
                 continue;
             }
             let name = unsafe { CStr::from_ptr(prop.name) }.to_string_lossy().to_string();
-            let Some((id, _, fmt)) = OBSERVED.iter().find(|(_, n, _)| *n == name) else {
+            let Some((id, _, _)) = OBSERVED.iter().find(|(_, n, _)| *n == name) else {
                 continue;
             };
+            // ⚠ 必须按事件自带的 format 解码并防 data=NULL：属性不可用/切换时 mpv 发
+            // MPV_FORMAT_NONE + data=null（此前按预期格式解引用 → Rust2024 debug 的
+            // "null pointer dereference" 前置检查 panic → 非 unwind abort，掩盖成「D3D 崩溃」）
             let data = unsafe {
-                match *fmt {
-                    libmpv::MPV_FORMAT_DOUBLE => json!((*(prop.data as *const f64)) as f64),
-                    libmpv::MPV_FORMAT_FLAG => json!((*(prop.data as *const c_int)) != 0),
-                    _ => Value::Null,
+                if prop.data.is_null() {
+                    Value::Null
+                } else {
+                    match prop.format {
+                        libmpv::MPV_FORMAT_DOUBLE => json!(*(prop.data as *const f64)),
+                        libmpv::MPV_FORMAT_FLAG => json!(*(prop.data as *const c_int) != 0),
+                        libmpv::MPV_FORMAT_STRING => {
+                            json!(CStr::from_ptr(prop.data as *const c_char).to_string_lossy().to_string())
+                        }
+                        _ => Value::Null,
+                    }
                 }
             };
             let _ = app2.emit(
@@ -167,12 +212,14 @@ impl MpvSession {
         ptrs.push(std::ptr::null_mut());
 
         let api = self.api();
-        libmpv::trace(&format!("before command {:?}", &cstrs.iter().map(|c| c.to_string_lossy()).collect::<Vec<_>>()));
+        let op = cstrs.first().map(|c| c.to_string_lossy().to_string()).unwrap_or_default();
         let err = unsafe { (api.command)(self.handle(), ptrs.as_mut_ptr()) };
-        libmpv::trace(&format!("after command err={}", err));
         if err != 0 {
-            return Err(libmpv::err_str(api, err));
+            let msg = libmpv::err_str(api, err);
+            libmpv::trace(&format!("command {} failed: {}", op, msg));
+            return Err(msg);
         }
+        libmpv::trace(&format!("command {}", op));
         Ok(json!({ "error": "success" }))
     }
 

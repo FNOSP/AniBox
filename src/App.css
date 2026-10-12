@@ -901,7 +901,8 @@ h3 {
   flex-direction: column;
   border-radius: 14px;
   overflow: hidden;
-  /* mpv 风格实底黑 + 固定 16:9：视频区始终铺满整块；底栏浮在画面内（uosc），画面永不位移 */
+  /* mpv 风格实底黑 + 固定 16:9：视频窗浮在本容器之上（lc-082），视频区始终铺满整块；
+     底栏由 mpv 侧 uosc 画在画面内（lc-083），页面任何布局变化都会位移画面 → 不存在此项 */
   background: #000;
   aspect-ratio: 16 / 9;
   flex-shrink: 0;
@@ -911,8 +912,282 @@ h3 {
   width: 100%;
   min-height: 0;
 }
-.player-embed /* 底栏已交给 mpv 侧 uosc（lc-083）：页面不再渲染播控条，避免任何布局变化位移画面 */
+.player-cover {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 14px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--ph-bg);
+  flex-shrink: 0;
+}
+.player-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.big-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 12px 26px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  transition: transform 0.15s ease, background-color 0.15s ease;
+}
+.player-cover:hover .big-play {
+  transform: translate(-50%, -50%) scale(1.05);
+  background: rgba(0, 0, 0, 0.7);
+}
+/* 原主仓库 TMDB 信息卡 */
+.tmdb-card {
+  flex-shrink: 0;
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+.tmdb-poster {
+  width: 132px;
+  min-width: 132px;
+  aspect-ratio: 2 / 3;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--ph-bg);
+  align-self: flex-start;
+}
+.tmdb-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.tmdb-info {
+  flex: 1;
+  min-width: 0;
+}
+.tmdb-name {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text-strong);
+}
+.meta-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.meta {
+  font-size: 12.5px;
+  color: var(--text-2);
+  background: var(--hover);
+  border: 1px solid var(--line);
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+:root .meta-rating {
+  color: #a06a00; /* 浅色表面金棕可读 */
+  font-weight: 700;
+}
+html.dark .meta-rating {
+  color: var(--gold);
+}
+.type-chip {
+  color: var(--accent);
+  border-color: rgba(108, 155, 255, 0.4);
+}
+.tmdb-info .meta-row {
+  margin: 10px 0 12px;
+}
+.tmdb-overview {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13.5px;
+  line-height: 1.75;
+}
+/* 右列：剧集竖排 */
+.detail-right {
+  flex: 1;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.detail-right .section-head {
+  margin: 0 0 12px;
+  flex-shrink: 0;
+}
+.detail-right .ep-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 4px 8px 0;
+  gap: 18px;
+}
+.detail-right .ep-thumb {
+  width: 150px;
+  min-width: 150px;
+}
+.ep-row.playing .ep-row-title {
+  color: var(--accent);
+}
 
+/* 剧集行卡（复刻飞牛原版：左 16:9 剧照 + 右标题·清晰度徽标·两行简介·时长，无卡片底） */
+.ep-list {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+  padding: 0 26px;
+}
+.ep-row {
+  display: flex;
+  gap: 24px;
+  min-width: 0;
+  cursor: pointer;
+}
+.ep-thumb {
+  position: relative;
+  width: 300px;
+  min-width: 300px;
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--ph-bg);
+}
+.ep-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.25s ease;
+}
+.ep-row:hover .ep-thumb img {
+  transform: scale(1.04);
+}
+.ep-play {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  color: #fff;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-left: 2px;
+}
+.ep-body {
+  flex: 1;
+  min-width: 0;
+  padding-top: 2px;
+}
+.ep-row-title {
+  font-size: 15.5px;
+  font-weight: 700;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ep-row:hover .ep-row-title {
+  color: var(--accent);
+}
+.ep-quality {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: 5px;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 16px;
+  vertical-align: 2px;
+  letter-spacing: 0.5px;
+  font-weight: 400;
+}
+.ep-overview {
+  margin: 8px 0 0;
+  color: var(--text-2);
+  font-size: 13.5px;
+  line-height: 1.7;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.ep-duration {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* ─────────────── 播放页 ─────────────── */
+
+.player-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+  /* mpv 风格实底黑（同上：视频窗浮在上层，实底不再遮挡视频） */
+  background: #000;
+}
+/* 全页播放器顶条：页面唯一放在视频区外的 UI（返回/标题）——底栏与交互在 mpv uosc 里 */
+.player-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px 8px;
+  flex-shrink: 0;
+}
+.player-topbar .player-title {
+  font-size: 14px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.player-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: transparent;
+}
+.player-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  letter-spacing: 2px;
+}
+.player-err {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 40px;
+  text-align: center;
+}
+/* 底栏已交给 mpv 侧 uosc（lc-083）：页面不再渲染播控条 */
 .seek-row {
   display: flex;
   align-items: center;

@@ -1746,6 +1746,33 @@ function App() {
 
   return (
     <div className="app-shell">
+      {/* [lc-094] 无边框窗口的缩放热区：tao 自带热区只有窗口外侧 SM_CXFRAME（175% 缩放 ≈ 7 物理像素
+          ≈ 4 CSS px），那几像素又常被 WebView2 子窗吃掉 → 手感"不灵敏、有时拖不动"。
+          这里在四边/四角铺透明拖拽条，由 WebView 收指针后调 startResizeDragging，热区稳定。
+          注意：全页/全屏形态下视频铺满窗口，左右/下边缘落在"挖洞"里（鼠标归 mpv），那边靠 mpv 侧不参与
+          —— 全屏本来也不需要拖拽缩放（先退回窗口态即可）。 */}
+      {(
+        [
+          ["North", "rsz rsz-n"],
+          ["South", "rsz rsz-s"],
+          ["West", "rsz rsz-w"],
+          ["East", "rsz rsz-e"],
+          ["NorthWest", "rsz rsz-nw"],
+          ["SouthWest", "rsz rsz-sw"],
+          ["SouthEast", "rsz rsz-se"],
+        ] as const
+      ).map(([dir, cls]) => (
+        <div
+          key={dir}
+          className={cls}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            getCurrentWindow()
+              .startResizeDragging(dir)
+              .catch(() => {});
+          }}
+        />
+      ))}
       <TitleBar
         title="Fntv-Plus Tauri2"
         nav={view !== "login"}

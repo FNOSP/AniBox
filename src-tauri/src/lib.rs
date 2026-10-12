@@ -399,6 +399,25 @@ fn apply_cutout(app: &AppHandle, state: &AppState, force: bool) {
     } else {
         0
     };
+    // [lc-094] 诊断：把主窗几何 / 缩放 / 全屏状态与挖洞一起记下 ——
+    // 定位「全屏后窗口没铺满屏 → 视频被小倍率放大 + 黑边（看起来像软件放大）」这类问题。
+    if let Some(w) = app.get_webview_window("main") {
+        let outer = w.outer_size().map(|s| (s.width, s.height)).unwrap_or((0, 0));
+        let inner = w.inner_size().map(|s| (s.width, s.height)).unwrap_or((0, 0));
+        let scale = w.scale_factor().unwrap_or(1.0);
+        let fs = w.is_fullscreen().unwrap_or(false);
+        libmpv::trace(&format!(
+            "[win] outer={}x{} inner={}x{} scale={:.3} fullscreen={} bounds={:?}",
+            outer.0,
+            outer.1,
+            inner.0,
+            inner.1,
+            scale,
+            fs,
+            *state.bounds.lock().unwrap()
+        ));
+    }
+
     match win_region::apply_cutout(main_hwnd, &exclude, hole, radius) {
         Ok(log) => libmpv::trace(&format!(
             "[cutout] on={} embed={:?} embedVisible={} hole={:?} -> {}",

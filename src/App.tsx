@@ -1699,14 +1699,18 @@ function App() {
       });
 
       // 每个库的第一页剧集（并行，按库顺序填回）
+      // [lc-112] 原来只有 .then() 没有 .catch()：任何一个库取数失败都会被静默吞掉，
+      // 该库 items 永远为空 ⇒ 整排不渲染（首页看起来"少了几个库"），且没有任何报错提示。
       libsArr.forEach((lib, idx) => {
-        fetchLibItems(lib.guid, null).then((items) => {
-          setLibRows((rows) => {
-            const next = [...rows];
-            if (next[idx]) next[idx] = { lib, items };
-            return next;
-          });
-        });
+        fetchLibItems(lib.guid, null)
+          .then((items) => {
+            setLibRows((rows) => {
+              const next = [...rows];
+              if (next[idx]) next[idx] = { lib, items };
+              return next;
+            });
+          })
+          .catch((e) => setErr(`加载媒体库「${lib.title}」失败：${String(e)}`));
       });
     } catch (e) {
       setErr(String(e));
@@ -1792,11 +1796,26 @@ function App() {
             setCarouselLogos(c.carouselLogos ?? {});
             setSum(c.sum ?? {});
             setFavTotal(typeof c.favTotal === "number" ? c.favTotal : 0);
-            setLibRows(
+            const rows0 =
               Array.isArray(c.libRows) && c.libRows.length
                 ? c.libRows
-                : c.libs.map((l: Lib) => ({ lib: l, items: [] })),
-            );
+                : c.libs.map((l: Lib) => ({ lib: l, items: [] }));
+            setLibRows(rows0);
+            // [lc-112] 快照直出后**仍要把各库第一页补齐**：快照里 items 常是空的
+            // （写快照那一刻往往还没填完），空 items ⇒ 整排不渲染；而 restored=true
+            // 意味着不会再走完整加载 —— 结果就是"首页只剩继续观看"，且 30 分钟内反复出现。
+            rows0.forEach((row: { lib: Lib; items: MediaItem[] }, idx: number) => {
+              if (row.items.length) return;
+              fetchLibItems(row.lib.guid, null)
+                .then((items) => {
+                  setLibRows((prev) => {
+                    const next = [...prev];
+                    if (next[idx]) next[idx] = { lib: next[idx].lib, items };
+                    return next;
+                  });
+                })
+                .catch((e) => setErr(`加载媒体库「${row.lib.title}」失败：${String(e)}`));
+            });
             setView("home");
             restored = true;
           }

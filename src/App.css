@@ -2224,3 +2224,40 @@ button:active {
   color: var(--muted);
   flex-shrink: 0;
 }
+
+/* [lc-116] 轮播左右切换箭头：默认完全透明且不吃鼠标；鼠标移到该侧附近区域才淡入可点 */
+.mist-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 6;
+  width: 44px;
+  height: 78px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.26);
+  backdrop-filter: blur(4px);
+  color: #fff;
+  font-size: 30px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;
+}
+.mist-nav-prev { left: 18px; }
+.mist-nav-next { right: 18px; }
+.mist-nav.is-on {
+  opacity: 1;
+  pointer-events: auto;
+}
+.mist-nav.is-on:hover {
+  background: rgba(0, 0, 0, 0.55);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+.mist-nav:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+  outline: 2px solid var(--accent);
+}

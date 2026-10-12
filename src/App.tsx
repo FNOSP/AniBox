@@ -359,7 +359,17 @@ function CarouselView({
 }) {
   const [index, setIndex] = useState(0);
   const [armed, setArmed] = useState(false);
+  // [lc-116] 鼠标靠近哪一侧："" | "prev" | "next"（用来淡入对应箭头）
+  const [near, setNear] = useState<"" | "prev" | "next">("");
   const n = items.length;
+
+  const onBannerMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const box = e.currentTarget;
+    const w = box.clientWidth || 1;
+    const x = e.clientX - box.getBoundingClientRect().left;
+    const zone = Math.min(260, w * 0.22);
+    setNear(x <= zone ? "prev" : x >= w - zone ? "next" : "");
+  };
 
   // 入场动画闸门：挂载后瞬间补 active，让首帧信息走 misty 同款上浮入场
   useEffect(() => {
@@ -380,7 +390,11 @@ function CarouselView({
   const yearOf = (it: MediaItem) => String(it.release_date || it.air_date || "").slice(0, 4);
 
   return (
-    <div className="mist-banner">
+    <div
+      className="mist-banner"
+      onMouseMove={onBannerMove}
+      onMouseLeave={() => setNear("")}
+    >
       <div className="mist-body" style={{ transform: `translateX(-${index * 100}%)` }}>
         {items.map((it, i) => {
           const bd = bds[it.guid];
@@ -444,6 +458,29 @@ function CarouselView({
           );
         })}
       </div>
+      {/* [lc-116] 左右切换箭头：默认 opacity 0 且不吃鼠标事件；鼠标移到对应侧的"附近区域"
+          （左右各约 22% 宽，最多 260px）才淡入并可点 —— 用 mousemove 判断靠近哪一侧，
+          而不是 hover 整个 banner（hero 占满一屏，那样等于一直显示）。 */}
+      {n > 1 && (
+        <>
+          <button
+            className={`mist-nav mist-nav-prev${near === "prev" ? " is-on" : ""}`}
+            title="上一张"
+            aria-label="上一张"
+            onClick={() => setIndex((i) => (i - 1 + n) % n)}
+          >
+            ‹
+          </button>
+          <button
+            className={`mist-nav mist-nav-next${near === "next" ? " is-on" : ""}`}
+            title="下一张"
+            aria-label="下一张"
+            onClick={() => setIndex((i) => (i + 1) % n)}
+          >
+            ›
+          </button>
+        </>
+      )}
     </div>
   );
 }

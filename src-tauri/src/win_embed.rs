@@ -12,10 +12,12 @@
 
 use std::sync::OnceLock;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, SetWindowPos, ShowWindow,
-    CS_HREDRAW, CS_VREDRAW, HWND_BOTTOM, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SWP_SHOWWINDOW, SW_HIDE, SW_SHOW, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClassNameW, GetWindow, IsWindow,
+    RegisterClassW, SetWindowPos, ShowWindow, CS_HREDRAW, CS_VREDRAW, GW_CHILD, GW_HWNDNEXT,
+    HWND_BOTTOM, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE,
+    SW_SHOW, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 
@@ -108,6 +110,74 @@ pub fn destroy(hwnd: isize) {
     unsafe {
         DestroyWindow(hwnd as HWND);
     }
+}
+
+fn class_name(h: HWND) -> String {
+    let mut buf = [0u16; 128];
+    let n = unsafe { GetClassNameW(h, buf.as_mut_ptr(), buf.len() as i32) };
+    if n <= 0 {
+        return String::new();
+    }
+    String::from_utf16_lossy(&buf[..n as usize])
+}
+
+/// [lc-089] 重新启用 mpv 自建的子窗（`class == "mpv"`）。返回 true = 已找到该子窗。
+///
+/// **根因**：mpv 在 `--wid` 嵌入模式下**主动禁用**自己的窗口 ——
+/// `video/out/w32_common.c:2163`：
+/// ```c
+/// if (w32->parent)
+///     EnableWindow(w32->window, 0);
+/// ```
+/// 而 Windows 的命中测试会**跳过 disabled 窗口**，鼠标永远进不了 mpv，点击全部落到
+/// 本宿主窗的 `DefWindowProcW`（什么都不做）→ 原生 uosc 底栏 / 右键菜单 / 双击全屏
+/// 全部「点了没反应」（lc-089 已复现：真实点击下 mpv 无任何指令）。
+///
+/// **为什么可以从外部启用**：
+/// ① mpv 只在 VO 初始化时禁一次，之后不会改回（全仓 `EnableWindow` 仅此一处调用）；
+/// ② mpv 的 `WM_MOUSEMOVE` / `WM_LBUTTONDOWN/UP` / `WM_MOUSEWHEEL` 处理里**没有**
+///    `w32->parent` 守卫（`w32_common.c:1607/1626/1647`；唯一的 parent 守卫在
+///    `WM_NCCALCSIZE`(1678)，与输入无关）→ 启用后鼠标即可原生驱动 mpv。
+/// 实测 A/B：启用前同一位置真实点击 → mpv 零指令；启用后 → `Run command: cycle pause`。
+///
+/// 注意：宿主窗创建时带 `WS_CLIPSIBLINGS` 且不含 `WS_DISABLED`，本身一直可命中；
+/// 被跳过的是 mpv 那一层子窗。
+pub fn enable_mpv_child(host: isize) -> bool {
+    let host = host as HWND;
+    if host.is_null() || unsafe { IsWindow(host) } == 0 {
+        return false;
+    }
+    unsafe {
+        let mut c = GetWindow(host, GW_CHILD);
+        while !c.is_null() {
+            if class_name(c) == "mpv" {
+                if IsWindowEnabled(c) == 0 {
+                    EnableWindow(c, 1);
+                    crate::libmpv::trace("(mpv-child) 已重新启用 mpv 自建子窗 → 鼠标交互恢复");
+                }
+                return true;
+            }
+            c = GetWindow(c, GW_HWNDNEXT);
+        }
+    }
+    false
+}
+
+/// 轮询等待 mpv 建好子窗并启用它（mpv 建窗是异步的，VO 初始化完成才出现）。
+/// `tries` × 200ms 为最长等待。
+pub fn spawn_enable_mpv_child(host: isize, tries: u32) {
+    tokio::task::spawn(async move {
+        for i in 0..tries {
+            if enable_mpv_child(host) {
+                if i > 0 {
+                    crate::libmpv::trace(&format!("(mpv-child) 第 {} 次探测命中 mpv 子窗", i + 1));
+                }
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        crate::libmpv::trace("(mpv-child) 轮询超时：未找到 mpv 子窗，鼠标交互可能不可用");
+    });
 }
 
 // 保留类型引用，避免未使用告警（DefWindowProc 签名需要）

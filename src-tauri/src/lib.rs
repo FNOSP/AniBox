@@ -453,6 +453,8 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
 
     let url = proxy::play_url(&cfg, &guid);
     session.command(json!(["loadfile", url, "replace"])).await?;
+    // [lc-089] 换片后补一次「启用 mpv 自建子窗」：实例复用时立刻命中返回，仅 VO 重建才真需要
+    win_embed::spawn_enable_mpv_child(session.embed_hwnd, 25);
 
     // [lc-085] 不再在播放期禁用窗口模糊（原 lc-081 的 clear_backdrop 是为了救 spawn 时代
     // 「进播放页整机卡死」；现在视频是进程内 D3D 输出，实测保留主题底更符合预期——

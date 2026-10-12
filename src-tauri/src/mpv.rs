@@ -194,6 +194,11 @@ impl MpvSession {
                 .await;
         }
 
+        // ── 5) [lc-089] 启用 mpv 自建子窗 —— mpv 在 --wid 嵌入时会主动 EnableWindow(0)，
+        // 而 Windows 命中测试跳过 disabled 窗口 → 鼠标永远进不了 mpv（点击全落到我们宿主窗）。
+        // mpv 建窗是异步的（VO 初始化后才出现），故轮询等待。详见 win_embed::enable_mpv_child。
+        crate::win_embed::spawn_enable_mpv_child(embed_hwnd, 75);
+
         Ok(session)
     }
 

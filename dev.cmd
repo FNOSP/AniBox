@@ -31,10 +31,27 @@ if not exist node_modules (
   echo [1/2] npm dependencies OK
 )
 
-REM Free vite fixed port 1420 (strictPort: startup fails if occupied)
-for /f "tokens=5" %%p in ('netstat -ano -p tcp ^| findstr /c:":1420 " ^| findstr /c:"LISTENING"') do (
-  echo [dev] Killing stale listener on port 1420 ^(pid=%%p^)
-  taskkill /f /pid %%p >nul 2>&1
+REM Free vite fixed port 1420 (strictPort: startup fails if occupied).
+REM NOTE: on Windows a busy port makes bind() fail with EACCES (permission denied)
+REM rather than EADDRINUSE -- easy to misread as a rights problem. Also this
+REM machine's ephemeral range starts at 1024 (netsh int ipv4 show dynamicport tcp),
+REM so ANY process can transiently grab 1420 as a source port. Observed in practice:
+REM NetEase UU booster (uu.exe) held 1420 on its 198.18.0.x virtual adapter, which
+REM showed up as an intermittent 'vite: listen EACCES 127.0.0.1:1420' failure.
+REM So: kill by port in EVERY state (not just LISTENING), skip pid 0 (TIME_WAIT
+REM entries belong to already-dead sockets and must not be reported as holders).
+for /f "tokens=5" %%p in ('netstat -ano -p tcp ^| findstr /c:":1420 "') do (
+  if not "%%p"=="0" (
+    echo [dev] Port 1420 held by pid=%%p -- killing
+    taskkill /f /pid %%p >nul 2>&1
+  )
+)
+netstat -ano -p tcp | findstr /c:":1420 " | findstr /c:"LISTENING" >nul 2>&1
+if not errorlevel 1 (
+  echo [dev] WARN: something is still LISTENING on 1420 after cleanup.
+  echo [dev]   netstat -ano -p tcp ^| findstr /c:":1420 "
+  echo [dev]   If vite then fails with EACCES: quit the UU booster / Clash TUN proxy, or run this elevated:
+  echo [dev]   netsh int ipv4 set dynamicport tcp start=49152 num=16384
 )
 
 echo [2/2] Starting Tauri dev (first Rust compile takes 5-15 min; F12 for DevTools)...

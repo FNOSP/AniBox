@@ -814,7 +814,9 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [seasonIdx, setSeasonIdx] = useState(0);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
+  const [detailPlay, setDetailPlay] = useState<PlayTarget | null>(null);
   // [lc-085] 视频全屏（mpv 双击/全屏键触发）：内嵌形态 ↔ 全页播放器形态 + 窗口全屏
+  const [playBig, setPlayBig] = useState(false);
   const [tmdb, setTmdb] = useState<Record<string, unknown> | null>(null);
   const [err, setErr] = useState("");
 
@@ -902,6 +904,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   }, [episodes.length]);
 
   const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
+  const backdrop = (pick(data ?? {}, ["backdrops", "backdrop"]) as string) || base.poster || "";
   const poster = (pick(data ?? {}, ["posters", "poster"]) as string) || base.poster || "";
   const overview = String(pick(data ?? {}, ["overview"]) ?? base.overview ?? "");
   const rating = String(pick(data ?? {}, ["voteAverage", "vote_average"]) ?? base.vote_average ?? "");
@@ -912,23 +915,13 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   const resumeAt = base.ts && base.duration && base.ts > 0 && base.ts < base.duration;
 
 
-  // [lc-106] 独立 mpv 窗口模式：点播放直接拉起独立 mpv（与主仓库一致），页面留在详情页
-  const [playNote, setPlayNote] = useState("");
-  const [playing, setPlaying] = useState(false);
-  const [playingGuid, setPlayingGuid] = useState<string | null>(null);
-  const startPlay = async () => {
+  const startPlay = () => {
     const ep = episodes[0];
-    const guid = isSeries && ep ? ep.guid : base.guid;
-    setPlaying(true);
-    setPlayNote("正在打开独立播放器…");
-    try {
-      await invoke("play_item", { guid });
-      setPlayNote("已在独立播放器窗口播放（可回到本页继续浏览）");
-    } catch (e) {
-      setPlayNote(String(e));
-    } finally {
-      setPlaying(false);
-    }
+    setDetailPlay(
+      isSeries && ep
+        ? { guid: ep.guid, title: ep.title, tvTitle: title }
+        : { guid: base.guid, title: base.title, tvTitle: title },
+    );
   };
 
   return (
@@ -939,15 +932,23 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
         </button>
         <h1 className="detail-title">{title}</h1>
         {rating && rating !== "0" && <span className="meta meta-rating detail-rating">★ {rating}</span>}
-        {/* [lc-107] 视频占位框已删除（独立 mpv 窗口模式，页面不留视频区）：播放入口收进标题行 */}
-        <button className="btn-play-head" onClick={playing ? undefined : startPlay} disabled={playing}>
-          {playing ? "⏳ 打开中…" : `▶ ${resumeAt ? "续播" : "播放"}`}
-        </button>
       </div>
-      {playNote && <div className="play-note">{playNote}</div>}
       <div className="detail-cols">
         <div className="detail-left">
           {err && <div className="err">{err}</div>}
+          {detailPlay ? (
+            <PlayerView
+              item={detailPlay}
+              embedded={!playBig}
+              onBig={setPlayBig}
+              onBack={() => setPlayBig(false)}
+            />
+          ) : (
+            <div className="player-cover" onClick={startPlay}>
+              {backdrop ? <img src={imgUrl(backdrop)} alt={title} /> : <div className="poster-empty">🎬</div>}
+              <button className="big-play">▶ {resumeAt ? "续播" : "播放"}</button>
+            </div>
+          )}
           <div className="tmdb-card">
             <div className="tmdb-poster">
               {poster ? <img src={imgUrl(poster)} alt={title} /> : <div className="poster-empty">🎬</div>}
@@ -991,15 +992,14 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                   ep.episode_number != null
                     ? `第 ${ep.episode_number} 集${ep.title ? `. ${ep.title}` : ""}`
                     : ep.title || "未命名剧集";
-                const playing = playingGuid === ep.guid;
+                const playing = detailPlay?.guid === ep.guid;
                 return (
                   <div
                     key={ep.guid}
                     className={`ep-row${playing ? " playing" : ""}`}
-                    onClick={() => {
-                      setPlayingGuid(ep.guid);
-                      invoke("play_item", { guid: ep.guid }).catch((e) => setErr(String(e)));
-                    }}
+                    onClick={() =>
+                      setDetailPlay({ guid: ep.guid, title: ep.title, tvTitle: title })
+                    }
                   >
                     <div className="ep-thumb">
                       {ep.poster ? (
@@ -1156,39 +1156,9 @@ function PlayerView({
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const [err, setErr] = useState("");
-  // [lc-105] 页面内播放（B站/爱奇艺式真内嵌）：优先把代理直链交给页面里的 <video>，
-  // 视频成为 DOM 的一部分（随滚动/圆角/裁剪，HTML 控件随便盖，无窗口套窗口、无挖洞）。
-  // 浏览器播不了的容器（MKV/HEVC 等）→ onError → htmlFailed → 自动回退到 mpv 路径。
-  // 想强制用 mpv：localStorage["fntv-player"]="mpv"。
-  const [htmlSrc, setHtmlSrc] = useState<string | null>(null);
-  const [htmlFailed, setHtmlFailed] = useState(false);
-  const FORCE_MPV =
-    typeof localStorage !== "undefined" && localStorage.getItem("fntv-player") === "mpv";
-  const htmlMode = !FORCE_MPV && !!htmlSrc && !htmlFailed;
-  useEffect(() => {
-    let alive = true;
-    setHtmlSrc(null);
-    setHtmlFailed(false);
-    if (FORCE_MPV) return;
-    invoke<{ url: string; guid: string }>("player_source", { guid: item.guid })
-      .then((r) => {
-        if (alive && r && r.url) setHtmlSrc(r.url);
-        else if (alive) setHtmlFailed(true);
-      })
-      .catch((e) => {
-        if (alive) {
-          setHtmlFailed(true);
-          setErr(String(e));
-        }
-      });
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.guid]);
   // [lc-101] 加载阶段状态机：把"半天没反应"变成可见进度，并让加载失败真正显示出来。
-  // 之前只认 duration(id=2)：等不到就永远停在「正在拉起 mpv…」；而 mpv 的失败信息全在
-  // start-file / file-loaded / end-file 事件里 —— 后端 lc-101 已把它们转成下面两个应用事件。
+  // mpv 的失败信息全在 start-file / file-loaded / end-file 事件里 —— 后端已把它们转成
+  // mpv-load / mpv-end 两个应用事件（lc-101）。
   const [phase, setPhase] = useState<"spawn" | "loading" | "playing" | "buffering" | "failed">("spawn");
   const [mpvErr, setMpvErr] = useState("");
   const [waited, setWaited] = useState(0);
@@ -1330,11 +1300,6 @@ function PlayerView({
       window.clearTimeout(teardownRef.current);
       teardownRef.current = null;
     }
-    // [lc-105] 页面内播放模式：不显示 mpv 宿主窗（否则页面里会留一个"坑"）
-    if (htmlMode) {
-      invoke("player_set_visible", { visible: false }).catch(() => {});
-      return;
-    }
     invoke("player_set_visible", { visible: true }).catch(() => {});
     invoke("play_item", { guid: item.guid }).catch((e) => setErr(String(e)));
     return () => {
@@ -1344,7 +1309,7 @@ function PlayerView({
         invoke("player_stop").catch(() => {});
       }, 150);
     };
-  }, [item.guid, htmlMode]);
+  }, [item.guid]);
 
   // [lc-093] 把「内嵌小窗 / 全页全屏」形态镜像到 mpv 的 fullscreen 属性 ——
   // uosc 用它当底栏双形态判据：小窗只留 播放暂停+上下一集 | 时间 | 全屏；全屏保持原样。
@@ -1419,19 +1384,9 @@ function PlayerView({
         className="player-stage"
         ref={stageRef}
       >
-        {htmlMode && (
-          <video
-            className="player-video"
-            src={htmlSrc ?? undefined}
-            controls
-            autoPlay
-            playsInline
-            onError={() => setHtmlFailed(true)}
-          />
-        )}
-        {!htmlMode && err && <div className="err player-err">{err}</div>}
-        {!htmlMode && !err && mpvErr && <div className="err player-err">{mpvErr}</div>}
-        {!htmlMode && !err && !mpvErr && phase !== "playing" && (
+        {err && <div className="err player-err">{err}</div>}
+        {!err && mpvErr && <div className="err player-err">{mpvErr}</div>}
+        {!err && !mpvErr && phase !== "playing" && (
           <div className="player-loading">
             {phase === "buffering"
               ? `缓冲中…（已等待 ${waited}s）`

@@ -907,8 +907,106 @@ h3 {
 }
 
 /* ─────────────── 详情页 hero ─────────────── */
-/* [lc-107] 视频占位框（封面大图）已随独立 mpv 窗口模式移除 */
 
+/* 剧集详情（草稿版式：顶部通栏标题 + 左播放器/信息卡 + 右剧集竖排） */
+.detail-full {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 54px 26px 16px; /* 顶部 = 悬浮标题栏40px + 14px 间距 */
+  gap: 14px;
+}
+.detail-headrow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+.detail-headrow .back {
+  flex-shrink: 0;
+}
+.detail-rating {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+.detail-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+.detail-cols {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 18px;
+}
+.detail-left {
+  flex: 1.65;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  overflow-y: auto; /* 播放器+信息卡+TMDB四节整体滚动 */
+  padding-right: 4px;
+}
+/* 内嵌 mpv 容器（PlayerView embedded 形态） */
+.player-embed {
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  overflow: hidden;
+  /* mpv 风格实底黑；布局 = 舞台(固定 16:9) + 常驻控制条（都在流内、尺寸恒定 → 画面永不位移） */
+  background: #000;
+  flex-shrink: 0;
+}
+.player-embed .player-stage {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+}
+.player-cover {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 14px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--ph-bg);
+  flex-shrink: 0;
+}
+.player-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.big-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 12px 26px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  transition: transform 0.15s ease, background-color 0.15s ease;
+}
+.player-cover:hover .big-play {
+  transform: translate(-50%, -50%) scale(1.05);
+  background: rgba(0, 0, 0, 0.7);
+}
 /* 原主仓库 TMDB 信息卡 */
 .tmdb-card {
   flex-shrink: 0;

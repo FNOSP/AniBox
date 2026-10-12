@@ -33,9 +33,17 @@ pub fn trace(msg: &str) {
         .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
 }
 
-/// 每轮启动重建日志（truncate）——多轮 A/B 诊断不互相污染
+/// 每个应用进程只重建一次日志 —— **不能**在每次 mpv launch 时清空：
+/// play/info 预检与直链 probe 的诊断写在 launch **之前**，一清空就把失败原因冲掉了
+/// （实测：日志只剩 launch 之后的 3 行，"哪一拍失败"永远查不到）。
+static RESET_DONE: OnceLock<()> = OnceLock::new();
+
 pub fn trace_reset(header: &str) {
-    let _ = std::fs::write(log_path(), format!("=== {}\n", header));
+    if RESET_DONE.set(()).is_ok() {
+        let _ = std::fs::write(log_path(), format!("=== {}\n", header));
+    } else {
+        trace(header); // 后续 launch 追加一行即可，不清空
+    }
 }
 
 /// 进程内 VEH 崩溃记录器：致命异常瞬间把 异常码/故障模块/偏移 写进诊断日志，

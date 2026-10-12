@@ -28,6 +28,9 @@ pub struct AppState {
     pub last_light: std::sync::Mutex<Option<bool>>,
     /// [lc-088] 当前 mpv 宿主子窗句柄（裁洞时要把它排除在裁剪目标外）
     pub embed_hwnd: std::sync::Mutex<Option<isize>>,
+    /// [lc-098] 最近一次「非全屏」时前端回传的占位矩形。退出全屏那一拍前端还没重传（state.bounds
+    /// 仍是全屏时的整窗值），先用它兜住，避免宿主窗/洞短暂错位出白闪。
+    pub last_embedded: std::sync::Mutex<Option<(i32, i32, i32, i32)>>,
     /// [lc-088] 上次实际应用的裁洞状态（去重用，避免区域被反复重建）
     pub last_cutout: std::sync::Mutex<Option<(isize, Option<(i32, i32, i32, i32)>)>>,
 }
@@ -41,6 +44,7 @@ impl Default for AppState {
             bounds: std::sync::Mutex::new((0, 0, 800, 450)),
             last_light: std::sync::Mutex::new(None),
             embed_hwnd: std::sync::Mutex::new(None),
+            last_embedded: std::sync::Mutex::new(None),
             last_cutout: std::sync::Mutex::new(None),
         }
     }
@@ -345,6 +349,32 @@ fn cutout_on() -> bool {
     win_region::cutout_enabled()
 }
 
+/// [lc-098] 视频占位矩形（主窗客户区物理像素）—— **「洞」与「mpv 宿主窗」都以它为准**，
+/// 保证两者永远一致（不一致就是白边/黑闪的来源）。
+///
+/// 规则（针对实测到的时序问题：窗口 Resized 事件**先于**前端重传 bounds 到达）：
+/// - **全屏态** → 直接用主窗客户区：`.player-page` 是 `fixed inset:0` 且顶条已隐藏，
+///   舞台必然等于整客户区 → 不必等前端，切换瞬间就对。
+/// - **非全屏态** → 用前端回传值；若它比当前客户区还大（说明是"退出全屏那一拍、前端还没重传"，
+///   拿到的还是全屏整窗值），退回上一次的内嵌值兜住，等前端重传后自然纠正。
+fn player_rect(app: &AppHandle, state: &AppState) -> Option<(i32, i32, i32, i32)> {
+    let w = app.get_webview_window("main")?;
+    let fs = w.is_fullscreen().ok().unwrap_or(false);
+    let (cw, ch) = w
+        .inner_size()
+        .ok()
+        .map(|s| (s.width as i32, s.height as i32))
+        .unwrap_or((0, 0));
+    if fs && cw > 0 && ch > 0 {
+        return Some((0, 0, cw, ch));
+    }
+    let b = *state.bounds.lock().unwrap();
+    if cw > 0 && ch > 0 && (b.2 > cw + 8 || b.3 > ch + 8) {
+        return *state.last_embedded.lock().unwrap();
+    }
+    Some(b)
+}
+
 /// 重算并应用挖洞。`force` 用于「洞矩形没变但必须重建」的场景（主窗 resize 后
 /// WebView 客户区尺寸变了，旧区域会残留成错位裁剪）。
 fn apply_cutout(app: &AppHandle, state: &AppState, force: bool) {
@@ -359,9 +389,10 @@ fn apply_cutout(app: &AppHandle, state: &AppState, force: bool) {
     // 一旦停在 false，洞就被清除且不会自动恢复 → 视频被 WebView 盖住、只见「正在拉起 mpv…」。
     // 现在"洞 ⇔ 宿主窗可见"，两者永远同一来源，不会再各说各话。
     let embed_visible = embed.map(win_embed::is_visible).unwrap_or(false);
-    // 洞 = 视频占位矩形本身（边缘的"缝隙"由 mpv 宿主窗向外 overscan 3px 盖住，见 win_embed::set_bounds）
+
+    // [lc-098] 洞 = player_rect()（与 mpv 宿主窗**同一来源**，保证两者永远一致）
     let hole = if cutout_on() && embed_visible {
-        Some(*state.bounds.lock().unwrap())
+        player_rect(app, state)
     } else {
         None
     };
@@ -465,7 +496,8 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     *state.embed_hwnd.lock().unwrap() = Some(session.embed_hwnd);
 
     // 应用当前 bounds（登页时前端会更新），再载入（窗口操作一律主线程）
-    let (x, y, w, h) = *state.bounds.lock().unwrap();
+    // [lc-098] 用 player_rect（= 洞的同一来源）摆放宿主窗，保证两者永远一致
+    let (x, y, w, h) = player_rect(&app, &state).unwrap_or(*state.bounds.lock().unwrap());
     let eh = session.embed_hwnd;
     let on_top = !cutout_on();
     on_main(&app, move || {
@@ -572,12 +604,20 @@ async fn player_set_bounds(
 ) -> Result<(), String> {
     let b = (x as i32, y as i32, w as i32, h as i32);
     *state.bounds.lock().unwrap() = b;
+    // [lc-098] 记下"非全屏"时的占位矩形：退出全屏那一拍前端还没重传，用它兜住避免错位白闪
+    if let Some(win) = app.get_webview_window("main") {
+        if win.is_fullscreen().ok() != Some(true) {
+            *state.last_embedded.lock().unwrap() = Some(b);
+        }
+    }
     place_bar(&app, x, y, w, h); // 视频区变化时控制条跟随（未创建/未显示都无害）
     let slot = state.mpv.lock().await;
     if let Some(m) = slot.as_ref() {
         let eh = m.embed_hwnd;
         let on_top = !cutout_on();
-        on_main(&app, move || win_embed::set_bounds(eh, b.0, b.1, b.2, b.3, on_top))?;
+        // [lc-098] 同样用 player_rect，和洞保持同一来源（全屏态按客户区、退出瞬间按上次内嵌值兜底）
+        let r = player_rect(&app, &state).unwrap_or(b);
+        on_main(&app, move || win_embed::set_bounds(eh, r.0, r.1, r.2, r.3, on_top))?;
     }
     drop(slot);
     apply_cutout(&app, &state, false); // 洞跟着视频占位矩形同步
@@ -879,12 +919,21 @@ pub fn run() {
             }
             // [lc-088] 主窗尺寸变化 → WebView 客户区随之变化，必须**强制**重建挖洞区域
             // （区域是绝对像素坐标，不随窗口缩放，残留就是错位裁剪）
+            // [lc-098] 但先把 mpv 宿主窗对到当前形态的正确矩形，再算洞 —— 否则全屏那一拍会出现
+            // "洞已放大、画面还小"，周边露出主窗浅色底（白闪）；退出时反之会整页被裁（黑闪）。
+            // 这里在事件循环线程（=主线程）上，直接调 Win32 是安全的。
             #[cfg(target_os = "windows")]
             if let Some(win) = app.get_webview_window("main") {
                 let h_resize = app.handle().clone();
                 win.on_window_event(move |ev| {
                     if matches!(ev, tauri::WindowEvent::Resized(_)) {
-                        apply_cutout(&h_resize, &h_resize.state::<AppState>(), true);
+                        let st = h_resize.state::<AppState>();
+                        if let Some(eh) = *st.embed_hwnd.lock().unwrap() {
+                            if let Some(r) = player_rect(&h_resize, &st) {
+                                win_embed::set_bounds(eh, r.0, r.1, r.2, r.3, !cutout_on());
+                            }
+                        }
+                        apply_cutout(&h_resize, &st, true);
                     }
                 });
             }

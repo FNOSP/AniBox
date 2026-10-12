@@ -126,9 +126,12 @@
 
 | 通道 | 命令 | 版号规则 | 产物 |
 |---|---|---|---|
-| **开发测试版** | 双击 `打包.bat` → GUI 选「开发测试版」（或 `build-fpk.exe build`） | 3 段式 `x.y.z`（打包器自动维护 manifest） | `Fntv-Plus-v<号>.fpk` |
-| **正式发布版** | 双击 `打包.bat` → GUI 选「正式发布版」，填显示名与版号（或 `build-fpk.exe release --name … --version …`） | GUI 填写的正式版号（大写 V） | `Fntv-Plus-V<版号去点>.fpk` |
+| **开发测试版** | 双击 `打包.bat` → GUI 选「开发测试版」（或 `build-fpk.exe build`） | 3 段式 `x.y.z`（打包器自动维护 manifest） | `Fntv-Plus-<序号>.fpk` |
+| **正式发布版** | 双击 `打包.bat` → GUI 选「正式发布版」，填显示名与版号（或 `build-fpk.exe release --name … --version …`） | GUI 填写的正式版号（`x.y.z`，无 v/V 前缀） | `Fntv-Plus-<版号>.fpk` |
 
+> **目标架构**（lc-1387）：GUI「目标架构」选 x86 / ARM64 / 两者连打；命令行加 `--arch arm64`（默认 `amd64`，兼容 `--arch x86` 等写法）。
+> ARM 包 = 同路径放 arm64 后端 + manifest `platform=arm`，产物加 `-arm64` 后缀（如 `Fntv-Plus-1.2.0-arm64.fpk`）。
+> 飞牛商店 `platform` 三选一：`x86` / `arm` / `all`，包内二进制必须与之一致（`cmd/main` 启动脚本与架构无关，只有 `app/server/fntvplus` 一个原生二进制）。
 > 两种通道的产物都自动输出到 `<仓库根>/release/`；引擎缺失时 GUI 会自动用 go 编译。
 
 > 飞牛商店要求版本号固定 3 段式 `x.y.z`（可带数字预发布后缀 `x.y.z-n`）；4 段式无效。

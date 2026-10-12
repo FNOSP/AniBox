@@ -4,10 +4,14 @@
 // GUI：双击 fpk/打包.bat（PowerShell WinForms 界面，调本引擎并实时显示输出）。
 //
 // 用法：
-//	build-fpk.exe build   [--out <目录>]                          开发测试版（版号自动 = fpk 提交数/痕迹）
-//	build-fpk.exe release --name <显示名> --version x.y.z [--out <目录>]   正式发布版（飞牛商店口径）
+//	build-fpk.exe build   [--arch amd64|arm64] [--out <目录>]                开发测试版（版号自动 = fpk 提交数/痕迹）
+//	build-fpk.exe release --name <显示名> --version x.y.z [--arch amd64|arm64] [--out <目录>]   正式发布版（飞牛商店口径）
 //
-// 流程：重建 payload(esbuild) → 交叉编译后端(linux/amd64) → fnpack 打包
+// 架构：默认 amd64（manifest platform=x86）；--arch arm64 交叉编译 linux/arm64 并把 manifest platform 写成
+//       arm，产物加 -arm64 后缀（fnOS 商店 platform 三选一：x86 / arm / all，见 lc-1387）。
+//       包内只有 app/server/fntvplus 一个原生二进制，所以 ARM 包 = 同路径放 arm64 二进制 + platform=arm；
+//       单次构建结束时会把该路径还原为 amd64（保持工作区默认形态）。
+// 流程：重建 payload(esbuild) → 交叉编译后端(linux/<arch>) → fnpack 打包
 //       → 产物移动到 --out 目录（默认 <仓库根>/release）。
 // 任何一步缺工具（node/go/fnpack）都会降级或给出明确提示；退出码 0=成功 1=失败。
 package main
@@ -26,15 +30,50 @@ import (
 
 var root string
 
+// —— 架构支持（lc-1387）——
+const (
+	archAMD64 = "amd64"
+	archARM64 = "arm64"
+)
+
+// normalizeArch 归一化 --arch 取值（兼容 aarch64/x86_64/arm 等写法）。
+func normalizeArch(a string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(a)) {
+	case "", "amd64", "x86_64", "x64", "x86":
+		return archAMD64, nil
+	case "arm64", "aarch64", "arm":
+		return archARM64, nil
+	}
+	return "", fmt.Errorf("未知架构 %q（仅支持 amd64 / arm64）", a)
+}
+
+// archSuffix 产物文件名后缀（amd64 不加，保持历史命名 Fntv-Plus-<版号>.fpk 不变）。
+func archSuffix(arch string) string {
+	if arch == archARM64 {
+		return "-arm64"
+	}
+	return ""
+}
+
+// platformForArch fnOS manifest 的 platform 取值：amd64→x86、arm64→arm。
+func platformForArch(arch string) string {
+	if arch == archARM64 {
+		return "arm"
+	}
+	return "x86"
+}
+
 func main() {
 	// 参数解析（手工，保持零依赖）：
 	//   build                          开发测试版
 	//   release --name X --version x.y.z   正式发布版
+	//   --arch amd64|arm64             目标架构（默认 amd64）
 	//   --out <dir>                    产物输出目录（默认 <仓库根>/release）
 	mode := "build"
 	outDir := ""
 	relName := ""
 	relVer := ""
+	archArg := ""
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -52,12 +91,20 @@ func main() {
 		case a == "--version" && i+1 < len(args):
 			i++
 			relVer = args[i]
+		case a == "--arch" && i+1 < len(args):
+			i++
+			archArg = args[i]
 		default:
 			fmt.Printf("[X] 未知参数: %s\n", a)
 			os.Exit(1)
 		}
 	}
-	if err := run(mode, relName, relVer, outDir); err != nil {
+	arch, err := normalizeArch(archArg)
+	if err != nil {
+		fmt.Printf("[X] %v\n", err)
+		os.Exit(1)
+	}
+	if err := run(mode, relName, relVer, outDir, arch); err != nil {
 		fmt.Printf("\n[X] %v\n", err)
 		os.Exit(1)
 	}
@@ -69,7 +116,7 @@ func defaultOutDir() string {
 	return filepath.Join(filepath.Dir(root), "release")
 }
 
-func run(mode, relName, relVer, outDir string) error {
+func run(mode, relName, relVer, outDir, arch string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -89,16 +136,41 @@ func run(mode, relName, relVer, outDir string) error {
 	fmt.Println(" Fntv-Plus fpk 打包（" + map[bool]string{true: "正式发布版", false: "开发测试版"}[mode == "release"] + "）")
 	fmt.Println("==============================================")
 	fmt.Printf("项目根: %s\n", root)
-	fmt.Printf("输出目录: %s\n\n", outDir)
+	fmt.Printf("输出目录: %s\n", outDir)
+	fmt.Printf("目标平台: %s（linux/%s，manifest platform=%s）\n\n", arch, arch, platformForArch(arch))
+
+	// [lc-1387] 打包前把 manifest 的 platform 写成目标架构，打包完成后还原：
+	//   fnOS 商店 platform 三选一（x86 / arm / all），包内二进制必须与之一致。
+	origPlatform := manifestGetString("platform", "x86")
+	if err := manifestSetString("platform", platformForArch(arch)); err != nil {
+		return err
+	}
+	defer func() {
+		if origPlatform != "" && origPlatform != platformForArch(arch) {
+			_ = manifestSetString("platform", origPlatform)
+			fmt.Printf("（已还原 manifest platform=%s）\n", origPlatform)
+		}
+	}()
 
 	var final string
 	if mode == "release" {
-		final, err = runRelease(relName, relVer)
+		final, err = runRelease(relName, relVer, arch)
 	} else {
-		final, err = runDev()
+		final, err = runDev(arch)
 	}
 	if err != nil {
 		return err
+	}
+
+	// [lc-1387] 包内只有 app/server/fntvplus 一个原生二进制：arm64 构建后把该路径还原为 amd64，
+	// 避免工作区里留着一个 ARM 二进制（下次构建本来也会重编，但状态一致更不易误判）。
+	if arch != archAMD64 {
+		bin := filepath.Join(root, "app", "server", "fntvplus")
+		if goBin, _ := exec.LookPath("go"); goBin != "" {
+			if err := buildBackend(bin, archAMD64); err != nil {
+				fmt.Printf("[warn] 还原 amd64 后端失败（不影响已完成的 ARM 包）: %v\n", err)
+			}
+		}
 	}
 
 	// 产物移动到输出目录（跨盘 rename 失败时退回复制+删除）
@@ -127,16 +199,16 @@ func run(mode, relName, relVer, outDir string) error {
 }
 
 // runDev 开发测试版：版号自动（max(fpk 提交数, 痕迹+1)+1，严格递增）。
-func runDev() (string, error) {
+func runDev(arch string) (string, error) {
 	devVer := devCommitVersion()
 	writeVersion(devVer)
 	fmt.Printf("开发版号: %s\n", devVer)
-	return buildPackage("dev")
+	return buildPackage("dev", arch)
 }
 
 // runRelease 正式发布版：显示名与版号完全由调用方控制（飞牛商店真实展示）。
-// 版号须 x.y.z 三段数字；产物 Fntv-Plus-<版号>.fpk（不带 v/V 前缀，用户指定统一命名）。
-func runRelease(relName, relVer string) (string, error) {
+// 版号须 x.y.z 三段数字；产物 Fntv-Plus-<版号>[-arm64].fpk（不带 v/V 前缀，用户指定统一命名）。
+func runRelease(relName, relVer, arch string) (string, error) {
 	if strings.TrimSpace(relName) == "" {
 		return "", fmt.Errorf("正式发布需要 --name <显示名>")
 	}
@@ -153,37 +225,45 @@ func runRelease(relName, relVer string) (string, error) {
 	if err := manifestSetString("version", relVer); err != nil {
 		return "", err
 	}
-	fmt.Printf("正式版: %s @ %s\n", relName, relVer)
-	final, err := buildPackage("rel")
+	fmt.Printf("正式版: %s @ %s（%s）\n", relName, relVer, arch)
+	final, err := buildPackage("rel", arch)
 	if err != nil {
 		return "", err
 	}
-	// [命名统一] 不再用大小写 v/V 区分开发/发布包：发布包 = Fntv-Plus-<版号>.fpk
-	named := filepath.Join(root, "Fntv-Plus-"+relVer+".fpk")
+	// [命名统一] 不再用大小写 v/V 区分开发/发布包：发布包 = Fntv-Plus-<版号>[-arm64].fpk
+	named := filepath.Join(root, "Fntv-Plus-"+relVer+archSuffix(arch)+".fpk")
 	if err := os.Rename(final, named); err != nil {
 		return final, nil // 重命名失败不致命，返回原名
 	}
 	return named, nil
 }
 
-// buildPackage 完整打包链路：payload → 后端 → fnpack → 本地命名（dev/rel）。
-func buildPackage(kind string) (string, error) {
+// buildPackage 完整打包链路：payload → 后端(<arch>) → fnpack → 本地命名（dev/rel）。
+func buildPackage(kind, arch string) (string, error) {
 	syncPayload()
+	// fnpack 会把 app/ 整个打进去：若残留 build-fpk.sh 时代留下的 fntvplus-arm64，
+	// 每个包都会白胖 ~10MB 且与 manifest platform 语义打架，这里明确提示。
+	if stale := filepath.Join(root, "app", "server", "fntvplus-arm64"); func() bool {
+		_, err := os.Stat(stale)
+		return err == nil
+	}() {
+		fmt.Printf("[warn] 检测到 %s（旧 build-fpk.sh 产物）：会被一并打进 .fpk，建议删除；ARM 包请用 --arch arm64\n", stale)
+	}
 	bin := filepath.Join(root, "app", "server", "fntvplus")
-	if err := buildBackend(bin); err != nil {
+	if err := buildBackend(bin, arch); err != nil {
 		return "", err
 	}
-	fpk, err := pack()
+	fpk, err := pack(arch)
 	if err != nil {
 		return "", err
 	}
-	// [命名统一] 带序号包命名: Fntv-Plus-<序号>.fpk（不再用大小写 v/V 区分开发/发布）。
+	// [命名统一] 带序号包命名: Fntv-Plus-<序号>[-arm64].fpk（不再用大小写 v/V 区分开发/发布）。
 	// 版号 x.y.z-<seq> → 取 "-" 后数字。
 	if ver := manifestVersion(); strings.Contains(ver, "-") {
 		if n, err := strconv.Atoi(strings.TrimPrefix(ver, strings.SplitN(ver, "-", 2)[0]+"-")); err == nil {
-			named := filepath.Join(root, "Fntv-Plus-"+strconv.Itoa(n)+".fpk")
+			named := filepath.Join(root, "Fntv-Plus-"+strconv.Itoa(n)+archSuffix(arch)+".fpk")
 			if err := os.Rename(fpk, named); err == nil {
-				cleanOldDevPackages(named)
+				cleanOldDevPackages(named, arch)
 				return named, nil
 			}
 		}
@@ -221,34 +301,39 @@ func syncPayload() {
 	fmt.Println("       dist/fntv-plus.user.js -> src/go/internal/inject/payload/ 同步完成")
 }
 
-// buildBackend 交叉编译 linux/amd64 后端到 app/server/fntvplus。
-func buildBackend(bin string) error {
-	fmt.Println("[2/3] 交叉编译后端 (linux/amd64)...")
+// buildBackend 交叉编译 linux/<arch> 后端到 app/server/fntvplus。
+// 注意：包内只有这一个原生二进制（fnpack 只打 app/ 目录），所以 arm64 构建同样是覆盖同一路径；
+// 缺 go 时只在 amd64 下复用既有二进制（绝不复用 amd64 产物冒充 arm，那会打出装不起来的包）。
+func buildBackend(bin, arch string) error {
+	fmt.Printf("[2/3] 交叉编译后端 (linux/%s)...\n", arch)
 	goBin, _ := exec.LookPath("go")
 	if goBin == "" {
-		if _, err := os.Stat(bin); err == nil {
-			fmt.Println("[skip] 未找到 go，复用已有 app/server/fntvplus")
-			return nil
+		if arch == archAMD64 {
+			if _, err := os.Stat(bin); err == nil {
+				fmt.Println("[skip] 未找到 go，复用已有 app/server/fntvplus（amd64）")
+				return nil
+			}
 		}
-		return fmt.Errorf("未找到 go 工具链，且 app/server/fntvplus 不存在；请安装 Go 1.23+ 后重跑")
+		return fmt.Errorf("未找到 go 工具链，无法交叉编译 linux/%s 后端；请安装 Go 1.23+ 后重跑", arch)
 	}
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		return err
 	}
 	// 先编译到 src/go 目录内（个别环境下 -o 指向目录外会静默失败），再移动到 app/server/
-	tmp := filepath.Join(root, "src", "go", "fntvplus_linux_amd64")
+	tmpName := "fntvplus_linux_" + arch
+	tmp := filepath.Join(root, "src", "go", tmpName)
 	// [lc-167] 编译期注入版号兜底：-X main.buildVersion=<manifest version>
 	args := []string{"build"}
 	if v := manifestVersion(); v != "" && v != "?" {
 		args = append(args, "-ldflags", "-X main.buildVersion="+v)
 	}
-	args = append(args, "-o", "fntvplus_linux_amd64", "./cmd/fntvplus")
+	args = append(args, "-o", tmpName, "./cmd/fntvplus")
 	cmd := exec.Command(goBin, args...)
 	cmd.Dir = filepath.Join(root, "src", "go")
-	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
+	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+arch, "CGO_ENABLED=0")
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("后端编译失败: %w", err)
+		return fmt.Errorf("后端编译失败 (linux/%s): %w", arch, err)
 	}
 	if _, err := os.Stat(tmp); err != nil {
 		return fmt.Errorf("编译命令成功但产物缺失: %s", tmp)
@@ -262,12 +347,12 @@ func buildBackend(bin string) error {
 	if _, err := os.Stat(bin); err != nil {
 		return fmt.Errorf("编译产物最终缺失: %s", bin)
 	}
-	fmt.Println("       app/server/fntvplus 编译完成")
+	fmt.Printf("       app/server/fntvplus 编译完成 (linux/%s)\n", arch)
 	return nil
 }
 
-// pack 调 fnpack build 打出 .fpk 并本地命名。
-func pack() (string, error) {
+// pack 调 fnpack build 打出 .fpk 并本地命名（含架构后缀）。
+func pack(arch string) (string, error) {
 	fnpack, err := findFnpack()
 	if err != nil {
 		return "", err
@@ -289,10 +374,10 @@ func pack() (string, error) {
 	}
 	if ver := manifestVersion(); strings.Contains(ver, "-") {
 		if n, err := strconv.Atoi(strings.TrimPrefix(ver, strings.SplitN(ver, "-", 2)[0]+"-")); err == nil {
-			// [命名统一] 测试包 = Fntv-Plus-<序号>.fpk（仅序号，无 v 前缀）
-			named := filepath.Join(root, "Fntv-Plus-"+strconv.Itoa(n)+".fpk")
+			// [命名统一] 测试包 = Fntv-Plus-<序号>[-arm64].fpk（仅序号，无 v 前缀）
+			named := filepath.Join(root, "Fntv-Plus-"+strconv.Itoa(n)+archSuffix(arch)+".fpk")
 			if err := os.Rename(out, named); err == nil {
-				cleanOldDevPackages(named)
+				cleanOldDevPackages(named, arch)
 				return named, nil
 			}
 		}
@@ -300,13 +385,17 @@ func pack() (string, error) {
 	return out, nil
 }
 
-// cleanOldDevPackages 清理 root 与输出目录里的旧测试包（新命名 Fntv-Plus-<序号>.fpk、
+// cleanOldDevPackages 清理 root 与输出目录里的旧测试包（新命名 Fntv-Plus-<序号>[-arm64].fpk、
 // 历史 Fntv-Plus-v<序号>.fpk）；发布包 Fntv-Plus-x.y.z.fpk 带点，正则天然不匹配、不会误删。
-// outDir 可为空（不扫）。
-func cleanOldDevPackages(keep string) {
-	// 兼容历史命名（Fntv-Plus-v123.fpk）与新命名（Fntv-Plus-123.fpk）；
+// 只清同架构的包（-arm64 与 amd64 互不干扰）。outDir 可为空（不扫）。
+func cleanOldDevPackages(keep, arch string) {
+	// 兼容历史命名（Fntv-Plus-v123.fpk）与新命名（Fntv-Plus-123.fpk / Fntv-Plus-123-arm64.fpk）；
 	// 纯数字形态不会与发布包冲突（发布包是 x.y.z 带点）。
-	re := regexp.MustCompile(`^Fntv-Plus-(?:v)?\d+\.fpk$`)
+	pat := `^Fntv-Plus-(?:v)?\d+\.fpk$`
+	if arch == archARM64 {
+		pat = `^Fntv-Plus-(?:v)?\d+-arm64\.fpk$`
+	}
+	re := regexp.MustCompile(pat)
 	removed, checked := 0, 0
 	for _, dir := range []string{root, filepath.Dir(keep)} {
 		entries, err := os.ReadDir(dir)
@@ -380,11 +469,12 @@ func devCommitVersion() string {
 	return base + "-" + strconv.Itoa(seq)
 }
 
-// maxHistorySeq 扫根目录与输出目录里的 Fntv-Plus-<数字>.fpk（含历史 v 前缀形态），
-// 返回最大 N（包挪进 release/ 后痕迹依然可追）。
+// maxHistorySeq 扫根目录与输出目录里的 Fntv-Plus-<数字>[-arm64].fpk（含历史 v 前缀形态），
+// 返回最大 N（包挪进 release/ 后痕迹依然可追；序号与架构无关，两个架构共用一套序列）。
 func maxHistorySeq() (int, bool) {
-	// 兼容历史 Fntv-Plus-v123.fpk 与新 Fntv-Plus-123.fpk（发布包带点，不匹配）
-	re := regexp.MustCompile(`^Fntv-Plus-(?:v)?(\d+)\.fpk$`)
+	// 兼容历史 Fntv-Plus-v123.fpk、新 Fntv-Plus-123.fpk 与架构后缀 Fntv-Plus-123-arm64.fpk
+	// （发布包带点，不匹配）
+	re := regexp.MustCompile(`^Fntv-Plus-(?:v)?(\d+)(?:-arm64)?\.fpk$`)
 	max, ok := 0, false
 	for _, dir := range []string{root, defaultOutDir()} {
 		entries, err := os.ReadDir(dir)

@@ -21,7 +21,7 @@ $releaseDir = Join-Path (Split-Path -Parent $fpkDir) 'release'       # <仓库�
 # ── 窗体 ──
 $form                 = New-Object System.Windows.Forms.Form
 $form.Text            = 'Fntv-Plus fpk 打包工具'
-$form.Size            = New-Object System.Drawing.Size(760, 620)
+$form.Size            = New-Object System.Drawing.Size(760, 692)
 $form.StartPosition   = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox     = $false
@@ -64,26 +64,50 @@ $txtVer.Enabled    = $false
 
 $gbMode.Controls.AddRange(@($rbDev, $rbRel, $lblName, $txtName, $lblVer, $txtVer))
 
+# ── 目标架构（lc-1387：x86 / ARM64 / 两者连打；对应引擎 --arch amd64|arm64） ──
+$gbArch             = New-Object System.Windows.Forms.GroupBox
+$gbArch.Text        = '目标架构'
+$gbArch.Location    = New-Object System.Drawing.Point(16, 146)
+$gbArch.Size        = New-Object System.Drawing.Size(710, 56)
+
+$rbX86             = New-Object System.Windows.Forms.RadioButton
+$rbX86.Text        = 'x86（默认，飞牛 x86 主机）'
+$rbX86.Location    = New-Object System.Drawing.Point(14, 22)
+$rbX86.Size        = New-Object System.Drawing.Size(196, 20)
+$rbX86.Checked     = $true
+
+$rbArm             = New-Object System.Windows.Forms.RadioButton
+$rbArm.Text        = 'ARM64（ARM 主机）'
+$rbArm.Location    = New-Object System.Drawing.Point(214, 22)
+$rbArm.Size        = New-Object System.Drawing.Size(180, 20)
+
+$rbBoth            = New-Object System.Windows.Forms.RadioButton
+$rbBoth.Text       = 'x86 + ARM64（依次打两个包）'
+$rbBoth.Location   = New-Object System.Drawing.Point(398, 22)
+$rbBoth.Size       = New-Object System.Drawing.Size(300, 20)
+
+$gbArch.Controls.AddRange(@($rbX86, $rbArm, $rbBoth))
+
 # ── 输出目录 ──
 $lblOut           = New-Object System.Windows.Forms.Label
 $lblOut.Text      = '输出目录：'
-$lblOut.Location  = New-Object System.Drawing.Point(16, 148)
+$lblOut.Location  = New-Object System.Drawing.Point(16, 214)
 $lblOut.Size      = New-Object System.Drawing.Size(80, 20)
 $txtOut           = New-Object System.Windows.Forms.TextBox
 $txtOut.Text      = $releaseDir
 $txtOut.ReadOnly  = $true
-$txtOut.Location  = New-Object System.Drawing.Point(100, 145)
+$txtOut.Location  = New-Object System.Drawing.Point(100, 211)
 $txtOut.Size      = New-Object System.Drawing.Size(626, 22)
 
 # ── 操作按钮 ──
 $btnStart           = New-Object System.Windows.Forms.Button
 $btnStart.Text      = '开始打包'
-$btnStart.Location  = New-Object System.Drawing.Point(16, 180)
+$btnStart.Location  = New-Object System.Drawing.Point(16, 246)
 $btnStart.Size      = New-Object System.Drawing.Size(140, 34)
 
 $btnOpen            = New-Object System.Windows.Forms.Button
 $btnOpen.Text       = '打开输出目录'
-$btnOpen.Location   = New-Object System.Drawing.Point(170, 180)
+$btnOpen.Location   = New-Object System.Drawing.Point(170, 246)
 $btnOpen.Size       = New-Object System.Drawing.Size(140, 34)
 
 # ── 日志框 ──
@@ -92,14 +116,18 @@ $logBox.Multiline             = $true
 $logBox.ReadOnly              = $true
 $logBox.ScrollBars            = 'Vertical'
 $logBox.Font                  = New-Object System.Drawing.Font('Consolas', 9)
-$logBox.Location              = New-Object System.Drawing.Point(16, 226)
+$logBox.Location              = New-Object System.Drawing.Point(16, 292)
 $logBox.Size                  = New-Object System.Drawing.Size(710, 340)
 $logBox.BackColor             = [System.Drawing.Color]::FromArgb(24, 22, 32)
 $logBox.ForeColor             = [System.Drawing.Color]::Gainsboro
 
-$form.Controls.AddRange(@($gbMode, $lblOut, $txtOut, $btnStart, $btnOpen, $logBox))
+$form.Controls.AddRange(@($gbMode, $gbArch, $lblOut, $txtOut, $btnStart, $btnOpen, $logBox))
 
 $script:running = $false
+$script:pending = @()     # [lc-1387] 待执行的架构队列（'' = amd64/x86、'--arch arm64' = ARM64）
+$script:isRel   = $false
+$script:relName = ''
+$script:relVer  = ''
 
 # 日志追加：句柄未创建（ShowDialog 之前）走直接写入；创建后走 BeginInvoke 跨线程刷新
 function Append-Log {
@@ -122,6 +150,9 @@ function Set-UiRunning {
         $btnStart.Enabled = -not $Busy
         $rbDev.Enabled = -not $Busy
         $rbRel.Enabled = -not $Busy
+        $rbX86.Enabled = -not $Busy
+        $rbArm.Enabled = -not $Busy
+        $rbBoth.Enabled = -not $Busy
         if ($Busy) { $btnStart.Text = '打包中…' } else { $btnStart.Text = '开始打包' }
     }) | Out-Null
 }
@@ -143,25 +174,36 @@ function Ensure-Engine {
     return $false
 }
 
-$btnStart.Add_Click({
-    if ($script:running) { return }
-    $isRel = $rbRel.Checked
-    $ver = $txtVer.Text.Trim()
-    if ($isRel -and ($txtName.Text.Trim() -eq '')) { Append-Log '[X] 正式发布需要填写显示名。'; return }
-    if ($isRel -and ($ver -notmatch '^\d+\.\d+\.\d+$')) { Append-Log '[X] 正式版号须为 x.y.z 三段数字（如 1.3.1）。'; return }
-    if (-not (Ensure-Engine)) { return }
+# [lc-1387] 目标架构 → 引擎参数队列（'' = amd64/x86；'--arch arm64' = ARM64）
+function Get-ArchTasks {
+    if ($rbArm.Checked)  { return @('--arch arm64') }
+    if ($rbBoth.Checked) { return @('', '--arch arm64') }
+    return @('')
+}
 
-    Set-UiRunning $true
-    $logBox.Clear()
-    Append-Log ('启动打包… ' + (Get-Date -Format 'HH:mm:ss'))
+function Build-EngineArgs {
+    param([string]$ArchFlag)
+    if ($script:isRel) {
+        $a = 'release --name "' + $script:relName + '" --version "' + $script:relVer + '" --out "' + $releaseDir + '"'
+    } else {
+        $a = 'build --out "' + $releaseDir + '"'
+    }
+    if ($ArchFlag -ne '') { $a = $a + ' ' + $ArchFlag }
+    return $a
+}
+
+# 逐架构串行执行（x86 + ARM64 时连打两个包；任一失败则停止队列）
+function Start-NextBuild {
+    if ($script:pending.Count -eq 0) { Set-UiRunning $false; Append-Log '全部打包任务结束。'; return }
+    $archFlag = $script:pending[0]
+    $script:pending = @($script:pending | Select-Object -Skip 1)
+    if ($archFlag -eq '') { $label = 'x86 (amd64)' } else { $label = 'ARM64' }
+    Append-Log ''
+    Append-Log ('---- 开始打包：' + $label + ' ----')
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName               = $engineExe
-    if ($isRel) {
-        $psi.Arguments = 'release --name "' + $txtName.Text.Trim() + '" --version "' + $ver + '" --out "' + $releaseDir + '"'
-    } else {
-        $psi.Arguments = 'build --out "' + $releaseDir + '"'
-    }
+    $psi.Arguments              = (Build-EngineArgs $archFlag)
     $psi.WorkingDirectory       = $fpkDir
     $psi.UseShellExecute        = $false
     $psi.CreateNoWindow         = $true
@@ -189,11 +231,20 @@ $btnStart.Add_Click({
         try { $code = $sender.ExitCode } catch { }
         Append-Log ''
         if ($code -eq 0) {
-            Append-Log ('[完成] 打包成功，产物已输出到: ' + $releaseDir)
+            Append-Log ('[完成] ' + $label + ' 打包成功，产物已输出到: ' + $releaseDir)
+            # 队列里还有下一个架构 → 回到 UI 线程继续
+            $form.BeginInvoke([System.Action]{
+                if ($script:pending.Count -gt 0) {
+                    Start-NextBuild
+                } else {
+                    Set-UiRunning $false
+                    Append-Log '全部打包任务结束。'
+                }
+            }) | Out-Null
         } else {
-            Append-Log ('[失败] 打包未成功（退出码 ' + $code + '），详见上方日志。')
+            Append-Log ('[失败] ' + $label + ' 打包未成功（退出码 ' + $code + '），详见上方日志；队列已停止。')
+            Set-UiRunning $false
         }
-        Set-UiRunning $false
     }
     $proc.add_OutputDataReceived($outHandler)
     $proc.add_ErrorDataReceived($errHandler)
@@ -207,6 +258,24 @@ $btnStart.Add_Click({
         Append-Log ('[X] 启动引擎失败: ' + $_.Exception.Message)
         Set-UiRunning $false
     }
+}
+
+$btnStart.Add_Click({
+    if ($script:running) { return }
+    $isRel = $rbRel.Checked
+    $ver = $txtVer.Text.Trim()
+    if ($isRel -and ($txtName.Text.Trim() -eq '')) { Append-Log '[X] 正式发布需要填写显示名。'; return }
+    if ($isRel -and ($ver -notmatch '^\d+\.\d+\.\d+$')) { Append-Log '[X] 正式版号须为 x.y.z 三段数字（如 1.3.1）。'; return }
+    if (-not (Ensure-Engine)) { return }
+
+    Set-UiRunning $true
+    $logBox.Clear()
+    Append-Log ('启动打包… ' + (Get-Date -Format 'HH:mm:ss'))
+    $script:isRel   = $isRel
+    $script:relName = $txtName.Text.Trim()
+    $script:relVer  = $ver
+    $script:pending = @(Get-ArchTasks)
+    Start-NextBuild
 })
 
 $btnOpen.Add_Click({
@@ -221,7 +290,7 @@ Append-Log ('Fntv-Plus fpk 打包工具就绪。')
 $engineState = if (Test-Path $engineExe) { ' [已就绪]' } else { ' [缺失，首次打包时自动编译]' }
 Append-Log ('引擎: ' + $engineExe + $engineState)
 Append-Log ('输出目录: ' + $releaseDir)
-Append-Log '选好模式后点「开始打包」，日志会实时滚动在下方。'
+Append-Log '选好模式与目标架构后点「开始打包」，日志会实时滚动在下方。'
 
 if ($SelfTest) {
     # 自检模式：验证 UI 构建/日志写入后直接退出（不弹窗）

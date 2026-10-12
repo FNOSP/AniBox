@@ -1,6 +1,6 @@
 appname=fntvplus
-release_version=1.1.0
-version=1.1.0-87
+release_version=1.2.0
+version=1.2.0
 display_name=Fntv-Plus
 desc=飞牛影视增强微应用：点开即用影视网页增强版，电视/平板/手机/电脑全设备生效，不改影视任何文件，卸载即还原。主要功能：B站/自建源/弹弹play 三源弹幕（扫码登录、来源可视）、界面美化（首页轮播、海报墙、详情页柔光玻璃、Logo 自定义）、片头片尾手动标记与自动跳过、播放记忆跨设备同步、豆瓣/Bangumi/Trakt 同步、TMDB 信息卡、观影记录与年度报告。PC 重度观影可选 Windows 桌面客户端（MPV 硬解/原盘）。
 source=thirdparty

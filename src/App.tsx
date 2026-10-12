@@ -460,8 +460,6 @@ function PosterCard({
   subtitle?: string;
 }) {
   const isPlayable = item.type === "Movie" || item.type === "Episode";
-  // [lc-113] 骨架屏：图片走 fntvimg 代理（多一跳 NAS 往返），没有占位时整屏是"空白 + 突然冒出"。
-  const [imgOk, setImgOk] = useState(false);
   const progress =
     item.ts && item.duration && item.duration > 0 ? Math.min(100, (item.ts / item.duration) * 100) : 0;
   return (
@@ -469,15 +467,11 @@ function PosterCard({
       <div className="poster-box">
         {item.poster ? (
           <>
-            {!imgOk && <div className="poster-skeleton" />}
-            <img
-              src={imgUrl(item.poster)}
-              loading="lazy"
-              alt={item.title}
-              className={imgOk ? "is-loaded" : ""}
-              onLoad={() => setImgOk(true)}
-              onError={() => setImgOk(true)}
-            />
+            {/* [lc-114] 骨架屏放在图片**下层**（纯 CSS 层叠）。此前用 opacity 切换且依赖
+                onLoad，而图片命中 WebView 缓存时常在 React 挂监听前就 complete ⇒ 回调不触发、
+                图片永久 opacity:0 ⇒ "图片出不来"。层叠写法没有这个竞态。 */}
+            <div className="poster-skeleton" />
+            <img src={imgUrl(item.poster)} loading="lazy" alt={item.title} />
           </>
         ) : (
           <div className="poster-empty">🎬</div>

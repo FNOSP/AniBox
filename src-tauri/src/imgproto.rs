@@ -58,12 +58,22 @@ fn cache_put(path: String, ct: String, bytes: Vec<u8>) {
     }
 }
 
+/// [lc-114] 图片并发闸门：首页一次会打出**几百张**海报请求，全部经本代理转发 NAS。
+/// 不限并发时 NAS/网关会被压出 200+HTML 的错误页（表现为图片全挂、变慢，还把并发中的
+/// 媒体库 API 挤成"非 JSON"）。这里限制同时在飞的请求数，超出的排队。
+fn img_gate() -> &'static tokio::sync::Semaphore {
+    static G: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
+    G.get_or_init(|| tokio::sync::Semaphore::new(6))
+}
+
 pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     // Windows 形态：http://fntvimg.localhost/<poster 路径> → path 即海报相对路径
     let path = request.uri().path().to_string();
     if path.is_empty() || path == "/" {
         return Response::builder().status(400).body(b"missing path".to_vec()).unwrap();
     }
+    // [lc-114] 拿到闸门许可再发上游请求（限流，避免把 NAS/网关压出错误页）
+    let _permit = img_gate().acquire().await.ok();
     let cfg = app.state::<AppState>().config.read().await.clone();
     if cfg.server.is_empty() {
         return Response::builder().status(503).body(b"not logged in".to_vec()).unwrap();
@@ -136,8 +146,19 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
                 .unwrap_or("image/jpeg")
                 .to_lowercase();
             let bytes = r.bytes().await.unwrap_or_default().to_vec();
-            // 未鉴权时 NAS 返回 200+JSON（不是图片），按 404 处理
+            // 未鉴权/被打到错误页时 NAS 会返回 200+JSON/HTML（不是图片）。
+            // [lc-114] 这种情况优先按**可重试的临时故障**处理（限流/网关页），返回 503 + Retry-After，
+            // 让浏览器稍后自动重试；只有明确不是图片时才回 404。
             if ct.contains("application/json") || ct.contains("text/html") {
+                let looks_like_login = bytes.len() < 20_000 && (bytes.starts_with(b"<!DOCTYPE") || bytes.starts_with(b"<html"));
+                if looks_like_login {
+                    return Response::builder()
+                        .status(503)
+                        .header("Retry-After", "2")
+                        .header("Content-Type", "text/plain")
+                        .body(b"upstream returned html (rate-limited?)".to_vec())
+                        .unwrap_or_else(|_| Response::builder().status(503).body(Vec::new()).unwrap());
+                }
                 return Response::builder()
                     .status(404)
                     .header("Content-Type", "text/plain")

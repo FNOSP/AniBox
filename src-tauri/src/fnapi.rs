@@ -74,7 +74,29 @@ impl FnClient {
         body: Option<Value>,
     ) -> Result<Value, String> {
         let base = normalize_server(base);
-        self.call_inner(&base, path, method, token, body, 0).await
+        // [lc-114] 可重试判定：NAS 偶发返回 **200 + HTML**（被限流/网关错误页/弹回登录页），
+        // 此时 JSON 解析失败。这属于临时故障而非参数错误 —— 短退避重试两次即可恢复；
+        // 之前直接抛「HTTP 200 返回非 JSON 数据」，首页会连带把媒体库/条目全判失败。
+        let mut last_err = String::new();
+        for (i, backoff_ms) in [0u64, 400, 1200].iter().enumerate() {
+            if i > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(*backoff_ms)).await;
+            }
+            match self
+                .call_inner(&base, path, method, token, body.clone(), 0)
+                .await
+            {
+                Ok(v) => return Ok(v),
+                Err(e) => {
+                    let retryable = e.contains("返回非 JSON") || e.contains("接口返回了网页");
+                    if !retryable {
+                        return Err(e);
+                    }
+                    last_err = e;
+                }
+            }
+        }
+        Err(format!("{last_err}（已重试 2 次，疑似 NAS 限流或会话被弹回登录页）"))
     }
 
     /// 跟随 3xx 探测最终基址：fnOS 80 端口会把 /v/api/v1/* 302 到实际端口（实测 :17777）。

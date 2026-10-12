@@ -12,6 +12,10 @@ export default defineConfig(() => ({
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
+  build: {
+    // 浮层控制条是独立窗口的独立页面（bar.html）
+    rollupOptions: { input: { main: 'index.html', bar: 'bar.html' } },
+  },
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 1420,

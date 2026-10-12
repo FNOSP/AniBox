@@ -81,16 +81,6 @@ function pick(o: Record<string, unknown>, keys: string[]): any {
   return undefined;
 }
 
-function fmtTime(sec: number | null | undefined): string {
-  if (!sec || !isFinite(sec)) return "--:--";
-  const s = Math.floor(sec % 60);
-  const m = Math.floor(sec / 60);
-  const h = Math.floor(m / 60);
-  const mm = String(m % 60).padStart(2, "0");
-  const ss = String(s).padStart(2, "0");
-  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
-}
-
 /** 时长口语化（原版剧集行样式）：1420 → 「23 分钟 40 秒」 */
 function fmtDur(sec: number | null | undefined): string {
   if (!sec || !isFinite(sec) || sec <= 0) return "";
@@ -1166,35 +1156,16 @@ function PlayerView({
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const [duration, setDuration] = useState(0);
-  const [timePos, setTimePos] = useState(0);
-  const [paused, setPaused] = useState(true);
-  const [speed, setSpeed] = useState(1);
   const [volume, setVolume] = useState(100);
-  const [scrub, setScrub] = useState<number | null>(null);
   const [err, setErr] = useState("");
-  const [uiShow, setUiShow] = useState(false);
 
   useEffect(() => {
     const p = listen<MpvEvent>("mpv-event", (e) => {
       const ev = e.payload;
       if (ev.event !== "property-change") return;
-      switch (ev.id) {
-        case 1:
-          setTimePos(typeof ev.data === "number" ? ev.data : 0);
-          break;
-        case 2:
-          setDuration(typeof ev.data === "number" ? ev.data : 0);
-          break;
-        case 3:
-          setPaused(!!ev.data);
-          break;
-        case 4:
-          setSpeed(typeof ev.data === "number" ? ev.data : 1);
-          break;
-        case 5:
-          setVolume(typeof ev.data === "number" ? ev.data : 100);
-          break;
-      }
+      // 只有音量在页面侧要用（滚轮调音量）；播放态/进度由浮层条窗口自己监听
+      if (ev.id === 5) setVolume(typeof ev.data === "number" ? ev.data : 100);
+      else if (ev.id === 2) setDuration(typeof ev.data === "number" ? ev.data : 0);
     });
     return () => {
       p.then((f) => f());
@@ -1229,22 +1200,21 @@ function PlayerView({
     };
   }, [item.guid]);
 
-  // 底栏：控制条常驻在流内（尺寸恒定 → 布局零抖动、画面永不位移），只有内容随鼠标活动淡入淡出
-  // （mpv 观感：鼠标动才出现、静置 2.5s 消失；暂停时常显）
+  // 悬停浮层控制条（独立子窗：bar.html/bar.tsx + Rust place_bar 贴底）：
+  // 鼠标在视频上活动 → 唤起；静置 2.5s → 收起（条自身也续命）。页面里不放任何条 → 无占位、无位移。
   const idleTimer = useRef<number | null>(null);
   const poke = useCallback(() => {
-    setUiShow(true);
+    invoke("bar_show", { visible: true }).catch(() => {});
     if (idleTimer.current) window.clearTimeout(idleTimer.current);
-    idleTimer.current = window.setTimeout(() => setUiShow(false), 2500);
+    idleTimer.current = window.setTimeout(() => {
+      invoke("bar_show", { visible: false }).catch(() => {});
+    }, 2500);
   }, []);
   useEffect(() => {
     return () => {
       if (idleTimer.current) window.clearTimeout(idleTimer.current);
     };
   }, []);
-  useEffect(() => {
-    if (paused) setUiShow(true);
-  }, [paused]);
 
   // 全屏请求（mpv 侧事件 / 页面双击舞台）：内嵌形态 ↔ 全页形态 + 窗口全屏
   useEffect(() => {
@@ -1282,6 +1252,15 @@ function PlayerView({
       poke();
     }, 230);
   };
+  // 浮层条上的全屏按钮只发信号，形态切换与窗口全屏由主页面做
+  useEffect(() => {
+    const p = listen<{ action: string }>("bar-action", (e) => {
+      if (e.payload.action === "fullscreen") setBig(!!embedded);
+    });
+    return () => {
+      p.then((f) => f());
+    };
+  }, [embedded, setBig]);
   const onStageWheel = (e: React.WheelEvent) => {
     const v = Math.max(0, Math.min(130, Math.round(volume + (e.deltaY < 0 ? 5 : -5))));
     invoke("mpv_set_volume", { volume: v }).catch(() => {});
@@ -1318,8 +1297,6 @@ function PlayerView({
     return () => window.removeEventListener("keydown", onKey);
   }, [poke, setBig]);
 
-  const shownTime = scrub ?? timePos;
-
   return (
     <div className={embedded ? "player-embed" : "player-page"}>
       {!embedded && (
@@ -1350,57 +1327,6 @@ function PlayerView({
       >
         {err && <div className="err player-err">{err}</div>}
         {!duration && !err && <div className="player-loading">正在拉起 mpv…</div>}
-      </div>
-      <div className={`control-bar${uiShow ? "" : " bar-hidden"}`} onMouseEnter={poke}>
-        <div className="seek-row">
-          <span className="time">{fmtTime(shownTime)}</span>
-          <input
-            type="range"
-            min={0}
-            max={duration || 100}
-            step={1}
-            value={shownTime}
-            onInput={(e) => setScrub(Number((e.target as HTMLInputElement).value))}
-            onPointerUp={(e) => {
-              const v = Number((e.target as HTMLInputElement).value);
-              setScrub(null);
-              invoke("mpv_seek", { seconds: v, absolute: true }).catch(() => {});
-            }}
-            disabled={!duration}
-          />
-          <span className="time">{fmtTime(duration)}</span>
-        </div>
-        <div className="btn-row">
-          <button className="big" title={paused ? "播放" : "暂停"} onClick={() => invoke("mpv_toggle_pause").catch(() => {})}>
-            {paused ? "▶" : "⏸"}
-          </button>
-          <button onClick={() => invoke("mpv_seek", { seconds: -10, absolute: false }).catch(() => {})}>−10s</button>
-          <button onClick={() => invoke("mpv_seek", { seconds: 30, absolute: false }).catch(() => {})}>+30s</button>
-          <span className="spacer" />
-          <span className="ctl-label">速度</span>
-          <select
-            value={speed}
-            onChange={(e) => invoke("mpv_set_rate", { rate: Number(e.target.value) }).catch(() => {})}
-          >
-            {[0.5, 0.75, 1, 1.25, 1.5, 2, 3].map((r) => (
-              <option key={r} value={r}>
-                {r}x
-              </option>
-            ))}
-          </select>
-          <span className="ctl-label">音量</span>
-          <input
-            type="range"
-            className="vol"
-            min={0}
-            max={130}
-            value={volume}
-            onChange={(e) => invoke("mpv_set_volume", { volume: Number(e.target.value) }).catch(() => {})}
-          />
-          <button title="全屏" onClick={() => setBig(!!embedded)}>
-            ⛶
-          </button>
-        </div>
       </div>
     </div>
   );

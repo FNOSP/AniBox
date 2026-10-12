@@ -81,6 +81,7 @@
 - ✅ Windows (x64)
 - ✅ macOS (Intel & Apple Silicon)
 - ✅ Linux (x64 & ARM64)
+- ✅ 飞牛 fnOS（NAS / x86_64，fpk 微应用）
 
 ### 📥 下载指南
 | 平台 | 文件类型 | 说明 |
@@ -88,6 +89,7 @@
 | 💻 Windows | `.exe` | **由维护者手动上传至本 Release**（不通过自动构建） |
 | 🍎 macOS | `.dmg` | 磁盘镜像，安装后执行: `sudo find "/Applications/Fntv-Plus.app" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null` |
 | 🐧 Linux | `.AppImage` | 便携应用，添加执行权限后直接运行。弹幕与播放器配置已内置，仅需自行安装 mpv（要求版本 > 0.37.0） |
+| 🏠 飞牛 fnOS | `.fpk` | 微应用（NAS，x86_64）：fnOS **应用中心 →「手动安装」→ 上传本包 `.fpk`**，安装后桌面出现「影视 Plus」（增强页，经官方网关 `/app/fntvplus/` 访问、自动复用 NAS 登录态）与「Fntv-Plus 设置」两个入口；不改影视应用任何文件，原生 5666 端口访问不受影响，卸载即还原。**升级**：应用中心卸载时勾选「保留数据」→ 安装新包，设置与缓存自动恢复 |
 
 > 📦 **更新机制说明（v3.7.0 起生效）**
 > - **所有平台安装包均在 GitHub Release 下载**：[Fntv-Plus v3.8.1 下载](https://github.com/YDMY007/Fntv-Plus/releases/tag/v3.8.1)
@@ -96,7 +98,8 @@
 >   - **全量包更新**：版本号第二位或第一位增加（如 `3.7.0` → `3.8.0`），应用内引导前往 GitHub 下载完整安装包覆盖安装。
 > - 同版本号的热补丁重复发布不会重复提示。
 > - ⚠️ **本版含随包 MPV 与安装器改动**：热补丁只更新应用代码，建议同时下载完整安装包覆盖安装，以取得新 MPV、分发瘦身与播放器品牌更新。
-> 💡 **Windows 版本由维护者手动上传**，本 Release 的 macOS / Linux 安装包由 GitHub Actions 自动构建并发布。
+> - 🏠 **飞牛 fpk 版不参与上述自动更新**：升级方式即上表「应用中心卸载（勾选保留数据）→ 安装新 `.fpk`」。
+> 💡 **Windows 与飞牛 fpk 版本由维护者手动上传**，本 Release 的 macOS / Linux 安装包由 GitHub Actions 自动构建并发布。
 
 ---
 

@@ -460,13 +460,25 @@ function PosterCard({
   subtitle?: string;
 }) {
   const isPlayable = item.type === "Movie" || item.type === "Episode";
+  // [lc-113] 骨架屏：图片走 fntvimg 代理（多一跳 NAS 往返），没有占位时整屏是"空白 + 突然冒出"。
+  const [imgOk, setImgOk] = useState(false);
   const progress =
     item.ts && item.duration && item.duration > 0 ? Math.min(100, (item.ts / item.duration) * 100) : 0;
   return (
     <div className="card" onClick={() => onOpen(item)} title={item.title}>
       <div className="poster-box">
         {item.poster ? (
-          <img src={imgUrl(item.poster)} loading="lazy" alt={item.title} />
+          <>
+            {!imgOk && <div className="poster-skeleton" />}
+            <img
+              src={imgUrl(item.poster)}
+              loading="lazy"
+              alt={item.title}
+              className={imgOk ? "is-loaded" : ""}
+              onLoad={() => setImgOk(true)}
+              onError={() => setImgOk(true)}
+            />
+          </>
         ) : (
           <div className="poster-empty">🎬</div>
         )}

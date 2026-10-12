@@ -693,6 +693,35 @@ h3 {
   border: 1px solid var(--line);
   transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
 }
+/* [lc-113] 图片骨架屏 + 淡入：图片走 fntvimg 代理（多一跳 NAS 往返），
+   没有占位时页面表现为"空白一片 + 图突然冒出来"。 */
+.poster-skeleton {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    var(--ph-bg) 30%,
+    rgba(255, 255, 255, 0.07) 48%,
+    var(--ph-bg) 66%
+  );
+  background-size: 300% 100%;
+  animation: posterShimmer 1.25s linear infinite;
+}
+@keyframes posterShimmer {
+  from { background-position: 130% 0; }
+  to { background-position: -30% 0; }
+}
+.poster-box > img {
+  opacity: 0;
+  transition: opacity 0.22s ease;
+}
+.poster-box > img.is-loaded {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .poster-skeleton { animation: none; }
+}
+
 .card:hover .poster-box {
   transform: translateY(-4px);
   border-color: rgba(108, 155, 255, 0.55);

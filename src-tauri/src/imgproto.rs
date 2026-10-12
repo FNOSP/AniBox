@@ -24,6 +24,40 @@ fn http_client() -> &'static reqwest::Client {
     })
 }
 
+/// [lc-113] 图片内存缓存。主仓库（Electron）是渲染进程直连 NAS（带会话 Cookie），只一跳；
+/// 我们是 WebView → 本进程 fntvimg 代理 → NAS，多一跳且每张海报一次完整往返，
+/// 所以首屏后延明显。这里按路径缓存 (content-type, bytes)，命中直接返回。
+const IMG_CACHE_MAX: usize = 400;
+const IMG_CACHE_MAX_BYTES: usize = 192 << 20; // 约 192MB 上限
+
+fn img_cache() -> &'static std::sync::Mutex<Option<Vec<(String, String, Vec<u8>)>>> {
+    static C: OnceLock<std::sync::Mutex<Option<Vec<(String, String, Vec<u8>)>>>> = OnceLock::new();
+    C.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+fn cache_get(path: &str) -> Option<(String, Vec<u8>)> {
+    let mut g = img_cache().lock().ok()?;
+    let v = g.as_mut()?;
+    let idx = v.iter().position(|(p, _, _)| p == path)?;
+    let (p, ct, b) = v[idx].clone();
+    v[idx] = (p, ct.clone(), b.clone());
+    Some((ct, b))
+}
+
+fn cache_put(path: String, ct: String, bytes: Vec<u8>) {
+    let Ok(mut g) = img_cache().lock() else { return };
+    let v = g.get_or_insert_with(Vec::new);
+    if v.iter().any(|(p, _, _)| *p == path) {
+        return;
+    }
+    v.push((path, ct, bytes));
+    while v.len() > IMG_CACHE_MAX
+        || v.iter().map(|(_, _, b)| b.len()).sum::<usize>() > IMG_CACHE_MAX_BYTES
+    {
+        v.remove(0);
+    }
+}
+
 pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     // Windows 形态：http://fntvimg.localhost/<poster 路径> → path 即海报相对路径
     let path = request.uri().path().to_string();
@@ -33,6 +67,15 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
     let cfg = app.state::<AppState>().config.read().await.clone();
     if cfg.server.is_empty() {
         return Response::builder().status(503).body(b"not logged in".to_vec()).unwrap();
+    }
+    // [lc-113] 命中内存缓存直接返回，省掉一次 NAS 往返
+    if let Some((ct, bytes)) = cache_get(&path) {
+        return Response::builder()
+            .status(200)
+            .header("Content-Type", ct)
+            .header("Cache-Control", "max-age=86400")
+            .body(bytes)
+            .unwrap_or_else(|_| Response::builder().status(500).body(Vec::new()).unwrap());
     }
     let mut current = format!(
         "{}{}{}",
@@ -101,6 +144,8 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
                     .body(b"unauthorized or missing".to_vec())
                     .unwrap();
             }
+            // [lc-113] 成功取到图片后写入内存缓存（后续同图秒回）
+            cache_put(path.clone(), ct.clone(), bytes.clone());
             Response::builder()
                 .status(status)
                 .header("Content-Type", ct)

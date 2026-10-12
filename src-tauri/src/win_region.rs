@@ -49,7 +49,7 @@ fn class_of(hwnd: HWND) -> String {
     String::from_utf16_lossy(&buf[..n as usize])
 }
 
-/// 该窗口是否落在任一「排除窗」（mpv 宿主 / playerbar）的子树里
+/// 该窗口是否落在任一「排除窗」（如 mpv 宿主窗）的子树里
 fn under_excluded(hwnd: HWND, excluded: &[isize]) -> bool {
     if excluded.is_empty() {
         return false;
@@ -66,7 +66,7 @@ fn under_excluded(hwnd: HWND, excluded: &[isize]) -> bool {
     false
 }
 
-/// 深度优先收集主窗下所有 WebView2 层窗口（排除 mpv 宿主/playerbar 子树）
+/// 深度优先收集主窗下所有 WebView2 层窗口（排除 mpv 宿主窗子树）
 fn collect_targets(main: HWND, excluded: &[isize]) -> Vec<(HWND, String)> {
     let mut out = Vec::new();
     let mut stack = Vec::new();

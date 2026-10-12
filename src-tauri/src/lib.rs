@@ -406,18 +406,11 @@ fn apply_cutout(app: &AppHandle, state: &AppState, force: bool) {
         *last = Some(key);
     }
 
-    // 只排除 mpv 宿主窗与 playerbar 的子树。
+    // 只排除 mpv 宿主窗的子树。
     // 注意：**不能**把主窗句柄放进来 —— collect_targets 从主窗的子窗开始走，
     // 排除判定是「向上找祖先」，主窗是所有目标的祖先，一旦入表就全被跳过（lc-088 踩过）。
     let mut exclude: Vec<isize> = Vec::with_capacity(2);
     if let Some(h) = embed {
-        exclude.push(h);
-    }
-    if let Some(h) = app
-        .get_webview_window("playerbar")
-        .and_then(|w| w.hwnd().ok())
-        .map(|h| h.0 as isize)
-    {
         exclude.push(h);
     }
 
@@ -519,79 +512,10 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     Ok(())
 }
 
-// ───────────────── [lc-090] 自绘浮层控制条（默认关闭） ─────────────────
-//
-// 为什么默认关：
-// ① **架构上已无法被唤起** —— lc-088 挖洞 + lc-089 启用 mpv 子窗之后，视频区内的鼠标
-//    完全归 mpv（这是刻意的），页面与这个浮层窗都收不到 mousemove → 靠「悬停唤起」的
-//    自绘条不可能再出现（lc-086 那套「主页面 stage mousemove → bar_show」在 lc-087 已撤，
-//    且现在连 stage 都收不到鼠标了）。
-// ② **会自己冒出来** —— bar.tsx 挂载时无条件 `poke()` → `bar_show(true)`，
-//    而窗口是被 `player_set_bounds`→`place_bar`→`ensure_bar` 懒创建的 →
-//    只要打开详情页（还没播）它就先显示出来，窄宽度下 速度/音量 标签还会竖排换行。
-// 现在底栏由 mpv 原生 uosc 提供（lc-089 已恢复鼠标交互）。
-// 代码保留备用：`FNTV_CUSTOM_BAR=1` 打开（注意届时需要自己重新接一个唤起源）。
-const BAR_H_CSS: f64 = 54.0;
-
-fn custom_bar_enabled() -> bool {
-    matches!(std::env::var("FNTV_CUSTOM_BAR").ok().as_deref(), Some("1"))
-}
-
-fn ensure_bar(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
-    if !custom_bar_enabled() {
-        return Err("自绘控制条已关闭（FNTV_CUSTOM_BAR=1 可启用）".into());
-    }
-    if let Some(w) = app.get_webview_window("playerbar") {
-        return Ok(w);
-    }
-    let main = app.get_webview_window("main").ok_or("主窗口不存在")?;
-    let hwnd = main.hwnd().map_err(|e| e.to_string())?;
-    let win = tauri::WebviewWindowBuilder::new(
-        app,
-        "playerbar",
-        tauri::WebviewUrl::App("bar.html".into()),
-    )
-    .parent_raw(hwnd)
-    .decorations(false)
-    .transparent(true)
-    .shadow(false)
-    .skip_taskbar(true)
-    .resizable(false)
-    .visible(false)
-    .build()
-    .map_err(|e| format!("创建播放控制条窗口失败: {}", e))?;
-    Ok(win)
-}
-
-/// 把控制条贴到视频区底部（x/y/w/h 与 player_set_bounds 同源：相对主窗客户区的物理像素）
-fn place_bar(app: &AppHandle, x: f64, y: f64, w: f64, h: f64) {
-    let Ok(bar) = ensure_bar(app) else { return };
-    let dpr = app
-        .get_webview_window("main")
-        .and_then(|m| m.scale_factor().ok())
-        .unwrap_or(1.0);
-    let bar_h = (BAR_H_CSS * dpr).round().max(1.0);
-    let _ = bar.set_size(tauri::PhysicalSize::new(w.max(16.0) as u32, bar_h as u32));
-    let _ = bar.set_position(tauri::PhysicalPosition::new(x, (y + h - bar_h).max(0.0)));
-}
-
-/// 控制条显隐（页面在鼠标移入视频/控制条时置 true，静置后置 false）
-#[tauri::command]
-async fn bar_show(app: AppHandle, state: State<'_, AppState>, visible: bool) -> Result<(), String> {
-    let bar = ensure_bar(&app)?;
-    if visible {
-        let b = *state.bounds.lock().unwrap();
-        place_bar(&app, b.0 as f64, b.1 as f64, b.2 as f64, b.3 as f64);
-        bar.show().map_err(|e| e.to_string())?;
-        // 抬到最上层：mpv 视频宿主窗也是子窗，必须压过它（视频窗自身 hit-transparent，点击不受影响）
-        if let Ok(h) = bar.hwnd() {
-            win_embed::keep_top(h.0 as isize);
-        }
-    } else {
-        bar.hide().map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
+// [lc-100] 自绘浮层控制条（bar.html / playerbar 窗口）已**整体删除**。
+// 它从 lc-090 起就默认关闭且架构上无法被唤起（视频区内鼠标归 mpv），属于纯死代码：
+// 一个额外窗口 + 一个额外页面 + 一条懒创建路径，还曾经自己冒出来（lc-090 的 bug）。
+// 底栏统一由 mpv 原生 uosc 提供；需要的话从 git 历史里取回（lc-099 之前的版本）。
 
 #[tauri::command]
 async fn player_set_bounds(
@@ -610,7 +534,6 @@ async fn player_set_bounds(
             *state.last_embedded.lock().unwrap() = Some(b);
         }
     }
-    place_bar(&app, x, y, w, h); // 视频区变化时控制条跟随（未创建/未显示都无害）
     let slot = state.mpv.lock().await;
     if let Some(m) = slot.as_ref() {
         let eh = m.embed_hwnd;
@@ -649,9 +572,6 @@ async fn player_set_visible(
 
 #[tauri::command]
 async fn player_stop(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    if let Ok(bar) = ensure_bar(&app) {
-        let _ = bar.hide();
-    }
     // [lc-088] 播放形态结束 → 撤掉挖洞，WebView 恢复完整区域；[lc-091] 同时隐藏宿主窗，
     // 让「洞 ⇔ 宿主窗可见」这条不变式成立（否则残留最后一帧浮在洞下方）
     if let Some(eh) = *state.embed_hwnd.lock().unwrap() {
@@ -764,21 +684,6 @@ async fn mpv_set_rate(state: State<'_, AppState>, rate: f64) -> Result<(), Strin
 
 #[cfg(target_os = "windows")]
 mod winvisual {
-    /// 关闭系统底板（DWMSBT_NONE）—— mpv 播放期间禁用全窗模糊，消合成开销
-    pub fn clear_backdrop(hwnd: isize) {
-        use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
-        unsafe {
-            let none: u32 = 1; // DWMSBT_NONE
-            DwmSetWindowAttribute(
-                hwnd as _,
-                38, // DWMWA_SYSTEMBACKDROP_TYPE
-                &none as *const u32 as *const core::ffi::c_void,
-                4,
-            );
-        }
-        disable_dwm_border(hwnd);
-    }
-
     /// SWCA 会重新启用 DWM 边框（且边框跟随 SetWindowRgn 圆角轮廓 → 圆角外白线），必须在其后关掉
     pub fn disable_dwm_border(hwnd: isize) {
         use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
@@ -990,7 +895,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             set_acrylic_tint,
             dev_log,
-            bar_show,
             mpv_input,
             tmdb::tmdb_show_details,
             get_config,

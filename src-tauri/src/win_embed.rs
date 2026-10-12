@@ -44,7 +44,7 @@ fn ensure_class() {
             hCursor: std::ptr::null_mut(),
             // [lc-097] 纯黑底色：宿主窗未被 mpv 绘到的像素（对齐缝隙、resize 瞬间）渲染成黑色，
             // 而不是让下面的主窗亚克力（浅色）透出来 —— 避免满屏时边缘出现"白边"。刷子只建一次。
-            hbrBackground: unsafe { CreateSolidBrush(0) }, // 不自动擦底，交给 mpv 填充 —— 黑色兜底
+            hbrBackground: CreateSolidBrush(0), // 纯黑兜底（本函数体已在 unsafe 块内）
             lpszMenuName: std::ptr::null(),
             lpszClassName: cls.as_ptr(),
         };

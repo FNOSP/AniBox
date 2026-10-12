@@ -66,6 +66,7 @@
 - 弹幕轨道吞吐优化：碰撞判定按「会不会撞」释放轨道，高密度弹幕不再成堆被丢。
 - MPV 弹幕菜单两级结构 + 原地刷新；空闲/换集瞬间不再因空播放地址报错。
 - 应用图标迭代至 v10，安装器画稿进构建链；打包规则统一、构建占用自动重试（EBUSY）。
+- **MPV 分发瘦身**：移出本仓库零引用的 Noto Serif CJK 字体（27.3MB，全区域合集、仓库内无任何配置或脚本引用），安装包相应减小约 15MB —— 弹幕显式用微软雅黑、uosc 用 Noto Sans Mono CJK SC、徽章/OSD 用 Segoe UI，均不受影响；仅显式指名「Noto Serif CJK *」的外挂字幕会回退系统 serif（简体环境本机已有 Noto Serif SC VF，观感基本不变）。文件留档于 `portable_config/scripts-backup/badge-fonts-pruned-lc1383/`（该目录不进包），可随时还原。
 - 日志与诊断能力增强：轮播 / 弹幕 / Bangumi 全链路可在 app.log 取证，便于远程排查。
 
 ## 💻 支持平台

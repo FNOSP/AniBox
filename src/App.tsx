@@ -361,6 +361,8 @@ function CarouselView({
   const [armed, setArmed] = useState(false);
   // [lc-116] 鼠标靠近哪一侧："" | "prev" | "next"（用来淡入对应箭头）
   const [near, setNear] = useState<"" | "prev" | "next">("");
+  // [lc-117] 首尾跨接的那一帧临时关掉 .mist-body 的 1.5s 横向过渡
+  const [noAnim, setNoAnim] = useState(false);
   const n = items.length;
 
   const onBannerMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -371,6 +373,26 @@ function CarouselView({
     setNear(x <= zone ? "prev" : x >= w - zone ? "next" : "");
   };
 
+  /**
+   * [lc-117] 统一走这里切页，delta = -1 / +1。
+   * 取模保证「第一张往左 = 最后一张」「最后一张往右 = 第一张」的反向回绕。
+   * 跨接的那一帧必须禁用过渡：.mist-body 是 translateX(-index*100%)，从 0 直接跳到
+   * -(n-1)*100% 会让 1.5s 动画横扫整条轨道（n 张卡要飞过 n-1 屏宽），观感像卡死。
+   */
+  const go = useCallback(
+    (delta: number) => {
+      if (n < 2) return;
+      const next = (index + delta + n) % n;
+      const wrap = (delta > 0 && index === n - 1) || (delta < 0 && index === 0);
+      if (wrap) {
+        setNoAnim(true);
+        requestAnimationFrame(() => requestAnimationFrame(() => setNoAnim(false)));
+      }
+      setIndex(next);
+    },
+    [index, n]
+  );
+
   // 入场动画闸门：挂载后瞬间补 active，让首帧信息走 misty 同款上浮入场
   useEffect(() => {
     const t = setTimeout(() => setArmed(true), 80);
@@ -378,13 +400,16 @@ function CarouselView({
   }, []);
 
   // 8s 自动轮播（emby-crx 同款节奏；页面隐藏时不切，避免回前台跳帧）
+  // [lc-117] 依赖 index 而不是常驻 interval：手动点箭头后重新起算 8s，
+  // 否则刚点过去就被自动轮播顶走，看着像「点了没反应」。
   useEffect(() => {
     if (n < 2) return;
-    const t = setInterval(() => {
-      if (!document.hidden) setIndex((i) => (i + 1) % n);
+    const t = setTimeout(() => {
+      if (!document.hidden) go(1);
     }, 8000);
-    return () => clearInterval(t);
-  }, [n]);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [n, index]);
 
   if (n === 0) return null;
   const yearOf = (it: MediaItem) => String(it.release_date || it.air_date || "").slice(0, 4);
@@ -395,7 +420,10 @@ function CarouselView({
       onMouseMove={onBannerMove}
       onMouseLeave={() => setNear("")}
     >
-      <div className="mist-body" style={{ transform: `translateX(-${index * 100}%)` }}>
+      <div
+        className={`mist-body${noAnim ? " no-anim" : ""}`}
+        style={{ transform: `translateX(-${index * 100}%)` }}
+      >
         {items.map((it, i) => {
           const bd = bds[it.guid];
           const meta = [
@@ -458,24 +486,36 @@ function CarouselView({
           );
         })}
       </div>
-      {/* [lc-116] 左右切换箭头：默认 opacity 0 且不吃鼠标事件；鼠标移到对应侧的"附近区域"
-          （左右各约 22% 宽，最多 260px）才淡入并可点 —— 用 mousemove 判断靠近哪一侧，
-          而不是 hover 整个 banner（hero 占满一屏，那样等于一直显示）。 */}
+      {/* [lc-116] 左右切换箭头：默认完全透明；鼠标移到对应侧的"附近区域"
+          （左右各约 22% 宽，最多 260px）才淡入 —— 用 mousemove 判断靠近哪一侧，
+          而不是 hover 整个 banner（hero 占满一屏，那样等于一直显示）。
+          [lc-117] 三个坑：
+          1) onMouseDown 里 preventDefault —— 原生 button 按下会抢焦点，浏览器把焦点元素
+             滚进视口会让整页上下窜一下（第二个「跳动」来源）。
+          2) 事件用 go(-1)/go(+1)，取模实现首尾反向回绕（第一张往左 = 最后一张）。
+          3) 不再用 pointer-events:none 门控可点性 —— 鼠标静止时 mousemove 不刷新 near，
+             按钮可能停在「看得见但点不动」的状态；透明时点到也只是切页，无副作用。 */}
       {n > 1 && (
         <>
           <button
+            type="button"
             className={`mist-nav mist-nav-prev${near === "prev" ? " is-on" : ""}`}
             title="上一张"
             aria-label="上一张"
-            onClick={() => setIndex((i) => (i - 1 + n) % n)}
+            onMouseEnter={() => setNear("prev")}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => go(-1)}
           >
             ‹
           </button>
           <button
+            type="button"
             className={`mist-nav mist-nav-next${near === "next" ? " is-on" : ""}`}
             title="下一张"
             aria-label="下一张"
-            onClick={() => setIndex((i) => (i + 1) % n)}
+            onMouseEnter={() => setNear("next")}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => go(1)}
           >
             ›
           </button>

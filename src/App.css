@@ -1570,6 +1570,10 @@ button:active {
   height: 100%;
   transition: transform 1.5s cubic-bezier(0.15, 0.07, 0, 1); /* emby-crx 同款缓动 */
 }
+/* [lc-117] 首尾跨接（第一张←→最后一张）的那一帧关掉过渡，否则会横扫整条轨道 */
+.mist-body.no-anim {
+  transition: none;
+}
 .mist-item {
   position: relative;
   min-width: 100%;
@@ -2225,39 +2229,61 @@ button:active {
   flex-shrink: 0;
 }
 
-/* [lc-116] 轮播左右切换箭头：默认完全透明且不吃鼠标；鼠标移到该侧附近区域才淡入可点 */
+/* [lc-117] 轮播左右切换箭头 —— 三个坑都在这里，别再踩回去：
+   1) 不要外面的长方形框。全局 `button{background:var(--hover);border;border-radius:9px;padding:8px 15px}`
+      是元素选择器，`.mist-nav` 是类选择器，但两者都只作用在各自属性上；真正的坑是
+      `button:hover{background:var(--hover-strong)}` 特异性 (0,0,1,1) 高于 `.mist-nav` (0,0,1,0)，
+      所以 hover 态必须显式写 `.mist-nav:hover` 兜住，否则一悬停就冒出灰底方框。
+   2) 垂直居中改用 top:0;bottom:0;margin:auto 0，**不能**用 transform: translateY(-50%)。
+      全局 `button:active{transform:scale(.97)}` 特异性 (0,0,1,1) 更高，按下瞬间会把
+      translateY(-50%) 整个顶掉 → 按钮下移 39px → 鼠标脱离按钮 → mouseup 落在 .mist-banner 上
+      → click 根本不触发（这就是「点击没反应」），且按下/松开一上一下（这就是「上下跳动」）。
+   3) 不再用 pointer-events:none 门控。鼠标静止时 mousemove 不刷新 near，按钮可能停在不可点状态。
+      透明时点到也只是切换，而鼠标一靠近必然触发 mousemove 让它显形，实际无差别。 */
 .mist-nav {
   position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 0;
+  bottom: 0;
+  margin: auto 0;
   z-index: 6;
-  width: 44px;
-  height: 78px;
+  width: 54px;
+  height: 88px;
   padding: 0;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  background: rgba(0, 0, 0, 0.26);
-  backdrop-filter: blur(4px);
-  color: #fff;
-  font-size: 30px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  outline: none;
+  color: rgba(255, 255, 255, 0.78);
+  font-family: inherit;
+  font-size: 52px;
   line-height: 1;
   cursor: pointer;
   opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+  transition: opacity 0.22s ease, color 0.2s ease, text-shadow 0.2s ease, transform 0.12s ease;
 }
-.mist-nav-prev { left: 18px; }
-.mist-nav-next { right: 18px; }
-.mist-nav.is-on {
-  opacity: 1;
-  pointer-events: auto;
-}
+.mist-nav-prev { left: 12px; }
+.mist-nav-next { right: 12px; }
+.mist-nav.is-on { opacity: 1; }
+/* 特异性必须 ≥ button:hover / button:active 的 (0,0,1,1)，所以这里用 .mist-nav:hover (0,0,2,0) */
+.mist-nav:hover,
 .mist-nav.is-on:hover {
-  background: rgba(0, 0, 0, 0.55);
-  border-color: rgba(255, 255, 255, 0.35);
+  background: none;
+  border: 0;
+  color: #fff;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.95);
+}
+.mist-nav:active,
+.mist-nav.is-on:active {
+  background: none;
+  border: 0;
+  /* 居中已不靠 transform，这里可以安全地只做按压反馈 */
+  transform: scale(0.92);
 }
 .mist-nav:focus-visible {
   opacity: 1;
-  pointer-events: auto;
-  outline: 2px solid var(--accent);
+  color: #fff;
+  outline: none;
 }

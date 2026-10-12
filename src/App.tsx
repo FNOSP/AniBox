@@ -902,7 +902,6 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   }, [episodes.length]);
 
   const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
-  const backdrop = (pick(data ?? {}, ["backdrops", "backdrop"]) as string) || base.poster || "";
   const poster = (pick(data ?? {}, ["posters", "poster"]) as string) || base.poster || "";
   const overview = String(pick(data ?? {}, ["overview"]) ?? base.overview ?? "");
   const rating = String(pick(data ?? {}, ["voteAverage", "vote_average"]) ?? base.vote_average ?? "");
@@ -940,17 +939,15 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
         </button>
         <h1 className="detail-title">{title}</h1>
         {rating && rating !== "0" && <span className="meta meta-rating detail-rating">★ {rating}</span>}
+        {/* [lc-107] 视频占位框已删除（独立 mpv 窗口模式，页面不留视频区）：播放入口收进标题行 */}
+        <button className="btn-play-head" onClick={playing ? undefined : startPlay} disabled={playing}>
+          {playing ? "⏳ 打开中…" : `▶ ${resumeAt ? "续播" : "播放"}`}
+        </button>
       </div>
+      {playNote && <div className="play-note">{playNote}</div>}
       <div className="detail-cols">
         <div className="detail-left">
           {err && <div className="err">{err}</div>}
-          {playNote && <div className="err player-err">{playNote}</div>}
-          <div className="player-cover" onClick={playing ? undefined : startPlay}>
-            {backdrop ? <img src={imgUrl(backdrop)} alt={title} /> : <div className="poster-empty">🎬</div>}
-            <button className="big-play" disabled={playing}>
-              {playing ? "⏳ 打开中…" : `▶ ${resumeAt ? "续播" : "播放"}`}
-            </button>
-          </div>
           <div className="tmdb-card">
             <div className="tmdb-poster">
               {poster ? <img src={imgUrl(poster)} alt={title} /> : <div className="poster-empty">🎬</div>}

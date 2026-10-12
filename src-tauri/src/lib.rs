@@ -699,10 +699,17 @@ pub fn run() {
                     set_system_round_corner(hwnd);
                 }
             }
-            // [lc-088] 主窗尺寸变化 → WebView 客户区随之变化，必须**强制**重建挖洞区域
-            // （区域是绝对像素坐标，不随窗口缩放，残留就是错位裁剪）
-            // [lc-098] 但先把 mpv 宿主窗对到当前形态的正确矩形，再算洞 —— 否则全屏那一拍会出现
-            // "洞已放大、画面还小"，周边露出主窗浅色底（白闪）；退出时反之会整页被裁（黑闪）。
+            // 窗口以 visible:false 创建：延迟到透明化/圆角区域/模糊全部就位后再显示，
+            // 消除首帧残留（圆角外露白/旧画面）。
+            // [lc-106 修复] 此块在 lc-106 清理挖洞代码时被误删 ⇒ 窗口永远不 show ⇒ "dev 启动后窗口没了"。
+            let h2 = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                if let Some(win) = h2.get_webview_window("main") {
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
+            });
             // dev 无人值守复现钩子（lc-082 视频输出崩溃专项）：FNTV_AUTOPLAY_TEST=<guid> 时
             // 启动 5s 后直接走与前端相同的 play_item 真链路（含 bounds 预置），结果写诊断日志。
             #[cfg(debug_assertions)]

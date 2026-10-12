@@ -10,6 +10,7 @@ mod mpv;
 mod proxy;
 mod tmdb;
 mod win_embed;
+mod win_region;
 
 use config::Config;
 use serde_json::{json, Value};
@@ -21,10 +22,16 @@ pub struct AppState {
     pub config: RwLock<Config>,
     pub mpv: Mutex<Option<Arc<mpv::MpvSession>>>,
     pub proxy_child: Mutex<Option<std::process::Child>>,
-    /// 播放占位区域的物理像素矩形 (x, y, w, h)
+    /// 播放占位区域的物理像素矩形 (x, y, w, h)，坐标 = 主窗**客户区**
     pub bounds: std::sync::Mutex<(i32, i32, i32, i32)>,
     /// 最近一次前端主题（player_stop 后恢复 SWCA 染色用）
     pub last_light: std::sync::Mutex<Option<bool>>,
+    /// [lc-088] 当前 mpv 宿主子窗句柄（裁洞时要把它排除在裁剪目标外）
+    pub embed_hwnd: std::sync::Mutex<Option<isize>>,
+    /// [lc-088] 播放形态是否可见（决定是否真的挖洞；不可见时清除区域）
+    pub player_visible: std::sync::Mutex<bool>,
+    /// [lc-088] 上次实际应用的裁洞状态（去重用，避免区域被反复重建）
+    pub last_cutout: std::sync::Mutex<Option<(isize, Option<(i32, i32, i32, i32)>)>>,
 }
 
 impl Default for AppState {
@@ -35,6 +42,9 @@ impl Default for AppState {
             proxy_child: Mutex::new(None),
             bounds: std::sync::Mutex::new((0, 0, 800, 450)),
             last_light: std::sync::Mutex::new(None),
+            embed_hwnd: std::sync::Mutex::new(None),
+            player_visible: std::sync::Mutex::new(false),
+            last_cutout: std::sync::Mutex::new(None),
         }
     }
 }
@@ -324,6 +334,80 @@ fn new_embed(app: &AppHandle, parent_hwnd: isize) -> Result<isize, String> {
     Ok(embed)
 }
 
+// ───────────────── [lc-088] WebView 挖洞（裁洞形态） ─────────────────
+//
+// 取 LumiPlayer 的 nativeVideoUiRegion 方案：mpv 宿主窗沉到 WebView **之下**，
+// 在 WebView2 各层窗口上把「视频占位矩形」从窗口区域里挖掉 → 视频从洞里透出。
+// 与 lc-082「透明透不出下层」不矛盾：透明是 alpha 合成，区域是真裁剪；且区域
+// 同时裁命中测试，洞里鼠标归 mpv，原生 uosc 照常可点。详见 win_region.rs。
+
+/// 裁洞圆角半径（**CSS 逻辑像素**）：与 .player-embed 的视觉圆角对齐；实际按 dpr 换算成物理像素
+const CUTOUT_RADIUS_CSS: f64 = 12.0;
+
+fn cutout_on() -> bool {
+    win_region::cutout_enabled()
+}
+
+/// 重算并应用挖洞。`force` 用于「洞矩形没变但必须重建」的场景（主窗 resize 后
+/// WebView 客户区尺寸变了，旧区域会残留成错位裁剪）。
+fn apply_cutout(app: &AppHandle, state: &AppState, force: bool) {
+    let Some(main) = app.get_webview_window("main") else { return };
+    let Ok(hwnd) = main.hwnd() else { return };
+    let main_hwnd = hwnd.0 as isize;
+
+    let embed = *state.embed_hwnd.lock().unwrap();
+    // 裁洞开启且播放形态可见时才挖洞；否则清除（视频让位给页面）
+    let hole = if cutout_on() && *state.player_visible.lock().unwrap() {
+        Some(*state.bounds.lock().unwrap())
+    } else {
+        None
+    };
+
+    if !force {
+        let key = (embed.unwrap_or(0), hole);
+        let mut last = state.last_cutout.lock().unwrap();
+        if last.as_ref() == Some(&key) {
+            return; // 状态未变 → 不碰 GDI 区域（区域重建代价不低，且会引起重绘闪烁）
+        }
+        *last = Some(key);
+    }
+
+    // 只排除 mpv 宿主窗与 playerbar 的子树。
+    // 注意：**不能**把主窗句柄放进来 —— collect_targets 从主窗的子窗开始走，
+    // 排除判定是「向上找祖先」，主窗是所有目标的祖先，一旦入表就全被跳过（lc-088 踩过）。
+    let mut exclude: Vec<isize> = Vec::with_capacity(2);
+    if let Some(h) = embed {
+        exclude.push(h);
+    }
+    if let Some(h) = app
+        .get_webview_window("playerbar")
+        .and_then(|w| w.hwnd().ok())
+        .map(|h| h.0 as isize)
+    {
+        exclude.push(h);
+    }
+
+    // 圆角半径随 dpr 换算（区域是物理像素坐标，固定 12 在高 dpr 下会显得过于方正）
+    let radius = if cutout_on() {
+        let dpr = app
+            .get_webview_window("main")
+            .and_then(|w| w.scale_factor().ok())
+            .unwrap_or(1.0);
+        (CUTOUT_RADIUS_CSS * dpr).round() as i32
+    } else {
+        0
+    };
+    match win_region::apply_cutout(main_hwnd, &exclude, hole, radius) {
+        Ok(log) => libmpv::trace(&format!(
+            "[cutout] on={} hole={:?} -> {}",
+            cutout_on(),
+            hole,
+            log.join(" | ")
+        )),
+        Err(e) => libmpv::trace(&format!("[cutout] 应用失败: {e}")),
+    }
+}
+
 #[tauri::command]
 async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> Result<(), String> {
     let cfg = state.config.read().await.clone();
@@ -353,13 +437,19 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     *slot = Some(session.clone());
     drop(slot);
 
+    // [lc-088] 登记宿主窗 + 置播放形态可见，再按「裁洞 / 置顶」两种形态摆放
+    *state.embed_hwnd.lock().unwrap() = Some(session.embed_hwnd);
+    *state.player_visible.lock().unwrap() = true;
+
     // 应用当前 bounds（登页时前端会更新），再载入（窗口操作一律主线程）
     let (x, y, w, h) = *state.bounds.lock().unwrap();
     let eh = session.embed_hwnd;
+    let on_top = !cutout_on();
     on_main(&app, move || {
-        win_embed::set_bounds(eh, x, y, w, h);
+        win_embed::set_bounds(eh, x, y, w, h, on_top);
         win_embed::set_visible(eh, true);
     })?;
+    apply_cutout(&app, &state, false);
 
     let url = proxy::play_url(&cfg, &guid);
     session.command(json!(["loadfile", url, "replace"])).await?;
@@ -445,9 +535,11 @@ async fn player_set_bounds(
     let slot = state.mpv.lock().await;
     if let Some(m) = slot.as_ref() {
         let eh = m.embed_hwnd;
-        // app 来自 command 参数
-        on_main(&app, move || win_embed::set_bounds(eh, b.0, b.1, b.2, b.3))?;
+        let on_top = !cutout_on();
+        on_main(&app, move || win_embed::set_bounds(eh, b.0, b.1, b.2, b.3, on_top))?;
     }
+    drop(slot);
+    apply_cutout(&app, &state, false); // 洞跟着视频占位矩形同步
     Ok(())
 }
 
@@ -457,17 +549,21 @@ async fn player_set_visible(
     state: State<'_, AppState>,
     visible: bool,
 ) -> Result<(), String> {
+    *state.player_visible.lock().unwrap() = visible;
     let slot = state.mpv.lock().await;
     if let Some(m) = slot.as_ref() {
         let eh = m.embed_hwnd;
-        // app 来自 command 参数
+        let on_top = !cutout_on();
         on_main(&app, move || {
             win_embed::set_visible(eh, visible);
-            if visible {
+            // 置顶形态才需要抢层级；裁洞形态下宿主窗必须留在 WebView 之下
+            if visible && on_top {
                 win_embed::keep_top(eh);
             }
         })?;
     }
+    drop(slot);
+    apply_cutout(&app, &state, false);
     Ok(())
 }
 
@@ -476,6 +572,9 @@ async fn player_stop(app: AppHandle, state: State<'_, AppState>) -> Result<(), S
     if let Ok(bar) = ensure_bar(&app) {
         let _ = bar.hide();
     }
+    // [lc-088] 播放形态结束 → 撤掉挖洞，WebView 恢复完整区域
+    *state.player_visible.lock().unwrap() = false;
+    apply_cutout(&app, &state, false);
     let slot = state.mpv.lock().await;
     if let Some(m) = slot.as_ref() {
         let _ = m.command(json!(["stop"])).await;
@@ -724,6 +823,17 @@ pub fn run() {
                     set_system_round_corner(hwnd);
                 }
             }
+            // [lc-088] 主窗尺寸变化 → WebView 客户区随之变化，必须**强制**重建挖洞区域
+            // （区域是绝对像素坐标，不随窗口缩放，残留就是错位裁剪）
+            #[cfg(target_os = "windows")]
+            if let Some(win) = app.get_webview_window("main") {
+                let h_resize = app.handle().clone();
+                win.on_window_event(move |ev| {
+                    if matches!(ev, tauri::WindowEvent::Resized(_)) {
+                        apply_cutout(&h_resize, &h_resize.state::<AppState>(), true);
+                    }
+                });
+            }
             // 窗口以 visible:false 创建：延迟到透明化/圆角区域/模糊全部就位后再显示，
             // 消除首帧残留（圆角外露白/旧画面）；show 后再补一次区域（尺寸可能已变）
             let h2 = app.handle().clone();
@@ -732,6 +842,14 @@ pub fn run() {
                 if let Some(win) = h2.get_webview_window("main") {
                     let _ = win.show();
                     let _ = win.set_focus();
+                    // 启动诊断：确认 WebView2 目标窗枚举口径（挖洞到底命中哪几个窗）
+                    #[cfg(all(target_os = "windows", debug_assertions))]
+                    if let Ok(h) = win.hwnd() {
+                        libmpv::trace(&format!(
+                            "[cutout] 启动目标窗: {}",
+                            win_region::list_targets(h.0 as isize, &[]).join(" | ")
+                        ));
+                    }
                 }
             });
             // dev 无人值守复现钩子（lc-082 视频输出崩溃专项）：FNTV_AUTOPLAY_TEST=<guid> 时

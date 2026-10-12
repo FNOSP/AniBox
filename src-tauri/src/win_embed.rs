@@ -1,6 +1,12 @@
-//! Win32 子窗口嵌入：在 Tauri 主窗口内创建一个 WS_CHILD 窗口交给 mpv `--wid` 渲染，
-//! 并用 SetWindowPos(HWND_BOTTOM) 把它压到 WebView 之下 —— 透明 WebView 顶层画控制栏，
-//! 视频区域在 HTML 里保持透明即可看到 mpv 画面（双层窗口架构，见 resource/wiki/Tauri2迁移方案.md）。
+//! Win32 子窗口嵌入：在 Tauri 主窗口内创建一个 WS_CHILD 窗口交给 mpv `--wid` 渲染。
+//!
+//! 层级（lc-088 定案，取 LumiPlayer 的「WebView 挖洞」方案）：
+//! - **默认（裁洞形态）**：宿主窗沉到最底（HWND_BOTTOM），由 `win_region` 在 WebView2
+//!   各层窗口上挖出「视频区」区域 → 视频从洞里透出，而 WebView 仍是**逻辑最上层**，
+//!   页面 HTML 可以正常盖住视频区之外的一切，弹窗/抽屉不再需要手工「先藏视频」。
+//!   洞对鼠标同样是穿透的 → mpv 依旧拿得到鼠标，原生 uosc 照常可用。
+//! - **回退（`FNTV_CUTOUT=0`）**：宿主窗置顶（HWND_TOP，lc-082 结论的旧形态）——
+//!   此时必须靠 `keep_top` 抢层级，且 HTML 盖不到视频。
 
 #![cfg(windows)]
 
@@ -8,8 +14,8 @@ use std::sync::OnceLock;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, SetWindowPos, ShowWindow,
-    CS_HREDRAW, CS_VREDRAW, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
-    SW_HIDE, SW_SHOW, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
+    CS_HREDRAW, CS_VREDRAW, HWND_BOTTOM, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_SHOWWINDOW, SW_HIDE, SW_SHOW, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 
@@ -19,6 +25,9 @@ const CLASS_NAME: &str = "FntvMpvHost\0";
 /// [lc-087] 不做鼠标穿透：内嵌的是**独立 mpv.exe 进程**，它自带消息循环、会把自己的子窗建在
 /// 这个宿主窗里并正常接收鼠标（uosc 底栏/右键菜单/滚轮/双击全屏都是 mpv 原生行为）。
 /// （进程内 libmpv 时代必须要的 HTTRANSPARENT 代收方案已随 lc-085/086 退役。）
+///
+/// [lc-088] 裁洞形态下宿主窗沉到 WebView **之下**，但洞是 SetWindowRgn 的**真区域**——
+/// 区域同时裁命中测试，所以落在洞里的鼠标依然由本窗（进而由 mpv）接收，无需消息转发。
 fn ensure_class() {
     CLASS_REGISTERED.get_or_init(|| unsafe {
         let cls: Vec<u16> = CLASS_NAME.encode_utf16().collect();
@@ -61,18 +70,17 @@ pub fn create_child(parent_hwnd: isize) -> isize {
     }
 }
 
-/// 移动/缩放到指定物理像素矩形，并压到 WebView 之上
+/// 移动/缩放到指定物理像素矩形。
 ///
-/// lc-082 实测：WebView2 窗口化承载时其渲染子窗（Chrome_WidgetWin_*/Intermediate D3D Window）
-/// 始终盖在同一父窗口的兄弟子窗上，页面再怎么透明也透不出「下面的」自定义子窗口
-/// （页面隐藏后视频仍不可见）。因此 mpv 窗口必须置于 WebView **之上**。
-/// lc-083：不再做鼠标穿透（HTTRANSPARENT）——底栏/交互交给 mpv 侧的 uosc（主仓库同款），
-/// uosc 需要鼠标事件（左键暂停、双击全屏、右键菜单、悬停出底栏）。
-pub fn set_bounds(hwnd: isize, x: i32, y: i32, w: i32, h: i32) {
+/// `on_top = false`（lc-088 裁洞形态，默认）：压到 WebView **之下**（HWND_BOTTOM），
+/// 由 `win_region` 在 WebView 上挖洞让视频透出 —— WebView 仍是逻辑最上层。
+/// `on_top = true`（`FNTV_CUTOUT=0` 回退形态，lc-082/087）：置顶压过 WebView，
+/// 此时必须配合 `keep_top` 反复抢层级，且 HTML 无法覆盖视频。
+pub fn set_bounds(hwnd: isize, x: i32, y: i32, w: i32, h: i32, on_top: bool) {
     unsafe {
         SetWindowPos(
             hwnd as HWND,
-            HWND_TOP,
+            if on_top { HWND_TOP } else { HWND_BOTTOM },
             x,
             y,
             w.max(1),
@@ -88,7 +96,8 @@ pub fn set_visible(hwnd: isize, visible: bool) {
     }
 }
 
-/// 重新置顶（WebView 重绘/重排后偶尔会插到上面，显示时补一次）
+/// 重新置顶（仅供 `FNTV_CUTOUT=0` 回退形态：WebView 重绘/重排后偶尔会插到上面，显示时补一次）。
+/// 裁洞形态**绝不能调用**——那会把宿主窗抬到 WebView 之上，洞就失去意义了。
 pub fn keep_top(hwnd: isize) {
     unsafe {
         SetWindowPos(hwnd as HWND, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);

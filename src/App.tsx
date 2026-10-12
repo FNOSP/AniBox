@@ -1183,10 +1183,28 @@ function PlayerView({
         h: rect.height * dpr,
       }).catch(() => {});
     };
+    // [lc-088] 视频占位矩形现在同时决定 WebView 的「挖洞」位置：除了尺寸变化，
+    // 滚动/窗口缩放会让它**位移而不改尺寸**（ResizeObserver 收不到）→ 洞会留错位。
+    // 故再挂 scroll(capture)/resize，并用 rAF 合并（Rust 侧另有去重兜底）。
+    let raf = 0;
+    const schedule = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        apply();
+      });
+    };
     apply();
-    const ro = new ResizeObserver(apply);
+    const ro = new ResizeObserver(schedule);
     ro.observe(el);
-    return () => ro.disconnect();
+    window.addEventListener("resize", schedule);
+    window.addEventListener("scroll", schedule, { capture: true, passive: true } as AddEventListenerOptions);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("scroll", schedule, { capture: true } as AddEventListenerOptions);
+      if (raf) cancelAnimationFrame(raf);
+    };
   }, []);
 
   useEffect(() => {

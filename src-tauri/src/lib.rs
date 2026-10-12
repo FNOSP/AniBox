@@ -364,13 +364,11 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     let url = proxy::play_url(&cfg, &guid);
     session.command(json!(["loadfile", url, "replace"])).await?;
 
-    // 播放会话期间禁用 SWCA 全窗模糊：mpv 每帧视频 + DWM 全窗亚克力重模糊 + 圆角区域
-    // 三者叠加会拖垮合成（用户实测进播放页整机卡死），停止后由 player_stop 恢复
-    #[cfg(target_os = "windows")]
-    {
-        use winvisual::clear_backdrop;
-        clear_backdrop(parent_hwnd);
-    }
+    // [lc-085] 不再在播放期禁用窗口模糊（原 lc-081 的 clear_backdrop 是为了救 spawn 时代
+    // 「进播放页整机卡死」；现在视频是进程内 D3D 输出，实测保留主题底更符合预期——
+    // 用户反馈「一播放详情页就变半透明」正是底板被清掉后页面透出桌面所致）。player_stop 里
+    // 的恢复逻辑保留无副作用（重复设置同值）。
+
     Ok(())
 }
 
@@ -449,6 +447,37 @@ async fn mpv_seek(state: State<'_, AppState>, seconds: f64, absolute: bool) -> R
     if let Some(m) = slot.as_ref() {
         let mode = if absolute { "absolute" } else { "relative" };
         m.command(json!(["seek", seconds, mode])).await?;
+    }
+    Ok(())
+}
+
+/// [lc-085] 输入转发：视频是原生子窗（浮在 WebView 之上）且 libmpv 内嵌模式下 mpv 不自行
+/// 接收鼠标/键盘（它建的嵌入子窗是 disabled 的）——鼠标事件由页面代收后经此命令转成 mpv 的
+/// `mouse` / `keypress` 命令。uosc 底栏出现、左键暂停、右键菜单、滚轮音量、双击全屏全靠这条通道。
+/// 坐标语义：相对视频窗客户区的**设备像素**（前端已按 dpr 换算）。
+/// 按钮编码同 mpv：0=左 1=中 2=右；负数=释放（-1 左 / -2 中 / -3 右）；滚轮 3=上 4=下。
+#[tauri::command]
+async fn mpv_input(
+    state: State<'_, AppState>,
+    kind: String,
+    x: f64,
+    y: f64,
+    button: Option<i64>,
+    key: Option<String>,
+) -> Result<(), String> {
+    let slot = state.mpv.lock().await;
+    if let Some(m) = slot.as_ref() {
+        let cmd = match kind.as_str() {
+            "move" => json!(["mouse", x as i64, y as i64]),
+            "button" | "wheel" => json!(["mouse", x as i64, y as i64, button.unwrap_or(0)]),
+            "key" => json!(["keypress", key.unwrap_or_default()]),
+            _ => return Ok(()),
+        };
+        if kind != "move" {
+            libmpv::trace(&format!("input {} -> {:?}", kind, cmd)); // 低频事件留痕（move 太频繁不记）
+        }
+        // 鼠标位置偶发越界等返回非 success，属正常，不向页面冒错
+        let _ = m.command(cmd).await;
     }
     Ok(())
 }
@@ -679,6 +708,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             set_acrylic_tint,
             dev_log,
+            mpv_input,
             tmdb::tmdb_show_details,
             get_config,
             save_config,

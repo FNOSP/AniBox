@@ -81,6 +81,16 @@ function pick(o: Record<string, unknown>, keys: string[]): any {
   return undefined;
 }
 
+function fmtTime(sec: number | null | undefined): string {
+  if (!sec || !isFinite(sec)) return "--:--";
+  const s = Math.floor(sec % 60);
+  const m = Math.floor(sec / 60);
+  const h = Math.floor(m / 60);
+  const mm = String(m % 60).padStart(2, "0");
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
 /** 时长口语化（原版剧集行样式）：1420 → 「23 分钟 40 秒」 */
 function fmtDur(sec: number | null | undefined): string {
   if (!sec || !isFinite(sec) || sec <= 0) return "";
@@ -815,6 +825,8 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   const [seasonIdx, setSeasonIdx] = useState(0);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
   const [detailPlay, setDetailPlay] = useState<PlayTarget | null>(null);
+  // [lc-085] 视频全屏（mpv 双击/全屏键触发）：内嵌形态 ↔ 全页播放器形态 + 窗口全屏
+  const [playBig, setPlayBig] = useState(false);
   const [tmdb, setTmdb] = useState<Record<string, unknown> | null>(null);
   const [err, setErr] = useState("");
 
@@ -935,7 +947,12 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
         <div className="detail-left">
           {err && <div className="err">{err}</div>}
           {detailPlay ? (
-            <PlayerView item={detailPlay} embedded />
+            <PlayerView
+              item={detailPlay}
+              embedded={!playBig}
+              onBig={setPlayBig}
+              onBack={() => setPlayBig(false)}
+            />
           ) : (
             <div className="player-cover" onClick={startPlay}>
               {backdrop ? <img src={imgUrl(backdrop)} alt={title} /> : <div className="poster-empty">🎬</div>}
@@ -1136,17 +1153,48 @@ function TmdbExtra({ tmdb }: { tmdb: Record<string, unknown> }) {
 
 /* ────────────────────────── 播放页 ────────────────────────── */
 
-function PlayerView({ item, onBack, embedded }: { item: PlayTarget; onBack?: () => void; embedded?: boolean }) {
+function PlayerView({
+  item,
+  onBack,
+  embedded,
+  onBig,
+}: {
+  item: PlayTarget;
+  onBack?: () => void;
+  embedded?: boolean;
+  onBig?: (on: boolean) => void;
+}) {
   const stageRef = useRef<HTMLDivElement>(null);
   const [duration, setDuration] = useState(0);
+  const [timePos, setTimePos] = useState(0);
+  const [paused, setPaused] = useState(true);
+  const [speed, setSpeed] = useState(1);
+  const [volume, setVolume] = useState(100);
+  const [scrub, setScrub] = useState<number | null>(null);
   const [err, setErr] = useState("");
+  const [uiShow, setUiShow] = useState(false);
 
   useEffect(() => {
     const p = listen<MpvEvent>("mpv-event", (e) => {
       const ev = e.payload;
       if (ev.event !== "property-change") return;
-      // 目前只需要 duration：用来区分「正在拉起 mpv…」与已起播
-      if (ev.id === 2) setDuration(typeof ev.data === "number" ? ev.data : 0);
+      switch (ev.id) {
+        case 1:
+          setTimePos(typeof ev.data === "number" ? ev.data : 0);
+          break;
+        case 2:
+          setDuration(typeof ev.data === "number" ? ev.data : 0);
+          break;
+        case 3:
+          setPaused(!!ev.data);
+          break;
+        case 4:
+          setSpeed(typeof ev.data === "number" ? ev.data : 1);
+          break;
+        case 5:
+          setVolume(typeof ev.data === "number" ? ev.data : 100);
+          break;
+      }
     });
     return () => {
       p.then((f) => f());
@@ -1181,32 +1229,99 @@ function PlayerView({ item, onBack, embedded }: { item: PlayTarget; onBack?: () 
     };
   }, [item.guid]);
 
-  // 底栏与播放交互全部交给 mpv 侧的 uosc（主仓库同款 portable_config）：画在视频画面内、
-  // 鼠标动才出现、静置自动隐藏 —— 不占页面布局，画面永不位移（lc-083）。
-  // uosc 的全屏请求走 mpv fullscreen 属性 → Rust 事件 mpv-fullscreen → 全屏 Tauri 窗口
+  // 底栏：控制条常驻在流内（尺寸恒定 → 布局零抖动、画面永不位移），只有内容随鼠标活动淡入淡出
+  // （mpv 观感：鼠标动才出现、静置 2.5s 消失；暂停时常显）
+  const idleTimer = useRef<number | null>(null);
+  const poke = useCallback(() => {
+    setUiShow(true);
+    if (idleTimer.current) window.clearTimeout(idleTimer.current);
+    idleTimer.current = window.setTimeout(() => setUiShow(false), 2500);
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (idleTimer.current) window.clearTimeout(idleTimer.current);
+    };
+  }, []);
+  useEffect(() => {
+    if (paused) setUiShow(true);
+  }, [paused]);
+
+  // 全屏请求（mpv 侧事件 / 页面双击舞台）：内嵌形态 ↔ 全页形态 + 窗口全屏
   useEffect(() => {
     const p = listen<{ on: boolean }>("mpv-fullscreen", (e) => {
-      getCurrentWindow().setFullscreen(!!e.payload.on).catch(() => {});
+      const on = !!e.payload.on;
+      onBig?.(on);
+      getCurrentWindow().setFullscreen(on).catch(() => {});
     });
     return () => {
       p.then((f) => f());
     };
-  }, []);
-  // ESC 退全屏：mpv 的 ESC→set fullscreen no 在 wid 子窗下不触发（键盘焦点在页面上）
+  }, [onBig]);
+
+  const setBig = useCallback(
+    (on: boolean) => {
+      onBig?.(on);
+      getCurrentWindow().setFullscreen(on).catch(() => {});
+    },
+    [onBig],
+  );
+
+  // 舞台鼠标交互。⚠ libmpv 内嵌（wid）下 mpv 自己收不到鼠标：实测 `mouse` 命令只改坐标、
+  // mouse-pos.hover 恒 false 且属性写不进去 → uosc/OSC 的底栏无法浮出（已弃用该路线）。
+  // 因此单机交互由页面代做；键盘与右键仍转发给 mpv（uosc 菜单等 OSD 覆盖层不受 hover 限制）。
+  const clickTimer = useRef<number | null>(null);
+  const onStageClick = () => {
+    if (clickTimer.current) {
+      window.clearTimeout(clickTimer.current);
+      clickTimer.current = null;
+      return; // 双击的第一下：交给 onDoubleClick
+    }
+    clickTimer.current = window.setTimeout(() => {
+      clickTimer.current = null;
+      invoke("mpv_toggle_pause").catch(() => {});
+      poke();
+    }, 230);
+  };
+  const onStageWheel = (e: React.WheelEvent) => {
+    const v = Math.max(0, Math.min(130, Math.round(volume + (e.deltaY < 0 ? 5 : -5))));
+    invoke("mpv_set_volume", { volume: v }).catch(() => {});
+    poke();
+  };
+
+  // 键位转发（mpv/input.conf 体系）：空格暂停、方向键进退/音量、f 全屏、m 静音、方括号变速
   useEffect(() => {
-    const onKey = async (ev: KeyboardEvent) => {
-      if (ev.key === "Escape" && (await getCurrentWindow().isFullscreen())) {
-        await getCurrentWindow().setFullscreen(false);
+    const map: Record<string, string> = {
+      " ": "SPACE",
+      ArrowLeft: "LEFT",
+      ArrowRight: "RIGHT",
+      ArrowUp: "UP",
+      ArrowDown: "DOWN",
+      "[": "[",
+      "]": "]",
+    };
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") {
+        setBig(false);
+        return;
       }
+      const key = map[ev.key];
+      if (!key) return;
+      ev.preventDefault();
+      if (key === "SPACE") {
+        invoke("mpv_toggle_pause").catch(() => {});
+        poke();
+        return;
+      }
+      invoke("mpv_input", { kind: "key", x: 0, y: 0, key }).catch(() => {});
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [poke, setBig]);
+
+  const shownTime = scrub ?? timePos;
 
   return (
     <div className={embedded ? "player-embed" : "player-page"}>
-      {/* 全页播放器：细顶条放返回（底栏/交互在 mpv 的 uosc 里，页面只在视频区外放 UI，
-          避免任何布局变化导致画面位移） */}
       {!embedded && (
         <div className="player-topbar">
           {onBack && (
@@ -1220,9 +1335,72 @@ function PlayerView({ item, onBack, embedded }: { item: PlayTarget; onBack?: () 
           </span>
         </div>
       )}
-      <div className="player-stage" ref={stageRef}>
+      <div
+        className="player-stage"
+        ref={stageRef}
+        onClick={onStageClick}
+        onDoubleClick={() => setBig(!!embedded)}
+        onWheel={onStageWheel}
+        onMouseMove={poke}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          invoke("mpv_input", { kind: "button", x: 0, y: 0, button: 2 }).catch(() => {});
+          invoke("mpv_input", { kind: "button", x: 0, y: 0, button: -3 }).catch(() => {});
+        }}
+      >
         {err && <div className="err player-err">{err}</div>}
         {!duration && !err && <div className="player-loading">正在拉起 mpv…</div>}
+      </div>
+      <div className={`control-bar${uiShow ? "" : " bar-hidden"}`} onMouseEnter={poke}>
+        <div className="seek-row">
+          <span className="time">{fmtTime(shownTime)}</span>
+          <input
+            type="range"
+            min={0}
+            max={duration || 100}
+            step={1}
+            value={shownTime}
+            onInput={(e) => setScrub(Number((e.target as HTMLInputElement).value))}
+            onPointerUp={(e) => {
+              const v = Number((e.target as HTMLInputElement).value);
+              setScrub(null);
+              invoke("mpv_seek", { seconds: v, absolute: true }).catch(() => {});
+            }}
+            disabled={!duration}
+          />
+          <span className="time">{fmtTime(duration)}</span>
+        </div>
+        <div className="btn-row">
+          <button className="big" title={paused ? "播放" : "暂停"} onClick={() => invoke("mpv_toggle_pause").catch(() => {})}>
+            {paused ? "▶" : "⏸"}
+          </button>
+          <button onClick={() => invoke("mpv_seek", { seconds: -10, absolute: false }).catch(() => {})}>−10s</button>
+          <button onClick={() => invoke("mpv_seek", { seconds: 30, absolute: false }).catch(() => {})}>+30s</button>
+          <span className="spacer" />
+          <span className="ctl-label">速度</span>
+          <select
+            value={speed}
+            onChange={(e) => invoke("mpv_set_rate", { rate: Number(e.target.value) }).catch(() => {})}
+          >
+            {[0.5, 0.75, 1, 1.25, 1.5, 2, 3].map((r) => (
+              <option key={r} value={r}>
+                {r}x
+              </option>
+            ))}
+          </select>
+          <span className="ctl-label">音量</span>
+          <input
+            type="range"
+            className="vol"
+            min={0}
+            max={130}
+            value={volume}
+            onChange={(e) => invoke("mpv_set_volume", { volume: Number(e.target.value) }).catch(() => {})}
+          />
+          <button title="全屏" onClick={() => setBig(!!embedded)}>
+            ⛶
+          </button>
+        </div>
       </div>
     </div>
   );

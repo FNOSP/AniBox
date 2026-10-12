@@ -8,20 +8,32 @@ use std::sync::OnceLock;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, SetWindowPos, ShowWindow,
-    CS_HREDRAW, CS_VREDRAW, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
-    SW_HIDE, SW_SHOW, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
+    CS_HREDRAW, CS_VREDRAW, HWND_TOP, HTTRANSPARENT, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_SHOWWINDOW, SW_HIDE, SW_SHOW, WM_NCHITTEST, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
+    WS_VISIBLE,
 };
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 
 static CLASS_REGISTERED: OnceLock<()> = OnceLock::new();
 const CLASS_NAME: &str = "FntvMpvHost\0";
 
+/// 鼠标穿透：视频窗浮在 WebView 之上，但命中测试返回 HTTRANSPARENT，
+/// 鼠标事件交给下方页面代收，再由前端 `mpv_input` 命令转发给 mpv（见 lib.rs）。
+/// 必须这样做的原因（lc-085 实测）：libmpv 内嵌模式下 mpv 自建的 "mpv" 子窗是 disabled 的，
+/// 它既不接受命中测试、也不处理宿主投递的消息 → 只有「页面代收 + 命令转发」这条通道可靠。
+unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if msg == WM_NCHITTEST {
+        return HTTRANSPARENT as LRESULT;
+    }
+    unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
+}
+
 fn ensure_class() {
     CLASS_REGISTERED.get_or_init(|| unsafe {
         let cls: Vec<u16> = CLASS_NAME.encode_utf16().collect();
         let wc = WNDCLASSW {
             style: CS_HREDRAW | CS_VREDRAW,
-            lpfnWndProc: Some(DefWindowProcW),
+            lpfnWndProc: Some(wndproc),
             cbClsExtra: 0,
             cbWndExtra: 0,
             hInstance: GetModuleHandleW(std::ptr::null()),

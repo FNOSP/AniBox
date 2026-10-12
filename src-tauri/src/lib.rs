@@ -359,6 +359,7 @@ fn apply_cutout(app: &AppHandle, state: &AppState, force: bool) {
     // 一旦停在 false，洞就被清除且不会自动恢复 → 视频被 WebView 盖住、只见「正在拉起 mpv…」。
     // 现在"洞 ⇔ 宿主窗可见"，两者永远同一来源，不会再各说各话。
     let embed_visible = embed.map(win_embed::is_visible).unwrap_or(false);
+    // 洞 = 视频占位矩形本身（边缘的"缝隙"由 mpv 宿主窗向外 overscan 3px 盖住，见 win_embed::set_bounds）
     let hole = if cutout_on() && embed_visible {
         Some(*state.bounds.lock().unwrap())
     } else {

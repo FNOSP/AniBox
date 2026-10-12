@@ -11,6 +11,7 @@
 #![cfg(windows)]
 
 use std::sync::OnceLock;
+use windows_sys::Win32::Graphics::Gdi::CreateSolidBrush;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -41,7 +42,9 @@ fn ensure_class() {
             hInstance: GetModuleHandleW(std::ptr::null()),
             hIcon: std::ptr::null_mut(),
             hCursor: std::ptr::null_mut(),
-            hbrBackground: std::ptr::null_mut(), // 不自动擦底，交给 mpv 填充
+            // [lc-097] 纯黑底色：宿主窗未被 mpv 绘到的像素（对齐缝隙、resize 瞬间）渲染成黑色，
+            // 而不是让下面的主窗亚克力（浅色）透出来 —— 避免满屏时边缘出现"白边"。刷子只建一次。
+            hbrBackground: unsafe { CreateSolidBrush(0) }, // 不自动擦底，交给 mpv 填充 —— 黑色兜底
             lpszMenuName: std::ptr::null(),
             lpszClassName: cls.as_ptr(),
         };
@@ -79,14 +82,19 @@ pub fn create_child(parent_hwnd: isize) -> isize {
 /// `on_top = true`（`FNTV_CUTOUT=0` 回退形态，lc-082/087）：置顶压过 WebView，
 /// 此时必须配合 `keep_top` 反复抢层级，且 HTML 无法覆盖视频。
 pub fn set_bounds(hwnd: isize, x: i32, y: i32, w: i32, h: i32, on_top: bool) {
+    // [lc-097] 向外 overscan 3 物理像素：挖洞区域是按占位矩形**精确**裁的，而 mpv 宿主窗与洞之间
+    // 只要差 1~3px（DPI 取整/浮点/边框），那条缝就会露出下面主窗的亚克力浅色底 —— 满屏时表现为
+    // 「四周一圈白边」。让宿主窗比洞大 3px，缝就被 mpv 自己的画面/黑边盖住。
+    // （反向做法——把洞内缩——会在四周留出 3px *页面*（浅色），反而制造白边，别用。）
+    const OVERSCAN: i32 = 3;
     unsafe {
         SetWindowPos(
             hwnd as HWND,
             if on_top { HWND_TOP } else { HWND_BOTTOM },
-            x,
-            y,
-            w.max(1),
-            h.max(1),
+            x - OVERSCAN,
+            y - OVERSCAN,
+            (w + OVERSCAN * 2).max(1),
+            (h + OVERSCAN * 2).max(1),
             SWP_NOACTIVATE | SWP_SHOWWINDOW,
         );
     }

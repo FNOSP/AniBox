@@ -1170,19 +1170,24 @@ function PlayerView({
     };
   }, []);
 
+  // [lc-097] 把视频占位矩形（主窗客户区物理像素）同步给后端 —— 它同时决定「挖洞」位置和
+  // mpv 宿主窗位置。抽成 useCallback 是为了让「形态切换补测」那个 effect 也能复用。
+  const syncBounds = useCallback(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    invoke("player_set_bounds", {
+      x: rect.left * dpr,
+      y: rect.top * dpr,
+      w: rect.width * dpr,
+      h: rect.height * dpr,
+    }).catch(() => {});
+  }, []);
+
   useEffect(() => {
     const el = stageRef.current;
     if (!el) return;
-    const apply = () => {
-      const rect = el.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      invoke("player_set_bounds", {
-        x: rect.left * dpr,
-        y: rect.top * dpr,
-        w: rect.width * dpr,
-        h: rect.height * dpr,
-      }).catch(() => {});
-    };
     // [lc-088] 视频占位矩形现在同时决定 WebView 的「挖洞」位置：除了尺寸变化，
     // 滚动/窗口缩放会让它**位移而不改尺寸**（ResizeObserver 收不到）→ 洞会留错位。
     // 故再挂 scroll(capture)/resize，并用 rAF 合并（Rust 侧另有去重兜底）。
@@ -1191,10 +1196,10 @@ function PlayerView({
       if (raf) return;
       raf = requestAnimationFrame(() => {
         raf = 0;
-        apply();
+        syncBounds();
       });
     };
-    apply();
+    syncBounds();
     const ro = new ResizeObserver(schedule);
     ro.observe(el);
     window.addEventListener("resize", schedule);
@@ -1205,7 +1210,16 @@ function PlayerView({
       window.removeEventListener("scroll", schedule, { capture: true } as AddEventListenerOptions);
       if (raf) cancelAnimationFrame(raf);
     };
-  }, []);
+  }, [syncBounds]);
+
+  // [lc-097] 形态切换（内嵌 ↔ 全页/全屏）后**多点补测**。
+  // 实测问题：切到全页形态时，挖洞与 mpv 宿主窗会停在旧的小矩形（页面已铺满、视频还缩在左上角），
+  // 表现为「要点一下画面才全屏」—— 说明那一次 ResizeObserver/rAF 没能落到后端。
+  // 这里按几个时间点强制重测（幂等、Rust 侧有去重），保证一定收敛到最终矩形。
+  useEffect(() => {
+    const ids = [0, 60, 160, 350, 700].map((ms) => window.setTimeout(syncBounds, ms));
+    return () => ids.forEach((id) => window.clearTimeout(id));
+  }, [embedded, syncBounds]);
 
   // [lc-091] 收尾防抖：React18 StrictMode（main.tsx 开着）与快速重挂载会「setup→cleanup→setup」，
   // 旧写法在 cleanup 里立刻 player_set_visible(false)+player_stop，会把刚建立的播放状态打掉 ——

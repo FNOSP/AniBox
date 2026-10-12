@@ -1156,16 +1156,14 @@ function PlayerView({
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(100);
   const [err, setErr] = useState("");
 
   useEffect(() => {
     const p = listen<MpvEvent>("mpv-event", (e) => {
       const ev = e.payload;
       if (ev.event !== "property-change") return;
-      // 只有音量在页面侧要用（滚轮调音量）；播放态/进度由浮层条窗口自己监听
-      if (ev.id === 5) setVolume(typeof ev.data === "number" ? ev.data : 100);
-      else if (ev.id === 2) setDuration(typeof ev.data === "number" ? ev.data : 0);
+      // 只消费 duration（区分「正在拉起 mpv…」）；进度/播放态等归 mpv 侧 uosc 自己用
+      if (ev.id === 2) setDuration(typeof ev.data === "number" ? ev.data : 0);
     });
     return () => {
       p.then((f) => f());
@@ -1200,22 +1198,6 @@ function PlayerView({
     };
   }, [item.guid]);
 
-  // 悬停浮层控制条（独立子窗：bar.html/bar.tsx + Rust place_bar 贴底）：
-  // 鼠标在视频上活动 → 唤起；静置 2.5s → 收起（条自身也续命）。页面里不放任何条 → 无占位、无位移。
-  const idleTimer = useRef<number | null>(null);
-  const poke = useCallback(() => {
-    invoke("bar_show", { visible: true }).catch(() => {});
-    if (idleTimer.current) window.clearTimeout(idleTimer.current);
-    idleTimer.current = window.setTimeout(() => {
-      invoke("bar_show", { visible: false }).catch(() => {});
-    }, 2500);
-  }, []);
-  useEffect(() => {
-    return () => {
-      if (idleTimer.current) window.clearTimeout(idleTimer.current);
-    };
-  }, []);
-
   // 全屏请求（mpv 侧事件 / 页面双击舞台）：内嵌形态 ↔ 全页形态 + 窗口全屏
   useEffect(() => {
     const p = listen<{ on: boolean }>("mpv-fullscreen", (e) => {
@@ -1236,37 +1218,8 @@ function PlayerView({
     [onBig],
   );
 
-  // 舞台鼠标交互。⚠ libmpv 内嵌（wid）下 mpv 自己收不到鼠标：实测 `mouse` 命令只改坐标、
-  // mouse-pos.hover 恒 false 且属性写不进去 → uosc/OSC 的底栏无法浮出（已弃用该路线）。
-  // 因此单机交互由页面代做；键盘与右键仍转发给 mpv（uosc 菜单等 OSD 覆盖层不受 hover 限制）。
-  const clickTimer = useRef<number | null>(null);
-  const onStageClick = () => {
-    if (clickTimer.current) {
-      window.clearTimeout(clickTimer.current);
-      clickTimer.current = null;
-      return; // 双击的第一下：交给 onDoubleClick
-    }
-    clickTimer.current = window.setTimeout(() => {
-      clickTimer.current = null;
-      invoke("mpv_toggle_pause").catch(() => {});
-      poke();
-    }, 230);
-  };
-  // 浮层条上的全屏按钮只发信号，形态切换与窗口全屏由主页面做
-  useEffect(() => {
-    const p = listen<{ action: string }>("bar-action", (e) => {
-      if (e.payload.action === "fullscreen") setBig(!!embedded);
-    });
-    return () => {
-      p.then((f) => f());
-    };
-  }, [embedded, setBig]);
-  const onStageWheel = (e: React.WheelEvent) => {
-    const v = Math.max(0, Math.min(130, Math.round(volume + (e.deltaY < 0 ? 5 : -5))));
-    invoke("mpv_set_volume", { volume: v }).catch(() => {});
-    poke();
-  };
-
+  // [lc-087] 舞台鼠标/滚轮/双击全屏全部交给 mpv 原生处理（独立 mpv.exe 进程自带消息循环，
+  // 子窗在宿主内正常收鼠标）——页面不再代收、不再转发、不再开浮层条窗口（uosc 底栏接管）。
   // 键位转发（mpv/input.conf 体系）：空格暂停、方向键进退/音量、f 全屏、m 静音、方括号变速
   useEffect(() => {
     const map: Record<string, string> = {
@@ -1286,16 +1239,11 @@ function PlayerView({
       const key = map[ev.key];
       if (!key) return;
       ev.preventDefault();
-      if (key === "SPACE") {
-        invoke("mpv_toggle_pause").catch(() => {});
-        poke();
-        return;
-      }
       invoke("mpv_input", { kind: "key", x: 0, y: 0, key }).catch(() => {});
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [poke, setBig]);
+  }, [setBig]);
 
   return (
     <div className={embedded ? "player-embed" : "player-page"}>
@@ -1315,15 +1263,6 @@ function PlayerView({
       <div
         className="player-stage"
         ref={stageRef}
-        onClick={onStageClick}
-        onDoubleClick={() => setBig(!!embedded)}
-        onWheel={onStageWheel}
-        onMouseMove={poke}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          invoke("mpv_input", { kind: "button", x: 0, y: 0, button: 2 }).catch(() => {});
-          invoke("mpv_input", { kind: "button", x: 0, y: 0, button: -3 }).catch(() => {});
-        }}
       >
         {err && <div className="err player-err">{err}</div>}
         {!duration && !err && <div className="player-loading">正在拉起 mpv…</div>}

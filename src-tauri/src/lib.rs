@@ -464,12 +464,28 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     Ok(())
 }
 
-/// [lc-086] 悬停浮层控制条：真实 WS_CHILD 子窗（parent_raw）+ 独立 WebView，挂在主窗上 →
-/// 随主窗移动/裁剪、不进任务栏；浮在 mpv 视频窗之上，鼠标移入视频才出现（mpv/uosc 观感）。
-/// 必须另开窗口的理由：视频是原生窗、浮在 WebView 之上，主页面里的 HTML 盖不到它。
+// ───────────────── [lc-090] 自绘浮层控制条（默认关闭） ─────────────────
+//
+// 为什么默认关：
+// ① **架构上已无法被唤起** —— lc-088 挖洞 + lc-089 启用 mpv 子窗之后，视频区内的鼠标
+//    完全归 mpv（这是刻意的），页面与这个浮层窗都收不到 mousemove → 靠「悬停唤起」的
+//    自绘条不可能再出现（lc-086 那套「主页面 stage mousemove → bar_show」在 lc-087 已撤，
+//    且现在连 stage 都收不到鼠标了）。
+// ② **会自己冒出来** —— bar.tsx 挂载时无条件 `poke()` → `bar_show(true)`，
+//    而窗口是被 `player_set_bounds`→`place_bar`→`ensure_bar` 懒创建的 →
+//    只要打开详情页（还没播）它就先显示出来，窄宽度下 速度/音量 标签还会竖排换行。
+// 现在底栏由 mpv 原生 uosc 提供（lc-089 已恢复鼠标交互）。
+// 代码保留备用：`FNTV_CUSTOM_BAR=1` 打开（注意届时需要自己重新接一个唤起源）。
 const BAR_H_CSS: f64 = 54.0;
 
+fn custom_bar_enabled() -> bool {
+    matches!(std::env::var("FNTV_CUSTOM_BAR").ok().as_deref(), Some("1"))
+}
+
 fn ensure_bar(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
+    if !custom_bar_enabled() {
+        return Err("自绘控制条已关闭（FNTV_CUSTOM_BAR=1 可启用）".into());
+    }
     if let Some(w) = app.get_webview_window("playerbar") {
         return Ok(w);
     }

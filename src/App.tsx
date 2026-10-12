@@ -1923,6 +1923,8 @@ function App() {
         onRefresh={() => loadHome()}
         refreshing={homeLoading}
         overlay={(view === "home" && !homeScrolled) || view === "player"}
+        // [lc-111] 详情页顶栏透明化（与首页同一观感）：.titlebar.ghost = 透明玻璃、保留主题色文字
+        ghost={view === "detail"}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
       />
       {err && view !== "login" && <div className="err global-err">{err}</div>}

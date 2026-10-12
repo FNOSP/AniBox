@@ -2969,7 +2969,7 @@ mp.register_script_message('codex-open-image-subs-brightness-menu', function()
 		items = items,
 		footnote = supported
 			and '随视频模式保留正片 HDR 元数据；选择亮度档位会切换到 SDR 图形字幕，不影响视频、ASS 与 OSD'
-			or '需要配套的 Yaoplayer 自编译核心',
+			or '需要配套的 Fntv-Plus 自编译核心',
 	})
 end)
 

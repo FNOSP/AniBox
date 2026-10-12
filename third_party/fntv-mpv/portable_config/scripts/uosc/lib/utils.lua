@@ -1168,8 +1168,9 @@ function render()
 	-- Controls read it. The module schedules only the frames still needed.
 	dock_motion:update()
 
-	-- mpv-Yaozhi idle branding. The published state is also used by the
-	-- command menu, so render from the same source of truth.
+	-- [lc-1381] 空闲品牌水印：Fntv-Plus 文字标（版式沿用上游 mpv-Yaozhi）。
+	-- The published state is also used by the command menu, so render from
+	-- the same source of truth.
 	local idle_branding_enabled = mp.get_property_native(
 		'user-data/uosc/idle-branding',
 		options.idle_branding and 'yes' or 'no'
@@ -1212,8 +1213,8 @@ function render()
 		-- The built-in asset has intentional transparent breathing room. Anchor
 		-- the wordmark to its visible lower edge instead of the canvas edge.
 		if image_mode == 'default' then mark_half_height = mark_half_height * 0.758 end
-		local brand_name = '{\\1c&H' .. config.color.idle_brand_glow .. '&}mpv-'
-			.. '{\\1c&H' .. config.color.idle_brand_text .. '&}Yaozhi'
+		local brand_name = '{\\1c&H' .. config.color.idle_brand_glow .. '&}Fntv-'
+			.. '{\\1c&H' .. config.color.idle_brand_text .. '&}Plus'
 		ass:txt(center_x, center_y + mark_half_height + 8 * state.scale, 8, brand_name, {
 			font = 'Segoe UI',
 			size = clamp(22 * state.scale, mark_half_height * 0.42, 34 * state.scale),

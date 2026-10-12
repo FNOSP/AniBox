@@ -50,7 +50,7 @@ function M.new(settings)
                 publish('ready')
                 local ready_action = settings.on_ready and settings.on_ready(spec, data)
                 if ready_action == 'deferred' then
-                    mp.osd_message('AI 后台准备完成；下个符合条件的视频片头会自动尝试\n当前视频可在“杳知 → 超分与补帧”中手动启用', 5)
+                    mp.osd_message('AI 后台准备完成；下个符合条件的视频片头会自动尝试\n当前视频可在“Fntv-Plus → 超分与补帧”中手动启用', 5)
                 elseif ready_action == 'deferred-slow' then
                     mp.osd_message('AI 已准备；测速余量偏低，下个符合条件的视频片头仍会尝试\n接入或运行失败会回退普通播放，当前视频可手动启用', 5)
                 elseif ready_action == 'deferred-unsupported' then
@@ -58,7 +58,7 @@ function M.new(settings)
                 elseif ready_action then
                     mp.osd_message('AI 后台准备完成，正在自动启用', 3)
                 else
-                    mp.osd_message('AI 已准备好，可在“杳知 → 超分与补帧”中启用\n当前继续正常播放', 6)
+                    mp.osd_message('AI 已准备好，可在“Fntv-Plus → 超分与补帧”中启用\n当前继续正常播放', 6)
                 end
             else
                 self.failure_code = data and data.code or 'prepare_failed'
@@ -78,7 +78,7 @@ function M.new(settings)
             if settings.on_failure then settings.on_failure(spec, 'timeout') end
             mp.osd_message('AI 后台准备超时，已停止准备；当前继续正常播放', 4)
         end)
-        mp.osd_message('AI 正在后台准备，当前正常播放\n可在“杳知 → 超分与补帧”中取消', 4)
+        mp.osd_message('AI 正在后台准备，当前正常播放\n可在“Fntv-Plus → 超分与补帧”中取消', 4)
         return false
     end
     function self:enable()

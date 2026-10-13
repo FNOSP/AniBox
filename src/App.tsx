@@ -1141,7 +1141,13 @@ function DetailSkeleton() {
       </div>
       <aside className="dv2-right">
         <div className="dv2e-hd">
-          <div className="dsk dsk-hd" />
+          <div className="dv2e-hd-l">
+            <div className="dv2e-hd-t">
+              <div className="dsk dsk-hd" />
+              <div className="dsk dsk-hd2" />
+            </div>
+          </div>
+          <div className="dsk dsk-playbtn" />
         </div>
         <div className="dv2e-list">
           {[0, 1, 2].map((i) => (
@@ -3416,6 +3422,37 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
     }
     return [...map.entries()].map(([relation, items]) => ({ relation, items }));
   })();
+  // [lc-1419] 选集头部的「集数 / 完结状态 / 上次更新」三项（用户要求）。
+  //   数据源与判据：
+  //   · 总集数：Bangumi subject 的 eps/total_episodes（实测 13），本机集数作为回退；
+  //   · 是否完结：infobox 里**有「放送结束」即视为已完结**（实测已完结条目有该键、在播没有）——
+  //     比"集数是否相等"稳（有些番本机只有部分集，拿本机数判会误报"未完结"）；
+  //   · 上次更新：本机集里最新的一集播出日期（air_date），没有就回退 Bangumi subject.date。
+  const subjectEps = Number(
+    (bgmSub as Record<string, unknown> | null)?.eps ??
+      (bgmSub as Record<string, unknown> | null)?.total_episodes ??
+      0,
+  );
+  const totalEps = subjectEps > 0 ? subjectEps : episodes.length;
+  const infoBox = ((bgmSub as Record<string, unknown> | null)?.infobox ?? []) as {
+    key?: string;
+    value?: unknown;
+  }[];
+  const finished = infoBox.some((b) => String(b?.key ?? "").includes("放送结束"));
+  const airDates = episodes.map((e) => String(e.air_date ?? "")).filter(Boolean).sort();
+  const lastAir = airDates.length ? airDates[airDates.length - 1] : String(pick(bgmSub ?? {}, ["date"]) ?? "");
+
+  // [lc-1419] 续播目标：有播放记录（ts>0 且未看完）就跳那一集并带进度，
+  //   否则从第 1 集开始。原「海报上的播放按钮」用的就是 episodes[0]，这里升级为"上次的位置"。
+  const resumeEp =
+    episodes.find((e) => (e.ts ?? 0) > 0 && !(e.duration && e.ts! >= e.duration)) ?? episodes[0];
+  const resumeTarget = resumeEp ?? null;
+  // 进度百分比（给按钮上的小字用）
+  const resumePct =
+    resumeTarget && resumeTarget.ts && resumeTarget.duration && resumeTarget.duration > 0
+      ? Math.min(100, Math.round((resumeTarget.ts / resumeTarget.duration) * 100))
+      : 0;
+
   // [lc-1401] 右栏选集：本机集号 → Bangumi 那集的 {小标题, 简介}（集号对齐 sort 优先，与回填逻辑一致）
   const bgmEpByNum = new Map<number, BgmEpisodeRow>();
   for (const e of bgmEps) {
@@ -3887,21 +3924,65 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
             小标题与 desc（Bangumi 只有一季时 ep 是**全季连号**，所以按号取，不按季内序号）。 */}
         <aside className="dv2-right">
           <div className="dv2e-hd">
-            <h3>选集</h3>
-            {seasons.length > 1 && (
-              <div className="season-tabs">
-                {seasons.map((sn, i) => (
-                  <button
-                    key={sn.guid}
-                    className={`season-tab ${i === seasonIdx ? "active" : ""}`}
-                    onClick={() => setSeasonIdx(i)}
-                  >
-                    {sn.title || `第 ${sn.season_number ?? i + 1} 季`}
-                  </button>
-                ))}
+            <div className="dv2e-hd-l">
+              <div className="dv2e-hd-t">
+                <h3>选集</h3>
+                {/* [lc-1419] 集数/完结/上次更新（用户要求）——三项都是"一眼确认状态"用的 */}
+                {isSeries && (
+                  <span className="dv2e-meta">
+                    <span className="dv2e-meta-n">
+                      {episodes.length}
+                      {totalEps > 0 && totalEps !== episodes.length ? ` / ${totalEps}` : ""} 集
+                    </span>
+                    <span className={`dv2e-state${finished ? " done" : " airing"}`}>
+                      {finished ? "已完结" : "连载中"}
+                    </span>
+                    {lastAir && <span className="dv2e-meta-d">更新至 {String(lastAir).slice(0, 10)}</span>}
+                  </span>
+                )}
               </div>
+              {seasons.length > 1 && (
+                <div className="season-tabs">
+                  {seasons.map((sn, i) => (
+                    <button
+                      key={sn.guid}
+                      className={`season-tab ${i === seasonIdx ? "active" : ""}`}
+                      onClick={() => setSeasonIdx(i)}
+                    >
+                      {sn.title || `第 ${sn.season_number ?? i + 1} 季`}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* [lc-1419] 播放入口从海报挪到这里（用户要求）。语义：
+                  有播放记录 → 「继续观看 第 N 集 · 42%」（点它直接跳到那一集的进度）；
+                  没有记录 → 「播放 第 1 集」。 */}
+            {isSeries && resumeTarget && (
+              <button
+                className="dv2e-play-btn"
+                disabled={playing}
+                onClick={() => {
+                  setPlayingGuid(resumeTarget.guid);
+                  invoke("play_item", { guid: resumeTarget.guid }).catch((e) => setErr(String(e)));
+                }}
+                title={
+                  resumePct > 0
+                    ? `继续播放 第 ${resumeTarget.episode_number ?? 1} 集（${resumePct}%）`
+                    : `播放 第 ${resumeTarget.episode_number ?? 1} 集`
+                }
+              >
+                <IcoPlayL size={14} strokeWidth={2.4} />
+                <span>
+                  {playing
+                    ? "打开中…"
+                    : resumePct > 0
+                      ? `继续观看 第 ${resumeTarget.episode_number ?? 1} 集`
+                      : `播放 第 ${resumeTarget.episode_number ?? 1} 集`}
+                </span>
+                {resumePct > 0 && <i className="dv2e-play-pct">{resumePct}%</i>}
+              </button>
             )}
-            <span className="muted">{episodes.length} 集</span>
           </div>
           <div className="dv2e-list">
             {!isSeries ? (

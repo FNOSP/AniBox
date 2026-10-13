@@ -3994,7 +3994,8 @@ html.dark .ditem-tag {
   top: 54px;        /* = .detail-full 顶部 padding（悬浮标题栏 40px + 14px） */
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  /* [lc-1419] gap 归零：头部与列表是**同一张卡片的两块**，留缝就又把它们切开了 */
+  gap: 0;
   max-height: calc(100vh - 70px);
 }
 
@@ -4214,16 +4215,95 @@ html.dark .ditem-tag {
 }
 
 /* ── 右列：集数据（竖向列表） ── */
+/* [lc-1419] 头部重排（用户："这个和下面容器有割裂，优化一下"）：
+   割裂的成因是**头部与列表各自带边框** —— 交界处压出两层线，看着像两个容器。
+   现在按"一个卡片两块区域"处理：外框由头部画（左右上三边），列表只画左右下三边，
+   两块背景同为 --bg-2 → 接缝消失。头部同时重排为：左侧标题+元信息+季切换，右侧播放入口。 */
 .dv2e-hd {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-radius: var(--radius) var(--radius) 0 0;
   background: var(--bg-2);
   border: 1px solid var(--line);
   border-bottom: none;
+}
+.dv2e-hd-l {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.dv2e-hd-t {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+/* 集数 / 完结状态 / 上次更新 三项 */
+.dv2e-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dv2e-state {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid;
+}
+/* 连载中 = 蓝色系（在动）；已完结 = 中性灰（静止）—— 颜色即语义 */
+.dv2e-state.airing {
+  color: var(--accent);
+  border-color: rgba(108, 155, 255, 0.45);
+  background: rgba(108, 155, 255, 0.1);
+}
+.dv2e-state.done {
+  color: var(--muted);
+  border-color: var(--line-strong);
+  background: var(--hover);
+}
+/* 顶部播放入口：主色胶囊，带进度小字（有记录时） */
+.dv2e-play-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent-grad);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+.dv2e-play-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(108, 155, 255, 0.42);
+}
+.dv2e-play-btn:active {
+  transform: scale(0.97);
+}
+.dv2e-play-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+  transform: none;
+}
+.dv2e-play-pct {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.85;
 }
 .dv2e-hd h3 {
   margin: 0;
@@ -4239,7 +4319,9 @@ html.dark .ditem-tag {
   min-height: 0;         /* 关键：让它能在右栏 max-height 内滚动，而不是把右栏撑高 */
   max-height: calc(100vh - 160px);
   overflow-y: auto;
+  /* [lc-1419] 只画左右下三边（上边由头部承担）—— 两块拼成一张卡片，交界处不再有双线 */
   border: 1px solid var(--line);
+  border-top: none;
   border-radius: 0 0 var(--radius) var(--radius);
   background: var(--bg-2);
 }
@@ -4866,6 +4948,19 @@ html.dark .ditem-tag {
   width: 72px;
   height: 16px;
   border-radius: 6px;
+}
+/* [lc-1419] 头部追加两块：元信息行（第二块）与右侧播放按钮位 —— 与真实头部结构对齐，
+   否则数据到位时头部高度突变（骨架 1 行 → 真内容 2 行 + 按钮）。 */
+.dsk-hd2 {
+  width: 116px;
+  height: 14px;
+  border-radius: 6px;
+}
+.dsk-playbtn {
+  width: 128px;
+  height: 34px;
+  border-radius: 999px;
+  flex: 0 0 auto;
 }
 /* 骨架块在容器里的定位（.dsk-poster 是 absolute 那种，这几类是普通流式块） */
 .dv2e-thumb .dsk,

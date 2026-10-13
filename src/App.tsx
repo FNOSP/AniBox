@@ -1106,6 +1106,60 @@ function AvatarSafe({
   );
 }
 
+/** [lc-1417] 详情页骨架屏（用户反馈"没做骨架屏"，进页面时是空等）。
+ *
+ *  形状按详情页真实布局摆：左列 = 海报 + 标签 chips + 简介行；右列 = 选集行（图 + 两行文字）。
+ *  复用既有 `.dsk` 的 shimmer 语言（与首页/发现页同一套），不再另造一套动画。
+ *
+ *  为什么必须连"右栏选集"一起摆：详情页的等待感主要来自右侧——条目详情没回来时
+ *  选集整个是空的（用户截图里右侧就是一片白），只给左列摆骨架的话右侧空白更显慢。
+ */
+function DetailSkeleton() {
+  return (
+    <div className="dv2">
+      <div className="dv2-left">
+        <div className="dv2-top">
+          <div className="dv2-poster"><div className="dsk dsk-dposter" /></div>
+          <div className="dv2-topinfo">
+            <div className="dv2-itags">
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="dsk dsk-chip" />
+              ))}
+            </div>
+            <div className="dv2-isum">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className={`dsk dsk-sline${i === 3 ? " short" : ""}`} />
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="dseg dv2-seg">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div key={i} className="dsk dsk-tab" />
+          ))}
+        </div>
+      </div>
+      <aside className="dv2-right">
+        <div className="dv2e-hd">
+          <div className="dsk dsk-hd" />
+        </div>
+        <div className="dv2e-list">
+          {[0, 1, 2].map((i) => (
+            <div className="dv2e-row" key={i}>
+              <div className="dv2e-thumb"><div className="dsk dsk-dthumb" /></div>
+              <div className="dv2e-main">
+                <div className="dsk dsk-sline" />
+                <div className={`dsk dsk-sline${i % 2 ? " short" : ""}`} />
+                <div className="dsk dsk-sline short" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 /* ────────────────────────── 首页骨架屏 ────────────────────────── */
 
 function HomeSkeleton() {
@@ -3413,7 +3467,13 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
 
       {err && <div className="err">{err}</div>}
 
+      {/* [lc-1417] 首屏骨架屏：条目详情（data）没到位之前先摆骨架，别让用户对着空白等。
+          判据用 `!data && !err`：出错时走上面的 .err，已有数据时立即换成真内容。
+          ⚠ 只包住"两栏主体"—— 返回键与标题（rail）是从 base 直接来的，不需要等网络。 */}
+      {!data && !err && <DetailSkeleton />}
+
       {/* ══ 两栏主体（用户版式）══ */}
+      {data && (
       <div className="dv2">
         {/* ── 左列：封面 / 标签框 / 简介框 / 标签页 / 内容 ── */}
         <div className="dv2-left">
@@ -3900,6 +3960,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
           </div>
         </aside>
       </div>
+      )}
 
       {/* [lc-128] 剧照原图（`original` 尺寸）：点击任意剧照放大。走同一套三级缓存
           （拉了即落盘，下次点开零网络），点背景/Esc… 这里只需点背景关闭。 */}

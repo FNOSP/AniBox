@@ -13,6 +13,14 @@ mod mpv;
 mod proxy;
 mod tmdb;
 
+/// [lc-1417] 详情页数据的落盘 TTL：**120 天**（用户指定）。
+/// 覆盖：飞牛条目详情 / 季列表 / 集列表 / TMDB 详情。
+/// 为什么给这么长：这些是**元数据**（简介、剧照、演职员、集号…），一经刮削基本不变；
+/// 用户明确要求"数据拉了直接本地落盘不要老是拉取"。过期也不清空 —— 命中逻辑同 disk_cache
+/// （TTL 内直出、过期则回源，回源失败仍可用旧值兜底，见 json_cached_conditional）。
+/// 想立刻更新：设置面板的「清理缓存」会把它们一起清掉，下次进详情页重新拉。
+const DETAIL_TTL_SECS: u64 = 120 * 24 * 3600;
+
 use config::Config;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -186,18 +194,30 @@ async fn get_continue_watching(state: State<'_, AppState>) -> Result<Value, Stri
 #[tauri::command]
 async fn get_seasons(state: State<'_, AppState>, guid: String) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
+    let key = format!("detail:seasons:{}", guid);
+    if let Some(v) = disk_cache::json_get(&key, DETAIL_TTL_SECS) {
+        return Ok(v);
+    }
     let client = fnapi::new_client();
     let path = format!("/v/api/v1/season/list/{}", guid);
-    client.call(&cfg.server, &path, "GET", &cfg.token, None).await
+    let v = client.call(&cfg.server, &path, "GET", &cfg.token, None).await?;
+    disk_cache::json_put(&key, &v);
+    Ok(v)
 }
 
 /// 集列表：GET /v/api/v1/episode/list/{guid} —— guid 必须是季 guid（见 get_seasons 注释）
 #[tauri::command]
 async fn get_episodes(state: State<'_, AppState>, guid: String) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
+    let key = format!("detail:episodes:{}", guid);
+    if let Some(v) = disk_cache::json_get(&key, DETAIL_TTL_SECS) {
+        return Ok(v);
+    }
     let client = fnapi::new_client();
     let path = format!("/v/api/v1/episode/list/{}", guid);
-    client.call(&cfg.server, &path, "GET", &cfg.token, None).await
+    let v = client.call(&cfg.server, &path, "GET", &cfg.token, None).await?;
+    disk_cache::json_put(&key, &v);
+    Ok(v)
 }
 
 /// 媒体统计：GET /v/api/v1/mediadb/sum —— 一个接口给全所有计数
@@ -265,12 +285,20 @@ async fn get_items_global(
 }
 
 /// 条目详情：端点与响应字段对齐 FlyNarwhal（GET /v/api/v1/item/{guid}，camelCase 字段）
+/// [lc-1417] **落盘缓存 120 天**：这是详情页最重的一次请求（简介/海报/演职员/评分全在里面），
+/// 原来每次进页面都重拉 —— 用户反馈"每次打开是重新拉了一遍数据吗，要等一会才出现"。
 #[tauri::command]
 async fn get_item_detail(state: State<'_, AppState>, guid: String) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
+    let key = format!("detail:item:{}", guid);
+    if let Some(v) = disk_cache::json_get(&key, DETAIL_TTL_SECS) {
+        return Ok(v);
+    }
     let client = fnapi::new_client();
     let path = format!("/v/api/v1/item/{}", guid);
-    client.call(&cfg.server, &path, "GET", &cfg.token, None).await
+    let v = client.call(&cfg.server, &path, "GET", &cfg.token, None).await?;
+    disk_cache::json_put(&key, &v);
+    Ok(v)
 }
 
 /// 轮播数据：全局白名单查询（对齐主仓库 itemListApi.ts —— type:['Movie','TV']、

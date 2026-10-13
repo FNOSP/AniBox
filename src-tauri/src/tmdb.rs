@@ -35,7 +35,8 @@
 //! 演员表（`tmdb_credits`）：**TMDB 主源** —— fnOS 条目的 `trim_id`（tm63578 = TMDB id /
 //! tt325158 = IMDb id / bg456080 = Bangumi）能精确定位就直接定位，定位不到才回落标题搜索
 //! （搜索**带最低相似度门槛**，不再是"取第一条"），命中方式写进 `matched_by` 与诊断日志，
-//! 结果按 tmdb id 落盘缓存（disk_cache，默认 7 天），飞牛/Bangumi 侧只在前端做兜底展示。
+//! 结果按 tmdb id 落盘缓存（disk_cache；[lc-1417] TTL 由 7 天提到 **120 天**，见 CREDITS_TTL_SECS），
+//! 飞牛/Bangumi 侧只在前端做兜底展示。
 //! 注：图片由前端经 fntvimg 自定义协议取（`/__tmdb/<t/p/size/...>`，三级缓存见 imgproto.rs）。
 
 use serde_json::{json, Value};
@@ -68,8 +69,13 @@ const THROTTLE_MAX_ATTEMPTS: usize = 4;
 const THROTTLE_BASE_BACKOFF_MS: u64 = 600;
 const THROTTLE_MAX_BACKOFF_MS: u64 = 8_000;
 
-/// 演员表落盘缓存 TTL：7 天（演员表几乎不变；飞牛条目每次进详情页都查一次太浪费）
-const CREDITS_TTL_SECS: u64 = 7 * 24 * 3600;
+/// [lc-1417] 详情页 TMDB 数据的落盘 TTL：**120 天**（用户指定："数据拉了直接本地落盘
+/// 不要老是拉取""落盘时间 120 天，用户也可自行清除"）。
+/// 覆盖演员表（CREDITS）与条目详情（SHOW，剧照/相似/别名那批）。
+/// 想立刻更新 → 设置面板「清理缓存」；那条命令会一并清掉这些。
+const CREDITS_TTL_SECS: u64 = 120 * 24 * 3600;
+/// 条目详情（tmdb_show_details）的 TTL，与上面同值、单独命名以便日后分别调整
+const SHOW_TTL_SECS: u64 = 120 * 24 * 3600;
 
 /// [lc-123-rev5] 发现页落盘缓存 TTL（用户反馈"刷得太频繁，想要"检测新增才刷新"）：
 ///   · 当季 12 小时 / 即将播出 24 小时 —— 这类榜单一天最多变一两次，镜像侧还有自己的边缘缓存；
@@ -1097,7 +1103,17 @@ pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
     } else {
         "credits,external_ids,keywords,alternative_titles,images,videos,release_dates,watch/providers,recommendations"
     };
-    let d = get_json(&detail_path(mt, id, append)).await?;
+    // [lc-1417] **落盘缓存 120 天**：键按 mt + tmdb id，同一部剧任何入口进来都命中同一份。
+    //   缓存的是**上游原始响应**（不是归一化结果）—— 归一化逻辑改了不必等缓存过期。
+    let detail_key = format!("json:show:{mt}:{id}");
+    let d = if let Some(v) = disk_cache::json_get(&detail_key, SHOW_TTL_SECS) {
+        crate::libmpv::trace(&format!("[tmdb] show_details 命中缓存 {detail_key}"));
+        v
+    } else {
+        let fresh = get_json(&detail_path(mt, id, append)).await?;
+        disk_cache::json_put(&detail_key, &fresh);
+        fresh
+    };
 
     // 3) 归一化（字段与主仓库 normalizeShow 对齐，只取渲染需要的）
     let s = |k: &str| d.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();

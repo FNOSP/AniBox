@@ -1862,21 +1862,29 @@ button:active {
   color: var(--text-strong);
   margin-bottom: 10px;
 }
+/* ⚠ [lc-1418] 这条容器规则目前**没有 JSX 引用**（剧照行已改走 ScrollRow 的 .dvstill-row）。
+   保留它只为防"以后有人把容器名改回来时布局突然崩"，但新增样式请写在 .dvstill-row 上。 */
 .tmdb-stills {
   display: flex;
   gap: 12px;
   overflow-x: auto;
   padding-bottom: 4px;
 }
-.tmdb-stills img {
-  /* [lc-1415] 用户反馈"剧照图片太大了"→ 缩回紧凑尺寸（原 128px 高、228px 宽）：
-     高度收到 96px、宽度跟着 16:9 变成 170px。这样一行能放下 3-4 张（和别的模块
-     信息密度一致），不再一张就占掉半个面板。 */
-  height: 96px;
-  min-width: 170px;
+/* [lc-1418] 剧照缩到**四分之一**（用户要求）。同时修一个我前几轮埋下的错：
+   这条规则原来挂在 `.tmdb-stills img` 上，但 [lc-1413] 把剧照行改走 ScrollRow 之后，
+   boxClass 用的是 `.dvstill-row`（`.tmdb-stills` 那个容器**在 JSX 里已经不存在了**）——
+   于是这条定尺寸的规则**从未命中**，剧照一直按图片原始尺寸渲染（截图里占掉大半屏）。
+   现在挂到真实存在的 `.dvstill-row` 上，并按用户要求缩到**当前显示尺寸的四分之一**。 */
+.dvstill-row img {
+  /* 尺寸的依据：**按用户看到的实际大小取四分之一**。
+     你截图里剧照 ≈ 500×281（TMDB w500 的自然尺寸，因为旧规则没命中所以一直按原图渲染），
+     四分之一 → **124×70**（保持 16:9：124 × 9/16 ≈ 70）。
+     想再调只需改这两个数（height 与 min-width 要同步，否则比例会歪）。 */
+  height: 70px;
+  min-width: 124px;
   aspect-ratio: 16 / 9;
   object-fit: cover;
-  border-radius: 8px;
+  border-radius: 6px;
   flex-shrink: 0;
 }
 .tmdb-inline {
@@ -3837,7 +3845,7 @@ html.dark .ditem-tag {
 }
 
 /* ── 剧照原图查看：点任意剧照 → original 尺寸（同一套落盘缓存） ── */
-.tmdb-stills img {
+.dvstill-row img {
   cursor: zoom-in;
 }
 .zoom-mask {
@@ -4766,14 +4774,15 @@ html.dark .ditem-tag {
 }
 
 /* [lc-1413] 剧照横排接 ScrollRow 后的容器规则。
-   .tmdb-stills 本身是 flex+overflow-x:auto（裸横排），现在外面套了 .srow，
+   剧照行本身是 flex+overflow-x:auto（裸横排），现在外面套了 .srow，
    所以内层只需保留 flex 与间距；.hscroll 的负边距在这里不适用（剧照本来就在面板内），
    故用 .dvstill-row 覆盖掉。 */
 .dvstill-row {
   margin: 0;
   padding-left: 0;
   padding-right: 0;
-  gap: 12px;
+  /* [lc-1418] 剧照缩到 48px 高后，间距也从 12px 收到 8px（与图的比例协调） */
+  gap: 8px;
 }
 /* [lc-1413] 剧照行嵌在 .tmdb-sec 里（带 14px 内边距 + 圆角边框的卡片），
    箭头默认 left/right:6px 会压到卡片边框上。这里给 .srow 挂一个修饰类（.insec）
@@ -4788,7 +4797,7 @@ html.dark .ditem-tag {
 }
 
 /* 箭头垂直居中：.srow-nav 的基准是 --srow-img-h，而 ScrollRow 会按 imgSel 量出的高度写入它
-   （剧照行传的是 .tmdb-stills img = 128px）。所以这里不需要额外的覆盖规则 —— 删掉冗余选择器，
+   （剧照行传的是 .dvstill-row img，[lc-1418] 起为 70px）。所以这里不需要额外的覆盖规则 —— 删掉冗余选择器，
    避免以后有人以为"剧照行有特殊居中逻辑"而去改一处根本不被使用的地方。 */
 
 /* [lc-1414] 头像兜底（AvatarSafe / BgmCastRow 共用）：内置图标居中 + 按名字取的稳定底色 */
@@ -4820,3 +4829,46 @@ html.dark .ditem-tag {
   margin-top: 4px;
 }
 /* 简介 3 行（封面变大后行更高，4 行会让一屏放不下几集） */
+
+/* [lc-1417] 详情页骨架屏（DetailSkeleton）用的尺寸类。
+   复用 .dsk 的 shimmer（既有动画语言），这里只定义各块的形状。
+   ⚠ 尺寸要与真实元素对齐：海报 132px 宽 / 选集缩略图 152px 宽（与 lc-1415 后的真值一致），
+     否则数据到位时会"跳一下"。 */
+.dsk-dposter {
+  width: 100%;
+  height: 100%;
+  border-radius: 10px;
+}
+.dsk-dthumb {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+}
+.dsk-chip {
+  width: 58px;
+  height: 24px;
+  border-radius: 999px;
+}
+.dsk-sline {
+  height: 12px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+}
+.dsk-sline.short {
+  width: 62%;
+}
+.dsk-tab {
+  width: 88px;
+  height: 34px;
+  border-radius: 9px;
+}
+.dsk-hd {
+  width: 72px;
+  height: 16px;
+  border-radius: 6px;
+}
+/* 骨架块在容器里的定位（.dsk-poster 是 absolute 那种，这几类是普通流式块） */
+.dv2e-thumb .dsk,
+.dv2-poster .dsk {
+  display: block;
+}

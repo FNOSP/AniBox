@@ -321,8 +321,9 @@ async function fetchLibItems(libGuid: string, parentGuid: string | null): Promis
 
 /* ────────────────────────── 标题栏 ────────────────────────── */
 
-/** [lc-123-rev] 「首页 | 发现」胶囊：**从顶栏挪到内容区顶部**（.navbar 行：居中、放大）。
- *  顶栏恢复干净：左边只留当前页名（+侧栏/刷新/主题按钮），中间弱化品牌小字，右边窗口按钮。
+/** [lc-123-rev2] 「首页 | 发现」胶囊：**从顶栏挪到内容区顶部的浮层**（.navbar = absolute，
+ *  不占布局高度，直接浮在首页海报上；见 App.css）。顶栏恢复干净：左边只留当前页名
+ *  （+侧栏/刷新/主题按钮），中间弱化品牌小字，右边窗口按钮。
  *  ⚠ 胶囊仍带 `-webkit-app-region: no-drag`（见 App.css .nav-cap）：虽已不贴拖拽区，
  *  这道声明是"胶囊一定点得动"的保险丝（顶栏整条仍是 data-tauri-drag-region 拖拽区）。 */
 function NavCapsule({
@@ -3867,12 +3868,15 @@ function App() {
           onOpenSettings={() => setSettingsOpen(true)}
         />
         <div className="view-stack">
-          {/* [lc-123-rev] 胶囊行：从顶栏挪到**内容区顶部、居中**（顶栏只留页名/品牌小字/窗口按钮）。
-              放在 .view-stack 里 = 侧栏右侧的内容区，横向真居中；高度由 --navh 定，
-              下方各视图的"让位间距"从"顶栏 40px"改成"胶囊行"（见 App.css）。 */}
-          <div className="navbar">
-            <NavCapsule page={page} onNav={onNav} />
-          </div>
+          {/* [lc-123-rev2] 「首页 | 发现」胶囊是**浮层**（.navbar = absolute，不占布局高度）：
+              浮在内容区（.view-stack，侧栏右侧）顶部居中、盖在海报上；首页 hero 保持满幅紧贴标题栏。
+              只在两个"主页"上出现：库/详情是带返回入口的子页，且详情页的分段栏（.dseg，sticky top 40px）
+              正好在胶囊的落点上，浮上去会压住中间的 tab（见 App.css 注释）。 */}
+          {(view === "home" || view === "discover") && (
+            <div className="navbar">
+              <NavCapsule page={page} onNav={onNav} />
+            </div>
+          )}
           <div className={`view-pane${view === "home" ? " active" : ""}`}>
             {homeReady ? (
               <HomeView
@@ -3976,8 +3980,9 @@ function App() {
         }
         onRefresh={() => loadHome()}
         refreshing={homeLoading}
-        // [lc-123-rev] 胶囊挪进 .navbar 行后，首页 hero 不再从顶栏下穿过（home-full 从胶囊行下沿开始），
-        // overlay 透明顶栏随之退场 —— 顶栏一律实体玻璃底，白字压深渐变没有存在意义了。
+        // [lc-123-rev2] 首页：hero 满幅（100vh）紧贴标题栏下方，胶囊是浮层（不占高度）。
+        // overlay 透明顶栏没有再启用 —— 顶栏一律实体玻璃底（用户看的是"白条消失 + hero 满幅"，
+        // 未要求海报穿到窗口上沿；要恢复那种观感需再把 homeScrolled 那套接线接回来）。
         // [lc-111] 详情页顶栏透明化：.titlebar.ghost = 透明玻璃、保留主题色文字
         ghost={view === "detail"}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}

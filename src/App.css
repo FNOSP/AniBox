@@ -21,9 +21,6 @@
   --gold: #ffd479;
   --shadow-card: 0 10px 30px rgba(31, 41, 90, 0.12);
   --radius: 14px;
-  /* [lc-123-rev] 胶囊行（.navbar）的固定高度：40px 让位 + 胶囊（≈54px）+ 上下留白。
-     它是"内容从哪开始"的唯一常量 —— 首页 100vh 头图、详情页 sticky 分段栏都按它补偿。 */
-  --navh: 104px;
   --text-strong: rgba(26, 33, 50, 0.92);
   --text: rgba(26, 33, 50, 0.8);
   --text-2: rgba(26, 33, 50, 0.7);
@@ -324,6 +321,7 @@ body,
 
 /* 视图栈：首页常驻挂载，切页只切换 active（防图片重请求与状态丢失） */
 .view-stack {
+  position: relative; /* [lc-123-rev2] 浮层胶囊（.navbar，absolute）的定位上下文 = 内容区 */
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -455,8 +453,7 @@ body,
 }
 .hero-skel {
   width: 100%;
-  /* [lc-123-rev] 与 .mist-banner 同一口径：再扣掉胶囊行的 --navh */
-  height: calc(100vh - var(--navh) - 210px);
+  height: calc(100vh - 210px);
   min-height: 300px;
   border-radius: 0;
 }
@@ -494,8 +491,7 @@ body,
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  /* [lc-123-rev] 顶栏 40px 的让位改由 .navbar 承担：这里只留内容自身的呼吸间距 */
-  padding: 22px 26px 46px;
+  padding: 62px 26px 46px;
 }
 .section-head {
   display: flex;
@@ -781,13 +777,11 @@ h3 {
 /* ─────────────── 详情页 hero ─────────────── */
 
 /* 剧集详情骨架：顶部悬浮返回 + 内容滚动（Kazumi 风重排见文末 lc-118 节） */
-/* [lc-123-rev] 顶部让位从「悬浮标题栏 40px + 14px」改成「只留 14px」：
-   40px 那层已由 .view-stack 的 .navbar（--navh）在流内占掉（不再需要给绝对定位的顶栏让位）。 */
 .detail-full {
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 14px 26px 16px;
+  padding: 54px 26px 16px; /* 顶部 = 悬浮标题栏40px + 14px 间距 */
   gap: 14px;
 }
 .meta-row {
@@ -1109,9 +1103,7 @@ button:active {
 .mist-banner {
   position: relative;
   width: 100%;
-  /* [lc-123-rev] 100vh → 扣掉胶囊行：头图起点已在 .navbar 之下，
-     再写 100vh 会把底部媒体库条挤出窗口（首屏看不到）。 */
-  height: calc(100vh - var(--navh));
+  height: 100vh; /* 标题栏为悬浮层，海报直铺到窗口上沿 */
   overflow: hidden;
   background: #0a0e14;
 }
@@ -1855,12 +1847,10 @@ button:active {
       ⇒ 布局空间等效 sigma = 15px（CSS 直接写 blur(15px)）；白色 modulate alpha .4 ⇒ opacity:.4；
       ShaderMask 线性 [white → transparent] stops [.8,1] ⇒ mask-image 末 20% 渐隐；
       之上再叠 48px 底部羽化条（把图压回页面底色；Kazumi 用 scaffoldBackgroundColor，这里用 --bg-1）。
-   ② 横向 26px 由 .detail-full 的既有 padding 提供：头图 / 分段条用负 margin 通栏、内部再补回 26px。
-      顶部垂直让位随 [lc-123-rev] 的胶囊行改动：padding-top 54px → 14px（顶栏 40px 那层
-      已由 .view-stack 的 .navbar 在流内占掉；不能再留 40px，否则头图上会多出一条空白带）。
-   ③ 硬约束：头图不得 position:fixed（会压出 DWM 窗口圆角）；.dseg 的 sticky top 必须 0
-      （滚动容器 .detail-full 的上沿已落在胶囊行下方；写 40px 会在分段栏上方留一条空缝）；
-      窗口边缘 6px / 四角 12×12 内不放可点元素；
+   ② 横向 26px 由 .detail-full 的既有 padding 提供：头图 / 分段条用负 margin 通栏、内部再补回 26px，
+      这样完全不必改 .detail-full（它的 padding-top 54px = 顶栏 40px + 14px 必须保持）。
+   ③ 硬约束：头图不得 position:fixed（会压出 DWM 窗口圆角）；.dseg 的 sticky top 必须 40px
+      （= .titlebar 高度；写 0 会滑到顶栏底下）；窗口边缘 6px / 四角 12×12 内不放可点元素；
       图片不用 opacity+onLoad 门控（lc-114：命中缓存时 onLoad 不触发 ⇒ 图永不显示），只做无条件 animation。
    ═══════════════════════════════════════════════════════════════ */
 
@@ -2080,7 +2070,7 @@ button:active {
 
 .dseg {
   position: sticky;
-  top: 0; /* [lc-123-rev] 滚动容器的上沿已在 .navbar 之下（不再是顶栏底下），写 0 才对 */
+  top: 40px; /* = .titlebar 高度；不能写 0 */
   z-index: 30;
   display: flex;
   justify-content: center; /* 对齐 Kazumi tabAlignment: TabAlignment.center */
@@ -2531,60 +2521,66 @@ button:active {
   }
 }
 
-/* ═══════════════════ [lc-123] 顶栏「首页 | 发现」胶囊 ═══════════════════
-   位置：.tb-center（已有的绝对居中容器）里，替代原来的窗口标题文字。
+/* ═══════════════════ [lc-123-rev2] 内容区顶部「首页 | 发现」**浮层**胶囊 ═══════════════════
+   自己动手改的第一版是"占一行的胶囊行"（.navbar 有 height/padding-top），实机截图里它把首页 hero
+   顶下来一条白带 —— 用户否掉：胶囊**不占任何布局高度**，直接浮在内容区顶部（盖在海报上）。
+   ① .navbar 只做定位壳：absolute 居中在 .view-stack（侧栏右侧的内容区）里，
+      top = 顶栏 40px + 12px 间隙；z-index 40：高于首页 hero 内部图层（.lib-strip 20 / .mist-nav 6）、
+      低于 .titlebar(50) —— 永不抢顶栏的拖拽与窗口按钮。
+   ② 浮在图上是"任何底色都要看得清"：深玻璃底 + backdrop-filter 模糊 + 细描边 + 浅色字
+      （选中态仍用现有 --accent-grad）。
+   ③ 紧凑尺寸：容器 padding 3px / 标签 6px 22px / 字号 13px ⇒ 整宽 ≈150px（不抢海报视觉）。
    ⚠ 顶栏整条是拖拽区（data-tauri-drag-region）：胶囊**必须** no-drag，否则点它只会拖窗口。
-   （兄弟元素 .tb-left/.tb-right 撑满两侧空白，拖拽能力不受影响。） */
-
-/* ═══════════════════ [lc-123-rev] 内容区顶部「首页 | 发现」胶囊行 ═══════════════════
-   胶囊已**从顶栏挪下来**：顶栏只留「页名 / 品牌小字 / 窗口按钮」（窗口拖拽不受影响）。
-   .navbar 是 .view-stack 的第一行（侧栏右侧的内容区），横向居中、高度 = --navh（含顶栏 40px 的让位）。
-   下方各视图不再为"绝对定位的顶栏"留 40px —— 改成按 --navh 对齐（.content / .detail-full / .discover /
-   .mist-banner / .dseg 都按这个常量补偿）。 */
+   ⚠ 浮层自己 pointer-events:none（不拦下方海报的点击/悬停），点击权只收回到 .nav-cap 上。 */
 
 .navbar {
-  flex: 0 0 auto;
-  height: var(--navh);
-  box-sizing: border-box;
-  padding-top: 40px; /* 让开绝对定位的 .titlebar（40px，z-index 高于本行）：胶囊不能被它压掉上沿 */
-  display: flex;
-  align-items: center; /* 在 40..--navh 这段带子里垂直居中 */
-  justify-content: center;
+  position: absolute;
+  top: 52px; /* = .titlebar 高度 40px + 12px 间隙 */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  pointer-events: none;
 }
 
 .nav-cap {
   display: flex;
-  gap: 3px;
-  padding: 5px;
+  gap: 2px;
+  padding: 3px;
   border-radius: 999px;
-  background: var(--hover);
-  border: 1px solid var(--line);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  /* 半透明玻璃：浅色页面 / 深色海报上都能看清白字 */
+  background: rgba(20, 28, 44, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(10px) saturate(1.15);
+  -webkit-backdrop-filter: blur(10px) saturate(1.15);
   -webkit-app-region: no-drag; /* ← 保险丝：胶囊永远不参与窗口拖拽 */
+  pointer-events: auto; /* 父层 .navbar 是 none，这里把点击收回 */
 }
 
-/* 做大做明显：内边距/字号都放大（选中态沿用 --accent-grad，见 .on） */
+/* 紧凑：内边距/字号都收小（选中态沿用 --accent-grad，见 .on） */
 .nav-cap-l {
-  padding: 10px 36px;
+  padding: 6px 22px;
   border: none;
   border-radius: 999px;
   background: transparent;
-  color: var(--muted);
-  font-size: 15px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
   transition: color 0.16s, background 0.16s, box-shadow 0.16s;
 }
 
 .nav-cap-l:hover {
-  color: var(--text-strong);
+  color: #fff;
 }
 
 .nav-cap-l.on {
   background: var(--accent-grad);
   color: #fff;
   box-shadow: 0 4px 14px rgba(108, 155, 255, 0.42);
+  text-shadow: none;
 }
 
 /* 左上角的"当前页"字样（首页/发现）——顶栏左侧现在只剩它（+侧栏/刷新/主题按钮） */
@@ -2607,8 +2603,7 @@ button:active {
   flex: 1;
   min-height: 0;
   display: flex;
-  /* [lc-123-rev] 顶栏让位已由 .navbar（--navh）承担 —— 这里只留一点点缝隙 */
-  padding-top: 4px;
+  padding-top: 40px; /* = 顶栏高度：内容不从顶栏底下穿过（与 .content 62px 同一约定） */
 }
 
 .dpane {
@@ -2628,7 +2623,10 @@ button:active {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 16px 20px 12px;
+  /* [lc-123-rev2] 顶部 56px（原 16px）= 40px 让位 + 浮层胶囊（≈40px 高，绝对定位在 top 52px）
+     的避让 —— 胶囊浮在内容区顶部且横向居中，正好压在两栏栏头的中间（标题/筛选 chips），
+     不避让会盖住文字与按钮。首页没有这个问题（胶囊浮在满幅 hero 的图面上）。 */
+  padding: 56px 20px 12px;
   flex-wrap: wrap;
 }
 

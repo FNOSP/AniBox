@@ -4219,29 +4219,36 @@ html.dark .ditem-tag {
    割裂的成因是**头部与列表各自带边框** —— 交界处压出两层线，看着像两个容器。
    现在按"一个卡片两块区域"处理：外框由头部画（左右上三边），列表只画左右下三边，
    两块背景同为 --bg-2 → 接缝消失。头部同时重排为：左侧标题+元信息+季切换，右侧播放入口。 */
+/* [lc-1421] 头部 = **一整排**（用户要求："做成一排显示，播放按钮在左边"）。
+   `flex-wrap: nowrap` 保证不折成两行；`overflow-x: auto` 是最后兜底 ——
+   真的窄到放不下时横向滚，而不是把内容挤变形或折行。
+   顺序（DOM 决定）：播放按钮 → 选集标题 → 集数/完结/更新 → 季切换。 */
 .dv2e-hd {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
   padding: 12px 14px;
   border-radius: var(--radius) var(--radius) 0 0;
   background: var(--bg-2);
   border: 1px solid var(--line);
   border-bottom: none;
 }
-.dv2e-hd-l {
-  min-width: 0;
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
+/* 头部里的「选集」标题：不参与收缩、不换行 */
+.dv2e-hd-h {
+  flex: 0 0 auto;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text-strong);
+  white-space: nowrap;
 }
-.dv2e-hd-t {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
+/* 元信息与季切换在一排里也不换行（宽度不够时整体横向滚） */
+.dv2e-meta,
+.season-tabs {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 /* 集数 / 完结状态 / 上次更新 三项 */
 .dv2e-meta {
@@ -4305,6 +4312,9 @@ html.dark .ditem-tag {
   font-weight: 600;
   opacity: 0.85;
 }
+/* [lc-1421] 头部标题的类名从 `h3` 元素选择器改为 `.dv2e-hd-h` 显式类
+   （一排布局下它需要 flex:0 0 auto / nowrap，元素选择器不好写这些）。
+   这条保留作为兼容兜底。 */
 .dv2e-hd h3 {
   margin: 0;
   font-size: 14px;

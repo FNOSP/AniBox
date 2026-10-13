@@ -1140,14 +1140,11 @@ function DetailSkeleton() {
         </div>
       </div>
       <aside className="dv2-right">
+        {/* [lc-1421] 骨架与真实头部同构：播放按钮在左、标题与元信息跟其后（一排） */}
         <div className="dv2e-hd">
-          <div className="dv2e-hd-l">
-            <div className="dv2e-hd-t">
-              <div className="dsk dsk-hd" />
-              <div className="dsk dsk-hd2" />
-            </div>
-          </div>
           <div className="dsk dsk-playbtn" />
+          <div className="dsk dsk-hd" />
+          <div className="dsk dsk-hd2" />
         </div>
         <div className="dv2e-list">
           {[0, 1, 2].map((i) => (
@@ -3945,41 +3942,13 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
               <span>{playing ? "打开中…" : resumeAt ? "继续播放" : "播放"}</span>
             </button>
           )}
+          {/* [lc-1421] 头部改成**一整行**（用户要求："做成一排显示，播放按钮在左边"）。
+              顺序 = 播放按钮 → 选集标题 → 集数/完结/更新 → 季切换。
+              原来按钮独占右侧、标题与信息在上面一行，一窄就分成两行（用户截图就是那样）。
+              `.dv2e-hd` 用 flex + nowrap + 允许横向溢出，保证"一排"；窄到实在放不下时才换行。 */}
           <div className="dv2e-hd">
-            <div className="dv2e-hd-l">
-              <div className="dv2e-hd-t">
-                <h3>选集</h3>
-                {/* [lc-1419] 集数/完结/上次更新（用户要求）——三项都是"一眼确认状态"用的 */}
-                {isSeries && (
-                  <span className="dv2e-meta">
-                    <span className="dv2e-meta-n">
-                      {episodes.length}
-                      {totalEps > 0 && totalEps !== episodes.length ? ` / ${totalEps}` : ""} 集
-                    </span>
-                    <span className={`dv2e-state${finished ? " done" : " airing"}`}>
-                      {finished ? "已完结" : "连载中"}
-                    </span>
-                    {lastAir && <span className="dv2e-meta-d">更新至 {String(lastAir).slice(0, 10)}</span>}
-                  </span>
-                )}
-              </div>
-              {seasons.length > 1 && (
-                <div className="season-tabs">
-                  {seasons.map((sn, i) => (
-                    <button
-                      key={sn.guid}
-                      className={`season-tab ${i === seasonIdx ? "active" : ""}`}
-                      onClick={() => setSeasonIdx(i)}
-                    >
-                      {sn.title || `第 ${sn.season_number ?? i + 1} 季`}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            {/* [lc-1419] 播放入口从海报挪到这里（用户要求）。语义：
-                  有播放记录 → 「继续观看 第 N 集 · 42%」（点它直接跳到那一集的进度）；
-                  没有记录 → 「播放 第 1 集」。 */}
+            {/* 播放入口（原来在右侧，现移到最左）。语义：
+                有播放记录 → 「继续观看 第 N 集 · N%」；没有 → 「播放 第 1 集」。 */}
             {isSeries && resumeTarget && (
               <button
                 className="dv2e-play-btn"
@@ -4004,6 +3973,33 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                 </span>
                 {resumePct > 0 && <i className="dv2e-play-pct">{resumePct}%</i>}
               </button>
+            )}
+            <h3 className="dv2e-hd-h">选集</h3>
+            {/* [lc-1419] 集数/完结/上次更新（"一眼确认状态"） */}
+            {isSeries && (
+              <span className="dv2e-meta">
+                <span className="dv2e-meta-n">
+                  {episodes.length}
+                  {totalEps > 0 && totalEps !== episodes.length ? ` / ${totalEps}` : ""} 集
+                </span>
+                <span className={`dv2e-state${finished ? " done" : " airing"}`}>
+                  {finished ? "已完结" : "连载中"}
+                </span>
+                {lastAir && <span className="dv2e-meta-d">更新至 {String(lastAir).slice(0, 10)}</span>}
+              </span>
+            )}
+            {seasons.length > 1 && (
+              <div className="season-tabs">
+                {seasons.map((sn, i) => (
+                  <button
+                    key={sn.guid}
+                    className={`season-tab ${i === seasonIdx ? "active" : ""}`}
+                    onClick={() => setSeasonIdx(i)}
+                  >
+                    {sn.title || `第 ${sn.season_number ?? i + 1} 季`}
+                  </button>
+                ))}
+              </div>
             )}
           </div>
           <div className="dv2e-list">

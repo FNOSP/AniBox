@@ -113,11 +113,18 @@ fn plain(status: u16, msg: &str) -> Response<Vec<u8>> {
 }
 
 /// 命中缓存的响应：200 + 内容类型 + 长缓存 + 可观测的 `x-fntv-cache: HIT`
+/// [lc-123-rev5] 图片响应一律带 `Access-Control-Allow-Origin: *`：首页 hero 的**亮度采样**要把图
+/// 放进 canvas 取像素（App.tsx sampleChromeTone），而图走 fntvimg 自定义协议
+/// （mac `fntvimg://localhost` / win `http://fntvimg.localhost`）—— 页面源是 tauri:// 或
+/// http://tauri.localhost ⇒ **跨源**：不回 ACAO 时画布被污染、getImageData 抛 SecurityError，
+/// 采样永远落兜底。图都是公开图片，`*` 无暴露面（不带凭证）。
+/// ⚠ 图片**没有 ETag、也不带 If-None-Match**（镜像侧 /img/* 永远没有 ETag，别把"没有"当异常）。
 fn cached_response(ct: &str, bytes: Vec<u8>) -> Response<Vec<u8>> {
     Response::builder()
         .status(200)
         .header("Content-Type", ct)
         .header("Cache-Control", "max-age=86400")
+        .header("Access-Control-Allow-Origin", "*")
         .header("x-fntv-cache", "HIT")
         .body(bytes)
         .unwrap_or_else(|_| Response::builder().status(500).body(Vec::new()).unwrap())
@@ -156,6 +163,7 @@ async fn proxy_public(key: &str, url: &str) -> Response<Vec<u8>> {
         .status(200)
         .header("Content-Type", ct)
         .header("Cache-Control", "max-age=86400")
+        .header("Access-Control-Allow-Origin", "*")
         .header("x-fntv-cache", "MISS")
         .body(bytes)
         .unwrap_or_else(|_| Response::builder().status(500).body(Vec::new()).unwrap())
@@ -264,6 +272,7 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
                 .status(status)
                 .header("Content-Type", ct)
                 .header("Cache-Control", "max-age=86400")
+                .header("Access-Control-Allow-Origin", "*")
                 .header("x-fntv-cache", "MISS")
                 .body(bytes)
                 .unwrap_or_else(|_| Response::builder().status(500).body(Vec::new()).unwrap())

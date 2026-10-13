@@ -58,11 +58,12 @@ const TTL_MATCH: u64 = 30 * 24 * 3600;
 const TTL_SUBJECT: u64 = 6 * 3600;
 const TTL_EPISODES: u64 = 24 * 3600;
 const TTL_PERSONS: u64 = 7 * 24 * 3600;
-/// 每日新番表（/calendar）：**整表 1 小时**。
-/// 规格是「整体 TTL 到次日（或 6 小时），当天那组每小时刷一次」——取其中的**最严**值（1 小时）
-/// 同时满足两条：今天那组最多陈 1 小时；1h 远小于"到次日"，永远不会把昨天的表当今天用
-/// （何况"今天是周几"由前端按本机时钟现算，与缓存龄无关）。表本身是静态周表，1 小时足够稳。
-const TTL_CALENDAR: u64 = 3600;
+/// 每日新番表（/calendar）：[lc-123-rev5] **TTL 3 小时**（原 1 小时）。
+/// 依据（用户：「刷给我感觉不需要这么频繁，能不能搞个检测新增才刷新的逻辑」）：新番表是一张静态周表，
+/// 一天最多变一两次；到期也**不无脑重拉** —— 带 ETag 条件请求，上游 304 就只顺延时间戳。
+/// 另外**跨天必须重取**：缓存键按前端本机日期分桶，且读回来的 payload 还要比一次 `day`
+/// （跨过本地零点 ⇒ 键变了 ⇒ 必然重取；万一键撞上也不会把昨天的表当今天用）。
+const TTL_CALENDAR: u64 = 3 * 3600;
 
 // ───────────────────────── 基础：密钥 / 端点 / 签名 / HTTP ─────────────────────────
 // 签名本体（hex 内层 / base64 外层）与端点解析在 crate::mirror_sign —— 全 crate 唯一实现，
@@ -121,7 +122,32 @@ fn auth_error_hint(body_text: &str) -> String {
 /// 镜像请求：多端点自动回退 + 签名 + 12s 超时。返回解析后的 JSON。
 /// **可降级**（缺密钥 / 连接错误 / 超时 / 5xx / 429）→ 直连官方域（免凭证）；
 /// **不降级**：401（bad_signature 等签名错误）与其余 4xx —— 确定性拒绝，原样报错。
-async fn mirror_call(method: &str, path_with_query: &str, body: Option<&str>) -> Result<Value, String> {
+async fn mirror_call(
+    method: &str,
+    path_with_query: &str,
+    body: Option<&str>,
+) -> Result<Value, String> {
+    match mirror_call_full(method, path_with_query, body, None).await? {
+        crate::tmdb::MirrorGet::Fresh(v, _) => Ok(v),
+        crate::tmdb::MirrorGet::NotModified => {
+            Err("未带 If-None-Match 却收到 304（镜像行为异常）".to_string())
+        }
+    }
+}
+
+/// [lc-123-rev5] 条件 GET（日历用）：带 `If-None-Match` 时镜像可能回 **304**（无 body）。
+/// 结果与 TMDB 侧共用 `crate::tmdb::MirrorGet`（Fresh(内容, ETag) / NotModified）——
+/// ETag 存进 disk_cache 的 meta，下次探测复用；304 就**什么都不改**，只顺延本地时间戳。
+async fn get_json_cond(path_with_query: &str, if_none_match: Option<&str>) -> Result<crate::tmdb::MirrorGet, String> {
+    mirror_call_full("GET", path_with_query, None, if_none_match).await
+}
+
+async fn mirror_call_full(
+    method: &str,
+    path_with_query: &str,
+    body: Option<&str>,
+    if_none_match: Option<&str>,
+) -> Result<crate::tmdb::MirrorGet, String> {
     let body_text = body.unwrap_or("");
     // 缺密钥 = 配置错误 → 按「镜像不可用」降级（Bangumi 直连免凭证）。没有密钥就签不了名，
     // 端点一个都不用试。密钥**存在但错误**会拿到 401 bad_signature → 原样报错，不走这里。
@@ -129,7 +155,9 @@ async fn mirror_call(method: &str, path_with_query: &str, body: Option<&str>) ->
         crate::libmpv::trace(
             "[bgm] WARN 未配置 FNTV_BGM_SECRET（镜像密钥缺失）→ 按镜像不可用处理，直连官方域（免凭证）",
         );
-        return direct_call(method, path_with_query, body_text).await;
+        return direct_call(method, path_with_query, body_text)
+            .await
+            .map(|v| crate::tmdb::MirrorGet::Fresh(v, None));
     };
     let mut last_err = String::new();
     for ep in endpoints() {
@@ -144,6 +172,10 @@ async fn mirror_call(method: &str, path_with_query: &str, body: Option<&str>) ->
             .header("accept", "application/json");
         if !body_text.is_empty() {
             rb = rb.header("content-type", "application/json").body(body_text.to_string());
+        }
+        // [lc-123-rev5] 条件请求：带上次存下的 ETag，没变就拿 304（几字节，省流量也省上游配额）
+        if let Some(et) = if_none_match.filter(|e| !e.is_empty()) {
+            rb = rb.header("if-none-match", et);
         }
         let resp = match rb.send().await {
             Ok(r) => r,
@@ -160,15 +192,30 @@ async fn mirror_call(method: &str, path_with_query: &str, body: Option<&str>) ->
             .and_then(|v| v.to_str().ok())
             .unwrap_or("-")
             .to_string();
+        if status == 304 {
+            // 条件请求命中：上游说"没变"——连 body 都没有，NotModified 直接上抛给缓存层
+            crate::libmpv::trace(&format!(
+                "[bgm] {method} {path_with_query} → {ep} 304 Not Modified cache={cache_hdr}"
+            ));
+            return Ok(crate::tmdb::MirrorGet::NotModified);
+        }
         if (200..300).contains(&status) {
+            // ETag 必须在 body 被取走前读（json() 会消费 resp）
+            let etag = resp
+                .headers()
+                .get("etag")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string)
+                .filter(|s| !s.is_empty());
             let v: Value = resp
                 .json()
                 .await
                 .map_err(|e| format!("{ep} 响应不是合法 JSON: {e}"))?;
             crate::libmpv::trace(&format!(
-                "[bgm] {method} {path_with_query} → {ep} {status} cache={cache_hdr}"
+                "[bgm] {method} {path_with_query} → {ep} {status} cache={cache_hdr} etag={}",
+                etag.as_deref().unwrap_or("-")
             ));
-            return Ok(v);
+            return Ok(crate::tmdb::MirrorGet::Fresh(v, etag));
         }
         let text = resp.text().await.unwrap_or_default();
         crate::libmpv::trace(&format!(
@@ -195,6 +242,7 @@ async fn mirror_call(method: &str, path_with_query: &str, body: Option<&str>) ->
     crate::libmpv::trace(&format!("[bgm] 镜像不可用，降级直连（免凭证）：{last_err}"));
     direct_call(method, path_with_query, body_text)
         .await
+        .map(|v| crate::tmdb::MirrorGet::Fresh(v, None)) // 降级直连不带条件头
         .map_err(|e| format!("所有镜像端点均失败（最后：{last_err}）；降级直连也失败：{e}"))
 }
 
@@ -663,35 +711,65 @@ pub async fn bgm_comments(id: i64, offset: Option<i64>, limit: Option<i64>) -> R
 ///     那两列无数据可依（要显示只能对每条再打一次 /v0/subjects/{id}，105 条全打不值得）。
 ///   · `summary` **105/105 全空** ⇒ 简介只能靠 bgm_subject（详情弹层就是这么做的）。
 ///   · `name_cn` 19/105 为空、`rating.score` 17 条为 null ⇒ 标题回落 `name`、评分容忍 null。
-/// 落盘缓存：整表 TTL_CALENDAR（1 小时）→ 今天那组每小时刷一次；`force` 绕过缓存（失败重试用）。
+/// [lc-123-rev5] 落盘缓存改用 **disk_cache 的 json 层**（与 TMDB 同一套：TTL + ETag + LRU）：
+///   · TTL_CALENDAR（3 小时）；**跨天必重取**（缓存键按 `arg.day` 分桶 + 读回来还要比 `payload.day`）；
+///   · 到期不无脑重拉：带 `If-None-Match` 条件请求，304 → 只顺延时间戳（前端零变化）；
+///   · `force`（手动 ⟳）跳过本地 TTL 检查但**仍带条件头**；`no_etag`（失败重试）才强制全量。
+///   · 返回带 `changed`：false = 命中缓存或 304（**前端不许碰 UI**）。
+/// arg.day = 前端本机日期（YYYY-MM-DD）：本地零点一过，键就变了 ⇒ 必然重取（不会把昨天的表当今天用）。
 #[tauri::command]
-pub async fn bgm_calendar(force: Option<bool>) -> Result<Value, String> {
-    const KEY: &str = "all";
-    if force != Some(true) {
-        if let Some(v) = cache_get("calendar", KEY, TTL_CALENDAR).await {
-            return Ok(v);
-        }
+pub async fn bgm_calendar(
+    force: Option<bool>,
+    no_etag: Option<bool>,
+    day: Option<String>,
+) -> Result<Value, String> {
+    let force = force == Some(true);
+    let no_etag = no_etag == Some(true);
+    let day = day.unwrap_or_default();
+    let key = format!("json:bgm:calendar:v1|{day}");
+    let day_check = day.clone();
+    let (payload, changed) = crate::disk_cache::json_cached_conditional(
+        &key,
+        TTL_CALENDAR,
+        force,
+        no_etag,
+        // 跨天保险：payload 记着自己属于哪一天；对不上就当本地没有（键撞车也不会用错天的表）
+        move |v| v.get("day").and_then(|d| d.as_str()) == Some(day_check.as_str()),
+        |etag| async move {
+            match get_json_cond("/calendar", etag.as_deref()).await? {
+                crate::tmdb::MirrorGet::NotModified => Ok(crate::disk_cache::Cond::NotModified),
+                crate::tmdb::MirrorGet::Fresh(raw, et) => {
+                    let days = normalize_calendar(&raw);
+                    if days.iter().all(|d| d.get("count").and_then(|c| c.as_u64()).unwrap_or(0) == 0) {
+                        // 空表当作失败：上游改结构时宁可报错（上一份可用缓存留着），
+                        // 也不给前端一个"7 天全空"的假象
+                        return Err(format!(
+                            "Bangumi 每日新番表为空或结构不符（顶层应为 7 组数组）：{}",
+                            truncate(&raw.to_string(), 160)
+                        ));
+                    }
+                    let total: u64 = days
+                        .iter()
+                        .map(|g| g.get("count").and_then(|c| c.as_u64()).unwrap_or(0))
+                        .sum();
+                    crate::libmpv::trace(&format!(
+                        "[bgm] calendar → {} 组 / {total} 部（day={day}）",
+                        days.len()
+                    ));
+                    Ok(crate::disk_cache::Cond::Fresh(
+                        json!({ "day": day, "cachedAt": now_secs(), "days": days }),
+                        et,
+                    ))
+                }
+            }
+        },
+    )
+    .await?;
+
+    let mut out = payload;
+    if let Value::Object(ref mut m) = out {
+        m.insert("changed".to_string(), json!(changed));
     }
-    let raw = get_json("/calendar").await?;
-    let days = normalize_calendar(&raw);
-    if days.iter().all(|d| d.get("count").and_then(|c| c.as_u64()).unwrap_or(0) == 0) {
-        // 空表当作失败：上游改结构时宁可报错 + 保留上一份可用缓存，也不给前端一个"7 天全空"的假象
-        return Err(format!(
-            "Bangumi 每日新番表为空或结构不符（顶层应为 7 组数组）：{}",
-            truncate(&raw.to_string(), 160)
-        ));
-    }
-    let out = json!({ "cachedAt": now_secs(), "days": days });
-    cache_put("calendar", KEY, &out).await;
-    crate::libmpv::trace(&format!(
-        "[bgm] calendar → {} 组 / {} 部",
-        out.pointer("/days").and_then(|d| d.as_array()).map(|a| a.len()).unwrap_or(0),
-        out.pointer("/days").and_then(|d| d.as_array()).map(|a| a
-            .iter()
-            .map(|g| g.get("count").and_then(|c| c.as_u64()).unwrap_or(0))
-            .sum::<u64>())
-            .unwrap_or(0)
-    ));
     Ok(out)
 }
 
@@ -913,7 +991,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "live network + FNTV_BGM_SECRET required"]
     async fn live_calendar_seven_groups() {
-        let v = super::bgm_calendar(Some(true)).await.expect("镜像 /calendar 应成功");
+        let v = super::bgm_calendar(Some(true), None, Some("2026-10-13".to_string()))
+            .await
+            .expect("镜像 /calendar 应成功");
         let days = v.get("days").and_then(|d| d.as_array()).expect("应含 days 数组");
         assert_eq!(days.len(), 7, "应恰好 7 组（周一..周日）");
         let total: u64 = days

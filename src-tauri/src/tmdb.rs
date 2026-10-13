@@ -71,6 +71,13 @@ const THROTTLE_MAX_BACKOFF_MS: u64 = 8_000;
 /// 演员表落盘缓存 TTL：7 天（演员表几乎不变；飞牛条目每次进详情页都查一次太浪费）
 const CREDITS_TTL_SECS: u64 = 7 * 24 * 3600;
 
+/// [lc-123-rev5] 发现页落盘缓存 TTL（用户反馈"刷得太频繁，想要"检测新增才刷新"）：
+///   · 当季 12 小时 / 即将播出 24 小时 —— 这类榜单一天最多变一两次，镜像侧还有自己的边缘缓存；
+///   · 到期也**不无脑重拉**：带 ETag 条件请求，上游 304 就只顺延时间戳（见 disk_cache::json_cached_conditional）；
+///   · 手动刷新 force 只跳过本地 TTL 检查，条件头照带（"检测新增"才叫刷新）。
+const DISCOVER_TTL_SEASON_SECS: u64 = 12 * 3600;
+const DISCOVER_TTL_UPCOMING_SECS: u64 = 24 * 3600;
+
 
 /// 用户自己的 key（可选）：env FNTV_TMDB_KEY → 主仓库 fn_config/config.json 的 tmdbApiKey。
 /// 只在降级直连时用；镜像路径不需要 key。
@@ -236,12 +243,24 @@ fn auth_params(key: &str) -> (Vec<(String, String)>, Vec<(String, String)>) {
     }
 }
 
+/// 镜像 GET 的两种结局（[lc-123-rev5] 条件请求）：
+///   NotModified = 带 `If-None-Match` 时镜像回 **304**（没变化，连 body 都没有）；
+///   Fresh = 200 的正文 + 本次响应的 `ETag`（有就存进 disk_cache 的 meta，供下次探测）。
+pub(crate) enum MirrorGet {
+    NotModified,
+    Fresh(Value, Option<String>),
+}
+
 /// 镜像 GET：多端点回退 + 准入签名 + 10s 超时。`path_with_query` 以 `/3` 开头。
 /// **429 分两种**（见 classify_429）：
 ///   · `throttled`（镜像自己的每 IP 上限）→ Throttled（调用方退避重试；不换端点：同一 worker 状态一致）
 ///   · `upstream_rate_limited`（上游 TMDB 429，镜像记 RATE_LIMIT）→ Degradable（原有的降级直连）
 /// 5xx/连接错误 → 试下一个端点，全部失败后 Degradable；4xx（含 401）→ Fatal。
-async fn mirror_get(path_with_query: &str) -> Result<Value, FetchError> {
+/// [lc-123-rev5] `if_none_match` 有值时透传 `If-None-Match`，镜像可能回 304 且**无 body**。
+async fn mirror_get_full(
+    path_with_query: &str,
+    if_none_match: Option<&str>,
+) -> Result<MirrorGet, FetchError> {
     // 缺密钥 = **配置错误 → 可降级**（按「镜像不可用」处理），不再直接失败：没有密钥就签不了名，
     // 连端点都不用试（省掉一次必然 401 的往返）。边界：只有「缺密钥」走这里；密钥**存在但错误**
     // 会拿到 401 bad_signature，那是确定性拒绝，仍按 Fatal 原样报错。
@@ -272,8 +291,12 @@ async fn mirror_get(path_with_query: &str) -> Result<Value, FetchError> {
             Some(q) => format!("{}?{}", url.path(), q),
             None => url.path().to_string(),
         };
-        let rb = mirror_sign::apply_auth(mirror_client().get(url), &secret, "GET", &signed_pwq, "")
+        let mut rb = mirror_sign::apply_auth(mirror_client().get(url), &secret, "GET", &signed_pwq, "")
             .header("accept", "application/json");
+        // [lc-123-rev5] 条件请求：带上次存下的 ETag，没变就拿 304（几字节，省流量也省上游配额）
+        if let Some(et) = if_none_match.filter(|e| !e.is_empty()) {
+            rb = rb.header("if-none-match", et);
+        }
         let resp = match rb.send().await {
             Ok(r) => r,
             Err(e) => {
@@ -289,14 +312,29 @@ async fn mirror_get(path_with_query: &str) -> Result<Value, FetchError> {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("-")
             .to_string();
+        if status == 304 {
+            // 条件请求命中：上游说"没变"——连 body 都没有，直接把 NotModified 交给缓存层
+            crate::libmpv::trace(&format!(
+                "[tmdb] GET {path_with_query} → {ep} 304 Not Modified cache={cache_hdr}"
+            ));
+            return Ok(MirrorGet::NotModified);
+        }
         if (200..300).contains(&status) {
+            // ETag 必须在 body 被取走前读（json() 会消费 resp）
+            let etag = resp
+                .headers()
+                .get("etag")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string)
+                .filter(|s| !s.is_empty());
             let v: Value = resp.json().await.map_err(|e| {
                 FetchError::Degradable(format!("{ep} 响应不是合法 JSON: {e}"))
             })?;
             crate::libmpv::trace(&format!(
-                "[tmdb] GET {path_with_query} → {ep} {status} cache={cache_hdr}"
+                "[tmdb] GET {path_with_query} → {ep} {status} cache={cache_hdr} etag={}",
+                etag.as_deref().unwrap_or("-")
             ));
-            return Ok(v);
+            return Ok(MirrorGet::Fresh(v, etag));
         }
         // Retry-After 必须在把 body 取走之前读（resp.text() 会 move resp）
         let retry_after = retry_after_ms(resp.headers());
@@ -401,10 +439,15 @@ async fn direct_get(path_with_query: &str, key: &str) -> Result<Value, String> {
 ///   · 其余 Degradable（上游 429 RATE_LIMIT / 不可达 / 镜像故障）且有用户 key → 降级直连并打日志；
 ///   · 没有 key → 返回合并错误（提示可配自己的 key 或稍后重试）。
 /// 退避重试耗尽后仍走降级（有 key 直连、无 key 报错）——只是不再"一撞就降"。
-async fn get_json(path_with_query: &str) -> Result<Value, String> {
+/// [lc-123-rev5] `if_none_match` 有值时走**条件请求**（镜像可能回 304，交给调用方决定"不动内容"）。
+/// 降级直连那条路径不带条件头（官方域是否支持 ETag 不确定）→ 结果按 Fresh(_, None) 处理。
+async fn get_json_cond(
+    path_with_query: &str,
+    if_none_match: Option<&str>,
+) -> Result<MirrorGet, String> {
     let mut throttle_cause = String::new();
     for attempt in 1..=THROTTLE_MAX_ATTEMPTS {
-        match mirror_get(path_with_query).await {
+        match mirror_get_full(path_with_query, if_none_match).await {
             Ok(v) => return Ok(v),
             Err(FetchError::Fatal(e)) => return Err(e),
             Err(FetchError::Throttled(msg, wait)) => {
@@ -424,7 +467,12 @@ async fn get_json(path_with_query: &str) -> Result<Value, String> {
                 tokio::time::sleep(Duration::from_millis(backoff)).await;
                 continue;
             }
-            Err(FetchError::Degradable(cause)) => return degrade_or_err(path_with_query, cause).await,
+            // 降级直连不带条件头（官方域支持与否不确定）→ 结果按 Fresh(_, None) 收下
+            Err(FetchError::Degradable(cause)) => {
+                return degrade_or_err(path_with_query, cause)
+                    .await
+                    .map(|v| MirrorGet::Fresh(v, None))
+            }
         }
     }
     // 重试到上限仍被我们自己限流：这时才降级（有 key 直连，无 key 报错并说明退避次数）
@@ -433,6 +481,15 @@ async fn get_json(path_with_query: &str) -> Result<Value, String> {
         format!("{throttle_cause}（已退避重试 {THROTTLE_MAX_ATTEMPTS} 次）"),
     )
     .await
+    .map(|v| MirrorGet::Fresh(v, None))
+}
+
+/// 无条件 GET（原有调用点用这个）：把 get_json_cond 的 Fresh 拆出来。
+async fn get_json(path_with_query: &str) -> Result<Value, String> {
+    match get_json_cond(path_with_query, None).await? {
+        MirrorGet::Fresh(v, _) => Ok(v),
+        MirrorGet::NotModified => Err("未带条件头却收到 304（不应发生）".to_string()),
+    }
 }
 
 /// Degradable → 有用户 key 就直连重试；没有 key 就返回「已尝试降级」的合并错误。
@@ -1270,6 +1327,11 @@ pub async fn tmdb_credits(arg: Value) -> Result<Value, String> {
 ///         未开播条目 vote_count=0，同一过滤器会把整个列表滤空（实测 total_results=0）。
 /// language **由客户端显式带上**（`discover_path` 里统一拼 `language=zh-CN`）——镜像已不再注入，
 /// 依赖镜像默认值会在换端点/换 worker 版本时静默退回英文标题。
+/// 每条 item 返回 `poster` 与 **`backdropPath`**（16:9 横图，前端主推卡/横向卡优先用它）。
+/// [lc-123-rev5] 落盘缓存 + 条件请求（TTL 见 DISCOVER_TTL_*）：
+///   arg.force  : true = **跳过本地 TTL 检查**去探测（手动刷新用；**仍然带 If-None-Match**）
+///   arg.noEtag : true = 连条件头都不带（**失败重试**用：强制全量重拉）
+///   返回里带 `changed`：false = 缓存命中或 304（**内容与上次一致，前端不许碰 UI**）。
 #[tauri::command]
 pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
     let is_movie = arg.get("mediaType").and_then(|v| v.as_str()) == Some("movie");
@@ -1280,6 +1342,8 @@ pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
     };
     let next = arg.get("season").and_then(|v| v.as_str()) == Some("next");
     let page = arg.get("page").and_then(|v| v.as_i64()).unwrap_or(1).clamp(1, 25); // [lc-123-rev] 3→25：见上方 arg.page 注释
+    let force = arg.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+    let no_etag = arg.get("noEtag").and_then(|v| v.as_bool()).unwrap_or(false);
     let media_type = if is_movie { "movie" } else { "tv" };
     // tv 的日期字段是 first_air_date，电影是 primary_release_date —— 同一条路径按类型换名
     let (gte_key, lte_key) = if is_movie {
@@ -1307,8 +1371,71 @@ pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
         page,
     );
 
-    let d = get_json(&path).await?;
+    // [lc-123-rev5] 「先读缓存 → 判断 TTL → 过期才打网络」的唯一入口：
+    //   · 缓存新鲜且非 force → 命中即返回（**零网络**）； · 过期/force → 带 ETag 条件请求（304 就不动内容）。
+    let season_key = if mode == "upcoming" {
+        "upcoming"
+    } else if next {
+        "next"
+    } else {
+        "current"
+    };
+    // 缓存键：**稳定量**（媒体类型 + 模式 + 季度 + 页码 + 日期窗口）——
+    // 绝不用飞牛 guid 这类"重新刮削就变"的东西（那会让缓存永远命中不了）。
+    let cache_key =
+        format!("json:tmdb:discover:v1|{media_type}|{mode}|{season_key}|{page}|{gte}|{lte}");
+    let ttl = if mode == "upcoming" {
+        DISCOVER_TTL_UPCOMING_SECS
+    } else {
+        DISCOVER_TTL_SEASON_SECS
+    };
+    let (payload, changed) = disk_cache::json_cached_conditional(
+        &cache_key,
+        ttl,
+        force,
+        no_etag,
+        |_| true,
+        |etag| {
+            let path = path.clone();
+            let today = today.clone();
+            let gte = gte.clone();
+            let lte = lte.clone();
+            let mode = mode;
+            let media_type = media_type;
+            async move {
+                match get_json_cond(&path, etag.as_deref()).await? {
+                    MirrorGet::NotModified => Ok(disk_cache::Cond::NotModified),
+                    MirrorGet::Fresh(raw, et) => Ok(disk_cache::Cond::Fresh(
+                        discover_payload(&raw, is_movie, &today, mode, media_type, next, &gte, &lte, page),
+                        et,
+                    )),
+                }
+            }
+        },
+    )
+    .await?;
 
+    let mut out = payload;
+    if let Value::Object(ref mut m) = out {
+        // changed=false（缓存命中 / 304）时前端**不得**碰 UI：不加这个标志，前端只能"每次都重画"
+        m.insert("changed".to_string(), json!(changed));
+    }
+    Ok(out)
+}
+
+/// discover 原始响应 → 前端 payload（items[] + 窗口/分页元信息）。
+/// **纯函数**：同一份原始响应永远得到同一份 payload —— 条件请求的 fetch 闭包与单测都复用这一份。
+fn discover_payload(
+    d: &Value,
+    is_movie: bool,
+    today: &str,
+    mode: &str,
+    media_type: &str,
+    next: bool,
+    gte: &str,
+    lte: &str,
+    page: i64,
+) -> Value {
     let s = |v: &Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
     let items: Vec<Value> = d
         .get("results")
@@ -1330,7 +1457,7 @@ pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
                     // 首播日期还没到 = 未开播；否则 = 已开播。**不编「连载中/已完结」**（discover 无从得知）。
                     let state = if date.is_empty() {
                         "unknown"
-                    } else if date.as_str() > today.as_str() {
+                    } else if date.as_str() > today {
                         "upcoming"
                     } else {
                         "airing"
@@ -1346,6 +1473,11 @@ pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
                         "votes": r.get("vote_count").and_then(|v| v.as_i64()).unwrap_or(0),
                         "popularity": r.get("popularity").and_then(|v| v.as_f64()).unwrap_or(0.0),
                         "poster": s(r, "poster_path"),
+                        // [lc-123-rev3] **横版大图**：TMDB 的标准结果对象本来就带 backdrop_path，
+                        // 之前这一格漏映射 ⇒ 前端只能拿 2:3 海报硬裁进 16:9（用户截图里的"主体被切"）。
+                        // 实测（带签名直打镜像，2026-10-13）：当季剧集 18/18、当季电影 20/20、
+                        // 即将播出 18/20 —— 合计 56/58 = 96.6% 非空；缺失的 2 条连 poster 也没有。
+                        "backdropPath": s(r, "backdrop_path"),
                         "overview": s(r, "overview"),
                     }))
                 })
@@ -1355,11 +1487,11 @@ pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
 
     crate::libmpv::trace(&format!(
         "[tmdb] discover mode={mode} media={media_type} season={} {gte}..{lte} page={page} → {} 条",
-        if next { "next" } else { "current" },
+        if mode == "upcoming" { "upcoming" } else if next { "next" } else { "current" },
         items.len()
     ));
 
-    Ok(json!({
+    json!({
         "mode": mode,
         "mediaType": media_type,
         "season": if mode == "upcoming" { "upcoming" } else if next { "next" } else { "current" },
@@ -1369,7 +1501,7 @@ pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
         "total": d.get("total_results").and_then(|v| v.as_i64()).unwrap_or(0),
         "totalPages": d.get("total_pages").and_then(|v| v.as_i64()).unwrap_or(0),
         "items": items,
-    }))
+    })
 }
 
 /// "YYYY-MM-DD" → (年, 月, 日)。日期算术的输入输出都用字符串（today_ymd 产出的形态），

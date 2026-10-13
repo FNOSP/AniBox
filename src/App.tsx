@@ -1336,10 +1336,22 @@ function BgmCastRow({
   fallback: string;
 }) {
   const src = img || bgmImg(avatar);
+  // [lc-1403] 图片加载失败 → 退回占位图标（否则 .bgmc-avatar 的圆形底色会留一个灰圆，
+  // 在演员表里看着像"背景上有个大圆圈"）。onError 只触发一次，不重试、不打日志（避免刷屏）。
+  const [failed, setFailed] = useState(false);
+  const showImg = !!src && !failed;
   return (
     <li className="bgmc-item">
-      {src ? (
-        <img className="bgmc-avatar" src={src} alt="" loading="lazy" width={40} height={40} />
+      {showImg ? (
+        <img
+          className="bgmc-avatar"
+          src={src}
+          alt=""
+          loading="lazy"
+          width={40}
+          height={40}
+          onError={() => setFailed(true)}
+        />
       ) : (
         <span className="bgmc-avatar bgmc-avatar-empty" aria-hidden="true">
           <IcoUserL size={15} strokeWidth={1.8} />
@@ -3068,6 +3080,15 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
         <button className="back" onClick={onBack} title="返回上一页">
           ‹ 返回
         </button>
+        {/* [lc-1403] 标题挪到返回键后面（用户要求）；原名（日文/英文）放标题后的括号里。
+            原名优先 TMDB 的 original_name/original_title，其次 Bangumi 的 name —— 与当前显示名
+            完全相同（或为空）时不显示括号，避免出现「进击的巨人（进击的巨人）」。 */}
+        <h1 className="dv2-rail-title">
+          {title || "（无标题）"}
+          {originalTitle && originalTitle !== title && (
+            <span className="dv2-rail-orig">（{originalTitle}）</span>
+          )}
+        </h1>
       </div>
 
       {err && <div className="err">{err}</div>}
@@ -3086,8 +3107,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
               )}
             </div>
             <div className="dv2-topinfo">
-              <h2 className="dv2-title">{title}</h2>
-              {originalTitle && originalTitle !== title && <div className="dv2-orig">{originalTitle}</div>}
+              {/* [lc-1403] 标题已挪到顶部返回键后面 —— 这里不再重复渲染标题/原名 */}
               <div className="dv2-mrow">
                 {year && <span className="dv2-chip">{year}</span>}
                 {isSeries && numSeasons ? <span className="dv2-chip">{numSeasons} 季</span> : null}
@@ -3488,21 +3508,30 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                     }}
                     title={`播放 第 ${num} 集`}
                   >
-                    <div className="dv2e-no">{playing ? "◉" : num}</div>
-                    <div className="dv2e-main">
-                      <div className="dv2e-t">
-                        <span className="dv2e-name">{sub || ep.title || `第 ${num} 集`}</span>
-                        {ep.quality && <span className="ep-quality">{ep.quality}</span>}
-                        {seen && <span className="dv2e-seen">已看</span>}
-                        {!seen && progress > 0 && <span className="dv2e-seen now">{Math.round(progress)}%</span>}
-                        {fmtDur(ep.duration) && <span className="dv2e-dur">{fmtDur(ep.duration)}</span>}
-                      </div>
-                      {desc && <p className="dv2e-desc">{desc}</p>}
+                    <div className="dv2e-thumb">
+                      {ep.poster ? (
+                        <img src={imgUrl(ep.poster)} loading="lazy" alt="" draggable={false} />
+                      ) : (
+                        <div className="poster-empty">
+                          <IcoClapL size={18} strokeWidth={1.8} />
+                        </div>
+                      )}
+                      <span className="dv2e-play">{playing ? "◉" : "▶"}</span>
+                      {seen && <span className="ep-mark seen"><IcoCheckL size={11} strokeWidth={2.2} /> 已看</span>}
+                      {!seen && progress > 0 && <span className="ep-mark now">看到 {Math.round(progress)}%</span>}
                       {progress > 0 && (
-                        <div className="progress dv2e-prog">
+                        <div className="progress">
                           <div style={{ width: `${progress}%` }} />
                         </div>
                       )}
+                    </div>
+                    <div className="dv2e-main">
+                      <div className="dv2e-t">
+                        <span className="dv2e-name">第 {num} 集{ep.title ? `. ${ep.title}` : sub ? `. ${sub}` : ""}</span>
+                        {ep.quality && <span className="ep-quality">{ep.quality}</span>}
+                      </div>
+                      {desc && <p className="dv2e-desc">{desc}</p>}
+                      {fmtDur(ep.duration) && <div className="dv2e-dur">{fmtDur(ep.duration)}</div>}
                     </div>
                   </div>
                 );

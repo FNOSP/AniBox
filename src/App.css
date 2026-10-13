@@ -2025,91 +2025,6 @@ button:active {
      · lib/bean/card/bangumi_info_card.dart BangumiInfoCardV
      · lib/pages/info/info_tabview.dart     infoBody + TabBar(isScrollable, tabAlignment:center, dividerHeight:0)
 
-   (1) 模糊海报头（Flutter → CSS 等价物）
-      Dart: 0.5 降采样 → ImageFilter.blur(sigma 15×0.5 = 7.5，光栅空间) → Transform.scale(2) 上采样
-      ⇒ 布局空间等效 sigma = 15px（CSS 直接写 blur(15px)）；白色 modulate alpha .4 ⇒ opacity:.4；
-      ShaderMask 线性 [white → transparent] stops [.8,1] ⇒ mask-image 末 20% 渐隐；
-      之上再叠 48px 底部羽化条（把图压回页面底色；Kazumi 用 scaffoldBackgroundColor，这里用 --bg-1）。
-   (2) 横向 26px 由 .detail-full 的既有 padding 提供：头图 / 分段条用负 margin 通栏、内部再补回 26px，
-      这样完全不必改 .detail-full（它的 padding-top 54px = 顶栏 40px + 14px 必须保持）。
-   (3) 硬约束：头图不得 position:fixed（会压出 DWM 窗口圆角）；.dseg 的 sticky top 必须 40px
-      （= .titlebar 高度；写 0 会滑到顶栏底下）；窗口边缘 6px / 四角 12×12 内不放可点元素；
-      图片不用 opacity+onLoad 门控（lc-114：命中缓存时 onLoad 不触发 ⇒ 图永不显示），只做无条件 animation。
-   ═══════════════════════════════════════════════════════════════ */
-
-/* ── (1) 模糊海报头 ── */
-
-.dhero {
-  position: relative; /* 绝不 fixed：见 (3) */
-  margin: 0 -26px; /* 通栏（抵消 .detail-full 的 26px 横向内边距） */
-  padding: 0 26px 20px; /* 内部内容回到 26px 对齐线 */
-  min-height: var(--dhero-h, 200px);
-  overflow: hidden;
-  flex-shrink: 0;
-}
-.dhero-bg {
-  position: absolute;
-  inset: 0 0 48px 0; /* 底部 48px 让位 = Kazumi 的 kTextTabBarHeight */
-  z-index: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-.dhero-bg img {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: calc(100% + 32px); /* _edgeBleed = 32：向下多出血 32px */
-  object-fit: cover;
-  object-position: center top;
-  filter: blur(15px) saturate(1.06); /* 等效 sigma 15 布局 px（@see (1)） */
-  transform: scale(1.06); /* 抵消 blur 边缘的半透明带 */
-  opacity: 0.4; /* ← 白色 modulate alpha .4 */
-  -webkit-mask-image: linear-gradient(to bottom, #000 0 80%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0 80%, transparent 100%);
-  animation: dheroIn 0.42s ease both;
-}
-@keyframes dheroIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 0.4;
-  }
-}
-.dhero::after {
-  /* 底部 48px 羽化：把图压回页面底色，消除可见接缝 */
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 48px;
-  background: linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0) 0,
-    var(--bg-1) 72%,
-    var(--bg-1) 100%
-  );
-  pointer-events: none;
-}
-.dhero--fallback img {
-  /* 无 backdrop 时用海报兜底重模糊（同 .mist-cover-fallback 思路） */
-  filter: blur(28px) saturate(0.95) brightness(0.9);
-  transform: scale(1.12);
-}
-.dhero-top {
-  position: relative;
-  z-index: 1; /* 必须：.dhero-bg 是定位元素，非定位内容会被它盖住 */
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-.dhero-top .back {
-  border-color: var(--line-strong);
-  backdrop-filter: blur(8px);
-}
 
 /* ── (1)b 信息卡（Kazumi BangumiInfoCardV 的等价物） ── */
 
@@ -2477,7 +2392,6 @@ button:active {
 /* ── (4) 动效降级（沿用既有 .poster-skeleton 的写法） ── */
 
 @media (prefers-reduced-motion: reduce) {
-  .dhero-bg img,
   .dcard,
   .dbody > *,
   .dstars-fg {
@@ -4456,4 +4370,97 @@ html.dark .ditem-tag {
   align-items: center;
   gap: 10px;
   margin-bottom: 4px;
+}
+
+/* [lc-1403] 返回键后面的标题（用户要求把标题挪到顶栏行；原名放括号里）。
+   注意：顶栏（.titlebar，z-index 50）是**绝对定位浮层**，详情页内容从 54px 处开始 —— 这行
+   在内容区顶部，不会被顶栏盖住；但两侧要留出窗口按钮的宽度，避免长标题压到最小化/关闭。 */
+.dv2-rail {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-right: 150px; /* 右侧窗口按钮区（3×46px）不落字 */
+  min-width: 0;
+}
+.dv2-rail-title {
+  margin: 0;
+  min-width: 0;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text-strong);
+  line-height: 1.3;
+  /* 单行省略：标题很长时不换行把版面顶下去 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dv2-rail-orig {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--muted);
+  margin-left: 2px;
+}
+
+/* [lc-1403] 右栏选集：改回「剧照 + 第N集.标题 + 简介 + 时长」（对齐飞牛原版版式，用户截图为准）。
+   剧照 16:9（飞牛侧 poster 就是横向截图），左侧固定宽度，右侧文字可换行。 */
+.dv2e-thumb {
+  position: relative;
+  width: 116px;
+  min-width: 116px;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--ph-bg);
+  flex: 0 0 auto;
+}
+.dv2e-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.dv2e-thumb .poster-empty {
+  font-size: 20px;
+}
+/* 剧照上的播放角标：默认半透明，hover/播放中才明显（与首页海报卡同一套语言） */
+.dv2e-play {
+  position: absolute;
+  left: 7px;
+  bottom: 7px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px);
+  opacity: 0.85;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+.dv2e-row:hover .dv2e-play,
+.dv2e-row.playing .dv2e-play {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.68);
+}
+.dv2e-row.playing .dv2e-play {
+  background: var(--accent-grad);
+}
+/* 选集行改为横向「图 + 文字」布局后，序号徽标不再需要 */
+.dv2e-list .dv2e-no {
+  display: none;
+}
+.dv2e-row {
+  gap: 12px;
+  align-items: flex-start;
+}
+.dv2e-desc {
+  -webkit-line-clamp: 3; /* 有剧照后行更高了，简介收到 3 行，保证一屏可见 4-5 集 */
+}
+.dv2e-dur {
+  margin-top: 5px;
+  display: block;
 }

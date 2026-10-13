@@ -1256,7 +1256,11 @@ function LibView({
  *  item 详情的字段名各版本不一，按优先级多键兜底。 */
 function pickGenres(d: Record<string, unknown> | null): string[] {
   const src = d ?? {};
-  const g = src.genres ?? src.genre ?? src.types ?? src.categories ?? src.tags;
+  // [lc-1405] **不许再兜底到 `src.tags`**：飞牛 item 详情的 `tags` 是**元信息字典**
+  //   （形如 {话数:"13", 放送开始:"…", 类型:[…]} 这类刮削字段），不是类型标签数组。
+  //   之前把它当 genres 取，值里的 "13"（话数）就被渲染成一个标签 —— 用户看到的
+  //   「标签数据错误显示成集数」正是这么来的。类型只认下面这几个真正的类型字段。
+  const g = src.genres ?? src.genre ?? src.types ?? src.categories;
   if (Array.isArray(g)) {
     return g
       .map((x) =>
@@ -3022,10 +3026,16 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   const tabIds: string[] = ["overview", "comments", "related", "more"];
   const activeTab = tabIds.includes(tab) ? tab : "overview";
   const longIntro = overview.length > 96; // ≈4~5 行（Kazumi 是 TextPainter 实测 numLines>7，这里用字数近似）
-  // [lc-1401] Bangumi 标签（左侧信息框）：来自 bgm_subject 的 tags[]（count = 被标次数，上游按热度序）
-  const bgmTags: BgmTag[] = Array.isArray((bgmSub as Record<string, unknown> | null)?.tags)
+  // [lc-1405] 标签框数据源：**Bangumi tags[] 优先，TMDB genres 兜底**（用户要求"直接取 bgm 或 tmdb 的"）。
+  //   ⚠ 不再用飞牛 item 的 tags —— 那是刮削元信息字典（含"话数"这类），不是题材标签，
+  //   之前它经 pickGenres 混进来，就把 "13"（话数）当标签显示了（用户反馈的现象）。
+  const bgmRawTags: BgmTag[] = Array.isArray((bgmSub as Record<string, unknown> | null)?.tags)
     ? ((bgmSub as Record<string, unknown>).tags as BgmTag[])
     : [];
+  // TMDB 的题材（tmdb.genres 已在上面解析成 genres: string[]）；两边都空 → 标签框整块不渲染
+  const bgmTags: BgmTag[] = bgmRawTags.length
+    ? bgmRawTags
+    : genres.map((g) => ({ name: g }));
   // [lc-1401] 关联条目按 relation 分组（上游原序即热度序，分组内不重排）
   const relatedGroups: { relation: string; items: BgmRelated[] }[] = (() => {
     const map = new Map<string, BgmRelated[]>();
@@ -3130,7 +3140,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
             <div className="dv2-tagbox">
               <div className="dv2-tagbox-h">
                 标签
-                <span className="dv2-src">Bangumi</span>
+                <span className="dv2-src">{bgmRawTags.length ? "Bangumi" : "TMDB"}</span>
               </div>
               <div className="dv2-tagbox-b">
                 {bgmTags.slice(0, 12).map((t, i) => (
@@ -3177,18 +3187,8 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
           <div className="dbody dv2-body">
         {activeTab === "overview" && (
           <div className="dpanel">
-            {genres.length > 0 && (
-              <section className="dsec">
-                <h2 className="dsec-t">类型标签</h2>
-                <div className="dtag-wrap">
-                  {genres.map((g) => (
-                    <span key={g} className="dtag">
-                      {g}
-                    </span>
-                  ))}
-                </div>
-              </section>
-            )}
+            {/* [lc-1405] 原本这里还有一节「类型标签」渲染 genres —— 与左列顶部那个标签框**同一份数据**，
+                重复；且用户已要求标签框直接取 BGM/TMDB，这一节就失去存在意义。故删除。 */}
             {/* [lc-1404] 剧照 / 分级 / 在线观看 / 相似 / 预告 / 别名关键词：**全部由 TmdbExtra 一处渲染**。
                 此前这里是"自己一条 .dstill-strip + TmdbExtra 里再来一条 .tmdb-stills"，
                 结果是同一批 TMDB 剧照出现**两组**（用户反馈）。现在只留 TmdbExtra 那一份。 */}

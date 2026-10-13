@@ -2242,11 +2242,6 @@ button:active {
 .dmore {
   gap: 14px; /* 原样复用 TmdbExtra 的 .tmdb-sec 结构，只补节间距 */
 }
-/* 剧照已在「概览」展示 → 隐藏「更多」里 TmdbExtra 的剧照节，避免同一批图渲染两遍。
-   :has() 在 WebView2(Chromium ≥105) 可用；不可用时整条规则被丢弃 ⇒ 退化为重复显示，无副作用。 */
-.dmore .tmdb-sec:has(.tmdb-stills) {
-  display: none;
-}
 /* 「更多」里的 .dsec 与 .dmore 的 gap 双份间距 → 由 gap 统一控制 */
 .dmore .dsec {
   margin-bottom: 0;
@@ -2319,23 +2314,6 @@ button:active {
   border-color: rgba(108, 155, 255, 0.45);
   color: var(--text-strong);
 }
-.dstill-strip {
-  display: flex;
-  gap: 12px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-}
-.dstill-strip img {
-  height: 128px;
-  aspect-ratio: 16 / 9;
-  border-radius: 8px;
-  object-fit: cover;
-  flex-shrink: 0;
-  transition: transform 0.25s ease;
-}
-.dstill-strip img:hover {
-  transform: scale(1.03);
-}
 
 /* ── (3)b 选集：复用既有 .ep-* 形态，只覆写面板内尺寸节奏 + 已看/在看徽标 ── */
 
@@ -2402,9 +2380,6 @@ button:active {
   }
   .dseg-btn::after {
     transition: none;
-  }
-  .dstill-strip img:hover {
-    transform: none;
   }
 }
 
@@ -3860,8 +3835,7 @@ html.dark .ditem-tag {
 }
 
 /* ── 剧照原图查看：点任意剧照 → original 尺寸（同一套落盘缓存） ── */
-.tmdb-stills img,
-.dstill-strip img {
+.tmdb-stills img {
   cursor: zoom-in;
 }
 .zoom-mask {

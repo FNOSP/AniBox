@@ -2992,13 +2992,8 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
       ? ratingFromItem
       : Number(tmdb?.rating ?? 0) || 0;
   const votes = Number(tmdb?.votes ?? 0) || 0;
-  // 剧照：Rust 端 backdrops 是路径字符串数组，同时兼容 {file_path} 对象形态
-  const stills: string[] = (Array.isArray(tmdb?.backdrops) ? (tmdb?.backdrops as unknown[]) : [])
-    .map((st) =>
-      typeof st === "string" ? st : String((st as Record<string, unknown> | null)?.file_path ?? ""),
-    )
-    .filter(Boolean)
-    .slice(0, 6);
+  // [lc-1404] 剧照列表不再在这里派生：它只被 TmdbExtra 内部用（那边自己从 tmdb.backdrops 取），
+  //   留着一份"渲染过一次的剧照数组"正是上版**两组剧照**的来源。
   // [lc-128] 演员/制作人员三级来源（**TMDB 主源**）：
   //   (1) tmdb_credits（专用命令，锚点优先 + 落盘缓存 7 天）
   //   (2) tmdb_show_details 里同源的 cast/crew（(1) 失败时兜底，已在内存里，零额外请求）
@@ -3194,30 +3189,11 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                 </div>
               </section>
             )}
-            {stills.length > 0 && (
-              <section className="dsec">
-                <h2 className="dsec-t">
-                  剧照
-                  <span className="dsec-src">TMDB</span>
-                </h2>
-                <div className="dstill-strip">
-                  {stills.map((p) => (
-                    <img
-                      key={p}
-                      src={tmdbImg(p, "w500")}
-                      loading="lazy"
-                      alt=""
-                      title="点击查看原图"
-                      onClick={() => setZoom(p)}
-                    />
-                  ))}
-                </div>
-              </section>
-            )}
-            {/* TMDB 扩展信息：分级 / 在线观看 / 相似 / 预告 / 别名关键词
-                （原来在「更多」里；[lc-1401] 版式把「演职人员」独立成一页，这里接住其余 TMDB 内容） */}
+            {/* [lc-1404] 剧照 / 分级 / 在线观看 / 相似 / 预告 / 别名关键词：**全部由 TmdbExtra 一处渲染**。
+                此前这里是"自己一条 .dstill-strip + TmdbExtra 里再来一条 .tmdb-stills"，
+                结果是同一批 TMDB 剧照出现**两组**（用户反馈）。现在只留 TmdbExtra 那一份。 */}
             {tmdb && <TmdbExtra tmdb={tmdb} onZoom={setZoom} />}
-            {!overview && genres.length === 0 && stills.length === 0 && !tmdb && (
+            {!overview && genres.length === 0 && !tmdb && (
               <div className="empty">暂无详情信息</div>
             )}
           </div>
@@ -3269,8 +3245,9 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
           </div>
         )}
 
-        {/* 更多：**演职人员以 TMDB 为主源**（tmdb_credits 落盘缓存）→ Bangumi 角色/制作人员 →
-            飞牛演员字段兜底；再原样复用 TmdbExtra（剧照节由 CSS 在 .dmore 内隐藏，避免与「概览」重复） */}
+        {/* 演职人员：**TMDB 主源**（tmdb_credits 落盘缓存）→ Bangumi 角色/制作人员 → 飞牛演员字段兜底。
+            [lc-1404] 本页**不含** TmdbExtra（分级/在线观看/相似/别名那些属于「剧照剧集详情信息」）——
+            用户反馈"演职人员下面又接了一个 tmdb 数据卡"，就是它原来挂在这里造成的重复。 */}
         {activeTab === "more" && (
           <div className="dpanel dmore">
             {/* (1) 演员表（TMDB 主源）：骨架 / 失败重试 / 数据 */}
@@ -3406,7 +3383,6 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                 </ul>
               </section>
             )}
-            {tmdb && <TmdbExtra tmdb={tmdb} onZoom={setZoom} />}
           </div>
         )}
 

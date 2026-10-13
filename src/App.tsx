@@ -3,6 +3,22 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { IcoHome, IcoStar, IcoGrid, IcoMovie, IcoTv, IcoLive, IcoFolder } from "./icons";
+// [lc-123-rev8] 图标统一用 Lucide（ISC 许可，https://lucide.dev）：stroke=currentColor、24 viewBox，
+// 按需导入 tree-shake；仓库内不再保留手拷贝的 SVG path。
+import {
+  Menu as IcoMenuL,
+  X as IcoXL,
+  Film as IcoFilmL,
+  Clapperboard as IcoClapL,
+  Check as IcoCheckL,
+  Settings as IcoGearL,
+  User as IcoUserL,
+  Clock as IcoClockL,
+  MessageSquare as IcoMsgL,
+  House as IcoHouseL,
+  Search as IcoSearchL,
+  Star as IcoStarL,
+} from "lucide-react";
 import "./App.css";
 
 type Config = {
@@ -122,8 +138,7 @@ type BgmPerson = {
 /** [lc-123] TMDB 发现页条目（src-tauri/src/tmdb.rs::tmdb_discover 归一化后的 items[]）。
  *  state 只有三态：airing（首播日已到）/ upcoming（首播日未到）/ unknown（缺日期）——
  *  discover 端点**不返回 status**，所以这里刻意没有「连载中/已完结」。
- *  [lc-123-rev3] backdropPath = 16:9 横图（实测非空 ~96.6%）：主推卡与「本季新剧」横向卡优先用它，
- *  没有时才回落到 2:3 海报（温和裁切，见 .dphero-bg.is-poster / .dlc-img.is-poster）。 */
+ */
 type TmdbDiscoverItem = {
   tmdbId: number;
   title: string;
@@ -300,7 +315,7 @@ function tmdbImg(path: string, size: string): string {
    跨域前置：图片走 fntvimg 自定义协议（src-tauri/src/imgproto.rs）——那里必须回 `Access-Control-Allow-Origin`，
         否则画布被跨域污染、getImageData 抛 SecurityError，永远落兜底（见 imgproto.rs 注释）。
    缓存：按图片 URL 记忆（同一张只采一次；换片才重采）。
-   ⚠ 只对首页 hero 采样：发现/库/详情页顶栏底下没有满幅图（是应用底色），用默认色（见 App.css）。 */
+   只对首页 hero 采样：发现/库/详情页顶栏底下没有满幅图（是应用底色），用默认色（见 App.css）。 */
 type ChromeTone = "auto" | "dark" | "light" | "fallback";
 /** 平均亮度阈值（0..255）：> 阈值 = 亮底 → 深色 chrome */
 const CHROME_LUMA_THRESHOLD = 150;
@@ -384,57 +399,13 @@ function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-/** [lc-123-rev6] 胶囊图标：内联 SVG + `stroke="currentColor"`（顶栏自适应反色时跟着变色）。
- *  viewBox 24 / stroke-width 1.8 / fill none / 圆头圆角。**不用 emoji**（emoji 不跟随 color）。 */
-function IconHome() {
-  return (
-    <svg
-      className="nav-ico"
-      viewBox="0 0 24 24"
-      width="18"
-      height="18"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M3.6 10.6 12 3.9l8.4 6.7" />
-      <path d="M5.7 9.7V20h12.6V9.7" />
-      <path d="M9.9 20v-5.1h4.2V20" />
-    </svg>
-  );
-}
-
-/** 放大镜（发现）。同样 currentColor + 统一描边参数。 */
-function IconSearch() {
-  return (
-    <svg
-      className="nav-ico"
-      viewBox="0 0 24 24"
-      width="18"
-      height="18"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="10.6" cy="10.6" r="6.6" />
-      <path d="M15.5 15.5 20.4 20.4" />
-    </svg>
-  );
-}
-
 /** [lc-123-rev2] 「首页 | 发现」胶囊：**从顶栏挪到内容区顶部的浮层**（.navbar = absolute，
  *  不占布局高度，直接浮在首页海报上；见 App.css）。顶栏恢复干净：左边只留当前页名
  *  （+侧栏/刷新/主题按钮），中间弱化品牌小字，右边窗口按钮。
  *  [lc-123-rev6] 文字 → **内联 SVG 图标**（房子/放大镜）；高亮不再是"直接跳过去"，而是
  *  一块会滑动的**水滴指示器**（等宽两槽 translateX(0|100%) + 过冲回弹缓动），见 App.css。
- *  ⚠ 图标按钮必须带 aria-label + title（无文字时读屏与悬停都要认得出）。
- *  ⚠ 胶囊仍带 `-webkit-app-region: no-drag`（见 App.css .nav-cap）：虽已不贴拖拽区，
+ *  图标按钮必须带 aria-label + title（无文字时读屏与悬停都要认得出）。
+ *  胶囊仍带 `-webkit-app-region: no-drag`（见 App.css .nav-cap）：虽已不贴拖拽区，
  *  这道声明是"胶囊一定点得动"的保险丝（顶栏整条仍是 data-tauri-drag-region 拖拽区）。 */
 function NavCapsule({
   page,
@@ -458,7 +429,7 @@ function NavCapsule({
         className={`nav-cap-l${page === "home" ? " on" : ""}`}
         onClick={() => onNav("home")}
       >
-        <IconHome />
+        <IcoHouseL size={18} strokeWidth={1.8} />
       </button>
       <button
         role="tab"
@@ -468,7 +439,7 @@ function NavCapsule({
         className={`nav-cap-l${page === "discover" ? " on" : ""}`}
         onClick={() => onNav("discover")}
       >
-        <IconSearch />
+        <IcoSearchL size={18} strokeWidth={1.8} />
       </button>
     </div>
   );
@@ -513,7 +484,7 @@ function TitleBar({
             title={sidebarOpen ? "收起侧栏" : "展开侧栏"}
             onClick={onToggleSidebar}
           >
-            ☰
+            <IcoMenuL size={16} strokeWidth={1.8} />
           </button>
         )}
         {/* [lc-123] 左上角这行字 = **当前页名**（首页/发现），随胶囊切换（不再是"回首页"按钮） */}
@@ -549,7 +520,7 @@ function TitleBar({
             ▢
           </button>
           <button className="tb-btn tb-close" title="关闭" onClick={() => win.close()}>
-            ✕
+            <IcoXL size={16} strokeWidth={1.8} />
           </button>
         </div>
       </div>
@@ -804,7 +775,7 @@ function CarouselView({
           const meta = [
             yearOf(it),
             (it.type || "").toLowerCase() === "movie" ? "电影" : "剧集",
-            it.vote_average && it.vote_average !== "0" ? `★ ${it.vote_average}` : "",
+            it.vote_average && it.vote_average !== "0" ? `${it.vote_average}` : "",
           ]
             .filter(Boolean)
             .join(" · ");
@@ -926,13 +897,13 @@ function PosterCard({
             <img src={imgUrl(item.poster)} loading="lazy" alt={item.title} />
           </>
         ) : (
-          <div className="poster-empty">🎬</div>
+          <div className="poster-empty"><IcoFilmL size={22} strokeWidth={1.8} /></div>
         )}
         <div className="card-hover">
           <span className="play-pill">{isPlayable ? "▶ 播放" : "打开"}</span>
         </div>
         {item.vote_average && item.vote_average !== "0" && (
-          <span className="rating">★ {item.vote_average}</span>
+          <span className="rating"><IcoStarL size={12} strokeWidth={2} className="rating-ico fill" /> {item.vote_average}</span>
         )}
         {progress > 0 && (
           <div className="progress">
@@ -944,7 +915,7 @@ function PosterCard({
             S{item.season_number}E{item.episode_number ?? ""}
           </span>
         )}
-        {item.watched === 1 && <span className="watched-badge">✓</span>}
+        {item.watched === 1 && <span className="watched-badge"><IcoCheckL size={11} strokeWidth={2.2} /></span>}
       </div>
       <div className="card-title">{subtitle || item.title}</div>
       {subtitle && item.title !== subtitle && <div className="card-sub">{item.title}</div>}
@@ -1028,7 +999,7 @@ function HomeView({
                 {lib.posters && lib.posters[0] ? (
                   <img src={imgUrl(lib.posters[0])} loading="lazy" alt={lib.title} />
                 ) : (
-                  <div className="poster-empty">🎞</div>
+                  <div className="poster-empty"><IcoClapL size={22} strokeWidth={1.8} /></div>
                 )}
               </div>
               <div className="lsc-shade" />
@@ -1043,7 +1014,7 @@ function HomeView({
                   onToggleHiddenLib(lib.guid);
                 }}
               >
-                ✕
+                <IcoXL size={13} strokeWidth={1.8} />
               </button>
             </div>
           ))}
@@ -1052,7 +1023,7 @@ function HomeView({
             title="管理首页媒体库展示"
             onClick={() => setManageOpen((v) => !v)}
           >
-            ⚙ 管理
+            <IcoGearL size={15} strokeWidth={1.8} /> 管理
           </div>
         </div>
         {manageOpen && (
@@ -1103,7 +1074,7 @@ function HomeView({
                     {poster ? (
                       <img src={imgUrl(poster)} loading="lazy" alt={title} />
                     ) : (
-                      <div className="poster-empty">🎬</div>
+                      <div className="poster-empty"><IcoFilmL size={22} strokeWidth={1.8} /></div>
                     )}
                     <div className="card-hover">
                       <span className="play-pill">▶ 续播</span>
@@ -1347,7 +1318,7 @@ function BgmCastRow({
         <img className="bgmc-avatar" src={src} alt="" loading="lazy" width={40} height={40} />
       ) : (
         <span className="bgmc-avatar bgmc-avatar-empty" aria-hidden="true">
-          👤
+          <IcoUserL size={15} strokeWidth={1.8} />
         </span>
       )}
       <div className="bgmc-main">
@@ -1447,9 +1418,6 @@ function Dsk({ cls }: { cls: string }) {
 /** [lc-123-rev] 左栏「即将播出」的追加页响应（Rust tmdb_discover 带 total/totalPages 回传）。 */
 type TmdbUpResp = { items?: TmdbDiscoverItem[]; total?: number; totalPages?: number };
 
-/** 主推卡取当季列表**前 N 条**（不额外请求）；8s 自动轮播，悬停暂停。 */
-const HERO_N = 5;
-const HERO_MS = 8000;
 /** 「加载更多」的页数上限：与 Rust `tmdb_discover` 的 `page.clamp(1,25)` 对齐（20 条/页 × 25 = 500） */
 const UP_MAX_PAGE = 25;
 
@@ -1468,20 +1436,110 @@ function DState({ err, emptyText, onRetry }: { err: string; emptyText: string; o
   return <div className="dstate">{emptyText}</div>;
 }
 
-/** 当季区的骨架：主推卡（16:9）+ 2 列横向卡（形状与真内容一致，避免加载完成时的跳动） */
+/** [lc-123-rev9] 主推区（**用户权威设计稿**：紧凑左右分栏 —— 左竖版海报 140×210，右信息列：
+ *  大标题 / 评分徽章+年份·状态·N 人评分一行 / 3 行简介 / 「查看详情」按钮）。**没有大 backdrop、
+ *  没有文字压图** —— 文字永远在实底信息列里。主推数据 = 当季第 1 条（热度第一），**不轮播不翻页**。
+ *  海报 = poster（2:3，w500）；缺图走占位块（Film 图标），不破格。
+ *  「查看详情」：TMDB 条目没有飞牛 guid，不能 play_item —— 复用**已有的** bgm_match + 弹层链路：
+ *  点按钮 → bgm_match(标题) 拿 Bangumi subject → 打开既有的 BgmDetailOverlay；失败给行内提示。 */
+function TmdbFeatured({
+  it,
+  isMovie,
+  onOpenDetail,
+  detailBusy,
+}: {
+  it: TmdbDiscoverItem;
+  isMovie: boolean;
+  onOpenDetail: (it: TmdbDiscoverItem) => void;
+  detailBusy: boolean;
+}) {
+  const state = it.state === "upcoming" ? "未开播" : it.state === "airing" ? "已开播" : "";
+  return (
+    <div className="dfeat">
+      <div className="dfeat-poster">
+        <Dsk cls="dsk-poster" />
+        {it.poster ? (
+          <img src={tmdbImg(it.poster, "w500")} alt="" draggable={false} />
+        ) : (
+          <span className="dfeat-poster-empty" aria-hidden="true">
+            <IcoFilmL size={28} strokeWidth={1.8} />
+          </span>
+        )}
+      </div>
+      <div className="dfeat-info">
+        <div className="dfeat-title">{it.title}</div>
+        <div className="dfeat-meta">
+          {it.rating > 0 && (
+            <span className="dfeat-score">
+              <IcoStarL size={14} strokeWidth={2} className="rating-ico fill" /> {it.rating.toFixed(1)}
+            </span>
+          )}
+          <span>{it.year || "—"}</span>
+          {state && <span>· {state}</span>}
+          {it.votes > 0 && <span>· {it.votes.toLocaleString("zh-CN")} 人评分</span>}
+          <span className="dfeat-kind">{isMovie ? "电影" : "剧集"}</span>
+        </div>
+        {it.overview ? <p className="dfeat-desc">{it.overview}</p> : null}
+        <button className="dfeat-btn" onClick={() => onOpenDetail(it)} disabled={detailBusy}>
+          {detailBusy ? "查找中…" : "查看详情"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** [lc-123-rev9] 标准海报卡（设计稿 .tmdb-card）：**2:3 竖版海报**（不再裁 16:9）+
+ *  右上评分角标 + 下方两行（标题 / 年份·状态 pill）。`minmax(140px,1fr)` 自适应 2~4 列。
+ *  缺 poster → 占位块（Film 图标），不破格。 */
+function TmdbPC({ it }: { it: TmdbDiscoverItem }) {
+  const tip = [it.title, it.overview].filter(Boolean).join("\n\n");
+  const state = it.state === "upcoming" ? "未开播" : it.state === "airing" ? "已开播" : "";
+  return (
+    <div className="dpc" title={tip}>
+      <div className="dpc-img">
+        <Dsk cls="dsk-poster" />
+        {it.poster ? (
+          <img src={tmdbImg(it.poster, "w342")} alt="" loading="lazy" draggable={false} />
+        ) : (
+          <span className="dpc-empty" aria-hidden="true">
+            <IcoFilmL size={22} strokeWidth={1.8} />
+          </span>
+        )}
+        {it.rating > 0 && <span className="dpc-rate">{it.rating.toFixed(1)}</span>}
+      </div>
+      <div className="dpc-bd">
+        <div className="dpc-t">{it.title}</div>
+        <div className="dpc-s">
+          <span>{it.year || "—"}</span>
+          {state && <span className="dpill">{state}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** [lc-123-rev9] 新形状骨架：主推分栏 + 海报网格卡（与真内容一致，避免加载完成跳动） */
 function TmdbSeasonSkeleton() {
   return (
     <>
-      <div className="dphero dphero-sk">
-        <Dsk cls="dsk-poster" />
+      <div className="dfeat dfeat-sk">
+        <div className="dfeat-poster">
+          <Dsk cls="dsk-poster" />
+        </div>
+        <div className="dfeat-info">
+          <Dsk cls="dsk-line" />
+          <Dsk cls="dsk-line short" />
+          <Dsk cls="dsk-line" />
+          <Dsk cls="dsk-line short" />
+        </div>
       </div>
-      <div className="dgrid2">
-        {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="dlc">
-            <div className="dlc-img">
+      <div className="dpcgrid">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className="dpc">
+            <div className="dpc-img">
               <Dsk cls="dsk-poster" />
             </div>
-            <div className="dlc-bd">
+            <div className="dpc-bd">
               <Dsk cls="dsk-line" />
               <Dsk cls="dsk-line short" />
             </div>
@@ -1489,106 +1547,6 @@ function TmdbSeasonSkeleton() {
         ))}
       </div>
     </>
-  );
-}
-
-/** [lc-123-rev] 左栏顶部**主推卡**（16:9 大图 + 底部渐变遮罩 + 徽标 + 大标题 + 评分/年份/状态 + 两行简介）。
- *  可翻页：左右箭头 + 圆点指示；数据就是当季列表前 N 条（HERO_N=5），不额外请求。
- *  状态仍只两态（已开播/未开播）——discover **不返回 status**，不编「连载中/已完结」。 */
-function TmdbHero({
-  items,
-  idx,
-  onIdx,
-  onHover,
-}: {
-  items: TmdbDiscoverItem[];
-  idx: number;
-  onIdx: (i: number) => void;
-  onHover: (h: boolean) => void;
-}) {
-  const hero = items[idx];
-  if (!hero) return null;
-  const state = hero.state === "upcoming" ? "未开播" : hero.state === "airing" ? "已开播" : "";
-  const meta = [hero.year, state].filter(Boolean).join(" · ");
-  // [lc-123-rev3] 主推大图用 16:9 横图（backdropPath）；只有缺横图时才回落 2:3 海报（.is-poster 温和裁切）
-  const heroImg = hero.backdropPath ? tmdbImg(hero.backdropPath, "w780") : hero.poster ? tmdbImg(hero.poster, "w780") : "";
-  return (
-    <div className="dphero" onMouseEnter={() => onHover(true)} onMouseLeave={() => onHover(false)}>
-      <div className={`dphero-bg${hero.backdropPath ? "" : " is-poster"}`} aria-hidden="true">
-        {heroImg ? <img src={heroImg} alt="" draggable={false} /> : null}
-      </div>
-      <div className="dphero-sh" aria-hidden="true" />
-      <div className="dphero-in">
-        <span className="dphero-badge">{idx === 0 ? "本季热度第一" : `热度 No.${idx + 1}`}</span>
-        <h3>{hero.title}</h3>
-        <div className="dphero-meta">
-          {hero.rating > 0 && <span>★ {hero.rating.toFixed(1)}</span>}
-          {meta && <span>{meta}</span>}
-          {hero.votes > 0 && <span>{hero.votes} 人评分</span>}
-        </div>
-        {hero.overview && <p className="dphero-sum">{hero.overview}</p>}
-      </div>
-      {items.length > 1 && (
-        <>
-          <button
-            className="dphero-ar left"
-            title="上一条"
-            onClick={() => onIdx((idx - 1 + items.length) % items.length)}
-          >
-            ‹
-          </button>
-          <button
-            className="dphero-ar right"
-            title="下一条"
-            onClick={() => onIdx((idx + 1) % items.length)}
-          >
-            ›
-          </button>
-          <div className="dphero-dots">
-            {items.map((it, i) => (
-              <button
-                key={it.tmdbId}
-                className={`dphero-dot${i === idx ? " on" : ""}`}
-                title={`第 ${i + 1} 条`}
-                onClick={() => onIdx(i)}
-              />
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-/** [lc-123-rev] 「本季新剧」2 列横向卡：16:9 背景图 + 标题 + 年份 + 开播状态小标签 + 右上评分角标。 */
-/** [lc-123-rev3] 「本季新剧」2 列横向卡：**16:9 横图**（backdropPath，w780）+ 标题 + 年份 +
- *  开播状态小标签 + 右上评分角标。缺横图时回落 2:3 海报（.is-poster 温和裁切，见 App.css）——
- *  列几何（16:9 框 / 2 列 / 卡内边距）保持不变，换成横图后卡片对齐与角标位置不动。 */
-function TmdbHC({ it }: { it: TmdbDiscoverItem }) {
-  const tip = [it.title, it.overview].filter(Boolean).join("\n\n");
-  const state = it.state === "upcoming" ? "未开播" : it.state === "airing" ? "已开播" : "";
-  const img = it.backdropPath ? tmdbImg(it.backdropPath, "w780") : it.poster ? tmdbImg(it.poster, "w342") : "";
-  return (
-    <div className="dlc" title={tip}>
-      <div className={`dlc-img${it.backdropPath ? "" : " is-poster"}`}>
-        <Dsk cls="dsk-poster" />
-        {img ? (
-          <img src={img} alt="" loading="lazy" draggable={false} />
-        ) : (
-          <span className="dlc-empty" aria-hidden="true">
-            🎬
-          </span>
-        )}
-        {it.rating > 0 && <span className="dlc-rate">{it.rating.toFixed(1)}</span>}
-      </div>
-      <div className="dlc-bd">
-        <div className="dlc-t">{it.title}</div>
-        <div className="dlc-s">
-          <span>{it.year || "—"}</span>
-          {state && <span className="dpill">{state}</span>}
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -1615,7 +1573,14 @@ function UpRow({ it, isMovie }: { it: TmdbDiscoverItem; isMovie: boolean }) {
 }
 
 /** 左栏：TMDB。`active` = 首次激活闸门（懒加载）。取数走 tmdb_discover（一条命令带 mode 参数）。 */
-function TmdbPane({ active }: { active: boolean }) {
+function TmdbPane({
+  active,
+  onDetail,
+}: {
+  active: boolean;
+  /** [lc-123-rev9] 「查看详情」命中后由父级挂 BgmDetailOverlay（与右栏同一份弹层） */
+  onDetail: (it: BgmCalendarItem) => void;
+}) {
   const [mediaType, setMediaType] = useState<"tv" | "movie">("tv");
   const [season, setSeason] = useState<"current" | "next">("current");
   const [items, setItems] = useState<TmdbDiscoverItem[]>([]);
@@ -1630,9 +1595,10 @@ function TmdbPane({ active }: { active: boolean }) {
   const [upTotal, setUpTotal] = useState(0); // 上游总条数（0=未知）
   const [upTotalPages, setUpTotalPages] = useState(0);
   const [upMoreBusy, setUpMoreBusy] = useState(false);
-  const [heroIdx, setHeroIdx] = useState(0);
-  const [heroHover, setHeroHover] = useState(false); // 悬停暂停自动轮播
   const [nonce, setNonce] = useState(0); // 两块共用的**失败重试**触发器（force + noEtag：强制全量）
+  // [lc-123-rev9] 「查看详情」：bgm_match(标题) → 复用右栏的 BgmDetailOverlay（轻量详情弹层）
+  const [detailBusy, setDetailBusy] = useState(false);
+  const [detailErr, setDetailErr] = useState("");
   const [probe, setProbe] = useState(0); // [lc-123-rev5] 10 分钟后台探测（force=false：命令层先读缓存判 TTL）
   // 失败重试与"到期探测"走**不同**的 force 语义：重试 = force + noEtag（强制全量，别拿坏缓存反复撞）
   const retryRef = useRef(false);
@@ -1727,16 +1693,8 @@ function TmdbPane({ active }: { active: boolean }) {
     };
   }, [active, mediaType, nonce]);
 
-  // 主推卡自动轮播（8s）：悬停暂停；不足两条不轮播（对应 effect 直接不挂定时器）
-  const heroItems = items.slice(0, HERO_N);
-  useEffect(() => {
-    if (heroHover || heroItems.length < 2) return;
-    const t = window.setInterval(() => setHeroIdx((i) => (i + 1) % heroItems.length), HERO_MS);
-    return () => window.clearInterval(t);
-  }, [heroHover, heroItems.length]);
-
-  const heroIdxSafe = heroItems.length ? Math.min(heroIdx, heroItems.length - 1) : 0;
-  const gridItems = items.slice(HERO_N);
+  const featured = items[0]; // 设计稿：主推 = 热度第一，无轮播
+  const gridItems = items.slice(1);
   const upLastPage = Math.min(upTotalPages > 0 ? upTotalPages : UP_MAX_PAGE, UP_MAX_PAGE);
   const upMoreAvail =
     upcoming.length > 0 && upPage < upLastPage && (upTotal === 0 || upcoming.length < upTotal);
@@ -1763,6 +1721,40 @@ function TmdbPane({ active }: { active: boolean }) {
       setUpMoreErr(String(e));
     } finally {
       setUpMoreBusy(false);
+    }
+  }
+
+  // [lc-123-rev9] 「查看详情」：TMDB 条目没有 guid → bgm_match(标题+年) 拿 Bangumi subject →
+  // 复用右栏同款 BgmDetailOverlay（bgm_subject/bgm_episodes/bgm_characters 全套）；失败行内提示。
+  async function openDetail(it: TmdbDiscoverItem) {
+    if (detailBusy) return;
+    setDetailBusy(true);
+    setDetailErr("");
+    try {
+      const m = await invoke<{ subject_id?: number }>("bgm_match", {
+        title: it.title,
+        year: it.year || undefined,
+      });
+      const sid = m?.subject_id;
+      if (!sid) {
+        setDetailErr(`未找到「${it.title}」对应的 Bangumi 条目`);
+        return;
+      }
+      onDetail({
+        id: sid,
+        type: 0,
+        name: it.originalTitle,
+        name_cn: it.title,
+        air_date: it.date,
+        score: it.rating > 0 ? it.rating : null,
+        votes: it.votes,
+        doing: 0,
+        cover: "",
+      });
+    } catch (e) {
+      setDetailErr(`详情查找失败：${String(e)}`);
+    } finally {
+      setDetailBusy(false);
     }
   }
 
@@ -1809,16 +1801,28 @@ function TmdbPane({ active }: { active: boolean }) {
           />
         ) : (
           <>
-            <TmdbHero items={heroItems} idx={heroIdxSafe} onIdx={setHeroIdx} onHover={setHeroHover} />
+            {featured && (
+              <TmdbFeatured
+                it={featured}
+                isMovie={isMovie}
+                detailBusy={detailBusy}
+                onOpenDetail={openDetail}
+              />
+            )}
+            {detailErr && (
+              <div className="dmore-hint" role="status">
+                {detailErr}
+              </div>
+            )}
             {gridItems.length > 0 && (
               <>
                 <h3 className="dsub-h">
                   {season === "next" ? "下季看点" : "本季新剧"}
                   <span>按热度排序</span>
                 </h3>
-                <div className="dgrid2">
+                <div className="dpcgrid">
                   {gridItems.map((it) => (
-                    <TmdbHC key={`${it.tmdbId}-${it.date}`} it={it} />
+                    <TmdbPC key={`${it.tmdbId}-${it.date}`} it={it} />
                   ))}
                 </div>
               </>
@@ -1955,7 +1959,7 @@ function useLibIndex(active: boolean): { state: LibIndexState; titles: Set<strin
 
 /** [lc-123-rev] 单个更新条目行：左侧强调竖条 + 封面(46×62，左上角该天序号) + 标题 +
  *  评分色阶标签(≥8 绿 / 7–8 黄 / <7 灰；无评分不显示) + 年份 + 今日更新标。
- *  ⚠ `/calendar` **没有集号与播出时刻**（只有 air_date 首播日 + air_weekday），所以这里
+ *  `/calendar` **没有集号与播出时刻**（只有 air_date 首播日 + air_weekday），所以这里
  *  刻意**不显示**「第 N 话 / 今晚 22:30」——那两列无数据可依，宁可不要也不编。 */
 function BgmCalRow({
   it,
@@ -1997,7 +2001,7 @@ function BgmCalRow({
         {it.cover ? (
           <img src={bgmImg(it.cover)} alt="" loading="lazy" width={46} height={62} draggable={false} />
         ) : (
-          <span aria-hidden="true">🎬</span>
+          <span aria-hidden="true"><IcoFilmL size={18} strokeWidth={1.8} /></span>
         )}
         <span className="drk" aria-hidden="true">
           {rank}
@@ -2298,11 +2302,11 @@ function BgmDetailOverlay({
     <div className="ddet-mask" onClick={onClose}>
       <div className="ddet" onClick={(e) => e.stopPropagation()}>
         <button className="ddet-close" title="关闭（Esc）" onClick={onClose}>
-          ✕
+          <IcoXL size={15} strokeWidth={1.8} />
         </button>
         <header className="ddet-hd">
           <div className={`ddet-cv${cover ? "" : " empty"}`}>
-            {cover ? <img src={cover} alt="" draggable={false} /> : <span aria-hidden="true">🎬</span>}
+            {cover ? <img src={cover} alt="" draggable={false} /> : <span aria-hidden="true"><IcoFilmL size={18} strokeWidth={1.8} /></span>}
           </div>
           <div className="ddet-hdm">
             <h2>{title || "（无标题）"}</h2>
@@ -2311,7 +2315,7 @@ function BgmDetailOverlay({
               {date && <span className="ddet-chip">{date}</span>}
               {score != null && (
                 <span className="ddet-chip score">
-                  ★ {score.toFixed(1)}
+                  <IcoStarL size={12} strokeWidth={2} className="rating-ico fill" /> {score.toFixed(1)}
                   {votes > 0 && <i>（{votes} 人）</i>}
                 </span>
               )}
@@ -2394,7 +2398,8 @@ function DiscoverView({ active }: { active: boolean }) {
   const [sel, setSel] = useState<BgmCalendarItem | null>(null);
   return (
     <div className="discover">
-      <TmdbPane active={active} />
+      {/* 左栏「查看详情」与右栏点条目共用同一份 BgmDetailOverlay（一次只显示一个） */}
+      <TmdbPane active={active} onDetail={(it) => setSel(it)} />
       <BgmPane active={active} onOpen={(it) => setSel(it)} />
       {sel && <BgmDetailOverlay id={sel.id} fallback={sel} onClose={() => setSel(null)} />}
     </div>
@@ -2754,9 +2759,9 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   // 旧版对整季每集 **无并发上限** 地并发 invoke("get_item_detail")（Promise.allSettled(episodes.map(...))），
   // 长篇（几十集）会瞬间打出几十个请求把 NAS/代理打爆 —— 与本项目 lc-114 图片并发风暴同源。
   // 新逻辑（按规格）：
-  //   ① 已匹配到 Bangumi（bgm 就绪）→ 用一次 bgm_episodes 的 desc 按 episode_number 对齐回填（单请求）；
-  //   ② 未匹配/尚未匹配（吐槽是懒加载，可能一直没匹配）→ 保留原 item 详情回填，但加 **并发上限 3**（worker 池）；
-  //      worker 每轮先看 bgmRef：匹配一到位就退场，把补齐工作交给 ① 的 desc（不再堆 NAS 请求）。
+  //   (1) 已匹配到 Bangumi（bgm 就绪）→ 用一次 bgm_episodes 的 desc 按 episode_number 对齐回填（单请求）；
+  //   (2) 未匹配/尚未匹配（吐槽是懒加载，可能一直没匹配）→ 保留原 item 详情回填，但加 **并发上限 3**（worker 池）；
+  //      worker 每轮先看 bgmRef：匹配一到位就退场，把补齐工作交给 (1) 的 desc（不再堆 NAS 请求）。
   useEffect(() => {
     if (!episodes.length) return;
     let alive = true;
@@ -2799,7 +2804,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
     const queue = [...missing];
     const worker = async () => {
       while (alive && queue.length) {
-        if (bgmRef.current) return; // ① 就绪 → legacy 任务立即退场
+        if (bgmRef.current) return; // (1) 就绪 → legacy 任务立即退场
         const ep = queue.shift()!;
         try {
           const d = await invoke<Record<string, unknown>>("get_item_detail", { guid: ep.guid });
@@ -2853,9 +2858,9 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
     .filter(Boolean)
     .slice(0, 6);
   // [lc-128] 演员/制作人员三级来源（**TMDB 主源**）：
-  //   ① tmdb_credits（专用命令，锚点优先 + 落盘缓存 7 天）
-  //   ② tmdb_show_details 里同源的 cast/crew（① 失败时兜底，已在内存里，零额外请求）
-  //   ③ 飞牛 item 详情里的 actors/cast（有则用、没有不报错）
+  //   (1) tmdb_credits（专用命令，锚点优先 + 落盘缓存 7 天）
+  //   (2) tmdb_show_details 里同源的 cast/crew（(1) 失败时兜底，已在内存里，零额外请求）
+  //   (3) 飞牛 item 详情里的 actors/cast（有则用、没有不报错）
   const creditsCast = Array.isArray(credits?.cast) ? (credits?.cast as TmdbCreditPerson[]) : [];
   const creditsCrew = Array.isArray(credits?.crew) ? (credits?.crew as TmdbCreditPerson[]) : [];
   const showCast: TmdbCreditPerson[] = Array.isArray(tmdb?.cast)
@@ -2930,7 +2935,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
         </div>
         <div className="dcard">
           <div className="dcard-poster">
-            {poster ? <img src={imgUrl(poster)} alt={title} /> : <div className="poster-empty">🎬</div>}
+            {poster ? <img src={imgUrl(poster)} alt={title} /> : <div className="poster-empty"><IcoFilmL size={22} strokeWidth={1.8} /></div>}
           </div>
           <div className="dcard-info">
             <h1 className="dcard-title">{title}</h1>
@@ -2950,12 +2955,16 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                 <span className="dscore-num">{ratingNum.toFixed(1)}</span>
                 <span className="dscore-outof">⁄10</span>
                 <span className="dstars" aria-hidden="true">
-                  <span className="dstars-bg">★★★★★</span>
+                  <span className="dstars-bg">{[0, 1, 2, 3, 4].map((i) => (
+                  <IcoStarL key={i} size={15} strokeWidth={1.6} className="rating-ico fill" />
+                ))}</span>
                   <span
                     className="dstars-fg"
                     style={{ width: `${Math.min(100, ratingNum * 10)}%` }}
                   >
-                    ★★★★★
+                    {[0, 1, 2, 3, 4].map((i) => (
+                      <IcoStarL key={i} size={15} strokeWidth={1.6} className="rating-ico fill" />
+                    ))}
                   </span>
                 </span>
                 {votes > 0 && (
@@ -3087,11 +3096,11 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                         {ep.poster ? (
                           <img src={imgUrl(ep.poster)} loading="lazy" alt={label} />
                         ) : (
-                          <div className="poster-empty">🎞</div>
+                          <div className="poster-empty"><IcoClapL size={22} strokeWidth={1.8} /></div>
                         )}
                         <span className="ep-play">{playing ? "◉" : "▶"}</span>
                         {seen ? (
-                          <span className="ep-mark seen">✓ 已看</span>
+                          <span className="ep-mark seen"><IcoCheckL size={11} strokeWidth={2.2} /> 已看</span>
                         ) : (
                           progress > 0 && <span className="ep-mark now">看到 {Math.round(progress)}%</span>
                         )}
@@ -3121,7 +3130,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
             飞牛演员字段兜底；再原样复用 TmdbExtra（剧照节由 CSS 在 .dmore 内隐藏，避免与「概览」重复） */}
         {activeTab === "more" && (
           <div className="dpanel dmore">
-            {/* ① 演员表（TMDB 主源）：骨架 / 失败重试 / 数据 */}
+            {/* (1) 演员表（TMDB 主源）：骨架 / 失败重试 / 数据 */}
             {creditsBusy && !credits && !creditsErr && <BgmListSkeleton />}
             {creditsErr && !creditsCast.length && !showCast.length && (
               <div className="bgmc-state">
@@ -3175,7 +3184,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                 </ul>
               </section>
             )}
-            {/* ② 飞牛演员字段（**只兜底**：TMDB 完全没数据时才显示；没有该字段则整块不出现） */}
+            {/* (2) 飞牛演员字段（**只兜底**：TMDB 完全没数据时才显示；没有该字段则整块不出现） */}
             {!creditsBusy && !cast.length && !crew.length && fbCast.length > 0 && (
               <section className="dsec">
                 <h2 className="dsec-t">
@@ -3293,7 +3302,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                         <div className="bgmc-head">
                           <span className="bgmc-nick">{c.user?.nickname || c.user?.username || "匿名"}</span>
                           <span className="bgmc-date">{String(c.updatedAt ?? "").slice(0, 10)}</span>
-                          {stars && <span className="bgmc-rate">★ {stars}</span>}
+                          {stars && <span className="bgmc-rate"><IcoStarL size={12} strokeWidth={2} className="rating-ico fill" /> {stars}</span>}
                         </div>
                         <p className="bgmc-text">{c.comment}</p>
                       </div>
@@ -3321,7 +3330,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
 
 
 /* ────────────────────────── TMDB 扩展信息（剧照/预告片/分级/在线观看/更多） ──────────────────────────
-   复刻主仓库 embyWall/detail/tmdbCard.ts ⑥⑧⑨⑩ 四节。剧照/头像走 fntvimg 代理的 TMDB 图片域
+   复刻主仓库 embyWall/detail/tmdbCard.ts (6)(8)(9)(10) 四节。剧照/头像走 fntvimg 代理的 TMDB 图片域
    （Rust 反代镜像 + **落盘三级缓存**，见 tmdbImg() 与 imgproto.rs）。
    [lc-128] 演职人员一节搬去「更多」分段（TMDB 主源 + 落盘缓存 + 飞牛兜底），这里不再重复渲染。 */
 
@@ -3592,13 +3601,13 @@ function Sidebar({
         {cardFold ? (
           <div className="sa-icons">
             <button type="button" className="sa-ico" title="设置" onClick={onOpenSettings}>
-              ⚙
+              <IcoGearL size={15} strokeWidth={1.8} />
             </button>
             <button type="button" className="sa-ico" title="观影记录" onClick={() => showToast("观影记录页在阶段3接入")}>
-              🕐
+              <IcoClockL size={15} strokeWidth={1.8} />
             </button>
             <button type="button" className="sa-ico" title="软件反馈建议" onClick={() => showToast("反馈渠道在阶段3接入")}>
-              💬
+              <IcoMsgL size={15} strokeWidth={1.8} />
             </button>
             <button type="button" className="sa-ico sa-expand" title="展开快捷操作" onClick={() => setFold(false)}>
               ∧
@@ -3611,13 +3620,13 @@ function Sidebar({
               <span className="sa-chev" />
             </div>
             <button type="button" className="sa-btn" onClick={onOpenSettings}>
-              ⚙ 设置
+              <IcoGearL size={14} strokeWidth={1.8} /> 设置
             </button>
             <button type="button" className="sa-btn" onClick={() => showToast("观影记录页在阶段3接入")}>
-              🕐 观影记录
+              <IcoClockL size={14} strokeWidth={1.8} /> 观影记录
             </button>
             <button type="button" className="sa-btn" onClick={() => showToast("反馈渠道在阶段3接入")}>
-              💬 软件反馈建议
+              <IcoMsgL size={14} strokeWidth={1.8} /> 软件反馈建议
             </button>
             <div className="sa-ver">v{appVer}</div>
             {/* [lc-122] 数据来源署名（关于区=版本行下）：TMDB 条款强制原文 + Bangumi 署名。
@@ -3635,6 +3644,13 @@ function Sidebar({
                 数据与部分内容来自{" "}
                 <a href="https://bgm.tv/" target="_blank" rel="noreferrer">
                   Bangumi 番组计划
+                </a>
+              </span>
+              {/* [lc-123-rev8] 图标库开源致谢（Lucide，ISC） */}
+              <span>
+                Icons by{" "}
+                <a href="https://lucide.dev" target="_blank" rel="noreferrer">
+                  Lucide (ISC)
                 </a>
               </span>
             </div>
@@ -3713,7 +3729,7 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
     <div className="ddet-mask" onClick={onClose}>
       <div className="ddet set-card" onClick={(e) => e.stopPropagation()}>
         <button className="ddet-close" title="关闭（Esc）" onClick={onClose}>
-          ✕
+          <IcoXL size={15} strokeWidth={1.8} />
         </button>
         <header className="ddet-hd">
           <div className="ddet-hdm">
@@ -3784,9 +3800,6 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** [lc-123-rev6] 深浅切换"圆形扩散"的时长（ms）：CSS 动画与"何时切主题（55%）"共用同一个数 */
-const THEME_WIPE_MS = 420;
-
 /* ────────────────────────── 根组件 ────────────────────────── */
 
 function App() {
@@ -3846,7 +3859,7 @@ function App() {
   const [booting, setBooting] = useState(true);
   const [username, setUserName] = useState("");
   const [server, setServer] = useState("");
-  // [lc-128] 设置面板（缓存 + 关于）开关；入口在侧栏快捷操作卡（⚙ 设置）
+  // [lc-128] 设置面板（缓存 + 关于）开关；入口在侧栏快捷操作卡（设置）
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sum, setSum] = useState<Record<string, number>>({});
   const [favTotal, setFavTotal] = useState<number | null>(null);
@@ -3991,37 +4004,39 @@ function App() {
     [page, goDiscover, goHome, clearPaneAnim],
   );
 
-  // [lc-123-rev6] 深浅模式切换：**从按钮位置圆形扩散覆盖全屏**（遮罩层 + clip-path: circle()，
-  // 不依赖 View Transitions API）。展开到 ~55% 时再切主题（遮罩已基本盖住屏幕，看不到切换瞬间），
-  // 随后圆**原路收回**到 0 → 动画结束从 DOM 移除。reduced-motion：直接切主题、不放动画。
-  const [ripple, setRipple] = useState<{
+  // [lc-123-rev7] 深浅模式切换：**「外部扩散」= 镂空反向扩散**（用户否掉 v6 的实色圆吞屏：
+  // 「怎么是全白全黑屏覆盖切换，我要那种不影响观感的外部扩散，透明那种」）。
+  // 做法：主题**立即切换**（DOM/类名马上换，v6 的"55% 提前切"已删），随后铺一个**旧主题印象层**
+  // 盖住全屏，用 clip-path: circle() 让它**从 150% 收缩到 0** —— 圆**外**是已切换的新界面、
+  // 圆**内**还是旧界面，圆边向外推进 = "透明的外部扩散"，全程无色块。
+  // 印象层**不放截图**（WebView2 无页面截图通道）：用旧主题的 CSS 变量底色按层次铺
+  // （见 App.css .theme-veil；420ms 内圆内只是"模糊的旧界面印象"，卡片文字瞬移人眼无感）。
+  const [veil, setVeil] = useState<{
     x: number;
     y: number;
-    toDark: boolean;
+    /** "in" = 旧主题印象从 150% 收到 0（切去新主题）；切反向主题时从 0 涨回 150%（原路收回） */
     phase: "in" | "out";
   } | null>(null);
   const toggleTheme = useCallback(
     (e: React.MouseEvent<HTMLButtonElement>) => {
       const next = theme === "dark" ? "light" : "dark";
       if (prefersReducedMotion()) {
-        setRipple(null);
+        setVeil(null);
         setTheme(next);
         return;
       }
       const r = e.currentTarget.getBoundingClientRect();
-      setRipple({
+      // 主题**先切**（新界面立刻生效），再让旧主题印象收缩退场
+      setTheme(next);
+      setVeil({
         x: r.left + r.width / 2,
         y: r.top + r.height / 2,
-        toDark: next === "dark",
         phase: "in",
       });
-      window.setTimeout(() => setTheme(next), Math.round(THEME_WIPE_MS * 0.55));
     },
     [theme],
   );
-  const onRippleEnd = useCallback(() => {
-    setRipple((cur) => (cur && cur.phase === "in" ? { ...cur, phase: "out" } : null));
-  }, []);
+  const onVeilEnd = useCallback(() => setVeil(null), []);
 
   // 首页数据落盘（30 分钟 TTL）：重启/会话恢复时零请求直出；数据落定 1.5s 后快照
   useEffect(() => {
@@ -4276,21 +4291,20 @@ function App() {
           }}
         />
       ))}
-      {/* [lc-123-rev6] 深浅切换的圆形扩散遮罩：新主题底色 + clip-path: circle()，
-          原点来自按钮 rect（写进 --tx/--ty）。z-index 80 > 顶栏 50；pointer-events:none；
-          animationend 后才从 DOM 移除（不留一个盖住全屏的层）。 */}
-      {ripple && (
+      {/* [lc-123-rev7] 深浅切换的**镂空反向扩散**：旧主题印象层（CSS 变量底色，无截图通道）
+          用 clip-path: circle() 从 150% 收缩到 0 —— 圆内是旧界面、圆外已是新界面，"透明的外部扩散"。
+          原点来自按钮 rect（--tx/--ty）；z-index 80 > 顶栏 50；pointer-events:none；
+          animationend 后从 DOM 移除。 */}
+      {veil && (
         <div
-          className={`theme-ripple ${ripple.toDark ? "to-dark" : "to-light"}${
-            ripple.phase === "out" ? " out" : ""
-          }`}
+          className={`theme-veil${veil.phase === "out" ? " out" : ""}`}
           style={
             {
-              "--tx": `${ripple.x}px`,
-              "--ty": `${ripple.y}px`,
+              "--tx": `${veil.x}px`,
+              "--ty": `${veil.y}px`,
             } as React.CSSProperties
           }
-          onAnimationEnd={onRippleEnd}
+          onAnimationEnd={onVeilEnd}
           aria-hidden="true"
         />
       )}

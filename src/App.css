@@ -178,6 +178,34 @@ body,
   }
 }
 
+
+/* [lc-123-rev8] Lucide 图标的行内对齐补齐（替换文本符号后 svg 是 inline-block，基线会偏）：
+   行内小图标一律 vertical-align:-0.16em；评分星（.fill）加 fill=currentColor 成实心（与原文本星号观感一致）。 */
+.rating-ico {
+  vertical-align: -0.16em;
+  flex-shrink: 0;
+}
+.rating-ico.fill {
+  fill: currentColor;
+}
+.rating,
+.watched-badge,
+.ep-mark,
+.bgmc-rate,
+.dscore-votes {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.dstars-bg,
+.dstars-fg {
+  display: inline-flex;
+  gap: 1px;
+}
+.dstars-fg .rating-ico {
+  color: var(--gold);
+}
+
 /* ─────────────── 标题栏 ─────────────── */
 
 .titlebar {
@@ -192,7 +220,7 @@ body,
   align-items: stretch;
   /* [lc-123-rev3] 顶栏**全透明**（用户要求：不加底色，每个控件都透明）——
      不设底色/描边/分隔线/渐变/模糊；可读性靠文字 text-shadow（见下方 .tb-* 规则），
-     不靠底色。⚠ 整条仍是 data-tauri-drag-region 拖拽区（无边框窗口唯一能拖的地方）。 */
+     不靠底色。整条仍是 data-tauri-drag-region 拖拽区（无边框窗口唯一能拖的地方）。 */
   background: transparent;
   border: 0;
   box-shadow: none;
@@ -315,7 +343,7 @@ body,
   color: #fff;
 }
 /* [lc-123-rev3] 透明底的可读性：文字/图标压在海报上时靠 text-shadow 保证深浅底都看得清
-   （用户要求：可读性不许用背景色解决）。顶栏图标都是文字字形（☰ ⟳ ◐ ─ ▢ ✕），
+   （用户要求：可读性不许用背景色解决）。顶栏图标都是文字字形（菜单/刷新/主题/窗口钮），
    text-shadow 对它们同样生效 —— 不需要 filter:drop-shadow。 */
 .tb-crumb,
 .tb-brand,
@@ -463,37 +491,30 @@ body,
   }
 }
 
-/* [lc-123-rev6] 深浅切换的**圆形扩散**遮罩（遮罩层 + clip-path: circle()，不用 View Transitions API）：
-   --tx/--ty = 主题按钮中心（JS 用 getBoundingClientRect 写进来）；
-   底色用**目标主题**的近似底色（不能用 CSS 变量 —— 遮罩在换主题前就铺开了，变量会在切换瞬间变色）；
-   z-index 80 > 顶栏 50；pointer-events:none 不挡点击；animationend 后由 JS 从 DOM 移除。
-   展开到 ~55% 时 JS 才切主题（此时圆已盖住整个视口）；随后 .out 把圆**原路收回**到 0。 */
-.theme-ripple {
+/* [lc-123-rev7] 深浅切换的**镂空反向扩散**（v6 的"实色圆吞屏"被用户否掉：
+   「我要那种不影响观感的外部扩散，透明那种」）。
+   结构：主题**立即切换**（新界面已在底下）→ 这一层铺**旧主题的印象**（CSS 变量底色按层次，
+   不放截图 —— WebView2 无页面截图通道；也不用纯 #fff/#000），clip-path: circle() 让它
+   **从 150% 收缩到 0**：圆内是旧界面、圆外是新界面，圆边向外推进 = "透明的外部扩散"。
+   --tx/--ty = 主题按钮中心（JS getBoundingClientRect 写入）；z-index 80 > 顶栏 50；
+   pointer-events:none 不挡点击；animationend 后由 JS 从 DOM 移除。
+   反向切换时旧印象自然从 0 涨回 150% —— 同一条 keyframes 往返，"原路收回"。 */
+.theme-veil {
   position: fixed;
   inset: 0;
   z-index: 80;
   pointer-events: none;
-  clip-path: circle(0px at var(--tx) var(--ty));
-  animation: themeWipeIn 0.42s ease-in-out forwards;
+  /* 旧主题印象（按真实层次）：底层 = 旧 --bg-0（app-shell 渐变起点）+ 旧 --bg-1（主表面）。
+     变量在**本层挂载前**读取（切换发生在前一个渲染周期），所以读到的就是旧主题的值。 */
+  background: linear-gradient(160deg, var(--bg-0), var(--bg-1) 55%);
+  clip-path: circle(150% at var(--tx) var(--ty));
+  animation: themeVeilShrink 0.42s ease-in-out forwards;
 }
-.theme-ripple.to-dark {
-  background: #0f1117;
+/* "原路收回"（当前流程用不到：每次切换都是"新主题已在底下 + 旧印象收缩"；保留给双向需求） */
+.theme-veil.out {
+  animation: themeVeilGrow 0.42s ease-in-out forwards;
 }
-.theme-ripple.to-light {
-  background: #f5f7fb;
-}
-.theme-ripple.out {
-  animation: themeWipeOut 0.42s ease-in-out forwards;
-}
-@keyframes themeWipeIn {
-  from {
-    clip-path: circle(0px at var(--tx) var(--ty));
-  }
-  to {
-    clip-path: circle(150% at var(--tx) var(--ty));
-  }
-}
-@keyframes themeWipeOut {
+@keyframes themeVeilShrink {
   from {
     clip-path: circle(150% at var(--tx) var(--ty));
   }
@@ -501,6 +522,15 @@ body,
     clip-path: circle(0px at var(--tx) var(--ty));
   }
 }
+@keyframes themeVeilGrow {
+  from {
+    clip-path: circle(0px at var(--tx) var(--ty));
+  }
+  to {
+    clip-path: circle(150% at var(--tx) var(--ty));
+  }
+}
+
 .main-row {
   display: flex;
   flex: 1;
@@ -1826,7 +1856,7 @@ button:active {
   }
 }
 
-/* ─────────────── TMDB 扩展信息四节（剧照/相似/更多/演职人员，复刻主仓库 tmdbCard ⑥⑧⑨⑩） ─────────────── */
+/* ─────────────── TMDB 扩展信息四节（剧照/相似/更多/演职人员，复刻主仓库 tmdbCard (6)(8)(9)(10)） ─────────────── */
 .tmdb-sec {
   border-radius: 14px;
   background: var(--bg-2);
@@ -2002,22 +2032,22 @@ button:active {
      · lib/bean/card/bangumi_info_card.dart BangumiInfoCardV
      · lib/pages/info/info_tabview.dart     infoBody + TabBar(isScrollable, tabAlignment:center, dividerHeight:0)
 
-   ① 模糊海报头（Flutter → CSS 等价物）
+   (1) 模糊海报头（Flutter → CSS 等价物）
       Dart: 0.5 降采样 → ImageFilter.blur(sigma 15×0.5 = 7.5，光栅空间) → Transform.scale(2) 上采样
       ⇒ 布局空间等效 sigma = 15px（CSS 直接写 blur(15px)）；白色 modulate alpha .4 ⇒ opacity:.4；
       ShaderMask 线性 [white → transparent] stops [.8,1] ⇒ mask-image 末 20% 渐隐；
       之上再叠 48px 底部羽化条（把图压回页面底色；Kazumi 用 scaffoldBackgroundColor，这里用 --bg-1）。
-   ② 横向 26px 由 .detail-full 的既有 padding 提供：头图 / 分段条用负 margin 通栏、内部再补回 26px，
+   (2) 横向 26px 由 .detail-full 的既有 padding 提供：头图 / 分段条用负 margin 通栏、内部再补回 26px，
       这样完全不必改 .detail-full（它的 padding-top 54px = 顶栏 40px + 14px 必须保持）。
-   ③ 硬约束：头图不得 position:fixed（会压出 DWM 窗口圆角）；.dseg 的 sticky top 必须 40px
+   (3) 硬约束：头图不得 position:fixed（会压出 DWM 窗口圆角）；.dseg 的 sticky top 必须 40px
       （= .titlebar 高度；写 0 会滑到顶栏底下）；窗口边缘 6px / 四角 12×12 内不放可点元素；
       图片不用 opacity+onLoad 门控（lc-114：命中缓存时 onLoad 不触发 ⇒ 图永不显示），只做无条件 animation。
    ═══════════════════════════════════════════════════════════════ */
 
-/* ── ① 模糊海报头 ── */
+/* ── (1) 模糊海报头 ── */
 
 .dhero {
-  position: relative; /* 绝不 fixed：见 ③ */
+  position: relative; /* 绝不 fixed：见 (3) */
   margin: 0 -26px; /* 通栏（抵消 .detail-full 的 26px 横向内边距） */
   padding: 0 26px 20px; /* 内部内容回到 26px 对齐线 */
   min-height: var(--dhero-h, 200px);
@@ -2039,7 +2069,7 @@ button:active {
   height: calc(100% + 32px); /* _edgeBleed = 32：向下多出血 32px */
   object-fit: cover;
   object-position: center top;
-  filter: blur(15px) saturate(1.06); /* 等效 sigma 15 布局 px（@see ①） */
+  filter: blur(15px) saturate(1.06); /* 等效 sigma 15 布局 px（@see (1)） */
   transform: scale(1.06); /* 抵消 blur 边缘的半透明带 */
   opacity: 0.4; /* ← 白色 modulate alpha .4 */
   -webkit-mask-image: linear-gradient(to bottom, #000 0 80%, transparent 100%);
@@ -2088,7 +2118,7 @@ button:active {
   backdrop-filter: blur(8px);
 }
 
-/* ── ①b 信息卡（Kazumi BangumiInfoCardV 的等价物） ── */
+/* ── (1)b 信息卡（Kazumi BangumiInfoCardV 的等价物） ── */
 
 .dcard {
   position: relative;
@@ -2226,7 +2256,7 @@ button:active {
   transform: none;
 }
 
-/* ── ② 分段栏（Kazumi TabBar 等价物：居中、3px 下划线、贴在顶栏下 40px） ── */
+/* ── (2) 分段栏（Kazumi TabBar 等价物：居中、3px 下划线、贴在顶栏下 40px） ── */
 
 .dseg {
   position: sticky;
@@ -2279,7 +2309,7 @@ button:active {
   transform: scaleX(1);
 }
 
-/* ── ③ 面板容器 ── */
+/* ── (3) 面板容器 ── */
 
 .dbody {
   padding: 18px 0 40px;
@@ -2314,7 +2344,7 @@ button:active {
   margin-bottom: 0;
 }
 
-/* ── ③a 概览：简介折叠（120px）/ 标签 chips / 剧照横条 ── */
+/* ── (3)a 概览：简介折叠（120px）/ 标签 chips / 剧照横条 ── */
 
 .dsec {
   margin-bottom: 24px;
@@ -2399,7 +2429,7 @@ button:active {
   transform: scale(1.03);
 }
 
-/* ── ③b 选集：复用既有 .ep-* 形态，只覆写面板内尺寸节奏 + 已看/在看徽标 ── */
+/* ── (3)b 选集：复用既有 .ep-* 形态，只覆写面板内尺寸节奏 + 已看/在看徽标 ── */
 
 .dbody .ep-list {
   padding: 0; /* 覆盖基类 .ep-list 的 0 26px（面板自带 .dbody 内边距） */
@@ -2451,7 +2481,7 @@ button:active {
   }
 }
 
-/* ── ④ 动效降级（沿用既有 .poster-skeleton 的写法） ── */
+/* ── (4) 动效降级（沿用既有 .poster-skeleton 的写法） ── */
 
 @media (prefers-reduced-motion: reduce) {
   .dhero-bg img,
@@ -2474,7 +2504,7 @@ button:active {
 /* ═══════════════════════════════════════════════════════════════
    ───── 详情页「吐槽」分段：Bangumi 评论（lc-119）─────
    【纯追加的新一节】上面的「详情页重排 lc-118」一节一字未动。
-   形态对齐 Kazumi 的评论列表：圆形头像 40 + 昵称/日期 + 右侧 ★(rate/2) + 正文，
+   形态对齐 Kazumi 的评论列表：圆形头像 40 + 昵称/日期 + 右侧评分星(rate/2) + 正文，
    Divider 风格细分隔线（hairline + --line）；骨架屏沿用 .poster-skeleton 的
    shimmer 语言（--skel-base/--skel-shine 双主题变量），前缀 bgmc-（Bangumi Comments）。
    ═══════════════════════════════════════════════════════════════ */
@@ -2544,7 +2574,7 @@ button:active {
   flex-shrink: 0;
 }
 
-/* 右侧 ★(rate/2)：靠右对齐（margin-left:auto），金色同 .dstars-fg 的 --gold */
+/* 右侧评分星(rate/2)：靠右对齐（margin-left:auto），金色同 .dstars-fg 的 --gold */
 .bgmc-rate {
   margin-left: auto;
   flex-shrink: 0;
@@ -2684,14 +2714,14 @@ button:active {
 /* ═══════════════════ [lc-123-rev2] 内容区顶部「首页 | 发现」**浮层**胶囊 ═══════════════════
    自己动手改的第一版是"占一行的胶囊行"（.navbar 有 height/padding-top），实机截图里它把首页 hero
    顶下来一条白带 —— 用户否掉：胶囊**不占任何布局高度**，直接浮在内容区顶部（盖在海报上）。
-   ① .navbar 只做定位壳：absolute 居中在 .view-stack（侧栏右侧的内容区）里，
+   (1) .navbar 只做定位壳：absolute 居中在 .view-stack（侧栏右侧的内容区）里，
       top = 顶栏 40px + 12px 间隙；z-index 40：高于首页 hero 内部图层（.lib-strip 20 / .mist-nav 6）、
       低于 .titlebar(50) —— 永不抢顶栏的拖拽与窗口按钮。
-   ② 浮在图上是"任何底色都要看得清"：深玻璃底 + backdrop-filter 模糊 + 细描边 + 浅色字
+   (2) 浮在图上是"任何底色都要看得清"：深玻璃底 + backdrop-filter 模糊 + 细描边 + 浅色字
       （选中态仍用现有 --accent-grad）。
-   ③ 紧凑尺寸：容器 padding 3px / 标签 6px 22px / 字号 13px ⇒ 整宽 ≈150px（不抢海报视觉）。
-   ⚠ 顶栏整条是拖拽区（data-tauri-drag-region）：胶囊**必须** no-drag，否则点它只会拖窗口。
-   ⚠ 浮层自己 pointer-events:none（不拦下方海报的点击/悬停），点击权只收回到 .nav-cap 上。 */
+   (3) 紧凑尺寸：容器 padding 3px / 标签 6px 22px / 字号 13px ⇒ 整宽 ≈150px（不抢海报视觉）。
+   顶栏整条是拖拽区（data-tauri-drag-region）：胶囊**必须** no-drag，否则点它只会拖窗口。
+   浮层自己 pointer-events:none（不拦下方海报的点击/悬停），点击权只收回到 .nav-cap 上。 */
 
 .navbar {
   position: absolute;
@@ -2823,7 +2853,7 @@ button:active {
   text-shadow: none;
 }
 
-/* [lc-123-rev6] 三处动效的 reduced-motion 守卫（②③④；JS 侧另有 prefersReducedMotion() 守卫）：
+/* [lc-123-rev6] 三处动效的 reduced-motion 守卫（(2)(3)(4)；JS 侧另有 prefersReducedMotion() 守卫）：
    瞬时切换、不缩放、不位移。 */
 @media (prefers-reduced-motion: reduce) {
   .nav-cap-ind {
@@ -2834,8 +2864,8 @@ button:active {
   .nav-cap-l.on .nav-ico,
   .view-pane.anim-to-discover,
   .view-pane.anim-to-home,
-  .theme-ripple,
-  .theme-ripple.out {
+  .theme-veil,
+  .theme-veil.out {
     animation: none;
   }
 }
@@ -2953,7 +2983,7 @@ button:active {
   cursor: default;
 }
 
-/* ★ 两栏**各自**的滚动容器（min-height:0 是 flex 子项能滚动的前提） */
+/* 两栏**各自**的滚动容器（min-height:0 是 flex 子项能滚动的前提） */
 .dscroll {
   flex: 1;
   min-height: 0;
@@ -2992,254 +3022,219 @@ button:active {
   color: var(--muted);
 }
 
-/* ── [lc-123-rev] 左栏：顶部横向主推卡（16:9）+ 2 列横向卡 + 即将播出紧凑列表 ── */
+/* ── [lc-123-rev9] 左栏（**用户权威设计稿**）：
+      主推区 = 紧凑左右分栏（竖版海报 140×210 + 实底信息列，无文字压图）；
+      「本季新剧」= 2:3 竖版海报网格（auto-fill minmax(140px,1fr)）；
+      「即将播出」紧凑行沿用 .duplist。
+      颜色全部走主题变量（设计稿的 #8a2be2/#0b0e14 不照抄）。 ── */
 
-.dphero {
-  position: relative;
-  aspect-ratio: 16 / 9;
-  border-radius: 16px;
-  overflow: hidden;
+/* 主推分栏 */
+.dfeat {
+  display: flex;
+  gap: 20px;
+  background: var(--bg-2);
   border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.dfeat-poster {
+  position: relative;
+  width: 140px;
+  height: 210px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  overflow: hidden;
   background: var(--ph-bg);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25);
 }
 
-/* 主推卡背景大图：海报是 2:3 竖图，按 16:9 裁切时把视觉重心往上抬一点（人物头部不被切掉） */
-.dphero-bg {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-}
-
-/* [lc-123-rev3] 主推大图优先用 16:9 横图（backdropPath）：原生比例 = 框比例 → 不裁切。
-   缺横图才回落 2:3 海报（.is-poster）：object-position:center 25% 温和裁切，把人物头部留在画面里。 */
-.dphero-bg img {
+.dfeat-poster img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: center;
   display: block;
 }
 
-.dphero-bg.is-poster img {
-  object-position: center 25%;
-}
-
-/* 底部渐变遮罩：标题/简介压在图上是可读的前提（对齐设计稿的 .hero .sh） */
-.dphero-sh {
+.dfeat-poster-empty {
   position: absolute;
   inset: 0;
-  z-index: 1;
-  background: linear-gradient(0deg, rgba(6, 10, 18, 0.94) 12%, rgba(6, 10, 18, 0.44) 52%, rgba(6, 10, 18, 0.06) 100%);
+  display: grid;
+  place-items: center;
+  color: var(--muted);
 }
 
-.dphero-in {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 2;
+.dfeat-info {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 14px 18px 16px;
+  justify-content: center;
+  gap: 10px;
 }
 
-.dphero-badge {
-  align-self: flex-start;
-  font-size: 11.5px;
-  padding: 3px 9px;
-  border-radius: 7px;
-  background: var(--accent-grad);
-  color: #fff;
-}
-
-.dphero-in h3 {
-  margin: 0;
+.dfeat-title {
   font-size: 24px;
-  line-height: 1.15;
-  color: #fff;
-  text-shadow: 0 3px 16px rgba(0, 0, 0, 0.5);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text-strong);
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dphero-meta {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  font-size: 12.5px;
-  color: #d6e2f5;
-}
-
-/* 简介固定两行（-webkit-line-clamp: 2），多出来的省略 */
-.dphero-sum {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: #c8d6ea;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.dfeat-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+
+/* 评分徽章（深底金字胶囊，同设计稿 .tmdb-score-badge） */
+.dfeat-score {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-1);
+  color: var(--gold);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.dfeat-kind {
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  background: rgba(108, 155, 255, 0.16);
+  color: var(--accent);
+}
+
+.dfeat-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-/* 左右翻页箭头 */
-.dphero-ar {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 3;
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 50%;
-  background: rgba(10, 17, 29, 0.42);
-  color: #fff;
-  font-size: 20px;
-  line-height: 1;
-  cursor: pointer;
-  backdrop-filter: blur(6px);
-}
-
-.dphero-ar:hover {
-  background: rgba(10, 17, 29, 0.68);
-}
-
-.dphero-ar.left {
-  left: 10px;
-}
-
-.dphero-ar.right {
-  right: 10px;
-}
-
-/* 圆点指示（右上角，避开左下角的标题/简介） */
-.dphero-dots {
-  position: absolute;
-  right: 12px;
-  top: 12px;
-  z-index: 3;
-  display: flex;
-  gap: 6px;
-}
-
-.dphero-dot {
-  width: 8px;
-  height: 8px;
-  padding: 0;
+.dfeat-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 8px 20px;
   border: none;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.38);
+  border-radius: 8px;
+  background: var(--accent-grad);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
   cursor: pointer;
+  transition: filter 0.2s, opacity 0.2s;
 }
 
-.dphero-dot.on {
-  background: #fff;
+.dfeat-btn:hover {
+  filter: brightness(1.12);
 }
 
-/* ── 「本季新剧」2 列横向卡 ── */
+.dfeat-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 
-.dgrid2 {
+/* 标准海报网格（设计稿 .tmdb-grid：auto-fill 140px） */
+.dpcgrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 16px;
 }
 
-.dlc {
-  border-radius: 12px;
+/* 海报卡（设计稿 .tmdb-card）：2:3 原比例，不再裁 16:9 */
+.dpc {
+  border-radius: 10px;
   overflow: hidden;
-  border: 1px solid var(--line);
-  background: var(--hover);
-  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+  background: var(--bg-2);
+  border: 1px solid transparent;
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
 }
 
-.dlc:hover {
-  transform: translateY(-2px);
-  border-color: rgba(108, 155, 255, 0.5);
+.dpc:hover {
+  transform: translateY(-4px);
   box-shadow: var(--shadow-card);
+  border-color: var(--line-strong);
 }
 
-.dlc-img {
+.dpc-img {
   position: relative;
-  aspect-ratio: 16 / 9;
+  width: 100%;
+  aspect-ratio: 2 / 3;
   overflow: hidden;
   background: var(--ph-bg);
 }
 
-/* [lc-123-rev3] 卡片图：横图（16:9 backdrop）原生比例 = 框比例 → 不裁切；
-   缺横图回落 2:3 海报时用 .is-poster 温和裁切（center 25%），不硬切主体。
-   框本身的 16:9 / 2 列几何不动 —— 换图不改列几何，评分角标与标题行对齐不受影响。 */
-.dlc-img > img {
+.dpc-img > img {
   position: relative;
   z-index: 1;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: center;
   display: block;
 }
 
-.dlc-img.is-poster > img {
-  object-position: center 25%;
-}
-
-.dlc-empty {
+.dpc-empty {
   position: relative;
   z-index: 1;
   display: grid;
   place-items: center;
   height: 100%;
-  font-size: 20px;
-  opacity: 0.5;
-}
-
-/* 右上评分角标 */
-.dlc-rate {
-  position: absolute;
-  right: 7px;
-  top: 7px;
-  z-index: 2;
-  font-size: 11.5px;
-  font-weight: 700;
-  padding: 2px 7px;
-  border-radius: 7px;
-  background: rgba(10, 17, 29, 0.72);
-  color: var(--gold);
-  backdrop-filter: blur(4px);
-}
-
-.dlc-bd {
-  padding: 8px 10px 10px;
-}
-
-.dlc-t {
-  font-size: 13.5px;
-  color: var(--text-strong);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dlc-s {
-  margin-top: 4px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11.5px;
   color: var(--muted);
 }
 
-/* 小标签（已开播 / 未开播 / 电影 / 剧集） */
-.dpill {
-  font-size: 11px;
-  padding: 1px 7px;
+/* 右上评分角标（深底金字 + 毛玻璃，同设计稿 .card-score） */
+.dpc-rate {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  z-index: 2;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 6px;
   border-radius: 6px;
-  background: rgba(108, 155, 255, 0.16);
-  color: var(--accent);
+  background: rgba(10, 12, 18, 0.85);
+  backdrop-filter: blur(4px);
+  color: var(--gold);
+}
+
+.dpc-bd {
+  padding: 10px 12px 12px;
+}
+
+.dpc-t {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-strong);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dpc-s {
+  margin-top: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 /* ── 「即将播出」紧凑列表（日期徽章 + 一行标题 + 类型小标签） ── */

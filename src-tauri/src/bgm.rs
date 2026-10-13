@@ -691,6 +691,22 @@ pub async fn bgm_persons(id: i64) -> Result<Value, String> {
     Ok(v)
 }
 
+/// 关联条目：GET /v0/subjects/{id}/subjects（**裸数组**，TTL 7 天）。
+/// 上游每条 = `{id, type, name, name_cn, relation, images}`；`relation` 是中文关系词
+/// （实测 55 条 / 16 种：片头曲 4、片尾曲 4、原声集 2、游戏 14、画集 7、广播剧 7、番外篇 2 …），
+/// 顺序即上游原序（热度序），**这里不分组不截断** —— 分组交给前端（改版式不必重发 Rust）。
+/// 注意上游 `images` 可能是**空对象**（实测有），前端按空串兜底。
+#[tauri::command]
+pub async fn bgm_related(id: i64) -> Result<Value, String> {
+    let key = id.to_string();
+    if let Some(v) = cache_get("related", &key, TTL_PERSONS).await {
+        return Ok(v);
+    }
+    let v = get_json(&format!("/v0/subjects/{id}/subjects")).await?;
+    cache_put("related", &key, &v).await;
+    Ok(v)
+}
+
 /// 吐槽（评论）：GET /p1/subjects/{id}/comments?limit={l}&offset={o}。
 /// **不落盘缓存**：评论会持续增长，交给镜像边缘缓存（x-fntv-cache 头可观察）。
 /// 分页交给前端：offset += **实际返回条数**（不假定 limit 生效）。

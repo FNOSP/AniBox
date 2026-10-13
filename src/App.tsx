@@ -180,7 +180,24 @@ type BgmEpisodeRow = {
   name_cn?: string;
   airdate?: string;
   duration?: string;
+  /** 单集简介（bgm_episodes 自带；详情页右栏选集每集小标题下的那段） */
+  desc?: string;
 };
+
+/** [lc-1401] Bangumi 关联条目（/v0/subjects/{id}/subjects，**裸数组**）。
+ *  relation 是上游中文关系词（片头曲/片尾曲/原声集/游戏/画集/广播剧/番外篇/前传…），
+ *  type 是条目类型码（1 书籍 / 2 动画 / 3 音乐 / 4 游戏 / 6 三次元），images 可能是空对象。 */
+type BgmRelated = {
+  id?: number;
+  type?: number;
+  name?: string;
+  name_cn?: string;
+  relation?: string;
+  images?: Record<string, string> | null;
+};
+
+/** [lc-1401] Bangumi 标签（/v0/subjects/{id} 的 tags[]）：count = 该标签被标次数（热度序） */
+type BgmTag = { name?: string; count?: number };
 
 /** [lc-128] TMDB 演员 / 制作人员（src-tauri/src/tmdb.rs::tmdb_credits 归一化后）。
  *  剧集带 roles[].episodes（aggregate_credits 的"演了几集"）；crew 带 job/jobLabel（中文职务）。 */
@@ -1257,8 +1274,15 @@ function pickGenres(d: Record<string, unknown> | null): string[] {
   return [];
 }
 
-/** [lc-118] 分段栏标签（顺序即 tabIds 顺序：概览 / 选集 / 更多 / [lc-119] 吐槽） */
-const TAB_LABEL: Record<string, string> = { overview: "概览", eps: "选集", more: "更多", comments: "吐槽" };
+/** [lc-118] 分段栏标签（顺序即 tabIds 顺序）。
+ *  [lc-1401] 按用户定稿版式改名：概览→详情、更多→演职人员，并新增「关联条目」。
+ *  「选集」不再是标签页 —— 它按用户版式常驻右栏（每集小标题 + 简介的竖向列表）。 */
+const TAB_LABEL: Record<string, string> = {
+  overview: "剧照剧集详情信息",
+  comments: "吐槽评论",
+  related: "关联条目",
+  more: "演职人员",
+};
 
 /** [lc-119] 吐槽分页页大小（p1 上游默认 20；分页推进以**实际返回条数**为准，不假定 limit 生效） */
 const BGM_PAGE = 20;
@@ -2420,7 +2444,9 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   // [lc-119] 吐槽（Bangumi 评论）：懒加载 —— 用户切到该分段时才匹配+拉评论（避免拖慢首屏）
   const [bgm, setBgm] = useState<BgmMatch | null>(null);
   const bgmRef = useRef<BgmMatch | null>(null); // 供 legacy 回填任务/翻页读最新值（不进依赖数组）
-  const [bgmProbed, setBgmProbed] = useState(false); // 匹配是否已尝试（成败都置位；空壳分段靠它退场）
+  // [lc-1401] 匹配是否已尝试（成败都置位）。旧版用它给「吐槽」分段做入口闸门；
+  //   新版式标签条恒在（不增删项），这个标志只作诊断用途 —— 保留 setter 以沿用同一条匹配路径。
+  const [, setBgmProbed] = useState(false);
   const [comments, setComments] = useState<BgmComment[]>([]);
   const [commentsErr, setCommentsErr] = useState("");
   const [commentsBusy, setCommentsBusy] = useState(false); // 首屏拉取（骨架屏）
@@ -2447,6 +2473,16 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   const creditsLoadedRef = useRef(false);
   // [lc-128] 剧照点击放大（original 尺寸：走同一套三级缓存，拉了即落盘）
   const [zoom, setZoom] = useState("");
+  // [lc-1401] 关联条目（Bangumi /subjects/{id}/subjects）：与「更多」同套懒加载骨架
+  const [related, setRelated] = useState<BgmRelated[]>([]);
+  const [relatedErr, setRelatedErr] = useState("");
+  const [relatedBusy, setRelatedBusy] = useState(false);
+  const [relatedNonce, setRelatedNonce] = useState(0);
+  const relatedLoadedRef = useRef(false);
+  // [lc-1401] 右栏选集：本机条目集数 + Bangumi 集号对齐表（desc/标题回填）
+  const [bgmEps, setBgmEps] = useState<BgmEpisodeRow[]>([]);
+  // [lc-1401] Bangumi 条目详情（顶部标签框用它的 tags[]；与 bgm 匹配分开存，语义不同）
+  const [bgmSub, setBgmSub] = useState<Record<string, unknown> | null>(null);
   // 注意：与吐槽一样**不做 busy 重入闸门** —— StrictMode 的双调用会「首跑 abort + 二跑早退」，
   // 骨架屏会永久卡住；靠 alive 标志丢弃过期结果即可（最坏情况是 dev 下多发一次请求）。
 
@@ -2557,8 +2593,48 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
     setCredits(null);
     setCreditsErr("");
     setCreditsBusy(false);
+    relatedLoadedRef.current = false;
+    setRelated([]);
+    setRelatedErr("");
+    setRelatedBusy(false);
+    setBgmEps([]);
+    setBgmSub(null);
     setZoom("");
   }, [base.guid]);
+
+  // [lc-1401] 条目详情（bgm_subject）：新版式顶部的「标签框」用它（tags[]），**必须一开始就有**，
+  // 所以不再等用户点某个标签页 —— 匹配 + 详情两次请求在进页面时就发（都走镜像 + 落盘缓存：
+  // match 30 天、subject 6h），首屏不等它们（标签框自己显示骨架屏）。
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        let m = bgmRef.current;
+        if (!m) {
+          const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
+          const r = await invoke<BgmMatch | null>("bgm_match", {
+            query: title,
+            year: String(base.release_date || "").slice(0, 4) || null,
+            mediaType: base.type ?? null,
+            cacheKey: base.guid,
+          });
+          m = r && r.subject_id ? r : null;
+          if (!alive) return;
+          bgmRef.current = m;
+          setBgm(m);
+          setBgmProbed(true);
+        }
+        if (!m) return;
+        const s = await invoke<Record<string, unknown>>("bgm_subject", { id: m.subject_id });
+        if (alive && s && !(s as { error?: unknown }).error) setBgmSub(s);
+      } catch {
+        /* 标签框拉不到就空着（下面的各标签页有各自的失败重试），绝不阻塞首屏 */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [base.guid, data]);
 
   // [lc-119] 吐槽懒加载（只在切到「吐槽」分段时才开始）：先 bgm_match（结果按 base.guid 落盘缓存），
   // 再拉第一页 /p1/.../comments。重试按钮通过 commentsNonce 重新走这段。已有数据则不重复拉。
@@ -2669,6 +2745,49 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   /** 失败重试：清掉错误从头发一次（数据成功前 moreLoadedRef 恒为 false，无需额外重置） */
   const retryMore = () => setMoreNonce((n) => n + 1);
 
+  // [lc-1401] 关联条目懒加载：切到「关联条目」才发。复用 bgmRef（吐槽/更多已匹配过就直接用），
+  // 都没匹配过才发 bgm_match —— 三条懒加载路径共用同一份匹配结果的模式，与「更多」一致。
+  useEffect(() => {
+    if (tab !== "related") return;
+    if (relatedLoadedRef.current) return;
+    let alive = true;
+    (async () => {
+      setRelatedBusy(true);
+      setRelatedErr("");
+      try {
+        let m = bgmRef.current;
+        if (!m) {
+          const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
+          const r = await invoke<BgmMatch | null>("bgm_match", {
+            query: title,
+            year: String(base.release_date || "").slice(0, 4) || null,
+            mediaType: base.type ?? null,
+            cacheKey: base.guid,
+          });
+          m = r && r.subject_id ? r : null;
+          if (!alive) return;
+          bgmRef.current = m;
+          setBgm(m);
+        }
+        if (!m) throw new Error("未匹配到 Bangumi 条目");
+        const r = await invoke<BgmRelated[]>("bgm_related", { id: m.subject_id });
+        if (!alive) return;
+        setRelated(bgmList<BgmRelated>(r));
+        relatedLoadedRef.current = true;
+      } catch (e) {
+        if (alive) setRelatedErr(String(e));
+      } finally {
+        if (alive) setRelatedBusy(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [tab, relatedNonce, base.guid]);
+
+  /** 失败重试（关联条目）：与 retryMore 同款 —— 成功前 relatedLoadedRef 恒为 false */
+  const retryRelated = () => setRelatedNonce((n) => n + 1);
+
   // [lc-128] 演员表（**TMDB 主源**）：切到「更多」分段时懒加载一次；锚点优先（trim_id/tmdbId/imdbId），
   // 锚不到由 Rust 侧回落标题搜索（带相似度门槛）。结果在 Rust 侧落盘缓存 7 天 → 重复进详情页零请求。
   // 失败不影响 Bangumi/飞牛兜底展示（各自独立状态机）。
@@ -2769,14 +2888,16 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
     if (!missing.length) return;
 
     if (bgm?.subject_id) {
-      invoke<{ data?: { sort?: number; ep?: number; desc?: string }[] }>("bgm_episodes", {
+      invoke<{ data?: BgmEpisodeRow[] }>("bgm_episodes", {
         id: bgm.subject_id,
         limit: 200,
       })
         .then((r) => {
           if (!alive) return;
+          const rows = Array.isArray(r?.data) ? r.data : [];
+          if (rows.length) setBgmEps(rows); // [lc-1401] 右栏选集用它拿「第N话 小标题 + 单集简介」
           const byNum = new Map<number, string>();
-          for (const e of Array.isArray(r?.data) ? r.data : []) {
+          for (const e of rows) {
             // Bangumi 集号：sort 是数字序号（ep 是展示号，可能带小数/字母），优先 sort
             const num = Number.isInteger(e?.sort)
               ? (e.sort as number)
@@ -2828,6 +2949,14 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
   const poster = (pick(data ?? {}, ["posters", "poster"]) as string) || base.poster || "";
   const overview = String(pick(data ?? {}, ["overview"]) ?? base.overview ?? "");
+  // [lc-1401] 原题名（有就别名不显示）：优先条目详情，其次 Bangumi 匹配结果
+  const originalTitle = String(
+    pick(data ?? {}, ["originalTitle", "original_title", "originalName"]) ?? bgm?.name ?? "",
+  ).trim();
+  // [lc-1401] Bangumi 封面（本机没海报时的兜底；走 fntvimg 的 /__bgm 代理，拉了即落盘）
+  const bgmCover = bgmImg(
+    bgm?.images?.large || bgm?.images?.common || bgm?.images?.medium || bgm?.images?.grid || "",
+  );
   const rating = String(pick(data ?? {}, ["voteAverage", "vote_average"]) ?? base.vote_average ?? "");
   const releaseDate = String(
     pick(data ?? {}, ["releaseDate", "release_date"]) ?? base.release_date ?? "",
@@ -2837,7 +2966,8 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
 
   // [lc-118] 重排新增的派生显示值（纯 render 计算，不动任何数据 effect）
   const year = releaseDate.slice(0, 4);
-  const backdrop = pickImgStr(data ?? {}, ["backdrops", "backdrop"]) || "";
+  // [lc-1401] 新版式删掉了通栏头图（backdrop 不再用于详情页背景），
+  //   但「剧照」一节仍取 TMDB 的 backdrops —— 那是 tmdb.images.backdrops，与本机条目的 backdrop 不是一回事。
   const tmdbGenres: string[] = Array.isArray(tmdb?.genres)
     ? (tmdb?.genres as unknown[]).map((x) => String(x))
     : [];
@@ -2877,28 +3007,35 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
       ? "details"
       : "none";
   const fbCast = fnosCast(data);
-  // 分段栏：概览恒在；选集 = 剧集且拿到季（用 seasons 兜住"切季瞬间 episodes 被清空"，
-  // 否则 tab 会在点击季时闪没）。只有一项时整条不渲染。
-  // [lc-119] 吐槽：「匹配到 bgm 且拉到评论」时保留；匹配失败/无评论 → 离开后本项即消失（不留空壳）。
-  //   —— 懒加载需要入口，所以「尚未尝试匹配」时先显示（点进去才发请求）；尝试结束（bgmProbed）
-  //   且无数据时不再显示；停留期间保留本项以便展示骨架屏/失败重试/空态。
-  // 更多：同款懒加载闸门 —— TMDB 有数据、或拉到过演员表/角色/制作人员、或尚未尝试（moreProbed）时显示；
-  //   尝试结束且都空 → 离开后本项即消失。
-  const tabIds: string[] = [
-    "overview",
-    ...(isSeries && (episodes.length > 0 || seasons.length > 0) ? ["eps"] : []),
-    ...(tmdb ||
-    credits ||
-    tab === "more" ||
-    !moreProbed ||
-    chars.length > 0 ||
-    persons.length > 0
-      ? ["more"]
-      : []),
-    ...(tab === "comments" || !bgmProbed || (bgm && comments.length > 0) ? ["comments"] : []),
-  ];
+  // [lc-1401] 分段栏（用户定稿版式：四个标签页，顺序固定）
+  //   剧照剧集详情信息 / 吐槽评论 / 关联条目 / 演职人员 —— 全部**恒在**：
+  //   版式要求标签条是固定的一条（不是按"有没有数据"增删），所以不再自适应增删项；
+  //   无数据的分段自己显示空态（各自都有骨架屏/失败重试/空态三态）。
+  //   「选集」已移出标签条 —— 按版式常驻右栏（每集小标题 + 简介的竖向列表）。
+  const tabIds: string[] = ["overview", "comments", "related", "more"];
   const activeTab = tabIds.includes(tab) ? tab : "overview";
   const longIntro = overview.length > 96; // ≈4~5 行（Kazumi 是 TextPainter 实测 numLines>7，这里用字数近似）
+  // [lc-1401] Bangumi 标签（左侧信息框）：来自 bgm_subject 的 tags[]（count = 被标次数，上游按热度序）
+  const bgmTags: BgmTag[] = Array.isArray((bgmSub as Record<string, unknown> | null)?.tags)
+    ? ((bgmSub as Record<string, unknown>).tags as BgmTag[])
+    : [];
+  // [lc-1401] 关联条目按 relation 分组（上游原序即热度序，分组内不重排）
+  const relatedGroups: { relation: string; items: BgmRelated[] }[] = (() => {
+    const map = new Map<string, BgmRelated[]>();
+    for (const r of related) {
+      const k = String(r.relation || "其它").trim() || "其它";
+      const arr = map.get(k);
+      if (arr) arr.push(r);
+      else map.set(k, [r]);
+    }
+    return [...map.entries()].map(([relation, items]) => ({ relation, items }));
+  })();
+  // [lc-1401] 右栏选集：本机集号 → Bangumi 那集的 {小标题, 简介}（集号对齐 sort 优先，与回填逻辑一致）
+  const bgmEpByNum = new Map<number, BgmEpisodeRow>();
+  for (const e of bgmEps) {
+    const num = Number.isInteger(e?.sort) ? (e.sort as number) : Number.isInteger(e?.ep) ? (e.ep as number) : NaN;
+    if (Number.isFinite(num) && !bgmEpByNum.has(num)) bgmEpByNum.set(num, e);
+  }
 
 
   // [lc-106] 独立 mpv 窗口模式：点播放直接拉起独立 mpv（与主仓库一致），页面留在详情页
@@ -2922,103 +3059,112 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
 
   return (
     <main className="content detail-full" onScroll={onDetailScroll}>
-      {/* [lc-118] 详情页重排（Kazumi 风）：模糊海报头 + 信息卡 + 分段栏 + 面板。
+      {/* [lc-1401] 详情页按**用户定稿版式**重排（两栏）：
+            左列：竖版封面 + 标题信息 → 标签框（Bangumi tags）→ 剧集简介框 → 四标签页 → 该页内容
+            右列：集数据（本机集数 × Bangumi 集号对齐）的**整条竖向列表**
+          ⚠ 上一版的模糊大头图（.dhero）**已按新稿删除**：稿里首屏就是"封面 + 两块信息框"，没有通栏头图。
           数据 effect 全部留在本组件顶层（不下沉到面板里，否则单集简介回填失效）。 */}
-      <section className={`dhero${backdrop ? "" : " dhero--fallback"}`}>
-        <div className="dhero-bg" aria-hidden="true">
-          {(backdrop || poster) && <img src={imgUrl(backdrop || poster)} alt="" />}
-        </div>
-        <div className="dhero-top">
-          <button className="back" onClick={onBack} title="返回上一页">
-            ‹ 返回
-          </button>
-        </div>
-        <div className="dcard">
-          <div className="dcard-poster">
-            {poster ? <img src={imgUrl(poster)} alt={title} /> : <div className="poster-empty"><IcoFilmL size={22} strokeWidth={1.8} /></div>}
-          </div>
-          <div className="dcard-info">
-            <h1 className="dcard-title">{title}</h1>
-            <div className="meta-row">
-              {year && <span className="meta">{year}</span>}
-              {isSeries && numSeasons ? <span className="meta">{numSeasons} 季</span> : null}
-              {genres.map((g) => (
-                <span key={g} className="meta">
-                  {g}
-                </span>
-              ))}
-              <span className="meta type-chip">{base.type}</span>
-            </div>
-            {/* 评分：数字 + 星条 + N 人评分（Kazumi 信息卡同款；刻意不用 .rating —— 那是海报卡绝对定位的类名） */}
-            {ratingNum > 0 && (
-              <div className="dcard-score">
-                <span className="dscore-num">{ratingNum.toFixed(1)}</span>
-                <span className="dscore-outof">⁄10</span>
-                <span className="dstars" aria-hidden="true">
-                  <span className="dstars-bg">{[0, 1, 2, 3, 4].map((i) => (
-                  <IcoStarL key={i} size={15} strokeWidth={1.6} className="rating-ico fill" />
-                ))}</span>
-                  <span
-                    className="dstars-fg"
-                    style={{ width: `${Math.min(100, ratingNum * 10)}%` }}
-                  >
-                    {[0, 1, 2, 3, 4].map((i) => (
-                      <IcoStarL key={i} size={15} strokeWidth={1.6} className="rating-ico fill" />
-                    ))}
-                  </span>
-                </span>
-                {votes > 0 && (
-                  <span className="dscore-votes">{votes.toLocaleString("zh-CN")} 人评分</span>
-                )}
-              </div>
-            )}
-            {/* [lc-107] 播放入口（独立 mpv 窗口模式）：由旧标题行搬进信息卡，续播语义与禁用态不变 */}
-            <div className="dcard-act">
-              <button className="dplay" onClick={playing ? undefined : startPlay} disabled={playing}>
-                {playing ? "打开中…" : `▶ ${resumeAt ? "续播" : "播放"}`}
-              </button>
-              {playNote && <span className="play-note">{playNote}</span>}
-            </div>
-          </div>
-        </div>
-      </section>
+      <div className="dv2-rail">
+        <button className="back" onClick={onBack} title="返回上一页">
+          ‹ 返回
+        </button>
+      </div>
 
       {err && <div className="err">{err}</div>}
 
-      {/* 分段栏：动态 2~3 项（只有一项时不渲染整条） */}
-      {tabIds.length > 1 && (
-        <nav className="dseg" role="tablist">
-          {tabIds.map((id) => (
-            <button
-              key={id}
-              role="tab"
-              aria-selected={activeTab === id}
-              className={`dseg-btn${activeTab === id ? " active" : ""}`}
-              onClick={() => setTab(id)}
-            >
-              {TAB_LABEL[id]}
-            </button>
-          ))}
-        </nav>
-      )}
+      {/* ══ 两栏主体（用户版式）══ */}
+      <div className="dv2">
+        {/* ── 左列：封面 / 标签框 / 简介框 / 标签页 / 内容 ── */}
+        <div className="dv2-left">
+          {/* 竖版封面 + 标题（海报来自本机条目，无则用 Bangumi 的） */}
+          <div className="dv2-top">
+            <div className="dv2-poster">
+              {poster || bgmCover ? (
+                <img src={poster ? imgUrl(poster) : bgmCover} alt={title} draggable={false} />
+              ) : (
+                <div className="poster-empty"><IcoFilmL size={22} strokeWidth={1.8} /></div>
+              )}
+            </div>
+            <div className="dv2-topinfo">
+              <h2 className="dv2-title">{title}</h2>
+              {originalTitle && originalTitle !== title && <div className="dv2-orig">{originalTitle}</div>}
+              <div className="dv2-mrow">
+                {year && <span className="dv2-chip">{year}</span>}
+                {isSeries && numSeasons ? <span className="dv2-chip">{numSeasons} 季</span> : null}
+                {isSeries && episodes.length > 0 ? <span className="dv2-chip">{episodes.length} 集</span> : null}
+                <span className="dv2-chip type">{base.type}</span>
+              </div>
+              {ratingNum > 0 && (
+                <div className="dv2-score">
+                  <span className="dv2-score-n">{ratingNum.toFixed(1)}</span>
+                  <span className="dv2-score-o">/10</span>
+                  {votes > 0 && <span className="dv2-score-v">{votes.toLocaleString("zh-CN")} 人评分</span>}
+                </div>
+              )}
+              <div className="dv2-act">
+                <button className="dplay" onClick={playing ? undefined : startPlay} disabled={playing}>
+                  {playing ? "打开中…" : `▶ ${resumeAt ? "续播" : "播放"}`}
+                </button>
+              </div>
+              {playNote && <div className="play-note">{playNote}</div>}
+            </div>
+          </div>
 
-      <div className="dbody">
+          {/* 标签框（Bangumi tags；上游按热度序，取前 12 个）。拿不到就整块不渲染 —— 不占位、不显示空框 */}
+          {bgmTags.length > 0 && (
+            <div className="dv2-tagbox">
+              <div className="dv2-tagbox-h">
+                标签
+                <span className="dv2-src">Bangumi</span>
+              </div>
+              <div className="dv2-tagbox-b">
+                {bgmTags.slice(0, 12).map((t, i) => (
+                  <span key={`${t.name}-${i}`} className="dtag" title={t.count ? `${t.count} 人标记` : ""}>
+                    {t.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 简介框 */}
+          {overview && (
+            <div className="dv2-introbox">
+              <div className="dv2-introbox-h">
+                简介
+                {bgm && <span className="dv2-src">飞牛</span>}
+              </div>
+              <p className={`dfold${!introFull && longIntro ? " clip" : ""}`}>{overview}</p>
+              {longIntro && (
+                <button className="dfold-more" onClick={() => setIntroFull((v) => !v)}>
+                  {introFull ? "收起" : "展开"}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* 四标签页（固定一条，不随数据增删） */}
+          <nav className="dseg dv2-seg" role="tablist">
+            {tabIds.map((id) => (
+              <button
+                key={id}
+                role="tab"
+                aria-selected={activeTab === id}
+                className={`dseg-btn${activeTab === id ? " active" : ""}`}
+                onClick={() => setTab(id)}
+              >
+                {TAB_LABEL[id]}
+              </button>
+            ))}
+          </nav>
+
+          {/* 标签页内容 */}
+          <div className="dbody dv2-body">
         {activeTab === "overview" && (
           <div className="dpanel">
-            {overview && (
-              <section className="dsec">
-                <h2 className="dsec-t">简介</h2>
-                <p className={`dfold${!introFull && longIntro ? " clip" : ""}`}>{overview}</p>
-                {longIntro && (
-                  <button className="dfold-more" onClick={() => setIntroFull((v) => !v)}>
-                    {introFull ? "收起" : "展开"}
-                  </button>
-                )}
-              </section>
-            )}
             {genres.length > 0 && (
               <section className="dsec">
-                <h2 className="dsec-t">标签</h2>
+                <h2 className="dsec-t">类型标签</h2>
                 <div className="dtag-wrap">
                   {genres.map((g) => (
                     <span key={g} className="dtag">
@@ -3030,7 +3176,10 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
             )}
             {stills.length > 0 && (
               <section className="dsec">
-                <h2 className="dsec-t">剧照</h2>
+                <h2 className="dsec-t">
+                  剧照
+                  <span className="dsec-src">TMDB</span>
+                </h2>
                 <div className="dstill-strip">
                   {stills.map((p) => (
                     <img
@@ -3045,84 +3194,58 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                 </div>
               </section>
             )}
-            {!overview && genres.length === 0 && stills.length === 0 && (
-              <div className="empty">暂无简介</div>
+            {/* TMDB 扩展信息：分级 / 在线观看 / 相似 / 预告 / 别名关键词
+                （原来在「更多」里；[lc-1401] 版式把「演职人员」独立成一页，这里接住其余 TMDB 内容） */}
+            {tmdb && <TmdbExtra tmdb={tmdb} onZoom={setZoom} />}
+            {!overview && genres.length === 0 && stills.length === 0 && !tmdb && (
+              <div className="empty">暂无详情信息</div>
             )}
           </div>
         )}
 
-        {activeTab === "eps" && (
-          <div className="dpanel">
-            <div className="section-head">
-              <h3>选集</h3>
-              {seasons.length > 1 && (
-                <div className="season-tabs">
-                  {seasons.map((sn, i) => (
-                    <button
-                      key={sn.guid}
-                      className={`season-tab ${i === seasonIdx ? "active" : ""}`}
-                      onClick={() => setSeasonIdx(i)}
-                    >
-                      {sn.title || `第 ${sn.season_number ?? i + 1} 季`}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <span className="muted">{episodes.length} 集</span>
-            </div>
-            {episodes.length === 0 ? (
-              <div className="empty">暂无剧集</div>
-            ) : (
-              <div className="ep-list">
-                {episodes.map((ep) => {
-                  const progress =
-                    ep.ts && ep.duration && ep.duration > 0 ? Math.min(100, (ep.ts / ep.duration) * 100) : 0;
-                  const seen = Number(ep.watched) === 1 || progress >= 95;
-                  const label =
-                    ep.episode_number != null
-                      ? `第 ${ep.episode_number} 集${ep.title ? `. ${ep.title}` : ""}`
-                      : ep.title || "未命名剧集";
-                  const playing = playingGuid === ep.guid;
-                  return (
-                    <div
-                      key={ep.guid}
-                      className={`ep-row${playing ? " playing" : ""}`}
-                      onClick={() => {
-                        setPlayingGuid(ep.guid);
-                        invoke("play_item", { guid: ep.guid }).catch((e) => setErr(String(e)));
-                      }}
-                    >
-                      <div className="ep-thumb">
-                        {ep.poster ? (
-                          <img src={imgUrl(ep.poster)} loading="lazy" alt={label} />
-                        ) : (
-                          <div className="poster-empty"><IcoClapL size={22} strokeWidth={1.8} /></div>
-                        )}
-                        <span className="ep-play">{playing ? "◉" : "▶"}</span>
-                        {seen ? (
-                          <span className="ep-mark seen"><IcoCheckL size={11} strokeWidth={2.2} /> 已看</span>
-                        ) : (
-                          progress > 0 && <span className="ep-mark now">看到 {Math.round(progress)}%</span>
-                        )}
-                        {progress > 0 && (
-                          <div className="progress">
-                            <div style={{ width: `${progress}%` }} />
-                          </div>
-                        )}
-                      </div>
-                      <div className="ep-body">
-                        <div className="ep-row-title">
-                          {label}
-                          {ep.quality && <span className="ep-quality">{ep.quality}</span>}
-                        </div>
-                        {ep.overview && <p className="ep-overview">{ep.overview}</p>}
-                        {fmtDur(ep.duration) && <div className="ep-duration">{fmtDur(ep.duration)}</div>}
-                      </div>
-                    </div>
-                  );
-                })}
+        {/* [lc-1401] 关联条目（Bangumi /subjects/{id}/subjects）：**按 relation 分组**渲染
+            （上游没有分组，只有每条的 relation 词）。组序 = 上游首次出现顺序（热度序）。 */}
+        {activeTab === "related" && (
+          <div className="dpanel drel">
+            {relatedBusy && !relatedErr && <BgmListSkeleton />}
+            {relatedErr && (
+              <div className="bgmc-state">
+                <div className="bgmc-state-t">关联条目加载失败</div>
+                <div className="bgmc-state-d">{relatedErr}</div>
+                <button className="bgmc-retry" onClick={retryRelated}>
+                  重试
+                </button>
               </div>
             )}
+            {!relatedBusy && !relatedErr && related.length === 0 && (
+              <div className="empty">暂无关联条目</div>
+            )}
+            {relatedGroups.map((g) => (
+              <section className="dsec" key={g.relation}>
+                <h2 className="dsec-t">
+                  {g.relation}
+                  <span className="dsec-src">{g.items.length} 项</span>
+                </h2>
+                <div className="drel-grid">
+                  {g.items.map((r, i) => {
+                    const cover = r.images?.large || r.images?.common || r.images?.medium || r.images?.grid || "";
+                    const nm = String(r.name_cn || r.name || "").trim() || "（无标题）";
+                    return (
+                      <div className="drel-card" key={`${r.id ?? i}`} title={String(r.name || "")}>
+                        <div className="drel-cv">
+                          {cover ? (
+                            <img src={bgmImg(cover)} alt="" loading="lazy" draggable={false} />
+                          ) : (
+                            <div className="poster-empty"><IcoFilmL size={16} strokeWidth={1.8} /></div>
+                          )}
+                        </div>
+                        <div className="drel-nm">{nm}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
           </div>
         )}
 
@@ -3315,6 +3438,78 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
             {comments.length > 0 && commentsDone && <div className="bgmc-more">没有更多吐槽了</div>}
           </div>
         )}
+          </div>
+        </div>
+
+        {/* ── 右列：集数据（整条竖向列表）──
+            每集 = 集号徽标 + 小标题（本机集名 / Bangumi name_cn 兜底）+ 该集简介 + 时长。
+            「本机集数 × Bangumi 集号」对齐：本机集按 episode_number 取 Bangumi 同号那条的
+            小标题与 desc（Bangumi 只有一季时 ep 是**全季连号**，所以按号取，不按季内序号）。 */}
+        <aside className="dv2-right">
+          <div className="dv2e-hd">
+            <h3>选集</h3>
+            {seasons.length > 1 && (
+              <div className="season-tabs">
+                {seasons.map((sn, i) => (
+                  <button
+                    key={sn.guid}
+                    className={`season-tab ${i === seasonIdx ? "active" : ""}`}
+                    onClick={() => setSeasonIdx(i)}
+                  >
+                    {sn.title || `第 ${sn.season_number ?? i + 1} 季`}
+                  </button>
+                ))}
+              </div>
+            )}
+            <span className="muted">{episodes.length} 集</span>
+          </div>
+          <div className="dv2e-list">
+            {!isSeries ? (
+              <div className="empty">本条目不是剧集</div>
+            ) : episodes.length === 0 ? (
+              <div className="empty">暂无剧集</div>
+            ) : (
+              episodes.map((ep, i) => {
+                const num = ep.episode_number ?? i + 1;
+                const bgmEp = bgmEpByNum.get(num);
+                const sub = String(bgmEp?.name_cn || bgmEp?.name || "").trim();
+                const desc = String(ep.overview || bgmEp?.desc || "").trim();
+                const progress =
+                  ep.ts && ep.duration && ep.duration > 0 ? Math.min(100, (ep.ts / ep.duration) * 100) : 0;
+                const seen = Number(ep.watched) === 1 || progress >= 95;
+                const playing = playingGuid === ep.guid;
+                return (
+                  <div
+                    key={ep.guid}
+                    className={`dv2e-row${playing ? " playing" : ""}${seen ? " seen" : ""}`}
+                    onClick={() => {
+                      setPlayingGuid(ep.guid);
+                      invoke("play_item", { guid: ep.guid }).catch((e) => setErr(String(e)));
+                    }}
+                    title={`播放 第 ${num} 集`}
+                  >
+                    <div className="dv2e-no">{playing ? "◉" : num}</div>
+                    <div className="dv2e-main">
+                      <div className="dv2e-t">
+                        <span className="dv2e-name">{sub || ep.title || `第 ${num} 集`}</span>
+                        {ep.quality && <span className="ep-quality">{ep.quality}</span>}
+                        {seen && <span className="dv2e-seen">已看</span>}
+                        {!seen && progress > 0 && <span className="dv2e-seen now">{Math.round(progress)}%</span>}
+                        {fmtDur(ep.duration) && <span className="dv2e-dur">{fmtDur(ep.duration)}</span>}
+                      </div>
+                      {desc && <p className="dv2e-desc">{desc}</p>}
+                      {progress > 0 && (
+                        <div className="progress dv2e-prog">
+                          <div style={{ width: `${progress}%` }} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </aside>
       </div>
 
       {/* [lc-128] 剧照原图（`original` 尺寸）：点击任意剧照放大。走同一套三级缓存

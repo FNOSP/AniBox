@@ -4073,6 +4073,8 @@ html.dark .ditem-tag {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-height: 0;
+  overflow: hidden;   /* [lc-1423] 内容溢出不影响外层容器高度 */
 }
 .dv2-itags {
   display: flex;
@@ -4081,19 +4083,38 @@ html.dark .ditem-tag {
   align-content: flex-start;
 }
 .dv2-isum {
+  position: relative;      /* 「展开」按钮的定位基座 */
+  flex: 0 0 auto;          /* 不参与拉伸 —— 被固定高度约束的那一块 */
+  height: 118px;
   min-height: 0;
-  flex: 1 1 auto;
+  overflow: hidden;
 }
-/* [lc-1410] 简介**默认全展示**（用户要求去掉「收起」按钮）：
-   不再有折叠高度上限、不再有渐隐层、不再有「展开/收起」按钮；
-   排版上只做中文常规的**首行缩进两字**（2em = 两个汉字宽）。
-   ⚠ 缩进写进这条规则本身，别拆成第二条同选择器 —— 同选择器拆两条只是徒增"改哪个"的歧义。 */
+/* [lc-1423] 简介区：**固定高度 + 截断 + 展开按钮**（用户要求）。
+   历史：lc-1410 曾按"默认全展示"把简介全铺开，后果是长简介撑高 `.dv2-top` ——
+   而海报是定宽 `aspect-ratio:2/3`、父级 `align-items:stretch` ⇒ **海报被纵向拉长变形**。
+   现在简介区固定高度，容器高度只由海报决定；全文改在弹窗里看（见 .sum-modal）。
+   ⚠ 本选择器只此一条规则（历史上被拆成两条过，已合并）。 */
 .dv2-isum .dfold {
   margin: 0;
   font-size: 13px;
   line-height: 1.8;
   color: var(--text-2);
   text-indent: 2em;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+/* 未展开时才画底部渐隐（全文在弹窗里，容器内不存在"展开态"） */
+.dv2-isum .dfold.clip::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 18px;            /* 让开「展开」按钮那一行 */
+  height: 34px;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0), var(--bg-2));
+  pointer-events: none;
 }
 .dv2-topinfo .play-note {
   font-size: 12px;
@@ -5076,4 +5097,81 @@ html.dark .ditem-tag {
   height: 16px;
   margin-bottom: 12px;
   border-radius: 6px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   [lc-1423] 简介区：**容器固定高度**、简介截断 + 「展开」按钮 + 弹窗看全文
+
+   背景（为什么必须固定高度）：`.dv2-top` 是 `display:flex; align-items:stretch`，
+   海报 `.dv2-poster` 是 `width:132px; aspect-ratio:2/3` 的**定宽**块。
+   lc-1410 把简介改成"全铺开"之后，长简介会把 `.dv2-top` 撑高 ——
+   stretch 又把海报拉到同高 ⇒ **海报被纵向扯长变形**（用户截图里的斜长海报就是这个）。
+   现在给简介区固定高度，容器高度就只由海报（固定 2:3）决定，简介多长都不影响。
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* 右栏信息区不再被高度撑开：交给固定高度的简介区 */
+/* 「展开」：右下角的小文字按钮（安静样式，不抢视觉） */
+.dv2-expand {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.dv2-expand:hover {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+
+/* ── 简介弹窗（复用 .ddet-mask 遮罩；这块只定义卡片与正文） ── */
+.sum-modal {
+  width: min(720px, 92vw);
+  max-height: min(78vh, 700px);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-2);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.sum-modal-h {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.sum-modal-h h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text-strong);
+}
+/* 关闭按钮复用 .ddet-close 的外观，但这里它在 flex 行里、不再绝对定位 */
+.sum-modal-x {
+  position: static;
+  margin-left: auto;
+}
+.sum-modal-b {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 20px;
+}
+.sum-modal-b .dfold {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.9;
+  color: var(--text-2);
+  text-indent: 2em;      /* 与容器内保持一致的中文排版 */
+  white-space: pre-wrap; /* 保留原文换行（上游简介常带段落空行） */
 }

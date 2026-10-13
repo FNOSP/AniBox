@@ -2721,7 +2721,10 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   const [err, setErr] = useState("");
   // [lc-118] 详情页分段栏当前项
   const [tab, setTab] = useState("overview");
-  // [lc-1410] 原 introFull（简介折叠展开态）随「收起按钮」一起移除：简介默认全展示。
+  // [lc-1423] 重新引入简介展开态：true = 弹窗打开（看完整简介）。
+  //   注意语义与 lc-1410 之前不同 —— 那时是"就地铺开"（会撑高容器、拉长海报），
+  //   现在是"**弹出弹窗**看全文"，容器高度不受影响。
+  const [introFull, setIntroFull] = useState(false);
   // [lc-119] 吐槽（Bangumi 评论）：懒加载 —— 用户切到该分段时才匹配+拉评论（避免拖慢首屏）
   const [bgm, setBgm] = useState<BgmMatch | null>(null);
   const bgmRef = useRef<BgmMatch | null>(null); // 供 legacy 回填任务/翻页读最新值（不进依赖数组）
@@ -3397,6 +3400,17 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   //   无数据的分段自己显示空态（各自都有骨架屏/失败重试/空态三态）。
   //   「选集」已移出标签条 —— 按版式常驻右栏（每集小标题 + 简介的竖向列表）。
   const tabIds: string[] = ["overview", "reviews", "comments", "related", "more"];
+  // [lc-1423] 简介是否需要"展开"：与之前同一套字数近似（>96 字≈4~5 行）
+  const longIntro = overview.length > 96;
+  // Esc 关简介弹窗（与项目其它弹层同一套键盘约定）
+  useEffect(() => {
+    if (!introFull) return;
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIntroFull(false);
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [introFull]);
   const activeTab = tabIds.includes(tab) ? tab : "overview";
   // [lc-1405] 标签框数据源：**Bangumi tags[] 优先，TMDB genres 兜底**（用户要求"直接取 bgm 或 tmdb 的"）。
   //   ⚠ 不再用飞牛 item 的 tags —— 那是刮削元信息字典（含"话数"这类），不是题材标签，
@@ -3538,9 +3552,18 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
               )}
               {overview && (
                 <div className="dv2-isum">
-                  {/* [lc-1410] 用户要求：**不要「收起」按钮、默认全展示**（原来是 120px 折叠 + 展开/收起）。
-                      所以这里不再挂 .clip、不再渲染按钮 —— 简介多长就多长。 */}
-                  <p className="dfold">{overview}</p>
+                  {/* [lc-1423] 改回"截断 + 展开"（用户要求），但这次**不再动容器高度**：
+                      lc-1410 曾按"不要收起按钮、默认全展示"把简介全铺开，后果是长简介把
+                      `.dv2-top` 撑高 —— 而海报是 `aspect-ratio:2/3` 的定宽块，
+                      在 `align-items:stretch` 下被**拉长变形**（用户截图里海报就是被扯长的）。
+                      现在：简介区**固定高度**、超出部分渐隐截断，右下角一个「展开」按钮；
+                      点击 → 弹窗展示完整简介（不动海报、不撑容器）。 */}
+                  <p className={`dfold${longIntro && !introFull ? " clip" : ""}`}>{overview}</p>
+                  {longIntro && (
+                    <button className="dv2-expand" onClick={() => setIntroFull(true)}>
+                      展开
+                    </button>
+                  )}
                 </div>
               )}
               {!bgmTags.length && !overview && <div className="empty">暂无标签与简介</div>}
@@ -4073,6 +4096,28 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
           </div>
         </aside>
       </div>
+      )}
+
+      {/* [lc-1423] 简介弹窗：完整正文（容器固定高度 + 截断后，全文在这里看）。
+          Esc / 点背景关闭；正文可滚动（长简介比一屏更长）。 */}
+      {introFull && (
+        <div className="ddet-mask" onClick={() => setIntroFull(false)}>
+          <div className="sum-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="sum-modal-h">
+              <h3>简介</h3>
+              <button
+                className="ddet-close sum-modal-x"
+                title="关闭（Esc）"
+                onClick={() => setIntroFull(false)}
+              >
+                <IcoXL size={15} strokeWidth={1.8} />
+              </button>
+            </div>
+            <div className="sum-modal-b">
+              <p className="dfold">{overview}</p>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* [lc-128] 剧照原图（`original` 尺寸）：点击任意剧照放大。走同一套三级缓存

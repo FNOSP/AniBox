@@ -895,8 +895,11 @@ h3 {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: var(--accent-grad);
-  color: #fff;
+  /* [lc-1425] 同 .ep-mark.seen：压在海报上，改深色毛玻璃底（不再是主色渐变+反白） */
+  background: rgba(10, 12, 18, 0.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: rgba(255, 255, 255, 0.94);
   font-size: 12px;
   display: flex;
   align-items: center;
@@ -2340,8 +2343,16 @@ button:active {
   backdrop-filter: blur(6px);
 }
 .ep-mark.seen {
-  background: var(--accent-grad);
-  color: #fff;
+  /* [lc-1425] 配色优化（用户："已看按钮蓝色调也优化"）。
+     ⚠ 与 lc-1422 那个按钮**不同**：这个徽标压在**剧照**上，不是压在卡片底色上，
+       所以不能改成 `--hover` 那类半透明浅底（会看不清）。
+       这里改用与**同排其它角标**一致的"深色毛玻璃 + 浅色字"：
+         · 「看到 N%」(.ep-mark.now) = rgba(10,12,18,.72) + 金字
+         · 播放角标 (.ep-play)      = rgba(0,0,0,.45) + 白字
+       已看 = 同款深底 + 白色字（Check 图标保留），取消蓝紫渐变与反白主色；
+       检查图标用一点 --accent 作"完成"暗示，但整体不再抢眼。 */
+  background: rgba(10, 12, 18, 0.72);
+  color: rgba(255, 255, 255, 0.94);
 }
 .ep-mark.now {
   background: rgba(10, 12, 18, 0.72);

@@ -3522,20 +3522,9 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
               ) : (
                 <div className="poster-empty"><IcoFilmL size={22} strokeWidth={1.8} /></div>
               )}
-              {/* [lc-1408] 播放入口挪到**海报上**：用户要求把海报右侧那块（原年份/季数/评分/播放）
-                  整个让给标签与简介，但播放入口不能一起消失 —— 剧集还能点右栏选集播，
-                  电影（非剧集）就彻底没有入口了。放海报底角，不进右侧信息框。 */}
-              <button
-                className="dv2-play"
-                title={resumeAt ? "继续播放" : "播放"}
-                onClick={playing ? undefined : startPlay}
-                disabled={playing}
-              >
-                <span className="dv2-play-ico" aria-hidden="true">
-                  <IcoPlayL size={16} strokeWidth={2.2} />
-                </span>
-                <span className="dv2-play-t">{playing ? "打开中…" : resumeAt ? "续播" : "播放"}</span>
-              </button>
+              {/* [lc-1420] 海报上的播放按钮已删（用户要求）。
+                  播放入口现在统一在**选集头部**（剧集），或右栏为空时的下方按钮（电影）——
+                  见 aside 里的 .dv2e-play-btn / .dv2-solo-play。 */}
             </div>
 
             {/* [lc-1408] 海报右侧信息框 = **标签 + 简介**（用户定稿：这一块原来的
@@ -3580,12 +3569,33 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
           {/* 标签页内容 */}
           <div className="dbody dv2-body">
         {activeTab === "overview" && (
-          <div className="dpanel">
+          /* [lc-1420] `.dpanel-single`：本页所有节包进**一个**容器、节间用浅横线分隔（用户要求）。
+             见 App.css 里同名类的注释（为什么不用 :has）。 */
+          <div className="dpanel dpanel-single">
             {/* [lc-1405] 原本这里还有一节「类型标签」渲染 genres —— 与左列顶部那个标签框**同一份数据**，
                 重复；且用户已要求标签框直接取 BGM/TMDB，这一节就失去存在意义。故删除。 */}
             {/* [lc-1404] 剧照 / 分级 / 在线观看 / 相似 / 预告 / 别名关键词：**全部由 TmdbExtra 一处渲染**。
                 此前这里是"自己一条 .dstill-strip + TmdbExtra 里再来一条 .tmdb-stills"，
                 结果是同一批 TMDB 剧照出现**两组**（用户反馈）。现在只留 TmdbExtra 那一份。 */}
+            {/* [lc-1420] 分块骨架：TMDB 详情也是一条独立请求，没回来之前这块是空的。
+                摆"剧照 + 文本行"的骨架（形状与 TmdbExtra 的首节一致），到位时无跳动。 */}
+            {!tmdb && (
+              <>
+                <div className="tmdb-sec">
+                  <div className="dsk dsk-sec-t" />
+                  <div className="dvstill-row">
+                    {[0, 1, 2, 3].map((i) => (
+                      <div key={i} className="dsk dsk-dstill" />
+                    ))}
+                  </div>
+                </div>
+                <div className="tmdb-sec">
+                  <div className="dsk dsk-sec-t" />
+                  <div className="dsk dsk-sline" />
+                  <div className="dsk dsk-sline short" />
+                </div>
+              </>
+            )}
             {tmdb && <TmdbExtra tmdb={tmdb} onZoom={setZoom} />}
             {!overview && genres.length === 0 && !tmdb && (
               <div className="empty">暂无详情信息</div>
@@ -3923,6 +3933,18 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
             「本机集数 × Bangumi 集号」对齐：本机集按 episode_number 取 Bangumi 同号那条的
             小标题与 desc（Bangumi 只有一季时 ep 是**全季连号**，所以按号取，不按季内序号）。 */}
         <aside className="dv2-right">
+          {/* [lc-1420] 非剧集（电影等）没有选集可点，海报上的播放按钮又已删 —— 
+              这里给一个独立的播放入口，避免"能看不能播"。 */}
+          {!isSeries && (
+            <button
+              className="dv2-solo-play"
+              disabled={playing}
+              onClick={playing ? undefined : startPlay}
+            >
+              <IcoPlayL size={16} strokeWidth={2.4} />
+              <span>{playing ? "打开中…" : resumeAt ? "继续播放" : "播放"}</span>
+            </button>
+          )}
           <div className="dv2e-hd">
             <div className="dv2e-hd-l">
               <div className="dv2e-hd-t">
@@ -3987,6 +4009,20 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
           <div className="dv2e-list">
             {!isSeries ? (
               <div className="empty">本条目不是剧集</div>
+            ) : episodes.length === 0 && seasons.length === 0 ? (
+              /* [lc-1420] **分块骨架**：条目详情（data）到得很快，所以整页骨架一闪就没了；
+                 但季/集是另外两条请求 —— 它们没回来之前右栏是空的，用户看着就是"还在等数据"。
+                 这里单独给右栏摆骨架（用真实行高，数据到位时不跳）。 */
+              [0, 1, 2, 3].map((i) => (
+                <div className="dv2e-row" key={`sk${i}`}>
+                  <div className="dv2e-thumb"><div className="dsk dsk-dthumb" /></div>
+                  <div className="dv2e-main">
+                    <div className="dsk dsk-sline" />
+                    <div className={`dsk dsk-sline${i % 2 ? " short" : ""}`} />
+                    <div className="dsk dsk-sline short" />
+                  </div>
+                </div>
+              ))
             ) : episodes.length === 0 ? (
               <div className="empty">暂无剧集</div>
             ) : (

@@ -4967,3 +4967,85 @@ html.dark .ditem-tag {
 .dv2-poster .dsk {
   display: block;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   [lc-1420] 「详情信息」页：内容卡片**全部包进一个容器**、用**浅横线**分隔（用户要求）。
+   原本每节（剧照 / 相似 / 更多）各自是独立圆角卡片（.tmdb-sec 自带底+描边+圆角），
+   一屏里几个"小方块"看着散；现在改成一个大容器，节与节之间只画一条淡横线。
+   ⚠ .tmdb-sec 是 **TmdbExtra 内部**的节容器，它也被别的页用过（历史遗留），
+     所以这里用 `.dpanel` 做作用域限定 —— 只影响详情信息页，不动别处。
+   ══════════════════════════════════════════════════════════════════════════════ */
+.dpanel > .tmdb-sec {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 16px 18px;
+}
+.dpanel > .tmdb-sec + .tmdb-sec {
+  border-top: 1px solid var(--line);   /* 浅横线分隔（与项目其它分隔线同一色阶） */
+}
+/* 容器本体：把这一页的所有节箍在一起（首末节的内边距对称）。
+   ⚠ 这里**必须用显式类**（.dpanel-single），不能用 `:has()` ——
+     `:has()` 在旧 WebView 上会被**整条规则丢弃**（不是报错，是"看起来没写"），
+     本项目 lc-1404 已经因为这个坑吃过一次亏（那条注释还在文件上半部分）。
+     显式类在 DOM 上直接可见、可查、可断言。 */
+.dpanel-single {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  overflow: hidden;
+}
+.dpanel-single > .tmdb-sec:first-child {
+  padding-top: 14px;
+}
+.dpanel-single > .tmdb-sec:last-child {
+  padding-bottom: 14px;
+}
+/* 电影类条目的独立播放按钮（右栏顶部） */
+.dv2-solo-play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  height: 40px;
+  margin-bottom: 8px;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--accent-grad);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+.dv2-solo-play:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(108, 155, 255, 0.42);
+}
+.dv2-solo-play:active {
+  transform: scale(0.98);
+}
+.dv2-solo-play:disabled {
+  opacity: 0.65;
+  cursor: default;
+  transform: none;
+}
+
+/* [lc-1420] 分块骨架补两块尺寸类（剧照块 / 节标题块）——
+   形状与真实元素对齐，数据到位时不跳动：
+   · dsk-dstill：与 .dvstill-row img 的 124×70 一致
+   · dsk-sec-t：与 .tmdb-sec-t 的字号行高一致 */
+.dsk-dstill {
+  width: 124px;
+  min-width: 124px;
+  height: 70px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.dsk-sec-t {
+  width: 64px;
+  height: 16px;
+  margin-bottom: 12px;
+  border-radius: 6px;
+}

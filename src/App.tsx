@@ -956,6 +956,7 @@ function PosterCard({
  */
 function ScrollRow({ children }: { children: ReactNode }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState(false);
   const [atStart, setAtStart] = useState(true);
   const [atEnd, setAtEnd] = useState(false);
@@ -966,6 +967,19 @@ function ScrollRow({ children }: { children: ReactNode }) {
     // 1px 容差：分数缩放（125%/150%）下 scrollLeft 是小数，等于阈值时不该误判成"还能滚"
     setAtStart(el.scrollLeft <= 1);
     setAtEnd(el.scrollLeft + el.clientWidth >= el.scrollWidth - 1);
+    // [lc-1409] 箭头要**相对图片区域垂直居中**（用户要求），而不是相对整行 ——
+    //   整行还含图片下方的标题/副标题，按整行居中会让箭头落到图片偏下的位置。
+    //   这里量出第一张卡片的图片高度写进 CSS 变量（.poster-box 有 aspect-ratio，
+    //   高度只取决于宽度，不依赖图片是否加载完成，所以量得到就是准的）。
+    const poster = el.querySelector<HTMLElement>(".poster-box");
+    const wrap = wrapRef.current;
+    if (wrap) {
+      // 量不到图片高度时（首帧未布局/结构变化）退化为"整行高度" ——
+      // 箭头就变成相对整行居中，比固定一个猜的像素值稳（继续观看与媒体库的图片高度差很多，
+      // 任何写死的兜底值都必然对其中一种不准）。
+      const imgH = poster && poster.offsetHeight > 0 ? poster.offsetHeight : el.clientHeight;
+      if (imgH > 0) wrap.style.setProperty("--srow-img-h", `${imgH}px`);
+    }
   }, []);
 
   useEffect(() => {
@@ -996,6 +1010,7 @@ function ScrollRow({ children }: { children: ReactNode }) {
   return (
     <div
       className="srow"
+      ref={wrapRef}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >

@@ -2243,11 +2243,27 @@ button:active {
   flex-direction: column;
 }
 .dmore {
-  gap: 14px; /* 原样复用 TmdbExtra 的 .tmdb-sec 结构，只补节间距 */
+  gap: 0;
+  /* [lc-1416] 用户要求：演职人员页内容**包进一个卡片容器**（原本各节是裸的、整页没有边界感）。
+     这里给统一的卡片底 + 内边距 + 圆角，与别的模块（.tmdb-sec）视觉语言一致；
+     节与节之间改用分隔线区分，而不是靠大间距（见下方 .dmore .dsec）。 */
+  padding: 6px 16px 16px;
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
 }
-/* 「更多」里的 .dsec 与 .dmore 的 gap 双份间距 → 由 gap 统一控制 */
+/* 卡片内的分节：用底部分隔线区分，不再靠间距 */
 .dmore .dsec {
+  padding: 14px 0;
   margin-bottom: 0;
+  border-bottom: 1px solid var(--line);
+}
+.dmore .dsec:last-child {
+  border-bottom: none;
+  padding-bottom: 2px;
+}
+.dmore .dsec:first-child {
+  padding-top: 10px;
 }
 
 /* ── (3)a 概览：简介折叠（120px）/ 标签 chips / 剧照横条 ── */
@@ -3149,8 +3165,13 @@ button:active {
   white-space: nowrap;
 }
 
-/* 「加载更多」（居中胶囊按钮）+ 尾部说明 */
-.dmore {
+/* [lc-1416] 「加载更多」居中胶囊按钮 —— 改名 .dmore → **.dmore-btn**。
+   为什么必须改名：原来它与「演职人员」页的**容器** `<div class="dpanel dmore">` 撞名，
+   而 `.dmore` 这条单独选择器（不加标签限定）**同样命中那个 div** —— 于是这个 block 级、
+   撑满宽度的容器套上了胶囊样式（border-radius: 999px 让上下变半圆、中间还是矩形）
+   + :hover 高亮。用户看到的"背景有个大椭圆、鼠标放上去还高亮"就是这个，
+   不是任何几何绘制，是**类名冲突**。容器那侧（.dmore / .dmore .dsec）语义正确、保持不动。 */
+.dmore-btn {
   display: block;
   margin: 12px auto 0;
   padding: 7px 24px;
@@ -3163,17 +3184,18 @@ button:active {
   cursor: pointer;
 }
 
-.dmore:hover {
+.dmore-btn:hover {
   background: var(--hover-strong);
   color: var(--text-strong);
 }
 
-.dmore:disabled {
+.dmore-btn:disabled {
   opacity: 0.55;
   cursor: default;
 }
 
-.dmore-hint {
+/* 尾部说明行（原 .dmore-hint，避开 dmore-* 前缀与上面按钮混淆） */
+.dup-hint {
   margin-top: 10px;
   text-align: center;
   font-size: 12px;

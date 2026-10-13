@@ -2054,7 +2054,7 @@ function TmdbPane({
               />
             )}
             {detailErr && (
-              <div className="dmore-hint" role="status">
+              <div className="dup-hint" role="status">
                 {detailErr}
               </div>
             )}
@@ -2099,18 +2099,22 @@ function TmdbPane({
                 <UpRow key={`${it.tmdbId}-${it.date}`} it={it} isMovie={isMovie} />
               ))}
             </ul>
+            {/* [lc-1416] 按钮类名 .dmore → **.dmore-btn**：原来它与「演职人员」页的**容器** .dmore 撞名，
+                而 `.dmore` 那条选择器同样命中那个 block 级、撑满宽度的 div →
+                容器套上了胶囊样式（border-radius:999px：上下半圆 + 中间矩形）与 :hover 高亮。
+                用户看到的"背景有个大椭圆、鼠标放上去还高亮"就是这个**类名冲突**，不是几何绘制。 */}
             {upMoreAvail && (
-              <button className="dmore" onClick={loadMoreUpcoming} disabled={upMoreBusy}>
+              <button className="dmore-btn" onClick={loadMoreUpcoming} disabled={upMoreBusy}>
                 {upMoreBusy ? "加载中…" : "加载更多"}
               </button>
             )}
             {/* 上游页数被后端夹在上限内：这里如实说明"只显示到第 N 部"，不谎称"已全部加载" */}
             {!upMoreAvail && upPage >= upLastPage && upTotal > upcoming.length && (
-              <div className="dmore-hint">
+              <div className="dup-hint">
                 已显示前 {upcoming.length} 部 · 共 {upTotal} 部
               </div>
             )}
-            {upMoreErr && <div className="dmore-hint">加载失败：{upMoreErr}</div>}
+            {upMoreErr && <div className="dup-hint">加载失败：{upMoreErr}</div>}
           </>
         )}
       </div>

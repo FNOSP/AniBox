@@ -3971,7 +3971,8 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
               `.dv2e-hd` 用 flex + nowrap + 允许横向溢出，保证"一排"；窄到实在放不下时才换行。 */}
           <div className="dv2e-hd">
             {/* 播放入口（原来在右侧，现移到最左）。语义：
-                有播放记录 → 「继续观看 第 N 集 · N%」；没有 → 「播放 第 1 集」。 */}
+                有播放记录 → 「观看至 第 N 集 · N%」（[lc-1424] 文案由"继续观看"改为"观看至"：
+                更贴合"已经看到第 N 集的第 N%"这个事实）；没有记录 → 「播放 第 1 集」。 */}
             {isSeries && resumeTarget && (
               <button
                 className="dv2e-play-btn"
@@ -3982,7 +3983,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                 }}
                 title={
                   resumePct > 0
-                    ? `继续播放 第 ${resumeTarget.episode_number ?? 1} 集（${resumePct}%）`
+                    ? `从第 ${resumeTarget.episode_number ?? 1} 集的 ${resumePct}% 继续播放`
                     : `播放 第 ${resumeTarget.episode_number ?? 1} 集`
                 }
               >
@@ -3991,7 +3992,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                   {playing
                     ? "打开中…"
                     : resumePct > 0
-                      ? `继续观看 第 ${resumeTarget.episode_number ?? 1} 集`
+                      ? `观看至 第 ${resumeTarget.episode_number ?? 1} 集`
                       : `播放 第 ${resumeTarget.episode_number ?? 1} 集`}
                 </span>
                 {resumePct > 0 && <i className="dv2e-play-pct">{resumePct}%</i>}

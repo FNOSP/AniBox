@@ -534,27 +534,88 @@ body,
 }
 
 .main-row {
+  position: relative;   /* [lc-1427] 侧栏改成 absolute 浮层后，这里是它的定位祖先 */
   display: flex;
   flex: 1;
   min-height: 0;
 }
+/* ══════════════════════════════════════════════════════════════════════════════
+   [lc-1427] 侧边栏：**覆盖式浮层**（用户要求"不要挤首页，改成展开覆盖到上层"）
+
+   原来是 `.main-row` flex 里的一个布局项（224px）—— 展开时把内容区挤窄，
+   首页轮播/海报因此被压出横向变形。现在改成 `position: absolute` 浮层：
+   内容区**永远占满**，侧栏展开时盖在上面，带毛玻璃能看见底下的内容。
+   动画保留并加强（用户要求"动画不要少"）：
+     · 展开/收起 = 位移 + 缩放 + 淡入，带轻微过冲（"抽出来"的手感）
+     · 背景 = **动态模糊**（backdrop-filter），不是实心色（用户要求）
+   ══════════════════════════════════════════════════════════════════════════════ */
 .sidebar {
+  position: absolute;      /* 脱离文档流：不再挤占内容区宽度 */
+  left: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 45;             /* 内容之上、顶栏(50)之下 —— 顶栏的汉堡键仍可点 */
   width: 224px;
-  min-width: 224px;
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1) 40%);
+  /* 背景 = 半透明 + 动态模糊（用户要求"背景色做动态模糊不要实心色"）。
+     半透明度刻意压低，模糊才看得出来；底色仍走主题变量，深浅主题都自然。 */
+  background: color-mix(in srgb, var(--bg-2) 62%, transparent);
+  backdrop-filter: blur(22px) saturate(1.35);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
   border-right: 1px solid var(--line);
+  box-shadow: 8px 0 32px rgba(12, 18, 40, 0.16);
   padding: 52px 10px 12px;
   overflow-y: auto;
   overflow-x: hidden;
   display: flex;
   flex-direction: column;
   gap: 3px;
-  transition: margin-left 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease;
+  /* [lc-1429] 动画换一套更优雅的（用户："侧栏动画换一个，这个不够优雅"）。
+     上一版的问题：`scale(0.97)` 让侧栏内容**轻微变形**（文字被缩放会糊一瞬），
+     过冲缓动 `cubic-bezier(.22,1.18,.36,1)` 在覆盖式侧栏上又显得"弹"。
+     这一版：
+       · **只做位移**（不再缩放）→ 文字始终清晰，是"滑出"而不是"弹出来"；
+       · 缓动 `cubic-bezier(0.32, 0.72, 0, 1)` —— 起步快、收尾长
+         （Material 的 emphasized-decelerate 手感），停下时**平稳落位**、无回弹；
+       · 时长 0.42s：224px 的位移用这点时间才显得从容；
+       · 收起后用 `visibility: hidden`（延迟到动画结束）撤出可访问性树。 */
+  transition:
+    transform 0.42s cubic-bezier(0.32, 0.72, 0, 1),
+    box-shadow 0.42s cubic-bezier(0.32, 0.72, 0, 1),
+    visibility 0s linear 0s;
+  will-change: transform;
 }
+/* 收起态：整体左移出屏 + 淡出 + 轻微缩小（不是"挤没"，是"抽走"） */
+/* 收起态：平滑滑出屏（不缩放、不淡出 —— 淡出会让"滑走"失去实体感） */
 .sidebar.collapsed {
-  margin-left: -224px;
-  opacity: 0;
+  transform: translateX(-100%);
   pointer-events: none;
+  box-shadow: none;
+  /* 动画期间保持可见，结束后才撤出渲染/可访问性树 */
+  visibility: hidden;
+  transition:
+    transform 0.42s cubic-bezier(0.32, 0.72, 0, 1),
+    box-shadow 0.42s cubic-bezier(0.32, 0.72, 0, 1),
+    visibility 0s linear 0.42s;
+}
+/* 无毛玻璃支持时（极旧 WebView）：退回接近实心的主题底色，至少保证可读 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .sidebar {
+    background: var(--bg-2);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* 少动效：不做位移动画，直接切换（visibility 仍即时生效） */
+  .sidebar,
+  .sidebar.collapsed {
+    transition: none;
+  }
+  .sidebar.collapsed {
+    transform: none;
+    visibility: hidden;
+  }
+  .sidebar-scrim {
+    animation: none;
+  }
 }
 .side-avatar {
   width: 32px;
@@ -1297,8 +1358,14 @@ button:active {
 
 .mist-banner {
   position: relative;
-  width: 100%;
-  height: 100vh; /* 标题栏为悬浮层，海报直铺到窗口上沿 */
+  /* [lc-1428] 轮播保持**全幅贴边**（不受 .home-full 横向 padding 影响）：
+     负边距抵消父级 padding、宽度补回来。它内部的信息层（.mist-info）自带
+     --home-pad 左留白，所以"轮播满幅 + 文字对齐"两者兼得
+     —— 这正是改动前的形态（用户要求"以原来轮播图的位置为准"）。 */
+  margin-left: calc(-1 * var(--home-pad));
+  margin-right: calc(-1 * var(--home-pad));
+  width: calc(100% + 2 * var(--home-pad));
+  height: 100vh; /* 满屏高度：媒体库条浮在上面 */
   overflow: hidden;
   background: #0a0e14;
 }
@@ -1459,7 +1526,12 @@ button:active {
 /* ═══════════ 首页：全屏 hero + 底部媒体库条 + 信息流分区（Emby 布局） ═══════════ */
 
 .home-full {
-  padding: 0 0 50px;
+  /* [lc-1428] 首页横向留白：原来靠侧栏（224px 布局项）提供左缘，侧栏改成浮层后
+     内容区直接顶到最左 —— 用户反馈"整体太靠左了，要以原来轮播图的位置为准"。
+     这里补上**与轮播内容一致**的左右留白（同一个 --home-pad 变量），
+     于是轮播文字 / 媒体库条 / 下方区块的左缘仍与改动前同一条基线。
+     （`.content` 本身有 26px 横向 padding，但首页用的是 .home-full 且此处归零过。） */
+  padding: 0 var(--home-pad) 50px;
 }
 .hero-zone {
   position: relative;
@@ -5199,4 +5271,20 @@ html.dark .ditem-tag {
   color: var(--text-2);
   text-indent: 2em;      /* 与容器内保持一致的中文排版 */
   white-space: pre-wrap; /* 保留原文换行（上游简介常带段落空行） */
+}
+
+/* [lc-1427] 侧栏的"点空白收起"遮罩：**完全透明**（见 JSX 注释：用户要的是覆盖上层，
+   不是模态弹窗，加暗化会让首页变暗）。层级：内容 < 遮罩(44) < 侧栏(45) < 顶栏(50)。 */
+.sidebar-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 44;
+  background: transparent;
+  cursor: default;
+  /* [lc-1429] 遮罩本身透明，但给一个极轻的淡入做层次（比侧栏快，先到后停） */
+  animation: scrimIn 0.28s ease both;
+}
+@keyframes scrimIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }

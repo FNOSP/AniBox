@@ -4917,6 +4917,22 @@ function App() {
     const homeReady = carousel.length > 0;
     body = (
       <div className="main-row">
+        {/* [lc-1427] 侧栏改为覆盖式浮层后的配套交互：展开时铺一层**透明遮罩**，
+            点击它收起侧栏（覆盖式侧栏的标准行为）。它必须：
+              · 在侧栏之下（z-index 44 < 侧栏 45）→ 不挡侧栏自己的点击；
+              · 在顶栏之下（< 50）→ 汉堡键仍可点（否则点不开/关不上）；
+              · 完全透明（不加暗化）—— 用户要的是"覆盖上层"而不是"模态弹窗"，
+                加暗化会让首页变暗、显得像对话框。 */}
+        {sidebarOpen && (
+          <div
+            className="sidebar-scrim"
+            aria-hidden="true"
+            onClick={() => {
+              setSidebarOpen(false);
+              localStorage.setItem("fntv-sidebar-open", "0");
+            }}
+          />
+        )}
         <Sidebar
           activeGuid={view === "home" ? null : activeLib?.guid ?? null}
           collapsed={!sidebarOpen}

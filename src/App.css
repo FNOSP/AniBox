@@ -1869,8 +1869,11 @@ button:active {
   padding-bottom: 4px;
 }
 .tmdb-stills img {
-  height: 128px;
-  min-width: 228px;
+  /* [lc-1415] 用户反馈"剧照图片太大了"→ 缩回紧凑尺寸（原 128px 高、228px 宽）：
+     高度收到 96px、宽度跟着 16:9 变成 170px。这样一行能放下 3-4 张（和别的模块
+     信息密度一致），不再一张就占掉半个面板。 */
+  height: 96px;
+  min-width: 170px;
   aspect-ratio: 16 / 9;
   object-fit: cover;
   border-radius: 8px;
@@ -3942,7 +3945,9 @@ html.dark .ditem-tag {
 
 .dv2 {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); /* 左主内容 + 右选集列 */
+  /* [lc-1415] 右栏上限 360→420px：封面放大到 152px 后，文字列需要更多横向空间
+     （用户反馈"右边剧集封面太小了…你看整体布局怎么调整一下"，这是三处调整之一）。 */
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 420px); /* 左主内容 + 右选集列 */
   gap: 22px;
   align-items: start;
   padding-bottom: 40px; /* 底部留白：放大图/弹层不贴边 */
@@ -4172,7 +4177,7 @@ html.dark .ditem-tag {
   color: var(--text-2);
   /* 设计稿里长标题是多行展示（不截断成一行），这里给到 4 行 */
   display: -webkit-box;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
   word-break: break-word;
@@ -4257,15 +4262,23 @@ html.dark .ditem-tag {
 }
 .dv2e-t {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
-  flex-wrap: wrap;
+  /* [lc-1415] nowrap：标题与「1080」徽标同一行，标题自己省略。
+     原来是 wrap，一挤就把徽标甩到第二行（用户截图里的排版乱象）。 */
+  flex-wrap: nowrap;
 }
 .dv2e-name {
   font-size: 13px;
   font-weight: 700;
   color: var(--text-strong);
-  word-break: break-word;
+  /* [lc-1415] 单行截断（原是多行 + break-word）：多行标题会把「1080」徽标与简介
+     一起往下挤。flex/min-width 让它能在窄列里被压缩而不是撑破。 */
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .dv2e-dur {
   font-size: 11px;
@@ -4288,9 +4301,9 @@ html.dark .ditem-tag {
   font-size: 12px;
   line-height: 1.65;
   color: var(--text-2);
-  /* 单集简介限 4 行：一屏能看到更多集（点开即离开本页，不需要全文铺开） */
+  /* [lc-1415] 简介 3 行（原 4 行）：封面放大后每行更高，3 行才能一屏看下 4-5 集 */
   display: -webkit-box;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
   word-break: break-word;
@@ -4363,8 +4376,11 @@ html.dark .ditem-tag {
    剧照 16:9（飞牛侧 poster 就是横向截图），左侧固定宽度，右侧文字可换行。 */
 .dv2e-thumb {
   position: relative;
-  width: 116px;
-  min-width: 116px;
+  /* [lc-1415] 用户反馈"右边剧集封面太小了"→ 116px 放大到 152px。
+     右栏宽 280~360px，原尺寸下封面只占约 1/3，文字列被挤成窄条（截图中简介断得很难看）；
+     放大后封面:文字 ≈ 4:5，与飞牛原版选集的比例相当。 */
+  width: 152px;
+  min-width: 152px;
   aspect-ratio: 16 / 9;
   border-radius: 8px;
   overflow: hidden;
@@ -4413,9 +4429,6 @@ html.dark .ditem-tag {
 .dv2e-row {
   gap: 12px;
   align-items: flex-start;
-}
-.dv2e-desc {
-  -webkit-line-clamp: 3; /* 有剧照后行更高了，简介收到 3 行，保证一屏可见 4-5 集 */
 }
 .dv2e-dur {
   margin-top: 5px;
@@ -4764,3 +4777,24 @@ html.dark .ditem-tag {
   color: #fff;
   opacity: 0.95;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   [lc-1415] 右栏选集的整体布局调整（配合封面放大到 152px）
+   用户反馈：封面太小；且截图里「第 1 集. 标题」与「1080」徽标挤成两行、简介断得很难看。
+   原因是右栏只 280~360px，而封面占 116px 后留给文字的更少。
+   本轮的调整（三处一起，才是"整体布局"）：
+     ① 右栏上限 360→420px：给文字更多横向空间（左列是主内容，本来就 minmax(0,1fr) 让得开）；
+     ② 封面 116→152px：与右栏新宽度成比例，且更接近飞牛原版选集的图:文比；
+     ③ 「1080」徽标改为**不参与换行**（nowrap），标题单独一行截断 ——
+        原来两者同行 flex-wrap，一挤就把徽标甩到第二行，看着像排版错乱。
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.dv2e-t .ep-quality {
+  flex: 0 0 auto;
+  margin-left: 6px;   /* 覆盖基类 .ep-quality 的 8px（模板里它跟标题在同一行） */
+}
+/* 时长：与简介同列，跟在简介下方；行高收紧一点 */
+.dv2e-dur {
+  margin-top: 4px;
+}
+/* 简介 3 行（封面变大后行更高，4 行会让一屏放不下几集） */

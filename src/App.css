@@ -47,11 +47,14 @@
   /* [lc-1426] 首页**统一内容左边距**（用户反馈：轮播文字与下方媒体库条/区块没对齐）。
      成因是三套基准各写各的：
        · 轮播文字 .mist-info  = `padding: 0 4% 163px`（4% 相对**轮播容器** .mist-item 宽）
-       · 媒体库条 .lib-strip   = `left: 4%`（绝对定位，4% 相对**定位祖先** .home-full 宽）
+       · 媒体库条 .lib-strip   = `left: 4%`（绝对定位，4% 相对**定位祖先** .hero-zone 宽）
        · 「继续观看」等区块      = `padding: 0 26px`（固定像素）
      前两者的百分比基准容器不同 ⇒ 渲染出来不齐（用户截图那条红线）。
-     现在统一到这个**固定像素变量**：两个容器（.mist-item / .home-full）左缘重合，
-     同值即可对齐；想整体调左右留白只改这一处。 */
+     现在统一到这个**固定像素变量**；想整体调左右留白只改这一处。
+     [lc-1432] 注意**基准各不相同**，不是哪里都写 var(--home-pad)：
+       · .mist-info 的基准是 0（.mist-banner 负边距把轮播拉成全幅）⇒ 写 var(--home-pad)
+       · .lib-strip / .lsc-pop 的基准**已经是 26**（定位祖先 .hero-zone 就在 .home-full
+         的 26px 内容盒内）⇒ 必须写 0，写变量就是 26+26=52（实测踩过） */
   --home-pad: 26px;
 }
 
@@ -1425,10 +1428,11 @@ button:active {
        → .mist-banner margin-left -26 ⇒ 盒子左缘 0（全幅贴边）+ 宽 calc(100%+52)
        → .mist-item 宽 100% ⇒ 左缘 0
        → 本层 absolute、定位祖先是 .mist-item ⇒ 基准 0
-     ⇒ 所以这里写 `var(--home-pad)`，文字落在 **26px**；
-       与 .lib-strip（定位祖先是 .view-stack，基准 0，left:26 ⇒ 26px）同一条基线。
-     ⚠ 基准不同不可复用同一套直觉：本层的基准**已经**是 0（负边距把它拉回来了），
-       而 .lib-strip 的基准也是 0 —— 两者恰好都只需 26。
+     ⇒ 所以这里写 `var(--home-pad)`，文字落在 **26px**。
+     [lc-1432] 本层基准是 0（.mist-banner 的负边距把它拉回全幅），写变量即 26；
+       而 .lib-strip / .lsc-pop 的基准**已经是 26**（定位祖先 .hero-zone 在 .home-full
+       的 26px 内容盒内）⇒ 那两处写 0 才是 26。基准不同，别复用同一套直觉。实测值：
+       轮播标题/简介/播放按钮/区块标题/横排首卡 = 26，媒体库条卡也曾是 52（现已修）。
      163 = 媒体库条占位(卡124px+底边距14px) + ~25px 隔离带 */
   padding: 0 var(--home-pad) 163px;
   box-sizing: border-box;
@@ -1551,10 +1555,12 @@ button:active {
 }
 .lib-strip {
   position: absolute;
-  /* [lc-1426] 与海报信息层用**同一个变量**（原注释就写了"要与 .mist-info 左缘对齐"，
-     但两处百分比基准不同所以从未真正对齐；right 也从 26px 统一过来） */
-  left: var(--home-pad);
-  right: var(--home-pad);
+  /* [lc-1432] 归零 —— 实测（dev 自检 [align]）这里渲染在 **52px**，比其它元素多一个 --home-pad。
+     原因：定位祖先是 `.hero-zone`（position: relative），而 `.hero-zone` 本身**已经**
+     落在 `.home-full` 的 26px 内容盒内 ⇒ 再写 left: var(--home-pad) 就是 26+26。
+     基准已经是 26，所以这里只需 0（右缘同理）。 */
+  left: 0;
+  right: 0;
   bottom: 14px;
   z-index: 20;
   display: flex;
@@ -1682,7 +1688,9 @@ button:active {
 }
 .lsc-pop {
   position: absolute;
-  left: 26px;
+  /* [lc-1432] 与 .lib-strip 同步归零：它俩同是 .hero-zone 的绝对定位子元素，
+     原来同为 26 时左缘对齐；条改成 0 后这里若留 26 会整体右漂一个 --home-pad。 */
+  left: 0;
   bottom: 152px;
   z-index: 41;
   width: 280px;

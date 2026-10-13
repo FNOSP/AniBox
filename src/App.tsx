@@ -99,6 +99,29 @@ type BgmMatch = {
   matched_by?: string;
 };
 
+/** [lc-1412] Bangumi 评论（长影评）：/p1/subjects/{id}/reviews。
+ *  与「吐槽」是两套数据：吐槽是短评（/comments），评论是长影评（/reviews）。
+ *  封面在 entry.icon（**多数是 no_photo.png 占位图**，前端碰到要退成图标，不显示灰块）；
+ *  entry.summary 是上游已截断的摘要；entry.replies 是回复数。 */
+type BgmReview = {
+  id: number | string;
+  user?: {
+    id?: number;
+    username?: string;
+    nickname?: string;
+    avatar?: { small?: string; grid?: string; medium?: string; large?: string };
+  };
+  entry?: {
+    id?: number;
+    title?: string;
+    icon?: string;
+    summary?: string;
+    replies?: number;
+    createdAt?: number;
+    updatedAt?: number;
+  };
+};
+
 /** [lc-119] Bangumi 吐槽（/p1/subjects/{id}/comments）；分页 limit/offset */
 type BgmComment = {
   id: number | string;
@@ -110,7 +133,13 @@ type BgmComment = {
   };
   rate?: number;
   comment?: string;
-  updatedAt?: string;
+  /** 上游是 **Unix 秒**（数字）；类型放宽到 number|string —— 老代码里当字符串 slice 过，
+   *  实际值是数字，所以展示前一律走 fmtBgmTime() 归一。 */
+  updatedAt?: number | string;
+  /** [lc-1412] 「喜欢」：上游形状 `[{users:[{...}], value:0}]`。
+   *  **只有少数条目带这个字段**（实测 50 条里 4 条），且 users 是点赞者列表 ——
+   *  计数 = 各 value 组的 users 长度之和。 */
+  reactions?: { users?: { id?: number; username?: string; nickname?: string }[]; value?: number }[];
 };
 
 type PlayTarget = { guid: string; title: string; tvTitle?: string };
@@ -1386,13 +1415,40 @@ function pickGenres(d: Record<string, unknown> | null): string[] {
  *  「选集」不再是标签页 —— 它按用户版式常驻右栏（每集小标题 + 简介的竖向列表）。 */
 const TAB_LABEL: Record<string, string> = {
   overview: "剧照剧集详情信息",
-  comments: "吐槽评论",
+  // [lc-1412] 原「吐槽评论」一个页拆成两页（用户要求"分开分别做成图片样式"），
+  //   并把两页**交换位置**：评论（长影评）在前、吐槽（短评气泡）在后。
+  reviews: "评论",
+  comments: "吐槽",
   related: "关联条目",
   more: "演职人员",
 };
 
 /** [lc-119] 吐槽分页页大小（p1 上游默认 20；分页推进以**实际返回条数**为准，不假定 limit 生效） */
 const BGM_PAGE = 20;
+
+/** [lc-1412] Bangumi 时间戳 → 展示串。
+ *  上游给的是 Unix 秒（comments.updatedAt / reviews.entry.createdAt）。
+ *  规则：7 天内显示相对时间（气泡流的常规做法，用户设计稿就是 "1d 23h ago"），
+ *  更早显示日期（同年不带年、跨年带年）。**解析不了就返回空串**（不显示比显示错的好）。 */
+function fmtBgmTime(ts?: number | string | null): string {
+  const n = Number(ts ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const d = new Date(n * 1000);
+  if (Number.isNaN(d.getTime())) return "";
+  const diff = Date.now() - d.getTime();
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "刚刚";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ${min % 60}m ago`;
+  const day = Math.floor(hr / 24);
+  if (day <= 7) return `${day}d ago`;
+  const y = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const thisYear = new Date().getFullYear();
+  return y === thisYear ? `${mm}-${dd}` : `${y}-${mm}-${dd}`;
+}
 
 /** Bangumi /v0/* 端点返回**裸数组**（吐槽走 /p1/* 包 {data}）——统一在这里兜底取值 */
 function bgmList<T>(v: unknown): T[] {
@@ -2573,6 +2629,16 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   const [commentsDone, setCommentsDone] = useState(false); // 已翻到底
   const [commentsNonce, setCommentsNonce] = useState(0); // 失败重试触发器
   const commentsOffset = useRef(0); // 下一页 offset = 已累计的**实际返回条数**
+  // [lc-1412] 评论（长影评）状态：与吐槽同款一套（懒加载 / 翻页 / 到底 / 重试），但数据源是 /reviews
+  const [reviews, setReviews] = useState<BgmReview[]>([]);
+  const [reviewsErr, setReviewsErr] = useState("");
+  const [reviewsBusy, setReviewsBusy] = useState(false);
+  const [reviewsMoreBusy, setReviewsMoreBusy] = useState(false);
+  const [reviewsDone, setReviewsDone] = useState(false);
+  const [reviewsNonce, setReviewsNonce] = useState(0);
+  const reviewsOffset = useRef(0);
+  const reviewsBusyRef = useRef(false);
+  const reviewsDoneRef = useRef(false);
   const commentsBusyRef = useRef(false);
   const commentsDoneRef = useRef(false);
   // 更多分段（Bangumi 角色/制作人员）：懒加载 —— 与吐槽同套路（骨架屏 / 失败重试 / 空态）
@@ -2702,6 +2768,15 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
     setCommentsBusy(false);
     setCommentsMoreBusy(false);
     setCommentsDone(false);
+    // [lc-1412] 评论（长影评）同样重置
+    reviewsOffset.current = 0;
+    reviewsDoneRef.current = false;
+    reviewsBusyRef.current = false;
+    setReviews([]);
+    setReviewsErr("");
+    setReviewsBusy(false);
+    setReviewsMoreBusy(false);
+    setReviewsDone(false);
     moreLoadedRef.current = false;
     setChars([]);
     setPersons([]);
@@ -2754,6 +2829,61 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
       alive = false;
     };
   }, [base.guid, data]);
+
+  // [lc-1412] 评论（长影评）懒加载：与吐槽同款（切到该页才发、复用 bgmRef 匹配、nonce 重试），
+  // 数据源换成 /p1/.../reviews。与吐槽**互相独立**：各自有自己的 offset/到底/错误态。
+  useEffect(() => {
+    if (tab !== "reviews") return;
+    if (reviewsOffset.current > 0) return;
+    let alive = true;
+    (async () => {
+      reviewsBusyRef.current = true;
+      setReviewsBusy(true);
+      setReviewsErr("");
+      try {
+        let m = bgmRef.current;
+        if (!m) {
+          const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
+          const r = await invoke<BgmMatch | null>("bgm_match", {
+            query: title,
+            year: String(base.release_date || "").slice(0, 4) || null,
+            mediaType: base.type ?? null,
+            cacheKey: base.guid,
+          });
+          m = r && r.subject_id ? r : null;
+          if (!alive) return;
+          bgmRef.current = m;
+          setBgm(m);
+          setBgmProbed(true);
+        }
+        if (!m) throw new Error("未匹配到 Bangumi 条目");
+        const r = await invoke<{ data?: BgmReview[] }>("bgm_reviews", {
+          id: m.subject_id,
+          offset: 0,
+          limit: BGM_PAGE,
+        });
+        const list = Array.isArray(r?.data) ? r.data : [];
+        if (!alive) return;
+        reviewsOffset.current = list.length;
+        setReviews(list);
+        if (list.length === 0) {
+          reviewsDoneRef.current = true;
+          setReviewsDone(true);
+        }
+      } catch (e) {
+        if (alive) {
+          setBgmProbed(true);
+          setReviewsErr(String(e));
+        }
+      } finally {
+        reviewsBusyRef.current = false;
+        if (alive) setReviewsBusy(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [tab, reviewsNonce, base.guid]);
 
   // [lc-119] 吐槽懒加载（只在切到「吐槽」分段时才开始）：先 bgm_match（结果按 base.guid 落盘缓存），
   // 再拉第一页 /p1/.../comments。重试按钮通过 commentsNonce 重新走这段。已有数据则不重复拉。
@@ -2948,6 +3078,44 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   /** [lc-128] 失败重试：清掉错误从头发一次（成功前 creditsLoadedRef 恒为 false） */
   const retryCredits = () => setCreditsNonce((n) => n + 1);
 
+  /** [lc-1412] 评论翻页：与吐槽同款（offset += 实际返回条数，0 条即到底） */
+  const loadMoreReviews = async () => {
+    const m = bgmRef.current;
+    if (!m || reviewsBusyRef.current || reviewsDoneRef.current) return;
+    reviewsBusyRef.current = true;
+    setReviewsMoreBusy(true);
+    setReviewsErr("");
+    try {
+      const r = await invoke<{ data?: BgmReview[] }>("bgm_reviews", {
+        id: m.subject_id,
+        offset: reviewsOffset.current,
+        limit: BGM_PAGE,
+      });
+      const list = Array.isArray(r?.data) ? r.data : [];
+      reviewsOffset.current += list.length;
+      setReviews((prev) => [...prev, ...list]);
+      if (list.length === 0) {
+        reviewsDoneRef.current = true;
+        setReviewsDone(true);
+      }
+    } catch (e) {
+      setReviewsErr(String(e));
+    } finally {
+      reviewsBusyRef.current = false;
+      setReviewsMoreBusy(false);
+    }
+  };
+
+  /** [lc-1412] 评论重试：已有列表续拉，空列表从头（含重新匹配） */
+  const retryReviews = () => {
+    if (reviews.length > 0) {
+      setReviewsErr("");
+      void loadMoreReviews();
+    } else {
+      setReviewsNonce((n) => n + 1);
+    }
+  };
+
   /** [lc-119] 翻下一页：offset += 实际返回条数；返回 0 条即到底（不再假定 limit/总数） */
   const loadMoreComments = async () => {
     const m = bgmRef.current;
@@ -2988,9 +3156,16 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
 
   /** [lc-119] 滚动到底自动加载下一页：extentAfter = scrollHeight - scrollTop - clientHeight < 200 */
   const onDetailScroll = (e: UIEvent<HTMLElement>) => {
-    if (activeTab !== "comments" || !bgm || commentsDone || commentsErr || commentsMoreBusy) return;
+    // [lc-1412] 评论 / 吐槽两页各自触底翻页（互不影响）
     const el = e.currentTarget;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) void loadMoreComments();
+    if (el.scrollHeight - el.scrollTop - el.clientHeight >= 200) return;
+    if (activeTab === "comments") {
+      if (!bgm || commentsDone || commentsErr || commentsMoreBusy) return;
+      void loadMoreComments();
+    } else if (activeTab === "reviews") {
+      if (!bgm || reviewsDone || reviewsErr || reviewsMoreBusy) return;
+      void loadMoreReviews();
+    }
   };
 
   // [lc-119] 单集简介回填（替换旧版 —— 唯一允许改动的既有逻辑）：
@@ -3115,7 +3290,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   //   版式要求标签条是固定的一条（不是按"有没有数据"增删），所以不再自适应增删项；
   //   无数据的分段自己显示空态（各自都有骨架屏/失败重试/空态三态）。
   //   「选集」已移出标签条 —— 按版式常驻右栏（每集小标题 + 简介的竖向列表）。
-  const tabIds: string[] = ["overview", "comments", "related", "more"];
+  const tabIds: string[] = ["overview", "reviews", "comments", "related", "more"];
   const activeTab = tabIds.includes(tab) ? tab : "overview";
   // [lc-1405] 标签框数据源：**Bangumi tags[] 优先，TMDB genres 兜底**（用户要求"直接取 bgm 或 tmdb 的"）。
   //   ⚠ 不再用飞牛 item 的 tags —— 那是刮削元信息字典（含"话数"这类），不是题材标签，
@@ -3463,7 +3638,70 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
           </div>
         )}
 
-        {/* [lc-119] 吐槽（Bangumi 评论，走自建镜像）：骨架屏 / 失败重试 / 空态 / 滚到底翻页 */}
+        {/* [lc-1412] 评论（长影评，用户设计稿版式）：
+              封面 + 标题（链接色）+ 摘要（3 行截断）+ 作者 · 日期 · N 回复。
+              数据源 /p1/.../reviews；封面在 entry.icon —— **多数是 no_photo.png 占位图**，
+              所以碰到 no_photo 就退成图标（否则整列都是灰方块，很难看）。 */}
+        {activeTab === "reviews" && (
+          <div className="dpanel dvrev">
+            {reviewsBusy && reviews.length === 0 && !reviewsErr && <BgmListSkeleton />}
+            {reviewsErr && (
+              <div className="bgmc-state">
+                <div className="bgmc-state-t">评论加载失败</div>
+                <div className="bgmc-state-d">{reviewsErr}</div>
+                <button className="bgmc-retry" onClick={retryReviews}>
+                  重试
+                </button>
+              </div>
+            )}
+            {!reviewsBusy && !reviewsErr && reviews.length === 0 && (
+              <div className="empty">暂无评论</div>
+            )}
+            {reviews.map((r) => {
+              const icon = String(r.entry?.icon ?? "");
+              const hasCover = !!icon && !/no_photo/i.test(icon);   // 占位图不当封面用
+              const date = fmtBgmTime(r.entry?.createdAt ?? r.entry?.updatedAt);
+              const replies = Number(r.entry?.replies ?? 0) || 0;
+              return (
+                <article className="dvrev-item" key={String(r.id)}>
+                  <div className="dvrev-cv">
+                    {hasCover ? (
+                      <img src={bgmImg(icon)} alt="" loading="lazy" draggable={false} />
+                    ) : (
+                      <span className="dvrev-cv-ph" aria-hidden="true">
+                        <IcoMsgL size={20} strokeWidth={1.7} />
+                      </span>
+                    )}
+                  </div>
+                  <div className="dvrev-main">
+                    <h3 className="dvrev-t">{String(r.entry?.title || "（无标题）")}</h3>
+                    {r.entry?.summary && <p className="dvrev-sum">{String(r.entry.summary)}</p>}
+                    <div className="dvrev-meta">
+                      <span className="dvrev-user">{r.user?.nickname || r.user?.username || "匿名"}</span>
+                      {date && <><span className="dvrev-dot">·</span><span>{date}</span></>}
+                      <span className="dvrev-dot">·</span>
+                      <span>{replies} 回复</span>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+            {reviews.length > 0 && reviewsMoreBusy && <div className="bgmc-more">加载中…</div>}
+            {reviews.length > 0 && reviewsDone && <div className="bgmc-more">没有更多评论了</div>}
+            {!reviewsDone && reviews.length > 0 && !reviewsMoreBusy && (
+              <div className="dvrev-more" onClick={() => void loadMoreReviews()}>
+                更多影评 ›
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* [lc-119] 吐槽（Bangumi 短评，走自建镜像）：骨架屏 / 失败重试 / 空态 / 滚到底翻页
+            [lc-1412] 版式按用户设计稿改成**气泡流**（原为头像+昵称+正文的列表行）：
+            每条是一张带边框的气泡卡，右上角心形（reactions 有数据时点亮并显示人数），
+            昵称/星级/时间一行在气泡上方。
+            ⚠ **做不出嵌套回复**：Bangumi 的 /comments 不提供回复链（50 条样本无 parent 字段，
+              parent_id 参数无效、三个候选回复端点全 404），所以这里只有平铺的评论流。 */}
         {activeTab === "comments" && (
           <div className="dpanel bgmc-panel">
             {commentsBusy && comments.length === 0 && !commentsErr && <BgmListSkeleton />}
@@ -3480,32 +3718,54 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
               <div className="empty">暂无吐槽</div>
             )}
             {comments.length > 0 && (
-              <ul className="bgmc-list">
+              <div className="dvtc-list">
                 {comments.map((c) => {
+                  // 星级：Bangumi rate 是 0~10，展示成 5 星（半星用 CSS 宽度裁）
                   const rate = Number(c.rate ?? 0) || 0;
-                  const stars = rate > 0 ? (rate / 2).toFixed(1).replace(/\.0$/, "") : "";
+                  const stars = rate > 0 ? Math.round(rate / 2) : 0;
+                  // reactions：上游只有 4/50 条带，且形状是 [{users:[...],value:0}]
+                  const rLike = (c.reactions ?? []).reduce<number>(
+                    (n, x) => n + (Array.isArray(x?.users) ? x.users.length : 0),
+                    0,
+                  );
                   return (
-                    <li key={String(c.id)} className="bgmc-item">
+                    <div className="dvtc-item" key={String(c.id)}>
                       <img
-                        className="bgmc-avatar"
+                        className="dvtc-ava"
                         src={bgmImg(c.user?.avatar?.large || c.user?.avatar?.grid || c.user?.avatar?.small)}
                         alt=""
                         loading="lazy"
-                        width={40}
-                        height={40}
+                        width={36}
+                        height={36}
                       />
-                      <div className="bgmc-main">
-                        <div className="bgmc-head">
-                          <span className="bgmc-nick">{c.user?.nickname || c.user?.username || "匿名"}</span>
-                          <span className="bgmc-date">{String(c.updatedAt ?? "").slice(0, 10)}</span>
-                          {stars && <span className="bgmc-rate"><IcoStarL size={12} strokeWidth={2} className="rating-ico fill" /> {stars}</span>}
+                      <div className="dvtc-body">
+                        <div className="dvtc-head">
+                          <span className="dvtc-nick">{c.user?.nickname || c.user?.username || "匿名"}</span>
+                          {stars > 0 && (
+                            <span className="dvtc-stars" title={`${rate} 分`}>
+                              {[0, 1, 2, 3, 4].map((i) => (
+                                <IcoStarL
+                                  key={i}
+                                  size={12}
+                                  strokeWidth={1.8}
+                                  className={`rating-ico${i < stars ? " fill" : ""}`}
+                                />
+                              ))}
+                            </span>
+                          )}
+                          <span className="dvtc-time">{fmtBgmTime(c.updatedAt)}</span>
                         </div>
-                        <p className="bgmc-text">{c.comment}</p>
+                        <div className="dvtc-bubble">
+                          <p className="dvtc-text">{c.comment}</p>
+                          <span className={`dvtc-like${rLike > 0 ? " on" : ""}`} aria-hidden="true">
+                            {rLike > 0 ? `♥ ${rLike}` : "♡"}
+                          </span>
+                        </div>
                       </div>
-                    </li>
+                    </div>
                   );
                 })}
-              </ul>
+              </div>
             )}
             {comments.length > 0 && commentsMoreBusy && <div className="bgmc-more">加载中…</div>}
             {comments.length > 0 && commentsDone && <div className="bgmc-more">没有更多吐槽了</div>}

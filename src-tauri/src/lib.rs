@@ -806,6 +806,8 @@ pub fn run() {
             bgm::bgm_characters,
             bgm::bgm_persons,
             bgm::bgm_comments,
+            // [lc-1412] 评论（长影评，/p1/.../reviews）：与「吐槽」分开的两个数据源
+            bgm::bgm_reviews,
             // [lc-1401] 关联条目（详情页「关联条目」标签页：片头曲/原声集/游戏/画集…按关系分组）
             bgm::bgm_related,
             // [lc-123] 发现页右栏：每日新番表（镜像 /calendar 路由，见 bgm.rs）

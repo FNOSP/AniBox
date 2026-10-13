@@ -717,6 +717,21 @@ pub async fn bgm_comments(id: i64, offset: Option<i64>, limit: Option<i64>) -> R
     get_json(&format!("/p1/subjects/{id}/comments?limit={l}&offset={o}")).await
 }
 
+/// [lc-1412] 评论（长影评）：GET /p1/subjects/{id}/reviews?limit={l}&offset={o}
+/// 返回 `{data:[{id, user, entry:{id,title,icon,summary,replies,createdAt,updatedAt}}], total}`。
+/// **实测要点**（431767，total=268）：
+///   · 封面在 `entry.icon`（多数是 `no_photo.png` 占位图 —— 前端碰到 no_photo 要退成图标，别显示灰块）；
+///   · `entry.summary` 是**摘要**（已截断，带尾部省略），完整正文要另打 entry 详情，本页只做列表；
+///   · `entry.replies` 是回复数（列表右上角那个「N 回复」）；
+///   · 与「吐槽」是**两套东西**：吐槽是短评（/comments，7262 条），评论是长影评（/reviews，268 条）。
+/// **不落盘缓存**（同吐槽：会持续增长，交给镜像边缘缓存）。
+#[tauri::command]
+pub async fn bgm_reviews(id: i64, offset: Option<i64>, limit: Option<i64>) -> Result<Value, String> {
+    let l = limit.unwrap_or(20).clamp(1, 50);
+    let o = offset.unwrap_or(0).max(0);
+    get_json(&format!("/p1/subjects/{id}/reviews?limit={l}&offset={o}")).await
+}
+
 /// [lc-123] 每日新番表（发现页右栏）：GET /calendar —— **裸数组**，7 组
 /// `{ weekday: {en,cn,ja,id}, items: [...] }`（不是 /v0 的 {data,total} 包装，别按 /v0 解析）。
 /// 上游条目字段（**实测** 7 组 / 105 条，2026-10-12 走镜像核对）：id/url/type/name/name_cn/summary/

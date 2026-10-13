@@ -4530,3 +4530,202 @@ html.dark .ditem-tag {
 .hscroll .continue-card .card-title {
   font-size: 13.5px;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   [lc-1412] 「评论」与「吐槽」两页各自的版式（用户设计稿）
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── 评论（长影评）：封面 + 标题(链接色) + 摘要(3 行) + 作者·日期·N 回复 ── */
+.dvrev {
+  gap: 0;
+}
+.dvrev-item {
+  display: flex;
+  gap: 14px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+  align-items: flex-start;
+}
+.dvrev-item:last-child {
+  border-bottom: none;
+}
+.dvrev-cv {
+  flex: 0 0 auto;
+  width: 86px;
+  height: 86px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--ph-bg);
+  border: 1px solid var(--line);
+}
+.dvrev-cv img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* 封面占位（上游多数影评是 no_photo.png）：退成图标而不是灰块 */
+.dvrev-cv-ph {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  opacity: 0.55;
+}
+.dvrev-main {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+/* 标题＝链接色（设计稿里是蓝色可点样式；这里暂不跳转，只做视觉） */
+.dvrev-t {
+  margin: 0 0 7px;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--accent);
+  word-break: break-word;
+}
+.dvrev-sum {
+  margin: 0 0 9px;
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--text-2);
+  /* 设计稿里摘要是 3 行截断（带尾部省略号） */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.dvrev-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dvrev-user {
+  color: var(--accent);
+}
+.dvrev-dot {
+  opacity: 0.5;
+}
+/* 底部「更多影评 ›」（设计稿右下角那个入口） */
+.dvrev-more {
+  margin-top: 12px;
+  text-align: right;
+  font-size: 13px;
+  color: var(--accent);
+  cursor: pointer;
+}
+.dvrev-more:hover {
+  text-decoration: underline;
+}
+
+/* ── 吐槽（短评）：气泡流（头像在左，气泡卡在右，右上角心形） ── */
+.dvtc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.dvtc-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.dvtc-ava {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--ph-bg);
+}
+.dvtc-body {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+/* 昵称 + 星级 + 时间：一行，压在气泡上方 */
+.dvtc-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 5px;
+}
+.dvtc-nick {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.dvtc-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  color: var(--gold);
+}
+.dvtc-stars .rating-ico:not(.fill) {
+  color: var(--hover-strong);
+}
+.dvtc-time {
+  font-size: 12px;
+  color: var(--muted);
+}
+/* 气泡本体：圆角卡 + 边框（设计稿的浅色描边气泡），右下角带一个小尾巴 */
+.dvtc-bubble {
+  position: relative;
+  padding: 11px 40px 11px 13px;   /* 右侧留出心形的位置 */
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+}
+/* 气泡左上的小尾巴（指向头像）：一个旋转 45° 的方块，边框只留左上两边 */
+.dvtc-bubble::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: 11px;
+  width: 9px;
+  height: 9px;
+  background: var(--bg-2);
+  border-left: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  transform: rotate(45deg);
+}
+.dvtc-text {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* 右上角心形：有 reactions 时点亮并显示人数 */
+.dvtc-like {
+  position: absolute;
+  right: 12px;
+  top: 10px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--muted);
+  opacity: 0.8;
+}
+.dvtc-like.on {
+  color: #e0525f;
+  opacity: 1;
+  font-weight: 700;
+}
+
+/* 窄窗口：评论封面收小，气泡内边距收紧 */
+@media (max-width: 900px) {
+  .dvrev-cv {
+    width: 64px;
+    height: 64px;
+  }
+  .dvtc-bubble {
+    padding-right: 34px;
+  }
+}

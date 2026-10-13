@@ -743,11 +743,25 @@ pub fn run() {
                 }
             }
             // SWCA 动态模糊 + 窗口级圆角（默认浅色 tint；主题切换由前端 set_acrylic_tint 更新）
+            //
+            // [lc-1414] **可用 FNTV_NO_ACRYLIC=1 关掉亚克力底板**（排障/观感二选一）。
+            //   为什么加这个开关：用户在「演职人员」页看到背景有个**大椭圆遮挡**，截图里是一段巨大的
+            //   弧形边界 + 半透明浅紫灰内部。我把 App.css 全量扫过一遍（clip-path / 各类 gradient /
+            //   border-radius / mask / filter:blur 逐条列出），**没有任何规则能画出那个形状** ——
+            //   唯一能画弧的是 .theme-veil 的 clip-path:circle()，而它已加"三保险"清理（lc-1406）。
+            //   因此最可能是**窗口级 DWM 亚克力的模糊层边界**：窗口 transparent:true，
+            //   内容一旦半透明，亚克力底板就透出来，其模糊边界呈弧形。
+            //   关掉它即可判定：椭圆消失 ⇒ 就是亚克力；仍在 ⇒ 另有来源（那就要 DevTools 点选确认）。
             #[cfg(target_os = "windows")]
             if let Some(win) = app.get_webview_window("main") {
                 use winvisual::{hwnd_isize_wv, set_backdrop, set_system_round_corner};
                 if let Some(hwnd) = hwnd_isize_wv(&win) {
-                    set_backdrop(hwnd, false); // 默认浅色
+                    let no_acrylic = std::env::var("FNTV_NO_ACRYLIC").ok().as_deref() == Some("1");
+                    if no_acrylic {
+                        libmpv::trace("FNTV_NO_ACRYLIC=1 → 跳过亚克力底板（仅保留系统圆角）");
+                    } else {
+                        set_backdrop(hwnd, false); // 默认浅色
+                    }
                     set_system_round_corner(hwnd);
                 }
             }

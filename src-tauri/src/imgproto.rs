@@ -96,6 +96,12 @@ fn resolve_target(path: &str) -> Result<Target, (u16, String)> {
         if !safe_rel(rest) {
             return Err((400, "bad bgm path".into()));
         }
+        // [lc-1414] 还原前端编码过的 `?`：客户端 bgmImg() 把查询串的 `?` 编成 `%3F`
+        //   （自定义协议下 `?` 会被当成本地 URL 的 query 丢掉，所以只能在路径里带），
+        //   这里必须**还原回 `?`**，否则上游 URL 变成
+        //   `…/987268.jpg%3Fr=1743266811&hd=1` → **404**（实测：带 %3F 是 404、还原后 200）。
+        //   这就是"评论头像全部裂图"的根因：Bangumi 头像 URL 基本都带 `?r=…&hd=1`。
+        let rest = rest.replace("%3F", "?");
         return Ok(Target::Public {
             key: format!("img:bgm:{rest}"),
             url: format!("{BGM_IMG_BASE}/{rest}"),

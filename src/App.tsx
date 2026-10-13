@@ -1051,6 +1051,61 @@ function ScrollRow({
   );
 }
 
+/** [lc-1414] 头像兜底：**拉不到图就用内置图标**，绝不显示裂图（用户明确要求）。
+ *
+ *  为什么需要：Bangumi 头像 URL 基本都带 `?r=…&hd=1` 查询串，历史上前端把它编成 %3F、
+ *  Rust 侧没还原 → 上游 404 → 整片裂图（根因已单独修）。但上游偶发 404/超时仍可能发生，
+ *  所以渲染层也要兜住：onError 后换成图标，并按用户名做**稳定的颜色**（刷新不变）。
+ *
+ *  用内置图标而不是灰底/首字母：与项目里其它占位（.poster-empty 用 IcoFilmL）同一套语言，
+ *  视觉上"这是个占位"比"这是个坏图"清楚。
+ */
+function AvatarSafe({
+  src,
+  name,
+  size = 36,
+  className = "dvtc-ava",
+}: {
+  src?: string;
+  /** 用于取稳定配色与 title（同一个人每次都是同一个颜色） */
+  name?: string;
+  size?: number;
+  className?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const showImg = !!src && !failed;
+  // 稳定的色相：把名字哈希成 0..360（同一个人刷新前后颜色一致，不会"闪色"）
+  const hue = (() => {
+    const s = String(name || "");
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+    return h;
+  })();
+  if (showImg) {
+    return (
+      <img
+        className={className}
+        src={src}
+        alt=""
+        loading="lazy"
+        width={size}
+        height={size}
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return (
+    <span
+      className={`${className} avatar-fallback`}
+      style={{ background: `hsl(${hue} 42% 62%)` }}
+      title={name || ""}
+      aria-hidden="true"
+    >
+      <IcoUserL size={Math.round(size * 0.5)} strokeWidth={1.9} />
+    </span>
+  );
+}
+
 /* ────────────────────────── 首页骨架屏 ────────────────────────── */
 
 function HomeSkeleton() {
@@ -1496,7 +1551,17 @@ function BgmCastRow({
           onError={() => setFailed(true)}
         />
       ) : (
-        <span className="bgmc-avatar bgmc-avatar-empty" aria-hidden="true">
+        // [lc-1414] 兜底也用同一套配色（按名字取色），与吐槽页的 AvatarSafe 观感一致
+        <span
+          className="bgmc-avatar avatar-fallback"
+          style={{ background: `hsl(${((): number => {
+            const t = String(name || "");
+            let h = 0;
+            for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) % 360;
+            return h;
+          })()} 42% 62%)` }}
+          aria-hidden="true"
+        >
           <IcoUserL size={15} strokeWidth={1.8} />
         </span>
       )}
@@ -3710,13 +3775,11 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                   );
                   return (
                     <div className="dvtc-item" key={String(c.id)}>
-                      <img
+                      <AvatarSafe
                         className="dvtc-ava"
+                        size={36}
+                        name={c.user?.nickname || c.user?.username || "匿名"}
                         src={bgmImg(c.user?.avatar?.large || c.user?.avatar?.grid || c.user?.avatar?.small)}
-                        alt=""
-                        loading="lazy"
-                        width={36}
-                        height={36}
                       />
                       <div className="dvtc-body">
                         <div className="dvtc-head">

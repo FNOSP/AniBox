@@ -4755,3 +4755,12 @@ html.dark .ditem-tag {
 /* 箭头垂直居中：.srow-nav 的基准是 --srow-img-h，而 ScrollRow 会按 imgSel 量出的高度写入它
    （剧照行传的是 .tmdb-stills img = 128px）。所以这里不需要额外的覆盖规则 —— 删掉冗余选择器，
    避免以后有人以为"剧照行有特殊居中逻辑"而去改一处根本不被使用的地方。 */
+
+/* [lc-1414] 头像兜底（AvatarSafe / BgmCastRow 共用）：内置图标居中 + 按名字取的稳定底色 */
+.avatar-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  opacity: 0.95;
+}

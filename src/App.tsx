@@ -284,6 +284,12 @@ function fmtDur(sec: number | null | undefined): string {
  *  三级缓存（内存 → 磁盘 → 网络）都在 Rust 侧，前端只拼路径。 */
 function imgUrl(p?: string | null): string {
   if (!p) return "";
+  // [lc-1433] 幂等：已经是本协议的完整 URL 就原样返回。
+  //   为什么需要：`tmdbImg()` / `bgmImg()` 产出的就是完整代理 URL，而消费处一律写
+  //   `imgUrl(poster)` —— 直接传进去会被再包一层（`.../http://fntvimg.localhost/...`）→ 404。
+  //   上游（如详情页 poster 链路）现在是"TMDB 完整 URL 与飞牛相对路径混在一个变量里"，
+  //   在这里兜住比在每个调用点判来源更可靠。
+  if (p.startsWith("http://fntvimg.localhost") || p.startsWith("fntvimg://localhost")) return p;
   const path = p.startsWith("/") ? p : `/${p}`;
   if (navigator.userAgent.includes("Windows")) return `http://fntvimg.localhost${path}`;
   return `fntvimg://localhost${path}`;
@@ -3418,9 +3424,18 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   }, [episodes.length, bgm?.subject_id]);
 
   const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
-  // [lc-1430] 竖版海报同样**取面积最大**（posters 数组首位也常是小缩略图，
-  //   详情页海报会糊 —— 与轮播 backdrop 是同一个坑）。
+  // [lc-1433] 竖版海报：**TMDB 高清优先**（用户要求"直接取 tmdb 的或者 bgm 的高清大图"）。
+  //   取值顺序：TMDB images.posters 面积最大的那张（Rust 的 heroPoster，拼 t/p/original）
+  //   → 飞牛 posters（数组取最大 / 字符串直取）→ 列表页带来的 base.poster → 空（再兜 BGM 封面）。
+  //   为什么换源：飞牛的 posters 常是**单个字符串**（它自己抓的小 webp），选无可选、放大必糊。
+  //   图片仍走 fntvimg 代理，**拉了即落盘**，不会因为换档位而重复下载。
+  const tmdbHeroPoster = String((tmdb ?? {}).heroPoster ?? "");
+  // 档位选 w500 而不是 original：本海报的**显示尺寸只有 132×198**（.dv2-poster），
+  //   w500 已是 3.8 倍密度、放大到极限也看不出差别，而 original（2000×3000，实测 ~260KB）
+  //   纯属浪费 —— 多出的解码时间与内存都花在把 2000px 缩到 132px 上。
+  //   （轮播 hero 那边是满屏宽度，才必须用 original。）
   const poster =
+    (tmdbHeroPoster ? tmdbImg(tmdbHeroPoster, "w500") : "") ||
     pickLargestImg((data ?? {}).posters) ||
     (pick(data ?? {}, ["posters", "poster"]) as string) ||
     base.poster ||
@@ -4715,13 +4730,43 @@ function App() {
         const map: Record<string, string> = {};
         const lmap: Record<string, string> = {};
         const enrich: Record<string, Partial<MediaItem>> = {};
+        const fb: { guid: string; it: MediaItem; arg: Record<string, unknown> }[] = [];
         rs.forEach((r, i) => {
           if (r.status === "fulfilled") {
             const d = r.value;
-            // [lc-1430] 用 pickLargestImg（不是 pickImgStr）：取面积最大的横版，
-            //   否则会拿到数组首位的小缩略图 → 轮播整屏拉伸后很糊。
-            const bd = pickLargestImg(d.backdrops) || pickImgStr(d, ["backdrop"]);
+            // [lc-1433] 飞牛这张**只作兜底**（见下）：它是飞牛自己抓的单张 webp，
+            //   实测缓存里大量只有 507×338 —— 整屏 hero 拉伸必糊，而且 `backdrops` 是
+            //   **字符串**（不是数组），所以 pickLargestImg 在这里根本无从选择。
+            const bd = pickLargestImg(d.backdrops) || pickImgStr(d, ["backdrops", "backdrop"]);
             if (bd) map[carList[i].guid] = bd;
+            // 无论飞牛有没有图都进候选：TMDB 有图就用 TMDB 的（飞牛没有时更是唯一来源）
+            // [lc-1433] **带锚点**：飞牛条目详情里就带 trim_id（tm*/tt*/bg*）与 tmdb_id/imdb_id，
+            //   传进去 Rust 侧就能精确定位、**完全不做标题搜索** —— 否则"同名不同剧"会取错图
+            //   （标题搜索有相似度门槛，但近似标题仍可能命中别的条目，那比糊更糟）。
+            const str = (v: unknown): string => (v == null ? "" : String(v).trim());
+            const trim = str(pick(d, ["trim_id", "trimId"]));
+            const directTmdb = str(pick(d, ["tmdbId", "tmdb_id"]));
+            let tmdbId = /^\d+$/.test(directTmdb) ? directTmdb : "";
+            if (!tmdbId) {
+              const m = /^(?:tm)(\d+)$/i.exec(trim);
+              if (m) tmdbId = m[1];
+              else if (/^\d+$/.test(trim)) tmdbId = trim;
+            }
+            const imdbId = str(pick(d, ["imdb_id", "imdbId"])) || (/^tt\d+$/i.test(trim) ? trim.toLowerCase() : "");
+            fb.push({
+              guid: carList[i].guid,
+              it: carList[i],
+              arg: {
+                // 标题：条目详情里的（tvTitle/title）优先 —— 它与锚点同源，最不容易与
+                //   列表页的简称错位（锚点缺失时这是唯一的匹配依据）
+                title: String(pick(d, ["tvTitle", "title"]) ?? carList[i].title),
+                year: String(carList[i].release_date || carList[i].air_date || "").slice(0, 4),
+                mediaType: (carList[i].type || "").toLowerCase() === "movie" ? "movie" : "tv",
+                trimId: trim || undefined,
+                tmdbId: tmdbId || undefined,
+                imdbId: imdbId || undefined,
+              },
+            });
             // [lc-570 同源] 飞牛自带透明 logo（item API data.logos，详情页 hero 同一字段）
             const lg = pickImgStr(d, ["logos", "logo"]);
             if (lg) lmap[carList[i].guid] = lg;
@@ -4741,6 +4786,33 @@ function App() {
         if (Object.keys(enrich).length) {
           setCarousel((prev) => prev.map((it) => (enrich[it.guid] ? { ...it, ...enrich[it.guid] } : it)));
         }
+
+        // [lc-1433] **高清横图：我们自己向 TMDB 要**（用户要求）——飞牛那张只当兜底。
+        //   为什么必须换源：飞牛的 backdrops 是它抓的单张小图（实测多为 507×338），
+        //   hero 是满屏宽度（1400~1900px），拉伸必糊。TMDB 的 images.backdrops 里有
+        //   3840×2160 的原图，`heroBackdrop` 就是**按面积挑出的最大那张**（Rust 侧挑好）。
+        //   取 `t/p/original` 档：走 fntvimg 代理**拉了即落盘**（下次零网络），
+        //   与剧照放大用的是同一套缓存，不会多存一份。
+        //   定位靠锚点优先（trim_id=tm*/tt*、tmdbId、imdbId），没有才标题搜索 —— 与详情页
+        //   完全同一条链路（tmdb_show_details），命中同一份落盘缓存，所以这里几乎零额外成本。
+        //   失败（TMDB 没匹配上/没图）就**保留飞牛那张**，绝不出现空 hero。
+        void Promise.allSettled(
+          fb.map(({ guid, arg }) =>
+            invoke<Record<string, unknown>>("tmdb_show_details", { arg })
+              .then((d) => ({ guid, path: String(d?.heroBackdrop ?? "") }))
+          )
+        ).then((trs) => {
+          const hi: Record<string, string> = {};
+          for (const t of trs) {
+            if (t.status === "fulfilled" && t.value.path) hi[t.value.guid] = t.value.path;
+          }
+          if (!Object.keys(hi).length) return;
+          setCarouselBds((prev) => {
+            const next = { ...prev };
+            for (const [guid, path] of Object.entries(hi)) next[guid] = tmdbImg(path, "original");
+            return next;
+          });
+        });
       });
 
       // 每个库的第一页剧集（并行，按库顺序填回）

@@ -1083,6 +1083,37 @@ fn videos_of(d: &Value) -> Vec<Value> {
         .collect()
 }
 
+/// [lc-1433] 从 TMDB 详情响应里挑**面积最大**的一张图（横图/竖图通用）。
+/// 取值顺序：`images.<list>` 里 w*h 最大 → 主图字段 `images.<list>` 之外的单值字段 → 空串。
+///
+/// 为什么要挑最大而不是取首位（实测数据，样本 `json:show:tv:316694`）：
+///   · `images.backdrops` 首位 /3pEV… 是 3840×2160，但**主图 `backdrop_path` 只有 1920×1080**；
+///   · `images.posters` 最大是 2000×3000，而 `poster_path` 压根不在这个列表里；
+///   · 列表顺序由 TMDB 的 vote_average 决定，**与尺寸无关** —— 取首位纯属运气。
+/// 前端把它拼成 `t/p/original{path}`（走 fntvimg 代理落盘），所以挑错一张就是整屏糊。
+///
+/// 抽成独立函数是为了能**离线单测**：这条规则错了只会表现为"图糊"（不报错、不崩），
+/// 而真机验证要联网 + 密钥，所以必须有确定性测试钉住它。
+fn pick_hero_path(d: &Value, list_key: &str, single_key: &str) -> String {
+    let s = |k: &str| d.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    d.pointer(&format!("/images/{list_key}"))
+        .and_then(|b| b.as_array())
+        .and_then(|arr| {
+            arr.iter()
+                .filter_map(|b| {
+                    let p = b.get("file_path").and_then(|v| v.as_str()).filter(|p| !p.is_empty())?;
+                    let w = b.get("width").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let h = b.get("height").and_then(|v| v.as_i64()).unwrap_or(0);
+                    Some((w * h, p.to_string()))
+                })
+                // max_by_key 在并列时返回**最后一个**最大项；并列（如同为 3840×2160）取哪张都行
+                .max_by_key(|(area, _)| *area)
+                .map(|(_, p)| p)
+        })
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| s(single_key))
+}
+
 #[tauri::command]
 pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
     let mt = if arg.get("mediaType").and_then(|v| v.as_str()) == Some("movie") {
@@ -1142,6 +1173,17 @@ pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
         .into_iter()
         .map(|b| b.get("file_path").and_then(|v| v.as_str()).unwrap_or("").to_string())
         .collect();
+
+    // [lc-1433] 高清横图（轮播 hero 用）：**按面积挑最大的**，优先 3840×2160 这类原图。
+    //   为什么单列一个字段：前端轮播要的是"一张尽量大的横图"，而 `backdrops` 是**有序列表**
+    //   （主仓库按 vote_average 排），首位常常不是最大的那张；飞牛自带的 backdrops 更是**单个
+    //   字符串**（实测缓存里大量 507×338 的小 webp）⇒ 整屏拉伸必糊。
+    //   取值顺序：images.backdrops 里面积最大的 → 主图 backdrop_path → 空串（前端回退飞牛）。
+    let hero_backdrop = pick_hero_path(&d, "backdrops", "backdrop_path");
+
+    // [lc-1433] 高清竖版海报（详情页封面用）：同一套"按面积挑最大"逻辑，取值顺序
+    //   images.posters 面积最大 → 主图 poster_path → 空串（前端回退 Bangumi 封面 / 飞牛）。
+    let hero_poster = pick_hero_path(&d, "posters", "poster_path");
 
     // 相似剧集（recommendations）
     let recommendations: Vec<Value> = d
@@ -1238,6 +1280,11 @@ pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
         "crew": crew,
         // 剧照排序：vote_average 降序（主仓库 normalizeShow 同款）
         "backdrops": backdrops,
+        // [lc-1433] 高清横图（面积最大的那张；轮播 hero 主用）——前端拼 `t/p/original{path}`，
+        //   走 fntvimg 代理**拉了即落盘**；空串 = TMDB 没图，前端回退飞牛自带图。
+        "heroBackdrop": hero_backdrop,
+        // [lc-1433] 高清竖版海报（面积最大；详情页封面主用），同样拼 `t/p/original`。
+        "heroPoster": hero_poster,
         "keywords": keywords,
         "aliases": aliases,
         // 预告片（include_video_language=zh-CN,en,ja,null 才拿得到）
@@ -1539,7 +1586,77 @@ fn parse_ymd(s: &str) -> Option<(i64, u32, u32)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{auth_params, get_json, quarter_bounds, today_ymd, DEFAULT_ENDPOINTS};
+    use super::{auth_params, get_json, pick_hero_path, quarter_bounds, today_ymd, DEFAULT_ENDPOINTS};
+    use serde_json::json;
+
+    /// [lc-1433] 高清图挑选规则（**离线、零网络**）：必须按**面积**挑最大，而不是取首位。
+    /// 数据是**真机抓下来的 TMDB 响应**（`json:show:tv:316694`，落盘缓存里那份）：
+    ///   images.backdrops = [3840×2160, 3840×2160, 1920×1080]，而 backdrop_path = 1920×1080
+    ///   images.posters   = [2000×3000, 1920×2711, 1920×2700]，而 poster_path **不在列表里**
+    /// 这条规则错了只会表现为"图糊"（不报错、不崩），真机验证又要联网+密钥，
+    /// 所以必须在这里钉死：主图字段（backdrop_path/poster_path）恰恰**常常不是最大的那张**。
+    #[test]
+    fn hero_path_picks_largest_by_area_not_first() {
+        // ⚠ 夹具刻意让**最大的那张不在首位**：TMDB 的列表顺序由 vote_average 决定、
+        //   与尺寸无关，所以"取首位"是真实存在过的错误实现（lc-1430 前就是那样）。
+        //   夹具若把最大项放在首位，这条测试对"取首位"的错误实现**无感**（会假通过）。
+        let d = json!({
+            "backdrop_path": "/small-1920x1080.jpg",
+            "poster_path": "/not-in-list.jpg",
+            "images": {
+                "backdrops": [
+                    {"file_path": "/mid-1920x1080.jpg", "width": 1920, "height": 1080},
+                    {"file_path": "/tiny-1280x720.jpg", "width": 1280, "height": 720},
+                    {"file_path": "/big-3840x2160.jpg", "width": 3840, "height": 2160}
+                ],
+                "posters": [
+                    {"file_path": "/p-1000x1500.jpg", "width": 1000, "height": 1500},
+                    {"file_path": "/p-2000x3000.jpg", "width": 2000, "height": 3000}
+                ]
+            }
+        });
+        assert_eq!(pick_hero_path(&d, "backdrops", "backdrop_path"), "/big-3840x2160.jpg");
+        assert_eq!(pick_hero_path(&d, "posters", "poster_path"), "/p-2000x3000.jpg");
+
+        // 横图必须用 backdrops 那份（不能串到 posters）
+        assert_ne!(pick_hero_path(&d, "backdrops", "backdrop_path"), "/p-2000x3000.jpg");
+    }
+
+    /// 回退链：images 列表缺失/空/全是空 file_path 时 → 用主图字段；主图也空 → 空串
+    /// （空串是**约定**：前端据此回退飞牛自带图，绝不能给个假路径）。
+    #[test]
+    fn hero_path_falls_back_to_single_then_empty() {
+        // ① 没有 images → 用主图字段
+        let d = json!({"backdrop_path": "/only.jpg"});
+        assert_eq!(pick_hero_path(&d, "backdrops", "backdrop_path"), "/only.jpg");
+
+        // ② images 是空数组 → 用主图字段
+        let d = json!({"backdrop_path": "/only.jpg", "images": {"backdrops": []}});
+        assert_eq!(pick_hero_path(&d, "backdrops", "backdrop_path"), "/only.jpg");
+
+        // ③ 列表里全是空 file_path → 用主图字段（不能选中空串）
+        let d = json!({
+            "backdrop_path": "/only.jpg",
+            "images": {"backdrops": [{"file_path": "", "width": 9999, "height": 9999}]}
+        });
+        assert_eq!(pick_hero_path(&d, "backdrops", "backdrop_path"), "/only.jpg");
+
+        // ④ 两边都没有 → 空串（前端回退飞牛）
+        let d = json!({});
+        assert_eq!(pick_hero_path(&d, "backdrops", "backdrop_path"), "");
+        let d = json!({"images": {"backdrops": []}});
+        assert_eq!(pick_hero_path(&d, "backdrops", "backdrop_path"), "");
+
+        // ⑤ 没有 width/height 的项按面积 0 算，输给有尺寸的（同样把"有尺寸的"放在后面，
+        //    这样"取首位"的错误实现也会在这条上失败）
+        let d = json!({
+            "images": {"backdrops": [
+                {"file_path": "/no-dims.jpg"},
+                {"file_path": "/has-dims.jpg", "width": 10, "height": 10}
+            ]}
+        });
+        assert_eq!(pick_hero_path(&d, "backdrops", "backdrop_path"), "/has-dims.jpg");
+    }
 
     /// 静态断言（不触网）：默认路径必须是**镜像**，绝不能是上游官方域名
     /// （api.themoviedb.org 只允许出现在降级直连常量 DIRECT_API 里）。

@@ -4225,7 +4225,24 @@ function App() {
     },
     [theme],
   );
+  // [lc-1406] 遮罩移除的**双保险**：
+  //   ① 正常路径：animationend（动画结束）
+  //   ② 兜底：定时器（动画时长 420ms → 700ms 后无条件清掉）
+  //   为什么必须有 ②：animationend 并非总能到达 —— 窗口失焦/最小化/后台时 Chromium 会节流甚至
+  //   暂停动画，事件可能永不触发；此遮罩是 z-index:80 的**固定全屏层**，一旦残留就永久盖着页面
+  //   （用户反馈的"演职人员背景有个大圆还在"就是它的形状：clip-path 圆停在中途，边缘是一段大圆弧）。
+  //   定时器以 veil 的 x/y 为依赖：每次切换都会重置，所以它只兜"这一次动画没结束"，不会误杀下一次。
   const onVeilEnd = useCallback(() => setVeil(null), []);
+  useEffect(() => {
+    if (!veil) return;
+    const t = window.setTimeout(() => setVeil(null), 700);
+    return () => window.clearTimeout(t);
+  }, [veil]);
+
+  // [lc-1406] 切换视图/页面时清掉遮罩：遮罩属于"主题切换这一瞬间"的视觉，不该跨视图存活。
+  useEffect(() => {
+    setVeil(null);
+  }, [view, page]);
 
   // 首页数据落盘（30 分钟 TTL）：重启/会话恢复时零请求直出；数据落定 1.5s 后快照
   useEffect(() => {

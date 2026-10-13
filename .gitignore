@@ -33,3 +33,39 @@ dist-ssr
 vite.config.js
 vite.config.d.ts
 .tmp-stage-*.mjs
+
+# ==== 入库规则（详见仓库 AGENTS.md）：以下一律不入库 ====
+# 密钥 / 凭据
+.secret.local
+.status-token.local
+.workers-url.local
+.tmdb-key.local
+*.pem
+*.key
+.env
+.env.*
+.wrangler/
+# 部署 / 运维脚手架与文档（内部资料）
+/bgm-mirror/
+/tmdb-mirror/
+/stats-server/
+/RELEASE.md
+/release.cmd
+.release-dryrun.cmd
+.dryrun*.cmd
+# 测试 / 验证脚本与一次性探针
+**/verify_*.js
+**/verify-*.js
+**/verify-*.mjs
+**/test-*.mjs
+*_test.go
+spike-*/
+tools/*test*
+# 本地状态 / 个人数据 / 工具目录
+.rea-*/
+.workbuddy/
+node_modules/
+nul
+on
+third_party/fntv-mpv/portable_config/files/recent.json
+third_party/fntv-mpv/portable_config/files/persistent_config.json

@@ -18,6 +18,7 @@ import {
   House as IcoHouseL,
   Search as IcoSearchL,
   Star as IcoStarL,
+  Play as IcoPlayL,
 } from "lucide-react";
 import "./App.css";
 
@@ -3060,29 +3061,18 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   const bgmCover = bgmImg(
     bgm?.images?.large || bgm?.images?.common || bgm?.images?.medium || bgm?.images?.grid || "",
   );
-  const rating = String(pick(data ?? {}, ["voteAverage", "vote_average"]) ?? base.vote_average ?? "");
-  const releaseDate = String(
-    pick(data ?? {}, ["releaseDate", "release_date"]) ?? base.release_date ?? "",
-  );
-  const numSeasons = pick(data ?? {}, ["numberOfSeasons", "number_of_seasons"]);
   const resumeAt = base.ts && base.duration && base.ts > 0 && base.ts < base.duration;
 
-  // [lc-118] 重排新增的派生显示值（纯 render 计算，不动任何数据 effect）
-  const year = releaseDate.slice(0, 4);
   // [lc-1401] 新版式删掉了通栏头图（backdrop 不再用于详情页背景），
   //   但「剧照」一节仍取 TMDB 的 backdrops —— 那是 tmdb.images.backdrops，与本机条目的 backdrop 不是一回事。
+  // [lc-1408] 原「年份 / 季数 / 集数 / 类型 / 评分 / 播放按钮」那组派生值随红框一起删掉了
+  //   （用户定稿：那块的原有内容全部不要，改放标签与简介）。播放按钮挪到海报上，仍用 resumeAt。
   const tmdbGenres: string[] = Array.isArray(tmdb?.genres)
     ? (tmdb?.genres as unknown[]).map((x) => String(x))
     : [];
   const genres = Array.from(
     new Set((tmdbGenres.length ? tmdbGenres : pickGenres(data)).filter(Boolean)),
   ).slice(0, 6);
-  const ratingFromItem = Number(String(rating ?? "").trim());
-  const ratingNum =
-    Number.isFinite(ratingFromItem) && ratingFromItem > 0
-      ? ratingFromItem
-      : Number(tmdb?.rating ?? 0) || 0;
-  const votes = Number(tmdb?.votes ?? 0) || 0;
   // [lc-1404] 剧照列表不再在这里派生：它只被 TmdbExtra 内部用（那边自己从 tmdb.backdrops 取），
   //   留着一份"渲染过一次的剧照数组"正是上版**两组剧照**的来源。
   // [lc-128] 演员/制作人员三级来源（**TMDB 主源**）：
@@ -3197,63 +3187,48 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
               ) : (
                 <div className="poster-empty"><IcoFilmL size={22} strokeWidth={1.8} /></div>
               )}
+              {/* [lc-1408] 播放入口挪到**海报上**：用户要求把海报右侧那块（原年份/季数/评分/播放）
+                  整个让给标签与简介，但播放入口不能一起消失 —— 剧集还能点右栏选集播，
+                  电影（非剧集）就彻底没有入口了。放海报底角，不进右侧信息框。 */}
+              <button
+                className="dv2-play"
+                title={resumeAt ? "继续播放" : "播放"}
+                onClick={playing ? undefined : startPlay}
+                disabled={playing}
+              >
+                <span className="dv2-play-ico" aria-hidden="true">
+                  <IcoPlayL size={16} strokeWidth={2.2} />
+                </span>
+                <span className="dv2-play-t">{playing ? "打开中…" : resumeAt ? "续播" : "播放"}</span>
+              </button>
             </div>
+
+            {/* [lc-1408] 海报右侧信息框 = **标签 + 简介**（用户定稿：这一块原来的
+                年份/季数/集数/类型/评分/播放按钮全部不要）。 */}
             <div className="dv2-topinfo">
-              {/* [lc-1403] 标题已挪到顶部返回键后面 —— 这里不再重复渲染标题/原名 */}
-              <div className="dv2-mrow">
-                {year && <span className="dv2-chip">{year}</span>}
-                {isSeries && numSeasons ? <span className="dv2-chip">{numSeasons} 季</span> : null}
-                {isSeries && episodes.length > 0 ? <span className="dv2-chip">{episodes.length} 集</span> : null}
-                <span className="dv2-chip type">{base.type}</span>
-              </div>
-              {ratingNum > 0 && (
-                <div className="dv2-score">
-                  <span className="dv2-score-n">{ratingNum.toFixed(1)}</span>
-                  <span className="dv2-score-o">/10</span>
-                  {votes > 0 && <span className="dv2-score-v">{votes.toLocaleString("zh-CN")} 人评分</span>}
+              {bgmTags.length > 0 && (
+                <div className="dv2-itags">
+                  {bgmTags.slice(0, 12).map((t, i) => (
+                    <span key={`${t.name}-${i}`} className="dtag" title={t.count ? `${t.count} 人标记` : ""}>
+                      {t.name}
+                    </span>
+                  ))}
                 </div>
               )}
-              <div className="dv2-act">
-                <button className="dplay" onClick={playing ? undefined : startPlay} disabled={playing}>
-                  {playing ? "打开中…" : `▶ ${resumeAt ? "续播" : "播放"}`}
-                </button>
-              </div>
+              {overview && (
+                <div className="dv2-isum">
+                  <p className={`dfold${!introFull && longIntro ? " clip" : ""}`}>{overview}</p>
+                  {longIntro && (
+                    <button className="dfold-more" onClick={() => setIntroFull((v) => !v)}>
+                      {introFull ? "收起" : "展开"}
+                    </button>
+                  )}
+                </div>
+              )}
+              {!bgmTags.length && !overview && <div className="empty">暂无标签与简介</div>}
               {playNote && <div className="play-note">{playNote}</div>}
             </div>
           </div>
-
-          {/* 标签框（Bangumi tags；上游按热度序，取前 12 个）。拿不到就整块不渲染 —— 不占位、不显示空框 */}
-          {bgmTags.length > 0 && (
-            <div className="dv2-tagbox">
-              <div className="dv2-tagbox-h">
-                标签
-                <span className="dv2-src">{bgmRawTags.length ? "Bangumi" : "TMDB"}</span>
-              </div>
-              <div className="dv2-tagbox-b">
-                {bgmTags.slice(0, 12).map((t, i) => (
-                  <span key={`${t.name}-${i}`} className="dtag" title={t.count ? `${t.count} 人标记` : ""}>
-                    {t.name}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* 简介框 */}
-          {overview && (
-            <div className="dv2-introbox">
-              <div className="dv2-introbox-h">
-                简介
-                {bgm && <span className="dv2-src">飞牛</span>}
-              </div>
-              <p className={`dfold${!introFull && longIntro ? " clip" : ""}`}>{overview}</p>
-              {longIntro && (
-                <button className="dfold-more" onClick={() => setIntroFull((v) => !v)}>
-                  {introFull ? "收起" : "展开"}
-                </button>
-              )}
-            </div>
-          )}
 
           {/* 四标签页（固定一条，不随数据增删） */}
           <nav className="dseg dv2-seg" role="tablist">

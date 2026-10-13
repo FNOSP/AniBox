@@ -3986,20 +3986,24 @@ html.dark .ditem-tag {
   max-height: calc(100vh - 70px);
 }
 
-/* ── 左列：封面 + 标题信息 ── */
+/* ── 左列：封面（含播放入口）+ 右侧「标签 + 简介」信息框 ──
+   [lc-1408] 用户定稿：海报右侧那一块（原 年份/季数/集数/类型/评分/播放按钮）**内容全部不要**，
+   改放标签与简介；播放入口挪到海报上（电影没有右栏选集，不能没有播放入口）。
+   因此下面这段把 .dv2-topinfo 一族重写为 .dv2-itags / .dv2-isum，并新增 .dv2-play。 */
 .dv2-top {
   display: flex;
   gap: 16px;
-  align-items: flex-start;
+  align-items: stretch;
   padding: 14px;
   border-radius: var(--radius);
   background: var(--bg-2);
   border: 1px solid var(--line);
 }
 .dv2-poster {
+  position: relative;   /* 播放入口的定位基座 */
   width: 132px;
   min-width: 132px;
-  aspect-ratio: 2 / 3; /* 竖版封面（用户稿：剧集竖屏封面） */
+  aspect-ratio: 2 / 3;  /* 竖版封面 */
   border-radius: 10px;
   overflow: hidden;
   background: var(--hover);
@@ -4011,108 +4015,78 @@ html.dark .ditem-tag {
   object-fit: cover;
   display: block;
 }
-.dv2-topinfo {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.dv2-title {
-  margin: 0;
-  font-size: 19px;
-  font-weight: 800;
-  color: var(--text-strong);
-  line-height: 1.35;
-  word-break: break-word;
-}
-.dv2-orig {
-  font-size: 12.5px;
-  color: var(--muted);
-  word-break: break-word;
-}
-.dv2-mrow {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.dv2-chip {
-  font-size: 12px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: var(--hover);
-  border: 1px solid var(--line);
-  color: var(--text-2);
-}
-.dv2-chip.type {
-  color: var(--accent);
-  border-color: rgba(108, 155, 255, 0.4);
-}
-.dv2-score {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-}
-.dv2-score-n {
-  font-size: 22px;
-  font-weight: 800;
-  color: var(--gold);
-  line-height: 1;
-}
-.dv2-score-o {
-  font-size: 12px;
-  color: var(--muted);
-}
-.dv2-score-v {
-  font-size: 12px;
-  color: var(--muted);
-  margin-left: 4px;
-}
-.dv2-act {
-  margin-top: 2px;
-}
-
-/* ── 左列：标签框 / 简介框（用户稿：两块独立框） ── */
-.dv2-tagbox,
-.dv2-introbox {
-  padding: 12px 14px;
-  border-radius: var(--radius);
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-}
-.dv2-tagbox-h,
-.dv2-introbox-h {
+/* 海报上的播放入口：底角一条半透明胶囊（不挡海报主体，也不用占右侧信息框） */
+.dv2-play {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 9px;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(10, 14, 24, 0.62);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: #fff;
   font-size: 13px;
   font-weight: 700;
-  color: var(--text-strong);
+  cursor: pointer;
+  transition: background 0.16s ease, transform 0.16s ease;
 }
-.dv2-src {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: var(--hover);
-  border: 1px solid var(--line);
-  color: var(--muted);
+.dv2-play:hover {
+  background: rgba(10, 14, 24, 0.78);
 }
-.dv2-tagbox-b {
+.dv2-play:active {
+  transform: scale(0.97);
+}
+.dv2-play:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+.dv2-play-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* 右侧信息框：**标签 + 简介**（内容自适应高度；海报固定 2:3 撑起这一行的高度） */
+.dv2-topinfo {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dv2-itags {
   display: flex;
   gap: 7px;
   flex-wrap: wrap;
+  align-content: flex-start;
 }
-.dv2-introbox .dfold {
+.dv2-isum {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+.dv2-isum .dfold {
+  margin: 0;
   font-size: 13px;
   line-height: 1.8;
+  color: var(--text-2);
 }
-.dv2-introbox .dfold.clip {
-  max-height: 108px;
+/* 折叠态：给个能看出"被截断"的高度上限（渐隐色用信息框底色 --bg-2，与框体一致） */
+.dv2-isum .dfold.clip {
+  max-height: 150px;
 }
-.dv2-introbox .dfold.clip::after {
-  /* 渐隐色必须与框底色一致（基类是 var(--bg-1)，这里是 var(--bg-2)） */
+.dv2-isum .dfold.clip::after {
   background: linear-gradient(to bottom, rgba(0, 0, 0, 0), var(--bg-2));
+}
+.dv2-topinfo .play-note {
+  font-size: 12px;
+  color: var(--muted);
 }
 
 /* ── 左列：标签页条（**不再通栏**：它是左列里的一个块，在简介框下方） ── */

@@ -2557,9 +2557,9 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   // TMDB 完整详情（剧照/相似/更多/演职人员），详情页「更多」分段的 TMDB 侧数据源
   const [tmdb, setTmdb] = useState<Record<string, unknown> | null>(null);
   const [err, setErr] = useState("");
-  // [lc-118] 详情页重排（Kazumi 风）新增的两个 UI state：分段栏当前项 + 简介展开态
+  // [lc-118] 详情页分段栏当前项
   const [tab, setTab] = useState("overview");
-  const [introFull, setIntroFull] = useState(false);
+  // [lc-1410] 原 introFull（简介折叠展开态）随「收起按钮」一起移除：简介默认全展示。
   // [lc-119] 吐槽（Bangumi 评论）：懒加载 —— 用户切到该分段时才匹配+拉评论（避免拖慢首屏）
   const [bgm, setBgm] = useState<BgmMatch | null>(null);
   const bgmRef = useRef<BgmMatch | null>(null); // 供 legacy 回填任务/翻页读最新值（不进依赖数组）
@@ -3117,7 +3117,6 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   //   「选集」已移出标签条 —— 按版式常驻右栏（每集小标题 + 简介的竖向列表）。
   const tabIds: string[] = ["overview", "comments", "related", "more"];
   const activeTab = tabIds.includes(tab) ? tab : "overview";
-  const longIntro = overview.length > 96; // ≈4~5 行（Kazumi 是 TextPainter 实测 numLines>7，这里用字数近似）
   // [lc-1405] 标签框数据源：**Bangumi tags[] 优先，TMDB genres 兜底**（用户要求"直接取 bgm 或 tmdb 的"）。
   //   ⚠ 不再用飞牛 item 的 tags —— 那是刮削元信息字典（含"话数"这类），不是题材标签，
   //   之前它经 pickGenres 混进来，就把 "13"（话数）当标签显示了（用户反馈的现象）。
@@ -3232,12 +3231,9 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
               )}
               {overview && (
                 <div className="dv2-isum">
-                  <p className={`dfold${!introFull && longIntro ? " clip" : ""}`}>{overview}</p>
-                  {longIntro && (
-                    <button className="dfold-more" onClick={() => setIntroFull((v) => !v)}>
-                      {introFull ? "收起" : "展开"}
-                    </button>
-                  )}
+                  {/* [lc-1410] 用户要求：**不要「收起」按钮、默认全展示**（原来是 120px 折叠 + 展开/收起）。
+                      所以这里不再挂 .clip、不再渲染按钮 —— 简介多长就多长。 */}
+                  <p className="dfold">{overview}</p>
                 </div>
               )}
               {!bgmTags.length && !overview && <div className="empty">暂无标签与简介</div>}

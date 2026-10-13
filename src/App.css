@@ -4278,39 +4278,51 @@ html.dark .ditem-tag {
   background: var(--hover);
 }
 /* 顶部播放入口：主色胶囊，带进度小字（有记录时） */
+/* [lc-1422] 播放入口改为**与主题一致的安静样式**（用户反馈蓝色渐变"太突兀"）。
+   原来用 --accent-grad 主色渐变 + 悬停阴影 —— 在一屏都是中性色的右栏里，它跳得太显眼。
+   现在对齐项目里既有的"安静胶囊"语言（.season-tab / .dmore-btn / .dtag 同一套）：
+     · 底 = var(--hover)（与卡片同色系，只在同色里加深一档）
+     · 描边 = var(--line-strong)
+     · 字色 = var(--text)（正常文字色，不是反白）
+     · 悬停只**微调底色与描边**（不再位移/投影）—— 深浅主题下都自然。
+   播放图标用 --accent 着色，作为唯一的"可点"暗示，不抢眼但认得出来。 */
 .dv2e-play-btn {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 34px;
-  padding: 0 14px;
-  border: none;
+  height: 32px;
+  padding: 0 13px;
+  border: 1px solid var(--line-strong);
   border-radius: 999px;
-  background: var(--accent-grad);
-  color: #fff;
+  background: var(--hover);
+  color: var(--text);
   font-size: 12.5px;
-  font-weight: 700;
+  font-weight: 600;
+  font-family: inherit;
   cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.dv2e-play-btn svg {
+  color: var(--accent);
 }
 .dv2e-play-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 8px 20px rgba(108, 155, 255, 0.42);
+  background: var(--hover-strong);
+  border-color: rgba(108, 155, 255, 0.45);
+  color: var(--text-strong);
 }
 .dv2e-play-btn:active {
-  transform: scale(0.97);
+  background: var(--hover-strong);
 }
 .dv2e-play-btn:disabled {
-  opacity: 0.6;
+  opacity: 0.55;
   cursor: default;
-  transform: none;
 }
 .dv2e-play-pct {
   font-style: normal;
   font-size: 11px;
   font-weight: 600;
-  opacity: 0.85;
+  color: var(--muted);
 }
 /* [lc-1421] 头部标题的类名从 `h3` 元素选择器改为 `.dv2e-hd-h` 显式类
    （一排布局下它需要 flex:0 0 auto / nowrap，元素选择器不好写这些）。
@@ -5012,34 +5024,40 @@ html.dark .ditem-tag {
   padding-bottom: 14px;
 }
 /* 电影类条目的独立播放按钮（右栏顶部） */
+/* [lc-1422] 电影类条目的播放入口：同样收敛为安静样式（与选集头部的按钮同一套语言）。
+   区别只是它是整行宽（右栏顶部没有别的内容与它并排）。 */
 .dv2-solo-play {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
   width: 100%;
-  height: 40px;
+  height: 38px;
   margin-bottom: 8px;
-  border: none;
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius);
-  background: var(--accent-grad);
-  color: #fff;
-  font-size: 14px;
-  font-weight: 700;
+  background: var(--hover);
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: inherit;
   cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.dv2-solo-play svg {
+  color: var(--accent);
 }
 .dv2-solo-play:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 24px rgba(108, 155, 255, 0.42);
+  background: var(--hover-strong);
+  border-color: rgba(108, 155, 255, 0.45);
+  color: var(--text-strong);
 }
 .dv2-solo-play:active {
-  transform: scale(0.98);
+  background: var(--hover-strong);
 }
 .dv2-solo-play:disabled {
-  opacity: 0.65;
+  opacity: 0.55;
   cursor: default;
-  transform: none;
 }
 
 /* [lc-1420] 分块骨架补两块尺寸类（剧照块 / 节标题块）——

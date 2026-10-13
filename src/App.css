@@ -277,9 +277,14 @@ body,
   color: var(--text);
   padding-left: 6px;
 }
+/* [lc-1402] padding 必须显式归零：全局 button 规则是 `padding: 8px 15px`，而本类与 .tb-btn/.ddet-close
+   都只声明了 width/height（box-sizing: border-box）→ 内容盒被左右各 15px 吃掉，34px 只剩 4px 宽。
+   装文字（旧版 ☰ / ⟳ / ◐）时溢出仍画得出来，所以看不出问题；换成 SVG 后会被 flex 压进这 4px 里
+   等比缩成 4×4 —— 表现就是**汉堡键变成一个点**（用户反馈的正是这个）。 */
 .tb-icon {
   width: 34px;
   height: 30px;
+  padding: 0;
   border: none;
   background: transparent;
   color: var(--text-2);
@@ -327,6 +332,7 @@ body,
 .tb-btn {
   width: 46px;
   height: 100%;
+  padding: 0; /* 同 .tb-icon：不复位 padding 会把最小化/最大化/关闭的 SVG 压扁 */
   border: none;
   background: transparent;
   color: var(--muted);
@@ -2951,6 +2957,7 @@ button:active {
 .dicon {
   width: 30px;
   height: 26px;
+  padding: 0; /* [lc-1402] 同 .tb-icon：固定 px 宽的图标钮必须复位全局 button 的 15px 左右 padding */
   border: none;
   border-radius: 8px;
   background: transparent;
@@ -3719,6 +3726,7 @@ html.dark .ditem-tag {
   top: 10px;
   width: 30px;
   height: 30px;
+  padding: 0; /* [lc-1402] 同 .tb-icon：30px 盒被全局 button 的 15px 左右 padding 吃光，✕ 会缩成点 */
   border: none;
   border-radius: 9px;
   background: transparent;

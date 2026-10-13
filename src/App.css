@@ -2851,8 +2851,7 @@ button:active {
   .nav-cap-l.on .nav-ico,
   .view-pane.anim-to-discover,
   .view-pane.anim-to-home,
-  .theme-veil,
-  .theme-veil.out {
+  .theme-veil {
     animation: none;
   }
 }

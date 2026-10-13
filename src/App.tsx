@@ -121,7 +121,9 @@ type BgmPerson = {
 
 /** [lc-123] TMDB 发现页条目（src-tauri/src/tmdb.rs::tmdb_discover 归一化后的 items[]）。
  *  state 只有三态：airing（首播日已到）/ upcoming（首播日未到）/ unknown（缺日期）——
- *  discover 端点**不返回 status**，所以这里刻意没有「连载中/已完结」。 */
+ *  discover 端点**不返回 status**，所以这里刻意没有「连载中/已完结」。
+ *  [lc-123-rev3] backdropPath = 16:9 横图（实测非空 ~96.6%）：主推卡与「本季新剧」横向卡优先用它，
+ *  没有时才回落到 2:3 海报（温和裁切，见 .dphero-bg.is-poster / .dlc-img.is-poster）。 */
 type TmdbDiscoverItem = {
   tmdbId: number;
   title: string;
@@ -133,6 +135,7 @@ type TmdbDiscoverItem = {
   votes: number;
   popularity: number;
   poster: string;
+  backdropPath: string;
   overview: string;
 };
 
@@ -290,6 +293,60 @@ function tmdbImg(path: string, size: string): string {
   return imgUrl(`/__tmdb/t/p/${size}${p}`);
 }
 
+/* ── [lc-123-rev4] 顶栏自适应反色（按 hero 海报顶部条带的亮度切 chrome 颜色） ──
+   背景：顶栏零背景（lc-123-rev3）后，白字/白图标压在一张**亮**海报上会"消失"（用户截图：亮绿海报）。
+   做法：采样 hero 图**顶部条带**（顶栏盖住的那一条，高度 8%）的平均感知亮度 0.2126R+0.7152G+0.0722B，
+        > 阈值 → 深色 chrome；否则浅色 chrome；采样失败 → 兜底"白字 + 强 text-shadow"。
+   跨域前置：图片走 fntvimg 自定义协议（src-tauri/src/imgproto.rs）——那里必须回 `Access-Control-Allow-Origin`，
+        否则画布被跨域污染、getImageData 抛 SecurityError，永远落兜底（见 imgproto.rs 注释）。
+   缓存：按图片 URL 记忆（同一张只采一次；换片才重采）。
+   ⚠ 只对首页 hero 采样：发现/库/详情页顶栏底下没有满幅图（是应用底色），用默认色（见 App.css）。 */
+type ChromeTone = "auto" | "dark" | "light" | "fallback";
+/** 平均亮度阈值（0..255）：> 阈值 = 亮底 → 深色 chrome */
+const CHROME_LUMA_THRESHOLD = 150;
+/** 只取图片顶部这一条（顶栏 40px 在满幅 hero 上覆盖的大致比例） */
+const CHROME_STRIP_RATIO = 0.08;
+/** 采样画布的目标宽度（按比例缩，够算均值且省时间） */
+const CHROME_SAMPLE_WIDTH = 64;
+const chromeToneCache = new Map<string, ChromeTone>();
+
+/** 采样一张图的顶部条带 → "dark"（亮底）/ "light"（暗底）；任何失败（跨域/解码/404）→ null（走兜底） */
+async function sampleChromeTone(src: string): Promise<ChromeTone | null> {
+  const hit = chromeToneCache.get(src);
+  if (hit) return hit;
+  try {
+    const img = new Image();
+    img.crossOrigin = "anonymous"; // 必须：不带这个，画布被污染 → getImageData 抛 SecurityError
+    img.decoding = "async";
+    img.src = src;
+    await img.decode();
+    const sw = img.naturalWidth;
+    const sh = Math.max(1, Math.round(img.naturalHeight * CHROME_STRIP_RATIO));
+    if (!sw || !sh) return null;
+    const dw = Math.max(1, Math.min(CHROME_SAMPLE_WIDTH, sw));
+    const dh = Math.max(1, Math.round(sh * (dw / sw)));
+    const cv = document.createElement("canvas");
+    cv.width = dw;
+    cv.height = dh;
+    const ctx = cv.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, sw, sh, 0, 0, dw, dh); // 源矩形 = 原图顶部 8%（宽度按比例缩到 ≤64px）
+    const { data } = ctx.getImageData(0, 0, dw, dh); // ← 跨域被拦时在这里抛错 → catch → null
+    let sum = 0;
+    let n = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      sum += 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+      n++;
+    }
+    if (!n) return null;
+    const tone: ChromeTone = sum / n > CHROME_LUMA_THRESHOLD ? "dark" : "light";
+    chromeToneCache.set(src, tone);
+    return tone;
+  } catch {
+    return null; // 跨域（SecurityError）/解码失败/图片 404：一律交给调用方走兜底分支
+  }
+}
+
 /** item 详情图片字段取值（对齐主仓库 carousel/images.ts pickImg：字符串直取；
  *  数组取首项的 path/url/字面量——新版 fnOS 实测为字符串，数组形态留作兼容） */
 function pickImgStr(d: Record<string, unknown>, keys: string[]): string | undefined {
@@ -321,9 +378,62 @@ async function fetchLibItems(libGuid: string, parentGuid: string | null): Promis
 
 /* ────────────────────────── 标题栏 ────────────────────────── */
 
+/** [lc-123-rev5] 用户是否要求"少动效"：三处动效的 **JS 侧守卫**
+ *  （CSS 侧另有 @media (prefers-reduced-motion: reduce) 守卫，双保险）。 */
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/** [lc-123-rev6] 胶囊图标：内联 SVG + `stroke="currentColor"`（顶栏自适应反色时跟着变色）。
+ *  viewBox 24 / stroke-width 1.8 / fill none / 圆头圆角。**不用 emoji**（emoji 不跟随 color）。 */
+function IconHome() {
+  return (
+    <svg
+      className="nav-ico"
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3.6 10.6 12 3.9l8.4 6.7" />
+      <path d="M5.7 9.7V20h12.6V9.7" />
+      <path d="M9.9 20v-5.1h4.2V20" />
+    </svg>
+  );
+}
+
+/** 放大镜（发现）。同样 currentColor + 统一描边参数。 */
+function IconSearch() {
+  return (
+    <svg
+      className="nav-ico"
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="10.6" cy="10.6" r="6.6" />
+      <path d="M15.5 15.5 20.4 20.4" />
+    </svg>
+  );
+}
+
 /** [lc-123-rev2] 「首页 | 发现」胶囊：**从顶栏挪到内容区顶部的浮层**（.navbar = absolute，
  *  不占布局高度，直接浮在首页海报上；见 App.css）。顶栏恢复干净：左边只留当前页名
  *  （+侧栏/刷新/主题按钮），中间弱化品牌小字，右边窗口按钮。
+ *  [lc-123-rev6] 文字 → **内联 SVG 图标**（房子/放大镜）；高亮不再是"直接跳过去"，而是
+ *  一块会滑动的**水滴指示器**（等宽两槽 translateX(0|100%) + 过冲回弹缓动），见 App.css。
+ *  ⚠ 图标按钮必须带 aria-label + title（无文字时读屏与悬停都要认得出）。
  *  ⚠ 胶囊仍带 `-webkit-app-region: no-drag`（见 App.css .nav-cap）：虽已不贴拖拽区，
  *  这道声明是"胶囊一定点得动"的保险丝（顶栏整条仍是 data-tauri-drag-region 拖拽区）。 */
 function NavCapsule({
@@ -334,22 +444,31 @@ function NavCapsule({
   onNav: (p: "home" | "discover") => void;
 }) {
   return (
-    <div className="nav-cap" role="tablist" aria-label="主导航">
+    <div className="nav-cap" data-side={page} role="tablist" aria-label="主导航">
+      {/* [lc-123-rev6] 滑动指示器（"水滴"）：绝对定位、宽度 = 一个槽位，translateX(0|100%) 搬家；
+          切换瞬间内部 scaleX(.92)→1 做出黏滞回弹（两个不同 animation-name 保证每次切换都重放） */}
+      <span className="nav-cap-ind" aria-hidden="true">
+        <i />
+      </span>
       <button
         role="tab"
         aria-selected={page === "home"}
+        aria-label="首页"
+        title="首页"
         className={`nav-cap-l${page === "home" ? " on" : ""}`}
         onClick={() => onNav("home")}
       >
-        首页
+        <IconHome />
       </button>
       <button
         role="tab"
         aria-selected={page === "discover"}
+        aria-label="发现"
+        title="发现"
         className={`nav-cap-l${page === "discover" ? " on" : ""}`}
         onClick={() => onNav("discover")}
       >
-        发现
+        <IconSearch />
       </button>
     </div>
   );
@@ -364,27 +483,29 @@ function TitleBar({
   onRefresh,
   refreshing,
   onToggleTheme,
-  overlay,
-  ghost,
+  chrome,
 }: {
   title: string;
   nav?: boolean;
-  /** 当前"页"（首页/发现）：左上角那行字跟着它切（胶囊已挪到内容区，见 NavCapsule） */
+  /** 当前"页"（首页/发现）：左上角那行字跟着它切（胶囊已挪到内容区浮层，见 NavCapsule） */
   page?: "home" | "discover";
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
   onRefresh?: () => void;
   refreshing?: boolean;
-  onToggleTheme?: () => void;
-  /** 悬浮在海报/视频上时：白字 + 顶部压暗渐变 */
-  overlay?: boolean;
-  /** 透明但保持主题色文字（详情页：顶栏下无穿层内容） */
-  ghost?: boolean;
+  /** [lc-123-rev6] 传事件：深浅切换的圆形扩散要拿**按钮中心**做原点（getBoundingClientRect） */
+  onToggleTheme?: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  /** [lc-123-rev4] 顶栏 chrome 色：auto=跟随主题（默认）；dark/light=按 hero 亮度采样；fallback=白字强阴影 */
+  chrome?: ChromeTone;
 }) {
   const win = getCurrentWindow();
   const crumb = page === "discover" ? "发现" : "首页";
   return (
-    <div className={`titlebar${overlay ? " overlay" : ""}${ghost ? " ghost" : ""}`} data-tauri-drag-region>
+    <div
+      className="titlebar"
+      data-tauri-drag-region
+      data-chrome={chrome && chrome !== "auto" ? chrome : undefined}
+    >
       <div className="tb-left" data-tauri-drag-region>
         {nav && onToggleSidebar && (
           <button
@@ -408,7 +529,7 @@ function TitleBar({
           </button>
         )}
         {onToggleTheme && (
-          <button className="tb-icon" title="切换深浅模式" onClick={onToggleTheme}>
+          <button className="tb-icon" title="切换深浅模式" onClick={(e) => onToggleTheme(e)}>
             ◐
           </button>
         )}
@@ -576,12 +697,15 @@ function CarouselView({
   logos,
   onPlay,
   onDetail,
+  onTone,
 }: {
   items: MediaItem[];
   bds: Record<string, string>;
   logos: Record<string, string>;
   onPlay: (t: PlayTarget) => void;
   onDetail: (item: MediaItem) => void;
+  /** [lc-123-rev4] 上报"当前这张 hero 图的顶栏 chrome 色"（App 透传给 TitleBar；仅首页用） */
+  onTone?: (t: ChromeTone) => void;
 }) {
   const [index, setIndex] = useState(0);
   const [armed, setArmed] = useState(false);
@@ -636,6 +760,31 @@ function CarouselView({
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [n, index]);
+
+  // [lc-123-rev4] 顶栏自适应反色：把**当前这一张** hero 图的 URL 采样成 chrome 色上报。
+  // 换片（index 变）才重采；同一张图有 URL 级缓存（sampleChromeTone 内部）。采样失败 → "fallback"。
+  const activeItem = items[index];
+  const activeSrc = activeItem
+    ? bds[activeItem.guid]
+      ? imgUrl(bds[activeItem.guid])
+      : activeItem.poster
+        ? imgUrl(activeItem.poster)
+        : null
+    : null;
+  useEffect(() => {
+    if (!onTone) return;
+    if (!activeSrc) {
+      onTone("auto"); // 这一张没有图（垫底色块）→ 交回默认色
+      return;
+    }
+    let alive = true;
+    sampleChromeTone(activeSrc).then((t) => {
+      if (alive) onTone(t ?? "fallback");
+    });
+    return () => {
+      alive = false;
+    };
+  }, [activeSrc, onTone]);
 
   if (n === 0) return null;
   const yearOf = (it: MediaItem) => String(it.release_date || it.air_date || "").slice(0, 4);
@@ -842,6 +991,7 @@ function HomeView({
   onOpenLib,
   onPlay,
   onOpenItem,
+  onHeroTone,
 }: {
   libs: Lib[];
   hiddenLibs: string[];
@@ -854,6 +1004,8 @@ function HomeView({
   onOpenLib: (lib: Lib) => void;
   onPlay: (t: PlayTarget) => void;
   onOpenItem: (item: MediaItem) => void;
+  /** [lc-123-rev4] hero 图亮度采样结果上报（App → TitleBar 自适应反色） */
+  onHeroTone?: (t: ChromeTone) => void;
 }) {
   const [manageOpen, setManageOpen] = useState(false);
   const shownLibs = libs.filter((l) => !hiddenLibs.includes(l.guid));
@@ -867,6 +1019,7 @@ function HomeView({
           logos={carouselLogos}
           onPlay={onPlay}
           onDetail={onOpenItem}
+          onTone={onHeroTone}
         />
         <div className="lib-strip">
           {shownLibs.map((lib) => (
@@ -1276,6 +1429,14 @@ function localWeekdayId(): number {
   return d === 0 ? 7 : d;
 }
 
+/** [lc-123-rev5] 本机日期 YYYY-MM-DD：日历缓存的**跨天分桶键**
+ *  （本地零点一过就换键 ⇒ 必然重取；不会把昨天的表当今天用）。 */
+function localDay(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 /** 发现页骨架块（两栏共用；shimmer 语言对齐已有的 .poster-skeleton / .bgmc-sk-*） */
 function Dsk({ cls }: { cls: string }) {
   return <div className={`dsk ${cls}`} aria-hidden="true" />;
@@ -1349,10 +1510,12 @@ function TmdbHero({
   if (!hero) return null;
   const state = hero.state === "upcoming" ? "未开播" : hero.state === "airing" ? "已开播" : "";
   const meta = [hero.year, state].filter(Boolean).join(" · ");
+  // [lc-123-rev3] 主推大图用 16:9 横图（backdropPath）；只有缺横图时才回落 2:3 海报（.is-poster 温和裁切）
+  const heroImg = hero.backdropPath ? tmdbImg(hero.backdropPath, "w780") : hero.poster ? tmdbImg(hero.poster, "w780") : "";
   return (
     <div className="dphero" onMouseEnter={() => onHover(true)} onMouseLeave={() => onHover(false)}>
-      <div className="dphero-bg" aria-hidden="true">
-        {hero.poster ? <img src={tmdbImg(hero.poster, "w780")} alt="" draggable={false} /> : null}
+      <div className={`dphero-bg${hero.backdropPath ? "" : " is-poster"}`} aria-hidden="true">
+        {heroImg ? <img src={heroImg} alt="" draggable={false} /> : null}
       </div>
       <div className="dphero-sh" aria-hidden="true" />
       <div className="dphero-in">
@@ -1398,15 +1561,19 @@ function TmdbHero({
 }
 
 /** [lc-123-rev] 「本季新剧」2 列横向卡：16:9 背景图 + 标题 + 年份 + 开播状态小标签 + 右上评分角标。 */
+/** [lc-123-rev3] 「本季新剧」2 列横向卡：**16:9 横图**（backdropPath，w780）+ 标题 + 年份 +
+ *  开播状态小标签 + 右上评分角标。缺横图时回落 2:3 海报（.is-poster 温和裁切，见 App.css）——
+ *  列几何（16:9 框 / 2 列 / 卡内边距）保持不变，换成横图后卡片对齐与角标位置不动。 */
 function TmdbHC({ it }: { it: TmdbDiscoverItem }) {
   const tip = [it.title, it.overview].filter(Boolean).join("\n\n");
   const state = it.state === "upcoming" ? "未开播" : it.state === "airing" ? "已开播" : "";
+  const img = it.backdropPath ? tmdbImg(it.backdropPath, "w780") : it.poster ? tmdbImg(it.poster, "w342") : "";
   return (
     <div className="dlc" title={tip}>
-      <div className="dlc-img">
+      <div className={`dlc-img${it.backdropPath ? "" : " is-poster"}`}>
         <Dsk cls="dsk-poster" />
-        {it.poster ? (
-          <img src={tmdbImg(it.poster, "w342")} alt="" loading="lazy" draggable={false} />
+        {img ? (
+          <img src={img} alt="" loading="lazy" draggable={false} />
         ) : (
           <span className="dlc-empty" aria-hidden="true">
             🎬
@@ -1465,7 +1632,24 @@ function TmdbPane({ active }: { active: boolean }) {
   const [upMoreBusy, setUpMoreBusy] = useState(false);
   const [heroIdx, setHeroIdx] = useState(0);
   const [heroHover, setHeroHover] = useState(false); // 悬停暂停自动轮播
-  const [nonce, setNonce] = useState(0); // 两块共用的失败重试触发器
+  const [nonce, setNonce] = useState(0); // 两块共用的**失败重试**触发器（force + noEtag：强制全量）
+  const [probe, setProbe] = useState(0); // [lc-123-rev5] 10 分钟后台探测（force=false：命令层先读缓存判 TTL）
+  // 失败重试与"到期探测"走**不同**的 force 语义：重试 = force + noEtag（强制全量，别拿坏缓存反复撞）
+  const retryRef = useRef(false);
+  const hardRetry = useCallback(() => {
+    retryRef.current = true;
+    setNonce((n) => n + 1);
+  }, []);
+  // changed=false（缓存命中/304/内容未变）时**不碰 UI**：用 ref 记"已经渲染过哪一份数据"
+  const appliedKeyRef = useRef("");
+  const itemsRef = useRef<TmdbDiscoverItem[]>([]);
+  const upCountRef = useRef(0);
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+  useEffect(() => {
+    upCountRef.current = upcoming.length;
+  }, [upcoming]);
 
   // 当季/下季（切换 剧集/电影 或 本季/下季 → 重取；active 才取）
   useEffect(() => {
@@ -1473,11 +1657,21 @@ function TmdbPane({ active }: { active: boolean }) {
     let alive = true;
     setBusy(true);
     setErr("");
-    invoke<{ items?: TmdbDiscoverItem[]; gte?: string; lte?: string }>("tmdb_discover", {
-      arg: { mode: "season", mediaType, season },
-    })
+    const hard = retryRef.current; // 失败重试：绕过本地缓存且**不带 ETag**（强制全量）
+    retryRef.current = false;
+    invoke<{ items?: TmdbDiscoverItem[]; gte?: string; lte?: string; changed?: boolean }>(
+      "tmdb_discover",
+      // 常规（进页面/10 分钟探测）：force=false ⇒ 命令层「先读 12h 磁盘缓存 → 未过期直接返回（零网络）
+      // → 过期才带 ETag 探测（304 就只顺延时间戳）」
+      { arg: { mode: "season", mediaType, season, force: hard, noEtag: hard } },
+    )
       .then((d) => {
         if (!alive) return;
+        const key = `${mediaType}|${season}`;
+        // changed=false（缓存命中 / 304 / 200 但内容未变）且这份数据已经渲染过 → **一个 state 都不碰**
+        // （零 re-render、滚动位置不动）。只有 内容变了 / 首次 / 换了 key 才落 state。
+        if (d?.changed === false && appliedKeyRef.current === key && itemsRef.current.length) return;
+        appliedKeyRef.current = key;
         setItems(Array.isArray(d?.items) ? d.items : []);
         setRange(d?.gte && d?.lte ? `${d.gte} ~ ${d.lte}` : "");
       })
@@ -1490,7 +1684,16 @@ function TmdbPane({ active }: { active: boolean }) {
     return () => {
       alive = false;
     };
-  }, [active, mediaType, season, nonce]);
+  }, [active, mediaType, season, nonce, probe]);
+
+  // [lc-123-rev5] 后台探测：每 10 分钟一次 —— **304 极便宜**（未变只传几十字节），
+  // 且命令层只在 TTL 过期时才真发请求；未变时 changed=false ⇒ 上面那个分支一个 state 都不碰。
+  // 只探当季列表：即将播出是"加载更多"累加出来的列表（用户翻过页就不该被后台缩回去）。
+  useEffect(() => {
+    if (!active) return;
+    const t = window.setInterval(() => setProbe((n) => n + 1), 10 * 60 * 1000);
+    return () => window.clearInterval(t);
+  }, [active]);
 
   // 即将播出（同一 mediaType；**不带季度窗口**）：先取第一页，后续页由「加载更多」追
   useEffect(() => {
@@ -1500,9 +1703,15 @@ function TmdbPane({ active }: { active: boolean }) {
     setUpErr("");
     setUpMoreErr("");
     setUpPage(1);
-    invoke<TmdbUpResp>("tmdb_discover", { arg: { mode: "upcoming", mediaType, page: 1 } })
+    const hard = retryRef.current;
+    retryRef.current = false;
+    invoke<TmdbUpResp & { changed?: boolean }>("tmdb_discover", {
+      // 常规 force=false：先读磁盘缓存（即将播出 TTL 24h）；失败重试才 force+noEtag 强制全量
+      arg: { mode: "upcoming", mediaType, page: 1, force: hard, noEtag: hard },
+    })
       .then((d) => {
         if (!alive) return;
+        if (d?.changed === false && upCountRef.current > 0) return; // 内容没变 → 不碰 UI
         setUpcoming(Array.isArray(d?.items) ? d.items : []);
         setUpTotal(typeof d?.total === "number" ? d.total : 0);
         setUpTotalPages(typeof d?.totalPages === "number" ? d.totalPages : 0);
@@ -1540,7 +1749,7 @@ function TmdbPane({ active }: { active: boolean }) {
     setUpMoreErr("");
     try {
       const d = await invoke<TmdbUpResp>("tmdb_discover", {
-        arg: { mode: "upcoming", mediaType, page: next },
+        arg: { mode: "upcoming", mediaType, page: next, force: false },
       });
       const more = Array.isArray(d?.items) ? d.items : [];
       setUpcoming((prev) => {
@@ -1591,12 +1800,12 @@ function TmdbPane({ active }: { active: boolean }) {
         {busy && !items.length ? (
           <TmdbSeasonSkeleton />
         ) : err && !items.length ? (
-          <DState err={err} emptyText="" onRetry={() => setNonce((n) => n + 1)} />
+          <DState err={err} emptyText="" onRetry={hardRetry} />
         ) : !items.length ? (
           <DState
             err=""
             emptyText={`${season === "next" ? "下季" : "本季"}暂无数据`}
-            onRetry={() => setNonce((n) => n + 1)}
+            onRetry={hardRetry}
           />
         ) : (
           <>
@@ -1632,7 +1841,7 @@ function TmdbPane({ active }: { active: boolean }) {
             ))}
           </ul>
         ) : upErr && !upcoming.length ? (
-          <DState err={upErr} emptyText="" onRetry={() => setNonce((n) => n + 1)} />
+          <DState err={upErr} emptyText="" onRetry={hardRetry} />
         ) : !upcoming.length ? (
           <div className="dstate">暂无即将播出的条目</div>
         ) : (
@@ -1818,21 +2027,35 @@ function BgmPane({ active, onOpen }: { active: boolean; onOpen: (it: BgmCalendar
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [nonce, setNonce] = useState(0);
-  // 失败重试要**绕过 Rust 落盘缓存**（否则重试还是那份坏数据）；用 ref 传，避免进依赖数组反复触发
+  const [probe, setProbe] = useState(0); // [lc-123-rev5] 10 分钟后台探测
+  // 手动 ⟳ / 失败重试的语义不同（见下）：⟳ = force（**仍带条件头**）；失败重试 = force + noEtag（全量）
   const forceRef = useRef(false);
+  const hardRef = useRef(false);
+  const daysRef = useRef<BgmCalendarDay[]>([]);
+  useEffect(() => {
+    daysRef.current = days;
+  }, [days]);
   // 库标题索引：与日历**并行**拉（不阻塞列表；没回来就先按普通列表渲染，回来再补标签/分组）
   const lib = useLibIndex(active);
 
   useEffect(() => {
     if (!active) return;
     let alive = true;
-    const force = forceRef.current;
+    const force = forceRef.current; // 手动 ⟳：跳过本地 TTL 检查（但条件头照带）
+    const noEtag = hardRef.current; // 失败重试：连条件头都不带（强制全量）
     forceRef.current = false;
+    hardRef.current = false;
     setBusy(true);
     setErr("");
-    invoke<{ days?: BgmCalendarDay[] }>("bgm_calendar", { force })
+    invoke<{ days?: BgmCalendarDay[]; changed?: boolean }>("bgm_calendar", {
+      force,
+      noEtag,
+      day: localDay(), // 跨天分桶键：本地零点一过就换键 ⇒ 必然重取
+    })
       .then((d) => {
         if (!alive) return;
+        // changed=false（命中缓存 / 304 / 内容未变）且已有数据 → **一个 state 都不碰**（零 re-render）
+        if (d?.changed === false && daysRef.current.length) return;
         setDays(Array.isArray(d?.days) ? d.days : []);
       })
       .catch((e) => {
@@ -1844,7 +2067,15 @@ function BgmPane({ active, onOpen }: { active: boolean; onOpen: (it: BgmCalendar
     return () => {
       alive = false;
     };
-  }, [active, nonce]);
+  }, [active, nonce, probe]);
+
+  // 后台探测：每 10 分钟一次；命令层只在 TTL（3h）过期时才真发请求，而且带 ETag —— 未变就 304，
+  // changed=false ⇒ 上面一个 state 都不碰（不 re-render、不重置滚动）。
+  useEffect(() => {
+    if (!active) return;
+    const t = window.setInterval(() => setProbe((n) => n + 1), 10 * 60 * 1000);
+    return () => window.clearInterval(t);
+  }, [active]);
 
   // 按 **weekday.id** 取组（不是数组下标）；找不到就当这天空（不拿别的天凑）
   const day = days.find((g) => g.id === wd) ?? null;
@@ -1937,7 +2168,8 @@ function BgmPane({ active, onOpen }: { active: boolean; onOpen: (it: BgmCalendar
             <button
               className="dretry"
               onClick={() => {
-                forceRef.current = true;
+                // 失败重试：force + noEtag（强制全量重拉，别拿坏缓存反复撞）
+                hardRef.current = true;
                 setNonce((n) => n + 1);
               }}
             >
@@ -3552,6 +3784,9 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
+/** [lc-123-rev6] 深浅切换"圆形扩散"的时长（ms）：CSS 动画与"何时切主题（55%）"共用同一个数 */
+const THEME_WIPE_MS = 420;
+
 /* ────────────────────────── 根组件 ────────────────────────── */
 
 function App() {
@@ -3603,6 +3838,10 @@ function App() {
   }, [theme]);
   // 首页加载中（首次/手动刷新）：无数据时渲染骨架屏；已有数据时静默刷新不闪骨架
   const [homeLoading, setHomeLoading] = useState(false);
+  // [lc-123-rev4] 顶栏 chrome 色（首页 hero 亮度采样结果；CarouselView 上报）。
+  // 只在首页生效：发现/库/详情页顶栏底下是应用底色 → 交回 "auto"（跟随主题）。
+  const [heroTone, setHeroTone] = useState<ChromeTone>("auto");
+  const onHeroTone = useCallback((t: ChromeTone) => setHeroTone(t), []);
   // 启动会话检查期：不渲染任何视图，避免带有效会话时闪登录页
   const [booting, setBooting] = useState(true);
   const [username, setUserName] = useState("");
@@ -3720,13 +3959,69 @@ function App() {
   }, []);
 
   // 顶栏胶囊：首页走 goHome（有数据不重拉），发现走 goDiscover
+  // [lc-123-rev6] 页面切换动效（首页 ↔ 发现）：两条视图都是常驻挂载，切换时给**进入/离开各一套**
+  // 动画类（出去的 opacity→0 + 反方向位移，进来的反之）；进入侧 animationend 摘掉动画类
+  // （另配 400ms 安全兜底：reduced-motion 下没有动画事件，不能留退场层盖在上面）。
+  const [paneAnim, setPaneAnim] = useState<{
+    dir: "to-discover" | "to-home";
+    leaving: "home" | "discover";
+  } | null>(null);
+  const animTimer = useRef<number | null>(null);
+  const clearPaneAnim = useCallback(() => {
+    if (animTimer.current) {
+      window.clearTimeout(animTimer.current);
+      animTimer.current = null;
+    }
+    setPaneAnim(null);
+  }, []);
   const onNav = useCallback(
     (p: "home" | "discover") => {
+      if (p !== page) {
+        if (prefersReducedMotion()) {
+          clearPaneAnim(); // 少动效：瞬时切换
+        } else {
+          setPaneAnim({ dir: p === "discover" ? "to-discover" : "to-home", leaving: page });
+          if (animTimer.current) window.clearTimeout(animTimer.current);
+          animTimer.current = window.setTimeout(() => setPaneAnim(null), 400);
+        }
+      }
       if (p === "discover") goDiscover();
       else goHome();
     },
-    [goDiscover, goHome],
+    [page, goDiscover, goHome, clearPaneAnim],
   );
+
+  // [lc-123-rev6] 深浅模式切换：**从按钮位置圆形扩散覆盖全屏**（遮罩层 + clip-path: circle()，
+  // 不依赖 View Transitions API）。展开到 ~55% 时再切主题（遮罩已基本盖住屏幕，看不到切换瞬间），
+  // 随后圆**原路收回**到 0 → 动画结束从 DOM 移除。reduced-motion：直接切主题、不放动画。
+  const [ripple, setRipple] = useState<{
+    x: number;
+    y: number;
+    toDark: boolean;
+    phase: "in" | "out";
+  } | null>(null);
+  const toggleTheme = useCallback(
+    (e: React.MouseEvent<HTMLButtonElement>) => {
+      const next = theme === "dark" ? "light" : "dark";
+      if (prefersReducedMotion()) {
+        setRipple(null);
+        setTheme(next);
+        return;
+      }
+      const r = e.currentTarget.getBoundingClientRect();
+      setRipple({
+        x: r.left + r.width / 2,
+        y: r.top + r.height / 2,
+        toDark: next === "dark",
+        phase: "in",
+      });
+      window.setTimeout(() => setTheme(next), Math.round(THEME_WIPE_MS * 0.55));
+    },
+    [theme],
+  );
+  const onRippleEnd = useCallback(() => {
+    setRipple((cur) => (cur && cur.phase === "in" ? { ...cur, phase: "out" } : null));
+  }, []);
 
   // 首页数据落盘（30 分钟 TTL）：重启/会话恢复时零请求直出；数据落定 1.5s 后快照
   useEffect(() => {
@@ -3845,6 +4140,19 @@ function App() {
       });
   }, [loadHome]);
 
+  // [lc-123-rev6] 常驻视图的动画类：进入侧挂 anim-*、退场侧额外加 leaving（退场层 position:absolute 叠在上面，
+  // pointer-events:none —— 动画中照样能点，不锁交互）。动画类只在这 ~260ms 里存在，结束即摘。
+  const paneCls = (which: "home" | "discover") => {
+    const active = view === which;
+    const entering = paneAnim && active && paneAnim.leaving !== which;
+    const leaving = paneAnim && !active && paneAnim.leaving === which;
+    return (
+      `view-pane${active ? " active" : ""}` +
+      (paneAnim && (entering || leaving) ? ` anim-${paneAnim.dir}` : "") +
+      (leaving ? " leaving" : "")
+    );
+  };
+
   let body: ReactNode;
   if (booting) {
     body = null; // 会话检查期不出任何视图
@@ -3877,7 +4185,7 @@ function App() {
               <NavCapsule page={page} onNav={onNav} />
             </div>
           )}
-          <div className={`view-pane${view === "home" ? " active" : ""}`}>
+          <div className={paneCls("home")} onAnimationEnd={clearPaneAnim}>
             {homeReady ? (
               <HomeView
                 libs={libs}
@@ -3894,6 +4202,7 @@ function App() {
                 }}
                 onPlay={play}
                 onOpenItem={openItem}
+                onHeroTone={onHeroTone}
               />
             ) : homeLoading ? (
               <HomeSkeleton />
@@ -3901,7 +4210,7 @@ function App() {
           </div>
           {/* [lc-123] 发现页：与首页同款「常驻挂载」——两栏的滚动位置/已取数据在切页后保留；
               首次拉取的闸门是 active={view === "discover"}（不进这一页就不发任何请求） */}
-          <div className={`view-pane${view === "discover" ? " active" : ""}`}>
+          <div className={paneCls("discover")} onAnimationEnd={clearPaneAnim}>
             <DiscoverView active={view === "discover"} />
           </div>
           {view === "lib" && activeLib && (
@@ -3967,6 +4276,24 @@ function App() {
           }}
         />
       ))}
+      {/* [lc-123-rev6] 深浅切换的圆形扩散遮罩：新主题底色 + clip-path: circle()，
+          原点来自按钮 rect（写进 --tx/--ty）。z-index 80 > 顶栏 50；pointer-events:none；
+          animationend 后才从 DOM 移除（不留一个盖住全屏的层）。 */}
+      {ripple && (
+        <div
+          className={`theme-ripple ${ripple.toDark ? "to-dark" : "to-light"}${
+            ripple.phase === "out" ? " out" : ""
+          }`}
+          style={
+            {
+              "--tx": `${ripple.x}px`,
+              "--ty": `${ripple.y}px`,
+            } as React.CSSProperties
+          }
+          onAnimationEnd={onRippleEnd}
+          aria-hidden="true"
+        />
+      )}
       <TitleBar
         title="Fntv-Plus Tauri2"
         nav={view !== "login"}
@@ -3980,12 +4307,12 @@ function App() {
         }
         onRefresh={() => loadHome()}
         refreshing={homeLoading}
-        // [lc-123-rev2] 首页：hero 满幅（100vh）紧贴标题栏下方，胶囊是浮层（不占高度）。
-        // overlay 透明顶栏没有再启用 —— 顶栏一律实体玻璃底（用户看的是"白条消失 + hero 满幅"，
-        // 未要求海报穿到窗口上沿；要恢复那种观感需再把 homeScrolled 那套接线接回来）。
-        // [lc-111] 详情页顶栏透明化：.titlebar.ghost = 透明玻璃、保留主题色文字
-        ghost={view === "detail"}
-        onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+        // [lc-123-rev3] 顶栏现在**一律全透明**（无底色/描边/渐变），可读性靠 text-shadow；
+        // overlay/ghost 两个"底色模式"修饰类随之取消（App.css 里的 .titlebar.overlay/.ghost 已删）。
+        // [lc-123-rev4] 首页 hero 是满幅图 → chrome 色按**图上条带亮度采样**自适应；
+        // 其余页（发现/库/详情）顶栏底下是应用底色 → "auto" 跟随主题（浅色主题深字 / 深色主题浅字）。
+        chrome={view === "home" ? heroTone : "auto"}
+        onToggleTheme={toggleTheme}
       />
       {err && view !== "login" && <div className="err global-err">{err}</div>}
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}

@@ -190,29 +190,14 @@ body,
   min-height: 40px;
   display: flex;
   align-items: stretch;
-  background: var(--bg-3); /* 实体底：透明顶栏是串层可见的前提 */
-  user-select: none;
-}
-.titlebar.ghost {
-  /* 详情页：顶栏下无穿层内容（评分胶囊类名撞车已修、页面不滚动），恢复透明玻璃观感 */
+  /* [lc-123-rev3] 顶栏**全透明**（用户要求：不加底色，每个控件都透明）——
+     不设底色/描边/分隔线/渐变/模糊；可读性靠文字 text-shadow（见下方 .tb-* 规则），
+     不靠底色。⚠ 整条仍是 data-tauri-drag-region 拖拽区（无边框窗口唯一能拖的地方）。 */
   background: transparent;
-}
-/* 首页/播放页：悬浮在海报/视频上 —— 顶部压暗渐变保证白字可读 */
-.titlebar.overlay {
-  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.42), rgba(0, 0, 0, 0.14) 70%, transparent);
-}
-.titlebar.overlay .tb-brand,
-.titlebar.overlay .tb-page,
-.titlebar.overlay .tb-icon,
-.titlebar.overlay .tb-link,
-.titlebar.overlay .tb-btn {
-  color: #fff;
-}
-.titlebar.overlay .tb-icon:hover,
-.titlebar.overlay .tb-link:hover,
-.titlebar.overlay .tb-btn:hover {
-  background: rgba(255, 255, 255, 0.16);
-  color: #fff;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  user-select: none;
 }
 .tb-left {
   flex: 1;
@@ -245,6 +230,18 @@ body,
   display: flex;
   align-items: stretch;
   justify-content: flex-end;
+}
+/* [lc-123-rev3] 顶栏内部容器与文字控件一律透明底/无描边（只有 hover/active 才允许半透明底，
+   见 .tb-icon:hover / .tb-link:hover / .tb-btn:hover） */
+.tb-left,
+.tb-center,
+.tb-right,
+.tb-buttons,
+.tb-crumb,
+.tb-brand,
+.tb-page {
+  background: transparent;
+  border: 0;
 }
 .tb-page {
   font-size: 13px;
@@ -313,8 +310,67 @@ body,
   color: var(--text-strong);
 }
 .tb-btn.tb-close:hover {
-  background: #e5484d;
+  /* 关闭键 hover：保持"变红"的约定，但改成半透明（顶栏透明后不整块盖住底下的海报） */
+  background: rgba(229, 72, 77, 0.58);
   color: #fff;
+}
+/* [lc-123-rev3] 透明底的可读性：文字/图标压在海报上时靠 text-shadow 保证深浅底都看得清
+   （用户要求：可读性不许用背景色解决）。顶栏图标都是文字字形（☰ ⟳ ◐ ─ ▢ ✕），
+   text-shadow 对它们同样生效 —— 不需要 filter:drop-shadow。 */
+.tb-crumb,
+.tb-brand,
+.tb-page,
+.tb-icon,
+.tb-link,
+.tb-btn {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+/* [lc-123-rev4] 顶栏 chrome 色自适应反色（只由**首页 hero 顶部条带亮度采样**驱动；
+   data-chrome 由 TitleBar 落，采样逻辑见 App.tsx sampleChromeTone）：
+     （无属性）auto = 跟随主题 —— 发现/库/详情页顶栏底下是应用底色，主题色即最可读；
+     dark  = 海报顶部偏亮 → 深色 chrome（rgba(0,0,0,.72)）；
+     light = 偏暗 → 浅色 chrome（rgba(255,255,255,.92)）；
+     fallback = 采样失败（跨域被拦/解码失败/404）→ 浅色 chrome + **强阴影**（防"白图标压亮底看不见"）。
+   切换带 200ms 颜色过渡，别闪。 */
+.titlebar[data-chrome] .tb-crumb,
+.titlebar[data-chrome] .tb-brand,
+.titlebar[data-chrome] .tb-page,
+.titlebar[data-chrome] .tb-icon,
+.titlebar[data-chrome] .tb-link,
+.titlebar[data-chrome] .tb-btn {
+  color: var(--tb-ink);
+  transition: color 0.2s ease;
+}
+/* hover 不切回主题色：深色海报上 hover 变深字会看不见（底色是半透明白/蓝的交互反馈，仍在） */
+.titlebar[data-chrome] .tb-icon:hover,
+.titlebar[data-chrome] .tb-link:hover,
+.titlebar[data-chrome] .tb-btn:hover {
+  color: var(--tb-ink);
+}
+.titlebar[data-chrome="dark"] {
+  --tb-ink: rgba(0, 0, 0, 0.72);
+}
+.titlebar[data-chrome="light"] {
+  --tb-ink: rgba(255, 255, 255, 0.92);
+}
+.titlebar[data-chrome="fallback"] {
+  --tb-ink: rgba(255, 255, 255, 0.92);
+}
+/* 浅色 chrome（含兜底）配双层强阴影：在任何底色上都留得住字形轮廓 */
+.titlebar[data-chrome="light"] .tb-crumb,
+.titlebar[data-chrome="light"] .tb-brand,
+.titlebar[data-chrome="light"] .tb-page,
+.titlebar[data-chrome="light"] .tb-icon,
+.titlebar[data-chrome="light"] .tb-link,
+.titlebar[data-chrome="light"] .tb-btn,
+.titlebar[data-chrome="fallback"] .tb-crumb,
+.titlebar[data-chrome="fallback"] .tb-brand,
+.titlebar[data-chrome="fallback"] .tb-page,
+.titlebar[data-chrome="fallback"] .tb-icon,
+.titlebar[data-chrome="fallback"] .tb-link,
+.titlebar[data-chrome="fallback"] .tb-btn {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 6px rgba(0, 0, 0, 0.35);
 }
 
 /* ─────────────── 侧栏 ─────────────── */
@@ -340,6 +396,110 @@ body,
   flex-direction: column;
   visibility: visible;
   pointer-events: auto;
+}
+
+/* [lc-123-rev6] 首页 ↔ 发现 的页面切换动画：进入/离开**各一套**（去发现往左、回首页往右）。
+   动画类只在切换那 ~260ms 里由 JS 挂上（animationend 或 400ms 兜底摘掉），不长期挂 transition。
+   退场侧 .leaving：position:absolute 叠在进入侧之上 —— 不改列布局、**不加 overflow 裁剪**
+   （hero 满幅照旧），且 pointer-events:none：动画期间照样能点，不锁交互。 */
+.view-pane.leaving {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  visibility: visible;
+  pointer-events: none;
+}
+.view-pane.anim-to-discover {
+  animation: paneInFromRight 0.26s ease-out both;
+}
+.view-pane.leaving.anim-to-discover {
+  animation: paneOutLeft 0.26s ease-out both;
+}
+.view-pane.anim-to-home {
+  animation: paneInFromLeft 0.26s ease-out both;
+}
+.view-pane.leaving.anim-to-home {
+  animation: paneOutRight 0.26s ease-out both;
+}
+@keyframes paneOutLeft {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-22px);
+  }
+}
+@keyframes paneInFromRight {
+  from {
+    opacity: 0;
+    transform: translateX(22px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes paneOutRight {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(22px);
+  }
+}
+@keyframes paneInFromLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-22px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* [lc-123-rev6] 深浅切换的**圆形扩散**遮罩（遮罩层 + clip-path: circle()，不用 View Transitions API）：
+   --tx/--ty = 主题按钮中心（JS 用 getBoundingClientRect 写进来）；
+   底色用**目标主题**的近似底色（不能用 CSS 变量 —— 遮罩在换主题前就铺开了，变量会在切换瞬间变色）；
+   z-index 80 > 顶栏 50；pointer-events:none 不挡点击；animationend 后由 JS 从 DOM 移除。
+   展开到 ~55% 时 JS 才切主题（此时圆已盖住整个视口）；随后 .out 把圆**原路收回**到 0。 */
+.theme-ripple {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  pointer-events: none;
+  clip-path: circle(0px at var(--tx) var(--ty));
+  animation: themeWipeIn 0.42s ease-in-out forwards;
+}
+.theme-ripple.to-dark {
+  background: #0f1117;
+}
+.theme-ripple.to-light {
+  background: #f5f7fb;
+}
+.theme-ripple.out {
+  animation: themeWipeOut 0.42s ease-in-out forwards;
+}
+@keyframes themeWipeIn {
+  from {
+    clip-path: circle(0px at var(--tx) var(--ty));
+  }
+  to {
+    clip-path: circle(150% at var(--tx) var(--ty));
+  }
+}
+@keyframes themeWipeOut {
+  from {
+    clip-path: circle(150% at var(--tx) var(--ty));
+  }
+  to {
+    clip-path: circle(0px at var(--tx) var(--ty));
+  }
 }
 .main-row {
   display: flex;
@@ -2543,8 +2703,9 @@ button:active {
 }
 
 .nav-cap {
+  position: relative; /* [lc-123-rev6] 滑动指示器的定位基座 */
   display: flex;
-  gap: 2px;
+  gap: 0; /* 等宽两槽：指示器宽度 = 50%，靠 translateX(0|100%) 搬家 */
   padding: 3px;
   border-radius: 999px;
   /* 半透明玻璃：浅色页面 / 深色海报上都能看清白字 */
@@ -2557,9 +2718,69 @@ button:active {
   pointer-events: auto; /* 父层 .navbar 是 none，这里把点击收回 */
 }
 
-/* 紧凑：内边距/字号都收小（选中态沿用 --accent-grad，见 .on） */
+/* [lc-123-rev6] 「水滴」滑动指示器：绝对定位在等宽槽位上，translateX(0|100%) 在两槽间搬家。
+   缓动 cubic-bezier(.34,1.56,.64,1) 是**带过冲**的曲线（黏滞回弹手感）；
+   切换瞬间内部 i 的 scaleX(.92)→1（140ms）＝"水滴"味（两个不同 animation-name 保证每次都重放）。 */
+.nav-cap-ind {
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  bottom: 3px;
+  width: calc((100% - 6px) / 2);
+  pointer-events: none;
+  transform: translateX(0);
+  transition: transform 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+  will-change: transform;
+}
+
+.nav-cap[data-side="discover"] .nav-cap-ind {
+  transform: translateX(100%);
+}
+
+.nav-cap-ind i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent-grad); /* 选中态仍是现有 --accent-grad */
+  box-shadow: 0 4px 14px rgba(108, 155, 255, 0.42);
+}
+
+.nav-cap[data-side="home"] .nav-cap-ind i {
+  animation: navBlobHome 0.14s ease-out;
+}
+
+.nav-cap[data-side="discover"] .nav-cap-ind i {
+  animation: navBlobDiscover 0.14s ease-out;
+}
+
+@keyframes navBlobHome {
+  from {
+    transform: scaleX(0.92);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes navBlobDiscover {
+  from {
+    transform: scaleX(0.92);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* 图标按钮：等宽槽位 + 足量点击热区（约 40×30，别做成 24×24 那么难点）；文字没了靠 aria-label/title */
 .nav-cap-l {
-  padding: 6px 22px;
+  position: relative;
+  z-index: 1; /* 压在指示器之上（图标与文字始终可见） */
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 30px;
+  padding: 0;
   border: none;
   border-radius: 999px;
   background: transparent;
@@ -2569,18 +2790,54 @@ button:active {
   font-family: inherit;
   cursor: pointer;
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
-  transition: color 0.16s, background 0.16s, box-shadow 0.16s;
+  transition: color 0.16s;
+}
+
+.nav-ico {
+  display: block;
+}
+
+/* 切到新槽时图标轻微缩放（1 → .92 → 1）：只给"刚选中"的那个按钮挂，天然按切换重放 */
+.nav-cap-l.on .nav-ico {
+  animation: navIconPop 0.14s ease-out;
+}
+
+@keyframes navIconPop {
+  from {
+    transform: scale(0.92);
+  }
+  to {
+    transform: scale(1);
+  }
 }
 
 .nav-cap-l:hover {
   color: #fff;
 }
 
+/* 高亮交给滑动指示器：选中按钮自己不再画底（否则和指示器叠成两层） */
 .nav-cap-l.on {
-  background: var(--accent-grad);
+  background: transparent;
   color: #fff;
-  box-shadow: 0 4px 14px rgba(108, 155, 255, 0.42);
+  box-shadow: none;
   text-shadow: none;
+}
+
+/* [lc-123-rev6] 三处动效的 reduced-motion 守卫（②③④；JS 侧另有 prefersReducedMotion() 守卫）：
+   瞬时切换、不缩放、不位移。 */
+@media (prefers-reduced-motion: reduce) {
+  .nav-cap-ind {
+    transition: none;
+  }
+  .nav-cap[data-side="home"] .nav-cap-ind i,
+  .nav-cap[data-side="discover"] .nav-cap-ind i,
+  .nav-cap-l.on .nav-ico,
+  .view-pane.anim-to-discover,
+  .view-pane.anim-to-home,
+  .theme-ripple,
+  .theme-ripple.out {
+    animation: none;
+  }
 }
 
 /* 左上角的"当前页"字样（首页/发现）——顶栏左侧现在只剩它（+侧栏/刷新/主题按钮） */
@@ -2589,10 +2846,6 @@ button:active {
   font-weight: 600;
   color: var(--text);
   padding-left: 2px;
-}
-
-.titlebar.overlay .tb-crumb {
-  color: #fff;
 }
 
 /* ═══════════════════ [lc-123] 发现页（左 TMDB / 右 Bangumi） ═══════════════════
@@ -2757,12 +3010,18 @@ button:active {
   z-index: 0;
 }
 
+/* [lc-123-rev3] 主推大图优先用 16:9 横图（backdropPath）：原生比例 = 框比例 → 不裁切。
+   缺横图才回落 2:3 海报（.is-poster）：object-position:center 25% 温和裁切，把人物头部留在画面里。 */
 .dphero-bg img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: center 24%;
+  object-position: center;
   display: block;
+}
+
+.dphero-bg.is-poster img {
+  object-position: center 25%;
 }
 
 /* 底部渐变遮罩：标题/简介压在图上是可读的前提（对齐设计稿的 .hero .sh） */
@@ -2910,13 +3169,21 @@ button:active {
   background: var(--ph-bg);
 }
 
+/* [lc-123-rev3] 卡片图：横图（16:9 backdrop）原生比例 = 框比例 → 不裁切；
+   缺横图回落 2:3 海报时用 .is-poster 温和裁切（center 25%），不硬切主体。
+   框本身的 16:9 / 2 列几何不动 —— 换图不改列几何，评分角标与标题行对齐不受影响。 */
 .dlc-img > img {
   position: relative;
   z-index: 1;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center;
   display: block;
+}
+
+.dlc-img.is-poster > img {
+  object-position: center 25%;
 }
 
 .dlc-empty {

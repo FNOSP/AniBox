@@ -491,36 +491,23 @@ body,
   }
 }
 
-/* [lc-123-rev7] 深浅切换的**镂空反向扩散**（v6 的"实色圆吞屏"被用户否掉：
-   「我要那种不影响观感的外部扩散，透明那种」）。
-   结构：主题**立即切换**（新界面已在底下）→ 这一层铺**旧主题的印象**（CSS 变量底色按层次，
-   不放截图 —— WebView2 无页面截图通道；也不用纯 #fff/#000），clip-path: circle() 让它
-   **从 150% 收缩到 0**：圆内是旧界面、圆外是新界面，圆边向外推进 = "透明的外部扩散"。
+/* [lc-123-rev7] 深浅切换的**从按钮往外扩散**（用户两轮纠偏后的最终形态：
+   v6「实色圆吞屏」否 → v7「旧印象从全屏缩回按钮」也否（观感像倒放，用户要「从按钮处往外扩散」）。
+   最终结构：主题**立即切换**（DOM 已是新主题）→ 遮罩铺**新主题的底色**（CSS 变量按层次，
+   不放截图 —— WebView2 无页面截图通道；也不用纯 #fff/#000），clip-path: circle()
+   **从按钮处的 0 长到 150%**：圆内是新主题底色、圆外是旧界面，圆边向外推进 = 新主题从按钮荡开盖满屏。
    --tx/--ty = 主题按钮中心（JS getBoundingClientRect 写入）；z-index 80 > 顶栏 50；
-   pointer-events:none 不挡点击；animationend 后由 JS 从 DOM 移除。
-   反向切换时旧印象自然从 0 涨回 150% —— 同一条 keyframes 往返，"原路收回"。 */
+   pointer-events:none 不挡点击；animationend 后由 JS 从 DOM 移除。 */
 .theme-veil {
   position: fixed;
   inset: 0;
   z-index: 80;
   pointer-events: none;
-  /* 旧主题印象（按真实层次）：底层 = 旧 --bg-0（app-shell 渐变起点）+ 旧 --bg-1（主表面）。
-     变量在**本层挂载前**读取（切换发生在前一个渲染周期），所以读到的就是旧主题的值。 */
+  /* 新主题底色（按真实层次）：--bg-0（app-shell 渐变起点）+ --bg-1（主表面）。
+     变量在挂载后读取 —— 此时主题已切换，读到的就是新主题的值。 */
   background: linear-gradient(160deg, var(--bg-0), var(--bg-1) 55%);
-  clip-path: circle(150% at var(--tx) var(--ty));
-  animation: themeVeilShrink 0.42s ease-in-out forwards;
-}
-/* "原路收回"（当前流程用不到：每次切换都是"新主题已在底下 + 旧印象收缩"；保留给双向需求） */
-.theme-veil.out {
+  clip-path: circle(0px at var(--tx) var(--ty));
   animation: themeVeilGrow 0.42s ease-in-out forwards;
-}
-@keyframes themeVeilShrink {
-  from {
-    clip-path: circle(150% at var(--tx) var(--ty));
-  }
-  to {
-    clip-path: circle(0px at var(--tx) var(--ty));
-  }
 }
 @keyframes themeVeilGrow {
   from {

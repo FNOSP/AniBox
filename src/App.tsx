@@ -4005,18 +4005,11 @@ function App() {
   );
 
   // [lc-123-rev7] 深浅模式切换：**「外部扩散」= 镂空反向扩散**（用户否掉 v6 的实色圆吞屏：
-  // 「怎么是全白全黑屏覆盖切换，我要那种不影响观感的外部扩散，透明那种」）。
-  // 做法：主题**立即切换**（DOM/类名马上换，v6 的"55% 提前切"已删），随后铺一个**旧主题印象层**
-  // 盖住全屏，用 clip-path: circle() 让它**从 150% 收缩到 0** —— 圆**外**是已切换的新界面、
-  // 圆**内**还是旧界面，圆边向外推进 = "透明的外部扩散"，全程无色块。
-  // 印象层**不放截图**（WebView2 无页面截图通道）：用旧主题的 CSS 变量底色按层次铺
-  // （见 App.css .theme-veil；420ms 内圆内只是"模糊的旧界面印象"，卡片文字瞬移人眼无感）。
-  const [veil, setVeil] = useState<{
-    x: number;
-    y: number;
-    /** "in" = 旧主题印象从 150% 收到 0（切去新主题）；切反向主题时从 0 涨回 150%（原路收回） */
-    phase: "in" | "out";
-  } | null>(null);
+  // 「从按钮处往外扩散」：主题**立即切换**（DOM/类名马上换），随后铺一层**新主题的底色**
+  // （CSS 变量按层次铺，见 App.css .theme-veil），clip-path: circle() 从**按钮处 0 长到全屏** ——
+  // 圆内是新主题底色、圆外是尚未被盖住的旧界面，圆边向外推进 = 新主题从按钮荡开盖满屏。
+  // 印象层**不放截图**（WebView2 无页面截图通道），也不用纯 #fff/#000。
+  const [veil, setVeil] = useState<{ x: number; y: number } | null>(null);
   const toggleTheme = useCallback(
     (e: React.MouseEvent<HTMLButtonElement>) => {
       const next = theme === "dark" ? "light" : "dark";
@@ -4026,13 +4019,9 @@ function App() {
         return;
       }
       const r = e.currentTarget.getBoundingClientRect();
-      // 主题**先切**（新界面立刻生效），再让旧主题印象收缩退场
+      // 主题先切（新主题立刻生效），遮罩再铺**新主题底色**从按钮处长出
       setTheme(next);
-      setVeil({
-        x: r.left + r.width / 2,
-        y: r.top + r.height / 2,
-        phase: "in",
-      });
+      setVeil({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
     },
     [theme],
   );
@@ -4297,7 +4286,7 @@ function App() {
           animationend 后从 DOM 移除。 */}
       {veil && (
         <div
-          className={`theme-veil${veil.phase === "out" ? " out" : ""}`}
+          className="theme-veil"
           style={
             {
               "--tx": `${veil.x}px`,

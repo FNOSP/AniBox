@@ -2,10 +2,13 @@
 //! 命令面向前端：配置 / 登录 / 媒体库 / 播放控制。
 
 mod authx;
+mod bgm;
 mod config;
+mod disk_cache;
 mod fnapi;
 mod libmpv;
 mod imgproto;
+mod mirror_sign;
 mod mpv;
 mod proxy;
 mod tmdb;
@@ -548,6 +551,44 @@ async fn mpv_set_rate(state: State<'_, AppState>, rate: f64) -> Result<(), Strin
     Ok(())
 }
 
+// ───────────────────────── 缓存（图片/数据落盘） ─────────────────────────
+
+/// 缓存统计：占用字节 / 条目数 / 上限(MB) / 目录。设置面板「缓存」一栏的三个要素之二。
+#[tauri::command]
+async fn cache_stats() -> Result<Value, String> {
+    let (bytes, files) = disk_cache::stats();
+    Ok(json!({
+        "bytes": bytes,
+        "files": files,
+        "limitMb": disk_cache::limit_mb(),
+        "dir": disk_cache::root_display(),
+    }))
+}
+
+/// 改上限（MB；0 = 不限）：写回 config.json + 立即按新上限淘汰一次（磁盘与内存同步）。
+#[tauri::command]
+async fn cache_set_limit(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    limit_mb: u64,
+) -> Result<Value, String> {
+    let mut cfg = state.config.read().await.clone();
+    cfg.cache_limit_mb = limit_mb;
+    config::save(&app, &cfg).await?;
+    *state.config.write().await = cfg;
+    disk_cache::set_limit_mb(limit_mb);
+    let (bytes, files) = disk_cache::stats();
+    Ok(json!({ "bytes": bytes, "files": files, "limitMb": disk_cache::limit_mb(), "dir": disk_cache::root_display() }))
+}
+
+/// 清理缓存：**内存层与磁盘层一起清**（清了盘内存还留着旧图 = 占用对不上、还看得到旧图）。
+#[tauri::command]
+async fn cache_clear() -> Result<Value, String> {
+    disk_cache::clear()?;
+    let (bytes, files) = disk_cache::stats();
+    Ok(json!({ "bytes": bytes, "files": files, "limitMb": disk_cache::limit_mb(), "dir": disk_cache::root_display() }))
+}
+
 // ───────────────────────── 入口 ─────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -664,6 +705,15 @@ pub fn run() {
             libmpv::install_crash_logger();
             // 启动时从磁盘读回配置（token/路径），否则每次重启都要重新登录
             let cfg = tauri::async_runtime::block_on(config::load(app.handle()));
+            // 图片/数据落盘缓存：目录在应用数据目录（不是 %TEMP%），上限来自 config，启动即按上限淘汰一次
+            {
+                let root = app
+                    .path()
+                    .app_data_dir()
+                    .map(|d| d.join("cache"))
+                    .unwrap_or_else(|_| std::env::temp_dir().join("fntv-cache"));
+                disk_cache::init(root, cfg.cache_limit_mb);
+            }
             *app.state::<AppState>().config.blocking_write() = cfg;
             // Win11 会给窗口画一圈系统细边框 —— 用户眼中的「外面又包了一层线条」，
             // DWMWA_BORDER_COLOR(34) 设为 DWMWA_COLOR_NONE(0xFFFFFFFE) 关掉（旧系统调用失败无副作用）
@@ -744,8 +794,26 @@ pub fn run() {
             dev_log,
             mpv_input,
             tmdb::tmdb_show_details,
+            // [lc-128] 演员表**主源 = TMDB**（trim_id 精确锚点 → IMDb find → 标题搜索带相似度门槛），
+            // 结果落盘缓存；飞牛/Bangumi 侧只在 TMDB 无数据时兜底（前端负责展示优先级）
+            tmdb::tmdb_credits,
+            // [lc-123] 发现页：TMDB 当季热门/即将播出（一条命令带 mode 参数）
+            tmdb::tmdb_discover,
+            // [lc-119] Bangumi（全线走自建镜像，见 bgm.rs 头部说明）
+            bgm::bgm_match,
+            bgm::bgm_subject,
+            bgm::bgm_episodes,
+            bgm::bgm_characters,
+            bgm::bgm_persons,
+            bgm::bgm_comments,
+            // [lc-123] 发现页右栏：每日新番表（镜像 /calendar 路由，见 bgm.rs）
+            bgm::bgm_calendar,
             get_config,
             save_config,
+            // 缓存面板三要素：占用 / 上限 / 清理
+            cache_stats,
+            cache_set_limit,
+            cache_clear,
             login,
             logout,
             check_session,

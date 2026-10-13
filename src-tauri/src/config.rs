@@ -24,6 +24,15 @@ pub struct Config {
     /// 对齐 Fntv-Plus cfg.nasProxyEnabled（useNasLocal 参数）
     #[serde(default)]
     pub nas_proxy_enabled: bool,
+    /// 图片/数据落盘缓存上限（MB；**0 = 不限**）。落盘目录 = app_data_dir/cache（见 disk_cache.rs）。
+    /// 设置面板「缓存」一栏读写它；超上限按最后访问时间 LRU 淘汰。
+    #[serde(default = "default_cache_limit_mb")]
+    pub cache_limit_mb: u64,
+}
+
+/// 默认 2GB（原内存层是 192MB；磁盘层给到 GB 级才装得下一批原图）
+fn default_cache_limit_mb() -> u64 {
+    2048
 }
 
 fn default_mpv() -> String {
@@ -45,6 +54,7 @@ impl Default for Config {
             mpv_path: default_mpv(),
             proxy_path: default_proxy(),
             nas_proxy_enabled: false,
+            cache_limit_mb: default_cache_limit_mb(),
         }
     }
 }

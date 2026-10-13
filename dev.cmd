@@ -24,6 +24,50 @@ REM Inject arbitrary JS into the webview 5s after start:
 REM     set FNTV_EVAL_JS=<js>  &&  dev.cmd
 REM ---------------------------------------------------------------------------------
 
+REM ---- mirror admission secrets: RUNTIME env only -- nothing injects them at COMPILE time ----
+REM No .github/ workflow, no release script and no tauri.conf.json build hook exists in this repo,
+REM and build.rs only calls tauri_build::build(), so nothing bakes FNTV_BGM_SECRET /
+REM FNTV_TMDB_SECRET into the binary. `tauri build` is not wired to anything here => a packaged
+REM build has NEITHER a compile-time secret NOR (for end users) a runtime one, and therefore always
+REM takes the fallback paths described below. Baking one in is possible (set the var in the shell
+REM that runs `cargo build` / `tauri build`; bgm.rs and tmdb.rs read option_env!) and equals
+REM publishing it (Kazumi does the same) -- a deliberate trade-off, not an accident.
+REM => missing secrets MUST stay non-fatal. See the two blocks below.
+
+REM ---- [lc-119] Bangumi mirror admission secret (this process only, never written into the repo) ----
+REM bgm.rs prefers our mirror (bgm.690075.xyz). A MISSING FNTV_BGM_SECRET is not fatal: it is treated
+REM as "mirror unavailable" -> one WARN line in %TEMP%\fntv-libmpv.log -> straight to api.bgm.tv
+REM (next.bgm.tv for /p1/*). Bangumi needs no credentials, so that fallback is fully functional;
+REM the mirror only adds edge cache + abuse protection for our own domain. A secret that is PRESENT
+REM BUT WRONG still fails loudly (401 bad_signature) -- deterministic rejection, never downgraded.
+REM Dev convenience: if the var is unset, read it from the main repo's bgm-mirror/.secret.local
+REM (already gitignored there). The value stays in this cmd process env; nothing is written into
+REM this repo.
+REM NOTE: keep this flattened (single-line ifs, no nested blocks). cmd misparses a nested
+REM       "if exist (...) else (...)" inside an outer parenthesized block -- the outer branch is
+REM       silently skipped. Verified the hard way on this machine.
+set "FNTV_BGM_SECRET_FILE=%~dp0..\Fntv-Plus\bgm-mirror\.secret.local"
+if defined FNTV_BGM_SECRET echo [dev] FNTV_BGM_SECRET already set in this shell -- keeping it
+if not defined FNTV_BGM_SECRET if exist "%FNTV_BGM_SECRET_FILE%" set /p FNTV_BGM_SECRET=<"%FNTV_BGM_SECRET_FILE%" && set "FNTV_BGM_LOADED=1"
+if defined FNTV_BGM_LOADED echo [dev] FNTV_BGM_SECRET loaded from %FNTV_BGM_SECRET_FILE% -- in-process only, not persisted
+if not defined FNTV_BGM_SECRET echo [dev] WARN: %FNTV_BGM_SECRET_FILE% missing or empty -- will degrade to direct api.bgm.tv/next.bgm.tv (no mirror cache/abuse layer). Set FNTV_BGM_SECRET to use the mirror.
+
+REM ---- [lc-122] TMDB mirror admission secret (independent key; this process only) ----
+REM tmdb.rs prefers the TMDB mirror (tmdb.690075.xyz, signed with FNTV_TMDB_SECRET). A MISSING
+REM FNTV_TMDB_SECRET is not fatal: same "mirror unavailable" path as 429 / unreachable / 5xx -> one
+REM WARN line in %TEMP%\fntv-libmpv.log -> direct api.themoviedb.org with the user's own key. A key
+REM that is PRESENT BUT WRONG (401 bad_signature) and all other 4xx stay hard failures by design.
+REM Dev convenience: if the var is unset, parse it from the main repo's tmdb-mirror/.secret.local.
+REM NOTE: that file is "NAME=value" format (unlike bgm's raw-value file), so parse with
+REM       for /f "tokens=1,* delims==" -- set /p would hand the whole "FNTV_TMDB_SECRET=..." line
+REM       to the process. tokens=1,* keeps every '=' after the first one (base64 padding safe).
+set "FNTV_TMDB_SECRET_FILE=%~dp0..\Fntv-Plus\tmdb-mirror\.secret.local"
+if not defined FNTV_TMDB_SECRET set "FNTV_TMDB_WAS_UNSET=1"
+if defined FNTV_TMDB_SECRET echo [dev] FNTV_TMDB_SECRET already set in this shell -- keeping it
+if not defined FNTV_TMDB_SECRET if exist "%FNTV_TMDB_SECRET_FILE%" for /f "usebackq tokens=1,* delims==" %%a in ("%FNTV_TMDB_SECRET_FILE%") do if /i "%%a"=="FNTV_TMDB_SECRET" if not defined FNTV_TMDB_SECRET set "FNTV_TMDB_SECRET=%%b"
+if defined FNTV_TMDB_WAS_UNSET if defined FNTV_TMDB_SECRET echo [dev] FNTV_TMDB_SECRET loaded from %FNTV_TMDB_SECRET_FILE% -- in-process only, not persisted
+if not defined FNTV_TMDB_SECRET echo [dev] WARN: %FNTV_TMDB_SECRET_FILE% missing or unparsable -- mirror is skipped (no WARN-free path); direct fallback needs your own tmdbApiKey in %APPDATA%\fntv\config.json or FNTV_TMDB_KEY. Set FNTV_TMDB_SECRET to use the mirror.
+
 where cargo >nul 2>&1
 if %errorlevel% neq 0 (
   echo [ERROR] cargo not found. Install Rust first: winget install Rustlang.Rustup
@@ -67,7 +111,7 @@ if not errorlevel 1 (
 )
 
 echo [2/3] Environment diagnostics (saves you a round trip when something breaks)...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\dev-diag.ps1"
+pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\dev-diag.ps1"
 
 echo.
 echo [3/3] Starting Tauri dev (first Rust compile takes 5-15 min)...
@@ -82,9 +126,11 @@ echo.
 echo [dev] tauri dev exited with code %errorlevel%.
 echo.
 echo ======================== last 60 lines: fntv-libmpv.log ========================
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -LiteralPath $env:TEMP\fntv-libmpv.log -Tail 60 -ErrorAction SilentlyContinue"
+rem 用 pwsh 7 + 显式 -Encoding utf8：日志是 UTF-8，而 powershell 5.1 的 Get-Content
+rem 默认按 ANSI(GBK 936) 读 → 中文全乱码。pwsh 也是本仓库约定的唯一 PowerShell。
+pwsh -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -LiteralPath $env:TEMP\fntv-libmpv.log -Tail 60 -Encoding utf8 -ErrorAction SilentlyContinue"
 echo ================================================================================
 echo ======================== last 20 lines: fntv-tauri2-mpv.log =====================
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -LiteralPath $env:TEMP\fntv-tauri2-mpv.log -Tail 20 -ErrorAction SilentlyContinue"
+pwsh -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -LiteralPath $env:TEMP\fntv-tauri2-mpv.log -Tail 20 -Encoding utf8 -ErrorAction SilentlyContinue"
 echo ================================================================================
 pause

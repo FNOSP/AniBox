@@ -25,6 +25,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 md5 = "0.7"
 rand = "0.9"
 urlencoding = "2"
+# [lc-119] Bangumi 镜像准入签名：内层 hex(sha256(body)) + 外层 base64(sha256(...))
+# （与 Fntv-Plus/bgm-mirror/worker.js verify 对齐；两 crate 版本已在 Cargo.lock 中，无新增传递依赖）
+sha2 = "0.10"
+base64 = "0.22"
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_UI_Input_KeyboardAndMouse"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

@@ -1014,9 +1014,13 @@ h3 {
   gap: 16px;
   overflow-x: auto;
   padding-bottom: 10px;
-  margin: 0 -26px;
-  padding-left: 26px;
-  padding-right: 26px;
+  /* [lc-1431] 横向归零。原来用「负边距 -26 + 同值 padding 26」自造通栏
+     （意图是让横向滚动条能贴到容器边缘），但在 .home-full 已提供 26px padding 的
+     前提下，那套自补净推出 -26px ⇒ 卡片跑到窗口最左，与轮播文字不齐。
+     首页的横向留白现在**统一由 .home-full 提供**，这里不再自补。 */
+  margin: 0;
+  padding-left: 0;
+  padding-right: 0;
 }
 .hscroll .card {
   min-width: 148px;
@@ -1414,8 +1418,17 @@ button:active {
   display: flex;
   flex-direction: column;
   justify-content: flex-end; /* 信息块贴底：居中会在上方留大片空白，贴近媒体库条只留隔离带 */
-  /* [lc-1426] 左边距改用统一变量（原 4%：4% 相对**轮播容器**宽，
-     而下方媒体库条的 left:4% 相对**定位祖先**宽 → 两者渲染出来不齐，用户截图所示）。
+  /* [lc-1431] 左缘与下方媒体库条对齐（--home-pad = 26，窗口坐标）。
+     位置链（注意 `.content.home-full` 是**同一个元素**，不是父子）：
+       窗口 0 → .view-stack(relative，基准 0)
+       → <main class="content home-full"> padding-left 26 ⇒ content box 左缘 26
+       → .mist-banner margin-left -26 ⇒ 盒子左缘 0（全幅贴边）+ 宽 calc(100%+52)
+       → .mist-item 宽 100% ⇒ 左缘 0
+       → 本层 absolute、定位祖先是 .mist-item ⇒ 基准 0
+     ⇒ 所以这里写 `var(--home-pad)`，文字落在 **26px**；
+       与 .lib-strip（定位祖先是 .view-stack，基准 0，left:26 ⇒ 26px）同一条基线。
+     ⚠ 基准不同不可复用同一套直觉：本层的基准**已经**是 0（负边距把它拉回来了），
+       而 .lib-strip 的基准也是 0 —— 两者恰好都只需 26。
      163 = 媒体库条占位(卡124px+底边距14px) + ~25px 隔离带 */
   padding: 0 var(--home-pad) 163px;
   box-sizing: border-box;
@@ -1729,16 +1742,13 @@ button:active {
 }
 .home-sec .section-head {
   margin: 0 0 14px;
-  padding: 0 var(--home-pad);
+  /* [lc-1431] 横向 padding 归零：**.home-full 已经提供 26px**，这里再加一份会变成 52px，
+     与轮播文字 / 媒体库条（都是 26px）差 26px —— 用户看到的"上面海报的没齐"就是这个。 */
+  padding: 0;
 }
-/* 首页海报铺满右缘：清掉横排与标题的右侧内边距，细滚动条浮在贴边海报上方 */
-.home-full .home-sec .section-head {
-  padding-right: 0;
-}
-.home-full .hscroll {
-  margin-right: 0;
-  padding-right: 0;
-}
+/* [lc-1431] 原来这里给首页"右侧归零"（让海报铺满右缘）。现在左右留白统一由
+   .home-full 提供（左右对称 26px），不再需要单独砍右侧 —— 保留规则但改成注释说明，
+   避免以后有人以为"首页右侧本来就该贴边"。 */
 .row-more {
   margin-left: auto;
   color: var(--accent);
@@ -1747,9 +1757,6 @@ button:active {
 }
 .row-more:hover {
   text-decoration: underline;
-}
-.home-sec .hscroll {
-  margin: 0;
 }
 
 /* ─────────────── 侧栏底部：用户行 + 快捷操作卡 ───────────────

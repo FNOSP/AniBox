@@ -1257,6 +1257,37 @@ function HomeView({
 }) {
   const [manageOpen, setManageOpen] = useState(false);
   const shownLibs = libs.filter((l) => !hiddenLibs.includes(l.guid));
+
+  // [lc-1431] **首页左缘对齐自检**（仅 dev）：启动后量四个关键元素的实际左边缘，
+  //   写进诊断日志（dev_log → libmpv::trace）。
+  //   为什么加这个：本轮我按 CSS 规范推演左缘，前后翻了两次结论（把 .content/.home-full
+  //   当成父子、又漏算负边距），最后靠重新读 DOM 才定案 —— 推演不可靠，实测才可靠。
+  //   这段代码在**真实渲染**后取值，日志里直接给出差值，以后改布局不必再猜。
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const t = window.setTimeout(() => {
+      const leftOf = (sel: string): number | null => {
+        const el = document.querySelector(sel);
+        return el ? Math.round(el.getBoundingClientRect().left) : null;
+      };
+      const rows: [string, number | null][] = [
+        ["轮播标题", leftOf(".mist-info h1")],
+        ["轮播简介", leftOf(".mist-info p")],
+        ["开始播放", leftOf(".mist-play")],
+        ["媒体库条卡", leftOf(".lib-strip-card")],
+        ["区块标题", leftOf(".home-sec .section-head h3")],
+        ["横排首卡", leftOf(".hscroll .card")],
+      ];
+      const vals = rows.map(([, v]) => v).filter((v): v is number => v != null);
+      const spread = vals.length ? Math.max(...vals) - Math.min(...vals) : -1;
+      const detail = rows.map(([k, v]) => `${k}=${v ?? "-"}`).join(" ");
+      invoke("dev_log", {
+        msg: `[align] ${detail} | 极差=${spread}px${spread === 0 ? " ✅对齐" : " ⚠️不齐"}`,
+      }).catch(() => {});
+    }, 1500);
+    return () => window.clearTimeout(t);
+  }, []);
+
   return (
     <main className="content home-full">
       {/* 全屏 hero 轮播 + 底部媒体库条（Emby 布局） */}

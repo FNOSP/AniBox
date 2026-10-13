@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type UIEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { IcoHome, IcoStar, IcoGrid, IcoMovie, IcoTv, IcoLive, IcoFolder } from "./icons";
@@ -15,6 +14,8 @@ type Config = {
   mpv_path: string;
   proxy_path: string;
   nas_proxy_enabled: boolean;
+  /** [lc-128] 图片/演员表落盘缓存上限（MB；0 = 不限）。设置面板「缓存」一栏读写。 */
+  cache_limit_mb: number;
 };
 
 type Lib = { guid: string; title: string; category: string; posters?: string[] };
@@ -62,8 +63,6 @@ type Episode = {
   media_stream?: { resolutions?: string[] } | null;
 };
 
-type MpvEvent = { event: string; id?: number; data?: unknown };
-
 type Season = {
   guid: string;
   title: string;
@@ -71,7 +70,164 @@ type Season = {
   number_of_episodes?: number;
 };
 
+/** [lc-119] Bangumi 匹配结果（src-tauri/src/bgm.rs::bgm_match；全线走自建镜像） */
+type BgmMatch = {
+  subject_id: number;
+  name?: string;
+  name_cn?: string;
+  date?: string;
+  score?: number | null;
+  rank?: number | null;
+  images?: Record<string, string> | null;
+  matched_by?: string;
+};
+
+/** [lc-119] Bangumi 吐槽（/p1/subjects/{id}/comments）；分页 limit/offset */
+type BgmComment = {
+  id: number | string;
+  user?: {
+    id?: number;
+    username?: string;
+    nickname?: string;
+    avatar?: { small?: string; grid?: string; large?: string };
+  };
+  rate?: number;
+  comment?: string;
+  updatedAt?: string;
+};
+
 type PlayTarget = { guid: string; title: string; tvTitle?: string };
+
+/** Bangumi 角色（/v0/subjects/{id}/characters，裸数组）：relation=主角/配角/客串；type=分类；
+ *  actors=声优列表（取首位展示）；images 与吐槽头像同形（large/grid/medium/small，可相对路径）。 */
+type BgmCharacter = {
+  id?: number;
+  name?: string;
+  relation?: string;
+  type?: number;
+  images?: Record<string, string> | null;
+  actors?: { id?: number; name?: string; images?: Record<string, string> | null }[];
+};
+
+/** Bangumi 制作人员（/v0/subjects/{id}/persons，裸数组）：relation=职位（导演/脚本/原作…）；
+ *  career 是职业列表（无 relation 时兜底）。 */
+type BgmPerson = {
+  id?: number;
+  name?: string;
+  relation?: string;
+  career?: string[];
+  images?: Record<string, string> | null;
+};
+
+/** [lc-123] TMDB 发现页条目（src-tauri/src/tmdb.rs::tmdb_discover 归一化后的 items[]）。
+ *  state 只有三态：airing（首播日已到）/ upcoming（首播日未到）/ unknown（缺日期）——
+ *  discover 端点**不返回 status**，所以这里刻意没有「连载中/已完结」。 */
+type TmdbDiscoverItem = {
+  tmdbId: number;
+  title: string;
+  originalTitle: string;
+  year: string;
+  date: string;
+  state: "airing" | "upcoming" | "unknown";
+  rating: number;
+  votes: number;
+  popularity: number;
+  poster: string;
+  overview: string;
+};
+
+/** [lc-123] Bangumi 每日新番表条目（src-tauri/src/bgm.rs::bgm_calendar 归一化后）。 */
+type BgmCalendarItem = {
+  id: number;
+  type: number;
+  name: string;
+  name_cn: string;
+  air_date: string;
+  air_weekday?: number | null;
+  score?: number | null;
+  votes: number;
+  doing: number;
+  cover: string;
+};
+
+/** 星期分组（/calendar 的顶层元素：上游是**裸数组**，不是 /v0 的 {data,total}） */
+type BgmCalendarDay = { id: number; cn: string; en: string; ja: string; count: number; items: BgmCalendarItem[] };
+
+/** Bangumi 剧集行（/v0/episodes 的 data[]；只取渲染需要的字段） */
+type BgmEpisodeRow = {
+  id?: number;
+  sort?: number;
+  ep?: number;
+  name?: string;
+  name_cn?: string;
+  airdate?: string;
+  duration?: string;
+};
+
+/** [lc-128] TMDB 演员 / 制作人员（src-tauri/src/tmdb.rs::tmdb_credits 归一化后）。
+ *  剧集带 roles[].episodes（aggregate_credits 的"演了几集"）；crew 带 job/jobLabel（中文职务）。 */
+type TmdbCreditPerson = {
+  id?: number;
+  name?: string;
+  character?: string;
+  roles?: { character?: string; episodes?: number }[];
+  episodes?: number;
+  job?: string;
+  jobLabel?: string;
+  department?: string;
+  profile?: string;
+  order?: number;
+};
+
+/** [lc-128] TMDB 演员表响应（tmdb_credits）：matchedBy = 定位方式（trim_id/imdb/搜索相似度） */
+type TmdbCredits = {
+  tmdbId?: number;
+  mediaType?: string;
+  matchedBy?: string;
+  cached?: boolean;
+  cast?: TmdbCreditPerson[];
+  crew?: TmdbCreditPerson[];
+};
+
+/** [lc-128] 按地区并列的一行（在线观看 providersByRegion / 分级 ratingsByRegion 共用） */
+type TmdbRegionRow = {
+  region: string;
+  rating?: string;
+  items?: { name?: string; logo?: string }[];
+};
+
+/** [lc-128] 地区码 → 中文名（未知地区回落到原始码，绝不猜） */
+const REGION_LABEL: Record<string, string> = {
+  CN: "中国大陆",
+  HK: "中国香港",
+  TW: "中国台湾",
+  MO: "中国澳门",
+  JP: "日本",
+  KR: "韩国",
+  SG: "新加坡",
+  MY: "马来西亚",
+  TH: "泰国",
+  US: "美国",
+  GB: "英国",
+  CA: "加拿大",
+  AU: "澳大利亚",
+  NZ: "新西兰",
+  DE: "德国",
+  FR: "法国",
+  IT: "意大利",
+  ES: "西班牙",
+  RU: "俄罗斯",
+  IN: "印度",
+  BR: "巴西",
+};
+const regionLabel = (code: string): string => REGION_LABEL[code] || code;
+
+function fmtSize(b: number): string {
+  if (!isFinite(b) || b <= 0) return "0 MB";
+  if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(2)} GB`;
+  if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(b / 1024))} KB`;
+}
 
 function pick(o: Record<string, unknown>, keys: string[]): any {
   for (const k of keys) {
@@ -91,12 +247,47 @@ function fmtDur(sec: number | null | undefined): string {
 }
 
 /** 图片统一走鉴权代理（WebView 直连 NAS 不带 Cookie 会全裂图）
- *  Windows 自定义协议形态：http://fntvimg.localhost/<poster 路径>；mac: fntvimg://localhost/<path> */
+ *  Windows 自定义协议形态：http://fntvimg.localhost/<poster 路径>；mac: fntvimg://localhost/<path>
+ *  [lc-128] 该协议同时承载 TMDB/Bangumi 图片（`/__tmdb/*`、`/__bgm/*`，见 imgproto.rs），
+ *  三级缓存（内存 → 磁盘 → 网络）都在 Rust 侧，前端只拼路径。 */
 function imgUrl(p?: string | null): string {
   if (!p) return "";
   const path = p.startsWith("/") ? p : `/${p}`;
   if (navigator.userAgent.includes("Windows")) return `http://fntvimg.localhost${path}`;
   return `fntvimg://localhost${path}`;
+}
+
+/** [lc-119] Bangumi 头像/封面：走 fntvimg 代理的 `/__bgm/*`（**拉了即落盘**，下次零网络），
+ *  兼容三种形态：完整 URL / 协议相对 `//lain.bgm.tv/...` / 相对路径 `/pic/user/l/...`。
+ *  [lc-123] `/calendar` 的封面是**明文 http://lain.bgm.tv**（该端点的老式返回）——WebView 是 https 页面
+ *  上下文，http 图会被当混合内容拦掉 ⇒ 整片裂图。这里统一升到 https（同一主机，站点支持）。
+ *  [lc-128] 其它域名（理论上不该有）不代理、不改写：fntvimg 只认识 NAS / TMDB / Bangumi 三个上游。 */
+function bgmImg(u?: string | null): string {
+  const s = String(u ?? "").trim();
+  if (!s) return "";
+  let path = "";
+  if (s.startsWith("http://lain.bgm.tv") || s.startsWith("https://lain.bgm.tv")) {
+    const url = new URL(s.replace(/^http:/, "https:"));
+    path = url.pathname + url.search;
+  } else if (s.startsWith("//lain.bgm.tv")) {
+    path = s.slice("//lain.bgm.tv".length);
+  } else if (s.startsWith("http") || s.startsWith("//")) {
+    return s;
+  } else {
+    path = s.startsWith("/") ? s : `/${s}`;
+  }
+  if (!path) return "";
+  // 少数图带查询串：自定义协议下 `?` 会被当 query 丢掉，这里用 %3F 编进路径（Rust 侧原样透传）
+  return imgUrl(`/__bgm${path.replace(/\?/g, "%3F")}`);
+}
+
+/** [lc-122] TMDB 图片：走 fntvimg 代理的 `/__tmdb/*`（Rust 反代镜像图片域并**落盘缓存**，
+ *  免签名）。`path` 是 TMDB 的 file_path（形如 /abc.jpg），`size` 如 w500/w185/**original**。
+ *  [lc-128] 不再让 WebView 直连 tmdb.690075.xyz：命中本地磁盘就**绝不重复请求**（用户要求
+ *  「拉了就本地缓存不要多拉」），且镜像/域名变更只改 Rust 一处。 */
+function tmdbImg(path: string, size: string): string {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return imgUrl(`/__tmdb/t/p/${size}${p}`);
 }
 
 /** item 详情图片字段取值（对齐主仓库 carousel/images.ts pickImg：字符串直取；
@@ -130,12 +321,45 @@ async function fetchLibItems(libGuid: string, parentGuid: string | null): Promis
 
 /* ────────────────────────── 标题栏 ────────────────────────── */
 
+/** [lc-123-rev] 「首页 | 发现」胶囊：**从顶栏挪到内容区顶部**（.navbar 行：居中、放大）。
+ *  顶栏恢复干净：左边只留当前页名（+侧栏/刷新/主题按钮），中间弱化品牌小字，右边窗口按钮。
+ *  ⚠ 胶囊仍带 `-webkit-app-region: no-drag`（见 App.css .nav-cap）：虽已不贴拖拽区，
+ *  这道声明是"胶囊一定点得动"的保险丝（顶栏整条仍是 data-tauri-drag-region 拖拽区）。 */
+function NavCapsule({
+  page,
+  onNav,
+}: {
+  page: "home" | "discover";
+  onNav: (p: "home" | "discover") => void;
+}) {
+  return (
+    <div className="nav-cap" role="tablist" aria-label="主导航">
+      <button
+        role="tab"
+        aria-selected={page === "home"}
+        className={`nav-cap-l${page === "home" ? " on" : ""}`}
+        onClick={() => onNav("home")}
+      >
+        首页
+      </button>
+      <button
+        role="tab"
+        aria-selected={page === "discover"}
+        className={`nav-cap-l${page === "discover" ? " on" : ""}`}
+        onClick={() => onNav("discover")}
+      >
+        发现
+      </button>
+    </div>
+  );
+}
+
 function TitleBar({
   title,
   nav,
+  page,
   sidebarOpen,
   onToggleSidebar,
-  onHome,
   onRefresh,
   refreshing,
   onToggleTheme,
@@ -144,9 +368,10 @@ function TitleBar({
 }: {
   title: string;
   nav?: boolean;
+  /** 当前"页"（首页/发现）：左上角那行字跟着它切（胶囊已挪到内容区，见 NavCapsule） */
+  page?: "home" | "discover";
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
-  onHome?: () => void;
   onRefresh?: () => void;
   refreshing?: boolean;
   onToggleTheme?: () => void;
@@ -156,6 +381,7 @@ function TitleBar({
   ghost?: boolean;
 }) {
   const win = getCurrentWindow();
+  const crumb = page === "discover" ? "发现" : "首页";
   return (
     <div className={`titlebar${overlay ? " overlay" : ""}${ghost ? " ghost" : ""}`} data-tauri-drag-region>
       <div className="tb-left" data-tauri-drag-region>
@@ -168,11 +394,8 @@ function TitleBar({
             ☰
           </button>
         )}
-        {nav && onHome && (
-          <button className="tb-link" onClick={onHome}>
-            首页
-          </button>
-        )}
+        {/* [lc-123] 左上角这行字 = **当前页名**（首页/发现），随胶囊切换（不再是"回首页"按钮） */}
+        {nav && <span className="tb-crumb">{crumb}</span>}
         {nav && onRefresh && (
           <button
             className={`tb-icon${refreshing ? " spinning" : ""}`}
@@ -190,8 +413,10 @@ function TitleBar({
         )}
         {!nav && <span className="tb-page">{title}</span>}
       </div>
+      {/* [lc-123-rev] 中部只剩弱化的品牌小字（原来这里是「首页|发现」胶囊，已挪到 .navbar 行）。
+          整条顶栏仍是拖拽区：中间的 span 不拦截拖拽，窗口拖动不受影响。 */}
       <div className="tb-center" data-tauri-drag-region>
-        <span className="tb-brand">{title}</span>
+        <span className="tb-brand">{nav ? "Fntv-Plus" : title}</span>
       </div>
       <div className="tb-right" data-tauri-drag-region>
         <div className="tb-buttons">
@@ -616,7 +841,6 @@ function HomeView({
   onOpenLib,
   onPlay,
   onOpenItem,
-  onScrolled,
 }: {
   libs: Lib[];
   hiddenLibs: string[];
@@ -629,16 +853,11 @@ function HomeView({
   onOpenLib: (lib: Lib) => void;
   onPlay: (t: PlayTarget) => void;
   onOpenItem: (item: MediaItem) => void;
-  /** 首页滚动状态上报：滚动后顶栏从 overlay 透明切回实底 */
-  onScrolled: (scrolled: boolean) => void;
 }) {
   const [manageOpen, setManageOpen] = useState(false);
   const shownLibs = libs.filter((l) => !hiddenLibs.includes(l.guid));
   return (
-    <main
-      className="content home-full"
-      onScroll={(e) => onScrolled(e.currentTarget.scrollTop > 8)}
-    >
+    <main className="content home-full">
       {/* 全屏 hero 轮播 + 底部媒体库条（Emby 布局） */}
       <div className="hero-zone">
         <CarouselView
@@ -889,19 +1108,1130 @@ function LibView({
   );
 }
 
-/* ────────────────────────── 详情页（Netflix 风 hero） ────────────────────────── */
+/* ────────────────────────── 详情页（Kazumi 风：模糊海报头 + 信息卡 + 分段） ────────────────────────── */
+
+/** [lc-118] genres 三形态归一：数组（[string] 或 [{name}]）/ 逗号串 —— 主仓库 images.ts lc-572 同款。
+ *  item 详情的字段名各版本不一，按优先级多键兜底。 */
+function pickGenres(d: Record<string, unknown> | null): string[] {
+  const src = d ?? {};
+  const g = src.genres ?? src.genre ?? src.types ?? src.categories ?? src.tags;
+  if (Array.isArray(g)) {
+    return g
+      .map((x) =>
+        typeof x === "string" ? x : String((x as Record<string, unknown> | null)?.name ?? ""),
+      )
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  if (typeof g === "string" && g.trim()) {
+    return g
+      .split(/[,，/、|]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+/** [lc-118] 分段栏标签（顺序即 tabIds 顺序：概览 / 选集 / 更多 / [lc-119] 吐槽） */
+const TAB_LABEL: Record<string, string> = { overview: "概览", eps: "选集", more: "更多", comments: "吐槽" };
+
+/** [lc-119] 吐槽分页页大小（p1 上游默认 20；分页推进以**实际返回条数**为准，不假定 limit 生效） */
+const BGM_PAGE = 20;
+
+/** Bangumi /v0/* 端点返回**裸数组**（吐槽走 /p1/* 包 {data}）——统一在这里兜底取值 */
+function bgmList<T>(v: unknown): T[] {
+  if (Array.isArray(v)) return v as T[];
+  const d = (v as { data?: unknown } | null)?.data;
+  return Array.isArray(d) ? (d as T[]) : [];
+}
+
+/** /characters 的 type 是分类（1 角色 / 2 机体 / 3 舰船 / 4 组织）；relation 才是主角/配角/客串 */
+const CHAR_TYPE_LABEL: Record<number, string> = { 1: "角色", 2: "机体", 3: "舰船", 4: "组织" };
+
+/** Bangumi 列表骨架屏（吐槽 / 更多 共用；与既有 .poster-skeleton 同风格；行宽错开避免机械感） */
+function BgmListSkeleton() {
+  return (
+    <ul className="bgmc-list bgmc-skel" aria-hidden="true">
+      {[0, 1, 2, 3].map((i) => (
+        <li key={i} className="bgmc-item">
+          <span className="bgmc-sk-avatar" />
+          <div className="bgmc-main">
+            <span className="bgmc-sk-line" style={{ width: i % 2 ? "40%" : "56%" }} />
+            <span className="bgmc-sk-line" style={{ width: "94%" }} />
+            <span className="bgmc-sk-line" style={{ width: i % 2 ? "72%" : "62%" }} />
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Bangumi 角色/制作人员行（「更多」分段共用）：头像 + 名称 + 右侧角色/职位标签 + 可选副行（声优）。
+ *  结构与「吐槽」列表同款（.bgmc-item 一族）；头像默认走 bgmImg（lain.bgm.tv 三级缓存代理），
+ *  [lc-128] `img` 可传**已解析好的完整 URL**（TMDB 头像走 tmdbImg、飞牛兜底头像走 imgUrl），
+ *  这样 TMDB / Bangumi / 飞牛三处演员表共用同一个展示组件，不新增一套。 */
+function BgmCastRow({
+  name,
+  tag,
+  sub,
+  avatar,
+  img,
+  fallback,
+}: {
+  name?: string;
+  tag?: string;
+  sub?: string;
+  avatar?: string;
+  /** 已解析的完整图片 URL（优先于 avatar） */
+  img?: string;
+  fallback: string;
+}) {
+  const src = img || bgmImg(avatar);
+  return (
+    <li className="bgmc-item">
+      {src ? (
+        <img className="bgmc-avatar" src={src} alt="" loading="lazy" width={40} height={40} />
+      ) : (
+        <span className="bgmc-avatar bgmc-avatar-empty" aria-hidden="true">
+          👤
+        </span>
+      )}
+      <div className="bgmc-main">
+        <div className="bgmc-head">
+          <span className="bgmc-nick">{name || fallback}</span>
+          {tag && <span className="bgmc-role">{tag}</span>}
+        </div>
+        {sub && <div className="bgmc-sub">{sub}</div>}
+      </div>
+    </li>
+  );
+}
+
+/** [lc-128] 飞牛侧演员表 —— **只做兜底**（TMDB 拿不到时才用）。飞牛的 item 详情是否带演员字段
+ *  依版本/刮削源而定：有就用（兼容字符串数组与对象数组、多种键名），**没有就是空数组**，
+ *  不报错、不渲染空区块。 */
+function fnosCast(d: Record<string, unknown> | null): { name: string; role: string; avatar: string }[] {
+  if (!d) return [];
+  const str = (o: Record<string, unknown>, keys: string[]): string => {
+    for (const k of keys) {
+      const v = o[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+    return "";
+  };
+  const raw = d.actors ?? d.cast ?? d.persons ?? d.actor_list ?? d.actors_list;
+  const arr: unknown[] = Array.isArray(raw)
+    ? raw
+    : typeof raw === "string" && raw.trim()
+      ? raw.split(/[,，、/]/).map((s) => s.trim()).filter(Boolean)
+      : [];
+  const out: { name: string; role: string; avatar: string }[] = [];
+  for (const it of arr) {
+    if (typeof it === "string") {
+      if (it.trim()) out.push({ name: it.trim(), role: "", avatar: "" });
+      continue;
+    }
+    const o = it as Record<string, unknown> | null;
+    if (!o || typeof o !== "object") continue;
+    const name = str(o, ["name", "actor", "actor_name", "person_name", "title"]);
+    if (!name) continue;
+    const role = str(o, ["role", "character", "character_name", "roles"]);
+    let avatar = str(o, ["avatar", "image", "head", "profile", "poster", "url", "path"]);
+    if (!avatar) {
+      const imgs = o.images;
+      if (typeof imgs === "string") avatar = imgs.trim();
+      else if (imgs && typeof imgs === "object") {
+        const im = imgs as Record<string, unknown>;
+        avatar = str(im, ["large", "grid", "medium", "small", "url"]);
+      }
+    }
+    out.push({ name, role, avatar });
+  }
+  return out.slice(0, 24);
+}
+
+/* ══════════════════════ [lc-123] 发现页（左 TMDB / 右 Bangumi） ══════════════════════
+   取数**一律走 Rust 命令**（`tmdb_discover` / `bgm_calendar`）：镜像要准入签名，WebView 里签不了，
+   所以 src/ 下**不允许**出现直连 bgm.690075.xyz / tmdb.690075.xyz 的 fetch。图片也不再直连图片域：
+   [lc-128] 统一走 fntvimg 自定义协议的 `/__tmdb/*`、`/__bgm/*`（Rust 反代 + **落盘三级缓存**）。
+   两栏各有**自己的滚动容器**（左栏滚到第五屏，右栏位置不能跟着跳）与**各自**的骨架屏/失败重试/空态。
+   数据只在**首次激活**时拉，切回首页再回来不重拉（与 HomeView 常驻挂载同一套理由）。 */
+
+/** 周几（1=周一 .. 7=周日）—— 与 Bangumi `weekday.id` / `air_weekday` **同一套编号**，
+ *  对齐一律按这个 id，**不按数组下标猜**（上游给的是 7 组数组，顺序变了也不会串天）。 */
+const WEEKDAYS: { id: number; cn: string }[] = [
+  { id: 1, cn: "周一" },
+  { id: 2, cn: "周二" },
+  { id: 3, cn: "周三" },
+  { id: 4, cn: "周四" },
+  { id: 5, cn: "周五" },
+  { id: 6, cn: "周六" },
+  { id: 7, cn: "周日" },
+];
+
+/** 本机时区的今天是周几（1..7）；右栏默认选中它、并在胶囊上打"今天"点 */
+function localWeekdayId(): number {
+  const d = new Date().getDay(); // 0=周日
+  return d === 0 ? 7 : d;
+}
+
+/** 发现页骨架块（两栏共用；shimmer 语言对齐已有的 .poster-skeleton / .bgmc-sk-*） */
+function Dsk({ cls }: { cls: string }) {
+  return <div className={`dsk ${cls}`} aria-hidden="true" />;
+}
+
+/* ───────────────────────── 左栏：TMDB 当季热门 + 即将播出 ───────────────────────── */
+
+/** [lc-123-rev] 左栏「即将播出」的追加页响应（Rust tmdb_discover 带 total/totalPages 回传）。 */
+type TmdbUpResp = { items?: TmdbDiscoverItem[]; total?: number; totalPages?: number };
+
+/** 主推卡取当季列表**前 N 条**（不额外请求）；8s 自动轮播，悬停暂停。 */
+const HERO_N = 5;
+const HERO_MS = 8000;
+/** 「加载更多」的页数上限：与 Rust `tmdb_discover` 的 `page.clamp(1,25)` 对齐（20 条/页 × 25 = 500） */
+const UP_MAX_PAGE = 25;
+
+/** 失败重试 / 空态（两块共用；骨架由各块自己的形状渲染） */
+function DState({ err, emptyText, onRetry }: { err: string; emptyText: string; onRetry: () => void }) {
+  if (err) {
+    return (
+      <div className="dstate">
+        <div className="dstate-msg">{err}</div>
+        <button className="dretry" onClick={onRetry}>
+          重试
+        </button>
+      </div>
+    );
+  }
+  return <div className="dstate">{emptyText}</div>;
+}
+
+/** 当季区的骨架：主推卡（16:9）+ 2 列横向卡（形状与真内容一致，避免加载完成时的跳动） */
+function TmdbSeasonSkeleton() {
+  return (
+    <>
+      <div className="dphero dphero-sk">
+        <Dsk cls="dsk-poster" />
+      </div>
+      <div className="dgrid2">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="dlc">
+            <div className="dlc-img">
+              <Dsk cls="dsk-poster" />
+            </div>
+            <div className="dlc-bd">
+              <Dsk cls="dsk-line" />
+              <Dsk cls="dsk-line short" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/** [lc-123-rev] 左栏顶部**主推卡**（16:9 大图 + 底部渐变遮罩 + 徽标 + 大标题 + 评分/年份/状态 + 两行简介）。
+ *  可翻页：左右箭头 + 圆点指示；数据就是当季列表前 N 条（HERO_N=5），不额外请求。
+ *  状态仍只两态（已开播/未开播）——discover **不返回 status**，不编「连载中/已完结」。 */
+function TmdbHero({
+  items,
+  idx,
+  onIdx,
+  onHover,
+}: {
+  items: TmdbDiscoverItem[];
+  idx: number;
+  onIdx: (i: number) => void;
+  onHover: (h: boolean) => void;
+}) {
+  const hero = items[idx];
+  if (!hero) return null;
+  const state = hero.state === "upcoming" ? "未开播" : hero.state === "airing" ? "已开播" : "";
+  const meta = [hero.year, state].filter(Boolean).join(" · ");
+  return (
+    <div className="dphero" onMouseEnter={() => onHover(true)} onMouseLeave={() => onHover(false)}>
+      <div className="dphero-bg" aria-hidden="true">
+        {hero.poster ? <img src={tmdbImg(hero.poster, "w780")} alt="" draggable={false} /> : null}
+      </div>
+      <div className="dphero-sh" aria-hidden="true" />
+      <div className="dphero-in">
+        <span className="dphero-badge">{idx === 0 ? "本季热度第一" : `热度 No.${idx + 1}`}</span>
+        <h3>{hero.title}</h3>
+        <div className="dphero-meta">
+          {hero.rating > 0 && <span>★ {hero.rating.toFixed(1)}</span>}
+          {meta && <span>{meta}</span>}
+          {hero.votes > 0 && <span>{hero.votes} 人评分</span>}
+        </div>
+        {hero.overview && <p className="dphero-sum">{hero.overview}</p>}
+      </div>
+      {items.length > 1 && (
+        <>
+          <button
+            className="dphero-ar left"
+            title="上一条"
+            onClick={() => onIdx((idx - 1 + items.length) % items.length)}
+          >
+            ‹
+          </button>
+          <button
+            className="dphero-ar right"
+            title="下一条"
+            onClick={() => onIdx((idx + 1) % items.length)}
+          >
+            ›
+          </button>
+          <div className="dphero-dots">
+            {items.map((it, i) => (
+              <button
+                key={it.tmdbId}
+                className={`dphero-dot${i === idx ? " on" : ""}`}
+                title={`第 ${i + 1} 条`}
+                onClick={() => onIdx(i)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** [lc-123-rev] 「本季新剧」2 列横向卡：16:9 背景图 + 标题 + 年份 + 开播状态小标签 + 右上评分角标。 */
+function TmdbHC({ it }: { it: TmdbDiscoverItem }) {
+  const tip = [it.title, it.overview].filter(Boolean).join("\n\n");
+  const state = it.state === "upcoming" ? "未开播" : it.state === "airing" ? "已开播" : "";
+  return (
+    <div className="dlc" title={tip}>
+      <div className="dlc-img">
+        <Dsk cls="dsk-poster" />
+        {it.poster ? (
+          <img src={tmdbImg(it.poster, "w342")} alt="" loading="lazy" draggable={false} />
+        ) : (
+          <span className="dlc-empty" aria-hidden="true">
+            🎬
+          </span>
+        )}
+        {it.rating > 0 && <span className="dlc-rate">{it.rating.toFixed(1)}</span>}
+      </div>
+      <div className="dlc-bd">
+        <div className="dlc-t">{it.title}</div>
+        <div className="dlc-s">
+          <span>{it.year || "—"}</span>
+          {state && <span className="dpill">{state}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** [lc-123-rev] 「即将播出」紧凑行：日期徽章 + 一行标题 + 类型小标签（纯展示，无跳转）。 */
+function UpRow({ it, isMovie }: { it: TmdbDiscoverItem; isMovie: boolean }) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(it.date || "");
+  const tip = [it.title, it.date, it.overview].filter(Boolean).join("\n\n");
+  return (
+    <li className="dup" title={tip}>
+      <span className="dup-d">
+        {m ? (
+          <>
+            <b>{String(Number(m[3]))}</b>
+            {String(Number(m[2]))} 月
+          </>
+        ) : (
+          "待定"
+        )}
+      </span>
+      <span className="dup-t">{it.title}</span>
+      <span className="dpill">{isMovie ? "电影" : "剧集"}</span>
+    </li>
+  );
+}
+
+/** 左栏：TMDB。`active` = 首次激活闸门（懒加载）。取数走 tmdb_discover（一条命令带 mode 参数）。 */
+function TmdbPane({ active }: { active: boolean }) {
+  const [mediaType, setMediaType] = useState<"tv" | "movie">("tv");
+  const [season, setSeason] = useState<"current" | "next">("current");
+  const [items, setItems] = useState<TmdbDiscoverItem[]>([]);
+  const [range, setRange] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [upcoming, setUpcoming] = useState<TmdbDiscoverItem[]>([]);
+  const [upBusy, setUpBusy] = useState(false);
+  const [upErr, setUpErr] = useState("");
+  const [upMoreErr, setUpMoreErr] = useState(""); // 追加页失败：只提示，不动已显示的列表
+  const [upPage, setUpPage] = useState(1); // 已载入页数（1..UP_MAX_PAGE）
+  const [upTotal, setUpTotal] = useState(0); // 上游总条数（0=未知）
+  const [upTotalPages, setUpTotalPages] = useState(0);
+  const [upMoreBusy, setUpMoreBusy] = useState(false);
+  const [heroIdx, setHeroIdx] = useState(0);
+  const [heroHover, setHeroHover] = useState(false); // 悬停暂停自动轮播
+  const [nonce, setNonce] = useState(0); // 两块共用的失败重试触发器
+
+  // 当季/下季（切换 剧集/电影 或 本季/下季 → 重取；active 才取）
+  useEffect(() => {
+    if (!active) return;
+    let alive = true;
+    setBusy(true);
+    setErr("");
+    invoke<{ items?: TmdbDiscoverItem[]; gte?: string; lte?: string }>("tmdb_discover", {
+      arg: { mode: "season", mediaType, season },
+    })
+      .then((d) => {
+        if (!alive) return;
+        setItems(Array.isArray(d?.items) ? d.items : []);
+        setRange(d?.gte && d?.lte ? `${d.gte} ~ ${d.lte}` : "");
+      })
+      .catch((e) => {
+        if (alive) setErr(String(e));
+      })
+      .finally(() => {
+        if (alive) setBusy(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [active, mediaType, season, nonce]);
+
+  // 即将播出（同一 mediaType；**不带季度窗口**）：先取第一页，后续页由「加载更多」追
+  useEffect(() => {
+    if (!active) return;
+    let alive = true;
+    setUpBusy(true);
+    setUpErr("");
+    setUpMoreErr("");
+    setUpPage(1);
+    invoke<TmdbUpResp>("tmdb_discover", { arg: { mode: "upcoming", mediaType, page: 1 } })
+      .then((d) => {
+        if (!alive) return;
+        setUpcoming(Array.isArray(d?.items) ? d.items : []);
+        setUpTotal(typeof d?.total === "number" ? d.total : 0);
+        setUpTotalPages(typeof d?.totalPages === "number" ? d.totalPages : 0);
+      })
+      .catch((e) => {
+        if (alive) setUpErr(String(e));
+      })
+      .finally(() => {
+        if (alive) setUpBusy(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [active, mediaType, nonce]);
+
+  // 主推卡自动轮播（8s）：悬停暂停；不足两条不轮播（对应 effect 直接不挂定时器）
+  const heroItems = items.slice(0, HERO_N);
+  useEffect(() => {
+    if (heroHover || heroItems.length < 2) return;
+    const t = window.setInterval(() => setHeroIdx((i) => (i + 1) % heroItems.length), HERO_MS);
+    return () => window.clearInterval(t);
+  }, [heroHover, heroItems.length]);
+
+  const heroIdxSafe = heroItems.length ? Math.min(heroIdx, heroItems.length - 1) : 0;
+  const gridItems = items.slice(HERO_N);
+  const upLastPage = Math.min(upTotalPages > 0 ? upTotalPages : UP_MAX_PAGE, UP_MAX_PAGE);
+  const upMoreAvail =
+    upcoming.length > 0 && upPage < upLastPage && (upTotal === 0 || upcoming.length < upTotal);
+
+  // 「加载更多」：**只追加**、不重置已显示内容（先出列表，追加失败只在尾部提示）
+  async function loadMoreUpcoming() {
+    if (upMoreBusy) return;
+    const next = upPage + 1;
+    setUpMoreBusy(true);
+    setUpMoreErr("");
+    try {
+      const d = await invoke<TmdbUpResp>("tmdb_discover", {
+        arg: { mode: "upcoming", mediaType, page: next },
+      });
+      const more = Array.isArray(d?.items) ? d.items : [];
+      setUpcoming((prev) => {
+        const seen = new Set(prev.map((x) => `${x.tmdbId}-${x.date}`));
+        return [...prev, ...more.filter((x) => !seen.has(`${x.tmdbId}-${x.date}`))];
+      });
+      setUpPage(next);
+      if (typeof d?.total === "number" && d.total > 0) setUpTotal(d.total);
+      if (typeof d?.totalPages === "number" && d.totalPages > 0) setUpTotalPages(d.totalPages);
+    } catch (e) {
+      setUpMoreErr(String(e));
+    } finally {
+      setUpMoreBusy(false);
+    }
+  }
+
+  const isMovie = mediaType === "movie";
+  return (
+    <section className="dpane">
+      <header className="dpane-hd">
+        <h2>{isMovie ? "当季热门电影" : "当季热门剧集"}</h2>
+        <span className="dn">{items.length} 部</span>
+        <span className="dsp" />
+        <div className="dchips">
+          <button className={`dchip${!isMovie ? " on" : ""}`} onClick={() => setMediaType("tv")}>
+            剧集
+          </button>
+          <button className={`dchip${isMovie ? " on" : ""}`} onClick={() => setMediaType("movie")}>
+            电影
+          </button>
+          <button
+            className={`dchip${season === "current" ? " on" : ""}`}
+            onClick={() => setSeason("current")}
+          >
+            本季
+          </button>
+          <button className={`dchip${season === "next" ? " on" : ""}`} onClick={() => setSeason("next")}>
+            下季
+          </button>
+        </div>
+      </header>
+      <div className="dscroll">
+        {range && (
+          <div className="dcap">
+            {season === "next" ? "下季" : "本季"} {range} · 共 {items.length} 部
+          </div>
+        )}
+        {busy && !items.length ? (
+          <TmdbSeasonSkeleton />
+        ) : err && !items.length ? (
+          <DState err={err} emptyText="" onRetry={() => setNonce((n) => n + 1)} />
+        ) : !items.length ? (
+          <DState
+            err=""
+            emptyText={`${season === "next" ? "下季" : "本季"}暂无数据`}
+            onRetry={() => setNonce((n) => n + 1)}
+          />
+        ) : (
+          <>
+            <TmdbHero items={heroItems} idx={heroIdxSafe} onIdx={setHeroIdx} onHover={setHeroHover} />
+            {gridItems.length > 0 && (
+              <>
+                <h3 className="dsub-h">
+                  {season === "next" ? "下季看点" : "本季新剧"}
+                  <span>按热度排序</span>
+                </h3>
+                <div className="dgrid2">
+                  {gridItems.map((it) => (
+                    <TmdbHC key={`${it.tmdbId}-${it.date}`} it={it} />
+                  ))}
+                </div>
+              </>
+            )}
+          </>
+        )}
+        <h3 className="dsub-h">
+          {isMovie ? "即将上映" : "即将播出"}
+          <span>按首播日排序</span>
+        </h3>
+        {upBusy && !upcoming.length ? (
+          <ul className="duplist">
+            {[0, 1, 2, 3].map((i) => (
+              <li key={i} className="dup">
+                <Dsk cls="dsk-date" />
+                <div className="dup-t">
+                  <Dsk cls="dsk-line" />
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : upErr && !upcoming.length ? (
+          <DState err={upErr} emptyText="" onRetry={() => setNonce((n) => n + 1)} />
+        ) : !upcoming.length ? (
+          <div className="dstate">暂无即将播出的条目</div>
+        ) : (
+          <>
+            <ul className="duplist">
+              {upcoming.map((it) => (
+                <UpRow key={`${it.tmdbId}-${it.date}`} it={it} isMovie={isMovie} />
+              ))}
+            </ul>
+            {upMoreAvail && (
+              <button className="dmore" onClick={loadMoreUpcoming} disabled={upMoreBusy}>
+                {upMoreBusy ? "加载中…" : "加载更多"}
+              </button>
+            )}
+            {/* 上游页数被后端夹在上限内：这里如实说明"只显示到第 N 部"，不谎称"已全部加载" */}
+            {!upMoreAvail && upPage >= upLastPage && upTotal > upcoming.length && (
+              <div className="dmore-hint">
+                已显示前 {upcoming.length} 部 · 共 {upTotal} 部
+              </div>
+            )}
+            {upMoreErr && <div className="dmore-hint">加载失败：{upMoreErr}</div>}
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* ───────────────────────── 右栏：Bangumi 每日新番 ───────────────────────── */
+
+/* ── [lc-123-rev] 在库匹配（best-effort；宁可少标，绝不谎报） ──
+   取数方式：复用**已有的** get_items_global（typeFilter 白名单 Movie/TV，与主仓库「库索引」同一口径），
+   按页拉标题集合。为什么建索引：本仓库**没有**"按标题查库"的命令（fnapi.rs 只有 item/list 等既有端点），
+   逐条网络匹配（一天 10~26 条、一周 105 条）会把 NAS 打爆 —— 一次性分页索引是唯一省的方式。
+   诚实边界：索引**分页到底**才算完整 ⇒ "ok"（可分组：在库/不在库）；
+   拉满上限还没到底 ⇒ "partial"（只给命中项打「已在库」标，**不分组、不标"不在库"**）；
+   拉失败或空库 ⇒ "none"（整个分组退场）。三种状态下列表都照常渲染（匹配在后台补，不阻塞）。 */
+const LIB_INDEX_PAGE = 60; // get_items_global 的 page_size 在 Rust 侧固定 60
+const LIB_INDEX_MAX_PAGES = 8; // 上限 480 部；不足一页才算"到底"
+const LIB_WHITELIST_TYPES = ["Movie", "TV"]; // 只要已识别的电影/剧集（排除文件夹/未识别视频）
+
+/** 归一化标题：NFKC（全角→半角）+ 小写 + 去掉空白/标点/符号（只留字母数字与汉字） */
+function normTitle(raw?: string | null): string {
+  return String(raw ?? "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s\p{P}\p{S}]/gu, "");
+}
+
+/** 标题是否命中库索引：先全等，再前缀兜底（「我推的孩子」↔「我推的孩子 第三季」这类季/篇后缀差异） */
+function libHasTitle(titles: Set<string>, raw?: string | null): boolean {
+  const n = normTitle(raw);
+  if (n.length < 2) return false;
+  if (titles.has(n)) return true;
+  for (const t of titles) {
+    if (t.length >= 3 && n.length >= 3 && (t.startsWith(n) || n.startsWith(t))) return true;
+  }
+  return false;
+}
+
+type LibIndexState = "loading" | "ok" | "partial" | "none";
+
+/** 会话级缓存：拉到的索引切页回来不再重拉（最多 8 次请求只花一次；失败不缓存，下次进来可重试） */
+let libIndexCache: { state: LibIndexState; titles: Set<string> } | null = null;
+
+/** 库标题索引（active 即拉，与日历并行；不阻塞列表渲染） */
+function useLibIndex(active: boolean): { state: LibIndexState; titles: Set<string> } {
+  const [idx, setIdx] = useState<{ state: LibIndexState; titles: Set<string> }>(
+    () => libIndexCache ?? { state: "loading", titles: new Set() },
+  );
+  useEffect(() => {
+    if (!active || libIndexCache) return;
+    let alive = true;
+    (async () => {
+      const titles = new Set<string>();
+      let complete = false;
+      try {
+        for (let p = 1; p <= LIB_INDEX_MAX_PAGES; p++) {
+          const d = await invoke<{ list?: MediaItem[]; total?: number }>("get_items_global", {
+            typeFilter: LIB_WHITELIST_TYPES,
+            page: p,
+          });
+          const list = Array.isArray(d?.list) ? d.list : [];
+          for (const it of list) {
+            const n = normTitle(it?.title);
+            if (n) titles.add(n);
+          }
+          if (list.length < LIB_INDEX_PAGE) {
+            complete = true; // 不足一页 = 已到底（空页也是）
+            break;
+          }
+        }
+      } catch {
+        if (alive) setIdx({ state: "none", titles: new Set() }); // 失败不写缓存（下次进来重试）
+        return;
+      }
+      if (titles.size === 0) {
+        if (alive) setIdx({ state: "none", titles: new Set() });
+        return;
+      }
+      const next = { state: (complete ? "ok" : "partial") as LibIndexState, titles };
+      libIndexCache = next;
+      if (alive) setIdx(next);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [active]);
+  return idx;
+}
+
+/** [lc-123-rev] 单个更新条目行：左侧强调竖条 + 封面(46×62，左上角该天序号) + 标题 +
+ *  评分色阶标签(≥8 绿 / 7–8 黄 / <7 灰；无评分不显示) + 年份 + 今日更新标。
+ *  ⚠ `/calendar` **没有集号与播出时刻**（只有 air_date 首播日 + air_weekday），所以这里
+ *  刻意**不显示**「第 N 话 / 今晚 22:30」——那两列无数据可依，宁可不要也不编。 */
+function BgmCalRow({
+  it,
+  today,
+  rank,
+  libState,
+  onOpen,
+}: {
+  it: BgmCalendarItem;
+  today: boolean;
+  /** 该天列表内的序号（1 起，按上游顺序，就是封面左上角那个角标） */
+  rank: number;
+  /** "in" = 已匹配到飞牛库（打「已在库」标）；null = 未匹配或索引不可用（不标） */
+  libState: "in" | null;
+  onOpen: (it: BgmCalendarItem) => void;
+}) {
+  const title = it.name_cn || it.name || "（无标题）";
+  const year = (it.air_date || "").slice(0, 4);
+  const score = typeof it.score === "number" && isFinite(it.score) && it.score > 0 ? it.score : null;
+  const tier = score == null ? null : score >= 8 ? "hi" : score >= 7 ? "mid" : "lo";
+  const tip = [title, year ? `${year} 年` : "", score != null ? `评分 ${score.toFixed(1)}` : ""]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <li
+      className="ditem"
+      role="button"
+      tabIndex={0}
+      title={`${tip} · 点击查看 Bangumi 详情`}
+      onClick={() => onOpen(it)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen(it);
+        }
+      }}
+    >
+      <div className={`dcv${it.cover ? "" : " empty"}`}>
+        {it.cover ? (
+          <img src={bgmImg(it.cover)} alt="" loading="lazy" width={46} height={62} draggable={false} />
+        ) : (
+          <span aria-hidden="true">🎬</span>
+        )}
+        <span className="drk" aria-hidden="true">
+          {rank}
+        </span>
+      </div>
+      <div className="dtx">
+        <div className="dt1">{title}</div>
+        <div className="dt2">
+          {tier && score != null && <span className={`dsc ${tier}`}>{score.toFixed(1)}</span>}
+          <span>{year ? `${year} 年` : "年份未知"}</span>
+          {libState === "in" && <span className="dlib">已在库</span>}
+          {today && <span className="ditem-tag">今日更新</span>}
+        </div>
+      </div>
+    </li>
+  );
+}
+
+/** 右栏：Bangumi 新番更新（7 个星期胶囊<迷你占比条> + 当天汇总条 + 当日列表）。
+ *  点击条目 → 打开该 Bangumi 条目的轻量详情。
+ *  [lc-123-rev] 在库分组：只对**当前选中这天**的条目做匹配（不逐条打网络），在库在前、组标题带数量；
+ *  索引不完整（partial）时退化成"只给命中项打标"，索引不可用时整个分组退场（见 useLibIndex 注释）。 */
+function BgmPane({ active, onOpen }: { active: boolean; onOpen: (it: BgmCalendarItem) => void }) {
+  const todayId = localWeekdayId();
+  const [days, setDays] = useState<BgmCalendarDay[]>([]);
+  const [wd, setWd] = useState<number>(todayId); // 默认今天（设计稿的"今天"带点，也默认展开）
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [nonce, setNonce] = useState(0);
+  // 失败重试要**绕过 Rust 落盘缓存**（否则重试还是那份坏数据）；用 ref 传，避免进依赖数组反复触发
+  const forceRef = useRef(false);
+  // 库标题索引：与日历**并行**拉（不阻塞列表；没回来就先按普通列表渲染，回来再补标签/分组）
+  const lib = useLibIndex(active);
+
+  useEffect(() => {
+    if (!active) return;
+    let alive = true;
+    const force = forceRef.current;
+    forceRef.current = false;
+    setBusy(true);
+    setErr("");
+    invoke<{ days?: BgmCalendarDay[] }>("bgm_calendar", { force })
+      .then((d) => {
+        if (!alive) return;
+        setDays(Array.isArray(d?.days) ? d.days : []);
+      })
+      .catch((e) => {
+        if (alive) setErr(String(e));
+      })
+      .finally(() => {
+        if (alive) setBusy(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [active, nonce]);
+
+  // 按 **weekday.id** 取组（不是数组下标）；找不到就当这天空（不拿别的天凑）
+  const day = days.find((g) => g.id === wd) ?? null;
+  const dayItems = day?.items ?? [];
+  // 星期胶囊的迷你占比条：以当周最大值（至少 1）为 100%
+  const maxCount = Math.max(1, ...days.map((g) => g.count || 0));
+  const weekTotal = days.reduce((n, g) => n + (g.count || 0), 0);
+  // 当天汇总：部数 + 8.0+ 数量 + 热度最高（doing=在看人数最大者；没有 doing 就不写这段，不编）
+  const hot = dayItems.reduce<BgmCalendarItem | null>(
+    (a, b) => (a == null || (b.doing ?? 0) > (a.doing ?? 0) ? b : a),
+    null,
+  );
+  const hotName = hot ? hot.name_cn || hot.name : "";
+  const hiCount = dayItems.filter((x) => typeof x.score === "number" && (x.score ?? 0) >= 8).length;
+  const wdCn = WEEKDAYS.find((w) => w.id === wd)?.cn ?? "";
+  // 逐条匹配：loading/partial 只给"命中"打标；只有 ok（索引完整）才敢分组和标"不在库"
+  const withLib = lib.state === "ok" || lib.state === "partial";
+  const rows = dayItems.map((it, i) => ({
+    it,
+    rank: i + 1, // 序号 = 该天列表内的位置（分组重排后也保持原序）
+    inLib: withLib ? libHasTitle(lib.titles, it.name_cn || it.name) : false,
+  }));
+  const inRows = rows.filter((r) => r.inLib);
+  const outRows = rows.filter((r) => !r.inLib);
+  const renderRow = (r: (typeof rows)[number]) => (
+    <BgmCalRow
+      key={r.it.id}
+      it={r.it}
+      today={wd === todayId}
+      rank={r.rank}
+      libState={r.inLib ? "in" : null}
+      onOpen={onOpen}
+    />
+  );
+
+  return (
+    <section className="dpane">
+      <header className="dpane-hd">
+        <h2>新番更新</h2>
+        <span className="dn">{weekTotal > 0 ? `${weekTotal} 部 / 周` : ""}</span>
+        <span className="dsp" />
+        <button
+          className="dicon"
+          title="刷新新番列表"
+          disabled={busy}
+          onClick={() => {
+            forceRef.current = true;
+            setNonce((n) => n + 1);
+          }}
+        >
+          ⟳
+        </button>
+      </header>
+      <div className="dweeks">
+        {WEEKDAYS.map((w) => {
+          const g = days.find((x) => x.id === w.id);
+          const pct = g && g.count > 0 ? Math.max(4, Math.round((g.count / maxCount) * 100)) : 0;
+          return (
+            <button
+              key={w.id}
+              className={`dweek${wd === w.id ? " on" : ""}${todayId === w.id ? " today" : ""}`}
+              onClick={() => setWd(w.id)}
+              title={g ? `${w.cn}共 ${g.count} 部` : w.cn}
+            >
+              {w.cn}
+              <span className="dweek-bar" aria-hidden="true">
+                <b style={{ width: `${pct}%` }} />
+              </span>
+              <i>{g ? `${g.count} 部` : "…"}</i>
+            </button>
+          );
+        })}
+      </div>
+      <div className="dscroll">
+        {busy && !days.length ? (
+          <ul className="dlist">
+            {[0, 1, 2, 3].map((i) => (
+              <li key={i} className="ditem">
+                <Dsk cls="dsk-cv" />
+                <div className="dtx">
+                  <Dsk cls="dsk-line" />
+                  <Dsk cls="dsk-line short" />
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : err ? (
+          <div className="dstate">
+            <div className="dstate-msg">{err}</div>
+            <button
+              className="dretry"
+              onClick={() => {
+                forceRef.current = true;
+                setNonce((n) => n + 1);
+              }}
+            >
+              重试
+            </button>
+          </div>
+        ) : !day || !day.items.length ? (
+          <div className="dstate">
+            {wd === todayId ? "今天没有新番更新" : `${wdCn}没有新番更新`}
+          </div>
+        ) : (
+          <>
+            <div className="ddaybar">
+              <b>
+                {wdCn}
+                {wd === todayId ? "（今天）" : ""}
+              </b>
+              <span>
+                {wd === todayId ? `今日 ${dayItems.length} 部新番更新` : `${dayItems.length} 部更新`}
+                {hiCount > 0 ? ` · ${hiCount} 部评分 8.0+` : ""}
+                {hotName ? ` · 热度最高：${hotName}` : ""}
+              </span>
+            </div>
+            <ul className="dlist">
+              {lib.state === "ok" ? (
+                <>
+                  {inRows.length > 0 && <li className="dgrp">已在飞牛库 · {inRows.length}</li>}
+                  {inRows.map(renderRow)}
+                  {outRows.length > 0 && <li className="dgrp">不在库 · {outRows.length}</li>}
+                  {outRows.map(renderRow)}
+                </>
+              ) : (
+                rows.map(renderRow)
+              )}
+            </ul>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* ───────────────────────── 右栏点击 → Bangumi 条目轻量详情 ───────────────────────── */
+
+/** 基于 **bgm subject** 的轻量详情（弹层）。
+ *  为什么独立于 DetailView：现有 DetailView 的入口是**飞牛库条目**（base.guid → get_item_detail /
+ *  get_seasons / get_episodes / play_item），而发现页的条目**不一定在库里**，硬塞一个假 MediaItem
+ *  只会得到"详情加载失败"。这里只用库无关的既有命令：bgm_subject / bgm_episodes / bgm_characters，
+ *  视觉沿用 App 的深色玻璃 + 圆角 + 主色（类名前缀 ddet-），不改动 DetailView。 */
+function BgmDetailOverlay({
+  id,
+  fallback,
+  onClose,
+}: {
+  id: number;
+  fallback: BgmCalendarItem | null;
+  onClose: () => void;
+}) {
+  const [sub, setSub] = useState<Record<string, unknown> | null>(null);
+  const [eps, setEps] = useState<BgmEpisodeRow[]>([]);
+  const [chars, setChars] = useState<BgmCharacter[]>([]);
+  const [err, setErr] = useState("");
+  const [extrasErr, setExtrasErr] = useState("");
+  const [busy, setBusy] = useState(true);
+  const [nonce, setNonce] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    setBusy(true);
+    setErr("");
+    setExtrasErr("");
+    (async () => {
+      try {
+        const s = await invoke<Record<string, unknown>>("bgm_subject", { id });
+        if (!alive) return;
+        setSub(s);
+      } catch (e) {
+        if (alive) setErr(String(e));
+      } finally {
+        if (alive) setBusy(false);
+      }
+      // 剧集/角色：与主详情页同一对命令；任一失败只标记 extrasErr（不该拖垮上面的主信息）
+      try {
+        const [er, cr] = await Promise.all([
+          invoke<{ data?: BgmEpisodeRow[] }>("bgm_episodes", { id, limit: 60 }),
+          invoke<BgmCharacter[]>("bgm_characters", { id }),
+        ]);
+        if (!alive) return;
+        setEps(Array.isArray(er?.data) ? er.data : []);
+        setChars(bgmList<BgmCharacter>(cr));
+      } catch (e) {
+        if (alive) setExtrasErr(String(e));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [id, nonce]);
+
+  // Esc 关闭（弹层是不可点透的模态：点背景也可关）
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  const imgs = (sub?.images ?? null) as Record<string, string> | null;
+  const cover = bgmImg(imgs?.large || imgs?.common || imgs?.medium || imgs?.grid || fallback?.cover || "");
+  const title = String(pick(sub ?? {}, ["name_cn", "name"]) ?? fallback?.name_cn ?? fallback?.name ?? "");
+  const original = String(pick(sub ?? {}, ["name"]) ?? "");
+  const date = String(pick(sub ?? {}, ["date"]) ?? fallback?.air_date ?? "");
+  const rating = (sub?.rating ?? null) as { score?: number; total?: number; rank?: number } | null;
+  const score =
+    typeof rating?.score === "number" && isFinite(rating.score) && rating.score > 0
+      ? rating.score
+      : typeof fallback?.score === "number" && (fallback?.score ?? 0) > 0
+        ? fallback?.score
+        : null;
+  const votes = typeof rating?.total === "number" ? rating.total : (fallback?.votes ?? 0);
+  const rank = typeof rating?.rank === "number" && rating.rank > 0 ? rating.rank : null;
+  const summary = String(pick(sub ?? {}, ["summary"]) ?? "").trim();
+
+  return (
+    <div className="ddet-mask" onClick={onClose}>
+      <div className="ddet" onClick={(e) => e.stopPropagation()}>
+        <button className="ddet-close" title="关闭（Esc）" onClick={onClose}>
+          ✕
+        </button>
+        <header className="ddet-hd">
+          <div className={`ddet-cv${cover ? "" : " empty"}`}>
+            {cover ? <img src={cover} alt="" draggable={false} /> : <span aria-hidden="true">🎬</span>}
+          </div>
+          <div className="ddet-hdm">
+            <h2>{title || "（无标题）"}</h2>
+            {original && original !== title && <div className="ddet-orig">{original}</div>}
+            <div className="ddet-meta">
+              {date && <span className="ddet-chip">{date}</span>}
+              {score != null && (
+                <span className="ddet-chip score">
+                  ★ {score.toFixed(1)}
+                  {votes > 0 && <i>（{votes} 人）</i>}
+                </span>
+              )}
+              {rank != null && <span className="ddet-chip">Rank #{rank}</span>}
+              <span className="ddet-chip dim">Bangumi #{id}</span>
+            </div>
+          </div>
+        </header>
+
+        <div className="ddet-body">
+          {busy && !sub && !err ? (
+            <>
+              <Dsk cls="dsk-line" />
+              <Dsk cls="dsk-line" />
+              <Dsk cls="dsk-line short" />
+            </>
+          ) : err ? (
+            <div className="dstate">
+              <div className="dstate-msg">{err}</div>
+              <button className="dretry" onClick={() => setNonce((n) => n + 1)}>
+                重试
+              </button>
+            </div>
+          ) : (
+            <>
+              {summary && (
+                <>
+                  <h3 className="ddet-h3">简介</h3>
+                  <p className="ddet-sum">{summary}</p>
+                </>
+              )}
+              <h3 className="ddet-h3">剧集{eps.length ? `（${eps.length}）` : ""}</h3>
+              {extrasErr ? (
+                <div className="dstate">
+                  <div className="dstate-msg">{extrasErr}</div>
+                  <button className="dretry" onClick={() => setNonce((n) => n + 1)}>
+                    重试
+                  </button>
+                </div>
+              ) : eps.length ? (
+                <ul className="dep-list">
+                  {eps.slice(0, 60).map((e, i) => (
+                    <li key={e.id ?? `${e.sort}-${i}`} className="dep-row">
+                      <span className="dep-no">{e.ep ?? e.sort ?? i + 1}</span>
+                      <span className="dep-name">{e.name_cn || e.name || `第 ${i + 1} 集`}</span>
+                      <span className="dep-date">{e.airdate || ""}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="dstate">暂无剧集数据</div>
+              )}
+              <h3 className="ddet-h3">主要角色{chars.length ? `（${chars.length}）` : ""}</h3>
+              {chars.length ? (
+                <ul className="bgmc-list">
+                  {chars.slice(0, 24).map((c, i) => (
+                    <BgmCastRow
+                      key={c.id ?? i}
+                      name={c.name}
+                      tag={c.relation || CHAR_TYPE_LABEL[c.type ?? 1]}
+                      sub={c.actors?.[0]?.name ? `CV：${c.actors[0].name}` : undefined}
+                      avatar={c.images?.grid || c.images?.medium || c.images?.large || c.images?.small}
+                      fallback="（无名）"
+                    />
+                  ))}
+                </ul>
+              ) : (
+                <div className="dstate">暂无角色数据</div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 发现页：左右两栏（各 50%），两栏各自的滚动与状态互不影响 */
+function DiscoverView({ active }: { active: boolean }) {
+  const [sel, setSel] = useState<BgmCalendarItem | null>(null);
+  return (
+    <div className="discover">
+      <TmdbPane active={active} />
+      <BgmPane active={active} onOpen={(it) => setSel(it)} />
+      {sel && <BgmDetailOverlay id={sel.id} fallback={sel} onClose={() => setSel(null)} />}
+    </div>
+  );
+}
 
 function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
-  // 内嵌播放：点集/播放按钮后在页内 mpv 播放（离开详情页自动 stop）
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [seasonIdx, setSeasonIdx] = useState(0);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
-  // [lc-085] 视频全屏（mpv 双击/全屏键触发）：内嵌形态 ↔ 全页播放器形态 + 窗口全屏
+  // TMDB 完整详情（剧照/相似/更多/演职人员），详情页「更多」分段的 TMDB 侧数据源
   const [tmdb, setTmdb] = useState<Record<string, unknown> | null>(null);
   const [err, setErr] = useState("");
+  // [lc-118] 详情页重排（Kazumi 风）新增的两个 UI state：分段栏当前项 + 简介展开态
+  const [tab, setTab] = useState("overview");
+  const [introFull, setIntroFull] = useState(false);
+  // [lc-119] 吐槽（Bangumi 评论）：懒加载 —— 用户切到该分段时才匹配+拉评论（避免拖慢首屏）
+  const [bgm, setBgm] = useState<BgmMatch | null>(null);
+  const bgmRef = useRef<BgmMatch | null>(null); // 供 legacy 回填任务/翻页读最新值（不进依赖数组）
+  const [bgmProbed, setBgmProbed] = useState(false); // 匹配是否已尝试（成败都置位；空壳分段靠它退场）
+  const [comments, setComments] = useState<BgmComment[]>([]);
+  const [commentsErr, setCommentsErr] = useState("");
+  const [commentsBusy, setCommentsBusy] = useState(false); // 首屏拉取（骨架屏）
+  const [commentsMoreBusy, setCommentsMoreBusy] = useState(false); // 翻页中（列表尾部提示）
+  const [commentsDone, setCommentsDone] = useState(false); // 已翻到底
+  const [commentsNonce, setCommentsNonce] = useState(0); // 失败重试触发器
+  const commentsOffset = useRef(0); // 下一页 offset = 已累计的**实际返回条数**
+  const commentsBusyRef = useRef(false);
+  const commentsDoneRef = useRef(false);
+  // 更多分段（Bangumi 角色/制作人员）：懒加载 —— 与吐槽同套路（骨架屏 / 失败重试 / 空态）
+  const [chars, setChars] = useState<BgmCharacter[]>([]);
+  const [persons, setPersons] = useState<BgmPerson[]>([]);
+  const [moreErr, setMoreErr] = useState("");
+  const [moreBusy, setMoreBusy] = useState(false); // 首屏拉取（骨架屏）
+  const [moreNonce, setMoreNonce] = useState(0); // 失败重试触发器
+  const [moreProbed, setMoreProbed] = useState(false); // 拉取是否已尝试（成败都置位；空壳分段靠它退场）
+  const moreLoadedRef = useRef(false); // 成功拉到过 → 不重复拉（切走再回来不重打请求）
+  // [lc-128] 演员表（**TMDB 主源**）：与「更多」同套路懒加载；Rust 侧按 guid + tmdb id 落盘缓存，
+  // 命中本地就零请求。Bangumi/飞牛侧只在 TMDB 无数据时兜底展示。
+  const [credits, setCredits] = useState<TmdbCredits | null>(null);
+  const [creditsErr, setCreditsErr] = useState("");
+  const [creditsBusy, setCreditsBusy] = useState(false);
+  const [creditsNonce, setCreditsNonce] = useState(0);
+  const creditsLoadedRef = useRef(false);
+  // [lc-128] 剧照点击放大（original 尺寸：走同一套三级缓存，拉了即落盘）
+  const [zoom, setZoom] = useState("");
+  // 注意：与吐槽一样**不做 busy 重入闸门** —— StrictMode 的双调用会「首跑 abort + 二跑早退」，
+  // 骨架屏会永久卡住；靠 alive 标志丢弃过期结果即可（最坏情况是 dev 下多发一次请求）。
 
   const isSeries = base.type === "TvSeries" || base.type === "TV";
+
+  /** [lc-128] TMDB 精确锚点：飞牛条目 `trim_id` 形如 `tm63578`（TMDB id）/ `tt325158`（IMDb id）/
+   *  `bg456080`（Bangumi，无 TMDB id）；另有显式 `tmdb_id`/`imdb_id` 字段时优先。有锚点就**直接定位**，
+   *  没有才回落标题搜索（Rust 侧搜索带相似度门槛，并回传 matched_by 说明"这条是谁给的 id"）。 */
+  const tmdbAnchor = (() => {
+    const d = data ?? {};
+    const str = (v: unknown): string => (v == null ? "" : String(v).trim());
+    const directTmdb = str(pick(d, ["tmdbId", "tmdb_id"]));
+    const imdb = str(pick(d, ["imdb_id", "imdbId"]));
+    const trim = str(pick(d, ["trim_id", "trimId"]));
+    let tmdbId = /^\d+$/.test(directTmdb) ? directTmdb : "";
+    if (!tmdbId) {
+      const m = /^(?:tm)(\d+)$/i.exec(trim);
+      if (m) tmdbId = m[1];
+      else if (/^\d+$/.test(trim)) tmdbId = trim; // 纯数字：老口径当 TMDB id
+    }
+    const imdbId = imdb || (/^tt\d+$/i.test(trim) ? trim.toLowerCase() : "");
+    return { trimId: trim, tmdbId, imdbId };
+  })();
 
   useEffect(() => {
     setData(null);
@@ -940,16 +2270,21 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   }, [seasons, seasonIdx]);
 
   // TMDB 完整详情（剧照/相似/更多/演职人员）：主仓库 fetchShowDetails 同款链路，失败静默降级
+  // [lc-128] 额外带上 trim_id / tmdb_id / imdb_id 锚点：能精确定位就不靠标题搜索（matchedBy 见日志）
   const tmdbTitle = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
   useEffect(() => {
     setTmdb(null);
-    if (!tmdbTitle) return;
+    // 等条目详情到位再发：锚点（trim_id 等）就来自它，先发一次纯标题搜索再重发纯属浪费
+    if (!data || !tmdbTitle) return;
     let alive = true;
     invoke<Record<string, unknown>>("tmdb_show_details", {
       arg: {
         title: tmdbTitle,
         year: String(base.release_date || "").slice(0, 4),
         mediaType: base.type === "Movie" ? "movie" : "tv",
+        trimId: tmdbAnchor.trimId || undefined,
+        tmdbId: tmdbAnchor.tmdbId || undefined,
+        imdbId: tmdbAnchor.imdbId || undefined,
       },
     })
       .then((d) => {
@@ -959,30 +2294,298 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
     return () => {
       alive = false;
     };
-  }, [base.guid, tmdbTitle]);
+  }, [base.guid, tmdbTitle, data, tmdbAnchor.trimId, tmdbAnchor.tmdbId, tmdbAnchor.imdbId]);
 
-  // 单集简介回填：原版剧集行带简介，episode/list 不含该字段，逐集拉 item 详情补（与轮播同一模式）
+  // [lc-119] 切换条目（本组件不随 base 重挂载）时清空 Bangumi 状态，避免把上一部的吐槽/匹配带过来
   useEffect(() => {
-    if (!episodes.length) return;
+    bgmRef.current = null;
+    commentsOffset.current = 0;
+    commentsDoneRef.current = false;
+    commentsBusyRef.current = false;
+    setBgm(null);
+    setBgmProbed(false);
+    setComments([]);
+    setCommentsErr("");
+    setCommentsBusy(false);
+    setCommentsMoreBusy(false);
+    setCommentsDone(false);
+    moreLoadedRef.current = false;
+    setChars([]);
+    setPersons([]);
+    setMoreErr("");
+    setMoreBusy(false);
+    setMoreProbed(false);
+    creditsLoadedRef.current = false;
+    setCredits(null);
+    setCreditsErr("");
+    setCreditsBusy(false);
+    setZoom("");
+  }, [base.guid]);
+
+  // [lc-119] 吐槽懒加载（只在切到「吐槽」分段时才开始）：先 bgm_match（结果按 base.guid 落盘缓存），
+  // 再拉第一页 /p1/.../comments。重试按钮通过 commentsNonce 重新走这段。已有数据则不重复拉。
+  useEffect(() => {
+    if (tab !== "comments") return;
+    if (commentsOffset.current > 0) return; // 已拉到过数据（含翻页）→ 不重拉
     let alive = true;
-    Promise.allSettled(
-      episodes.map((ep) => invoke<Record<string, unknown>>("get_item_detail", { guid: ep.guid })),
-    ).then((rs) => {
-      if (!alive) return;
-      setEpisodes((prev) =>
-        prev.map((ep, i) => {
-          const r = rs[i];
-          if (r.status !== "fulfilled") return ep;
-          const ov = pick(r.value, ["overview"]);
-          if (!ov || ep.overview) return ep;
-          return { ...ep, overview: String(ov) };
-        }),
-      );
-    });
+    (async () => {
+      commentsBusyRef.current = true;
+      setCommentsBusy(true);
+      setCommentsErr("");
+      try {
+        let m = bgmRef.current;
+        if (!m) {
+          // 标题优先 data.tvTitle || data.title || base.title；年份取 release_date 前 4 位；type 传 base.type
+          const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
+          const r = await invoke<BgmMatch | null>("bgm_match", {
+            query: title,
+            year: String(base.release_date || "").slice(0, 4) || null,
+            mediaType: base.type ?? null,
+            cacheKey: base.guid,
+          });
+          m = r && r.subject_id ? r : null;
+          if (!alive) return;
+          bgmRef.current = m;
+          setBgm(m);
+          setBgmProbed(true);
+        }
+        if (!m) throw new Error("未匹配到 Bangumi 条目");
+        const r = await invoke<{ data?: BgmComment[] }>("bgm_comments", {
+          id: m.subject_id,
+          offset: 0,
+          limit: BGM_PAGE,
+        });
+        const list = Array.isArray(r?.data) ? r.data : [];
+        if (!alive) return;
+        commentsOffset.current = list.length; // ← 实际返回条数（不假定 limit 生效）
+        setComments(list);
+        if (list.length === 0) {
+          commentsDoneRef.current = true;
+          setCommentsDone(true);
+        }
+      } catch (e) {
+        if (alive) {
+          setBgmProbed(true);
+          setCommentsErr(String(e));
+        }
+      } finally {
+        commentsBusyRef.current = false;
+        if (alive) setCommentsBusy(false);
+      }
+    })();
     return () => {
       alive = false;
     };
-  }, [episodes.length]);
+  }, [tab, commentsNonce, base.guid]);
+
+  // 更多分段懒加载（只在切到「更多」时才开始）：复用 bgm 匹配结果（bgmRef）——
+  // 吐槽先点过就直接用，两边都没匹配过才发 bgm_match（同 title/年份/type/cacheKey 参数）。
+  // 注意：这里**不**置 bgmProbed —— 那个标志的语义是「吐槽已探测」，是「吐槽」分段的入口闸门。
+  // 角色/制作人员一次拉两条（同 subject）：任一失败整体失败，重试按钮走 moreNonce 重走本段。
+  useEffect(() => {
+    if (tab !== "more") return;
+    if (moreLoadedRef.current) return; // 已拉到过 → 不重拉
+    let alive = true;
+    (async () => {
+      setMoreBusy(true);
+      setMoreErr("");
+      try {
+        let m = bgmRef.current;
+        if (!m) {
+          // 标题优先 data.tvTitle || data.title || base.title；年份取 release_date 前 4 位；type 传 base.type
+          const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
+          const r = await invoke<BgmMatch | null>("bgm_match", {
+            query: title,
+            year: String(base.release_date || "").slice(0, 4) || null,
+            mediaType: base.type ?? null,
+            cacheKey: base.guid,
+          });
+          m = r && r.subject_id ? r : null;
+          if (!alive) return;
+          bgmRef.current = m;
+          setBgm(m); // 供「吐槽」复用（那里若已拉过则无副作用；未拉过则省一次匹配）
+        }
+        if (!m) throw new Error("未匹配到 Bangumi 条目");
+        const [cr, pr] = await Promise.all([
+          invoke<BgmCharacter[]>("bgm_characters", { id: m.subject_id }),
+          invoke<BgmPerson[]>("bgm_persons", { id: m.subject_id }),
+        ]);
+        if (!alive) return;
+        setChars(bgmList<BgmCharacter>(cr));
+        setPersons(bgmList<BgmPerson>(pr));
+        moreLoadedRef.current = true;
+      } catch (e) {
+        if (alive) setMoreErr(String(e));
+      } finally {
+        if (alive) {
+          setMoreBusy(false);
+          setMoreProbed(true);
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [tab, moreNonce, base.guid]);
+
+  /** 失败重试：清掉错误从头发一次（数据成功前 moreLoadedRef 恒为 false，无需额外重置） */
+  const retryMore = () => setMoreNonce((n) => n + 1);
+
+  // [lc-128] 演员表（**TMDB 主源**）：切到「更多」分段时懒加载一次；锚点优先（trim_id/tmdbId/imdbId），
+  // 锚不到由 Rust 侧回落标题搜索（带相似度门槛）。结果在 Rust 侧落盘缓存 7 天 → 重复进详情页零请求。
+  // 失败不影响 Bangumi/飞牛兜底展示（各自独立状态机）。
+  useEffect(() => {
+    if (tab !== "more") return;
+    if (creditsLoadedRef.current) return;
+    let alive = true;
+    (async () => {
+      setCreditsBusy(true);
+      setCreditsErr("");
+      try {
+        const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
+        const r = await invoke<TmdbCredits>("tmdb_credits", {
+          arg: {
+            title,
+            year: String(base.release_date || "").slice(0, 4),
+            mediaType: base.type === "Movie" ? "movie" : "tv",
+            trimId: tmdbAnchor.trimId || undefined,
+            tmdbId: tmdbAnchor.tmdbId || undefined,
+            imdbId: tmdbAnchor.imdbId || undefined,
+            cacheKey: base.guid,
+          },
+        });
+        if (!alive) return;
+        setCredits(r);
+        creditsLoadedRef.current = true;
+      } catch (e) {
+        if (alive) setCreditsErr(String(e));
+      } finally {
+        if (alive) setCreditsBusy(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // data 到位后才拿得到 trim_id 锚点：进「更多」早于详情返回时，数据一到会带着锚点重跑一次
+  }, [tab, creditsNonce, base.guid, data, tmdbAnchor.trimId, tmdbAnchor.tmdbId, tmdbAnchor.imdbId]);
+
+  /** [lc-128] 失败重试：清掉错误从头发一次（成功前 creditsLoadedRef 恒为 false） */
+  const retryCredits = () => setCreditsNonce((n) => n + 1);
+
+  /** [lc-119] 翻下一页：offset += 实际返回条数；返回 0 条即到底（不再假定 limit/总数） */
+  const loadMoreComments = async () => {
+    const m = bgmRef.current;
+    if (!m || commentsBusyRef.current || commentsDoneRef.current) return;
+    commentsBusyRef.current = true;
+    setCommentsMoreBusy(true);
+    setCommentsErr("");
+    try {
+      const r = await invoke<{ data?: BgmComment[] }>("bgm_comments", {
+        id: m.subject_id,
+        offset: commentsOffset.current,
+        limit: BGM_PAGE,
+      });
+      const list = Array.isArray(r?.data) ? r.data : [];
+      commentsOffset.current += list.length; // ← 实际返回条数
+      setComments((prev) => [...prev, ...list]);
+      if (list.length === 0) {
+        commentsDoneRef.current = true;
+        setCommentsDone(true);
+      }
+    } catch (e) {
+      setCommentsErr(String(e));
+    } finally {
+      commentsBusyRef.current = false;
+      setCommentsMoreBusy(false);
+    }
+  };
+
+  /** [lc-119] 失败重试：已有列表 → 从当前 offset 续拉；空列表 → 重新从头（含重新匹配） */
+  const retryComments = () => {
+    if (comments.length > 0) {
+      setCommentsErr("");
+      void loadMoreComments();
+    } else {
+      setCommentsNonce((n) => n + 1);
+    }
+  };
+
+  /** [lc-119] 滚动到底自动加载下一页：extentAfter = scrollHeight - scrollTop - clientHeight < 200 */
+  const onDetailScroll = (e: UIEvent<HTMLElement>) => {
+    if (activeTab !== "comments" || !bgm || commentsDone || commentsErr || commentsMoreBusy) return;
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) void loadMoreComments();
+  };
+
+  // [lc-119] 单集简介回填（替换旧版 —— 唯一允许改动的既有逻辑）：
+  // 旧版对整季每集 **无并发上限** 地并发 invoke("get_item_detail")（Promise.allSettled(episodes.map(...))），
+  // 长篇（几十集）会瞬间打出几十个请求把 NAS/代理打爆 —— 与本项目 lc-114 图片并发风暴同源。
+  // 新逻辑（按规格）：
+  //   ① 已匹配到 Bangumi（bgm 就绪）→ 用一次 bgm_episodes 的 desc 按 episode_number 对齐回填（单请求）；
+  //   ② 未匹配/尚未匹配（吐槽是懒加载，可能一直没匹配）→ 保留原 item 详情回填，但加 **并发上限 3**（worker 池）；
+  //      worker 每轮先看 bgmRef：匹配一到位就退场，把补齐工作交给 ① 的 desc（不再堆 NAS 请求）。
+  useEffect(() => {
+    if (!episodes.length) return;
+    let alive = true;
+    const missing = episodes.filter((ep) => !ep.overview);
+    if (!missing.length) return;
+
+    if (bgm?.subject_id) {
+      invoke<{ data?: { sort?: number; ep?: number; desc?: string }[] }>("bgm_episodes", {
+        id: bgm.subject_id,
+        limit: 200,
+      })
+        .then((r) => {
+          if (!alive) return;
+          const byNum = new Map<number, string>();
+          for (const e of Array.isArray(r?.data) ? r.data : []) {
+            // Bangumi 集号：sort 是数字序号（ep 是展示号，可能带小数/字母），优先 sort
+            const num = Number.isInteger(e?.sort)
+              ? (e.sort as number)
+              : Number.isInteger(e?.ep)
+                ? (e.ep as number)
+                : NaN;
+            const desc = String(e?.desc ?? "").trim();
+            if (Number.isFinite(num) && desc) byNum.set(num, desc);
+          }
+          if (!byNum.size) return;
+          setEpisodes((prev) =>
+            prev.map((ep) => {
+              if (ep.overview || ep.episode_number == null) return ep;
+              const d = byNum.get(ep.episode_number);
+              return d ? { ...ep, overview: d } : ep;
+            }),
+          );
+        })
+        .catch(() => {});
+      return () => {
+        alive = false;
+      };
+    }
+
+    const queue = [...missing];
+    const worker = async () => {
+      while (alive && queue.length) {
+        if (bgmRef.current) return; // ① 就绪 → legacy 任务立即退场
+        const ep = queue.shift()!;
+        try {
+          const d = await invoke<Record<string, unknown>>("get_item_detail", { guid: ep.guid });
+          const ov = pick(d, ["overview"]);
+          if (alive && ov) {
+            setEpisodes((prev) =>
+              prev.map((x) => (x.guid === ep.guid && !x.overview ? { ...x, overview: String(ov) } : x)),
+            );
+          }
+        } catch {
+          /* 单集失败忽略（与原 allSettled 语义一致） */
+        }
+      }
+    };
+    void Promise.all([worker(), worker(), worker()]); // 并发上限 3
+    return () => {
+      alive = false;
+    };
+  }, [episodes.length, bgm?.subject_id]);
 
   const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
   const poster = (pick(data ?? {}, ["posters", "poster"]) as string) || base.poster || "";
@@ -993,6 +2596,71 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   );
   const numSeasons = pick(data ?? {}, ["numberOfSeasons", "number_of_seasons"]);
   const resumeAt = base.ts && base.duration && base.ts > 0 && base.ts < base.duration;
+
+  // [lc-118] 重排新增的派生显示值（纯 render 计算，不动任何数据 effect）
+  const year = releaseDate.slice(0, 4);
+  const backdrop = pickImgStr(data ?? {}, ["backdrops", "backdrop"]) || "";
+  const tmdbGenres: string[] = Array.isArray(tmdb?.genres)
+    ? (tmdb?.genres as unknown[]).map((x) => String(x))
+    : [];
+  const genres = Array.from(
+    new Set((tmdbGenres.length ? tmdbGenres : pickGenres(data)).filter(Boolean)),
+  ).slice(0, 6);
+  const ratingFromItem = Number(String(rating ?? "").trim());
+  const ratingNum =
+    Number.isFinite(ratingFromItem) && ratingFromItem > 0
+      ? ratingFromItem
+      : Number(tmdb?.rating ?? 0) || 0;
+  const votes = Number(tmdb?.votes ?? 0) || 0;
+  // 剧照：Rust 端 backdrops 是路径字符串数组，同时兼容 {file_path} 对象形态
+  const stills: string[] = (Array.isArray(tmdb?.backdrops) ? (tmdb?.backdrops as unknown[]) : [])
+    .map((st) =>
+      typeof st === "string" ? st : String((st as Record<string, unknown> | null)?.file_path ?? ""),
+    )
+    .filter(Boolean)
+    .slice(0, 6);
+  // [lc-128] 演员/制作人员三级来源（**TMDB 主源**）：
+  //   ① tmdb_credits（专用命令，锚点优先 + 落盘缓存 7 天）
+  //   ② tmdb_show_details 里同源的 cast/crew（① 失败时兜底，已在内存里，零额外请求）
+  //   ③ 飞牛 item 详情里的 actors/cast（有则用、没有不报错）
+  const creditsCast = Array.isArray(credits?.cast) ? (credits?.cast as TmdbCreditPerson[]) : [];
+  const creditsCrew = Array.isArray(credits?.crew) ? (credits?.crew as TmdbCreditPerson[]) : [];
+  const showCast: TmdbCreditPerson[] = Array.isArray(tmdb?.cast)
+    ? (tmdb?.cast as TmdbCreditPerson[])
+    : [];
+  const showCrew: TmdbCreditPerson[] = Array.isArray(tmdb?.crew)
+    ? (tmdb?.crew as TmdbCreditPerson[])
+    : [];
+  const cast = creditsCast.length ? creditsCast : showCast;
+  const crew = creditsCrew.length ? creditsCrew : showCrew;
+  const castFrom: "credits" | "details" | "none" = creditsCast.length
+    ? "credits"
+    : showCast.length
+      ? "details"
+      : "none";
+  const fbCast = fnosCast(data);
+  // 分段栏：概览恒在；选集 = 剧集且拿到季（用 seasons 兜住"切季瞬间 episodes 被清空"，
+  // 否则 tab 会在点击季时闪没）。只有一项时整条不渲染。
+  // [lc-119] 吐槽：「匹配到 bgm 且拉到评论」时保留；匹配失败/无评论 → 离开后本项即消失（不留空壳）。
+  //   —— 懒加载需要入口，所以「尚未尝试匹配」时先显示（点进去才发请求）；尝试结束（bgmProbed）
+  //   且无数据时不再显示；停留期间保留本项以便展示骨架屏/失败重试/空态。
+  // 更多：同款懒加载闸门 —— TMDB 有数据、或拉到过演员表/角色/制作人员、或尚未尝试（moreProbed）时显示；
+  //   尝试结束且都空 → 离开后本项即消失。
+  const tabIds: string[] = [
+    "overview",
+    ...(isSeries && (episodes.length > 0 || seasons.length > 0) ? ["eps"] : []),
+    ...(tmdb ||
+    credits ||
+    tab === "more" ||
+    !moreProbed ||
+    chars.length > 0 ||
+    persons.length > 0
+      ? ["more"]
+      : []),
+    ...(tab === "comments" || !bgmProbed || (bgm && comments.length > 0) ? ["comments"] : []),
+  ];
+  const activeTab = tabIds.includes(tab) ? tab : "overview";
+  const longIntro = overview.length > 96; // ≈4~5 行（Kazumi 是 TextPainter 实测 numLines>7，这里用字数近似）
 
 
   // [lc-106] 独立 mpv 窗口模式：点播放直接拉起独立 mpv（与主仓库一致），页面留在详情页
@@ -1015,40 +2683,134 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   };
 
   return (
-    <main className="content detail-full">
-      <div className="detail-headrow">
-        <button className="back" onClick={onBack} title="返回上一页">
-          ‹ 返回
-        </button>
-        <h1 className="detail-title">{title}</h1>
-        {rating && rating !== "0" && <span className="meta meta-rating detail-rating">★ {rating}</span>}
-        {/* [lc-107] 视频占位框已删除（独立 mpv 窗口模式，页面不留视频区）：播放入口收进标题行 */}
-        <button className="btn-play-head" onClick={playing ? undefined : startPlay} disabled={playing}>
-          {playing ? "⏳ 打开中…" : `▶ ${resumeAt ? "续播" : "播放"}`}
-        </button>
-      </div>
-      {playNote && <div className="play-note">{playNote}</div>}
-      <div className="detail-cols">
-        <div className="detail-left">
-          {err && <div className="err">{err}</div>}
-          <div className="tmdb-card">
-            <div className="tmdb-poster">
-              {poster ? <img src={imgUrl(poster)} alt={title} /> : <div className="poster-empty">🎬</div>}
+    <main className="content detail-full" onScroll={onDetailScroll}>
+      {/* [lc-118] 详情页重排（Kazumi 风）：模糊海报头 + 信息卡 + 分段栏 + 面板。
+          数据 effect 全部留在本组件顶层（不下沉到面板里，否则单集简介回填失效）。 */}
+      <section className={`dhero${backdrop ? "" : " dhero--fallback"}`}>
+        <div className="dhero-bg" aria-hidden="true">
+          {(backdrop || poster) && <img src={imgUrl(backdrop || poster)} alt="" />}
+        </div>
+        <div className="dhero-top">
+          <button className="back" onClick={onBack} title="返回上一页">
+            ‹ 返回
+          </button>
+        </div>
+        <div className="dcard">
+          <div className="dcard-poster">
+            {poster ? <img src={imgUrl(poster)} alt={title} /> : <div className="poster-empty">🎬</div>}
+          </div>
+          <div className="dcard-info">
+            <h1 className="dcard-title">{title}</h1>
+            <div className="meta-row">
+              {year && <span className="meta">{year}</span>}
+              {isSeries && numSeasons ? <span className="meta">{numSeasons} 季</span> : null}
+              {genres.map((g) => (
+                <span key={g} className="meta">
+                  {g}
+                </span>
+              ))}
+              <span className="meta type-chip">{base.type}</span>
             </div>
-            <div className="tmdb-info">
-              <div className="tmdb-name">{title}</div>
-              <div className="meta-row">
-                {releaseDate && <span className="meta">{releaseDate.slice(0, 4)}</span>}
-                {isSeries && numSeasons ? <span className="meta">{numSeasons} 季</span> : null}
-                <span className="meta type-chip">{base.type}</span>
+            {/* 评分：数字 + 星条 + N 人评分（Kazumi 信息卡同款；刻意不用 .rating —— 那是海报卡绝对定位的类名） */}
+            {ratingNum > 0 && (
+              <div className="dcard-score">
+                <span className="dscore-num">{ratingNum.toFixed(1)}</span>
+                <span className="dscore-outof">⁄10</span>
+                <span className="dstars" aria-hidden="true">
+                  <span className="dstars-bg">★★★★★</span>
+                  <span
+                    className="dstars-fg"
+                    style={{ width: `${Math.min(100, ratingNum * 10)}%` }}
+                  >
+                    ★★★★★
+                  </span>
+                </span>
+                {votes > 0 && (
+                  <span className="dscore-votes">{votes.toLocaleString("zh-CN")} 人评分</span>
+                )}
               </div>
-              {overview && <p className="tmdb-overview">{overview}</p>}
+            )}
+            {/* [lc-107] 播放入口（独立 mpv 窗口模式）：由旧标题行搬进信息卡，续播语义与禁用态不变 */}
+            <div className="dcard-act">
+              <button className="dplay" onClick={playing ? undefined : startPlay} disabled={playing}>
+                {playing ? "打开中…" : `▶ ${resumeAt ? "续播" : "播放"}`}
+              </button>
+              {playNote && <span className="play-note">{playNote}</span>}
             </div>
           </div>
-          {tmdb && <TmdbExtra tmdb={tmdb} />}
         </div>
-        {isSeries && (
-          <div className="detail-right">
+      </section>
+
+      {err && <div className="err">{err}</div>}
+
+      {/* 分段栏：动态 2~3 项（只有一项时不渲染整条） */}
+      {tabIds.length > 1 && (
+        <nav className="dseg" role="tablist">
+          {tabIds.map((id) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={activeTab === id}
+              className={`dseg-btn${activeTab === id ? " active" : ""}`}
+              onClick={() => setTab(id)}
+            >
+              {TAB_LABEL[id]}
+            </button>
+          ))}
+        </nav>
+      )}
+
+      <div className="dbody">
+        {activeTab === "overview" && (
+          <div className="dpanel">
+            {overview && (
+              <section className="dsec">
+                <h2 className="dsec-t">简介</h2>
+                <p className={`dfold${!introFull && longIntro ? " clip" : ""}`}>{overview}</p>
+                {longIntro && (
+                  <button className="dfold-more" onClick={() => setIntroFull((v) => !v)}>
+                    {introFull ? "收起" : "展开"}
+                  </button>
+                )}
+              </section>
+            )}
+            {genres.length > 0 && (
+              <section className="dsec">
+                <h2 className="dsec-t">标签</h2>
+                <div className="dtag-wrap">
+                  {genres.map((g) => (
+                    <span key={g} className="dtag">
+                      {g}
+                    </span>
+                  ))}
+                </div>
+              </section>
+            )}
+            {stills.length > 0 && (
+              <section className="dsec">
+                <h2 className="dsec-t">剧照</h2>
+                <div className="dstill-strip">
+                  {stills.map((p) => (
+                    <img
+                      key={p}
+                      src={tmdbImg(p, "w500")}
+                      loading="lazy"
+                      alt=""
+                      title="点击查看原图"
+                      onClick={() => setZoom(p)}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
+            {!overview && genres.length === 0 && stills.length === 0 && (
+              <div className="empty">暂无简介</div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "eps" && (
+          <div className="dpanel">
             <div className="section-head">
               <h3>选集</h3>
               {seasons.length > 1 && (
@@ -1066,79 +2828,351 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
               )}
               <span className="muted">{episodes.length} 集</span>
             </div>
-            <div className="ep-list">
-              {episodes.map((ep) => {
-                const progress =
-                  ep.ts && ep.duration && ep.duration > 0 ? Math.min(100, (ep.ts / ep.duration) * 100) : 0;
-                const label =
-                  ep.episode_number != null
-                    ? `第 ${ep.episode_number} 集${ep.title ? `. ${ep.title}` : ""}`
-                    : ep.title || "未命名剧集";
-                const playing = playingGuid === ep.guid;
-                return (
-                  <div
-                    key={ep.guid}
-                    className={`ep-row${playing ? " playing" : ""}`}
-                    onClick={() => {
-                      setPlayingGuid(ep.guid);
-                      invoke("play_item", { guid: ep.guid }).catch((e) => setErr(String(e)));
-                    }}
-                  >
-                    <div className="ep-thumb">
-                      {ep.poster ? (
-                        <img src={imgUrl(ep.poster)} loading="lazy" alt={label} />
-                      ) : (
-                        <div className="poster-empty">🎞</div>
-                      )}
-                      <span className="ep-play">{playing ? "◉" : "▶"}</span>
-                      {progress > 0 && (
-                        <div className="progress">
-                          <div style={{ width: `${progress}%` }} />
-                        </div>
-                      )}
-                    </div>
-                    <div className="ep-body">
-                      <div className="ep-row-title">
-                        {label}
-                        {ep.quality && <span className="ep-quality">{ep.quality}</span>}
+            {episodes.length === 0 ? (
+              <div className="empty">暂无剧集</div>
+            ) : (
+              <div className="ep-list">
+                {episodes.map((ep) => {
+                  const progress =
+                    ep.ts && ep.duration && ep.duration > 0 ? Math.min(100, (ep.ts / ep.duration) * 100) : 0;
+                  const seen = Number(ep.watched) === 1 || progress >= 95;
+                  const label =
+                    ep.episode_number != null
+                      ? `第 ${ep.episode_number} 集${ep.title ? `. ${ep.title}` : ""}`
+                      : ep.title || "未命名剧集";
+                  const playing = playingGuid === ep.guid;
+                  return (
+                    <div
+                      key={ep.guid}
+                      className={`ep-row${playing ? " playing" : ""}`}
+                      onClick={() => {
+                        setPlayingGuid(ep.guid);
+                        invoke("play_item", { guid: ep.guid }).catch((e) => setErr(String(e)));
+                      }}
+                    >
+                      <div className="ep-thumb">
+                        {ep.poster ? (
+                          <img src={imgUrl(ep.poster)} loading="lazy" alt={label} />
+                        ) : (
+                          <div className="poster-empty">🎞</div>
+                        )}
+                        <span className="ep-play">{playing ? "◉" : "▶"}</span>
+                        {seen ? (
+                          <span className="ep-mark seen">✓ 已看</span>
+                        ) : (
+                          progress > 0 && <span className="ep-mark now">看到 {Math.round(progress)}%</span>
+                        )}
+                        {progress > 0 && (
+                          <div className="progress">
+                            <div style={{ width: `${progress}%` }} />
+                          </div>
+                        )}
                       </div>
-                      {ep.overview && <p className="ep-overview">{ep.overview}</p>}
-                      {fmtDur(ep.duration) && <div className="ep-duration">{fmtDur(ep.duration)}</div>}
+                      <div className="ep-body">
+                        <div className="ep-row-title">
+                          {label}
+                          {ep.quality && <span className="ep-quality">{ep.quality}</span>}
+                        </div>
+                        {ep.overview && <p className="ep-overview">{ep.overview}</p>}
+                        {fmtDur(ep.duration) && <div className="ep-duration">{fmtDur(ep.duration)}</div>}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 更多：**演职人员以 TMDB 为主源**（tmdb_credits 落盘缓存）→ Bangumi 角色/制作人员 →
+            飞牛演员字段兜底；再原样复用 TmdbExtra（剧照节由 CSS 在 .dmore 内隐藏，避免与「概览」重复） */}
+        {activeTab === "more" && (
+          <div className="dpanel dmore">
+            {/* ① 演员表（TMDB 主源）：骨架 / 失败重试 / 数据 */}
+            {creditsBusy && !credits && !creditsErr && <BgmListSkeleton />}
+            {creditsErr && !creditsCast.length && !showCast.length && (
+              <div className="bgmc-state">
+                <div className="bgmc-state-t">演员表（TMDB）加载失败</div>
+                <div className="bgmc-state-d">{creditsErr}</div>
+                <button className="bgmc-retry" onClick={retryCredits}>
+                  重试
+                </button>
+              </div>
+            )}
+            {cast.length > 0 && (
+              <section className="dsec">
+                <h2 className="dsec-t">
+                  演职人员
+                  <span className="dsec-src" title={credits?.matchedBy || (castFrom === "details" ? "TMDB 详情接口" : "")}>
+                    TMDB{credits?.tmdbId ? ` #${credits.tmdbId}` : ""}
+                    {credits?.cached ? " · 本地缓存" : ""}
+                  </span>
+                </h2>
+                <ul className="bgmc-list">
+                  {cast.map((c, i) => (
+                    <BgmCastRow
+                      key={`${c.id ?? c.name}-${i}`}
+                      name={c.name}
+                      tag={c.character ? `饰 ${c.character}` : ""}
+                      sub={Number(c.episodes ?? 0) > 0 ? `出演 ${c.episodes} 集` : ""}
+                      img={c.profile ? tmdbImg(String(c.profile), "w185") : ""}
+                      fallback="未知演员"
+                    />
+                  ))}
+                </ul>
+              </section>
+            )}
+            {crew.length > 0 && (
+              <section className="dsec">
+                <h2 className="dsec-t">
+                  制作
+                  <span className="dsec-src">TMDB</span>
+                </h2>
+                <ul className="bgmc-list">
+                  {crew.map((c, i) => (
+                    <BgmCastRow
+                      key={`${c.id ?? c.name}-${i}`}
+                      name={c.name}
+                      tag={c.jobLabel || c.job || ""}
+                      sub={Number(c.episodes ?? 0) > 0 ? `${c.episodes} 集` : ""}
+                      img={c.profile ? tmdbImg(String(c.profile), "w185") : ""}
+                      fallback="未知"
+                    />
+                  ))}
+                </ul>
+              </section>
+            )}
+            {/* ② 飞牛演员字段（**只兜底**：TMDB 完全没数据时才显示；没有该字段则整块不出现） */}
+            {!creditsBusy && !cast.length && !crew.length && fbCast.length > 0 && (
+              <section className="dsec">
+                <h2 className="dsec-t">
+                  演职人员
+                  <span className="dsec-src">飞牛</span>
+                </h2>
+                <ul className="bgmc-list">
+                  {fbCast.map((c, i) => (
+                    <BgmCastRow
+                      key={`${c.name}-${i}`}
+                      name={c.name}
+                      tag={c.role ? `饰 ${c.role}` : ""}
+                      img={c.avatar ? (c.avatar.startsWith("http") ? c.avatar : imgUrl(c.avatar)) : ""}
+                      fallback="未知演员"
+                    />
+                  ))}
+                </ul>
+              </section>
+            )}
+            {moreBusy && !moreErr && <BgmListSkeleton />}
+            {moreErr && (
+              <div className="bgmc-state">
+                <div className="bgmc-state-t">角色与制作人员加载失败</div>
+                <div className="bgmc-state-d">{moreErr}</div>
+                <button className="bgmc-retry" onClick={retryMore}>
+                  重试
+                </button>
+              </div>
+            )}
+            {!moreBusy &&
+              !moreErr &&
+              moreProbed &&
+              chars.length === 0 &&
+              persons.length === 0 &&
+              !creditsBusy &&
+              cast.length === 0 &&
+              crew.length === 0 &&
+              fbCast.length === 0 && <div className="empty">暂无角色与制作人员信息</div>}
+            {chars.length > 0 && (
+              <section className="dsec">
+                <h2 className="dsec-t">
+                  角色
+                  <span className="dsec-src">Bangumi</span>
+                </h2>
+                <ul className="bgmc-list">
+                  {chars.map((c, i) => (
+                    <BgmCastRow
+                      key={String(c.id ?? i)}
+                      name={c.name}
+                      tag={c.relation || CHAR_TYPE_LABEL[Number(c.type)] || ""}
+                      sub={c.actors?.[0]?.name ? `CV：${c.actors[0].name}` : ""}
+                      avatar={c.images?.large || c.images?.grid || c.images?.medium || c.images?.small}
+                      fallback="未知角色"
+                    />
+                  ))}
+                </ul>
+              </section>
+            )}
+            {/* 制作人员（Bangumi）：TMDB 已有 crew 时不再重复展示同一批人 */}
+            {persons.length > 0 && crew.length === 0 && (
+              <section className="dsec">
+                <h2 className="dsec-t">
+                  制作人员
+                  <span className="dsec-src">Bangumi</span>
+                </h2>
+                <ul className="bgmc-list">
+                  {persons.map((p, i) => (
+                    <BgmCastRow
+                      key={String(p.id ?? i)}
+                      name={p.name}
+                      tag={p.relation || (Array.isArray(p.career) ? p.career.join(" / ") : "")}
+                      avatar={p.images?.large || p.images?.grid || p.images?.medium || p.images?.small}
+                      fallback="未知"
+                    />
+                  ))}
+                </ul>
+              </section>
+            )}
+            {tmdb && <TmdbExtra tmdb={tmdb} onZoom={setZoom} />}
+          </div>
+        )}
+
+        {/* [lc-119] 吐槽（Bangumi 评论，走自建镜像）：骨架屏 / 失败重试 / 空态 / 滚到底翻页 */}
+        {activeTab === "comments" && (
+          <div className="dpanel bgmc-panel">
+            {commentsBusy && comments.length === 0 && !commentsErr && <BgmListSkeleton />}
+            {commentsErr && (
+              <div className="bgmc-state">
+                <div className="bgmc-state-t">吐槽加载失败</div>
+                <div className="bgmc-state-d">{commentsErr}</div>
+                <button className="bgmc-retry" onClick={retryComments}>
+                  重试
+                </button>
+              </div>
+            )}
+            {!commentsBusy && !commentsErr && comments.length === 0 && (
+              <div className="empty">暂无吐槽</div>
+            )}
+            {comments.length > 0 && (
+              <ul className="bgmc-list">
+                {comments.map((c) => {
+                  const rate = Number(c.rate ?? 0) || 0;
+                  const stars = rate > 0 ? (rate / 2).toFixed(1).replace(/\.0$/, "") : "";
+                  return (
+                    <li key={String(c.id)} className="bgmc-item">
+                      <img
+                        className="bgmc-avatar"
+                        src={bgmImg(c.user?.avatar?.large || c.user?.avatar?.grid || c.user?.avatar?.small)}
+                        alt=""
+                        loading="lazy"
+                        width={40}
+                        height={40}
+                      />
+                      <div className="bgmc-main">
+                        <div className="bgmc-head">
+                          <span className="bgmc-nick">{c.user?.nickname || c.user?.username || "匿名"}</span>
+                          <span className="bgmc-date">{String(c.updatedAt ?? "").slice(0, 10)}</span>
+                          {stars && <span className="bgmc-rate">★ {stars}</span>}
+                        </div>
+                        <p className="bgmc-text">{c.comment}</p>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {comments.length > 0 && commentsMoreBusy && <div className="bgmc-more">加载中…</div>}
+            {comments.length > 0 && commentsDone && <div className="bgmc-more">没有更多吐槽了</div>}
           </div>
         )}
       </div>
+
+      {/* [lc-128] 剧照原图（`original` 尺寸）：点击任意剧照放大。走同一套三级缓存
+          （拉了即落盘，下次点开零网络），点背景/Esc… 这里只需点背景关闭。 */}
+      {zoom && (
+        <div className="ddet-mask zoom-mask" onClick={() => setZoom("")}>
+          <img className="zoom-img" src={tmdbImg(zoom, "original")} alt="" />
+        </div>
+      )}
     </main>
   );
 }
 
 
-/* ────────────────────────── TMDB 扩展信息（剧照/相似/更多/演职人员） ──────────────────────────
-   复刻主仓库 embyWall/detail/tmdbCard.ts ⑥⑧⑨⑩ 四节；剧照走 fntvimg 代理（TMDB 原图 URL 的 path 部分不可用，
-   改用 image.tmdb.org 直链经 imgproto？——不行，imgproto 只映射 NAS sys/img。这里用 TMDB w500 直链 <img>，
-   WebView 可直连 TMDB 图片 CDN（无鉴权）。 */
+/* ────────────────────────── TMDB 扩展信息（剧照/预告片/分级/在线观看/更多） ──────────────────────────
+   复刻主仓库 embyWall/detail/tmdbCard.ts ⑥⑧⑨⑩ 四节。剧照/头像走 fntvimg 代理的 TMDB 图片域
+   （Rust 反代镜像 + **落盘三级缓存**，见 tmdbImg() 与 imgproto.rs）。
+   [lc-128] 演职人员一节搬去「更多」分段（TMDB 主源 + 落盘缓存 + 飞牛兜底），这里不再重复渲染。 */
 
-function TmdbExtra({ tmdb }: { tmdb: Record<string, unknown> }) {
+/** 分级 / 在线观看：**按多个国家（地区）并列**——每行标出地区名，没数据的地区直接不出现
+ *  （大陆 CN 无数据即自然缺省，不做特判、不报错、不显示空区块）；两块全空时给明确空态。 */
+function TmdbRegions({ tmdb }: { tmdb: Record<string, unknown> }) {
+  const list = (k: string): TmdbRegionRow[] =>
+    Array.isArray(tmdb[k]) ? (tmdb[k] as TmdbRegionRow[]).filter((r) => r && r.region) : [];
+  const ratings = list("ratingsByRegion").filter((r) => String(r.rating ?? "").trim());
+  const providers = list("providersByRegion").filter((r) => (r.items ?? []).length > 0);
+  if (!ratings.length && !providers.length) {
+    return (
+      <div className="tmdb-sec">
+        <div className="tmdb-sec-t">分级 / 在线观看</div>
+        <div className="tmdb-empty">暂无分级与在线观看数据</div>
+      </div>
+    );
+  }
+  return (
+    <div className="tmdb-sec">
+      <div className="tmdb-sec-t">分级 / 在线观看</div>
+      <div className="tmdb-mrow">
+        <span className="tmdb-mk">分级</span>
+        {ratings.length ? (
+          <div className="tmdb-regions">
+            {ratings.map((r) => (
+              <div className="tmdb-rrow" key={`rt-${r.region}`}>
+                <span className="tmdb-rk">{regionLabel(r.region)}</span>
+                <span className="tmdb-inline">{String(r.rating)}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <span className="tmdb-inline tmdb-dim">暂无</span>
+        )}
+      </div>
+      <div className="tmdb-mrow">
+        <span className="tmdb-mk">在线看</span>
+        {providers.length ? (
+          <div className="tmdb-regions">
+            {providers.map((r) => (
+              <div className="tmdb-rrow" key={`pv-${r.region}`}>
+                <span className="tmdb-rk">{regionLabel(r.region)}</span>
+                <span className="tmdb-inline">
+                  {(r.items ?? [])
+                    .map((it) => it.name)
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <span className="tmdb-inline tmdb-dim">暂无</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TmdbExtra({
+  tmdb,
+  onZoom,
+}: {
+  tmdb: Record<string, unknown>;
+  /** [lc-128] 点剧照 → 以 original 尺寸放大（原图走同一套落盘缓存，拉了就不再拉） */
+  onZoom?: (path: string) => void;
+}) {
   const arr = (k: string): Record<string, unknown>[] =>
     Array.isArray(tmdb[k]) ? (tmdb[k] as Record<string, unknown>[]) : [];
   const strList = (k: string): string[] => (Array.isArray(tmdb[k]) ? (tmdb[k] as string[]) : []);
   const stills = arr("backdrops").slice(0, 6);
   const recs = arr("recommendations").slice(0, 8);
-  const cast = arr("cast").slice(0, 20);
+  const videos = arr("videos").slice(0, 4);
   const aliases = strList("aliases");
   const keywords = strList("keywords");
-  const providers = strList("providers");
   const popularity = Number(tmdb.popularity ?? 0);
   const tmdbId = String(tmdb.tmdbId ?? "");
+  const isMovie = String(tmdb.mediaType ?? "") === "movie";
   const imdb = String((tmdb.externalIds as Record<string, unknown> | undefined)?.imdb ?? "");
   const wiki = String((tmdb.externalIds as Record<string, unknown> | undefined)?.wikidata ?? "");
-  const hasMore = aliases.length || keywords.length || providers.length || popularity > 0;
+  const hasMore = aliases.length || keywords.length || popularity > 0;
   const links = [
-    { label: "TMDB", url: tmdbId ? `https://www.themoviedb.org/tv/${tmdbId}` : "" },
+    { label: "TMDB", url: tmdbId ? `https://www.themoviedb.org/${isMovie ? "movie" : "tv"}/${tmdbId}` : "" },
     { label: "IMDb", url: imdb ? `https://www.imdb.com/title/${imdb}` : "" },
     { label: "Wikidata", url: wiki ? `https://www.wikidata.org/wiki/${wiki}` : "" },
   ].filter((l) => l.url);
@@ -1149,7 +3183,14 @@ function TmdbExtra({ tmdb }: { tmdb: Record<string, unknown> }) {
           <div className="tmdb-sec-t">剧照</div>
           <div className="tmdb-stills">
             {stills.map((st) => (
-              <img key={String(st.file_path ?? st)} src={`https://image.tmdb.org/t/p/w500${st.file_path ?? st}`} loading="lazy" alt="" />
+              <img
+                key={String(st.file_path ?? st)}
+                src={tmdbImg(String(st.file_path ?? st), "w500")}
+                loading="lazy"
+                alt=""
+                title="点击查看原图"
+                onClick={() => onZoom?.(String(st.file_path ?? st))}
+              />
             ))}
           </div>
         </div>
@@ -1168,6 +3209,27 @@ function TmdbExtra({ tmdb }: { tmdb: Record<string, unknown> }) {
           </p>
         </div>
       )}
+      {videos.length > 0 && (
+        <div className="tmdb-sec">
+          <div className="tmdb-sec-t">预告片</div>
+          <div className="tmdb-links">
+            {videos.map((v, i) => (
+              <a
+                key={`${String(v.key)}-${i}`}
+                href={`https://www.youtube.com/watch?v=${String(v.key)}`}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                title={String(v.name ?? "")}
+              >
+                ▶ {String(v.type ?? "Trailer") === "Teaser" ? "先导" : "预告"}
+                {v.lang ? ` · ${String(v.lang)}` : ""}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+      <TmdbRegions tmdb={tmdb} />
       {hasMore && (
         <div className="tmdb-sec">
           <div className="tmdb-sec-t">更多</div>
@@ -1176,9 +3238,6 @@ function TmdbExtra({ tmdb }: { tmdb: Record<string, unknown> }) {
           )}
           {keywords.length > 0 && (
             <div className="tmdb-mrow"><span className="tmdb-mk">关键词</span><span className="tmdb-inline">{keywords.join(" · ")}</span></div>
-          )}
-          {providers.length > 0 && (
-            <div className="tmdb-mrow"><span className="tmdb-mk">在线看</span><span className="tmdb-inline">{providers.join(" · ")}</span></div>
           )}
           {popularity > 0 && (
             <div className="tmdb-mrow"><span className="tmdb-mk">热度</span><span className="tmdb-inline">{Math.round(popularity).toLocaleString("zh-CN")}</span></div>
@@ -1202,331 +3261,10 @@ function TmdbExtra({ tmdb }: { tmdb: Record<string, unknown> }) {
           )}
         </div>
       )}
-      {cast.length > 0 && (
-        <div className="tmdb-sec">
-          <div className="tmdb-sec-t">演职人员</div>
-          <div className="tmdb-cast">
-            {cast.map((c, i) => (
-              <div key={`${c.name}-${i}`} className="tmdb-cast-row">
-                {c.profile ? (
-                  <img className="tmdb-cast-ava" src={`https://image.tmdb.org/t/p/w185${c.profile}`} loading="lazy" alt="" />
-                ) : (
-                  <span className="tmdb-cast-ava tmdb-cast-empty">👤</span>
-                )}
-                <span className="tmdb-cast-name">{String(c.name)}</span>
-                {c.character ? <span className="tmdb-cast-role">饰 {String(c.character)}</span> : null}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </>
   );
 }
 
-/* ────────────────────────── 播放页 ────────────────────────── */
-
-function PlayerView({
-  item,
-  onBack,
-  embedded,
-  onBig,
-}: {
-  item: PlayTarget;
-  onBack?: () => void;
-  embedded?: boolean;
-  onBig?: (on: boolean) => void;
-}) {
-  const stageRef = useRef<HTMLDivElement>(null);
-  const [err, setErr] = useState("");
-  // [lc-105] 页面内播放（B站/爱奇艺式真内嵌）：优先把代理直链交给页面里的 <video>，
-  // 视频成为 DOM 的一部分（随滚动/圆角/裁剪，HTML 控件随便盖，无窗口套窗口、无挖洞）。
-  // 浏览器播不了的容器（MKV/HEVC 等）→ onError → htmlFailed → 自动回退到 mpv 路径。
-  // 想强制用 mpv：localStorage["fntv-player"]="mpv"。
-  const [htmlSrc, setHtmlSrc] = useState<string | null>(null);
-  const [htmlFailed, setHtmlFailed] = useState(false);
-  const FORCE_MPV =
-    typeof localStorage !== "undefined" && localStorage.getItem("fntv-player") === "mpv";
-  const htmlMode = !FORCE_MPV && !!htmlSrc && !htmlFailed;
-  useEffect(() => {
-    let alive = true;
-    setHtmlSrc(null);
-    setHtmlFailed(false);
-    if (FORCE_MPV) return;
-    invoke<{ url: string; guid: string }>("player_source", { guid: item.guid })
-      .then((r) => {
-        if (alive && r && r.url) setHtmlSrc(r.url);
-        else if (alive) setHtmlFailed(true);
-      })
-      .catch((e) => {
-        if (alive) {
-          setHtmlFailed(true);
-          setErr(String(e));
-        }
-      });
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.guid]);
-  // [lc-101] 加载阶段状态机：把"半天没反应"变成可见进度，并让加载失败真正显示出来。
-  // 之前只认 duration(id=2)：等不到就永远停在「正在拉起 mpv…」；而 mpv 的失败信息全在
-  // start-file / file-loaded / end-file 事件里 —— 后端 lc-101 已把它们转成下面两个应用事件。
-  const [phase, setPhase] = useState<"spawn" | "loading" | "playing" | "buffering" | "failed">("spawn");
-  const [mpvErr, setMpvErr] = useState("");
-  const [waited, setWaited] = useState(0);
-  const t0Ref = useRef(Date.now());
-
-  useEffect(() => {
-    t0Ref.current = Date.now();
-    setPhase("spawn");
-    setMpvErr("");
-    setWaited(0);
-  }, [item.guid]);
-
-  useEffect(() => {
-    const p1 = listen<MpvEvent>("mpv-event", (e) => {
-      const ev = e.payload;
-      if (ev.event !== "property-change") return;
-      // duration 到了说明文件已就绪（播放态）；进度/播放态本身仍归 mpv 侧 uosc 自己用
-      if (ev.id === 2 && typeof ev.data === "number" && ev.data > 0) setPhase("playing");
-      // id=7 paused-for-cache：NAS/代理慢时 mpv 在缓冲，必须让用户看到，而不是干等
-      if (ev.id === 7) setPhase((s) => (ev.data ? "buffering" : s === "buffering" ? "playing" : s));
-    });
-    const p2 = listen<{ phase: string }>("mpv-load", (e) => {
-      const ph = e.payload.phase;
-      if (ph === "start") setPhase((s) => (s === "failed" ? s : "loading"));
-      else if (ph === "loaded") setPhase("playing");
-    });
-    const p3 = listen<{ reason: string; error: string }>("mpv-end", (e) => {
-      setMpvErr(e.payload.error || `播放失败（${e.payload.reason}）`);
-      setPhase("failed");
-    });
-    return () => {
-      p1.then((f) => f());
-      p2.then((f) => f());
-      p3.then((f) => f());
-    };
-  }, []);
-
-  // [lc-101] 计时 + 超时：spawn/loading 阶段每 0.5s 刷新已等待秒数；
-  // 25s 仍未就绪 → 判定失败并直接给出排查清单（NAS 可达？代理 22346 在跑？直链 401/404？）
-  useEffect(() => {
-    const arm = phase === "spawn" || phase === "loading";
-    const id = window.setInterval(
-      () => setWaited(Math.round((Date.now() - t0Ref.current) / 1000)),
-      500,
-    );
-    const to = arm
-      ? window.setTimeout(() => {
-          setMpvErr(
-            "加载超时（25s）：mpv 已启动，但没等到媒体就绪。请检查 NAS 是否可达、Go 代理(22346)是否在跑、该条目直链是否 401/404。",
-          );
-          setPhase("failed");
-        }, 25000)
-      : 0;
-    return () => {
-      window.clearInterval(id);
-      if (to) window.clearTimeout(to);
-    };
-  }, [phase]);
-
-  // [lc-097] 把视频占位矩形（主窗客户区物理像素）同步给后端 —— 它同时决定「挖洞」位置和
-  // mpv 宿主窗位置。抽成 useCallback 是为了让「形态切换补测」那个 effect 也能复用。
-  const syncBounds = useCallback(() => {
-    const el = stageRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    invoke("player_set_bounds", {
-      x: rect.left * dpr,
-      y: rect.top * dpr,
-      w: rect.width * dpr,
-      h: rect.height * dpr,
-    }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    const el = stageRef.current;
-    if (!el) return;
-    // [lc-088] 视频占位矩形现在同时决定 WebView 的「挖洞」位置：除了尺寸变化，
-    // 滚动/窗口缩放会让它**位移而不改尺寸**（ResizeObserver 收不到）→ 洞会留错位。
-    // 故再挂 scroll(capture)/resize，并用 rAF 合并（Rust 侧另有去重兜底）。
-    let raf = 0;
-    const schedule = () => {
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        syncBounds();
-      });
-    };
-    syncBounds();
-    const ro = new ResizeObserver(schedule);
-    ro.observe(el);
-    window.addEventListener("resize", schedule);
-    window.addEventListener("scroll", schedule, { capture: true, passive: true } as AddEventListenerOptions);
-    return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", schedule);
-      window.removeEventListener("scroll", schedule, { capture: true } as AddEventListenerOptions);
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, [syncBounds]);
-
-  // [lc-099] 逐帧同步（根治"视频区位置跟不上"这一类问题）。
-  // 背景：视频是原生子窗，"画面该在哪"完全依赖前端把占位矩形推给后端。此前用
-  // ResizeObserver + resize + scroll + 定时补测 这套**事件猜谜**式同步，必然存在遗漏/滞后 ——
-  // 「要点一下画面才生效」「切换全屏那一拍错位」都是它引起的（实测日志证实：Resized 先到、
-  // 前端重传后到，中间那一拍就是错的）。
-  // 改为：播放页存续期间按 rAF 每帧对比一次矩形，变了才推。每帧一次 getBoundingClientRect
-  // 的开销可忽略，且天然覆盖滚动/动画/布局变化/全屏切换，不再依赖任何事件的时序。
-  useEffect(() => {
-    let raf = 0;
-    let last = "";
-    const tick = () => {
-      const el = stageRef.current;
-      if (el) {
-        const r = el.getBoundingClientRect();
-        const dpr = window.devicePixelRatio || 1;
-        const key = `${Math.round(r.left * dpr)},${Math.round(r.top * dpr)},${Math.round(
-          r.width * dpr,
-        )},${Math.round(r.height * dpr)}`;
-        if (key !== last) {
-          last = key;
-          syncBounds();
-        }
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [syncBounds]);
-
-  // [lc-091] 收尾防抖：React18 StrictMode（main.tsx 开着）与快速重挂载会「setup→cleanup→setup」，
-  // 旧写法在 cleanup 里立刻 player_set_visible(false)+player_stop，会把刚建立的播放状态打掉 ——
-  // 后端拿到 6 条并发命令（true/play/false/stop/true/play），最终状态取决于完成顺序，
-  // 一旦停在 false 洞就被清除且不会恢复 → 视频被 WebView 盖住，只剩「正在拉起 mpv…」。
-  // 现在把收尾延后 150ms：期间若重新 setup 就取消，等于"重挂载不打断播放"。
-  const teardownRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (teardownRef.current) {
-      window.clearTimeout(teardownRef.current);
-      teardownRef.current = null;
-    }
-    // [lc-105] 页面内播放模式：不显示 mpv 宿主窗（否则页面里会留一个"坑"）
-    if (htmlMode) {
-      invoke("player_set_visible", { visible: false }).catch(() => {});
-      return;
-    }
-    invoke("player_set_visible", { visible: true }).catch(() => {});
-    invoke("play_item", { guid: item.guid }).catch((e) => setErr(String(e)));
-    return () => {
-      teardownRef.current = window.setTimeout(() => {
-        teardownRef.current = null;
-        invoke("player_set_visible", { visible: false }).catch(() => {});
-        invoke("player_stop").catch(() => {});
-      }, 150);
-    };
-  }, [item.guid, htmlMode]);
-
-  // [lc-093] 把「内嵌小窗 / 全页全屏」形态镜像到 mpv 的 fullscreen 属性 ——
-  // uosc 用它当底栏双形态判据：小窗只留 播放暂停+上下一集 | 时间 | 全屏；全屏保持原样。
-  // 单点驱动（只认 embedded），mpv 侧的回声由后端 fs_expect 吞掉，不会循环。
-  useEffect(() => {
-    invoke("mpv_set_ui_fullscreen", { on: !embedded }).catch(() => {});
-  }, [embedded]);
-
-  // 全屏请求（mpv 侧事件 / 页面双击舞台）：内嵌形态 ↔ 全页形态 + 窗口全屏
-  useEffect(() => {
-    const p = listen<{ on: boolean }>("mpv-fullscreen", (e) => {
-      const on = !!e.payload.on;
-      onBig?.(on);
-      getCurrentWindow().setFullscreen(on).catch(() => {});
-    });
-    return () => {
-      p.then((f) => f());
-    };
-  }, [onBig]);
-
-  const setBig = useCallback(
-    (on: boolean) => {
-      onBig?.(on);
-      getCurrentWindow().setFullscreen(on).catch(() => {});
-    },
-    [onBig],
-  );
-
-  // [lc-087] 舞台鼠标/滚轮/双击全屏全部交给 mpv 原生处理（独立 mpv.exe 进程自带消息循环，
-  // 子窗在宿主内正常收鼠标）——页面不再代收、不再转发、不再开浮层条窗口（uosc 底栏接管）。
-  // 键位转发（mpv/input.conf 体系）：空格暂停、方向键进退/音量、f 全屏、m 静音、方括号变速
-  useEffect(() => {
-    const map: Record<string, string> = {
-      " ": "SPACE",
-      ArrowLeft: "LEFT",
-      ArrowRight: "RIGHT",
-      ArrowUp: "UP",
-      ArrowDown: "DOWN",
-      "[": "[",
-      "]": "]",
-    };
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === "Escape") {
-        setBig(false);
-        return;
-      }
-      const key = map[ev.key];
-      if (!key) return;
-      ev.preventDefault();
-      invoke("mpv_input", { kind: "key", x: 0, y: 0, key }).catch(() => {});
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [setBig]);
-
-  return (
-    <div className={embedded ? "player-embed" : "player-page"}>
-      {!embedded && (
-        <div className="player-topbar">
-          {onBack && (
-            <button className="back" onClick={onBack} title="返回上一页">
-              ‹ 返回
-            </button>
-          )}
-          <span className="player-title">
-            {item.tvTitle ? `${item.tvTitle} · ` : ""}
-            {item.title}
-          </span>
-        </div>
-      )}
-      <div
-        className="player-stage"
-        ref={stageRef}
-      >
-        {htmlMode && (
-          <video
-            className="player-video"
-            src={htmlSrc ?? undefined}
-            controls
-            autoPlay
-            playsInline
-            onError={() => setHtmlFailed(true)}
-          />
-        )}
-        {!htmlMode && err && <div className="err player-err">{err}</div>}
-        {!htmlMode && !err && mpvErr && <div className="err player-err">{mpvErr}</div>}
-        {!htmlMode && !err && !mpvErr && phase !== "playing" && (
-          <div className="player-loading">
-            {phase === "buffering"
-              ? `缓冲中…（已等待 ${waited}s）`
-              : phase === "loading"
-                ? `正在加载媒体… ${waited}s`
-                : `正在启动 mpv… ${waited}s`}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 /* ────────────────────────── 侧栏（保留现有样式） ────────────────────────── */
 
 const SIDEBAR_CATS = [
@@ -1547,6 +3285,7 @@ function Sidebar({
   onOpenFav,
   onOpenCat,
   onHome,
+  onOpenSettings,
 }: {
   activeGuid: string | null;
   collapsed?: boolean;
@@ -1557,6 +3296,8 @@ function Sidebar({
   onOpenFav: () => void;
   onOpenCat: (cat: { key: string; types: string[] }) => void;
   onHome: () => void;
+  /** [lc-128] 打开设置面板（缓存上限 / 占用 / 清理 + 关于） */
+  onOpenSettings: () => void;
 }) {
   const [toast, setToast] = useState("");
   const toastTimer = useRef<number | null>(null);
@@ -1617,7 +3358,7 @@ function Sidebar({
       <div className="side-actions">
         {cardFold ? (
           <div className="sa-icons">
-            <button type="button" className="sa-ico" title="设置" onClick={() => showToast("设置面板在阶段3接入")}>
+            <button type="button" className="sa-ico" title="设置" onClick={onOpenSettings}>
               ⚙
             </button>
             <button type="button" className="sa-ico" title="观影记录" onClick={() => showToast("观影记录页在阶段3接入")}>
@@ -1636,7 +3377,7 @@ function Sidebar({
               收起
               <span className="sa-chev" />
             </div>
-            <button type="button" className="sa-btn" onClick={() => showToast("设置面板在阶段3接入")}>
+            <button type="button" className="sa-btn" onClick={onOpenSettings}>
               ⚙ 设置
             </button>
             <button type="button" className="sa-btn" onClick={() => showToast("观影记录页在阶段3接入")}>
@@ -1646,6 +3387,24 @@ function Sidebar({
               💬 软件反馈建议
             </button>
             <div className="sa-ver">v{appVer}</div>
+            {/* [lc-122] 数据来源署名（关于区=版本行下）：TMDB 条款强制原文 + Bangumi 署名。
+                链接与详情页外链同款（<a target=_blank>），由 Tauri 交给系统浏览器打开。 */}
+            <div className="sa-attrib">
+              <span>
+                This product uses the TMDB API but is not endorsed or certified by TMDB.
+              </span>
+              <span>
+                <a href="https://www.themoviedb.org/" target="_blank" rel="noreferrer">
+                  themoviedb.org
+                </a>
+              </span>
+              <span>
+                数据与部分内容来自{" "}
+                <a href="https://bgm.tv/" target="_blank" rel="noreferrer">
+                  Bangumi 番组计划
+                </a>
+              </span>
+            </div>
           </>
         )}
       </div>
@@ -1654,10 +3413,151 @@ function Sidebar({
   );
 }
 
+/* ────────────────────────── 设置面板（缓存 + 关于） ────────────────────────── */
+
+/** [lc-128] 设置面板：目前两栏 —— **缓存**（上限 / 占用 / 清理）与**关于**（版本 + 署名，与侧栏
+ *  关于区同一份文案）。外壳复用 Bangumi 弹层的 .ddet-mask/.ddet/.ddet-close/.ddet-hd 与 .ddet-body；
+ *  内部 .set-* 全部走既有 CSS 变量（同一套深色亚克力玻璃、字体与圆角），不引入新配色。
+ *  三要素对应 Rust 的三条命令：cache_stats / cache_set_limit / cache_clear
+ *  （清理**同时清内存层与磁盘层**，不会出现"清了盘还留着旧图"）。 */
+function SettingsPanel({ onClose }: { onClose: () => void }) {
+  type Stats = { bytes: number; files: number; limitMb: number; dir: string };
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const [ver, setVer] = useState("0.1.0");
+
+  const refresh = useCallback(() => {
+    invoke<Stats>("cache_stats")
+      .then(setStats)
+      .catch((e) => setNote(String(e)));
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    getVersion().then(setVer).catch(() => {});
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose, refresh]);
+
+  const setLimit = async (mb: number) => {
+    setBusy(true);
+    setNote("");
+    try {
+      const r = await invoke<Stats>("cache_set_limit", { limitMb: mb });
+      setStats(r);
+      setNote(mb === 0 ? "已设为不限制" : `上限已设为 ${fmtSize(mb * 1024 * 1024)}`);
+    } catch (e) {
+      setNote(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clearCache = async () => {
+    setBusy(true);
+    setNote("");
+    try {
+      const r = await invoke<Stats>("cache_clear");
+      setStats(r);
+      setNote("缓存已清理（内存 + 磁盘）");
+    } catch (e) {
+      setNote(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const limitMb = stats?.limitMb ?? 0;
+  // 下拉里没有的当前值（手改过 config.json）也要显示出来，别让 UI 与真实配置不一致
+  const known = [0, 1024, 2048, 5120, 10240];
+  const extras = limitMb && !known.includes(limitMb) ? [limitMb] : [];
+
+  return (
+    <div className="ddet-mask" onClick={onClose}>
+      <div className="ddet set-card" onClick={(e) => e.stopPropagation()}>
+        <button className="ddet-close" title="关闭（Esc）" onClick={onClose}>
+          ✕
+        </button>
+        <header className="ddet-hd">
+          <div className="ddet-hdm">
+            <h2>设置</h2>
+            <div className="ddet-meta">
+              <span className="ddet-chip dim">v{ver}</span>
+            </div>
+          </div>
+        </header>
+        <div className="ddet-body set-body">
+          <h3 className="ddet-h3">缓存</h3>
+          <div className="set-row">
+            <span className="set-k">占用上限</span>
+            <select
+              className="set-select"
+              value={limitMb}
+              disabled={busy}
+              onChange={(e) => setLimit(Number(e.target.value))}
+            >
+              {extras.map((mb) => (
+                <option key={mb} value={mb}>
+                  {fmtSize(mb * 1024 * 1024)}
+                </option>
+              ))}
+              <option value={1024}>1 GB</option>
+              <option value={2048}>2 GB</option>
+              <option value={5120}>5 GB</option>
+              <option value={10240}>10 GB</option>
+              <option value={0}>不限制</option>
+            </select>
+          </div>
+          <div className="set-row">
+            <span className="set-k">当前占用</span>
+            <span className="set-v">
+              {stats ? `${fmtSize(stats.bytes)} · ${stats.files} 个文件` : "读取中…"}
+            </span>
+          </div>
+          <div className="set-row">
+            <span className="set-k">清理缓存</span>
+            <button className="set-btn" onClick={clearCache} disabled={busy || !stats?.bytes}>
+              立即清理
+            </button>
+          </div>
+          <div className="set-hint">
+            图片与演员表缓存在软件数据目录（{stats?.dir || "…"}）：命中本地就不再请求，超上限按最后访问
+            时间自动淘汰；清理会同时清掉内存与磁盘。
+          </div>
+
+          <h3 className="ddet-h3">关于</h3>
+          <div className="set-attrib">
+            <span>This product uses the TMDB API but is not endorsed or certified by TMDB.</span>
+            <span>
+              <a href="https://www.themoviedb.org/" target="_blank" rel="noreferrer">
+                themoviedb.org
+              </a>
+            </span>
+            <span>
+              数据与部分内容来自{" "}
+              <a href="https://bgm.tv/" target="_blank" rel="noreferrer">
+                Bangumi 番组计划
+              </a>
+            </span>
+          </div>
+          {note && <div className="set-note">{note}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ────────────────────────── 根组件 ────────────────────────── */
 
 function App() {
-  const [view, setView] = useState<"login" | "home" | "lib" | "detail" | "player">("login");
+  const [view, setView] = useState<"login" | "home" | "discover" | "lib" | "detail">("login");
+  // [lc-123] 「页」= 顶栏胶囊的两个面（首页/发现）。与 view 分开：在库里/详情页时胶囊仍要
+  // 记住用户是从哪一页进去的（发现页点条目进 Bangumi 详情，左上角应仍显示「发现」）。
+  const [page, setPage] = useState<"home" | "discover">("home");
   const [libs, setLibs] = useState<Lib[]>([]);
   const [continueList, setContinueList] = useState<PlayItem[]>([]);
   const [carousel, setCarousel] = useState<MediaItem[]>([]);
@@ -1686,7 +3586,6 @@ function App() {
   }, []);
   const [activeLib, setActiveLib] = useState<Lib | null>(null);
   const [detailItem, setDetailItem] = useState<MediaItem | null>(null);
-  const [playTarget, setPlayTarget] = useState<PlayTarget | null>(null);
   const [err, setErr] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(
     () => localStorage.getItem("fntv-sidebar-open") !== "0",
@@ -1703,12 +3602,12 @@ function App() {
   }, [theme]);
   // 首页加载中（首次/手动刷新）：无数据时渲染骨架屏；已有数据时静默刷新不闪骨架
   const [homeLoading, setHomeLoading] = useState(false);
-  // 首页是否已滚动：滚动后 overlay 透明顶栏切实底（防内容从顶栏下穿过）
-  const [homeScrolled, setHomeScrolled] = useState(false);
   // 启动会话检查期：不渲染任何视图，避免带有效会话时闪登录页
   const [booting, setBooting] = useState(true);
   const [username, setUserName] = useState("");
   const [server, setServer] = useState("");
+  // [lc-128] 设置面板（缓存 + 关于）开关；入口在侧栏快捷操作卡（⚙ 设置）
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [sum, setSum] = useState<Record<string, number>>({});
   const [favTotal, setFavTotal] = useState<number | null>(null);
 
@@ -1746,6 +3645,7 @@ function App() {
       setContinueList(contArr);
       setCarousel(carList);
       setLibRows(libsArr.map((l) => ({ lib: l, items: [] })));
+      setPage("home");
       setView("home");
 
       // 轮播条目详情补齐（缓存到 App 层，只拉一次）：横版主图 + 简介/评分/年份回填
@@ -1805,10 +3705,27 @@ function App() {
 
   // 回首页：数据还在内存就直接切视图（进详情/库再回来不重拉），否则完整加载
   const goHome = useCallback(() => {
+    setPage("home");
     if (view === "home") return;
     if (carousel.length > 0) setView("home");
     else loadHome();
   }, [view, carousel.length, loadHome]);
+
+  // [lc-123] 去发现页：**不预取**（DiscoverView 的首拉闸门是 active=view==="discover"），
+  // 首页数据原样留在内存（切回来不重拉）
+  const goDiscover = useCallback(() => {
+    setPage("discover");
+    setView("discover");
+  }, []);
+
+  // 顶栏胶囊：首页走 goHome（有数据不重拉），发现走 goDiscover
+  const onNav = useCallback(
+    (p: "home" | "discover") => {
+      if (p === "discover") goDiscover();
+      else goHome();
+    },
+    [goDiscover, goHome],
+  );
 
   // 首页数据落盘（30 分钟 TTL）：重启/会话恢复时零请求直出；数据落定 1.5s 后快照
   useEffect(() => {
@@ -1836,9 +3753,19 @@ function App() {
     return () => clearTimeout(t);
   }, [view, libs, continueList, carousel, carouselBds, carouselLogos, sum, favTotal, libRows]);
 
+  // [lc-118] 首页轮播的「开始播放」= **直接拉起独立 mpv 窗口**（与详情页同一个入口）。
+  const [playMsg, setPlayMsg] = useState("");
   const play = useCallback((t: PlayTarget) => {
-    setPlayTarget(t);
-    setView("player");
+    setPlayMsg("");
+    invoke("play_item", { guid: t.guid })
+      .then(() => {
+        setPlayMsg(`已在独立播放器窗口打开${t.title ? `：${t.title}` : ""}`);
+        window.setTimeout(() => setPlayMsg(""), 4000);
+      })
+      .catch((e) => {
+        setPlayMsg(`播放失败：${String(e)}`);
+        window.setTimeout(() => setPlayMsg(""), 6000);
+      });
   }, []);
 
   const openItem = useCallback((item: MediaItem) => {
@@ -1848,11 +3775,13 @@ function App() {
 
   const openFav = useCallback(() => {
     setActiveLib({ guid: "_fav", title: "收藏", category: "" });
+    setPage("home");
     setView("lib");
   }, []);
 
   const openCat = useCallback((cat: { key: string; types: string[] }) => {
     setActiveLib({ guid: `_cat:${cat.types.join(",")}`, title: cat.key, category: "" });
+    setPage("home");
     setView("lib");
   }, []);
 
@@ -1899,6 +3828,7 @@ function App() {
                 })
                 .catch((e) => setErr(`加载媒体库「${row.lib.title}」失败：${String(e)}`));
             });
+            setPage("home");
             setView("home");
             restored = true;
           }
@@ -1920,10 +3850,10 @@ function App() {
   } else if (view === "login") {
     body = <LoginPage onDone={() => loadHome()} />;
   } else {
-    // 首页常驻挂载：切到库/详情只隐藏不卸载（图片零重请求、滚动位置保留），player 全屏接管
+    // 首页常驻挂载：切到库/详情只隐藏不卸载（图片零重请求、滚动位置保留）
     const homeReady = carousel.length > 0;
     body = (
-      <div className="main-row" style={view === "player" ? { display: "none" } : undefined}>
+      <div className="main-row">
         <Sidebar
           activeGuid={view === "home" ? null : activeLib?.guid ?? null}
           collapsed={!sidebarOpen}
@@ -1934,8 +3864,15 @@ function App() {
           onOpenFav={openFav}
           onOpenCat={openCat}
           onHome={goHome}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
         <div className="view-stack">
+          {/* [lc-123-rev] 胶囊行：从顶栏挪到**内容区顶部、居中**（顶栏只留页名/品牌小字/窗口按钮）。
+              放在 .view-stack 里 = 侧栏右侧的内容区，横向真居中；高度由 --navh 定，
+              下方各视图的"让位间距"从"顶栏 40px"改成"胶囊行"（见 App.css）。 */}
+          <div className="navbar">
+            <NavCapsule page={page} onNav={onNav} />
+          </div>
           <div className={`view-pane${view === "home" ? " active" : ""}`}>
             {homeReady ? (
               <HomeView
@@ -1953,11 +3890,15 @@ function App() {
                 }}
                 onPlay={play}
                 onOpenItem={openItem}
-                onScrolled={setHomeScrolled}
               />
             ) : homeLoading ? (
               <HomeSkeleton />
             ) : null}
+          </div>
+          {/* [lc-123] 发现页：与首页同款「常驻挂载」——两栏的滚动位置/已取数据在切页后保留；
+              首次拉取的闸门是 active={view === "discover"}（不进这一页就不发任何请求） */}
+          <div className={`view-pane${view === "discover" ? " active" : ""}`}>
+            <DiscoverView active={view === "discover"} />
           </div>
           {view === "lib" && activeLib && (
             <div className="view-pane active">
@@ -1972,23 +3913,34 @@ function App() {
         </div>
       </div>
     );
-    if (view === "player" && playTarget) {
-      body = (
-        <PlayerView
-          item={playTarget}
-          onBack={() => setView(detailItem ? "detail" : activeLib ? "lib" : "home")}
-        />
-      );
-    }
   }
 
   return (
     <div className="app-shell">
+      {/* [lc-118] 播放反馈浮标：轮播/首页没有 err 区域，播放失败必须有可见反馈 */}
+      {playMsg && (
+        <div
+          style={{
+            position: "fixed",
+            left: "50%",
+            bottom: 28,
+            transform: "translateX(-50%)",
+            padding: "10px 18px",
+            borderRadius: 12,
+            zIndex: 9999,
+            background: "rgba(20,22,28,.92)",
+            color: "#fff",
+            fontSize: 13,
+            boxShadow: "0 8px 28px rgba(0,0,0,.45)",
+            pointerEvents: "none",
+          }}
+        >
+          {playMsg}
+        </div>
+      )}
       {/* [lc-094] 无边框窗口的缩放热区：tao 自带热区只有窗口外侧 SM_CXFRAME（175% 缩放 ≈ 7 物理像素
           ≈ 4 CSS px），那几像素又常被 WebView2 子窗吃掉 → 手感"不灵敏、有时拖不动"。
-          这里在四边/四角铺透明拖拽条，由 WebView 收指针后调 startResizeDragging，热区稳定。
-          注意：全页/全屏形态下视频铺满窗口，左右/下边缘落在"挖洞"里（鼠标归 mpv），那边靠 mpv 侧不参与
-          —— 全屏本来也不需要拖拽缩放（先退回窗口态即可）。 */}
+          这里在四边/四角铺透明拖拽条，由 WebView 收指针后调 startResizeDragging，热区稳定。 */}
       {(
         [
           ["North", "rsz rsz-n"],
@@ -2014,6 +3966,7 @@ function App() {
       <TitleBar
         title="Fntv-Plus Tauri2"
         nav={view !== "login"}
+        page={page}
         sidebarOpen={sidebarOpen}
         onToggleSidebar={() =>
           setSidebarOpen((v) => {
@@ -2021,15 +3974,16 @@ function App() {
             return !v;
           })
         }
-        onHome={goHome}
         onRefresh={() => loadHome()}
         refreshing={homeLoading}
-        overlay={(view === "home" && !homeScrolled) || view === "player"}
-        // [lc-111] 详情页顶栏透明化（与首页同一观感）：.titlebar.ghost = 透明玻璃、保留主题色文字
+        // [lc-123-rev] 胶囊挪进 .navbar 行后，首页 hero 不再从顶栏下穿过（home-full 从胶囊行下沿开始），
+        // overlay 透明顶栏随之退场 —— 顶栏一律实体玻璃底，白字压深渐变没有存在意义了。
+        // [lc-111] 详情页顶栏透明化：.titlebar.ghost = 透明玻璃、保留主题色文字
         ghost={view === "detail"}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
       />
       {err && view !== "login" && <div className="err global-err">{err}</div>}
+      {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
       {body}
     </div>
   );

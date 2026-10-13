@@ -44,6 +44,15 @@
   --err-bg: rgba(229, 72, 77, 0.1);
   --err-border: rgba(214, 69, 74, 0.45);
   --err-text: #a5292f;
+  /* [lc-1426] 首页**统一内容左边距**（用户反馈：轮播文字与下方媒体库条/区块没对齐）。
+     成因是三套基准各写各的：
+       · 轮播文字 .mist-info  = `padding: 0 4% 163px`（4% 相对**轮播容器** .mist-item 宽）
+       · 媒体库条 .lib-strip   = `left: 4%`（绝对定位，4% 相对**定位祖先** .home-full 宽）
+       · 「继续观看」等区块      = `padding: 0 26px`（固定像素）
+     前两者的百分比基准容器不同 ⇒ 渲染出来不齐（用户截图那条红线）。
+     现在统一到这个**固定像素变量**：两个容器（.mist-item / .home-full）左缘重合，
+     同值即可对齐；想整体调左右留白只改这一处。 */
+  --home-pad: 26px;
 }
 
 html.dark {
@@ -1338,7 +1347,10 @@ button:active {
   display: flex;
   flex-direction: column;
   justify-content: flex-end; /* 信息块贴底：居中会在上方留大片空白，贴近媒体库条只留隔离带 */
-  padding: 0 4% 163px; /* 163 = 媒体库条占位(卡124px+底边距14px) + ~25px 隔离带 */
+  /* [lc-1426] 左边距改用统一变量（原 4%：4% 相对**轮播容器**宽，
+     而下方媒体库条的 left:4% 相对**定位祖先**宽 → 两者渲染出来不齐，用户截图所示）。
+     163 = 媒体库条占位(卡124px+底边距14px) + ~25px 隔离带 */
+  padding: 0 var(--home-pad) 163px;
   box-sizing: border-box;
   pointer-events: none;
 }
@@ -1454,8 +1466,10 @@ button:active {
 }
 .lib-strip {
   position: absolute;
-  left: 4%; /* 与海报信息层（.mist-info padding 0 4%）左缘对齐，含「开始播放」按钮 */
-  right: 26px;
+  /* [lc-1426] 与海报信息层用**同一个变量**（原注释就写了"要与 .mist-info 左缘对齐"，
+     但两处百分比基准不同所以从未真正对齐；right 也从 26px 统一过来） */
+  left: var(--home-pad);
+  right: var(--home-pad);
   bottom: 14px;
   z-index: 20;
   display: flex;
@@ -1643,7 +1657,7 @@ button:active {
 }
 .home-sec .section-head {
   margin: 0 0 14px;
-  padding: 0 26px;
+  padding: 0 var(--home-pad);
 }
 /* 首页海报铺满右缘：清掉横排与标题的右侧内边距，细滚动条浮在贴边海报上方 */
 .home-full .home-sec .section-head {

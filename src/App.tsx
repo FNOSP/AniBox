@@ -954,7 +954,7 @@ function PosterCard({
  *   - 箭头只在鼠标进入这一行时才显形（否则首页一屏里到处是箭头，很吵）；
  *   - 用 ResizeObserver 跟踪可视宽度，窗口缩放后翻页距离自动跟着变。
  */
-function ScrollRow({ children }: { children: ReactNode }) {
+function ScrollRow({ children, boxClass }: { children: ReactNode; boxClass?: string }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState(false);
@@ -1014,7 +1014,7 @@ function ScrollRow({ children }: { children: ReactNode }) {
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
-      <div className="hscroll" ref={boxRef}>
+      <div className={boxClass ? `hscroll ${boxClass}` : "hscroll"} ref={boxRef}>
         {children}
       </div>
       <button
@@ -3275,7 +3275,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
         {/* [lc-1401] 关联条目（Bangumi /subjects/{id}/subjects）：**按 relation 分组**渲染
             （上游没有分组，只有每条的 relation 词）。组序 = 上游首次出现顺序（热度序）。 */}
         {activeTab === "related" && (
-          <div className="dpanel drel">
+          <div className="dpanel">
             {relatedBusy && !relatedErr && <BgmListSkeleton />}
             {relatedErr && (
               <div className="bgmc-state">
@@ -3289,13 +3289,17 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
             {!relatedBusy && !relatedErr && related.length === 0 && (
               <div className="empty">暂无关联条目</div>
             )}
-            {relatedGroups.map((g) => (
-              <section className="dsec" key={g.relation}>
-                <h2 className="dsec-t">
-                  {g.relation}
-                  <span className="dsec-src">{g.items.length} 项</span>
-                </h2>
-                <div className="drel-grid">
+            {/* [lc-1411] 按用户定稿版式重做：**横向分栏**（一列 = 一个关系），
+                  列内竖向排卡片，列间竖分隔线；整条横向可翻页（复用 ScrollRow 的箭头）。
+                  与旧版的区别：旧版是"每个关系一节、节内网格"，改成一列一节后，
+                  同一屏能同时看到「续集 / 书籍 / 游戏 / 原声集 / 片头曲…」的对照关系。 */}
+            <ScrollRow boxClass="drel-cols">
+              {relatedGroups.map((g) => (
+                <section className="drel-col" key={g.relation}>
+                  <h3 className="drel-col-h">
+                    {g.relation}
+                    <span className="drel-col-n">{g.items.length}</span>
+                  </h3>
                   {g.items.map((r, i) => {
                     const cover = r.images?.large || r.images?.common || r.images?.medium || r.images?.grid || "";
                     const nm = String(r.name_cn || r.name || "").trim() || "（无标题）";
@@ -3312,9 +3316,9 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                       </div>
                     );
                   })}
-                </div>
-              </section>
-            ))}
+                </section>
+              ))}
+            </ScrollRow>
           </div>
         )}
 

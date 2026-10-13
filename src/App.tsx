@@ -254,39 +254,6 @@ type TmdbCredits = {
   crew?: TmdbCreditPerson[];
 };
 
-/** [lc-128] 按地区并列的一行（在线观看 providersByRegion / 分级 ratingsByRegion 共用） */
-type TmdbRegionRow = {
-  region: string;
-  rating?: string;
-  items?: { name?: string; logo?: string }[];
-};
-
-/** [lc-128] 地区码 → 中文名（未知地区回落到原始码，绝不猜） */
-const REGION_LABEL: Record<string, string> = {
-  CN: "中国大陆",
-  HK: "中国香港",
-  TW: "中国台湾",
-  MO: "中国澳门",
-  JP: "日本",
-  KR: "韩国",
-  SG: "新加坡",
-  MY: "马来西亚",
-  TH: "泰国",
-  US: "美国",
-  GB: "英国",
-  CA: "加拿大",
-  AU: "澳大利亚",
-  NZ: "新西兰",
-  DE: "德国",
-  FR: "法国",
-  IT: "意大利",
-  ES: "西班牙",
-  RU: "俄罗斯",
-  IN: "印度",
-  BR: "巴西",
-};
-const regionLabel = (code: string): string => REGION_LABEL[code] || code;
-
 function fmtSize(b: number): string {
   if (!isFinite(b) || b <= 0) return "0 MB";
   if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(2)} GB`;
@@ -983,7 +950,19 @@ function PosterCard({
  *   - 箭头只在鼠标进入这一行时才显形（否则首页一屏里到处是箭头，很吵）；
  *   - 用 ResizeObserver 跟踪可视宽度，窗口缩放后翻页距离自动跟着变。
  */
-function ScrollRow({ children, boxClass }: { children: ReactNode; boxClass?: string }) {
+function ScrollRow({
+  children,
+  boxClass,
+  imgSel = ".poster-box",
+  inSec = false,
+}: {
+  children: ReactNode;
+  boxClass?: string;
+  /** 量哪个元素的高度作为箭头垂直居中的基准（默认 .poster-box；剧照行传 img 选择器） */
+  imgSel?: string;
+  /** 这一行嵌在带内边距的卡片里（如 .tmdb-sec）→ 箭头左右内收到 14px，不压卡片边框 */
+  inSec?: boolean;
+}) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState(false);
@@ -1000,7 +979,7 @@ function ScrollRow({ children, boxClass }: { children: ReactNode; boxClass?: str
     //   整行还含图片下方的标题/副标题，按整行居中会让箭头落到图片偏下的位置。
     //   这里量出第一张卡片的图片高度写进 CSS 变量（.poster-box 有 aspect-ratio，
     //   高度只取决于宽度，不依赖图片是否加载完成，所以量得到就是准的）。
-    const poster = el.querySelector<HTMLElement>(".poster-box");
+    const poster = el.querySelector<HTMLElement>(imgSel);
     const wrap = wrapRef.current;
     if (wrap) {
       // 量不到图片高度时（首帧未布局/结构变化）退化为"整行高度" ——
@@ -1009,7 +988,7 @@ function ScrollRow({ children, boxClass }: { children: ReactNode; boxClass?: str
       const imgH = poster && poster.offsetHeight > 0 ? poster.offsetHeight : el.clientHeight;
       if (imgH > 0) wrap.style.setProperty("--srow-img-h", `${imgH}px`);
     }
-  }, []);
+  }, [imgSel]);
 
   useEffect(() => {
     const el = boxRef.current;
@@ -1027,7 +1006,7 @@ function ScrollRow({ children, boxClass }: { children: ReactNode; boxClass?: str
       ro?.disconnect();
       window.removeEventListener("resize", sync);
     };
-  }, [sync, children]);
+  }, [sync, children, imgSel]);
 
   const page = (dir: -1 | 1) => {
     const el = boxRef.current;
@@ -1038,7 +1017,7 @@ function ScrollRow({ children, boxClass }: { children: ReactNode; boxClass?: str
 
   return (
     <div
-      className="srow"
+      className={`srow${inSec ? " insec" : ""}`}
       ref={wrapRef}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
@@ -1414,7 +1393,8 @@ function pickGenres(d: Record<string, unknown> | null): string[] {
  *  [lc-1401] 按用户定稿版式改名：概览→详情、更多→演职人员，并新增「关联条目」。
  *  「选集」不再是标签页 —— 它按用户版式常驻右栏（每集小标题 + 简介的竖向列表）。 */
 const TAB_LABEL: Record<string, string> = {
-  overview: "剧照剧集详情信息",
+  // [lc-1413] 用户要求：标签名从「剧照剧集详情信息」缩短为「详情信息」
+  overview: "详情信息",
   // [lc-1412] 原「吐槽评论」一个页拆成两页（用户要求"分开分别做成图片样式"），
   //   并把两页**交换位置**：评论（长影评）在前、吐槽（短评气泡）在后。
   reviews: "评论",
@@ -3866,67 +3846,12 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
 }
 
 
-/* ────────────────────────── TMDB 扩展信息（剧照/预告片/分级/在线观看/更多） ──────────────────────────
-   复刻主仓库 embyWall/detail/tmdbCard.ts (6)(8)(9)(10) 四节。剧照/头像走 fntvimg 代理的 TMDB 图片域
-   （Rust 反代镜像 + **落盘三级缓存**，见 tmdbImg() 与 imgproto.rs）。
-   [lc-128] 演职人员一节搬去「更多」分段（TMDB 主源 + 落盘缓存 + 飞牛兜底），这里不再重复渲染。 */
-
-/** 分级 / 在线观看：**按多个国家（地区）并列**——每行标出地区名，没数据的地区直接不出现
- *  （大陆 CN 无数据即自然缺省，不做特判、不报错、不显示空区块）；两块全空时给明确空态。 */
-function TmdbRegions({ tmdb }: { tmdb: Record<string, unknown> }) {
-  const list = (k: string): TmdbRegionRow[] =>
-    Array.isArray(tmdb[k]) ? (tmdb[k] as TmdbRegionRow[]).filter((r) => r && r.region) : [];
-  const ratings = list("ratingsByRegion").filter((r) => String(r.rating ?? "").trim());
-  const providers = list("providersByRegion").filter((r) => (r.items ?? []).length > 0);
-  if (!ratings.length && !providers.length) {
-    return (
-      <div className="tmdb-sec">
-        <div className="tmdb-sec-t">分级 / 在线观看</div>
-        <div className="tmdb-empty">暂无分级与在线观看数据</div>
-      </div>
-    );
-  }
-  return (
-    <div className="tmdb-sec">
-      <div className="tmdb-sec-t">分级 / 在线观看</div>
-      <div className="tmdb-mrow">
-        <span className="tmdb-mk">分级</span>
-        {ratings.length ? (
-          <div className="tmdb-regions">
-            {ratings.map((r) => (
-              <div className="tmdb-rrow" key={`rt-${r.region}`}>
-                <span className="tmdb-rk">{regionLabel(r.region)}</span>
-                <span className="tmdb-inline">{String(r.rating)}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <span className="tmdb-inline tmdb-dim">暂无</span>
-        )}
-      </div>
-      <div className="tmdb-mrow">
-        <span className="tmdb-mk">在线看</span>
-        {providers.length ? (
-          <div className="tmdb-regions">
-            {providers.map((r) => (
-              <div className="tmdb-rrow" key={`pv-${r.region}`}>
-                <span className="tmdb-rk">{regionLabel(r.region)}</span>
-                <span className="tmdb-inline">
-                  {(r.items ?? [])
-                    .map((it) => it.name)
-                    .filter(Boolean)
-                    .join(" · ")}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <span className="tmdb-inline tmdb-dim">暂无</span>
-        )}
-      </div>
-    </div>
-  );
-}
+/* ────────────────────────── TMDB 扩展信息（剧照 / 相似 / 更多） ──────────────────────────
+   剧照/头像走 fntvimg 代理的 TMDB 图片域（Rust 反代镜像 + **落盘三级缓存**，见 tmdbImg() 与 imgproto.rs）。
+   [lc-128] 演职人员一节搬去「演职人员」页（TMDB 主源 + 落盘缓存 + 飞牛兜底），这里不再重复渲染。
+   [lc-1413] 按用户要求**删掉「预告片」与「分级 / 在线观看」两节**：
+     前者是 YouTube 外链（国内打不开，点了也是白点），后者对国内用户基本是空数据；
+     连带删掉 TmdbRegions 组件、videos 派生变量与相关类型用法。 */
 
 function TmdbExtra({
   tmdb,
@@ -3941,7 +3866,6 @@ function TmdbExtra({
   const strList = (k: string): string[] => (Array.isArray(tmdb[k]) ? (tmdb[k] as string[]) : []);
   const stills = arr("backdrops").slice(0, 6);
   const recs = arr("recommendations").slice(0, 8);
-  const videos = arr("videos").slice(0, 4);
   const aliases = strList("aliases");
   const keywords = strList("keywords");
   const popularity = Number(tmdb.popularity ?? 0);
@@ -3960,7 +3884,11 @@ function TmdbExtra({
       {stills.length > 0 && (
         <div className="tmdb-sec">
           <div className="tmdb-sec-t">剧照</div>
-          <div className="tmdb-stills">
+          {/* [lc-1413] 用户反馈"剧照太多显示不完全，加同款雪佛龙按钮（不要背景色）" ——
+              原来是一条 overflow-x:auto 的裸横排（项目全局隐藏了滚动条，滚轮又只滚纵向，
+              所以多出来的剧照根本看不到）。这里改走 ScrollRow：复用首页那套**无底色**雪佛龙，
+              smooth 翻页 + 两端自动隐藏。箭头垂直居中的基准改成剧照高度（.tmdb-stills img）。 */}
+          <ScrollRow boxClass="dvstill-row" imgSel=".tmdb-stills img" inSec>
             {stills.map((st) => (
               <img
                 key={String(st.file_path ?? st)}
@@ -3971,7 +3899,7 @@ function TmdbExtra({
                 onClick={() => onZoom?.(String(st.file_path ?? st))}
               />
             ))}
-          </div>
+          </ScrollRow>
         </div>
       )}
       {recs.length > 0 && (
@@ -3988,27 +3916,8 @@ function TmdbExtra({
           </p>
         </div>
       )}
-      {videos.length > 0 && (
-        <div className="tmdb-sec">
-          <div className="tmdb-sec-t">预告片</div>
-          <div className="tmdb-links">
-            {videos.map((v, i) => (
-              <a
-                key={`${String(v.key)}-${i}`}
-                href={`https://www.youtube.com/watch?v=${String(v.key)}`}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                title={String(v.name ?? "")}
-              >
-                ▶ {String(v.type ?? "Trailer") === "Teaser" ? "先导" : "预告"}
-                {v.lang ? ` · ${String(v.lang)}` : ""}
-              </a>
-            ))}
-          </div>
-        </div>
-      )}
-      <TmdbRegions tmdb={tmdb} />
+      {/* [lc-1413] 用户要求删掉「预告片」与「分级 / 在线观看」两个模块 ——
+          前者是外链 YouTube（国内打不开，点了也是白点），后者对国内用户基本是空的。 */}
       {hasMore && (
         <div className="tmdb-sec">
           <div className="tmdb-sec-t">更多</div>

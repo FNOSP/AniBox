@@ -4729,3 +4729,29 @@ html.dark .ditem-tag {
     padding-right: 34px;
   }
 }
+
+/* [lc-1413] 剧照横排接 ScrollRow 后的容器规则。
+   .tmdb-stills 本身是 flex+overflow-x:auto（裸横排），现在外面套了 .srow，
+   所以内层只需保留 flex 与间距；.hscroll 的负边距在这里不适用（剧照本来就在面板内），
+   故用 .dvstill-row 覆盖掉。 */
+.dvstill-row {
+  margin: 0;
+  padding-left: 0;
+  padding-right: 0;
+  gap: 12px;
+}
+/* [lc-1413] 剧照行嵌在 .tmdb-sec 里（带 14px 内边距 + 圆角边框的卡片），
+   箭头默认 left/right:6px 会压到卡片边框上。这里给 .srow 挂一个修饰类（.insec）
+   把箭头内收到 14px，与卡片内容对齐。
+   ⚠ **不用 :has()** —— 上一轮刚因为这个坑吃过亏：:has() 在旧 WebView 上会被整条丢弃，
+     退化成"看起来没写"，而不是报错。修饰类在 DOM 上直接可见可查，稳。 */
+.srow.insec .srow-prev {
+  left: 14px;
+}
+.srow.insec .srow-next {
+  right: 14px;
+}
+
+/* 箭头垂直居中：.srow-nav 的基准是 --srow-img-h，而 ScrollRow 会按 imgSel 量出的高度写入它
+   （剧照行传的是 .tmdb-stills img = 128px）。所以这里不需要额外的覆盖规则 —— 删掉冗余选择器，
+   避免以后有人以为"剧照行有特殊居中逻辑"而去改一处根本不被使用的地方。 */

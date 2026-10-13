@@ -394,6 +394,43 @@ function pickImgStr(d: Record<string, unknown>, keys: string[]): string | undefi
   return undefined;
 }
 
+/** [lc-1430] 从图片数组里取**面积最大**的那张（不是第一张）。
+ *
+ *  为什么必须这样：飞牛的 `backdrops`/`posters` 数组里**第一项经常是竖版小缩略图**，
+ *  真正的大横版（1920×1080）排在后面。取第一张 → 首页轮播把一张几百像素的缩略图
+ *  拉伸铺满整屏（用户反馈"海报太糊"）。
+ *  主仓库 embyWall/carousel/images.ts 的 [lc-599] 早就踩过这个坑并修成"按 w*h 选最大"，
+ *  这里是同一套逻辑的移植（那条注释原话："数组第一项经常是竖版小缩略图, 大横版通常在后面"）。
+ *
+ *  兼容三种元素形态：字符串 / {file_path|url|path|image|src} / {width,height}。
+ *  没有任何尺寸信息时**回退到第一张**（不猜、不报错）。
+ */
+function pickLargestImg(v: unknown): string | undefined {
+  const extract = (it: unknown): string => {
+    if (typeof it === "string") return it;
+    if (!it || typeof it !== "object") return "";
+    const o = it as Record<string, unknown>;
+    const p = o.file_path ?? o.url ?? o.path ?? o.image ?? o.src;
+    return typeof p === "string" ? p : "";
+  };
+  if (typeof v === "string") return v || undefined;
+  if (!Array.isArray(v) || !v.length) return undefined;
+  let best = v[0];
+  let bestSize = 0;
+  for (const it of v) {
+    const o = (it && typeof it === "object" ? it : null) as Record<string, unknown> | null;
+    const w = Number(o?.width ?? o?.w ?? 0) || 0;
+    const h = Number(o?.height ?? o?.h ?? 0) || 0;
+    const sz = w * h;
+    if (sz > bestSize) {
+      bestSize = sz;
+      best = it;
+    }
+  }
+  const s = extract(best) || extract(v[0]);
+  return s || undefined;
+}
+
 /** 库内容加载：库根=ancestor 查询（Episode 由服务端白名单滤掉）；文件夹钻取=parent 查询。
  *  形状依据见 lib.rs get_items 注释（实测：库根传 parent_guid=库guid 返回 0 条，勿兜底）。 */
 async function fetchLibItems(libGuid: string, parentGuid: string | null): Promise<MediaItem[]> {
@@ -3350,7 +3387,13 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   }, [episodes.length, bgm?.subject_id]);
 
   const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
-  const poster = (pick(data ?? {}, ["posters", "poster"]) as string) || base.poster || "";
+  // [lc-1430] 竖版海报同样**取面积最大**（posters 数组首位也常是小缩略图，
+  //   详情页海报会糊 —— 与轮播 backdrop 是同一个坑）。
+  const poster =
+    pickLargestImg((data ?? {}).posters) ||
+    (pick(data ?? {}, ["posters", "poster"]) as string) ||
+    base.poster ||
+    "";
   const overview = String(pick(data ?? {}, ["overview"]) ?? base.overview ?? "");
   // [lc-1401] 原题名（有就别名不显示）：优先条目详情，其次 Bangumi 匹配结果
   const originalTitle = String(
@@ -4644,7 +4687,9 @@ function App() {
         rs.forEach((r, i) => {
           if (r.status === "fulfilled") {
             const d = r.value;
-            const bd = pickImgStr(d, ["backdrops", "backdrop"]);
+            // [lc-1430] 用 pickLargestImg（不是 pickImgStr）：取面积最大的横版，
+            //   否则会拿到数组首位的小缩略图 → 轮播整屏拉伸后很糊。
+            const bd = pickLargestImg(d.backdrops) || pickImgStr(d, ["backdrop"]);
             if (bd) map[carList[i].guid] = bd;
             // [lc-570 同源] 飞牛自带透明 logo（item API data.logos，详情页 hero 同一字段）
             const lg = pickImgStr(d, ["logos", "logo"]);

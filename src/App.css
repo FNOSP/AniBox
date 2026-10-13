@@ -4438,3 +4438,69 @@ html.dark .ditem-tag {
   margin-top: 5px;
   display: block;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   [lc-1407] 「继续观看」/ 媒体库横排的**左右翻页箭头**
+   背景：这两条横排是 overflow-x:auto，但本项目全局隐藏了滚动条（`* { scrollbar-width:none }`）
+   且滚轮只滚纵向 —— 用户实际"无法横向滑动"。按用户要求复用**轮播同款雪佛龙**做翻页。
+   与轮播（.mist-nav）的区别：轮播箭头固定在 banner 两侧、按鼠标靠近哪侧显形；
+   横排箭头**只在鼠标进入这一行时显形**（首页一屏多条横排，否则到处是箭头很吵），
+   并且到两端后对应侧自动淡出 + 禁用（没有更多内容时不该还留个可按的箭头）。
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.srow {
+  position: relative; /* 箭头的定位基座 */
+}
+
+/* 箭头本体：大号雪佛龙、无底无框（与轮播 .mist-nav 同一套观感），默认完全透明 */
+.srow-nav {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  margin: auto 0;
+  z-index: 6;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(12, 16, 26, 0.42);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #fff;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none; /* 默认不可点：避免"看不见却点得到"的误触 */
+  transition: opacity 0.18s ease, background 0.18s ease, transform 0.18s ease;
+}
+.srow-nav.is-on {
+  opacity: 1;
+  pointer-events: auto;
+}
+.srow-nav:hover {
+  background: rgba(12, 16, 26, 0.62);
+  color: #fff;
+}
+.srow-nav:active {
+  transform: scale(0.92);
+}
+.srow-nav:disabled {
+  opacity: 0 !important;
+  pointer-events: none;
+}
+/* 两侧位置：略微压进内容一点（不是贴死边），且不挡住首/末卡片的点击区太多 */
+.srow-prev {
+  left: 6px;
+}
+.srow-next {
+  right: 6px;
+}
+
+/* 少动效偏好：去掉过渡（显隐仍是瞬时的，功能不受影响） */
+@media (prefers-reduced-motion: reduce) {
+  .srow-nav {
+    transition: none;
+  }
+}

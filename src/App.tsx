@@ -940,6 +940,93 @@ function PosterCard({
   );
 }
 
+/** [lc-1407] 可横向翻页的一行（首页「继续观看」与各媒体库横排共用）。
+ *
+ *  为什么需要它：这两条横排是 `overflow-x: auto`，但本项目**全局隐藏了滚动条**
+ *  （`* { scrollbar-width: none }`，WebView2 的 Fluent 滚动条无视 ::-webkit-scrollbar 才这么干的），
+ *  而鼠标滚轮默认只滚纵向 —— 于是横排实际上"没有任何可用的滚动入口"
+ *  （用户反馈：无法横向滑动）。这里改成**轮播同款雪佛龙箭头**翻页（用户指定）。
+ *
+ *  实现要点：
+ *   - 翻页距离 = **可视宽度 × 0.9**（留一点重叠，让用户看得出是接着翻的），按 smooth 滚；
+ *   - 到两端后对应箭头**自动淡出并禁用**（与轮播的 near 透明逻辑同一套观感）；
+ *   - 箭头只在鼠标进入这一行时才显形（否则首页一屏里到处是箭头，很吵）；
+ *   - 用 ResizeObserver 跟踪可视宽度，窗口缩放后翻页距离自动跟着变。
+ */
+function ScrollRow({ children }: { children: ReactNode }) {
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const [hover, setHover] = useState(false);
+  const [atStart, setAtStart] = useState(true);
+  const [atEnd, setAtEnd] = useState(false);
+
+  const sync = useCallback(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    // 1px 容差：分数缩放（125%/150%）下 scrollLeft 是小数，等于阈值时不该误判成"还能滚"
+    setAtStart(el.scrollLeft <= 1);
+    setAtEnd(el.scrollLeft + el.clientWidth >= el.scrollWidth - 1);
+  }, []);
+
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    sync();
+    el.addEventListener("scroll", sync, { passive: true });
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(sync);
+      ro.observe(el);
+    }
+    window.addEventListener("resize", sync);
+    return () => {
+      el.removeEventListener("scroll", sync);
+      ro?.disconnect();
+      window.removeEventListener("resize", sync);
+    };
+  }, [sync, children]);
+
+  const page = (dir: -1 | 1) => {
+    const el = boxRef.current;
+    if (!el) return;
+    const step = Math.max(160, el.clientWidth * 0.9);
+    el.scrollBy({ left: dir * step, behavior: "smooth" });
+  };
+
+  return (
+    <div
+      className="srow"
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      <div className="hscroll" ref={boxRef}>
+        {children}
+      </div>
+      <button
+        type="button"
+        className={`srow-nav srow-prev${hover && !atStart ? " is-on" : ""}`}
+        title="向左翻"
+        aria-label="向左翻"
+        disabled={atStart}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => page(-1)}
+      >
+        ‹
+      </button>
+      <button
+        type="button"
+        className={`srow-nav srow-next${hover && !atEnd ? " is-on" : ""}`}
+        title="向右翻"
+        aria-label="向右翻"
+        disabled={atEnd}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => page(1)}
+      >
+        ›
+      </button>
+    </div>
+  );
+}
+
 /* ────────────────────────── 首页骨架屏 ────────────────────────── */
 
 function HomeSkeleton() {
@@ -1070,7 +1157,7 @@ function HomeView({
           <div className="section-head">
             <h3>继续观看</h3>
           </div>
-          <div className="hscroll">
+          <ScrollRow>
             {continueList.map((raw) => {
               const guid = String(pick(raw, ["guid"]) ?? "");
               const title = String(pick(raw, ["title"]) ?? "");
@@ -1112,7 +1199,7 @@ function HomeView({
                 </div>
               );
             })}
-          </div>
+          </ScrollRow>
         </section>
       )}
 
@@ -1129,11 +1216,11 @@ function HomeView({
                 全部 ›
               </span>
             </div>
-            <div className="hscroll">
+            <ScrollRow>
               {items.map((it) => (
                 <PosterCard key={it.guid} item={it} onOpen={onOpenItem} />
               ))}
-            </div>
+            </ScrollRow>
           </section>
         ) : null,
       )}

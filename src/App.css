@@ -5438,8 +5438,8 @@ html.dark .ditem-tag {
 .webrs {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 10px;
+  gap: 12px;
+  margin-top: 12px;
   padding: 10px 0 8px;
   border-top: 1px solid var(--line);
 }
@@ -5449,7 +5449,7 @@ html.dark .ditem-tag {
 .webrs-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
 }
 .webrs-bar input,
 .webrs-bar select,
@@ -5461,7 +5461,7 @@ html.dark .ditem-tag {
   min-height: 32px;
   margin: 0;
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: 10px;
   font-size: 12.5px;
   font-family: inherit;
 }
@@ -5502,6 +5502,7 @@ html.dark .ditem-tag {
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 .webrs-bar .webrs-go {
+  padding: 0 20px;
   color: var(--accent);
   font-weight: 600;
 }
@@ -5516,8 +5517,9 @@ html.dark .ditem-tag {
   background: var(--glass-btn-bg);
 }
 .webrs-bar .webrs-gear {
-  width: 34px;
+  width: 36px;
   padding: 0;
+  margin-left: 4px;
   font-size: 14px;
   color: var(--text-2);
 }

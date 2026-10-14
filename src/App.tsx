@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode, type UIEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -2622,14 +2622,29 @@ function DiscoverView({
   );
 }
 
-/* ════════════ [lc-1501] 在线资源面板（发现页无源条目 · Kazumi「播放来源」同款）════════════
-   全部内置源（KazumiRules 16 条）并发聚合搜索，按源分组展示：
-   · 状态徽标 = N 个结果 / 无结果 / 检索失败（Kazumi 同款三态）
-   · 点条目 → 线路/选集 → 解析直链（HTTP 正则 → 隐藏 WebView 嗅探兜底）→ 独立 mpv
-   · 「添加源」粘贴 Kazumi 规则 JSON 即可（webrs-rules/{name}.json）；源行可删 */
+/* ════════════ [lc-1502] 在线资源面板（发现页无源条目 · Kazumi「我的规则」式）════════════
+   源由**用户勾选启用**（⚙ 设置面板，localStorage 持久化），搜索只跑勾选的源：
+   · ⚙ 源管理：复选框启用/停用、全选/清空、＋粘贴 Kazumi 规则 JSON 添加、× 删除
+   · 结果按源分组：N 个结果（绿）/ 无结果 / 检索失败（红），点条目 → 线路/选集 → mpv
+   · 解析直链：HTTP 正则直解 → 隐藏 WebView 嗅探兜底 */
 type WebrsSearchItem = { name: string; url: string };
 type WebrsRoad = { name: string; index: number; episodes: WebrsSearchItem[] };
 type WebrsGroup = { name: string; status: "ok" | "empty" | "error"; error: string; items: WebrsSearchItem[] };
+type WebrsRuleInfo = { name: string; mode?: string };
+
+const WEBRS_ENABLED_KEY = "anibox.webrs.enabledSources";
+
+/** 已勾选源名单（localStorage 持久化）。null = 从未改过 → 视为全启用。 */
+function loadEnabled(): string[] | null {
+  try {
+    const raw = localStorage.getItem(WEBRS_ENABLED_KEY);
+    if (raw == null) return null;
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+  } catch {
+    return null;
+  }
+}
 
 function WebrsPanel({ title }: { title: string }) {
   const [groups, setGroups] = useState<WebrsGroup[] | null>(null); // null = 尚未搜索
@@ -2637,21 +2652,29 @@ function WebrsPanel({ title }: { title: string }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [ruleCount, setRuleCount] = useState(0);
-  // 二级视图：选集（rule + 条目 → roads/episodes）
+  // 源管理
+  const [srcs, setSrcs] = useState<WebrsRuleInfo[]>([]);
+  const [enabled, setEnabled] = useState<string[] | null>(null); // null = 全启用
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addText, setAddText] = useState("");
+  const [addErr, setAddErr] = useState("");
+  // 二级视图：选集
   const [sel, setSel] = useState<{ rule: string; item: WebrsSearchItem } | null>(null);
   const [roads, setRoads] = useState<WebrsRoad[]>([]);
   const [roadIdx, setRoadIdx] = useState(0);
   const [subBusy, setSubBusy] = useState("");
-  // 添加源弹窗
-  const [addOpen, setAddOpen] = useState(false);
-  const [addText, setAddText] = useState("");
-  const [addErr, setAddErr] = useState("");
 
-  const loadRules = useCallback(async () => {
+  const isEnabled = useCallback(
+    (name: string) => enabled == null || enabled.includes(name),
+    [enabled],
+  );
+  const enabledNames = useMemo(() => srcs.filter((r) => isEnabled(r.name)).map((r) => r.name), [srcs, isEnabled]);
+
+  const refreshRules = useCallback(async () => {
     try {
-      const r = await invoke<{ name: string }[]>("webrs_rules");
-      setRuleCount(r.length);
+      const r = await invoke<WebrsRuleInfo[]>("webrs_rules");
+      setSrcs(r);
       return r;
     } catch (e) {
       setErr(String(e));
@@ -2659,36 +2682,58 @@ function WebrsPanel({ title }: { title: string }) {
     }
   }, []);
 
-  const doSearch = useCallback(async (k: string) => {
-    const key = k.trim();
-    if (!key) return;
-    setBusy(true);
-    setErr("");
-    setSel(null);
-    setRoads([]);
-    try {
-      const r = await invoke<WebrsGroup[]>("webrs_search_multi", { keyword: key });
-      setGroups(r);
-      // 自动展开第一个有结果的源（省一次点击）
-      const first = r.find((g) => g.status === "ok");
-      setExpanded(first ? { [first.name]: true } : {});
-    } catch (e) {
-      setErr(String(e));
-      setGroups([]);
-    } finally {
-      setBusy(false);
-    }
-  }, []);
+  const doSearch = useCallback(
+    async (k: string) => {
+      const key = k.trim();
+      if (!key) return;
+      const picked = srcs.filter((r) => isEnabled(r.name)).map((r) => r.name);
+      if (picked.length === 0) {
+        setErr("还没有勾选任何源 —— 点 ⚙ 选要用的源");
+        return;
+      }
+      setBusy(true);
+      setErr("");
+      setSel(null);
+      setRoads([]);
+      try {
+        const r = await invoke<WebrsGroup[]>("webrs_search_multi", { keyword: key, rules: picked });
+        setGroups(r);
+        const first = r.find((g) => g.status === "ok");
+        setExpanded(first ? { [first.name]: true } : {});
+      } catch (e) {
+        setErr(String(e));
+        setGroups([]);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [srcs, isEnabled],
+  );
 
-  // 进面板：拉规则数 + 自动按标题全源搜一次
+  // 进面板：拉源列表 + 自动按标题搜一次（只搜勾选的）
   const autoDone = useRef(false);
   useEffect(() => {
     if (autoDone.current) return;
     autoDone.current = true;
-    loadRules().then((r) => {
-      if (r.length > 0) doSearch(title);
+    setEnabled(loadEnabled());
+    refreshRules().then((r) => {
+      const en = loadEnabled();
+      const picked = r.filter((x) => en == null || en.includes(x.name)).map((x) => x.name);
+      if (r.length > 0 && picked.length > 0) doSearch(title);
     });
   }, []);
+
+  const toggleSource = (name: string) => {
+    const cur = srcs.filter((r) => isEnabled(r.name)).map((r) => r.name);
+    const next = cur.includes(name) ? cur.filter((x) => x !== name) : [...cur, name];
+    setEnabled(next);
+    localStorage.setItem(WEBRS_ENABLED_KEY, JSON.stringify(next));
+  };
+  const setAllSources = (on: boolean) => {
+    const next = on ? srcs.map((r) => r.name) : [];
+    setEnabled(next);
+    localStorage.setItem(WEBRS_ENABLED_KEY, JSON.stringify(next));
+  };
 
   const openChapters = async (rule: string, item: WebrsSearchItem) => {
     setSel({ rule, item });
@@ -2733,9 +2778,9 @@ function WebrsPanel({ title }: { title: string }) {
       const name = await invoke<string>("webrs_add_rule", { jsonText: addText });
       setAddOpen(false);
       setAddText("");
-      await loadRules();
+      await refreshRules();
       setErr("");
-      setSubBusy(`已添加源「${name}」，重新搜索即可使用`);
+      setSubBusy(`已添加源「${name}」，记得在列表里勾选它`);
     } catch (e) {
       setAddErr(String(e));
     }
@@ -2745,8 +2790,11 @@ function WebrsPanel({ title }: { title: string }) {
     if (!window.confirm(`删除源「${name}」？（内置源会在下次启动时恢复）`)) return;
     try {
       await invoke("webrs_remove_rule", { ruleName: name });
+      await refreshRules();
+      const next = (enabled ?? srcs.map((r) => r.name)).filter((x) => x !== name);
+      setEnabled(next);
+      localStorage.setItem(WEBRS_ENABLED_KEY, JSON.stringify(next));
       setGroups((g) => (g ? g.filter((x) => x.name !== name) : g));
-      loadRules();
     } catch (e) {
       setErr(String(e));
     }
@@ -2768,17 +2816,17 @@ function WebrsPanel({ title }: { title: string }) {
           {busy ? "搜索中" : "搜索"}
         </button>
         <button
-          className="webrs-add"
-          title={`添加源（粘贴 Kazumi 规则 JSON）· 当前 ${ruleCount} 个源`}
+          className="webrs-gear"
+          title={`源管理（已勾选 ${enabledNames.length}/${srcs.length}）`}
           onClick={() => {
-            setAddOpen(true);
+            setSettingsOpen(true);
             setAddErr("");
           }}
         >
-          ＋源
+          ⚙
         </button>
       </div>
-      {busy && <div className="webrs-note">正在并发搜索 {ruleCount} 个源…</div>}
+      {busy && <div className="webrs-note">正在搜索 {enabledNames.length} 个已勾选源…</div>}
       {err && <div className="webrs-err">{err}</div>}
       {subBusy && <div className="webrs-note">{subBusy}</div>}
 
@@ -2831,16 +2879,6 @@ function WebrsPanel({ title }: { title: string }) {
                 <span className={`webrs-g-badge ${g.status}`}>{badge(g)}</span>
                 <span className="webrs-g-arrow">{expanded[g.name] ? "⌃" : "⌄"}</span>
               </button>
-              <button
-                className="webrs-g-x"
-                title={`删除源 ${g.name}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeRule(g.name);
-                }}
-              >
-                ×
-              </button>
               {expanded[g.name] && g.status === "ok" && (
                 <div className="webrs-g-items">
                   {g.items.map((it) => (
@@ -2853,34 +2891,63 @@ function WebrsPanel({ title }: { title: string }) {
             </div>
           ))}
           {groups.every((g) => g.status !== "ok") && (
-            <div className="webrs-note">所有源都没有结果：换个关键词，或「＋源」添加更多规则</div>
+            <div className="webrs-note">勾选的源都没有结果：换个关键词、换个源，或 ⚙ 里添加规则</div>
           )}
         </div>
       )}
 
-      {/* 添加源弹窗（粘贴 Kazumi 规则 JSON） */}
-      {addOpen && (
-        <div className="ddet-mask" onClick={() => setAddOpen(false)}>
+      {/* ⚙ 源管理设置面板 */}
+      {settingsOpen && (
+        <div className="ddet-mask" onClick={() => setSettingsOpen(false)}>
           <div className="sum-modal webrs-add-modal" onClick={(e) => e.stopPropagation()}>
             <div className="sum-modal-h">
-              <h3>添加源（Kazumi 规则 JSON）</h3>
-              <button className="ddet-close sum-modal-x" onClick={() => setAddOpen(false)}>
+              <h3>
+                源管理 <span className="webrs-mgr-count">已勾选 {enabledNames.length} / {srcs.length}</span>
+              </h3>
+              <button className="ddet-close sum-modal-x" onClick={() => setSettingsOpen(false)}>
                 ×
               </button>
             </div>
-            <textarea
-              className="webrs-add-ta"
-              value={addText}
-              onChange={(e) => setAddText(e.target.value)}
-              placeholder="粘贴规则 JSON（可从 KazumiRules 仓库直接复制规则文件全文），须包含 name 字段"
-              rows={12}
-            />
-            {addErr && <div className="webrs-err">{addErr}</div>}
-            <div className="webrs-add-acts">
-              <button className="webrs-go" disabled={!addText.trim()} onClick={addRule}>
-                导入
+            <div className="webrs-mgr-acts">
+              <button onClick={() => setAllSources(true)}>全选</button>
+              <button onClick={() => setAllSources(false)}>清空</button>
+              <button className="webrs-mgr-addbtn" onClick={() => setAddOpen((v) => !v)}>
+                {addOpen ? "收起" : "＋ 添加源"}
               </button>
             </div>
+            {addOpen && (
+              <>
+                <textarea
+                  className="webrs-add-ta"
+                  value={addText}
+                  onChange={(e) => setAddText(e.target.value)}
+                  placeholder="粘贴 Kazumi 规则 JSON（可从 KazumiRules 仓库复制规则文件全文），须包含 name 字段"
+                  rows={10}
+                />
+                {addErr && <div className="webrs-err">{addErr}</div>}
+                <div className="webrs-add-acts">
+                  <button className="webrs-go" disabled={!addText.trim()} onClick={addRule}>
+                    导入
+                  </button>
+                </div>
+              </>
+            )}
+            <div className="webrs-mgr-list">
+              {srcs.map((r) => (
+                <div key={r.name} className={`webrs-mgr-row${isEnabled(r.name) ? " on" : ""}`}>
+                  <label className="webrs-mgr-main">
+                    <input type="checkbox" checked={isEnabled(r.name)} onChange={() => toggleSource(r.name)} />
+                    <span className="webrs-mgr-name">{r.name}</span>
+                    {r.mode === "api" && <span className="webrs-mgr-mode">API</span>}
+                  </label>
+                  <button className="webrs-mgr-x" title={`删除源 ${r.name}`} onClick={() => removeRule(r.name)}>
+                    ×
+                  </button>
+                </div>
+              ))}
+              {srcs.length === 0 && <div className="webrs-note">没有可用源 —— 「＋ 添加源」导入一条规则</div>}
+            </div>
+            <div className="webrs-mgr-tip">勾选后关闭本面板，搜索只查已勾选的源；内置源删除后下次启动会恢复。</div>
           </div>
         </div>
       )}

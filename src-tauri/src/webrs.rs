@@ -812,14 +812,27 @@ pub async fn webrs_search(app: AppHandle, rule_name: String, keyword: String) ->
 /// [lc-1501] 多源聚合搜索（对齐 Kazumi「播放来源」）：并发跑**全部**规则，
 /// 按源分组回传 status：ok（有结果）/ empty（无结果）/ error（检索失败，带 error 文案）。
 #[tauri::command]
-pub async fn webrs_search_multi(app: AppHandle, keyword: String) -> Result<Value, String> {
+pub async fn webrs_search_multi(
+    app: AppHandle,
+    keyword: String,
+    rules: Option<Vec<String>>,
+) -> Result<Value, String> {
     let keyword = keyword.trim().to_string();
     if keyword.is_empty() {
         return Err("搜索词为空".into());
     }
-    let rules = load_rules(&app).await?;
+    // [lc-1502] 只搜用户勾选的源；不传 = 全部（兜底）
+    let all = load_rules(&app).await?;
+    let picked: Vec<Rule> = match &rules {
+        Some(names) if !names.is_empty() => all
+            .into_iter()
+            .filter(|r| names.iter().any(|n| n.eq_ignore_ascii_case(&r.name)))
+            .collect(),
+        _ => all,
+    };
+    let rules = picked;
     if rules.is_empty() {
-        return Err("没有可用规则源".into());
+        return Err("没有已启用的源 —— 点 ⚙ 勾选要用的源".into());
     }
     let mut set: tokio::task::JoinSet<Value> = tokio::task::JoinSet::new();
     for rule in rules {

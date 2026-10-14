@@ -6073,6 +6073,59 @@ html.dark .ditem-tag {
   color: var(--muted);
   margin-top: 2px;
 }
+/* ── [lc-1534] 「正在追」封面条（填面板中部留白；点封面 → 该条目详情） ── */
+.bgmac-watch {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.bgmac-watch-hd {
+  font-size: 11px;
+  color: var(--muted);
+}
+.bgmac-watch-hd b {
+  color: var(--text-2);
+  font-weight: 700;
+}
+.bgmac-watch-row {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+.bgmac-wcover {
+  width: 46px;
+  height: 62px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--ph-bg);
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 4px rgba(31, 41, 90, 0.12);
+  transition: transform 0.14s, box-shadow 0.14s;
+}
+.bgmac-wcover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.bgmac-wcover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(31, 41, 90, 0.2);
+}
+html.dark .bgmac-wcover {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+html.dark .bgmac-wcover:hover {
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.55);
+}
 /* ── 大按钮（连接 / 立即同步）── */
 .bgmac-cta {
   width: 100%;

@@ -44,6 +44,12 @@ pub struct CollectEntry {
     /// 本地最后修改时间（Unix 秒；0 = 未知，用于"最新优先"合并）
     #[serde(default)]
     pub updated_at: i64,
+    /// [lc-1534] 条目名（collections 的 subject.name_cn 优先；旧表无此字段，同步/拉取时回填）
+    #[serde(default)]
+    pub name: String,
+    /// [lc-1534] 封面 URL（subject.images.common；同上，缺失时「正在追」封面条按需现拉）
+    #[serde(default)]
+    pub cover: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -88,6 +94,61 @@ fn now_secs() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// [lc-1534] 从 collections 条目里抽 subject 元数据（名字中文优先；封面 common → 兜底更小档）。
+fn subject_meta(item: &Value) -> (String, String) {
+    let sub = item.get("subject");
+    let name = sub
+        .and_then(|s| s.get("name_cn").and_then(|v| v.as_str()))
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| sub.and_then(|s| s.get("name").and_then(|v| v.as_str())))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let cover = ["common", "medium", "large", "small", "grid"]
+        .iter()
+        .find_map(|k| {
+            sub.and_then(|s| s.pointer(&format!("/images/{k}")))
+                .and_then(|v| v.as_str())
+        })
+        .unwrap_or("")
+        .to_string();
+    (name, cover)
+}
+
+/// [lc-1534] Bangumi v0 的 `updated_at`（RFC3339，形如 `2026-10-14T18:36:28+08:00`）→ Unix 秒。
+/// 手写解析够用即可：固定格式、不含闰秒；解析失败返回 0。
+fn iso_secs(s: &str) -> i64 {
+    if s.len() < 25 {
+        return 0;
+    }
+    let num = |a: usize, z: usize| s.get(a..z).and_then(|x| x.parse::<i64>().ok());
+    let (Some(y), Some(mo), Some(d), Some(h), Some(mi), Some(sec), Some(tzh), Some(tzm)) = (
+        num(0, 4),
+        num(5, 7),
+        num(8, 10),
+        num(11, 13),
+        num(14, 16),
+        num(17, 19),
+        num(20, 22),
+        num(23, 25),
+    ) else {
+        return 0;
+    };
+    let leap = |y: i64| (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let mut days: i64 = 0;
+    for yy in 1970..y {
+        days += if leap(yy) { 366 } else { 365 };
+    }
+    let ml = [31, if leap(y) { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    for mm in 0..(mo.clamp(1, 12) as usize - 1) {
+        days += ml[mm];
+    }
+    days += d.clamp(1, 31) - 1;
+    let tz = tzh * 3600 + tzm * 60;
+    let tz_sign = if s.as_bytes().get(19) == Some(&b'-') { -1 } else { 1 };
+    days * 86400 + h * 3600 + mi * 60 + sec - tz_sign * tz
 }
 
 // ───────────────────────── 账号绑定 ─────────────────────────
@@ -205,11 +266,15 @@ pub async fn bgm_collect_set(
     if kind <= 0 {
         table.map.remove(&key);
     } else {
+        // [lc-1534] 保留已有的名字/封面（只更新状态与时间）
+        let prev = table.map.get(&key).cloned().unwrap_or_default();
         table.map.insert(
             key,
             CollectEntry {
                 kind,
                 updated_at: now_secs(),
+                name: prev.name,
+                cover: prev.cover,
             },
         );
     }
@@ -273,6 +338,8 @@ pub async fn bgm_sync_now(
     // 1) 拉远端全量（subject_type=2 只取动画；limit 50 分页）
     let me = fetch_me(&token).await?;
     let mut remote: HashMap<String, i64> = HashMap::new();
+    // [lc-1534] subject_id → (名字, 封面)：collections 响应自带 subject，顺手收集，供「正在追」封面条
+    let mut remote_meta: HashMap<String, (String, String)> = HashMap::new();
     let mut offset = 0u64;
     loop {
         let path = format!(
@@ -291,6 +358,10 @@ pub async fn bgm_sync_now(
             let Some(t) = item.get("type").and_then(|s| s.as_i64()) else {
                 continue;
             };
+            let (name, cover) = subject_meta(item);
+            if !name.is_empty() || !cover.is_empty() {
+                remote_meta.insert(sid.to_string(), (name, cover));
+            }
             remote.insert(sid.to_string(), t);
         }
         let total = v.get("total").and_then(|t| t.as_u64()).unwrap_or(0);
@@ -352,9 +423,22 @@ pub async fn bgm_sync_now(
             CollectEntry {
                 kind: *t,
                 updated_at: now,
+                ..Default::default()
             },
         );
         downloaded += 1;
+    }
+
+    // 2c. [lc-1534] 回填名字/封面（type 有无变化都回填；旧表升级靠这里）
+    for (key, (name, cover)) in &remote_meta {
+        if let Some(e) = table.map.get_mut(key) {
+            if !name.is_empty() {
+                e.name = name.clone();
+            }
+            if !cover.is_empty() {
+                e.cover = cover.clone();
+            }
+        }
     }
 
     save_table(&app, &table).await?;
@@ -414,4 +498,94 @@ pub async fn bgm_collect_stats(app: AppHandle) -> Result<Value, String> {
         *by_type.entry(e.kind).or_insert(0) += 1;
     }
     Ok(json!({ "total": table.map.len(), "byType": by_type }))
+}
+
+/// [lc-1534] 「正在追」封面条数据（卡片左栏用）：本地表 type=3（在看）按最近更新倒序。
+/// 前 limit 条里有缺封面的（或一条都没有）且已绑定 → 现拉 collections 首页（type=3）回填本地表；
+/// 只补名字/封面/更新时间，type 以本地表为准不覆盖。返回 [{id, name, cover}]（最多 limit 条，默认 12）。
+#[tauri::command]
+pub async fn bgm_watching_covers(
+    app: AppHandle,
+    state: State<'_, crate::AppState>,
+    limit: Option<u32>,
+) -> Result<Value, String> {
+    let limit = limit.unwrap_or(12).clamp(1, 30) as usize;
+    let mut table = load_table(&app).await;
+
+    // 1) 本地「在看」按最近更新倒序；看前 limit 条是否缺封面
+    let need_fetch = {
+        let mut rows: Vec<&CollectEntry> = table
+            .map
+            .values()
+            .filter(|e| e.kind == TYPE_WATCHING)
+            .collect();
+        rows.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        rows.is_empty() || rows.iter().take(limit).any(|e| e.cover.is_empty())
+    };
+
+    // 2) 现拉回填（只补元数据）
+    if need_fetch {
+        let token = state.config.read().await.bgm_token.trim().to_string();
+        if !token.is_empty() {
+            if let Ok(me) = fetch_me(&token).await {
+                let path = format!(
+                    "/v0/users/{}/collections?subject_type=2&type=3&limit={}&offset=0",
+                    urlencoding::encode(&me),
+                    limit.max(12)
+                );
+                if let Ok(v) = authed_call("GET", &path, &token, None).await {
+                    if let Some(data) = v.get("data").and_then(|d| d.as_array()) {
+                        let now = now_secs();
+                        for item in data {
+                            let Some(sid) = item.get("subject_id").and_then(|s| s.as_i64()) else {
+                                continue;
+                            };
+                            let (name, cover) = subject_meta(item);
+                            let key = sid.to_string();
+                            let e = table.map.entry(key).or_insert_with(|| CollectEntry {
+                                kind: TYPE_WATCHING,
+                                updated_at: now,
+                                ..Default::default()
+                            });
+                            if !name.is_empty() {
+                                e.name = name;
+                            }
+                            if !cover.is_empty() {
+                                e.cover = cover;
+                            }
+                            // 用远端真实的「收藏更新时间」校正（封面条按它排序）
+                            if let Some(ts) = item.get("updated_at").and_then(|v| v.as_str()) {
+                                let secs = iso_secs(ts);
+                                if secs > 0 {
+                                    e.updated_at = secs;
+                                }
+                            }
+                        }
+                        let _ = save_table(&app, &table).await;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3) 输出：type=3 按最近更新倒序，截断到 limit
+    let mut rows: Vec<(i64, String, String, i64)> = table
+        .map
+        .iter()
+        .filter(|(_, e)| e.kind == TYPE_WATCHING)
+        .filter_map(|(k, e)| {
+            k.parse::<i64>()
+                .ok()
+                .map(|id| (id, e.name.clone(), e.cover.clone(), e.updated_at))
+        })
+        .collect();
+    rows.sort_by(|a, b| b.3.cmp(&a.3).then_with(|| b.0.cmp(&a.0)));
+    let items: Vec<Value> = rows
+        .into_iter()
+        .take(limit)
+        .map(|(id, name, cover, ts)| {
+            json!({ "id": id, "name": name, "cover": cover, "updatedAt": ts })
+        })
+        .collect();
+    Ok(json!({ "items": items }))
 }

@@ -2435,6 +2435,8 @@ function BgmCalRow({
    数据源：Rust bgm_account 模块（走自建镜像，见 bgm_account.rs）。 */
 type BgmAccountState = { bound: boolean; username: string };
 type BgmCollectStats = { total: number; byType: Record<string, number> };
+/** [lc-1534] 「正在追」封面条条目（Rust bgm_watching_covers：本地表 type=3 按最近更新倒序） */
+type BgmWatchCover = { id: number; name: string; cover: string };
 
 /** 追番状态五元组（Bangumi type 值 / 标签 / 统计配色） */
 const BGAC_TYPES: { k: number; label: string; color: string }[] = [
@@ -2445,9 +2447,10 @@ const BGAC_TYPES: { k: number; label: string; color: string }[] = [
   { k: 5, label: "放弃", color: "#ED5B52" },
 ];
 
-function BgmAccountCard() {
+function BgmAccountCard({ onOpen }: { onOpen?: (it: BgmCalendarItem) => void }) {
   const [acct, setAcct] = useState<BgmAccountState>({ bound: false, username: "" });
   const [stats, setStats] = useState<BgmCollectStats>({ total: 0, byType: {} });
+  const [watch, setWatch] = useState<BgmWatchCover[]>([]); // [lc-1534] 「正在追」封面条
   const [season, setSeason] = useState<{ total: number; seasonTotal: number; byType: Record<string, number> }>(
     { total: 0, seasonTotal: 0, byType: {} },
   );
@@ -2478,6 +2481,13 @@ function BgmAccountCard() {
         "bgm_collect_season",
       );
       setSeason(ss);
+    } catch {
+      /* ignore */
+    }
+    // [lc-1534] 「正在追」封面条（本地优先；缺封面时命令层会现拉一次并回填）
+    try {
+      const wc = await invoke<{ items: BgmWatchCover[] }>("bgm_watching_covers", { limit: 12 });
+      setWatch(Array.isArray(wc?.items) ? wc.items : []);
     } catch {
       /* ignore */
     }
@@ -2619,6 +2629,41 @@ function BgmAccountCard() {
           <div className="bgmac-desc">与 Bangumi 保持相同的追番状态。</div>
           <div className="bgmac-types">想看 · 在看 · 看过 · 搁置 · 抛弃</div>
         </div>
+        {/* [lc-1534] 「正在追」封面条：填面板中部留白；点封面 → 该条目详情 */}
+        {acct.bound && watch.length > 0 && (
+          <div className="bgmac-watch">
+            <div className="bgmac-watch-hd">
+              正在追 <b>{Math.max(counts(3), watch.length)}</b> 部
+            </div>
+            <div className="bgmac-watch-row">
+              {watch.slice(0, 5).map((w) => (
+                <button
+                  key={w.id}
+                  className={`bgmac-wcover${w.cover ? "" : " empty"}`}
+                  title={w.name}
+                  onClick={() =>
+                    onOpen?.({
+                      id: w.id,
+                      type: 2,
+                      name: w.name,
+                      name_cn: w.name,
+                      air_date: "",
+                      votes: 0,
+                      doing: 0,
+                      cover: w.cover,
+                    })
+                  }
+                >
+                  {w.cover ? (
+                    <img src={bgmImg(w.cover)} alt="" loading="lazy" draggable={false} />
+                  ) : (
+                    <IcoFilmL size={16} strokeWidth={1.8} />
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {acct.bound ? (
           <div className="bgmac-acts">
             <button className="bgmac-act" disabled={syncBusy} onClick={syncNow}>
@@ -2896,7 +2941,7 @@ function BgmPane({ active, onOpen }: { active: boolean; onOpen: (it: BgmCalendar
         </button>
       </header>
       {/* [lc-1516] Bangumi 账号面板：紧跟栏头（避开顶部 56px 的胶囊让位区） */}
-      <BgmAccountCard />
+      <BgmAccountCard onOpen={onOpen} />
       <div className="dweeks">
         {WEEKDAYS.map((w) => {
           const g = days.find((x) => x.id === w.id);

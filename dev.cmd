@@ -121,9 +121,29 @@ echo       mpv log   : %%TEMP%%\anibox-mpv.log
 echo       Go proxy  : %%TEMP%%\proxy.log  (only when started by hand)
 echo       -> on exit this window prints the tail of both logs.
 echo.
-call npm run tauri dev
+REM ---- [lc-1547] run under a Job Object + app-exit watcher (see tools\dev-run.ps1) ----
+REM (A) Job Object (kill-on-close): closing THIS window kills the whole tree. Windows does
+REM     not kill descendants on a console window close, so vite + cargo + anibox.exe would
+REM     otherwise survive.
+REM (B) App-exit watcher: when the APP WINDOW is closed, dev-run.ps1 tears the chain down
+REM     and returns 0, so this script can fall through and close itself -- no manual close.
+REM (pwsh here, not powershell: this repo's PowerShell is always 7.x.)
+pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\dev-run.ps1" -Command "npm run tauri dev"
+set DEVRUN_EXIT=%errorlevel%
+REM Fallback sweep: if the Job Object could not be created (e.g. this cmd is itself
+REM already inside a job), the tree may still be alive -- kill the known dev children.
+REM anibox.exe is the app under test; cargo/node are dev-only. mpv.exe is intentionally
+REM NOT killed (it may be playing something you were watching).
+taskkill /f /im anibox.exe >nul 2>&1
+taskkill /f /im cargo.exe >nul 2>&1
 echo.
-echo [dev] tauri dev exited with code %errorlevel%.
+echo [dev] tauri dev exited with code %DEVRUN_EXIT%.
+
+REM [lc-1547] Clean app-close path (exit 0) => just close this window; no log dump, no pause.
+REM Anything else (build error, crash, non-zero) => print the log tails and hold the window
+REM open so the error stays readable.
+if "%DEVRUN_EXIT%"=="0" goto devdone
+
 echo.
 echo ======================== last 60 lines: anibox.log ========================
 rem Use pwsh 7 + explicit -Encoding utf8: the logs are UTF-8, and powershell 5.1's Get-Content
@@ -134,3 +154,6 @@ echo ======================== last 20 lines: anibox-mpv.log ====================
 pwsh -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -LiteralPath $env:TEMP\anibox-mpv.log -Tail 20 -Encoding utf8 -ErrorAction SilentlyContinue"
 echo ================================================================================
 pause
+
+:devdone
+exit /b %DEVRUN_EXIT%

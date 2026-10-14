@@ -505,12 +505,33 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
         return Err(e);
     }
 
-    // [lc-1500] 在线资源（webrs_play）会往 mpv 写 referrer / user-agent / http-header-fields，
-    // 切回本地 NAS 播放前先清掉，免得残留的站点头污染本机直链请求。
+    // [lc-1554] **先 loadfile，再清理残留头**（原来清理在前，白等数秒）。
+    //
+    // 实测（[play/stage] 阶段计时 + mpv 日志）：每条 IPC 命令要等 mpv 回包，而 mpv 的
+    // 事件循环在启动/加载期被脚本、滤镜、D3D 设备创建占住 —— 单条 set 实测 2.7~3.5s。
+    // 原来这两条清理排在 loadfile **之前** ⇒ "点播放 → 等 3~7 秒 → 才开始加载"。
+    //
+    // 关键事实：`referrer` / `http-header-fields` 只在**打开 URL 那一刻**被读取，而本次
+    // loadfile 用的是 Go 代理的本地直链（http://127.0.0.1:22346/...），残留的站点 referrer
+    // 对它没有影响。清理的意义是**为下一次播放恢复默认**，放到 loadfile 之后完全等价。
+    let r3 = session.command(json!(["loadfile", url, "replace"])).await;
+    stage(&format!("loadfile: {:?}", r3.as_ref().map(|_| "ok").map_err(|e| e.as_str())));
+    r3?;
+
+    // [lc-1500] 清理在线资源（webrs_play）写入的站点头，避免污染**后续**播放。
     let _ = session.command(json!(["set", "referrer", ""])).await;
     let _ = session.command(json!(["set", "http-header-fields", ""])).await;
 
-    session.command(json!(["loadfile", url, "replace"])).await?;
+    // [lc-1555] 加载后**强制进入播放态**。
+    //
+    // 背景（日志实证）：mpv 窗口现在 ~400ms 就出现（lc-1552 提速），而 loadfile 要等
+    // 网络准备好才发。这段空窗里 mpv 显示 idle 品牌页，用户会以为"卡住了"、**提前点画面**
+    // —— 左键绑定是 `cycle pause`（input.conf），这一下把 pause 置 1；随后 loadfile 到位，
+    // mpv 就带着暂停态开始 ⇒ 表现为「必须再点一下才真正播放」。
+    //
+    // 这里在 loadfile 之后无条件 set pause=no：本次调用是用户明确的"播这个"意图，
+    // 空窗期的误触不该决定最终状态。只影响本次播放的起始态，用户随后手动暂停不受干扰。
+    let _ = session.command(json!(["set", "pause", "no"])).await;
 
     // [lc-085] 不再在播放期禁用窗口模糊（原 lc-081 的 clear_backdrop 是为了救 spawn 时代
     // 「进播放页整机卡死」；现在视频是进程内 D3D 输出，实测保留主题底更符合预期——

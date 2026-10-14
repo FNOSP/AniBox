@@ -2688,6 +2688,8 @@ function WebrsPanel({ title }: { title: string }) {
 
   // [lc-1508] 引导提示（中性样式，区别于真错误 err）：如"还没勾选任何源"
   const [srcHint, setSrcHint] = useState("");
+  // [lc-1513] 二级视图（选集）返回时先播退出动画再卸载
+  const [subMounted, subClosing] = useDelayedUnmount(!!sel);
   const doSearch = useCallback(
     async (k: string) => {
       const key = k.trim();
@@ -2865,18 +2867,16 @@ function WebrsPanel({ title }: { title: string }) {
       {srcHint && !err && <div className="webrs-hint">{srcHint}</div>}
       {subBusy && <div className="webrs-note">{subBusy}</div>}
 
-      {/* 二级视图：选集 */}
-      {sel && (
-        <div className="webrs-sub">
+      {/* 二级视图：选集（返回时播退出动画；roads 在动画期间保留，内容不闪空） */}
+      {(sel || subMounted) && (
+        <div className={`webrs-sub${subClosing ? " view-out" : " view-in"}`}>
           <div className="webrs-crumbs">
-            <span className="webrs-cur">{sel.item.name}</span>
-            <span className="webrs-src">来源：{sel.rule}</span>
+            <span className="webrs-cur">{sel?.item.name ?? ""}</span>
+            <span className="webrs-src">来源：{sel?.rule ?? ""}</span>
             <button
               className="webrs-back"
-              onClick={() => {
-                setSel(null);
-                setRoads([]);
-              }}
+              onClick={() => setSel(null)}
+              title="返回搜索结果"
             >
               ‹ 返回结果
             </button>
@@ -3019,6 +3019,30 @@ function WebrsPanel({ title }: { title: string }) {
   );
 }
 
+/**
+ * [lc-1513] 延迟卸载：active 变 false 时先保留渲染 closing 时长（给退出动画留时间），
+ * 到点再真正卸载。用于「返回上一级」的转场 —— 否则路由一切换旧视图瞬间消失。
+ */
+function useDelayedUnmount(active: boolean, ms = 200) {
+  const [mounted, setMounted] = useState(active);
+  const [closing, setClosing] = useState(false);
+  useEffect(() => {
+    if (active) {
+      setMounted(true);
+      setClosing(false);
+      return;
+    }
+    if (!mounted) return;
+    setClosing(true);
+    const t = window.setTimeout(() => {
+      setMounted(false);
+      setClosing(false);
+    }, ms);
+    return () => window.clearTimeout(t);
+  }, [active, mounted, ms]);
+  return [mounted, closing] as const;
+}
+
 function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
@@ -3090,6 +3114,15 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   const [bgmSub, setBgmSub] = useState<Record<string, unknown> | null>(null);
   // 注意：与吐槽一样**不做 busy 重入闸门** —— StrictMode 的双调用会「首跑 abort + 二跑早退」，
   // 骨架屏会永久卡住；靠 alive 标志丢弃过期结果即可（最坏情况是 dev 下多发一次请求）。
+
+  // [lc-1513] 标签页切换淡入（详情/评论/吐槽/关联/演职人员）：class 加一下即触发
+  const [tabAnim, setTabAnim] = useState(false);
+  useEffect(() => {
+    if (prefersReducedMotion()) return;
+    setTabAnim(true);
+    const t = window.setTimeout(() => setTabAnim(false), 260);
+    return () => window.clearTimeout(t);
+  }, [tab]);
 
   const isSeries = base.type === "TvSeries" || base.type === "TV";
   // [lc-1444] 发现页条目形态：guid 是 `discover-<tmdbId>` 占位标识（不是真飞牛 guid），
@@ -3957,7 +3990,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
           </nav>
 
           {/* 标签页内容 */}
-          <div className="dbody dv2-body">
+          <div className={`dbody dv2-body${tabAnim ? " view-in" : ""}`}>
         {activeTab === "overview" && (
           /* [lc-1420] `.dpanel-single`：本页所有节包进**一个**容器、节间用浅横线分隔（用户要求）。
              见 App.css 里同名类的注释（为什么不用 :has）。 */
@@ -5438,6 +5471,11 @@ function App() {
     leaving: "home" | "discover";
   } | null>(null);
   const animTimer = useRef<number | null>(null);
+  // [lc-1513] 子页（库/详情）转场：进出都播动画；返回时目标 pane 补一次淡入
+  const [pageAnim, setPageAnim] = useState<string | null>(null);
+  const [libEnterAnim, setLibEnterAnim] = useState(false);
+  const [detailMounted, detailClosing] = useDelayedUnmount(view === "detail" && !!detailItem);
+  const [libMounted, libClosing] = useDelayedUnmount(view === "lib" && !!activeLib);
   const clearPaneAnim = useCallback(() => {
     if (animTimer.current) {
       window.clearTimeout(animTimer.current);
@@ -5667,7 +5705,9 @@ function App() {
     return (
       `view-pane${active ? " active" : ""}` +
       (paneAnim && (entering || leaving) ? ` anim-${paneAnim.dir}` : "") +
-      (leaving ? " leaving" : "")
+      (leaving ? " leaving" : "") +
+      // [lc-1513] 从详情页返回：目标主页补一次进入淡入（class 添加即触发）
+      (pageAnim && active ? " view-in" : "")
     );
   };
 
@@ -5719,7 +5759,13 @@ function App() {
               <NavCapsule page={page} onNav={onNav} />
             </div>
           )}
-          <div className={paneCls("home")} onAnimationEnd={clearPaneAnim}>
+          <div
+            className={paneCls("home")}
+            onAnimationEnd={() => {
+              clearPaneAnim();
+              setPageAnim(null);
+            }}
+          >
             {homeReady ? (
               <HomeView
                 libs={libs}
@@ -5746,26 +5792,41 @@ function App() {
           </div>
           {/* [lc-123] 发现页：与首页同款「常驻挂载」——两栏的滚动位置/已取数据在切页后保留；
               首次拉取的闸门是 active={view === "discover"}（不进这一页就不发任何请求） */}
-          <div className={paneCls("discover")} onAnimationEnd={clearPaneAnim}>
+          <div
+            className={paneCls("discover")}
+            onAnimationEnd={() => {
+              clearPaneAnim();
+              setPageAnim(null);
+            }}
+          >
             <DiscoverView
               active={view === "discover"}
               onOpenDetail={openDiscoverDetail}
               onOpenBgm={openDiscoverBgm}
             />
           </div>
-          {view === "lib" && activeLib && (
-            <div className="view-pane active">
+          {(view === "lib" || libMounted) && activeLib && (
+            <div
+              className={`view-pane active${libClosing ? " view-out" : libEnterAnim ? " view-in" : ""}`}
+              onAnimationEnd={() => setLibEnterAnim(false)}
+            >
               <LibView lib={activeLib} onBackHome={goHome} onOpenItem={openItem} />
             </div>
           )}
-          {view === "detail" && detailItem && (
-            <div className="view-pane active">
+          {/* [lc-1513] 详情/库页：进入播 view-in；返回时（view 切走）先播 view-out
+              再延迟卸载；返回目标（home/discover/lib）同时补一次 view-in 淡入，
+              不会出现「返回后旧视图瞬间闪回、新视图硬切」。 */}
+          {(view === "detail" || detailMounted) && detailItem && (
+            <div className={`view-pane active${detailClosing ? " view-out" : " view-in"}`}>
               {/* [lc-1444] 返回目标按进详情的来源（detailFrom）决定，不用 view/activeLib 现猜 */}
               <DetailView
                 base={detailItem}
-                onBack={() =>
-                  setView(detailFrom === "discover" ? "discover" : detailFrom === "lib" ? "lib" : "home")
-                }
+                onBack={() => {
+                  // 返回动画：目标 pane 补一次进入淡入（class 添加即触发，animationend 后移除）
+                  if (detailFrom === "lib") setLibEnterAnim(true);
+                  else setPageAnim("view-in");
+                  setView(detailFrom === "discover" ? "discover" : detailFrom === "lib" ? "lib" : "home");
+                }}
               />
             </div>
           )}

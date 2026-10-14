@@ -5954,3 +5954,31 @@ html.dark .ditem-tag {
 .dsk-still-row .dsk-dstill {
   flex: 0 0 124px;
 }
+
+/* ══════════════ [lc-1513] 页面转场动画（进入淡入右滑 / 返回淡出左滑）══════════════
+   view-pane / webrs 二级视图 / 详情页标签页共用。时长刻意短（~0.2s）——
+   转场是反馈不是表演。prefers-reduced-motion 时全关（用户系统设置）。 */
+@keyframes viewIn {
+  from { opacity: 0; transform: translateX(14px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes viewOut {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateX(-14px); }
+}
+.view-in {
+  animation: viewIn 0.22s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+.view-out {
+  animation: viewOut 0.18s cubic-bezier(0.4, 0, 1, 1) both;
+}
+.webrs-sub.view-in {
+  animation-duration: 0.18s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .view-in,
+  .view-out,
+  .webrs-sub.view-in {
+    animation: none;
+  }
+}

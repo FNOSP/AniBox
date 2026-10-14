@@ -2686,15 +2686,18 @@ function WebrsPanel({ title }: { title: string }) {
     }
   }, []);
 
+  // [lc-1508] 引导提示（中性样式，区别于真错误 err）：如"还没勾选任何源"
+  const [srcHint, setSrcHint] = useState("");
   const doSearch = useCallback(
     async (k: string) => {
       const key = k.trim();
       if (!key) return;
       const picked = srcs.filter((r) => isEnabled(r.name)).map((r) => r.name);
       if (picked.length === 0) {
-        setErr("还没有勾选任何源 —— 点 ⚙ 选要用的源");
+        setSrcHint("还没有勾选任何源，点右侧 ⚙ 选择要用的源");
         return;
       }
+      setSrcHint("");
       setBusy(true);
       setErr("");
       setSel(null);
@@ -2724,6 +2727,7 @@ function WebrsPanel({ title }: { title: string }) {
       const en = loadEnabled();
       const picked = r.filter((x) => en == null || en.includes(x.name)).map((x) => x.name);
       if (r.length > 0 && picked.length > 0) doSearch(title);
+      else setSrcHint(r.length > 0 ? "还没有勾选任何源，点右侧 ⚙ 选择要用的源" : "还没有可用源，点 ⚙ 添加规则");
     });
   }, []);
 
@@ -2784,7 +2788,7 @@ function WebrsPanel({ title }: { title: string }) {
       setAddText("");
       await refreshRules();
       setErr("");
-      setSubBusy(`已添加源「${name}」，记得在列表里勾选它`);
+      setSrcHint(`已添加源「${name}」，记得在列表里勾选它`);
     } catch (e) {
       setAddErr(String(e));
     }
@@ -2858,6 +2862,7 @@ function WebrsPanel({ title }: { title: string }) {
       </div>
       {busy && <div className="webrs-note">正在搜索 {enabledNames.length} 个已勾选源…</div>}
       {err && <div className="webrs-err">{err}</div>}
+      {srcHint && !err && <div className="webrs-hint">{srcHint}</div>}
       {subBusy && <div className="webrs-note">{subBusy}</div>}
 
       {/* 二级视图：选集 */}

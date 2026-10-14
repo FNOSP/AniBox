@@ -5434,11 +5434,14 @@ html.dark .ditem-tag {
 /* ══════════════════════ [lc-1500] 在线资源面板（发现页无源条目）══════════════════════
    发现页条目没有飞牛 guid → 右栏选集区换成「在线资源」：源选择 + 关键词搜索 →
    搜索结果 → 线路/选集 → 解析直链 → 独立 mpv。视觉语言沿用 .dv2e / .season-tab 那套。 */
+/* [lc-1508] 整块改轻量：与「选集」头部之间留呼吸、行距收紧、控件统一 30px 高 */
 .webrs {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 2px 0 12px;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 0 8px;
+  border-top: 1px solid var(--line);
 }
 .webrs-bar {
   display: flex;
@@ -5447,44 +5450,53 @@ html.dark .ditem-tag {
 }
 .webrs-bar select {
   max-width: 96px;
-  height: 32px;
+  height: 30px;
   border: 1px solid var(--line-strong);
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--option-bg);
   color: var(--text-strong);
   padding: 0 6px;
-  font-size: 12.5px;
+  font-size: 12px;
   cursor: pointer;
   flex: 0 0 auto;
 }
 .webrs-bar input {
   flex: 1 1 auto;
   min-width: 0;
-  height: 32px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   background: var(--input-bg);
   color: var(--text-strong);
   padding: 0 10px;
-  font-size: 13px;
+  font-size: 12.5px;
   outline: none;
+  transition: border-color 0.15s, background 0.15s;
 }
 .webrs-bar input:focus {
   border-color: var(--accent);
+  background: var(--bg-3);
 }
 .webrs-bar .webrs-go {
   flex: 0 0 auto;
-  height: 32px;
+  height: 30px;
   padding: 0 14px;
-  border: none;
-  border-radius: 9px;
-  background: var(--accent-grad);
-  color: #fff;
-  font-size: 12.5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--glass-btn-bg);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.webrs-bar .webrs-go:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 .webrs-bar .webrs-go:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: default;
 }
 .webrs-note {
@@ -5496,9 +5508,18 @@ html.dark .ditem-tag {
   color: var(--err-text);
   background: var(--err-bg);
   border: 1px solid var(--err-border);
-  border-radius: 9px;
-  padding: 7px 10px;
+  border-radius: 8px;
+  padding: 6px 10px;
   word-break: break-all;
+}
+/* [lc-1508] 引导提示（非错误）：中性淡底，别用红色吓人 */
+.webrs-hint {
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--hover);
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  padding: 6px 10px;
 }
 .webrs-list {
   display: flex;
@@ -5774,15 +5795,21 @@ html.dark .ditem-tag {
 /* ── [lc-1502] 源管理设置面板（⚙ 勾选启用）── */
 .webrs-bar .webrs-gear {
   flex: 0 0 auto;
-  width: 34px;
-  height: 32px;
+  width: 32px;
+  height: 30px;
   border: 1px solid var(--line-strong);
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--glass-btn-bg);
-  color: var(--text-strong);
-  font-size: 14px;
+  color: var(--text-2);
+  font-size: 13px;
   cursor: pointer;
   line-height: 1;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.webrs-bar .webrs-gear:hover {
+  background: var(--hover-strong);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .webrs-bar .webrs-gear:hover {
   background: var(--hover-strong);

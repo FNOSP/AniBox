@@ -2412,24 +2412,26 @@ function BgmCalRow({
  *  点击条目 → 打开该 Bangumi 条目的轻量详情。
  *  [lc-123-rev] 在库分组：只对**当前选中这天**的条目做匹配（不逐条打网络），在库在前、组标题带数量；
  *  索引不完整（partial）时退化成"只给命中项打标"，索引不可用时整个分组退场（见 useLibIndex 注释）。 */
-/* ════════════ [lc-1516] 发现页右栏顶部：Bangumi 账号面板 ════════════
-   展示用户状态（未连接 / ✓ 用户名）与当前同步内容（追番状态统计），
-   并提供绑定（粘贴 Access Token，Kazumi 同款）、立即同步、解绑。
+/* ════════════ [lc-1516] 发现页右栏顶部：Bangumi 追番同步卡 ════════════
+   版式按用户设计稿：左侧 = 图标 +「Bangumi / 追番同步」标题组 + 描述 + 状态枚举
+   + 大按钮（连接 / 立即同步）；右侧 = 观看统计（追番状态 donut + 分项计数）。
    数据源：Rust bgm_account 模块（走自建镜像，见 bgm_account.rs）。 */
 type BgmAccountState = { bound: boolean; username: string };
 type BgmCollectStats = { total: number; byType: Record<string, number> };
 
-const BGAC_TYPE_LABEL: Record<number, string> = {
-  1: "想看",
-  2: "看过",
-  3: "在看",
-  4: "搁置",
-  5: "抛弃",
-};
+/** 追番状态五元组（Bangumi type 值 / 标签 / 统计配色） */
+const BGAC_TYPES: { k: number; label: string; color: string }[] = [
+  { k: 1, label: "想看", color: "#e8a33d" },
+  { k: 3, label: "在看", color: "#4caf7d" },
+  { k: 2, label: "看过", color: "#5b8def" },
+  { k: 4, label: "搁置", color: "#9aa3b2" },
+  { k: 5, label: "抛弃", color: "#e5646d" },
+];
 
 function BgmAccountCard() {
   const [acct, setAcct] = useState<BgmAccountState>({ bound: false, username: "" });
   const [stats, setStats] = useState<BgmCollectStats>({ total: 0, byType: {} });
+  const [bindOpen, setBindOpen] = useState(false); // 连接表单展开态
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
@@ -2465,6 +2467,7 @@ function BgmAccountCard() {
       const s = await invoke<BgmAccountState>("bgm_account_bind", { token: t });
       setAcct(s);
       setToken("");
+      setBindOpen(false);
       setNote(`已连接 Bangumi 账号「${s.username}」`);
       refresh();
     } catch (e) {
@@ -2505,69 +2508,141 @@ function BgmAccountCard() {
     }
   };
 
-  // 统计 chips：只显示非零类型（顺序固定 3/2/1/4/5：在看优先）
-  const chips: { k: number; n: number }[] = [3, 2, 1, 4, 5]
-    .map((k) => ({ k, n: Number(stats.byType?.[String(k)] ?? 0) }))
-    .filter((x) => x.n > 0);
+  // ── 右侧观看统计：donut（五状态占比）+ 分项计数 ──
+  const total = Math.max(0, Number(stats.total ?? 0));
+  const counts = (k: number) => Number(stats.byType?.[String(k)] ?? 0);
+  const R = 24;
+  const C = 2 * Math.PI * R;
+  let acc = 0;
+  const segs = BGAC_TYPES.map((t) => {
+    const n = counts(t.k);
+    const frac = total > 0 ? n / total : 0;
+    const seg = { ...t, n, dash: frac * C, offset: acc * C };
+    acc += frac;
+    return seg;
+  });
 
   return (
-    <div className="bgmac">
-      <div className="bgmac-hd">
-        <span className="bgmac-t">Bangumi 账号</span>
+    <div className={`bgmac${acct.bound ? " on" : ""}`}>
+      {/* 左侧：图标 + 标题组 + 按钮 */}
+      <div className="bgmac-main">
+        <div className="bgmac-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z" />
+            <path d="M4 20.5V5.5" />
+            <path d="M9 7.5h6M9 11h4" />
+          </svg>
+        </div>
+        <div className="bgmac-text">
+          <div className="bgmac-kicker">Bangumi</div>
+          <div className="bgmac-title">追番同步</div>
+          <div className="bgmac-desc">与 Bangumi 保持相同的追番状态。</div>
+          <div className="bgmac-types">想看 · 在看 · 看过 · 搁置 · 抛弃</div>
+        </div>
         {acct.bound ? (
-          <span className="bgmac-user" title={`已连接：${acct.username}`}>
-            ✓ {acct.username}
-          </span>
-        ) : (
-          <span className="bgmac-user off">未连接</span>
-        )}
-      </div>
-
-      {acct.bound ? (
-        <>
-          <div className="bgmac-stats" title="本地追番状态统计（与 Bangumi 同步中）">
-            {chips.length > 0 ? (
-              chips.map((c) => (
-                <span key={c.k} className="bgmac-chip">
-                  {BGAC_TYPE_LABEL[c.k]} {c.n}
-                </span>
-              ))
-            ) : (
-              <span className="bgmac-empty">暂无同步的追番状态</span>
-            )}
-            {stats.total > 0 && <span className="bgmac-total">共 {stats.total} 条</span>}
-          </div>
           <div className="bgmac-acts">
-            <button className="bgmac-btn primary" disabled={syncBusy} onClick={syncNow}>
-              {syncBusy ? "同步中…" : "立即同步"}
+            <button className="bgmac-cta" disabled={syncBusy} onClick={syncNow}>
+              {syncBusy ? "同步中…" : "→ 立即同步"}
             </button>
-            <button className="bgmac-btn" onClick={unbind}>
+            <button className="bgmac-link" onClick={unbind}>
               解绑
             </button>
           </div>
-        </>
-      ) : (
-        <>
+        ) : bindOpen ? (
           <div className="bgmac-bind">
             <input
               value={token}
               onChange={(e) => setToken(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && !busy && bind()}
               placeholder="粘贴 Bangumi Access Token"
-              title="在 Bangumi 个人设置页生成 Access Token（ bangumi.tv 右上角 → 设置 → 访问令牌 ）"
+              autoFocus
             />
-            <button className="bgmac-btn primary" disabled={busy || !token.trim()} onClick={bind}>
+            <button className="bgmac-cta sm" disabled={busy || !token.trim()} onClick={bind}>
               {busy ? "连接中…" : "连接"}
             </button>
           </div>
-          <div className="bgmac-tip">
-            在 bangumi.tv 个人设置生成访问令牌，粘贴后即可同步追番状态
+        ) : (
+          <button className="bgmac-cta" onClick={() => setBindOpen(true)}>
+            → 连接 Bangumi
+          </button>
+        )}
+      </div>
+
+      {/* 右上：连接状态徽章 */}
+      <div className={`bgmac-badge${acct.bound ? " on" : ""}`} title={acct.bound ? `已连接：${acct.username}` : "未连接 Bangumi 账号"}>
+        {acct.bound ? (
+          <>
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 12.5 9 17.5 20 6.5" />
+            </svg>
+            <span className="bgmac-badge-name">{acct.username}</span>
+          </>
+        ) : (
+          <>
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10 13a5 5 0 0 0 7.1.5l2.4-2.4a5 5 0 0 0-7.1-7.1L11 5.4" />
+              <path d="M14 11a5 5 0 0 0-7.1-.5L4.5 13a5 5 0 0 0 7.1 7.1l1.4-1.4" />
+            </svg>
+            未连接
+          </>
+        )}
+      </div>
+
+      {/* 右侧：观看统计 */}
+      <div className="bgmac-stats">
+        {acct.bound ? (
+          <>
+            <svg className="bgmac-donut" viewBox="0 0 60 60" width="60" height="60">
+              <circle cx="30" cy="30" r={R} fill="none" stroke="var(--ph-bg)" strokeWidth="7" />
+              {total > 0 &&
+                segs
+                  .filter((s) => s.n > 0)
+                  .map((s) => (
+                    <circle
+                      key={s.k}
+                      cx="30"
+                      cy="30"
+                      r={R}
+                      fill="none"
+                      stroke={s.color}
+                      strokeWidth="7"
+                      strokeDasharray={`${Math.max(0.6, s.dash)} ${C}`}
+                      strokeDashoffset={-s.offset}
+                      strokeLinecap="butt"
+                    />
+                  ))}
+              <text x="30" y="29" textAnchor="middle" className="bgmac-donut-n">
+                {total}
+              </text>
+              <text x="30" y="38" textAnchor="middle" className="bgmac-donut-l">
+                部番剧
+              </text>
+            </svg>
+            <div className="bgmac-legend">
+              {segs.map((s) => (
+                <span key={s.k} className="bgmac-legend-row">
+                  <i className="bgmac-dot" style={{ background: s.color }} />
+                  {s.label}
+                  <b>{s.n}</b>
+                </span>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="bgmac-stats-empty">
+            <svg viewBox="0 0 60 60" width="52" height="52">
+              <circle cx="30" cy="30" r="24" fill="none" stroke="var(--line-strong)" strokeWidth="6" strokeDasharray="3 5" />
+            </svg>
+            <span>连接后展示追番统计</span>
           </div>
-        </>
-      )}
+        )}
+      </div>
 
       {err && <div className="bgmac-err">{err}</div>}
       {note && !err && <div className="bgmac-note">{note}</div>}
+      {!acct.bound && bindOpen && (
+        <div className="bgmac-tip">在 bangumi.tv 个人设置 → 访问令牌 生成，粘贴后即可同步</div>
+      )}
     </div>
   );
 }

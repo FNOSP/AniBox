@@ -2659,6 +2659,9 @@ function WebrsPanel({ title }: { title: string }) {
   const [addOpen, setAddOpen] = useState(false);
   const [addText, setAddText] = useState("");
   const [addErr, setAddErr] = useState("");
+  // [lc-1503] 一键测试源：对全部源各发一次真实搜索，行内显示 ✓ n / 无结果 / ✗
+  const [tests, setTests] = useState<Record<string, { status: string; count: number; error: string }>>({});
+  const [testing, setTesting] = useState(false);
   // 二级视图：选集
   const [sel, setSel] = useState<{ rule: string; item: WebrsSearchItem } | null>(null);
   const [roads, setRoads] = useState<WebrsRoad[]>([]);
@@ -2786,6 +2789,32 @@ function WebrsPanel({ title }: { title: string }) {
     }
   };
 
+  // [lc-1503] 一键测试：全部源（不管勾没勾）各跑一次搜索，结果挂到每行徽标。
+  // 测试词用搜索框关键词（空则用通用词「少女」——各站收录差异最小的探针）。
+  const testAll = async () => {
+    if (testing) return;
+    const key = kw.trim() || "少女";
+    setTesting(true);
+    setAddErr("");
+    const loading: Record<string, { status: string; count: number; error: string }> = {};
+    for (const r of srcs) loading[r.name] = { status: "loading", count: 0, error: "" };
+    setTests(loading);
+    try {
+      const r = await invoke<WebrsGroup[]>("webrs_search_multi", {
+        keyword: key,
+        rules: srcs.map((s) => s.name),
+      });
+      const next: Record<string, { status: string; count: number; error: string }> = {};
+      for (const g of r) next[g.name] = { status: g.status, count: g.items.length, error: g.error };
+      setTests(next);
+    } catch (e) {
+      setAddErr(String(e));
+      setTests({});
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const removeRule = async (name: string) => {
     if (!window.confirm(`删除源「${name}」？（内置源会在下次启动时恢复）`)) return;
     try {
@@ -2908,13 +2937,17 @@ function WebrsPanel({ title }: { title: string }) {
                 ×
               </button>
             </div>
-            <div className="webrs-mgr-acts">
-              <button onClick={() => setAllSources(true)}>全选</button>
-              <button onClick={() => setAllSources(false)}>清空</button>
-              <button className="webrs-mgr-addbtn" onClick={() => setAddOpen((v) => !v)}>
-                {addOpen ? "收起" : "＋ 添加源"}
-              </button>
-            </div>
+            <div className="webrs-mgr-body">
+              <div className="webrs-mgr-acts">
+                <button onClick={testAll} disabled={testing} title="对全部源各发一次真实搜索，检验源是否可用">
+                  {testing ? "测试中…" : "⚡ 一键测试"}
+                </button>
+                <button onClick={() => setAllSources(true)}>全选</button>
+                <button onClick={() => setAllSources(false)}>清空</button>
+                <button className="webrs-mgr-addbtn" onClick={() => setAddOpen((v) => !v)}>
+                  {addOpen ? "收起" : "＋ 添加源"}
+                </button>
+              </div>
             {addOpen && (
               <>
                 <textarea
@@ -2933,21 +2966,41 @@ function WebrsPanel({ title }: { title: string }) {
               </>
             )}
             <div className="webrs-mgr-list">
-              {srcs.map((r) => (
-                <div key={r.name} className={`webrs-mgr-row${isEnabled(r.name) ? " on" : ""}`}>
-                  <label className="webrs-mgr-main">
-                    <input type="checkbox" checked={isEnabled(r.name)} onChange={() => toggleSource(r.name)} />
-                    <span className="webrs-mgr-name">{r.name}</span>
-                    {r.mode === "api" && <span className="webrs-mgr-mode">API</span>}
-                  </label>
-                  <button className="webrs-mgr-x" title={`删除源 ${r.name}`} onClick={() => removeRule(r.name)}>
-                    ×
-                  </button>
-                </div>
-              ))}
+              {srcs.map((r) => {
+                const t = tests[r.name];
+                return (
+                  <div key={r.name} className={`webrs-mgr-row${isEnabled(r.name) ? " on" : ""}`}>
+                    <label className="webrs-mgr-main">
+                      <input type="checkbox" checked={isEnabled(r.name)} onChange={() => toggleSource(r.name)} />
+                      <span className="webrs-mgr-name">{r.name}</span>
+                      {r.mode === "api" && <span className="webrs-mgr-mode">API</span>}
+                    </label>
+                    {t && (
+                      <span
+                        className={`webrs-mgr-test ${t.status}`}
+                        title={t.error || (t.status === "ok" ? `搜索正常，${t.count} 条结果` : "")}
+                      >
+                        {t.status === "loading"
+                          ? "…"
+                          : t.status === "ok"
+                            ? `✓ ${t.count} 条`
+                            : t.status === "empty"
+                              ? "无结果"
+                              : "✗ 失败"}
+                      </span>
+                    )}
+                    <button className="webrs-mgr-x" title={`删除源 ${r.name}`} onClick={() => removeRule(r.name)}>
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
               {srcs.length === 0 && <div className="webrs-note">没有可用源 —— 「＋ 添加源」导入一条规则</div>}
+              </div>
+              <div className="webrs-mgr-tip">
+                勾选后关闭本面板，搜索只查已勾选的源；内置源删除后下次启动会恢复。一键测试用搜索框关键词（空则「少女」）。
+              </div>
             </div>
-            <div className="webrs-mgr-tip">勾选后关闭本面板，搜索只查已勾选的源；内置源删除后下次启动会恢复。</div>
           </div>
         </div>
       )}

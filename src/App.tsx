@@ -3021,6 +3021,9 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   const [episodes, setEpisodes] = useState<Episode[]>([]);
   // TMDB 完整详情（剧照/相似/更多/演职人员），详情页「更多」分段的 TMDB 侧数据源
   const [tmdb, setTmdb] = useState<Record<string, unknown> | null>(null);
+  // [lc-1507] TMDB 请求是否已 settle（成败都置位）：区分「加载中」（骨架）与「已失败」
+  // （不再转骨架，改显示 Bangumi 简介兜底 / 空态）—— 否则失败后骨架永远转
+  const [tmdbDone, setTmdbDone] = useState(false);
   const [err, setErr] = useState("");
   // [lc-118] 详情页分段栏当前项
   const [tab, setTab] = useState("overview");
@@ -3176,35 +3179,73 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
 
   // TMDB 完整详情（剧照/相似/更多/演职人员）：主仓库 fetchShowDetails 同款链路，失败静默降级
   // [lc-128] 额外带上 trim_id / tmdb_id / imdb_id 锚点：能精确定位就不靠标题搜索（matchedBy 见日志）
+  // [lc-1507] 发现页 Bangumi 条目（无 tmdb 锚点）的标题搜索失败率很高 —— TMDB 对新番/第二季
+  //   经常没有条目或没有中文译名（实测「转生就是剑 第二季」sim=0.17 只有第一季 0.22）。
+  //   两级兜底：① 首搜失败 → 用 Bangumi **日文原名**（bgmSub.name）重搜一次（TMDB 收录日文
+  //   原名远多于中文译名，且不带年份防错标）；② 日文重搜也失败 → 详情信息 tab 显示
+  //   Bangumi 简介而不是永久骨架。
   const tmdbTitle = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
+  const bgmNameJp = String(pick(bgmSub ?? {}, ["name"]) ?? "").trim();
   useEffect(() => {
     setTmdb(null);
+    setTmdbDone(false);
     // 等条目详情到位再发：锚点（trim_id 等）就来自它，先发一次纯标题搜索再重发纯属浪费。
     // [lc-1444] 发现页条目例外：条目自带 tmdb_id，直接精确定位，不等（也没有）飞牛详情。
     if (!dataReady || !tmdbTitle) return;
     let alive = true;
-    invoke<Record<string, unknown>>("tmdb_show_details", {
-      arg: {
-        title: tmdbTitle,
-        year: String(base.release_date || "").slice(0, 4),
-        mediaType: base.type === "Movie" ? "movie" : "tv",
-        trimId: tmdbAnchor.trimId || undefined,
-        tmdbId: noFnOS
-          ? base.tmdb_id
-            ? String(base.tmdb_id)
-            : undefined // 右栏新番条目没有 TMDB id → 走标题搜索
-          : tmdbAnchor.tmdbId || undefined,
-        imdbId: tmdbAnchor.imdbId || undefined,
-      },
-    })
-      .then((d) => {
-        if (alive && d && !d.error) setTmdb(d);
-      })
-      .catch(() => {});
+    const fetchDetails = (title: string, year: string) =>
+      invoke<Record<string, unknown>>("tmdb_show_details", {
+        arg: {
+          title,
+          year,
+          mediaType: base.type === "Movie" ? "movie" : "tv",
+          trimId: tmdbAnchor.trimId || undefined,
+          tmdbId: noFnOS
+            ? base.tmdb_id
+              ? String(base.tmdb_id)
+              : undefined // 右栏新番条目没有 TMDB id → 走标题搜索
+            : tmdbAnchor.tmdbId || undefined,
+          imdbId: tmdbAnchor.imdbId || undefined,
+        },
+      });
+    (async () => {
+      let d: Record<string, unknown> | null = null;
+      try {
+        const r = await fetchDetails(tmdbTitle, String(base.release_date || "").slice(0, 4));
+        if (r && !r.error) d = r;
+      } catch {
+        /* 静默：走日文重搜 */
+      }
+      if (!alive) return;
+      // ① 首搜失败（或没搜到）→ 日文原名重搜（不带年份：TMDB/飞牛的年份错标很常见）
+      if (!d && bgmNameJp && bgmNameJp !== tmdbTitle) {
+        try {
+          const r2 = await fetchDetails(bgmNameJp, "");
+          if (r2 && !r2.error) d = r2;
+        } catch {
+          /* 静默：兜底空态 */
+        }
+      }
+      if (!alive) return;
+      if (d) setTmdb(d);
+      setTmdbDone(true);
+    })();
     return () => {
       alive = false;
     };
-  }, [base.guid, tmdbTitle, dataReady, noFnOS, base.tmdb_id, tmdbAnchor.trimId, tmdbAnchor.tmdbId, tmdbAnchor.imdbId]);
+  }, [
+    base.guid,
+    tmdbTitle,
+    bgmNameJp,
+    dataReady,
+    noFnOS,
+    base.tmdb_id,
+    base.release_date,
+    base.type,
+    tmdbAnchor.trimId,
+    tmdbAnchor.tmdbId,
+    tmdbAnchor.imdbId,
+  ]);
 
   // [lc-119] 切换条目（本组件不随 base 重挂载）时清空 Bangumi 状态，避免把上一部的吐槽/匹配带过来
   useEffect(() => {
@@ -3665,7 +3706,16 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
     (pick(data ?? {}, ["posters", "poster"]) as string) ||
     base.poster ||
     "";
-  const overview = String(pick(data ?? {}, ["overview"]) ?? base.overview ?? "");
+  // [lc-1507] 简介兜底链：飞牛详情 → 飞牛条目自带 → **Bangumi subject.summary**（发现页
+  //   Bangumi 条目 TMDB 匹配不上时，简介不至于空白 —— bgmSub 进页面就拉了）
+  const bgmSummary = String(pick(bgmSub ?? {}, ["summary"]) ?? "").trim();
+  const overview = (() => {
+    const a = String(pick(data ?? {}, ["overview"]) ?? "").trim();
+    if (a) return a;
+    const b = String(base.overview ?? "").trim();
+    if (b) return b;
+    return bgmSummary;
+  })();
   // [lc-1401] 原题名（有就别名不显示）：优先条目详情，其次 Bangumi 匹配结果
   const originalTitle = String(
     pick(data ?? {}, ["originalTitle", "original_title", "originalName"]) ?? bgm?.name ?? "",
@@ -3913,8 +3963,9 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                 此前这里是"自己一条 .dstill-strip + TmdbExtra 里再来一条 .tmdb-stills"，
                 结果是同一批 TMDB 剧照出现**两组**（用户反馈）。现在只留 TmdbExtra 那一份。 */}
             {/* [lc-1420] 分块骨架：TMDB 详情也是一条独立请求，没回来之前这块是空的。
-                摆"剧照 + 文本行"的骨架（形状与 TmdbExtra 的首节一致），到位时无跳动。 */}
-            {!tmdb && (
+                摆"剧照 + 文本行"的骨架（形状与 TmdbExtra 的首节一致），到位时无跳动。
+                [lc-1507] 骨架只在请求**进行中**（!tmdbDone）显示 —— 失败后不再永久转圈。 */}
+            {!tmdb && !tmdbDone && (
               <>
                 <div className="tmdb-sec">
                   <div className="dsk dsk-sec-t" />
@@ -3934,8 +3985,20 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
               </>
             )}
             {tmdb && <TmdbExtra tmdb={tmdb} onZoom={setZoom} />}
-            {!overview && genres.length === 0 && !tmdb && (
-              <div className="empty">暂无详情信息</div>
+            {/* [lc-1507] TMDB 失败后的兜底：有简介（Bangumi）就显示简介节，
+                什么都没有才显示空态 —— 原先骨架与「暂无详情信息」会同时出现 */}
+            {!tmdb && tmdbDone && (
+              <>
+                {overview && (
+                  <div className="tmdb-sec">
+                    <div className="tmdb-sec-t">简介</div>
+                    <p className="dfold">{overview}</p>
+                  </div>
+                )}
+                {!overview && genres.length === 0 && (
+                  <div className="empty">TMDB 与 Bangumi 都没有该条目的详情信息</div>
+                )}
+              </>
             )}
           </div>
         )}

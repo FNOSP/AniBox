@@ -6035,16 +6035,6 @@ html.dark .ditem-tag {
   flex-direction: column;
   gap: 10px;
 }
-.bgmac-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  background: #dcefe2;
-  color: #2e7d4f;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 .bgmac-text {
   display: flex;
   flex-direction: column;
@@ -6079,15 +6069,16 @@ html.dark .ditem-tag {
   height: 38px;
   border: none;
   border-radius: 19px;
-  background: #dcefe2;
-  color: #1f6b40;
+  background: var(--accent-grad);
+  color: #fff;
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  transition: background 0.15s, transform 0.12s;
+  box-shadow: 0 4px 14px rgba(108, 155, 255, 0.28);
+  transition: filter 0.15s, transform 0.12s, box-shadow 0.15s;
 }
 .bgmac-cta:hover:not(:disabled) {
-  background: #cbe7d4;
+  filter: brightness(1.08);
 }
 .bgmac-cta:active:not(:disabled) {
   transform: scale(0.98);
@@ -6140,7 +6131,7 @@ html.dark .ditem-tag {
   outline: none;
 }
 .bgmac-bind input:focus {
-  border-color: #2e7d4f;
+  border-color: var(--accent);
 }
 /* ── 右上徽章 ── */
 .bgmac-badge {
@@ -6247,15 +6238,11 @@ html.dark .ditem-tag {
 .bgmac-tip {
   color: var(--muted);
 }
-/* 深色主题下微调品牌绿（保持可读） */
-html.dark .bgmac-icon,
-html.dark .bgmac-badge.on,
-html.dark .bgmac-cta {
+/* 深色主题下徽章/小标题的品牌绿提亮（CTA 已走主题 accent-grad，不在此列） */
+html.dark .bgmac-badge.on {
   background: rgba(76, 175, 125, 0.22);
 }
 html.dark .bgmac-kicker,
-html.dark .bgmac-icon,
-html.dark .bgmac-badge.on,
-html.dark .bgmac-cta {
+html.dark .bgmac-badge.on {
   color: #7ed4a5;
 }

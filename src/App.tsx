@@ -2524,15 +2524,8 @@ function BgmAccountCard() {
 
   return (
     <div className={`bgmac${acct.bound ? " on" : ""}`}>
-      {/* 左侧：图标 + 标题组 + 按钮 */}
+      {/* 左侧：标题组 + 按钮（图标按用户要求删除） */}
       <div className="bgmac-main">
-        <div className="bgmac-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z" />
-            <path d="M4 20.5V5.5" />
-            <path d="M9 7.5h6M9 11h4" />
-          </svg>
-        </div>
         <div className="bgmac-text">
           <div className="bgmac-kicker">Bangumi</div>
           <div className="bgmac-title">追番同步</div>

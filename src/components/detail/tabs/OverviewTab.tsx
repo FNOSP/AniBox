@@ -11,8 +11,8 @@ type Props = {
 export function OverviewTab({ genres, overview, setZoom, tmdb, tmdbDone }: Props) {
   return (
     <>
-      /* [lc-1420] `.dpanel-single`：本页所有节包进**一个**容器、节间用浅横线分隔（用户要求）。
-         见 App.css 里同名类的注释（为什么不用 :has）。 */
+      {/* [lc-1420] `.dpanel-single`：本页所有节包进**一个**容器、节间用浅横线分隔（用户要求）。
+         见 App.css 里同名类的注释（为什么不用 :has）。 */}
       <div className="dpanel dpanel-single">
         {/* [lc-1405] 原本这里还有一节「类型标签」渲染 genres —— 与左列顶部那个标签框**同一份数据**，
             重复；且用户已要求标签框直接取 BGM/TMDB，这一节就失去存在意义。故删除。 */}

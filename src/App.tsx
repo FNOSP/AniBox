@@ -2539,13 +2539,11 @@ function BgmAccountCard() {
   // ── 右侧观看统计：donut（五状态占比）+ 分项计数 ──
   const total = Math.max(0, Number(stats.total ?? 0));
   const counts = (k: number) => Number(stats.byType?.[String(k)] ?? 0);
-  const R = 24;
-  const C = 2 * Math.PI * R;
   let acc = 0;
   const segs = BGAC_TYPES.map((t) => {
     const n = counts(t.k);
     const frac = total > 0 ? n / total : 0;
-    const seg = { ...t, n, dash: frac * C, offset: acc * C };
+    const seg = { ...t, n, frac, a0: acc, a1: acc + frac };
     acc += frac;
     return seg;
   });
@@ -2609,46 +2607,61 @@ function BgmAccountCard() {
         <div className="bgmac-block-t">同步状态</div>
         {acct.bound ? (
           <>
-            <svg className="bgmac-donut" viewBox="0 0 60 60" width="60" height="60">
-              <circle cx="30" cy="30" r={R} fill="none" stroke="var(--ph-bg)" strokeWidth="7" />
-              {total > 0 &&
+            {/* 圆饼统计（实心扇形，12 点方向起顺时针） */}
+            <svg className="bgmac-pie" viewBox="0 0 100 100" width="118" height="118">
+              {total === 0 ? (
+                <circle cx="50" cy="50" r="44" fill="var(--ph-bg)" />
+              ) : (
                 segs
                   .filter((s) => s.n > 0)
-                  .map((s) => (
-                    <circle
-                      key={s.k}
-                      cx="30"
-                      cy="30"
-                      r={R}
-                      fill="none"
-                      stroke={s.color}
-                      strokeWidth="7"
-                      strokeDasharray={`${Math.max(0.6, s.dash)} ${C}`}
-                      strokeDashoffset={-s.offset}
-                      strokeLinecap="butt"
-                    />
-                  ))}
-              <text x="30" y="29" textAnchor="middle" className="bgmac-donut-n">
+                  .map((s) => {
+                    const a0 = -Math.PI / 2 + s.a0 * 2 * Math.PI;
+                    const a1 = -Math.PI / 2 + s.a1 * 2 * Math.PI;
+                    const R0 = 44;
+                    if (s.frac >= 0.99999) {
+                      // 只有一种状态：整圆（扇形 path 在全圆时会退化）
+                      return <circle key={s.k} cx="50" cy="50" r={R0} fill={s.color} />;
+                    }
+                    const x0 = 50 + R0 * Math.cos(a0);
+                    const y0 = 50 + R0 * Math.sin(a0);
+                    const x1 = 50 + R0 * Math.cos(a1);
+                    const y1 = 50 + R0 * Math.sin(a1);
+                    const large = s.frac > 0.5 ? 1 : 0;
+                    return (
+                      <path
+                        key={s.k}
+                        d={`M 50 50 L ${x0.toFixed(2)} ${y0.toFixed(2)} A ${R0} ${R0} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z`}
+                        fill={s.color}
+                      >
+                        <title>{`${s.label} ${s.n}`}</title>
+                      </path>
+                    );
+                  })
+              )}
+              <circle cx="50" cy="50" r="26" className="bgmac-pie-hole" />
+              <text x="50" y="48" textAnchor="middle" className="bgmac-pie-n">
                 {total}
               </text>
-              <text x="30" y="38" textAnchor="middle" className="bgmac-donut-l">
+              <text x="50" y="60" textAnchor="middle" className="bgmac-pie-l">
                 部番剧
               </text>
             </svg>
-            <div className="bgmac-legend">
-              {segs.map((s) => (
-                <span key={s.k} className="bgmac-legend-row">
-                  <i className="bgmac-dot" style={{ background: s.color }} />
-                  {s.label}
-                  <b>{s.n}</b>
-                </span>
-              ))}
+            {/* 饼下紧凑图例：色点 + 数字（label 走 title，省宽度） */}
+            <div className="bgmac-pie-legend">
+              {segs
+                .filter((s) => s.n > 0)
+                .map((s) => (
+                  <span key={s.k} className="bgmac-pie-lg" title={`${s.label} ${s.n}`}>
+                    <i className="bgmac-dot" style={{ background: s.color }} />
+                    {s.n}
+                  </span>
+                ))}
             </div>
           </>
         ) : (
           <div className="bgmac-stats-empty">
-            <svg viewBox="0 0 60 60" width="52" height="52">
-              <circle cx="30" cy="30" r="24" fill="none" stroke="var(--line-strong)" strokeWidth="6" strokeDasharray="3 5" />
+            <svg viewBox="0 0 100 100" width="96" height="96">
+              <circle cx="50" cy="50" r="42" fill="none" stroke="var(--line-strong)" strokeWidth="7" strokeDasharray="4 6" />
             </svg>
             <span>连接后展示追番统计</span>
           </div>

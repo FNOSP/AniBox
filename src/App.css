@@ -6210,10 +6210,10 @@ html.dark .ditem-tag {
 .bgmac-stats {
   grid-area: stats;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: 8px;
   padding: 0 4px 0 14px;
   border-left: 1px solid var(--line);
   min-width: 0;
@@ -6225,22 +6225,43 @@ html.dark .ditem-tag {
   color: var(--text-2);
   letter-spacing: 0.03em;
 }
-.bgmac-donut {
+/* [lc-1524] 圆饼统计（实心扇形） */
+.bgmac-pie {
   flex: 0 0 auto;
 }
-.bgmac-donut-n {
-  font-size: 15px;
+.bgmac-pie path {
+  transition: opacity 0.15s;
+}
+.bgmac-pie path:hover {
+  opacity: 0.82;
+}
+/* 中心盖一个小圆做"洞"，数字更清晰 */
+.bgmac-pie-hole {
+  fill: var(--glass-btn-bg);
+}
+.bgmac-pie-n {
+  font-size: 20px;
   font-weight: 800;
   fill: var(--text-strong);
 }
-.bgmac-donut-l {
-  font-size: 8px;
+.bgmac-pie-l {
+  font-size: 8.5px;
   fill: var(--muted);
 }
-.bgmac-legend {
+/* 饼下紧凑图例：色点 + 数字 */
+.bgmac-pie-legend {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 3px 9px;
+}
+.bgmac-pie-lg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-2);
+  line-height: 1.4;
 }
 .bgmac-legend-row {
   display: flex;

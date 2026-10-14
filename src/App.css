@@ -5440,7 +5440,9 @@ html.dark .ditem-tag {
   flex-direction: column;
   gap: 14px;
   margin-top: 12px;
-  padding: 10px 0 8px;
+  /* [lc-1512] 之前左右 padding 是 0 —— 搜索栏直接顶在外层容器（.dv2e-list 卡片）的
+     左右边框上，看着"和容器框贴在一起"。这里给四边都留出内边距。 */
+  padding: 14px 8px 12px;
   border-top: 1px solid var(--line);
 }
 /* [lc-1509] 搜索栏：**一套统一规格**（同高 32px / 同圆角 / 同边框 / 同字体），

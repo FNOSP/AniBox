@@ -58,6 +58,8 @@ type MediaItem = {
   duration?: number;
   air_date?: string;
   media_stream?: unknown;
+  /** [lc-1444] 发现页条目自带的 TMDB id（无飞牛 guid 时用它直连 TMDB 定位） */
+  tmdb_id?: number;
 };
 
 /** play/list（继续观看）返回的条目，camelCase 为主，读取时做双格式兼容 */
@@ -1858,18 +1860,16 @@ function DState({ err, emptyText, onRetry }: { err: string; emptyText: string; o
  *  大标题 / 评分徽章+年份·状态·N 人评分一行 / 3 行简介 / 「查看详情」按钮）。**没有大 backdrop、
  *  没有文字压图** —— 文字永远在实底信息列里。主推数据 = 当季第 1 条（热度第一），**不轮播不翻页**。
  *  海报 = poster（2:3，w500）；缺图走占位块（Film 图标），不破格。
- *  「查看详情」：TMDB 条目没有飞牛 guid，不能 play_item —— 复用**已有的** bgm_match + 弹层链路：
- *  点按钮 → bgm_match(标题) 拿 Bangumi subject → 打开既有的 BgmDetailOverlay；失败给行内提示。 */
+ *  「查看详情」：TMDB 条目没有飞牛 guid —— [lc-1444] 改为**直接进主详情页**
+ *  （复用 DetailView，选集信息占位），不再走 bgm_match → BgmDetailOverlay 弹层。 */
 function TmdbFeatured({
   it,
   isMovie,
   onOpenDetail,
-  detailBusy,
 }: {
   it: TmdbDiscoverItem;
   isMovie: boolean;
   onOpenDetail: (it: TmdbDiscoverItem) => void;
-  detailBusy: boolean;
 }) {
   const state = it.state === "upcoming" ? "未开播" : it.state === "airing" ? "已开播" : "";
   return (
@@ -1898,8 +1898,8 @@ function TmdbFeatured({
           <span className="dfeat-kind">{isMovie ? "电影" : "剧集"}</span>
         </div>
         {it.overview ? <p className="dfeat-desc">{it.overview}</p> : null}
-        <button className="dfeat-btn" onClick={() => onOpenDetail(it)} disabled={detailBusy}>
-          {detailBusy ? "查找中…" : "查看详情"}
+        <button className="dfeat-btn" onClick={() => onOpenDetail(it)}>
+          查看详情
         </button>
       </div>
     </div>
@@ -1909,11 +1909,11 @@ function TmdbFeatured({
 /** [lc-123-rev9] 标准海报卡（设计稿 .tmdb-card）：**2:3 竖版海报**（不再裁 16:9）+
  *  右上评分角标 + 下方两行（标题 / 年份·状态 pill）。`minmax(140px,1fr)` 自适应 2~4 列。
  *  缺 poster → 占位块（Film 图标），不破格。 */
-function TmdbPC({ it }: { it: TmdbDiscoverItem }) {
+function TmdbPC({ it, onOpen }: { it: TmdbDiscoverItem; onOpen: (it: TmdbDiscoverItem) => void }) {
   const tip = [it.title, it.overview].filter(Boolean).join("\n\n");
   const state = it.state === "upcoming" ? "未开播" : it.state === "airing" ? "已开播" : "";
   return (
-    <div className="dpc" title={tip}>
+    <div className="dpc" title={tip} onClick={() => onOpen(it)}>
       <div className="dpc-img">
         <Dsk cls="dsk-poster" />
         {it.poster ? (
@@ -1993,11 +1993,11 @@ function UpRow({ it, isMovie }: { it: TmdbDiscoverItem; isMovie: boolean }) {
 /** 左栏：TMDB。`active` = 首次激活闸门（懒加载）。取数走 tmdb_discover（一条命令带 mode 参数）。 */
 function TmdbPane({
   active,
-  onDetail,
+  onOpenDetail,
 }: {
   active: boolean;
-  /** [lc-123-rev9] 「查看详情」命中后由父级挂 BgmDetailOverlay（与右栏同一份弹层） */
-  onDetail: (it: BgmCalendarItem) => void;
+  /** [lc-1444] 「查看详情」→ 直接进主详情页（复用 DetailView；父级合成 MediaItem） */
+  onOpenDetail: (it: TmdbDiscoverItem, mediaType: "tv" | "movie") => void;
 }) {
   const [mediaType, setMediaType] = useState<"tv" | "movie">("tv");
   const [season, setSeason] = useState<"current" | "next">("current");
@@ -2014,9 +2014,6 @@ function TmdbPane({
   const [upTotalPages, setUpTotalPages] = useState(0);
   const [upMoreBusy, setUpMoreBusy] = useState(false);
   const [nonce, setNonce] = useState(0); // 两块共用的**失败重试**触发器（force + noEtag：强制全量）
-  // [lc-123-rev9] 「查看详情」：bgm_match(标题) → 复用右栏的 BgmDetailOverlay（轻量详情弹层）
-  const [detailBusy, setDetailBusy] = useState(false);
-  const [detailErr, setDetailErr] = useState("");
   const [probe, setProbe] = useState(0); // [lc-123-rev5] 10 分钟后台探测（force=false：命令层先读缓存判 TTL）
   // 失败重试与"到期探测"走**不同**的 force 语义：重试 = force + noEtag（强制全量，别拿坏缓存反复撞）
   const retryRef = useRef(false);
@@ -2142,38 +2139,10 @@ function TmdbPane({
     }
   }
 
-  // [lc-123-rev9] 「查看详情」：TMDB 条目没有 guid → bgm_match(标题+年) 拿 Bangumi subject →
-  // 复用右栏同款 BgmDetailOverlay（bgm_subject/bgm_episodes/bgm_characters 全套）；失败行内提示。
-  async function openDetail(it: TmdbDiscoverItem) {
-    if (detailBusy) return;
-    setDetailBusy(true);
-    setDetailErr("");
-    try {
-      const m = await invoke<{ subject_id?: number }>("bgm_match", {
-        title: it.title,
-        year: it.year || undefined,
-      });
-      const sid = m?.subject_id;
-      if (!sid) {
-        setDetailErr(`未找到「${it.title}」对应的 Bangumi 条目`);
-        return;
-      }
-      onDetail({
-        id: sid,
-        type: 0,
-        name: it.originalTitle,
-        name_cn: it.title,
-        air_date: it.date,
-        score: it.rating > 0 ? it.rating : null,
-        votes: it.votes,
-        doing: 0,
-        cover: "",
-      });
-    } catch (e) {
-      setDetailErr(`详情查找失败：${String(e)}`);
-    } finally {
-      setDetailBusy(false);
-    }
+  // [lc-1444] 「查看详情」：**直接进主详情页**（复用 DetailView，选集信息占位）。
+  //   TMDB 条目没有飞牛 guid —— 由父级合成 MediaItem（guid 用 discover-<tmdbId> 占位标识）。
+  function openDetail(it: TmdbDiscoverItem) {
+    onOpenDetail(it, mediaType);
   }
 
   const isMovie = mediaType === "movie";
@@ -2223,14 +2192,8 @@ function TmdbPane({
               <TmdbFeatured
                 it={featured}
                 isMovie={isMovie}
-                detailBusy={detailBusy}
                 onOpenDetail={openDetail}
               />
-            )}
-            {detailErr && (
-              <div className="dup-hint" role="status">
-                {detailErr}
-              </div>
             )}
             {gridItems.length > 0 && (
               <>
@@ -2240,7 +2203,7 @@ function TmdbPane({
                 </h3>
                 <div className="dpcgrid">
                   {gridItems.map((it) => (
-                    <TmdbPC key={`${it.tmdbId}-${it.date}`} it={it} />
+                    <TmdbPC key={`${it.tmdbId}-${it.date}`} it={it} onOpen={openDetail} />
                   ))}
                 </div>
               </>
@@ -2816,12 +2779,19 @@ function BgmDetailOverlay({
 }
 
 /** 发现页：左右两栏（各 50%），两栏各自的滚动与状态互不影响 */
-function DiscoverView({ active }: { active: boolean }) {
+function DiscoverView({
+  active,
+  onOpenDetail,
+}: {
+  active: boolean;
+  /** [lc-1444] 左栏 TMDB 条目 → 主详情页（父级合成 MediaItem 并切 view） */
+  onOpenDetail: (it: TmdbDiscoverItem, mediaType: "tv" | "movie") => void;
+}) {
   const [sel, setSel] = useState<BgmCalendarItem | null>(null);
   return (
     <div className="discover">
-      {/* 左栏「查看详情」与右栏点条目共用同一份 BgmDetailOverlay（一次只显示一个） */}
-      <TmdbPane active={active} onDetail={(it) => setSel(it)} />
+      {/* 右栏 Bangumi 条目仍用 BgmDetailOverlay 弹层；左栏「查看详情」走主详情页 */}
+      <TmdbPane active={active} onOpenDetail={onOpenDetail} />
       <BgmPane active={active} onOpen={(it) => setSel(it)} />
       {sel && <BgmDetailOverlay id={sel.id} fallback={sel} onClose={() => setSel(null)} />}
     </div>
@@ -2898,6 +2868,11 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   // 骨架屏会永久卡住；靠 alive 标志丢弃过期结果即可（最坏情况是 dev 下多发一次请求）。
 
   const isSeries = base.type === "TvSeries" || base.type === "TV";
+  // [lc-1444] 发现页条目形态：guid 是 `discover-<tmdbId>` 占位标识（不是真飞牛 guid），
+  //   没有飞牛条目可查 —— 详情主体靠 TMDB（条目自带 tmdb_id 直接定位）+ Bangumi（标题匹配），
+  //   选集区显示占位。dataReady = 主体可以渲染（真条目等 data 到位；发现页条目立即渲染）。
+  const noFnOS = /^discover-/.test(base.guid);
+  const dataReady = !!data || noFnOS;
 
   /** [lc-128] TMDB 精确锚点：飞牛条目 `trim_id` 形如 `tm63578`（TMDB id）/ `tt325158`（IMDb id）/
    *  `bg456080`（Bangumi，无 TMDB id）；另有显式 `tmdb_id`/`imdb_id` 字段时优先。有锚点就**直接定位**，
@@ -2923,6 +2898,11 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
     setSeasons([]);
     setSeasonIdx(0);
     setEpisodes([]);
+    if (noFnOS) {
+      // 发现页条目：无飞牛条目，跳过详情/季/集三条飞牛请求；清掉可能残留的详情错误
+      setErr("");
+      return;
+    }
     invoke<Record<string, unknown>>("get_item_detail", { guid: base.guid })
       .then((d) => setData(d))
       .catch((e) => setErr(String(e)));
@@ -2933,7 +2913,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
         .then((ss) => setSeasons(Array.isArray(ss) ? ss : []))
         .catch(() => {});
     }
-  }, [base.guid, isSeries]);
+  }, [base.guid, isSeries, noFnOS]);
 
   useEffect(() => {
     const s = seasons[seasonIdx];
@@ -2959,8 +2939,9 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   const tmdbTitle = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
   useEffect(() => {
     setTmdb(null);
-    // 等条目详情到位再发：锚点（trim_id 等）就来自它，先发一次纯标题搜索再重发纯属浪费
-    if (!data || !tmdbTitle) return;
+    // 等条目详情到位再发：锚点（trim_id 等）就来自它，先发一次纯标题搜索再重发纯属浪费。
+    // [lc-1444] 发现页条目例外：条目自带 tmdb_id，直接精确定位，不等（也没有）飞牛详情。
+    if (!dataReady || !tmdbTitle) return;
     let alive = true;
     invoke<Record<string, unknown>>("tmdb_show_details", {
       arg: {
@@ -2968,7 +2949,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
         year: String(base.release_date || "").slice(0, 4),
         mediaType: base.type === "Movie" ? "movie" : "tv",
         trimId: tmdbAnchor.trimId || undefined,
-        tmdbId: tmdbAnchor.tmdbId || undefined,
+        tmdbId: noFnOS ? String(base.tmdb_id ?? "") : tmdbAnchor.tmdbId || undefined,
         imdbId: tmdbAnchor.imdbId || undefined,
       },
     })
@@ -2979,7 +2960,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
     return () => {
       alive = false;
     };
-  }, [base.guid, tmdbTitle, data, tmdbAnchor.trimId, tmdbAnchor.tmdbId, tmdbAnchor.imdbId]);
+  }, [base.guid, tmdbTitle, dataReady, noFnOS, base.tmdb_id, tmdbAnchor.trimId, tmdbAnchor.tmdbId, tmdbAnchor.imdbId]);
 
   // [lc-119] 切换条目（本组件不随 base 重挂载）时清空 Bangumi 状态，避免把上一部的吐槽/匹配带过来
   useEffect(() => {
@@ -3281,7 +3262,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
             year: String(base.release_date || "").slice(0, 4),
             mediaType: base.type === "Movie" ? "movie" : "tv",
             trimId: tmdbAnchor.trimId || undefined,
-            tmdbId: tmdbAnchor.tmdbId || undefined,
+            tmdbId: noFnOS ? String(base.tmdb_id ?? "") : tmdbAnchor.tmdbId || undefined,
             imdbId: tmdbAnchor.imdbId || undefined,
             cacheKey: base.guid,
           },
@@ -3648,12 +3629,13 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
       {err && <div className="err">{err}</div>}
 
       {/* [lc-1417] 首屏骨架屏：条目详情（data）没到位之前先摆骨架，别让用户对着空白等。
-          判据用 `!data && !err`：出错时走上面的 .err，已有数据时立即换成真内容。
+          判据用 `!dataReady && !err`：出错时走上面的 .err，已有数据时立即换成真内容。
+          [lc-1444] 发现页条目没有飞牛详情，dataReady 立即为真 —— 不等、不摆骨架。
           ⚠ 只包住"两栏主体"—— 返回键与标题（rail）是从 base 直接来的，不需要等网络。 */}
-      {!data && !err && <DetailSkeleton />}
+      {!dataReady && !err && <DetailSkeleton />}
 
       {/* ══ 两栏主体（用户版式）══ */}
-      {data && (
+      {dataReady && (
       <div className="dv2">
         {/* ── 左列：封面 / 标签框 / 简介框 / 标签页 / 内容 ── */}
         <div className="dv2-left">
@@ -4086,8 +4068,9 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
             小标题与 desc（Bangumi 只有一季时 ep 是**全季连号**，所以按号取，不按季内序号）。 */}
         <aside className="dv2-right">
           {/* [lc-1420] 非剧集（电影等）没有选集可点，海报上的播放按钮又已删 —— 
-              这里给一个独立的播放入口，避免"能看不能播"。 */}
-          {!isSeries && (
+              这里给一个独立的播放入口，避免"能看不能播"。
+              [lc-1444] 发现页条目没有飞牛 guid，播不了 —— 不显示播放入口。 */}
+          {!isSeries && !noFnOS && (
             <button
               className="dv2-solo-play"
               disabled={playing}
@@ -4135,8 +4118,13 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
             {isSeries && (
               <span className="dv2e-meta">
                 <span className="dv2e-meta-n">
-                  {episodes.length}
-                  {totalEps > 0 && totalEps !== episodes.length ? ` / ${totalEps}` : ""} 集
+                  {/* [lc-1444] 发现页条目没有本机集数：显示 Bangumi 总集数（若有），否则 "—" */}
+                  {noFnOS
+                    ? totalEps > 0
+                      ? totalEps
+                      : "—"
+                    : `${episodes.length}${totalEps > 0 && totalEps !== episodes.length ? ` / ${totalEps}` : ""}`}{" "}
+                  集
                 </span>
                 <span className={`dv2e-state${finished ? " done" : " airing"}`}>
                   {finished ? "已完结" : "连载中"}
@@ -4161,7 +4149,7 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
           <div className="dv2e-list">
             {!isSeries ? (
               <div className="empty">本条目不是剧集</div>
-            ) : episodes.length === 0 && seasons.length === 0 ? (
+            ) : episodes.length === 0 && seasons.length === 0 && !noFnOS ? (
               /* [lc-1420] **分块骨架**：条目详情（data）到得很快，所以整页骨架一闪就没了；
                  但季/集是另外两条请求 —— 它们没回来之前右栏是空的，用户看着就是"还在等数据"。
                  这里单独给右栏摆骨架（用真实行高，数据到位时不跳）。 */
@@ -4176,7 +4164,12 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                 </div>
               ))
             ) : episodes.length === 0 ? (
-              <div className="empty">暂无剧集</div>
+              /* [lc-1444] 发现页条目没有飞牛选集数据 —— 按用户要求先空着占位 */
+              noFnOS ? (
+                <div className="empty">选集信息暂未接入</div>
+              ) : (
+                <div className="empty">暂无剧集</div>
+              )
             ) : (
               episodes.map((ep, i) => {
                 const num = ep.episode_number ?? i + 1;
@@ -4891,6 +4884,9 @@ function App() {
   }, []);
   const [activeLib, setActiveLib] = useState<Lib | null>(null);
   const [detailItem, setDetailItem] = useState<MediaItem | null>(null);
+  // [lc-1444] 进详情的来源（返回键的目标）：lib = 库里进，discover = 发现页进，home = 首页进。
+  // 不用 view 现查 —— 用户从发现页进详情后 view 已是 "detail"，现查只能靠猜。
+  const [detailFrom, setDetailFrom] = useState<"lib" | "discover" | "home">("home");
   const [err, setErr] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(
     () => localStorage.getItem("fntv-sidebar-open") !== "0",
@@ -5271,10 +5267,33 @@ function App() {
       });
   }, []);
 
-  const openItem = useCallback((item: MediaItem) => {
-    setDetailItem(item);
-    setView("detail");
-  }, []);
+  const openItem = useCallback(
+    (item: MediaItem) => {
+      setDetailItem(item);
+      setDetailFrom(view === "lib" ? "lib" : "home");
+      setView("detail");
+    },
+    [view],
+  );
+
+  // [lc-1444] 发现页条目 → 主详情页：合成 MediaItem。guid 用 `discover-<tmdbId>` 占位标识
+  // （DetailView 借此进入「无飞牛条目」形态：跳过飞牛请求、选集区占位、
+  //  TMDB 定位直接用条目自带的 tmdb_id，不用等飞牛详情的锚点）。
+  const openDiscoverDetail = useCallback(
+    (it: TmdbDiscoverItem, mediaType: "tv" | "movie") => {
+      setDetailItem({
+        guid: `discover-${it.tmdbId}`,
+        title: it.title,
+        overview: it.overview,
+        release_date: it.date || (it.year ? `${it.year}-01-01` : ""),
+        tmdb_id: it.tmdbId,
+        type: mediaType === "movie" ? "Movie" : "TV",
+      });
+      setDetailFrom("discover");
+      setView("detail");
+    },
+    [],
+  );
 
   const openFav = useCallback(() => {
     setActiveLib({ guid: "_fav", title: "收藏", category: "" });
@@ -5436,7 +5455,7 @@ function App() {
           {/* [lc-123] 发现页：与首页同款「常驻挂载」——两栏的滚动位置/已取数据在切页后保留；
               首次拉取的闸门是 active={view === "discover"}（不进这一页就不发任何请求） */}
           <div className={paneCls("discover")} onAnimationEnd={clearPaneAnim}>
-            <DiscoverView active={view === "discover"} />
+            <DiscoverView active={view === "discover"} onOpenDetail={openDiscoverDetail} />
           </div>
           {view === "lib" && activeLib && (
             <div className="view-pane active">
@@ -5445,7 +5464,13 @@ function App() {
           )}
           {view === "detail" && detailItem && (
             <div className="view-pane active">
-              <DetailView base={detailItem} onBack={() => setView(activeLib ? "lib" : "home")} />
+              {/* [lc-1444] 返回目标按进详情的来源（detailFrom）决定，不用 view/activeLib 现猜 */}
+              <DetailView
+                base={detailItem}
+                onBack={() =>
+                  setView(detailFrom === "discover" ? "discover" : detailFrom === "lib" ? "lib" : "home")
+                }
+              />
             </div>
           )}
         </div>

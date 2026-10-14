@@ -3156,12 +3156,14 @@ button:active {
   gap: 16px;
 }
 
-/* 海报卡（设计稿 .tmdb-card）：2:3 原比例，不再裁 16:9 */
+/* 海报卡（设计稿 .tmdb-card）：2:3 原比例，不再裁 16:9。
+   [lc-1444] 整卡可点（进入主详情页） */
 .dpc {
   border-radius: 10px;
   overflow: hidden;
   background: var(--bg-2);
   border: 1px solid transparent;
+  cursor: pointer;
   transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
 }
 

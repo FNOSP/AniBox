@@ -183,6 +183,13 @@ pub fn root_display() -> String {
     with_store(|s| s.root.display().to_string()).unwrap_or_default()
 }
 
+/// [lc-1436] 缓存根目录的 **PathBuf**（诊断面板「打开缓存目录」用）。
+/// 与 `root_display()` 并存而不是取代它：那个是给 UI 显示的字符串，
+/// 这个是给文件管理器打开的路径（display() 在非 UTF-8 路径上有损，不该拿去当路径用）。
+pub fn root_path() -> Option<std::path::PathBuf> {
+    with_store(|s| s.root.clone())
+}
+
 fn with_store<T>(f: impl FnOnce(&mut Store) -> T) -> Option<T> {
     let mut g = STORE.get()?.lock().ok()?;
     Some(f(&mut g))

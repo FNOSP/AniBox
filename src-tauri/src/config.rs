@@ -28,11 +28,37 @@ pub struct Config {
     /// 设置面板「缓存」一栏读写它；超上限按最后访问时间 LRU 淘汰。
     #[serde(default = "default_cache_limit_mb")]
     pub cache_limit_mb: u64,
+
+    /* ── [lc-1434] 设置面板新增项（原 Fntv-Plus 设置面板的同名功能）──
+       全部带 serde default：老 config.json 里没有这些键时按默认值走，**不需要迁移脚本**。 */
+    /// 关闭按钮行为："exit"（直接退出）| "tray"（最小化到托盘）| "ask"（每次询问，默认）
+    #[serde(default = "default_exit_mode")]
+    pub exit_mode: String,
+    /// 性能模式：关动画、关磨砂（低配机救急）。纯前端开关，存这里是为了跨设备/重启保持
+    #[serde(default)]
+    pub perf_mode: bool,
+    /// 首页轮播是否用影片透明 Logo 代替文字标题（飞牛条目自带 logo，见 lc-570）
+    #[serde(default = "default_true")]
+    pub carousel_logo: bool,
+    /// 启动页："home"（首页，默认）| "continue"（继续观看）
+    #[serde(default = "default_launch_page")]
+    pub launch_page: String,
 }
 
-/// 默认 2GB（原内存层是 192MB；磁盘层给到 GB 级才装得下一批原图）
 fn default_cache_limit_mb() -> u64 {
     2048
+}
+
+fn default_exit_mode() -> String {
+    "ask".into()
+}
+
+fn default_launch_page() -> String {
+    "home".into()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_mpv() -> String {
@@ -55,6 +81,10 @@ impl Default for Config {
             proxy_path: default_proxy(),
             nas_proxy_enabled: false,
             cache_limit_mb: default_cache_limit_mb(),
+            exit_mode: default_exit_mode(),
+            perf_mode: false,
+            carousel_logo: true,
+            launch_page: default_launch_page(),
         }
     }
 }

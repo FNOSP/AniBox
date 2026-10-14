@@ -617,7 +617,270 @@ async fn cache_clear() -> Result<Value, String> {
     Ok(json!({ "bytes": bytes, "files": files, "limitMb": disk_cache::limit_mb(), "dir": disk_cache::root_display() }))
 }
 
+// ───────────────────────── [lc-1434] 设置面板（通用/外观/诊断） ─────────────────────────
+// 背景：原 Electron 项目（Fntv-Plus）设置面板里有一批通用项，本软件缺。
+// 这里只搬**对新客户端有意义**的：退出行为、启动页、性能模式、轮播 Logo；
+// 那些给"注入进飞牛网页"用的设置（详情页美化/隐藏原生按钮/界面语言/轮播样式四选一）
+// 在新架构（自有 React UI）下没有作用对象，不搬。
+//
+// 与 `get_config`/`save_config` 的分工：那对命令是**全量 Config**（登录页在用，含密码/token）；
+// 这一对是**设置面板专用的白名单子集**——面板只该碰这几个键，不给它整份配置的读写面。
+
+/// 设置面板读：只回面板关心的字段（**不含密码/token** —— 面板不需要，也不该拿到）。
+#[tauri::command]
+async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    Ok(json!({
+        "exitMode": cfg.exit_mode,
+        "perfMode": cfg.perf_mode,
+        "carouselLogo": cfg.carousel_logo,
+        "launchPage": cfg.launch_page,
+        "autoLogin": cfg.auto_login,
+    }))
+}
+
+/// 设置面板写：接受上述键的**任意子集**（前端只发改动的那个），逐个白名单校验后落盘。
+/// 非法值直接 Err（不静默改成默认值——静默会让 UI 与配置悄悄不一致，排查时极难发现）。
+#[tauri::command]
+async fn set_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    arg: Value,
+) -> Result<Value, String> {
+    let mut cfg = state.config.read().await.clone();
+    if let Some(v) = arg.get("exitMode") {
+        let s = v.as_str().unwrap_or("");
+        if !matches!(s, "exit" | "tray" | "ask") {
+            return Err(format!("exitMode 非法：{s}（只允许 exit/tray/ask）"));
+        }
+        cfg.exit_mode = s.to_string();
+    }
+    if let Some(v) = arg.get("perfMode") {
+        cfg.perf_mode = v.as_bool().ok_or("perfMode 必须是布尔值")?;
+    }
+    if let Some(v) = arg.get("carouselLogo") {
+        cfg.carousel_logo = v.as_bool().ok_or("carouselLogo 必须是布尔值")?;
+    }
+    if let Some(v) = arg.get("launchPage") {
+        let s = v.as_str().unwrap_or("");
+        if !matches!(s, "home" | "continue") {
+            return Err(format!("launchPage 非法：{s}（只允许 home/continue）"));
+        }
+        cfg.launch_page = s.to_string();
+    }
+    if let Some(v) = arg.get("autoLogin") {
+        cfg.auto_login = v.as_bool().ok_or("autoLogin 必须是布尔值")?;
+    }
+    config::save(&app, &cfg).await?;
+    *state.config.write().await = cfg.clone();
+    Ok(json!({
+        "exitMode": cfg.exit_mode,
+        "perfMode": cfg.perf_mode,
+        "carouselLogo": cfg.carousel_logo,
+        "launchPage": cfg.launch_page,
+        "autoLogin": cfg.auto_login,
+    }))
+}
+
+/// [lc-1434] 启动页：**登录成功后、首页数据加载前**被调用（前端路由据此决定落点）。
+/// 独立成一条命令而不是复用 get_settings：它要能被"最小可用"地调用，
+/// 不依赖前端已把整份设置读回来（登录流程早期就用到）。
+#[tauri::command]
+async fn get_launch_page(state: State<'_, AppState>) -> Result<String, String> {
+    Ok(state.config.read().await.launch_page.clone())
+}
+
+/// [lc-1436] 开机自启：Windows 走 HKCU\...\Run 注册表（**不引入 auto-launch crate**：
+/// 一行注册表键就是它的全部实现，多一个依赖只为省 20 行不值）。
+/// 值 = 当前 exe 全路径（`current_exe`）——dev 下是 target/debug 里的 exe，
+/// 自启后指向开发构建属预期（用户从 dev 开的自启，就该由 dev 的 exe 承担）。
+#[tauri::command]
+async fn set_autostart(enabled: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::System::Registry::{
+            RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
+            KEY_SET_VALUE, REG_SZ,
+        };
+        const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+        const VALUE_NAME: &str = "FntvPlus";
+        let to_wide = |s: &str| -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() };
+
+        let subkey = to_wide(RUN_KEY);
+        let mut hkey: HKEY = std::ptr::null_mut();
+        let rc = unsafe {
+            RegCreateKeyExW(
+                HKEY_CURRENT_USER,
+                subkey.as_ptr(),
+                0,
+                std::ptr::null_mut(),
+                0, // REG_OPTION_NON_VOLATILE
+                KEY_SET_VALUE,
+                std::ptr::null_mut(),
+                &mut hkey,
+                std::ptr::null_mut(),
+            )
+        };
+        if rc != 0 {
+            return Err(format!("打开注册表 Run 键失败（错误码 {rc}）"));
+        }
+        let vname = to_wide(VALUE_NAME);
+        let result = if enabled {
+            let exe = std::env::current_exe()
+                .map_err(|e| format!("取当前程序路径失败：{e}"))?
+                .to_string_lossy()
+                .to_string();
+            // 带引号：路径里有空格时（Program Files）不带引号会被系统截断成错误的命令
+            let quoted = format!("\"{exe}\"");
+            let data = to_wide(&quoted);
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    data.as_ptr() as *const u8,
+                    data.len() * std::mem::size_of::<u16>(),
+                )
+            };
+            let rc = unsafe {
+                RegSetValueExW(hkey, vname.as_ptr(), 0, REG_SZ, bytes.as_ptr(), bytes.len() as u32)
+            };
+            if rc != 0 {
+                Err(format!("写自启注册表失败（错误码 {rc}）"))
+            } else {
+                libmpv::trace(&format!("[lc-1436] 开机自启已开启 → {quoted}"));
+                Ok(())
+            }
+        } else {
+            // 删不存在的值会返回 ERROR_FILE_NOT_FOUND(2)：那就是"本来没开"，当成功处理
+            let rc = unsafe { RegDeleteValueW(hkey, vname.as_ptr()) };
+            unsafe { RegCloseKey(hkey) };
+            if rc != 0 && rc != 2 {
+                return Err(format!("删自启注册表失败（错误码 {rc}）"));
+            }
+            libmpv::trace("[lc-1436] 开机自启已关闭");
+            return Ok(());
+        };
+        unsafe { RegCloseKey(hkey) };
+        result
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = enabled;
+        Ok(()) // 非 Windows 暂不实现（本软件当前只发 Windows）
+    }
+}
+
+/// [lc-1436] 诊断：在文件管理器里打开日志/缓存/数据目录。
+/// kind 白名单三选一 —— 不接受任意路径（那等于给前端一个"打开任意位置"的能力，没必要）。
+#[tauri::command]
+async fn open_path(app: AppHandle, kind: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let path: std::path::PathBuf = match kind.as_str() {
+        "log" => {
+            let p = libmpv::log_path();
+            if !p.exists() {
+                return Err("诊断日志尚未生成（本进程还没写过日志）".into());
+            }
+            p
+        }
+        "cache" => {
+            let p = disk_cache::root_path().ok_or("缓存目录尚未初始化")?;
+            if !p.exists() {
+                return Err("缓存目录尚未生成".into());
+            }
+            p
+        }
+        "app" => {
+            use tauri::Manager;
+            app.path()
+                .app_data_dir()
+                .map_err(|e| format!("无法解析数据目录：{e}"))?
+        }
+        other => return Err(format!("未知的打开目标：{other}（只允许 log/cache/app）")),
+    };
+    app.opener()
+        .open_path(path.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| format!("打开目录失败：{e}"))
+}
+
+/// [lc-1435] 关闭询问的**回答**：exit_mode == "ask" 时窗口拦截了关闭并 emit `close-ask`，
+/// 前端弹确认框后回调这里。exit 走 app.exit(0) —— 与托盘退出同一条路，
+/// 保证 RunEvent::Exit 的退场清理（杀 mpv/代理子进程）一定会跑到。
+#[tauri::command]
+async fn resolve_close(app: AppHandle, action: String) -> Result<(), String> {
+    match action.as_str() {
+        "exit" => {
+            libmpv::trace("[lc-1435] 用户选择退出程序");
+            app.exit(0);
+            Ok(())
+        }
+        "hide" => {
+            use tauri::Manager;
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.hide();
+            }
+            libmpv::trace("[lc-1435] 用户选择最小化到托盘");
+            Ok(())
+        }
+        other => Err(format!("未知的关闭动作：{other}（只允许 exit/hide）")),
+    }
+}
+
 // ───────────────────────── 入口 ─────────────────────────
+
+/// [lc-1435] 系统托盘：左键点击显示主窗口；右键菜单「显示主窗口 / 退出」。
+/// 为什么要托盘：设置面板的「关闭按钮 → 最小化到托盘」需要一个能回来的入口，
+/// 没有托盘的话隐藏窗口 = 应用"消失"（只能去任务管理器杀进程）。
+/// 退出菜单项直接 app.exit(0) —— 与 resolve_close("exit") 同一条路，退场清理必然执行。
+fn install_tray(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    use tauri::Manager;
+
+    let show_i = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
+    let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+    let mut builder = TrayIconBuilder::with_id("main-tray")
+        .menu(&menu)
+        // 左键单击不弹菜单（Windows 习惯：左键=显示窗口，右键=菜单）
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, ev| match ev.id().as_ref() {
+            "show" => {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.unminimize();
+                    let _ = w.set_focus();
+                }
+            }
+            "quit" => {
+                libmpv::trace("[lc-1435] 托盘菜单 → 退出");
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, ev| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = ev
+            {
+                let app = tray.app_handle();
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.unminimize();
+                    let _ = w.set_focus();
+                }
+            }
+        });
+    // 图标：用应用自身图标（tauri.conf.json 的 bundle icon）；取不到就不带图标建托盘
+    // （Windows 上没图标的托盘项仍然可点，只是没有图案）
+    if let Some(icon) = app.default_window_icon().cloned() {
+        builder = builder.icon(icon);
+    }
+    builder.build(app)?;
+    libmpv::trace("[lc-1435] 系统托盘已创建");
+    Ok(())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 // ───────────────────────── 窗口视觉：SWCA 动态模糊 + OS 级圆角 ─────────────────────────
@@ -829,7 +1092,36 @@ pub fn run() {
                     }
                 });
             }
+            install_tray(app.handle())?;
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // [lc-1435] 关闭按钮三态：exit 放行 / tray 隐藏 / ask 交给前端弹框。
+            // 为什么用 on_window_event 而不是前端拦：WebView 里拦不住原生关闭按钮
+            // （那是 OS 的窗口消息，不经过 JS），必须在这一层拦。
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                use tauri::Manager;
+                let app = window.app_handle();
+                let mode = tauri::async_runtime::block_on(async {
+                    app.state::<AppState>().config.read().await.exit_mode.clone()
+                });
+                match mode.as_str() {
+                    "exit" => {
+                        libmpv::trace("[lc-1435] CloseRequested → exit（直接退出）");
+                    }
+                    "tray" => {
+                        api.prevent_close();
+                        let _ = window.hide();
+                        libmpv::trace("[lc-1435] CloseRequested → tray（隐藏到托盘）");
+                    }
+                    _ => {
+                        // "ask"（含非法值兜底）：拦住并问前端；前端回 resolve_close 决定去向
+                        api.prevent_close();
+                        let _ = app.emit("close-ask", ());
+                        libmpv::trace("[lc-1435] CloseRequested → ask（已 emit close-ask）");
+                    }
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             set_acrylic_tint,
@@ -856,6 +1148,15 @@ pub fn run() {
             bgm::bgm_calendar,
             get_config,
             save_config,
+            // [lc-1434] 设置面板（通用/外观）：白名单子集读写 + 启动页查询
+            get_settings,
+            set_settings,
+            get_launch_page,
+            // [lc-1436] 诊断：打开日志/缓存/数据目录；开机自启
+            open_path,
+            set_autostart,
+            // [lc-1435] 关闭询问的回答（exit → 走 RunEvent::Exit 退场清理）
+            resolve_close,
             // 缓存面板三要素：占用 / 上限 / 清理
             cache_stats,
             cache_set_limit,

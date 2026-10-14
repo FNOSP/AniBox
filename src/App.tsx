@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode, type UIEvent 
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { IcoHome, IcoStar, IcoGrid, IcoMovie, IcoTv, IcoLive, IcoFolder } from "./icons";
 // [lc-123-rev8] 图标统一用 Lucide（ISC 许可，https://lucide.dev）：stroke=currentColor、24 viewBox，
 // 按需导入 tree-shake；仓库内不再保留手拷贝的 SVG path。
@@ -337,6 +338,23 @@ function tmdbImg(path: string, size: string): string {
    缓存：按图片 URL 记忆（同一张只采一次；换片才重采）。
    只对首页 hero 采样：发现/库/详情页顶栏底下没有满幅图（是应用底色），用默认色（见 App.css）。 */
 type ChromeTone = "auto" | "dark" | "light" | "fallback";
+/** [lc-1437] 设置面板的项（Rust 侧 `get_settings`/`set_settings` 的白名单子集）。
+ *  放在 App 顶层持有：性能模式（html.perf 类）与轮播 Logo（CarouselView 入参）
+ *  都要在面板之外生效，面板只是它们的编辑界面。 */
+type AppSettings = {
+  exitMode: "exit" | "tray" | "ask";
+  perfMode: boolean;
+  carouselLogo: boolean;
+  launchPage: "home" | "continue";
+  autoLogin: boolean;
+};
+const DEFAULT_SETTINGS: AppSettings = {
+  exitMode: "ask",
+  perfMode: false,
+  carouselLogo: true,
+  launchPage: "home",
+  autoLogin: false,
+};
 /** 平均亮度阈值（0..255）：> 阈值 = 亮底 → 深色 chrome */
 const CHROME_LUMA_THRESHOLD = 150;
 /** 只取图片顶部这一条（顶栏 40px 在满幅 hero 上覆盖的大致比例） */
@@ -1241,6 +1259,8 @@ function HomeView({
   carousel,
   carouselBds,
   carouselLogos,
+  carouselLogoOn,
+  launchPage,
   libRows,
   onOpenLib,
   onPlay,
@@ -1254,6 +1274,11 @@ function HomeView({
   carousel: MediaItem[];
   carouselBds: Record<string, string>;
   carouselLogos: Record<string, string>;
+  /** [lc-1438] 「轮播透明标题」开关：关时传空表让 CarouselView 走文字标题。
+   *  不在这里过滤数据（数据留着，下次打开开关无需重拉）。 */
+  carouselLogoOn: boolean;
+  /** [lc-1439] 启动页设置：`"continue"` = 首页加载后自动滚到「继续观看」 */
+  launchPage: "home" | "continue";
   libRows: { lib: Lib; items: MediaItem[] }[];
   onOpenLib: (lib: Lib) => void;
   onPlay: (t: PlayTarget) => void;
@@ -1263,6 +1288,24 @@ function HomeView({
 }) {
   const [manageOpen, setManageOpen] = useState(false);
   const shownLibs = libs.filter((l) => !hiddenLibs.includes(l.guid));
+  // [lc-1439] 启动页 = 继续观看：等「继续观看」区块渲染出来后把它滚到视口顶部。
+  //   用 ref + scrollIntoView 而不是算像素：hero 是 100vh，偏移量随窗口高度变，
+  //   算像素就得维护"hero 高度 + 媒体库条高度"这套常量（改版式必忘）。
+  //   只在**首次**挂载后执行一次（ref 清空），否则用户手动滚回顶部又会被拽下去。
+  const homeRef = useRef<HTMLElement | null>(null);
+  const launchScrolled = useRef(false);
+  useEffect(() => {
+    if (launchScrolled.current || launchPage !== "continue") return;
+    if (!continueList.length) return; // 没有观看记录就没得滚（保持首页顶部）
+    launchScrolled.current = true;
+    // 下一帧再滚：等这一轮 DOM 提交完（区块可能刚随 continueList 出现）
+    const t = window.setTimeout(() => {
+      const box = homeRef.current;
+      const sec = box?.querySelector<HTMLElement>(".home-sec");
+      if (box && sec) box.scrollTo({ top: sec.offsetTop, behavior: "auto" });
+    }, 60);
+    return () => window.clearTimeout(t);
+  }, [launchPage, continueList.length]);
 
   // [lc-1431] **首页左缘对齐自检**（仅 dev）：启动后量四个关键元素的实际左边缘，
   //   写进诊断日志（dev_log → libmpv::trace）。
@@ -1295,13 +1338,13 @@ function HomeView({
   }, []);
 
   return (
-    <main className="content home-full">
+    <main className="content home-full" ref={homeRef}>
       {/* 全屏 hero 轮播 + 底部媒体库条（Emby 布局） */}
       <div className="hero-zone">
         <CarouselView
           items={carousel}
           bds={carouselBds}
-          logos={carouselLogos}
+          logos={carouselLogoOn ? carouselLogos : {}}
           onPlay={onPlay}
           onDetail={onOpenItem}
           onTone={onHeroTone}
@@ -4491,12 +4534,33 @@ function Sidebar({
  *  内部 .set-* 全部走既有 CSS 变量（同一套深色亚克力玻璃、字体与圆角），不引入新配色。
  *  三要素对应 Rust 的三条命令：cache_stats / cache_set_limit / cache_clear
  *  （清理**同时清内存层与磁盘层**，不会出现"清了盘还留着旧图"）。 */
-function SettingsPanel({ onClose }: { onClose: () => void }) {
+/** [lc-1437] 设置面板：通用 / 外观 / 账号 / 缓存 / 诊断 / 关于 六组。
+ *  与 Rust 侧的分工：`get_settings`/`set_settings` 是**白名单子集**（不含密码/token），
+ *  缓存那三条命令是独立的一小组；诊断三按钮走 `open_path`。 */
+function SettingsPanel({
+  onClose,
+  onLogout,
+  settings,
+  onSettings,
+}: {
+  onClose: () => void;
+  /** 退出登录：由 App 负责清会话与切页（面板只发意图，不自己改全局状态） */
+  onLogout: () => void;
+  /** 设置项（App 持有：轮播 Logo / 性能模式都要在面板外生效） */
+  settings: AppSettings;
+  onSettings: (patch: Partial<AppSettings>) => void;
+}) {
   type Stats = { bytes: number; files: number; limitMb: number; dir: string };
   const [stats, setStats] = useState<Stats | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   const [ver, setVer] = useState("0.1.0");
+  const [user, setUser] = useState("");
+  const [server, setServer] = useState("");
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [autostart, setAutostart] = useState(
+    () => localStorage.getItem("fntv-autostart") === "1",
+  );
 
   const refresh = useCallback(() => {
     invoke<Stats>("cache_stats")
@@ -4507,6 +4571,12 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     refresh();
     getVersion().then(setVer).catch(() => {});
+    invoke<Config>("get_config")
+      .then((c) => {
+        setUser(c.username);
+        setServer(c.server);
+      })
+      .catch(() => {});
     const h = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
@@ -4542,6 +4612,34 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
     }
   };
 
+  /** [lc-1437] 自启开关：真值在系统注册表里，前端只在 localStorage 记一份 UI 状态。
+   *  写入失败（权限/杀软拦截）时**回滚开关**并把错误显示出来 —— 不能出现
+   *  "界面显示已开启、实际没写进注册表"这种静默不一致。 */
+  const toggleAutostart = async () => {
+    const next = !autostart;
+    setBusy(true);
+    setNote("");
+    try {
+      await invoke("set_autostart", { enabled: next });
+      setAutostart(next);
+      localStorage.setItem("fntv-autostart", next ? "1" : "0");
+      setNote(next ? "已设为开机自启" : "已取消开机自启");
+    } catch (e) {
+      setNote(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openPath = async (kind: "log" | "cache" | "app") => {
+    setNote("");
+    try {
+      await invoke("open_path", { kind });
+    } catch (e) {
+      setNote(String(e));
+    }
+  };
+
   const limitMb = stats?.limitMb ?? 0;
   // 下拉里没有的当前值（手改过 config.json）也要显示出来，别让 UI 与真实配置不一致
   const known = [0, 1024, 2048, 5120, 10240];
@@ -4562,6 +4660,120 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
           </div>
         </header>
         <div className="ddet-body set-body">
+          {/* ── 通用 ── */}
+          <h3 className="ddet-h3">通用</h3>
+          <div className="set-row">
+            <div>
+              <span className="set-k">启动页</span>
+              <div className="set-desc">登录成功后进入的页面</div>
+            </div>
+            <select
+              className="set-select"
+              value={settings.launchPage}
+              disabled={busy}
+              onChange={(e) => onSettings({ launchPage: e.target.value as AppSettings["launchPage"] })}
+            >
+              <option value="home">首页</option>
+              <option value="continue">继续观看</option>
+            </select>
+          </div>
+          <div className="set-row">
+            <div>
+              <span className="set-k">开机自启</span>
+              <div className="set-desc">登录系统后自动启动本程序</div>
+            </div>
+            <button
+              type="button"
+              className={`set-sw${autostart ? " on" : ""}`}
+              disabled={busy}
+              aria-pressed={autostart}
+              aria-label="开机自启"
+              onClick={toggleAutostart}
+            />
+          </div>
+          <div className="set-row">
+            <div>
+              <span className="set-k">关闭按钮</span>
+              <div className="set-desc">点窗口右上角关闭时的行为</div>
+            </div>
+            <select
+              className="set-select"
+              value={settings.exitMode}
+              disabled={busy}
+              onChange={(e) => onSettings({ exitMode: e.target.value as AppSettings["exitMode"] })}
+            >
+              <option value="ask">每次询问</option>
+              <option value="tray">最小化到托盘</option>
+              <option value="exit">直接退出</option>
+            </select>
+          </div>
+
+          {/* ── 外观 ── */}
+          <h3 className="ddet-h3">外观</h3>
+          <div className="set-row">
+            <div>
+              <span className="set-k">性能模式</span>
+              <div className="set-desc">关闭动画与磨砂效果，低配机更流畅</div>
+            </div>
+            <button
+              type="button"
+              className={`set-sw${settings.perfMode ? " on" : ""}`}
+              aria-pressed={settings.perfMode}
+              aria-label="性能模式"
+              onClick={() => onSettings({ perfMode: !settings.perfMode })}
+            />
+          </div>
+          <div className="set-row">
+            <div>
+              <span className="set-k">轮播透明标题</span>
+              <div className="set-desc">首页轮播用影片透明 Logo 代替文字标题（无 Logo 时自动用文字）</div>
+            </div>
+            <button
+              type="button"
+              className={`set-sw${settings.carouselLogo ? " on" : ""}`}
+              aria-pressed={settings.carouselLogo}
+              aria-label="轮播透明标题"
+              onClick={() => onSettings({ carouselLogo: !settings.carouselLogo })}
+            />
+          </div>
+
+          {/* ── 账号 ── */}
+          <h3 className="ddet-h3">账号</h3>
+          <div className="set-row">
+            <span className="set-k">当前账号</span>
+            <span className="set-v">{user || "—"}</span>
+          </div>
+          <div className="set-row">
+            <span className="set-k">服务器</span>
+            <span className="set-v">{server || "—"}</span>
+          </div>
+          <div className="set-row">
+            <span className="set-k">退出登录</span>
+            {confirmLogout ? (
+              <div className="set-confirm">
+                <span className="set-confirm-q">退出后需重新登录，确定？</span>
+                <button className="set-btn" disabled={busy} onClick={() => setConfirmLogout(false)}>
+                  取消
+                </button>
+                <button
+                  className="set-btn danger"
+                  disabled={busy}
+                  onClick={() => {
+                    setConfirmLogout(false);
+                    onLogout();
+                  }}
+                >
+                  确定退出
+                </button>
+              </div>
+            ) : (
+              <button className="set-btn danger" onClick={() => setConfirmLogout(true)}>
+                退出登录
+              </button>
+            )}
+          </div>
+
+          {/* ── 缓存 ── */}
           <h3 className="ddet-h3">缓存</h3>
           <div className="set-row">
             <span className="set-k">占用上限</span>
@@ -4600,6 +4812,28 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
             时间自动淘汰；清理会同时清掉内存与磁盘。
           </div>
 
+          {/* ── 诊断 ── */}
+          <h3 className="ddet-h3">诊断</h3>
+          <div className="set-row">
+            <span className="set-k">打开目录</span>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <button className="set-btn" onClick={() => openPath("log")}>
+                诊断日志
+              </button>
+              <button className="set-btn" onClick={() => openPath("cache")}>
+                缓存目录
+              </button>
+              <button className="set-btn" onClick={() => openPath("app")}>
+                数据目录
+              </button>
+            </div>
+          </div>
+          <div className="set-hint">
+            诊断日志在系统临时目录（fntv-libmpv.log），记录了镜像请求、图片缓存命中与播放链路；
+            反馈问题时把最后一段贴出来即可。
+          </div>
+
+          {/* ── 关于 ── */}
           <h3 className="ddet-h3">关于</h3>
           <div className="set-attrib">
             <span>This product uses the TMDB API but is not endorsed or certified by TMDB.</span>
@@ -4671,6 +4905,76 @@ function App() {
     // SWCA 模糊染色随主题切换（浅色近白/深色近黑）
     invoke("set_acrylic_tint", { light: theme === "light" }).catch(() => {});
   }, [theme]);
+
+  /* ── [lc-1437] 设置项（性能模式 / 轮播 Logo / 退出行为 / 启动页）──
+     状态放 App 顶层：前两项要在面板之外生效（html.perf 类、CarouselView 入参），
+     后两项是"下一次动作"才生效的（关闭按钮、登录后落点）。
+     真值在 Rust 的 config.json，这里只是它的镜像 + 一份 localStorage 兜底：
+     **启动瞬间就用本地值**（不等 IPC 回来，避免性能模式用户先看到一帧动画），
+     IPC 回来后再以配置为准校正一次。 */
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    let cached: Partial<AppSettings> = {};
+    try {
+      const raw = localStorage.getItem("fntv-settings");
+      if (raw) cached = JSON.parse(raw) as Partial<AppSettings>;
+    } catch {
+      /* 损坏就当没有 */
+    }
+    return { ...DEFAULT_SETTINGS, ...cached };
+  });
+  // 性能模式：html.perf 类驱动全局降级（CSS 见 App.css [lc-1437]）
+  useEffect(() => {
+    document.documentElement.classList.toggle("perf", settings.perfMode);
+  }, [settings.perfMode]);
+  // 启动时拉一次真实配置（校正本地镜像；失败就继续用本地值）
+  useEffect(() => {
+    invoke<AppSettings>("get_settings")
+      .then((s) => {
+        if (!s) return;
+        setSettings((prev) => ({ ...prev, ...s }));
+        try {
+          localStorage.setItem("fntv-settings", JSON.stringify(s));
+        } catch {
+          /* ignore */
+        }
+      })
+      .catch(() => {});
+  }, []);
+  /** 改设置：**先本地生效**（开关点下去立刻有反应），再落盘；落盘失败则重拉真实配置覆盖回来。 */
+  const patchSettings = useCallback(async (patch: Partial<AppSettings>) => {
+    setSettings((prev) => ({ ...prev, ...patch }));
+    try {
+      const saved = await invoke<AppSettings>("set_settings", { arg: patch });
+      setSettings((prev) => ({ ...prev, ...saved }));
+      try {
+        localStorage.setItem("fntv-settings", JSON.stringify(saved));
+      } catch {
+        /* ignore */
+      }
+    } catch {
+      // 回滚：不能让界面停在一个"没写进配置"的值上。重拉最稳
+      // （逐个键反推"改之前"容易出错，且 Rust 侧可能只拒了其中一个键）
+      invoke<AppSettings>("get_settings")
+        .then((s) => s && setSettings((prev) => ({ ...prev, ...s })))
+        .catch(() => {});
+    }
+  }, []);
+
+  /** [lc-1439] 关闭询问：原生关闭按钮被 Rust 拦下后 emit close-ask，这里弹框。
+   *  仅桌面端有该事件（Web 预览下 listen 不可用 → 静默跳过）。 */
+  const [closeAsk, setCloseAsk] = useState(false);
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    listen("close-ask", () => setCloseAsk(true))
+      .then((f) => {
+        un = f;
+      })
+      .catch(() => {
+        /* 非 Tauri 环境（如 vite preview）：没有该事件 */
+      });
+    return () => un?.();
+  }, []);
+
   // 首页加载中（首次/手动刷新）：无数据时渲染骨架屏；已有数据时静默刷新不闪骨架
   const [homeLoading, setHomeLoading] = useState(false);
   // [lc-123-rev4] 顶栏 chrome 色（首页 hero 亮度采样结果；CarouselView 上报）。
@@ -4894,7 +5198,8 @@ function App() {
   const toggleTheme = useCallback(
     (e: React.MouseEvent<HTMLButtonElement>) => {
       const next = theme === "dark" ? "light" : "dark";
-      if (prefersReducedMotion()) {
+      // [lc-1437] 性能模式/少动效偏好：跳过扩散遮罩（那是一次全屏重绘，正是性能模式要省的）
+      if (prefersReducedMotion() || settings.perfMode) {
         setVeil(null);
         setTheme(next);
         return;
@@ -4904,7 +5209,7 @@ function App() {
       setTheme(next);
       setVeil({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
     },
-    [theme],
+    [theme, settings.perfMode],
   );
   // [lc-1406] 遮罩移除的**双保险**：
   //   ① 正常路径：animationend（动画结束）
@@ -5111,6 +5416,8 @@ function App() {
                 carousel={carousel}
                 carouselBds={carouselBds}
                 carouselLogos={carouselLogos}
+                carouselLogoOn={settings.carouselLogo}
+                launchPage={settings.launchPage}
                 libRows={libRows}
                 hiddenLibs={hiddenLibs}
                 onToggleHiddenLib={toggleHiddenLib}
@@ -5232,7 +5539,64 @@ function App() {
         onToggleTheme={toggleTheme}
       />
       {err && view !== "login" && <div className="err global-err">{err}</div>}
-      {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <SettingsPanel
+          onClose={() => setSettingsOpen(false)}
+          settings={settings}
+          onSettings={(patch) => void patchSettings(patch)}
+          onLogout={() => {
+            // [lc-1437] 退出登录：清会话 + 清首页快照（那是上一个账号的数据，
+            // 留着会让下一个账号先看到别人的片单）+ 回登录页
+            setSettingsOpen(false);
+            invoke("logout").catch(() => {});
+            try {
+              localStorage.removeItem("fntv-home-cache");
+            } catch {
+              /* ignore */
+            }
+            setCarousel([]);
+            setCarouselBds({});
+            setCarouselLogos({});
+            setLibRows([]);
+            setLibs([]);
+            setContinueList([]);
+            setView("login");
+          }}
+        />
+      )}
+      {/* [lc-1439] 关闭询问框：原生关闭按钮被 Rust 拦下后弹（三选一）。
+          用 fixed 浮层而非复用设置面板 —— 它必须在任何页面状态下都能弹出来。 */}
+      {closeAsk && (
+        <div className="close-ask" onClick={() => setCloseAsk(false)}>
+          <div className="close-ask-box" onClick={(e) => e.stopPropagation()}>
+            <h3>关闭窗口</h3>
+            <p>要退出程序，还是最小化到系统托盘继续在后台运行？</p>
+            <div className="close-ask-acts">
+              <button className="set-btn" onClick={() => setCloseAsk(false)}>
+                取消
+              </button>
+              <button
+                className="set-btn"
+                onClick={() => {
+                  setCloseAsk(false);
+                  invoke("resolve_close", { action: "hide" }).catch(() => {});
+                }}
+              >
+                最小化到托盘
+              </button>
+              <button
+                className="set-btn danger"
+                onClick={() => {
+                  setCloseAsk(false);
+                  invoke("resolve_close", { action: "exit" }).catch(() => {});
+                }}
+              >
+                退出程序
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {body}
     </div>
   );

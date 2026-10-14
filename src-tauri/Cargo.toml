@@ -16,7 +16,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# [lc-1435] tray-icon：系统托盘（隐藏到托盘 / 托盘退出）
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -29,7 +30,9 @@ urlencoding = "2"
 # （与 Fntv-Plus/bgm-mirror/worker.js verify 对齐；两 crate 版本已在 Cargo.lock 中，无新增传递依赖）
 sha2 = "0.10"
 base64 = "0.22"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_UI_Input_KeyboardAndMouse"] }
+# [lc-1436] Win32_System_Registry：开机自启写 HKCU\...\Run（不加 Win32_Security 则 RegCreateKeyExW 的
+# SECURITY_ATTRIBUTES 参数类型不存在，编译不过）
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Registry", "Win32_Security"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

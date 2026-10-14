@@ -4076,6 +4076,131 @@ html.dark .ditem-tag {
   color: var(--text-2);
   font-size: 12.5px;
 }
+/* ── [lc-1437] 设置面板：开关控件 + 分组小标题 + 危险按钮 ──
+   开关是自绘的（不用原生 checkbox）：项目里所有控件都是自绘风格，
+   原生 checkbox 在深浅两套主题下外观不可控（且 Windows 上是系统蓝色方块，与主题冲突）。 */
+.set-sw {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--hover);
+  cursor: pointer;
+  padding: 0;
+  transition: background-color 0.18s ease, border-color 0.18s ease;
+}
+.set-sw::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: transform 0.18s cubic-bezier(0.32, 0.72, 0, 1), background-color 0.18s ease;
+}
+.set-sw.on {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.set-sw.on::after {
+  transform: translateX(18px);
+  background: var(--accent);
+}
+.set-sw:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.set-desc {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  margin-top: 2px;
+}
+/* 危险动作（退出登录）：红色描边，与普通按钮区分 */
+.set-btn.danger {
+  color: #e5484d;
+  border-color: rgba(229, 72, 77, 0.45);
+}
+.set-btn.danger:hover:not(:disabled) {
+  background: rgba(229, 72, 77, 0.1);
+}
+/* 行内确认（退出登录 / 关闭询问共用）：替换该行内容，不弹二级弹窗 */
+.set-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.set-confirm-q {
+  font-size: 12.5px;
+  color: var(--text-2);
+  margin-right: auto;
+}
+/* 关闭询问的浮层（原生关闭按钮触发，独立于设置面板） */
+.close-ask {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 10, 16, 0.42);
+  animation: fadeIn 0.16s ease both;
+}
+.close-ask-box {
+  width: min(360px, 88vw);
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-card);
+  padding: 18px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.close-ask-box h3 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-strong);
+}
+.close-ask-box p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.close-ask-acts {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+/* ── [lc-1437] 性能模式：全局降级（关动画 + 关磨砂）──
+   磨砂（backdrop-filter）是这类界面的最大开销：它是每帧对背后内容做一次高斯模糊，
+   低配机上滚动直接掉帧。动画归零是为了"点了就有反馈"而不是"等它演完"。
+   保留 transition-property 本身（只把时长压到 0），这样视觉状态仍会更新、不会卡在中间态。 */
+.perf *,
+.perf *::before,
+.perf *::after {
+  transition-duration: 0s !important;
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* 磨砂去掉后，原本靠模糊掩盖的"半透明面板"会显得脏：把几处关键面板补成实底 */
+.perf .sidebar,
+.perf .set-card,
+.perf .ddet,
+.perf .navbar,
+.perf .lsc-pop {
+  background: var(--panel) !important;
+}
 /* ══════════════════════════════════════════════════════════════════════════════
    [lc-1401] 详情页新版式（**用户定稿设计稿**）：
      左列：竖版封面 + 标题信息 → 标签框（Bangumi tags）→ 简介框 → 四标签页 → 该页内容

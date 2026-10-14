@@ -5438,7 +5438,7 @@ html.dark .ditem-tag {
 .webrs {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   margin-top: 12px;
   padding: 10px 0 8px;
   border-top: 1px solid var(--line);
@@ -5449,7 +5449,7 @@ html.dark .ditem-tag {
 .webrs-bar {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
 }
 .webrs-bar input,
 .webrs-bar select,
@@ -5461,7 +5461,7 @@ html.dark .ditem-tag {
   min-height: 32px;
   margin: 0;
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: 8px;
   font-size: 12.5px;
   font-family: inherit;
 }
@@ -5502,7 +5502,6 @@ html.dark .ditem-tag {
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 .webrs-bar .webrs-go {
-  padding: 0 20px;
   color: var(--accent);
   font-weight: 600;
 }
@@ -5517,9 +5516,8 @@ html.dark .ditem-tag {
   background: var(--glass-btn-bg);
 }
 .webrs-bar .webrs-gear {
-  width: 36px;
+  width: 34px;
   padding: 0;
-  margin-left: 4px;
   font-size: 14px;
   color: var(--text-2);
 }
@@ -5545,6 +5543,8 @@ html.dark .ditem-tag {
 }
 /* [lc-1508] 引导提示（非错误）：中性淡底，别用红色吓人 */
 .webrs-hint {
+  /* [lc-1511] 搜索栏与提示框明确拉开（用户反馈"两个框挨边了"） */
+  margin-top: 6px;
   font-size: 12px;
   color: var(--text-2);
   background: var(--hover);

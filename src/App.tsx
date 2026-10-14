@@ -3918,7 +3918,9 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
               <>
                 <div className="tmdb-sec">
                   <div className="dsk dsk-sec-t" />
-                  <div className="dvstill-row">
+                  {/* [lc-1505] 骨架容器用专用类：.dvstill-row 本身没有 flex（真实剧照行的
+                      横排布局由 ScrollRow 提供），裸 div 会把骨架块竖着堆成一列 */}
+                  <div className="dsk-still-row">
                     {[0, 1, 2, 3].map((i) => (
                       <div key={i} className="dsk dsk-dstill" />
                     ))}

@@ -5921,3 +5921,14 @@ html.dark .ditem-tag {
   opacity: 0.55;
   cursor: default;
 }
+
+/* ── [lc-1505] 详情信息页剧照骨架行：横排容器（.dvstill-row 本身无 flex，
+   真实行布局由 ScrollRow 提供，骨架是静态 div 需要自己横排）── */
+.dsk-still-row {
+  display: flex;
+  gap: 12px;
+  overflow: hidden;
+}
+.dsk-still-row .dsk-dstill {
+  flex: 0 0 124px;
+}

@@ -1071,7 +1071,9 @@ pub async fn webrs_chapters(app: AppHandle, rule_name: String, url: String) -> R
     let root = vec![doc.tree.root().id()];
     let road_nodes = eval_nodes(&doc, &root, &rule.chapter_roads)?;
     if road_nodes.is_empty() {
-        return Err("没解析到播放线路（规则 chapterRoads 不匹配？站点改版了？）".into());
+        return Err(
+            "没解析到播放线路 —— 该站选集很可能由脚本动态加载（如 baimao），HTTP 拿不到，换个源试试".into(),
+        );
     }
     let mut roads: Vec<Value> = Vec::new();
     for (ri, road) in road_nodes.into_iter().enumerate() {

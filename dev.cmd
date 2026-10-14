@@ -126,8 +126,8 @@ echo.
 echo [dev] tauri dev exited with code %errorlevel%.
 echo.
 echo ======================== last 60 lines: anibox.log ========================
-rem 用 pwsh 7 + 显式 -Encoding utf8：日志是 UTF-8，而 powershell 5.1 的 Get-Content
-rem 默认按 ANSI(GBK 936) 读 → 中文全乱码。pwsh 也是本仓库约定的唯一 PowerShell。
+rem Use pwsh 7 + explicit -Encoding utf8: the logs are UTF-8, and powershell 5.1's Get-Content
+rem reads them as ANSI (GBK codepage 936) -> garbled text. pwsh is this repo's only PowerShell.
 pwsh -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -LiteralPath $env:TEMP\anibox.log -Tail 60 -Encoding utf8 -ErrorAction SilentlyContinue"
 echo ================================================================================
 echo ======================== last 20 lines: anibox-mpv.log =====================

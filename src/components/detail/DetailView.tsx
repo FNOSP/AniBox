@@ -2,16 +2,16 @@
 import { type UIEvent, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { createPortal } from "react-dom";
-import { Check as IcoCheckL, Clapperboard as IcoClapL, Film as IcoFilmL, MessageSquare as IcoMsgL, Play as IcoPlayL, Star as IcoStarL, X as IcoXL } from "lucide-react";
-import { AvatarSafe } from "../common/AvatarSafe";
-import { ScrollRow } from "../common/ScrollRow";
-import { BgmCastRow } from "./BgmCastRow";
-import { BgmListSkeleton } from "./BgmListSkeleton";
+import { Check as IcoCheckL, Clapperboard as IcoClapL, Film as IcoFilmL, Play as IcoPlayL, X as IcoXL } from "lucide-react";
 import { DetailSkeleton } from "./DetailSkeleton";
-import { TmdbExtra } from "./TmdbExtra";
-import { BGM_PAGE, CHAR_TYPE_LABEL, TAB_LABEL, bgmList, fnosCast, pickGenres } from "./helpers";
+import { BGM_PAGE, TAB_LABEL, bgmList, fnosCast, pickGenres } from "./helpers";
+import { OverviewTab } from "./tabs/OverviewTab";
+import { RelatedTab } from "./tabs/RelatedTab";
+import { CastTab } from "./tabs/CastTab";
+import { ReviewsTab } from "./tabs/ReviewsTab";
+import { CommentsTab } from "./tabs/CommentsTab";
 import { WebrsPanel } from "../webrs/WebrsPanel";
-import { fmtBgmTime, fmtDur, pick } from "../../lib/format";
+import { fmtDur, pick } from "../../lib/format";
 import { bgmImg, imgUrl, pickLargestImg, tmdbImg } from "../../lib/images";
 import { prefersReducedMotion } from "../../lib/motion";
 import { BgmCharacter, BgmComment, BgmEpisodeRow, BgmMatch, BgmPerson, BgmRelated, BgmReview, BgmTag, Episode, MediaItem, Season, TmdbCreditPerson, TmdbCredits } from "../../types";
@@ -966,244 +966,50 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
           {/* 标签页内容 */}
           <div className={`dbody dv2-body${tabAnim ? " view-in" : ""}`}>
         {activeTab === "overview" && (
-          /* [lc-1420] `.dpanel-single`：本页所有节包进**一个**容器、节间用浅横线分隔（用户要求）。
-             见 App.css 里同名类的注释（为什么不用 :has）。 */
-          <div className="dpanel dpanel-single">
-            {/* [lc-1405] 原本这里还有一节「类型标签」渲染 genres —— 与左列顶部那个标签框**同一份数据**，
-                重复；且用户已要求标签框直接取 BGM/TMDB，这一节就失去存在意义。故删除。 */}
-            {/* [lc-1404] 剧照 / 分级 / 在线观看 / 相似 / 预告 / 别名关键词：**全部由 TmdbExtra 一处渲染**。
-                此前这里是"自己一条 .dstill-strip + TmdbExtra 里再来一条 .tmdb-stills"，
-                结果是同一批 TMDB 剧照出现**两组**（用户反馈）。现在只留 TmdbExtra 那一份。 */}
-            {/* [lc-1420] 分块骨架：TMDB 详情也是一条独立请求，没回来之前这块是空的。
-                摆"剧照 + 文本行"的骨架（形状与 TmdbExtra 的首节一致），到位时无跳动。
-                [lc-1507] 骨架只在请求**进行中**（!tmdbDone）显示 —— 失败后不再永久转圈。 */}
-            {!tmdb && !tmdbDone && (
-              <>
-                <div className="tmdb-sec">
-                  <div className="dsk dsk-sec-t" />
-                  {/* [lc-1505] 骨架容器用专用类：.dvstill-row 本身没有 flex（真实剧照行的
-                      横排布局由 ScrollRow 提供），裸 div 会把骨架块竖着堆成一列 */}
-                  <div className="dsk-still-row">
-                    {[0, 1, 2, 3].map((i) => (
-                      <div key={i} className="dsk dsk-dstill" />
-                    ))}
-                  </div>
-                </div>
-                <div className="tmdb-sec">
-                  <div className="dsk dsk-sec-t" />
-                  <div className="dsk dsk-sline" />
-                  <div className="dsk dsk-sline short" />
-                </div>
-              </>
-            )}
-            {tmdb && <TmdbExtra tmdb={tmdb} onZoom={setZoom} />}
-            {/* [lc-1507] TMDB 失败后的兜底：有简介（Bangumi）就显示简介节，
-                什么都没有才显示空态 —— 原先骨架与「暂无详情信息」会同时出现 */}
-            {!tmdb && tmdbDone && (
-              <>
-                {overview && (
-                  <div className="tmdb-sec">
-                    <div className="tmdb-sec-t">简介</div>
-                    <p className="dfold">{overview}</p>
-                  </div>
-                )}
-                {!overview && genres.length === 0 && (
-                  <div className="empty">TMDB 与 Bangumi 都没有该条目的详情信息</div>
-                )}
-              </>
-            )}
-          </div>
+          <OverviewTab
+            genres={genres}
+            overview={overview}
+            setZoom={setZoom}
+            tmdb={tmdb}
+            tmdbDone={tmdbDone}
+          />
         )}
 
         {/* [lc-1401] 关联条目（Bangumi /subjects/{id}/subjects）：**按 relation 分组**渲染
             （上游没有分组，只有每条的 relation 词）。组序 = 上游首次出现顺序（热度序）。 */}
         {activeTab === "related" && (
-          <div className="dpanel">
-            {relatedBusy && !relatedErr && <BgmListSkeleton />}
-            {relatedErr && (
-              <div className="bgmc-state">
-                <div className="bgmc-state-t">关联条目加载失败</div>
-                <div className="bgmc-state-d">{relatedErr}</div>
-                <button className="bgmc-retry" onClick={retryRelated}>
-                  重试
-                </button>
-              </div>
-            )}
-            {!relatedBusy && !relatedErr && related.length === 0 && (
-              <div className="empty">暂无关联条目</div>
-            )}
-            {/* [lc-1411] 按用户定稿版式重做：**横向分栏**（一列 = 一个关系），
-                  列内竖向排卡片，列间竖分隔线；整条横向可翻页（复用 ScrollRow 的箭头）。
-                  与旧版的区别：旧版是"每个关系一节、节内网格"，改成一列一节后，
-                  同一屏能同时看到「续集 / 书籍 / 游戏 / 原声集 / 片头曲…」的对照关系。 */}
-            <ScrollRow boxClass="drel-cols">
-              {relatedGroups.map((g) => (
-                <section className="drel-col" key={g.relation}>
-                  <h3 className="drel-col-h">
-                    {g.relation}
-                    <span className="drel-col-n">{g.items.length}</span>
-                  </h3>
-                  {g.items.map((r, i) => {
-                    const cover = r.images?.large || r.images?.common || r.images?.medium || r.images?.grid || "";
-                    const nm = String(r.name_cn || r.name || "").trim() || "（无标题）";
-                    return (
-                      <div className="drel-card" key={`${r.id ?? i}`} title={String(r.name || "")}>
-                        <div className="drel-cv">
-                          {cover ? (
-                            <img src={bgmImg(cover)} alt="" loading="lazy" draggable={false} />
-                          ) : (
-                            <div className="poster-empty"><IcoFilmL size={16} strokeWidth={1.8} /></div>
-                          )}
-                        </div>
-                        <div className="drel-nm">{nm}</div>
-                      </div>
-                    );
-                  })}
-                </section>
-              ))}
-            </ScrollRow>
-          </div>
+          <RelatedTab
+            related={related}
+            relatedGroups={relatedGroups}
+            relatedBusy={relatedBusy}
+            relatedErr={relatedErr}
+            retryRelated={retryRelated}
+          />
         )}
 
         {/* 演职人员：**TMDB 主源**（tmdb_credits 落盘缓存）→ Bangumi 角色/制作人员 → 飞牛演员字段兜底。
             [lc-1404] 本页**不含** TmdbExtra（分级/在线观看/相似/别名那些属于「剧照剧集详情信息」）——
             用户反馈"演职人员下面又接了一个 tmdb 数据卡"，就是它原来挂在这里造成的重复。 */}
         {activeTab === "more" && (
-          <div className="dpanel dmore">
-            {/* (1) 演员表（TMDB 主源）：骨架 / 失败重试 / 数据 */}
-            {creditsBusy && !credits && !creditsErr && <BgmListSkeleton />}
-            {creditsErr && !creditsCast.length && !showCast.length && (
-              <div className="bgmc-state">
-                <div className="bgmc-state-t">演员表（TMDB）加载失败</div>
-                <div className="bgmc-state-d">{creditsErr}</div>
-                <button className="bgmc-retry" onClick={retryCredits}>
-                  重试
-                </button>
-              </div>
-            )}
-            {cast.length > 0 && (
-              <section className="dsec">
-                <h2 className="dsec-t">
-                  演职人员
-                  <span className="dsec-src" title={credits?.matchedBy || (castFrom === "details" ? "TMDB 详情接口" : "")}>
-                    TMDB{credits?.tmdbId ? ` #${credits.tmdbId}` : ""}
-                    {credits?.cached ? " · 本地缓存" : ""}
-                  </span>
-                </h2>
-                <ul className="bgmc-list">
-                  {cast.map((c, i) => (
-                    <BgmCastRow
-                      key={`${c.id ?? c.name}-${i}`}
-                      name={c.name}
-                      tag={c.character ? `饰 ${c.character}` : ""}
-                      sub={Number(c.episodes ?? 0) > 0 ? `出演 ${c.episodes} 集` : ""}
-                      img={c.profile ? tmdbImg(String(c.profile), "w185") : ""}
-                      fallback="未知演员"
-                    />
-                  ))}
-                </ul>
-              </section>
-            )}
-            {crew.length > 0 && (
-              <section className="dsec">
-                <h2 className="dsec-t">
-                  制作
-                  <span className="dsec-src">TMDB</span>
-                </h2>
-                <ul className="bgmc-list">
-                  {crew.map((c, i) => (
-                    <BgmCastRow
-                      key={`${c.id ?? c.name}-${i}`}
-                      name={c.name}
-                      tag={c.jobLabel || c.job || ""}
-                      sub={Number(c.episodes ?? 0) > 0 ? `${c.episodes} 集` : ""}
-                      img={c.profile ? tmdbImg(String(c.profile), "w185") : ""}
-                      fallback="未知"
-                    />
-                  ))}
-                </ul>
-              </section>
-            )}
-            {/* (2) 飞牛演员字段（**只兜底**：TMDB 完全没数据时才显示；没有该字段则整块不出现） */}
-            {!creditsBusy && !cast.length && !crew.length && fbCast.length > 0 && (
-              <section className="dsec">
-                <h2 className="dsec-t">
-                  演职人员
-                  <span className="dsec-src">飞牛</span>
-                </h2>
-                <ul className="bgmc-list">
-                  {fbCast.map((c, i) => (
-                    <BgmCastRow
-                      key={`${c.name}-${i}`}
-                      name={c.name}
-                      tag={c.role ? `饰 ${c.role}` : ""}
-                      img={c.avatar ? (c.avatar.startsWith("http") ? c.avatar : imgUrl(c.avatar)) : ""}
-                      fallback="未知演员"
-                    />
-                  ))}
-                </ul>
-              </section>
-            )}
-            {moreBusy && !moreErr && <BgmListSkeleton />}
-            {moreErr && (
-              <div className="bgmc-state">
-                <div className="bgmc-state-t">角色与制作人员加载失败</div>
-                <div className="bgmc-state-d">{moreErr}</div>
-                <button className="bgmc-retry" onClick={retryMore}>
-                  重试
-                </button>
-              </div>
-            )}
-            {!moreBusy &&
-              !moreErr &&
-              moreProbed &&
-              chars.length === 0 &&
-              persons.length === 0 &&
-              !creditsBusy &&
-              cast.length === 0 &&
-              crew.length === 0 &&
-              fbCast.length === 0 && <div className="empty">暂无角色与制作人员信息</div>}
-            {chars.length > 0 && (
-              <section className="dsec">
-                <h2 className="dsec-t">
-                  角色
-                  <span className="dsec-src">Bangumi</span>
-                </h2>
-                <ul className="bgmc-list">
-                  {chars.map((c, i) => (
-                    <BgmCastRow
-                      key={String(c.id ?? i)}
-                      name={c.name}
-                      tag={c.relation || CHAR_TYPE_LABEL[Number(c.type)] || ""}
-                      sub={c.actors?.[0]?.name ? `CV：${c.actors[0].name}` : ""}
-                      avatar={c.images?.large || c.images?.grid || c.images?.medium || c.images?.small}
-                      fallback="未知角色"
-                    />
-                  ))}
-                </ul>
-              </section>
-            )}
-            {/* 制作人员（Bangumi）：TMDB 已有 crew 时不再重复展示同一批人 */}
-            {persons.length > 0 && crew.length === 0 && (
-              <section className="dsec">
-                <h2 className="dsec-t">
-                  制作人员
-                  <span className="dsec-src">Bangumi</span>
-                </h2>
-                <ul className="bgmc-list">
-                  {persons.map((p, i) => (
-                    <BgmCastRow
-                      key={String(p.id ?? i)}
-                      name={p.name}
-                      tag={p.relation || (Array.isArray(p.career) ? p.career.join(" / ") : "")}
-                      avatar={p.images?.large || p.images?.grid || p.images?.medium || p.images?.small}
-                      fallback="未知"
-                    />
-                  ))}
-                </ul>
-              </section>
-            )}
-          </div>
+          <CastTab
+            cast={cast}
+            castFrom={castFrom}
+            showCast={showCast}
+            chars={chars}
+            credits={credits}
+            creditsBusy={creditsBusy}
+            creditsCast={creditsCast}
+            creditsErr={creditsErr}
+            crew={crew}
+            fbCast={fbCast}
+            moreBusy={moreBusy}
+            moreErr={moreErr}
+            moreProbed={moreProbed}
+            persons={persons}
+            retryCredits={retryCredits}
+            retryMore={retryMore}
+          />
+
         )}
 
         {/* [lc-1412] 评论（长影评，用户设计稿版式）：
@@ -1211,57 +1017,15 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
               数据源 /p1/.../reviews；封面在 entry.icon —— **多数是 no_photo.png 占位图**，
               所以碰到 no_photo 就退成图标（否则整列都是灰方块，很难看）。 */}
         {activeTab === "reviews" && (
-          <div className="dpanel dvrev">
-            {reviewsBusy && reviews.length === 0 && !reviewsErr && <BgmListSkeleton />}
-            {reviewsErr && (
-              <div className="bgmc-state">
-                <div className="bgmc-state-t">评论加载失败</div>
-                <div className="bgmc-state-d">{reviewsErr}</div>
-                <button className="bgmc-retry" onClick={retryReviews}>
-                  重试
-                </button>
-              </div>
-            )}
-            {!reviewsBusy && !reviewsErr && reviews.length === 0 && (
-              <div className="empty">暂无评论</div>
-            )}
-            {reviews.map((r) => {
-              const icon = String(r.entry?.icon ?? "");
-              const hasCover = !!icon && !/no_photo/i.test(icon);   // 占位图不当封面用
-              const date = fmtBgmTime(r.entry?.createdAt ?? r.entry?.updatedAt);
-              const replies = Number(r.entry?.replies ?? 0) || 0;
-              return (
-                <article className="dvrev-item" key={String(r.id)}>
-                  <div className="dvrev-cv">
-                    {hasCover ? (
-                      <img src={bgmImg(icon)} alt="" loading="lazy" draggable={false} />
-                    ) : (
-                      <span className="dvrev-cv-ph" aria-hidden="true">
-                        <IcoMsgL size={20} strokeWidth={1.7} />
-                      </span>
-                    )}
-                  </div>
-                  <div className="dvrev-main">
-                    <h3 className="dvrev-t">{String(r.entry?.title || "（无标题）")}</h3>
-                    {r.entry?.summary && <p className="dvrev-sum">{String(r.entry.summary)}</p>}
-                    <div className="dvrev-meta">
-                      <span className="dvrev-user">{r.user?.nickname || r.user?.username || "匿名"}</span>
-                      {date && <><span className="dvrev-dot">·</span><span>{date}</span></>}
-                      <span className="dvrev-dot">·</span>
-                      <span>{replies} 回复</span>
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
-            {reviews.length > 0 && reviewsMoreBusy && <div className="bgmc-more">加载中…</div>}
-            {reviews.length > 0 && reviewsDone && <div className="bgmc-more">没有更多评论了</div>}
-            {!reviewsDone && reviews.length > 0 && !reviewsMoreBusy && (
-              <div className="dvrev-more" onClick={() => void loadMoreReviews()}>
-                更多影评 ›
-              </div>
-            )}
-          </div>
+          <ReviewsTab
+            loadMoreReviews={loadMoreReviews}
+            retryReviews={retryReviews}
+            reviews={reviews}
+            reviewsBusy={reviewsBusy}
+            reviewsDone={reviewsDone}
+            reviewsErr={reviewsErr}
+            reviewsMoreBusy={reviewsMoreBusy}
+          />
         )}
 
         {/* [lc-119] 吐槽（Bangumi 短评，走自建镜像）：骨架屏 / 失败重试 / 空态 / 滚到底翻页
@@ -1271,71 +1035,15 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
             ⚠ **做不出嵌套回复**：Bangumi 的 /comments 不提供回复链（50 条样本无 parent 字段，
               parent_id 参数无效、三个候选回复端点全 404），所以这里只有平铺的评论流。 */}
         {activeTab === "comments" && (
-          <div className="dpanel bgmc-panel">
-            {commentsBusy && comments.length === 0 && !commentsErr && <BgmListSkeleton />}
-            {commentsErr && (
-              <div className="bgmc-state">
-                <div className="bgmc-state-t">吐槽加载失败</div>
-                <div className="bgmc-state-d">{commentsErr}</div>
-                <button className="bgmc-retry" onClick={retryComments}>
-                  重试
-                </button>
-              </div>
-            )}
-            {!commentsBusy && !commentsErr && comments.length === 0 && (
-              <div className="empty">暂无吐槽</div>
-            )}
-            {comments.length > 0 && (
-              <div className="dvtc-list">
-                {comments.map((c) => {
-                  // 星级：Bangumi rate 是 0~10，展示成 5 星（半星用 CSS 宽度裁）
-                  const rate = Number(c.rate ?? 0) || 0;
-                  const stars = rate > 0 ? Math.round(rate / 2) : 0;
-                  // reactions：上游只有 4/50 条带，且形状是 [{users:[...],value:0}]
-                  const rLike = (c.reactions ?? []).reduce<number>(
-                    (n, x) => n + (Array.isArray(x?.users) ? x.users.length : 0),
-                    0,
-                  );
-                  return (
-                    <div className="dvtc-item" key={String(c.id)}>
-                      <AvatarSafe
-                        className="dvtc-ava"
-                        size={36}
-                        name={c.user?.nickname || c.user?.username || "匿名"}
-                        src={bgmImg(c.user?.avatar?.large || c.user?.avatar?.grid || c.user?.avatar?.small)}
-                      />
-                      <div className="dvtc-body">
-                        <div className="dvtc-head">
-                          <span className="dvtc-nick">{c.user?.nickname || c.user?.username || "匿名"}</span>
-                          {stars > 0 && (
-                            <span className="dvtc-stars" title={`${rate} 分`}>
-                              {[0, 1, 2, 3, 4].map((i) => (
-                                <IcoStarL
-                                  key={i}
-                                  size={12}
-                                  strokeWidth={1.8}
-                                  className={`rating-ico${i < stars ? " fill" : ""}`}
-                                />
-                              ))}
-                            </span>
-                          )}
-                          <span className="dvtc-time">{fmtBgmTime(c.updatedAt)}</span>
-                        </div>
-                        <div className="dvtc-bubble">
-                          <p className="dvtc-text">{c.comment}</p>
-                          <span className={`dvtc-like${rLike > 0 ? " on" : ""}`} aria-hidden="true">
-                            {rLike > 0 ? `♥ ${rLike}` : "♡"}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {comments.length > 0 && commentsMoreBusy && <div className="bgmc-more">加载中…</div>}
-            {comments.length > 0 && commentsDone && <div className="bgmc-more">没有更多吐槽了</div>}
-          </div>
+          <CommentsTab
+            comments={comments}
+            commentsBusy={commentsBusy}
+            commentsDone={commentsDone}
+            commentsErr={commentsErr}
+            commentsMoreBusy={commentsMoreBusy}
+            retryComments={retryComments}
+          />
+
         )}
           </div>
         </div>

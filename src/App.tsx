@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { createPortal } from "react-dom";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -2925,9 +2926,13 @@ function WebrsPanel({ title }: { title: string }) {
         </div>
       )}
 
-      {/* ⚙ 源管理设置面板 */}
-      {settingsOpen && (
-        <div className="ddet-mask" onClick={() => setSettingsOpen(false)}>
+      {/* ⚙ 源管理设置面板。portal 挂 body：弹窗留在 .content 里会被 sticky 的
+          .dseg（z30 + backdrop-filter）合成穿透 —— 玻璃层画到遮罩上面成"白条"
+          （[lc-1504] 用户截图实锤）。portal 后与 .dseg 同在顶层上下文，
+          mask z40 > dseg z30 正常压制；顶栏 z50 仍在其上，窗口按钮不受影响。 */}
+      {settingsOpen &&
+        createPortal(
+          <div className="ddet-mask" onClick={() => setSettingsOpen(false)}>
           <div className="sum-modal webrs-add-modal" onClick={(e) => e.stopPropagation()}>
             <div className="sum-modal-h">
               <h3>
@@ -3002,8 +3007,9 @@ function WebrsPanel({ title }: { title: string }) {
               </div>
             </div>
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -4423,8 +4429,9 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
 
       {/* [lc-1423] 简介弹窗：完整正文（容器固定高度 + 截断后，全文在这里看）。
           Esc / 点背景关闭；正文可滚动（长简介比一屏更长）。 */}
-      {introFull && (
-        <div className="ddet-mask" onClick={() => setIntroFull(false)}>
+      {introFull &&
+        createPortal(
+          <div className="ddet-mask" onClick={() => setIntroFull(false)}>
           <div className="sum-modal" onClick={(e) => e.stopPropagation()}>
             <div className="sum-modal-h">
               <h3>简介</h3>
@@ -4440,16 +4447,19 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
               <p className="dfold">{overview}</p>
             </div>
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
 
       {/* [lc-128] 剧照原图（`original` 尺寸）：点击任意剧照放大。走同一套三级缓存
           （拉了即落盘，下次点开零网络），点背景/Esc… 这里只需点背景关闭。 */}
-      {zoom && (
-        <div className="ddet-mask zoom-mask" onClick={() => setZoom("")}>
-          <img className="zoom-img" src={tmdbImg(zoom, "original")} alt="" />
-        </div>
-      )}
+      {zoom &&
+        createPortal(
+          <div className="ddet-mask zoom-mask" onClick={() => setZoom("")}>
+            <img className="zoom-img" src={tmdbImg(zoom, "original")} alt="" />
+          </div>,
+          document.body,
+        )}
     </main>
   );
 }

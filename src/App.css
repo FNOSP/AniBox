@@ -5713,6 +5713,10 @@ html.dark .ditem-tag {
 .webrs-add-modal {
   width: min(480px, 92vw);
   max-height: 86vh;
+  /* [lc-1504] 弹窗底色改不透明：半透明 bg-2 叠在 mask 的 backdrop blur 上，
+     会随背后海报/页面内容透出明暗斑块（截图里 dalvdm 行上的"白条"就是这类
+     合成残影），且列表文字对比度被拖低 */
+  background: var(--option-bg);
 }
 /* [lc-1503] modal 主体：flex 列 + 内部滚动，修 sum-modal overflow:hidden 把
    列表/tip 裁掉的问题 */
@@ -5723,6 +5727,26 @@ html.dark .ditem-tag {
   flex-direction: column;
   padding: 0 16px 14px;
   overflow-y: auto;
+}
+/* 全局把滚动条藏干净了（* { scrollbar-width:none }），但 WebView2 的 Fluent
+   悬浮滚动条仍会在长列表里画出大块残影 —— 这里给管理列表一条自绘细滚动条，
+   既提供滚动位置反馈，也把 Fluent 的画法顶掉 */
+.webrs-mgr-body::-webkit-scrollbar {
+  display: block;
+  width: 6px;
+}
+.webrs-mgr-body::-webkit-scrollbar-thumb {
+  display: block;
+  border-radius: 3px;
+  background: var(--line-strong);
+}
+.webrs-mgr-body::-webkit-scrollbar-track {
+  display: block;
+  background: transparent;
+}
+.webrs-mgr-body {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
 }
 .webrs-add-ta {
   width: 100%;
@@ -5805,6 +5829,11 @@ html.dark .ditem-tag {
   border-radius: 9px;
   background: var(--glass-btn-bg);
   padding: 6px 8px 6px 10px;
+  transition: background 0.12s, border-color 0.12s;
+}
+.webrs-mgr-row:hover {
+  background: var(--hover);
+  border-color: var(--line-strong);
 }
 .webrs-mgr-row.on {
   border-color: var(--line-strong);

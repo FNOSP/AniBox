@@ -23,7 +23,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 
 static CLASS_REGISTERED: OnceLock<()> = OnceLock::new();
-const CLASS_NAME: &str = "FntvMpvHost\0";
+const CLASS_NAME: &str = "AniBoxMpvHost\0";
 
 /// [lc-087] 不做鼠标穿透：内嵌的是**独立 mpv.exe 进程**，它自带消息循环、会把自己的子窗建在
 /// 这个宿主窗里并正常接收鼠标（uosc 底栏/右键菜单/滚轮/双击全屏都是 mpv 原生行为）。

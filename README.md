@@ -1,6 +1,6 @@
-# Fntv-Plus Tauri2 (PoC)
+# AniBox（番盒）
 
-Fntv-Plus 的 Tauri 2 迁移概念验证版：**告别网页注入，自绘 UI + 直调飞牛影视 API + mpv 原生子窗嵌入**。
+飞牛影视（fnOS）桌面客户端：**告别网页注入，自绘 UI + 直调飞牛影视 API + mpv 原生子窗嵌入**。
 
 背景与方案文档见主仓库 `resource/wiki/Tauri2迁移方案.md`。
 
@@ -20,7 +20,8 @@ EADDRINUSE**，且本机动态端口范围从 1024 起，任何进程的出站�
 - **高级设置**：可改 mpv.exe / Go 代理路径，默认复用主仓库：
   - `D:/GitHub/Fntv-Plus/third_party/fntv-mpv/mpv.exe`
   - `D:/GitHub/Fntv-Plus/third_party/proxy/proxy.exe`
-- 配置落盘：`%APPDATA%/com.fntv.plus.tauri2/config.json`
+- 配置落盘：`%APPDATA%/com.anibox.app/config.json`
+  （旧版 `com.fntv.plus.tauri2` 的数据会在首次启动时**自动迁移**，含缓存与 WebView 配置）
 
 ---
 
@@ -32,7 +33,7 @@ EADDRINUSE**，且本机动态端口范围从 1024 起，任何进程的出站�
 Tauri 主窗口        decorations:false / transparent:true / DWM 圆角 + 亚克力底板
 ├─ WebView2 各层窗口  WRY_WEBVIEW / Chrome_WidgetWin_0|1 / Intermediate D3D Window /
 │                     Chrome_RenderWidgetHostHWND   ← 全部被 SetWindowRgn 挖掉「视频矩形」
-└─ FntvMpvHost       WS_CHILD · HWND_BOTTOM · 纯黑底色   ← 洞口透出来的就是它
+└─ AniBoxMpvHost       WS_CHILD · HWND_BOTTOM · 纯黑底色   ← 洞口透出来的就是它
    └─ mpv 自建子窗    class "mpv"（mpv.exe 进程内建；被 mpv 自己禁用 → 我们 EnableWindow 打开）
 ```
 
@@ -56,7 +57,7 @@ Tauri 主窗口        decorations:false / transparent:true / DWM 圆角 + 亚�
 
 ### mpv 侧与三个必知坑
 
-独立 `mpv.exe` 进程 + `--wid=<FntvMpvHost>` + `--input-ipc-server=\\.\pipe\fntv-tauri2-mpv-<pid>`，
+独立 `mpv.exe` 进程 + `--wid=<AniBoxMpvHost>` + `--input-ipc-server=\\.\pipe\anibox-mpv-<pid>`，
 共用主仓库 `third_party/fntv-mpv/portable_config`（uosc / input.conf / 脚本 / 着色器原样生效）。
 
 1. **mpv 嵌入时会把自建子窗 `EnableWindow(0)`**（mpv 源码 `w32_common.c:2163`，意图是"让宿主收输入"），
@@ -77,9 +78,9 @@ Tauri 主窗口        decorations:false / transparent:true / DWM 圆角 + 亚�
 
 ### 诊断（排查播放/全屏问题先看这两个）
 
-- `%TEMP%/fntv-libmpv.log` —— 应用侧：`[win] outer/inner/scale/fullscreen/bounds`、`[cutout]` 逐窗结果、
+- `%TEMP%/anibox.log` —— 应用侧：`[win] outer/inner/scale/fullscreen/bounds`、`[cutout]` 逐窗结果、
   `CRASH` 记录。**带相对毫秒时间戳**，可直接还原"哪一拍用了旧值"。
-- `%TEMP%/fntv-tauri2-mpv.log` —— mpv 自身日志（`Window size` / `Video display` / 脚本加载 / 滤镜报错）。
+- `%TEMP%/anibox-mpv.log` —— mpv 自身日志（`Window size` / `Video display` / 脚本加载 / 滤镜报错）。
 - `.workbuddy/tools/` —— 验证脚本：`screen_shot.py`（屏幕真值抓图 + 命中测试）、`test_mpv_mouse.py`
   （鼠标输入 A/B）、`test_mpv_focus.py`（焦点）、`gen_uosc_controls.py`（uosc 底栏双形态生成）。
   注意：**合成鼠标事件进不了 WebView2**，凡依赖页面内 pointerdown 的改动无法用模拟输入验证。

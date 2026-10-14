@@ -88,7 +88,7 @@ fn http() -> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
-            .user_agent("FntvPlus-Tauri2/0.1")
+            .user_agent("AniBox/0.1")
             .connect_timeout(Duration::from_secs(6))
             .timeout(Duration::from_secs(REQ_TIMEOUT_SECS))
             .build()
@@ -102,7 +102,7 @@ fn direct_client() -> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
-            .user_agent("FntvPlus-Tauri2/0.1 (https://github.com/YDMY007/Fntv-Plus)")
+            .user_agent("AniBox/0.1 (https://github.com/YDMY007/Fntv-Plus)")
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(DIRECT_TIMEOUT_SECS))
             .build()

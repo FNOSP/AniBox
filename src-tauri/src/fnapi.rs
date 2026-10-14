@@ -181,7 +181,7 @@ impl FnClient {
             .header("Authorization", token)
             .header("Cookie", cookie)
             .header("Authx", authx)
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) fntv-tauri2");
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) anibox");
 
         let resp = req.send().await.map_err(|e| {
             if e.is_builder() {

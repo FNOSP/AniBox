@@ -1,4 +1,4 @@
-//! Fntv-Plus Tauri2 PoC —— 自绘 UI + 直调飞牛 API + mpv 双层窗口内嵌。
+//! AniBox —— 自绘 UI + 直调飞牛 API + mpv 双层窗口内嵌。
 //! 命令面向前端：配置 / 登录 / 媒体库 / 播放控制。
 
 mod authx;
@@ -8,6 +8,7 @@ mod disk_cache;
 mod fnapi;
 mod libmpv;
 mod imgproto;
+mod migrate;
 mod mirror_sign;
 mod mpv;
 mod proxy;
@@ -703,7 +704,7 @@ async fn set_autostart(enabled: bool) -> Result<(), String> {
             KEY_SET_VALUE, REG_SZ,
         };
         const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-        const VALUE_NAME: &str = "FntvPlus";
+        const VALUE_NAME: &str = "AniBox";
         let to_wide = |s: &str| -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() };
 
         let subkey = to_wide(RUN_KEY);
@@ -724,6 +725,9 @@ async fn set_autostart(enabled: bool) -> Result<(), String> {
         if rc != 0 {
             return Err(format!("打开注册表 Run 键失败（错误码 {rc}）"));
         }
+        // 旧版（FntvPlus）留下的自启值指向已不存在的旧 exe，顺手清掉；rc=2 表示本来就没有
+        let legacy = to_wide("FntvPlus");
+        unsafe { RegDeleteValueW(hkey, legacy.as_ptr()) };
         let vname = to_wide(VALUE_NAME);
         let result = if enabled {
             let exe = std::env::current_exe()
@@ -978,9 +982,26 @@ fn set_acrylic_tint(
 }
 
 pub fn run() {
+    // [lc-1440] 改名迁移（Fntv-Plus Tauri2 → AniBox）**必须在 Builder 之前**：
+    //   identifier 变了 ⇒ app_data_dir / WebView profile 目录全换路径，
+    //   而 WebView2 一创建就会锁住它的 profile（EBWebView 里的 leveldb），那时再搬就晚了。
+    //   详见 migrate.rs 头部。
+    let mig = migrate::run();
+    // 日志系统此时还没建（libmpv::trace 走的是追加写文件，无需初始化，可以直接用）
+    if let Some(d) = &mig.appdata {
+        libmpv::trace(&format!("[lc-1440] 数据目录迁移 APPDATA → {d}"));
+    }
+    if let Some(d) = &mig.localappdata {
+        libmpv::trace(&format!("[lc-1440] 数据目录迁移 LOCALAPPDATA → {d}"));
+    }
+    if mig.appdata.is_none() && mig.localappdata.is_none() {
+        libmpv::trace("[lc-1440] 无需迁移（新目录已存在，或旧目录不存在）");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
+        // 协议名沿用 "fntvimg" 不改名：图片 URL 会进 WebView 缓存与 localStorage，改名 = 老缓存全 404
         .register_asynchronous_uri_scheme_protocol("fntvimg", |ctx, request, responder| {
             // 带会话鉴权的图片代理：WebView 里 <img> 直连 NAS 不带 Cookie 会全裂图
             let app = ctx.app_handle().clone();
@@ -992,7 +1013,7 @@ pub fn run() {
 
         .setup(|app| {
             // VEH 崩溃记录器：任意致命异常（D3D 视频输出崩因定位）写出异常码+故障模块+偏移，
-            // 落 %TEMP%/fntv-libmpv.log（lc-082 视频输出专项）
+            // 落 %TEMP%/anibox.log（lc-082 视频输出专项）
             libmpv::install_crash_logger();
             // 启动时从磁盘读回配置（token/路径），否则每次重启都要重新登录
             let cfg = tauri::async_runtime::block_on(config::load(app.handle()));
@@ -1002,7 +1023,7 @@ pub fn run() {
                     .path()
                     .app_data_dir()
                     .map(|d| d.join("cache"))
-                    .unwrap_or_else(|_| std::env::temp_dir().join("fntv-cache"));
+                    .unwrap_or_else(|_| std::env::temp_dir().join("anibox-cache"));
                 disk_cache::init(root, cfg.cache_limit_mb);
             }
             *app.state::<AppState>().config.blocking_write() = cfg;

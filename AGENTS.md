@@ -1,4 +1,6 @@
-# Fntv-Plus-Tauri2 —— 项目规则
+# AniBox —— 项目规则
+
+> 仓库目录仍为 `Fntv-Plus-Tauri2`（GitHub 仓库改名是另一件事，未动）。
 
 ---
 

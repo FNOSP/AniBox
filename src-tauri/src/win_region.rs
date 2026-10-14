@@ -1,7 +1,7 @@
 //! 窗口区域裁洞（WebView 挖洞）—— 参照 LumiPlayer 的 nativeVideoUiRegion 方案。
 //!
 //! 目标：把 WebView2 各层窗口的**窗口区域**挖掉「视频占位矩形」那一块，
-//! 让位于其下方的 `FntvMpvHost`（mpv `--wid` 渲染目标）从洞里透出来。
+//! 让位于其下方的 `AniBoxMpvHost`（mpv `--wid` 渲染目标）从洞里透出来。
 //!
 //! 为什么必须是「区域」而不是「透明」（lc-082 已实测）：WebView2 的渲染子窗
 //! （Chrome_WidgetWin_0/1、Chrome_RenderWidgetHostHWND、Intermediate D3D Window）

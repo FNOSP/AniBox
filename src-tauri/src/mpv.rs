@@ -57,12 +57,12 @@ fn pipe_path(name: &str) -> String {
 impl MpvSession {
     /// 拉起独立 mpv 进程并连上 IPC（幂等：实例常驻，播放/停止只切播放状态）
     pub async fn launch(app: AppHandle, mpv_path: &str) -> Result<Arc<MpvSession>, String> {
-        let name = format!("fntv-tauri2-mpv-{}", std::process::id());
+        let name = format!("anibox-mpv-{}", std::process::id());
         let path = pipe_path(&name);
         crate::libmpv::trace_reset(&format!("launch(mpv.exe) pid={}", std::process::id()));
 
         // ── 1) 启动 mpv.exe（pwsh 中转，-PassThru 拿 PID）
-        let log_path = std::env::temp_dir().join("fntv-tauri2-mpv.log");
+        let log_path = std::env::temp_dir().join("anibox-mpv.log");
         let args = [
             format!("--input-ipc-server={}", path),
             "--idle=yes".to_string(),

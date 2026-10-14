@@ -19,7 +19,7 @@ static START: OnceLock<Instant> = OnceLock::new();
 /// [lc-1436] 改 pub：诊断面板「打开诊断日志」要拿到这个路径
 /// （此前只有本模块内部写日志用；dev.cmd 的 tail 也盯这个文件）。
 pub fn log_path() -> PathBuf {
-    std::env::temp_dir().join("fntv-libmpv.log")
+    std::env::temp_dir().join("anibox.log")
 }
 
 /// 诊断日志（追加一行），前缀是**相对进程启动的毫秒数**。

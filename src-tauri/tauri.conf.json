@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Fntv-Plus Tauri2",
+  "productName": "AniBox",
   "version": "0.1.0",
-  "identifier": "com.fntv.plus.tauri2",
+  "identifier": "com.anibox.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Fntv-Plus Tauri2",
+        "title": "AniBox",
         "width": 1280,
         "height": 800,
         "minWidth": 960,

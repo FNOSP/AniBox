@@ -4829,7 +4829,7 @@ function SettingsPanel({
             </div>
           </div>
           <div className="set-hint">
-            诊断日志在系统临时目录（fntv-libmpv.log），记录了镜像请求、图片缓存命中与播放链路；
+            诊断日志在系统临时目录（anibox.log），记录了镜像请求、图片缓存命中与播放链路；
             反馈问题时把最后一段贴出来即可。
           </div>
 
@@ -5519,7 +5519,7 @@ function App() {
         />
       )}
       <TitleBar
-        title="Fntv-Plus Tauri2"
+        title="AniBox"
         nav={view !== "login"}
         page={page}
         sidebarOpen={sidebarOpen}

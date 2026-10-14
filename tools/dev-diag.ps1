@@ -18,7 +18,7 @@ $wvExe = @(
 Line "WebView2 runtime" ($(if ($wvExe) { $wvExe.Directory.Name + '  (' + $wvExe.FullName + ')' } else { 'NOT FOUND - Edge WebView2 runtime missing' }))
 
 # config: only non-secret fields; whether a password/token exist is what matters
-$cfgPath = Join-Path $env:APPDATA 'com.fntv.plus.tauri2\config.json'
+$cfgPath = Join-Path $env:APPDATA 'com.anibox.app\config.json'
 if (Test-Path $cfgPath) {
     try {
         $c = Get-Content -Raw -LiteralPath $cfgPath | ConvertFrom-Json
@@ -55,7 +55,7 @@ foreach ($k in 'FNTV_DEVTOOLS', 'FNTV_CUTOUT', 'FNTV_AUTOPLAY_TEST', 'FNTV_EVAL_
 }
 
 # logs that will be produced
-foreach ($f in 'fntv-libmpv.log', 'fntv-tauri2-mpv.log') {
+foreach ($f in 'anibox.log', 'anibox-mpv.log') {
     $p = Join-Path $env:TEMP $f
     $info = Get-Item -LiteralPath $p -ErrorAction SilentlyContinue
     Line "log $f" ($(if ($info) { "$($info.Length) bytes, modified $($info.LastWriteTime)" } else { 'not created yet' }))

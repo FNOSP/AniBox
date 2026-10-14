@@ -558,7 +558,7 @@ mod tests {
     ///   (d) 手动 force → 即使新鲜也发一次**带条件头**的请求；304 则内容不变。
     #[tokio::test]
     async fn json_cached_conditional_offline_paths() {
-        let dir = std::env::temp_dir().join(format!("fntv-dc-cond-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("anibox-dc-cond-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         init(dir, 64);
 

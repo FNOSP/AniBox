@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 REM One-click dev launcher, mirrors Fntv-Plus dev.cmd.
 REM Kill stale Tauri dev instance (frees vite port / IPC pipes)
-taskkill /f /im fntv-plus-tauri2.exe >nul 2>&1
+taskkill /f /im anibox.exe >nul 2>&1
 REM Kill stale proxy.exe to avoid 22346 port clash with installed Fntv-Plus / main-repo dev
 taskkill /f /im proxy.exe >nul 2>&1
 REM Intentionally NOT killing mpv.exe (it may be playing something you are watching).
@@ -36,7 +36,7 @@ REM => missing secrets MUST stay non-fatal. See the two blocks below.
 
 REM ---- [lc-119] Bangumi mirror admission secret (this process only, never written into the repo) ----
 REM bgm.rs prefers our mirror (bgm.690075.xyz). A MISSING FNTV_BGM_SECRET is not fatal: it is treated
-REM as "mirror unavailable" -> one WARN line in %TEMP%\fntv-libmpv.log -> straight to api.bgm.tv
+REM as "mirror unavailable" -> one WARN line in %TEMP%\anibox.log -> straight to api.bgm.tv
 REM (next.bgm.tv for /p1/*). Bangumi needs no credentials, so that fallback is fully functional;
 REM the mirror only adds edge cache + abuse protection for our own domain. A secret that is PRESENT
 REM BUT WRONG still fails loudly (401 bad_signature) -- deterministic rejection, never downgraded.
@@ -55,7 +55,7 @@ if not defined FNTV_BGM_SECRET echo [dev] WARN: %FNTV_BGM_SECRET_FILE% missing o
 REM ---- [lc-122] TMDB mirror admission secret (independent key; this process only) ----
 REM tmdb.rs prefers the TMDB mirror (tmdb.690075.xyz, signed with FNTV_TMDB_SECRET). A MISSING
 REM FNTV_TMDB_SECRET is not fatal: same "mirror unavailable" path as 429 / unreachable / 5xx -> one
-REM WARN line in %TEMP%\fntv-libmpv.log -> direct api.themoviedb.org with the user's own key. A key
+REM WARN line in %TEMP%\anibox.log -> direct api.themoviedb.org with the user's own key. A key
 REM that is PRESENT BUT WRONG (401 bad_signature) and all other 4xx stay hard failures by design.
 REM Dev convenience: if the var is unset, parse it from the main repo's tmdb-mirror/.secret.local.
 REM NOTE: that file is "NAME=value" format (unlike bgm's raw-value file), so parse with
@@ -116,8 +116,8 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\dev-diag.ps1"
 echo.
 echo [3/3] Starting Tauri dev (first Rust compile takes 5-15 min)...
 echo       DevTools  : F12 / Ctrl+Shift+I inside the app, or set FNTV_DEVTOOLS=1 before dev.cmd
-echo       App log   : %%TEMP%%\fntv-libmpv.log      (ms timestamps, [win]/[cutout]/[probe]/[play/info]/[imgproto])
-echo       mpv log   : %%TEMP%%\fntv-tauri2-mpv.log
+echo       App log   : %%TEMP%%\anibox.log      (ms timestamps, [win]/[cutout]/[probe]/[play/info]/[imgproto])
+echo       mpv log   : %%TEMP%%\anibox-mpv.log
 echo       Go proxy  : %%TEMP%%\proxy.log  (only when started by hand)
 echo       -> on exit this window prints the tail of both logs.
 echo.
@@ -125,12 +125,12 @@ call npm run tauri dev
 echo.
 echo [dev] tauri dev exited with code %errorlevel%.
 echo.
-echo ======================== last 60 lines: fntv-libmpv.log ========================
+echo ======================== last 60 lines: anibox.log ========================
 rem 用 pwsh 7 + 显式 -Encoding utf8：日志是 UTF-8，而 powershell 5.1 的 Get-Content
 rem 默认按 ANSI(GBK 936) 读 → 中文全乱码。pwsh 也是本仓库约定的唯一 PowerShell。
-pwsh -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -LiteralPath $env:TEMP\fntv-libmpv.log -Tail 60 -Encoding utf8 -ErrorAction SilentlyContinue"
+pwsh -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -LiteralPath $env:TEMP\anibox.log -Tail 60 -Encoding utf8 -ErrorAction SilentlyContinue"
 echo ================================================================================
-echo ======================== last 20 lines: fntv-tauri2-mpv.log =====================
-pwsh -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -LiteralPath $env:TEMP\fntv-tauri2-mpv.log -Tail 20 -Encoding utf8 -ErrorAction SilentlyContinue"
+echo ======================== last 20 lines: anibox-mpv.log =====================
+pwsh -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -LiteralPath $env:TEMP\anibox-mpv.log -Tail 20 -Encoding utf8 -ErrorAction SilentlyContinue"
 echo ================================================================================
 pause

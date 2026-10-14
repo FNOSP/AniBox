@@ -113,7 +113,7 @@ fn mirror_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
-            .user_agent("FntvPlus-Tauri2/0.1 (tmdb-mirror)")
+            .user_agent("AniBox/0.1 (tmdb-mirror)")
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(MIRROR_TIMEOUT_SECS))
             .build()
@@ -126,7 +126,7 @@ fn direct_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) fntv-tauri2")
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) anibox")
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(DIRECT_TIMEOUT_SECS))
             .build()
@@ -2009,7 +2009,7 @@ mod tests {
     #[ignore = "live network + FNTV_TMDB_SECRET required"]
     async fn live_language_and_credits_by_anchor() {
         // 落盘缓存：用**独立临时目录**初始化（别污染真实 app_data），顺手验证「第二次不重复请求」
-        let dir = std::env::temp_dir().join("fntv-tauri2-test-cache");
+        let dir = std::env::temp_dir().join("anibox-test-cache");
         let _ = std::fs::remove_dir_all(&dir);
         crate::disk_cache::init(dir.clone(), 64);
 

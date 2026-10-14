@@ -46,7 +46,7 @@ fn public_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
-            .user_agent("FntvPlus-Tauri2/0.1 (+https://github.com/YDMY007/Fntv-Plus)")
+            .user_agent("AniBox/0.1 (+https://github.com/YDMY007/Fntv-Plus)")
             .connect_timeout(std::time::Duration::from_secs(6))
             .timeout(std::time::Duration::from_secs(20))
             .build()

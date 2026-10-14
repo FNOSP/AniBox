@@ -2602,13 +2602,13 @@ function BgmAccountCard() {
         )}
       </div>
 
-      {/* 右上：同步状态（donut + 图例） */}
+      {/* 右上：同步状态（左圆饼 + 右图例，用户示意图） */}
       <div className="bgmac-stats">
         <div className="bgmac-block-t">同步状态</div>
         {acct.bound ? (
-          <>
+          <div className="bgmac-stats-body">
             {/* 圆饼统计（实心扇形，12 点方向起顺时针） */}
-            <svg className="bgmac-pie" viewBox="0 0 100 100" width="118" height="118">
+            <svg className="bgmac-pie" viewBox="0 0 100 100" width="78" height="78">
               {total === 0 ? (
                 <circle cx="50" cy="50" r="44" fill="var(--ph-bg)" />
               ) : (
@@ -2646,7 +2646,7 @@ function BgmAccountCard() {
                 部番剧
               </text>
             </svg>
-            {/* 饼下图例：完整显示（色点 + 状态名 + 数字），与原来一致 */}
+            {/* 右侧图例：色点 + 状态名 + 数字（数字右对齐） */}
             <div className="bgmac-pie-legend">
               {segs
                 .filter((s) => s.n > 0)
@@ -2658,10 +2658,10 @@ function BgmAccountCard() {
                   </span>
                 ))}
             </div>
-          </>
+          </div>
         ) : (
           <div className="bgmac-stats-empty">
-            <svg viewBox="0 0 100 100" width="96" height="96">
+            <svg viewBox="0 0 100 100" width="80" height="80">
               <circle cx="50" cy="50" r="42" fill="none" stroke="var(--line-strong)" strokeWidth="7" strokeDasharray="4 6" />
             </svg>
             <span>连接后展示追番统计</span>

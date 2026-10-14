@@ -6225,7 +6225,14 @@ html.dark .ditem-tag {
   color: var(--text-2);
   letter-spacing: 0.03em;
 }
-/* [lc-1524] 圆饼统计（实心扇形） */
+/* [lc-1526] 圆饼 + 图例横排（用户示意图：左饼右清单） */
+.bgmac-stats-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
 .bgmac-pie {
   flex: 0 0 auto;
 }
@@ -6240,21 +6247,32 @@ html.dark .ditem-tag {
   fill: var(--glass-btn-bg);
 }
 .bgmac-pie-n {
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 800;
   fill: var(--text-strong);
 }
 .bgmac-pie-l {
-  font-size: 8.5px;
+  font-size: 8px;
   fill: var(--muted);
 }
-/* 饼下图例：完整行（色点 + 状态名 + 数字） */
+/* 右侧图例：五行（色点 + 状态名 + 数字右对齐），紧凑字号适配对半列宽 */
 .bgmac-pie-legend {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  align-self: stretch;
-  padding: 0 2px;
+  gap: 2px;
+}
+.bgmac-pie-legend .bgmac-legend-row {
+  font-size: 10.5px;
+  gap: 5px;
+}
+.bgmac-pie-legend .bgmac-legend-row b {
+  font-size: 11px;
+}
+.bgmac-pie-legend .bgmac-dot {
+  width: 6px;
+  height: 6px;
 }
 .bgmac-legend-row {
   display: flex;

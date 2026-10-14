@@ -5593,3 +5593,167 @@ html.dark .ditem-tag {
   opacity: 0.5;
   cursor: default;
 }
+
+/* ── [lc-1501] 多源聚合面板（Kazumi「播放来源」式）── */
+.webrs-bar .webrs-add {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--glass-btn-bg);
+  color: var(--text-strong);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.webrs-bar .webrs-add:hover {
+  background: var(--hover-strong);
+  border-color: var(--accent);
+}
+.webrs-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 460px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.webrs-g {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--glass-btn-bg);
+  overflow: hidden;
+}
+.webrs-g.ok {
+  border-color: var(--line-strong);
+}
+.webrs-g-hd {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 30px 8px 10px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+}
+.webrs-g-hd:hover {
+  background: var(--hover);
+}
+.webrs-g-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.webrs-g-badge {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: var(--muted);
+  background: var(--ph-bg);
+}
+.webrs-g-badge.ok {
+  color: #2e7d32;
+  background: rgba(46, 125, 50, 0.12);
+}
+.webrs-g-badge.error {
+  color: var(--err-text);
+  background: var(--err-bg);
+}
+.webrs-g-arrow {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+.webrs-g-x {
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  line-height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: transparent;
+  font-size: 13px;
+  cursor: pointer;
+}
+.webrs-g:hover .webrs-g-x {
+  color: var(--muted);
+}
+.webrs-g-x:hover {
+  background: var(--hover-strong);
+  color: var(--err-text) !important;
+}
+.webrs-g-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 8px 8px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.webrs-g-items button {
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-1);
+  color: var(--text-strong);
+  padding: 7px 10px;
+  font-size: 12.5px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.webrs-g-items button:hover {
+  border-color: var(--accent);
+  background: var(--hover-strong);
+}
+.webrs-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.webrs-src {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.webrs-add-modal {
+  width: min(520px, 92vw);
+}
+.webrs-add-ta {
+  width: 100%;
+  min-height: 240px;
+  resize: vertical;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  padding: 10px;
+  font-size: 12px;
+  font-family: Consolas, monospace;
+  outline: none;
+}
+.webrs-add-ta:focus {
+  border-color: var(--accent);
+}
+.webrs-add-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}

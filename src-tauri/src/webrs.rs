@@ -64,13 +64,15 @@ pub struct Rule {
     #[serde(rename = "searchMode")]
     pub search_mode: String, // "xpath"（默认）| "api"
     #[serde(rename = "chapterMode")]
-    pub chapter_mode: String, // 本实现只支持 "xpath"
+    pub chapter_mode: String, // "xpath"（默认）| "api"
     #[serde(rename = "searchApiConfig")]
     pub search_api_config: Option<ApiSearchConfig>,
+    #[serde(rename = "chapterApiConfig")]
+    pub chapter_api_config: Option<ApiChapterConfig>,
 }
 
-/// [lc-1500] API 搜索配置（如 mutefun：`/index.php/ajax/suggest`）。
-/// JSONPath 只实现子集：`$.list[*]` 这类「字段名 + [*] 通配」。
+/// [lc-1501] API 搜索配置（如 mutefun：`/index.php/ajax/suggest`、xfdmnext：PostgREST RPC）。
+/// JSONPath 只实现子集：`$.list[*]` / `$[*]` 这类「字段名 + [*] 通配」。
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct ApiSearchConfig {
@@ -83,71 +85,99 @@ pub struct ApiSearchConfig {
     pub source_path: String,
 }
 
+/// [lc-1501] API 选集配置（sorani / xfdmnext）：模板请求拿 JSON，roadsPath 逐线路、
+/// episodesPath 逐集，episodePage.url 用 `@source` / `@episodeUrl` 拼出播放页。
+/// 只实现 Kazumi 的 "nested" 格式（delimited 的 $$$ 打包形态社区已无人用）。
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct ApiChapterConfig {
+    pub request: ApiRequest,
+    pub format: String, // "nested"
+    #[serde(rename = "roadsPath")]
+    pub roads_path: String,
+    #[serde(rename = "roadNamePath")]
+    pub road_name_path: String,
+    #[serde(rename = "episodesPath")]
+    pub episodes_path: String,
+    #[serde(rename = "episodeNamePath")]
+    pub episode_name_path: String,
+    #[serde(rename = "episodeUrlPath")]
+    pub episode_url_path: String,
+    #[serde(rename = "episodePage")]
+    pub episode_page: ApiEpisodePage,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct ApiEpisodePage {
+    pub url: String,
+    pub query: std::collections::HashMap<String, Value>,
+}
+
+/// [lc-1501] 通用请求模板：query 值可为字符串/数字/布尔（"@keyword"/"@source" 只在
+/// 字符串值里替换）；POST 支持 form 与 JSON 两种 body；headers 原样透传（规则自带
+/// 的 apikey / Authorization，如 xfdmnext 的 PostgREST）。
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct ApiRequest {
     pub method: String,
     pub url: String,
-    pub query: std::collections::HashMap<String, String>,
+    pub headers: std::collections::HashMap<String, String>,
+    #[serde(rename = "bodyType")]
+    pub body_type: String, // "form"（默认）| "json"
+    pub body: Value,
+    pub query: std::collections::HashMap<String, Value>,
 }
 
-// ───────────────────────── 内置默认规则（Predidit/KazumiRules 原文） ─────────────────────────
+impl ApiRequest {
+    /// query 的字符串值里替换占位符（非字符串原样保留）
+    fn query_pairs(&self, ph: &[(&str, &str)]) -> Vec<(String, String)> {
+        self.query
+            .iter()
+            .map(|(k, v)| {
+                let val = match v {
+                    Value::String(s) => {
+                        let mut s = s.clone();
+                        for (p, r) in ph {
+                            s = s.replace(p, r);
+                        }
+                        s
+                    }
+                    other => other.to_string(),
+                };
+                (k.clone(), val)
+            })
+            .collect()
+    }
 
-const DEFAULT_RULES: &[&str] = &[
-    r#"{
-    "api": "1",
-    "type": "anime",
-    "name": "AGE",
-    "version": "1.5",
-    "muliSources": true,
-    "useWebview": true,
-    "useNativePlayer": true,
-    "userAgent": "",
-    "baseURL": "https://www.agedm.io/",
-    "searchURL": "https://www.agedm.io/search?query=@keyword",
-    "searchList": "//div[2]/div/section/div/div/div/div",
-    "searchName": "//div/div[2]/h5/a",
-    "searchResult": "//div/div[2]/h5/a",
-    "chapterRoads": "//div[2]/div/section/div/div[2]/div[2]/div[2]/div",
-    "chapterResult": "//ul/li/a"
-}"#,
-    r#"{
-    "api": "8",
-    "type": "anime",
-    "name": "mutefun",
-    "version": "1.3",
-    "muliSources": true,
-    "useWebview": true,
-    "useNativePlayer": true,
-    "usePost": false,
-    "useLegacyParser": false,
-    "adBlocker": false,
-    "userAgent": "",
-    "baseURL": "https://www.2kdm.com/voddetail/",
-    "searchMode": "api",
-    "chapterMode": "xpath",
-    "searchApiConfig": {
-        "request": {
-            "method": "GET",
-            "url": "https://www.2kdm.com/index.php/ajax/suggest",
-            "query": {
-                "mid": "1",
-                "wd": "@keyword"
+    /// body（仅 JSON body 用）：递归替换字符串值里的占位符
+    fn body_json(&self, ph: &[(&str, &str)]) -> Value {
+        fn walk(v: &Value, ph: &[(&str, &str)]) -> Value {
+            match v {
+                Value::String(s) => {
+                    let mut s = s.clone();
+                    for (p, r) in ph {
+                        s = s.replace(p, r);
+                    }
+                    Value::String(s)
+                }
+                Value::Array(a) => Value::Array(a.iter().map(|x| walk(x, ph)).collect()),
+                Value::Object(o) => {
+                    Value::Object(o.iter().map(|(k, x)| (k.clone(), walk(x, ph))).collect())
+                }
+                other => other.clone(),
             }
-        },
-        "listPath": "$.list[*]",
-        "namePath": "$.name",
-        "sourcePath": "$.id"
-    },
-    "searchURL": "",
-    "searchList": "",
-    "searchName": "",
-    "searchResult": "",
-    "chapterRoads": "//div[contains(@class,'module-play-list-content')]",
-    "chapterResult": ".//a[contains(@class,'module-play-list-link')]",
-    "referer": ""
-}"#,
-];
+        }
+        walk(&self.body, ph)
+    }
+}
+
+// ───────────────────────── 内置规则（Predidit/KazumiRules 全量） ─────────────────────────
+
+/// [lc-1501] 内置**全部 16 条**社区规则（7sefun/aafun/AGE/akianime/baimao/dalvdm/
+/// DM84/ezdmw/giriGiriLove/mgnacg/moonci/mutefun/MXdm/sorani/xfdmneo/xfdmnext），
+/// 打包成一个 JSON 数组随二进制分发；文件内容 = KazumiRules 仓库原文。
+const BUILTIN_RULES_JSON: &str = include_str!("builtin_rules.json");
 
 pub fn rules_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app
@@ -158,22 +188,24 @@ pub fn rules_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     Ok(dir)
 }
 
-/// 首次运行时把内置规则写进 webrs-rules/（已有同名文件不覆盖，尊重用户改动）。
+/// 把内置规则逐条补种进 webrs-rules/（**缺哪个补哪个**，已有同名文件不覆盖 ——
+/// 尊重用户改动；用户删掉的内置源会在下次启动补回，行为等同"恢复默认"）。
 async fn seed_rules(app: &AppHandle) -> Result<(), String> {
     let dir = rules_dir(app)?;
-    if dir.exists() {
-        return Ok(());
-    }
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| format!("创建规则目录失败: {e}"))?;
-    for body in DEFAULT_RULES {
-        let name = serde_json::from_str::<Rule>(body)
-            .ok()
-            .map(|r| r.name)
-            .unwrap_or_else(|| "rule".into());
+    for v in serde_json::from_str::<Vec<Value>>(BUILTIN_RULES_JSON).unwrap_or_default() {
+        let Some(name) = v.get("name").and_then(|n| n.as_str()) else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
         let p = dir.join(format!("{name}.json"));
         if !p.exists() {
+            // 原文落盘（Value 序列化），不经过 Rule 结构体 —— 免得丢掉未建模的字段
+            let body = serde_json::to_string_pretty(&v).unwrap_or_default();
             let _ = tokio::fs::write(&p, body).await;
         }
     }
@@ -653,65 +685,65 @@ pub async fn webrs_rules(app: AppHandle) -> Result<Vec<Value>, String> {
         .collect())
 }
 
-/// [lc-1500] 规则搜索：返回 [{name, url}]。api 模式走 JSONPath 子集（sourcePath
-/// 若不是 URL， Chapters 阶段不支持 —— 这类规则直接提示）。
-#[tauri::command]
-pub async fn webrs_search(app: AppHandle, rule_name: String, keyword: String) -> Result<Value, String> {
-    let rules = load_rules(&app).await?;
-    let rule = find_rule(&rules, &rule_name)?.clone();
-    let ua = rule_ua(&rule);
-    let referer = rule_referer(&rule);
-    let keyword = keyword.trim().to_string();
-    if keyword.is_empty() {
-        return Err("搜索词为空".into());
+/// [lc-1501] api 模板请求执行器：url / query / headers / body 字符串值里的占位符
+/// 统一替换；GET 把 query 追加进 URL，POST 按 bodyType 走 form / JSON。
+async fn api_request(rule: &Rule, req: &ApiRequest, ph: &[(&str, &str)]) -> Result<String, String> {
+    let ua = rule_ua(rule);
+    let referer = rule_referer(rule);
+    let mut url = req.url.clone();
+    for (p, r) in ph {
+        url = url.replace(p, r);
     }
-    let encoded = urlencoding::encode(&keyword).to_string();
+    if !url.starts_with("http") {
+        url = join_url(&rule.base_url, &url).ok_or_else(|| format!("模板 URL 无法拼接: {url}"))?;
+    }
+    let client = http();
+    let is_post = req.method.eq_ignore_ascii_case("post");
+    let mut builder = if is_post {
+        client.post(&url)
+    } else {
+        let mut u = Url::parse(&url).map_err(|e| format!("URL 解析失败: {e}"))?;
+        for (k, v) in req.query_pairs(ph) {
+            u.query_pairs_mut().append_pair(&k, &v);
+        }
+        client.get(u.as_str())
+    };
+    builder = builder.header("user-agent", &ua).header("referer", &referer);
+    for (k, v) in &req.headers {
+        if let Ok(hv) = reqwest::header::HeaderValue::from_str(v) {
+            builder = builder.header(k.as_str(), hv);
+        }
+    }
+    if is_post {
+        if req.body_type.eq_ignore_ascii_case("json") {
+            builder = builder.header("content-type", "application/json");
+            builder = builder.body(serde_json::to_string(&req.body_json(ph)).unwrap_or_default());
+        } else {
+            builder = builder.form(&req.query_pairs(ph));
+        }
+    }
+    let resp = builder.send().await.map_err(|e| format!("请求失败 {url}: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| format!("读响应失败: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("请求返回 {status}: {url}"));
+    }
+    Ok(text)
+}
+
+/// [lc-1501] 规则搜索核心（单源）：返回 [{name, src}]。api 模式走 JSONPath 子集，
+/// xpath 模式走 HTML 解析。webrs_search / webrs_search_multi 共用。
+async fn rule_search(rule: &Rule, keyword: &str) -> Result<Vec<(String, String)>, String> {
+    let ua = rule_ua(rule);
+    let referer = rule_referer(rule);
+    let encoded = urlencoding::encode(keyword).to_string();
 
     let items: Vec<(String, String)> = if rule.search_mode == "api" {
-        let cfg = rule.search_api_config.clone().ok_or("规则缺少 searchApiConfig")?;
-        let mut url = cfg.request.url.replace("@keyword", &encoded);
-        if !url.starts_with("http") {
-            url = join_url(&rule.base_url, &url).ok_or("searchApiConfig.url 无法拼接")?;
-        }
-        let req = crate::libmpv::trace(&format!("[webrs] api 搜索: {url}"));
-        let _ = req;
-        let body = if cfg.request.method.eq_ignore_ascii_case("post") {
-            // POST 模式：query → form body（对齐 Kazumi PreparedRuleRequest）。
-            // ⚠ 传**原始关键词**：form 序列化会自己编码，先 encode 过会双重编码。
-            let form: Vec<(String, String)> = cfg
-                .request
-                .query
-                .iter()
-                .map(|(k, v)| (k.clone(), v.replace("@keyword", &keyword)))
-                .collect();
-            let resp = http()
-                .post(&url)
-                .header("user-agent", &ua)
-                .header("referer", &referer)
-                .form(&form)
-                .send()
-                .await
-                .map_err(|e| format!("API 搜索请求失败: {e}"))?;
-            resp.text().await.map_err(|e| format!("读响应失败: {e}"))?
-        } else {
-            let mut q: Vec<(String, String)> = cfg
-                .request
-                .query
-                .iter()
-                .map(|(k, v)| (k.clone(), v.replace("@keyword", &keyword)))
-                .collect();
-            if q.is_empty() {
-                fetch_text(&url, &ua, &referer).await?
-            } else {
-                // url 可能自带 query，用 Url 合并
-                let mut u = Url::parse(&url).map_err(|e| format!("URL 解析失败: {e}"))?;
-                for (k, v) in q.drain(..) {
-                    u.query_pairs_mut().append_pair(&k, &v);
-                }
-                fetch_text(u.as_str(), &ua, &referer).await?
-            }
-        };
-        // JSONPath 子集：$.a.b[*] 取列表；namePath/sourcePath 相对每项取字段
+        let cfg = rule
+            .search_api_config
+            .clone()
+            .ok_or("规则缺少 searchApiConfig")?;
+        let body = api_request(rule, &cfg.request, &[("@keyword", keyword)]).await?;
         let v: Value = serde_json::from_str(body.trim())
             .map_err(|e| format!("API 搜索返回的不是 JSON: {e}"))?;
         let list = json_path(&v, &cfg.list_path).ok_or("listPath 解析失败")?;
@@ -755,7 +787,19 @@ pub async fn webrs_search(app: AppHandle, rule_name: String, keyword: String) ->
         }
         out
     };
+    Ok(items)
+}
 
+/// [lc-1500] 单源搜索（保留给单源场景 / 调试）。
+#[tauri::command]
+pub async fn webrs_search(app: AppHandle, rule_name: String, keyword: String) -> Result<Value, String> {
+    let rules = load_rules(&app).await?;
+    let rule = find_rule(&rules, &rule_name)?.clone();
+    let keyword = keyword.trim().to_string();
+    if keyword.is_empty() {
+        return Err("搜索词为空".into());
+    }
+    let items = rule_search(&rule, &keyword).await?;
     if items.is_empty() {
         return Err("没有搜到结果，换个源或换关键词试试".into());
     }
@@ -765,10 +809,116 @@ pub async fn webrs_search(app: AppHandle, rule_name: String, keyword: String) ->
         .collect::<Vec<_>>()))
 }
 
-/// JSONPath 极简子集：`$.a.b[*]`。返回路径终点数组（支持中间任意层 [*]）。
+/// [lc-1501] 多源聚合搜索（对齐 Kazumi「播放来源」）：并发跑**全部**规则，
+/// 按源分组回传 status：ok（有结果）/ empty（无结果）/ error（检索失败，带 error 文案）。
+#[tauri::command]
+pub async fn webrs_search_multi(app: AppHandle, keyword: String) -> Result<Value, String> {
+    let keyword = keyword.trim().to_string();
+    if keyword.is_empty() {
+        return Err("搜索词为空".into());
+    }
+    let rules = load_rules(&app).await?;
+    if rules.is_empty() {
+        return Err("没有可用规则源".into());
+    }
+    let mut set: tokio::task::JoinSet<Value> = tokio::task::JoinSet::new();
+    for rule in rules {
+        let keyword = keyword.clone();
+        set.spawn(async move {
+            let name = rule.name.clone();
+            match rule_search(&rule, &keyword).await {
+                Ok(items) if items.is_empty() => json!({ "name": name, "status": "empty", "error": "", "items": [] }),
+                Ok(items) => json!({
+                    "name": name,
+                    "status": "ok",
+                    "error": "",
+                    "items": items
+                        .into_iter()
+                        .take(20)
+                        .map(|(n, u)| json!({ "name": n, "url": u }))
+                        .collect::<Vec<_>>()
+                }),
+                Err(e) => json!({ "name": name, "status": "error", "error": e, "items": [] }),
+            }
+        });
+    }
+    let mut groups = Vec::new();
+    while let Some(res) = set.join_next().await {
+        if let Ok(v) = res {
+            groups.push(v);
+        }
+    }
+    groups.sort_by(|a, b| {
+        let sa = a.get("status").and_then(|s| s.as_str()).unwrap_or("");
+        let sb = b.get("status").and_then(|s| s.as_str()).unwrap_or("");
+        let ka = if sa == "ok" { 0 } else { 1 };
+        let kb = if sb == "ok" { 0 } else { 1 };
+        ka.cmp(&kb).then_with(|| {
+            a.get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("")
+                .cmp(b.get("name").and_then(|n| n.as_str()).unwrap_or(""))
+        })
+    });
+    Ok(json!(groups))
+}
+
+/// [lc-1501] 用户加源：粘贴 Kazumi 规则 JSON → 校验 → 落盘 webrs-rules/{name}.json。
+/// 返回规则名。同名已存在则报错（先删再加）。
+#[tauri::command]
+pub async fn webrs_add_rule(app: AppHandle, json_text: String) -> Result<String, String> {
+    let v: Value = serde_json::from_str(json_text.trim())
+        .map_err(|e| format!("不是合法 JSON: {e}"))?;
+    let name = v
+        .get("name")
+        .and_then(|n| n.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        return Err("规则缺少 name 字段".into());
+    }
+    serde_json::from_value::<Rule>(v.clone())
+        .map_err(|e| format!("规则字段不合法: {e}"))?;
+    let dir = rules_dir(&app)?;
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| format!("创建规则目录失败: {e}"))?;
+    let p = dir.join(format!("{name}.json"));
+    if p.exists() {
+        return Err(format!("规则「{name}」已存在，先删掉再加"));
+    }
+    tokio::fs::write(&p, serde_json::to_string_pretty(&v).unwrap_or_default())
+        .await
+        .map_err(|e| format!("写入规则失败: {e}"))?;
+    crate::libmpv::trace(&format!("[webrs] 新增规则: {name}"));
+    Ok(name)
+}
+
+/// [lc-1501] 用户删源。内置源删掉后下次启动会被补种（等同"恢复默认"）。
+#[tauri::command]
+pub async fn webrs_remove_rule(app: AppHandle, rule_name: String) -> Result<(), String> {
+    let name = rule_name.trim().to_string();
+    if name.is_empty() || name.contains(['/', '\\', ':']) || name.contains("..") {
+        return Err("规则名不合法".into());
+    }
+    let p = rules_dir(&app)?.join(format!("{name}.json"));
+    match tokio::fs::remove_file(&p).await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!("删除失败: {e}")),
+    }
+}
+
 fn json_path<'a>(root: &'a Value, path: &str) -> Option<Vec<&'a Value>> {
-    let p = path.trim().strip_prefix("$.")?;
+    // 支持 `$.a.b[*]`、`$[*]`（根数组，xfdmnext 用）与 `$`（原样）
+    let mut p = path.trim().strip_prefix('$')?;
+    if let Some(rest) = p.strip_prefix('.') {
+        p = rest;
+    }
     let mut cur: Vec<&Value> = vec![root];
+    if p.is_empty() {
+        return Some(cur);
+    }
     for seg in p.split('.') {
         let (key, wildcard) = match seg.strip_suffix("[*]") {
             Some(k) => (k, true),
@@ -776,13 +926,18 @@ fn json_path<'a>(root: &'a Value, path: &str) -> Option<Vec<&'a Value>> {
         };
         let mut next = Vec::new();
         for v in &cur {
-            let hit = v.get(key);
-            if let Some(hit) = hit {
+            // key 为空 = 通配作用在当前值本身（`$[*]` 首段）
+            let targets: Vec<&Value> = if key.is_empty() {
+                vec![*v]
+            } else {
+                v.get(key).into_iter().collect()
+            };
+            for hit in targets {
                 if wildcard {
-                    if let Some(arr) = hit.as_array() {
-                        for it in arr {
-                            next.push(it);
-                        }
+                    match hit.as_array() {
+                        Some(arr) => next.extend(arr.iter()),
+                        // 通配作用在非数组上：部分 API 单条返回对象，容错当单元素
+                        None => next.push(hit),
                     }
                 } else {
                     next.push(hit);
@@ -798,7 +953,17 @@ fn json_path_str(v: &Value, path: &str) -> Option<String> {
     let vals = json_path(v, path)?;
     match vals.first()? {
         Value::String(s) => Some(s.trim().to_string()),
-        Value::Number(n) => Some(n.to_string()), // `$.id` 这类数字字段（对齐 Dart toString）
+        Value::Number(n) => {
+            // sorani 的 episodeOrder 是 1.0 这类浮点：整数值渲染成 "1"（拼 episodePage
+            // 模板时 "/episode/1.0" 会 404；对齐 Dart int/dart 的直觉输出）
+            if let Some(f) = n.as_f64() {
+                if f.fract() == 0.0 && f.abs() < 9e15 {
+                    return Some(format!("{}", f as i64));
+                }
+            }
+            Some(n.to_string())
+        }
+        Value::Bool(b) => Some(b.to_string()),
         _ => None,
     }
 }
@@ -811,9 +976,74 @@ fn json_path_str(v: &Value, path: &str) -> Option<String> {
 pub async fn webrs_chapters(app: AppHandle, rule_name: String, url: String) -> Result<Value, String> {
     let rules = load_rules(&app).await?;
     let rule = find_rule(&rules, &rule_name)?.clone();
+
+    // ── api 选集（sorani / xfdmnext）：模板请求拿 JSON，roadsPath/episodesPath 逐层抽取 ──
+    if rule.chapter_mode == "api" {
+        let cfg = rule
+            .chapter_api_config
+            .clone()
+            .ok_or("规则缺少 chapterApiConfig")?;
+        if cfg.format.eq_ignore_ascii_case("delimited") {
+            return Err("该规则使用 delimited 打包格式，暂不支持".into());
+        }
+        let src_id = url.trim().to_string();
+        if src_id.is_empty() {
+            return Err("缺少资源 id".into());
+        }
+        let body = api_request(&rule, &cfg.request, &[("@source", &src_id)]).await?;
+        let v: Value = serde_json::from_str(body.trim())
+            .map_err(|e| format!("API 选集返回的不是 JSON: {e}"))?;
+        let roads_raw = json_path(&v, &cfg.roads_path).ok_or("roadsPath 解析失败")?;
+        let mut roads: Vec<Value> = Vec::new();
+        for road in roads_raw {
+            let rname = if cfg.road_name_path.trim().is_empty() {
+                String::new()
+            } else {
+                json_path_str(road, &cfg.road_name_path).unwrap_or_default()
+            };
+            let eps_raw = json_path(road, &cfg.episodes_path).unwrap_or_default();
+            let mut eps: Vec<Value> = Vec::new();
+            for ep in eps_raw {
+                let ename = json_path_str(ep, &cfg.episode_name_path).unwrap_or_default();
+                let eurl = json_path_str(ep, &cfg.episode_url_path).unwrap_or_default();
+                if eurl.is_empty() {
+                    continue;
+                }
+                // episodePage 模板：@source / @episodeUrl → 播放页（后面 resolve 阶段嗅探直链）
+                let page = cfg
+                    .episode_page
+                    .url
+                    .replace("@source", &src_id)
+                    .replace("@episodeUrl", &eurl);
+                if page.is_empty() {
+                    continue;
+                }
+                let name = if ename.is_empty() {
+                    format!("第{}集", eps.len() + 1)
+                } else {
+                    ename
+                };
+                eps.push(json!({ "name": name, "url": page }));
+            }
+            if eps.is_empty() {
+                continue;
+            }
+            let rname = if rname.is_empty() {
+                format!("线路 {}", roads.len() + 1)
+            } else {
+                rname
+            };
+            roads.push(json!({ "name": rname, "index": roads.len(), "episodes": eps }));
+        }
+        if roads.is_empty() {
+            return Err("没解析到播放线路（api 选集）".into());
+        }
+        return Ok(json!({ "roads": roads, "pageUrl": url }));
+    }
+
     if rule.chapter_mode != "xpath" {
         return Err(format!(
-            "规则「{}」的选集模式是 {}，本版本只支持 xpath",
+            "规则「{}」的选集模式是 {}，本版本只支持 xpath/api",
             rule.name, rule.chapter_mode
         ));
     }

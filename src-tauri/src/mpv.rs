@@ -61,7 +61,14 @@ impl MpvSession {
         let path = pipe_path(&name);
         crate::libmpv::trace_reset(&format!("launch(mpv.exe) pid={}", std::process::id()));
 
-        // ── 1) 启动 mpv.exe（pwsh 中转，-PassThru 拿 PID）
+        // ── 1) 启动 mpv.exe
+        // [lc-1552] 改为 **Rust 直接 spawn**（原为 pwsh Start-Process 中转，白花 ~450ms）：
+        //   · 实测：直接 Popen → 6ms 就返回；经 pwsh → 454ms（pwsh 冷启本身约 440ms）。
+        //   · lc-079 当年记的「Rust/tokio 直接 spawn 必死」是 **--wid 内嵌时代**的结论；
+        //     现在已是独立窗口（lc-106），实测直接 spawn 的 mpv 连播 8s 稳定存活、
+        //     IPC 正常、窗口正常（本机验证）。
+        //   · tokio 的 child.id() 本来就能拿 PID，不需要 pwsh -PassThru。
+        //   · 用 kill_on_drop(false)：mpv 要活过本次调用（会话常驻，播放/停止只切状态）。
         let log_path = std::env::temp_dir().join("anibox-mpv.log");
         let args = [
             format!("--input-ipc-server={}", path),
@@ -78,23 +85,24 @@ impl MpvSession {
             "--window-dragging=no".to_string(),
             format!("--log-file={}", log_path.to_string_lossy()),
         ];
-        let q = '\'';
-        let arg_list = args
-            .iter()
-            .map(|a| format!("{q}{}{q}", a.replace(q, "")))
-            .collect::<Vec<_>>()
-            .join(",");
-        let cmd = format!(
-            "$p = Start-Process -FilePath {q}{}{q} -ArgumentList @({arg_list}) -WindowStyle Hidden -PassThru; $p.Id",
-            mpv_path.replace(q, "")
-        );
-        let out = tokio::process::Command::new("pwsh")
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &cmd])
-            .output()
-            .await
+        let mut command = tokio::process::Command::new(mpv_path);
+        command
+            .args(&args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            // CREATE_NO_WINDOW：别给 mpv 弹一个控制台窗口（pwsh 时代由 -WindowStyle Hidden 承担）
+            .creation_flags(0x0800_0000);
+        let child = command
+            .spawn()
             .map_err(|e| format!("拉起 mpv 失败: {e}"))?;
-        let pid = String::from_utf8_lossy(&out.stdout).trim().parse::<u32>().ok();
-        crate::libmpv::trace(&format!("mpv.exe spawned pid={pid:?} args={args:?}"));
+        let pid = child.id();
+        crate::libmpv::trace(&format!(
+            "mpv.exe spawned pid={pid:?} args={args:?}（直接 spawn，无 pwsh 中转）"
+        ));
+        // 不持有 child：mpv 要活过本次 launch（会话常驻，播放/停止只切状态），
+        // 退出统一走 shutdown() 的 taskkill /PID（它只认 pid，不需要句柄）。
+        drop(child);
 
         // ── 2) 连 IPC 管道（mpv 起得要一会儿，重试 ~20s）
         let mut file = None;

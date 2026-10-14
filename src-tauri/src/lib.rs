@@ -445,57 +445,59 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
         return Err("未登录".into());
     }
 
-    // [lc-102/lc-103] 播放前**先要一次播放信息**（抄主仓库：`api.ts:191 POST /v/api/v1/play/info
-    // {item_guid}`）。Go 代理的 `/playvideo` 内部第一步也是它（`playvideo.go:19 fetchPlayInfo`
-    // → `GET /v/api/v1/stream/list/<guid>`），失败就 `c.JSON(500,"Failed to get play info")`。
+    // [lc-1551] 顺序重排：**mpv 先起来**，网络准备全部并行。
     //
-    // 【lc-103 实测根因】代理那条链**只能吃「具体媒体」的 guid**：
-    //   stream/list(原始 TV/剧集容器 guid) → 200 但 data 是空数组 ⇒ 代理判"获取播放信息失败或为空" ⇒ 500
-    //   stream/list(play/info 解析出的 Episode guid) → 2 条流 ✓
-    // 主仓库正是这么绕的：media.ts 先 `getPlayInfo(id)`，再拿 `response.data.guid` 去 getProxyUrl。
-    // 所以这里必须**用解析后的 guid** 去拼代理 URL —— 这是"拉取半天没反应/加载出错"的唯一原因。
+    // 实测耗时（anibox.log）：launch 开始 → file-loaded 共 3.26s，而 mpv 自报的
+    // 加载只用 292ms、spawn 只用 259ms ⇒ 约 3s 全花在「等网络」（resolve_play_guid
+    // 要飞牛 API 往返解析出真正的 Episode guid；probe 要等 Go 代理给出可播流）。
+    // 原实现把这些**串行放在启动 mpv 之前**，用户点击后要干等数秒才看到窗口。
+    //
+    // 现在：点击 → 立刻拉起 mpv 窗口（用户马上有反馈）→ 同时并行解析 guid /
+    // 起代理 / 预检直链 → 全部就绪后 loadfile。失败则回滚（关掉刚起的空窗）。
+    // 保留 lc-109 的原意：失败仍给明确错误，而不是"开个空窗干等着"。
     let _ = app.emit("mpv-load", json!({ "phase": "start" }));
-    let (play_guid, _t) = resolve_play_guid(&app, &state, &mut cfg, &guid).await?;
 
-    proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
-
-    // [lc-1549] mpv 启动与直链预检**并行**（原为串行，用户反馈「点播放要好久才拉起 mpv，
-    // 之前都秒播」）。耗时构成（anibox.log 实测）：launch→file-loaded 共 4.9s，而 mpv
-    // 自己报的加载只用 173ms —— 差额全在「等直链预检返回」上。预检本身要等 Go 代理
-    // 解析出一条可播的流（可能几秒），期间 mpv 窗口一直不出现。
-    //
-    // 现在两条腿同时跑：
-    //   · mpv.exe 立刻拉起并连 IPC（用户马上看到窗口，符合"秒播"预期）
-    //   · 预检在后台跑；失败则回滚（关掉刚起的 mpv）并把代理的错误文案抛给前端
-    // 保留 lc-109 的原意：失败仍然给出明确错误，而不是"开个空窗什么都不加载"。
-    let url = proxy::play_url(&cfg, &play_guid);
-    let url_for_probe = url.clone();
-
-    // 预检**与 mpv 启动真正并行**：先把预检作为一个 task 抛出去
-    // （`join!` 在这里不够用——启动 mpv 要拿 state 锁，而预检是纯网络）。
-    let probe_task = tokio::spawn(async move { proxy::probe(&url_for_probe).await });
-
-    // 同时拉起会话（用户立刻看到 mpv 窗口）
-    let mut slot = state.mpv.lock().await;
-    let (session, freshly_launched) = match slot.as_ref() {
-        Some(m) if !m.is_dead().await => (m.clone(), false),
-        Some(m) => {
-            m.shutdown().await;
-            (mpv::MpvSession::launch(app.clone(), &cfg.mpv_path).await?, true)
-        }
-        None => (mpv::MpvSession::launch(app.clone(), &cfg.mpv_path).await?, true),
+    // [lc-1551] 阶段计时：每步都记一条，下次「还慢」时有数可查（不再靠猜）。
+    let t_play = std::time::Instant::now();
+    let stage = |name: &str| {
+        libmpv::trace(&format!("[play/stage] {name} @ {}ms", t_play.elapsed().as_millis()));
     };
-    *slot = Some(session.clone());
-    drop(slot);
 
-    // 收预检结果（此刻两条腿已经并行跑完）
-    let probe_result = match probe_task.await {
-        Ok(r) => r,
-        Err(e) => Err(format!("直链预检任务异常：{e}")),
-    };
+    // ① 先保证有一个活着的 mpv 会话（窗口立刻出现）
+    let url;
+    let probe_result;
+    let session;
+    let freshly_launched;
+    {
+        let mut slot = state.mpv.lock().await;
+        let (s, fresh) = match slot.as_ref() {
+            Some(m) if !m.is_dead().await => (m.clone(), false),
+            Some(m) => {
+                m.shutdown().await;
+                (mpv::MpvSession::launch(app.clone(), &cfg.mpv_path).await?, true)
+            }
+            None => (mpv::MpvSession::launch(app.clone(), &cfg.mpv_path).await?, true),
+        };
+        *slot = Some(s.clone());
+        drop(slot);
+        stage("mpv-launched");
+
+        // ② 网络准备：解析 guid（飞牛 API）+ 确保 Go 代理在跑
+        let (play_guid, _t) = resolve_play_guid(&app, &state, &mut cfg, &guid).await?;
+        stage("guid-resolved");
+        proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
+        stage("proxy-ready");
+        url = proxy::play_url(&cfg, &play_guid);
+
+        // ③ 直链预检（同样在 mpv 起来之后；失败回滚）
+        probe_result = proxy::probe(&url).await;
+        stage("probe-done");
+        session = s;
+        freshly_launched = fresh;
+    }
+
     if let Err(e) = probe_result {
         libmpv::trace(&format!("[probe] 直链预检失败: {e}"));
-        // 回滚：刚起的、还没加载任何东西的 mpv 关掉，避免留一个空窗
         if freshly_launched {
             let _ = session.shutdown().await;
             *state.mpv.lock().await = None;
@@ -1057,7 +1059,23 @@ pub fn run() {
                     .unwrap_or_else(|_| std::env::temp_dir().join("anibox-cache"));
                 disk_cache::init(root, cfg.cache_limit_mb);
             }
-            *app.state::<AppState>().config.blocking_write() = cfg;
+            *app.state::<AppState>().config.blocking_write() = cfg.clone();
+            // [lc-1552] 启动即**预热 Go 代理**：冷启动 proxy.exe 要 2.5s（实测
+            // [play/stage] proxy-ready @3035ms），而它只在首次播放时才被拉起 ⇒
+            // 第一次点播放要白等这 2.5s（后续播放代理已驻留，只要 477ms）。
+            // 这里在后台静默拉起来，用户第一次点播放时它已经在监听了。
+            // 失败无副作用（ensure 内部只 log，不 panic；真播放时还会再试一次）。
+            {
+                let h = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let st = h.state::<AppState>();
+                    let path = st.config.read().await.proxy_path.clone();
+                    let holder = &st.proxy_child;
+                    if let Err(e) = proxy::ensure(&path, holder).await {
+                        libmpv::trace(&format!("[warmup] Go 代理预热失败（不影响使用）: {e}"));
+                    }
+                });
+            }
             // Win11 会给窗口画一圈系统细边框 —— 用户眼中的「外面又包了一层线条」，
             // DWMWA_BORDER_COLOR(34) 设为 DWMWA_COLOR_NONE(0xFFFFFFFE) 关掉（旧系统调用失败无副作用）
             #[cfg(target_os = "windows")]

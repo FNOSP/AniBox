@@ -6039,6 +6039,11 @@ html.dark .ditem-tag {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* [lc-1533] 内容撑满整格（用户截图反馈：面板下半留白一大块）：
+     文字组贴顶（与右侧「同步状态」标题同一水平线），按钮组沉底 ——
+     与用户设计稿的竖向结构一致（内容在上、按钮在下），下半不再空一块。 */
+  align-self: stretch;
+  justify-content: space-between;
 }
 .bgmac-text {
   display: flex;

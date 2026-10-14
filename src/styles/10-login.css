@@ -1,0 +1,125 @@
+/* ─────────────── 登录页 ─────────────── */
+
+.login-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 70px;
+  padding: 40px;
+}
+.login-hero {
+  position: relative;
+  text-align: left;
+}
+.login-hero h1 {
+  font-size: 56px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  margin: 0;
+  background: var(--accent-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.login-hero p {
+  color: var(--muted);
+  margin: 10px 0 0;
+  letter-spacing: 1px;
+}
+.login-hero-glow {
+  position: absolute;
+  width: 340px;
+  height: 340px;
+  top: -120px;
+  left: -80px;
+  background: radial-gradient(circle, rgba(108, 155, 255, 0.22), transparent 65%);
+  filter: blur(10px);
+  pointer-events: none;
+}
+.login-card {
+  width: 380px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 28px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(14px);
+}
+.login-card h2 {
+  margin: 0 0 4px;
+  font-size: 19px;
+}
+.login-card label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+.login-opts {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-top: 10px;
+}
+.login-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+  margin-top: 0 !important;
+}
+.login-check:hover {
+  color: var(--text-strong);
+}
+.login-check input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.login-check input:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+.linklike {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  text-align: left;
+  padding: 8px 0 0;
+  font-size: 12px;
+}
+.linklike:hover {
+  text-decoration: underline;
+}
+.primary {
+  margin-top: 16px;
+  background: var(--accent-grad);
+  border: none;
+  color: #fff;
+  padding: 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 8px 22px rgba(108, 155, 255, 0.35);
+  transition: filter 0.15s, transform 0.15s;
+}
+.primary:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+.primary:disabled {
+  opacity: 0.55;
+  cursor: default;
+  transform: none;
+}
+

@@ -1,0 +1,27 @@
+/* ─────────────── 首页：继续观看横排 ─────────────── */
+
+.hscroll {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  padding-bottom: 10px;
+  /* [lc-1431] 横向归零。原来用「负边距 -26 + 同值 padding 26」自造通栏
+     （意图是让横向滚动条能贴到容器边缘），但在 .home-full 已提供 26px padding 的
+     前提下，那套自补净推出 -26px ⇒ 卡片跑到窗口最左，与轮播文字不齐。
+     首页的横向留白现在**统一由 .home-full 提供**，这里不再自补。 */
+  margin: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+.hscroll .card {
+  min-width: 148px;
+  width: 148px;
+  flex: none;
+}
+.hscroll::-webkit-scrollbar {
+  height: 7px;
+}
+.continue-card .poster-box {
+  aspect-ratio: 16 / 10;
+}
+

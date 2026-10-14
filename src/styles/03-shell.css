@@ -1,0 +1,123 @@
+/* ─────────────── 侧栏 ─────────────── */
+
+/* 视图栈：首页常驻挂载，切页只切换 active（防图片重请求与状态丢失） */
+.view-stack {
+  position: relative; /* [lc-123-rev2] 浮层胶囊（.navbar，absolute）的定位上下文 = 内容区 */
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.view-pane {
+  display: none; /* 非 active pane 隐藏（display:flex 只在 .active 上出现，无需 important） */
+  visibility: hidden;
+  pointer-events: none;
+  flex: 1;
+  min-height: 0;
+}
+.view-pane.active {
+  display: flex;
+  flex-direction: column;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+/* [lc-123-rev6] 首页 ↔ 发现 的页面切换动画：进入/离开**各一套**（去发现往左、回首页往右）。
+   动画类只在切换那 ~260ms 里由 JS 挂上（animationend 或 400ms 兜底摘掉），不长期挂 transition。
+   退场侧 .leaving：position:absolute 叠在进入侧之上 —— 不改列布局、**不加 overflow 裁剪**
+   （hero 满幅照旧），且 pointer-events:none：动画期间照样能点，不锁交互。 */
+.view-pane.leaving {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  visibility: visible;
+  pointer-events: none;
+}
+.view-pane.anim-to-discover {
+  animation: paneInFromRight 0.26s ease-out both;
+}
+.view-pane.leaving.anim-to-discover {
+  animation: paneOutLeft 0.26s ease-out both;
+}
+.view-pane.anim-to-home {
+  animation: paneInFromLeft 0.26s ease-out both;
+}
+.view-pane.leaving.anim-to-home {
+  animation: paneOutRight 0.26s ease-out both;
+}
+@keyframes paneOutLeft {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-22px);
+  }
+}
+@keyframes paneInFromRight {
+  from {
+    opacity: 0;
+    transform: translateX(22px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes paneOutRight {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(22px);
+  }
+}
+@keyframes paneInFromLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-22px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* [lc-123-rev7] 深浅切换的**从按钮往外扩散**（用户两轮纠偏后的最终形态：
+   v6「实色圆吞屏」否 → v7「旧印象从全屏缩回按钮」也否（观感像倒放，用户要「从按钮处往外扩散」）。
+   最终结构：主题**立即切换**（DOM 已是新主题）→ 遮罩铺**新主题的底色**（CSS 变量按层次，
+   不放截图 —— WebView2 无页面截图通道；也不用纯 #fff/#000），clip-path: circle()
+   **从按钮处的 0 长到 150%**：圆内是新主题底色、圆外是旧界面，圆边向外推进 = 新主题从按钮荡开盖满屏。
+   --tx/--ty = 主题按钮中心（JS getBoundingClientRect 写入）；z-index 80 > 顶栏 50；
+   pointer-events:none 不挡点击；animationend 后由 JS 从 DOM 移除。 */
+.theme-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  pointer-events: none;
+  /* 新主题底色（按真实层次）：--bg-0（app-shell 渐变起点）+ --bg-1（主表面）。
+     变量在挂载后读取 —— 此时主题已切换，读到的就是新主题的值。 */
+  background: linear-gradient(160deg, var(--bg-0), var(--bg-1) 55%);
+  clip-path: circle(0px at var(--tx) var(--ty));
+  animation: themeVeilGrow 0.42s ease-in-out forwards;
+}
+@keyframes themeVeilGrow {
+  from {
+    clip-path: circle(0px at var(--tx) var(--ty));
+  }
+  to {
+    clip-path: circle(150% at var(--tx) var(--ty));
+  }
+}
+
+.main-row {
+  position: relative;   /* [lc-1427] 侧栏改成 absolute 浮层后，这里是它的定位祖先 */
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}

@@ -1,0 +1,77 @@
+/* ══════════════════════════════════════════════════════════════════════════════
+   [lc-1415] 右栏选集的整体布局调整（配合封面放大到 152px）
+   用户反馈：封面太小；且截图里「第 1 集. 标题」与「1080」徽标挤成两行、简介断得很难看。
+   原因是右栏只 280~360px，而封面占 116px 后留给文字的更少。
+   本轮的调整（三处一起，才是"整体布局"）：
+     ① 右栏上限 360→420px：给文字更多横向空间（左列是主内容，本来就 minmax(0,1fr) 让得开）；
+     ② 封面 116→152px：与右栏新宽度成比例，且更接近飞牛原版选集的图:文比；
+     ③ 「1080」徽标改为**不参与换行**（nowrap），标题单独一行截断 ——
+        原来两者同行 flex-wrap，一挤就把徽标甩到第二行，看着像排版错乱。
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.dv2e-t .ep-quality {
+  flex: 0 0 auto;
+  margin-left: 6px;   /* 覆盖基类 .ep-quality 的 8px（模板里它跟标题在同一行） */
+}
+/* 时长：与简介同列，跟在简介下方；行高收紧一点 */
+.dv2e-dur {
+  margin-top: 4px;
+}
+/* 简介 3 行（封面变大后行更高，4 行会让一屏放不下几集） */
+
+/* [lc-1417] 详情页骨架屏（DetailSkeleton）用的尺寸类。
+   复用 .dsk 的 shimmer（既有动画语言），这里只定义各块的形状。
+   ⚠ 尺寸要与真实元素对齐：海报 132px 宽 / 选集缩略图 152px 宽（与 lc-1415 后的真值一致），
+     否则数据到位时会"跳一下"。 */
+.dsk-dposter {
+  width: 100%;
+  height: 100%;
+  border-radius: 10px;
+}
+.dsk-dthumb {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+}
+.dsk-chip {
+  width: 58px;
+  height: 24px;
+  border-radius: 999px;
+}
+.dsk-sline {
+  height: 12px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+}
+.dsk-sline.short {
+  width: 62%;
+}
+.dsk-tab {
+  width: 88px;
+  height: 34px;
+  border-radius: 9px;
+}
+.dsk-hd {
+  width: 72px;
+  height: 16px;
+  border-radius: 6px;
+}
+/* [lc-1419] 头部追加两块：元信息行（第二块）与右侧播放按钮位 —— 与真实头部结构对齐，
+   否则数据到位时头部高度突变（骨架 1 行 → 真内容 2 行 + 按钮）。 */
+.dsk-hd2 {
+  width: 116px;
+  height: 14px;
+  border-radius: 6px;
+}
+.dsk-playbtn {
+  width: 128px;
+  height: 34px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+/* 骨架块在容器里的定位（.dsk-poster 是 absolute 那种，这几类是普通流式块） */
+.dv2e-thumb .dsk,
+.dv2-poster .dsk {
+  display: block;
+}
+

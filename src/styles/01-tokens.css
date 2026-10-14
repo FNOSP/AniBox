@@ -1,0 +1,220 @@
+/* ═══════════════════════════════════════════════════════════════
+   AniBox —— 复刻主仓库 embyWall 美化后的视觉语言
+   深色玻璃 · 大圆角 · 柔和阴影 · hover 上浮光晕 · Netflix 风 hero
+   body 透明由 DWM acrylic 系统背景材质透出
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  /* ── 浅色（默认主题）：苹果浅色玻璃，压暗的蓝灰文字保证玻璃底对比 ── */
+  --bg-0: rgba(246, 248, 252, 0.4);
+  --bg-1: rgba(243, 246, 251, 0.55);
+  --bg-2: rgba(239, 242, 248, 0.72);
+  --bg-3: rgba(252, 253, 255, 0.9);
+  --line: rgba(30, 45, 90, 0.1);
+  --line-strong: rgba(30, 45, 90, 0.17);
+  --accent: #6c9bff;
+  --accent-2: #8f6cff;
+  --accent-grad: linear-gradient(135deg, #6c9bff 0%, #8f6cff 100%);
+  --gold: #ffd479;
+  --shadow-card: 0 10px 30px rgba(31, 41, 90, 0.12);
+  --radius: 14px;
+  --text-strong: rgba(26, 33, 50, 0.92);
+  --text: rgba(26, 33, 50, 0.8);
+  --text-2: rgba(26, 33, 50, 0.7);
+  --muted: rgba(58, 68, 94, 0.6);
+  --hover: rgba(30, 50, 110, 0.06);
+  --hover-strong: rgba(30, 50, 110, 0.11);
+  --input-bg: rgba(30, 50, 110, 0.07);
+  --ph-bg: rgba(30, 50, 110, 0.05);
+  --skel-base: rgba(30, 50, 110, 0.06);
+  --skel-shine: rgba(30, 50, 110, 0.13);
+  --option-bg: #ffffff;
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-border: rgba(30, 50, 110, 0.16);
+  --glass-btn-bg: rgba(30, 50, 110, 0.06);
+  --glass-btn-hover: rgba(30, 50, 110, 0.11);
+  --glass-line: rgba(30, 50, 110, 0.13);
+  --glass-text: #222b40;
+  --glass-text-2: rgba(34, 43, 64, 0.78);
+  --glass-text-dim: rgba(34, 43, 64, 0.55);
+  --toast-bg: rgba(252, 253, 255, 0.94);
+  --err-bg: rgba(229, 72, 77, 0.1);
+  --err-border: rgba(214, 69, 74, 0.45);
+  --err-text: #a5292f;
+  /* [lc-1426] 首页**统一内容左边距**（用户反馈：轮播文字与下方媒体库条/区块没对齐）。
+     成因是三套基准各写各的：
+       · 轮播文字 .mist-info  = `padding: 0 4% 163px`（4% 相对**轮播容器** .mist-item 宽）
+       · 媒体库条 .lib-strip   = `left: 4%`（绝对定位，4% 相对**定位祖先** .hero-zone 宽）
+       · 「继续观看」等区块      = `padding: 0 26px`（固定像素）
+     前两者的百分比基准容器不同 ⇒ 渲染出来不齐（用户截图那条红线）。
+     现在统一到这个**固定像素变量**；想整体调左右留白只改这一处。
+     [lc-1432] 注意**基准各不相同**，不是哪里都写 var(--home-pad)：
+       · .mist-info 的基准是 0（.mist-banner 负边距把轮播拉成全幅）⇒ 写 var(--home-pad)
+       · .lib-strip / .lsc-pop 的基准**已经是 26**（定位祖先 .hero-zone 就在 .home-full
+         的 26px 内容盒内）⇒ 必须写 0，写变量就是 26+26=52（实测踩过） */
+  --home-pad: 26px;
+}
+
+html.dark {
+  /* ── 深色（原默认主题）── */
+  --bg-0: rgba(13, 15, 22, 0.3);
+  --bg-1: rgba(18, 20, 29, 0.52);
+  --bg-2: rgba(24, 26, 36, 0.66);
+  --bg-3: rgba(30, 33, 45, 0.85);
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --shadow-card: 0 10px 30px rgba(0, 0, 0, 0.42);
+  --text-strong: rgba(233, 235, 244, 0.92);
+  --text: rgba(233, 235, 244, 0.8);
+  --text-2: rgba(233, 235, 244, 0.7);
+  --muted: rgba(233, 235, 244, 0.52);
+  --hover: rgba(255, 255, 255, 0.07);
+  --hover-strong: rgba(255, 255, 255, 0.15);
+  --input-bg: rgba(255, 255, 255, 0.07);
+  --ph-bg: rgba(255, 255, 255, 0.045);
+  --skel-base: rgba(255, 255, 255, 0.05);
+  --skel-shine: rgba(255, 255, 255, 0.11);
+  --option-bg: #1a1d28;
+  --glass-bg: rgba(30, 34, 52, 0.38);
+  --glass-border: rgba(255, 255, 255, 0.28);
+  --glass-btn-bg: rgba(255, 255, 255, 0.1);
+  --glass-btn-hover: rgba(255, 255, 255, 0.16);
+  --glass-line: rgba(255, 255, 255, 0.15);
+  --glass-text: #fff;
+  --glass-text-2: rgba(255, 255, 255, 0.78);
+  --glass-text-dim: rgba(255, 255, 255, 0.55);
+  --toast-bg: rgba(30, 34, 52, 0.85);
+  --err-bg: rgba(229, 72, 77, 0.15);
+  --err-border: rgba(229, 72, 77, 0.42);
+  --err-text: #ffb4b6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.app-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  /* 无描边：线条感来自本描边+Win11 系统窗口边框（后者已在 Rust 侧 DWMWA_BORDER_COLOR 关闭） */
+  border: none;
+  border-radius: 10px; /* 窗口形状由 DWM 系统圆角裁定(抗锯齿)；CSS 弧略大使其处于系统弧内侧 */
+  overflow: hidden;
+  background: linear-gradient(160deg, var(--bg-1), var(--bg-0) 55%);
+  animation: pageIn 0.28s ease;
+}
+
+/* [lc-094] 无边框窗口的边缘缩放热区（6px 边 / 12px 角）。
+   背景：tao 在无边框窗口上移除了 WS_THICKFRAME，只保留自己的 WM_NCHITTEST 判定，
+   热区 = SM_CXFRAME（175% 缩放约 7 物理像素 ≈ 4 CSS px），且这些像素常被 WebView2 子窗吃掉
+   → 拖边缘"不灵敏、有时无法触发"。改为页面内透明拖拽条 + startResizeDragging，热区可配、稳定。
+   顶边避开右上角窗口按钮区（.tb-btn 3×46px 且 flush 到右边缘）。 */
+.rsz {
+  position: fixed;
+  z-index: 60;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.rsz-n {
+  top: 0;
+  left: 12px;
+  right: 140px;
+  height: 6px;
+  cursor: ns-resize;
+}
+.rsz-s {
+  bottom: 0;
+  left: 12px;
+  right: 12px;
+  height: 6px;
+  cursor: ns-resize;
+}
+.rsz-w {
+  left: 0;
+  top: 44px; /* 避开 40px 顶栏，别抢走标题栏的拖拽/点击 */
+  bottom: 12px;
+  width: 6px;
+  cursor: ew-resize;
+}
+.rsz-e {
+  right: 0;
+  top: 44px;
+  bottom: 12px;
+  width: 6px;
+  cursor: ew-resize;
+}
+.rsz-nw {
+  top: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+}
+.rsz-sw {
+  bottom: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nesw-resize;
+}
+.rsz-se {
+  bottom: 0;
+  right: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+}
+
+@keyframes pageIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+
+/* [lc-123-rev8] Lucide 图标的行内对齐补齐（替换文本符号后 svg 是 inline-block，基线会偏）：
+   行内小图标一律 vertical-align:-0.16em；评分星（.fill）加 fill=currentColor 成实心（与原文本星号观感一致）。 */
+.rating-ico {
+  vertical-align: -0.16em;
+  flex-shrink: 0;
+}
+.rating-ico.fill {
+  fill: currentColor;
+}
+.rating,
+.watched-badge,
+.ep-mark,
+.bgmc-rate,
+.dscore-votes {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.dstars-bg,
+.dstars-fg {
+  display: inline-flex;
+  gap: 1px;
+}
+.dstars-fg .rating-ico {
+  color: var(--gold);
+}
+

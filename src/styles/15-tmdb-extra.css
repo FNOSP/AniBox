@@ -1,0 +1,179 @@
+/* ─────────────── TMDB 扩展信息四节（剧照/相似/更多/演职人员，复刻主仓库 tmdbCard (6)(8)(9)(10)） ─────────────── */
+.tmdb-sec {
+  border-radius: 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  padding: 14px 16px;
+}
+.tmdb-sec-t {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-strong);
+  margin-bottom: 10px;
+}
+/* ⚠ [lc-1418] 这条容器规则目前**没有 JSX 引用**（剧照行已改走 ScrollRow 的 .dvstill-row）。
+   保留它只为防"以后有人把容器名改回来时布局突然崩"，但新增样式请写在 .dvstill-row 上。 */
+.tmdb-stills {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+/* [lc-1418] 剧照缩到**四分之一**（用户要求）。同时修一个我前几轮埋下的错：
+   这条规则原来挂在 `.tmdb-stills img` 上，但 [lc-1413] 把剧照行改走 ScrollRow 之后，
+   boxClass 用的是 `.dvstill-row`（`.tmdb-stills` 那个容器**在 JSX 里已经不存在了**）——
+   于是这条定尺寸的规则**从未命中**，剧照一直按图片原始尺寸渲染（截图里占掉大半屏）。
+   现在挂到真实存在的 `.dvstill-row` 上，并按用户要求缩到**当前显示尺寸的四分之一**。 */
+.dvstill-row img {
+  /* 尺寸的依据：**按用户看到的实际大小取四分之一**。
+     你截图里剧照 ≈ 500×281（TMDB w500 的自然尺寸，因为旧规则没命中所以一直按原图渲染），
+     四分之一 → **124×70**（保持 16:9：124 × 9/16 ≈ 70）。
+     想再调只需改这两个数（height 与 min-width 要同步，否则比例会歪）。 */
+  height: 70px;
+  min-width: 124px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.tmdb-inline {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.9;
+  min-width: 0;
+  word-break: break-all;
+}
+.tmdb-inline i {
+  color: var(--muted);
+  font-style: normal;
+  margin: 0 2px;
+}
+.tmdb-mrow {
+  display: flex;
+  gap: 18px;
+  padding: 5px 0;
+  font-size: 13px;
+}
+.tmdb-mk {
+  min-width: 44px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.tmdb-links {
+  display: flex;
+  gap: 16px;
+  margin-top: 10px;
+}
+.tmdb-links a {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.tmdb-links a:hover {
+  text-decoration: underline;
+}
+.tmdb-cast {
+  display: flex;
+  flex-direction: column;
+}
+.tmdb-cast-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13.5px;
+}
+.tmdb-cast-row:last-child {
+  border-bottom: none;
+}
+.tmdb-cast-ava {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--ph-bg);
+}
+.tmdb-cast-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+.tmdb-cast-name {
+  font-weight: 700;
+  color: var(--text-strong);
+  min-width: 72px;
+}
+.tmdb-cast-role {
+  color: var(--text-2);
+}
+
+.play-note {
+  font-size: 13px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+/* [lc-117] 轮播左右切换箭头 —— 三个坑都在这里，别再踩回去：
+   1) 不要外面的长方形框。全局 `button{background:var(--hover);border;border-radius:9px;padding:8px 15px}`
+      是元素选择器，`.mist-nav` 是类选择器，但两者都只作用在各自属性上；真正的坑是
+      `button:hover{background:var(--hover-strong)}` 特异性 (0,0,1,1) 高于 `.mist-nav` (0,0,1,0)，
+      所以 hover 态必须显式写 `.mist-nav:hover` 兜住，否则一悬停就冒出灰底方框。
+   2) 垂直居中改用 top:0;bottom:0;margin:auto 0，**不能**用 transform: translateY(-50%)。
+      全局 `button:active{transform:scale(.97)}` 特异性 (0,0,1,1) 更高，按下瞬间会把
+      translateY(-50%) 整个顶掉 → 按钮下移 39px → 鼠标脱离按钮 → mouseup 落在 .mist-banner 上
+      → click 根本不触发（这就是「点击没反应」），且按下/松开一上一下（这就是「上下跳动」）。
+   3) 不再用 pointer-events:none 门控。鼠标静止时 mousemove 不刷新 near，按钮可能停在不可点状态。
+      透明时点到也只是切换，而鼠标一靠近必然触发 mousemove 让它显形，实际无差别。 */
+.mist-nav {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  margin: auto 0;
+  z-index: 6;
+  width: 54px;
+  height: 88px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  outline: none;
+  color: rgba(255, 255, 255, 0.78);
+  font-family: inherit;
+  font-size: 52px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+  transition: opacity 0.22s ease, color 0.2s ease, text-shadow 0.2s ease, transform 0.12s ease;
+}
+.mist-nav-prev { left: 12px; }
+.mist-nav-next { right: 12px; }
+.mist-nav.is-on { opacity: 1; }
+/* 特异性必须 ≥ button:hover / button:active 的 (0,0,1,1)，所以这里用 .mist-nav:hover (0,0,2,0) */
+.mist-nav:hover,
+.mist-nav.is-on:hover {
+  background: none;
+  border: 0;
+  color: #fff;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.95);
+}
+.mist-nav:active,
+.mist-nav.is-on:active {
+  background: none;
+  border: 0;
+  /* 居中已不靠 transform，这里可以安全地只做按压反馈 */
+  transform: scale(0.92);
+}
+.mist-nav:focus-visible {
+  opacity: 1;
+  color: #fff;
+  outline: none;
+}
+

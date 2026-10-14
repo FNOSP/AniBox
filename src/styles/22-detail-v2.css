@@ -1,0 +1,626 @@
+/* ══════════════════════════════════════════════════════════════════════════════
+   [lc-1401] 详情页新版式（**用户定稿设计稿**）：
+     左列：竖版封面 + 标题信息 → 标签框（Bangumi tags）→ 简介框 → 四标签页 → 该页内容
+     右列：集数据（每集小标题 + 简介）的**整条竖向列表**
+   两栏各自独立滚动（左列内容长、右列选集也长，谁都不该把对方顶走）。
+   ⚠ 本版式是「详情页」不是播放页：用户稿里右栏是一条竖直列表、左栏是主内容 ——
+     所以两栏都允许滚，但**各自滚各自的**（右栏 sticky + 自身 max-height 溢出滚动）。
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.dv2 {
+  display: grid;
+  /* [lc-1415] 右栏上限 360→420px：封面放大到 152px 后，文字列需要更多横向空间
+     （用户反馈"右边剧集封面太小了…你看整体布局怎么调整一下"，这是三处调整之一）。 */
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 420px); /* 左主内容 + 右选集列 */
+  gap: 22px;
+  align-items: start;
+  padding-bottom: 40px; /* 底部留白：放大图/弹层不贴边 */
+}
+.dv2-left {
+  min-width: 0; /* 关键：grid 子项默认 min-width:auto，长文本会把列撑破 */
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.dv2-right {
+  min-width: 0;
+  position: sticky; /* 右栏跟随：左列很长时选集始终在视野内 */
+  top: 54px;        /* = .detail-full 顶部 padding（悬浮标题栏 40px + 14px） */
+  display: flex;
+  flex-direction: column;
+  /* [lc-1419] gap 归零：头部与列表是**同一张卡片的两块**，留缝就又把它们切开了 */
+  gap: 0;
+  max-height: calc(100vh - 70px);
+}
+
+/* ── 左列：封面（含播放入口）+ 右侧「标签 + 简介」信息框 ──
+   [lc-1408] 用户定稿：海报右侧那一块（原 年份/季数/集数/类型/评分/播放按钮）**内容全部不要**，
+   改放标签与简介；播放入口挪到海报上（电影没有右栏选集，不能没有播放入口）。
+   因此下面这段把 .dv2-topinfo 一族重写为 .dv2-itags / .dv2-isum，并新增 .dv2-play。 */
+.dv2-top {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+.dv2-poster {
+  position: relative;   /* 播放入口的定位基座 */
+  width: 132px;
+  min-width: 132px;
+  aspect-ratio: 2 / 3;  /* 竖版封面 */
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--hover);
+  border: 1px solid var(--line);
+}
+.dv2-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* 海报上的播放入口：底角一条半透明胶囊（不挡海报主体，也不用占右侧信息框） */
+.dv2-play {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(10, 14, 24, 0.62);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.16s ease, transform 0.16s ease;
+}
+.dv2-play:hover {
+  background: rgba(10, 14, 24, 0.78);
+}
+.dv2-play:active {
+  transform: scale(0.97);
+}
+.dv2-play:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+.dv2-play-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* 右侧信息框：**标签 + 简介**（内容自适应高度；海报固定 2:3 撑起这一行的高度） */
+.dv2-topinfo {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;   /* [lc-1423] 内容溢出不影响外层容器高度 */
+}
+.dv2-itags {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  align-content: flex-start;
+}
+.dv2-isum {
+  position: relative;      /* 「展开」按钮的定位基座 */
+  flex: 0 0 auto;          /* 不参与拉伸 —— 被固定高度约束的那一块 */
+  height: 118px;
+  min-height: 0;
+  overflow: hidden;
+}
+/* [lc-1423] 简介区：**固定高度 + 截断 + 展开按钮**（用户要求）。
+   历史：lc-1410 曾按"默认全展示"把简介全铺开，后果是长简介撑高 `.dv2-top` ——
+   而海报是定宽 `aspect-ratio:2/3`、父级 `align-items:stretch` ⇒ **海报被纵向拉长变形**。
+   现在简介区固定高度，容器高度只由海报决定；全文改在弹窗里看（见 .sum-modal）。
+   ⚠ 本选择器只此一条规则（历史上被拆成两条过，已合并）。 */
+.dv2-isum .dfold {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--text-2);
+  text-indent: 2em;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+/* 未展开时才画底部渐隐（全文在弹窗里，容器内不存在"展开态"） */
+.dv2-isum .dfold.clip::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 18px;            /* 让开「展开」按钮那一行 */
+  height: 34px;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0), var(--bg-2));
+  pointer-events: none;
+}
+.dv2-topinfo .play-note {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── 左列：标签页条（**不再通栏**：它是左列里的一个块，在简介框下方） ── */
+.dv2-seg {
+  position: static;      /* 覆盖基类 sticky：新版式里它不是吸顶条，而是左列内的分段控件 */
+  margin: 0;             /* 覆盖基类 -26px 通栏负边距 */
+  justify-content: flex-start;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 4px;
+  gap: 2px;
+  backdrop-filter: none;
+  overflow-x: auto;      /* 四个中文标签在窄窗口下允许横滑，绝不换行挤成两排 */
+}
+.dv2-seg .dseg-btn {
+  padding: 9px 13px 10px;
+  font-size: 13px;
+  border-radius: 9px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.dv2-seg .dseg-btn.active {
+  background: var(--hover-strong);
+}
+.dv2-seg .dseg-btn::after {
+  left: 8px;
+  right: 8px;
+  height: 2px;
+}
+.dv2-body {
+  padding: 0;            /* 覆盖基类 18px 0 40px：新版式里左列用 gap 控节奏 */
+}
+.dv2-body > * {
+  animation: dPanel 0.24s cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+/* ── 关联条目：**横向分栏**（用户定稿版式）────────────────────────────────
+   一列 = 一个 relation（续集 / 书籍 / 游戏 / 原声集 / 片头曲 / 片尾曲 / 衍生 …），
+   列内竖向排卡片（封面 + 标题），列间一条竖分隔线；整条横向可翻页（复用 ScrollRow 箭头）。
+   数值来源：用户设计稿 —— 封面与列宽对齐（列宽 108px 级）、标题小字多行、列头在上、竖线在列间。 */
+/* ⚠ .dpanel 是 column flex 容器：直接子项默认 flex-shrink:1，会被压扁到内容之外。
+   分栏行必须是自然高度（列高由内容决定），所以这条要显式挡住收缩。 */
+.dpanel > .srow {
+  flex: 0 0 auto;
+}
+.drel-cols {
+  /* 覆盖 .hscroll 的通用规则：列间用 0 间距（分隔线自己就是间隔），
+     左右 padding 由 .hscroll 基类提供（26px），这里不再加。 */
+  gap: 0;
+  padding-bottom: 6px;
+}
+.drel-col {
+  flex: 0 0 auto;
+  width: 132px;                 /* 列宽固定：分栏要整齐，不能按内容宽度抖动 */
+  padding: 0 14px;
+  border-right: 1px solid var(--line);   /* 列间竖分隔线 */
+  min-width: 0;
+}
+.drel-col:last-child {
+  border-right: none;           /* 末列不画线（右边没有下一列了） */
+}
+.drel-col-h {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.drel-col-n {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+/* 列内卡片：**竖向堆叠**（不是网格）—— 与设计稿一致，一列里能连排多张 */
+.drel-card {
+  min-width: 0;
+  margin-bottom: 14px;
+  cursor: default;
+}
+.drel-card:last-child {
+  margin-bottom: 4px;
+}
+.drel-cv {
+  aspect-ratio: 2 / 3;          /* 竖版封面 */
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--ph-bg);
+  border: 1px solid var(--line);
+  transition: border-color 0.15s ease;
+}
+.drel-card:hover .drel-cv {
+  border-color: rgba(108, 155, 255, 0.45);
+}
+.drel-cv img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.drel-nm {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-2);
+  /* 设计稿里长标题是多行展示（不截断成一行），这里给到 4 行 */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+/* ── 右列：集数据（竖向列表） ── */
+/* [lc-1419] 头部重排（用户："这个和下面容器有割裂，优化一下"）：
+   割裂的成因是**头部与列表各自带边框** —— 交界处压出两层线，看着像两个容器。
+   现在按"一个卡片两块区域"处理：外框由头部画（左右上三边），列表只画左右下三边，
+   两块背景同为 --bg-2 → 接缝消失。头部同时重排为：左侧标题+元信息+季切换，右侧播放入口。 */
+/* [lc-1421] 头部 = **一整排**（用户要求："做成一排显示，播放按钮在左边"）。
+   `flex-wrap: nowrap` 保证不折成两行；`overflow-x: auto` 是最后兜底 ——
+   真的窄到放不下时横向滚，而不是把内容挤变形或折行。
+   顺序（DOM 决定）：播放按钮 → 选集标题 → 集数/完结/更新 → 季切换。 */
+.dv2e-hd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding: 12px 14px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-bottom: none;
+}
+/* 头部里的「选集」标题：不参与收缩、不换行 */
+.dv2e-hd-h {
+  flex: 0 0 auto;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+/* 元信息与季切换在一排里也不换行（宽度不够时整体横向滚） */
+.dv2e-meta,
+.season-tabs {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+/* 集数 / 完结状态 / 上次更新 三项 */
+.dv2e-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dv2e-state {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid;
+}
+/* 连载中 = 蓝色系（在动）；已完结 = 中性灰（静止）—— 颜色即语义 */
+.dv2e-state.airing {
+  color: var(--accent);
+  border-color: rgba(108, 155, 255, 0.45);
+  background: rgba(108, 155, 255, 0.1);
+}
+.dv2e-state.done {
+  color: var(--muted);
+  border-color: var(--line-strong);
+  background: var(--hover);
+}
+/* 顶部播放入口：主色胶囊，带进度小字（有记录时） */
+/* [lc-1422] 播放入口改为**与主题一致的安静样式**（用户反馈蓝色渐变"太突兀"）。
+   原来用 --accent-grad 主色渐变 + 悬停阴影 —— 在一屏都是中性色的右栏里，它跳得太显眼。
+   现在对齐项目里既有的"安静胶囊"语言（.season-tab / .dmore-btn / .dtag 同一套）：
+     · 底 = var(--hover)（与卡片同色系，只在同色里加深一档）
+     · 描边 = var(--line-strong)
+     · 字色 = var(--text)（正常文字色，不是反白）
+     · 悬停只**微调底色与描边**（不再位移/投影）—— 深浅主题下都自然。
+   播放图标用 --accent 着色，作为唯一的"可点"暗示，不抢眼但认得出来。 */
+.dv2e-play-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.dv2e-play-btn svg {
+  color: var(--accent);
+}
+.dv2e-play-btn:hover {
+  background: var(--hover-strong);
+  border-color: rgba(108, 155, 255, 0.45);
+  color: var(--text-strong);
+}
+.dv2e-play-btn:active {
+  background: var(--hover-strong);
+}
+.dv2e-play-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.dv2e-play-pct {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+/* [lc-1421] 头部标题的类名从 `h3` 元素选择器改为 `.dv2e-hd-h` 显式类
+   （一排布局下它需要 flex:0 0 auto / nowrap，元素选择器不好写这些）。
+   这条保留作为兼容兜底。 */
+.dv2e-hd h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text-strong);
+}
+.dv2e-hd .muted {
+  margin-left: auto;
+  font-size: 12px;
+}
+.dv2e-list {
+  min-height: 0;         /* 关键：让它能在右栏 max-height 内滚动，而不是把右栏撑高 */
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+  /* [lc-1419] 只画左右下三边（上边由头部承担）—— 两块拼成一张卡片，交界处不再有双线 */
+  border: 1px solid var(--line);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--bg-2);
+}
+.dv2e-list::-webkit-scrollbar {
+  width: 8px;
+}
+.dv2e-list::-webkit-scrollbar-thumb {
+  background: var(--hover-strong);
+  border-radius: 99px;
+}
+.dv2e-row {
+  display: flex;
+  gap: 10px;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.dv2e-row:last-child {
+  border-bottom: none;
+}
+.dv2e-row:hover {
+  background: var(--hover);
+}
+.dv2e-row.playing {
+  background: var(--hover-strong);
+}
+.dv2e-row.playing .dv2e-no {
+  background: var(--accent-grad);
+  color: #fff;
+  border-color: transparent;
+}
+.dv2e-no {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+  background: var(--hover);
+  border: 1px solid var(--line);
+}
+.dv2e-main {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.dv2e-t {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  /* [lc-1415] nowrap：标题与「1080」徽标同一行，标题自己省略。
+     原来是 wrap，一挤就把徽标甩到第二行（用户截图里的排版乱象）。 */
+  flex-wrap: nowrap;
+}
+.dv2e-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-strong);
+  /* [lc-1415] 单行截断（原是多行 + break-word）：多行标题会把「1080」徽标与简介
+     一起往下挤。flex/min-width 让它能在窄列里被压缩而不是撑破。 */
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dv2e-dur {
+  font-size: 11px;
+  color: var(--muted);
+}
+.dv2e-seen {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--hover);
+  border: 1px solid var(--line);
+}
+.dv2e-seen.now {
+  color: var(--accent);
+  border-color: rgba(108, 155, 255, 0.4);
+}
+.dv2e-desc {
+  margin: 5px 0 0;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text-2);
+  /* [lc-1415] 简介 3 行（原 4 行）：封面放大后每行更高，3 行才能一屏看下 4-5 集 */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.dv2e-prog {
+  margin-top: 7px;
+}
+
+/* ── 窄窗口：右栏掉到下方（并排会两边都挤得没法看） ── */
+@media (max-width: 900px) {
+  .dv2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dv2-right {
+    position: static;
+    top: auto;
+    max-height: none;
+  }
+  .dv2e-list {
+    max-height: 420px;
+  }
+}
+
+/* 少动效偏好：新类不引入额外动画，这里只压掉 hover 位移 */
+@media (prefers-reduced-motion: reduce) {
+  .drel-card:hover {
+    transform: none;
+  }
+}
+
+/* [lc-1401] 新版式没有通栏头图了，返回按钮单独一行（原来挂在 .dhero-top 的绝对定位里） */
+.dv2-rail {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+/* [lc-1403] 返回键后面的标题（用户要求把标题挪到顶栏行；原名放括号里）。
+   注意：顶栏（.titlebar，z-index 50）是**绝对定位浮层**，详情页内容从 54px 处开始 —— 这行
+   在内容区顶部，不会被顶栏盖住；但两侧要留出窗口按钮的宽度，避免长标题压到最小化/关闭。 */
+.dv2-rail {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-right: 150px; /* 右侧窗口按钮区（3×46px）不落字 */
+  min-width: 0;
+}
+.dv2-rail-title {
+  margin: 0;
+  min-width: 0;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text-strong);
+  line-height: 1.3;
+  /* 单行省略：标题很长时不换行把版面顶下去 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dv2-rail-orig {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--muted);
+  margin-left: 2px;
+}
+
+/* [lc-1403] 右栏选集：改回「剧照 + 第N集.标题 + 简介 + 时长」（对齐飞牛原版版式，用户截图为准）。
+   剧照 16:9（飞牛侧 poster 就是横向截图），左侧固定宽度，右侧文字可换行。 */
+.dv2e-thumb {
+  position: relative;
+  /* [lc-1415] 用户反馈"右边剧集封面太小了"→ 116px 放大到 152px。
+     右栏宽 280~360px，原尺寸下封面只占约 1/3，文字列被挤成窄条（截图中简介断得很难看）；
+     放大后封面:文字 ≈ 4:5，与飞牛原版选集的比例相当。 */
+  width: 152px;
+  min-width: 152px;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--ph-bg);
+  flex: 0 0 auto;
+}
+.dv2e-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.dv2e-thumb .poster-empty {
+  font-size: 20px;
+}
+/* 剧照上的播放角标：默认半透明，hover/播放中才明显（与首页海报卡同一套语言） */
+.dv2e-play {
+  position: absolute;
+  left: 7px;
+  bottom: 7px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px);
+  opacity: 0.85;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+.dv2e-row:hover .dv2e-play,
+.dv2e-row.playing .dv2e-play {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.68);
+}
+.dv2e-row.playing .dv2e-play {
+  background: var(--accent-grad);
+}
+/* 选集行改为横向「图 + 文字」布局后，序号徽标不再需要 */
+.dv2e-list .dv2e-no {
+  display: none;
+}
+.dv2e-row {
+  gap: 12px;
+  align-items: flex-start;
+}
+.dv2e-dur {
+  margin-top: 5px;
+  display: block;
+}
+

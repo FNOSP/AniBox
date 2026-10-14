@@ -1,0 +1,312 @@
+/* ═══════════════ [lc-128] 多地区分级/在线观看 · 剧照原图 · 设置面板 ═══════════════
+   全部沿用既有变量（--text-2/--muted/--line/--bg-2/--accent…）与既有组件族的命名，
+   不引入新配色/字体；弹层外壳复用的是 Bangumi 详情弹层那套 .ddet-mask/.ddet。 */
+
+/* ── 分级 / 在线观看：每行一个地区（地区名 + 该地区的数据） ── */
+.tmdb-regions {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+.tmdb-rrow {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  min-width: 0;
+}
+.tmdb-rk {
+  flex: 0 0 auto;
+  min-width: 62px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.tmdb-rrow .tmdb-inline {
+  font-size: 13px;
+  line-height: 1.7;
+}
+.tmdb-dim {
+  color: var(--muted);
+}
+.tmdb-empty {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 2px 0;
+}
+
+/* ── 剧照原图查看：点任意剧照 → original 尺寸（同一套落盘缓存） ── */
+.dvstill-row img {
+  cursor: zoom-in;
+}
+.zoom-mask {
+  z-index: 60;
+}
+.zoom-img {
+  max-width: min(1500px, 94vw);
+  max-height: 90vh;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  object-fit: contain;
+  cursor: zoom-out;
+}
+
+/* ── 段落标题右侧的来源标注（TMDB / Bangumi / 飞牛） ── */
+.dsec-t .dsec-src {
+  margin-left: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.2px;
+}
+
+/* ── 设置面板（缓存 + 关于）：外壳复用 .ddet-*，内部 .set-* ── */
+.set-card {
+  width: min(560px, 92vw);
+}
+.set-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13.5px;
+}
+.set-row:last-of-type {
+  border-bottom: none;
+}
+.set-k {
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+.set-v {
+  color: var(--text-strong);
+  font-weight: 600;
+  text-align: right;
+  word-break: break-all;
+}
+.set-select {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-strong);
+  background: var(--input-bg);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.set-select option {
+  background: var(--option-bg);
+  color: var(--text-strong);
+}
+.set-btn {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+  background: var(--hover);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: background-color 0.16s ease, transform 0.16s ease;
+}
+.set-btn:hover:not(:disabled) {
+  background: var(--hover-strong);
+  transform: translateY(-1px);
+}
+.set-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.set-hint {
+  margin-top: 6px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--muted);
+  word-break: break-all;
+}
+.set-attrib {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.set-attrib a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.set-attrib a:hover {
+  text-decoration: underline;
+}
+.set-note {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: var(--hover);
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+/* ── [lc-1437] 设置面板：开关控件 + 分组小标题 + 危险按钮 ──
+   开关是自绘的（不用原生 checkbox）：项目里所有控件都是自绘风格，
+   原生 checkbox 在深浅两套主题下外观不可控（且 Windows 上是系统蓝色方块，与主题冲突）。 */
+.set-sw {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--hover);
+  cursor: pointer;
+  padding: 0;
+  transition: background-color 0.18s ease, border-color 0.18s ease;
+}
+.set-sw::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: transform 0.18s cubic-bezier(0.32, 0.72, 0, 1), background-color 0.18s ease;
+}
+.set-sw.on {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.set-sw.on::after {
+  transform: translateX(18px);
+  background: var(--accent);
+}
+.set-sw:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.set-desc {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  margin-top: 2px;
+}
+/* 危险动作（退出登录）：红色描边，与普通按钮区分 */
+.set-btn.danger {
+  color: #e5484d;
+  border-color: rgba(229, 72, 77, 0.45);
+}
+.set-btn.danger:hover:not(:disabled) {
+  background: rgba(229, 72, 77, 0.1);
+}
+/* 行内确认（退出登录 / 关闭询问共用）：替换该行内容，不弹二级弹窗 */
+.set-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.set-confirm-q {
+  font-size: 12.5px;
+  color: var(--text-2);
+  margin-right: auto;
+}
+/* [lc-1514] 关闭询问的浮层（原生关闭按钮触发，独立于设置面板）。
+   玻璃化：遮罩半透明 + 动态模糊背后界面，弹窗本体也走半透明玻璃 + 自身
+   backdrop-filter。.perf 性能模式会全局关掉 backdrop-filter，自动降级为
+   半透明纯色，不用另写兼容。 */
+.close-ask {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 10, 16, 0.42);
+  backdrop-filter: blur(10px) saturate(1.15);
+  -webkit-backdrop-filter: blur(10px) saturate(1.15);
+  animation: fadeIn 0.16s ease both;
+}
+.close-ask-box {
+  width: min(360px, 88vw);
+  border-radius: 14px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-card);
+  padding: 18px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: closeAskPop 0.22s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+@keyframes closeAskPop {
+  from { opacity: 0; transform: scale(0.94) translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+/* 记忆选项：整行可点（label 包 input） */
+.close-ask-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+.close-ask-remember input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.close-ask-box h3 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-strong);
+}
+.close-ask-box p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.close-ask-acts {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+/* ── [lc-1437] 性能模式：全局降级（关动画 + 关磨砂）──
+   磨砂（backdrop-filter）是这类界面的最大开销：它是每帧对背后内容做一次高斯模糊，
+   低配机上滚动直接掉帧。动画归零是为了"点了就有反馈"而不是"等它演完"。
+   保留 transition-property 本身（只把时长压到 0），这样视觉状态仍会更新、不会卡在中间态。 */
+.perf *,
+.perf *::before,
+.perf *::after {
+  transition-duration: 0s !important;
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* 磨砂去掉后，原本靠模糊掩盖的"半透明面板"会显得脏：把几处关键面板补成实底 */
+.perf .sidebar,
+.perf .set-card,
+.perf .ddet,
+.perf .navbar,
+.perf .lsc-pop {
+  background: var(--panel) !important;
+}

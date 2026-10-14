@@ -1,0 +1,227 @@
+/* ═══════════ 首页：全屏 hero + 底部媒体库条 + 信息流分区（Emby 布局） ═══════════ */
+
+.home-full {
+  /* [lc-1428] 首页横向留白：原来靠侧栏（224px 布局项）提供左缘，侧栏改成浮层后
+     内容区直接顶到最左 —— 用户反馈"整体太靠左了，要以原来轮播图的位置为准"。
+     这里补上**与轮播内容一致**的左右留白（同一个 --home-pad 变量），
+     于是轮播文字 / 媒体库条 / 下方区块的左缘仍与改动前同一条基线。
+     （`.content` 本身有 26px 横向 padding，但首页用的是 .home-full 且此处归零过。） */
+  padding: 0 var(--home-pad) 50px;
+}
+.hero-zone {
+  position: relative;
+}
+.lib-strip {
+  position: absolute;
+  /* [lc-1432] 归零 —— 实测（dev 自检 [align]）这里渲染在 **52px**，比其它元素多一个 --home-pad。
+     原因：定位祖先是 `.hero-zone`（position: relative），而 `.hero-zone` 本身**已经**
+     落在 `.home-full` 的 26px 内容盒内 ⇒ 再写 left: var(--home-pad) 就是 26+26。
+     基准已经是 26，所以这里只需 0（右缘同理）。 */
+  left: 0;
+  right: 0;
+  bottom: 14px;
+  z-index: 20;
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.lib-strip::-webkit-scrollbar {
+  height: 6px;
+}
+.lib-strip::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.24);
+  border-radius: 3px;
+}
+.lib-strip-card {
+  position: relative;
+  width: 220px;
+  min-width: 220px;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 1px solid var(--line-strong);
+  transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
+}
+.lib-strip-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(108, 155, 255, 0.55);
+  box-shadow: var(--shadow-card), 0 0 22px rgba(108, 155, 255, 0.14);
+}
+.lsc-bg {
+  position: absolute;
+  inset: 0;
+}
+.lsc-bg img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.lsc-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(10, 12, 18, 0.05) 30%, rgba(10, 12, 18, 0.85));
+}
+.lsc-title {
+  position: absolute;
+  left: 12px;
+  bottom: 22px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff; /* 浮在图片+暗渐变遮罩上，两主题恒白（继承会吃主题深色字） */
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+.lsc-cat {
+  position: absolute;
+  left: 12px;
+  bottom: 8px;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  color: rgba(233, 235, 244, 0.55);
+  text-transform: uppercase;
+}
+.lsc-hide {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 3;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.45);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 11px;
+  line-height: 1;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+.lib-strip-card:hover .lsc-hide {
+  opacity: 1;
+}
+.lsc-hide:hover {
+  background: rgba(229, 72, 77, 0.55);
+  border-color: rgba(255, 140, 140, 0.6);
+  color: #fff;
+}
+.lsc-manage {
+  align-self: center;
+  min-width: 78px;
+  height: 42px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  opacity: 0; /* 悬停媒体库条才显示；全部库隐藏时加 .always 常显防找不到入口 */
+  transition: opacity 0.15s ease, color 0.15s, background-color 0.15s, border-color 0.15s;
+}
+.lib-strip:hover .lsc-manage,
+.lsc-manage.always {
+  opacity: 1;
+}
+.lsc-manage:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+.lsc-pop-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: transparent;
+}
+.lsc-pop {
+  position: absolute;
+  /* [lc-1432] 与 .lib-strip 同步归零：它俩同是 .hero-zone 的绝对定位子元素，
+     原来同为 26 时左缘对齐；条改成 0 后这里若留 26 会整体右漂一个 --home-pad。 */
+  left: 0;
+  bottom: 152px;
+  z-index: 41;
+  width: 280px;
+  max-height: 46vh;
+  overflow-y: auto;
+  border-radius: 14px;
+  background: rgba(30, 34, 52, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  padding: 10px 12px;
+}
+.lsc-pop-head {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #fff;
+  padding: 4px 4px 8px;
+}
+.lsc-pop-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 6px;
+  border-radius: 9px;
+  cursor: pointer;
+  font-size: 13px;
+  color: rgba(233, 235, 244, 0.85);
+}
+.lsc-pop-row:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #fff;
+}
+.lsc-pop-row input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.lsc-pop-row span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lsc-pop-row .lsc-pop-cat {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.home-sec {
+  margin-top: 30px;
+}
+.home-sec .section-head {
+  margin: 0 0 14px;
+  /* [lc-1431] 横向 padding 归零：**.home-full 已经提供 26px**，这里再加一份会变成 52px，
+     与轮播文字 / 媒体库条（都是 26px）差 26px —— 用户看到的"上面海报的没齐"就是这个。 */
+  padding: 0;
+}
+/* [lc-1431] 原来这里给首页"右侧归零"（让海报铺满右缘）。现在左右留白统一由
+   .home-full 提供（左右对称 26px），不再需要单独砍右侧 —— 保留规则但改成注释说明，
+   避免以后有人以为"首页右侧本来就该贴边"。 */
+.row-more {
+  margin-left: auto;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+}
+.row-more:hover {
+  text-decoration: underline;
+}
+

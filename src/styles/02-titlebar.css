@@ -1,0 +1,201 @@
+/* ─────────────── 标题栏 ─────────────── */
+
+.titlebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50; /* 盖过所有内容层，串层元素（残留徽标/胶囊）不再透上来 */
+  height: 40px;
+  min-height: 40px;
+  display: flex;
+  align-items: stretch;
+  /* [lc-123-rev3] 顶栏**全透明**（用户要求：不加底色，每个控件都透明）——
+     不设底色/描边/分隔线/渐变/模糊；可读性靠文字 text-shadow（见下方 .tb-* 规则），
+     不靠底色。整条仍是 data-tauri-drag-region 拖拽区（无边框窗口唯一能拖的地方）。 */
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  user-select: none;
+}
+.tb-left {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 10px;
+}
+.tb-center {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+/* [lc-123-rev] 顶栏中部的品牌小字：**弱化**（小字号 + 弱色 + 字距），
+   顶栏只留「页名（左）/ 品牌（中）/ 窗口按钮（右）」，主体感交给内容区的胶囊。 */
+.tb-brand {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  opacity: 0.9;
+}
+.tb-right {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+}
+/* [lc-123-rev3] 顶栏内部容器与文字控件一律透明底/无描边（只有 hover/active 才允许半透明底，
+   见 .tb-icon:hover / .tb-link:hover / .tb-btn:hover） */
+.tb-left,
+.tb-center,
+.tb-right,
+.tb-buttons,
+.tb-crumb,
+.tb-brand,
+.tb-page {
+  background: transparent;
+  border: 0;
+}
+.tb-page {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  padding-left: 6px;
+}
+/* [lc-1402] padding 必须显式归零：全局 button 规则是 `padding: 8px 15px`，而本类与 .tb-btn/.ddet-close
+   都只声明了 width/height（box-sizing: border-box）→ 内容盒被左右各 15px 吃掉，34px 只剩 4px 宽。
+   装文字（旧版 ☰ / ⟳ / ◐）时溢出仍画得出来，所以看不出问题；换成 SVG 后会被 flex 压进这 4px 里
+   等比缩成 4×4 —— 表现就是**汉堡键变成一个点**（用户反馈的正是这个）。 */
+.tb-icon {
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tb-icon:hover {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+.tb-icon:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.tb-icon.spinning {
+  animation: tb-spin 0.9s linear infinite;
+}
+@keyframes tb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.tb-link {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.tb-link:hover {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+.tb-buttons {
+  display: flex;
+  height: 100%;
+}
+.tb-btn {
+  width: 46px;
+  height: 100%;
+  padding: 0; /* 同 .tb-icon：不复位 padding 会把最小化/最大化/关闭的 SVG 压扁 */
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.tb-btn:hover {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+.tb-btn.tb-close:hover {
+  /* 关闭键 hover：保持"变红"的约定，但改成半透明（顶栏透明后不整块盖住底下的海报） */
+  background: rgba(229, 72, 77, 0.58);
+  color: #fff;
+}
+/* [lc-123-rev3] 透明底的可读性：文字/图标压在海报上时靠 text-shadow 保证深浅底都看得清
+   （用户要求：可读性不许用背景色解决）。顶栏图标都是文字字形（菜单/刷新/主题/窗口钮），
+   text-shadow 对它们同样生效 —— 不需要 filter:drop-shadow。 */
+.tb-crumb,
+.tb-brand,
+.tb-page,
+.tb-icon,
+.tb-link,
+.tb-btn {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+/* [lc-123-rev4] 顶栏 chrome 色自适应反色（只由**首页 hero 顶部条带亮度采样**驱动；
+   data-chrome 由 TitleBar 落，采样逻辑见 App.tsx sampleChromeTone）：
+     （无属性）auto = 跟随主题 —— 发现/库/详情页顶栏底下是应用底色，主题色即最可读；
+     dark  = 海报顶部偏亮 → 深色 chrome（rgba(0,0,0,.72)）；
+     light = 偏暗 → 浅色 chrome（rgba(255,255,255,.92)）；
+     fallback = 采样失败（跨域被拦/解码失败/404）→ 浅色 chrome + **强阴影**（防"白图标压亮底看不见"）。
+   切换带 200ms 颜色过渡，别闪。 */
+.titlebar[data-chrome] .tb-crumb,
+.titlebar[data-chrome] .tb-brand,
+.titlebar[data-chrome] .tb-page,
+.titlebar[data-chrome] .tb-icon,
+.titlebar[data-chrome] .tb-link,
+.titlebar[data-chrome] .tb-btn {
+  color: var(--tb-ink);
+  transition: color 0.2s ease;
+}
+/* hover 不切回主题色：深色海报上 hover 变深字会看不见（底色是半透明白/蓝的交互反馈，仍在） */
+.titlebar[data-chrome] .tb-icon:hover,
+.titlebar[data-chrome] .tb-link:hover,
+.titlebar[data-chrome] .tb-btn:hover {
+  color: var(--tb-ink);
+}
+.titlebar[data-chrome="dark"] {
+  --tb-ink: rgba(0, 0, 0, 0.72);
+}
+.titlebar[data-chrome="light"] {
+  --tb-ink: rgba(255, 255, 255, 0.92);
+}
+.titlebar[data-chrome="fallback"] {
+  --tb-ink: rgba(255, 255, 255, 0.92);
+}
+/* 浅色 chrome（含兜底）配双层强阴影：在任何底色上都留得住字形轮廓 */
+.titlebar[data-chrome="light"] .tb-crumb,
+.titlebar[data-chrome="light"] .tb-brand,
+.titlebar[data-chrome="light"] .tb-page,
+.titlebar[data-chrome="light"] .tb-icon,
+.titlebar[data-chrome="light"] .tb-link,
+.titlebar[data-chrome="light"] .tb-btn,
+.titlebar[data-chrome="fallback"] .tb-crumb,
+.titlebar[data-chrome="fallback"] .tb-brand,
+.titlebar[data-chrome="fallback"] .tb-page,
+.titlebar[data-chrome="fallback"] .tb-icon,
+.titlebar[data-chrome="fallback"] .tb-link,
+.titlebar[data-chrome="fallback"] .tb-btn {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 6px rgba(0, 0, 0, 0.35);
+}
+

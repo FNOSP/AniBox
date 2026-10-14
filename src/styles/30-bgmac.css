@@ -1,0 +1,435 @@
+/* ══════════════ [lc-1516] 发现页右栏：Bangumi 追番同步卡 ══════════════
+   版式按用户设计稿：左侧标题组 + 大按钮，右侧观看统计；Bangumi 品牌绿固定色
+   （不跟随主题 accent）。grid 双列：左 main / 右 stats。 */
+.bgmac {
+  position: relative;
+  margin: 0 16px 10px;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--glass-btn-bg);
+  /* [lc-1520] 三块布局（用户示意图）：上排「bangumi面板 | 同步状态」+ 底部通栏「当季追番状态」。
+     [lc-1522] 上排两列一人一半；[lc-1527] 右列微放宽（1fr 1.12fr）给"饼+图例"横排让位。 */
+  display: grid;
+  grid-template-columns: 1fr 1.12fr;
+  grid-template-areas:
+    "main stats"
+    "season season";
+  gap: 10px 14px;
+  align-items: start;
+}
+/* ── 左列 ── */
+.bgmac-main {
+  grid-area: main;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* [lc-1533] 内容撑满整格（用户截图反馈：面板下半留白一大块）：
+     文字组贴顶（与右侧「同步状态」标题同一水平线），按钮组沉底 ——
+     与用户设计稿的竖向结构一致（内容在上、按钮在下），下半不再空一块。 */
+  align-self: stretch;
+  justify-content: space-between;
+}
+.bgmac-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.bgmac-kicker {
+  font-size: 12px;
+  font-weight: 600;
+  color: #2e7d4f;
+  letter-spacing: 0.02em;
+}
+.bgmac-title {
+  font-size: 21px;
+  font-weight: 800;
+  color: var(--text-strong);
+  line-height: 1.25;
+}
+.bgmac-desc {
+  font-size: 12.5px;
+  color: var(--text-2);
+  line-height: 1.55;
+}
+.bgmac-types {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+/* ── [lc-1534] 「正在追」封面条（填面板中部留白；点封面 → 该条目详情） ── */
+.bgmac-watch {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.bgmac-watch-hd {
+  font-size: 11px;
+  color: var(--muted);
+}
+.bgmac-watch-hd b {
+  color: var(--text-2);
+  font-weight: 700;
+}
+.bgmac-watch-row {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+.bgmac-wcover {
+  width: 46px;
+  height: 62px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--ph-bg);
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 4px rgba(31, 41, 90, 0.12);
+  transition: transform 0.14s, box-shadow 0.14s;
+}
+.bgmac-wcover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.bgmac-wcover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(31, 41, 90, 0.2);
+}
+html.dark .bgmac-wcover {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+html.dark .bgmac-wcover:hover {
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.55);
+}
+/* ── 大按钮（连接 / 立即同步）── */
+.bgmac-cta {
+  width: 100%;
+  height: 38px;
+  border: none;
+  border-radius: 19px;
+  background: var(--accent-grad);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(108, 155, 255, 0.28);
+  transition: filter 0.15s, transform 0.12s, box-shadow 0.15s;
+}
+.bgmac-cta:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.bgmac-cta:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.bgmac-cta:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.bgmac-cta.sm {
+  width: auto;
+  padding: 0 16px;
+}
+.bgmac-acts {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+/* [lc-1519] 已连接态：同步改紧凑小按钮（巨按钮 CTA 只留给「连接」主流程） */
+.bgmac-act {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 15px;
+  background: var(--accent-grad);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(108, 155, 255, 0.25);
+  transition: filter 0.15s, transform 0.12s;
+}
+.bgmac-act:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.bgmac-act:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.bgmac-act:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+/* 行内成功提示：小字不抢视觉（不再整卡宽灰条） */
+.bgmac-inline-note {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.bgmac-link {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+.bgmac-link:hover {
+  color: var(--err-text);
+}
+/* ── 绑定表单 ── */
+.bgmac-bind {
+  display: flex;
+  gap: 8px;
+}
+.bgmac-bind input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 38px;
+  box-sizing: border-box;
+  border: 1px solid var(--line-strong);
+  border-radius: 19px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  padding: 0 14px;
+  font-size: 12.5px;
+  outline: none;
+}
+.bgmac-bind input:focus {
+  border-color: var(--accent);
+}
+/* ── 右上徽章 ── */
+/* [lc-1521] 用户标签：跟在「追番同步」标题后，浅灰胶囊包裹 */
+.bgmac-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--ph-bg);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  max-width: 150px;
+  vertical-align: middle;
+  flex: 0 0 auto;
+}
+.bgmac-badge svg {
+  color: #2e7d4f;
+  flex: 0 0 auto;
+}
+.bgmac-badge-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 108px;
+}
+/* 标题与徽章同一行 */
+.bgmac-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.bgmac-title-row .bgmac-title {
+  flex: 0 0 auto;
+}
+/* ── 右列：观看统计 ── */
+.bgmac-stats {
+  grid-area: stats;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 4px 0 14px;
+  border-left: 1px solid var(--line);
+  min-width: 0;
+}
+/* 块标题（同步状态 / 当季追番状态） */
+.bgmac-block-t {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-2);
+  letter-spacing: 0.03em;
+}
+/* [lc-1528] 同步状态图（用户设计稿移植：环形图 + 引线联动图例行） */
+.bgmac-stats-body {
+  width: 100%;
+  min-width: 0;
+}
+.bgmac-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.bgmac-chart-title {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--text-2);
+  letter-spacing: 0.5px;
+}
+.bgmac-chart-num {
+  font-size: 19px;
+  font-weight: 700;
+  fill: var(--text-strong);
+}
+.bgmac-chart-sub {
+  font-size: 8px;
+  fill: var(--muted);
+  letter-spacing: 1.5px;
+}
+.bgmac-sector {
+  cursor: pointer;
+  transition: opacity 0.22s ease;
+}
+/* 图例行 */
+.bgmac-row-bg {
+  fill: transparent;
+  transition: fill 0.22s ease;
+}
+.bgmac-chart-row {
+  cursor: pointer;
+}
+.bgmac-chart-row.hl .bgmac-row-bg {
+  fill: rgba(255, 255, 255, 0.78);
+}
+html.dark .bgmac-chart-row.hl .bgmac-row-bg {
+  fill: rgba(255, 255, 255, 0.1);
+}
+.bgmac-chart-label {
+  font-size: 10.5px;
+  fill: var(--text-2);
+  transition: fill 0.2s;
+}
+.bgmac-chart-row.hl .bgmac-chart-label {
+  fill: var(--text-strong);
+  font-weight: 600;
+}
+.bgmac-chart-value {
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--text-strong);
+}
+/* 引线（悬停时出现，连高亮段与对应图例行） */
+.bgmac-leader {
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.9;
+  pointer-events: none;
+}
+.bgmac-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+.bgmac-legend-row b {
+  margin-left: auto;
+  color: var(--text-strong);
+  font-size: 11.5px;
+}
+.bgmac-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.bgmac-stats-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 10.5px;
+  text-align: center;
+  padding: 6px 4px;
+  line-height: 1.4;
+}
+/* ── 底部通栏：当季追番状态 ── */
+.bgmac-season {
+  grid-area: season;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.bgmac-season-bar {
+  display: flex;
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--ph-bg);
+}
+.bgmac-season-seg {
+  display: block;
+  height: 100%;
+  transition: width 0.3s ease;
+}
+.bgmac-season-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+.bgmac-season-total {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+.bgmac-season-empty {
+  font-size: 11.5px;
+  color: var(--muted);
+  padding: 2px 0;
+}
+
+/* ── 提示 / 错误 ── */
+.bgmac-err,
+.bgmac-note,
+.bgmac-tip {
+  grid-area: main;
+  font-size: 11.5px;
+  border-radius: 9px;
+  padding: 6px 10px;
+  word-break: break-all;
+}
+.bgmac-err {
+  color: var(--err-text);
+  background: var(--err-bg);
+  border: 1px solid var(--err-border);
+}
+.bgmac-note {
+  color: var(--text-2);
+  background: var(--hover);
+  border-radius: 9px;
+}
+.bgmac-tip {
+  color: var(--muted);
+}
+/* 深色主题：小标题品牌绿提亮（徽章已统一浅灰胶囊，不在此列） */
+html.dark .bgmac-kicker {
+  color: #7ed4a5;
+}
+

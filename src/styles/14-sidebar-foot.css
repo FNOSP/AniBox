@@ -1,0 +1,186 @@
+/* ─────────────── 侧栏底部：用户行 + 快捷操作卡 ───────────────
+   逐行复刻主仓库 src/preload/plugins/embyWall.ts injectSettingsUI()
+   （lc-1121 折叠体 / lc-1126 图标行 / lc-365 版本行），变量取 html.dark 档：
+   --fnos-sidebar-btn-bg = rgba(30,34,52,.38)。按钮底色用白浮层以保证
+   在本应用纯色侧栏底上的同款层级观感（原版按钮与卡同变量、靠毛玻璃差显形）。 */
+.side-userrow {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px 10px;
+}
+.side-actions {
+  position: sticky;
+  bottom: 2px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-bg);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  color: var(--glass-text);
+  font-size: 12px;
+  user-select: none;
+  overflow: hidden;
+}
+.sa-head {
+  padding: 8px 0 6px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--glass-text-2);
+  transition: background-color 0.16s ease;
+}
+.sa-head:hover {
+  background: var(--glass-btn-bg);
+  color: var(--glass-text);
+}
+.sa-chev {
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--glass-text-dim);
+  border-bottom: 1.5px solid var(--glass-text-dim);
+  transform: rotate(45deg);
+  margin-top: -3px;
+}
+.sa-btn {
+  box-sizing: border-box;
+  width: calc(100% - 28px);
+  margin: 0 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  background: var(--glass-btn-bg);
+  color: var(--glass-text);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  text-align: center;
+  transition: background-color 0.16s ease, transform 0.16s ease;
+}
+.sa-head + .sa-btn {
+  margin-top: 2px;
+}
+.sa-btn + .sa-btn {
+  margin-top: 6px;
+}
+.sa-btn:hover {
+  background: var(--glass-btn-hover);
+  transform: translateY(-1px);
+}
+.sa-ver {
+  margin: 10px 14px 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--glass-line);
+  text-align: center;
+  font-size: 11.5px;
+  letter-spacing: 0.3px;
+  color: var(--glass-text-dim);
+  user-select: none;
+}
+/* [lc-122] 关于区署名（版本行下方）：TMDB 强制署名 + Bangumi；窄栏内小字居中，链接可点 */
+.sa-attrib {
+  margin: -6px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--glass-text-dim);
+  user-select: none;
+}
+.sa-attrib a {
+  color: var(--glass-text-2);
+  text-decoration: underline;
+}
+.sa-attrib a:hover {
+  color: var(--glass-text);
+}
+.sa-icons {
+  padding: 8px 10px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.sa-ico {
+  box-sizing: border-box;
+  width: 38px;
+  height: 36px;
+  border-radius: 10px;
+  cursor: pointer;
+  background: var(--glass-btn-bg);
+  color: var(--glass-text);
+  font-size: 15px;
+  font-family: inherit;
+  padding: 0;
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.16s ease, transform 0.16s ease;
+}
+.sa-ico:hover {
+  background: var(--glass-btn-hover);
+  transform: translateY(-1px);
+}
+.sa-expand {
+  background: transparent;
+  color: var(--glass-text-dim);
+  font-size: 13px;
+  border: 1px dashed var(--glass-border);
+  box-shadow: none;
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+.sa-expand:hover {
+  background: var(--glass-btn-bg);
+  color: var(--glass-text);
+  transform: none;
+}
+.side-toast {
+  position: fixed;
+  left: 112px;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 60;
+  padding: 9px 16px;
+  border-radius: 12px;
+  background: var(--toast-bg);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+  color: var(--glass-text);
+  font-size: 12.5px;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: toast-in 0.18s ease;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+

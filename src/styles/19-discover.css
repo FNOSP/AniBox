@@ -1,0 +1,828 @@
+/* ═══════════════════ [lc-123] 发现页（左 TMDB / 右 Bangumi） ═══════════════════
+   两栏各 50%、**各自纵向滚动**（.dscroll 各是独立滚动容器）：左栏滚到第五屏，右栏位置不动。
+   两栏的状态（骨架屏/失败重试/空态）也各自独立 —— 一边挂掉不影响另一边。 */
+
+.discover {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  padding-top: 40px; /* = 顶栏高度：内容不从顶栏底下穿过（与 .content 62px 同一约定） */
+}
+
+.dpane {
+  flex: 1 1 50%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+}
+
+.dpane:last-child {
+  border-right: 0;
+}
+
+.dpane-hd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* [lc-123-rev2] 顶部 56px（原 16px）= 40px 让位 + 浮层胶囊（≈40px 高，绝对定位在 top 52px）
+     的避让 —— 胶囊浮在内容区顶部且横向居中，正好压在两栏栏头的中间（标题/筛选 chips），
+     不避让会盖住文字与按钮。首页没有这个问题（胶囊浮在满幅 hero 的图面上）。 */
+  padding: 56px 20px 12px;
+  flex-wrap: wrap;
+}
+
+.dpane-hd h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-strong);
+  letter-spacing: 0.2px;
+}
+
+/* [lc-123-rev] 栏头计数（替代原来的 .dsrc 数据源徽标 ——
+   用户明确不要界面上出现「TMDB · /3/discover/...」「Bangumi · /calendar」这类端点标注） */
+.dn {
+  font-size: 12.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.dsp {
+  flex: 1;
+}
+
+.dchips {
+  display: flex;
+  gap: 6px;
+}
+
+.dchip {
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-family: inherit;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  background: var(--hover);
+  cursor: pointer;
+  transition: 0.16s;
+}
+
+.dchip:hover {
+  color: var(--text-strong);
+  background: var(--hover-strong);
+}
+
+.dchip.on {
+  color: #fff;
+  background: var(--accent-grad);
+  border-color: transparent;
+}
+
+/* 右栏表头的单独刷新按钮 */
+.dicon {
+  width: 30px;
+  height: 26px;
+  padding: 0; /* [lc-1402] 同 .tb-icon：固定 px 宽的图标钮必须复位全局 button 的 15px 左右 padding */
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.dicon:hover {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+
+.dicon:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* 两栏**各自**的滚动容器（min-height:0 是 flex 子项能滚动的前提） */
+.dscroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 20px 24px;
+}
+
+.dscroll::-webkit-scrollbar {
+  width: 9px;
+}
+
+.dscroll::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 9px;
+}
+
+.dcap {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 10px;
+}
+
+.dsub-h {
+  margin: 18px 0 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+/* 小节标题后面的补充说明（「按热度排序」这类，弱化处理） */
+.dsub-h span {
+  margin-left: 8px;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* ── [lc-123-rev9] 左栏（**用户权威设计稿**）：
+      主推区 = 紧凑左右分栏（竖版海报 140×210 + 实底信息列，无文字压图）；
+      「本季新剧」= 2:3 竖版海报网格（auto-fill minmax(140px,1fr)）；
+      「即将播出」紧凑行沿用 .duplist。
+      颜色全部走主题变量（设计稿的 #8a2be2/#0b0e14 不照抄）。 ── */
+
+/* 主推分栏 */
+.dfeat {
+  display: flex;
+  gap: 20px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.dfeat-poster {
+  position: relative;
+  width: 140px;
+  height: 210px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--ph-bg);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25);
+}
+
+.dfeat-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.dfeat-poster-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.dfeat-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+}
+
+.dfeat-title {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.dfeat-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+
+/* 评分徽章（深底金字胶囊，同设计稿 .tmdb-score-badge） */
+.dfeat-score {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-1);
+  color: var(--gold);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.dfeat-kind {
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  background: rgba(108, 155, 255, 0.16);
+  color: var(--accent);
+}
+
+.dfeat-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.dfeat-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 8px 20px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent-grad);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: filter 0.2s, opacity 0.2s;
+}
+
+.dfeat-btn:hover {
+  filter: brightness(1.12);
+}
+
+.dfeat-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* 标准海报网格（设计稿 .tmdb-grid：auto-fill 140px） */
+.dpcgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 16px;
+}
+
+/* 海报卡（设计稿 .tmdb-card）：2:3 原比例，不再裁 16:9。
+   [lc-1444] 整卡可点（进入主详情页） */
+.dpc {
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-2);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+}
+
+.dpc:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-card);
+  border-color: var(--line-strong);
+}
+
+.dpc-img {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  background: var(--ph-bg);
+}
+
+.dpc-img > img {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.dpc-empty {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--muted);
+}
+
+/* 右上评分角标（深底金字 + 毛玻璃，同设计稿 .card-score） */
+.dpc-rate {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  z-index: 2;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: rgba(10, 12, 18, 0.85);
+  backdrop-filter: blur(4px);
+  color: var(--gold);
+}
+
+.dpc-bd {
+  padding: 10px 12px 12px;
+}
+
+.dpc-t {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dpc-s {
+  margin-top: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── 「即将播出」紧凑列表（日期徽章 + 一行标题 + 类型小标签） ── */
+
+.duplist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.dup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 11px;
+}
+
+.dup:hover {
+  background: var(--hover);
+}
+
+.dup-d {
+  flex: 0 0 auto;
+  width: 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 3px 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--hover);
+  font-size: 10.5px;
+  line-height: 1.15;
+  color: var(--muted);
+}
+
+.dup-d b {
+  font-size: 15px;
+  color: var(--text-strong);
+}
+
+.dup-t {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* [lc-1416] 「加载更多」居中胶囊按钮 —— 改名 .dmore → **.dmore-btn**。
+   为什么必须改名：原来它与「演职人员」页的**容器** `<div class="dpanel dmore">` 撞名，
+   而 `.dmore` 这条单独选择器（不加标签限定）**同样命中那个 div** —— 于是这个 block 级、
+   撑满宽度的容器套上了胶囊样式（border-radius: 999px 让上下变半圆、中间还是矩形）
+   + :hover 高亮。用户看到的"背景有个大椭圆、鼠标放上去还高亮"就是这个，
+   不是任何几何绘制，是**类名冲突**。容器那侧（.dmore / .dmore .dsec）语义正确、保持不动。 */
+.dmore-btn {
+  display: block;
+  margin: 12px auto 0;
+  padding: 7px 24px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--hover);
+  color: var(--text);
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.dmore-btn:hover {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+
+.dmore-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* 尾部说明行（原 .dmore-hint，避开 dmore-* 前缀与上面按钮混淆） */
+.dup-hint {
+  margin-top: 10px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── 右栏：星期胶囊（7 个，带部数角标 + 今天标记） ── */
+
+.dweeks {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 0 20px 12px;
+}
+
+.dweek {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 64px;
+  padding: 7px 12px 6px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--hover);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: 0.18s;
+}
+
+.dweek:hover {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+
+/* [lc-123-rev] 迷你占比条：条长 = 该天部数 / 当周最大值（占比 ≥4% 才可见，0 部不画） */
+.dweek-bar {
+  display: block;
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.dweek-bar b {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.7;
+}
+
+.dweek i {
+  font-style: normal;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.dweek.on {
+  background: var(--accent-grad);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 4px 14px rgba(108, 155, 255, 0.4);
+}
+
+.dweek.on i {
+  opacity: 0.95;
+}
+
+/* 选中态的迷你占比条：渐变底上改用白色轨道/填充（否则 accent 条在 accent 底上不可见） */
+.dweek.on .dweek-bar {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.dweek.on .dweek-bar b {
+  background: #fff;
+  opacity: 0.95;
+}
+
+/* 今天：胶囊下方一个小圆点（配色与选中态无关，两者可同时出现） */
+.dweek.today::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translateX(-50%);
+}
+
+/* ── 右栏：当日更新列表 ── */
+
+.dlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* [lc-123-rev] 分组标题（在库 / 不在库；带数量）。只在"索引完整"时出现（见 useLibIndex） */
+.dgrp {
+  margin: 10px 0 4px;
+  padding: 0 2px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.dgrp:first-child {
+  margin-top: 2px;
+}
+
+/* [lc-123-rev] 当天汇总条（「周三（今天）· 今日 12 部新番更新 · 热度最高：X」） */
+.ddaybar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: linear-gradient(120deg, rgba(108, 155, 255, 0.16), rgba(108, 155, 255, 0.04));
+}
+
+.ddaybar b {
+  font-size: 14.5px;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+
+.ddaybar span {
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 行：左侧强调竖条（::before）+ 封面（左上角该天序号）+ 标题/标签 */
+.ditem {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 10px 9px 14px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.16s, border-color 0.16s;
+}
+
+.ditem::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+  opacity: 0.5;
+}
+
+.ditem:hover,
+.ditem:focus-visible {
+  background: var(--hover);
+  border-color: var(--line);
+  outline: none;
+}
+
+.dcv {
+  position: relative; /* 序号角标 .drk 的定位基座 */
+  width: 46px;
+  height: 62px;
+  min-width: 46px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--ph-bg);
+  display: grid;
+  place-items: center;
+}
+
+.dcv img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.dcv.empty {
+  color: var(--muted);
+  font-size: 18px;
+}
+
+/* 封面左上角：该天列表内的序号（1 起；分组重排后仍是原序） */
+.drk {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-bottom-right-radius: 8px;
+  background: rgba(10, 17, 29, 0.72);
+  color: var(--gold);
+}
+
+.dtx {
+  flex: 1;
+  min-width: 0;
+}
+
+.dt1 {
+  font-size: 14px;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dt2 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 评分色阶标签：≥8 绿 / 7–8 黄 / <7 灰（score 为 null 时不渲染） */
+.dsc {
+  font-weight: 700;
+  font-size: 12px;
+  padding: 1px 7px;
+  border-radius: 6px;
+}
+
+.dsc.hi {
+  color: #1f9d63;
+  background: rgba(61, 220, 151, 0.16);
+}
+
+.dsc.mid {
+  color: #a97b12;
+  background: rgba(232, 180, 66, 0.18);
+}
+
+.dsc.lo {
+  color: var(--muted);
+  background: var(--hover-strong);
+}
+
+html.dark .dsc.hi {
+  color: #3ddc97;
+}
+
+html.dark .dsc.mid {
+  color: #ffd479;
+}
+
+/* 「已在库」标（索引不完整时也会用：只给命中项打标，不分组、不标"不在库"） */
+.dlib {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: rgba(61, 220, 151, 0.16);
+  color: #1f9d63;
+}
+
+html.dark .dlib {
+  color: #3ddc97;
+}
+
+/* 「今日更新」角标（红色；仅当选中天=今天）。**刻意不叫 .dtag** —— 那是详情页
+   "类型/关键词"胶囊的既有类名（详情页那套有 hover 描边、语义是可选标签），复用会把两处样式绑在一起。 */
+.ditem-tag {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: rgba(221, 90, 90, 0.16);
+  color: #c94040;
+}
+
+html.dark .ditem-tag {
+  background: rgba(221, 90, 90, 0.2);
+  color: #ff9a9a;
+}
+
+/* ── 骨架 / 失败 / 空态（两栏共用；微光语言对齐 .poster-skeleton） ── */
+
+.dsk {
+  display: block;
+  background: linear-gradient(100deg, var(--skel-base) 30%, var(--skel-shine) 48%, var(--skel-base) 66%);
+  background-size: 300% 100%;
+  animation: dskShimmer 1.25s linear infinite;
+}
+
+.dsk-poster {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.dsk-cv {
+  width: 46px;
+  height: 62px;
+  min-width: 46px;
+  border-radius: 8px;
+}
+
+/* 「即将播出」骨架行的日期徽章占位（与 .dup-d 同尺寸） */
+.dsk-date {
+  width: 46px;
+  height: 34px;
+  min-width: 46px;
+  border-radius: 9px;
+}
+
+.dsk-line {
+  height: 11px;
+  border-radius: 6px;
+  margin: 6px 9px;
+}
+
+.dsk-line.short {
+  width: 55%;
+}
+
+@keyframes dskShimmer {
+  from {
+    background-position: 130% 0;
+  }
+  to {
+    background-position: -30% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dsk {
+    animation: none;
+  }
+}
+
+.dstate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 26px 14px;
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.dstate-msg {
+  max-width: 100%;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.dretry {
+  padding: 6px 16px;
+  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  background: var(--hover);
+  color: var(--text);
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.dretry:hover {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+

@@ -1,0 +1,74 @@
+/* ─────────────── 通用控件 ─────────────── */
+
+input,
+select {
+  background: var(--input-bg);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--text);
+  padding: 10px 13px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+input:focus,
+select:focus {
+  border-color: rgba(108, 155, 255, 0.65);
+  box-shadow: 0 0 0 3px rgba(108, 155, 255, 0.14);
+}
+input[type="range"] {
+  padding: 0;
+  height: 4px;
+  accent-color: var(--accent);
+  background: var(--input-bg);
+  border: none;
+}
+input[type="range"]:focus {
+  box-shadow: none;
+}
+select option {
+  background: var(--option-bg);
+}
+button {
+  background: var(--hover);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--text);
+  padding: 8px 15px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+button:hover {
+  background: var(--hover-strong);
+}
+button:active {
+  transform: scale(0.97);
+}
+.err {
+  background: var(--err-bg);
+  border: 1px solid var(--err-border);
+  color: var(--err-text);
+  border-radius: 10px;
+  padding: 11px 15px;
+  font-size: 13px;
+  margin-bottom: 12px;
+  line-height: 1.55;
+}
+
+/* 全局隐藏滚动条（WebView2 的 Fluent 滚动条会无视 ::-webkit-scrollbar 自定义，
+   故标准属性 scrollbar-width:none 与 webkit 双保险；滚轮/触摸板滚动不受影响） */
+* {
+  scrollbar-width: none;
+}
+::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+::-webkit-scrollbar-thumb,
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  display: none;
+}
+

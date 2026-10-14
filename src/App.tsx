@@ -22,7 +22,7 @@ import { bgmImg, pickImgStr, pickLargestImg, tmdbImg } from "./lib/images";
 import { prefersReducedMotion } from "./lib/motion";
 import { DEFAULT_SETTINGS } from "./lib/settings";
 import { AppSettings, BgmCalendarItem, ChromeTone, Config, Lib, MediaItem, PlayItem, PlayTarget, TmdbDiscoverItem } from "./types";
-import "./App.css";
+import "./styles/index.css";
 
 
 function App() {

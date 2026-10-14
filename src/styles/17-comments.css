@@ -1,0 +1,210 @@
+/* ═══════════════════════════════════════════════════════════════
+   ───── 详情页「吐槽」分段：Bangumi 评论（lc-119）─────
+   【纯追加的新一节】上面的「详情页重排 lc-118」一节一字未动。
+   形态对齐 Kazumi 的评论列表：圆形头像 40 + 昵称/日期 + 右侧评分星(rate/2) + 正文，
+   Divider 风格细分隔线（hairline + --line）；骨架屏沿用 .poster-skeleton 的
+   shimmer 语言（--skel-base/--skel-shine 双主题变量），前缀 bgmc-（Bangumi Comments）。
+   ═══════════════════════════════════════════════════════════════ */
+
+.bgmc-panel {
+  gap: 0;
+}
+
+/* ── 列表：项目之间用 hairline 分隔（Divider），最后一项不带线 ── */
+
+.bgmc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.bgmc-item {
+  display: flex;
+  gap: 12px;
+  padding: 14px 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.bgmc-item:last-child {
+  border-bottom: none;
+}
+
+.bgmc-avatar {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--ph-bg);
+  display: block;
+}
+
+.bgmc-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.bgmc-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.bgmc-nick {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bgmc-date {
+  font-size: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+/* 右侧评分星(rate/2)：靠右对齐（margin-left:auto），金色同 .dstars-fg 的 --gold */
+.bgmc-rate {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--gold);
+}
+
+.bgmc-text {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 「更多」的角色/制作人员行（复用 .bgmc-item 一族）：右侧角色类型/职位标签 + 副行（声优）。
+   配色/字号沿用 bgmc 既有取值，不引入新色。 */
+.bgmc-role {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.bgmc-sub {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.bgmc-avatar-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
+/* 列表尾部提示（翻页中 / 到底） */
+.bgmc-more {
+  padding: 14px 0 2px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+/* ── 失败重试 / 空态 ── */
+
+.bgmc-state {
+  padding: 28px 0;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.bgmc-state-t {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.bgmc-state-d {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--muted);
+  max-width: 560px;
+  word-break: break-word;
+}
+
+.bgmc-retry {
+  margin-top: 4px;
+  border: 1px solid var(--line-strong);
+  background: var(--hover);
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 7px 22px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.bgmc-retry:hover {
+  background: var(--hover-strong);
+  border-color: rgba(108, 155, 255, 0.45);
+}
+
+.bgmc-retry:active {
+  transform: scale(0.97);
+}
+
+/* ── 骨架屏（shimmer 语言对齐 .poster-skeleton） ── */
+
+.bgmc-sk-avatar,
+.bgmc-sk-line {
+  display: block;
+  background: linear-gradient(100deg, var(--skel-base) 30%, var(--skel-shine) 48%, var(--skel-base) 66%);
+  background-size: 300% 100%;
+  animation: bgmcShimmer 1.25s linear infinite;
+}
+
+.bgmc-sk-avatar {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  border-radius: 50%;
+}
+
+.bgmc-sk-line {
+  height: 11px;
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+
+.bgmc-sk-line:last-child {
+  margin-bottom: 0;
+}
+
+@keyframes bgmcShimmer {
+  from {
+    background-position: 130% 0;
+  }
+  to {
+    background-position: -30% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bgmc-sk-avatar,
+  .bgmc-sk-line {
+    animation: none;
+  }
+}
+

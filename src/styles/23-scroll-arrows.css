@@ -1,0 +1,109 @@
+/* ══════════════════════════════════════════════════════════════════════════════
+   [lc-1407] 「继续观看」/ 媒体库横排的**左右翻页箭头**
+   背景：这两条横排是 overflow-x:auto，但本项目全局隐藏了滚动条（`* { scrollbar-width:none }`）
+   且滚轮只滚纵向 —— 用户实际"无法横向滑动"。按用户要求复用**轮播同款雪佛龙**做翻页。
+   与轮播（.mist-nav）的区别：轮播箭头固定在 banner 两侧、按鼠标靠近哪侧显形；
+   横排箭头**只在鼠标进入这一行时显形**（首页一屏多条横排，否则到处是箭头很吵），
+   并且到两端后对应侧自动淡出 + 禁用（没有更多内容时不该还留个可按的箭头）。
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.srow {
+  position: relative; /* 箭头的定位基座 */
+}
+
+/* 箭头本体：大号雪佛龙、无底无框（与轮播 .mist-nav 同一套观感），默认完全透明 */
+/* [lc-1409] 三处按用户反馈调整：
+   ① **去掉圆形底色**，只留 < > 字形（与海报轮播的 .mist-nav 同一观感：无底无框靠 text-shadow 立住）；
+   ② **相对图片区域垂直居中**，而不是相对整行 —— 整行还含图片下方的标题/副标题，
+      按整行居中箭头会落到图片偏下（用户看到的正是这个）。居中基准 = --srow-img-h
+      （由 ScrollRow 量第一张卡的 .poster-box 高度写入；aspect-ratio 保证它不依赖图片是否加载完）；
+   ③ 字号提到 40px，贴近轮播那种"大号雪佛龙"的分量。 */
+.srow-nav {
+  position: absolute;
+  /* 垂直居中于图片：top = 图片高度的一半，再用 translateY(-50%) 拉回半个自身 */
+  /* --srow-img-h 由 ScrollRow 写入（图片高度；量不到则写整行高度）。这里给个中性兜底值。 */
+  top: calc(var(--srow-img-h, 160px) / 2);
+  transform: translateY(-50%);
+  z-index: 6;
+  /* [lc-1410] 尺寸/字号/投影**逐项对齐海报轮播的 .mist-nav**（用户要求"和轮播海报的一样大"）：
+     54×88 的点击区、font-size 52 的字形、同款单层投影。 */
+  width: 54px;
+  height: 88px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  outline: none;
+  color: rgba(255, 255, 255, 0.78);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+  font-family: inherit;
+  font-size: 52px;
+  font-weight: 400;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none; /* 默认不可点：避免"看不见却点得到"的误触 */
+  transition: opacity 0.22s ease, color 0.2s ease, text-shadow 0.2s ease, transform 0.12s ease;
+}
+/* ⚠ 必须显式兜住 hover/active：全局 button:hover 会铺一层底色、:active 有 scale(.97)，
+   特异性高于单类选择器（同 lc-1402 的 padding 坑），不复位就会又冒出个方块底色。 */
+.srow-nav:hover {
+  background: none;
+  border: 0;
+  color: #fff;
+}
+.srow-nav.is-on {
+  opacity: 1;
+  pointer-events: auto;
+}
+.srow-nav:active {
+  background: none;
+  color: #fff;
+  transform: translateY(-50%) scale(0.92); /* translateY 必须保留，否则会跳一下 */
+}
+.srow-nav:focus-visible {
+  outline: none;
+  opacity: 1;
+  color: #fff;
+}
+.srow-nav:disabled {
+  opacity: 0 !important;
+  pointer-events: none;
+}
+/* 两侧位置：略微压进内容一点（不是贴死边），且不挡住首/末卡片的点击区太多 */
+/* 尺寸放大到 54px 宽后，两侧留 6px（轮播是 12px，但首页横排两端本就有内容边距） */
+.srow-prev {
+  left: 6px;
+}
+.srow-next {
+  right: 6px;
+}
+
+/* 少动效偏好：去掉过渡（显隐仍是瞬时的，功能不受影响） */
+@media (prefers-reduced-motion: reduce) {
+  .srow-nav {
+    transition: none;
+  }
+  .srow-nav:active {
+    /* 少动效：连按下的缩放也去掉，只保留位移基准 */
+    transform: translateY(-50%);
+  }
+}
+
+/* [lc-1409] 「继续观看」卡片整体放大（用户要求）。
+   ⚠ 为什么要单独一条、且必须放在 `.hscroll .card` **之后**：
+   那条规则给两种卡共用了 148px 的固定宽（`min-width` + `width` + `flex:none`），
+   媒体库海报卡要按 2:3 竖版 148px，而继续观看是 16:10 横版 —— 同样 148px 宽时横版卡
+   显得又小又扁。两者特异性相同（都是 0,0,2,0），所以**靠源顺序决定胜负**：
+   这条写在后面才能覆盖掉共用宽度。宽度一涨，16:10 的图片高度跟着涨，卡片整体就放大了。 */
+.hscroll .continue-card {
+  min-width: 236px;
+  width: 236px;
+}
+/* 放大后标题字号顺手提一点（原来 13px 是配 148px 小卡的） */
+.hscroll .continue-card .card-title {
+  font-size: 13.5px;
+}
+

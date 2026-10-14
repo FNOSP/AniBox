@@ -1,0 +1,217 @@
+/* ═══════════════════ [lc-123] Bangumi 条目轻量详情（弹层） ═══════════════════
+   与 DetailView 并列的一套"库无关"详情：只吃 bgm_subject/bgm_episodes/bgm_characters。
+   z-index 40 < 顶栏的 50：不盖住窗口按钮/胶囊（模态只盖内容区）。 */
+
+.ddet-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(6, 9, 15, 0.62);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 24px 24px;
+  animation: pageIn 0.18s ease;
+}
+
+.ddet {
+  position: relative;
+  width: min(880px, 94vw);
+  max-height: min(82vh, 760px);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-3);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.ddet-close {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  width: 30px;
+  height: 30px;
+  padding: 0; /* [lc-1402] 同 .tb-icon：30px 盒被全局 button 的 15px 左右 padding 吃光，✕ 会缩成点 */
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.ddet-close:hover {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+
+.ddet-hd {
+  display: flex;
+  gap: 16px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ddet-cv {
+  width: 110px;
+  height: 150px;
+  min-width: 110px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--ph-bg);
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+}
+
+.ddet-cv img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.ddet-cv.empty {
+  font-size: 26px;
+  color: var(--muted);
+}
+
+.ddet-hdm {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 30px;
+}
+
+.ddet-hdm h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-strong);
+  line-height: 1.3;
+}
+
+.ddet-orig {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.ddet-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.ddet-chip {
+  font-size: 12px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--hover);
+  color: var(--text-2);
+}
+
+.ddet-chip.score {
+  color: var(--gold);
+  border-color: transparent;
+  background: rgba(255, 212, 121, 0.14);
+}
+
+.ddet-chip.score i {
+  font-style: normal;
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.ddet-chip.dim {
+  color: var(--muted);
+}
+
+.ddet-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 22px;
+}
+
+.ddet-body::-webkit-scrollbar {
+  width: 9px;
+}
+
+.ddet-body::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 9px;
+}
+
+.ddet-h3 {
+  margin: 16px 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.ddet-h3:first-child {
+  margin-top: 0;
+}
+
+.ddet-sum {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+/* 剧集行：集号 + 名称 + 日期（flex 三列，长名截断） */
+.dep-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.dep-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 9px;
+  font-size: 13px;
+}
+
+.dep-row:nth-child(odd) {
+  background: var(--hover);
+}
+
+.dep-no {
+  min-width: 34px;
+  text-align: center;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--accent);
+  background: rgba(108, 155, 255, 0.14);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+
+.dep-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dep-date {
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+

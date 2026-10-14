@@ -1,0 +1,367 @@
+/* ═══════════════════════════════════════════════════════════════
+   ───── 详情页重排：Kazumi 风（lc-118）─────
+   【纯追加】本节不修改、不删除任何既有 live 规则；旧两栏版式与内嵌播放器的残留规则
+   已于死代码清理时删除。数值来源：
+     · lib/pages/info/info_page.dart        _InfoHeaderBackground / _minimumBangumiInfoLoadingDuration
+     · lib/bean/card/bangumi_info_card.dart BangumiInfoCardV
+     · lib/pages/info/info_tabview.dart     infoBody + TabBar(isScrollable, tabAlignment:center, dividerHeight:0)
+
+
+/* ── (1)b 信息卡（Kazumi BangumiInfoCardV 的等价物） ── */
+
+.dcard {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  border-radius: var(--radius); /* 14 */
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-card);
+  animation: dIn 0.42s cubic-bezier(0.2, 0, 0, 1) 0.04s both;
+}
+@keyframes dIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.dcard-poster {
+  width: 148px;
+  min-width: 148px;
+  aspect-ratio: 2 / 3; /* Kazumi 海报 AspectRatio 0.65 ≈ 2/3 */
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--ph-bg);
+  align-self: flex-start;
+}
+.dcard-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.dcard-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dcard-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--text-strong);
+  letter-spacing: 0.3px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.dcard-score {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dscore-num {
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--accent);
+  line-height: 1;
+}
+.dscore-outof {
+  font-size: 13px;
+  color: var(--muted);
+}
+.dscore-votes {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+/* 5 星：底层灰星 + 顶层金星按 inline width 裁切（主仓库 starsHtml 同款，纯 CSS 无 SVG）。
+   TMDB 是 0~10 分制 → 金星宽 = 分数×10%。动画只做 clip-path 擦拭，宽度交给 inline style。 */
+.dstars {
+  position: relative;
+  display: inline-block;
+  font-size: 15px;
+  letter-spacing: 2px;
+  line-height: 1;
+}
+.dstars-bg {
+  color: var(--hover-strong);
+}
+.dstars-fg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--gold);
+  animation: dStars 0.6s cubic-bezier(0.2, 0, 0, 1) 0.25s both;
+}
+@keyframes dStars {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0);
+  }
+}
+.dcard-act {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: auto;
+  flex-wrap: wrap;
+}
+.dplay {
+  border: 1px solid transparent;
+  background: var(--accent-grad);
+  color: #fff;
+  font-weight: 700;
+  font-size: 13.5px;
+  padding: 9px 22px;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(108, 155, 255, 0.35);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.dplay:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(108, 155, 255, 0.45);
+}
+.dplay:active {
+  transform: scale(0.97);
+}
+.dplay:disabled {
+  opacity: 0.6;
+  cursor: default;
+  transform: none;
+}
+
+/* ── (2) 分段栏（Kazumi TabBar 等价物：居中、3px 下划线、贴在顶栏下 40px） ── */
+
+.dseg {
+  position: sticky;
+  top: 40px; /* = .titlebar 高度；不能写 0 */
+  z-index: 30;
+  display: flex;
+  justify-content: center; /* 对齐 Kazumi tabAlignment: TabAlignment.center */
+  gap: 4px;
+  margin: 0 -26px; /* 通栏玻璃条 */
+  padding: 4px 0 0;
+  background: var(--bg-1);
+  backdrop-filter: blur(14px) saturate(1.1);
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.dseg-btn {
+  position: relative;
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 11px 18px 13px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.18s ease;
+}
+/* 必须显式兜住：全局 button:hover 是 (0,0,1,1)，特异性高于 .dseg-btn (0,0,1,0)（同 lc-117 .mist-nav 那坑） */
+.dseg-btn:hover {
+  background: none;
+  color: var(--text);
+}
+.dseg-btn.active {
+  color: var(--text-strong);
+}
+.dseg-btn::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 0;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--accent-grad);
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+.dseg-btn.active::after {
+  transform: scaleX(1);
+}
+
+/* ── (3) 面板容器 ── */
+
+.dbody {
+  padding: 18px 0 40px;
+}
+.dbody > * {
+  animation: dPanel 0.24s cubic-bezier(0.2, 0, 0, 1) both;
+}
+@keyframes dPanel {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.dpanel {
+  display: flex;
+  flex-direction: column;
+}
+.dmore {
+  gap: 0;
+  /* [lc-1416] 用户要求：演职人员页内容**包进一个卡片容器**（原本各节是裸的、整页没有边界感）。
+     这里给统一的卡片底 + 内边距 + 圆角，与别的模块（.tmdb-sec）视觉语言一致；
+     节与节之间改用分隔线区分，而不是靠大间距（见下方 .dmore .dsec）。 */
+  padding: 6px 16px 16px;
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+/* 卡片内的分节：用底部分隔线区分，不再靠间距 */
+.dmore .dsec {
+  padding: 14px 0;
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--line);
+}
+.dmore .dsec:last-child {
+  border-bottom: none;
+  padding-bottom: 2px;
+}
+.dmore .dsec:first-child {
+  padding-top: 10px;
+}
+
+/* ── (3)a 概览：简介折叠（120px）/ 标签 chips / 剧照横条 ── */
+
+.dsec {
+  margin-bottom: 24px;
+}
+.dsec:last-child {
+  margin-bottom: 0;
+}
+.dsec-t {
+  margin: 0 0 10px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+.dfold {
+  position: relative;
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13.5px;
+  line-height: 1.85;
+  white-space: pre-wrap;
+}
+
+
+
+
+.dtag-wrap {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dtag {
+  font-size: 12.5px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--hover);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  transition: border-color 0.15s, color 0.15s;
+}
+.dtag:hover {
+  border-color: rgba(108, 155, 255, 0.45);
+  color: var(--text-strong);
+}
+
+/* ── (3)b 选集：复用既有 .ep-* 形态，只覆写面板内尺寸节奏 + 已看/在看徽标 ── */
+
+.dbody .ep-list {
+  padding: 0; /* 覆盖基类 .ep-list 的 0 26px（面板自带 .dbody 内边距） */
+  gap: 16px; /* 覆盖基类 30px：Kazumi 列表节奏更密 */
+}
+.dbody .ep-thumb {
+  width: 168px; /* 覆盖基类 300px（旧右栏是 150px，这里取中间值） */
+  min-width: 168px;
+}
+.ep-mark {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  line-height: 16px;
+  backdrop-filter: blur(6px);
+}
+.ep-mark.seen {
+  /* [lc-1425] 配色优化（用户："已看按钮蓝色调也优化"）。
+     ⚠ 与 lc-1422 那个按钮**不同**：这个徽标压在**剧照**上，不是压在卡片底色上，
+       所以不能改成 `--hover` 那类半透明浅底（会看不清）。
+       这里改用与**同排其它角标**一致的"深色毛玻璃 + 浅色字"：
+         · 「看到 N%」(.ep-mark.now) = rgba(10,12,18,.72) + 金字
+         · 播放角标 (.ep-play)      = rgba(0,0,0,.45) + 白字
+       已看 = 同款深底 + 白色字（Check 图标保留），取消蓝紫渐变与反白主色；
+       检查图标用一点 --accent 作"完成"暗示，但整体不再抢眼。 */
+  background: rgba(10, 12, 18, 0.72);
+  color: rgba(255, 255, 255, 0.94);
+}
+.ep-mark.now {
+  background: rgba(10, 12, 18, 0.72);
+  color: var(--gold);
+}
+@media (min-width: 1180px) {
+  /* 宽窗两列：保住"两栏信息密度"的观感（替代旧两栏版式） */
+  .dbody .ep-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 22px;
+  }
+  .dbody .ep-row {
+    gap: 16px;
+  }
+}
+@media (max-width: 720px) {
+  /* 极窄窗保险：卡片竖排，别把标题挤成一条 */
+  .dcard {
+    flex-direction: column;
+  }
+  .dcard-poster {
+    width: 120px;
+  }
+  .dcard-title {
+    font-size: 20px;
+  }
+}
+
+/* ── (4) 动效降级（沿用既有 .poster-skeleton 的写法） ── */
+
+@media (prefers-reduced-motion: reduce) {
+  .dcard,
+  .dbody > *,
+  .dstars-fg {
+    animation: none;
+  }
+  .dstars-fg {
+    clip-path: none;
+  }
+  .dseg-btn::after {
+    transition: none;
+  }
+}
+

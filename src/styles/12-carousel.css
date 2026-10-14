@@ -1,0 +1,179 @@
+/* ═══════════ 首页全屏海报轮播（复刻 Nolovenodie/emby-crx Misty banner，数值逐条对齐 style.css） ═══════════ */
+
+.mist-banner {
+  position: relative;
+  /* [lc-1428] 轮播保持**全幅贴边**（不受 .home-full 横向 padding 影响）：
+     负边距抵消父级 padding、宽度补回来。它内部的信息层（.mist-info）自带
+     --home-pad 左留白，所以"轮播满幅 + 文字对齐"两者兼得
+     —— 这正是改动前的形态（用户要求"以原来轮播图的位置为准"）。 */
+  margin-left: calc(-1 * var(--home-pad));
+  margin-right: calc(-1 * var(--home-pad));
+  width: calc(100% + 2 * var(--home-pad));
+  height: 100vh; /* 满屏高度：媒体库条浮在上面 */
+  overflow: hidden;
+  background: #0a0e14;
+}
+.mist-body {
+  display: flex;
+  height: 100%;
+  transition: transform 1.5s cubic-bezier(0.15, 0.07, 0, 1); /* emby-crx 同款缓动 */
+}
+/* [lc-117] 首尾跨接（第一张←→最后一张）的那一帧关掉过渡，否则会横扫整条轨道 */
+.mist-body.no-anim {
+  transition: none;
+}
+.mist-item {
+  position: relative;
+  min-width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.mist-cover {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  user-select: none;
+  /* 底部 30% 渐隐入页底（emby-crx 同款 mask） */
+  -webkit-mask-image: linear-gradient(to top, transparent 0%, black 30%);
+  mask-image: linear-gradient(to top, transparent 0%, black 30%);
+}
+.mist-cover-fallback {
+  /* 无 backdrop 时用海报模糊垫底（条目本身无横图） */
+  background-size: cover;
+  background-position: center;
+  filter: blur(26px) saturate(0.9) brightness(0.62);
+  transform: scale(1.12);
+}
+.mist-veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.6), transparent 55%),
+    linear-gradient(to top, rgba(0, 0, 0, 0.5), transparent 35%);
+  pointer-events: none;
+}
+.mist-info {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end; /* 信息块贴底：居中会在上方留大片空白，贴近媒体库条只留隔离带 */
+  /* [lc-1431] 左缘与下方媒体库条对齐（--home-pad = 26，窗口坐标）。
+     位置链（注意 `.content.home-full` 是**同一个元素**，不是父子）：
+       窗口 0 → .view-stack(relative，基准 0)
+       → <main class="content home-full"> padding-left 26 ⇒ content box 左缘 26
+       → .mist-banner margin-left -26 ⇒ 盒子左缘 0（全幅贴边）+ 宽 calc(100%+52)
+       → .mist-item 宽 100% ⇒ 左缘 0
+       → 本层 absolute、定位祖先是 .mist-item ⇒ 基准 0
+     ⇒ 所以这里写 `var(--home-pad)`，文字落在 **26px**。
+     [lc-1432] 本层基准是 0（.mist-banner 的负边距把它拉回全幅），写变量即 26；
+       而 .lib-strip / .lsc-pop 的基准**已经是 26**（定位祖先 .hero-zone 在 .home-full
+       的 26px 内容盒内）⇒ 那两处写 0 才是 26。基准不同，别复用同一套直觉。实测值：
+       轮播标题/简介/播放按钮/区块标题/横排首卡 = 26，媒体库条卡也曾是 52（现已修）。
+     163 = 媒体库条占位(卡124px+底边距14px) + ~25px 隔离带 */
+  padding: 0 var(--home-pad) 163px;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+.mist-info > * {
+  pointer-events: auto;
+  transition: all 2.5s cubic-bezier(0, 1.41, 0.36, 0.93) 0.4s;
+  transform: translateY(150%);
+  opacity: 0;
+}
+.mist-item.active .mist-info > * {
+  transform: translateY(0);
+  opacity: 1;
+}
+.mist-info > div:nth-child(2) {
+  transition-delay: 0.6s;
+}
+.mist-info > div:nth-child(3) {
+  transition-delay: 0.8s;
+}
+.mist-info > div:nth-child(4) {
+  transition-delay: 1s;
+}
+.mist-meta {
+  font-size: clamp(0.7rem, 0.4rem + 0.6vw, 1rem);
+  font-weight: bold;
+  letter-spacing: 2px;
+  color: rgba(255, 255, 255, 0.75);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  margin-bottom: 0.6em;
+}
+.mist-info h1 {
+  color: #fff;
+  font-size: clamp(2rem, -0.362rem + 6.75vw, 4.7rem);
+  font-weight: bolder;
+  margin: 0;
+  text-shadow: 0 4px 10px rgb(0 0 0 / 20%);
+  max-width: 80%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mist-logo {
+  /* 飞牛自带透明 logo（item API data.logos）替换文字标题；高度思路同 emby-crx 的 clamp */
+  height: clamp(2.2rem, -0.545rem + 5.2vw, 4.4rem);
+  max-width: min(70%, 640px);
+  object-fit: contain;
+  object-position: left center;
+  align-self: flex-start;
+  margin: 0.2em 0 0.5em;
+  filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.45));
+  user-select: none;
+}
+.mist-info p {
+  color: #fff;
+  font-size: clamp(0.75rem, 0.4rem + 1vw, 1.25rem);
+  font-weight: bold;
+  max-width: 47%;
+  opacity: 0.7;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.mist-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 25px; /* 与下方到媒体库条的隔离带(163-138=25px)等距 */
+}
+.mist-play,
+.mist-more {
+  cursor: pointer;
+  border: none;
+  border-radius: 10px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  font-family: inherit;
+  height: 2.9em;
+  font-size: clamp(0.72rem, -0.275rem + 2.5vw, 1.05rem);
+  transition: transform 0.2s ease, background-color 0.2s ease;
+}
+.mist-play {
+  width: 8.5em;
+  background: #fff; /* emby-crx MORE 同款白底黑字 */
+  color: #10141c;
+}
+.mist-more {
+  width: 6em;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+  backdrop-filter: blur(8px);
+}
+.mist-play:hover,
+.mist-more:hover {
+  transform: scale(0.95);
+}
+.mist-more:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+.mist-play:active,
+.mist-more:active {
+  transform: scale(0.92);
+}

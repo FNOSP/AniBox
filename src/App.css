@@ -6248,20 +6248,13 @@ html.dark .ditem-tag {
   font-size: 8.5px;
   fill: var(--muted);
 }
-/* 饼下紧凑图例：色点 + 数字 */
+/* 饼下图例：完整行（色点 + 状态名 + 数字） */
 .bgmac-pie-legend {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 3px 9px;
-}
-.bgmac-pie-lg {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--text-2);
-  line-height: 1.4;
+  flex-direction: column;
+  gap: 3px;
+  align-self: stretch;
+  padding: 0 2px;
 }
 .bgmac-legend-row {
   display: flex;

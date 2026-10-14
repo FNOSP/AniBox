@@ -2646,14 +2646,15 @@ function BgmAccountCard() {
                 部番剧
               </text>
             </svg>
-            {/* 饼下紧凑图例：色点 + 数字（label 走 title，省宽度） */}
+            {/* 饼下图例：完整显示（色点 + 状态名 + 数字），与原来一致 */}
             <div className="bgmac-pie-legend">
               {segs
                 .filter((s) => s.n > 0)
                 .map((s) => (
-                  <span key={s.k} className="bgmac-pie-lg" title={`${s.label} ${s.n}`}>
+                  <span key={s.k} className="bgmac-legend-row">
                     <i className="bgmac-dot" style={{ background: s.color }} />
-                    {s.n}
+                    {s.label}
+                    <b>{s.n}</b>
                   </span>
                 ))}
             </div>

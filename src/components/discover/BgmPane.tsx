@@ -133,7 +133,8 @@ export function BgmPane({ active, onOpen }: { active: boolean; onOpen: (it: BgmC
       <div className="dweeks">
         {WEEKDAYS.map((w) => {
           const g = days.find((x) => x.id === w.id);
-          const pct = g && g.count > 0 ? Math.max(4, Math.round((g.count / maxCount) * 100)) : 0;
+          // [lc-1539] 柱高 = 该天部数 / 当周最大值（占比 ≥6% 才可见，0 部不画）
+          const pct = g && g.count > 0 ? Math.max(6, Math.round((g.count / maxCount) * 100)) : 0;
           return (
             <button
               key={w.id}
@@ -141,10 +142,9 @@ export function BgmPane({ active, onOpen }: { active: boolean; onOpen: (it: BgmC
               onClick={() => setWd(w.id)}
               title={g ? `${w.cn}共 ${g.count} 部` : w.cn}
             >
-              {w.cn}
-              <span className="dweek-bar" aria-hidden="true">
-                <b style={{ width: `${pct}%` }} />
-              </span>
+              {/* [lc-1539] 底色占比填充（迷你柱状图，替代原独立细条） */}
+              <span className="dweek-fill" style={{ height: `${pct}%` }} aria-hidden="true" />
+              <span className="dweek-d">{w.cn}</span>
               <i>{g ? `${g.count} 部` : "…"}</i>
             </button>
           );

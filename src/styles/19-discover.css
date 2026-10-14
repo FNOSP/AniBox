@@ -447,7 +447,7 @@
   color: var(--muted);
 }
 
-/* ── 右栏：星期胶囊（7 个，带部数角标 + 今天标记） ── */
+/* ── 右栏：星期胶囊（7 个，底色按占比填充成迷你柱状图） ── */
 
 .dweeks {
   display: flex;
@@ -461,7 +461,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  justify-content: center;
+  gap: 1px;
   min-width: 64px;
   padding: 7px 12px 6px;
   border-radius: 12px;
@@ -471,6 +472,8 @@
   font-size: 12.5px;
   font-family: inherit;
   cursor: pointer;
+  /* ⚠ 不能 overflow:hidden —— 「今天」的小圆点是 bottom:-4px 悬浮在胶囊外的，
+     裁掉就看不见了。填充层的圆角靠自身 border-radius 处理（见下）。 */
   transition: 0.18s;
 }
 
@@ -479,28 +482,57 @@
   color: var(--text-strong);
 }
 
-/* [lc-123-rev] 迷你占比条：条长 = 该天部数 / 当周最大值（占比 ≥4% 才可见，0 部不画） */
-.dweek-bar {
-  display: block;
-  width: 100%;
-  height: 3px;
-  border-radius: 2px;
-  overflow: hidden;
-  background: var(--line);
+/* [lc-1539] 底色占比填充：绝对定位铺满底部，高度 = 该天部数 / 当周最大值。
+   替代原来的 .dweek-bar 细条 —— 七天排开就是一整周的柱状图，一眼看出哪天多。
+   ① 底部两角用 11px 圆角（= 胶囊 12px 内半径）自己收边，不依赖父级裁剪；
+   ② 顶缘一条实色细线当"水位线"：填充体本身很淡（压在部数文字下也不糊），
+      靠这条线把占比读清楚；
+   ③ 文字层 z-index:1 盖在填充上。 */
+.dweek-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 0;
+  background: var(--accent);
+  opacity: 0.14;
+  border-radius: 0 0 11px 11px;
+  transition: height 0.3s ease, opacity 0.18s;
 }
 
-.dweek-bar b {
-  display: block;
-  height: 100%;
-  border-radius: 2px;
+/* 水位线：填充顶缘的实色细线（跟随填充高度，随 height 过渡一起动） */
+.dweek-fill::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  border-radius: 1px;
   background: var(--accent);
-  opacity: 0.7;
+  opacity: 0.75;
+}
+
+.dweek-d,
+.dweek i {
+  position: relative;
+  z-index: 1;
+}
+
+.dweek-d {
+  font-size: 12.5px;
+  line-height: 1.3;
 }
 
 .dweek i {
   font-style: normal;
   font-size: 11px;
   opacity: 0.75;
+}
+
+/* 悬停：填充稍亮（与底色 hover 同步加深，避免"没反应"的观感） */
+.dweek:hover .dweek-fill {
+  opacity: 0.2;
 }
 
 .dweek.on {
@@ -510,18 +542,27 @@
   box-shadow: 0 4px 14px rgba(108, 155, 255, 0.4);
 }
 
+.dweek.on .dweek-d {
+  font-weight: 700;
+}
+
 .dweek.on i {
   opacity: 0.95;
 }
 
-/* 选中态的迷你占比条：渐变底上改用白色轨道/填充（否则 accent 条在 accent 底上不可见） */
-.dweek.on .dweek-bar {
-  background: rgba(255, 255, 255, 0.3);
+/* 选中态：填充与水位线都改白色（accent 底上 accent 不可见），并保持"能看出占比" */
+.dweek.on .dweek-fill {
+  background: #fff;
+  opacity: 0.22;
 }
 
-.dweek.on .dweek-bar b {
+.dweek.on .dweek-fill::before {
   background: #fff;
-  opacity: 0.95;
+  opacity: 0.9;
+}
+
+.dweek.on:hover .dweek-fill {
+  opacity: 0.28;
 }
 
 /* 今天：胶囊下方一个小圆点（配色与选中态无关，两者可同时出现） */
@@ -530,6 +571,7 @@
   position: absolute;
   left: 50%;
   bottom: -4px;
+  z-index: 2;
   width: 5px;
   height: 5px;
   border-radius: 50%;

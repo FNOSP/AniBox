@@ -2562,7 +2562,8 @@ function BgmAccountCard() {
   const DOT_X = 118;
   const LABEL_X = 132;
   const VALUE_X = 194;
-  const LEADER_END_X = 106;
+  const ROW_BG_X = DOT_X - 16; // 胶囊左缘（比圆点内缩 16px，包住圆点）
+  const LEADER_END_X = DOT_X - 10; // 引线终点（落在胶囊内 6px，与设计稿同比例）
   const ROW_N = BGAC_TYPES.length;
   const rowY = (i: number) => CY - ((ROW_N - 1) * ROW_GAP) / 2 + i * ROW_GAP;
   const pt = (r: number, deg: number) => {
@@ -2655,7 +2656,7 @@ function BgmAccountCard() {
             {/* [lc-1528] 同步状态图（用户设计稿移植）：环形图 + 引线联动图例行。
                 悬停扇形/图例行 → 该段高亮其余变暗 + 引线连到该行。 */}
             <svg className="bgmac-chart" viewBox={`0 0 ${VB_W} ${VB_H}`} role="img" aria-label="同步状态">
-              <text className="bgmac-chart-title" x={VB_W / 2} y="18" textAnchor="middle" dominantBaseline="central">
+              <text className="bgmac-chart-title" x={VB_W / 2} y="13" textAnchor="middle" dominantBaseline="central">
                 同步状态
               </text>
               {total > 0 ? (
@@ -2706,7 +2707,7 @@ function BgmAccountCard() {
                   onMouseEnter={() => setHl(i)}
                   onMouseLeave={() => setHl(null)}
                 >
-                  <rect className="bgmac-row-bg" x={LEADER_END_X} y={rowY(i) - 10} width={VALUE_X - LEADER_END_X} height={20} rx="6" />
+                  <rect className="bgmac-row-bg" x={ROW_BG_X} y={rowY(i) - 10} width={VALUE_X - ROW_BG_X} height={20} rx="6" />
                   <circle cx={DOT_X} cy={rowY(i)} r="4.5" fill={s.color} />
                   <text className="bgmac-chart-label" x={LABEL_X} y={rowY(i)} dominantBaseline="central">
                     {s.label}

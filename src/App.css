@@ -6095,10 +6095,41 @@ html.dark .ditem-tag {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
-.bgmac-acts .bgmac-cta {
-  flex: 1 1 auto;
-  width: auto;
+/* [lc-1519] 已连接态：同步改紧凑小按钮（巨按钮 CTA 只留给「连接」主流程） */
+.bgmac-act {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 15px;
+  background: var(--accent-grad);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(108, 155, 255, 0.25);
+  transition: filter 0.15s, transform 0.12s;
+}
+.bgmac-act:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.bgmac-act:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.bgmac-act:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+/* 行内成功提示：小字不抢视觉（不再整卡宽灰条） */
+.bgmac-inline-note {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 .bgmac-link {
   flex: 0 0 auto;
@@ -6220,7 +6251,6 @@ html.dark .ditem-tag {
 .bgmac-err,
 .bgmac-note,
 .bgmac-tip {
-  flex-basis: 100%;
   font-size: 11.5px;
   border-radius: 9px;
   padding: 6px 10px;
@@ -6234,6 +6264,7 @@ html.dark .ditem-tag {
 .bgmac-note {
   color: var(--text-2);
   background: var(--hover);
+  border-radius: 9px;
 }
 .bgmac-tip {
   color: var(--muted);

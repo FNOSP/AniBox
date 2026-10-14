@@ -2499,7 +2499,7 @@ function BgmAccountCard() {
         "bgm_sync_now",
         { priority: "local" },
       );
-      setNote(`同步完成：上传 ${r.uploaded} · 下载 ${r.downloaded}（Bangumi 共 ${r.remoteTotal} 条动画收藏）`);
+      setNote(`同步完成 · 下载 ${r.downloaded} · 上传 ${r.uploaded}`);
       refresh();
     } catch (e) {
       setErr(String(e));
@@ -2534,12 +2534,13 @@ function BgmAccountCard() {
         </div>
         {acct.bound ? (
           <div className="bgmac-acts">
-            <button className="bgmac-cta" disabled={syncBusy} onClick={syncNow}>
-              {syncBusy ? "同步中…" : "→ 立即同步"}
+            <button className="bgmac-act" disabled={syncBusy} onClick={syncNow}>
+              {syncBusy ? "同步中…" : "立即同步"}
             </button>
             <button className="bgmac-link" onClick={unbind}>
               解绑
             </button>
+            {note && !err && <span className="bgmac-inline-note">{note}</span>}
           </div>
         ) : bindOpen ? (
           <div className="bgmac-bind">
@@ -2631,8 +2632,9 @@ function BgmAccountCard() {
         )}
       </div>
 
+      {/* 错误/提示收在左列内（不再整卡宽灰条）；已连接的成功提示走行内小字 */}
       {err && <div className="bgmac-err">{err}</div>}
-      {note && !err && <div className="bgmac-note">{note}</div>}
+      {!acct.bound && note && !err && <div className="bgmac-note">{note}</div>}
       {!acct.bound && bindOpen && (
         <div className="bgmac-tip">在 bangumi.tv 个人设置 → 访问令牌 生成，粘贴后即可同步</div>
       )}

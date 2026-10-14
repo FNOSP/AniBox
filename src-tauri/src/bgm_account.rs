@@ -372,6 +372,39 @@ pub async fn bgm_sync_now(
     }))
 }
 
+/// [lc-1520] 当季追番状态：本地追番表 ∩ 当季 Bangumi 日历（日历走同一镜像 + 落盘缓存）。
+/// 前端「当季追番状态」通栏用：本季放送番里有多少已标记、各状态分布。
+#[tauri::command]
+pub async fn bgm_collect_season(app: AppHandle) -> Result<Value, String> {
+    let table = load_table(&app).await;
+    let cal = crate::bgm::bgm_calendar(None, None, None).await?;
+    let mut season_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    let mut season_total = 0u32;
+    if let Some(days) = cal.get("days").and_then(|d| d.as_array()) {
+        for day in days {
+            if let Some(items) = day.get("items").and_then(|i| i.as_array()) {
+                for it in items {
+                    season_total += 1;
+                    if let Some(id) = it.get("id").and_then(|v| v.as_i64()) {
+                        season_ids.insert(id);
+                    }
+                }
+            }
+        }
+    }
+    let mut by_type: HashMap<i64, u32> = HashMap::new();
+    let mut total = 0u32;
+    for (k, e) in &table.map {
+        if let Ok(sid) = k.parse::<i64>() {
+            if season_ids.contains(&sid) {
+                total += 1;
+                *by_type.entry(e.kind).or_insert(0) += 1;
+            }
+        }
+    }
+    Ok(json!({ "total": total, "seasonTotal": season_total, "byType": by_type }))
+}
+
 /// 已同步条数（设置面板展示）
 #[tauri::command]
 pub async fn bgm_collect_stats(app: AppHandle) -> Result<Value, String> {

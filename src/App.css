@@ -6022,13 +6022,18 @@ html.dark .ditem-tag {
   border: 1px solid var(--line);
   border-radius: 20px;
   background: var(--glass-btn-bg);
-  display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
+  /* [lc-1520] 三块布局（用户示意图）：上排「bangumi面板 | 同步状态」+ 底部通栏「当季追番状态」 */
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "main stats"
+    "season season";
+  gap: 10px 14px;
+  align-items: start;
 }
 /* ── 左列 ── */
 .bgmac-main {
-  flex: 1 1 auto;
+  grid-area: main;
   min-width: 0;
   padding-right: 76px; /* 给右上绝对定位徽章留位 */
   display: flex;
@@ -6193,12 +6198,23 @@ html.dark .ditem-tag {
 }
 /* ── 右列：观看统计 ── */
 .bgmac-stats {
-  flex: 0 0 auto;
+  grid-area: stats;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 4px 2px 4px 12px;
+  gap: 6px;
+  padding: 0 2px 0 12px;
   border-left: 1px solid var(--line);
+}
+.bgmac-stats .bgmac-donut {
+  margin-top: 2px;
+}
+/* 块标题（同步状态 / 当季追番状态） */
+.bgmac-block-t {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-2);
+  letter-spacing: 0.03em;
 }
 .bgmac-donut {
   flex: 0 0 auto;
@@ -6247,10 +6263,50 @@ html.dark .ditem-tag {
   padding: 6px 4px;
   line-height: 1.4;
 }
-/* ── 提示 / 错误（整卡宽）── */
+/* ── 底部通栏：当季追番状态 ── */
+.bgmac-season {
+  grid-area: season;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.bgmac-season-bar {
+  display: flex;
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--ph-bg);
+}
+.bgmac-season-seg {
+  display: block;
+  height: 100%;
+  transition: width 0.3s ease;
+}
+.bgmac-season-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+.bgmac-season-total {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+.bgmac-season-empty {
+  font-size: 11.5px;
+  color: var(--muted);
+  padding: 2px 0;
+}
+
+/* ── 提示 / 错误 ── */
 .bgmac-err,
 .bgmac-note,
 .bgmac-tip {
+  grid-area: main;
   font-size: 11.5px;
   border-radius: 9px;
   padding: 6px 10px;

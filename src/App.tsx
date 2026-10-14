@@ -2431,6 +2431,9 @@ const BGAC_TYPES: { k: number; label: string; color: string }[] = [
 function BgmAccountCard() {
   const [acct, setAcct] = useState<BgmAccountState>({ bound: false, username: "" });
   const [stats, setStats] = useState<BgmCollectStats>({ total: 0, byType: {} });
+  const [season, setSeason] = useState<{ total: number; seasonTotal: number; byType: Record<string, number> }>(
+    { total: 0, seasonTotal: 0, byType: {} },
+  );
   const [bindOpen, setBindOpen] = useState(false); // 连接表单展开态
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2448,6 +2451,14 @@ function BgmAccountCard() {
     try {
       const st = await invoke<BgmCollectStats>("bgm_collect_stats");
       setStats(st);
+    } catch {
+      /* ignore */
+    }
+    try {
+      const ss = await invoke<{ total: number; seasonTotal: number; byType: Record<string, number> }>(
+        "bgm_collect_season",
+      );
+      setSeason(ss);
     } catch {
       /* ignore */
     }
@@ -2582,8 +2593,9 @@ function BgmAccountCard() {
         )}
       </div>
 
-      {/* 右侧：观看统计 */}
+      {/* 右上：同步状态（donut + 图例） */}
       <div className="bgmac-stats">
+        <div className="bgmac-block-t">同步状态</div>
         {acct.bound ? (
           <>
             <svg className="bgmac-donut" viewBox="0 0 60 60" width="60" height="60">
@@ -2629,6 +2641,52 @@ function BgmAccountCard() {
             </svg>
             <span>连接后展示追番统计</span>
           </div>
+        )}
+      </div>
+
+      {/* 底部通栏：当季追番状态（本季放送 ∩ 本地追番表） */}
+      <div className="bgmac-season">
+        <div className="bgmac-block-t">当季追番状态</div>
+        {acct.bound ? (
+          season.total > 0 ? (
+            <>
+              <div className="bgmac-season-bar">
+                {BGAC_TYPES.map((t) => {
+                  const n = Number(season.byType?.[String(t.k)] ?? 0);
+                  if (n <= 0) return null;
+                  return (
+                    <i
+                      key={t.k}
+                      className="bgmac-season-seg"
+                      style={{ width: `${(n / season.total) * 100}%`, background: t.color }}
+                    />
+                  );
+                })}
+              </div>
+              <div className="bgmac-season-legend">
+                {BGAC_TYPES.map((t) => {
+                  const n = Number(season.byType?.[String(t.k)] ?? 0);
+                  if (n <= 0) return null;
+                  return (
+                    <span key={t.k} className="bgmac-legend-row">
+                      <i className="bgmac-dot" style={{ background: t.color }} />
+                      {t.label}
+                      <b>{n}</b>
+                    </span>
+                  );
+                })}
+                <span className="bgmac-season-total">
+                  当季 {season.seasonTotal} 部中已标记 {season.total} 部
+                </span>
+              </div>
+            </>
+          ) : (
+            <div className="bgmac-season-empty">
+              当季 {season.seasonTotal > 0 ? `${season.seasonTotal} 部番剧` : "番剧"}暂无追番标记
+            </div>
+          )
+        ) : (
+          <div className="bgmac-season-empty">连接 Bangumi 后展示当季追番分布</div>
         )}
       </div>
 

@@ -2559,11 +2559,11 @@ function BgmAccountCard() {
   const R_IN = 32;
   const R_LEADER = 58;
   const ROW_GAP = 26;
-  const DOT_X = 118;
-  const LABEL_X = 132;
+  const DOT_X = 126;
+  const LABEL_X = 140;
   const VALUE_X = 194;
-  const ROW_BG_X = DOT_X - 16; // 胶囊左缘（比圆点内缩 16px，包住圆点）
-  const LEADER_END_X = DOT_X - 10; // 引线终点（落在胶囊内 6px，与设计稿同比例）
+  const ROW_BG_X = DOT_X - 14; // 胶囊左缘（比圆点内缩 14px，包住圆点）
+  const LEADER_END_X = DOT_X - 10; // 引线终点（落在胶囊内 4px）
   const ROW_N = BGAC_TYPES.length;
   const rowY = (i: number) => CY - ((ROW_N - 1) * ROW_GAP) / 2 + i * ROW_GAP;
   const pt = (r: number, deg: number) => {

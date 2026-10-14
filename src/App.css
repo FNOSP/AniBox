@@ -6225,57 +6225,72 @@ html.dark .ditem-tag {
   color: var(--text-2);
   letter-spacing: 0.03em;
 }
-/* [lc-1526] 圆饼 + 图例横排（用户示意图：左饼右清单） */
+/* [lc-1528] 同步状态图（用户设计稿移植：环形图 + 引线联动图例行） */
 .bgmac-stats-body {
-  display: flex;
-  align-items: center;
-  gap: 10px;
   width: 100%;
   min-width: 0;
 }
-.bgmac-pie {
-  flex: 0 0 auto;
+.bgmac-chart {
+  display: block;
+  width: 100%;
+  height: auto;
 }
-.bgmac-pie path {
-  transition: opacity 0.15s;
+.bgmac-chart-title {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--text-2);
+  letter-spacing: 0.5px;
 }
-.bgmac-pie path:hover {
-  opacity: 0.82;
-}
-/* 中心盖一个小圆做"洞"，数字更清晰；用卡纸实色，玻璃底上也压得住 */
-.bgmac-pie-hole {
-  fill: var(--option-bg);
-}
-.bgmac-pie {
-  filter: drop-shadow(0 2px 6px rgba(20, 30, 60, 0.1));
-}
-.bgmac-pie-n {
+.bgmac-chart-num {
   font-size: 19px;
-  font-weight: 800;
+  font-weight: 700;
   fill: var(--text-strong);
 }
-.bgmac-pie-l {
+.bgmac-chart-sub {
   font-size: 8px;
   fill: var(--muted);
+  letter-spacing: 1.5px;
 }
-/* 右侧图例：五行（色点 + 状态名 + 数字右对齐），紧凑字号适配对半列宽 */
-.bgmac-pie-legend {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.bgmac-sector {
+  cursor: pointer;
+  transition: opacity 0.22s ease;
 }
-.bgmac-pie-legend .bgmac-legend-row {
+/* 图例行 */
+.bgmac-row-bg {
+  fill: transparent;
+  transition: fill 0.22s ease;
+}
+.bgmac-chart-row {
+  cursor: pointer;
+}
+.bgmac-chart-row.hl .bgmac-row-bg {
+  fill: rgba(255, 255, 255, 0.78);
+}
+html.dark .bgmac-chart-row.hl .bgmac-row-bg {
+  fill: rgba(255, 255, 255, 0.1);
+}
+.bgmac-chart-label {
+  font-size: 10.5px;
+  fill: var(--text-2);
+  transition: fill 0.2s;
+}
+.bgmac-chart-row.hl .bgmac-chart-label {
+  fill: var(--text-strong);
+  font-weight: 600;
+}
+.bgmac-chart-value {
   font-size: 11px;
-  gap: 6px;
+  font-weight: 600;
+  fill: var(--text-strong);
 }
-.bgmac-pie-legend .bgmac-legend-row b {
-  font-size: 11px;
-}
-.bgmac-pie-legend .bgmac-dot {
-  width: 6px;
-  height: 6px;
+/* 引线（悬停时出现，连高亮段与对应图例行） */
+.bgmac-leader {
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.9;
+  pointer-events: none;
 }
 .bgmac-legend-row {
   display: flex;

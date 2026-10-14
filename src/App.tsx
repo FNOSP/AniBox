@@ -2438,11 +2438,11 @@ type BgmCollectStats = { total: number; byType: Record<string, number> };
 
 /** 追番状态五元组（Bangumi type 值 / 标签 / 统计配色） */
 const BGAC_TYPES: { k: number; label: string; color: string }[] = [
-  { k: 1, label: "想看", color: "#e8a33d" },
-  { k: 3, label: "在看", color: "#4caf7d" },
-  { k: 2, label: "看过", color: "#5b8def" },
-  { k: 4, label: "搁置", color: "#9aa3b2" },
-  { k: 5, label: "抛弃", color: "#e5646d" },
+  { k: 1, label: "想看", color: "#E9A23C" },
+  { k: 3, label: "在看", color: "#37A75F" },
+  { k: 2, label: "看过", color: "#4A87F0" },
+  { k: 4, label: "搁置", color: "#9AA1A8" },
+  { k: 5, label: "放弃", color: "#ED5B52" },
 ];
 
 function BgmAccountCard() {
@@ -2452,6 +2452,8 @@ function BgmAccountCard() {
     { total: 0, seasonTotal: 0, byType: {} },
   );
   const [bindOpen, setBindOpen] = useState(false); // 连接表单展开态
+  // [lc-1528] 同步状态图联动高亮：null = 无；数字 = BGAC_TYPES 下标
+  const [hl, setHl] = useState<number | null>(null);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
@@ -2548,6 +2550,50 @@ function BgmAccountCard() {
     return seg;
   });
 
+  // [lc-1528] 同步状态图几何（按用户设计稿重算，适配对半列宽；viewBox 200×150）
+  const VB_W = 200;
+  const VB_H = 150;
+  const CX = 58;
+  const CY = 86;
+  const R_OUT = 46;
+  const R_IN = 32;
+  const R_LEADER = 58;
+  const ROW_GAP = 26;
+  const DOT_X = 118;
+  const LABEL_X = 132;
+  const VALUE_X = 194;
+  const LEADER_END_X = 106;
+  const ROW_N = BGAC_TYPES.length;
+  const rowY = (i: number) => CY - ((ROW_N - 1) * ROW_GAP) / 2 + i * ROW_GAP;
+  const pt = (r: number, deg: number) => {
+    const rad = (deg * Math.PI) / 180;
+    return [CX + r * Math.sin(rad), CY - r * Math.cos(rad)] as const;
+  };
+  /** 环形扇形路径（外弧正向 + 内弧反向） */
+  const sectorPath = (a0: number, a1: number) => {
+    const d0 = -90 + a0 * 360;
+    const d1 = -90 + a1 * 360;
+    const [x0, y0] = pt(R_OUT, d0);
+    const [x1, y1] = pt(R_OUT, d1);
+    const [x2, y2] = pt(R_IN, d1);
+    const [x3, y3] = pt(R_IN, d0);
+    const large = d1 - d0 > 180 ? 1 : 0;
+    return `M${x0.toFixed(2)},${y0.toFixed(2)}A${R_OUT},${R_OUT} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)}L${x2.toFixed(2)},${y2.toFixed(2)}A${R_IN},${R_IN} 0 ${large} 0 ${x3.toFixed(2)},${y3.toFixed(2)}Z`;
+  };
+  /** 引线：扇形边缘 → 沿 R_LEADER 圆弧绕到图例行方向 → 直线连到行（不穿过环本体） */
+  const leaderPath = (mid: number, ry: number) => {
+    const [x0, y0] = pt(R_OUT + 2, -90 + mid * 360);
+    const [x1, y1] = pt(R_LEADER, -90 + mid * 360);
+    const dx = LEADER_END_X - CX;
+    const dy = ry - CY;
+    const phi = (Math.atan2(dx, -dy) * 180) / Math.PI;
+    const [x2, y2] = pt(R_LEADER, phi);
+    const d = ((phi - (-90 + mid * 360) + 540) % 360) - 180;
+    const large = Math.abs(d) > 180 ? 1 : 0;
+    const sweep = d > 0 ? 1 : 0;
+    return `M${x0.toFixed(2)},${y0.toFixed(2)}L${x1.toFixed(2)},${y1.toFixed(2)}A${R_LEADER},${R_LEADER} 0 ${large} ${sweep} ${x2.toFixed(2)},${y2.toFixed(2)}L${LEADER_END_X},${ry.toFixed(2)}`;
+  };
+
   return (
     <div className={`bgmac${acct.bound ? " on" : ""}`}>
       {/* 左侧：标题组 + 按钮（图标按用户要求删除） */}
@@ -2602,68 +2648,80 @@ function BgmAccountCard() {
         )}
       </div>
 
-      {/* 右上：同步状态（左圆饼 + 右图例，用户示意图） */}
+      {/* 右上：同步状态图（标题在 SVG 内，用户设计稿） */}
       <div className="bgmac-stats">
-        <div className="bgmac-block-t">同步状态</div>
         {acct.bound ? (
           <div className="bgmac-stats-body">
-            {/* 圆饼统计（实心扇形，12 点方向起顺时针） */}
-            <svg className="bgmac-pie" viewBox="0 0 100 100" width="88" height="88">
-              {total === 0 ? (
-                <circle cx="50" cy="50" r="44" fill="var(--ph-bg)" />
-              ) : (
+            {/* [lc-1528] 同步状态图（用户设计稿移植）：环形图 + 引线联动图例行。
+                悬停扇形/图例行 → 该段高亮其余变暗 + 引线连到该行。 */}
+            <svg className="bgmac-chart" viewBox={`0 0 ${VB_W} ${VB_H}`} role="img" aria-label="同步状态">
+              <text className="bgmac-chart-title" x={VB_W / 2} y="18" textAnchor="middle" dominantBaseline="central">
+                同步状态
+              </text>
+              {total > 0 ? (
                 segs
                   .filter((s) => s.n > 0)
                   .map((s) => {
-                    const a0 = -Math.PI / 2 + s.a0 * 2 * Math.PI;
-                    const a1 = -Math.PI / 2 + s.a1 * 2 * Math.PI;
-                    const R0 = 44;
-                    if (s.frac >= 0.99999) {
-                      // 只有一种状态：整圆（扇形 path 在全圆时会退化）
-                      return <circle key={s.k} cx="50" cy="50" r={R0} fill={s.color} />;
-                    }
-                    const x0 = 50 + R0 * Math.cos(a0);
-                    const y0 = 50 + R0 * Math.sin(a0);
-                    const x1 = 50 + R0 * Math.cos(a1);
-                    const y1 = 50 + R0 * Math.sin(a1);
-                    const large = s.frac > 0.5 ? 1 : 0;
+                    const i = segs.indexOf(s);
                     return (
                       <path
                         key={s.k}
-                        d={`M 50 50 L ${x0.toFixed(2)} ${y0.toFixed(2)} A ${R0} ${R0} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z`}
+                        className="bgmac-sector"
+                        d={sectorPath(s.a0, s.a1)}
                         fill={s.color}
-                        stroke="var(--option-bg)"
-                        strokeWidth="1.6"
+                        opacity={hl == null || hl === i ? 1 : 0.32}
+                        onMouseEnter={() => setHl(i)}
+                        onMouseLeave={() => setHl(null)}
                       >
                         <title>{`${s.label} ${s.n}`}</title>
                       </path>
                     );
                   })
+              ) : (
+                <path className="bgmac-sector" d={sectorPath(0, 1)} fill="var(--ph-bg)" />
               )}
-              <circle cx="50" cy="50" r="27" className="bgmac-pie-hole" />
-              <text x="50" y="49" textAnchor="middle" className="bgmac-pie-n">
-                {total}
-              </text>
-              <text x="50" y="61" textAnchor="middle" className="bgmac-pie-l">
-                部番剧
-              </text>
-            </svg>
-            {/* 右侧图例：色点 + 状态名 + 数字（数字右对齐） */}
-            <div className="bgmac-pie-legend">
-              {segs
-                .filter((s) => s.n > 0)
-                .map((s) => (
-                  <span key={s.k} className="bgmac-legend-row">
-                    <i className="bgmac-dot" style={{ background: s.color }} />
+              {total > 0 && (
+                <>
+                  <text className="bgmac-chart-num" x={CX} y={CY - 7} textAnchor="middle" dominantBaseline="central">
+                    {total}
+                  </text>
+                  <text className="bgmac-chart-sub" x={CX} y={CY + 11} textAnchor="middle" dominantBaseline="central">
+                    部番剧
+                  </text>
+                </>
+              )}
+              {/* 引线：当前高亮段的连线 */}
+              {hl != null && (
+                <path
+                  className="bgmac-leader show"
+                  d={leaderPath(segs[hl].frac > 0 ? (segs[hl].a0 + segs[hl].a1) / 2 : 0, rowY(hl))}
+                  stroke={segs[hl].color}
+                />
+              )}
+              {/* 图例行 */}
+              {segs.map((s, i) => (
+                <g
+                  key={s.k}
+                  className={`bgmac-chart-row${hl === i ? " hl" : ""}`}
+                  onMouseEnter={() => setHl(i)}
+                  onMouseLeave={() => setHl(null)}
+                >
+                  <rect className="bgmac-row-bg" x={LEADER_END_X} y={rowY(i) - 10} width={VALUE_X - LEADER_END_X} height={20} rx="6" />
+                  <circle cx={DOT_X} cy={rowY(i)} r="4.5" fill={s.color} />
+                  <text className="bgmac-chart-label" x={LABEL_X} y={rowY(i)} dominantBaseline="central">
                     {s.label}
-                    <b>{s.n}</b>
-                  </span>
-                ))}
-            </div>
+                  </text>
+                  <text className="bgmac-chart-value" x={VALUE_X} y={rowY(i)} textAnchor="end" dominantBaseline="central">
+                    {s.n}
+                  </text>
+                </g>
+              ))}
+            </svg>
           </div>
         ) : (
           <div className="bgmac-stats-empty">
-            <svg viewBox="0 0 100 100" width="80" height="80">
+            <span className="bgmac-block-t">同步状态</span>
+            <svg viewBox="0 0 100 100" width="76" height="76">
               <circle cx="50" cy="50" r="42" fill="none" stroke="var(--line-strong)" strokeWidth="7" strokeDasharray="4 6" />
             </svg>
             <span>连接后展示追番统计</span>

@@ -3,6 +3,7 @@
 
 mod authx;
 mod bgm;
+mod bgm_account;
 mod config;
 mod disk_cache;
 mod fnapi;
@@ -1209,6 +1210,14 @@ pub fn run() {
             mpv_seek,
             mpv_set_volume,
             mpv_set_rate,
+            // [lc-1515] Bangumi 账号绑定 + 追番状态同步（Kazumi 同款）
+            bgm_account::bgm_account_status,
+            bgm_account::bgm_account_bind,
+            bgm_account::bgm_account_unbind,
+            bgm_account::bgm_collect_set,
+            bgm_account::bgm_collect_get,
+            bgm_account::bgm_sync_now,
+            bgm_account::bgm_collect_stats,
             // [lc-1500] 在线资源（Kazumi 规则源）：发现页无源条目 → 搜索/选集/解析直链 → mpv
             // [lc-1501] 多源聚合搜索 + 用户加源/删源（Kazumi「播放来源 / 我的规则」同款）
             webrs::webrs_rules,

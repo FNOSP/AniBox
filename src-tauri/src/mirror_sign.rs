@@ -105,6 +105,20 @@ pub fn truncate(s: &str, n: usize) -> String {
 
 /// 401 家族的错误文案：把「本应用的密钥问题」与「镜像/上游问题」区分开。
 /// `secret_env` 是调用方对应的环境变量名（bgm/tmdb 密钥独立，报错要指对人）。
+/// 判断镜像返回的 401 是不是**签名侧**错误（密钥四兄弟）。
+/// 用于把「镜像签名错」与「用户自带 Bearer token 被上游拒了」区分开 —— 后者
+/// （如 Bangumi /v0/me 的假 token）不能套密钥文案，会误导排查方向。
+pub fn is_mirror_auth_error(body_text: &str) -> bool {
+    let err = serde_json::from_str::<serde_json::Value>(body_text)
+        .ok()
+        .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(String::from))
+        .unwrap_or_default();
+    matches!(
+        err.as_str(),
+        "bad_signature" | "stale_signature" | "bad_app" | "mirror_misconfigured"
+    )
+}
+
 pub fn auth_error_hint(body_text: &str, secret_env: &str) -> String {
     let err = serde_json::from_str::<serde_json::Value>(body_text)
         .ok()

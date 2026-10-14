@@ -43,6 +43,9 @@ pub struct Config {
     /// 启动页："home"（首页，默认）| "continue"（继续观看）
     #[serde(default = "default_launch_page")]
     pub launch_page: String,
+    /// [lc-1515] Bangumi 个人 Access Token（追番状态同步用；用户手动粘贴，本地保存）
+    #[serde(default)]
+    pub bgm_token: String,
 }
 
 fn default_cache_limit_mb() -> u64 {
@@ -85,6 +88,7 @@ impl Default for Config {
             perf_mode: false,
             carousel_logo: true,
             launch_page: default_launch_page(),
+            bgm_token: String::new(),
         }
     }
 }

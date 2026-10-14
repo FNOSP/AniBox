@@ -127,7 +127,7 @@ async fn mirror_call(
     path_with_query: &str,
     body: Option<&str>,
 ) -> Result<Value, String> {
-    match mirror_call_full(method, path_with_query, body, None).await? {
+    match mirror_call_full(method, path_with_query, body, None, &[]).await? {
         crate::tmdb::MirrorGet::Fresh(v, _) => Ok(v),
         crate::tmdb::MirrorGet::NotModified => {
             Err("未带 If-None-Match 却收到 304（镜像行为异常）".to_string())
@@ -139,7 +139,32 @@ async fn mirror_call(
 /// 结果与 TMDB 侧共用 `crate::tmdb::MirrorGet`（Fresh(内容, ETag) / NotModified）——
 /// ETag 存进 disk_cache 的 meta，下次探测复用；304 就**什么都不改**，只顺延本地时间戳。
 async fn get_json_cond(path_with_query: &str, if_none_match: Option<&str>) -> Result<crate::tmdb::MirrorGet, String> {
-    mirror_call_full("GET", path_with_query, None, if_none_match).await
+    mirror_call_full("GET", path_with_query, None, if_none_match, &[]).await
+}
+
+/// [lc-1515] 带**调用方自定义头**的镜像调用（如 bgm_account 透传用户 Bangumi Bearer
+/// token 做 /v0/me 验证与收藏读写）。extra 形如 `[("authorization", "Bearer xxx")]`，
+/// 与签名三件套一起发给镜像；降级直连时同样带上（官方 API 认这个头）。
+pub(crate) async fn mirror_call_authed(
+    method: &str,
+    path_with_query: &str,
+    body: Option<&str>,
+    authorization: &str,
+) -> Result<Value, String> {
+    match mirror_call_full(
+        method,
+        path_with_query,
+        body,
+        None,
+        &[("authorization", authorization)],
+    )
+    .await?
+    {
+        crate::tmdb::MirrorGet::Fresh(v, _) => Ok(v),
+        crate::tmdb::MirrorGet::NotModified => {
+            Err("未带 If-None-Match 却收到 304（镜像行为异常）".to_string())
+        }
+    }
 }
 
 async fn mirror_call_full(
@@ -147,6 +172,7 @@ async fn mirror_call_full(
     path_with_query: &str,
     body: Option<&str>,
     if_none_match: Option<&str>,
+    extra: &[(&str, &str)],
 ) -> Result<crate::tmdb::MirrorGet, String> {
     let body_text = body.unwrap_or("");
     // 缺密钥 = 配置错误 → 按「镜像不可用」降级（Bangumi 直连免凭证）。没有密钥就签不了名，
@@ -155,7 +181,7 @@ async fn mirror_call_full(
         crate::libmpv::trace(
             "[bgm] WARN 未配置 FNTV_BGM_SECRET（镜像密钥缺失）→ 按镜像不可用处理，直连官方域（免凭证）",
         );
-        return direct_call(method, path_with_query, body_text)
+        return direct_call(method, path_with_query, body_text, extra)
             .await
             .map(|v| crate::tmdb::MirrorGet::Fresh(v, None));
     };
@@ -170,6 +196,9 @@ async fn mirror_call_full(
         // 准入三件套（ts/签名由共享实现现算，与 URL 上实际发送的 path+query 对齐）
         rb = mirror_sign::apply_auth(rb, &secret, method, path_with_query, body_text)
             .header("accept", "application/json");
+        for (k, v) in extra {
+            rb = rb.header(*k, *v);
+        }
         if !body_text.is_empty() {
             rb = rb.header("content-type", "application/json").body(body_text.to_string());
         }
@@ -231,8 +260,10 @@ async fn mirror_call_full(
             last_err = format!("{ep} HTTP {status}: {}", truncate(&text, 160));
             continue; // 5xx → 切下一个端点
         }
-        // 4xx：确定性拒绝（签名/路由/上游 404）——换端点或直连结果相同，**不降级**，原样报错
-        return Err(if status == 401 {
+        // 4xx：确定性拒绝（签名/路由/上游 404）——换端点或直连结果相同，**不降级**，原样报错。
+        // [lc-1515] 401 要分两种：镜密钥四兄弟 → 密钥文案；其余（如用户 Bangumi token
+        // 被上游拒）→ 通用 HTTP 文案，由调用方映射成用户向提示（别套密钥文案误导）。
+        return Err(if status == 401 && mirror_sign::is_mirror_auth_error(&text) {
             auth_error_hint(&text)
         } else {
             format!("镜像请求失败（HTTP {status}）：{}", truncate(&text, 200))
@@ -240,7 +271,7 @@ async fn mirror_call_full(
     }
     // 端点全部不可用（连接错误/超时/5xx）或 429 → 降级直连官方域（免凭证）
     crate::libmpv::trace(&format!("[bgm] 镜像不可用，降级直连（免凭证）：{last_err}"));
-    direct_call(method, path_with_query, body_text)
+    direct_call(method, path_with_query, body_text, extra)
         .await
         .map(|v| crate::tmdb::MirrorGet::Fresh(v, None)) // 降级直连不带条件头
         .map_err(|e| format!("所有镜像端点均失败（最后：{last_err}）；降级直连也失败：{e}"))
@@ -249,7 +280,12 @@ async fn mirror_call_full(
 /// 降级直连 Bangumi 官方域（**免凭证**：Bangumi API 不需要任何 key，镜像只是防滥用+缓存层）。
 /// /v0/* → api.bgm.tv；/p1/* → next.bgm.tv（api.bgm.tv 的 /p1/* 返回 200 + 业务 404，勿用）。
 /// 克制重试：仅瞬时类（网络/超时/429/5xx）最多 DIRECT_MAX_ATTEMPTS 次、间隔 500ms；其余 4xx 直接报错。
-async fn direct_call(method: &str, path_with_query: &str, body_text: &str) -> Result<Value, String> {
+async fn direct_call(
+    method: &str,
+    path_with_query: &str,
+    body_text: &str,
+    extra: &[(&str, &str)],
+) -> Result<Value, String> {
     let base = if path_with_query.starts_with("/p1/") {
         DIRECT_NEXT
     } else {
@@ -267,6 +303,9 @@ async fn direct_call(method: &str, path_with_query: &str, body_text: &str) -> Re
             direct_client().get(&url)
         };
         rb = rb.header("accept", "application/json");
+        for (k, v) in extra {
+            rb = rb.header(*k, *v);
+        }
         if !body_text.is_empty() {
             rb = rb.header("content-type", "application/json").body(body_text.to_string());
         }
@@ -912,13 +951,13 @@ mod tests {
     #[ignore = "live network"]
     async fn live_direct_call_is_credential_free() {
         // /v0/* → api.bgm.tv
-        let v = direct_call("GET", "/v0/subjects/8", "")
+        let v = direct_call("GET", "/v0/subjects/8", "", &[])
             .await
             .expect("直连 GET /v0/subjects/8 应成功（免凭证）");
         assert_eq!(v.get("id").and_then(|x| x.as_i64()), Some(8));
 
         // /p1/* → next.bgm.tv。⚠ 这条是防「打到 api.bgm.tv 拿到 HTTP 200 + {"code":404} 空壳」的哨兵。
-        let c = direct_call("GET", "/p1/subjects/8/comments?limit=2&offset=0", "")
+        let c = direct_call("GET", "/p1/subjects/8/comments?limit=2&offset=0", "", &[])
             .await
             .expect("直连 GET /p1/... 应成功");
         assert!(
@@ -934,6 +973,7 @@ mod tests {
             "POST",
             "/v0/search/subjects",
             "{\"keyword\":\"命运石之门\",\"filter\":{\"type\":[2]}}",
+            &[],
         )
         .await
         .expect("直连 POST /v0/search/subjects 应成功");

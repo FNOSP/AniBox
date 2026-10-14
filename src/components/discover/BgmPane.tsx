@@ -117,8 +117,19 @@ export function BgmPane({ active, onOpen }: { active: boolean; onOpen: (it: BgmC
           ⟳
         </button>
       </header>
-      {/* [lc-1516] Bangumi 账号面板：紧跟栏头（避开顶部 56px 的胶囊让位区） */}
-      <BgmAccountCard onOpen={onOpen} />
+      {/* [lc-1516] Bangumi 账号面板：紧跟栏头（避开顶部 56px 的胶囊让位区）
+          [lc-1538] 底部通栏改「今日状态条」：当前选中日的汇总由这里算好传进去
+          （原先那条 .ddaybar 已从列表上方移入卡片，列表不再重复显示） */}
+      <BgmAccountCard
+        onOpen={onOpen}
+        today={{
+          wdCn,
+          isToday: wd === todayId,
+          count: dayItems.length,
+          hiCount,
+          hotName,
+        }}
+      />
       <div className="dweeks">
         {WEEKDAYS.map((w) => {
           const g = days.find((x) => x.id === w.id);
@@ -172,17 +183,6 @@ export function BgmPane({ active, onOpen }: { active: boolean; onOpen: (it: BgmC
           </div>
         ) : (
           <>
-            <div className="ddaybar">
-              <b>
-                {wdCn}
-                {wd === todayId ? "（今天）" : ""}
-              </b>
-              <span>
-                {wd === todayId ? `今日 ${dayItems.length} 部新番更新` : `${dayItems.length} 部更新`}
-                {hiCount > 0 ? ` · ${hiCount} 部评分 8.0+` : ""}
-                {hotName ? ` · 热度最高：${hotName}` : ""}
-              </span>
-            </div>
             <ul className="dlist">
               {lib.state === "ok" ? (
                 <>

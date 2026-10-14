@@ -558,32 +558,8 @@
   margin-top: 2px;
 }
 
-/* [lc-123-rev] 当天汇总条（「周三（今天）· 今日 12 部新番更新 · 热度最高：X」） */
-.ddaybar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 2px 0 12px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: linear-gradient(120deg, rgba(108, 155, 255, 0.16), rgba(108, 155, 255, 0.04));
-}
-
-.ddaybar b {
-  font-size: 14.5px;
-  color: var(--text-strong);
-  white-space: nowrap;
-}
-
-.ddaybar span {
-  min-width: 0;
-  font-size: 12.5px;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* [lc-1538] 原「当天汇总条」.ddaybar 已移入 Bangumi 卡片底部（见 30-bgmac.css 的
+   .bgmac-today），这里不再保留 —— 列表上方不再重复显示当日汇总。 */
 
 /* 行：左侧强调竖条（::before）+ 封面（左上角该天序号）+ 标题/标签 */
 .ditem {

@@ -23,13 +23,30 @@ export const BGAC_TYPES: { k: number; label: string; color: string }[] = [
 ];
 
 
-export function BgmAccountCard({ onOpen }: { onOpen?: (it: BgmCalendarItem) => void }) {
+/** [lc-1538] 今日状态条数据（BgmPane 按当前选中日算好传入） */
+export type BgmTodaySummary = {
+  /** 星期中文名（如「周三」） */
+  wdCn: string;
+  /** 是否就是本机今天（决定「（今天）」后缀与文案措辞） */
+  isToday: boolean;
+  /** 当日更新部数 */
+  count: number;
+  /** 当日评分 8.0+ 部数（0 则整段不显示） */
+  hiCount: number;
+  /** 当日热度最高条目名（空则整段不显示） */
+  hotName: string;
+};
+
+export function BgmAccountCard({
+  onOpen,
+  today,
+}: {
+  onOpen?: (it: BgmCalendarItem) => void;
+  today?: BgmTodaySummary;
+}) {
   const [acct, setAcct] = useState<BgmAccountState>({ bound: false, username: "" });
   const [stats, setStats] = useState<BgmCollectStats>({ total: 0, byType: {} });
   const [watch, setWatch] = useState<BgmWatchCover[]>([]); // [lc-1534] 「正在追」封面条
-  const [season, setSeason] = useState<{ total: number; seasonTotal: number; byType: Record<string, number> }>(
-    { total: 0, seasonTotal: 0, byType: {} },
-  );
   const [bindOpen, setBindOpen] = useState(false); // 连接表单展开态
   // [lc-1528] 同步状态图联动高亮：null = 无；数字 = BGAC_TYPES 下标
   const [hl, setHl] = useState<number | null>(null);
@@ -49,14 +66,6 @@ export function BgmAccountCard({ onOpen }: { onOpen?: (it: BgmCalendarItem) => v
     try {
       const st = await invoke<BgmCollectStats>("bgm_collect_stats");
       setStats(st);
-    } catch {
-      /* ignore */
-    }
-    try {
-      const ss = await invoke<{ total: number; seasonTotal: number; byType: Record<string, number> }>(
-        "bgm_collect_season",
-      );
-      setSeason(ss);
     } catch {
       /* ignore */
     }
@@ -351,51 +360,21 @@ export function BgmAccountCard({ onOpen }: { onOpen?: (it: BgmCalendarItem) => v
         )}
       </div>
 
-      {/* 底部通栏：当季追番状态（本季放送 ∩ 本地追番表） */}
-      <div className="bgmac-season">
-        <div className="bgmac-block-t">当季追番状态</div>
-        {acct.bound ? (
-          season.total > 0 ? (
-            <>
-              <div className="bgmac-season-bar">
-                {BGAC_TYPES.map((t) => {
-                  const n = Number(season.byType?.[String(t.k)] ?? 0);
-                  if (n <= 0) return null;
-                  return (
-                    <i
-                      key={t.k}
-                      className="bgmac-season-seg"
-                      style={{ width: `${(n / season.total) * 100}%`, background: t.color }}
-                    />
-                  );
-                })}
-              </div>
-              <div className="bgmac-season-legend">
-                {BGAC_TYPES.map((t) => {
-                  const n = Number(season.byType?.[String(t.k)] ?? 0);
-                  if (n <= 0) return null;
-                  return (
-                    <span key={t.k} className="bgmac-legend-row">
-                      <i className="bgmac-dot" style={{ background: t.color }} />
-                      {t.label}
-                      <b>{n}</b>
-                    </span>
-                  );
-                })}
-                <span className="bgmac-season-total">
-                  当季 {season.seasonTotal} 部中已标记 {season.total} 部
-                </span>
-              </div>
-            </>
-          ) : (
-            <div className="bgmac-season-empty">
-              当季 {season.seasonTotal > 0 ? `${season.seasonTotal} 部番剧` : "番剧"}暂无追番标记
-            </div>
-          )
-        ) : (
-          <div className="bgmac-season-empty">连接 Bangumi 后展示当季追番分布</div>
-        )}
-      </div>
+      {/* [lc-1538] 底部通栏：今日状态条（原「当季追番状态」由它替换 —— 用户要求）
+          文案沿用列表上方那条 .ddaybar 的原措辞，样式换成卡片内的浅底通栏。 */}
+      {today && today.count > 0 && (
+        <div className="bgmac-today">
+          <b>
+            {today.wdCn}
+            {today.isToday ? "（今天）" : ""}
+          </b>
+          <span>
+            {today.isToday ? `今日 ${today.count} 部新番更新` : `${today.count} 部更新`}
+            {today.hiCount > 0 ? ` · ${today.hiCount} 部评分 8.0+` : ""}
+            {today.hotName ? ` · 热度最高：${today.hotName}` : ""}
+          </span>
+        </div>
+      )}
 
       {/* 错误/提示收在左列内（不再整卡宽灰条）；已连接的成功提示走行内小字 */}
       {err && <div className="bgmac-err">{err}</div>}

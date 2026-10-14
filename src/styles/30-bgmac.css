@@ -336,25 +336,6 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
   opacity: 0.9;
   pointer-events: none;
 }
-.bgmac-legend-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--text-2);
-  line-height: 1.4;
-}
-.bgmac-legend-row b {
-  margin-left: auto;
-  color: var(--text-strong);
-  font-size: 11.5px;
-}
-.bgmac-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-}
 .bgmac-stats-empty {
   display: flex;
   flex-direction: column;
@@ -366,43 +347,32 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
   padding: 6px 4px;
   line-height: 1.4;
 }
-/* ── 底部通栏：当季追番状态 ── */
-.bgmac-season {
+/* ── [lc-1538] 底部通栏：今日状态条（替换原「当季追番状态」）──
+   版式对齐列表上方那条 .ddaybar（星期 + 汇总小字），底色改用卡片内的浅渐变
+   （原 ddaybar 是独立块、有边框；这里嵌在卡片里，只用浅底区分层级）。 */
+.bgmac-today {
   grid-area: season;
   display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
-}
-.bgmac-season-bar {
-  display: flex;
-  width: 100%;
-  height: 8px;
-  border-radius: 4px;
-  overflow: hidden;
-  background: var(--ph-bg);
-}
-.bgmac-season-seg {
-  display: block;
-  height: 100%;
-  transition: width 0.3s ease;
-}
-.bgmac-season-legend {
-  display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 4px 14px;
+  gap: 10px;
+  margin-top: 2px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: linear-gradient(120deg, rgba(108, 155, 255, 0.16), rgba(108, 155, 255, 0.04));
 }
-.bgmac-season-total {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--muted);
+.bgmac-today b {
+  font-size: 14px;
+  color: var(--text-strong);
+  white-space: nowrap;
 }
-.bgmac-season-empty {
-  font-size: 11.5px;
+.bgmac-today span {
+  min-width: 0;
+  font-size: 12.5px;
   color: var(--muted);
-  padding: 2px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── 提示 / 错误 ── */

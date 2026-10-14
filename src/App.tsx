@@ -2412,6 +2412,166 @@ function BgmCalRow({
  *  点击条目 → 打开该 Bangumi 条目的轻量详情。
  *  [lc-123-rev] 在库分组：只对**当前选中这天**的条目做匹配（不逐条打网络），在库在前、组标题带数量；
  *  索引不完整（partial）时退化成"只给命中项打标"，索引不可用时整个分组退场（见 useLibIndex 注释）。 */
+/* ════════════ [lc-1516] 发现页右栏顶部：Bangumi 账号面板 ════════════
+   展示用户状态（未连接 / ✓ 用户名）与当前同步内容（追番状态统计），
+   并提供绑定（粘贴 Access Token，Kazumi 同款）、立即同步、解绑。
+   数据源：Rust bgm_account 模块（走自建镜像，见 bgm_account.rs）。 */
+type BgmAccountState = { bound: boolean; username: string };
+type BgmCollectStats = { total: number; byType: Record<string, number> };
+
+const BGAC_TYPE_LABEL: Record<number, string> = {
+  1: "想看",
+  2: "看过",
+  3: "在看",
+  4: "搁置",
+  5: "抛弃",
+};
+
+function BgmAccountCard() {
+  const [acct, setAcct] = useState<BgmAccountState>({ bound: false, username: "" });
+  const [stats, setStats] = useState<BgmCollectStats>({ total: 0, byType: {} });
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [note, setNote] = useState("");
+
+  const refresh = useCallback(async () => {
+    try {
+      const s = await invoke<BgmAccountState>("bgm_account_status");
+      setAcct(s);
+    } catch {
+      /* 状态查询失败不打扰用户 */
+    }
+    try {
+      const st = await invoke<BgmCollectStats>("bgm_collect_stats");
+      setStats(st);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const bind = async () => {
+    const t = token.trim();
+    if (!t) return;
+    setBusy(true);
+    setErr("");
+    setNote("");
+    try {
+      const s = await invoke<BgmAccountState>("bgm_account_bind", { token: t });
+      setAcct(s);
+      setToken("");
+      setNote(`已连接 Bangumi 账号「${s.username}」`);
+      refresh();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unbind = async () => {
+    if (!window.confirm(`解绑 Bangumi 账号「${acct.username}」？本地追番状态会保留。`)) return;
+    setErr("");
+    setNote("");
+    try {
+      await invoke("bgm_account_unbind");
+      setAcct({ bound: false, username: "" });
+      setNote("已解绑");
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  const syncNow = async () => {
+    setSyncBusy(true);
+    setErr("");
+    setNote("");
+    try {
+      const r = await invoke<{ uploaded: number; downloaded: number; remoteTotal: number }>(
+        "bgm_sync_now",
+        { priority: "local" },
+      );
+      setNote(`同步完成：上传 ${r.uploaded} · 下载 ${r.downloaded}（Bangumi 共 ${r.remoteTotal} 条动画收藏）`);
+      refresh();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
+  // 统计 chips：只显示非零类型（顺序固定 3/2/1/4/5：在看优先）
+  const chips: { k: number; n: number }[] = [3, 2, 1, 4, 5]
+    .map((k) => ({ k, n: Number(stats.byType?.[String(k)] ?? 0) }))
+    .filter((x) => x.n > 0);
+
+  return (
+    <div className="bgmac">
+      <div className="bgmac-hd">
+        <span className="bgmac-t">Bangumi 账号</span>
+        {acct.bound ? (
+          <span className="bgmac-user" title={`已连接：${acct.username}`}>
+            ✓ {acct.username}
+          </span>
+        ) : (
+          <span className="bgmac-user off">未连接</span>
+        )}
+      </div>
+
+      {acct.bound ? (
+        <>
+          <div className="bgmac-stats" title="本地追番状态统计（与 Bangumi 同步中）">
+            {chips.length > 0 ? (
+              chips.map((c) => (
+                <span key={c.k} className="bgmac-chip">
+                  {BGAC_TYPE_LABEL[c.k]} {c.n}
+                </span>
+              ))
+            ) : (
+              <span className="bgmac-empty">暂无同步的追番状态</span>
+            )}
+            {stats.total > 0 && <span className="bgmac-total">共 {stats.total} 条</span>}
+          </div>
+          <div className="bgmac-acts">
+            <button className="bgmac-btn primary" disabled={syncBusy} onClick={syncNow}>
+              {syncBusy ? "同步中…" : "立即同步"}
+            </button>
+            <button className="bgmac-btn" onClick={unbind}>
+              解绑
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="bgmac-bind">
+            <input
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !busy && bind()}
+              placeholder="粘贴 Bangumi Access Token"
+              title="在 Bangumi 个人设置页生成 Access Token（ bangumi.tv 右上角 → 设置 → 访问令牌 ）"
+            />
+            <button className="bgmac-btn primary" disabled={busy || !token.trim()} onClick={bind}>
+              {busy ? "连接中…" : "连接"}
+            </button>
+          </div>
+          <div className="bgmac-tip">
+            在 bangumi.tv 个人设置生成访问令牌，粘贴后即可同步追番状态
+          </div>
+        </>
+      )}
+
+      {err && <div className="bgmac-err">{err}</div>}
+      {note && !err && <div className="bgmac-note">{note}</div>}
+    </div>
+  );
+}
+
 function BgmPane({ active, onOpen }: { active: boolean; onOpen: (it: BgmCalendarItem) => void }) {
   const todayId = localWeekdayId();
   const [days, setDays] = useState<BgmCalendarDay[]>([]);
@@ -2521,6 +2681,8 @@ function BgmPane({ active, onOpen }: { active: boolean; onOpen: (it: BgmCalendar
           ⟳
         </button>
       </header>
+      {/* [lc-1516] Bangumi 账号面板：紧跟栏头（避开顶部 56px 的胶囊让位区） */}
+      <BgmAccountCard />
       <div className="dweeks">
         {WEEKDAYS.map((w) => {
           const g = days.find((x) => x.id === w.id);

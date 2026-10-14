@@ -6011,3 +6011,136 @@ html.dark .ditem-tag {
     animation: none;
   }
 }
+
+/* ══════════════ [lc-1516] 发现页右栏：Bangumi 账号面板 ══════════════ */
+.bgmac {
+  margin: 0 16px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--glass-btn-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bgmac-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bgmac-t {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+.bgmac-user {
+  margin-left: auto;
+  font-size: 12px;
+  color: #2e7d32;
+  font-weight: 600;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bgmac-user.off {
+  color: var(--muted);
+  font-weight: 400;
+}
+.bgmac-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.bgmac-chip {
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.bgmac-total {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+}
+.bgmac-empty {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.bgmac-acts {
+  display: flex;
+  gap: 8px;
+}
+.bgmac-btn {
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--glass-btn-bg);
+  color: var(--text-strong);
+  font-size: 12px;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.bgmac-btn:hover:not(:disabled) {
+  background: var(--hover-strong);
+  border-color: var(--accent);
+}
+.bgmac-btn.primary {
+  color: var(--accent);
+  font-weight: 600;
+}
+.bgmac-btn.primary:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+}
+.bgmac-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.bgmac-bind {
+  display: flex;
+  gap: 8px;
+}
+.bgmac-bind input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  padding: 0 10px;
+  font-size: 12px;
+  outline: none;
+}
+.bgmac-bind input:focus {
+  border-color: var(--accent);
+}
+.bgmac-bind .bgmac-btn {
+  flex: 0 0 auto;
+}
+.bgmac-tip {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.bgmac-err {
+  font-size: 11.5px;
+  color: var(--err-text);
+  background: var(--err-bg);
+  border: 1px solid var(--err-border);
+  border-radius: 8px;
+  padding: 5px 9px;
+  word-break: break-all;
+}
+.bgmac-note {
+  font-size: 11.5px;
+  color: var(--text-2);
+  background: var(--hover);
+  border-radius: 8px;
+  padding: 5px 9px;
+}

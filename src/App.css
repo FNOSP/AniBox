@@ -5443,33 +5443,35 @@ html.dark .ditem-tag {
   padding: 10px 0 8px;
   border-top: 1px solid var(--line);
 }
+/* [lc-1509] 搜索栏：**一套统一规格**（同高 32px / 同圆角 / 同边框 / 同字体），
+   根治"按钮歪、边框挨太近"——之前 input 走全局 `padding:10px 13px`（content-box，
+   项目没有全局 border-box），button 走 `padding:8px 15px`，各自覆盖对齐必然错位。 */
 .webrs-bar {
   display: flex;
-  gap: 8px;
   align-items: center;
+  gap: 10px;
 }
-.webrs-bar select {
-  max-width: 96px;
-  height: 30px;
+.webrs-bar input,
+.webrs-bar select,
+.webrs-bar .webrs-go,
+.webrs-bar .webrs-gear,
+.webrs-bar .webrs-add {
+  box-sizing: border-box;
+  height: 32px;
+  min-height: 32px;
+  margin: 0;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
-  background: var(--option-bg);
-  color: var(--text-strong);
-  padding: 0 6px;
-  font-size: 12px;
-  cursor: pointer;
-  flex: 0 0 auto;
+  font-size: 12.5px;
+  font-family: inherit;
 }
 .webrs-bar input {
   flex: 1 1 auto;
   min-width: 0;
-  height: 30px;
-  border: 1px solid transparent;
-  border-radius: 8px;
+  padding: 0 12px;
+  line-height: 30px;
   background: var(--input-bg);
   color: var(--text-strong);
-  padding: 0 10px;
-  font-size: 12.5px;
   outline: none;
   transition: border-color 0.15s, background 0.15s;
 }
@@ -5477,32 +5479,59 @@ html.dark .ditem-tag {
   border-color: var(--accent);
   background: var(--bg-3);
 }
-.webrs-bar .webrs-go {
+.webrs-bar select {
   flex: 0 0 auto;
-  height: 30px;
+  max-width: 96px;
+  padding: 0 6px;
+  background: var(--option-bg);
+  color: var(--text-strong);
+  cursor: pointer;
+}
+.webrs-bar .webrs-go,
+.webrs-bar .webrs-gear,
+.webrs-bar .webrs-add {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 0 14px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
   background: var(--glass-btn-bg);
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 600;
+  color: var(--text-strong);
+  line-height: 1;
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.webrs-bar .webrs-go {
+  color: var(--accent);
+  font-weight: 600;
 }
 .webrs-bar .webrs-go:hover:not(:disabled) {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
 }
+.webrs-bar .webrs-gear,
+.webrs-bar .webrs-add:hover,
+.webrs-bar .webrs-gear:hover {
+  background: var(--glass-btn-bg);
+}
+.webrs-bar .webrs-gear {
+  width: 34px;
+  padding: 0;
+  font-size: 14px;
+  color: var(--text-2);
+}
+.webrs-bar .webrs-gear:hover,
+.webrs-bar .webrs-add:hover {
+  background: var(--hover-strong);
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .webrs-bar .webrs-go:disabled {
   opacity: 0.45;
   cursor: default;
 }
-.webrs-note {
-  font-size: 12px;
-  color: var(--muted);
-}
+
 .webrs-err {
   font-size: 12px;
   color: var(--err-text);
@@ -5616,22 +5645,6 @@ html.dark .ditem-tag {
 }
 
 /* ── [lc-1501] 多源聚合面板（Kazumi「播放来源」式）── */
-.webrs-bar .webrs-add {
-  flex: 0 0 auto;
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: 9px;
-  background: var(--glass-btn-bg);
-  color: var(--text-strong);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.webrs-bar .webrs-add:hover {
-  background: var(--hover-strong);
-  border-color: var(--accent);
-}
 .webrs-groups {
   display: flex;
   flex-direction: column;
@@ -5792,29 +5805,7 @@ html.dark .ditem-tag {
   margin-top: 8px;
 }
 
-/* ── [lc-1502] 源管理设置面板（⚙ 勾选启用）── */
-.webrs-bar .webrs-gear {
-  flex: 0 0 auto;
-  width: 32px;
-  height: 30px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--glass-btn-bg);
-  color: var(--text-2);
-  font-size: 13px;
-  cursor: pointer;
-  line-height: 1;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-.webrs-bar .webrs-gear:hover {
-  background: var(--hover-strong);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.webrs-bar .webrs-gear:hover {
-  background: var(--hover-strong);
-  border-color: var(--accent);
-}
+/* ── [lc-1502] 源管理设置面板（⚙ 勾选启用）；搜索栏控件规格见上方统一规则 ── */
 .webrs-mgr-count {
   font-size: 12px;
   font-weight: 400;

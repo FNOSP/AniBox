@@ -2562,8 +2562,8 @@ function BgmAccountCard() {
   const DOT_X = 126;
   const LABEL_X = 140;
   const VALUE_X = 194;
-  const ROW_BG_X = DOT_X - 14; // 胶囊左缘（比圆点内缩 14px，包住圆点）
-  const LEADER_END_X = DOT_X - 10; // 引线终点（落在胶囊内 4px）
+  const ROW_BG_X = DOT_X - 8; // 胶囊左缘（用户要求：胶囊背景矩形整体右移，贴近圆点）
+  const LEADER_END_X = ROW_BG_X - 2; // 引线终点停在胶囊左缘外 2px，可见段更长
   const ROW_N = BGAC_TYPES.length;
   const rowY = (i: number) => CY - ((ROW_N - 1) * ROW_GAP) / 2 + i * ROW_GAP;
   const pt = (r: number, deg: number) => {

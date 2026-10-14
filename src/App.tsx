@@ -2551,7 +2551,7 @@ function BgmAccountCard() {
   });
 
   // [lc-1528] 同步状态图几何（按用户设计稿重算，适配对半列宽；viewBox 200×150）
-  const VB_W = 200;
+  const VB_W = 206; // 右侧多留 6 单位给胶囊右缘内边距（数字不再贴边）
   const VB_H = 150;
   const CX = 58;
   const CY = 86;
@@ -2707,7 +2707,7 @@ function BgmAccountCard() {
                   onMouseEnter={() => setHl(i)}
                   onMouseLeave={() => setHl(null)}
                 >
-                  <rect className="bgmac-row-bg" x={ROW_BG_X} y={rowY(i) - 10} width={VALUE_X - ROW_BG_X} height={20} rx="6" />
+                  <rect className="bgmac-row-bg" x={ROW_BG_X} y={rowY(i) - 10} width={VALUE_X + 8 - ROW_BG_X} height={20} rx="6" />
                   <circle cx={DOT_X} cy={rowY(i)} r="4.5" fill={s.color} />
                   <text className="bgmac-chart-label" x={LABEL_X} y={rowY(i)} dominantBaseline="central">
                     {s.label}

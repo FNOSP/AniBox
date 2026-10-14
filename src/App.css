@@ -4143,7 +4143,10 @@ html.dark .ditem-tag {
   color: var(--text-2);
   margin-right: auto;
 }
-/* 关闭询问的浮层（原生关闭按钮触发，独立于设置面板） */
+/* [lc-1514] 关闭询问的浮层（原生关闭按钮触发，独立于设置面板）。
+   玻璃化：遮罩半透明 + 动态模糊背后界面，弹窗本体也走半透明玻璃 + 自身
+   backdrop-filter。.perf 性能模式会全局关掉 backdrop-filter，自动降级为
+   半透明纯色，不用另写兼容。 */
 .close-ask {
   position: fixed;
   inset: 0;
@@ -4152,18 +4155,44 @@ html.dark .ditem-tag {
   align-items: center;
   justify-content: center;
   background: rgba(8, 10, 16, 0.42);
+  backdrop-filter: blur(10px) saturate(1.15);
+  -webkit-backdrop-filter: blur(10px) saturate(1.15);
   animation: fadeIn 0.16s ease both;
 }
 .close-ask-box {
   width: min(360px, 88vw);
   border-radius: 14px;
-  background: var(--panel);
-  border: 1px solid var(--line-strong);
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  border: 1px solid var(--glass-border);
   box-shadow: var(--shadow-card);
   padding: 18px 18px 14px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  animation: closeAskPop 0.22s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+@keyframes closeAskPop {
+  from { opacity: 0; transform: scale(0.94) translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+/* 记忆选项：整行可点（label 包 input） */
+.close-ask-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+.close-ask-remember input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex: 0 0 auto;
 }
 .close-ask-box h3 {
   margin: 0;

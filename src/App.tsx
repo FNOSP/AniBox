@@ -5269,6 +5269,11 @@ function App() {
   /** [lc-1439] 关闭询问：原生关闭按钮被 Rust 拦下后 emit close-ask，这里弹框。
    *  仅桌面端有该事件（Web 预览下 listen 不可用 → 静默跳过）。 */
   const [closeAsk, setCloseAsk] = useState(false);
+  // [lc-1514] 「记住我的选择」勾选态：每次弹问重置（不把上次的勾选带给下一次）
+  const [rememberClose, setRememberClose] = useState(false);
+  useEffect(() => {
+    if (closeAsk) setRememberClose(false);
+  }, [closeAsk]);
   useEffect(() => {
     let un: (() => void) | undefined;
     listen("close-ask", () => setCloseAsk(true))
@@ -5947,12 +5952,22 @@ function App() {
         />
       )}
       {/* [lc-1439] 关闭询问框：原生关闭按钮被 Rust 拦下后弹（三选一）。
-          用 fixed 浮层而非复用设置面板 —— 它必须在任何页面状态下都能弹出来。 */}
+          用 fixed 浮层而非复用设置面板 —— 它必须在任何页面状态下都能弹出来。
+          [lc-1514] 玻璃化（半透明 + 动态模糊）+「记住我的选择」：勾上则把
+          exit_mode 写进 settings，之后 Rust 的 CloseRequested 直接按记忆执行，不再问。 */}
       {closeAsk && (
         <div className="close-ask" onClick={() => setCloseAsk(false)}>
           <div className="close-ask-box" onClick={(e) => e.stopPropagation()}>
             <h3>关闭窗口</h3>
             <p>要退出程序，还是最小化到系统托盘继续在后台运行？</p>
+            <label className="close-ask-remember">
+              <input
+                type="checkbox"
+                checked={rememberClose}
+                onChange={(e) => setRememberClose(e.target.checked)}
+              />
+              <span>记住我的选择，下次不再询问</span>
+            </label>
             <div className="close-ask-acts">
               <button className="set-btn" onClick={() => setCloseAsk(false)}>
                 取消
@@ -5961,6 +5976,7 @@ function App() {
                 className="set-btn"
                 onClick={() => {
                   setCloseAsk(false);
+                  if (rememberClose) patchSettings({ exitMode: "tray" });
                   invoke("resolve_close", { action: "hide" }).catch(() => {});
                 }}
               >
@@ -5970,6 +5986,7 @@ function App() {
                 className="set-btn danger"
                 onClick={() => {
                   setCloseAsk(false);
+                  if (rememberClose) patchSettings({ exitMode: "exit" });
                   invoke("resolve_close", { action: "exit" }).catch(() => {});
                 }}
               >

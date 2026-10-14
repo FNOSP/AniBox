@@ -364,6 +364,7 @@ enum Pred {
     Pos(usize),
     Eq(String, String),
     Contains(String, String),
+    StartsWith(String, String),
 }
 
 #[derive(Debug, Clone)]
@@ -374,9 +375,19 @@ enum Test {
     Text,
 }
 
+/// XPath 轴（子集）：`//`=Descendant（经 descendant-or-self::node() 展开）、
+/// `/`=Child、`self::`、`following-sibling::`（ezdmw 的选集规则用到后两个）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Axis {
+    Child,
+    Desc,
+    SelfAxis,
+    FollowingSibling,
+}
+
 #[derive(Debug, Clone)]
 struct Step {
-    desc: bool, // true = `//`（后代轴），false = `/`（子轴）
+    axis: Axis,
     test: Test,
     preds: Vec<Pred>,
 }
@@ -399,6 +410,19 @@ fn parse_pred(raw: &str) -> Result<Pred, String> {
     }
     if p.chars().all(|c| c.is_ascii_digit()) {
         return Ok(Pred::Pos(p.parse().map_err(|_| "谓词下标解析失败")?));
+    }
+    if let Some(rest) = p.strip_prefix("starts-with(") {
+        let inner = rest.strip_suffix(')').ok_or("starts-with() 缺右括号")?;
+        let (left, right) = inner
+            .split_once(',')
+            .ok_or("starts-with() 需要 @attr 与字符串两个参数")?;
+        let attr = left
+            .trim()
+            .strip_prefix('@')
+            .ok_or("starts-with() 第一个参数必须是 @attr")?
+            .trim()
+            .to_string();
+        return Ok(Pred::StartsWith(attr, unquote(right)));
     }
     if let Some(rest) = p.strip_prefix("contains(") {
         let inner = rest.strip_suffix(')').ok_or("contains() 缺右括号")?;
@@ -425,21 +449,29 @@ fn parse_pred(raw: &str) -> Result<Pred, String> {
     Err(format!("不支持的谓词: {p}"))
 }
 
-fn parse_step(raw: &str, desc: bool) -> Result<Step, String> {
+fn parse_step(raw: &str, default_axis: Axis) -> Result<Step, String> {
     let raw = raw.trim();
     if raw.is_empty() {
         return Err("空 XPath 步进".into());
     }
+    // 显式轴前缀（ezdmw 的选集规则用 self:: / following-sibling::）
+    let (axis, raw) = if let Some(rest) = raw.strip_prefix("self::") {
+        (Axis::SelfAxis, rest.trim())
+    } else if let Some(rest) = raw.strip_prefix("following-sibling::") {
+        (Axis::FollowingSibling, rest.trim())
+    } else {
+        (default_axis, raw)
+    };
     if let Some(attr) = raw.strip_prefix('@') {
         return Ok(Step {
-            desc,
+            axis,
             test: Test::Attr(attr.trim().to_string()),
             preds: Vec::new(),
         });
     }
     if raw == "text()" {
         return Ok(Step {
-            desc,
+            axis,
             test: Test::Text,
             preds: Vec::new(),
         });
@@ -486,11 +518,44 @@ fn parse_step(raw: &str, desc: bool) -> Result<Step, String> {
         preds.push(parse_pred(&rest[st + 1..end])?);
         rest = &rest[end + 1..];
     }
-    Ok(Step { desc, test, preds })
+    Ok(Step { axis, test, preds })
 }
 
-/// 解析整条 XPath（`.` 开头 = 相对上下文求值）。
-fn parse_xpath(expr: &str) -> Result<Vec<Step>, String> {
+/// 解析整条 XPath 为**联合分支**：顶层 `|`（引号/括号外）把表达式切成多条
+/// 供选路径（ezdmw chapterResult 用 4 个分支取不同线路的选集链接）。
+/// 每条分支内部按 `.` 开头 = 相对上下文求值。
+fn parse_xpath(expr: &str) -> Result<Vec<Vec<Step>>, String> {
+    let mut branches: Vec<String> = Vec::new();
+    let mut depth = 0i32;
+    let mut q: Option<char> = None;
+    let mut start = 0usize;
+    for (i, c) in expr.char_indices() {
+        if let Some(qc) = q {
+            if c == qc {
+                q = None;
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' => q = Some(c),
+            '[' => depth += 1,
+            ']' => depth -= 1,
+            '|' if depth == 0 => {
+                branches.push(expr[start..i].trim().to_string());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if q.is_some() || depth != 0 {
+        return Err(format!("XPath 括号/引号不闭合: {expr}"));
+    }
+    branches.push(expr[start..].trim().to_string());
+    branches.iter().map(|b| parse_single_xpath(b)).collect()
+}
+
+/// 解析单条分支（`.` 开头 = 相对上下文求值）。
+fn parse_single_xpath(expr: &str) -> Result<Vec<Step>, String> {
     let mut s = expr.trim();
     let mut relative = false;
     if let Some(rest) = s.strip_prefix('.') {
@@ -503,15 +568,15 @@ fn parse_xpath(expr: &str) -> Result<Vec<Step>, String> {
     let mut steps = Vec::new();
     let mut i = 0usize;
     while i < s.len() {
-        let desc = if s[i..].starts_with("//") {
+        let axis = if s[i..].starts_with("//") {
             i += 2;
-            true
+            Axis::Desc
         } else if s[i..].starts_with('/') {
             i += 1;
-            false
+            Axis::Child
         } else if steps.is_empty() && relative {
             // ".tag" 形态不合法，但 ".//a" 已在上面被剥成 "//a" / "/a"，这里兜住
-            false
+            Axis::Child
         } else {
             return Err(format!("XPath 语法错误（缺少起始 /）: {expr}"));
         };
@@ -536,7 +601,7 @@ fn parse_xpath(expr: &str) -> Result<Vec<Step>, String> {
             }
             i += c.len_utf8();
         }
-        steps.push(parse_step(&s[start..i], desc)?);
+        steps.push(parse_step(&s[start..i], axis)?);
     }
     Ok(steps)
 }
@@ -588,13 +653,47 @@ fn apply_preds(doc: &Html, list: &[NodeId], preds: &[Pred]) -> Vec<NodeId> {
                 Pred::Contains(a, v) => attr_of(doc, id, a)
                     .map(|s| s.contains(v.as_str()))
                     .unwrap_or(false),
+                Pred::StartsWith(a, v) => attr_of(doc, id, a)
+                    .map(|s| s.starts_with(v.as_str()))
+                    .unwrap_or(false),
             })
         })
         .map(|(_, id)| *id)
         .collect()
 }
 
-fn eval_xpath(doc: &Html, ctx: &[NodeId], steps: &[Step]) -> Result<EvalOut, String> {
+fn eval_xpath(doc: &Html, ctx: &[NodeId], branches: &[Vec<Step>]) -> Result<EvalOut, String> {
+    let mut out_nodes: Vec<NodeId> = Vec::new();
+    let mut seen: HashSet<NodeId> = HashSet::new();
+    let mut out_str: Vec<String> = Vec::new();
+    let mut any_str = false;
+    for steps in branches {
+        match eval_single_xpath(doc, ctx, steps)? {
+            EvalOut::Nodes(v) => {
+                for n in v {
+                    if seen.insert(n) {
+                        out_nodes.push(n);
+                    }
+                }
+            }
+            EvalOut::Str(v) => {
+                any_str = true;
+                for s in v {
+                    if !out_str.contains(&s) {
+                        out_str.push(s);
+                    }
+                }
+            }
+        }
+    }
+    Ok(if any_str {
+        EvalOut::Str(out_str)
+    } else {
+        EvalOut::Nodes(out_nodes)
+    })
+}
+
+fn eval_single_xpath(doc: &Html, ctx: &[NodeId], steps: &[Step]) -> Result<EvalOut, String> {
     let mut cur: Vec<NodeId> = ctx.to_vec();
     for (si, st) in steps.iter().enumerate() {
         match &st.test {
@@ -631,10 +730,25 @@ fn eval_xpath(doc: &Html, ctx: &[NodeId], steps: &[Step]) -> Result<EvalOut, Str
                 // desc 轴必须同样展开成「descendant-or-self 逐节点走 child 轴」。
                 for id in &cur {
                     let Some(node) = doc.tree.get(*id) else { continue };
-                    if st.desc {
-                        for d in std::iter::once(*id).chain(node.descendants().map(|n| n.id())) {
-                            let Some(dn) = doc.tree.get(d) else { continue };
-                            let children: Vec<NodeId> = dn
+                    match st.axis {
+                        Axis::Desc => {
+                            for d in std::iter::once(*id).chain(node.descendants().map(|n| n.id())) {
+                                let Some(dn) = doc.tree.get(d) else { continue };
+                                let children: Vec<NodeId> = dn
+                                    .children()
+                                    .filter(|n| n.value().is_element())
+                                    .map(|n| n.id())
+                                    .filter(|cid| tag_of(*cid))
+                                    .collect();
+                                for k in apply_preds(doc, &children, &st.preds) {
+                                    if seen.insert(k) {
+                                        out.push(k);
+                                    }
+                                }
+                            }
+                        }
+                        Axis::Child => {
+                            let children: Vec<NodeId> = node
                                 .children()
                                 .filter(|n| n.value().is_element())
                                 .map(|n| n.id())
@@ -646,16 +760,29 @@ fn eval_xpath(doc: &Html, ctx: &[NodeId], steps: &[Step]) -> Result<EvalOut, Str
                                 }
                             }
                         }
-                    } else {
-                        let children: Vec<NodeId> = node
-                            .children()
+                        Axis::SelfAxis => {
+                            // 上下文节点本身（要求是元素），谓词按单元素列表求值
+                            if node.value().is_element() && tag_of(*id) {
+                                let one = [*id];
+                                for k in apply_preds(doc, &one, &st.preds) {
+                                    if seen.insert(k) {
+                                        out.push(k);
+                                    }
+                                }
+                            }
+                        }
+                        Axis::FollowingSibling => {
+                            let sibs: Vec<NodeId> = std::iter::successors(node.next_sibling(), |n| {
+                                n.next_sibling()
+                            })
                             .filter(|n| n.value().is_element())
                             .map(|n| n.id())
                             .filter(|cid| tag_of(*cid))
                             .collect();
-                        for k in apply_preds(doc, &children, &st.preds) {
-                            if seen.insert(k) {
-                                out.push(k);
+                            for k in apply_preds(doc, &sibs, &st.preds) {
+                                if seen.insert(k) {
+                                    out.push(k);
+                                }
                             }
                         }
                     }
@@ -1195,42 +1322,52 @@ pub async fn webrs_resolve(
 const SNIFF_LABEL: &str = "webrs-sniffer";
 const SNIFF_SCHEME: &str = "anibox-sniff";
 
-fn sniff_script() -> String {
+fn sniff_script(beacon_port: u16) -> String {
     r#"(function () {
   if (window.__aniboxSniff) return;
   window.__aniboxSniff = 1;
   var done = false;
   var seen = {};
+  var BEACON = 'http://127.0.0.1:PORT/sniff?u=';
   function ok(u) {
     if (!u || typeof u !== 'string' || done) return false;
     if (!/^https?:\/\//i.test(u)) return false;
+    var l = u.toLowerCase();
+    if (/googleads|googlesyndication|adtrafficquality|doubleclick|prestrain\.html|prestrain%2ehtml/.test(l)) return false;
     if (seen[u]) return false;
-    return /\.(m3u8|mp4|flv)(\?|#|$)/i.test(u);
+    return /\.(m3u8|mp4|flv)(\?|#|$)/i.test(l);
   }
   function emit(u) {
     if (!ok(u)) return;
     seen[u] = 1;
     done = true;
-    var target = 'SCHEME://found?u=' + encodeURIComponent(u);
-    // 播放器常嵌在 iframe 里：顶窗导航（framebusting，跨域 iframe 也被允许）
-    // 才能被宿主的 on_navigation 拦到；失败再退回当前 frame。
-    try { window.top.location.href = target; return; } catch (e) {}
-    try { location.href = target; } catch (e) {}
+    var q = encodeURIComponent(u);
+    // 回传四通道：本地 beacon（image/fetch/sendBeacon，页面无 CSP 时必达）+ 伪导航兜底
+    try { new Image().src = BEACON + q; } catch (e) {}
+    try { fetch(BEACON + q, { mode: 'no-cors' }).catch(function () {}); } catch (e) {}
+    try { navigator.sendBeacon && navigator.sendBeacon(BEACON + q); } catch (e) {}
+    var nav = 'anibox-sniff://found?u=' + q;
+    try { window.top.location.href = nav; return; } catch (e) {}
+    try { location.href = nav; } catch (e) {}
   }
-  try {
-    var of = window.fetch;
-    if (of) window.fetch = function (input) {
-      try { emit(typeof input === 'string' ? input : (input && input.url) || ''); } catch (e) {}
-      return of.apply(this, arguments);
-    };
-  } catch (e) {}
+  // XHR（Kazumi 同款）：open 时按 URL 命中（hls.js 拉 m3u8 清单必经之路），
+  // load 后再查响应体是否 #EXTM3U 开头（覆盖无扩展名的动态清单接口）
   try {
     var oo = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function (m, u) {
-      try { emit(u); } catch (e) {}
+      var self = this, u0 = u;
+      try { emit(u0); } catch (e) {}
+      this.addEventListener('load', function () {
+        try {
+          if (self.responseText && self.responseText.trim().indexOf('#EXTM3U') === 0) {
+            emit(self.responseURL || u0);
+          }
+        } catch (e) {}
+      });
       return oo.apply(this, arguments);
     };
   } catch (e) {}
+  // fetch（Kazumi 同款）：Response.text 响应体 #EXTM3U 开头 → this.url
   try {
     if (window.Response) {
       var ot = Response.prototype.text;
@@ -1239,19 +1376,22 @@ fn sniff_script() -> String {
         var self = this;
         try {
           p.then(function (t) {
-            try { if (t && t.indexOf('#EXTM3U') === 0) emit((self && self.url) || ''); } catch (e) {}
+            try { if (t && t.trim().indexOf('#EXTM3U') === 0) emit(self.url || ''); } catch (e) {}
           });
         } catch (e) {}
         return p;
       };
     }
   } catch (e) {}
+  // video/source 标签扫描 + 轮询兜底（Kazumi 的 timer scan 同款）
   function scan() {
     if (done) return;
     try {
       var els = document.querySelectorAll('video,source');
       for (var i = 0; i < els.length; i++) {
-        emit(els[i].getAttribute('src') || '');
+        var s1 = els[i].getAttribute('src') || '';
+        if (s1.indexOf('blob:') === 0) continue;
+        emit(s1);
         emit(els[i].src || '');
       }
     } catch (e) {}
@@ -1260,7 +1400,7 @@ fn sniff_script() -> String {
       var flat = document.documentElement.innerHTML.split('\\/').join('/');
       var m = flat.match(/https?:\/\/[^"'\\\s<>]{8,300}?\.m3u8(?:\?[^"'\\\s<>]{0,200})?/i);
       if (m) emit(m[0]);
-      var m2 = flat.match(/["'](\/[^"'\\\s<>]{4,200}?\.m3u8(?:\?[^"'\\\s<>]{0,200})?)["']/i);
+      var m2 = flat.match(/["'](\/[^"'\\\s<>]{4,200}?\.m3u8[^"'\\\s<>]{0,100})["']/i);
       if (m2) emit(location.origin + m2[1]);
     } catch (e) {}
   }
@@ -1272,29 +1412,109 @@ fn sniff_script() -> String {
   setTimeout(function () { clearInterval(iv); }, 60000);
 })();
 "#
-    .replace("SCHEME", SNIFF_SCHEME)
+    .replace("PORT", &beacon_port.to_string())
 }
 
-/// 隐藏 WebView 加载播放页，on_navigation 拦 `anibox-sniff://found?u=` 回传直链。
+/// 本地嗅探回传 beacon：嗅探 JS 命中直链后向 `http://127.0.0.1:<port>/sniff?u=<url>`
+/// 发请求（image/fetch/sendBeacon 三连），这里收下转交等待者。比伪导航可靠 ——
+/// WebView2 对未知 scheme 的 location.href 未必触发顶层 NavigationStarting。
+static BEACON_PORT: OnceLock<u16> = OnceLock::new();
+static SNIFF_TX: OnceLock<std::sync::Mutex<Option<std::sync::mpsc::Sender<String>>>> = OnceLock::new();
+
+fn ensure_beacon() -> Result<u16, String> {
+    if let Some(p) = BEACON_PORT.get() {
+        return Ok(*p);
+    }
+    for port in [22347u16, 22348, 22349] {
+        let Ok(listener) = std::net::TcpListener::bind(("127.0.0.1", port)) else {
+            continue;
+        };
+        let _ = BEACON_PORT.set(port);
+        let _ = SNIFF_TX.set(std::sync::Mutex::new(None));
+        std::thread::spawn(move || {
+            for conn in listener.incoming() {
+                let Ok(mut sock) = conn else { continue };
+                let mut buf = [0u8; 4096];
+                let n = std::io::Read::read(&mut sock, &mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                // 请求行：GET /sniff?u=<encoded>&… HTTP/1.1
+                if let Some(line) = req.lines().next() {
+                    if let Some(path) = line.split_whitespace().nth(1) {
+                        if let Some(qs) = path.split_once('?').map(|(_, q)| q) {
+                            for kv in qs.split('&') {
+                                if let Some(v) = kv.strip_prefix("u=") {
+                                    let url = urlencoding::decode(v)
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_default();
+                                    if !url.is_empty() {
+                                        if let Some(tx) =
+                                            SNIFF_TX.get().and_then(|m| m.lock().ok().and_then(|g| g.clone()))
+                                        {
+                                            let _ = tx.send(url);
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                let _ = std::io::Write::write_all(
+                    &mut sock,
+                    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+            }
+        });
+        crate::libmpv::trace(&format!("[webrs] 嗅探 beacon 监听 127.0.0.1:{port}"));
+        return Ok(port);
+    }
+    Err("嗅探回传端口（22347-22349）全部被占用".into())
+}
+
+/// 隐藏 WebView 加载播放页，等待直链回传。通道：① 本地 beacon（嗅探 JS 的
+/// image/fetch/sendBeacon 三连，页面/iframe 无 CSP 时必达）② 伪导航
+/// anibox-sniff://（on_navigation 拦截，兜底）。JS hook 注入全 frame
+/// （WebView2 AddScriptToExecuteOnDocumentCreated 覆盖 iframe）。
 async fn webview_sniff(app: &AppHandle, page_url: &str, ua: &str, _referer: &str) -> Result<String, String> {
     use std::sync::mpsc;
 
+    let beacon_port = ensure_beacon()?;
     let (tx, rx) = mpsc::channel::<Result<String, String>>();
+
+    // 等待者登记：beacon（发纯 URL）经转发线程并入统一回传通道
+    let (btx, brx) = mpsc::channel::<String>();
+    {
+        let slot = SNIFF_TX.get().ok_or("beacon 未初始化")?;
+        *slot.lock().map_err(|e| e.to_string())? = Some(btx);
+    }
+    {
+        let tx_fwd = tx.clone();
+        std::thread::spawn(move || {
+            // rx 在等待结束后被 drop → brx 断开 → 本线程自然退出
+            while let Ok(u) = brx.recv() {
+                if tx_fwd.send(Ok(u)).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
     let app2 = app.clone();
     let page = page_url.to_string();
     let ua_owned = ua.to_string();
-    let script = sniff_script();
+    let script = sniff_script(beacon_port);
+    let tx_nav = tx.clone();
 
-    app.run_on_main_thread(move || {
-        let tx2 = tx.clone();
+    let dispatch = app.run_on_main_thread(move || {
         // 上一个残留的嗅探窗先销毁
         if let Some(w) = app2.get_webview_window(SNIFF_LABEL) {
             let _ = w.destroy();
         }
         let Ok(target) = Url::parse(&page) else {
-            let _ = tx.send(Err(format!("播放页 URL 无效: {page}")));
+            let _ = tx_nav.send(Err(format!("播放页 URL 无效: {page}")));
             return;
         };
+        let tx_build_err = tx_nav.clone();
         let b = tauri::webview::WebviewWindowBuilder::new(
             &app2,
             SNIFF_LABEL,
@@ -1306,9 +1526,9 @@ async fn webview_sniff(app: &AppHandle, page_url: &str, ua: &str, _referer: &str
         .user_agent(&ua_owned)
         .on_navigation(move |u| {
             if u.scheme() == SNIFF_SCHEME {
-                for (k, v) in u.query_pairs() {
-                    if k == "u" && !v.is_empty() {
-                        let _ = tx2.send(Ok(v.to_string()));
+                for (_, v) in u.query_pairs() {
+                    if !v.is_empty() {
+                        let _ = tx_nav.send(Ok(v.to_string()));
                     }
                 }
                 return false; // 取消这次伪导航，页面保持原状
@@ -1316,17 +1536,30 @@ async fn webview_sniff(app: &AppHandle, page_url: &str, ua: &str, _referer: &str
             true
         });
         if let Err(e) = b.build() {
-            let _ = tx.send(Err(format!("创建嗅探 WebView 失败: {e}")));
+            let _ = tx_build_err.send(Err(format!("创建嗅探 WebView 失败: {e}")));
         }
-    })
-    .map_err(|e| format!("嗅探窗口调度失败: {e}"))?;
+    });
 
-    // 等结果（最长 40s；window.close 后由 finally 清理）
+    if let Err(e) = dispatch {
+        if let Some(m) = SNIFF_TX.get() {
+            if let Ok(mut g) = m.lock() {
+                *g = None;
+            }
+        }
+        return Err(format!("嗅探窗口调度失败: {e}"));
+    }
+
+    // 等结果（最长 40s）
     let wait = tokio::task::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(40)))
         .await
-        .map_err(|e| format!("嗅探等待失败: {e}"))?;
+        .map_err(|e| format!("嗅探等待失败: {e}"));
 
-    // 清理嗅探窗
+    // 清理：撤销等待者 + 销毁嗅探窗
+    if let Some(m) = SNIFF_TX.get() {
+        if let Ok(mut g) = m.lock() {
+            *g = None;
+        }
+    }
     let app3 = app.clone();
     let app4 = app.clone();
     let _ = app3.run_on_main_thread(move || {
@@ -1336,12 +1569,12 @@ async fn webview_sniff(app: &AppHandle, page_url: &str, ua: &str, _referer: &str
     });
 
     match wait {
-        Ok(Ok(url)) => Ok(url),
-        Ok(Err(e)) => Err(e),
-        Err(_) => Err("嗅探超时（40s 内没截到视频流）——该站点可能用了不支持的加密/验证方案，换一个源试试".into()),
+        Ok(Ok(Ok(url))) => Ok(url),
+        Ok(Ok(Err(e))) => Err(e),
+        Ok(Err(_)) => Err("嗅探超时（40s 内没截到视频流）——该站点可能需要验证或用了不支持的加密方案，换一个源试试".into()),
+        Err(e) => Err(e),
     }
 }
-
 // ───────────────────────── mpv 播放 ─────────────────────────
 
 /// [lc-1500] 在线资源直链 → 独立 mpv。m3u8 直链普遍校验 Referer/UA，
@@ -1403,6 +1636,22 @@ pub async fn webrs_play(
     }
     if let Some(u) = ua.as_deref().filter(|s| !s.is_empty()) {
         let _ = session.command(json!(["set", "user-agent", u])).await;
+    }
+    // [lc-1506] Referer/UA 再写一份 http-header-fields：确保 ffmpeg(hls) 分段请求
+    // 也带上（mpv 的 referrer 属性只覆盖部分加载路径）
+    {
+        let mut hf: Vec<String> = Vec::new();
+        if let Some(r) = referer.as_deref().filter(|s| !s.is_empty()) {
+            hf.push(format!("Referer: {r}"));
+        }
+        if let Some(u) = ua.as_deref().filter(|s| !s.is_empty()) {
+            hf.push(format!("User-Agent: {u}"));
+        }
+        if !hf.is_empty() {
+            let _ = session
+                .command(json!(["set", "http-header-fields", hf.join(", ")]))
+                .await;
+        }
     }
     session.command(json!(["loadfile", url, "replace"])).await?;
     Ok(())

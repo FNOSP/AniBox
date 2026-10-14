@@ -459,25 +459,49 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
 
     proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
 
-    // [lc-109] 直链预检放在**启动 mpv 之前**：预检失败（如代理 500）直接报错返回，
-    // 不再"先把 mpv 窗口开出来、然后什么也不加载"——那正是用户看到的「无文件空窗 + 播放失败」。
+    // [lc-1549] mpv 启动与直链预检**并行**（原为串行，用户反馈「点播放要好久才拉起 mpv，
+    // 之前都秒播」）。耗时构成（anibox.log 实测）：launch→file-loaded 共 4.9s，而 mpv
+    // 自己报的加载只用 173ms —— 差额全在「等直链预检返回」上。预检本身要等 Go 代理
+    // 解析出一条可播的流（可能几秒），期间 mpv 窗口一直不出现。
+    //
+    // 现在两条腿同时跑：
+    //   · mpv.exe 立刻拉起并连 IPC（用户马上看到窗口，符合"秒播"预期）
+    //   · 预检在后台跑；失败则回滚（关掉刚起的 mpv）并把代理的错误文案抛给前端
+    // 保留 lc-109 的原意：失败仍然给出明确错误，而不是"开个空窗什么都不加载"。
     let url = proxy::play_url(&cfg, &play_guid);
-    if let Err(e) = proxy::probe(&url).await {
-        libmpv::trace(&format!("[probe] 直链预检失败: {e}"));
-        return Err(e);
-    }
+    let url_for_probe = url.clone();
 
+    // 预检**与 mpv 启动真正并行**：先把预检作为一个 task 抛出去
+    // （`join!` 在这里不够用——启动 mpv 要拿 state 锁，而预检是纯网络）。
+    let probe_task = tokio::spawn(async move { proxy::probe(&url_for_probe).await });
+
+    // 同时拉起会话（用户立刻看到 mpv 窗口）
     let mut slot = state.mpv.lock().await;
-    let session = match slot.as_ref() {
-        Some(m) if !m.is_dead().await => m.clone(),
+    let (session, freshly_launched) = match slot.as_ref() {
+        Some(m) if !m.is_dead().await => (m.clone(), false),
         Some(m) => {
             m.shutdown().await;
-            mpv::MpvSession::launch(app.clone(), &cfg.mpv_path).await?
+            (mpv::MpvSession::launch(app.clone(), &cfg.mpv_path).await?, true)
         }
-        None => mpv::MpvSession::launch(app.clone(), &cfg.mpv_path).await?,
+        None => (mpv::MpvSession::launch(app.clone(), &cfg.mpv_path).await?, true),
     };
     *slot = Some(session.clone());
     drop(slot);
+
+    // 收预检结果（此刻两条腿已经并行跑完）
+    let probe_result = match probe_task.await {
+        Ok(r) => r,
+        Err(e) => Err(format!("直链预检任务异常：{e}")),
+    };
+    if let Err(e) = probe_result {
+        libmpv::trace(&format!("[probe] 直链预检失败: {e}"));
+        // 回滚：刚起的、还没加载任何东西的 mpv 关掉，避免留一个空窗
+        if freshly_launched {
+            let _ = session.shutdown().await;
+            *state.mpv.lock().await = None;
+        }
+        return Err(e);
+    }
 
     // [lc-1500] 在线资源（webrs_play）会往 mpv 写 referrer / user-agent / http-header-fields，
     // 切回本地 NAS 播放前先清掉，免得残留的站点头污染本机直链请求。

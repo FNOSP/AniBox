@@ -6023,9 +6023,9 @@ html.dark .ditem-tag {
   border-radius: 20px;
   background: var(--glass-btn-bg);
   /* [lc-1520] 三块布局（用户示意图）：上排「bangumi面板 | 同步状态」+ 底部通栏「当季追番状态」。
-     [lc-1522] 上排两列一人一半（1fr 1fr）。 */
+     [lc-1522] 上排两列一人一半；[lc-1527] 右列微放宽（1fr 1.12fr）给"饼+图例"横排让位。 */
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1.12fr;
   grid-template-areas:
     "main stats"
     "season season";
@@ -6242,9 +6242,12 @@ html.dark .ditem-tag {
 .bgmac-pie path:hover {
   opacity: 0.82;
 }
-/* 中心盖一个小圆做"洞"，数字更清晰 */
+/* 中心盖一个小圆做"洞"，数字更清晰；用卡纸实色，玻璃底上也压得住 */
 .bgmac-pie-hole {
-  fill: var(--glass-btn-bg);
+  fill: var(--option-bg);
+}
+.bgmac-pie {
+  filter: drop-shadow(0 2px 6px rgba(20, 30, 60, 0.1));
 }
 .bgmac-pie-n {
   font-size: 19px;
@@ -6264,8 +6267,8 @@ html.dark .ditem-tag {
   gap: 2px;
 }
 .bgmac-pie-legend .bgmac-legend-row {
-  font-size: 10.5px;
-  gap: 5px;
+  font-size: 11px;
+  gap: 6px;
 }
 .bgmac-pie-legend .bgmac-legend-row b {
   font-size: 11px;

@@ -2608,7 +2608,7 @@ function BgmAccountCard() {
         {acct.bound ? (
           <div className="bgmac-stats-body">
             {/* 圆饼统计（实心扇形，12 点方向起顺时针） */}
-            <svg className="bgmac-pie" viewBox="0 0 100 100" width="78" height="78">
+            <svg className="bgmac-pie" viewBox="0 0 100 100" width="88" height="88">
               {total === 0 ? (
                 <circle cx="50" cy="50" r="44" fill="var(--ph-bg)" />
               ) : (
@@ -2632,17 +2632,19 @@ function BgmAccountCard() {
                         key={s.k}
                         d={`M 50 50 L ${x0.toFixed(2)} ${y0.toFixed(2)} A ${R0} ${R0} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z`}
                         fill={s.color}
+                        stroke="var(--option-bg)"
+                        strokeWidth="1.6"
                       >
                         <title>{`${s.label} ${s.n}`}</title>
                       </path>
                     );
                   })
               )}
-              <circle cx="50" cy="50" r="26" className="bgmac-pie-hole" />
-              <text x="50" y="48" textAnchor="middle" className="bgmac-pie-n">
+              <circle cx="50" cy="50" r="27" className="bgmac-pie-hole" />
+              <text x="50" y="49" textAnchor="middle" className="bgmac-pie-n">
                 {total}
               </text>
-              <text x="50" y="60" textAnchor="middle" className="bgmac-pie-l">
+              <text x="50" y="61" textAnchor="middle" className="bgmac-pie-l">
                 部番剧
               </text>
             </svg>

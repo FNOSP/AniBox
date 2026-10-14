@@ -5,9 +5,9 @@
 
 import type { ReactElement } from "react";
 
-type IconProps = { size?: number; className?: string };
+export type IconProps = { size?: number; className?: string };
 
-function mk(paths: string[], viewBox = "0 0 24 24"): (p: IconProps) => ReactElement {
+export function mk(paths: string[], viewBox = "0 0 24 24"): (p: IconProps) => ReactElement {
   return function Icon({ size = 16, className }: IconProps) {
     return (
       <svg

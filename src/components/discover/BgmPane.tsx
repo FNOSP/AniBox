@@ -1,0 +1,203 @@
+/* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
+import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { BgmAccountCard } from "./BgmAccountCard";
+import { BgmCalRow } from "./BgmCalRow";
+import { Dsk, WEEKDAYS, localDay, localWeekdayId } from "./shared";
+import { libHasTitle, useLibIndex } from "../../hooks/useLibIndex";
+import { BgmCalendarDay, BgmCalendarItem } from "../../types";
+
+
+export function BgmPane({ active, onOpen }: { active: boolean; onOpen: (it: BgmCalendarItem) => void }) {
+  const todayId = localWeekdayId();
+  const [days, setDays] = useState<BgmCalendarDay[]>([]);
+  const [wd, setWd] = useState<number>(todayId); // 默认今天（设计稿的"今天"带点，也默认展开）
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [nonce, setNonce] = useState(0);
+  const [probe, setProbe] = useState(0); // [lc-123-rev5] 10 分钟后台探测
+  // 手动 ⟳ / 失败重试的语义不同（见下）：⟳ = force（**仍带条件头**）；失败重试 = force + noEtag（全量）
+  const forceRef = useRef(false);
+  const hardRef = useRef(false);
+  const daysRef = useRef<BgmCalendarDay[]>([]);
+  useEffect(() => {
+    daysRef.current = days;
+  }, [days]);
+  // 库标题索引：与日历**并行**拉（不阻塞列表；没回来就先按普通列表渲染，回来再补标签/分组）
+  const lib = useLibIndex(active);
+
+  useEffect(() => {
+    if (!active) return;
+    let alive = true;
+    const force = forceRef.current; // 手动 ⟳：跳过本地 TTL 检查（但条件头照带）
+    const noEtag = hardRef.current; // 失败重试：连条件头都不带（强制全量）
+    forceRef.current = false;
+    hardRef.current = false;
+    setBusy(true);
+    setErr("");
+    invoke<{ days?: BgmCalendarDay[]; changed?: boolean }>("bgm_calendar", {
+      force,
+      noEtag,
+      day: localDay(), // 跨天分桶键：本地零点一过就换键 ⇒ 必然重取
+    })
+      .then((d) => {
+        if (!alive) return;
+        // changed=false（命中缓存 / 304 / 内容未变）且已有数据 → **一个 state 都不碰**（零 re-render）
+        if (d?.changed === false && daysRef.current.length) return;
+        setDays(Array.isArray(d?.days) ? d.days : []);
+      })
+      .catch((e) => {
+        if (alive) setErr(String(e));
+      })
+      .finally(() => {
+        if (alive) setBusy(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [active, nonce, probe]);
+
+  // 后台探测：每 10 分钟一次；命令层只在 TTL（3h）过期时才真发请求，而且带 ETag —— 未变就 304，
+  // changed=false ⇒ 上面一个 state 都不碰（不 re-render、不重置滚动）。
+  useEffect(() => {
+    if (!active) return;
+    const t = window.setInterval(() => setProbe((n) => n + 1), 10 * 60 * 1000);
+    return () => window.clearInterval(t);
+  }, [active]);
+
+  // 按 **weekday.id** 取组（不是数组下标）；找不到就当这天空（不拿别的天凑）
+  const day = days.find((g) => g.id === wd) ?? null;
+  const dayItems = day?.items ?? [];
+  // 星期胶囊的迷你占比条：以当周最大值（至少 1）为 100%
+  const maxCount = Math.max(1, ...days.map((g) => g.count || 0));
+  const weekTotal = days.reduce((n, g) => n + (g.count || 0), 0);
+  // 当天汇总：部数 + 8.0+ 数量 + 热度最高（doing=在看人数最大者；没有 doing 就不写这段，不编）
+  const hot = dayItems.reduce<BgmCalendarItem | null>(
+    (a, b) => (a == null || (b.doing ?? 0) > (a.doing ?? 0) ? b : a),
+    null,
+  );
+  const hotName = hot ? hot.name_cn || hot.name : "";
+  const hiCount = dayItems.filter((x) => typeof x.score === "number" && (x.score ?? 0) >= 8).length;
+  const wdCn = WEEKDAYS.find((w) => w.id === wd)?.cn ?? "";
+  // 逐条匹配：loading/partial 只给"命中"打标；只有 ok（索引完整）才敢分组和标"不在库"
+  const withLib = lib.state === "ok" || lib.state === "partial";
+  const rows = dayItems.map((it, i) => ({
+    it,
+    rank: i + 1, // 序号 = 该天列表内的位置（分组重排后也保持原序）
+    inLib: withLib ? libHasTitle(lib.titles, it.name_cn || it.name) : false,
+  }));
+  const inRows = rows.filter((r) => r.inLib);
+  const outRows = rows.filter((r) => !r.inLib);
+  const renderRow = (r: (typeof rows)[number]) => (
+    <BgmCalRow
+      key={r.it.id}
+      it={r.it}
+      today={wd === todayId}
+      rank={r.rank}
+      libState={r.inLib ? "in" : null}
+      onOpen={onOpen}
+    />
+  );
+
+  return (
+    <section className="dpane">
+      <header className="dpane-hd">
+        <h2>新番更新</h2>
+        <span className="dn">{weekTotal > 0 ? `${weekTotal} 部 / 周` : ""}</span>
+        <span className="dsp" />
+        <button
+          className="dicon"
+          title="刷新新番列表"
+          disabled={busy}
+          onClick={() => {
+            forceRef.current = true;
+            setNonce((n) => n + 1);
+          }}
+        >
+          ⟳
+        </button>
+      </header>
+      {/* [lc-1516] Bangumi 账号面板：紧跟栏头（避开顶部 56px 的胶囊让位区） */}
+      <BgmAccountCard onOpen={onOpen} />
+      <div className="dweeks">
+        {WEEKDAYS.map((w) => {
+          const g = days.find((x) => x.id === w.id);
+          const pct = g && g.count > 0 ? Math.max(4, Math.round((g.count / maxCount) * 100)) : 0;
+          return (
+            <button
+              key={w.id}
+              className={`dweek${wd === w.id ? " on" : ""}${todayId === w.id ? " today" : ""}`}
+              onClick={() => setWd(w.id)}
+              title={g ? `${w.cn}共 ${g.count} 部` : w.cn}
+            >
+              {w.cn}
+              <span className="dweek-bar" aria-hidden="true">
+                <b style={{ width: `${pct}%` }} />
+              </span>
+              <i>{g ? `${g.count} 部` : "…"}</i>
+            </button>
+          );
+        })}
+      </div>
+      <div className="dscroll">
+        {busy && !days.length ? (
+          <ul className="dlist">
+            {[0, 1, 2, 3].map((i) => (
+              <li key={i} className="ditem">
+                <Dsk cls="dsk-cv" />
+                <div className="dtx">
+                  <Dsk cls="dsk-line" />
+                  <Dsk cls="dsk-line short" />
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : err ? (
+          <div className="dstate">
+            <div className="dstate-msg">{err}</div>
+            <button
+              className="dretry"
+              onClick={() => {
+                // 失败重试：force + noEtag（强制全量重拉，别拿坏缓存反复撞）
+                hardRef.current = true;
+                setNonce((n) => n + 1);
+              }}
+            >
+              重试
+            </button>
+          </div>
+        ) : !day || !day.items.length ? (
+          <div className="dstate">
+            {wd === todayId ? "今天没有新番更新" : `${wdCn}没有新番更新`}
+          </div>
+        ) : (
+          <>
+            <div className="ddaybar">
+              <b>
+                {wdCn}
+                {wd === todayId ? "（今天）" : ""}
+              </b>
+              <span>
+                {wd === todayId ? `今日 ${dayItems.length} 部新番更新` : `${dayItems.length} 部更新`}
+                {hiCount > 0 ? ` · ${hiCount} 部评分 8.0+` : ""}
+                {hotName ? ` · 热度最高：${hotName}` : ""}
+              </span>
+            </div>
+            <ul className="dlist">
+              {lib.state === "ok" ? (
+                <>
+                  {inRows.length > 0 && <li className="dgrp">已在飞牛库 · {inRows.length}</li>}
+                  {inRows.map(renderRow)}
+                  {outRows.length > 0 && <li className="dgrp">不在库 · {outRows.length}</li>}
+                  {outRows.map(renderRow)}
+                </>
+              ) : (
+                rows.map(renderRow)
+              )}
+            </ul>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}

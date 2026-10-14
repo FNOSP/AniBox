@@ -1,0 +1,328 @@
+/* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
+import { useCallback, useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
+import { X as IcoXL } from "lucide-react";
+import { fmtSize } from "../../lib/format";
+import { AppSettings, Config } from "../../types";
+
+export function SettingsPanel({
+  onClose,
+  onLogout,
+  settings,
+  onSettings,
+}: {
+  onClose: () => void;
+  /** 退出登录：由 App 负责清会话与切页（面板只发意图，不自己改全局状态） */
+  onLogout: () => void;
+  /** 设置项（App 持有：轮播 Logo / 性能模式都要在面板外生效） */
+  settings: AppSettings;
+  onSettings: (patch: Partial<AppSettings>) => void;
+}) {
+  type Stats = { bytes: number; files: number; limitMb: number; dir: string };
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const [ver, setVer] = useState("0.1.0");
+  const [user, setUser] = useState("");
+  const [server, setServer] = useState("");
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [autostart, setAutostart] = useState(
+    () => localStorage.getItem("fntv-autostart") === "1",
+  );
+
+  const refresh = useCallback(() => {
+    invoke<Stats>("cache_stats")
+      .then(setStats)
+      .catch((e) => setNote(String(e)));
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    getVersion().then(setVer).catch(() => {});
+    invoke<Config>("get_config")
+      .then((c) => {
+        setUser(c.username);
+        setServer(c.server);
+      })
+      .catch(() => {});
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose, refresh]);
+
+  const setLimit = async (mb: number) => {
+    setBusy(true);
+    setNote("");
+    try {
+      const r = await invoke<Stats>("cache_set_limit", { limitMb: mb });
+      setStats(r);
+      setNote(mb === 0 ? "已设为不限制" : `上限已设为 ${fmtSize(mb * 1024 * 1024)}`);
+    } catch (e) {
+      setNote(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clearCache = async () => {
+    setBusy(true);
+    setNote("");
+    try {
+      const r = await invoke<Stats>("cache_clear");
+      setStats(r);
+      setNote("缓存已清理（内存 + 磁盘）");
+    } catch (e) {
+      setNote(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** [lc-1437] 自启开关：真值在系统注册表里，前端只在 localStorage 记一份 UI 状态。
+   *  写入失败（权限/杀软拦截）时**回滚开关**并把错误显示出来 —— 不能出现
+   *  "界面显示已开启、实际没写进注册表"这种静默不一致。 */
+  const toggleAutostart = async () => {
+    const next = !autostart;
+    setBusy(true);
+    setNote("");
+    try {
+      await invoke("set_autostart", { enabled: next });
+      setAutostart(next);
+      localStorage.setItem("fntv-autostart", next ? "1" : "0");
+      setNote(next ? "已设为开机自启" : "已取消开机自启");
+    } catch (e) {
+      setNote(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openPath = async (kind: "log" | "cache" | "app") => {
+    setNote("");
+    try {
+      await invoke("open_path", { kind });
+    } catch (e) {
+      setNote(String(e));
+    }
+  };
+
+  const limitMb = stats?.limitMb ?? 0;
+  // 下拉里没有的当前值（手改过 config.json）也要显示出来，别让 UI 与真实配置不一致
+  const known = [0, 1024, 2048, 5120, 10240];
+  const extras = limitMb && !known.includes(limitMb) ? [limitMb] : [];
+
+  return (
+    <div className="ddet-mask" onClick={onClose}>
+      <div className="ddet set-card" onClick={(e) => e.stopPropagation()}>
+        <button className="ddet-close" title="关闭（Esc）" onClick={onClose}>
+          <IcoXL size={15} strokeWidth={1.8} />
+        </button>
+        <header className="ddet-hd">
+          <div className="ddet-hdm">
+            <h2>设置</h2>
+            <div className="ddet-meta">
+              <span className="ddet-chip dim">v{ver}</span>
+            </div>
+          </div>
+        </header>
+        <div className="ddet-body set-body">
+          {/* ── 通用 ── */}
+          <h3 className="ddet-h3">通用</h3>
+          <div className="set-row">
+            <div>
+              <span className="set-k">启动页</span>
+              <div className="set-desc">登录成功后进入的页面</div>
+            </div>
+            <select
+              className="set-select"
+              value={settings.launchPage}
+              disabled={busy}
+              onChange={(e) => onSettings({ launchPage: e.target.value as AppSettings["launchPage"] })}
+            >
+              <option value="home">首页</option>
+              <option value="continue">继续观看</option>
+            </select>
+          </div>
+          <div className="set-row">
+            <div>
+              <span className="set-k">开机自启</span>
+              <div className="set-desc">登录系统后自动启动本程序</div>
+            </div>
+            <button
+              type="button"
+              className={`set-sw${autostart ? " on" : ""}`}
+              disabled={busy}
+              aria-pressed={autostart}
+              aria-label="开机自启"
+              onClick={toggleAutostart}
+            />
+          </div>
+          <div className="set-row">
+            <div>
+              <span className="set-k">关闭按钮</span>
+              <div className="set-desc">点窗口右上角关闭时的行为</div>
+            </div>
+            <select
+              className="set-select"
+              value={settings.exitMode}
+              disabled={busy}
+              onChange={(e) => onSettings({ exitMode: e.target.value as AppSettings["exitMode"] })}
+            >
+              <option value="ask">每次询问</option>
+              <option value="tray">最小化到托盘</option>
+              <option value="exit">直接退出</option>
+            </select>
+          </div>
+
+          {/* ── 外观 ── */}
+          <h3 className="ddet-h3">外观</h3>
+          <div className="set-row">
+            <div>
+              <span className="set-k">性能模式</span>
+              <div className="set-desc">关闭动画与磨砂效果，低配机更流畅</div>
+            </div>
+            <button
+              type="button"
+              className={`set-sw${settings.perfMode ? " on" : ""}`}
+              aria-pressed={settings.perfMode}
+              aria-label="性能模式"
+              onClick={() => onSettings({ perfMode: !settings.perfMode })}
+            />
+          </div>
+          <div className="set-row">
+            <div>
+              <span className="set-k">轮播透明标题</span>
+              <div className="set-desc">首页轮播用影片透明 Logo 代替文字标题（无 Logo 时自动用文字）</div>
+            </div>
+            <button
+              type="button"
+              className={`set-sw${settings.carouselLogo ? " on" : ""}`}
+              aria-pressed={settings.carouselLogo}
+              aria-label="轮播透明标题"
+              onClick={() => onSettings({ carouselLogo: !settings.carouselLogo })}
+            />
+          </div>
+
+          {/* ── 账号 ── */}
+          <h3 className="ddet-h3">账号</h3>
+          <div className="set-row">
+            <span className="set-k">当前账号</span>
+            <span className="set-v">{user || "—"}</span>
+          </div>
+          <div className="set-row">
+            <span className="set-k">服务器</span>
+            <span className="set-v">{server || "—"}</span>
+          </div>
+          <div className="set-row">
+            <span className="set-k">退出登录</span>
+            {confirmLogout ? (
+              <div className="set-confirm">
+                <span className="set-confirm-q">退出后需重新登录，确定？</span>
+                <button className="set-btn" disabled={busy} onClick={() => setConfirmLogout(false)}>
+                  取消
+                </button>
+                <button
+                  className="set-btn danger"
+                  disabled={busy}
+                  onClick={() => {
+                    setConfirmLogout(false);
+                    onLogout();
+                  }}
+                >
+                  确定退出
+                </button>
+              </div>
+            ) : (
+              <button className="set-btn danger" onClick={() => setConfirmLogout(true)}>
+                退出登录
+              </button>
+            )}
+          </div>
+
+          {/* ── 缓存 ── */}
+          <h3 className="ddet-h3">缓存</h3>
+          <div className="set-row">
+            <span className="set-k">占用上限</span>
+            <select
+              className="set-select"
+              value={limitMb}
+              disabled={busy}
+              onChange={(e) => setLimit(Number(e.target.value))}
+            >
+              {extras.map((mb) => (
+                <option key={mb} value={mb}>
+                  {fmtSize(mb * 1024 * 1024)}
+                </option>
+              ))}
+              <option value={1024}>1 GB</option>
+              <option value={2048}>2 GB</option>
+              <option value={5120}>5 GB</option>
+              <option value={10240}>10 GB</option>
+              <option value={0}>不限制</option>
+            </select>
+          </div>
+          <div className="set-row">
+            <span className="set-k">当前占用</span>
+            <span className="set-v">
+              {stats ? `${fmtSize(stats.bytes)} · ${stats.files} 个文件` : "读取中…"}
+            </span>
+          </div>
+          <div className="set-row">
+            <span className="set-k">清理缓存</span>
+            <button className="set-btn" onClick={clearCache} disabled={busy || !stats?.bytes}>
+              立即清理
+            </button>
+          </div>
+          <div className="set-hint">
+            图片与演员表缓存在软件数据目录（{stats?.dir || "…"}）：命中本地就不再请求，超上限按最后访问
+            时间自动淘汰；清理会同时清掉内存与磁盘。
+          </div>
+
+          {/* ── 诊断 ── */}
+          <h3 className="ddet-h3">诊断</h3>
+          <div className="set-row">
+            <span className="set-k">打开目录</span>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <button className="set-btn" onClick={() => openPath("log")}>
+                诊断日志
+              </button>
+              <button className="set-btn" onClick={() => openPath("cache")}>
+                缓存目录
+              </button>
+              <button className="set-btn" onClick={() => openPath("app")}>
+                数据目录
+              </button>
+            </div>
+          </div>
+          <div className="set-hint">
+            诊断日志在系统临时目录（anibox.log），记录了镜像请求、图片缓存命中与播放链路；
+            反馈问题时把最后一段贴出来即可。
+          </div>
+
+          {/* ── 关于 ── */}
+          <h3 className="ddet-h3">关于</h3>
+          <div className="set-attrib">
+            <span>This product uses the TMDB API but is not endorsed or certified by TMDB.</span>
+            <span>
+              <a href="https://www.themoviedb.org/" target="_blank" rel="noreferrer">
+                themoviedb.org
+              </a>
+            </span>
+            <span>
+              数据与部分内容来自{" "}
+              <a href="https://bgm.tv/" target="_blank" rel="noreferrer">
+                Bangumi 番组计划
+              </a>
+            </span>
+          </div>
+          {note && <div className="set-note">{note}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────── 根组件 ────────────────────────── */

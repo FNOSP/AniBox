@@ -5430,3 +5430,166 @@ html.dark .ditem-tag {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+
+/* ══════════════════════ [lc-1500] 在线资源面板（发现页无源条目）══════════════════════
+   发现页条目没有飞牛 guid → 右栏选集区换成「在线资源」：源选择 + 关键词搜索 →
+   搜索结果 → 线路/选集 → 解析直链 → 独立 mpv。视觉语言沿用 .dv2e / .season-tab 那套。 */
+.webrs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 0 12px;
+}
+.webrs-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.webrs-bar select {
+  max-width: 96px;
+  height: 32px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--option-bg);
+  color: var(--text-strong);
+  padding: 0 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.webrs-bar input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  padding: 0 10px;
+  font-size: 13px;
+  outline: none;
+}
+.webrs-bar input:focus {
+  border-color: var(--accent);
+}
+.webrs-bar .webrs-go {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 9px;
+  background: var(--accent-grad);
+  color: #fff;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.webrs-bar .webrs-go:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.webrs-note {
+  font-size: 12px;
+  color: var(--muted);
+}
+.webrs-err {
+  font-size: 12px;
+  color: var(--err-text);
+  background: var(--err-bg);
+  border: 1px solid var(--err-border);
+  border-radius: 9px;
+  padding: 7px 10px;
+  word-break: break-all;
+}
+.webrs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.webrs-list button {
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--glass-btn-bg);
+  color: var(--text-strong);
+  padding: 9px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.webrs-list button:hover {
+  background: var(--hover-strong);
+  border-color: var(--accent);
+}
+.webrs-crumbs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.webrs-cur {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.webrs-back {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+}
+.webrs-roads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.webrs-roads button {
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.webrs-roads button.on {
+  background: var(--accent-grad);
+  border-color: transparent;
+  color: #fff;
+}
+.webrs-eps {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.webrs-eps button {
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--glass-btn-bg);
+  color: var(--text-strong);
+  font-size: 12px;
+  padding: 7px 4px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+.webrs-eps button:hover:not(:disabled) {
+  background: var(--hover-strong);
+  border-color: var(--accent);
+}
+.webrs-eps button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

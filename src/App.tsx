@@ -2622,6 +2622,177 @@ function DiscoverView({
   );
 }
 
+/* ════════════ [lc-1500] 在线资源面板（发现页无源条目）════════════
+   原理对齐 Kazumi（GPL-3.0 社区规则生态）：规则 JSON（webrs-rules/*.json）
+   → 规则搜索（@keyword + XPath）→ 线路/选集 → 解析直链（HTTP 正则，未命中走
+   隐藏 WebView 嗅探 m3u8/mp4）→ 独立 mpv 带 Referer/UA 播放。
+   面板只做三层 UI：源+关键词 → 搜索结果 → 线路+选集。 */
+type WebrsSearchItem = { name: string; url: string };
+type WebrsRoad = { name: string; index: number; episodes: WebrsSearchItem[] };
+
+function WebrsPanel({ title }: { title: string }) {
+  const [rules, setRules] = useState<{ name: string; mode?: string }[]>([]);
+  const [rule, setRule] = useState("");
+  const [kw, setKw] = useState(title);
+  const [results, setResults] = useState<WebrsSearchItem[]>([]);
+  const [roads, setRoads] = useState<WebrsRoad[]>([]);
+  const [roadIdx, setRoadIdx] = useState(0);
+  const [selName, setSelName] = useState("");
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+
+  // 规则列表：进面板拉一次（Rust 侧首次会种入内置规则）
+  useEffect(() => {
+    let alive = true;
+    invoke<{ name: string }[]>("webrs_rules")
+      .then((r) => {
+        if (!alive) return;
+        setRules(r);
+        setRule((cur) => cur || (r[0]?.name ?? ""));
+      })
+      .catch((e) => alive && setErr(String(e)));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const doSearch = useCallback(async (source: string, keyword: string) => {
+    const k = keyword.trim();
+    if (!source || !k) return;
+    setBusy(`「${source}」搜索中…`);
+    setErr("");
+    setResults([]);
+    setRoads([]);
+    setSelName("");
+    try {
+      const r = await invoke<WebrsSearchItem[]>("webrs_search", { ruleName: source, keyword: k });
+      setResults(r);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy("");
+    }
+  }, []);
+
+  // 规则就绪后自动按标题搜一次（进详情页就是想"直接能看"，省一次点击）
+  const autoDone = useRef("");
+  useEffect(() => {
+    if (!rule || autoDone.current === rule) return;
+    autoDone.current = rule;
+    doSearch(rule, title);
+  }, [rule, title, doSearch]);
+
+  const pick = async (it: WebrsSearchItem) => {
+    setSelName(it.name);
+    setBusy("拉取选集…");
+    setErr("");
+    setRoads([]);
+    try {
+      const r = await invoke<{ roads: WebrsRoad[] }>("webrs_chapters", {
+        ruleName: rule,
+        url: it.url,
+      });
+      setRoads(r.roads ?? []);
+      setRoadIdx(0);
+    } catch (e) {
+      setErr(String(e));
+      setSelName("");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const playEp = async (ep: WebrsSearchItem) => {
+    setBusy("解析视频直链…（页面藏得深时会拉起嗅探，最多等 40s）");
+    setErr("");
+    try {
+      const r = await invoke<{ url: string; referer: string; ua: string; via: string }>(
+        "webrs_resolve",
+        { ruleName: rule, url: ep.url },
+      );
+      setBusy("正在拉起独立播放器…");
+      await invoke("webrs_play", { url: r.url, referer: r.referer, ua: r.ua });
+      setBusy(`已在独立播放器窗口播放 · ${selName} · ${ep.name}（${r.via === "webview" ? "嗅探直链" : "页面直解"}）`);
+    } catch (e) {
+      setErr(String(e));
+      setBusy("");
+    }
+  };
+
+  return (
+    <div className="webrs">
+      <div className="webrs-bar">
+        <select
+          value={rule}
+          onChange={(e) => {
+            setRule(e.target.value);
+            autoDone.current = "";
+          }}
+          title="资源源（Kazumi 规则）"
+        >
+          {rules.map((r) => (
+            <option key={r.name} value={r.name}>
+              {r.name}
+            </option>
+          ))}
+        </select>
+        <input
+          value={kw}
+          onChange={(e) => setKw(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && doSearch(rule, kw)}
+          placeholder="搜索资源关键词"
+        />
+        <button className="webrs-go" disabled={!!busy || !rule} onClick={() => doSearch(rule, kw)}>
+          搜索
+        </button>
+      </div>
+      {busy && <div className="webrs-note">{busy}</div>}
+      {err && <div className="webrs-err">{err}</div>}
+      {!selName && results.length > 0 && (
+        <div className="webrs-list">
+          {results.map((r) => (
+            <button key={r.url} onClick={() => pick(r)} title={r.url}>
+              {r.name}
+            </button>
+          ))}
+        </div>
+      )}
+      {selName && roads.length > 0 && (
+        <>
+          <div className="webrs-crumbs">
+            <span className="webrs-cur">{selName}</span>
+            <button
+              className="webrs-back"
+              onClick={() => {
+                setSelName("");
+                setRoads([]);
+              }}
+            >
+              ‹ 返回结果
+            </button>
+          </div>
+          {roads.length > 1 && (
+            <div className="webrs-roads">
+              {roads.map((rd, i) => (
+                <button key={rd.name} className={i === roadIdx ? "on" : ""} onClick={() => setRoadIdx(i)}>
+                  {rd.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="webrs-eps">
+            {(roads[roadIdx]?.episodes ?? []).map((ep) => (
+              <button key={ep.url} disabled={busy.startsWith("解析")} onClick={() => playEp(ep)} title={ep.url}>
+                {ep.name}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
@@ -3973,9 +4144,11 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
                 </div>
               ))
             ) : episodes.length === 0 ? (
-              /* [lc-1444] 发现页条目没有飞牛选集数据 —— 按用户要求先空着占位 */
+              /* [lc-1444] 发现页条目没有飞牛选集数据。
+                 [lc-1500] 无源条目的"看"法 = 在线资源面板（Kazumi 规则源 → mpv），
+                 直接替换掉原来的"选集信息暂未接入"占位。 */
               noFnOS ? (
-                <div className="empty">选集信息暂未接入</div>
+                <WebrsPanel title={title || base.title} />
               ) : (
                 <div className="empty">暂无剧集</div>
               )

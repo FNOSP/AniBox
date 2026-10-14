@@ -13,6 +13,7 @@ mod mirror_sign;
 mod mpv;
 mod proxy;
 mod tmdb;
+mod webrs;
 
 /// [lc-1417] 详情页数据的落盘 TTL：**120 天**（用户指定）。
 /// 覆盖：飞牛条目详情 / 季列表 / 集列表 / TMDB 详情。
@@ -476,6 +477,11 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     };
     *slot = Some(session.clone());
     drop(slot);
+
+    // [lc-1500] 在线资源（webrs_play）会往 mpv 写 referrer / user-agent / http-header-fields，
+    // 切回本地 NAS 播放前先清掉，免得残留的站点头污染本机直链请求。
+    let _ = session.command(json!(["set", "referrer", ""])).await;
+    let _ = session.command(json!(["set", "http-header-fields", ""])).await;
 
     session.command(json!(["loadfile", url, "replace"])).await?;
 
@@ -1202,7 +1208,13 @@ pub fn run() {
             mpv_set_ui_fullscreen,
             mpv_seek,
             mpv_set_volume,
-            mpv_set_rate
+            mpv_set_rate,
+            // [lc-1500] 在线资源（Kazumi 规则源）：发现页无源条目 → 搜索/选集/解析直链 → mpv
+            webrs::webrs_rules,
+            webrs::webrs_search,
+            webrs::webrs_chapters,
+            webrs::webrs_resolve,
+            webrs::webrs_play
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

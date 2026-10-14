@@ -2539,7 +2539,21 @@ function BgmAccountCard() {
       <div className="bgmac-main">
         <div className="bgmac-text">
           <div className="bgmac-kicker">Bangumi</div>
-          <div className="bgmac-title">追番同步</div>
+          <div className="bgmac-title-row">
+            <span className="bgmac-title">追番同步</span>
+            <span className={`bgmac-badge${acct.bound ? " on" : ""}`} title={acct.bound ? `已连接：${acct.username}` : "未连接 Bangumi 账号"}>
+              {acct.bound ? (
+                <>
+                  <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 12.5 9 17.5 20 6.5" />
+                  </svg>
+                  <span className="bgmac-badge-name">{acct.username}</span>
+                </>
+              ) : (
+                "未连接"
+              )}
+            </span>
+          </div>
           <div className="bgmac-desc">与 Bangumi 保持相同的追番状态。</div>
           <div className="bgmac-types">想看 · 在看 · 看过 · 搁置 · 抛弃</div>
         </div>
@@ -2570,26 +2584,6 @@ function BgmAccountCard() {
           <button className="bgmac-cta" onClick={() => setBindOpen(true)}>
             → 连接 Bangumi
           </button>
-        )}
-      </div>
-
-      {/* 右上：连接状态徽章 */}
-      <div className={`bgmac-badge${acct.bound ? " on" : ""}`} title={acct.bound ? `已连接：${acct.username}` : "未连接 Bangumi 账号"}>
-        {acct.bound ? (
-          <>
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 12.5 9 17.5 20 6.5" />
-            </svg>
-            <span className="bgmac-badge-name">{acct.username}</span>
-          </>
-        ) : (
-          <>
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M10 13a5 5 0 0 0 7.1.5l2.4-2.4a5 5 0 0 0-7.1-7.1L11 5.4" />
-              <path d="M14 11a5 5 0 0 0-7.1-.5L4.5 13a5 5 0 0 0 7.1 7.1l1.4-1.4" />
-            </svg>
-            未连接
-          </>
         )}
       </div>
 

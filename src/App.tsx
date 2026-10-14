@@ -758,7 +758,10 @@ function CarouselView({
   /** [lc-123-rev4] 上报"当前这张 hero 图的顶栏 chrome 色"（App 透传给 TitleBar；仅首页用） */
   onTone?: (t: ChromeTone) => void;
 }) {
-  const [index, setIndex] = useState(0);
+  // [lc-1523] 真无限轮播：轨道 = [最后一张克隆, ...items, 第一张克隆]，
+  //   pos 是**轨道下标**（1..n 为真实位；0 / n+1 为首尾克隆位）。
+  //   跨接时先滑到克隆位（动画连续），transitionend 后再无动画瞬移回真实位。
+  const [pos, setPos] = useState(1);
   const [armed, setArmed] = useState(false);
   // [lc-116] 鼠标靠近哪一侧："" | "prev" | "next"（用来淡入对应箭头）
   const [near, setNear] = useState<"" | "prev" | "next">("");
@@ -775,24 +778,36 @@ function CarouselView({
   };
 
   /**
-   * [lc-117] 统一走这里切页，delta = -1 / +1。
-   * 取模保证「第一张往左 = 最后一张」「最后一张往右 = 第一张」的反向回绕。
-   * 跨接的那一帧必须禁用过渡：.mist-body 是 translateX(-index*100%)，从 0 直接跳到
-   * -(n-1)*100% 会让 1.5s 动画横扫整条轨道（n 张卡要飞过 n-1 屏宽），观感像卡死。
+   * [lc-1523] 统一走这里切页，delta = -1 / +1。克隆轨道上直接 ±1：
+   * 最后一张( pos=n )再 +1 → 滑到第一张克隆( n+1 )，动画连续；transitionend
+   * 后 onTransEnd 无动画瞬移回真实第一张( 1 )。第一张( 1 )再 -1 同理走 last 克隆( 0 )。
    */
   const go = useCallback(
     (delta: number) => {
       if (n < 2) return;
-      const next = (index + delta + n) % n;
-      const wrap = (delta > 0 && index === n - 1) || (delta < 0 && index === 0);
-      if (wrap) {
-        setNoAnim(true);
-        requestAnimationFrame(() => requestAnimationFrame(() => setNoAnim(false)));
-      }
-      setIndex(next);
+      const target = pos + delta;
+      if (target < 0 || target > n + 1) return;
+      setPos(target);
     },
-    [index, n]
+    [pos, n]
   );
+
+  /** [lc-1523] 滑到克隆位后的瞬间重置：关过渡 → 瞬移回真实位 → 恢复过渡。 */
+  const onTransEnd = useCallback((e: React.TransitionEvent) => {
+    // 只认容器自身 transform 的过渡结束：子元素（图/遮罩/文字）的 transition 冒泡上来不理会
+    if (e.target !== e.currentTarget || e.propertyName !== "transform") return;
+    if (n < 2) return;
+    if (pos === n + 1 || pos === 0) {
+      setNoAnim(true);
+      setPos(pos === n + 1 ? 1 : n);
+      requestAnimationFrame(() => requestAnimationFrame(() => setNoAnim(false)));
+    }
+  }, [pos, n]);
+
+  // items 数量变化（刷新/换库）时把轨道拉回真实首位，避免 pos 越界
+  useEffect(() => {
+    setPos(1);
+  }, [n]);
 
   // 入场动画闸门：挂载后瞬间补 active，让首帧信息走 misty 同款上浮入场
   useEffect(() => {
@@ -801,7 +816,7 @@ function CarouselView({
   }, []);
 
   // 8s 自动轮播（emby-crx 同款节奏；页面隐藏时不切，避免回前台跳帧）
-  // [lc-117] 依赖 index 而不是常驻 interval：手动点箭头后重新起算 8s，
+  // [lc-117] 依赖当前片（pos）而不是常驻 interval：手动点箭头后重新起算 8s，
   // 否则刚点过去就被自动轮播顶走，看着像「点了没反应」。
   useEffect(() => {
     if (n < 2) return;
@@ -810,11 +825,12 @@ function CarouselView({
     }, 8000);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [n, index]);
+  }, [n, pos]);
 
   // [lc-123-rev4] 顶栏自适应反色：把**当前这一张** hero 图的 URL 采样成 chrome 色上报。
-  // 换片（index 变）才重采；同一张图有 URL 级缓存（sampleChromeTone 内部）。采样失败 → "fallback"。
-  const activeItem = items[index];
+  // 换片（pos 变）才重采；同一张图有 URL 级缓存（sampleChromeTone 内部）。采样失败 → "fallback"。
+  const seq = n >= 2 ? [items[n - 1], ...items, items[0]] : items;
+  const activeItem = seq[Math.min(pos, seq.length - 1)];
   const activeSrc = activeItem
     ? bds[activeItem.guid]
       ? imgUrl(bds[activeItem.guid])
@@ -848,9 +864,10 @@ function CarouselView({
     >
       <div
         className={`mist-body${noAnim ? " no-anim" : ""}`}
-        style={{ transform: `translateX(-${index * 100}%)` }}
+        style={{ transform: `translateX(-${pos * 100}%)` }}
+        onTransitionEnd={onTransEnd}
       >
-        {items.map((it, i) => {
+        {seq.map((it, i) => {
           const bd = bds[it.guid];
           const meta = [
             yearOf(it),
@@ -860,14 +877,14 @@ function CarouselView({
             .filter(Boolean)
             .join(" · ");
           return (
-            <div key={it.guid} className={`mist-item ${i === index && armed ? "active" : ""}`}>
+            <div key={it.guid} className={`mist-item ${i === pos && armed ? "active" : ""}`}>
               {bd ? (
                 <img
                   className="mist-cover"
                   src={imgUrl(bd)}
                   alt={it.title}
                   draggable={false}
-                  loading={i === 0 ? "eager" : "lazy"}
+                  loading={i <= 1 ? "eager" : "lazy"}
                 />
               ) : (
                 <div

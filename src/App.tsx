@@ -60,6 +60,8 @@ type MediaItem = {
   media_stream?: unknown;
   /** [lc-1444] 发现页条目自带的 TMDB id（无飞牛 guid 时用它直连 TMDB 定位） */
   tmdb_id?: number;
+  /** [lc-1444] 已知的 Bangumi subject id（发现页右栏新番表条目自带）：详情页直连，免标题匹配 */
+  bgm_id?: number;
 };
 
 /** play/list（继续观看）返回的条目，camelCase 为主，读取时做双格式兼容 */
@@ -1861,7 +1863,7 @@ function DState({ err, emptyText, onRetry }: { err: string; emptyText: string; o
  *  没有文字压图** —— 文字永远在实底信息列里。主推数据 = 当季第 1 条（热度第一），**不轮播不翻页**。
  *  海报 = poster（2:3，w500）；缺图走占位块（Film 图标），不破格。
  *  「查看详情」：TMDB 条目没有飞牛 guid —— [lc-1444] 改为**直接进主详情页**
- *  （复用 DetailView，选集信息占位），不再走 bgm_match → BgmDetailOverlay 弹层。 */
+ *  （复用 DetailView，选集信息占位），不再走 bgm_match + 轻量弹层的旧链路。 */
 function TmdbFeatured({
   it,
   isMovie,
@@ -2601,199 +2603,21 @@ function BgmPane({ active, onOpen }: { active: boolean; onOpen: (it: BgmCalendar
   );
 }
 
-/* ───────────────────────── 右栏点击 → Bangumi 条目轻量详情 ───────────────────────── */
-
-/** 基于 **bgm subject** 的轻量详情（弹层）。
- *  为什么独立于 DetailView：现有 DetailView 的入口是**飞牛库条目**（base.guid → get_item_detail /
- *  get_seasons / get_episodes / play_item），而发现页的条目**不一定在库里**，硬塞一个假 MediaItem
- *  只会得到"详情加载失败"。这里只用库无关的既有命令：bgm_subject / bgm_episodes / bgm_characters，
- *  视觉沿用 App 的深色玻璃 + 圆角 + 主色（类名前缀 ddet-），不改动 DetailView。 */
-function BgmDetailOverlay({
-  id,
-  fallback,
-  onClose,
-}: {
-  id: number;
-  fallback: BgmCalendarItem | null;
-  onClose: () => void;
-}) {
-  const [sub, setSub] = useState<Record<string, unknown> | null>(null);
-  const [eps, setEps] = useState<BgmEpisodeRow[]>([]);
-  const [chars, setChars] = useState<BgmCharacter[]>([]);
-  const [err, setErr] = useState("");
-  const [extrasErr, setExtrasErr] = useState("");
-  const [busy, setBusy] = useState(true);
-  const [nonce, setNonce] = useState(0);
-
-  useEffect(() => {
-    let alive = true;
-    setBusy(true);
-    setErr("");
-    setExtrasErr("");
-    (async () => {
-      try {
-        const s = await invoke<Record<string, unknown>>("bgm_subject", { id });
-        if (!alive) return;
-        setSub(s);
-      } catch (e) {
-        if (alive) setErr(String(e));
-      } finally {
-        if (alive) setBusy(false);
-      }
-      // 剧集/角色：与主详情页同一对命令；任一失败只标记 extrasErr（不该拖垮上面的主信息）
-      try {
-        const [er, cr] = await Promise.all([
-          invoke<{ data?: BgmEpisodeRow[] }>("bgm_episodes", { id, limit: 60 }),
-          invoke<BgmCharacter[]>("bgm_characters", { id }),
-        ]);
-        if (!alive) return;
-        setEps(Array.isArray(er?.data) ? er.data : []);
-        setChars(bgmList<BgmCharacter>(cr));
-      } catch (e) {
-        if (alive) setExtrasErr(String(e));
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [id, nonce]);
-
-  // Esc 关闭（弹层是不可点透的模态：点背景也可关）
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [onClose]);
-
-  const imgs = (sub?.images ?? null) as Record<string, string> | null;
-  const cover = bgmImg(imgs?.large || imgs?.common || imgs?.medium || imgs?.grid || fallback?.cover || "");
-  const title = String(pick(sub ?? {}, ["name_cn", "name"]) ?? fallback?.name_cn ?? fallback?.name ?? "");
-  const original = String(pick(sub ?? {}, ["name"]) ?? "");
-  const date = String(pick(sub ?? {}, ["date"]) ?? fallback?.air_date ?? "");
-  const rating = (sub?.rating ?? null) as { score?: number; total?: number; rank?: number } | null;
-  const score =
-    typeof rating?.score === "number" && isFinite(rating.score) && rating.score > 0
-      ? rating.score
-      : typeof fallback?.score === "number" && (fallback?.score ?? 0) > 0
-        ? fallback?.score
-        : null;
-  const votes = typeof rating?.total === "number" ? rating.total : (fallback?.votes ?? 0);
-  const rank = typeof rating?.rank === "number" && rating.rank > 0 ? rating.rank : null;
-  const summary = String(pick(sub ?? {}, ["summary"]) ?? "").trim();
-
-  return (
-    <div className="ddet-mask" onClick={onClose}>
-      <div className="ddet" onClick={(e) => e.stopPropagation()}>
-        <button className="ddet-close" title="关闭（Esc）" onClick={onClose}>
-          <IcoXL size={15} strokeWidth={1.8} />
-        </button>
-        <header className="ddet-hd">
-          <div className={`ddet-cv${cover ? "" : " empty"}`}>
-            {cover ? <img src={cover} alt="" draggable={false} /> : <span aria-hidden="true"><IcoFilmL size={18} strokeWidth={1.8} /></span>}
-          </div>
-          <div className="ddet-hdm">
-            <h2>{title || "（无标题）"}</h2>
-            {original && original !== title && <div className="ddet-orig">{original}</div>}
-            <div className="ddet-meta">
-              {date && <span className="ddet-chip">{date}</span>}
-              {score != null && (
-                <span className="ddet-chip score">
-                  <IcoStarL size={12} strokeWidth={2} className="rating-ico fill" /> {score.toFixed(1)}
-                  {votes > 0 && <i>（{votes} 人）</i>}
-                </span>
-              )}
-              {rank != null && <span className="ddet-chip">Rank #{rank}</span>}
-              <span className="ddet-chip dim">Bangumi #{id}</span>
-            </div>
-          </div>
-        </header>
-
-        <div className="ddet-body">
-          {busy && !sub && !err ? (
-            <>
-              <Dsk cls="dsk-line" />
-              <Dsk cls="dsk-line" />
-              <Dsk cls="dsk-line short" />
-            </>
-          ) : err ? (
-            <div className="dstate">
-              <div className="dstate-msg">{err}</div>
-              <button className="dretry" onClick={() => setNonce((n) => n + 1)}>
-                重试
-              </button>
-            </div>
-          ) : (
-            <>
-              {summary && (
-                <>
-                  <h3 className="ddet-h3">简介</h3>
-                  <p className="ddet-sum">{summary}</p>
-                </>
-              )}
-              <h3 className="ddet-h3">剧集{eps.length ? `（${eps.length}）` : ""}</h3>
-              {extrasErr ? (
-                <div className="dstate">
-                  <div className="dstate-msg">{extrasErr}</div>
-                  <button className="dretry" onClick={() => setNonce((n) => n + 1)}>
-                    重试
-                  </button>
-                </div>
-              ) : eps.length ? (
-                <ul className="dep-list">
-                  {eps.slice(0, 60).map((e, i) => (
-                    <li key={e.id ?? `${e.sort}-${i}`} className="dep-row">
-                      <span className="dep-no">{e.ep ?? e.sort ?? i + 1}</span>
-                      <span className="dep-name">{e.name_cn || e.name || `第 ${i + 1} 集`}</span>
-                      <span className="dep-date">{e.airdate || ""}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="dstate">暂无剧集数据</div>
-              )}
-              <h3 className="ddet-h3">主要角色{chars.length ? `（${chars.length}）` : ""}</h3>
-              {chars.length ? (
-                <ul className="bgmc-list">
-                  {chars.slice(0, 24).map((c, i) => (
-                    <BgmCastRow
-                      key={c.id ?? i}
-                      name={c.name}
-                      tag={c.relation || CHAR_TYPE_LABEL[c.type ?? 1]}
-                      sub={c.actors?.[0]?.name ? `CV：${c.actors[0].name}` : undefined}
-                      avatar={c.images?.grid || c.images?.medium || c.images?.large || c.images?.small}
-                      fallback="（无名）"
-                    />
-                  ))}
-                </ul>
-              ) : (
-                <div className="dstate">暂无角色数据</div>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** 发现页：左右两栏（各 50%），两栏各自的滚动与状态互不影响 */
 function DiscoverView({
   active,
   onOpenDetail,
+  onOpenBgm,
 }: {
   active: boolean;
   /** [lc-1444] 左栏 TMDB 条目 → 主详情页（父级合成 MediaItem 并切 view） */
   onOpenDetail: (it: TmdbDiscoverItem, mediaType: "tv" | "movie") => void;
+  /** [lc-1444] 右栏新番表条目 → 主详情页（条目自带 Bangumi subject id） */
+  onOpenBgm: (it: BgmCalendarItem) => void;
 }) {
-  const [sel, setSel] = useState<BgmCalendarItem | null>(null);
   return (
     <div className="discover">
-      {/* 右栏 Bangumi 条目仍用 BgmDetailOverlay 弹层；左栏「查看详情」走主详情页 */}
       <TmdbPane active={active} onOpenDetail={onOpenDetail} />
-      <BgmPane active={active} onOpen={(it) => setSel(it)} />
-      {sel && <BgmDetailOverlay id={sel.id} fallback={sel} onClose={() => setSel(null)} />}
+      <BgmPane active={active} onOpen={onOpenBgm} />
     </div>
   );
 }
@@ -2874,6 +2698,30 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
   const noFnOS = /^discover-/.test(base.guid);
   const dataReady = !!data || noFnOS;
 
+  // [lc-1444] Bangumi 定位统一入口：发现页右栏条目自带 bgm_id → **直连**（省一次标题匹配，
+  //   也不会匹配错同名番）；否则 bgm_match(标题+年)。结果写 bgmRef + setBgm，供
+  //   首屏标签框 / 影评 / 吐槽 / 更多 / 关联五个懒加载点共用同一条路径。
+  const resolveBgm = useCallback(async (): Promise<BgmMatch | null> => {
+    const cached = bgmRef.current;
+    if (cached) return cached;
+    let m: BgmMatch | null = null;
+    if (base.bgm_id) {
+      m = { subject_id: base.bgm_id };
+    } else {
+      const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
+      const r = await invoke<BgmMatch | null>("bgm_match", {
+        query: title,
+        year: String(base.release_date || "").slice(0, 4) || null,
+        mediaType: base.type ?? null,
+        cacheKey: base.guid,
+      });
+      m = r && r.subject_id ? r : null;
+    }
+    bgmRef.current = m;
+    setBgm(m);
+    return m;
+  }, [base.bgm_id, base.guid, base.title, base.type, base.release_date, data]);
+
   /** [lc-128] TMDB 精确锚点：飞牛条目 `trim_id` 形如 `tm63578`（TMDB id）/ `tt325158`（IMDb id）/
    *  `bg456080`（Bangumi，无 TMDB id）；另有显式 `tmdb_id`/`imdb_id` 字段时优先。有锚点就**直接定位**，
    *  没有才回落标题搜索（Rust 侧搜索带相似度门槛，并回传 matched_by 说明"这条是谁给的 id"）。 */
@@ -2949,7 +2797,11 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
         year: String(base.release_date || "").slice(0, 4),
         mediaType: base.type === "Movie" ? "movie" : "tv",
         trimId: tmdbAnchor.trimId || undefined,
-        tmdbId: noFnOS ? String(base.tmdb_id ?? "") : tmdbAnchor.tmdbId || undefined,
+        tmdbId: noFnOS
+          ? base.tmdb_id
+            ? String(base.tmdb_id)
+            : undefined // 右栏新番条目没有 TMDB id → 走标题搜索
+          : tmdbAnchor.tmdbId || undefined,
         imdbId: tmdbAnchor.imdbId || undefined,
       },
     })
@@ -3012,17 +2864,8 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
       try {
         let m = bgmRef.current;
         if (!m) {
-          const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
-          const r = await invoke<BgmMatch | null>("bgm_match", {
-            query: title,
-            year: String(base.release_date || "").slice(0, 4) || null,
-            mediaType: base.type ?? null,
-            cacheKey: base.guid,
-          });
-          m = r && r.subject_id ? r : null;
+          m = await resolveBgm();
           if (!alive) return;
-          bgmRef.current = m;
-          setBgm(m);
           setBgmProbed(true);
         }
         if (!m) return;
@@ -3050,17 +2893,8 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
       try {
         let m = bgmRef.current;
         if (!m) {
-          const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
-          const r = await invoke<BgmMatch | null>("bgm_match", {
-            query: title,
-            year: String(base.release_date || "").slice(0, 4) || null,
-            mediaType: base.type ?? null,
-            cacheKey: base.guid,
-          });
-          m = r && r.subject_id ? r : null;
+          m = await resolveBgm();
           if (!alive) return;
-          bgmRef.current = m;
-          setBgm(m);
           setBgmProbed(true);
         }
         if (!m) throw new Error("未匹配到 Bangumi 条目");
@@ -3105,18 +2939,8 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
       try {
         let m = bgmRef.current;
         if (!m) {
-          // 标题优先 data.tvTitle || data.title || base.title；年份取 release_date 前 4 位；type 传 base.type
-          const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
-          const r = await invoke<BgmMatch | null>("bgm_match", {
-            query: title,
-            year: String(base.release_date || "").slice(0, 4) || null,
-            mediaType: base.type ?? null,
-            cacheKey: base.guid,
-          });
-          m = r && r.subject_id ? r : null;
+          m = await resolveBgm();
           if (!alive) return;
-          bgmRef.current = m;
-          setBgm(m);
           setBgmProbed(true);
         }
         if (!m) throw new Error("未匹配到 Bangumi 条目");
@@ -3162,18 +2986,8 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
       try {
         let m = bgmRef.current;
         if (!m) {
-          // 标题优先 data.tvTitle || data.title || base.title；年份取 release_date 前 4 位；type 传 base.type
-          const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
-          const r = await invoke<BgmMatch | null>("bgm_match", {
-            query: title,
-            year: String(base.release_date || "").slice(0, 4) || null,
-            mediaType: base.type ?? null,
-            cacheKey: base.guid,
-          });
-          m = r && r.subject_id ? r : null;
+          m = await resolveBgm();
           if (!alive) return;
-          bgmRef.current = m;
-          setBgm(m); // 供「吐槽」复用（那里若已拉过则无副作用；未拉过则省一次匹配）
         }
         if (!m) throw new Error("未匹配到 Bangumi 条目");
         const [cr, pr] = await Promise.all([
@@ -3213,17 +3027,8 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
       try {
         let m = bgmRef.current;
         if (!m) {
-          const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
-          const r = await invoke<BgmMatch | null>("bgm_match", {
-            query: title,
-            year: String(base.release_date || "").slice(0, 4) || null,
-            mediaType: base.type ?? null,
-            cacheKey: base.guid,
-          });
-          m = r && r.subject_id ? r : null;
+          m = await resolveBgm();
           if (!alive) return;
-          bgmRef.current = m;
-          setBgm(m);
         }
         if (!m) throw new Error("未匹配到 Bangumi 条目");
         const r = await invoke<BgmRelated[]>("bgm_related", { id: m.subject_id });
@@ -3262,7 +3067,11 @@ function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
             year: String(base.release_date || "").slice(0, 4),
             mediaType: base.type === "Movie" ? "movie" : "tv",
             trimId: tmdbAnchor.trimId || undefined,
-            tmdbId: noFnOS ? String(base.tmdb_id ?? "") : tmdbAnchor.tmdbId || undefined,
+            tmdbId: noFnOS
+              ? base.tmdb_id
+                ? String(base.tmdb_id)
+                : undefined // 右栏新番条目没有 TMDB id → 走标题搜索
+              : tmdbAnchor.tmdbId || undefined,
             imdbId: tmdbAnchor.imdbId || undefined,
             cacheKey: base.guid,
           },
@@ -5295,6 +5104,21 @@ function App() {
     [],
   );
 
+  // [lc-1444] 发现页右栏（新番表）条目 → 主详情页：条目自带 Bangumi subject id，
+  //   guid 用 `discover-bgm-<id>` 占位标识；封面直接带（代理 URL）；TMDB 侧没有 id，走标题搜索兜底。
+  const openDiscoverBgm = useCallback((it: BgmCalendarItem) => {
+    setDetailItem({
+      guid: `discover-bgm-${it.id}`,
+      title: it.name_cn || it.name,
+      release_date: it.air_date,
+      poster: bgmImg(it.cover),
+      bgm_id: it.id,
+      type: "TV",
+    });
+    setDetailFrom("discover");
+    setView("detail");
+  }, []);
+
   const openFav = useCallback(() => {
     setActiveLib({ guid: "_fav", title: "收藏", category: "" });
     setPage("home");
@@ -5455,7 +5279,11 @@ function App() {
           {/* [lc-123] 发现页：与首页同款「常驻挂载」——两栏的滚动位置/已取数据在切页后保留；
               首次拉取的闸门是 active={view === "discover"}（不进这一页就不发任何请求） */}
           <div className={paneCls("discover")} onAnimationEnd={clearPaneAnim}>
-            <DiscoverView active={view === "discover"} onOpenDetail={openDiscoverDetail} />
+            <DiscoverView
+              active={view === "discover"}
+              onOpenDetail={openDiscoverDetail}
+              onOpenBgm={openDiscoverBgm}
+            />
           </div>
           {view === "lib" && activeLib && (
             <div className="view-pane active">

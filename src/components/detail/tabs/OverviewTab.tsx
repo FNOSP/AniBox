@@ -16,7 +16,7 @@ export function OverviewTab({ genres, overview, setZoom, tmdb, tmdbDone }: Props
       <div className="dpanel dpanel-single">
         {/* [lc-1405] 原本这里还有一节「类型标签」渲染 genres —— 与左列顶部那个标签框**同一份数据**，
             重复；且用户已要求标签框直接取 BGM/TMDB，这一节就失去存在意义。故删除。 */}
-        {/* [lc-1404] 剧照 / 分级 / 在线观看 / 相似 / 预告 / 别名关键词：**全部由 TmdbExtra 一处渲染**。
+        {/* [lc-1404] 剧照由 TmdbExtra 一处渲染（相似剧集/更多块见「更多」页，lc-1565/1566）。
             此前这里是"自己一条 .dstill-strip + TmdbExtra 里再来一条 .tmdb-stills"，
             结果是同一批 TMDB 剧照出现**两组**（用户反馈）。现在只留 TmdbExtra 那一份。 */}
         {/* [lc-1420] 分块骨架：TMDB 详情也是一条独立请求，没回来之前这块是空的。

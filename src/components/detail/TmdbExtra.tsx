@@ -1,5 +1,6 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。
-   [lc-1565] 「更多」块（别名/关键词/热度/编号/链接）移出为独立标签页（tabs/ExtraTab）。 */
+   [lc-1565] 「更多」块（别名/关键词/热度/编号/链接）移出为独立标签页（tabs/ExtraTab）。
+   [lc-1566] 「相似剧集」也移去「更多」页 —— 本组件只剩「剧照」（详情页）。 */
 import { ScrollRow } from "../common/ScrollRow";
 import { tmdbImg } from "../../lib/images";
 
@@ -15,10 +16,9 @@ export function TmdbExtra({
   const arr = (k: string): Record<string, unknown>[] =>
     Array.isArray(tmdb[k]) ? (tmdb[k] as Record<string, unknown>[]) : [];
   const stills = arr("backdrops").slice(0, 6);
-  const recs = arr("recommendations").slice(0, 8);
   return (
     <>
-      {stills.length > 0 && (
+      {stills.length > 0 ? (
         <div className="tmdb-sec">
           <div className="tmdb-sec-t">剧照</div>
           {/* [lc-1413] 用户反馈"剧照太多显示不完全，加同款雪佛龙按钮（不要背景色）" ——
@@ -38,20 +38,9 @@ export function TmdbExtra({
             ))}
           </ScrollRow>
         </div>
-      )}
-      {recs.length > 0 && (
-        <div className="tmdb-sec">
-          <div className="tmdb-sec-t">相似剧集</div>
-          <p className="tmdb-inline">
-            {recs.map((r, i) => (
-              <span key={String(r.tmdbId ?? i)}>
-                {i > 0 && <i> · </i>}
-                {String(r.title)}
-                {r.year ? ` (${r.year})` : ""}
-              </span>
-            ))}
-          </p>
-        </div>
+      ) : (
+        /* [lc-1566] 相似剧集移出后本页只剩剧照 —— 没有剧照就给空态（否则只剩一个空容器） */
+        <div className="empty">暂无剧照</div>
       )}
     </>
   );

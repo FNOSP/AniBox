@@ -10,6 +10,7 @@ import { RelatedTab } from "./tabs/RelatedTab";
 import { CastTab } from "./tabs/CastTab";
 import { ReviewsTab } from "./tabs/ReviewsTab";
 import { CommentsTab } from "./tabs/CommentsTab";
+import { ExtraTab } from "./tabs/ExtraTab";
 import { WebrsPanel } from "../webrs/WebrsPanel";
 import { fmtDur, pick } from "../../lib/format";
 import { bgmImg, imgUrl, pickLargestImg, tmdbImg } from "../../lib/images";
@@ -22,7 +23,7 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [seasonIdx, setSeasonIdx] = useState(0);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
-  // TMDB 完整详情（剧照/相似/更多/演职人员），详情页「更多」分段的 TMDB 侧数据源
+  // TMDB 完整详情（剧照/相似/更多）：「详情」「更多」两个标签页的 TMDB 侧数据源
   const [tmdb, setTmdb] = useState<Record<string, unknown> | null>(null);
   // [lc-1507] TMDB 请求是否已 settle（成败都置位）：区分「加载中」（骨架）与「已失败」
   // （不再转骨架，改显示 Bangumi 简介兜底 / 空态）—— 否则失败后骨架永远转
@@ -89,7 +90,7 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
   // 注意：与吐槽一样**不做 busy 重入闸门** —— StrictMode 的双调用会「首跑 abort + 二跑早退」，
   // 骨架屏会永久卡住；靠 alive 标志丢弃过期结果即可（最坏情况是 dev 下多发一次请求）。
 
-  // [lc-1513] 标签页切换淡入（详情/评论/吐槽/关联/演职人员）：class 加一下即触发
+  // [lc-1513] 标签页切换淡入（详情/评论/吐槽/关联/角色/更多）：class 加一下即触发
   const [tabAnim, setTabAnim] = useState(false);
   useEffect(() => {
     if (prefersReducedMotion()) return;
@@ -770,12 +771,13 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
       ? "details"
       : "none";
   const fbCast = fnosCast(data);
-  // [lc-1401] 分段栏（用户定稿版式：四个标签页，顺序固定）
-  //   剧照剧集详情信息 / 吐槽评论 / 关联条目 / 演职人员 —— 全部**恒在**：
+  // [lc-1401] 分段栏（用户定稿版式：顺序固定）
+  //   详情 / 评论 / 吐槽 / 关联 / 角色 / 更多 —— 全部**恒在**：
   //   版式要求标签条是固定的一条（不是按"有没有数据"增删），所以不再自适应增删项；
   //   无数据的分段自己显示空态（各自都有骨架屏/失败重试/空态三态）。
   //   「选集」已移出标签条 —— 按版式常驻右栏（每集小标题 + 简介的竖向列表）。
-  const tabIds: string[] = ["overview", "reviews", "comments", "related", "more"];
+  //   [lc-1565] 用户改名：详情信息→详情、关联条目→关联、演职人员→角色；新增「更多」页。
+  const tabIds: string[] = ["overview", "reviews", "comments", "related", "more", "extra"];
   // [lc-1423] 简介是否需要"展开"：与之前同一套字数近似（>96 字≈4~5 行）
   const longIntro = overview.length > 96;
   // Esc 关简介弹窗（与项目其它弹层同一套键盘约定）
@@ -1011,6 +1013,9 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
           />
 
         )}
+
+        {/* [lc-1565] 「更多」页：原「详情」页底部的 更多 块（别名/关键词/热度/编号/链接）独立成页 */}
+        {activeTab === "extra" && <ExtraTab tmdb={tmdb} tmdbDone={tmdbDone} />}
 
         {/* [lc-1412] 评论（长影评，用户设计稿版式）：
               封面 + 标题（链接色）+ 摘要（3 行截断）+ 作者 · 日期 · N 回复。
@@ -1250,9 +1255,10 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
 }
 
 
-/* ────────────────────────── TMDB 扩展信息（剧照 / 相似 / 更多） ──────────────────────────
+/* ────────────────────────── TMDB 扩展信息（剧照 / 相似） ──────────────────────────
    剧照/头像走 fntvimg 代理的 TMDB 图片域（Rust 反代镜像 + **落盘三级缓存**，见 tmdbImg() 与 imgproto.rs）。
-   [lc-128] 演职人员一节搬去「演职人员」页（TMDB 主源 + 落盘缓存 + 飞牛兜底），这里不再重复渲染。
+   [lc-128] 演职人员一节搬去「角色」页（TMDB 主源 + 落盘缓存 + 飞牛兜底），这里不再重复渲染。
+   [lc-1565] 「更多」块（别名/关键词/热度/编号/链接）独立成「更多」页（tabs/ExtraTab）。
    [lc-1413] 按用户要求**删掉「预告片」与「分级 / 在线观看」两节**：
      前者是 YouTube 外链（国内打不开，点了也是白点），后者对国内用户基本是空数据；
      连带删掉 TmdbRegions 组件、videos 派生变量与相关类型用法。 */

@@ -817,6 +817,8 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
   const bgmCounts = (bgmRating.count ?? null) as Record<string, number> | null;
   const tmdbScore = Number((tmdb as Record<string, unknown> | null)?.rating ?? 0) || 0;
   const tmdbVotes = Number((tmdb as Record<string, unknown> | null)?.votes ?? 0) || 0;
+  // [lc-1575] TMDB 编号（字符串，可能为空）：BGM 无排名时，评分组件的 Ranked 块改用它兜底
+  const tmdbIdStr = String((tmdb as Record<string, unknown> | null)?.tmdbId ?? "").trim();
   const ratingScore = bgmScore > 0 ? bgmScore : tmdbScore > 0 ? tmdbScore : null;
   const ratingSource: "bgm" | "tmdb" | "none" = bgmScore > 0 ? "bgm" : tmdbScore > 0 ? "tmdb" : "none";
   const ratingTotal = bgmScore > 0 ? bgmTotal : tmdbVotes;
@@ -950,6 +952,7 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
                 scoreSource={ratingSource}
                 total={ratingTotal}
                 rank={bgmRank > 0 ? bgmRank : null}
+                tmdbId={tmdbIdStr}
                 counts={bgmScore > 0 ? bgmCounts : null}
               />
               {playNote && <div className="play-note">{playNote}</div>}

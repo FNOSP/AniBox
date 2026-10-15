@@ -19,6 +19,8 @@ type Props = {
   total: number;
   /** BGM 排名（>0 有效；null = 未上榜） */
   rank: number | null;
+  /** TMDB 编号（BGM 无排名时的兜底显示；"" = 无） */
+  tmdbId: string;
   /** BGM 评分分布（rating.count：{"1":..,"10":..}；null = 无数据 → 全部画矮柱） */
   counts: Record<string, number> | null;
 };
@@ -71,7 +73,7 @@ function StatusIcon({ kind }: { kind: number }) {
   );
 }
 
-export function RatingWidget({ subjectId, date, score, scoreSource, total, rank, counts }: Props) {
+export function RatingWidget({ subjectId, date, score, scoreSource, total, rank, tmdbId, counts }: Props) {
   // 收藏状态：-1 = 尚未取到（按钮显示「同步状态」+ 刷新图标）
   const [status, setStatus] = useState<number>(-1);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -144,8 +146,13 @@ export function RatingWidget({ subjectId, date, score, scoreSource, total, rank,
       });
   };
 
+  // [lc-1575] 排名块判据：BGM 排名有效 → #rank；BGM 没有排名数据时改用 TMDB 编号顶上（用户要求）；
+  //   两者都没有 → 保持「未上榜」（不显示复制按钮）。复制内容 = 当前显示的值。
+  const rankOk = rank != null && rank > 0;
+  const idFallback = !rankOk && tmdbId !== "";
+
   const copyRank = () => {
-    const text = rank != null && rank > 0 ? `#${rank}` : "";
+    const text = rankOk ? `#${rank}` : idFallback ? tmdbId : "";
     if (!text) return;
     const done = () => {
       setCopied(true);
@@ -170,7 +177,6 @@ export function RatingWidget({ subjectId, date, score, scoreSource, total, rank,
   const scoreText = score == null ? "—" : score.toFixed(1);
   const starFill = score == null ? 0 : Math.max(0, Math.min(5, Math.round(score / 2)));
   const totalLabel = total > 0 ? `${total} 人评分` : scoreSource === "tmdb" ? "TMDB 评分" : "暂无评分";
-  const rankOk = rank != null && rank > 0;
   // 柱状图：counts 的 "1".."10"；无数据全部画 2% 矮柱（设计稿的"小柱子也在"语言）
   const bars = Array.from({ length: 10 }, (_, i) => Number(counts?.[String(i + 1)] ?? 0) || 0);
   const barMax = Math.max(1, ...bars);
@@ -223,11 +229,15 @@ export function RatingWidget({ subjectId, date, score, scoreSource, total, rank,
             </div>
           </div>
           <div className="info-group">
-            <div className="label label-rank">Bangumi Ranked</div>
+            <div className="label label-rank">{idFallback ? "TMDB 编号" : "Bangumi Ranked"}</div>
             <div className="rank-display">
-              <div className="value rank">{rankOk ? `#${rank}` : "未上榜"}</div>
-              {rankOk && (
-                <button className={`copy-btn${copied ? " copied" : ""}`} title="复制排名" onClick={copyRank}>
+              <div className="value rank">{rankOk ? `#${rank}` : idFallback ? tmdbId : "未上榜"}</div>
+              {(rankOk || idFallback) && (
+                <button
+                  className={`copy-btn${copied ? " copied" : ""}`}
+                  title={rankOk ? "复制排名" : "复制编号"}
+                  onClick={copyRank}
+                >
                   <svg className="icon-copy" viewBox="0 0 24 24">
                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />

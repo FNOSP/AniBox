@@ -24,6 +24,14 @@ mod webrs;
 /// （TTL 内直出、过期则回源，回源失败仍可用旧值兜底，见 json_cached_conditional）。
 /// 想立刻更新：设置面板的「清理缓存」会把它们一起清掉，下次进详情页重新拉。
 const DETAIL_TTL_SECS: u64 = 120 * 24 * 3600;
+/// [lc-1578] **季/集列表**的落盘 TTL —— 与上面的 item 详情**刻意分开**：
+///   · item 详情是重请求（简介/海报/演职/评分全在里面），值得 120 天长缓存；
+///   · 季/集列表**随"新集入库"变化**，长缓存必然显示旧集数。事故：`detail:episodes` 沿用
+///     120 天 TTL ⇒ 用户在飞牛里补了第 3 集，App 仍返回缓存里的 2 集（实测缓存 17:04 写入、
+///     23:25 仍被命中返回），用户报「飞牛里三集、软件只显示两集」。
+/// 用户定的节奏：**10 分钟一刷** —— 10 分钟内的来回切页仍走缓存（吸收 React 双挂载/反复进退），
+/// 新集最多滞后 10 分钟。
+const DETAIL_LIST_TTL_SECS: u64 = 10 * 60;
 
 use config::Config;
 use serde_json::{json, Value};
@@ -253,11 +261,12 @@ async fn get_continue_watching(state: State<'_, AppState>) -> Result<Value, Stri
 
 /// 季列表：GET /v/api/v1/season/list/{剧guid}
 /// 注意：episode/list 的入参是**季** guid —— 传剧 guid 实测返回 data:null。
+/// [lc-1578] 缓存 TTL = DETAIL_LIST_TTL_SECS（10 分钟），**不是** item 详情那档 120 天。
 #[tauri::command]
 async fn get_seasons(state: State<'_, AppState>, guid: String) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let key = format!("detail:seasons:{}", guid);
-    if let Some(v) = disk_cache::json_get(&key, DETAIL_TTL_SECS) {
+    if let Some(v) = disk_cache::json_get(&key, DETAIL_LIST_TTL_SECS) {
         return Ok(v);
     }
     let client = fnapi::new_client();
@@ -268,11 +277,13 @@ async fn get_seasons(state: State<'_, AppState>, guid: String) -> Result<Value, 
 }
 
 /// 集列表：GET /v/api/v1/episode/list/{guid} —— guid 必须是季 guid（见 get_seasons 注释）
+/// [lc-1578] 缓存 TTL = DETAIL_LIST_TTL_SECS（10 分钟）：**这是"集数不刷新"事故的正主**
+/// （见该常量注释）—— 新集入库后最多 10 分钟就能看到。
 #[tauri::command]
 async fn get_episodes(state: State<'_, AppState>, guid: String) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let key = format!("detail:episodes:{}", guid);
-    if let Some(v) = disk_cache::json_get(&key, DETAIL_TTL_SECS) {
+    if let Some(v) = disk_cache::json_get(&key, DETAIL_LIST_TTL_SECS) {
         return Ok(v);
     }
     let client = fnapi::new_client();
@@ -1518,4 +1529,20 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    /// [lc-1578] 哨兵：**季/集列表**的 TTL 必须远短于 item 详情（10 分钟 vs 120 天）。
+    /// 反过来（列表也挂 120 天）正是用户报的「飞牛里三集、软件只显示两集」——这条测试让它变红。
+    /// 真机取证（2026-10-15）：`detail:episodes` 缓存 17:04 写入（当时 2 集）、23:25 仍被命中返回，
+    /// 而飞牛侧已是 3 集。
+    #[test]
+    fn detail_list_ttl_stays_short() {
+        assert_eq!(super::DETAIL_LIST_TTL_SECS, 600, "集数刷新节奏：10 分钟一刷");
+        assert!(
+            super::DETAIL_LIST_TTL_SECS * 1000 < super::DETAIL_TTL_SECS,
+            "列表 TTL 必须远小于 item 详情 TTL（否则新集长时间不可见）"
+        );
+    }
 }

@@ -74,11 +74,13 @@ html.dark .drw, html.dark .drw-drop {
 .drw-drop, .drw-drop *, .drw-drop *::before, .drw-drop *::after { box-sizing: border-box; margin: 0; padding: 0; }
 .drw ul, .drw-drop { list-style: none; }
 
-.drw { display: flex; justify-content: space-between; align-items: stretch; gap: 14px; width: 100%; min-width: 0; }
+/* [lc-1573] min-height 与左侧竖版海报同高：132px 宽 × 3/2 = 198px（海报 aspect-ratio 2/3） */
+.drw { display: flex; justify-content: space-between; align-items: stretch; gap: 14px; width: 100%; min-width: 0; min-height: 198px; }
 
 /* ── 左列：信息 + 收藏按钮 ── */
-.drw .left-section { display: flex; flex-direction: column; justify-content: space-between; gap: 6px; width: 42%; max-width: 240px; min-width: 150px; flex: 0 0 auto; position: relative; z-index: 10; }
-.drw .info-group { margin-bottom: 6px; }
+/* [lc-1573] 原固定宽度 42%/240px 比内容（约 165px）宽太多、撑出空档；改 flex: 0 1 auto 按内容宽自适应 */
+.drw .left-section { display: flex; flex-direction: column; justify-content: space-between; gap: 6px; flex: 0 1 auto; min-width: 170px; max-width: 250px; position: relative; z-index: 10; }
+.drw .info-group { margin-bottom: 12px; }
 .drw .label { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--drw-text-2); font-weight: 500; letter-spacing: 0.4px; margin-bottom: 4px; }
 .drw .label::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--drw-dot, var(--drw-text-2)); box-shadow: 0 0 0 3px var(--drw-dot-halo, transparent); }
 .drw .label-start { --drw-dot: var(--drw-dot-start); --drw-dot-halo: rgba(49, 130, 206, 0.15); }
@@ -179,7 +181,7 @@ html.dark .drw, html.dark .drw-drop {
 .drw .chart { display: flex; align-items: flex-end; justify-content: space-between; flex: 1; min-height: 128px; gap: 4px; padding-bottom: 3px; border-bottom: 1px solid var(--drw-border); }
 .drw .bar-wrapper { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; flex: 1; cursor: pointer; border-radius: 6px; transition: background 0.3s ease; min-width: 0; }
 .drw .bar-wrapper:hover { background: rgba(128, 128, 128, 0.05); }
-.drw .bar { width: 100%; max-width: 22px; border-radius: 7px 7px 2px 2px; background: linear-gradient(to top, var(--drw-chart-1), var(--drw-chart-2)); transform-origin: bottom; transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); }
+.drw .bar { width: 100%; max-width: 30px; border-radius: 7px 7px 2px 2px; background: linear-gradient(to top, var(--drw-chart-1), var(--drw-chart-2)); transform-origin: bottom; transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); }
 .drw .bar-wrapper:hover .bar { background: linear-gradient(to top, var(--drw-chart-2), var(--drw-chart-hover)); transform: translateY(-3px) scaleY(1.02); box-shadow: 0 6px 16px var(--drw-chart-glow); filter: saturate(1.1); }
 .drw .bar-wrapper:active .bar { transform: translateY(0) scaleY(0.96); filter: brightness(1); transition: all 0.1s ease; }
 .drw .x-label { font-size: 10.5px; color: var(--drw-text-2); margin-top: 6px; font-weight: 500; transition: color 0.3s, transform 0.3s, font-weight 0.2s; }

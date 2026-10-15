@@ -200,9 +200,17 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
   //   Bangumi 简介而不是永久骨架。
   const tmdbTitle = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
   const bgmNameJp = String(pick(bgmSub ?? {}, ["name"]) ?? "").trim();
+  // [lc-1573] tmdb 重置只在**切换条目**时做一次：本 effect 的依赖里有 bgmNameJp（来自懒加载的
+  //   bgmSub，晚于 data 到达）—— lc-1507 把它加进依赖后，bgmSub 一到就会重跑本段；若每次都
+  //   setTmdb(null)，已渲染的 TMDB 海报会被先清后取：封面在「TMDB 图 → 飞牛图 → TMDB 图」
+  //   之间连跳（用户反馈「进入详情页后封面会跳动一下」的根因）。用 ref 认条目 guid。
+  const tmdbGuidRef = useRef("");
   useEffect(() => {
-    setTmdb(null);
-    setTmdbDone(false);
+    if (tmdbGuidRef.current !== base.guid) {
+      tmdbGuidRef.current = base.guid;
+      setTmdb(null);
+      setTmdbDone(false);
+    }
     // 等条目详情到位再发：锚点（trim_id 等）就来自它，先发一次纯标题搜索再重发纯属浪费。
     // [lc-1444] 发现页条目例外：条目自带 tmdb_id，直接精确定位，不等（也没有）飞牛详情。
     if (!dataReady || !tmdbTitle) return;

@@ -56,10 +56,18 @@ fn pipe_path(name: &str) -> String {
 
 impl MpvSession {
     /// 拉起独立 mpv 进程并连上 IPC（幂等：实例常驻，播放/停止只切播放状态）
+    ///
+    /// `initial_url`：启动即加载的播放列表/直链（None = idle 启动，等 loadfile）。
+    /// `force_title`：**随命令行下发的 `--force-media-title`**。必须在命令行而不是靠
+    /// IPC `set` —— 实测（探针）：IPC `set force-media-title` 只在设置那一刻生效，
+    /// 而容器自带的 `Title` tag（我们这来源的 MP4 常带繁体标题）会在 **loadfile 后**覆盖
+    /// media-title，于是 uosc_danmaku 读到的是无季集标记的容器标题 → 判「非剧集」跳过
+    /// B站搜索。命令行下发的值优先级最高，容器 tag 不再能顶掉它。
     pub async fn launch(
         app: AppHandle,
         mpv_path: &str,
         initial_url: Option<String>,
+        force_title: Option<String>,
     ) -> Result<Arc<MpvSession>, String> {
         let name = format!("anibox-mpv-{}", std::process::id());
         let path = pipe_path(&name);
@@ -91,13 +99,15 @@ impl MpvSession {
         ];
         // [lc-1559] 启动即加载（可选）：命令行直接带 M3U8/URL ⇒ 无 idle 空窗，
         // 不依赖 IPC（启动头几秒 IPC 命令会卡，见 lib.rs lc-1559 注释）。
-        let args = if let Some(u) = initial_url {
-            let mut a = args.to_vec();
-            a.push(u);
-            a
-        } else {
-            args.to_vec()
-        };
+        let mut args = args.to_vec();
+        if let Some(t) = force_title {
+            if !t.is_empty() {
+                args.push(format!("--force-media-title={t}"));
+            }
+        }
+        if let Some(u) = initial_url {
+            args.push(u);
+        }
         let mut command = tokio::process::Command::new(mpv_path);
         command
             .args(&args)

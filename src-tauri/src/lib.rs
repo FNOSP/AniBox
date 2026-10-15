@@ -5,6 +5,7 @@ mod authx;
 mod bgm;
 mod bgm_account;
 mod config;
+mod danmaku_shim;
 mod disk_cache;
 mod fnapi;
 mod libmpv;
@@ -34,6 +35,8 @@ pub struct AppState {
     pub config: RwLock<Config>,
     pub mpv: Mutex<Option<Arc<mpv::MpvSession>>>,
     pub proxy_child: Mutex<Option<std::process::Child>>,
+    /// [lc-1560] 弹幕 shim 子进程（node 跑 danmaku-shim.js，供 uosc_danmaku 调 22347）
+    pub danmaku_child: Mutex<Option<std::process::Child>>,
     /// 最近一次前端主题（player_stop 后恢复 SWCA 染色用）
     pub last_light: std::sync::Mutex<Option<bool>>,
 }
@@ -44,6 +47,7 @@ impl Default for AppState {
             config: RwLock::new(Config::default()),
             mpv: Mutex::new(None),
             proxy_child: Mutex::new(None),
+            danmaku_child: Mutex::new(None),
             last_light: std::sync::Mutex::new(None),
         }
     }
@@ -524,49 +528,63 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     let url = m3u8_path.to_string_lossy().to_string();
     stage("m3u8-written");
 
-    // ② 拉起 mpv（命令行带 M3U8 → 启动即加载，无 idle 空窗、无 IPC 起播）
+    let session: std::sync::Arc<crate::mpv::MpvSession>;
+
+    // ② 拉起/复用 mpv。
+    //
+    // [lc-1560] **会话复用时必须自己 loadfile**（lc-1559 重构漏掉的分支）：
+    // 原来只有"新建会话"这一支把 url 放进 mpv 命令行；已存在的会话直接拿去用了，
+    // **url 根本没被加载** ⇒ 关掉 mpv 窗口后（会话死 → 走新建，正常）与**连续点下一集**
+    // （会话活着 → 什么都不发生）表现不同，后者"点了没反应"。
+    // 标题同理：新会话走命令行（优先级最高、容器自带 Title tag 顶不掉）；复用会话只能
+    // IPC `set`，此时 mpv 不在启动期、IPC 不卡，实测能生效（探针 B 已验）。
     {
         let mut slot = state.mpv.lock().await;
-        let s = match slot.as_ref() {
-            Some(m) if !m.is_dead().await => m.clone(),
+        let existing = match slot.as_ref() {
+            Some(m) if !m.is_dead().await => Some(m.clone()),
             Some(m) => {
                 m.shutdown().await;
-                mpv::MpvSession::launch(app.clone(), &cfg.mpv_path, Some(url.clone())).await?
+                None
             }
-            None => mpv::MpvSession::launch(app.clone(), &cfg.mpv_path, Some(url.clone())).await?,
+            None => None,
+        };
+        let s = match existing {
+            Some(m) => {
+                // 复用：先定标题再 loadfile（顺序不能反，标题要在文件加载前就位）
+                let _ = m
+                    .command(json!(["set", "force-media-title", display_title.clone()]))
+                    .await;
+                m.command(json!(["loadfile", url.clone(), "replace"])).await?;
+                // [lc-1555 延续] 复用会话时 mpv 可能停在上一集的暂停态/播完态，
+                // 本次是明确的"播这个"意图 → 无条件恢复播放（只影响起始态）。
+                let _ = m.command(json!(["set", "pause", "no"])).await;
+                stage("loadfile(reuse)");
+                m
+            }
+            None => {
+                mpv::MpvSession::launch(
+                    app.clone(),
+                    &cfg.mpv_path,
+                    Some(url.clone()),
+                    Some(display_title.clone()),
+                )
+                .await?
+            }
         };
         *slot = Some(s.clone());
-        drop(s);
+        session = s;
     }
     stage("mpv-launched(with-url)");
 
-    // ③ probe 后台跑（不再挡路；失败 emit 给前端）
-    {
-        let app2 = app.clone();
-        tokio::spawn(async move {
-            if let Err(e) = proxy::probe(&direct_url).await {
-                libmpv::trace(&format!("[probe] 直链预检失败: {e}"));
-                let _ = app2.emit(
-                    "mpv-load",
-                    json!({ "phase": "error", "error": format!("直链预检失败：{e}") }),
-                );
-            }
-        });
-    }
-    stage("probe-spawned");
-
-    // [lc-1557] **不再让 probe 挡在 loadfile 前面**。
+    // ③ [lc-1557] probe 只在后台跑，**不挡起播**。
     //
     // probe 会对代理直链发一次真实 GET —— NAS/网络慢时要等 20s（reqwest 超时上限），
     // 期间用户对着 idle 品牌页干等。现在 loadfile 的入口是**本地 m3u8 文件**（秒开），
     // mpv 打开内层直链失败时本就会走 end-file error → 我们已有的错误展示链路，
     // probe 的"提前报错"价值不再值得它挡路。
     //
-    // 改为：loadfile 先发（用户立即看到加载），probe 在后台跑——若它先于 mpv 发现
-    // 代理 500，照样把代理给的明确文案 emit 给前端（两条路谁先到都行）。
-    stage("block-exited");
-    let probe_url = proxy::play_url(&cfg, &play_guid);
-    stage("probe-url-built");
+    // 两条路谁先到都行：probe 若先于 mpv 发现代理 500，照样把代理给的明确文案 emit 给前端。
+    let probe_url = direct_url.clone();
     {
         let app2 = app.clone();
         tokio::spawn(async move {
@@ -579,22 +597,20 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
             }
         });
     }
+    stage("probe-spawned");
 
-    // [lc-1554] **先 loadfile，再清理残留头**（原来清理在前，白等数秒）。
-    //
-    // 实测（[play/stage] 阶段计时 + mpv 日志）：每条 IPC 命令要等 mpv 回包，而 mpv 的
-    // 事件循环在启动/加载期被脚本、滤镜、D3D 设备创建占住 —— 单条 set 实测 2.7~3.5s。
-    // 原来这两条清理排在 loadfile **之前** ⇒ "点播放 → 等 3~7 秒 → 才开始加载"。
-    //
-    // 关键事实：`referrer` / `http-header-fields` 只在**打开 URL 那一刻**被读取，而本次
-    // loadfile 用的是 Go 代理的本地直链（http://127.0.0.1:22346/...），残留的站点 referrer
-    // 对它没有影响。清理的意义是**为下一次播放恢复默认**，放到 loadfile 之后完全等价。
-    // [lc-1558] loadfile 也不等回包（fire-and-forget）—— 实测它同样会卡到秒级。
-    // 成败由事件侧兜底：end-file(reason=error) → 读线程 emit "mpv-end" → 前端弹错。
-    // [lc-085] 不再在播放期禁用窗口模糊（原 lc-081 的 clear_backdrop 是为了救 spawn 时代
-    // 「进播放页整机卡死」；现在视频是进程内 D3D 输出，实测保留主题底更符合预期——
-    // 用户反馈「一播放详情页就变半透明」正是底板被清掉后页面透出桌面所致）。player_stop 里
-    // 的恢复逻辑保留无副作用（重复设置同值）。
+    // [lc-1500] 清理在线资源（webrs_play）写入的站点头，避免污染**后续**播放。
+    // [lc-1554] 这两条放 loadfile **之后**：`referrer` / `http-header-fields` 只在打开 URL
+    // 那一刻被读取，而本次加载的是 Go 代理的本地直链（127.0.0.1:22346），残留站点 referrer
+    // 对它无影响；清理的意义只是"为下一次播放恢复默认"，放后面完全等价。
+    // [lc-1558] 且不等回包（fire-and-forget）：实测 set 同样会卡到秒级；这两条只影响"下一次"
+    // 播放，晚几百毫秒生效无碍，不能拖住本次起播。
+    // [lc-1556] 播放期保留主题底（lc-081 清 backdrop 是为救 spawn 时代「进播放页卡死」，
+    // 现在视频是进程内 D3D 输出，清掉反而让页面透出桌面）；player_stop 里恢复逻辑保留。
+    let _ = session.command(json!(["set", "referrer", ""])).await;
+    let _ = session
+        .command(json!(["set", "http-header-fields", ""]))
+        .await;
 
     Ok(())
 }
@@ -1139,6 +1155,9 @@ pub fn run() {
                 disk_cache::init(root, cfg.cache_limit_mb);
             }
             *app.state::<AppState>().config.blocking_write() = cfg.clone();
+            // [lc-1560] 启动即**预热弹幕 shim**（B站弹幕下载经它，见 danmaku_shim.rs）。
+            // 首次播放时 shim 已在监听，省一次 node 冷启动；失败不影响本地播放。
+            danmaku_shim::spawn_warmup(app.handle().clone());
             // [lc-1552] 启动即**预热 Go 代理**：冷启动 proxy.exe 要 2.5s（实测
             // [play/stage] proxy-ready @3035ms），而它只在首次播放时才被拉起 ⇒
             // 第一次点播放要白等这 2.5s（后续播放代理已驻留，只要 477ms）。
@@ -1363,6 +1382,10 @@ pub fn run() {
                         let _ = tauri::async_runtime::block_on(m.shutdown());
                     }
                     *slot = None;
+                }
+                // [lc-1560] 弹幕 shim 子进程同样收掉（别留孤儿 node）
+                if let Some(mut dc) = st.danmaku_child.blocking_lock().take() {
+                    let _ = dc.kill();
                 }
                 let mut pc = st.proxy_child.blocking_lock();
                 if let Some(c) = pc.as_mut() {

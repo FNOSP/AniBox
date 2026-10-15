@@ -1425,7 +1425,10 @@ fn ensure_beacon() -> Result<u16, String> {
     if let Some(p) = BEACON_PORT.get() {
         return Ok(*p);
     }
-    for port in [22347u16, 22348, 22349] {
+    // [lc-1560] 22347 让给弹幕 shim（uosc_danmaku 的 Lua 硬编码该端口，
+// 见 main.lua / menu.lua / extra.lua 的 127.0.0.1:22347 调用）——嗅探 beacon
+// 从 22348 起找，避免两个本地服务抢同一端口。
+    for port in [22348u16, 22349, 22350] {
         let Ok(listener) = std::net::TcpListener::bind(("127.0.0.1", port)) else {
             continue;
         };
@@ -1621,9 +1624,9 @@ pub async fn webrs_play(
         Some(m) if !m.is_dead().await => m.clone(),
         Some(m) => {
             m.shutdown().await;
-            crate::mpv::MpvSession::launch(app.clone(), &cfg.mpv_path, None).await?
+            crate::mpv::MpvSession::launch(app.clone(), &cfg.mpv_path, None, None).await?
         }
-        None => crate::mpv::MpvSession::launch(app.clone(), &cfg.mpv_path, None).await?,
+        None => crate::mpv::MpvSession::launch(app.clone(), &cfg.mpv_path, None, None).await?,
     };
     *slot = Some(session.clone());
     drop(slot);

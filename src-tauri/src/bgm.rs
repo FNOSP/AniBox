@@ -119,6 +119,18 @@ fn auth_error_hint(body_text: &str) -> String {
     mirror_sign::auth_error_hint(body_text, "FNTV_BGM_SECRET")
 }
 
+/// [lc-1574] 2xx 响应体解码：**空 body 是写操作的正常形态** —— Bangumi 写操作
+/// （如 POST /v0/users/-/collections/{id}，收藏状态回写）成功时返回 2xx + 空 body（202/204），
+/// 镜像对写操作「透传，不缓存」原样转发；旧代码对所有 2xx 无条件 `resp.json()`，
+/// 空 body 直接解码失败 ⇒ 把「写入其实已成功」误报成「响应不是合法 JSON」。
+/// 空 body → Ok(Value::Null)；非空才按 JSON 解析（ep 仅用于错误定位：镜像端点地址 / 「直连」）。
+fn decode_2xx_body(ep: &str, bytes: &[u8]) -> Result<Value, String> {
+    if bytes.is_empty() {
+        return Ok(Value::Null);
+    }
+    serde_json::from_slice::<Value>(bytes).map_err(|e| format!("{ep} 响应不是合法 JSON: {e}"))
+}
+
 /// 镜像请求：多端点自动回退 + 签名 + 12s 超时。返回解析后的 JSON。
 /// **可降级**（缺密钥 / 连接错误 / 超时 / 5xx / 429）→ 直连官方域（免凭证）；
 /// **不降级**：401（bad_signature 等签名错误）与其余 4xx —— 确定性拒绝，原样报错。
@@ -229,20 +241,25 @@ async fn mirror_call_full(
             return Ok(crate::tmdb::MirrorGet::NotModified);
         }
         if (200..300).contains(&status) {
-            // ETag 必须在 body 被取走前读（json() 会消费 resp）
+            // ETag 必须在 body 被取走前读（bytes() 同样会消费 resp）
             let etag = resp
                 .headers()
                 .get("etag")
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string)
                 .filter(|s| !s.is_empty());
-            let v: Value = resp
-                .json()
+            // [lc-1574] 先读字节再解码：decode_2xx_body 容忍空 body（写操作的成功形态）。
+            // 原 `resp.json()` 对空 body 直接解码失败 ⇒ 收藏写入被误报「不是合法 JSON」。
+            let bytes = resp
+                .bytes()
                 .await
-                .map_err(|e| format!("{ep} 响应不是合法 JSON: {e}"))?;
+                .map_err(|e| format!("{ep} 读取响应体失败: {e}"))?;
+            let empty = bytes.is_empty();
+            let v = decode_2xx_body(&ep, &bytes)?;
             crate::libmpv::trace(&format!(
-                "[bgm] {method} {path_with_query} → {ep} {status} cache={cache_hdr} etag={}",
-                etag.as_deref().unwrap_or("-")
+                "[bgm] {method} {path_with_query} → {ep} {status} cache={cache_hdr} etag={}{}",
+                etag.as_deref().unwrap_or("-"),
+                if empty { "（空 body，写操作）" } else { "" }
             ));
             return Ok(crate::tmdb::MirrorGet::Fresh(v, etag));
         }
@@ -313,12 +330,17 @@ async fn direct_call(
             Ok(resp) => {
                 let status = resp.status().as_u16();
                 if (200..300).contains(&status) {
-                    let v: Value = resp
-                        .json()
+                    // [lc-1574] 与镜像侧同款：空 body（写操作 202/204）视为成功（值 = Null），
+                    // 不再无条件 json() —— 降级直连同样会遇到空 body 写操作。
+                    let bytes = resp
+                        .bytes()
                         .await
-                        .map_err(|e| format!("直连响应不是合法 JSON: {e}"))?;
+                        .map_err(|e| format!("直连读取响应体失败: {e}"))?;
+                    let empty = bytes.is_empty();
+                    let v = decode_2xx_body("直连", &bytes)?;
                     crate::libmpv::trace(&format!(
-                        "[bgm] 降级直连成功 {method} {path_with_query} → {base} {status} (attempt {attempt})"
+                        "[bgm] 降级直连成功 {method} {path_with_query} → {base} {status} (attempt {attempt}){}",
+                        if empty { "（空 body，写操作）" } else { "" }
                     ));
                     return Ok(v);
                 }
@@ -905,7 +927,20 @@ fn normalize_calendar(raw: &Value) -> Vec<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::{direct_call, DEFAULT_ENDPOINTS, DIRECT_API, DIRECT_NEXT};
+    use super::{decode_2xx_body, direct_call, DEFAULT_ENDPOINTS, DIRECT_API, DIRECT_NEXT};
+
+    /// [lc-1574] 2xx 空 body 容忍（**不触网**）：钉住三种形态 ——
+    /// 空字节 → Ok(Null)（写操作正常形态）；合法 JSON → Ok；非 JSON → Err（消息含「不是合法 JSON」）。
+    #[test]
+    fn decode_2xx_body_tolerates_empty_write_response() {
+        assert_eq!(decode_2xx_body("ep", b"").unwrap(), serde_json::Value::Null);
+        assert_eq!(
+            decode_2xx_body("ep", br#"{"a":1}"#).unwrap(),
+            serde_json::json!({ "a": 1 })
+        );
+        let e = decode_2xx_body("ep", b"<html>x</html>").unwrap_err();
+        assert!(e.contains("不是合法 JSON"), "应报 JSON 解码失败：{e}");
+    }
 
     /// 静态断言（不触网）：默认路径必须是**镜像**（上游域名只许出现在降级直连常量里）。
     #[test]

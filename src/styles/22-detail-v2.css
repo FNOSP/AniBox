@@ -38,10 +38,13 @@
    改放标签与简介；播放入口挪到海报上（电影没有右栏选集，不能没有播放入口）。
    [lc-1567] 标签/简介已移入「详情」页（OverviewTab），右侧信息框只留播放提示；
    .dv2-itags / .dv2-isum 的样式改由「详情」页复用。 */
+/* [lc-1570] align-items: stretch → flex-start：评分组件加入后信息列可能高于海报，
+   stretch 会再把海报纵向拉长变形（lc-1423 同款坑）—— 两列各自自然高度，谁高容器跟谁。 */
 .dv2-top {
   display: flex;
-  gap: 16px;
-  align-items: stretch;
+  /* [lc-1571] 海报 ↔ 评分组件的间距 16→28（用户：这一块往右移一些） */
+  gap: 28px;
+  align-items: flex-start;
   padding: 14px;
   border-radius: var(--radius);
   background: var(--bg-2);
@@ -101,15 +104,15 @@
   align-items: center;
   justify-content: center;
 }
-/* 右侧信息框：[lc-1567] 标签/简介移入「详情」页后，这里只承载播放提示（.play-note）。 */
+/* 右侧信息框：[lc-1567] 标签/简介移入「详情」页；[lc-1570] 现挂「评分组件」+ 播放提示。
+   overflow:hidden 已移除 —— 评分组件的收藏下拉要从这里伸出来（原用途是旧的固定高简介）。 */
 .dv2-topinfo {
   min-width: 0;
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   min-height: 0;
-  overflow: hidden;   /* [lc-1423] 内容溢出不影响外层容器高度 */
 }
 .dv2-itags {
   display: flex;

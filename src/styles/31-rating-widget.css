@@ -1,0 +1,198 @@
+/* ══════════════════════════════════════════════════════════════════════════════
+   [lc-1570] 详情页「评分组件」（用户设计稿接入）：放送开始 / 评分+星级 / Ranked 排名+复制 /
+   收藏状态同步（下拉）/ 评分透视柱状图。挂在海报右侧空位（.dv2-topinfo）。
+   数据 BGM 优先、TMDB 兜底（见 DetailView 的传参）。
+   ⚠ 全选择器挂 .drw 前缀（原稿的 .label/.bar/.star 等是通用名，防撞车）；
+   深色跟随应用主题 html.dark（原稿的 prefers-color-scheme 换成它，与全站一致）；
+   尺寸整体收紧一档（原稿是 820px 独立卡片，这里要塞进海报右侧）。
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.drw, .drw-drop {
+  --drw-border: #e8ecef;
+  --drw-text-1: #2d3748;
+  --drw-text-2: #8c97a3;
+  --drw-green-dark: #276749;
+  --drw-green-light: #48bb78;
+  --drw-star-1: #f6e05e;
+  --drw-star-2: #f5a623;
+  --drw-star-stroke: #ecc94b;
+  --drw-star-empty: #cbd5e0;
+  --drw-star-shadow: rgba(245, 166, 35, 0.4);
+  --drw-dot-start: #3182ce;
+  --drw-dot-rating: #276749;
+  --drw-dot-rank: #48bb78;
+  --drw-drop-bg: #f4f7eb;
+  --drw-drop-hover: rgba(92, 147, 51, 0.1);
+  --drw-drop-item: #e6ebd8;
+  --drw-drop-shadow: rgba(0, 0, 0, 0.12);
+  --drw-chart-1: #bee3f8;
+  --drw-chart-2: #4299e1;
+  --drw-chart-hover: #2b6cb0;
+  --drw-chart-glow: rgba(66, 153, 225, 0.35);
+  --drw-chart-text: #2b6cb0;
+  --drw-btn-sync-bg: #5c9333; --drw-btn-sync-fg: #ffffff; --drw-btn-sync-sh: rgba(92, 147, 51, 0.3);
+  --drw-btn-0-bg: #718096; --drw-btn-0-fg: #ffffff; --drw-btn-0-sh: rgba(113, 128, 150, 0.3);
+  --drw-btn-3-bg: #5c9333; --drw-btn-3-fg: #ffffff; --drw-btn-3-sh: rgba(92, 147, 51, 0.3);
+  --drw-btn-1-bg: #3182ce; --drw-btn-1-fg: #ffffff; --drw-btn-1-sh: rgba(49, 130, 206, 0.3);
+  --drw-btn-4-bg: #dd6b20; --drw-btn-4-fg: #ffffff; --drw-btn-4-sh: rgba(221, 107, 32, 0.3);
+  --drw-btn-2-bg: #805ad5; --drw-btn-2-fg: #ffffff; --drw-btn-2-sh: rgba(128, 90, 213, 0.3);
+  --drw-btn-5-bg: #e53e3e; --drw-btn-5-fg: #ffffff; --drw-btn-5-sh: rgba(229, 62, 62, 0.3);
+}
+html.dark .drw, html.dark .drw-drop {
+  --drw-border: #2d3748;
+  --drw-text-1: #f7fafc;
+  --drw-text-2: #a0aec0;
+  --drw-green-dark: #68d391;
+  --drw-green-light: #9ae6b4;
+  --drw-star-2: #dd6b20;
+  --drw-star-stroke: #f5a623;
+  --drw-star-empty: #4a5568;
+  --drw-star-shadow: rgba(221, 107, 32, 0.5);
+  --drw-dot-start: #63b3ed;
+  --drw-dot-rating: #68d391;
+  --drw-dot-rank: #9ae6b4;
+  --drw-drop-bg: #2d3748;
+  --drw-drop-hover: rgba(104, 211, 145, 0.15);
+  --drw-drop-item: #3a4a5e;
+  --drw-drop-shadow: rgba(0, 0, 0, 0.4);
+  --drw-chart-1: #2a4365;
+  --drw-chart-2: #3182ce;
+  --drw-chart-hover: #63b3ed;
+  --drw-chart-glow: rgba(99, 179, 237, 0.5);
+  --drw-chart-text: #63b3ed;
+  --drw-btn-sync-bg: #276749; --drw-btn-sync-fg: #68d391; --drw-btn-sync-sh: rgba(0, 0, 0, 0.3);
+  --drw-btn-0-bg: #2d3748; --drw-btn-0-fg: #a0aec0; --drw-btn-0-sh: rgba(0, 0, 0, 0.3);
+  --drw-btn-3-bg: #22543d; --drw-btn-3-fg: #68d391; --drw-btn-3-sh: rgba(0, 0, 0, 0.3);
+  --drw-btn-1-bg: #2a4365; --drw-btn-1-fg: #63b3ed; --drw-btn-1-sh: rgba(0, 0, 0, 0.3);
+  --drw-btn-4-bg: #7b341e; --drw-btn-4-fg: #f6ad55; --drw-btn-4-sh: rgba(0, 0, 0, 0.3);
+  --drw-btn-2-bg: #44337a; --drw-btn-2-fg: #d6bcfa; --drw-btn-2-sh: rgba(0, 0, 0, 0.3);
+  --drw-btn-5-bg: #742a2a; --drw-btn-5-fg: #fc8181; --drw-btn-5-sh: rgba(0, 0, 0, 0.3);
+}
+
+/* 局部 reset（原稿的 * 全局重置收进 .drw 作用域；.drw-drop 是 portal 出去的浮层，单独盖） */
+.drw, .drw *, .drw *::before, .drw *::after,
+.drw-drop, .drw-drop *, .drw-drop *::before, .drw-drop *::after { box-sizing: border-box; margin: 0; padding: 0; }
+.drw ul, .drw-drop { list-style: none; }
+
+.drw { display: flex; justify-content: space-between; align-items: stretch; gap: 14px; width: 100%; min-width: 0; }
+
+/* ── 左列：信息 + 收藏按钮 ── */
+.drw .left-section { display: flex; flex-direction: column; justify-content: space-between; gap: 6px; width: 42%; max-width: 240px; min-width: 150px; flex: 0 0 auto; position: relative; z-index: 10; }
+.drw .info-group { margin-bottom: 6px; }
+.drw .label { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--drw-text-2); font-weight: 500; letter-spacing: 0.4px; margin-bottom: 4px; }
+.drw .label::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--drw-dot, var(--drw-text-2)); box-shadow: 0 0 0 3px var(--drw-dot-halo, transparent); }
+.drw .label-start { --drw-dot: var(--drw-dot-start); --drw-dot-halo: rgba(49, 130, 206, 0.15); }
+.drw .label-rating { --drw-dot: var(--drw-dot-rating); --drw-dot-halo: rgba(39, 103, 73, 0.15); }
+.drw .label-rank { --drw-dot: var(--drw-dot-rank); --drw-dot-halo: rgba(72, 187, 120, 0.15); }
+.drw .value { font-size: 18px; font-weight: 700; color: var(--drw-text-1); line-height: 1.2; }
+.drw .value.rank { color: var(--drw-green-light); }
+
+/* 放送开始（无底色日期） */
+.drw .date-inline { display: inline-flex; align-items: center; gap: 6px; cursor: default; transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); }
+.drw .date-inline:hover { transform: translateX(2px); }
+.drw .calendar-icon { width: 15px; height: 15px; stroke: var(--drw-dot-start); stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.drw .date-inline:hover .calendar-icon { transform: scale(1.2) rotate(-5deg); }
+.drw .date-part { font-size: 19px; font-weight: 800; color: var(--drw-text-1); font-variant-numeric: tabular-nums; line-height: 1; transition: color 0.3s ease; }
+.drw .date-part.year { font-size: 15px; color: var(--drw-text-2); font-weight: 600; }
+.drw .date-part.divider { color: var(--drw-text-2); font-weight: 400; font-size: 13px; opacity: 0.6; margin: 0 2px; }
+.drw .date-inline:hover .date-part.year,
+.drw .date-inline:hover .date-part.divider { color: var(--drw-dot-start); opacity: 1; }
+
+/* 评分 + 星级 */
+.drw .rating-display { display: flex; align-items: center; gap: 9px; }
+.drw .rating-number { font-size: 25px; font-weight: 800; color: var(--drw-green-dark); line-height: 1.1; letter-spacing: -0.5px; text-shadow: 0 4px 12px rgba(89, 158, 70, 0.15); transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); transform-origin: left center; }
+.drw .rating-stars { display: flex; gap: 3px; align-items: center; transform: translateY(2px); transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.drw .star { width: 16px; height: 16px; transform-origin: center center; }
+.drw .star.filled { fill: url(#drwStarGradient); stroke: var(--drw-star-stroke); stroke-width: 1.5; filter: drop-shadow(0 2px 4px var(--drw-star-shadow)); }
+.drw .star.empty { fill: transparent; stroke: var(--drw-star-empty); stroke-width: 1.5; }
+.drw .rating-display:hover .rating-number { transform: scale(1.08); }
+.drw .rating-display:hover .rating-stars { transform: translateY(-1px); }
+.drw .rating-display:hover .star { animation: drwStarPulse 0.6s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.drw .rating-display:hover .star:nth-child(1) { animation-delay: 0s; }
+.drw .rating-display:hover .star:nth-child(2) { animation-delay: 0.07s; }
+.drw .rating-display:hover .star:nth-child(3) { animation-delay: 0.14s; }
+.drw .rating-display:hover .star:nth-child(4) { animation-delay: 0.21s; }
+.drw .rating-display:hover .star:nth-child(5) { animation-delay: 0.28s; }
+
+/* Ranked + 复制 */
+.drw .rank-display { display: inline-flex; align-items: center; gap: 6px; position: relative; }
+.drw .copy-btn { position: relative; display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: none; background: transparent; border-radius: 6px; cursor: pointer; color: var(--drw-text-2); transition: background 0.3s ease, transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1); -webkit-tap-highlight-color: transparent; }
+.drw .copy-btn:hover { background: rgba(72, 187, 120, 0.12); color: var(--drw-green-dark); transform: scale(1.05); }
+.drw .copy-btn:active { transform: scale(0.9); }
+.drw .copy-btn svg { position: absolute; width: 13px; height: 13px; stroke: currentColor; stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.drw .icon-copy { opacity: 1; transform: scale(1) rotate(0deg); }
+.drw .icon-check { opacity: 0; transform: scale(0.5) rotate(-45deg); stroke: var(--drw-green-dark); }
+.drw .copy-btn.copied .icon-copy { opacity: 0; transform: scale(0.5) rotate(45deg); }
+.drw .copy-btn.copied .icon-check { opacity: 1; transform: scale(1.1) rotate(0deg); }
+.drw .copy-btn.copied { background: rgba(72, 187, 120, 0.15); color: var(--drw-green-dark); }
+.drw .copy-tooltip { position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%) translateY(6px) scale(0.95); background: var(--drw-green-dark); color: #fff; padding: 3px 9px; border-radius: 6px; font-size: 11px; font-weight: 600; white-space: nowrap; opacity: 0; pointer-events: none; transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); z-index: 20; }
+.drw .copy-tooltip::after { content: ""; position: absolute; bottom: -4px; left: 50%; transform: translateX(-50%); border-width: 4px 4px 0; border-style: solid; border-color: var(--drw-green-dark) transparent transparent; }
+.drw .copy-tooltip.show { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+
+/* 收藏按钮 + 下拉 */
+.drw .watch-component { position: relative; display: inline-block; margin-top: 4px; }
+.drw .watch-btn { display: flex; align-items: center; justify-content: center; background: var(--drw-btn-sync-bg); color: var(--drw-btn-sync-fg); border: none; border-radius: 20px; padding: 7px 16px; font-size: 12.5px; font-weight: 600; cursor: pointer; min-width: 124px; box-shadow: 0 4px 12px var(--drw-btn-sync-sh), inset 0 1px 0 rgba(255, 255, 255, 0.2); transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); -webkit-tap-highlight-color: transparent; overflow: hidden; }
+.drw .watch-btn[data-status="未追"] { background: var(--drw-btn-0-bg); color: var(--drw-btn-0-fg); box-shadow: 0 4px 12px var(--drw-btn-0-sh), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+.drw .watch-btn[data-status="在看"] { background: var(--drw-btn-3-bg); color: var(--drw-btn-3-fg); box-shadow: 0 4px 12px var(--drw-btn-3-sh), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+.drw .watch-btn[data-status="想看"] { background: var(--drw-btn-1-bg); color: var(--drw-btn-1-fg); box-shadow: 0 4px 12px var(--drw-btn-1-sh), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+.drw .watch-btn[data-status="搁置"] { background: var(--drw-btn-4-bg); color: var(--drw-btn-4-fg); box-shadow: 0 4px 12px var(--drw-btn-4-sh), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+.drw .watch-btn[data-status="看过"] { background: var(--drw-btn-2-bg); color: var(--drw-btn-2-fg); box-shadow: 0 4px 12px var(--drw-btn-2-sh), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+.drw .watch-btn[data-status="抛弃"] { background: var(--drw-btn-5-bg); color: var(--drw-btn-5-fg); box-shadow: 0 4px 12px var(--drw-btn-5-sh), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+.drw .watch-btn:hover { transform: translateY(-2px); filter: brightness(1.1); }
+.drw .watch-component.active .watch-btn { transform: translateY(1px) scale(0.98); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1); filter: brightness(0.95); }
+.drw .watch-btn:disabled { opacity: 0.55; cursor: default; transform: none; filter: none; }
+.drw .btn-content { display: flex; align-items: center; justify-content: center; gap: 8px; transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+.drw .watch-btn.changing .btn-content { opacity: 0; transform: scale(0.8) translateY(4px); }
+.drw .watch-btn .btn-icon { width: 15px; height: 15px; stroke: currentColor; stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.3s ease; }
+.drw .watch-component.active .sync-icon { transform: rotate(180deg); }
+.drw .watch-btn.bounce { animation: drwBtnBounce 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+
+/* [lc-1572] 下拉浮层：portal 到 body + position:fixed —— 避开 .content 内的层叠/合成怪癖
+   （lc-1504 同款坑：浮层与玻璃/滚动层在 WebView2 会画错顺序，曾表现为被标签条半透明穿透）。
+   top/left 由组件按按钮 rect 现算（内联 style）。 */
+.drw-drop { position: fixed; width: 126px; background: var(--drw-drop-bg); border-radius: 12px; box-shadow: 0 12px 32px var(--drw-drop-shadow); padding: 6px 0; z-index: 100; opacity: 0; pointer-events: none; transform: translateY(-15px) scale(0.95); transform-origin: top center; transition: opacity 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1); overflow: hidden; }
+.drw-drop.open { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); }
+.drw-drop li { list-style: none; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 12px; font-size: 13px; color: var(--drw-text-1); cursor: pointer; transition: all 0.2s ease; border-left: 3px solid transparent; opacity: 0; transform: translateY(-8px); }
+.drw-drop li svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.2s ease; }
+.drw-drop.open li { opacity: 1; transform: translateY(0); }
+.drw-drop.open li:nth-child(1) { transition-delay: 0.04s; }
+.drw-drop.open li:nth-child(2) { transition-delay: 0.08s; }
+.drw-drop.open li:nth-child(3) { transition-delay: 0.12s; }
+.drw-drop.open li:nth-child(4) { transition-delay: 0.16s; }
+.drw-drop.open li:nth-child(5) { transition-delay: 0.2s; }
+.drw-drop.open li:nth-child(6) { transition-delay: 0.24s; }
+.drw-drop li:hover { background: var(--drw-drop-item); color: var(--drw-green-dark); }
+.drw-drop li:hover svg { transform: scale(1.15); }
+.drw-drop li.selected { font-weight: 700; background: var(--drw-drop-hover); }
+.drw-drop li[data-value="未追"].selected { color: var(--drw-btn-0-bg); border-left-color: var(--drw-btn-0-bg); }
+.drw-drop li[data-value="在看"].selected { color: var(--drw-btn-3-bg); border-left-color: var(--drw-btn-3-bg); }
+.drw-drop li[data-value="想看"].selected { color: var(--drw-btn-1-bg); border-left-color: var(--drw-btn-1-bg); }
+.drw-drop li[data-value="搁置"].selected { color: var(--drw-btn-4-bg); border-left-color: var(--drw-btn-4-bg); }
+.drw-drop li[data-value="看过"].selected { color: var(--drw-btn-2-bg); border-left-color: var(--drw-btn-2-bg); }
+.drw-drop li[data-value="抛弃"].selected { color: var(--drw-btn-5-bg); border-left-color: var(--drw-btn-5-bg); }
+
+.drw-note { font-size: 11px; color: var(--drw-text-2); line-height: 1.4; }
+
+/* ── 右列：评分透视 ── */
+.drw .right-section { display: flex; flex-direction: column; justify-content: flex-end; flex: 1 1 auto; min-width: 0; position: relative; z-index: 5; }
+.drw .chart-title { align-self: flex-start; margin-left: 10px; font-size: 11px; color: var(--drw-text-2); font-weight: 500; letter-spacing: 0.4px; margin-bottom: 5px; }
+.drw .chart { display: flex; align-items: flex-end; justify-content: space-between; flex: 1; min-height: 128px; gap: 4px; padding-bottom: 3px; border-bottom: 1px solid var(--drw-border); }
+.drw .bar-wrapper { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; flex: 1; cursor: pointer; border-radius: 6px; transition: background 0.3s ease; min-width: 0; }
+.drw .bar-wrapper:hover { background: rgba(128, 128, 128, 0.05); }
+.drw .bar { width: 100%; max-width: 22px; border-radius: 7px 7px 2px 2px; background: linear-gradient(to top, var(--drw-chart-1), var(--drw-chart-2)); transform-origin: bottom; transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); }
+.drw .bar-wrapper:hover .bar { background: linear-gradient(to top, var(--drw-chart-2), var(--drw-chart-hover)); transform: translateY(-3px) scaleY(1.02); box-shadow: 0 6px 16px var(--drw-chart-glow); filter: saturate(1.1); }
+.drw .bar-wrapper:active .bar { transform: translateY(0) scaleY(0.96); filter: brightness(1); transition: all 0.1s ease; }
+.drw .x-label { font-size: 10.5px; color: var(--drw-text-2); margin-top: 6px; font-weight: 500; transition: color 0.3s, transform 0.3s, font-weight 0.2s; }
+.drw .bar-wrapper:hover .x-label { color: var(--drw-chart-text); font-weight: bold; transform: scale(1.1); }
+
+@keyframes drwStarPulse {
+  0% { transform: scale(1); filter: brightness(1); }
+  50% { transform: scale(1.28); filter: brightness(1.35); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+@keyframes drwBtnBounce {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.05); }
+  60% { transform: scale(0.97); }
+  100% { transform: scale(1); }
+}

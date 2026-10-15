@@ -11,6 +11,7 @@ import { CastTab } from "./tabs/CastTab";
 import { ReviewsTab } from "./tabs/ReviewsTab";
 import { CommentsTab } from "./tabs/CommentsTab";
 import { ExtraTab } from "./tabs/ExtraTab";
+import { RatingWidget } from "./RatingWidget";
 import { WebrsPanel } from "../webrs/WebrsPanel";
 import { fmtDur, pick } from "../../lib/format";
 import { bgmImg, imgUrl, pickLargestImg, tmdbImg } from "../../lib/images";
@@ -800,6 +801,20 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
   const bgmTags: BgmTag[] = bgmRawTags.length
     ? bgmRawTags
     : genres.map((g) => ({ name: g }));
+  // [lc-1570] 评分组件数据：BGM 优先（date / rating.rank·total·score·count），TMDB 兜底（airDate / rating·votes）
+  const bgmRating = ((bgmSub as Record<string, unknown> | null)?.rating ?? {}) as Record<string, unknown>;
+  const bgmScore = Number(bgmRating.score ?? 0) || 0;
+  const bgmTotal = Number(bgmRating.total ?? 0) || 0;
+  const bgmRank = Number(bgmRating.rank ?? 0) || 0;
+  const bgmCounts = (bgmRating.count ?? null) as Record<string, number> | null;
+  const tmdbScore = Number((tmdb as Record<string, unknown> | null)?.rating ?? 0) || 0;
+  const tmdbVotes = Number((tmdb as Record<string, unknown> | null)?.votes ?? 0) || 0;
+  const ratingScore = bgmScore > 0 ? bgmScore : tmdbScore > 0 ? tmdbScore : null;
+  const ratingSource: "bgm" | "tmdb" | "none" = bgmScore > 0 ? "bgm" : tmdbScore > 0 ? "tmdb" : "none";
+  const ratingTotal = bgmScore > 0 ? bgmTotal : tmdbVotes;
+  const airDate =
+    String(pick(bgmSub ?? {}, ["date"]) ?? "").trim() || String(pick(tmdb ?? {}, ["airDate"]) ?? "").trim();
+  const ratingSubjectId = bgm?.subject_id ?? base.bgm_id ?? null;
   // [lc-1401] 关联条目按 relation 分组（上游原序即热度序，分组内不重排）
   const relatedGroups: { relation: string; items: BgmRelated[] }[] = (() => {
     const map = new Map<string, BgmRelated[]>();
@@ -918,8 +933,17 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
             </div>
 
             {/* [lc-1567] 标签与简介已移入「详情」页（用户要求：标签→简介→剧照，同一容器、浅线分隔）。
-                这里只留播放提示（.play-note）。 */}
+                [lc-1570] 海报右侧空位挂「评分组件」（用户设计稿接入：放送开始/评分/Ranked/收藏/评分透视）。 */}
             <div className="dv2-topinfo">
+              <RatingWidget
+                subjectId={ratingSubjectId}
+                date={airDate}
+                score={ratingScore}
+                scoreSource={ratingSource}
+                total={ratingTotal}
+                rank={bgmRank > 0 ? bgmRank : null}
+                counts={bgmScore > 0 ? bgmCounts : null}
+              />
               {playNote && <div className="play-note">{playNote}</div>}
             </div>
           </div>

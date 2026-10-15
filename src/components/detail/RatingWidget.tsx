@@ -21,8 +21,11 @@ type Props = {
   rank: number | null;
   /** TMDB 编号（BGM 无排名时的兜底显示；"" = 无） */
   tmdbId: string;
-  /** BGM 评分分布（rating.count：{"1":..,"10":..}；null = 无数据 → 全部画矮柱） */
+  /** 评分分布（BGM rating.count 或 [lc-1576] TMDB histogram 转成的 {"1":..,"10":..}；
+   *  null = 无数据 → 全部画矮柱） */
   counts: Record<string, number> | null;
+  /** 分布来源：bgm / tmdb / none（[lc-1576] tmdb 时图表标题标注「· TMDB」，与「TMDB 编号」同口径） */
+  countsSource: "bgm" | "tmdb" | "none";
 };
 
 /** 收藏状态项（kind 与 BGM type 同号：0=未追（不在收藏）/1 想看 /2 看过 /3 在看 /4 搁置 /5 抛弃）。
@@ -73,7 +76,7 @@ function StatusIcon({ kind }: { kind: number }) {
   );
 }
 
-export function RatingWidget({ subjectId, date, score, scoreSource, total, rank, tmdbId, counts }: Props) {
+export function RatingWidget({ subjectId, date, score, scoreSource, total, rank, tmdbId, counts, countsSource }: Props) {
   // 收藏状态：-1 = 尚未取到（按钮显示「同步状态」+ 刷新图标）
   const [status, setStatus] = useState<number>(-1);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -299,7 +302,8 @@ export function RatingWidget({ subjectId, date, score, scoreSource, total, rank,
         {note && <div className="drw-note">{note}</div>}
       </div>
       <div className="right-section">
-        <div className="chart-title">评分透视</div>
+        {/* [lc-1576] 分布来自 TMDB 时在标题上标注来源（与「TMDB 编号 / TMDB 评分」同一口径） */}
+        <div className="chart-title">{countsSource === "tmdb" ? "评分透视 · TMDB" : "评分透视"}</div>
         <div className="chart">
           {bars.map((v, i) => (
             <div className="bar-wrapper" key={i} title={`${i + 1} 分 · ${v} 人`}>

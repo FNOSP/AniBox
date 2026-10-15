@@ -825,6 +825,43 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
   const airDate =
     String(pick(bgmSub ?? {}, ["date"]) ?? "").trim() || String(pick(tmdb ?? {}, ["airDate"]) ?? "").trim();
   const ratingSubjectId = bgm?.subject_id ?? base.bgm_id ?? null;
+  // [lc-1576] 评分透视兜底：**BGM 没有评分分布（rating.count）时改用 TMDB 的分布**（镜像签名路由
+  //   /rating-details/...；Rust 侧落盘缓存 24h）。转成与 BGM 同形的 {"1":count,...} 供组件直接用；
+  //   拉取失败/空分布保持 null（柱状图照常画空态矮柱）。切换条目（base.guid）时重置。
+  const [tmdbHist, setTmdbHist] = useState<Record<string, number> | null>(null);
+  // 重置只在切换条目时做一次（ref 认 guid，同 [lc-1573] tmdb 段的理由：依赖里的 bgmSub/tmdb
+  // 晚到会重跑本段，每次都清会让已画好的柱形"先清后取"闪一下）。
+  const histGuidRef = useRef("");
+  useEffect(() => {
+    if (histGuidRef.current !== base.guid) {
+      histGuidRef.current = base.guid;
+      setTmdbHist(null);
+    }
+    if (bgmScore > 0 && bgmCounts) return; // BGM 有分布 → 用 BGM 的，不请求
+    if (!tmdbIdStr) return; // 没定位到 TMDB 条目 → 保持空态
+    let alive = true;
+    invoke<{ histogram?: { key?: unknown; count?: unknown }[] }>("tmdb_rating_details", {
+      id: Number(tmdbIdStr),
+      mediaType: base.type === "Movie" ? "movie" : "tv",
+    })
+      .then((r) => {
+        if (!alive) return;
+        const hist = Array.isArray(r?.histogram) ? r.histogram : [];
+        const m: Record<string, number> = {};
+        for (const h of hist) {
+          const k = Number(h?.key);
+          const c = Number(h?.count);
+          if (Number.isInteger(k) && k >= 1 && k <= 10 && Number.isFinite(c)) m[String(k)] = c;
+        }
+        if (Object.keys(m).length) setTmdbHist(m); // 空分布视为无数据，保持空态
+      })
+      .catch(() => {
+        /* 静默：保持空态（柱状图照常画矮柱） */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [base.guid, base.type, bgmScore, bgmCounts, tmdbIdStr]);
   // [lc-1401] 关联条目按 relation 分组（上游原序即热度序，分组内不重排）
   const relatedGroups: { relation: string; items: BgmRelated[] }[] = (() => {
     const map = new Map<string, BgmRelated[]>();
@@ -953,7 +990,8 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
                 total={ratingTotal}
                 rank={bgmRank > 0 ? bgmRank : null}
                 tmdbId={tmdbIdStr}
-                counts={bgmScore > 0 ? bgmCounts : null}
+                counts={bgmScore > 0 && bgmCounts ? bgmCounts : tmdbHist}
+                countsSource={bgmScore > 0 && bgmCounts ? "bgm" : tmdbHist ? "tmdb" : "none"}
               />
               {playNote && <div className="play-note">{playNote}</div>}
             </div>

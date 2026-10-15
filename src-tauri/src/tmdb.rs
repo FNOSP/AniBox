@@ -76,6 +76,9 @@ const THROTTLE_MAX_BACKOFF_MS: u64 = 8_000;
 const CREDITS_TTL_SECS: u64 = 120 * 24 * 3600;
 /// 条目详情（tmdb_show_details）的 TTL，与上面同值、单独命名以便日后分别调整
 const SHOW_TTL_SECS: u64 = 120 * 24 * 3600;
+/// [lc-1576] 评分分布（tmdb_rating_details，镜像 /rating-details 路由）的落盘 TTL：**24 小时**。
+/// 分布数据变化很慢（但比演员表/详情"活"一点——新评分每天都在涨），24h 是平衡点。
+const RATING_TTL_SECS: u64 = 24 * 3600;
 
 /// [lc-123-rev5] 发现页落盘缓存 TTL（用户反馈"刷得太频繁，想要"检测新增才刷新"）：
 ///   · 当季 12 小时 / 即将播出 24 小时 —— 这类榜单一天最多变一两次，镜像侧还有自己的边缘缓存；
@@ -439,17 +442,28 @@ async fn direct_get(path_with_query: &str, key: &str) -> Result<Value, String> {
     Err(format!("直连 TMDB 失败（{DIRECT_MAX_ATTEMPTS} 次尝试后）：{last_err}"))
 }
 
-/// 取数主入口：先镜像；
-///   · **镜像短时限流（429 throttled）→ 指数退避重试**（最多 THROTTLE_MAX_ATTEMPTS 次；
-///     这是*我们自己的*镜像闸门，不是上游限流，直接降级反而多打自己的配额）；
-///   · 其余 Degradable（上游 429 RATE_LIMIT / 不可达 / 镜像故障）且有用户 key → 降级直连并打日志；
-///   · 没有 key → 返回合并错误（提示可配自己的 key 或稍后重试）。
-/// 退避重试耗尽后仍走降级（有 key 直连、无 key 报错）——只是不再"一撞就降"。
+/// 取数主入口（**/3/* 常规路径**）：镜像 + 短时限流退避重试 + 降级直连（骨架见 mirror_with_retry）。
 /// [lc-123-rev5] `if_none_match` 有值时走**条件请求**（镜像可能回 304，交给调用方决定"不动内容"）。
 /// 降级直连那条路径不带条件头（官方域是否支持 ETag 不确定）→ 结果按 Fresh(_, None) 处理。
 async fn get_json_cond(
     path_with_query: &str,
     if_none_match: Option<&str>,
+) -> Result<MirrorGet, String> {
+    mirror_with_retry(path_with_query, if_none_match, true).await
+}
+
+/// [lc-1576] 镜像取数公共骨架（get_json_cond / get_json_mirror_only 共用，**避免两处退避逻辑漂移**）：
+///   · **镜像短时限流（429 throttled）→ 指数退避重试**（最多 THROTTLE_MAX_ATTEMPTS 次；
+///     这是*我们自己的*镜像闸门，不是上游限流，直接降级反而多打自己的配额）；
+///   · 其余 Degradable（上游 429 RATE_LIMIT / 不可达 / 镜像故障）：
+///     `degrade_direct=true`  → 有用户 key 就降级直连并打日志、没有 key 返回合并错误（/3/* 路径）；
+///     `degrade_direct=false` → **原样报错**（镜像专属路由：上游没有这条路径，降级只会多打一次
+///                              必然 404 的请求、还会把错误信息带偏）。
+/// 退避重试耗尽后仍走同一判定 —— 只是不再"一撞就降"。
+async fn mirror_with_retry(
+    path_with_query: &str,
+    if_none_match: Option<&str>,
+    degrade_direct: bool,
 ) -> Result<MirrorGet, String> {
     let mut throttle_cause = String::new();
     for attempt in 1..=THROTTLE_MAX_ATTEMPTS {
@@ -463,7 +477,7 @@ async fn get_json_cond(
                 } else {
                     (THROTTLE_BASE_BACKOFF_MS << (attempt - 1)).min(THROTTLE_MAX_BACKOFF_MS)
                 };
-                throttle_cause = msg.clone();
+                throttle_cause = msg;
                 if attempt == THROTTLE_MAX_ATTEMPTS {
                     break; // 退避用尽 → 落到下方的降级判定
                 }
@@ -475,24 +489,38 @@ async fn get_json_cond(
             }
             // 降级直连不带条件头（官方域支持与否不确定）→ 结果按 Fresh(_, None) 收下
             Err(FetchError::Degradable(cause)) => {
+                if !degrade_direct {
+                    return Err(cause);
+                }
                 return degrade_or_err(path_with_query, cause)
                     .await
-                    .map(|v| MirrorGet::Fresh(v, None))
+                    .map(|v| MirrorGet::Fresh(v, None));
             }
         }
     }
-    // 重试到上限仍被我们自己限流：这时才降级（有 key 直连，无 key 报错并说明退避次数）
-    degrade_or_err(
-        path_with_query,
-        format!("{throttle_cause}（已退避重试 {THROTTLE_MAX_ATTEMPTS} 次）"),
-    )
-    .await
-    .map(|v| MirrorGet::Fresh(v, None))
+    // 重试到上限仍被我们自己限流：这时才走降级判定（有 key 直连，无 key 报错并说明退避次数）
+    let cause = format!("{throttle_cause}（已退避重试 {THROTTLE_MAX_ATTEMPTS} 次）");
+    if degrade_direct {
+        degrade_or_err(path_with_query, cause)
+            .await
+            .map(|v| MirrorGet::Fresh(v, None))
+    } else {
+        Err(cause)
+    }
 }
 
 /// 无条件 GET（原有调用点用这个）：把 get_json_cond 的 Fresh 拆出来。
 async fn get_json(path_with_query: &str) -> Result<Value, String> {
     match get_json_cond(path_with_query, None).await? {
+        MirrorGet::Fresh(v, _) => Ok(v),
+        MirrorGet::NotModified => Err("未带条件头却收到 304（不应发生）".to_string()),
+    }
+}
+
+/// [lc-1576] 镜像**专属路由**（上游官方 API 没有的路径，如 `/rating-details/...`）取数：
+/// 与 get_json 同套（签名 + 多端点回退 + 429 分类 + throttled 退避重试），但**不做降级直连**。
+async fn get_json_mirror_only(path_with_query: &str) -> Result<Value, String> {
+    match mirror_with_retry(path_with_query, None, false).await? {
         MirrorGet::Fresh(v, _) => Ok(v),
         MirrorGet::NotModified => Err("未带条件头却收到 304（不应发生）".to_string()),
     }
@@ -1373,6 +1401,33 @@ pub async fn tmdb_credits(arg: Value) -> Result<Value, String> {
         payload.get("cast").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0)
     ));
     Ok(payload)
+}
+
+/// [lc-1576] 评分分布（详情页「评分透视」柱状图）：**BGM 没有 rating.count 时由前端改用它兜底**。
+/// 走镜像**新增的签名路由** `GET /rating-details/{movie|tv}/{id}`（上游官方 API 没有这条路径；
+/// 与 /3/* 同套准入签名——签名的 path 取自解析后的 URL，与实际请求逐字节一致，见 mirror_get_full）。
+/// 返回**原样透传**：`{"histogram":[{"key":1,"count":89},...]}`（1~10 分分布；转 {"1":..,"10":..}
+/// 与裁无效项都由前端做）。落盘缓存 24h（参考 tmdb_credits 的写法）：分布一天最多动一两次，
+/// 详情页来回切换/重进不该重复打镜像。
+#[tauri::command]
+pub async fn tmdb_rating_details(id: i64, media_type: String) -> Result<Value, String> {
+    let mt = match media_type.trim() {
+        "movie" => "movie",
+        "tv" => "tv",
+        other => return Err(format!("media_type 只支持 movie/tv：{other}")),
+    };
+    if id <= 0 {
+        return Err(format!("id 非法：{id}"));
+    }
+    let key = format!("json:rating:{mt}:{id}");
+    if let Some(v) = disk_cache::json_get(&key, RATING_TTL_SECS) {
+        crate::libmpv::trace(&format!("[tmdb] rating_details 命中缓存 {key}"));
+        return Ok(v);
+    }
+    let v = get_json_mirror_only(&format!("/rating-details/{mt}/{id}")).await?;
+    disk_cache::json_put(&key, &v);
+    crate::libmpv::trace(&format!("[tmdb] rating_details {mt}/{id} 已拉取并落盘 {key}"));
+    Ok(v)
 }
 
 /// [lc-123] 发现页左栏取数：`/3/discover/{tv|movie}` 一条命令带三种口味（**参数**决定，不做三条命令：

@@ -371,7 +371,7 @@ async fn resolve_play_guid(
     state: &AppState,
     cfg: &mut Config,
     guid: &str,
-) -> Result<(String, String), String> {
+) -> Result<(String, String, String), String> {
     let client = fnapi::new_client();
     let body = || json!({ "item_guid": guid });
     let mut probe = client
@@ -399,13 +399,42 @@ async fn resolve_play_guid(
                     g = x.to_string();
                 }
             }
-            libmpv::trace(&format!("[play/info] ok type={t} 原始={guid} → 拉流用={g}"));
+            // [lc-1556] 提取标题（供 mpv 的 force-media-title）：uosc_danmaku 靠
+            // media-title 解析番名/集数来走「自建源 → B站 → 弹弹play」的加载链，
+            // 没有标题时脚本会直接跳过自动匹配（用户看到的"变成兜底弹弹play"）。
+            // 标题拼法对齐主仓库 mpv.ts getTitle()：`剧名 - S1E5: 集名`（电影只有集名）。
+            let it = info.get("item").cloned().unwrap_or_else(|| json!({}));
+            let get_s = |k: &str| {
+                it.get(k)
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            };
+            let get_n = |k: &str| {
+                it.get(k)
+                    .and_then(|v| v.as_i64())
+                    .or_else(|| it.get(k).and_then(|v| v.as_f64()).map(|f| f as i64))
+                    .unwrap_or(0)
+            };
+            let ep_title = get_s("title").unwrap_or_else(|| get_s("name").unwrap_or_default());
+            let tv_title = get_s("tv_title");
+            let season = get_n("season_number");
+            let episode = get_n("episode_number");
+            let media_title = match tv_title {
+                Some(tv) if !tv.is_empty() => {
+                    format!("{tv} - S{season}E{episode}: {ep_title}")
+                }
+                _ => ep_title.clone(),
+            };
+            libmpv::trace(&format!(
+                "[play/info] ok type={t} 原始={guid} → 拉流用={g} 标题={media_title:?}"
+            ));
             if matches!(t, "TV" | "Season" | "Collection" | "Directory" | "Folder") {
                 return Err(format!(
                     "「{t}」没有可播放的具体媒体 —— 请在选集里点具体一集再播放"
                 ));
             }
-            Ok((g, t.to_string()))
+            Ok((g, t.to_string(), media_title))
         }
         Err(e) => {
             libmpv::trace(&format!("[play/info] 失败: {e}"));
@@ -430,7 +459,7 @@ async fn player_source(
         return Err("未登录".into());
     }
     proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
-    let (play_guid, t) = resolve_play_guid(&app, &state, &mut cfg, &guid).await?;
+    let (play_guid, t, _title) = resolve_play_guid(&app, &state, &mut cfg, &guid).await?;
     Ok(json!({
         "url": proxy::play_url(&cfg, &play_guid),
         "guid": play_guid,
@@ -463,46 +492,92 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
         libmpv::trace(&format!("[play/stage] {name} @ {}ms", t_play.elapsed().as_millis()));
     };
 
-    // ① 先保证有一个活着的 mpv 会话（窗口立刻出现）
-    let url;
-    let probe_result;
-    let session;
-    let freshly_launched;
+    // ① [lc-1559] **先解析，再启动 mpv（URL 直接放进命令行）**——起播零 IPC 依赖。
+    //
+    // 为什么不再"先起窗口再 loadfile"：实测（stage 日志）mpv 启动/加载头几秒内
+    // 事件循环被脚本、滤镜、D3D 初始化占住，**任何经 IPC 发送的命令都会卡到秒级**
+    // （loadfile/no-reply 写管道也会阻塞）——这是 mpv --input-ipc-server 的固有行为，
+    // 不是我们锁的问题（换 spawn_blocking 也一样卡）。
+    //
+    // 原项目（主仓库 mpv.ts）本来就是**先拼好 M3U8 播放列表、再把文件路径交给 mpv
+    // 启动参数**——mpv 一启动就开始播，全程不依赖 IPC。本仓库 lc-106 改独立窗口时
+    // 引入了"先 idle 启动 + IPC loadfile"的形态，正是本次一系列起播卡顿的根源。
+    //
+    // 现在回归主仓库形态：
+    //   解析 guid（飞牛 API）→ 写单条目 M3U8（#EXTINF 标题 → media-title → 弹幕链）
+    //   → mpv 命令行直接带该 M3U8 ⇒ 窗口出现即开始加载，无 idle 空窗。
+    let (play_guid, _t, media_title) = resolve_play_guid(&app, &state, &mut cfg, &guid).await?;
+    stage("guid-resolved");
+    proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
+    stage("proxy-ready");
+    let direct_url = proxy::play_url(&cfg, &play_guid);
+
+    let display_title: String = media_title
+        .replace(['\u{300E}', '\u{300F}', '\u{300C}', '\u{300D}', '\u{3010}', '\u{3011}', '\u{3014}', '\u{3015}', '\u{300A}', '\u{300B}', '\u{3008}', '\u{3009}', '\u{201C}', '\u{201D}', '\u{0027}', '\u{2019}'], "")
+        .trim()
+        .to_string();
+
+    // 单条目 M3U8（#EXTINF 标题 → mpv 的 media-title → uosc_danmaku 解析番名/集数）
+    let m3u8_path = std::env::temp_dir().join("anibox-play.m3u8");
+    let m3u8 = format!("#EXTM3U\n#EXTINF:-1,{}\n{}\n", display_title, direct_url);
+    std::fs::write(&m3u8_path, m3u8).map_err(|e| format!("写播放列表失败: {e}"))?;
+    let url = m3u8_path.to_string_lossy().to_string();
+    stage("m3u8-written");
+
+    // ② 拉起 mpv（命令行带 M3U8 → 启动即加载，无 idle 空窗、无 IPC 起播）
     {
         let mut slot = state.mpv.lock().await;
-        let (s, fresh) = match slot.as_ref() {
-            Some(m) if !m.is_dead().await => (m.clone(), false),
+        let s = match slot.as_ref() {
+            Some(m) if !m.is_dead().await => m.clone(),
             Some(m) => {
                 m.shutdown().await;
-                (mpv::MpvSession::launch(app.clone(), &cfg.mpv_path).await?, true)
+                mpv::MpvSession::launch(app.clone(), &cfg.mpv_path, Some(url.clone())).await?
             }
-            None => (mpv::MpvSession::launch(app.clone(), &cfg.mpv_path).await?, true),
+            None => mpv::MpvSession::launch(app.clone(), &cfg.mpv_path, Some(url.clone())).await?,
         };
         *slot = Some(s.clone());
-        drop(slot);
-        stage("mpv-launched");
-
-        // ② 网络准备：解析 guid（飞牛 API）+ 确保 Go 代理在跑
-        let (play_guid, _t) = resolve_play_guid(&app, &state, &mut cfg, &guid).await?;
-        stage("guid-resolved");
-        proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
-        stage("proxy-ready");
-        url = proxy::play_url(&cfg, &play_guid);
-
-        // ③ 直链预检（同样在 mpv 起来之后；失败回滚）
-        probe_result = proxy::probe(&url).await;
-        stage("probe-done");
-        session = s;
-        freshly_launched = fresh;
+        drop(s);
     }
+    stage("mpv-launched(with-url)");
 
-    if let Err(e) = probe_result {
-        libmpv::trace(&format!("[probe] 直链预检失败: {e}"));
-        if freshly_launched {
-            let _ = session.shutdown().await;
-            *state.mpv.lock().await = None;
-        }
-        return Err(e);
+    // ③ probe 后台跑（不再挡路；失败 emit 给前端）
+    {
+        let app2 = app.clone();
+        tokio::spawn(async move {
+            if let Err(e) = proxy::probe(&direct_url).await {
+                libmpv::trace(&format!("[probe] 直链预检失败: {e}"));
+                let _ = app2.emit(
+                    "mpv-load",
+                    json!({ "phase": "error", "error": format!("直链预检失败：{e}") }),
+                );
+            }
+        });
+    }
+    stage("probe-spawned");
+
+    // [lc-1557] **不再让 probe 挡在 loadfile 前面**。
+    //
+    // probe 会对代理直链发一次真实 GET —— NAS/网络慢时要等 20s（reqwest 超时上限），
+    // 期间用户对着 idle 品牌页干等。现在 loadfile 的入口是**本地 m3u8 文件**（秒开），
+    // mpv 打开内层直链失败时本就会走 end-file error → 我们已有的错误展示链路，
+    // probe 的"提前报错"价值不再值得它挡路。
+    //
+    // 改为：loadfile 先发（用户立即看到加载），probe 在后台跑——若它先于 mpv 发现
+    // 代理 500，照样把代理给的明确文案 emit 给前端（两条路谁先到都行）。
+    stage("block-exited");
+    let probe_url = proxy::play_url(&cfg, &play_guid);
+    stage("probe-url-built");
+    {
+        let app2 = app.clone();
+        tokio::spawn(async move {
+            if let Err(e) = proxy::probe(&probe_url).await {
+                libmpv::trace(&format!("[probe] 直链预检失败: {e}"));
+                let _ = app2.emit(
+                    "mpv-load",
+                    json!({ "phase": "error", "error": format!("直链预检失败：{e}") }),
+                );
+            }
+        });
     }
 
     // [lc-1554] **先 loadfile，再清理残留头**（原来清理在前，白等数秒）。
@@ -514,25 +589,8 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     // 关键事实：`referrer` / `http-header-fields` 只在**打开 URL 那一刻**被读取，而本次
     // loadfile 用的是 Go 代理的本地直链（http://127.0.0.1:22346/...），残留的站点 referrer
     // 对它没有影响。清理的意义是**为下一次播放恢复默认**，放到 loadfile 之后完全等价。
-    let r3 = session.command(json!(["loadfile", url, "replace"])).await;
-    stage(&format!("loadfile: {:?}", r3.as_ref().map(|_| "ok").map_err(|e| e.as_str())));
-    r3?;
-
-    // [lc-1500] 清理在线资源（webrs_play）写入的站点头，避免污染**后续**播放。
-    let _ = session.command(json!(["set", "referrer", ""])).await;
-    let _ = session.command(json!(["set", "http-header-fields", ""])).await;
-
-    // [lc-1555] 加载后**强制进入播放态**。
-    //
-    // 背景（日志实证）：mpv 窗口现在 ~400ms 就出现（lc-1552 提速），而 loadfile 要等
-    // 网络准备好才发。这段空窗里 mpv 显示 idle 品牌页，用户会以为"卡住了"、**提前点画面**
-    // —— 左键绑定是 `cycle pause`（input.conf），这一下把 pause 置 1；随后 loadfile 到位，
-    // mpv 就带着暂停态开始 ⇒ 表现为「必须再点一下才真正播放」。
-    //
-    // 这里在 loadfile 之后无条件 set pause=no：本次调用是用户明确的"播这个"意图，
-    // 空窗期的误触不该决定最终状态。只影响本次播放的起始态，用户随后手动暂停不受干扰。
-    let _ = session.command(json!(["set", "pause", "no"])).await;
-
+    // [lc-1558] loadfile 也不等回包（fire-and-forget）—— 实测它同样会卡到秒级。
+    // 成败由事件侧兜底：end-file(reason=error) → 读线程 emit "mpv-end" → 前端弹错。
     // [lc-085] 不再在播放期禁用窗口模糊（原 lc-081 的 clear_backdrop 是为了救 spawn 时代
     // 「进播放页整机卡死」；现在视频是进程内 D3D 输出，实测保留主题底更符合预期——
     // 用户反馈「一播放详情页就变半透明」正是底板被清掉后页面透出桌面所致）。player_stop 里

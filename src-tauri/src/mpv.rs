@@ -56,7 +56,11 @@ fn pipe_path(name: &str) -> String {
 
 impl MpvSession {
     /// 拉起独立 mpv 进程并连上 IPC（幂等：实例常驻，播放/停止只切播放状态）
-    pub async fn launch(app: AppHandle, mpv_path: &str) -> Result<Arc<MpvSession>, String> {
+    pub async fn launch(
+        app: AppHandle,
+        mpv_path: &str,
+        initial_url: Option<String>,
+    ) -> Result<Arc<MpvSession>, String> {
         let name = format!("anibox-mpv-{}", std::process::id());
         let path = pipe_path(&name);
         crate::libmpv::trace_reset(&format!("launch(mpv.exe) pid={}", std::process::id()));
@@ -85,6 +89,15 @@ impl MpvSession {
             "--window-dragging=no".to_string(),
             format!("--log-file={}", log_path.to_string_lossy()),
         ];
+        // [lc-1559] 启动即加载（可选）：命令行直接带 M3U8/URL ⇒ 无 idle 空窗，
+        // 不依赖 IPC（启动头几秒 IPC 命令会卡，见 lib.rs lc-1559 注释）。
+        let args = if let Some(u) = initial_url {
+            let mut a = args.to_vec();
+            a.push(u);
+            a
+        } else {
+            args.to_vec()
+        };
         let mut command = tokio::process::Command::new(mpv_path);
         command
             .args(&args)
@@ -278,6 +291,31 @@ impl MpvSession {
         }
 
         Ok(session)
+    }
+
+    /// [lc-1558] 发一条命令但**不等回包**（fire-and-forget）。
+    ///
+    /// 实测：mpv 启动/加载期事件循环被脚本、滤镜、D3D 初始化占住，等回包的命令
+    /// 会卡数秒（单条 set 实测 2.7~3.5s，连 loadfile 也一样）。播放链路里那些
+    /// "发了就完事"的命令（loadfile 本体、清理 referrer/header、set pause、
+    /// set force-media-title）用这个发送 —— 成败由事件侧兜底（end-file error → mpv-end）。
+    pub async fn command_no_reply(&self, cmd: Value) {
+        let rid = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let line = json!({ "command": cmd, "request_id": rid }).to_string() + "
+";
+        let tx = Arc::clone(&self.tx);
+        // [lc-1558] 写管道放**阻塞线程**（spawn_blocking）：mpv 启动/加载期事件循环被占、
+        // 可能暂时不读管道 ⇒ 同步写在 async 上下文里会把 executor 线程一起拖住。
+        // 交给 blocking 池后：最多占一个池线程，executor 与其它命令完全不受影响；
+        // mpv 一腾出手就会读走数据，write 自然完成。
+        let _ = tokio::task::spawn_blocking(move || {
+            let mut guard = tx.lock().unwrap();
+            if let Some(f) = guard.as_mut() {
+                let _ = f.write_all(line.as_bytes());
+                let _ = f.flush();
+            }
+        })
+        .await;
     }
 
     /// 发一条命令（JSON 数组）并等回包（5s 超时）

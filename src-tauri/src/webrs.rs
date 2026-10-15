@@ -1621,9 +1621,9 @@ pub async fn webrs_play(
         Some(m) if !m.is_dead().await => m.clone(),
         Some(m) => {
             m.shutdown().await;
-            crate::mpv::MpvSession::launch(app.clone(), &cfg.mpv_path).await?
+            crate::mpv::MpvSession::launch(app.clone(), &cfg.mpv_path, None).await?
         }
-        None => crate::mpv::MpvSession::launch(app.clone(), &cfg.mpv_path).await?,
+        None => crate::mpv::MpvSession::launch(app.clone(), &cfg.mpv_path, None).await?,
     };
     *slot = Some(session.clone());
     drop(slot);

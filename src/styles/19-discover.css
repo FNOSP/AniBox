@@ -847,3 +847,1239 @@ html.dark .ditem-tag {
   color: var(--text-strong);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════════
+   [lc-1577] 发现页左栏 TMDB 面板 —— 按用户设计稿（`媒体库_动画版.html`）重做的新一节。
+   · 全部类名带 `dlib-` 前缀（根容器 `dlib-pane`），keyframes 同样带前缀 —— 本项目出过
+     `.dmore` 撞名事故（新按钮类名撞上详情页容器，用户看到莫名的大椭圆），所以新类名一律加前缀。
+   · 颜色全部走主题变量（设计稿的白色底/浅灰渐变**不照抄** —— 那会破深色主题）；
+     只有"压在图片上"的角标（海报网格的徽章/评分）用固定深色底，与既有 .dpc-rate 同一套做法。
+   · 面板要塞进**半宽左栏**：所有行都 flex-wrap + min-width:0 + ellipsis，绝不允许横向溢出。
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/* 根类名用 `dlib-pane`（**刻意不叫 `dlib`**）：仓库里已有一条 `.dlib`（BgmCalRow 的「已在库」徽章：
+   11px 字号 + 绿底 + 绿字 + 1px 7px 内边距 + 圆角，`html.dark .dlib` 还会改色）——同名会互相串味
+   （本项目踩过 `.dmore` 撞名的坑：详情页容器套上胶囊样式，用户看到莫名的大椭圆）。改叫 `dlib-pane`
+   后两边彻底无关，不需要任何元素限定或属性复位。 */
+.dlib-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  font-size: 14px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  animation: dlibPageIn 0.5s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+}
+
+html.dark .dlib-pane {
+  color: var(--text);
+}
+
+/* ── 栏头：两行（① 品牌+概览+搜索 ② 标签+视图+排序）。.dpane-hd 已给 56px 顶部让位，这里只改布局 ── */
+.dpane-hd.dlib-hd {
+  flex-direction: column;
+  align-items: stretch;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  gap: 9px;
+}
+
+.dlib-row1 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.dlib-row2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* TMDB 品牌胶囊（官方青绿渐变 —— 品牌色，深浅主题下都成立） */
+.dlib-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #01b4e4, #90cea1);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  flex-shrink: 0;
+}
+
+/* 概览标题（照设计稿：当季新剧（周三）—— 大号加粗 + 弱化括号说明） */
+.dlib-ovtag {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text-strong);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.dlib-paren {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* 概览（共 N 部作品 / 平均分 / 最高分 / 更新于） */
+.dlib-ov {
+  flex: 1 1 200px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.dlib-ov-i {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dlib-ov-k {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.dlib-ov-v {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: var(--text-strong);
+  letter-spacing: -0.2px;
+}
+
+.dlib-ov-v.accent {
+  font-size: 15px;
+  color: var(--accent);
+}
+
+.dlib-ov-v.orange {
+  font-size: 15px;
+  color: #a97b12;
+}
+
+.dlib-ov-v.green {
+  font-size: 15px;
+  color: #1f9d63;
+}
+
+html.dark .dlib-ov-v.orange {
+  color: #ffd479;
+}
+
+html.dark .dlib-ov-v.green {
+  color: #3ddc97;
+}
+
+/* 搜索框（玻璃胶囊；窄栏下整体换行，宽度自适应） */
+.dlib-search {
+  flex: 1 1 170px;
+  min-width: 0;
+  max-width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 11px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(14px);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.dlib-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(108, 155, 255, 0.18);
+}
+
+.dlib-search-ico {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+/* 聚焦时图标转一圈（设计稿的 searchSpin） */
+.dlib-search:focus-within .dlib-search-ico {
+  animation: dlibSearchSpin 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.dlib-search-in {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  outline: none;
+  color: var(--text);
+  font-size: 12.5px;
+  font-family: inherit;
+}
+
+.dlib-search-in::placeholder {
+  color: var(--muted);
+}
+
+.dlib-search-x {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--hover);
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.16s, color 0.16s;
+}
+
+.dlib-search-x:hover {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+
+/* ── 第二行：主/子标签（同一玻璃胶囊，中间竖分隔） ── */
+.dlib-tabs {
+  flex: 1 1 250px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(14px);
+}
+
+.dlib-tgroup {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  /* 窄栏下宁可换行，也不把「即将播出」压成「即将…」 */
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.dlib-tdiv {
+  flex-shrink: 0;
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--line);
+}
+
+.dlib-tab {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 700;
+  font-family: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.dlib-tab > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dlib-tab > svg {
+  flex-shrink: 0;
+}
+
+.dlib-tab:hover {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+
+.dlib-tab.on {
+  background: var(--accent-grad);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(108, 155, 255, 0.3);
+  animation: dlibTabPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 视图切换 / 排序切换（两个独立玻璃胶囊） */
+.dlib-switch {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(14px);
+}
+
+.dlib-vbtn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.dlib-vbtn:hover {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+
+.dlib-vbtn.on {
+  background: var(--accent-grad);
+  color: #fff;
+  box-shadow: 0 3px 10px rgba(108, 155, 255, 0.3);
+  animation: dlibPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 排序胶囊：文字按钮自带 6px 纵向内边距，比视图圆钮（28px）高一点 ——
+   容器内边距从 4px 收到 3px，让两个胶囊与标签栏视觉等高。 */
+.dlib-sort {
+  padding: 3px 4px;
+}
+
+.dlib-sbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 700;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.dlib-sbtn:hover {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+
+.dlib-sbtn.on {
+  background: var(--accent-grad);
+  color: #fff;
+  box-shadow: 0 3px 10px rgba(108, 155, 255, 0.3);
+  animation: dlibPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 滚动容器沿用 .dscroll（已 overflow-x: hidden ⇒ 横向绝不溢出），这里只补一点内边距细节。
+   注：`.dlib-content` 是「内容切换时换 key 重挂载」的边界容器，本身不需要任何样式 ——
+   入场动画挂在具体条目上（见下面 .dlib-row / .dlib-gcard / .dlib-lrow），换 key 即重播。 */
+.dscroll.dlib-scroll {
+  padding: 0 20px 28px;
+}
+
+/* 搜索结果**没有独立的结果条**：搜索态由栏头概览标题显示「搜索结果（N 条）」（唯一说明处），
+   退出搜索 = 清空搜索框（输入清空会自动回列表，见 TmdbPane 的 onChange）或点框内 ×。 */
+
+/* ── 时间线视图 ── */
+.dlib-tl {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.dlib-grp {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 组头依次入场（内容切换时重挂载 ⇒ 重播） */
+.dlib-tl > .dlib-grp {
+  animation: dlibEnter 0.5s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+}
+
+.dlib-ghd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 11px;
+  padding-bottom: 9px;
+  border-bottom: 1px dashed var(--line);
+}
+
+.dlib-gpill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--accent-grad);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(108, 155, 255, 0.25);
+}
+
+.dlib-gpill > svg {
+  flex-shrink: 0;
+}
+
+.dlib-gcnt {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.dlib-rows {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+/* 时间轴竖线：左 50px = 日期列(40) + 圆点列(22) 的中心 */
+.dlib-line {
+  position: absolute;
+  left: 50px;
+  top: 14px;
+  bottom: 14px;
+  width: 2px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    var(--line-strong) 6%,
+    var(--line-strong) 94%,
+    transparent 100%
+  );
+}
+
+.dlib-row {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 40px 22px minmax(0, 1fr);
+  align-items: stretch;
+  min-width: 0;
+  animation: dlibRowIn 0.42s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+}
+
+.dlib-date {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  padding-right: 6px;
+}
+
+.dlib-day {
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--text-strong);
+}
+
+.dlib-wd {
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* 排行榜模式：行首 #1/#2/#3…（前三名配色不同） */
+.dlib-rank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-right: 3px;
+  font-size: 16px;
+  font-weight: 900;
+  font-style: italic;
+  color: var(--muted);
+}
+
+.dlib-rank.r1 {
+  color: #d99a10;
+}
+
+.dlib-rank.r2 {
+  color: #7c8899;
+}
+
+.dlib-rank.r3 {
+  color: #b4653a;
+}
+
+html.dark .dlib-rank.r1 {
+  color: #ffd479;
+}
+
+html.dark .dlib-rank.r2 {
+  color: #c3ccda;
+}
+
+html.dark .dlib-rank.r3 {
+  color: #e8a06a;
+}
+
+.dlib-dotcol {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dlib-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--bg-3);
+  border: 3px solid var(--accent);
+  box-shadow: 0 0 0 4px rgba(108, 155, 255, 0.13);
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.dlib-row:hover .dlib-dot {
+  transform: scale(1.25);
+  box-shadow: 0 0 0 6px rgba(108, 155, 255, 0.18);
+}
+
+.dlib-row.rm1 .dlib-dot {
+  border-color: #d99a10;
+  box-shadow: 0 0 0 4px rgba(217, 154, 16, 0.18);
+}
+
+.dlib-row.rm2 .dlib-dot {
+  border-color: #7c8899;
+  box-shadow: 0 0 0 4px rgba(124, 136, 153, 0.18);
+}
+
+.dlib-row.rm3 .dlib-dot {
+  border-color: #b4653a;
+  box-shadow: 0 0 0 4px rgba(180, 101, 58, 0.18);
+}
+
+/* 时间线首行的圆点持续脉冲（设计稿 dotPulse） */
+.dlib-rows > .dlib-row:first-of-type .dlib-dot {
+  animation: dlibDotPulse 2.5s ease-in-out infinite;
+}
+
+/* 时间线里的横卡：海报 | 信息列 | 大号评分 */
+.dlib-card {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr) auto;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px 10px 10px;
+  border-radius: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+}
+
+.dlib-card:hover {
+  transform: translateX(4px);
+  box-shadow: var(--shadow-card);
+  border-color: var(--line-strong);
+}
+
+/* 三种视图共用的海报块（缺图走 .dlib-ph 占位，不留破图） */
+.dlib-poster,
+.dlib-lposter {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--ph-bg);
+}
+
+.dlib-poster {
+  width: 70px;
+  height: 105px;
+}
+
+.dlib-lposter {
+  width: 46px;
+  height: 69px;
+  border-radius: 6px;
+}
+
+.dlib-poster img,
+.dlib-lposter img,
+.dlib-gposter img {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.4s ease;
+}
+
+.dlib-card:hover .dlib-poster img,
+.dlib-lrow:hover .dlib-lposter img,
+.dlib-gcard:hover .dlib-gposter img {
+  transform: scale(1.06);
+}
+
+.dlib-ph {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.dlib-cinfo {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+}
+
+.dlib-chead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.dlib-ctitle {
+  min-width: 0;
+  flex: 0 1 auto;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dlib-card:hover .dlib-ctitle {
+  color: var(--accent);
+}
+
+.dlib-csub {
+  font-size: 11.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dlib-genres {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.dlib-genre {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: rgba(108, 155, 255, 0.14);
+  color: var(--accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.dlib-cov {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  padding-left: 7px;
+  border-left: 2px solid var(--line-strong);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.dlib-cscore {
+  flex-shrink: 0;
+  min-width: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding-left: 11px;
+  border-left: 1px solid var(--line);
+}
+
+.dlib-scorenum {
+  font-size: 21px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.dlib-scorelab {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* 评分色阶（与既有 .dsc 同一套口径：≥8 绿 / 6–8 黄 / <6 红） */
+.dlib-scorenum.hi,
+.dlib-lscore.hi {
+  color: #1f9d63;
+}
+
+.dlib-scorenum.mid,
+.dlib-lscore.mid {
+  color: #a97b12;
+}
+
+.dlib-scorenum.lo,
+.dlib-lscore.lo {
+  color: #c94040;
+}
+
+html.dark .dlib-scorenum.hi,
+html.dark .dlib-lscore.hi {
+  color: #3ddc97;
+}
+
+html.dark .dlib-scorenum.mid,
+html.dark .dlib-lscore.mid {
+  color: #ffd479;
+}
+
+html.dark .dlib-scorenum.lo,
+html.dark .dlib-lscore.lo {
+  color: #ff9a9a;
+}
+
+/* ── 子标签徽章（当季=绿系 / 热门=主色系 / 即将播出=橙系） ── */
+.dlib-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.dlib-badge::before {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.dlib-badge-airing {
+  background: rgba(61, 220, 151, 0.16);
+  color: #1f9d63;
+}
+
+.dlib-badge-hot {
+  background: rgba(108, 155, 255, 0.16);
+  color: var(--accent);
+}
+
+.dlib-badge-soon {
+  background: rgba(232, 180, 66, 0.18);
+  color: #a97b12;
+}
+
+html.dark .dlib-badge-airing {
+  color: #3ddc97;
+}
+
+html.dark .dlib-badge-soon {
+  color: #ffd479;
+}
+
+/* ── 网格视图：2:3 竖版海报卡（左上徽章 + 右下评分 + 标题/元信息/题材） ── */
+.dlib-gv {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+  gap: 14px;
+}
+
+.dlib-gcard {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+  animation: dlibGridIn 0.45s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+}
+
+.dlib-gcard:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-card);
+  border-color: var(--line-strong);
+}
+
+.dlib-gposter {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  background: var(--ph-bg);
+}
+
+/* 压在图片上的角标：固定深底 + 亮色字（与既有 .dpc-rate 同一套做法 —— 图面上不受主题影响） */
+.dlib-gposter > .dlib-badge {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  z-index: 2;
+  background: rgba(10, 12, 18, 0.72);
+  backdrop-filter: blur(6px);
+  color: #3ddc97;
+}
+
+.dlib-gposter > .dlib-badge-hot {
+  color: #8fb4ff;
+}
+
+.dlib-gposter > .dlib-badge-soon {
+  color: #ffd479;
+}
+
+.dlib-gcard:hover .dlib-gposter > .dlib-badge {
+  transform: scale(1.06);
+}
+
+.dlib-gscore {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(10, 12, 18, 0.78);
+  backdrop-filter: blur(6px);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.dlib-gscore.hi {
+  color: #3ddc97;
+}
+
+.dlib-gscore.mid {
+  color: #ffd479;
+}
+
+.dlib-gscore.lo {
+  color: #ff9a9a;
+}
+
+.dlib-ginfo {
+  min-width: 0;
+  padding: 9px 10px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.dlib-gtitle {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dlib-gcard:hover .dlib-gtitle {
+  color: var(--accent);
+}
+
+.dlib-gmeta {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── 紧凑列表视图 ── */
+.dlib-lv {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dlib-lrow {
+  position: relative;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  gap: 11px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px 12px 8px 8px;
+  border-radius: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  animation: dlibListIn 0.38s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+}
+
+/* 悬停时左侧亮起一条主色竖条（设计稿 list-card::before） */
+.dlib-lrow::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--accent);
+  transform: scaleY(0);
+  transition: transform 0.28s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.dlib-lrow:hover {
+  transform: translateX(4px);
+  box-shadow: var(--shadow-card);
+  border-color: var(--line-strong);
+}
+
+.dlib-lrow:hover::before {
+  transform: scaleY(1);
+}
+
+.dlib-linfo {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dlib-lhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.dlib-ltitle {
+  min-width: 0;
+  flex: 0 1 auto;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dlib-lrow:hover .dlib-ltitle {
+  color: var(--accent);
+}
+
+.dlib-lsub {
+  font-size: 11.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dlib-lmeta {
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dlib-lscore {
+  flex-shrink: 0;
+  min-width: 44px;
+  text-align: center;
+  font-size: 17px;
+  font-weight: 900;
+  color: var(--muted);
+}
+
+/* ── 骨架（形状按当前视图摆，避免加载完跳动） ── */
+.dlib-sktl {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.dlib-skrow {
+  display: grid;
+  grid-template-columns: 40px 22px minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+}
+
+.dlib-skdate {
+  display: flex;
+  align-items: center;
+  padding-right: 6px;
+}
+
+.dlib-skdate > .dsk-line {
+  flex: 1;
+  margin: 0;
+}
+
+.dlib-skdot {
+  justify-self: center;
+  align-self: center;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--skel-base);
+}
+
+.dlib-skcard {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+
+.dlib-skp,
+.dlib-skgp,
+.dlib-sklp {
+  position: relative;
+  overflow: hidden;
+  background: var(--ph-bg);
+}
+
+.dlib-skp {
+  width: 70px;
+  height: 105px;
+  border-radius: 8px;
+}
+
+.dlib-sklp {
+  width: 46px;
+  height: 69px;
+  border-radius: 6px;
+}
+
+.dlib-sklines {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.dlib-sklines > .dsk-line {
+  margin: 5px 0;
+}
+
+.dlib-skgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+  gap: 14px;
+}
+
+.dlib-skg {
+  min-width: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+
+.dlib-skgp {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+}
+
+.dlib-skg .dlib-sklines > .dsk-line {
+  margin: 7px 9px;
+}
+
+.dlib-sklist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dlib-skl {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 11px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px;
+  border-radius: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+
+/* ── 动画（keyframes 名一律 dlib 前缀，避免与既有动画撞名） ── */
+@keyframes dlibPageIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dlibTabPop {
+  0% {
+    transform: scale(0.92);
+  }
+  60% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes dlibPop {
+  0% {
+    transform: scale(0.78);
+  }
+  50% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes dlibEnter {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dlibRowIn {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dlibGridIn {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dlibListIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dlibSearchSpin {
+  0% {
+    transform: rotate(0deg) scale(0.9);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.1);
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+@keyframes dlibDotPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 4px rgba(108, 155, 255, 0.13);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(108, 155, 255, 0.06);
+  }
+}
+
+/* 系统「减少动态效果」时全关（与仓库其它节一致） */
+@media (prefers-reduced-motion: reduce) {
+  .dlib-pane,
+  .dlib-tl > .dlib-grp,
+  .dlib-row,
+  .dlib-gcard,
+  .dlib-lrow,
+  .dlib-tab.on,
+  .dlib-vbtn.on,
+  .dlib-sbtn.on,
+  .dlib-search:focus-within .dlib-search-ico,
+  .dlib-rows > .dlib-row:first-of-type .dlib-dot {
+    animation: none;
+  }
+}
+

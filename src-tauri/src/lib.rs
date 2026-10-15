@@ -1420,6 +1420,8 @@ pub fn run() {
             tmdb::tmdb_credits,
             // [lc-123] 发现页：TMDB 当季热门/即将播出（一条命令带 mode 参数）
             tmdb::tmdb_discover,
+            // [lc-1577] 发现页左栏「媒体库」搜索框（真实 TMDB 搜索）
+            tmdb::tmdb_search,
             // [lc-1576] 评分分布（详情页「评分透视」兜底：BGM 无 rating.count 时改用 TMDB 的）
             tmdb::tmdb_rating_details,
             // [lc-119] Bangumi（全线走自建镜像，见 bgm.rs 头部说明）

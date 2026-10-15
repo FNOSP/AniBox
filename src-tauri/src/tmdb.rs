@@ -554,6 +554,61 @@ fn names_of(v: Option<&Value>) -> Vec<String> {
     }
 }
 
+/// [lc-1577] TMDB 官方题材表（zh-CN）——**列表类端点**（discover / search）的结果对象只带
+/// `genre_ids: [18, 80]`（数字），只有详情端点才带 `genres: [{id,name}]`（见 names_of）。
+/// 这里补 id→中文名映射：电影/剧集共用一张表（同 id 在两边中文名一致，如 18=剧情、16=动画；
+/// 10759 / 10762~10768 是剧集独有）。**认不出的 id 一律丢弃**（宁可少标，也不编名字）。
+fn genre_name(id: i64) -> Option<&'static str> {
+    Some(match id {
+        28 => "动作",
+        12 => "冒险",
+        16 => "动画",
+        35 => "喜剧",
+        80 => "犯罪",
+        99 => "纪录",
+        18 => "剧情",
+        10751 => "家庭",
+        14 => "奇幻",
+        36 => "历史",
+        27 => "恐怖",
+        10402 => "音乐",
+        9648 => "悬疑",
+        10749 => "爱情",
+        878 => "科幻",
+        10770 => "电视电影",
+        53 => "惊悚",
+        10752 => "战争",
+        37 => "西部",
+        // —— 剧集独有 ——
+        10759 => "动作冒险",
+        10762 => "儿童",
+        10763 => "新闻",
+        10764 => "真人秀",
+        10765 => "科幻奇幻",
+        10766 => "肥皂剧",
+        10767 => "脱口秀",
+        10768 => "战争政治",
+        _ => return None,
+    })
+}
+
+/// `genre_ids: [18, 80, 99999]` → `["剧情", "犯罪"]`（保序、去重、未知 id 丢弃）
+fn genre_names(v: Option<&Value>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Some(arr) = v.and_then(|v| v.as_array()) {
+        for x in arr {
+            let Some(id) = x.as_i64() else { continue };
+            if let Some(n) = genre_name(id) {
+                let s = n.to_string();
+                if !out.contains(&s) {
+                    out.push(s);
+                }
+            }
+        }
+    }
+    out
+}
+
 /* ══════════ 请求路径构造（纯函数）—— **显式语言参数只在这里拼**，单测逐条钉住 ══════════
    为什么集中：镜像是可替换的（worker 有兜底址、还能整个换成官方域），语言参数一旦散落在各
    调用点，就会在"镜像不再注入 zh-CN"之后静默退回英文——集中 + 单测能保证新增端点不会再漏。 */
@@ -612,6 +667,14 @@ fn discover_path(
     }
     p.push_str(&format!("&page={page}"));
     p
+}
+
+/// [lc-1577] 发现页「热门」榜：**全时段** popularity 排序，**不带日期窗口**（与当季/即将播出区分）。
+/// `vote_count.gte=100` 滤掉刚建条目/零票垃圾 —— 比当季的 5 更严：没有日期窗口兜底，太松会混进冷门。
+fn popular_path(media_type: &str, page: i64) -> String {
+    format!(
+        "/3/discover/{media_type}?sort_by=popularity.desc&vote_count.gte=100&language={LANG}&page={page}"
+    )
 }
 
 /* ══════════ fnOS 条目锚点（trim_id）→ TMDB id ══════════
@@ -1432,7 +1495,8 @@ pub async fn tmdb_rating_details(id: i64, media_type: String) -> Result<Value, S
 
 /// [lc-123] 发现页左栏取数：`/3/discover/{tv|movie}` 一条命令带三种口味（**参数**决定，不做三条命令：
 /// 三者只差 query，拆开只会把"vote_count 例外"这类边界抄三遍）。
-///   arg.mode      : "season"（默认）= 当季热门网格；"upcoming" = 即将播出
+///   arg.mode      : "season"（默认）= 当季热门网格；"upcoming" = 即将播出；
+///                   [lc-1577] "popular" = 全时段热门榜（不带日期窗口）
 ///   arg.mediaType : "tv"（默认）| "movie"（决定 discover 路径与日期字段名）
 ///   arg.season    : "current"（默认）| "next"（只对 mode=season 有意义）
 ///   arg.page      : 1..25（默认 1，夹紧；镜像/上游都有缓存，翻页成本低）
@@ -1443,6 +1507,7 @@ pub async fn tmdb_rating_details(id: i64, media_type: String) -> Result<Value, S
 ///         （5 是"滤掉刚建条目/零票垃圾"的下限；取 10 会把季初的网格削到十几条）
 ///   即将：sort_by=popularity.desc + first_air_date.gte=<今天> —— **绝不能带 vote_count.gte**：
 ///         未开播条目 vote_count=0，同一过滤器会把整个列表滤空（实测 total_results=0）。
+///   [lc-1577] 热门：sort_by=popularity.desc + vote_count.gte=100（无日期窗口；见 popular_path）
 /// language **由客户端显式带上**（`discover_path` 里统一拼 `language=zh-CN`）——镜像已不再注入，
 /// 依赖镜像默认值会在换端点/换 worker 版本时静默退回英文标题。
 /// 每条 item 返回 `poster` 与 **`backdropPath`**（16:9 横图，前端主推卡/横向卡优先用它）。
@@ -1453,10 +1518,11 @@ pub async fn tmdb_rating_details(id: i64, media_type: String) -> Result<Value, S
 #[tauri::command]
 pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
     let is_movie = arg.get("mediaType").and_then(|v| v.as_str()) == Some("movie");
-    let mode = if arg.get("mode").and_then(|v| v.as_str()) == Some("upcoming") {
-        "upcoming"
-    } else {
-        "season"
+    // [lc-1577] 三种口味：当季（默认）/ 即将播出 / 热门（全时段）
+    let mode = match arg.get("mode").and_then(|v| v.as_str()) {
+        Some("upcoming") => "upcoming",
+        Some("popular") => "popular",
+        _ => "season",
     };
     let next = arg.get("season").and_then(|v| v.as_str()) == Some("next");
     let page = arg.get("page").and_then(|v| v.as_i64()).unwrap_or(1).clamp(1, 25); // [lc-123-rev] 3→25：见上方 arg.page 注释
@@ -1472,31 +1538,34 @@ pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
     let today = today_ymd();
     let (gte, lte) = if mode == "upcoming" {
         (today.clone(), String::new())
+    } else if mode == "popular" {
+        // 热门：全时段 —— 不带日期窗口（空 gte/lte 只进缓存键与 payload 元信息）
+        (String::new(), String::new())
     } else {
         // 当季/下季：由**今天**推季度首末（日期分解就地完成，不做"字符串→元组"的双表示）
         let (ty, tm, _) = civil_from_days((mirror_sign::now_secs() / 86_400) as i64);
         quarter_bounds(ty, tm, next)
     };
 
-    // 路径统一由 discover_path 拼（含显式 language=zh-CN 与 vote_count 例外）
-    let path = discover_path(
-        media_type,
-        gte_key,
-        &gte,
-        lte_key,
-        &lte,
-        mode == "season",
-        page,
-    );
+    // 路径统一由 discover_path / popular_path 拼（含显式 language=zh-CN 与 vote_count 例外）
+    let path = if mode == "popular" {
+        popular_path(media_type, page)
+    } else {
+        discover_path(media_type, gte_key, &gte, lte_key, &lte, mode == "season", page)
+    };
 
     // [lc-123-rev5] 「先读缓存 → 判断 TTL → 过期才打网络」的唯一入口：
     //   · 缓存新鲜且非 force → 命中即返回（**零网络**）； · 过期/force → 带 ETag 条件请求（304 就不动内容）。
-    let season_key = if mode == "upcoming" {
-        "upcoming"
-    } else if next {
-        "next"
-    } else {
-        "current"
+    let season_key = match mode {
+        "upcoming" => "upcoming",
+        "popular" => "popular",
+        _ => {
+            if next {
+                "next"
+            } else {
+                "current"
+            }
+        }
     };
     // 缓存键：**稳定量**（媒体类型 + 模式 + 季度 + 页码 + 日期窗口）——
     // 绝不用飞牛 guid 这类"重新刮削就变"的东西（那会让缓存永远命中不了）。
@@ -1537,6 +1606,38 @@ pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
     if let Value::Object(ref mut m) = out {
         // changed=false（缓存命中 / 304）时前端**不得**碰 UI：不加这个标志，前端只能"每次都重画"
         m.insert("changed".to_string(), json!(changed));
+    }
+    Ok(out)
+}
+
+/// [lc-1577] 发现页左栏「媒体库」搜索框：`/3/search/{tv|movie}?query=…`（**真实 TMDB 搜索**）。
+/// 与 tmdb_discover 返回**同一套 item 形状**（含 genres），前端复用同一套三视图渲染；
+/// 额外把 `query` 塞进 payload，前端据此显示「搜索结果：<关键词>（N 条）」。
+/// **不做落盘缓存**：搜索是用户即时动作、结果随时间变；重复查询由镜像 45 分钟边缘缓存兜住。
+#[tauri::command]
+pub async fn tmdb_search(arg: Value) -> Result<Value, String> {
+    let query = arg
+        .get("query")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let is_movie = arg.get("mediaType").and_then(|v| v.as_str()) == Some("movie");
+    let media_type = if is_movie { "movie" } else { "tv" };
+    let page = arg.get("page").and_then(|v| v.as_i64()).unwrap_or(1).clamp(1, 25);
+    if query.is_empty() {
+        // 空查询不请求（前端清空输入也走这条）
+        return Ok(json!({
+            "query": "", "mediaType": media_type, "page": 1,
+            "total": 0, "totalPages": 0, "items": [],
+        }));
+    }
+    let today = today_ymd();
+    let path = format!("{}&page={page}", search_path(media_type, &query, ""));
+    let raw = get_json(&path).await?;
+    let mut out = discover_payload(&raw, is_movie, &today, "search", media_type, false, "", "", page);
+    if let Value::Object(ref mut m) = out {
+        m.insert("query".to_string(), json!(query));
     }
     Ok(out)
 }
@@ -1596,6 +1697,8 @@ fn discover_payload(
                         // 实测（带签名直打镜像，2026-10-13）：当季剧集 18/18、当季电影 20/20、
                         // 即将播出 18/20 —— 合计 56/58 = 96.6% 非空；缺失的 2 条连 poster 也没有。
                         "backdropPath": s(r, "backdrop_path"),
+                        // [lc-1577] 题材：列表端点只有 genre_ids，用官方表映射成中文名（未知 id 丢弃）
+                        "genres": genre_names(r.get("genre_ids")),
                         "overview": s(r, "overview"),
                     }))
                 })
@@ -1605,14 +1708,30 @@ fn discover_payload(
 
     crate::libmpv::trace(&format!(
         "[tmdb] discover mode={mode} media={media_type} season={} {gte}..{lte} page={page} → {} 条",
-        if mode == "upcoming" { "upcoming" } else if next { "next" } else { "current" },
+        if mode == "upcoming" {
+            "upcoming"
+        } else if mode == "popular" {
+            "popular"
+        } else if next {
+            "next"
+        } else {
+            "current"
+        },
         items.len()
     ));
 
     json!({
         "mode": mode,
         "mediaType": media_type,
-        "season": if mode == "upcoming" { "upcoming" } else if next { "next" } else { "current" },
+        "season": if mode == "upcoming" {
+            "upcoming"
+        } else if mode == "popular" {
+            "popular"
+        } else if next {
+            "next"
+        } else {
+            "current"
+        },
         "gte": gte,
         "lte": lte,
         "page": page,
@@ -1800,6 +1919,35 @@ mod tests {
             .await
             .expect("电影当季应成功");
         assert_eq!(m["mediaType"].as_str(), Some("movie"));
+
+        // [lc-1577] 热门（全时段）：非空、无日期窗口、条目带题材
+        let p = super::tmdb_discover(serde_json::json!({"mode":"popular","mediaType":"tv"}))
+            .await
+            .expect("热门应成功");
+        let pn = p["items"].as_array().map(|a| a.len()).unwrap_or(0);
+        assert!(pn > 0, "热门不应为空: {p}");
+        assert_eq!(p["gte"].as_str(), Some(""), "热门不得带日期窗口: {p}");
+        let with_genres = p["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|it| it["genres"].as_array().map(|g| !g.is_empty()).unwrap_or(false))
+            .count();
+        assert!(with_genres > 0, "热门条目应至少一条带题材: {p}");
+
+        // [lc-1577] 搜索：真实 TMDB 搜索，返回同一套 item 形状（含 genres）
+        let q = super::tmdb_search(serde_json::json!({"query":"三体","mediaType":"tv"}))
+            .await
+            .expect("搜索应成功");
+        assert_eq!(q["query"].as_str(), Some("三体"));
+        let qn = q["items"].as_array().map(|a| a.len()).unwrap_or(0);
+        assert!(qn > 0, "搜索「三体」应有结果: {q}");
+        assert!(q["items"][0].get("genres").is_some(), "搜索结果也应有 genres 字段: {q}");
+        // 空查询不请求、直接空结果
+        let e = super::tmdb_search(serde_json::json!({"query":"  "}))
+            .await
+            .expect("空查询应成功返回空");
+        assert_eq!(e["items"].as_array().map(|a| a.len()).unwrap_or(9), 0, "空查询应回空: {e}");
     }
 
     /// 真机冒烟（**默认忽略**，不进 CI）：带 FNTV_TMDB_SECRET 直打 tmdb 镜像，
@@ -1900,6 +2048,36 @@ mod tests {
         // 即将播出**不能**带 vote_count.gte（未开播条目 vote_count=0 会被滤空）
         let up = super::discover_path("tv", "first_air_date.gte", "2026-10-12", "", "", false, 1);
         assert!(!up.contains("vote_count.gte"), "即将播出不得带 vote_count：{up}");
+
+        // [lc-1577] 热门：显式 language + vote_count 下限 + **无日期窗口**
+        let pop = super::popular_path("tv", 1);
+        assert!(pop.contains("language=zh-CN"), "热门必须显式带 language：{pop}");
+        assert!(pop.contains("vote_count.gte=100"), "{pop}");
+        assert!(
+            !pop.contains("first_air_date") && !pop.contains("primary_release_date"),
+            "热门不得带日期窗口：{pop}"
+        );
+    }
+
+    /// [lc-1577] 热门路径：全时段（无日期窗口）+ 页码透传
+    #[test]
+    fn popular_path_has_no_date_window() {
+        let p = super::popular_path("movie", 3);
+        assert!(p.starts_with("/3/discover/movie?sort_by=popularity.desc"), "{p}");
+        assert!(p.contains("page=3"), "{p}");
+    }
+
+    /// [lc-1577] `genre_ids` → 中文题材名：已知 id 映射、**保序去重**、未知 id 丢弃（不编名字）
+    #[test]
+    fn genre_ids_map_to_chinese_names() {
+        let v = serde_json::json!([18, 80, 99999, 80, 10765]);
+        assert_eq!(super::genre_names(Some(&v)), vec!["剧情", "犯罪", "科幻奇幻"]);
+        // 非数字 / null 项：跳过、不 panic
+        let bad = serde_json::json!(["x", null, 16]);
+        assert_eq!(super::genre_names(Some(&bad)), vec!["动画"]);
+        // 缺字段 / 非数组：空
+        assert!(super::genre_names(None).is_empty());
+        assert!(super::genre_names(Some(&serde_json::json!("nope"))).is_empty());
     }
 
     /// 两种 429 **必须是两种处理**：

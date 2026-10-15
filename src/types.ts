@@ -177,6 +177,8 @@ export type TmdbDiscoverItem = {
   poster: string;
   backdropPath: string;
   overview: string;
+  /** [lc-1577] TMDB 中文题材名（列表端点只有 genre_ids，Rust 侧用官方表映射；未知 id 丢弃 ⇒ 可能空数组） */
+  genres: string[];
 };
 
 /** [lc-123] Bangumi 每日新番表条目（src-tauri/src/bgm.rs::bgm_calendar 归一化后）。 */

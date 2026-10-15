@@ -872,7 +872,7 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
   return (
     <main className="content detail-full" onScroll={onDetailScroll}>
       {/* [lc-1401] 详情页按**用户定稿版式**重排（两栏）：
-            左列：竖版封面 + 标题信息 → 标签框（Bangumi tags）→ 剧集简介框 → 四标签页 → 该页内容
+            左列：竖版封面 → 标签页 → 该页内容（[lc-1567] 标签/简介从首屏移入「详情」页）
             右列：集数据（本机集数 × Bangumi 集号对齐）的**整条竖向列表**
           ⚠ 上一版的模糊大头图（.dhero）**已按新稿删除**：稿里首屏就是"封面 + 两块信息框"，没有通栏头图。
           数据 effect 全部留在本组件顶层（不下沉到面板里，否则单集简介回填失效）。 */}
@@ -917,35 +917,9 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
                   见 aside 里的 .dv2e-play-btn / .dv2-solo-play。 */}
             </div>
 
-            {/* [lc-1408] 海报右侧信息框 = **标签 + 简介**（用户定稿：这一块原来的
-                年份/季数/集数/类型/评分/播放按钮全部不要）。 */}
+            {/* [lc-1567] 标签与简介已移入「详情」页（用户要求：标签→简介→剧照，同一容器、浅线分隔）。
+                这里只留播放提示（.play-note）。 */}
             <div className="dv2-topinfo">
-              {bgmTags.length > 0 && (
-                <div className="dv2-itags">
-                  {bgmTags.slice(0, 12).map((t, i) => (
-                    <span key={`${t.name}-${i}`} className="dtag" title={t.count ? `${t.count} 人标记` : ""}>
-                      {t.name}
-                    </span>
-                  ))}
-                </div>
-              )}
-              {overview && (
-                <div className="dv2-isum">
-                  {/* [lc-1423] 改回"截断 + 展开"（用户要求），但这次**不再动容器高度**：
-                      lc-1410 曾按"不要收起按钮、默认全展示"把简介全铺开，后果是长简介把
-                      `.dv2-top` 撑高 —— 而海报是 `aspect-ratio:2/3` 的定宽块，
-                      在 `align-items:stretch` 下被**拉长变形**（用户截图里海报就是被扯长的）。
-                      现在：简介区**固定高度**、超出部分渐隐截断，右下角一个「展开」按钮；
-                      点击 → 弹窗展示完整简介（不动海报、不撑容器）。 */}
-                  <p className={`dfold${longIntro && !introFull ? " clip" : ""}`}>{overview}</p>
-                  {longIntro && (
-                    <button className="dv2-expand" onClick={() => setIntroFull(true)}>
-                      展开
-                    </button>
-                  )}
-                </div>
-              )}
-              {!bgmTags.length && !overview && <div className="empty">暂无标签与简介</div>}
               {playNote && <div className="play-note">{playNote}</div>}
             </div>
           </div>
@@ -969,8 +943,11 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
           <div className={`dbody dv2-body${tabAnim ? " view-in" : ""}`}>
         {activeTab === "overview" && (
           <OverviewTab
-            genres={genres}
+            bgmTags={bgmTags}
             overview={overview}
+            longIntro={longIntro}
+            introFull={introFull}
+            onExpand={() => setIntroFull(true)}
             setZoom={setZoom}
             tmdb={tmdb}
             tmdbDone={tmdbDone}

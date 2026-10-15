@@ -1,62 +1,69 @@
-/* [lc-1536] 从 DetailView 拆出的标签页（纯搬移，逻辑与注释未改动）。 */
+/* [lc-1536] 从 DetailView 拆出的标签页（纯搬移，逻辑与注释未改动）。
+   [lc-1567] 标签/简介从首屏移入本页（用户要求）：版面 = 标签 → 简介 → 剧照，
+   同一容器（.dpanel-single）、节间浅横线分隔。 */
 import { TmdbExtra } from "../TmdbExtra";
+import { BgmTag } from "../../../types";
 
 type Props = {
-  genres: string[];
+  bgmTags: BgmTag[];
   overview: string;
+  longIntro: boolean;
+  introFull: boolean;
+  onExpand: () => void;
   setZoom: (u: string) => void;
   tmdb: Record<string, unknown> | null;
   tmdbDone: boolean;
 };
-export function OverviewTab({ genres, overview, setZoom, tmdb, tmdbDone }: Props) {
+export function OverviewTab({ bgmTags, overview, longIntro, introFull, onExpand, setZoom, tmdb, tmdbDone }: Props) {
   return (
     <>
-      {/* [lc-1420] `.dpanel-single`：本页所有节包进**一个**容器、节间用浅横线分隔（用户要求）。
-         见 App.css 里同名类的注释（为什么不用 :has）。 */}
+      {/* [lc-1420] `.dpanel-single`：本页所有节包进**一个**容器、节间用浅横线分隔（用户要求）。 */}
       <div className="dpanel dpanel-single">
-        {/* [lc-1405] 原本这里还有一节「类型标签」渲染 genres —— 与左列顶部那个标签框**同一份数据**，
-            重复；且用户已要求标签框直接取 BGM/TMDB，这一节就失去存在意义。故删除。 */}
-        {/* [lc-1404] 剧照由 TmdbExtra 一处渲染（相似剧集/更多块见「更多」页，lc-1565/1566）。
-            此前这里是"自己一条 .dstill-strip + TmdbExtra 里再来一条 .tmdb-stills"，
-            结果是同一批 TMDB 剧照出现**两组**（用户反馈）。现在只留 TmdbExtra 那一份。 */}
-        {/* [lc-1420] 分块骨架：TMDB 详情也是一条独立请求，没回来之前这块是空的。
-            摆"剧照 + 文本行"的骨架（形状与 TmdbExtra 的首节一致），到位时无跳动。
+        {/* [lc-1567] 标签（Bangumi tags 优先 / TMDB genres 兜底）：原「首屏标签框」原样移入 */}
+        {bgmTags.length > 0 && (
+          <div className="tmdb-sec">
+            <div className="tmdb-sec-t">标签</div>
+            <div className="dv2-itags">
+              {bgmTags.slice(0, 12).map((t, i) => (
+                <span key={`${t.name}-${i}`} className="dtag" title={t.count ? `${t.count} 人标记` : ""}>
+                  {t.name}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        {/* [lc-1567] 简介：原「首屏简介框」原样移入（截断 + 「展开」弹窗，行为未动） */}
+        {overview && (
+          <div className="tmdb-sec">
+            <div className="tmdb-sec-t">简介</div>
+            <div className="dv2-isum">
+              <p className={`dfold${longIntro && !introFull ? " clip" : ""}`}>{overview}</p>
+              {longIntro && (
+                <button className="dv2-expand" onClick={onExpand}>
+                  展开
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+        {/* [lc-1404] 剧照由 TmdbExtra 一处渲染（相似剧集/更多块见「更多」页，lc-1565/1566）。 */}
+        {/* [lc-1420] 分块骨架：TMDB 详情没回来之前摆「剧照行」骨架，到位无跳动。
             [lc-1507] 骨架只在请求**进行中**（!tmdbDone）显示 —— 失败后不再永久转圈。 */}
         {!tmdb && !tmdbDone && (
-          <>
-            <div className="tmdb-sec">
-              <div className="dsk dsk-sec-t" />
-              {/* [lc-1505] 骨架容器用专用类：.dvstill-row 本身没有 flex（真实剧照行的
-                  横排布局由 ScrollRow 提供），裸 div 会把骨架块竖着堆成一列 */}
-              <div className="dsk-still-row">
-                {[0, 1, 2, 3].map((i) => (
-                  <div key={i} className="dsk dsk-dstill" />
-                ))}
-              </div>
+          <div className="tmdb-sec">
+            <div className="dsk dsk-sec-t" />
+            {/* [lc-1505] 骨架容器用专用类：.dvstill-row 本身没有 flex（真实剧照行的
+                横排布局由 ScrollRow 提供），裸 div 会把骨架块竖着堆成一列 */}
+            <div className="dsk-still-row">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="dsk dsk-dstill" />
+              ))}
             </div>
-            <div className="tmdb-sec">
-              <div className="dsk dsk-sec-t" />
-              <div className="dsk dsk-sline" />
-              <div className="dsk dsk-sline short" />
-            </div>
-          </>
+          </div>
         )}
         {tmdb && <TmdbExtra tmdb={tmdb} onZoom={setZoom} />}
-        {/* [lc-1507] TMDB 失败后的兜底：有简介（Bangumi）就显示简介节，
-            什么都没有才显示空态 —— 原先骨架与「暂无详情信息」会同时出现 */}
-        {!tmdb && tmdbDone && (
-          <>
-            {overview && (
-              <div className="tmdb-sec">
-                <div className="tmdb-sec-t">简介</div>
-                <p className="dfold">{overview}</p>
-              </div>
-            )}
-            {!overview && genres.length === 0 && (
-              <div className="empty">TMDB 与 Bangumi 都没有该条目的详情信息</div>
-            )}
-          </>
-        )}
+        {/* [lc-1507] TMDB 失败：静默降级，剧照位给空态（不永久转圈） */}
+        {!tmdb && tmdbDone && <div className="empty">暂无剧照</div>}
       </div>
     </>
   );

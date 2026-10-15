@@ -3,7 +3,8 @@
 //! Windows 形态：`http://fntvimg.localhost/<path>`；mac 形态：`fntvimg://localhost/<path>`。
 //! 路径前缀决定上游：
 //!   · `/__tmdb/<rest>`  → `https://tmdb.690075.xyz/img/<rest>`（TMDB 图片域，**免签名**）
-//!   · `/__bgm/<rest>`   → `https://lain.bgm.tv/<rest>`（Bangumi 图片域；明文 http 由前端升 https）
+//!   · `/__bgm/<rest>`   → 自建镜像 `https://bgm.690075.xyz/img/<rest>`（**签名轨**，与 API 同密钥；
+//!     [lc-1569] lain.bgm.tv 客户端侧被 DNS 污染直连必超时 —— 无密钥时才退回直连。明文 http 由前端升 https）
 //!   · 其余              → NAS `…/v/api/v1/sys/img<path>`（需会话鉴权，见下）
 //! （前缀刻意用 `__tmdb` / `__bgm`：URL 路径里没有需要转义的字符，且 NAS 的图片相对路径
 //!   形如 `/f5/04/xxx.webp`，不可能撞上这两个前缀。）
@@ -26,8 +27,10 @@ use crate::AppState;
 
 /// TMDB 图片域（镜像反代 image.tmdb.org；**免签名**，见 tmdb-mirror worker.js 注释）
 const TMDB_IMG_BASE: &str = "https://tmdb.690075.xyz";
-/// Bangumi 图片域
+/// Bangumi 图片域（直连 —— 仅作无密钥时的退路；[lc-1569] 客户端侧已被 DNS 污染，正常走镜像）
 const BGM_IMG_BASE: &str = "https://lain.bgm.tv";
+/// [lc-1569] BGM 图片镜像（自建，签名轨）：`/img/*` → lain.bgm.tv，边缘缓存 30 天
+const BGM_MIRROR_BASE: &str = "https://bgm.690075.xyz";
 
 fn http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -70,6 +73,21 @@ enum Target {
     Public { key: String, url: String },
 }
 
+/// [lc-1569] BGM 图片的取图 URL：有镜像密钥 → 自建镜像 `/img/*`（签名轨，与 API 同密钥）；
+/// 无密钥 → 退回直连（其它网络环境/未配置时仍可用，与 bgm.rs 的「缺密钥降级」同哲学）。
+fn bgm_img_url(rest: &str, has_secret: bool) -> String {
+    if has_secret {
+        format!("{BGM_MIRROR_BASE}/img/{rest}")
+    } else {
+        format!("{BGM_IMG_BASE}/{rest}")
+    }
+}
+
+/// BGM 准入密钥（与 bgm.rs 同一来源：运行时 env → 编译期注入）。
+fn bgm_secret() -> Option<String> {
+    crate::mirror_sign::resolve_secret("FNTV_BGM_SECRET", option_env!("FNTV_BGM_SECRET"))
+}
+
 /// 相对路径安全闸：拒绝空段、`..`、反斜杠、控制字符（防穿透到上游别的路径）。
 fn safe_rel(rel: &str) -> bool {
     if rel.is_empty() || rel.starts_with('/') {
@@ -102,9 +120,11 @@ fn resolve_target(path: &str) -> Result<Target, (u16, String)> {
         //   `…/987268.jpg%3Fr=1743266811&hd=1` → **404**（实测：带 %3F 是 404、还原后 200）。
         //   这就是"评论头像全部裂图"的根因：Bangumi 头像 URL 基本都带 `?r=…&hd=1`。
         let rest = rest.replace("%3F", "?");
+        // [lc-1569] lain.bgm.tv 在客户端侧被 DNS 污染（实测解析到 Facebook/Twitter 假 IP、
+        //   连接必超时 ⇒ 评论/吐槽/关联整片裂图）。改走自建镜像 /img/*（签名轨）；无密钥退直连。
         return Ok(Target::Public {
             key: format!("img:bgm:{rest}"),
-            url: format!("{BGM_IMG_BASE}/{rest}"),
+            url: bgm_img_url(&rest, bgm_secret().is_some()),
         });
     }
     Ok(Target::Nas(path.to_string()))
@@ -141,28 +161,10 @@ async fn proxy_public(key: &str, url: &str) -> Response<Vec<u8>> {
     if let Some((ct, bytes)) = disk_cache::get(key) {
         return cached_response(&ct, bytes);
     }
-    let resp = match public_client().get(url).header("accept", "image/*,*/*").send().await {
-        Ok(r) => r,
-        Err(e) => return plain(502, &format!("img upstream: {e}")),
+    let (ct, bytes) = match fetch_public_image(url).await {
+        Ok(v) => v,
+        Err((status, msg)) => return plain(status, &msg),
     };
-    let status = resp.status().as_u16();
-    if !(200..300).contains(&status) {
-        return plain(502, &format!("img upstream HTTP {status}"));
-    }
-    let ct = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("image/jpeg")
-        .to_lowercase();
-    // 上游返回的 HTML/JSON 错误页（防盗链/网关页）不写盘、不缓存，直接按缺失处理
-    if ct.contains("text/html") || ct.contains("application/json") {
-        return plain(404, "upstream returned non-image");
-    }
-    let bytes = resp.bytes().await.map(|b| b.to_vec()).unwrap_or_default();
-    if bytes.is_empty() {
-        return plain(502, "upstream returned empty body");
-    }
     disk_cache::put(key, &ct, &bytes);
     crate::libmpv::trace(&format!("[img] MISS {key} → {} 字节（已落盘）", bytes.len()));
     Response::builder()
@@ -173,6 +175,37 @@ async fn proxy_public(key: &str, url: &str) -> Response<Vec<u8>> {
         .header("x-fntv-cache", "MISS")
         .body(bytes)
         .unwrap_or_else(|_| Response::builder().status(500).body(Vec::new()).unwrap())
+}
+
+/// [lc-1569] 免鉴权图片的**网络抓取**（不含磁盘缓存；拆出来让 live 测试能直击网络）。
+/// 镜像 URL（bgm.690075.xyz/img/*）自动挂准入三件套；直连 URL（lain.bgm.tv / TMDB 镜像）原样发。
+async fn fetch_public_image(url: &str) -> Result<(String, Vec<u8>), (u16, String)> {
+    let mut rb = public_client().get(url).header("accept", "image/*,*/*");
+    if url.starts_with(BGM_MIRROR_BASE) {
+        if let Some(secret) = bgm_secret() {
+            rb = crate::mirror_sign::apply_auth(rb, &secret, "GET", &url[BGM_MIRROR_BASE.len()..], "");
+        }
+    }
+    let resp = rb.send().await.map_err(|e| (502, format!("img upstream: {e}")))?;
+    let status = resp.status().as_u16();
+    if !(200..300).contains(&status) {
+        return Err((502, format!("img upstream HTTP {status}")));
+    }
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("image/jpeg")
+        .to_lowercase();
+    // 上游返回的 HTML/JSON 错误页（防盗链/网关页）不写盘、不缓存，直接按缺失处理
+    if ct.contains("text/html") || ct.contains("application/json") {
+        return Err((404, "upstream returned non-image".into()));
+    }
+    let bytes = resp.bytes().await.map(|b| b.to_vec()).unwrap_or_default();
+    if bytes.is_empty() {
+        return Err((502, "upstream returned empty body".into()));
+    }
+    Ok((ct, bytes))
 }
 
 pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
@@ -289,15 +322,16 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
 
 #[cfg(test)]
 mod tests {
-    use super::{public_client, BGM_IMG_BASE, TMDB_IMG_BASE};
+    use super::{bgm_img_url, fetch_public_image, public_client, BGM_IMG_BASE, BGM_MIRROR_BASE, TMDB_IMG_BASE};
 
     /// 真机冒烟（**默认忽略**）：
-    ///   FNTV_TMDB_SECRET=<值> cargo test --lib imgproto::tests::live_public_image_upstreams_work -- --ignored --nocapture
+    ///   FNTV_TMDB_SECRET=<值> FNTV_BGM_SECRET=<值> cargo test --lib imgproto::tests::live_public_image_upstreams_work -- --ignored --nocapture
     /// 为什么需要它：图片从「WebView 直连图片域」改成「Rust 侧代理 + 落盘」后，**请求方从浏览器换成了
     /// 我们自己的 UA/Accept** —— 一旦某个 CDN 按 UA/Referer 403（症状是整片图裂，而且只在日志里看得见），
     /// 静态断言是查不出来的。这条把两个上游各拉一张真图钉住（tmdb 图路径从详情响应现取，不写死）。
+    /// [lc-1569] BGM leg 改走自建镜像 /img/*（签名轨）—— lain.bgm.tv 直连已被 DNS 污染。
     #[tokio::test]
-    #[ignore = "live network (+ FNTV_TMDB_SECRET for the TMDB leg)"]
+    #[ignore = "live network (+ FNTV_TMDB_SECRET / FNTV_BGM_SECRET)"]
     async fn live_public_image_upstreams_work() {
         // ── ① TMDB 图片域（镜像 /img/*，免签名）：先从详情响应里取一个真实 file_path ──
         let d = super::super::tmdb::tmdb_show_details(serde_json::json!({
@@ -326,29 +360,20 @@ mod tests {
         assert!(ct.starts_with("image/"), "应是图片类型：{ct}");
         assert!(n > 100, "图片内容不应为空：{n}");
 
-        // ── ② Bangumi 图片域（lain.bgm.tv，https）：从官方 API 取一张真图的相对路径 ──
-        let sub: serde_json::Value = public_client()
-            .get("https://api.bgm.tv/v0/subjects/8")
-            .header("accept", "application/json")
-            .send()
-            .await
-            .expect("Bangumi API 请求失败")
-            .json()
-            .await
-            .expect("Bangumi API 响应不是 JSON");
-        let rel = sub
-            .pointer("/images/large")
-            .or_else(|| sub.pointer("/images/common"))
-            .and_then(|v| v.as_str())
-            .expect("Bangumi 条目应有封面");
-        let rel = rel.replace("http://lain.bgm.tv", "").replace("https://lain.bgm.tv", "");
-        let url = format!("{BGM_IMG_BASE}{}", if rel.starts_with('/') { rel } else { format!("/{rel}") });
-        let r = public_client().get(&url).send().await.expect("Bangumi 图片请求失败");
-        let st = r.status();
-        let n = r.bytes().await.map(|b| b.len()).unwrap_or(0);
-        println!("bgm img {url} → {st} {n}B");
-        assert!(st.is_success(), "lain.bgm.tv 应 200（https + 我们的 UA）：{st}");
-        assert!(n > 100, "图片内容不应为空：{n}");
+        // ── ② [lc-1569] Bangumi 图片：走**自建镜像** /img/*（签名轨）——
+        //    lain.bgm.tv 在客户端侧已被 DNS 污染（直连必超时），不再直连测试。
+        let rel = "pic/cover/l/d1/16/201973_EwPD6.jpg"; // 钉一张真实封面（2026-10-15 实测）
+        let url = bgm_img_url(rel, true);
+        let (ct, bytes) = fetch_public_image(&url).await.expect("BGM 镜像图片应可取到");
+        println!("bgm img {url} → {ct} {}B", bytes.len());
+        assert!(ct.starts_with("image/"), "应是图片类型：{ct}");
+        assert!(bytes.len() > 100, "图片内容不应为空：{}", bytes.len());
+        // 带查询串的头像形态（?r=…&hd=1 —— 历史上 %3F 事故的形态）也必须过：
+        let rel2 = "pic/user/l/000/89/23/892340.jpg?r=1723268031&hd=1";
+        let url2 = bgm_img_url(rel2, true);
+        let (ct2, bytes2) = fetch_public_image(&url2).await.expect("带 query 的头像应可取到");
+        println!("bgm avatar {url2} → {ct2} {}B", bytes2.len());
+        assert!(ct2.starts_with("image/") && bytes2.len() > 100, "头像应是有效图片");
     }
 
     /// 路径闸门（不触网）：`__tmdb/__bgm` 前缀解析 + `..`/反斜杠/空段一律拒绝。
@@ -365,7 +390,8 @@ mod tests {
         match resolve_target("/__bgm/pic/user/l/1.jpg").expect("应解析") {
             Target::Public { key, url } => {
                 assert_eq!(key, "img:bgm:pic/user/l/1.jpg");
-                assert_eq!(url, format!("{BGM_IMG_BASE}/pic/user/l/1.jpg"));
+                // [lc-1569] URL 取决于环境里有没有镜像密钥（有 → 镜像 /img/*；无 → 直连），两边都算对
+                assert_eq!(url, super::bgm_img_url("pic/user/l/1.jpg", super::bgm_secret().is_some()));
             }
             _ => panic!("应是 Public 目标"),
         }
@@ -377,5 +403,15 @@ mod tests {
         assert!(resolve_target("/__tmdb/../secret").is_err(), "必须拒绝 ..");
         assert!(resolve_target("/__tmdb/a//b.jpg").is_err(), "必须拒绝空段");
         assert!(resolve_target("/").is_err());
+    }
+
+    /// [lc-1569] BGM 图片两分支（纯函数、不依赖环境）：有密钥 → 镜像 `/img/*`；无 → 直连。
+    #[test]
+    fn bgm_img_url_branches() {
+        assert_eq!(bgm_img_url("pic/x.jpg", false), format!("{BGM_IMG_BASE}/pic/x.jpg"));
+        assert_eq!(
+            bgm_img_url("pic/x.jpg?r=1&hd=1", true),
+            format!("{BGM_MIRROR_BASE}/img/pic/x.jpg?r=1&hd=1")
+        );
     }
 }

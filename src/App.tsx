@@ -494,6 +494,14 @@ function App() {
     setView("detail");
   }, []);
 
+  // [lc-1563] 发现页右栏「已在库」条目 → 直接开库内条目（真 guid）：此前一律走 discover-*
+  //   占位详情，在库条目也会落成「无源 → 在线资源面板」；已在库的番应进库内详情（可播放）。
+  const openDiscoverLib = useCallback((item: MediaItem) => {
+    setDetailItem(item);
+    setDetailFrom("discover");
+    setView("detail");
+  }, []);
+
   const openFav = useCallback(() => {
     setActiveLib({ guid: "_fav", title: "收藏", category: "" });
     setPage("home");
@@ -672,6 +680,7 @@ function App() {
               active={view === "discover"}
               onOpenDetail={openDiscoverDetail}
               onOpenBgm={openDiscoverBgm}
+              onOpenLib={openDiscoverLib}
             />
           </div>
           {(view === "lib" || libMounted) && activeLib && (

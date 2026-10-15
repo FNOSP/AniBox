@@ -30,7 +30,7 @@ export function BgmCalRow({
       className="ditem"
       role="button"
       tabIndex={0}
-      title={`${tip} · 点击查看 Bangumi 详情`}
+      title={`${tip} · ${libState === "in" ? "点击打开库内详情" : "点击查看 Bangumi 详情"}`}
       onClick={() => onOpen(it)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -63,7 +63,8 @@ export function BgmCalRow({
 }
 
 /** 右栏：Bangumi 新番更新（7 个星期胶囊<迷你占比条> + 当天汇总条 + 当日列表）。
- *  点击条目 → 打开该 Bangumi 条目的轻量详情。
+ *  点击条目 → 打开详情页；[lc-1563] 已在库的条目直接开库内条目（真 guid、可播放），
+ *  其余维持 Bangumi 占位详情（无源时右栏为在线资源面板）。
  *  [lc-123-rev] 在库分组：只对**当前选中这天**的条目做匹配（不逐条打网络），在库在前、组标题带数量；
  *  索引不完整（partial）时退化成"只给命中项打标"，索引不可用时整个分组退场（见 useLibIndex 注释）。 */
 /* ════════════ [lc-1516] 发现页右栏顶部：Bangumi 追番同步卡 ════════════

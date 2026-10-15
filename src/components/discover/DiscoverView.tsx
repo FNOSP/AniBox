@@ -1,24 +1,27 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
 import { BgmPane } from "./BgmPane";
 import { TmdbPane } from "./TmdbPane";
-import { BgmCalendarItem, TmdbDiscoverItem } from "../../types";
+import { BgmCalendarItem, MediaItem, TmdbDiscoverItem } from "../../types";
 
 
 export function DiscoverView({
   active,
   onOpenDetail,
   onOpenBgm,
+  onOpenLib,
 }: {
   active: boolean;
   /** [lc-1444] 左栏 TMDB 条目 → 主详情页（父级合成 MediaItem 并切 view） */
   onOpenDetail: (it: TmdbDiscoverItem, mediaType: "tv" | "movie") => void;
   /** [lc-1444] 右栏新番表条目 → 主详情页（条目自带 Bangumi subject id） */
   onOpenBgm: (it: BgmCalendarItem) => void;
+  /** [lc-1563] 右栏「已在库」条目 → 库内条目（真 guid；父级 openDiscoverLib） */
+  onOpenLib: (item: MediaItem) => void;
 }) {
   return (
     <div className="discover">
       <TmdbPane active={active} onOpenDetail={onOpenDetail} />
-      <BgmPane active={active} onOpen={onOpenBgm} />
+      <BgmPane active={active} onOpen={onOpenBgm} onOpenLib={onOpenLib} />
     </div>
   );
 }

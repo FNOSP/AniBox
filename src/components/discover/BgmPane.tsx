@@ -4,11 +4,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { BgmAccountCard } from "./BgmAccountCard";
 import { BgmCalRow } from "./BgmCalRow";
 import { Dsk, WEEKDAYS, localDay, localWeekdayId } from "./shared";
-import { libHasTitle, useLibIndex } from "../../hooks/useLibIndex";
-import { BgmCalendarDay, BgmCalendarItem } from "../../types";
+import { libHasTitle, resolveLibItem, useLibIndex } from "../../hooks/useLibIndex";
+import { BgmCalendarDay, BgmCalendarItem, MediaItem } from "../../types";
 
 
-export function BgmPane({ active, onOpen }: { active: boolean; onOpen: (it: BgmCalendarItem) => void }) {
+export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen: (it: BgmCalendarItem) => void; onOpenLib: (item: MediaItem) => void }) {
   const todayId = localWeekdayId();
   const [days, setDays] = useState<BgmCalendarDay[]>([]);
   const [wd, setWd] = useState<number>(todayId); // 默认今天（设计稿的"今天"带点，也默认展开）
@@ -25,6 +25,13 @@ export function BgmPane({ active, onOpen }: { active: boolean; onOpen: (it: BgmC
   }, [days]);
   // 库标题索引：与日历**并行**拉（不阻塞列表；没回来就先按普通列表渲染，回来再补标签/分组）
   const lib = useLibIndex(active);
+  // [lc-1563] 点开统一入口：先查库索引 —— 命中（已在库）→ 开库内条目（真 guid，可播）；
+  // 未命中 → 保持原链路（discover-* 占位详情，无源时右栏为在线资源面板）。
+  const openBgm = (it: BgmCalendarItem) => {
+    const hit = resolveLibItem(lib.byTitle, it.name_cn || it.name);
+    if (hit) onOpenLib(hit);
+    else onOpen(it);
+  };
 
   useEffect(() => {
     if (!active) return;
@@ -95,7 +102,7 @@ export function BgmPane({ active, onOpen }: { active: boolean; onOpen: (it: BgmC
       today={wd === todayId}
       rank={r.rank}
       libState={r.inLib ? "in" : null}
-      onOpen={onOpen}
+      onOpen={openBgm}
     />
   );
 
@@ -121,7 +128,7 @@ export function BgmPane({ active, onOpen }: { active: boolean; onOpen: (it: BgmC
           [lc-1538] 底部通栏改「今日状态条」：当前选中日的汇总由这里算好传进去
           （原先那条 .ddaybar 已从列表上方移入卡片，列表不再重复显示） */}
       <BgmAccountCard
-        onOpen={onOpen}
+        onOpen={openBgm}
         today={{
           wdCn,
           isToday: wd === todayId,

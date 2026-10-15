@@ -30,25 +30,54 @@ export function libHasTitle(titles: Set<string>, raw?: string | null): boolean {
   return false;
 }
 
+/** [lc-1563] 解析到库内条目（点开用）：与 libHasTitle 同口径（先全等、再前缀兜底）；
+ *  前缀命中多个时取「归一化标题与查询串长度最接近」的一个，避免季/篇后缀挑错。
+ *  未命中返回 null —— 调用方维持原链路（Bangumi 占位详情）。 */
+
+export function resolveLibItem(byTitle: Map<string, MediaItem>, raw?: string | null): MediaItem | null {
+  const n = normTitle(raw);
+  if (n.length < 2) return null;
+  const exact = byTitle.get(n);
+  if (exact) return exact;
+  let best: MediaItem | null = null;
+  let bestD = Number.POSITIVE_INFINITY;
+  for (const [t, it] of byTitle) {
+    if (t.length >= 3 && n.length >= 3 && (t.startsWith(n) || n.startsWith(t))) {
+      const d = Math.abs(t.length - n.length);
+      if (d < bestD) {
+        best = it;
+        bestD = d;
+      }
+    }
+  }
+  return best;
+}
+
 
 export type LibIndexState = "loading" | "ok" | "partial" | "none";
 
+/** [lc-1563] 库索引：titles 供「已在库」判定；byTitle 供「点开 → 库内条目」解析（真 guid）。 */
+
+export type LibIndex = { state: LibIndexState; titles: Set<string>; byTitle: Map<string, MediaItem> };
+
 /** 会话级缓存：拉到的索引切页回来不再重拉（最多 8 次请求只花一次；失败不缓存，下次进来可重试） */
 
-export let libIndexCache: { state: LibIndexState; titles: Set<string> } | null = null;
+export let libIndexCache: LibIndex | null = null;
 
 /** 库标题索引（active 即拉，与日历并行；不阻塞列表渲染） */
 
-export function useLibIndex(active: boolean): { state: LibIndexState; titles: Set<string> } {
-  const [idx, setIdx] = useState<{ state: LibIndexState; titles: Set<string> }>(
-    () => libIndexCache ?? { state: "loading", titles: new Set() },
+export function useLibIndex(active: boolean): LibIndex {
+  const [idx, setIdx] = useState<LibIndex>(
+    () => libIndexCache ?? { state: "loading", titles: new Set(), byTitle: new Map() },
   );
   useEffect(() => {
     if (!active || libIndexCache) return;
     let alive = true;
-    (async () => {
-      const titles = new Set<string>();
-      let complete = false;
+      (async () => {
+        const titles = new Set<string>();
+        // [lc-1563] 顺手留一份「归一化标题 → 条目」映射：点开在库条目时要用真 guid
+        const byTitle = new Map<string, MediaItem>();
+        let complete = false;
       try {
         for (let p = 1; p <= LIB_INDEX_MAX_PAGES; p++) {
           const d = await invoke<{ list?: MediaItem[]; total?: number }>("get_items_global", {
@@ -56,24 +85,27 @@ export function useLibIndex(active: boolean): { state: LibIndexState; titles: Se
             page: p,
           });
           const list = Array.isArray(d?.list) ? d.list : [];
-          for (const it of list) {
-            const n = normTitle(it?.title);
-            if (n) titles.add(n);
-          }
+            for (const it of list) {
+              const n = normTitle(it?.title);
+              if (n) {
+                titles.add(n);
+                if (!byTitle.has(n)) byTitle.set(n, it);
+              }
+            }
           if (list.length < LIB_INDEX_PAGE) {
             complete = true; // 不足一页 = 已到底（空页也是）
             break;
           }
         }
       } catch {
-        if (alive) setIdx({ state: "none", titles: new Set() }); // 失败不写缓存（下次进来重试）
+        if (alive) setIdx({ state: "none", titles: new Set(), byTitle: new Map() }); // 失败不写缓存（下次进来重试）
         return;
       }
       if (titles.size === 0) {
-        if (alive) setIdx({ state: "none", titles: new Set() });
+        if (alive) setIdx({ state: "none", titles: new Set(), byTitle: new Map() });
         return;
       }
-      const next = { state: (complete ? "ok" : "partial") as LibIndexState, titles };
+      const next: LibIndex = { state: complete ? "ok" : "partial", titles, byTitle };
       libIndexCache = next;
       if (alive) setIdx(next);
     })();

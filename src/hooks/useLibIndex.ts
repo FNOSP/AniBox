@@ -35,6 +35,8 @@ export function libHasTitle(titles: Set<string>, raw?: string | null): boolean {
  *  未命中返回 null —— 调用方维持原链路（Bangumi 占位详情）。 */
 
 export function resolveLibItem(byTitle: Map<string, MediaItem>, raw?: string | null): MediaItem | null {
+  // [lc-1564] 旧形状索引（热更残留）没有 byTitle —— 视为未命中、绝不抛错（点击路径的底线）
+  if (!byTitle) return null;
   const n = normTitle(raw);
   if (n.length < 2) return null;
   const exact = byTitle.get(n);
@@ -70,8 +72,16 @@ export function useLibIndex(active: boolean): LibIndex {
   const [idx, setIdx] = useState<LibIndex>(
     () => libIndexCache ?? { state: "loading", titles: new Set(), byTitle: new Map() },
   );
+  // [lc-1564] 旧形状防御：热更残留的索引可能没有 byTitle —— ① 下游永远拿到形状完整的对象；
+  // ② stale 进依赖数组，配合下面「采纳有效缓存」把索引自愈成新形状（正常会话恒为 no-op）。
+  const stale = !idx.byTitle;
   useEffect(() => {
-    if (!active || libIndexCache) return;
+    if (!active) return;
+    // [lc-1564] 缓存有效性以 byTitle 为准；旧形状缓存（无 byTitle）不认，强制重拉
+    if (libIndexCache && libIndexCache.byTitle) {
+      if (stale) setIdx(libIndexCache); // 热更残留：state 落后于缓存 → 直接采纳，免等一次网络
+      return;
+    }
     let alive = true;
       (async () => {
         const titles = new Set<string>();
@@ -112,8 +122,8 @@ export function useLibIndex(active: boolean): LibIndex {
     return () => {
       alive = false;
     };
-  }, [active]);
-  return idx;
+  }, [active, stale]);
+  return stale ? { ...idx, byTitle: new Map() } : idx;
 }
 
 /** [lc-123-rev] 单个更新条目行：左侧强调竖条 + 封面(46×62，左上角该天序号) + 标题 +

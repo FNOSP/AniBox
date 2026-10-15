@@ -29,7 +29,8 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
   // 未命中 → 保持原链路（discover-* 占位详情，无源时右栏为在线资源面板）。
   const openBgm = (it: BgmCalendarItem) => {
     const hit = resolveLibItem(lib.byTitle, it.name_cn || it.name);
-    if (hit) onOpenLib(hit);
+    // [lc-1564] onOpenLib 兜底：极端混版（热更半套）下缺回调也不让点击抛错，退原链路
+    if (hit && onOpenLib) onOpenLib(hit);
     else onOpen(it);
   };
 

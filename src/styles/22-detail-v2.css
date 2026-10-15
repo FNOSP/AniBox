@@ -117,19 +117,11 @@
   flex-wrap: wrap;
   align-content: flex-start;
 }
-.dv2-isum {
-  position: relative;      /* 「展开」按钮的定位基座 */
-  flex: 0 0 auto;          /* 不参与拉伸 —— 被固定高度约束的那一块 */
-  height: 118px;
-  min-height: 0;
-  overflow: hidden;
-}
-/* [lc-1423] 简介区：**固定高度 + 截断 + 展开按钮**（用户要求）。
-   历史：lc-1410 曾按"默认全展示"把简介全铺开，后果是长简介撑高 `.dv2-top` ——
-   而海报是定宽 `aspect-ratio:2/3`、父级 `align-items:stretch` ⇒ **海报被纵向拉长变形**。
-   现在简介区固定高度，容器高度只由海报决定；全文改在弹窗里看（见 .sum-modal）。
-   ⚠ 本选择器只此一条规则（历史上被拆成两条过，已合并）。 */
+/* [lc-1568] 简介区高度**自适应**（用户：「位置动态调整，不要留死空白」）：短简介收身；
+   长简介截断 4 行 + 底部渐隐 + 「展开」。原固定高度 118px 是给顶部信息框防"海报被
+   纵向拉长"的（lc-1423）—— 简介移入「详情」页后该约束已不存在，固定高度只会留死空白。 */
 .dv2-isum .dfold {
+  position: relative;      /* [lc-1568] 渐隐的定位基座：锚在文字底部（原锚在固定高盒底） */
   margin: 0;
   font-size: 13px;
   line-height: 1.8;
@@ -146,7 +138,7 @@
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 18px;            /* 让开「展开」按钮那一行 */
+  bottom: 0;
   height: 34px;
   background: linear-gradient(to bottom, rgba(0, 0, 0, 0), var(--bg-2));
   pointer-events: none;

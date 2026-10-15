@@ -463,6 +463,9 @@
   align-items: center;
   justify-content: center;
   gap: 1px;
+  /* [lc-1562] 七枚等宽铺满整行：原来按内容宽（合计不满栏宽、周日右侧留白）；
+     flex:1 均分整行宽度，右缘与卡片/列表对齐。min-width 保留作窄栏下限（仍可换行）。 */
+  flex: 1;
   min-width: 64px;
   padding: 7px 12px 6px;
   border-radius: 12px;

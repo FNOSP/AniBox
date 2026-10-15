@@ -310,3 +310,43 @@
 .perf .lsc-pop {
   background: var(--panel) !important;
 }
+
+/* ── [lc-1561] 自建弹幕接口（danmu_api）：多地址输入 + 连通测试 ──
+   纵向布局的行（正文换行排），与 .set-row 的「左右两端」区分开。 */
+.set-row-col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.set-ta {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-strong);
+  background: var(--input-bg);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 7px 10px;
+  resize: vertical;
+}
+.set-ta::placeholder {
+  color: var(--muted);
+}
+.set-ta:disabled {
+  opacity: 0.5;
+}
+.set-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.set-note {
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-all;
+  flex: 1;
+  min-width: 0;
+}

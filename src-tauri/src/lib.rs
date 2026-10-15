@@ -63,8 +63,63 @@ async fn get_config(state: State<'_, AppState>) -> Result<Config, String> {
 #[tauri::command]
 async fn save_config(app: AppHandle, state: State<'_, AppState>, config: Config) -> Result<(), String> {
     config::save(&app, &config).await?;
+    // [lc-1561] 自建弹幕接口配置桥给 Node 侧客户端（改完立即生效，见 write_danmu_config）
+    danmaku_shim::write_danmu_config(&config)?;
+    // [lc-1561] 同步 Lua 侧闸门（只写开关、绝不写地址，见 sync_lua_gate 注释）
+    danmaku_shim::sync_lua_gate(
+        &config.mpv_path,
+        config.danmu_api_enabled,
+        &config.danmu_api_base,
+    );
     *state.config.write().await = config;
     Ok(())
+}
+
+/// [lc-1561] 测试某个自建弹幕接口地址是否可达（设置面板「测试连接」）。
+///
+/// 用与客户端相同的口径：请求 `/api/v2/search/anime?keyword=…` 只看**能否连通 + 是否返回
+/// JSON**（不校验搜索结果，那是业务）。返回人话结论，对齐主仓库 testConnection 的提示风格。
+#[tauri::command]
+async fn test_danmu_api(url: String) -> Result<String, String> {
+    let base = url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Err("请先填写服务地址".into());
+    }
+    if !base.starts_with("http://") && !base.starts_with("https://") {
+        return Err("地址需以 http:// 或 https:// 开头".into());
+    }
+    let api = format!("{base}/api/v2/search/anime?keyword=%E6%B5%8B%E8%AF%95");
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(12))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => return Err(format!("构造请求失败: {e}")),
+    };
+    match client.get(&api).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                return Ok(format!("❌ 服务返回 {status} —— 地址可达，但路径或 TOKEN 可能不对"));
+            }
+            if body.trim_start().starts_with('{') || body.trim_start().starts_with('[') {
+                Ok("✅ 连接成功（服务返回了 JSON）".into())
+            } else {
+                Ok("⚠️ 地址可达，但返回的不是 JSON —— 确认填的是 danmu_api 服务地址（通常带 TOKEN 路径）".into())
+            }
+        }
+        Err(e) => {
+            let hint = if e.is_timeout() {
+                "连接超时：服务未响应（确认容器在跑、端口正确）"
+            } else if e.is_connect() {
+                "连接被拒绝：服务未启动或端口不通"
+            } else {
+                "请求失败"
+            };
+            Ok(format!("❌ {hint} —— {e}"))
+        }
+    }
 }
 
 // ───────────────────────── 登录 / 会话 ─────────────────────────
@@ -424,14 +479,40 @@ async fn resolve_play_guid(
             let tv_title = get_s("tv_title");
             let season = get_n("season_number");
             let episode = get_n("episode_number");
+            // [lc-1561] 季/集号缺失时不拼 "S0E0"：那会在弹幕面板的番名里留下 "- : " 残渣
+            // （fnOS 未提供 season/episode 时 season=episode=0 → "番名 - S0E0: 集名" →
+            // uosc_danmaku 的 bili_fast_parse 剥掉 "S0E0" 后只剩 "番名 - : 集名"）。
+            // 主仓库 getTitle 靠 tvTitle 是否存在分支；这里再按「季集号是否有效」细一档，
+            // 三种形态：完整 S/E、只有番名+集名、只有集名。
             let media_title = match tv_title {
-                Some(tv) if !tv.is_empty() => {
+                Some(tv) if !tv.is_empty() && season > 0 && episode > 0 => {
                     format!("{tv} - S{season}E{episode}: {ep_title}")
                 }
+                Some(tv) if !tv.is_empty() && !ep_title.is_empty() => {
+                    format!("{tv} - {ep_title}")
+                }
+                Some(tv) if !tv.is_empty() => tv,
                 _ => ep_title.clone(),
             };
+            // [lc-1561] 自建源的「系列级匹配记忆」用季 guid 做键（同一部剧的各集共用，
+            // 命中一次后续集免搜索）。主仓库要再发一次 play/info 才拿到（resolveSeriesKey），
+            // 这里响应就在手上，直取省一次往返。字段名与主仓库同口径：
+            // parent_guid 优先，其次 item.parent_guid；都没有则退回本集 guid。
+            let parent_guid = info
+                .get("parent_guid")
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    it.get("parent_guid")
+                        .and_then(|x| x.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| g.clone());
+            danmaku_shim::write_play_meta(&g, &parent_guid);
             libmpv::trace(&format!(
-                "[play/info] ok type={t} 原始={guid} → 拉流用={g} 标题={media_title:?}"
+                "[play/info] ok type={t} 原始={guid} → 拉流用={g} 标题={media_title:?} 系列键={parent_guid}"
             ));
             if matches!(t, "TV" | "Season" | "Collection" | "Directory" | "Folder") {
                 return Err(format!(
@@ -765,6 +846,10 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         "carouselLogo": cfg.carousel_logo,
         "launchPage": cfg.launch_page,
         "autoLogin": cfg.auto_login,
+        // [lc-1561] 自建弹幕接口（地址非敏感，明文回填；多地址逐行）
+        "danmuApiEnabled": cfg.danmu_api_enabled,
+        "danmuApiBases": cfg.danmu_api_bases,
+        "danmuApiBase": cfg.danmu_api_base,
     }))
 }
 
@@ -800,6 +885,31 @@ async fn set_settings(
     if let Some(v) = arg.get("autoLogin") {
         cfg.auto_login = v.as_bool().ok_or("autoLogin 必须是布尔值")?;
     }
+    // [lc-1561] 自建弹幕接口：多地址（逐行去空/去尾斜杠/去重，上限 4 条 —— 与原项目同口径）。
+    // 改完**立即**桥给 Node 客户端并同步 Lua 闸门（不这样得等下次启动才生效）。
+    let mut danmu_changed = false;
+    if let Some(v) = arg.get("danmuApiEnabled") {
+        cfg.danmu_api_enabled = v.as_bool().ok_or("danmuApiEnabled 必须是布尔值")?;
+        danmu_changed = true;
+    }
+    if let Some(v) = arg.get("danmuApiBases") {
+        let arr = v.as_array().ok_or("danmuApiBases 必须是数组")?;
+        let mut list: Vec<String> = arr
+            .iter()
+            .filter_map(|x| x.as_str())
+            .map(|s| s.trim().trim_end_matches('/').to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        list.dedup();
+        list.truncate(4);
+        cfg.danmu_api_base = list.first().cloned().unwrap_or_default();
+        cfg.danmu_api_bases = list;
+        danmu_changed = true;
+    }
+    if danmu_changed {
+        danmaku_shim::write_danmu_config(&cfg)?;
+        danmaku_shim::sync_lua_gate(&cfg.mpv_path, cfg.danmu_api_enabled, &cfg.danmu_api_base);
+    }
     config::save(&app, &cfg).await?;
     *state.config.write().await = cfg.clone();
     Ok(json!({
@@ -808,6 +918,9 @@ async fn set_settings(
         "carouselLogo": cfg.carousel_logo,
         "launchPage": cfg.launch_page,
         "autoLogin": cfg.auto_login,
+        "danmuApiEnabled": cfg.danmu_api_enabled,
+        "danmuApiBases": cfg.danmu_api_bases,
+        "danmuApiBase": cfg.danmu_api_base,
     }))
 }
 
@@ -1155,6 +1268,12 @@ pub fn run() {
                 disk_cache::init(root, cfg.cache_limit_mb);
             }
             *app.state::<AppState>().config.blocking_write() = cfg.clone();
+            // [lc-1561] 自建弹幕接口配置桥（Node 侧每次读盘 ⇒ 这里先写一份，后续 save_config
+            // 再覆盖；保证 shim 一启动就能读到「启用/地址」，不会误判为未启用）。
+            if let Err(e) = danmaku_shim::write_danmu_config(&cfg) {
+                libmpv::trace(&format!("[danmaku-shim] 写自建源配置失败（不影响内置 B站）: {e}"));
+            }
+            danmaku_shim::sync_lua_gate(&cfg.mpv_path, cfg.danmu_api_enabled, &cfg.danmu_api_base);
             // [lc-1560] 启动即**预热弹幕 shim**（B站弹幕下载经它，见 danmaku_shim.rs）。
             // 首次播放时 shim 已在监听，省一次 node 冷启动；失败不影响本地播放。
             danmaku_shim::spawn_warmup(app.handle().clone());
@@ -1316,6 +1435,8 @@ pub fn run() {
             bgm::bgm_calendar,
             get_config,
             save_config,
+            // [lc-1561] 自建弹幕接口连通测试（设置面板）
+            test_danmu_api,
             // [lc-1434] 设置面板（通用/外观）：白名单子集读写 + 启动页查询
             get_settings,
             set_settings,

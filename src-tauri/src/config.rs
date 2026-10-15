@@ -46,6 +46,21 @@ pub struct Config {
     /// [lc-1515] Bangumi 个人 Access Token（追番状态同步用；用户手动粘贴，本地保存）
     #[serde(default)]
     pub bgm_token: String,
+
+    /* ── [lc-1561] 自建弹幕接口（danmu_api）—— 对齐主仓库 fn_config 的同名项 ──
+       用户在自己的 NAS/Docker 上部署 https://github.com/huangxd-/danmu_api（LogVar 弹幕API），
+       它把哔哩/爱奇艺/优酷/腾讯等平台的弹幕聚合到同一集，密度显著高于本应用内置的
+       「直连 B站 单源 + 阈值聚合」。作为弹幕**优选源**：命中即用，未命中自动降级内置 B站。
+       默认关闭 = 完全走内置 B站 链路（与接入前行为一致）。 */
+    /// 自建弹幕接口开关
+    #[serde(default)]
+    pub danmu_api_enabled: bool,
+    /// 单地址（恒等于 bases[0]，兼容旧读取方与 uosc conf 同步）
+    #[serde(default)]
+    pub danmu_api_base: String,
+    /// 多地址列表（故障转移；主仓库上限 4 条）
+    #[serde(default)]
+    pub danmu_api_bases: Vec<String>,
 }
 
 fn default_cache_limit_mb() -> u64 {
@@ -89,6 +104,9 @@ impl Default for Config {
             carousel_logo: true,
             launch_page: default_launch_page(),
             bgm_token: String::new(),
+            danmu_api_enabled: false,
+            danmu_api_base: String::new(),
+            danmu_api_bases: Vec::new(),
         }
     }
 }

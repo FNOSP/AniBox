@@ -81,8 +81,48 @@ export function SettingsPanel({
     }
   };
 
-  /** [lc-1437] 自启开关：真值在系统注册表里，前端只在 localStorage 记一份 UI 状态。
-   *  写入失败（权限/杀软拦截）时**回滚开关**并把错误显示出来 —— 不能出现
+  /* [lc-1561] 自建弹幕接口（danmu_api）：地址多行输入 + 连通测试。
+     保存走 onSettings → Rust 侧落盘后**立即**桥给 Node 客户端并同步 Lua 闸门，
+     所以改完不必重启应用重启 mpv。地址非敏感，明文回填（对齐主仓库：地址不写进 conf）。 */
+  const [dmBases, setDmBases] = useState(
+    () => (settings.danmuApiBases || []).join("\n"),
+  );
+  const [dmNote, setDmNote] = useState("");
+  const [dmTesting, setDmTesting] = useState(false);
+
+  const parseBases = (text: string) =>
+    text
+      .split(/[\n;；]/)
+      .map((s) => s.trim().replace(/\/+$/, ""))
+      .filter(Boolean)
+      .slice(0, 4);
+
+  const saveDanmu = (enabled: boolean, text: string) => {
+    onSettings({ danmuApiEnabled: enabled, danmuApiBases: parseBases(text) });
+  };
+
+  const testDanmu = async () => {
+    setDmTesting(true);
+    setDmNote("");
+    try {
+      const list = parseBases(dmBases);
+      if (!list.length) {
+        setDmNote("请先填写服务地址");
+        return;
+      }
+      const out: string[] = [];
+      for (const b of list) {
+        out.push(await invoke<string>("test_danmu_api", { url: b }));
+      }
+      setDmNote(out.join("　"));
+    } catch (e) {
+      setDmNote(String(e));
+    } finally {
+      setDmTesting(false);
+    }
+  };
+
+  /** [lc-1437] 自启开关：真值在系统注册表里，前端只在 localStorage 记一份 UI 状态。   *  写入失败（权限/杀软拦截）时**回滚开关**并把错误显示出来 —— 不能出现
    *  "界面显示已开启、实际没写进注册表"这种静默不一致。 */
   const toggleAutostart = async () => {
     const next = !autostart;
@@ -204,6 +244,56 @@ export function SettingsPanel({
               aria-label="轮播透明标题"
               onClick={() => onSettings({ carouselLogo: !settings.carouselLogo })}
             />
+          </div>
+
+          {/* ── 弹幕 ── */}
+          <h3 className="ddet-h3">弹幕</h3>
+          <div className="set-row">
+            <div>
+              <span className="set-k">自建弹幕接口</span>
+              <div className="set-desc">
+                自部署 danmu_api（LogVar 弹幕API）作为优选源，聚合多平台弹幕；未命中自动降级内置 B站
+              </div>
+            </div>
+            <button
+              type="button"
+              className={`set-sw${settings.danmuApiEnabled ? " on" : ""}`}
+              aria-pressed={settings.danmuApiEnabled}
+              aria-label="自建弹幕接口"
+              onClick={() => saveDanmu(!settings.danmuApiEnabled, dmBases)}
+            />
+          </div>
+          <div className="set-row set-row-col">
+            <span className="set-k">服务地址</span>
+            <textarea
+              className="set-ta"
+              rows={2}
+              placeholder={"http://192.168.31.170:9321/你的TOKEN\nhttp://100.66.1.2:9321/你的TOKEN"}
+              value={dmBases}
+              disabled={busy}
+              onChange={(e) => setDmBases(e.target.value)}
+              onBlur={() => saveDanmu(settings.danmuApiEnabled, dmBases)}
+            />
+            <div className="set-actions">
+              <button
+                className="set-btn"
+                disabled={dmTesting}
+                onClick={testDanmu}
+              >
+                {dmTesting ? "测试中…" : "测试连接"}
+              </button>
+              <button
+                className="set-btn"
+                disabled={busy}
+                onClick={() => saveDanmu(settings.danmuApiEnabled, dmBases)}
+              >
+                保存
+              </button>
+              <span className="set-note">{dmNote}</span>
+            </div>
+            <div className="set-desc">
+              每行一条（最多 4 条，故障转移）。地址只存本机，不写入 mpv 配置。
+            </div>
           </div>
 
           {/* ── 账号 ── */}

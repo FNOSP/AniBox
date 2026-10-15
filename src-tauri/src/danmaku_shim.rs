@@ -25,6 +25,28 @@ fn port_ready() -> bool {
     std::net::TcpStream::connect(("127.0.0.1", SHIM_PORT)).is_ok()
 }
 
+/// [lc-1561] Node 侧要落盘的源码：shim 本体 + 移植的两个模块 + 支撑桩。
+///
+/// 全部 `include_str!` 编进二进制（打包不需要额外的 resources 条目），首次运行写出；
+/// 之后按**内容**判断是否需要刷新（比长度可靠：改注释长度不变也要重写）。
+const NODE_FILES: &[(&str, &str)] = &[
+    ("anibox-danmaku-shim.cjs", SHIM_JS),
+    // 主仓库 danmuApi.ts / biliRunner.ts 的 tsc 转译产物（业务逻辑一字未改）
+    (
+        "anibox-danmu-api.cjs",
+        include_str!("../assets/danmu-api.cjs"),
+    ),
+    (
+        "anibox-bili-runner.cjs",
+        include_str!("../assets/bili-runner.cjs"),
+    ),
+    // 上述两者的环境桩（electron/logger/fn_config/proxyAgent + 脚本目录通道）
+    (
+        "anibox-danmu-deps.cjs",
+        include_str!("../assets/danmu-api-deps.cjs"),
+    ),
+];
+
 /// 由 mpv 路径推导 uosc_danmaku 脚本目录：<mpv 目录>/portable_config/scripts/uosc_danmaku
 pub fn script_dir_from_mpv(mpv_path: &str) -> Option<PathBuf> {
     let exe = Path::new(mpv_path);
@@ -41,17 +63,34 @@ pub fn script_dir_from_mpv(mpv_path: &str) -> Option<PathBuf> {
     None
 }
 
-/// shim 脚本落到临时目录（`include_str!` 内嵌 → 首次运行写出，之后按内容长度判断是否需要刷新）
-fn materialize_shim_js() -> Result<PathBuf, String> {
-    let path = std::env::temp_dir().join("anibox-danmaku-shim.cjs");
-    let need_write = match std::fs::read(&path) {
-        Ok(existing) => existing.len() != SHIM_JS.len(),
-        Err(_) => true,
-    };
-    if need_write {
-        std::fs::write(&path, SHIM_JS).map_err(|e| format!("写出弹幕 shim 脚本失败: {e}"))?;
+/// [lc-1561] 移植产物之间的相互 require 用的是**中性文件名**（anibox-danmu-api.cjs 等），
+/// 所以落盘时统一改名 —— 保留 assets 里带语义的原文件名便于对照上游。
+/// 顺序：shim 引 `bili-runner` → `danmu-api` → `deps`，全部先落盘再启动。
+fn rewrite_requires(src: &str) -> String {
+    src.replace("./danmu-api.cjs", "./anibox-danmu-api.cjs")
+        .replace("./bili-runner.cjs", "./anibox-bili-runner.cjs")
+        .replace("./danmu-api-deps.cjs", "./anibox-danmu-deps.cjs")
+}
+
+/// 落盘全部 Node 源码（内容变化的文件才重写），返回 shim 主文件路径。
+fn materialize_node_files() -> Result<PathBuf, String> {
+    let dir = std::env::temp_dir();
+    let mut shim_path = dir.join("anibox-danmaku-shim.cjs");
+    for (name, src) in NODE_FILES {
+        let path = dir.join(name);
+        let body = rewrite_requires(src);
+        let need_write = match std::fs::read(&path) {
+            Ok(existing) => existing != body.as_bytes(),
+            Err(_) => true,
+        };
+        if need_write {
+            std::fs::write(&path, body).map_err(|e| format!("写出 {name} 失败: {e}"))?;
+        }
+        if *name == "anibox-danmaku-shim.cjs" {
+            shim_path = path;
+        }
     }
-    Ok(path)
+    Ok(shim_path)
 }
 
 /// 就绪则直接返回；否则拉起 node 跑 shim 并等待端口监听（最长 10s）。
@@ -76,7 +115,7 @@ pub async fn ensure(
 
     let dir = script_dir_from_mpv(mpv_path)
         .ok_or_else(|| format!("未找到 uosc_danmaku 脚本目录（由 mpv 路径推导）：{mpv_path}"))?;
-    let js = materialize_shim_js()?;
+    let js = materialize_node_files()?;
 
     crate::libmpv::trace(&format!(
         "[danmaku-shim] 拉起 node {} {}（脚本目录 {}）",
@@ -122,6 +161,55 @@ pub async fn ensure(
     Err("弹幕 shim 启动超时（127.0.0.1:22347 未监听）".into())
 }
 
+/// [lc-1561] 同步「自建弹幕接口」开关到 uosc_danmaku 的 script-opts（Lua 侧闸门）。
+///
+/// 为什么需要：Lua 的自动补源判断是 `options.auto_load_extra or options.danmu_api_enabled`
+/// （main.lua:909/972、apis/dandanplay.lua:368/466）。用户若关掉「B站弹幕搜索」而只开自建源，
+/// 没有这个键 Lua 根本不会去请求本地 shim —— 自建源就永远不会被问到。
+///
+/// ⚠️ **绝不把服务地址写进 conf**（对齐主仓库 lc-1104）：portable_config 是 git 跟踪、
+/// 随安装包分发的目录，写进去等于把用户的内网地址（含 TOKEN 路径）摊到工作区与发布目录。
+/// 地址只留在应用自己的 config.json；Lua 侧也零读取（真正发请求的是 Node 客户端）。
+/// 未启用或地址为空 → **删键**（options.lua 默认 false ⇒ 完全走内置 B站 链路）。
+pub fn sync_lua_gate(mpv_path: &str, enabled: bool, base: &str) {
+    let Some(script_dir) = script_dir_from_mpv(mpv_path) else {
+        return;
+    };
+    // script-opts 与 scripts 同级
+    let Some(portable) = script_dir.parent().and_then(|p| p.parent()) else {
+        return;
+    };
+    let conf_dir = portable.join("script-opts");
+    let target = conf_dir.join("uosc_danmaku.conf");
+
+    let on = enabled && !base.trim().is_empty();
+    let mut lines: Vec<String> = std::fs::read_to_string(&target)
+        .map(|s| s.lines().map(|l| l.to_string()).collect())
+        .unwrap_or_default();
+    // 清掉历史行（含地址行：老版本可能写过，升级后自动消失）
+    lines.retain(|l| {
+        let t = l.trim_start();
+        !t.starts_with("danmu_api_enabled=")
+            && !t.starts_with("danmu_api_base=")
+            && !t.starts_with("# 自建弹幕接口")
+    });
+    while lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+    if on {
+        lines.push("# 自建弹幕接口（danmu_api）：由应用设置面板控制，作为弹幕优选源；未命中自动降级内置B站弹幕".into());
+        lines.push("danmu_api_enabled=yes".into());
+    }
+    if std::fs::create_dir_all(&conf_dir).is_err() {
+        return;
+    }
+    let mut body = lines.join("\n");
+    body.push('\n');
+    if let Err(e) = std::fs::write(&target, body) {
+        crate::libmpv::trace(&format!("[danmaku-shim] 写自建源闸门失败: {e}"));
+    }
+}
+
 /// 应用启动时后台预热（用户首次播放时 shim 已就绪，省一次冷启动等待）。
 pub fn spawn_warmup(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
@@ -133,3 +221,51 @@ pub fn spawn_warmup(app: tauri::AppHandle) {
         }
     });
 }
+
+/// [lc-1561] 把设置面板的自建弹幕接口配置**桥接**给 Node 侧客户端。
+///
+/// shim 里的 `danmu-api-deps.cjs` 每次读盘，所以这里只要在配置变化时覆盖写一次即可 ——
+/// 用户在设置面板改完**立即生效**，不需要重启应用、也不需要重启 shim（与主仓库 fnConfig
+/// 的「每次读 config.json」行为等价）。
+///
+/// 写在 %TEMP%（与 shim 自身的落点一致）。注意：**不含任何第三方凭据**，只有用户自建的
+/// 服务地址（用户自己的内网地址，本来也要落进 config.json）。
+pub fn write_danmu_config(cfg: &crate::config::Config) -> Result<(), String> {
+    let path = std::env::temp_dir().join("anibox-danmu-config.json");
+    let bases: Vec<String> = cfg
+        .danmu_api_bases
+        .iter()
+        .map(|b| b.trim().trim_end_matches('/').to_string())
+        .filter(|b| !b.is_empty())
+        .collect();
+    let payload = serde_json::json!({
+        "enabled": cfg.danmu_api_enabled,
+        "base": cfg.danmu_api_base.trim().trim_end_matches('/'),
+        "bases": bases,
+        // 飞牛地址/令牌：系列记忆键解析（play-meta 缺失时的兜底）与自建源无关，仅供桩里的
+        // readConfig 兼容主仓库形状；真源仍是 config.json 本身。
+        "server": cfg.server,
+        "token": cfg.token,
+    });
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("写自建源配置失败: {e}"))?;
+    Ok(())
+}
+
+/// [lc-1561] 把本次播放的条目元信息写给 Node 侧：自建源的「系列级匹配记忆」需要季 guid
+/// （原项目 `resolveSeriesKey` 要再发一次 play/info HTTP 才拿到；我们在 play_item 里已经
+/// 解析过响应，直传更省一次往返）。
+pub fn write_play_meta(episode_guid: &str, parent_guid: &str) {
+    let path = std::env::temp_dir().join("anibox-play-meta.json");
+    let payload = serde_json::json!({
+        "episodeGuid": episode_guid,
+        "parentGuid": parent_guid,
+    });
+    if let Ok(s) = serde_json::to_string_pretty(&payload) {
+        let _ = std::fs::write(&path, s);
+    }
+}
+

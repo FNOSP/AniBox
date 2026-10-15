@@ -267,4 +267,9 @@ export type AppSettings = {
   carouselLogo: boolean;
   launchPage: "home" | "continue";
   autoLogin: boolean;
+  /** [lc-1561] 自建弹幕接口（danmu_api）开关 —— 对齐主仓库同名设置 */
+  danmuApiEnabled: boolean;
+  /** 多地址列表（故障转移，≤4 条；danmuApiBase 恒等于第一条） */
+  danmuApiBases: string[];
+  danmuApiBase: string;
 };

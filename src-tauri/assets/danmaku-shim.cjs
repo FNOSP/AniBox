@@ -46,6 +46,38 @@ function loadMod() {
     return mod;
 }
 
+/**
+ * [lc-1561] 自建弹幕接口（danmu_api）客户端 + 弹幕源编排器 —— 主仓库对应模块的**原样转译产物**。
+ *
+ * 业务逻辑一字未改：客户端那边是多地址故障转移、只认精确匹配（主名归一化 + 季号一致）、
+ * 未标季条目用分集标题核验、系列级匹配记忆、fnOS 原标题备用搜索词；编排器那边是
+ * 自建源 → 内置 B站 → 弹弹play 的优先级链、低于聚合阈值时叠加合并、逐源 traces、
+ * 候选三源合并与序号重排。全是主仓库实测磨出来的细节，重写必然丢。
+ *
+ * 配置由 Rust 侧写 %TEMP%/anibox-danmu-config.json + anibox-play-meta.json
+ * （见 danmu-api-deps.cjs；每次读取都重读盘 ⇒ 设置面板改完立即生效）。
+ */
+let runner = null;
+function loadRunner() {
+    if (!runner) {
+        const deps = require('./danmu-api-deps.cjs');
+        deps.setScriptDir(scriptDir); // 编排器靠它定位 bili_danmaku.js（替代原 electron 路径探测）
+        runner = require('./bili-runner.cjs');
+    }
+    return runner;
+}
+
+/** 系列记忆键：Rust 在 play_item 时把 parent_guid 写进 play-meta.json（省一次 fnOS HTTP） */
+function readSeriesKey() {
+    try {
+        const deps = require('./danmu-api-deps.cjs');
+        const c = deps.fnConfig.readConfig();
+        return c.parentGuid || c.episodeGuid || '';
+    } catch (_) {
+        return '';
+    }
+}
+
 /** 弹幕 XML 只允许写在 fnos-danmaku 缓存目录（与主仓库 isSafeDanmakuPath 同口径） */
 function isSafeDanmakuPath(p) {
     if (!p) return false;
@@ -77,30 +109,39 @@ function withTimeout(promise, ms, label) {
 }
 
 /**
- * [lc-1560] 逐源结论 —— 对齐主仓库 `biliRunner.ts` 的 `DanmakuSourceTrace[]`。
+ * [lc-1561] 逐源结论的**兜底**生成器。
  *
- * 消费方是 Lua 的 `modules/menu.lua` → `build_bili_config_menu_props()`（「弹幕源详情」
- * 面板的 ①②③ 三行）与 `src_note()`：
- *   used=true      → "✅ <detail> · N 条"
- *   attempted 未中 → "❌ <error>"
- *   未参与         → "➖ <skippedReason>"
- * 缺了这个数组时 `BILI_INFO.sources` 为 nil，面板退化成「（尚未取过弹幕，无逐源记录）」，
- * 而 ③ 弹弹play 那一行会因 `BILI_INFO.ok==true` 误判为「✅ 已从弹弹play 取到弹幕（前两者
- * 均未命中）」—— 与实际「B站 命中 1931 条」自相矛盾（用户实测截图）。
+ * 正常路径下这个数组由移植过来的 `bili-runner.cjs`（= 主仓库 biliRunner.ts 原样转译）
+ * 产出的 `r.sources` 提供 —— 自建源/B站 各自的 attempted/used/count/error 都是真实记录。
+ * 本函数只在「runner 整体抛异常」时兜底，避免面板退回到「尚未取过弹幕，无逐源记录」。
  *
- * 本应用的源结构与主仓库不同，如实标注：
- *   ① 自建源（danmu_api）：Tauri 侧未接入（主仓库那是 Electron 主进程模块），恒未参与；
- *   ② 内置 B站：本 shim 的唯一实际执行源，used/count/error 取 `run()` 真实结果；
- *   ③ 弹弹play：兜底由 Lua 脚本侧（apis/dandanplay.lua）按需触发，应用侧不参与。
+ * 消费方：Lua 的 `modules/menu.lua` → `build_bili_config_menu_props()` 的 ①②③ 三行。
+ *   used=true → "✅ <detail> · N 条"；attempted 未中 → "❌ <error>"；未参与 → "➖ <skippedReason>"
  */
 function buildSourceTraces(r) {
     const ok = !!(r && r.ok);
+    // 伪 id 直取（手动选定）：编排器不产 traces（单源操作，无优先级链可言），
+    // 这里按「谁提供的」如实写，而不是硬套三源模板。
+    const src = String((r && r.source) || '');
+    if (ok && src.indexOf('自建源') >= 0) {
+        return [
+            {
+                id: 'danmu_api',
+                attempted: true,
+                used: true,
+                detail: '手动选定条目直取',
+                count: Number(r.danmaku_count) || 0,
+            },
+            { id: 'bilibili', attempted: false, used: false, skippedReason: '手动选定自建源条目，未参与' },
+            { id: 'dandanplay', attempted: false, used: false, skippedReason: '手动选定自建源条目，未参与' },
+        ];
+    }
     return [
         {
             id: 'danmu_api',
             attempted: false,
             used: false,
-            skippedReason: '本版本未接入自建弹幕接口（Tauri 迁移遗留；弹幕取内置 B站 源）',
+            skippedReason: '本次未走到自建源判定（编排器异常，详见 anibox-danmaku-shim.log）',
         },
         ok
             ? {
@@ -120,7 +161,7 @@ function buildSourceTraces(r) {
             id: 'dandanplay',
             attempted: false,
             used: false,
-            skippedReason: '弹弹play 兜底由 MPV 弹幕脚本按需触发（应用侧不参与）',
+            skippedReason: '弹弹play 兜底由 MPV 弹幕脚本按需触发（应用侧不含第三方凭证）',
         },
     ];
 }
@@ -174,6 +215,7 @@ async function handle(req, res) {
             const threshold = q('threshold') ? parseInt(q('threshold'), 10) : undefined;
             const season = q('season') ? parseInt(q('season'), 10) : 0;
             const altTitle = q('alt');
+            const guid = q('guid');
             if (!title || !out) {
                 json(res, 400, { ok: false, error: '缺少 title 或 out 参数' });
                 return;
@@ -182,10 +224,14 @@ async function handle(req, res) {
                 json(res, 403, { ok: false, error: 'out 路径不在允许的弹幕缓存目录内' });
                 return;
             }
-            console.log(`[danmaku-shim] /danmaku title=${JSON.stringify(title)} ep=${ep} season=${season} out=${out}`);
+            console.log(`[danmaku-shim] /danmaku title=${JSON.stringify(title)} ep=${ep} season=${season} guid=${guid || '(无)'} alt=${altTitle ? JSON.stringify(altTitle) : '(无)'}`);
+            // [lc-1561] 走移植的编排器（= 主仓库 biliRunner.runBiliDanmaku）：自建源 → 内置 B站
+            // → 弹弹play(Lua 侧) 的优先级、低于阈值叠加合并、逐源 traces 全部与原项目一致。
+            // seriesKey 由 play-meta.json 直供（Rust 已解析出 parent_guid，省一次 HTTP）。
+            const seriesKey = readSeriesKey();
             const r = await withTimeout(
-                loadMod().run(title, ep, out, threshold, season, 60000, true, '', '', altTitle),
-                90000,
+                loadRunner().runBiliDanmaku(title, ep, out, threshold, season, 60000, true, '', seriesKey, altTitle),
+                180000,
                 '/danmaku',
             );
             if (r && r.ok) {
@@ -203,8 +249,7 @@ async function handle(req, res) {
                     season_id: r.season_id == null ? null : r.season_id,
                     epid: r.epid == null ? null : r.epid,
                     season_mismatch: !!r.season_mismatch,
-                    // [lc-1560] bili_danmaku.js 自产 sources=false（主仓库由 biliRunner.ts 补），
-                    // 这里按同一契约补出来，否则「弹幕源详情」面板的 ①②③ 全是「尚未取过弹幕」。
+                    // 逐源 traces 由编排器给出（真实记录）；缺省才兜底
                     sources: (r.sources && r.sources.length ? r.sources : buildSourceTraces(r)),
                     self_count: r.self_count == null ? null : r.self_count,
                     bilibili_count: r.bilibili_count == null ? null : r.bilibili_count,
@@ -224,15 +269,16 @@ async function handle(req, res) {
                 return;
             }
             console.log(`[danmaku-shim] /danmaku-candidates title=${JSON.stringify(title)} ep=${ep}`);
+            // 三源候选合并（自建源置顶 + 弹弹play 段 + B站 兜底），序号重排与原项目一致
             const r = await withTimeout(
-                loadMod().search_candidates(title, ep, season),
-                90000,
+                loadRunner().runBiliDanmakuCandidates(title, ep, season, 60000),
+                120000,
                 '/danmaku-candidates',
             );
             if (r && r.ok) {
-                json(res, 200, { ok: true, candidates: r.candidates || [] });
+                json(res, 200, { ok: true, candidates: r.candidates || [], selfHosted: r.selfHosted || null });
             } else {
-                json(res, 200, { ok: false, error: (r && r.error) || '候选搜索失败' });
+                json(res, 200, { ok: false, error: (r && r.error) || '候选搜索失败', selfHosted: r.selfHosted || null });
             }
             return;
         }
@@ -269,14 +315,11 @@ async function handle(req, res) {
                 return;
             }
             console.log(`[danmaku-shim] /danmaku-by-bvid bvid=${bvid} ep=${ep} cid=${cid} out=${out}`);
+            // [lc-1561] 走编排器的 byBvid（= 主仓库 runBiliDanmakuByBvid）：内部处理
+            // 自建源伪 id（dmapi:<id>）/ 弹弹play 伪 id（ddp:<id>）直取、以及 B站 分P 定位。
             const r = await withTimeout(
-                loadMod().run_candidates(
-                    [{ bvid, cid: cid || null, title: title || bvid }],
-                    out,
-                    threshold,
-                    ep,
-                ),
-                90000,
+                loadRunner().runBiliDanmakuByBvid(title || '', bvid, out, threshold, ep, 60000, cid || 0, readSeriesKey()),
+                180000,
                 '/danmaku-by-bvid',
             );
             if (r && r.ok) {
@@ -284,11 +327,12 @@ async function handle(req, res) {
                     ok: true,
                     bvid: r.bvid || bvid,
                     title: r.title || '',
+                    matched_title: r.matched_title || '',
                     danmaku_count: r.danmaku_count || 0,
                     source: r.source || '',
                     cid: r.cid == null ? null : r.cid,
                     cookie_status: r.cookie_status || null,
-                    sources: buildSourceTraces(r),
+                    sources: (r.sources && r.sources.length ? r.sources : buildSourceTraces(r)),
                 });
             } else {
                 json(res, 200, { ok: false, error: (r && r.error) || '未命中', sources: buildSourceTraces(r) });

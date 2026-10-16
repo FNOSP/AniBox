@@ -449,6 +449,10 @@ export function WebrsPanel({ title }: { title: string }) {
 
   return (
     <div className="webrs">
+      {/* [lc-1609] 合规：常驻提示 —— 在线资源全部来自第三方网站，本软件不提供/不存储任何资源 */}
+      <div className="webrs-hint">
+        资源来自第三方网站，本软件不提供、不存储任何资源 · 详见「设置 → 关于 → 免责声明」
+      </div>
       <div className="webrs-bar">
         <input
           value={kw}

@@ -510,6 +510,31 @@ pub async fn bgm_collect_stats(app: AppHandle) -> Result<Value, String> {
     Ok(json!({ "total": table.map.len(), "byType": by_type, "byId": by_id, "list": list }))
 }
 
+/// [lc-1597] 把单集在 BGM 上标成「看过」（type=2）：`PUT /v0/users/-/collections/-/episodes/{episode_id}`。
+/// 口径对齐原 Electron 项目 `bangumiSync.ts::markEpisodeWatched`（**type = 2 = 看过**）。
+/// ⚠ 上游要求**该条目已在收藏里**，否则 400 `subject not collected` —— 这里如实把错误带回，
+/// **不替用户改收藏状态**（那是「状态同步」按钮的事）。
+#[tauri::command]
+pub async fn bgm_episode_watched(
+    state: State<'_, crate::AppState>,
+    episode_id: i64,
+) -> Result<Value, String> {
+    if episode_id <= 0 {
+        return Err(format!("episode_id 非法：{episode_id}"));
+    }
+    let token = state.config.read().await.bgm_token.trim().to_string();
+    if token.is_empty() {
+        return Err("未绑定 Bangumi 账号".to_string());
+    }
+    authed_call(
+        "PUT",
+        &format!("/v0/users/-/collections/-/episodes/{episode_id}"),
+        &token,
+        Some(r#"{"type":2}"#),
+    )
+    .await
+}
+
 /// [lc-1534] 「正在追」封面条数据（卡片左栏用）：本地表 type=3（在看）按最近更新倒序。
 /// 前 limit 条里有缺封面的（或一条都没有）且已绑定 → 现拉 collections 首页（type=3）回填本地表；
 /// 只补名字/封面/更新时间，type 以本地表为准不覆盖。返回 [{id, name, cover}]（最多 limit 条，默认 12）。

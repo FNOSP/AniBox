@@ -1516,6 +1516,8 @@ pub fn run() {
             bgm_account::bgm_collect_stats,
             bgm_account::bgm_collect_season,
             bgm_account::bgm_watching_covers,
+            // [lc-1597] 观看进度过 80% → 把该集在 BGM 标「看过」（PUT .../episodes/{id} {type:2}）
+            bgm_account::bgm_episode_watched,
             // [lc-1500] 在线资源（Kazumi 规则源）：发现页无源条目 → 搜索/选集/解析直链 → mpv
             // [lc-1501] 多源聚合搜索 + 用户加源/删源（Kazumi「播放来源 / 我的规则」同款）
             webrs::webrs_rules,

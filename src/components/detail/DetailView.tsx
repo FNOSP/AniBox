@@ -33,6 +33,8 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
   const forceSeasonRef = useRef(false);
   const forceEpsRef = useRef(false);
   const lastEpGuidRef = useRef("");
+  // [lc-1597] 播放结束后是否要跑一次「BGM 分集看过」同步（见下方 syncBgmRef 的 effect）
+  const syncBgmRef = useRef(false);
   // TMDB 完整详情（剧照/相似/更多）：「详情」「更多」两个标签页的 TMDB 侧数据源
   const [tmdb, setTmdb] = useState<Record<string, unknown> | null>(null);
   // [lc-1507] TMDB 请求是否已 settle（成败都置位）：区分「加载中」（骨架）与「已失败」
@@ -164,6 +166,7 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
     const bump = () => {
       forceSeasonRef.current = true;
       forceEpsRef.current = true;
+      syncBgmRef.current = true;
       setProgTick((n) => n + 1);
     };
     const un1 = listen<{ phase?: string }>("mpv-load", (e) => {
@@ -944,6 +947,26 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
     const num = Number.isInteger(e?.sort) ? (e.sort as number) : Number.isInteger(e?.ep) ? (e.ep as number) : NaN;
     if (Number.isFinite(num) && !bgmEpByNum.has(num)) bgmEpByNum.set(num, e);
   }
+
+  // [lc-1597] 播放结束后：把**本地进度 ≥80%**（或飞牛已标 watched）的集在 BGM 上标「看过」。
+  //   对齐原 Electron 项目 bangumiSync.ts：`PUT /v0/users/-/collections/-/episodes/{id}` body `{type:2}`。
+  //   前提：① 已绑定 BGM ② 条目已匹配到 BGM（才有 episode_id）。上游还要求**条目已在收藏里**，
+  //   否则 400 `subject not collected` —— 静默失败（不打扰用户，也**不替用户改收藏状态**）。
+  //   条件不满足时**不消费标志**（等 BGM 匹配/集列表晚到后再跑）。
+  useEffect(() => {
+    if (!syncBgmRef.current) return;
+    const sid = Number((bgm as Record<string, unknown> | null)?.subject_id ?? 0);
+    if (!sid || !episodes.length) return;
+    syncBgmRef.current = false;
+    for (const ep of episodes) {
+      const progress =
+        ep.ts && ep.duration && ep.duration > 0 ? Math.min(100, (ep.ts / ep.duration) * 100) : 0;
+      if (!(Number(ep.watched) === 1 || progress >= 80)) continue;
+      const num = Number(ep.episode_number ?? 0);
+      const id = Number(num > 0 ? bgmEpByNum.get(num)?.id ?? 0 : 0);
+      if (id > 0) invoke("bgm_episode_watched", { episodeId: id }).catch(() => {});
+    }
+  }, [episodes, bgm]);
 
 
   // [lc-106] 独立 mpv 窗口模式：点播放直接拉起独立 mpv（与主仓库一致），页面留在详情页

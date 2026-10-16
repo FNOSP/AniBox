@@ -1255,7 +1255,9 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
                 const desc = String(ep.overview || bgmEp?.desc || "").trim();
                 const progress =
                   ep.ts && ep.duration && ep.duration > 0 ? Math.min(100, (ep.ts / ep.duration) * 100) : 0;
-                const seen = Number(ep.watched) === 1 || progress >= 95;
+                // [lc-1596] 「已看」门槛：本地进度 **≥80%** 即视为已观看（原为 95% —— 用户要求
+                //   「观看进度超过 80 后打上已观看的标记」）。飞牛自己的 `watched=1` 仍然优先。
+                const seen = Number(ep.watched) === 1 || progress >= 80;
                 const playing = playingGuid === ep.guid;
                 return (
                   <div

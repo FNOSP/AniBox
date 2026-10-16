@@ -289,6 +289,9 @@ html.dark .bgmac-wcover:hover {
 }
 .bgmac-cta:hover:not(:disabled) {
   filter: brightness(1.08);
+  /* [lc-1590] 悬停上浮 + 影子加深（过渡里已有 transform/box-shadow） */
+  transform: translateY(-1px);
+  box-shadow: 0 7px 18px rgba(108, 155, 255, 0.36);
 }
 .bgmac-cta:active:not(:disabled) {
   transform: scale(0.98);

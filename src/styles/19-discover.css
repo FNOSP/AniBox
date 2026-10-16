@@ -92,16 +92,27 @@
   color: var(--muted);
   font-size: 14px;
   cursor: pointer;
+  /* [lc-1590] 动效：悬停转 180°、忙时（disabled）持续旋转 */
+  transition: background 0.2s, color 0.2s, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .dicon:hover {
   background: var(--hover-strong);
   color: var(--text-strong);
 }
+.dicon:hover:not(:disabled) {
+  transform: rotate(180deg);
+}
 
 .dicon:disabled {
   opacity: 0.45;
   cursor: default;
+  animation: diconSpin 1s linear infinite;
+}
+@keyframes diconSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* 两栏**各自**的滚动容器（min-height:0 是 flex 子项能滚动的前提） */
@@ -510,6 +521,9 @@
 .dweek:hover {
   background: var(--hover-strong);
   color: var(--text-strong);
+  /* [lc-1590] 悬停轻微上浮 + 柔影（与左栏卡片的悬浮语言一致） */
+  transform: translateY(-1px);
+  box-shadow: 0 5px 14px rgba(31, 41, 90, 0.1);
 }
 
 /* [lc-1539] 底色占比填充：绝对定位铺满底部，高度 = 该天部数 / 当周最大值。
@@ -570,6 +584,19 @@
   color: #fff;
   border-color: transparent;
   box-shadow: 0 4px 14px rgba(108, 155, 255, 0.4);
+  /* [lc-1590] 选中时弹一下（弹性曲线，像左栏标签那样） */
+  animation: dweekPop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes dweekPop {
+  0% {
+    transform: scale(0.94);
+  }
+  60% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
 .dweek.on .dweek-d {
@@ -607,6 +634,19 @@
   border-radius: 50%;
   background: var(--accent);
   transform: translateX(-50%);
+  /* [lc-1590] 今天点轻微呼吸（存在感，不喧宾） */
+  animation: dweekDot 2.4s ease-in-out infinite;
+}
+@keyframes dweekDot {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: translateX(-50%) scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1.4);
+  }
 }
 
 /* ── 右栏：当日更新列表 ── */
@@ -643,7 +683,61 @@
   border-radius: 12px;
   border: 1px solid transparent;
   cursor: pointer;
-  transition: background 0.16s, border-color 0.16s;
+  transition: background 0.16s, border-color 0.16s, transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1),
+    box-shadow 0.2s;
+}
+
+/* [lc-1590] 列表入场：切天/首次渲染时逐条淡入上浮（前 12 条按序递增延迟，更靠后的一起入）。
+   ⚠ fill-mode 用 `backwards` 而不是 `both`：`both` 会在动画结束后**钉住** transform，
+   把悬停的 translateX(3px) 顶掉（动画的填充值优先于普通声明）。 */
+.dlist > * {
+  animation: ditemIn 0.34s cubic-bezier(0.25, 0.8, 0.25, 1) backwards;
+}
+.dlist > :nth-child(1) {
+  animation-delay: 0.01s;
+}
+.dlist > :nth-child(2) {
+  animation-delay: 0.03s;
+}
+.dlist > :nth-child(3) {
+  animation-delay: 0.05s;
+}
+.dlist > :nth-child(4) {
+  animation-delay: 0.07s;
+}
+.dlist > :nth-child(5) {
+  animation-delay: 0.09s;
+}
+.dlist > :nth-child(6) {
+  animation-delay: 0.11s;
+}
+.dlist > :nth-child(7) {
+  animation-delay: 0.13s;
+}
+.dlist > :nth-child(8) {
+  animation-delay: 0.15s;
+}
+.dlist > :nth-child(9) {
+  animation-delay: 0.17s;
+}
+.dlist > :nth-child(10) {
+  animation-delay: 0.19s;
+}
+.dlist > :nth-child(11) {
+  animation-delay: 0.21s;
+}
+.dlist > :nth-child(12) {
+  animation-delay: 0.23s;
+}
+@keyframes ditemIn {
+  0% {
+    opacity: 0;
+    transform: translateY(9px);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .ditem::before {
@@ -663,6 +757,13 @@
   background: var(--hover);
   border-color: var(--line);
   outline: none;
+  /* [lc-1590] 悬停轻微右移 + 柔影；左侧强调竖条同步提亮 */
+  transform: translateX(3px);
+  box-shadow: 0 6px 16px rgba(31, 41, 90, 0.08);
+}
+.ditem:hover::before,
+.ditem:focus-visible::before {
+  opacity: 1;
 }
 
 .dcv {
@@ -2129,7 +2230,11 @@ html.dark .dlib-badge-soon {
   .dlib-vbtn.on,
   .dlib-sbtn.on,
   .dlib-search:focus-within .dlib-search-ico,
-  .dlib-rows > .dlib-row:first-of-type .dlib-dot {
+  .dlib-rows > .dlib-row:first-of-type .dlib-dot,
+  .dicon:disabled,
+  .dweek.on,
+  .dweek.today::after,
+  .dlist > * {
     animation: none;
   }
 }
@@ -2155,12 +2260,15 @@ html.dark .dlib-badge-soon {
   font-family: inherit;
   white-space: nowrap;
   cursor: pointer;
-  transition: background 0.2s, color 0.2s, border-color 0.2s;
+  transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1),
+    box-shadow 0.2s;
 }
 .darc-btn:hover {
   background: var(--hover-strong);
   color: var(--text-strong);
   border-color: var(--line-strong);
+  transform: translateY(-1px);
+  box-shadow: 0 5px 14px rgba(31, 41, 90, 0.1);
 }
 
 /* 弹窗卡片（遮罩 = 既有的 .ddet-mask；关闭键复用 .ddet-close） */

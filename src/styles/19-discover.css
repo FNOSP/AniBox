@@ -489,10 +489,12 @@
   justify-content: center;
   gap: 1px;
   /* [lc-1562] 七枚等宽铺满整行：原来按内容宽（合计不满栏宽、周日右侧留白）；
-     flex:1 均分整行宽度，右缘与卡片/列表对齐。min-width 保留作窄栏下限（仍可换行）。 */
+     flex:1 均分整行宽度，右缘与卡片/列表对齐。min-width 保留作窄栏下限（仍可换行）。
+     [lc-1589] 行尾加了「总表查询」按钮 ⇒ 七格自动被压缩；min-width 64→54、横向 padding 12→8
+     让它们压得下去（仍不至于把「14 部」挤折行）。 */
   flex: 1;
-  min-width: 64px;
-  padding: 7px 12px 6px;
+  min-width: 54px;
+  padding: 7px 8px 6px;
   border-radius: 12px;
   border: 1px solid var(--line);
   background: var(--hover);
@@ -2130,5 +2132,182 @@ html.dark .dlib-badge-soon {
   .dlib-rows > .dlib-row:first-of-type .dlib-dot {
     animation: none;
   }
+}
+
+/* ══════════════ [lc-1589] 星期行「总表查询」按钮 + 往季番表弹窗 ══════════════
+   用户要求：七个星期格子压缩、右侧留位放「总表查询」；点击弹窗选年份 + 季度，看该季真实番表。
+   数据 = AniList 官方 API（Rust `anilist_season`，按季度缓存 24h）；遮罩复用 `.ddet-mask`。 */
+
+/* 星期行里的查询按钮：不加 flex:1 ⇒ 不抢格子的伸缩，七格自然被压缩 */
+.darc-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: var(--glass-bg);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.darc-btn:hover {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+  border-color: var(--line-strong);
+}
+
+/* 弹窗卡片（遮罩 = 既有的 .ddet-mask；关闭键复用 .ddet-close） */
+.arc-modal {
+  width: min(960px, 94vw);
+  max-height: min(82vh, 740px);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-2);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.arc-hd {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+  color: var(--accent);
+}
+.arc-hd h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text-strong);
+}
+.arc-x {
+  position: static;
+  margin-left: auto;
+}
+.arc-sel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.arc-year {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--option-bg, var(--bg-3));
+  color: var(--text);
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.arc-seasons {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.arc-sbtn {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.arc-sbtn:hover {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+.arc-sbtn.on {
+  background: var(--accent-grad);
+  color: #fff;
+  border-color: transparent;
+}
+.arc-cnt {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+.arc-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px 18px;
+}
+.arc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 14px 12px;
+}
+.arc-card {
+  min-width: 0;
+}
+.arc-cv {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--ph-bg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+.arc-cv img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.arc-noimg {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+.arc-score {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.72);
+  color: var(--gold, #ffd479);
+  font-size: 11px;
+  font-weight: 800;
+}
+.arc-t {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.arc-meta {
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--muted);
+  overflow: hidden;
+  white-space: nowrap;
 }
 

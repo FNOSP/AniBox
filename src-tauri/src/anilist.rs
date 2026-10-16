@@ -40,6 +40,27 @@ query ($a: Int, $b: Int, $p: Int) {
 }
 "#;
 
+/// [lc-1589] 往季番表查询：`Page.media(season, seasonYear, sort: POPULARITY_DESC)`。
+/// 弹窗「总表查询」用（选年份 + 季度 → 该季番剧列表）。最多取 2 页（100 条，按人气排序足够）。
+const SEASON_QUERY: &str = r#"
+query ($y: Int, $s: MediaSeason, $p: Int) {
+  Page(page: $p, perPage: 50) {
+    pageInfo { hasNextPage }
+    media(season: $s, seasonYear: $y, type: ANIME, sort: POPULARITY_DESC, isAdult: false) {
+      id
+      title { native romaji english }
+      coverImage { medium }
+      episodes
+      format
+      status
+      averageScore
+      genres
+    }
+  }
+}
+"#;
+const SEASON_MAX_PAGES: usize = 2;
+
 fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(REQ_TIMEOUT_SECS))
@@ -134,5 +155,86 @@ pub async fn anilist_day_schedule(start: i64, end: i64) -> Result<Value, String>
         "[anilist] 当日放送表 {start}..{end}（查 {q_start}..{q_end}）→ {} 条（{pages} 页）",
         items.len()
     ));
+    Ok(out)
+}
+
+/// [lc-1589] **往季番表**：`Page.media(season, seasonYear, sort: POPULARITY_DESC)` ——
+/// 弹窗「总表查询」用（选年份 + 季度 → 看该季番剧列表，数据即 AniList 的季度表）。
+/// 缓存 `json:anilist:season:v1|{year}|{season}`，TTL 24h（往季基本定型；当季评分/状态还会动）。
+#[tauri::command]
+pub async fn anilist_season(year: i64, season: String) -> Result<Value, String> {
+    let s = season.trim().to_ascii_uppercase();
+    if !matches!(s.as_str(), "WINTER" | "SPRING" | "SUMMER" | "FALL") {
+        return Err(format!("season 只支持 WINTER/SPRING/SUMMER/FALL：{season}"));
+    }
+    if !(1940..=2100).contains(&year) {
+        return Err(format!("year 非法：{year}"));
+    }
+    let key = format!("json:anilist:season:v1|{year}|{s}");
+    if let Some(v) = disk_cache::json_get(&key, TTL_SECS) {
+        return Ok(v);
+    }
+    let http = client();
+    let mut items: Vec<Value> = Vec::new();
+    for p in 1..=SEASON_MAX_PAGES {
+        let body = json!({ "query": SEASON_QUERY, "variables": { "y": year, "s": s, "p": p } });
+        let resp = http
+            .post(ENDPOINT)
+            .header("content-type", "application/json")
+            .header("accept", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("AniList 连接失败：{e}"))?;
+        let status = resp.status().as_u16();
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("AniList 响应不是合法 JSON：{e}"))?;
+        if status != 200 {
+            let msg = v.get("errors").map(|e| e.to_string()).unwrap_or_default();
+            return Err(format!(
+                "AniList HTTP {status}：{}",
+                crate::mirror_sign::truncate(&msg, 160)
+            ));
+        }
+        let page = v.pointer("/data/Page");
+        let arr = page.and_then(|p| p.get("media")).and_then(|a| a.as_array());
+        let Some(arr) = arr else { break };
+        for m in arr {
+            let t = m.get("title").cloned().unwrap_or(Value::Null);
+            let titles: Vec<String> = ["native", "romaji", "english"]
+                .iter()
+                .filter_map(|k| t.get(*k).and_then(|x| x.as_str()))
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect();
+            let genres: Vec<String> = m
+                .get("genres")
+                .and_then(|g| g.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str()).map(|s| s.to_string()).collect())
+                .unwrap_or_default();
+            items.push(json!({
+                "anilistId": m.get("id").and_then(|x| x.as_i64()).unwrap_or(0),
+                "titles": titles,
+                "cover": m.pointer("/coverImage/medium").and_then(|x| x.as_str()).unwrap_or(""),
+                "episodes": m.get("episodes").and_then(|x| x.as_i64()).unwrap_or(0),
+                "format": m.get("format").and_then(|x| x.as_str()).unwrap_or(""),
+                "status": m.get("status").and_then(|x| x.as_str()).unwrap_or(""),
+                "score": m.get("averageScore").and_then(|x| x.as_i64()).unwrap_or(0),
+                "genres": genres,
+            }));
+        }
+        let more = page
+            .and_then(|p| p.pointer("/pageInfo/hasNextPage"))
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false);
+        if !more || arr.len() < PER_PAGE {
+            break;
+        }
+    }
+    let out = json!({ "year": year, "season": s, "count": items.len(), "items": items });
+    disk_cache::json_put(&key, &out);
+    crate::libmpv::trace(&format!("[anilist] 往季番表 {year} {s} → {} 条", items.len()));
     Ok(out)
 }

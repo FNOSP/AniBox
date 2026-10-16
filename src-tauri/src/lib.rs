@@ -1436,6 +1436,8 @@ pub fn run() {
             tmdb::tmdb_search,
             // [lc-1582] AniList 官方 API：当日放送表（补 BGM 缺的「几点更新」→ 右栏行的「第 N 话 · HH:MM」）
             anilist::anilist_day_schedule,
+            // [lc-1589] AniList：往季番表（「总表查询」弹窗：选年份+季度看该季列表）
+            anilist::anilist_season,
             // [lc-1576] 评分分布（详情页「评分透视」兜底：BGM 无 rating.count 时改用 TMDB 的）
             tmdb::tmdb_rating_details,
             // [lc-119] Bangumi（全线走自建镜像，见 bgm.rs 头部说明）

@@ -1,8 +1,10 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { CalendarDays as IcoCalL } from "lucide-react";
 import { BgmAccountCard } from "./BgmAccountCard";
 import { BgmCalRow } from "./BgmCalRow";
+import { SeasonArchive } from "./SeasonArchive";
 import { Dsk, WEEKDAYS, localDay, localWeekdayId } from "./shared";
 import { libHasTitle, normTitle, resolveLibItem, useLibIndex } from "../../hooks/useLibIndex";
 import { BgmCalendarDay, BgmCalendarItem, MediaItem } from "../../types";
@@ -19,6 +21,8 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
   const [collect, setCollect] = useState<{ id: string; kind: number; name: string }[]>([]); // [lc-1581] 追番表（含名字）
   // [lc-1582] 精确放送时刻（AniList 官方 API）：条目 id → { ep, at }（一次拿"选中那天"整张表，按标题匹配）
   const [airMap, setAirMap] = useState<Record<string, { ep: number; at: number }>>({});
+  // [lc-1589] 「总表查询」弹窗（往季番表，数据走 AniList）
+  const [arcOpen, setArcOpen] = useState(false);
   // 手动 ⟳ / 失败重试的语义不同（见下）：⟳ = force（**仍带条件头**）；失败重试 = force + noEtag（全量）
   const forceRef = useRef(false);
   const hardRef = useRef(false);
@@ -262,6 +266,11 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
             </button>
           );
         })}
+        {/* [lc-1589] 星期七格右侧的「总表查询」：打开往季番表弹窗（选年份 + 季度） */}
+        <button className="darc-btn" onClick={() => setArcOpen(true)} title="查往季番表（选年份 + 季度）">
+          <IcoCalL size={14} strokeWidth={2} />
+          总表查询
+        </button>
       </div>
       <div className="dscroll">
         {busy && !days.length ? (
@@ -311,6 +320,8 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
           </>
         )}
       </div>
+      {/* [lc-1589] 「总表查询」弹窗（往季番表，数据走 AniList 官方 API） */}
+      {arcOpen && <SeasonArchive onClose={() => setArcOpen(false)} />}
     </section>
   );
 }

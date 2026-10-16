@@ -140,7 +140,7 @@ export function CarouselView({
             .filter(Boolean)
             .join(" · ");
           return (
-            <div key={it.guid} className={`mist-item ${i === pos && armed ? "active" : ""}`}>
+            <div key={`${it.guid}#${i}`} className={`mist-item ${i === pos && armed ? "active" : ""}`}>
               {bd ? (
                 <img
                   className="mist-cover"

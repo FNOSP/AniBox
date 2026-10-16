@@ -61,6 +61,12 @@ pub struct Config {
     /// 多地址列表（故障转移；主仓库上限 4 条）
     #[serde(default)]
     pub danmu_api_bases: Vec<String>,
+
+    /* ── [lc-1599] 应用内反馈（工单制）── */
+    /// 反馈系统匿名设备 ID：首次提交反馈时生成 32 位 hex 随机串并落盘（不要求密码学强度）。
+    /// 仅用于把同一台设备的工单归组（「我的工单」状态查询），不含任何个人信息。
+    #[serde(default)]
+    pub feedback_aid: String,
 }
 
 fn default_cache_limit_mb() -> u64 {
@@ -107,6 +113,7 @@ impl Default for Config {
             danmu_api_enabled: false,
             danmu_api_base: String::new(),
             danmu_api_bases: Vec::new(),
+            feedback_aid: String::new(),
         }
     }
 }

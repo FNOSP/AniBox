@@ -8,6 +8,8 @@ mod bgm_account;
 mod config;
 mod danmaku_shim;
 mod disk_cache;
+// [lc-1599] 应用内反馈（工单制）：提交/列表/会话/回复（脱敏与本地索引见 feedback.rs 头部）
+mod feedback;
 mod fnapi;
 mod libmpv;
 mod imgproto;
@@ -1479,6 +1481,12 @@ pub fn run() {
             // [lc-1436] 诊断：打开日志/缓存/数据目录；开机自启
             open_path,
             set_autostart,
+            // [lc-1599] 应用内反馈（工单制）：提交（日志尾部脱敏 + 环境块）/ 列表（本地索引+远端状态合并）/
+            // 会话（原样透传）/ 回复
+            feedback::feedback_submit,
+            feedback::feedback_list,
+            feedback::feedback_thread,
+            feedback::feedback_reply,
             // [lc-1435] 关闭询问的回答（exit → 走 RunEvent::Exit 退场清理）
             resolve_close,
             // 缓存面板三要素：占用 / 上限 / 清理

@@ -25,6 +25,7 @@ export function Sidebar({
   onOpenCat,
   onHome,
   onOpenSettings,
+  onOpenFeedback,
 }: {
   activeGuid: string | null;
   collapsed?: boolean;
@@ -37,6 +38,8 @@ export function Sidebar({
   onHome: () => void;
   /** [lc-128] 打开设置面板（缓存上限 / 占用 / 清理 + 关于） */
   onOpenSettings: () => void;
+  /** [lc-1599] 打开反馈面板（工单制：提交 / 我的工单 / 会话） */
+  onOpenFeedback: () => void;
 }) {
   const [toast, setToast] = useState("");
   const toastTimer = useRef<number | null>(null);
@@ -103,7 +106,7 @@ export function Sidebar({
             <button type="button" className="sa-ico" title="观影记录" onClick={() => showToast("观影记录页在阶段3接入")}>
               <IcoClockL size={15} strokeWidth={1.8} />
             </button>
-            <button type="button" className="sa-ico" title="软件反馈建议" onClick={() => showToast("反馈渠道在阶段3接入")}>
+            <button type="button" className="sa-ico" title="反馈" onClick={onOpenFeedback}>
               <IcoMsgL size={15} strokeWidth={1.8} />
             </button>
             <button type="button" className="sa-ico sa-expand" title="展开快捷操作" onClick={() => setFold(false)}>
@@ -122,8 +125,8 @@ export function Sidebar({
             <button type="button" className="sa-btn" onClick={() => showToast("观影记录页在阶段3接入")}>
               <IcoClockL size={14} strokeWidth={1.8} /> 观影记录
             </button>
-            <button type="button" className="sa-btn" onClick={() => showToast("反馈渠道在阶段3接入")}>
-              <IcoMsgL size={14} strokeWidth={1.8} /> 软件反馈建议
+            <button type="button" className="sa-btn" onClick={onOpenFeedback}>
+              <IcoMsgL size={14} strokeWidth={1.8} /> 反馈
             </button>
             <div className="sa-ver">v{appVer}</div>
             {/* [lc-122] 数据来源署名（关于区=版本行下）：TMDB 条款强制原文 + Bangumi 署名。

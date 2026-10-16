@@ -21,10 +21,31 @@
   font-weight: 400; /* 方正少儿简体本身够圆润，不再叠粗 */
   letter-spacing: 0.02em;
   opacity: 1;
-  /* 多色渐变文字：background-clip:text + 透明字色（青→蓝→紫→粉，呼应应用主色） */
+  /* 多色渐变文字：background-clip:text + 透明字色（青→蓝→紫→粉，呼应应用主色）
+     [lc-1611] 缓慢流动：把 background-size 放大，再往返位移背景位置 —— 文字透出的渐变缓缓流动 */
   background: linear-gradient(92deg, #4adede 0%, #6ea8ff 34%, #8b5cf6 64%, #f472b6 100%);
+  background-size: 220% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
   color: transparent;
+  animation: logoFlow 6s ease-in-out infinite;
+}
+
+/* [lc-1611] 流动：0% ↔ 100% 往返（ease-in-out，不突兀） */
+@keyframes logoFlow {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+/* 少动效：停掉流动（渐变仍静态可见） */
+@media (prefers-reduced-motion: reduce) {
+  .tb-brand-logo {
+    animation: none;
+  }
 }

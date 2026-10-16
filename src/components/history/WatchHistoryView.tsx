@@ -1,26 +1,41 @@
-/* [lc-1615] 观影记录页 —— 样式照抄原项目（Electron 版 watchHistory.ts 的 .wh-* 面板：
+/* [lc-1615/lc-1616] 观影记录页 —— 样式照抄原项目（Electron 版 watchHistory.ts 的 .wh-* 面板：
    大标题 + 筛选胶囊 + 「观影活跃度」统计卡 + GitHub 风热力图 + 「已看完/在观看」双栏海报墙），
-   但配色/材质落到本仓库 tokens（深浅主题通用，见 src/styles/37-history.css）。
-   数据 = get_watch_history（飞牛 play/list ∪ 本机播放历史，Rust 侧合并去重）。 */
+   配色/材质落到本仓库 tokens（深浅主题通用，见 src/styles/37-history.css）。
+   数据 = get_watch_history（飞牛 play/list ∪ 本机播放历史，Rust 侧合并去重 + **按作品聚合**）。
+
+   [lc-1616] 两处升级：
+     ① 按「部」聚合：Rust 侧 aggregate_by_series 把「集」条目并成作品级卡片（一剧一卡）；
+     ② 评分与评语：点卡打开详情浮层（照抄原项目观感）—— 海报 + 元数据 + TMDB/BGM 现有评分
+        + 我的 5 星评分/评语（持久化到 Rust 侧 ratings.json）+ 播放记录 sessions。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Clock as IcoClockL, RefreshCw as IcoRefreshL } from "lucide-react";
 import { imgUrl } from "../../lib/images";
 import { MediaItem } from "../../types";
 
-/** get_watch_history 返回的统一条目（camelCase；Rust history.rs 组装） */
+/** 一条作品播放记录（详情浮层「播放记录」用；Rust aggregate_by_series 产出） */
+export type HistorySession = {
+  playedAt?: number;
+  episode?: string;
+  progress?: number;
+};
+
+/** get_watch_history 返回的统一条目（camelCase；Rust history.rs 组装）—— [lc-1616] 作品级 */
 export type HistoryItem = {
+  /** 作品键（剧 guid / 电影自身 guid / 在线源 `webrs:<url>`） */
   guid: string;
   title: string;
-  /** 集号标签（"S2E1"；电影为空） */
+  /** 最近一次观看的集号标签（"S2E1"；电影为空） */
   episode?: string;
+  /** 看过几集（不同集号数；电影 0） */
+  episodeCount?: number;
   /** 海报（NAS 相对路径；空 = 用渐变兜底） */
   poster?: string;
   tmdbId?: string;
   bgmId?: string;
   /** Movie / Episode / ...；在线源固定 "webrs" */
   type?: string;
-  /** 播放时刻（ms；飞牛条目无时间戳时为 0 → 显示「未记录时间」） */
+  /** 最近观看时刻（ms；飞牛条目无时间戳时为 0 → 显示「未记录时间」） */
   playedAt?: number;
   /** "fnos"（库内）| "webrs"（在线源） */
   source?: string;
@@ -29,8 +44,14 @@ export type HistoryItem = {
   parentGuid?: string;
   /** 剧 guid（富化补全；点击进详情用） */
   seriesGuid?: string;
-  /** 观看进度 0-1（飞牛 play/list 有；本机记录为 0） */
+  /** 最近一次观看进度 0-1（飞牛 play/list 有；本机记录为 0） */
   progress?: number;
+  /** 该作品的播放记录（时间倒序） */
+  sessions?: HistorySession[];
+  /** 我的评分 0-5（0/缺省 = 未评） */
+  myRating?: number;
+  /** 我的评语 */
+  myReview?: string;
 };
 
 type HistoryResp = { items?: HistoryItem[]; fnosOk?: boolean; fnosError?: string };
@@ -60,6 +81,14 @@ function fmtAgo(ts?: number): string {
   return `${Math.floor(months / 12)} 年前`;
 }
 
+/** 绝对时间（详情浮层「播放记录」用；无时间戳 → 未记录时间） */
+function fmtAbs(ts?: number): string {
+  if (!ts || ts <= 0) return "未记录时间";
+  const d = new Date(ts);
+  const p = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 /** 无海报时的渐变兜底（照抄原项目 ART_PALETTE：按名称 hash 稳定取色） */
 const ART_PALETTE = [
   "#3a2a1a,#120c08", "#3a1a2a,#140810", "#1a2a3a,#081018",
@@ -72,6 +101,21 @@ function artForName(name: string): string {
   for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
   const [a, b] = ART_PALETTE[Math.abs(h) % ART_PALETTE.length].split(",");
   return `linear-gradient(145deg, ${a}, ${b})`;
+}
+
+/* ── 星星（照抄原项目 STAR_PATH + 金色渐变） ── */
+const STAR_PATH =
+  "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z";
+function Stars({ value, size = 13 }: { value: number; size?: number }) {
+  return (
+    <span className="hist-stars" style={{ ["--hist-star" as string]: `${size}px` }}>
+      {[1, 2, 3, 4, 5].map((i) => (
+        <svg key={i} viewBox="0 0 24 24" className={i <= value ? "on" : "off"}>
+          <path d={STAR_PATH} />
+        </svg>
+      ))}
+    </span>
+  );
 }
 
 /* ── 热力图（GitHub 贡献图口径，照抄原项目：列=周、行=星期，53 周 = 过去一年） ── */
@@ -87,7 +131,7 @@ function localKey(d: Date): string {
 }
 const pad2 = (n: number) => (n < 10 ? `0${n}` : `${n}`);
 const fmtDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-/** 颜色档位（照抄原项目）：0=空 1=1条 2=2~3 3=4~5 4=6+ */
+/** 颜色档位（照抄原项目）：0=空 1=1部 2=2~3 3=4~5 4=6+ */
 const heatLevel = (c: number) => (c <= 0 ? 0 : c === 1 ? 1 : c <= 3 ? 2 : c <= 5 ? 3 : 4);
 
 function buildHeat(items: HistoryItem[]) {
@@ -146,6 +190,10 @@ export function WatchHistoryView({
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState<Filter>("全部");
   const [note, setNote] = useState("");
+  /** 我的评分/评语（作品键 → 值）；从 items 初始化，保存后就地更新，卡片星星随之刷新 */
+  const [myRatings, setMyRatings] = useState<Record<string, { score: number; review: string }>>({});
+  /** 详情浮层当前作品（null = 关闭） */
+  const [detail, setDetail] = useState<HistoryItem | null>(null);
   const noteTimer = useRef<number | null>(null);
   const heatWrapRef = useRef<HTMLDivElement | null>(null);
   const [tip, setTip] = useState<{ x: number; y: number; text: string } | null>(null);
@@ -161,14 +209,21 @@ export function WatchHistoryView({
     setErr("");
     try {
       const r = await invoke<HistoryResp>("get_watch_history");
+      const list = Array.isArray(r?.items) ? r.items : [];
       setData({
-        items: Array.isArray(r?.items) ? r.items : [],
+        items: list,
         fnosOk: !!r?.fnosOk,
         fnosError: String(r?.fnosError ?? ""),
       });
-      if (isRefresh) {
-        showNote(`已刷新：共 ${Array.isArray(r?.items) ? r.items.length : 0} 条记录`);
+      // 用后端带出的评分初始化本地表（避免逐条 get_my_rating 往返）
+      const map: Record<string, { score: number; review: string }> = {};
+      for (const it of list) {
+        if (it.guid && (it.myRating || it.myReview)) {
+          map[it.guid] = { score: it.myRating ?? 0, review: it.myReview ?? "" };
+        }
       }
+      setMyRatings(map);
+      if (isRefresh) showNote(`已刷新：共 ${list.length} 部作品`);
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -228,12 +283,16 @@ export function WatchHistoryView({
 
   const heat = useMemo(() => buildHeat(items), [items]);
 
-  /** 卡片点击：库内 → 详情链路；在线源 → 提示（没有可打开的详情页） */
-  const handleOpen = (it: HistoryItem) => {
+  /** 卡片点击 → 打开详情浮层（[lc-1616] 不再直接跳详情；浮层内「查看详情」再走详情链路） */
+  const handleOpen = (it: HistoryItem) => setDetail(it);
+
+  /** 浮层「查看详情」：库内 → 详情链路；在线源 → 提示 */
+  const handleViewDetail = (it: HistoryItem) => {
     if (it.source === "webrs") {
       showNote("在线源条目暂无可打开的详情页 —— 可在对应作品的「在线资源」面板中继续播放");
       return;
     }
+    setDetail(null);
     onOpenItem({
       guid: it.seriesGuid || it.guid,
       title: it.title,
@@ -252,7 +311,7 @@ export function WatchHistoryView({
           ‹
         </button>
         <h3 className="hist-title">观影记录</h3>
-        <span className="muted">{data ? `${items.length} 条` : ""}</span>
+        <span className="muted">{data ? `${items.length} 部` : ""}</span>
         <button className="hist-sync" onClick={() => void load(true)} disabled={busy || loading}>
           <IcoRefreshL size={13} strokeWidth={2.2} className={busy ? "hist-sync-spin" : ""} />
           {busy ? "同步中…" : "立即同步"}
@@ -281,7 +340,7 @@ export function WatchHistoryView({
 
       {!loading && data && (
         <>
-          {/* 筛选胶囊（照抄原项目右上角「全部/电影/剧集/动漫」→ 本仓库分类：+在线源；计数随数据刷新） */}
+          {/* 筛选胶囊（照抄原项目右上角「全部/电影/剧集/动漫」→ 本仓库分类：+在线源；计数 = 作品数） */}
           <div className="hist-pills">
             {FILTERS.map((f) => (
               <button
@@ -315,7 +374,7 @@ export function WatchHistoryView({
                 <div className="hist-stats">
                   <div className="hist-stats-title">观影活跃度</div>
                   <div className="hist-stats-sub">
-                    共 {stats.total} 条 · 已看完 {stats.doneN} · 在看 {stats.watchingN} · {stats.activeDays} 天/30天活跃
+                    共 {stats.total} 部 · 已看完 {stats.doneN} · 在看 {stats.watchingN} · {stats.activeDays} 天/30天活跃
                   </div>
                   <div className="hist-stat-row">
                     <div>
@@ -323,11 +382,11 @@ export function WatchHistoryView({
                       <span>近30天</span>
                     </div>
                     <div>
-                      <div className="n"><b>{stats.monthCount}</b><i>条</i></div>
+                      <div className="n"><b>{stats.monthCount}</b><i>部</i></div>
                       <span>本月</span>
                     </div>
                     <div>
-                      <div className="n"><b>{stats.total}</b><i>条</i></div>
+                      <div className="n"><b>{stats.total}</b><i>部</i></div>
                       <span>累计</span>
                     </div>
                     <div>
@@ -341,7 +400,7 @@ export function WatchHistoryView({
                   <div className="hist-heat-head">
                     <div className="hist-heat-title-wrap">
                       <div className="hist-heat-title">观影活动热力图</div>
-                      <div className="hist-heat-range">过去一年 · {heat.total} 条记录</div>
+                      <div className="hist-heat-range">过去一年 · {heat.total} 部作品</div>
                     </div>
                     <div className="hist-heat-legend">
                       少
@@ -387,7 +446,7 @@ export function WatchHistoryView({
                                       setTip({
                                         x: r.left - wr.left + r.width / 2,
                                         y: r.top - wr.top - 6,
-                                        text: `${fmtDay(cell.date)} · ${cell.count > 0 ? `${cell.count} 条记录` : "未观看"}`,
+                                        text: `${fmtDay(cell.date)} · ${cell.count > 0 ? `${cell.count} 部作品` : "未观看"}`,
                                       });
                                     }}
                                     onMouseLeave={() => setTip(null)}
@@ -412,7 +471,7 @@ export function WatchHistoryView({
               <section className="hist-section">
                 <div className="hist-section-head">
                   <div className="hist-section-title">影视清单</div>
-                  <div className="hist-section-hint">点击查看详情</div>
+                  <div className="hist-section-hint">点击查看详情并评分</div>
                 </div>
                 <div className="hist-split">
                   <div className="hist-col done">
@@ -422,7 +481,9 @@ export function WatchHistoryView({
                     </div>
                     <div className="hist-grid">
                       {done.length > 0 ? (
-                        done.map((it) => <HistoryCard key={it.guid} it={it} onOpen={handleOpen} />)
+                        done.map((it) => (
+                          <HistoryCard key={it.guid} it={it} rating={myRatings[it.guid]?.score ?? 0} onOpen={handleOpen} />
+                        ))
                       ) : (
                         <div className="hist-col-empty">暂无已看完的作品</div>
                       )}
@@ -435,7 +496,9 @@ export function WatchHistoryView({
                     </div>
                     <div className="hist-grid">
                       {watching.length > 0 ? (
-                        watching.map((it) => <HistoryCard key={it.guid} it={it} onOpen={handleOpen} />)
+                        watching.map((it) => (
+                          <HistoryCard key={it.guid} it={it} rating={myRatings[it.guid]?.score ?? 0} onOpen={handleOpen} />
+                        ))
                       ) : (
                         <div className="hist-col-empty">暂无在观看的作品</div>
                       )}
@@ -448,16 +511,62 @@ export function WatchHistoryView({
         </>
       )}
 
+      {detail && (
+        <HistoryDetail
+          it={detail}
+          rating={myRatings[detail.guid] ?? { score: 0, review: "" }}
+          onClose={() => setDetail(null)}
+          onViewDetail={() => handleViewDetail(detail)}
+          onSaved={(v) => {
+            setMyRatings((m) => ({ ...m, [detail.guid]: v }));
+            // 同步回 data（卡片/统计若读取 items 上的评分也保持一致）
+            setData((d) =>
+              d
+                ? {
+                    ...d,
+                    items: d.items.map((x) =>
+                      x.guid === detail.guid ? { ...x, myRating: v.score, myReview: v.review } : x,
+                    ),
+                  }
+                : d,
+            );
+          }}
+          onNote={showNote}
+        />
+      )}
+
       {note && <div className="hist-toast show">{note}</div>}
+
+      {/* 我的评分金星渐变（供 CSS fill: url(#hist-gold) 引用；照抄原项目金色渐变） */}
+      <svg width="0" height="0" style={{ position: "absolute" }} aria-hidden="true">
+        <defs>
+          <linearGradient id="hist-gold" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="#ffe27a" />
+            <stop offset="1" stopColor="#ffb300" />
+          </linearGradient>
+        </defs>
+      </svg>
     </main>
   );
 }
 
-/* ── 海报卡（照抄原项目 .wh-card：2:3 封面 + 底部渐隐 + 名称/副行 + 进度条 + 来源角标） ── */
+/* ── 海报卡（照抄原项目 .wh-card：2:3 封面 + 底部渐隐 + 星星/名称/副行 + 进度条 + 来源角标） ── */
 
-function HistoryCard({ it, onOpen }: { it: HistoryItem; onOpen: (it: HistoryItem) => void }) {
+function HistoryCard({
+  it,
+  rating,
+  onOpen,
+}: {
+  it: HistoryItem;
+  rating: number;
+  onOpen: (it: HistoryItem) => void;
+}) {
   const pct = Math.round(Math.min(1, Math.max(0, it.progress ?? 0)) * 100);
-  const sub = [it.episode, fmtAgo(it.playedAt)].filter(Boolean).join(" · ");
+  // [lc-1616] 副行 = 最新一集 / 看过几集 · 进度 · 最近观看时间
+  const epPart = it.episode || (it.episodeCount && it.episodeCount > 0 ? `看过 ${it.episodeCount} 集` : "");
+  const sub = [epPart, pct > 0 && pct < 100 ? `${pct}%` : "", fmtAgo(it.playedAt)]
+    .filter(Boolean)
+    .join(" · ");
   const isWebrs = it.source === "webrs";
   return (
     <div
@@ -481,8 +590,237 @@ function HistoryCard({ it, onOpen }: { it: HistoryItem; onOpen: (it: HistoryItem
         </div>
       )}
       <div className="hist-meta">
+        {rating > 0 && <Stars value={rating} />}
         <div className="hist-name">{it.title || "未知作品"}</div>
         <div className="hist-sub">{sub}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ── 详情浮层（照抄原项目 .wh-detail：左海报 6fr / 右内容 4fr） ── */
+
+type TmdbInfo = {
+  rating?: number;
+  votes?: number;
+  year?: string;
+  genres?: string[];
+  overview?: string;
+  episodes?: number;
+};
+type BgmInfo = {
+  rating?: { score?: number; total?: number };
+  date?: string;
+  eps?: number;
+  name_cn?: string;
+  name?: string;
+};
+
+function HistoryDetail({
+  it,
+  rating,
+  onClose,
+  onViewDetail,
+  onSaved,
+  onNote,
+}: {
+  it: HistoryItem;
+  rating: { score: number; review: string };
+  onClose: () => void;
+  onViewDetail: () => void;
+  onSaved: (v: { score: number; review: string }) => void;
+  onNote: (msg: string) => void;
+}) {
+  const [score, setScore] = useState(rating.score);
+  const [review, setReview] = useState(rating.review);
+  const [saving, setSaving] = useState(false);
+  // [lc-1616] 可选：顺带把「看过」状态同步到 BGM（默认关闭；仓库无写 BGM 评分的命令，
+  //   只能借已有的 bgm_collect_set 标状态 —— 绝不擅自改用户 BGM 数据）。
+  const [syncBgm, setSyncBgm] = useState(false);
+  const [tmdb, setTmdb] = useState<TmdbInfo | null>(null);
+  const [bgm, setBgm] = useState<BgmInfo | null>(null);
+
+  // 打开时按需取「现有评分」：TMDB（tmdb_show_details，落盘缓存 120 天）+ Bangumi（bgm_subject）。
+  // 都是仓库已有命令，不新增接口；失败静默（对应栏显示「暂无」）。
+  useEffect(() => {
+    let alive = true;
+    if (it.tmdbId) {
+      invoke<TmdbInfo>("tmdb_show_details", {
+        tmdbId: Number(it.tmdbId),
+        mediaType: it.type === "Movie" ? "movie" : "tv",
+        title: it.title,
+      })
+        .then((r) => alive && setTmdb(r ?? null))
+        .catch(() => {});
+    }
+    if (it.bgmId) {
+      invoke<BgmInfo>("bgm_subject", { id: Number(it.bgmId) })
+        .then((r) => alive && setBgm(r ?? null))
+        .catch(() => {});
+    }
+    return () => {
+      alive = false;
+    };
+  }, [it.tmdbId, it.bgmId, it.type, it.title]);
+
+  // Esc 关闭
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await invoke("set_my_rating", { key: it.guid, score, review });
+      // 可选的 BGM 同步（默认关）：仅当用户显式勾选且该作品有 BGM 条目时执行。
+      if (syncBgm && it.bgmId) {
+        try {
+          // 评分意味着看过 → 借已有 bgm_collect_set 标记为「看过」(kind=2)；已绑定则顺手同步。
+          await invoke("bgm_collect_set", { subjectId: Number(it.bgmId), kind: 2 });
+          onNote("已保存并同步到 Bangumi（标记为看过）");
+        } catch {
+          onNote("已保存；Bangumi 同步失败（可稍后重试）");
+        }
+      } else {
+        onNote("已保存你的评价");
+      }
+      onSaved({ score, review });
+    } catch (e) {
+      onNote(`保存失败：${String(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const typeLabel = it.type === "Movie" ? "电影" : it.source === "webrs" ? "在线源" : "剧集";
+  const year = String(tmdb?.year ?? "").trim() || String(bgm?.date ?? "").slice(0, 4);
+  const genres = tmdb?.genres ?? [];
+  const totalEps = Number(tmdb?.episodes ?? 0) || Number(bgm?.eps ?? 0) || 0;
+  const tmdbScore = Number(tmdb?.rating ?? 0);
+  const tmdbVotes = Number(tmdb?.votes ?? 0);
+  const bgmScore = Number(bgm?.rating?.score ?? 0);
+  const bgmTotal = Number(bgm?.rating?.total ?? 0);
+  const sessions = it.sessions ?? [];
+
+  const fmtVotes = (v: number) => (v <= 0 ? "" : v >= 10000 ? `${(v / 10000).toFixed(1)} 万人评` : `${v} 人评`);
+
+  return (
+    <div className="hist-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="hist-detail">
+        <div className="hist-detail-hero">
+          {it.poster ? (
+            <img className="hist-detail-poster" src={imgUrl(it.poster)} alt="" />
+          ) : (
+            <div className="hist-detail-poster fallback" style={{ background: artForName(it.title || it.guid) }} />
+          )}
+          <div className="hist-detail-scrim" />
+        </div>
+        <div className="hist-detail-body">
+          <button className="hist-detail-close" onClick={onClose} title="关闭（Esc）">
+            ✕
+          </button>
+          <div className="hist-detail-name">{it.title || "未知作品"}</div>
+          <div className="hist-detail-meta">
+            <span>{typeLabel}</span>
+            {year && <span>{year}</span>}
+            {totalEps > 0 && <span>共 {totalEps} 集</span>}
+            {it.episodeCount && it.episodeCount > 0 ? <span>已看 {it.episodeCount} 集</span> : null}
+          </div>
+          {genres.length > 0 && (
+            <div className="hist-detail-chips">
+              {genres.map((g) => (
+                <span className="hist-detail-chip" key={g}>
+                  {g}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* 三栏评分：TMDB / Bangumi / 我的（互不覆盖） */}
+          <div className="hist-ratings">
+            <div className="hist-rating">
+              <div className="hist-rating-label">TMDB</div>
+              <div className="hist-rating-score">{tmdbScore > 0 ? tmdbScore.toFixed(1) : "暂无"}</div>
+              <div className="hist-rating-count">{fmtVotes(tmdbVotes) || "—"}</div>
+            </div>
+            <div className="hist-rating">
+              <div className="hist-rating-label">Bangumi</div>
+              <div className="hist-rating-score">{bgmScore > 0 ? bgmScore.toFixed(1) : "暂无"}</div>
+              <div className="hist-rating-count">{fmtVotes(bgmTotal) || "—"}</div>
+            </div>
+            <div className="hist-rating mine">
+              <div className="hist-rating-label">我的评分</div>
+              <div className="hist-rating-score mine-score">{score > 0 ? `${score}.0` : "未评"}</div>
+              <div className="hist-rating-count">{score > 0 ? "★".repeat(score) : "—"}</div>
+            </div>
+          </div>
+
+          {tmdb?.overview && <div className="hist-detail-overview">{tmdb.overview}</div>}
+
+          <div className="hist-detail-divider" />
+          <div className="hist-detail-label">我的评分</div>
+          <div className="hist-rate">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <button
+                key={i}
+                className={`hist-rate-star${i <= score ? " on" : ""}`}
+                onClick={() => setScore(score === i ? 0 : i)}
+                title={`${i} 星`}
+                type="button"
+              >
+                <svg viewBox="0 0 24 24">
+                  <path d={STAR_PATH} />
+                </svg>
+              </button>
+            ))}
+          </div>
+          <textarea
+            className="hist-review"
+            value={review}
+            placeholder="写下你对这部作品的看法…"
+            onChange={(e) => setReview(e.target.value)}
+          />
+          {it.bgmId && (
+            <label className="hist-sync-bgm">
+              <input type="checkbox" checked={syncBgm} onChange={(e) => setSyncBgm(e.target.checked)} />
+              同步到 Bangumi（标记为看过）
+            </label>
+          )}
+          <div className="hist-detail-actions">
+            <button className="hist-btn primary" onClick={() => void save()} disabled={saving}>
+              {saving ? "保存中…" : "保存我的评价"}
+            </button>
+            <button className="hist-btn ghost" onClick={onViewDetail}>
+              查看详情
+            </button>
+          </div>
+
+          <div className="hist-detail-divider" />
+          <div className="hist-sessions">
+            <div className="hist-detail-label">播放记录</div>
+            {sessions.length > 0 ? (
+              sessions.slice(0, 30).map((s, i) => {
+                const p = Math.round(Math.min(1, Math.max(0, s.progress ?? 0)) * 100);
+                return (
+                  <div className="hist-sess" key={i}>
+                    <span>{fmtAbs(s.playedAt)}</span>
+                    <span className="pos">
+                      {[s.episode, p > 0 ? `${p}%` : ""].filter(Boolean).join(" · ") || "—"}
+                    </span>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="hist-sess">
+                <span>暂无分段记录</span>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

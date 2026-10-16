@@ -621,11 +621,299 @@ html.dark .hist-heat {
   to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
+/* ── 卡片星星（[lc-1616] 我的评分；照抄原项目 .wh-card .stars） ── */
+.hist-stars {
+  display: inline-flex;
+  gap: 2px;
+  margin-bottom: 5px;
+}
+.hist-stars svg {
+  width: var(--hist-star, 13px);
+  height: var(--hist-star, 13px);
+  fill: #ffd60a;
+}
+.hist-stars svg.off {
+  fill: rgba(255, 255, 255, 0.3);
+}
+
+/* ═══════════ [lc-1616] 作品详情浮层（照抄原项目 .wh-detail：左海报 6fr / 右内容 4fr） ═══════════ */
+.hist-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  animation: histOverlayIn 0.16s ease both;
+}
+@keyframes histOverlayIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.hist-detail {
+  width: 1000px;
+  max-width: 94vw;
+  height: 82vh;
+  max-height: 82vh;
+  display: grid;
+  grid-template-columns: 6fr 4fr;
+  overflow: hidden;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  box-shadow: 0 40px 100px rgba(0, 0, 0, 0.55);
+}
+@media (max-width: 760px) {
+  .hist-detail {
+    grid-template-columns: 1fr;
+    grid-template-rows: 40% 60%;
+    height: 88vh;
+  }
+}
+.hist-detail-hero {
+  position: relative;
+  overflow: hidden;
+  background: var(--ph-bg);
+}
+.hist-detail-poster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+}
+.hist-detail-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(16, 16, 21, 0.9) 0%, rgba(0, 0, 0, 0) 55%);
+  pointer-events: none;
+}
+html:not(.dark) .hist-detail-scrim {
+  background: transparent; /* 浅色模式去掉海报底部辉光（对齐原项目 lc-1013） */
+}
+.hist-detail-body {
+  position: relative;
+  padding: 26px 30px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.hist-detail-close {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--hover);
+  color: var(--text-2);
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.hist-detail-close:hover {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+.hist-detail-name {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--text-strong);
+  padding-right: 34px;
+}
+.hist-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.hist-detail-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+.hist-detail-chip {
+  font-size: 12px;
+  padding: 4px 11px;
+  border-radius: 14px;
+  background: var(--hover);
+  color: var(--text-2);
+}
+
+/* 三栏评分：TMDB / Bangumi / 我的（互不覆盖） */
+.hist-ratings {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+.hist-rating {
+  flex: 1 1 120px;
+  min-width: 110px;
+  background: var(--hover);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.hist-rating.mine {
+  border-color: rgba(108, 155, 255, 0.4);
+}
+.hist-rating-label {
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.5px;
+}
+.hist-rating-score {
+  font-size: 23px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #ffcc00;
+  font-variant-numeric: tabular-nums;
+}
+.hist-rating-score.mine-score {
+  color: var(--accent);
+}
+.hist-rating-count {
+  font-size: 11px;
+  color: var(--muted);
+}
+.hist-detail-overview {
+  margin-top: 14px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-2);
+}
+.hist-detail-divider {
+  height: 1px;
+  background: var(--line);
+  margin: 18px 0;
+}
+.hist-detail-label {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.hist-rate {
+  display: flex;
+  gap: 8px;
+}
+.hist-rate-star {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+}
+.hist-rate-star svg {
+  width: 32px;
+  height: 32px;
+  fill: rgba(255, 255, 255, 0.22);
+  transition: transform 0.12s ease, fill 0.12s ease;
+}
+.hist-rate-star.on svg {
+  fill: url(#hist-gold);
+}
+.hist-rate-star:hover svg {
+  transform: scale(1.16);
+}
+.hist-review {
+  width: 100%;
+  margin-top: 12px;
+  min-height: 78px;
+  resize: vertical;
+  background: var(--hover);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  color: var(--text-strong);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+.hist-review:focus {
+  border-color: var(--accent);
+}
+.hist-sync-bgm {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+.hist-detail-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+.hist-btn {
+  border: none;
+  padding: 11px 20px;
+  border-radius: 13px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: filter 0.15s, background 0.15s;
+}
+.hist-btn.primary {
+  background: var(--accent);
+  color: #fff;
+}
+.hist-btn.primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.hist-btn.ghost {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+.hist-btn.ghost:hover {
+  background: var(--hover-strong);
+}
+.hist-sessions {
+  display: flex;
+  flex-direction: column;
+}
+.hist-sess {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--text-2);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.hist-sess .pos {
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+
 /* ── 少动效兜底（与 29-transitions.css 同口径） ── */
 @media (prefers-reduced-motion: reduce) {
   .hist-card,
   .hist-hcell,
-  .hist-heat-tip {
+  .hist-heat-tip,
+  .hist-rate-star svg {
     transition: none;
   }
   .hist-card:hover {
@@ -637,7 +925,8 @@ html.dark .hist-heat {
   .hist-sync-spin,
   .hist-skel-stats::after,
   .hist-skel::after,
-  .hist-toast {
+  .hist-toast,
+  .hist-overlay {
     animation: none;
   }
 }

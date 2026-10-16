@@ -61,6 +61,25 @@ pub struct WatchRecord {
     pub parent_guid: String,
 }
 
+/// [lc-1616] 「我的评分 + 评语」—— 观影记录详情浮层里用户自己的评价。
+///
+/// 为什么落在 Rust 侧（`app_data_dir/ratings.json`）而不是 localStorage：
+///   ① 本项目是 Tauri 桌面端，localStorage 会随 WebView 清缓存/换端而丢；
+///   ② 与 history.json 同目录，读写路径一致，后续做「评分随历史一起备份/同步」也顺。
+/// 键口径与作品聚合一致：作品 guid（剧 guid / 电影自身 guid / 在线源 `webrs:<url>`）。
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct MyRating {
+    /// 5 星评分（0 = 未评；写入时夹到 0..=5）
+    #[serde(default)]
+    pub score: u8,
+    /// 评语（可为空）
+    #[serde(default)]
+    pub review: String,
+    /// 最后修改时刻（ms；用于展示"已保存"排序/未来增量同步）
+    #[serde(default)]
+    pub updated_at: u64,
+}
+
 pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -70,6 +89,10 @@ pub fn now_ms() -> u64 {
 
 fn file_path(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_data_dir().ok().map(|d| d.join("history.json"))
+}
+
+fn ratings_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_data_dir().ok().map(|d| d.join("ratings.json"))
 }
 
 /// 读写串行化：record 是「读-改-写」，两条播放命令几乎同时触发时不能互相覆盖。
@@ -95,6 +118,67 @@ fn save(app: &AppHandle, list: &[WatchRecord]) {
     }
     if let Ok(s) = serde_json::to_string_pretty(list) {
         let _ = std::fs::write(&p, s);
+    }
+}
+
+/// 读取全部评分（文件不存在/损坏 → 空表，绝不报错）。
+pub fn load_ratings(app: &AppHandle) -> std::collections::HashMap<String, MyRating> {
+    let Some(p) = ratings_path(app) else {
+        return Default::default();
+    };
+    match std::fs::read_to_string(&p) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+        Err(_) => Default::default(),
+    }
+}
+
+fn save_ratings(app: &AppHandle, map: &std::collections::HashMap<String, MyRating>) {
+    let Some(p) = ratings_path(app) else {
+        return;
+    };
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(s) = serde_json::to_string_pretty(map) {
+        let _ = std::fs::write(&p, s);
+    }
+}
+
+/// 取某作品的评分（无则 None）。
+pub fn get_rating(app: &AppHandle, key: &str) -> Option<MyRating> {
+    if key.is_empty() {
+        return None;
+    }
+    load_ratings(app).remove(key)
+}
+
+/// 写某作品的评分：score 夹到 0..=5；score=0 且评语为空 → 视为「清除该条」。
+/// 与 [`record`] 共用同一把锁：都是「读-改-写」，串行化避免并发互相覆盖。
+pub fn set_rating(app: &AppHandle, key: &str, score: u8, review: String) {
+    if key.is_empty() {
+        return;
+    }
+    let _guard = LOCK.lock();
+    let mut map = load_ratings(app);
+    apply_rating(&mut map, key, score, &review);
+    save_ratings(app, &map);
+}
+
+/// [`set_rating`] 的纯逻辑（供单测）：夹分 + 「空分空评语 = 删除」。
+fn apply_rating(map: &mut std::collections::HashMap<String, MyRating>, key: &str, score: u8, review: &str) {
+    let score = score.min(5);
+    let review = review.trim();
+    if score == 0 && review.is_empty() {
+        map.remove(key);
+    } else {
+        map.insert(
+            key.to_string(),
+            MyRating {
+                score,
+                review: review.to_string(),
+                updated_at: now_ms(),
+            },
+        );
     }
 }
 
@@ -177,6 +261,110 @@ pub fn merge(fnos: Option<&Value>, local: Vec<WatchRecord>) -> Vec<Value> {
     }
 
     // ③ 时间倒序；无时间戳的（played_at=0）保持插入序沉底（sort_by 是稳定排序）
+    out.sort_by(|a, b| played_at_of(b).cmp(&played_at_of(a)));
+    out
+}
+
+/// [lc-1616] 作品级聚合：把「集」条目按作品归并成一张卡（纯函数，单测覆盖）。
+///
+/// 为什么：play/list 与本机历史都是**集**级 —— 同一部剧看 8 集就出 8 张卡；用户要「按部算」，
+/// 一张卡 = 一部作品。
+///
+/// 作品键口径：优先用 [`enrich_series`] 补出的**剧 guid**（`seriesGuid`）；电影/在线源没有
+/// `seriesGuid`，退化为条目自身 guid（在线源是 `webrs:<url>` 前缀键，天然不与飞牛 guid 相撞）。
+/// ⚠ 富化失败（网络超限/无 token）的剧集条目 `seriesGuid` 为空 → 会退化成「每集一张卡」，
+/// 这是**降级**而非错误（页面本身仍可用）；重新打开/有网后富化成功即自动并回一张。
+///
+/// 每部作品保留的字段：
+///   · 海报/标题/锚点 id（tmdbId/bgmId）/来源名：取组内**首个非空**（海报已由富化换成竖版剧海报）；
+///   · `playedAt` = 组内 max（最近观看时间）；
+///   · `progress`/`episode` = **最近一次**那条（比 max 更准：看完第1集(1.0)再看第2集(0.2)
+///     应显示"看到第2集 · 20%"而不是 1.0；据此判「已看完/在观看」也符合直觉）；
+///   · `episodeCount` = 组内**不同集号标签**数（"看了几集"；电影/无集号为 0）；
+///   · `sessions` = 组内全部条目按时间倒序（详情浮层的「播放记录」：时间 + 进度）。
+pub fn aggregate_by_series(items: &[Value]) -> Vec<Value> {
+    // 先按作品键分组（保持首次出现顺序，最后统一按时间倒序）
+    let mut order: Vec<String> = Vec::new();
+    let mut groups: std::collections::HashMap<String, Vec<Value>> = std::collections::HashMap::new();
+    for it in items {
+        let series = it.get("seriesGuid").and_then(|x| x.as_str()).unwrap_or("");
+        let guid = it.get("guid").and_then(|x| x.as_str()).unwrap_or("");
+        let key = if !series.is_empty() { series } else { guid };
+        if key.is_empty() {
+            continue;
+        }
+        if !groups.contains_key(key) {
+            order.push(key.to_string());
+        }
+        groups.entry(key.to_string()).or_default().push(it.clone());
+    }
+
+    let mut out: Vec<Value> = Vec::new();
+    for key in order {
+        let Some(mut g) = groups.remove(&key) else { continue };
+        // 组内按时间倒序 → g[0] = 最近一次
+        g.sort_by(|a, b| played_at_of(b).cmp(&played_at_of(a)));
+        let first_nonempty = |k: &str| -> String {
+            g.iter()
+                .find_map(|v| v.get(k).and_then(|x| x.as_str()).filter(|s| !s.is_empty()))
+                .unwrap_or("")
+                .to_string()
+        };
+        // 类型：任一条目是 Movie 即电影（剧集条目 type 为 Episode/TV/Season）
+        let is_movie = g
+            .iter()
+            .any(|v| v.get("type").and_then(|x| x.as_str()) == Some("Movie"));
+        let media_type = if is_movie {
+            "Movie".to_string()
+        } else {
+            first_nonempty("type")
+        };
+        let source = g
+            .iter()
+            .find_map(|v| v.get("source").and_then(|x| x.as_str()).filter(|s| !s.is_empty()))
+            .unwrap_or("fnos")
+            .to_string();
+        // 不同集号标签数（"看了几集"）
+        let mut eps: Vec<String> = g
+            .iter()
+            .filter_map(|v| {
+                v.get("episode")
+                    .and_then(|x| x.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+            })
+            .collect();
+        eps.sort();
+        eps.dedup();
+        let latest = &g[0];
+        let sessions: Vec<Value> = g
+            .iter()
+            .map(|v| {
+                json!({
+                    "playedAt": played_at_of(v),
+                    "episode": v.get("episode").and_then(|x| x.as_str()).unwrap_or(""),
+                    "progress": progress_of(v),
+                })
+            })
+            .collect();
+        out.push(json!({
+            "guid": key.clone(),
+            "seriesGuid": key,
+            "title": first_nonempty("title"),
+            "episode": latest.get("episode").and_then(|x| x.as_str()).unwrap_or(""),
+            "episodeCount": eps.len(),
+            "poster": first_nonempty("poster"),
+            "tmdbId": first_nonempty("tmdbId"),
+            "bgmId": first_nonempty("bgmId"),
+            "type": media_type,
+            "playedAt": g.iter().map(played_at_of).max().unwrap_or(0),
+            "source": source,
+            "sourceName": first_nonempty("sourceName"),
+            "progress": progress_of(latest),
+            "sessions": sessions,
+        }));
+    }
+    // 作品间也按最近观看时间倒序（无时间的沉底，稳定排序保持插入序）
     out.sort_by(|a, b| played_at_of(b).cmp(&played_at_of(a)));
     out
 }
@@ -615,5 +803,62 @@ mod tests {
         assert_eq!(l2.len(), 1);
         assert_eq!(l2[0].poster, "/p1.webp");
         assert_eq!(l2[0].played_at, 20);
+    }
+
+    #[test]
+    fn aggregate_groups_episodes_by_series() {
+        // 同一部剧的 3 集 → 1 张卡；电影各自成卡
+        let items = vec![
+            json!({"guid":"e3","seriesGuid":"S","title":"剧名","episode":"S1E3","poster":"/s.webp",
+                   "type":"Episode","playedAt":300,"progress":0.2,"source":"fnos","tmdbId":"9"}),
+            json!({"guid":"e1","seriesGuid":"S","title":"剧名","episode":"S1E1","poster":"",
+                   "type":"Episode","playedAt":100,"progress":1.0,"source":"fnos"}),
+            json!({"guid":"e2","seriesGuid":"S","title":"剧名","episode":"S1E2",
+                   "type":"Episode","playedAt":200,"progress":1.0,"source":"fnos"}),
+            json!({"guid":"m1","title":"电影","type":"Movie","playedAt":50,"progress":0.5,"source":"fnos"}),
+        ];
+        let out = aggregate_by_series(&items);
+        assert_eq!(out.len(), 2); // 剧(并 3 集) + 电影
+        // 最近观看的剧排在前
+        assert_eq!(out[0]["guid"], json!("S"));
+        assert_eq!(out[0]["episode"], json!("S1E3")); // 最近一集
+        assert_eq!(out[0]["episodeCount"], json!(3)); // 看了 3 集
+        assert!((out[0]["progress"].as_f64().unwrap() - 0.2).abs() < 1e-9); // 最近一次进度（不是 max）
+        assert_eq!(out[0]["playedAt"], json!(300)); // 取 max
+        assert_eq!(out[0]["poster"], json!("/s.webp")); // 首个非空海报
+        assert_eq!(out[0]["sessions"].as_array().unwrap().len(), 3); // 播放记录 = 全部集
+        // 电影：自身成卡、无集号
+        assert_eq!(out[1]["guid"], json!("m1"));
+        assert_eq!(out[1]["type"], json!("Movie"));
+        assert_eq!(out[1]["episodeCount"], json!(0));
+    }
+
+    #[test]
+    fn aggregate_keeps_untagged_items_separate() {
+        // 无 seriesGuid 的条目（在线源集页 URL 各不相同）→ 各自成卡，且不与飞牛 guid 相撞
+        let items = vec![
+            json!({"guid":"webrs:https://x/ep1","title":"在线","type":"webrs","source":"webrs","playedAt":10}),
+            json!({"guid":"webrs:https://x/ep2","title":"在线","type":"webrs","source":"webrs","playedAt":20}),
+        ];
+        let out = aggregate_by_series(&items);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0]["source"], json!("webrs"));
+        assert_eq!(out[1]["source"], json!("webrs"));
+    }
+
+    #[test]
+    fn rating_apply_clamps_and_clears() {
+        let mut map: std::collections::HashMap<String, MyRating> = Default::default();
+        // 夹到 5
+        apply_rating(&mut map, "k", 9, "很棒");
+        assert_eq!(map["k"].score, 5);
+        assert_eq!(map["k"].review, "很棒");
+        // 评语去首尾空白
+        apply_rating(&mut map, "k", 3, "  还行  ");
+        assert_eq!(map["k"].score, 3);
+        assert_eq!(map["k"].review, "还行");
+        // 空分 + 空评语 → 删除
+        apply_rating(&mut map, "k", 0, "   ");
+        assert!(!map.contains_key("k"));
     }
 }

@@ -291,11 +291,37 @@ async fn get_watch_history(app: AppHandle, state: State<'_, AppState>) -> Result
     }
     let mut items = history::merge(fnos.as_ref(), local);
     history::enrich_series(&mut items, &cfg.server, &cfg.token).await;
+    // [lc-1616] 富化（拿到剧 guid）之后再按**作品**聚合：同一部剧只出一张卡。
+    let mut items = history::aggregate_by_series(&items);
+    // 把用户自己的评分/评语（ratings.json）贴到作品上，前端浮层可零额外往返直接显示。
+    let ratings = history::load_ratings(&app);
+    for it in items.iter_mut() {
+        if let Some(k) = it.get("guid").and_then(|x| x.as_str()) {
+            if let Some(r) = ratings.get(k) {
+                it["myRating"] = json!(r.score);
+                it["myReview"] = json!(r.review);
+            }
+        }
+    }
     Ok(json!({
         "items": items,
         "fnosOk": fnos.is_some(),
         "fnosError": fnos_error,
     }))
+}
+
+/// [lc-1616] 取某作品「我的评分/评语」（键 = 作品 guid；无则 null）。
+#[tauri::command]
+fn get_my_rating(app: AppHandle, key: String) -> Option<history::MyRating> {
+    history::get_rating(&app, &key)
+}
+
+/// [lc-1616] 写某作品「我的评分/评语」：score 夹到 0..=5；score=0 且评语空 = 清除。
+/// 只落本机 `app_data_dir/ratings.json`，**不**触碰任何第三方（BGM 同步由前端按需另调）。
+#[tauri::command]
+fn set_my_rating(app: AppHandle, key: String, score: u8, review: String) -> Result<Value, String> {
+    history::set_rating(&app, &key, score, review);
+    Ok(json!({ "ok": true }))
 }
 
 /// 季列表：GET /v/api/v1/season/list/{剧guid}
@@ -1612,6 +1638,8 @@ pub fn run() {
             get_continue_watching,
             // [lc-1615] 观影记录：飞牛 play/list ∪ 本机播放历史（合并/富化见 history.rs）
             get_watch_history,
+            get_my_rating,
+            set_my_rating,
             get_seasons,
             get_episodes,
             get_item_detail,

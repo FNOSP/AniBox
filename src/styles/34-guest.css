@@ -26,10 +26,61 @@
   cursor: default;
 }
 
-/* ── 引导弹窗卡片（外壳 = .ddet；这里只定尺寸与内部排版） ── */
+/* ── 引导弹窗卡片（外壳 = .ddet；这里只定尺寸与内部排版） ──
+   [lc-1603] 居中构图：图标徽章 → 标题 → 副标题 → 居中双按钮；顶部一条 accent 渐变细线。 */
 .gst-modal {
-  width: min(440px, 92vw);
-  padding: 26px 26px 20px;
+  width: min(420px, 92vw);
+  padding: 30px 28px 22px;
+  text-align: center;
+  /* 背景做出层次（比 .ddet 的单色更有纵深），深浅主题都成立 */
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-3));
+  /* [lc-1603] 进场：卡片微放大 + 上浮 */
+  animation: gstModalIn 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* 顶部 3px accent 渐变细线（靠 .ddet 的 overflow:hidden 收边） */
+.gst-modal::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--accent-grad);
+}
+@keyframes gstModalIn {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* 图标徽章：浅 accent 底 + accent 色线性图标，轻微延迟 pop */
+.gst-badge {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 15px;
+  color: var(--accent);
+  background: rgba(108, 155, 255, 0.14);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 6px 18px rgba(108, 155, 255, 0.18);
+  animation: gstBadgePop 0.34s 0.06s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes gstBadgePop {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 .gst-hd {
   margin: 0;
@@ -46,24 +97,26 @@
 }
 .gst-acts {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 10px;
-  margin-top: 20px;
+  margin-top: 22px;
 }
 .gst-btn {
   font-family: inherit;
   font-size: 13px;
   font-weight: 600;
   border-radius: 9px;
-  padding: 8px 18px;
+  padding: 9px 18px;
+  min-width: 96px;
   cursor: pointer;
   border: 1px solid var(--line-strong);
   background: var(--hover);
   color: var(--text-strong);
-  transition: filter 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
+  transition: filter 0.15s ease, background-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
 }
 .gst-btn.ghost:hover {
   background: var(--hover-strong);
+  transform: translateY(-1px);
 }
 .gst-btn.primary {
   border: none;
@@ -74,4 +127,34 @@
 .gst-btn.primary:hover {
   filter: brightness(1.08);
   transform: translateY(-1px);
+  box-shadow: 0 9px 22px rgba(108, 155, 255, 0.42);
+}
+/* [lc-1603] 关闭：遮罩淡出 + 卡片微缩下沉。由 GuestLoginPrompt 在关闭时挂上 `.gst-mask-closing`，
+   等动画走完（170ms）再真正卸载 —— 类名要**同时命中 .ddet-mask**（不然会被它自己的
+   `animation: pageIn` 按文件顺序盖掉）。 */
+.ddet-mask.gst-mask-closing {
+  animation: gstMaskOut 0.17s ease forwards;
+}
+.ddet-mask.gst-mask-closing .gst-modal {
+  animation: gstModalOut 0.17s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+@keyframes gstMaskOut {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes gstModalOut {
+  to {
+    opacity: 0;
+    transform: scale(0.94) translateY(10px);
+  }
+}
+/* 减弱动效：只保留静态内容，不要位移/缩放 */
+@media (prefers-reduced-motion: reduce) {
+  .gst-modal,
+  .gst-badge,
+  .ddet-mask.gst-mask-closing,
+  .ddet-mask.gst-mask-closing .gst-modal {
+    animation: none;
+  }
 }

@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { Lock as IcoLock } from "lucide-react";
 import { DetailView } from "./components/detail/DetailView";
 import { DiscoverView } from "./components/discover/DiscoverView";
 import { HomeSkeleton } from "./components/home/HomeSkeleton";
@@ -1037,23 +1038,42 @@ function App() {
    同 SettingsPanel / 详情页简介弹窗的用法），portal 到 body —— 不被 .app-shell 的
    圆角/溢出与视图转场动画上下文裁剪。Esc / 点遮罩关闭。 */
 function GuestLoginPrompt({ onClose, onGoLogin }: { onClose: () => void; onGoLogin: () => void }) {
+  // [lc-1603] 关闭动画：先挂 `.gst-mask-closing` 让遮罩淡出 + 卡片缩下沉，动画走完再真卸载
+  // （照 SeasonArchive 的既有模式；条件挂载本身没有退场动画，必须延迟卸载）
+  const [closing, setClosing] = useState(false);
+  const requestClose = () => {
+    if (closing) return;
+    setClosing(true);
+    window.setTimeout(onClose, 170); // 与 CSS 动画时长对齐
+  };
+  // [lc-1603]「去登录」也先播退场动画再走
+  const goLogin = () => {
+    if (closing) return;
+    setClosing(true);
+    window.setTimeout(onGoLogin, 170);
+  };
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") requestClose();
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [onClose]);
+    // requestClose 每次渲染都是新函数，但只读 closing —— 依赖里放 closing 语义等价
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closing]);
   return createPortal(
-    <div className="ddet-mask" onClick={onClose}>
+    <div className={`ddet-mask${closing ? " gst-mask-closing" : ""}`} onClick={requestClose}>
       <div className="ddet gst-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="gst-badge">
+          <IcoLock size={24} strokeWidth={2} />
+        </div>
         <h3 className="gst-hd">登录后即可查看详情、播放与管理媒体库</h3>
         <p className="gst-sub">在设置里填入飞牛服务器地址与账号即可登录</p>
         <div className="gst-acts">
-          <button className="gst-btn ghost" onClick={onClose}>
+          <button className="gst-btn ghost" onClick={requestClose}>
             再看看
           </button>
-          <button className="gst-btn primary" onClick={onGoLogin}>
+          <button className="gst-btn primary" onClick={goLogin}>
             去登录
           </button>
         </div>

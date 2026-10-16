@@ -619,7 +619,7 @@ export function TmdbPane({
   return (
     <section className="dpane">
       <div className="dlib-pane">
-        {/* ① 顶行：品牌胶囊 + 概览标题 + 概览 + 搜索框（窄栏下 flex-wrap 换行堆叠，绝不横向溢出） */}
+        {/* ① 顶行：品牌胶囊 + 概览标题 + 概览统计（窄栏下 flex-wrap 换行堆叠，绝不横向溢出） */}
         <header className="dpane-hd dlib-hd">
           <div className="dlib-row1">
             <span className="dlib-brand">
@@ -657,34 +657,9 @@ export function TmdbPane({
                 <b className="dlib-ov-v">{nowLabel(now)}</b>
               </span>
             </div>
-            <form
-              className="dlib-search"
-              onSubmit={(e) => {
-                e.preventDefault();
-                doSearch(query, mediaType);
-              }}
-            >
-              <IcoSearchL size={15} strokeWidth={2} className="dlib-search-ico" />
-              <input
-                className="dlib-search-in"
-                value={query}
-                placeholder="搜索电影、剧集…"
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setQuery(v);
-                  // 输入清空 = 退出搜索（否则列表会停在旧结果上，看着像"卡住"）
-                  if (!v.trim()) clearSearch();
-                }}
-              />
-              {query ? (
-                <button type="button" className="dlib-search-x" title="清除" onClick={clearSearch}>
-                  <IcoXL size={13} strokeWidth={2.4} />
-                </button>
-              ) : null}
-            </form>
           </div>
 
-          {/* ② 次行：主/子标签 + 视图切换 + 排序切换 */}
+          {/* ② 次行：主/子标签 + 搜索框（用户给的排法：搜索紧挨标签、同占一行） */}
           <div className="dlib-row2">
             <div className="dlib-tabs">
               <div className="dlib-tgroup">
@@ -713,6 +688,45 @@ export function TmdbPane({
                 </button>
               </div>
             </div>
+            <form
+              className="dlib-search"
+              onSubmit={(e) => {
+                e.preventDefault();
+                doSearch(query, mediaType);
+              }}
+            >
+              <IcoSearchL size={15} strokeWidth={2} className="dlib-search-ico" />
+              <input
+                className="dlib-search-in"
+                value={query}
+                placeholder="搜索电影、剧集…"
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setQuery(v);
+                  // 输入清空 = 退出搜索（否则列表会停在旧结果上，看着像"卡住"）
+                  if (!v.trim()) clearSearch();
+                }}
+              />
+              {query ? (
+                <button type="button" className="dlib-search-x" title="清除" onClick={clearSearch}>
+                  <IcoXL size={13} strokeWidth={2.4} />
+                </button>
+              ) : null}
+            </form>
+          </div>
+
+          {/* ③ 第三行：排序 + 视图切换（用户给的排法：排序在前、视图在后，另起一行） */}
+          <div className="dlib-row3">
+            <div className="dlib-switch dlib-sort">
+              <button className={`dlib-sbtn${sort === "time" ? " on" : ""}`} onClick={() => setSort("time")}>
+                <IcoClockL size={14} strokeWidth={2} />
+                <span>按时间</span>
+              </button>
+              <button className={`dlib-sbtn${sort === "rating" ? " on" : ""}`} onClick={() => setSort("rating")}>
+                <IcoStarL size={14} strokeWidth={2} />
+                <span>按评分</span>
+              </button>
+            </div>
             <div className="dlib-switch">
               <button
                 className={`dlib-vbtn${view === "timeline" ? " on" : ""}`}
@@ -728,20 +742,10 @@ export function TmdbPane({
                 <IcoRowsL size={16} strokeWidth={2} />
               </button>
             </div>
-            <div className="dlib-switch dlib-sort">
-              <button className={`dlib-sbtn${sort === "time" ? " on" : ""}`} onClick={() => setSort("time")}>
-                <IcoClockL size={14} strokeWidth={2} />
-                <span>按时间</span>
-              </button>
-              <button className={`dlib-sbtn${sort === "rating" ? " on" : ""}`} onClick={() => setSort("rating")}>
-                <IcoStarL size={14} strokeWidth={2} />
-                <span>按评分</span>
-              </button>
-            </div>
           </div>
         </header>
 
-        {/* ③ 内容区（独立滚动；头部固定） */}
+        {/* ④ 内容区（独立滚动；头部固定） */}
         <div className="dscroll dlib-scroll">
           {loadingNow ? (
             <DlibSkeleton view={view} />

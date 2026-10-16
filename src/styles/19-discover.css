@@ -900,6 +900,14 @@ html.dark .dlib-pane {
   flex-wrap: wrap;
 }
 
+/* 第三行：排序 + 视图切换（用户排法：单独一行、排序在前视图在后、左对齐） */
+.dlib-row3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 /* TMDB 品牌胶囊（官方青绿渐变 —— 品牌色，深浅主题下都成立） */
 .dlib-brand {
   display: inline-flex;
@@ -934,11 +942,13 @@ html.dark .dlib-pane {
 
 /* 概览（共 N 部作品 / 平均分 / 最高分 / 更新于） */
 .dlib-ov {
-  flex: 1 1 200px;
+  /* 统计四件套（共 N 部作品 / 平均分 / 最高分 / 更新于）：半宽栏里放不下就**整块**换到下一行
+     （不给它 100% 是怕宽栏时白占一行；340px 的 flex-basis 正好在半宽栏触发换行） */
+  flex: 1 1 340px;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 6px 12px;
+  gap: 4px 10px;
   flex-wrap: wrap;
   font-size: 12px;
 }
@@ -989,9 +999,10 @@ html.dark .dlib-ov-v.green {
 
 /* 搜索框（玻璃胶囊；窄栏下整体换行，宽度自适应） */
 .dlib-search {
-  flex: 1 1 170px;
-  min-width: 0;
-  max-width: 100%;
+  /* 与标签**同行**（用户排法），紧挨标签往后排、吃掉剩余宽度；限宽免得被拉成超长框 */
+  flex: 1 1 180px;
+  min-width: 150px;
+  max-width: 320px;
   height: 32px;
   display: flex;
   align-items: center;
@@ -1056,12 +1067,15 @@ html.dark .dlib-ov-v.green {
 
 /* ── 第二行：主/子标签（同一玻璃胶囊，中间竖分隔） ── */
 .dlib-tabs {
-  flex: 1 1 250px;
+  /* 半宽栏里标签组必须**整块**排版：不拉伸、组内也不换行 ——
+     否则「节目/电影」被 flex:1 拉满一整行、子标签再占一行（用户截图里的零碎感）。
+     换行交给外层 .dlib-row2 整块进行。 */
+  flex: 0 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 4px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   padding: 4px;
   border-radius: 999px;
   background: var(--glass-bg);
@@ -1070,12 +1084,12 @@ html.dark .dlib-ov-v.green {
 }
 
 .dlib-tgroup {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
   display: flex;
   align-items: center;
-  /* 窄栏下宁可换行，也不把「即将播出」压成「即将…」 */
-  flex-wrap: wrap;
+  /* 按钮按内容宽排（不拉伸、不换行）—— 换行由 .dlib-row2 整块决定 */
+  flex-wrap: nowrap;
   gap: 4px;
 }
 
@@ -1088,7 +1102,7 @@ html.dark .dlib-ov-v.green {
 }
 
 .dlib-tab {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
   display: inline-flex;
   align-items: center;

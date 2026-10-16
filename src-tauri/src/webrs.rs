@@ -2156,11 +2156,21 @@ where
             }
             match make(&app2, &label) {
                 Ok(()) => {
+                    // [lc-1618] 埋点：建窗**成功**也留痕。嗅探/验证窗是「在线源能不能播」
+                    // 的关键一环，过去成败都无迹可查，用户报「播不了」时只能靠猜。
+                    crate::libmpv::trace(&format!(
+                        "[webrs] 隐藏窗创建成功 label={label}（第 {} 次尝试）",
+                        attempt + 1
+                    ));
                     let _ = tx.send(Ok(label));
                     return;
                 }
                 Err(e) => {
                     last_err = describe_webview_error(&e);
+                    crate::libmpv::trace(&format!(
+                        "[webrs] 隐藏窗创建失败 label={label}（第 {} 次尝试）: {last_err}",
+                        attempt + 1
+                    ));
                     if attempt == 0 {
                         // 给 WebView2 一点时间回收上次失败留下的环境 / 进程
                         std::thread::sleep(std::time::Duration::from_millis(300));
@@ -2293,9 +2303,19 @@ async fn webview_sniff(
     });
 
     match wait {
-        Ok(Ok(Ok(url))) => Ok(url),
+        Ok(Ok(Ok(url))) => {
+            crate::libmpv::trace(&format!("[webrs] 嗅探命中（{used_label}）: {url}"));
+            Ok(url)
+        }
         Ok(Ok(Err(e))) => Err(e),
-        Ok(Err(_)) => Err("嗅探超时（40s 内没截到视频流）——该站点可能需要验证或用了不支持的加密方案，换一个源试试".into()),
+        Ok(Err(_)) => {
+            // [lc-1618] 埋点：嗅探超时是最常见的「在线源播不了」成因（页面没截到直链 /
+            // 需验证 / 加密方案不支持），过去只把文案冒给前端、日志里没有对应记录。
+            crate::libmpv::trace(&format!(
+                "[webrs] 嗅探超时（{used_label}）40s 内未截到视频流 —— 页面可能需验证 / 加密方案不支持"
+            ));
+            Err("嗅探超时（40s 内没截到视频流）——该站点可能需要验证或用了不支持的加密方案，换一个源试试".into())
+        }
         Err(e) => Err(e),
     }
 }
@@ -2741,6 +2761,13 @@ pub async fn webrs_play(
     if cfg.mpv_path.is_empty() {
         return Err("mpv 路径未配置".into());
     }
+    // [lc-1618] 埋点：入口留痕（含直链与是否带 Referer/UA），便于把「播不了」定位到
+    // 「预检没过 / 会话没起 / loadfile 失败 / 加载后源站拒流」中的哪一步。
+    crate::libmpv::trace(&format!(
+        "[webrs] play: 收到播放请求 url={url} referer={:?} ua={:?}",
+        referer.as_deref().filter(|s| !s.is_empty()),
+        ua.as_deref().filter(|s| !s.is_empty())
+    ));
 
     // 直链预检（带 Referer/UA；只看状态码，不读 body）
     {
@@ -2756,9 +2783,13 @@ pub async fn webrs_play(
         let resp = req
             .send()
             .await
-            .map_err(|e| format!("直链不可达: {e}"))?;
+            .map_err(|e| {
+                crate::libmpv::trace(&format!("[webrs] play: 直链预检请求失败: {e}"));
+                format!("直链不可达: {e}")
+            })?;
         let status = resp.status();
         if !(status.is_success() || status == reqwest::StatusCode::PARTIAL_CONTENT) {
+            crate::libmpv::trace(&format!("[webrs] play: 直链预检返回 {status}（源可能失效）"));
             return Err(format!("直链返回 {status}，源可能失效"));
         }
         crate::libmpv::trace(&format!("[webrs] 直链预检 ok: {status} {url}"));
@@ -2767,25 +2798,47 @@ pub async fn webrs_play(
     let _ = app.emit("mpv-load", json!({ "phase": "start" }));
 
     let mut slot = state.mpv.lock().await;
-    let session = match slot.as_ref() {
-        Some(m) if !m.is_dead().await => m.clone(),
+    let (session, reused) = match slot.as_ref() {
+        Some(m) if !m.is_dead().await => (m.clone(), true),
         Some(m) => {
             m.shutdown().await;
-            crate::mpv::MpvSession::launch(app.clone(), &cfg.mpv_path, None, None).await?
+            (
+                crate::mpv::MpvSession::launch(app.clone(), &cfg.mpv_path, None, None).await?,
+                false,
+            )
         }
-        None => crate::mpv::MpvSession::launch(app.clone(), &cfg.mpv_path, None, None).await?,
+        None => (
+            crate::mpv::MpvSession::launch(app.clone(), &cfg.mpv_path, None, None).await?,
+            false,
+        ),
     };
     *slot = Some(session.clone());
     drop(slot);
+    // [lc-1618] 埋点：会话复用/新建决定「URL 走命令行还是 IPC」。在线源这里是 idle 启动 +
+    // IPC loadfile（与库内 play_item 的「URL 进命令行」不同），启动期 IPC 可能慢/超时。
+    crate::libmpv::trace(&format!(
+        "[webrs] play: mpv 会话{}",
+        if reused { "复用" } else { "新建（idle 启动）" }
+    ));
 
     // Referer/UA 先写属性再 loadfile（对本地 NAS 播放无影响；play_item 播本地前会清）
+    //
+    // [lc-1618] 诊断：这几条 `set` 与下面的 `loadfile` 都走 IPC，而 mpv 启动头几秒事件循环
+    // 被脚本/滤镜占住，`command()` 的 5s 超时可能触发（lc-1559 的实测结论）。过去一律
+    // `let _ =` 吞掉 —— 若 referer/UA 没设上，HLS 分段会被源站 403，表现为「窗口起来了但
+    // 播不动、且没有任何报错」。这里失败改为留痕（**不改行为**，避免把可播的源误伤）。
+    let set_trace = |what: &str, r: Result<serde_json::Value, String>| {
+        if let Err(e) = r {
+            crate::libmpv::trace(&format!("[webrs] play: set {what} 失败（起播可能受影响）: {e}"));
+        }
+    };
     if let Some(r) = referer.as_deref().filter(|s| !s.is_empty()) {
-        let _ = session.command(json!(["set", "referrer", r])).await;
+        set_trace("referrer", session.command(json!(["set", "referrer", r])).await);
     } else {
-        let _ = session.command(json!(["set", "referrer", ""])).await;
+        set_trace("referrer", session.command(json!(["set", "referrer", ""])).await);
     }
     if let Some(u) = ua.as_deref().filter(|s| !s.is_empty()) {
-        let _ = session.command(json!(["set", "user-agent", u])).await;
+        set_trace("user-agent", session.command(json!(["set", "user-agent", u])).await);
     }
     // [lc-1506] Referer/UA 再写一份 http-header-fields：确保 ffmpeg(hls) 分段请求
     // 也带上（mpv 的 referrer 属性只覆盖部分加载路径）
@@ -2798,11 +2851,19 @@ pub async fn webrs_play(
             hf.push(format!("User-Agent: {u}"));
         }
         if !hf.is_empty() {
-            let _ = session
-                .command(json!(["set", "http-header-fields", hf.join(", ")]))
-                .await;
+            set_trace(
+                "http-header-fields",
+                session
+                    .command(json!(["set", "http-header-fields", hf.join(", ")]))
+                    .await,
+            );
         }
     }
+    crate::libmpv::trace(&format!(
+        "[webrs] play: loadfile → {url}（referer={:?} ua={:?}）",
+        referer.as_deref().filter(|s| !s.is_empty()),
+        ua.as_deref().filter(|s| !s.is_empty())
+    ));
     session.command(json!(["loadfile", url, "replace"])).await?;
     // [lc-1615] 起播成功 → 落一笔本机播放历史（观影记录页数据源）。
     // 去重键用「集页面 URL」（直链是临时的：带签名/会过期，不能当键）；缺失时退化为直链。

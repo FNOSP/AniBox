@@ -11,16 +11,19 @@
   /* [lc-1520] 上排「bangumi面板 | 同步状态」两块。
      [lc-1522] 上排两列一人一半；[lc-1527] 右列微放宽（1fr 1.12fr）给"饼+图例"横排让位。
      [lc-1583] 底部那条「今日状态条」已**移出卡片、独立成容器**（见 19-discover.css 的 .dtoday）。 */
-  display: grid;
-  grid-template-columns: 1fr 1.12fr;
-  grid-template-areas: "main stats";
-  gap: 10px 14px;
-  align-items: start;
+  /* [lc-1584] 外层改 flex 列：折叠动画发生在「内容块 ↔ 横栏」之间 */
+  display: flex;
+  flex-direction: column;
 }
 
-/* ── [lc-1584] 右上角折叠按钮 + 折叠态横栏 ──
-   用户要求：这张卡右上角放一个可折叠按钮，折叠后收成**一条横栏**，写总信息（BGM 登录态 + 总追番）。
-   实现用「两态都渲染、CSS 切显隐」：折叠时隐藏 .bgmac-main/.bgmac-stats、显示 .bgmac-bar。 */
+/* ── [lc-1584] 右上角折叠按钮 + 折叠态横栏（带展开/折叠动画）──
+   用户要求：这张卡右上角放一个可折叠按钮，折叠后收成**一条横栏**（BGM 登录态 + 总追番），
+   且折叠/展开要有**优雅动画**。
+   实现：两态都渲染、CSS 切形态 ——
+     · 内容块 `grid-template-rows: 1fr → 0fr`（比 max-height 干净：内容多高都精确收放，
+       没有"先慢后快"的时序错觉）
+     · 横栏 max-height + 透明度 + 位移（单行，够用）
+     · 箭头靠 CSS 旋转 180°（不换图标，动画连续） */
 .bgmac-fold {
   position: absolute;
   top: 10px;
@@ -42,50 +45,94 @@
   background: var(--hover-strong);
   color: var(--text-strong);
 }
+.bgmac-fold svg {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.bgmac.fold .bgmac-fold svg {
+  transform: rotate(180deg);
+}
 
+/* 内容块（main 面板 + stats 同步状态环）：折叠时整行收到 0 高（子项 overflow:hidden 跟着裁切） */
+.bgmac-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.12fr;
+  grid-template-areas: "main stats";
+  grid-template-rows: 1fr;
+  gap: 10px 14px;
+  align-items: start;
+  transition: grid-template-rows 0.32s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease;
+}
+.bgmac-grid > * {
+  min-height: 0;
+  overflow: hidden;
+}
+.bgmac.fold .bgmac-grid {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+/* 折叠态横栏：登录态 + 总追番 */
 .bgmac-bar {
-  display: none;
-}
-.bgmac.fold {
-  display: flex;
-  align-items: center;
-  gap: 6px 12px;
-  flex-wrap: wrap;
-  padding: 11px 44px 11px 16px; /* 右侧给折叠按钮让位 */
-  cursor: pointer;
-}
-.bgmac.fold .bgmac-main,
-.bgmac.fold .bgmac-stats {
-  display: none;
-}
-.bgmac.fold .bgmac-bar {
   display: flex;
   align-items: center;
   gap: 4px 12px;
   flex-wrap: wrap;
   min-width: 0;
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+  overflow: hidden;
+  pointer-events: none;
+  transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease,
+    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
+.bgmac.fold {
+  padding-right: 44px; /* 给右上角折叠按钮让位 */
+}
+.bgmac.fold .bgmac-bar {
+  max-height: 72px;
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  margin-top: 2px;
+  cursor: pointer;
+}
+/* 登录态：**只显示状态、不显示具体账号 id**（用户要求）—— 已登录绿、未登录红 */
 .bgmac-bar-user {
   display: inline-flex;
   align-items: center;
+  gap: 5px;
   flex-shrink: 0;
-  padding: 2px 9px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--glass-btn-bg);
   font-size: 12.5px;
   font-weight: 700;
-  color: var(--text-strong);
   white-space: nowrap;
 }
+.bgmac-bar-user::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
 .bgmac-bar-user.on {
-  border-color: rgba(108, 155, 255, 0.4);
-  background: rgba(108, 155, 255, 0.12);
+  color: #37a75f;
+}
+.bgmac-bar-user.off {
+  color: #ed5b52;
 }
 .bgmac-bar-stat {
   min-width: 0;
   font-size: 12.5px;
   color: var(--muted);
+}
+
+/* 系统「减少动态效果」：折叠动画全关（与仓库其它节一致） */
+@media (prefers-reduced-motion: reduce) {
+  .bgmac-grid,
+  .bgmac-bar,
+  .bgmac-fold svg {
+    transition: none;
+  }
 }
 /* ── 左列 ── */
 .bgmac-main {

@@ -1,7 +1,7 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ChevronDown as IcoChevD, ChevronUp as IcoChevU, Film as IcoFilmL } from "lucide-react";
+import { ChevronUp as IcoChevU, Film as IcoFilmL } from "lucide-react";
 import { bgmImg } from "../../lib/images";
 import { BgmCalendarItem } from "../../types";
 
@@ -186,7 +186,7 @@ export function BgmAccountCard({
   return (
     <div className={`bgmac${acct.bound ? " on" : ""}${collapsed ? " fold" : ""}`}>
       {/* [lc-1584] 右上角折叠按钮：折叠后整卡收成一条横栏（BGM 登录态 + 总追番信息）。
-          展开/折叠两态都保留它，随时能切回来。 */}
+          展开/折叠两态都保留它，随时能切回来（箭头靠 CSS 旋转 180°，动画更顺）。 */}
       <button
         type="button"
         className="bgmac-fold"
@@ -194,12 +194,12 @@ export function BgmAccountCard({
         title={collapsed ? "展开追番同步" : "折叠成横栏"}
         aria-expanded={!collapsed}
       >
-        {collapsed ? <IcoChevD size={16} strokeWidth={2} /> : <IcoChevU size={16} strokeWidth={2} />}
+        <IcoChevU size={16} strokeWidth={2} />
       </button>
-      {/* 折叠态横栏（展开时由 CSS 隐藏）：登录态 + 总追番；点它也能展开 */}
+      {/* 折叠态横栏（展开时由 CSS 收成 0 高）：登录态 + 总追番；点它也能展开 */}
       <div className="bgmac-bar" onClick={() => setCollapsed(false)} title="点击展开">
-        <span className={`bgmac-bar-user${acct.bound ? " on" : ""}`}>
-          {acct.bound ? `Bangumi · ${acct.username}` : "未连接 Bangumi"}
+        <span className={`bgmac-bar-user${acct.bound ? " on" : " off"}`}>
+          {acct.bound ? "已登录" : "未登录"}
         </span>
         <span className="bgmac-bar-stat">
           {total > 0
@@ -207,8 +207,10 @@ export function BgmAccountCard({
             : "连接后展示追番统计"}
         </span>
       </div>
-      {/* 左侧：标题组 + 按钮（图标按用户要求删除） */}
-      <div className="bgmac-main">
+      {/* 内容块（可折叠）：main 面板 + stats 同步状态环 */}
+      <div className="bgmac-grid">
+        {/* 左侧：标题组 + 按钮（图标按用户要求删除） */}
+        <div className="bgmac-main">
         <div className="bgmac-text">
           <div className="bgmac-kicker">Bangumi</div>
           <div className="bgmac-title-row">
@@ -373,6 +375,7 @@ export function BgmAccountCard({
             <span>连接后展示追番统计</span>
           </div>
         )}
+      </div>
       </div>
 
       {/* [lc-1583] 「今日状态条」已**移出卡片、独立成容器**（见 BgmPane 的 .dtoday）——

@@ -1541,7 +1541,12 @@ pub fn run() {
             // [lc-1606] 反爬验证闭环（图片验证码 / 自动点击 / 自定义 JS）
             webrs::webrs_captcha_start,
             webrs::webrs_captcha_submit,
-            webrs::webrs_captcha_cancel
+            webrs::webrs_captcha_cancel,
+            // [lc-1608] 在线规则目录 + 一键更新（拉 KazumiRules index.json / 装/更新单条 / 查可更新）
+            webrs::webrs_catalog,
+            webrs::webrs_install_rule,
+            webrs::webrs_update_rule,
+            webrs::webrs_check_updates
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -19,11 +19,12 @@
 //! `//tag` / `.//tag` / `tag`、`tag[N]`、`tag[@attr='v']`、`tag[contains(@attr,'v')]`、
 //! 结尾 `@attr` / `text()`。其余语法报「不支持的 XPath」。
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use url::Url;
@@ -1292,6 +1293,282 @@ pub async fn webrs_remove_rule(app: AppHandle, rule_name: String) -> Result<(), 
         Ok(_) => Ok(()),
         Err(e) => Err(format!("删除失败: {e}")),
     }
+}
+
+// ───────────────────────── [lc-1608] 在线规则目录 + 一键更新 ─────────────────────────
+//
+// 对齐 Kazumi 的 plugin catalog（`plugin_catalog_api.dart` / `plugins_controller.dart`）：
+//   · `index.json` 是目录（每条 = name + version + …），`{name}.json` 是规则全文；
+//   · 上游仓库 = Predidit/KazumiRules，端点 raw.githubusercontent.com；
+//   · 版本比较走「按 `.` 切段逐段比整数」，远端更大才算「可更新」（Kazumi `needUpdate`）。
+// 与 Kazumi 的差异（为什么这么选）：
+//   · Kazumi 另有镜像 `raw.gitcode.com`（`pluginShopMirror`）。国内直连 raw 常不通，
+//     所以这里**直连失败自动回退镜像**——不引入任何密钥，也不依赖我们自建的 gh 镜像
+//     （那个 `/raw/*` 走签名轨，需要 FNTV_GH_SECRET，本项目没有也不该为此新增密钥）。
+//   · 目录带 6 小时缓存（内存 + 落盘），`force=true` 跳过 TTL —— 面板「检查更新」默认用缓存。
+
+/// 规则目录上游（Kazumi 同款）。raw 直连优先，失败回退 gitcode 镜像。
+const CATALOG_BASE: &str = "https://raw.githubusercontent.com/Predidit/KazumiRules/main/";
+const CATALOG_BASE_MIRROR: &str = "https://raw.gitcode.com/gh_mirrors/ka/KazumiRules/raw/main/";
+/// 目录缓存 TTL（内存 / 落盘共用）。6 小时 —— 规则更新以「天」为节奏，够新。
+const CATALOG_TTL_SECS: u64 = 6 * 3600;
+
+/// [lc-1608] 目录条目（逐字段对齐 Kazumi `PluginHTTPItem`；缺字段宽容、多余字段忽略）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CatalogItem {
+    pub name: String,
+    pub version: String,
+    #[serde(rename = "useNativePlayer")]
+    pub use_native_player: bool,
+    pub author: String,
+    #[serde(rename = "lastUpdate")]
+    pub last_update: i64,
+    #[serde(rename = "antiCrawlerEnabled")]
+    pub anti_crawler_enabled: bool,
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// [lc-1608] 版本比较：远端是否比本地**更新**（对齐 Kazumi `utils/version.dart` 的 needUpdate）。
+/// 按 `.` 切段，逐段转整数比较，缺段补 0；某段不是整数（如 `1.0-beta`）→ 退回「整体字符串不等」。
+/// 返回 true 仅当 remote 严格大于 local。
+fn remote_is_newer(local: &str, remote: &str) -> bool {
+    let l = local.trim();
+    let r = remote.trim();
+    let ls: Vec<&str> = l.split('.').collect();
+    let rs: Vec<&str> = r.split('.').collect();
+    let n = ls.len().max(rs.len());
+    for i in 0..n {
+        // 缺段补 0；本段存在但不是整数 → 无法按段比，回退字符串判等
+        let a = if i < ls.len() {
+            match ls[i].trim().parse::<i64>() {
+                Ok(v) => v,
+                Err(_) => return l != r,
+            }
+        } else {
+            0
+        };
+        let b = if i < rs.len() {
+            match rs[i].trim().parse::<i64>() {
+                Ok(v) => v,
+                Err(_) => return l != r,
+            }
+        } else {
+            0
+        };
+        if b > a {
+            return true;
+        }
+        if b < a {
+            return false;
+        }
+    }
+    false
+}
+
+/// 内存层缓存：`(拉取时刻秒, 条目)`。进程内复用，避免反复打网络。
+static CATALOG_MEM: OnceLock<std::sync::Mutex<Option<(u64, Vec<CatalogItem>)>>> = OnceLock::new();
+
+fn catalog_mem() -> &'static std::sync::Mutex<Option<(u64, Vec<CatalogItem>)>> {
+    CATALOG_MEM.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// 落盘缓存路径：app_data_dir/webrs-catalog.json（与 config.json 同级，非仓库内文件）。
+fn catalog_cache_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("无法解析数据目录: {e}"))?
+        .join("webrs-catalog.json"))
+}
+
+async fn read_disk_catalog(app: &AppHandle) -> Option<(u64, Vec<CatalogItem>)> {
+    let p = catalog_cache_path(app).ok()?;
+    let s = tokio::fs::read_to_string(&p).await.ok()?;
+    let v: Value = serde_json::from_str(&s).ok()?;
+    let at = v.get("fetchedAt").and_then(|x| x.as_u64()).unwrap_or(0);
+    let items: Vec<CatalogItem> = serde_json::from_value(v.get("items")?.clone()).ok()?;
+    Some((at, items))
+}
+
+async fn write_disk_catalog(app: &AppHandle, items: &[CatalogItem]) {
+    let Ok(p) = catalog_cache_path(app) else {
+        return;
+    };
+    let body = json!({ "fetchedAt": now_secs(), "items": items });
+    let _ = tokio::fs::write(&p, serde_json::to_string(&body).unwrap_or_default()).await;
+}
+
+/// 拉目录里的一个文件（`index.json` 或 `{name}.json`）：raw 直连优先，失败回退镜像。
+/// 两个端点都不需要密钥；任一成功即返回，全失败带最后一次错误。
+async fn fetch_catalog_file(path: &str) -> Result<String, String> {
+    let client = http();
+    let mut last = String::from("未知错误");
+    for base in [CATALOG_BASE, CATALOG_BASE_MIRROR] {
+        let url = format!("{base}{path}");
+        match client.get(&url).send().await {
+            Ok(r) => {
+                let st = r.status();
+                match r.text().await {
+                    Ok(t) if st.is_success() => return Ok(t),
+                    Ok(_) => last = format!("HTTP {st}（{url}）"),
+                    Err(e) => last = format!("读响应失败: {e}（{url}）"),
+                }
+            }
+            Err(e) => last = format!("请求失败: {e}（{url}）"),
+        }
+    }
+    Err(format!("规则目录拉取失败（直连与镜像均不可用）：{last}"))
+}
+
+/// 解析目录 JSON（对齐 Kazumi `parsePluginList`：坏条目跳过；整体为空则报错）。
+fn parse_catalog(text: &str) -> Result<Vec<CatalogItem>, String> {
+    let arr: Vec<Value> =
+        serde_json::from_str(text.trim()).map_err(|e| format!("目录不是合法 JSON 数组: {e}"))?;
+    let mut items = Vec::new();
+    for v in &arr {
+        match serde_json::from_value::<CatalogItem>(v.clone()) {
+            Ok(it) if !it.name.trim().is_empty() => items.push(it),
+            _ => {} // 缺 name 等坏条目跳过（对应 Kazumi 的 skippedItems）
+        }
+    }
+    if !arr.is_empty() && items.is_empty() {
+        return Err("规则目录里没有可用条目".into());
+    }
+    Ok(items)
+}
+
+/// 目录取数（三级：内存缓存 → 落盘缓存 → 网络），`force` 跳过前两级。
+async fn catalog_items(app: &AppHandle, force: bool) -> Result<Vec<CatalogItem>, String> {
+    if !force {
+        if let Some((at, items)) = catalog_mem().lock().unwrap().as_ref() {
+            if now_secs().saturating_sub(*at) < CATALOG_TTL_SECS {
+                return Ok(items.clone());
+            }
+        }
+        if let Some((at, items)) = read_disk_catalog(app).await {
+            if now_secs().saturating_sub(at) < CATALOG_TTL_SECS {
+                *catalog_mem().lock().unwrap() = Some((at, items.clone()));
+                return Ok(items);
+            }
+        }
+    }
+    let text = fetch_catalog_file("index.json").await?;
+    let items = parse_catalog(&text)?;
+    *catalog_mem().lock().unwrap() = Some((now_secs(), items.clone()));
+    write_disk_catalog(app, &items).await;
+    Ok(items)
+}
+
+/// [lc-1608] 拉在线规则目录（`index.json`），返回 `{ items: [...] }`。带 6 小时缓存。
+#[tauri::command]
+pub async fn webrs_catalog(app: AppHandle, force: Option<bool>) -> Result<Value, String> {
+    let items = catalog_items(&app, force.unwrap_or(false)).await?;
+    Ok(json!({ "items": items }))
+}
+
+/// 规则名合法性（防路径穿越）——与 `webrs_remove_rule` 同口径。
+fn safe_rule_name(name: &str) -> Result<String, String> {
+    let n = name.trim().to_string();
+    if n.is_empty() || n.contains(['/', '\\', ':']) || n.contains("..") {
+        return Err("规则名不合法".into());
+    }
+    Ok(n)
+}
+
+/// 把一份规则 JSON 写进规则目录。`overwrite=false` 时已存在即报错（安装语义）；
+/// `overwrite=true` 直接覆盖（更新语义）。抽成独立函数便于单测（用临时目录、不触网）。
+async fn write_rule_file(
+    dir: &std::path::Path,
+    name: &str,
+    v: &Value,
+    overwrite: bool,
+) -> Result<Value, String> {
+    let remote_name = v
+        .get("name")
+        .and_then(|n| n.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if remote_name.is_empty() {
+        return Err("规则缺少 name 字段".into());
+    }
+    // 名称一致性（对齐 Kazumi `_preparePluginUpdate`）：防目录条目与下载内容对不上
+    if !remote_name.eq_ignore_ascii_case(name) {
+        return Err(format!("下载的规则名「{remote_name}」与请求的「{name}」不一致"));
+    }
+    let rule: Rule =
+        serde_json::from_value(v.clone()).map_err(|e| format!("规则字段不合法: {e}"))?;
+    tokio::fs::create_dir_all(dir)
+        .await
+        .map_err(|e| format!("创建规则目录失败: {e}"))?;
+    let p = dir.join(format!("{name}.json"));
+    if p.exists() && !overwrite {
+        return Err(format!("规则「{name}」已存在，请改用更新"));
+    }
+    // 原文落盘（Value 序列化），不经过 Rule 结构体 —— 免得丢掉未建模的字段
+    tokio::fs::write(&p, serde_json::to_string_pretty(v).unwrap_or_default())
+        .await
+        .map_err(|e| format!("写入规则失败: {e}"))?;
+    crate::libmpv::trace(&format!(
+        "[webrs] {}规则: {name} v{}",
+        if overwrite { "更新" } else { "安装" },
+        rule.version
+    ));
+    Ok(json!({ "name": name, "version": rule.version }))
+}
+
+/// 下载 `{name}.json` 并落盘（`overwrite` 决定安装 / 更新语义）。
+async fn fetch_and_write_rule(app: &AppHandle, name: &str, overwrite: bool) -> Result<Value, String> {
+    let name = safe_rule_name(name)?;
+    let text = fetch_catalog_file(&format!("{name}.json")).await?;
+    let v: Value =
+        serde_json::from_str(text.trim()).map_err(|e| format!("规则不是合法 JSON: {e}"))?;
+    let dir = rules_dir(app)?;
+    write_rule_file(&dir, &name, &v, overwrite).await
+}
+
+/// [lc-1608] 安装一条在线规则（写进规则目录，已存在则报错）。
+#[tauri::command]
+pub async fn webrs_install_rule(app: AppHandle, name: String) -> Result<Value, String> {
+    fetch_and_write_rule(&app, &name, false).await
+}
+
+/// [lc-1608] 更新一条在线规则（下载并**覆盖**本地同名规则）。
+#[tauri::command]
+pub async fn webrs_update_rule(app: AppHandle, name: String) -> Result<Value, String> {
+    fetch_and_write_rule(&app, &name, true).await
+}
+
+/// [lc-1608] 本地规则（含内置种入）vs 目录版本 → 可更新列表 `{ items: [{name, localVersion, remoteVersion}] }`。
+/// 判据 = Kazumi `_remoteIsNewer`（远端严格更新才算）。
+#[tauri::command]
+pub async fn webrs_check_updates(app: AppHandle) -> Result<Value, String> {
+    let items = catalog_items(&app, false).await?;
+    let local = load_rules(&app).await?;
+    let mut local_map: HashMap<String, String> = HashMap::new();
+    for r in &local {
+        local_map.insert(r.name.to_lowercase(), r.version.clone());
+    }
+    let mut out = Vec::new();
+    for it in &items {
+        if let Some(lv) = local_map.get(&it.name.to_lowercase()) {
+            if remote_is_newer(lv, &it.version) {
+                out.push(json!({
+                    "name": it.name,
+                    "localVersion": lv,
+                    "remoteVersion": it.version,
+                }));
+            }
+        }
+    }
+    Ok(json!({ "items": out }))
 }
 
 fn json_path<'a>(root: &'a Value, path: &str) -> Option<Vec<&'a Value>> {
@@ -2629,5 +2906,104 @@ mod tests {
         let normal = r#"<html><body><div class="myui-vodbox-content"><div class="card-info">
           <div class="title">少女</div></div></div></body></html>"#;
         assert!(!detects_captcha_challenge(&resp(200, normal, false), &cfg));
+    }
+
+    // ───────────────────── [lc-1608] 在线规则目录：单测（不触网） ─────────────────────
+
+    #[test]
+    fn catalog_parses_items_and_skips_bad_ones() {
+        // 混入两条坏数据（非对象 / 缺 name），应被跳过，其余正常解析
+        let text = r#"[
+          {"name":"7sefun","version":"1.3","useNativePlayer":true,"author":"","lastUpdate":1786362131000},
+          "not-an-object",
+          {"version":"9.9"},
+          {"name":"aafun","version":"1.2"}
+        ]"#;
+        let items = parse_catalog(text).unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].name, "7sefun");
+        assert_eq!(items[0].version, "1.3");
+        assert!(items[0].use_native_player);
+        assert_eq!(items[0].last_update, 1786362131000);
+        assert_eq!(items[1].name, "aafun");
+        assert_eq!(items[1].version, "1.2");
+    }
+
+    #[test]
+    fn catalog_root_must_be_array() {
+        assert!(parse_catalog(r#"{"name":"x"}"#).is_err());
+        assert!(parse_catalog("not json").is_err());
+    }
+
+    #[test]
+    fn version_compare_three_cases() {
+        // 可更新：远端更大
+        assert!(remote_is_newer("1.2", "1.3"));
+        assert!(remote_is_newer("1.2", "1.2.1")); // 缺段补 0 → 1.2.0 < 1.2.1
+        assert!(remote_is_newer("1.9", "1.10")); // 逐段整数比较，非字典序
+        // 不可更新：相等
+        assert!(!remote_is_newer("1.2", "1.2"));
+        assert!(!remote_is_newer("1.2", "1.2.0")); // 补齐后相等
+        // 本地更高：远端更小
+        assert!(!remote_is_newer("2.0", "1.9"));
+        assert!(!remote_is_newer("1.2.1", "1.2"));
+    }
+
+    #[test]
+    fn version_compare_non_numeric_falls_back_to_inequality() {
+        // 某段不是整数 → 无法按段比，退回「整体字符串不等」
+        assert!(remote_is_newer("1.0", "1.0-beta"));
+        assert!(!remote_is_newer("1.0-beta", "1.0-beta"));
+    }
+
+    /// 唯一的临时目录（无 tempfile 依赖）：用进程 id + 纳秒后缀，测试完清掉。
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!("webrs-cat-test-{tag}-{}-{nanos}", std::process::id()))
+    }
+
+    #[tokio::test]
+    async fn install_then_update_writes_and_overwrites() {
+        let dir = temp_dir("install");
+        let v1 = json!({"name":"demo","version":"1.0","searchURL":"http://a/@keyword"});
+        let v2 = json!({"name":"demo","version":"2.0","searchURL":"http://a/@keyword"});
+
+        // 安装：写入并回传版本
+        let r = write_rule_file(&dir, "demo", &v1, false).await.unwrap();
+        assert_eq!(r["version"], "1.0");
+        let p = dir.join("demo.json");
+        assert!(p.exists());
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert_eq!(saved["version"], "1.0");
+
+        // 已存在时再安装（overwrite=false）→ 报错，且不覆盖
+        assert!(write_rule_file(&dir, "demo", &v2, false).await.is_err());
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert_eq!(saved["version"], "1.0");
+
+        // 更新（overwrite=true）→ 覆盖成功
+        let r = write_rule_file(&dir, "demo", &v2, true).await.unwrap();
+        assert_eq!(r["version"], "2.0");
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert_eq!(saved["version"], "2.0");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn write_rule_rejects_name_mismatch_and_missing_name() {
+        let dir = temp_dir("mismatch");
+        // 内容里的 name 与请求名不一致 → 拒绝（对齐 Kazumi）
+        let bad = json!({"name":"other","version":"1.0"});
+        assert!(write_rule_file(&dir, "demo", &bad, true).await.is_err());
+        // 缺 name → 拒绝
+        let noname = json!({"version":"1.0"});
+        assert!(write_rule_file(&dir, "demo", &noname, true).await.is_err());
+        // 目录里不应留下任何文件
+        assert!(!dir.join("demo.json").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

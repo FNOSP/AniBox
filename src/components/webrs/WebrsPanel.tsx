@@ -12,7 +12,17 @@ export type WebrsRoad = { name: string; index: number; episodes: WebrsSearchItem
 // [lc-1606] 新增 captcha 状态：该源返回了反爬验证挑战页，需要人机验证
 export type WebrsGroup = { name: string; status: "ok" | "empty" | "error" | "captcha"; error: string; items: WebrsSearchItem[] };
 
-export type WebrsRuleInfo = { name: string; mode?: string };
+export type WebrsRuleInfo = { name: string; version?: string; mode?: string };
+
+// [lc-1608] 在线规则目录条目（对应 Rust CatalogItem）+ 可更新项
+export type WebrsCatalogItem = {
+  name: string;
+  version: string;
+  author?: string;
+  useNativePlayer?: boolean;
+  lastUpdate?: number;
+};
+export type WebrsUpdateItem = { name: string; localVersion: string; remoteVersion: string };
 
 
 export const WEBRS_ENABLED_KEY = "anibox.webrs.enabledSources";
@@ -47,6 +57,12 @@ export function WebrsPanel({ title }: { title: string }) {
   // [lc-1503] 一键测试源：对全部源各发一次真实搜索，行内显示 ✓ n / 无结果 / ✗
   const [tests, setTests] = useState<Record<string, { status: string; count: number; error: string }>>({});
   const [testing, setTesting] = useState(false);
+  // [lc-1608] 在线规则目录：目录列表 + 可更新项 + 检查进度 + 行内安装/更新忙态
+  const [catalog, setCatalog] = useState<WebrsCatalogItem[] | null>(null);
+  const [updates, setUpdates] = useState<WebrsUpdateItem[]>([]);
+  const [catBusy, setCatBusy] = useState(false);
+  const [catMsg, setCatMsg] = useState<{ kind: "ok" | "err" | "note"; text: string } | null>(null);
+  const [rowBusy, setRowBusy] = useState<Record<string, "install" | "update">>({});
   // 二级视图：选集
   const [sel, setSel] = useState<{ rule: string; item: WebrsSearchItem } | null>(null);
   const [roads, setRoads] = useState<WebrsRoad[]>([]);
@@ -322,6 +338,106 @@ export function WebrsPanel({ title }: { title: string }) {
     }
   };
 
+  // ───────────── [lc-1608] 在线规则目录：检查 / 安装 / 更新 / 全部更新 ─────────────
+  // 本地版本表（小写名 → 版本），用于给目录行打「未装 / 已装 vX / 可更新」状态。
+  const localVer = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const r of srcs) if (r.version) m[r.name.toLowerCase()] = r.version;
+    return m;
+  }, [srcs]);
+  const updateMap = useMemo(() => {
+    const m: Record<string, WebrsUpdateItem> = {};
+    for (const u of updates) m[u.name.toLowerCase()] = u;
+    return m;
+  }, [updates]);
+
+  const checkUpdates = useCallback(async (force: boolean) => {
+    if (catBusy) return;
+    setCatBusy(true);
+    setCatMsg({ kind: "note", text: force ? "正在刷新在线规则目录…" : "正在读取在线规则目录…" });
+    try {
+      const c = await invoke<{ items: WebrsCatalogItem[] }>("webrs_catalog", { force });
+      setCatalog(c.items ?? []);
+      // 目录已（内存）缓存，第二次调用很快；可更新判据在 Rust（Kazumi _remoteIsNewer 口径）
+      const u = await invoke<{ items: WebrsUpdateItem[] }>("webrs_check_updates");
+      setUpdates(u.items ?? []);
+      setCatMsg({
+        kind: "ok",
+        text: `目录 ${c.items?.length ?? 0} 条规则，${u.items?.length ?? 0} 条可更新`,
+      });
+    } catch (e) {
+      setCatMsg({ kind: "err", text: String(e) });
+    } finally {
+      setCatBusy(false);
+    }
+  }, [catBusy]);
+
+  // 安装 / 更新单条。串行由调用方保证（行内按钮天然一次一个）。
+  const installOrUpdate = useCallback(
+    async (name: string, kind: "install" | "update") => {
+      setRowBusy((m) => ({ ...m, [name]: kind }));
+      setCatMsg({ kind: "note", text: `${kind === "install" ? "安装" : "更新"}「${name}」…` });
+      try {
+        const r = await invoke<{ name: string; version: string }>(
+          kind === "install" ? "webrs_install_rule" : "webrs_update_rule",
+          { name },
+        );
+        await refreshRules();
+        const u = await invoke<{ items: WebrsUpdateItem[] }>("webrs_check_updates");
+        setUpdates(u.items ?? []);
+        setCatMsg({ kind: "ok", text: `已${kind === "install" ? "安装" : "更新"}「${r.name}」v${r.version}` });
+      } catch (e) {
+        setCatMsg({ kind: "err", text: `${kind === "install" ? "安装" : "更新"}「${name}」失败：${e}` });
+      } finally {
+        setRowBusy((m) => {
+          const n = { ...m };
+          delete n[name];
+          return n;
+        });
+      }
+    },
+    [refreshRules],
+  );
+
+  // 全部更新：**串行**逐个调用（不并发轰炸上游），带 i/n 进度。
+  const updateAll = useCallback(async () => {
+    if (catBusy) return;
+    const targets = updates.map((u) => u.name);
+    if (targets.length === 0) {
+      setCatMsg({ kind: "note", text: "没有可更新的规则" });
+      return;
+    }
+    setCatBusy(true);
+    let ok = 0;
+    let fail = 0;
+    for (let i = 0; i < targets.length; i++) {
+      const name = targets[i];
+      setRowBusy((m) => ({ ...m, [name]: "update" }));
+      setCatMsg({ kind: "note", text: `更新中 ${i + 1}/${targets.length}：「${name}」…` });
+      try {
+        await invoke("webrs_update_rule", { name });
+        ok++;
+      } catch {
+        fail++;
+      } finally {
+        setRowBusy((m) => {
+          const n = { ...m };
+          delete n[name];
+          return n;
+        });
+      }
+    }
+    await refreshRules();
+    try {
+      const u = await invoke<{ items: WebrsUpdateItem[] }>("webrs_check_updates");
+      setUpdates(u.items ?? []);
+    } catch {
+      /* 忽略：至少把已更新的结果报出去 */
+    }
+    setCatBusy(false);
+    setCatMsg({ kind: fail ? "err" : "ok", text: `全部更新完成：成功 ${ok} 条${fail ? `，失败 ${fail} 条` : ""}` });
+  }, [catBusy, updates, refreshRules]);
+
   const badge = (g: WebrsGroup) =>
     g.status === "ok"
       ? `${g.items.length} 个结果`
@@ -524,6 +640,77 @@ export function WebrsPanel({ title }: { title: string }) {
               })}
               {srcs.length === 0 && <div className="webrs-note">没有可用源 —— 「＋ 添加源」导入一条规则</div>}
               </div>
+
+              {/* [lc-1608] 在线规则目录（KazumiRules index.json）：检查更新 / 逐条安装·更新 / 全部更新 */}
+              <div className="webrs-cat">
+                <div className="webrs-cat-hd">
+                  <span className="webrs-cat-title">在线规则</span>
+                  <button onClick={() => checkUpdates(true)} disabled={catBusy}>
+                    {catBusy ? "检查中…" : "检查更新"}
+                  </button>
+                  <button
+                    className="webrs-cat-upall"
+                    onClick={updateAll}
+                    disabled={catBusy || updates.length === 0}
+                    title={updates.length ? `更新 ${updates.length} 条可更新规则` : "暂无可更新规则"}
+                  >
+                    全部更新{updates.length ? ` (${updates.length})` : ""}
+                  </button>
+                </div>
+                {catMsg && (
+                  <div className={`webrs-cat-msg ${catMsg.kind === "err" ? "err" : catMsg.kind === "ok" ? "ok" : ""}`}>
+                    {catMsg.text}
+                  </div>
+                )}
+                {catalog && (
+                  <div className="webrs-cat-list">
+                    {catalog.map((it) => {
+                      const lv = localVer[it.name.toLowerCase()];
+                      const up = updateMap[it.name.toLowerCase()];
+                      const busy = rowBusy[it.name];
+                      const state = !lv ? "new" : up ? "update" : "installed";
+                      return (
+                        <div key={it.name} className="webrs-cat-row">
+                          <span className="webrs-cat-name" title={it.author ? `${it.name} · ${it.author}` : it.name}>
+                            {it.name}
+                          </span>
+                          <span className="webrs-cat-ver">v{it.version}</span>
+                          <span className={`webrs-cat-state ${state}`}>
+                            {state === "new"
+                              ? "未装"
+                              : state === "update"
+                                ? `可更新 v${lv} → v${it.version}`
+                                : `已装 v${lv}`}
+                          </span>
+                          {state === "new" && (
+                            <button
+                              className="webrs-cat-act"
+                              disabled={!!busy || catBusy}
+                              onClick={() => installOrUpdate(it.name, "install")}
+                            >
+                              {busy === "install" ? "安装中…" : "安装"}
+                            </button>
+                          )}
+                          {state === "update" && (
+                            <button
+                              className="webrs-cat-act on"
+                              disabled={!!busy || catBusy}
+                              onClick={() => installOrUpdate(it.name, "update")}
+                            >
+                              {busy === "update" ? "更新中…" : "更新"}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {catalog.length === 0 && <div className="webrs-note">在线目录为空</div>}
+                  </div>
+                )}
+                {!catalog && !catBusy && (
+                  <div className="webrs-note">点「检查更新」从 KazumiRules 拉取在线规则目录（带 6 小时缓存）</div>
+                )}
+              </div>
+
               <div className="webrs-mgr-tip">
                 勾选后关闭本面板，搜索只查已勾选的源；内置源删除后下次启动会恢复。一键测试用搜索框关键词（空则「少女」）。
               </div>

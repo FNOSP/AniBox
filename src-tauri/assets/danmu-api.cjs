@@ -170,6 +170,14 @@ let activeBaseIdx = 0;
 /** 最近一轮 failover 各地址的传输失败明细（host:port 已脱敏，无 TOKEN），供根因文案使用。 */
 let lastFailoverErrors = '';
 let lastFailReason = '';
+/**
+ * [lc-1637] 本轮 autoFetch 里，自建服务端**原始**返回的条目数峰值（`animes` 数组长度，
+ * 尚未经 exactMatchTier 精确筛选）。用于区分「搜不到」的两种根因：
+ *   =0  → 服务端一条都没有（真·未收录）；
+ *   >0  → 有近名条目但全被「主名+季号完全一致」的精确匹配拒收。
+ * 纯统计，不参与任何命中判定 —— 命中结果完全不受影响。
+ */
+let lastRawAnimeCount = 0;
 /** 文本请求的 failover 包装：逐地址尝试，全部传输层失败时记录错误明细并返回 null。 */
 async function httpTextFailover(pathWithQuery, timeoutMs) {
     const bases = fnConfig.getDanmuApiBases();
@@ -591,6 +599,9 @@ async function searchWithKeyword(keyword, season, epTitle = '', timeoutMs = 1200
         searchCache.set(key, { at: Date.now(), val: list });
     }
     const hits = [];
+    // [lc-1637] 记下服务端原始返回条目数峰值（未经精确筛选），供未命中时区分「服务端 0 条」vs「近名被拒收」。
+    if (animes && animes.length > lastRawAnimeCount)
+        lastRawAnimeCount = animes.length;
     for (const a of animes || []) {
         const id = Number(a && a.animeId);
         if (!id)
@@ -825,6 +836,7 @@ async function autoFetch(title, ep, out, season = 0, epTitle = '', seriesKey = '
     if (!isActive())
         return null;
     lastFailReason = '';
+    lastRawAnimeCount = 0; // [lc-1637] 每轮 autoFetch 归零，只统计本轮各关键词搜索里服务端返回的条目数峰值
     try {
         // [lc-1220] MPV 链路只传整串 title（「番名 - S2E27: 集标题」，Lua 侧 clean_bili_title
         // 保留真实副标题），调用方没给 epTitle 时从尾段提取；网页链路已显式传 item.title。
@@ -886,7 +898,11 @@ async function autoFetch(title, ep, out, season = 0, epTitle = '', seriesKey = '
         if (!hits.length) {
             // [lc-1266] 给弹幕面板的人话根因：地址不可达时 getJsonFailover 已写过，这里只补「服务正常但没匹配上」
             if (!lastFailReason) {
-                lastFailReason = '服务正常，但搜索无精确匹配条目（自建源只认「主名+季号」完全一致；手动搜索能看到的近名条目会被刻意拒收，防挂错片）';
+                // [lc-1637] 把「搜不到」拆成两种根因，别再用一句「近名条目被拒收」把「服务端压根 0 条」也糊过去
+                // （lc-1635 实测《佐佐木与文鸟小哔》就是 success=true / animes=0，服务端一条都没有）。
+                lastFailReason = lastRawAnimeCount > 0
+                    ? `自建源有 ${lastRawAnimeCount} 条近名条目，但均非「主名+季号」精确匹配（已拒收，防挂错片）；可换源或手动匹配`
+                    : '自建源未收录该条目（服务端 0 条结果）；可换源或等自建源补源';
             }
             log.info(`[danmuApi] 未命中（无精确匹配条目）→ 降级内置B站(模糊匹配) | title=${title} ep=${ep} season=${season}${altTitle ? ' alt=' + altTitle : ''}`);
             return null;

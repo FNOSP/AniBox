@@ -232,21 +232,39 @@
 .webrs-g.ok {
   border-color: var(--line-strong);
 }
+.webrs-g.captcha {
+  border-color: rgba(178, 106, 0, 0.35);
+}
+/* [lc-1622] 行头 = 折叠按钮（左）+ 「去验证」（captcha 时，右）。默认全展开，
+   故这里是「收起」入口而非唯一展开入口。 */
 .webrs-g-hd {
-  width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
   min-height: 38px;
-  padding: 6px 10px;
+  padding: 4px 6px 4px 10px;
+}
+.webrs-g-toggle {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 2px 4px;
   border: none;
+  border-radius: 8px;
   background: none;
   cursor: pointer;
   text-align: left;
   line-height: 1.4;
 }
-.webrs-g-hd:hover {
+.webrs-g-toggle:hover {
   background: var(--hover);
+}
+.webrs-g-st {
+  flex: 0 0 auto;
+  font-size: 12px;
 }
 .webrs-g-name {
   font-size: 13px;
@@ -269,6 +287,10 @@
   color: #2e7d32;
   background: rgba(46, 125, 50, 0.12);
 }
+.webrs-g-badge.empty {
+  color: var(--muted);
+  background: var(--ph-bg);
+}
 .webrs-g-badge.error {
   color: var(--err-text);
   background: var(--err-bg);
@@ -277,6 +299,12 @@
   flex: 0 0 auto;
   color: var(--muted);
   font-size: 11px;
+}
+.webrs-g-tip {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 0 12px 10px;
+  line-height: 1.5;
 }
 .webrs-g-items {
   display: flex;
@@ -287,6 +315,9 @@
   overflow-y: auto;
 }
 .webrs-g-items button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   text-align: left;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -295,9 +326,18 @@
   padding: 7px 10px;
   font-size: 12.5px;
   cursor: pointer;
+}
+.webrs-g-ep {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.webrs-g-play {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 10px;
 }
 .webrs-g-items button:hover {
   border-color: var(--accent);
@@ -536,9 +576,6 @@
 .webrs-g-badge.captcha {
   color: #b26a00;
   background: rgba(178, 106, 0, 0.14);
-}
-.webrs-g-captcha {
-  cursor: default;
 }
 .webrs-g-verify {
   flex: 0 0 auto;

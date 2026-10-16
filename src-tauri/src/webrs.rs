@@ -1898,53 +1898,80 @@ fn first_iframe_src(html: &str, base: &str) -> Option<String> {
 const SNIFF_LABEL: &str = "webrs-sniffer";
 const SNIFF_SCHEME: &str = "anibox-sniff";
 
+// ── [lc-1622] 嗅探回传：主通道改「JS 写全局 + Rust 轮询」 ──
+//
+// 背景（真凶）：注入脚本命中直链后走 `<img src="http://127.0.0.1:<beacon>/sniff?u=…">`
+// 回传，但**页面 CSP 只管得住页面自己的资源加载**：强 CSP 站点（如 hhplayer 系）
+// 只允许 `img-src 'self' data: https:`，`http://127.0.0.1` 的图片被 CSP + mixed-content
+// 双重拦死 → 应用收不到 → 解析失败 → 播不了。fetch/sendBeacon 同样吃 connect-src。
+//
+// 解法：让注入脚本把结果写进**页面全局** `window.__aniboxSniff = {url,ts}`，Rust 侧用
+// 宿主的 `eval_with_callback`（见 eval_json，lc-1606 为验证码做的同一套）**定时读取**。
+// `ExecuteScript`/`eval` 是宿主行为，**不受页面 CSP 限制** ✓。
+//
+// 跨 frame：initialization_script 全 frame 注入。每个 frame 命中后 ① 写本 frame 全局；
+// ② 尝试 `window.top.postMessage({__aniboxSniff:u}, '*')` 冒泡给主 frame（跨域 postMessage
+// 到 top 是允许的，只要求 top 侧有监听）；③ 主 frame 的 message 监听把值落到自己的
+// `window.__aniboxSniff`。Rust 只轮询**主 frame** 即可拿到任意 frame 的命中。
+//
+// 三通道（取先到）：
+//   ① 全局变量 + Rust 轮询 —— 主通道，**不受页面 CSP 限制**（跨域 frame 靠 postMessage 冒泡）；
+//   ② 本地 beacon（image/fetch/sendBeacon）—— 页面/iframe 无 CSP 时必达，强 CSP 站点会被拦；
+//   ③ anibox-sniff:// 伪导航（on_navigation 拦截）—— 兜底。
 fn sniff_script(beacon_port: u16, legacy: bool) -> String {
     r#"(function () {
-  if (window.__aniboxSniff) return;
-  window.__aniboxSniff = 1;
+  // __aniboxSniffInit 防同 frame 重复注入；__aniboxSniff 是给 Rust 轮询读的结果对象
+  // （不再是布尔哨兵）。
+  if (window.__aniboxSniffInit) return;
+  window.__aniboxSniffInit = true;
   var done = false;
   var seen = {};
   var LEGACY = __LEGACY__;
   var BEACON = 'http://127.0.0.1:PORT/sniff?u=';
-  function ok(u) {
+  // [lc-1622] 主 frame 监听子 frame 冒泡：跨域 iframe 里命中的直链经 postMessage 冒泡上来。
+  // （本监听在每个 frame 都会装，但只有主 frame 会真正收到 top 定向的 message。）
+  try {
+    window.addEventListener('message', function (ev) {
+      try {
+        var d = ev && ev.data;
+        if (d && typeof d.__aniboxSniff === 'string' && d.__aniboxSniff) {
+          if (!(window.__aniboxSniff && window.__aniboxSniff.url)) {
+            window.__aniboxSniff = { url: d.__aniboxSniff, ts: Date.now() };
+          }
+        }
+      } catch (e) {}
+    });
+  } catch (e) {}
+  // [lc-1622] 统一回传：isRaw=true 时跳过「媒体扩展名 / prestrain」校验（legacy 回传 iframe 页 URL 用）。
+  function deliver(u, isRaw) {
     if (!u || typeof u !== 'string' || done) return false;
     if (!/^https?:\/\//i.test(u)) return false;
     var l = u.toLowerCase();
-    if (/googleads|googlesyndication|adtrafficquality|doubleclick|prestrain\.html|prestrain%2ehtml/.test(l)) return false;
+    if (/googleads|googlesyndication|adtrafficquality|doubleclick/.test(l)) return false;
+    if (!isRaw && /prestrain\.html|prestrain%2ehtml/.test(l)) return false;
+    if (!isRaw && !/\.(m3u8|mp4|flv)(\?|#|$)/i.test(l)) return false;
     if (seen[u]) return false;
-    return /\.(m3u8|mp4|flv)(\?|#|$)/i.test(l);
-  }
-  function emit(u) {
-    if (!ok(u)) return;
     seen[u] = 1;
     done = true;
+    // ① 主通道：写本 frame 全局 —— Rust 用宿主 eval 轮询读，**不受页面 CSP 限制**
+    try { window.__aniboxSniff = { url: u, ts: Date.now() }; } catch (e) {}
+    // ② 冒泡到主 frame（跨域 postMessage 到 top 合法）—— 子 frame 命中靠这条到 top
+    try { if (window.top && window.top !== window) window.top.postMessage({ __aniboxSniff: u }, '*'); } catch (e) {}
     var q = encodeURIComponent(u);
-    // 回传四通道：本地 beacon（image/fetch/sendBeacon，页面无 CSP 时必达）+ 伪导航兜底
+    // ③ 次要通道：本地 beacon（页面/iframe 无 CSP 时必达；强 CSP 站点会被拦）
     try { new Image().src = BEACON + q; } catch (e) {}
     try { fetch(BEACON + q, { mode: 'no-cors' }).catch(function () {}); } catch (e) {}
     try { navigator.sendBeacon && navigator.sendBeacon(BEACON + q); } catch (e) {}
+    // ④ 兜底：伪导航（on_navigation 拦截 anibox-sniff://）
     var nav = 'anibox-sniff://found?u=' + q;
-    try { window.top.location.href = nav; return; } catch (e) {}
+    try { window.top.location.href = nav; return true; } catch (e) {}
     try { location.href = nav; } catch (e) {}
+    return true;
   }
+  function emit(u) { return deliver(u, false); }
   // [lc-1606] useLegacyParser：不回传直链，而是回传 iframe 播放页 URL（外层页没有
   // 直链、播放器被塞进 iframe 的站，如 xfdmneo）。Rust 侧拿到后再 HTTP 解一次。
-  function emitRaw(u) {
-    if (!u || typeof u !== 'string' || done) return;
-    if (!/^https?:\/\//i.test(u)) return;
-    var l = u.toLowerCase();
-    if (/googleads|googlesyndication|adtrafficquality|doubleclick/.test(l)) return;
-    if (seen[u]) return;
-    seen[u] = 1;
-    done = true;
-    var q = encodeURIComponent(u);
-    try { new Image().src = BEACON + q; } catch (e) {}
-    try { fetch(BEACON + q, { mode: 'no-cors' }).catch(function () {}); } catch (e) {}
-    try { navigator.sendBeacon && navigator.sendBeacon(BEACON + q); } catch (e) {}
-    var nav = 'anibox-sniff://found?u=' + q;
-    try { window.top.location.href = nav; return; } catch (e) {}
-    try { location.href = nav; } catch (e) {}
-  }
+  function emitRaw(u) { return deliver(u, true); }
   // XHR（Kazumi 同款）：open 时按 URL 命中（hls.js 拉 m3u8 清单必经之路），
   // load 后再查响应体是否 #EXTM3U 开头（覆盖无扩展名的动态清单接口）
   try {
@@ -2197,10 +2224,13 @@ fn reset_sniff_waiters() {
     }
 }
 
-/// 隐藏 WebView 加载播放页，等待直链回传。通道：① 本地 beacon（嗅探 JS 的
-/// image/fetch/sendBeacon 三连，页面/iframe 无 CSP 时必达）② 伪导航
-/// anibox-sniff://（on_navigation 拦截，兜底）。JS hook 注入全 frame
-/// （WebView2 AddScriptToExecuteOnDocumentCreated 覆盖 iframe）。
+/// 隐藏 WebView 加载播放页，等待直链回传。三通道（取先到）：
+/// ① [lc-1622] 注入脚本写页面全局 `window.__aniboxSniff`，本函数用宿主 eval 轮询
+///    **主 frame** 读取 —— **不受页面 CSP 限制**，强 CSP 站点靠它；跨域 frame 命中的值
+///    由脚本 postMessage 冒泡到 top 后落进主 frame 全局。
+/// ② 本地 beacon（嗅探 JS 的 image/fetch/sendBeacon 三连，页面/iframe 无 CSP 时必达）
+/// ③ 伪导航 anibox-sniff://（on_navigation 拦截，兜底）
+/// JS hook 注入全 frame（WebView2 AddScriptToExecuteOnDocumentCreated 覆盖 iframe）。
 async fn webview_sniff(
     app: &AppHandle,
     page_url: &str,
@@ -2285,6 +2315,45 @@ async fn webview_sniff(
             return Err(format!("创建嗅探 WebView 失败: {e}"));
         }
     };
+
+    // [lc-1622] 主通道：宿主侧定时 eval 读**主 frame** 的 window.__aniboxSniff。
+    // ExecuteScript/eval 是宿主行为，**不受页面 CSP（img-src / connect-src）限制** ——
+    // 这正是「强 CSP 源站把本地 beacon 图片拦死」的正解。子 frame 命中后经 postMessage
+    // 冒泡到 top（见 sniff_script），故只需轮询主 frame。
+    {
+        let app_poll = app.clone();
+        let label_poll = used_label.clone();
+        let tx_poll = tx.clone();
+        tokio::spawn(async move {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(40);
+            loop {
+                if std::time::Instant::now() >= deadline {
+                    break;
+                }
+                // 与验证流程同一节奏（350ms 档），首次略等一下让页面开始跑
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                let Some(w) = app_poll.get_webview_window(&label_poll) else {
+                    break; // 窗口已销毁（等待结束后的清理）→ 退出
+                };
+                let Some(raw) = eval_json(
+                    &w,
+                    "window.__aniboxSniff && window.__aniboxSniff.url || ''",
+                )
+                .await
+                else {
+                    continue;
+                };
+                let Ok(url) = serde_json::from_str::<String>(&raw) else {
+                    continue;
+                };
+                if !url.is_empty() {
+                    crate::libmpv::trace(&format!("[webrs] 轮询命中（{label_poll}）: {url}"));
+                    let _ = tx_poll.send(Ok(url));
+                    break;
+                }
+            }
+        });
+    }
 
     // 等结果（最长 40s）
     let wait = tokio::task::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(40)))

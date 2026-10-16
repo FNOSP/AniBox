@@ -156,8 +156,9 @@ export function WebrsPanel({ title }: { title: string }) {
       try {
         const r = await invoke<WebrsGroup[]>("webrs_search_multi", { keyword: key, rules: picked });
         setGroups(r);
-        const first = r.find((g) => g.status === "ok");
-        setExpanded(first ? { [first.name]: true } : {});
+        // [lc-1622] 照 Kazumi「播放来源」：默认**全部展开**（不再只展开第一个）。
+        // expanded 里没有某源的键 = 视为展开（见渲染处的 `expanded[name] !== false`）。
+        setExpanded({});
         // [lc-1606] 有源需要人机验证 → 自动发起（一次一个，避免多隐藏窗）
         const need = r.filter((g) => g.status === "captcha");
         if (need.length > 0 && !captchaBusyRef.current) {
@@ -447,14 +448,20 @@ export function WebrsPanel({ title }: { title: string }) {
     setCatMsg({ kind: fail ? "err" : "ok", text: `全部更新完成：成功 ${ok} 条${fail ? `，失败 ${fail} 条` : ""}` });
   }, [catBusy, updates, refreshRules]);
 
-  const badge = (g: WebrsGroup) =>
-    g.status === "ok"
-      ? `${g.items.length} 个结果`
-      : g.status === "empty"
-        ? "无结果"
-        : g.status === "captcha"
-          ? "需要验证"
-          : "检索失败";
+  // [lc-1622] 每个源一行状态（照 Kazumi source_sheet_view 的 statusLabel）：
+  // ✅ 可直接播放 / 🔒 需要验证 / ⚪ 无结果 / ✗ 检索失败。
+  const statusMeta = (g: WebrsGroup): { icon: string; label: string; cls: string } => {
+    switch (g.status) {
+      case "ok":
+        return { icon: "✅", label: `可直接播放 · ${g.items.length} 个结果`, cls: "ok" };
+      case "captcha":
+        return { icon: "🔒", label: "需要验证", cls: "captcha" };
+      case "empty":
+        return { icon: "⚪", label: "无结果", cls: "empty" };
+      default:
+        return { icon: "✗", label: "检索失败", cls: "error" };
+    }
+  };
 
   return (
     <div className="webrs">
@@ -531,46 +538,63 @@ export function WebrsPanel({ title }: { title: string }) {
         </div>
       )}
 
-      {/* 一级视图：按源分组的结果 */}
+      {/* 一级视图：按源分组的结果。照 Kazumi「播放来源」——**默认全部展开**，
+          每源一行（名称 + 状态 + 展开/收起），展开即该源全部结果，点结果直接进线路/选集。
+          [lc-1622] 状态用图标 + 文案（✅ 可直接播放 / 🔒 需要验证 / ⚪ 无结果 / ✗ 检索失败）。 */}
       {!sel && groups !== null && (
         <div className="webrs-groups">
-          {groups.map((g) => (
-            <div key={g.name} className={`webrs-g${g.status === "ok" ? " ok" : ""}`}>
-              {g.status === "captcha" ? (
-                // [lc-1606] 需要人机验证：整行不是折叠按钮，右侧给「去验证」入口
-                <div className="webrs-g-hd webrs-g-captcha">
-                  <span className="webrs-g-name">{g.name}</span>
-                  <span className="webrs-g-badge captcha">{badge(g)}</span>
+          {groups.map((g) => {
+            const meta = statusMeta(g);
+            // 缺键 = 默认展开（doSearch 里 setExpanded({}) 即「全展开」）
+            const open = expanded[g.name] !== false;
+            return (
+              <div key={g.name} className={`webrs-g ${meta.cls}`}>
+                <div className="webrs-g-hd">
                   <button
-                    className="webrs-g-verify"
-                    onClick={() => startCaptcha(g.name, kw)}
-                    title="重新发起人机验证"
+                    className="webrs-g-toggle"
+                    onClick={() => setExpanded((m) => ({ ...m, [g.name]: !open }))}
+                    title={g.error || g.name}
+                    aria-expanded={open}
                   >
-                    去验证
+                    <span className="webrs-g-st" aria-hidden>
+                      {meta.icon}
+                    </span>
+                    <span className="webrs-g-name">{g.name}</span>
+                    <span className={`webrs-g-badge ${meta.cls}`}>{meta.label}</span>
+                    <span className="webrs-g-arrow">{open ? "⌃" : "⌄"}</span>
                   </button>
-                </div>
-              ) : (
-                <button
-                  className="webrs-g-hd"
-                  onClick={() => setExpanded((m) => ({ ...m, [g.name]: !m[g.name] }))}
-                  title={g.error || g.name}
-                >
-                  <span className="webrs-g-name">{g.name}</span>
-                  <span className={`webrs-g-badge ${g.status}`}>{badge(g)}</span>
-                  <span className="webrs-g-arrow">{expanded[g.name] ? "⌃" : "⌄"}</span>
-                </button>
-              )}
-              {expanded[g.name] && g.status === "ok" && (
-                <div className="webrs-g-items">
-                  {g.items.map((it) => (
-                    <button key={it.url} onClick={() => openChapters(g.name, it)} title={it.url}>
-                      {it.name}
+                  {g.status === "captcha" && (
+                    <button
+                      className="webrs-g-verify"
+                      onClick={() => startCaptcha(g.name, kw)}
+                      title="重新发起人机验证"
+                    >
+                      去验证
                     </button>
-                  ))}
+                  )}
                 </div>
-              )}
-            </div>
-          ))}
+                {open && g.status === "ok" && (
+                  <div className="webrs-g-items">
+                    {g.items.map((it) => (
+                      <button key={it.url} onClick={() => openChapters(g.name, it)} title={it.url}>
+                        <span className="webrs-g-ep">{it.name}</span>
+                        <span className="webrs-g-play" aria-hidden>
+                          ▶
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {open && g.status === "captcha" && (
+                  <div className="webrs-g-tip">需要完成网站验证后才能检索 —— 点右上「去验证」。</div>
+                )}
+                {open && g.status === "empty" && <div className="webrs-g-tip">没有找到匹配结果。</div>}
+                {open && g.status === "error" && (
+                  <div className="webrs-g-tip">{g.error || "检索失败。"}</div>
+                )}
+              </div>
+            );
+          })}
           {groups.every((g) => g.status !== "ok") && (
             <div className="webrs-note">勾选的源都没有结果：换个关键词、换个源，或 ⚙ 里添加规则</div>
           )}

@@ -199,6 +199,7 @@ export function BgmAccountCard({
       {/* 折叠态横栏（展开时由 CSS 收成 0 高）：登录态 + 总追番；点它也能展开 */}
       <div className="bgmac-bar" onClick={() => setCollapsed(false)} title="点击展开">
         <span className={`bgmac-bar-user${acct.bound ? " on" : " off"}`}>
+          <i className="bgmac-bar-brand">Bangumi</i>
           {acct.bound ? "已登录" : "未登录"}
         </span>
         <span className="bgmac-bar-stat">

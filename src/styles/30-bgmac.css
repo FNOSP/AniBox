@@ -97,7 +97,8 @@
   margin-top: 2px;
   cursor: pointer;
 }
-/* 登录态：**只显示状态、不显示具体账号 id**（用户要求）—— 已登录绿、未登录红 */
+/* 登录态：**只显示状态、不显示具体账号 id**（用户要求）—— 已登录绿、未登录红；
+   前面带 BGM 名称（品牌字用正文色，状态字用绿/红，圆点跟随状态色） */
 .bgmac-bar-user {
   display: inline-flex;
   align-items: center;
@@ -106,6 +107,10 @@
   font-size: 12.5px;
   font-weight: 700;
   white-space: nowrap;
+}
+.bgmac-bar-brand {
+  font-style: normal;
+  color: var(--text-strong);
 }
 .bgmac-bar-user::before {
   content: "";

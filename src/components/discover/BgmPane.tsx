@@ -7,6 +7,7 @@ import { BgmCalRow } from "./BgmCalRow";
 import { SeasonArchive } from "./SeasonArchive";
 import { Dsk, WEEKDAYS, localDay, localWeekdayId } from "./shared";
 import { libHasTitle, normTitle, resolveLibItem, useLibIndex } from "../../hooks/useLibIndex";
+import { useRefresh } from "../../hooks/useRefresh";
 import { BgmCalendarDay, BgmCalendarItem, MediaItem } from "../../types";
 
 
@@ -26,6 +27,11 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
   // 手动 ⟳ / 失败重试的语义不同（见下）：⟳ = force（**仍带条件头**）；失败重试 = force + noEtag（全量）
   const forceRef = useRef(false);
   const hardRef = useRef(false);
+  /* [lc-1640] 顶栏 ⟳ 走的就是本栏自己的 ⟳ 语义（force 跳过本地 TTL、仍带条件头）：
+     refreshingRef 标记"本次取数由顶栏触发"，用于给顶栏 spinning 收尾（普通进页面/探测不上报）。 */
+  const { tick: refreshTick, reportBusy } = useRefresh();
+  const refreshingRef = useRef(false);
+  const lastRefreshTick = useRef(refreshTick);
   const daysRef = useRef<BgmCalendarDay[]>([]);
   useEffect(() => {
     daysRef.current = days;
@@ -66,11 +72,27 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
       })
       .finally(() => {
         if (alive) setBusy(false);
+        // [lc-1640] 顶栏 ⟳ 触发的取数结束 → 撤掉顶栏 spinning（成功/304/失败都收尾）。
+        if (refreshingRef.current) {
+          refreshingRef.current = false;
+          reportBusy("bgm", false);
+        }
       });
     return () => {
       alive = false;
     };
-  }, [active, nonce, probe]);
+  }, [active, nonce, probe, reportBusy]);
+
+  /* [lc-1640] 顶栏 ⟳ 消费：等价于点本栏的 ⟳（force 跳过本地 TTL、仍带条件头）。
+     仅在本栏激活时响应（tick 在 lib/history/detail 页也会自增，本栏常驻挂载，靠 active 挡掉）。 */
+  useEffect(() => {
+    if (!active || refreshTick === lastRefreshTick.current) return;
+    lastRefreshTick.current = refreshTick;
+    refreshingRef.current = true;
+    reportBusy("bgm", true);
+    forceRef.current = true;
+    setNonce((n) => n + 1);
+  }, [active, refreshTick, reportBusy]);
 
   // [lc-1580] 本地追番表（subject_id → 收藏类型）：算「今日已追订阅更新」用。
   // 与日历**同频**刷新（进页面 / ⟳ / 10 分钟探测）—— 表是本地文件、读取近乎零成本；

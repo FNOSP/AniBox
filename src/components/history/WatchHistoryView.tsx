@@ -19,6 +19,7 @@ import {
   Sparkles as IcoSparklesL,
 } from "lucide-react";
 import { imgUrl } from "../../lib/images";
+import { useRefresh } from "../../hooks/useRefresh";
 import { MediaItem } from "../../types";
 import { WatchReport } from "./WatchReport";
 
@@ -345,6 +346,17 @@ export function WatchHistoryView({
   useEffect(() => {
     void load();
   }, [load]);
+
+  /* [lc-1640] 顶栏 ⟳：复用本页已有的「立即同步」路径（load(true)）—— get_watch_history 无 Rust 缓存，
+     本机记录 + 飞牛 play/list 每次都是实拉，天然就是强制刷新；load(true) 还会给页内 toast 与自身按钮收尾。 */
+  const { tick: refreshTick, reportBusy } = useRefresh();
+  const lastRefreshTick = useRef(refreshTick);
+  useEffect(() => {
+    if (refreshTick === lastRefreshTick.current) return;
+    lastRefreshTick.current = refreshTick;
+    reportBusy("history", true);
+    void load(true).finally(() => reportBusy("history", false));
+  }, [refreshTick, load, reportBusy]);
 
   // 卸载时清掉 toast 定时器（防泄漏）
   useEffect(() => () => {

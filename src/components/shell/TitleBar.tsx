@@ -51,7 +51,8 @@ export function TitleBar({
         {nav && onRefresh && (
           <button
             className={`tb-icon${refreshing ? " spinning" : ""}`}
-            title="刷新首页数据"
+            // [lc-1640] 语义由"刷新首页数据"改为"按当前页强制刷新"（各视图分派到自己的 force 刷新）。
+            title="刷新当前页数据"
             onClick={onRefresh}
             disabled={refreshing}
           >

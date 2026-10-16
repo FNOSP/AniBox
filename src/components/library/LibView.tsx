@@ -1,8 +1,9 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { PosterCard } from "../common/PosterCard";
 import { fetchLibItems } from "../../lib/api";
+import { useRefresh } from "../../hooks/useRefresh";
 import { Lib, MediaItem } from "../../types";
 
 
@@ -70,6 +71,22 @@ export function LibView({
   useEffect(() => {
     load(null);
   }, [load]);
+
+  /* [lc-1640] 顶栏 ⟳：强制刷新**当前所在层**（库根或正在钻取的文件夹）。
+     飞牛 item/list 无 Rust 缓存（get_items 直连），load 本身就是强制重拉 —— 直接复用，
+     不另写取数。用 ref 记住最新一层的 guid，避免 effect 依赖 current/load 引起的重复触发。 */
+  const { tick: refreshTick, reportBusy } = useRefresh();
+  const lastRefreshTick = useRef(refreshTick);
+  const currentGuidRef = useRef<string | null>(null);
+  useEffect(() => {
+    currentGuidRef.current = current ? current.guid : null;
+  }, [current]);
+  useEffect(() => {
+    if (refreshTick === lastRefreshTick.current) return;
+    lastRefreshTick.current = refreshTick;
+    reportBusy("lib", true);
+    void load(currentGuidRef.current).finally(() => reportBusy("lib", false));
+  }, [refreshTick, load, reportBusy]);
 
   async function openItem(item: MediaItem) {
     // 只有未识别文件夹（Directory）继续逐层钻取；

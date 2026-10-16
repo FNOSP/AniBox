@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { DState, Dsk, UP_MAX_PAGE } from "./shared";
 import { tmdbImg } from "../../lib/images";
+import { useRefresh } from "../../hooks/useRefresh";
 import { TmdbDiscoverItem } from "../../types";
 
 type MediaKind = "tv" | "movie";
@@ -270,6 +271,14 @@ export function TmdbPane({
     setNonce((n) => n + 1);
   }, []);
 
+  /* ── [lc-1640] 顶栏 ⟳ 的「软强制刷新」：force=true 跳过本地 TTL、**仍带 If-None-Match**
+     （"检测新增"口径，见 tmdb_discover 注释）——与 hardRetry 的 force+noEtag（全量重拉）刻意分开。
+     refreshingRef 标记"本次取数由顶栏 ⟳ 触发"，用于给顶栏 spinning 收尾（普通进页面/切标签不上报）。 */
+  const { tick: refreshTick, reportBusy } = useRefresh();
+  const softForceRef = useRef(false);
+  const refreshingRef = useRef(false);
+  const lastRefreshTick = useRef(refreshTick);
+
   // changed=false（缓存命中/304/内容未变）时**不碰 UI**：用 ref 记"已经渲染过哪一份数据"
   const appliedKeyRef = useRef("");
   const keyRef = useRef(""); // 当前列表对应的 (mediaType|subTab)
@@ -303,10 +312,12 @@ export function TmdbPane({
     setErr(""); // 每次取数（含重试/探测）都先清掉上一次的错误
     const hard = retryRef.current; // 失败重试：绕过本地缓存且**不带 ETag**（强制全量）
     retryRef.current = false;
+    const soft = softForceRef.current; // [lc-1640] 顶栏 ⟳：跳过本地 TTL、仍带 If-None-Match
+    softForceRef.current = false;
     invoke<DiscoverResp>("tmdb_discover", {
       // 常规（进页面/10 分钟探测）：force=false ⇒ 命令层「先读磁盘缓存 → 未过期直接返回（零网络）
       // → 过期才带 ETag 探测（304 就只顺延时间戳）」
-      arg: { mode: subTab, mediaType, season: "current", page: 1, force: hard, noEtag: hard },
+      arg: { mode: subTab, mediaType, season: "current", page: 1, force: hard || soft, noEtag: hard },
     })
       .then((d) => {
         if (!alive) return;
@@ -324,11 +335,16 @@ export function TmdbPane({
       })
       .finally(() => {
         if (alive) setBusy(false);
+        // [lc-1640] 顶栏 ⟳ 触发的取数结束 → 撤掉顶栏 spinning（无论成功/304/失败）。
+        if (refreshingRef.current) {
+          refreshingRef.current = false;
+          reportBusy("tmdb", false);
+        }
       });
     return () => {
       alive = false;
     };
-  }, [active, mediaType, subTab, nonce, probe]);
+  }, [active, mediaType, subTab, nonce, probe, reportBusy]);
 
   // [lc-123-rev5] 后台探测：每 10 分钟一次 —— **304 极便宜**（未变只传几十字节），
   // 且命令层只在 TTL 过期时才真发请求；未变时 changed=false ⇒ 上面那个分支一个 state 都不碰。
@@ -399,8 +415,13 @@ export function TmdbPane({
       })
       .finally(() => {
         if (seq === searchSeqRef.current) setSBusy(false);
+        // [lc-1640] 顶栏 ⟳ 在搜索态下重跑搜索 → 这里给顶栏 spinning 收尾。
+        if (refreshingRef.current) {
+          refreshingRef.current = false;
+          reportBusy("tmdb", false);
+        }
       });
-  }, []);
+  }, [reportBusy]);
 
   const clearSearch = useCallback(() => {
     searchSeqRef.current++; // 作废在途响应
@@ -410,6 +431,22 @@ export function TmdbPane({
     setSErr("");
     setSBusy(false);
   }, []);
+
+  // [lc-1640] 顶栏 ⟳ 消费：force 重取当前列表（软强制，仍带条件头）。
+  //   仅在本栏激活时响应（tick 在 lib/history/detail 页也会自增，本栏常驻挂载，必须靠 active 闸门挡掉）。
+  //   搜索态：重跑搜索；否则 bump nonce 让主取数 effect 带 softForce 重取（「即将播出」会回到第 1 页，与切标签同口径）。
+  useEffect(() => {
+    if (!active || refreshTick === lastRefreshTick.current) return;
+    lastRefreshTick.current = refreshTick;
+    refreshingRef.current = true;
+    reportBusy("tmdb", true);
+    if (searchTerm) {
+      doSearch(searchTerm, mediaType);
+      return;
+    }
+    softForceRef.current = true;
+    setNonce((n) => n + 1);
+  }, [active, refreshTick, searchTerm, mediaType, doSearch, reportBusy]);
 
   // 切主标签：子标签重置为「当季」+ 退出搜索（搜索用的是**主标签的 mediaType**）
   function pickMedia(mt: MediaKind) {

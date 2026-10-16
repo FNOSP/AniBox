@@ -1,7 +1,7 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
 // [lc-123-rev8] 图标统一用 Lucide（ISC 许可，https://lucide.dev）：stroke=currentColor、24 viewBox，
 // 按需导入 tree-shake；仓库内不再保留手拷贝的 SVG path。
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
@@ -23,6 +23,7 @@ import { NavCapsule } from "./components/shell/NavCapsule";
 import { TitleBar } from "./components/shell/TitleBar";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { useDelayedUnmount } from "./hooks/useDelayedUnmount";
+import { RefreshContext } from "./hooks/useRefresh";
 import { fetchLibItems } from "./lib/api";
 import { pick } from "./lib/format";
 import { bgmImg, pickImgStr, pickLargestImg, tmdbImg } from "./lib/images";
@@ -169,6 +170,25 @@ function App() {
 
   // 首页加载中（首次/手动刷新）：无数据时渲染骨架屏；已有数据时静默刷新不闪骨架
   const [homeLoading, setHomeLoading] = useState(false);
+  /* ── [lc-1640] 顶栏 ⟳ =「按当前页强制刷新该页数据」──
+     tick：每点一次自增；discover/lib/history/detail 各自的视图监听它触发自己的 force 刷新
+       （经 RefreshContext 下发，见 src/hooks/useRefresh.ts）。home 不走 tick —— App 直接调
+       loadHome/loadGuestHome（飞牛各命令本身无 Rust 缓存，就是强制重拉）。
+     pageRefreshing：各视图用 reportBusy 上报"正在刷新"，这里汇总成顶栏 ⟳ 的 spinning 态
+       （home 的 homeLoading 一并算进去，见下方 refreshing 的计算）。 */
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [pageRefreshing, setPageRefreshing] = useState(false);
+  const busySourcesRef = useRef<Set<string>>(new Set());
+  const reportRefreshBusy = useCallback((id: string, busy: boolean) => {
+    const s = busySourcesRef.current;
+    if (busy) s.add(id);
+    else s.delete(id);
+    setPageRefreshing(s.size > 0);
+  }, []);
+  const refreshCtx = useMemo(
+    () => ({ tick: refreshTick, reportBusy: reportRefreshBusy }),
+    [refreshTick, reportRefreshBusy],
+  );
   // [lc-123-rev4] 顶栏 chrome 色（首页 hero 亮度采样结果；CarouselView 上报）。
   // 只在首页生效：发现/库/详情页顶栏底下是应用底色 → 交回 "auto"（跟随主题）。
   const [heroTone, setHeroTone] = useState<ChromeTone>("auto");
@@ -429,6 +449,21 @@ function App() {
       setHomeLoading(false);
     }
   }, []);
+
+  // [lc-1640] 顶栏 ⟳：按**当前视图**强制刷新该页数据（原先写死只重拉首页）。
+  //   · home：loadHome / loadGuestHome 本身就是强制重拉（get_media_libs 等命令无 Rust 缓存，
+  //     每次都直连飞牛；游客链走 tmdb_discover，同样无本地 TTL 命中问题）——直接调用。
+  //   · discover/lib/history/detail：bump tick，由对应视图消费后触发它自己的 force 刷新
+  //     （TmdbPane/BgmPane 的 force、DetailView.refreshAll、LibView 重载、HistoryView load(true)）。
+  //   · login：nav=false ⇒ 顶栏根本不渲染刷新键（无数据可刷，见 TitleBar），这里不必处理。
+  const onRefresh = useCallback(() => {
+    if (view === "home") {
+      if (guest) void loadGuestHome();
+      else void loadHome();
+      return;
+    }
+    setRefreshTick((n) => n + 1);
+  }, [view, guest, loadHome, loadGuestHome]);
 
   // [lc-1600] 从登录页进入游客模式（标记已由 LoginPage 写入）：切态 + 切首页；
   // 内存里已有数据（引导弹窗折返回登录页又点「先逛逛」）就直接复用，不重拉。
@@ -993,9 +1028,10 @@ function App() {
             return !v;
           })
         }
-        // [lc-1600] 游客：刷新走游客取数链（飞牛接口不可用，别再打）
-        onRefresh={() => (guest ? loadGuestHome() : loadHome())}
-        refreshing={homeLoading}
+        // [lc-1640] 顶栏 ⟳：按当前视图强制刷新该页数据（见 onRefresh）。
+        onRefresh={onRefresh}
+        // spinning 汇总：home 用 homeLoading，其余页面用各视图 reportBusy 的聚合（pageRefreshing）。
+        refreshing={homeLoading || pageRefreshing}
         // [lc-123-rev3] 顶栏现在**一律全透明**（无底色/描边/渐变），可读性靠 text-shadow；
         // overlay/ghost 两个"底色模式"修饰类随之取消（App.css 里的 .titlebar.overlay/.ghost 已删）。
         // [lc-123-rev4] 首页 hero 是满幅图 → chrome 色按**图上条带亮度采样**自适应；
@@ -1102,7 +1138,8 @@ function App() {
           </div>
         </div>
       )}
-      {body}
+      {/* [lc-1640] 刷新通道下发：discover/lib/history/detail 视图经 useRefresh 消费 tick 触发自身 force 刷新。 */}
+      <RefreshContext.Provider value={refreshCtx}>{body}</RefreshContext.Provider>
       {/* [lc-1607] 首次启动的免责声明同意闸门：未同意过则弹（登录页/主界面都覆盖，portal 到 body）。
           「我已阅读并同意」→ 置位 localStorage 并关闭；「不同意并退出」→ 走仓库既有退出链路
           （resolve_close("exit") = app.exit(0)，退场清理必然执行）。 */}

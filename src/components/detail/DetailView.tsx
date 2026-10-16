@@ -21,6 +21,7 @@ import { RatingWidget } from "./RatingWidget";
 import { fmtDur, pick } from "../../lib/format";
 import { bgmImg, imgUrl, pickLargestImg, tmdbImg } from "../../lib/images";
 import { prefersReducedMotion } from "../../lib/motion";
+import { useRefresh } from "../../hooks/useRefresh";
 import { BgmCharacter, BgmComment, BgmEpisodeRow, BgmMatch, BgmPerson, BgmRelated, BgmReview, BgmTag, Episode, MediaItem, Season, TmdbCreditPerson, TmdbCredits } from "../../types";
 
 
@@ -173,6 +174,41 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
     syncBgmRef.current = true;
     setProgTick((n) => n + 1);
   }, []);
+
+  /* ── [lc-1640] 顶栏 ⟳：复用 refreshAll（带 force 重取条目详情/季/集，跳过 120 天/10 分钟缓存）──
+     完成信号：详情主体请求会把 data（先被清空、再回填）——用 dataReady 的 false→true 收尾；
+     noFnOS 详情（发现页占位条目）没有飞牛主体可刷，dataReady 恒真，故另设 1.5s 兜底，避免 ⟳ 长亮。 */
+  const { tick: refreshTick, reportBusy } = useRefresh();
+  const lastRefreshTick = useRef(refreshTick);
+  const [extRefreshing, setExtRefreshing] = useState(false);
+  const extSawPendingRef = useRef(false);
+  useEffect(() => {
+    if (refreshTick === lastRefreshTick.current) return;
+    lastRefreshTick.current = refreshTick;
+    extSawPendingRef.current = false; // 每次刷新重新等待"详情被清空再回填"
+    setExtRefreshing(true);
+    refreshAll();
+  }, [refreshTick, refreshAll]);
+  useEffect(() => {
+    if (!extRefreshing) return;
+    reportBusy("detail", true);
+    const t = window.setTimeout(() => setExtRefreshing(false), 1500);
+    return () => {
+      window.clearTimeout(t);
+      reportBusy("detail", false);
+    };
+  }, [extRefreshing, reportBusy]);
+  useEffect(() => {
+    if (!extRefreshing) return;
+    if (!dataReady) {
+      extSawPendingRef.current = true;
+      return;
+    }
+    if (extSawPendingRef.current) {
+      extSawPendingRef.current = false;
+      setExtRefreshing(false);
+    }
+  }, [extRefreshing, dataReady]);
 
   // [lc-1629] 元数据操作弹层的目标（null = 关闭）。每集行的「⋯」与条目「⋯」都设它。
   const [metaTarget, setMetaTarget] = useState<MetaTarget | null>(null);

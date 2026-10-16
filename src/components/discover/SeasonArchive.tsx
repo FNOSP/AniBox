@@ -60,6 +60,13 @@ export function SeasonArchive({ onClose }: { onClose: () => void }) {
   const [err, setErr] = useState("");
   // [lc-1591] 年份用**自定义面板**（原生 <select> 的展开列表没法美化）；打开时点别处/Esc 收起
   const [yearOpen, setYearOpen] = useState(false);
+  // [lc-1592] 关闭动画：先挂 `.arc-mask-closing` 让遮罩淡出 + 卡片缩下沉，**动画走完再真卸载**
+  const [closing, setClosing] = useState(false);
+  const requestClose = () => {
+    if (closing) return;
+    setClosing(true);
+    window.setTimeout(onClose, 170); // 与 CSS 动画时长对齐
+  };
 
   const years = useMemo(() => {
     const out: number[] = [];
@@ -96,21 +103,23 @@ export function SeasonArchive({ onClose }: { onClose: () => void }) {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (yearOpen) setYearOpen(false);
-      else onClose();
+      else requestClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, yearOpen]);
+    // requestClose 每次渲染都是新函数，但只读 closing —— 依赖里放 closing 语义等价
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [yearOpen, closing]);
 
   return (
-    <div className="ddet-mask" onClick={onClose}>
+    <div className={`ddet-mask${closing ? " arc-mask-closing" : ""}`} onClick={requestClose}>
       <div className="arc-modal" onClick={(e) => e.stopPropagation()}>
         {/* 年份面板打开时的透明遮罩：点卡片空白处收起面板（选择行 z-index 更高，不受影响） */}
         {yearOpen && <div className="arc-yback" onClick={() => setYearOpen(false)} />}
         <div className="arc-hd">
           <IcoCalL size={16} strokeWidth={2} />
           <h3>往季番表</h3>
-          <button className="ddet-close arc-x" onClick={onClose} title="关闭">
+          <button className="ddet-close arc-x" onClick={requestClose} title="关闭">
             <IcoXL size={15} strokeWidth={2.2} />
           </button>
         </div>

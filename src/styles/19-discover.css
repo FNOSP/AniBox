@@ -2234,7 +2234,10 @@ html.dark .dlib-badge-soon {
   .dicon:disabled,
   .dweek.on,
   .dweek.today::after,
-  .dlist > * {
+  .dlist > *,
+  .arc-modal,
+  .ddet-mask.arc-mask-closing,
+  .ddet-mask.arc-mask-closing .arc-modal {
     animation: none;
   }
 }
@@ -2283,6 +2286,38 @@ html.dark .dlib-badge-soon {
   background: var(--bg-2);
   box-shadow: var(--shadow-card);
   overflow: hidden;
+  /* [lc-1592] 进场：卡片微放大 + 上浮 */
+  animation: arcModalIn 0.2s cubic-bezier(0.2, 0.8, 0.25, 1);
+}
+@keyframes arcModalIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* [lc-1592] 关闭：遮罩淡出 + 卡片微缩下沉。由 SeasonArchive 在关闭时挂上 `.arc-mask-closing`，
+   等动画走完（170ms）再真正卸载 —— 所以类名要**同时命中 .ddet-mask**（不然会被它自己的
+   `animation: pageIn` 按文件顺序盖掉）。 */
+.ddet-mask.arc-mask-closing {
+  animation: arcMaskOut 0.17s ease forwards;
+}
+.ddet-mask.arc-mask-closing .arc-modal {
+  animation: arcModalOut 0.17s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+@keyframes arcMaskOut {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes arcModalOut {
+  to {
+    opacity: 0;
+    transform: scale(0.97) translateY(8px);
+  }
 }
 .arc-hd {
   display: flex;

@@ -263,12 +263,19 @@ async fn get_continue_watching(state: State<'_, AppState>) -> Result<Value, Stri
 /// 季列表：GET /v/api/v1/season/list/{剧guid}
 /// 注意：episode/list 的入参是**季** guid —— 传剧 guid 实测返回 data:null。
 /// [lc-1578] 缓存 TTL = DETAIL_LIST_TTL_SECS（10 分钟），**不是** item 详情那档 120 天。
+/// [lc-1595] `force` = **跳过缓存读**（仍然写回）：播放结束/窗口回焦时前端用它拿最新状态。
 #[tauri::command]
-async fn get_seasons(state: State<'_, AppState>, guid: String) -> Result<Value, String> {
+async fn get_seasons(
+    state: State<'_, AppState>,
+    guid: String,
+    force: Option<bool>,
+) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let key = format!("detail:seasons:{}", guid);
-    if let Some(v) = disk_cache::json_get(&key, DETAIL_LIST_TTL_SECS) {
-        return Ok(v);
+    if !force.unwrap_or(false) {
+        if let Some(v) = disk_cache::json_get(&key, DETAIL_LIST_TTL_SECS) {
+            return Ok(v);
+        }
     }
     let client = fnapi::new_client();
     let path = format!("/v/api/v1/season/list/{}", guid);
@@ -280,12 +287,20 @@ async fn get_seasons(state: State<'_, AppState>, guid: String) -> Result<Value, 
 /// 集列表：GET /v/api/v1/episode/list/{guid} —— guid 必须是季 guid（见 get_seasons 注释）
 /// [lc-1578] 缓存 TTL = DETAIL_LIST_TTL_SECS（10 分钟）：**这是"集数不刷新"事故的正主**
 /// （见该常量注释）—— 新集入库后最多 10 分钟就能看到。
+/// [lc-1595] `force` = **跳过缓存读**（仍然写回）：观看进度（`ts`/`watched`）随每次播放变化，
+/// 播放结束/窗口回焦时必须拿最新的一份，否则详情页停在旧进度（用户实测：看完第 3 集退出仍是旧状态）。
 #[tauri::command]
-async fn get_episodes(state: State<'_, AppState>, guid: String) -> Result<Value, String> {
+async fn get_episodes(
+    state: State<'_, AppState>,
+    guid: String,
+    force: Option<bool>,
+) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let key = format!("detail:episodes:{}", guid);
-    if let Some(v) = disk_cache::json_get(&key, DETAIL_LIST_TTL_SECS) {
-        return Ok(v);
+    if !force.unwrap_or(false) {
+        if let Some(v) = disk_cache::json_get(&key, DETAIL_LIST_TTL_SECS) {
+            return Ok(v);
+        }
     }
     let client = fnapi::new_client();
     let path = format!("/v/api/v1/episode/list/{}", guid);

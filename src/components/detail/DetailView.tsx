@@ -1,6 +1,7 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
 import { type UIEvent, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { createPortal } from "react-dom";
 import { Check as IcoCheckL, Clapperboard as IcoClapL, Film as IcoFilmL, Play as IcoPlayL, X as IcoXL } from "lucide-react";
 import { DetailSkeleton } from "./DetailSkeleton";
@@ -24,6 +25,14 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [seasonIdx, setSeasonIdx] = useState(0);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
+  // [lc-1595] 播放结束 → 强制刷新观看进度：`ts`/`watched` 随每次播放变化，而本页原先只在
+  //   挂载/切条目/切季时取数 ⇒ 用户「看完第 3 集退出来，状态还是之前的」。
+  //   事件来自 Rust（mpv.rs）：正常看完/退出 = `mpv-load{phase:"ended"}`；播放失败 = `mpv-end`。
+  //   ⚠ 必须**带 force** 取数：季/集有 10 分钟缓存（lc-1578），不带 force 会拿回旧进度。
+  const [progTick, setProgTick] = useState(0);
+  const forceSeasonRef = useRef(false);
+  const forceEpsRef = useRef(false);
+  const lastEpGuidRef = useRef("");
   // TMDB 完整详情（剧照/相似/更多）：「详情」「更多」两个标签页的 TMDB 侧数据源
   const [tmdb, setTmdb] = useState<Record<string, unknown> | null>(null);
   // [lc-1507] TMDB 请求是否已 settle（成败都置位）：区分「加载中」（骨架）与「已失败」
@@ -150,6 +159,23 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
     return { trimId: trim, tmdbId, imdbId };
   })();
 
+  // [lc-1595] 监听播放结束事件 → 触发一次带 force 的重取（见上）。
+  useEffect(() => {
+    const bump = () => {
+      forceSeasonRef.current = true;
+      forceEpsRef.current = true;
+      setProgTick((n) => n + 1);
+    };
+    const un1 = listen<{ phase?: string }>("mpv-load", (e) => {
+      if (e.payload?.phase === "ended") bump();
+    });
+    const un2 = listen("mpv-end", bump);
+    return () => {
+      un1.then((f) => f());
+      un2.then((f) => f());
+    };
+  }, []);
+
   useEffect(() => {
     setData(null);
     setSeasons([]);
@@ -166,17 +192,25 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
     // 层级：剧 → 季 → 集。episode/list 的入参是季 guid（传剧 guid 实测 data:null），
     // 所以先 season/list/{剧guid}，选中季后再 episode/list/{季guid}。
     if (isSeries) {
-      invoke<Season[]>("get_seasons", { guid: base.guid })
+      const forceSeason = forceSeasonRef.current;
+      forceSeasonRef.current = false;
+      invoke<Season[]>("get_seasons", { guid: base.guid, force: forceSeason })
         .then((ss) => setSeasons(Array.isArray(ss) ? ss : []))
         .catch(() => {});
     }
-  }, [base.guid, isSeries, noFnOS]);
+  }, [base.guid, isSeries, noFnOS, progTick]);
 
   useEffect(() => {
     const s = seasons[seasonIdx];
     if (!s) return;
-    setEpisodes([]);
-    invoke<Episode[]>("get_episodes", { guid: s.guid })
+    const force = forceEpsRef.current;
+    forceEpsRef.current = false;
+    // 只在**换季**时清空列表：播放结束的刷新保留现有行（否则右栏会闪一下空白）
+    if (s.guid !== lastEpGuidRef.current) {
+      lastEpGuidRef.current = s.guid;
+      setEpisodes([]);
+    }
+    invoke<Episode[]>("get_episodes", { guid: s.guid, force })
       .then((eps) =>
         setEpisodes(
           (Array.isArray(eps) ? eps : []).map((e) => ({
@@ -189,7 +223,7 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
         ),
       )
       .catch(() => {});
-  }, [seasons, seasonIdx]);
+  }, [seasons, seasonIdx, progTick]);
 
   // TMDB 完整详情（剧照/相似/更多/演职人员）：主仓库 fetchShowDetails 同款链路，失败静默降级
   // [lc-128] 额外带上 trim_id / tmdb_id / imdb_id 锚点：能精确定位就不靠标题搜索（matchedBy 见日志）

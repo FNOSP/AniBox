@@ -10,8 +10,10 @@ export type BgmAccountState = { bound: boolean; username: string };
 export type BgmCollectStats = {
   total: number;
   byType: Record<string, number>;
-  /** [lc-1580] subject_id → 收藏类型（1想看/2看过/3在看/4搁置/5放弃）；发现页算「已追订阅更新」用 */
+  /** [lc-1580] subject_id → 收藏类型（1想看/2看过/3在看/4搁置/5放弃） */
   byId?: Record<string, number>;
+  /** [lc-1581] 逐条目（含**名字**）：按 id 匹配不到时用名字兜（BGM 每季是独立条目） */
+  list?: { id: string; kind: number; name: string }[];
 };
 /** [lc-1534] 「正在追」封面条条目（Rust bgm_watching_covers：本地表 type=3 按最近更新倒序） */
 

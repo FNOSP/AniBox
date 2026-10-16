@@ -8,6 +8,7 @@ export function BgmCalRow({
   today,
   rank,
   libState,
+  epLabel,
   onOpen,
 }: {
   it: BgmCalendarItem;
@@ -16,13 +17,15 @@ export function BgmCalRow({
   rank: number;
   /** "in" = 已匹配到飞牛库（打「已在库」标）；null = 未匹配或索引不可用（不标） */
   libState: "in" | null;
+  /** [lc-1581] 该天更新的集号（如「第 3 话」）：分集端点里 airdate 命中所选那天才算得出，取不到不传 */
+  epLabel?: string;
   onOpen: (it: BgmCalendarItem) => void;
 }) {
   const title = it.name_cn || it.name || "（无标题）";
   const year = (it.air_date || "").slice(0, 4);
   const score = typeof it.score === "number" && isFinite(it.score) && it.score > 0 ? it.score : null;
   const tier = score == null ? null : score >= 8 ? "hi" : score >= 7 ? "mid" : "lo";
-  const tip = [title, year ? `${year} 年` : "", score != null ? `评分 ${score.toFixed(1)}` : ""]
+  const tip = [title, year ? `${year} 年` : "", score != null ? `评分 ${score.toFixed(1)}` : "", epLabel ?? ""]
     .filter(Boolean)
     .join(" · ");
   return (
@@ -56,6 +59,7 @@ export function BgmCalRow({
           <span>{year ? `${year} 年` : "年份未知"}</span>
           {libState === "in" && <span className="dlib">已在库</span>}
           {today && <span className="ditem-tag">今日更新</span>}
+          {epLabel && <span className="ditem-tag ep">{epLabel}</span>}
         </div>
       </div>
     </li>

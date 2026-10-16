@@ -759,6 +759,16 @@ html.dark .ditem-tag {
   color: #ff9a9a;
 }
 
+/* [lc-1581] 「第 N 话」角标（中性蓝，与红色「今日更新」区分）—— 分集端点里 airdate=所选那天 的那一话 */
+.ditem-tag.ep {
+  background: rgba(74, 135, 240, 0.14);
+  color: #3f6fd0;
+}
+html.dark .ditem-tag.ep {
+  background: rgba(74, 135, 240, 0.22);
+  color: #9dbcf7;
+}
+
 /* ── 骨架 / 失败 / 空态（两栏共用；微光语言对齐 .poster-skeleton） ── */
 
 .dsk {

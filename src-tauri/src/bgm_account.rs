@@ -493,16 +493,21 @@ pub async fn bgm_collect_season(app: AppHandle) -> Result<Value, String> {
 /// [lc-1580] 额外回一张 **`byId`（subject_id → 收藏类型）**：发现页右栏「今日状态条」用它算
 /// 「今天有几部**已追订阅**的番更新」—— 前端拿日历当天的 id 直接查这张表、交集在本地算，
 /// 不用再多打一次日历/收藏接口（表是本地文件，读取近乎零成本）。
+/// [lc-1581] 再加一张 **`list`（[{id,kind,name}]）**：只按 id 匹配会漏 —— BGM 把**每一季算独立条目**
+/// （日历里「药屋少女的呢喃 第三季」id=568244，追番表里「药屋少女的呢喃」id=420628），
+/// 前端要用**名字**再兜一层（复用库索引那套 normTitle + 前缀匹配）。
 #[tauri::command]
 pub async fn bgm_collect_stats(app: AppHandle) -> Result<Value, String> {
     let table = load_table(&app).await;
     let mut by_type: HashMap<i64, u32> = HashMap::new();
     let mut by_id = serde_json::Map::new();
+    let mut list = Vec::new();
     for (k, e) in &table.map {
         *by_type.entry(e.kind).or_insert(0) += 1;
         by_id.insert(k.clone(), json!(e.kind));
+        list.push(json!({ "id": k, "kind": e.kind, "name": e.name }));
     }
-    Ok(json!({ "total": table.map.len(), "byType": by_type, "byId": by_id }))
+    Ok(json!({ "total": table.map.len(), "byType": by_type, "byId": by_id, "list": list }))
 }
 
 /// [lc-1534] 「正在追」封面条数据（卡片左栏用）：本地表 type=3（在看）按最近更新倒序。

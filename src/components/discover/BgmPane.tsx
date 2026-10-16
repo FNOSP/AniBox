@@ -1,11 +1,11 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { BgmAccountCard } from "./BgmAccountCard";
 import { BgmCalRow } from "./BgmCalRow";
 import { Dsk, WEEKDAYS, localDay, localWeekdayId } from "./shared";
-import { libHasTitle, resolveLibItem, useLibIndex } from "../../hooks/useLibIndex";
-import { BgmCalendarDay, BgmCalendarItem, MediaItem } from "../../types";
+import { libHasTitle, normTitle, resolveLibItem, useLibIndex } from "../../hooks/useLibIndex";
+import { BgmCalendarDay, BgmCalendarItem, BgmEpisodeRow, MediaItem } from "../../types";
 
 
 export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen: (it: BgmCalendarItem) => void; onOpenLib: (item: MediaItem) => void }) {
@@ -16,7 +16,10 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
   const [err, setErr] = useState("");
   const [nonce, setNonce] = useState(0);
   const [probe, setProbe] = useState(0); // [lc-123-rev5] 10 分钟后台探测
-  const [collectKinds, setCollectKinds] = useState<Record<string, number>>({}); // [lc-1580] id → 收藏类型
+  const [collect, setCollect] = useState<{ id: string; kind: number; name: string }[]>([]); // [lc-1581] 追番表（含名字）
+  // [lc-1581] 「第 N 话」：条目 id → { airdate: 集号 }（分集端点结果按条目缓存，切天不重复打）
+  const [epNo, setEpNo] = useState<Record<string, number>>({});
+  const epCacheRef = useRef<Map<string, Record<string, number>>>(new Map());
   // 手动 ⟳ / 失败重试的语义不同（见下）：⟳ = force（**仍带条件头**）；失败重试 = force + noEtag（全量）
   const forceRef = useRef(false);
   const hardRef = useRef(false);
@@ -72,9 +75,9 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
   useEffect(() => {
     if (!active) return;
     let alive = true;
-    invoke<{ byId?: Record<string, number> }>("bgm_collect_stats")
+    invoke<{ list?: { id: string; kind: number; name: string }[] }>("bgm_collect_stats")
       .then((d) => {
-        if (alive) setCollectKinds(d?.byId ?? {});
+        if (alive) setCollect(Array.isArray(d?.list) ? d.list : []);
       })
       .catch(() => {
         /* 未绑定 / 读取失败：保持空表（提醒显示「暂无更新」，不报错） */
@@ -100,12 +103,76 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
   const weekTotal = days.reduce((n, g) => n + (g.count || 0), 0);
   // 当天汇总：部数 + 8.0+ 数量 + [lc-1580] 已追订阅更新数（原「热度最高」已按用户要求替换）
   const hiCount = dayItems.filter((x) => typeof x.score === "number" && (x.score ?? 0) >= 8).length;
-  // [lc-1580] 「已追订阅」口径 = 本地追番表里 type 在看(3) / 想看(1) 的条目（排除 看过/搁置/放弃）。
-  // 用当天日历条目的 id 直接查表 ⇒ 交集在本地算，实时跟着追番表变（在详情页改了收藏、回到本页即重算）。
-  const subUpdated = dayItems.filter((it) => {
-    const k = collectKinds[String(it.id)];
-    return k === 3 || k === 1;
-  }).length;
+  // [lc-1581] 「已追订阅」口径 = 本地追番表里 在看(3) / 想看(1) 的条目（排除 看过/搁置/放弃）。
+  // ⚠ **必须 id + 标题双匹配**：BGM 把每一季算独立条目 —— 日历里「药屋少女的呢喃 第三季」(568244)、
+  // 追番表里「药屋少女的呢喃」(420628)，只按 id 求交集会漏（用户实测「今天应该有一部更新」）。
+  // 标题匹配复用库索引那套（normTitle + 全等→前缀兜底，能吃掉「 第三季」这类季/篇后缀）。
+  const subIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const e of collect) if (e.kind === 3 || e.kind === 1) s.add(e.id);
+    return s;
+  }, [collect]);
+  const subNames = useMemo(() => {
+    const s = new Set<string>();
+    for (const e of collect) if ((e.kind === 3 || e.kind === 1) && e.name) s.add(normTitle(e.name));
+    return s;
+  }, [collect]);
+  const subUpdated = dayItems.filter(
+    (it) => subIds.has(String(it.id)) || libHasTitle(subNames, it.name_cn || it.name),
+  ).length;
+
+  // [lc-1581] 「第 N 话」角标：BGM 的 infobox **没有"几点更新"**（只有 放送星期/放送开始/电视台），
+  // 但**分集端点带每集的 airdate** —— 用"所选星期在本周的那天"去匹配，得到"这天更新第几话"。
+  // 端点走 bgm_episodes（落盘 24h 缓存）⇒ 每个条目一天最多打一次；并发限 4，别一次冲 20+ 个。
+  // 只对**当前选中天**的条目取；结果按条目 id 缓存在 ref 里（切天不重复打）。
+  const selDate = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + (wd - todayId)); // 所选星期在本周的那一天（今天 = todayId）
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  })();
+  useEffect(() => {
+    if (!active || !dayItems.length) return;
+    let alive = true;
+    const build = () => {
+      const next: Record<string, number> = {};
+      for (const it of dayItems) {
+        const n = epCacheRef.current.get(String(it.id))?.[selDate];
+        if (n) next[String(it.id)] = n;
+      }
+      if (alive) setEpNo(next);
+    };
+    const need = dayItems.filter((it) => !epCacheRef.current.has(String(it.id)));
+    if (!need.length) {
+      build(); // 全在缓存里（切天/切回）→ 直接算，零网络
+      return;
+    }
+    (async () => {
+      const q = need.slice();
+      const worker = async () => {
+        for (let it = q.shift(); it; it = q.shift()) {
+          try {
+            const r = await invoke<{ data?: BgmEpisodeRow[] }>("bgm_episodes", { id: it.id, limit: 100 });
+            const m: Record<string, number> = {};
+            for (const e of r?.data ?? []) {
+              const d = String(e.airdate || "").slice(0, 10);
+              if (d) m[d] = Number(e.ep ?? e.sort ?? 0);
+            }
+            epCacheRef.current.set(String(it.id), m);
+          } catch {
+            epCacheRef.current.set(String(it.id), {}); // 失败也记空：别为同一条反复打网络
+          }
+        }
+      };
+      await Promise.all([0, 1, 2, 3].map(() => worker()));
+      build();
+    })();
+    return () => {
+      alive = false;
+    };
+    // 依赖刻意用 days/wd（dayItems 每次渲染都是新数组，进依赖会每帧重跑）；数据变了才重算。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, wd, days]);
   const wdCn = WEEKDAYS.find((w) => w.id === wd)?.cn ?? "";
   // 逐条匹配：loading/partial 只给"命中"打标；只有 ok（索引完整）才敢分组和标"不在库"
   const withLib = lib.state === "ok" || lib.state === "partial";
@@ -123,6 +190,7 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
       today={wd === todayId}
       rank={r.rank}
       libState={r.inLib ? "in" : null}
+      epLabel={epNo[String(r.it.id)] ? `第 ${epNo[String(r.it.id)]} 话` : undefined}
       onOpen={openBgm}
     />
   );

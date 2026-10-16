@@ -14,12 +14,17 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
-/// 容量上限：观影记录页只关心近期历史；无限增长只会拖慢每次读写。
-/// 500 条 ≈ 一年重度使用量，超出裁掉最旧的（按 played_at）。
-pub const MAX_ENTRIES: usize = 500;
+/// [lc-1631] 容量上限：原为 500，但年度报告要能算「整年」——年初的记录会被挤掉，
+/// 导致「1 月的观看」在 12 月时消失。这里两条一起上：
+///   ① 上限抬到 [`MAX_ENTRIES`]（对齐原项目观看事件台账的 3000 上限）；
+///   ② 另存**日级台账** `watch_days.json`（只记每天看了几部，永不裁剪）——
+///      即便条目级记录滚动淘汰，报告仍能还原「哪些天在看 / 活跃天数 / 连续天数 / 月度节奏」。
+/// 3000 条 JSON 约 1MB，读写仍是一次文件操作，可接受。
+pub const MAX_ENTRIES: usize = 3000;
 
 /// 富化阶段（季→剧）最多允许的**网络**请求数；缓存命中不计。
 /// 兜底闸门：万一 play/list 异常大，不至于把「打开观影记录页」拖成批量拉取。
@@ -59,6 +64,20 @@ pub struct WatchRecord {
     /// 所属季 guid（剧集；由 play/info 的 parent_guid 得到。剧 guid 在富化时补全）
     #[serde(default)]
     pub parent_guid: String,
+    // ── [lc-1631] 年度报告所需字段（全部 #[serde(default)]：旧 history.json 缺这些键也能读，向后兼容）──
+    /// 条目**总时长**（ms；0 = 未知）。play/info 的 `duration`（秒）折算，落盘时即有。
+    #[serde(default)]
+    pub duration_ms: u64,
+    /// 本次**实际观看时长**（ms；0 = 未知）。播放结束时由前端回填（见 [`backfill_session`]）——
+    /// 起播那一刻拿不到，如实留 0，报告侧再按「进度 × 总时长」折算（原项目同口径）。
+    #[serde(default)]
+    pub watched_ms: u64,
+    /// 观看进度 0..1（0 = 未知）。来自飞牛 play/list 的 ts/duration，或播放结束回填。
+    #[serde(default)]
+    pub progress: f64,
+    /// 是否看完（进度达阈值，或飞牛 watched=1）。
+    #[serde(default)]
+    pub finished: bool,
 }
 
 /// [lc-1616] 「我的评分 + 评语」—— 观影记录详情浮层里用户自己的评价。
@@ -93,6 +112,86 @@ fn file_path(app: &AppHandle) -> Option<PathBuf> {
 
 fn ratings_path(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_data_dir().ok().map(|d| d.join("ratings.json"))
+}
+
+/// [lc-1631] 日级台账文件（与 history.json 同目录）。
+fn days_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_data_dir().ok().map(|d| d.join("watch_days.json"))
+}
+
+/// [lc-1631] 单日台账：只记「这天看了几部」，跨重启累积、**永不裁剪**。
+/// 键 = `"Y-M-D"`（月份 **0 基**，与原项目 `fntv_wh_daycount_v1` 及前端热力图的
+/// `getMonth()` 口径一致，避免 1 月/12 月差一位）。为什么不记时长：起播时拿不到真实
+/// 观看时长，硬塞估算值会污染台账；时长在报告侧按记录/均值折算，台账只保「天数」这一
+/// 永不丢失的事实。
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct DayStat {
+    #[serde(default)]
+    pub count: u32,
+}
+
+/// 本地日期 `"Y-M-D"`（月份 0 基）。record 恒在「此刻」调用，故直接用系统本地时间；
+/// 非 Windows 退化为 UTC（本软件当前只发 Windows，对齐 feedback.rs 的做法）。
+fn today_key() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::System::SystemInformation::GetLocalTime;
+        let mut st: windows_sys::Win32::Foundation::SYSTEMTIME = unsafe { std::mem::zeroed() };
+        unsafe { GetLocalTime(&mut st) };
+        // wMonth 是 1..12 → 减 1 得到 0 基，与前端一致
+        format!("{}-{}-{}", st.wYear, st.wMonth as i32 - 1, st.wDay)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let secs = now_ms() / 1000;
+        let days = (secs / 86400) as i64;
+        let z = days + 719_468;
+        let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y = yoe + era * 400 + if mo <= 2 { 1 } else { 0 };
+        format!("{}-{}-{}", y, mo - 1, d)
+    }
+}
+
+/// 读取日级台账（文件缺失/损坏 → 空表，绝不报错）。
+pub fn load_days(app: &AppHandle) -> BTreeMap<String, DayStat> {
+    let Some(p) = days_path(app) else {
+        return Default::default();
+    };
+    match std::fs::read_to_string(&p) {
+        Ok(s) => serde_json::from_str::<BTreeMap<String, DayStat>>(&s).unwrap_or_default(),
+        Err(_) => Default::default(),
+    }
+}
+
+fn save_days(app: &AppHandle, map: &BTreeMap<String, DayStat>) {
+    let Some(p) = days_path(app) else {
+        return;
+    };
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(s) = serde_json::to_string(map) {
+        let _ = std::fs::write(&p, s);
+    }
+}
+
+/// 台账 +1（纯逻辑，供单测）：脏键（年份 < 2000）丢弃，避免报告/热力图从脏年份起算。
+fn bump_day(map: &mut BTreeMap<String, DayStat>, key: &str) {
+    let y = key
+        .split('-')
+        .next()
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(0);
+    if y < 2000 {
+        return;
+    }
+    map.entry(key.to_string()).or_default().count += 1;
 }
 
 /// 读写串行化：record 是「读-改-写」，两条播放命令几乎同时触发时不能互相覆盖。
@@ -183,14 +282,39 @@ fn apply_rating(map: &mut std::collections::HashMap<String, MyRating>, key: &str
 }
 
 /// 落一条播放记录：同 guid 覆盖更新（保留旧记录里更全的字段），超上限裁最旧。
+/// [lc-1631] 同时：① 日级台账 +1；② 广播 `history-recorded`（前端据此把「播放结束回填的
+/// 真实观看时长」对位到这条记录 —— 见前端 WatchHistoryView 模块级会话计时）。
 pub fn record(app: &AppHandle, rec: WatchRecord) {
     if rec.guid.is_empty() {
         return;
     }
     let _guard = LOCK.lock();
     let mut list = load(app);
-    upsert(&mut list, rec);
+    upsert(&mut list, rec.clone());
     save(app, &list);
+    // 日级台账：只记「今天看了几部」，永不裁剪（报告整年可算的关键）。
+    let mut days = load_days(app);
+    bump_day(&mut days, &today_key());
+    save_days(app, &days);
+    // 通知前端「刚起播的是哪一条」：mpv 事件流不带 guid，前端靠这条事件知道该把时长回填给谁。
+    let _ = app.emit("history-recorded", json!({ "guid": rec.guid, "playedAt": rec.played_at }));
+}
+
+/// [lc-1631] 播放结束回填：把前端统计到的真实观看时长/进度/看完状态补进对应记录。
+/// 起播那一刻这些量都不存在（时长要播完才知道），所以只能事后回填；
+/// 回填用 max/或 累积语义，避免重放/乱序把已有数据冲小。
+pub fn backfill_session(app: &AppHandle, guid: &str, watched_ms: u64, progress: f64, finished: bool) {
+    if guid.is_empty() {
+        return;
+    }
+    let _guard = LOCK.lock();
+    let mut list = load(app);
+    if let Some(r) = list.iter_mut().find(|r| r.guid == guid) {
+        r.watched_ms = r.watched_ms.max(watched_ms);
+        r.progress = r.progress.max(progress.clamp(0.0, 1.0));
+        r.finished = r.finished || finished;
+        save(app, &list);
+    }
 }
 
 /// 插入/更新（纯函数，供单测）：同 guid 用新记录覆盖、空字段从旧记录补齐；
@@ -210,6 +334,8 @@ fn upsert(list: &mut Vec<WatchRecord>, rec: WatchRecord) {
 
 /// 同一 guid 的两条记录合并：played_at 取新的；旧记录有而新记录缺的字段保留
 /// （重放时拿到的元数据可能更少，比如起播时详情页尚未刮削完成）。
+/// [lc-1631] 年度报告字段：时长/进度/看完只增不减（新的那次可能还没播完 → 不能把
+/// 上次看完整部的 watched_ms/finished 冲掉）。
 fn merge_record(old: WatchRecord, new: WatchRecord) -> WatchRecord {
     let keep = |n: String, o: String| if n.is_empty() { o } else { n };
     WatchRecord {
@@ -224,6 +350,10 @@ fn merge_record(old: WatchRecord, new: WatchRecord) -> WatchRecord {
         source: keep(new.source, old.source),
         source_name: keep(new.source_name, old.source_name),
         parent_guid: keep(new.parent_guid, old.parent_guid),
+        duration_ms: new.duration_ms.max(old.duration_ms),
+        watched_ms: new.watched_ms.max(old.watched_ms),
+        progress: new.progress.max(old.progress),
+        finished: new.finished || old.finished,
     }
 }
 
@@ -361,6 +491,12 @@ pub fn aggregate_by_series(items: &[Value]) -> Vec<Value> {
             "source": source,
             "sourceName": first_nonempty("sourceName"),
             "progress": progress_of(latest),
+            // [lc-1631] 作品级时长（组内最大，通常每集相同）/ 是否有任一条目看完
+            "durationMs": g.iter()
+                .map(|v| v.get("durationMs").and_then(|x| x.as_u64()).unwrap_or(0))
+                .max()
+                .unwrap_or(0),
+            "finished": g.iter().any(|v| v.get("finished").and_then(|x| x.as_bool()).unwrap_or(false)),
             "sessions": sessions,
         }));
     }
@@ -402,7 +538,11 @@ fn record_to_json(r: &WatchRecord) -> Value {
         "sourceName": r.source_name.clone(),
         "parentGuid": r.parent_guid.clone(),
         "seriesGuid": "",
-        "progress": 0.0,
+        // [lc-1631] 本机记录也能带进度/时长/看完：播放结束回填后，卡片/统计/报告都用得到
+        "progress": r.progress.clamp(0.0, 1.0),
+        "durationMs": r.duration_ms,
+        "watchedMs": r.watched_ms,
+        "finished": r.finished,
     })
 }
 
@@ -443,6 +583,11 @@ fn fnos_to_json(it: &Value) -> Value {
         "parentGuid": str_of(it, &["parent_guid", "parentGuid"]),
         "seriesGuid": "",
         "progress": progress,
+        // [lc-1631] 飞牛条目自带总时长（duration 秒）与 watched 标记 —— 报告按
+        // 「进度 × 总时长」折算观看量时要用，别丢。
+        "durationMs": if duration > 0.0 { (duration * 1000.0) as u64 } else { 0 },
+        "watchedMs": 0,
+        "finished": watched,
     })
 }
 
@@ -470,6 +615,11 @@ fn merge_same_guid(existing: &mut Value, incoming: &Value) {
     }
     // 进度取两者较大（飞牛侧为准；本机记录不记进度）
     keep["progress"] = json!(progress_of(&keep).max(progress_of(&other)));
+    // [lc-1631] 总时长取较大（一方为 0 时用另一方的真实值）；看完状态取「或」
+    let dur = |v: &Value| v.get("durationMs").and_then(|x| x.as_u64()).unwrap_or(0);
+    keep["durationMs"] = json!(dur(&keep).max(dur(&other)));
+    let fin = |v: &Value| v.get("finished").and_then(|x| x.as_bool()).unwrap_or(false);
+    keep["finished"] = json!(fin(&keep) || fin(&other));
     *existing = keep;
 }
 
@@ -665,10 +815,64 @@ pub fn pick_img(v: Option<&Value>) -> String {
     extract(v)
 }
 
+/// [lc-1631] 年度报告数据源：本机播放记录（事件级，带真实墙钟时间）+ 日级台账。
+/// **不触网**（报告要秒开；飞牛侧的作品级事实由前端复用 `get_watch_history` 的 items）。
+/// 前端据 `years` 渲染年份下拉；`events` 算月度节奏/观影时刻/连续天数/TOP；
+/// `days` 在记录被裁掉时兜底「活跃天数/月度节奏」。
+pub fn report_data(app: &AppHandle) -> Value {
+    let recs = load(app);
+    let days = load_days(app);
+    let mut years: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+    // 当前年份（本地）：即便今年还没看过，下拉里也要能选到
+    if let Some(y) = today_key().split('-').next().and_then(|s| s.parse::<u32>().ok()) {
+        years.insert(y);
+    }
+    let events: Vec<Value> = recs
+        .iter()
+        .filter(|r| r.played_at >= MIN_VALID_MS)
+        .map(|r| {
+            json!({
+                "ts": r.played_at,
+                "guid": r.guid,
+                "title": r.title,
+                "type": r.media_type,
+                "source": r.source,
+                "ms": r.watched_ms,
+                "durationMs": r.duration_ms,
+                "progress": r.progress.clamp(0.0, 1.0),
+                "finished": r.finished,
+            })
+        })
+        .collect();
+    let mut day_list: Vec<Value> = Vec::new();
+    for (k, st) in &days {
+        let parts: Vec<&str> = k.split('-').collect();
+        if parts.len() != 3 {
+            continue;
+        }
+        let (Ok(y), Ok(m0), Ok(d)) = (
+            parts[0].parse::<i32>(),
+            parts[1].parse::<i32>(),
+            parts[2].parse::<i32>(),
+        ) else {
+            continue;
+        };
+        if y < 2000 || st.count == 0 {
+            continue;
+        }
+        years.insert(y as u32);
+        day_list.push(json!({ "y": y, "m0": m0, "d": d, "count": st.count }));
+    }
+    json!({
+        "years": years.into_iter().collect::<Vec<u32>>(),
+        "events": events,
+        "days": day_list,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
     fn rec(guid: &str, played_at: u64) -> WatchRecord {
         WatchRecord {
             guid: guid.into(),
@@ -860,5 +1064,77 @@ mod tests {
         // 空分 + 空评语 → 删除
         apply_rating(&mut map, "k", 0, "   ");
         assert!(!map.contains_key("k"));
+    }
+
+    // ── [lc-1631] 年度报告数据完整性 ──
+
+    #[test]
+    fn old_history_json_without_report_fields_still_parses() {
+        // 旧 history.json（没有 duration_ms/watched_ms/progress/finished）必须能读，缺字段给默认值
+        let old = r#"[{"guid":"g1","title":"旧记录","played_at":1700000000000,"source":"fnos"}]"#;
+        let list: Vec<WatchRecord> = serde_json::from_str(old).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].title, "旧记录");
+        assert_eq!(list[0].duration_ms, 0);
+        assert_eq!(list[0].watched_ms, 0);
+        assert_eq!(list[0].progress, 0.0);
+        assert!(!list[0].finished);
+        // 再序列化回 JSON 不丢新键（未来可继续演进）
+        let round: Vec<WatchRecord> =
+            serde_json::from_str(&serde_json::to_string(&list).unwrap()).unwrap();
+        assert_eq!(round[0].guid, "g1");
+    }
+
+    #[test]
+    fn merge_record_keeps_report_fields_monotonic() {
+        // 新记录（重放、还没播完）不能把旧记录已有的真实时长/看完状态冲小
+        let old = WatchRecord {
+            guid: "g".into(),
+            watched_ms: 3_600_000,
+            duration_ms: 3_600_000,
+            progress: 1.0,
+            finished: true,
+            played_at: 100,
+            ..Default::default()
+        };
+        let new = WatchRecord {
+            guid: "g".into(),
+            played_at: 200,
+            ..Default::default()
+        };
+        let m = merge_record(old, new);
+        assert_eq!(m.watched_ms, 3_600_000);
+        assert_eq!(m.duration_ms, 3_600_000);
+        assert_eq!(m.progress, 1.0);
+        assert!(m.finished);
+        assert_eq!(m.played_at, 200);
+    }
+
+    #[test]
+    fn day_ledger_accumulates_and_drops_dirty() {
+        let mut m: BTreeMap<String, DayStat> = Default::default();
+        bump_day(&mut m, "2026-0-5"); // 2026 年 1 月 5 日（0 基月）
+        bump_day(&mut m, "2026-0-5");
+        bump_day(&mut m, "2026-11-31");
+        bump_day(&mut m, "1970-0-1"); // 脏键：年份 < 2000 → 丢弃
+        assert_eq!(m.get("2026-0-5").unwrap().count, 2);
+        assert_eq!(m.get("2026-11-31").unwrap().count, 1);
+        assert!(!m.contains_key("1970-0-1"));
+    }
+
+    #[test]
+    fn fnos_duration_and_watched_map_to_report_fields() {
+        // 飞牛条目：duration(秒) → durationMs；watched=1 → finished
+        let it = json!({ "guid":"g1","title":"片","type":"Movie","ts":600,"duration":1200,"watched":1 });
+        let j = fnos_to_json(&it);
+        assert_eq!(j["durationMs"], json!(1_200_000u64));
+        assert_eq!(j["finished"], json!(true));
+        assert!((j["progress"].as_f64().unwrap() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn max_entries_covers_a_full_year() {
+        // 上限必须足够容纳一整年（原 500 会把年初挤掉 → 报告算不出整年）
+        assert!(MAX_ENTRIES >= 3000);
     }
 }

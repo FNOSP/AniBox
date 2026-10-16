@@ -9,15 +9,18 @@
         + 我的 5 星评分/评语（持久化到 Rust 侧 ratings.json）+ 播放记录 sessions。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   CalendarDays as IcoCalL,
   Clock as IcoClockL,
   LayoutGrid as IcoGridL,
   RefreshCw as IcoRefreshL,
   Rows3 as IcoRowsL,
+  Sparkles as IcoSparklesL,
 } from "lucide-react";
 import { imgUrl } from "../../lib/images";
 import { MediaItem } from "../../types";
+import { WatchReport } from "./WatchReport";
 
 /** 一条作品播放记录（详情浮层「播放记录」用；Rust aggregate_by_series 产出） */
 export type HistorySession = {
@@ -52,6 +55,10 @@ export type HistoryItem = {
   seriesGuid?: string;
   /** 最近一次观看进度 0-1（飞牛 play/list 有；本机记录为 0） */
   progress?: number;
+  /** [lc-1631] 条目总时长（ms；0 = 未知）—— 年度报告按「进度 × 总时长」折算观看量 */
+  durationMs?: number;
+  /** [lc-1631] 是否看完 */
+  finished?: boolean;
   /** 该作品的播放记录（时间倒序） */
   sessions?: HistorySession[];
   /** 我的评分 0-5（0/缺省 = 未评） */
@@ -61,6 +68,65 @@ export type HistoryItem = {
 };
 
 type HistoryResp = { items?: HistoryItem[]; fnosOk?: boolean; fnosError?: string };
+
+/* ── [lc-1631] 播放会话计时（模块级，App 启动即注册；本文件被 App 静态 import）──
+   为什么在这里：年度报告要「实际观看时长」，而起播那一刻拿不到 —— 只能等播放结束。
+   Rust 侧 mpv 已把 time-pos(id=1)/duration(id=2) 作为 `mpv-event` 广播到前端，mpv 的
+   起止则由 `mpv-load {phase:start|ended}` / `mpv-end` 标记。本模块据此累计「本次会话看过的
+   最大播放位置」，在会话结束时把真实时长回填给 Rust（record_watch_session）。
+   不新增播放器钩子、不动 mpv.rs/DetailView —— 两条播放链路（库内/在线源）都走同一套事件。 */
+let _sessGuid = "";
+let _sessMaxPos = 0;
+let _sessDur = 0;
+
+function finalizeSession(): void {
+  const guid = _sessGuid;
+  const pos = _sessMaxPos;
+  const dur = _sessDur;
+  _sessMaxPos = 0;
+  _sessDur = 0;
+  // 几乎没播（< 3 秒，多为误触/立刻切走）不记，避免污染统计
+  if (!guid || pos <= 3) return;
+  const watchedMs = Math.round(pos * 1000);
+  const progress = dur > 0 ? Math.min(1, pos / dur) : 0;
+  const finished = dur > 0 && pos >= dur * 0.92;
+  invoke("record_watch_session", { guid, watchedMs, progress, finished }).catch(() => {
+    /* 回填失败不影响播放；下次播放会重新记录 */
+  });
+}
+
+// 播放器起播（含复用会话的 loadfile）→ 清空计数准备本段。
+// 为什么不在 start 结算上一段：切集时 mpv 会先对上一段发 end-file（reason=stop/redirect →
+// mpv-load ended），已在那里结算；若在此再结算，可能与随后到达的 history-recorded（新 guid）
+// 抢跑，把上一段的时长记到新条目上。故 start 只做「清零」，结算统一交给 ended/mpv-end。
+void listen("mpv-load", (e) => {
+  const phase = (e.payload as { phase?: string } | null)?.phase;
+  if (phase === "start") {
+    _sessMaxPos = 0;
+    _sessDur = 0;
+  } else if (phase === "ended") {
+    finalizeSession();
+  }
+});
+// 播放失败（加载错误/崩溃）→ 把已看的那点也结算掉
+void listen("mpv-end", () => finalizeSession());
+// 属性变化：累计最大播放位置 + 记住总时长
+void listen("mpv-event", (e) => {
+  const p = e.payload as { event?: string; id?: number; data?: unknown } | null;
+  if (!p || p.event !== "property-change") return;
+  const d = typeof p.data === "number" ? p.data : NaN;
+  if (Number.isNaN(d)) return;
+  if (p.id === 1) {
+    if (d > _sessMaxPos) _sessMaxPos = d;
+  } else if (p.id === 2 && d > 0) {
+    _sessDur = d;
+  }
+});
+// Rust 每次落播放记录都会广播 guid —— 前端据此把时长回填给「刚起播的那一条」
+void listen("history-recorded", (e) => {
+  const g = (e.payload as { guid?: string } | null)?.guid;
+  if (typeof g === "string" && g) _sessGuid = g;
+});
 
 type Filter = "全部" | "电影" | "剧集" | "在线源";
 
@@ -237,6 +303,8 @@ export function WatchHistoryView({
   const [myRatings, setMyRatings] = useState<Record<string, { score: number; review: string }>>({});
   /** 详情浮层当前作品（null = 关闭） */
   const [detail, setDetail] = useState<HistoryItem | null>(null);
+  /** [lc-1631] 年度报告浮层是否打开 */
+  const [reportOpen, setReportOpen] = useState(false);
   const noteTimer = useRef<number | null>(null);
   const heatWrapRef = useRef<HTMLDivElement | null>(null);
   const [tip, setTip] = useState<{ x: number; y: number; text: string } | null>(null);
@@ -372,6 +440,11 @@ export function WatchHistoryView({
         </button>
         <h3 className="hist-title">观影记录</h3>
         <span className="muted">{data ? `${items.length} 部` : ""}</span>
+        {/* [lc-1631] 年度报告入口（照原项目：面板顶栏一个按钮） */}
+        <button className="hist-report-btn" onClick={() => setReportOpen(true)} title="生成本年度观影报告">
+          <IcoSparklesL size={14} strokeWidth={2.2} />
+          年度报告
+        </button>
         <button className="hist-sync" onClick={() => void load(true)} disabled={busy || loading}>
           <IcoRefreshL size={13} strokeWidth={2.2} className={busy ? "hist-sync-spin" : ""} />
           {busy ? "同步中…" : "立即同步"}
@@ -646,6 +719,9 @@ export function WatchHistoryView({
           onNote={showNote}
         />
       )}
+
+      {/* [lc-1631] 年度报告浮层（作品级事实复用已加载的 items，避免再拉一次飞牛） */}
+      {reportOpen && <WatchReport items={items} onClose={() => setReportOpen(false)} />}
 
       {note && <div className="hist-toast show">{note}</div>}
 

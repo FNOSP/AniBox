@@ -334,6 +334,22 @@ fn get_my_rating(app: AppHandle, key: String) -> Option<history::MyRating> {
     history::get_rating(&app, &key)
 }
 
+/// [lc-1631] 年度报告数据源：本机播放记录（事件级）+ 日级台账，**不触网**（秒开）。
+/// 前端据 years 渲染年份下拉；events 算月度节奏/观影时刻/连续天数/TOP；days 兜底活跃天数。
+/// 飞牛侧的作品级事实（看过哪些、进度）由前端复用 get_watch_history 的 items，不在此重复拉取。
+#[tauri::command]
+fn get_watch_report(app: AppHandle) -> Value {
+    history::report_data(&app)
+}
+
+/// [lc-1631] 播放结束回填真实观看时长/进度/看完状态到对应记录（guid 由 history-recorded
+/// 事件告知前端）。起播时这些量不存在，只能事后补；拿不到（播放器崩溃等）就保持 0，
+/// 报告侧按「进度 × 总时长」折算，绝不编造。
+#[tauri::command]
+fn record_watch_session(app: AppHandle, guid: String, watched_ms: u64, progress: f64, finished: bool) {
+    history::backfill_session(&app, &guid, watched_ms, progress, finished);
+}
+
 /// [lc-1616] 写某作品「我的评分/评语」：score 夹到 0..=5；score=0 且评语空 = 清除。
 /// 只落本机 `app_data_dir/ratings.json`，**不**触碰任何第三方（BGM 同步由前端按需另调）。
 #[tauri::command]
@@ -682,6 +698,9 @@ struct PlayResolution {
     episode: i64,
     /// 所属季 guid（剧集 = play/info 的 parent_guid；电影为空）
     parent_guid: String,
+    /// [lc-1631] 条目总时长（ms；0 = 未知）。play/info 的 item.duration（秒）折算，
+    /// 年度报告按「进度 × 总时长」折算观看量时需要。
+    duration_ms: u64,
 }
 
 /// [lc-105] 解析「真正要拉流的 guid」：`POST /v/api/v1/play/info {item_guid}` → 取回 `data.guid`
@@ -785,6 +804,9 @@ async fn resolve_play_guid(
             // [lc-1615] 历史记录元数据（海报/锚点 id）就地取：play/info 响应里现成，不用二次请求。
             let poster = history::pick_img(it.get("posters"));
             let (tmdb_id, bgm_id) = history::parse_trim_ids(&get_s("trim_id").unwrap_or_default());
+            // [lc-1631] 总时长（秒 → 毫秒）：年度报告折算观看量的依据。
+            let dur_sec = get_n("duration");
+            let duration_ms = if dur_sec > 0 { (dur_sec as u64) * 1000 } else { 0 };
             Ok(PlayResolution {
                 play_guid: g,
                 kind: t.to_string(),
@@ -797,6 +819,7 @@ async fn resolve_play_guid(
                 season,
                 episode,
                 parent_guid,
+                duration_ms,
             })
         }
         Err(e) => {
@@ -963,6 +986,12 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
             source: "fnos".into(),
             source_name: String::new(),
             parent_guid: res.parent_guid.clone(),
+            // [lc-1631] 起播时能拿到的真实字段：条目总时长。实际观看时长（watched_ms）
+            // 要播完才知道 → 留 0，由前端会话计时在播放结束回填（record_watch_session）。
+            duration_ms: res.duration_ms,
+            watched_ms: 0,
+            progress: 0.0,
+            finished: false,
         },
     );
 
@@ -1788,6 +1817,9 @@ pub fn run() {
             get_watch_history,
             get_my_rating,
             set_my_rating,
+            // [lc-1631] 年度报告数据源 + 播放结束回填真实观看时长
+            get_watch_report,
+            record_watch_session,
             get_seasons,
             get_episodes,
             get_edit_detail,

@@ -1091,6 +1091,403 @@ html:not(.dark) .hist-detail-scrim {
   white-space: nowrap;
 }
 
+/* ═══════════════ [lc-1631] 年度观影报告 ═══════════════
+   照原项目 watchReport.ts 的观感（深色遮罩 + 浅色舞台 + 渐变强调色 + 5 页翻页），
+   配色落到本仓库 tokens；结构与原项目一致：遮罩 / 舞台 / 翻页控制行 / 导出按钮。 */
+
+/* 入口按钮（页头，紧挨「立即同步」左侧） */
+.hist-report-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  margin-right: 10px;
+  padding: 6px 15px;
+  border-radius: 999px;
+  border: none;
+  background: var(--accent-grad);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+.hist-report-btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+}
+/* 「立即同步」本有 margin-left:auto，加了报告按钮后由报告按钮占位 → 同步钮靠右即可 */
+.hist-report-btn + .hist-sync {
+  margin-left: 0;
+}
+
+/* 遮罩（刻意不挂 backdrop-filter：透明窗 + 软件渲染下全屏 blur 是合成器卡死高发源） */
+.wr-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 85;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 14px;
+  background: rgba(12, 14, 22, 0.86);
+  animation: wrFade 0.2s ease;
+}
+@keyframes wrFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 舞台（浅色卡片，5 页共用一块画布） */
+.wr-stage {
+  width: min(760px, 92vw);
+  height: min(520px, 80vh);
+  border-radius: 20px;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(165deg, rgba(250, 251, 254, 0.97), rgba(240, 243, 250, 0.99));
+  color: #262c44;
+  box-shadow: 0 24px 80px rgba(20, 26, 60, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+}
+.wr-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #5a6480;
+  font-size: 14px;
+}
+
+/* 单页容器 */
+.wr-pg {
+  position: absolute;
+  inset: 0;
+  animation: wrPageIn 0.28s ease;
+}
+@keyframes wrPageIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.wr-pg-pad {
+  padding: 56px 46px 30px;
+}
+.wr-pg-cover {
+  background: linear-gradient(165deg, rgba(109, 127, 242, 0.1), rgba(138, 99, 232, 0.06));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+.wr-kicker {
+  position: absolute;
+  top: 26px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 4px;
+  color: #8a93ad;
+}
+.wr-grad {
+  background: var(--accent-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.wr-h1 {
+  font-size: 24px;
+  font-weight: 900;
+  color: #262c44;
+  margin: 14px 0 6px;
+}
+.wr-sub {
+  font-size: 12px;
+  color: #5a6480;
+  margin-bottom: 8px;
+}
+.wr-accent {
+  color: #4a5fd0;
+}
+.wr-muted-blk {
+  color: #5a6480;
+  line-height: 1.9;
+  margin-top: 10px;
+}
+
+/* 封面页 */
+.wr-cover-lead {
+  font-size: 15px;
+  font-weight: 700;
+  color: #5a6480;
+}
+.wr-cover-big {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.wr-num {
+  font-size: 74px;
+  font-weight: 900;
+  background: var(--accent-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.wr-unit {
+  font-size: 20px;
+  font-weight: 800;
+  color: #262c44;
+}
+.wr-cover-row,
+.wr-sum-row {
+  display: flex;
+  gap: 30px;
+  margin-top: 6px;
+}
+.wr-cover-row > div,
+.wr-sum-row > div {
+  text-align: center;
+}
+.wr-cover-row b,
+.wr-sum-row b {
+  display: block;
+  font-size: 24px;
+  font-weight: 900;
+  color: #262c44;
+}
+.wr-sum-row b {
+  font-size: 30px;
+}
+.wr-cover-row span,
+.wr-sum-row span {
+  font-size: 11px;
+  color: #5a6480;
+}
+.wr-sum-h {
+  font-size: 26px;
+  font-weight: 900;
+  color: #262c44;
+}
+.wr-note {
+  font-size: 11px;
+  color: #4a5fd0;
+  background: rgba(109, 127, 242, 0.1);
+  border: 1px solid rgba(109, 127, 242, 0.28);
+  border-radius: 8px;
+  padding: 5px 12px;
+  margin-top: 10px;
+  max-width: 600px;
+  line-height: 1.6;
+  text-align: center;
+}
+.wr-foot {
+  position: absolute;
+  bottom: 20px;
+  font-size: 10.5px;
+  color: #8a93ad;
+}
+
+/* 月度条形 */
+.wr-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  height: 220px;
+  margin-top: 26px;
+}
+.wr-bcol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+.wr-bpeak {
+  font-size: 9px;
+  font-weight: 700;
+  color: transparent;
+}
+.wr-bpeak.on {
+  color: #4a5fd0;
+}
+.wr-bar {
+  width: 60%;
+  border-radius: 7px;
+  background: linear-gradient(180deg, rgba(109, 127, 242, 0.55), rgba(109, 127, 242, 0.25));
+  transition: height 0.4s ease;
+}
+.wr-bar.hot {
+  background: var(--accent-grad);
+}
+.wr-blab {
+  font-size: 10px;
+  color: #5a6480;
+}
+
+/* 时刻分布 */
+.wr-hbars {
+  display: flex;
+  align-items: flex-end;
+  height: 140px;
+  margin-top: 18px;
+}
+.wr-hcol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  flex: 1;
+}
+.wr-hbar {
+  width: 70%;
+  border-radius: 4px 4px 0 0;
+  background: rgba(109, 127, 242, 0.35);
+  transition: height 0.4s ease;
+}
+.wr-hbar.night {
+  background: var(--accent-grad);
+}
+.wr-hlab {
+  font-size: 8.5px;
+  color: #5a6480;
+  height: 12px;
+}
+
+/* TOP5 */
+.wr-tops {
+  margin-top: 18px;
+}
+.wr-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+}
+.wr-medal {
+  font-size: 17px;
+  width: 26px;
+}
+.wr-topbody {
+  flex: 1;
+  min-width: 0;
+}
+.wr-tophead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+.wr-topname {
+  font-size: 14px;
+  font-weight: 700;
+  color: #262c44;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wr-topmeta {
+  font-size: 11px;
+  color: #5a6480;
+  flex-shrink: 0;
+}
+.wr-topbar {
+  margin-top: 5px;
+  height: 7px;
+  border-radius: 99px;
+  background: rgba(109, 127, 242, 0.14);
+}
+.wr-topfill {
+  height: 100%;
+  border-radius: 99px;
+  background: var(--accent-grad);
+}
+
+/* 翻页控制行 */
+.wr-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.wr-year {
+  margin-right: 6px;
+  padding: 6px 10px;
+  border-radius: 9px;
+  border: none;
+  background: rgba(48, 52, 74, 0.92);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  outline: none;
+  cursor: pointer;
+}
+.wr-year option {
+  color: #262c44;
+}
+.wr-nav {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+  background: rgba(48, 52, 74, 0.92);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+}
+.wr-dots {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.wr-dots i {
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+  display: block;
+  background: rgba(255, 255, 255, 0.35);
+  transition: all 0.2s;
+}
+.wr-dots i.on {
+  width: 22px;
+  background: #fff;
+}
+.wr-close {
+  padding: 8px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+  background: rgba(48, 52, 74, 0.92);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+.wr-export {
+  margin-top: 2px;
+  padding: 8px 18px;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent-grad);
+}
+
 /* ── 少动效兜底（与 29-transitions.css 同口径） ── */
 @media (prefers-reduced-motion: reduce) {
   .hist-card,
@@ -1118,7 +1515,17 @@ html:not(.dark) .hist-detail-scrim {
   .hist-skel-stats::after,
   .hist-skel::after,
   .hist-toast,
-  .hist-overlay {
+  .hist-overlay,
+  .wr-overlay,
+  .wr-pg {
     animation: none;
+  }
+  .hist-report-btn:hover {
+    transform: none;
+  }
+  .wr-bar,
+  .wr-hbar,
+  .wr-dots i {
+    transition: none;
   }
 }

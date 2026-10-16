@@ -3161,6 +3161,12 @@ pub async fn webrs_play(
             source: "webrs".into(),
             source_name: rule_name.unwrap_or_default(),
             parent_guid: String::new(),
+            // [lc-1631] 在线源起播时拿不到总时长/进度 → 如实留空；
+            // 实际观看时长由前端会话计时在播放结束回填（record_watch_session）。
+            duration_ms: 0,
+            watched_ms: 0,
+            progress: 0.0,
+            finished: false,
         },
     );
     Ok(())

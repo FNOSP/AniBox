@@ -10,12 +10,19 @@ import { AppSettings, Config } from "../../types";
 export function SettingsPanel({
   onClose,
   onLogout,
+  onLogin,
+  loggedIn = true,
   settings,
   onSettings,
 }: {
   onClose: () => void;
   /** 退出登录：由 App 负责清会话与切页（面板只发意图，不自己改全局状态） */
   onLogout: () => void;
+  /** [lc-1623] 去飞牛登录页：飞牛未登录（游客态）时面板给「登录飞牛」入口。
+   *  BGM 与飞牛已解耦，此入口只影响飞牛侧。 */
+  onLogin?: () => void;
+  /** [lc-1623] 飞牛是否已登录（游客态 = false）：账号区据此显示「登录飞牛」而非「退出登录」。 */
+  loggedIn?: boolean;
   /** 设置项（App 持有：轮播 Logo / 性能模式都要在面板外生效） */
   settings: AppSettings;
   onSettings: (patch: Partial<AppSettings>) => void;
@@ -304,37 +311,51 @@ export function SettingsPanel({
           <h3 className="ddet-h3">账号</h3>
           <div className="set-row">
             <span className="set-k">当前账号</span>
-            <span className="set-v">{user || "—"}</span>
+            <span className="set-v">{loggedIn ? user || "—" : "未登录"}</span>
           </div>
           <div className="set-row">
             <span className="set-k">服务器</span>
             <span className="set-v">{server || "—"}</span>
           </div>
-          <div className="set-row">
-            <span className="set-k">退出登录</span>
-            {confirmLogout ? (
-              <div className="set-confirm">
-                <span className="set-confirm-q">退出后需重新登录，确定？</span>
-                <button className="set-btn" disabled={busy} onClick={() => setConfirmLogout(false)}>
-                  取消
+          {/* [lc-1623] 飞牛未登录（游客态）→ 给「登录飞牛」入口；已登录 → 仍是「退出登录」。
+              BGM 追番与飞牛已解耦，未登录飞牛不影响 BGM。 */}
+          {loggedIn ? (
+            <div className="set-row">
+              <span className="set-k">退出登录</span>
+              {confirmLogout ? (
+                <div className="set-confirm">
+                  <span className="set-confirm-q">退出后需重新登录，确定？</span>
+                  <button className="set-btn" disabled={busy} onClick={() => setConfirmLogout(false)}>
+                    取消
+                  </button>
+                  <button
+                    className="set-btn danger"
+                    disabled={busy}
+                    onClick={() => {
+                      setConfirmLogout(false);
+                      onLogout();
+                    }}
+                  >
+                    确定退出
+                  </button>
+                </div>
+              ) : (
+                <button className="set-btn danger" onClick={() => setConfirmLogout(true)}>
+                  退出登录
                 </button>
-                <button
-                  className="set-btn danger"
-                  disabled={busy}
-                  onClick={() => {
-                    setConfirmLogout(false);
-                    onLogout();
-                  }}
-                >
-                  确定退出
-                </button>
+              )}
+            </div>
+          ) : (
+            <div className="set-row">
+              <div>
+                <span className="set-k">飞牛登录</span>
+                <div className="set-desc">未登录飞牛时，Bangumi 追番等功能仍照常可用</div>
               </div>
-            ) : (
-              <button className="set-btn danger" onClick={() => setConfirmLogout(true)}>
-                退出登录
+              <button className="set-btn" onClick={() => onLogin?.()}>
+                登录飞牛
               </button>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* ── 缓存 ── */}
           <h3 className="ddet-h3">缓存</h3>

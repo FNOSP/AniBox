@@ -730,8 +730,27 @@ function App() {
         setBooting(false);
       })
       .catch(() => {
-        setBooting(false);
-        setView("login");
+        // [lc-1623] 飞牛会话失效 / 未登录：**不再无条件停在登录页** —— 那会把 BGM 侧（BGM 账号卡、
+        //   发现页 BGM 面板、追番同步）一起挡在门外，正是用户感知的「飞牛退出 BGM 也没了」。
+        //   曾配置过飞牛（config.server 非空）→ 进游客态：App 照常可用，发现页/BGM 面板直接可达；
+        //   首页/媒体库这类飞牛依赖区仍按游客态处理（播放/详情引导登录），不误伤。
+        //   两个例外仍回登录页：① 全新安装（无 server，否则新用户找不到飞牛登录入口）；
+        //   ② 配了「自动登录」（记住的密码 + auto_login）—— 让登录页照旧静默重登，别把这个既有功能弄没了。
+        //   重新登录飞牛的常规入口在设置面板「账号 → 登录飞牛」。
+        invoke<Config>("get_config")
+          .then((c) => {
+            const autoArmed = !!(c?.auto_login && c?.password && c?.username && c?.server);
+            if (c?.server && !autoArmed) {
+              setGuest(true);
+              setPage("home");
+              setView("home");
+              void loadGuestHome();
+            } else {
+              setView("login");
+            }
+          })
+          .catch(() => setView("login"))
+          .finally(() => setBooting(false));
       });
   }, [loadHome, loadGuestHome]);
 
@@ -780,7 +799,9 @@ function App() {
           // [lc-1615] history 页没有任何侧栏项应高亮（"_history" 不匹配首页/收藏/分类）
           activeGuid={view === "home" ? null : view === "history" ? "_history" : activeLib?.guid ?? null}
           collapsed={!sidebarOpen}
-          username={username}
+          // [lc-1623] 游客态（飞牛未登录/已退出）不显示飞牛用户名 —— 底栏如实显示「未登录」，
+          //   与首页/媒体库那类飞牛依赖区的提示口径一致（不误伤）。
+          username={guest ? "" : username}
           server={server}
           sum={sum}
           favTotal={favTotal}
@@ -988,9 +1009,19 @@ function App() {
           onClose={() => setSettingsOpen(false)}
           settings={settings}
           onSettings={(patch) => void patchSettings(patch)}
+          // [lc-1623] 飞牛未登录（游客态）时设置面板给「登录飞牛」入口 —— 退出/失效后进的是
+          //   游客态而非登录页，这里是回到飞牛登录的唯一常规入口（BGM 与它无关，不受影响）。
+          loggedIn={!guest}
+          onLogin={() => {
+            setSettingsOpen(false);
+            setView("login");
+          }}
           onLogout={() => {
             // [lc-1437] 退出登录：清会话 + 清首页快照（那是上一个账号的数据，
-            // 留着会让下一个账号先看到别人的片单）+ 回登录页
+            // 留着会让下一个账号先看到别人的片单）。
+            // [lc-1623] 但**不回登录页**：飞牛退出不该牵连 BGM（两者已解耦）——进游客态，
+            // 发现页/BGM 面板照常可用；想重新登录飞牛走设置面板「账号 → 登录飞牛」。
+            // Rust 侧 logout 只清飞牛 token，绝不碰 bgm_token（见 lib.rs）。
             setSettingsOpen(false);
             invoke("logout").catch(() => {});
             try {
@@ -1004,7 +1035,10 @@ function App() {
             setLibRows([]);
             setLibs([]);
             setContinueList([]);
-            setView("login");
+            setGuest(true);
+            setPage("home");
+            setView("home");
+            void loadGuestHome();
           }}
         />
       )}

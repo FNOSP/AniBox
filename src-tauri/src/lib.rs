@@ -75,6 +75,16 @@ async fn get_config(state: State<'_, AppState>) -> Result<Config, String> {
 
 #[tauri::command]
 async fn save_config(app: AppHandle, state: State<'_, AppState>, config: Config) -> Result<(), String> {
+    // [lc-1623] 防误伤（BGM 与飞牛解耦）：这是**整份覆盖**配置的写入口（登录页在用）。
+    // BGM 的 access token 属于 BGM 自己的账号状态，飞牛侧的任何保存都不该把它冲掉 ——
+    // 传入为空而当前非空时保留现值。BGM 绑定/解绑只走 bgm_account_bind/unbind，绝不经过这里。
+    let mut config = config;
+    if config.bgm_token.is_empty() {
+        let cur = state.config.read().await;
+        if !cur.bgm_token.is_empty() {
+            config.bgm_token = cur.bgm_token.clone();
+        }
+    }
     config::save(&app, &config).await?;
     // [lc-1561] 自建弹幕接口配置桥给 Node 侧客户端（改完立即生效，见 write_danmu_config）
     danmaku_shim::write_danmu_config(&config)?;
@@ -175,9 +185,17 @@ async fn login(
 }
 
 #[tauri::command]
-async fn logout(state: State<'_, AppState>) -> Result<(), String> {
-    let mut cfg = state.config.write().await;
+async fn logout(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    // [lc-1623] 退出登录 = **只清飞牛侧**（会话 token），绝不动 `bgm_token` 与任何 BGM 追番状态：
+    //   BGM 的登录态是独立的（cfg.bgm_token，见 bgm_account.rs），它的绑定/解绑只由
+    //   bgm_account_bind / bgm_account_unbind 触发 —— 飞牛退出不该牵连它。
+    //   两处修正（原实现只改内存、不落盘，退出后重启会因磁盘上 token 还在而"自动登录"）：
+    //     · 补 config::save 落盘，让退出真正生效；
+    //     · 保留 server / username / password（供重新登录预填，server 亦是"曾配置过"的路由信号）。
+    let mut cfg = state.config.read().await.clone();
     cfg.token = String::new();
+    config::save(&app, &cfg).await?;
+    *state.config.write().await = cfg;
     Ok(())
 }
 

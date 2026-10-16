@@ -78,6 +78,9 @@
   gap: 4px 12px;
   flex-wrap: wrap;
   min-width: 0;
+  /* 纵向留白给涟漪扩散环：横栏为了折叠动画必须 overflow:hidden（裁剪边界=padding box），
+     没有这段 padding 的话扩散到圆点外的环会被切掉。 */
+  padding: 7px 0;
   max-height: 0;
   opacity: 0;
   transform: translateY(-4px);
@@ -90,7 +93,7 @@
   padding-right: 44px; /* 给右上角折叠按钮让位 */
 }
 .bgmac.fold .bgmac-bar {
-  max-height: 72px;
+  max-height: 90px;
   opacity: 1;
   transform: none;
   pointer-events: auto;
@@ -102,7 +105,7 @@
 .bgmac-bar-user {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px; /* 品牌字 ↔ 状态组：留白别太挤 */
   flex-shrink: 0;
   font-size: 12.5px;
   font-weight: 700;
@@ -115,7 +118,7 @@
 .bgmac-bar-state {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 7px; /* 圆点 ↔ 状态字：同上 */
 }
 .bgmac-bar-user.on .bgmac-bar-state {
   color: #37a75f;
@@ -153,7 +156,7 @@
     opacity: 0.25;
   }
   100% {
-    transform: scale(3.4);
+    transform: scale(3);
     opacity: 0;
   }
 }

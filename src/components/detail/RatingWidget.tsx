@@ -26,6 +26,9 @@ type Props = {
   counts: Record<string, number> | null;
   /** 分布来源：bgm / tmdb / none（[lc-1576] tmdb 时图表标题标注「· TMDB」，与「TMDB 编号」同口径） */
   countsSource: "bgm" | "tmdb" | "none";
+  /** [lc-1598] 该条目**有观看记录**（详情页按条目 watched/ts 或任意一集有进度算出）：
+   *  为 true 且当前状态是「未追 / 想看」时，自动改标「在看」（见下方取状态的 effect）。 */
+  autoWatching?: boolean;
 };
 
 /** 收藏状态项（kind 与 BGM type 同号：0=未追（不在收藏）/1 想看 /2 看过 /3 在看 /4 搁置 /5 抛弃）。
@@ -76,7 +79,7 @@ function StatusIcon({ kind }: { kind: number }) {
   );
 }
 
-export function RatingWidget({ subjectId, date, score, scoreSource, total, rank, tmdbId, counts, countsSource }: Props) {
+export function RatingWidget({ subjectId, date, score, scoreSource, total, rank, tmdbId, counts, countsSource, autoWatching }: Props) {
   // 收藏状态：-1 = 尚未取到（按钮显示「同步状态」+ 刷新图标）
   const [status, setStatus] = useState<number>(-1);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -105,7 +108,24 @@ export function RatingWidget({ subjectId, date, score, scoreSource, total, rank,
     let alive = true;
     invoke<{ type?: number }>("bgm_collect_get", { subjectId })
       .then((r) => {
-        if (alive) setStatus(Number(r?.type ?? 0));
+        if (!alive) return;
+        const t = Number(r?.type ?? 0);
+        setStatus(t);
+        // [lc-1598] **有观看记录 → 默认把状态改成「在看」**（用户要求）。只在「未追(0) / 想看(1)」时改：
+        //   在看/看过/搁置/抛弃 都是用户明确设过的，尊重原值、不覆盖。
+        //   bgm_collect_set 内部：本地表落库 + 已绑定则顺手推一份到 Bangumi。
+        if (autoWatching && (t === 0 || t === 1)) {
+          invoke("bgm_collect_set", { subjectId, kind: 3 })
+            .then(() => {
+              if (alive) {
+                setStatus(3);
+                setNote("已按观看记录标记为「在看」");
+              }
+            })
+            .catch(() => {
+              /* 失败静默：保持原状态，不打扰 */
+            });
+        }
       })
       .catch((e) => {
         if (alive) setNote(String(e));
@@ -113,7 +133,7 @@ export function RatingWidget({ subjectId, date, score, scoreSource, total, rank,
     return () => {
       alive = false;
     };
-  }, [subjectId]);
+  }, [subjectId, autoWatching]);
 
   // 下拉：点组件外关闭（设计稿同款）
   useEffect(() => {

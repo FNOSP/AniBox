@@ -862,6 +862,12 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
   const airDate =
     String(pick(bgmSub ?? {}, ["date"]) ?? "").trim() || String(pick(tmdb ?? {}, ["airDate"]) ?? "").trim();
   const ratingSubjectId = bgm?.subject_id ?? base.bgm_id ?? null;
+  // [lc-1598] 「有观看记录」判据（给评分组件的状态按钮用）：条目级 watched/ts 有值，或任意一集有进度/已看。
+  //   为 true 时 RatingWidget 会把「未追 / 想看」默认改成「在看」（用户要求）。
+  const hasWatchRecord =
+    Number(pick(data ?? {}, ["watched"]) ?? 0) === 1 ||
+    Number(pick(data ?? {}, ["ts"]) ?? 0) > 0 ||
+    episodes.some((e) => Number(e.watched) === 1 || (e.ts ?? 0) > 0);
   // [lc-1576] 评分透视兜底：**BGM 没有评分分布（rating.count）时改用 TMDB 的分布**（镜像签名路由
   //   /rating-details/...；Rust 侧落盘缓存 24h）。转成与 BGM 同形的 {"1":count,...} 供组件直接用；
   //   拉取失败/空分布保持 null（柱状图照常画空态矮柱）。切换条目（base.guid）时重置。
@@ -1049,6 +1055,7 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
                 tmdbId={tmdbIdStr}
                 counts={bgmScore > 0 && bgmCounts ? bgmCounts : tmdbHist}
                 countsSource={bgmScore > 0 && bgmCounts ? "bgm" : tmdbHist ? "tmdb" : "none"}
+                autoWatching={hasWatchRecord}
               />
               {playNote && <div className="play-note">{playNote}</div>}
             </div>

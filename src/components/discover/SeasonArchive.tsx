@@ -1,22 +1,30 @@
 /* [lc-1589] 「总表查询」弹窗：选年份 + 季度 → 看该季真实番表。
-   数据源 = **AniList 官方 API**（Rust 命令 `anilist_season`，与「当日放送表」同一条链路；
-   往季基本定型、按季度缓存 24h）。外壳复用仓库既有的 `.ddet-mask` 遮罩模式（同详情页简介弹窗）。 */
+   [lc-1605] 数据源 **AniList → Bangumi**：AniList 标题只有日语原生（用户投诉「名称全是日语」），
+   换成 BGM（中文库 name_cn + 每季当独立条目 + 条目自带 subject id 可复用现有 BGM 详情链路）。
+   Rust 命令 `bgm_season`（走镜像 /v0/subjects?year&month，落盘 7 天）。
+   外壳复用仓库既有的 `.ddet-mask` 遮罩模式（同详情页简介弹窗），关闭动画沿用 lc-1592。 */
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { CalendarDays as IcoCalL, ChevronDown as IcoChevD, X as IcoXL } from "lucide-react";
+import { BgmCalendarItem } from "../../types";
 import { Dsk } from "./shared";
 
+/** [lc-1605] bgm_season 归一化后的条目（Rust 侧字段，见 bgm.rs normalize_season） */
 type SeasonItem = {
-  anilistId: number;
-  /** [native, romaji, english]（有的为空） */
-  titles: string[];
+  id: number;
+  /** 日文原名 */
+  name: string;
+  /** 中文名（BGM name_cn，可能为空） */
+  name_cn: string;
+  /** 首播日期 YYYY-MM-DD（可能为空） */
+  date: string;
+  /** Bangumi 评分 **10 分制**（null = 无评分） */
+  score: number | null;
+  /** 排名（越小越好，null = 无） */
+  rank: number | null;
+  /** 话数（0 = 未知） */
+  eps: number;
   cover: string;
-  episodes: number;
-  format: string;
-  status: string;
-  /** AniList 百分制（0 = 无） */
-  score: number;
-  genres: string[];
 };
 
 type SeasonKey = "WINTER" | "SPRING" | "SUMMER" | "FALL";
@@ -28,30 +36,29 @@ const SEASONS: { k: SeasonKey; label: string }[] = [
   { k: "FALL", label: "10月番" },
 ];
 
+/** [lc-1605] 季度 → BGM 的 month 参数（前端 SEASONS 已固定这四个月） */
+const SEASON_MONTH: Record<SeasonKey, number> = {
+  WINTER: 1,
+  SPRING: 4,
+  SUMMER: 7,
+  FALL: 10,
+};
+
 /** 按当前月份推「当前季」（1-3 月 = 1月番，以此类推） */
 function currentSeason(d = new Date()): SeasonKey {
   const m = d.getMonth() + 1;
   return m <= 3 ? "WINTER" : m <= 6 ? "SPRING" : m <= 9 ? "SUMMER" : "FALL";
 }
 
-const FORMAT_CN: Record<string, string> = {
-  TV: "TV",
-  TV_SHORT: "TV短篇",
-  MOVIE: "剧场版",
-  SPECIAL: "特别篇",
-  OVA: "OVA",
-  ONA: "网络动画",
-  MUSIC: "音乐",
-};
-const STATUS_CN: Record<string, string> = {
-  FINISHED: "已完结",
-  RELEASING: "连载中",
-  NOT_YET_RELEASED: "未开播",
-  CANCELLED: "已取消",
-  HIATUS: "休止",
-};
-
-export function SeasonArchive({ onClose }: { onClose: () => void }) {
+export function SeasonArchive({
+  onClose,
+  onOpenItem,
+}: {
+  onClose: () => void;
+  /** [lc-1605] 点卡片 → 跳详情页。与「每日新番表」同一条链路（App 的 openDiscoverBgm）：
+      这里把 SeasonItem 合成为 BgmCalendarItem（air_date 用 date），复用同一条详情合成逻辑。 */
+  onOpenItem: (it: BgmCalendarItem) => void;
+}) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [season, setSeason] = useState<SeasonKey>(() => currentSeason(now));
@@ -62,10 +69,33 @@ export function SeasonArchive({ onClose }: { onClose: () => void }) {
   const [yearOpen, setYearOpen] = useState(false);
   // [lc-1592] 关闭动画：先挂 `.arc-mask-closing` 让遮罩淡出 + 卡片缩下沉，**动画走完再真卸载**
   const [closing, setClosing] = useState(false);
-  const requestClose = () => {
+  // [lc-1605] after：退场动画走完后要接着做的事（点卡片跳详情时用）。
+  // 与 CSS 动画时长（170ms）对齐；先关弹窗、再执行 after（跳详情自带 view-in，接力不硬切）。
+  const requestClose = (after?: () => void) => {
     if (closing) return;
     setClosing(true);
-    window.setTimeout(onClose, 170); // 与 CSS 动画时长对齐
+    window.setTimeout(() => {
+      onClose();
+      after?.();
+    }, 170);
+  };
+
+  // [lc-1605] 点卡片：复用退场动画，动画走完再跳详情（避免「弹窗瞬没 + 详情硬切」）
+  const openItem = (it: SeasonItem) => {
+    requestClose(() =>
+      onOpenItem({
+        id: it.id,
+        type: 2,
+        name: it.name,
+        name_cn: it.name_cn,
+        air_date: it.date,
+        air_weekday: null,
+        score: it.score,
+        votes: 0,
+        doing: 0,
+        cover: it.cover,
+      }),
+    );
   };
 
   const years = useMemo(() => {
@@ -80,7 +110,8 @@ export function SeasonArchive({ onClose }: { onClose: () => void }) {
     let alive = true;
     setBusy(true);
     setErr("");
-    invoke<{ items?: SeasonItem[] }>("anilist_season", { year, season })
+    // [lc-1605] 数据源换成 BGM：季度 → month（1/4/7/10）
+    invoke<{ items?: SeasonItem[] }>("bgm_season", { year, month: SEASON_MONTH[season] })
       .then((d) => {
         if (alive) setItems(Array.isArray(d?.items) ? d.items : []);
       })
@@ -112,14 +143,14 @@ export function SeasonArchive({ onClose }: { onClose: () => void }) {
   }, [yearOpen, closing]);
 
   return (
-    <div className={`ddet-mask${closing ? " arc-mask-closing" : ""}`} onClick={requestClose}>
+    <div className={`ddet-mask${closing ? " arc-mask-closing" : ""}`} onClick={() => requestClose()}>
       <div className="arc-modal" onClick={(e) => e.stopPropagation()}>
         {/* 年份面板打开时的透明遮罩：点卡片空白处收起面板（选择行 z-index 更高，不受影响） */}
         {yearOpen && <div className="arc-yback" onClick={() => setYearOpen(false)} />}
         <div className="arc-hd">
           <IcoCalL size={16} strokeWidth={2} />
           <h3>往季番表</h3>
-          <button className="ddet-close arc-x" onClick={requestClose} title="关闭">
+          <button className="ddet-close arc-x" onClick={() => requestClose()} title="关闭">
             <IcoXL size={15} strokeWidth={2.2} />
           </button>
         </div>
@@ -188,14 +219,21 @@ export function SeasonArchive({ onClose }: { onClose: () => void }) {
             <div className="dstate">该季度没有查到条目</div>
           ) : (
             <div className="arc-grid">
-              {items.map((it) => {
-                const title = it.titles[0] || "（无标题）";
-                const sub = it.titles.find((t) => t !== title) || "";
+              {items.map((it, i) => {
+                // [lc-1605] 中文优先（BGM name_cn），缺则回落日文原名
+                const title = it.name_cn || it.name || "（无标题）";
+                const tip = [title, it.rank ? `排名 #${it.rank}` : "", it.date]
+                  .filter(Boolean)
+                  .join("\n");
                 return (
-                  <div
+                  <button
+                    type="button"
                     className="arc-card"
-                    key={it.anilistId}
-                    title={[title, sub, it.genres.join(" / ")].filter(Boolean).join("\n")}
+                    key={it.id}
+                    title={tip}
+                    // 错峰进场（克制）：按 index 给一点 animation-delay，上限防最后一排等太久
+                    style={{ animationDelay: `${Math.min(i, 11) * 22}ms` }}
+                    onClick={() => openItem(it)}
                   >
                     <div className="arc-cv">
                       {it.cover ? (
@@ -203,21 +241,19 @@ export function SeasonArchive({ onClose }: { onClose: () => void }) {
                       ) : (
                         <span className="arc-noimg">无图</span>
                       )}
-                      {it.score > 0 && (
-                        <span className="arc-score" title="AniList 评分（百分制）">
+                      {it.score != null && it.score > 0 && (
+                        <span className="arc-score" title="Bangumi 评分（10 分制）">
                           {it.score}
                         </span>
                       )}
                     </div>
                     <div className="arc-t">{title}</div>
                     <div className="arc-meta">
-                      <span>{FORMAT_CN[it.format] || it.format || "—"}</span>
+                      <span>{it.date || "日期未知"}</span>
                       <span>·</span>
-                      <span>{it.episodes > 0 ? `${it.episodes} 话` : "话数未知"}</span>
-                      <span>·</span>
-                      <span>{STATUS_CN[it.status] || it.status || "—"}</span>
+                      <span>{it.eps > 0 ? `${it.eps} 话` : "话数未知"}</span>
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>

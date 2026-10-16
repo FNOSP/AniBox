@@ -64,6 +64,9 @@ const TTL_PERSONS: u64 = 7 * 24 * 3600;
 /// 另外**跨天必须重取**：缓存键按前端本机日期分桶，且读回来的 payload 还要比一次 `day`
 /// （跨过本地零点 ⇒ 键变了 ⇒ 必然重取；万一键撞上也不会把昨天的表当今天用）。
 const TTL_CALENDAR: u64 = 3 * 3600;
+/// [lc-1605] 往季番表（/v0/subjects?year&month）：**往季基本定型**，TTL 可长（7 天）。
+/// 缓存键含 year+month（不同季各自一份）；当季仍在放送、评分会动，7 天粒度足够。
+const TTL_SEASON: u64 = 7 * 24 * 3600;
 
 // ───────────────────────── 基础：密钥 / 端点 / 签名 / HTTP ─────────────────────────
 // 签名本体（hex 内层 / base64 外层）与端点解析在 crate::mirror_sign —— 全 crate 唯一实现，
@@ -925,10 +928,78 @@ fn normalize_calendar(raw: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+/// [lc-1605] 往季番表（「总表查询」弹窗）：GET /v0/subjects?type=2&year={year}&month={month}
+/// &sort=rank&limit=25&offset=0 —— **换掉原来的 anilist_season**（AniList 标题只有日语原生，
+/// 用户投诉「名称全是日语」）。选 BGM 的理由：中文库（name_cn）、**每季当独立条目**（语义与
+/// AniList season 一致）、条目自带 subject id 可直接复用现有 BGM 详情链路。
+/// ⚠️ `sort` 只认 **rank**（实测 trends → HTTP 400 unknown sort）；`month` 只会有 1/4/7/10。
+/// 返回 `{ items: [{ id, name, name_cn, date, score, rank, eps, cover }] }`，落盘 7 天（键含 year+month）。
+#[tauri::command]
+pub async fn bgm_season(year: i64, month: i64) -> Result<Value, String> {
+    let key = format!("{year}-{month}");
+    if let Some(v) = cache_get("season", &key, TTL_SEASON).await {
+        return Ok(v);
+    }
+    let path =
+        format!("/v0/subjects?type=2&year={year}&month={month}&sort=rank&limit=25&offset=0");
+    let raw = get_json(&path).await?;
+    // 上游结构变了（拿不到 data 数组）→ 宁可报错，也不给前端一个"空季"的假象
+    if raw.get("data").and_then(|d| d.as_array()).is_none() {
+        return Err(format!(
+            "Bangumi 往季番表结构不符（缺 data 数组）：{}",
+            truncate(&raw.to_string(), 160)
+        ));
+    }
+    let items = normalize_season(&raw);
+    crate::libmpv::trace(&format!(
+        "[bgm] season {year}-{month} → {} 部",
+        items.len()
+    ));
+    let out = json!({ "items": items });
+    cache_put("season", &key, &out).await;
+    Ok(out)
+}
+
+/// /v0/subjects 列表归一化：只留渲染需要的字段。上游字段（**实测** 2026-07 走镜像核对）：
+/// id/name/name_cn/date/eps/platform/rating{score,rank,total,count}/images{large,common,...}/...
+/// ⚠️ 列表端点**没有顶层 score/rank**（在 `rating` 里；score 为 **10 分制**，rank 越小越好）。
+/// `eps` = 话数（`total_episodes` 实测为 0，不用它）。`cover` 取 large → 逐级回退 common/medium/small/grid。
+fn normalize_season(raw: &Value) -> Vec<Value> {
+    raw.get("data")
+        .and_then(|d| d.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|it| {
+                    let id = it.get("id").and_then(|v| v.as_i64())?;
+                    let s = |k: &str| it.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let cover = ["large", "common", "medium", "small", "grid"]
+                        .iter()
+                        .find_map(|k| {
+                            it.pointer(&format!("/images/{k}"))
+                                .and_then(|v| v.as_str())
+                                .filter(|s| !s.is_empty())
+                        })
+                        .unwrap_or("")
+                        .to_string();
+                    Some(json!({
+                        "id": id,
+                        "name": s("name"),
+                        "name_cn": s("name_cn"),
+                        "date": s("date"),
+                        "score": it.pointer("/rating/score").cloned().unwrap_or(Value::Null),
+                        "rank": it.pointer("/rating/rank").cloned().unwrap_or(Value::Null),
+                        "eps": it.get("eps").and_then(|v| v.as_i64()).unwrap_or(0),
+                        "cover": cover,
+                    }))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{decode_2xx_body, direct_call, DEFAULT_ENDPOINTS, DIRECT_API, DIRECT_NEXT};
-
     /// [lc-1574] 2xx 空 body 容忍（**不触网**）：钉住三种形态 ——
     /// 空字节 → Ok(Null)（写操作正常形态）；合法 JSON → Ok；非 JSON → Err（消息含「不是合法 JSON」）。
     #[test]
@@ -1109,5 +1180,41 @@ mod tests {
         println!("calendar: 7 组 / {total} 部");
         assert!(total > 0, "总条目数应为正");
         assert!(days[0].get("items").and_then(|i| i.as_array()).is_some(), "每组应带 items");
+    }
+
+    /// [lc-1605] 往季番表归一化（**不触网**）：喂一份上游真实形状（/v0 的 {data,total} 包装 +
+    /// 真实字段名），钉住四件事：① 顶层按 `data` 取（不是裸数组）② score/rank 从 **rating** 里取
+    /// （列表端点没有顶层 score/rank）③ cover 优先 large、缺失逐级回退 ④ 缺 rating/eps 时给
+    /// null/0 而不是 panic；⑤ 非 {data:[...]} 结构 → 空（调用方当失败处理）。
+    #[test]
+    fn normalize_season_handles_upstream_shape() {
+        let raw = serde_json::json!({
+            "total": 2,
+            "data": [
+                { "id": 638497, "name": "正反対な君と僕 第2期", "name_cn": "相反的你和我 第二季",
+                  "date": "2026-07-05", "eps": 13, "platform": "TV",
+                  "rating": { "rank": 212, "total": 4342, "score": 8 },
+                  "images": { "large": "https://lain.bgm.tv/pic/cover/l/x.jpg",
+                              "common": "https://lain.bgm.tv/r/400/pic/cover/l/x.jpg" } },
+                // 缺 rating / eps / images.large → 只能靠回退与默认值活下来
+                { "id": 545917, "name": "これ描いて死ね", "date": "2026-07-03",
+                  "images": { "common": "https://lain.bgm.tv/r/400/pic/cover/l/y.jpg" } }
+            ]
+        });
+        let items = super::normalize_season(&raw);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["id"].as_i64(), Some(638497));
+        assert_eq!(items[0]["name_cn"].as_str(), Some("相反的你和我 第二季"));
+        assert_eq!(items[0]["score"].as_f64(), Some(8.0), "score 从 rating.score 取（10 分制）");
+        assert_eq!(items[0]["rank"].as_i64(), Some(212), "rank 从 rating.rank 取");
+        assert_eq!(items[0]["eps"].as_i64(), Some(13));
+        assert!(items[0]["cover"].as_str().unwrap().contains("/l/"), "优先 large");
+        assert!(items[1]["cover"].as_str().unwrap().contains("/r/400/"), "large 缺 → 回退 common");
+        assert_eq!(items[1]["score"], serde_json::Value::Null, "缺 rating → null（不是 0）");
+        assert_eq!(items[1]["rank"], serde_json::Value::Null);
+        assert_eq!(items[1]["eps"].as_i64(), Some(0), "缺 eps → 0");
+        assert_eq!(items[1]["name_cn"].as_str(), Some(""), "缺 name_cn → 空串");
+        // 结构不符（不是 {data:[...]}）→ 空，由调用方当失败处理
+        assert!(super::normalize_season(&serde_json::json!([{ "id": 1 }])).is_empty());
     }
 }

@@ -1470,6 +1470,8 @@ pub fn run() {
             bgm::bgm_related,
             // [lc-123] 发现页右栏：每日新番表（镜像 /calendar 路由，见 bgm.rs）
             bgm::bgm_calendar,
+            // [lc-1605] 发现页右栏「总表查询」弹窗：往季番表（镜像 /v0/subjects?year&month 路由）
+            bgm::bgm_season,
             get_config,
             save_config,
             // [lc-1561] 自建弹幕接口连通测试（设置面板）

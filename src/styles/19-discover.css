@@ -2236,15 +2236,22 @@ html.dark .dlib-badge-soon {
   .dweek.today::after,
   .dlist > *,
   .arc-modal,
+  .arc-card,
   .ddet-mask.arc-mask-closing,
   .ddet-mask.arc-mask-closing .arc-modal {
     animation: none;
+  }
+  /* [lc-1605] 新增的卡片 hover/active 过渡一并关掉 */
+  .arc-card,
+  .arc-cv {
+    transition: none;
   }
 }
 
 /* ══════════════ [lc-1589] 星期行「总表查询」按钮 + 往季番表弹窗 ══════════════
    用户要求：七个星期格子压缩、右侧留位放「总表查询」；点击弹窗选年份 + 季度，看该季真实番表。
-   数据 = AniList 官方 API（Rust `anilist_season`，按季度缓存 24h）；遮罩复用 `.ddet-mask`。 */
+   [lc-1605] 数据 = **Bangumi 镜像**（Rust `bgm_season`，/v0/subjects?year&month，按 year+month 落盘 7 天）
+   —— 换掉原 AniList（标题只有日语原生）。卡片改为可点击跳详情 + 进场/hover 动效。 */
 
 /* 星期行里的查询按钮：不加 flex:1 ⇒ 不抢格子的伸缩，七格自然被压缩 */
 .darc-btn {
@@ -2477,8 +2484,48 @@ html.dark .dlib-badge-soon {
   grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
   gap: 14px 12px;
 }
+/* [lc-1605] 卡片改为**可点击**（<button>）：先重置按钮默认样式，再加 hover/active 微动效
+   （上浮 + 阴影 + 缓动曲线，参照既有卡片 .dlib-gcard / .darc-btn 的写法）。
+   进场用错峰淡入：animation-delay 由 SeasonArchive 按 index 内联给；
+   ⚠️ fill-mode 用 **backwards**（不是 both）—— 动画结束后不再占用 transform，
+   否则 fill-forwards 会盖掉 :hover 的 translateY（经典坑）。 */
 .arc-card {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  border-radius: 8px;
+  animation: arcCardIn 0.34s cubic-bezier(0.25, 0.8, 0.25, 1) backwards;
+}
+@keyframes arcCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* [lc-1605] 交互态只给**真卡片**（<button>）：骨架屏是 <div class="arc-card">，
+   不该带指针/hover 上浮（否则加载态看着像能点） */
+button.arc-card {
+  cursor: pointer;
+  transition: transform 0.22s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+button.arc-card:hover {
+  transform: translateY(-3px);
+}
+button.arc-card:active {
+  transform: translateY(-1px) scale(0.985);
+}
+button.arc-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .arc-cv {
   position: relative;
@@ -2487,6 +2534,27 @@ html.dark .dlib-badge-soon {
   overflow: hidden;
   background: var(--ph-bg);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  /* [lc-1605] 封面跟着卡片一起动（上浮 + 阴影加深） */
+  transition: transform 0.22s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 0.22s ease;
+}
+button.arc-card:hover .arc-cv {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(31, 41, 90, 0.22);
+}
+/* [lc-1605] 少动效：新加的淡入/上浮一并关掉。**必须放在定义之后** ——
+   同特异性下后者胜，放前面（文件上部那个通用块）会被这里的 animation/transition 盖掉。 */
+@media (prefers-reduced-motion: reduce) {
+  .arc-card {
+    animation: none;
+  }
+  button.arc-card,
+  button.arc-card:hover,
+  button.arc-card:active,
+  .arc-cv,
+  button.arc-card:hover .arc-cv {
+    transition: none;
+    transform: none;
+  }
 }
 .arc-cv img {
   width: 100%;

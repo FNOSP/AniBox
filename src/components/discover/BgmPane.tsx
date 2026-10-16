@@ -320,8 +320,10 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
           </>
         )}
       </div>
-      {/* [lc-1589] 「总表查询」弹窗（往季番表，数据走 AniList 官方 API） */}
-      {arcOpen && <SeasonArchive onClose={() => setArcOpen(false)} />}
+      {/* [lc-1589] 「总表查询」弹窗（往季番表，[lc-1605] 数据改走 BGM 镜像 /v0/subjects） */}
+      {arcOpen && (
+        <SeasonArchive onClose={() => setArcOpen(false)} onOpenItem={onOpen} />
+      )}
     </section>
   );
 }

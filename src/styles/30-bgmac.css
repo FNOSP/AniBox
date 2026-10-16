@@ -97,12 +97,12 @@
   margin-top: 2px;
   cursor: pointer;
 }
-/* 登录态：**只显示状态、不显示具体账号 id**（用户要求）—— 已登录绿、未登录红；
-   前面带 BGM 名称（品牌字用正文色，状态字用绿/红，圆点跟随状态色） */
+/* 登录态：**只显示状态、不显示具体账号 id**（用户要求）—— `Bangumi ● 已登录`（绿）/ `Bangumi ● 未登录`（红）；
+   圆点在**状态字前面**，带「内圈 → 外圈」的涟漪波动（雷达式脉冲，两圈错开）。 */
 .bgmac-bar-user {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   flex-shrink: 0;
   font-size: 12.5px;
   font-weight: 700;
@@ -112,18 +112,50 @@
   font-style: normal;
   color: var(--text-strong);
 }
-.bgmac-bar-user::before {
-  content: "";
-  width: 6px;
-  height: 6px;
+.bgmac-bar-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.bgmac-bar-user.on .bgmac-bar-state {
+  color: #37a75f;
+}
+.bgmac-bar-user.off .bgmac-bar-state {
+  color: #ed5b52;
+}
+/* 圆点 + 两圈错开的涟漪（内圈往外扩散、渐隐） */
+.bgmac-dot {
+  position: relative;
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
   border-radius: 50%;
   background: currentColor;
 }
-.bgmac-bar-user.on {
-  color: #37a75f;
+.bgmac-dot::before,
+.bgmac-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  animation: bgmacRipple 2s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
 }
-.bgmac-bar-user.off {
-  color: #ed5b52;
+.bgmac-dot::after {
+  animation-delay: 1s;
+}
+@keyframes bgmacRipple {
+  0% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  70% {
+    opacity: 0.25;
+  }
+  100% {
+    transform: scale(3.4);
+    opacity: 0;
+  }
 }
 .bgmac-bar-stat {
   min-width: 0;
@@ -131,12 +163,17 @@
   color: var(--muted);
 }
 
-/* 系统「减少动态效果」：折叠动画全关（与仓库其它节一致） */
+/* 系统「减少动态效果」：折叠动画与涟漪全关（与仓库其它节一致） */
 @media (prefers-reduced-motion: reduce) {
   .bgmac-grid,
   .bgmac-bar,
   .bgmac-fold svg {
     transition: none;
+  }
+  .bgmac-dot::before,
+  .bgmac-dot::after {
+    animation: none;
+    opacity: 0;
   }
 }
 /* ── 左列 ── */

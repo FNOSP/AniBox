@@ -200,7 +200,11 @@ export function BgmAccountCard({
       <div className="bgmac-bar" onClick={() => setCollapsed(false)} title="点击展开">
         <span className={`bgmac-bar-user${acct.bound ? " on" : " off"}`}>
           <i className="bgmac-bar-brand">Bangumi</i>
-          {acct.bound ? "已登录" : "未登录"}
+          {/* 圆点在**状态字前面**，带「内圈→外圈」涟漪波动（见 30-bgmac.css 的 .bgmac-dot） */}
+          <span className="bgmac-bar-state">
+            <span className="bgmac-dot" aria-hidden="true" />
+            {acct.bound ? "已登录" : "未登录"}
+          </span>
         </span>
         <span className="bgmac-bar-stat">
           {total > 0

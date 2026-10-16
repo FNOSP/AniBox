@@ -68,7 +68,9 @@ export function TitleBar({
       {/* [lc-123-rev] 中部只剩弱化的品牌小字（原来这里是「首页|发现」胶囊，已挪到 .navbar 行）。
           整条顶栏仍是拖拽区：中间的 span 不拦截拖拽，窗口拖动不受影响。 */}
       <div className="tb-center" data-tauri-drag-region>
-        <span className="tb-brand">{nav ? "AniBox" : title}</span>
+        {/* [lc-1610] nav 时中间是品牌字标（挂 .tb-brand-logo：内嵌方正少儿简体 + 多色渐变）；
+            非 nav 时显示页名，保持原来的弱化小字样式。 */}
+        <span className={`tb-brand${nav ? " tb-brand-logo" : ""}`}>{nav ? "AniBox" : title}</span>
       </div>
       <div className="tb-right" data-tauri-drag-region>
         <div className="tb-buttons">

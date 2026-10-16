@@ -1,0 +1,30 @@
+/* ═══════════════ [lc-1610] 顶栏品牌字标（AniBox）═══════════════
+   用户要求：软件中间的 logo 换成「方正少儿简体」字体样式 + 多色渐变，且字体**内嵌进软件**
+   （不依赖用户系统装没装）—— 字体文件随包分发：`src/assets/fonts/FZShaonian.ttf`。
+   ⚠ 授权说明：方正少儿简体为方正字库（FounderType）商业字体；本项目按「开源、非商用」使用，
+     若用于商业目的请自行向方正取得授权。
+   生效范围：只作用于「品牌字标」这一态（TitleBar 在 nav 时给 .tb-brand 挂 .tb-brand-logo）——
+   非 nav 时 .tb-brand 显示的是页名，不该被套上 logo 字体/渐变。 */
+
+@font-face {
+  font-family: "AniBoxLogo";
+  src: url("../assets/fonts/FZShaonian.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  /* 字体随包分发、本地读取，swap 不会有可见闪烁 */
+  font-display: swap;
+}
+
+.tb-brand-logo {
+  font-family: "AniBoxLogo", system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 400; /* 方正少儿简体本身够圆润，不再叠粗 */
+  letter-spacing: 0.02em;
+  opacity: 1;
+  /* 多色渐变文字：background-clip:text + 透明字色（青→蓝→紫→粉，呼应应用主色） */
+  background: linear-gradient(92deg, #4adede 0%, #6ea8ff 34%, #8b5cf6 64%, #f472b6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}

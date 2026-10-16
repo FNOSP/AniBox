@@ -36,3 +36,5 @@
 @import "./34-guest.css";
 /* [lc-1607] 免责声明（首次启动同意闸门 + 设置内只读查看） */
 @import "./35-disclaimer.css";
+/* [lc-1610] 顶栏品牌字标：内嵌「方正少儿简体」+ 多色渐变 */
+@import "./36-logo.css";

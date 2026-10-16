@@ -14,6 +14,8 @@ import { HomeView } from "./components/home/HomeView";
 import { LibView } from "./components/library/LibView";
 import { LoginPage } from "./components/login/LoginPage";
 import { FeedbackPanel } from "./components/feedback/FeedbackPanel";
+import { DisclaimerModal } from "./components/disclaimer/DisclaimerModal";
+import { DISCLAIMER_ACK_KEY } from "./components/disclaimer/DisclaimerText";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
 import { NavCapsule } from "./components/shell/NavCapsule";
 import { TitleBar } from "./components/shell/TitleBar";
@@ -65,6 +67,14 @@ function App() {
   // 不用 view 现查 —— 用户从发现页进详情后 view 已是 "detail"，现查只能靠猜。
   const [detailFrom, setDetailFrom] = useState<"lib" | "discover" | "home">("home");
   const [err, setErr] = useState("");
+  // [lc-1607] 首次启动的免责声明同意闸门：localStorage 未置位 → 弹；同意后置位，不再弹。
+  const [disclaimerOpen, setDisclaimerOpen] = useState(() => {
+    try {
+      return localStorage.getItem(DISCLAIMER_ACK_KEY) !== "1";
+    } catch {
+      return true;
+    }
+  });
   const [sidebarOpen, setSidebarOpen] = useState(
     () => localStorage.getItem("fntv-sidebar-open") !== "0",
   );
@@ -1021,6 +1031,24 @@ function App() {
         </div>
       )}
       {body}
+      {/* [lc-1607] 首次启动的免责声明同意闸门：未同意过则弹（登录页/主界面都覆盖，portal 到 body）。
+          「我已阅读并同意」→ 置位 localStorage 并关闭；「不同意并退出」→ 走仓库既有退出链路
+          （resolve_close("exit") = app.exit(0)，退场清理必然执行）。 */}
+      {disclaimerOpen && (
+        <DisclaimerModal
+          variant="first"
+          onAgree={() => {
+            try {
+              localStorage.setItem(DISCLAIMER_ACK_KEY, "1");
+            } catch {
+              /* ignore */
+            }
+            setDisclaimerOpen(false);
+          }}
+          onExit={() => invoke("resolve_close", { action: "exit" }).catch(() => {})}
+          onClose={() => setDisclaimerOpen(false)}
+        />
+      )}
     </div>
   );
 }

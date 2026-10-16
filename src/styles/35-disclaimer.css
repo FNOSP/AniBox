@@ -1,0 +1,103 @@
+/* ═══════════════ [lc-1607] 免责声明（首次启动同意闸门 + 设置内只读查看） ═══════════════
+   外壳复用 .ddet-mask + .ddet 卡片（同设置面板 / 游客引导弹窗），内层 .dsc-* 只定尺寸与排版。
+   颜色全走 01-tokens 变量 —— 深浅主题各自成立。 */
+
+/* ── 卡片：限宽居中；正文区可滚动，按钮区固定不滚 ── */
+.dsc-modal {
+  width: min(560px, 94vw);
+  max-height: min(84vh, 720px);
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-3));
+  /* [lc-1607] 进场：卡片微放大 + 上浮（照 gstModalIn） */
+  animation: dscModalIn 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes dscModalIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── 正文：保留原文换行（pre-wrap），可滚动 ── */
+.dsc-body {
+  padding: 16px 22px 20px;
+}
+
+.dsc-text {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.85;
+  color: var(--text);
+}
+
+/* ── 底部按钮区（固定，不随正文滚动） ── */
+.dsc-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 22px;
+  border-top: 1px solid var(--line);
+}
+
+.dsc-btn {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 9px;
+  padding: 9px 18px;
+  min-width: 96px;
+  cursor: pointer;
+  border: 1px solid var(--line-strong);
+  background: var(--hover);
+  color: var(--text-strong);
+  transition: filter 0.15s ease, background-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+.dsc-btn.ghost:hover {
+  background: var(--hover-strong);
+  transform: translateY(-1px);
+}
+.dsc-btn.primary {
+  border: none;
+  background: var(--accent-grad);
+  color: #fff;
+  box-shadow: 0 6px 18px rgba(108, 155, 255, 0.32);
+}
+.dsc-btn.primary:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow: 0 9px 22px rgba(108, 155, 255, 0.42);
+}
+
+/* ── 关闭：遮罩淡出 + 卡片微缩下沉。类名要**同时命中 .ddet-mask**
+   （不然会被它自己的 `animation: pageIn` 按文件顺序盖掉）。 ── */
+.ddet-mask.dsc-mask-closing {
+  animation: dscMaskOut 0.17s ease forwards;
+}
+.ddet-mask.dsc-mask-closing .dsc-modal {
+  animation: dscModalOut 0.17s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+@keyframes dscMaskOut {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes dscModalOut {
+  to {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+}
+
+/* 减弱动效：只保留静态内容，不要位移/缩放 */
+@media (prefers-reduced-motion: reduce) {
+  .dsc-modal,
+  .ddet-mask.dsc-mask-closing,
+  .ddet-mask.dsc-mask-closing .dsc-modal {
+    animation: none;
+  }
+}

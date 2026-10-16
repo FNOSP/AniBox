@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { X as IcoXL } from "lucide-react";
+import { DisclaimerModal } from "../disclaimer/DisclaimerModal";
 import { fmtSize } from "../../lib/format";
 import { AppSettings, Config } from "../../types";
 
@@ -27,6 +28,8 @@ export function SettingsPanel({
   const [user, setUser] = useState("");
   const [server, setServer] = useState("");
   const [confirmLogout, setConfirmLogout] = useState(false);
+  // [lc-1607] 设置 → 关于 → 免责声明：打开只读态弹窗（只有「关闭」）
+  const [showDisclaimer, setShowDisclaimer] = useState(false);
   const [autostart, setAutostart] = useState(
     () => localStorage.getItem("fntv-autostart") === "1",
   );
@@ -47,11 +50,12 @@ export function SettingsPanel({
       })
       .catch(() => {});
     const h = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      // [lc-1607] 免责声明弹窗打开时，Esc 归它（只关弹窗，不连设置面板一起关）
+      if (e.key === "Escape" && !showDisclaimer) onClose();
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [onClose, refresh]);
+  }, [onClose, refresh, showDisclaimer]);
 
   const setLimit = async (mb: number) => {
     setBusy(true);
@@ -408,9 +412,54 @@ export function SettingsPanel({
               </a>
             </span>
           </div>
+          {/* [lc-1607] 版权 / 资源纠纷风险规避三入口：免责声明（只读弹窗）+ 开源许可 + 第三方组件与致谢 */}
+          <div className="set-row">
+            <div>
+              <span className="set-k">免责声明</span>
+              <div className="set-desc">首次启动需阅读并同意的完整条款</div>
+            </div>
+            <button className="set-btn" onClick={() => setShowDisclaimer(true)}>
+              查看
+            </button>
+          </div>
+          <div className="set-row">
+            <div>
+              <span className="set-k">开源许可（GPL-3.0）</span>
+              <div className="set-desc">本项目基于 GNU GPL-3.0 许可证开源发布（见仓库根目录 LICENSE）</div>
+            </div>
+            <a
+              className="set-btn"
+              href="https://www.gnu.org/licenses/gpl-3.0.html"
+              target="_blank"
+              rel="noreferrer"
+              style={{ textDecoration: "none" }}
+            >
+              许可证全文
+            </a>
+          </div>
+          <div className="set-row">
+            <div>
+              <span className="set-k">第三方组件与致谢</span>
+              <div className="set-desc">
+                在线资源能力参考并移植自{" "}
+                <a href="https://github.com/Predidit/Kazumi" target="_blank" rel="noreferrer">
+                  Predidit/Kazumi
+                </a>
+                （GPL-3.0）；规则内容来自社区仓库{" "}
+                <a href="https://github.com/Predidit/KazumiRules" target="_blank" rel="noreferrer">
+                  KazumiRules
+                </a>
+                ；mpv / uosc 等第三方组件各自遵循其许可。
+              </div>
+            </div>
+          </div>
           {note && <div className="set-note">{note}</div>}
         </div>
       </div>
+      {/* [lc-1607] 免责声明只读态：portal 到 body，只有「关闭」 */}
+      {showDisclaimer && (
+        <DisclaimerModal variant="info" onClose={() => setShowDisclaimer(false)} />
+      )}
     </div>
   );
 }

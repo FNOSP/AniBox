@@ -34,3 +34,5 @@
 @import "./33-feedback.css";
 /* [lc-1600] 游客模式（登录页入口 + 查看详情引导弹窗） */
 @import "./34-guest.css";
+/* [lc-1607] 免责声明（首次启动同意闸门 + 设置内只读查看） */
+@import "./35-disclaimer.css";

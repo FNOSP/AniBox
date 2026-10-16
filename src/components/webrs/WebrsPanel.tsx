@@ -276,7 +276,16 @@ export function WebrsPanel({ title }: { title: string }) {
         { ruleName: sel.rule, url: ep.url },
       );
       setSubBusy("正在拉起独立播放器…");
-      await invoke("webrs_play", { url: r.url, referer: r.referer, ua: r.ua });
+      // [lc-1615] 附观影记录元数据（番剧名/集名/源名/集页 URL）—— Rust 侧落本地历史用，不影响播放
+      await invoke("webrs_play", {
+        url: r.url,
+        referer: r.referer,
+        ua: r.ua,
+        title: sel.item.name,
+        episode: ep.name,
+        ruleName: sel.rule,
+        episodeUrl: ep.url,
+      });
       setSubBusy(`已在独立播放器窗口播放 · ${sel.item.name} · ${ep.name}（${r.via === "webview" ? "嗅探直链" : "页面直解"}）`);
     } catch (e) {
       setErr(String(e));

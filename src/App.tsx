@@ -9,6 +9,8 @@ import { listen } from "@tauri-apps/api/event";
 import { Lock as IcoLock } from "lucide-react";
 import { DetailView } from "./components/detail/DetailView";
 import { DiscoverView } from "./components/discover/DiscoverView";
+// [lc-1615] 观影记录页（侧栏快捷操作卡入口；飞牛 play/list ∪ 本机播放历史）
+import { WatchHistoryView } from "./components/history/WatchHistoryView";
 import { HomeSkeleton } from "./components/home/HomeSkeleton";
 import { HomeView } from "./components/home/HomeView";
 import { LibView } from "./components/library/LibView";
@@ -31,7 +33,8 @@ import "./styles/index.css";
 
 
 function App() {
-  const [view, setView] = useState<"login" | "home" | "discover" | "lib" | "detail">("login");
+  // [lc-1615] 新增 "history"（观影记录页；侧栏快捷操作卡入口）
+  const [view, setView] = useState<"login" | "home" | "discover" | "lib" | "detail" | "history">("login");
   // [lc-123] 「页」= 顶栏胶囊的两个面（首页/发现）。与 view 分开：在库里/详情页时胶囊仍要
   // 记住用户是从哪一页进去的（发现页点条目进 Bangumi 详情，左上角应仍显示「发现」）。
   const [page, setPage] = useState<"home" | "discover">("home");
@@ -65,7 +68,8 @@ function App() {
   const [detailItem, setDetailItem] = useState<MediaItem | null>(null);
   // [lc-1444] 进详情的来源（返回键的目标）：lib = 库里进，discover = 发现页进，home = 首页进。
   // 不用 view 现查 —— 用户从发现页进详情后 view 已是 "detail"，现查只能靠猜。
-  const [detailFrom, setDetailFrom] = useState<"lib" | "discover" | "home">("home");
+  // [lc-1615] 增加 history = 观影记录页进。
+  const [detailFrom, setDetailFrom] = useState<"lib" | "discover" | "home" | "history">("home");
   const [err, setErr] = useState("");
   // [lc-1607] 首次启动的免责声明同意闸门：localStorage 未置位 → 弹；同意后置位，不再弹。
   const [disclaimerOpen, setDisclaimerOpen] = useState(() => {
@@ -465,6 +469,8 @@ function App() {
   const [libEnterAnim, setLibEnterAnim] = useState(false);
   const [detailMounted, detailClosing] = useDelayedUnmount(view === "detail" && !!detailItem);
   const [libMounted, libClosing] = useDelayedUnmount(view === "lib" && !!activeLib);
+  // [lc-1615] 观影记录页：条件挂载 + 延迟卸载（与库页同套转场）
+  const [historyMounted, historyClosing] = useDelayedUnmount(view === "history");
   const clearPaneAnim = useCallback(() => {
     if (animTimer.current) {
       window.clearTimeout(animTimer.current);
@@ -648,6 +654,18 @@ function App() {
     setView("lib");
   }, []);
 
+  // [lc-1615] 观影记录页：侧栏快捷操作卡入口 → 全页视图（与库/详情同套 view-pane 转场）
+  const openHistory = useCallback(() => {
+    setView("history");
+  }, []);
+
+  // [lc-1615] 观影记录页点库内条目 → 详情（返回目标 = history；与 openItem 同一条详情链路）
+  const openHistoryItem = useCallback((item: MediaItem) => {
+    setDetailItem(item);
+    setDetailFrom("history");
+    setView("detail");
+  }, []);
+
   useEffect(() => {
     // [lc-1600] 启动先看游客标记：是游客 → **跳过登录/会话检查**，直接进首页（游客取数链）。
     // 先切视图再拉数据：homeLoading 一置起即渲染骨架屏（不闪登录页、不空白）。
@@ -759,7 +777,8 @@ function App() {
           />
         )}
         <Sidebar
-          activeGuid={view === "home" ? null : activeLib?.guid ?? null}
+          // [lc-1615] history 页没有任何侧栏项应高亮（"_history" 不匹配首页/收藏/分类）
+          activeGuid={view === "home" ? null : view === "history" ? "_history" : activeLib?.guid ?? null}
           collapsed={!sidebarOpen}
           username={username}
           server={server}
@@ -770,6 +789,7 @@ function App() {
           onHome={goHome}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenFeedback={() => setFeedbackOpen(true)}
+          onOpenHistory={openHistory}
         />
         <div className="view-stack">
           {/* [lc-123-rev2] 「首页 | 发现」胶囊是**浮层**（.navbar = absolute，不占布局高度）：
@@ -836,6 +856,13 @@ function App() {
               <LibView lib={activeLib} onBackHome={goHome} onOpenItem={openItem} />
             </div>
           )}
+          {/* [lc-1615] 观影记录页：条件挂载 + view-in/view-out 转场（与库/详情页同套）。
+              从详情返回时本 pane 重新挂载（view-in 随挂载触发），无需额外补动画。 */}
+          {(view === "history" || historyMounted) && (
+            <div className={`view-pane active${historyClosing ? " view-out" : " view-in"}`}>
+              <WatchHistoryView onBack={goHome} onOpenItem={openHistoryItem} />
+            </div>
+          )}
           {/* [lc-1513] 详情/库页：进入播 view-in；返回时（view 切走）先播 view-out
               再延迟卸载；返回目标（home/discover/lib）同时补一次 view-in 淡入，
               不会出现「返回后旧视图瞬间闪回、新视图硬切」。 */}
@@ -847,8 +874,19 @@ function App() {
                 onBack={() => {
                   // 返回动画：目标 pane 补一次进入淡入（class 添加即触发，animationend 后移除）
                   if (detailFrom === "lib") setLibEnterAnim(true);
-                  else setPageAnim("view-in");
-                  setView(detailFrom === "discover" ? "discover" : detailFrom === "lib" ? "lib" : "home");
+                  // [lc-1615] history 不补 pageAnim：本 pane 重新挂载时自带 view-in。
+                  // （pageAnim 只被 home/discover 的 animationend 清理；目标 pane 非激活时会滞留，
+                  //   下次进首页才补播一次「过期的」淡入。）
+                  else if (detailFrom !== "history") setPageAnim("view-in");
+                  setView(
+                    detailFrom === "discover"
+                      ? "discover"
+                      : detailFrom === "lib"
+                        ? "lib"
+                        : detailFrom === "history"
+                          ? "history"
+                          : "home",
+                  );
                 }}
               />
             </div>

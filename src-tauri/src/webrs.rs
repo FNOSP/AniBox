@@ -2730,6 +2730,12 @@ pub async fn webrs_play(
     url: String,
     referer: Option<String>,
     ua: Option<String>,
+    // [lc-1615] 观影记录元数据（可选；老调用方不传时仅按直链 URL 记一笔，不影响播放）。
+    // title = 番剧名、episode = 集名、rule_name = 规则源名、episode_url = 集页面 URL（去重键）。
+    title: Option<String>,
+    episode: Option<String>,
+    rule_name: Option<String>,
+    episode_url: Option<String>,
 ) -> Result<(), String> {
     let cfg = state.config.read().await.clone();
     if cfg.mpv_path.is_empty() {
@@ -2798,6 +2804,25 @@ pub async fn webrs_play(
         }
     }
     session.command(json!(["loadfile", url, "replace"])).await?;
+    // [lc-1615] 起播成功 → 落一笔本机播放历史（观影记录页数据源）。
+    // 去重键用「集页面 URL」（直链是临时的：带签名/会过期，不能当键）；缺失时退化为直链。
+    let key = episode_url.filter(|s| !s.is_empty()).unwrap_or_else(|| url.clone());
+    crate::history::record(
+        &app,
+        crate::history::WatchRecord {
+            guid: format!("webrs:{}", key),
+            title: title.unwrap_or_default(),
+            episode: episode.unwrap_or_default(),
+            poster: String::new(),
+            tmdb_id: String::new(),
+            bgm_id: String::new(),
+            media_type: "webrs".into(),
+            played_at: crate::history::now_ms(),
+            source: "webrs".into(),
+            source_name: rule_name.unwrap_or_default(),
+            parent_guid: String::new(),
+        },
+    );
     Ok(())
 }
 

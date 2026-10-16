@@ -1,0 +1,643 @@
+/* ═══════════════ [lc-1615] 观影记录页 ═══════════════
+   样式照抄原项目（Electron 版 watchHistory.ts 的 .wh-* 面板）：大标题+accent 方点、
+   筛选胶囊、观影活跃度统计卡（4 数字 + 左侧 accent 竖条）、GitHub 风热力图
+   （0/1/2-3/4-5/6+ 四档绿色）、「已看完 / 在观看」双栏海报墙（2:3 封面 + 底部渐隐 +
+   名称/副行 + 进度条 + 角标）、骨架屏 shimmer。
+   配色/材质全部落到本仓库 tokens（01-tokens.css，深浅主题通用）；
+   热力图绿色档位沿用原项目的 GitHub 绿（深浅各一套）。 */
+
+/* ── 页头：大标题（accent 方点）+ 计数 + 立即同步 ── */
+/* 选择器带 .page-head：压过 06-content.css 的 `.page-head h3`（(0,1,1) > 单类 (0,1,0)） */
+.page-head .hist-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 24px;
+}
+.page-head .hist-title::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--accent-grad);
+  flex-shrink: 0;
+}
+.hist-sync {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 15px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--hover);
+  color: var(--text-strong);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.hist-sync:hover {
+  background: var(--hover-strong);
+  border-color: rgba(108, 155, 255, 0.45);
+}
+.hist-sync:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.hist-sync-spin {
+  animation: histSpin 0.9s linear infinite;
+}
+@keyframes histSpin {
+  to { transform: rotate(360deg); }
+}
+.hist-retry {
+  margin-left: 10px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* ── 筛选胶囊（原项目右上角「全部/电影/剧集/动漫」同款；计数随数据刷新） ── */
+.hist-pills {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 16px;
+}
+.hist-pill {
+  padding: 7px 15px;
+  border-radius: 22px;
+  border: 1px solid transparent;
+  background: var(--hover);
+  color: var(--text-2);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.hist-pill:hover {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+.hist-pill.active {
+  background: var(--accent-grad);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ── 飞牛不可用提示条 ── */
+.hist-warn {
+  margin: 0 0 14px;
+  padding: 9px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--hover);
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* ── 顶部两栏：左=统计卡 / 右=热力图卡（原项目 wh-chart-split 版式，各半等高） ── */
+.hist-chart-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: stretch;
+  margin-bottom: 8px;
+}
+@media (max-width: 980px) {
+  .hist-chart-split {
+    grid-template-columns: 1fr;
+  }
+}
+.hist-stats,
+.hist-heat {
+  min-width: 0;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.hist-stats-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-strong);
+  letter-spacing: 0.3px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hist-stats-title::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.hist-stats-sub {
+  font-size: 12.5px;
+  color: var(--text-2);
+  line-height: 1.7;
+  word-break: break-word;
+}
+
+/* 统计数字：4 等分，左侧 accent 竖条 + 大数字 + 单位 + 短标签（照抄原项目 .wh-stat-row） */
+.hist-stat-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px 10px;
+  margin-top: auto;
+}
+.hist-stat-row > div {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 5px;
+  position: relative;
+  padding-left: 12px;
+  min-width: 0;
+}
+.hist-stat-row > div::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.5;
+}
+.hist-stat-row .n {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  line-height: 1;
+}
+.hist-stat-row b {
+  font-size: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.3px;
+  color: var(--text-strong);
+}
+.hist-stat-row i {
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 600;
+  color: var(--muted);
+}
+.hist-stat-row span {
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* ── 热力图（GitHub 贡献图；绿色档位沿用原项目 --wh-hm-*） ── */
+.hist-heat {
+  position: relative;
+  /* 浅色档位（GitHub light） */
+  --hist-hm-0: rgba(30, 50, 110, 0.07);
+  --hist-hm-1: #9be9a8;
+  --hist-hm-2: #40c463;
+  --hist-hm-3: #30a14e;
+  --hist-hm-4: #216e39;
+  --hist-hcell-border: rgba(27, 31, 35, 0.12);
+}
+html.dark .hist-heat {
+  /* 深色档位（GitHub dark） */
+  --hist-hm-0: rgba(255, 255, 255, 0.07);
+  --hist-hm-1: #0e4429;
+  --hist-hm-2: #006d32;
+  --hist-hm-3: #26a641;
+  --hist-hm-4: #39d353;
+  --hist-hcell-border: rgba(255, 255, 255, 0.14);
+}
+.hist-heat-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.hist-heat-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+.hist-heat-range {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.hist-heat-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  flex: none;
+  margin-top: 4px;
+}
+.hist-heat-legend .hist-hcell {
+  pointer-events: none;
+}
+.hist-heat-body {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  min-height: 132px;
+  position: relative;
+}
+.hist-heat-days {
+  display: grid;
+  grid-template-rows: repeat(7, 12px);
+  gap: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  flex: none;
+  margin-top: 22px;
+}
+.hist-heat-days span {
+  line-height: 12px;
+  height: 12px;
+  visibility: hidden;
+}
+.hist-heat-days span.show {
+  visibility: visible;
+}
+.hist-heat-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex: 1;
+  padding-bottom: 6px;
+  display: flex;
+}
+.hist-heat-inner {
+  display: flex;
+  flex-direction: column;
+  margin: 0 auto;
+  min-width: max-content;
+}
+.hist-heat-months {
+  position: relative;
+  height: 16px;
+  margin-bottom: 6px;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.hist-heat-months span {
+  position: absolute;
+  top: 0;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  padding-right: 8px;
+}
+.hist-heat-cols {
+  display: flex;
+  gap: 4px;
+}
+.hist-heat-week {
+  display: grid;
+  grid-template-rows: repeat(7, 12px);
+  gap: 4px;
+}
+.hist-hcell {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--hist-hm-0);
+  box-shadow: inset 0 0 0 1px var(--hist-hcell-border);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.hist-hcell.l1 { background: var(--hist-hm-1); }
+.hist-hcell.l2 { background: var(--hist-hm-2); }
+.hist-hcell.l3 { background: var(--hist-hm-3); }
+.hist-hcell.l4 { background: var(--hist-hm-4); }
+.hist-hcell.future {
+  opacity: 0.5;
+  cursor: default;
+}
+.hist-hcell:hover {
+  transform: scale(1.28);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.45);
+  z-index: 5;
+}
+.hist-hcell.future:hover {
+  transform: none;
+  box-shadow: inset 0 0 0 1px var(--hist-hcell-border);
+}
+.hist-heat-tip {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  background: var(--toast-bg);
+  border: 1px solid var(--line);
+  padding: 6px 11px;
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--text-strong);
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 20;
+  box-shadow: var(--shadow-card);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.hist-heat-tip.show {
+  opacity: 1;
+}
+
+/* ── 影视清单：已看完 / 在观看 双栏（原项目 wh-split） ── */
+.hist-section {
+  margin-top: 22px;
+}
+.hist-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.hist-section-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+.hist-section-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+.hist-split {
+  display: flex;
+  gap: 26px;
+}
+.hist-col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+@media (max-width: 980px) {
+  .hist-split {
+    flex-direction: column;
+  }
+}
+.hist-col-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding-left: 4px;
+}
+.hist-col-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-strong);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.hist-col-title::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+  flex: none;
+}
+.hist-col.done .hist-col-title::before {
+  background: #34c759;
+}
+.hist-col.watching .hist-col-title::before {
+  background: #ff9f0a;
+}
+.hist-col-count {
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--hover);
+  border: 1px solid var(--line);
+  padding: 2px 10px;
+  border-radius: 11px;
+}
+.hist-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 16px 14px;
+  align-content: start;
+}
+.hist-col-empty {
+  grid-column: 1 / -1;
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  background: var(--hover);
+  border: 1px dashed var(--line-strong);
+  border-radius: 14px;
+}
+
+/* ── 海报卡（照抄原项目 .wh-card：2:3 + 渐隐 + 名称/副行 + 进度条 + 角标） ── */
+.hist-card {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border-radius: 14px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--ph-bg);
+  border: 1px solid var(--line);
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.22s, border-color 0.22s;
+}
+.hist-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(108, 155, 255, 0.55);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45);
+}
+.hist-art {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+}
+.hist-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 6%, rgba(0, 0, 0, 0) 50%);
+}
+.hist-meta {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 10px;
+}
+.hist-name {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hist-sub {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.75);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hist-pbar {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 0;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.22);
+}
+.hist-pfill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.hist-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+.hist-badge.webrs {
+  background: rgba(10, 132, 255, 0.28);
+  border-color: rgba(10, 132, 255, 0.6);
+  color: #7fd0ff;
+}
+
+/* ── 骨架屏（照抄原项目 .wh-skel shimmer） ── */
+.hist-skel-stats {
+  height: 148px;
+  border-radius: 18px;
+  background: var(--ph-bg);
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+.hist-skel {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--ph-bg);
+}
+.hist-skel-stats::after,
+.hist-skel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, var(--skel-shine) 50%, transparent 100%);
+  transform: translateX(-100%);
+  animation: histShimmer 1.2s infinite;
+}
+@keyframes histShimmer {
+  100% { transform: translateX(100%); }
+}
+
+/* ── 空态 ── */
+.hist-empty {
+  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+  background: var(--hover);
+  border: 1px dashed var(--line-strong);
+  border-radius: 16px;
+  margin-top: 6px;
+}
+.hist-empty-t {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.hist-empty-s {
+  font-size: 12.5px;
+}
+
+/* ── 页面内轻提示（在线源条目点击等） ── */
+.hist-toast {
+  position: fixed;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 70;
+  max-width: 72vw;
+  background: var(--toast-bg);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 11px 20px;
+  font-size: 13px;
+  color: var(--text-strong);
+  box-shadow: var(--shadow-card);
+  pointer-events: none;
+  animation: histToastIn 0.25s ease both;
+}
+@keyframes histToastIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* ── 少动效兜底（与 29-transitions.css 同口径） ── */
+@media (prefers-reduced-motion: reduce) {
+  .hist-card,
+  .hist-hcell,
+  .hist-heat-tip {
+    transition: none;
+  }
+  .hist-card:hover {
+    transform: none;
+  }
+  .hist-hcell:hover {
+    transform: none;
+  }
+  .hist-sync-spin,
+  .hist-skel-stats::after,
+  .hist-skel::after,
+  .hist-toast {
+    animation: none;
+  }
+}

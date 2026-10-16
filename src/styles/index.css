@@ -38,3 +38,5 @@
 @import "./35-disclaimer.css";
 /* [lc-1610] 顶栏品牌字标：内嵌「方正少儿简体」+ 多色渐变 */
 @import "./36-logo.css";
+/* [lc-1615] 观影记录页（飞牛 play/list ∪ 本机播放历史） */
+@import "./37-history.css";

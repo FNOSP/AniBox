@@ -1,5 +1,5 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { IcoFolder, IcoGrid, IcoHome, IcoLive, IcoMovie, IcoStar, IcoTv } from "../../icons";
 import { Clock as IcoClockL, MessageSquare as IcoMsgL, Settings as IcoGearL } from "lucide-react";
@@ -26,6 +26,7 @@ export function Sidebar({
   onHome,
   onOpenSettings,
   onOpenFeedback,
+  onOpenHistory,
 }: {
   activeGuid: string | null;
   collapsed?: boolean;
@@ -40,9 +41,9 @@ export function Sidebar({
   onOpenSettings: () => void;
   /** [lc-1599] 打开反馈面板（工单制：提交 / 我的工单 / 会话） */
   onOpenFeedback: () => void;
+  /** [lc-1615] 打开观影记录页（原「阶段3接入」toast 占位改真页面） */
+  onOpenHistory: () => void;
 }) {
-  const [toast, setToast] = useState("");
-  const toastTimer = useRef<number | null>(null);
   // 快捷操作卡折叠态：持久化键与主仓库 embyWall.ts 相同（'1'=收起成图标行，缺省=展开）
   const [cardFold, setCardFold] = useState(
     () => localStorage.getItem("fntvSidebarActions.collapsed") === "1",
@@ -58,11 +59,6 @@ export function Sidebar({
     } catch {
       /* ignore */
     }
-  }
-  function showToast(msg: string) {
-    setToast(msg);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(""), 2200);
   }
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
@@ -103,7 +99,7 @@ export function Sidebar({
             <button type="button" className="sa-ico" title="设置" onClick={onOpenSettings}>
               <IcoGearL size={15} strokeWidth={1.8} />
             </button>
-            <button type="button" className="sa-ico" title="观影记录" onClick={() => showToast("观影记录页在阶段3接入")}>
+            <button type="button" className="sa-ico" title="观影记录" onClick={onOpenHistory}>
               <IcoClockL size={15} strokeWidth={1.8} />
             </button>
             <button type="button" className="sa-ico" title="反馈" onClick={onOpenFeedback}>
@@ -122,7 +118,7 @@ export function Sidebar({
             <button type="button" className="sa-btn" onClick={onOpenSettings}>
               <IcoGearL size={14} strokeWidth={1.8} /> 设置
             </button>
-            <button type="button" className="sa-btn" onClick={() => showToast("观影记录页在阶段3接入")}>
+            <button type="button" className="sa-btn" onClick={onOpenHistory}>
               <IcoClockL size={14} strokeWidth={1.8} /> 观影记录
             </button>
             <button type="button" className="sa-btn" onClick={onOpenFeedback}>
@@ -157,7 +153,6 @@ export function Sidebar({
           </>
         )}
       </div>
-      {toast && <div className="side-toast">{toast}</div>}
     </aside>
   );
 }

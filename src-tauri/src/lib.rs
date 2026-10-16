@@ -11,6 +11,8 @@ mod disk_cache;
 // [lc-1599] 应用内反馈（工单制）：提交/列表/会话/回复（脱敏与本地索引见 feedback.rs 头部）
 mod feedback;
 mod fnapi;
+// [lc-1615] 本地播放历史（观影记录页数据源之一）：history.json 落盘 + 与飞牛 play/list 合并
+mod history;
 mod libmpv;
 mod imgproto;
 mod migrate;
@@ -252,7 +254,7 @@ async fn get_items(
         .await
 }
 
-/// 继续观看：GET /v/api/v1/play/list（camelCase 字段）
+/// 继续观看：GET /v/api/v1/play/list（实测为 snake_case 字段，前端读取时双格式兼容）
 #[tauri::command]
 async fn get_continue_watching(state: State<'_, AppState>) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
@@ -260,6 +262,40 @@ async fn get_continue_watching(state: State<'_, AppState>) -> Result<Value, Stri
     client
         .call(&cfg.server, "/v/api/v1/play/list", "GET", &cfg.token, None)
         .await
+}
+
+/// [lc-1615] 观影记录：飞牛 play/list ∪ 本机播放历史（history.rs）。
+/// 合并规则见 history::merge（同 guid 取更新的那条；飞牛条目无时间戳时以本机时间为准）；
+/// 剧集条目再做「季→剧 guid + 竖版海报」富化（缓存优先、并发受限）。
+/// 飞牛拉取失败不整体报错：本机记录照常返回，前端据 fnosOk/fnosError 给出提示。
+#[tauri::command]
+async fn get_watch_history(app: AppHandle, state: State<'_, AppState>) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    let local = history::load(&app);
+    let mut fnos: Option<Value> = None;
+    let mut fnos_error = String::new();
+    if cfg.token.is_empty() {
+        fnos_error = "未登录".into();
+    } else {
+        let client = fnapi::new_client();
+        match client
+            .call(&cfg.server, "/v/api/v1/play/list", "GET", &cfg.token, None)
+            .await
+        {
+            Ok(v) => fnos = Some(v),
+            Err(e) => {
+                libmpv::trace(&format!("[lc-1615] play/list 拉取失败（仅返回本机记录）: {e}"));
+                fnos_error = e;
+            }
+        }
+    }
+    let mut items = history::merge(fnos.as_ref(), local);
+    history::enrich_series(&mut items, &cfg.server, &cfg.token).await;
+    Ok(json!({
+        "items": items,
+        "fnosOk": fnos.is_some(),
+        "fnosError": fnos_error,
+    }))
 }
 
 /// 季列表：GET /v/api/v1/season/list/{剧guid}
@@ -451,6 +487,32 @@ async fn relogin(app: &AppHandle, cfg: &Config) -> Result<Config, String> {
 }
 
 
+/// [lc-1615] 播放解析结果。原先是 `(guid, type, title)` 三元组；观影记录要在「成功起播」
+/// 那一刻落盘海报/锚点 id/季集号等元数据，而 play/info 的响应本就包含它们 —— 就地扩展，
+/// 免得起播后再补一次网络请求。
+struct PlayResolution {
+    /// 拉流用 guid（Episode/Movie）
+    play_guid: String,
+    /// 类型（Movie / Episode / ...）
+    kind: String,
+    /// 展示标题（`剧名 - SxxEyy: 集名` 形态，供 mpv force-media-title）
+    media_title: String,
+    /// 剧名（电影为空）
+    tv_title: String,
+    /// 集名（item.title；电影 = 片名）
+    ep_title: String,
+    /// 海报（NAS 相对路径；可能为空）
+    poster: String,
+    /// trim_id 锚点解析出的 TMDB / Bangumi id（可能为空）
+    tmdb_id: String,
+    bgm_id: String,
+    /// 季号 / 集号（0 = 无）
+    season: i64,
+    episode: i64,
+    /// 所属季 guid（剧集 = play/info 的 parent_guid；电影为空）
+    parent_guid: String,
+}
+
 /// [lc-105] 解析「真正要拉流的 guid」：`POST /v/api/v1/play/info {item_guid}` → 取回 `data.guid`
 /// （Episode/Movie）。**mpv 路径与页面内 `<video>` 路径共用这一份**（lc-102/103 实测结论：
 /// 代理只认具体媒体的 guid，给容器 guid 会 500）。会话失效时会用保存的密码静默重登一次。
@@ -459,7 +521,7 @@ async fn resolve_play_guid(
     state: &AppState,
     cfg: &mut Config,
     guid: &str,
-) -> Result<(String, String, String), String> {
+) -> Result<PlayResolution, String> {
     let client = fnapi::new_client();
     let body = || json!({ "item_guid": guid });
     let mut probe = client
@@ -513,14 +575,15 @@ async fn resolve_play_guid(
             // uosc_danmaku 的 bili_fast_parse 剥掉 "S0E0" 后只剩 "番名 - : 集名"）。
             // 主仓库 getTitle 靠 tvTitle 是否存在分支；这里再按「季集号是否有效」细一档，
             // 三种形态：完整 S/E、只有番名+集名、只有集名。
-            let media_title = match tv_title {
+            // [lc-1615] 用 as_deref 匹配：tv_title 之后还要进历史记录，不能被 match 移走。
+            let media_title = match tv_title.as_deref() {
                 Some(tv) if !tv.is_empty() && season > 0 && episode > 0 => {
                     format!("{tv} - S{season}E{episode}: {ep_title}")
                 }
                 Some(tv) if !tv.is_empty() && !ep_title.is_empty() => {
                     format!("{tv} - {ep_title}")
                 }
-                Some(tv) if !tv.is_empty() => tv,
+                Some(tv) if !tv.is_empty() => tv.to_string(),
                 _ => ep_title.clone(),
             };
             // [lc-1561] 自建源的「系列级匹配记忆」用季 guid 做键（同一部剧的各集共用，
@@ -548,7 +611,22 @@ async fn resolve_play_guid(
                     "「{t}」没有可播放的具体媒体 —— 请在选集里点具体一集再播放"
                 ));
             }
-            Ok((g, t.to_string(), media_title))
+            // [lc-1615] 历史记录元数据（海报/锚点 id）就地取：play/info 响应里现成，不用二次请求。
+            let poster = history::pick_img(it.get("posters"));
+            let (tmdb_id, bgm_id) = history::parse_trim_ids(&get_s("trim_id").unwrap_or_default());
+            Ok(PlayResolution {
+                play_guid: g,
+                kind: t.to_string(),
+                media_title,
+                tv_title: tv_title.unwrap_or_default(),
+                ep_title,
+                poster,
+                tmdb_id,
+                bgm_id,
+                season,
+                episode,
+                parent_guid,
+            })
         }
         Err(e) => {
             libmpv::trace(&format!("[play/info] 失败: {e}"));
@@ -573,11 +651,11 @@ async fn player_source(
         return Err("未登录".into());
     }
     proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
-    let (play_guid, t, _title) = resolve_play_guid(&app, &state, &mut cfg, &guid).await?;
+    let res = resolve_play_guid(&app, &state, &mut cfg, &guid).await?;
     Ok(json!({
-        "url": proxy::play_url(&cfg, &play_guid),
-        "guid": play_guid,
-        "type": t,
+        "url": proxy::play_url(&cfg, &res.play_guid),
+        "guid": res.play_guid,
+        "type": res.kind,
     }))
 }
 
@@ -620,13 +698,14 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     // 现在回归主仓库形态：
     //   解析 guid（飞牛 API）→ 写单条目 M3U8（#EXTINF 标题 → media-title → 弹幕链）
     //   → mpv 命令行直接带该 M3U8 ⇒ 窗口出现即开始加载，无 idle 空窗。
-    let (play_guid, _t, media_title) = resolve_play_guid(&app, &state, &mut cfg, &guid).await?;
+    let res = resolve_play_guid(&app, &state, &mut cfg, &guid).await?;
     stage("guid-resolved");
     proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
     stage("proxy-ready");
-    let direct_url = proxy::play_url(&cfg, &play_guid);
+    let direct_url = proxy::play_url(&cfg, &res.play_guid);
 
-    let display_title: String = media_title
+    let display_title: String = res
+        .media_title
         .replace(['\u{300E}', '\u{300F}', '\u{300C}', '\u{300D}', '\u{3010}', '\u{3011}', '\u{3014}', '\u{3015}', '\u{300A}', '\u{300B}', '\u{3008}', '\u{3009}', '\u{201C}', '\u{201D}', '\u{0027}', '\u{2019}'], "")
         .trim()
         .to_string();
@@ -685,6 +764,33 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
         session = s;
     }
     stage("mpv-launched(with-url)");
+
+    // [lc-1615] 落一笔本机播放历史（观影记录页数据源）：走到这里 = loadfile 已发出
+    // （失败路径均已提前 return）。只存原始字段；「季→剧 guid / 竖版海报」的富化统一放在
+    // get_watch_history 里做（缓存优先），不让起播路径变重。
+    history::record(
+        &app,
+        history::WatchRecord {
+            // 去重键用**入口 guid**（前端点击/回放直接可用的那个）；play/list 的 guid 同为可播条目 guid
+            guid: guid.clone(),
+            title: if !res.tv_title.is_empty() {
+                res.tv_title.clone()
+            } else if !res.ep_title.is_empty() {
+                res.ep_title.clone()
+            } else {
+                res.media_title.clone()
+            },
+            episode: history::episode_label(res.season, res.episode),
+            poster: res.poster.clone(),
+            tmdb_id: res.tmdb_id.clone(),
+            bgm_id: res.bgm_id.clone(),
+            media_type: res.kind.clone(),
+            played_at: history::now_ms(),
+            source: "fnos".into(),
+            source_name: String::new(),
+            parent_guid: res.parent_guid.clone(),
+        },
+    );
 
     // ③ [lc-1557] probe 只在后台跑，**不挡起播**。
     //
@@ -1504,6 +1610,8 @@ pub fn run() {
             get_items_global,
             get_items,
             get_continue_watching,
+            // [lc-1615] 观影记录：飞牛 play/list ∪ 本机播放历史（合并/富化见 history.rs）
+            get_watch_history,
             get_seasons,
             get_episodes,
             get_item_detail,

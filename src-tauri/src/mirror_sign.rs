@@ -129,7 +129,7 @@ pub fn auth_error_hint(body_text: &str, secret_env: &str) -> String {
             "镜像拒绝签名（bad_signature）：检查 {secret_env} 是否为镜像 .secret.local 的完整值（勿加引号/换行）。"
         ),
         "stale_signature" => {
-            "镜像时间窗校验失败（stale_signature）：检查系统时间，或升级 Fntv-Plus（密钥已轮换）。"
+            "镜像时间窗校验失败（stale_signature）：检查系统时间，或升级 AniBox（密钥已轮换）。"
                 .to_string()
         }
         "bad_app" => "镜像拒绝应用标识（bad_app）：x-fntv-app 必须是 fntv-plus。".to_string(),

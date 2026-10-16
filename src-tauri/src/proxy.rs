@@ -19,7 +19,7 @@ pub async fn ensure(
     }
     if !std::path::Path::new(proxy_path).exists() {
         return Err(format!(
-            "Go 代理不存在: {}（可在登录页高级设置里改为 Fntv-Plus 安装目录下的 third_party/proxy/proxy.exe）",
+            "Go 代理不存在: {}（可在登录页高级设置里改为安装目录下的 third_party/proxy/proxy.exe）",
             proxy_path
         ));
     }

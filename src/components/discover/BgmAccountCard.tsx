@@ -42,7 +42,21 @@ export function BgmAccountCard({
   // [lc-1528] 同步状态图联动高亮：null = 无；数字 = BGAC_TYPES 下标
   const [hl, setHl] = useState<number | null>(null);
   // [lc-1584] 折叠态：整卡收成一条横栏（BGM 登录态 + 总追番信息）
-  const [collapsed, setCollapsed] = useState(false);
+  // [lc-1626] 折叠状态持久化：重启 / 切页后保持上次的展开或收起
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("anibox.bgmac.collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("anibox.bgmac.collapsed", collapsed ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [collapsed]);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);

@@ -21,8 +21,9 @@
 
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::HashSet;
-use std::sync::OnceLock;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use url::Url;
@@ -69,6 +70,55 @@ pub struct Rule {
     pub search_api_config: Option<ApiSearchConfig>,
     #[serde(rename = "chapterApiConfig")]
     pub chapter_api_config: Option<ApiChapterConfig>,
+    /// [lc-1606] 反爬验证配置（对齐 Kazumi AntiCrawlerConfig）。
+    #[serde(rename = "antiCrawlerConfig")]
+    pub anti_crawler_config: AntiCrawlerConfig,
+}
+
+/// [lc-1606] 反爬验证配置（逐字段对齐 Kazumi `lib/plugins/anti_crawler_config.dart`）。
+///
+/// 仅当 XPath 搜索响应被判为「验证挑战页」时才启用：用隐藏 WebView 加载搜索页，
+/// 按 `captchaType` 完成验证并保存 cookie + UA，随后自动重试检索。三型：
+/// - 1 imageCaptcha：抓验证码图 → 前端弹窗输入 → 回填提交（`captchaImage`/`captchaInput`/`captchaButton`）；
+/// - 2 autoClickButton：定位 `captchaButton` 自动点击（如「我不是机器人」），无需用户交互；
+/// - 3 customJavaScript：执行规则自带的 `captchaScript`（配 `window.KazumiCaptcha` 桥）。
+///
+/// `captchaDetectType`：1 xpath / 2 text / 3 regex，配合 `captchaDetectValue` 判定挑战页。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct AntiCrawlerConfig {
+    pub enabled: bool,
+    #[serde(rename = "captchaType")]
+    pub captcha_type: u32,
+    #[serde(rename = "captchaImage")]
+    pub captcha_image: String,
+    #[serde(rename = "captchaInput")]
+    pub captcha_input: String,
+    #[serde(rename = "captchaButton")]
+    pub captcha_button: String,
+    #[serde(rename = "captchaDetectType")]
+    pub captcha_detect_type: u32,
+    #[serde(rename = "captchaDetectValue")]
+    pub captcha_detect_value: String,
+    #[serde(rename = "captchaScript")]
+    pub captcha_script: String,
+}
+
+impl Default for AntiCrawlerConfig {
+    fn default() -> Self {
+        // 缺省对齐 Kazumi 的 fromJson 兜底：captchaType=1(imageCaptcha)、captchaDetectType=1(xpath)。
+        // 容器级 #[serde(default)] 会用这里的值填充 JSON 里缺失的字段。
+        Self {
+            enabled: false,
+            captcha_type: 1,
+            captcha_image: String::new(),
+            captcha_input: String::new(),
+            captcha_button: String::new(),
+            captcha_detect_type: 1,
+            captcha_detect_value: String::new(),
+            captcha_script: String::new(),
+        }
+    }
 }
 
 /// [lc-1501] API 搜索配置（如 mutefun：`/index.php/ajax/suggest`、xfdmnext：PostgREST RPC）。
@@ -309,23 +359,174 @@ fn http() -> reqwest::Client {
         .expect("reqwest client build")
 }
 
-async fn fetch_text(url: &str, ua: &str, referer: &str) -> Result<String, String> {
+// ───────────────────────── [lc-1606] 每规则 cookie 收割 / 复用 ─────────────────────────
+
+/// 某条规则验证成功后收获的 cookie + UA（对齐 Kazumi `plugin_cookie_manager.dart`）。
+/// **仅内存**：进程重启即失效，需重新验证（与 Kazumi 一致，避免把站点的 clearance
+/// cookie 落到磁盘上长期留存）。
+#[derive(Debug, Clone, Default)]
+struct RuleCookie {
+    cookies: Vec<(String, String)>,
+    user_agent: String,
+}
+
+static COOKIE_STORE: OnceLock<std::sync::Mutex<HashMap<String, RuleCookie>>> = OnceLock::new();
+
+fn cookie_store() -> &'static std::sync::Mutex<HashMap<String, RuleCookie>> {
+    COOKIE_STORE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// 存 cookie + UA（按 name 覆盖同名，保留其它）。UA 非空才更新。
+fn save_cookies(rule_name: &str, cookies: Vec<(String, String)>, user_agent: Option<String>) {
+    let Ok(mut g) = cookie_store().lock() else { return };
+    let entry = g.entry(rule_name.to_string()).or_default();
+    if let Some(ua) = user_agent {
+        let ua = ua.trim();
+        if !ua.is_empty() {
+            entry.user_agent = ua.to_string();
+        }
+    }
+    for (k, v) in cookies {
+        if k.is_empty() {
+            continue;
+        }
+        match entry.cookies.iter_mut().find(|(n, _)| n == &k) {
+            Some(slot) => slot.1 = v,
+            None => entry.cookies.push((k, v)),
+        }
+    }
+}
+
+/// 拼 `name=value; name2=value2` 的 Cookie 头；无则空串。
+fn cookie_header_for(rule_name: &str) -> String {
+    cookie_store()
+        .lock()
+        .ok()
+        .and_then(|g| {
+            g.get(rule_name).map(|c| {
+                c.cookies
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            })
+        })
+        .unwrap_or_default()
+}
+
+fn verified_ua(rule_name: &str) -> Option<String> {
+    cookie_store().lock().ok().and_then(|g| {
+        g.get(rule_name).and_then(|c| {
+            if c.user_agent.is_empty() {
+                None
+            } else {
+                Some(c.user_agent.clone())
+            }
+        })
+    })
+}
+
+/// 有效 UA：**验证过的 UA 覆盖规则 UA**（clearance cookie 与签发它的 UA 绑定，
+/// 换一个 UA 会让站点重新发挑战页）。无验证记录时退回规则 UA。
+fn effective_ua(rule: &Rule) -> String {
+    if !cookie_header_for(&rule.name).is_empty() {
+        if let Some(ua) = verified_ua(&rule.name) {
+            return ua;
+        }
+    }
+    rule_ua(rule)
+}
+
+/// 一次 HTTP 取回的原始响应：状态码 + 正文 + `cf-mitigated: challenge` 标记。
+/// 非 2xx 也**保留 body**（对齐 Kazumi `_isCaptchaChallengeResponse`：挑战页常以
+/// 403/429/503 返回，需要正文才能跑检测）。
+struct HttpResp {
+    status: reqwest::StatusCode,
+    body: String,
+    cf_mitigated: bool,
+}
+
+async fn fetch_text(url: &str, ua: &str, referer: &str, rule_name: &str) -> Result<HttpResp, String> {
     let client = http();
     let mut req = client.get(url).header("user-agent", ua);
     if !referer.is_empty() {
         req = req.header("referer", referer);
+    }
+    let cookie = cookie_header_for(rule_name);
+    if !cookie.is_empty() {
+        req = req.header("cookie", cookie);
     }
     let resp = req
         .send()
         .await
         .map_err(|e| format!("请求失败 {url}: {e}"))?;
     let status = resp.status();
-    if !status.is_success() {
-        return Err(format!("请求返回 {status}: {url}"));
-    }
+    // Cloudflare 对 managed challenge 响应打此头（正文可能为空/压缩，头最可靠）
+    let cf_mitigated = resp
+        .headers()
+        .get("cf-mitigated")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("challenge"))
+        .unwrap_or(false);
     // 编码：这些站点多是 UTF-8，GBK 站点先用 lossless 兜底（latin1 丢字）——
     // reqwest 的 text() 默认按 header/UTF-8 解，乱码页面的搜索基本也匹配不上，先不管。
-    resp.text().await.map_err(|e| format!("读响应失败: {e}"))
+    let body = resp.text().await.map_err(|e| format!("读响应失败: {e}"))?;
+    Ok(HttpResp {
+        status,
+        body,
+        cf_mitigated,
+    })
+}
+
+/// [lc-1606] 判定一次响应是否为「反爬验证挑战页」（对齐 Kazumi
+/// `xpath_rule_strategy.dart:detectsCaptchaChallenge` + `rule_engine.dart:_isCaptchaChallengeResponse`）：
+/// 1) `cf-mitigated: challenge` 头直接判真；
+/// 2) 配了 `captchaDetectValue` 时按 captchaDetectType：1 xpath / 2 text(包含) / 3 regex；
+/// 3) 未配 detectValue 时回退：看 captchaImage / captchaButton 选择器是否命中。
+/// 未启用反爬（`enabled=false`）一律为假。
+fn detects_captcha_challenge(resp: &HttpResp, cfg: &AntiCrawlerConfig) -> bool {
+    if !cfg.enabled {
+        return false;
+    }
+    if resp.cf_mitigated {
+        return true;
+    }
+    let raw = resp.body.as_str();
+    if raw.trim().is_empty() {
+        return false;
+    }
+    let detect = cfg.captcha_detect_value.trim();
+    if !detect.is_empty() {
+        match cfg.captcha_detect_type {
+            2 => return raw.contains(detect),
+            3 => {
+                if let Ok(re) = regex::RegexBuilder::new(detect)
+                    .case_insensitive(true)
+                    .dot_matches_new_line(true)
+                    .build()
+                {
+                    return re.is_match(raw);
+                }
+                return false;
+            }
+            // 1 或未知 → xpath
+            _ => return xpath_hits(raw, detect),
+        }
+    }
+    // 回退：没有 detectValue 时看验证码图/按钮选择器是否命中
+    for sel in [cfg.captcha_image.trim(), cfg.captcha_button.trim()] {
+        if !sel.is_empty() && xpath_hits(raw, sel) {
+            return true;
+        }
+    }
+    false
+}
+
+/// 用本项目的手写 XPath 子集在 HTML 上求值，命中（非空节点）即真；解析失败视为未命中。
+fn xpath_hits(html: &str, expr: &str) -> bool {
+    let doc = scraper::Html::parse_document(html);
+    let root = vec![doc.tree.root().id()];
+    eval_nodes(&doc, &root, expr).map(|v| !v.is_empty()).unwrap_or(false)
 }
 
 /// 相对 URL 拼接（对齐 Kazumi normalizeEpisodeUrl 的常见形态）：
@@ -815,7 +1016,7 @@ pub async fn webrs_rules(app: AppHandle) -> Result<Vec<Value>, String> {
 /// [lc-1501] api 模板请求执行器：url / query / headers / body 字符串值里的占位符
 /// 统一替换；GET 把 query 追加进 URL，POST 按 bodyType 走 form / JSON。
 async fn api_request(rule: &Rule, req: &ApiRequest, ph: &[(&str, &str)]) -> Result<String, String> {
-    let ua = rule_ua(rule);
+    let ua = effective_ua(rule);
     let referer = rule_referer(rule);
     let mut url = req.url.clone();
     for (p, r) in ph {
@@ -836,6 +1037,11 @@ async fn api_request(rule: &Rule, req: &ApiRequest, ph: &[(&str, &str)]) -> Resu
         client.get(u.as_str())
     };
     builder = builder.header("user-agent", &ua).header("referer", &referer);
+    // [lc-1606] 带上该规则验证后收获的 cookie（若已通过反爬验证）
+    let cookie = cookie_header_for(&rule.name);
+    if !cookie.is_empty() {
+        builder = builder.header("cookie", cookie);
+    }
     for (k, v) in &req.headers {
         if let Ok(hv) = reqwest::header::HeaderValue::from_str(v) {
             builder = builder.header(k.as_str(), hv);
@@ -858,10 +1064,29 @@ async fn api_request(rule: &Rule, req: &ApiRequest, ph: &[(&str, &str)]) -> Resu
     Ok(text)
 }
 
+/// [lc-1606] 检索错误：区分「需要人机验证」与普通错误，供上层触发/回退验证流程。
+#[derive(Debug)]
+enum SearchError {
+    Captcha,
+    Other(String),
+}
+
+impl From<String> for SearchError {
+    fn from(s: String) -> Self {
+        SearchError::Other(s)
+    }
+}
+
+impl From<&str> for SearchError {
+    fn from(s: &str) -> Self {
+        SearchError::Other(s.to_string())
+    }
+}
+
 /// [lc-1501] 规则搜索核心（单源）：返回 [{name, src}]。api 模式走 JSONPath 子集，
 /// xpath 模式走 HTML 解析。webrs_search / webrs_search_multi 共用。
-async fn rule_search(rule: &Rule, keyword: &str) -> Result<Vec<(String, String)>, String> {
-    let ua = rule_ua(rule);
+async fn rule_search(rule: &Rule, keyword: &str) -> Result<Vec<(String, String)>, SearchError> {
+    let ua = effective_ua(rule);
     let referer = rule_referer(rule);
     let encoded = urlencoding::encode(keyword).to_string();
 
@@ -889,8 +1114,20 @@ async fn rule_search(rule: &Rule, keyword: &str) -> Result<Vec<(String, String)>
             return Err("规则缺少 searchURL/searchList".into());
         }
         let url = rule.search_url.replace("@keyword", &encoded);
-        let html = fetch_text(&url, &ua, &referer).await?;
-        let doc = Html::parse_document(&html);
+        let resp = fetch_text(&url, &ua, &referer, &rule.name).await?;
+        if !resp.status.is_success() {
+            // [lc-1606] 非 2xx 也要看正文：命中反爬挑战 → 上报「需要验证」（对齐 Kazumi）
+            if detects_captcha_challenge(&resp, &rule.anti_crawler_config) {
+                return Err(SearchError::Captcha);
+            }
+            return Err(SearchError::Other(format!("请求返回 {}: {url}", resp.status)));
+        }
+        // [lc-1606] 实测部分站点（如 dalvdm）挑战页也以 HTTP 200 返回 —— 对启用了反爬的
+        // 规则，成功响应同样跑一次检测（detectValue/选择器是验证码专用，误判风险低）。
+        if detects_captcha_challenge(&resp, &rule.anti_crawler_config) {
+            return Err(SearchError::Captcha);
+        }
+        let doc = Html::parse_document(&resp.body);
         let root = vec![doc.tree.root().id()];
         let list = eval_nodes(&doc, &root, &rule.search_list)?;
         let mut out = Vec::new();
@@ -926,7 +1163,13 @@ pub async fn webrs_search(app: AppHandle, rule_name: String, keyword: String) ->
     if keyword.is_empty() {
         return Err("搜索词为空".into());
     }
-    let items = rule_search(&rule, &keyword).await?;
+    let items = match rule_search(&rule, &keyword).await {
+        Ok(v) => v,
+        Err(SearchError::Captcha) => {
+            return Err("该源需要人机验证，请在前端完成验证后重试".into())
+        }
+        Err(SearchError::Other(e)) => return Err(e),
+    };
     if items.is_empty() {
         return Err("没有搜到结果，换个源或换关键词试试".into());
     }
@@ -978,7 +1221,9 @@ pub async fn webrs_search_multi(
                         .map(|(n, u)| json!({ "name": n, "url": u }))
                         .collect::<Vec<_>>()
                 }),
-                Err(e) => json!({ "name": name, "status": "error", "error": e, "items": [] }),
+                // [lc-1606] 需要人机验证：单独 status，前端据此弹出验证流程
+                Err(SearchError::Captcha) => json!({ "name": name, "status": "captcha", "error": "需要人机验证", "items": [] }),
+                Err(SearchError::Other(e)) => json!({ "name": name, "status": "error", "error": e, "items": [] }),
             }
         });
     }
@@ -1190,11 +1435,15 @@ pub async fn webrs_chapters(app: AppHandle, rule_name: String, url: String) -> R
     if rule.chapter_roads.is_empty() || rule.chapter_result.is_empty() {
         return Err("规则缺少 chapterRoads/chapterResult".into());
     }
-    let ua = rule_ua(&rule);
+    let ua = effective_ua(&rule);
     let referer = rule_referer(&rule);
     let page_url = join_url(&rule.base_url, &url).ok_or("详情页 URL 无效")?;
-    let html = fetch_text(&page_url, &ua, &referer).await?;
-    let doc = Html::parse_document(&html);
+    // [lc-1606] 带上验证 cookie；非 2xx 直接报错（选集页一般不落挑战页）
+    let resp = fetch_text(&page_url, &ua, &referer, &rule.name).await?;
+    if !resp.status.is_success() {
+        return Err(format!("请求返回 {}: {page_url}", resp.status));
+    }
+    let doc = Html::parse_document(&resp.body);
     let root = vec![doc.tree.root().id()];
     let road_nodes = eval_nodes(&doc, &root, &rule.chapter_roads)?;
     if road_nodes.is_empty() {
@@ -1294,27 +1543,77 @@ pub async fn webrs_resolve(
 ) -> Result<Value, String> {
     let rules = load_rules(&app).await?;
     let rule = find_rule(&rules, &rule_name)?.clone();
-    let ua = rule_ua(&rule);
+    let ua = effective_ua(&rule);
     let referer = rule_referer(&rule);
     let page_url = join_url(&rule.base_url, &url).ok_or("播放页 URL 无效")?;
+    // [lc-1606] useLegacyParser：该站的播放器藏在 iframe 里，外层页拿不到直链
+    let legacy = rule.use_legacy_parser;
 
     crate::libmpv::trace(&format!("[webrs] resolve: {page_url}"));
 
     // ── 1) HTTP 直解 ──
-    match fetch_text(&page_url, &ua, &referer).await {
-        Ok(html) => {
-            if let Some(hit) = extract_from_html(&html, &page_url) {
+    match fetch_text(&page_url, &ua, &referer, &rule.name).await {
+        Ok(resp) if resp.status.is_success() => {
+            if let Some(hit) = extract_from_html(&resp.body, &page_url) {
                 crate::libmpv::trace(&format!("[webrs] HTTP 命中: {hit}"));
                 return Ok(json!({ "url": hit, "referer": referer, "ua": ua, "via": "http" }));
             }
+            // [lc-1606] legacy：外层页没有直链时，取第一个 iframe[src] 再解一次
+            if legacy {
+                if let Some(inner) = first_iframe_src(&resp.body, &page_url) {
+                    crate::libmpv::trace(&format!("[webrs] legacy iframe: {inner}"));
+                    if let Ok(r2) = fetch_text(&inner, &ua, &referer, &rule.name).await {
+                        if r2.status.is_success() {
+                            if let Some(hit) = extract_from_html(&r2.body, &inner) {
+                                return Ok(json!({ "url": hit, "referer": referer, "ua": ua, "via": "legacy" }));
+                            }
+                        }
+                    }
+                }
+            }
         }
+        Ok(resp) => crate::libmpv::trace(&format!(
+            "[webrs] 页面返回 {}（转 WebView 嗅探）",
+            resp.status
+        )),
         Err(e) => crate::libmpv::trace(&format!("[webrs] 页面拉取失败（转 WebView 嗅探）: {e}")),
     }
 
     // ── 2) WebView 嗅探 ──
-    let hit = webview_sniff(&app, &page_url, &ua, &referer).await?;
+    let mut hit = webview_sniff(&app, &page_url, &ua, &referer, legacy).await?;
+    // legacy 的嗅探回传可能是 iframe 播放页 URL（非直链）—— 再 HTTP 解一次
+    if legacy && !is_media_url(&hit) {
+        if let Ok(r) = fetch_text(&hit, &ua, &referer, &rule.name).await {
+            if r.status.is_success() {
+                if let Some(m) = extract_from_html(&r.body, &hit) {
+                    hit = m;
+                }
+            }
+        }
+    }
     crate::libmpv::trace(&format!("[webrs] WebView 命中: {hit}"));
     Ok(json!({ "url": hit, "referer": referer, "ua": ua, "via": "webview" }))
+}
+
+/// [lc-1606] 是否为直链媒体（m3u8/mp4/flv）。
+fn is_media_url(u: &str) -> bool {
+    media_regex().is_match(u)
+}
+
+/// [lc-1606] 抽页面里第一个 iframe 的 src（useLegacyParser 用，xfdmneo 这类）。
+fn first_iframe_src(html: &str, base: &str) -> Option<String> {
+    let doc = Html::parse_document(html);
+    let sel = scraper::Selector::parse("iframe").ok()?;
+    for el in doc.select(&sel) {
+        if let Some(src) = el.value().attr("src") {
+            if let Some(full) = join_url(base, src) {
+                if full.starts_with("http") {
+                    return Some(full);
+                }
+            }
+        }
+    }
+    None
 }
 
 // ── WebView 嗅探（Kazumi video_webview 的 JS 钩子思路）──
@@ -1322,12 +1621,13 @@ pub async fn webrs_resolve(
 const SNIFF_LABEL: &str = "webrs-sniffer";
 const SNIFF_SCHEME: &str = "anibox-sniff";
 
-fn sniff_script(beacon_port: u16) -> String {
+fn sniff_script(beacon_port: u16, legacy: bool) -> String {
     r#"(function () {
   if (window.__aniboxSniff) return;
   window.__aniboxSniff = 1;
   var done = false;
   var seen = {};
+  var LEGACY = __LEGACY__;
   var BEACON = 'http://127.0.0.1:PORT/sniff?u=';
   function ok(u) {
     if (!u || typeof u !== 'string' || done) return false;
@@ -1343,6 +1643,24 @@ fn sniff_script(beacon_port: u16) -> String {
     done = true;
     var q = encodeURIComponent(u);
     // 回传四通道：本地 beacon（image/fetch/sendBeacon，页面无 CSP 时必达）+ 伪导航兜底
+    try { new Image().src = BEACON + q; } catch (e) {}
+    try { fetch(BEACON + q, { mode: 'no-cors' }).catch(function () {}); } catch (e) {}
+    try { navigator.sendBeacon && navigator.sendBeacon(BEACON + q); } catch (e) {}
+    var nav = 'anibox-sniff://found?u=' + q;
+    try { window.top.location.href = nav; return; } catch (e) {}
+    try { location.href = nav; } catch (e) {}
+  }
+  // [lc-1606] useLegacyParser：不回传直链，而是回传 iframe 播放页 URL（外层页没有
+  // 直链、播放器被塞进 iframe 的站，如 xfdmneo）。Rust 侧拿到后再 HTTP 解一次。
+  function emitRaw(u) {
+    if (!u || typeof u !== 'string' || done) return;
+    if (!/^https?:\/\//i.test(u)) return;
+    var l = u.toLowerCase();
+    if (/googleads|googlesyndication|adtrafficquality|doubleclick/.test(l)) return;
+    if (seen[u]) return;
+    seen[u] = 1;
+    done = true;
+    var q = encodeURIComponent(u);
     try { new Image().src = BEACON + q; } catch (e) {}
     try { fetch(BEACON + q, { mode: 'no-cors' }).catch(function () {}); } catch (e) {}
     try { navigator.sendBeacon && navigator.sendBeacon(BEACON + q); } catch (e) {}
@@ -1403,6 +1721,16 @@ fn sniff_script(beacon_port: u16) -> String {
       var m2 = flat.match(/["'](\/[^"'\\\s<>]{4,200}?\.m3u8[^"'\\\s<>]{0,100})["']/i);
       if (m2) emit(location.origin + m2[1]);
     } catch (e) {}
+    // [lc-1606] legacy：没有直链时回传 iframe 播放页 URL（Kazumi legacy 分支）
+    if (LEGACY) {
+      try {
+        var ifs = document.querySelectorAll('iframe');
+        for (var j = 0; j < ifs.length; j++) {
+          var s = ifs[j].getAttribute('src') || '';
+          if (s && !/\.(m3u8|mp4|flv)(\?|#|$)/i.test(s)) emitRaw(s);
+        }
+      } catch (e) {}
+    }
   }
   scan();
   var iv = setInterval(function () {
@@ -1413,6 +1741,7 @@ fn sniff_script(beacon_port: u16) -> String {
 })();
 "#
     .replace("PORT", &beacon_port.to_string())
+    .replace("__LEGACY__", if legacy { "1" } else { "0" })
 }
 
 /// 本地嗅探回传 beacon：嗅探 JS 命中直链后向 `http://127.0.0.1:<port>/sniff?u=<url>`
@@ -1478,7 +1807,13 @@ fn ensure_beacon() -> Result<u16, String> {
 /// image/fetch/sendBeacon 三连，页面/iframe 无 CSP 时必达）② 伪导航
 /// anibox-sniff://（on_navigation 拦截，兜底）。JS hook 注入全 frame
 /// （WebView2 AddScriptToExecuteOnDocumentCreated 覆盖 iframe）。
-async fn webview_sniff(app: &AppHandle, page_url: &str, ua: &str, _referer: &str) -> Result<String, String> {
+async fn webview_sniff(
+    app: &AppHandle,
+    page_url: &str,
+    ua: &str,
+    _referer: &str,
+    legacy: bool,
+) -> Result<String, String> {
     use std::sync::mpsc;
 
     let beacon_port = ensure_beacon()?;
@@ -1505,7 +1840,7 @@ async fn webview_sniff(app: &AppHandle, page_url: &str, ua: &str, _referer: &str
     let app2 = app.clone();
     let page = page_url.to_string();
     let ua_owned = ua.to_string();
-    let script = sniff_script(beacon_port);
+    let script = sniff_script(beacon_port, legacy);
     let tx_nav = tx.clone();
 
     let dispatch = app.run_on_main_thread(move || {
@@ -1578,6 +1913,442 @@ async fn webview_sniff(app: &AppHandle, page_url: &str, ua: &str, _referer: &str
         Err(e) => Err(e),
     }
 }
+// ───────────────────────── [lc-1606] 反爬验证流程 ─────────────────────────
+//
+// 对齐 Kazumi `captcha_verification_service.dart` + `captcha_webview_windows_impl.dart`：
+// 用隐藏 WebView 加载搜索页，按 captchaType 完成验证，再统一收尾（收割 cookie + UA +
+// HTML、卸载窗口），随后前端自动重试检索（此时 cookie 已在内存 jar 里）。
+// 三型：1 图片验证码（抓图 → 前端输入 → 回填提交）；2 自动点击按钮；3 自定义 JS。
+//
+// 与本项目既有 webview_sniff 一样走隐藏 WebviewWindow + initialization_script；
+// 但验证需要「双向」通信，这里改用 `eval_with_callback` 轮询页面里由注入脚本维护的
+// `window.__aniboxCaptcha` 状态对象（避开 CSP 对本地 beacon 的限制）。
+
+/// 当前验证会话（同一时刻只允许一个）。
+struct CaptchaHandle {
+    rule: String,
+    label: String,
+    cancel: Arc<AtomicBool>,
+}
+
+static CAPTCHA_SESSION: OnceLock<std::sync::Mutex<Option<CaptchaHandle>>> = OnceLock::new();
+static CAPTCHA_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn captcha_session() -> &'static std::sync::Mutex<Option<CaptchaHandle>> {
+    CAPTCHA_SESSION.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// 在隐藏窗里 eval 一段 JS 表达式并取回 JSON 序列化结果（超时 5s 返回 None）。
+/// 表达式异常时返回 null（Windows 下 eval 的异常会被吞掉，故 JS 里自带 try/catch）。
+async fn eval_json(w: &tauri::WebviewWindow, expr: &str) -> Option<String> {
+    let js = format!("(function(){{ try {{ return {expr}; }} catch (e) {{ return null; }} }})()");
+    // 用 std mpsc（Sender::send 取 &self，闭包可 Fn 重复调用；oneshot 会 move self 不适用）
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    if w.eval_with_callback(js, move |s| {
+        let _ = tx.send(s);
+    })
+    .is_err()
+    {
+        return None;
+    }
+    tokio::task::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(5)).ok())
+        .await
+        .ok()
+        .flatten()
+}
+
+/// 注入到验证页的脚本：维护 `window.__aniboxCaptcha = {status,image,log,url}`。
+/// status: idle/found/clicked/submitted/done/fail。按 captchaType 走不同分支。
+fn captcha_script(cfg: &AntiCrawlerConfig) -> String {
+    let img = serde_json::to_string(&cfg.captcha_image).unwrap_or_else(|_| "\"\"".into());
+    let input = serde_json::to_string(&cfg.captcha_input).unwrap_or_else(|_| "\"\"".into());
+    let btn = serde_json::to_string(&cfg.captcha_button).unwrap_or_else(|_| "\"\"".into());
+    let head = r#"(function () {
+  try {
+    if (window.__aniboxCaptcha) return;
+    var st = { status: 'idle', image: '', log: '', url: location.href, submitted: false };
+    window.__aniboxCaptcha = st;
+    var IMG = __IMG__, INPUT = __INPUT__, BTN = __BTN__, TYPE = __TYPE__;
+    function evalX(xp) {
+      try { var r = document.evaluate(xp, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null); return r.singleNodeValue; }
+      catch (e) { return null; }
+    }
+    function setStatus(s) { st.status = s; }
+    function startDisappear(xp) {
+      if (st._obs) return;
+      try {
+        st._obs = new MutationObserver(function () {
+          if (!evalX(xp)) { try { st._obs.disconnect(); } catch (e) {} st._obs = null; setStatus('done'); }
+        });
+        st._obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+      } catch (e) {}
+    }
+    function capture(img, cb) {
+      function go() {
+        try {
+          var c = document.createElement('canvas');
+          c.width = img.naturalWidth || img.width || 120;
+          c.height = img.naturalHeight || img.height || 40;
+          c.getContext('2d').drawImage(img, 0, 0);
+          cb(c.toDataURL('image/png'));
+        } catch (e) { cb(null); }
+      }
+      if (img.complete && img.naturalWidth > 0) go();
+      else { img.addEventListener('load', go); img.addEventListener('error', function () { cb(null); }); }
+    }
+    function tick() {
+      st.url = location.href;
+      if (TYPE === 1) {
+        var im = evalX(IMG);
+        if (im) {
+          startDisappear(IMG);
+          if (!st.image) capture(im, function (d) { if (d) { st.image = d; setStatus('found'); } });
+        }
+      } else if (TYPE === 2) {
+        var b = evalX(BTN);
+        if (b && st.status !== 'clicked' && st.status !== 'done') {
+          try { b.click(); } catch (e) {}
+          setStatus('clicked');
+          startDisappear(BTN);
+        }
+      }
+    }
+"#;
+    let tail = if cfg.captcha_type == 3 {
+        // type3：注入规则脚本，暴露 window.KazumiCaptcha 桥；脚本返回 true 或调 done() 即通过
+        r#"    try {
+      window.KazumiCaptcha = {
+        log: function (m) { st.log = 'JS:' + String(m); },
+        clicked: function () { setStatus('clicked'); },
+        done: function () { setStatus('done'); },
+        fail: function (m) { st.log = 'fail:' + String(m); setStatus('fail'); }
+      };
+      var __r = (function () {
+__SCRIPT__
+      })();
+      if (__r === true) setStatus('done');
+    } catch (e) { st.log = 'err:' + (e && e.message ? e.message : e); setStatus('fail'); }
+"#
+        .replace("__SCRIPT__", cfg.captcha_script.trim())
+    } else {
+        r#"    tick();
+    st._iv = setInterval(function () {
+      try { if (st.status === 'done') { clearInterval(st._iv); return; } tick(); } catch (e) {}
+    }, 500);
+"#
+        .to_string()
+    };
+    let end = "  } catch (e) {}\n})();\n";
+    format!("{head}{tail}{end}")
+        .replace("__IMG__", &img)
+        .replace("__INPUT__", &input)
+        .replace("__BTN__", &btn)
+        .replace("__TYPE__", &cfg.captcha_type.to_string())
+}
+
+/// type1 提交脚本：native value setter 写值 + 派发 input/change + 点提交按钮
+/// （对齐 Kazumi `submitCaptchaInteract`）。
+fn captcha_submit_script(cfg: &AntiCrawlerConfig, code: &str) -> String {
+    let input = serde_json::to_string(&cfg.captcha_input).unwrap_or_else(|_| "\"\"".into());
+    let btn = serde_json::to_string(&cfg.captcha_button).unwrap_or_else(|_| "\"\"".into());
+    let code = serde_json::to_string(code).unwrap_or_else(|_| "\"\"".into());
+    r#"(function () {
+  function evalX(xp) {
+    try { var r = document.evaluate(xp, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null); return r.singleNodeValue; }
+    catch (e) { return null; }
+  }
+  var input = evalX(__INPUT__);
+  if (input) {
+    try {
+      input.focus();
+      var d = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+      d.set.call(input, __CODE__);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    } catch (e) {}
+  }
+  var b = evalX(__BTN__);
+  if (b) { try { b.click(); } catch (e) {} }
+  if (window.__aniboxCaptcha) {
+    window.__aniboxCaptcha.image = '';
+    window.__aniboxCaptcha.status = 'submitted';
+    window.__aniboxCaptcha.submitted = true;
+  }
+  return true;
+})();"#
+        .replace("__INPUT__", &input)
+        .replace("__BTN__", &btn)
+        .replace("__CODE__", &code)
+}
+
+fn destroy_captcha_window(app: &AppHandle, label: &str) {
+    let app2 = app.clone();
+    let label = label.to_string();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(w) = app2.get_webview_window(&label) {
+            let _ = w.destroy();
+        }
+    });
+}
+
+fn cancel_captcha(app: &AppHandle) {
+    let label = {
+        let Ok(mut g) = captcha_session().lock() else {
+            return;
+        };
+        match g.take() {
+            Some(h) => {
+                h.cancel.store(true, Ordering::Relaxed);
+                h.label
+            }
+            None => return,
+        }
+    };
+    destroy_captcha_window(app, &label);
+}
+
+/// 收尾：收割 HTML + UA + cookie 存入内存 jar，卸载窗口（对齐 Kazumi `_saveCookiesAndUnload`）。
+async fn harvest_captcha(app: &AppHandle, rule: &Rule, label: &str, page_url: &str) {
+    let Some(w) = app.get_webview_window(label) else {
+        return;
+    };
+    let html = eval_json(
+        &w,
+        "document.documentElement ? document.documentElement.outerHTML : ''",
+    )
+    .await
+    .and_then(|s| serde_json::from_str::<String>(&s).ok())
+    .unwrap_or_default();
+    let ua = eval_json(&w, "navigator.userAgent || ''")
+        .await
+        .and_then(|s| serde_json::from_str::<String>(&s).ok())
+        .unwrap_or_default();
+    let mut cookies: Vec<(String, String)> = Vec::new();
+    if let Ok(u) = Url::parse(page_url) {
+        if let Ok(cs) = w.cookies_for_url(u) {
+            for c in cs {
+                cookies.push((c.name().to_string(), c.value().to_string()));
+            }
+        }
+    }
+    crate::libmpv::trace(&format!(
+        "[webrs] 验证收尾: html {} 字节, cookie {} 条",
+        html.len(),
+        cookies.len()
+    ));
+    save_cookies(&rule.name, cookies, Some(ua));
+}
+
+/// 轮询验证页状态直到通过/失败/超时，然后统一收尾。
+async fn run_captcha_flow(app: AppHandle, rule: Rule, label: String, initial_url: String, cancel: Arc<AtomicBool>) {
+    let cfg = rule.anti_crawler_config.clone();
+    let name = rule.name.clone();
+    let _ = app.emit(
+        "webrs-captcha-status",
+        json!({ "rule": name, "status": "loading", "error": "" }),
+    );
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    let mut last_image = String::new();
+    let mut saw_action = false;
+    let outcome: Result<(), String> = loop {
+        if cancel.load(Ordering::Relaxed) {
+            break Err("已取消".into());
+        }
+        if std::time::Instant::now() > deadline {
+            break Err("验证超时，请重试".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+        let Some(w) = app.get_webview_window(&label) else {
+            break Err("验证窗口已关闭".into());
+        };
+        let Some(raw) = eval_json(&w, "window.__aniboxCaptcha || null").await else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_str::<Value>(&raw) else {
+            continue;
+        };
+        let status = v.get("status").and_then(|s| s.as_str()).unwrap_or("");
+        let image = v.get("image").and_then(|s| s.as_str()).unwrap_or("");
+        let url = v.get("url").and_then(|s| s.as_str()).unwrap_or("");
+        // type1：新验证码图 → 推给前端弹窗
+        if cfg.captcha_type == 1 && !image.is_empty() && image != last_image {
+            last_image = image.to_string();
+            let _ = app.emit("webrs-captcha", json!({ "rule": name, "image": image }));
+        }
+        if status == "clicked" || status == "submitted" {
+            saw_action = true;
+        }
+        if status == "done" {
+            break Ok(());
+        }
+        if status == "fail" {
+            let log = v
+                .get("log")
+                .and_then(|s| s.as_str())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("验证脚本执行失败");
+            break Err(log.to_string());
+        }
+        // 导航视为成功：仅当已发生交互（点击/提交）后，避免 http→https 之类的自动跳转误判
+        if saw_action && !url.is_empty() && url != initial_url {
+            break Ok(());
+        }
+    };
+
+    if outcome.is_ok() {
+        harvest_captcha(&app, &rule, &label, &initial_url).await;
+    }
+    destroy_captcha_window(&app, &label);
+    // 清会话（仅当仍是本会话，避免误清新会话）
+    if let Ok(mut g) = captcha_session().lock() {
+        if g.as_ref().map(|h| h.label.as_str()) == Some(label.as_str()) {
+            *g = None;
+        }
+    }
+    match outcome {
+        Ok(()) => {
+            crate::libmpv::trace(&format!("[webrs] 反爬验证通过: {name}"));
+            let _ = app.emit(
+                "webrs-captcha-status",
+                json!({ "rule": name, "status": "verified", "error": "" }),
+            );
+        }
+        Err(e) => {
+            crate::libmpv::trace(&format!("[webrs] 反爬验证失败: {name} · {e}"));
+            let _ = app.emit(
+                "webrs-captcha-status",
+                json!({ "rule": name, "status": "failed", "error": e }),
+            );
+        }
+    }
+}
+
+/// [lc-1606] 发起反爬验证：建隐藏窗加载搜索页并按 captchaType 注入脚本。
+/// 立即返回；结果经 `webrs-captcha`（type1 图）/`webrs-captcha-status` 事件回传。
+#[tauri::command]
+pub async fn webrs_captcha_start(
+    app: AppHandle,
+    rule_name: String,
+    keyword: String,
+) -> Result<(), String> {
+    let rules = load_rules(&app).await?;
+    let rule = find_rule(&rules, &rule_name)?.clone();
+    if !rule.anti_crawler_config.enabled {
+        return Err(format!("规则「{}」未启用反爬验证", rule.name));
+    }
+    if rule.search_url.is_empty() {
+        return Err("规则缺少 searchURL".into());
+    }
+    let encoded = urlencoding::encode(keyword.trim()).to_string();
+    let url = rule.search_url.replace("@keyword", &encoded);
+
+    // 撤掉可能存在的旧会话
+    cancel_captcha(&app);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let label = format!(
+        "webrs-captcha-{}",
+        CAPTCHA_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    {
+        let mut g = captcha_session().lock().map_err(|e| e.to_string())?;
+        *g = Some(CaptchaHandle {
+            rule: rule.name.clone(),
+            label: label.clone(),
+            cancel: cancel.clone(),
+        });
+    }
+
+    let ua = effective_ua(&rule);
+    let script = captcha_script(&rule.anti_crawler_config);
+    let app2 = app.clone();
+    let url2 = url.clone();
+    let ua2 = ua.clone();
+    let label2 = label.clone();
+    let (btx, brx) = std::sync::mpsc::channel::<Result<(), String>>();
+    let dispatch = app.run_on_main_thread(move || {
+        if let Some(w) = app2.get_webview_window(&label2) {
+            let _ = w.destroy();
+        }
+        let Ok(target) = Url::parse(&url2) else {
+            let _ = btx.send(Err(format!("验证页 URL 无效: {url2}")));
+            return;
+        };
+        let b = tauri::webview::WebviewWindowBuilder::new(
+            &app2,
+            &label2,
+            tauri::WebviewUrl::External(target),
+        )
+        .title("AniBox 人机验证")
+        .visible(false)
+        .initialization_script(&script)
+        .user_agent(&ua2);
+        match b.build() {
+            Ok(_) => {
+                let _ = btx.send(Ok(()));
+            }
+            Err(e) => {
+                let _ = btx.send(Err(format!("创建验证窗口失败: {e}")));
+            }
+        }
+    });
+    if let Err(e) = dispatch {
+        return Err(format!("验证窗口调度失败: {e}"));
+    }
+    let built = tokio::task::spawn_blocking(move || {
+        brx.recv_timeout(std::time::Duration::from_secs(10))
+    })
+    .await
+    .map_err(|e| format!("等待验证窗口失败: {e}"))?;
+    match built {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return Err(e),
+        Err(_) => return Err("创建验证窗口超时".into()),
+    }
+
+    let app3 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        run_captcha_flow(app3, rule, label, url, cancel).await;
+    });
+    Ok(())
+}
+
+/// [lc-1606] type1：前端把用户输入的验证码交回来，在窗里回填并点提交。
+#[tauri::command]
+pub async fn webrs_captcha_submit(
+    app: AppHandle,
+    rule_name: String,
+    code: String,
+) -> Result<(), String> {
+    let rules = load_rules(&app).await?;
+    let rule = find_rule(&rules, &rule_name)?.clone();
+    let code = code.trim().to_string();
+    if code.is_empty() {
+        return Err("验证码为空".into());
+    }
+    let label = {
+        let g = captcha_session().lock().map_err(|e| e.to_string())?;
+        match g.as_ref() {
+            Some(h) if h.rule.eq_ignore_ascii_case(&rule_name) => h.label.clone(),
+            _ => return Err("没有进行中的验证会话，请重新发起".into()),
+        }
+    };
+    let w = app
+        .get_webview_window(&label)
+        .ok_or("验证窗口已关闭，请重新发起验证")?;
+    let script = captcha_submit_script(&rule.anti_crawler_config, &code);
+    w.eval(script)
+        .map_err(|e| format!("提交验证码失败: {e}"))?;
+    Ok(())
+}
+
+/// [lc-1606] 用户取消验证：撤销会话并销毁窗口。
+#[tauri::command]
+pub async fn webrs_captcha_cancel(app: AppHandle) -> Result<(), String> {
+    cancel_captcha(&app);
+    Ok(())
+}
+
 // ───────────────────────── mpv 播放 ─────────────────────────
 
 /// [lc-1500] 在线资源直链 → 独立 mpv。m3u8 直链普遍校验 Referer/UA，
@@ -1658,4 +2429,205 @@ pub async fn webrs_play(
     }
     session.command(json!(["loadfile", url, "replace"])).await?;
     Ok(())
+}
+
+// ───────────────────────── [lc-1606] 单测（不触网） ─────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anticrawler_defaults_when_fields_missing() {
+        // 只写 enabled：其余字段应走 Default（captchaType=1 / captchaDetectType=1），对齐 Kazumi
+        let cfg: AntiCrawlerConfig = serde_json::from_str("{\"enabled\":true}").unwrap();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.captcha_type, 1);
+        assert_eq!(cfg.captcha_detect_type, 1);
+        assert!(cfg.captcha_image.is_empty());
+        assert!(cfg.captcha_script.is_empty());
+    }
+
+    #[test]
+    fn anticrawler_real_shape() {
+        // dalvdm 的真实 antiCrawlerConfig
+        let j = r#"{"enabled":true,"captchaType":1,
+          "captchaImage":"//div[contains(@class, 'mac_msg_jump')]//img[contains(@class, 'mac_verify_img')]",
+          "captchaInput":"//div[contains(@class, 'mac_msg_jump')]//input[@name='verify']",
+          "captchaButton":"//div[contains(@class, 'mac_msg_jump')]//input[contains(@class, 'verify_submit')]",
+          "captchaDetectType":1,
+          "captchaDetectValue":"//div[contains(@class, 'mac_msg_jump')]//input[@name='verify']",
+          "captchaScript":""}"#;
+        let cfg: AntiCrawlerConfig = serde_json::from_str(j).unwrap();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.captcha_type, 1);
+        assert_eq!(cfg.captcha_detect_type, 1);
+        assert!(cfg.captcha_detect_value.contains("mac_msg_jump"));
+        assert!(cfg.captcha_image.contains("mac_verify_img"));
+    }
+
+    #[test]
+    fn rule_parses_anticrawler_config() {
+        let j = r#"{"name":"x","searchURL":"http://a/@keyword",
+          "antiCrawlerConfig":{"enabled":true,"captchaType":2,"captchaButton":"//button"}}"#;
+        let r: Rule = serde_json::from_str(j).unwrap();
+        assert!(r.anti_crawler_config.enabled);
+        assert_eq!(r.anti_crawler_config.captcha_type, 2);
+        assert_eq!(r.anti_crawler_config.captcha_button, "//button");
+    }
+
+    #[test]
+    fn rule_without_anticrawler_defaults_disabled() {
+        let r: Rule = serde_json::from_str(r#"{"name":"y"}"#).unwrap();
+        assert!(!r.anti_crawler_config.enabled);
+        assert_eq!(r.anti_crawler_config.captcha_type, 1);
+    }
+
+    fn resp(status: u16, body: &str, cf: bool) -> HttpResp {
+        HttpResp {
+            status: reqwest::StatusCode::from_u16(status).unwrap(),
+            body: body.to_string(),
+            cf_mitigated: cf,
+        }
+    }
+
+    #[test]
+    fn challenge_cf_mitigated_header() {
+        let cfg = AntiCrawlerConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        // 头命中即判真，即使 body 为空
+        assert!(detects_captcha_challenge(&resp(403, "", true), &cfg));
+    }
+
+    #[test]
+    fn challenge_disabled_is_never_true() {
+        let cfg = AntiCrawlerConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        assert!(!detects_captcha_challenge(&resp(403, "challenge", true), &cfg));
+    }
+
+    #[test]
+    fn challenge_detect_text() {
+        let cfg = AntiCrawlerConfig {
+            enabled: true,
+            captcha_detect_type: 2,
+            captcha_detect_value: "Just a moment".into(),
+            ..Default::default()
+        };
+        assert!(detects_captcha_challenge(
+            &resp(503, "<title>Just a moment...</title>", false),
+            &cfg
+        ));
+        assert!(!detects_captcha_challenge(&resp(200, "normal page", false), &cfg));
+    }
+
+    #[test]
+    fn challenge_detect_regex() {
+        let cfg = AntiCrawlerConfig {
+            enabled: true,
+            captcha_detect_type: 3,
+            captcha_detect_value: r"cf-\w+".into(),
+            ..Default::default()
+        };
+        assert!(detects_captcha_challenge(
+            &resp(403, "<div class=\"cf-challenge\">", false),
+            &cfg
+        ));
+        assert!(!detects_captcha_challenge(&resp(403, "<div>nope</div>", false), &cfg));
+    }
+
+    #[test]
+    fn challenge_detect_xpath() {
+        let cfg = AntiCrawlerConfig {
+            enabled: true,
+            captcha_detect_type: 1,
+            captcha_detect_value: "//input[@name='verify']".into(),
+            ..Default::default()
+        };
+        assert!(detects_captcha_challenge(
+            &resp(403, "<div><input name='verify'></div>", false),
+            &cfg
+        ));
+        assert!(!detects_captcha_challenge(
+            &resp(403, "<div><input name='q'></div>", false),
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn challenge_xpath_fallback_selectors() {
+        // 未配 detectValue 时回退看 captchaImage / captchaButton 是否命中
+        let cfg = AntiCrawlerConfig {
+            enabled: true,
+            captcha_detect_type: 1,
+            captcha_detect_value: String::new(),
+            captcha_image: "//img[@class='verify']".into(),
+            ..Default::default()
+        };
+        assert!(detects_captcha_challenge(
+            &resp(403, "<img class='verify'>", false),
+            &cfg
+        ));
+        assert!(!detects_captcha_challenge(
+            &resp(403, "<img class='x'>", false),
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn cookie_header_join_and_overwrite() {
+        let name = "unit-test-rule-cookie";
+        save_cookies(
+            name,
+            vec![("a".into(), "1".into()), ("b".into(), "2".into())],
+            Some("UA/1".into()),
+        );
+        assert_eq!(cookie_header_for(name), "a=1; b=2");
+        // 同名覆盖，其余保留
+        save_cookies(name, vec![("a".into(), "9".into())], None);
+        assert_eq!(cookie_header_for(name), "a=9; b=2");
+        assert_eq!(verified_ua(name).as_deref(), Some("UA/1"));
+    }
+
+    #[test]
+    fn effective_ua_overrides_after_verify() {
+        let name = "unit-test-rule-ua";
+        let rule = Rule {
+            name: name.into(),
+            user_agent: "RuleUA".into(),
+            ..Default::default()
+        };
+        assert_eq!(effective_ua(&rule), "RuleUA");
+        // 有 cookie + 验证 UA → 覆盖规则 UA（clearance cookie 与 UA 绑定）
+        save_cookies(name, vec![("c".into(), "1".into())], Some("VerifiedUA".into()));
+        assert_eq!(effective_ua(&rule), "VerifiedUA");
+    }
+
+    #[test]
+    fn challenge_detect_dalvdm_real_body() {
+        // 用真机探针抓到的 dalvdm 挑战页形态（HTTP 200 + mac_msg_jump 结构）验证检测
+        let cfg = AntiCrawlerConfig {
+            enabled: true,
+            captcha_type: 1,
+            captcha_image: "//div[contains(@class, 'mac_msg_jump')]//img[contains(@class, 'mac_verify_img')]".into(),
+            captcha_input: "//div[contains(@class, 'mac_msg_jump')]//input[@name='verify']".into(),
+            captcha_button: "//div[contains(@class, 'mac_msg_jump')]//input[contains(@class, 'verify_submit')]".into(),
+            captcha_detect_type: 1,
+            captcha_detect_value: "//div[contains(@class, 'mac_msg_jump')]//input[@name='verify']".into(),
+            captcha_script: String::new(),
+        };
+        let challenge = r#"<html><head><title>系统安全验证</title></head><body>
+          <div class="mac_msg_jump"><img class="mac_verify_img" src="/v">
+          <input name="verify" type="text"><input class="verify_submit" type="submit"></div></body></html>"#;
+        // 200 也要能识别（dalvdm 挑战页就是 200）
+        assert!(detects_captcha_challenge(&resp(200, challenge, false), &cfg));
+        // 正常结果页不含验证码选择器 → 不误判
+        let normal = r#"<html><body><div class="myui-vodbox-content"><div class="card-info">
+          <div class="title">少女</div></div></div></body></html>"#;
+        assert!(!detects_captcha_challenge(&resp(200, normal, false), &cfg));
+    }
 }

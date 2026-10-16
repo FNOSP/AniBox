@@ -1,6 +1,7 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { createPortal } from "react-dom";
 import { useDelayedUnmount } from "../../hooks/useDelayedUnmount";
 
@@ -8,7 +9,8 @@ export type WebrsSearchItem = { name: string; url: string };
 
 export type WebrsRoad = { name: string; index: number; episodes: WebrsSearchItem[] };
 
-export type WebrsGroup = { name: string; status: "ok" | "empty" | "error"; error: string; items: WebrsSearchItem[] };
+// [lc-1606] 新增 captcha 状态：该源返回了反爬验证挑战页，需要人机验证
+export type WebrsGroup = { name: string; status: "ok" | "empty" | "error" | "captcha"; error: string; items: WebrsSearchItem[] };
 
 export type WebrsRuleInfo = { name: string; mode?: string };
 
@@ -51,6 +53,14 @@ export function WebrsPanel({ title }: { title: string }) {
   const [roadIdx, setRoadIdx] = useState(0);
   const [subBusy, setSubBusy] = useState("");
 
+  // [lc-1606] 反爬验证：type1 的验证码图 + 输入；captchaMsg 是整体状态反馈
+  const [captcha, setCaptcha] = useState<{ rule: string; image: string } | null>(null);
+  const [captchaMsg, setCaptchaMsg] = useState<{ rule: string; status: "loading" | "verified" | "failed"; error: string } | null>(null);
+  const [code, setCode] = useState("");
+  // 同一源避免自动重复发起（验证成功后重搜若仍挑战 → 最多再试 2 次，防死循环）
+  const captchaAttempts = useRef<Record<string, number>>({});
+  const captchaBusyRef = useRef(false);
+
   const isEnabled = useCallback(
     (name: string) => enabled == null || enabled.includes(name),
     [enabled],
@@ -72,6 +82,47 @@ export function WebrsPanel({ title }: { title: string }) {
   const [srcHint, setSrcHint] = useState("");
   // [lc-1513] 二级视图（选集）返回时先播退出动画再卸载
   const [subMounted, subClosing] = useDelayedUnmount(!!sel);
+
+  // [lc-1606] 发起反爬验证（Rust 建隐藏窗加载搜索页，按 captchaType 自动/交互完成）
+  const startCaptcha = useCallback(async (rule: string, keyword: string) => {
+    captchaBusyRef.current = true;
+    setCaptcha(null);
+    setCode("");
+    setCaptchaMsg({ rule, status: "loading", error: "" });
+    try {
+      await invoke("webrs_captcha_start", { ruleName: rule, keyword });
+    } catch (e) {
+      captchaBusyRef.current = false;
+      setCaptchaMsg({ rule, status: "failed", error: String(e) });
+    }
+  }, []);
+
+  const submitCaptcha = useCallback(async () => {
+    if (!captcha) return;
+    const c = code.trim();
+    if (!c) return;
+    try {
+      await invoke("webrs_captcha_submit", { ruleName: captcha.rule, code: c });
+      setCode("");
+      setCaptcha(null);
+      setCaptchaMsg({ rule: captcha.rule, status: "loading", error: "" });
+    } catch (e) {
+      setCaptchaMsg({ rule: captcha.rule, status: "failed", error: String(e) });
+    }
+  }, [captcha, code]);
+
+  const cancelCaptcha = useCallback(async () => {
+    captchaBusyRef.current = false;
+    setCaptcha(null);
+    setCode("");
+    setCaptchaMsg(null);
+    try {
+      await invoke("webrs_captcha_cancel");
+    } catch {
+      /* 忽略：窗口可能已自行销毁 */
+    }
+  }, []);
+
   const doSearch = useCallback(
     async (k: string) => {
       const key = k.trim();
@@ -91,6 +142,18 @@ export function WebrsPanel({ title }: { title: string }) {
         setGroups(r);
         const first = r.find((g) => g.status === "ok");
         setExpanded(first ? { [first.name]: true } : {});
+        // [lc-1606] 有源需要人机验证 → 自动发起（一次一个，避免多隐藏窗）
+        const need = r.filter((g) => g.status === "captcha");
+        if (need.length > 0 && !captchaBusyRef.current) {
+          const target = need.find((g) => (captchaAttempts.current[g.name] ?? 0) < 2) ?? need[0];
+          const n = captchaAttempts.current[target.name] ?? 0;
+          if (n < 2) {
+            captchaAttempts.current[target.name] = n + 1;
+            await startCaptcha(target.name, key);
+          } else {
+            setSrcHint(`源「${target.name}」需要人机验证（已尝试多次），可点该行「去验证」重试`);
+          }
+        }
       } catch (e) {
         setErr(String(e));
         setGroups([]);
@@ -98,8 +161,49 @@ export function WebrsPanel({ title }: { title: string }) {
         setBusy(false);
       }
     },
-    [srcs, isEnabled],
+    [srcs, isEnabled, startCaptcha],
   );
+
+  // [lc-1606] 验证事件：type1 收到图 → 弹窗；status verified → 自动重搜
+  const doSearchRef = useRef(doSearch);
+  doSearchRef.current = doSearch;
+  const kwRef = useRef(kw);
+  kwRef.current = kw;
+  useEffect(() => {
+    let alive = true;
+    let un1: (() => void) | undefined;
+    let un2: (() => void) | undefined;
+    listen<{ rule: string; image: string }>("webrs-captcha", (e) => {
+      if (!alive) return;
+      setCaptcha({ rule: e.payload.rule, image: e.payload.image });
+    }).then((u) => {
+      if (alive) un1 = u;
+      else u();
+    });
+    listen<{ rule: string; status: string; error: string }>("webrs-captcha-status", (e) => {
+      if (!alive) return;
+      const p = e.payload;
+      if (p.status === "verified") {
+        captchaBusyRef.current = false;
+        setCaptcha(null);
+        setCaptchaMsg({ rule: p.rule, status: "verified", error: "" });
+        // 自动重试：cookie 已入 jar，重搜这次就能拿到结果
+        doSearchRef.current(kwRef.current);
+      } else if (p.status === "failed") {
+        captchaBusyRef.current = false;
+        setCaptcha(null);
+        setCaptchaMsg({ rule: p.rule, status: "failed", error: p.error });
+      }
+    }).then((u) => {
+      if (alive) un2 = u;
+      else u();
+    });
+    return () => {
+      alive = false;
+      un1?.();
+      un2?.();
+    };
+  }, []);
 
   // 进面板：拉源列表 + 自动按标题搜一次（只搜勾选的）
   const autoDone = useRef(false);
@@ -219,7 +323,13 @@ export function WebrsPanel({ title }: { title: string }) {
   };
 
   const badge = (g: WebrsGroup) =>
-    g.status === "ok" ? `${g.items.length} 个结果` : g.status === "empty" ? "无结果" : "检索失败";
+    g.status === "ok"
+      ? `${g.items.length} 个结果`
+      : g.status === "empty"
+        ? "无结果"
+        : g.status === "captcha"
+          ? "需要验证"
+          : "检索失败";
 
   return (
     <div className="webrs">
@@ -248,6 +358,16 @@ export function WebrsPanel({ title }: { title: string }) {
       {err && <div className="webrs-err">{err}</div>}
       {srcHint && !err && <div className="webrs-hint">{srcHint}</div>}
       {subBusy && <div className="webrs-note">{subBusy}</div>}
+      {/* [lc-1606] 反爬验证状态 */}
+      {captchaMsg?.status === "loading" && (
+        <div className="webrs-note">人机验证 · {captchaMsg.rule} —— 正在等待网站响应…</div>
+      )}
+      {captchaMsg?.status === "verified" && (
+        <div className="webrs-captcha-ok">✓ 验证通过 · {captchaMsg.rule} —— 正在重新检索…</div>
+      )}
+      {captchaMsg?.status === "failed" && (
+        <div className="webrs-err">人机验证失败 · {captchaMsg.rule}：{captchaMsg.error}</div>
+      )}
 
       {/* 二级视图：选集（返回时播退出动画；roads 在动画期间保留，内容不闪空） */}
       {(sel || subMounted) && (
@@ -287,15 +407,30 @@ export function WebrsPanel({ title }: { title: string }) {
         <div className="webrs-groups">
           {groups.map((g) => (
             <div key={g.name} className={`webrs-g${g.status === "ok" ? " ok" : ""}`}>
-              <button
-                className="webrs-g-hd"
-                onClick={() => setExpanded((m) => ({ ...m, [g.name]: !m[g.name] }))}
-                title={g.error || g.name}
-              >
-                <span className="webrs-g-name">{g.name}</span>
-                <span className={`webrs-g-badge ${g.status}`}>{badge(g)}</span>
-                <span className="webrs-g-arrow">{expanded[g.name] ? "⌃" : "⌄"}</span>
-              </button>
+              {g.status === "captcha" ? (
+                // [lc-1606] 需要人机验证：整行不是折叠按钮，右侧给「去验证」入口
+                <div className="webrs-g-hd webrs-g-captcha">
+                  <span className="webrs-g-name">{g.name}</span>
+                  <span className="webrs-g-badge captcha">{badge(g)}</span>
+                  <button
+                    className="webrs-g-verify"
+                    onClick={() => startCaptcha(g.name, kw)}
+                    title="重新发起人机验证"
+                  >
+                    去验证
+                  </button>
+                </div>
+              ) : (
+                <button
+                  className="webrs-g-hd"
+                  onClick={() => setExpanded((m) => ({ ...m, [g.name]: !m[g.name] }))}
+                  title={g.error || g.name}
+                >
+                  <span className="webrs-g-name">{g.name}</span>
+                  <span className={`webrs-g-badge ${g.status}`}>{badge(g)}</span>
+                  <span className="webrs-g-arrow">{expanded[g.name] ? "⌃" : "⌄"}</span>
+                </button>
+              )}
               {expanded[g.name] && g.status === "ok" && (
                 <div className="webrs-g-items">
                   {g.items.map((it) => (
@@ -395,6 +530,49 @@ export function WebrsPanel({ title }: { title: string }) {
             </div>
           </div>
         </div>,
+          document.body,
+        )}
+
+      {/* [lc-1606] type1 图片验证码弹窗：显示抓到的图 + 输入框 → webrs_captcha_submit。
+          portal 挂 body（同源管理弹窗，避开 .dseg 合成穿透）。 */}
+      {captcha &&
+        createPortal(
+          <div className="ddet-mask">
+            <div className="sum-modal webrs-captcha-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="sum-modal-h">
+                <h3>
+                  人机验证 <span className="webrs-mgr-count">{captcha.rule}</span>
+                </h3>
+                <button className="ddet-close sum-modal-x" onClick={cancelCaptcha}>
+                  ×
+                </button>
+              </div>
+              <div className="webrs-captcha-body">
+                <div className="webrs-captcha-tip">该来源需要验证，请输入下图中的字符以继续检索。</div>
+                <div className="webrs-captcha-imgwrap">
+                  <img className="webrs-captcha-img" src={captcha.image} alt="验证码" />
+                </div>
+                <input
+                  className="webrs-captcha-input"
+                  value={code}
+                  autoFocus
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder="输入图片中的字符"
+                  onChange={(e) => setCode(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submitCaptcha()}
+                />
+                <div className="webrs-captcha-acts">
+                  <button className="webrs-captcha-cancel" onClick={cancelCaptcha}>
+                    取消
+                  </button>
+                  <button className="webrs-go" disabled={!code.trim()} onClick={submitCaptcha}>
+                    验证
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>,
           document.body,
         )}
     </div>

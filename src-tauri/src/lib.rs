@@ -1537,7 +1537,11 @@ pub fn run() {
             webrs::webrs_remove_rule,
             webrs::webrs_chapters,
             webrs::webrs_resolve,
-            webrs::webrs_play
+            webrs::webrs_play,
+            // [lc-1606] 反爬验证闭环（图片验证码 / 自动点击 / 自定义 JS）
+            webrs::webrs_captcha_start,
+            webrs::webrs_captcha_submit,
+            webrs::webrs_captcha_cancel
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

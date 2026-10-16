@@ -2273,6 +2273,7 @@ html.dark .dlib-badge-soon {
 
 /* 弹窗卡片（遮罩 = 既有的 .ddet-mask；关闭键复用 .ddet-close） */
 .arc-modal {
+  position: relative; /* 年份面板的透明遮罩以它为定位基座 */
   width: min(960px, 94vw);
   max-height: min(82vh, 740px);
   display: flex;
@@ -2302,6 +2303,8 @@ html.dark .dlib-badge-soon {
   margin-left: auto;
 }
 .arc-sel {
+  position: relative;
+  z-index: 5; /* 高于 .arc-yback（年份面板的透明遮罩），选择行始终可点 */
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2309,16 +2312,92 @@ html.dark .dlib-badge-soon {
   padding: 10px 16px;
   border-bottom: 1px solid var(--line);
 }
-.arc-year {
+/* 年份面板打开时铺满卡片的透明遮罩：点空白处收起（z-index 低于 .arc-sel） */
+.arc-yback {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  background: transparent;
+}
+/* [lc-1591] 自定义年份下拉：原生 <select> 的展开列表没法美化，改成按钮 + 4 列年份网格 */
+.arc-yearwrap {
+  position: relative;
+}
+.arc-ybtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   height: 30px;
-  padding: 0 8px;
+  padding: 0 10px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   background: var(--option-bg, var(--bg-3));
   color: var(--text);
   font-size: 12.5px;
+  font-weight: 700;
   font-family: inherit;
   cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+.arc-ybtn:hover,
+.arc-ybtn.on {
+  background: var(--hover-strong);
+  border-color: var(--accent);
+}
+.arc-ychev {
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.arc-ybtn.on .arc-ychev {
+  transform: rotate(180deg);
+}
+.arc-ypanel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 6;
+  width: 236px;
+  max-height: 232px;
+  overflow-y: auto;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--bg-3);
+  box-shadow: var(--shadow-card);
+  animation: arcPanelIn 0.16s ease;
+}
+@keyframes arcPanelIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.arc-yitem {
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.arc-yitem:hover {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+.arc-yitem.on {
+  background: var(--accent-grad);
+  color: #fff;
 }
 .arc-seasons {
   display: flex;

@@ -3,7 +3,7 @@
    往季基本定型、按季度缓存 24h）。外壳复用仓库既有的 `.ddet-mask` 遮罩模式（同详情页简介弹窗）。 */
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { CalendarDays as IcoCalL, X as IcoXL } from "lucide-react";
+import { CalendarDays as IcoCalL, ChevronDown as IcoChevD, X as IcoXL } from "lucide-react";
 import { Dsk } from "./shared";
 
 type SeasonItem = {
@@ -58,6 +58,8 @@ export function SeasonArchive({ onClose }: { onClose: () => void }) {
   const [items, setItems] = useState<SeasonItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // [lc-1591] 年份用**自定义面板**（原生 <select> 的展开列表没法美化）；打开时点别处/Esc 收起
+  const [yearOpen, setYearOpen] = useState(false);
 
   const years = useMemo(() => {
     const out: number[] = [];
@@ -89,33 +91,62 @@ export function SeasonArchive({ onClose }: { onClose: () => void }) {
     };
   }, [year, season]);
 
-  // Esc 关闭（与其它弹窗一致）
+  // Esc：先收年份面板，再关弹窗（与其它弹窗一致）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      if (yearOpen) setYearOpen(false);
+      else onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, yearOpen]);
 
   return (
     <div className="ddet-mask" onClick={onClose}>
       <div className="arc-modal" onClick={(e) => e.stopPropagation()}>
+        {/* 年份面板打开时的透明遮罩：点卡片空白处收起面板（选择行 z-index 更高，不受影响） */}
+        {yearOpen && <div className="arc-yback" onClick={() => setYearOpen(false)} />}
         <div className="arc-hd">
           <IcoCalL size={16} strokeWidth={2} />
-          <h3>往季番表 · 总表查询</h3>
+          <h3>往季番表</h3>
           <button className="ddet-close arc-x" onClick={onClose} title="关闭">
             <IcoXL size={15} strokeWidth={2.2} />
           </button>
         </div>
         <div className="arc-sel">
-          <select className="arc-year" value={year} onChange={(e) => setYear(Number(e.target.value))}>
-            {years.map((y) => (
-              <option key={y} value={y}>
-                {y} 年
-              </option>
-            ))}
-          </select>
+          {/* [lc-1591] 自定义年份面板（原生 select 的下拉列表没法美化）：按钮 + 4 列年份网格 */}
+          <div className="arc-yearwrap">
+            <button
+              type="button"
+              className={`arc-ybtn${yearOpen ? " on" : ""}`}
+              onClick={() => setYearOpen((v) => !v)}
+              aria-expanded={yearOpen}
+              aria-haspopup="listbox"
+            >
+              {year} 年
+              <IcoChevD size={14} strokeWidth={2} className="arc-ychev" />
+            </button>
+            {yearOpen && (
+              <div className="arc-ypanel" role="listbox">
+                {years.map((y) => (
+                  <button
+                    key={y}
+                    type="button"
+                    role="option"
+                    aria-selected={y === year}
+                    className={`arc-yitem${y === year ? " on" : ""}`}
+                    onClick={() => {
+                      setYear(y);
+                      setYearOpen(false);
+                    }}
+                  >
+                    {y}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <div className="arc-seasons">
             {SEASONS.map((s) => (
               <button

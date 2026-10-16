@@ -266,10 +266,10 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
             </button>
           );
         })}
-        {/* [lc-1589] 星期七格右侧的「总表查询」：打开往季番表弹窗（选年份 + 季度） */}
+        {/* [lc-1589] 星期七格右侧的「往季番表」：打开弹窗（选年份 + 季度） */}
         <button className="darc-btn" onClick={() => setArcOpen(true)} title="查往季番表（选年份 + 季度）">
           <IcoCalL size={14} strokeWidth={2} />
-          总表查询
+          往季番表
         </button>
       </div>
       <div className="dscroll">

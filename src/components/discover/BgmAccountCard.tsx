@@ -7,7 +7,12 @@ import { BgmCalendarItem } from "../../types";
 
 export type BgmAccountState = { bound: boolean; username: string };
 
-export type BgmCollectStats = { total: number; byType: Record<string, number> };
+export type BgmCollectStats = {
+  total: number;
+  byType: Record<string, number>;
+  /** [lc-1580] subject_id → 收藏类型（1想看/2看过/3在看/4搁置/5放弃）；发现页算「已追订阅更新」用 */
+  byId?: Record<string, number>;
+};
 /** [lc-1534] 「正在追」封面条条目（Rust bgm_watching_covers：本地表 type=3 按最近更新倒序） */
 
 export type BgmWatchCover = { id: number; name: string; cover: string };
@@ -33,8 +38,8 @@ export type BgmTodaySummary = {
   count: number;
   /** 当日评分 8.0+ 部数（0 则整段不显示） */
   hiCount: number;
-  /** 当日热度最高条目名（空则整段不显示） */
-  hotName: string;
+  /** [lc-1580] 当日「已追订阅」（在看 / 想看）的更新部数 —— 取代原「热度最高：…」那一段 */
+  subCount: number;
 };
 
 export function BgmAccountCard({
@@ -371,7 +376,9 @@ export function BgmAccountCard({
           <span>
             {today.isToday ? `今日 ${today.count} 部新番更新` : `${today.count} 部更新`}
             {today.hiCount > 0 ? ` · ${today.hiCount} 部评分 8.0+` : ""}
-            {today.hotName ? ` · 热度最高：${today.hotName}` : ""}
+            {/* [lc-1580] 用户要求：原「热度最高：…」改成**已追订阅的更新提醒**
+                （口径 = 在看(3) / 想看(1)；跟着本地追番表实时算，见 BgmPane） */}
+            {today.subCount > 0 ? ` · 已追订阅 ${today.subCount} 部更新` : " · 已追订阅暂无更新"}
           </span>
         </div>
       )}

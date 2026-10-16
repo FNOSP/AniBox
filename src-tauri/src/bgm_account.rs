@@ -490,14 +490,19 @@ pub async fn bgm_collect_season(app: AppHandle) -> Result<Value, String> {
 }
 
 /// 已同步条数（设置面板展示）
+/// [lc-1580] 额外回一张 **`byId`（subject_id → 收藏类型）**：发现页右栏「今日状态条」用它算
+/// 「今天有几部**已追订阅**的番更新」—— 前端拿日历当天的 id 直接查这张表、交集在本地算，
+/// 不用再多打一次日历/收藏接口（表是本地文件，读取近乎零成本）。
 #[tauri::command]
 pub async fn bgm_collect_stats(app: AppHandle) -> Result<Value, String> {
     let table = load_table(&app).await;
     let mut by_type: HashMap<i64, u32> = HashMap::new();
-    for e in table.map.values() {
+    let mut by_id = serde_json::Map::new();
+    for (k, e) in &table.map {
         *by_type.entry(e.kind).or_insert(0) += 1;
+        by_id.insert(k.clone(), json!(e.kind));
     }
-    Ok(json!({ "total": table.map.len(), "byType": by_type }))
+    Ok(json!({ "total": table.map.len(), "byType": by_type, "byId": by_id }))
 }
 
 /// [lc-1534] 「正在追」封面条数据（卡片左栏用）：本地表 type=3（在看）按最近更新倒序。

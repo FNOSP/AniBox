@@ -16,6 +16,7 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
   const [err, setErr] = useState("");
   const [nonce, setNonce] = useState(0);
   const [probe, setProbe] = useState(0); // [lc-123-rev5] 10 分钟后台探测
+  const [collectKinds, setCollectKinds] = useState<Record<string, number>>({}); // [lc-1580] id → 收藏类型
   // 手动 ⟳ / 失败重试的语义不同（见下）：⟳ = force（**仍带条件头**）；失败重试 = force + noEtag（全量）
   const forceRef = useRef(false);
   const hardRef = useRef(false);
@@ -65,6 +66,24 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
     };
   }, [active, nonce, probe]);
 
+  // [lc-1580] 本地追番表（subject_id → 收藏类型）：算「今日已追订阅更新」用。
+  // 与日历**同频**刷新（进页面 / ⟳ / 10 分钟探测）—— 表是本地文件、读取近乎零成本；
+  // 在详情页改了收藏、切回发现页（active 变化）就会重跑本 effect ⇒ 提醒实时跟上。
+  useEffect(() => {
+    if (!active) return;
+    let alive = true;
+    invoke<{ byId?: Record<string, number> }>("bgm_collect_stats")
+      .then((d) => {
+        if (alive) setCollectKinds(d?.byId ?? {});
+      })
+      .catch(() => {
+        /* 未绑定 / 读取失败：保持空表（提醒显示「暂无更新」，不报错） */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [active, nonce, probe]);
+
   // 后台探测：每 10 分钟一次；命令层只在 TTL（3h）过期时才真发请求，而且带 ETag —— 未变就 304，
   // changed=false ⇒ 上面一个 state 都不碰（不 re-render、不重置滚动）。
   useEffect(() => {
@@ -79,13 +98,14 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
   // 星期胶囊的迷你占比条：以当周最大值（至少 1）为 100%
   const maxCount = Math.max(1, ...days.map((g) => g.count || 0));
   const weekTotal = days.reduce((n, g) => n + (g.count || 0), 0);
-  // 当天汇总：部数 + 8.0+ 数量 + 热度最高（doing=在看人数最大者；没有 doing 就不写这段，不编）
-  const hot = dayItems.reduce<BgmCalendarItem | null>(
-    (a, b) => (a == null || (b.doing ?? 0) > (a.doing ?? 0) ? b : a),
-    null,
-  );
-  const hotName = hot ? hot.name_cn || hot.name : "";
+  // 当天汇总：部数 + 8.0+ 数量 + [lc-1580] 已追订阅更新数（原「热度最高」已按用户要求替换）
   const hiCount = dayItems.filter((x) => typeof x.score === "number" && (x.score ?? 0) >= 8).length;
+  // [lc-1580] 「已追订阅」口径 = 本地追番表里 type 在看(3) / 想看(1) 的条目（排除 看过/搁置/放弃）。
+  // 用当天日历条目的 id 直接查表 ⇒ 交集在本地算，实时跟着追番表变（在详情页改了收藏、回到本页即重算）。
+  const subUpdated = dayItems.filter((it) => {
+    const k = collectKinds[String(it.id)];
+    return k === 3 || k === 1;
+  }).length;
   const wdCn = WEEKDAYS.find((w) => w.id === wd)?.cn ?? "";
   // 逐条匹配：loading/partial 只给"命中"打标；只有 ok（索引完整）才敢分组和标"不在库"
   const withLib = lib.state === "ok" || lib.state === "partial";
@@ -135,7 +155,7 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
           isToday: wd === todayId,
           count: dayItems.length,
           hiCount,
-          hotName,
+          subCount: subUpdated,
         }}
       />
       <div className="dweeks">

@@ -1,12 +1,20 @@
 /* [lc-1589] 「总表查询」弹窗：选年份 + 季度 → 看该季真实番表。
    [lc-1605] 数据源 **AniList → Bangumi**：AniList 标题只有日语原生（用户投诉「名称全是日语」），
    换成 BGM（中文库 name_cn + 每季当独立条目 + 条目自带 subject id 可复用现有 BGM 详情链路）。
-   Rust 命令 `bgm_season`（走镜像 /v0/subjects?year&month，落盘 7 天）。
+   Rust 命令 `bgm_season`（走镜像 /v0/subjects?year&month，落盘缓存）。
+   [lc-1625] 「加载好慢」两处根因（见交付报告 lc-1625）：
+     ① 封面**直连 lain.bgm.tv** —— 该域在客户端侧被 DNS 污染（实测解析到 199.59.149.237、连接必超时），
+        25 张图一起挂 → 面板「转半天」。改为走 `bgmImg()`（fntvimg 代理 → 自建镜像 /img/* + disk_cache，
+        首次拉完落盘、下次秒开）。
+     ② 打开面板**空白干等** invoke 返回（冷启动镜像请求实测 ttfb 3.3s / 总 5.2s）。
+        改为 **stale-while-revalidate**：内存 + localStorage 双层前端缓存，命中先立刻渲染，
+        后台再刷新（Rust 侧 TTL 内零网络）。
    外壳复用仓库既有的 `.ddet-mask` 遮罩模式（同详情页简介弹窗），关闭动画沿用 lc-1592。 */
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { CalendarDays as IcoCalL, ChevronDown as IcoChevD, X as IcoXL } from "lucide-react";
 import { BgmCalendarItem } from "../../types";
+import { bgmImg } from "../../lib/images";
 import { Dsk } from "./shared";
 
 /** [lc-1605] bgm_season 归一化后的条目（Rust 侧字段，见 bgm.rs normalize_season） */
@@ -44,10 +52,68 @@ const SEASON_MONTH: Record<SeasonKey, number> = {
   FALL: 10,
 };
 
-/** 按当前月份推「当前季」（1-3 月 = 1月番，以此类推） */
+/** [lc-1605] 按当前月份推「当前季」（1-3 月 = 1月番，以此类推） */
 function currentSeason(d = new Date()): SeasonKey {
   const m = d.getMonth() + 1;
   return m <= 3 ? "WINTER" : m <= 6 ? "SPRING" : m <= 9 ? "SUMMER" : "FALL";
+}
+
+/* ───────────────── [lc-1625] 前端双层缓存（stale-while-revalidate 的「stale」层） ─────────────────
+   为什么在**前端**再缓存一份：Rust 的 bgm_season 落盘缓存（%TEMP%）已经能避免重复网络，但
+   ① 面板默认显示的是「本机当前季」，而缓存键按 (year,month) 分桶 —— 冷启动/首次打开仍要等
+      invoke 往返（含镜像网络，实测冷启动 3~5s）；② 切年份/季度来回切，每次都走一次 IPC。
+   所以这里加一层：**内存 Map（同会话秒切）+ localStorage（重开面板/重启应用也秒开）**。
+   命中就先渲染，invoke 在后台继续跑（Rust 命中 TTL 时零网络），返回后再覆盖 —— 即 SWR。 */
+const MEM = new Map<string, SeasonItem[]>();
+const LS_PREFIX = "anibox.season.v1:";
+const LS_LAST = "anibox.season.last.v1";
+
+function cacheKey(year: number, season: SeasonKey): string {
+  return `${year}-${SEASON_MONTH[season]}`;
+}
+
+/** 读缓存：内存 → localStorage。返回 null = 无缓存（该显示骨架）。 */
+function readCache(key: string): SeasonItem[] | null {
+  const mem = MEM.get(key);
+  if (mem) return mem;
+  try {
+    const raw = localStorage.getItem(LS_PREFIX + key);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as unknown;
+    if (Array.isArray(v)) {
+      const list = v as SeasonItem[];
+      MEM.set(key, list);
+      return list;
+    }
+  } catch {
+    /* localStorage 不可用/JSON 坏了 → 当无缓存 */
+  }
+  return null;
+}
+
+/** 写缓存：内存 + localStorage（localStorage 失败不影响内存层，本次会话仍秒开）。 */
+function writeCache(key: string, items: SeasonItem[]): void {
+  MEM.set(key, items);
+  try {
+    localStorage.setItem(LS_PREFIX + key, JSON.stringify(items));
+  } catch {
+    /* 配额满/隐私模式 → 忽略，仅内存层生效 */
+  }
+}
+
+/** [lc-1625] 记住上次看的季度（可选增强）：重开面板直接命中内存/落盘缓存，不回到「当前季」干等。 */
+function readLast(): { year: number; season: SeasonKey } | null {
+  try {
+    const raw = localStorage.getItem(LS_LAST);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as { year?: number; season?: string };
+    if (typeof v.year === "number" && v.season && v.season in SEASON_MONTH) {
+      return { year: v.year, season: v.season as SeasonKey };
+    }
+  } catch {
+    /* 忽略 */
+  }
+  return null;
 }
 
 export function SeasonArchive({
@@ -60,8 +126,10 @@ export function SeasonArchive({
   onOpenItem: (it: BgmCalendarItem) => void;
 }) {
   const now = new Date();
-  const [year, setYear] = useState(now.getFullYear());
-  const [season, setSeason] = useState<SeasonKey>(() => currentSeason(now));
+  // [lc-1625] 初始值：优先「上次看的季度」，否则本机当前年+当前季
+  const last = useMemo(() => readLast(), []);
+  const [year, setYear] = useState(last?.year ?? now.getFullYear());
+  const [season, setSeason] = useState<SeasonKey>(() => last?.season ?? currentSeason(now));
   const [items, setItems] = useState<SeasonItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -106,17 +174,39 @@ export function SeasonArchive({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // [lc-1625] 记住「上次看的季度」：换年份/季度就写一次（下次打开直接命中缓存）
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_LAST, JSON.stringify({ year, season }));
+    } catch {
+      /* 忽略 */
+    }
+  }, [year, season]);
+
+  // [lc-1625] stale-while-revalidate：命中前端缓存 → **先立刻渲染**（不显示骨架/不干等），
+  // 后台仍 invoke 一次（Rust TTL 内零网络，到期才刷新）→ 返回后覆盖。无缓存才显示骨架。
   useEffect(() => {
     let alive = true;
-    setBusy(true);
+    const key = cacheKey(year, season);
+    const cached = readCache(key);
     setErr("");
-    // [lc-1605] 数据源换成 BGM：季度 → month（1/4/7/10）
+    if (cached) {
+      setItems(cached);
+      setBusy(false); // 有缓存：不显示「查询中…」占位，静默后台刷新
+    } else {
+      setItems([]);
+      setBusy(true);
+    }
     invoke<{ items?: SeasonItem[] }>("bgm_season", { year, month: SEASON_MONTH[season] })
       .then((d) => {
-        if (alive) setItems(Array.isArray(d?.items) ? d.items : []);
+        if (!alive) return;
+        const list = Array.isArray(d?.items) ? d.items : [];
+        setItems(list);
+        writeCache(key, list);
       })
       .catch((e) => {
-        if (alive) {
+        // 有缓存时后台刷新失败 → 保留旧内容（stale 优于空白）；无缓存才报错
+        if (alive && !cached) {
           setItems([]);
           setErr(String(e));
         }
@@ -198,7 +288,8 @@ export function SeasonArchive({
               </button>
             ))}
           </div>
-          <span className="arc-cnt">{busy ? "查询中…" : `${items.length} 部`}</span>
+          {/* [lc-1625] 有内容（缓存或已加载）时即使后台在刷新也显示条数，不再闪「查询中…」 */}
+          <span className="arc-cnt">{busy && !items.length ? "查询中…" : `${items.length} 部`}</span>
         </div>
         <div className="arc-list">
           {busy && !items.length ? (
@@ -237,7 +328,16 @@ export function SeasonArchive({
                   >
                     <div className="arc-cv">
                       {it.cover ? (
-                        <img src={it.cover} alt="" loading="lazy" draggable={false} />
+                        // [lc-1625] 封面走 bgmImg()（fntvimg 代理 → 自建镜像 /img/* + disk_cache）：
+                        // 直连 lain.bgm.tv 在客户端侧被 DNS 污染、连接必超时（25 张一起挂 = 面板转半天）。
+                        // loading=lazy 懒加载（视口外不请求），decoding=async 不阻塞主线程。
+                        <img
+                          src={bgmImg(it.cover)}
+                          alt=""
+                          loading="lazy"
+                          decoding="async"
+                          draggable={false}
+                        />
                       ) : (
                         <span className="arc-noimg">无图</span>
                       )}

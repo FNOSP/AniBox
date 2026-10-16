@@ -2561,6 +2561,44 @@ button.arc-card:hover .arc-cv {
   height: 100%;
   object-fit: cover;
   display: block;
+  /* [lc-1625] 图片就绪时淡入，避免"占位块 → 图"硬切 */
+  animation: arcImgIn 0.3s ease;
+}
+@keyframes arcImgIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* [lc-1625] 封面占位骨架：图片字节到达前显示一块缓慢流动的微光（图加载完自然盖住它）。
+   走 background-position 动画（GPU 合成，几乎零成本）；`.arc-cv` 已有 overflow:hidden 兜住。 */
+.arc-cv {
+  background: linear-gradient(
+    100deg,
+    var(--ph-bg) 30%,
+    var(--hover, rgba(31, 41, 90, 0.06)) 50%,
+    var(--ph-bg) 70%
+  );
+  background-size: 200% 100%;
+  animation: arcShimmer 1.3s ease-in-out infinite;
+}
+@keyframes arcShimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .arc-cv img {
+    animation: none;
+  }
+  .arc-cv {
+    animation: none;
+  }
 }
 .arc-noimg {
   position: absolute;

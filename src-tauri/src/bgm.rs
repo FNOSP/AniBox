@@ -64,9 +64,81 @@ const TTL_PERSONS: u64 = 7 * 24 * 3600;
 /// 另外**跨天必须重取**：缓存键按前端本机日期分桶，且读回来的 payload 还要比一次 `day`
 /// （跨过本地零点 ⇒ 键变了 ⇒ 必然重取；万一键撞上也不会把昨天的表当今天用）。
 const TTL_CALENDAR: u64 = 3 * 3600;
-/// [lc-1605] 往季番表（/v0/subjects?year&month）：**往季基本定型**，TTL 可长（7 天）。
-/// 缓存键含 year+month（不同季各自一份）；当季仍在放送、评分会动，7 天粒度足够。
-const TTL_SEASON: u64 = 7 * 24 * 3600;
+/// [lc-1605] 往季番表（/v0/subjects?year&month）：缓存键含 year+month（不同季各自一份）。
+/// [lc-1625] **往季基本定型**，TTL 拉长到 30 天（用户要求「拉过的都本地缓存下次直接打开」）。
+/// 但**当季**仍在放送、评分/排名天天变 —— 对当前年+当前季用短 TTL（24h），否则评分会僵一个月。
+/// 判据：请求的 (year, month) 是否等于「本机当前年 + 当前季」（季 = 1/4/7/10 月）。
+const TTL_SEASON_PAST: u64 = 30 * 24 * 3600;
+const TTL_SEASON_CURRENT: u64 = 24 * 3600;
+
+fn is_leap_year(y: i64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+/// [lc-1625] Unix 天数（1970-01-01 起）→ (year, month)。纯函数，便于离线单测。
+fn ym_from_days(mut days: i64) -> (i64, i64) {
+    let mut year = 1970i64;
+    loop {
+        let yd = if is_leap_year(year) { 366 } else { 365 };
+        if days < yd {
+            break;
+        }
+        days -= yd;
+        year += 1;
+    }
+    let ml = [
+        31,
+        if is_leap_year(year) { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    let mut month = 1i64;
+    for &l in ml.iter() {
+        if days < l {
+            break;
+        }
+        days -= l;
+        month += 1;
+    }
+    (year, month)
+}
+
+/// [lc-1625] 本机「当前年 + 当前月」(year, month)。**不引入 chrono**（项目无此依赖），
+/// 用 Unix 秒自行换算；口径是 **UTC**（判"当前季"最多差一个月边界，够用 —— 跨边界最坏把当季
+/// 当往季缓存 30 天，下次重开面板就会刷新，不会错数据）。
+fn current_year_month() -> (i64, i64) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    ym_from_days(secs.div_euclid(86_400))
+}
+
+/// [lc-1625] 季首月（1/4/7/10）→ 是否「本机当前季」。判据用 (year, month) 与该季首月比较。
+fn is_current_season(year: i64, month: i64) -> bool {
+    let (cy, cm) = current_year_month();
+    if year != cy {
+        return false;
+    }
+    let season_of = |m: i64| -> i64 {
+        match m {
+            1..=3 => 1,
+            4..=6 => 4,
+            7..=9 => 7,
+            _ => 10,
+        }
+    };
+    season_of(month) == season_of(cm)
+}
 
 // ───────────────────────── 基础：密钥 / 端点 / 签名 / HTTP ─────────────────────────
 // 签名本体（hex 内层 / base64 外层）与端点解析在 crate::mirror_sign —— 全 crate 唯一实现，
@@ -937,7 +1009,14 @@ fn normalize_calendar(raw: &Value) -> Vec<Value> {
 #[tauri::command]
 pub async fn bgm_season(year: i64, month: i64) -> Result<Value, String> {
     let key = format!("{year}-{month}");
-    if let Some(v) = cache_get("season", &key, TTL_SEASON).await {
+    // [lc-1625] 当季用短 TTL（评分/排名天天变），往季用长 TTL（基本定型，30 天）。
+    // 命中即返回，**不打网络** —— 这是"拉过就本地缓存、下次秒开"的数据层。
+    let ttl = if is_current_season(year, month) {
+        TTL_SEASON_CURRENT
+    } else {
+        TTL_SEASON_PAST
+    };
+    if let Some(v) = cache_get("season", &key, ttl).await {
         return Ok(v);
     }
     let path =
@@ -952,8 +1031,9 @@ pub async fn bgm_season(year: i64, month: i64) -> Result<Value, String> {
     }
     let items = normalize_season(&raw);
     crate::libmpv::trace(&format!(
-        "[bgm] season {year}-{month} → {} 部",
-        items.len()
+        "[bgm] season {year}-{month} → {} 部（TTL {}s）",
+        items.len(),
+        ttl
     ));
     let out = json!({ "items": items });
     cache_put("season", &key, &out).await;
@@ -1216,5 +1296,32 @@ mod tests {
         assert_eq!(items[1]["name_cn"].as_str(), Some(""), "缺 name_cn → 空串");
         // 结构不符（不是 {data:[...]}）→ 空，由调用方当失败处理
         assert!(super::normalize_season(&serde_json::json!([{ "id": 1 }])).is_empty());
+    }
+
+    /// [lc-1625] Unix 天数 → (年,月) 换算（**不触网/不依赖当前时间**）：钉住闰年与月边界。
+    /// 用例依据：1970 非闰（365 天）；1972 闰（2 月 29 天）。
+    #[test]
+    fn ym_from_days_handles_leap_and_month_bounds() {
+        use super::{current_year_month, is_current_season, ym_from_days};
+        assert_eq!(ym_from_days(0), (1970, 1), "纪元当天");
+        assert_eq!(ym_from_days(30), (1970, 1), "1 月 31 日");
+        assert_eq!(ym_from_days(31), (1970, 2), "2 月 1 日");
+        assert_eq!(ym_from_days(58), (1970, 2), "2 月 28 日（平年）");
+        assert_eq!(ym_from_days(59), (1970, 3), "3 月 1 日（平年）");
+        assert_eq!(ym_from_days(364), (1970, 12), "1970 最后一天");
+        assert_eq!(ym_from_days(365), (1971, 1), "跨年");
+        // 1972 是闰年：到 1972-01-01 = 365+365 = 730 天
+        assert_eq!(ym_from_days(730), (1972, 1));
+        assert_eq!(ym_from_days(761), (1972, 2), "1972 闰年 2 月 1 日");
+        assert_eq!(ym_from_days(789), (1972, 2), "闰年 2 月 29 日");
+        assert_eq!(ym_from_days(790), (1972, 3), "闰年 3 月 1 日");
+        // 当前年月至少要落在 2024 之后（宽松 sanity：只要换算没跑飞）
+        let (y, m) = current_year_month();
+        assert!(y >= 2024 && (1..=12).contains(&m), "当前年月不合理: {y}-{m}");
+        // 当前季自身必然算"当季"
+        assert!(is_current_season(y, m), "本机当前 (年,月) 必属当季");
+        // 明确往季：2015 年任意季都不是当季
+        assert!(!is_current_season(2015, 1));
+        assert!(!is_current_season(2015, 10));
     }
 }

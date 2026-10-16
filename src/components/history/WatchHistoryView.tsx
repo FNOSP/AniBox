@@ -9,7 +9,13 @@
         + 我的 5 星评分/评语（持久化到 Rust 侧 ratings.json）+ 播放记录 sessions。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Clock as IcoClockL, RefreshCw as IcoRefreshL } from "lucide-react";
+import {
+  CalendarDays as IcoCalL,
+  Clock as IcoClockL,
+  LayoutGrid as IcoGridL,
+  RefreshCw as IcoRefreshL,
+  Rows3 as IcoRowsL,
+} from "lucide-react";
 import { imgUrl } from "../../lib/images";
 import { MediaItem } from "../../types";
 
@@ -59,6 +65,41 @@ type HistoryResp = { items?: HistoryItem[]; fnosOk?: boolean; fnosError?: string
 type Filter = "全部" | "电影" | "剧集" | "在线源";
 
 const FILTERS: Filter[] = ["全部", "电影", "剧集", "在线源"];
+
+/* ── [lc-1620] 展示方式：海报网格（默认）/ 紧凑列表 / 时间线 ──
+   口径照抄发现页「媒体库」左栏 TmdbPane 的三视图（timeline/grid/list）+ `.dlib-vbtn` 切换钮。
+   选择记 localStorage：观影记录页是高频回访页，用户切过一次就该记住（与仓库既有
+   `fntvSidebarActions.collapsed` / `anibox-guest` 等键同一套做法）。 */
+type ViewMode = "grid" | "list" | "timeline";
+const VIEW_KEY = "fntv-history-view";
+
+/** 读取已保存的展示方式；非法/首次一律回落到「海报网格」（默认视图，一屏放最多）。 */
+function readView(): ViewMode {
+  try {
+    const v = localStorage.getItem(VIEW_KEY);
+    if (v === "grid" || v === "list" || v === "timeline") return v;
+  } catch {
+    /* 隐私模式等拿不到 localStorage：静默回落，不阻断页面 */
+  }
+  return "grid";
+}
+
+/** 时间线分组桶（今天 / 昨天 / 本周 / 更早；无时间戳归「更早」） */
+type TimeBucket = "今天" | "昨天" | "本周" | "更早";
+const BUCKET_ORDER: TimeBucket[] = ["今天", "昨天", "本周", "更早"];
+
+function bucketOf(ts?: number): TimeBucket {
+  if (!ts || ts <= 0) return "更早";
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((today.getTime() - d.getTime()) / 86400000);
+  if (days <= 0) return "今天";
+  if (days === 1) return "昨天";
+  if (days < 7) return "本周";
+  return "更早";
+}
 
 /** 条目 → 筛选分类（在线源按 source；其余按类型：Movie=电影，其它归剧集） */
 function catOf(it: HistoryItem): Exclude<Filter, "全部"> {
@@ -189,6 +230,8 @@ export function WatchHistoryView({
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState<Filter>("全部");
+  /** [lc-1620] 展示方式（默认海报网格；从 localStorage 恢复） */
+  const [view, setView] = useState<ViewMode>(readView);
   const [note, setNote] = useState("");
   /** 我的评分/评语（作品键 → 值）；从 items 初始化，保存后就地更新，卡片星星随之刷新 */
   const [myRatings, setMyRatings] = useState<Record<string, { score: number; review: string }>>({});
@@ -255,6 +298,23 @@ export function WatchHistoryView({
   // 双栏拆分（照抄原项目：已看完 = 进度≥1；其余 = 在观看）
   const done = useMemo(() => filtered.filter((it) => (it.progress ?? 0) >= 1), [filtered]);
   const watching = useMemo(() => filtered.filter((it) => (it.progress ?? 0) < 1), [filtered]);
+
+  /** [lc-1620] 时间线视图的分组（今天/昨天/本周/更早；空桶不渲染） */
+  const groups = useMemo(() => {
+    const map: Record<TimeBucket, HistoryItem[]> = { 今天: [], 昨天: [], 本周: [], 更早: [] };
+    for (const it of filtered) map[bucketOf(it.playedAt)].push(it);
+    return BUCKET_ORDER.map((k) => ({ key: k, rows: map[k] })).filter((g) => g.rows.length > 0);
+  }, [filtered]);
+
+  /** 切换展示方式并落盘（写失败不影响当前会话） */
+  const pickView = useCallback((v: ViewMode) => {
+    setView(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      /* 忽略写入失败 */
+    }
+  }, []);
 
   const stats = useMemo(() => {
     const now = new Date();
@@ -340,7 +400,8 @@ export function WatchHistoryView({
 
       {!loading && data && (
         <>
-          {/* 筛选胶囊（照抄原项目右上角「全部/电影/剧集/动漫」→ 本仓库分类：+在线源；计数 = 作品数） */}
+          {/* 筛选胶囊（照抄原项目右上角「全部/电影/剧集/动漫」→ 本仓库分类：+在线源；计数 = 作品数）
+              + [lc-1620] 右侧展示方式切换（照抄发现页 .dlib-vbtn 口径） */}
           <div className="hist-pills">
             {FILTERS.map((f) => (
               <button
@@ -351,6 +412,29 @@ export function WatchHistoryView({
                 {f} ({counts[f]})
               </button>
             ))}
+            <div className="hist-views" role="group" aria-label="展示方式">
+              <button
+                className={`hist-vbtn${view === "grid" ? " on" : ""}`}
+                title="海报网格"
+                onClick={() => pickView("grid")}
+              >
+                <IcoGridL size={16} strokeWidth={2} />
+              </button>
+              <button
+                className={`hist-vbtn${view === "list" ? " on" : ""}`}
+                title="紧凑列表"
+                onClick={() => pickView("list")}
+              >
+                <IcoRowsL size={16} strokeWidth={2} />
+              </button>
+              <button
+                className={`hist-vbtn${view === "timeline" ? " on" : ""}`}
+                title="时间线"
+                onClick={() => pickView("timeline")}
+              >
+                <IcoCalL size={16} strokeWidth={2} />
+              </button>
+            </div>
           </div>
 
           {!data.fnosOk && (
@@ -467,44 +551,72 @@ export function WatchHistoryView({
                 </div>
               </section>
 
-              {/* 影视清单：已看完 / 在观看 双栏（照抄原项目 wh-split 版式） */}
+              {/* 影视清单：三种展示方式（[lc-1620] 替换原「已看完/在观看」双栏大卡）
+                  —— 默认海报网格（一屏放最多）；切换后换 key 重挂载 ⇒ 条目依次入场（照抄 TmdbPane contentKey 手法）。 */}
               <section className="hist-section">
                 <div className="hist-section-head">
                   <div className="hist-section-title">影视清单</div>
-                  <div className="hist-section-hint">点击查看详情并评分</div>
-                </div>
-                <div className="hist-split">
-                  <div className="hist-col done">
-                    <div className="hist-col-head">
-                      <span className="hist-col-title">已看完</span>
-                      <span className="hist-col-count">{done.length}</span>
-                    </div>
-                    <div className="hist-grid">
-                      {done.length > 0 ? (
-                        done.map((it) => (
-                          <HistoryCard key={it.guid} it={it} rating={myRatings[it.guid]?.score ?? 0} onOpen={handleOpen} />
-                        ))
-                      ) : (
-                        <div className="hist-col-empty">暂无已看完的作品</div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="hist-col watching">
-                    <div className="hist-col-head">
-                      <span className="hist-col-title">在观看</span>
-                      <span className="hist-col-count">{watching.length}</span>
-                    </div>
-                    <div className="hist-grid">
-                      {watching.length > 0 ? (
-                        watching.map((it) => (
-                          <HistoryCard key={it.guid} it={it} rating={myRatings[it.guid]?.score ?? 0} onOpen={handleOpen} />
-                        ))
-                      ) : (
-                        <div className="hist-col-empty">暂无在观看的作品</div>
-                      )}
-                    </div>
+                  <div className="hist-section-hint">
+                    {done.length} 部已看完 · {watching.length} 部在看 · 点击查看详情并评分
                   </div>
                 </div>
+
+                {filtered.length === 0 ? (
+                  <div className="hist-col-empty">该分类下暂无作品</div>
+                ) : (
+                  <div className="hist-content" key={`${filter}|${view}`}>
+                    {view === "grid" ? (
+                      <div className="hist-grid">
+                        {filtered.map((it, i) => (
+                          <HistoryCard
+                            key={it.guid}
+                            it={it}
+                            rating={myRatings[it.guid]?.score ?? 0}
+                            onOpen={handleOpen}
+                            delay={i}
+                          />
+                        ))}
+                      </div>
+                    ) : view === "list" ? (
+                      <div className="hist-lv">
+                        {filtered.map((it, i) => (
+                          <HistoryRow
+                            key={it.guid}
+                            it={it}
+                            rating={myRatings[it.guid]?.score ?? 0}
+                            onOpen={handleOpen}
+                            delay={i}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="hist-tl">
+                        {groups.map((g, gi) => (
+                          <div className="hist-grp" key={g.key} style={{ animationDelay: `${Math.min(gi, 6) * 0.04}s` }}>
+                            <div className="hist-ghd">
+                              <span className="hist-gpill">
+                                <IcoCalL size={13} strokeWidth={2.2} />
+                                {g.key}
+                              </span>
+                              <span className="hist-gcnt">{g.rows.length} 部作品</span>
+                            </div>
+                            <div className="hist-rows">
+                              {g.rows.map((it, i) => (
+                                <HistoryRow
+                                  key={it.guid}
+                                  it={it}
+                                  rating={myRatings[it.guid]?.score ?? 0}
+                                  onOpen={handleOpen}
+                                  delay={i}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </section>
             </>
           )}
@@ -556,10 +668,13 @@ function HistoryCard({
   it,
   rating,
   onOpen,
+  delay = 0,
 }: {
   it: HistoryItem;
   rating: number;
   onOpen: (it: HistoryItem) => void;
+  /** [lc-1620] 入场错峰延迟（按索引；与发现页网格一致，最多封顶 11 档） */
+  delay?: number;
 }) {
   const pct = Math.round(Math.min(1, Math.max(0, it.progress ?? 0)) * 100);
   // [lc-1616] 副行 = 最新一集 / 看过几集 · 进度 · 最近观看时间
@@ -573,6 +688,7 @@ function HistoryCard({
       className="hist-card"
       onClick={() => onOpen(it)}
       title={isWebrs && it.sourceName ? `在线源：${it.sourceName}` : it.title}
+      style={{ animationDelay: `${Math.min(delay, 11) * 0.03}s` }}
     >
       <div
         className="hist-art"
@@ -593,6 +709,54 @@ function HistoryCard({
         {rating > 0 && <Stars value={rating} />}
         <div className="hist-name">{it.title || "未知作品"}</div>
         <div className="hist-sub">{sub}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ── [lc-1620] 紧凑行（紧凑列表 / 时间线视图共用：小封面 + 标题/进度 + 最近时间 + 评分） ──
+   一屏能扫十几条，是对「一横展示太少」的第二种解法（网格是横向多放，行是纵向多扫）。 */
+
+function HistoryRow({
+  it,
+  rating,
+  onOpen,
+  delay = 0,
+}: {
+  it: HistoryItem;
+  rating: number;
+  onOpen: (it: HistoryItem) => void;
+  delay?: number;
+}) {
+  const pct = Math.round(Math.min(1, Math.max(0, it.progress ?? 0)) * 100);
+  const epPart = it.episode || (it.episodeCount && it.episodeCount > 0 ? `看过 ${it.episodeCount} 集` : "");
+  const sub = [epPart, pct > 0 ? `${pct}%` : ""].filter(Boolean).join(" · ") || "暂无进度";
+  const isWebrs = it.source === "webrs";
+  return (
+    <div
+      className="hist-lrow"
+      onClick={() => onOpen(it)}
+      title={isWebrs && it.sourceName ? `在线源：${it.sourceName}` : it.title}
+      style={{ animationDelay: `${Math.min(delay, 9) * 0.035}s` }}
+    >
+      <div
+        className="hist-lposter"
+        style={
+          it.poster
+            ? { backgroundImage: `url(${imgUrl(it.poster)})` }
+            : { background: artForName(it.title || it.guid) }
+        }
+      />
+      <div className="hist-linfo">
+        <div className="hist-lhead">
+          <span className="hist-ltitle">{it.title || "未知作品"}</span>
+          <span className={`hist-lbadge${isWebrs ? " webrs" : ""}`}>{isWebrs ? "在线源" : "飞牛"}</span>
+        </div>
+        <div className="hist-lsub">{sub}</div>
+      </div>
+      <div className="hist-lright">
+        {rating > 0 ? <Stars value={rating} size={12} /> : <span className="hist-lnone">未评</span>}
+        <span className="hist-ltime">{fmtAgo(it.playedAt)}</span>
       </div>
     </div>
   );

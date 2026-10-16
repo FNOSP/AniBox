@@ -95,6 +95,43 @@
   font-weight: 600;
 }
 
+/* ── [lc-1620] 展示方式切换（照抄发现页 .dlib-switch / .dlib-vbtn：玻璃胶囊内三个圆形图标钮） ──
+   放在筛选胶囊同一行右侧（margin-left:auto 顶到行尾；窄屏随 .hist-pills 的 wrap 换行）。 */
+.hist-views {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.hist-vbtn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.hist-vbtn:hover {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+.hist-vbtn.on {
+  background: var(--accent-grad);
+  color: #fff;
+  box-shadow: 0 3px 10px rgba(108, 155, 255, 0.3);
+  animation: histPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
 /* ── 飞牛不可用提示条 ── */
 .hist-warn {
   margin: 0 0 14px;
@@ -370,7 +407,8 @@ html.dark .hist-heat {
   opacity: 1;
 }
 
-/* ── 影视清单：已看完 / 在观看 双栏（原项目 wh-split） ── */
+/* ── 影视清单：[lc-1620] 三种展示方式（海报网格 / 紧凑列表 / 时间线） ──
+   （原「已看完 / 在观看」双栏大卡已移除：一屏放太少，用户要求「一横展示多几个」。） */
 .hist-section {
   margin-top: 22px;
 }
@@ -378,6 +416,8 @@ html.dark .hist-heat {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
   margin-bottom: 14px;
 }
 .hist-section-title {
@@ -389,65 +429,11 @@ html.dark .hist-heat {
   font-size: 12px;
   color: var(--muted);
 }
-.hist-split {
-  display: flex;
-  gap: 26px;
-}
-.hist-col {
-  flex: 1 1 0;
+/* 视图容器：换 key 重挂载时条目依次入场，容器本身不需要样式 */
+.hist-content {
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-@media (max-width: 980px) {
-  .hist-split {
-    flex-direction: column;
-  }
-}
-.hist-col-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-  padding-left: 4px;
-}
-.hist-col-title {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--text-strong);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.hist-col-title::before {
-  content: "";
-  width: 8px;
-  height: 8px;
-  border-radius: 3px;
-  flex: none;
-}
-.hist-col.done .hist-col-title::before {
-  background: #34c759;
-}
-.hist-col.watching .hist-col-title::before {
-  background: #ff9f0a;
-}
-.hist-col-count {
-  font-size: 12px;
-  color: var(--muted);
-  background: var(--hover);
-  border: 1px solid var(--line);
-  padding: 2px 10px;
-  border-radius: 11px;
-}
-.hist-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 16px 14px;
-  align-content: start;
 }
 .hist-col-empty {
-  grid-column: 1 / -1;
   min-height: 180px;
   display: flex;
   align-items: center;
@@ -458,6 +444,202 @@ html.dark .hist-heat {
   background: var(--hover);
   border: 1px dashed var(--line-strong);
   border-radius: 14px;
+}
+
+/* ① 海报网格（默认）：一屏尽量多放（minmax 取 118~132 区间下限附近，横排更多） */
+.hist-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 16px 12px;
+  align-content: start;
+}
+
+/* ② 紧凑列表：一行一条（小封面 + 标题/进度 + 最近时间 + 评分），一屏能扫很多条 */
+.hist-lv {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hist-lrow {
+  position: relative;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  gap: 11px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px 12px 8px 8px;
+  border-radius: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  animation: histRowIn 0.38s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+}
+/* 悬停时左侧亮起一条主色竖条（与发现页 .dlib-lrow::before 同款） */
+.hist-lrow::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--accent);
+  transform: scaleY(0);
+  transition: transform 0.28s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+.hist-lrow:hover {
+  transform: translateX(4px);
+  box-shadow: var(--shadow-card);
+  border-color: var(--line-strong);
+}
+.hist-lrow:hover::before {
+  transform: scaleY(1);
+}
+.hist-lposter {
+  position: relative;
+  width: 46px;
+  height: 69px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--ph-bg);
+  background-size: cover;
+  background-position: center;
+}
+.hist-linfo {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.hist-lhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.hist-ltitle {
+  min-width: 0;
+  flex: 0 1 auto;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hist-lrow:hover .hist-ltitle {
+  color: var(--accent);
+}
+.hist-lbadge {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--hover);
+  color: var(--text-2);
+}
+.hist-lbadge.webrs {
+  background: rgba(10, 132, 255, 0.16);
+  color: #3b9bff;
+}
+html.dark .hist-lbadge.webrs {
+  color: #7fd0ff;
+}
+.hist-lsub {
+  font-size: 11.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hist-lright {
+  flex-shrink: 0;
+  min-width: 66px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+.hist-lright .hist-stars {
+  margin-bottom: 0;
+}
+.hist-lnone {
+  font-size: 11px;
+  color: var(--muted);
+}
+.hist-ltime {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ③ 时间线：按最近观看时间分组（今天/昨天/本周/更早），组内纵向列表 */
+.hist-tl {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.hist-grp {
+  display: flex;
+  flex-direction: column;
+  animation: histEnter 0.5s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+}
+.hist-ghd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 11px;
+  padding-bottom: 9px;
+  border-bottom: 1px dashed var(--line);
+}
+.hist-gpill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--accent-grad);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(108, 155, 255, 0.25);
+}
+.hist-gpill > svg {
+  flex-shrink: 0;
+}
+.hist-gcnt {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.hist-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── [lc-1620] 入场动画（keyframes 名 hist 前缀，避免与既有动画撞名） ── */
+@keyframes histEnter {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes histGridIn {
+  from { opacity: 0; transform: scale(0.92) translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes histRowIn {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes histPop {
+  0% { transform: scale(0.78); }
+  50% { transform: scale(1.12); }
+  100% { transform: scale(1); }
 }
 
 /* ── 海报卡（照抄原项目 .wh-card：2:3 + 渐隐 + 名称/副行 + 进度条 + 角标） ── */
@@ -471,6 +653,7 @@ html.dark .hist-heat {
   background: var(--ph-bg);
   border: 1px solid var(--line);
   transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.22s, border-color 0.22s;
+  animation: histGridIn 0.45s cubic-bezier(0.25, 0.8, 0.25, 1) both;
 }
 .hist-card:hover {
   transform: translateY(-4px);
@@ -911,17 +1094,26 @@ html:not(.dark) .hist-detail-scrim {
 /* ── 少动效兜底（与 29-transitions.css 同口径） ── */
 @media (prefers-reduced-motion: reduce) {
   .hist-card,
+  .hist-lrow,
   .hist-hcell,
   .hist-heat-tip,
   .hist-rate-star svg {
     transition: none;
   }
-  .hist-card:hover {
+  .hist-card:hover,
+  .hist-lrow:hover {
+    transform: none;
+  }
+  .hist-lrow:hover::before {
     transform: none;
   }
   .hist-hcell:hover {
     transform: none;
   }
+  .hist-card,
+  .hist-lrow,
+  .hist-grp,
+  .hist-vbtn.on,
   .hist-sync-spin,
   .hist-skel-stats::after,
   .hist-skel::after,

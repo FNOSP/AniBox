@@ -101,6 +101,9 @@ export function WebrsPanel({ title }: { title: string }) {
 
   // [lc-1606] 发起反爬验证（Rust 建隐藏窗加载搜索页，按 captchaType 自动/交互完成）
   const startCaptcha = useCallback(async (rule: string, keyword: string) => {
+    // [lc-1624] 同一时刻只允许一个验证会话：已在验证中就不要再起一个
+    // （否则第二个会立刻把第一个顶掉，用户看到「失败 · 已取消」）。
+    if (captchaBusyRef.current) return;
     captchaBusyRef.current = true;
     setCaptcha(null);
     setCode("");
@@ -210,6 +213,12 @@ export function WebrsPanel({ title }: { title: string }) {
         captchaBusyRef.current = false;
         setCaptcha(null);
         setCaptchaMsg({ rule: p.rule, status: "failed", error: p.error });
+      } else if (p.status === "cancelled") {
+        // [lc-1624] 取消 / 被新会话顶掉**不是验证失败**：清态即可，不弹「验证失败」。
+        // 后端已按原因分型（用户取消 / 被取代），这里一律静默收尾，避免误报。
+        captchaBusyRef.current = false;
+        setCaptcha(null);
+        setCaptchaMsg(null);
       }
     }).then((u) => {
       if (alive) un2 = u;

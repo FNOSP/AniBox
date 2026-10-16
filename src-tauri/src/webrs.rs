@@ -22,7 +22,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -351,13 +351,17 @@ fn rule_referer(rule: &Rule) -> String {
     format!("{}/", rule.base_url.trim_end_matches('/'))
 }
 
-fn http() -> reqwest::Client {
+/// [lc-1624] HTTP 客户端构建**返回 Result**（原来是 `.expect("reqwest client build")`）。
+/// release 是 `panic = "abort"` —— 客户端构建一旦失败（TLS 后端/系统代理等异常），
+/// expect 就是**直接崩进程**，而这条路径在「每次点播放 / 每次搜索」上都会走到。
+/// 失败改成可诊断错误上抛，最坏只是这一路请求失败，不会把整个软件带走。
+fn http() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(20))
         .build()
-        .expect("reqwest client build")
+        .map_err(|e| format!("HTTP 客户端初始化失败: {e}"))
 }
 
 // ───────────────────────── [lc-1606] 每规则 cookie 收割 / 复用 ─────────────────────────
@@ -448,7 +452,7 @@ struct HttpResp {
 }
 
 async fn fetch_text(url: &str, ua: &str, referer: &str, rule_name: &str) -> Result<HttpResp, String> {
-    let client = http();
+    let client = http()?;
     let mut req = client.get(url).header("user-agent", ua);
     if !referer.is_empty() {
         req = req.header("referer", referer);
@@ -661,13 +665,43 @@ fn parse_step(raw: &str, default_axis: Axis) -> Result<Step, String> {
         (Axis::SelfAxis, rest.trim())
     } else if let Some(rest) = raw.strip_prefix("following-sibling::") {
         (Axis::FollowingSibling, rest.trim())
+    } else if raw == ".." || raw.starts_with("../") {
+        // [lc-1624] 父节点轴：社区规则里没有，但写成 `..` 时给**可诊断**错误，
+        // 而不是被当成一个名为 ".." 的标签静默匹配不到（表现为"没结果"，更难查）。
+        return Err("暂不支持父节点轴 `..`（如需请改写为绝对路径）".into());
+    } else if let Some(name) = [
+        "parent::",
+        "ancestor::",
+        "ancestor-or-self::",
+        "preceding-sibling::",
+        "preceding::",
+        "descendant::",
+        "descendant-or-self::",
+        "child::",
+        "attribute::",
+    ]
+    .iter()
+    .find_map(|a| raw.strip_prefix(*a))
+    {
+        return Err(format!(
+            "暂不支持的轴 `{}`（仅支持 //、/、self::、following-sibling::）",
+            &raw[..raw.len() - name.len()]
+        ));
     } else {
         (default_axis, raw)
     };
     if let Some(attr) = raw.strip_prefix('@') {
+        let name = attr.trim();
+        // [lc-1624] `@attr` 混写谓词/路径（如 @href[1]、@href/a）不是合法属性步进，
+        // 原实现会把整串当成属性名 → 静默匹配不到。这里给可诊断错误。
+        if name.is_empty() || name.contains('[') || name.contains('/') {
+            return Err(format!(
+                "属性步进写法不支持: @{name}（属性名里不应含 [ 或 /）"
+            ));
+        }
         return Ok(Step {
             axis,
-            test: Test::Attr(attr.trim().to_string()),
+            test: Test::Attr(name.to_string()),
             preds: Vec::new(),
         });
     }
@@ -726,6 +760,9 @@ fn parse_step(raw: &str, default_axis: Axis) -> Result<Step, String> {
 /// 解析整条 XPath 为**联合分支**：顶层 `|`（引号/括号外）把表达式切成多条
 /// 供选路径（ezdmw chapterResult 用 4 个分支取不同线路的选集链接）。
 /// 每条分支内部按 `.` 开头 = 相对上下文求值。
+///
+/// [lc-1624] 空分支（如末尾多写 `|`）直接忽略 —— "能解析就解析"；只有整条都没有
+/// 可解析分支时才报错。
 fn parse_xpath(expr: &str) -> Result<Vec<Vec<Step>>, String> {
     let mut branches: Vec<String> = Vec::new();
     let mut depth = 0i32;
@@ -753,19 +790,34 @@ fn parse_xpath(expr: &str) -> Result<Vec<Vec<Step>>, String> {
         return Err(format!("XPath 括号/引号不闭合: {expr}"));
     }
     branches.push(expr[start..].trim().to_string());
-    branches.iter().map(|b| parse_single_xpath(b)).collect()
+    let mut out: Vec<Vec<Step>> = Vec::new();
+    for b in &branches {
+        if b.is_empty() {
+            continue; // 空联合分支忽略（末尾 / 多余的 |）
+        }
+        out.push(parse_single_xpath(b)?);
+    }
+    if out.is_empty() {
+        return Err(format!("XPath「{expr}」为空（没有任何可解析的分支）"));
+    }
+    Ok(out)
 }
 
 /// 解析单条分支（`.` 开头 = 相对上下文求值）。
+///
+/// [lc-1624] **空步进容错**（这是「空 XPath 步进」报错的根因）：
+/// 社区规则里出现过 `chapterRoads = "//"`（内置 aafun 就是），以及末尾 / 相邻多写 `/`
+/// 的笔误（`//div//`、`//a///b`）。原实现把空段丢给 `parse_step` 直接报
+/// 「空 XPath 步进」，于是**整个源**的选集/搜索链路全挂。现在：
+///   · 相邻或末尾的空段直接忽略（等价于少写一个 `/`）；
+///   · 若最终一个步进都没有（`//` / `/` / `.`），表示「上下文节点本身」，返回空步进列表
+///     （求值即原样返回上下文 —— aafun 的 `//` 正是这个语义：以根为唯一"线路"）。
 fn parse_single_xpath(expr: &str) -> Result<Vec<Step>, String> {
     let mut s = expr.trim();
     let mut relative = false;
     if let Some(rest) = s.strip_prefix('.') {
         relative = true;
         s = rest;
-    }
-    if s.is_empty() {
-        return Err("空 XPath".into());
     }
     let mut steps = Vec::new();
     let mut i = 0usize;
@@ -780,7 +832,10 @@ fn parse_single_xpath(expr: &str) -> Result<Vec<Step>, String> {
             // ".tag" 形态不合法，但 ".//a" 已在上面被剥成 "//a" / "/a"，这里兜住
             Axis::Child
         } else {
-            return Err(format!("XPath 语法错误（缺少起始 /）: {expr}"));
+            return Err(format!(
+                "XPath「{expr}」语法错误：第 {} 个字符处缺少起始 /（步进之间只能由 / 或 // 分隔）",
+                i + 1
+            ));
         };
         // 抠一个步进（遇到深度 0 且不在引号内的 '/' 停）
         let start = i;
@@ -803,7 +858,15 @@ fn parse_single_xpath(expr: &str) -> Result<Vec<Step>, String> {
             }
             i += c.len_utf8();
         }
-        steps.push(parse_step(&s[start..i], axis)?);
+        if q.is_some() || depth != 0 {
+            return Err(format!("XPath「{expr}」谓词括号/引号不闭合"));
+        }
+        let seg = s[start..i].trim();
+        if seg.is_empty() {
+            // 相邻 / 末尾多写的分隔符：忽略这一段（能解析就解析）
+            continue;
+        }
+        steps.push(parse_step(seg, axis)?);
     }
     Ok(steps)
 }
@@ -1026,7 +1089,7 @@ async fn api_request(rule: &Rule, req: &ApiRequest, ph: &[(&str, &str)]) -> Resu
     if !url.starts_with("http") {
         url = join_url(&rule.base_url, &url).ok_or_else(|| format!("模板 URL 无法拼接: {url}"))?;
     }
-    let client = http();
+    let client = http()?;
     let is_post = req.method.eq_ignore_ascii_case("post");
     let mut builder = if is_post {
         client.post(&url)
@@ -1130,14 +1193,19 @@ async fn rule_search(rule: &Rule, keyword: &str) -> Result<Vec<(String, String)>
         }
         let doc = Html::parse_document(&resp.body);
         let root = vec![doc.tree.root().id()];
-        let list = eval_nodes(&doc, &root, &rule.search_list)?;
+        // [lc-1624] 给 XPath 解析/求值错误带上**字段名**，坏源一眼可查；
+        // 错误只影响这一个源（多源聚合里各源独立 catch），不会带崩整条链路。
+        let list = eval_nodes(&doc, &root, &rule.search_list)
+            .map_err(|e| format!("searchList 选择器失败：{e}"))?;
         let mut out = Vec::new();
         for node in list.into_iter().take(60) {
-            let name = match eval_xpath(&doc, &[node], &parse_xpath(&rule.search_name)?)? {
+            let name = match eval_xpath(&doc, &[node], &parse_xpath(&rule.search_name)
+                .map_err(|e| format!("searchName 选择器失败：{e}"))?)? {
                 EvalOut::Str(v) => v.first().cloned().unwrap_or_default(),
                 EvalOut::Nodes(v) => v.first().map(|n| text_of(&doc, *n)).unwrap_or_default(),
             };
-            let href = match eval_xpath(&doc, &[node], &parse_xpath(&rule.search_result)?)? {
+            let href = match eval_xpath(&doc, &[node], &parse_xpath(&rule.search_result)
+                .map_err(|e| format!("searchResult 选择器失败：{e}"))?)? {
                 EvalOut::Str(v) => v.first().cloned().unwrap_or_default(),
                 EvalOut::Nodes(v) => v.first().and_then(|n| attr_of(&doc, *n, "href")).unwrap_or_default(),
             };
@@ -1379,6 +1447,13 @@ fn catalog_mem() -> &'static std::sync::Mutex<Option<(u64, Vec<CatalogItem>)>> {
     CATALOG_MEM.get_or_init(|| std::sync::Mutex::new(None))
 }
 
+/// [lc-1624] 取目录缓存锁，**容忍中毒**：原写法 `.lock().unwrap()` 在别的线程持锁
+/// panic 过一次后（毒锁）会连锁 panic —— 在 `panic = "abort"` 下即整进程崩溃。
+/// 目录缓存只是加速用的旁路数据，毒锁时直接取回内部值继续用，绝不 panic。
+fn catalog_mem_guard() -> std::sync::MutexGuard<'static, Option<(u64, Vec<CatalogItem>)>> {
+    catalog_mem().lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// 落盘缓存路径：app_data_dir/webrs-catalog.json（与 config.json 同级，非仓库内文件）。
 fn catalog_cache_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     Ok(app
@@ -1408,7 +1483,7 @@ async fn write_disk_catalog(app: &AppHandle, items: &[CatalogItem]) {
 /// 拉目录里的一个文件（`index.json` 或 `{name}.json`）：raw 直连优先，失败回退镜像。
 /// 两个端点都不需要密钥；任一成功即返回，全失败带最后一次错误。
 async fn fetch_catalog_file(path: &str) -> Result<String, String> {
-    let client = http();
+    let client = http()?;
     let mut last = String::from("未知错误");
     for base in [CATALOG_BASE, CATALOG_BASE_MIRROR] {
         let url = format!("{base}{path}");
@@ -1447,21 +1522,21 @@ fn parse_catalog(text: &str) -> Result<Vec<CatalogItem>, String> {
 /// 目录取数（三级：内存缓存 → 落盘缓存 → 网络），`force` 跳过前两级。
 async fn catalog_items(app: &AppHandle, force: bool) -> Result<Vec<CatalogItem>, String> {
     if !force {
-        if let Some((at, items)) = catalog_mem().lock().unwrap().as_ref() {
+        if let Some((at, items)) = catalog_mem_guard().as_ref() {
             if now_secs().saturating_sub(*at) < CATALOG_TTL_SECS {
                 return Ok(items.clone());
             }
         }
         if let Some((at, items)) = read_disk_catalog(app).await {
             if now_secs().saturating_sub(at) < CATALOG_TTL_SECS {
-                *catalog_mem().lock().unwrap() = Some((at, items.clone()));
+                *catalog_mem_guard() = Some((at, items.clone()));
                 return Ok(items);
             }
         }
     }
     let text = fetch_catalog_file("index.json").await?;
     let items = parse_catalog(&text)?;
-    *catalog_mem().lock().unwrap() = Some((now_secs(), items.clone()));
+    *catalog_mem_guard() = Some((now_secs(), items.clone()));
     write_disk_catalog(app, &items).await;
     Ok(items)
 }
@@ -1722,7 +1797,9 @@ pub async fn webrs_chapters(app: AppHandle, rule_name: String, url: String) -> R
     }
     let doc = Html::parse_document(&resp.body);
     let root = vec![doc.tree.root().id()];
-    let road_nodes = eval_nodes(&doc, &root, &rule.chapter_roads)?;
+    // [lc-1624] 字段名进错误文案；坏源只影响自己
+    let road_nodes = eval_nodes(&doc, &root, &rule.chapter_roads)
+        .map_err(|e| format!("chapterRoads 选择器失败：{e}"))?;
     if road_nodes.is_empty() {
         return Err(
             "没解析到播放线路 —— 该站选集很可能由脚本动态加载（如 baimao），HTTP 拿不到，换个源试试".into(),
@@ -1731,8 +1808,12 @@ pub async fn webrs_chapters(app: AppHandle, rule_name: String, url: String) -> R
     let mut roads: Vec<Value> = Vec::new();
     for (ri, road) in road_nodes.into_iter().enumerate() {
         let eps_ctx = vec![road];
-        let Ok(ep_steps) = parse_xpath(&rule.chapter_result) else {
-            continue;
+        let ep_steps = match parse_xpath(&rule.chapter_result) {
+            Ok(s) => s,
+            Err(e) => {
+                crate::libmpv::trace(&format!("[webrs] chapterResult 选择器失败: {e}"));
+                continue;
+            }
         };
         let ep_nodes = match eval_xpath(&doc, &eps_ctx, &ep_steps)? {
             EvalOut::Nodes(v) => v,
@@ -2054,6 +2135,32 @@ fn sniff_script(beacon_port: u16, legacy: bool) -> String {
 static BEACON_PORT: OnceLock<u16> = OnceLock::new();
 static SNIFF_TX: OnceLock<std::sync::Mutex<Option<std::sync::mpsc::Sender<String>>>> = OnceLock::new();
 
+/// [lc-1624] 同一时刻只允许一次嗅探。
+///
+/// 两次并发解析会：① 抢同一个 `SNIFF_LABEL`，后一次建窗会把前一次的窗 `destroy` 掉；
+/// ② 覆盖 `SNIFF_TX` 里的等待者（谁后注册谁生效），先注册的那次从此收不到回传；
+/// ③ 先结束的那次 `reset_sniff_waiters()` 又会把后一次的登记清空。结果是两边都拿不到直链、
+/// 还各自留一个隐藏窗。用一个进程内闸门把「解析」串行化，第二次直接给可诊断错误。
+static SNIFF_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+struct SniffGuard;
+
+impl SniffGuard {
+    fn acquire() -> Option<Self> {
+        SNIFF_ACTIVE
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()
+            .map(|_| SniffGuard)
+    }
+}
+
+impl Drop for SniffGuard {
+    // 无论正常返回还是中途 `?` 早退 / panic 展开，都会复位，不会把闸门永久锁死
+    fn drop(&mut self) {
+        SNIFF_ACTIVE.store(false, Ordering::SeqCst);
+    }
+}
+
 fn ensure_beacon() -> Result<u16, String> {
     if let Some(p) = BEACON_PORT.get() {
         return Ok(*p);
@@ -2156,8 +2263,18 @@ fn describe_webview_error(err: &tauri::Error) -> String {
 
 /// [lc-1613] 在主线程序列上创建隐藏 WebView。
 /// `make(app, label)` 负责按给定 label 组装并 build 窗口，最多被调用 2 次；
-/// 第 2 次用新 label（`{base}-r1`）并稍作间隔，规避上一次残留 / 瞬时状态。
+/// 第 2 次换新 label（`{base}-r1`）以规避上一次残留 / 瞬时状态。
 /// 成功返回**实际使用的 label**（调用方据此销毁窗口）；失败返回可诊断错误。
+///
+/// [lc-1624] 防「孤儿隐藏窗」（这是「点几次播放就崩」的关键成因之一）：
+/// 等待方一旦超时（20s）就给 `aborted` 置位；主线程闭包**建成后**把 label 交回等待方，
+/// 交不回（等待方已放弃）或已 aborted，就**立刻把刚建的窗销毁**。
+/// 否则会出现「等待方已经返回失败、闭包稍后才把窗建出来」——那个窗没有任何人负责销毁，
+/// 每次失败都漏一个完整 WebView2 实例，点几次就耗尽资源把进程拖崩。
+///
+/// 同时去掉原来在主线程里的 `std::thread::sleep(300ms)` 重试退避：主线程就是事件循环，
+/// 占住它反而会拖慢其它已排队的建窗 / 销毁，把 20s 超时逼出来、制造孤儿窗；
+/// 换 label 本身已经能绕开 0x8007139F 的 EnvironmentOptions 冲突，不需要阻塞主线程。
 async fn create_hidden_webview<F>(
     app: &AppHandle,
     base_label: &str,
@@ -2169,6 +2286,8 @@ where
     let (tx, rx) = std::sync::mpsc::channel::<Result<String, String>>();
     let app2 = app.clone();
     let base = base_label.to_string();
+    let aborted = Arc::new(AtomicBool::new(false));
+    let aborted2 = aborted.clone();
     app.run_on_main_thread(move || {
         let mut last_err = String::from("创建 WebView 失败");
         for attempt in 0..2u32 {
@@ -2183,13 +2302,22 @@ where
             }
             match make(&app2, &label) {
                 Ok(()) => {
-                    // [lc-1618] 埋点：建窗**成功**也留痕。嗅探/验证窗是「在线源能不能播」
-                    // 的关键一环，过去成败都无迹可查，用户报「播不了」时只能靠猜。
-                    crate::libmpv::trace(&format!(
-                        "[webrs] 隐藏窗创建成功 label={label}（第 {} 次尝试）",
-                        attempt + 1
-                    ));
-                    let _ = tx.send(Ok(label));
+                    // [lc-1618] 埋点：建窗成功也留痕。
+                    // [lc-1624] 但**先**看等待方还要不要这个窗：交不回 / 已放弃 → 立即自毁。
+                    let delivered = tx.send(Ok(label.clone())).is_ok();
+                    if delivered && !aborted2.load(Ordering::Relaxed) {
+                        crate::libmpv::trace(&format!(
+                            "[webrs] 隐藏窗创建成功 label={label}（第 {} 次尝试）",
+                            attempt + 1
+                        ));
+                    } else {
+                        if let Some(w) = app2.get_webview_window(&label) {
+                            let _ = w.destroy();
+                        }
+                        crate::libmpv::trace(&format!(
+                            "[webrs] 隐藏窗创建成功但等待方已放弃 → 立即销毁 label={label}"
+                        ));
+                    }
                     return;
                 }
                 Err(e) => {
@@ -2198,10 +2326,6 @@ where
                         "[webrs] 隐藏窗创建失败 label={label}（第 {} 次尝试）: {last_err}",
                         attempt + 1
                     ));
-                    if attempt == 0 {
-                        // 给 WebView2 一点时间回收上次失败留下的环境 / 进程
-                        std::thread::sleep(std::time::Duration::from_millis(300));
-                    }
                 }
             }
         }
@@ -2209,10 +2333,32 @@ where
     })
     .map_err(|e| format!("窗口调度失败: {e}"))?;
 
-    tokio::task::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(20)))
-        .await
-        .map_err(|e| format!("等待窗口失败: {e}"))?
-        .map_err(|_| "创建 WebView 超时（20s）".to_string())?
+    let aborted3 = aborted.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        match rx.recv_timeout(std::time::Duration::from_secs(20)) {
+            Ok(v) => v,
+            Err(_) => {
+                // 等待方放弃：置位，让主线程闭包若稍后建成就自毁，别留孤儿窗
+                aborted3.store(true, Ordering::Relaxed);
+                Err("创建 WebView 超时（20s）".to_string())
+            }
+        }
+    })
+    .await
+    .map_err(|e| format!("等待窗口失败: {e}"))?;
+
+    if res.is_err() {
+        // 兜底：两个可能用过的 label 都再 best-effort 清一次（闭包可能刚建好、置位晚一拍）
+        for l in [base_label.to_string(), format!("{base_label}-r1")] {
+            let app2 = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Some(w) = app2.get_webview_window(&l) {
+                    let _ = w.destroy();
+                }
+            });
+        }
+    }
+    res
 }
 
 /// [lc-1613] 撤销嗅探等待者登记（早退 / 收尾时调用）。
@@ -2239,6 +2385,10 @@ async fn webview_sniff(
     legacy: bool,
 ) -> Result<String, String> {
     use std::sync::mpsc;
+
+    // [lc-1624] 串行化：闸门在函数返回/早退时随 SniffGuard::drop 自动复位
+    let _sniff_guard = SniffGuard::acquire()
+        .ok_or_else(|| "已有一次直链解析在进行中，请等它结束再试".to_string())?;
 
     let beacon_port = ensure_beacon()?;
     let (tx, rx) = mpsc::channel::<Result<String, String>>();
@@ -2399,15 +2549,29 @@ async fn webview_sniff(
 // 但验证需要「双向」通信，这里改用 `eval_with_callback` 轮询页面里由注入脚本维护的
 // `window.__aniboxCaptcha` 状态对象（避开 CSP 对本地 beacon 的限制）。
 
+/// 取消原因码（[lc-1624]）：区分「用户主动取消 / 被新会话顶掉」——两者都**不是验证失败**，
+/// 不该用「人机验证失败」的文案糊到用户脸上（这正是用户报的「失败 · dalvdm：已取消」）。
+const CAPTCHA_CANCEL_NONE: u8 = 0;
+const CAPTCHA_CANCEL_USER: u8 = 1;
+const CAPTCHA_CANCEL_SUPERSEDED: u8 = 2;
+
 /// 当前验证会话（同一时刻只允许一个）。
 struct CaptchaHandle {
     rule: String,
     label: String,
-    cancel: Arc<AtomicBool>,
+    /// 0=进行中；1=用户取消；2=被新会话顶掉（见上面的常量）
+    cancel: Arc<AtomicU8>,
 }
 
 static CAPTCHA_SESSION: OnceLock<std::sync::Mutex<Option<CaptchaHandle>>> = OnceLock::new();
 static CAPTCHA_SEQ: AtomicU64 = AtomicU64::new(0);
+/// [lc-1624] 串行化「发起验证」：两次并发发起会各自建窗、互相顶掉，且后注册的覆盖会话，
+/// 先注册的那个 flow 会一直跑到超时（窗还泄漏）。整段持锁，保证同一时刻只有一个会话在建立。
+static CAPTCHA_START_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+fn captcha_start_lock() -> &'static tokio::sync::Mutex<()> {
+    CAPTCHA_START_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
 
 fn captcha_session() -> &'static std::sync::Mutex<Option<CaptchaHandle>> {
     CAPTCHA_SESSION.get_or_init(|| std::sync::Mutex::new(None))
@@ -2566,14 +2730,16 @@ fn destroy_captcha_window(app: &AppHandle, label: &str) {
     });
 }
 
-fn cancel_captcha(app: &AppHandle) {
+/// [lc-1624] 撤销当前验证会话并销毁窗口。`reason` 用上面的 CANCEL_* 常量，
+/// 让正在跑的 flow 能区分「用户取消」与「被新会话顶掉」，从而给出正确文案。
+fn cancel_captcha(app: &AppHandle, reason: u8) {
     let label = {
         let Ok(mut g) = captcha_session().lock() else {
             return;
         };
         match g.take() {
             Some(h) => {
-                h.cancel.store(true, Ordering::Relaxed);
+                h.cancel.store(reason, Ordering::Relaxed);
                 h.label
             }
             None => return,
@@ -2615,7 +2781,7 @@ async fn harvest_captcha(app: &AppHandle, rule: &Rule, label: &str, page_url: &s
 }
 
 /// 轮询验证页状态直到通过/失败/超时，然后统一收尾。
-async fn run_captcha_flow(app: AppHandle, rule: Rule, label: String, initial_url: String, cancel: Arc<AtomicBool>) {
+async fn run_captcha_flow(app: AppHandle, rule: Rule, label: String, initial_url: String, cancel: Arc<AtomicU8>) {
     let cfg = rule.anti_crawler_config.clone();
     let name = rule.name.clone();
     let _ = app.emit(
@@ -2627,8 +2793,14 @@ async fn run_captcha_flow(app: AppHandle, rule: Rule, label: String, initial_url
     let mut last_image = String::new();
     let mut saw_action = false;
     let outcome: Result<(), String> = loop {
-        if cancel.load(Ordering::Relaxed) {
-            break Err("已取消".into());
+        // [lc-1624] 取消原因分型：被新会话顶掉 ≠ 用户取消 ≠ 失败
+        let cancel_reason = cancel.load(Ordering::Relaxed);
+        if cancel_reason != CAPTCHA_CANCEL_NONE {
+            break Err(if cancel_reason == CAPTCHA_CANCEL_SUPERSEDED {
+                "已被新的验证会话取代".to_string()
+            } else {
+                "已取消".to_string()
+            });
         }
         if std::time::Instant::now() > deadline {
             break Err("验证超时，请重试".into());
@@ -2690,11 +2862,22 @@ async fn run_captcha_flow(app: AppHandle, rule: Rule, label: String, initial_url
             );
         }
         Err(e) => {
-            crate::libmpv::trace(&format!("[webrs] 反爬验证失败: {name} · {e}"));
-            let _ = app.emit(
-                "webrs-captcha-status",
-                json!({ "rule": name, "status": "failed", "error": e }),
-            );
+            // [lc-1624] 取消 / 被顶掉 **不是**验证失败：发 cancelled 状态，
+            // 前端据此清态（不弹"验证失败"），避免误报「失败 · dalvdm：已取消」。
+            let cancel_reason = cancel.load(Ordering::Relaxed);
+            if cancel_reason != CAPTCHA_CANCEL_NONE {
+                crate::libmpv::trace(&format!("[webrs] 反爬验证中止: {name} · {e}"));
+                let _ = app.emit(
+                    "webrs-captcha-status",
+                    json!({ "rule": name, "status": "cancelled", "error": e }),
+                );
+            } else {
+                crate::libmpv::trace(&format!("[webrs] 反爬验证失败: {name} · {e}"));
+                let _ = app.emit(
+                    "webrs-captcha-status",
+                    json!({ "rule": name, "status": "failed", "error": e }),
+                );
+            }
         }
     }
 }
@@ -2718,9 +2901,14 @@ pub async fn webrs_captcha_start(
     let encoded = urlencoding::encode(keyword.trim()).to_string();
     let url = rule.search_url.replace("@keyword", &encoded);
 
-    // 撤掉可能存在的旧会话
-    cancel_captcha(&app);
-    let cancel = Arc::new(AtomicBool::new(false));
+    // [lc-1624] 串行化整个「发起验证」：保证同一时刻只有一个会话在建立。
+    // 否则两次并发发起会各自建窗、互相顶掉；后注册的覆盖会话，先注册的 flow 会一直跑到
+    // 90s 超时（窗口还泄漏）。持锁到会话登记完成为止。
+    let _start_guard = captcha_start_lock().lock().await;
+
+    // 撤掉可能存在的旧会话 —— 用 SUPERSEDED 原因，让它给"被取代"文案而不是"验证失败"
+    cancel_captcha(&app, CAPTCHA_CANCEL_SUPERSEDED);
+    let cancel = Arc::new(AtomicU8::new(CAPTCHA_CANCEL_NONE));
     let label_base = format!(
         "webrs-captcha-{}",
         CAPTCHA_SEQ.fetch_add(1, Ordering::Relaxed)
@@ -2802,9 +2990,11 @@ pub async fn webrs_captcha_submit(
 }
 
 /// [lc-1606] 用户取消验证：撤销会话并销毁窗口。
+/// [lc-1624] 用 USER 原因 —— 正在跑的 flow 会发 `cancelled` 状态（而非 `failed`），
+/// 前端据此清态，不再误报「人机验证失败 · …：已取消」。
 #[tauri::command]
 pub async fn webrs_captcha_cancel(app: AppHandle) -> Result<(), String> {
-    cancel_captcha(&app);
+    cancel_captcha(&app, CAPTCHA_CANCEL_USER);
     Ok(())
 }
 
@@ -2840,7 +3030,7 @@ pub async fn webrs_play(
 
     // 直链预检（带 Referer/UA；只看状态码，不读 body）
     {
-        let client = http();
+        let client = http()?;
         let mut req = client
             .get(&url)
             .header("user-agent", ua.clone().unwrap_or_else(random_ua));
@@ -3174,6 +3364,69 @@ mod tests {
         let normal = r#"<html><body><div class="myui-vodbox-content"><div class="card-info">
           <div class="title">少女</div></div></div></body></html>"#;
         assert!(!detects_captcha_challenge(&resp(200, normal, false), &cfg));
+    }
+
+    // ───────────────────── [lc-1624] XPath 引擎：空步进容错 + 诊断 ─────────────────────
+
+    fn parse_doc(html: &str) -> Html {
+        Html::parse_document(html)
+    }
+
+    #[test]
+    fn xpath_bare_double_slash_is_context_root() {
+        // 内置 aafun 的 chapterRoads 就是 `//` —— 原实现报「空 XPath 步进」，整个源挂掉。
+        // 现在应解析为「零步进 = 上下文本身」，即根节点为唯一"线路"。
+        let d = parse_doc("<html><body><div class='x'><a href='/1'>ep</a></div></body></html>");
+        let root = vec![d.tree.root().id()];
+        let steps = parse_xpath("//").expect("`//` 应可解析");
+        assert_eq!(steps.len(), 1);
+        assert!(steps[0].is_empty(), "`//` 应解析为零步进（上下文本身）");
+        let nodes = eval_nodes(&d, &root, "//").expect("`//` 应求值为节点");
+        assert_eq!(nodes, root, "`//` 应返回上下文节点本身");
+        // 以根为上下文时，aafun 的 chapterResult 仍能取到选集链接
+        let links = eval_nodes(&d, &root, "//div[@class='x']/a").unwrap();
+        assert_eq!(links.len(), 1);
+    }
+
+    #[test]
+    fn xpath_trailing_and_duplicate_separators_are_lenient() {
+        let d = parse_doc("<html><body><div><span>x</span></div></body></html>");
+        let root = vec![d.tree.root().id()];
+        let base = eval_nodes(&d, &root, "//div").unwrap();
+        assert_eq!(eval_nodes(&d, &root, "//div/").unwrap(), base, "末尾多写 / 应忽略");
+        assert_eq!(eval_nodes(&d, &root, "//div//").unwrap(), base, "末尾多写 // 应忽略");
+        // 相邻分隔符 //a///b 折叠成 //a/b（能解析就解析）
+        assert_eq!(eval_nodes(&d, &root, "//div///span").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn xpath_empty_union_branch_ignored_but_all_empty_errors() {
+        let d = parse_doc("<html><body><p>a</p></body></html>");
+        let root = vec![d.tree.root().id()];
+        // 末尾多写 | → 空分支忽略
+        assert_eq!(eval_nodes(&d, &root, "//p|").unwrap().len(), 1);
+        // 全是空分支 / 空表达式 → 可诊断错误
+        assert!(parse_xpath("|").is_err());
+        assert!(parse_xpath("").is_err());
+        assert!(parse_xpath("  |  | ").is_err());
+    }
+
+    #[test]
+    fn xpath_parent_axis_reports_diagnostic() {
+        // 不支持的轴给**点名**的可诊断错误，而不是静默匹配不到
+        let e = parse_xpath("//div/..").unwrap_err();
+        assert!(e.contains(".."), "错误应点名 `..`：{e}");
+        let e2 = parse_xpath("//div/ancestor::body").unwrap_err();
+        assert!(e2.contains("ancestor::"), "错误应点名不支持的轴：{e2}");
+    }
+
+    #[test]
+    fn xpath_attr_step_rejects_garbage() {
+        // `@attr` 混写谓词 / 路径不再被当成属性名静默失配
+        assert!(parse_xpath("//a/@href[1]").is_err());
+        assert!(parse_xpath("//a/@").is_err());
+        // 正常属性步进仍可用
+        assert!(parse_xpath("//a/@href").is_ok());
     }
 
     // ───────────────────── [lc-1608] 在线规则目录：单测（不触网） ─────────────────────

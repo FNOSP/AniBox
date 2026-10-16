@@ -68,10 +68,37 @@ export function TitleBar({
       {/* [lc-123-rev] 中部只剩弱化的品牌小字（原来这里是「首页|发现」胶囊，已挪到 .navbar 行）。
           整条顶栏仍是拖拽区：中间的 span 不拦截拖拽，窗口拖动不受影响。 */}
       <div className="tb-center" data-tauri-drag-region>
-        {/* [lc-1610] 中部品牌字标 AniBox（内嵌方正少儿简体 + 多色渐变）。
-            类名**不加 nav 条件**：`title` 恒为 "AniBox"，登录页（nav=false）中间显示的也是它，
-            加了条件会漏掉登录页 → 用户反馈「字体还是系统字样」正是这个原因（lc-1612 修）。 */}
-        <span className="tb-brand tb-brand-logo">{nav ? "AniBox" : title}</span>
+        {/* [lc-1614] 中部品牌字标：内联 SVG（多色渐变 + 轻微浮动），字体 Baloo 2（见 index.html）。
+            替换 lc-1610 的内嵌方正少儿简体（商业字体内嵌有授权风险，已整体删除）。 */}
+        <svg
+          className="tb-brand tb-brand-logo"
+          viewBox="0 0 800 240"
+          xmlns="http://www.w3.org/2000/svg"
+          role="img"
+          aria-label="AniBox"
+        >
+          <defs>
+            {/* 动漫感多色相渐变（青 → 蓝紫 → 紫 → 粉） */}
+            <linearGradient id="aniboxLogoInk" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stopColor="#5EC8E8" />
+              <stop offset="0.33" stopColor="#7B8FE8" />
+              <stop offset="0.66" stopColor="#C77BD8" />
+              <stop offset="1" stopColor="#F58EB5" />
+            </linearGradient>
+          </defs>
+          <g className="mark">
+            <text
+              x="400"
+              y="162"
+              textAnchor="middle"
+              fontFamily="'Baloo 2', system-ui, sans-serif"
+              fontWeight="800"
+              fontSize="150"
+              letterSpacing="1"
+              fill="url(#aniboxLogoInk)"
+            >AniBox</text>
+          </g>
+        </svg>
       </div>
       <div className="tb-right" data-tauri-drag-region>
         <div className="tb-buttons">

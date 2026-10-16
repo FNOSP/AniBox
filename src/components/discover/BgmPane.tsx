@@ -227,16 +227,22 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
       {/* [lc-1516] Bangumi 账号面板：紧跟栏头（避开顶部 56px 的胶囊让位区）
           [lc-1538] 底部通栏改「今日状态条」：当前选中日的汇总由这里算好传进去
           （原先那条 .ddaybar 已从列表上方移入卡片，列表不再重复显示） */}
-      <BgmAccountCard
-        onOpen={openBgm}
-        today={{
-          wdCn,
-          isToday: wd === todayId,
-          count: dayItems.length,
-          hiCount,
-          subCount: subUpdated,
-        }}
-      />
+      <BgmAccountCard onOpen={openBgm} />
+      {/* [lc-1583] 「今日状态条」**独立成容器**（原先嵌在追番卡里当底部通栏）—— 用户要求：
+          它汇总的是**当前选中日**，属于日历区，不该塞在账号卡内部。 */}
+      {dayItems.length > 0 && (
+        <div className="dtoday">
+          <b>
+            {wdCn}
+            {wd === todayId ? "（今天）" : ""}
+          </b>
+          <span>
+            {wd === todayId ? `今日 ${dayItems.length} 部新番更新` : `${dayItems.length} 部更新`}
+            {hiCount > 0 ? ` · ${hiCount} 部评分 8.0+` : ""}
+            {subUpdated > 0 ? ` · 已追订阅 ${subUpdated} 部更新` : " · 已追订阅暂无更新"}
+          </span>
+        </div>
+      )}
       <div className="dweeks">
         {WEEKDAYS.map((w) => {
           const g = days.find((x) => x.id === w.id);

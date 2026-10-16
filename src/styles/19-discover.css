@@ -456,6 +456,31 @@
   padding: 0 20px 12px;
 }
 
+/* [lc-1583] 「今日状态条」**独立容器**（原先嵌在 Bangumi 追番卡里当底部通栏）—— 汇总的是
+   "当前选中日"，属日历区。外观沿用原通栏（淡蓝渐变 + 细边），但按栏内其它块一样留出左右内边距；
+   窄栏下允许换行（不截断文字）。 */
+.dtoday {
+  display: flex;
+  align-items: center;
+  gap: 4px 10px;
+  flex-wrap: wrap;
+  margin: 0 16px 10px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: linear-gradient(120deg, rgba(108, 155, 255, 0.16), rgba(108, 155, 255, 0.04));
+}
+.dtoday b {
+  font-size: 14px;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+.dtoday span {
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
 .dweek {
   position: relative;
   display: flex;
@@ -603,8 +628,8 @@
   margin-top: 2px;
 }
 
-/* [lc-1538] 原「当天汇总条」.ddaybar 已移入 Bangumi 卡片底部（见 30-bgmac.css 的
-   .bgmac-today），这里不再保留 —— 列表上方不再重复显示当日汇总。 */
+/* [lc-1538] 原「当天汇总条」.ddaybar 从列表上方移走（列表不再重复显示当日汇总）；
+   [lc-1583] 它现在是**独立容器 `.dtoday`**（见上方 .dweeks 前面那条），不再嵌在追番卡里。 */
 
 /* 行：左侧强调竖条（::before）+ 封面（左上角该天序号）+ 标题/标签 */
 .ditem {

@@ -30,26 +30,10 @@ export const BGAC_TYPES: { k: number; label: string; color: string }[] = [
 ];
 
 
-/** [lc-1538] 今日状态条数据（BgmPane 按当前选中日算好传入） */
-export type BgmTodaySummary = {
-  /** 星期中文名（如「周三」） */
-  wdCn: string;
-  /** 是否就是本机今天（决定「（今天）」后缀与文案措辞） */
-  isToday: boolean;
-  /** 当日更新部数 */
-  count: number;
-  /** 当日评分 8.0+ 部数（0 则整段不显示） */
-  hiCount: number;
-  /** [lc-1580] 当日「已追订阅」（在看 / 想看）的更新部数 —— 取代原「热度最高：…」那一段 */
-  subCount: number;
-};
-
 export function BgmAccountCard({
   onOpen,
-  today,
 }: {
   onOpen?: (it: BgmCalendarItem) => void;
-  today?: BgmTodaySummary;
 }) {
   const [acct, setAcct] = useState<BgmAccountState>({ bound: false, username: "" });
   const [stats, setStats] = useState<BgmCollectStats>({ total: 0, byType: {} });
@@ -367,23 +351,8 @@ export function BgmAccountCard({
         )}
       </div>
 
-      {/* [lc-1538] 底部通栏：今日状态条（原「当季追番状态」由它替换 —— 用户要求）
-          文案沿用列表上方那条 .ddaybar 的原措辞，样式换成卡片内的浅底通栏。 */}
-      {today && today.count > 0 && (
-        <div className="bgmac-today">
-          <b>
-            {today.wdCn}
-            {today.isToday ? "（今天）" : ""}
-          </b>
-          <span>
-            {today.isToday ? `今日 ${today.count} 部新番更新` : `${today.count} 部更新`}
-            {today.hiCount > 0 ? ` · ${today.hiCount} 部评分 8.0+` : ""}
-            {/* [lc-1580] 用户要求：原「热度最高：…」改成**已追订阅的更新提醒**
-                （口径 = 在看(3) / 想看(1)；跟着本地追番表实时算，见 BgmPane） */}
-            {today.subCount > 0 ? ` · 已追订阅 ${today.subCount} 部更新` : " · 已追订阅暂无更新"}
-          </span>
-        </div>
-      )}
+      {/* [lc-1583] 「今日状态条」已**移出卡片、独立成容器**（见 BgmPane 的 .dtoday）——
+          它汇总的是"当前选中日"，属于日历区，不该嵌在追番卡里。 */}
 
       {/* 错误/提示收在左列内（不再整卡宽灰条）；已连接的成功提示走行内小字 */}
       {err && <div className="bgmac-err">{err}</div>}

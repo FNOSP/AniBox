@@ -8,13 +8,12 @@
   border: 1px solid var(--line);
   border-radius: 20px;
   background: var(--glass-btn-bg);
-  /* [lc-1520] 三块布局（用户示意图）：上排「bangumi面板 | 同步状态」+ 底部通栏「当季追番状态」。
-     [lc-1522] 上排两列一人一半；[lc-1527] 右列微放宽（1fr 1.12fr）给"饼+图例"横排让位。 */
+  /* [lc-1520] 上排「bangumi面板 | 同步状态」两块。
+     [lc-1522] 上排两列一人一半；[lc-1527] 右列微放宽（1fr 1.12fr）给"饼+图例"横排让位。
+     [lc-1583] 底部那条「今日状态条」已**移出卡片、独立成容器**（见 19-discover.css 的 .dtoday）。 */
   display: grid;
   grid-template-columns: 1fr 1.12fr;
-  grid-template-areas:
-    "main stats"
-    "season season";
+  grid-template-areas: "main stats";
   gap: 10px 14px;
   align-items: start;
 }
@@ -347,34 +346,6 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
   padding: 6px 4px;
   line-height: 1.4;
 }
-/* ── [lc-1538] 底部通栏：今日状态条（替换原「当季追番状态」）──
-   版式对齐列表上方那条 .ddaybar（星期 + 汇总小字），底色改用卡片内的浅渐变
-   （原 ddaybar 是独立块、有边框；这里嵌在卡片里，只用浅底区分层级）。 */
-.bgmac-today {
-  grid-area: season;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 2px;
-  padding: 9px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: linear-gradient(120deg, rgba(108, 155, 255, 0.16), rgba(108, 155, 255, 0.04));
-}
-.bgmac-today b {
-  font-size: 14px;
-  color: var(--text-strong);
-  white-space: nowrap;
-}
-.bgmac-today span {
-  min-width: 0;
-  font-size: 12.5px;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* ── 提示 / 错误 ── */
 .bgmac-err,
 .bgmac-note,

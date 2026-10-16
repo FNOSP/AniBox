@@ -95,7 +95,13 @@
   opacity: 0.45;
   cursor: default;
 }
-.tb-icon.spinning {
+/* [lc-1639] 旋转只作用在**字形**上（.tb-spin 包一层）：原来直接转按钮，
+   hover 背景方框会跟着一起转（用户报的「背景方框跟着旋转」）。
+   注意：transform 对 inline 元素无效 → 这个 span 必须 inline-block。 */
+.tb-spin {
+  display: inline-block;
+}
+.tb-icon.spinning .tb-spin {
   animation: tb-spin 0.9s linear infinite;
 }
 @keyframes tb-spin {

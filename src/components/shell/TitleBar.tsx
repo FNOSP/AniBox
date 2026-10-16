@@ -55,7 +55,7 @@ export function TitleBar({
             onClick={onRefresh}
             disabled={refreshing}
           >
-            ⟳
+            <span className="tb-spin">⟳</span>
           </button>
         )}
         {onToggleTheme && (

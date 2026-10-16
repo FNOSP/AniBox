@@ -54,6 +54,61 @@ fn pipe_path(name: &str) -> String {
     format!(r"\\.\pipe\{}", name)
 }
 
+/// [lc-1621] 归一化在线源 HTTP 头：去空白、滤空值，并额外拼出 `http-header-fields` 串。
+///
+/// 返回 `(referrer, user_agent, header_fields)`，供两处共用：
+///   ① 新建 mpv 会话时 → `http_header_args()` 拼成命令行参数；
+///   ② 复用 mpv 会话时 → IPC `set referrer/user-agent/http-header-fields`。
+/// 两处必须用**同一套**头，否则「首次播」（新建）与「连续播下一集」（复用）表现不一致。
+pub fn normalize_http_headers(
+    referrer: Option<&str>,
+    ua: Option<&str>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let r = referrer
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let u = ua
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    // [lc-1506] 再补一份 http-header-fields：ffmpeg(hls) 的分段请求走它
+    // （mpv 的 `referrer` 属性只覆盖部分加载路径，缺了它分段会被源站 403）。
+    let mut hf: Vec<String> = Vec::new();
+    if let Some(r) = &r {
+        hf.push(format!("Referer: {r}"));
+    }
+    if let Some(u) = &u {
+        hf.push(format!("User-Agent: {u}"));
+    }
+    let hf = if hf.is_empty() { None } else { Some(hf.join(", ")) };
+    (r, u, hf)
+}
+
+/// [lc-1621] 在线源 HTTP 头 → mpv **命令行参数**（`--referrer` / `--user-agent` /
+/// `--http-header-fields`，参数名与 mpv 属性名一致）。
+///
+/// 为什么走命令行而不是 IPC `set`（对齐库内 `play_item` 的 lc-1559 形态）：
+/// `referrer` / `http-header-fields` 只在**打开 URL 那一刻**被读取；而 mpv 启动头几秒
+/// 事件循环被脚本/滤镜/D3D 初始化占住，任何 IPC 命令都会卡到秒级（lc-1559 实测）。
+/// 「先 idle 启动 + IPC 设头 + IPC loadfile」的老形态 ⇒ 头常常没设上就 loadfile 了 ⇒
+/// 源站拒流 ⇒ **窗口起来但播不动、且没有任何报错**。改走启动参数后，
+/// mpv 一启动就带着头去加载直链，全程零启动期 IPC。
+pub fn http_header_args(referrer: Option<&str>, ua: Option<&str>) -> Vec<String> {
+    let (r, u, hf) = normalize_http_headers(referrer, ua);
+    let mut a: Vec<String> = Vec::new();
+    if let Some(r) = r {
+        a.push(format!("--referrer={r}"));
+    }
+    if let Some(u) = u {
+        a.push(format!("--user-agent={u}"));
+    }
+    if let Some(hf) = hf {
+        a.push(format!("--http-header-fields={hf}"));
+    }
+    a
+}
+
 impl MpvSession {
     /// 拉起独立 mpv 进程并连上 IPC（幂等：实例常驻，播放/停止只切播放状态）
     ///
@@ -63,11 +118,14 @@ impl MpvSession {
     /// 而容器自带的 `Title` tag（我们这来源的 MP4 常带繁体标题）会在 **loadfile 后**覆盖
     /// media-title，于是 uosc_danmaku 读到的是无季集标记的容器标题 → 判「非剧集」跳过
     /// B站搜索。命令行下发的值优先级最高，容器 tag 不再能顶掉它。
+    /// `extra_args`：追加的**启动参数**（如在线源的 `--referrer/--user-agent/--http-header-fields`，
+    /// 见 `http_header_args`）。同样属于「打开那一刻才读」的东西，必须随命令行下发、不靠启动期 IPC。
     pub async fn launch(
         app: AppHandle,
         mpv_path: &str,
         initial_url: Option<String>,
         force_title: Option<String>,
+        extra_args: Vec<String>,
     ) -> Result<Arc<MpvSession>, String> {
         let name = format!("anibox-mpv-{}", std::process::id());
         let path = pipe_path(&name);
@@ -105,6 +163,9 @@ impl MpvSession {
                 args.push(format!("--force-media-title={t}"));
             }
         }
+        // [lc-1621] 在线源的头参数（--referrer/--user-agent/--http-header-fields）随命令行下发：
+        // 与 initial_url 同属「打开那一刻才读」，必须启动前给到，不能靠启动期 IPC（会卡）。
+        args.extend(extra_args);
         if let Some(u) = initial_url {
             args.push(u);
         }

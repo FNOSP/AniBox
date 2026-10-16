@@ -782,6 +782,9 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
                     &cfg.mpv_path,
                     Some(url.clone()),
                     Some(display_title.clone()),
+                    // 库内播的是 Go 代理本地直链（127.0.0.1:22346），不需要 Referer/UA，
+                    // 故无额外启动参数（在线源那套头参数见 webrs_play）。
+                    Vec::new(),
                 )
                 .await?
             }

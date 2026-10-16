@@ -13,8 +13,9 @@
     "windows": [
       {
         "title": "AniBox",
-        "width": 1280,
-        "height": 800,
+        "width": 1440,
+        "height": 900,
+        "center": true,
         "minWidth": 960,
         "minHeight": 640,
         "decorations": false,

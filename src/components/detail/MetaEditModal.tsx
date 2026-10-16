@@ -2,8 +2,11 @@
    背景：飞牛有时把集数/条目识别错，用户在飞牛网页端可「编辑元数据 / 手动匹配影片 /
    解除匹配影片 / 刷新元数据」，改完飞牛侧会重新匹配成正确元数据。本弹层把这几件事搬进 App。
    接口形状见 src-tauri/src/lib.rs 顶部注释（路由来自飞牛 Web bundle 的路由表 + 只读探针实测）。
-   ⚠ 「手动匹配影片」的请求体形状部分为**推断**（rescrap 的 media_guids/scrap_tv_type 未实打写入），
-     已在界面标注「首次使用请核对」；编辑元数据 / 刷新 / 解除匹配的形状为已确认。 */
+   [lc-1632] 「手动匹配影片」已按飞牛网页端 F12 **实测请求**逐字段对齐（不再是推断）：
+     POST /scrap/rescrap body = {item_guid, source_id, source, type, media_guids,
+                                 season_number, episode_number, scrap_tv_type}
+     关键：`source` 实测为 "trim_id"、`source_id` 即 trim id（如 tt220542）——
+     两者都取自**选中那条搜索结果自带的字段原样透传**，不做映射、不套自造枚举。 */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
@@ -22,7 +25,8 @@ export type MetaTarget = {
   isEpisode?: boolean;
 };
 
-/** 飞牛搜索源枚举（bundle `el`：title/tmdb_id/imdb_id） */
+/** 飞牛**搜索**源枚举（bundle `el`：title/tmdb_id/imdb_id）—— 仅用于 `scrap/search` 的入参，
+    与 rescrap 请求体里的 `source` 无关（后者实测为 "trim_id"，取自搜索结果原样透传）。 */
 type ScrapSource = "title" | "tmdb_id" | "imdb_id";
 
 type ScrapHit = {
@@ -59,6 +63,10 @@ export function MetaEditModal({
   const [keyword, setKeyword] = useState("");
   const [hits, setHits] = useState<ScrapHit[] | null>(null);
   const [searching, setSearching] = useState(false);
+  // [lc-1632] 集级匹配的季节/集号：对齐飞牛网页端弹层里的两个输入框（rescrap 实测会回传这两个值）。
+  // 默认取当前集自己的季/集号，用户可在此改成正确值 —— 手动匹配本就是为了纠错。
+  const [season, setSeason] = useState(0);
+  const [episode, setEpisode] = useState(0);
 
   // ── 其它操作 ──
   const [busy, setBusy] = useState("");
@@ -87,6 +95,12 @@ export function MetaEditModal({
   useEffect(() => {
     setKeyword(target.title);
   }, [target.title]);
+
+  // 目标集切换时重置季/集号输入框（默认取当前集的真实季/集号）
+  useEffect(() => {
+    setSeason(target.seasonNumber ?? 0);
+    setEpisode(target.episodeNumber ?? 0);
+  }, [target.seasonNumber, target.episodeNumber]);
 
   // Esc 关闭（与详情页其它弹层一致）
   useEffect(() => {
@@ -151,24 +165,31 @@ export function MetaEditModal({
   }, [keyword, source, target.guid]);
 
   // 应用匹配：把选中的搜索结果交给 rescrap，触发飞牛重新刮削。
+  // [lc-1632] 逐字段对齐飞牛网页端实测请求：
+  //   · item_guid    = **当前被匹配条目**的 guid（不是搜索结果里的 id —— 实测即当前条目）
+  //   · source/source_id/type = 选中搜索结果**自带的字段原样透传**（实测 source="trim_id"、
+  //                    source_id=trim id 如 tt220542、type="TV"）—— 不做映射/不改名/不用自造枚举
+  //   · media_guids  = []（实测为空）
+  //   · season_number/episode_number = 对话框里填的两个值；scrap_tv_type = "SingleEpisode"
+  //   · 后三项仅集级匹配携带（Movie/整剧匹配飞牛不传，避免用 0 覆盖飞牛侧）
   const onApply = useCallback(
     async (hit: ScrapHit) => {
       setBusy("match");
       setErr("");
       try {
-        const payload: Record<string, unknown> = {
-          item_guid: target.guid,
+        const args: Record<string, unknown> = {
+          itemGuid: target.guid,
+          sourceId: hit.source_id ?? "",
           source: hit.source ?? "",
-          source_id: hit.source_id ?? "",
           type: hit.type || target.type,
-          media_guids: [],
+          mediaGuids: [],
         };
         if (target.isEpisode) {
-          payload.season_number = target.seasonNumber ?? 0;
-          payload.episode_number = target.episodeNumber ?? 0;
-          payload.scrap_tv_type = "SingleEpisode";
+          args.seasonNumber = season;
+          args.episodeNumber = episode;
+          args.scrapTvType = "SingleEpisode";
         }
-        await invoke("scrap_rescrap", { payload });
+        await invoke("scrap_rescrap", args);
         onDone();
         flash("已提交匹配，飞牛正在重新刮削");
       } catch (e) {
@@ -177,7 +198,7 @@ export function MetaEditModal({
         setBusy("");
       }
     },
-    [target, onDone],
+    [target, season, episode, onDone],
   );
 
   const onRefresh = useCallback(async () => {
@@ -272,6 +293,26 @@ export function MetaEditModal({
                 <IcoSearchL size={13} strokeWidth={2} /> {searching ? "搜索中…" : "搜索"}
               </button>
             </div>
+            {/* [lc-1632] 集级匹配：对齐飞牛网页端的季/集号输入（rescrap 会把这两个值回传给飞牛）。
+                默认是当前集自己的季/集号，识别错时在此改成正确的。 */}
+            {target.isEpisode && (
+              <div className="meta-row">
+                <span className="meta-dim">季</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={season}
+                  onChange={(e) => setSeason(Number(e.target.value) || 0)}
+                />
+                <span className="meta-dim">集</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={episode}
+                  onChange={(e) => setEpisode(Number(e.target.value) || 0)}
+                />
+              </div>
+            )}
             {hits && (
               <ul className="meta-hits">
                 {hits.map((h, i) => (
@@ -290,7 +331,8 @@ export function MetaEditModal({
               </ul>
             )}
             <p className="meta-dim">
-              ⚠ 首次使用请核对：匹配请求体（media_guids / scrap_tv_type）形状为推断，提交后以飞牛网页端结果为准。
+              匹配请求体已按飞牛网页端实测对齐（source/source_id 取自选中结果、media_guids 为空、
+              集级匹配带季/集号与 scrap_tv_type=SingleEpisode）。
             </p>
           </section>
 

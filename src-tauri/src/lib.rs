@@ -417,11 +417,17 @@ async fn get_episodes(
      · 写   POST /item/saveEditDetail body = 上面那份全量对象（改哪些填哪些）+ 对应 `*_locked:true`
      · 刷新 POST /item/refresh        body {item_guid, refresh_mode}
      · 搜   POST /scrap/search        body {source, source_keyword, lan, item_guid?}
-     · 匹配 POST /scrap/rescrap       body {item_guid, source, source_id, type, media_guids,
+     · 匹配 POST /scrap/rescrap       body {item_guid, source_id, source, type, media_guids,
                                             season_number, episode_number, scrap_tv_type}
      · 解除 DELETE /scrap/:guid
    鉴权与其它接口一致（Authorization + Cookie + Authx 签名；nonce 由 fnapi 统一追加）。
-   ⚠ 写命令只做「提交」，**不在此做任何批量/自动写**，全部由用户在前端点按钮触发。 */
+   ⚠ 写命令只做「提交」，**不在此做任何批量/自动写**，全部由用户在前端点按钮触发。
+   [lc-1632] rescrap 的请求体已由用户从飞牛网页端 F12 **实测抓包**逐字段确认（不再是推断）：
+     source 实测为 "trim_id"、source_id 即 trim id（如 tt220542），两者均由前端把**选中的那条
+     搜索结果原样透传**；media_guids 实测为 []；集级匹配带 season_number/episode_number（对话框
+     输入）与 scrap_tv_type="SingleEpisode"。实测请求另带 `x-trim-client: web` /
+     `x-trim-client-version` 两个头 —— 那是网页端客户端标识，**鉴权不依赖**它，故此处不加；
+     仅在实测出现写入被拒时再补（见 fnapi 的请求头拼装）。 */
 
 /// 读取条目/剧集的完整可编辑元数据（编辑元数据弹层的初始值来源）。
 #[tauri::command]
@@ -506,14 +512,42 @@ async fn scrap_search(
 }
 
 /// 手动匹配影片 · 第二步：把选中的搜索结果应用到条目（触发飞牛重新匹配）。
-/// `payload` 直接透传飞牛要求的字段（item_guid/source/source_id/type/media_guids[/season_number/
-/// episode_number/scrap_tv_type]），由前端按选中结果组装。
+/// [lc-1632] 形参逐字段对齐飞牛网页端**实测**请求体（POST /scrap/rescrap）：
+/// `item_guid` / `source_id` / `source` / `type` / `media_guids` / `season_number` /
+/// `episode_number` / `scrap_tv_type` —— 字段名一律照实测，不改名、不省略。
+/// 其中 `source`/`source_id`/`type` 由前端把**选中的那条搜索结果原样透传**（实测
+/// source="trim_id"、source_id=trim id 如 tt220542、type="TV"），这里不做任何映射。
+/// `item_guid` 是**被匹配条目自身**的 guid（不是搜索结果里的 id）。
 #[tauri::command]
-async fn scrap_rescrap(state: State<'_, AppState>, payload: Value) -> Result<Value, String> {
+async fn scrap_rescrap(
+    state: State<'_, AppState>,
+    item_guid: String,
+    source_id: String,
+    source: String,
+    r#type: String,
+    media_guids: Vec<String>,
+    season_number: Option<i64>,
+    episode_number: Option<i64>,
+    scrap_tv_type: Option<String>,
+) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let client = fnapi::new_client();
+    let mut body = json!({
+        "item_guid": item_guid,
+        "source_id": source_id,
+        "source": source,
+        "type": r#type,
+        "media_guids": media_guids,
+    });
+    // 集级匹配才带这三项（Movie / 整剧匹配飞牛不传，避免用 0 覆盖飞牛侧）；
+    // scrap_tv_type 实测固定为 "SingleEpisode"。
+    if let (Some(s), Some(e)) = (season_number, episode_number) {
+        body["season_number"] = json!(s);
+        body["episode_number"] = json!(e);
+        body["scrap_tv_type"] = json!(scrap_tv_type.unwrap_or_else(|| "SingleEpisode".into()));
+    }
     client
-        .call(&cfg.server, "/v/api/v1/scrap/rescrap", "POST", &cfg.token, Some(payload))
+        .call(&cfg.server, "/v/api/v1/scrap/rescrap", "POST", &cfg.token, Some(body))
         .await
 }
 

@@ -2080,6 +2080,113 @@ fn ensure_beacon() -> Result<u16, String> {
     Err("嗅探回传端口（22347-22349）全部被占用".into())
 }
 
+// ─────────────── [lc-1613] 隐藏 WebView 创建：对齐主窗口参数 + 失败重试 ───────────────
+//
+// 根因：主窗口（tauri.conf.json `app.windows[0].additionalBrowserArgs`）设了
+// `--autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI`，
+// 而本文件追加创建的隐藏窗口（嗅探 / 验证）没设该项，落到 wry 的默认值
+// `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`。
+//
+// WebView2 规则（见 wry `web_context.rs` 注释 + MS 文档）：**同一 user data folder 下
+// 若已存在运行中的实例，且两次 Environment 的 CoreWebView2EnvironmentOptions 不一致，
+// 则新的 CreateCoreWebView2EnvironmentWithOptions 直接失败**，返回
+// ERROR_INVALID_STATE(0x8007139F)「组或资源的状态不是执行请求操作的正确状态」。
+// 主窗口是进程里第一个 environment（所以能建），追加窗口 options 不同 ⇒ 每次必挂。
+//
+// 修法：追加窗口**逐字对齐主窗口的 additionalBrowserArgs**（运行期从配置读，避免硬编码，
+// 改了 tauri.conf.json 也不会再错位）。兜底：建窗失败自动换新 label 重试一次；仍失败给出
+// 可诊断文案。
+
+/// 主窗口（配置里首个设了 additionalBrowserArgs 的窗口）的浏览器参数。
+/// 返回 None 表示主窗口也没设 ⇒ 追加窗口同样保持 None（两边都用 wry 默认值，天然一致）。
+fn main_window_browser_args(app: &AppHandle) -> Option<String> {
+    app.config()
+        .app
+        .windows
+        .iter()
+        .find_map(|w| w.additional_browser_args.clone())
+}
+
+/// [lc-1613] 把建窗失败翻译成带排查建议的文案（识别 ERROR_INVALID_STATE 0x8007139F）。
+fn describe_webview_error(err: &tauri::Error) -> String {
+    let raw = err.to_string();
+    let invalid_state = raw.contains("8007139F")
+        || raw.contains("8007139f")
+        || raw.contains("-2147019873") // 0x8007139F 的有符号 i32 形式
+        || raw.contains("正确状态")
+        || raw.contains("not in the correct state");
+    if invalid_state {
+        format!(
+            "{raw}\n（WebView2 ERROR_INVALID_STATE：常见于「同一用户数据目录下 Environment \
+             选项不一致」或「上次退出残留 WebView2 进程占用用户数据目录」。排查：① 任务管理器\
+             结束所有 msedgewebview2.exe 后重开应用；② 到「设置→应用」修复/更新 Microsoft \
+             Edge WebView2 Runtime；③ 若装了会拦截进程的安全软件，请放行本应用。）"
+        )
+    } else {
+        raw
+    }
+}
+
+/// [lc-1613] 在主线程序列上创建隐藏 WebView。
+/// `make(app, label)` 负责按给定 label 组装并 build 窗口，最多被调用 2 次；
+/// 第 2 次用新 label（`{base}-r1`）并稍作间隔，规避上一次残留 / 瞬时状态。
+/// 成功返回**实际使用的 label**（调用方据此销毁窗口）；失败返回可诊断错误。
+async fn create_hidden_webview<F>(
+    app: &AppHandle,
+    base_label: &str,
+    make: F,
+) -> Result<String, String>
+where
+    F: Fn(&AppHandle, &str) -> Result<(), tauri::Error> + Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::channel::<Result<String, String>>();
+    let app2 = app.clone();
+    let base = base_label.to_string();
+    app.run_on_main_thread(move || {
+        let mut last_err = String::from("创建 WebView 失败");
+        for attempt in 0..2u32 {
+            let label = if attempt == 0 {
+                base.clone()
+            } else {
+                format!("{base}-r{attempt}")
+            };
+            // 清掉可能残留的同名窗口（只有此前创建成功过才会有）
+            if let Some(w) = app2.get_webview_window(&label) {
+                let _ = w.destroy();
+            }
+            match make(&app2, &label) {
+                Ok(()) => {
+                    let _ = tx.send(Ok(label));
+                    return;
+                }
+                Err(e) => {
+                    last_err = describe_webview_error(&e);
+                    if attempt == 0 {
+                        // 给 WebView2 一点时间回收上次失败留下的环境 / 进程
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                    }
+                }
+            }
+        }
+        let _ = tx.send(Err(last_err));
+    })
+    .map_err(|e| format!("窗口调度失败: {e}"))?;
+
+    tokio::task::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(20)))
+        .await
+        .map_err(|e| format!("等待窗口失败: {e}"))?
+        .map_err(|_| "创建 WebView 超时（20s）".to_string())?
+}
+
+/// [lc-1613] 撤销嗅探等待者登记（早退 / 收尾时调用）。
+fn reset_sniff_waiters() {
+    if let Some(m) = SNIFF_TX.get() {
+        if let Ok(mut g) = m.lock() {
+            *g = None;
+        }
+    }
+}
+
 /// 隐藏 WebView 加载播放页，等待直链回传。通道：① 本地 beacon（嗅探 JS 的
 /// image/fetch/sendBeacon 三连，页面/iframe 无 CSP 时必达）② 伪导航
 /// anibox-sniff://（on_navigation 拦截，兜底）。JS hook 注入全 frame
@@ -2114,25 +2221,30 @@ async fn webview_sniff(
         });
     }
 
-    let app2 = app.clone();
     let page = page_url.to_string();
     let ua_owned = ua.to_string();
     let script = sniff_script(beacon_port, legacy);
     let tx_nav = tx.clone();
 
-    let dispatch = app.run_on_main_thread(move || {
-        // 上一个残留的嗅探窗先销毁
-        if let Some(w) = app2.get_webview_window(SNIFF_LABEL) {
-            let _ = w.destroy();
+    // 目标 URL 无效则直接失败，不必起窗口
+    let target = match Url::parse(&page) {
+        Ok(u) => u,
+        Err(_) => {
+            reset_sniff_waiters();
+            return Err(format!("播放页 URL 无效: {page}"));
         }
-        let Ok(target) = Url::parse(&page) else {
-            let _ = tx_nav.send(Err(format!("播放页 URL 无效: {page}")));
-            return;
-        };
-        let tx_build_err = tx_nav.clone();
-        let b = tauri::webview::WebviewWindowBuilder::new(
-            &app2,
-            SNIFF_LABEL,
+    };
+
+    // 组装建窗闭包（最多调用 2 次，故用 Fn 且每次 clone 捕获物）：
+    // ① on_navigation 拦截 anibox-sniff:// 伪导航回传直链；
+    // ② [lc-1613] 必须与主窗口传**完全相同**的 additionalBrowserArgs，否则同一
+    //    user data folder 下 EnvironmentOptions 不一致 → 0x8007139F。
+    let make = move |app: &AppHandle, label: &str| {
+        let tx_nav = tx_nav.clone();
+        let target = target.clone();
+        let mut b = tauri::webview::WebviewWindowBuilder::new(
+            app,
+            label,
             tauri::WebviewUrl::External(target),
         )
         .title("AniBox 资源解析")
@@ -2150,35 +2262,32 @@ async fn webview_sniff(
             }
             true
         });
-        if let Err(e) = b.build() {
-            let _ = tx_build_err.send(Err(format!("创建嗅探 WebView 失败: {e}")));
+        if let Some(args) = main_window_browser_args(app) {
+            b = b.additional_browser_args(&args);
         }
-    });
+        b.build().map(|_| ())
+    };
 
-    if let Err(e) = dispatch {
-        if let Some(m) = SNIFF_TX.get() {
-            if let Ok(mut g) = m.lock() {
-                *g = None;
-            }
+    let used_label = match create_hidden_webview(app, SNIFF_LABEL, make).await {
+        Ok(l) => l,
+        Err(e) => {
+            reset_sniff_waiters();
+            return Err(format!("创建嗅探 WebView 失败: {e}"));
         }
-        return Err(format!("嗅探窗口调度失败: {e}"));
-    }
+    };
 
     // 等结果（最长 40s）
     let wait = tokio::task::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(40)))
         .await
         .map_err(|e| format!("嗅探等待失败: {e}"));
 
-    // 清理：撤销等待者 + 销毁嗅探窗
-    if let Some(m) = SNIFF_TX.get() {
-        if let Ok(mut g) = m.lock() {
-            *g = None;
-        }
-    }
+    // 清理：撤销等待者 + 销毁嗅探窗（用实际 label，重试过就是 `-r1`）
+    reset_sniff_waiters();
     let app3 = app.clone();
     let app4 = app.clone();
+    let used_label2 = used_label.clone();
     let _ = app3.run_on_main_thread(move || {
-        if let Some(w) = app4.get_webview_window(SNIFF_LABEL) {
+        if let Some(w) = app4.get_webview_window(&used_label2) {
             let _ = w.destroy();
         }
     });
@@ -2523,10 +2632,41 @@ pub async fn webrs_captcha_start(
     // 撤掉可能存在的旧会话
     cancel_captcha(&app);
     let cancel = Arc::new(AtomicBool::new(false));
-    let label = format!(
+    let label_base = format!(
         "webrs-captcha-{}",
         CAPTCHA_SEQ.fetch_add(1, Ordering::Relaxed)
     );
+
+    let ua = effective_ua(&rule);
+    let script = captcha_script(&rule.anti_crawler_config);
+    // 验证页 URL 无效则直接失败，不必起窗口
+    let target = Url::parse(&url).map_err(|_| format!("验证页 URL 无效: {url}"))?;
+
+    // 组装建窗闭包（最多调用 2 次）：[lc-1613] 必须与主窗口传**完全相同**的
+    // additionalBrowserArgs，否则同一 user data folder 下 EnvironmentOptions
+    // 不一致 → CreateCoreWebView2EnvironmentWithOptions 返回 0x8007139F。
+    let make = move |app: &AppHandle, label: &str| {
+        let mut b = tauri::webview::WebviewWindowBuilder::new(
+            app,
+            label,
+            tauri::WebviewUrl::External(target.clone()),
+        )
+        .title("AniBox 人机验证")
+        .visible(false)
+        .initialization_script(&script)
+        .user_agent(&ua);
+        if let Some(args) = main_window_browser_args(app) {
+            b = b.additional_browser_args(&args);
+        }
+        b.build().map(|_| ())
+    };
+
+    let label = match create_hidden_webview(&app, &label_base, make).await {
+        Ok(l) => l,
+        Err(e) => return Err(format!("创建验证窗口失败: {e}")),
+    };
+
+    // 建窗成功后才登记会话（label 可能因重试变成 `-r1`，提交/取消都按它找窗）
     {
         let mut g = captcha_session().lock().map_err(|e| e.to_string())?;
         *g = Some(CaptchaHandle {
@@ -2534,53 +2674,6 @@ pub async fn webrs_captcha_start(
             label: label.clone(),
             cancel: cancel.clone(),
         });
-    }
-
-    let ua = effective_ua(&rule);
-    let script = captcha_script(&rule.anti_crawler_config);
-    let app2 = app.clone();
-    let url2 = url.clone();
-    let ua2 = ua.clone();
-    let label2 = label.clone();
-    let (btx, brx) = std::sync::mpsc::channel::<Result<(), String>>();
-    let dispatch = app.run_on_main_thread(move || {
-        if let Some(w) = app2.get_webview_window(&label2) {
-            let _ = w.destroy();
-        }
-        let Ok(target) = Url::parse(&url2) else {
-            let _ = btx.send(Err(format!("验证页 URL 无效: {url2}")));
-            return;
-        };
-        let b = tauri::webview::WebviewWindowBuilder::new(
-            &app2,
-            &label2,
-            tauri::WebviewUrl::External(target),
-        )
-        .title("AniBox 人机验证")
-        .visible(false)
-        .initialization_script(&script)
-        .user_agent(&ua2);
-        match b.build() {
-            Ok(_) => {
-                let _ = btx.send(Ok(()));
-            }
-            Err(e) => {
-                let _ = btx.send(Err(format!("创建验证窗口失败: {e}")));
-            }
-        }
-    });
-    if let Err(e) = dispatch {
-        return Err(format!("验证窗口调度失败: {e}"));
-    }
-    let built = tokio::task::spawn_blocking(move || {
-        brx.recv_timeout(std::time::Duration::from_secs(10))
-    })
-    .await
-    .map_err(|e| format!("等待验证窗口失败: {e}"))?;
-    match built {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => return Err(e),
-        Err(_) => return Err("创建验证窗口超时".into()),
     }
 
     let app3 = app.clone();

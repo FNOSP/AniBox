@@ -28,19 +28,6 @@ import { AppSettings, BgmCalendarItem, ChromeTone, Config, Lib, MediaItem, PlayI
 import "./styles/index.css";
 
 
-/* [lc-1600] 游客模式：AniList 当季番条目（`anilist_season` 的 items[]，只声明用到的字段） */
-type GuestAnime = {
-  anilistId?: number;
-  /** [native, romaji, english]（中文优先取首个非空） */
-  titles?: string[];
-  cover?: string;
-  /** bannerImage（横图；可能为空 → 轮播退回封面糊底） */
-  banner?: string;
-  /** AniList 百分制评分（0 = 无） */
-  score?: number;
-};
-
-
 function App() {
   const [view, setView] = useState<"login" | "home" | "discover" | "lib" | "detail">("login");
   // [lc-123] 「页」= 顶栏胶囊的两个面（首页/发现）。与 view 分开：在库里/详情页时胶囊仍要
@@ -348,19 +335,18 @@ function App() {
   }, []);
 
   /* ── [lc-1600] 游客首页取数：未登录 → 飞牛接口不可用，改用公开数据源合成 6 条伪 MediaItem ──
-     3 条 AniList 当季番（已按人气排序，取前 3）+ 3 条 TMDB 周热门剧集（mode=trending），
+     [lc-1604] 两半都来自 TMDB（中文名/中文简介 + 官方横图 backdrop + 官方海报，同一套来源）：
+     3 条「热门番剧」（mode=anime）+ 3 条 TMDB 周热门剧集（mode=trending），
      顺序：番剧在前、剧集在后。任一来源失败只丢那一半（Promise.allSettled）——
      能拿几条算几条，两条链都空就是空首页，**绝不进错误态**（游客仍可去发现页）。 */
   const loadGuestHome = useCallback(async () => {
     setErr("");
     setHomeLoading(true);
     try {
-      const now = new Date();
-      const m = now.getMonth() + 1;
-      // 与 SeasonArchive.currentSeason() 同口径：1-3 月 WINTER / 4-6 SPRING / 7-9 SUMMER / 10-12 FALL
-      const season = m <= 3 ? "WINTER" : m <= 6 ? "SPRING" : m <= 9 ? "SUMMER" : "FALL";
       const [animeRes, tvRes] = await Promise.allSettled([
-        invoke<{ items?: GuestAnime[] }>("anilist_season", { year: now.getFullYear(), season }),
+        invoke<{ items?: TmdbDiscoverItem[] }>("tmdb_discover", {
+          arg: { mode: "anime", mediaType: "tv", page: 1 },
+        }),
         invoke<{ items?: TmdbDiscoverItem[] }>("tmdb_discover", {
           arg: { mode: "trending", mediaType: "tv", page: 1 },
         }),
@@ -368,23 +354,28 @@ function App() {
 
       const items: MediaItem[] = [];
       const bds: Record<string, string> = {};
+      // [lc-1604] 两半共用 `guest-tmdb-{id}` 作 guid：同一部动画也可能同时进周热门，
+      // 用 Set 记已用 id，只保留先出现的（番剧半边在前）。
+      const used = new Set<number>();
 
-      // ① 番剧：AniList 当季前 3（标题中文优先；bannerImage 当横图，缺了轮播自动退封面糊底）
+      // ① 番剧：TMDB 热门番剧前 3（[lc-1604] 与剧集半边同一套映射：中文名/简介 + 官方横图/海报）
       if (animeRes.status === "fulfilled") {
         for (const it of (animeRes.value?.items ?? []).slice(0, 3)) {
-          const id = Number(it.anilistId) || 0;
-          const title = (it.titles ?? []).map((t) => String(t ?? "").trim()).find(Boolean) ?? "";
-          if (!id || !title) continue;
-          const guid = `guest-anilist-${id}`;
+          const id = Number(it.tmdbId) || 0;
+          const title = String(it.title || it.originalTitle || "").trim();
+          if (!id || !title || used.has(id)) continue;
+          used.add(id);
+          const guid = `guest-tmdb-${id}`;
           items.push({
             guid,
             title,
             type: "TV",
-            poster: it.cover || undefined,
-            // AniList 是百分制（85）→ 转 10 分制（8.5）：与 TMDB 条目同一把尺，轮播 meta 才不会一会儿 85 一会儿 7.8
-            vote_average: it.score ? (it.score / 10).toFixed(1) : "",
+            poster: it.poster ? tmdbImg(it.poster, "w780") : undefined,
+            overview: it.overview || "",
+            vote_average: it.rating ? String(it.rating) : "",
+            release_date: it.date || (it.year ? `${it.year}-01-01` : ""),
           });
-          if (it.banner) bds[guid] = it.banner;
+          if (it.backdropPath) bds[guid] = tmdbImg(it.backdropPath, "original");
         }
       }
 
@@ -393,7 +384,8 @@ function App() {
         for (const it of (tvRes.value?.items ?? []).slice(0, 3)) {
           const id = Number(it.tmdbId) || 0;
           const title = String(it.title || it.originalTitle || "").trim();
-          if (!id || !title) continue;
+          if (!id || !title || used.has(id)) continue;
+          used.add(id);
           const guid = `guest-tmdb-${id}`;
           items.push({
             guid,

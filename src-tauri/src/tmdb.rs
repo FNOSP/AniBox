@@ -688,6 +688,14 @@ fn trending_path(media_type: &str) -> String {
     format!("/3/trending/{media_type}/week?language={LANG}")
 }
 
+/// [lc-1604] 游客首页「最近热门番剧」：TMDB discover —— 动画题材(16) + 日本原作语言 + 人气排序。
+/// `first_air_date.gte={gte}` = **近半年滚动窗口**（由调用方算 gte；无 lte）——
+/// 没有窗口会取到"全站最热动画"（哆啦A梦/死神/宝可梦 这种常青老番），不符合"最近热门"；
+/// vote_count.gte=50（比 popular_path 的 100 宽松：半年窗口已足够收窄，别把刚开播的当季新番滤掉）。
+fn anime_path(gte: &str, page: i64) -> String {
+    format!("/3/discover/tv?sort_by=popularity.desc&with_genres=16&with_original_language=ja&first_air_date.gte={gte}&vote_count.gte=50&language={LANG}&page={page}")
+}
+
 /* ══════════ fnOS 条目锚点（trim_id）→ TMDB id ══════════
    飞牛条目上的 `trim_id` 形如 `tm63578`（TMDB id）/ `tt325158`（IMDb id）/ `bg456080`（Bangumi）。
    能精确锚定就直接锚（省一次搜索，也不会像标题搜索那样认错片子），锚不到才回落标题搜索。 */
@@ -1510,6 +1518,7 @@ pub async fn tmdb_rating_details(id: i64, media_type: String) -> Result<Value, S
 ///                   [lc-1577] "popular" = 全时段热门榜（不带日期窗口）；
 ///                   [lc-1600] "trending" = TMDB 周热门（游客模式首页用；走 `/3/trending/{tv|movie}/week`，
 ///                            响应与 discover 同形，同样复用 discover_payload）
+///                   [lc-1604] "anime" = 游客首页「最近热门番剧」（动画题材16 + 日本原作语言 + 近半年窗口，见 anime_path）
 ///   arg.mediaType : "tv"（默认）| "movie"（决定 discover 路径与日期字段名）
 ///   arg.season    : "current"（默认）| "next"（只对 mode=season 有意义）
 ///   arg.page      : 1..25（默认 1，夹紧；镜像/上游都有缓存，翻页成本低）
@@ -1533,10 +1542,12 @@ pub async fn tmdb_rating_details(id: i64, media_type: String) -> Result<Value, S
 pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
     let is_movie = arg.get("mediaType").and_then(|v| v.as_str()) == Some("movie");
     // [lc-1577] 四种口味：当季（默认）/ 即将播出 / 热门（全时段）/ [lc-1600] 趋势（周榜）
+    // [lc-1604] 第五种：anime（游客首页「热门番剧」，动画题材+日本原作语言，见 anime_path）
     let mode = match arg.get("mode").and_then(|v| v.as_str()) {
         Some("upcoming") => "upcoming",
         Some("popular") => "popular",
         Some("trending") => "trending",
+        Some("anime") => "anime",
         _ => "season",
     };
     let next = arg.get("season").and_then(|v| v.as_str()) == Some("next");
@@ -1559,17 +1570,26 @@ pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
     } else if mode == "trending" {
         // [lc-1600] 趋势（周榜）：端点自带排序/窗口，同样不带 discover 过滤参数
         (String::new(), String::new())
+    } else if mode == "anime" {
+        // [lc-1604] 最近热门番剧：**近半年滚动窗口**（今天 - 180 天，无 lte）——
+        // 无窗口会退化成"全站最热动画"（哆啦A梦/死神 这类常青老番霸榜），与"最近热门"语义不符。
+        // 日期分解就地完成（同当季分支的写法），只产出 gte；gte 进缓存键 → 跨天自然分格。
+        let days = (mirror_sign::now_secs() / 86_400) as i64 - 180;
+        let (y, m, d) = civil_from_days(days);
+        (format!("{y:04}-{m:02}-{d:02}"), String::new())
     } else {
         // 当季/下季：由**今天**推季度首末（日期分解就地完成，不做"字符串→元组"的双表示）
         let (ty, tm, _) = civil_from_days((mirror_sign::now_secs() / 86_400) as i64);
         quarter_bounds(ty, tm, next)
     };
 
-    // 路径统一由 discover_path / popular_path / trending_path 拼（含显式 language=zh-CN 与 vote_count 例外）
+    // 路径统一由 discover_path / popular_path / trending_path / anime_path 拼（含显式 language=zh-CN 与 vote_count 例外）
     let path = if mode == "popular" {
         popular_path(media_type, page)
     } else if mode == "trending" {
         trending_path(media_type)
+    } else if mode == "anime" {
+        anime_path(&gte, page)
     } else {
         discover_path(media_type, gte_key, &gte, lte_key, &lte, mode == "season", page)
     };
@@ -1581,6 +1601,8 @@ pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
         "popular" => "popular",
         // [lc-1600] 趋势周榜：缓存键独立成格（45 分钟 TTL，与当季/热门互不挤占）
         "trending" => "trending",
+        // [lc-1604] 最近热门番剧：缓存键独立成格（45 分钟 TTL，与当季/热门互不挤占）
+        "anime" => "anime",
         _ => {
             if next {
                 "next"
@@ -1596,6 +1618,9 @@ pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
     let ttl = if mode == "upcoming" {
         DISCOVER_TTL_UPCOMING_SECS
     } else if mode == "trending" {
+        DISCOVER_TTL_TRENDING_SECS
+    } else if mode == "anime" {
+        // [lc-1604] 最近热门番剧：与 trending 同 TTL（45 分钟）——近半年窗口内人气排序，属滚动热度指标
         DISCOVER_TTL_TRENDING_SECS
     } else {
         DISCOVER_TTL_SEASON_SECS
@@ -1738,6 +1763,9 @@ fn discover_payload(
             "popular"
         } else if mode == "trending" {
             "trending"
+        } else if mode == "anime" {
+            // [lc-1604] 纯展示：让 trace/season 如实反映 anime 模式（不影响缓存键/路径）
+            "anime"
         } else if next {
             "next"
         } else {
@@ -1755,6 +1783,9 @@ fn discover_payload(
             "popular"
         } else if mode == "trending" {
             "trending"
+        } else if mode == "anime" {
+            // [lc-1604] 纯展示：与 trace 同口径（anime 不再是 current）
+            "anime"
         } else if next {
             "next"
         } else {
@@ -2097,6 +2128,18 @@ mod tests {
         let p = super::popular_path("movie", 3);
         assert!(p.starts_with("/3/discover/movie?sort_by=popularity.desc"), "{p}");
         assert!(p.contains("page=3"), "{p}");
+    }
+
+    /// [lc-1604] 最近热门番剧路径：动画题材 + 日本原作语言 + **近半年窗口** + vote_count 下限 + 显式 language
+    #[test]
+    fn anime_path_has_anime_filters() {
+        let p = super::anime_path("2026-04-19", 1);
+        assert!(p.contains("with_genres=16"), "必须限定动画题材：{p}");
+        assert!(p.contains("with_original_language=ja"), "必须限定日本原作：{p}");
+        assert!(p.contains("first_air_date.gte=2026-04-19"), "必须带近半年窗口下界：{p}");
+        assert!(!p.contains("first_air_date.lte"), "不得带上界：{p}");
+        assert!(p.contains("vote_count.gte=50"), "{p}");
+        assert!(p.contains("language=zh-CN"), "必须显式带 language：{p}");
     }
 
     /// [lc-1577] `genre_ids` → 中文题材名：已知 id 映射、**保序去重**、未知 id 丢弃（不编名字）

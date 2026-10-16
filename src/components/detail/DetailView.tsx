@@ -13,7 +13,9 @@ import { ReviewsTab } from "./tabs/ReviewsTab";
 import { CommentsTab } from "./tabs/CommentsTab";
 import { ExtraTab } from "./tabs/ExtraTab";
 import { RatingWidget } from "./RatingWidget";
-import { WebrsPanel } from "../webrs/WebrsPanel";
+// [lc-1627] 在线播放先搁置：WebrsPanel 暂不挂载（无源条目改为显示「未查询到资源」）。
+// 恢复时把下行 import 与 1271 行附近的分支一起放回来即可。
+// import { WebrsPanel } from "../webrs/WebrsPanel";
 import { fmtDur, pick } from "../../lib/format";
 import { bgmImg, imgUrl, pickLargestImg, tmdbImg } from "../../lib/images";
 import { prefersReducedMotion } from "../../lib/motion";
@@ -1270,10 +1272,11 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
               ))
             ) : episodes.length === 0 ? (
               /* [lc-1444] 发现页条目没有飞牛选集数据。
-                 [lc-1500] 无源条目的"看"法 = 在线资源面板（Kazumi 规则源 → mpv），
-                 直接替换掉原来的"选集信息暂未接入"占位。 */
+                 [lc-1627] 用户要求：**在线播放先搁置** —— 无源条目不再挂在线资源面板，
+                 直接显示「未查询到资源」。（WebrsPanel 代码保留，恢复时把下面换回
+                 `<WebrsPanel title={title || base.title} />` 并放开文件头部的 import 即可。） */
               noFnOS ? (
-                <WebrsPanel title={title || base.title} />
+                <div className="empty">未查询到资源</div>
               ) : (
                 <div className="empty">暂无剧集</div>
               )

@@ -17,6 +17,76 @@
   gap: 10px 14px;
   align-items: start;
 }
+
+/* ── [lc-1584] 右上角折叠按钮 + 折叠态横栏 ──
+   用户要求：这张卡右上角放一个可折叠按钮，折叠后收成**一条横栏**，写总信息（BGM 登录态 + 总追番）。
+   实现用「两态都渲染、CSS 切显隐」：折叠时隐藏 .bgmac-main/.bgmac-stats、显示 .bgmac-bar。 */
+.bgmac-fold {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--glass-bg);
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.bgmac-fold:hover {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+
+.bgmac-bar {
+  display: none;
+}
+.bgmac.fold {
+  display: flex;
+  align-items: center;
+  gap: 6px 12px;
+  flex-wrap: wrap;
+  padding: 11px 44px 11px 16px; /* 右侧给折叠按钮让位 */
+  cursor: pointer;
+}
+.bgmac.fold .bgmac-main,
+.bgmac.fold .bgmac-stats {
+  display: none;
+}
+.bgmac.fold .bgmac-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.bgmac-bar-user {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--glass-btn-bg);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+.bgmac-bar-user.on {
+  border-color: rgba(108, 155, 255, 0.4);
+  background: rgba(108, 155, 255, 0.12);
+}
+.bgmac-bar-stat {
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
 /* ── 左列 ── */
 .bgmac-main {
   grid-area: main;

@@ -1,7 +1,7 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Film as IcoFilmL } from "lucide-react";
+import { ChevronDown as IcoChevD, ChevronUp as IcoChevU, Film as IcoFilmL } from "lucide-react";
 import { bgmImg } from "../../lib/images";
 import { BgmCalendarItem } from "../../types";
 
@@ -41,6 +41,8 @@ export function BgmAccountCard({
   const [bindOpen, setBindOpen] = useState(false); // 连接表单展开态
   // [lc-1528] 同步状态图联动高亮：null = 无；数字 = BGAC_TYPES 下标
   const [hl, setHl] = useState<number | null>(null);
+  // [lc-1584] 折叠态：整卡收成一条横栏（BGM 登录态 + 总追番信息）
+  const [collapsed, setCollapsed] = useState(false);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
@@ -182,7 +184,29 @@ export function BgmAccountCard({
   };
 
   return (
-    <div className={`bgmac${acct.bound ? " on" : ""}`}>
+    <div className={`bgmac${acct.bound ? " on" : ""}${collapsed ? " fold" : ""}`}>
+      {/* [lc-1584] 右上角折叠按钮：折叠后整卡收成一条横栏（BGM 登录态 + 总追番信息）。
+          展开/折叠两态都保留它，随时能切回来。 */}
+      <button
+        type="button"
+        className="bgmac-fold"
+        onClick={() => setCollapsed((v) => !v)}
+        title={collapsed ? "展开追番同步" : "折叠成横栏"}
+        aria-expanded={!collapsed}
+      >
+        {collapsed ? <IcoChevD size={16} strokeWidth={2} /> : <IcoChevU size={16} strokeWidth={2} />}
+      </button>
+      {/* 折叠态横栏（展开时由 CSS 隐藏）：登录态 + 总追番；点它也能展开 */}
+      <div className="bgmac-bar" onClick={() => setCollapsed(false)} title="点击展开">
+        <span className={`bgmac-bar-user${acct.bound ? " on" : ""}`}>
+          {acct.bound ? `Bangumi · ${acct.username}` : "未连接 Bangumi"}
+        </span>
+        <span className="bgmac-bar-stat">
+          {total > 0
+            ? `追番 ${total} 部 · 在看 ${counts(3)} · 想看 ${counts(1)} · 看过 ${counts(2)} · 搁置 ${counts(4)} · 放弃 ${counts(5)}`
+            : "连接后展示追番统计"}
+        </span>
+      </div>
       {/* 左侧：标题组 + 按钮（图标按用户要求删除） */}
       <div className="bgmac-main">
         <div className="bgmac-text">

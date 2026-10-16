@@ -44,10 +44,32 @@ export function CarouselView({
    * [lc-1523] 统一走这里切页，delta = -1 / +1。克隆轨道上直接 ±1：
    * 最后一张( pos=n )再 +1 → 滑到第一张克隆( n+1 )，动画连续；transitionend
    * 后 onTransEnd 无动画瞬移回真实第一张( 1 )。第一张( 1 )再 -1 同理走 last 克隆( 0 )。
+   *
+   * [lc-1630] 修「切到最后一张再点下一个没反应」：
+   *   克隆位（pos===0 / n+1）在轨道上没有"更远"的下标，原来的 `target > n+1` 越界判断
+   *   会直接 return —— 点击被吞掉。用户停在克隆位再点、或在过渡进行中（pos 已置为克隆位、
+   *   但 transitionend 还没触发）就点，都会命中这条路径。
+   *   做法：先把点击"映射回真实位"（克隆位与真实位是同一张图，复位瞬间无可见跳动），
+   *   下一帧再走这一步。real+delta 仍落在合法轨道范围（n≥2 时 ∈ {0,1,2,n-1,n,n+1}），
+   *   所以复位后照常走原有跨接逻辑，绝不会"点了没反应"。
    */
   const go = useCallback(
     (delta: number) => {
       if (n < 2) return;
+      if (pos === n + 1 || pos === 0) {
+        const real = pos === n + 1 ? 1 : n;
+        setNoAnim(true);
+        setPos(real);
+        // 双 rAF：先让"关过渡 + 瞬移回真实位"真正渲染一帧，再开过渡走这一步，
+        // 否则同一帧里改两次 transform 会被合并、复位不可见（时序不稳 → 可见跳动）。
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            setNoAnim(false);
+            setPos(real + delta);
+          })
+        );
+        return;
+      }
       const target = pos + delta;
       if (target < 0 || target > n + 1) return;
       setPos(target);
@@ -65,6 +87,20 @@ export function CarouselView({
       setPos(pos === n + 1 ? 1 : n);
       requestAnimationFrame(() => requestAnimationFrame(() => setNoAnim(false)));
     }
+  }, [pos, n]);
+
+  // [lc-1630] 克隆位兜底复位：正常由 onTransEnd 的 transitionend 复位；但过渡被打断、
+  //   或 transition 被禁用（如 prefers-reduced-motion）时该事件不会触发，轨道会卡在克隆位。
+  //   这里加一个比过渡（0.45s）稍长的定时器双保险；两者幂等，谁先到都一样。
+  useEffect(() => {
+    if (n < 2) return;
+    if (pos !== 0 && pos !== n + 1) return;
+    const t = setTimeout(() => {
+      setNoAnim(true);
+      setPos(pos === n + 1 ? 1 : n);
+      requestAnimationFrame(() => requestAnimationFrame(() => setNoAnim(false)));
+    }, 600);
+    return () => clearTimeout(t);
   }, [pos, n]);
 
   // items 数量变化（刷新/换库）时把轨道拉回真实首位，避免 pos 越界

@@ -16,11 +16,19 @@
 .mist-body {
   display: flex;
   height: 100%;
-  transition: transform 1.5s cubic-bezier(0.15, 0.07, 0, 1); /* emby-crx 同款缓动 */
+  /* [lc-1630] 原为 1.5s：切页观感"卡顿"，且过渡期间再点「下一个」会被 go() 吞掉。
+     缩短到 0.45s + 更顺的 ease-out，跨接复位更利落、也不再有明显拖尾。 */
+  transition: transform 0.45s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 /* [lc-117] 首尾跨接（第一张←→最后一张）的那一帧关掉过渡，否则会横扫整条轨道 */
 .mist-body.no-anim {
   transition: none;
+}
+/* [lc-1630] 尊重系统"减弱动态效果"：关掉横向滑动；克隆位复位交给兜底定时器，仍不会卡住 */
+@media (prefers-reduced-motion: reduce) {
+  .mist-body {
+    transition: none;
+  }
 }
 .mist-item {
   position: relative;

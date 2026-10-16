@@ -391,6 +391,125 @@ async fn get_episodes(
     Ok(v)
 }
 
+/* ───────────────── [lc-1629] 飞牛「每集/条目自定义元数据」写接口 ─────────────────
+   背景：飞牛有时把集数/条目识别错，用户在飞牛网页端可以「编辑元数据 / 手动匹配影片 /
+   解除匹配影片 / 刷新元数据」，改完飞牛侧会重新匹配成正确元数据。本组命令把这几件事搬进
+   App 详情页（只读的展示早已接入，这里补上**写**）。
+   接口形状来自飞牛影视 Web 前端 bundle（`/v/assets/` 下的 JS 路由表）与 Fntv-Plus 参考实现，
+   并用只读探针实测核对（getEditDetail / scrap.search 已实打确认；写命令未对用户库发起真实写入）：
+     · 读   POST /item/getEditDetail  body {item_guid}         → 完整可编辑元数据（含 *_locked 字段）
+     · 写   POST /item/saveEditDetail body = 上面那份全量对象（改哪些填哪些）+ 对应 `*_locked:true`
+     · 刷新 POST /item/refresh        body {item_guid, refresh_mode}
+     · 搜   POST /scrap/search        body {source, source_keyword, lan, item_guid?}
+     · 匹配 POST /scrap/rescrap       body {item_guid, source, source_id, type, media_guids,
+                                            season_number, episode_number, scrap_tv_type}
+     · 解除 DELETE /scrap/:guid
+   鉴权与其它接口一致（Authorization + Cookie + Authx 签名；nonce 由 fnapi 统一追加）。
+   ⚠ 写命令只做「提交」，**不在此做任何批量/自动写**，全部由用户在前端点按钮触发。 */
+
+/// 读取条目/剧集的完整可编辑元数据（编辑元数据弹层的初始值来源）。
+#[tauri::command]
+async fn get_edit_detail(state: State<'_, AppState>, guid: String) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    let client = fnapi::new_client();
+    client
+        .call(
+            &cfg.server,
+            "/v/api/v1/item/getEditDetail",
+            "POST",
+            &cfg.token,
+            Some(json!({ "item_guid": guid })),
+        )
+        .await
+}
+
+/// 保存条目/剧集元数据：`payload` = getEditDetail 返回的全量对象（前端只改 title/overview
+/// 等目标字段并置 `xxx_locked:true`，其余原样回传，避免飞牛把没传的字段清空 —— 对齐参考实现）。
+#[tauri::command]
+async fn save_edit_detail(state: State<'_, AppState>, payload: Value) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    let client = fnapi::new_client();
+    // nonce 由 fnapi::call 在最终 body 上追加（签名对最终字节计算）。
+    client
+        .call(
+            &cfg.server,
+            "/v/api/v1/item/saveEditDetail",
+            "POST",
+            &cfg.token,
+            Some(payload),
+        )
+        .await
+}
+
+/// 刷新元数据：让飞牛按当前匹配重新刮削该条目（`mode` = "immediate"|"await"，缺省 immediate）。
+#[tauri::command]
+async fn refresh_item(
+    state: State<'_, AppState>,
+    guid: String,
+    mode: Option<String>,
+) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    let client = fnapi::new_client();
+    client
+        .call(
+            &cfg.server,
+            "/v/api/v1/item/refresh",
+            "POST",
+            &cfg.token,
+            Some(json!({
+                "item_guid": guid,
+                "refresh_mode": mode.unwrap_or_else(|| "immediate".into()),
+            })),
+        )
+        .await
+}
+
+/// 手动匹配影片 · 第一步：按标题/TMDB id/IMDB id 搜索刮削源。
+/// `source` = "title"|"tmdb_id"|"imdb_id"（飞牛搜索源枚举），`keyword` 为搜索词。
+#[tauri::command]
+async fn scrap_search(
+    state: State<'_, AppState>,
+    source: String,
+    keyword: String,
+    lan: Option<String>,
+    item_guid: Option<String>,
+) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    let client = fnapi::new_client();
+    let mut body = json!({
+        "source": source,
+        "source_keyword": keyword,
+        "lan": lan.unwrap_or_else(|| "zh-CN".into()),
+    });
+    if let Some(g) = item_guid {
+        body["item_guid"] = json!(g);
+    }
+    client
+        .call(&cfg.server, "/v/api/v1/scrap/search", "POST", &cfg.token, Some(body))
+        .await
+}
+
+/// 手动匹配影片 · 第二步：把选中的搜索结果应用到条目（触发飞牛重新匹配）。
+/// `payload` 直接透传飞牛要求的字段（item_guid/source/source_id/type/media_guids[/season_number/
+/// episode_number/scrap_tv_type]），由前端按选中结果组装。
+#[tauri::command]
+async fn scrap_rescrap(state: State<'_, AppState>, payload: Value) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    let client = fnapi::new_client();
+    client
+        .call(&cfg.server, "/v/api/v1/scrap/rescrap", "POST", &cfg.token, Some(payload))
+        .await
+}
+
+/// 解除匹配影片：删除该条目的刮削关联（`DELETE /scrap/:guid`）。
+#[tauri::command]
+async fn scrap_unscrap(state: State<'_, AppState>, guid: String) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    let client = fnapi::new_client();
+    let path = format!("/v/api/v1/scrap/{}", guid);
+    client.call(&cfg.server, &path, "DELETE", &cfg.token, None).await
+}
+
 /// 媒体统计：GET /v/api/v1/mediadb/sum —— 一个接口给全所有计数
 /// （库 guid→数量、favorite、movie/tv/live/video 分类数、total）
 #[tauri::command]
@@ -458,12 +577,20 @@ async fn get_items_global(
 /// 条目详情：端点与响应字段对齐 FlyNarwhal（GET /v/api/v1/item/{guid}，camelCase 字段）
 /// [lc-1417] **落盘缓存 120 天**：这是详情页最重的一次请求（简介/海报/演职员/评分全在里面），
 /// 原来每次进页面都重拉 —— 用户反馈"每次打开是重新拉了一遍数据吗，要等一会才出现"。
+/// [lc-1629] `force` = **跳过缓存读**（仍然写回）：编辑元数据/手动匹配/刷新元数据后，
+/// 飞牛侧内容已变，详情页必须拿最新一份，否则标题/简介停在旧值（缓存 120 天，不 force 就看不到改动）。
 #[tauri::command]
-async fn get_item_detail(state: State<'_, AppState>, guid: String) -> Result<Value, String> {
+async fn get_item_detail(
+    state: State<'_, AppState>,
+    guid: String,
+    force: Option<bool>,
+) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let key = format!("detail:item:{}", guid);
-    if let Some(v) = disk_cache::json_get(&key, DETAIL_TTL_SECS) {
-        return Ok(v);
+    if !force.unwrap_or(false) {
+        if let Some(v) = disk_cache::json_get(&key, DETAIL_TTL_SECS) {
+            return Ok(v);
+        }
     }
     let client = fnapi::new_client();
     let path = format!("/v/api/v1/item/{}", guid);
@@ -1663,6 +1790,12 @@ pub fn run() {
             set_my_rating,
             get_seasons,
             get_episodes,
+            get_edit_detail,
+            save_edit_detail,
+            refresh_item,
+            scrap_search,
+            scrap_rescrap,
+            scrap_unscrap,
             get_item_detail,
             get_carousel_items,
             play_item,

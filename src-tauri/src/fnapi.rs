@@ -149,9 +149,14 @@ impl FnClient {
         Box::pin(async move {
         if depth > 3 {
             return Err("重定向次数过多".into());
-        }        // POST/PUT 追加 nonce 并以最终序列化字符串为签名依据（字节级一致，见模块注释）
-        let is_post = method.eq_ignore_ascii_case("post");
-        let body_json: String = if is_post {
+        }        // POST/PUT/PATCH 追加 nonce 并以最终序列化字符串为签名依据（字节级一致，见模块注释）
+        // [lc-1629] 原来只认 POST —— 飞牛写接口里 `DELETE /scrap/:guid`（解除匹配）等非 GET 方法
+        //   之前会被当成 GET 发出去（req 分支写死 post/get），必须按 method 正确构造。
+        //   带 body 的方法 = POST/PUT/PATCH（飞牛约定它们都要 nonce）；GET/DELETE 无 body。
+        let has_body = method.eq_ignore_ascii_case("post")
+            || method.eq_ignore_ascii_case("put")
+            || method.eq_ignore_ascii_case("patch");
+        let body_json: String = if has_body {
             let mut obj = body
                 .as_ref()
                 .and_then(|v| v.as_object())
@@ -163,7 +168,7 @@ impl FnClient {
             String::new()
         };
 
-        let authx = crate::authx::authx(path, if is_post { Some(body_json.as_str()) } else { None });
+        let authx = crate::authx::authx(path, if has_body { Some(body_json.as_str()) } else { None });
         let cookie = if token.is_empty() {
             "mode=relay".to_string()
         } else {
@@ -171,10 +176,14 @@ impl FnClient {
         };
         let url = format!("{}{}", base, path);
 
-        let mut req = if is_post {
-            self.http.post(&url).body(body_json)
-        } else {
-            self.http.get(&url)
+        // [lc-1629] 按 method 正确构造请求（原来只区分 post/get，PUT/DELETE 会被错发成 GET）。
+        //   reqwest 的 post/put/patch/get/delete 都返回 RequestBuilder，故可统一 match。
+        let mut req = match method.to_ascii_uppercase().as_str() {
+            "POST" => self.http.post(&url).body(body_json),
+            "PUT" => self.http.put(&url).body(body_json),
+            "PATCH" => self.http.patch(&url).body(body_json),
+            "DELETE" => self.http.delete(&url),
+            _ => self.http.get(&url),
         };
         req = req
             .header("Content-Type", "application/json")

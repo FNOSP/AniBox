@@ -620,3 +620,276 @@
   display: block;
 }
 
+/* ══════════════════ [lc-1629] 飞牛「每集/条目自定义元数据」操作入口 + 弹层 ══════════════════
+   只加必要的小入口与弹层，**不改动**既有选集/头部版面：
+     · .dv2e-meta-btn = 每集剧照右上角的「⋯」（悬停/常显，压在海报上）
+     · .dv2-meta-btn  = 条目标题行尾的「⋯」（无飞牛条目时不渲染）
+   弹层外壳沿用详情页既有语言（.ddet-mask 同款遮罩 + --bg-3 卡片）。 */
+
+.dv2e-meta-btn {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  opacity: 0.8;
+  transition: opacity 0.15s ease, background 0.15s ease;
+  z-index: 2;
+}
+.dv2e-row:hover .dv2e-meta-btn {
+  opacity: 1;
+}
+.dv2e-meta-btn:hover {
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.dv2-meta-btn {
+  flex: 0 0 auto;
+  margin-left: 4px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--hover);
+  color: var(--text-2);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.dv2-meta-btn:hover {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+
+.meta-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(6, 9, 15, 0.62);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 24px 24px;
+  animation: pageIn 0.18s ease;
+}
+.meta-modal {
+  position: relative;
+  width: min(560px, 94vw);
+  max-height: min(84vh, 760px);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-3);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.meta-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.meta-h h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-strong);
+  flex: 0 0 auto;
+}
+.meta-sub {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 12.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.meta-x {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.meta-x:hover {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+.meta-b {
+  padding: 4px 16px 12px;
+  overflow-y: auto;
+}
+.meta-sec {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.meta-sec:last-child {
+  border-bottom: none;
+}
+.meta-sec h4 {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-2);
+  letter-spacing: 0.4px;
+}
+.meta-f {
+  display: block;
+  margin-bottom: 8px;
+}
+.meta-f > span {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.meta-f input,
+.meta-f textarea,
+.meta-row input,
+.meta-row select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-2, var(--hover));
+  color: var(--text-strong);
+  font-size: 13px;
+  font-family: inherit;
+}
+.meta-f textarea {
+  resize: vertical;
+  line-height: 1.6;
+}
+.meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.meta-row select {
+  flex: 0 0 auto;
+  width: auto;
+}
+.meta-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.meta-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--hover);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.meta-btn:hover:not(:disabled) {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+.meta-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.meta-btn.primary {
+  margin-top: 4px;
+  background: var(--accent-grad);
+  border-color: transparent;
+  color: #fff;
+}
+.meta-btn.danger {
+  color: #e5787a;
+  border-color: rgba(229, 120, 122, 0.4);
+}
+.meta-btn.sm {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.meta-hits {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.meta-hits li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+.meta-hits li + li {
+  margin-top: 6px;
+}
+.meta-hit-t {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.meta-hit-name {
+  display: block;
+  font-size: 13px;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.meta-hit-meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.meta-dim {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.meta-err {
+  margin: 0;
+  font-size: 12px;
+  color: #e5787a;
+}
+.meta-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--text-2);
+  background: var(--hover);
+}
+.meta-foot.err {
+  color: #e5787a;
+}
+

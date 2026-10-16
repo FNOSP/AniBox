@@ -5,6 +5,8 @@ import { listen } from "@tauri-apps/api/event";
 import { createPortal } from "react-dom";
 import { Check as IcoCheckL, Clapperboard as IcoClapL, Film as IcoFilmL, Play as IcoPlayL, X as IcoXL } from "lucide-react";
 import { DetailSkeleton } from "./DetailSkeleton";
+// [lc-1629] 飞牛每集/条目自定义元数据操作弹层（编辑元数据 / 手动匹配 / 刷新 / 解除匹配）
+import { MetaEditModal, type MetaTarget } from "./MetaEditModal";
 import { BGM_PAGE, TAB_LABEL, bgmList, fnosCast, pickGenres } from "./helpers";
 import { OverviewTab } from "./tabs/OverviewTab";
 import { RelatedTab } from "./tabs/RelatedTab";
@@ -163,14 +165,21 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
     return { trimId: trim, tmdbId, imdbId };
   })();
 
+  // [lc-1629] 统一的「带 force 重取」：置三个 force ref + bump progTick，让条目详情/季/集都跳过缓存。
+  //   播放结束（lc-1595）与元数据写操作成功后（编辑/匹配/刷新/解除）共用同一条路径。
+  const refreshAll = useCallback(() => {
+    forceSeasonRef.current = true;
+    forceEpsRef.current = true;
+    syncBgmRef.current = true;
+    setProgTick((n) => n + 1);
+  }, []);
+
+  // [lc-1629] 元数据操作弹层的目标（null = 关闭）。每集行的「⋯」与条目「⋯」都设它。
+  const [metaTarget, setMetaTarget] = useState<MetaTarget | null>(null);
+
   // [lc-1595] 监听播放结束事件 → 触发一次带 force 的重取（见上）。
   useEffect(() => {
-    const bump = () => {
-      forceSeasonRef.current = true;
-      forceEpsRef.current = true;
-      syncBgmRef.current = true;
-      setProgTick((n) => n + 1);
-    };
+    const bump = () => refreshAll();
     const un1 = listen<{ phase?: string }>("mpv-load", (e) => {
       if (e.payload?.phase === "ended") bump();
     });
@@ -179,7 +188,7 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
       un1.then((f) => f());
       un2.then((f) => f());
     };
-  }, []);
+  }, [refreshAll]);
 
   useEffect(() => {
     setData(null);
@@ -191,15 +200,17 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
       setErr("");
       return;
     }
-    invoke<Record<string, unknown>>("get_item_detail", { guid: base.guid })
+    // [lc-1629] 读一次 force 并消费：播放结束/元数据写操作成功后置真 → 详情也跳过 120 天缓存，
+    //   否则「编辑元数据」改完标题/简介看不到变化。
+    const forceItem = forceSeasonRef.current;
+    forceSeasonRef.current = false;
+    invoke<Record<string, unknown>>("get_item_detail", { guid: base.guid, force: forceItem })
       .then((d) => setData(d))
       .catch((e) => setErr(String(e)));
     // 层级：剧 → 季 → 集。episode/list 的入参是季 guid（传剧 guid 实测 data:null），
     // 所以先 season/list/{剧guid}，选中季后再 episode/list/{季guid}。
     if (isSeries) {
-      const forceSeason = forceSeasonRef.current;
-      forceSeasonRef.current = false;
-      invoke<Season[]>("get_seasons", { guid: base.guid, force: forceSeason })
+      invoke<Season[]>("get_seasons", { guid: base.guid, force: forceItem })
         .then((ss) => setSeasons(Array.isArray(ss) ? ss : []))
         .catch(() => {});
     }
@@ -1016,6 +1027,19 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
             <span className="dv2-rail-orig">（{originalTitle}）</span>
           )}
         </h1>
+        {/* [lc-1629] 条目级「元数据」入口（对齐飞牛网页端条目的右键菜单）：
+            编辑元数据 / 手动匹配影片 / 解除匹配 / 刷新元数据。无飞牛条目（发现页）时不显示。 */}
+        {!noFnOS && (
+          <button
+            className="dv2-meta-btn"
+            title="元数据操作（编辑 / 手动匹配 / 解除匹配 / 刷新）"
+            onClick={() =>
+              setMetaTarget({ guid: base.guid, title: title || base.title, type: isSeries ? "TV" : "Movie" })
+            }
+          >
+            ⋯
+          </button>
+        )}
       </div>
 
       {err && <div className="err">{err}</div>}
@@ -1311,6 +1335,25 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
                         </div>
                       )}
                       <span className="dv2e-play">{playing ? "◉" : "▶"}</span>
+                      {/* [lc-1629] 每集「元数据」入口（对齐飞牛网页端每集海报的右键菜单）：
+                          编辑元数据 / 手动匹配影片 / 解除匹配 / 刷新元数据。stopPropagation 防止误触播放。 */}
+                      <button
+                        className="dv2e-meta-btn"
+                        title="本集元数据（编辑 / 手动匹配 / 解除匹配 / 刷新）"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMetaTarget({
+                            guid: ep.guid,
+                            title: `第 ${num} 集${ep.title ? `. ${ep.title}` : sub ? `. ${sub}` : ""}`,
+                            type: "TV",
+                            seasonNumber: ep.season_number,
+                            episodeNumber: ep.episode_number ?? num,
+                            isEpisode: true,
+                          });
+                        }}
+                      >
+                        ⋯
+                      </button>
                       {seen && <span className="ep-mark seen"><IcoCheckL size={11} strokeWidth={2.2} /> 已看</span>}
                       {!seen && progress > 0 && <span className="ep-mark now">看到 {Math.round(progress)}%</span>}
                       {progress > 0 && (
@@ -1369,6 +1412,16 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
           </div>,
           document.body,
         )}
+
+      {/* [lc-1629] 飞牛每集/条目自定义元数据操作弹层（编辑 / 手动匹配 / 解除匹配 / 刷新）。
+          写成功后 onDone → refreshAll()：带 force 重取详情/季/集，立刻反映飞牛侧的新数据。 */}
+      {metaTarget && (
+        <MetaEditModal
+          target={metaTarget}
+          onClose={() => setMetaTarget(null)}
+          onDone={() => refreshAll()}
+        />
+      )}
     </main>
   );
 }

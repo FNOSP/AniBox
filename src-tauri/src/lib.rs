@@ -1,6 +1,7 @@
 //! AniBox —— 自绘 UI + 直调飞牛 API + mpv 双层窗口内嵌。
 //! 命令面向前端：配置 / 登录 / 媒体库 / 播放控制。
 
+mod anilist;
 mod authx;
 mod bgm;
 mod bgm_account;
@@ -1433,6 +1434,8 @@ pub fn run() {
             tmdb::tmdb_discover,
             // [lc-1577] 发现页左栏「媒体库」搜索框（真实 TMDB 搜索）
             tmdb::tmdb_search,
+            // [lc-1582] AniList 官方 API：当日放送表（补 BGM 缺的「几点更新」→ 右栏行的「第 N 话 · HH:MM」）
+            anilist::anilist_day_schedule,
             // [lc-1576] 评分分布（详情页「评分透视」兜底：BGM 无 rating.count 时改用 TMDB 的）
             tmdb::tmdb_rating_details,
             // [lc-119] Bangumi（全线走自建镜像，见 bgm.rs 头部说明）

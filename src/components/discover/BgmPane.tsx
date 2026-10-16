@@ -5,7 +5,7 @@ import { BgmAccountCard } from "./BgmAccountCard";
 import { BgmCalRow } from "./BgmCalRow";
 import { Dsk, WEEKDAYS, localDay, localWeekdayId } from "./shared";
 import { libHasTitle, normTitle, resolveLibItem, useLibIndex } from "../../hooks/useLibIndex";
-import { BgmCalendarDay, BgmCalendarItem, BgmEpisodeRow, MediaItem } from "../../types";
+import { BgmCalendarDay, BgmCalendarItem, MediaItem } from "../../types";
 
 
 export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen: (it: BgmCalendarItem) => void; onOpenLib: (item: MediaItem) => void }) {
@@ -17,9 +17,8 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
   const [nonce, setNonce] = useState(0);
   const [probe, setProbe] = useState(0); // [lc-123-rev5] 10 分钟后台探测
   const [collect, setCollect] = useState<{ id: string; kind: number; name: string }[]>([]); // [lc-1581] 追番表（含名字）
-  // [lc-1581] 「第 N 话」：条目 id → { airdate: 集号 }（分集端点结果按条目缓存，切天不重复打）
-  const [epNo, setEpNo] = useState<Record<string, number>>({});
-  const epCacheRef = useRef<Map<string, Record<string, number>>>(new Map());
+  // [lc-1582] 精确放送时刻（AniList 官方 API）：条目 id → { ep, at }（一次拿"选中那天"整张表，按标题匹配）
+  const [airMap, setAirMap] = useState<Record<string, { ep: number; at: number }>>({});
   // 手动 ⟳ / 失败重试的语义不同（见下）：⟳ = force（**仍带条件头**）；失败重试 = force + noEtag（全量）
   const forceRef = useRef(false);
   const hardRef = useRef(false);
@@ -121,58 +120,70 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
     (it) => subIds.has(String(it.id)) || libHasTitle(subNames, it.name_cn || it.name),
   ).length;
 
-  // [lc-1581] 「第 N 话」角标：BGM 的 infobox **没有"几点更新"**（只有 放送星期/放送开始/电视台），
-  // 但**分集端点带每集的 airdate** —— 用"所选星期在本周的那天"去匹配，得到"这天更新第几话"。
-  // 端点走 bgm_episodes（落盘 24h 缓存）⇒ 每个条目一天最多打一次；并发限 4，别一次冲 20+ 个。
-  // 只对**当前选中天**的条目取；结果按条目 id 缓存在 ref 里（切天不重复打）。
-  const selDate = (() => {
+  // [lc-1582] 行的「第 N 话 · HH:MM」角标：**BGM 没有"几点更新"**（infobox 只有 放送星期/放送开始/
+  // 电视台），改从 **AniList 官方 API** 的当日放送表拿（`airingSchedules` 带精确到分钟的 `airingAt`）。
+  // 一次拿"选中那天"的整张表（Rust 侧 1~4 页 + 按天落盘缓存）⇒ 比"逐条打 bgm_episodes（14~26 次）"
+  // 省得多，还多了时刻。匹配按**归一化标题**（全等 → 前缀兜底，与库索引同口径）；匹配不到就不显示，
+  // 失败也静默（不影响列表本身）。
+  const dayRange = (() => {
     const d = new Date();
     d.setDate(d.getDate() + (wd - todayId)); // 所选星期在本周的那一天（今天 = todayId）
-    const p = (n: number) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+    d.setHours(0, 0, 0, 0);
+    const start = Math.floor(d.getTime() / 1000);
+    return { start, end: start + 86400 };
   })();
   useEffect(() => {
     if (!active || !dayItems.length) return;
     let alive = true;
-    const build = () => {
-      const next: Record<string, number> = {};
-      for (const it of dayItems) {
-        const n = epCacheRef.current.get(String(it.id))?.[selDate];
-        if (n) next[String(it.id)] = n;
-      }
-      if (alive) setEpNo(next);
-    };
-    const need = dayItems.filter((it) => !epCacheRef.current.has(String(it.id)));
-    if (!need.length) {
-      build(); // 全在缓存里（切天/切回）→ 直接算，零网络
-      return;
-    }
-    (async () => {
-      const q = need.slice();
-      const worker = async () => {
-        for (let it = q.shift(); it; it = q.shift()) {
-          try {
-            const r = await invoke<{ data?: BgmEpisodeRow[] }>("bgm_episodes", { id: it.id, limit: 100 });
-            const m: Record<string, number> = {};
-            for (const e of r?.data ?? []) {
-              const d = String(e.airdate || "").slice(0, 10);
-              if (d) m[d] = Number(e.ep ?? e.sort ?? 0);
-            }
-            epCacheRef.current.set(String(it.id), m);
-          } catch {
-            epCacheRef.current.set(String(it.id), {}); // 失败也记空：别为同一条反复打网络
+    invoke<{ items?: { episode: number; airingAt: number; titles: string[] }[] }>(
+      "anilist_day_schedule",
+      { start: dayRange.start, end: dayRange.end },
+    )
+      .then((d) => {
+        if (!alive) return;
+        // 归一化标题索引（AniList 给 native/romaji/english 三种，全进）
+        const idx = new Map<string, { ep: number; at: number }>();
+        for (const s of d?.items ?? []) {
+          for (const t of s.titles ?? []) {
+            const n = normTitle(t);
+            if (n.length >= 2 && !idx.has(n)) idx.set(n, { ep: s.episode, at: s.airingAt });
           }
         }
-      };
-      await Promise.all([0, 1, 2, 3].map(() => worker()));
-      build();
-    })();
+        const next: Record<string, { ep: number; at: number }> = {};
+        for (const it of dayItems) {
+          const keys = [normTitle(it.name_cn || it.name), normTitle(it.name)].filter((k) => k.length >= 2);
+          let hit = keys.map((k) => idx.get(k)).find(Boolean);
+          if (!hit) {
+            const kk = keys.filter((k) => k.length >= 3);
+            for (const [t, v] of idx) {
+              if (t.length >= 3 && kk.some((k) => t.startsWith(k) || k.startsWith(t))) {
+                hit = v;
+                break;
+              }
+            }
+          }
+          if (hit) next[String(it.id)] = hit;
+        }
+        setAirMap(next);
+      })
+      .catch(() => {
+        /* 拿不到就静默：行上不显示时刻（列表照常） */
+      });
     return () => {
       alive = false;
     };
     // 依赖刻意用 days/wd（dayItems 每次渲染都是新数组，进依赖会每帧重跑）；数据变了才重算。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, wd, days]);
+
+  // 行上显示：有集号 → 「第 N 话 · HH:MM」，没集号 → 只给时刻（本地时区）
+  const epLabelOf = (id: number): string | undefined => {
+    const a = airMap[String(id)];
+    if (!a) return undefined;
+    const d = new Date(a.at * 1000);
+    const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    return a.ep > 0 ? `第 ${a.ep} 话 · ${hm}` : hm;
+  };
   const wdCn = WEEKDAYS.find((w) => w.id === wd)?.cn ?? "";
   // 逐条匹配：loading/partial 只给"命中"打标；只有 ok（索引完整）才敢分组和标"不在库"
   const withLib = lib.state === "ok" || lib.state === "partial";
@@ -190,7 +201,7 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
       today={wd === todayId}
       rank={r.rank}
       libState={r.inLib ? "in" : null}
-      epLabel={epNo[String(r.it.id)] ? `第 ${epNo[String(r.it.id)]} 话` : undefined}
+      epLabel={epLabelOf(r.it.id)}
       onOpen={openBgm}
     />
   );

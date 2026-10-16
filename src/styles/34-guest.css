@@ -1,0 +1,77 @@
+/* ═══════════════ [lc-1600] 游客模式（未登录也能用） ═══════════════
+   ① 登录页「先逛逛（游客模式）」次级按钮（.gst-enter）；
+   ② 「查看详情 / 播放需要登录」引导弹窗（外壳复用 .ddet-mask + .ddet 卡片，内层 .gst-*）。
+   颜色全部走 01-tokens 变量 —— 深浅主题各自成立；弹层外壳与设置面板/详情页简介弹窗同款。 */
+
+/* ── 登录页：先逛逛 —— 刻意弱于 .primary 渐变主按钮（透明底 + 弱描边 + 次要文字色） ── */
+.gst-enter {
+  margin-top: 10px;
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+.gst-enter:hover {
+  color: var(--text-strong);
+  border-color: var(--accent);
+  background: var(--hover);
+}
+.gst-enter:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ── 引导弹窗卡片（外壳 = .ddet；这里只定尺寸与内部排版） ── */
+.gst-modal {
+  width: min(440px, 92vw);
+  padding: 26px 26px 20px;
+}
+.gst-hd {
+  margin: 0;
+  font-size: 16.5px;
+  font-weight: 700;
+  color: var(--text-strong);
+  line-height: 1.45;
+}
+.gst-sub {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.gst-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+.gst-btn {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 9px;
+  padding: 8px 18px;
+  cursor: pointer;
+  border: 1px solid var(--line-strong);
+  background: var(--hover);
+  color: var(--text-strong);
+  transition: filter 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
+}
+.gst-btn.ghost:hover {
+  background: var(--hover-strong);
+}
+.gst-btn.primary {
+  border: none;
+  background: var(--accent-grad);
+  color: #fff;
+  box-shadow: 0 6px 18px rgba(108, 155, 255, 0.32);
+}
+.gst-btn.primary:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}

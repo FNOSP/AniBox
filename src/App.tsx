@@ -2,6 +2,7 @@
 // [lc-123-rev8] 图标统一用 Lucide（ISC 许可，https://lucide.dev）：stroke=currentColor、24 viewBox，
 // 按需导入 tree-shake；仓库内不再保留手拷贝的 SVG path。
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -11,6 +12,7 @@ import { HomeSkeleton } from "./components/home/HomeSkeleton";
 import { HomeView } from "./components/home/HomeView";
 import { LibView } from "./components/library/LibView";
 import { LoginPage } from "./components/login/LoginPage";
+import { FeedbackPanel } from "./components/feedback/FeedbackPanel";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
 import { NavCapsule } from "./components/shell/NavCapsule";
 import { TitleBar } from "./components/shell/TitleBar";
@@ -23,6 +25,19 @@ import { prefersReducedMotion } from "./lib/motion";
 import { DEFAULT_SETTINGS } from "./lib/settings";
 import { AppSettings, BgmCalendarItem, ChromeTone, Config, Lib, MediaItem, PlayItem, PlayTarget, TmdbDiscoverItem } from "./types";
 import "./styles/index.css";
+
+
+/* [lc-1600] 游客模式：AniList 当季番条目（`anilist_season` 的 items[]，只声明用到的字段） */
+type GuestAnime = {
+  anilistId?: number;
+  /** [native, romaji, english]（中文优先取首个非空） */
+  titles?: string[];
+  cover?: string;
+  /** bannerImage（横图；可能为空 → 轮播退回封面糊底） */
+  banner?: string;
+  /** AniList 百分制评分（0 = 无） */
+  score?: number;
+};
 
 
 function App() {
@@ -162,6 +177,14 @@ function App() {
   const [server, setServer] = useState("");
   // [lc-128] 设置面板（缓存 + 关于）开关；入口在侧栏快捷操作卡（设置）
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // [lc-1599] 反馈面板（工单制）开关；入口在侧栏快捷操作卡（反馈）
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  // [lc-1600] 游客模式（未登录也能用）：true = 本会话按游客态走 —— 首页取数走
+  // 「AniList 当季 + TMDB 周热门」兜底链；查看详情/播放改为弹登录引导。
+  // 初始值从启动标记推导（LoginPage 写入）；登录成功（loadHome）时清掉标记并置回 false。
+  const [guest, setGuest] = useState(() => localStorage.getItem("anibox-guest") === "1");
+  // [lc-1600] 「查看详情 / 播放需要登录」引导弹窗
+  const [guestAsk, setGuestAsk] = useState(false);
   const [sum, setSum] = useState<Record<string, number>>({});
   const [favTotal, setFavTotal] = useState<number | null>(null);
 
@@ -177,6 +200,13 @@ function App() {
 
   // 首页数据完整加载（启动无缓存/手动刷新/登录后）：拉全量并回填
   const loadHome = useCallback(async () => {
+    // [lc-1600] 走到这里 = 登录成功（或已有有效会话）：游客标记完成使命，清掉
+    try {
+      localStorage.removeItem("anibox-guest");
+    } catch {
+      /* ignore */
+    }
+    setGuest(false);
     setErr("");
     setHomeLoading(true);
     try {
@@ -316,13 +346,100 @@ function App() {
     }
   }, []);
 
+  /* ── [lc-1600] 游客首页取数：未登录 → 飞牛接口不可用，改用公开数据源合成 6 条伪 MediaItem ──
+     3 条 AniList 当季番（已按人气排序，取前 3）+ 3 条 TMDB 周热门剧集（mode=trending），
+     顺序：番剧在前、剧集在后。任一来源失败只丢那一半（Promise.allSettled）——
+     能拿几条算几条，两条链都空就是空首页，**绝不进错误态**（游客仍可去发现页）。 */
+  const loadGuestHome = useCallback(async () => {
+    setErr("");
+    setHomeLoading(true);
+    try {
+      const now = new Date();
+      const m = now.getMonth() + 1;
+      // 与 SeasonArchive.currentSeason() 同口径：1-3 月 WINTER / 4-6 SPRING / 7-9 SUMMER / 10-12 FALL
+      const season = m <= 3 ? "WINTER" : m <= 6 ? "SPRING" : m <= 9 ? "SUMMER" : "FALL";
+      const [animeRes, tvRes] = await Promise.allSettled([
+        invoke<{ items?: GuestAnime[] }>("anilist_season", { year: now.getFullYear(), season }),
+        invoke<{ items?: TmdbDiscoverItem[] }>("tmdb_discover", {
+          arg: { mode: "trending", mediaType: "tv", page: 1 },
+        }),
+      ]);
+
+      const items: MediaItem[] = [];
+      const bds: Record<string, string> = {};
+
+      // ① 番剧：AniList 当季前 3（标题中文优先；bannerImage 当横图，缺了轮播自动退封面糊底）
+      if (animeRes.status === "fulfilled") {
+        for (const it of (animeRes.value?.items ?? []).slice(0, 3)) {
+          const id = Number(it.anilistId) || 0;
+          const title = (it.titles ?? []).map((t) => String(t ?? "").trim()).find(Boolean) ?? "";
+          if (!id || !title) continue;
+          const guid = `guest-anilist-${id}`;
+          items.push({
+            guid,
+            title,
+            type: "TV",
+            poster: it.cover || undefined,
+            // AniList 是百分制（85）→ 转 10 分制（8.5）：与 TMDB 条目同一把尺，轮播 meta 才不会一会儿 85 一会儿 7.8
+            vote_average: it.score ? (it.score / 10).toFixed(1) : "",
+          });
+          if (it.banner) bds[guid] = it.banner;
+        }
+      }
+
+      // ② 剧集：TMDB 周热门前 3（海报/横图都走 fntvimg 代理；横图取 original 档，与登录态 hero 同规格）
+      if (tvRes.status === "fulfilled") {
+        for (const it of (tvRes.value?.items ?? []).slice(0, 3)) {
+          const id = Number(it.tmdbId) || 0;
+          const title = String(it.title || it.originalTitle || "").trim();
+          if (!id || !title) continue;
+          const guid = `guest-tmdb-${id}`;
+          items.push({
+            guid,
+            title,
+            type: "TV",
+            poster: it.poster ? tmdbImg(it.poster, "w780") : undefined,
+            overview: it.overview || "",
+            vote_average: it.rating ? String(it.rating) : "",
+            release_date: it.date || (it.year ? `${it.year}-01-01` : ""),
+          });
+          if (it.backdropPath) bds[guid] = tmdbImg(it.backdropPath, "original");
+        }
+      }
+
+      setLibs([]);
+      setContinueList([]);
+      setCarousel(items);
+      setCarouselBds(bds);
+      setCarouselLogos({});
+      setLibRows([]);
+      setSum({});
+      setPage("home");
+      setView("home");
+    } catch {
+      /* 兜底：取数异常也绝不把游客首页打成错误态 */
+    } finally {
+      setHomeLoading(false);
+    }
+  }, []);
+
+  // [lc-1600] 从登录页进入游客模式（标记已由 LoginPage 写入）：切态 + 切首页；
+  // 内存里已有数据（引导弹窗折返回登录页又点「先逛逛」）就直接复用，不重拉。
+  const enterGuest = useCallback(() => {
+    setGuest(true);
+    setPage("home");
+    setView("home");
+    if (!carousel.length) void loadGuestHome();
+  }, [carousel.length, loadGuestHome]);
+
   // 回首页：数据还在内存就直接切视图（进详情/库再回来不重拉），否则完整加载
   const goHome = useCallback(() => {
     setPage("home");
     if (view === "home") return;
     if (carousel.length > 0) setView("home");
+    else if (guest) loadGuestHome();
     else loadHome();
-  }, [view, carousel.length, loadHome]);
+  }, [view, carousel.length, loadHome, loadGuestHome, guest]);
 
   // [lc-123] 去发现页：**不预取**（DiscoverView 的首拉闸门是 active=view==="discover"），
   // 首页数据原样留在内存（切回来不重拉）
@@ -412,7 +529,10 @@ function App() {
 
   // 首页数据落盘（30 分钟 TTL）：重启/会话恢复时零请求直出；数据落定 1.5s 后快照
   useEffect(() => {
-    if (view !== "home" || !carousel.length) return;
+    // [lc-1600] 游客数据不写快照（快照是登录态恢复路径在用；游客条目混进去会在
+    // 下次带会话启动时被恢复出来）。guest 只作守卫、不进依赖：若因它触发一次
+    // "旧游客数据"的写入，反而会污染快照。
+    if (guest || view !== "home" || !carousel.length) return;
     const t = setTimeout(() => {
       try {
         localStorage.setItem(
@@ -434,11 +554,17 @@ function App() {
       }
     }, 1500);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, libs, continueList, carousel, carouselBds, carouselLogos, sum, favTotal, libRows]);
 
   // [lc-118] 首页轮播的「开始播放」= **直接拉起独立 mpv 窗口**（与详情页同一个入口）。
   const [playMsg, setPlayMsg] = useState("");
   const play = useCallback((t: PlayTarget) => {
+    // [lc-1600] 游客：播放依赖飞牛会话（guest-* 伪条目也没有可播源）→ 弹登录引导，不出"播放失败"
+    if (guest) {
+      setGuestAsk(true);
+      return;
+    }
     setPlayMsg("");
     invoke("play_item", { guid: t.guid })
       .then(() => {
@@ -449,15 +575,20 @@ function App() {
         setPlayMsg(`播放失败：${String(e)}`);
         window.setTimeout(() => setPlayMsg(""), 6000);
       });
-  }, []);
+  }, [guest]);
 
   const openItem = useCallback(
     (item: MediaItem) => {
+      // [lc-1600] 游客：不跳详情页，弹登录引导（轮播 MORE / 首页横排共用这条链路）
+      if (guest) {
+        setGuestAsk(true);
+        return;
+      }
       setDetailItem(item);
       setDetailFrom(view === "lib" ? "lib" : "home");
       setView("detail");
     },
-    [view],
+    [view, guest],
   );
 
   // [lc-1444] 发现页条目 → 主详情页：合成 MediaItem。guid 用 `discover-<tmdbId>` 占位标识
@@ -515,6 +646,16 @@ function App() {
   }, []);
 
   useEffect(() => {
+    // [lc-1600] 启动先看游客标记：是游客 → **跳过登录/会话检查**，直接进首页（游客取数链）。
+    // 先切视图再拉数据：homeLoading 一置起即渲染骨架屏（不闪登录页、不空白）。
+    if (localStorage.getItem("anibox-guest") === "1") {
+      setGuest(true);
+      setPage("home");
+      setView("home");
+      setBooting(false);
+      void loadGuestHome();
+      return;
+    }
     invoke("check_session")
       .then(() => {
         // 30 分钟内的落盘快照直接恢复（重启零请求直出）；否则完整加载（骨架屏）
@@ -571,7 +712,7 @@ function App() {
         setBooting(false);
         setView("login");
       });
-  }, [loadHome]);
+  }, [loadHome, loadGuestHome]);
 
   // [lc-123-rev6] 常驻视图的动画类：进入侧挂 anim-*、退场侧额外加 leaving（退场层 position:absolute 叠在上面，
   // pointer-events:none —— 动画中照样能点，不锁交互）。动画类只在这 ~260ms 里存在，结束即摘。
@@ -592,7 +733,7 @@ function App() {
   if (booting) {
     body = null; // 会话检查期不出任何视图
   } else if (view === "login") {
-    body = <LoginPage onDone={() => loadHome()} />;
+    body = <LoginPage onDone={() => loadHome()} onGuest={enterGuest} />;
   } else {
     // 首页常驻挂载：切到库/详情只隐藏不卸载（图片零重请求、滚动位置保留）
     const homeReady = carousel.length > 0;
@@ -625,6 +766,7 @@ function App() {
           onOpenCat={openCat}
           onHome={goHome}
           onOpenSettings={() => setSettingsOpen(true)}
+          onOpenFeedback={() => setFeedbackOpen(true)}
         />
         <div className="view-stack">
           {/* [lc-123-rev2] 「首页 | 发现」胶囊是**浮层**（.navbar = absolute，不占布局高度）：
@@ -789,7 +931,8 @@ function App() {
             return !v;
           })
         }
-        onRefresh={() => loadHome()}
+        // [lc-1600] 游客：刷新走游客取数链（飞牛接口不可用，别再打）
+        onRefresh={() => (guest ? loadGuestHome() : loadHome())}
         refreshing={homeLoading}
         // [lc-123-rev3] 顶栏现在**一律全透明**（无底色/描边/渐变），可读性靠 text-shadow；
         // overlay/ghost 两个"底色模式"修饰类随之取消（App.css 里的 .titlebar.overlay/.ghost 已删）。
@@ -820,6 +963,21 @@ function App() {
             setLibRows([]);
             setLibs([]);
             setContinueList([]);
+            setView("login");
+          }}
+        />
+      )}
+      {/* [lc-1599] 反馈面板（工单制）：入口在侧栏快捷操作卡（反馈）。
+          page = 当前视图名，随工单一起上报（日志环境块的 page=xxx 同源）。 */}
+      {feedbackOpen && (
+        <FeedbackPanel page={view} onClose={() => setFeedbackOpen(false)} />
+      )}
+      {/* [lc-1600] 游客「查看详情 / 播放」引导弹窗（portal 到 body，与详情页弹窗同一套） */}
+      {guestAsk && (
+        <GuestLoginPrompt
+          onClose={() => setGuestAsk(false)}
+          onGoLogin={() => {
+            setGuestAsk(false);
             setView("login");
           }}
         />
@@ -871,6 +1029,37 @@ function App() {
       )}
       {body}
     </div>
+  );
+}
+
+/* ────────────────────────── [lc-1600] 游客登录引导弹窗 ──────────────────────────
+   游客态点「查看详情 / 开始播放」时弹出。外壳复用仓库弹层（.ddet-mask 遮罩 + .ddet 卡片，
+   同 SettingsPanel / 详情页简介弹窗的用法），portal 到 body —— 不被 .app-shell 的
+   圆角/溢出与视图转场动画上下文裁剪。Esc / 点遮罩关闭。 */
+function GuestLoginPrompt({ onClose, onGoLogin }: { onClose: () => void; onGoLogin: () => void }) {
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+  return createPortal(
+    <div className="ddet-mask" onClick={onClose}>
+      <div className="ddet gst-modal" onClick={(e) => e.stopPropagation()}>
+        <h3 className="gst-hd">登录后即可查看详情、播放与管理媒体库</h3>
+        <p className="gst-sub">在设置里填入飞牛服务器地址与账号即可登录</p>
+        <div className="gst-acts">
+          <button className="gst-btn ghost" onClick={onClose}>
+            再看看
+          </button>
+          <button className="gst-btn primary" onClick={onGoLogin}>
+            去登录
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

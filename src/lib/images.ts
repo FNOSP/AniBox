@@ -8,6 +8,10 @@ export function imgUrl(p?: string | null): string {
   //   上游（如详情页 poster 链路）现在是"TMDB 完整 URL 与飞牛相对路径混在一个变量里"，
   //   在这里兜住比在每个调用点判来源更可靠。
   if (p.startsWith("http://fntvimg.localhost") || p.startsWith("fntvimg://localhost")) return p;
+  // [lc-1600] 其它绝对 URL（http/https）同样直通：AniList 封面/横图（s4.anilist.co 等）不在
+  //   fntvimg 的三个上游（NAS / TMDB / Bangumi）里，包一层只会变成 `.../https://...` 的 404 路径。
+  //   与 CastTab 的 `avatar.startsWith("http") ? avatar : imgUrl(avatar)` 是同一语义。
+  if (p.startsWith("http://") || p.startsWith("https://")) return p;
   const path = p.startsWith("/") ? p : `/${p}`;
   if (navigator.userAgent.includes("Windows")) return `http://fntvimg.localhost${path}`;
   return `fntvimg://localhost${path}`;

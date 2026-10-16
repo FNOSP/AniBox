@@ -86,6 +86,9 @@ const RATING_TTL_SECS: u64 = 24 * 3600;
 ///   · 手动刷新 force 只跳过本地 TTL 检查，条件头照带（"检测新增"才叫刷新）。
 const DISCOVER_TTL_SEASON_SECS: u64 = 12 * 3600;
 const DISCOVER_TTL_UPCOMING_SECS: u64 = 24 * 3600;
+/// [lc-1600] 游客模式「最近热门」（/3/trending 周榜）的落盘 TTL：**45 分钟**。
+/// 热门榜变化快（新剧集随时冲榜），比当季/即将短得多；与 tmdb_search 依赖的镜像边缘缓存同一量级。
+const DISCOVER_TTL_TRENDING_SECS: u64 = 45 * 60;
 
 
 /// 用户自己的 key（可选）：env FNTV_TMDB_KEY → 主仓库 fn_config/config.json 的 tmdbApiKey。
@@ -675,6 +678,14 @@ fn popular_path(media_type: &str, page: i64) -> String {
     format!(
         "/3/discover/{media_type}?sort_by=popularity.desc&vote_count.gte=100&language={LANG}&page={page}"
     )
+}
+
+/// [lc-1600] 游客模式「最近热门」：TMDB 官方 trending 端点（**周榜**，`/3/trending/{tv|movie}/week`）。
+/// 响应形状与 discover 一致（results[] 同一套字段：id/name/first_air_date/vote_average/
+/// poster_path/backdrop_path/overview/genre_ids…），所以 discover_payload 直接复用；
+/// 路径同样**显式带 language=zh-CN**（镜像不注入，漏了就退回英文标题）。
+fn trending_path(media_type: &str) -> String {
+    format!("/3/trending/{media_type}/week?language={LANG}")
 }
 
 /* ══════════ fnOS 条目锚点（trim_id）→ TMDB id ══════════
@@ -1496,7 +1507,9 @@ pub async fn tmdb_rating_details(id: i64, media_type: String) -> Result<Value, S
 /// [lc-123] 发现页左栏取数：`/3/discover/{tv|movie}` 一条命令带三种口味（**参数**决定，不做三条命令：
 /// 三者只差 query，拆开只会把"vote_count 例外"这类边界抄三遍）。
 ///   arg.mode      : "season"（默认）= 当季热门网格；"upcoming" = 即将播出；
-///                   [lc-1577] "popular" = 全时段热门榜（不带日期窗口）
+///                   [lc-1577] "popular" = 全时段热门榜（不带日期窗口）；
+///                   [lc-1600] "trending" = TMDB 周热门（游客模式首页用；走 `/3/trending/{tv|movie}/week`，
+///                            响应与 discover 同形，同样复用 discover_payload）
 ///   arg.mediaType : "tv"（默认）| "movie"（决定 discover 路径与日期字段名）
 ///   arg.season    : "current"（默认）| "next"（只对 mode=season 有意义）
 ///   arg.page      : 1..25（默认 1，夹紧；镜像/上游都有缓存，翻页成本低）
@@ -1508,6 +1521,7 @@ pub async fn tmdb_rating_details(id: i64, media_type: String) -> Result<Value, S
 ///   即将：sort_by=popularity.desc + first_air_date.gte=<今天> —— **绝不能带 vote_count.gte**：
 ///         未开播条目 vote_count=0，同一过滤器会把整个列表滤空（实测 total_results=0）。
 ///   [lc-1577] 热门：sort_by=popularity.desc + vote_count.gte=100（无日期窗口；见 popular_path）
+///   [lc-1600] 趋势：trending 端点自带排序（周榜），**不带任何 discover 过滤参数**（见 trending_path）
 /// language **由客户端显式带上**（`discover_path` 里统一拼 `language=zh-CN`）——镜像已不再注入，
 /// 依赖镜像默认值会在换端点/换 worker 版本时静默退回英文标题。
 /// 每条 item 返回 `poster` 与 **`backdropPath`**（16:9 横图，前端主推卡/横向卡优先用它）。
@@ -1518,10 +1532,11 @@ pub async fn tmdb_rating_details(id: i64, media_type: String) -> Result<Value, S
 #[tauri::command]
 pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
     let is_movie = arg.get("mediaType").and_then(|v| v.as_str()) == Some("movie");
-    // [lc-1577] 三种口味：当季（默认）/ 即将播出 / 热门（全时段）
+    // [lc-1577] 四种口味：当季（默认）/ 即将播出 / 热门（全时段）/ [lc-1600] 趋势（周榜）
     let mode = match arg.get("mode").and_then(|v| v.as_str()) {
         Some("upcoming") => "upcoming",
         Some("popular") => "popular",
+        Some("trending") => "trending",
         _ => "season",
     };
     let next = arg.get("season").and_then(|v| v.as_str()) == Some("next");
@@ -1541,15 +1556,20 @@ pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
     } else if mode == "popular" {
         // 热门：全时段 —— 不带日期窗口（空 gte/lte 只进缓存键与 payload 元信息）
         (String::new(), String::new())
+    } else if mode == "trending" {
+        // [lc-1600] 趋势（周榜）：端点自带排序/窗口，同样不带 discover 过滤参数
+        (String::new(), String::new())
     } else {
         // 当季/下季：由**今天**推季度首末（日期分解就地完成，不做"字符串→元组"的双表示）
         let (ty, tm, _) = civil_from_days((mirror_sign::now_secs() / 86_400) as i64);
         quarter_bounds(ty, tm, next)
     };
 
-    // 路径统一由 discover_path / popular_path 拼（含显式 language=zh-CN 与 vote_count 例外）
+    // 路径统一由 discover_path / popular_path / trending_path 拼（含显式 language=zh-CN 与 vote_count 例外）
     let path = if mode == "popular" {
         popular_path(media_type, page)
+    } else if mode == "trending" {
+        trending_path(media_type)
     } else {
         discover_path(media_type, gte_key, &gte, lte_key, &lte, mode == "season", page)
     };
@@ -1559,6 +1579,8 @@ pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
     let season_key = match mode {
         "upcoming" => "upcoming",
         "popular" => "popular",
+        // [lc-1600] 趋势周榜：缓存键独立成格（45 分钟 TTL，与当季/热门互不挤占）
+        "trending" => "trending",
         _ => {
             if next {
                 "next"
@@ -1573,6 +1595,8 @@ pub async fn tmdb_discover(arg: Value) -> Result<Value, String> {
         format!("json:tmdb:discover:v1|{media_type}|{mode}|{season_key}|{page}|{gte}|{lte}");
     let ttl = if mode == "upcoming" {
         DISCOVER_TTL_UPCOMING_SECS
+    } else if mode == "trending" {
+        DISCOVER_TTL_TRENDING_SECS
     } else {
         DISCOVER_TTL_SEASON_SECS
     };
@@ -1712,6 +1736,8 @@ fn discover_payload(
             "upcoming"
         } else if mode == "popular" {
             "popular"
+        } else if mode == "trending" {
+            "trending"
         } else if next {
             "next"
         } else {
@@ -1727,6 +1753,8 @@ fn discover_payload(
             "upcoming"
         } else if mode == "popular" {
             "popular"
+        } else if mode == "trending" {
+            "trending"
         } else if next {
             "next"
         } else {
@@ -2057,6 +2085,10 @@ mod tests {
             !pop.contains("first_air_date") && !pop.contains("primary_release_date"),
             "热门不得带日期窗口：{pop}"
         );
+
+        // [lc-1600] 游客「最近热门」：trending 周榜 + 显式 language（响应与 discover 同形，复用 payload）
+        let tr = super::trending_path("tv");
+        assert_eq!(tr, "/3/trending/tv/week?language=zh-CN", "{tr}");
     }
 
     /// [lc-1577] 热门路径：全时段（无日期窗口）+ 页码透传

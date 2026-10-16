@@ -50,6 +50,7 @@ query ($y: Int, $s: MediaSeason, $p: Int) {
       id
       title { native romaji english }
       coverImage { medium }
+      bannerImage
       episodes
       format
       status
@@ -160,7 +161,9 @@ pub async fn anilist_day_schedule(start: i64, end: i64) -> Result<Value, String>
 
 /// [lc-1589] **往季番表**：`Page.media(season, seasonYear, sort: POPULARITY_DESC)` ——
 /// 弹窗「总表查询」用（选年份 + 季度 → 看该季番剧列表，数据即 AniList 的季度表）。
-/// 缓存 `json:anilist:season:v1|{year}|{season}`，TTL 24h（往季基本定型；当季评分/状态还会动）。
+/// 缓存 `json:anilist:season:v2|{year}|{season}`，TTL 24h（往季基本定型；当季评分/状态还会动）。
+/// [lc-1600] v1→v2：条目新增 `banner` 字段（bannerImage，游客模式首页横图用）。键升版强制重取 ——
+/// 否则旧缓存里没有 banner，游客 hero 只能退化成糊封面。
 #[tauri::command]
 pub async fn anilist_season(year: i64, season: String) -> Result<Value, String> {
     let s = season.trim().to_ascii_uppercase();
@@ -170,7 +173,7 @@ pub async fn anilist_season(year: i64, season: String) -> Result<Value, String> 
     if !(1940..=2100).contains(&year) {
         return Err(format!("year 非法：{year}"));
     }
-    let key = format!("json:anilist:season:v1|{year}|{s}");
+    let key = format!("json:anilist:season:v2|{year}|{s}");
     if let Some(v) = disk_cache::json_get(&key, TTL_SECS) {
         return Ok(v);
     }
@@ -218,6 +221,8 @@ pub async fn anilist_season(year: i64, season: String) -> Result<Value, String> 
                 "anilistId": m.get("id").and_then(|x| x.as_i64()).unwrap_or(0),
                 "titles": titles,
                 "cover": m.pointer("/coverImage/medium").and_then(|x| x.as_str()).unwrap_or(""),
+                // [lc-1600] 横图（bannerImage，可能为空）：游客模式首页轮播用它当 hero 横图
+                "banner": m.get("bannerImage").and_then(|x| x.as_str()).unwrap_or(""),
                 "episodes": m.get("episodes").and_then(|x| x.as_i64()).unwrap_or(0),
                 "format": m.get("format").and_then(|x| x.as_str()).unwrap_or(""),
                 "status": m.get("status").and_then(|x| x.as_str()).unwrap_or(""),

@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Config } from "../../types";
 
 
-export function LoginPage({ onDone }: { onDone: () => void }) {
+export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: () => void }) {
   const [cfg, setCfg] = useState<Config | null>(null);
   const [server, setServer] = useState("");
   const [username, setUsername] = useState("");
@@ -129,6 +129,25 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
         <button className="primary" disabled={busy}>
           {busy ? "登录中…" : "登 录"}
         </button>
+        {/* [lc-1600] 游客入口：未登录也能用（首页轮播走 AniList 当季 + TMDB 热门兜底；
+            详情/播放引导登录）。标记写进 localStorage，启动流程据此跳过会话检查。 */}
+        {onGuest && (
+          <button
+            type="button"
+            className="gst-enter"
+            disabled={busy}
+            onClick={() => {
+              try {
+                localStorage.setItem("anibox-guest", "1");
+              } catch {
+                /* 写不进也不拦：本次会话照常进游客态 */
+              }
+              onGuest();
+            }}
+          >
+            先逛逛（游客模式）
+          </button>
+        )}
       </form>
     </div>
   );

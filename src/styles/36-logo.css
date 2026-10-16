@@ -1,3 +1,14 @@
+/* ═══════════════ [lc-1619] 品牌字体 Baloo 2 内嵌（OFL 1.1，可商用）═══════════════
+   之前走 Google Fonts（fonts.googleapis.com）—— 国内常不可达、离线也不行、还对第三方发请求。
+   改为内嵌 latin 子集 woff2（~15KB，够 logo 的 "AniBox" 用）：离线/国内都稳、不发外部请求。 */
+@font-face {
+  font-family: "Baloo 2";
+  src: url("../assets/fonts/Baloo2-800.woff2") format("woff2");
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* ═══════════════ [lc-1614] 顶栏品牌字标 AniBox（纯 CSS / SVG 版）═══════════════
    用户给的设计：内联 SVG 文字 + 动漫感多色相渐变 + 轻微浮动；字体走 web 字体
    （Baloo 2 wght 800 —— index.html 里 link Google Fonts，加载不到就回落 system-ui）。

@@ -539,19 +539,19 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
 .bgmac-remember {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  font-size: 11.5px;
-  color: var(--text-2);
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
   cursor: pointer;
   user-select: none;
-  line-height: 1.4;
+  line-height: 1.5;
   min-width: 0;
 }
 .bgmac-remember input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
   flex: 0 0 auto;
   margin: 0;
   border: 1px solid var(--line-strong);
@@ -559,21 +559,25 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
   background: var(--input-bg);
   cursor: pointer;
   position: relative;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.bgmac-remember:hover input[type="checkbox"]:not(:disabled) {
+  border-color: var(--accent, #6c9bff);
 }
 .bgmac-remember input[type="checkbox"]:checked {
   background: var(--accent, #6c9bff);
   border-color: var(--accent, #6c9bff);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--accent, #6c9bff) 26%, transparent);
 }
 .bgmac-remember input[type="checkbox"]:checked::after {
   content: "";
   position: absolute;
   left: 4px;
   top: 1px;
-  width: 4px;
-  height: 8px;
+  width: 3px;
+  height: 7px;
   border: solid #fff;
-  border-width: 0 1.8px 1.8px 0;
+  border-width: 0 1.6px 1.6px 0;
   transform: rotate(45deg);
 }
 .bgmac-remember input[type="checkbox"]:focus-visible {

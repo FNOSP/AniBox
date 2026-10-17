@@ -311,6 +311,12 @@ async fn get_watch_history(app: AppHandle, state: State<'_, AppState>) -> Result
         }
     }
     let mut items = history::merge(fnos.as_ref(), local);
+    // [lc-1667] 观影记录口径：在线源已搁置（整条隐藏）；无封面的个人视频默认不计算。
+    // 在「富化 / 聚合」之前过滤 —— 既让列表与统计一致，也省掉这些条目无谓的网络富化。
+    items.retain(|it| {
+        let s = |k: &str| it.get(k).and_then(|x| x.as_str()).unwrap_or("");
+        history::visible_in_history(s("type"), s("source"), s("poster"))
+    });
     history::enrich_series(&mut items, &cfg.server, &cfg.token).await;
     // [lc-1616] 富化（拿到剧 guid）之后再按**作品**聚合：同一部剧只出一张卡。
     let mut items = history::aggregate_by_series(&items);

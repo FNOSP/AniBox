@@ -129,9 +129,10 @@ void listen("history-recorded", (e) => {
   if (typeof g === "string" && g) _sessGuid = g;
 });
 
-type Filter = "全部" | "电影" | "剧集" | "在线源";
+/* [lc-1667] 在线源已搁置：不再提供「在线源」筛选（数据侧也已整条隐藏）。 */
+type Filter = "全部" | "电影" | "剧集";
 
-const FILTERS: Filter[] = ["全部", "电影", "剧集", "在线源"];
+const FILTERS: Filter[] = ["全部", "电影", "剧集"];
 
 /* ── [lc-1620] 展示方式：海报网格（默认）/ 紧凑列表 / 时间线 ──
    口径照抄发现页「媒体库」左栏 TmdbPane 的三视图（timeline/grid/list）+ `.dlib-vbtn` 切换钮。
@@ -168,9 +169,8 @@ function bucketOf(ts?: number): TimeBucket {
   return "更早";
 }
 
-/** 条目 → 筛选分类（在线源按 source；其余按类型：Movie=电影，其它归剧集） */
+/** 条目 → 筛选分类（Movie=电影，其它归剧集；在线源已由后端过滤，不再参与） */
 function catOf(it: HistoryItem): Exclude<Filter, "全部"> {
-  if (it.source === "webrs") return "在线源";
   return it.type === "Movie" ? "电影" : "剧集";
 }
 
@@ -365,7 +365,7 @@ export function WatchHistoryView({
 
   const items = data?.items ?? [];
   const counts = useMemo(() => {
-    const c: Record<Filter, number> = { 全部: items.length, 电影: 0, 剧集: 0, 在线源: 0 };
+    const c: Record<Filter, number> = { 全部: items.length, 电影: 0, 剧集: 0 };
     for (const it of items) c[catOf(it)]++;
     return c;
   }, [items]);
@@ -485,7 +485,7 @@ export function WatchHistoryView({
 
       {!loading && data && (
         <>
-          {/* 筛选胶囊（照抄原项目右上角「全部/电影/剧集/动漫」→ 本仓库分类：+在线源；计数 = 作品数）
+          {/* 筛选胶囊（照抄原项目右上角「全部/电影/剧集/动漫」→ 本仓库分类：全部/电影/剧集；计数 = 作品数）
               + [lc-1620] 右侧展示方式切换（照抄发现页 .dlib-vbtn 口径） */}
           <div className="hist-pills">
             {FILTERS.map((f) => (
@@ -533,7 +533,7 @@ export function WatchHistoryView({
               <IcoClockL size={26} strokeWidth={1.6} />
               <div className="hist-empty-t">暂无观影记录</div>
               <div className="hist-empty-s">
-                {data.fnosOk ? "播放过的内容会自动记录在这里（库内 + 在线源）" : "登录后还会并入飞牛影视的观看记录"}
+                {data.fnosOk ? "播放过的内容会自动记录在这里" : "登录后还会并入飞牛影视的观看记录"}
               </div>
             </div>
           ) : (

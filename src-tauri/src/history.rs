@@ -395,6 +395,17 @@ pub fn merge(fnos: Option<&Value>, local: Vec<WatchRecord>) -> Vec<Value> {
     out
 }
 
+/// [lc-1667] 观影记录可见口径（用户定稿）：
+///   · **在线源（webrs）已搁置** → 列表 / 统计 / 年度报告一律不展示、不计算；
+///   · **个人视频（type=Video）取不到封面（poster 为空）** → 默认不计算；
+///     正规影视条目即便暂时缺海报仍保留，避免误伤刮削失败的内容。
+pub fn visible_in_history(media_type: &str, source: &str, poster: &str) -> bool {
+    if source == "webrs" || media_type == "webrs" {
+        return false;
+    }
+    !(matches!(media_type, "Video" | "Directory") && poster.trim().is_empty())
+}
+
 /// [lc-1616] 作品级聚合：把「集」条目按作品归并成一张卡（纯函数，单测覆盖）。
 ///
 /// 为什么：play/list 与本机历史都是**集**级 —— 同一部剧看 8 集就出 8 张卡；用户要「按部算」，
@@ -829,7 +840,11 @@ pub fn report_data(app: &AppHandle) -> Value {
     }
     let events: Vec<Value> = recs
         .iter()
-        .filter(|r| r.played_at >= MIN_VALID_MS)
+        // [lc-1667] 与观影记录同口径：在线源已搁置、无封面个人视频不计算（年度报告也不含）
+        .filter(|r| {
+            r.played_at >= MIN_VALID_MS
+                && visible_in_history(&r.media_type, &r.source, &r.poster)
+        })
         .map(|r| {
             json!({
                 "ts": r.played_at,
@@ -888,6 +903,20 @@ mod tests {
         assert_eq!(episode_label(2, 1), "S2E1");
         assert_eq!(episode_label(0, 5), "第5集");
         assert_eq!(episode_label(0, 0), "");
+    }
+
+    #[test]
+    fn history_visibility_policy() {
+        // 在线源已搁置：无论有没有海报都不展示
+        assert!(!visible_in_history("webrs", "webrs", ""));
+        assert!(!visible_in_history("Movie", "webrs", "/p.webp"));
+        // 个人视频：取不到封面 → 不计算；有封面则保留
+        assert!(!visible_in_history("Video", "fnos", ""));
+        assert!(!visible_in_history("Directory", "fnos", "  "));
+        assert!(visible_in_history("Video", "fnos", "/p.webp"));
+        // 正规影视条目缺海报（刮削失败）仍保留，避免误伤
+        assert!(visible_in_history("Movie", "fnos", ""));
+        assert!(visible_in_history("Episode", "fnos", ""));
     }
 
     #[test]

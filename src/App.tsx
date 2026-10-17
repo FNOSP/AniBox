@@ -8,6 +8,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Lock as IcoLock } from "lucide-react";
 import { DetailView } from "./components/detail/DetailView";
+// [lc-1654] 海报卡「⋯ → 编辑元数据」复用详情页同一套弹层
+import { MetaEditModal, type MetaTarget } from "./components/detail/MetaEditModal";
 import { DiscoverView } from "./components/discover/DiscoverView";
 // [lc-1615] 观影记录页（侧栏快捷操作卡入口；飞牛 play/list ∪ 本机播放历史）
 import { WatchHistoryView } from "./components/history/WatchHistoryView";
@@ -69,6 +71,8 @@ function App() {
   // [lc-1647] 从首页横排直接点进「未识别文件夹」时的起始层（个人视频/网盘类库根层即文件夹）
   const [libFolder, setLibFolder] = useState<MediaItem | null>(null);
   const [detailItem, setDetailItem] = useState<MediaItem | null>(null);
+  // [lc-1654] 海报卡「⋯ → 编辑元数据」的目标（弹层挂在 App 根部，不塞进卡片）
+  const [posterMetaTarget, setPosterMetaTarget] = useState<MetaTarget | null>(null);
   // [lc-1444] 进详情的来源（返回键的目标）：lib = 库里进，discover = 发现页进，home = 首页进。
   // 不用 view 现查 —— 用户从发现页进详情后 view 已是 "detail"，现查只能靠猜。
   // [lc-1615] 增加 history = 观影记录页进。
@@ -468,6 +472,26 @@ function App() {
     }
     setRefreshTick((n) => n + 1);
   }, [view, guest, loadHome, loadGuestHome]);
+
+  // [lc-1654] 海报卡「⋯」两项元数据操作：弹窗目标与刷新动作都由 App 统一持有。
+  const posterEditMeta = useCallback((item: MediaItem) => {
+    setPosterMetaTarget({
+      guid: item.guid,
+      title: item.title,
+      type: item.type === "Movie" ? "Movie" : "TV",
+    });
+  }, []);
+  const posterRefreshMeta = useCallback(
+    async (item: MediaItem) => {
+      try {
+        await invoke("refresh_item", { guid: item.guid, mode: "immediate" });
+        onRefresh();
+      } catch {
+        /* 刷新失败保持原状 */
+      }
+    },
+    [onRefresh],
+  );
 
   // [lc-1600] 从登录页进入游客模式（标记已由 LoginPage 写入）：切态 + 切首页；
   // 内存里已有数据（引导弹窗折返回登录页又点「先逛逛」）就直接复用，不重拉。
@@ -918,6 +942,8 @@ function App() {
                 onPlay={play}
                 onOpenItem={openItem}
                 onHeroTone={onHeroTone}
+                onEditMeta={posterEditMeta}
+                onRefreshMeta={posterRefreshMeta}
               />
             ) : homeLoading ? (
               <HomeSkeleton />
@@ -944,7 +970,7 @@ function App() {
               className={`view-pane active${libClosing ? " view-out" : libEnterAnim ? " view-in" : ""}${view !== "lib" ? " pane-exit" : ""}`}
               onAnimationEnd={() => setLibEnterAnim(false)}
             >
-              <LibView lib={activeLib} initialFolder={libFolder} onBackHome={goHome} onOpenItem={openItem} />
+              <LibView lib={activeLib} initialFolder={libFolder} onBackHome={goHome} onOpenItem={openItem} onEditMeta={posterEditMeta} onRefreshMeta={posterRefreshMeta} />
             </div>
           )}
           {/* [lc-1615] 观影记录页：条件挂载 + view-in/view-out 转场（与库/详情页同套）。
@@ -1171,6 +1197,17 @@ function App() {
       )}
       {/* [lc-1640] 刷新通道下发：discover/lib/history/detail 视图经 useRefresh 消费 tick 触发自身 force 刷新。 */}
       <RefreshContext.Provider value={refreshCtx}>{body}</RefreshContext.Provider>
+      {/* [lc-1654] 海报卡「⋯ → 编辑元数据」弹层：挂在 App 根部，完成/关闭后刷新当前视图。 */}
+      {posterMetaTarget && (
+        <MetaEditModal
+          target={posterMetaTarget}
+          onClose={() => setPosterMetaTarget(null)}
+          onDone={() => {
+            setPosterMetaTarget(null);
+            onRefresh();
+          }}
+        />
+      )}
       {/* [lc-1607] 首次启动的免责声明同意闸门：未同意过则弹（登录页/主界面都覆盖，portal 到 body）。
           「我已阅读并同意」→ 置位 localStorage 并关闭；「不同意并退出」→ 走仓库既有退出链路
           （resolve_close("exit") = app.exit(0)，退场清理必然执行）。 */}

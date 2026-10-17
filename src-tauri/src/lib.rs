@@ -22,6 +22,7 @@ mod mirror_sign;
 mod mpv;
 mod proxy;
 mod tmdb;
+mod watched;
 mod webrs;
 
 /// [lc-1417] 详情页数据的落盘 TTL：**120 天**（用户指定）。
@@ -1874,6 +1875,9 @@ pub fn run() {
             get_favorites,
             favorites::favorite_get,
             favorites::favorite_toggle,
+            // [lc-1654] 海报卡「已看」切换（飞牛 item/watched，失败降级本地 watched.json）
+            watched::watched_get_all,
+            watched::set_item_watched,
             get_items_global,
             get_items,
             get_continue_watching,

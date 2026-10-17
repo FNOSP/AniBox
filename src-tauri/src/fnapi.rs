@@ -152,10 +152,14 @@ impl FnClient {
         }        // POST/PUT/PATCH 追加 nonce 并以最终序列化字符串为签名依据（字节级一致，见模块注释）
         // [lc-1629] 原来只认 POST —— 飞牛写接口里 `DELETE /scrap/:guid`（解除匹配）等非 GET 方法
         //   之前会被当成 GET 发出去（req 分支写死 post/get），必须按 method 正确构造。
-        //   带 body 的方法 = POST/PUT/PATCH（飞牛约定它们都要 nonce）；GET/DELETE 无 body。
+        //   带 body 的方法 = POST/PUT/PATCH（飞牛约定它们都要 nonce）；GET 无 body。
+        // [lc-1654] DELETE 也可能带 JSON body：飞牛 `DELETE /item/watched` 实测需要
+        //   `{ item_guid }`，网页端同样对 DELETE 的 body 参与签名。仅在调用方显式传 body
+        //   时才带，既有「无 body 的 DELETE」行为不变。
         let has_body = method.eq_ignore_ascii_case("post")
             || method.eq_ignore_ascii_case("put")
-            || method.eq_ignore_ascii_case("patch");
+            || method.eq_ignore_ascii_case("patch")
+            || (method.eq_ignore_ascii_case("delete") && body.is_some());
         let body_json: String = if has_body {
             let mut obj = body
                 .as_ref()
@@ -182,7 +186,7 @@ impl FnClient {
             "POST" => self.http.post(&url).body(body_json),
             "PUT" => self.http.put(&url).body(body_json),
             "PATCH" => self.http.patch(&url).body(body_json),
-            "DELETE" => self.http.delete(&url),
+            "DELETE" => self.http.delete(&url).body(body_json),
             _ => self.http.get(&url),
         };
         req = req
@@ -237,8 +241,11 @@ impl FnClient {
             return self.call_inner(base, path, method, token, body, depth).await;
         }
         if code != 0 {
+            // [lc-1654] 飞牛部分未实现路由回的是 `{"message":"Not Implemented..."}`（没有 `msg`），
+            //   只读 `msg` 会把真实原因吞成「未知业务错误」，降级判定也就无从谈起。
             let msg = v
                 .get("msg")
+                .or_else(|| v.get("message"))
                 .and_then(|m| m.as_str())
                 .unwrap_or("未知业务错误")
                 .to_string();

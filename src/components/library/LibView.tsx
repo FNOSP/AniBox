@@ -12,6 +12,8 @@ export function LibView({
   onBackHome,
   onOpenItem,
   initialFolder,
+  onEditMeta,
+  onRefreshMeta,
 }: {
   lib: Lib;
   onBackHome: () => void;
@@ -20,6 +22,9 @@ export function LibView({
    *  个人视频/网盘类库（category=Others/Mix）根层往往就是文件夹，首页点它必须进库钻取，
    *  不能像以前那样落进详情页（详情页对文件夹无意义，表现为「打不开」）。 */
   initialFolder?: MediaItem | null;
+  /** [lc-1654] 海报卡「编辑元数据 / 刷新元数据」由 App 注入（弹窗不在卡片内部） */
+  onEditMeta?: (item: MediaItem) => void;
+  onRefreshMeta?: (item: MediaItem) => void;
 }) {
   // [lc-1647] 层级模型重写：每一层 = 「这一层显示的文件夹（库根为 null）+ 该层的条目列表」。
   // 旧模型只存父文件夹、当前层靠 `items` 单独存 —— 钻到第 3 层时面包屑标题不跟着变，
@@ -185,7 +190,7 @@ export function LibView({
       {!loading && (
         <div className="grid">
           {items.map((it) => (
-            <PosterCard key={it.guid} item={it} onOpen={openItem} />
+            <PosterCard key={it.guid} item={it} onOpen={openItem} onEditMeta={onEditMeta} onRefreshMeta={onRefreshMeta} />
           ))}
         </div>
       )}

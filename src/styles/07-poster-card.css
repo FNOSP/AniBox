@@ -171,3 +171,117 @@
   text-overflow: ellipsis;
 }
 
+
+/* ─────────── [lc-1654] 海报卡四项操作（对齐飞牛网页端卡片） ───────────
+   覆盖层：中间大圆播放 + 底部一行（已看 / 收藏 / 更多），悬停显形。
+   结构完全浮在 .poster-box 内，不改动标题/角标/进度条布局。 */
+.poster-actions {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  opacity: 0;
+  transition: opacity 0.18s;
+  background: linear-gradient(180deg, rgba(10, 12, 18, 0.08), rgba(10, 12, 18, 0.62));
+}
+.card:hover .poster-actions {
+  opacity: 1;
+}
+.pa-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  border: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: var(--accent-grad);
+  box-shadow: 0 8px 24px rgba(108, 155, 255, 0.45);
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+.pa-play:hover {
+  transform: translate(-50%, -50%) scale(1.06);
+  box-shadow: 0 10px 30px rgba(108, 155, 255, 0.6);
+}
+.pa-play .fill {
+  fill: currentColor;
+  margin-left: 2px; /* 视觉上让三角形居中 */
+}
+.pa-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.pa-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(10, 12, 18, 0.35);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  transition: background 0.15s, color 0.15s, transform 0.15s;
+}
+.pa-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+.pa-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.pa-btn.is-on {
+  color: #fff;
+}
+.pa-heart.is-on {
+  color: #ff6b8a;
+}
+.pa-more-wrap {
+  position: relative;
+}
+/* 更多菜单：绝对定位浮层（在卡片内向上弹出，避开底部一行） */
+.pa-menu {
+  position: absolute;
+  right: 0;
+  bottom: 42px;
+  min-width: 132px;
+  padding: 6px;
+  border-radius: 10px;
+  background: rgba(24, 27, 35, 0.97);
+  border: 1px solid var(--line);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  z-index: 20;
+}
+.pa-menu button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pa-menu button:hover {
+  background: var(--semi-color-fill-3, rgba(255, 255, 255, 0.08));
+}

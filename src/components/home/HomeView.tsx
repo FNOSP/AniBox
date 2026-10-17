@@ -29,6 +29,8 @@ export function HomeView({
   onPlay,
   onOpenItem,
   onHeroTone,
+  onEditMeta,
+  onRefreshMeta,
 }: {
   libs: Lib[];
   hiddenLibs: string[];
@@ -50,6 +52,9 @@ export function HomeView({
   onOpenItem: (item: MediaItem) => void;
   /** [lc-123-rev4] hero 图亮度采样结果上报（App → TitleBar 自适应反色） */
   onHeroTone?: (t: ChromeTone) => void;
+  /** [lc-1654] 海报卡「编辑元数据 / 刷新元数据」由 App 注入（弹窗不在卡片内部） */
+  onEditMeta?: (item: MediaItem) => void;
+  onRefreshMeta?: (item: MediaItem) => void;
 }) {
   const [manageOpen, setManageOpen] = useState(false);
   const shownLibs = libs.filter((l) => !hiddenLibs.includes(l.guid));
@@ -263,6 +268,8 @@ export function HomeView({
                 <PosterCard
                   key={it.guid}
                   item={it}
+                  onEditMeta={onEditMeta}
+                  onRefreshMeta={onRefreshMeta}
                   onOpen={(x) =>
                     x.type === "Directory" ? onOpenFolder(lib, x) : onOpenItem(x)
                   }

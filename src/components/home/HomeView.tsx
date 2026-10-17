@@ -170,25 +170,49 @@ export function HomeView({
             <h3>继续观看</h3>
           </div>
           <ScrollRow>
-            {continueList.map((raw) => {
+            {continueList
+              .filter((raw) => String(pick(raw, ["type"]) ?? "") !== "LiveChannel")
+              .map((raw) => {
               const guid = String(pick(raw, ["guid"]) ?? "");
-              const title = String(pick(raw, ["title"]) ?? "");
-              const tvTitle = pick(raw, ["tvTitle", "tv_title"]) as string | undefined;
+              const rawTitle = String(pick(raw, ["title"]) ?? "").trim();
+              const tvTitle = String(pick(raw, ["tv_title", "tvTitle"]) ?? "").trim();
+              const type = String(pick(raw, ["type"]) ?? "");
               const poster = pick(raw, ["poster"]) as string | undefined;
               const ts = Number(pick(raw, ["ts"]) ?? 0);
               const duration = Number(pick(raw, ["duration"]) ?? 0);
-              const sn = pick(raw, ["seasonNumber", "season_number"]);
-              const en = pick(raw, ["episodeNumber", "episode_number"]);
+              const sn = Number(pick(raw, ["season_number", "seasonNumber"]) ?? 0);
+              const en = Number(pick(raw, ["episode_number", "episodeNumber"]) ?? 0);
+              const watched = Number(pick(raw, ["watched"]) ?? 0) === 1;
+              const isEpisode = type === "Episode";
+              // [lc-1645] 卡片主标题永远是「剧名」；单集名（title）单独放第二行。
+              // 飞牛 play/list 的 title 三种情况都见过：空串、"第 N 集"、真正的单集标题 ——
+              // 之前只在 tv_title 存在时才渲染第二行，空串的条目（如药屋 S3E3）就整行缺失。
+              const mainTitle = tvTitle || rawTitle;
               const progress = duration > 0 ? Math.min(100, (ts / duration) * 100) : 0;
+              // 第二行「完整数据」：集号 + 单集标题（与剧名/集号重复时丢弃）+ 剩余时长
+              const epLabel = isEpisode && en > 0 ? `第 ${en} 集` : "";
+              const epTitle =
+                rawTitle && rawTitle !== mainTitle && rawTitle !== epLabel ? rawTitle : "";
+              const remainLabel =
+                watched || (duration > 0 && ts >= duration)
+                  ? "已看完"
+                  : duration > 0 && ts > 0
+                    ? `剩余 ${Math.max(1, Math.round((duration - ts) / 60))} 分钟`
+                    : duration === 0 && ts > 0
+                      ? `已看 ${Math.max(1, Math.round(ts / 60))} 分钟`
+                      : "";
+              const sub =
+                [epLabel, epTitle, remainLabel].filter(Boolean).join(" · ") ||
+                (type === "Movie" ? "电影" : "");
               return (
                 <div
                   key={guid}
                   className="card continue-card"
-                  onClick={() => onPlay({ guid, title, tvTitle })}
+                  onClick={() => onPlay({ guid, title: rawTitle || mainTitle, tvTitle })}
                 >
                   <div className="poster-box wide">
                     {poster ? (
-                      <img src={imgUrl(poster)} loading="lazy" alt={title} />
+                      <img src={imgUrl(poster)} loading="lazy" alt={mainTitle} />
                     ) : (
                       <div className="poster-empty"><IcoFilmL size={22} strokeWidth={1.8} /></div>
                     )}
@@ -200,14 +224,14 @@ export function HomeView({
                         <div style={{ width: `${progress}%` }} />
                       </div>
                     )}
-                    {sn != null && (
+                    {isEpisode && en > 0 && (
                       <span className="ep-badge">
-                        S{sn}E{en ?? ""}
+                        S{sn > 0 ? sn : 1}E{en}
                       </span>
                     )}
                   </div>
-                  <div className="card-title">{tvTitle || title}</div>
-                  {tvTitle && <div className="card-sub">{title}</div>}
+                  <div className="card-title">{mainTitle}</div>
+                  {sub && <div className="card-sub">{sub}</div>}
                 </div>
               );
             })}

@@ -3017,9 +3017,8 @@ pub async fn webrs_play(
     episode_url: Option<String>,
 ) -> Result<(), String> {
     let cfg = state.config.read().await.clone();
-    if cfg.mpv_path.is_empty() {
-        return Err("mpv 路径未配置".into());
-    }
+    // 播放器可用性前置校验（mpv 路径非空 / PotPlayer 路径有效）
+    let _ = crate::player::resolve_player(&cfg)?;
     // [lc-1618] 埋点：入口留痕（含直链与是否带 Referer/UA），便于把「播不了」定位到
     // 「预检没过 / 会话没起 / loadfile 失败 / 加载后源站拒流」中的哪一步。
     crate::libmpv::trace(&format!(
@@ -3054,95 +3053,24 @@ pub async fn webrs_play(
         crate::libmpv::trace(&format!("[webrs] 直链预检 ok: {status} {url}"));
     }
 
-    let _ = app.emit("mpv-load", json!({ "phase": "start" }));
-
-    // [lc-1621] **对齐库内 play_item（lc-1559）的「命令行直启」形态**。
-    //
-    // 老写法：「先 idle 起窗 → IPC `set referrer/user-agent/http-header-fields` → IPC
-    // `loadfile`」。但 mpv 启动头几秒事件循环被脚本/滤镜/D3D 初始化占住，`command()`
-    // （recv_timeout 5s）会卡到秒级甚至超时 ⇒ **Referer/UA 没设上就 loadfile** ⇒
-    // m3u8 源站（普遍校验 Referer/UA）直接拒流 ⇒ 窗口起来了，却**播不动且没有任何报错**。
-    //
-    // 现在：新建会话时，**直链 URL + Referer/UA + http-header-fields 全部进 mpv 命令行**
-    // （见 `mpv::http_header_args`）——mpv 一启动就带着头去加载直链，全程零启动期 IPC。
-    // 只有「复用已在运行的会话」时才走 IPC（此时 mpv 早已过启动期、IPC 不卡；与 play_item
-    // lc-1560 的处理一致）。复用分支必须自己 loadfile，否则「连续点下一集」会点了没反应。
-    let reused = {
-        let mut slot = state.mpv.lock().await;
-        let existing = match slot.as_ref() {
-            Some(m) if !m.is_dead().await => Some(m.clone()),
-            Some(m) => {
-                m.shutdown().await;
-                None
-            }
-            None => None,
-        };
-        let (s, reused) = match existing {
-            Some(m) => {
-                // 复用：mpv 已就绪，IPC 不卡。Referer/UA 先 set 再 loadfile（顺序不能反：
-                // 头只在打开 URL 那一刻被读取）。失败留痕但**不中断**（避免误伤可播的源）。
-                let (r, u, hf) =
-                    crate::mpv::normalize_http_headers(referer.as_deref(), ua.as_deref());
-                let set_trace = |what: &str, r: Result<serde_json::Value, String>| {
-                    if let Err(e) = r {
-                        crate::libmpv::trace(&format!(
-                            "[webrs] play: set {what} 失败（起播可能受影响）: {e}"
-                        ));
-                    }
-                };
-                // referrer 无论有没有都写（没有就清空），避免上一部在线源的 Referer 残留污染。
-                set_trace(
-                    "referrer",
-                    m.command(json!(["set", "referrer", r.unwrap_or_default()])).await,
-                );
-                if let Some(u) = u {
-                    set_trace("user-agent", m.command(json!(["set", "user-agent", u])).await);
-                }
-                if let Some(hf) = hf {
-                    set_trace(
-                        "http-header-fields",
-                        m.command(json!(["set", "http-header-fields", hf])).await,
-                    );
-                }
-                crate::libmpv::trace(&format!(
-                    "[webrs] play: 复用会话 → IPC loadfile {url}（referer={:?} ua={:?}）",
-                    referer.as_deref().filter(|s| !s.is_empty()),
-                    ua.as_deref().filter(|s| !s.is_empty())
-                ));
-                // loadfile 成败**上抛**（别把失败吞成「点了没反应」）——前端能弹错。
-                m.command(json!(["loadfile", url.clone(), "replace"])).await?;
-                (m, true)
-            }
-            None => {
-                let args = crate::mpv::http_header_args(referer.as_deref(), ua.as_deref());
-                crate::libmpv::trace(&format!(
-                    "[webrs] play: 新建会话（URL+头走命令行，零启动期 IPC）url={url} 头参数={args:?}"
-                ));
-                (
-                    crate::mpv::MpvSession::launch(
-                        app.clone(),
-                        &cfg.mpv_path,
-                        Some(url.clone()),
-                        None,
-                        args,
-                    )
-                    .await?,
-                    false,
-                )
-            }
-        };
-        *slot = Some(s.clone());
-        reused
-    };
-    // [lc-1618] 埋点：会话复用/新建决定「URL 走命令行还是 IPC」。
-    crate::libmpv::trace(&format!(
-        "[webrs] play: mpv 会话{}",
-        if reused {
-            "复用（IPC loadfile）"
-        } else {
-            "新建（命令行直启）"
-        }
-    ));
+    // [player] 统一入口：
+    //   · mpv：新建会话时 URL+Referer/UA 全部进命令行（零启动期 IPC）；复用会话走 IPC。
+    //   · PotPlayer：命令行不支持 Referer/UA → player 内部注册到本地 relay（22349）再播放。
+    let headers = crate::player::HttpHeaders::new(referer.clone(), ua.clone());
+    let header_ref = if headers.needs_relay() { Some(&headers) } else { None };
+    crate::player::launch(
+        &app,
+        &state,
+        &cfg,
+        &url,
+        title.as_deref().unwrap_or(""),
+        0.0,
+        0.0,
+        header_ref,
+        &[],
+    )
+    .await?;
+    crate::libmpv::trace("[webrs] play: player::launch 完成");
 
     // [lc-1615] 起播成功 → 落一笔本机播放历史（观影记录页数据源）。
     // 去重键用「集页面 URL」（直链是临时的：带签名/会过期，不能当键）；缺失时退化为直链。

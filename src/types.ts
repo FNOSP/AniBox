@@ -325,6 +325,9 @@ export type UpdateProgress = {
   message: string;
 };
 
+/** [player] 播放器类型：mpv = 随包自带（默认）；potplayer = 本机安装的 PotPlayer */
+export type PlayerKind = "mpv" | "potplayer";
+
 export type ChromeTone = "auto" | "dark" | "light" | "fallback";
 /** [lc-1437] 设置面板的项（Rust 侧 `get_settings`/`set_settings` 的白名单子集）。
  *  放在 App 顶层持有：性能模式（html.perf 类）与轮播 Logo（CarouselView 入参）
@@ -334,8 +337,12 @@ export type AppSettings = {
   exitMode: "exit" | "tray" | "ask";
   perfMode: boolean;
   carouselLogo: boolean;
-  launchPage: "home" | "continue";
+  launchPage: "home" | "discover";
   autoLogin: boolean;
+  /** [player] 播放器选择（默认 mpv = 随包自带）。后端始终返回，旧缓存可能缺省。 */
+  playerKind?: PlayerKind;
+  /** [player] PotPlayer 可执行文件路径；空串 = 播放时自动探测常见安装路径 */
+  potplayerPath?: string;
   /** [lc-1561] 自建弹幕接口（danmu_api）开关 —— 对齐主仓库同名设置 */
   danmuApiEnabled: boolean;
   /** 多地址列表（故障转移，≤4 条；danmuApiBase 恒等于第一条） */

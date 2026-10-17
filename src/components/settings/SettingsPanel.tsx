@@ -1,10 +1,11 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { X as IcoXL } from "lucide-react";
+import { Check as IcoCheck, ChevronDown as IcoChevron, X as IcoXL } from "lucide-react";
 import { DisclaimerModal } from "../disclaimer/DisclaimerModal";
 import { fmtSize } from "../../lib/format";
 import {
@@ -66,6 +67,226 @@ function normalizeCheck(raw: unknown): UpdateCheckResult {
   };
 }
 
+/** 设置面板专用下拉选择器（替换原生 <select>）。
+ *
+ *  为什么不用原生 select：Windows/WebView2 下它是系统控件，选项面板由 OS 绘制，
+ *  无法跟随深浅主题与 --accent，且圆角/内边距与面板其它控件对不齐。
+ *
+ *  实现要点：
+ *  - 触发器是按钮（role=combobox），弹层用 createPortal 挂到 body：
+ *    `.ddet-body` 有 overflow-y:auto，绝对定位弹层会被裁切，必须脱离滚动容器。
+ *  - 弹层 position:fixed，按触发器 rect 计算坐标；空间不足时向上翻转。
+ *  - 交互：点击外部关闭、Esc 关闭（capture 阶段 stopPropagation，
+ *    避免同一次 Esc 把整个设置面板也关掉）、↑/↓/Home/End 移动、Enter/Space 选中、
+ *    Tab 关闭；focus-visible 有独立描边。 */
+type SetSelectOption = { value: string; label: string };
+
+function SetSelect({
+  value,
+  options,
+  onChange,
+  disabled,
+  label,
+}: {
+  value: string;
+  options: SetSelectOption[];
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const [pos, setPos] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    maxHeight: number;
+    up: boolean;
+  } | null>(null);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const popRef = useRef<HTMLDivElement | null>(null);
+  const listId = useId();
+  const optionId = (i: number) => `${listId}-opt-${i}`;
+
+  // 旧配置里的未知值（如历史 launch_page="continue"）兜底到第一项显示，不让 UI 空白
+  const selectedIndex = Math.max(0, options.findIndex((o) => o.value === value));
+  const current = options[selectedIndex] ?? options[0];
+
+  const place = useCallback(() => {
+    const el = btnRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const gap = 6;
+    const edge = 8;
+    // 弹层至少与触发器同宽；右对齐触发器的右缘，但不出视口
+    const width = Math.min(
+      Math.max(r.width, 168),
+      Math.max(120, window.innerWidth - edge * 2),
+    );
+    const left = Math.min(
+      Math.max(edge, r.right - width),
+      Math.max(edge, window.innerWidth - width - edge),
+    );
+    const below = window.innerHeight - r.bottom - gap - edge;
+    const above = r.top - gap - edge;
+    const up = below < 140 && above > below;
+    const maxHeight = Math.max(80, Math.min(280, up ? above : below));
+    setPos({ left, top: up ? r.top - gap : r.bottom + gap, width, maxHeight, up });
+  }, []);
+
+  const closeMenu = useCallback((focusBtn = false) => {
+    setOpen(false);
+    if (focusBtn) btnRef.current?.focus();
+  }, []);
+
+  const openMenu = useCallback(() => {
+    if (disabled) return;
+    setActive(Math.max(0, options.findIndex((o) => o.value === value)));
+    setOpen(true);
+  }, [disabled, options, value]);
+
+  const choose = useCallback(
+    (next: string) => {
+      onChange(next);
+      closeMenu(true);
+    },
+    [onChange, closeMenu],
+  );
+
+  // 打开期间：定位 + 跟随滚动/窗口尺寸变化（设置面板内部滚动也要跟上）
+  useLayoutEffect(() => {
+    if (!open) return;
+    place();
+    const onScroll = () => place();
+    const onResize = () => place();
+    window.addEventListener("resize", onResize);
+    document.addEventListener("scroll", onScroll, true);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      document.removeEventListener("scroll", onScroll, true);
+    };
+  }, [open, place]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (popRef.current?.contains(t) || btnRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        // capture + stopPropagation：这一次 Esc 只关下拉，不关设置面板
+        e.preventDefault();
+        e.stopPropagation();
+        closeMenu(true);
+        return;
+      }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        e.stopPropagation();
+        const n = options.length;
+        if (!n) return;
+        setActive((i) =>
+          e.key === "ArrowDown" ? (i + 1) % n : (i - 1 + n) % n,
+        );
+        return;
+      }
+      if (e.key === "Home" || e.key === "End") {
+        e.preventDefault();
+        e.stopPropagation();
+        setActive(e.key === "Home" ? 0 : options.length - 1);
+        return;
+      }
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+        e.preventDefault();
+        e.stopPropagation();
+        const opt = options[Math.max(0, Math.min(active, options.length - 1))];
+        if (opt) choose(opt.value);
+        return;
+      }
+      if (e.key === "Tab") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [open, options, active, choose, closeMenu]);
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        className="set-dd"
+        role="combobox"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        aria-activedescendant={open ? optionId(active) : undefined}
+        aria-label={label}
+        disabled={disabled}
+        onClick={() => (open ? closeMenu() : openMenu())}
+        onKeyDown={(e) => {
+          if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+            e.preventDefault();
+            openMenu();
+          }
+        }}
+      >
+        <span className="set-dd-val">{current?.label ?? ""}</span>
+        <IcoChevron className="set-dd-chev" size={14} strokeWidth={2} aria-hidden />
+      </button>
+      {open &&
+        pos &&
+        createPortal(
+          <div
+            ref={popRef}
+            id={listId}
+            className="set-dd-pop"
+            role="listbox"
+            aria-label={label}
+            style={{
+              left: pos.left,
+              top: pos.top,
+              width: pos.width,
+              maxHeight: pos.maxHeight,
+              // 向上翻转时以触发器上缘为基准整体上移
+              transform: pos.up ? "translateY(-100%)" : undefined,
+            }}
+          >
+            {options.map((o, i) => (
+              <div
+                key={o.value}
+                id={optionId(i)}
+                role="option"
+                aria-selected={o.value === value}
+                tabIndex={-1}
+                className={
+                  "set-dd-opt" +
+                  (i === active ? " active" : "") +
+                  (o.value === value ? " selected" : "")
+                }
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => choose(o.value)}
+              >
+                <span className="set-dd-opt-l">{o.label}</span>
+                {o.value === value && (
+                  <IcoCheck className="set-dd-opt-check" size={14} strokeWidth={2.4} aria-hidden />
+                )}
+              </div>
+            ))}
+          </div>,
+          document.body,
+        )}
+    </>
+  );
+}
+
 export function SettingsPanel({
   onClose,
   onLogout,
@@ -99,6 +320,92 @@ export function SettingsPanel({
   const [autostart, setAutostart] = useState(
     () => localStorage.getItem("fntv-autostart") === "1",
   );
+
+  /* ── [player] 播放器选择 ──
+     playerKind: 真值在 settings（App 持有、set_settings 落盘）；默认 mpv（随包自带）。
+     potPath   : 路径输入框的本地草稿；settings 回来/保存成功后再同步（输入过程中不回写）。
+     potStatus : 探测/校验结果提示（已找到 / 路径无效 / 未安装）。
+     留空是合法状态 —— 后端在起播时自动探测常见安装路径。 */
+  const playerKind = settings.playerKind ?? "mpv";
+  const [potPath, setPotPath] = useState(() => settings.potplayerPath ?? "");
+  const [potStatus, setPotStatus] = useState<{
+    tone: "ok" | "err" | "dim";
+    text: string;
+  } | null>(null);
+  const [potBusy, setPotBusy] = useState(false);
+
+  useEffect(() => {
+    setPotPath(settings.potplayerPath ?? "");
+  }, [settings.potplayerPath]);
+
+  /** 切换播放器：立即落盘（与面板其它设置同一条 set_settings 流程）。 */
+  const choosePlayer = (v: string) => {
+    const kind = v === "potplayer" ? "potplayer" : "mpv";
+    setPotStatus(null);
+    onSettings({ playerKind: kind });
+  };
+
+  /** 自动探测本机 PotPlayer：命中则回填并保存，未命中提示「未安装」。 */
+  const detectPot = async () => {
+    setPotBusy(true);
+    setPotStatus(null);
+    try {
+      const r = await invoke<{ path?: string }>("detect_potplayer");
+      const p = (r?.path ?? "").trim();
+      if (p) {
+        setPotPath(p);
+        setPotStatus({ tone: "ok", text: `已找到：${p}` });
+        onSettings({ playerKind: "potplayer", potplayerPath: p });
+      } else {
+        setPotStatus({
+          tone: "err",
+          text: "未安装（未在常见安装路径找到 PotPlayer）",
+        });
+      }
+    } catch (e) {
+      setPotStatus({ tone: "err", text: String(e) });
+    } finally {
+      setPotBusy(false);
+    }
+  };
+
+  /** 校验路径：save=true 时通过后落盘（用于失焦保存）。空路径不校验，按「自动探测」处理。 */
+  const validatePot = async (save: boolean) => {
+    const p = potPath.trim();
+    if (!p) {
+      setPotStatus({
+        tone: "dim",
+        text: "路径为空：播放时将自动探测常见安装路径",
+      });
+      if (save && (settings.potplayerPath ?? "")) onSettings({ potplayerPath: "" });
+      return;
+    }
+    setPotBusy(true);
+    setPotStatus(null);
+    try {
+      const r = await invoke<{ valid?: boolean; resolved?: string }>(
+        "validate_potplayer_path",
+        { path: p },
+      );
+      if (r?.valid) {
+        const resolved = (r.resolved || p).trim();
+        setPotPath(resolved);
+        setPotStatus({ tone: "ok", text: `已找到：${resolved}` });
+        if (save && resolved !== (settings.potplayerPath ?? "")) {
+          onSettings({ potplayerPath: resolved });
+        }
+      } else {
+        setPotStatus({
+          tone: "err",
+          text: "路径无效（必须指向已存在的 .exe 文件）",
+        });
+      }
+    } catch (e) {
+      setPotStatus({ tone: "err", text: String(e) });
+    } finally {
+      setPotBusy(false);
+    }
+  };
 
   /* ── [更新与维护] 状态 ──
      upd        : 最近一次 update_check 结果（模块级缓存，重开面板可恢复）
@@ -420,15 +727,16 @@ export function SettingsPanel({
               <span className="set-k">启动页</span>
               <div className="set-desc">登录成功后进入的页面</div>
             </div>
-            <select
-              className="set-select"
+            <SetSelect
+              label="启动页"
               value={settings.launchPage}
               disabled={busy}
-              onChange={(e) => onSettings({ launchPage: e.target.value as AppSettings["launchPage"] })}
-            >
-              <option value="home">首页</option>
-              <option value="continue">继续观看</option>
-            </select>
+              options={[
+                { value: "home", label: "首页" },
+                { value: "discover", label: "发现页" },
+              ]}
+              onChange={(v) => onSettings({ launchPage: v as AppSettings["launchPage"] })}
+            />
           </div>
           <div className="set-row">
             <div>
@@ -449,17 +757,96 @@ export function SettingsPanel({
               <span className="set-k">关闭按钮</span>
               <div className="set-desc">点窗口右上角关闭时的行为</div>
             </div>
-            <select
-              className="set-select"
+            <SetSelect
+              label="关闭按钮行为"
               value={settings.exitMode}
               disabled={busy}
-              onChange={(e) => onSettings({ exitMode: e.target.value as AppSettings["exitMode"] })}
-            >
-              <option value="ask">每次询问</option>
-              <option value="tray">最小化到托盘</option>
-              <option value="exit">直接退出</option>
-            </select>
+              options={[
+                { value: "ask", label: "每次询问" },
+                { value: "tray", label: "最小化到托盘" },
+                { value: "exit", label: "直接退出" },
+              ]}
+              onChange={(v) => onSettings({ exitMode: v as AppSettings["exitMode"] })}
+            />
           </div>
+
+          {/* ── 播放器 ── */}
+          <h3 className="ddet-h3">播放器</h3>
+          <div className="set-row">
+            <div>
+              <span className="set-k">播放器选择</span>
+              <div className="set-desc">
+                默认使用随包自带的 mpv；也可改用本机安装的 PotPlayer
+              </div>
+            </div>
+            <SetSelect
+              label="播放器选择"
+              value={playerKind}
+              disabled={busy}
+              options={[
+                { value: "mpv", label: "自带 mpv（推荐）" },
+                { value: "potplayer", label: "本机 PotPlayer" },
+              ]}
+              onChange={choosePlayer}
+            />
+          </div>
+          {playerKind === "potplayer" && (
+            <>
+              <div className="set-row set-row-col">
+                <span className="set-k">PotPlayer 路径</span>
+                <input
+                  className="set-input"
+                  type="text"
+                  spellCheck={false}
+                  placeholder="留空将自动探测常见安装路径，或填写 PotPlayerMini64.exe 的完整路径"
+                  value={potPath}
+                  disabled={busy || potBusy}
+                  onChange={(e) => setPotPath(e.target.value)}
+                  onBlur={() => {
+                    if (potPath.trim() !== (settings.potplayerPath ?? "")) {
+                      void validatePot(true);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void validatePot(true);
+                    }
+                  }}
+                />
+                <div className="set-actions">
+                  <button
+                    type="button"
+                    className="set-btn"
+                    disabled={busy || potBusy}
+                    onClick={detectPot}
+                  >
+                    自动探测
+                  </button>
+                  <button
+                    type="button"
+                    className="set-btn"
+                    disabled={busy || potBusy}
+                    onClick={() => validatePot(false)}
+                  >
+                    校验
+                  </button>
+                  {potStatus && (
+                    <span className={`set-pot-status ${potStatus.tone}`}>
+                      {potStatus.text}
+                    </span>
+                  )}
+                </div>
+                <div className="set-desc">
+                  路径为空时，将在起播时自动探测常见安装路径；填写后需指向已存在的 .exe。
+                </div>
+              </div>
+              <div className="set-warn">
+                PotPlayer 模式不支持内置弹幕、uosc 底栏与精确暂停/跳转/倍速控制；
+                需要 Referer/UA 的 HLS 源会提示切回 mpv。
+              </div>
+            </>
+          )}
 
           {/* ── 外观 ── */}
           <h3 className="ddet-h3">外观</h3>

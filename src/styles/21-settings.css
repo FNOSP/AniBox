@@ -106,6 +106,113 @@
   background: var(--option-bg);
   color: var(--text-strong);
 }
+/* ── 自定义下拉（启动页 / 关闭按钮）────────────────────────────────────────
+   原生 <select> 在 WebView2 里由系统绘制选项面板，无法跟随深浅主题与 --accent。
+   这里改成「按钮 + 门户弹层」：按钮尺寸/圆角对齐 .set-select（6px 10px / 9px），
+   弹层 fixed 挂在 body 上（SettingsPanel.tsx 用 createPortal），因此不会被
+   .ddet-body 的 overflow-y:auto 裁切。 */
+.set-dd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 132px;
+  max-width: 190px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.2;
+  color: var(--text-strong);
+  background: var(--input-bg);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 6px 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.16s ease, border-color 0.16s ease;
+}
+.set-dd:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: color-mix(in srgb, var(--line-strong) 60%, var(--text-2));
+}
+.set-dd[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  background: var(--hover);
+}
+.set-dd:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
+.set-dd:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.set-dd-val {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.set-dd-chev {
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: transform 0.16s ease, color 0.16s ease;
+}
+.set-dd:hover:not(:disabled) .set-dd-chev,
+.set-dd[aria-expanded="true"] .set-dd-chev {
+  color: var(--text-strong);
+}
+.set-dd[aria-expanded="true"] .set-dd-chev {
+  transform: rotate(180deg);
+}
+/* 弹层：position/top/left/width/max-height 由 JS 按触发器 rect 计算（含向上翻转） */
+.set-dd-pop {
+  position: fixed;
+  z-index: 120;
+  box-sizing: border-box;
+  padding: 5px;
+  border-radius: 11px;
+  background: var(--option-bg);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-card);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  animation: setDdFade 0.12s ease both;
+}
+@keyframes setDdFade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.set-dd-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  font-size: 13px;
+  line-height: 1.25;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+.set-dd-opt.active {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+.set-dd-opt.selected {
+  color: var(--accent);
+  font-weight: 600;
+}
+.set-dd-opt-l {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.set-dd-opt-check {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--accent);
+}
 .set-btn {
   font-family: inherit;
   font-size: 13px;
@@ -336,6 +443,61 @@
 }
 .set-ta:disabled {
   opacity: 0.5;
+}
+/* ── [player] 播放器选择：PotPlayer 路径输入 / 探测与校验 / 能力差异提示 ──
+   输入框与 .set-ta 同一套尺寸与圆角（7px 10px / 9px），单行；状态行沿用
+   .set-upd-dot 的语义色（ok 绿 / err 红 / dim 灰）。能力提示用琥珀色描边，
+   深浅主题都只做低透明度混合，不写死底色。 */
+.set-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-strong);
+  background: var(--input-bg);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 7px 10px;
+  transition: background-color 0.16s ease, border-color 0.16s ease;
+}
+.set-input::placeholder {
+  color: var(--muted);
+}
+.set-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  background: var(--hover);
+}
+.set-input:disabled {
+  opacity: 0.5;
+}
+.set-pot-status {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+  word-break: break-all;
+}
+.set-pot-status.ok {
+  color: #3fb950;
+}
+.set-pot-status.err {
+  color: #e5484d;
+}
+.set-pot-status.dim {
+  color: var(--muted);
+}
+.set-warn {
+  margin: 2px 0 6px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, #d29922 45%, transparent);
+  background: color-mix(in srgb, #d29922 12%, transparent);
+  color: var(--text-2);
+  font-size: 11.5px;
+  line-height: 1.6;
 }
 .set-actions {
   display: flex;

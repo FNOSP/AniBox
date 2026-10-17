@@ -19,6 +19,13 @@ pub struct Config {
     pub auto_login: bool,
     #[serde(default = "default_mpv")]
     pub mpv_path: String,
+    /// 播放器类型："mpv"（随包自带，默认）| "potplayer"（本机安装的 PotPlayer）
+    /// 老 config.json 无此键 → 默认 mpv，行为与接入前完全一致。
+    #[serde(default = "default_player_kind")]
+    pub player_kind: String,
+    /// PotPlayer 可执行文件路径（空 = 自动探测常见安装位置）
+    #[serde(default)]
+    pub potplayer_path: String,
     #[serde(default = "default_proxy")]
     pub proxy_path: String,
     /// 对齐 Fntv-Plus cfg.nasProxyEnabled（useNasLocal 参数）
@@ -40,7 +47,8 @@ pub struct Config {
     /// 首页轮播是否用影片透明 Logo 代替文字标题（飞牛条目自带 logo，见 lc-570）
     #[serde(default = "default_true")]
     pub carousel_logo: bool,
-    /// 启动页："home"（首页，默认）| "continue"（继续观看）
+    /// 启动页："home"（首页，默认）| "discover"（发现页）
+    /// 历史取值 "continue" 已移除；老 config 读到后由前端归一为 home。
     #[serde(default = "default_launch_page")]
     pub launch_page: String,
     /// [lc-1515] Bangumi 个人 Access Token（追番状态同步用；用户手动粘贴，本地保存）
@@ -127,6 +135,10 @@ fn default_mpv() -> String {
     "D:/GitHub/Fntv-Plus/third_party/fntv-mpv/mpv.exe".into()
 }
 
+fn default_player_kind() -> String {
+    "mpv".into()
+}
+
 fn default_proxy() -> String {
     "D:/GitHub/Fntv-Plus/third_party/proxy/proxy.exe".into()
 }
@@ -140,6 +152,8 @@ impl Default for Config {
             password: String::new(),
             auto_login: false,
             mpv_path: default_mpv(),
+            player_kind: default_player_kind(),
+            potplayer_path: String::new(),
             proxy_path: default_proxy(),
             nas_proxy_enabled: false,
             cache_limit_mb: default_cache_limit_mb(),
@@ -238,6 +252,21 @@ pub async fn save(app: &tauri::AppHandle, cfg: &Config) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn player_fields_have_backward_compatible_defaults() {
+        // 老 config.json 没有播放器键 → 默认自带 mpv、PotPlayer 路径为空（自动探测）
+        let c: Config = serde_json::from_str("{}").unwrap();
+        assert_eq!(c.player_kind, "mpv", "默认播放器必须是自带 mpv");
+        assert_eq!(c.potplayer_path, "");
+
+        // 显式选择 PotPlayer 可被解析
+        let c2: Config =
+            serde_json::from_str(r#"{"player_kind":"potplayer","potplayer_path":"C:\\P\\PotPlayerMini64.exe"}"#)
+                .unwrap();
+        assert_eq!(c2.player_kind, "potplayer");
+        assert_eq!(c2.potplayer_path, r"C:\P\PotPlayerMini64.exe");
+    }
 
     #[test]
     fn default_true_is_true() {

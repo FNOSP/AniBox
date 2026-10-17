@@ -34,6 +34,10 @@ import { DEFAULT_SETTINGS } from "./lib/settings";
 import { AppSettings, BgmCalendarItem, ChromeTone, Config, Lib, MediaItem, PlayItem, PlayTarget, TmdbDiscoverItem } from "./types";
 import "./styles/index.css";
 
+/** 启动页取值归一：历史配置里的 "continue"（已移除）及任何未知值一律回落到首页。 */
+function normalizeLaunchPage(v: unknown): AppSettings["launchPage"] {
+  return v === "discover" ? "discover" : "home";
+}
 
 function App() {
   // [lc-1615] 新增 "history"（观影记录页；侧栏快捷操作卡入口）
@@ -116,8 +120,25 @@ function App() {
     } catch {
       /* 损坏就当没有 */
     }
-    return { ...DEFAULT_SETTINGS, ...cached };
+    return {
+      ...DEFAULT_SETTINGS,
+      ...cached,
+      // 老缓存里可能是 "continue"：统一归一，避免选择器显示空值
+      launchPage: normalizeLaunchPage(cached.launchPage),
+    };
   });
+  // applyLaunchPage 在异步加载回调里读取最新值（不能闭包捕获旧 settings）
+  const settingsRef = useRef(settings);
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+  /** 按「启动页」设置落点：登录成功/启动会话恢复/游客进首页后调用。
+   *  注意必须等首页数据加载完成后再调（loadHome/loadGuestHome 内部会 setPage("home")）。 */
+  const applyLaunchPage = useCallback(() => {
+    const target = normalizeLaunchPage(settingsRef.current.launchPage);
+    setPage(target);
+    setView(target);
+  }, []);
   // 性能模式：html.perf 类驱动全局降级（CSS 见 App.css [lc-1437]）
   useEffect(() => {
     document.documentElement.classList.toggle("perf", settings.perfMode);
@@ -127,9 +148,11 @@ function App() {
     invoke<AppSettings>("get_settings")
       .then((s) => {
         if (!s) return;
-        setSettings((prev) => ({ ...prev, ...s }));
+        // 后端可能仍返回旧配置里的 "continue"：归一后再进状态与本地缓存
+        const next = { ...s, launchPage: normalizeLaunchPage(s.launchPage) };
+        setSettings((prev) => ({ ...prev, ...next }));
         try {
-          localStorage.setItem("fntv-settings", JSON.stringify(s));
+          localStorage.setItem("fntv-settings", JSON.stringify(next));
         } catch {
           /* ignore */
         }
@@ -141,9 +164,10 @@ function App() {
     setSettings((prev) => ({ ...prev, ...patch }));
     try {
       const saved = await invoke<AppSettings>("set_settings", { arg: patch });
-      setSettings((prev) => ({ ...prev, ...saved }));
+      const next = { ...saved, launchPage: normalizeLaunchPage(saved.launchPage) };
+      setSettings((prev) => ({ ...prev, ...next }));
       try {
-        localStorage.setItem("fntv-settings", JSON.stringify(saved));
+        localStorage.setItem("fntv-settings", JSON.stringify(next));
       } catch {
         /* ignore */
       }
@@ -525,8 +549,10 @@ function App() {
     setGuest(true);
     setPage("home");
     setView("home");
-    if (!carousel.length) void loadGuestHome();
-  }, [carousel.length, loadGuestHome]);
+    // 启动页设置对游客同样生效：等游客首页数据就绪后再落点（loadGuestHome 会 setPage("home")）
+    if (!carousel.length) void loadGuestHome().then(applyLaunchPage);
+    else applyLaunchPage();
+  }, [carousel.length, loadGuestHome, applyLaunchPage]);
 
   // 回首页：数据还在内存就直接切视图（进详情/库再回来不重拉），否则完整加载
   const goHome = useCallback(() => {
@@ -791,7 +817,7 @@ function App() {
       setPage("home");
       setView("home");
       setBooting(false);
-      void loadGuestHome();
+      void loadGuestHome().then(applyLaunchPage);
       return;
     }
     invoke("check_session")
@@ -846,7 +872,8 @@ function App() {
         } catch {
           /* 缓存损坏 → 走完整加载 */
         }
-        if (!restored) loadHome();
+        if (!restored) void loadHome().then(applyLaunchPage);
+        else applyLaunchPage();
         setBooting(false);
       })
       .catch(() => {
@@ -864,7 +891,7 @@ function App() {
               setGuest(true);
               setPage("home");
               setView("home");
-              void loadGuestHome();
+              void loadGuestHome().then(applyLaunchPage);
             } else {
               setView("login");
             }
@@ -872,7 +899,7 @@ function App() {
           .catch(() => setView("login"))
           .finally(() => setBooting(false));
       });
-  }, [loadHome, loadGuestHome]);
+  }, [loadHome, loadGuestHome, applyLaunchPage]);
 
   // [lc-123-rev6] 常驻视图的动画类：进入侧挂 anim-*、退场侧额外加 leaving（退场层 position:absolute 叠在上面，
   // pointer-events:none —— 动画中照样能点，不锁交互）。动画类只在这 ~260ms 里存在，结束即摘。
@@ -893,7 +920,15 @@ function App() {
   if (booting) {
     body = null; // 会话检查期不出任何视图
   } else if (view === "login") {
-    body = <LoginPage onDone={() => loadHome()} onGuest={enterGuest} />;
+    body = (
+      <LoginPage
+        onDone={() => {
+          // 登录成功后按「启动页」落点（首页/发现页）
+          void loadHome().then(applyLaunchPage);
+        }}
+        onGuest={enterGuest}
+      />
+    );
   } else {
     // 首页常驻挂载：切到库/详情只隐藏不卸载（图片零重请求、滚动位置保留）
     const homeReady = carousel.length > 0;
@@ -976,7 +1011,9 @@ function App() {
                 carouselBds={carouselBds}
                 carouselLogos={carouselLogos}
                 carouselLogoOn={settings.carouselLogo}
-                launchPage={settings.launchPage}
+                // 旧 HomeView 的 launchPage 只用于「继续观看」自动滚动，该选项已移除；
+                // 启动落点改由 App 的 applyLaunchPage 直接切页，这里固定 home 以不改 HomeView。
+                launchPage="home"
                 libRows={libRows}
                 hiddenLibs={hiddenLibs}
                 onToggleHiddenLib={toggleHiddenLib}

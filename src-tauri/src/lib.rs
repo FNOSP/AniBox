@@ -20,6 +20,8 @@ mod imgproto;
 mod migrate;
 mod mirror_sign;
 mod mpv;
+// [player] 统一播放启动封装（mpv / 本机 PotPlayer）+ 本地 HTTP relay
+mod player;
 mod proxy;
 mod tmdb;
 // [update] 全量更新（自建下载器 + NSIS）+ 前端资源热补丁覆盖层（fntvweb 协议）
@@ -57,6 +59,8 @@ pub struct AppState {
     pub proxy_child: Mutex<Option<std::process::Child>>,
     /// [lc-1560] 弹幕 shim 子进程（node 跑 danmaku-shim.js，供 uosc_danmaku 调 22347）
     pub danmaku_child: Mutex<Option<std::process::Child>>,
+    /// [player] 当前由本应用拉起的 PotPlayer PID（用于新播放前/退出时清理）
+    pub potplayer_pid: Mutex<Option<u32>>,
     /// 最近一次前端主题（player_stop 后恢复 SWCA 染色用）
     pub last_light: std::sync::Mutex<Option<bool>>,
 }
@@ -68,6 +72,7 @@ impl Default for AppState {
             mpv: Mutex::new(None),
             proxy_child: Mutex::new(None),
             danmaku_child: Mutex::new(None),
+            potplayer_pid: Mutex::new(None),
             last_light: std::sync::Mutex::new(None),
         }
     }
@@ -1000,63 +1005,38 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
         .trim()
         .to_string();
 
-    // 单条目 M3U8（#EXTINF 标题 → mpv 的 media-title → uosc_danmaku 解析番名/集数）
-    let m3u8_path = std::env::temp_dir().join("anibox-play.m3u8");
-    let m3u8 = format!("#EXTM3U\n#EXTINF:-1,{}\n{}\n", display_title, direct_url);
-    std::fs::write(&m3u8_path, m3u8).map_err(|e| format!("写播放列表失败: {e}"))?;
-    let url = m3u8_path.to_string_lossy().to_string();
-    stage("m3u8-written");
+    // 播放器：自带 mpv 用「单条目 M3U8」入口（#EXTINF 标题 → media-title → 弹幕链）；
+    // PotPlayer 没有 media-title / 弹幕链概念，直接播代理直链（本地 127.0.0.1，无需 header）。
+    let (kind, _player_path) = player::resolve_player(&cfg)?;
+    let url = if kind == "potplayer" {
+        direct_url.clone()
+    } else {
+        let m3u8_path = std::env::temp_dir().join("anibox-play.m3u8");
+        let m3u8 = format!("#EXTM3U\n#EXTINF:-1,{}\n{}\n", display_title, direct_url);
+        std::fs::write(&m3u8_path, m3u8).map_err(|e| format!("写播放列表失败: {e}"))?;
+        m3u8_path.to_string_lossy().to_string()
+    };
+    stage("url-prepared");
 
-    let session: std::sync::Arc<crate::mpv::MpvSession>;
-
-    // ② 拉起/复用 mpv。
-    //
-    // [lc-1560] **会话复用时必须自己 loadfile**（lc-1559 重构漏掉的分支）：
-    // 原来只有"新建会话"这一支把 url 放进 mpv 命令行；已存在的会话直接拿去用了，
-    // **url 根本没被加载** ⇒ 关掉 mpv 窗口后（会话死 → 走新建，正常）与**连续点下一集**
-    // （会话活着 → 什么都不发生）表现不同，后者"点了没反应"。
-    // 标题同理：新会话走命令行（优先级最高、容器自带 Title tag 顶不掉）；复用会话只能
-    // IPC `set`，此时 mpv 不在启动期、IPC 不卡，实测能生效（探针 B 已验）。
-    {
-        let mut slot = state.mpv.lock().await;
-        let existing = match slot.as_ref() {
-            Some(m) if !m.is_dead().await => Some(m.clone()),
-            Some(m) => {
-                m.shutdown().await;
-                None
-            }
-            None => None,
-        };
-        let s = match existing {
-            Some(m) => {
-                // 复用：先定标题再 loadfile（顺序不能反，标题要在文件加载前就位）
-                let _ = m
-                    .command(json!(["set", "force-media-title", display_title.clone()]))
-                    .await;
-                m.command(json!(["loadfile", url.clone(), "replace"])).await?;
-                // [lc-1555 延续] 复用会话时 mpv 可能停在上一集的暂停态/播完态，
-                // 本次是明确的"播这个"意图 → 无条件恢复播放（只影响起始态）。
-                let _ = m.command(json!(["set", "pause", "no"])).await;
-                stage("loadfile(reuse)");
-                m
-            }
-            None => {
-                mpv::MpvSession::launch(
-                    app.clone(),
-                    &cfg.mpv_path,
-                    Some(url.clone()),
-                    Some(display_title.clone()),
-                    // 库内播的是 Go 代理本地直链（127.0.0.1:22346），不需要 Referer/UA，
-                    // 故无额外启动参数（在线源那套头参数见 webrs_play）。
-                    Vec::new(),
-                )
-                .await?
-            }
-        };
-        *slot = Some(s.clone());
-        session = s;
-    }
-    stage("mpv-launched(with-url)");
+    // ② 统一入口：mpv 内部复用会话/新建；PotPlayer 逐集拉起。
+    let duration_secs = if res.duration_ms > 0 {
+        res.duration_ms as f64 / 1000.0
+    } else {
+        0.0
+    };
+    player::launch(
+        &app,
+        &state,
+        &cfg,
+        &url,
+        &display_title,
+        0.0,
+        duration_secs,
+        None,
+        &[],
+    )
+    .await?;
+    stage("player-launched");
 
     // [lc-1615] 落一笔本机播放历史（观影记录页数据源）：走到这里 = loadfile 已发出
     // （失败路径均已提前 return）。只存原始字段；「季→剧 guid / 竖版海报」的富化统一放在
@@ -1114,19 +1094,7 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     }
     stage("probe-spawned");
 
-    // [lc-1500] 清理在线资源（webrs_play）写入的站点头，避免污染**后续**播放。
-    // [lc-1554] 这两条放 loadfile **之后**：`referrer` / `http-header-fields` 只在打开 URL
-    // 那一刻被读取，而本次加载的是 Go 代理的本地直链（127.0.0.1:22346），残留站点 referrer
-    // 对它无影响；清理的意义只是"为下一次播放恢复默认"，放后面完全等价。
-    // [lc-1558] 且不等回包（fire-and-forget）：实测 set 同样会卡到秒级；这两条只影响"下一次"
-    // 播放，晚几百毫秒生效无碍，不能拖住本次起播。
-    // [lc-1556] 播放期保留主题底（lc-081 清 backdrop 是为救 spawn 时代「进播放页卡死」，
-    // 现在视频是进程内 D3D 输出，清掉反而让页面透出桌面）；player_stop 里恢复逻辑保留。
-    let _ = session.command(json!(["set", "referrer", ""])).await;
-    let _ = session
-        .command(json!(["set", "http-header-fields", ""]))
-        .await;
-
+    // 在线源站点头的清理由 player::launch 的复用分支负责（fire-and-forget），这里不再直接操作会话。
     Ok(())
 }
 
@@ -1136,11 +1104,9 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
 // 底栏统一由 mpv 原生 uosc 提供；需要的话从 git 历史里取回（lc-099 之前的版本）。
 
 #[tauri::command]
-async fn player_stop(state: State<'_, AppState>) -> Result<(), String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
-        m.command(json!(["stop"])).await?;
-    }
+async fn player_stop(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    // mpv：回 idle（实例保留）；PotPlayer：无 IPC，直接结束进程并补 ended 事件。
+    player::stop_all(&app, &state, true).await;
     Ok(())
 }
 
@@ -1280,6 +1246,9 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         "carouselLogo": cfg.carousel_logo,
         "launchPage": cfg.launch_page,
         "autoLogin": cfg.auto_login,
+        // [player] 播放器选择（默认自带 mpv；potplayer 路径空 = 自动探测）
+        "playerKind": cfg.player_kind,
+        "potplayerPath": cfg.potplayer_path,
         // [lc-1561] 自建弹幕接口（地址非敏感，明文回填；多地址逐行）
         "danmuApiEnabled": cfg.danmu_api_enabled,
         "danmuApiBases": cfg.danmu_api_bases,
@@ -1311,13 +1280,31 @@ async fn set_settings(
     }
     if let Some(v) = arg.get("launchPage") {
         let s = v.as_str().unwrap_or("");
-        if !matches!(s, "home" | "continue") {
-            return Err(format!("launchPage 非法：{s}（只允许 home/continue）"));
+        // "continue" 为已移除的历史取值：老 config 仍可读取（前端归一为 home），但不再接受写入
+        if !matches!(s, "home" | "discover") {
+            return Err(format!("launchPage 非法：{s}（只允许 home/discover）"));
         }
         cfg.launch_page = s.to_string();
     }
     if let Some(v) = arg.get("autoLogin") {
         cfg.auto_login = v.as_bool().ok_or("autoLogin 必须是布尔值")?;
+    }
+    // [player] 播放器选择：mpv（默认）/ potplayer。potplayer 路径空 = 自动探测。
+    if let Some(v) = arg.get("playerKind") {
+        let s = v.as_str().unwrap_or("");
+        if !matches!(s, "mpv" | "potplayer") {
+            return Err(format!("playerKind 非法：{s}（只允许 mpv/potplayer）"));
+        }
+        cfg.player_kind = s.to_string();
+    }
+    if let Some(v) = arg.get("potplayerPath") {
+        let s = v.as_str().ok_or("potplayerPath 必须是字符串")?.trim().to_string();
+        if s.is_empty() {
+            cfg.potplayer_path.clear();
+        } else {
+            // 非空路径必须真实存在且为 .exe（立即反馈，避免保存后才在起播时报错）
+            cfg.potplayer_path = player::validate_potplayer_path(&s)?;
+        }
     }
     // [lc-1561] 自建弹幕接口：多地址（逐行去空/去尾斜杠/去重，上限 4 条 —— 与原项目同口径）。
     // 改完**立即**桥给 Node 客户端并同步 Lua 闸门（不这样得等下次启动才生效）。
@@ -1352,10 +1339,28 @@ async fn set_settings(
         "carouselLogo": cfg.carousel_logo,
         "launchPage": cfg.launch_page,
         "autoLogin": cfg.auto_login,
+        "playerKind": cfg.player_kind,
+        "potplayerPath": cfg.potplayer_path,
         "danmuApiEnabled": cfg.danmu_api_enabled,
         "danmuApiBases": cfg.danmu_api_bases,
         "danmuApiBase": cfg.danmu_api_base,
     }))
+}
+
+/// [player] 自动探测本机 PotPlayer：返回 `{ path }`（未找到时 path 为空串）。
+#[tauri::command]
+async fn detect_potplayer() -> Result<Value, String> {
+    Ok(json!({ "path": player::detect_potplayer_path().unwrap_or_default() }))
+}
+
+/// [player] 校验用户选择的 PotPlayer 路径：返回 `{ valid, resolved }`。
+/// 不合法时 valid=false 且 resolved 为空（不抛错，方便前端即时提示）。
+#[tauri::command]
+async fn validate_potplayer_path(path: String) -> Result<Value, String> {
+    match player::validate_potplayer_path(&path) {
+        Ok(resolved) => Ok(json!({ "valid": true, "resolved": resolved })),
+        Err(_) => Ok(json!({ "valid": false, "resolved": "" })),
+    }
 }
 
 /// [lc-1434] 启动页：**登录成功后、首页数据加载前**被调用（前端路由据此决定落点）。
@@ -1898,6 +1903,9 @@ pub fn run() {
             // [lc-1434] 设置面板（通用/外观）：白名单子集读写 + 启动页查询
             get_settings,
             set_settings,
+            // [player] 播放器选择：自动探测 / 路径校验
+            detect_potplayer,
+            validate_potplayer_path,
             get_launch_page,
             // [lc-1436] 诊断：打开日志/缓存/数据目录；开机自启
             open_path,
@@ -2025,6 +2033,12 @@ pub fn run() {
                 if let Some(mut dc) = st.danmaku_child.blocking_lock().take() {
                     let _ = dc.kill();
                 }
+                // [player] PotPlayer 子进程（不 emit 事件：应用正在退出）
+                let _ = tauri::async_runtime::block_on(player::stop_potplayer(
+                    app_handle,
+                    &st,
+                    false,
+                ));
                 let mut pc = st.proxy_child.blocking_lock();
                 if let Some(c) = pc.as_mut() {
                     let _ = c.kill();

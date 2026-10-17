@@ -24,40 +24,74 @@ export function LibView({
   // [lc-1647] 层级模型重写：每一层 = 「这一层显示的文件夹（库根为 null）+ 该层的条目列表」。
   // 旧模型只存父文件夹、当前层靠 `items` 单独存 —— 钻到第 3 层时面包屑标题不跟着变，
   // 返回上一层还会把**上上层**的列表贴回来（表现为「点进去内容不对/打不开」）。
-  type Level = { folder: MediaItem | null; items: MediaItem[] };
-  const [levels, setLevels] = useState<Level[]>([{ folder: initialFolder ?? null, items: [] }]);
+  // [lc-1648] 每层带自增 id：异步取数回来时按 id 定位，层已被弹掉就丢弃结果 ——
+  // 否则「点文件夹 → 立刻按返回」时，晚到的列表会写进**返回后的那一层**，
+  // 看起来就是返回键没反应（内容纹丝不动）。
+  type Level = { id: number; folder: MediaItem | null; items: MediaItem[] };
+  const nextLevelId = useRef(1);
+  const [levels, setLevels] = useState<Level[]>([{ id: 0, folder: initialFolder ?? null, items: [] }]);
   const [total, setTotal] = useState(0);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
+
+  const levelsRef = useRef(levels);
+  useEffect(() => {
+    levelsRef.current = levels;
+  }, [levels]);
 
   const top = levels[levels.length - 1];
   const items = top.items;
   const current = top.folder;
 
-  /** 把取回的列表写进**当前层** */
-  const applyItems = useCallback((list: MediaItem[]) => {
+  /** 把取回的列表写进指定层（层已不存在则丢弃） */
+  const applyItems = useCallback((list: MediaItem[], levelId?: number) => {
     setLevels((ls) => {
-      const next = ls.slice();
-      next[next.length - 1] = { ...next[next.length - 1], items: list };
-      return next;
+      const id = levelId ?? ls[ls.length - 1]?.id;
+      let hit = false;
+      const next = ls.map((l) => {
+        if (l.id !== id) return l;
+        hit = true;
+        return { ...l, items: list };
+      });
+      return hit ? next : ls;
     });
   }, []);
 
   const load = useCallback(
-    async (parentGuid: string | null) => {
+    async (parentGuid: string | null, levelId?: number) => {
+      // 记下这次取数要写进哪一层（层 id 在弹栈后不会复用）。
+      // 钻取时由 openItem 直接传新层 id —— setLevels 是异步的，此刻 levelsRef 里还没有新层。
+      const targetId = levelId ?? levelsRef.current[levelsRef.current.length - 1]?.id;
       setLoading(true);
       setErr("");
-      // 虚拟库：收藏 / 全局分类浏览
+      // [lc-1648] **钻取优先**：parentGuid 非空 = 已进入某个文件夹，必须按 parent_guid 拉子项。
+      // 之前这段判断排在「收藏/全部分类」之后，_cat/_fav 入口下点文件夹会落回根查询 ——
+      // 列表内容不变（点一下闪一下、看起来进不去），面包屑却变了，用户只能干瞪眼。
+      if (parentGuid) {
+        try {
+          const list = await fetchLibItems(lib.guid, parentGuid);
+          applyItems(list, targetId);
+          setTotal(list.length);
+          if (list.length === 0) setErr("该文件夹为空");
+        } catch (e) {
+          applyItems([], targetId);
+          setTotal(0);
+          setErr(String(e));
+        }
+        setLoading(false);
+        return;
+      }
+      // 虚拟库根层：收藏 / 全局分类浏览
       if (lib.guid === "_fav") {
         try {
           const d = await invoke<{ total: number; list: MediaItem[] | null }>("get_favorites", {
             page: 1,
           });
-          applyItems(d.list ?? []);
+          applyItems(d.list ?? [], targetId);
           setTotal(d.total ?? 0);
           if (!d.list?.length) setErr("还没有收藏");
         } catch (e) {
-          applyItems([]);
+          applyItems([], targetId);
           setErr(String(e));
         }
         setLoading(false);
@@ -70,25 +104,25 @@ export function LibView({
             typeFilter: types,
             page: 1,
           });
-          applyItems(d.list ?? []);
+          applyItems(d.list ?? [], targetId);
           setTotal(d.total ?? 0);
           if (!d.list?.length) setErr("该分类暂无已识别条目");
         } catch (e) {
-          applyItems([]);
+          applyItems([], targetId);
           setErr(String(e));
         }
         setLoading(false);
         return;
       }
       try {
-        const list = await fetchLibItems(lib.guid, parentGuid);
-        applyItems(list);
+        const list = await fetchLibItems(lib.guid, null);
+        applyItems(list, targetId);
         setTotal(list.length);
         if (list.length === 0) setErr("该库暂无已识别条目");
       } catch (e) {
         // [lc-1647] 原来没有 try/catch：get_items 一旦 reject，setLoading(false) 永远走不到，
         // 页面就卡在「加载中…」—— 个人视频/网盘类库最常见的「打不开」表象。
-        applyItems([]);
+        applyItems([], targetId);
         setTotal(0);
         setErr(String(e));
       }
@@ -127,8 +161,9 @@ export function LibView({
       return;
     }
     // 新开一层：上一层的列表原样留在 levels 里，返回时零请求还原
-    setLevels((ls) => [...ls, { folder: item, items: [] }]);
-    await load(item.guid);
+    const id = nextLevelId.current++;
+    setLevels((ls) => [...ls, { id, folder: item, items: [] }]);
+    await load(item.guid, id);
   }
 
   function pop() {

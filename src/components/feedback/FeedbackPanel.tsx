@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Activity as IcoActivity,
   ArrowLeft as IcoBack,
@@ -109,6 +110,23 @@ const STATUS_TEXT: Record<string, string> = {
 };
 
 const KNOWN_STATUS = ["open", "confirmed", "progress", "resolved", "closed"];
+
+/** QQ 交流群邀请链接 */
+const QQ_GROUP_URL = "https://qm.qq.com/q/dUnIQVvoIw";
+
+/**
+ * 用系统默认浏览器打开外链。
+ * Tauri/WebView2 默认会丢弃 target="_blank" 的新窗口请求（wry 未注册 new_window handler 时
+ * 直接 SetHandled(true)，既不弹窗也不报错），所以必须走 opener 插件；
+ * 纯浏览器预览（vite dev）里 invoke 不可用，再退回原生新标签页。
+ */
+async function openExternal(url: string) {
+  try {
+    await openUrl(url);
+  } catch {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
 
 const badgeCls = (s: string) => (KNOWN_STATUS.includes(s) ? s : "unknown");
 const statusText = (s: string) => STATUS_TEXT[s] ?? "未同步";
@@ -526,10 +544,15 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
                 <div className="fbx-subbar-actions">
                   <a
                     className="fbx-btn subtle"
-                    href="https://qm.qq.com/q/dUnIQVvoIw"
+                    href={QQ_GROUP_URL}
                     target="_blank"
                     rel="noreferrer"
                     title="加入 QQ 交流群"
+                    onClick={(e) => {
+                      // 走系统浏览器（Tauri 会拦截 target=_blank）；键盘 Enter 同样触发 click
+                      e.preventDefault();
+                      void openExternal(QQ_GROUP_URL);
+                    }}
                   >
                     <IcoExt size={13} aria-hidden="true" />
                     加入 Q 群
@@ -687,7 +710,7 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
                   </div>
                   <div className="fbx-form-ft">
                     <button
-                      className="fbx-btn"
+                      className="fbx-btn subtle"
                       onClick={() => setFbTab("tickets")}
                       disabled={submitting}
                     >

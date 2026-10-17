@@ -22,6 +22,8 @@ mod mirror_sign;
 mod mpv;
 mod proxy;
 mod tmdb;
+// [update] 全量更新（自建下载器 + NSIS）+ 前端资源热补丁覆盖层（fntvweb 协议）
+mod update;
 // [lc-1663] 匿名使用统计（心跳上报，移植自旧项目 usageStats.ts）
 mod usage_stats;
 mod watched;
@@ -1683,11 +1685,21 @@ pub fn run() {
                 responder.respond(response);
             });
         })
+        // [update] 前端资源覆盖层协议：补丁目录优先，缺失回退内嵌资源（见 update.rs）
+        .register_asynchronous_uri_scheme_protocol("fntvweb", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let response = update::handle_web_asset(app, request).await;
+                responder.respond(response);
+            });
+        })
 
         .setup(|app| {
             // VEH 崩溃记录器：任意致命异常（D3D 视频输出崩因定位）写出异常码+故障模块+偏移，
             // 落 %TEMP%/anibox.log（lc-082 视频输出专项）
             libmpv::install_crash_logger();
+            // [update] 载入前端补丁覆盖层指针；release 且存在补丁时切到 fntvweb 协议
+            update::init(app.handle());
             // 启动时从磁盘读回配置（token/路径），否则每次重启都要重新登录
             let cfg = tauri::async_runtime::block_on(config::load(app.handle()));
             // [lc-1661] 日志分流设置：必须在任何模块开始写日志前注入（migrate 阶段用的是默认值）
@@ -1912,6 +1924,15 @@ pub fn run() {
             usage_stats::usage_stats_set,
             // [lc-1435] 关闭询问的回答（exit → 走 RunEvent::Exit 退场清理）
             resolve_close,
+            // [update] 应用信息 / 全量更新（自建下载器 + NSIS）/ 前端热补丁
+            update::app_info,
+            update::update_check,
+            update::update_download,
+            update::update_cancel,
+            update::update_install,
+            update::patch_check,
+            update::patch_apply,
+            update::patch_rollback,
             // 缓存面板三要素：占用 / 上限 / 清理
             cache_stats,
             cache_set_limit,

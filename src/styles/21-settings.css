@@ -350,3 +350,129 @@
   flex: 1;
   min-width: 0;
 }
+
+/* ── [更新与维护] 检查 / 下载 / 补丁 ──
+   尺寸与 .set-btn 一致（13px / 7px 14px / 9px 圆角）；颜色全部取既有变量，
+   深色主题自动跟随。进度条用 --accent，错误行用与 .set-btn.danger 同源的红色。 */
+.set-btn.primary {
+  color: #fff;
+  background: var(--accent);
+  border-color: transparent;
+}
+.set-btn.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 82%, #000);
+}
+.set-upd {
+  gap: 8px;
+}
+.set-upd-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-strong);
+}
+.set-upd-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--muted);
+}
+.set-upd-dot.ok {
+  background: #3fb950;
+}
+.set-upd-dot.warn {
+  background: #d29922;
+}
+.set-upd-dot.err {
+  background: #e5484d;
+}
+.set-upd-status-text {
+  font-weight: 600;
+}
+.set-upd-date {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.set-upd-notes-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.set-upd-notes-toggle {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.set-upd-notes {
+  margin: 0;
+  width: 100%;
+  box-sizing: border-box;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--hover);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.set-upd-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+}
+.set-upd-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--hover);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.set-upd-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.18s ease;
+}
+.set-upd-progress-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+  min-width: 0;
+}
+.set-upd-pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  font-weight: 600;
+}
+.set-upd-msg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.set-upd-ok {
+  font-size: 12.5px;
+  color: #3fb950;
+  font-weight: 600;
+}
+.set-upd-err {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: #e5484d;
+  word-break: break-word;
+}

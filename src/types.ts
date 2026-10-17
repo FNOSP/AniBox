@@ -283,6 +283,48 @@ export type TmdbCredits = {
   crew?: TmdbCreditPerson[];
 };
 
+/** [更新与维护] 后端 `app_info()`：软件名 / 版本 / 仓库地址 / 简介。
+ *  前端优先用它填「关于」，字段为空时回退到占位常量。 */
+export type AppInfo = {
+  name: string;
+  version: string;
+  repoUrl: string;
+  description: string;
+};
+
+/** [更新与维护] 更新类型：hotfix = 热补丁（无需重装）；full = 全量安装包 */
+export type UpdateType = "hotfix" | "full";
+
+/** [更新与维护] 后端 `update_check()` 的返回。字段按固定契约（camelCase）；
+ *  前端在读取时兼容 snake_case（见 SettingsPanel 的归一化函数）。 */
+export type UpdateCheckResult = {
+  hasUpdate: boolean;
+  currentVersion: string;
+  latestVersion: string;
+  updateType: UpdateType;
+  notes: string;
+  publishedAt: string;
+  downloadUrl: string;
+  patchUrl: string;
+  htmlUrl: string;
+};
+
+/** [更新与维护] 后端 `update_download()` 的返回：落盘路径与字节数 */
+export type UpdateDownloadResult = { path: string; size: number };
+
+/** [更新与维护] 后端 `patch_check()` 的返回 */
+export type PatchCheckResult = { hasPatch: boolean; version: string; notes: string };
+
+/** [更新与维护] `update-progress` / `patch-progress` 事件 payload。
+ *  percent 可能缺省（旧后端），此时前端用 loaded/total 现算。 */
+export type UpdateProgress = {
+  phase: string;
+  loaded: number;
+  total: number;
+  percent: number;
+  message: string;
+};
+
 export type ChromeTone = "auto" | "dark" | "light" | "fallback";
 /** [lc-1437] 设置面板的项（Rust 侧 `get_settings`/`set_settings` 的白名单子集）。
  *  放在 App 顶层持有：性能模式（html.perf 类）与轮播 Logo（CarouselView 入参）

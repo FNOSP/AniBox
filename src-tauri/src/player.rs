@@ -246,7 +246,18 @@ pub async fn launch(
     match kind.as_str() {
         "mpv" => launch_mpv(app, state, cfg, url, title, headers).await,
         "potplayer" => {
-            launch_potplayer(app, state, &path, url, resume_secs, duration_secs, headers, subs).await
+            launch_potplayer(
+                app,
+                state,
+                &path,
+                url,
+                title,
+                resume_secs,
+                duration_secs,
+                headers,
+                subs,
+            )
+            .await
         }
         _ => unreachable!(),
     }
@@ -328,6 +339,7 @@ async fn launch_potplayer(
     state: &AppState,
     path: &str,
     url: &str,
+    title: &str,
     resume_secs: f64,
     duration_secs: f64,
     headers: Option<&HttpHeaders>,
@@ -348,23 +360,22 @@ async fn launch_potplayer(
         }
     }
 
-    // 2) 需要 Referer/UA 的源：注册到本地 relay，交给 PotPlayer 的是 relay URL。
-    let play_url = match headers {
-        Some(h) if h.needs_relay() => {
-            ensure_relay().await?;
-            let id = relay_register(RelayTarget {
-                url: url.to_string(),
-                headers: h.clone(),
-            });
-            let relayed = relay_url(&id);
-            crate::libmpv::trace(&format!(
-                "[player] potplayer relay 注册: {url} -> {relayed}（referer={:?} ua={:?}）",
-                h.referer, h.user_agent
-            ));
-            relayed
-        }
-        _ => url.to_string(),
-    };
+    // 2) 一律经本地 relay 转发，并在 URL 路径里附带可读文件名：
+    //    PotPlayer 把 URL 末段当作标题/播放列表项名，直链（GUID/查询串）会显示成一串字符。
+    //    与旧项目 playbackShim 同思路：`/relay/<id>/<剧名 - 集名>.mp4`，relay 仍只按 id 转发。
+    //    无 Referer/UA 时 relay 仅做本机逐字节转发（Range 透传），不影响 /seek、-sub。
+    ensure_relay().await?;
+    let relay_headers = headers.cloned().unwrap_or_default();
+    let id = relay_register(RelayTarget {
+        url: url.to_string(),
+        headers: relay_headers,
+    });
+    let play_url = relay_url_named(&id, title);
+    crate::libmpv::trace(&format!(
+        "[player] potplayer relay 注册: {url} -> {play_url}（referer={:?} ua={:?} title={title:?}）",
+        headers.and_then(|h| h.referer.as_deref()),
+        headers.and_then(|h| h.user_agent.as_deref()),
+    ));
 
     // 3) 构建参数并启动（不等待，记录 PID）。
     let args = build_potplayer_args(&play_url, resume_secs, duration_secs, subs);
@@ -572,8 +583,111 @@ pub fn relay_clear() {
     relay_map().lock().unwrap().clear();
 }
 
+/// 不带可读名的 relay URL（保留给测试/调试；播放路径统一用 [`relay_url_named`]）。
+#[allow(dead_code)]
 pub fn relay_url(id: &str) -> String {
     format!("http://127.0.0.1:{RELAY_PORT}/relay/{id}")
+}
+
+/// 把可读标题整理成可安全放进 URL 路径的文件名基名（不含扩展名）。
+///
+/// 对齐旧项目 `playbackShim.makeUrl`：先替换 Windows 文件名非法字符
+/// `\ / : * ? " < > |` 为 `_`，再由 [`relay_url_named`] 整段 URL 编码。
+/// 编码结果是纯 ASCII 百分号序列，PotPlayer 解码后仍显示正确中文。
+pub fn sanitize_display_name(title: &str) -> String {
+    let mut out = String::with_capacity(title.len());
+    for ch in title.chars() {
+        // 控制字符（含 \r\n\t）与 Windows 非法文件名统一替换，避免破坏 URL/文件名。
+        if ch.is_control() || matches!(ch, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+            out.push('_');
+        } else {
+            out.push(ch);
+        }
+    }
+    let out = out.trim().trim_matches('.').trim().to_string();
+    if out.is_empty() {
+        "video".to_string()
+    } else {
+        out
+    }
+}
+
+/// 生成带可读文件名的 relay URL：`http://127.0.0.1:22349/relay/<id>/<可读名>.mp4`。
+///
+/// PotPlayer 会把 URL 末段当作显示标题，因此把剧名/集名编码进路径即可让它显示中文名，
+/// 而不是一串 GUID/查询串。relay 路由只取 `/relay/` 后的**第一段**作为 id，
+/// 后续文件名段被忽略，仍按 id 转发（见 [`relay_id_from_path`]）。
+pub fn relay_url_named(id: &str, display_name: &str) -> String {
+    let stem = sanitize_display_name(display_name);
+    let encoded = urlencoding::encode(&stem);
+    format!("http://127.0.0.1:{RELAY_PORT}/relay/{id}/{encoded}.mp4")
+}
+
+/// 从请求路径中取出 relay id：`/relay/<id>` 与 `/relay/<id>/<可读名>.mp4` 都返回 `<id>`。
+pub fn relay_id_from_path(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("/relay/")?;
+    let id = rest.split('/').next().unwrap_or("");
+    if id.is_empty() {
+        None
+    } else {
+        Some(id)
+    }
+}
+
+/// 上游响应的 Content-Type 是否表示 HLS 播放列表。
+pub fn is_hls_content_type(ct: &str) -> bool {
+    let c = ct.to_ascii_lowercase();
+    c.contains("mpegurl") || c.contains("vnd.apple.mpegurl")
+}
+
+/// 把 HLS 播放列表里的相对 URI 重写为绝对 URL。
+///
+/// 经 relay 转发后，PotPlayer 看到的播放列表地址是 `http://127.0.0.1:22349/relay/<id>/<名>.mp4`，
+/// 若列表里是相对分片 URI，PotPlayer 会向 `/relay/<id>/xxx.ts` 请求，被 relay 误当成同 id 的
+/// 播放列表请求。这里按最终上游地址（`base`，含 302 后的地址）解析成绝对 URL，
+/// 让 PotPlayer 直接去源站取分片。仅用于「无 Referer/UA」的 HLS（有头时 launch 已提前报错）。
+pub fn rewrite_hls_playlist(body: &str, base: &url::Url) -> String {
+    let mut out = String::with_capacity(body.len() + 64);
+    for line in body.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            out.push_str(line);
+        } else if t.starts_with('#') {
+            // #EXT-X-KEY / #EXT-X-MAP 的 URI="..." 也可能是相对地址（加密密钥、fMP4 初始化段）。
+            out.push_str(&rewrite_uri_attributes(line, base));
+        } else {
+            match base.join(t) {
+                Ok(abs) => out.push_str(abs.as_str()),
+                Err(_) => out.push_str(line),
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// 把一行标签里的 `URI="..."` 属性解析成绝对地址。
+fn rewrite_uri_attributes(line: &str, base: &url::Url) -> String {
+    let mut out = String::with_capacity(line.len() + 32);
+    let mut rest = line;
+    while let Some(pos) = rest.find("URI=\"") {
+        let (before, after) = rest.split_at(pos + 5);
+        out.push_str(before);
+        if let Some(endq) = after.find('"') {
+            let uri = &after[..endq];
+            match base.join(uri) {
+                Ok(abs) => out.push_str(abs.as_str()),
+                Err(_) => out.push_str(uri),
+            }
+            out.push('"');
+            rest = &after[endq + 1..];
+        } else {
+            out.push_str(after);
+            rest = "";
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// 构建转发给源站的请求头（纯函数，可测）。
@@ -682,7 +796,8 @@ async fn handle_relay_conn(mut stream: tokio::net::TcpStream) {
         return;
     }
     let path = target_path.split('?').next().unwrap_or("");
-    let Some(id) = path.strip_prefix("/relay/") else {
+    // 只取 `/relay/` 后第一段作为 id：可读文件名段（`/relay/<id>/<名>.mp4`）仅用于显示。
+    let Some(id) = relay_id_from_path(path) else {
         let _ = write_plain(&mut stream, 404, "Not Found", b"relay target missing").await;
         return;
     };
@@ -719,6 +834,41 @@ async fn handle_relay_conn(mut stream: tokio::net::TcpStream) {
             return;
         }
     };
+
+    // HLS：播放列表里的相对分片 URI 要重写成绝对地址，否则 PotPlayer 会把
+    // `/relay/<id>/xxx.ts` 当成同一 id 再请求一次播放列表。仅无头场景（有头 HLS 已提前报错）。
+    let upstream_ct = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let upstream_is_hls = is_hls_content_type(&upstream_ct)
+        || looks_like_hls(t.url.as_str())
+        || looks_like_hls(resp.url().as_str());
+    if upstream_is_hls && resp.status().is_success() && method != "HEAD" {
+        let base = resp.url().clone();
+        match resp.text().await {
+            Ok(text) => {
+                let rewritten = rewrite_hls_playlist(&text, &base);
+                let body = rewritten.as_bytes();
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                if stream.write_all(head.as_bytes()).await.is_ok() {
+                    let _ = stream.write_all(body).await;
+                    let _ = stream.flush().await;
+                }
+            }
+            Err(e) => {
+                crate::libmpv::trace(&format!("[relay] 读取 HLS 播放列表失败 {}: {e}", t.url));
+                let _ = write_plain(&mut stream, 502, "Bad Gateway", format!("读取播放列表失败: {e}").as_bytes())
+                    .await;
+            }
+        }
+        return;
+    }
 
     let status = resp.status();
     let content_length = resp
@@ -943,6 +1093,54 @@ mod tests {
         assert!(looks_like_hls("https://x/a.m3u"));
         assert!(!looks_like_hls("https://x/a.mp4"));
         assert!(!looks_like_hls("https://x/a.m3u8x"));
+    }
+
+    #[test]
+    fn display_name_sanitizes_and_falls_back() {
+        assert_eq!(
+            sanitize_display_name(" 葬送的芙莉莲 - S01E01: 冒险的终点 "),
+            "葬送的芙莉莲 - S01E01_ 冒险的终点"
+        );
+        assert_eq!(
+            sanitize_display_name(r#"a/b\c:d*e?f"g<h>i|j"#),
+            "a_b_c_d_e_f_g_h_i_j"
+        );
+        assert_eq!(sanitize_display_name("   "), "video");
+        assert_eq!(sanitize_display_name("..."), "video");
+    }
+
+    #[test]
+    fn relay_url_named_encodes_readable_name() {
+        let u = relay_url_named("abc123", "剧名 - S01E04: 集标题");
+        assert!(u.starts_with("http://127.0.0.1:22349/relay/abc123/"));
+        assert!(u.ends_with(".mp4"));
+        assert!(!u.contains(' '));
+        let last = u.rsplit('/').next().unwrap();
+        let stem = last.trim_end_matches(".mp4");
+        let decoded = urlencoding::decode(stem).unwrap();
+        assert_eq!(decoded.as_ref(), "剧名 - S01E04_ 集标题");
+    }
+
+    #[test]
+    fn relay_id_from_path_ignores_readable_tail() {
+        assert_eq!(relay_id_from_path("/relay/abc"), Some("abc"));
+        assert_eq!(relay_id_from_path("/relay/abc/%E5%89%A7%E5%90%8D.mp4"), Some("abc"));
+        assert_eq!(relay_id_from_path("/relay/"), None);
+        assert_eq!(relay_id_from_path("/other/abc"), None);
+    }
+
+    #[test]
+    fn hls_playlist_rewrites_relative_uris() {
+        let base = url::Url::parse("https://cdn.test/hls/index.m3u8").unwrap();
+        let body = "#EXTM3U\n#EXTINF:10,\nseg-1.ts\n/abs/seg-2.ts\nhttps://other/x.ts\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n";
+        let out = rewrite_hls_playlist(body, &base);
+        assert!(out.contains("https://cdn.test/hls/seg-1.ts"));
+        assert!(out.contains("https://cdn.test/abs/seg-2.ts"));
+        assert!(out.contains("https://other/x.ts"));
+        assert!(out.contains("URI=\"https://cdn.test/hls/key.bin\""));
+        assert!(out.contains("#EXTINF:10,"));
+        assert!(is_hls_content_type("application/vnd.apple.mpegurl"));
+        assert!(!is_hls_content_type("video/mp4"));
     }
 
     #[test]

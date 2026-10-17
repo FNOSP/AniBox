@@ -3055,7 +3055,19 @@ pub async fn webrs_play(
 
     // [player] 统一入口：
     //   · mpv：新建会话时 URL+Referer/UA 全部进命令行（零启动期 IPC）；复用会话走 IPC。
-    //   · PotPlayer：命令行不支持 Referer/UA → player 内部注册到本地 relay（22349）再播放。
+    //   · PotPlayer：命令行不支持 Referer/UA → player 内部注册到本地 relay（22349）再播放；
+    //     relay URL 路径附带「番名 - 集名」，PotPlayer 标题/播放列表项显示可读中文名。
+    // [lc-1615] 拼一个可读标题供播放器显示（历史记录仍用 title/episode 原字段）。
+    let display_title = {
+        let t = title.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        let e = episode.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        match (t, e) {
+            (Some(t), Some(e)) => format!("{t} - {e}"),
+            (Some(t), None) => t.to_string(),
+            (None, Some(e)) => e.to_string(),
+            (None, None) => String::new(),
+        }
+    };
     let headers = crate::player::HttpHeaders::new(referer.clone(), ua.clone());
     let header_ref = if headers.needs_relay() { Some(&headers) } else { None };
     crate::player::launch(
@@ -3063,7 +3075,7 @@ pub async fn webrs_play(
         &state,
         &cfg,
         &url,
-        title.as_deref().unwrap_or(""),
+        &display_title,
         0.0,
         0.0,
         header_ref,

@@ -9,6 +9,9 @@ import { pick } from "../../lib/format";
 import { imgUrl } from "../../lib/images";
 import { ChromeTone, Lib, MediaItem, PlayItem, PlayTarget } from "../../types";
 
+/** [lc-1646] 去掉标题里的装饰性音乐符号（飞牛单集标题里常见 ♪ ♫ 等），用户明确不要出现。 */
+const stripDecor = (s: string) => s.replace(/[♪♫♬♩🎵🎶]/g, "").replace(/\s{2,}/g, " ").trim();
+
 
 export function HomeView({
   libs,
@@ -174,8 +177,8 @@ export function HomeView({
               .filter((raw) => String(pick(raw, ["type"]) ?? "") !== "LiveChannel")
               .map((raw) => {
               const guid = String(pick(raw, ["guid"]) ?? "");
-              const rawTitle = String(pick(raw, ["title"]) ?? "").trim();
-              const tvTitle = String(pick(raw, ["tv_title", "tvTitle"]) ?? "").trim();
+              const rawTitle = stripDecor(String(pick(raw, ["title"]) ?? ""));
+              const tvTitle = stripDecor(String(pick(raw, ["tv_title", "tvTitle"]) ?? ""));
               const type = String(pick(raw, ["type"]) ?? "");
               const poster = pick(raw, ["poster"]) as string | undefined;
               const ts = Number(pick(raw, ["ts"]) ?? 0);

@@ -25,3 +25,9 @@
   aspect-ratio: 16 / 10;
 }
 
+/* [lc-1646] 继续观看：标题与信息行都居中（用户要求），与海报视觉居中对齐 */
+.continue-card .card-title,
+.continue-card .card-sub {
+  text-align: center;
+}
+

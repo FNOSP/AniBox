@@ -39,7 +39,7 @@ regex = "1"
 # SECURITY_ATTRIBUTES 参数类型不存在，编译不过）
 # [lc-1599] Win32_System_SystemInformation：反馈日志环境块取**本地时间**（GetLocalTime）。
 # 同 crate 加 feature（不新增任何依赖），模块本身只依赖已启用的 Foundation。
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Registry", "Win32_Security", "Win32_System_SystemInformation"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Registry", "Win32_Security", "Win32_System_SystemInformation", "Win32_System_Time"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

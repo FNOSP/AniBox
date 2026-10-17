@@ -293,6 +293,9 @@ async fn get_continue_watching(state: State<'_, AppState>) -> Result<Value, Stri
 async fn get_watch_history(app: AppHandle, state: State<'_, AppState>) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let local = history::load(&app);
+    // [lc-1669] 老用户迁移：把旧 history.json 的播放记录回填到日级台账（热力图数据源）。
+    // 幂等：只补 `tracked=false` 的旧天，新口径天不会被覆盖。
+    history::migrate_days_from_history(&app, &local);
     let mut fnos: Option<Value> = None;
     let mut fnos_error = String::new();
     if cfg.token.is_empty() {

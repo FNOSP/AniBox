@@ -249,6 +249,107 @@ pub fn heat_days(map: &BTreeMap<String, DayStat>) -> Vec<Value> {
     out
 }
 
+/// [lc-1669] 毫秒时间戳 → 本地日期 `"Y-M-D"`（月份 0 基）。
+/// 用于把旧 `history.json` 回填到日级台账；Windows 走系统本地时区（含夏令时），
+/// 其他平台退化为 UTC（本软件当前只发 Windows）。
+#[cfg(target_os = "windows")]
+fn local_day_key(ms: u64) -> Option<String> {
+    use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
+    use windows_sys::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
+    // FILETIME = 100ns 间隔，起点 1601-01-01；先加 Unix epoch 差值再换算。
+    let ft_val = (ms as u128 + 11_644_473_600_000u128) * 10_000u128;
+    let filetime = FILETIME {
+        dwLowDateTime: (ft_val & 0xFFFF_FFFF) as u32,
+        dwHighDateTime: (ft_val >> 32) as u32,
+    };
+    let mut utc_st: SYSTEMTIME = unsafe { std::mem::zeroed() };
+    if unsafe { FileTimeToSystemTime(&filetime, &mut utc_st) } == 0 {
+        return None;
+    }
+    let mut local_st: SYSTEMTIME = unsafe { std::mem::zeroed() };
+    if unsafe { SystemTimeToTzSpecificLocalTime(std::ptr::null(), &utc_st, &mut local_st) } == 0 {
+        return None;
+    }
+    Some(format!(
+        "{}-{}-{}",
+        local_st.wYear,
+        local_st.wMonth as i32 - 1,
+        local_st.wDay
+    ))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn local_day_key(ms: u64) -> Option<String> {
+    let secs = (ms / 1000) as i64;
+    let days = secs.div_euclid(86_400);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + if mo <= 2 { 1 } else { 0 };
+    Some(format!("{}-{}-{}", y, mo - 1, d))
+}
+
+/// [lc-1669] 把旧 `history.json` 回填到日级台账（幂等，页面每次加载都可安全调用）。
+/// 背景：热力图在 lc-1668 之前用「作品清单」倒推，老用户只有 history.json / 旧 watch_days；
+/// 升级后把已有播放记录补成「按天 + 按作品去重」的台账，历史天才有数据。
+pub fn migrate_days_from_history(app: &AppHandle, records: &[WatchRecord]) {
+    if records.is_empty() {
+        return;
+    }
+    // 按天聚合：count = 记录条数（history.json 一条 guid 只留最近一次，无法还原真实次数），
+    // heat = 去重作品数；在线源已搁置，不参与。
+    let mut rebuilt: BTreeMap<String, (u32, BTreeSet<String>)> = BTreeMap::new();
+    for r in records {
+        if r.played_at < MIN_VALID_MS || r.source == "webrs" {
+            continue;
+        }
+        let Some(key) = local_day_key(r.played_at) else {
+            continue;
+        };
+        let series = if r.title.trim().is_empty() {
+            r.guid.clone()
+        } else {
+            r.title.clone()
+        };
+        let e = rebuilt.entry(key).or_default();
+        e.0 += 1;
+        e.1.insert(series);
+    }
+    if rebuilt.is_empty() {
+        return;
+    }
+    let mut days = load_days(app);
+    if merge_rebuilt_days(rebuilt, &mut days) {
+        save_days(app, &days);
+    }
+}
+
+/// 纯逻辑：把回填数据并入台账。已有 `tracked` 的天保留（新口径数据更准），
+/// 旧格式天用回填值补上（count 取较大者，heat/series 来自历史记录）。
+fn merge_rebuilt_days(
+    rebuilt: BTreeMap<String, (u32, BTreeSet<String>)>,
+    days: &mut BTreeMap<String, DayStat>,
+) -> bool {
+    let mut changed = false;
+    for (key, (count, series)) in rebuilt {
+        let st = days.entry(key).or_default();
+        if st.tracked {
+            continue;
+        }
+        st.count = st.count.max(count);
+        st.heat = series.len() as u32;
+        st.series = series;
+        st.tracked = true;
+        changed = true;
+    }
+    changed
+}
+
 /// 读写串行化：record 是「读-改-写」，两条播放命令几乎同时触发时不能互相覆盖。
 static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -1238,6 +1339,52 @@ mod tests {
             DayStat { count: 1, ..Default::default() },
         );
         assert_eq!(heat_days(&legacy)[0]["count"], json!(1));
+    }
+
+    #[test]
+    fn local_day_key_matches_today_key() {
+        // 同一时刻的本地日期转换应与 record 用的 today_key 口径一致
+        assert_eq!(local_day_key(now_ms()).unwrap(), today_key());
+    }
+
+    #[test]
+    fn migration_rebuilds_legacy_days_without_overwriting_new() {
+        let mut days: BTreeMap<String, DayStat> = Default::default();
+        // 旧格式天：只有 count，没有 tracked/series
+        days.insert(
+            "2026-9-17".into(),
+            DayStat { count: 1, ..Default::default() },
+        );
+        // 新格式天：已有去重数据，迁移不能覆盖
+        days.insert(
+            "2026-9-18".into(),
+            DayStat {
+                count: 5,
+                heat: 2,
+                tracked: true,
+                series: ["剧X".to_string(), "剧Y".to_string()].into_iter().collect(),
+            },
+        );
+        let mut rebuilt: BTreeMap<String, (u32, BTreeSet<String>)> = Default::default();
+        rebuilt.insert(
+            "2026-9-17".into(),
+            (2, ["剧A".to_string(), "剧B".to_string()].into_iter().collect()),
+        );
+        rebuilt.insert(
+            "2026-9-18".into(),
+            (1, ["新剧".to_string()].into_iter().collect()),
+        );
+        assert!(merge_rebuilt_days(rebuilt, &mut days));
+        let d = days.get("2026-9-17").unwrap();
+        assert_eq!(d.count, 2);
+        assert_eq!(d.heat, 2);
+        assert!(d.tracked);
+        assert_eq!(d.series.len(), 2);
+        // 新格式天保持原样
+        let e = days.get("2026-9-18").unwrap();
+        assert_eq!(e.count, 5);
+        assert_eq!(e.heat, 2);
+        assert_eq!(e.series.len(), 2);
     }
 
     #[test]

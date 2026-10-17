@@ -550,6 +550,9 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
 .bgmac-remember input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
+  /* ⚠ 全局 input 规则带 padding:10px 13px；不归零会把 14px 盒撑成 40px 大蓝块 */
+  box-sizing: border-box;
+  padding: 0;
   width: 14px;
   height: 14px;
   flex: 0 0 auto;

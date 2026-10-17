@@ -58,12 +58,13 @@ const TTL_MATCH: u64 = 30 * 24 * 3600;
 const TTL_SUBJECT: u64 = 6 * 3600;
 const TTL_EPISODES: u64 = 24 * 3600;
 const TTL_PERSONS: u64 = 7 * 24 * 3600;
-/// 每日新番表（/calendar）：[lc-123-rev5] **TTL 3 小时**（原 1 小时）。
-/// 依据（用户：「刷给我感觉不需要这么频繁，能不能搞个检测新增才刷新的逻辑」）：新番表是一张静态周表，
-/// 一天最多变一两次；到期也**不无脑重拉** —— 带 ETag 条件请求，上游 304 就只顺延时间戳。
-/// 另外**跨天必须重取**：缓存键按前端本机日期分桶，且读回来的 payload 还要比一次 `day`
-/// （跨过本地零点 ⇒ 键变了 ⇒ 必然重取；万一键撞上也不会把昨天的表当今天用）。
-const TTL_CALENDAR: u64 = 3 * 3600;
+/// 每日新番表（/calendar）：[lc-1671] **TTL 12 小时**（原 3 小时）。
+/// 依据：新番表是一张**按星期几固定**的周表，一天最多变一两次；且用户反馈"每次启动都在拉"——
+/// 3 小时太短，重启几次就过期回源。到期也**不无脑重拉**：带 ETag 条件请求，上游 304 就只顺延
+/// 时间戳；回源失败时 disk_cache 会用旧缓存兜底（stale-if-error），不再整页报错。
+/// 缓存键仍按天分桶（跨零点换键）；换键后若没有今日缓存且网络全挂，`bgm_calendar` 会
+/// 回退到最近一份可用周表，不会因为零点后第一次打开就整页失败。
+const TTL_CALENDAR: u64 = 12 * 3600;
 /// [lc-1605] 往季番表（/v0/subjects?year&month）：缓存键含 year+month（不同季各自一份）。
 /// [lc-1625] **往季基本定型**，TTL 拉长到 30 天（用户要求「拉过的都本地缓存下次直接打开」）。
 /// 但**当季**仍在放送、评分/排名天天变 —— 对当前年+当前季用短 TTL（24h），否则评分会僵一个月。
@@ -895,7 +896,7 @@ pub async fn bgm_calendar(
     let day = day.unwrap_or_default();
     let key = format!("json:bgm:calendar:v1|{day}");
     let day_check = day.clone();
-    let (payload, changed) = crate::disk_cache::json_cached_conditional(
+    let cached = crate::disk_cache::json_cached_conditional(
         &key,
         TTL_CALENDAR,
         force,
@@ -931,7 +932,32 @@ pub async fn bgm_calendar(
             }
         },
     )
-    .await?;
+    .await;
+    // [lc-1671] 跨天/换键时本地没有今天的缓存，且网络全挂 → 回退到最近一份可用周表
+    // （周表本身不随日期变；前端"今天"高亮用本机 weekday，不依赖 payload.day）。
+    // 手动 force / 失败重试仍如实报错。
+    let (payload, changed) = match cached {
+        Ok(x) => x,
+        Err(e) => {
+            if force || no_etag {
+                return Err(e);
+            }
+            match crate::disk_cache::json_get_latest("json:bgm:calendar:v1|", |v| {
+                v.get("days")
+                    .and_then(|d| d.as_array())
+                    .map(|a| !a.is_empty())
+                    .unwrap_or(false)
+            }) {
+                Some((v, _, _)) => {
+                    crate::libmpv::trace(
+                        "[bgm] calendar 今日缓存缺失且回源失败 → 回退最近一份可用周表（stale）",
+                    );
+                    (v, false)
+                }
+                None => return Err(e),
+            }
+        }
+    };
 
     let mut out = payload;
     if let Value::Object(ref mut m) = out {

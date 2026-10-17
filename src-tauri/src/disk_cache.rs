@@ -428,6 +428,36 @@ pub fn json_get_full(key: &str) -> Option<(Value, Option<String>, u64)> {
     Some((v, etag, created))
 }
 
+/// [lc-1671] 前缀匹配的最新 JSON 缓存（按 meta.created 取最新）。
+/// 用途：日历缓存键按天分桶，跨天/新键没有缓存时，回退到上一份可用的周表；
+/// 也可用于把旧版本的分桶键平滑迁移到新键。`valid` 过滤结构不符的脏缓存。
+pub fn json_get_latest(
+    prefix: &str,
+    valid: impl Fn(&Value) -> bool,
+) -> Option<(Value, Option<String>, u64)> {
+    let keys: Vec<String> = with_store(|s| {
+        s.index
+            .keys()
+            .filter(|k| k.starts_with(prefix))
+            .cloned()
+            .collect()
+    })?;
+    let mut best: Option<(String, u64)> = None;
+    for k in keys {
+        if let Some((v, _, created)) = json_get_full(&k) {
+            if !valid(&v) {
+                continue;
+            }
+            if best.as_ref().map(|(_, c)| created > *c).unwrap_or(true) {
+                best = Some((k, created));
+            }
+        }
+    }
+    let (key, _) = best?;
+    let (v, etag, created) = json_get_full(&key)?;
+    Some((v, etag, created))
+}
+
 /// JSON 缓存写（带 ETag；key 不变，meta 里多一个 `etag` 字段）。
 pub fn json_put_full(key: &str, val: &Value, etag: Option<&str>) {
     let Ok(text) = serde_json::to_string(val) else { return };
@@ -485,6 +515,8 @@ pub fn etag_weak_eq(a: Option<&str>, b: Option<&str>) -> bool {
 ///        304 → **payload 不变**，只 `json_touch` 顺延时间戳 → changed=false；
 ///        200 → 新内容替换 + 存新 ETag → changed=true；
 ///   ③ 本地没有（首次/被清）→ 全量拉（没有 ETag 可带）→ changed=true。
+///   ④ 回源失败且非 force/no_etag → **旧缓存兜底**（stale-if-error）→ changed=false；
+///      force/no_etag 仍把错误上抛（手动刷新失败要如实告知）。
 /// `no_etag`：失败重试专用（连条件头都不带，强制全量）。
 /// `valid`：缓存内容的额外校验（如"日历 payload 必须属于今天"）；不通过就当作本地没有 → 全量重取。
 /// 返回 `(payload, changed)`：**changed=false 时调用方不得碰 UI**（304 不许 re-render/重置滚动）。
@@ -507,15 +539,16 @@ where
                 return Ok((val, false));
             }
             let want = if no_etag { None } else { etag.clone() }; // clone：下面弱比较还要用本地那份
-            return match fetch(want).await? {
-                Cond::NotModified => {
+            let fetched = fetch(want).await;
+            return match fetched {
+                Ok(Cond::NotModified) => {
                     json_touch(key); // 304：内容不变，只把时间戳顺延（TTL 重新计时）
                     crate::libmpv::trace(&format!(
                         "[cache] 304 Not Modified → 内容不变，仅顺延时间戳: {key}"
                     ));
                     Ok((val, false))
                 }
-                Cond::Fresh(v, et) => {
+                Ok(Cond::Fresh(v, et)) => {
                     // 200 但**内容其实没变**也算"没变"（镜像刚升过缓存键版本时，第一次带
                     // If-None-Match 的请求大概率仍回 200；老副本回源后内容一致）：
                     //   · ETag 弱比较相等（忽略 W/ 前缀）→ 内容同一份；
@@ -530,6 +563,19 @@ where
                     }
                     json_put_full(key, &v, et.as_deref());
                     Ok((v, true))
+                }
+                Err(e) => {
+                    // [lc-1671] 回源失败 → **旧缓存兜底**（stale-if-error）。
+                    // 正常进页面/启动时网络差或镜像全挂，宁可展示上一份可用数据，也不要整页报错；
+                    // 手动 force / 失败重试（no_etag）仍把错误上抛，避免把"刷新失败"伪装成成功。
+                    if !force && !no_etag {
+                        crate::libmpv::trace(&format!(
+                            "[cache] 回源失败 → 使用旧缓存兜底（stale）: {key}（{e}）"
+                        ));
+                        Ok((val, false))
+                    } else {
+                        Err(e)
+                    }
                 }
             };
         }
@@ -709,5 +755,21 @@ mod tests {
         assert!(!etag_weak_eq(Some("\"a\""), Some("\"b\"")));
         assert!(!etag_weak_eq(None, Some("\"a\"")));
         assert!(!etag_weak_eq(Some(""), Some("")));
+
+        // (g) 回源失败：普通加载用旧缓存兜底（stale-if-error）；手动 force 仍报错
+        json_put_full(key, &json!({"n": 42}), None);
+        std::thread::sleep(std::time::Duration::from_millis(2100));
+        let (v8, ch8) = json_cached_conditional(key, 1, false, false, |_| true, |_et| async {
+            Err::<Cond, String>("network down".into())
+        })
+        .await
+        .expect("普通加载应回退旧缓存");
+        assert_eq!(v8["n"], 42);
+        assert!(!ch8, "(g) 旧缓存兜底不许碰 UI");
+        let forced = json_cached_conditional(key, 1, true, false, |_| true, |_et| async {
+            Err::<Cond, String>("network down".into())
+        })
+        .await;
+        assert!(forced.is_err(), "(g) 手动 force 失败必须如实报错");
     }
 }

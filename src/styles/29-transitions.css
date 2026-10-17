@@ -15,6 +15,30 @@
 .view-out {
   animation: viewOut 0.18s cubic-bezier(0.4, 0, 1, 1) both;
 }
+/* [lc-1649] 退场的 view-pane 必须**脱离文档流**。
+   详情/库/记录页退场的那 ~200ms 里，目标页（home/discover）同时也已经是 .active，
+   两个 `flex: 1` 的兄弟在 .view-stack（flex-direction: column）里会被**上下对半劈开** ——
+   用户看到的就是「返回时画面裂成上下两半」。与首页↔发现的 .leaving 用同一套做法：
+   absolute 叠在进入侧之上，不改列布局。 */
+.view-pane.view-out {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  visibility: visible;
+  pointer-events: none;
+}
+/* [lc-1649] 同一个道理，但覆盖「切走的第一帧」：useDelayedUnmount 的 closing 是在 effect 里
+   才置真的，首帧退场 pane 还带着 view-in —— 仅靠 .view-out 仍会闪一帧上下劈开。
+   所以由 App 按 `view !== 本页` 直接挂 pane-exit，从切走那一刻就脱离文档流。 */
+.view-pane.pane-exit {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  visibility: visible;
+  pointer-events: none;
+}
 .webrs-sub.view-in {
   animation-duration: 0.18s;
 }

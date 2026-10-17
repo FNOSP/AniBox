@@ -920,7 +920,7 @@ function App() {
           </div>
           {(view === "lib" || libMounted) && activeLib && (
             <div
-              className={`view-pane active${libClosing ? " view-out" : libEnterAnim ? " view-in" : ""}`}
+              className={`view-pane active${libClosing ? " view-out" : libEnterAnim ? " view-in" : ""}${view !== "lib" ? " pane-exit" : ""}`}
               onAnimationEnd={() => setLibEnterAnim(false)}
             >
               <LibView lib={activeLib} initialFolder={libFolder} onBackHome={goHome} onOpenItem={openItem} />
@@ -929,7 +929,7 @@ function App() {
           {/* [lc-1615] 观影记录页：条件挂载 + view-in/view-out 转场（与库/详情页同套）。
               从详情返回时本 pane 重新挂载（view-in 随挂载触发），无需额外补动画。 */}
           {(view === "history" || historyMounted) && (
-            <div className={`view-pane active${historyClosing ? " view-out" : " view-in"}`}>
+            <div className={`view-pane active${historyClosing ? " view-out" : " view-in"}${view !== "history" ? " pane-exit" : ""}`}>
               <WatchHistoryView onBack={goHome} onOpenItem={openHistoryItem} />
             </div>
           )}
@@ -937,7 +937,7 @@ function App() {
               再延迟卸载；返回目标（home/discover/lib）同时补一次 view-in 淡入，
               不会出现「返回后旧视图瞬间闪回、新视图硬切」。 */}
           {(view === "detail" || detailMounted) && detailItem && (
-            <div className={`view-pane active${detailClosing ? " view-out" : " view-in"}`}>
+            <div className={`view-pane active${detailClosing ? " view-out" : " view-in"}${view !== "detail" ? " pane-exit" : ""}`}>
               {/* [lc-1444] 返回目标按进详情的来源（detailFrom）决定，不用 view/activeLib 现猜 */}
               <DetailView
                 base={detailItem}

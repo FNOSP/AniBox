@@ -1,13 +1,15 @@
 /* [lc-1652] 电影详情页「沉浸式」版式（用户提供的样板）：
    全幅头图 + 大标题 + 元数据行 + 播放/收藏按钮 + 玻璃拟态简介/演职员卡。
    [lc-1655] 底部剧照横排已删除，改为「剧照」按钮打开全屏轮播（StillLightbox）。
+   [lc-1662] 「剧照」按钮删除：剧照全部并入头图背景自动轮播（backdrop 第一张 + 4K 剧照），
+     5.5s 交叉淡入淡出；StillLightbox 组件保留但不再由本页打开。
    只有**电影**（!isSeries）走这套；剧集详情页保持原版式。下方仍接原有标签页。 */
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Star as IcoStarL } from "lucide-react";
 import { imgUrl, tmdbImg } from "../../lib/images";
+import { prefersReducedMotion } from "../../lib/motion";
 import { TmdbCreditPerson } from "../../types";
-import { StillLightbox } from "./StillLightbox";
 
 type Props = {
   title: string;
@@ -22,7 +24,7 @@ type Props = {
   genres: string[];
   overview: string;
   cast: TmdbCreditPerson[];
-  /** [lc-1655] 4K 剧照 file_path 列表（最多 6 张，供全屏轮播） */
+  /** [lc-1655] 4K 剧照 file_path 列表（[lc-1662] 全部并入头图背景轮播） */
   stills: string[];
   resumeAt: boolean;
   playing: boolean;
@@ -56,8 +58,6 @@ export function MovieHero({
   const [fav, setFav] = useState(false);
   const [favBusy, setFavBusy] = useState(false);
   const [note, setNote] = useState("");
-  // [lc-1655] 全屏剧照轮播开关
-  const [stillsOpen, setStillsOpen] = useState(false);
 
   useEffect(() => {
     if (!favGuid) return;
@@ -88,11 +88,46 @@ export function MovieHero({
   const bg = backdrop || (poster ? imgUrl(poster) : "");
   const topCast = cast.filter((c) => c?.name).slice(0, 4);
 
+  // [lc-1662] 头图轮播：backdrop 第一张，4K 剧照依次加入（stills 是 TMDB file_path，
+  //   这里统一拼成 original 代理 URL）。去重 + 去空，保证不会出现空白帧。
+  const stillUrls = stills
+    .map((p) => (p.startsWith("http") ? p : tmdbImg(p, "original")))
+    .filter(Boolean);
+  const slides = Array.from(new Set([backdrop, ...stillUrls].filter(Boolean)));
+  const slideKey = slides.join("|");
+  const [slideIdx, setSlideIdx] = useState(0);
+
+  // 换片/剧照列表变化 → 回到第一张
+  useEffect(() => {
+    setSlideIdx(0);
+  }, [slideKey]);
+
+  // 自动轮播：约 5.5s 一张；尊重系统「减弱动态效果」（不自动轮换）。
+  useEffect(() => {
+    if (slides.length <= 1 || prefersReducedMotion()) return;
+    const t = window.setInterval(() => setSlideIdx((i) => (i + 1) % slides.length), 5500);
+    return () => window.clearInterval(t);
+  }, [slides.length, slideKey]);
+
   return (
     <>
       <section className="mv-hero">
+        {/* 基础层：backdrop / poster 常驻。轮播的剧照层叠在它上面 —— 某张剧照加载失败时
+            会自然露出这一层，不会出现空白。 */}
         {bg && <div className="mv-hero-bg" style={{ backgroundImage: `url("${bg}")` }} />}
+        {slides.map((url, i) =>
+          url === bg ? null : (
+            <div
+              key={url}
+              className={`mv-hero-bg mv-hero-bg-layer${slideIdx === i ? " on" : ""}`}
+              style={{ backgroundImage: `url("${url}")` }}
+            />
+          ),
+        )}
         <div className="mv-hero-shade" />
+        {/* 顶栏可读性：顶部一条随主题变化的薄雾（浅色主题提亮、深色主题压暗），
+            让透明顶栏的字在任意头图上都清晰，同时不遮住头图主体。 */}
+        <div className="mv-hero-topscrim" />
 
         <div className="mv-topbar">
           <button className="mv-back" onClick={onBack} title="返回上一页">
@@ -140,17 +175,6 @@ export function MovieHero({
                 ⋯
               </button>
             )}
-            {/* [lc-1655] 剧照：仅有 4K 剧照时出现，点击打开全屏轮播 */}
-            {stills.length > 0 && (
-              <button className="mv-btn-ghost" onClick={() => setStillsOpen(true)} title="查看剧照">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-                  <rect x="3" y="4" width="18" height="16" rx="2" />
-                  <circle cx="8.5" cy="9.5" r="1.5" />
-                  <path d="M21 15l-5-5L5 21" />
-                </svg>
-                剧照
-              </button>
-            )}
           </div>
           {note && <div className="mv-note">{note}</div>}
 
@@ -180,11 +204,6 @@ export function MovieHero({
           )}
         </div>
       </section>
-
-      {/* [lc-1655] 全屏剧照轮播（替代原底部横排） */}
-      {stillsOpen && stills.length > 0 && (
-        <StillLightbox paths={stills} onClose={() => setStillsOpen(false)} />
-      )}
     </>
   );
 }

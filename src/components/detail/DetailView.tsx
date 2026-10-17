@@ -850,6 +850,8 @@ export function DetailView({
   // [lc-1401] 新版式删掉了通栏头图（backdrop 不再用于详情页背景），
   //   但「剧照」一节仍取 TMDB 的 backdrops —— 那是 tmdb.images.backdrops，与本机条目的 backdrop 不是一回事。
   // [lc-1652] 电影版式重新需要通栏头图：TMDB heroBackdrop（面积最大）→ 飞牛 backdrops → 海报兜底
+  // [lc-1662] 模糊根因：全屏背景曾回退到 **w500 竖版海报**（500px 拉到整屏必糊）。
+  //   现在兜底链改为：TMDB 原图竖版海报 → BGM 大图 → 最后才用传入的小图；绝不拿 w500 当整屏底。
   const movieBackdrop = (() => {
     const tb = String((tmdb ?? {}).heroBackdrop ?? "");
     if (tb) return tmdbImg(tb, "original");
@@ -857,15 +859,16 @@ export function DetailView({
       pickLargestImg((data ?? {}).backdrops) ||
       String(pick(data ?? {}, ["backdrops", "backdrop"]) ?? "");
     if (fnb) return imgUrl(fnb);
-    return poster ? imgUrl(poster) : bgmCover;
+    if (tmdbHeroPoster) return tmdbImg(tmdbHeroPoster, "original");
+    if (bgmCover) return bgmCover;
+    return poster ? imgUrl(poster) : "";
   })();
-  // [lc-1655] 电影剧照：只取后端 `stills4k`（已过滤 width>=3840 并按面积降序），最多 6 张，
-  //   供头图「剧照」按钮打开的全屏轮播使用；剧集页仍走 TmdbExtra 的 backdrops 横排。
+  // [lc-1655] 电影剧照：只取后端 `stills4k`（已过滤 width>=3840 并按面积降序）。
+  // [lc-1662] 不再截断为 6 张 —— 全部并入头图背景轮播（详情页「剧照」按钮已删除）。
   const movieStills: string[] = Array.isArray((tmdb ?? {}).stills4k)
     ? ((tmdb ?? {}).stills4k as unknown[])
         .map((p) => String(p ?? ""))
         .filter((p) => p.length > 0)
-        .slice(0, 6)
     : [];
   // 片长：飞牛详情 duration 是秒
   const runtimeMin = Math.round(Number(pick(data ?? {}, ["duration"]) ?? 0) / 60) || 0;

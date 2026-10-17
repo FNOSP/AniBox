@@ -1,38 +1,57 @@
 /* [lc-1652] 电影详情页「沉浸式」版式（用户样板）：全幅头图 / 大标题 / 元数据 /
    播放·收藏 / 玻璃简介卡 / 剧照横排。仅电影使用，剧集详情页不变。 */
 
-/* 电影模式下 .detail-full 去掉左右/底部内边距，让头图满幅 */
+/* 电影模式下 .detail-full 去掉内边距，让头图满幅 */
 .detail-full.mv-detail {
   /* .detail-full 自带 gap:14px，会把头图和下方标签页之间撑出一条透底缝 → 归零 */
   gap: 0;
-  /* [lc-1657] 顶部留 40px（悬浮标题栏高度）：头图从顶栏**下沿**开始，
-     顶栏区域保持正常页面底色、图标清晰；底部归零，头图正好铺到窗口底部。 */
-  padding: 40px 0 0;
+  /* [lc-1662] 顶部不再留 40px：头图从窗口顶端（透明悬浮标题栏下方）开始铺，
+     顶栏透出头图才恢复"半透明/毛玻璃"观感；返回键另行下移到顶栏下方。
+     底部归零，头图正好铺到窗口底部。 */
+  padding: 0;
 }
 
 .mv-hero {
   position: relative;
   flex: none; /* 父级是 flex column：别让头图被压缩 */
-  /* [lc-1657] 铺满首屏剩余高度（40px = 悬浮标题栏高度）：与 .detail-full 的 40px
-     上内边距相加正好 100vh，底部不留透底缝。dvh 兜住移动端动态视口。 */
-  min-height: calc(100vh - 40px);
-  min-height: calc(100dvh - 40px);
+  /* [lc-1662] 铺满整屏（含顶栏区域）。dvh 兜住移动端动态视口。 */
+  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  /* 顶部留白只需避开返回键（topbar 落在 12px），不再需要 104px 的大空白 */
-  padding: 64px 48px 40px;
+  /* 顶部留白：40px 悬浮标题栏 + 返回键，避免正文压到顶栏图标 */
+  padding: 104px 48px 40px;
   overflow: hidden;
   isolation: isolate;
 }
+/* 常驻基础层（backdrop → poster）：轮播剧照层叠在它上面，加载失败时自然露出，不会空白 */
 .mv-hero-bg {
   position: absolute;
   inset: 0;
   background-size: cover;
   background-position: center 28%;
   background-color: #10131a;
-  transform: scale(1.03);
+  /* [lc-1662] 不再 scale 放大（哪怕 1.03 也会让合成器重采样、损失锐度）；cover 已能铺满。 */
+  z-index: -3;
+}
+/* [lc-1662] 轮播层：叠在基础层之上、暗化遮罩之下；只靠 opacity 交叉淡入淡出，
+   绝对定位不参与布局 → 不改变版式、不产生滚动条。 */
+.mv-hero-bg-layer {
   z-index: -2;
+  opacity: 0;
+  transition: opacity 1.2s ease;
+  will-change: opacity;
+  /* 关键：轮播层失败时保持透明，露出下面的 backdrop/poster 基础层（不能继承不透明底色） */
+  background-color: transparent;
+}
+.mv-hero-bg-layer.on {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mv-hero-bg-layer {
+    transition: none;
+  }
 }
 .mv-hero-shade {
   position: absolute;
@@ -42,12 +61,29 @@
     linear-gradient(to right, rgba(8, 10, 15, 0.94) 0%, rgba(8, 10, 15, 0.55) 48%, rgba(8, 10, 15, 0.12) 100%),
     linear-gradient(to top, rgba(8, 10, 15, 1) 0%, rgba(8, 10, 15, 0.74) 34%, rgba(8, 10, 15, 0.08) 72%);
 }
+/* [lc-1662] 顶栏可读性薄雾：跟随主题（浅色主题提亮 / 深色主题压暗）覆盖顶部约 96px，
+   让透明顶栏的 auto 文字色在任意头图上都清晰，同时不遮住头图主体。 */
+.mv-hero-topscrim {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 84px;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--bg-1) 58%, transparent) 0%,
+    color-mix(in srgb, var(--bg-1) 24%, transparent) 55%,
+    transparent 100%
+  );
+}
 
 .mv-topbar {
   position: absolute;
-  /* [lc-1657] 头图已从顶栏下沿（窗口 y=40）开始，这里再偏移 12px →
-     返回键落在窗口 y≈52，仍紧贴悬浮标题栏下方，不与其抢位置。 */
-  top: 12px;
+  /* [lc-1662] 头图已铺到窗口顶端：返回键落在 40px 悬浮标题栏下方 12px 处，
+     不与其抢位置、不压住顶栏图标。 */
+  top: 52px;
   left: 20px;
   right: 20px;
   display: flex;
@@ -295,9 +331,9 @@
 
 @media (max-width: 900px) {
   .mv-hero {
-    /* [lc-1657] 与 topbar 的 12px 偏移配套：56px 足够避开返回键，不再留大块空白 */
-    padding: 56px 22px 28px;
-    min-height: calc(100dvh - 40px);
+    /* [lc-1662] 顶部留白 = 40px 顶栏 + 返回键；头图仍铺满整屏 */
+    padding: 92px 22px 28px;
+    min-height: 100dvh;
   }
   .mv-title {
     font-size: 38px;

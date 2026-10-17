@@ -1878,6 +1878,14 @@ pub fn run() {
             feedback::feedback_list,
             feedback::feedback_thread,
             feedback::feedback_reply,
+            // [lc-1599] 设置面板「日志/诊断」迁移到反馈面板：日志信息 / 打开日志或目录 /
+            // 读取脱敏日志（复制）/ 诊断信息 / 导出诊断包 / 手动日志文件上传
+            feedback::feedback_log_info,
+            feedback::feedback_open_log,
+            feedback::feedback_read_log,
+            feedback::feedback_diagnostics,
+            feedback::feedback_export_diagnostics,
+            feedback::feedback_upload_log_text,
             // [lc-1435] 关闭询问的回答（exit → 走 RunEvent::Exit 退场清理）
             resolve_close,
             // 缓存面板三要素：占用 / 上限 / 清理

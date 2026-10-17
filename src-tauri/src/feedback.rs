@@ -228,23 +228,26 @@ fn env_block(page: Option<&str>) -> String {
 
 // ───────────────────────── 日志尾部 ─────────────────────────
 
-/// 读诊断日志尾部。默认 LOG_TAIL_BYTES，硬上限 LOG_TAIL_MAX_BYTES；
-/// 文件不存在/为空返回 None（跳过日志附件）。
-fn read_log_tail() -> Option<String> {
+/// MPV 播放器日志（mpv.rs 启动时 `--log-file` 写到这里；与诊断日志同目录）。
+fn mpv_log_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("anibox-mpv.log")
+}
+
+/// 读任意日志文件尾部。`max_bytes` 会被硬上限 LOG_TAIL_MAX_BYTES 夹住；
+/// 文件不存在/为空返回 None。截断时丢掉第一个半行（避免半行/半个 UTF-8 字符开头）。
+fn read_tail_path(p: &std::path::Path, max_bytes: u64) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
-    let p = libmpv::log_path();
-    let meta = std::fs::metadata(&p).ok()?;
+    let meta = std::fs::metadata(p).ok()?;
     let len = meta.len();
     if len == 0 {
         return None;
     }
-    let want = LOG_TAIL_BYTES.min(LOG_TAIL_MAX_BYTES);
+    let want = max_bytes.min(LOG_TAIL_MAX_BYTES);
     let start = len.saturating_sub(want);
-    let mut f = std::fs::File::open(&p).ok()?;
+    let mut f = std::fs::File::open(p).ok()?;
     f.seek(SeekFrom::Start(start)).ok()?;
     let mut buf = Vec::with_capacity((len - start) as usize);
     f.read_to_end(&mut buf).ok()?;
-    // 从中间截断时丢掉第一个半行（避免半行/半个 UTF-8 字符开头；lossy 兜底非法序列）
     let slice = if start > 0 {
         match buf.iter().position(|&b| b == b'\n') {
             Some(i) => &buf[i + 1..],
@@ -258,6 +261,31 @@ fn read_log_tail() -> Option<String> {
         None
     } else {
         Some(text)
+    }
+}
+
+/// 读诊断日志尾部。默认 LOG_TAIL_BYTES；文件不存在/为空返回 None（跳过日志附件）。
+fn read_log_tail() -> Option<String> {
+    read_tail_path(&libmpv::log_path(), LOG_TAIL_BYTES)
+}
+
+/// 把任意文本裁到尾部 `max_bytes` 字节（按 UTF-8 字符边界对齐）。返回 (尾部文本, 是否截断)。
+fn tail_chars(text: &str, max_bytes: usize) -> (&str, bool) {
+    if text.len() <= max_bytes {
+        return (text, false);
+    }
+    let mut start = text.len() - max_bytes;
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    (&text[start..], true)
+}
+
+/// 截断文本时丢掉第一行（可能是半行）。
+fn drop_first_line(text: &str) -> &str {
+    match text.find('\n') {
+        Some(i) => &text[i + 1..],
+        None => text,
     }
 }
 
@@ -451,6 +479,16 @@ pub fn redact(text: &str) -> String {
 
 // ───────────────────────── 命令 ─────────────────────────
 
+/// 统一提交入口：POST /feedback → 返回工单号（feedback_submit / 手动日志上传共用）。
+async fn post_feedback(body: &Value) -> Result<String, String> {
+    let v = send_json(http().post(format!("{API_BASE}/feedback")).json(body)).await?;
+    v.get("id")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "反馈服务未返回工单号".to_string())
+}
+
 /// 提交反馈。成功后写本地索引并返回工单号。
 /// include_log=true 时附带日志尾部（已脱敏 + 环境块）；文件不存在/为空则不带 log 字段。
 #[tauri::command]
@@ -495,13 +533,7 @@ pub async fn feedback_submit(
         body["log"] = json!(l);
     }
 
-    let v = send_json(http().post(format!("{API_BASE}/feedback")).json(&body)).await?;
-    let id = v
-        .get("id")
-        .and_then(|x| x.as_str())
-        .filter(|s| !s.is_empty())
-        .ok_or("反馈服务未返回工单号")?
-        .to_string();
+    let id = post_feedback(&body).await?;
 
     // 本地索引：前插 + 截断（写失败不挡提交 —— 工单已在服务端建立，只是本地列表少一条）
     let mut list = load_index(&app).await;
@@ -610,6 +642,309 @@ pub async fn feedback_reply(id: String, text: String) -> Result<Value, String> {
     send_json(http().post(format!("{API_BASE}/feedback/reply")).json(&body)).await
 }
 
+// ───────────────────────── 日志 / 诊断工具（设置面板迁移） ─────────────────────────
+// 对应旧 Electron 项目：
+//   · settings:open-log / open-error-log / open-mpv-log / export-log
+//   · settings:diagnostics（汇总运行态 + 复制）
+//   · feedback:upload-log（手动选择日志文件上传）
+// 新项目只有一份诊断日志（anibox.log）与 MPV 日志（anibox-mpv.log），没有独立 error 日志。
+
+fn file_size(p: &std::path::Path) -> u64 {
+    std::fs::metadata(p).map(|m| m.len()).unwrap_or(0)
+}
+
+fn app_data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| format!("无法解析数据目录：{e}"))
+}
+
+fn diagnostics_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(app_data_dir(app)?.join("diagnostics"))
+}
+
+fn or_unset(s: &str) -> &str {
+    if s.is_empty() { "(未设置)" } else { s }
+}
+
+fn or_saved(s: &str) -> &str {
+    if s.is_empty() { "无" } else { "已保存" }
+}
+
+/// 诊断文本（不含 token/password 明文；只报告“是否已保存”）。
+fn diagnostics_text(app: &AppHandle, cfg: &config::Config) -> String {
+    let log = libmpv::log_path();
+    let mpv = mpv_log_path();
+    let data_dir = app_data_dir(app).map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    let yes = |b: bool| if b { "开" } else { "关" };
+    let lines = [
+        "== 基本信息 ==".to_string(),
+        format!("版本: {}", env!("CARGO_PKG_VERSION")),
+        format!("系统: {} {} ({})", os_label(), std::env::consts::OS, arch_label()),
+        format!("本地时间: {}", now_local_str()),
+        format!("应用数据目录: {data_dir}"),
+        String::new(),
+        "== 日志 ==".to_string(),
+        format!("诊断日志: {}（{} 字节）", log.to_string_lossy(), file_size(&log)),
+        format!("MPV 日志: {}（{} 字节）", mpv.to_string_lossy(), file_size(&mpv)),
+        String::new(),
+        "== 连接与账号 ==".to_string(),
+        format!("NAS 地址: {}", or_unset(&cfg.server)),
+        format!("账号: {}", or_unset(&cfg.username)),
+        format!("Token: {}", or_saved(&cfg.token)),
+        format!("记住密码: {}", or_saved(&cfg.password)),
+        format!("自动登录: {}", yes(cfg.auto_login)),
+        String::new(),
+        "== 播放与网络 ==".to_string(),
+        format!("MPV 路径: {}", or_unset(&cfg.mpv_path)),
+        format!("代理路径: {}", or_unset(&cfg.proxy_path)),
+        format!("NAS 本地代理: {}", yes(cfg.nas_proxy_enabled)),
+        format!("缓存上限: {} MB（0 = 不限）", cfg.cache_limit_mb),
+        String::new(),
+        "== 其它设置 ==".to_string(),
+        format!("关闭行为: {}", or_unset(&cfg.exit_mode)),
+        format!("性能模式: {}", yes(cfg.perf_mode)),
+        format!("轮播 Logo: {}", yes(cfg.carousel_logo)),
+        format!("启动页: {}", or_unset(&cfg.launch_page)),
+        format!("Bangumi 用户: {}", or_unset(&cfg.bgm_username)),
+        format!("Bangumi Token: {}", or_saved(&cfg.bgm_token)),
+        format!("记住 Bangumi Token: {}", yes(cfg.bgm_remember)),
+        format!("自建弹幕接口: {}", yes(cfg.danmu_api_enabled)),
+        format!("弹幕接口数量: {}", cfg.danmu_api_bases.len()),
+    ];
+    lines.join("\n")
+}
+
+/// 日志文件信息（面板展示 + 按钮可用性）。
+#[tauri::command]
+pub async fn feedback_log_info() -> Result<Value, String> {
+    let log = libmpv::log_path();
+    let mpv = mpv_log_path();
+    let dir = log.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    Ok(json!({
+        "path": log.to_string_lossy(),
+        "dir": dir.to_string_lossy(),
+        "size": file_size(&log),
+        "exists": log.exists(),
+        "mpvPath": mpv.to_string_lossy(),
+        "mpvSize": file_size(&mpv),
+        "mpvExists": mpv.exists(),
+        "maxBytes": LOG_TAIL_MAX_BYTES,
+    }))
+}
+
+/// 打开日志文件 / 日志目录 / MPV 日志 / 诊断包目录。
+/// kind: "log" | "dir" | "mpv" | "diagnostics"
+#[tauri::command]
+pub async fn feedback_open_log(app: AppHandle, kind: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let target: std::path::PathBuf = match kind.as_str() {
+        "log" => {
+            let p = libmpv::log_path();
+            if !p.exists() {
+                return Err("诊断日志尚未生成（本进程还没写过日志）".into());
+            }
+            p
+        }
+        "dir" => {
+            let p = libmpv::log_path();
+            p.parent()
+                .map(|x| x.to_path_buf())
+                .ok_or("无法定位日志目录")?
+        }
+        "mpv" => {
+            let p = mpv_log_path();
+            if !p.exists() {
+                return Err("MPV 日志尚未生成（请先用 MPV 播放一次）".into());
+            }
+            p
+        }
+        "diagnostics" => {
+            let p = diagnostics_dir(&app)?;
+            std::fs::create_dir_all(&p).map_err(|e| format!("创建诊断目录失败：{e}"))?;
+            p
+        }
+        other => return Err(format!("未知的日志目标：{other}")),
+    };
+    app.opener()
+        .open_path(target.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| format!("打开失败：{e}"))
+}
+
+/// 读取诊断日志尾部并脱敏，供「复制日志」使用（绝不返回明文凭据）。
+#[tauri::command]
+pub async fn feedback_read_log(max_bytes: Option<u64>) -> Result<Value, String> {
+    let want = max_bytes.unwrap_or(LOG_TAIL_BYTES);
+    match read_tail_path(&libmpv::log_path(), want) {
+        Some(raw) => {
+            let text = redact(&raw);
+            Ok(json!({
+                "text": text,
+                "bytes": text.len(),
+                "path": libmpv::log_path().to_string_lossy(),
+            }))
+        }
+        None => Ok(json!({ "text": "", "bytes": 0, "path": libmpv::log_path().to_string_lossy() })),
+    }
+}
+
+/// 诊断信息（面板「诊断信息」区块 + 复制）。
+#[tauri::command]
+pub async fn feedback_diagnostics(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
+    let cfg = state.config.read().await;
+    Ok(json!({ "text": diagnostics_text(&app, &cfg) }))
+}
+
+// ── 最小 ZIP（store 模式，无第三方依赖）：诊断包只需打包 2~3 个文本文件 ──
+
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for &b in data {
+        crc ^= b as u32;
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+fn zip_store(files: &[(String, Vec<u8>)]) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::new();
+    let mut central: Vec<(String, u32, u32, u32)> = Vec::new();
+    for (name, data) in files {
+        let offset = out.len() as u32;
+        let crc = crc32(data);
+        let size = data.len() as u32;
+        // local file header
+        out.extend_from_slice(&0x0403_4B50u32.to_le_bytes());
+        out.extend_from_slice(&20u16.to_le_bytes()); // version needed
+        out.extend_from_slice(&0x0800u16.to_le_bytes()); // UTF-8 name
+        out.extend_from_slice(&0u16.to_le_bytes()); // method = store
+        out.extend_from_slice(&0u16.to_le_bytes()); // mod time
+        out.extend_from_slice(&0x21u16.to_le_bytes()); // mod date = 1980-01-01
+        out.extend_from_slice(&crc.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes()); // extra len
+        out.extend_from_slice(name.as_bytes());
+        out.extend_from_slice(data);
+        central.push((name.clone(), crc, size, offset));
+    }
+    let cd_offset = out.len() as u32;
+    for (name, crc, size, offset) in &central {
+        out.extend_from_slice(&0x0201_4B50u32.to_le_bytes());
+        out.extend_from_slice(&20u16.to_le_bytes()); // version made by
+        out.extend_from_slice(&20u16.to_le_bytes()); // version needed
+        out.extend_from_slice(&0x0800u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes()); // method = store
+        out.extend_from_slice(&0u16.to_le_bytes()); // mod time
+        out.extend_from_slice(&0x21u16.to_le_bytes()); // mod date = 1980-01-01
+        out.extend_from_slice(&crc.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes()); // extra
+        out.extend_from_slice(&0u16.to_le_bytes()); // comment
+        out.extend_from_slice(&0u16.to_le_bytes()); // disk
+        out.extend_from_slice(&0u16.to_le_bytes()); // internal attrs
+        out.extend_from_slice(&0u32.to_le_bytes()); // external attrs
+        out.extend_from_slice(&offset.to_le_bytes());
+        out.extend_from_slice(name.as_bytes());
+    }
+    let cd_size = out.len() as u32 - cd_offset;
+    out.extend_from_slice(&0x0605_4B50u32.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes()); // disk
+    out.extend_from_slice(&0u16.to_le_bytes()); // cd disk
+    out.extend_from_slice(&(central.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(central.len() as u16).to_le_bytes());
+    out.extend_from_slice(&cd_size.to_le_bytes());
+    out.extend_from_slice(&cd_offset.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes()); // comment
+    out
+}
+
+/// 导出诊断包（zip：diagnostics.txt + anibox.log + anibox-mpv.log，日志均已脱敏）。
+/// 写入 app_data_dir/diagnostics/，返回 zip 路径；前端随后打开该目录。
+#[tauri::command]
+pub async fn feedback_export_diagnostics(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
+    let cfg = state.config.read().await;
+    let text = diagnostics_text(&app, &cfg);
+    let log = read_tail_path(&libmpv::log_path(), LOG_TAIL_MAX_BYTES)
+        .map(|s| redact(&s))
+        .unwrap_or_else(|| "（日志为空或不存在）".to_string());
+    let mpv = read_tail_path(&mpv_log_path(), LOG_TAIL_MAX_BYTES)
+        .map(|s| redact(&s))
+        .unwrap_or_else(|| "（MPV 日志为空或不存在）".to_string());
+
+    let stamp = now_local_str()
+        .replace('-', "")
+        .replace(' ', "")
+        .replace(':', "");
+    let dir = diagnostics_dir(&app)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建诊断目录失败：{e}"))?;
+    let path = dir.join(format!("anibox-diagnostics-{stamp}.zip"));
+    let files = vec![
+        ("diagnostics.txt".to_string(), text.into_bytes()),
+        ("anibox.log".to_string(), log.into_bytes()),
+        ("anibox-mpv.log".to_string(), mpv.into_bytes()),
+    ];
+    std::fs::write(&path, zip_store(&files)).map_err(|e| format!("写入诊断包失败：{e}"))?;
+    libmpv::trace(&format!("[feedback] 诊断包已导出: {}", path.to_string_lossy()));
+    Ok(json!({ "path": path.to_string_lossy(), "dir": dir.to_string_lossy() }))
+}
+
+/// 手动选择日志文件上传：前端读取文件尾部文本（≤2MB）后传进来，
+/// Rust 侧统一脱敏 + 环境块 + 提交，避免前端接触网络与脱敏规则。
+#[tauri::command]
+pub async fn feedback_upload_log_text(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    text: String,
+    name: Option<String>,
+    page: Option<String>,
+    truncated: Option<bool>,
+) -> Result<Value, String> {
+    if text.trim().is_empty() {
+        return Err("日志内容为空".into());
+    }
+    let aid = ensure_aid(&app, &state).await?;
+    let (tail, cut) = tail_chars(&text, LOG_TAIL_MAX_BYTES as usize);
+    let tail = if truncated.unwrap_or(false) || cut {
+        drop_first_line(tail)
+    } else {
+        tail
+    };
+    let safe = redact(tail);
+    let name = name.unwrap_or_default();
+    let title = if name.trim().is_empty() {
+        "手动上传日志文件".to_string()
+    } else {
+        format!("手动上传日志文件：{}", name.trim())
+    };
+    let mut body = json!({
+        "message": title,
+        "aid": aid,
+        "v": env!("CARGO_PKG_VERSION"),
+        "os": os_label(),
+        "arch": arch_label(),
+        "log": format!("{}\n{}", env_block(page.as_deref()), safe),
+    });
+    if let Some(p) = page.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        body["page"] = json!(p);
+    }
+    let id = post_feedback(&body).await?;
+    libmpv::trace(&format!("[feedback] 手动日志上传成功 id={id}"));
+    Ok(json!({ "id": id }))
+}
+
 // ───────────────────────── 测试 ─────────────────────────
 
 #[cfg(test)]
@@ -712,5 +1047,33 @@ mod tests {
             "URL 编码的 Trim-MC-token 必须遮蔽: {out2}"
         );
         assert!(out2.contains("&z=1"), "后续参数不动: {out2}");
+    }
+
+    #[test]
+    fn tail_chars_aligns_utf8_boundary() {
+        let s = "aaa中文中文中文";
+        let (tail, cut) = tail_chars(s, 7);
+        assert!(cut);
+        assert!(tail.is_char_boundary(0), "尾部必须落在字符边界: {tail:?}");
+        assert!(s.ends_with(tail));
+    }
+
+    #[test]
+    fn drop_first_line_works() {
+        assert_eq!(drop_first_line("half\nfull\nmore"), "full\nmore");
+        assert_eq!(drop_first_line("only"), "only");
+    }
+
+    #[test]
+    fn crc32_known_vector() {
+        assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
+    }
+
+    #[test]
+    fn zip_store_has_signatures() {
+        let z = zip_store(&[("a.txt".to_string(), b"hello".to_vec())]);
+        assert_eq!(&z[0..4], b"PK\x03\x04", "local file header");
+        assert_eq!(&z[z.len() - 22..z.len() - 18], b"PK\x05\x06", "EOCD");
+        assert!(z.windows(5).any(|w| w == b"a.txt"), "文件名写入");
     }
 }

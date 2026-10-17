@@ -1,13 +1,16 @@
-/* [lc-1599] 应用内反馈（工单制）面板：列表 / 新建 / 会话 三视图，同一弹窗内切换。
+/* [lc-1599] 应用内反馈（工单制）面板：列表 / 新建 / 会话 / 诊断工具 四视图，同一弹窗内切换。
    外壳复用 .ddet-mask/.ddet（与 SettingsPanel 同款），内部样式全走 33-feedback.css 的 fbx-*。
-   portal 到 body（对齐 WebrsPanel 的成因）：面板由侧栏（覆盖式浮层，z45）内触发打开，
+   portal 到 body（对齐 WebrwsPanel 的成因）：面板由侧栏（覆盖式浮层，z45）内触发打开，
    留在原层级会受侧栏/顶栏合成层干扰；portal 后与 .dseg 等同在顶层上下文，z40 遮罩正常压住内容区。
-   数据链路 = Rust 四条命令：feedback_submit / feedback_list / feedback_thread / feedback_reply。
+   数据链路 = Rust 命令：feedback_submit / feedback_list / feedback_thread / feedback_reply；
+   以及从旧 Electron 设置面板迁移来的日志/诊断命令：feedback_log_info / feedback_open_log /
+   feedback_read_log / feedback_diagnostics / feedback_export_diagnostics / feedback_upload_log_text。
    会话视图打开期间每 20 秒轮询一次（实时状态同步）；网络失败只行内提示、保留已有内容。 */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { X as IcoXL } from "lucide-react";
+import { fmtSize } from "../../lib/format";
 
 /** feedback_list 返回项（Rust 侧本地索引 + 远端状态合并；远端缺失时 status="unknown"） */
 type FbListItem = {
@@ -36,6 +39,18 @@ type FbTicket = {
 type FbMsg = { ts: number; role: string; text: string };
 type FbThread = { ok: boolean; ticket: FbTicket; messages: FbMsg[] };
 
+/** feedback_log_info（Rust 侧返回的日志路径/大小；mpv 日志不存在时 mpvExists=false） */
+type LogInfo = {
+  path: string;
+  dir: string;
+  size: number;
+  exists: boolean;
+  mpvPath: string;
+  mpvSize: number;
+  mpvExists: boolean;
+  maxBytes: number;
+};
+
 /** 状态枚举 → 中文（对齐服务端冻结枚举；unknown = 网络降级时的本地兜底） */
 const STATUS_TEXT: Record<string, string> = {
   open: "待处理",
@@ -63,7 +78,7 @@ function fmtTs(ts: number | null | undefined): string {
 }
 
 export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: string }) {
-  const [view, setView] = useState<"list" | "new" | "thread">("list");
+  const [view, setView] = useState<"list" | "new" | "thread" | "diag">("list");
   // 列表
   const [items, setItems] = useState<FbListItem[] | null>(null);
   const [listErr, setListErr] = useState("");
@@ -80,6 +95,14 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
   const [copyNote, setCopyNote] = useState("");
+  // 日志 / 诊断工具（旧 Electron 设置面板迁移）
+  const [logInfo, setLogInfo] = useState<LogInfo | null>(null);
+  const [diagText, setDiagText] = useState("");
+  const [diagLoading, setDiagLoading] = useState(false);
+  const [toolNote, setToolNote] = useState("");
+  const [toolErr, setToolErr] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   const loadList = useCallback(async () => {
     setListErr("");
@@ -93,10 +116,44 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
     }
   }, []);
 
+  const loadLogInfo = useCallback(async () => {
+    try {
+      setLogInfo(await invoke<LogInfo>("feedback_log_info"));
+    } catch {
+      // 日志信息只是展示项，失败不影响工单功能
+    }
+  }, []);
+
+  const loadDiag = useCallback(async () => {
+    setDiagLoading(true);
+    setToolErr("");
+    try {
+      const r = await invoke<{ text: string }>("feedback_diagnostics");
+      setDiagText(r.text || "");
+    } catch (e) {
+      setToolErr(String(e));
+    } finally {
+      setDiagLoading(false);
+    }
+  }, []);
+
   // 进入列表视图时拉取（打开面板 / 从新建或会话返回）
   useEffect(() => {
     if (view === "list") void loadList();
   }, [view, loadList]);
+
+  // 面板打开即取日志信息（新建视图的“当前日志”提示也要用）
+  useEffect(() => {
+    void loadLogInfo();
+  }, [loadLogInfo]);
+
+  // 诊断视图：每次进入刷新日志信息与诊断文本
+  useEffect(() => {
+    if (view === "diag") {
+      void loadLogInfo();
+      void loadDiag();
+    }
+  }, [view, loadLogInfo, loadDiag]);
 
   const loadThread = useCallback(async (id: string) => {
     try {
@@ -193,6 +250,87 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
     window.setTimeout(() => setCopyNote(""), 1500);
   };
 
+  // ── 日志 / 诊断工具（对应旧 Electron 设置面板的日志按钮） ──
+  const openLog = async (kind: "log" | "dir" | "mpv" | "diagnostics") => {
+    setToolErr("");
+    setToolNote("");
+    try {
+      await invoke("feedback_open_log", { kind });
+    } catch (e) {
+      setToolErr(String(e));
+    }
+  };
+
+  const copyLog = async () => {
+    setToolErr("");
+    setToolNote("");
+    try {
+      const r = await invoke<{ text: string; bytes: number }>("feedback_read_log", {});
+      if (!r.text) {
+        setToolNote("日志为空或尚未生成");
+        return;
+      }
+      await navigator.clipboard.writeText(r.text);
+      setToolNote(`已复制日志（已脱敏，${fmtSize(r.bytes)}）`);
+    } catch (e) {
+      setToolErr(String(e));
+    }
+  };
+
+  const copyDiag = async () => {
+    if (!diagText) return;
+    try {
+      await navigator.clipboard.writeText(diagText);
+      setToolNote("诊断信息已复制");
+    } catch {
+      setToolErr("复制失败");
+    }
+  };
+
+  const exportDiag = async () => {
+    setToolErr("");
+    setToolNote("正在导出诊断包…");
+    try {
+      const r = await invoke<{ path: string }>("feedback_export_diagnostics");
+      setToolNote(`诊断包已导出：${r.path}`);
+      // 导出后直接打开所在目录（与旧项目“导出日志”后给路径的体验一致）
+      await invoke("feedback_open_log", { kind: "diagnostics" }).catch(() => {});
+    } catch (e) {
+      setToolNote("");
+      setToolErr(String(e));
+    }
+  };
+
+  const pickLogFile = () => fileRef.current?.click();
+
+  const onPickLogFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f || uploading) return;
+    setUploading(true);
+    setToolErr("");
+    setToolNote("读取日志文件…");
+    try {
+      const max = 2 * 1024 * 1024;
+      const truncated = f.size > max;
+      const blob = truncated ? f.slice(f.size - max) : f;
+      const text = await blob.text();
+      const r = await invoke<{ id: string }>("feedback_upload_log_text", {
+        text,
+        name: f.name,
+        page: page || undefined,
+        truncated,
+      });
+      setToolNote(`日志上传成功，工单号：${r.id}`);
+      openThread(r.id);
+    } catch (err) {
+      setToolNote("");
+      setToolErr(String(err));
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const ticketStatus = thread?.ticket?.status ?? "";
   // 原始提交内容固定渲染为第一条 user 气泡；若服务端 messages[0] 与它完全相同则跳过（防重复）
   const origMsg = thread?.ticket?.message ?? "";
@@ -229,9 +367,21 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
               >
                 ＋ 新建反馈
               </button>
-              <button className="fbx-btn" onClick={() => void loadList()} disabled={items === null}>
-                刷新
-              </button>
+              <div className="fbx-toolbar-r">
+                <button className="fbx-btn" onClick={() => void loadList()} disabled={items === null}>
+                  刷新
+                </button>
+                <button
+                  className="fbx-btn"
+                  onClick={() => {
+                    setToolNote("");
+                    setToolErr("");
+                    setView("diag");
+                  }}
+                >
+                  日志与诊断
+                </button>
+              </div>
             </div>
             {listErr && <div className="fbx-note err">{listErr}</div>}
             <div className="fbx-list">
@@ -292,10 +442,18 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
               <div className="fbx-hint">
                 日志会先脱敏（账号/token/密码/手机号/邮箱/本机用户名），保留 NAS 地址与域名便于排查
               </div>
+              <div className="fbx-hint">
+                {logInfo
+                  ? `当前日志：${fmtSize(logInfo.size)}（最多附带最近 ${fmtSize(Math.min(logInfo.maxBytes, 512 * 1024))}）`
+                  : "正在读取日志信息…"}
+              </div>
               {submitErr && <div className="fbx-note err">{submitErr}</div>}
               <div className="fbx-actions">
                 <button className="fbx-btn" onClick={() => setView("list")} disabled={submitting}>
                   返回列表
+                </button>
+                <button className="fbx-btn" onClick={() => setView("diag")} disabled={submitting}>
+                  日志与诊断
                 </button>
                 <button
                   className="fbx-btn primary"
@@ -305,6 +463,108 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
                   {submitting ? "提交中…" : "提交"}
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {view === "diag" && (
+          <div className="ddet-body fbx-body">
+            <div className="fbx-toolbar">
+              <button className="fbx-btn" onClick={() => setView("list")}>
+                ← 返回列表
+              </button>
+              <button className="fbx-btn" onClick={() => void loadLogInfo()}>
+                刷新日志信息
+              </button>
+            </div>
+            {toolErr && <div className="fbx-note err">{toolErr}</div>}
+            {toolNote && <div className="fbx-note">{toolNote}</div>}
+
+            <div className="fbx-diag">
+              <section className="fbx-sec">
+                <h4 className="fbx-sec-h">日志文件</h4>
+                <div className="fbx-kv">
+                  <span>诊断日志</span>
+                  <code>{logInfo?.path || "读取中…"}</code>
+                </div>
+                <div className="fbx-kv">
+                  <span>大小</span>
+                  <span>{logInfo ? fmtSize(logInfo.size) : "…"}</span>
+                </div>
+                <div className="fbx-kv">
+                  <span>MPV 日志</span>
+                  <code>{logInfo?.mpvPath || "读取中…"}</code>
+                </div>
+                <div className="fbx-kv">
+                  <span>MPV 日志大小</span>
+                  <span>
+                    {logInfo ? (logInfo.mpvExists ? fmtSize(logInfo.mpvSize) : "尚未生成") : "…"}
+                  </span>
+                </div>
+                <div className="fbx-btnrow">
+                  <button
+                    className="fbx-btn"
+                    onClick={() => void openLog("log")}
+                    disabled={!logInfo?.exists}
+                  >
+                    打开日志
+                  </button>
+                  <button className="fbx-btn" onClick={() => void openLog("dir")}>
+                    打开日志目录
+                  </button>
+                  <button className="fbx-btn" onClick={() => void copyLog()}>
+                    复制日志（脱敏）
+                  </button>
+                  <button className="fbx-btn" onClick={() => void exportDiag()}>
+                    导出诊断包
+                  </button>
+                  <button
+                    className="fbx-btn"
+                    onClick={() => void openLog("mpv")}
+                    disabled={!logInfo?.mpvExists}
+                  >
+                    MPV 日志
+                  </button>
+                </div>
+                <div className="fbx-hint">
+                  复制与导出的日志都会先按 feedback.rs 的同一套规则脱敏（token / 密码 / Bearer /
+                  手机号 / 邮箱 / 本机用户名），NAS 地址与域名保留用于排查网络。
+                </div>
+              </section>
+
+              <section className="fbx-sec">
+                <div className="fbx-sec-hd">
+                  <h4 className="fbx-sec-h">诊断信息</h4>
+                  <div className="fbx-btnrow">
+                    <button className="fbx-btn" onClick={() => void loadDiag()} disabled={diagLoading}>
+                      {diagLoading ? "刷新中…" : "刷新"}
+                    </button>
+                    <button className="fbx-btn" onClick={() => void copyDiag()} disabled={!diagText}>
+                      复制
+                    </button>
+                  </div>
+                </div>
+                <pre className="fbx-pre">{diagText || (diagLoading ? "加载中…" : "（无诊断信息）")}</pre>
+              </section>
+
+              <section className="fbx-sec">
+                <h4 className="fbx-sec-h">手动上传日志文件</h4>
+                <div className="fbx-hint">
+                  选择一个 .log / .txt 文件，读取尾部最多 2MB，脱敏后作为工单提交（工单内容为文件名）。
+                </div>
+                <div className="fbx-btnrow">
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept=".log,.txt,text/plain"
+                    style={{ display: "none" }}
+                    onChange={(e) => void onPickLogFile(e)}
+                  />
+                  <button className="fbx-btn primary" onClick={pickLogFile} disabled={uploading}>
+                    {uploading ? "上传中…" : "选择日志文件上传"}
+                  </button>
+                </div>
+              </section>
             </div>
           </div>
         )}

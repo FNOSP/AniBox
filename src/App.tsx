@@ -82,9 +82,11 @@ function App() {
       return true;
     }
   });
-  const [sidebarOpen, setSidebarOpen] = useState(
-    () => localStorage.getItem("fntv-sidebar-open") !== "0",
-  );
+  // [lc-1653] 侧栏启动一律收起：不再读取 localStorage 决定初始展开态，
+  // 避免上次的展开状态影响下一次启动（用户反馈：打开软件侧栏不应默认展开）。
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  // [lc-1653] 侧栏里任一导航/面板入口触发后自动收起侧栏。
+  const closeSidebar = () => setSidebarOpen(false);
   // 深浅主题：默认浅色；html.dark 类由本状态驱动，首帧前 main.tsx 已按存储值预置防闪烁
   const [theme, setTheme] = useState<"light" | "dark">(() =>
     localStorage.getItem("fntv-theme") === "dark" ? "dark" : "light",
@@ -852,12 +854,31 @@ function App() {
           server={server}
           sum={sum}
           favTotal={favTotal}
-          onOpenFav={openFav}
-          onOpenCat={openCat}
-          onHome={goHome}
-          onOpenSettings={() => setSettingsOpen(true)}
-          onOpenFeedback={() => setFeedbackOpen(true)}
-          onOpenHistory={openHistory}
+          // [lc-1653] 每个入口先收起侧栏，再执行原回调（导航/开面板）。
+          onOpenFav={() => {
+            closeSidebar();
+            openFav();
+          }}
+          onOpenCat={(cat) => {
+            closeSidebar();
+            openCat(cat);
+          }}
+          onHome={() => {
+            closeSidebar();
+            goHome();
+          }}
+          onOpenSettings={() => {
+            closeSidebar();
+            setSettingsOpen(true);
+          }}
+          onOpenFeedback={() => {
+            closeSidebar();
+            setFeedbackOpen(true);
+          }}
+          onOpenHistory={() => {
+            closeSidebar();
+            openHistory();
+          }}
         />
         <div className="view-stack">
           {/* [lc-123-rev2] 「首页 | 发现」胶囊是**浮层**（.navbar = absolute，不占布局高度）：
@@ -1036,12 +1057,8 @@ function App() {
         nav={view !== "login"}
         page={page}
         sidebarOpen={sidebarOpen}
-        onToggleSidebar={() =>
-          setSidebarOpen((v) => {
-            localStorage.setItem("fntv-sidebar-open", v ? "0" : "1");
-            return !v;
-          })
-        }
+        // [lc-1653] 汉堡键保持开/关切换语义；展开态不再持久化（不影响下次启动）。
+        onToggleSidebar={() => setSidebarOpen((v) => !v)}
         // [lc-1640] 顶栏 ⟳：按当前视图强制刷新该页数据（见 onRefresh）。
         onRefresh={onRefresh}
         // spinning 汇总：home 用 homeLoading，其余页面用各视图 reportBusy 的聚合（pageRefreshing）。

@@ -433,7 +433,7 @@ export function SettingsPanel({
               </a>
             </span>
           </div>
-          {/* [lc-1607] 版权 / 资源纠纷风险规避三入口：免责声明（只读弹窗）+ 开源许可 + 第三方组件与致谢 */}
+          {/* [lc-1607] 版权 / 资源纠纷风险规避入口：免责声明（只读弹窗）+ 开源许可 */}
           <div className="set-row">
             <div>
               <span className="set-k">免责声明</span>
@@ -457,22 +457,6 @@ export function SettingsPanel({
             >
               许可证全文
             </a>
-          </div>
-          <div className="set-row">
-            <div>
-              <span className="set-k">第三方组件与致谢</span>
-              <div className="set-desc">
-                在线资源能力参考并移植自{" "}
-                <a href="https://github.com/Predidit/Kazumi" target="_blank" rel="noreferrer">
-                  Predidit/Kazumi
-                </a>
-                （GPL-3.0）；规则内容来自社区仓库{" "}
-                <a href="https://github.com/Predidit/KazumiRules" target="_blank" rel="noreferrer">
-                  KazumiRules
-                </a>
-                ；mpv / uosc 等第三方组件各自遵循其许可。
-              </div>
-            </div>
           </div>
           {note && <div className="set-note">{note}</div>}
         </div>

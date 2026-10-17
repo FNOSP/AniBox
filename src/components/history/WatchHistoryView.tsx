@@ -68,7 +68,16 @@ export type HistoryItem = {
   myReview?: string;
 };
 
-type HistoryResp = { items?: HistoryItem[]; fnosOk?: boolean; fnosError?: string };
+/** [lc-1668] 热力图的一天（count = 当天去重作品数；同一部剧一天只算一次） */
+export type HistoryHeatDay = { y: number; m0: number; d: number; count: number };
+
+type HistoryResp = {
+  items?: HistoryItem[];
+  fnosOk?: boolean;
+  fnosError?: string;
+  /** [lc-1668] 日级台账（播放过就算；在线源已搁置不计入） */
+  heat?: HistoryHeatDay[];
+};
 
 /* ── [lc-1631] 播放会话计时（模块级，App 启动即注册；本文件被 App 静态 import）──
    为什么在这里：年度报告要「实际观看时长」，而起播那一刻拿不到 —— 只能等播放结束。
@@ -242,13 +251,10 @@ const fmtDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2
 /** 颜色档位（照抄原项目）：0=空 1=1部 2=2~3 3=4~5 4=6+ */
 const heatLevel = (c: number) => (c <= 0 ? 0 : c === 1 ? 1 : c <= 3 ? 2 : c <= 5 ? 3 : 4);
 
-function buildHeat(items: HistoryItem[]) {
+function buildHeat(days: HistoryHeatDay[]) {
   const counts = new Map<string, number>();
-  for (const it of items) {
-    const ts = it.playedAt ?? 0;
-    if (ts <= 0) continue;
-    const k = localKey(new Date(ts));
-    counts.set(k, (counts.get(k) ?? 0) + 1);
+  for (const b of days) {
+    if (b.count > 0) counts.set(`${b.y}-${b.m0}-${b.d}`, b.count);
   }
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -280,7 +286,7 @@ function buildHeat(items: HistoryItem[]) {
     }
   });
   const total = [...counts.values()].reduce((s, n) => s + n, 0);
-  return { weeks, months, total };
+  return { weeks, months, total, activeDays: counts.size };
 }
 
 const WEEKDAY_LABELS = ["日", "一", "二", "三", "四", "五", "六"];
@@ -293,7 +299,12 @@ export function WatchHistoryView({
   /** 库内条目点击 → 走现有详情链路（App.tsx 负责 setDetailItem + view 切换） */
   onOpenItem: (item: MediaItem) => void;
 }) {
-  const [data, setData] = useState<{ items: HistoryItem[]; fnosOk: boolean; fnosError: string } | null>(null);
+  const [data, setData] = useState<{
+    items: HistoryItem[];
+    fnosOk: boolean;
+    fnosError: string;
+    heat: HistoryHeatDay[];
+  } | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState<Filter>("全部");
@@ -326,6 +337,7 @@ export function WatchHistoryView({
         items: list,
         fnosOk: !!r?.fnosOk,
         fnosError: String(r?.fnosError ?? ""),
+        heat: Array.isArray(r?.heat) ? r.heat : [],
       });
       // 用后端带出的评分初始化本地表（避免逐条 get_my_rating 往返）
       const map: Record<string, { score: number; review: string }> = {};
@@ -364,6 +376,7 @@ export function WatchHistoryView({
   }, []);
 
   const items = data?.items ?? [];
+  const heatDays = data?.heat;
   const counts = useMemo(() => {
     const c: Record<Filter, number> = { 全部: items.length, 电影: 0, 剧集: 0 };
     for (const it of items) c[catOf(it)]++;
@@ -401,13 +414,18 @@ export function WatchHistoryView({
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
     const dayMs = 86400000;
     const thirtyAgo = now.getTime() - 30 * dayMs;
+    // [lc-1668] 近30天活跃天数改看**播放活动台账**：只要播放过就算一天，
+    // 不再受「作品清单」过滤（个人视频/在线源）与「只保留最近一次」的影响。
     const activeDays = new Set<string>();
+    for (const b of heatDays ?? []) {
+      const d = new Date(b.y, b.m0, b.d);
+      if (d.getTime() >= thirtyAgo) activeDays.add(`${b.y}-${b.m0}-${b.d}`);
+    }
     let monthCount = 0;
     for (const it of items) {
       const ts = it.playedAt ?? 0;
       if (ts <= 0) continue;
       if (ts >= monthStart) monthCount++;
-      if (ts >= thirtyAgo) activeDays.add(localKey(new Date(ts)));
     }
     const total = items.length;
     const doneN = items.filter((it) => (it.progress ?? 0) >= 1).length;
@@ -419,9 +437,9 @@ export function WatchHistoryView({
       doneN,
       watchingN: total - doneN,
     };
-  }, [items]);
+  }, [items, heatDays]);
 
-  const heat = useMemo(() => buildHeat(items), [items]);
+  const heat = useMemo(() => buildHeat(heatDays ?? []), [heatDays]);
 
   /** 卡片点击 → 打开详情浮层（[lc-1616] 不再直接跳详情；浮层内「查看详情」再走详情链路） */
   const handleOpen = (it: HistoryItem) => setDetail(it);
@@ -569,7 +587,7 @@ export function WatchHistoryView({
                   <div className="hist-heat-head">
                     <div className="hist-heat-title-wrap">
                       <div className="hist-heat-title">观影活动热力图</div>
-                      <div className="hist-heat-range">过去一年 · {heat.total} 部作品</div>
+                      <div className="hist-heat-range">过去一年 · {heat.activeDays} 天有观看</div>
                     </div>
                     <div className="hist-heat-legend">
                       少

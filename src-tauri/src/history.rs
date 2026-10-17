@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -128,6 +128,16 @@ fn days_path(app: &AppHandle) -> Option<PathBuf> {
 pub struct DayStat {
     #[serde(default)]
     pub count: u32,
+    /// [lc-1668] 热力图口径：当天播放过的**作品去重数**（同一部剧一天只算一次）。
+    #[serde(default)]
+    pub heat: u32,
+    /// [lc-1668] 是否已按新口径记录过（旧 watch_days.json 没有该字段 → false，
+    /// 热力图对旧数据回退用 count，避免历史天直接变空）。
+    #[serde(default)]
+    pub tracked: bool,
+    /// [lc-1668] 当天已计过的作品键（标题），用于同一天去重；只存标题，不存路径。
+    #[serde(default)]
+    pub series: BTreeSet<String>,
 }
 
 /// 本地日期 `"Y-M-D"`（月份 0 基）。record 恒在「此刻」调用，故直接用系统本地时间；
@@ -182,7 +192,11 @@ fn save_days(app: &AppHandle, map: &BTreeMap<String, DayStat>) {
 }
 
 /// 台账 +1（纯逻辑，供单测）：脏键（年份 < 2000）丢弃，避免报告/热力图从脏年份起算。
-fn bump_day(map: &mut BTreeMap<String, DayStat>, key: &str) {
+/// [lc-1668] 同时维护热力图口径：
+///   · `count` 仍 = 播放次数（年度报告的「次数 × 平均时长」估算保持原语义）；
+///   · `heat` = 当天**去重作品数**（同一部剧一天只算一次，标题作为作品键）；
+///   · `count_for_heat=false`（在线源已搁置）不计入热力图。
+fn bump_day(map: &mut BTreeMap<String, DayStat>, key: &str, series_key: &str, count_for_heat: bool) {
     let y = key
         .split('-')
         .next()
@@ -191,7 +205,48 @@ fn bump_day(map: &mut BTreeMap<String, DayStat>, key: &str) {
     if y < 2000 {
         return;
     }
-    map.entry(key.to_string()).or_default().count += 1;
+    let st = map.entry(key.to_string()).or_default();
+    // 旧台账迁移：没有 tracked 标记时，先把已有 count 作为热力图基数（历史无法回溯去重）
+    if !st.tracked {
+        st.heat = st.heat.max(st.count);
+    }
+    st.tracked = true;
+    st.count += 1;
+    if count_for_heat {
+        let k = series_key.trim();
+        if !k.is_empty() && st.series.insert(k.to_string()) {
+            st.heat += 1;
+        }
+    }
+}
+
+/// [lc-1668] 热力图数据：日级台账 → `[{y, m0, d, count}]`。
+/// `count` = 当天**去重作品数**（同一部剧一天只算一次）；旧台账没有 `tracked` 标记时
+/// 回退用原始播放次数，避免历史天直接变空（无法回溯去重，但至少保留活动痕迹）。
+pub fn heat_days(map: &BTreeMap<String, DayStat>) -> Vec<Value> {
+    let mut out = Vec::new();
+    for (k, st) in map {
+        let parts: Vec<&str> = k.split('-').collect();
+        if parts.len() != 3 {
+            continue;
+        }
+        let (Ok(y), Ok(m0), Ok(d)) = (
+            parts[0].parse::<i32>(),
+            parts[1].parse::<i32>(),
+            parts[2].parse::<i32>(),
+        ) else {
+            continue;
+        };
+        if y < 2000 {
+            continue;
+        }
+        let count = if st.tracked { st.heat } else { st.count };
+        if count == 0 {
+            continue;
+        }
+        out.push(json!({ "y": y, "m0": m0, "d": d, "count": count }));
+    }
+    out
 }
 
 /// 读写串行化：record 是「读-改-写」，两条播放命令几乎同时触发时不能互相覆盖。
@@ -293,8 +348,14 @@ pub fn record(app: &AppHandle, rec: WatchRecord) {
     upsert(&mut list, rec.clone());
     save(app, &list);
     // 日级台账：只记「今天看了几部」，永不裁剪（报告整年可算的关键）。
+    // [lc-1668] 同时记热力图去重键：作品键 = 标题（剧集各集共用 tv_title；电影/个人视频用自身标题）。
     let mut days = load_days(app);
-    bump_day(&mut days, &today_key());
+    let series_key = if rec.title.trim().is_empty() {
+        rec.guid.clone()
+    } else {
+        rec.title.clone()
+    };
+    bump_day(&mut days, &today_key(), &series_key, rec.source != "webrs");
     save_days(app, &days);
     // 通知前端「刚起播的是哪一条」：mpv 事件流不带 guid，前端靠这条事件知道该把时长回填给谁。
     let _ = app.emit("history-recorded", json!({ "guid": rec.guid, "playedAt": rec.played_at }));
@@ -1142,13 +1203,41 @@ mod tests {
     #[test]
     fn day_ledger_accumulates_and_drops_dirty() {
         let mut m: BTreeMap<String, DayStat> = Default::default();
-        bump_day(&mut m, "2026-0-5"); // 2026 年 1 月 5 日（0 基月）
-        bump_day(&mut m, "2026-0-5");
-        bump_day(&mut m, "2026-11-31");
-        bump_day(&mut m, "1970-0-1"); // 脏键：年份 < 2000 → 丢弃
-        assert_eq!(m.get("2026-0-5").unwrap().count, 2);
-        assert_eq!(m.get("2026-11-31").unwrap().count, 1);
+        bump_day(&mut m, "2026-0-5", "剧A", true); // 2026 年 1 月 5 日（0 基月）
+        bump_day(&mut m, "2026-0-5", "剧A", true); // 同一部剧同一天：count+1，heat 不增
+        bump_day(&mut m, "2026-0-5", "剧B", true);
+        bump_day(&mut m, "2026-11-31", "电影C", true);
+        bump_day(&mut m, "2026-11-31", "在线源", false); // 在线源不计热力图
+        bump_day(&mut m, "1970-0-1", "脏", true); // 脏键：年份 < 2000 → 丢弃
+        let d = m.get("2026-0-5").unwrap();
+        assert_eq!(d.count, 3);
+        assert_eq!(d.heat, 2);
+        let e = m.get("2026-11-31").unwrap();
+        assert_eq!(e.count, 2);
+        assert_eq!(e.heat, 1);
         assert!(!m.contains_key("1970-0-1"));
+    }
+
+    #[test]
+    fn heat_days_uses_dedup_count_and_legacy_fallback() {
+        let mut m: BTreeMap<String, DayStat> = Default::default();
+        bump_day(&mut m, "2026-9-17", "剧A", true);
+        bump_day(&mut m, "2026-9-17", "剧B", true);
+        bump_day(&mut m, "2026-9-17", "剧A", true);
+        let h = heat_days(&m);
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0]["count"], json!(2));
+        assert_eq!(h[0]["y"], json!(2026));
+        assert_eq!(h[0]["m0"], json!(9));
+        assert_eq!(h[0]["d"], json!(17));
+
+        // 旧台账没有 tracked 标记 → 回退用原始 count，历史天不会变空
+        let mut legacy: BTreeMap<String, DayStat> = Default::default();
+        legacy.insert(
+            "2026-9-18".into(),
+            DayStat { count: 1, ..Default::default() },
+        );
+        assert_eq!(heat_days(&legacy)[0]["count"], json!(1));
     }
 
     #[test]

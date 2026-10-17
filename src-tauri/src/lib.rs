@@ -330,10 +330,14 @@ async fn get_watch_history(app: AppHandle, state: State<'_, AppState>) -> Result
             }
         }
     }
+    // [lc-1668] 热力图数据：来自**日级台账**（播放过就算，同一部剧一天只算一次），
+    // 与「作品清单」的过滤口径解耦 —— 个人视频即便因无封面不进列表，播放活动仍计入日历。
+    let heat = history::heat_days(&history::load_days(&app));
     Ok(json!({
         "items": items,
         "fnosOk": fnos.is_some(),
         "fnosError": fnos_error,
+        "heat": heat,
     }))
 }
 

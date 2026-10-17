@@ -802,7 +802,7 @@ a.fbx-btn {
 .fbx-diag-toolbar {
   flex: 0 0 auto;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
@@ -918,6 +918,29 @@ a.fbx-btn {
 }
 .fbx-btnrow-inline {
   margin-top: 0;
+}
+/* 日志与诊断：顶部工具条 + 各按钮行统一到与 .fbx-form-ft .fbx-btn 相同的口径。
+   基类 .fbx-btn 原本按内容自适应（7px/13px、12.5px），.subtle 又改成 6px/10px，
+   导致「刷新全部 / 导出诊断包」及日志行按钮高低、宽窄不一。这里统一锁死盒模型：
+   同高 34px、水平居中、line-height:1；主/次按钮仅保留原有配色层级差异。
+   选择器位于 .fbx-btn.subtle 之后，确保覆盖其 padding。 */
+.fbx-diag-actions,
+.fbx-btnrow {
+  align-items: center;
+}
+.fbx-diag-actions .fbx-btn,
+.fbx-btnrow .fbx-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 34px;
+  min-height: 34px;
+  padding: 0 16px;
+  margin: 0;
+  line-height: 1;
+  font-size: 13px;
 }
 .fbx-modgrid {
   display: grid;

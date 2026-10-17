@@ -124,7 +124,6 @@
    长简介截断 4 行 + 底部渐隐 + 「展开」。原固定高度 118px 是给顶部信息框防"海报被
    纵向拉长"的（lc-1423）—— 简介移入「详情」页后该约束已不存在，固定高度只会留死空白。 */
 .dv2-isum .dfold {
-  position: relative;      /* [lc-1568] 渐隐的定位基座：锚在文字底部（原锚在固定高盒底） */
   margin: 0;
   font-size: 13px;
   line-height: 1.8;
@@ -135,16 +134,13 @@
   -webkit-line-clamp: 4;
   overflow: hidden;
 }
-/* 未展开时才画底部渐隐（全文在弹窗里，容器内不存在"展开态"） */
-.dv2-isum .dfold.clip::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 34px;
-  background: linear-gradient(to bottom, rgba(0, 0, 0, 0), var(--bg-2));
-  pointer-events: none;
+/* [lc-1666] 未展开时的底部收束：用**文字遮罩**渐隐，不再盖一层实心底色。
+   原 ::after 的渐变色终点是 var(--bg-2)（本身半透明，叠在卡片同色底上会明显更实），
+   在玻璃/渐变背景上会出现一条"实心色结束"的横带；mask 让文字本身淡出，
+   露出卡片真实底色，收束自然（全文在弹窗里，容器内不存在"展开态"）。 */
+.dv2-isum .dfold.clip {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 34px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 34px), transparent);
 }
 .dv2-topinfo .play-note {
   font-size: 12px;

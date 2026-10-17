@@ -1,5 +1,5 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { IcoFolder, IcoGrid, IcoHome, IcoLive, IcoMovie, IcoStar, IcoTv } from "../../icons";
 import { Clock as IcoClockL, MessageSquare as IcoMsgL, Settings as IcoGearL } from "lucide-react";
@@ -52,10 +52,19 @@ export function Sidebar({
     () => localStorage.getItem("fntvSidebarActions.collapsed") === "1",
   );
   const [appVer, setAppVer] = useState("0.1.0");
+  // [lc-1665] 快捷操作卡展开/收起：高度补间 + 内容淡入（优雅过渡，不再是硬切）
+  const panelRef = useRef<HTMLDivElement>(null);
+  const prevHeightRef = useRef<number | null>(null);
   useEffect(() => {
     getVersion().then(setAppVer).catch(() => {});
   }, []);
   function setFold(v: boolean) {
+    if (v === cardFold) return;
+    const el = panelRef.current;
+    // 切换前先记住当前高度；减少动态偏好时不做补间，直接切换
+    if (el && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      prevHeightRef.current = el.getBoundingClientRect().height;
+    }
     setCardFold(v);
     try {
       localStorage.setItem("fntvSidebarActions.collapsed", v ? "1" : "0");
@@ -63,6 +72,19 @@ export function Sidebar({
       /* ignore */
     }
   }
+  // DOM 更新后把高度从旧值补到新值（Web Animations API，结束后自动回落到 auto）
+  useLayoutEffect(() => {
+    const el = panelRef.current;
+    const from = prevHeightRef.current;
+    prevHeightRef.current = null;
+    if (!el || from == null) return;
+    const to = el.getBoundingClientRect().height;
+    if (Math.abs(to - from) < 1) return;
+    el.animate([{ height: `${from}px` }, { height: `${to}px` }], {
+      duration: 360,
+      easing: "cubic-bezier(0.32, 0.72, 0, 1)",
+    });
+  }, [cardFold]);
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
       <div className={`side-item ${activeGuid === null ? "active" : ""}`} onClick={onHome}>
@@ -96,9 +118,9 @@ export function Sidebar({
           <div className="side-user-server">{server ? server.replace(/^https?:\/\//, "") : "未连接"}</div>
         </div>
       </div>
-      <div className="side-actions">
+      <div className="side-actions" ref={panelRef}>
         {cardFold ? (
-          <div className="sa-icons">
+          <div className="sa-pane sa-icons" key="icons">
             <button type="button" className="sa-ico" title="设置" onClick={onOpenSettings}>
               <IcoGearL size={15} strokeWidth={1.8} />
             </button>
@@ -113,7 +135,7 @@ export function Sidebar({
             </button>
           </div>
         ) : (
-          <>
+          <div className="sa-pane sa-full" key="full">
             <div className="sa-head" title="收起快捷操作" onClick={() => setFold(true)}>
               收起
               <span className="sa-chev" />
@@ -153,7 +175,7 @@ export function Sidebar({
                 </a>
               </span>
             </div>
-          </>
+          </div>
         )}
       </div>
     </aside>

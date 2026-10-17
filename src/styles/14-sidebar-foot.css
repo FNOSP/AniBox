@@ -28,6 +28,30 @@
   user-select: none;
   overflow: hidden;
 }
+/* [lc-1665] 展开/收起：内容淡入上浮；高度补间由 Sidebar.tsx 用 WAAPI 完成，
+   两者叠加形成「面板长大/收拢 + 内容换气」的过渡，不再是硬切。 */
+.sa-pane {
+  animation: saPaneIn 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.sa-full {
+  display: flex;
+  flex-direction: column;
+}
+@keyframes saPaneIn {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sa-pane {
+    animation: none;
+  }
+}
 .sa-head {
   padding: 8px 0 6px;
   display: flex;

@@ -53,35 +53,9 @@
     transition: none;
   }
 }
-/* [lc-1667] 暗化遮罩：只做"必要的轻微暗化"，不做大范围柔化。
-   旧版底部 to top 渐变 0.74@34% → 0.08@72% 拖得太长，头图下半像蒙了一层灰雾（用户反馈"下部模糊"）。
-   现在把暗部收在文字所在的下缘，且中段透明度降低，让头图中部保持通透清晰。 */
-.mv-hero-shade {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background:
-    linear-gradient(to right, rgba(8, 10, 15, 0.9) 0%, rgba(8, 10, 15, 0.42) 46%, rgba(8, 10, 15, 0.06) 100%),
-    linear-gradient(to top, rgba(8, 10, 15, 0.94) 0%, rgba(8, 10, 15, 0.48) 26%, rgba(8, 10, 15, 0.12) 50%, transparent 70%);
-}
-/* [lc-1667] 顶栏可读性：旧版是一条 84px 高、58% 主题色的"薄雾"，在浅色主题下会在头图顶部
-   糊出一片白雾（用户反馈"顶部模糊"）。改为只覆盖标题栏高度的**浅渐变**（无 blur），
-   中段迅速衰减到透明，既能托住透明顶栏的文字，又不把头顶的头图糊掉。 */
-.mv-hero-topscrim {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 48px;
-  z-index: 0;
-  pointer-events: none;
-  background: linear-gradient(
-    to bottom,
-    color-mix(in srgb, var(--bg-1) 40%, transparent) 0%,
-    color-mix(in srgb, var(--bg-1) 12%, transparent) 55%,
-    transparent 100%
-  );
-}
+/* [lc-1697] 用户要求：电影详情页顶部/底部的装饰性覆盖层全部删除。
+   已移除 .mv-hero-shade（底部/整体暗化遮罩）与 .mv-hero-topscrim（顶部薄雾/渐变），
+   且不新增任何替代渐变、薄雾或模糊；头图只保留背景图与内容本身。 */
 
 .mv-topbar {
   position: absolute;

@@ -124,10 +124,8 @@ export function MovieHero({
             />
           ),
         )}
-        <div className="mv-hero-shade" />
-        {/* 顶栏可读性：顶部一条随主题变化的薄雾（浅色主题提亮、深色主题压暗），
-            让透明顶栏的字在任意头图上都清晰，同时不遮住头图主体。 */}
-        <div className="mv-hero-topscrim" />
+        {/* [lc-1697] 顶部薄雾 .mv-hero-topscrim 与底部/整体暗化遮罩 .mv-hero-shade
+            已按用户要求删除；头图只保留背景图与内容本身，不再叠加任何装饰层。 */}
 
         <div className="mv-topbar">
           <button className="mv-back" onClick={onBack} title="返回上一页">

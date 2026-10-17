@@ -153,18 +153,68 @@ fn iso_secs(s: &str) -> i64 {
 
 // ───────────────────────── 账号绑定 ─────────────────────────
 
-/// 账号状态：是否绑定 + 用户名（username 由 /v0/me 现查，不落库）
-#[tauri::command]
-pub async fn bgm_account_status(state: State<'_, crate::AppState>) -> Result<Value, String> {
-    let cfg = state.config.read().await.clone();
+/// [lc-1660] 账号状态（三态）：`bound` 只看本地 token 是否存在；
+/// `verified` 表示本次 `/v0/me` 校验是否成功。网络/镜像失败不再被误判为「未绑定」。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BgmAccountState {
+    pub bound: bool,
+    pub verified: bool,
+    pub username: String,
+    pub error: String,
+    pub remember: bool,
+}
+
+/// 由内存配置 + 一次可选的 `/v0/me` 校验构造状态。
+async fn compute_state(app: &AppHandle, app_state: &crate::AppState) -> BgmAccountState {
+    let cfg = app_state.config.read().await.clone();
     let token = cfg.bgm_token.trim().to_string();
+    let remember = cfg.bgm_remember;
     if token.is_empty() {
-        return Ok(json!({ "bound": false, "username": "" }));
+        return BgmAccountState {
+            bound: false,
+            verified: false,
+            username: cfg.bgm_username,
+            error: String::new(),
+            remember,
+        };
     }
     match fetch_me(&token).await {
-        Ok(name) => Ok(json!({ "bound": true, "username": name })),
-        Err(_) => Ok(json!({ "bound": false, "username": "" })),
+        Ok(name) => {
+            // 校验成功且缓存用户名为空 → 回填并落盘（失败不影响本次返回）。
+            // 重新读一次最新配置再合并，避免覆盖校验期间发生的其它改动（如 remember 开关）。
+            if cfg.bgm_username.is_empty() && !name.is_empty() {
+                let mut next = app_state.config.read().await.clone();
+                if next.bgm_username.is_empty() {
+                    next.bgm_username = name.clone();
+                    if crate::config::save(app, &next).await.is_ok() {
+                        *app_state.config.write().await = next;
+                    }
+                }
+            }
+            BgmAccountState {
+                bound: true,
+                verified: true,
+                username: name,
+                error: String::new(),
+                remember,
+            }
+        }
+        Err(e) => BgmAccountState {
+            bound: true,
+            verified: false,
+            username: cfg.bgm_username,
+            error: e,
+            remember,
+        },
     }
+}
+
+#[tauri::command]
+pub async fn bgm_account_status(
+    app: AppHandle,
+    state: State<'_, crate::AppState>,
+) -> Result<BgmAccountState, String> {
+    Ok(compute_state(&app, state.inner()).await)
 }
 
 /// 带用户 Bearer token 的镜像请求（[lc-1515] 全线走自建镜像 bgm.690075.xyz，
@@ -184,33 +234,63 @@ async fn fetch_me(token: &str) -> Result<String, String> {
         .ok_or_else(|| "Bangumi 返回的用户信息不完整".to_string())
 }
 
-/// 绑定：先验证 token，通过才写 config
+/// 绑定：先验证 token，通过才写 config。`remember` 缺省 true。
 #[tauri::command]
 pub async fn bgm_account_bind(
     app: AppHandle,
     state: State<'_, crate::AppState>,
     token: String,
-) -> Result<Value, String> {
+    remember: Option<bool>,
+) -> Result<BgmAccountState, String> {
     let token = token.trim().to_string();
     if token.is_empty() {
         return Err("Token 不能为空".into());
     }
     let name = fetch_me(&token).await?;
+    let remember = remember.unwrap_or(true);
     let mut cfg = state.config.read().await.clone();
     cfg.bgm_token = token;
+    cfg.bgm_username = name.clone();
+    cfg.bgm_remember = remember;
     crate::config::save(&app, &cfg).await?;
     *state.config.write().await = cfg;
     crate::libmpv::trace(&format!("[bgm] 账号绑定成功: {name}"));
-    Ok(json!({ "bound": true, "username": name }))
+    Ok(BgmAccountState {
+        bound: true,
+        verified: true,
+        username: name,
+        error: String::new(),
+        remember,
+    })
 }
 
+/// 解绑：清 token 与缓存用户名，**保留** bgm_remember 开关本身。
 #[tauri::command]
-pub async fn bgm_account_unbind(app: AppHandle, state: State<'_, crate::AppState>) -> Result<(), String> {
+pub async fn bgm_account_unbind(
+    app: AppHandle,
+    state: State<'_, crate::AppState>,
+) -> Result<(), String> {
     let mut cfg = state.config.read().await.clone();
     cfg.bgm_token = String::new();
+    cfg.bgm_username = String::new();
     crate::config::save(&app, &cfg).await?;
     *state.config.write().await = cfg;
     Ok(())
+}
+
+/// [lc-1660] 切换「记住上次账号」：立即按净化规则重写磁盘
+/// （关闭时磁盘 token 清空，内存 token 保留供本次会话使用），并返回最新状态。
+#[tauri::command]
+pub async fn bgm_account_set_remember(
+    app: AppHandle,
+    state: State<'_, crate::AppState>,
+    remember: bool,
+) -> Result<BgmAccountState, String> {
+    let mut cfg = state.config.read().await.clone();
+    cfg.bgm_remember = remember;
+    crate::config::save(&app, &cfg).await?;
+    *state.config.write().await = cfg;
+    Ok(compute_state(&app, state.inner()).await)
 }
 
 /// API 错误文案本地化（对齐 Kazumi describeError）。

@@ -12,6 +12,31 @@ export type Config = {
   nas_proxy_enabled: boolean;
   /** [lc-128] 图片/演员表落盘缓存上限（MB；0 = 不限）。设置面板「缓存」一栏读写。 */
   cache_limit_mb: number;
+  /** [lc-1630] Bangumi 访问令牌（敏感，仅用于本地恢复；不展示） */
+  bgm_token?: string;
+  /** [lc-1630] 上次绑定成功的 Bangumi 账号名（缓存展示用） */
+  bgm_username?: string;
+  /** [lc-1630] 记住上次账号：下次启动自动恢复 */
+  bgm_remember?: boolean;
+};
+
+/**
+ * [lc-1630] Bangumi 账号状态（`bgm_account_status` / `bgm_account_bind` /
+ * `bgm_account_set_remember` 的统一返回结构）。
+ *
+ * 关键：`bound` 是"是否已绑定"的唯一依据；`verified` 只表示"本次网络校验是否成功"。
+ * 网络/镜像失败时可能是 `bound=true, verified=false`，**不得**据此显示为未连接。
+ */
+export type BgmAccountState = {
+  bound: boolean;
+  /** 本次网络校验是否成功（缺省视为 true，兼容旧后端） */
+  verified?: boolean;
+  /** 本次校验拿到的账号名（可能为空，展示时回退缓存） */
+  username?: string;
+  /** 校验失败时的错误说明（仅提示用） */
+  error?: string;
+  /** 是否记住此账号（下次启动自动恢复） */
+  remember?: boolean;
 };
 
 

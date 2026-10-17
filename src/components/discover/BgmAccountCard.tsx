@@ -3,9 +3,10 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronUp as IcoChevU, Film as IcoFilmL } from "lucide-react";
 import { bgmImg } from "../../lib/images";
-import { BgmCalendarItem } from "../../types";
+import { BgmCalendarItem, BgmAccountState } from "../../types";
 
-export type BgmAccountState = { bound: boolean; username: string };
+/** [lc-1630] 类型已收敛到 types.ts；此处再导出，保持既有引用路径可用。 */
+export type { BgmAccountState };
 
 export type BgmCollectStats = {
   total: number;
@@ -35,7 +36,21 @@ export function BgmAccountCard({
 }: {
   onOpen?: (it: BgmCalendarItem) => void;
 }) {
-  const [acct, setAcct] = useState<BgmAccountState>({ bound: false, username: "" });
+  // [lc-1630] bound 才是"是否已绑定"的唯一依据；verified 仅表示本次网络校验是否成功。
+  const [acct, setAcct] = useState<BgmAccountState>({
+    bound: false,
+    verified: true,
+    username: "",
+    remember: true,
+  });
+  // [lc-1630] 缓存上次账号名：网络校验失败（username 为空）时仍能显示账号
+  const [cachedUser, setCachedUser] = useState(() => {
+    try {
+      return localStorage.getItem("anibox.bgmac.username") || "";
+    } catch {
+      return "";
+    }
+  });
   const [stats, setStats] = useState<BgmCollectStats>({ total: 0, byType: {} });
   const [watch, setWatch] = useState<BgmWatchCover[]>([]); // [lc-1534] 「正在追」封面条
   const [bindOpen, setBindOpen] = useState(false); // 连接表单展开态
@@ -58,15 +73,39 @@ export function BgmAccountCard({
     }
   }, [collapsed]);
   const [token, setToken] = useState("");
+  // [lc-1630] 绑定表单里的「记住此账号」：默认勾选
+  const [rememberNew, setRememberNew] = useState(true);
+  const [rememberBusy, setRememberBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
   const [err, setErr] = useState("");
   const [note, setNote] = useState("");
 
+  /** [lc-1630] 合并后端返回的状态，并在拿到账号名时更新本地缓存 */
+  const applyAcct = useCallback((s: BgmAccountState) => {
+    setAcct((prev) => ({
+      // 后端未返回的字段回退到旧值，避免旧后端把 remember 等打成 undefined
+      ...prev,
+      ...s,
+      verified: s.verified ?? true,
+      username: s.username ?? prev.username ?? "",
+      remember: s.remember ?? prev.remember ?? true,
+    }));
+    const u = (s.username || "").trim();
+    if (u) {
+      setCachedUser(u);
+      try {
+        localStorage.setItem("anibox.bgmac.username", u);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, []);
+
   const refresh = useCallback(async () => {
     try {
       const s = await invoke<BgmAccountState>("bgm_account_status");
-      setAcct(s);
+      applyAcct(s);
     } catch {
       /* 状态查询失败不打扰用户 */
     }
@@ -83,7 +122,7 @@ export function BgmAccountCard({
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [applyAcct]);
 
   useEffect(() => {
     refresh();
@@ -96,11 +135,16 @@ export function BgmAccountCard({
     setErr("");
     setNote("");
     try {
-      const s = await invoke<BgmAccountState>("bgm_account_bind", { token: t });
-      setAcct(s);
+      // [lc-1630] 传 remember：决定下次启动是否自动恢复该账号
+      const s = await invoke<BgmAccountState>("bgm_account_bind", {
+        token: t,
+        remember: rememberNew,
+      });
+      applyAcct(s);
       setToken("");
       setBindOpen(false);
-      setNote(`已连接 Bangumi 账号「${s.username}」`);
+      const boundName = (s.username || cachedUser || "").trim();
+      setNote(boundName ? `已连接 Bangumi 账号「${boundName}」` : "已连接 Bangumi 账号");
       refresh();
     } catch (e) {
       setErr(String(e));
@@ -109,13 +153,37 @@ export function BgmAccountCard({
     }
   };
 
+  /** [lc-1630] 已绑定态切换「记住此账号」：乐观更新，失败回滚并提示 */
+  const toggleRemember = async (next: boolean) => {
+    const prev = !!acct.remember;
+    setRememberBusy(true);
+    setErr("");
+    setAcct((a) => ({ ...a, remember: next }));
+    try {
+      const s = await invoke<BgmAccountState>("bgm_account_set_remember", { remember: next });
+      applyAcct(s);
+    } catch (e) {
+      setAcct((a) => ({ ...a, remember: prev }));
+      setErr(String(e));
+    } finally {
+      setRememberBusy(false);
+    }
+  };
+
+  /** [lc-1630] 校验失败时的「重试」：只重新拉 status，不改动绑定态 */
+  const retryVerify = async () => {
+    setNote("");
+    await refresh();
+  };
+
   const unbind = async () => {
-    if (!window.confirm(`解绑 Bangumi 账号「${acct.username}」？本地追番状态会保留。`)) return;
+    const shown = (acct.username || cachedUser || "").trim();
+    if (!window.confirm(`解绑 Bangumi 账号${shown ? `「${shown}」` : ""}？本地追番状态会保留。`)) return;
     setErr("");
     setNote("");
     try {
       await invoke("bgm_account_unbind");
-      setAcct({ bound: false, username: "" });
+      setAcct({ bound: false, verified: true, username: "", remember: acct.remember });
       setNote("已解绑");
     } catch (e) {
       setErr(String(e));
@@ -197,6 +265,26 @@ export function BgmAccountCard({
     return `M${x0.toFixed(2)},${y0.toFixed(2)}L${x1.toFixed(2)},${y1.toFixed(2)}A${R_LEADER},${R_LEADER} 0 ${large} ${sweep} ${x2.toFixed(2)},${y2.toFixed(2)}L${LEADER_END_X},${ry.toFixed(2)}`;
   };
 
+  // [lc-1630] 展示用账号名：优先本次校验返回，其次本地缓存
+  const shownUser = (acct.username || cachedUser || "").trim();
+  // [lc-1630] 已绑定但本次网络校验失败：只给轻量提示，绝不显示成未连接
+  const verifyFailed = acct.bound && acct.verified === false;
+  // 校验失败若是确定性 401（token 失效/权限不足），提示重新绑定；纯网络问题只提示重试
+  const authFailed = verifyFailed && /无效|过期|权限|拒绝|401/.test(acct.error || "");
+
+  const rebind = async () => {
+    if (!window.confirm("当前 Bangumi 授权已失效，重新绑定账号？")) return;
+    setErr("");
+    setNote("");
+    try {
+      await invoke("bgm_account_unbind");
+      setAcct({ bound: false, verified: true, username: "", remember: acct.remember });
+      setBindOpen(true);
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
   return (
     <div className={`bgmac${acct.bound ? " on" : ""}${collapsed ? " fold" : ""}`}>
       {/* [lc-1584] 右上角折叠按钮：折叠后整卡收成一条横栏（BGM 登录态 + 总追番信息）。
@@ -234,13 +322,13 @@ export function BgmAccountCard({
           <div className="bgmac-kicker">Bangumi</div>
           <div className="bgmac-title-row">
             <span className="bgmac-title">追番同步</span>
-            <span className={`bgmac-badge${acct.bound ? " on" : ""}`} title={acct.bound ? `已连接：${acct.username}` : "未连接 Bangumi 账号"}>
+            <span className={`bgmac-badge${acct.bound ? " on" : ""}`} title={acct.bound ? `已连接：${shownUser || "Bangumi 账号"}` : "未连接 Bangumi 账号"}>
               {acct.bound ? (
                 <>
                   <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M4 12.5 9 17.5 20 6.5" />
                   </svg>
-                  <span className="bgmac-badge-name">{acct.username}</span>
+                  <span className="bgmac-badge-name">{shownUser || "已连接"}</span>
                 </>
               ) : (
                 "未连接"
@@ -286,28 +374,66 @@ export function BgmAccountCard({
           </div>
         )}
         {acct.bound ? (
-          <div className="bgmac-acts">
-            <button className="bgmac-act" disabled={syncBusy} onClick={syncNow}>
-              {syncBusy ? "同步中…" : "立即同步"}
-            </button>
-            <button className="bgmac-link" onClick={unbind}>
-              解绑
-            </button>
-            {note && !err && <span className="bgmac-inline-note">{note}</span>}
-          </div>
+          <>
+            {verifyFailed && (
+              <div className="bgmac-warn" role="status" title={acct.error || undefined}>
+                <span className="bgmac-warn-t">
+                  {authFailed ? "账号授权已失效，请重新绑定" : "网络校验失败，稍后重试"}
+                </span>
+                {authFailed ? (
+                  <button type="button" className="bgmac-retry" onClick={rebind} disabled={rememberBusy}>
+                    重新绑定
+                  </button>
+                ) : (
+                  <button type="button" className="bgmac-retry" onClick={retryVerify} disabled={rememberBusy}>
+                    重试
+                  </button>
+                )}
+              </div>
+            )}
+            <div className="bgmac-acts">
+              <button className="bgmac-act" disabled={syncBusy} onClick={syncNow}>
+                {syncBusy ? "同步中…" : "立即同步"}
+              </button>
+              <button className="bgmac-link" onClick={unbind}>
+                解绑
+              </button>
+              {note && !err && <span className="bgmac-inline-note">{note}</span>}
+            </div>
+            <label className="bgmac-remember">
+              <input
+                type="checkbox"
+                checked={!!acct.remember}
+                disabled={rememberBusy}
+                onChange={(e) => toggleRemember(e.target.checked)}
+              />
+              <span>记住此账号（下次启动自动恢复）</span>
+            </label>
+          </>
         ) : bindOpen ? (
-          <div className="bgmac-bind">
-            <input
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && !busy && bind()}
-              placeholder="粘贴 Bangumi Access Token"
-              autoFocus
-            />
-            <button className="bgmac-cta sm" disabled={busy || !token.trim()} onClick={bind}>
-              {busy ? "连接中…" : "连接"}
-            </button>
-          </div>
+          <>
+            <div className="bgmac-bind">
+              <input
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !busy && bind()}
+                placeholder="粘贴 Bangumi Access Token"
+                autoFocus
+              />
+              <button className="bgmac-cta sm" disabled={busy || !token.trim()} onClick={bind}>
+                {busy ? "连接中…" : "连接"}
+              </button>
+            </div>
+            <label className="bgmac-remember">
+              <input
+                type="checkbox"
+                checked={rememberNew}
+                disabled={busy}
+                onChange={(e) => setRememberNew(e.target.checked)}
+              />
+              <span>记住此账号（下次启动自动恢复）</span>
+            </label>
+          </>
         ) : (
           <button className="bgmac-cta" onClick={() => setBindOpen(true)}>
             → 连接 Bangumi

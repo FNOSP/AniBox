@@ -79,14 +79,16 @@ async fn get_config(state: State<'_, AppState>) -> Result<Config, String> {
 #[tauri::command]
 async fn save_config(app: AppHandle, state: State<'_, AppState>, config: Config) -> Result<(), String> {
     // [lc-1623] 防误伤（BGM 与飞牛解耦）：这是**整份覆盖**配置的写入口（登录页在用）。
-    // BGM 的 access token 属于 BGM 自己的账号状态，飞牛侧的任何保存都不该把它冲掉 ——
-    // 传入为空而当前非空时保留现值。BGM 绑定/解绑只走 bgm_account_bind/unbind，绝不经过这里。
+    // BGM 的账号三件套（token / 用户名 / 记忆开关）属于 BGM 自己的账号状态，
+    // **只能**由 bgm_account_bind / unbind / set_remember 修改。飞牛登录、设置面板、
+    // 登录页等任何 save_config 都一律保留当前值 —— 前端 Config 是挂载时的旧快照，
+    // 允许它回写会把刚绑定的 token 冲掉（用户报「莫名退出账号」的根因之一）。
     let mut config = config;
-    if config.bgm_token.is_empty() {
+    {
         let cur = state.config.read().await;
-        if !cur.bgm_token.is_empty() {
-            config.bgm_token = cur.bgm_token.clone();
-        }
+        config.bgm_token = cur.bgm_token.clone();
+        config.bgm_username = cur.bgm_username.clone();
+        config.bgm_remember = cur.bgm_remember;
     }
     config::save(&app, &config).await?;
     // [lc-1561] 自建弹幕接口配置桥给 Node 侧客户端（改完立即生效，见 write_danmu_config）
@@ -1925,6 +1927,7 @@ pub fn run() {
             bgm_account::bgm_account_status,
             bgm_account::bgm_account_bind,
             bgm_account::bgm_account_unbind,
+            bgm_account::bgm_account_set_remember,
             bgm_account::bgm_collect_set,
             bgm_account::bgm_collect_get,
             bgm_account::bgm_sync_now,

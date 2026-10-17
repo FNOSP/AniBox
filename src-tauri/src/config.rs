@@ -46,6 +46,13 @@ pub struct Config {
     /// [lc-1515] Bangumi 个人 Access Token（追番状态同步用；用户手动粘贴，本地保存）
     #[serde(default)]
     pub bgm_token: String,
+    /// [lc-1660] 是否「记住上次账号」：false 时**磁盘上不保留** bgm_token（内存中仍保留，供本次会话使用）。
+    /// 老 config.json 无此键 → 默认 true（与历史行为一致，token 继续落盘）。
+    #[serde(default = "default_true")]
+    pub bgm_remember: bool,
+    /// [lc-1660] 最近一次校验成功的 Bangumi 用户名（缓存，供网络/镜像失败时状态接口回显）。
+    #[serde(default)]
+    pub bgm_username: String,
 
     /* ── [lc-1561] 自建弹幕接口（danmu_api）—— 对齐主仓库 fn_config 的同名项 ──
        用户在自己的 NAS/Docker 上部署 https://github.com/huangxd-/danmu_api（LogVar 弹幕API），
@@ -110,6 +117,8 @@ impl Default for Config {
             carousel_logo: true,
             launch_page: default_launch_page(),
             bgm_token: String::new(),
+            bgm_remember: true,
+            bgm_username: String::new(),
             danmu_api_enabled: false,
             danmu_api_base: String::new(),
             danmu_api_bases: Vec::new(),
@@ -128,13 +137,45 @@ fn config_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
 }
 
 pub async fn load(app: &tauri::AppHandle) -> Config {
-    match config_path(app) {
-        Ok(p) => match tokio::fs::read_to_string(&p).await {
-            Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
-            Err(_) => Config::default(),
-        },
-        Err(_) => Config::default(),
+    let Ok(p) = config_path(app) else {
+        return Config::default();
+    };
+    let s = match tokio::fs::read_to_string(&p).await {
+        Ok(s) => s,
+        Err(_) => return Config::default(),
+    };
+    match serde_json::from_str::<Config>(&s) {
+        Ok(c) => c,
+        Err(e) => {
+            // [lc-1660] 解析失败不再静默丢配置：先把损坏文件备份，再回落默认。
+            // 备份失败也不阻塞启动（下次 save 会覆盖），但至少尝试留痕。
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let bak = p.with_file_name(format!("config.json.bak-{ts}"));
+            match tokio::fs::rename(&p, &bak).await {
+                Ok(_) => crate::libmpv::trace(&format!(
+                    "[config] 解析失败（{e}），已备份为 {}",
+                    bak.display()
+                )),
+                Err(be) => crate::libmpv::trace(&format!(
+                    "[config] 解析失败（{e}），备份也失败（{be}），使用默认配置"
+                )),
+            }
+            Config::default()
+        }
     }
+}
+
+/// [lc-1660] 落盘净化：`bgm_remember = false` 时清空磁盘上的 token（内存副本不受影响）。
+/// 抽成纯函数便于单测。
+fn for_disk(cfg: &Config) -> Config {
+    let mut disk = cfg.clone();
+    if !disk.bgm_remember {
+        disk.bgm_token.clear();
+    }
+    disk
 }
 
 pub async fn save(app: &tauri::AppHandle, cfg: &Config) -> Result<(), String> {
@@ -144,8 +185,54 @@ pub async fn save(app: &tauri::AppHandle, cfg: &Config) -> Result<(), String> {
             .await
             .map_err(|e| format!("创建数据目录失败: {}", e))?;
     }
-    let s = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
-    tokio::fs::write(&p, s)
+    let s = serde_json::to_string_pretty(&for_disk(cfg)).map_err(|e| e.to_string())?;
+    // [lc-1660] 原子写：先写同目录临时文件，再 rename 覆盖。rename 失败时旧文件保持完整。
+    let tmp = p.with_extension("json.tmp");
+    tokio::fs::write(&tmp, s)
         .await
-        .map_err(|e| format!("写入配置失败: {}", e))
+        .map_err(|e| format!("写入临时配置失败: {}", e))?;
+    tokio::fs::rename(&tmp, &p).await.map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("替换配置文件失败: {}", e)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_true_is_true() {
+        assert!(default_true());
+    }
+
+    #[test]
+    fn new_fields_have_safe_defaults() {
+        let c: Config = serde_json::from_str("{}").unwrap();
+        assert!(c.bgm_remember, "缺省应记住账号");
+        assert_eq!(c.bgm_username, "");
+        assert_eq!(c.bgm_token, "");
+    }
+
+    #[test]
+    fn for_disk_keeps_token_when_remembering() {
+        let mut c = Config::default();
+        c.bgm_token = "tok".into();
+        c.bgm_remember = true;
+        assert_eq!(for_disk(&c).bgm_token, "tok");
+    }
+
+    #[test]
+    fn for_disk_clears_token_when_not_remembering() {
+        let mut c = Config::default();
+        c.bgm_token = "tok".into();
+        c.bgm_remember = false;
+        let disk = for_disk(&c);
+        assert_eq!(disk.bgm_token, "");
+        // 内存副本（入参）不被修改
+        assert_eq!(c.bgm_token, "tok");
+        // 其它账号字段保留
+        c.bgm_username = "alice".into();
+        assert_eq!(for_disk(&c).bgm_username, "alice");
+    }
 }

@@ -534,6 +534,103 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
 .bgmac-tip {
   color: var(--muted);
 }
+/* ── [lc-1630] 记住账号开关 / 网络校验失败提示 ──
+   与卡片既有小控件同风格：复选框用主题色、提示条用暖色轻背景（深浅主题都读变量）。 */
+.bgmac-remember {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+  line-height: 1.4;
+  min-width: 0;
+}
+.bgmac-remember input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--input-bg);
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s, border-color 0.15s;
+}
+.bgmac-remember input[type="checkbox"]:checked {
+  background: var(--accent, #6c9bff);
+  border-color: var(--accent, #6c9bff);
+}
+.bgmac-remember input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 1.8px 1.8px 0;
+  transform: rotate(45deg);
+}
+.bgmac-remember input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent, #6c9bff);
+  outline-offset: 1px;
+}
+.bgmac-remember input[type="checkbox"]:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.bgmac-remember:has(input:disabled) {
+  opacity: 0.7;
+  cursor: default;
+}
+
+/* 校验失败轻提示：不抢占绑定态，只提示"网络问题，稍后重试" */
+.bgmac-warn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: #9a6b1f;
+  background: rgba(233, 162, 60, 0.12);
+  border: 1px solid rgba(233, 162, 60, 0.28);
+  border-radius: 9px;
+  padding: 5px 10px;
+}
+html.dark .bgmac-warn {
+  color: #f0bd6b;
+  background: rgba(233, 162, 60, 0.16);
+  border-color: rgba(233, 162, 60, 0.34);
+}
+.bgmac-warn-t {
+  min-width: 0;
+}
+.bgmac-retry {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid rgba(233, 162, 60, 0.5);
+  border-radius: 11px;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.bgmac-retry:hover:not(:disabled) {
+  background: rgba(233, 162, 60, 0.18);
+}
+.bgmac-retry:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 /* 深色主题：小标题品牌绿提亮（徽章已统一浅灰胶囊，不在此列） */
 html.dark .bgmac-kicker {
   color: #7ed4a5;

@@ -25,6 +25,7 @@ export function HomeView({
   launchPage,
   libRows,
   onOpenLib,
+  onOpenFolder,
   onPlay,
   onOpenItem,
   onHeroTone,
@@ -43,6 +44,8 @@ export function HomeView({
   launchPage: "home" | "continue";
   libRows: { lib: Lib; items: MediaItem[] }[];
   onOpenLib: (lib: Lib) => void;
+  /** [lc-1647] 首页横排里点到「未识别文件夹」→ 直接开库并钻到该层（个人视频/网盘库的根层就是文件夹） */
+  onOpenFolder: (lib: Lib, folder: MediaItem) => void;
   onPlay: (t: PlayTarget) => void;
   onOpenItem: (item: MediaItem) => void;
   /** [lc-123-rev4] hero 图亮度采样结果上报（App → TitleBar 自适应反色） */
@@ -257,7 +260,13 @@ export function HomeView({
             </div>
             <ScrollRow>
               {items.map((it) => (
-                <PosterCard key={it.guid} item={it} onOpen={onOpenItem} />
+                <PosterCard
+                  key={it.guid}
+                  item={it}
+                  onOpen={(x) =>
+                    x.type === "Directory" ? onOpenFolder(lib, x) : onOpenItem(x)
+                  }
+                />
               ))}
             </ScrollRow>
           </section>

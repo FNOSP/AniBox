@@ -66,6 +66,8 @@ function App() {
     });
   }, []);
   const [activeLib, setActiveLib] = useState<Lib | null>(null);
+  // [lc-1647] 从首页横排直接点进「未识别文件夹」时的起始层（个人视频/网盘类库根层即文件夹）
+  const [libFolder, setLibFolder] = useState<MediaItem | null>(null);
   const [detailItem, setDetailItem] = useState<MediaItem | null>(null);
   // [lc-1444] 进详情的来源（返回键的目标）：lib = 库里进，discover = 发现页进，home = 首页进。
   // 不用 view 现查 —— 用户从发现页进详情后 view 已是 "detail"，现查只能靠猜。
@@ -678,13 +680,23 @@ function App() {
   }, []);
 
   const openFav = useCallback(() => {
+    setLibFolder(null);
     setActiveLib({ guid: "_fav", title: "收藏", category: "" });
     setPage("home");
     setView("lib");
   }, []);
 
   const openCat = useCallback((cat: { key: string; types: string[] }) => {
+    setLibFolder(null);
     setActiveLib({ guid: `_cat:${cat.types.join(",")}`, title: cat.key, category: "" });
+    setPage("home");
+    setView("lib");
+  }, []);
+
+  // [lc-1647] 首页横排点「未识别文件夹」→ 开库并直接钻到该层（不再落到无意义的详情页）
+  const openLibFolder = useCallback((lib: Lib, folder: MediaItem) => {
+    setLibFolder(folder);
+    setActiveLib(lib);
     setPage("home");
     setView("lib");
   }, []);
@@ -877,9 +889,11 @@ function App() {
                 hiddenLibs={hiddenLibs}
                 onToggleHiddenLib={toggleHiddenLib}
                 onOpenLib={(l) => {
+                  setLibFolder(null);
                   setActiveLib(l);
                   setView("lib");
                 }}
+                onOpenFolder={openLibFolder}
                 onPlay={play}
                 onOpenItem={openItem}
                 onHeroTone={onHeroTone}
@@ -909,7 +923,7 @@ function App() {
               className={`view-pane active${libClosing ? " view-out" : libEnterAnim ? " view-in" : ""}`}
               onAnimationEnd={() => setLibEnterAnim(false)}
             >
-              <LibView lib={activeLib} onBackHome={goHome} onOpenItem={openItem} />
+              <LibView lib={activeLib} initialFolder={libFolder} onBackHome={goHome} onOpenItem={openItem} />
             </div>
           )}
           {/* [lc-1615] 观影记录页：条件挂载 + view-in/view-out 转场（与库/详情页同套）。

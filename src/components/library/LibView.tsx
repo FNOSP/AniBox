@@ -11,18 +11,37 @@ export function LibView({
   lib,
   onBackHome,
   onOpenItem,
+  initialFolder,
 }: {
   lib: Lib;
   onBackHome: () => void;
   onOpenItem: (item: MediaItem) => void;
+  /** [lc-1647] 从首页「按库横排」直接点进某个未识别文件夹时，把该文件夹作为起始层。
+   *  个人视频/网盘类库（category=Others/Mix）根层往往就是文件夹，首页点它必须进库钻取，
+   *  不能像以前那样落进详情页（详情页对文件夹无意义，表现为「打不开」）。 */
+  initialFolder?: MediaItem | null;
 }) {
-  const [items, setItems] = useState<MediaItem[]>([]);
+  // [lc-1647] 层级模型重写：每一层 = 「这一层显示的文件夹（库根为 null）+ 该层的条目列表」。
+  // 旧模型只存父文件夹、当前层靠 `items` 单独存 —— 钻到第 3 层时面包屑标题不跟着变，
+  // 返回上一层还会把**上上层**的列表贴回来（表现为「点进去内容不对/打不开」）。
+  type Level = { folder: MediaItem | null; items: MediaItem[] };
+  const [levels, setLevels] = useState<Level[]>([{ folder: initialFolder ?? null, items: [] }]);
   const [total, setTotal] = useState(0);
-  const [stack, setStack] = useState<{ folder: MediaItem; items: MediaItem[] }[]>([]);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
 
-  const current = stack.length > 0 ? stack[stack.length - 1].folder : null;
+  const top = levels[levels.length - 1];
+  const items = top.items;
+  const current = top.folder;
+
+  /** 把取回的列表写进**当前层** */
+  const applyItems = useCallback((list: MediaItem[]) => {
+    setLevels((ls) => {
+      const next = ls.slice();
+      next[next.length - 1] = { ...next[next.length - 1], items: list };
+      return next;
+    });
+  }, []);
 
   const load = useCallback(
     async (parentGuid: string | null) => {
@@ -34,10 +53,11 @@ export function LibView({
           const d = await invoke<{ total: number; list: MediaItem[] | null }>("get_favorites", {
             page: 1,
           });
-          setItems(d.list ?? []);
+          applyItems(d.list ?? []);
           setTotal(d.total ?? 0);
           if (!d.list?.length) setErr("还没有收藏");
         } catch (e) {
+          applyItems([]);
           setErr(String(e));
         }
         setLoading(false);
@@ -50,27 +70,37 @@ export function LibView({
             typeFilter: types,
             page: 1,
           });
-          setItems(d.list ?? []);
+          applyItems(d.list ?? []);
           setTotal(d.total ?? 0);
           if (!d.list?.length) setErr("该分类暂无已识别条目");
         } catch (e) {
+          applyItems([]);
           setErr(String(e));
         }
         setLoading(false);
         return;
       }
-      const list = await fetchLibItems(lib.guid, parentGuid);
-      setItems(list);
-      setTotal(list.length);
-      if (list.length === 0) setErr("该库暂无已识别条目");
+      try {
+        const list = await fetchLibItems(lib.guid, parentGuid);
+        applyItems(list);
+        setTotal(list.length);
+        if (list.length === 0) setErr("该库暂无已识别条目");
+      } catch (e) {
+        // [lc-1647] 原来没有 try/catch：get_items 一旦 reject，setLoading(false) 永远走不到，
+        // 页面就卡在「加载中…」—— 个人视频/网盘类库最常见的「打不开」表象。
+        applyItems([]);
+        setTotal(0);
+        setErr(String(e));
+      }
       setLoading(false);
     },
-    [lib.guid],
+    [lib.guid, applyItems],
   );
 
   useEffect(() => {
-    load(null);
-  }, [load]);
+    // [lc-1647] 有起始文件夹就直接钻进去，否则从库根开始
+    load(initialFolder ? initialFolder.guid : null);
+  }, [load, initialFolder]);
 
   /* [lc-1640] 顶栏 ⟳：强制刷新**当前所在层**（库根或正在钻取的文件夹）。
      飞牛 item/list 无 Rust 缓存（get_items 直连），load 本身就是强制重拉 —— 直接复用，
@@ -96,21 +126,20 @@ export function LibView({
       onOpenItem(item);
       return;
     }
-    if (current) setStack((s) => [...s.slice(0, -1), { folder: current, items }]);
-    else setStack((s) => [...s, { folder: item, items }]);
+    // 新开一层：上一层的列表原样留在 levels 里，返回时零请求还原
+    setLevels((ls) => [...ls, { folder: item, items: [] }]);
     await load(item.guid);
   }
 
-  async function pop() {
-    const prev = stack[stack.length - 1];
-    setStack((s) => s.slice(0, -1));
-    setItems(prev.items);
+  function pop() {
+    // 返回上一层：该层列表还缓存在 levels 里，直接弹栈即可
+    setLevels((ls) => (ls.length > 1 ? ls.slice(0, -1) : ls));
   }
 
   return (
     <main className="content">
       <div className="page-head">
-        <button className="back" onClick={stack.length > 0 ? pop : onBackHome}>
+        <button className="back" onClick={levels.length > 1 ? pop : onBackHome}>
           ‹
         </button>
         <h3>{current ? current.title : lib.title}</h3>

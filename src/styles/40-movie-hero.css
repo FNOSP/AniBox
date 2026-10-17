@@ -1,0 +1,356 @@
+/* [lc-1652] 电影详情页「沉浸式」版式（用户样板）：全幅头图 / 大标题 / 元数据 /
+   播放·收藏 / 玻璃简介卡 / 剧照横排。仅电影使用，剧集详情页不变。 */
+
+/* 电影模式下 .detail-full 去掉内边距，让头图满幅 */
+.detail-full.mv-detail {
+  padding: 0 0 16px;
+}
+
+.mv-hero {
+  position: relative;
+  flex: none; /* 父级是 flex column：别让头图被压缩 */
+  min-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 104px 48px 40px;
+  overflow: hidden;
+  isolation: isolate;
+}
+.mv-hero-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center 28%;
+  background-color: #10131a;
+  transform: scale(1.03);
+  z-index: -2;
+}
+.mv-hero-shade {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    linear-gradient(to right, rgba(8, 10, 15, 0.94) 0%, rgba(8, 10, 15, 0.55) 48%, rgba(8, 10, 15, 0.12) 100%),
+    linear-gradient(to top, rgba(8, 10, 15, 0.98) 0%, rgba(8, 10, 15, 0.62) 34%, rgba(8, 10, 15, 0.08) 72%);
+}
+
+.mv-topbar {
+  position: absolute;
+  /* 悬浮标题栏约 40px：返回/元数据按钮必须落在它下方，避免和窗口控件抢位置 */
+  top: 50px;
+  left: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 3;
+}
+.mv-back,
+.mv-meta {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.12);
+  color: #eee;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+.mv-back {
+  padding: 7px 16px;
+  border-radius: 20px;
+  font-size: 14px;
+}
+.mv-meta {
+  margin-left: auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  font-size: 16px;
+  line-height: 1;
+}
+.mv-back:hover,
+.mv-meta:hover {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.32);
+}
+
+.mv-hero-body {
+  position: relative;
+  z-index: 2;
+  max-width: 1000px;
+}
+.mv-title {
+  margin: 0 0 6px;
+  font-size: 58px;
+  font-weight: 900;
+  line-height: 1.08;
+  letter-spacing: 2px;
+  color: #fff;
+  text-shadow: 0 6px 26px rgba(0, 0, 0, 0.75);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.mv-subtitle {
+  font-size: 16px;
+  letter-spacing: 5px;
+  color: rgba(230, 233, 240, 0.72);
+  margin-bottom: 18px;
+  text-transform: uppercase;
+}
+
+.mv-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 14px;
+  color: rgba(228, 231, 238, 0.88);
+  margin-bottom: 22px;
+}
+.mv-meta-row > span + span::before {
+  content: "";
+  display: inline-block;
+  width: 1px;
+  height: 12px;
+  margin-right: 14px;
+  vertical-align: -1px;
+  background: rgba(255, 255, 255, 0.28);
+}
+.mv-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: linear-gradient(135deg, #f5c518, #e6b800);
+  color: #1a1a1a;
+  font-weight: 700;
+  font-size: 14px;
+  padding: 2px 9px;
+  border-radius: 5px;
+}
+.mv-rating::before {
+  content: none !important;
+}
+.mv-votes {
+  color: rgba(228, 231, 238, 0.6);
+}
+
+.mv-actions {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 26px;
+  flex-wrap: wrap;
+}
+.mv-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: #fff;
+  color: #0b0c10;
+  border: none;
+  border-radius: 12px;
+  padding: 14px 30px;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 12px 34px rgba(255, 255, 255, 0.18);
+  transition: transform 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.25s;
+}
+.mv-btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 16px 44px rgba(255, 255, 255, 0.26);
+}
+.mv-btn-primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.mv-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  padding: 14px 26px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  transition: background 0.2s, border-color 0.2s;
+}
+.mv-btn-ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.38);
+}
+.mv-btn-ghost.on {
+  color: #ff8fa3;
+  border-color: rgba(255, 143, 163, 0.5);
+}
+.mv-btn-ghost svg {
+  width: 17px;
+  height: 17px;
+}
+.mv-btn-ghost:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.mv-note {
+  font-size: 12.5px;
+  color: rgba(228, 231, 238, 0.7);
+  margin: -14px 0 16px;
+}
+
+.mv-glass {
+  background: rgba(20, 22, 30, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-radius: 16px;
+  padding: 24px 26px;
+  max-width: 820px;
+}
+.mv-desc {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.8;
+  color: rgba(215, 219, 228, 0.92);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.mv-cast {
+  display: flex;
+  gap: 26px;
+  align-items: center;
+  flex-wrap: wrap;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin-top: 18px;
+  padding-top: 18px;
+}
+.mv-cast-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.mv-cast-avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: #2a2f3a center/cover no-repeat;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  flex: none;
+}
+.mv-cast-info h4 {
+  margin: 0 0 2px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #fff;
+}
+.mv-cast-info p {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(210, 214, 222, 0.62);
+}
+
+/* ── 剧照横排 ── */
+.mv-stills {
+  flex: none;
+  padding: 20px 26px 4px;
+}
+.mv-stills-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.mv-stills-head h3 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text-strong);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mv-stills-head h3::before {
+  content: "";
+  width: 5px;
+  height: 18px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+.mv-muted {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.mv-still {
+  position: relative;
+  flex: none;
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  transition: box-shadow 0.3s, border-color 0.3s;
+}
+.mv-still img {
+  display: block;
+  height: 176px;
+  width: auto;
+  object-fit: cover;
+  transition: transform 0.55s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+.mv-still:hover img {
+  transform: scale(1.07);
+}
+.mv-still:hover {
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
+  border-color: var(--line-strong);
+}
+.mv-zoom {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 20px;
+  background: rgba(0, 0, 0, 0.22);
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+.mv-still:hover .mv-zoom {
+  opacity: 1;
+}
+
+/* ── 下方标签页：电影模式单列 ── */
+.dv2.dv2-movie {
+  display: block;
+  padding: 6px 26px 40px;
+}
+.dv2.dv2-movie .dv2-left {
+  gap: 14px;
+}
+
+@media (max-width: 900px) {
+  .mv-hero {
+    padding: 76px 22px 28px;
+    min-height: 72vh;
+  }
+  .mv-title {
+    font-size: 38px;
+  }
+  .mv-stills {
+    padding: 16px 16px 4px;
+  }
+  .mv-still img {
+    height: 130px;
+  }
+  .dv2.dv2-movie {
+    padding: 6px 16px 30px;
+  }
+}

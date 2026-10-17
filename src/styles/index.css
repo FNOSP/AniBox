@@ -40,3 +40,6 @@
 @import "./36-logo.css";
 /* [lc-1615] 观影记录页（飞牛 play/list ∪ 本机播放历史） */
 @import "./37-history.css";
+
+/* [lc-1652] 电影详情页「沉浸式」版式（用户样板） */
+@import "./40-movie-hero.css";

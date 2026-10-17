@@ -15,6 +15,8 @@ import { ReviewsTab } from "./tabs/ReviewsTab";
 import { CommentsTab } from "./tabs/CommentsTab";
 import { ExtraTab } from "./tabs/ExtraTab";
 import { RatingWidget } from "./RatingWidget";
+// [lc-1652] 电影详情页「沉浸式」版式（用户样板）
+import { MovieHero } from "./MovieHero";
 // [lc-1627] 在线播放先搁置：WebrsPanel 暂不挂载（无源条目改为显示「未查询到资源」）。
 // 恢复时把下行 import 与 1271 行附近的分支一起放回来即可。
 // import { WebrsPanel } from "../webrs/WebrsPanel";
@@ -117,6 +119,8 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
   }, [tab]);
 
   const isSeries = base.type === "TvSeries" || base.type === "TV";
+  // [lc-1652] 电影（非剧集、且有飞牛条目）走「沉浸式」样板版式；发现页占位条目保持原样
+  const isMovie = !isSeries && !/^discover-/.test(base.guid);
   // [lc-1444] 发现页条目形态：guid 是 `discover-<tmdbId>` 占位标识（不是真飞牛 guid），
   //   没有飞牛条目可查 —— 详情主体靠 TMDB（条目自带 tmdb_id 直接定位）+ Bangumi（标题匹配），
   //   选集区显示占位。dataReady = 主体可以渲染（真条目等 data 到位；发现页条目立即渲染）。
@@ -836,6 +840,21 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
 
   // [lc-1401] 新版式删掉了通栏头图（backdrop 不再用于详情页背景），
   //   但「剧照」一节仍取 TMDB 的 backdrops —— 那是 tmdb.images.backdrops，与本机条目的 backdrop 不是一回事。
+  // [lc-1652] 电影版式重新需要通栏头图：TMDB heroBackdrop（面积最大）→ 飞牛 backdrops → 海报兜底
+  const movieBackdrop = (() => {
+    const tb = String((tmdb ?? {}).heroBackdrop ?? "");
+    if (tb) return tmdbImg(tb, "original");
+    const fnb =
+      pickLargestImg((data ?? {}).backdrops) ||
+      String(pick(data ?? {}, ["backdrops", "backdrop"]) ?? "");
+    if (fnb) return imgUrl(fnb);
+    return poster ? imgUrl(poster) : bgmCover;
+  })();
+  const movieStills: { file_path?: string }[] = Array.isArray((tmdb ?? {}).backdrops)
+    ? ((tmdb ?? {}).backdrops as { file_path?: string }[]).slice(0, 12)
+    : [];
+  // 片长：飞牛详情 duration 是秒
+  const runtimeMin = Math.round(Number(pick(data ?? {}, ["duration"]) ?? 0) / 60) || 0;
   // [lc-1408] 原「年份 / 季数 / 集数 / 类型 / 评分 / 播放按钮」那组派生值随红框一起删掉了
   //   （用户定稿：那块的原有内容全部不要，改放标签与简介）。播放按钮挪到海报上，仍用 resumeAt。
   const tmdbGenres: string[] = Array.isArray(tmdb?.genres)
@@ -1044,13 +1063,13 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
   };
 
   return (
-    <main className="content detail-full" onScroll={onDetailScroll}>
+    <main className={`content detail-full${isMovie ? " mv-detail" : ""}`} onScroll={onDetailScroll}>
       {/* [lc-1401] 详情页按**用户定稿版式**重排（两栏）：
             左列：竖版封面 → 标签页 → 该页内容（[lc-1567] 标签/简介从首屏移入「详情」页）
             右列：集数据（本机集数 × Bangumi 集号对齐）的**整条竖向列表**
           ⚠ 上一版的模糊大头图（.dhero）**已按新稿删除**：稿里首屏就是"封面 + 两块信息框"，没有通栏头图。
           数据 effect 全部留在本组件顶层（不下沉到面板里，否则单集简介回填失效）。 */}
-      <div className="dv2-rail">
+      <div className="dv2-rail" style={isMovie ? { display: "none" } : undefined}>
         <button className="back" onClick={onBack} title="返回上一页">
           ‹ 返回
         </button>
@@ -1086,13 +1105,46 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
           ⚠ 只包住"两栏主体"—— 返回键与标题（rail）是从 base 直接来的，不需要等网络。 */}
       {!dataReady && !err && <DetailSkeleton />}
 
+      {/* [lc-1652] 电影：沉浸式头图 + 简介/演职员 + 剧照（用户样板） */}
+      {dataReady && isMovie && (
+        <MovieHero
+          title={title}
+          originalTitle={originalTitle}
+          backdrop={movieBackdrop}
+          poster={poster}
+          rating={ratingScore}
+          votes={ratingTotal}
+          year={String(pick(tmdb ?? {}, ["year"]) ?? "").trim()}
+          runtimeMin={runtimeMin}
+          genres={genres}
+          overview={overview}
+          cast={cast}
+          stills={movieStills}
+          resumeAt={!!resumeAt}
+          playing={playing}
+          onPlay={startPlay}
+          onBack={onBack}
+          onMeta={() => setMetaTarget({ guid: base.guid, title: title || base.title, type: "Movie" })}
+          onZoom={(p) => setZoom(p)}
+          favItem={{
+            guid: base.guid,
+            title,
+            tvTitle: "",
+            poster: String(poster ?? ""),
+            type: String(pick(data ?? {}, ["type"]) ?? base.type ?? ""),
+            seasonNumber: 0,
+            episodeNumber: 0,
+          }}
+        />
+      )}
+
       {/* ══ 两栏主体（用户版式）══ */}
       {dataReady && (
-      <div className="dv2">
+      <div className={`dv2${isMovie ? " dv2-movie" : ""}`}>
         {/* ── 左列：封面 / 标签框 / 简介框 / 标签页 / 内容 ── */}
         <div className="dv2-left">
           {/* 竖版封面 + 标题（海报来自本机条目，无则用 Bangumi 的） */}
-          <div className="dv2-top">
+          <div className="dv2-top" style={isMovie ? { display: "none" } : undefined}>
             <div className="dv2-poster">
               {poster || bgmCover ? (
                 <img src={poster ? imgUrl(poster) : bgmCover} alt={title} draggable={false} />
@@ -1245,7 +1297,7 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
             每集 = 集号徽标 + 小标题（本机集名 / Bangumi name_cn 兜底）+ 该集简介 + 时长。
             「本机集数 × Bangumi 集号」对齐：本机集按 episode_number 取 Bangumi 同号那条的
             小标题与 desc（Bangumi 只有一季时 ep 是**全季连号**，所以按号取，不按季内序号）。 */}
-        <aside className="dv2-right">
+        <aside className="dv2-right" style={isMovie ? { display: "none" } : undefined}>
           {/* [lc-1420] 非剧集（电影等）没有选集可点，海报上的播放按钮又已删 —— 
               这里给一个独立的播放入口，避免"能看不能播"。
               [lc-1444] 发现页条目没有飞牛 guid，播不了 —— 不显示播放入口。 */}

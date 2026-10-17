@@ -89,8 +89,15 @@ async fn save_config(app: AppHandle, state: State<'_, AppState>, config: Config)
         config.bgm_token = cur.bgm_token.clone();
         config.bgm_username = cur.bgm_username.clone();
         config.bgm_remember = cur.bgm_remember;
+        // [lc-1661] 日志设置只能由 feedback_log_settings_set 修改（前端 Config 快照不含/易过期）。
+        config.log_debug = cur.log_debug;
+        config.log_modules = cur.log_modules.clone();
+        // [lc-1662] 匿名统计开关只能由 usage_stats_set 修改
+        config.usage_stats_enabled = cur.usage_stats_enabled;
     }
     config::save(&app, &config).await?;
+    // [lc-1661] 日志设置随整份配置保存后同步到运行态（本函数保留旧值，实际不会变，稳妥起见仍同步）
+    libmpv::apply_settings(config.log_debug, config.log_modules.clone());
     // [lc-1561] 自建弹幕接口配置桥给 Node 侧客户端（改完立即生效，见 write_danmu_config）
     danmaku_shim::write_danmu_config(&config)?;
     // [lc-1561] 同步 Lua 侧闸门（只写开关、绝不写地址，见 sync_lua_gate 注释）
@@ -1342,8 +1349,28 @@ async fn set_settings(
     }))
 }
 
-/// [lc-1434] 启动页：**登录成功后、首页数据加载前**被调用（前端路由据此决定落点）。
-/// 独立成一条命令而不是复用 get_settings：它要能被"最小可用"地调用，
+/// [lc-1662] 匿名使用统计：读开关（默认开启，见 config.rs 注释）。
+/// 说明文案（旧项目「关于」页）：仅上报匿名 ID / 版本 / 系统 / 日期，不含账号、IP、路径。
+#[tauri::command]
+async fn usage_stats_get(state: State<'_, AppState>) -> Result<Value, String> {
+    Ok(json!({ "enabled": state.config.read().await.usage_stats_enabled }))
+}
+
+/// [lc-1662] 匿名使用统计：写开关（持久化到 config.json，立即生效）。
+#[tauri::command]
+async fn usage_stats_set(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<Value, String> {
+    let mut cfg = state.config.read().await.clone();
+    cfg.usage_stats_enabled = enabled;
+    config::save(&app, &cfg).await?;
+    *state.config.write().await = cfg;
+    Ok(json!({ "enabled": enabled }))
+}
+
+/// [lc-1434] 启动页：**登录成功后、首页数据加载前**被调用（前端路由据此决定落点）。/// 独立成一条命令而不是复用 get_settings：它要能被"最小可用"地调用，
 /// 不依赖前端已把整份设置读回来（登录流程早期就用到）。
 #[tauri::command]
 async fn get_launch_page(state: State<'_, AppState>) -> Result<String, String> {
@@ -1676,6 +1703,8 @@ pub fn run() {
             libmpv::install_crash_logger();
             // 启动时从磁盘读回配置（token/路径），否则每次重启都要重新登录
             let cfg = tauri::async_runtime::block_on(config::load(app.handle()));
+            // [lc-1661] 日志分流设置：必须在任何模块开始写日志前注入（migrate 阶段用的是默认值）
+            libmpv::apply_settings(cfg.log_debug, cfg.log_modules.clone());
             // 图片/数据落盘缓存：目录在应用数据目录（不是 %TEMP%），上限来自 config，启动即按上限淘汰一次
             {
                 let root = app
@@ -1885,7 +1914,12 @@ pub fn run() {
             feedback::feedback_read_log,
             feedback::feedback_diagnostics,
             feedback::feedback_export_diagnostics,
-            feedback::feedback_upload_log_text,
+            // [lc-1661] 日志设置（调试开关 + 组件过滤，持久化到 config.json）
+            feedback::feedback_log_settings_get,
+            feedback::feedback_log_settings_set,
+            // [lc-1662] 匿名使用统计开关（默认开；本版仅持久化开关，未实现上报链路）
+            usage_stats_get,
+            usage_stats_set,
             // [lc-1435] 关闭询问的回答（exit → 走 RunEvent::Exit 退场清理）
             resolve_close,
             // 缓存面板三要素：占用 / 上限 / 清理

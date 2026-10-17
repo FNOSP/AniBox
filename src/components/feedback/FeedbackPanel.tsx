@@ -4,9 +4,10 @@
    留在原层级会受侧栏/顶栏合成层干扰；portal 后与 .dseg 等同在顶层上下文，z40 遮罩正常压住内容区。
    数据链路 = Rust 命令：feedback_submit / feedback_list / feedback_thread / feedback_reply；
    以及从旧 Electron 设置面板迁移来的日志/诊断命令：feedback_log_info / feedback_open_log /
-   feedback_read_log / feedback_diagnostics / feedback_export_diagnostics / feedback_upload_log_text。
+   feedback_read_log / feedback_diagnostics / feedback_export_diagnostics；
+   调试日志设置走固定契约 feedback_log_settings_get / feedback_log_settings_set。
    会话视图打开期间每 20 秒轮询一次（实时状态同步）；网络失败只行内提示、保留已有内容。 */
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { X as IcoXL } from "lucide-react";
@@ -50,6 +51,34 @@ type LogInfo = {
   mpvExists: boolean;
   maxBytes: number;
 };
+
+/** 调试日志的组件级开关（键名与后端契约一致） */
+type LogModules = {
+  mpv: boolean;
+  bgm: boolean;
+  mirror: boolean;
+  feedback: boolean;
+  history: boolean;
+  webrs: boolean;
+  other: boolean;
+};
+
+/** feedback_log_settings_get / _set 的统一返回结构 */
+type LogSettings = {
+  debug: boolean;
+  modules: LogModules;
+  errorLogPath: string;
+};
+
+const MODULE_LABELS: { key: keyof LogModules; label: string }[] = [
+  { key: "mpv", label: "MPV" },
+  { key: "bgm", label: "BGM" },
+  { key: "mirror", label: "镜像缓存" },
+  { key: "feedback", label: "反馈" },
+  { key: "history", label: "观影记录" },
+  { key: "webrs", label: "在线源" },
+  { key: "other", label: "其他" },
+];
 
 /** 状态枚举 → 中文（对齐服务端冻结枚举；unknown = 网络降级时的本地兜底） */
 const STATUS_TEXT: Record<string, string> = {
@@ -101,8 +130,15 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
   const [diagLoading, setDiagLoading] = useState(false);
   const [toolNote, setToolNote] = useState("");
   const [toolErr, setToolErr] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const fileRef = useRef<HTMLInputElement | null>(null);
+  // 调试日志设置（固定契约 feedback_log_settings_get / _set）
+  const [logSettings, setLogSettings] = useState<LogSettings | null>(null);
+  const [savingLogSettings, setSavingLogSettings] = useState(false);
+  const [logSetErr, setLogSetErr] = useState("");
+  // 匿名统计（后端命令尚未在 Rust 侧实现时降级为不可用，不影响其它功能）
+  const [statsEnabled, setStatsEnabled] = useState<boolean | null>(null);
+  const [statsAvailable, setStatsAvailable] = useState<boolean | null>(null);
+  const [savingStats, setSavingStats] = useState(false);
+  const [statsErr, setStatsErr] = useState("");
 
   const loadList = useCallback(async () => {
     setListErr("");
@@ -137,6 +173,72 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
     }
   }, []);
 
+  const loadLogSettings = useCallback(async () => {
+    setLogSetErr("");
+    try {
+      setLogSettings(await invoke<LogSettings>("feedback_log_settings_get"));
+    } catch (e) {
+      setLogSetErr(String(e));
+    }
+  }, []);
+
+  const loadUsageStats = useCallback(async () => {
+    setStatsErr("");
+    try {
+      const r = await invoke<{ enabled: boolean }>("usage_stats_get");
+      setStatsEnabled(!!r?.enabled);
+      setStatsAvailable(true);
+    } catch {
+      // 命令缺失/后端未实现：降级为“不可用”，不抛错、不影响其它区块
+      setStatsAvailable(false);
+    }
+  }, []);
+
+  /** 保存调试日志设置：乐观更新 → 失败回滚并提示 */
+  const saveLogSettings = async (patch: { debug?: boolean; modules?: LogModules }) => {
+    const prev = logSettings;
+    if (!prev || savingLogSettings) return;
+    const next = {
+      debug: patch.debug ?? prev.debug,
+      modules: patch.modules ?? prev.modules,
+    };
+    setLogSettings({ ...prev, ...next });
+    setSavingLogSettings(true);
+    setLogSetErr("");
+    try {
+      const r = await invoke<LogSettings>("feedback_log_settings_set", next);
+      setLogSettings(r);
+    } catch (e) {
+      setLogSettings(prev); // 回滚到保存前
+      setLogSetErr(`保存失败：${String(e)}`);
+    } finally {
+      setSavingLogSettings(false);
+    }
+  };
+
+  const toggleModule = (key: keyof LogModules, checked: boolean) => {
+    if (!logSettings) return;
+    void saveLogSettings({ modules: { ...logSettings.modules, [key]: checked } });
+  };
+
+  /** 匿名统计开关：同样乐观更新、失败回滚 */
+  const saveStats = async (enabled: boolean) => {
+    if (savingStats || statsEnabled === null) return;
+    const prev = statsEnabled;
+    setStatsEnabled(enabled);
+    setSavingStats(true);
+    setStatsErr("");
+    try {
+      const r = await invoke<{ enabled: boolean }>("usage_stats_set", { enabled });
+      if (typeof r?.enabled === "boolean") setStatsEnabled(r.enabled);
+    } catch (e) {
+      setStatsEnabled(prev);
+      setStatsErr(`保存失败：${String(e)}`);
+    } finally {
+      setSavingStats(false);
+    }
+  };
+
   // 进入列表视图时拉取（打开面板 / 从新建或会话返回）
   useEffect(() => {
     if (view === "list") void loadList();
@@ -147,13 +249,15 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
     void loadLogInfo();
   }, [loadLogInfo]);
 
-  // 诊断视图：每次进入刷新日志信息与诊断文本
+  // 诊断视图：每次进入刷新日志信息、诊断文本、日志设置与匿名统计
   useEffect(() => {
     if (view === "diag") {
       void loadLogInfo();
       void loadDiag();
+      void loadLogSettings();
+      void loadUsageStats();
     }
-  }, [view, loadLogInfo, loadDiag]);
+  }, [view, loadLogInfo, loadDiag, loadLogSettings, loadUsageStats]);
 
   const loadThread = useCallback(async (id: string) => {
     try {
@@ -251,7 +355,7 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
   };
 
   // ── 日志 / 诊断工具（对应旧 Electron 设置面板的日志按钮） ──
-  const openLog = async (kind: "log" | "dir" | "mpv" | "diagnostics") => {
+  const openLog = async (kind: "log" | "dir" | "mpv" | "diagnostics" | "error") => {
     setToolErr("");
     setToolNote("");
     try {
@@ -301,36 +405,6 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
     }
   };
 
-  const pickLogFile = () => fileRef.current?.click();
-
-  const onPickLogFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    e.target.value = "";
-    if (!f || uploading) return;
-    setUploading(true);
-    setToolErr("");
-    setToolNote("读取日志文件…");
-    try {
-      const max = 2 * 1024 * 1024;
-      const truncated = f.size > max;
-      const blob = truncated ? f.slice(f.size - max) : f;
-      const text = await blob.text();
-      const r = await invoke<{ id: string }>("feedback_upload_log_text", {
-        text,
-        name: f.name,
-        page: page || undefined,
-        truncated,
-      });
-      setToolNote(`日志上传成功，工单号：${r.id}`);
-      openThread(r.id);
-    } catch (err) {
-      setToolNote("");
-      setToolErr(String(err));
-    } finally {
-      setUploading(false);
-    }
-  };
-
   const ticketStatus = thread?.ticket?.status ?? "";
   // 原始提交内容固定渲染为第一条 user 气泡；若服务端 messages[0] 与它完全相同则跳过（防重复）
   const origMsg = thread?.ticket?.message ?? "";
@@ -368,6 +442,15 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
                 ＋ 新建反馈
               </button>
               <div className="fbx-toolbar-r">
+                <a
+                  className="fbx-btn"
+                  href="https://qm.qq.com/q/dUnIQVvoIw"
+                  target="_blank"
+                  rel="noreferrer"
+                  title="加入 QQ 交流群"
+                >
+                  加入 Q 群
+                </a>
                 <button className="fbx-btn" onClick={() => void loadList()} disabled={items === null}>
                   刷新
                 </button>
@@ -509,6 +592,9 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
                   >
                     打开日志
                   </button>
+                  <button className="fbx-btn" onClick={() => void openLog("error")}>
+                    打开报错日志
+                  </button>
                   <button className="fbx-btn" onClick={() => void openLog("dir")}>
                     打开日志目录
                   </button>
@@ -530,6 +616,84 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
                   复制与导出的日志都会先按 feedback.rs 的同一套规则脱敏（token / 密码 / Bearer /
                   手机号 / 邮箱 / 本机用户名），NAS 地址与域名保留用于排查网络。
                 </div>
+                <div className="fbx-hint">
+                  导出诊断包包含：诊断文本 + 日志设置 + anibox.log + anibox-error.log（日志均已脱敏）。
+                </div>
+              </section>
+
+              <section className="fbx-sec">
+                <div className="fbx-sec-hd">
+                  <h4 className="fbx-sec-h">调试日志</h4>
+                  {savingLogSettings && <span className="fbx-hint">保存中…</span>}
+                </div>
+                {logSetErr && <div className="fbx-note err">{logSetErr}</div>}
+                {logSettings === null ? (
+                  <div className="fbx-hint">{logSetErr ? "日志设置读取失败" : "读取中…"}</div>
+                ) : (
+                  <>
+                    <label className="fbx-check">
+                      <input
+                        type="checkbox"
+                        checked={logSettings.debug}
+                        disabled={savingLogSettings}
+                        onChange={(e) => void saveLogSettings({ debug: e.target.checked })}
+                      />
+                      <span>启用调试日志</span>
+                    </label>
+                    <div className="fbx-modgrid">
+                      {MODULE_LABELS.map(({ key, label }) => (
+                        <label key={key} className="fbx-check">
+                          <input
+                            type="checkbox"
+                            checked={!!logSettings.modules[key]}
+                            disabled={savingLogSettings || !logSettings.debug}
+                            onChange={(e) => toggleModule(key, e.target.checked)}
+                          />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div className="fbx-kv">
+                      <span>报错日志</span>
+                      <code>{logSettings.errorLogPath || "—"}</code>
+                    </div>
+                    <div className="fbx-btnrow">
+                      <button className="fbx-btn" onClick={() => void openLog("error")}>
+                        打开报错日志
+                      </button>
+                    </div>
+                    <div className="fbx-hint">
+                      按组件分别开启日志，便于定位问题；关闭总开关后不再写入调试日志。
+                    </div>
+                  </>
+                )}
+              </section>
+
+              <section className="fbx-sec">
+                <div className="fbx-sec-hd">
+                  <h4 className="fbx-sec-h">匿名统计</h4>
+                  {savingStats && <span className="fbx-hint">保存中…</span>}
+                </div>
+                {statsErr && <div className="fbx-note err">{statsErr}</div>}
+                {statsAvailable === null ? (
+                  <div className="fbx-hint">读取中…</div>
+                ) : statsAvailable ? (
+                  <label className="fbx-check">
+                    <input
+                      type="checkbox"
+                      checked={!!statsEnabled}
+                      disabled={savingStats}
+                      onChange={(e) => void saveStats(e.target.checked)}
+                    />
+                    <span>参与匿名统计</span>
+                  </label>
+                ) : (
+                  <div className="fbx-hint">当前版本暂不支持匿名统计设置。</div>
+                )}
+                <div className="fbx-hint">
+                  仅上报匿名使用数据（随机匿名 ID、应用版本、系统类型），不含账号、IP、媒体库或文件路径；
+                  服务端不存储 IP，可随时在此关闭。
+                </div>
               </section>
 
               <section className="fbx-sec">
@@ -545,25 +709,6 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
                   </div>
                 </div>
                 <pre className="fbx-pre">{diagText || (diagLoading ? "加载中…" : "（无诊断信息）")}</pre>
-              </section>
-
-              <section className="fbx-sec">
-                <h4 className="fbx-sec-h">手动上传日志文件</h4>
-                <div className="fbx-hint">
-                  选择一个 .log / .txt 文件，读取尾部最多 2MB，脱敏后作为工单提交（工单内容为文件名）。
-                </div>
-                <div className="fbx-btnrow">
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    accept=".log,.txt,text/plain"
-                    style={{ display: "none" }}
-                    onChange={(e) => void onPickLogFile(e)}
-                  />
-                  <button className="fbx-btn primary" onClick={pickLogFile} disabled={uploading}>
-                    {uploading ? "上传中…" : "选择日志文件上传"}
-                  </button>
-                </div>
               </section>
             </div>
           </div>

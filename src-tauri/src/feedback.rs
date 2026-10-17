@@ -21,7 +21,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::OnceLock;
 use std::time::Duration;
 use tauri::{AppHandle, Manager, State};
@@ -267,26 +267,6 @@ fn read_tail_path(p: &std::path::Path, max_bytes: u64) -> Option<String> {
 /// 读诊断日志尾部。默认 LOG_TAIL_BYTES；文件不存在/为空返回 None（跳过日志附件）。
 fn read_log_tail() -> Option<String> {
     read_tail_path(&libmpv::log_path(), LOG_TAIL_BYTES)
-}
-
-/// 把任意文本裁到尾部 `max_bytes` 字节（按 UTF-8 字符边界对齐）。返回 (尾部文本, 是否截断)。
-fn tail_chars(text: &str, max_bytes: usize) -> (&str, bool) {
-    if text.len() <= max_bytes {
-        return (text, false);
-    }
-    let mut start = text.len() - max_bytes;
-    while start < text.len() && !text.is_char_boundary(start) {
-        start += 1;
-    }
-    (&text[start..], true)
-}
-
-/// 截断文本时丢掉第一行（可能是半行）。
-fn drop_first_line(text: &str) -> &str {
-    match text.find('\n') {
-        Some(i) => &text[i + 1..],
-        None => text,
-    }
 }
 
 // ───────────────────────── 脱敏 ─────────────────────────
@@ -646,8 +626,8 @@ pub async fn feedback_reply(id: String, text: String) -> Result<Value, String> {
 // 对应旧 Electron 项目：
 //   · settings:open-log / open-error-log / open-mpv-log / export-log
 //   · settings:diagnostics（汇总运行态 + 复制）
-//   · feedback:upload-log（手动选择日志文件上传）
-// 新项目只有一份诊断日志（anibox.log）与 MPV 日志（anibox-mpv.log），没有独立 error 日志。
+// [lc-1661] 新增独立报错日志 anibox-error.log + 调试/组件日志开关；
+// 旧项目的「手动选择日志文件上传」已按需求移除（不再有 feedback:upload-log）。
 
 fn file_size(p: &std::path::Path) -> u64 {
     std::fs::metadata(p).map(|m| m.len()).unwrap_or(0)
@@ -674,9 +654,20 @@ fn or_saved(s: &str) -> &str {
 /// 诊断文本（不含 token/password 明文；只报告“是否已保存”）。
 fn diagnostics_text(app: &AppHandle, cfg: &config::Config) -> String {
     let log = libmpv::log_path();
+    let errlog = libmpv::error_log_path();
     let mpv = mpv_log_path();
     let data_dir = app_data_dir(app).map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
     let yes = |b: bool| if b { "开" } else { "关" };
+    let modules: Vec<String> = libmpv::MODULE_KEYS
+        .iter()
+        .map(|k| {
+            format!(
+                "{}={}",
+                k,
+                yes(cfg.log_modules.get(*k).copied().unwrap_or(true))
+            )
+        })
+        .collect();
     let lines = [
         "== 基本信息 ==".to_string(),
         format!("版本: {}", env!("CARGO_PKG_VERSION")),
@@ -686,7 +677,11 @@ fn diagnostics_text(app: &AppHandle, cfg: &config::Config) -> String {
         String::new(),
         "== 日志 ==".to_string(),
         format!("诊断日志: {}（{} 字节）", log.to_string_lossy(), file_size(&log)),
+        format!("报错日志: {}（{} 字节）", errlog.to_string_lossy(), file_size(&errlog)),
         format!("MPV 日志: {}（{} 字节）", mpv.to_string_lossy(), file_size(&mpv)),
+        format!("调试日志: {}", yes(cfg.log_debug)),
+        format!("组件日志: {}", modules.join(" ")),
+        format!("匿名使用统计: {}", yes(cfg.usage_stats_enabled)),
         String::new(),
         "== 连接与账号 ==".to_string(),
         format!("NAS 地址: {}", or_unset(&cfg.server)),
@@ -719,6 +714,7 @@ fn diagnostics_text(app: &AppHandle, cfg: &config::Config) -> String {
 #[tauri::command]
 pub async fn feedback_log_info() -> Result<Value, String> {
     let log = libmpv::log_path();
+    let errlog = libmpv::error_log_path();
     let mpv = mpv_log_path();
     let dir = log.parent().map(|p| p.to_path_buf()).unwrap_or_default();
     Ok(json!({
@@ -726,6 +722,10 @@ pub async fn feedback_log_info() -> Result<Value, String> {
         "dir": dir.to_string_lossy(),
         "size": file_size(&log),
         "exists": log.exists(),
+        // [lc-1661] 独立报错日志
+        "errorLogPath": errlog.to_string_lossy(),
+        "errorLogSize": file_size(&errlog),
+        "errorLogExists": errlog.exists(),
         "mpvPath": mpv.to_string_lossy(),
         "mpvSize": file_size(&mpv),
         "mpvExists": mpv.exists(),
@@ -733,8 +733,61 @@ pub async fn feedback_log_info() -> Result<Value, String> {
     }))
 }
 
-/// 打开日志文件 / 日志目录 / MPV 日志 / 诊断包目录。
-/// kind: "log" | "dir" | "mpv" | "diagnostics"
+/// [lc-1661] 固定契约 JSON：{ debug, modules(全 7 键), errorLogPath }。
+fn log_settings_value(debug: bool, modules: &BTreeMap<String, bool>) -> Value {
+    let mut m = serde_json::Map::new();
+    for k in libmpv::MODULE_KEYS {
+        m.insert(k.to_string(), json!(modules.get(k).copied().unwrap_or(true)));
+    }
+    json!({
+        "debug": debug,
+        "modules": Value::Object(m),
+        "errorLogPath": libmpv::error_log_path().to_string_lossy(),
+    })
+}
+
+/// 读日志设置（调试开关 + 组件过滤 + 报错日志路径）。
+#[tauri::command]
+pub async fn feedback_log_settings_get(state: State<'_, AppState>) -> Result<Value, String> {
+    let cfg = state.config.read().await;
+    Ok(log_settings_value(cfg.log_debug, &cfg.log_modules))
+}
+
+/// 写日志设置：接受 debug / modules 的任意子集，持久化到 config.json 并立即生效。
+/// 未提供的键保持原值；未知组件键忽略（契约只认 7 个固定键）。
+#[tauri::command]
+pub async fn feedback_log_settings_set(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    settings: Value,
+) -> Result<Value, String> {
+    let mut cfg = state.config.read().await.clone();
+    if let Some(v) = settings.get("debug") {
+        cfg.log_debug = v.as_bool().ok_or("debug 必须是布尔值")?;
+    }
+    if let Some(v) = settings.get("modules") {
+        let obj = v.as_object().ok_or("modules 必须是对象")?;
+        for k in libmpv::MODULE_KEYS {
+            if let Some(b) = obj.get(k) {
+                let b = b
+                    .as_bool()
+                    .ok_or_else(|| format!("modules.{k} 必须是布尔值"))?;
+                cfg.log_modules.insert(k.to_string(), b);
+            }
+        }
+        // 归一化：缺省键补 true（config.json 可读、前端回填不丢项）
+        for k in libmpv::MODULE_KEYS {
+            cfg.log_modules.entry(k.to_string()).or_insert(true);
+        }
+    }
+    config::save(&app, &cfg).await?;
+    libmpv::apply_settings(cfg.log_debug, cfg.log_modules.clone());
+    *state.config.write().await = cfg.clone();
+    Ok(log_settings_value(cfg.log_debug, &cfg.log_modules))
+}
+
+/// 打开日志文件 / 日志目录 / 报错日志 / MPV 日志 / 诊断包目录。
+/// kind: "log" | "dir" | "error" | "mpv" | "diagnostics"
 #[tauri::command]
 pub async fn feedback_open_log(app: AppHandle, kind: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
@@ -751,6 +804,18 @@ pub async fn feedback_open_log(app: AppHandle, kind: String) -> Result<(), Strin
             p.parent()
                 .map(|x| x.to_path_buf())
                 .ok_or("无法定位日志目录")?
+        }
+        // [lc-1661] 独立报错日志：不存在时创建空文件再打开（用户可能想看“确实没报错”）
+        "error" => {
+            let p = libmpv::error_log_path();
+            if !p.exists() {
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&p)
+                    .map_err(|e| format!("创建报错日志失败：{e}"))?;
+            }
+            p
         }
         "mpv" => {
             let p = mpv_log_path();
@@ -868,7 +933,8 @@ fn zip_store(files: &[(String, Vec<u8>)]) -> Vec<u8> {
     out
 }
 
-/// 导出诊断包（zip：diagnostics.txt + anibox.log + anibox-mpv.log，日志均已脱敏）。
+/// 导出诊断包（zip：diagnostics.txt + log-settings.json + 脱敏 anibox.log +
+/// 脱敏 anibox-error.log + 脱敏 anibox-mpv.log）。
 /// 写入 app_data_dir/diagnostics/，返回 zip 路径；前端随后打开该目录。
 #[tauri::command]
 pub async fn feedback_export_diagnostics(
@@ -880,9 +946,23 @@ pub async fn feedback_export_diagnostics(
     let log = read_tail_path(&libmpv::log_path(), LOG_TAIL_MAX_BYTES)
         .map(|s| redact(&s))
         .unwrap_or_else(|| "（日志为空或不存在）".to_string());
+    // [lc-1661] 独立报错日志（同样脱敏）
+    let errlog = read_tail_path(&libmpv::error_log_path(), LOG_TAIL_MAX_BYTES)
+        .map(|s| redact(&s))
+        .unwrap_or_else(|| "（报错日志为空或不存在）".to_string());
     let mpv = read_tail_path(&mpv_log_path(), LOG_TAIL_MAX_BYTES)
         .map(|s| redact(&s))
         .unwrap_or_else(|| "（MPV 日志为空或不存在）".to_string());
+    // [lc-1662] log-settings.json 里附上匿名统计开关（排查用；不改变 get/set 的固定契约）
+    let mut settings_val = log_settings_value(cfg.log_debug, &cfg.log_modules);
+    if let Some(o) = settings_val.as_object_mut() {
+        o.insert(
+            "usageStatsEnabled".to_string(),
+            json!(cfg.usage_stats_enabled),
+        );
+    }
+    let settings_json = serde_json::to_string_pretty(&settings_val)
+        .map_err(|e| format!("序列化日志设置失败：{e}"))?;
 
     let stamp = now_local_str()
         .replace('-', "")
@@ -893,56 +973,14 @@ pub async fn feedback_export_diagnostics(
     let path = dir.join(format!("anibox-diagnostics-{stamp}.zip"));
     let files = vec![
         ("diagnostics.txt".to_string(), text.into_bytes()),
+        ("log-settings.json".to_string(), settings_json.into_bytes()),
         ("anibox.log".to_string(), log.into_bytes()),
+        ("anibox-error.log".to_string(), errlog.into_bytes()),
         ("anibox-mpv.log".to_string(), mpv.into_bytes()),
     ];
     std::fs::write(&path, zip_store(&files)).map_err(|e| format!("写入诊断包失败：{e}"))?;
     libmpv::trace(&format!("[feedback] 诊断包已导出: {}", path.to_string_lossy()));
     Ok(json!({ "path": path.to_string_lossy(), "dir": dir.to_string_lossy() }))
-}
-
-/// 手动选择日志文件上传：前端读取文件尾部文本（≤2MB）后传进来，
-/// Rust 侧统一脱敏 + 环境块 + 提交，避免前端接触网络与脱敏规则。
-#[tauri::command]
-pub async fn feedback_upload_log_text(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    text: String,
-    name: Option<String>,
-    page: Option<String>,
-    truncated: Option<bool>,
-) -> Result<Value, String> {
-    if text.trim().is_empty() {
-        return Err("日志内容为空".into());
-    }
-    let aid = ensure_aid(&app, &state).await?;
-    let (tail, cut) = tail_chars(&text, LOG_TAIL_MAX_BYTES as usize);
-    let tail = if truncated.unwrap_or(false) || cut {
-        drop_first_line(tail)
-    } else {
-        tail
-    };
-    let safe = redact(tail);
-    let name = name.unwrap_or_default();
-    let title = if name.trim().is_empty() {
-        "手动上传日志文件".to_string()
-    } else {
-        format!("手动上传日志文件：{}", name.trim())
-    };
-    let mut body = json!({
-        "message": title,
-        "aid": aid,
-        "v": env!("CARGO_PKG_VERSION"),
-        "os": os_label(),
-        "arch": arch_label(),
-        "log": format!("{}\n{}", env_block(page.as_deref()), safe),
-    });
-    if let Some(p) = page.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        body["page"] = json!(p);
-    }
-    let id = post_feedback(&body).await?;
-    libmpv::trace(&format!("[feedback] 手动日志上传成功 id={id}"));
-    Ok(json!({ "id": id }))
 }
 
 // ───────────────────────── 测试 ─────────────────────────
@@ -1050,18 +1088,32 @@ mod tests {
     }
 
     #[test]
-    fn tail_chars_aligns_utf8_boundary() {
-        let s = "aaa中文中文中文";
-        let (tail, cut) = tail_chars(s, 7);
-        assert!(cut);
-        assert!(tail.is_char_boundary(0), "尾部必须落在字符边界: {tail:?}");
-        assert!(s.ends_with(tail));
-    }
+    fn log_settings_value_has_contract_shape() {
+        // [lc-1661] 固定契约：debug + 全 7 键 modules + errorLogPath
+        let v = log_settings_value(true, &BTreeMap::new());
+        assert_eq!(v.get("debug").and_then(|x| x.as_bool()), Some(true));
+        let m = v.get("modules").and_then(|x| x.as_object()).expect("modules");
+        for k in libmpv::MODULE_KEYS {
+            assert_eq!(m.get(k).and_then(|x| x.as_bool()), Some(true), "缺省全开: {k}");
+        }
+        assert!(v.get("errorLogPath").and_then(|x| x.as_str()).is_some());
+        assert!(v
+            .get("errorLogPath")
+            .and_then(|x| x.as_str())
+            .unwrap()
+            .ends_with("anibox-error.log"));
 
-    #[test]
-    fn drop_first_line_works() {
-        assert_eq!(drop_first_line("half\nfull\nmore"), "full\nmore");
-        assert_eq!(drop_first_line("only"), "only");
+        // 显式关闭的组件如实反映
+        let mut mods = BTreeMap::new();
+        mods.insert("mpv".to_string(), false);
+        let v2 = log_settings_value(false, &mods);
+        assert_eq!(v2.get("debug").and_then(|x| x.as_bool()), Some(false));
+        assert_eq!(
+            v2["modules"]["mpv"].as_bool(),
+            Some(false),
+            "组件开关回读"
+        );
+        assert_eq!(v2["modules"]["bgm"].as_bool(), Some(true), "未设置的键全开");
     }
 
     #[test]
@@ -1075,5 +1127,24 @@ mod tests {
         assert_eq!(&z[0..4], b"PK\x03\x04", "local file header");
         assert_eq!(&z[z.len() - 22..z.len() - 18], b"PK\x05\x06", "EOCD");
         assert!(z.windows(5).any(|w| w == b"a.txt"), "文件名写入");
+    }
+
+    #[test]
+    fn diagnostics_zip_contains_required_entries() {
+        // [lc-1661/1662] 诊断包固定清单
+        let files = vec![
+            ("diagnostics.txt".to_string(), b"d".to_vec()),
+            ("log-settings.json".to_string(), b"{}".to_vec()),
+            ("anibox.log".to_string(), b"l".to_vec()),
+            ("anibox-error.log".to_string(), b"e".to_vec()),
+            ("anibox-mpv.log".to_string(), b"m".to_vec()),
+        ];
+        let z = zip_store(&files);
+        for (name, _) in &files {
+            assert!(
+                z.windows(name.len()).any(|w| w == name.as_bytes()),
+                "缺少 {name}"
+            );
+        }
     }
 }

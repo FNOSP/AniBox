@@ -58,6 +58,13 @@ html.dark {
   filter: brightness(1.07);
 }
 
+/* 外链按钮（加入 Q 群）：与 .fbx-btn 同视觉，去掉下划线 */
+a.fbx-btn {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
 /* 行内提示（.err 变体与全局错误配色同族） */
 .fbx-note {
   font-size: 12.5px;
@@ -236,6 +243,26 @@ html.dark {
   accent-color: var(--accent);
   cursor: pointer;
   flex: 0 0 auto;
+}
+.fbx-check input[type="checkbox"]:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.fbx-check:has(input[type="checkbox"]:disabled) {
+  opacity: 0.65;
+  cursor: default;
+}
+
+/* 调试日志的组件级开关：自适应网格，窄屏自动折行 */
+.fbx-modgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 7px 12px;
+  margin: 9px 0 4px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--input-bg);
 }
 .fbx-hint {
   font-size: 11.5px;

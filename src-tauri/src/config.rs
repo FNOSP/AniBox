@@ -74,6 +74,25 @@ pub struct Config {
     /// 仅用于把同一台设备的工单归组（「我的工单」状态查询），不含任何个人信息。
     #[serde(default)]
     pub feedback_aid: String,
+
+    /* ── [lc-1661] 日志设置（独立报错日志 + 调试开关 + 组件过滤）──
+       老 config.json 无这些键 → serde default：debug=true（保持原有常开行为）、
+       modules 为空 = 全开。不需要迁移脚本。 */
+    /// 调试日志总开关：false 时普通 info/debug 不再写 anibox.log；
+    /// WARN/ERROR 级仍写 anibox-error.log（独立报错日志不受此开关影响）。
+    #[serde(default = "default_true")]
+    pub log_debug: bool,
+    /// 组件级日志开关（键：mpv/bgm/mirror/feedback/history/webrs/other）。
+    /// 缺省（空 map / 缺键）视为全开。
+    #[serde(default)]
+    pub log_modules: std::collections::BTreeMap<String, bool>,
+
+    /* ── [lc-1662] 匿名使用统计开关 ──
+       旧项目 `statsEnabled` 口径：**默认开启**（`getStatsEnabled()` 返回 `statsEnabled !== false`）。
+       说明文案（旧项目「关于」页）：仅上报「随机匿名 ID + 版本号 + 系统类型 + 日期」，
+       不含账号 / IP / 媒体库 / 文件路径；每天最多一次，可随时关闭。 */
+    #[serde(default = "default_true")]
+    pub usage_stats_enabled: bool,
 }
 
 fn default_cache_limit_mb() -> u64 {
@@ -123,6 +142,9 @@ impl Default for Config {
             danmu_api_base: String::new(),
             danmu_api_bases: Vec::new(),
             feedback_aid: String::new(),
+            log_debug: true,
+            log_modules: std::collections::BTreeMap::new(),
+            usage_stats_enabled: true,
         }
     }
 }
@@ -212,6 +234,29 @@ mod tests {
         assert!(c.bgm_remember, "缺省应记住账号");
         assert_eq!(c.bgm_username, "");
         assert_eq!(c.bgm_token, "");
+    }
+
+    #[test]
+    fn log_settings_have_safe_defaults() {
+        // 老 config.json 没有日志键 → debug 默认开、组件表为空（= 全开）
+        let c: Config = serde_json::from_str("{}").unwrap();
+        assert!(c.log_debug, "调试日志默认开启（保持原有行为）");
+        assert!(c.log_modules.is_empty(), "缺省组件表为空 = 全开");
+
+        // 显式关闭与组件过滤可被解析
+        let c2: Config =
+            serde_json::from_str(r#"{"log_debug":false,"log_modules":{"mpv":false}}"#).unwrap();
+        assert!(!c2.log_debug);
+        assert_eq!(c2.log_modules.get("mpv"), Some(&false));
+    }
+
+    #[test]
+    fn usage_stats_defaults_to_on() {
+        // 旧项目 statsEnabled 默认 true（statsEnabled !== false）
+        let c: Config = serde_json::from_str("{}").unwrap();
+        assert!(c.usage_stats_enabled, "匿名统计默认开启");
+        let c2: Config = serde_json::from_str(r#"{"usage_stats_enabled":false}"#).unwrap();
+        assert!(!c2.usage_stats_enabled);
     }
 
     #[test]

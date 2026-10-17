@@ -14,6 +14,7 @@ export function TitleBar({
   refreshing,
   onToggleTheme,
   chrome,
+  onHome,
 }: {
   title: string;
   nav?: boolean;
@@ -27,6 +28,8 @@ export function TitleBar({
   onToggleTheme?: (e: React.MouseEvent<HTMLButtonElement>) => void;
   /** [lc-123-rev4] 顶栏 chrome 色：auto=跟随主题（默认）；dark/light=按 hero 亮度采样；fallback=白字强阴影 */
   chrome?: ChromeTone;
+  /** [lc-1661] 点击左上角页名快速回首页；不传则仍渲染为纯文本（向后兼容） */
+  onHome?: () => void;
 }) {
   const win = getCurrentWindow();
   const crumb = page === "discover" ? "发现" : "首页";
@@ -47,7 +50,23 @@ export function TitleBar({
           </button>
         )}
         {/* [lc-123] 左上角这行字 = **当前页名**（首页/发现），随胶囊切换（不再是"回首页"按钮） */}
-        {nav && <span className="tb-crumb">{crumb}</span>}
+        {/* [lc-1661] 用户要求：点这行字快速回首页。传了 onHome 才渲染成按钮（可点）；
+            没传仍是纯文本，保持向后兼容。button 不是 data-tauri-drag-region 的命中目标，
+            所以点击不会被拖拽区吞掉（同 .tb-icon 的既有行为）。 */}
+        {nav &&
+          (onHome ? (
+            <button
+              type="button"
+              className="tb-crumb tb-crumb-btn"
+              title="返回首页"
+              aria-label="返回首页"
+              onClick={onHome}
+            >
+              {crumb}
+            </button>
+          ) : (
+            <span className="tb-crumb">{crumb}</span>
+          ))}
         {nav && onRefresh && (
           <button
             className={`tb-icon${refreshing ? " spinning" : ""}`}

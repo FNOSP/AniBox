@@ -69,6 +69,32 @@
   color: var(--text);
   padding-left: 6px;
 }
+/* [lc-1661] 左上角页名（首页/发现）可点击回首页：按钮化后**观感与原来的纯文本一致**
+   （字号/字重/颜色仍由 .tb-crumb 给，这里只补按钮复位与交互反馈）。
+   · 全局 button 有 `padding: 8px 15px`（见 lc-1402），必须显式复位；
+   · 用 `padding: 3px 6px` + `margin-left: -4px` 抵消，让文字起点与原 span 对齐；
+   · 选择器写成 .tb-crumb.tb-crumb-btn（0,2,0），压过 18-nav-capsule.css 里后加载的 `.tb-crumb { padding-left: 2px }`；
+   · 只有 hover/active 才出现半透明底（延续顶栏"可读性不靠底色"的约定）。 */
+.tb-crumb.tb-crumb-btn {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text);
+  padding: 3px 6px;
+  margin-left: -4px;
+  border-radius: 6px;
+  cursor: pointer;
+  /* 兜底：若将来顶栏改回 CSS app-region 方案，按钮也不会被当成拖拽区 */
+  -webkit-app-region: no-drag;
+  transition: background-color 0.15s ease;
+}
+.tb-crumb.tb-crumb-btn:hover {
+  background: var(--hover);
+}
+.tb-crumb.tb-crumb-btn:active {
+  background: var(--hover-strong);
+}
 /* [lc-1402] padding 必须显式归零：全局 button 规则是 `padding: 8px 15px`，而本类与 .tb-btn/.ddet-close
    都只声明了 width/height（box-sizing: border-box）→ 内容盒被左右各 15px 吃掉，34px 只剩 4px 宽。
    装文字（旧版 ☰ / ⟳ / ◐）时溢出仍画得出来，所以看不出问题；换成 SVG 后会被 flex 压进这 4px 里

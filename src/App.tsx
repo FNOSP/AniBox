@@ -1143,6 +1143,8 @@ function App() {
         // 其余页（发现/库/详情）顶栏底下是应用底色 → "auto" 跟随主题（浅色主题深字 / 深色主题浅字）。
         chrome={view === "home" ? heroTone : "auto"}
         onToggleTheme={toggleTheme}
+        // [lc-1661] 顶栏左上角「首页/发现」可点击：快速回首页（goHome 有内存数据就不重拉）。
+        onHome={goHome}
       />
       {err && view !== "login" && <div className="err global-err">{err}</div>}
       {settingsOpen && (

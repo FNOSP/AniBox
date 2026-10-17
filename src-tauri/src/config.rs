@@ -93,6 +93,18 @@ pub struct Config {
        不含账号 / IP / 媒体库 / 文件路径；每天最多一次，可随时关闭。 */
     #[serde(default = "default_true")]
     pub usage_stats_enabled: bool,
+    /// [lc-1663] 机器级匿名 ID（系统机器标识 SHA-256 前 31 位 hex；拿不到时回退 32 位随机 hex）。
+    #[serde(default)]
+    pub usage_stats_anon_id: String,
+    /// 上次上报日期 YYYY-MM-DD（空 = 从未上报）
+    #[serde(default)]
+    pub usage_stats_last_ping_day: String,
+    /// 上次上报是否成功（仅用于状态展示）
+    #[serde(default)]
+    pub usage_stats_last_ping_ok: bool,
+    /// 上报失败攒下的欠报日期（YYYY-MM-DD，最多 7 天，网络恢复后补发）
+    #[serde(default)]
+    pub usage_stats_pending_days: Vec<String>,
 }
 
 fn default_cache_limit_mb() -> u64 {
@@ -145,6 +157,10 @@ impl Default for Config {
             log_debug: true,
             log_modules: std::collections::BTreeMap::new(),
             usage_stats_enabled: true,
+            usage_stats_anon_id: String::new(),
+            usage_stats_last_ping_day: String::new(),
+            usage_stats_last_ping_ok: false,
+            usage_stats_pending_days: Vec::new(),
         }
     }
 }
@@ -257,6 +273,11 @@ mod tests {
         assert!(c.usage_stats_enabled, "匿名统计默认开启");
         let c2: Config = serde_json::from_str(r#"{"usage_stats_enabled":false}"#).unwrap();
         assert!(!c2.usage_stats_enabled);
+        // [lc-1663] 运行态字段默认空
+        assert!(c2.usage_stats_anon_id.is_empty());
+        assert!(c2.usage_stats_last_ping_day.is_empty());
+        assert!(!c2.usage_stats_last_ping_ok);
+        assert!(c2.usage_stats_pending_days.is_empty());
     }
 
     #[test]

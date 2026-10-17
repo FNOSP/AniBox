@@ -681,7 +681,19 @@ fn diagnostics_text(app: &AppHandle, cfg: &config::Config) -> String {
         format!("MPV 日志: {}（{} 字节）", mpv.to_string_lossy(), file_size(&mpv)),
         format!("调试日志: {}", yes(cfg.log_debug)),
         format!("组件日志: {}", modules.join(" ")),
-        format!("匿名使用统计: {}", yes(cfg.usage_stats_enabled)),
+        format!(
+            "匿名使用统计: {} · 上次上报: {}",
+            yes(cfg.usage_stats_enabled),
+            if cfg.usage_stats_last_ping_day.is_empty() {
+                "未上报".to_string()
+            } else {
+                format!(
+                    "{}（{}）",
+                    cfg.usage_stats_last_ping_day,
+                    if cfg.usage_stats_last_ping_ok { "成功" } else { "失败" }
+                )
+            }
+        ),
         String::new(),
         "== 连接与账号 ==".to_string(),
         format!("NAS 地址: {}", or_unset(&cfg.server)),
@@ -959,6 +971,18 @@ pub async fn feedback_export_diagnostics(
         o.insert(
             "usageStatsEnabled".to_string(),
             json!(cfg.usage_stats_enabled),
+        );
+        o.insert(
+            "usageStatsLastPingDay".to_string(),
+            json!(cfg.usage_stats_last_ping_day),
+        );
+        o.insert(
+            "usageStatsLastPingOk".to_string(),
+            json!(cfg.usage_stats_last_ping_ok),
+        );
+        o.insert(
+            "usageStatsPendingDays".to_string(),
+            json!(cfg.usage_stats_pending_days),
         );
     }
     let settings_json = serde_json::to_string_pretty(&settings_val)

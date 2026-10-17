@@ -296,6 +296,8 @@ async fn get_watch_history(app: AppHandle, state: State<'_, AppState>) -> Result
     // [lc-1669] 老用户迁移：把旧 history.json 的播放记录回填到日级台账（热力图数据源）。
     // 幂等：只补 `tracked=false` 的旧天，新口径天不会被覆盖。
     history::migrate_days_from_history(&app, &local);
+    // [lc-1670] 旧 Electron 版 localStorage 里的热力图台账（fntv_wh_daycount_v1）也补进来
+    history::migrate_legacy_electron_days(&app);
     let mut fnos: Option<Value> = None;
     let mut fnos_error = String::new();
     if cfg.token.is_empty() {

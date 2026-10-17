@@ -323,6 +323,7 @@ pub fn migrate_days_from_history(app: &AppHandle, records: &[WatchRecord]) {
     if rebuilt.is_empty() {
         return;
     }
+    let _guard = LOCK.lock();
     let mut days = load_days(app);
     if merge_rebuilt_days(rebuilt, &mut days) {
         save_days(app, &days);
@@ -348,6 +349,169 @@ fn merge_rebuilt_days(
         changed = true;
     }
     changed
+}
+
+/// [lc-1670] 旧 Electron 版热力图台账迁移。
+/// 旧版把 `fntv_wh_daycount_v1`（形如 `{"2026-7-31":6}`，月份 0 基）存在
+/// `%APPDATA%/fntv/Partitions/*/Local Storage/leveldb`；新版 localStorage 不同源读不到，
+/// 这里直接扫描旧 LevelDB 的 .log/.ldb 原始字节提取该键（一次/进程，幂等）。
+#[cfg(target_os = "windows")]
+pub fn migrate_legacy_electron_days(app: &AppHandle) {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let Some(appdata) = std::env::var_os("APPDATA") else {
+            return;
+        };
+        // 旧 Electron 版的 userData 目录名可能是 fntv / Fntv-Plus 等：
+        // 扫描 %APPDATA% 下所有名字含 fntv 的目录，取其 Local Storage / Partitions。
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(PathBuf::from(appdata)) {
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().to_lowercase();
+                if !name.contains("fntv") || !e.path().is_dir() {
+                    continue;
+                }
+                let base = e.path();
+                dirs.push(base.join("Local Storage").join("leveldb"));
+                if let Ok(parts) = std::fs::read_dir(base.join("Partitions")) {
+                    for p in parts.flatten() {
+                        let p = p.path().join("Local Storage").join("leveldb");
+                        if p.is_dir() {
+                            dirs.push(p);
+                        }
+                    }
+                }
+            }
+        }
+        let mut legacy: BTreeMap<String, u32> = BTreeMap::new();
+        for dir in dirs {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for e in entries.flatten() {
+                let path = e.path();
+                let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+                if ext != "log" && ext != "ldb" {
+                    continue;
+                }
+                if let Ok(bytes) = std::fs::read(&path) {
+                    extract_legacy_daycounts(&bytes, &mut legacy);
+                }
+            }
+        }
+        if legacy.is_empty() {
+            return;
+        }
+        let _guard = LOCK.lock();
+        let mut days = load_days(app);
+        let mut changed = false;
+        for (key, count) in legacy {
+            if !valid_day_key(&key) {
+                continue;
+            }
+            let st = days.entry(key).or_default();
+            // 新版已按「作品去重」记过的天不覆盖（旧数据只有次数，粒度更粗）
+            if st.tracked {
+                continue;
+            }
+            if count > st.count {
+                st.count = count;
+                changed = true;
+            }
+        }
+        if changed {
+            save_days(app, &days);
+        }
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn migrate_legacy_electron_days(_app: &AppHandle) {}
+
+/// 从 LevelDB 原始字节里提取旧键 `fntv_wh_daycount_v1` 的 JSON 值（UTF-16LE / UTF-8 都试）。
+fn extract_legacy_daycounts(bytes: &[u8], out: &mut BTreeMap<String, u32>) {
+    const KEY: &str = "fntv_wh_daycount_v1";
+    // UTF-16LE 解码（Chromium localStorage 字符串按 UTF-16 存）
+    let utf16: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    let text16 = String::from_utf16_lossy(&utf16);
+    extract_json_after_key(&text16, KEY, out);
+    // 兜底：部分旧版本/工具写入的是 UTF-8
+    if let Ok(text8) = std::str::from_utf8(bytes) {
+        extract_json_after_key(text8, KEY, out);
+    }
+}
+
+/// 在文本里找 `key`，取其后第一个平衡的 `{...}` 解析成 `日期 → 次数`，同键取较大值。
+fn extract_json_after_key(text: &str, key: &str, out: &mut BTreeMap<String, u32>) {
+    let mut from = 0usize;
+    while let Some(pos) = text[from..].find(key) {
+        let after = from + pos + key.len();
+        let window = &text[after..];
+        if let Some(rel) = window.find('{') {
+            // 键和值之间可能有少量二进制字符；只在前 200 个字符内找 JSON 起点
+            if rel <= 200 {
+                if let Some(json) = balanced_json(&window[rel..]) {
+                    if let Ok(map) = serde_json::from_str::<BTreeMap<String, u32>>(json) {
+                        for (k, v) in map {
+                            out.entry(k).and_modify(|x| *x = (*x).max(v)).or_insert(v);
+                        }
+                    }
+                }
+            }
+        }
+        from = after;
+    }
+}
+
+/// 取字符串开头第一个平衡的 `{...}`（正确处理 JSON 字符串内的花括号/转义）。
+fn balanced_json(s: &str) -> Option<&str> {
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut esc = false;
+    for (i, c) in s.char_indices() {
+        if in_str {
+            if esc {
+                esc = false;
+            } else if c == '\\' {
+                esc = true;
+            } else if c == '"' {
+                in_str = false;
+            }
+        } else {
+            match c {
+                '"' => in_str = true,
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(&s[..=i]);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// 合法日期键（`Y-M-D`，月份 0 基）：挡掉 localStorage 里的脏数据。
+fn valid_day_key(k: &str) -> bool {
+    let parts: Vec<&str> = k.split('-').collect();
+    if parts.len() != 3 {
+        return false;
+    }
+    let (Ok(y), Ok(m), Ok(d)) = (
+        parts[0].parse::<i32>(),
+        parts[1].parse::<i32>(),
+        parts[2].parse::<i32>(),
+    ) else {
+        return false;
+    };
+    y >= 2000 && (0..=11).contains(&m) && (1..=31).contains(&d)
 }
 
 /// 读写串行化：record 是「读-改-写」，两条播放命令几乎同时触发时不能互相覆盖。
@@ -1385,6 +1549,19 @@ mod tests {
         assert_eq!(e.count, 5);
         assert_eq!(e.heat, 2);
         assert_eq!(e.series.len(), 2);
+    }
+
+    #[test]
+    fn legacy_electron_daycount_extraction() {
+        // 模拟 Chromium localStorage 的 UTF-16LE 原始字节（键后跟 JSON 值，取最新较大值）
+        let payload = "fntv_wh_daycount_v1\u{1}{\"2026-7-31\":3}\u{0}fntv_wh_daycount_v1\u{1}{\"2026-7-31\":6}";
+        let bytes: Vec<u8> = payload.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+        let mut out: BTreeMap<String, u32> = Default::default();
+        extract_legacy_daycounts(&bytes, &mut out);
+        assert_eq!(out.get("2026-7-31"), Some(&6));
+        assert!(valid_day_key("2026-7-31"));
+        assert!(!valid_day_key("2026-13-1"));
+        assert!(!valid_day_key("垃圾"));
     }
 
     #[test]

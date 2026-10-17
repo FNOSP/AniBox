@@ -639,15 +639,23 @@ a.fbx-btn {
 .fbx-form-ft {
   flex: 0 0 auto;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   padding-top: 10px;
   border-top: 1px solid var(--line);
 }
-/* 表单底部「取消」：复用 .subtle 的次要按钮配色（透明底 / 常规描边 / 弱化文字），
-   但恢复与同排 .primary「提交」相同的盒尺寸，避免 .subtle 的工具栏紧凑内边距导致按钮矮一截。 */
-.fbx-form-ft .fbx-btn.subtle {
-  padding: 7px 13px;
+/* 表单底部按钮：取消 / 提交必须**同高同盒**。
+   之前只给 .subtle 补了 padding，但两个按钮仍受全局 button 的行高/内容影响而高度不一致；
+   这里直接锁死两者的 height / padding / line-height，避免再被继承值撑出大小差。 */
+.fbx-form-ft .fbx-btn {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  height: 34px;
+  min-height: 34px;
+  padding: 0 16px;
+  line-height: 1;
+  font-size: 13px;
 }
 
 /* ── 工单会话（反馈详情层） ── */

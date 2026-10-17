@@ -25,6 +25,9 @@
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const https = require('https');
+const crypto = require('crypto');
 const { URL } = require('url');
 
 const scriptDir = process.argv[2];
@@ -106,6 +109,169 @@ function withTimeout(promise, ms, label) {
         promise,
         new Promise((_, reject) => setTimeout(() => reject(new Error(label + ' 超时')), ms)),
     ]);
+}
+
+// ===================== [lc-1643] NAS 字幕端点 =====================
+// 迁移遗留补齐：Lua 的 fntv_nas_sub.lua 一直调 127.0.0.1:22347 的 /nas-subtitle*，
+// 但 Tauri2 迁移时只搬了弹幕端点 ⇒ 「加载字幕」菜单取不到 NAS 外挂字幕、
+// 「在线搜索字幕（简体中文）」也永远失败。这里按主仓库
+// src/main/common/playbackShim.ts:1087-1240 的契约逐条补齐，请求签名对齐
+// src-tauri/src/authx.rs（同一套公开客户端 key/secret，与 Rust 侧完全同源）。
+
+const FN_API_KEY = 'NDzZTVxnRKP8Z0jXg1VAMonaG8akvh';
+const FN_API_SECRET = '16CCEB3D-AB42-077D-36A1-F355324E4237';
+const SUB_CACHE_DIR = path.join(os.tmpdir(), 'anibox-subtitles');
+
+function md5hex(s) {
+    return crypto.createHash('md5').update(s, 'utf8').digest('hex');
+}
+
+/** Authx 头：sign = md5(apiKey_path_nonce_ts_md5(body)_apiSecret)，与 authx.rs 逐字节对齐 */
+function authxHeader(urlPath, bodyStr) {
+    const nonce = String(Math.floor(Math.random() * 900000) + 100000);
+    const ts = Date.now();
+    const dataMd5 = md5hex(bodyStr || '');
+    const sign = md5hex([FN_API_KEY, urlPath, nonce, ts, dataMd5, FN_API_SECRET].join('_'));
+    return `nonce=${nonce}&timestamp=${ts}&sign=${sign}`;
+}
+
+/** 服务器地址归一化（对齐 fnapi.rs normalize_server）：补协议头、去引号空白、只留 origin */
+function normalizeServer(input) {
+    let s = String(input || '').trim().replace(/：/g, ':').replace(/^["'\s]+|["'\s]+$/g, '');
+    if (!/^https?:\/\//i.test(s)) s = 'http://' + s;
+    const m = s.match(/^(https?:\/\/[^/]+)/i);
+    return m ? m[1] : s;
+}
+
+/** 拆绝对/相对 Location（对齐 fnapi.rs split_redirect） */
+function splitRedirect(base, loc) {
+    const i = loc.indexOf('://');
+    if (i >= 0) {
+        const after = loc.slice(i + 3);
+        const slash = after.indexOf('/');
+        return slash >= 0
+            ? { base: loc.slice(0, i + 3) + after.slice(0, slash), path: after.slice(slash) }
+            : { base: loc, path: '/' };
+    }
+    return { base, path: loc };
+}
+
+/**
+ * 飞牛 API 调用（二进制安全）：返回 { status, headers, buffer, text, json }。
+ * POST/PUT/PATCH 追加 nonce 并以最终序列化字符串签名；3xx 手动跟随并重签新路径；
+ * 内网自签证书一律放行（对齐 reqwest accept_invalid_certs）。
+ */
+function fnCall(base, urlPath, method, token, bodyObj, timeoutMs) {
+    const hasBody = /^(post|put|patch)$/i.test(method);
+    const bodyStr = hasBody
+        ? JSON.stringify(Object.assign({}, bodyObj || {}, { nonce: String(Math.floor(Math.random() * 900000) + 100000) }))
+        : '';
+    return new Promise((resolve, reject) => {
+        const go = (curBase, curPath, depth) => {
+            if (depth > 3) return reject(new Error('重定向次数过多'));
+            let u;
+            try {
+                u = new URL(curBase + curPath);
+            } catch (e) {
+                return reject(new Error('服务器地址格式无效'));
+            }
+            const mod = u.protocol === 'https:' ? https : http;
+            const headers = {
+                'Content-Type': 'application/json',
+                Authorization: token || '',
+                Cookie: token ? `mode=relay; Trim-MC-token=${token}` : 'mode=relay',
+                Authx: authxHeader(curPath, hasBody ? bodyStr : ''),
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) anibox',
+                'x-trim-client': 'web',
+                'x-trim-client-version': '616',
+            };
+            if (hasBody) headers['Content-Length'] = Buffer.byteLength(bodyStr);
+            const req = mod.request(
+                {
+                    protocol: u.protocol,
+                    hostname: u.hostname,
+                    port: u.port || (u.protocol === 'https:' ? 443 : 80),
+                    path: u.pathname + u.search,
+                    method: method.toUpperCase(),
+                    headers,
+                    rejectUnauthorized: false,
+                },
+                (resp) => {
+                    const st = resp.statusCode || 0;
+                    if ([301, 302, 307, 308].includes(st)) {
+                        const loc = resp.headers.location || '';
+                        resp.resume();
+                        if (!loc) return resolve({ status: st, headers: resp.headers, buffer: Buffer.alloc(0), text: '', json: null });
+                        const nx = splitRedirect(curBase, loc);
+                        return go(nx.base, nx.path, depth + 1);
+                    }
+                    const chunks = [];
+                    resp.on('data', (c) => chunks.push(c));
+                    resp.on('end', () => {
+                        const buffer = Buffer.concat(chunks);
+                        const text = buffer.toString('utf8');
+                        let parsed = null;
+                        try {
+                            parsed = JSON.parse(text);
+                        } catch (_) {
+                            parsed = null;
+                        }
+                        resolve({ status: st, headers: resp.headers, buffer, text, json: parsed });
+                    });
+                },
+            );
+            req.setTimeout(timeoutMs || 12000, () => req.destroy(new Error('请求超时')));
+            req.on('error', reject);
+            if (hasBody) req.write(bodyStr);
+            req.end();
+        };
+        go(normalizeServer(base), urlPath, 0);
+    });
+}
+
+/** 解析 Lua 透传的 fnOS 连接参数；缺参回 400 并返回 null */
+function nasParams(res, q) {
+    const itemGuid = q('itemGuid');
+    const token = q('token');
+    const domain = q('domain');
+    if (!itemGuid || !token || !domain) {
+        json(res, 400, { ok: false, error: '缺少 itemGuid / token / domain 参数' });
+        return null;
+    }
+    return { itemGuid, token, domain };
+}
+
+/** GET /v/api/v1/stream/list/{guid} → subtitle_streams（失败返回空数组） */
+async function fetchSubtitleStreams(domain, token, itemGuid) {
+    const r = await fnCall(domain, `/v/api/v1/stream/list/${encodeURIComponent(itemGuid)}`, 'GET', token, null, 12000);
+    if (!r.json || r.json.code !== 0 || !r.json.data) return [];
+    return Array.isArray(r.json.data.subtitle_streams) ? r.json.data.subtitle_streams : [];
+}
+
+/** 外挂字幕显示名：title 常为空/纯语言标签，退化为「语言 字幕#n」 */
+function subTitleOf(s, idx) {
+    const lang = String((s && s.language) || '').trim();
+    const raw = String((s && s.title) || '').trim();
+    return raw || [lang && lang !== 'und' ? lang : '', `字幕#${idx + 1}`].filter(Boolean).join(' ');
+}
+
+/** 下载指定 guid 的字幕到本地临时目录（已存在即复用），返回 { path, title } */
+async function downloadSubtitleFile(domain, token, guid, name, format) {
+    if (!fs.existsSync(SUB_CACHE_DIR)) fs.mkdirSync(SUB_CACHE_DIR, { recursive: true });
+    const safeName = String(name || guid).replace(/[\\/:*?"<>|]/g, '_');
+    const filePath = path.join(SUB_CACHE_DIR, `${safeName}@${guid}.${format || 'srt'}`);
+    if (fs.existsSync(filePath) && fs.statSync(filePath).size > 0) {
+        return { path: filePath, title: name || guid };
+    }
+    const r = await fnCall(domain, `/v/api/v1/subtitle/dl/${encodeURIComponent(guid)}`, 'GET', token, null, 25000);
+    const ct = String(r.headers['content-type'] || '').toLowerCase();
+    // 服务端出错时会回 JSON 错误体；正常是字幕二进制流
+    if (r.json && r.json.code !== 0) throw new Error(r.json.msg || r.json.message || '字幕下载失败');
+    if (!r.buffer || r.buffer.length === 0 || ct.includes('application/json')) {
+        throw new Error('字幕下载失败(NAS 上不存在或无权限)');
+    }
+    fs.writeFileSync(filePath, r.buffer);
+    return { path: filePath, title: name || guid };
 }
 
 /**
@@ -204,6 +370,98 @@ async function handle(req, res) {
     // 探活：Rust 侧用它判断 shim 是否就绪（不依赖 bili_danmaku.js 加载）
     if (pathname === '/health') {
         json(res, 200, { ok: true, ready: true, pid: process.pid });
+        return;
+    }
+
+    // ===== [lc-1643] NAS 字幕端点（契约见主仓库 playbackShim.ts:1087-1240）=====
+    if (pathname === '/nas-subtitles') {
+        const p = nasParams(res, q);
+        if (!p) return;
+        fetchSubtitleStreams(p.domain, p.token, p.itemGuid)
+            .then((streams) => {
+                const items = streams
+                    .filter((s) => Number(s.extra_file) === 1 || Number(s.is_external) === 1)
+                    .map((s, i) => ({
+                        guid: String(s.guid || ''),
+                        title: subTitleOf(s, i),
+                        format: String(s.format || 'srt'),
+                        language: String(s.language || '').trim(),
+                        is_default: Number(s.is_default) || 0,
+                    }));
+                console.log(`[danmaku-shim] /nas-subtitles itemGuid=${p.itemGuid} 外挂字幕 ${items.length} 条(流共 ${streams.length} 条)`);
+                json(res, 200, { ok: true, items });
+            })
+            .catch((e) => json(res, 500, { ok: false, error: String((e && e.message) || e) }));
+        return;
+    }
+
+    if (pathname === '/nas-subtitle-file') {
+        const p = nasParams(res, q);
+        if (!p) return;
+        const guid = q('guid');
+        if (!guid) {
+            json(res, 400, { ok: false, error: '缺少 guid 参数' });
+            return;
+        }
+        (async () => {
+            const streams = await fetchSubtitleStreams(p.domain, p.token, p.itemGuid);
+            const idx = streams.findIndex((s) => String(s.guid) === guid);
+            const hit = idx >= 0 ? streams[idx] : undefined;
+            const name = subTitleOf(hit || {}, idx < 0 ? 0 : idx);
+            const out = await downloadSubtitleFile(p.domain, p.token, guid, name, (hit && hit.format) || 'srt');
+            console.log(`[danmaku-shim] /nas-subtitle-file guid=${guid} -> ${out.path}`);
+            json(res, 200, { ok: true, path: out.path, title: out.title });
+        })().catch((e) => json(res, 200, { ok: false, error: String((e && e.message) || e) }));
+        return;
+    }
+
+    if (pathname === '/nas-subtitle-search') {
+        const p = nasParams(res, q);
+        if (!p) return;
+        const lan = q('lan') || 'zh-CN';
+        fnCall(p.domain, '/v/api/v1/subtitle/search', 'POST', p.token, { lan, media_guid: p.itemGuid }, 25000)
+            .then((r) => {
+                if (!r.json || r.json.code !== 0 || !r.json.data) {
+                    json(res, 200, { ok: false, error: (r.json && (r.json.msg || r.json.message)) || 'fnOS 在线字幕搜索失败' });
+                    return;
+                }
+                const items = Array.isArray(r.json.data.subtitles) ? r.json.data.subtitles : [];
+                console.log(`[danmaku-shim] /nas-subtitle-search itemGuid=${p.itemGuid} lan=${lan} 候选 ${items.length} 条`);
+                json(res, 200, { ok: true, items });
+            })
+            .catch((e) => json(res, 200, { ok: false, error: String((e && e.message) || e) }));
+        return;
+    }
+
+    if (pathname === '/nas-subtitle-download') {
+        const p = nasParams(res, q);
+        if (!p) return;
+        const trimId = q('trimId');
+        if (!trimId) {
+            json(res, 400, { ok: false, error: '缺少 trimId 参数' });
+            return;
+        }
+        (async () => {
+            const r = await fnCall(
+                p.domain,
+                '/v/api/v1/subtitle/download',
+                'POST',
+                p.token,
+                { media_guid: p.itemGuid, trim_id: trimId, sync_download: 1 },
+                25000,
+            );
+            if (!r.json || r.json.code !== 0 || !r.json.data) {
+                throw new Error((r.json && (r.json.msg || r.json.message)) || 'fnOS 在线字幕下载失败');
+            }
+            const s = r.json.data;
+            const guid = String(s.guid || '');
+            if (!guid) throw new Error('fnOS 未返回新字幕流的 guid');
+            const lang = String(s.language || '').trim();
+            const name = String(s.title || '').trim() || lang || '在线字幕';
+            const out = await downloadSubtitleFile(p.domain, p.token, guid, name, String(s.format || 'srt'));
+            console.log(`[danmaku-shim] /nas-subtitle-download trimId=${trimId} guid=${guid} -> ${out.path}`);
+            json(res, 200, { ok: true, path: out.path, title: name, guid });
+        })().catch((e) => json(res, 200, { ok: false, error: String((e && e.message) || e) }));
         return;
     }
 

@@ -140,7 +140,8 @@ export function MovieHero({
           <div className="mv-meta-row">
             {rating != null && rating > 0 && (
               <span className="mv-rating">
-                <IcoStarL size={13} strokeWidth={0} className="fill" /> {rating.toFixed(1)}
+                <IcoStarL size={13} strokeWidth={0} className="mv-rating-star" aria-hidden="true" />{" "}
+                {rating.toFixed(1)}
               </span>
             )}
             {year && <span>{year}</span>}

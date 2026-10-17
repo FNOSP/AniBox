@@ -98,7 +98,10 @@
   line-height: 1.08;
   letter-spacing: 2px;
   color: #fff;
-  text-shadow: 0 6px 26px rgba(0, 0, 0, 0.75);
+  /* [lc-1698] 用户要求：标题只保留文字与排版，去掉底色/阴影。
+     原 text-shadow(0 6px 26px) 的 26px 大模糊会在字周形成深色光晕（观感像一层底色），
+     已删除且不新增任何替代阴影；父级/伪元素也没有 background/box-shadow。 */
+  text-shadow: none;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -130,19 +133,29 @@
   vertical-align: -1px;
   background: rgba(255, 255, 255, 0.28);
 }
+/* [lc-1698] 评分：去掉黄色渐变徽标，改为与顶栏/操作按钮同语言的「中性玻璃胶囊」。
+   金色只留给星星图标，分数用正文白；无渐变、无投影，靠细描边在深浅背景上都立得住。 */
 .mv-rating {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  background: linear-gradient(135deg, #f5c518, #e6b800);
-  color: #1a1a1a;
-  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(16, 18, 26, 0.38);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-weight: 600;
   font-size: 14px;
-  padding: 2px 9px;
-  border-radius: 5px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 .mv-rating::before {
   content: none !important;
+}
+.mv-rating svg {
+  flex: none;
+  color: #f5c518;
+  fill: currentColor;
 }
 .mv-votes {
   color: rgba(228, 231, 238, 0.6);

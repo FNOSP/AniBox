@@ -10,7 +10,10 @@ export const SIDEBAR_CATS = [
   { key: "电影", types: ["Movie"], ico: <IcoMovie />, sumKey: "movie" },
   { key: "电视节目", types: ["TV"], ico: <IcoTv />, sumKey: "tv" },
   { key: "电视直播", types: ["Live"], ico: <IcoLive />, sumKey: "live" },
-  { key: "其他", types: ["Video"], ico: <IcoFolder />, sumKey: "video" },
+  // [lc-1650] 「其他」必须带上 Directory：飞牛 mediadb/sum 的 video 计数把**未识别文件夹**
+  // 也算进去了（实测 sum.video=2，而 tags.type=["Video"] 查出来 0 条、那 2 条其实是 Directory）。
+  // 只查 Video 会出现「侧栏显示 2、点进去空的」。
+  { key: "其他", types: ["Video", "Directory"], ico: <IcoFolder />, sumKey: "video" },
 ];
 
 

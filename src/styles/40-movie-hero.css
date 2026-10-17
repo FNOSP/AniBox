@@ -3,13 +3,16 @@
 
 /* 电影模式下 .detail-full 去掉内边距，让头图满幅 */
 .detail-full.mv-detail {
+  /* .detail-full 自带 gap:14px，会把头图和下方标签页之间撑出一条透底缝 → 归零 */
+  gap: 0;
   padding: 0 0 16px;
 }
 
 .mv-hero {
   position: relative;
   flex: none; /* 父级是 flex column：别让头图被压缩 */
-  min-height: 84vh;
+  /* 铺满首屏（40px = 悬浮标题栏高度），底部不留透底缝 */
+  min-height: calc(100vh - 40px);
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
@@ -32,7 +35,7 @@
   z-index: -1;
   background:
     linear-gradient(to right, rgba(8, 10, 15, 0.94) 0%, rgba(8, 10, 15, 0.55) 48%, rgba(8, 10, 15, 0.12) 100%),
-    linear-gradient(to top, rgba(8, 10, 15, 0.98) 0%, rgba(8, 10, 15, 0.62) 34%, rgba(8, 10, 15, 0.08) 72%);
+    linear-gradient(to top, rgba(8, 10, 15, 1) 0%, rgba(8, 10, 15, 0.74) 34%, rgba(8, 10, 15, 0.08) 72%);
 }
 
 .mv-topbar {
@@ -46,8 +49,7 @@
   gap: 10px;
   z-index: 3;
 }
-.mv-back,
-.mv-meta {
+.mv-back {
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: rgba(255, 255, 255, 0.12);
   color: #eee;
@@ -55,22 +57,11 @@
   -webkit-backdrop-filter: blur(16px);
   cursor: pointer;
   transition: background 0.2s, border-color 0.2s;
-}
-.mv-back {
   padding: 7px 16px;
   border-radius: 20px;
   font-size: 14px;
 }
-.mv-meta {
-  margin-left: auto;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  font-size: 16px;
-  line-height: 1;
-}
-.mv-back:hover,
-.mv-meta:hover {
+.mv-back:hover {
   background: rgba(255, 255, 255, 0.22);
   border-color: rgba(255, 255, 255, 0.32);
 }
@@ -139,6 +130,7 @@
 
 .mv-actions {
   display: flex;
+  align-items: center;
   gap: 14px;
   margin-bottom: 26px;
   flex-wrap: wrap;
@@ -197,6 +189,29 @@
 .mv-btn-ghost:disabled {
   opacity: 0.6;
   cursor: default;
+}
+/* 元数据入口：小正方形按钮（与「收藏」同款玻璃底/描边） */
+.mv-btn-square {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  transition: background 0.2s, border-color 0.2s;
+}
+.mv-btn-square:hover {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.38);
 }
 .mv-note {
   font-size: 12.5px;
@@ -260,7 +275,8 @@
 /* ── 下方标签页：电影模式单列 ── */
 .dv2.dv2-movie {
   display: block;
-  padding: 6px 26px 40px;
+  /* 父级 gap 已归零，这里自己保留上内边距 */
+  padding: 18px 26px 40px;
 }
 .dv2.dv2-movie .dv2-left {
   gap: 14px;
@@ -269,12 +285,12 @@
 @media (max-width: 900px) {
   .mv-hero {
     padding: 76px 22px 28px;
-    min-height: 72vh;
+    min-height: calc(100dvh - 40px);
   }
   .mv-title {
     font-size: 38px;
   }
   .dv2.dv2-movie {
-    padding: 6px 16px 30px;
+    padding: 18px 16px 30px;
   }
 }

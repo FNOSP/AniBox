@@ -96,11 +96,6 @@ export function MovieHero({
           <button className="mv-back" onClick={onBack} title="返回上一页">
             ‹ 返回
           </button>
-          {onMeta && (
-            <button className="mv-meta" onClick={onMeta} title="元数据操作（编辑 / 手动匹配 / 刷新）">
-              ⋯
-            </button>
-          )}
         </div>
 
         <div className="mv-hero-body">
@@ -129,6 +124,20 @@ export function MovieHero({
               </svg>
               {favBusy ? "处理中…" : fav ? "已收藏" : "收藏"}
             </button>
+            {/* 元数据入口：小正方形按钮，紧挨「收藏」右侧 */}
+            {onMeta && (
+              <button
+                className="mv-btn-square"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMeta();
+                }}
+                title="元数据操作（编辑 / 手动匹配 / 刷新）"
+                aria-label="元数据操作"
+              >
+                ⋯
+              </button>
+            )}
             {/* [lc-1655] 剧照：仅有 4K 剧照时出现，点击打开全屏轮播 */}
             {stills.length > 0 && (
               <button className="mv-btn-ghost" onClick={() => setStillsOpen(true)} title="查看剧照">

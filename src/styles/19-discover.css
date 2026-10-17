@@ -15,11 +15,6 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--line);
-}
-
-.dpane:last-child {
-  border-right: 0;
 }
 
 .dpane-hd {
@@ -505,15 +500,15 @@
   /* 七枚等宽铺满整行；min-width 54px 保留作窄栏下限（窄栏下整体换行，不挤爆） */
   flex: 1;
   min-width: 54px;
-  /* 底部多留 3px 给进度条，文字不被压 */
-  padding: 8px 6px 9px;
+  /* 顶部多留 10px：「今天」圆点居中悬在星期文字上方，不压字；底部 3px 给进度条 */
+  padding: 10px 6px 9px;
   border-radius: 11px;
   border: 1px solid var(--line);
   background: var(--bg-2);
   color: var(--text-2);
   font-family: inherit;
   cursor: pointer;
-  /* ⚠ 不能 overflow:hidden —— 「今天」的右上角圆点贴边放置，裁掉会缺一角 */
+  /* 保留 overflow 默认值：顶部居中的「今天」圆点靠近上缘，避免任何裁切 */
   transition: background 0.18s, color 0.18s, border-color 0.18s, box-shadow 0.18s,
     transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
@@ -589,29 +584,30 @@
   background: rgba(255, 255, 255, 0.75);
 }
 
-/* 今天：右上角小圆点（与选中态互不冲突，可同时出现） */
+/* 今天：星期文字正上方居中的小圆点（与选中态互不冲突，可同时出现） */
 .dweek.today::after {
   content: "";
   position: absolute;
-  top: 5px;
-  right: 5px;
+  top: 3px;
+  left: 50%;
   z-index: 2;
   width: 5px;
   height: 5px;
   border-radius: 50%;
   background: var(--accent);
-  /* 今天点轻微呼吸（存在感，不喧宾） */
+  transform: translateX(-50%);
+  /* 今天点轻微呼吸（存在感，不喧宾）；keyframes 里必须重复 translateX，否则会覆盖掉居中偏移 */
   animation: dweekDot 2.4s ease-in-out infinite;
 }
 @keyframes dweekDot {
   0%,
   100% {
     opacity: 0.55;
-    transform: scale(1);
+    transform: translateX(-50%) scale(1);
   }
   50% {
     opacity: 1;
-    transform: scale(1.35);
+    transform: translateX(-50%) scale(1.35);
   }
 }
 

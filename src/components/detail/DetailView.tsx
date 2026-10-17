@@ -896,7 +896,14 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
   //   无数据的分段自己显示空态（各自都有骨架屏/失败重试/空态三态）。
   //   「选集」已移出标签条 —— 按版式常驻右栏（每集小标题 + 简介的竖向列表）。
   //   [lc-1565] 用户改名：详情信息→详情、关联条目→关联、演职人员→角色；新增「更多」页。
-  const tabIds: string[] = ["overview", "reviews", "comments", "related", "more", "extra"];
+  //   [lc-1657] 「评论」「吐槽」只在**拿到 BGM 条目 id** 时才出现（用户要求：无 BGM id 的剧集一律隐藏）。
+  //     判据与 ratingSubjectId 同源：bgm.subject_id 或 base.bgm_id，任一为有效正整数即视为有 BGM id；
+  //     0 / undefined / null 一律视为无效。其余四个标签（详情/关联/角色/更多）顺序与行为不变。
+  const hasBgmId =
+    Number(bgm?.subject_id ?? 0) > 0 || Number(base.bgm_id ?? 0) > 0;
+  const tabIds: string[] = hasBgmId
+    ? ["overview", "reviews", "comments", "related", "more", "extra"]
+    : ["overview", "related", "more", "extra"];
   // [lc-1423] 简介是否需要"展开"：与之前同一套字数近似（>96 字≈4~5 行）
   const longIntro = overview.length > 96;
   // Esc 关简介弹窗（与项目其它弹层同一套键盘约定）

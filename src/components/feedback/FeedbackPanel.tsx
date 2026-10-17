@@ -712,7 +712,19 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
                     <button
                       type="button"
                       className="fbx-btn subtle"
-                      style={{ height: 34, minHeight: 34, padding: "0 16px", lineHeight: 1, fontSize: 13 }}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        alignSelf: "center",
+                        boxSizing: "border-box",
+                        height: 34,
+                        minHeight: 34,
+                        padding: "0 16px",
+                        margin: 0,
+                        lineHeight: 1,
+                        fontSize: 13,
+                      }}
                       onClick={() => setFbTab("tickets")}
                       disabled={submitting}
                     >
@@ -721,7 +733,19 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
                     <button
                       type="button"
                       className="fbx-btn primary"
-                      style={{ height: 34, minHeight: 34, padding: "0 16px", lineHeight: 1, fontSize: 13 }}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        alignSelf: "center",
+                        boxSizing: "border-box",
+                        height: 34,
+                        minHeight: 34,
+                        padding: "0 16px",
+                        margin: 0,
+                        lineHeight: 1,
+                        fontSize: 13,
+                      }}
                       onClick={() => void submit()}
                       disabled={!canSubmit}
                     >

@@ -78,6 +78,8 @@ export function MovieHero({
         const on = !!r?.favorited;
         setFav(on);
         setNote(on ? "已收藏，可在侧边栏「收藏」里找到" : "已取消收藏");
+        // [lc-1660] 通知 App 刷新侧栏收藏计数（收藏/取消都派发）
+        window.dispatchEvent(new Event("anibox-favorites-changed"));
       })
       .catch((e) => setNote(String(e)))
       .finally(() => setFavBusy(false));

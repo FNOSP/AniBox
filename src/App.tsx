@@ -218,6 +218,32 @@ function App() {
   const [sum, setSum] = useState<Record<string, number>>({});
   const [favTotal, setFavTotal] = useState<number | null>(null);
 
+  // [lc-1660] 刷新侧栏「收藏」计数：收藏动作散落在 PosterCard / RatingWidget / MovieHero，
+  // 它们成功后派发 anibox-favorites-changed（轻量跨组件通道），这里统一回源拿真实总数。
+  // 失败静默 —— 保持旧值，避免一次网络抖动把计数清零。
+  const refreshFavTotal = useCallback(async () => {
+    try {
+      const r = await invoke<{ total: number }>("get_favorites", { page: 1 });
+      setFavTotal(typeof r?.total === "number" ? r.total : 0);
+    } catch {
+      /* 失败保持旧值 */
+    }
+  }, []);
+
+  // [lc-1660] 收藏/取消收藏后立即刷新计数
+  useEffect(() => {
+    const onFavChanged = () => {
+      void refreshFavTotal();
+    };
+    window.addEventListener("anibox-favorites-changed", onFavChanged);
+    return () => window.removeEventListener("anibox-favorites-changed", onFavChanged);
+  }, [refreshFavTotal]);
+
+  // [lc-1660] 兜底：切回首页时也刷新一次（成本低）
+  useEffect(() => {
+    if (view === "home") void refreshFavTotal();
+  }, [view, refreshFavTotal]);
+
   useEffect(() => {
     // 用户名 / 服务器地址：侧栏底部卡片展示用
     invoke<Config>("get_config")
@@ -790,6 +816,9 @@ function App() {
             setCarouselLogos(c.carouselLogos ?? {});
             setSum(c.sum ?? {});
             setFavTotal(typeof c.favTotal === "number" ? c.favTotal : 0);
+            // [lc-1660] 快照里的 favTotal 可能是旧的（甚至 0）：恢复后立刻回源刷新，
+            // 否则 30 分钟内计数会一直锁在快照值上。
+            void refreshFavTotal();
             const rows0 =
               Array.isArray(c.libRows) && c.libRows.length
                 ? c.libRows

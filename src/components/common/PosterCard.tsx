@@ -132,6 +132,8 @@ export function PosterCard({
       });
       setFavorited(!!r.favorited);
       onFavoriteChange?.(item, !!r.favorited);
+      // [lc-1660] 通知 App 刷新侧栏收藏计数（收藏/取消都派发）
+      window.dispatchEvent(new Event("anibox-favorites-changed"));
     } catch {
       /* 失败保持原状态 */
     } finally {

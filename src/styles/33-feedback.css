@@ -25,6 +25,14 @@ html.dark {
 }
 .fbx-close {
   z-index: 3;
+  transition: background-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+.fbx-close:active {
+  transform: scale(0.92);
+  transition-duration: 0.08s;
 }
 
 /* ── 顶部标题区 ── */
@@ -88,11 +96,20 @@ html.dark {
   border: 1px solid var(--line);
   border-radius: 12px;
   cursor: pointer;
-  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+  transition: background-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    border-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 .fbx-nav-btn:hover {
   background: var(--hover-strong);
   border-color: var(--line-strong);
+  transform: translateY(-1px);
+}
+.fbx-nav-btn:active {
+  transform: translateY(0) scale(0.985);
+  transition-duration: 0.08s;
 }
 .fbx-nav-btn.is-active {
   color: var(--text-strong);
@@ -156,15 +173,21 @@ html.dark {
   padding: 7px 13px;
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color 0.16s ease, border-color 0.16s ease, transform 0.16s ease,
-    filter 0.16s ease;
+  transition: background-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    border-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    filter 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 .fbx-btn:hover:not(:disabled) {
   background: var(--hover-strong);
   transform: translateY(-1px);
 }
 .fbx-btn:active:not(:disabled) {
-  transform: translateY(0);
+  /* 按压回弹：轻微内收 + 下压，松手由 transition 平滑回位 */
+  transform: translateY(0) scale(0.97);
+  transition-duration: 0.08s;
 }
 .fbx-btn:disabled {
   opacity: 0.45;
@@ -193,7 +216,8 @@ a.fbx-btn {
   text-decoration: none;
 }
 
-/* 键盘焦点可见（鼠标点击不出现焦点环） */
+/* 键盘焦点可见（鼠标点击不出现焦点环）。用 box-shadow 焦点环而非 outline，
+   这样它可以随 0.18s 的 transition 平滑出现（outline 颜色过渡在部分 WebView 上不生效）。 */
 .fbx-btn:focus-visible,
 .fbx-nav-btn:focus-visible,
 .fbx-tab:focus-visible,
@@ -201,8 +225,12 @@ a.fbx-btn {
 .fbx-tid:focus-visible,
 .fbx-linkbtn:focus-visible,
 .fbx-close:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg-3), 0 0 0 4px color-mix(in srgb, var(--accent) 72%, transparent);
+}
+.fbx-btn.primary:focus-visible {
+  box-shadow: 0 0 0 2px var(--bg-3), 0 0 0 4px color-mix(in srgb, var(--accent) 72%, transparent),
+    0 2px 10px color-mix(in srgb, var(--accent) 26%, transparent);
 }
 .fbx-ta:focus-visible,
 .fbx-input:focus-visible {
@@ -212,8 +240,8 @@ a.fbx-btn {
 }
 .fbx-check input[type="checkbox"]:focus-visible,
 .fbx-toggle-row input[type="checkbox"]:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg-3), 0 0 0 4px color-mix(in srgb, var(--accent) 72%, transparent);
 }
 
 /* 行内提示 / 状态条 */
@@ -247,9 +275,20 @@ a.fbx-btn {
   color: inherit;
   background: none;
   border: none;
+  border-radius: 6px;
   padding: 2px 4px;
   cursor: pointer;
   text-decoration: underline;
+  transition: opacity 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+.fbx-linkbtn:hover {
+  opacity: 0.78;
+}
+.fbx-linkbtn:active {
+  transform: scale(0.97);
+  transition-duration: 0.08s;
 }
 
 /* 小标签 */
@@ -409,11 +448,18 @@ a.fbx-btn {
   padding: 6px 12px;
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color 0.16s ease, color 0.16s ease;
+  transition: background-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 .fbx-tab:hover {
   color: var(--text-2);
   background: var(--hover-strong);
+}
+.fbx-tab:active {
+  transform: scale(0.98);
+  transition-duration: 0.08s;
 }
 .fbx-tab.is-active {
   color: var(--text-strong);
@@ -451,12 +497,19 @@ a.fbx-btn {
   border-radius: 11px;
   padding: 11px 13px;
   cursor: pointer;
-  transition: background-color 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+  transition: background-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    border-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 .fbx-row:hover {
   background: var(--hover-strong);
   border-color: var(--line-strong);
   transform: translateX(2px);
+}
+.fbx-row:active {
+  transform: translateX(1px) scale(0.995);
+  transition-duration: 0.08s;
 }
 .fbx-row-main {
   display: flex;
@@ -583,6 +636,17 @@ a.fbx-btn {
   background: var(--input-bg);
   cursor: pointer;
   user-select: none;
+  transition: background-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    border-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+.fbx-toggle-row:hover {
+  border-color: var(--line-strong);
+}
+.fbx-toggle-row:active {
+  transform: scale(0.995);
+  transition-duration: 0.08s;
 }
 .fbx-toggle-row input[type="checkbox"] {
   flex: 0 0 auto;
@@ -594,6 +658,7 @@ a.fbx-btn {
   background: transparent;
   accent-color: var(--accent);
   cursor: pointer;
+  transition: box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 .fbx-toggle-txt {
   display: flex;
@@ -629,6 +694,7 @@ a.fbx-btn {
   background: transparent;
   accent-color: var(--accent);
   cursor: pointer;
+  transition: box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 .fbx-check input[type="checkbox"]:disabled {
   cursor: default;
@@ -706,10 +772,19 @@ a.fbx-btn {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    border-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    background-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
+    transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 .fbx-tid:hover {
   color: var(--text-2);
   border-color: var(--line);
+}
+.fbx-tid:active {
+  transform: scale(0.98);
+  transition-duration: 0.08s;
 }
 .fbx-copy {
   flex: 0 0 auto;
@@ -987,6 +1062,86 @@ a.fbx-btn {
   border-radius: 9px;
 }
 
+/* ── 入场动画（淡入上浮，克制不抢戏） ──
+   只在容器/行**挂载时**跑一次：输入、轮询、状态更新都不会重建这些节点，
+   因此不会在打字或 20s 轮询时重播。行用 backwards 填充，动画结束后交回
+   hover/active 的 transform。 */
+@keyframes fbxFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fbx-fb,
+.fbx-thread,
+.fbx-diag-wrap {
+  animation: fbxFadeUp 0.22s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+}
+.fbx-sec,
+.fbx-row {
+  animation: fbxFadeUp 0.2s cubic-bezier(0.25, 0.8, 0.25, 1) backwards;
+}
+/* 错峰：仅前 8 项依次延后 22ms，避免长列表整体拖慢 */
+.fbx-row:nth-child(1),
+.fbx-sec:nth-child(1) {
+  animation-delay: 0ms;
+}
+.fbx-row:nth-child(2),
+.fbx-sec:nth-child(2) {
+  animation-delay: 22ms;
+}
+.fbx-row:nth-child(3),
+.fbx-sec:nth-child(3) {
+  animation-delay: 44ms;
+}
+.fbx-row:nth-child(4),
+.fbx-sec:nth-child(4) {
+  animation-delay: 66ms;
+}
+.fbx-row:nth-child(5),
+.fbx-sec:nth-child(5) {
+  animation-delay: 88ms;
+}
+.fbx-row:nth-child(6),
+.fbx-sec:nth-child(6) {
+  animation-delay: 110ms;
+}
+.fbx-row:nth-child(7),
+.fbx-sec:nth-child(7) {
+  animation-delay: 132ms;
+}
+.fbx-row:nth-child(n + 8),
+.fbx-sec:nth-child(n + 8) {
+  animation-delay: 154ms;
+}
+
+/* ── 关闭退场：遮罩淡出 + 卡片轻微缩放/下移 ──
+   由 FeedbackPanel 在 requestClose 时挂 `.fbx-closing`，220ms 动画结束后再调用
+   onClose 真正卸载（与 TSX 的 CLOSE_ANIM_MS 对齐）。选择器同时命中 .ddet-mask，
+   才能盖掉它自带的 `animation: pageIn`。 */
+.ddet-mask.fbx-closing {
+  animation: fbxMaskOut 0.22s cubic-bezier(0.25, 0.8, 0.25, 1) forwards;
+  pointer-events: none;
+}
+.ddet-mask.fbx-closing .fbx-card {
+  animation: fbxCardOut 0.22s cubic-bezier(0.25, 0.8, 0.25, 1) forwards;
+}
+@keyframes fbxMaskOut {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes fbxCardOut {
+  to {
+    opacity: 0;
+    transform: scale(0.97) translateY(8px);
+  }
+}
+
 /* ── 窄窗口适配（侧栏展开/收起、窄面板） ── */
 @media (max-width: 640px) {
   .fbx-card {
@@ -1024,11 +1179,41 @@ a.fbx-btn {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* 关闭退场直接跳过（TSX 侧也会同步直接调用 onClose） */
+  .ddet-mask.fbx-closing,
+  .ddet-mask.fbx-closing .fbx-card,
+  .fbx-fb,
+  .fbx-thread,
+  .fbx-diag-wrap,
+  .fbx-sec,
+  .fbx-row {
+    animation: none;
+  }
   .fbx-btn,
   .fbx-row,
   .fbx-nav-btn,
-  .fbx-tab {
+  .fbx-tab,
+  .fbx-tid,
+  .fbx-close,
+  .fbx-linkbtn,
+  .fbx-toggle-row,
+  .fbx-check input[type="checkbox"],
+  .fbx-toggle-row input[type="checkbox"] {
     transition: none;
+  }
+  /* 不做位移/缩放，保留颜色与焦点环反馈 */
+  .fbx-btn:hover:not(:disabled),
+  .fbx-btn:active:not(:disabled),
+  .fbx-row:hover,
+  .fbx-row:active,
+  .fbx-nav-btn:hover,
+  .fbx-nav-btn:active,
+  .fbx-tab:active,
+  .fbx-tid:active,
+  .fbx-close:active,
+  .fbx-linkbtn:active,
+  .fbx-toggle-row:active {
+    transform: none;
   }
   .fbx-spinner {
     animation-duration: 1.6s;

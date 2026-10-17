@@ -10,7 +10,7 @@
    feedback_read_log / feedback_diagnostics / feedback_export_diagnostics；
    调试日志设置走固定契约 feedback_log_settings_get / feedback_log_settings_set。
    会话视图打开期间每 20 秒轮询一次（实时状态同步）；网络失败只行内提示、保留已有内容。 */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -142,7 +142,39 @@ function fmtTs(ts: number | null | undefined): string {
   return d.getFullYear() === new Date().getFullYear() ? base : `${d.getFullYear()}-${base}`;
 }
 
+/** 关闭退场动画时长（与 33-feedback.css 的 fbxMaskOut / fbxCardOut 对齐） */
+const CLOSE_ANIM_MS = 220;
+
+/** 系统是否要求减弱动效：为 true 时直接卸载，不播退场动画、按钮也不做位移 */
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
 export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: string }) {
+  // 关闭退场：先挂 fbx-closing 播淡出+缩放，动画结束后再真正调用 onClose（由 App 卸载）
+  const [closing, setClosing] = useState(false);
+  const closingRef = useRef(false);
+  const closeTimer = useRef<number | null>(null);
+  const requestClose = useCallback(() => {
+    if (closingRef.current) return; // 关闭过程中防重复触发
+    closingRef.current = true;
+    if (prefersReducedMotion()) {
+      onClose();
+      return;
+    }
+    setClosing(true);
+    closeTimer.current = window.setTimeout(onClose, CLOSE_ANIM_MS);
+  }, [onClose]);
+  useEffect(
+    () => () => {
+      if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
+    },
+    [],
+  );
   // 一级分区（常驻导航）与反馈区二级视图
   const [section, setSection] = useState<"feedback" | "diag">("feedback");
   const [fbTab, setFbTab] = useState<"tickets" | "new">("tickets");
@@ -321,11 +353,11 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
   // Escape 关闭（输入法合成中的 Escape 不关 —— 那是取消候选词）
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.isComposing) onClose();
+      if (e.key === "Escape" && !e.isComposing) requestClose();
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [onClose]);
+  }, [requestClose]);
 
   const openThread = (id: string) => {
     setThreadId(id);
@@ -474,9 +506,12 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
   const canSubmit = msg.trim().length >= 5 && !submitting;
 
   return createPortal(
-    <div className="ddet-mask" onClick={onClose}>
+    <div
+      className={`ddet-mask${closing ? " fbx-closing" : ""}`}
+      onClick={requestClose}
+    >
       <div className="ddet fbx-card" onClick={(e) => e.stopPropagation()}>
-        <button className="ddet-close fbx-close" title="关闭（Esc）" aria-label="关闭反馈面板" onClick={onClose}>
+        <button className="ddet-close fbx-close" title="关闭（Esc）" aria-label="关闭反馈面板" onClick={requestClose}>
           <IcoXL size={15} strokeWidth={1.8} />
         </button>
 

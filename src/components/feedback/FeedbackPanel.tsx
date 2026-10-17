@@ -710,14 +710,18 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
                   </div>
                   <div className="fbx-form-ft">
                     <button
+                      type="button"
                       className="fbx-btn subtle"
+                      style={{ height: 34, minHeight: 34, padding: "0 16px", lineHeight: 1, fontSize: 13 }}
                       onClick={() => setFbTab("tickets")}
                       disabled={submitting}
                     >
                       取消
                     </button>
                     <button
+                      type="button"
                       className="fbx-btn primary"
+                      style={{ height: 34, minHeight: 34, padding: "0 16px", lineHeight: 1, fontSize: 13 }}
                       onClick={() => void submit()}
                       disabled={!canSubmit}
                     >

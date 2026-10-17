@@ -53,28 +53,32 @@
     transition: none;
   }
 }
+/* [lc-1667] 暗化遮罩：只做"必要的轻微暗化"，不做大范围柔化。
+   旧版底部 to top 渐变 0.74@34% → 0.08@72% 拖得太长，头图下半像蒙了一层灰雾（用户反馈"下部模糊"）。
+   现在把暗部收在文字所在的下缘，且中段透明度降低，让头图中部保持通透清晰。 */
 .mv-hero-shade {
   position: absolute;
   inset: 0;
   z-index: -1;
   background:
-    linear-gradient(to right, rgba(8, 10, 15, 0.94) 0%, rgba(8, 10, 15, 0.55) 48%, rgba(8, 10, 15, 0.12) 100%),
-    linear-gradient(to top, rgba(8, 10, 15, 1) 0%, rgba(8, 10, 15, 0.74) 34%, rgba(8, 10, 15, 0.08) 72%);
+    linear-gradient(to right, rgba(8, 10, 15, 0.9) 0%, rgba(8, 10, 15, 0.42) 46%, rgba(8, 10, 15, 0.06) 100%),
+    linear-gradient(to top, rgba(8, 10, 15, 0.94) 0%, rgba(8, 10, 15, 0.48) 26%, rgba(8, 10, 15, 0.12) 50%, transparent 70%);
 }
-/* [lc-1662] 顶栏可读性薄雾：跟随主题（浅色主题提亮 / 深色主题压暗）覆盖顶部约 96px，
-   让透明顶栏的 auto 文字色在任意头图上都清晰，同时不遮住头图主体。 */
+/* [lc-1667] 顶栏可读性：旧版是一条 84px 高、58% 主题色的"薄雾"，在浅色主题下会在头图顶部
+   糊出一片白雾（用户反馈"顶部模糊"）。改为只覆盖标题栏高度的**浅渐变**（无 blur），
+   中段迅速衰减到透明，既能托住透明顶栏的文字，又不把头顶的头图糊掉。 */
 .mv-hero-topscrim {
   position: absolute;
   left: 0;
   right: 0;
   top: 0;
-  height: 84px;
+  height: 48px;
   z-index: 0;
   pointer-events: none;
   background: linear-gradient(
     to bottom,
-    color-mix(in srgb, var(--bg-1) 58%, transparent) 0%,
-    color-mix(in srgb, var(--bg-1) 24%, transparent) 55%,
+    color-mix(in srgb, var(--bg-1) 40%, transparent) 0%,
+    color-mix(in srgb, var(--bg-1) 12%, transparent) 55%,
     transparent 100%
   );
 }
@@ -266,11 +270,12 @@
   margin: -14px 0 16px;
 }
 
+/* [lc-1667] 简介卡：去掉 backdrop-filter: blur(24px)。
+   这块卡片横跨头图下半，模糊滤镜会把身后的剧照整片糊掉 —— 用户看到的"下部模糊"主要来自它。
+   改用略高的底色不透明度保证文字对比，头图在卡片周围/边缘保持清晰。 */
 .mv-glass {
-  background: rgba(20, 22, 30, 0.42);
+  background: rgba(16, 18, 26, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.09);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
   border-radius: 16px;
   padding: 24px 26px;
   max-width: 820px;

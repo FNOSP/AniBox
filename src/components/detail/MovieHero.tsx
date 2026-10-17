@@ -1,12 +1,13 @@
 /* [lc-1652] 电影详情页「沉浸式」版式（用户提供的样板）：
-   全幅头图 + 大标题 + 元数据行 + 播放/收藏按钮 + 玻璃拟态简介/演职员卡 + 底部剧照横排。
+   全幅头图 + 大标题 + 元数据行 + 播放/收藏按钮 + 玻璃拟态简介/演职员卡。
+   [lc-1655] 底部剧照横排已删除，改为「剧照」按钮打开全屏轮播（StillLightbox）。
    只有**电影**（!isSeries）走这套；剧集详情页保持原版式。下方仍接原有标签页。 */
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Star as IcoStarL } from "lucide-react";
-import { ScrollRow } from "../common/ScrollRow";
 import { imgUrl, tmdbImg } from "../../lib/images";
 import { TmdbCreditPerson } from "../../types";
+import { StillLightbox } from "./StillLightbox";
 
 type Props = {
   title: string;
@@ -21,13 +22,13 @@ type Props = {
   genres: string[];
   overview: string;
   cast: TmdbCreditPerson[];
-  stills: { file_path?: string }[];
+  /** [lc-1655] 4K 剧照 file_path 列表（最多 6 张，供全屏轮播） */
+  stills: string[];
   resumeAt: boolean;
   playing: boolean;
   onPlay: () => void;
   onBack: () => void;
   onMeta?: () => void;
-  onZoom?: (path: string) => void;
   favItem: Record<string, unknown> | null;
 };
 
@@ -49,13 +50,14 @@ export function MovieHero({
   onPlay,
   onBack,
   onMeta,
-  onZoom,
   favItem,
 }: Props) {
   const favGuid = String((favItem?.guid as string) ?? "").trim();
   const [fav, setFav] = useState(false);
   const [favBusy, setFavBusy] = useState(false);
   const [note, setNote] = useState("");
+  // [lc-1655] 全屏剧照轮播开关
+  const [stillsOpen, setStillsOpen] = useState(false);
 
   useEffect(() => {
     if (!favGuid) return;
@@ -127,6 +129,17 @@ export function MovieHero({
               </svg>
               {favBusy ? "处理中…" : fav ? "已收藏" : "收藏"}
             </button>
+            {/* [lc-1655] 剧照：仅有 4K 剧照时出现，点击打开全屏轮播 */}
+            {stills.length > 0 && (
+              <button className="mv-btn-ghost" onClick={() => setStillsOpen(true)} title="查看剧照">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                  <rect x="3" y="4" width="18" height="16" rx="2" />
+                  <circle cx="8.5" cy="9.5" r="1.5" />
+                  <path d="M21 15l-5-5L5 21" />
+                </svg>
+                剧照
+              </button>
+            )}
           </div>
           {note && <div className="mv-note">{note}</div>}
 
@@ -157,24 +170,9 @@ export function MovieHero({
         </div>
       </section>
 
-      {stills.length > 0 && (
-        <section className="mv-stills">
-          <div className="mv-stills-head">
-            <h3>剧照</h3>
-            <span className="mv-muted">{stills.length} 张</span>
-          </div>
-          <ScrollRow boxClass="mv-still-row" imgSel=".mv-still img">
-            {stills.map((st) => {
-              const p = String(st.file_path ?? "");
-              return (
-                <div className="mv-still" key={p} onClick={() => onZoom?.(p)} title="点击查看原图">
-                  <img src={tmdbImg(p, "w500")} loading="lazy" alt="" />
-                  <span className="mv-zoom">⤢</span>
-                </div>
-              );
-            })}
-          </ScrollRow>
-        </section>
+      {/* [lc-1655] 全屏剧照轮播（替代原底部横排） */}
+      {stillsOpen && stills.length > 0 && (
+        <StillLightbox paths={stills} onClose={() => setStillsOpen(false)} />
       )}
     </>
   );

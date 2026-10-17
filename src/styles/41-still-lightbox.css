@@ -1,0 +1,118 @@
+/* [lc-1655] 电影详情页「剧照」全屏轮播（StillLightbox）：
+   深色 0.92 遮罩 + contain 大图 + 左右循环箭头 + 右上关闭 + 底部计数。
+   独立于详情页缩放遮罩（.ddet-mask z-index 40 / 顶栏 50），这里用 80 盖住全部。 */
+
+.slb-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(6, 8, 12, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 72px;
+  animation: pageIn 0.18s ease;
+}
+
+.slb-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  cursor: default;
+  animation: slbFade 0.25s ease;
+}
+
+@keyframes slbFade {
+  from {
+    opacity: 0.4;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 左右切换箭头：竖直居中，半透明圆钮 */
+.slb-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 48px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 34px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.2s;
+}
+.slb-nav:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.slb-prev {
+  left: 16px;
+}
+.slb-next {
+  right: 16px;
+}
+
+/* 右上关闭 */
+.slb-close {
+  position: absolute;
+  top: 18px;
+  right: 22px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.slb-close:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* 底部计数 3 / 6 */
+.slb-count {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+
+@media (max-width: 900px) {
+  .slb-mask {
+    padding: 40px 12px;
+  }
+  .slb-nav {
+    width: 38px;
+    height: 60px;
+    font-size: 28px;
+  }
+  .slb-prev {
+    left: 6px;
+  }
+  .slb-next {
+    right: 6px;
+  }
+}

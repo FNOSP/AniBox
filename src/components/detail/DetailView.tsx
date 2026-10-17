@@ -850,8 +850,13 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
     if (fnb) return imgUrl(fnb);
     return poster ? imgUrl(poster) : bgmCover;
   })();
-  const movieStills: { file_path?: string }[] = Array.isArray((tmdb ?? {}).backdrops)
-    ? ((tmdb ?? {}).backdrops as { file_path?: string }[]).slice(0, 12)
+  // [lc-1655] 电影剧照：只取后端 `stills4k`（已过滤 width>=3840 并按面积降序），最多 6 张，
+  //   供头图「剧照」按钮打开的全屏轮播使用；剧集页仍走 TmdbExtra 的 backdrops 横排。
+  const movieStills: string[] = Array.isArray((tmdb ?? {}).stills4k)
+    ? ((tmdb ?? {}).stills4k as unknown[])
+        .map((p) => String(p ?? ""))
+        .filter((p) => p.length > 0)
+        .slice(0, 6)
     : [];
   // 片长：飞牛详情 duration 是秒
   const runtimeMin = Math.round(Number(pick(data ?? {}, ["duration"]) ?? 0) / 60) || 0;
@@ -1125,7 +1130,6 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
           onPlay={startPlay}
           onBack={onBack}
           onMeta={() => setMetaTarget({ guid: base.guid, title: title || base.title, type: "Movie" })}
-          onZoom={(p) => setZoom(p)}
           favItem={{
             guid: base.guid,
             title,
@@ -1214,6 +1218,8 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
             setZoom={setZoom}
             tmdb={tmdb}
             tmdbDone={tmdbDone}
+            /* [lc-1655] 电影页不再渲染剧照块（剧照改全屏轮播）；剧集页保持原行为 */
+            showStills={!isMovie}
           />
         )}
 

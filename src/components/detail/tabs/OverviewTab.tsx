@@ -13,8 +13,20 @@ type Props = {
   setZoom: (u: string) => void;
   tmdb: Record<string, unknown> | null;
   tmdbDone: boolean;
+  /** [lc-1655] 是否渲染剧照块（TmdbExtra / 骨架 / 空态）。电影页传 false（剧照改全屏轮播），默认 true。 */
+  showStills?: boolean;
 };
-export function OverviewTab({ bgmTags, overview, longIntro, introFull, onExpand, setZoom, tmdb, tmdbDone }: Props) {
+export function OverviewTab({
+  bgmTags,
+  overview,
+  longIntro,
+  introFull,
+  onExpand,
+  setZoom,
+  tmdb,
+  tmdbDone,
+  showStills = true,
+}: Props) {
   return (
     <>
       {/* [lc-1420] `.dpanel-single`：本页所有节包进**一个**容器、节间用浅横线分隔（用户要求）。 */}
@@ -46,10 +58,11 @@ export function OverviewTab({ bgmTags, overview, longIntro, introFull, onExpand,
             </div>
           </div>
         )}
-        {/* [lc-1404] 剧照由 TmdbExtra 一处渲染（相似剧集/更多块见「更多」页，lc-1565/1566）。 */}
+        {/* [lc-1404] 剧照由 TmdbExtra 一处渲染（相似剧集/更多块见「更多」页，lc-1565/1566）。
+            [lc-1655] 电影页（showStills=false）整块不渲染：剧照改由头图「剧照」按钮全屏轮播。 */}
         {/* [lc-1420] 分块骨架：TMDB 详情没回来之前摆「剧照行」骨架，到位无跳动。
             [lc-1507] 骨架只在请求**进行中**（!tmdbDone）显示 —— 失败后不再永久转圈。 */}
-        {!tmdb && !tmdbDone && (
+        {showStills && !tmdb && !tmdbDone && (
           <div className="tmdb-sec">
             <div className="dsk dsk-sec-t" />
             {/* [lc-1505] 骨架容器用专用类：.dvstill-row 本身没有 flex（真实剧照行的
@@ -61,9 +74,9 @@ export function OverviewTab({ bgmTags, overview, longIntro, introFull, onExpand,
             </div>
           </div>
         )}
-        {tmdb && <TmdbExtra tmdb={tmdb} onZoom={setZoom} />}
+        {showStills && tmdb && <TmdbExtra tmdb={tmdb} onZoom={setZoom} />}
         {/* [lc-1507] TMDB 失败：静默降级，剧照位给空态（不永久转圈） */}
-        {!tmdb && tmdbDone && <div className="empty">暂无剧照</div>}
+        {showStills && !tmdb && tmdbDone && <div className="empty">暂无剧照</div>}
       </div>
     </>
   );

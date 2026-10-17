@@ -1295,6 +1295,36 @@ pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
     //   images.posters 面积最大 → 主图 poster_path → 空串（前端回退 Bangumi 封面 / 飞牛）。
     let hero_poster = pick_hero_path(&d, "posters", "poster_path");
 
+    // [lc-1655] 4K 剧照（电影详情页全屏轮播用）：只留 `width >= 3840` 的原图，**不排除 hero 主图**
+    //   （只剩 1 张 4K 时轮播也有内容），按面积降序（大图在前）取前 6 张，只输出 file_path。
+    //   与上面的 `backdrops` 字段互不影响（那是有序列表，剧集页等其它消费者仍在用）。
+    let mut stills4k_ranked: Vec<(i64, String)> = d
+        .pointer("/images/backdrops")
+        .and_then(|b| b.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|b| {
+                    let p = b
+                        .get("file_path")
+                        .and_then(|v| v.as_str())
+                        .filter(|p| !p.is_empty())?;
+                    let w = b.get("width").and_then(|v| v.as_i64()).unwrap_or(0);
+                    if w < 3840 {
+                        return None;
+                    }
+                    let h = b.get("height").and_then(|v| v.as_i64()).unwrap_or(0);
+                    Some((w * h, p.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    stills4k_ranked.sort_by(|a, b| b.0.cmp(&a.0));
+    let stills4k: Vec<String> = stills4k_ranked
+        .into_iter()
+        .take(6)
+        .map(|(_, p)| p)
+        .collect();
+
     // 相似剧集（recommendations）
     let recommendations: Vec<Value> = d
         .pointer("/recommendations/results")
@@ -1395,6 +1425,8 @@ pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
         "heroBackdrop": hero_backdrop,
         // [lc-1433] 高清竖版海报（面积最大；详情页封面主用），同样拼 `t/p/original`。
         "heroPoster": hero_poster,
+        // [lc-1655] 4K 剧照（电影全屏轮播用）：`width >= 3840` 且按面积降序，最多 6 条 file_path。
+        "stills4k": stills4k,
         "keywords": keywords,
         "aliases": aliases,
         // 预告片（include_video_language=zh-CN,en,ja,null 才拿得到）

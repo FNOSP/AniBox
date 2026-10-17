@@ -257,76 +257,6 @@
   color: rgba(210, 214, 222, 0.62);
 }
 
-/* ── 剧照横排 ── */
-.mv-stills {
-  flex: none;
-  padding: 20px 26px 4px;
-}
-.mv-stills-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 14px;
-}
-.mv-stills-head h3 {
-  margin: 0;
-  font-size: 19px;
-  font-weight: 700;
-  color: var(--text-strong);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.mv-stills-head h3::before {
-  content: "";
-  width: 5px;
-  height: 18px;
-  border-radius: 3px;
-  background: var(--accent);
-}
-.mv-muted {
-  font-size: 12.5px;
-  color: var(--muted);
-}
-.mv-still {
-  position: relative;
-  flex: none;
-  border-radius: 12px;
-  overflow: hidden;
-  cursor: pointer;
-  border: 1px solid var(--line);
-  transition: box-shadow 0.3s, border-color 0.3s;
-}
-.mv-still img {
-  display: block;
-  height: 176px;
-  width: auto;
-  object-fit: cover;
-  transition: transform 0.55s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-}
-.mv-still:hover img {
-  transform: scale(1.07);
-}
-.mv-still:hover {
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
-  border-color: var(--line-strong);
-}
-.mv-zoom {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  font-size: 20px;
-  background: rgba(0, 0, 0, 0.22);
-  opacity: 0;
-  transition: opacity 0.25s;
-}
-.mv-still:hover .mv-zoom {
-  opacity: 1;
-}
-
 /* ── 下方标签页：电影模式单列 ── */
 .dv2.dv2-movie {
   display: block;
@@ -343,12 +273,6 @@
   }
   .mv-title {
     font-size: 38px;
-  }
-  .mv-stills {
-    padding: 16px 16px 4px;
-  }
-  .mv-still img {
-    height: 130px;
   }
   .dv2.dv2-movie {
     padding: 6px 16px 30px;

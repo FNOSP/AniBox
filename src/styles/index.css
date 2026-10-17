@@ -43,3 +43,5 @@
 
 /* [lc-1652] 电影详情页「沉浸式」版式（用户样板） */
 @import "./40-movie-hero.css";
+/* [lc-1655] 电影详情页「剧照」全屏轮播 */
+@import "./41-still-lightbox.css";

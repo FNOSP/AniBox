@@ -1,4 +1,9 @@
 /* ═══════════════ [lc-1599] 应用内反馈（工单制）面板 ═══════════════
+   信息架构（整体重排）：
+     · 顶部标题区（品牌图标 + 标题 + 说明）
+     · 一级分区导航（反馈 / 日志与诊断）—— 常驻，两条主线一眼可见
+     · 反馈分区：二级标签「我的工单 / 新建反馈」+ 工单会话详情层
+     · 日志与诊断分区：工具条（刷新 / 导出诊断包）+ 自适应卡片网格
    外壳复用 .ddet-mask/.ddet（与 SettingsPanel 同款，定义见 20-bgm-detail.css），
    内部全部 fbx- 前缀；颜色走 01-tokens.css 的变量（深/浅两套主题都成立）。
    仅状态徽章的橙/绿在现有 token 里没有对应项 —— 直接沿用 19-discover.css
@@ -13,71 +18,250 @@ html.dark {
   --fbx-green: #3ddc97;
 }
 
-/* 面板卡片：比设置面板略宽（会话气泡要留出左右空白） */
+/* ── 面板外壳 ── */
 .fbx-card {
-  width: min(620px, 94vw);
+  width: min(820px, 94vw);
+  max-height: min(84vh, 840px);
+}
+.fbx-close {
+  z-index: 3;
 }
 
-/* body 改为不滚动的弹性列：各视图自己管滚动区（列表 / 表单 / 消息），
+/* ── 顶部标题区 ── */
+.fbx-hd {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 22px 12px;
+  min-width: 0;
+}
+.fbx-brand-ico {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.fbx-hd-txt {
+  min-width: 0;
+  padding-right: 34px;
+}
+.fbx-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--text-strong);
+}
+.fbx-subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 一级分区导航（分段卡片） ── */
+.fbx-nav {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 0 22px 12px;
+}
+.fbx-nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  font-family: inherit;
+  text-align: left;
+  color: var(--text-2);
+  background: var(--hover);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+.fbx-nav-btn:hover {
+  background: var(--hover-strong);
+  border-color: var(--line-strong);
+}
+.fbx-nav-btn.is-active {
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--accent) 12%, var(--hover));
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.fbx-nav-btn > svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+.fbx-nav-btn.is-active > svg {
+  color: var(--accent);
+}
+.fbx-nav-txt {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.fbx-nav-txt b {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.fbx-nav-txt small {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fbx-nav-btn.is-active .fbx-nav-txt small {
+  color: var(--text-2);
+}
+
+/* body 改为不滚动的弹性列：各分区自己管滚动区（列表 / 表单 / 消息 / 诊断网格），
    会话视图的回复框才能钉在底部，而不是被整页滚动带走 */
 .ddet-body.fbx-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
+  min-height: 0;
   overflow: hidden;
-  padding: 14px 20px 16px;
+  padding: 0 22px 18px;
 }
 
-/* ── 通用控件（对齐 .set-btn 视觉） ── */
+/* ── 通用控件 ── */
 .fbx-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--text-strong);
   background: var(--hover);
   border: 1px solid var(--line-strong);
   border-radius: 9px;
-  padding: 7px 14px;
+  padding: 7px 13px;
+  white-space: nowrap;
   cursor: pointer;
-  transition: background-color 0.16s ease, transform 0.16s ease;
+  transition: background-color 0.16s ease, border-color 0.16s ease, transform 0.16s ease,
+    filter 0.16s ease;
 }
 .fbx-btn:hover:not(:disabled) {
   background: var(--hover-strong);
   transform: translateY(-1px);
 }
+.fbx-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
 .fbx-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .fbx-btn.primary {
   background: var(--accent-grad);
   border-color: transparent;
   color: #fff;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 26%, transparent);
 }
 .fbx-btn.primary:hover:not(:disabled) {
   filter: brightness(1.07);
 }
-
-/* 外链按钮（加入 Q 群）：与 .fbx-btn 同视觉，去掉下划线 */
+.fbx-btn.subtle {
+  padding: 6px 10px;
+  background: transparent;
+  border-color: var(--line);
+  color: var(--text-2);
+}
+.fbx-btn.subtle:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text-strong);
+}
 a.fbx-btn {
-  display: inline-flex;
-  align-items: center;
   text-decoration: none;
 }
 
-/* 行内提示（.err 变体与全局错误配色同族） */
+/* 键盘焦点可见（鼠标点击不出现焦点环） */
+.fbx-btn:focus-visible,
+.fbx-nav-btn:focus-visible,
+.fbx-tab:focus-visible,
+.fbx-row:focus-visible,
+.fbx-tid:focus-visible,
+.fbx-linkbtn:focus-visible,
+.fbx-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.fbx-ta:focus-visible,
+.fbx-input:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+.fbx-check input[type="checkbox"]:focus-visible,
+.fbx-toggle-row input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 行内提示 / 状态条 */
 .fbx-note {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0; /* 覆盖全局 .err 的 margin-bottom，避免在弹性布局里多出空隙 */
   font-size: 12.5px;
-  padding: 8px 10px;
+  line-height: 1.5;
+  padding: 8px 11px;
   border-radius: 9px;
+  border: 1px solid transparent;
   background: var(--hover);
   color: var(--text-2);
-  word-break: break-all;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .fbx-note.err {
   background: var(--err-bg);
-  border: 1px solid var(--err-border);
+  border-color: var(--err-border);
   color: var(--err-text);
+}
+.fbx-linkbtn {
+  flex: 0 0 auto;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* 小标签 */
+.fbx-chip {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--hover);
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 /* ── 状态徽章（待处理=中性灰 / 已确认=蓝 / 已跟进=橙 / 已解决=绿 / 已关闭=深灰） ── */
@@ -122,13 +306,119 @@ a.fbx-btn {
   border-style: dashed;
 }
 
-/* ── 列表视图 ── */
-.fbx-toolbar {
+/* ── 加载 / 空态 / 错误态 ── */
+.fbx-spinner {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  animation: fbx-spin 0.8s linear infinite;
+}
+.fbx-spinner.sm {
+  width: 13px;
+  height: 13px;
+  border-width: 2px;
+}
+@keyframes fbx-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.fbx-state {
+  flex: 1;
+  min-height: 170px;
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   gap: 8px;
+  padding: 26px 18px;
+  text-align: center;
+  color: var(--muted);
+}
+.fbx-state-ico {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--hover);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.fbx-state-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.fbx-state-txt {
+  margin: 0;
+  max-width: 330px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+.fbx-state .fbx-btn {
+  margin-top: 4px;
+}
+
+/* ═════════ 反馈分区 ═════════ */
+.fbx-fb {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.fbx-subbar {
+  flex: 0 0 auto;
+  display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
 }
+.fbx-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--hover);
+  border: 1px solid var(--line);
+}
+.fbx-tab {
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  padding: 6px 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+.fbx-tab:hover {
+  color: var(--text-2);
+  background: var(--hover-strong);
+}
+.fbx-tab.is-active {
+  color: var(--text-strong);
+  background: var(--bg-3);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
+}
+.fbx-subbar-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* 工单列表 */
 .fbx-list {
   flex: 1;
   min-height: 0;
@@ -136,33 +426,35 @@ a.fbx-btn {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding-right: 2px;
+  padding: 1px 3px 2px 1px;
 }
 .fbx-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
+  min-width: 0;
   text-align: left;
   font-family: inherit;
   color: var(--text);
   background: var(--hover);
   border: 1px solid var(--line);
   border-radius: 11px;
-  padding: 10px 12px;
+  padding: 11px 13px;
   cursor: pointer;
-  transition: background-color 0.16s ease, border-color 0.16s ease;
+  transition: background-color 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
 }
 .fbx-row:hover {
   background: var(--hover-strong);
   border-color: var(--line-strong);
+  transform: translateX(2px);
 }
 .fbx-row-main {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  min-width: 0;
   flex: 1;
+  min-width: 0;
 }
 .fbx-row-title {
   font-size: 13.5px;
@@ -175,27 +467,62 @@ a.fbx-btn {
 .fbx-row-meta {
   font-size: 11.5px;
   color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.fbx-empty {
-  padding: 28px 0;
-  text-align: center;
-  font-size: 13px;
-  color: var(--muted);
+.fbx-row-side {
+  flex: 0 0 auto;
 }
 
-/* ── 新建视图 ── */
+/* ── 新建反馈表单 ── */
 .fbx-form {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.fbx-form-scroll {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  padding: 1px 3px 2px 1px;
+}
+.fbx-pane {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
+  padding: 14px 15px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--hover);
+}
+.fbx-pane-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.fbx-pane-h {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+.fbx-pane-h > svg {
+  color: var(--muted);
 }
 .fbx-k {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+  gap: 10px;
   font-size: 12.5px;
   font-weight: 600;
   color: var(--text-2);
@@ -208,6 +535,7 @@ a.fbx-btn {
 .fbx-ta,
 .fbx-input {
   width: 100%;
+  min-width: 0;
   box-sizing: border-box;
   font-family: inherit;
   font-size: 13px;
@@ -227,6 +555,51 @@ a.fbx-btn {
 }
 .fbx-ta:disabled {
   opacity: 0.5;
+  cursor: not-allowed;
+}
+.fbx-count {
+  align-self: flex-end;
+  margin-top: -4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.fbx-toggle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 4px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--input-bg);
+  cursor: pointer;
+  user-select: none;
+}
+.fbx-toggle-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.fbx-toggle-txt {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.fbx-toggle-txt b {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.fbx-toggle-txt small {
+  font-size: 11px;
+  color: var(--muted);
 }
 .fbx-check {
   display: flex;
@@ -236,13 +609,17 @@ a.fbx-btn {
   color: var(--text-2);
   cursor: pointer;
   user-select: none;
+  min-width: 0;
 }
 .fbx-check input[type="checkbox"] {
+  flex: 0 0 auto;
   width: 14px;
   height: 14px;
+  padding: 0;
+  border: none;
+  background: transparent;
   accent-color: var(--accent);
   cursor: pointer;
-  flex: 0 0 auto;
 }
 .fbx-check input[type="checkbox"]:disabled {
   cursor: default;
@@ -252,64 +629,65 @@ a.fbx-btn {
   opacity: 0.65;
   cursor: default;
 }
-
-/* 调试日志的组件级开关：自适应网格，窄屏自动折行 */
-.fbx-modgrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
-  gap: 7px 12px;
-  margin: 9px 0 4px;
-  padding: 9px 10px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--input-bg);
-}
 .fbx-hint {
+  margin: 0;
   font-size: 11.5px;
   line-height: 1.6;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
-.fbx-actions {
+.fbx-form-ft {
+  flex: 0 0 auto;
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
 }
 
-/* ── 会话视图 ── */
+/* ── 工单会话（反馈详情层） ── */
+.fbx-thread {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
 .fbx-thread-hd {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
   row-gap: 6px;
+  padding-bottom: 2px;
 }
 .fbx-tidwrap {
   display: flex;
   align-items: center;
   gap: 4px;
-  min-width: 0;
   flex: 1;
+  min-width: 0;
   justify-content: flex-end;
 }
 .fbx-tid {
-  font-family: inherit;
-  font-size: 11.5px;
+  min-width: 0;
+  max-width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
   color: var(--muted);
-  background: none;
-  border: none;
+  background: var(--hover);
+  border: 1px solid transparent;
   border-radius: 6px;
-  padding: 2px 5px;
+  padding: 3px 6px;
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  min-width: 0;
-  max-width: 100%;
 }
 .fbx-tid:hover {
-  background: var(--hover);
   color: var(--text-2);
+  border-color: var(--line);
 }
 .fbx-copy {
   flex: 0 0 auto;
@@ -323,13 +701,14 @@ a.fbx-btn {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 2px 2px 4px;
+  padding: 2px 3px 4px 1px;
 }
 .fbx-msg {
   display: flex;
   flex-direction: column;
   gap: 3px;
   max-width: 82%;
+  min-width: 0;
 }
 .fbx-msg.user {
   align-self: flex-end;
@@ -346,6 +725,7 @@ a.fbx-btn {
   border-radius: 12px;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
   text-align: left;
 }
 .fbx-msg.user .fbx-msg-txt {
@@ -363,54 +743,84 @@ a.fbx-btn {
   font-size: 10.5px;
   color: var(--muted);
 }
+.fbx-thread-empty {
+  margin: auto;
+  padding: 18px 10px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
 .fbx-reply {
+  flex: 0 0 auto;
   display: flex;
   align-items: flex-end;
   gap: 8px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
 }
 .fbx-reply-ta {
   flex: 1;
   min-width: 0;
+  max-height: 120px;
+  resize: none;
 }
 .fbx-send {
   flex: 0 0 auto;
 }
 
-/* 内部滚动区滚动条（与 .ddet-body 同款） */
-.fbx-list::-webkit-scrollbar,
-.fbx-msgs::-webkit-scrollbar,
-.fbx-form::-webkit-scrollbar {
-  width: 9px;
-}
-.fbx-list::-webkit-scrollbar-thumb,
-.fbx-msgs::-webkit-scrollbar-thumb,
-.fbx-form::-webkit-scrollbar-thumb {
-  background: var(--line-strong);
-  border-radius: 9px;
-}
-
-/* ── 日志 / 诊断工具（从旧 Electron 设置面板迁移） ── */
-.fbx-toolbar-r {
+/* ═════════ 日志与诊断分区 ═════════ */
+.fbx-diag-wrap {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 10px;
+}
+.fbx-diag-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.fbx-diag-heading {
+  min-width: 0;
+}
+.fbx-diag-heading .fbx-hint {
+  margin-top: 3px;
+}
+.fbx-diag-actions {
+  display: flex;
+  gap: 7px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
-
 .fbx-diag {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding-right: 2px;
+  padding: 1px 3px 2px 1px;
+}
+.fbx-diag-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 10px;
+  align-items: start;
 }
 .fbx-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 13px 14px;
   border: 1px solid var(--line);
-  border-radius: 11px;
+  border-radius: 12px;
   background: var(--hover);
-  padding: 12px 14px;
+}
+.fbx-span2 {
+  grid-column: 1 / -1;
 }
 .fbx-sec-hd {
   display: flex;
@@ -418,33 +828,43 @@ a.fbx-btn {
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
+  margin-bottom: 7px;
 }
 .fbx-sec-h {
-  margin: 0 0 8px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
   font-weight: 700;
   color: var(--text-strong);
 }
-.fbx-sec-hd .fbx-sec-h {
-  margin: 0;
+.fbx-sec-h > svg {
+  color: var(--muted);
 }
 .fbx-kv {
   display: flex;
   align-items: baseline;
   gap: 10px;
+  min-width: 0;
   padding: 3px 0;
   font-size: 12px;
   color: var(--text-2);
 }
 .fbx-kv > span:first-child {
-  flex: 0 0 88px;
+  flex: 0 0 74px;
   color: var(--muted);
+}
+.fbx-kv > span:last-child,
+.fbx-kv code {
+  min-width: 0;
 }
 .fbx-kv code {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--text);
   word-break: break-all;
+  overflow-wrap: anywhere;
 }
 .fbx-btnrow {
   display: flex;
@@ -452,23 +872,98 @@ a.fbx-btn {
   flex-wrap: wrap;
   margin-top: 8px;
 }
-.fbx-pre {
-  margin: 0;
-  padding: 10px;
-  max-height: 240px;
-  overflow: auto;
+.fbx-btnrow-inline {
+  margin-top: 0;
+}
+.fbx-modgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 7px 12px;
+  margin: 9px 0 4px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
   border-radius: 9px;
-  background: rgba(0, 0, 0, 0.18);
+  background: var(--input-bg);
+}
+.fbx-pre {
+  margin: 9px 0 0;
+  padding: 10px 11px;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--input-bg);
   color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 11px;
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-all;
+  overflow-wrap: anywhere;
 }
-.fbx-diag::-webkit-scrollbar {
+
+/* ── 内部滚动区滚动条（与 .ddet-body 同款） ── */
+.fbx-list::-webkit-scrollbar,
+.fbx-msgs::-webkit-scrollbar,
+.fbx-form-scroll::-webkit-scrollbar,
+.fbx-diag::-webkit-scrollbar,
+.fbx-pre::-webkit-scrollbar {
   width: 9px;
+  height: 9px;
 }
-.fbx-diag::-webkit-scrollbar-thumb {
+.fbx-list::-webkit-scrollbar-thumb,
+.fbx-msgs::-webkit-scrollbar-thumb,
+.fbx-form-scroll::-webkit-scrollbar-thumb,
+.fbx-diag::-webkit-scrollbar-thumb,
+.fbx-pre::-webkit-scrollbar-thumb {
   background: var(--line-strong);
   border-radius: 9px;
+}
+
+/* ── 窄窗口适配（侧栏展开/收起、窄面板） ── */
+@media (max-width: 640px) {
+  .fbx-card {
+    width: 96vw;
+    max-height: calc(100vh - 84px); /* 扣掉 .ddet-mask 的上下内边距，窄窗口也不溢出 */
+  }
+  .fbx-hd {
+    padding: 14px 16px 10px;
+  }
+  .fbx-nav {
+    padding: 0 16px 10px;
+  }
+  .ddet-body.fbx-body {
+    padding: 0 16px 14px;
+  }
+  .fbx-nav-btn {
+    padding: 9px 10px;
+  }
+  .fbx-nav-txt small {
+    display: none;
+  }
+  .fbx-subbar-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .fbx-diag-grid {
+    grid-template-columns: 1fr;
+  }
+  .fbx-kv > span:first-child {
+    flex-basis: 64px;
+  }
+  .fbx-msg {
+    max-width: 90%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fbx-btn,
+  .fbx-row,
+  .fbx-nav-btn,
+  .fbx-tab {
+    transition: none;
+  }
+  .fbx-spinner {
+    animation-duration: 1.6s;
+  }
 }

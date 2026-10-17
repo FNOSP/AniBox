@@ -272,7 +272,7 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
       <div className="dweeks">
         {WEEKDAYS.map((w) => {
           const g = days.find((x) => x.id === w.id);
-          // [lc-1539] 柱高 = 该天部数 / 当周最大值（占比 ≥6% 才可见，0 部不画）
+          // [lc-1662] 占比 = 该天部数 / 当周最大值（0 部不画进度条；最低 6% 保证可见）
           const pct = g && g.count > 0 ? Math.max(6, Math.round((g.count / maxCount) * 100)) : 0;
           return (
             <button
@@ -281,10 +281,17 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
               onClick={() => setWd(w.id)}
               title={g ? `${w.cn}共 ${g.count} 部` : w.cn}
             >
-              {/* [lc-1539] 底色占比填充（迷你柱状图，替代原独立细条） */}
-              <span className="dweek-fill" style={{ height: `${pct}%` }} aria-hidden="true" />
+              {/* [lc-1662] 底部迷你进度条（替代原「整块高度填充 + 水位线」，
+                  不再横贯文字；宽度按当周占比，左右各留 6px 内缩） */}
               <span className="dweek-d">{w.cn}</span>
-              <i>{g ? `${g.count} 部` : "…"}</i>
+              <span className="dweek-n">{g ? `${g.count} 部` : "…"}</span>
+              {pct > 0 && (
+                <span
+                  className="dweek-bar"
+                  style={{ width: `calc((100% - 12px) * ${pct / 100})` }}
+                  aria-hidden="true"
+                />
+              )}
             </button>
           );
         })}

@@ -29,6 +29,9 @@ type Props = {
   /** [lc-1598] 该条目**有观看记录**（详情页按条目 watched/ts 或任意一集有进度算出）：
    *  为 true 且当前状态是「未追 / 想看」时，自动改标「在看」（见下方取状态的 effect）。 */
   autoWatching?: boolean;
+  /** [lc-1651] 条目本身（无 BGM 条目时，按钮从「同步状态」改成「收藏」，写本地收藏）。
+   *  guid 必填，其余字段用于侧栏收藏卡片渲染。 */
+  favItem?: Record<string, unknown> | null;
 };
 
 /** 收藏状态项（kind 与 BGM type 同号：0=未追（不在收藏）/1 想看 /2 看过 /3 在看 /4 搁置 /5 抛弃）。
@@ -42,6 +45,21 @@ const STATUS_ITEMS: { kind: number; label: string }[] = [
   { kind: 5, label: "抛弃" },
 ];
 const statusLabel = (kind: number) => STATUS_ITEMS.find((s) => s.kind === kind)?.label ?? "同步状态";
+
+/** [lc-1651] 收藏图标（无 BGM 条目时的按钮）：实心 = 已收藏 */
+function FavIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg
+      className="btn-icon"
+      viewBox="0 0 24 24"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth={filled ? 0 : 1.8}
+    >
+      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+    </svg>
+  );
+}
 
 /** 状态图标（设计稿内联 SVG 全量搬运；kind=-1 = 初始「同步状态」的刷新图标） */
 function StatusIcon({ kind }: { kind: number }) {
@@ -79,9 +97,14 @@ function StatusIcon({ kind }: { kind: number }) {
   );
 }
 
-export function RatingWidget({ subjectId, date, score, scoreSource, total, rank, tmdbId, counts, countsSource, autoWatching }: Props) {
+export function RatingWidget({ subjectId, date, score, scoreSource, total, rank, tmdbId, counts, countsSource, autoWatching, favItem }: Props) {
   // 收藏状态：-1 = 尚未取到（按钮显示「同步状态」+ 刷新图标）
   const [status, setStatus] = useState<number>(-1);
+  // [lc-1651] 无 BGM 条目时的本地收藏态
+  const [fav, setFav] = useState(false);
+  const [favBusy, setFavBusy] = useState(false);
+  const favGuid = String((favItem?.guid as string) ?? "").trim();
+  const noSync = subjectId == null;
   const [menuOpen, setMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [changing, setChanging] = useState(false);
@@ -134,6 +157,33 @@ export function RatingWidget({ subjectId, date, score, scoreSource, total, rank,
       alive = false;
     };
   }, [subjectId, autoWatching]);
+
+  // [lc-1651] 无 BGM 条目（按钮原本永远停在「同步状态」）→ 改读本地收藏态
+  useEffect(() => {
+    if (!noSync || !favGuid) return;
+    let alive = true;
+    invoke<boolean>("favorite_get", { guid: favGuid })
+      .then((v) => {
+        if (alive) setFav(!!v);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [noSync, favGuid]);
+
+  const toggleFav = () => {
+    if (!favGuid || favBusy) return;
+    setFavBusy(true);
+    invoke<{ favorited?: boolean }>("favorite_toggle", { item: favItem })
+      .then((r) => {
+        const on = !!r?.favorited;
+        setFav(on);
+        setNote(on ? "已收藏，可在侧边栏「收藏」里找到" : "已取消收藏");
+      })
+      .catch((e) => setNote(String(e)))
+      .finally(() => setFavBusy(false));
+  };
 
   // 下拉：点组件外关闭（设计稿同款）
   useEffect(() => {
@@ -274,51 +324,73 @@ export function RatingWidget({ subjectId, date, score, scoreSource, total, rank,
             </div>
           </div>
         </div>
-        <div className={`watch-component${menuOpen ? " active" : ""}`}>
-          <button
-            className={`watch-btn${changing ? " changing" : ""}${bounce ? " bounce" : ""}`}
-            data-status={status >= 0 ? statusLabel(status) : undefined}
-            disabled={subjectId == null}
-            title={subjectId == null ? "未匹配到 Bangumi 条目，无法同步收藏" : "设置收藏状态（已绑定账号则同步到 Bangumi）"}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (menuOpen) {
-                setMenuOpen(false);
-                return;
-              }
-              // [lc-1572] 浮层 portal 到 body：避开 .content 内的层叠/合成怪癖
-              // （lc-1504 同款坑——详情页里浮层与玻璃/滚动层在 WebView2 会画错顺序，
-              //  曾表现为下拉被标签条半透明"穿透"）。
-              const r = e.currentTarget.getBoundingClientRect();
-              setMenuPos({ top: r.bottom + 8, left: r.left });
-              setMenuOpen(true);
-            }}
-          >
-            <div className="btn-content">
-              <StatusIcon kind={status} />
-              <span>{status >= 0 ? statusLabel(status) : "同步状态"}</span>
-            </div>
-          </button>
-          {createPortal(
-            <ul
-              className={`drw-drop${menuOpen ? " open" : ""}`}
-              style={menuPos ? { top: menuPos.top, left: menuPos.left } : undefined}
+        {noSync ? (
+          /* [lc-1651] 没有 BGM 条目 → 原按钮永远停在「同步状态」，改成真正可用的「收藏」：
+             写本地收藏（favorites.json），侧边栏「收藏」立刻能看到。 */
+          <div className={`watch-component${fav ? " active" : ""}`}>
+            <button
+              className="watch-btn"
+              data-status={fav ? "已收藏" : "收藏"}
+              disabled={!favGuid || favBusy}
+              title={favGuid ? (fav ? "取消收藏" : "收藏（可在侧边栏「收藏」里找到）") : "该条目无法收藏"}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleFav();
+              }}
             >
-              {STATUS_ITEMS.map((it) => (
-                <li
-                  key={it.kind}
-                  data-value={it.label}
-                  className={status === it.kind ? "selected" : ""}
-                  onClick={() => pickStatus(it.kind)}
-                >
-                  <StatusIcon kind={it.kind} />
-                  <span>{it.label}</span>
-                </li>
-              ))}
-            </ul>,
-            document.body,
-          )}
-        </div>
+              <div className="btn-content">
+                <FavIcon filled={fav} />
+                <span>{favBusy ? "处理中…" : fav ? "已收藏" : "收藏"}</span>
+              </div>
+            </button>
+          </div>
+        ) : (
+          <div className={`watch-component${menuOpen ? " active" : ""}`}>
+            <button
+              className={`watch-btn${changing ? " changing" : ""}${bounce ? " bounce" : ""}`}
+              data-status={status >= 0 ? statusLabel(status) : undefined}
+              disabled={subjectId == null}
+              title={subjectId == null ? "未匹配到 Bangumi 条目，无法同步收藏" : "设置收藏状态（已绑定账号则同步到 Bangumi）"}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (menuOpen) {
+                  setMenuOpen(false);
+                  return;
+                }
+                // [lc-1572] 浮层 portal 到 body：避开 .content 内的层叠/合成怪癖
+                // （lc-1504 同款坑——详情页里浮层与玻璃/滚动层在 WebView2 会画错顺序，
+                //  曾表现为下拉被标签条半透明"穿透"）。
+                const r = e.currentTarget.getBoundingClientRect();
+                setMenuPos({ top: r.bottom + 8, left: r.left });
+                setMenuOpen(true);
+              }}
+            >
+              <div className="btn-content">
+                <StatusIcon kind={status} />
+                <span>{status >= 0 ? statusLabel(status) : "同步状态"}</span>
+              </div>
+            </button>
+            {createPortal(
+              <ul
+                className={`drw-drop${menuOpen ? " open" : ""}`}
+                style={menuPos ? { top: menuPos.top, left: menuPos.left } : undefined}
+              >
+                {STATUS_ITEMS.map((it) => (
+                  <li
+                    key={it.kind}
+                    data-value={it.label}
+                    className={status === it.kind ? "selected" : ""}
+                    onClick={() => pickStatus(it.kind)}
+                  >
+                    <StatusIcon kind={it.kind} />
+                    <span>{it.label}</span>
+                  </li>
+                ))}
+              </ul>,
+              document.body,
+            )}
+          </div>
+        )}
         {note && <div className="drw-note">{note}</div>}
       </div>
       <div className="right-section">

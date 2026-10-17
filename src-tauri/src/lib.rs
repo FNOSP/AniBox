@@ -8,6 +8,8 @@ mod bgm_account;
 mod config;
 mod danmaku_shim;
 mod disk_cache;
+// [lc-1651] 本地收藏（侧边栏「收藏」写入端；飞牛 item/favorite 在本机 NAS 上未实现）
+mod favorites;
 // [lc-1599] 应用内反馈（工单制）：提交/列表/会话/回复（脱敏与本地索引见 feedback.rs 头部）
 mod feedback;
 mod fnapi;
@@ -571,30 +573,56 @@ async fn get_media_sum(state: State<'_, AppState>) -> Result<Value, String> {
         .await
 }
 
-/// 收藏列表：POST /v/api/v1/favorite/list（响应 {total,list} 同 item/list）
+/// 收藏列表：本地收藏 ∪ 飞牛 `POST /v/api/v1/favorite/list`（响应 {total,list} 同 item/list）。
+/// [lc-1651] 本机 NAS 的 `item/favorite` 路由未实现（返回 Not Implemented），收藏由客户端
+/// `favorites.rs` 落盘；这里把两边合并、本地在前（按加入时间倒序），飞牛哪天支持了自动带上。
 #[tauri::command]
 async fn get_favorites(
+    app: AppHandle,
     state: State<'_, AppState>,
     page: Option<i64>,
 ) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let client = fnapi::new_client();
-    client
-        .call(
-            &cfg.server,
-            "/v/api/v1/favorite/list",
-            "POST",
-            &cfg.token,
-            Some(json!({
-                "tags": { "type": [] },
-                "sort_type": "DESC",
-                "sort_column": "create_time",
-                "exclude_grouped_video": 1,
-                "page": page.unwrap_or(1),
-                "page_size": 60
-            })),
-        )
-        .await
+    let remote = if cfg.token.is_empty() {
+        None
+    } else {
+        client
+            .call(
+                &cfg.server,
+                "/v/api/v1/favorite/list",
+                "POST",
+                &cfg.token,
+                Some(json!({
+                    "tags": { "type": [] },
+                    "sort_type": "DESC",
+                    "sort_column": "create_time",
+                    "exclude_grouped_video": 1,
+                    "page": page.unwrap_or(1),
+                    "page_size": 60
+                })),
+            )
+            .await
+            .ok()
+    };
+    let local = favorites::list(&app);
+    let mut seen: std::collections::HashSet<String> = local
+        .iter()
+        .filter_map(|v| v.get("guid").and_then(|x| x.as_str()).map(str::to_string))
+        .collect();
+    let mut list = local;
+    if let Some(data) = remote {
+        if let Some(arr) = data.get("list").and_then(|x| x.as_array()) {
+            for it in arr {
+                let g = it.get("guid").and_then(|x| x.as_str()).unwrap_or("");
+                if g.is_empty() || !seen.insert(g.to_string()) {
+                    continue;
+                }
+                list.push(it.clone());
+            }
+        }
+    }
+    Ok(json!({ "total": list.len(), "list": list }))
 }
 
 /// 全局分类浏览：不带 ancestor/parent，按 tags.type 过滤（电影/电视节目/直播/其他）
@@ -1844,6 +1872,8 @@ pub fn run() {
             get_media_libs,
             get_media_sum,
             get_favorites,
+            favorites::favorite_get,
+            favorites::favorite_toggle,
             get_items_global,
             get_items,
             get_continue_watching,

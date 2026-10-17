@@ -1118,6 +1118,18 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
                 counts={bgmScore > 0 && bgmCounts ? bgmCounts : tmdbHist}
                 countsSource={bgmScore > 0 && bgmCounts ? "bgm" : tmdbHist ? "tmdb" : "none"}
                 autoWatching={hasWatchRecord}
+                /* [lc-1651] 无 BGM 条目时按钮变「收藏」：这里给足收藏卡片渲染字段 */
+                favItem={{
+                  guid: base.guid,
+                  title:
+                    String(pick(data ?? {}, ["tv_title", "tvTitle"]) ?? "").trim() ||
+                    String(pick(data ?? {}, ["title"]) ?? base.title ?? ""),
+                  tvTitle: String(pick(data ?? {}, ["tv_title", "tvTitle"]) ?? "").trim(),
+                  poster: String(poster ?? ""),
+                  type: String(pick(data ?? {}, ["type"]) ?? base.type ?? ""),
+                  seasonNumber: Number(pick(data ?? {}, ["season_number", "seasonNumber"]) ?? 0) || 0,
+                  episodeNumber: Number(pick(data ?? {}, ["episode_number", "episodeNumber"]) ?? 0) || 0,
+                }}
               />
               {playNote && <div className="play-note">{playNote}</div>}
             </div>

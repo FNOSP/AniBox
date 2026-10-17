@@ -18,11 +18,22 @@
   box-shadow: none;
   backdrop-filter: none;
   user-select: none;
-  /* [lc-1702] 自适应反色：整条顶栏作为 difference 混合组，白色基色。
-     亮背景上白色反相成深色、暗背景上保持白色 —— 无需采样、无需底色/遮罩。
-     品牌 logo 与关闭键拆到独立图层（见 .tb-brand-layer / .tb-close-layer），不参与本混合组。 */
-  color: #fff;
-  mix-blend-mode: difference;
+  /* [lc-1703] 二值色调：data-tone 由 TitleBar 的 JS 采样给出。
+     图标/文字只用**实心纯黑或实心纯白**（见下方 color: var(--tb-fg)），
+     不再使用 mix-blend-mode: difference（反相会出现彩色/半透明/灰）。 */
+  --tb-fg: #0b0d12;
+  --tb-hover-bg: rgba(11, 13, 18, 0.1);
+  --tb-hover-bg-strong: rgba(11, 13, 18, 0.16);
+}
+.titlebar[data-tone="light"] {
+  --tb-fg: #0b0d12;
+  --tb-hover-bg: rgba(11, 13, 18, 0.1);
+  --tb-hover-bg-strong: rgba(11, 13, 18, 0.16);
+}
+.titlebar[data-tone="dark"] {
+  --tb-fg: #ffffff;
+  --tb-hover-bg: rgba(255, 255, 255, 0.16);
+  --tb-hover-bg-strong: rgba(255, 255, 255, 0.24);
 }
 .tb-left {
   flex: 1;
@@ -31,8 +42,8 @@
   gap: 6px;
   padding-left: 10px;
 }
-/* [lc-1702] 品牌 logo 独立图层：定位与原来的 .tb-center 一致（窗口水平居中），
-   但在 .titlebar 的 difference 混合组**之外** —— 渐变字标保持原样、不被反相。
+/* [lc-1703] 品牌 logo 独立图层：定位与原来的 .tb-center 一致（窗口水平居中），
+   且**不参与色调切换** —— 渐变字标保持原样。
    pointer-events:none：不吃鼠标事件，拖拽仍由下方 .titlebar 接管。 */
 .tb-brand-layer {
   position: absolute;
@@ -77,7 +88,7 @@
 .tb-page {
   font-size: 13px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--tb-fg);
   padding-left: 6px;
 }
 /* [lc-1661] 左上角页名（首页/发现）可点击回首页：按钮化后**观感与原来的纯文本一致**
@@ -91,7 +102,7 @@
   font-size: 13px;
   font-weight: 600;
   line-height: 1.2;
-  color: var(--text);
+  color: var(--tb-fg);
   padding: 3px 6px;
   margin-left: -4px;
   border-radius: 6px;
@@ -101,10 +112,10 @@
   transition: background-color 0.15s ease;
 }
 .tb-crumb.tb-crumb-btn:hover {
-  background: var(--hover);
+  background: var(--tb-hover-bg);
 }
 .tb-crumb.tb-crumb-btn:active {
-  background: var(--hover-strong);
+  background: var(--tb-hover-bg-strong);
 }
 /* [lc-1402] padding 必须显式归零：全局 button 规则是 `padding: 8px 15px`，而本类与 .tb-btn/.ddet-close
    都只声明了 width/height（box-sizing: border-box）→ 内容盒被左右各 15px 吃掉，34px 只剩 4px 宽。
@@ -116,7 +127,7 @@
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--text-2);
+  color: var(--tb-fg);
   font-size: 14px;
   border-radius: 8px;
   cursor: pointer;
@@ -125,11 +136,12 @@
   justify-content: center;
 }
 .tb-icon:hover {
-  background: var(--hover-strong);
-  color: var(--text-strong);
+  background: var(--tb-hover-bg);
+  color: var(--tb-fg);
 }
 .tb-icon:disabled {
-  opacity: 0.45;
+  /* [lc-1703] 不再降透明度：图标必须保持实心不透明（刷新中靠旋转提示） */
+  opacity: 1;
   cursor: default;
 }
 /* [lc-1639] 旋转只作用在**字形**上（.tb-spin 包一层）：原来直接转按钮，
@@ -149,7 +161,7 @@
 .tb-link {
   border: none;
   background: transparent;
-  color: var(--text);
+  color: var(--tb-fg);
   font-size: 13px;
   font-weight: 600;
   padding: 6px 10px;
@@ -157,8 +169,8 @@
   cursor: pointer;
 }
 .tb-link:hover {
-  background: var(--hover-strong);
-  color: var(--text-strong);
+  background: var(--tb-hover-bg);
+  color: var(--tb-fg);
 }
 .tb-buttons {
   display: flex;
@@ -170,57 +182,49 @@
   padding: 0; /* 同 .tb-icon：不复位 padding 会把最小化/最大化/关闭的 SVG 压扁 */
   border: none;
   background: transparent;
-  color: var(--muted);
+  color: var(--tb-fg);
   font-size: 12px;
   cursor: pointer;
 }
 .tb-btn:hover {
-  background: var(--hover);
-  color: var(--text-strong);
+  background: var(--tb-hover-bg);
+  color: var(--tb-fg);
 }
 .tb-btn.tb-close:hover {
   /* 关闭键 hover：保持"变红"的约定，但改成半透明（顶栏透明后不整块盖住底下的海报） */
   background: rgba(229, 72, 77, 0.58);
   color: #fff;
 }
-/* [lc-1702] 顶栏自适应反色（纯 CSS）：
-   .titlebar 是 `mix-blend-mode: difference` 混合组 + 白色基色 ⇒ 图标/文字在任意背景上自动反相
-   （亮底 → 深色，暗底 → 白色），不再依赖 hero 亮度采样，也不需要 text-shadow。
-   注意：difference 下黑色阴影不产生任何效果（|Cb-0| = Cb），故这里不再加 text-shadow。 */
+/* [lc-1703] 二值色调：所有图标/文字统一取 --tb-fg（实心纯黑 #0b0d12 或实心纯白 #fff），
+   不再使用 difference / 半透明图标；text-shadow 一律去掉。 */
 .titlebar .tb-crumb,
 .titlebar .tb-page,
 .titlebar .tb-icon,
 .titlebar .tb-link,
 .titlebar .tb-btn {
-  color: #fff;
+  color: var(--tb-fg);
   text-shadow: none;
 }
-/* 按钮/页名的 hover 反馈：混合组里用**白色半透明**，difference 后亮暗底都可见
-   （深色半透明 hover 在亮底上会几乎看不出来）。 */
+/* hover：同色系半透明底（黑图标配浅灰、白图标配深灰），图标本身保持实心不变色。 */
 .titlebar .tb-icon:hover,
 .titlebar .tb-link:hover,
 .titlebar .tb-btn:hover,
 .titlebar .tb-crumb.tb-crumb-btn:hover {
-  background: rgba(255, 255, 255, 0.22);
-  color: #fff;
+  background: var(--tb-hover-bg);
+  color: var(--tb-fg);
 }
 .titlebar .tb-crumb.tb-crumb-btn:active {
-  background: rgba(255, 255, 255, 0.34);
+  background: var(--tb-hover-bg-strong);
 }
-/* 禁用态（刷新中）：整体降透明度即可，混合组会按比例反相。 */
-.titlebar .tb-icon:disabled {
-  opacity: 0.45;
-}
-/* 焦点环：白色在 difference 下同样自动反相，任何底色都留得住轮廓。 */
+/* 焦点环：跟随当前图标色（纯黑/纯白），任何底色都留得住轮廓。 */
 .titlebar :focus-visible,
 .tb-close-layer :focus-visible {
-  outline: 2px solid #fff;
+  outline: 2px solid var(--tb-fg);
   outline-offset: -2px;
 }
 
-/* [lc-1702] 关闭键独立图层：平时整层 difference（白色 X 自动反相）；
-   hover 时整层切回 normal，红色 hover 底色与白色 X 保持原样，不被混合弄脏。
-   图层 z-index(52) > .titlebar(50)：可点击、不被拖拽区吞掉。 */
+/* [lc-1703] 关闭键独立图层：可点击（z-index 52 > .titlebar 50），
+   data-tone 与顶栏同步；图标同色实心，hover 红色保留。 */
 .tb-close-layer {
   position: absolute;
   top: 0;
@@ -229,10 +233,13 @@
   height: 40px;
   z-index: 52;
   display: flex;
-  mix-blend-mode: difference;
+  --tb-fg: #0b0d12;
 }
-.tb-close-layer:hover {
-  mix-blend-mode: normal;
+.tb-close-layer[data-tone="light"] {
+  --tb-fg: #0b0d12;
+}
+.tb-close-layer[data-tone="dark"] {
+  --tb-fg: #ffffff;
 }
 .tb-close-layer .tb-close {
   width: 100%;
@@ -240,7 +247,7 @@
   padding: 0;
   border: none;
   background: transparent;
-  color: #fff;
+  color: var(--tb-fg);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -248,7 +255,7 @@
   text-shadow: none;
 }
 .tb-close-layer .tb-close:hover {
-  background: rgba(229, 72, 77, 0.58);
+  background: rgba(229, 72, 77, 0.9);
   color: #fff;
 }
 

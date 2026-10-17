@@ -18,6 +18,11 @@
   box-shadow: none;
   backdrop-filter: none;
   user-select: none;
+  /* [lc-1702] 自适应反色：整条顶栏作为 difference 混合组，白色基色。
+     亮背景上白色反相成深色、暗背景上保持白色 —— 无需采样、无需底色/遮罩。
+     品牌 logo 与关闭键拆到独立图层（见 .tb-brand-layer / .tb-close-layer），不参与本混合组。 */
+  color: #fff;
+  mix-blend-mode: difference;
 }
 .tb-left {
   flex: 1;
@@ -26,15 +31,20 @@
   gap: 6px;
   padding-left: 10px;
 }
-.tb-center {
+/* [lc-1702] 品牌 logo 独立图层：定位与原来的 .tb-center 一致（窗口水平居中），
+   但在 .titlebar 的 difference 混合组**之外** —— 渐变字标保持原样、不被反相。
+   pointer-events:none：不吃鼠标事件，拖拽仍由下方 .titlebar 接管。 */
+.tb-brand-layer {
   position: absolute;
   left: 50%;
   top: 0;
-  bottom: 0;
+  height: 40px;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 7px;
+  z-index: 51; /* 高于 .titlebar(50)：正常混合，盖在反色层之上 */
+  pointer-events: none;
 }
 /* [lc-123-rev] 顶栏中部的品牌小字：**弱化**（小字号 + 弱色 + 字距），
    顶栏只留「页名（左）/ 品牌（中）/ 窗口按钮（右）」，主体感交给内容区的胶囊。 */
@@ -50,11 +60,12 @@
   display: flex;
   align-items: stretch;
   justify-content: flex-end;
+  /* [lc-1702] 关闭键已拆到独立图层（.tb-close-layer，46px），这里给它让出位置 */
+  padding-right: 46px;
 }
 /* [lc-123-rev3] 顶栏内部容器与文字控件一律透明底/无描边（只有 hover/active 才允许半透明底，
    见 .tb-icon:hover / .tb-link:hover / .tb-btn:hover） */
 .tb-left,
-.tb-center,
 .tb-right,
 .tb-buttons,
 .tb-crumb,
@@ -172,62 +183,72 @@
   background: rgba(229, 72, 77, 0.58);
   color: #fff;
 }
-/* [lc-123-rev3] 透明底的可读性：文字/图标压在海报上时靠 text-shadow 保证深浅底都看得清
-   （用户要求：可读性不许用背景色解决）。顶栏图标都是文字字形（菜单/刷新/主题/窗口钮），
-   text-shadow 对它们同样生效 —— 不需要 filter:drop-shadow。 */
-.tb-crumb,
-.tb-brand,
-.tb-page,
-.tb-icon,
-.tb-link,
-.tb-btn {
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+/* [lc-1702] 顶栏自适应反色（纯 CSS）：
+   .titlebar 是 `mix-blend-mode: difference` 混合组 + 白色基色 ⇒ 图标/文字在任意背景上自动反相
+   （亮底 → 深色，暗底 → 白色），不再依赖 hero 亮度采样，也不需要 text-shadow。
+   注意：difference 下黑色阴影不产生任何效果（|Cb-0| = Cb），故这里不再加 text-shadow。 */
+.titlebar .tb-crumb,
+.titlebar .tb-page,
+.titlebar .tb-icon,
+.titlebar .tb-link,
+.titlebar .tb-btn {
+  color: #fff;
+  text-shadow: none;
+}
+/* 按钮/页名的 hover 反馈：混合组里用**白色半透明**，difference 后亮暗底都可见
+   （深色半透明 hover 在亮底上会几乎看不出来）。 */
+.titlebar .tb-icon:hover,
+.titlebar .tb-link:hover,
+.titlebar .tb-btn:hover,
+.titlebar .tb-crumb.tb-crumb-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+.titlebar .tb-crumb.tb-crumb-btn:active {
+  background: rgba(255, 255, 255, 0.34);
+}
+/* 禁用态（刷新中）：整体降透明度即可，混合组会按比例反相。 */
+.titlebar .tb-icon:disabled {
+  opacity: 0.45;
+}
+/* 焦点环：白色在 difference 下同样自动反相，任何底色都留得住轮廓。 */
+.titlebar :focus-visible,
+.tb-close-layer :focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: -2px;
 }
 
-/* [lc-123-rev4] 顶栏 chrome 色自适应反色（只由**首页 hero 顶部条带亮度采样**驱动；
-   data-chrome 由 TitleBar 落，采样逻辑见 App.tsx sampleChromeTone）：
-     （无属性）auto = 跟随主题 —— 发现/库/详情页顶栏底下是应用底色，主题色即最可读；
-     dark  = 海报顶部偏亮 → 深色 chrome（rgba(0,0,0,.72)）；
-     light = 偏暗 → 浅色 chrome（rgba(255,255,255,.92)）；
-     fallback = 采样失败（跨域被拦/解码失败/404）→ 浅色 chrome + **强阴影**（防"白图标压亮底看不见"）。
-   切换带 200ms 颜色过渡，别闪。 */
-.titlebar[data-chrome] .tb-crumb,
-.titlebar[data-chrome] .tb-brand,
-.titlebar[data-chrome] .tb-page,
-.titlebar[data-chrome] .tb-icon,
-.titlebar[data-chrome] .tb-link,
-.titlebar[data-chrome] .tb-btn {
-  color: var(--tb-ink);
-  transition: color 0.2s ease;
+/* [lc-1702] 关闭键独立图层：平时整层 difference（白色 X 自动反相）；
+   hover 时整层切回 normal，红色 hover 底色与白色 X 保持原样，不被混合弄脏。
+   图层 z-index(52) > .titlebar(50)：可点击、不被拖拽区吞掉。 */
+.tb-close-layer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 46px;
+  height: 40px;
+  z-index: 52;
+  display: flex;
+  mix-blend-mode: difference;
 }
-/* hover 不切回主题色：深色海报上 hover 变深字会看不见（底色是半透明白/蓝的交互反馈，仍在） */
-.titlebar[data-chrome] .tb-icon:hover,
-.titlebar[data-chrome] .tb-link:hover,
-.titlebar[data-chrome] .tb-btn:hover {
-  color: var(--tb-ink);
+.tb-close-layer:hover {
+  mix-blend-mode: normal;
 }
-.titlebar[data-chrome="dark"] {
-  --tb-ink: rgba(0, 0, 0, 0.72);
+.tb-close-layer .tb-close {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-shadow: none;
 }
-.titlebar[data-chrome="light"] {
-  --tb-ink: rgba(255, 255, 255, 0.92);
-}
-.titlebar[data-chrome="fallback"] {
-  --tb-ink: rgba(255, 255, 255, 0.92);
-}
-/* 浅色 chrome（含兜底）配双层强阴影：在任何底色上都留得住字形轮廓 */
-.titlebar[data-chrome="light"] .tb-crumb,
-.titlebar[data-chrome="light"] .tb-brand,
-.titlebar[data-chrome="light"] .tb-page,
-.titlebar[data-chrome="light"] .tb-icon,
-.titlebar[data-chrome="light"] .tb-link,
-.titlebar[data-chrome="light"] .tb-btn,
-.titlebar[data-chrome="fallback"] .tb-crumb,
-.titlebar[data-chrome="fallback"] .tb-brand,
-.titlebar[data-chrome="fallback"] .tb-page,
-.titlebar[data-chrome="fallback"] .tb-icon,
-.titlebar[data-chrome="fallback"] .tb-link,
-.titlebar[data-chrome="fallback"] .tb-btn {
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 6px rgba(0, 0, 0, 0.35);
+.tb-close-layer .tb-close:hover {
+  background: rgba(229, 72, 77, 0.58);
+  color: #fff;
 }
 

@@ -13,6 +13,8 @@ mod favorites;
 // [lc-1599] 应用内反馈（工单制）：提交/列表/会话/回复（脱敏与本地索引见 feedback.rs 头部）
 mod feedback;
 mod fnapi;
+// [gamepad] 全局手柄：原生 gilrs 后台轮询（mpv/PotPlayer 前台时同样可用）
+mod gamepad;
 // [lc-1615] 本地播放历史（观影记录页数据源之一）：history.json 落盘 + 与飞牛 play/list 合并
 mod history;
 mod libmpv;
@@ -108,6 +110,12 @@ async fn save_config(app: AppHandle, state: State<'_, AppState>, config: Config)
         config.usage_stats_last_ping_day = cur.usage_stats_last_ping_day.clone();
         config.usage_stats_last_ping_ok = cur.usage_stats_last_ping_ok;
         config.usage_stats_pending_days = cur.usage_stats_pending_days.clone();
+        // [gamepad] 手柄设置只能由 set_settings 修改（登录页的整份 Config 快照不含/易过期）
+        config.gamepad_enabled = cur.gamepad_enabled;
+        config.gamepad_deadzone = cur.gamepad_deadzone;
+        config.gamepad_direction_threshold = cur.gamepad_direction_threshold;
+        config.gamepad_repeat_delay = cur.gamepad_repeat_delay;
+        config.gamepad_repeat_interval = cur.gamepad_repeat_interval;
     }
     config::save(&app, &config).await?;
     // [lc-1661] 日志设置随整份配置保存后同步到运行态（本函数保留旧值，实际不会变，稳妥起见仍同步）
@@ -1253,6 +1261,12 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         "danmuApiEnabled": cfg.danmu_api_enabled,
         "danmuApiBases": cfg.danmu_api_bases,
         "danmuApiBase": cfg.danmu_api_base,
+        // [gamepad] 全局手柄（camelCase；范围 clamp 在 set_settings）
+        "gamepadEnabled": cfg.gamepad_enabled,
+        "gamepadDeadzone": cfg.gamepad_deadzone,
+        "gamepadDirectionThreshold": cfg.gamepad_direction_threshold,
+        "gamepadRepeatDelay": cfg.gamepad_repeat_delay,
+        "gamepadRepeatInterval": cfg.gamepad_repeat_interval,
     }))
 }
 
@@ -1331,8 +1345,45 @@ async fn set_settings(
         danmaku_shim::write_danmu_config(&cfg)?;
         danmaku_shim::sync_lua_gate(&cfg.mpv_path, cfg.danmu_api_enabled, &cfg.danmu_api_base);
     }
+    // [gamepad] 数值型设置：类型必须正确，超出范围按契约 clamp（不报错——前端滑块可能
+    // 因浮点步进给出 0.5000001，这种边界值静默夹住比让 UI 报错更合理）。
+    if let Some(v) = arg.get("gamepadEnabled") {
+        cfg.gamepad_enabled = v.as_bool().ok_or("gamepadEnabled 必须是布尔值")?;
+    }
+    if let Some(v) = arg.get("gamepadDeadzone") {
+        let n = v.as_f64().ok_or("gamepadDeadzone 必须是数字")? as f32;
+        cfg.gamepad_deadzone = n.clamp(
+            config::GAMEPAD_DEADZONE_MIN,
+            config::GAMEPAD_DEADZONE_MAX,
+        );
+    }
+    if let Some(v) = arg.get("gamepadDirectionThreshold") {
+        let n = v.as_f64().ok_or("gamepadDirectionThreshold 必须是数字")? as f32;
+        cfg.gamepad_direction_threshold = n.clamp(
+            config::GAMEPAD_DIRECTION_THRESHOLD_MIN,
+            config::GAMEPAD_DIRECTION_THRESHOLD_MAX,
+        );
+    }
+    if let Some(v) = arg.get("gamepadRepeatDelay") {
+        let n = v.as_f64().ok_or("gamepadRepeatDelay 必须是数字")?;
+        cfg.gamepad_repeat_delay =
+            (n.round() as i64).clamp(
+                config::GAMEPAD_REPEAT_DELAY_MIN as i64,
+                config::GAMEPAD_REPEAT_DELAY_MAX as i64,
+            ) as u32;
+    }
+    if let Some(v) = arg.get("gamepadRepeatInterval") {
+        let n = v.as_f64().ok_or("gamepadRepeatInterval 必须是数字")?;
+        cfg.gamepad_repeat_interval =
+            (n.round() as i64).clamp(
+                config::GAMEPAD_REPEAT_INTERVAL_MIN as i64,
+                config::GAMEPAD_REPEAT_INTERVAL_MAX as i64,
+            ) as u32;
+    }
     config::save(&app, &cfg).await?;
     *state.config.write().await = cfg.clone();
+    // [gamepad] 热更新后台轮询线程的阈值/开关（无需重启）
+    gamepad::update_settings(&cfg);
     Ok(json!({
         "exitMode": cfg.exit_mode,
         "perfMode": cfg.perf_mode,
@@ -1344,6 +1395,11 @@ async fn set_settings(
         "danmuApiEnabled": cfg.danmu_api_enabled,
         "danmuApiBases": cfg.danmu_api_bases,
         "danmuApiBase": cfg.danmu_api_base,
+        "gamepadEnabled": cfg.gamepad_enabled,
+        "gamepadDeadzone": cfg.gamepad_deadzone,
+        "gamepadDirectionThreshold": cfg.gamepad_direction_threshold,
+        "gamepadRepeatDelay": cfg.gamepad_repeat_delay,
+        "gamepadRepeatInterval": cfg.gamepad_repeat_interval,
     }))
 }
 
@@ -1721,6 +1777,8 @@ pub fn run() {
                 disk_cache::init(root, cfg.cache_limit_mb);
             }
             *app.state::<AppState>().config.blocking_write() = cfg.clone();
+            // [gamepad] 全局手柄轮询（默认关闭；后台线程，退出时由 RunEvent::Exit 停止）
+            gamepad::spawn(app.handle().clone(), gamepad::GamepadSettings::from(&cfg));
             // [lc-1561] 自建弹幕接口配置桥（Node 侧每次读盘 ⇒ 这里先写一份，后续 save_config
             // 再覆盖；保证 shim 一启动就能读到「启用/地址」，不会误判为未启用）。
             if let Err(e) = danmaku_shim::write_danmu_config(&cfg) {
@@ -1903,6 +1961,9 @@ pub fn run() {
             // [lc-1434] 设置面板（通用/外观）：白名单子集读写 + 启动页查询
             get_settings,
             set_settings,
+            // [gamepad] 全局手柄：当前状态 / 触发一次检测
+            gamepad::gamepad_status,
+            gamepad::gamepad_detect,
             // [player] 播放器选择：自动探测 / 路径校验
             detect_potplayer,
             validate_potplayer_path,
@@ -2023,6 +2084,8 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 // 退出时清场：mpv 子进程 + 嵌入窗口 + Go 代理
                 let st = app_handle.state::<AppState>();
+                // [gamepad] 停止手柄轮询线程（≤8ms 自行退出）
+                gamepad::stop();
                 if let Ok(mut slot) = st.mpv.try_lock() {
                     if let Some(m) = slot.as_ref() {
                         let _ = tauri::async_runtime::block_on(m.shutdown());

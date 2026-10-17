@@ -40,6 +40,9 @@ regex = "1"
 # [lc-1599] Win32_System_SystemInformation：反馈日志环境块取**本地时间**（GetLocalTime）。
 # 同 crate 加 feature（不新增任何依赖），模块本身只依赖已启用的 Foundation。
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Registry", "Win32_Security", "Win32_System_SystemInformation", "Win32_System_Time"] }
+# [gamepad] 全局手柄：Windows 上默认走 Windows.GameInput（WGI，支持 XInput/DS4/Switch），
+# 后台也能读到输入（mpv/PotPlayer 在前台时同样可用）。WGI 与 xinput feature 互斥，不要同时开。
+gilrs = "0.11"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

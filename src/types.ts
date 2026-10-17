@@ -348,4 +348,10 @@ export type AppSettings = {
   /** 多地址列表（故障转移，≤4 条；danmuApiBase 恒等于第一条） */
   danmuApiBases: string[];
   danmuApiBase: string;
+  /** 手柄：开关与高级参数（真值与处理均在 Rust；前端只做编辑与显示） */
+  gamepadEnabled?: boolean;
+  gamepadDeadzone?: number;
+  gamepadDirectionThreshold?: number;
+  gamepadRepeatDelay?: number;
+  gamepadRepeatInterval?: number;
 };

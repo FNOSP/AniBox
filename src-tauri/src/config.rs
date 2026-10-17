@@ -113,6 +113,25 @@ pub struct Config {
     /// 上报失败攒下的欠报日期（YYYY-MM-DD，最多 7 天，网络恢复后补发）
     #[serde(default)]
     pub usage_stats_pending_days: Vec<String>,
+
+    /* ── [gamepad] 全局手柄（原生 gilrs 监听，mpv/PotPlayer 在前台时同样可用）──
+       全部带 serde default：老 config.json 没有这些键时按默认值走，**不需要迁移脚本**。
+       语义与取值范围见设置面板契约（get_settings/set_settings 做白名单 + clamp）。 */
+    /// 手柄总开关（默认关：不接手柄的用户完全无感）
+    #[serde(default)]
+    pub gamepad_enabled: bool,
+    /// 左摇杆死区（0.10–0.50，默认 0.30）：模长低于此值视为回中
+    #[serde(default = "default_gamepad_deadzone")]
+    pub gamepad_deadzone: f32,
+    /// 方向触发阈值（0.20–0.80，默认 0.40）：单轴绝对值达到才判为该方向
+    #[serde(default = "default_gamepad_direction_threshold")]
+    pub gamepad_direction_threshold: f32,
+    /// 长按首次重复延迟（毫秒，100–800，默认 320）
+    #[serde(default = "default_gamepad_repeat_delay")]
+    pub gamepad_repeat_delay: u32,
+    /// 长按重复间隔（毫秒，50–400，默认 130）
+    #[serde(default = "default_gamepad_repeat_interval")]
+    pub gamepad_repeat_interval: u32,
 }
 
 fn default_cache_limit_mb() -> u64 {
@@ -141,6 +160,32 @@ fn default_player_kind() -> String {
 
 fn default_proxy() -> String {
     "D:/GitHub/Fntv-Plus/third_party/proxy/proxy.exe".into()
+}
+
+// [gamepad] 取值边界集中在这里：config 默认值、set_settings 的 clamp、gamepad 运行时共用。
+pub const GAMEPAD_DEADZONE_MIN: f32 = 0.10;
+pub const GAMEPAD_DEADZONE_MAX: f32 = 0.50;
+pub const GAMEPAD_DIRECTION_THRESHOLD_MIN: f32 = 0.20;
+pub const GAMEPAD_DIRECTION_THRESHOLD_MAX: f32 = 0.80;
+pub const GAMEPAD_REPEAT_DELAY_MIN: u32 = 100;
+pub const GAMEPAD_REPEAT_DELAY_MAX: u32 = 800;
+pub const GAMEPAD_REPEAT_INTERVAL_MIN: u32 = 50;
+pub const GAMEPAD_REPEAT_INTERVAL_MAX: u32 = 400;
+
+fn default_gamepad_deadzone() -> f32 {
+    0.30
+}
+
+fn default_gamepad_direction_threshold() -> f32 {
+    0.40
+}
+
+fn default_gamepad_repeat_delay() -> u32 {
+    320
+}
+
+fn default_gamepad_repeat_interval() -> u32 {
+    130
 }
 
 impl Default for Config {
@@ -175,6 +220,11 @@ impl Default for Config {
             usage_stats_last_ping_day: String::new(),
             usage_stats_last_ping_ok: false,
             usage_stats_pending_days: Vec::new(),
+            gamepad_enabled: false,
+            gamepad_deadzone: default_gamepad_deadzone(),
+            gamepad_direction_threshold: default_gamepad_direction_threshold(),
+            gamepad_repeat_delay: default_gamepad_repeat_delay(),
+            gamepad_repeat_interval: default_gamepad_repeat_interval(),
         }
     }
 }
@@ -307,6 +357,28 @@ mod tests {
         assert!(c2.usage_stats_last_ping_day.is_empty());
         assert!(!c2.usage_stats_last_ping_ok);
         assert!(c2.usage_stats_pending_days.is_empty());
+    }
+
+    #[test]
+    fn gamepad_fields_have_safe_defaults() {
+        // 老 config.json 没有手柄键 → 关闭 + 契约默认值（不需要迁移）
+        let c: Config = serde_json::from_str("{}").unwrap();
+        assert!(!c.gamepad_enabled, "手柄默认关闭");
+        assert_eq!(c.gamepad_deadzone, 0.30);
+        assert_eq!(c.gamepad_direction_threshold, 0.40);
+        assert_eq!(c.gamepad_repeat_delay, 320);
+        assert_eq!(c.gamepad_repeat_interval, 130);
+
+        // 显式值可被解析
+        let c2: Config = serde_json::from_str(
+            r#"{"gamepad_enabled":true,"gamepad_deadzone":0.25,"gamepad_direction_threshold":0.5,"gamepad_repeat_delay":200,"gamepad_repeat_interval":100}"#,
+        )
+        .unwrap();
+        assert!(c2.gamepad_enabled);
+        assert_eq!(c2.gamepad_deadzone, 0.25);
+        assert_eq!(c2.gamepad_direction_threshold, 0.5);
+        assert_eq!(c2.gamepad_repeat_delay, 200);
+        assert_eq!(c2.gamepad_repeat_interval, 100);
     }
 
     #[test]

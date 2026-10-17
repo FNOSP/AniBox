@@ -7,6 +7,14 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check as IcoCheck, ChevronDown as IcoChevron, X as IcoXL } from "lucide-react";
 import { DisclaimerModal } from "../disclaimer/DisclaimerModal";
+import {
+  GAMEPAD_DEFAULTS,
+  GAMEPAD_KEY_TABLE,
+  GAMEPAD_RANGES,
+  detectGamepad,
+  fetchGamepadStatus,
+  type GamepadStatusPayload,
+} from "../../hooks/useGamepad";
 import { fmtSize } from "../../lib/format";
 import {
   AppInfo,
@@ -320,6 +328,57 @@ export function SettingsPanel({
   const [autostart, setAutostart] = useState(
     () => localStorage.getItem("fntv-autostart") === "1",
   );
+
+  /* ── 手柄 ──
+     配置真值在 Rust（get_settings / set_settings 的 gamepad* 字段），
+     死区/阈值/长按连跳也由 Rust 侧消费；前端只负责编辑与显示。
+     连接状态由 `gamepad-status` 事件刷新，初始化调 `gamepad_status`。 */
+  const padEnabled = settings.gamepadEnabled ?? GAMEPAD_DEFAULTS.enabled;
+  const padValues = {
+    stickDeadzone: settings.gamepadDeadzone ?? GAMEPAD_DEFAULTS.stickDeadzone,
+    directionThreshold:
+      settings.gamepadDirectionThreshold ?? GAMEPAD_DEFAULTS.directionThreshold,
+    repeatDelay: settings.gamepadRepeatDelay ?? GAMEPAD_DEFAULTS.repeatDelay,
+    repeatInterval: settings.gamepadRepeatInterval ?? GAMEPAD_DEFAULTS.repeatInterval,
+  } as const;
+  const PAD_SETTING_FIELD = {
+    stickDeadzone: "gamepadDeadzone",
+    directionThreshold: "gamepadDirectionThreshold",
+    repeatDelay: "gamepadRepeatDelay",
+    repeatInterval: "gamepadRepeatInterval",
+  } as const;
+
+  const [padConn, setPadConn] = useState<{ connected: boolean; name: string }>({
+    connected: false,
+    name: "",
+  });
+
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    void fetchGamepadStatus().then(setPadConn);
+    listen<GamepadStatusPayload>("gamepad-status", (e) => {
+      setPadConn({
+        connected: !!e.payload?.connected,
+        name: String(e.payload?.name ?? ""),
+      });
+    })
+      .then((f) => {
+        un = f;
+      })
+      .catch(() => {});
+    return () => un?.();
+  }, []);
+
+  const detectPad = async () => {
+    setPadConn(await detectGamepad());
+  };
+
+  const setPadNum = (
+    key: keyof typeof PAD_SETTING_FIELD,
+    value: number,
+  ) => {
+    onSettings({ [PAD_SETTING_FIELD[key]]: value } as Partial<AppSettings>);
+  };
 
   /* ── [player] 播放器选择 ──
      playerKind: 真值在 settings（App 持有、set_settings 落盘）；默认 mpv（随包自带）。
@@ -847,6 +906,105 @@ export function SettingsPanel({
               </div>
             </>
           )}
+
+          {/* ── 手柄 ── */}
+          <h3 className="ddet-h3">手柄</h3>
+          <div className="set-row">
+            <div>
+              <span className="set-k">手柄操作</span>
+              <div className="set-desc">用 Xbox 布局手柄浏览界面、控制播放</div>
+            </div>
+            <button
+              type="button"
+              className={`set-sw${padEnabled ? " on" : ""}`}
+              aria-pressed={padEnabled}
+              aria-label="手柄操作"
+              onClick={() => onSettings({ gamepadEnabled: !padEnabled })}
+            />
+          </div>
+          <div className="set-row">
+            <div>
+              <span className="set-k">连接状态</span>
+              <div className="set-desc">浏览器需先按一下手柄才会识别设备</div>
+            </div>
+            <div className="set-pad-status">
+              <span className={`set-pad-dot${padConn.connected ? " on" : " off"}`} />
+              <span className="set-pad-name" title={padConn.name}>
+                {padConn.connected ? padConn.name || "已连接" : "未检测到"}
+              </span>
+              <button
+                type="button"
+                className="set-btn"
+                onClick={() => void detectPad()}
+              >
+                检测
+              </button>
+            </div>
+          </div>
+          {(
+            [
+              {
+                key: "stickDeadzone",
+                label: "摇杆死区",
+                desc: "低于此值视为没有推杆（0.10–0.50）",
+                fmt: (v: number) => v.toFixed(2),
+              },
+              {
+                key: "directionThreshold",
+                label: "方向阈值",
+                desc: "推杆超过此值才触发方向（0.20–0.80）",
+                fmt: (v: number) => v.toFixed(2),
+              },
+              {
+                key: "repeatDelay",
+                label: "长按延迟",
+                desc: "按住多久开始连续移动（100–800ms）",
+                fmt: (v: number) => `${Math.round(v)}ms`,
+              },
+              {
+                key: "repeatInterval",
+                label: "连跳间隔",
+                desc: "连续移动的间隔（50–400ms）",
+                fmt: (v: number) => `${Math.round(v)}ms`,
+              },
+            ] as const
+          ).map((s) => {
+            const range = GAMEPAD_RANGES[s.key];
+            return (
+              <div className="set-row set-pad-slider" key={s.key}>
+                <div>
+                  <span className="set-k">{s.label}</span>
+                  <div className="set-desc">{s.desc}</div>
+                </div>
+                <div className="set-range-wrap">
+                  <input
+                    type="range"
+                    className="set-range"
+                    min={range.min}
+                    max={range.max}
+                    step={range.step}
+                    value={padValues[s.key]}
+                    disabled={!padEnabled}
+                    aria-label={s.label}
+                    onChange={(e) => setPadNum(s.key, Number(e.target.value))}
+                  />
+                  <span className="set-range-val">{s.fmt(padValues[s.key])}</span>
+                </div>
+              </div>
+            );
+          })}
+          <div className="set-pad-keys" aria-label="手柄按键说明">
+            {GAMEPAD_KEY_TABLE.map((k) => (
+              <div className="set-pad-key" key={k.btn}>
+                <span className="set-pad-btn">{k.label}</span>
+                <span className="set-pad-act">{k.action}</span>
+              </div>
+            ))}
+          </div>
+          <div className="set-hint">
+            播放时 A 暂停、LB/RB 快退/快进 5 秒、LT/RT 调倍速、B 停止；界面中方向键移动白色焦点框，
+            A 确认。窗口失去焦点时浏览器会暂停 Gamepad API，重新点回窗口即可恢复。
+          </div>
 
           {/* ── 外观 ── */}
           <h3 className="ddet-h3">外观</h3>

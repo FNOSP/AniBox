@@ -25,7 +25,9 @@ import { NavCapsule } from "./components/shell/NavCapsule";
 import { TitleBar } from "./components/shell/TitleBar";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { useDelayedUnmount } from "./hooks/useDelayedUnmount";
+import { useGamepad } from "./hooks/useGamepad";
 import { RefreshContext } from "./hooks/useRefresh";
+import { focusNav } from "./lib/focusNav";
 import { fetchLibItems } from "./lib/api";
 import { pick } from "./lib/format";
 import { bgmImg, pickImgStr, pickLargestImg, tmdbImg } from "./lib/images";
@@ -609,6 +611,23 @@ function App() {
     },
     [page, goDiscover, goHome, clearPaneAnim],
   );
+
+  /* 手柄：Start 开关设置面板；LB/RB 切「首页 ↔ 发现」；X 收藏当前焦点卡片。
+     播放中的按键（暂停/seek/倍速/停止）由 useGamepad 内部直接调用 Tauri 命令。 */
+  useGamepad({
+    onStart: () => {
+      if (view === "login") return;
+      setSettingsOpen((v) => !v);
+    },
+    onSwitchPage: (dir) => onNav(dir > 0 ? "discover" : "home"),
+    onFavorite: () => {
+      const el = focusNav.getFocused();
+      const heart = el?.querySelector<HTMLElement>(
+        '[aria-label="收藏"], [aria-label="取消收藏"]',
+      );
+      heart?.click();
+    },
+  });
 
   // [lc-123-rev7] 深浅模式切换：**「外部扩散」= 镂空反向扩散**（用户否掉 v6 的实色圆吞屏：
   // 「从按钮处往外扩散」：主题**立即切换**（DOM/类名马上换），随后铺一层**新主题的底色**

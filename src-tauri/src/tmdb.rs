@@ -1347,10 +1347,30 @@ pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
                     }
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
+                    // [lc-1658] 补足卡片展示所需的图片与评分字段：
+                    //   poster/backdrop 取 TMDB 的 *_path（空串兜底），rating 为 vote_average。
+                    //   前端「关联」标签在 BGM 无关联时用这些字段回退渲染 TMDB 推荐卡片。
+                    let poster = r
+                        .get("poster_path")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let backdrop = r
+                        .get("backdrop_path")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let rating = r
+                        .get("vote_average")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
                     Some(json!({
                         "tmdbId": tmdb_id,
                         "title": t,
                         "year": year_of(date),
+                        "poster": poster,
+                        "backdrop": backdrop,
+                        "rating": rating,
                     }))
                 })
                 .collect::<Vec<_>>()

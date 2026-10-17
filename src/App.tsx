@@ -682,6 +682,24 @@ function App() {
     [],
   );
 
+  // [lc-1658] 详情页「关联」标签的 TMDB 推荐卡片 → 主详情页。合成与 openDiscoverDetail
+  //   完全一致的 `discover-<tmdbId>` 占位条目（同一条链路），因此从发现页 / 关联卡片进入
+  //   的详情页形态、返回目标（discover）都一致。
+  const openTmdbRecommendation = useCallback(
+    (tmdbId: number, title: string, year: string, mediaType: "tv" | "movie") => {
+      setDetailItem({
+        guid: `discover-${tmdbId}`,
+        title,
+        release_date: year ? `${year}-01-01` : "",
+        tmdb_id: tmdbId,
+        type: mediaType === "movie" ? "Movie" : "TV",
+      });
+      setDetailFrom("discover");
+      setView("detail");
+    },
+    [],
+  );
+
   // [lc-1444] 发现页右栏（新番表）条目 → 主详情页：条目自带 Bangumi subject id，
   //   guid 用 `discover-bgm-<id>` 占位标识；封面直接带（代理 URL）；TMDB 侧没有 id，走标题搜索兜底。
   const openDiscoverBgm = useCallback((it: BgmCalendarItem) => {
@@ -988,6 +1006,7 @@ function App() {
               {/* [lc-1444] 返回目标按进详情的来源（detailFrom）决定，不用 view/activeLib 现猜 */}
               <DetailView
                 base={detailItem}
+                onOpenTmdb={openTmdbRecommendation}
                 onBack={() => {
                   // 返回动画：目标 pane 补一次进入淡入（class 添加即触发，animationend 后移除）
                   if (detailFrom === "lib") setLibEnterAnim(true);

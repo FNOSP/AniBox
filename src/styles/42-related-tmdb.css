@@ -1,0 +1,82 @@
+/* [lc-1658] 「关联」标签页：BGM 无关联时回退展示 TMDB 相似推荐（横版卡片，整卡可点）。
+   .dpanel 是 column flex 容器，行本身要按内容高度自然撑开（不参与收缩）。 */
+.dpanel > .drel-tmdb-row {
+  flex: 0 0 auto;
+}
+.drel-tmdb-row {
+  gap: 14px;
+  padding-bottom: 6px;
+}
+
+/* 整张卡片就是按钮：清掉原生按钮样式，保持与卡片一致的排版 */
+.drel-tmdb-card {
+  flex: 0 0 auto;
+  width: 240px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: transform 0.18s ease;
+}
+/* 悬停轻微上浮（用户要求"有反馈"）；不影响布局（用 transform） */
+.drel-tmdb-card:hover {
+  transform: translateY(-3px);
+}
+.drel-tmdb-card:focus-visible {
+  outline: 2px solid rgba(108, 155, 255, 0.7);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+
+/* 横版图（优先 backdrop，缺则 poster） */
+.drel-tmdb-cv {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--ph-bg);
+  border: 1px solid var(--line);
+  transition: border-color 0.15s ease;
+}
+.drel-tmdb-card:hover .drel-tmdb-cv {
+  border-color: rgba(108, 155, 255, 0.55);
+}
+.drel-tmdb-cv img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 右上角评分（TMDB vote_average，0-10） */
+.drel-tmdb-score {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.62);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+/* 图下标题 */
+.drel-tmdb-nm {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}

@@ -9,7 +9,7 @@ import { DetailSkeleton } from "./DetailSkeleton";
 import { MetaEditModal, type MetaTarget } from "./MetaEditModal";
 import { BGM_PAGE, TAB_LABEL, bgmList, fnosCast, pickGenres } from "./helpers";
 import { OverviewTab } from "./tabs/OverviewTab";
-import { RelatedTab } from "./tabs/RelatedTab";
+import { RelatedTab, type TmdbRecommendation } from "./tabs/RelatedTab";
 import { CastTab } from "./tabs/CastTab";
 import { ReviewsTab } from "./tabs/ReviewsTab";
 import { CommentsTab } from "./tabs/CommentsTab";
@@ -27,7 +27,16 @@ import { useRefresh } from "../../hooks/useRefresh";
 import { BgmCharacter, BgmComment, BgmEpisodeRow, BgmMatch, BgmPerson, BgmRelated, BgmReview, BgmTag, Episode, MediaItem, Season, TmdbCreditPerson, TmdbCredits } from "../../types";
 
 
-export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => void }) {
+export function DetailView({
+  base,
+  onBack,
+  onOpenTmdb,
+}: {
+  base: MediaItem;
+  onBack: () => void;
+  /** [lc-1658] 关联标签页 TMDB 推荐卡片点击 → 打开对应 TMDB 条目详情（与发现页同一链路） */
+  onOpenTmdb?: (tmdbId: number, title: string, year: string, mediaType: "tv" | "movie") => void;
+}) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [seasonIdx, setSeasonIdx] = useState(0);
@@ -936,6 +945,24 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
   const tmdbVotes = Number((tmdb as Record<string, unknown> | null)?.votes ?? 0) || 0;
   // [lc-1575] TMDB 编号（字符串，可能为空）：BGM 无排名时，评分组件的 Ranked 块改用它兜底
   const tmdbIdStr = String((tmdb as Record<string, unknown> | null)?.tmdbId ?? "").trim();
+  // [lc-1658] TMDB 相似推荐（后端 recommendations，含 poster/backdrop/rating）→ 前端类型，
+  //   供「关联」标签在 BGM 无关联时兜底渲染。
+  const tmdbRecs: TmdbRecommendation[] = Array.isArray(tmdb?.recommendations)
+    ? (tmdb!.recommendations as unknown[]).flatMap((r) => {
+        if (!r || typeof r !== "object") return [];
+        const o = r as Record<string, unknown>;
+        const id = Number(o.tmdbId);
+        if (!id) return [];
+        return [{
+          tmdbId: id,
+          title: String(o.title ?? ""),
+          year: String(o.year ?? ""),
+          poster: String(o.poster ?? ""),
+          backdrop: String(o.backdrop ?? ""),
+          rating: Number(o.rating ?? 0) || 0,
+        }];
+      })
+    : [];
   const ratingScore = bgmScore > 0 ? bgmScore : tmdbScore > 0 ? tmdbScore : null;
   const ratingSource: "bgm" | "tmdb" | "none" = bgmScore > 0 ? "bgm" : tmdbScore > 0 ? "tmdb" : "none";
   const ratingTotal = bgmScore > 0 ? bgmTotal : tmdbVotes;
@@ -1239,6 +1266,10 @@ export function DetailView({ base, onBack }: { base: MediaItem; onBack: () => vo
             relatedBusy={relatedBusy}
             relatedErr={relatedErr}
             retryRelated={retryRelated}
+            tmdbRecs={tmdbRecs}
+            tmdbDone={tmdbDone}
+            mediaType={isSeries ? "tv" : "movie"}
+            onOpenTmdb={onOpenTmdb}
           />
         )}
 

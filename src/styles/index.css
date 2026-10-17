@@ -45,3 +45,5 @@
 @import "./40-movie-hero.css";
 /* [lc-1655] 电影详情页「剧照」全屏轮播 */
 @import "./41-still-lightbox.css";
+/* [lc-1658] 关联标签页：BGM 无关联时的 TMDB 推荐卡片行 */
+@import "./42-related-tmdb.css";

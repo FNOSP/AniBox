@@ -1,7 +1,7 @@
 /* [lc-1599] 应用内反馈（工单制）面板。
    信息架构：顶部标题区 + 常驻双分区导航（反馈 / 日志与诊断），两条主线一眼可见。
    - 反馈：二级视图「我的工单 / 新建反馈」，工单会话作为该分区的详情层（可返回）。
-   - 日志与诊断：工具条 + 自适应卡片网格（日志文件 / 调试日志 / 匿名统计 / 诊断信息）。
+   - 日志与诊断：工具条 + 自适应卡片网格（匿名统计置顶 / 日志文件 / 调试日志 / 诊断信息）。
    外壳复用 .ddet-mask/.ddet（与 SettingsPanel 同款），内部样式全走 33-feedback.css 的 fbx-*。
    portal 到 body（对齐 WebrwsPanel 的成因）：面板由侧栏（覆盖式浮层，z45）内触发打开，
    留在原层级会受侧栏/顶栏合成层干扰；portal 后与 .dseg 等同在顶层上下文，z40 遮罩正常压住内容区。
@@ -512,7 +512,7 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
             <IcoActivity size={17} strokeWidth={1.9} aria-hidden="true" />
             <span className="fbx-nav-txt">
               <b>日志与诊断</b>
-              <small>日志文件 · 调试开关 · 导出</small>
+              <small>匿名统计 · 日志文件 · 调试开关</small>
             </span>
           </button>
         </nav>
@@ -859,7 +859,7 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
               <div className="fbx-diag-toolbar">
                 <div className="fbx-diag-heading">
                   <h3 className="fbx-pane-h">日志与诊断</h3>
-                  <p className="fbx-hint">查看或导出脱敏日志，调整调试日志与匿名统计。</p>
+                  <p className="fbx-hint">调整匿名统计、查看或导出脱敏日志与调试开关。</p>
                 </div>
                 <div className="fbx-diag-actions">
                   <button
@@ -894,6 +894,55 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
 
               <div className="fbx-diag">
                 <div className="fbx-diag-grid">
+                  {/* 匿名统计：置顶独立卡片。放在网格首位，避免被日志长卡片挤到滚动区下方找不到 */}
+                  <section className="fbx-sec fbx-span2 fbx-stats-sec" aria-labelledby="fbx-stats-h">
+                    <div className="fbx-sec-hd">
+                      <h4 className="fbx-sec-h" id="fbx-stats-h">
+                        <IcoActivity size={14} aria-hidden="true" />
+                        匿名统计
+                      </h4>
+                      <div className="fbx-stats-side">
+                        {statsAvailable && statsEnabled !== null && (
+                          <span className={`fbx-chip ${statsEnabled ? "on" : "off"}`}>
+                            {statsEnabled ? "已开启" : "已关闭"}
+                          </span>
+                        )}
+                        {savingStats && <span className="fbx-hint">保存中…</span>}
+                      </div>
+                    </div>
+                    {statsErr && (
+                      <div className="fbx-note err" role="alert">
+                        {statsErr}
+                      </div>
+                    )}
+                    {statsAvailable === null ? (
+                      <p className="fbx-hint">读取中…</p>
+                    ) : statsAvailable ? (
+                      <div className="fbx-stats-body">
+                        <label className="fbx-check">
+                          <input
+                            type="checkbox"
+                            checked={!!statsEnabled}
+                            disabled={savingStats}
+                            onChange={(e) => void saveStats(e.target.checked)}
+                          />
+                          <span>参与匿名统计</span>
+                        </label>
+                        <p className="fbx-hint">
+                          仅上报匿名 ID、应用版本、系统类型与日期；不含账号、文件路径或任何内容，可随时关闭。
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="fbx-stats-body">
+                        <p className="fbx-hint">当前版本暂不支持匿名统计设置。</p>
+                        <button className="fbx-btn subtle" onClick={() => void loadUsageStats()}>
+                          <IcoRefresh size={13} aria-hidden="true" />
+                          重试
+                        </button>
+                      </div>
+                    )}
+                  </section>
+
                   {/* 日志文件 */}
                   <section className="fbx-sec">
                     <div className="fbx-sec-hd">
@@ -1011,41 +1060,6 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
                         </p>
                       </>
                     )}
-                  </section>
-
-                  {/* 匿名统计 */}
-                  <section className="fbx-sec fbx-span2">
-                    <div className="fbx-sec-hd">
-                      <h4 className="fbx-sec-h">
-                        <IcoActivity size={14} aria-hidden="true" />
-                        匿名统计
-                      </h4>
-                      {savingStats && <span className="fbx-hint">保存中…</span>}
-                    </div>
-                    {statsErr && (
-                      <div className="fbx-note err" role="alert">
-                        {statsErr}
-                      </div>
-                    )}
-                    {statsAvailable === null ? (
-                      <p className="fbx-hint">读取中…</p>
-                    ) : statsAvailable ? (
-                      <label className="fbx-check">
-                        <input
-                          type="checkbox"
-                          checked={!!statsEnabled}
-                          disabled={savingStats}
-                          onChange={(e) => void saveStats(e.target.checked)}
-                        />
-                        <span>参与匿名统计</span>
-                      </label>
-                    ) : (
-                      <p className="fbx-hint">当前版本暂不支持匿名统计设置。</p>
-                    )}
-                    <p className="fbx-hint">
-                      仅上报匿名使用数据（随机匿名 ID、应用版本、系统类型），不含账号、IP、媒体库或文件路径；
-                      服务端不存储 IP，可随时在此关闭。
-                    </p>
                   </section>
 
                   {/* 诊断信息 */}

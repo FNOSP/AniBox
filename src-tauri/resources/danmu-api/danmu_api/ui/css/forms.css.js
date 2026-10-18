@@ -1,0 +1,359 @@
+// language=CSS
+export const formsCssContent = /* css */ `
+/* 表单控件样式 — 保持 danmu_api 原有交互形态 + Bangumi-syncer 配色 */
+
+/* ============ 表单基础 ============ */
+.form-group {
+    margin-bottom: 14px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    color: var(--theme-muted);
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 9px 14px;
+    border: 1px solid var(--theme-border);
+    border-radius: var(--app-radius-input);
+    font-size: 13px;
+    background: var(--theme-input-bg);
+    color: var(--theme-text);
+    transition: border-color 0.22s var(--app-ease-smooth), box-shadow 0.22s var(--app-ease-smooth);
+}
+
+/* Native select popups use these colors as well as the closed control. */
+.form-group select option,
+.form-group select optgroup,
+select option,
+select optgroup {
+    background-color: var(--theme-container-bg);
+    color: var(--theme-text);
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: var(--theme-accent);
+    box-shadow: 0 0 0 3px var(--theme-accent-soft);
+}
+
+.form-group textarea {
+    resize: vertical;
+    min-height: 80px;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    line-height: 1.5;
+    border-radius: var(--app-radius-card-sm);
+}
+
+/* ============ 开关按钮 ============ */
+.switch-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 48px;
+    height: 26px;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--theme-border);
+    transition: 0.3s var(--app-ease-smooth);
+    border-radius: 999px;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 20px;
+    width: 20px;
+    left: 3px;
+    bottom: 3px;
+    background-color: #ffffff;
+    transition: 0.3s var(--app-ease-smooth);
+    border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+input:checked + .slider {
+    background: linear-gradient(135deg, var(--theme-accent), var(--theme-accent-hover));
+    box-shadow: 0 0 0 3px var(--theme-accent-soft);
+}
+
+input:checked + .slider:before {
+    transform: translateX(22px);
+}
+
+.switch-label {
+    font-weight: 500;
+    font-size: 13px;
+    color: var(--theme-text);
+}
+
+/* ============ 数字滚轮 ============ */
+.number-picker {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: var(--theme-panel-bg);
+    padding: 14px;
+    border-radius: var(--app-radius-card-sm);
+    border: 1px solid var(--theme-border);
+}
+
+.number-display {
+    font-size: 30px;
+    font-weight: 700;
+    color: var(--theme-accent);
+    min-width: 60px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.number-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.number-btn {
+    width: 38px;
+    height: 38px;
+    border: 1.5px solid var(--theme-accent);
+    background: var(--theme-input-bg);
+    color: var(--theme-accent);
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 18px;
+    font-weight: 700;
+    transition: all 0.22s var(--app-ease-smooth);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.number-btn:hover {
+    background: var(--theme-accent);
+    color: #ffffff;
+    transform: scale(1.05);
+}
+
+.number-btn:active {
+    transform: scale(0.95);
+}
+
+.number-range {
+    width: 100%;
+    margin-top: 8px;
+}
+
+.number-range input[type="range"],
+.color-pool-lightness input[type="range"] {
+    width: 100%;
+    height: 6px;
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+}
+
+.number-range input[type="range"]::-webkit-slider-runnable-track,
+.color-pool-lightness input[type="range"]::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--theme-panel-strong);
+}
+
+.number-range input[type="range"]::-moz-range-track,
+.color-pool-lightness input[type="range"]::-moz-range-track {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--theme-panel-strong);
+    border: none;
+}
+
+.number-range input[type="range"]::-webkit-slider-thumb,
+.color-pool-lightness input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--theme-accent);
+    cursor: pointer;
+    box-shadow: 0 1px 4px rgba(var(--app-primary-rgb), 0.3);
+    margin-top: -6px;
+}
+
+.number-range input[type="range"]::-moz-range-thumb,
+.color-pool-lightness input[type="range"]::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--theme-accent);
+    cursor: pointer;
+    border: none;
+    box-shadow: 0 1px 4px rgba(var(--app-primary-rgb), 0.3);
+}
+
+.number-range input[type="range"]::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--theme-accent);
+    cursor: pointer;
+    border: none;
+}
+
+/* ============ 标签选择（单选） ============ */
+.tag-selector {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.tag-option {
+    padding: 10px 20px;
+    background: var(--theme-panel-strong);
+    border: 2px solid transparent;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.3s;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.tag-option:hover {
+    background: var(--theme-panel-bg);
+    transform: translateY(-1px);
+}
+
+.tag-option.selected {
+    background: linear-gradient(135deg, var(--theme-accent), var(--theme-accent-hover));
+    color: #ffffff;
+    border-color: var(--theme-accent);
+}
+
+/* ============ 多选标签（保持原有椭圆包裹形态，仅改配色） ============ */
+.multi-select-container {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    background: transparent !important;
+    border: none;
+    box-shadow: none;
+}
+
+.selected-tags {
+    min-height: 60px;
+    background: var(--theme-container-bg);
+    border: 2px dashed var(--theme-border);
+    border-radius: 12px;
+    padding: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: flex-start;
+}
+
+.selected-tags.empty::before {
+    content: '拖动或点击下方选项添加...';
+    color: var(--theme-muted);
+    font-size: 14px;
+    width: 100%;
+    text-align: center;
+    padding: 15px 0;
+}
+
+.available-tag.disabled:hover {
+    transform: none;
+}
+
+/* ============ 映射表 ============ */
+.map-container {
+    margin-top: 10px;
+}
+
+.map-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding: 10px;
+    border: 1px solid var(--theme-border);
+    border-radius: 6px;
+    background: var(--theme-panel-bg);
+}
+
+.map-input-left,
+.map-input-right {
+    flex: 1;
+    padding: 8px;
+    border: 1px solid var(--theme-border);
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+.map-separator {
+    font-weight: bold;
+    color: var(--theme-muted);
+}
+
+.map-remove-btn {
+    margin-left: 10px;
+    padding: 6px 12px;
+    font-size: 12px;
+    transition: transform 0.22s var(--app-ease-smooth);
+}
+.map-remove-btn:hover {
+    transform: translateY(-1px);
+}
+
+.map-item-template {
+    display: none;
+}
+
+/* Read-only config fields in edit modal */
+.readonly-field {
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--theme-panel-bg, #f5f6f8);
+    border: 1px dashed var(--theme-border, #d5d7db);
+    border-radius: 6px;
+    color: var(--theme-text, #333);
+    font-size: 14px;
+    line-height: 1.5;
+    word-break: break-word;
+    white-space: pre-wrap;
+    cursor: default;
+    user-select: text;
+}
+
+.readonly-field:empty::before {
+    content: '—';
+    color: var(--theme-muted, #999);
+}
+`;

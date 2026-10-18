@@ -1,0 +1,828 @@
+// language=JavaScript
+export const mainJsContent = /* javascript */ `
+// 自定义弹窗组件
+function createCustomAlert() {
+    // 检查是否已存在自定义弹窗元素
+    if (document.getElementById('custom-alert-overlay')) {
+        return;
+    }
+
+    // 创建弹窗HTML元素
+    const alertHTML = '<div class="modal" id="custom-alert-overlay"><div class="modal-content" id="custom-alert-content"><div class="modal-header"><h3 id="custom-alert-title">提示</h3><button class="close-btn" id="custom-alert-close">&times;</button></div><div class="modal-body"><p id="custom-alert-message" style="word-break: break-all; white-space: pre-line;"></p></div><div class="modal-footer"><button class="btn btn-primary" id="custom-alert-confirm">确定</button></div></div></div>';
+
+    // 添加到body
+    document.body.insertAdjacentHTML('beforeend', alertHTML);
+
+    // 获取元素
+    const overlay = document.getElementById('custom-alert-overlay');
+    const closeBtn = document.getElementById('custom-alert-close');
+    const confirmBtn = document.getElementById('custom-alert-confirm');
+
+    // 关闭弹窗函数
+    function closeAlert() {
+        overlay.classList.remove('active');
+        // 重置标题和消息
+        document.getElementById('custom-alert-title').textContent = '提示';
+    }
+
+    // 事件监听器
+    closeBtn.addEventListener('click', closeAlert);
+    confirmBtn.addEventListener('click', closeAlert);
+
+    // 点击遮罩层关闭弹窗
+    overlay.addEventListener('click', function(e) {
+        if (e.target === overlay) {
+            closeAlert();
+        }
+    });
+}
+
+// 自定义alert函数
+function customAlert(message, title = '提示') {
+    // 确保弹窗元素已创建
+    createCustomAlert();
+
+    // 获取元素
+    const overlay = document.getElementById('custom-alert-overlay');
+    const titleElement = document.getElementById('custom-alert-title');
+    const messageElement = document.getElementById('custom-alert-message');
+
+    // 设置标题和消息
+    titleElement.textContent = title;
+    messageElement.textContent = message; // 使用 textContent 避免 message 中的 HTML 被解析执行；换行由元素 CSS white-space: pre-line 渲染
+
+    // 显示弹窗
+    overlay.classList.add('active');
+}
+
+// 自定义confirm函数（如果需要）
+function customConfirm(message, title = '确认') {
+    return new Promise((resolve) => {
+        // 确保弹窗元素已创建
+        createCustomAlert();
+
+        // 获取元素
+        const overlay = document.getElementById('custom-alert-overlay');
+        const titleElement = document.getElementById('custom-alert-title');
+        const messageElement = document.getElementById('custom-alert-message');
+        const confirmBtn = document.getElementById('custom-alert-confirm');
+
+        // 移除之前的事件监听器（如果有）
+        const newConfirmBtn = confirmBtn.cloneNode(true);
+        confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+
+        // 设置标题和消息
+        titleElement.textContent = title;
+        messageElement.textContent = message;
+
+        // 确定按钮事件
+        newConfirmBtn.addEventListener('click', () => {
+            overlay.classList.remove('active');
+            resolve(true);
+        });
+
+        // 关闭按钮事件
+        document.getElementById('custom-alert-close').addEventListener('click', () => {
+            overlay.classList.remove('active');
+            resolve(false);
+        });
+
+        // 点击遮罩层关闭
+        overlay.addEventListener('click', function(e) {
+            if (e.target === overlay) {
+                overlay.classList.remove('active');
+                resolve(false);
+            }
+        });
+
+        // 显示弹窗
+        overlay.classList.add('active');
+    });
+}
+
+// 初始化自定义弹窗
+document.addEventListener('DOMContentLoaded', createCustomAlert);
+
+// 数据存储
+let envVariables = {};
+let currentCategory = 'api'; // 默认分类改为api
+let envSearchQuery = '';
+let editingKey = null;
+let editingCategory = null;
+let editingKeyName = '';
+let editingType = 'text';
+let logs = []; // 保留本地日志数组，用于UI显示
+
+// 版本信息
+let currentVersion = '';
+let latestVersion = '';
+let currentToken = 'globals.currentToken';
+let currentAdminToken = ''; // admin token，用于系统管理
+let originalToken = '';
+
+// 反向代理/API基础路径配置
+// 从LocalStorage获取用户自定义的Base URL
+let customBaseUrl = localStorage.getItem('logvar_api_base_url') || '';
+
+// 保存自定义Base URL (为空则清除)
+function saveBaseUrl() {
+    const input = document.getElementById('custom-base-url').value.trim();
+    if (input) {
+        // 确保URL不以斜杠结尾，方便后续拼接
+        let formattedUrl = input;
+        if (formattedUrl.endsWith('/')) {
+            formattedUrl = formattedUrl.slice(0, -1);
+        }
+        localStorage.setItem('logvar_api_base_url', formattedUrl);
+        customBaseUrl = formattedUrl;
+        customAlert('API地址配置已保存，即将刷新页面。', '保存成功');
+        setTimeout(() => {
+            location.reload();
+        }, 1000);
+    } else {
+        // 输入为空，视为清除配置/重置为默认
+        localStorage.removeItem('logvar_api_base_url');
+        customBaseUrl = '';
+        customAlert('配置已重置为默认状态，即将刷新页面。', '操作成功');
+        setTimeout(() => {
+            location.reload();
+        }, 1000);
+    }
+}
+
+// 构建带token的API请求路径
+function buildApiUrl(path, isSystemPath = false) {
+    let res;
+    // 如果是系统管理路径且有admin token,则使用admin token
+    if (isSystemPath && currentAdminToken && currentAdminToken.trim() !== '' && currentAdminToken.trim() !== '*'.repeat(currentAdminToken.length)) {
+        res = '/' + currentAdminToken + path;
+    } else {
+        // 否则使用普通token
+        res = (currentToken ? '/' + currentToken : "") + path;
+    }
+    
+    // 如果配置了自定义基础URL (解决反代问题)
+    if (customBaseUrl) {
+        // 确保路径以/开头
+        const cleanPath = res.startsWith('/') ? res : '/' + res;
+        return customBaseUrl + cleanPath;
+    }
+
+    return res;
+}
+
+// 从API加载真实环境变量数据
+function loadEnvVariables() {
+    // 从API获取真实配置数据
+    fetch(buildApiUrl('/api/config', true))
+        .then(response => response.json())
+        .then(config => {
+            // 从配置中获取admin token
+            currentAdminToken = config.originalEnvVars?.ADMIN_TOKEN || '';
+            updateLocalDanmuPermission(config);
+
+            originalToken = config.originalEnvVars?.TOKEN || '';
+            
+            // 使用从API获取的原始环境变量，用于系统设置
+            const originalEnvVars = config.originalEnvVars || {};
+            // 浏览器偏好覆盖部署环境变量；云函数更新变量通常要等重新部署后才会进入新实例。
+            applyTheme(getStoredTheme() || originalEnvVars.UI_THEME || document.body.dataset.theme || 'lavender');
+            // 恢复独立的深浅色偏好：已存储 > 系统偏好 > 默认浅色
+            if (!document.body.dataset.colorScheme) {
+                var scheme = getStoredColorScheme();
+                if (!scheme) {
+                    scheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                }
+                document.body.dataset.colorScheme = scheme;
+                document.documentElement.dataset.colorScheme = scheme;
+            }
+            updateColorSchemeToggle();
+            // 用户未手动选择时，跟随系统深浅色变更
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function (e) {
+                if (!getStoredColorScheme()) {
+                    document.body.dataset.colorScheme = e.matches ? 'dark' : 'light';
+                    document.documentElement.dataset.colorScheme = e.matches ? 'dark' : 'light';
+                    updateColorSchemeToggle();
+                }
+            });
+
+            // 重新组织数据结构以适配现有UI
+            envVariables = {};
+            
+            // 将原始环境变量转换为UI所需格式
+            // 这里需要将原始环境变量按类别组织
+            Object.keys(originalEnvVars).forEach(key => {
+                // 从envVarConfig获取配置信息
+                const varConfig = config.envVarConfig?.[key] || { category: 'system', type: 'text', description: '未分类配置项' };
+                const category = varConfig.category || 'system';
+                
+                // 如果该分类不存在，创建它
+                if (!envVariables[category]) {
+                    envVariables[category] = [];
+                }
+                
+                // 添加到对应分类，包含完整的配置信息
+                envVariables[category].push({
+                    key: key,
+                    value: originalEnvVars[key],
+                    description: varConfig.description || '',
+                    type: varConfig.type || 'text',
+                    min: varConfig.min,
+                    max: varConfig.max,
+                    options: varConfig.options || [], // 仅对 select 和 multi-select 类型有效
+                    sources: varConfig.sources || null // 仅对 DANMU_OFFSET 等需要来源配置的有效
+                });
+            });
+            
+            // 渲染环境变量列表
+            renderEnvList();
+        })
+        .catch(error => {
+            console.error('Failed to load env variables:', error);
+        });
+}
+
+// 更新API端点信息
+function updateApiEndpoint() {
+  return fetch(buildApiUrl('/api/config', true))
+    .then(response => {
+        // 检查ContentType，如果是HTML说明可能是404页面或反代错误页面
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.indexOf("application/json") === -1) {
+             throw new Error("Received HTML instead of JSON. Possible 404 or Proxy Error.");
+        }
+        if (!response.ok) {
+            throw new Error(\`HTTP error! status: \${response.status}\`);
+        }
+        return response.json();
+    })
+    .then(config => {
+      let _reverseProxy = customBaseUrl; // 使用全局配置
+
+      // 获取当前页面的协议、主机和端口
+      const protocol = window.location.protocol;
+      const host = window.location.host;
+      const token = config.originalEnvVars?.TOKEN || '87654321'; // 默认token值
+      const adminToken = config.originalEnvVars?.ADMIN_TOKEN;
+
+      // 获取URL路径并提取token
+      let urlPath = window.location.pathname;
+      if(_reverseProxy) {
+          try {
+              let proxyPath = _reverseProxy.startsWith('http') 
+                  ? new URL(_reverseProxy).pathname 
+                  : _reverseProxy;
+              
+              if (proxyPath.endsWith('/')) {
+                  proxyPath = proxyPath.slice(0, -1);
+              }
+              if(proxyPath && urlPath.startsWith(proxyPath)) {
+                  urlPath = urlPath.substring(proxyPath.length);
+              }
+          } catch(e) { /* ignore */ }
+      }
+
+      const pathParts = urlPath.split('/').filter(part => part !== '');
+      const urlToken = pathParts.length > 0 ? pathParts[0] : '';
+      let apiToken = '********';
+      
+      // 判断是否使用默认token
+      if (token === '87654321') {
+        // 如果是默认token，则显示真实token
+        apiToken = token;
+      } else {
+        // 如果不是默认token，则检查URL中的token是否匹配，匹配则显示真实token，否则显示星号
+        if (urlToken === token || (adminToken !== "" && urlToken === adminToken)) {
+          apiToken = token; // 更新全局token变量
+        }
+      }
+      
+      // 构造API端点URL
+      let baseUrlStr;
+      if (_reverseProxy) {
+          // 如果配置了反代，且是相对路径，则补全协议和主机，确保显示为绝对路径
+          baseUrlStr = _reverseProxy.startsWith('http') 
+              ? _reverseProxy 
+              : (protocol + '//' + host + _reverseProxy);
+      } else {
+          baseUrlStr = protocol + '//' + host;
+      }
+
+      // 确保 baseUrlStr 不以斜杠结尾
+      let cleanBaseUrl = baseUrlStr;
+      if (cleanBaseUrl.endsWith('/')) {
+          cleanBaseUrl = cleanBaseUrl.slice(0, -1);
+      }
+      const apiEndpoint = cleanBaseUrl + '/' + apiToken;
+      
+      const apiEndpointElement = document.getElementById('api-endpoint');
+      if (apiEndpointElement) {
+        apiEndpointElement.textContent = apiEndpoint;
+      }
+      return config; // 返回配置信息，以便链式调用
+    })
+    .catch(error => {
+      console.error('获取配置信息失败:', error);
+      // 出错时显示默认值
+      const protocol = window.location.protocol;
+      const host = window.location.host;
+      let _reverseProxy = customBaseUrl;
+      
+      // 构造显示用的BaseUrl
+      let baseUrlStr;
+      if (_reverseProxy) {
+          baseUrlStr = _reverseProxy.startsWith('http') 
+              ? _reverseProxy 
+              : (protocol + '//' + host + _reverseProxy);
+      } else {
+          baseUrlStr = protocol + '//' + host;
+      }
+
+      let cleanBaseUrl = baseUrlStr;
+      if (cleanBaseUrl.endsWith('/')) {
+          cleanBaseUrl = cleanBaseUrl.slice(0, -1);
+      }
+      const apiEndpoint = cleanBaseUrl + '/********';
+      
+      const apiEndpointElement = document.getElementById('api-endpoint');
+      if (apiEndpointElement) {
+        apiEndpointElement.textContent = apiEndpoint;
+      }
+      
+      // 如果是因为反代导致的问题，显示输入框 (交由renderPreview处理，或者在这里也可以触发)
+      const proxyContainer = document.getElementById('proxy-config-container');
+      if(proxyContainer) {
+          proxyContainer.style.display = 'block';
+          // 填充当前输入框（如果有值）
+          if(customBaseUrl) {
+              document.getElementById('custom-base-url').value = customBaseUrl;
+          }
+      }
+      
+      throw error; // 抛出错误，以便调用者可以处理
+    });
+}
+
+function getDockerVersion() {
+  const url = "https://img.shields.io/docker/v/logvar/danmu-api?sort=semver";
+
+  fetch(url)
+    .then(response => response.text())
+    .then(svgContent => {
+      // 使用正则表达式从 SVG 中提取版本号
+      const versionMatch = svgContent.match(/version<\\/text><text.*?>(v[\\d\\.]+)/);
+
+      if (versionMatch && versionMatch[1]) {
+        console.log("Version:", versionMatch[1]);
+        const latestVersionElement = document.getElementById('latest-version');
+        if (latestVersionElement) {
+          latestVersionElement.textContent = versionMatch[1];
+        }
+      } else {
+        console.log("Version not found");
+      }
+    })
+    .catch(error => {
+      console.error("Error fetching the SVG:", error);
+    });
+}
+
+// 切换导航
+function switchSection(section, event = null) {
+    // 点击已激活的"配置预览"时返回总览
+    if (section === 'preview' && document.getElementById('preview-section').classList.contains('active')) {
+        if (typeof resetToPreviewOverview === 'function') resetToPreviewOverview();
+        return;
+    }
+
+    // 检查是否尝试访问受token保护的section（日志查看、接口调试、推送弹幕、请求记录、系统配置需要token访问）
+    if (section === 'logs' || section === 'api' || section === 'env' || section === 'push' || section === 'request-records' || section === 'local-danmu') {
+        let _reverseProxy = customBaseUrl; // 使用全局配置
+
+        // 获取URL路径并提取token
+        let urlPath = window.location.pathname;
+        if(_reverseProxy) {
+            // 严谨地移除BaseUrl中的path部分
+            try {
+                // 如果_reverseProxy包含完整URL，提取pathname
+                // 如果只是相对路径，直接使用
+                let proxyPath = _reverseProxy.startsWith('http') 
+                    ? new URL(_reverseProxy).pathname 
+                    : _reverseProxy;
+                
+                // 确保移除尾部斜杠，防止匹配失败
+                if (proxyPath.endsWith('/')) {
+                    proxyPath = proxyPath.slice(0, -1);
+                }
+                
+                if(proxyPath && urlPath.startsWith(proxyPath)) {
+                    urlPath = urlPath.substring(proxyPath.length);
+                }
+            } catch(e) {
+                console.error("解析反代路径失败", e);
+            }
+        }
+        
+        const pathParts = urlPath.split('/').filter(part => part !== '');
+        const urlToken = pathParts.length > 0 ? pathParts[0] : '';
+        
+        // 检查URL中是否有token
+        if (!urlToken && originalToken !== "87654321") {
+            // 提示用户需要在URL中配置TOKEN
+            setTimeout(() => {
+                // 获取当前页面的协议、主机和端口
+                const protocol = window.location.protocol;
+                const host = window.location.host;
+                
+                // 构造显示的BaseUrl，确保是绝对路径
+                let displayBase;
+                if (_reverseProxy) {
+                    displayBase = _reverseProxy.startsWith('http') 
+                        ? _reverseProxy 
+                        : (protocol + '//' + host + _reverseProxy);
+                } else {
+                    displayBase = protocol + '//' + host;
+                }
+                
+                if (displayBase.endsWith('/')) {
+                    displayBase = displayBase.slice(0, -1);
+                }
+                
+                // 根据section类型显示不同的token提示
+                const tokenType = section === 'env' ? 'ADMIN_TOKEN' : 'TOKEN';
+                customAlert('请在URL中配置相应的' + tokenType + '以访问此功能！\\n\\n访问方式：' + displayBase + '/{' + tokenType + '}');
+            }, 100);
+            return;
+        }
+        
+        // 如果是系统配置页面，还需要检查是否配置了ADMIN_TOKEN且URL中的token等于currentAdminToken
+        if (section === 'env') {
+            // 检查部署平台配置
+            checkDeployPlatformConfig().then(result => {
+                if (!result.success) {
+                    // 如果配置检查不通过，只显示提示，不切换页面
+                    setTimeout(() => {
+                        customAlert(result.message);
+                    }, 100);
+                } else {
+                    // 如果配置检查通过，才切换到env页面
+                    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+                    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+
+                    document.getElementById(\`\${section}-section\`).classList.add('active');
+                    // 在异步回调中使用传入的event参数来设置按钮的active状态
+                    if (event && event.target) {
+                        event.target.classList.add('active');
+                    }
+
+                    addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : section === 'push' ? '推送弹幕' : section === 'request-records' ? '请求记录' : '接口调试'}模块\`, 'info');
+                }
+            });
+        } else {
+            // 对于日志查看、接口调试和推送弹幕页面，只要URL中有token就可以访问
+            document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+
+            document.getElementById(\`\${section}-section\`).classList.add('active');
+            if (event && event.target) {
+                event.target.classList.add('active');
+            }
+
+            addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : section === 'push' ? '推送弹幕' : section === 'request-records' ? '请求记录' : '接口调试'}模块\`, 'info');
+            
+            // 如果切换到日志查看页面，则立即刷新日志
+            if (section === 'logs') {
+                if (typeof fetchRealLogs === 'function') {
+                    fetchRealLogs();
+                }
+            }
+        }
+    } else {
+        // 对于非受保护页面（如配置预览），正常切换
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+
+        document.getElementById(\`\${section}-section\`).classList.add('active');
+        if (event && event.target) {
+            event.target.classList.add('active');
+        }
+
+        addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : section === 'push' ? '推送弹幕' : '接口调试'}模块\`, 'info');
+    }
+}
+
+// 切换类别
+function switchCategory(category) {
+    currentCategory = category;
+    clearEnvSearch(false);
+    renderEnvList();
+}
+
+let modalPageScrollTop = 0;
+
+function lockPageScroll() {
+    if (document.body.classList.contains('modal-open')) {
+        return;
+    }
+
+    modalPageScrollTop = window.scrollY || document.documentElement.scrollTop;
+    document.documentElement.classList.add('modal-open');
+    document.body.classList.add('modal-open');
+    document.body.style.top = '-' + modalPageScrollTop + 'px';
+}
+
+function unlockPageScroll() {
+    if (!document.body.classList.contains('modal-open')) {
+        return;
+    }
+
+    document.documentElement.classList.remove('modal-open');
+    document.body.classList.remove('modal-open');
+    document.body.style.top = '';
+    window.scrollTo(0, modalPageScrollTop);
+}
+
+// 关闭模态框
+function closeModal() {
+    if (typeof cleanupSelectedTagsTouchDrag === 'function') cleanupSelectedTagsTouchDrag();
+    if (typeof handleStagingTouchCancel === 'function') handleStagingTouchCancel();
+
+    var modal = document.getElementById('env-modal');
+    modal.classList.add('closing');
+    setTimeout(function() {
+        modal.classList.remove('active');
+        modal.classList.remove('closing');
+        unlockPageScroll();
+    }, 220);
+    editingKey = null;
+    editingCategory = null;
+    // 重置表单字段状态
+    editingKeyName = '';
+    editingType = 'text';
+}
+
+// 页面加载完成后初始化时获取一次日志
+async function init() {
+    try {
+        await updateApiEndpoint(); // 等待API端点更新完成
+        getDockerVersion();
+        // 从API获取配置信息，包括检查是否有admin token
+        const config = await fetchAndSetConfig();
+
+        // 设置默认推送地址
+        setDefaultPushUrl(config);
+
+        // 检查并处理管理员令牌
+        checkAndHandleAdminToken();
+        
+        loadEnvVariables(); // 从API加载真实环境变量数据
+        renderEnvList();
+        renderPreview();
+        addLog('系统初始化完成', 'success');
+        // 获取真实日志数据
+        fetchRealLogs();
+        
+        // 初始化推送弹幕界面
+        if (typeof initPushDanmuInterface === 'function') {
+            initPushDanmuInterface();
+        }
+        
+        // 初始化接口调试界面
+        if (typeof initApiTestInterface === 'function') {
+            initApiTestInterface();
+        }
+        
+    } catch (error) {
+        console.error('初始化失败:', error);
+        addLog('系统初始化失败: ' + error.message, 'error');
+        
+        // 确保反代配置框显示
+        const proxyContainer = document.getElementById('proxy-config-container');
+        if(proxyContainer) {
+            proxyContainer.style.display = 'block';
+            if(customBaseUrl) {
+                document.getElementById('custom-base-url').value = customBaseUrl;
+            }
+        }
+        
+        // 即使初始化失败，也要尝试获取日志
+        fetchRealLogs();
+    }
+}
+
+// 复制API端点到剪贴板
+function copyApiEndpoint() {
+    var apiEndpointElement = document.getElementById('api-endpoint');
+    if (!apiEndpointElement) return;
+    var apiEndpoint = apiEndpointElement.textContent.trim();
+    if (!apiEndpoint || apiEndpoint === '加载中...') return;
+
+    var done = function() {
+        var originalText = apiEndpointElement.textContent;
+        apiEndpointElement.textContent = '已复制!';
+        apiEndpointElement.style.color = '#ff6b6b';
+        setTimeout(function() {
+            apiEndpointElement.textContent = originalText;
+            apiEndpointElement.style.color = '#4CAF50';
+        }, 2000);
+        addLog('API端点已复制到剪贴板: ' + apiEndpoint, 'success');
+    };
+
+    // 主方案：Clipboard API (需 HTTPS)
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(apiEndpoint).then(done).catch(function(err) {
+            // HTTPS 下仍失败则使用备用方案
+            fallbackCopy(apiEndpoint, done);
+        });
+    } else {
+        // HTTP 环境下的备用方案
+        fallbackCopy(apiEndpoint, done);
+    }
+}
+
+function fallbackCopy(text, done) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '-9999px';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+        document.execCommand('copy');
+        if (done) done();
+    } catch(e) {
+        customAlert('复制失败，请手动复制：' + text);
+    }
+    document.body.removeChild(ta);
+}
+
+function escapeHtml(text) {
+    // 如果是 null 或 undefined，返回空字符串
+    if (text === null || text === undefined) {
+        return '';
+    }
+    
+    // 将非字符串值转换为字符串
+    const str = String(text);
+    
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return str.replace(/[&<>"']/g, m => map[m]);
+}
+
+
+// 页面加载完成后初始化
+init();
+
+// 明暗模式切换
+function toggleColorScheme() {
+    const currentScheme = document.body.dataset.colorScheme || 'light';
+    const newScheme = currentScheme === 'dark' ? 'light' : 'dark';
+    const btn = document.getElementById('theme-scheme-toggle');
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!document.startViewTransition || !btn || reducedMotion) {
+        applyColorScheme(newScheme);
+        return;
+    }
+    // 以开关中心为圆心、到最远角的距离为半径展开圆形裁剪
+    const rect = btn.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const radius = Math.hypot(
+        Math.max(centerX, window.innerWidth - centerX),
+        Math.max(centerY, window.innerHeight - centerY),
+    );
+    const transition = document.startViewTransition(function () { applyColorScheme(newScheme); });
+    transition.ready.then(function () {
+        document.documentElement.animate(
+            {
+                clipPath: [
+                    'circle(0px at ' + centerX + 'px ' + centerY + 'px)',
+                    'circle(' + radius + 'px at ' + centerX + 'px ' + centerY + 'px)',
+                ],
+            },
+            { duration: 600, easing: 'ease-out', pseudoElement: '::view-transition-new(root)' },
+        );
+    }).catch(function () { /* 过渡被中断时无需处理，主题已应用 */ });
+}
+
+/** 应用明暗模式并保存偏好；切换期间关闭元素自身的颜色过渡，避免视图快照捕获中间态 */
+function applyColorScheme(scheme) {
+    const root = document.documentElement;
+    root.classList.add('theme-switching');
+    document.body.dataset.colorScheme = scheme;
+    root.dataset.colorScheme = scheme;
+    storeColorScheme(scheme);
+    updateColorSchemeToggle();
+    requestAnimationFrame(function () { root.classList.remove('theme-switching'); });
+}
+
+function updateColorSchemeToggle() {
+    const btn = document.getElementById('theme-scheme-toggle');
+    if (!btn) return;
+    const scheme = document.body.dataset.colorScheme || 'light';
+    btn.title = scheme === 'dark' ? '切换浅色模式' : '切换暗色模式';
+    btn.setAttribute('aria-pressed', String(scheme === 'dark'));
+}
+
+// ===== 背景弹幕词库 =====
+const DANMAKU_DICT = [
+    // 常规流行语等
+    '弹幕', 'Danmaku', 'Bullet Chat', 'Barrage', 'Comment', 'コメント', 'バレットチャット', '幕弹', '弹幕引擎运行中', '彈幕 API 已就绪', '弹幕陪你看', '有弹幕才有氛围~', '弹幕即正义', '请合理使用', '公益服务请适当调高缓存避免滥用', '感谢大佬', 'PR 欢迎', 'Star 一下', 'LogVar', 'LogVar可能会倒闭但绝对不会变质', '(≧▽≦)', '(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧', 'Σ(°△°|||)︴', '٩(◕‿◕｡)۶', '—=≡Σ((( つ•̀ω•́)つ', '✨', '⭐', '🌸', '🎬', '💫', '📺', '🔥', '🚀', '抢沙发', '前排出售瓜子矿泉水', '潜水出来冒个泡', '酱紫啊', '太有才了', '膜拜大神', '火钳刘明', '神马都是浮云', '给力', '不管你信不信，反正我是信了', '矮油~', '哎哟，不错哦', '元芳，你怎么看', '233333', '666', '不明觉厉', '喜大普奔', '我和我的小伙伴们都惊呆了', '野生字幕君', '开口跪', '镇站之宝', '教练我想打篮球', '经费在燃烧', '你指尖跃动的电光', '是我此生不灭的信仰', '颜表立', '此生无悔入东方，来世愿生幻想乡', '梦が始まる', '战斗力只有5的渣渣', '马猴烧酒', '前方高能', '高能预警', '空降成功', '进度条保命', '战歌起', '正片开始', '名场面', '泪目', '见证历史', '撒花🎉', '完结撒花', '喵~', '这也在你的计算之中吗', '恭喜你发现宝藏', '囍', 'av170001', '真实', '下次一定', '你币有了', 'awsl', '注入灵魂', '神仙打架', '草(一种植物)', '不愧是你', '好耶', '爷青回', '芜湖', '血压起来了', 'DNA动了', '绷不住了', '绝绝子', '破防了', '优雅永不过时', '电子榨菜', '哈基米', '啊？', '命运的齿轮开始转动', '尊嘟假嘟', '硬控', '情绪价值', '电子布洛芬', 'city不city', '小孩哥', '小孩姐', 'Next Level', '上大分', '天命人', '广智救我', '接', '致敬', '何意味', '人生易如反掌', '淡人', '听劝', '真是一 pair 苦命鸳鸯啊', '谷子', '爱你老己', '生命力', '活人感', '敬自己一杯', '超绝松弛感', '顶级理解', '我的身材很曼妙', '是啊，吃什么', '恭喜爹可以称帝了！', '夯爆了', '班味消除', '中国人能飞', '中国人会飞', '牛来',
+    // TG 管理员与活跃人员
+    '鸽子', '豆佬', '@一路走来', '@摆烂 10','@𝒏𝒆𝒌𝒐', '@sleep', '@Aurora', '@🐳𝔀𝓭𝓷𝓶𝓵𝓰𝓫𝓭', '@mask','@我勒个豆儿', '@从', '@比企谷 雪乃', '@水东', '@一只歌鸽子(半夜看到我叫我滚去睡觉', '@狗剩', '@马牛逼',
+    // github 贡献者
+    '@huangxd-', '@wan0ge', '@woleigedouer', '@Wo254992', '@lilixu3','@Celestials316', '@dyphire', '@piaoyizy', '@xiaoQQya', '@liixing','@goodcommunication', '@Mr-Quin', '@chason-zhao', '@DemoJameson','@rinnein', '@Lampon', '@zcw199604', '@Mashiro000', '@wade6716','@xlmc', '@mz289', '@sugarbliss', '@Backsoon0', '@ynsen', '@karasushin', '@desmond9527',
+];
+
+// 背景弹幕发射间隔 0.5~1.5s
+const DANMAKU_INTERVAL_MS = 500;
+
+// ===== 背景弹幕系统 =====
+(function initBgDanmaku() {
+    const colors = [
+        '#f09199', '#00a2ff', '#8cb48c', '#39c5bb',
+        '#e9485e', '#a682e6', '#f78c50', '#6B8AFF',
+        '#ffb74d', '#ce93d8', '#80cbc4',
+    ];
+    const container = document.createElement('div');
+    container.id = 'bg-danmaku-layer';
+    container.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:-1;';
+    document.body.appendChild(container);
+
+    let running = true;
+    let timer = null;
+
+    function spawn() {
+        if (!running) return;
+        const text = DANMAKU_DICT[Math.floor(Math.random() * DANMAKU_DICT.length)];
+        const el = document.createElement('span');
+        const top = 3 + Math.random() * 94;
+        const duration = 16 + Math.random() * 22;
+        const size = 14 + Math.random() * 14;
+        const delay = Math.random() * 5;
+        const color = colors[Math.floor(Math.random() * colors.length)];
+        const opacity = 0.24 + Math.random() * 0.16;
+        el.textContent = text;
+        el.style.cssText = [
+            'position:absolute','white-space:nowrap',
+            'top:' + top + '%','left:100%',
+            'font-size:' + size + 'px','font-weight:600',
+            'color:' + color,'opacity:' + opacity.toFixed(2),
+            'pointer-events:none','user-select:none',
+            'text-shadow:0 0 2px rgba(0,0,0,0.08), 0 0 6px currentColor',
+            'animation:danmakuScroll2 ' + duration + 's linear ' + delay + 's',
+            'animation-fill-mode:backwards',
+        ].join(';');
+        container.appendChild(el);
+        el.addEventListener('animationend', () => el.remove());
+    }
+
+    function tick() {
+        spawn();
+        timer = setTimeout(tick, DANMAKU_INTERVAL_MS + Math.random() * DANMAKU_INTERVAL_MS * 2);
+    }
+
+    tick();
+
+    window._bgDanmaku = {
+        stop: function() { running = false; clearTimeout(timer); container.innerHTML = ''; },
+        start: function() { running = true; tick(); },
+    };
+})();
+
+// header 浮动点缀文字
+(function initHeaderDanmaku() {
+    const header = document.querySelector('.header');
+    if (!header) return;
+
+    const floatColors = [
+        'var(--theme-muted)', 'var(--theme-muted)',
+        '#f09199', '#00a2ff', '#8cb48c', '#39c5bb',
+        '#a682e6', '#f78c50', '#6B8AFF', '#ffb74d', '#ce93d8',
+    ];
+
+    function spawnHeaderFloat() {
+        const el = document.createElement('span');
+        el.className = 'header-danmaku-item';
+        el.textContent = DANMAKU_DICT[Math.floor(Math.random() * DANMAKU_DICT.length)];
+        const top = 4 + Math.random() * (header.offsetHeight - 22);
+        el.style.top = top + 'px';
+        el.style.fontSize = (11 + Math.random() * 5) + 'px';
+        el.style.color = floatColors[Math.floor(Math.random() * floatColors.length)];
+        el.style.animationDuration = (10 + Math.random() * 12) + 's';
+        header.appendChild(el);
+        el.addEventListener('animationend', function() { el.remove(); });
+    }
+
+    setInterval(spawnHeaderFloat, DANMAKU_INTERVAL_MS + Math.random() * DANMAKU_INTERVAL_MS * 2);
+    spawnHeaderFloat();
+})();
+`;

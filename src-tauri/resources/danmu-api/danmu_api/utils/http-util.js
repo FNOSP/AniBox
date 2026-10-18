@@ -1,0 +1,882 @@
+import { globals } from '../configs/globals.js';
+import { log } from './log-util.js'
+import { AsyncLocalStorage } from 'node:async_hooks';
+import https from 'node:https';
+import http from 'node:http';
+
+// 跨异步生命周期链路的日志上下文追踪器
+export const sourceLogContext = new AsyncLocalStorage();
+
+// 单次搜索请求内的 HTTP 响应复用缓存: 相同 URL 的重复 GET 直接复用, 借助 AsyncLocalStorage 实现请求级隔离
+export const httpCacheContext = new AsyncLocalStorage();
+
+export function runWithHttpCache(fn) {
+  return httpCacheContext.run(new Map(), fn);
+}
+
+// 源调度键名（sourceOrderArr）到日志标签规范名称的映射
+// sourceOrderArr 中部分键名与对应源文件的标签命名不一致（如 360→360kan, imgo→mango）
+// 此映射表为本地 fallback，与 sources/registry.js 的 logName 字段保持一致。
+// 注意：http-util.js 是各源依赖的底层工具，不可反向 import registry（会形成
+// http-util → registry → 各源 → http-util 的静态循环依赖），故保留本地表。
+const SOURCE_KEY_TO_LOG_NAME = {
+  '360': '360kan',
+  'imgo': 'mango',
+};
+
+/**
+ * 将 sourceOrderArr 中的调度键名转换为日志标签规范名称
+ * @param {string} sourceKey - sourceOrderArr 中的键名
+ * @returns {string} 对应的日志标签名称，如无映射则返回原值
+ */
+export function toLogSourceName(sourceKey) {
+  return SOURCE_KEY_TO_LOG_NAME[sourceKey] || sourceKey;
+}
+
+// =====================
+// 请求工具方法
+// =====================
+
+/**
+ * 将外部中断信号链接到内部控制器，并返回内存清理函数
+ * @param {AbortSignal} externalSignal 外部传入的信号
+ * @param {AbortController} internalController 内部使用的控制器
+ * @returns {Function} 监听器清理闭包
+ */
+function linkSignal(externalSignal, internalController) {
+  if (!externalSignal) return () => { };
+
+  if (externalSignal.aborted) {
+    internalController.abort();
+    return () => { };
+  }
+
+  const abortHandler = () => {
+    internalController.abort();
+  };
+
+  externalSignal.addEventListener('abort', abortHandler, { once: true });
+
+  // 返回注销函数，供请求结束后的 finally 块调用，阻断内存泄漏链
+  return () => {
+    externalSignal.removeEventListener('abort', abortHandler);
+  };
+}
+
+const IS_NODE_RUNTIME = globalThis.__FORWARD_WIDGET__ !== true
+  && typeof process !== 'undefined'
+  && Boolean(process.versions?.node);
+
+// 旧版 Node（<20.19.0，自带 undici 解析响应头时丢弃 Set-Cookie）与 iOS 巨魔（无 WebAssembly、无原生 fetch）改用 node-fetch v3（其 Headers 正常暴露 Set-Cookie）；降级边界与 esm-shim 的 20.19.0 一致，Node >= 20.19.0 仍用原生 fetch。判定仅依赖静态环境、进程内恒定，故模块加载时算一次并缓存。
+function detectNodeFetchDowngrade() {
+  if (!IS_NODE_RUNTIME) return typeof WebAssembly === 'undefined';
+  const [major, minor] = process.versions.node.split('.').map(Number);
+  return major < 20 || (major === 20 && minor < 19);
+}
+
+const USE_NODE_FETCH = detectNodeFetchDowngrade();
+if (USE_NODE_FETCH) {
+  // 模块载入时 logLevel 尚未初始化，用 console.log 保证启动提示必现
+  console.log("[system] [http] 检测到旧版Node/iOS环境，已全局切换至 node-fetch v3 作为请求实现");
+}
+
+// 降级分支共享 keep-alive Agent，复用 TCP/TLS 连接以与原生 undici 连接池达到实际等价（消除重复握手开销）；按协议区分 https/http
+const nodeFetchHttpsAgent = USE_NODE_FETCH && IS_NODE_RUNTIME ? new https.Agent({ keepAlive: true, keepAliveMsecs: 1000, maxSockets: 256 }) : null;
+const nodeFetchHttpAgent = USE_NODE_FETCH && IS_NODE_RUNTIME ? new http.Agent({ keepAlive: true, keepAliveMsecs: 1000, maxSockets: 256 }) : null;
+function nodeFetchAgent(parsedUrl) {
+  const protocol = parsedUrl instanceof URL ? parsedUrl.protocol : new URL(parsedUrl).protocol;
+  return protocol === 'https:' ? nodeFetchHttpsAgent : nodeFetchHttpAgent;
+}
+
+function shouldUseNodeFetch() {
+  return USE_NODE_FETCH;
+}
+
+export async function httpGet(url, options = {}) {
+  // 单次搜索请求内 HTTP 响应复用: 若当前请求上下文已激活复用缓存且本 URL 已缓存, 直接返回克隆结果, 跳过重复网络请求
+  const requestHttpCache = httpCacheContext.getStore();
+  // 重试调用传入 bypassCache 时跳过复用，避免复用首次已缓存的失败响应而令重试被静默吞掉
+  const bypassCache = options.bypassCache === true;
+  if (requestHttpCache && !bypassCache && requestHttpCache.has(url)) {
+    const cached = requestHttpCache.get(url);
+    log("info", `[${sourceLogContext.getStore() || 'system'}] [请求复用] 复用请求内已缓存的 HTTP 响应, 跳过重复请求: ${url}`);
+    return { data: structuredClone(cached.data), status: cached.status, headers: { ...cached.headers } };
+  }
+
+  // 从 options 中获取重试次数，默认为 0
+  const maxRetries = parseInt(options.retries || '0', 10) || 0;
+  // GET 与 POST 行为保持一致：默认跟随重定向，allow_redirects 为 false 时禁止（用于截获 302 Location）
+  const allow_redirects = options.allow_redirects !== false;
+  // 提取允许放行的特定状态码白名单
+  const validStatusCodes = Array.isArray(options.validStatusCodes) ? options.validStatusCodes : [];
+  let lastError;
+
+  // 执行请求，包含重试逻辑
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // 获取当前异步生命周期的源标识
+    const currentSource = sourceLogContext.getStore() || "system";
+
+    if (attempt > 0) {
+      log("info", `[${currentSource}] [请求模拟] 第 ${attempt} 次重试: ${url}`);
+      // 针对网络层物理阻断（如 ETIMEDOUT, ECONNRESET, AbortError）取消长退避，实现快速重试
+      // 常规服务端报错（如 502, 429）保持指数退避逻辑
+      if (lastError && (lastError.cause?.code === 'ETIMEDOUT' || lastError.cause?.code === 'ECONNRESET' || lastError.name === 'AbortError')) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } else {
+        await new Promise(resolve => setTimeout(resolve, Math.min(1000 * Math.pow(2, attempt - 1), 5000)));
+      }
+    } else {
+      log("info", `[${currentSource}] [请求模拟] HTTP GET: ${url}`);
+    }
+
+    // 设置超时时间（默认5秒）
+    const timeout = parseInt(options.timeout || globals.vodRequestTimeout || '5000', 10) || 5000;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+    // 链接外部中断信号并获取清理函数
+    const cleanupSignal = linkSignal(options.signal, controller);
+
+    try {
+      // 兼容iOS巨魔或旧版Node：使用node-fetch替代内置fetch
+      let response;
+      if (shouldUseNodeFetch()) {
+        const fetch = (await import('node-fetch')).default;
+        response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            ...options.headers,
+          },
+          signal: controller.signal,
+          agent: nodeFetchAgent,
+          redirect: allow_redirects ? 'follow' : 'manual'
+        });
+      } else {
+        // 现代浏览器环境
+        response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            ...options.headers,
+          },
+          signal: controller.signal,
+          redirect: allow_redirects ? 'follow' : 'manual'
+        });
+      }
+
+      clearTimeout(timeoutId);
+
+      // 非 2xx 且不在白名单内的状态码抛出异常
+      if (!response.ok && !validStatusCodes.includes(response.status)) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      let data;
+
+      if (options.base64Data) {
+        log("info", "[system] [http] base64模式");
+
+        // 先拿二进制
+        const arrayBuffer = await response.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+
+        // 转换为 Base64
+        let binary = '';
+        const chunkSize = 0x8000; // 分块防止大文件卡死
+        for (let i = 0; i < uint8Array.length; i += chunkSize) {
+          let chunk = uint8Array.subarray(i, i + chunkSize);
+          binary += String.fromCharCode.apply(null, chunk);
+        }
+        data = btoa(binary); // 得到 base64 字符串
+
+      } else if (options.zlibMode) {
+        log("info", "[system] [http] zlib模式")
+
+        // 获取 ArrayBuffer
+        const arrayBuffer = await response.arrayBuffer();
+
+        // 兼容iOS巨魔环境：检查DecompressionStream是否可用
+        let decodedData;
+        if (typeof DecompressionStream !== 'undefined') {
+          // 现代浏览器环境
+          const decompressionStream = new DecompressionStream("deflate");
+          const decompressedStream = new Response(
+            new Blob([arrayBuffer]).stream().pipeThrough(decompressionStream)
+          );
+          try {
+            decodedData = await decompressedStream.text();
+          } catch (e) {
+            log("error", `[${currentSource}] [请求模拟] 解压缩失败`, e);
+            throw e;
+          }
+        } else {
+          // iOS巨魔环境降级处理：使用pako库
+          log("info", "[system] [http] iOS环境降级使用pako解压");
+          try {
+            // 动态导入pako库
+            const pako = await import('pako');
+            // 解压数据
+            const inflateResult = pako.inflate(new Uint8Array(arrayBuffer));
+            // 转换为字符串
+            decodedData = new TextDecoder('utf-8').decode(inflateResult);
+          } catch (e) {
+            log("error", `[${currentSource}] [请求模拟] pako解压缩失败`, e);
+            throw e;
+          }
+        }
+
+        data = decodedData; // 更新解压后的数据
+      } else {
+        // 个别旧站点（如搜狐 videolist）仍返回 GBK；调用方可显式指定编码。
+        if (options.encoding) {
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          let encoding = options.encoding;
+          if (encoding === 'auto') {
+            const contentType = response.headers.get('content-type') || '';
+            encoding = /charset\s*=\s*(gbk|gb2312|big5)/i.exec(contentType)?.[1] || 'utf-8';
+          }
+          data = new TextDecoder(encoding).decode(bytes);
+        } else {
+          data = await response.text();
+        }
+      }
+
+      let parsedData;
+      try {
+        parsedData = JSON.parse(data);  // 尝试将文本解析为 JSON
+      } catch (e) {
+        parsedData = data;  // 如果解析失败，保留原始文本
+      }
+
+      // 获取所有 headers，但特别处理 set-cookie
+      const headers = {};
+      let setCookieValues = [];
+
+      // 遍历 headers 条目
+      for (const [key, value] of response.headers.entries()) {
+        if (key.toLowerCase() === 'set-cookie') {
+          setCookieValues.push(value);
+        } else {
+          headers[key] = value;
+        }
+      }
+
+      // 如果存在 set-cookie 头，将其合并为分号分隔的字符串
+      if (setCookieValues.length > 0) {
+        headers['set-cookie'] = setCookieValues.join(';');
+      }
+
+      // 请求成功，返回结果
+      if (attempt > 0) {
+        log("info", `[${currentSource}] [请求模拟] 重试成功`);
+      }
+
+      // 将本次响应记入请求内复用缓存, 供同请求内相同 URL 的后续请求直接复用
+      if (requestHttpCache && !bypassCache) {
+        requestHttpCache.set(url, { data: structuredClone(parsedData), status: response.status, headers });
+      }
+
+      // 模拟 iOS 环境：返回 { data: ... } 结构
+      return {
+        data: parsedData,
+        status: response.status,
+        headers: headers
+      };
+
+    } catch (error) {
+      clearTimeout(timeoutId);
+      lastError = error;
+      const currentSource = sourceLogContext.getStore() || "system";
+
+      // 如果是外部信号导致的中断，停止重试并直接抛出
+      if (options.signal?.aborted) {
+        throw error;
+      }
+
+      // 检查是否是超时错误
+      if (error.name === 'AbortError') {
+        log("error", `[${currentSource}] [请求模拟] 请求超时:`, error.message);
+        log("error", '详细诊断:');
+        log("error", '- URL:', url);
+        log("error", '- 超时时间:', `${timeout}ms`);
+        log("error", `- 当前尝试: ${attempt + 1}/${maxRetries + 1}`);
+      } else {
+        log("error", `[${currentSource}] [请求模拟] 请求失败:`, error.message);
+        log("error", '详细诊断:');
+        log("error", '- URL:', url);
+        log("error", '- 错误类型:', error.name);
+        log("error", '- 消息:', error.message);
+        log("error", `- 当前尝试: ${attempt + 1}/${maxRetries + 1}`);
+        if (error.cause) {
+          log("error", '- 码:', error.cause.code);
+          log("error", '- 原因:', error.cause.message);
+        }
+      }
+
+      // 如果还有重试机会，继续循环；否则在循环结束后抛出错误
+      if (attempt < maxRetries) {
+        log("info", `[${currentSource}] [请求模拟] 准备重试...`);
+        continue;
+      }
+    } finally {
+      // 请求生命周期结束，释放监听器内存引用
+      cleanupSignal();
+    }
+  }
+
+  // 所有重试都失败，抛出最后一个错误
+  const finalSource = sourceLogContext.getStore() || "system";
+  log("error", `[${finalSource}] [请求模拟] 所有重试均失败 (${maxRetries + 1} 次尝试)`);
+  throw lastError;
+}
+
+export async function httpPost(url, body, options = {}) {
+  // 从 options 中获取重试次数，默认为 0
+  const maxRetries = parseInt(options.retries || '0', 10) || 0;
+  const validStatusCodes = Array.isArray(options.validStatusCodes) ? options.validStatusCodes : [];
+  let lastError;
+
+  // 执行请求，包含重试逻辑
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const currentSource = sourceLogContext.getStore() || "system";
+
+    if (attempt > 0) {
+      log("info", `[${currentSource}] [请求模拟] 第 ${attempt} 次重试: ${url}`);
+      // 针对网络层物理阻断（如 ETIMEDOUT, ECONNRESET, AbortError）取消长退避，实现快速重试
+      // 常规服务端报错（如 502, 429）保持指数退避逻辑
+      if (lastError && (lastError.cause?.code === 'ETIMEDOUT' || lastError.cause?.code === 'ECONNRESET' || lastError.name === 'AbortError')) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } else {
+        await new Promise(resolve => setTimeout(resolve, Math.min(1000 * Math.pow(2, attempt - 1), 5000)));
+      }
+    } else {
+      log("info", `[${currentSource}] [请求模拟] HTTP POST: ${url}`);
+    }
+
+    // 设置超时时间（默认5秒）
+    const timeout = parseInt(options.timeout || globals.vodRequestTimeout || '5000', 10) || 5000;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+    // 链接外部中断信号并获取清理函数
+    const cleanupSignal = linkSignal(options.signal, controller);
+
+    // 处理请求头、body 和其他参数
+    const { headers = {}, params, allow_redirects = true } = options;
+    const fetchOptions = {
+      method: 'POST',
+      headers: {
+        ...headers,
+      },
+      body: body,
+      signal: controller.signal
+    };
+
+    if (!allow_redirects) {
+      fetchOptions.redirect = 'manual';  // 禁止重定向
+    }
+
+    try {
+      // 兼容iOS巨魔或旧版Node：使用node-fetch替代内置fetch
+      let response;
+      if (shouldUseNodeFetch()) {
+        const fetch = (await import('node-fetch')).default;
+        response = await fetch(url, { ...fetchOptions, agent: nodeFetchAgent });
+      } else {
+        // 现代浏览器环境
+        response = await fetch(url, fetchOptions);
+      }
+
+      clearTimeout(timeoutId);
+
+      const data = await response.text();
+
+      if (!response.ok && !validStatusCodes.includes(response.status)) {
+        log("error", `[${currentSource}] [请求模拟] response data: `, data);
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      let parsedData;
+      try {
+        parsedData = JSON.parse(data);  // 尝试将文本解析为 JSON
+      } catch (e) {
+        parsedData = data;  // 如果解析失败，保留原始文本
+      }
+
+      // 请求成功，返回结果
+      if (attempt > 0) {
+        log("info", `[${currentSource}] [请求模拟] 重试成功`);
+      }
+
+      // 模拟 iOS 环境：返回 { data: ... } 结构
+      return {
+        data: parsedData,
+        status: response.status,
+        headers: Object.fromEntries(response.headers.entries())
+      };
+
+    } catch (error) {
+      clearTimeout(timeoutId);
+      lastError = error;
+      const currentSource = sourceLogContext.getStore() || "system";
+
+      // 如果是外部信号导致的中断，停止重试并直接抛出
+      if (options.signal?.aborted) {
+        throw error;
+      }
+
+      // 检查是否是超时错误
+      if (error.name === 'AbortError') {
+        log("error", `[${currentSource}] [请求模拟] 请求超时:`, error.message);
+        log("error", '详细诊断:');
+        log("error", '- URL:', url);
+        log("error", '- 超时时间:', `${timeout}ms`);
+        log("error", `- 当前尝试: ${attempt + 1}/${maxRetries + 1}`);
+      } else {
+        log("error", `[${currentSource}] [请求模拟] 请求失败:`, error.message);
+        log("error", '详细诊断:');
+        log("error", '- URL:', url);
+        log("error", '- 错误类型:', error.name);
+        log("error", '- 消息:', error.message);
+        log("error", `- 当前尝试: ${attempt + 1}/${maxRetries + 1}`);
+        if (error.cause) {
+          log("error", '- 码:', error.cause.code);
+          log("error", '- 原因:', error.cause.message);
+        }
+      }
+
+      // 如果还有重试机会，继续循环；否则在循环结束后抛出错误
+      if (attempt < maxRetries) {
+        log("info", `[${currentSource}] [请求模拟] 准备重试...`);
+        continue;
+      }
+    } finally {
+      // 请求生命周期结束，释放监听器内存引用
+      cleanupSignal();
+    }
+  }
+
+  // 所有重试都失败，抛出最后一个错误
+  const finalSource = sourceLogContext.getStore() || "system";
+  log("error", `[${finalSource}] [请求模拟] 所有重试均失败 (${maxRetries + 1} 次尝试)`);
+  throw lastError;
+}
+
+/**
+ * 通用 HTTP 请求函数（模拟环境返回结构）
+ * @param {string} method - HTTP 方法
+ * @param {string} url - 请求地址
+ * @param {any} [body] - 请求体（可选）
+ * @param {object} [options] - 选项
+ * @param {object} [options.headers] - 请求头
+ * @param {object} [options.params] - 查询参数（暂未实现）
+ * @param {boolean} [options.allow_redirects=true] - 是否允许重定向（与 GET/POST 行为一致，false 时禁止以截获 3xx Location）
+ * @returns {Promise<{data: any, status: number, headers: Record<string, string>}>}
+ */
+async function httpRequestMethod(method, url, body, options = {}) {
+  const currentSource = sourceLogContext.getStore() || "system";
+  log("info", `[${currentSource}] [请求模拟] HTTP ${method}: ${url}`);
+
+  const { headers = {}, allow_redirects = true } = options;
+  const validStatusCodes = Array.isArray(options.validStatusCodes) ? options.validStatusCodes : [];
+
+  const fetchOptions = {
+    method,
+    headers: { ...headers },
+  };
+
+  // 与 GET/POST 行为一致：默认跟随重定向，allow_redirects 为 false 时禁止（用于截获 3xx Location）
+  fetchOptions.redirect = allow_redirects ? 'follow' : 'manual';
+
+  // 只有在 body 存在时才设置（DELETE 通常无 body）
+  if (body !== undefined && body !== null) {
+    fetchOptions.body = body;
+  }
+
+  if (options.body !== undefined && options.body !== null) {
+    fetchOptions.body = options.body;
+  }
+
+  // 如果传递了 signal，直接透传给 fetch
+  if (options.signal) {
+    fetchOptions.signal = options.signal;
+  }
+
+  try {
+    // 兼容iOS巨魔或旧版Node：使用node-fetch替代内置fetch
+    let response;
+    if (shouldUseNodeFetch()) {
+      const fetch = (await import('node-fetch')).default;
+      response = await fetch(url, { ...fetchOptions, agent: nodeFetchAgent });
+    } else {
+      response = await fetch(url, fetchOptions);
+    }
+    const textData = await response.text();
+
+    if (!response.ok && !validStatusCodes.includes(response.status)) {
+      log("error", `[${currentSource}] [请求模拟] response data: `, textData);
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    let parsedData;
+    try {
+      parsedData = JSON.parse(textData);
+    } catch (e) {
+      parsedData = textData;
+    }
+
+    return {
+      data: parsedData,
+      status: response.status,
+      headers: Object.fromEntries(response.headers.entries())
+    };
+  } catch (error) {
+    const currentSource = sourceLogContext.getStore() || "system";
+    log("error", `[${currentSource}] [请求模拟] 请求失败:`, error.message);
+    log("error", '详细诊断:');
+    log("error", '- URL:', url);
+    log("error", '- 错误类型:', error.name);
+    log("error", '- 消息:', error.message);
+    if (error.cause) {
+      log("error", '- 码:', error.cause?.code);
+      log("error", '- 原因:', error.cause?.message);
+    }
+    throw error;
+  }
+}
+
+export async function httpPatch(url, body, options = {}) {
+  return httpRequestMethod('PATCH', url, body, options);
+}
+
+export async function httpPut(url, body, options = {}) {
+  return httpRequestMethod('PUT', url, body, options);
+}
+
+export async function httpDelete(url, options = {}) {
+  return httpRequestMethod('DELETE', url, undefined, options); // DELETE 不传 body
+}
+
+export async function getPageTitle(url) {
+  try {
+    // 使用 httpGet 获取网页内容
+    const response = await httpGet(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15'
+      }
+    });
+
+    // response.data 包含 HTML 内容
+    const html = response.data;
+
+    // 方法1: 使用正则表达式提取 <title> 标签
+    const titleMatch = html.match(/<title[^>]*>(.*?)<\/title>/i);
+    if (titleMatch && titleMatch[1]) {
+      // 解码 HTML 实体（如 &nbsp; &amp; 等）
+      const title = titleMatch[1]
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .trim();
+
+      return title;
+    }
+
+    // 如果没找到 title 标签
+    return url;
+
+  } catch (error) {
+    const currentSource = sourceLogContext.getStore() || "system";
+    log("error", `[${currentSource}] 获取标题失败: ${error.message}`);
+    return url;
+  }
+}
+
+export function jsonResponse(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*"
+    }
+  });
+}
+
+export function xmlResponse(data, status = 200) {
+  // 确保 data 是字符串且以 <?xml 开头
+  if (typeof data !== 'string' || !data.trim().startsWith('<?xml')) {
+    throw new Error('Expected data to be an XML string starting with <?xml');
+  }
+
+  // 直接返回 XML 字符串作为 Response 的 body
+  return new Response(data, {
+    status,
+    headers: {
+      "Content-Type": "application/xml",
+      "Access-Control-Allow-Origin": "*"
+    }
+  });
+}
+
+export function binResponse(data, filename = "data.bin", status = 200) {
+  return new Response(data, {
+    status,
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Access-Control-Allow-Origin": "*"
+    }
+  });
+}
+
+export function buildQueryString(params, encode = true) {
+  const encodeFn = encode ? encodeURIComponent : (v) => v;
+  let queryString = '';
+
+  // 遍历 params 对象的每个属性
+  for (let key in params) {
+    if (params.hasOwnProperty(key)) {
+      // 如果 queryString 已经有参数了，则添加 '&'
+      if (queryString.length > 0) {
+        queryString += '&';
+      }
+
+      // 将 key 和 value 使用 encodeURIComponent 编码，并拼接成查询字符串
+      queryString += encodeFn(key) + '=' + encodeFn(params[key]);
+    }
+  }
+
+  return queryString;
+}
+
+export function sortedQueryString(params = {}) {
+  const normalized = {};
+  for (const [k, v] of Object.entries(params)) {
+    if (typeof v === "boolean") normalized[k] = v ? "true" : "false";
+    else if (v == null) normalized[k] = "";
+    else normalized[k] = String(v);
+  }
+
+  // 获取对象的所有键并排序
+  const keys = [];
+  for (const key in normalized) {
+    if (Object.prototype.hasOwnProperty.call(normalized, key)) {
+      keys.push(key);
+    }
+  }
+  keys.sort();
+
+  // 构建键值对数组
+  const pairs = [];
+  for (const key of keys) {
+    // 对键和值进行 URL 编码
+    const encodedKey = encodeURIComponent(key);
+    const encodedValue = encodeURIComponent(normalized[key]);
+    pairs.push(`${encodedKey}=${encodedValue}`);
+  }
+
+  // 用 & 连接所有键值对
+  return pairs.join('&');
+}
+
+export function updateQueryString(url, params) {
+  // 解析 URL
+  let baseUrl = url;
+  let queryString = '';
+  const hashIndex = url.indexOf('#');
+  let hash = '';
+  if (hashIndex !== -1) {
+    baseUrl = url.substring(0, hashIndex);
+    hash = url.substring(hashIndex);
+  }
+  const queryIndex = baseUrl.indexOf('?');
+  if (queryIndex !== -1) {
+    queryString = baseUrl.substring(queryIndex + 1);
+    baseUrl = baseUrl.substring(0, queryIndex);
+  }
+
+  // 解析现有查询字符串为对象
+  const queryParams = {};
+  if (queryString) {
+    const pairs = queryString.split('&');
+    for (const pair of pairs) {
+      if (pair) {
+        const [key, value = ''] = pair.split('=').map(decodeURIComponent);
+        queryParams[key] = value;
+      }
+    }
+  }
+
+  // 更新参数
+  for (const key in params) {
+    if (Object.prototype.hasOwnProperty.call(params, key)) {
+      queryParams[key] = params[key];
+    }
+  }
+
+  // 构建新的查询字符串
+  const newQuery = [];
+  for (const key in queryParams) {
+    if (Object.prototype.hasOwnProperty.call(queryParams, key)) {
+      newQuery.push(
+        `${encodeURIComponent(key)}=${encodeURIComponent(queryParams[key])}`
+      );
+    }
+  }
+
+  // 拼接最终 URL
+  return baseUrl + (newQuery.length ? '?' + newQuery.join('&') : '') + hash;
+}
+
+export function getPathname(url) {
+  // 查找路径的起始位置（跳过协议和主机部分）
+  let pathnameStart = url.indexOf('//') + 2;
+  if (pathnameStart === 1) pathnameStart = 0; // 如果没有协议部分
+  const pathStart = url.indexOf('/', pathnameStart);
+  if (pathStart === -1) return '/'; // 如果没有路径，返回默认根路径
+  const queryStart = url.indexOf('?', pathStart);
+  const hashStart = url.indexOf('#', pathStart);
+  // 确定路径的结束位置（查询字符串或片段之前）
+  let pathEnd = queryStart !== -1 ? queryStart : (hashStart !== -1 ? hashStart : url.length);
+  const pathname = url.substring(pathStart, pathEnd);
+  return pathname || '/';
+}
+
+/**
+ * 流式 GET 请求,支持前置数据缓冲嗅探与熔断
+ * @param {string} url 请求地址
+ * @param {object} options 配置项
+ * @param {number} [options.sniffLimit=32768] 最大嗅探长度(字节)，默认32KB
+ * @param {object} [options.headers] 请求头
+ * @param {function(string): boolean} checkCallback 数据检查回调,返回 false 则中断下载
+ * @returns {Promise<any>} 返回 JSON 数据或 null (被中断时)
+ */
+export async function httpGetWithStreamCheck(url, options = {}, checkCallback) {
+  const { headers = {}, sniffLimit } = options;
+  // 默认限制为 32KB
+  const SNIFF_LIMIT = parseInt(sniffLimit || '32768', 10) || 32768;
+  const timeout = parseInt(options.timeout || globals.vodRequestTimeout || '5000', 10) || 5000;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  // 链接外部中断信号并获取清理函数
+  const cleanupSignal = linkSignal(options.signal, controller);
+
+  try {
+    const currentSource = sourceLogContext.getStore() || "system";
+    log("info", `[${currentSource}] [流式请求] HTTP GET: ${url}`);
+
+    // 兼容iOS巨魔或旧版Node：使用node-fetch替代内置fetch
+    let response;
+    if (shouldUseNodeFetch()) {
+      const fetch = (await import('node-fetch')).default;
+      response = await fetch(url, {
+        method: 'GET',
+        headers: headers,
+        signal: controller.signal,
+        agent: nodeFetchAgent
+      });
+    } else {
+      response = await fetch(url, {
+        method: 'GET',
+        headers: headers,
+        signal: controller.signal
+      });
+    }
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const reader = response.body.getReader ? response.body.getReader() : null;
+
+    // 环境兼容性回退
+    if (!reader) {
+      const currentSource = sourceLogContext.getStore() || "system";
+      log("warn", `[${currentSource}] [流式请求] 环境不支持流式读取,回退到普通请求`);
+      const text = await response.text();
+      clearTimeout(timeoutId);
+      if (checkCallback && !checkCallback(text.slice(0, SNIFF_LIMIT))) {
+        log("info", `[${currentSource}] [流式请求] 检测到无效数据(回退模式),丢弃结果`);
+        return null;
+      }
+      try { return JSON.parse(text); } catch { return text; }
+    }
+
+    let receivedLength = 0;
+    let chunks = [];
+    let isAborted = false;
+
+    // 缓冲状态
+    let checkBuffer = "";
+    let stopChecking = false; // 标记是否停止检查
+
+    // 流式读取循环
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (done) break;
+
+      // 先累加长度
+      receivedLength += value.length;
+
+      // 1. 数据嗅探逻辑 (仅在前 SNIFF_LIMIT 范围内执行)
+      if (!stopChecking && checkCallback) {
+        // 累积文本
+        const chunkText = new TextDecoder("utf-8").decode(value, { stream: true });
+        checkBuffer += chunkText;
+
+        // 执行回调检查
+        if (!checkCallback(checkBuffer)) {
+          const currentSource = sourceLogContext.getStore() || "system";
+          log("info", `[${currentSource}] [流式请求] 嗅探到无效特征(已读${receivedLength}字节),立即熔断`);
+          controller.abort();
+          isAborted = true;
+          break;
+        }
+
+        // 如果缓冲区超过限制
+        if (receivedLength > SNIFF_LIMIT) {
+          stopChecking = true;
+          checkBuffer = null; // 释放缓冲区内存
+        }
+      }
+
+      chunks.push(value);
+    }
+
+    clearTimeout(timeoutId);
+
+    if (isAborted) return null; // 被中断,返回空
+
+    // 2. 拼接完整数据
+    let chunksAll = new Uint8Array(receivedLength);
+    let position = 0;
+    for (let chunk of chunks) {
+      chunksAll.set(chunk, position);
+      position += chunk.length;
+    }
+
+    const resultText = new TextDecoder("utf-8").decode(chunksAll);
+    try {
+      return JSON.parse(resultText);
+    } catch (e) {
+      return resultText;
+    }
+
+  } catch (error) {
+    const currentSource = sourceLogContext.getStore() || "system";
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      return null;
+    }
+    log("error", `[${currentSource}] [流式请求] 失败: ${error.message}`);
+    return null;
+  } finally {
+    // 流式请求执行完毕或被熔断拦截，释放监听器内存引用
+    cleanupSignal();
+  }
+}

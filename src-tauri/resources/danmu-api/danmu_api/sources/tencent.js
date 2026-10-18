@@ -1,0 +1,984 @@
+import BaseSource from './base.js';
+import { globals } from '../configs/globals.js';
+import { log } from "../utils/log-util.js";
+import { httpGet, httpPost } from "../utils/http-util.js";
+import { convertToAsciiSum } from "../utils/codec-util.js";
+import { generateValidStartDate } from "../utils/time-util.js";
+import { addAnime, removeEarliestAnime } from "../utils/cache-util.js";
+import { printFirst200Chars, titleMatches, getExplicitSeasonNumber, extractSeasonNumberFromAnimeTitle } from "../utils/common-util.js";
+import { SegmentListResponse } from '../models/dandan-model.js';
+
+// =====================
+// 获取腾讯视频弹幕
+// =====================
+export default class TencentSource extends BaseSource {
+  extractAliasesFromHintWords(hintWords) {
+    if (!hintWords || typeof hintWords !== 'string') return [];
+
+    const aliases = [];
+    const addAlias = (value) => {
+      const alias = String(value || '').replace(/<\/?em>/g, '').trim();
+      if (alias && !aliases.includes(alias)) aliases.push(alias);
+    };
+
+    const aliasMatch = hintWords.match(/(?:又名|别名)\s*[：:]\s*(.+)$/);
+    if (!aliasMatch) return aliases;
+
+    aliasMatch[1]
+      .split(/[、,，/|]+/)
+      .forEach(addAlias);
+
+    return aliases;
+  }
+
+  titleOrAliasMatches(anime, queryTitle, querySeason = null) {
+    if (titleMatches(anime.title, queryTitle, querySeason)) return true;
+    return Array.isArray(anime.aliases) && anime.aliases.some(alias => titleMatches(alias, queryTitle, querySeason));
+  }
+
+  /**
+   * 过滤腾讯视频搜索项
+   * @param {Object} item - 搜索项
+   * @param {string} keyword - 搜索关键词
+   * @returns {Object|null} 过滤后的结果
+   */
+  filterTencentSearchItem(item, keyword) {
+    if (!item.videoInfo || !item.doc) {
+      return null;
+    }
+
+    const videoInfo = item.videoInfo;
+    const mediaId = item.doc.id; // cid
+
+    // 过滤无年份信息
+    if (!videoInfo.year || videoInfo.year === 0) {
+      return null;
+    }
+
+    // 过滤"全网搜"结果
+    if (videoInfo.subTitle === "全网搜" || videoInfo.playFlag === 2) {
+      return null;
+    }
+
+    // 清理标题(移除HTML标签)
+    let title = videoInfo.title.replace(/<em>/g, '').replace(/<\/em>/g, '');
+
+    if (!title || !mediaId) {
+      return null;
+    }
+
+    // 内容类型过滤
+    const contentType = videoInfo.typeName;
+    if (contentType.includes("短剧")) {
+      return null;
+    }
+
+    // 类型白名单(与360/vod保持一致,使用中文类型)
+    const allowedTypes = ["电视剧", "动漫", "电影", "纪录片", "综艺", "综艺节目"];
+    if (!allowedTypes.includes(contentType)) {
+      return null;
+    }
+
+    let mediaType = contentType;
+
+    // 提取 3D 与 2D 属性标签并追加至媒体类型
+    let is3D = false;
+    let is2D = false;
+    if (videoInfo.coverDoc) {
+        if (videoInfo.coverDoc.richTags && Array.isArray(videoInfo.coverDoc.richTags)) {
+            videoInfo.coverDoc.richTags.forEach(tag => {
+                if (tag.text && tag.text.includes('3D')) is3D = true;
+                if (tag.text && tag.text.includes('2D')) is2D = true;
+            });
+        }
+        if (videoInfo.coverDoc.tags && Array.isArray(videoInfo.coverDoc.tags)) {
+            videoInfo.coverDoc.tags.forEach(tag => {
+                if (tag && tag.includes('3D')) is3D = true;
+                if (tag && tag.includes('2D')) is2D = true;
+            });
+        }
+    }
+    
+    if (is3D) {
+        mediaType = "3D" + mediaType;
+    } else if (is2D) {
+        mediaType = "2D" + mediaType;
+    }
+
+    // 过滤非腾讯视频内容
+    const allSites = (videoInfo.playSites || []).concat(videoInfo.episodeSites || []);
+    if (allSites.length > 0 && !allSites.some(site => site.enName === 'qq')) {
+      return null;
+    }
+
+    // 电影非正片内容过滤
+    if (contentType === "电影") {
+      const nonFormalKeywords = ["花絮", "彩蛋", "幕后", "独家", "解说", "特辑", "探班", "拍摄", "制作", "导演", "记录", "回顾", "盘点", "混剪", "解析", "抢先"];
+      if (nonFormalKeywords.some(kw => title.includes(kw))) {
+        return null;
+      }
+    }
+
+    const episodeCount = contentType === '电影' ? 1 : (videoInfo.subjectDoc ? videoInfo.subjectDoc.videoNum : 0);
+    const aliases = this.extractAliasesFromHintWords(videoInfo.hintWords).filter(alias => alias !== title);
+
+    return {
+      provider: "tencent",
+      mediaId: mediaId,
+      title: title,
+      aliases: aliases,
+      type: mediaType,  
+      year: videoInfo.year,
+      imageUrl: videoInfo.imgUrl,
+      episodeCount: episodeCount
+    };
+  }
+
+  async search(keyword) {
+    try {
+      log("info", `[tencent] 开始搜索: ${keyword}`);
+
+      const searchUrl = "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch?vplatform=2";
+      const payload = {
+        version: "25071701",
+        clientType: 1,
+        filterValue: "",
+        uuid: "0379274D-05A0-4EB6-A89C-878C9A460426",
+        query: keyword,
+        retry: 0,
+        pagenum: 0,
+        isPrefetch: true,
+        pagesize: 30,
+        queryFrom: 0,
+        searchDatakey: "",
+        transInfo: "",
+        isneedQc: true,
+        preQid: "",
+        adClientInfo: "",
+        extraInfo: {
+          multi_terminal_pc: "1",
+          themeType: "1",
+          sugRelatedIds: "{}",
+          appVersion: ""
+        }
+      };
+
+      const headers = {
+        'Content-Type': 'application/json',
+        'Origin': 'https://v.qq.com',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Referer': `https://v.qq.com/x/search/?q=${encodeURIComponent(keyword)}&stag=&smartbox_ab=`,
+        'H38': '220496a1fb1498325e9be6d938',
+        'H42': '335a00a80ab9bbbef56793d8e7a97e87b9341dee34ebd83d61afc0cdb303214caaece3',
+        'Uk': '8e91af25d3af99d0f0640327e7307666',
+        'Cookie': 'tvfe_boss_uuid=ee8f05103d59226f; pgv_pvid=3155633511; video_platform=2; ptag=v_qq_com; main_login=qq'
+      };
+
+      const response = await httpPost(searchUrl, JSON.stringify(payload), { headers });
+
+      if (!response || !response.data) {
+        log("info", "[tencent] 搜索响应为空");
+        return [];
+      }
+
+      const data = typeof response.data === "string" ? JSON.parse(response.data) : response.data;
+
+      if (data.ret !== 0) {
+        log("error", `[tencent] API返回错误: ${data.msg} (ret: ${data.ret})`);
+        return [];
+      }
+
+      let itemList = [];
+
+      // 优先从 MainNeed box 获取结果
+      if (data.data && data.data.areaBoxList) {
+        for (const box of data.data.areaBoxList) {
+          if (box.boxId === "MainNeed" && box.itemList) {
+            log("info", `[tencent] 从 MainNeed box 找到 ${box.itemList.length} 个项目`);
+            itemList = box.itemList;
+            break;
+          }
+        }
+      }
+
+      // 回退到 normalList
+      if (itemList.length === 0 && data.data && data.data.normalList && data.data.normalList.itemList) {
+        log("info", "[tencent] MainNeed box 未找到，使用 normalList");
+        itemList = data.data.normalList.itemList;
+      }
+
+      // 追加「相关影视」box 中 title 包含 keyword 的 itemList
+      if (data.data && data.data.areaBoxList) {
+        for (const box of data.data.areaBoxList) {
+          if (
+            box.itemList &&
+            box.boxTitle &&
+            Array.isArray(box.boxTitle.boxTitles) &&
+            box.boxTitle.boxTitles.includes("相关影视")
+          ) {
+            const relatedItems = box.itemList.filter(item =>
+              item.videoInfo &&
+              item.videoInfo.title &&
+              item.videoInfo.title.includes(keyword)
+            );
+            if (relatedItems.length > 0) {
+              log("info", `[tencent] 追加「相关影视」box 中匹配 "${keyword}" 的 ${relatedItems.length} 个项目`);
+              itemList = [...itemList, ...relatedItems];
+            } else {
+              log("info", `[tencent] 「相关影视」box 中无匹配 "${keyword}" 的项目`);
+            }
+            break;
+          }
+        }
+      }
+
+      if (itemList.length === 0) {
+        log("info", "[tencent] 搜索无结果");
+        return [];
+      }
+
+      // 过滤和处理搜索结果
+      const results = [];
+      for (const item of itemList) {
+        const filtered = this.filterTencentSearchItem(item, keyword);
+        if (filtered) {
+          // 综艺等分季内容将各季收在 videoInfo.episodeSites/playSites 的 chapterInfo 下，
+          // 提取每季的 pageContext 供 getEpisodes 逐季补全分集
+          const chapters = this.extractChapterContexts(item.videoInfo);
+          if (chapters.length > 0) filtered.chapterContexts = chapters;
+          results.push(filtered);
+        }
+      }
+
+      log("info", `[tencent] 搜索找到 ${results.length} 个有效结果`);
+      return results;
+
+    } catch (error) {
+      log("error", "[tencent] 搜索出错:", error.message);
+      return [];
+    }
+  }
+
+  // 从 videoInfo 的 episodeSites/playSites 中提取各季章节标题，用于综艺等多季内容逐季补全分集
+  extractChapterContexts(videoInfo) {
+    const chapters = [];
+    if (!videoInfo) return chapters;
+    const sites = [...(videoInfo.episodeSites || []), ...(videoInfo.playSites || [])];
+    for (const site of sites) {
+      if (site && site.chapterInfo && Array.isArray(site.chapterInfo.chapters)) {
+        for (const ch of site.chapterInfo.chapters) {
+          if (ch && ch.title) {
+            chapters.push({ title: ch.title });
+          }
+        }
+      }
+    }
+    return chapters;
+  }
+
+  // 子分类式章节仅取“正片”子分类：该值直接作为请求参数 chapter_name 发往分页接口，
+  // 与 tabs 分页路径以 chapter_name=正片 标识正片的方式一致；其余子分类（花絮/直播回放/彩蛋等）不请求。
+  isZhengpianChapter(ch) {
+    return !!ch && ch.title === "正片";
+  }
+
+  // 将季标题(如 2021冬)转为可排序的时间键，用于多季按时间先后排列；
+  // 取标题中首个四位年份为高位，并以 春=1/夏=2/秋=3/冬=4 的播出季序为低位。
+  seasonOrderKey(title) {
+    if (!title) return 0;
+    const yearMatch = title.match(/(?:19|20)\d{2}/);
+    const year = yearMatch ? parseInt(yearMatch[0], 10) : 0;
+    const seasonWeight = { "春": 1, "夏": 2, "秋": 3, "冬": 4 };
+    let season = 0;
+    for (const name of Object.keys(seasonWeight)) {
+      if (title.includes(name)) { season = seasonWeight[name]; break; }
+    }
+    return year * 10 + season;
+  }
+
+  // 按分页 tabs 下发的 page_context 结构构造章节请求参数；
+  // chapterInfo 自带的 pageContext 缺少 cid/page_num/req_type 等必填项，服务端会忽略并回落默认视图
+  buildChapterPageContext(cid, chapterName, pageNum) {
+    return `lid=&cid=${cid}&page_num=${pageNum}&page_size=30&id_type=1&req_type=6&req_from=web_vsite&req_from_second_type=&detail_page_type=1&year=&tab_type=4&chapter_name=${chapterName}&is_nocopyright=false`;
+  }
+
+  // 从分集接口的 item_params 中提取标题相关字段，供 buildEpisodeTitle 统一组装。
+  // 腾讯各字段含义：
+  //   play_title     —— 展示用标题，连续剧为「兰香如故 第01集」，综艺为「第1期：xxx」
+  //   video_subtitle —— 该集副标题（如「寒山图解生存厄 寒舍三人盼新生」），电影/综艺常为空
+  //   union_title    —— 内部标题，连续剧多为「兰香如故_01」（不含集标题），仅作兜底
+  //   c_title_output / title —— 纯集号（如 "01" / "1"），或在综艺中与 union_title 相同
+  extractEpisodeMeta(itemParams) {
+    const p = itemParams || {};
+    return {
+      vid: p.vid,
+      title: p.title,
+      unionTitle: p.union_title || p.title,
+      playTitle: p.play_title || '',
+      videoSubtitle: p.video_subtitle || '',
+      cTitleOutput: p.c_title_output || '',
+    };
+  }
+
+  // 「兰香如故_01」->「兰香如故 第1集」；兼容纯数字集号（如 "01"）
+  normalizeUnionTitle(unionTitle) {
+    if (unionTitle === undefined || unionTitle === null) return '';
+    const value = String(unionTitle).trim();
+    if (!value) return '';
+    const m = value.match(/^(.*?)_0*(\d+)$/);
+    if (m && m[1]) return `${m[1]} 第${m[2]}集`;
+    return this.formatEpisodeNumber(value);
+  }
+
+  // 纯数字集号统一补成「第N集」，非纯数字标题原样返回
+  formatEpisodeNumber(value) {
+    if (value === undefined || value === null) return '';
+    const text = String(value).trim();
+    if (!/^\d+$/.test(text)) return text;
+    return `第${Number.parseInt(text, 10)}集`;
+  }
+
+  /**
+   * 组装分集显示标题，与 iqiyi/youku 源保持一致的「集数 + 标题」形态。
+   *
+   * 原先仅取 union_title，连续剧只能显示「兰香如故_01」——只有集号、没有集标题，
+   * 与 iqiyi 的「南部档案第1集 你俩掉进邪神洞」差距明显。改为：
+   *   主标题 play_title（自带剧名与集数）> union_title 规范化 > c_title_output > title
+   *   再追加 video_subtitle 作为集标题（已包含时跳过）
+   *
+   * @param {object} ep allEpisodes 中的分集对象
+   * @returns {string} 组装后的标题，全部字段缺失时返回空串
+   */
+  buildEpisodeTitle(ep) {
+    if (!ep) return '';
+    const playTitle = typeof ep.playTitle === 'string' ? ep.playTitle.trim() : '';
+    const subtitle = typeof ep.videoSubtitle === 'string' ? ep.videoSubtitle.trim() : '';
+    const cTitleOutput = typeof ep.cTitleOutput === 'string' ? ep.cTitleOutput.trim() : '';
+    const title = typeof ep.title === 'string' ? ep.title.trim() : '';
+
+    let base = playTitle
+      || this.normalizeUnionTitle(ep.unionTitle)
+      || this.formatEpisodeNumber(cTitleOutput)
+      || this.formatEpisodeNumber(title);
+    if (!base) return '';
+
+    // 集号去前导零：「第001话」->「第1话」，与 iqiyi/youku 展示风格一致
+    base = base.replace(/第0+(\d+)([集话回期])/g, '第$1$2');
+
+    // 追加集副标题，避免与主标题重复
+    if (subtitle && !base.includes(subtitle)) {
+      base = `${base} ${subtitle}`;
+    }
+    return base;
+  }
+
+  async getEpisodes(id, chapterContexts = []) {
+    try {
+      log("info", `[tencent] 获取分集列表: cid=${id}`);
+
+      const episodesUrl = "https://pbaccess.video.qq.com/trpc.universal_backend_service.page_server_rpc.PageServer/GetPageData?video_appid=3000010&vversion_name=8.2.96&vversion_platform=2";
+
+      // 先获取分页信息
+      const payload = {
+        has_cache: 1,
+        page_params: {
+          req_from: "web_vsite",
+          page_id: "vsite_episode_list",
+          page_type: "detail_operation",
+          id_type: "1",
+          page_size: "",
+          cid: id,
+          vid: "",
+          lid: "",
+          page_num: "",
+          page_context: `cid=${id}&detail_page_type=1&req_from=web_vsite&req_from_second_type=&req_type=0`,
+          detail_page_type: "1"
+        }
+      };
+
+      const headers = {
+        'Content-Type': 'application/json',
+        'Origin': 'https://v.qq.com',
+        'Referer': `https://v.qq.com/x/cover/${id}.html`,
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/537.36 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+        'Accept': 'application/json',
+        'Accept-Language': 'zh-CN,zh;q=0.9'
+      };
+
+      const response = await httpPost(episodesUrl, JSON.stringify(payload), { headers });
+
+      if (!response || !response.data) {
+        log("info", "[tencent] 分集响应为空");
+        return [];
+      }
+
+      const data = typeof response.data === "string" ? JSON.parse(response.data) : response.data;
+
+      if (data.ret !== 0) {
+        log("error", `[tencent] 分集API返回错误: ret=${data.ret}`);
+        return [];
+      }
+
+      // 解析分页tabs
+      let tabs = [];
+      if (data.data && data.data.module_list_datas) {
+        for (const moduleListData of data.data.module_list_datas) {
+          for (const moduleData of moduleListData.module_datas) {
+            if (moduleData.module_params && moduleData.module_params.tabs) {
+              try {
+                tabs = JSON.parse(moduleData.module_params.tabs);
+                break;
+              } catch (e) {
+                log("error", "[tencent] 解析tabs失败:", e.message);
+              }
+            }
+          }
+          if (tabs.length > 0) break;
+        }
+      }
+
+      // 获取所有分页的分集
+      const allEpisodes = [];
+      const seenVids = new Set();
+
+      if (tabs.length === 0) {
+        log("info", "[tencent] 未找到分页信息,尝试从初始响应中提取分集");
+
+        // 尝试直接从第一次响应中提取分集(单页情况)
+        if (data.data && data.data.module_list_datas) {
+          for (const moduleListData of data.data.module_list_datas) {
+            for (const moduleData of moduleListData.module_datas) {
+              if (moduleData.item_data_lists && moduleData.item_data_lists.item_datas) {
+                for (const item of moduleData.item_data_lists.item_datas) {
+                  if (item.item_params && item.item_params.vid && item.item_params.is_trailer !== "1") {
+                    if (!seenVids.has(item.item_params.vid)) {
+                      seenVids.add(item.item_params.vid);
+                      allEpisodes.push(this.extractEpisodeMeta(item.item_params));
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // 综艺等分季内容：各季收在 chapterInfo 下，逐季分页请求并合并
+        if (chapterContexts.length > 0) {
+          // 章节本身为子分类(正片/花絮)时仅取正片子分类；否则按季遍历
+          const zhengpianChapters = chapterContexts.filter((ch) => this.isZhengpianChapter(ch));
+          const targetChapters = zhengpianChapters.length > 0 ? zhengpianChapters : chapterContexts;
+          // 按季遍历时按时间先后排序；仅取正片子分类时保持原顺序
+          const orderedChapters = zhengpianChapters.length > 0
+            ? targetChapters
+            : targetChapters.slice().sort((a, b) => this.seasonOrderKey(a.title) - this.seasonOrderKey(b.title));
+          for (const ch of orderedChapters) {
+            try {
+              const seasonEpisodes = [];
+              let pageNum = 0;
+              let hasNext = true;
+              while (hasNext) {
+                const chapterPayload = {
+                  has_cache: 1,
+                  page_params: {
+                    req_from: "web_vsite",
+                    page_id: "vsite_episode_list",
+                    page_type: "detail_operation",
+                    id_type: "1",
+                    page_size: "",
+                    cid: id,
+                    vid: "",
+                    lid: "",
+                    page_num: "",
+                    page_context: this.buildChapterPageContext(id, ch.title, pageNum),
+                    detail_page_type: "1"
+                  }
+                };
+                const chapterResponse = await httpPost(episodesUrl, JSON.stringify(chapterPayload), { headers });
+                if (!chapterResponse || !chapterResponse.data) break;
+                const chapterData = typeof chapterResponse.data === "string" ? JSON.parse(chapterResponse.data) : chapterResponse.data;
+                if (chapterData.ret !== 0 || !chapterData.data) break;
+                hasNext = false;
+                let pageItemCount = 0;
+                if (chapterData.data.module_list_datas) {
+                  for (const moduleListData of chapterData.data.module_list_datas) {
+                    for (const moduleData of moduleListData.module_datas) {
+                      const hasNextFlag = moduleData.module_params && moduleData.module_params.has_next;
+                      if (hasNextFlag === true || hasNextFlag === "true") hasNext = true;
+                      if (moduleData.item_data_lists && moduleData.item_data_lists.item_datas) {
+                        for (const item of moduleData.item_data_lists.item_datas) {
+                          if (item.item_params && item.item_params.vid && item.item_params.is_trailer !== "1") {
+                            pageItemCount++;
+                            seasonEpisodes.push({
+                              ...this.extractEpisodeMeta(item.item_params),
+                              order: parseInt(item.item_params.episode_on_chapter, 10) || 0
+                            });
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                if (pageItemCount === 0) break;
+                pageNum++;
+              }
+              // 单季内按集序号排序，再合并(跨季按 vid 去重)
+              seasonEpisodes.sort((a, b) => a.order - b.order);
+              for (const ep of seasonEpisodes) {
+                if (seenVids.has(ep.vid)) continue;
+                seenVids.add(ep.vid);
+                // order 仅用于季内排序，不进入分集数据
+                const { order, ...epMeta } = ep;
+                allEpisodes.push(epMeta);
+              }
+            } catch (error) {
+              log("error", `[tencent] 分季分集请求失败: ${error.message}`);
+            }
+          }
+        }
+
+        if (allEpisodes.length === 0) {
+          log("info", "[tencent] 初始响应中也未找到分集信息");
+          return [];
+        }
+
+        log("info", `[tencent] 共获取 ${allEpisodes.length} 集(含多季合并)`);
+      } else {
+        log("info", `[tencent] 找到 ${tabs.length} 个分页`);
+
+        // 获取所有分页的分集
+        for (const tab of tabs) {
+          if (!tab.page_context) continue;
+
+          const tabPayload = {
+            has_cache: 1,
+            page_params: {
+              req_from: "web_vsite",
+              page_id: "vsite_episode_list",
+              page_type: "detail_operation",
+              id_type: "1",
+              page_size: "",
+              cid: id,
+              vid: "",
+              lid: "",
+              page_num: "",
+              page_context: tab.page_context,
+              detail_page_type: "1"
+            }
+          };
+
+          const tabResponse = await httpPost(episodesUrl, JSON.stringify(tabPayload), { headers });
+
+          if (!tabResponse || !tabResponse.data) continue;
+
+          const tabData = typeof tabResponse.data === "string" ? JSON.parse(tabResponse.data) : tabResponse.data;
+
+          if (tabData.ret !== 0 || !tabData.data) continue;
+
+          // 提取分集
+          if (tabData.data.module_list_datas) {
+            for (const moduleListData of tabData.data.module_list_datas) {
+              for (const moduleData of moduleListData.module_datas) {
+                if (moduleData.item_data_lists && moduleData.item_data_lists.item_datas) {
+                  for (const item of moduleData.item_data_lists.item_datas) {
+                    if (item.item_params && item.item_params.vid && item.item_params.is_trailer !== "1") {
+                      allEpisodes.push(this.extractEpisodeMeta(item.item_params));
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      log("info", `[tencent] 共获取 ${allEpisodes.length} 集`);
+      return allEpisodes;
+
+    } catch (error) {
+      log("error", "[tencent] 获取分集出错:", error.message);
+      return [];
+    }
+  }
+
+  /**
+   * 处理搜索结果
+   * @param {Array} sourceAnimes 原始数据
+   * @param {string} queryTitle 关键词
+   * @param {Array} curAnimes 结果池
+   * @param {Map|null} detailStore 详情缓存
+   * @param {number|null} querySeason 目标季度
+   */
+  async handleAnimes(sourceAnimes, queryTitle, curAnimes, detailStore = null, querySeason = null) {
+    const tmpAnimes = [];
+
+    // 添加错误处理，确保sourceAnimes是数组
+    if (!sourceAnimes || !Array.isArray(sourceAnimes)) {
+      log("error", "[tencent] sourceAnimes is not a valid array");
+      return [];
+    }
+
+    // 基础标题、别名与季度匹配过滤
+    let filteredAnimes = sourceAnimes.filter(s => this.titleOrAliasMatches(s, queryTitle, querySeason));
+
+    // 提取搜索词中的明确季度信息或使用传入的季度参数
+    const resolvedQuerySeason = querySeason !== null ? querySeason : getExplicitSeasonNumber(queryTitle);
+
+    // 初始列表预过滤机制：若用户指定了季度，优先检查结果中是否已包含匹配项
+    if (resolvedQuerySeason !== null) {
+      const seasonFiltered = filteredAnimes.filter(anime => {
+        const s = extractSeasonNumberFromAnimeTitle(anime.title).season;
+        return s === resolvedQuerySeason || (resolvedQuerySeason === 1 && s === null);
+      });
+
+      // 如果已命中目标，减少详情请求量
+      if (seasonFiltered.length > 0) {
+        filteredAnimes = seasonFiltered;
+        log("info", `[tencent] 结果已命中目标季(第${resolvedQuerySeason}季)，跳过非目标季相关请求`);
+      }
+    }
+
+    // 使用 map 和 async 时需要返回 Promise 数组，并等待所有 Promise 完成
+    const processTencentAnimes = await Promise.all(filteredAnimes.map(async (anime) => {
+        try {
+          const eps = await this.getEpisodes(anime.mediaId, anime.chapterContexts);
+          let links = [];
+
+          for (let i = 0; i < eps.length; i++) {
+            const ep = eps[i];
+            // 组装「集数 + 集标题」，与 iqiyi/youku 源展示形态一致
+            const epTitle = this.buildEpisodeTitle(ep) || `第${i + 1}集`;
+            // 构建完整URL: https://v.qq.com/x/cover/{cid}/{vid}.html
+            const fullUrl = `https://v.qq.com/x/cover/${anime.mediaId}/${ep.vid}.html`;
+            links.push({
+              "name": (i + 1).toString(),
+              "url": fullUrl,
+              "title": `【qq】 ${epTitle}`
+            });
+          }
+
+          if (links.length > 0) {
+            // 从第一集的各个标题字段中提取版本信息（如 [特别版]），任一字段带标记即可命中
+            const firstEpTitle = [eps[0].playTitle, eps[0].unionTitle, eps[0].title].filter(Boolean).join(' ') || `第1集`;
+            let displayTitle = anime.title;
+
+            // 检查第一集标题是否包含 anime.title 且匹配 xxxx[xxx版] 格式
+            const versionMatch = firstEpTitle.match(/\[.+版\]/);
+            if (versionMatch && firstEpTitle.includes(anime.title)) {
+              displayTitle = `${anime.title}${versionMatch[0]}`;
+            }
+
+            // 将字符串mediaId转换为数字ID (使用哈希函数)
+            const numericAnimeId = convertToAsciiSum(anime.mediaId);
+            let transformedAnime = {
+              animeId: numericAnimeId,
+              bangumiId: anime.mediaId,
+              animeTitle: `${displayTitle}(${anime.year})【${anime.type}】from tencent`,
+              type: anime.type,
+              typeDescription: anime.type,
+              imageUrl: anime.imageUrl,
+              startDate: generateValidStartDate(anime.year),
+              episodeCount: links.length,
+              rating: 0,
+              isFavorited: true,
+              source: "tencent",
+              aliases: anime.aliases || [],
+            };
+
+            tmpAnimes.push(transformedAnime);
+
+            addAnime({...transformedAnime, links: links}, detailStore);
+
+            if (globals.animes.length > globals.MAX_ANIMES) removeEarliestAnime();
+          }
+        } catch (error) {
+          log("error", `[tencent] Error processing anime: ${error.message}`);
+        }
+      })
+    );
+
+    this.sortAndPushAnimesByYear(tmpAnimes, curAnimes);
+
+    return processTencentAnimes;
+  }
+
+  // 提取vid的公共函数
+  extractVid(id) {
+    let vid = id;
+    // 如果传入的是完整URL，则从中提取vid
+    if (typeof id === 'string' && (id.startsWith('http') || id.includes('vid='))) {
+      // 1. 尝试从查询参数中提取 vid
+      const queryMatch = id.match(/[?&]vid=([^&]+)/);
+      if (queryMatch) {
+        vid = queryMatch[1]; // 获取 vid 参数值
+      } else {
+        // 2. 从路径末尾提取 vid
+        const pathParts = id.split('/');
+        const lastPart = pathParts[pathParts.length - 1];
+        vid = lastPart.split('.')[0]; // 去除文件扩展名
+      }
+    }
+    return vid;
+  }
+
+  async getEpisodeDanmu(id) {
+    log("info", "[tencent] 开始从本地请求腾讯视频弹幕...", id);
+
+    // 解析 URL 获取 vid
+    let vid = this.extractVid(id);
+
+    log("info", `[tencent] vid: ${vid}`);
+
+    // 获取页面标题
+    let res;
+    try {
+      res = await httpGet(id, {
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        },
+      });
+    } catch (error) {
+      log("error", "[tencent] 请求页面失败:", error);
+      return [];
+    }
+
+    // 使用正则表达式提取 <title> 标签内容
+    const titleMatch = res.data.match(/<title[^>]*>(.*?)<\/title>/i);
+    const title = titleMatch ? titleMatch[1].split("_")[0] : "未知标题";
+    log("info", `[tencent] 标题: ${title}`);
+
+    // 普通弹幕流程只需要分片列表，不请求仅用于时长展示的 getinfo
+    const segmentResult = await this.getEpisodeDanmuSegments(id, false);
+    if (!segmentResult || !segmentResult.segmentList || segmentResult.segmentList.length === 0) {
+      return [];
+    }
+
+    const segmentList = segmentResult.segmentList;
+    log("info", `[tencent] 弹幕分段数量: ${segmentList.length}`);
+
+    // 创建请求Promise数组
+    const promises = [];
+    for (const segment of segmentList) {
+      promises.push(
+        httpGet(segment.url, {
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+          },
+          retries: 1,
+        })
+      );
+    }
+
+    // 解析弹幕数据
+    let contents = [];
+    try {
+      const results = await Promise.allSettled(promises);
+      const datas = results
+        .filter(result => result.status === "fulfilled")
+        .map(result => {
+          // 检查result是否包含响应数据
+          if (result.value && result.value.data) {
+            return result.value.data;
+          }
+          return null;
+        })
+        .filter(data => data !== null); // 过滤掉null值
+
+      datas.forEach(data => {
+        data = typeof data === "string" ? JSON.parse(data) : data;
+        contents.push(...data.barrage_list);
+      });
+    } catch (error) {
+      log("error", "[tencent] 解析弹幕数据失败:", error);
+      return [];
+    }
+
+    printFirst200Chars(contents);
+
+    return contents;
+  }
+
+  /**
+   * 获取视频真实时长（秒）
+   *
+   * 腾讯弹幕分片接口(base)只提供按 30s 对齐的分片边界，末段 segment_end 是分片桶的
+   * 上边界（会把片尾广告/占位时长也算进去），并非正片真实时长。
+   * vv.video.qq.com/getinfo 的 vl.vi[0].td 才是权威的视频总时长。
+   *
+   * @param {string} vid - 视频 vid
+   * @returns {Promise<number>} 视频时长（秒），拿不到时返回 0
+   */
+  async getVideoDuration(vid) {
+    if (!vid) return 0;
+
+    try {
+      const infoUrl = `https://vv.video.qq.com/getinfo?vids=${encodeURIComponent(vid)}&platform=101001&charge=0&otype=json&defn=shd&defaultfmt=auto&defnpayver=0&spsrt=1`;
+      const res = await httpGet(infoUrl, {
+        // 时长是可选信息，超时后直接回落到分片边界，避免拖慢弹幕请求
+        timeout: 3000,
+        headers: {
+          "Content-Type": "application/json",
+          'Origin': 'https://v.qq.com',
+          'Referer': `https://v.qq.com/x/cover/${vid}.html`,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+      });
+
+      if (!res || !res.data) return 0;
+
+      // getinfo 返回 JSONP 包裹：QZOutputJson={...}; httpGet 也可能已解析为对象
+      let data = res.data;
+      if (typeof res.data === "string") {
+        const braceIndex = res.data.indexOf("{");
+        if (braceIndex === -1) return 0;
+        data = JSON.parse(res.data.slice(braceIndex).replace(/;?\s*$/, ""));
+      }
+
+      // 真实时长为 vl.vi[0].td（浮点秒）
+      const td = Number(data?.vl?.vi?.[0]?.td);
+      if (!Number.isFinite(td) || td <= 0) {
+        log("info", `[tencent] getinfo 未返回有效 td 字段: ${data?.vl?.vi?.[0]?.td}`);
+        return 0;
+      }
+
+      log("info", `[tencent] 视频真实时长(td): ${td}s`);
+      return td;
+    } catch (error) {
+      log("error", "[tencent] 获取视频真实时长失败:", error.message);
+      return 0;
+    }
+  }
+
+  async getEpisodeDanmuSegments(id, includeDuration = true) {
+    log("info", "[tencent] 获取腾讯视频弹幕分段列表...", id);
+
+    // 弹幕 API 基础地址
+    const api_danmaku_base = "https://dm.video.qq.com/barrage/base/";
+    const api_danmaku_segment = "https://dm.video.qq.com/barrage/segment/";
+
+    let vid = this.extractVid(id);
+
+    log("info", `[tencent] 获取弹幕分段列表 - vid: ${vid}`);
+
+    // 仅在明确需要时长时并行获取，避免普通弹幕请求额外访问 getinfo
+    const durationPromise = includeDuration ? this.getVideoDuration(vid) : null;
+
+    // 获取弹幕基础数据
+    let res;
+    try {
+      res = await httpGet(api_danmaku_base + vid, {
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        },
+      });
+    } catch (error) {
+      if (error.response?.status === 404) {
+        return new SegmentListResponse({
+          "type": "qq",
+          "segmentList": []
+        });
+      }
+      log("error", "[tencent] 请求弹幕基础数据失败:", error);
+      return new SegmentListResponse({
+        "type": "qq",
+        "segmentList": []
+      });
+    }
+
+    // 先把 res.data 转成 JSON
+    const data = typeof res.data === "string" ? JSON.parse(res.data) : res.data;
+
+    // 构建分段列表
+    const segmentList = [];
+    const segmentItems = Object.values(data.segment_index);
+    for (const item of segmentItems) {
+      segmentList.push({
+        "type": "qq",
+        "segment_start": (() => {
+          const start = Number(item.segment_start) || 0;
+          return start / 1000;
+        })(),
+        "segment_end": (() => {
+          const end = Number(item.segment_name.split('/').pop()) || 0;
+          return end / 1000;
+        })(),
+        "url": `${api_danmaku_segment}${vid}/${item.segment_name}`
+      });
+    }
+
+    // 真实视频时长（td）；拿不到时为 0，交由上游回落到分片边界推断
+    const videoDuration = durationPromise ? await durationPromise : 0;
+
+    return new SegmentListResponse({
+      "type": "qq",
+      "duration": videoDuration,
+      "segmentList": segmentList
+    });
+  }
+
+  async getEpisodeSegmentDanmu(segment) {
+    try {
+      const response = await httpGet(segment.url, {
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        },
+        retries: 1,
+      });
+
+      // 处理响应数据并返回 contents 格式的弹幕
+      let contents = [];
+      if (response && response.data) {
+        const parsedData = typeof response.data === "string" ? JSON.parse(response.data) : response.data;
+        contents.push(...parsedData.barrage_list);
+      }
+
+      return contents;
+    } catch (error) {
+      log("error", "[tencent] 请求分片弹幕失败:", error);
+      return []; // 返回空数组而不是抛出错误，保持与getEpisodeDanmu一致的行为
+    }
+  }
+
+  formatComments(comments) {
+    return comments.map(item => {
+      const content = {
+        timepoint: item.time_offset / 1000,
+        ct: 1,
+        size: 25,
+        color: 16777215,
+        unixtime: Math.floor(Date.now() / 1000),
+        uid: 0,
+        content: item.content,
+      };
+
+      if (item.content_style && item.content_style !== "") {
+        try {
+          const content_style = JSON.parse(item.content_style);
+
+          if (content_style.gradient_colors && content_style.gradient_colors.length > 0) {
+            content.color = parseInt(content_style.gradient_colors[0].replace("#", ""), 16);
+          } else if (content_style.color && content_style.color !== "ffffff") {
+            content.color = parseInt(content_style.color.replace("#", ""), 16);
+          }
+
+          if (content_style.position === 2) {
+            content.ct = 5;
+          } else if (content_style.position === 3) {
+            content.ct = 4;
+          }
+        } catch (e) {
+          // JSON 解析失败，使用默认值
+        }
+      }
+
+      content.like = parseInt(item.up_count) || 0;
+
+      return content;
+    });
+  }
+}

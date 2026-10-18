@@ -1,0 +1,863 @@
+<div align="center">
+  <img src="https://i.mji.rip/2025/09/27/eedc7b701c0fa5c1f7c175b22f441ad9.jpeg" alt="Clash" width="128" style="border-radius: 16px;" />
+</div>
+
+<h2 align="center">
+LogVar 弹幕 API 服务器
+</h2>
+
+[![GitHub](https://img.shields.io/badge/-GitHub-181717?logo=github)](https://github.com/huangxd-/danmu_api)
+![GitHub forks](https://img.shields.io/github/forks/huangxd-/danmu_api)
+![GitHub Repo stars](https://img.shields.io/github/stars/huangxd-/danmu_api)
+![GitHub License](https://img.shields.io/github/license/huangxd-/danmu_api)
+![Docker Image Version](https://img.shields.io/docker/v/logvar/danmu-api?sort=semver)
+![Docker Pulls](https://img.shields.io/docker/pulls/logvar/danmu-api)
+[![telegram](https://img.shields.io/static/v1?label=telegram&message=telegram_channel&color=blue)](https://t.me/logvar_danmu_channel)
+[![telegram](https://img.shields.io/static/v1?label=telegram&message=telegram_group&color=blue)](https://t.me/logvar_danmu_group)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/huangxd-/danmu_api)
+
+---
+
+一个人人都能部署的基于 js 的弹幕 API 服务器，支持爱优腾芒哔咪人韩巴狐乐西埋帆红弹幕直接获取，兼容弹弹play的搜索、详情查询和弹幕获取接口规范，并提供日志记录，支持vercel/netlify/edgeone/cloudflare/docker/hf等部署方式，不用提前下载弹幕，没有nas或小鸡也能一键部署。
+
+本项目仅为个人学习爱好开发，代码开源。如有任何侵权行为，请联系本人删除。
+
+有问题提issue或 [私信机器人](https://t.me/ddjdd_bot) 都ok。
+
+新加了 [tg频道](https://t.me/logvar_danmu_channel) ，方便发送更新通知，以及群组，太多人私信咨询了，索性增加一个 [互助群](https://t.me/logvar_danmu_group) ，大家有问题可以在群里求助。
+
+> 请不要在国内媒体平台宣传本项目！
+
+# 目录
+
+- [功能](#功能)
+- [前置条件](#前置条件)
+- [本地运行](#本地运行)
+- [使用 Docker 运行](#使用-docker-运行)
+- [Docker 一键启动 【推荐】](#docker-一键启动-推荐)
+- [部署到 Vercel 【推荐】](#部署到-vercel-推荐)
+- [部署到 Netlify](#部署到-netlify)
+- [部署到 腾讯云 EdgeOne Makers](#部署到-腾讯云-edgeone-makers)
+- [部署到 Cloudflare](#部署到-cloudflare)
+- [部署到 Hugging Face Spaces](#部署到-hugging-face-spaces)
+- [API食用指南](#api食用指南)
+- [环境变量列表](#环境变量列表)
+- [采集源及对应平台列表](#采集源及对应平台列表)
+- [项目结构](#项目结构)
+- [注意事项](#注意事项)
+- [关联项目](#关联项目)
+- [特别感谢](#特别感谢)
+- [贡献者](#贡献者)
+
+## 功能
+- **API 接口**：
+  - `GET /api/v2/search/anime?keyword=${queryTitle}`：根据关键字搜索动漫。
+  - `POST /api/v2/match`：根据关键字匹配动漫，用于自动匹配。（已支持在match接口中通过@语法动态指定平台优先级，如`赴山海 S01E28 @qiyi`；已支持从网盘资源命名，如`无忧渡.S01E01.2160p.WEB-DL.H265.DDP.5.1`中提取 title/season/episode）；可通过 `AUTO_MATCH_MAPPING_TABLE` 配置跨标题、跨季和集数范围映射；已支持外语标题匹配，如`Blood.River.S01E05`，需配置环境变量`TITLE_TO_CHINESE`使用；已适配该格式`爱情公寓.ipartment.2009.S03E05.H.265.25fps.mkv`标题；已支持AI自动匹配，需配合AI相关环境变量使用
+  - `GET /api/v2/search/episodes`：根据关键词搜索所有匹配的剧集信息。
+  - `GET /api/v2/bangumi/:animeId`：获取指定动漫的详细信息。
+  - `GET /api/v2/comment/:commentId?format=json&duration=true`：获取指定弹幕评论；当 `duration=true` 且返回 JSON 时，会额外附带 `videoDuration` 字段，优先返回源站时长，拿不到时返回 `0`。
+  - `GET /api/v2/comment?url=${videoUrl}&format=json`：通过视频URL直接获取弹幕（兼容第三方弹幕服务器格式）。
+  - `POST /api/v2/segmentcomment?format=json`：通过comment接口返回体中的Segment类JSON数据获取单独一个分片的弹幕数据。
+  - `GET /api/v2/fongmi/danmaku?name={name}&episode={episode}`：FengMi影视api。
+  - `GET /danmaku/api/v2/fongmi/danmaku?name={name}&episode={episode}`：兼容FengMi影视api短路径。
+  - `GET /api/logs`：获取最近的日志（最多 500 行，格式为 `[时间戳] 级别: 消息`）。
+  - `GET /api/cache/animes`：获取最近的 animes 缓存。
+  - `POST /api/v2/favorite/add`：新增收藏。手动匹配测试使用 `{ "keyword": "火影忍者" }` 保存搜索关键词及整组搜索结果；同时兼容 `{ "fileName": "火影忍者 S01E01" }`。
+  - `GET /api/v2/favorite/list`：获取收藏摘要列表，包含收藏关键词、来源、总集数、首条搜索结果图片、收藏时间及最近刷新时间；响应中的 `favoriteSupported` 表示当前部署是否具备持久化收藏能力。
+  - `POST /api/v2/favorite/refresh`：使用 `{ "keyword": "火影忍者" }` 强制重新搜索并更新收藏缓存。
+  - `POST /api/v2/favorite/schedule`：设置或关闭收藏的定时刷新（仅 Node/Docker 部署可用）。设置使用 `{ "keyword": "火影忍者", "schedule": { "frequency": "daily", "time": "03:00" } }`；每周模式需额外传 `"weekday": 1-7`（周一至周日），例如 `{ "frequency": "weekly", "time": "03:00", "weekday": 1 }`。关闭使用 `{ "keyword": "火影忍者", "schedule": null }`。固定按北京时间（`Asia/Shanghai`）执行，serverless 平台返回 `501`。
+  - `POST /api/v2/favorite/remove`：使用 `{ "keyword": "火影忍者" }` 删除收藏及对应搜索缓存。
+  - `POST /api/v2/local-danmu/upload`：上传并解析本地弹幕文件（`multipart/form-data`，字段包括 `file`、`title`、`year`、`type`，电视剧可指定 `season`、`episode`）。每次接收一个文件，最大 10 MB；管理页面的批量导入会依次调用此接口。
+  - `GET /api/v2/local-danmu/list`：获取已上传的本地弹幕资源及按标题、年份、类型、季分组的列表。
+  - `GET /api/v2/local-danmu/:resourceKey`：获取指定本地弹幕资源的元数据；`DELETE /api/v2/local-danmu/:resourceKey`：删除资源。
+  - `PATCH /api/v2/local-danmu/:resourceKey`：编辑本地弹幕元数据；`scope=resource` 修改集数和显示文件名，`scope=group` 修改当前季的标题、年份、类型和季数。目标资源已存在时返回冲突错误，不会覆盖原文件。
+  - 本地弹幕接口需要 `TOKEN` 或 `ADMIN_TOKEN`。默认仅管理员可上传和删除；设置 `LOCAL_DANMU_NOT_REQUIRE_ADMIN=true` 后，普通 `TOKEN` 也可执行上传和删除。Node/Docker 将资源保存到 `.cache/local-danmu`，云端部署使用 Redis 持久化。
+- **弹幕格式输出**：支持 JSON 和 XML 及 [@dan-uni/dan-any](https://github.com/ani-uni/dan-any)支持的全部输出格式 输出，通过以下方式配置：
+  - 环境变量：`DANMU_OUTPUT_FORMAT=json|xml|artplayer.json|baha.json|bili.xml|danuni.json|danuni.binpb|ddplay.json|dplayer.json|vod.json`（默认：json）
+  - 查询参数：`?format=xml` 或 `?format=json` ...（优先级最高）
+  - 优先级：查询参数 > 环境变量 > 默认值
+  - 示例：`GET /api/v2/comment/10001?format=xml` 返回 XML 格式弹幕
+  - **XML 格式说明**：完全遵循 Bilibili 标准格式，8字段标准弹幕属性
+- **日志记录**：捕获 `console.log`（info 级别）和 `console.error`（error 级别），JSON 内容格式化输出。
+- **永久收藏缓存**：适合《火影忍者》《名侦探柯南》等集数较多、重复搜索耗时较长的剧集。只缓存剧集搜索结果，不缓存弹幕。
+  - `GET /api/v2/favorite/list` 是公开只读接口，无需 token。其他收藏接口在自定义 `TOKEN` 时，必须使用 `/{TOKEN}/api/v2/favorite/...` 或 `/{ADMIN_TOKEN}/api/v2/favorite/...` 形式显式携带 token；使用默认 `TOKEN=87654321` 且未开启管理员限制时可省略 token。配置 `FAVORITE_REQUIRE_ADMIN=true` 后，写入和管理操作仅允许 `ADMIN_TOKEN`。
+  - 在 UI 的“接口调试 → 弹幕测试 → 手动匹配测试”中输入关键词并搜索，搜索成功后点击“收藏”按钮即可保存整组搜索结果；已收藏时可再次点击按钮取消收藏。
+  - 收藏名称和缓存键使用手动搜索框中的原始关键词，例如搜索“火影忍者”即收藏为“火影忍者”；列表图片取第一条搜索结果的图片。
+  - 后续搜索或自动匹配命中收藏时直接从永久缓存返回，不再请求外部弹幕源；除精确关键词外，也会使用收藏剧名包含关系匹配同名剧场版、季度等变体。
+  - “收藏”标签页支持搜索收藏、强制刷新和删除，每项会显示收藏时间及最近刷新时间。刷新会绕过已有缓存重新查询；删除会同时移除对应搜索缓存。
+  - 收藏不受 `SEARCH_CACHE_MINUTES`、普通搜索缓存 500 条上限或过期清理影响。
+  - 支持定时刷新收藏：在“收藏”标签页点击“定时刷新”按钮，选择每天或每周（1-7 对应周一至周日）与执行时间，固定按北京时间（`Asia/Shanghai`）运行；已配置的条目按钮会显示类似“每天 03:00”“周一 03:00”，条目下方显示下次执行时间和最近状态。
+  - 定时刷新失败会保留旧缓存并在 10 分钟后自动重试一次，仍失败则等待下一个正常周期，不再继续重试；服务停机错过执行时间时，重启后只补执行一次并重新计算下一周期。
+  - 定时刷新计划随收藏一起保存在 `.cache/favoritesCache` 或 Redis 中，Node/Docker 重启后如需保留请挂载 `.cache` 目录或配置 Upstash Redis；纯内存收藏及计划会随进程重启丢失。Vercel、Cloudflare、Netlify、EdgeOne、Hugging Face 等 serverless 平台不启动调度器，按钮会禁用并提示“仅支持 Node/Docker 部署”。
+  - Node/Docker 部署会写入 `.cache/favoritesCache` 永久保存，请挂载 `.cache` 目录；serverless 平台必须配置 Redis 才启用收藏按钮，否则界面会置灰并提示配置 `UPSTASH_REDIS_REST_URL`、`UPSTASH_REDIS_REST_TOKEN`。配置 Redis 后可跨冷启动和实例恢复。
+- **智能缓存管理**：支持内存缓存搜索结果和弹幕数据，避免短期内重复的不必要API请求。包括：
+  - 搜索结果缓存（可通过 `SEARCH_CACHE_MINUTES` 配置，默认1分钟）
+  - 弹幕缓存（可通过 `COMMENT_CACHE_MINUTES` 配置，默认5分钟）
+  - 永久收藏缓存（无 TTL、无数量上限，Node/Docker 可持久化到 `.cache/favoritesCache`）
+  - 用户偏好记录（可通过 `MAX_LAST_SELECT_MAP` 配置，默认100条）
+  - Redis 分布式缓存支持，包括本地redis和upstash redis（可选）
+  - 配置redis可持久化原有查询信息和永久收藏；搜索结果与弹幕缓存仍只保存在实例内存中，不会写入 Redis
+  - 本地和Docker部署支持实时保存缓存到文件（挂载.cache目录即可）
+- **部署支持**：支持本地运行、Docker 容器化、Vercel 一键部署、Netlify 一键部署、EdgeOne Makers 一键部署、Cloudflare 一键部署、Hugging Face Spaces部署和 Docker 一键启动。
+- **手动选择记忆**：支持记住之前搜索title时手动选择的anime，并在后续的match自动匹配时优选该anime，支持记住集episode，下次自动匹配时会对集进行偏移【实验性】。
+- **手动搜索支持输入播放链接获取弹幕**：支持手动搜索的播放器输入爱优腾芒哔咪狐乐西埋巴Ani红播放链接可获取弹幕，如`senplayer`。
+  - 支持空格分隔多个链接合并弹幕，例如：`https://www.iqiyi.com/v_xxx.html https://v.qq.com/x/cover/xxx.html`
+  - 支持链接尾部追加时间偏移，例如：`https://www.iqiyi.com/v_xxx.html@-50`（提前50秒）、`https://v.qq.com/x/cover/xxx.html@%11`（百分比缩放）
+- **弹幕转换功能**：支持通过环境变量配置弹幕转换规则，包括：
+  - 将顶部和底部弹幕转换为浮动弹幕（`CONVERT_TOP_BOTTOM_TO_SCROLL`）
+  - 转换弹幕颜色为白色或彩色（`CONVERT_COLOR`），支持自定义颜色池（`COLOR_POOL`）
+  - 解决部分播放器不支持顶部/底部弹幕和彩色弹幕的问题
+  - 增加点赞数显示，先去重再拼接点赞标记，点赞数缩写显示，≥5 才显示，避免低赞干扰
+- **弹幕限制数量**：支持通过环境变量配置等间隔采样弹幕数量。
+- **弹幕时间偏移功能**：支持通过环境变量 `DANMU_OFFSET` 配置弹幕时间偏移，解决弹幕与视频不同步的问题。格式为 `剧名:秒`（全剧偏移）、`剧名/季:秒`（整季偏移）、`剧名/季/集:秒`（单集偏移），支持指定来源 `剧名@来源:秒`、`剧名/季@来源1&来源2:秒`（不指定来源则对所有来源生效），多条用逗号分隔。例如：`overlord/S01:90, re-zero/S02@bilibili:120, re-zero/S02/E03@dandan&bilibili:10`。正数表示弹幕延后（向右），负数表示弹幕提前（向左）。另外支持百分比模式：在来源或路径末尾增加 `%`，如 `东方/S03/E02@tencent%:11`，表示按公式 `原时间 * (视频时长 + 偏移秒数) / 视频时长` 缩放全部弹幕时间，更适合整集整体快慢不一致的场景。另外在手动解析链接时，可以在链接末尾追加 `@秒数` 或 `@%秒数` 实现单链接时间偏移。
+- **弹幕分片请求**：
+  - `/api/v2/comment` 请求时支持定义 `segmentflag=true` 参数，用于请求弹幕分片列表
+  - `/api/v2/comment/:commentId?format=json&duration=true` 可在 JSON 返回体中附带 `videoDuration`
+  - `/api/v2/segmentcomment` 通过comment接口返回体中的Segment类JSON数据获取单独一个分片的弹幕数据
+- **UI界面-后台配置管理系统**：支持通过UI执行一些操作（详细见 [UI 系统使用说明](https://github.com/huangxd-/danmu_api/tree/main/danmu_api/ui/README.md) ），包括：
+  - 配置预览
+  - 日志查看
+  - 接口调试/弹幕测试
+    - 自动匹配测试、手动匹配测试及收藏管理
+  - 推送弹幕
+  - 请求记录
+  - 本地弹幕上传、列表管理和删除
+  - 系统管理
+
+## 前置条件
+- Node.js（v18.0.0 或更高版本；理论兼容更低版本，请自行测试）
+- npm
+- Docker（可选，用于容器化部署）
+
+## 本地运行
+1. **克隆仓库**：
+   ```bash
+   git clone <仓库地址>
+   cd <项目目录>
+   ```
+
+2. **安装依赖**：
+   ```bash
+   npm install
+   ```
+
+3. **配置应用**（可选）：
+
+   本项目支持两种配置方式，优先级从高到低：
+   1. **系统环境变量**（最高优先级）
+   2. **.env 文件**（低优先级）- 复制 `config/.env.example` 为 `config/.env` 并修改
+
+4. **启动服务器**：
+   ```bash
+   npm start
+   ```
+   服务器将在 `http://{ip}:9321` 运行，默认token是`87654321`。Node 服务默认通过 `::` 同时监听 IPv6 和 IPv4；不支持 IPv6 绑定时会自动回退到 `0.0.0.0`。IPv6 地址访问格式为 `http://[IPv6地址]:9321`。若操作系统强制启用了 `IPV6_V6ONLY`，需调整系统网络策略后才能通过同一监听端口接受 IPv4 连接。
+   如需修改端口，可设置环境变量 `DANMU_API_PORT`（例如 `DANMU_API_PORT=8080 npm start`）。
+   HTTPS 反向代理应传递 `X-Forwarded-Proto`；无法传递时可设置 `DANMU_API_PUBLIC_PROTO=https`，用于生成正确的对外弹幕链接。
+
+   **热更新支持**：修改 `config/.env`，应用会自动检测并重新加载配置（无需重启应用）。
+
+   或者使用下面的命令
+   ```bash
+   # 启动
+   node ./danmu_api/server.js
+   # 测试（danmu_api/tests 下的全部用例）
+   npm test
+   # 只跑单个测试文件
+   node --test danmu_api/tests/utils/merge-util.test.js
+   # 构建forward弹幕插件
+   node build-forward-widget.js
+   # 测试forward弹幕插件（真实联网，需手动执行）
+   node forward/forward-widget.spec.js
+   ```
+
+   > 测试用例全部位于 `danmu_api/tests/`，目录与 `danmu_api/` 源码目录一一对应（`utils/`、`sources/`、`apis/`、`configs/`、`models/`、`ui/`），
+   > 跨模块的请求级用例放在 `tests/` 顶层，共享夹具在 `tests/helpers/`。
+   > `npm test` 使用 `node --test --test-concurrency=1`：本地弹幕与 Bangumi Data 用例会读写仓库根目录的 `.cache/`，
+   > 因此测试文件必须串行执行，请勿去掉 `--test-concurrency=1`。
+   > 该命令依赖 Node 默认的测试文件发现规则（Node 18 及以上均可用），不需要也不应改成 `--test <目录>` 形式。
+   > `danmu_api/tests/manual/live-source-checks.js` 是依赖真实数据源的手工巡检用例，不会被自动发现、也不参与 `npm test`；
+   > 手动执行：`node --test danmu_api/tests/manual/live-source-checks.js`（详见文件头说明）；
+   > 其中写入真实平台环境变量 / 触发真实部署 / 写真实 Redis 的用例默认跳过，需要时加 `LIVE_SOURCE_WRITE_CHECKS=true`。
+   > 提交 PR 或推送到 main 时会由 `.github/workflows/test.yml` 自动执行 `npm install` + `npm test`（无需任何 secrets，
+   > 也不访问外网/Redis，fork PR 同样会跑）；CI 使用 Node 24，**运行测试需要 Node ≥ 22.3**——
+   > `configs/cache-persistence.test.js` 与 `configs/cache-backends.test.js` 的子进程依赖 `--experimental-test-module-mocks`。
+   > 全新 clone 里没有 `config/.env`（仅跟踪 `config/.env.example`），相关用例会自行临时生成并清理，无需手工准备。
+
+5. **测试 API**：
+   使用 Postman 或 curl 测试：
+   - `GET http://{ip}:9321/87654321`
+   - `GET http://{ip}:9321/87654321/api/v2/search/anime?keyword=生万物`
+   - `POST http://{ip}:9321/87654321/api/v2/match`
+   - `GET http://{ip}:9321/87654321/api/v2/search/episodes?anime=生万物`
+   - `GET http://{ip}:9321/87654321/api/v2/bangumi/1`
+   - `GET http://{ip}:9321/87654321/api/v2/comment/1?format=json`
+   - `GET http://{ip}:9321/87654321/api/v2/comment/1?format=json&duration=true`
+   - `GET http://{ip}:9321/87654321/api/v2/comment?url=https://v.qq.com/x/cover/xxx.html&format=json`
+   - `GET http://{ip}:9321/87654321/api/v2/extcomment?url=https://v.qq.com/x/cover/xxx.html&format=json`
+   - `POST http://{ip}:9321/87654321/api/v2/segmentcomment?format=json` (请求体包含segment类JSON数据，示例 `{"type": "qq","segment_start":0,"segment_end":30000,"url":"https://dm.video.qq.com/barrage/segment/j0032ubhl9s/t/v1/0/30000"}` )
+   - `GET http://{ip}:9321/87654321/api/logs`
+   > 注意：TOKEN为默认87654321的情况下，可不带{TOKEN}请求，如`http://{ip}:9321/api/v2/search/anime?keyword=生万物`
+
+### Forward 真机调试
+
+在电脑上启动实时日志接收服务：
+
+```bash
+node danmu_api/server.js
+```
+
+再在另一个终端生成可与正式插件并存的 debug bundle：
+
+```bash
+node build-forward-widget.js --debug
+```
+
+在 Forward 中安装 `dist/logvar-danmu.debug.js`，将 `debugEndpoint` 配置为带 token 的电脑局域网地址，例如 `http://192.168.1.10:9321/87654321`。不要填写 `127.0.0.1`，它在手机上指向手机自身。
+
+真机复现时，handler 开始/结束、参数、结果摘要、`info/warn/error`、直接 `console` 输出，以及所有 HTTP GET/POST 的 URL、状态、耗时和异常会实时显示在服务端终端。相同内容也会以 `[ForwardRemote]` 前缀写入 `/api/logs`：
+
+```text
+GET http://127.0.0.1:9321/87654321/api/logs
+```
+
+服务端不会保存 trace session，也不提供回放接口。正式 bundle 不包含日志回传代码；Cookie、token 和 API key 会在上传前脱敏。日志回传失败不会影响弹幕主流程。
+
+## 使用 Docker 运行
+1. **构建 Docker 镜像**：
+   ```bash
+   docker build -t danmu-api .
+   ```
+
+2. **运行容器**：
+   ```bash
+   docker run -d -p 9321:9321 --name danmu-api -e TOKEN=87654321 danmu-api
+   ```
+   - 使用`-e TOKEN=87654321`设置`TOKEN`环境变量，覆盖Dockerfile中的默认值。
+   - 或使用 `--env-file .env` 加载 .env 文件中的所有环境变量：`docker run -d -p 9321:9321 --name danmu-api --env-file .env danmu-api`
+
+   > 容器内服务默认启用 IPv4/IPv6 双栈监听。通过 IPv6 从宿主机访问时，Docker 守护进程及容器网络也需要启用 IPv6；否则仍可正常使用 IPv4。
+
+   **热更新支持**：如需支持环境变量热更新（修改 `.env` 文件后无需重启容器），请使用 Volume 挂载：
+   ```bash
+   docker run -d -p 9321:9321 --name danmu-api -v $(pwd)/.env:/app/.env --env-file .env danmu-api
+   ```
+
+   > **推荐**：使用 docker compose 部署可以更方便地管理配置和支持热更新，详见下方"Docker 一键启动"部分。
+
+3. **测试 API**：
+   使用 `http://{ip}:9321/{TOKEN}` 访问上述 API 接口。
+   > 注意：TOKEN为默认87654321的情况下，可不带{TOKEN}请求，如`http://{ip}:9321/api/v2/search/anime?keyword=生万物`
+
+## Docker 一键启动 【推荐】
+1. **拉取镜像**：
+   ```bash
+   docker pull logvar/danmu-api:latest
+   ```
+
+2. **运行容器**：
+   ```bash
+   docker run -d -p 9321:9321 --name danmu-api -e TOKEN=87654321 logvar/danmu-api:latest
+   ```
+   - 使用`-e TOKEN=87654321`设置`TOKEN`环境变量。
+   - 或使用 `--env-file .env` 加载 .env 文件中的所有环境变量：`docker run -d -p 9321:9321 --name danmu-api --env-file .env logvar/danmu-api:latest`
+
+   **热更新支持**：如需支持环境变量热更新（修改 `config/.env` 文件后无需重启容器），请使用 Volume 挂载：
+   ```bash
+   docker run -d -p 9321:9321 --name danmu-api -v $(pwd)/config:/app/config --env-file .env logvar/danmu-api:latest
+   ```
+
+   或使用 docker compose 部署（**推荐，支持环境变量热更新**）：
+   ```yaml
+   services:
+     danmu-api:
+       image: logvar/danmu-api:latest
+       ports:
+         - "9321:9321"
+       # 热更新支持：挂载 config/.env 文件，修改后容器会自动重新加载配置（无需重启容器）
+       volumes:
+         - ./config:/app/config    # config目录下需要创建.env
+         - ./.chche:/app/.cache    # 配置.chche目录，会将缓存实时保存在本地文件
+       restart: unless-stopped
+   ```
+
+   可以使用 watchtower 监控有新版本自动更新：
+   ```yaml
+   services:
+     watchtower:
+       image: nickfedor/watchtower
+       container_name: watchtower-gx
+       restart: always
+       volumes:
+         - /var/run/docker.sock:/var/run/docker.sock
+       environment:
+         - TZ=Asia/Shanghai  # 保持时区正确
+       command:
+         - --cleanup         # 更新后清理旧镜像
+         - --interval        # 间隔参数
+         - "12600"           # 30分钟（1800秒），适合测试
+         - danmu-api         # 监控的目标容器名
+   ```
+
+3. **测试 API**：
+   使用 `http://{ip}:9321/{TOKEN}` 访问上述 API 接口。
+   > 注意：TOKEN为默认87654321的情况下，可不带{TOKEN}请求，如`http://{ip}:9321/api/v2/search/anime?keyword=生万物`
+
+### 一键安装脚本
+`bash <(curl -fsSL https://raw.githubusercontent.com/dukiii1928/danmu-install/refs/heads/main/install.sh)`
+
+## 安卓App
+请前往 @lilixu3 的项目 [danmu-api-android](https://github.com/lilixu3/danmu-api-android/releases) 下载
+
+## 部署到 Vercel 【推荐】
+
+### 一键部署
+点击以下按钮即可将项目快速部署到 Vercel：
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/huangxd-/danmu_api&project-name=danmu_api&repository-name=danmu_api)
+
+**注意**：请将按钮链接中的 `https://github.com/huangxd-/danmu_api` 替换为你的实际 Git 仓库地址。编辑 `README.md` 并更新链接后，推送到仓库，点击按钮即可自动克隆和部署。
+- **设置环境变量**：部署后，在 Vercel 仪表板中：
+  1. 转到你的项目设置。
+  2. 在“Environment Variables”部分添加 `TOKEN` 变量，输入你的 API 令牌值。
+  3. 保存更改并重新部署。
+- 示例请求：`https://{your_domain}.vercel.app/87654321/api/v2/search/anime?keyword=子夜归`
+  > 注意：TOKEN为默认87654321的情况下，可不带{TOKEN}请求，如`https://{your_domain}.vercel.app/api/v2/search/anime?keyword=子夜归`
+
+### 优化点
+- Settings > Functions > Advanced Setting > Function Region 切换为 新加坡/韩国/日本等，能提高访问速度，体验更优
+  > hk有可能访问不了360或其他源，可以尝试切其他region
+- vercel在国内被墙，请配合代理或绑定自定义域名使用
+
+## 部署到 Netlify
+
+> ⚠️ **风险提示：Netlify 存在封号风险！**
+>
+> Netlify 对将免费额度用于「API 代理 / 弹幕转发」这类服务的容忍度较低，此类用途可能被判定为违反其服务条款（ToS），轻则限速，重则**直接封禁账号**。请在知悉风险后再决定是否使用：不要把重要域名或长期服务完全押在 Netlify 上，更稳妥可优先选择 Vercel 或自建 Docker 部署。
+
+### 一键部署
+点击以下按钮即可将项目快速部署到 Netlify：
+
+<a href="https://app.netlify.com/start/deploy?repository=https://github.com/huangxd-/danmu_api"><img src="https://www.netlify.com/img/deploy/button.svg"></a>
+
+> 默认访问domain：https://{你的部署项目名}.netlify.app
+> > 注意：TOKEN为默认87654321的情况下，可不带{TOKEN}请求，如`https://{你的部署项目名}.netlify.app/api/v2/search/anime?keyword=子夜归`
+
+- **设置环境变量**：部署后，在 Netlify 仪表板中：
+  1. 点击Project configuration。
+  2. 在“Environment variables”部分点击 “Add a variable” 添加 `TOKEN` 变量，输入你的 API 令牌值。
+  3. 保存更改并重新部署。
+
+<a id="部署到-腾讯云-edgeone-pages"></a>
+
+## 部署到 腾讯云 EdgeOne Makers
+
+EdgeOne Pages 已更名为 EdgeOne Makers，现有项目无需因品牌更名迁移，本项目也无需为项目 ID 前缀变化升级部署代码。[官方更名说明](https://pages.edgeone.ai/zh/resources/announcement-makers-rename)
+
+使用 UI 管理云端环境变量时，`DEPLOY_PLATFROM_PROJECT` 请填写控制台显示的完整项目 ID：旧项目通常为 `pages-xxxxxxxxxxxx`，新版控制台创建的项目通常为 `makers-xxxxxxxxxxxx`。两种前缀均可直接填写，请勿自行替换前缀。`DEPLOY_PLATFROM_TOKEN` 填写项目所属账号的 API Token，具体获取步骤见 [部署平台环境变量配置指南](danmu_api/ui/README.md#3-edgeone-makers-平台)。
+
+部署链接和接口地址中仍可能保留 `pages`，无需按品牌名称自行改成 `makers`。
+
+### 一键部署
+[![使用 EdgeOne Makers 部署](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://console.cloud.tencent.com/edgeone/pages/new?template=https://github.com/huangxd-/danmu_api&project-name=danmu-api&root-directory=.%2F&env=TOKEN)
+
+> 注意：部署时请在环境变量配置区域填写你的TOKEN值，该变量将用于API服务的身份验证相关功能
+> 
+> 示例请求：`https://{your_domain}/{TOKEN}/api/v2/search/anime?keyword=子夜归`确认是否部署成功
+> > 注意：TOKEN为默认87654321的情况下，可不带{TOKEN}请求，如`https://{your_domain}.vercel.app/api/v2/search/anime?keyword=子夜归`
+>
+> 部署的时候项目加速区域最好设置为"全球可用区（不含中国大陆）"，不然不绑定自定义域名貌似只能生成3小时的预览链接？[相关文档](https://edgeone.cloud.tencent.com/pages/document/175191784523485184)
+> 
+> 也可直接用国际站的部署按钮一键部署，默认选择"全球可用区（不含中国大陆）" [![使用 EdgeOne Makers 部署](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://edgeone.ai/pages/new?template=https://github.com/huangxd-/danmu_api&project-name=danmu-api&root-directory=.%2F&env=TOKEN)
+> 
+<img src="https://i.mji.rip/2025/09/17/3a675876dabb92e4ce45c10d543ce66b.png" style="width:400px" />
+
+> 如果每次访问都遇到404等问题，可能是 EdgeOne Makers 修改了访问策略，每次接口请求都转发到了新的环境，没有缓存，导致获取不到对应的弹幕，推荐用vercel/netlify部署。
+> 
+> 解决方法：请配置环境变量`UPSTASH_REDIS_REST_URL`和`UPSTASH_REDIS_REST_TOKEN`，开启upstash redis存储
+
+## 部署到 Cloudflare
+
+### 一键部署
+点击以下按钮即可将项目快速部署到 Cloudflare：
+
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/huangxd-/danmu_api)
+
+**注意**：请将按钮链接中的 `https://github.com/huangxd-/danmu_api` 替换为你的实际 Git 仓库地址。编辑 `README.md` 并更新链接后，推送到仓库，点击按钮即可自动克隆和部署。
+- **设置环境变量**：部署后，在 Cloudflare 仪表板中：
+  1. 转到你的 Workers 项目。
+  2. 转到“Settings” > “Variables”。
+  3. 添加 `TOKEN` 环境变量，输入你的 API 令牌值。
+  4. 保存并部署。
+- 示例请求：`https://{your_domain}.workers.dev/87654321/api/v2/search/anime?keyword=子夜归`
+  > 注意：TOKEN为默认87654321的情况下，可不带{TOKEN}请求，如`https://{your_domain}.workers.dev/api/v2/search/anime?keyword=子夜归`
+
+### ~~手动部署~~
+~~创建一个worker，将`danmu_api/worker.js`里的代码直接拷贝到你创建的`worker.js`里，然后点击部署。~~
+
+> cf部署可能不稳定，推荐用vercel/netlify部署。
+
+## 部署到 Hugging Face Spaces
+
+### Docker 部署
+1. 在 Hugging Face 创建 Space，SDK 选择 **Docker**。
+2. 将仓库代码推送到 Space 仓库，或在 Space 中连接/同步你的 Git 仓库。
+3. 在 Space Settings > Variables and secrets 中至少添加 `TOKEN` 环境变量。
+4. 如果需要在 UI 中保存环境变量并触发重启，额外添加：
+   - `DEPLOY_PLATFROM_ACCOUNT`: Hugging Face 用户名或组织名
+   - `DEPLOY_PLATFROM_PROJECT`: Space 名称
+   - `DEPLOY_PLATFROM_TOKEN`: 具备目标 Space 写入权限的 User Access Token
+
+- 示例请求：`https://{account}-{space}.hf.space/87654321/api/v2/search/anime?keyword=子夜归`
+  > 注意：TOKEN为默认87654321的情况下，可不带{TOKEN}请求，如`https://{account}-{space}.hf.space/api/v2/search/anime?keyword=子夜归`
+
+## API食用指南
+支持 forward/senplayer/hills/小幻/yamby/eplayerx/afusekt/uz影视/dscloud/lenna/danmaku-anywhere/omnibox/ChaiChaiEmbyTV/moontv/capyplayer/kerkerker/LinPlayer/peekpili/FengMi影视 等支持弹幕API的播放器。
+
+配合 dd-danmaku 扩展新增对 Emby Web 端弹幕的支持，具体使用方法参考 [PR #98](https://github.com/huangxd-/danmu_api/pull/98) 。
+
+以`senplayer`为例：
+1. 获取到部署之后的API地址，如 `http://192.168.1.7:9321/87654321` ，其中`87654321`是默认token（默认为87654321的情况下也可以不带token），如果有自定义环境变量TOKEN，请替换成相应的token；API地址也可直接在UI界面上点击API端点直接复制
+2. 将API地址填入自定义弹幕API，在`设置 - 弹幕设置 - 自定义弹幕API`
+3. 播放界面点击`弹幕按钮 - 搜索弹幕`，选择你的弹幕API，会根据标题进行搜索，等待一段时间，选择剧集就行。
+<img src="https://i.mji.rip/2025/09/14/1dae193008f23e507d3cc3733a92f0a1.jpeg" style="width:400px" />
+<img src="https://i.mji.rip/2025/09/14/506fd7810928088d7450be00f67f27e6.png" style="width:400px" />
+<img src="https://i.mji.rip/2025/09/14/e206ab329c232d8bed225c6a9ff6f506.jpeg" style="width:400px" />
+<img src="https://i.mji.rip/2025/09/14/80aa5205d49a767447f61938f2dada20.jpeg" style="width:400px" />
+<img src="https://i.mji.rip/2025/09/14/9fdf945fb247994518042691f60d7849.jpeg" style="width:400px" />
+<img src="https://i.mji.rip/2025/09/14/dbacc0cf9c8a839f16b8960de1f38f11.jpeg" style="width:400px" />
+4. 现已支持手动搜索标题输入爱优腾芒哔咪狐乐西埋巴Ani红播放链接获取弹幕。
+
+`uz`使用：
+1. 弹幕拓展 -> 豆儿弹幕
+2. 豆儿弹幕API -> 填入你的API
+
+### XML 格式说明
+
+API 支持返回 Bilibili 标准 XML 格式的弹幕数据，通过查询参数 `?format=xml` 指定。
+
+**XML 格式示例**：
+```xml
+<?xml version="1.0" ?>
+<i>
+    <d p="5.0,5,25,16488046,1751533608,0,0,13190629936">有 162 条弹幕来袭~请做好准备🔥！</d>
+    <d p="4.0,5,25,13818234,1751533608,0,0,84261947057">阿姐我来啦！[打call了]</d>
+    <d p="5.0,1,25,16488046,1751533608,0,0,33648506749">2025-07-02打卡</d>
+</i>
+```
+
+**属性 `p` 字段说明**（8个字段，逗号分隔）：
+1. **时间**：弹幕出现时间（秒）
+2. **类型**：1=滚动, 4=底部, 5=顶部
+3. **字体**：字体大小（25=中, 18=小）
+4. **颜色**：RGB 转十进制（16777215=白色）
+5. **时间戳**：Unix 时间戳（秒）
+6. **弹幕池**：弹幕池编号（通常为0）
+7. **用户Hash**：用户唯一标识（数字格式）
+8. **弹幕ID**：弹幕唯一编号（11位数字）
+
+**使用示例**：
+- 获取 JSON 格式：`GET /api/v2/comment/10001`
+- 获取 XML 格式：`GET /api/v2/comment/10001?format=xml`
+- 获取 JSON 并附带视频时长：`GET /api/v2/comment/10001?format=json&duration=true`
+- 通过 URL 获取弹幕：`GET /api/v2/comment?url=https://v.qq.com/x/cover/xxx.html&format=json`
+
+> 注意：
+>
+> ~~小幻在填写API的时候需要在API后面加上/api/v2，如http://192.168.1.7:9321/87654321/api/v2~~
+> 
+> （已对小幻做兼容，`/api/v2`可加可不加都可以正确处理）
+> 
+> 小幻在使用时可能出现掉匹配无法加载弹幕的问题，详见[这个issue](https://github.com/huangxd-/danmu_api/issues/33)，可以通过配置环境变量`UPSTASH_REDIS_REST_URL`和`UPSTASH_REDIS_REST_TOKEN`，开启upstash redis存储解决
+> 
+> 有很多人问FW能不能用，FW推荐直接使用插件，如果非要使用，则可以配合 `https://raw.githubusercontent.com/huangxd-/ForwardWidgets/refs/heads/main/widgets.fwd` 里的`danmu_api`插件使用
+
+## 环境变量列表
+| 变量名称      | 描述 |
+| ----------- | ----------- |
+| TOKEN      | 【可选】自定义用户token，不填默认为`87654321`       |
+| ADMIN_TOKEN      | 【可选】系统管理访问令牌，如果未配置此值，则无法访问系统管理功能，需要先配置后在URL中填入此token才能打开系统管理       |
+| FAVORITE_REQUIRE_ADMIN | 【可选】收藏写入和管理接口是否必须使用 `ADMIN_TOKEN`，默认为 `false`。设为 `false` 时接受 `TOKEN` 或 `ADMIN_TOKEN`；自定义 `TOKEN` 必须在 URL 路径中显式携带，默认 `TOKEN=87654321` 时可省略。设为 `true` 时只接受已配置的 `ADMIN_TOKEN`。`GET /api/v2/favorite/list` 始终公开，无需 token。 |
+| LOCAL_DANMU_NOT_REQUIRE_ADMIN | 【可选】本地弹幕上传和删除是否无需 ADMIN 权限，默认为 `false`。普通 `TOKEN` 用户可查看已导入列表。设为 `false` 时仅 `ADMIN_TOKEN` 可上传和删除，非管理员点击“选择文件”或删除按钮会直接提示需要 ADMIN 权限；设为 `true` 时也允许普通 `TOKEN` 用户上传和删除。 |
+| OTHER_SERVER   | 【可选】兜底第三方弹幕服务器，不填默认为`https://api.danmu.icu`，其他可选：`https://fc.lyz05.cn`，`https://dmku.hls.one`，`https://se.678.ooo`，`https://danmu.56uxi.com`，`https://dm.lxlad.com`       |
+| CUSTOM_SOURCE_API_URL   | 【可选】自定义弹幕源API地址，默认为空，配置后还需在SOURCE_ORDER添加custom源       |
+| VOD_SERVERS      | 【可选】VOD服务器列表，支持多个服务器并发查询，格式：`名称@URL,名称@URL,...`，示例：`金蝉@https://zy.jinchancaiji.com,789@https://www.caiji.cyou,听风@https://gctf.tfdh.top`，不填默认为`金蝉@https://zy.jinchancaiji.com,789@https://www.caiji.cyou,听风@https://gctf.tfdh.top`       |
+| VOD_RETURN_MODE      | 【可选】VOD返回模式，可选值：`all`（返回所有站点结果）、`fastest`（只返回最快的站点结果），默认为`fastest`。当配置多个VOD站点时，`all`模式会返回所有站点的结果（结果较多），`fastest`模式只返回首先响应成功的站点结果（结果较少，避免重复）       |
+| VOD_REQUEST_TIMEOUT      | 【可选】VOD服务器单个请求超时时间（毫秒），防止慢速或失效的采集站阻塞搜索，默认为`10000`（10秒），建议值：`5000-15000`。由于`fastest`模式只返回最快响应的站点，可以设置较大的超时时间给慢速站点更多机会       |
+| BILIBILI_COOKIE      | 【可选】b站cookie（填入后能抓取完整弹幕和启用港澳台App接口），如 `buvid3=E2BCA ... eao6; theme-avatar-tip-show=SHOWED`，请自行通过浏览器或抓包工具抓取，热心网友测试后，弹幕获取实际最少只需取 `SESSDATA=xxxx` 字段，但如果需要使用港澳台区域稳定的App搜索接口还需要`bili_jct=xxxx`或`access_key=xxxx` 字段，不知道怎么获取cookie的，可以从工具 [cookie-butler](https://cookie-butler.do-u.me) 获取    |
+| DOUBAN_COOKIE      | 【可选】豆瓣cookie，用于豆瓣相关接口请求，配置后可降低豆瓣接口风控影响，提升搜索/详情获取的稳定性。填写浏览器中已登录豆瓣后的完整 Cookie 字符串即可，格式示例：`bid=xxxx; ll="118282"; ...`。如遇到豆瓣搜索不稳定、返回异常或频繁验证，建议优先补充该变量       |
+| YOUKU_CONCURRENCY    | 【可选】youku弹幕请求并发数，用于加快youku弹幕请求速度，不填默认为`8`，最高`16`       |
+| SOURCE_ORDER    | 【可选】源排序，用于按源对返回资源的排序（注意：先后顺序会影响自动匹配最终的返回），默认是`douban,360,renren,hanjutv`，表示douban数据排在最前，hanjutv数据排在最后，示例：`douban,renren`：只返回douban数据和renren数据，且douban数据靠前；当前可选择的源字段有 `360,vod,tmdb,douban,tencent,youku,iqiyi,imgo,bilibili,migu,sohu,leshi,xigua,maiduidui,aiyifan,hongguo,renren,hanjutv,dandan,bahamut,animeko,custom,local`。`local` 表示已上传的本地弹幕，例如 `local,douban,360` 会将本地弹幕搜索结果排在前面。       |
+| PLATFORM_ORDER    | 【可选】自动匹配优选平台，按顺序优先返回指定平台弹幕，默认为空，即返回第一个满足条件的平台，示例：`bilibili1,qq`，表示如果有b站的播放源，则优先返回b站的弹幕，否则就返回腾讯的弹幕，两者都没有，则返回第一个满足条件的平台，当配置合并平台的时候为指定期望的合并源；当前可选择的平台字段有 `qiyi, bilibili1, imgo, youku, qq, migu, sohu, leshi, xigua, maiduidui, aiyifan, hongguo, renren, hanjutv, dandan, bahamut, animeko, custom`  |
+| MERGE_SOURCE_PAIRS    | 【可选】源合并配置，配置后将对应源合并同时一起获取弹幕返回，默认为空，格式是`源字段&源字段&源字段`，示例：`dandan&bahamut&animeko,renren&hanjutv,renren`， 允许多组、允许同时存在、允许多源，允许填单源表示保留原结果，一组中第一个为主源其余为副源，副源往主源合并，主源如果没有结果会轮替下一个作为主源循环，目前允许合并的源字段有`tencent,youku,iqiyi,imgo,bilibili,migu,sohu,leshi,xigua,maiduidui,aiyifan,hongguo,renren,hanjutv,dandan,bahamut,animeko` |
+| CUSTOM_MERGE_RULES | 【可选】合并映射表，用于自定义源合并行为，默认为空。<br>格式 1 (合并)：`副源剧名/S季数@来源 -> 主源剧名/S季数@来源 \| E副源集数>E主源集数`<br>格式 2 (阻断)：`副源剧名/S季数@来源 × 主源剧名/S季数@来源`<br>说明：`[/S季数]` 与 `[\|路由规则]` 为可选项，留空则交由程序判断。多个规则用分号隔开，多段路由用逗号分隔。<br>示例：<br>1. 常规合并：`天气之子@bilibili -> 天气之子@dandan`<br>2. 多集路由：`我推的孩子/S01@bahamut -> 我推的孩子/S03@dandan \| E25~E35>E25~E35`<br>3. 阻断合并：`辉夜大小姐想让我告白？～天才们的恋爱头脑战～(2020)@bilibili × 辉夜大小姐想让我告白～天才们的恋爱头脑战～ OVA(2021)【OVA】@dandan` |
+| ANIME_TITLE_FILTER    | 【可选】剧名过滤规则，用于按正则表达式对剧名进行过滤，适用于过滤一些不需要的剧集，需开启ENABLE_ANIME_EPISODE_FILTER，默认值：空（不过滤），格式：使用 \| 分隔多个关键词，例如：广告\|预告\|无关剧名       |
+| EPISODE_TITLE_FILTER    | 【可选】剧集标题正则过滤，按正则关键字对剧集或综艺的集标题进行过滤，适用于过滤一些预告或综艺非正式集，只支持match自动匹配，默认值如下 |
+| ENABLE_ANIME_EPISODE_FILTER    | 【可选】控制手动搜索的时候是否根据ANIME_TITLE_FILTER进行剧名过滤以及根据EPISODE_TITLE_FILTER进行集标题过滤，默认为`false`（禁用），启用后 GET /api/v2/bangumi/{id} 和 GET /api/v2/search/anime 接口会过滤掉预告、花絮等特殊集，以及名称包含特殊关键词的动漫。       |
+| STRICT_TITLE_MATCH    | 【可选】是否启用严格标题匹配模式，默认为`false`（宽松模糊匹配），启用后只匹配标题开头或完全匹配的结果。例如：搜索"遮天"时，`false`会匹配"古惑仔3之只手遮天"，`true`只匹配"遮天"、"遮天 第一季"等。可选值：`true`、`false`       |
+| TITLE_TO_CHINESE    | 【可选】是否在match自动匹配时将外语标题转换成中文标题，适用于网盘没有刮削的资源，默认值：false（不转换），说明：需配合TMDB_API_KEY使用       |
+| TITLE_MAPPING_TABLE    | 【可选】剧名映射表，用于自动匹配、手动搜索、FongMi、收藏时替换标题进行搜索（对解析出的剧名做全名精确匹配），格式：原始标题->映射标题;原始标题->映射标题;... ，例如："唐朝诡事录->唐朝诡事录之西行;国色芳华->锦绣芳华"       |
+| AUTO_MATCH_MAPPING_TABLE    | 【可选】自动匹配映射表，仅作用于 `POST /api/v2/match`，多条规则用分号分隔。开放映射 `永生 S05E02 -> 永生 S01E58` 会在源第 5 季内按集数递增映射；同标题同季度可配置多个开放规则，后面起始集数的规则会从该集开始覆盖前面的规则，例如 `一念永恒 S01E53 -> 一念永恒 S02E01;一念永恒 S01E107 -> 一念永恒 S03E01`；有限范围 `永生 S05E02~03 -> 永生 S01E58~59` 只映射包含两端的等长范围。支持目标结果优选 `海贼王 S02E01 -> 航海王(1999)【动漫】 S01E62` 和平台优选 `航海王 S01E01 -> 航海王 S01E01 @qiyi`。同一输入优先采用有限范围规则，规则起始集数相同按配置顺序；整体优先级为当前源季手动偏好 > 本映射表 > `TITLE_MAPPING_TABLE` > 普通匹配，`default` 偏好不阻断映射。限定候选不可用时回退同目标标题，映射目标失败时按原始请求重新匹配。普通搜索、收藏缓存和弹幕时间偏移不受影响。       |
+| TITLE_NOISE_FILTER    | 【可选】剧名杂音清理规则，按正则表达式清理搜索与匹配阶段的剧名杂音词（如`百花杀（真彩）`→`百花杀`），默认值如下，设为空值可禁用      |
+| ANIME_TITLE_SIMPLIFIED    | 【可选】是否在搜索时将繁体剧名标题自动转换为简体，适用于繁体标题搜索，默认值：false（不转换），可选值：`true`、`false`       |
+| BLOCKED_WORDS    | 【可选】弹幕屏蔽词列表，默认为空，多条规则用逗号分隔（中英文逗号均可，逗号前后空格会自动忽略）。每条规则支持两种写法：正则 `/正则/` 或 `/正则/i`（可带 i/m/s/u 等标志），或直接写纯文本词（按字面匹配）。示例如下       |
+| GROUP_MINUTE    | 【可选】合并去重分钟数，表示按n分钟分组后对弹幕合并去重，默认为1，最大值为30，0表示不去重       |
+| DANMU_LIMIT    | 【可选】等间隔采样限制弹幕总数，单位为k，即千：默认 0，表示不限制弹幕数，若改为5，弹幕总数在超过5000的情况下会将弹幕数控制在5000       |
+| CONVERT_TOP_BOTTOM_TO_SCROLL    | 【可选】是否将顶部和底部弹幕转换为浮动弹幕，默认为`false`（不转换），启用后顶部弹幕（ct=5）和底部弹幕（ct=4）会被转换为浮动弹幕（ct=1），可选值：`true`、`false`       |
+| CONVERT_COLOR    | 【可选】弹幕转换颜色配置，默认为`default`（不转换），`white` 将所有非白色的弹幕颜色转换为纯白色，`color` 将所有白色弹幕转换为随机颜色（包含白色），可选值：`default`、`white`、`color`       |
+| COLOR_POOL    | 【可选】自定义颜色池（`CONVERT_COLOR`为`color`时生效），不配置使用默认颜色池（白、红、橙、黄、绿、青、蓝、紫、粉），格式：十进制颜色值逗号分隔，例如：`16711680,65280,255,16776960`       |
+| LIKE_SWITCH    | 【可选】弹幕点赞数显示开关，默认为`true`（开启），开启后会在弹幕内容后显示点赞数标记，≥5 才显示，避免低赞干扰       |
+| DANMU_OUTPUT_FORMAT    | 【可选】弹幕输出格式，默认为`json`，可选值：`json`（JSON格式）、`xml`（XML格式）及所有`@dan-uni/dan-any`支持的输出格式，支持通过查询参数`?format=xml`或`?format=json`等覆盖此设置，优先级：查询参数 > 环境变量 > 默认值       |
+| DANMU_SIMPLIFIED_TRADITIONAL    | 【可选】弹幕简繁体转换设置：default（默认不转换）、simplified（繁转简）、traditional（简转繁）       |
+| DANMU_OFFSET      | 【可选】弹幕时间偏移配置，用于解决弹幕与视频不同步的问题。格式：剧名:秒（全剧偏移）或 剧名/季:秒（整季偏移）或 剧名/季/集:秒（单集偏移），支持指定来源：剧名@来源:秒 或 剧名/季@来源1&来源2:秒（不指定来源则对所有来源生效），多条用逗号分隔。例如：`overlord/S01:90, re-zero/S02@bilibili:120, re-zero/S02/E03@dandan&bilibili:10`。正数表示弹幕延后（向右），负数表示弹幕提前（向左）。支持百分比模式，在路径/来源末尾添加 `%`，例如：`东方/S03/E02@tencent%:11`，按 `原时间 * (视频时长 + 偏移秒数) / 视频时长` 计算新的弹幕发送时间。       |
+| UI_THEME    | 【可选】管理界面默认主题，默认为 `lavender`（经典默认）。浏览器中选择的主题会保存在本地并优先使用。可选值：`lavender`（经典默认）、`shinyo`（新叶绿）、`sakura`（哔哩粉）、`tianyi`（天依蓝）、`hatsune`（初音青）、`sakuragi`（樱木红）、`violet`（罗兰紫）、`amber`（LCL橘）       |
+| PROXY_URL    | 【可选】代理/反代地址，目前只对巴哈姆特、TMDB API、bilibili、animeko、aiyifan生效，支持格式：<br> 正常代理：`http://127.0.0.1:7890`，支持 `http://用户名:密码@代理地址:端口`（用户名和密码中的特殊字符需分别 URL 编码） <br> 万能反代：`@http://127.0.0.1` <br> 特定反代：`源字段@http://127.0.0.1`，目前支持的字段有：`bahamut,tmdb,bilibili,animeko,aiyifan`（bilibili字段会启用阿b的港澳台番剧的搜索与获取）<br> 混合配置/示例：`http://你的代理地址:28233,bahamut@你的巴哈反代地址,tmdb@你的tmdb反代地址,@你的万能反代地址` <br> 优先级：特定反代 > 万能反代 > 正常代理，高优先级覆盖低优先级使用。 <br> （注意：如果巴哈姆特请求不通，会拖慢搜索返回速度，如需使用bahamut源请在SOURCE_ORDER环境变量中手动添加`bahamut`）如果你使用docker部署并且访问不了 bahamut / animeko 源或 TMDB API ，请配置代理/反代地址（animeko 也可通过开启 Bangumi Data 解决）（[Netlify反代教程](https://github.com/wan0ge/bahamut-api-proxy)）；vercel/netlify/cf中理应都自然能联通，不用填写       |
+| TMDB_API_KEY    | 【可选】TMDB API Key地址，目前只对巴哈姆特生效，配置后并行从TMDB获取日语原名搜索巴哈（如果TMDB条目类型不是动画或制作地区不是jp则不会进行巴哈搜索）可以解决巴哈译名不同导致的搜索无结果问题，例如大陆常用译名`间谍过家家`在巴哈译名为`間諜家家酒`，正常搜索无法搜索到，配置后可以解决这一问题但会稍微影响请求速度，[TMDBAPI](https://www.themoviedb.org/settings/api)获取方法参考：[TMDB API Key申请 - 绿联NAS私有云](https://www.ugnas.com/tutorial-detail/id-226.html)       |
+| RATE_LIMIT_MAX_REQUESTS    | 【可选】限流配置：1分钟内同一IP最大请求次数，默认为`3`，设置为`0`表示不限流       |
+| IP_BLACKLIST    | 【可选】IP 黑名单列表，命中则拒绝请求。支持逗号/分号/换行分隔，支持 `/regex/` 或 `/regex/i` 正则，支持 IPv4/IPv6 CIDR，例如：`192.168.1.10,10.0.0.0/24,2001:db8::/64,/^203\.0\.113\./`       |
+| LOG_LEVEL    | 【可选】日志级别，默认为`info`，可选值：`error`（仅错误）、`warn`（错误和警告）、`info`（所有日志），生产环境建议使用`warn`，调试时使用`info`       |
+| SEARCH_CACHE_MINUTES    | 【可选】搜索结果缓存时间（分钟），默认为`3`，避免短期内重复的不必要API请求，同时保证获取最新的结果列表，可根据需要调整：Vercel/Cloudflare建议`1-5`分钟，Docker可设置`5-30`分钟，设置为`0`表示不缓存       |
+| COMMENT_CACHE_MINUTES    | 【可选】弹幕缓存时间（分钟），默认为`3`，弹幕数据的缓存时间，独立于搜索结果缓存，设置为`0`表示不缓存       |
+| COMMENT_CACHE_MIN_COUNT    | 【可选】弹幕缓存最少条数，默认为`100`。缓存弹幕少于该数量时忽略缓存时间并重新获取最新弹幕，设置为`0`可关闭此机制       |
+| HONGGUO_MERGE_ALL_EPISODES | 【可选】红果短剧是否将所有集弹幕按集号合并为一集返回，默认为`false`。启用后每集弹幕时间会累加前面各集时长，并在剧集列表中显示为“全集”       |
+| REMEMBER_LAST_SELECT    | 【可选】是否记住明确手动选择的结果，用于match自动匹配时优选上次的选择，默认为`true`。自动匹配后直接获取其返回结果不会写入偏好，选择不同结果时才会记录；如不需要，请关闭       |
+| MAX_LAST_SELECT_MAP    | 【可选】最后选择映射缓存大小限制，默认为`100`，lastSelectMap最多保存的条目数，超过限制时删除最早的条目（FIFO），用于存储查询关键字上次选择的animeId，最小值100，最大值1000       |
+| MAX_ANIMES    | 【可选】动漫标题缓存最大数量，默认为`100`，缓存最多保存的anime条目数，超过限制时删除最早的条目（FIFO），最小值100，最大值1000       |
+| BANGUMI_DATA_CACHE_DAYS    | 【可选】指定 Bangumi Data 数据有效期(天)，默认为：`7`，超过有效期后会下载更新，设置0则每次请求时强制异步更新（需开启`USE_BANGUMI_DATA`）'       |
+| UPSTASH_REDIS_REST_URL    | 【可选】Upstash redis url，需配合UPSTASH_REDIS_REST_TOKEN使用，用于持久化原有查询信息和收藏缓存，避免 serverless 冷启动丢失收藏；搜索结果和弹幕缓存不会写入 Redis（会稍微影响收藏操作和冷启动请求速度），获取方法请参考：`https://cloud.tencent.cn/developer/article/2424508`       |
+| UPSTASH_REDIS_REST_TOKEN    | 【可选】Upstash redis token，需配合UPSTASH_REDIS_REST_URL使用，用于持久化原有查询信息和收藏缓存，避免 serverless 冷启动丢失收藏；搜索结果和弹幕缓存不会写入 Redis（会稍微影响收藏操作和冷启动请求速度），获取方法请参考：`https://cloud.tencent.cn/developer/article/2424508`       |
+| LOCAL_CACHE_ENABLED    | 【可选】Node/Docker 通用文件缓存开关，默认为 `true`，需已有 `.cache` 目录；设置 `false` 后不读取或写入通用文件缓存，包括收藏与定时计划；已配置 Upstash 时仍可持久化。不影响本地弹幕文件、Bangumi Data、内存缓存或 Redis。运行中开启时保存当前内存，不自动导入旧文件。       |
+| LOCAL_REDIS_URL    | 【可选】本地 Redis 连接 URL，用于查询数据持久化，适用于 Docker 和本地部署，格式：`redis://:password@127.0.0.1:6379/0`，默认为空（不使用本地 Redis）。       |
+| DEPLOY_PLATFROM_ACCOUNT    | 【可选】部署账号ID，调用部署服务API需要，配置后可使用UI界面配置服务，不同部署平台获取方式可查看 [部署平台环境变量配置指南](https://github.com/huangxd-/danmu_api/tree/main/danmu_api/ui/README.md#部署平台环境变量配置指南) ，docker部署和本地node部署并不需要配置      |
+| DEPLOY_PLATFROM_PROJECT    | 【可选】部署项目名称或 ID，EdgeOne Makers 填控制台显示的完整项目 ID（`pages-...` 或 `makers-...`），调用部署服务API需要，配置后可使用UI界面配置服务，不同部署平台获取方式可查看 [部署平台环境变量配置指南](https://github.com/huangxd-/danmu_api/tree/main/danmu_api/ui/README.md#部署平台环境变量配置指南) ，docker部署和本地node部署并不需要配置       |
+| DEPLOY_PLATFROM_TOKEN    | 【可选】部署平台token，调用部署服务API需要，配置后可使用UI界面配置服务，不同部署平台获取方式可查看 [部署平台环境变量配置指南](https://github.com/huangxd-/danmu_api/tree/main/danmu_api/ui/README.md#部署平台环境变量配置指南) ，docker部署和本地node部署并不需要配置       |
+| NODE_TLS_REJECT_UNAUTHORIZED      | 【可选】在建立 HTTPS 连接时是否验证服务器的 SSL/TLS 证书，0表示忽略，默认为1       |
+| AI_BASE_URL      | 【可选】AI服务的基础URL地址，用于配置AI相关功能的API端点，不填默认为https://api.openai.com/v1       |
+| AI_MODEL      | 【可选】AI模型名称，指定使用的AI模型，不填默认为gpt-4o       |
+| AI_API_KEY      | 【可选】AI服务的API密钥，用于身份验证，默认为空，需手动填写       |
+| AI_MATCH_PROMPT      | 【可选】AI匹配提示词，用于自定义AI匹配行为，不填提供默认提示词，提示词如下       |
+| USE_BANGUMI_DATA      | 【可选】[Bangumi Data](https://github.com/bangumi-data/bangumi-data) 数据辅助开关，默认值：`false`（关闭），开启后将动画元数据缓存至本地或内存中给源调用，提升动画源的检索速度与匹配精准度并补全特定数据与番剧（本地和Docker部署使用时请先挂载.cache目录获得最佳体验，云部署使用时会将数据缓存至临时内存中如果体验不佳请关闭）       |
+| DANDANPLAY_ACCOUNT      | 【可选】弹弹play账号（dandan 源使用）。与密码同时填写后开启 [NipaPlay](https://github.com/AimesSoft/NipaPlay-Reload) 中转弹弹play辅助服务，使用 NipaPlay 获取弹幕与兜底，解决默认服务端无弹幕与更新缓慢的问题，并开启弹弹聚合弹幕实时拉取功能（实时拉取注意：需先开启对应源；指向的平台视频若已下架将无法获取；含巴哈姆特平台时需确保能够连通巴哈）       |
+| DANDANPLAY_PASSWORD      | 【可选】弹弹play密码（dandan 源使用），与账号同时填写后开启 [NipaPlay](https://github.com/AimesSoft/NipaPlay-Reload) 中转弹弹play辅助服务（UI 配置页提供连通性测试）       |
+
+```regex
+# EPISODE_TITLE_FILTER 默认值
+(特别|惊喜|纳凉)?企划(?!(书|案|部))|合伙人手记|超前(营业|vlog)?|速览|vlog|(?<!(Chain|Chemical|Nuclear|连锁|化学|核|生化|生理|应激))reaction|(?<!(单))纯享|加更(版|篇)?|抢先(看|版|集|篇)?|(?<!(被|争|谁))抢[先鲜](?!(一步|手|攻|了|告|言|机|话))|抢鲜|预告(?!(函|信|书|犯))|(?<!(死亡|恐怖|灵异|怪谈))花絮(独家)?|(?<!(一|直))直拍|(制作|拍摄|幕后|花絮|未播|独家|演员|导演|主创|杀青|探班|收官|开播|先导|彩蛋|NG|回顾|高光|个人|主创)特辑|(?<!(行动|计划|游戏|任务|危机|神秘|黄金))彩蛋|(?<!(嫌疑人|证人|家属|律师|警方|凶手|死者))专访|(?<!(证人))采访(?!(吸血鬼|鬼))|(正式|角色|先导|概念|首曝|定档|剧情|动画|宣传|主题曲|印象)[\s\.]*[PpＰｐ][VvＶｖ]|(?<!(退居|回归|走向|转战|隐身|藏身|的))幕后(?!(主谋|主使|黑手|真凶|玩家|老板|金主|英雄|功臣|推手|大佬|操纵|交易|策划|博弈|BOSS|真相))(故事|花絮|独家)?|直播(陪看|回顾)|未播(片段)?|衍生(?!(品|物|兽))|番外(?!(地|人))|会员(专享|加长|尊享|专属|版)?|(?<!(鸦|雪|纸|相|照|图|名|大))片花|(?<!(提取|吸收|生命|魔法|修护|美白))精华|看点|速看|解读(?!.*(密文|密码|密电|电报|档案|书信|遗书|碑文|代码|信号|暗号|讯息|谜题|人心|唇语|真相|谜团|梦境))|(?<!(案情|人生|死前|历史|世纪))回顾|影评|解说|(?<!(更|会|能|来|的|比|适合|擅长|比起))吐槽(?!.*(艺人|役|大会|担当))|吐槽(?!.*(艺人|役|大会|担当))|吐槽(?!.*(艺人|役|大会|担当))|吐槽(?!.*(艺人|役|大会|担当))|吐槽(?!.*(艺人|役|大会|担当))|(?<!(年终|季度|库存|资产|物资|财务|收获|战利))盘点|拍摄花絮|制作花絮|幕后花絮|未播花絮|独家花絮|花絮特辑|先导预告|终极预告|正式预告|官方预告|彩蛋片段|删减片段|未播片段|番外彩蛋|精彩片段|精彩看点|精彩集锦|看点解析|看点预告|NG镜头|NG花絮|番外篇|番外特辑|制作特辑|拍摄特辑|幕后特辑|导演特辑|演员特辑|片尾曲|(?<!(生命|生活|情感|爱情|一段|小|意外))插曲|高光回顾|背景音乐|OST|音乐MV|歌曲MV|前季回顾|剧情回顾|往期回顾|内容总结|剧情盘点|精选合集|剪辑合集|混剪视频|独家专访|演员访谈|导演访谈|主创访谈|媒体采访|发布会采访|陪看(记)?|试看版|短剧|精编|(?<!(Love|Disney|One|C|Note|S\d+|\+|&|\s))Plus|独家版|(?<!(导演|加长|周年))特别版(?!(图|画))|短片|(?<!(新闻|紧急|临时|召开|破坏|大闹|澄清|道歉|新品|产品|事故))发布会|解忧局|走心局|火锅局|巅峰时刻|坞里都知道|福持目标坞民|福利(?!(院|会|主义|课))篇|(福利|加更|番外|彩蛋|衍生|特别|收官|游戏|整蛊|日常)篇|独家(?!(记忆|试爱|报道|秘方|占有|宠爱|恩宠))|.{2,}(?<!(市|分|警|总|省|卫|药|政|监|结|大|开|破|布|僵|困|骗|赌|胜|败|定|乱|危|迷|谜|入|搅|设|中|残|平|和|终|变|对|安|做|书|画|察|务|案|通|信|育|商|象|源|业|冰))局(?!(长|座|势|面|部|内|外|中|限|促|气))|(?<!(重症|隔离|实验|心理|审讯|单向|术后))观察室|上班那点事儿|周top|赛段|VLOG|(?<!(大案|要案|刑侦|侦查|破案|档案|风云|历史|战争|探案|自然|人文|科学|医学|地理|宇宙|赛事|世界杯|奥运))全纪录|开播|先导|总宣|展演|集锦|旅行日记|精彩分享|剧情揭秘(?!(者|人))|(?:^|】\s*|\]\s*)(?:[SC]|SP|OP|ED|PV)\d+(?:[\s:：\.\-]|$)
+
+# 如果你想自定义过滤词，请新增EPISODE_TITLE_FILTER环境变量，示例如下，每个词用'|'隔开，也可参照默认值填写
+测试|test
+```
+
+```plain
+# TITLE_NOISE_FILTER 默认值
+[（(\[［](?:臻彩|真彩|高清|标清|超清|国配|中配|日配|粤语|原声|台配|无修|未删减|完整版|日语版|国语版|英语版|中字|字幕|助听|原版)[\])）］]
+```
+
+```regex
+# BLOCKED_WORDS 示例值
+# 格式：多条规则用逗号分隔（中英文逗号均可）；/正则/ 或 /正则/i 为正则规则，直接写的文字按纯文本字面匹配
+# 例如屏蔽纯文本词与正则混合： 剧透,广告,/^测试/,/\d{5,}/
+/.{20,}/,/^\d{2,4}[-/.]\d{1,2}[-/.]\d{1,2}([日号.]*)?$/,/^(?!哈+$)([a-zA-Z\u4e00-\u9fa5])\1{2,}/,/[0-9]+\.*[0-9]*\s*(w|万)+\s*(\+|个|人|在看)+/,/^[a-z]{6,}$/,/^(?:qwertyuiop|asdfghjkl|zxcvbnm)$/,/^\d{5,}$/,/^(\d)\1{2,}$/,/^\d{1,4}$/,/(20[0-3][0-9])/,/(0?[1-9]|1[0-2])月/,/\d{1,2}[.-]\d{1,2}/,/[@#&$%^*+\|/\-_=<>°◆◇■□●○★☆▼▲♥♦♠♣①②③④⑤⑥⑦⑧⑨⑩]/,/[一二三四五六七八九十百\d]+刷/,/第[一二三四五六七八九十百\d]+/,/(全体成员|报到|报道|来啦|签到|刷|打卡|我在|来了|考古|爱了|挖坟|留念|你好|回来|哦哦|重温|复习|重刷|再看|在看|前排|沙发|有人看|板凳|末排|我老婆|我老公|撅了|后排|周目|重看|包养|DVD|同上|同样|我也是|俺也|算我|爱豆|我家爱豆|我家哥哥|加我|三连|币|新人|入坑|补剧|冲了|硬了|看完|舔屏|万人|牛逼|煞笔|傻逼|卧槽|tm|啊这|哇哦)/
+
+# 注释如下：
+/.{20,}/  # 屏蔽20字符及以上的弹幕
+/^\d{2,4}[-/.]\d{1,2}[-/.]\d{1,2}([日号.])?$/  # 屏蔽日期弹幕
+/^(?!哈+$)([a-zA-Z\u4e00-\u9fa5])\1{2,}/  # 屏蔽单个汉字或者字母连续出现3次及以上的弹幕（排除纯“哈”重复）
+/[0-9]+.[0-9]\s(w|万)+\s*(\+|个|人|在看)+/  # 屏蔽几点几万在看的弹幕
+/^[a-z]{6,}$/  # 屏蔽6个及以上连续小写字母的弹幕
+/^(?:qwertyuiop|asdfghjkl|zxcvbnm)$/  # 屏蔽键盘连续行的弹幕
+/^\d{5,}$/  # 屏蔽5位及以上纯数字的弹幕
+/^(\d)\1{2,}$/  # 屏蔽三个及以上相同数字重复的弹幕
+/^\d{1,4}$/  # 屏蔽1-4位数字的弹幕
+/(20[0-3][0-9])/  # 屏蔽2000-2039年份相关的弹幕
+/(0?[1-9]|1[0-2])月/  # 屏蔽月份表述的弹幕
+/\d{1,2}[.-]\d{1,2}/  # 屏蔽类似时间或日期分隔的数字弹幕
+/[@#&$%^*+\|/\-_=<>°◆◇■□●○★☆▼▲♥♦♠♣①②③④⑤⑥⑦⑧⑨⑩]/  # 屏蔽特殊符号或表情符号的弹幕
+/[一二三四五六七八九十百\d]+刷/  # 屏蔽数字或汉字数字后跟“刷”的弹幕
+/第[一二三四五六七八九十百\d]+/  # 屏蔽“第几”序号相关的弹幕
+/(全体成员|报到|报道|来啦|签到|刷|打卡|我在|来了|考古|爱了|挖坟|留念|你好|回来|哦哦|重温|复习|重刷|再看|在看|前排|沙发|有人看|板凳|末排|我老婆|我老公|撅了|后排|周目|重看|包养|DVD|同上|同样|我也是|俺也|算我|爱豆|我家爱豆|我家哥哥|加我|三连|币|新人|入坑|补剧|冲了|硬了|看完|舔屏|万人|牛逼|煞笔|傻逼|卧槽|tm|啊这|哇哦)/  # 屏蔽常见互动、报到或口语化弹幕词汇
+```
+
+```shell
+# AI_MATCH_PROMPT 默认值
+你是一个专业的影视匹配专家，你的的任务是根据用户提供的 JSON 数据，从候选动漫列表中匹配最符合条件的动漫及集数。
+
+输入字段说明：
+- title: 查询标题
+- season: 季数（可为 null）
+- episode: 集数（可为 null）
+- year: 年份（可为 null）
+- dynamicPlatformOrder: 平台偏好列表（可为 null）
+- preferAnimeId: 偏好动漫 ID（可为 null）
+- animes: 候选动漫列表
+  - animeId: 动漫id
+    animeTitle: 动漫标题，(年份)前面才是真实的标题
+    aliases: 动漫标题的别名，视情况可以作为(动漫标题)看待
+    type: 类型
+    year: 发布年份
+    episodeCount: 总集数
+    source: 弹幕来源
+
+匹配规则 (按优先级排序):
+1. 如果preferAnimeId非空，且animes存在该animeId，则返回该id对应的anime和episode
+2. 标题相似度: 优先匹配标题相似度最高的条目
+3. 季度严格匹配: 如果指定了季度,必须严格匹配
+4. 类型匹配: episode为空则优先匹配电影，非空则匹配电视剧等
+5. 年份接近: 优先选择年份接近的
+6. 平台匹配：如果有多个高度相似的结果且dynamicPlatformOrder非空，则从前往后选择相对应的平台
+7. 集数完整: 如果有多个高度相似的结果,选择集数最完整的
+
+请分析哪个动漫最符合查询条件，如果指定了季数和集数，请也返回对应的集信息。
+请严格按照以下 JSON 格式返回结果，不要包含任何其他内容：
+{
+  "animeIndex": 匹配的动漫在列表中的索引(从0开始) 或 null
+}
+
+如果没有找到合适的匹配，返回：
+{
+  "animeIndex": null
+}
+```
+
+## 采集源及对应平台列表
+| 采集源      | 平台列表 |
+| ----------- | ----------- |
+| 360      | qiyi, bilibili1, imgo, youku, qq |
+| vod      | qiyi, bilibili1, imgo, youku, qq |
+| tmdb     | qiyi, bilibili1, youku, qq, migu |
+| douban   | qiyi, bilibili1, youku, qq, migu |
+| tencent  | qq |
+| youku    | youku |
+| iqiyi    | qiyi |
+| imgo     | imgo |
+| bilibili | bilibili1 |
+| migu     | migu |
+| sohu     | sohu |
+| leshi    | leshi |
+| xigua    | xigua |
+| maiduidui| maiduidui |
+| aiyifan  | aiyifan |
+| hongguo  | hongguo |
+| renren   | renren |
+| hanjutv  | hanjutv |
+| bahamut  | bahamut |
+| dandan   | [dandan](https://www.dandanplay.com/) |
+| animeko  | [animeko](https://github.com/open-ani/animeko) |
+| custom   | custom |
+| local    | 本地上传弹幕（无播放平台） |
+
+## 项目结构
+```
+├── .gitignore
+├── .pr_agent.toml              # PR Agent 配置文件
+├── .github/
+│   └── workflows/
+│       ├── docker-image.yml     # Docker 镜像构建与推送
+│       ├── pr_agent.yml         # PR Agent 自动审查
+│       ├── sync_fork.yml        # Fork 仓库自动同步
+│       └── sync_hf.yml          # Hugging Face Space 同步
+├── build-forward-widget.js     # 构建forward弹幕插件脚本
+├── Dockerfile
+├── edgeone.json                # EdgeOne Makers 配置文件
+├── LICENSE
+├── netlify.toml                # netlify 配置文件
+├── package.json
+├── README.hf.md                # Hugging Face Space 部署说明
+├── README.md
+├── vercel.json                 # vercel 配置文件
+├── wrangler.toml               # cloudflare worker 配置文件
+├── config/
+│   └── .env.example            # .env 配置文件示例
+├── danmu_api/
+│   ├── esm-shim.cjs            # Node.js低版本兼容层
+│   ├── server.js               # 本地node启动脚本
+│   ├── worker.js               # 主 API 服务器代码
+│   ├── tests/                  # 测试用例，目录结构与源码一一对应（npm test 入口）
+│   │   ├── helpers/            # 共享夹具（请求/响应 mock、全局状态重置、DOM 沙箱）
+│   │   ├── apis/ configs/ models/ sources/ utils/ ui/  # 按模块镜像的 *.test.js
+│   │   ├── worker-api.test.js  # 请求级端点测试
+│   │   └── manual/             # 依赖真实数据源的手工巡检用例（不参与自动测试，需手动指定路径运行）
+│   ├── apis/
+│   │   ├── clients/
+│   │   │   └── fongmi-api.js   # FongMi影视兼容接口
+│   │   ├── dandan-api.js       # 弹弹play兼容接口函数
+│   │   ├── local-danmu-api.js  # 本地弹幕上传、列表、读取和删除接口
+│   │   ├── env-api.js          # 环境变量接口函数
+│   │   ├── favorite-api.js     # 永久收藏的新增、列表、刷新、删除和定时刷新接口
+│   │   ├── forward-trace-api.js # Forward 调试日志回传接口
+│   │   └── system-api.js       # 系统管理接口函数
+│   ├── configs/
+│   │   ├── envs.js             # 环境变量处理脚本
+│   │   ├── globals.js          # 全局变量处理脚本
+│   │   └── handlers/           # 部署平台API调用及环境变量处理类
+│   │       ├── base-handler.js
+│   │       ├── cloudflare-handler.js
+│   │       ├── edgeone-handler.js
+│   │       ├── handler-factory.js
+│   │       ├── huggingface-handler.js
+│   │       ├── netlify-handler.js
+│   │       ├── node-handler.js
+│   │       └── vercel-handler.js
+│   ├── models/
+│   │   └── dandan-model.js     # 弹弹play数据模型
+│   ├── sources/
+│   │   ├── aiyifan.js          # 爱壹帆源
+│   │   ├── animeko.js          # Animeko源
+│   │   ├── bahamut.js          # 巴哈姆特源
+│   │   ├── base.js             # 弹幕源获取基类
+│   │   ├── bilibili.js         # b站源
+│   │   ├── custom.js           # 自定义弹幕源
+│   │   ├── dandan.js           # 弹弹play源
+│   │   ├── douban.js           # 豆瓣源
+│   │   ├── hanjutv.js          # 韩剧TV源
+│   │   ├── hongguo.js          # 红果短剧源
+│   │   ├── iqiyi.js            # 爱奇艺源
+│   │   ├── kan360.js           # 360看源
+│   │   ├── leshi.js            # 乐视视频源
+│   │   ├── maiduidui.js        # 埋堆堆源
+│   │   ├── mango.js            # 芒果TV源
+│   │   ├── migu.js             # 咪咕视频源
+│   │   ├── other.js            # 第三方弹幕服务器
+│   │   ├── renren.js           # 人人视频源
+│   │   ├── sohu.js             # 搜狐视频源
+│   │   ├── tencent.js          # 腾讯视频源
+│   │   ├── tmdb.js             # TMDB源
+│   │   ├── vod.js              # vod源
+│   │   ├── xigua.js            # 西瓜视频源
+│   │   ├── youku.js            # 优酷源
+│   │   ├── local.js            # 本地弹幕源
+│   │   └── registry.js         # 弹幕源注册与实例管理
+│   ├── ui/
+│   │   ├── README.md           # UI系统使用说明
+│   │   ├── template.js         # UI模板文件
+│   │   ├── css/
+│   │   │   ├── base.css.js     # 基础样式
+│   │   │   ├── components.css.js # 组件样式
+│   │   │   ├── forms.css.js    # 表单样式
+│   │   │   ├── responsive.css.js # 响应式样式
+│   │   │   └── themes.css.js   # 管理界面主题样式
+│   │   └── js/
+│   │       ├── apitest.js      # API测试脚本
+│   │       ├── icons.js        # UI图标
+│   │       ├── localdanmu.js   # 本地弹幕上传与管理脚本
+│   │       ├── logview.js      # 日志查看脚本
+│   │       ├── main.js         # UI主脚本
+│   │       ├── preview.js      # 预览功能脚本
+│   │       ├── pushdanmu.js    # 推送弹幕脚本
+│   │       ├── requestrecords.js # 请求记录脚本
+│   │       └── systemsettings.js # 系统设置脚本
+│   └── utils/
+│       ├── ai-util.js          # AI相关处理工具
+│       ├── aiyifan-util.js     # 爱壹帆签名工具
+│       ├── auto-match-mapping-util.js # 自动匹配映射规则解析与候选筛选工具
+│       ├── bangumi-data-util.js # Bangumi Data管理工具
+│       ├── cache-util.js       # 缓存数据处理工具
+│       ├── codec-util.js       # 编解码工具
+│       ├── common-util.js      # 通用工具
+│       ├── cookie-util.js      # b站 cookie获取工具
+│       ├── dan-any.js          # dan-any 弹幕格式转换工具
+│       ├── danmu-util.js       # 弹幕处理工具
+│       ├── douban-util.js      # 豆瓣API请求工具
+│       ├── favorite-schedule-util.js # 定时刷新的校验、时间计算与调度工具
+│       ├── favorite-util.js    # 永久收藏缓存的匹配、增删、刷新及序列化工具
+│       ├── hanjutv-util.js     # 韩剧tv加解密工具
+│       ├── http-util.js        # 请求工具
+│       ├── imdb-util.js        # IMDB API请求工具
+│       ├── local-redis-util.js # 本地redis工具
+│       ├── log-util.js         # 日志工具
+│       ├── local-danmu-parser.js # 本地弹幕文件解析与资源键工具
+│       ├── local-danmu-store.js # 本地弹幕文件/Redis存储工具
+│       ├── merge-util.js       # 源合并处理工具
+│       ├── migu-util.js        # 咪咕工具
+│       ├── nipaplay-util.js    # NipaPlay 中转弹弹play服务端工具
+│       ├── offset-util.js      # 弹幕偏移工具
+│       ├── redis-util.js       # redis工具
+│       ├── server-listen-util.js # IPv4/IPv6 双栈监听与 IPv4 回退工具
+│       ├── time-util.js        # 时间日期工具
+│       ├── tmdb-util.js        # TMDB API请求处理工具
+│       └── zh-util.js          # 中文繁简转换工具
+├── forward/
+│   ├── custom-polyfill.js      # 自定义polyfill
+│   ├── forward-widget.js       # forward弹幕插件
+│   └── forward-widget.spec.js  # forward弹幕插件测试脚本（真实联网，手动执行）
+├── netlify/
+│   └── functions/
+│       └── api.js              # netlify 中间处理逻辑
+└── node-functions/
+    ├── [[...path]]..js         # EdgeOne Makers 所有路由跳转指向index
+    └── index.js                # EdgeOne Makers 中间处理逻辑
+```
+
+## 注意事项
+
+### 热更新相关
+- **本地运行**：修改 `config/.env` 文件后，应用会自动检测并重新加载配置（无需重启应用）。
+- **Docker 部署**：需要使用 Volume 挂载 `config/.env` 文件才能支持热更新。推荐使用 docker compose 部署（见"Docker 一键启动"部分），配置 Volume 后修改配置文件容器会自动重新加载配置。
+- **Vercel/Netlify/Cloudflare**：需要在平台的环境变量设置中修改，然后重新部署才能生效。
+- **配置优先级**：系统环境变量 > .env 文件
+
+### 其他注意事项
+- 日志存储在内存中，服务器重启后会清空。
+- `/api/logs` 中的 JSON 日志会格式化显示，带缩进以提高可读性。
+- 搜索结果和弹幕数据存储在内存中，服务器重启后会清空，可通过配置 `UPSTASH_REDIS_REST_URL` 和 `UPSTASH_REDIS_REST_TOKEN` 启用 Redis 持久化存储，启用 Redis 后，收藏功能也可用。
+- 已支持本地redis，可通过配置 `LOCAL_REDIS_URL` 启用，只支持docker和本地部署环境。
+- 搜索结果缓存默认时间为 1 分钟，可通过环境变量 `SEARCH_CACHE_MINUTES` 调整（设置为 0 表示不缓存）。
+- 确保 `package.json` 中包含 `node-fetch` 依赖。
+- 一键部署需要将项目推送到公开的 Git 仓库（如 GitHub），并更新按钮中的仓库地址。
+- 运行 Docker 容器时，需通过 `-e TOKEN=87654321` 传递 `TOKEN` 环境变量。
+- cloudflare貌似被哔风控了。
+- cloudflare貌似有单次请求数量限制，会导致后半部分没有弹幕。
+- 如果想更换兜底第三方弹幕服务器，请添加环境变量`OTHER_SERVER`，示例`https://api.danmu.icu`。
+- 如果想使用自定义弹幕源，请添加环境变量`CUSTOM_SOURCE_API_URL`，并在`SOURCE_ORDER`环境变量中添加`custom`源。
+- 本地弹幕上传的标题、年份和类型为必填项。年份从今年向下排列至 `1900` 年，默认值和最大值均为打开页面时的当前年份；类型仅可选 `tv` 或 `movie`。`tv` 的季和集均默认 `1`，`movie` 的季和集可留空。管理列表按标题、年份、类型、季归为一个剧集，支持按标题关键词搜索，展开后缩进显示各集，可编辑剧集或单集信息、单独删除文件、重新上传文件或一次删除整个剧集；编辑不会重新解析弹幕内容，同一季同一集重新上传会替换原文件，不同季独立保存。编辑后若目标资源已存在会拒绝保存。旧资源继续兼容，未填写季数的资源沿用第 1 季处理。在 `SOURCE_ORDER` 中添加 `local` 后即可搜索已上传的剧集。
+- 同一部电视剧支持多选弹幕文件批量导入，共用标题、年份和季。页面从 `S01E02`、`EP02`、`第02集`、`02.xml` 等文件名识别集数，并支持逐个修改；未识别或重复的集数需要先修正。文件逐个上传，每个文件不超过 10 MB，失败后继续处理其余文件，并显示各文件结果及成功、失败数量。电影仍逐个导入。
+- Node/Docker 部署的本地弹幕文件保存在 `.cache/local-danmu`，使用 Docker 时请挂载 `.cache` 目录以持久化；Vercel、Netlify、Cloudflare、EdgeOne、Hugging Face 等云端部署需要可用的 Redis 才能保存本地弹幕资源。
+- 如果想搜索bilibili港澳台番剧，请开启`Bangumi Data`匹配或添加环境变量`PROXY_URL`并填写`bilibili@`字段的解析/反代服务地址，示例：`bilibili@https://233.233.233`，支持部分[公共解析服务器](https://github.com/yujincheng08/BiliRoaming/wiki/%E5%85%AC%E5%85%B1%E8%A7%A3%E6%9E%90%E6%9C%8D%E5%8A%A1%E5%99%A8)，另外港澳台区域搜索最好在`BILIBILI_COOKIE`环境变量中加入包含`bili_jct`或`access_key`字段的cookie使用App接口，如果没有会使用不稳定的web接口进行搜索。（如果你填写的服务器遇到了App接口报错说明不支持App接口，Web接口报错-500、502正常，风控严重，但只要一直搜索总会成功）
+- 如果想更换vod站点，请添加环境变量`VOD_SERVERS`，示例`金蝉@https://zy.jinchancaiji.com,789@https://www.caiji.cyou,听风@https://gctf.tfdh.top`（支持多个服务器并发查询）。
+- 当配置多个VOD站点时，可通过`VOD_RETURN_MODE`环境变量控制返回结果方式：`all`（返回所有站点结果）或`fastest`（默认，只返回最快的站点结果，避免结果过多）。
+- 推荐vercel/netlify部署，cloudflare/edgeone不稳定，当然最稳定还是自己本地docker部署最佳。
+- /api/v2/comment接口默认限流：1分钟内同一IP只能请求3次，可通过环境变量`RATE_LIMIT_MAX_REQUESTS`调整（设置为0表示不限流）。
+- TMDB源请求逻辑：search tmdb -> tmdbId -> imdbId -> doubanId -> playUrl；优点：emby通过tmdb刮削，标题通过tmdb搜索，返回的信息可能更加匹配；缺点：链条过长，请求时长5-10s左右，中间一环数据有缺失，就没有返回结果。
+- TMDB源在SOURCE_ORDER添加tmdb的同时，需要添加TMDB_API_KEY环境变量
+- 弹幕分片下载请求已加入重试机制，重试次数为1次
+- 查询数据启动时按 Local Redis > Upstash > 文件缓存恢复，空或不可用的后端会继续尝试下一级；剧集详情与 ID 索引成组恢复，完整快照优先于残缺快照，其他查询数据按键回退，剧集计数器取各后端已知的有效最大值。只有恢复存在损坏或失败、且所有后端均未提供有效计数器或剧集 ID 时，才以当前毫秒时间戳作为编号起点，降低重用未知旧编号的风险。均无可用数据时使用内存。成功读取的后端独立写入，启动读取失败的后端在本进程内暂停查询数据写入，重启后重新恢复。运行中不重新导入旧快照；每个进程首次覆盖既有查询缓存文件前保留 `.bak-*` 备份，每个文件跨重启最多两份。
+- 设置界面清理缓存时，单独重置剧集编号会保留现存剧集 ID 的上界。损坏缓存被保护后，可显式清理全部查询项并在保存成功后恢复写入；仅清理部分项则需重启重读剩余数据，界面会提示。各缓存后端并发清理，Redis 清理操作使用 5 秒网络等待预算（Local Redis 包含建连时间）；持久化失败仍返回失败，并说明内存已清理和失败后端，不能视为全部清理成功。查询缓存与收藏独立加载，收藏读取失败时暂停对应后端的收藏写入，避免覆盖原快照。
+- 有任何问题，如部署/环境变量配置等，可通过deepwiki对本项目进行提问，链接入口：https://deepwiki.com/huangxd-/danmu_api ，其中项目内容一般每周刷新一次
+
+### 部署完成后在播放器填写后弹幕未生效自主排查步骤
+以API示例 `http://192.168.1.7:9321/87654321` 为例（默认为87654321的情况下也可以不带token）
+1. 首先确认你的api部署成功 访问 `http://192.168.1.7:9321/87654321` 有json输出
+2. 检查你在播放器的填写是否正确，有无多余空格等
+3. 播放器请求后，查看 `http://192.168.1.7:9321/87654321/api/logs` 日志，看请求是否有报错，比如有用户在自己软路由上搭建，但走了全局代理，导致人人等访问不了，请确保走直连
+4. 如果你播放的影片片名不规范，很可能搜不到，请确保片名规范
+
+### 关联项目
+[喂饭教程1：danmu_api vercel 自动同步部署方案 - 永远保持最新版本！实时同步原作者更新](https://github.com/xiaoyao20084321/log-var-danmu-deployment-guide)
+
+[喂饭教程2：Docker版弹幕danmu_api图文部署教程（面板安装版）](https://github.com/nekokit/danmu_api-docker-deployment-guide)
+
+[喂饭教程3：使用Netlify反向代理巴哈姆特api，实现danmu_api项目国内直连获取巴哈姆特弹幕](https://github.com/wan0ge/bahamut-api-proxy)
+
+[喂饭教程4：使用Vercel搭建万能反向代理，部署后请绑定自定义域名使用](https://github.com/souying/vercel-api-proxy)
+
+[喂饭教程5：非常详细的 danmu_api 图文教程](https://bks.indevs.in)
+
+### 特别感谢
+- 开源项目 [danmaku-anywhere](https://github.com/Mr-Quin/danmaku-anywhere) 提供的[弹弹play开放平台](https://doc.dandanplay.com/open/) danmaku-anywhere 镜像弹弹play服务端使用授权
+
+- 开源项目 [NipaPlay-Reload](https://github.com/AimesSoft/NipaPlay-Reload) 提供的[弹弹play开放平台](https://doc.dandanplay.com/open/) NipaPlay 中转弹弹play服务端使用授权
+
+- 开源项目 [animeko](https://github.com/open-ani/animeko) 提供的弹幕API
+
+- 开源项目 [bangumi-data](https://github.com/bangumi-data/bangumi-data) 提供的平台动画元数据
+
+- 开源项目 [Bangumi-syncer](https://github.com/SanaeMio/Bangumi-syncer) 提供的 UI 灵感
+
+### 贡献者
+<a href="https://github.com/huangxd-/danmu_api/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=huangxd-/danmu_api" alt="contributors" />
+</a>
+
+### 📈项目 Star 数增长趋势
+#### Star History
+[![Star History Chart](https://api.star-history.com/svg?repos=huangxd-/danmu_api&type=Date)](https://www.star-history.com/#huangxd-/danmu_api&Date)

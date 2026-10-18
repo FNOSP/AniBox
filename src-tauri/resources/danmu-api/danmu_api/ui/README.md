@@ -1,0 +1,388 @@
+# 目录
+
+- [UI 系统使用说明](#ui-系统使用说明)
+- [功能概览](#功能概览)
+- [访问方式](#访问方式)
+- [功能详解](#功能详解)
+  - [1. 配置预览](#1-配置预览)
+  - [2. 日志查看](#2-日志查看)
+  - [3. 接口调试/弹幕测试](#3-接口调试弹幕测试)
+  - [4. 推送弹幕](#4-推送弹幕)
+  - [5. 请求记录](#5-请求记录)
+  - [6. 本地弹幕](#6-本地弹幕)
+  - [7. 系统配置](#7-系统配置)
+- [安全说明](#安全说明)
+- [部署平台支持](#部署平台支持)
+- [部署平台环境变量配置指南](#部署平台环境变量配置指南)
+  - [各平台变量获取详细步骤](#各平台变量获取详细步骤)
+    - [1. Vercel 平台](#1-vercel-平台)
+    - [2. Netlify 平台](#2-netlify-平台)
+    - [3. EdgeOne Makers 平台](#3-edgeone-makers-平台)
+    - [4. Cloudflare 平台](#4-cloudflare-平台)
+  - [常见问题](#常见问题)
+- [API 端点](#api-端点)
+- [故障排除](#故障排除)
+
+# UI 系统使用说明
+
+本项目包含一个基于 Web 的用户界面，用于管理和配置弹幕 API 服务。以下是 UI 系统的详细使用说明。
+
+## 功能概览
+
+UI 系统提供了以下主要功能模块：
+
+1. **配置预览** - 查看当前生效的环境变量配置
+2. **日志查看** - 实时查看系统运行日志
+3. **接口调试/弹幕测试** - 测试和调试弹幕 API 接口
+4. **推送弹幕** - 向播放器推送弹幕
+5. **请求记录** - 查看最近的 API 请求记录
+6. **本地弹幕** - 上传、解析和管理本地弹幕文件
+7. **系统配置** - 环境变量配置和系统管理
+
+## 访问方式
+
+UI 系统需要通过在 URL 中添加 TOKEN 来访问，以确保安全性：
+
+- 普通功能访问：`http://your-domain/{TOKEN}`
+- 系统管理功能：`http://your-domain/{ADMIN_TOKEN}`
+
+## 功能详解
+
+### 1. 配置预览
+
+在配置预览页面，您可以：
+
+- 查看当前生效的环境变量配置
+- 了解各配置项的当前值和描述
+- 配置按类别分组显示（API配置、源配置、匹配配置等）
+
+### 2. 日志查看
+
+日志查看页面提供：
+
+- 实时日志监控
+- 刷新日志功能
+- 清空日志功能（需要 ADMIN_TOKEN）
+
+### 3. 接口调试/弹幕测试
+
+接口调试功能允许您：
+
+- 选择不同的 API 接口进行测试
+- 输入接口参数
+- 发送请求并查看响应结果
+- 支持的接口包括：
+  - 搜索动漫 - `/api/v2/search/anime`
+  - 搜索剧集 - `/api/v2/search/episodes`
+  - 匹配动漫 - `/api/v2/match`
+  - 获取番剧详情 - `/api/v2/bangumi/:animeId`
+  - 获取弹幕 - `/api/v2/comment/:commentId`
+
+弹幕测试功能允许您：
+
+- 自动匹配测试：输入文件名自动匹配并获取弹幕，模拟播放器自动加载流程
+- 手动匹配测试：搜索动漫 → 选择番剧 → 选择剧集 → 获取弹幕
+- 弹幕统计：弹幕数、时长、高能时刻、平均密度、匹配时长、类型分布
+- 弹幕热力图：按时间段可视化弹幕密度分布
+- 弹幕列表：支持全部/滚动/顶部/底部过滤，显示颜色和类型标签，首次加载及每次加载更多500条
+- 导出功能：支持导出JSON和XML格式弹幕文件
+- 时长处理：优先请求 `/api/v2/comment/:commentId?format=json&duration=true` 返回的 `videoDuration`，没有真实时长时再回退到尾部裁剪算法
+- 视图导航优化：搜索结果/剧集详情/弹幕详情逐级切换，带返回按钮和加载动画
+
+### 4. 推送弹幕
+
+推送弹幕功能支持：
+
+- 向 OK 影视等播放器推送弹幕
+- 搜索动漫并选择剧集
+- 推送地址格式如：`http://127.0.0.1:9978/action?do=refresh&type=danmaku&path=`
+- 需要在同一局域网或使用公网 IP
+
+
+### 5. 请求记录
+
+请求记录页面提供：
+
+- 查看最近一段时间内的 API 请求历史
+- 显示每条请求的详细信息，包括：
+  - 请求时间
+  - 请求方法 (GET, POST, etc.)
+  - 请求 URL
+  - 请求参数
+  - 请求来源 IP
+- 查看今日请求总数
+
+### 6. 本地弹幕
+
+本地弹幕页面用于将本地弹幕文件导入服务，并在搜索和自动匹配中使用。页面支持 XML、JSON、ASS、SSA、CSV、TXT 格式，单个文件大小上限为 10 MB。
+
+上传时需要填写标题、年份和类型（`tv` 或 `movie`）。电视剧默认第 1 季第 1 集，也可以指定季数和集数；电影的季数和集数可以留空。标题、年份、类型和季相同的资源会归为一组，列表支持按标题关键词搜索，可编辑剧集信息（标题、年份、类型、季）或单集信息（集数、显示文件名），编辑只更新元数据，不重新解析弹幕；也可展开查看每一集并单独删除文件、重新上传文件，或一次删除整个剧集。编辑目标与已有资源冲突时会拒绝保存。重新上传同一季同一集会替换原文件。
+
+同一部电视剧的多集可以一次多选导入，共用标题、年份和季。选择多个文件后，页面会按文件名排序并显示预览，自动识别 `S01E02`、`EP02`、`第02集`、`02.xml` 等文件名中的集数；每个文件的集数都可以修改，未识别或重复的集数需要先修正才能上传。批量导入仅用于 `tv`，电影仍逐个导入。
+
+点击“批量上传并解析”后，页面逐个上传文件，显示每个文件的结果和整批统计。单个文件超过 10 MB 或上传失败时会继续处理其余文件，成功后统一刷新资源列表。批量导入由页面依次调用现有上传接口完成，接口每次仍只接收一个 `file`。
+
+本地弹幕页面和接口需要有效的 `TOKEN` 或 `ADMIN_TOKEN`。默认只有 `ADMIN_TOKEN` 可以上传和删除，普通 `TOKEN` 只能查看列表；设置 `LOCAL_DANMU_NOT_REQUIRE_ADMIN=true` 后，普通 `TOKEN` 也可以上传和删除。资源保存方式取决于部署环境：Node/Docker 保存到 `.cache/local-danmu`，云端部署使用已配置的 Redis。
+
+导入完成后，需要在 `SOURCE_ORDER` 中加入 `local`，例如 `SOURCE_ORDER=local,douban,360`，搜索接口才会检索并返回本地弹幕。`local` 是数据源，不属于 `PLATFORM_ORDER` 的播放平台选项。
+
+### 7. 系统配置
+
+系统配置页面包含：
+
+#### 环境变量管理
+- **API配置** - API 相关设置
+- **源配置** - 数据源配置
+- **匹配配置** - 匹配算法设置
+- **弹幕配置** - 弹幕相关参数
+- **缓存配置** - 缓存策略设置
+- **系统配置** - 系统级配置
+
+#### 配置项类型
+- **文本** - 普通文本输入
+- **布尔值** - 开关选择
+- **数字** - 数字滚轮输入 (带范围限制)
+- **单选** - 从预定义选项中选择
+- **多选** - 选择多个选项并可拖动排序
+
+#### 系统管理功能
+- **清理缓存** - 清除系统缓存（需要 ADMIN_TOKEN）
+- **重新部署** - 重新部署系统（需要 ADMIN_TOKEN）
+
+## 安全说明
+
+- 访问 UI 系统需要在 URL 中配置 TOKEN
+- 系统管理功能（日志查看、环境变量配置等）需要 ADMIN_TOKEN
+- 本地弹幕上传和删除默认需要 ADMIN_TOKEN；可通过 `LOCAL_DANMU_NOT_REQUIRE_ADMIN=true` 放宽为普通 TOKEN
+- 确保 TOKEN 和 ADMIN_TOKEN 的安全性
+
+## 部署平台支持
+
+系统支持多种部署平台：
+
+- Node.js
+- Vercel
+- Netlify
+- Cloudflare
+- Docker
+- EdgeOne Makers（原 EdgeOne Pages）
+
+根据部署平台的不同，可能需要配置额外的环境变量。
+
+## 部署平台环境变量配置指南
+
+### 平台与所需变量对照表
+
+| 平台 | DEPLOY_PLATFROM_ACCOUNT | DEPLOY_PLATFROM_PROJECT | DEPLOY_PLATFROM_TOKEN |
+|------|----------------------|----------------------|---------------------|
+| Vercel | ❌ | ✅ | ✅ |
+| Netlify | ✅ | ✅ | ✅ |
+| EdgeOne Makers | ❌ | ✅ | ✅ |
+| Cloudflare | ✅ | ✅ | ✅ |
+| Hugging Face Spaces | ✅ | ✅ | ✅ |
+| Node.js | ❌ | ❌ | ❌ |
+| Docker | ❌ | ❌ | ❌ |
+
+---
+
+### 5. Hugging Face Spaces 平台
+
+#### 需要的变量
+- `DEPLOY_PLATFROM_ACCOUNT`: Hugging Face 用户名或组织名
+- `DEPLOY_PLATFROM_PROJECT`: Space 名称
+- `DEPLOY_PLATFROM_TOKEN`: User Access Token
+
+#### 获取步骤
+
+**获取 Account 与 Space 名称**
+
+1. 打开你的 Hugging Face Space 页面
+2. Space 地址格式为 `https://huggingface.co/spaces/{account}/{space}`
+3. `{account}` 填入 `DEPLOY_PLATFROM_ACCOUNT`，`{space}` 填入 `DEPLOY_PLATFROM_PROJECT`
+
+**获取 User Access Token (`DEPLOY_PLATFROM_TOKEN`)**
+
+1. 登录 [Hugging Face Access Tokens](https://huggingface.co/settings/tokens)
+2. 创建 Fine-grained token 或 Write token
+3. 如果使用 Fine-grained token，请授予目标 Space 的写入权限
+4. **立即复制并保存** Token(只显示一次)
+
+---
+
+### 各平台变量获取详细步骤
+
+#### 1. Vercel 平台
+
+#### 需要的变量
+- `DEPLOY_PLATFROM_PROJECT`: 项目 ID
+- `DEPLOY_PLATFROM_TOKEN`: API Token
+
+#### 获取步骤
+
+**获取 Project ID (`DEPLOY_PLATFROM_PROJECT`)**
+
+1. 登录 [Vercel Dashboard](https://vercel.com/dashboard)
+2. 选择你的项目
+3. 进入项目后,点击 **Settings** 标签
+4. 在左侧菜单中选择 **General**
+5. 向下滚动找到 **Project ID** 部分
+6. 复制显示的项目 ID(格式类似: `prj_xxxxxxxxxxxx`)
+
+**获取 API Token (`DEPLOY_PLATFROM_TOKEN`)**
+
+1. 点击右上角头像,选择 **Settings**
+2. 在左侧菜单中选择 **Tokens**
+3. 点击 **Create Token** 按钮
+4. 输入 Token 名称(如: `environment-variables-api`)
+5. 选择 **Scope**:
+   - 可以选择 **Full Account** 或特定项目
+   - 建议选择特定项目以提高安全性
+6. 设置过期时间(可选)
+7. 点击 **Create** 创建 Token
+8. **立即复制并保存** Token(只显示一次)
+
+---
+
+### 2. Netlify 平台
+
+#### 需要的变量
+- `DEPLOY_PLATFROM_ACCOUNT`: 账户 ID
+- `DEPLOY_PLATFROM_PROJECT`: 站点 ID
+- `DEPLOY_PLATFROM_TOKEN`: Personal Access Token
+
+#### 获取步骤
+
+**获取 Account ID (`DEPLOY_PLATFROM_ACCOUNT`)**
+
+1. 登录 [Netlify Dashboard](https://app.netlify.com/)
+2. 点击左下角头像,选择 **User settings**
+3. 点击 **Team settings** 可以看到你的 Account Slug
+4. 或者在左侧菜单选择 **Applications**
+5. 在 API 端点中可以找到 Account ID
+
+**获取 Site ID (`DEPLOY_PLATFROM_PROJECT`)**
+
+1. 在 Netlify Dashboard 中选择你的项目
+2. 进入项目后,点击 **Project configuration**
+3. 在 **General** > **Project details** 部分
+4. 找到 **Project information** 下的 **Project ID**
+5. 复制显示的站点 ID(格式类似: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`)
+
+**获取 Personal Access Token (`DEPLOY_PLATFROM_TOKEN`)**
+
+1. 点击左下角头像,选择 **User settings**
+2. 在左侧菜单中选择 **Applications**
+3. 滚动到 **Personal access tokens** 部分
+4. 点击 **New access token** 按钮
+5. 输入 Token 描述(如: `Environment Variables API`)
+6. 点击 **Generate token**
+7. **立即复制并保存** Token(只显示一次)
+
+---
+
+<a id="3-edgeone-腾讯云-pages-平台"></a>
+
+### 3. EdgeOne Makers 平台
+
+EdgeOne Pages 已更名为 EdgeOne Makers，账号、项目、构建和域名等既有行为保持不变，现有项目无需迁移。[官方更名说明](https://pages.edgeone.ai/zh/resources/announcement-makers-rename)
+
+#### 需要的变量
+
+- `DEPLOY_PLATFROM_PROJECT`: 控制台显示的完整项目 ID，支持 `pages-...` 和 `makers-...`
+- `DEPLOY_PLATFROM_TOKEN`: 项目所属账号的 API Token
+
+变量名中的 `PLATFROM` 沿用项目既有拼写，请按原样填写。
+
+#### 获取步骤
+
+**获取 Project ID (`DEPLOY_PLATFROM_PROJECT`)**
+
+1. 登录 [腾讯云 EdgeOne 控制台](https://console.cloud.tencent.com/edgeone)
+2. 进入 **Makers** 服务（旧版控制台名称为 **Pages**）
+3. 选择你的项目
+4. 从项目页面 URL 中复制完整项目 ID。旧项目通常为 `pages-xxxxxxxxxxxx`，新版控制台创建的项目通常为 `makers-xxxxxxxxxxxx`，请以控制台实际显示的值为准，不要自行替换前缀。
+
+例如，新项目的实际 ID 为 `makers-xxxxxxxxxxxx` 时，填写：
+
+```env
+DEPLOY_PLATFROM_PROJECT=makers-xxxxxxxxxxxx
+```
+
+本项目会将项目 ID 原样传给平台接口，无需为 `makers-` 前缀修改代码。部署链接和接口地址中的 `pages` 也无需按品牌名称自行替换。
+
+**获取 API Token (`DEPLOY_PLATFROM_TOKEN`)**
+
+1. 登录 [腾讯云 EdgeOne 控制台](https://console.cloud.tencent.com/edgeone)
+2. 进入 **Makers** 服务（旧版控制台名称为 **Pages**）
+3. 选择 **API Token** 标签页 
+4. 点击 **创建 API Token** 按钮
+5. 输入描述和过期时间，点击提交后复制相应Token
+
+---
+
+### 4. Cloudflare 平台
+
+#### 需要的变量
+- `DEPLOY_PLATFROM_ACCOUNT`: 账户 ID
+- `DEPLOY_PLATFROM_PROJECT`: Workers 脚本名称
+- `DEPLOY_PLATFROM_TOKEN`: API Token
+
+#### 获取步骤
+
+**获取 Account ID (`DEPLOY_PLATFROM_ACCOUNT`)**
+
+1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. 在右侧可以看到 **Account ID**
+3. 或者点击任意域名,在右侧栏可以找到 **Account ID**
+4. 复制该 ID(格式类似: `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`)
+
+**获取 Workers 脚本名称 (`DEPLOY_PLATFROM_PROJECT`)**
+
+1. 在 Cloudflare Dashboard 左侧菜单选择 **Workers & Pages**
+2. 找到你的 Workers 脚本
+3. 脚本名称就是列表中显示的名称
+4. 或者点击进入脚本详情,在 URL 中可以看到脚本名称
+
+**获取 API Token (`DEPLOY_PLATFROM_TOKEN`)**
+
+1. 点击右上角头像,选择 **配置文件**
+2. 在左侧菜单选择 **API Tokens**
+3. 点击 **Create Token** 按钮
+4. 可以选择模板或自定义:
+   - 选择 **Edit Cloudflare Workers** 模板
+   - 或创建 **Custom token**
+5. 配置权限:
+   - **Account** > **Workers Scripts** > **Edit**
+   - 选择特定账户
+6. (可选)设置 IP 限制和 TTL
+7. 点击 **Continue to summary**
+8. 确认后点击 **Create Token**
+9. **立即复制并保存** Token(只显示一次)
+
+---
+
+### 常见问题
+
+**Q: Token 创建后忘记复制怎么办?**  
+A: 大多数平台的 Token 只显示一次,如果忘记复制需要删除后重新创建。
+
+## API 端点
+
+在 UI 页面顶部显示当前 API 端点，可点击复制到剪贴板。
+
+本地弹幕管理使用以下接口：
+
+- `POST /api/v2/local-danmu/upload`：上传并解析本地弹幕文件，使用 `multipart/form-data`，必填字段为 `file`、`title`、`year`、`type`。
+- `GET /api/v2/local-danmu/list`：获取资源列表和分组信息。
+- `GET /api/v2/local-danmu/:resourceKey`：获取单个资源元数据。
+- `DELETE /api/v2/local-danmu/:resourceKey`：删除单个资源。
+- `PATCH /api/v2/local-danmu/:resourceKey`：编辑资源元数据；`scope=resource` 修改集数和显示文件名，`scope=group` 修改当前季的标题、年份、类型和季数。编辑不会重新解析弹幕内容，目标键冲突时返回 409。
+
+这些接口也支持去掉 `/v2` 的 `/api/local-danmu/...` 路径。上传和删除默认需要 `ADMIN_TOKEN`；设置 `LOCAL_DANMU_NOT_REQUIRE_ADMIN=true` 后，普通 `TOKEN` 也可以执行。
+
+## 故障排除
+
+- 如果无法访问功能页面，请检查 URL 中的 TOKEN 是否正确
+- 如果系统管理功能不可用，请确认 ADMIN_TOKEN 等环境变量是否已配置
+- 如果本地弹幕列表为空，请确认已在 `SOURCE_ORDER` 中加入 `local`；如果上传或删除返回 403，请使用 `ADMIN_TOKEN` 或启用 `LOCAL_DANMU_NOT_REQUIRE_ADMIN=true`
+- 如遇到其他问题，请查看系统日志获取更多信息

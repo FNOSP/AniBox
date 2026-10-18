@@ -5,15 +5,25 @@
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![Rust](https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-blue)]()
 [![飞牛影视](https://img.shields.io/badge/%E9%A3%9E%E7%89%9B%E5%BD%B1%E8%A7%86-fnOS-056de2)](https://www.fnnas.com/)
+[![Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FYDMY007%2FFntv-Plus%2Fbadge-data%2Fdownloads.json&query=%24.total&label=%E4%B8%8B%E8%BD%BD&suffix=%E6%AC%A1&color=2ea44f&logo=github&logoColor=white)](https://github.com/YDMY007/Fntv-Plus/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)]()
+[![Electron](https://img.shields.io/badge/electron-38-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/YDMY007/Fntv-Plus?style=flat&logo=github&logoColor=white)](https://github.com/YDMY007/Fntv-Plus/stargazers)
+[![Forks](https://img.shields.io/github/forks/YDMY007/Fntv-Plus?style=flat&logo=github&logoColor=white)](https://github.com/YDMY007/Fntv-Plus/forks)
+[![Issues](https://img.shields.io/github/issues/YDMY007/Fntv-Plus?logo=github)](https://github.com/YDMY007/Fntv-Plus/issues)
+[![Commits](https://img.shields.io/badge/commits-1067-2ea44f?logo=git&logoColor=white)](https://github.com/YDMY007/Fntv-Plus/commits)
+[![Last Commit](https://img.shields.io/github/last-commit/YDMY007/Fntv-Plus/release?logo=git&logoColor=white)](https://github.com/YDMY007/Fntv-Plus/commits)
+[![Gitee](https://img.shields.io/badge/Gitee-mirror-F47040?logo=gitee&logoColor=white)](https://gitee.com/YDMY007/fntv-plus)
+
+<img src="https://count.getloli.com/get/@Fntv-Plus?theme=rule34" alt="访问计数" width="320">
 
 </div>
 
-> ### ⚠️ 重要警告与声明
+> ### <img src="https://api.iconify.design/mdi/alert.svg?color=%236c9bff" width="18" height="18" alt="" /> 重要警告与声明
 >
-> **🧪 本项目是个人开源作品，不代表任何官方立场，与飞牛影视官方无任何关联、合作或背书关系。**
+> **<img src="https://api.iconify.design/mdi/flask-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 本项目是个人开源作品，不代表任何官方立场，与飞牛影视官方无任何关联、合作或背书关系。**
 >
 > 使用前请务必知悉以下风险：
 > - **非官方第三方客户端**：AniBox 为**飞牛影视（fnOS / 飞牛私有云）**的媒体库与播放场景定制，**非飞牛官方出品**；可能因飞牛端接口调整而失效、闪退或行为异常，**不保证长期稳定可用**。
@@ -24,9 +34,9 @@
 
 > **把飞牛影视，变成你桌面上的私人影院。** AniBox 是一个**为飞牛影视（fnOS / 飞牛私有云）定制的第三方 Windows 桌面客户端**：它不把网页塞进浏览器，而是用 **React 自绘界面**直接调用飞牛影视 API，以**独立 `mpv.exe` 进程**承担播放；再用 Bangumi / TMDB / AniList 元数据聚合、本地弹幕 shim、原生全局手柄、磁盘缓存与双通道更新，把「看片」这件事做成一套完整、可长期维护的桌面体验。
 
-> 🌐 **项目地址 / 官网：TODO** —— 正式仓库定名与站点上线后在此补充；下载与更新以本仓库 Releases 为唯一官方渠道。
+> <img src="https://api.iconify.design/mdi/web.svg?color=%236c9bff" width="18" height="18" alt="" /> **项目地址 / 官网：TODO** —— 正式仓库定名与站点上线后在此补充；下载与更新以本仓库 Releases 为唯一官方渠道。
 
-## 🖼️ 界面截图
+## <img src="https://api.iconify.design/mdi/image-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 界面截图
 
 > 以下为结构占位，图片待补充（**截图占位 / TODO**）。请勿在此引用尚未存在的图片路径。
 
@@ -56,7 +66,7 @@
 
 ---
 
-## 🍴 项目缘起与独立声明
+## <img src="https://api.iconify.design/mdi/source-fork.svg?color=%236c9bff" width="18" height="18" alt="" /> 项目缘起与独立声明
 
 > **AniBox 是一个独立开发的第三方桌面客户端，产品名统一为 AniBox。**
 
@@ -73,109 +83,109 @@
 > - **独立发展**：本项目独立维护、独立发布，不代表任何上游或官方立场。
 > - **许可证**：本项目采用 **GPL-3.0**，完整条款见 [LICENSE](LICENSE)。
 
-> **⚠️ 免责声明**：本项目为第三方客户端，与飞牛影视官方无关。本项目仅为个人学习、交流等非商业用途的开源项目，不代表任何官方立场。使用前请确保遵守相关服务条款与版权规定，因使用本项目产生的任何后果由使用者自行承担。
+> **<img src="https://api.iconify.design/mdi/alert.svg?color=%236c9bff" width="18" height="18" alt="" /> 免责声明**：本项目为第三方客户端，与飞牛影视官方无关。本项目仅为个人学习、交流等非商业用途的开源项目，不代表任何官方立场。使用前请确保遵守相关服务条款与版权规定，因使用本项目产生的任何后果由使用者自行承担。
 
 ---
 
-## ✨ 主要功能
+## <img src="https://api.iconify.design/mdi/creation.svg?color=%236c9bff" width="18" height="18" alt="" /> 主要功能
 
 > 每个功能点下面补充了具体场景说明，方便上手。
 
 ### 登录与连接
 
-- **🔐 NAS 登录与宽容地址输入** — NAS 地址 + 用户名 + 密码登录，地址支持裸 IP、无协议头、全角冒号等宽容写法：
-  - 💡 记不清完整 URL 也没关系，直接填 `192.168.1.10:18888` 这类裸地址即可，客户端会自动补全协议与端口。
-- **💾 登录态与自动登录** — 登录态（token）与可选「记住密码 / 自动登录」保存在本机配置中：
-  - 💡 勾选自动登录后，下次启动会静默重登，省去每次输入。
-- **📜 首次启动免责声明** — 首次启动展示免责声明，同意后方可使用；设置 → 关于可再次查看：
-  - 💡 想重新阅读条款，随时在「设置 → 关于 → 免责声明」里查看。
-- **📦 数据目录迁移** — 旧 identifier `com.fntv.plus.tauri2` 的配置、缓存与 WebView 数据会自动迁移到 `com.anibox.app`：
-  - 💡 从早期版本升级时无需手动搬配置，首次启动自动完成迁移。
+- **<img src="https://api.iconify.design/mdi/lock-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> NAS 登录与宽容地址输入** — NAS 地址 + 用户名 + 密码登录，地址支持裸 IP、无协议头、全角冒号等宽容写法：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 记不清完整 URL 也没关系，直接填 `192.168.1.10:18888` 这类裸地址即可，客户端会自动补全协议与端口。
+- **<img src="https://api.iconify.design/mdi/content-save-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 登录态与自动登录** — 登录态（token）与可选「记住密码 / 自动登录」保存在本机配置中：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 勾选自动登录后，下次启动会静默重登，省去每次输入。
+- **<img src="https://api.iconify.design/mdi/script-text-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 首次启动免责声明** — 首次启动展示免责声明，同意后方可使用；设置 → 关于可再次查看：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 想重新阅读条款，随时在「设置 → 关于 → 免责声明」里查看。
+- **<img src="https://api.iconify.design/mdi/package-variant-closed.svg?color=%236c9bff" width="18" height="18" alt="" /> 数据目录迁移** — 旧 identifier `com.fntv.plus.tauri2` 的配置、缓存与 WebView 数据会自动迁移到 `com.anibox.app`：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 从早期版本升级时无需手动搬配置，首次启动自动完成迁移。
 
 ### 首页与界面
 
-- **🖼️ 全屏 Hero 轮播** — 无限循环轮播，首尾克隆位无缝衔接；支持影片透明 Logo 或文字标题：
-  - 💡 打开客户端即是沉浸式海报墙，鼠标悬停暂停、可手动切换。
-- **▶️ 「继续观看」横排** — 首页首屏展示未看完内容，一键续播：
-  - 💡 追到一半的片子直接从这里接着看，不用再翻媒体库。
-- **🗂️ 按媒体库横排与展示管理** — 首页按媒体库分组横排，可隐藏指定库：
-  - 💡 库太多显得杂乱时，在设置里隐藏不常看的库，首页更清爽。
-- **🧭 侧栏导航** — 首页、收藏、全部 / 电影 / 电视节目 / 电视直播 / 其他分类；底部为用户信息与快捷操作卡：
-  - 💡 分类切换集中在左侧栏，路径统一。
+- **<img src="https://api.iconify.design/mdi/image-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 全屏 Hero 轮播** — 无限循环轮播，首尾克隆位无缝衔接；支持影片透明 Logo 或文字标题：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 打开客户端即是沉浸式海报墙，鼠标悬停暂停、可手动切换。
+- **<img src="https://api.iconify.design/mdi/play.svg?color=%236c9bff" width="18" height="18" alt="" /> 「继续观看」横排** — 首页首屏展示未看完内容，一键续播：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 追到一半的片子直接从这里接着看，不用再翻媒体库。
+- **<img src="https://api.iconify.design/mdi/folder-multiple-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 按媒体库横排与展示管理** — 首页按媒体库分组横排，可隐藏指定库：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 库太多显得杂乱时，在设置里隐藏不常看的库，首页更清爽。
+- **<img src="https://api.iconify.design/mdi/compass-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 侧栏导航** — 首页、收藏、全部 / 电影 / 电视节目 / 电视直播 / 其他分类；底部为用户信息与快捷操作卡：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 分类切换集中在左侧栏，路径统一。
 
 ### 发现与元数据
 
-- **🎬 TMDB 面板** — 热门 / 发现 / 搜索，条目可直接进入详情：
-  - 💡 想找片时先用 TMDB 面板浏览热门或搜索，点条目直达详情页。
-- **📅 Bangumi 面板** — 每日放送日历、当季番表、往季番表查询、番组详情、评论 / 吐槽 / 关联 / 角色：
-  - 💡 追番党看当季 / 往季番表，按天查看放送日历。
-- **🕒 AniList 放送时刻** — 按天获取番剧的精确放送时刻（Bangumi 仅提供星期与首播日）：
-  - 💡 详情页的放送时间更精确，方便卡点追更。
-- **🔗 Bangumi 账号绑定** — 手动粘贴 Access Token 绑定，支持追番收藏状态同步与冲突策略：
-  - 💡 绑定后追番状态可在客户端与 Bangumi 之间同步。
+- **<img src="https://api.iconify.design/mdi/movie-open-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> TMDB 面板** — 热门 / 发现 / 搜索，条目可直接进入详情：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 想找片时先用 TMDB 面板浏览热门或搜索，点条目直达详情页。
+- **<img src="https://api.iconify.design/mdi/calendar-month-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> Bangumi 面板** — 每日放送日历、当季番表、往季番表查询、番组详情、评论 / 吐槽 / 关联 / 角色：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 追番党看当季 / 往季番表，按天查看放送日历。
+- **<img src="https://api.iconify.design/mdi/clock-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> AniList 放送时刻** — 按天获取番剧的精确放送时刻（Bangumi 仅提供星期与首播日）：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 详情页的放送时间更精确，方便卡点追更。
+- **<img src="https://api.iconify.design/mdi/link-variant.svg?color=%236c9bff" width="18" height="18" alt="" /> Bangumi 账号绑定** — 手动粘贴 Access Token 绑定，支持追番收藏状态同步与冲突策略：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 绑定后追番状态可在客户端与 Bangumi 之间同步。
 
 ### 媒体库与收藏
 
-- **🗃️ 媒体库网格与分类** — 网格浏览、分类筛选、文件夹层级、虚拟「收藏」入口：
-  - 💡 大库也能按分类与文件夹层层下钻，快速定位。
-- **✅ 海报卡「已看」切换** — 写回飞牛，接口不可用时降级为本地标记：
-  - 💡 看完随手标「已看」，飞牛接口异常时也不会丢标记。
-- **⭐ 本地收藏** — 飞牛收藏接口不可用时由客户端落盘，列表与飞牛收藏合并展示：
-  - 💡 收藏入口始终可用，本地与远端收藏一起看。
+- **<img src="https://api.iconify.design/mdi/database-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 媒体库网格与分类** — 网格浏览、分类筛选、文件夹层级、虚拟「收藏」入口：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 大库也能按分类与文件夹层层下钻，快速定位。
+- **<img src="https://api.iconify.design/mdi/check-circle-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 海报卡「已看」切换** — 写回飞牛，接口不可用时降级为本地标记：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 看完随手标「已看」，飞牛接口异常时也不会丢标记。
+- **<img src="https://api.iconify.design/mdi/star-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 本地收藏** — 飞牛收藏接口不可用时由客户端落盘，列表与飞牛收藏合并展示：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 收藏入口始终可用，本地与远端收藏一起看。
 
 ### 详情页
 
-- **🎭 两栏沉浸式详情** — 左侧选集、右侧详情，全屏背景海报：
-  - 💡 点进作品即进入沉浸式布局，选集与信息一屏可见。
-- **🗂️ 标签页** — 详情 / 评论 / 吐槽 / 关联 / 角色 / 更多（无 Bangumi 条目 id 时隐藏评论与吐槽）：
-  - 💡 想快速看评论、关联作品或角色，切换标签即可。
-- **🖼️ 剧照灯箱与预告** — 演职人员、角色、关联条目、TMDB 剧照与预告、剧照灯箱：
-  - 💡 点开剧照可放大浏览，预告片可直接播放。
-- **⭐ 评分与元数据编辑** — 我的评分 / 评语、Bangumi 评分组件、简介展开、元数据编辑：
-  - 💡 打分、写短评、补全简介都在详情页完成。
+- **<img src="https://api.iconify.design/mdi/drama-masks.svg?color=%236c9bff" width="18" height="18" alt="" /> 两栏沉浸式详情** — 左侧选集、右侧详情，全屏背景海报：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 点进作品即进入沉浸式布局，选集与信息一屏可见。
+- **<img src="https://api.iconify.design/mdi/folder-multiple-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 标签页** — 详情 / 评论 / 吐槽 / 关联 / 角色 / 更多（无 Bangumi 条目 id 时隐藏评论与吐槽）：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 想快速看评论、关联作品或角色，切换标签即可。
+- **<img src="https://api.iconify.design/mdi/image-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 剧照灯箱与预告** — 演职人员、角色、关联条目、TMDB 剧照与预告、剧照灯箱：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 点开剧照可放大浏览，预告片可直接播放。
+- **<img src="https://api.iconify.design/mdi/star-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 评分与元数据编辑** — 我的评分 / 评语、Bangumi 评分组件、简介展开、元数据编辑：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 打分、写短评、补全简介都在详情页完成。
 
 ### 观影记录
 
-- **📼 合并去重** — 数据 = 飞牛 `play/list` ∪ 本机播放历史，Rust 侧合并去重并按「作品」聚合：
-  - 💡 无论在哪端看过，记录都会汇总到同一条作品下。
-- **📊 活跃度热力图** — 已看完 / 在观看双栏海报墙，按年 / 季 / 月 / 周切换：
-  - 💡 回看自己的观影密度与习惯，一目了然。
-- **✨ 年度观影报告** — 总时长、部数、月度节奏、观影时刻、年度 TOP5、连续天数、看完率，可导出 PNG 长图：
-  - 💡 年底翻一翻自己的观影画像，喜欢就导出分享。
+- **<img src="https://api.iconify.design/mdi/cassette.svg?color=%236c9bff" width="18" height="18" alt="" /> 合并去重** — 数据 = 飞牛 `play/list` ∪ 本机播放历史，Rust 侧合并去重并按「作品」聚合：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 无论在哪端看过，记录都会汇总到同一条作品下。
+- **<img src="https://api.iconify.design/mdi/chart-box-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 活跃度热力图** — 已看完 / 在观看双栏海报墙，按年 / 季 / 月 / 周切换：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 回看自己的观影密度与习惯，一目了然。
+- **<img src="https://api.iconify.design/mdi/creation.svg?color=%236c9bff" width="18" height="18" alt="" /> 年度观影报告** — 总时长、部数、月度节奏、观影时刻、年度 TOP5、连续天数、看完率，可导出 PNG 长图：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 年底翻一翻自己的观影画像，喜欢就导出分享。
 
 ### 播放与弹幕
 
-- **🎥 mpv（默认）** — 独立进程 + 命名管道 IPC，uosc 底栏、右键菜单、字幕、着色器原生可用：
-  - 💡 独立进程不进程内嵌，播放器自身的交互与脚本能力完整保留。
-- **🪟 PotPlayer（可选）** — 命令行起播 + `potctl.exe` 轮询进度；Referer/UA 由本地 relay 代转：
-  - 💡 习惯 PotPlayer 快捷键 / 滤镜的用户可切换为外部播放器。
-- **💬 弹幕** — 本地 `127.0.0.1:22347` shim 为 uosc_danmaku 提供 B 站弹幕接口；可选自建 `danmu_api` 作为优选源（最多 4 个地址故障转移），未命中自动降级内置 B 站：
-  - 💡 弹幕随视频自动加载；自建源不可用时自动降级，不中断观看。
-- **⏱️ 播放历史** — 起播即记录到本机 `history.json`，与飞牛记录合并展示：
-  - 💡 本机记录作为飞牛记录的补充，跨端也能对上。
+- **<img src="https://api.iconify.design/mdi/video-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> mpv（默认）** — 独立进程 + 命名管道 IPC，uosc 底栏、右键菜单、字幕、着色器原生可用：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 独立进程不进程内嵌，播放器自身的交互与脚本能力完整保留。
+- **<img src="https://api.iconify.design/mdi/window-maximize.svg?color=%236c9bff" width="18" height="18" alt="" /> PotPlayer（可选）** — 命令行起播 + `potctl.exe` 轮询进度；Referer/UA 由本地 relay 代转：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 习惯 PotPlayer 快捷键 / 滤镜的用户可切换为外部播放器。
+- **<img src="https://api.iconify.design/mdi/comment-text-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 弹幕** — 本地 `127.0.0.1:22347` shim 为 uosc_danmaku 提供 B 站弹幕接口；可选自建 `danmu_api` 作为优选源（最多 4 个地址故障转移），未命中自动降级内置 B 站：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 弹幕随视频自动加载；自建源不可用时自动降级，不中断观看。
+- **<img src="https://api.iconify.design/mdi/timer-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 播放历史** — 起播即记录到本机 `history.json`，与飞牛记录合并展示：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 本机记录作为飞牛记录的补充，跨端也能对上。
 
 ### 手柄与系统
 
-- **🎮 原生全局手柄** — gilrs / XInput 原生监听，mpv 或 PotPlayer 在前台时同样可用：
+- **<img src="https://api.iconify.design/mdi/gamepad-variant-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 原生全局手柄** — gilrs / XInput 原生监听，mpv 或 PotPlayer 在前台时同样可用：
   - **标准映射**：方向键焦点导航、A 确认 / 暂停、B 返回 / 停止、LB/RB 切页或 ±5s、LT/RT 调倍速、X 收藏、Start 打开设置。
   - **可调参数**：摇杆死区、方向阈值、长按首次延迟、连跳间隔。
-  - 💡 接上手柄即可在沙发上操作；窗口失焦时 WebView 会暂停手柄输入，点回窗口恢复。
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 接上手柄即可在沙发上操作；窗口失焦时 WebView 会暂停手柄输入，点回窗口恢复。
 
 ### 更新与维护
 
-- **🧩 热补丁** — 只覆盖前端静态资源：下载 → sha256 校验 → 原子切换 → 可回滚：
-  - 💡 小修复无需重装，下载补丁后重载即生效；失败可一键回滚。
-- **📦 全量更新** — 后台下载安装包（Range 续传），完成后拉起 NSIS 安装器，不跳转 GitHub：
-  - 💡 大版本更新在应用内完成下载与安装。
-- **⚙️ 设置内更新面板** — 检查更新、更新说明、下载进度、补丁应用 / 回滚：
-  - 💡 所有更新操作集中在设置面板，状态一目了然。
+- **<img src="https://api.iconify.design/mdi/puzzle-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 热补丁** — 只覆盖前端静态资源：下载 → sha256 校验 → 原子切换 → 可回滚：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 小修复无需重装，下载补丁后重载即生效；失败可一键回滚。
+- **<img src="https://api.iconify.design/mdi/package-variant-closed.svg?color=%236c9bff" width="18" height="18" alt="" /> 全量更新** — 后台下载安装包（Range 续传），完成后拉起 NSIS 安装器，不跳转 GitHub：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 大版本更新在应用内完成下载与安装。
+- **<img src="https://api.iconify.design/mdi/cog-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 设置内更新面板** — 检查更新、更新说明、下载进度、补丁应用 / 回滚：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 所有更新操作集中在设置面板，状态一目了然。
 
 ### 反馈与诊断
 
-- **🎫 应用内工单** — 新建反馈、我的工单、会话回复、20 秒轮询状态：
-  - 💡 遇到问题直接在客户端提交工单，无需另开网页。
-- **🩺 日志与诊断** — 诊断日志、mpv 日志、调试日志开关、组件级过滤、诊断信息导出：
-  - 💡 反馈内容与日志在提交前做脱敏处理。
+- **<img src="https://api.iconify.design/mdi/ticket-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 应用内工单** — 新建反馈、我的工单、会话回复、20 秒轮询状态：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 遇到问题直接在客户端提交工单，无需另开网页。
+- **<img src="https://api.iconify.design/mdi/stethoscope.svg?color=%236c9bff" width="18" height="18" alt="" /> 日志与诊断** — 诊断日志、mpv 日志、调试日志开关、组件级过滤、诊断信息导出：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 反馈内容与日志在提交前做脱敏处理。
 
 ### 在线资源（不提供）
 
@@ -184,7 +194,7 @@
 
 ---
 
-## 🧱 技术栈与架构
+## <img src="https://api.iconify.design/mdi/wall.svg?color=%236c9bff" width="18" height="18" alt="" /> 技术栈与架构
 
 ### 总览
 
@@ -260,7 +270,7 @@
 
 ---
 
-## 📁 项目结构
+## <img src="https://api.iconify.design/mdi/folder-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 项目结构
 
 ```text
 Fntv-Plus-Tauri2/                  # 仓库目录名（产品名 AniBox）
@@ -329,7 +339,7 @@ Fntv-Plus-Tauri2/                  # 仓库目录名（产品名 AniBox）
 
 ---
 
-## 📦 安装与下载
+## <img src="https://api.iconify.design/mdi/package-variant-closed.svg?color=%236c9bff" width="18" height="18" alt="" /> 安装与下载
 
 ### 预编译版本（推荐）
 
@@ -337,8 +347,8 @@ Fntv-Plus-Tauri2/                  # 仓库目录名（产品名 AniBox）
 
 | 平台 | 文件类型 | 说明 |
 |------|----------|------|
-| 💻 Windows | NSIS 安装包（`.exe`） | 支持自定义安装路径、创建桌面 / 开始菜单快捷方式。 |
-| 🧩 热补丁 | 补丁包（`-hotfix`） | 由应用内更新面板获取，重载即生效，无需下载全量包。 |
+| <img src="https://api.iconify.design/mdi/laptop.svg?color=%236c9bff" width="18" height="18" alt="" /> Windows | NSIS 安装包（`.exe`） | 支持自定义安装路径、创建桌面 / 开始菜单快捷方式。 |
+| <img src="https://api.iconify.design/mdi/puzzle-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 热补丁 | 补丁包（`-hotfix`） | 由应用内更新面板获取，重载即生效，无需下载全量包。 |
 
 > 当前发布目标为 **Windows 10 / 11 x64**；其他平台未验证。
 
@@ -398,7 +408,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 ---
 
-## ⚙️ 配置说明
+## <img src="https://api.iconify.design/mdi/cog-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 配置说明
 
 配置落盘位置：
 
@@ -447,7 +457,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 ---
 
-## 🔄 更新机制
+## <img src="https://api.iconify.design/mdi/sync.svg?color=%236c9bff" width="18" height="18" alt="" /> 更新机制
 
 AniBox 使用「**热补丁优先、全量兜底**」的双通道更新：
 
@@ -477,7 +487,7 @@ AniBox 使用「**热补丁优先、全量兜底**」的双通道更新：
 
 ---
 
-## ❓ 常见问题
+## <img src="https://api.iconify.design/mdi/help-circle-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 常见问题
 
 **Q：为什么提示找不到 mpv / 点播放没反应？**
 A：AniBox 不随包分发播放内核。请准备 `mpv.exe` 与 `portable_config`，在登录页「高级设置」或 `config.json` 的 `mpv_path` 中指定路径。
@@ -502,7 +512,7 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 
 ---
 
-## ⚠️ 已知限制
+## <img src="https://api.iconify.design/mdi/alert.svg?color=%236c9bff" width="18" height="18" alt="" /> 已知限制
 
 1. **平台**：当前主要面向 Windows 10/11 x64；代码含大量 Win32 调用，其他平台未验证。
 2. **PotPlayer 模式**：不支持内置弹幕、uosc 底栏与精确暂停 / 跳转 / 倍速控制；需要 Referer / UA 的 HLS 源依赖本地 relay，仍可能受目标站限制。
@@ -517,7 +527,7 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 
 ---
 
-## 🛡️ 版权与合规
+## <img src="https://api.iconify.design/mdi/shield-check-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 版权与合规
 
 > 本节是发布与二次分发前必须保留的内容。若你修改并分发 AniBox，请同时保留本节与 `LICENSE`。
 
@@ -584,7 +594,7 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 
 ---
 
-## 🎫 反馈与贡献
+## <img src="https://api.iconify.design/mdi/ticket-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 反馈与贡献
 
 ### 应用内反馈
 
@@ -614,7 +624,7 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 
 ---
 
-## 🙏 特别感谢
+## <img src="https://api.iconify.design/mdi/hand-heart.svg?color=%236c9bff" width="18" height="18" alt="" /> 特别感谢
 
 本项目实际使用或依赖以下第三方组件，各自遵循其自身许可：
 
@@ -646,7 +656,7 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 
 ---
 
-## 📄 许可证
+## <img src="https://api.iconify.design/mdi/file-document-outline.svg?color=%236c9bff" width="18" height="18" alt="" /> 许可证
 
 本项目采用 [GPL-3.0 许可证](LICENSE)。
 

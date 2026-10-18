@@ -53,6 +53,22 @@ async function openExternal(url: string) {
 let lastCheck: UpdateCheckResult | null = null;
 let lastDownload: UpdateDownloadResult | null = null;
 
+/** 设置面板的标签分类。顺序即展示顺序；新增分类时同时补上对应面板内容，
+ *  避免设置项「无处可去」或重复渲染。 */
+const SET_TABS = [
+  { key: "general", label: "通用" },
+  { key: "account", label: "账号" },
+  { key: "player", label: "播放器" },
+  { key: "appearance", label: "外观" },
+  { key: "danmu", label: "弹幕" },
+  { key: "gamepad", label: "手柄" },
+  { key: "storage", label: "缓存与存储" },
+  { key: "diagnostics", label: "诊断" },
+  { key: "update", label: "更新" },
+  { key: "about", label: "关于" },
+] as const;
+type SetTabKey = (typeof SET_TABS)[number]["key"];
+
 const asText = (v: unknown): string => {
   if (Array.isArray(v)) return v.map((x) => String(x)).join("\n");
   return v === null || v === undefined ? "" : String(v);
@@ -328,6 +344,36 @@ export function SettingsPanel({
   const [autostart, setAutostart] = useState(
     () => localStorage.getItem("fntv-autostart") === "1",
   );
+
+  /* ── 标签分类 ──
+     只做布局状态，不参与任何设置真值；切换标签不会触发任何 invoke。
+     桌面宽窗为左侧竖向标签，窄窗由 CSS 改为顶部横向可滚动标签（同一套 DOM）。 */
+  const [tab, setTab] = useState<SetTabKey>("general");
+  const tabsRef = useRef<HTMLDivElement | null>(null);
+  const paneRef = useRef<HTMLDivElement | null>(null);
+
+  // 切标签后内容区回到顶部：否则从长页面（手柄/更新）切到短页面会停在半空
+  useEffect(() => {
+    paneRef.current?.scrollTo({ top: 0 });
+  }, [tab]);
+
+  /** 标签栏键盘导航（WAI-ARIA tabs 模式）：←/→/↑/↓ 循环、Home/End 跳首尾。
+   *  竖向与横向布局共用同一套按键，避免窗口变窄后键盘失效。 */
+  const onTabKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const idx = SET_TABS.findIndex((t) => t.key === tab);
+    let next = -1;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (idx + 1) % SET_TABS.length;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp")
+      next = (idx - 1 + SET_TABS.length) % SET_TABS.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = SET_TABS.length - 1;
+    if (next < 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setTab(SET_TABS[next].key);
+    const btns = tabsRef.current?.querySelectorAll<HTMLButtonElement>(".set-tab");
+    btns?.[next]?.focus();
+  };
 
   /* ── 手柄 ──
      配置真值在 Rust（get_settings / set_settings 的 gamepad* 字段），
@@ -691,8 +737,14 @@ export function SettingsPanel({
       .filter(Boolean)
       .slice(0, 4);
 
-  const saveDanmu = (enabled: boolean, text: string) => {
-    onSettings({ danmuApiEnabled: enabled, danmuApiBases: parseBases(text) });
+  /** 统一提交弹幕相关设置（开关/地址/引擎都走这一条路径，不新增独立保存按钮）。
+   *  engine 缺省 = 保留当前值（旧缓存可能没有该字段 → 回退 "node"）。 */
+  const saveDanmu = (enabled: boolean, text: string, engine?: "node" | "rust") => {
+    onSettings({
+      danmuApiEnabled: enabled,
+      danmuApiBases: parseBases(text),
+      danmuEngine: engine ?? settings.danmuEngine ?? "node",
+    });
   };
 
   const testDanmu = async () => {
@@ -778,590 +830,688 @@ export function SettingsPanel({
             </div>
           </div>
         </header>
-        <div className="ddet-body set-body">
-          {/* ── 通用 ── */}
-          <h3 className="ddet-h3">通用</h3>
-          <div className="set-row">
-            <div>
-              <span className="set-k">启动页</span>
-              <div className="set-desc">登录成功后进入的页面</div>
-            </div>
-            <SetSelect
-              label="启动页"
-              value={settings.launchPage}
-              disabled={busy}
-              options={[
-                { value: "home", label: "首页" },
-                { value: "discover", label: "发现页" },
-              ]}
-              onChange={(v) => onSettings({ launchPage: v as AppSettings["launchPage"] })}
-            />
-          </div>
-          <div className="set-row">
-            <div>
-              <span className="set-k">开机自启</span>
-              <div className="set-desc">登录系统后自动启动本程序</div>
-            </div>
-            <button
-              type="button"
-              className={`set-sw${autostart ? " on" : ""}`}
-              disabled={busy}
-              aria-pressed={autostart}
-              aria-label="开机自启"
-              onClick={toggleAutostart}
-            />
-          </div>
-          <div className="set-row">
-            <div>
-              <span className="set-k">关闭按钮</span>
-              <div className="set-desc">点窗口右上角关闭时的行为</div>
-            </div>
-            <SetSelect
-              label="关闭按钮行为"
-              value={settings.exitMode}
-              disabled={busy}
-              options={[
-                { value: "ask", label: "每次询问" },
-                { value: "tray", label: "最小化到托盘" },
-                { value: "exit", label: "直接退出" },
-              ]}
-              onChange={(v) => onSettings({ exitMode: v as AppSettings["exitMode"] })}
-            />
-          </div>
-
-          {/* ── 播放器 ── */}
-          <h3 className="ddet-h3">播放器</h3>
-          <div className="set-row">
-            <div>
-              <span className="set-k">播放器选择</span>
-              <div className="set-desc">
-                默认使用随包自带的 mpv；也可改用本机安装的 PotPlayer
-              </div>
-            </div>
-            <SetSelect
-              label="播放器选择"
-              value={playerKind}
-              disabled={busy}
-              options={[
-                { value: "mpv", label: "自带 mpv（推荐）" },
-                { value: "potplayer", label: "本机 PotPlayer" },
-              ]}
-              onChange={choosePlayer}
-            />
-          </div>
-          {playerKind === "potplayer" && (
-            <>
-              <div className="set-row set-row-col">
-                <span className="set-k">PotPlayer 路径</span>
-                <input
-                  className="set-input"
-                  type="text"
-                  spellCheck={false}
-                  placeholder="留空将自动探测常见安装路径，或填写 PotPlayerMini64.exe 的完整路径"
-                  value={potPath}
-                  disabled={busy || potBusy}
-                  onChange={(e) => setPotPath(e.target.value)}
-                  onBlur={() => {
-                    if (potPath.trim() !== (settings.potplayerPath ?? "")) {
-                      void validatePot(true);
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void validatePot(true);
-                    }
-                  }}
-                />
-                <div className="set-actions">
-                  <button
-                    type="button"
-                    className="set-btn"
-                    disabled={busy || potBusy}
-                    onClick={detectPot}
-                  >
-                    自动探测
-                  </button>
-                  <button
-                    type="button"
-                    className="set-btn"
-                    disabled={busy || potBusy}
-                    onClick={() => validatePot(false)}
-                  >
-                    校验
-                  </button>
-                  {potStatus && (
-                    <span className={`set-pot-status ${potStatus.tone}`}>
-                      {potStatus.text}
-                    </span>
-                  )}
-                </div>
-                <div className="set-desc">
-                  路径为空时，将在起播时自动探测常见安装路径；填写后需指向已存在的 .exe。
-                </div>
-              </div>
-              <div className="set-warn">
-                PotPlayer 模式不支持内置弹幕、uosc 底栏与精确暂停/跳转/倍速控制；
-                需要 Referer/UA 的 HLS 源会提示切回 mpv。
-              </div>
-            </>
-          )}
-
-          {/* ── 手柄 ── */}
-          <h3 className="ddet-h3">手柄</h3>
-          <div className="set-row">
-            <div>
-              <span className="set-k">手柄操作</span>
-              <div className="set-desc">用 Xbox 布局手柄浏览界面、控制播放</div>
-            </div>
-            <button
-              type="button"
-              className={`set-sw${padEnabled ? " on" : ""}`}
-              aria-pressed={padEnabled}
-              aria-label="手柄操作"
-              onClick={() => onSettings({ gamepadEnabled: !padEnabled })}
-            />
-          </div>
-          <div className="set-row">
-            <div>
-              <span className="set-k">连接状态</span>
-              <div className="set-desc">浏览器需先按一下手柄才会识别设备</div>
-            </div>
-            <div className="set-pad-status">
-              <span className={`set-pad-dot${padConn.connected ? " on" : " off"}`} />
-              <span className="set-pad-name" title={padConn.name}>
-                {padConn.connected ? padConn.name || "已连接" : "未检测到"}
-              </span>
+        <div className="set-layout">
+          <div
+            ref={tabsRef}
+            className="set-tabs"
+            role="tablist"
+            aria-label="设置分类"
+            onKeyDown={onTabKeyDown}
+          >
+            {SET_TABS.map((t) => (
               <button
+                key={t.key}
                 type="button"
-                className="set-btn"
-                onClick={() => void detectPad()}
+                role="tab"
+                id={`set-tab-${t.key}`}
+                aria-selected={tab === t.key}
+                aria-controls={tab === t.key ? `set-panel-${t.key}` : undefined}
+                tabIndex={tab === t.key ? 0 : -1}
+                className={`set-tab${tab === t.key ? " on" : ""}`}
+                onClick={() => setTab(t.key)}
               >
-                检测
+                {t.label}
               </button>
-            </div>
-          </div>
-          {(
-            [
-              {
-                key: "stickDeadzone",
-                label: "摇杆死区",
-                desc: "低于此值视为没有推杆（0.10–0.50）",
-                fmt: (v: number) => v.toFixed(2),
-              },
-              {
-                key: "directionThreshold",
-                label: "方向阈值",
-                desc: "推杆超过此值才触发方向（0.20–0.80）",
-                fmt: (v: number) => v.toFixed(2),
-              },
-              {
-                key: "repeatDelay",
-                label: "长按延迟",
-                desc: "按住多久开始连续移动（100–800ms）",
-                fmt: (v: number) => `${Math.round(v)}ms`,
-              },
-              {
-                key: "repeatInterval",
-                label: "连跳间隔",
-                desc: "连续移动的间隔（50–400ms）",
-                fmt: (v: number) => `${Math.round(v)}ms`,
-              },
-            ] as const
-          ).map((s) => {
-            const range = GAMEPAD_RANGES[s.key];
-            return (
-              <div className="set-row set-pad-slider" key={s.key}>
-                <div>
-                  <span className="set-k">{s.label}</span>
-                  <div className="set-desc">{s.desc}</div>
-                </div>
-                <div className="set-range-wrap">
-                  <input
-                    type="range"
-                    className="set-range"
-                    min={range.min}
-                    max={range.max}
-                    step={range.step}
-                    value={padValues[s.key]}
-                    disabled={!padEnabled}
-                    aria-label={s.label}
-                    onChange={(e) => setPadNum(s.key, Number(e.target.value))}
-                  />
-                  <span className="set-range-val">{s.fmt(padValues[s.key])}</span>
-                </div>
-              </div>
-            );
-          })}
-          <div className="set-pad-keys" aria-label="手柄按键说明">
-            {GAMEPAD_KEY_TABLE.map((k) => (
-              <div className="set-pad-key" key={k.btn}>
-                <span className="set-pad-btn">{k.label}</span>
-                <span className="set-pad-act">{k.action}</span>
-              </div>
             ))}
           </div>
-          <div className="set-hint">
-            播放时 A 暂停、LB/RB 快退/快进 5 秒、LT/RT 调倍速、B 停止；界面中方向键移动白色焦点框，
-            A 确认。窗口失去焦点时浏览器会暂停 Gamepad API，重新点回窗口即可恢复。
-          </div>
-
-          {/* ── 外观 ── */}
-          <h3 className="ddet-h3">外观</h3>
-          <div className="set-row">
-            <div>
-              <span className="set-k">性能模式</span>
-              <div className="set-desc">关闭动画与磨砂效果，低配机更流畅</div>
-            </div>
-            <button
-              type="button"
-              className={`set-sw${settings.perfMode ? " on" : ""}`}
-              aria-pressed={settings.perfMode}
-              aria-label="性能模式"
-              onClick={() => onSettings({ perfMode: !settings.perfMode })}
-            />
-          </div>
-          <div className="set-row">
-            <div>
-              <span className="set-k">轮播透明标题</span>
-              <div className="set-desc">首页轮播用影片透明 Logo 代替文字标题（无 Logo 时自动用文字）</div>
-            </div>
-            <button
-              type="button"
-              className={`set-sw${settings.carouselLogo ? " on" : ""}`}
-              aria-pressed={settings.carouselLogo}
-              aria-label="轮播透明标题"
-              onClick={() => onSettings({ carouselLogo: !settings.carouselLogo })}
-            />
-          </div>
-
-          {/* ── 弹幕 ── */}
-          <h3 className="ddet-h3">弹幕</h3>
-          <div className="set-row">
-            <div>
-              <span className="set-k">自建弹幕接口</span>
-              <div className="set-desc">
-                自部署 danmu_api（LogVar 弹幕API）作为优选源，聚合多平台弹幕；未命中自动降级内置 B站
-              </div>
-            </div>
-            <button
-              type="button"
-              className={`set-sw${settings.danmuApiEnabled ? " on" : ""}`}
-              aria-pressed={settings.danmuApiEnabled}
-              aria-label="自建弹幕接口"
-              onClick={() => saveDanmu(!settings.danmuApiEnabled, dmBases)}
-            />
-          </div>
-          <div className="set-row set-row-col">
-            <span className="set-k">服务地址</span>
-            <textarea
-              className="set-ta"
-              rows={2}
-              placeholder={"http://192.168.31.170:9321/你的TOKEN\nhttp://100.66.1.2:9321/你的TOKEN"}
-              value={dmBases}
-              disabled={busy}
-              onChange={(e) => setDmBases(e.target.value)}
-              onBlur={() => saveDanmu(settings.danmuApiEnabled, dmBases)}
-            />
-            <div className="set-actions">
-              <button
-                className="set-btn"
-                disabled={dmTesting}
-                onClick={testDanmu}
-              >
-                {dmTesting ? "测试中…" : "测试连接"}
-              </button>
-              <button
-                className="set-btn"
-                disabled={busy}
-                onClick={() => saveDanmu(settings.danmuApiEnabled, dmBases)}
-              >
-                保存
-              </button>
-              <span className="set-note">{dmNote}</span>
-            </div>
-            <div className="set-desc">
-              每行一条（最多 4 条，故障转移）。地址只存本机，不写入 mpv 配置。
-            </div>
-          </div>
-
-          {/* ── 账号 ── */}
-          <h3 className="ddet-h3">账号</h3>
-          <div className="set-row">
-            <span className="set-k">当前账号</span>
-            <span className="set-v">{loggedIn ? user || "—" : "未登录"}</span>
-          </div>
-          <div className="set-row">
-            <span className="set-k">服务器</span>
-            <span className="set-v">{server || "—"}</span>
-          </div>
-          {/* [lc-1623] 飞牛未登录（游客态）→ 给「登录飞牛」入口；已登录 → 仍是「退出登录」。
-              BGM 追番与飞牛已解耦，未登录飞牛不影响 BGM。 */}
-          {loggedIn ? (
-            <div className="set-row">
-              <span className="set-k">退出登录</span>
-              {confirmLogout ? (
-                <div className="set-confirm">
-                  <span className="set-confirm-q">退出后需重新登录，确定？</span>
-                  <button className="set-btn" disabled={busy} onClick={() => setConfirmLogout(false)}>
-                    取消
-                  </button>
-                  <button
-                    className="set-btn danger"
-                    disabled={busy}
-                    onClick={() => {
-                      setConfirmLogout(false);
-                      onLogout();
-                    }}
-                  >
-                    确定退出
-                  </button>
-                </div>
-              ) : (
-                <button className="set-btn danger" onClick={() => setConfirmLogout(true)}>
-                  退出登录
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="set-row">
-              <div>
-                <span className="set-k">飞牛登录</span>
-                <div className="set-desc">未登录飞牛时，Bangumi 追番等功能仍照常可用</div>
-              </div>
-              <button className="set-btn" onClick={() => onLogin?.()}>
-                登录飞牛
-              </button>
-            </div>
-          )}
-
-          {/* ── 缓存 ── */}
-          <h3 className="ddet-h3">缓存</h3>
-          <div className="set-row">
-            <span className="set-k">占用上限</span>
-            <select
-              className="set-select"
-              value={limitMb}
-              disabled={busy}
-              onChange={(e) => setLimit(Number(e.target.value))}
-            >
-              {extras.map((mb) => (
-                <option key={mb} value={mb}>
-                  {fmtSize(mb * 1024 * 1024)}
-                </option>
-              ))}
-              <option value={1024}>1 GB</option>
-              <option value={2048}>2 GB</option>
-              <option value={5120}>5 GB</option>
-              <option value={10240}>10 GB</option>
-              <option value={0}>不限制</option>
-            </select>
-          </div>
-          <div className="set-row">
-            <span className="set-k">当前占用</span>
-            <span className="set-v">
-              {stats ? `${fmtSize(stats.bytes)} · ${stats.files} 个文件` : "读取中…"}
-            </span>
-          </div>
-          <div className="set-row">
-            <span className="set-k">清理缓存</span>
-            <button className="set-btn" onClick={clearCache} disabled={busy || !stats?.bytes}>
-              立即清理
-            </button>
-          </div>
-          <div className="set-hint">
-            图片与演员表缓存在软件数据目录（{stats?.dir || "…"}）：命中本地就不再请求，超上限按最后访问
-            时间自动淘汰；清理会同时清掉内存与磁盘。
-          </div>
-
-          {/* ── 诊断 ── */}
-          <h3 className="ddet-h3">诊断</h3>
-          <div className="set-row">
-            <span className="set-k">打开目录</span>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-              <button className="set-btn" onClick={() => openPath("log")}>
-                诊断日志
-              </button>
-              <button className="set-btn" onClick={() => openPath("cache")}>
-                缓存目录
-              </button>
-              <button className="set-btn" onClick={() => openPath("app")}>
-                数据目录
-              </button>
-            </div>
-          </div>
-          <div className="set-hint">
-            诊断日志在系统临时目录（anibox.log），记录了镜像请求、图片缓存命中与播放链路；
-            反馈问题时把最后一段贴出来即可。
-          </div>
-
-          {/* ── 更新与维护 ── */}
-          <h3 className="ddet-h3">更新与维护</h3>
-          <div className="set-row">
-            <span className="set-k">当前版本</span>
-            <span className="set-v">v{ver}</span>
-          </div>
-          <div className="set-row">
-            <div>
-              <span className="set-k">检查更新</span>
-              <div className="set-desc">热补丁无需重装；全量更新后台下载，完成后提示安装</div>
-            </div>
-            <button
-              type="button"
-              className="set-btn"
-              disabled={updBusy}
-              onClick={checkUpdate}
-            >
-              {updChecking ? "检查中…" : "检查更新"}
-            </button>
-          </div>
-
-          {(updStatus || updError) && (
-            <div className="set-row set-row-col set-upd">
-              <div className="set-upd-status">
-                {updStatus && <span className={`set-upd-dot ${updStatus.tone}`} />}
-                <span className="set-upd-status-text">{updStatus?.text}</span>
-                {upd?.publishedAt && <span className="set-upd-date">发布于 {upd.publishedAt}</span>}
-              </div>
-
-              {!!upd?.notes && (
-                <div className="set-upd-notes-wrap">
-                  <button
-                    type="button"
-                    className="set-btn set-upd-notes-toggle"
-                    onClick={() => setShowNotes((v) => !v)}
-                  >
-                    {showNotes ? "收起更新说明" : "查看更新说明"}
-                  </button>
-                  {/* 纯文本渲染：React 默认转义，不解析/执行 HTML */}
-                  {showNotes && <pre className="set-upd-notes">{upd?.notes}</pre>}
-                </div>
-              )}
-
-              {showProgress && progress && (
-                <div className="set-upd-progress">
-                  <div className="set-upd-bar">
-                    <i style={{ width: `${progress.percent}%` }} />
+          <div
+            ref={paneRef}
+            className="ddet-body set-body"
+            role="tabpanel"
+            id={`set-panel-${tab}`}
+            aria-labelledby={`set-tab-${tab}`}
+            tabIndex={0}
+          >
+            {/* key=tab：切换标签时整块重挂载，触发 CSS 入场动画（淡入 + 轻微上移） */}
+            <div className="set-tabpane" key={tab}>
+              {/* ── 通用 ── */}
+              {tab === "general" && (
+                <>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">启动页</span>
+                      <div className="set-desc">登录成功后进入的页面</div>
+                    </div>
+                    <SetSelect
+                      label="启动页"
+                      value={settings.launchPage}
+                      disabled={busy}
+                      options={[
+                        { value: "home", label: "首页" },
+                        { value: "discover", label: "发现页" },
+                      ]}
+                      onChange={(v) => onSettings({ launchPage: v as AppSettings["launchPage"] })}
+                    />
                   </div>
-                  <div className="set-upd-progress-meta">
-                    <span className="set-upd-pct">{Math.round(progress.percent)}%</span>
-                    {progress.message && <span className="set-upd-msg">{progress.message}</span>}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">开机自启</span>
+                      <div className="set-desc">登录系统后自动启动本程序</div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${autostart ? " on" : ""}`}
+                      disabled={busy}
+                      aria-pressed={autostart}
+                      aria-label="开机自启"
+                      onClick={toggleAutostart}
+                    />
                   </div>
-                </div>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">关闭按钮</span>
+                      <div className="set-desc">点窗口右上角关闭时的行为</div>
+                    </div>
+                    <SetSelect
+                      label="关闭按钮行为"
+                      value={settings.exitMode}
+                      disabled={busy}
+                      options={[
+                        { value: "ask", label: "每次询问" },
+                        { value: "tray", label: "最小化到托盘" },
+                        { value: "exit", label: "直接退出" },
+                      ]}
+                      onChange={(v) => onSettings({ exitMode: v as AppSettings["exitMode"] })}
+                    />
+                  </div>
+                  {note && <div className="set-note">{note}</div>}
+
+                </>
               )}
 
-              <div className="set-actions">
-                {downloading && (
-                  <button type="button" className="set-btn" onClick={cancelDownload}>
-                    取消
-                  </button>
-                )}
-                {isHotfix && !patchApplied && (
-                  <button
-                    type="button"
-                    className="set-btn primary"
-                    disabled={applying || downloading}
-                    onClick={applyPatch}
-                  >
-                    {applying ? "应用中…" : "应用补丁"}
-                  </button>
-                )}
-                {isHotfix && patchApplied && (
-                  <>
-                    <span className="set-upd-ok">补丁已应用</span>
-                    <button type="button" className="set-btn" onClick={rollbackPatch}>
-                      回滚补丁
+              {/* ── 播放器 ── */}
+              {tab === "player" && (
+                <>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">播放器选择</span>
+                      <div className="set-desc">
+                        默认使用随包自带的 mpv；也可改用本机安装的 PotPlayer
+                      </div>
+                    </div>
+                    <SetSelect
+                      label="播放器选择"
+                      value={playerKind}
+                      disabled={busy}
+                      options={[
+                        { value: "mpv", label: "自带 mpv（推荐）" },
+                        { value: "potplayer", label: "本机 PotPlayer" },
+                      ]}
+                      onChange={choosePlayer}
+                    />
+                  </div>
+                  {playerKind === "potplayer" && (
+                    <>
+                      <div className="set-row set-row-col">
+                        <span className="set-k">PotPlayer 路径</span>
+                        <input
+                          className="set-input"
+                          type="text"
+                          spellCheck={false}
+                          placeholder="留空将自动探测常见安装路径，或填写 PotPlayerMini64.exe 的完整路径"
+                          value={potPath}
+                          disabled={busy || potBusy}
+                          onChange={(e) => setPotPath(e.target.value)}
+                          onBlur={() => {
+                            if (potPath.trim() !== (settings.potplayerPath ?? "")) {
+                              void validatePot(true);
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void validatePot(true);
+                            }
+                          }}
+                        />
+                        <div className="set-actions">
+                          <button
+                            type="button"
+                            className="set-btn"
+                            disabled={busy || potBusy}
+                            onClick={detectPot}
+                          >
+                            自动探测
+                          </button>
+                          <button
+                            type="button"
+                            className="set-btn"
+                            disabled={busy || potBusy}
+                            onClick={() => validatePot(false)}
+                          >
+                            校验
+                          </button>
+                          {potStatus && (
+                            <span className={`set-pot-status ${potStatus.tone}`}>
+                              {potStatus.text}
+                            </span>
+                          )}
+                        </div>
+                        <div className="set-desc">
+                          路径为空时，将在起播时自动探测常见安装路径；填写后需指向已存在的 .exe。
+                        </div>
+                      </div>
+                      <div className="set-warn">
+                        PotPlayer 模式不支持内置弹幕、uosc 底栏与精确暂停/跳转/倍速控制；
+                        需要 Referer/UA 的 HLS 源会提示切回 mpv。
+                      </div>
+                </>
+              )}
+
+                </>
+              )}
+
+              {/* ── 手柄 ── */}
+              {tab === "gamepad" && (
+                <>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">手柄操作</span>
+                      <div className="set-desc">用 Xbox 布局手柄浏览界面、控制播放</div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${padEnabled ? " on" : ""}`}
+                      aria-pressed={padEnabled}
+                      aria-label="手柄操作"
+                      onClick={() => onSettings({ gamepadEnabled: !padEnabled })}
+                    />
+                  </div>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">连接状态</span>
+                      <div className="set-desc">浏览器需先按一下手柄才会识别设备</div>
+                    </div>
+                    <div className="set-pad-status">
+                      <span className={`set-pad-dot${padConn.connected ? " on" : " off"}`} />
+                      <span className="set-pad-name" title={padConn.name}>
+                        {padConn.connected ? padConn.name || "已连接" : "未检测到"}
+                      </span>
+                      <button
+                        type="button"
+                        className="set-btn"
+                        onClick={() => void detectPad()}
+                      >
+                        检测
+                      </button>
+                    </div>
+                  </div>
+                  {(
+                    [
+                      {
+                        key: "stickDeadzone",
+                        label: "摇杆死区",
+                        desc: "低于此值视为没有推杆（0.10–0.50）",
+                        fmt: (v: number) => v.toFixed(2),
+                      },
+                      {
+                        key: "directionThreshold",
+                        label: "方向阈值",
+                        desc: "推杆超过此值才触发方向（0.20–0.80）",
+                        fmt: (v: number) => v.toFixed(2),
+                      },
+                      {
+                        key: "repeatDelay",
+                        label: "长按延迟",
+                        desc: "按住多久开始连续移动（100–800ms）",
+                        fmt: (v: number) => `${Math.round(v)}ms`,
+                      },
+                      {
+                        key: "repeatInterval",
+                        label: "连跳间隔",
+                        desc: "连续移动的间隔（50–400ms）",
+                        fmt: (v: number) => `${Math.round(v)}ms`,
+                      },
+                    ] as const
+                  ).map((s) => {
+                    const range = GAMEPAD_RANGES[s.key];
+                    return (
+                      <div className="set-row set-pad-slider" key={s.key}>
+                        <div>
+                          <span className="set-k">{s.label}</span>
+                          <div className="set-desc">{s.desc}</div>
+                        </div>
+                        <div className="set-range-wrap">
+                          <input
+                            type="range"
+                            className="set-range"
+                            min={range.min}
+                            max={range.max}
+                            step={range.step}
+                            value={padValues[s.key]}
+                            disabled={!padEnabled}
+                            aria-label={s.label}
+                            onChange={(e) => setPadNum(s.key, Number(e.target.value))}
+                          />
+                          <span className="set-range-val">{s.fmt(padValues[s.key])}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div className="set-pad-keys" aria-label="手柄按键说明">
+                    {GAMEPAD_KEY_TABLE.map((k) => (
+                      <div className="set-pad-key" key={k.btn}>
+                        <span className="set-pad-btn">{k.label}</span>
+                        <span className="set-pad-act">{k.action}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="set-hint">
+                    播放时 A 暂停、LB/RB 快退/快进 5 秒、LT/RT 调倍速、B 停止；界面中方向键移动白色焦点框，
+                    A 确认。窗口失去焦点时浏览器会暂停 Gamepad API，重新点回窗口即可恢复。
+                  </div>
+
+                </>
+              )}
+
+              {/* ── 外观 ── */}
+              {tab === "appearance" && (
+                <>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">性能模式</span>
+                      <div className="set-desc">关闭动画与磨砂效果，低配机更流畅</div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${settings.perfMode ? " on" : ""}`}
+                      aria-pressed={settings.perfMode}
+                      aria-label="性能模式"
+                      onClick={() => onSettings({ perfMode: !settings.perfMode })}
+                    />
+                  </div>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">轮播透明标题</span>
+                      <div className="set-desc">首页轮播用影片透明 Logo 代替文字标题（无 Logo 时自动用文字）</div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${settings.carouselLogo ? " on" : ""}`}
+                      aria-pressed={settings.carouselLogo}
+                      aria-label="轮播透明标题"
+                      onClick={() => onSettings({ carouselLogo: !settings.carouselLogo })}
+                    />
+                  </div>
+
+                </>
+              )}
+
+              {/* ── 弹幕 ── */}
+              {tab === "danmu" && (
+                <>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">自建弹幕接口</span>
+                      <div className="set-desc">
+                        内置 danmu_api 本地独立运行（零配置），聚合多平台弹幕；未命中自动降级内置 B站。
+                        也可填写自部署地址覆盖内置源。
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${settings.danmuApiEnabled ? " on" : ""}`}
+                      aria-pressed={settings.danmuApiEnabled}
+                      aria-label="自建弹幕接口"
+                      onClick={() => saveDanmu(!settings.danmuApiEnabled, dmBases)}
+                    />
+                  </div>
+                  <div className="set-row set-row-col">
+                    <span className="set-k">服务地址</span>
+                    <textarea
+                      className="set-ta"
+                      rows={2}
+                      placeholder={"留空即用内置源（本机自动启动）\n如需覆盖：http://192.168.31.170:9321/你的TOKEN"}
+                      value={dmBases}
+                      disabled={busy}
+                      onChange={(e) => setDmBases(e.target.value)}
+                      onBlur={() => saveDanmu(settings.danmuApiEnabled, dmBases)}
+                    />
+                    <div className="set-actions">
+                      <button
+                        className="set-btn"
+                        disabled={dmTesting}
+                        onClick={testDanmu}
+                      >
+                        {dmTesting ? "测试中…" : "测试连接"}
+                      </button>
+                      <button
+                        className="set-btn"
+                        disabled={busy}
+                        onClick={() => saveDanmu(settings.danmuApiEnabled, dmBases)}
+                      >
+                        保存
+                      </button>
+                      <span className="set-note">{dmNote}</span>
+                    </div>
+                    <div className="set-desc">
+                      每行一条（最多 4 条，故障转移）。地址只存本机，不写入 mpv 配置。
+                    </div>
+                  </div>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">弹幕引擎</span>
+                      <div className="set-desc">
+                        Rust 为测试版：自建源（danmu_api）走 Rust，B 站等其余端点仍由 Node 承担。
+                        {!settings.danmuApiEnabled && "（需先启用「自建弹幕接口」）"}
+                      </div>
+                    </div>
+                    <SetSelect
+                      label="弹幕引擎"
+                      value={settings.danmuEngine ?? "node"}
+                      disabled={busy || !settings.danmuApiEnabled}
+                      options={[
+                        { value: "node", label: "Node（默认/稳定）" },
+                        { value: "rust", label: "Rust（测试版）" },
+                      ]}
+                      onChange={(v) =>
+                        saveDanmu(settings.danmuApiEnabled, dmBases, v as "node" | "rust")
+                      }
+                    />
+                  </div>
+
+                </>
+              )}
+
+              {/* ── 账号 ── */}
+              {tab === "account" && (
+                <>
+                  <div className="set-row">
+                    <span className="set-k">当前账号</span>
+                    <span className="set-v">{loggedIn ? user || "—" : "未登录"}</span>
+                  </div>
+                  <div className="set-row">
+                    <span className="set-k">服务器</span>
+                    <span className="set-v">{server || "—"}</span>
+                  </div>
+                  {/* [lc-1623] 飞牛未登录（游客态）→ 给「登录飞牛」入口；已登录 → 仍是「退出登录」。
+                      BGM 追番与飞牛已解耦，未登录飞牛不影响 BGM。 */}
+                  {loggedIn ? (
+                    <div className="set-row">
+                      <span className="set-k">退出登录</span>
+                      {confirmLogout ? (
+                        <div className="set-confirm">
+                          <span className="set-confirm-q">退出后需重新登录，确定？</span>
+                          <button className="set-btn" disabled={busy} onClick={() => setConfirmLogout(false)}>
+                            取消
+                          </button>
+                          <button
+                            className="set-btn danger"
+                            disabled={busy}
+                            onClick={() => {
+                              setConfirmLogout(false);
+                              onLogout();
+                            }}
+                          >
+                            确定退出
+                          </button>
+                        </div>
+                      ) : (
+                        <button className="set-btn danger" onClick={() => setConfirmLogout(true)}>
+                          退出登录
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="set-row">
+                      <div>
+                        <span className="set-k">飞牛登录</span>
+                        <div className="set-desc">未登录飞牛时，Bangumi 追番等功能仍照常可用</div>
+                      </div>
+                      <button className="set-btn" onClick={() => onLogin?.()}>
+                        登录飞牛
+                      </button>
+                    </div>
+              )}
+
+                </>
+              )}
+
+              {/* ── 缓存 ── */}
+              {tab === "storage" && (
+                <>
+                  <div className="set-row">
+                    <span className="set-k">占用上限</span>
+                    <select
+                      className="set-select"
+                      value={limitMb}
+                      disabled={busy}
+                      onChange={(e) => setLimit(Number(e.target.value))}
+                    >
+                      {extras.map((mb) => (
+                        <option key={mb} value={mb}>
+                          {fmtSize(mb * 1024 * 1024)}
+                        </option>
+                      ))}
+                      <option value={1024}>1 GB</option>
+                      <option value={2048}>2 GB</option>
+                      <option value={5120}>5 GB</option>
+                      <option value={10240}>10 GB</option>
+                      <option value={0}>不限制</option>
+                    </select>
+                  </div>
+                  <div className="set-row">
+                    <span className="set-k">当前占用</span>
+                    <span className="set-v">
+                      {stats ? `${fmtSize(stats.bytes)} · ${stats.files} 个文件` : "读取中…"}
+                    </span>
+                  </div>
+                  <div className="set-row">
+                    <span className="set-k">清理缓存</span>
+                    <button className="set-btn" onClick={clearCache} disabled={busy || !stats?.bytes}>
+                      立即清理
                     </button>
-                  </>
-                )}
-                {isFull && !downloaded && (
-                  <button
-                    type="button"
-                    className="set-btn primary"
-                    disabled={downloading}
-                    onClick={downloadUpdate}
-                  >
-                    {downloading ? "下载中…" : "下载安装包"}
-                  </button>
-                )}
-                {isFull && downloaded && (
-                  <button
-                    type="button"
-                    className="set-btn primary"
-                    disabled={applying}
-                    onClick={installUpdate}
-                  >
-                    {applying ? "安装中…" : "立即安装"}
-                  </button>
-                )}
-              </div>
+                  </div>
+                  <div className="set-hint">
+                    图片与演员表缓存在软件数据目录（{stats?.dir || "…"}）：命中本地就不再请求，超上限按最后访问
+                    时间自动淘汰；清理会同时清掉内存与磁盘。
+                  </div>
+                  {note && <div className="set-note">{note}</div>}
 
-              {updError && (
-                <div className="set-upd-err">
-                  <span>{updError}</span>
-                  <button type="button" className="set-btn" disabled={updBusy} onClick={checkUpdate}>
-                    重试
-                  </button>
-                </div>
+                </>
+              )}
+
+              {/* ── 诊断 ── */}
+              {tab === "diagnostics" && (
+                <>
+                  <div className="set-row">
+                    <span className="set-k">打开目录</span>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                      <button className="set-btn" onClick={() => openPath("log")}>
+                        诊断日志
+                      </button>
+                      <button className="set-btn" onClick={() => openPath("cache")}>
+                        缓存目录
+                      </button>
+                      <button className="set-btn" onClick={() => openPath("app")}>
+                        数据目录
+                      </button>
+                    </div>
+                  </div>
+                  <div className="set-hint">
+                    诊断日志在系统临时目录（anibox.log），记录了镜像请求、图片缓存命中与播放链路；
+                    反馈问题时把最后一段贴出来即可。
+                  </div>
+                  {note && <div className="set-note">{note}</div>}
+
+                </>
+              )}
+
+              {/* ── 更新与维护 ── */}
+              {tab === "update" && (
+                <>
+                  <div className="set-row">
+                    <span className="set-k">当前版本</span>
+                    <span className="set-v">v{ver}</span>
+                  </div>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">检查更新</span>
+                      <div className="set-desc">热补丁无需重装；全量更新后台下载，完成后提示安装</div>
+                    </div>
+                    <button
+                      type="button"
+                      className="set-btn"
+                      disabled={updBusy}
+                      onClick={checkUpdate}
+                    >
+                      {updChecking ? "检查中…" : "检查更新"}
+                    </button>
+                  </div>
+
+                  {(updStatus || updError) && (
+                    <div className="set-row set-row-col set-upd">
+                      <div className="set-upd-status">
+                        {updStatus && <span className={`set-upd-dot ${updStatus.tone}`} />}
+                        <span className="set-upd-status-text">{updStatus?.text}</span>
+                        {upd?.publishedAt && <span className="set-upd-date">发布于 {upd.publishedAt}</span>}
+                      </div>
+
+                      {!!upd?.notes && (
+                        <div className="set-upd-notes-wrap">
+                          <button
+                            type="button"
+                            className="set-btn set-upd-notes-toggle"
+                            onClick={() => setShowNotes((v) => !v)}
+                          >
+                            {showNotes ? "收起更新说明" : "查看更新说明"}
+                          </button>
+                          {/* 纯文本渲染：React 默认转义，不解析/执行 HTML */}
+                          {showNotes && <pre className="set-upd-notes">{upd?.notes}</pre>}
+                        </div>
+                      )}
+
+                      {showProgress && progress && (
+                        <div className="set-upd-progress">
+                          <div className="set-upd-bar">
+                            <i style={{ width: `${progress.percent}%` }} />
+                          </div>
+                          <div className="set-upd-progress-meta">
+                            <span className="set-upd-pct">{Math.round(progress.percent)}%</span>
+                            {progress.message && <span className="set-upd-msg">{progress.message}</span>}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="set-actions">
+                        {downloading && (
+                          <button type="button" className="set-btn" onClick={cancelDownload}>
+                            取消
+                          </button>
+                        )}
+                        {isHotfix && !patchApplied && (
+                          <button
+                            type="button"
+                            className="set-btn primary"
+                            disabled={applying || downloading}
+                            onClick={applyPatch}
+                          >
+                            {applying ? "应用中…" : "应用补丁"}
+                          </button>
+                        )}
+                        {isHotfix && patchApplied && (
+                          <>
+                            <span className="set-upd-ok">补丁已应用</span>
+                            <button type="button" className="set-btn" onClick={rollbackPatch}>
+                              回滚补丁
+                            </button>
+                          </>
+                        )}
+                        {isFull && !downloaded && (
+                          <button
+                            type="button"
+                            className="set-btn primary"
+                            disabled={downloading}
+                            onClick={downloadUpdate}
+                          >
+                            {downloading ? "下载中…" : "下载安装包"}
+                          </button>
+                        )}
+                        {isFull && downloaded && (
+                          <button
+                            type="button"
+                            className="set-btn primary"
+                            disabled={applying}
+                            onClick={installUpdate}
+                          >
+                            {applying ? "安装中…" : "立即安装"}
+                          </button>
+                        )}
+                      </div>
+
+                      {updError && (
+                        <div className="set-upd-err">
+                          <span>{updError}</span>
+                          <button type="button" className="set-btn" disabled={updBusy} onClick={checkUpdate}>
+                            重试
+                          </button>
+                        </div>
+                      )}
+                    </div>
+              )}
+
+                </>
+              )}
+
+              {/* ── 关于 ── */}
+              {tab === "about" && (
+                <>
+                  <div className="set-row set-row-col">
+                    <span className="set-k">软件说明</span>
+                    <div className="set-desc">{softwareDesc}</div>
+                  </div>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">项目地址</span>
+                      <div className="set-desc">{projectUrl}</div>
+                    </div>
+                    <button type="button" className="set-btn" onClick={() => openExternal(projectUrl)}>
+                      打开
+                    </button>
+                  </div>
+                  <div className="set-attrib">
+                    <span>This product uses the TMDB API but is not endorsed or certified by TMDB.</span>
+                    <span>
+                      <a href="https://www.themoviedb.org/" target="_blank" rel="noreferrer">
+                        themoviedb.org
+                      </a>
+                    </span>
+                    <span>
+                      数据与部分内容来自{" "}
+                      <a href="https://bgm.tv/" target="_blank" rel="noreferrer">
+                        Bangumi 番组计划
+                      </a>
+                    </span>
+                  </div>
+                  {/* [lc-1607] 版权 / 资源纠纷风险规避入口：免责声明（只读弹窗）+ 开源许可 */}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">免责声明</span>
+                      <div className="set-desc">首次启动需阅读并同意的完整条款</div>
+                    </div>
+                    <button className="set-btn" onClick={() => setShowDisclaimer(true)}>
+                      查看
+                    </button>
+                  </div>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">开源许可（GPL-3.0）</span>
+                      <div className="set-desc">本项目基于 GNU GPL-3.0 许可证开源发布（见仓库根目录 LICENSE）</div>
+                    </div>
+                    <a
+                      className="set-btn"
+                      href="https://www.gnu.org/licenses/gpl-3.0.html"
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ textDecoration: "none" }}
+                    >
+                      许可证全文
+                    </a>
+                  </div>
+                </>
               )}
             </div>
-          )}
-
-          {/* ── 关于 ── */}
-          <h3 className="ddet-h3">关于</h3>
-          <div className="set-row set-row-col">
-            <span className="set-k">软件说明</span>
-            <div className="set-desc">{softwareDesc}</div>
           </div>
-          <div className="set-row">
-            <div>
-              <span className="set-k">项目地址</span>
-              <div className="set-desc">{projectUrl}</div>
-            </div>
-            <button type="button" className="set-btn" onClick={() => openExternal(projectUrl)}>
-              打开
-            </button>
-          </div>
-          <div className="set-attrib">
-            <span>This product uses the TMDB API but is not endorsed or certified by TMDB.</span>
-            <span>
-              <a href="https://www.themoviedb.org/" target="_blank" rel="noreferrer">
-                themoviedb.org
-              </a>
-            </span>
-            <span>
-              数据与部分内容来自{" "}
-              <a href="https://bgm.tv/" target="_blank" rel="noreferrer">
-                Bangumi 番组计划
-              </a>
-            </span>
-          </div>
-          {/* [lc-1607] 版权 / 资源纠纷风险规避入口：免责声明（只读弹窗）+ 开源许可 */}
-          <div className="set-row">
-            <div>
-              <span className="set-k">免责声明</span>
-              <div className="set-desc">首次启动需阅读并同意的完整条款</div>
-            </div>
-            <button className="set-btn" onClick={() => setShowDisclaimer(true)}>
-              查看
-            </button>
-          </div>
-          <div className="set-row">
-            <div>
-              <span className="set-k">开源许可（GPL-3.0）</span>
-              <div className="set-desc">本项目基于 GNU GPL-3.0 许可证开源发布（见仓库根目录 LICENSE）</div>
-            </div>
-            <a
-              className="set-btn"
-              href="https://www.gnu.org/licenses/gpl-3.0.html"
-              target="_blank"
-              rel="noreferrer"
-              style={{ textDecoration: "none" }}
-            >
-              许可证全文
-            </a>
-          </div>
-          {note && <div className="set-note">{note}</div>}
         </div>
       </div>
       {/* [lc-1607] 免责声明只读态：portal 到 body，只有「关闭」 */}

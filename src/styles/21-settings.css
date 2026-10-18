@@ -61,15 +61,107 @@
   letter-spacing: 0.2px;
 }
 
-/* ── 设置面板（缓存 + 关于）：外壳复用 .ddet-*，内部 .set-* ── */
+/* ── 设置面板（标签分类）：外壳复用 .ddet-*，内部 .set-*
+   结构：header → .set-layout（左侧标签栏 .set-tabs + 右侧内容区 .ddet-body.set-body）
+   内容区独立滚动，标签栏在窄窗由 CSS 翻成顶部横向滚动条。 */
 .set-card {
-  width: min(560px, 92vw);
+  /* 比单栏面板宽一些：左侧标签固定列 + 内容列；仍受 94vw 约束，窄窗不溢出 */
+  width: min(780px, 94vw);
+}
+.set-layout {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+.set-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 0 auto;
+  width: 146px;
+  padding: 12px 10px;
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.set-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.18s ease, color 0.18s ease;
+}
+.set-tab:hover {
+  background: var(--hover);
+  color: var(--text-strong);
+}
+.set-tab.on {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.set-tab:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 1px;
+}
+/* 选中指示条：竖向布局是左缘竖条，横向布局在 @media 里改为底边横条。
+   用 transform 缩放做过渡（不是改宽度），避免逐帧重排。 */
+.set-tab::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+  transform: scaleY(0);
+  transform-origin: center;
+  transition: transform 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.set-tab.on::before {
+  transform: scaleY(1);
 }
 .set-body {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
+/* 标签页内容：切换标签时 key 变化触发重挂载 → 入场动画重播。
+   淡入 + 轻微上移 6px，时长 0.22s，与项目 .view-in 同一条缓动。 */
+.set-tabpane {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: setPaneIn 0.22s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+@keyframes setPaneIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .set-row {
   display: flex;
   align-items: center;
@@ -736,6 +828,47 @@
   white-space: nowrap;
   color: var(--muted);
 }
+/* ── 窄窗：标签栏从左侧竖列翻到顶部横排（可横向滚动，不换行不溢出） ──
+   同一套 DOM，只改 flex 方向与指示条方向，不需要 JS 监听窗口尺寸。 */
+@media (max-width: 700px) {
+  .set-layout {
+    flex-direction: column;
+  }
+  .set-tabs {
+    flex-direction: row;
+    align-items: center;
+    width: auto;
+    padding: 8px 10px;
+    gap: 4px;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .set-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .set-tab {
+    padding: 6px 12px;
+    border-radius: 999px;
+  }
+  .set-tab::before {
+    left: 10px;
+    right: 10px;
+    top: auto;
+    bottom: 1px;
+    width: auto;
+    height: 2px;
+    transform: scaleX(0);
+  }
+  .set-tab.on::before {
+    transform: scaleX(1);
+  }
+  .set-body {
+    padding: 14px 14px 18px;
+  }
+}
 @media (max-width: 480px) {
   .set-pad-keys {
     grid-template-columns: minmax(0, 1fr);
@@ -747,4 +880,16 @@
     width: 110px;
   }
 }
+/* 系统「减少动态效果」：标签切换动画与指示条过渡直接关掉（与 29-transitions.css 同一约定）。
+   .perf 性能模式由全局规则统一把时长压到 0，这里不重复处理。 */
+@media (prefers-reduced-motion: reduce) {
+  .set-tabpane {
+    animation: none;
+  }
+  .set-tab,
+  .set-tab::before {
+    transition: none;
+  }
+}
+
 

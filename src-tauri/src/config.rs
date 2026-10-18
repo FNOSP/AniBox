@@ -63,12 +63,12 @@ pub struct Config {
     pub bgm_username: String,
 
     /* ── [lc-1561] 自建弹幕接口（danmu_api）—— 对齐主仓库 fn_config 的同名项 ──
-       用户在自己的 NAS/Docker 上部署 https://github.com/huangxd-/danmu_api（LogVar 弹幕API），
-       它把哔哩/爱奇艺/优酷/腾讯等平台的弹幕聚合到同一集，密度显著高于本应用内置的
-       「直连 B站 单源 + 阈值聚合」。作为弹幕**优选源**：命中即用，未命中自动降级内置 B站。
-       默认关闭 = 完全走内置 B站 链路（与接入前行为一致）。 */
-    /// 自建弹幕接口开关
-    #[serde(default)]
+       应用现已**内置**一份 danmu_api（本地独立运行、零配置）：用户不填地址时自动使用
+       `http://127.0.0.1:22352/<TOKEN>`；也可继续填写自部署地址覆盖。
+       作为弹幕**优选源**：命中即用，未命中自动降级内置 B站。
+       默认开启 = 开箱即用内置源；关闭则完全走内置 B站 链路。 */
+    /// 自建弹幕接口开关（默认开启：使用内置实例或用户填写的地址）
+    #[serde(default = "default_true")]
     pub danmu_api_enabled: bool,
     /// 单地址（恒等于 bases[0]，兼容旧读取方与 uosc conf 同步）
     #[serde(default)]
@@ -76,6 +76,11 @@ pub struct Config {
     /// 多地址列表（故障转移；主仓库上限 4 条）
     #[serde(default)]
     pub danmu_api_bases: Vec<String>,
+    /// 弹幕引擎："node"（默认，行为与接入前完全一致）| "rust"（Rust 直接接管 22347，
+    /// 自建源三跳由 Rust 实现，B站/字幕端点反代到内部 Node 端口）。
+    /// 环境变量 `ANIBOX_DANMAKU_ENGINE=rust` 可临时覆盖（便于测试）。
+    #[serde(default = "default_danmu_engine")]
+    pub danmu_engine: String,
 
     /* ── [lc-1599] 应用内反馈（工单制）── */
     /// 反馈系统匿名设备 ID：首次提交反馈时生成 32 位 hex 随机串并落盘（不要求密码学强度）。
@@ -117,8 +122,10 @@ pub struct Config {
     /* ── [gamepad] 全局手柄（原生 gilrs 监听，mpv/PotPlayer 在前台时同样可用）──
        全部带 serde default：老 config.json 没有这些键时按默认值走，**不需要迁移脚本**。
        语义与取值范围见设置面板契约（get_settings/set_settings 做白名单 + clamp）。 */
-    /// 手柄总开关（默认关：不接手柄的用户完全无感）
-    #[serde(default)]
+    /// 手柄总开关（默认开：接上手柄即可直接使用；用户可在设置里显式关闭）
+    /// 注意：bool 的 `#[serde(default)]` 默认 false，这里必须用自定义默认函数，
+    /// 否则旧 config.json 缺该字段时会回落到 false。
+    #[serde(default = "default_gamepad_enabled")]
     pub gamepad_enabled: bool,
     /// 左摇杆死区（0.10–0.50，默认 0.30）：模长低于此值视为回中
     #[serde(default = "default_gamepad_deadzone")]
@@ -150,8 +157,14 @@ fn default_true() -> bool {
     true
 }
 
+/// [gamepad] 手柄总开关默认开启。独立成函数而不是复用 `default_true`，
+/// 便于以后单独调整手柄默认值，也让 serde 属性自解释。
+fn default_gamepad_enabled() -> bool {
+    true
+}
+
 fn default_mpv() -> String {
-    "D:/GitHub/Fntv-Plus/third_party/fntv-mpv/mpv.exe".into()
+    "D:/GitHub/AniBox/third_party/fntv-mpv/mpv.exe".into()
 }
 
 fn default_player_kind() -> String {
@@ -159,7 +172,11 @@ fn default_player_kind() -> String {
 }
 
 fn default_proxy() -> String {
-    "D:/GitHub/Fntv-Plus/third_party/proxy/proxy.exe".into()
+    "D:/GitHub/AniBox/third_party/proxy/proxy.exe".into()
+}
+
+fn default_danmu_engine() -> String {
+    "node".into()
 }
 
 // [gamepad] 取值边界集中在这里：config 默认值、set_settings 的 clamp、gamepad 运行时共用。
@@ -209,9 +226,10 @@ impl Default for Config {
             bgm_token: String::new(),
             bgm_remember: true,
             bgm_username: String::new(),
-            danmu_api_enabled: false,
+            danmu_api_enabled: true,
             danmu_api_base: String::new(),
             danmu_api_bases: Vec::new(),
+            danmu_engine: default_danmu_engine(),
             feedback_aid: String::new(),
             log_debug: true,
             log_modules: std::collections::BTreeMap::new(),
@@ -220,7 +238,7 @@ impl Default for Config {
             usage_stats_last_ping_day: String::new(),
             usage_stats_last_ping_ok: false,
             usage_stats_pending_days: Vec::new(),
-            gamepad_enabled: false,
+            gamepad_enabled: default_gamepad_enabled(),
             gamepad_deadzone: default_gamepad_deadzone(),
             gamepad_direction_threshold: default_gamepad_direction_threshold(),
             gamepad_repeat_delay: default_gamepad_repeat_delay(),
@@ -361,9 +379,9 @@ mod tests {
 
     #[test]
     fn gamepad_fields_have_safe_defaults() {
-        // 老 config.json 没有手柄键 → 关闭 + 契约默认值（不需要迁移）
+        // 老 config.json 没有手柄键 → 默认开启 + 契约默认值（不需要迁移）
         let c: Config = serde_json::from_str("{}").unwrap();
-        assert!(!c.gamepad_enabled, "手柄默认关闭");
+        assert!(c.gamepad_enabled, "手柄默认开启");
         assert_eq!(c.gamepad_deadzone, 0.30);
         assert_eq!(c.gamepad_direction_threshold, 0.40);
         assert_eq!(c.gamepad_repeat_delay, 320);

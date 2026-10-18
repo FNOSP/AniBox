@@ -3070,7 +3070,7 @@ pub async fn webrs_play(
     };
     let headers = crate::player::HttpHeaders::new(referer.clone(), ua.clone());
     let header_ref = if headers.needs_relay() { Some(&headers) } else { None };
-    crate::player::launch(
+    let launch_res = crate::player::launch(
         &app,
         &state,
         &cfg,
@@ -3081,11 +3081,12 @@ pub async fn webrs_play(
         header_ref,
         &[],
     )
-    .await?;
+    .await;
     crate::libmpv::trace("[webrs] play: player::launch 完成");
 
     // [lc-1615] 起播成功 → 落一笔本机播放历史（观影记录页数据源）。
-    // 去重键用「集页面 URL」（直链是临时的：带签名/会过期，不能当键）；缺失时退化为直链。
+    // [lc-1710] 先记录、后传播播放器错误：只要已把可播地址交给播放器就算一次观看，
+    // 不能因 IPC/启动失败丢掉记录。去重由 history 内部按剧级 series_key（在线源 = 番剧名）。
     let key = episode_url.filter(|s| !s.is_empty()).unwrap_or_else(|| url.clone());
     crate::history::record(
         &app,
@@ -3107,8 +3108,10 @@ pub async fn webrs_play(
             watched_ms: 0,
             progress: 0.0,
             finished: false,
+            ..Default::default()
         },
     );
+    launch_res?;
     Ok(())
 }
 

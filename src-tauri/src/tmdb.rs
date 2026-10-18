@@ -529,6 +529,34 @@ async fn get_json_mirror_only(path_with_query: &str) -> Result<Value, String> {
     }
 }
 
+/// 人物接口：**镜像优先，镜像不可用才回退官方直连**（与 get_json 一致），
+/// 额外把「镜像 404」视为「该路由未提供」→ 也允许回退直连（有用户 key 时）。
+/// 401/403 等明确拒绝仍原样报错，不直连；镜像成功时不会触碰官方域。
+async fn get_json_person_mirror_first(path_with_query: &str) -> Result<Value, String> {
+    match get_json(path_with_query).await {
+        Ok(v) => Ok(v),
+        Err(e) if is_mirror_404(&e) => {
+            let Some(key) = api_key() else {
+                return Err(format!(
+                    "{e}；未配置个人 TMDB API Key（config.json 的 tmdbApiKey 或环境变量 FNTV_TMDB_KEY），无法回退直连"
+                ));
+            };
+            crate::libmpv::trace(&format!(
+                "[tmdb] 镜像 404（路由未提供）→ 回退官方直连：{path_with_query}"
+            ));
+            direct_get(path_with_query, &key)
+                .await
+                .map_err(|e2| format!("镜像 404（{e}）；回退直连也失败：{e2}"))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// 镜像错误文案是否代表「HTTP 404（路由未提供）」——仅用于决定是否允许回退直连。
+fn is_mirror_404(err: &str) -> bool {
+    err.contains("HTTP 404")
+}
+
 /// Degradable → 有用户 key 就直连重试；没有 key 就返回「已尝试降级」的合并错误。
 async fn degrade_or_err(path_with_query: &str, cause: String) -> Result<Value, String> {
     let Some(key) = api_key() else {
@@ -1743,6 +1771,186 @@ pub async fn tmdb_search(arg: Value) -> Result<Value, String> {
     Ok(out)
 }
 
+/// 演员/人物页：`GET /3/person/{id}?language=zh-CN&append_to_response=combined_credits,external_ids`。
+/// **镜像优先**（get_json：镜像失败/超时/5xx/429/缺密钥 → 回退官方直连）；镜像 404（路由未提供）
+/// 也允许回退直连（见 get_json_person_mirror_first）。镜像与官方同为 `/3/*` 前缀，无需改写路径。
+/// 按 `json:person:{id}` 落盘缓存，TTL 与演员表一致
+/// （CREDITS_TTL_SECS = 120 天）。返回归一化结构：
+///   { tmdbId, name, originalName, profile, biography, birthday, deathday, placeOfBirth,
+///     knownFor, works[] }
+/// `works` 合并 `combined_credits.cast` + `crew`：按 (media_type, id) 去重（cast 优先保留 character，
+/// crew 保留 job；同一作品两者都有时合并字段），只留 movie/tv，按 vote_count 降序、年份降序。
+#[tauri::command]
+pub async fn tmdb_person(arg: Value) -> Result<Value, String> {
+    let id = arg
+        .get("id")
+        .and_then(|v| v.as_i64())
+        .filter(|i| *i > 0)
+        .ok_or_else(|| "tmdb_person 缺少合法 id".to_string())?;
+    let key = format!("json:person:{id}");
+    if let Some(v) = disk_cache::json_get(&key, CREDITS_TTL_SECS) {
+        crate::libmpv::trace(&format!("[tmdb] person 命中缓存 {key}"));
+        return Ok(v);
+    }
+    let path = format!(
+        "/3/person/{id}?language={LANG}&append_to_response=combined_credits,external_ids"
+    );
+    // 镜像优先；镜像 404（路由未提供）时也回退官方直连（有用户 key 时），见下方封装。
+    let d = get_json_person_mirror_first(&path).await?;
+    let out = normalize_person(&d, id);
+    disk_cache::json_put(&key, &out);
+    crate::libmpv::trace(&format!(
+        "[tmdb] person id={id} 已拉取并落盘 {key}（作品 {} 条）",
+        out.get("works")
+            .and_then(|w| w.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0)
+    ));
+    Ok(out)
+}
+
+/// 取字符串字段（缺失/非字符串 → 空串）。
+fn str_of(v: &Value, k: &str) -> String {
+    v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
+}
+
+/// combined_credits 的单条 → 归一化作品项。`mt` 只接受 movie/tv。
+fn person_work_from(e: &Value, mt: &str) -> Value {
+    let is_movie = mt == "movie";
+    let title = if is_movie { str_of(e, "title") } else { str_of(e, "name") };
+    let original = if is_movie {
+        str_of(e, "original_title")
+    } else {
+        str_of(e, "original_name")
+    };
+    let date = if is_movie {
+        str_of(e, "release_date")
+    } else {
+        str_of(e, "first_air_date")
+    };
+    json!({
+        "tmdbId": e.get("id").and_then(|v| v.as_i64()).unwrap_or(0),
+        "mediaType": mt,
+        "title": title,
+        "originalTitle": original,
+        "year": year_of(&date),
+        "poster": str_of(e, "poster_path"),
+        "backdrop": str_of(e, "backdrop_path"),
+        "character": str_of(e, "character"),
+        "job": str_of(e, "job"),
+        "rating": e.get("vote_average").and_then(|v| v.as_f64()).unwrap_or(0.0),
+        "votes": e.get("vote_count").and_then(|v| v.as_i64()).unwrap_or(0),
+        "episodeCount": e.get("episode_count").and_then(|v| v.as_i64()).unwrap_or(0),
+    })
+}
+
+/// 把 src 里「目标为空」的字段补进 dst（不覆盖已有值）；`prefer` 字段（job）由 src 覆盖。
+fn merge_work(dst: &mut Value, src: &Value, override_fields: &[&str]) {
+    let (Some(d), Some(s)) = (dst.as_object_mut(), src.as_object()) else {
+        return;
+    };
+    for (k, v) in s {
+        let empty = match d.get(k) {
+            None | Some(Value::Null) => true,
+            Some(Value::String(x)) => x.is_empty(),
+            Some(Value::Array(x)) => x.is_empty(),
+            Some(Value::Number(n)) => n.as_f64() == Some(0.0),
+            _ => false,
+        };
+        let force = override_fields.contains(&k.as_str());
+        if empty || force {
+            if let Some(x) = v.as_str() {
+                if force && x.is_empty() {
+                    continue;
+                }
+            }
+            d.insert(k.clone(), v.clone());
+        }
+    }
+}
+
+/// 归一化 person 响应（纯函数，可单测）。
+fn normalize_person(d: &Value, fallback_id: i64) -> Value {
+    let mut works: Vec<Value> = Vec::new();
+    let mut idx: std::collections::HashMap<(String, i64), usize> =
+        std::collections::HashMap::new();
+
+    let key_of = |e: &Value| -> Option<(String, i64)> {
+        let mt = e.get("media_type").and_then(|v| v.as_str()).unwrap_or("");
+        if mt != "movie" && mt != "tv" {
+            return None;
+        }
+        let id = e.get("id").and_then(|v| v.as_i64())?;
+        Some((mt.to_string(), id))
+    };
+
+    // cast 优先：先落 character / 主要元数据
+    if let Some(arr) = d
+        .pointer("/combined_credits/cast")
+        .and_then(|v| v.as_array())
+    {
+        for e in arr {
+            let Some((mt, id)) = key_of(e) else { continue };
+            let key = (mt.clone(), id);
+            if idx.contains_key(&key) {
+                continue;
+            }
+            idx.insert(key, works.len());
+            works.push(person_work_from(e, &mt));
+        }
+    }
+    // crew：同一作品只补 job（以及 cast 缺的字段），不覆盖 character
+    if let Some(arr) = d
+        .pointer("/combined_credits/crew")
+        .and_then(|v| v.as_array())
+    {
+        for e in arr {
+            let Some((mt, id)) = key_of(e) else { continue };
+            let key = (mt.clone(), id);
+            if let Some(&pos) = idx.get(&key) {
+                let merged = person_work_from(e, &mt);
+                // crew 的 job 一定以 crew 为准（cast 条目通常没有 job）
+                merge_work(&mut works[pos], &merged, &["job"]);
+            } else {
+                idx.insert(key, works.len());
+                works.push(person_work_from(e, &mt));
+            }
+        }
+    }
+
+    // 排序：vote_count 降序 → 年份降序
+    works.sort_by(|a, b| {
+        let va = a.get("votes").and_then(|v| v.as_i64()).unwrap_or(0);
+        let vb = b.get("votes").and_then(|v| v.as_i64()).unwrap_or(0);
+        vb.cmp(&va).then_with(|| {
+            let ya = a
+                .get("year")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0);
+            let yb = b
+                .get("year")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0);
+            yb.cmp(&ya)
+        })
+    });
+
+    json!({
+        "tmdbId": d.get("id").and_then(|v| v.as_i64()).unwrap_or(fallback_id),
+        "name": str_of(d, "name"),
+        "originalName": str_of(d, "original_name"),
+        "profile": str_of(d, "profile_path"),
+        "biography": str_of(d, "biography"),
+        "birthday": str_of(d, "birthday"),
+        "deathday": str_of(d, "deathday"),
+        "placeOfBirth": str_of(d, "place_of_birth"),
+        "knownFor": str_of(d, "known_for_department"),
+        "works": works,
+    })
+}
+
 /// discover 原始响应 → 前端 payload（items[] + 窗口/分页元信息）。
 /// **纯函数**：同一份原始响应永远得到同一份 payload —— 条件请求的 fetch 闭包与单测都复用这一份。
 fn discover_payload(
@@ -1941,6 +2149,16 @@ mod tests {
             ]}
         });
         assert_eq!(pick_hero_path(&d, "backdrops", "backdrop_path"), "/has-dims.jpg");
+    }
+
+    /// 回退判定（不触网）：人物接口仅「镜像 404」允许回退直连；401/403 等明确拒绝不直连。
+    /// 网络/超时/5xx/429 的降级由 get_json 内部处理（镜像成功时不会触碰官方域）。
+    #[test]
+    fn person_fallback_only_on_mirror_404() {
+        assert!(super::is_mirror_404("镜像请求失败（HTTP 404）：Not Found"));
+        assert!(!super::is_mirror_404("镜像请求失败（HTTP 401）：bad_signature"));
+        assert!(!super::is_mirror_404("镜像请求失败（HTTP 403）：forbidden"));
+        assert!(!super::is_mirror_404("所有镜像端点均不可达（最后：timeout）"));
     }
 
     /// 静态断言（不触网）：默认路径必须是**镜像**，绝不能是上游官方域名
@@ -2465,5 +2683,63 @@ mod tests {
             }
         }
         out
+    }
+
+    /// 演员作品归一化（**离线、零网络**）：cast + crew 合并去重、非 movie/tv 过滤、
+    /// cast 优先保留 character / crew 保留 job、vote_count 降序 + 年份降序。
+    #[test]
+    fn normalize_person_dedups_and_sorts_works() {
+        let d = json!({
+            "id": 287,
+            "name": "布拉德·皮特",
+            "original_name": "Brad Pitt",
+            "profile_path": "/p.jpg",
+            "biography": "bio",
+            "birthday": "1963-12-18",
+            "deathday": null,
+            "place_of_birth": "Shawnee",
+            "known_for_department": "Acting",
+            "combined_credits": {
+                "cast": [
+                    {"id": 550, "media_type": "movie", "title": "搏击俱乐部", "original_title": "Fight Club",
+                     "release_date": "1999-10-15", "poster_path": "/a.jpg", "backdrop_path": "/ab.jpg",
+                     "character": "Tyler Durden", "vote_average": 8.4, "vote_count": 25000},
+                    {"id": 1399, "media_type": "tv", "name": "权力的游戏", "original_name": "Game of Thrones",
+                     "first_air_date": "2011-04-17", "poster_path": "/g.jpg", "backdrop_path": "",
+                     "character": "Jaime", "vote_average": 8.4, "vote_count": 20000, "episode_count": 73},
+                    // 非 movie/tv → 必须被过滤
+                    {"id": 999, "media_type": "person", "name": "x", "vote_count": 99999}
+                ],
+                "crew": [
+                    // 与 cast 的 550 同作品：合并 job，character 保留
+                    {"id": 550, "media_type": "movie", "job": "Producer", "department": "Production",
+                     "title": "搏击俱乐部", "release_date": "1999-10-15", "vote_average": 8.4, "vote_count": 25000},
+                    {"id": 777, "media_type": "movie", "title": "导演作品", "original_title": "Directed",
+                     "release_date": "2015-01-01", "job": "Director", "vote_average": 7.0, "vote_count": 100}
+                ]
+            }
+        });
+        let out = super::normalize_person(&d, 287);
+        assert_eq!(out["tmdbId"], 287);
+        assert_eq!(out["originalName"], "Brad Pitt");
+        assert_eq!(out["deathday"], "", "deathday=null → 空串");
+        assert_eq!(out["knownFor"], "Acting");
+
+        let works = out["works"].as_array().unwrap();
+        assert_eq!(works.len(), 3, "550 合并后 + 1399 + 777；person 类型被过滤");
+        let f = works.iter().find(|w| w["tmdbId"] == 550).unwrap();
+        assert_eq!(f["character"], "Tyler Durden", "cast 优先保留 character");
+        assert_eq!(f["job"], "Producer", "crew 的 job 合并进来");
+        assert_eq!(f["mediaType"], "movie");
+
+        // 排序：votes 25000 → 20000 → 100
+        assert_eq!(works[0]["tmdbId"], 550);
+        assert_eq!(works[1]["tmdbId"], 1399);
+        assert_eq!(works[2]["tmdbId"], 777);
+        // tv 字段取 name/first_air_date，year 取前 4 位
+        assert_eq!(works[1]["mediaType"], "tv");
+        assert_eq!(works[1]["title"], "权力的游戏");
+        assert_eq!(works[1]["year"], "2011");
+        assert_eq!(works[1]["episodeCount"], 73);
     }
 }

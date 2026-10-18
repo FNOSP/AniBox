@@ -230,6 +230,30 @@ async fn get_json_cond(path_with_query: &str, if_none_match: Option<&str>) -> Re
     mirror_call_full("GET", path_with_query, None, if_none_match, &[]).await
 }
 
+/// 人物接口：**镜像优先，镜像不可用才回退官方直连**。
+/// 与 `get_json` 的区别只在「镜像 404」：人物作品路由（`/v0/persons/{id}/works`）镜像未必反代，
+/// 镜像 404 视为「该路由未提供」→ 回退直连（官方可能有）。401/403 等明确拒绝仍原样报错，不直连。
+/// 网络错误/超时/5xx/429/缺密钥的降级已由 `get_json` 内部处理（日志会区分）。
+async fn get_json_person_mirror_first(path_with_query: &str) -> Result<Value, String> {
+    match get_json(path_with_query).await {
+        Ok(v) => Ok(v),
+        Err(e) if is_mirror_404(&e) => {
+            crate::libmpv::trace(&format!(
+                "[bgm] 镜像 404（路由未提供）→ 回退官方直连：{path_with_query}"
+            ));
+            direct_call("GET", path_with_query, "", &[])
+                .await
+                .map_err(|e2| format!("镜像 404（{e}）；回退直连也失败：{e2}"))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// 镜像错误文案是否代表「HTTP 404（路由未提供）」——仅用于决定是否允许回退直连。
+fn is_mirror_404(err: &str) -> bool {
+    err.contains("HTTP 404")
+}
+
 /// [lc-1515] 带**调用方自定义头**的镜像调用（如 bgm_account 透传用户 Bangumi Bearer
 /// token 做 /v0/me 验证与收藏读写）。extra 形如 `[("authorization", "Bearer xxx")]`，
 /// 与签名三件套一起发给镜像；降级直连时同样带上（官方 API 认这个头）。
@@ -828,6 +852,286 @@ pub async fn bgm_persons(id: i64) -> Result<Value, String> {
     Ok(v)
 }
 
+// ───────────────────────── 人物（演员/制作人员）参演作品 ─────────────────────────
+
+/// 日期串前 4 位（"YYYY-MM-DD" → "YYYY"）；非 4 位数字开头 → 空串。
+fn year_prefix(date: &str) -> String {
+    let b = date.as_bytes();
+    if b.len() >= 4 && b[..4].iter().all(|c| c.is_ascii_digit()) {
+        date[..4].to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// Bangumi `subject.type` → 前端 mediaType：2 = anime，6 = real，其余 other。
+fn map_subject_type(t: i64) -> &'static str {
+    match t {
+        2 => "anime",
+        6 => "real",
+        _ => "other",
+    }
+}
+
+/// 从 Bangumi `infobox` 数组里取指定 key 的文本值。
+/// value 可能是字符串或「字符串/对象数组」，数组项兼容 `{v: "..."}` 形态。
+fn infobox_str(v: &Value, keys: &[&str]) -> Option<String> {
+    let arr = v.get("infobox").and_then(|x| x.as_array())?;
+    for it in arr {
+        let Some(k) = it.get("key").and_then(|x| x.as_str()) else {
+            continue;
+        };
+        if !keys.iter().any(|want| k == *want) {
+            continue;
+        }
+        let s = match it.get("value") {
+            Some(Value::String(s)) => s.clone(),
+            Some(Value::Array(a)) => a
+                .iter()
+                .filter_map(|x| {
+                    x.as_str()
+                        .map(str::to_string)
+                        .or_else(|| x.get("v").and_then(|y| y.as_str()).map(str::to_string))
+                })
+                .collect::<Vec<_>>()
+                .join(" / "),
+            _ => continue,
+        };
+        if !s.trim().is_empty() {
+            return Some(s);
+        }
+    }
+    None
+}
+
+/// images 对象归一（四个键恒存在，缺省空串）。
+fn images_obj(v: &Value) -> Value {
+    let img = v.get("images");
+    let g = |k: &str| {
+        img.and_then(|x| x.get(k))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    json!({
+        "large": g("large"),
+        "medium": g("medium"),
+        "grid": g("grid"),
+        "small": g("small"),
+    })
+}
+
+/// 归一化 Bangumi 人物详情（防御式：Bangumi 原始字段名以实际响应为准）。
+///   · name / name_cn（若存在）→ name 取中文名优先，originalName 取原始 name；
+///   · images / career / summary 直接取；
+///   · birth / bloodType 优先顶层字段，否则从 infobox（生日 / 血型）解析。
+/// works 恒为空数组 —— 前端另行调用 bgm_person_works。
+fn normalize_bgm_person(v: &Value, fallback_id: i64) -> Value {
+    let name_raw = v
+        .get("name")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let name_cn = v
+        .get("name_cn")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| infobox_str(v, &["简体中文名", "中文名"]));
+    let career = v
+        .get("career")
+        .and_then(|x| x.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let birth = v
+        .get("birth")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| infobox_str(v, &["生日", "出生日期"]))
+        .unwrap_or_default();
+    let blood_type = v
+        .get("blood_type")
+        .and_then(|x| x.as_i64())
+        .or_else(|| {
+            infobox_str(v, &["血型"]).and_then(|s| {
+                s.chars()
+                    .find(|c| c.is_ascii_digit())
+                    .and_then(|c| c.to_digit(10))
+                    .map(|d| d as i64)
+            })
+        })
+        .unwrap_or(0);
+
+    json!({
+        "bgmId": v.get("id").and_then(|x| x.as_i64()).unwrap_or(fallback_id),
+        "name": name_cn.clone().unwrap_or_else(|| name_raw.clone()),
+        "originalName": name_raw,
+        "images": images_obj(v),
+        "career": career,
+        "summary": v.get("summary").and_then(|x| x.as_str()).unwrap_or(""),
+        "birth": birth,
+        "bloodType": blood_type,
+        "works": [],
+    })
+}
+
+/// 归一化人物作品列表。兼容两种响应形态（实际字段名以真实响应为准）：
+///   A) `works[i].subject` 是完整条目 + 条目上的 `character` / `staff`；
+///   B) 平铺的 `subject_id` / `subject_type` / `subject_name` / `subject_image` / `character_name`。
+fn normalize_bgm_person_works(v: &Value, fallback_id: i64) -> Value {
+    let arr = v
+        .get("works")
+        .and_then(|x| x.as_array())
+        .or_else(|| v.as_array());
+    let mut out: Vec<Value> = Vec::new();
+    if let Some(arr) = arr {
+        for w in arr {
+            let subject = w.get("subject").unwrap_or(w);
+            let subject_type = subject
+                .get("type")
+                .and_then(|x| x.as_i64())
+                .or_else(|| w.get("subject_type").and_then(|x| x.as_i64()))
+                .unwrap_or(0);
+            let bgm_id = subject
+                .get("id")
+                .and_then(|x| x.as_i64())
+                .or_else(|| w.get("subject_id").and_then(|x| x.as_i64()))
+                .or_else(|| w.get("id").and_then(|x| x.as_i64()))
+                .unwrap_or(0);
+            let name = subject
+                .get("name")
+                .and_then(|x| x.as_str())
+                .or_else(|| w.get("subject_name").and_then(|x| x.as_str()))
+                .unwrap_or("")
+                .to_string();
+            let name_cn = subject
+                .get("name_cn")
+                .and_then(|x| x.as_str())
+                .or_else(|| w.get("subject_name_cn").and_then(|x| x.as_str()))
+                .unwrap_or("")
+                .to_string();
+            let date = subject.get("date").and_then(|x| x.as_str()).unwrap_or("");
+            let poster = subject
+                .get("images")
+                .and_then(|i| i.get("large"))
+                .and_then(|x| x.as_str())
+                .or_else(|| w.get("subject_image").and_then(|x| x.as_str()))
+                .unwrap_or("")
+                .to_string();
+            let character = w
+                .get("character")
+                .and_then(|x| x.as_str())
+                .or_else(|| w.get("character_name").and_then(|x| x.as_str()))
+                .unwrap_or("")
+                .to_string();
+            let staff = w.get("staff").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let rating = subject
+                .get("score")
+                .and_then(|x| x.as_f64())
+                .unwrap_or(0.0);
+            if bgm_id == 0 {
+                continue; // 结构不符（缺 subject/subject_id）→ 跳过，不产出假条目
+            }
+
+            out.push(json!({
+                "bgmId": bgm_id,
+                "mediaType": map_subject_type(subject_type),
+                "title": if name_cn.is_empty() { name.clone() } else { name_cn },
+                "originalTitle": name,
+                "year": year_prefix(date),
+                "poster": poster,
+                "character": character,
+                "staff": staff,
+                "subjectType": subject_type,
+                "rating": rating,
+            }));
+        }
+    }
+    json!({
+        "bgmId": v.get("id").and_then(|x| x.as_i64()).unwrap_or(fallback_id),
+        "works": out,
+    })
+}
+
+/// 人物详情：GET /v0/persons/{id}（**镜像优先**，镜像不可用时回退官方直连；TTL 7 天）。
+/// 镜像 worker 已反代 /v0/*，路径与官方一致，无需改写前缀。
+#[tauri::command]
+pub async fn bgm_person(arg: Value) -> Result<Value, String> {
+    let id = arg
+        .get("id")
+        .and_then(|v| v.as_i64())
+        .filter(|i| *i > 0)
+        .ok_or_else(|| "bgm_person 缺少合法 id".to_string())?;
+    let key = id.to_string();
+    if let Some(v) = cache_get("person", &key, TTL_PERSONS).await {
+        return Ok(v);
+    }
+    let raw = get_json(&format!("/v0/persons/{id}")).await?;
+    let out = normalize_bgm_person(&raw, id);
+    cache_put("person", &key, &out).await;
+    crate::libmpv::trace(&format!("[bgm] person {id} 已拉取并落盘"));
+    Ok(out)
+}
+
+/// 人物参演作品：GET /v0/persons/{id}/works（**镜像优先**，镜像不可用时回退官方直连；TTL 7 天）。
+/// 该路由镜像未必反代 → 镜像 404 视为「路由未提供」也允许回退直连；
+/// 直连仍失败则退回 `bgm_person` 响应里可能携带的 works（不伪造数据）；都没有就明确报错。
+#[tauri::command]
+pub async fn bgm_person_works(arg: Value) -> Result<Value, String> {
+    let id = arg
+        .get("id")
+        .and_then(|v| v.as_i64())
+        .filter(|i| *i > 0)
+        .ok_or_else(|| "bgm_person_works 缺少合法 id".to_string())?;
+    let key = id.to_string();
+    if let Some(v) = cache_get("person_works", &key, TTL_PERSONS).await {
+        return Ok(v);
+    }
+    let path = format!("/v0/persons/{id}/works");
+
+    let raw = match get_json_person_mirror_first(&path).await {
+        Ok(v) => v,
+        Err(e) => {
+            crate::libmpv::trace(&format!("[bgm] person_works 镜像与直连均失败：{e}"));
+            if let Some(v) = person_works_from_person(id).await {
+                cache_put("person_works", &key, &v).await;
+                return Ok(v);
+            }
+            return Err(format!("Bangumi 人物作品接口不可用（{path}）：{e}"));
+        }
+    };
+
+    let out = normalize_bgm_person_works(&raw, id);
+    cache_put("person_works", &key, &out).await;
+    crate::libmpv::trace(&format!(
+        "[bgm] person_works {id} 已拉取（{} 条）",
+        out.get("works")
+            .and_then(|w| w.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0)
+    ));
+    Ok(out)
+}
+
+/// 兜底：从人物详情响应里的 `works` 字段取作品（若存在且非空）。
+async fn person_works_from_person(id: i64) -> Option<Value> {
+    let raw = get_json(&format!("/v0/persons/{id}")).await.ok()?;
+    let works = raw.get("works")?;
+    if works.as_array().map(|a| a.is_empty()).unwrap_or(true) {
+        return None;
+    }
+    Some(normalize_bgm_person_works(
+        &json!({ "works": works.clone() }),
+        id,
+    ))
+}
+
+
 /// 关联条目：GET /v0/subjects/{id}/subjects（**裸数组**，TTL 7 天）。
 /// 上游每条 = `{id, type, name, name_cn, relation, images}`；`relation` 是中文关系词
 /// （实测 55 条 / 16 种：片头曲 4、片尾曲 4、原声集 2、游戏 14、画集 7、广播剧 7、番外篇 2 …），
@@ -1117,6 +1421,96 @@ mod tests {
         );
         let e = decode_2xx_body("ep", b"<html>x</html>").unwrap_err();
         assert!(e.contains("不是合法 JSON"), "应报 JSON 解码失败：{e}");
+    }
+
+    /// subject.type → mediaType 映射（不触网）：2=anime / 6=real / 其余 other。
+    #[test]
+    fn maps_subject_type_to_media_type() {
+        assert_eq!(super::map_subject_type(2), "anime");
+        assert_eq!(super::map_subject_type(6), "real");
+        assert_eq!(super::map_subject_type(1), "other");
+        assert_eq!(super::map_subject_type(4), "other");
+        assert_eq!(super::map_subject_type(0), "other");
+    }
+
+    /// 人物作品归一化（不触网）：兼容「works[i].subject 嵌套」与「subject_* 平铺」两种形态。
+    #[test]
+    fn normalize_person_works_supports_nested_and_flat_shapes() {
+        let nested = serde_json::json!({
+            "id": 1,
+            "works": [
+                {"subject": {"id": 10, "type": 2, "name": "進撃の巨人", "name_cn": "进击的巨人",
+                             "date": "2013-04-07", "images": {"large": "/l.jpg"}, "score": 8.9},
+                 "character": "利威尔", "staff": ""},
+                {"subject": {"id": 20, "type": 6, "name": "実写", "name_cn": "", "date": "2019-01-01",
+                             "images": {}, "score": 6.5},
+                 "character": "", "staff": "导演"}
+            ]
+        });
+        let out = super::normalize_bgm_person_works(&nested, 1);
+        assert_eq!(out["bgmId"], 1);
+        let ws = out["works"].as_array().unwrap();
+        assert_eq!(ws.len(), 2);
+        assert_eq!(ws[0]["mediaType"], "anime");
+        assert_eq!(ws[0]["title"], "进击的巨人", "中文名优先作为标题");
+        assert_eq!(ws[0]["originalTitle"], "進撃の巨人");
+        assert_eq!(ws[0]["year"], "2013");
+        assert_eq!(ws[0]["poster"], "/l.jpg");
+        assert_eq!(ws[0]["character"], "利威尔");
+        assert_eq!(ws[0]["subjectType"], 2);
+        assert_eq!(ws[1]["mediaType"], "real");
+        assert_eq!(ws[1]["title"], "実写", "name_cn 为空 → 回退 name");
+        assert_eq!(ws[1]["staff"], "导演");
+
+        // 平铺形态
+        let flat = serde_json::json!({
+            "id": 1,
+            "works": [{"subject_id": 30, "subject_type": 2, "subject_name": "name",
+                       "subject_name_cn": "中文", "subject_image": "/i.jpg", "character_name": "c"}]
+        });
+        let out = super::normalize_bgm_person_works(&flat, 1);
+        let w = &out["works"][0];
+        assert_eq!(w["bgmId"], 30);
+        assert_eq!(w["title"], "中文");
+        assert_eq!(w["poster"], "/i.jpg");
+        assert_eq!(w["character"], "c");
+    }
+
+    /// 人物详情归一化（不触网）：name_cn / infobox 生日、血型、简体中文名 的防御式解析。
+    #[test]
+    fn normalize_person_reads_infobox_defensively() {
+        let v = serde_json::json!({
+            "id": 5,
+            "name": "花澤香菜",
+            "images": {"large": "/L.jpg"},
+            "career": ["声优", "演员"],
+            "summary": "s",
+            "infobox": [
+                {"key": "简体中文名", "value": "花泽香菜"},
+                {"key": "生日", "value": "1989-02-25"},
+                {"key": "血型", "value": "AB型"}
+            ]
+        });
+        let out = super::normalize_bgm_person(&v, 5);
+        assert_eq!(out["bgmId"], 5);
+        assert_eq!(out["name"], "花泽香菜", "简体中文名优先");
+        assert_eq!(out["originalName"], "花澤香菜");
+        assert_eq!(out["birth"], "1989-02-25");
+        assert_eq!(out["bloodType"], 0, "非数字血型 → 0");
+        assert_eq!(out["images"]["large"], "/L.jpg");
+        assert_eq!(out["images"]["grid"], "", "缺省键补空串");
+        assert_eq!(out["career"].as_array().unwrap().len(), 2);
+        assert_eq!(out["works"].as_array().unwrap().len(), 0, "works 恒为空");
+    }
+
+    /// 回退判定（不触网）：人物接口仅「镜像 404」允许回退直连；401/403 等明确拒绝不直连。
+    /// 网络/超时/5xx 的降级由 `get_json` 内部处理（镜像成功时不会触碰官方域）。
+    #[test]
+    fn person_fallback_only_on_mirror_404() {
+        assert!(super::is_mirror_404("镜像请求失败（HTTP 404）：Not Found"));
+        assert!(!super::is_mirror_404("镜像请求失败（HTTP 401）：bad_signature"));
+        assert!(!super::is_mirror_404("镜像请求失败（HTTP 403）：forbidden"));
+        assert!(!super::is_mirror_404("所有镜像端点均失败（最后：timeout）"));
     }
 
     /// 静态断言（不触网）：默认路径必须是**镜像**（上游域名只许出现在降级直连常量里）。

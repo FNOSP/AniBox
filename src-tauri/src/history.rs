@@ -37,8 +37,14 @@ const MIN_VALID_MS: u64 = 946_684_800_000;
 /// 一条本机播放记录（history.json 的数组元素）
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct WatchRecord {
-    /// 去重键：库内 = 播放条目 guid；在线源 = `webrs:<集页面 URL>`
+    /// 播放条目 guid（库内 = 集/电影 guid；在线源 = `webrs:<集页面 URL>`）。
+    /// ⚠ 这不是去重键：仅用于「播放结束回填」对位与打开详情。去重见 [`series_key_of`]。
     pub guid: String,
+    /// [lc-1710] **剧级去重键**：同一部剧/番剧/电影只保留一条记录。
+    /// 旧 history.json 没有该键（空串）→ 读取时由 [`series_key_of`] 现算并归一化，
+    /// 向后兼容、无需迁移脚本。
+    #[serde(default)]
+    pub series_key: String,
     /// 显示标题（剧名/电影名/番剧名）
     pub title: String,
     /// 集号标签（"S2E1"；电影为空）
@@ -104,6 +110,93 @@ pub fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// [lc-1710] **剧级稳定键**：同一部剧/番剧（跨集、跨季、重复观看）只算一次。
+///
+/// 优先级（前缀隔离，永不互撞）：
+///   1. `bgm:<id>` / `tmdb:<id>` —— 作品级锚点，最稳定（跨季也同一部剧）；
+///   2. `parent:<季 guid>` —— 剧集各集共用（play/info 的 parent_guid）；仅当它确实
+///      不同于条目自身 guid 时才用（否则是「没有父级」的退化值，会变成按集去重）；
+///   3. `title:<标题>` —— 番剧名兜底（在线源没有季 guid，只能按标题归并）；
+///   4. `guid:<条目 guid>` —— 电影/个人视频等「自身即作品」的兜底。
+///
+/// 为什么不用条目 guid：它是**集**级，8 集就会出 8 条记录（旧实现的缺陷）。
+pub fn series_key_of(r: &WatchRecord) -> String {
+    if !r.series_key.trim().is_empty() {
+        return r.series_key.trim().to_string();
+    }
+    let bgm = r.bgm_id.trim();
+    if !bgm.is_empty() {
+        return format!("bgm:{bgm}");
+    }
+    let tmdb = r.tmdb_id.trim();
+    if !tmdb.is_empty() {
+        return format!("tmdb:{tmdb}");
+    }
+    let parent = r.parent_guid.trim();
+    let guid = r.guid.trim();
+    // 剧集类（Episode/TV/Season）与在线源：按「剧」聚合，而不是按集。
+    let episodic = r.media_type.contains("Episode")
+        || matches!(r.media_type.as_str(), "TV" | "Season" | "webrs");
+    if episodic {
+        if !parent.is_empty() && parent != guid {
+            return format!("parent:{parent}");
+        }
+        if !r.title.trim().is_empty() {
+            return format!("title:{}", r.title.trim());
+        }
+    }
+    if !guid.is_empty() {
+        return format!("guid:{guid}");
+    }
+    if !parent.is_empty() {
+        return format!("parent:{parent}");
+    }
+    if !r.title.trim().is_empty() {
+        return format!("title:{}", r.title.trim());
+    }
+    String::new()
+}
+
+/// [lc-1710] 读取期归一化：补齐 `series_key` 并**按剧折叠**旧数据。
+///
+/// 旧 `history.json` 是「一条 guid（集）= 一条记录」，同一部剧看多集就有多条。
+/// 这里按 [`series_key_of`] 分组、用 [`merge_record`] 合并（新者胜、旧字段互补），
+/// 再按播放时间倒序 + 容量上限裁剪。纯函数、幂等，可在每次 `load` 安全调用；
+/// 真正的落盘发生在下一次 `record`（读-改-写）。
+pub fn normalize_records(list: Vec<WatchRecord>) -> Vec<WatchRecord> {
+    // 先按时间升序处理，保证「后处理的更晚」→ merge_record 的 new 侧是更新的那条。
+    let mut sorted: Vec<WatchRecord> = list
+        .into_iter()
+        .map(|mut r| {
+            if r.series_key.trim().is_empty() {
+                r.series_key = series_key_of(&r);
+            }
+            r
+        })
+        .collect();
+    sorted.sort_by_key(|r| r.played_at);
+    let mut out: Vec<WatchRecord> = Vec::new();
+    let mut idx: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for r in sorted {
+        let key = r.series_key.clone();
+        match idx.get(&key).copied() {
+            Some(i) => {
+                let old = std::mem::take(&mut out[i]);
+                out[i] = merge_record(old, r);
+            }
+            None => {
+                idx.insert(key, out.len());
+                out.push(r);
+            }
+        }
+    }
+    out.sort_by(|a, b| b.played_at.cmp(&a.played_at));
+    if out.len() > MAX_ENTRIES {
+        out.truncate(MAX_ENTRIES);
+    }
+    out
 }
 
 fn file_path(app: &AppHandle) -> Option<PathBuf> {
@@ -193,9 +286,9 @@ fn save_days(app: &AppHandle, map: &BTreeMap<String, DayStat>) {
 
 /// 台账 +1（纯逻辑，供单测）：脏键（年份 < 2000）丢弃，避免报告/热力图从脏年份起算。
 /// [lc-1668] 同时维护热力图口径：
-///   · `count` 仍 = 播放次数（年度报告的「次数 × 平均时长」估算保持原语义）；
-///   · `heat` = 当天**去重作品数**（同一部剧一天只算一次，标题作为作品键）；
-///   · `count_for_heat=false`（在线源已搁置）不计入热力图。
+///   · `count` = 当天**去重作品数**（[lc-1710] 与 heat 同口径：同一部剧一天重复观看不重复计数）；
+///   · `heat` = 当天**去重作品数**（同一部剧一天只算一次，剧级键作为作品键）；
+///   · `count_for_heat=false`（在线源已搁置）不计入热力图，但仍保留一条计数痕迹。
 fn bump_day(map: &mut BTreeMap<String, DayStat>, key: &str, series_key: &str, count_for_heat: bool) {
     let y = key
         .split('-')
@@ -211,12 +304,17 @@ fn bump_day(map: &mut BTreeMap<String, DayStat>, key: &str, series_key: &str, co
         st.heat = st.heat.max(st.count);
     }
     st.tracked = true;
-    st.count += 1;
     if count_for_heat {
         let k = series_key.trim();
-        if !k.is_empty() && st.series.insert(k.to_string()) {
+        if k.is_empty() {
+            st.count += 1;
+        } else if st.series.insert(k.to_string()) {
+            // 同一部剧当天首次出现 → count/heat 各 +1；重复观看不再计数。
+            st.count += 1;
             st.heat += 1;
         }
+    } else {
+        st.count += 1;
     }
 }
 
@@ -523,7 +621,7 @@ pub fn load(app: &AppHandle) -> Vec<WatchRecord> {
         return Vec::new();
     };
     match std::fs::read_to_string(&p) {
-        Ok(s) => serde_json::from_str::<Vec<WatchRecord>>(&s).unwrap_or_default(),
+        Ok(s) => normalize_records(serde_json::from_str::<Vec<WatchRecord>>(&s).unwrap_or_default()),
         Err(_) => Vec::new(),
     }
 }
@@ -610,16 +708,13 @@ pub fn record(app: &AppHandle, rec: WatchRecord) {
     }
     let _guard = LOCK.lock();
     let mut list = load(app);
+    // [lc-1710] 去重粒度 = 剧：同一部剧重复起播只更新、不新增（见 upsert / series_key_of）。
+    let series_key = series_key_of(&rec);
     upsert(&mut list, rec.clone());
     save(app, &list);
     // 日级台账：只记「今天看了几部」，永不裁剪（报告整年可算的关键）。
-    // [lc-1668] 同时记热力图去重键：作品键 = 标题（剧集各集共用 tv_title；电影/个人视频用自身标题）。
+    // [lc-1668] 同时记热力图去重键：作品键 = 剧级键（同一部剧各集/重看共用）。
     let mut days = load_days(app);
-    let series_key = if rec.title.trim().is_empty() {
-        rec.guid.clone()
-    } else {
-        rec.title.clone()
-    };
     bump_day(&mut days, &today_key(), &series_key, rec.source != "webrs");
     save_days(app, &days);
     // 通知前端「刚起播的是哪一条」：mpv 事件流不带 guid，前端靠这条事件知道该把时长回填给谁。
@@ -643,10 +738,19 @@ pub fn backfill_session(app: &AppHandle, guid: &str, watched_ms: u64, progress: 
     }
 }
 
-/// 插入/更新（纯函数，供单测）：同 guid 用新记录覆盖、空字段从旧记录补齐；
+/// 插入/更新（纯函数，供单测）：**同一部剧（series_key）**用新记录覆盖、空字段从旧记录补齐；
 /// 之后按 played_at 倒序 + 裁到 [`MAX_ENTRIES`]。
-fn upsert(list: &mut Vec<WatchRecord>, rec: WatchRecord) {
-    if let Some(pos) = list.iter().position(|r| r.guid == rec.guid) {
+///
+/// [lc-1710] 去重键从「条目 guid（集）」改为「剧级 series_key」：
+/// 同一部剧看第 2 集时更新原记录（刷新最近观看时间/集号/进度），而不是再插一条。
+fn upsert(list: &mut Vec<WatchRecord>, mut rec: WatchRecord) {
+    if rec.series_key.trim().is_empty() {
+        rec.series_key = series_key_of(&rec);
+    }
+    if let Some(pos) = list
+        .iter()
+        .position(|r| series_key_of(r) == rec.series_key)
+    {
         let old = list.remove(pos);
         list.push(merge_record(old, rec));
     } else {
@@ -666,6 +770,7 @@ fn merge_record(old: WatchRecord, new: WatchRecord) -> WatchRecord {
     let keep = |n: String, o: String| if n.is_empty() { o } else { n };
     WatchRecord {
         guid: new.guid,
+        series_key: keep(new.series_key, old.series_key),
         title: keep(new.title, old.title),
         episode: keep(new.episode, old.episode),
         poster: keep(new.poster, old.poster),
@@ -1475,7 +1580,8 @@ mod tests {
         bump_day(&mut m, "2026-11-31", "在线源", false); // 在线源不计热力图
         bump_day(&mut m, "1970-0-1", "脏", true); // 脏键：年份 < 2000 → 丢弃
         let d = m.get("2026-0-5").unwrap();
-        assert_eq!(d.count, 3);
+        // [lc-1710] 同一部剧当天重复观看不重复计数：剧A + 剧B = 2
+        assert_eq!(d.count, 2);
         assert_eq!(d.heat, 2);
         let e = m.get("2026-11-31").unwrap();
         assert_eq!(e.count, 2);
@@ -1578,5 +1684,120 @@ mod tests {
     fn max_entries_covers_a_full_year() {
         // 上限必须足够容纳一整年（原 500 会把年初挤掉 → 报告算不出整年）
         assert!(MAX_ENTRIES >= 3000);
+    }
+
+    // ── [lc-1710] 剧级去重（新规则：起播即记录；同一部剧只算一次）──
+
+    fn ep(guid: &str, parent: &str, title: &str, episode: &str, played_at: u64) -> WatchRecord {
+        WatchRecord {
+            guid: guid.into(),
+            title: title.into(),
+            episode: episode.into(),
+            media_type: "Episode".into(),
+            source: "fnos".into(),
+            parent_guid: parent.into(),
+            played_at,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn series_key_prefers_stable_show_anchors() {
+        // BGM/TMDB 作品级锚点最优先（跨季仍是同一部剧）
+        let mut r = ep("e1", "season1", "剧A", "S1E1", 1);
+        r.bgm_id = "123".into();
+        r.tmdb_id = "456".into();
+        assert_eq!(series_key_of(&r), "bgm:123");
+        r.bgm_id.clear();
+        assert_eq!(series_key_of(&r), "tmdb:456");
+        // 无锚点 → 季 guid（同剧各集共用）
+        r.tmdb_id.clear();
+        assert_eq!(series_key_of(&r), "parent:season1");
+        // 没有父级（parent == guid）→ 退到番剧名
+        let r2 = ep("e1", "e1", "剧A", "S1E1", 1);
+        assert_eq!(series_key_of(&r2), "title:剧A");
+        // 电影/个人视频：自身即作品
+        let movie = WatchRecord {
+            guid: "m1".into(),
+            title: "电影".into(),
+            media_type: "Movie".into(),
+            ..Default::default()
+        };
+        assert_eq!(series_key_of(&movie), "guid:m1");
+        // 在线源没有季 guid → 按番剧名归并
+        let web = WatchRecord {
+            guid: "webrs:https://x/ep1".into(),
+            title: "在线番".into(),
+            media_type: "webrs".into(),
+            source: "webrs".into(),
+            ..Default::default()
+        };
+        assert_eq!(series_key_of(&web), "title:在线番");
+    }
+
+    #[test]
+    fn first_play_creates_one_record() {
+        let mut list = Vec::new();
+        upsert(&mut list, ep("e1", "s1", "剧A", "S1E1", 100));
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].guid, "e1");
+        assert_eq!(list[0].series_key, "parent:s1");
+    }
+
+    #[test]
+    fn replay_same_show_does_not_add_record() {
+        let mut list = Vec::new();
+        upsert(&mut list, ep("e1", "s1", "剧A", "S1E1", 100));
+        // 同一部剧的第二集：应更新原记录（不新增），并刷新最近观看时间/集号
+        upsert(&mut list, ep("e2", "s1", "剧A", "S1E2", 200));
+        assert_eq!(list.len(), 1, "同一部剧只能有一条记录");
+        assert_eq!(list[0].guid, "e2");
+        assert_eq!(list[0].episode, "S1E2");
+        assert_eq!(list[0].played_at, 200);
+        // 重复观看同一集：仍只有一条，时间刷新
+        upsert(&mut list, ep("e2", "s1", "剧A", "S1E2", 300));
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].played_at, 300);
+    }
+
+    #[test]
+    fn different_shows_create_separate_records() {
+        let mut list = Vec::new();
+        upsert(&mut list, ep("e1", "s1", "剧A", "S1E1", 100));
+        upsert(&mut list, ep("e9", "s2", "剧B", "S1E1", 200));
+        assert_eq!(list.len(), 2);
+        // 倒序：最近的在前
+        assert_eq!(list[0].title, "剧B");
+        assert_eq!(list[1].title, "剧A");
+    }
+
+    #[test]
+    fn normalize_merges_legacy_episode_records() {
+        // 旧 history.json：同一部剧 3 集 = 3 条（没有 series_key 字段）
+        let legacy = vec![
+            ep("e1", "s1", "剧A", "S1E1", 100),
+            ep("e3", "s1", "剧A", "S1E3", 300),
+            ep("e2", "s1", "剧A", "S1E2", 200),
+            ep("x1", "s2", "剧B", "S1E1", 50),
+        ];
+        let out = normalize_records(legacy);
+        assert_eq!(out.len(), 2, "旧数据按剧折叠");
+        let a = out.iter().find(|r| r.title == "剧A").unwrap();
+        assert_eq!(a.series_key, "parent:s1");
+        assert_eq!(a.played_at, 300); // 最近一次
+        assert_eq!(a.episode, "S1E3");
+        assert_eq!(a.guid, "e3");
+    }
+
+    #[test]
+    fn normalize_is_idempotent() {
+        let once = normalize_records(vec![
+            ep("e1", "s1", "剧A", "S1E1", 100),
+            ep("e2", "s1", "剧A", "S1E2", 200),
+        ]);
+        let twice = normalize_records(once.clone());
+        assert_eq!(once.len(), twice.len());
+        assert_eq!(once[0].series_key, twice[0].series_key);
+        assert_eq!(once[0].played_at, twice[0].played_at);
     }
 }

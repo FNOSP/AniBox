@@ -5,7 +5,12 @@ mod anilist;
 mod authx;
 mod bgm;
 mod bgm_account;
+// [bili-account] B 站账号（Cookie 读写/体检）+ Node 检测 + 一键自建弹幕源
+mod bili_account;
+// [bili-qr] B 站二维码扫码登录（generate/poll，Cookie 落盘复用 bili_account）
+mod bili_qr;
 mod config;
+mod danmaku;
 mod danmaku_shim;
 mod disk_cache;
 // [lc-1651] 本地收藏（侧边栏「收藏」写入端；飞牛 item/favorite 在本机 NAS 上未实现）
@@ -61,6 +66,10 @@ pub struct AppState {
     pub proxy_child: Mutex<Option<std::process::Child>>,
     /// [lc-1560] 弹幕 shim 子进程（node 跑 danmaku-shim.js，供 uosc_danmaku 调 22347）
     pub danmaku_child: Mutex<Option<std::process::Child>>,
+    /// 弹幕缓存清理/重搜互斥锁：重复点击不产生并发清理
+    pub danmaku_cache_lock: Mutex<()>,
+    /// 内置自建弹幕源 danmu_api 子进程（127.0.0.1:22352）
+    pub builtin_child: Mutex<Option<std::process::Child>>,
     /// [player] 当前由本应用拉起的 PotPlayer PID（用于新播放前/退出时清理）
     pub potplayer_pid: Mutex<Option<u32>>,
     /// 最近一次前端主题（player_stop 后恢复 SWCA 染色用）
@@ -74,6 +83,8 @@ impl Default for AppState {
             mpv: Mutex::new(None),
             proxy_child: Mutex::new(None),
             danmaku_child: Mutex::new(None),
+            danmaku_cache_lock: Mutex::new(()),
+            builtin_child: Mutex::new(None),
             potplayer_pid: Mutex::new(None),
             last_light: std::sync::Mutex::new(None),
         }
@@ -95,6 +106,7 @@ async fn save_config(app: AppHandle, state: State<'_, AppState>, config: Config)
     // 登录页等任何 save_config 都一律保留当前值 —— 前端 Config 是挂载时的旧快照，
     // 允许它回写会把刚绑定的 token 冲掉（用户报「莫名退出账号」的根因之一）。
     let mut config = config;
+    let old_engine = crate::danmaku::resolve_engine(&*state.config.read().await).to_string();
     {
         let cur = state.config.read().await;
         config.bgm_token = cur.bgm_token.clone();
@@ -116,6 +128,13 @@ async fn save_config(app: AppHandle, state: State<'_, AppState>, config: Config)
         config.gamepad_direction_threshold = cur.gamepad_direction_threshold;
         config.gamepad_repeat_delay = cur.gamepad_repeat_delay;
         config.gamepad_repeat_interval = cur.gamepad_repeat_interval;
+        // 弹幕引擎只能由 set_settings 修改（登录页快照缺该字段时会被 serde default
+        // 静默写回 "node"，把用户设的 rust 重置掉）
+        config.danmu_engine = cur.danmu_engine.clone();
+        // 自建源开关/地址同样只由 set_settings 修改（避免登录页旧快照把用户配置冲掉）
+        config.danmu_api_enabled = cur.danmu_api_enabled;
+        config.danmu_api_base = cur.danmu_api_base.clone();
+        config.danmu_api_bases = cur.danmu_api_bases.clone();
     }
     config::save(&app, &config).await?;
     // [lc-1661] 日志设置随整份配置保存后同步到运行态（本函数保留旧值，实际不会变，稳妥起见仍同步）
@@ -126,9 +145,19 @@ async fn save_config(app: AppHandle, state: State<'_, AppState>, config: Config)
     danmaku_shim::sync_lua_gate(
         &config.mpv_path,
         config.danmu_api_enabled,
-        &config.danmu_api_base,
+        &crate::danmaku::effective_base(&config),
     );
+    let builtin_active = config.danmu_api_enabled && crate::danmaku::uses_builtin(&config);
     *state.config.write().await = config;
+    // 内置自建源：仅在内置源生效时才重配，避免每次保存都触发
+    if builtin_active {
+        crate::danmaku::builtin::spawn_reconfigure(app.clone());
+    }
+    // 弹幕引擎运行期切换：node ⇄ rust（收掉旧服务、按新引擎重启）
+    let new_engine = crate::danmaku::resolve_engine(&*state.config.read().await).to_string();
+    if old_engine != new_engine {
+        danmaku_shim::spawn_reconfigure(app.clone());
+    }
     Ok(())
 }
 
@@ -137,8 +166,15 @@ async fn save_config(app: AppHandle, state: State<'_, AppState>, config: Config)
 /// 用与客户端相同的口径：请求 `/api/v2/search/anime?keyword=…` 只看**能否连通 + 是否返回
 /// JSON**（不校验搜索结果，那是业务）。返回人话结论，对齐主仓库 testConnection 的提示风格。
 #[tauri::command]
-async fn test_danmu_api(url: String) -> Result<String, String> {
-    let base = url.trim().trim_end_matches('/');
+async fn test_danmu_api(app: AppHandle, url: String) -> Result<String, String> {
+    // 地址留空 = 测试内置实例（零配置默认源）。
+    let is_builtin = url.trim().is_empty();
+    let base_owned = if is_builtin {
+        crate::danmaku::builtin::base()
+    } else {
+        url.trim().trim_end_matches('/').to_string()
+    };
+    let base = base_owned.as_str();
     if base.is_empty() {
         return Err("请先填写服务地址".into());
     }
@@ -167,6 +203,18 @@ async fn test_danmu_api(url: String) -> Result<String, String> {
             }
         }
         Err(e) => {
+            // 内置源连不上时给出可操作的原因：优先区分「本机没装 Node.js」，
+            // 否则只提示服务未启动，避免只看到笼统的「连接被拒绝」。
+            if is_builtin {
+                if let Err(node_err) = crate::danmaku::builtin::resolve_node(&app) {
+                    return Err(format!(
+                        "内置弹幕源启动失败：{node_err}（将自动降级为内置 B 站弹幕）"
+                    ));
+                }
+                return Err(format!(
+                    "内置弹幕源未就绪：服务未启动或端口不通（{e}）。请确认已启用「自建弹幕接口」，或稍后重试"
+                ));
+            }
             let hint = if e.is_timeout() {
                 "连接超时：服务未响应（确认容器在跑、端口正确）"
             } else if e.is_connect() {
@@ -177,6 +225,129 @@ async fn test_danmu_api(url: String) -> Result<String, String> {
             Ok(format!("❌ {hint} —— {e}"))
         }
     }
+}
+
+// ───────────────────────── 弹幕缓存 ─────────────────────────
+
+/// 读取当前正在播放条目的 mpv 属性（路径 / media-title）。
+/// 没有 mpv 会话或未加载媒体 → 明确报「当前没有正在播放的条目」。
+async fn current_playing_media(
+    state: &AppState,
+) -> Result<(Arc<mpv::MpvSession>, String, String), String> {
+    let session = {
+        let slot = state.mpv.lock().await;
+        slot.as_ref().cloned()
+    }
+    .ok_or_else(|| "当前没有正在播放的条目".to_string())?;
+    if session.is_dead().await {
+        return Err("当前没有正在播放的条目".into());
+    }
+    let path = mpv_prop_str(&session, "path").await;
+    if path.trim().is_empty() {
+        return Err("当前没有正在播放的条目".into());
+    }
+    let media_title = mpv_prop_str(&session, "media-title").await;
+    Ok((session, path, media_title))
+}
+
+async fn mpv_prop_str(session: &Arc<mpv::MpvSession>, key: &str) -> String {
+    session
+        .command(json!(["get_property", key]))
+        .await
+        .ok()
+        .and_then(|v| {
+            v.get("data")
+                .and_then(|d| d.as_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_default()
+}
+
+/// [danmaku-cache] 清空当前条目（或全部）已缓存弹幕。
+///
+/// `scope`：`current`（默认，只清当前播放条目）| `all`（无法定位当前条目时的兜底）。
+/// 清理采用「先移到临时目录再删」：任一移动失败会回滚，原缓存保持不变。
+#[tauri::command]
+async fn danmaku_clear_cache(
+    state: State<'_, AppState>,
+    scope: Option<String>,
+) -> Result<Value, String> {
+    // 互斥：重复点击不会产生并发清理
+    let _guard = state
+        .danmaku_cache_lock
+        .try_lock()
+        .map_err(|_| "弹幕缓存清理正在进行，请稍候".to_string())?;
+    let scope = scope.unwrap_or_else(|| "current".into());
+    if scope == "all" {
+        let removed = danmaku_shim::clear_all_cache()?;
+        return Ok(json!({
+            "ok": true,
+            "scope": "all",
+            "removed": removed.len(),
+            "files": removed,
+            "message": format!("已清空全部弹幕缓存（{} 个文件）", removed.len()),
+        }));
+    }
+    let (_session, _path, media_title) = current_playing_media(&state).await?;
+    let (title, episode) = danmaku_shim::parse_media_title(&media_title);
+    let removed = danmaku_shim::clear_current_cache(&title, episode)?;
+    Ok(json!({
+        "ok": true,
+        "scope": "current",
+        "title": title,
+        "episode": episode,
+        "removed": removed.len(),
+        "files": removed,
+        "message": format!("已清空当前条目弹幕缓存（{} 个文件）", removed.len()),
+    }))
+}
+
+/// [danmaku-cache] 清空当前条目缓存并**重新三源搜索**。
+///
+/// 重新搜索复用 Lua 侧现成的 `clear-danmaku-refetch`（uosc_danmaku/modules/menu.lua）：
+/// 它清运行态、删中间缓存并按当前视频重走「自建源 → 内置 B 站 → 弹弹play」自动匹配链。
+#[tauri::command]
+async fn danmaku_refresh(state: State<'_, AppState>) -> Result<Value, String> {
+    let _guard = state
+        .danmaku_cache_lock
+        .try_lock()
+        .map_err(|_| "弹幕缓存清理正在进行，请稍候".to_string())?;
+    let (session, _path, media_title) = current_playing_media(&state).await?;
+    let (title, episode) = danmaku_shim::parse_media_title(&media_title);
+    let removed = danmaku_shim::clear_current_cache(&title, episode)?;
+    // ① Lua 侧 clear_danmaku_refetch：清运行态/中间缓存，并重走一次自动匹配（弹弹play 等）。
+    session
+        .command(json!(["script-message", "clear-danmaku-refetch"]))
+        .await
+        .map_err(|e| {
+            format!(
+                "已清空当前条目缓存（{} 个文件），但触发重新搜索失败：{e}",
+                removed.len()
+            )
+        })?;
+    // ② 再显式触发一次 B站/自建源链路（clear_danmaku_refetch 对网络流不会主动跑 B站 搜索，
+    //    只会在弹弹play 命中后补源；这里补上 bili_search_now 保证「三源」都被重新问到）。
+    session
+        .command(json!(["script-message", "bili_search_now"]))
+        .await
+        .map_err(|e| {
+            format!(
+                "已清空当前条目缓存（{} 个文件），但触发 B站/自建源搜索失败：{e}",
+                removed.len()
+            )
+        })?;
+    Ok(json!({
+        "ok": true,
+        "scope": "current",
+        "title": title,
+        "episode": episode,
+        "removed": removed.len(),
+        "files": removed,
+        "message": format!(
+            "已清空当前条目缓存（{} 个文件），正在重新搜索弹幕…",
+            removed.len()
+        ),
+    }))
 }
 
 // ───────────────────────── 登录 / 会话 ─────────────────────────
@@ -1032,7 +1203,7 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     } else {
         0.0
     };
-    player::launch(
+    let launch_res = player::launch(
         &app,
         &state,
         &cfg,
@@ -1043,16 +1214,18 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
         None,
         &[],
     )
-    .await?;
+    .await;
     stage("player-launched");
 
-    // [lc-1615] 落一笔本机播放历史（观影记录页数据源）：走到这里 = loadfile 已发出
-    // （失败路径均已提前 return）。只存原始字段；「季→剧 guid / 竖版海报」的富化统一放在
-    // get_watch_history 里做（缓存优先），不让起播路径变重。
+    // [lc-1615] 落一笔本机播放历史（观影记录页数据源）：走到这里 = 已解析出可播地址并
+    // 交给播放器（URL 已在启动参数里，mpv 一启动即开始加载）。
+    // [lc-1710] 先记录、后传播播放器错误：mpv 的 IPC 连接超时（mpv.rs）或 PotPlayer
+    // 启动失败时，用户其实已经看到播放窗口/已起播，若因 `?` 提前返回就会丢记录 ——
+    // 新规则要求「只要起播就必须有观影记录」，故此处不再受 launch 结果影响。
     history::record(
         &app,
         history::WatchRecord {
-            // 去重键用**入口 guid**（前端点击/回放直接可用的那个）；play/list 的 guid 同为可播条目 guid
+            // 条目 guid：仅用于回填对位/打开详情；去重由 history 内部按剧级 series_key 完成
             guid: guid.clone(),
             title: if !res.tv_title.is_empty() {
                 res.tv_title.clone()
@@ -1076,8 +1249,11 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
             watched_ms: 0,
             progress: 0.0,
             finished: false,
+            ..Default::default()
         },
     );
+    // 记录已落盘，再决定是否向调用方报播放器启动错误。
+    launch_res?;
 
     // ③ [lc-1557] probe 只在后台跑，**不挡起播**。
     //
@@ -1261,6 +1437,8 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         "danmuApiEnabled": cfg.danmu_api_enabled,
         "danmuApiBases": cfg.danmu_api_bases,
         "danmuApiBase": cfg.danmu_api_base,
+        // 弹幕引擎（camelCase 映射 `danmu_engine`）
+        "danmuEngine": cfg.danmu_engine,
         // [gamepad] 全局手柄（camelCase；范围 clamp 在 set_settings）
         "gamepadEnabled": cfg.gamepad_enabled,
         "gamepadDeadzone": cfg.gamepad_deadzone,
@@ -1278,6 +1456,7 @@ async fn set_settings(
     state: State<'_, AppState>,
     arg: Value,
 ) -> Result<Value, String> {
+    let old_engine = crate::danmaku::resolve_engine(&*state.config.read().await).to_string();
     let mut cfg = state.config.read().await.clone();
     if let Some(v) = arg.get("exitMode") {
         let s = v.as_str().unwrap_or("");
@@ -1341,9 +1520,13 @@ async fn set_settings(
         cfg.danmu_api_bases = list;
         danmu_changed = true;
     }
-    if danmu_changed {
-        danmaku_shim::write_danmu_config(&cfg)?;
-        danmaku_shim::sync_lua_gate(&cfg.mpv_path, cfg.danmu_api_enabled, &cfg.danmu_api_base);
+    // 弹幕引擎：node（默认/稳定）| rust（测试版）。非法值直接报错，避免静默回落。
+    if let Some(v) = arg.get("danmuEngine") {
+        let s = v.as_str().unwrap_or("");
+        if !matches!(s, "node" | "rust") {
+            return Err(format!("danmuEngine 非法：{s}（只允许 node/rust）"));
+        }
+        cfg.danmu_engine = s.to_string();
     }
     // [gamepad] 数值型设置：类型必须正确，超出范围按契约 clamp（不报错——前端滑块可能
     // 因浮点步进给出 0.5000001，这种边界值静默夹住比让 UI 报错更合理）。
@@ -1382,6 +1565,19 @@ async fn set_settings(
     }
     config::save(&app, &cfg).await?;
     *state.config.write().await = cfg.clone();
+    // [lc-1561] 弹幕接口副作用：只在所有校验通过、配置成功落盘后再同步
+    // （否则同一次调用若后续校验失败返回 Err，临时配置/Lua 闸门已改而配置未改，UI 回滚后不一致）
+    if danmu_changed {
+        danmaku_shim::write_danmu_config(&cfg)?;
+        danmaku_shim::sync_lua_gate(&cfg.mpv_path, cfg.danmu_api_enabled, &crate::danmaku::effective_base(&cfg));
+        // 内置自建源：地址/开关变化后按需启动或收掉
+        crate::danmaku::builtin::spawn_reconfigure(app.clone());
+    }
+    // 弹幕引擎运行期切换：node ⇄ rust（与 save_config 同一路径，收旧服务/按新引擎重启）
+    let new_engine = crate::danmaku::resolve_engine(&cfg).to_string();
+    if old_engine != new_engine {
+        danmaku_shim::spawn_reconfigure(app.clone());
+    }
     // [gamepad] 热更新后台轮询线程的阈值/开关（无需重启）
     gamepad::update_settings(&cfg);
     Ok(json!({
@@ -1395,6 +1591,7 @@ async fn set_settings(
         "danmuApiEnabled": cfg.danmu_api_enabled,
         "danmuApiBases": cfg.danmu_api_bases,
         "danmuApiBase": cfg.danmu_api_base,
+        "danmuEngine": cfg.danmu_engine,
         "gamepadEnabled": cfg.gamepad_enabled,
         "gamepadDeadzone": cfg.gamepad_deadzone,
         "gamepadDirectionThreshold": cfg.gamepad_direction_threshold,
@@ -1784,10 +1981,12 @@ pub fn run() {
             if let Err(e) = danmaku_shim::write_danmu_config(&cfg) {
                 libmpv::trace(&format!("[danmaku-shim] 写自建源配置失败（不影响内置 B站）: {e}"));
             }
-            danmaku_shim::sync_lua_gate(&cfg.mpv_path, cfg.danmu_api_enabled, &cfg.danmu_api_base);
+            danmaku_shim::sync_lua_gate(&cfg.mpv_path, cfg.danmu_api_enabled, &crate::danmaku::effective_base(&cfg));
             // [lc-1560] 启动即**预热弹幕 shim**（B站弹幕下载经它，见 danmaku_shim.rs）。
             // 首次播放时 shim 已在监听，省一次 node 冷启动；失败不影响本地播放。
             danmaku_shim::spawn_warmup(app.handle().clone());
+            // 内置自建弹幕源 danmu_api：启动即后台预热（首次播放直接可用；失败降级内置 B站）
+            crate::danmaku::builtin::spawn_warmup(app.handle().clone());
             // [lc-1552] 启动即**预热 Go 代理**：冷启动 proxy.exe 要 2.5s（实测
             // [play/stage] proxy-ready @3035ms），而它只在首次播放时才被拉起 ⇒
             // 第一次点播放要白等这 2.5s（后续播放代理已驻留，只要 477ms）。
@@ -1939,12 +2138,17 @@ pub fn run() {
             anilist::anilist_season,
             // [lc-1576] 评分分布（详情页「评分透视」兜底：BGM 无 rating.count 时改用 TMDB 的）
             tmdb::tmdb_rating_details,
+            // 演员/人物页：TMDB 人物详情 + 参演作品（combined_credits 去重排序）
+            tmdb::tmdb_person,
             // [lc-119] Bangumi（全线走自建镜像，见 bgm.rs 头部说明）
             bgm::bgm_match,
             bgm::bgm_subject,
             bgm::bgm_episodes,
             bgm::bgm_characters,
             bgm::bgm_persons,
+            // 人物（演员/制作人员）详情 + 参演作品
+            bgm::bgm_person,
+            bgm::bgm_person_works,
             bgm::bgm_comments,
             // [lc-1412] 评论（长影评，/p1/.../reviews）：与「吐槽」分开的两个数据源
             bgm::bgm_reviews,
@@ -1958,6 +2162,20 @@ pub fn run() {
             save_config,
             // [lc-1561] 自建弹幕接口连通测试（设置面板）
             test_danmu_api,
+            // [danmaku-cache] 设置面板：清空当前条目弹幕缓存 / 清空全部 / 清空并重新三源搜索
+            danmaku_clear_cache,
+            danmaku_refresh,
+            // [bili-account] B 站账号 Cookie 读写/体检 + Node 检测 + 一键自建弹幕源
+            bili_account::bili_account_status,
+            bili_account::bili_set_cookie,
+            bili_account::bili_clear_cookie,
+            bili_account::detect_node,
+            bili_account::setup_builtin_danmaku,
+            // [bili-qr] B 站二维码扫码登录
+            bili_qr::bili_qr_generate,
+            bili_qr::bili_qr_poll,
+            // [danmaku] 自建弹幕源 Rust 版：只跑三跳的调试命令
+            danmaku::danmaku_fetch_selfhosted,
             // [lc-1434] 设置面板（通用/外观）：白名单子集读写 + 启动页查询
             get_settings,
             set_settings,
@@ -2096,6 +2314,12 @@ pub fn run() {
                 if let Some(mut dc) = st.danmaku_child.blocking_lock().take() {
                     let _ = dc.kill();
                 }
+                // 内置 danmu_api 子进程同样收掉
+                if let Some(mut bc) = st.builtin_child.blocking_lock().take() {
+                    let _ = bc.kill();
+                }
+                // Rust 弹幕引擎（若开启）停掉监听线程
+                danmaku::stop_engine();
                 // [player] PotPlayer 子进程（不 emit 事件：应用正在退出）
                 let _ = tauri::async_runtime::block_on(player::stop_potplayer(
                     app_handle,

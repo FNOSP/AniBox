@@ -2,8 +2,12 @@
 //!
 //! 为什么不用 WebView Gamepad API：WebView 只有**窗口获得焦点**时才拿得到手柄输入，
 //! 而本应用的核心场景是「mpv / PotPlayer 窗口在前台播放，AniBox 在后台」——
-//! 这时 WebView 的 `navigator.getGamepads()` 不会更新。原生 gilrs（Windows 上默认走
-//! Windows.GameInput，支持 XInput / DS4 / Switch Pro 等）在后台也能拿到全局输入。
+//! 这时 WebView 的 `navigator.getGamepads()` 不会更新。原生 gilrs 使用 **XInput** 后端
+//! （`gilrs` 的 `xinput` feature，见 Cargo.toml）：XInput 不要求窗口焦点，后台也能拿到输入。
+//!
+//! 注意：不使用 gilrs 默认的 WGI（Windows.Gaming.Input）后端 —— WGI 需要进程拥有前台焦点窗口
+//! 才会产出事件，正是「Xbox 360 手柄显示已连接但完全无输入」的根因。XInput 只覆盖 XInput
+//! 设备（Xbox 360 / One / Series），DS4 / Switch Pro 等非 XInput 设备不在支持范围内。
 //!
 //! 设计要点：
 //! - 后台线程持有 `Gilrs`（该对象不要求 Send，创建与使用都在同一线程），8ms 轮询一次；
@@ -217,7 +221,10 @@ fn run(app: AppHandle, shared: Arc<Shared>) {
             }
         }
     };
-    crate::libmpv::trace("[gamepad] 轮询线程已启动（gilrs）");
+    let connected = gilrs.gamepads().filter(|(_, g)| g.is_connected()).count();
+    crate::libmpv::trace(&format!(
+        "[gamepad] 使用 XInput 后端启动，已连接 {connected} 个设备"
+    ));
 
     let start = Instant::now();
     let mut settings = shared.settings();
@@ -294,6 +301,9 @@ fn run(app: AppHandle, shared: Arc<Shared>) {
                         dpad[idx] = false;
                     }
                 }
+                // XInput 后端下扳机（LT/RT）由 gilrs 的「轴→按钮」转换直接产出
+                // ButtonPressed/Released（LeftTrigger2/RightTrigger2），不会走这里；
+                // 因此轴事件只需处理左摇杆。
                 EventType::AxisChanged(axis, value, _) if settings.enabled => match axis {
                     gilrs::Axis::LeftStickX => last_x = value,
                     gilrs::Axis::LeftStickY => last_y = value,
@@ -392,11 +402,18 @@ pub fn map_button(button: Button) -> Option<&'static str> {
         East => "B",
         North => "Y",
         West => "X",
-        // gilrs 的命名：`*Trigger2` 是肩键（LB/RB），`*Trigger` 是扳机（LT/RT）
-        LeftTrigger2 => "LB",
-        RightTrigger2 => "RB",
-        LeftTrigger => "LT",
-        RightTrigger => "RT",
+        // XInput 后端的按钮编号依据（gilrs-core 0.6.8 + gilrs 0.11.2 源码）：
+        // - 肩键：windows_xinput/gamepad.rs 把 LEFT_SHOULDER 映射为 native BTN_LT、
+        //   RIGHT_SHOULDER 映射为 BTN_RT；gilrs mapping/mod.rs 的默认映射把
+        //   BTN_LT → Button::LeftTrigger、BTN_RT → Button::RightTrigger。
+        // - 扳机：XInput 的 bLeftTrigger / bRightTrigger 以轴事件 AXIS_LT2 / AXIS_RT2 上报，
+        //   默认映射把这两个轴映射为 Btn(LeftTrigger2 / RightTrigger2)，再由 gilrs
+        //   （axis_to_btn_pressed=0.75 / released=0.65）转成 ButtonPressed/Released 事件。
+        // 因此物理 LB→LeftTrigger、LT→LeftTrigger2、RB→RightTrigger、RT→RightTrigger2。
+        LeftTrigger => "LB",
+        LeftTrigger2 => "LT",
+        RightTrigger => "RB",
+        RightTrigger2 => "RT",
         Start => "Start",
         Select => "Back",
         _ => return None,
@@ -560,10 +577,10 @@ mod tests {
         assert_eq!(map_button(East), Some("B"));
         assert_eq!(map_button(North), Some("Y"));
         assert_eq!(map_button(West), Some("X"));
-        assert_eq!(map_button(LeftTrigger2), Some("LB"));
-        assert_eq!(map_button(RightTrigger2), Some("RB"));
-        assert_eq!(map_button(LeftTrigger), Some("LT"));
-        assert_eq!(map_button(RightTrigger), Some("RT"));
+        assert_eq!(map_button(LeftTrigger), Some("LB"));
+        assert_eq!(map_button(LeftTrigger2), Some("LT"));
+        assert_eq!(map_button(RightTrigger), Some("RB"));
+        assert_eq!(map_button(RightTrigger2), Some("RT"));
         assert_eq!(map_button(Start), Some("Start"));
         assert_eq!(map_button(Select), Some("Back"));
         // 不映射的按键
@@ -617,7 +634,7 @@ mod tests {
     #[test]
     fn settings_from_config_clamps_out_of_range() {
         let mut cfg = Config::default();
-        assert!(!cfg.gamepad_enabled);
+        assert!(cfg.gamepad_enabled);
         assert_eq!(cfg.gamepad_deadzone, 0.30);
         assert_eq!(cfg.gamepad_direction_threshold, 0.40);
         assert_eq!(cfg.gamepad_repeat_delay, 320);

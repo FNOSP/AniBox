@@ -429,7 +429,7 @@ pub fn potctl_path(app: &AppHandle) -> Option<PathBuf> {
             .join("resources")
             .join("potctl.exe"),
     );
-    candidates.push(PathBuf::from(r"D:\GitHub\Fntv-Plus\third_party\proxy\potctl.exe"));
+    candidates.push(PathBuf::from(r"D:\GitHub\AniBox\third_party\proxy\potctl.exe"));
     candidates.into_iter().find(|p| p.is_file())
 }
 

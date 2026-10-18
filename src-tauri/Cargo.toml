@@ -35,14 +35,20 @@ scraper = "0.23"
 ego-tree = "0.10"
 url = "2"
 regex = "1"
+# [bili-qr] 二维码本地渲染（只开 svg feature，避免引入 image 依赖树）
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # [lc-1436] Win32_System_Registry：开机自启写 HKCU\...\Run（不加 Win32_Security 则 RegCreateKeyExW 的
 # SECURITY_ATTRIBUTES 参数类型不存在，编译不过）
 # [lc-1599] Win32_System_SystemInformation：反馈日志环境块取**本地时间**（GetLocalTime）。
 # 同 crate 加 feature（不新增任何依赖），模块本身只依赖已启用的 Foundation。
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Registry", "Win32_Security", "Win32_System_SystemInformation", "Win32_System_Time"] }
-# [gamepad] 全局手柄：Windows 上默认走 Windows.GameInput（WGI，支持 XInput/DS4/Switch），
-# 后台也能读到输入（mpv/PotPlayer 在前台时同样可用）。WGI 与 xinput feature 互斥，不要同时开。
-gilrs = "0.11"
+# [gamepad] 全局手柄：显式选择 XInput 后端。
+# - WGI（Windows.Gaming.Input，gilrs 的默认 feature）只有在进程拥有**前台焦点窗口**时才产出事件；
+#   本应用的核心场景是 mpv/PotPlayer 在前台、AniBox 在后台，WGI 会「显示已连接但按键无输入」。
+# - XInput（XUSB）不要求焦点，后台可稳定读取，覆盖 Xbox 360 / Xbox One / Xbox Series 手柄。
+# - WGI 与 xinput 两个 feature 互斥（gilrs-core 里同时开会 compile_error），因此必须关掉默认 feature。
+# - 兼容性限制：XInput 后端只识别 XInput 设备，DS4 / Switch Pro 等非 XInput 设备不在覆盖范围。
+gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

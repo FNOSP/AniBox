@@ -6,18 +6,18 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![Rust](https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![飞牛影视](https://img.shields.io/badge/%E9%A3%9E%E7%89%9B%E5%BD%B1%E8%A7%86-fnOS-056de2)](https://www.fnnas.com/)
-[![Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FYDMY007%2FFntv-Plus%2Fbadge-data%2Fdownloads.json&query=%24.total&label=%E4%B8%8B%E8%BD%BD&suffix=%E6%AC%A1&color=2ea44f&logo=github&logoColor=white)](https://github.com/YDMY007/Fntv-Plus/releases)
+[![Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FYDMY007%2FAniBox%2Fbadge-data%2Fdownloads.json&query=%24.total&label=%E4%B8%8B%E8%BD%BD&suffix=%E6%AC%A1&color=2ea44f&logo=github&logoColor=white)](https://github.com/YDMY007/AniBox/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)]()
 [![Electron](https://img.shields.io/badge/electron-38-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/YDMY007/Fntv-Plus?style=flat&logo=github&logoColor=white)](https://github.com/YDMY007/Fntv-Plus/stargazers)
-[![Forks](https://img.shields.io/github/forks/YDMY007/Fntv-Plus?style=flat&logo=github&logoColor=white)](https://github.com/YDMY007/Fntv-Plus/forks)
-[![Issues](https://img.shields.io/github/issues/YDMY007/Fntv-Plus?logo=github)](https://github.com/YDMY007/Fntv-Plus/issues)
-[![Commits](https://img.shields.io/badge/commits-1067-2ea44f?logo=git&logoColor=white)](https://github.com/YDMY007/Fntv-Plus/commits)
-[![Last Commit](https://img.shields.io/github/last-commit/YDMY007/Fntv-Plus/release?logo=git&logoColor=white)](https://github.com/YDMY007/Fntv-Plus/commits)
+[![Stars](https://img.shields.io/github/stars/YDMY007/AniBox?style=flat&logo=github&logoColor=white)](https://github.com/YDMY007/AniBox/stargazers)
+[![Forks](https://img.shields.io/github/forks/YDMY007/AniBox?style=flat&logo=github&logoColor=white)](https://github.com/YDMY007/AniBox/forks)
+[![Issues](https://img.shields.io/github/issues/YDMY007/AniBox?logo=github)](https://github.com/YDMY007/AniBox/issues)
+[![Commits](https://img.shields.io/badge/commits-1067-2ea44f?logo=git&logoColor=white)](https://github.com/YDMY007/AniBox/commits)
+[![Last Commit](https://img.shields.io/github/last-commit/YDMY007/AniBox/release?logo=git&logoColor=white)](https://github.com/YDMY007/AniBox/commits)
 [![Gitee](https://img.shields.io/badge/Gitee-mirror-F47040?logo=gitee&logoColor=white)](https://gitee.com/YDMY007/fntv-plus)
 
-<img src="https://count.getloli.com/get/@Fntv-Plus?theme=rule34" alt="访问计数" width="320">
+<img src="https://count.getloli.com/get/@AniBox?theme=rule34" alt="访问计数" width="320">
 
 </div>
 
@@ -34,7 +34,7 @@
 
 > **把飞牛影视，变成你桌面上的私人影院。** AniBox 是一个**为飞牛影视（fnOS / 飞牛私有云）定制的第三方 Windows 桌面客户端**：它不把网页塞进浏览器，而是用 **React 自绘界面**直接调用飞牛影视 API，以**独立 `mpv.exe` 进程**承担播放；再用 Bangumi / TMDB / AniList 元数据聚合、本地弹幕 shim、原生全局手柄、磁盘缓存与双通道更新，把「看片」这件事做成一套完整、可长期维护的桌面体验。
 
-> <img src="https://api.iconify.design/mdi/web.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> **项目地址 / 官网：TODO** —— 正式仓库定名与站点上线后在此补充；下载与更新以本仓库 Releases 为唯一官方渠道。
+> <img src="https://api.iconify.design/mdi/web.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> **项目地址 / 官网：https://690075.xyz** —— 下载与更新以本仓库 Releases 为唯一官方渠道。
 
 ## <img src="https://api.iconify.design/mdi/image-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 界面截图
 
@@ -78,7 +78,7 @@
 
 ### 独立声明
 
-> - **仓库目录名**：本仓库目录仍为 `Fntv-Plus-Tauri2`（历史遗留），**软件产品名统一为 AniBox**；本文档中的「AniBox」均指本仓库构建的桌面客户端。
+> - **仓库目录名**：本仓库目录为 `AniBox`，**软件产品名统一为 AniBox**；本文档中的「AniBox」均指本仓库构建的桌面客户端。
 > - **技术路线**：区别于「网页注入」式方案，AniBox 采用 **Tauri 2 + Rust + React + TypeScript** 自绘界面，直连飞牛影视 API，并以独立 mpv 进程播放。
 > - **独立发展**：本项目独立维护、独立发布，不代表任何上游或官方立场。
 > - **许可证**：本项目采用 **GPL-3.0**，完整条款见 [LICENSE](LICENSE)。
@@ -214,7 +214,7 @@
 | 手柄 | Rust **gilrs** 原生监听，事件推送到前端 |
 | 缓存 | 内存 → 磁盘 → 网络三级缓存，磁盘 LRU 淘汰 |
 
-> **mpv 说明**：本项目使用**第三方预编译的 mpv 版本**（**非本项目构建 / 编译**），版权归 **mpv 项目及其构建者**所有，遵循其 **GPL / LGPL** 许可；本项目**不声称拥有 mpv 代码**，也不随包分发 mpv 二进制。
+> **mpv 说明**：本项目使用**第三方预编译的 mpv 版本**（**非本项目构建 / 编译**），具体来自 [Yaozhil/mpv-Yaozhi](https://github.com/Yaozhil/mpv-Yaozhi) 项目；版权归 **mpv 项目及其构建者**所有，遵循其 **GPL / LGPL** 许可；本项目**不声称拥有 mpv 代码**，也不随包分发 mpv 二进制。
 
 ### 运行时拓扑
 
@@ -244,7 +244,7 @@
 - **会话复用**：同一 mpv 进程内 `loadfile replace` 切换剧集，避免反复启动。
 - **请求头**：播放请求可通过 `referrer` / `user-agent` / `http-header-fields` 传入；库内播放会清空残留头。
 - **便携配置**：uosc、input.conf、脚本、着色器来自 `mpv.exe` 同目录的 `portable_config`，由用户自行提供（本仓库不分发 mpv 二进制）。
-- **第三方预编译**：所用 `mpv.exe` 为**第三方预编译版本**（非本项目构建 / 编译），版权归 mpv 项目及构建者所有，遵循其 GPL/LGPL 许可。
+- **第三方预编译**：所用 `mpv.exe` 为**第三方预编译版本**（非本项目构建 / 编译），来自 [Yaozhil/mpv-Yaozhi](https://github.com/Yaozhil/mpv-Yaozhi) 项目（本地运行时目录 `third_party/fntv-mpv` 即基于该项目，该目录不入库、不随仓库分发），版权归 mpv 项目及构建者所有，遵循其 GPL/LGPL 许可。
 
 ### 自建镜像与降级
 
@@ -273,7 +273,7 @@
 ## <img src="https://api.iconify.design/mdi/folder-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 项目结构
 
 ```text
-Fntv-Plus-Tauri2/                  # 仓库目录名（产品名 AniBox）
+AniBox/                            # 仓库目录名（产品名 AniBox）
 ├── src/                           # 前端（React + TypeScript）
 │   ├── App.tsx                    # 应用外壳：视图路由、登录态、主题、全局事件
 │   ├── main.tsx                   # 入口：主题预置、挂载
@@ -357,7 +357,7 @@ Fntv-Plus-Tauri2/                  # 仓库目录名（产品名 AniBox）
 ```bash
 # 1. 克隆仓库
 git clone <仓库地址>
-cd Fntv-Plus-Tauri2
+cd AniBox
 
 # 2. 安装前端依赖
 npm install
@@ -445,7 +445,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 | `usage_stats_enabled` | `true` | 匿名使用统计开关 |
 | `usage_stats_anon_id` | 空 | 机器标识 SHA-256 前 31 位（不可逆）或随机 hex |
 | `usage_stats_last_ping_day` / `_ok` / `_pending_days` | 空 / `false` / 空 | 上报状态与欠报日期 |
-| `gamepad_enabled` | `false` | 手柄总开关 |
+| `gamepad_enabled` | `true` | 手柄总开关（默认开启，可在设置里关闭） |
 | `gamepad_deadzone` | `0.30` | 左摇杆死区（0.10–0.50） |
 | `gamepad_direction_threshold` | `0.40` | 方向触发阈值（0.20–0.80） |
 | `gamepad_repeat_delay` | `320` | 长按首次重复延迟（ms） |
@@ -566,7 +566,7 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 
 ### mpv / uosc / 字体 / 图标
 
-- **mpv** 是独立第三方播放器。AniBox 使用**第三方预编译的 mpv 版本**（**非本项目构建 / 编译**），其**版权归 mpv 项目及对应构建者所有**，遵循其 **GPL / LGPL** 许可；本项目**不声称拥有 mpv 代码**，也不随包分发其二进制。
+- **mpv** 是独立第三方播放器。AniBox 使用**第三方预编译的 mpv 版本**（**非本项目构建 / 编译**），来自 [Yaozhil/mpv-Yaozhi](https://github.com/Yaozhil/mpv-Yaozhi) 项目，其**版权归 mpv 项目及对应构建者所有**，遵循其 **GPL / LGPL** 许可；本项目**不声称拥有 mpv 代码**，也不随包分发其二进制。
 - **uosc** 与弹幕脚本遵循其各自仓库许可；本仓库不分发其二进制。
 - **PotPlayer** 为第三方专有软件，本项目**不随包分发**，仅调用用户本机安装的版本。
 - 内置字体使用 **SIL Open Font License** 的开源字体（如 Baloo 2）或系统字体；**不内嵌任何商业字体**。
@@ -613,8 +613,8 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 
 ### 项目地址与交流
 
-- 项目地址：**TODO**（正式仓库定名后统一替换）。
-- 交流群：**TODO**（尚未确定，请勿臆造群号）。
+- 项目地址：**https://690075.xyz**
+- 交流群：**QQ 群 823166605**
 
 ### 贡献
 
@@ -630,7 +630,7 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 
 **播放内核 / 播放器 UI**
 
-- [mpv](https://github.com/mpv-player/mpv) — 独立播放内核（**使用第三方预编译版本，非本项目构建 / 编译**；GPL/LGPL，版权归 mpv 项目及构建者）
+- [mpv](https://github.com/mpv-player/mpv) — 独立播放内核（**使用第三方预编译版本，非本项目构建 / 编译**；本项目实际使用的构建来自 [Yaozhil/mpv-Yaozhi](https://github.com/Yaozhil/mpv-Yaozhi)；GPL/LGPL，版权归 mpv 项目及构建者）
 - [uosc](https://github.com/tomasklaen/uosc) — mpv 现代化界面框架（遵循其仓库许可）
 - [uosc_danmaku](https://github.com/Tony15246/uosc_danmaku) — 基于 uosc 的弹幕脚本（遵循其仓库许可）
 - [PotPlayer](https://potplayer.daum.net/) — 可选外部播放器（Kakao/DAUM），本项目仅调用、不随包分发

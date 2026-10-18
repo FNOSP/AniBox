@@ -46,7 +46,7 @@ REM this repo.
 REM NOTE: keep this flattened (single-line ifs, no nested blocks). cmd misparses a nested
 REM       "if exist (...) else (...)" inside an outer parenthesized block -- the outer branch is
 REM       silently skipped. Verified the hard way on this machine.
-set "FNTV_BGM_SECRET_FILE=%~dp0..\Fntv-Plus\bgm-mirror\.secret.local"
+set "FNTV_BGM_SECRET_FILE=%~dp0secrets\bgm-mirror\.secret.local"
 if defined FNTV_BGM_SECRET echo [dev] FNTV_BGM_SECRET already set in this shell -- keeping it
 if not defined FNTV_BGM_SECRET if exist "%FNTV_BGM_SECRET_FILE%" set /p FNTV_BGM_SECRET=<"%FNTV_BGM_SECRET_FILE%" && set "FNTV_BGM_LOADED=1"
 if defined FNTV_BGM_LOADED echo [dev] FNTV_BGM_SECRET loaded from %FNTV_BGM_SECRET_FILE% -- in-process only, not persisted
@@ -61,7 +61,7 @@ REM Dev convenience: if the var is unset, parse it from the main repo's tmdb-mir
 REM NOTE: that file is "NAME=value" format (unlike bgm's raw-value file), so parse with
 REM       for /f "tokens=1,* delims==" -- set /p would hand the whole "FNTV_TMDB_SECRET=..." line
 REM       to the process. tokens=1,* keeps every '=' after the first one (base64 padding safe).
-set "FNTV_TMDB_SECRET_FILE=%~dp0..\Fntv-Plus\tmdb-mirror\.secret.local"
+set "FNTV_TMDB_SECRET_FILE=%~dp0secrets\tmdb-mirror\.secret.local"
 if not defined FNTV_TMDB_SECRET set "FNTV_TMDB_WAS_UNSET=1"
 if defined FNTV_TMDB_SECRET echo [dev] FNTV_TMDB_SECRET already set in this shell -- keeping it
 if not defined FNTV_TMDB_SECRET if exist "%FNTV_TMDB_SECRET_FILE%" for /f "usebackq tokens=1,* delims==" %%a in ("%FNTV_TMDB_SECRET_FILE%") do if /i "%%a"=="FNTV_TMDB_SECRET" if not defined FNTV_TMDB_SECRET set "FNTV_TMDB_SECRET=%%b"

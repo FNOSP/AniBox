@@ -72,10 +72,14 @@ tools/*test*
 node_modules/
 nul
 on
-third_party/fntv-mpv/portable_config/files/recent.json
-third_party/fntv-mpv/portable_config/files/persistent_config.json
+# 第三方运行时二进制 / 配置（mpv、proxy、potplayer 等）与 fpk 均不入库
+/third_party/
+/fpk/
 
 # 内置弹幕源 danmu_api：源码入库；运行时依赖/生成物不入库
 src-tauri/resources/danmu-api/node_modules/
 src-tauri/resources/danmu-api/config/.env
 src-tauri/resources/danmu-api/.cache/
+# 迁移后的本地密钥目录：整个 secrets/ 与所有 *.local 一律不入库
+/secrets/
+*.local

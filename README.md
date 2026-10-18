@@ -60,6 +60,14 @@
 
 > **AniBox 是一个独立开发的第三方桌面客户端，产品名统一为 AniBox。**
 
+### 项目沿革（原 Fntv-Plus → AniBox）
+
+> - **改名**：AniBox 由原 **Fntv-Plus** 项目**改名而来**。
+> - **全面重写**：改名后当前版本已**全面重写 / 重构**（**Tauri 2 + Rust + React + TypeScript + Vite**），与早期 Electron 版本在**架构与代码上相互独立**，并非旧版的延续。
+> - **旧版定位**：旧 Electron 版仅作历史参考，**不代表当前实现**；请勿以旧版代码、界面或行为推断本版本。
+
+### 独立声明
+
 > - **仓库目录名**：本仓库目录仍为 `Fntv-Plus-Tauri2`（历史遗留），**软件产品名统一为 AniBox**；本文档中的「AniBox」均指本仓库构建的桌面客户端。
 > - **技术路线**：区别于「网页注入」式方案，AniBox 采用 **Tauri 2 + Rust + React + TypeScript** 自绘界面，直连飞牛影视 API，并以独立 mpv 进程播放。
 > - **独立发展**：本项目独立维护、独立发布，不代表任何上游或官方立场。
@@ -196,6 +204,8 @@
 | 手柄 | Rust **gilrs** 原生监听，事件推送到前端 |
 | 缓存 | 内存 → 磁盘 → 网络三级缓存，磁盘 LRU 淘汰 |
 
+> **mpv 说明**：本项目使用**第三方预编译的 mpv 版本**（**非本项目构建 / 编译**），版权归 **mpv 项目及其构建者**所有，遵循其 **GPL / LGPL** 许可；本项目**不声称拥有 mpv 代码**，也不随包分发 mpv 二进制。
+
 ### 运行时拓扑
 
 ```text
@@ -224,6 +234,7 @@
 - **会话复用**：同一 mpv 进程内 `loadfile replace` 切换剧集，避免反复启动。
 - **请求头**：播放请求可通过 `referrer` / `user-agent` / `http-header-fields` 传入；库内播放会清空残留头。
 - **便携配置**：uosc、input.conf、脚本、着色器来自 `mpv.exe` 同目录的 `portable_config`，由用户自行提供（本仓库不分发 mpv 二进制）。
+- **第三方预编译**：所用 `mpv.exe` 为**第三方预编译版本**（非本项目构建 / 编译），版权归 mpv 项目及构建者所有，遵循其 GPL/LGPL 许可。
 
 ### 自建镜像与降级
 
@@ -545,7 +556,7 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 
 ### mpv / uosc / 字体 / 图标
 
-- **mpv** 是独立第三方播放器，遵循其自身许可（GPL/LGPL，详见 mpv 项目）。
+- **mpv** 是独立第三方播放器。AniBox 使用**第三方预编译的 mpv 版本**（**非本项目构建 / 编译**），其**版权归 mpv 项目及对应构建者所有**，遵循其 **GPL / LGPL** 许可；本项目**不声称拥有 mpv 代码**，也不随包分发其二进制。
 - **uosc** 与弹幕脚本遵循其各自仓库许可；本仓库不分发其二进制。
 - **PotPlayer** 为第三方专有软件，本项目**不随包分发**，仅调用用户本机安装的版本。
 - 内置字体使用 **SIL Open Font License** 的开源字体（如 Baloo 2）或系统字体；**不内嵌任何商业字体**。
@@ -609,7 +620,7 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 
 **播放内核 / 播放器 UI**
 
-- [mpv](https://github.com/mpv-player/mpv) — 独立播放内核（GPL/LGPL，详见其项目）
+- [mpv](https://github.com/mpv-player/mpv) — 独立播放内核（**使用第三方预编译版本，非本项目构建 / 编译**；GPL/LGPL，版权归 mpv 项目及构建者）
 - [uosc](https://github.com/tomasklaen/uosc) — mpv 现代化界面框架（遵循其仓库许可）
 - [uosc_danmaku](https://github.com/Tony15246/uosc_danmaku) — 基于 uosc 的弹幕脚本（遵循其仓库许可）
 - [PotPlayer](https://potplayer.daum.net/) — 可选外部播放器（Kakao/DAUM），本项目仅调用、不随包分发

@@ -6,15 +6,14 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![Rust](https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![飞牛影视](https://img.shields.io/badge/%E9%A3%9E%E7%89%9B%E5%BD%B1%E8%A7%86-fnOS-056de2)](https://www.fnnas.com/)
-[![Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FYDMY007%2FAniBox%2Fbadge-data%2Fdownloads.json&query=%24.total&label=%E4%B8%8B%E8%BD%BD&suffix=%E6%AC%A1&color=2ea44f&logo=github&logoColor=white)](https://github.com/YDMY007/AniBox/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)]()
-[![Electron](https://img.shields.io/badge/electron-38-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
+[![Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FFNOSP%2FAniBox%2Fbadge-data%2Fdownloads.json&query=%24.total&label=%E4%B8%8B%E8%BD%BD&suffix=%E6%AC%A1&color=2ea44f&logo=github&logoColor=white)](https://github.com/FNOSP/AniBox/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)](https://github.com/FNOSP/AniBox/releases)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/YDMY007/AniBox?style=flat&logo=github&logoColor=white)](https://github.com/YDMY007/AniBox/stargazers)
-[![Forks](https://img.shields.io/github/forks/YDMY007/AniBox?style=flat&logo=github&logoColor=white)](https://github.com/YDMY007/AniBox/forks)
-[![Issues](https://img.shields.io/github/issues/YDMY007/AniBox?logo=github)](https://github.com/YDMY007/AniBox/issues)
-[![Commits](https://img.shields.io/badge/commits-1067-2ea44f?logo=git&logoColor=white)](https://github.com/YDMY007/AniBox/commits)
-[![Last Commit](https://img.shields.io/github/last-commit/YDMY007/AniBox/release?logo=git&logoColor=white)](https://github.com/YDMY007/AniBox/commits)
+[![Stars](https://img.shields.io/github/stars/FNOSP/AniBox?style=flat&logo=github&logoColor=white)](https://github.com/FNOSP/AniBox/stargazers)
+[![Forks](https://img.shields.io/github/forks/FNOSP/AniBox?style=flat&logo=github&logoColor=white)](https://github.com/FNOSP/AniBox/forks)
+[![Issues](https://img.shields.io/github/issues/FNOSP/AniBox?logo=github)](https://github.com/FNOSP/AniBox/issues)
+[![Commits](https://img.shields.io/badge/commits-1067-2ea44f?logo=git&logoColor=white)](https://github.com/FNOSP/AniBox/commits)
+[![Last Commit](https://img.shields.io/github/last-commit/FNOSP/AniBox/release?logo=git&logoColor=white)](https://github.com/FNOSP/AniBox/commits)
 [![Gitee](https://img.shields.io/badge/Gitee-mirror-F47040?logo=gitee&logoColor=white)](https://gitee.com/YDMY007/fntv-plus)
 
 <img src="https://count.getloli.com/get/@AniBox?theme=rule34" alt="访问计数" width="320">
@@ -38,30 +37,39 @@
 
 ## <img src="https://api.iconify.design/mdi/image-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 界面截图
 
-> 以下为结构占位，图片待补充（**截图占位 / TODO**）。请勿在此引用尚未存在的图片路径。
-
 <div align="center">
-  <p><em>图：首页全屏 Hero 轮播与继续观看（截图占位 / TODO）</em></p>
+  <img src="docs/pic/home.jpg" width="100%" alt="">
+  <p><em>图：首页全屏 Hero 轮播</em></p>
 </div>
 
 <div align="center">
-  <p><em>图：发现页 TMDB / Bangumi 双面板（截图占位 / TODO）</em></p>
+<img src="docs/pic/find.jpg" width="100%" alt="">
+  <p><em>图：发现页 TMDB / Bangumi 双面板</em></p>
 </div>
 
 <div align="center">
-  <p><em>图：媒体库网格与分类浏览（截图占位 / TODO）</em></p>
+<img src="docs/pic/details.jpg" width="100%" alt="">
+  <p><em>图：两栏沉浸式详情页与标签页</em></p>
 </div>
 
 <div align="center">
-  <p><em>图：两栏沉浸式详情页与标签页（截图占位 / TODO）</em></p>
+<img src="docs/pic/playhistory.jpg" width="100%" alt="">
+  <p><em>图：观影记录与年度报告</em></p>
 </div>
 
 <div align="center">
-  <p><em>图：观影记录与年度报告（截图占位 / TODO）</em></p>
+<img src="docs/pic/mpv.jpg" width="100%" alt="">
+  <p><em>图：mpv 三源弹幕丰富影视体验</em></p>
 </div>
 
 <div align="center">
-  <p><em>图：mpv 独立窗口与 uosc 底栏（截图占位 / TODO）</em></p>
+<img src="docs/pic/potplay.jpg" width="100%" alt="">
+  <p><em>图：兼容本机自带potplayer调用</em></p>
+</div>
+
+<div align="center">
+<img src="docs/pic/actor.jpg" width="100%" alt="">
+  <p><em>图：演员信息入库检测</em></p>
 </div>
 
 ---
@@ -252,10 +260,10 @@
 
 | 用途 | 默认端点（代码内） | 说明 |
 | --- | --- | --- |
-| Bangumi API / 图片 | `bgm.690075.xyz` | 带准入签名；缺密钥时降级直连官方域 |
-| TMDB API / 图片 | `tmdb.690075.xyz` | 镜像注入服务端 key；缺密钥时降级用户自己的 key |
-| GitHub 下载 | `gh.690075.xyz` | 更新包解析 `/app/resolve` |
-| 匿名统计 / 反馈 | `stats.690075.xyz` | `/ping`、`/feedback` 等 |
+| Bangumi API / 图片 | `bgm.*****.xyz` | 带准入签名；缺密钥时降级直连官方域 |
+| TMDB API / 图片 | `tmdb.*****.xyz` | 镜像注入服务端 key；缺密钥时降级用户自己的 key |
+| GitHub 下载 | `gh.*****.xyz` | 更新包解析 `/app/resolve` |
+| 匿名统计 / 反馈 | `stats.*****.xyz` | `/ping`、`/feedback` 等 |
 
 - 镜像准入签名：`x-fntv-app` + `x-fntv-ts` + `x-fntv-sign`，密钥**只从运行时环境或编译期 `option_env!` 读取，绝不写入仓库**。
 - 缺密钥 / 网络错误 / 超时 / 5xx / 429 会按模块既定策略降级；401 与其他 4xx 属确定性拒绝，不降级。
@@ -520,7 +528,7 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 4. **镜像依赖**：缺少镜像密钥时会降级（Bangumi 直连官方域、TMDB 使用用户自己的 key）；无 key 时 TMDB 相关功能可能不可用。
 5. **在线资源**：**本版本不提供在线资源观看 / 播放功能**，相关能力不在发布范围。
 6. **AniList**：直连官方 API，受其限流约束，仅按天缓存，失败时前端静默隐藏放送时刻。
-7. **手柄**：采用 Xbox 布局标准映射；窗口失焦时浏览器 / WebView 会暂停手柄输入，点回窗口恢复；`Y` 键「下一集」当前为预留事件，后端尚未提供命令。
+7. **手柄**：采用 Xbox 布局标准映射；窗口失焦时浏览器 / WebView 会暂停手柄输入，点回窗口恢复；`Y` 键「下一集」直接操作 mpv 播放列表（`playlist-next`）。
 8. **登录方式**：当前为 NAS 地址 + 用户名 / 密码；FN Connect / OAuth 远程登录尚未实现（TODO）。
 9. **播放进度**：客户端记录本机观看历史；「已看」可写回飞牛，接口不可用时降级为本地标记。未实现向飞牛实时回写播放进度（TODO）。
 10. **弹幕**：内置链路依赖 mpv 便携配置中的弹幕脚本与本地 Node shim；脚本缺失时弹幕不可用。

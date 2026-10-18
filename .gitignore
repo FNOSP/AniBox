@@ -22,6 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# 日志统一放 tests/logs/（仍兼容根目录遗留的 .devlog*.txt）
+tests/logs/
 .devlog*.txt
 
 # 本地 commit 回退锚点日志（对齐主仓库，纯本地不入库）
@@ -60,6 +62,9 @@ vite.config.d.ts
 **/test-*.mjs
 *_test.go
 spike-*/
+# 测试 / 验证脚本统一目录
+tests/*test*
+tests/**/*test*
 tools/*test*
 # 本地状态 / 个人数据 / 工具目录
 .rea-*/
@@ -69,3 +74,8 @@ nul
 on
 third_party/fntv-mpv/portable_config/files/recent.json
 third_party/fntv-mpv/portable_config/files/persistent_config.json
+
+# 内置弹幕源 danmu_api：源码入库；运行时依赖/生成物不入库
+src-tauri/resources/danmu-api/node_modules/
+src-tauri/resources/danmu-api/config/.env
+src-tauri/resources/danmu-api/.cache/

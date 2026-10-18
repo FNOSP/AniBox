@@ -20,8 +20,9 @@
 - 这些是**「我们自己的服务器怎么搭」**的内部资料。公开出去只增加被刷、被抄、被盯上的面，对使用者没有任何价值。
 
 ### 3. 测试 / 验证脚本与一次性探针
-`scripts/test-*.mjs`、`scripts/verify-*.mjs`、`**/verify_*.js`、`**/verify-*.js`、`*_test.go`、`spike-*/`、`tools/` 下的临时校验脚本、`.dryrun*.cmd`
+`tests/` 下的测试 / 验证 / 一次性脚本与产物、`**/verify_*.js`、`**/verify-*.js`、`*_test.go`、`spike-*/`、`tools/` 下的临时校验脚本、`.dryrun*.cmd`
 - 它们是开发期的佐证，不是产品的一部分。（哪天决定开源测试，再显式 `git add -f` 单独决定 —— 不要默认放开。）
+- **统一目录约定（硬性）**：今后所有测试 / 验证 / 一次性探针脚本与临时产物，一律放在仓库根目录的 `tests/` 下 —— 脚本直接放 `tests/`，日志放 `tests/logs/`，截图等产物放 `tests/artifacts/`，spike 放 `tests/spikes/`。**不要再直接放到项目根目录。**
 
 ### 4. 本地状态 / 个人数据 / 工具目录
 `.rea-*/`、`.workbuddy/`、`node_modules/`、`dist/`、`target/`、`nul`、`on`、`third_party/fntv-mpv/portable_config/files/recent.json`、`persistent_config.json`

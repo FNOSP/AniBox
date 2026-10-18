@@ -18,6 +18,8 @@ export type Config = {
   bgm_username?: string;
   /** [lc-1630] 记住上次账号：下次启动自动恢复 */
   bgm_remember?: boolean;
+  /** 弹幕引擎：`"node"`（默认）| `"rust"`（测试版）。与 Rust 侧 `danmu_engine` 同名（snake_case） */
+  danmu_engine?: string;
 };
 
 /**
@@ -283,6 +285,71 @@ export type TmdbCredits = {
   crew?: TmdbCreditPerson[];
 };
 
+/* ────────────────── [lc-1700] 演员页（TMDB / Bangumi 人物） ────────────────── */
+
+/** 人物数据来源：TMDB = 全球影视库；bgm = Bangumi（动画/三次元） */
+export type PersonSource = "tmdb" | "bgm";
+
+/** 从详情页点进演员页的目标（只带最少字段，详情由演员页自己拉） */
+export type PersonTarget = {
+  source: PersonSource;
+  id: number;
+  name: string;
+  /** 头像：TMDB 为 file_path（/xxx.jpg），BGM 为 images.grid 之类的相对/完整路径 */
+  profile?: string;
+};
+
+/** 演员页的一部作品（兼容 TMDB / Bangumi 两种返回；缺失字段按 source 解释） */
+export type PersonWork = {
+  /** TMDB 作品 id（source = tmdb） */
+  tmdbId?: number;
+  /** Bangumi 条目 id（source = bgm） */
+  bgmId?: number;
+  mediaType: "movie" | "tv" | "anime" | "real" | "other";
+  title: string;
+  originalTitle?: string;
+  year?: string | number;
+  poster?: string;
+  /** TMDB 横图 file_path（BGM 无） */
+  backdrop?: string;
+  /** TMDB：饰演角色 */
+  character?: string;
+  /** TMDB：职务（导演/编剧…） */
+  job?: string;
+  /** BGM：职位 */
+  staff?: string;
+  rating?: number | null;
+  votes?: number;
+  /** TMDB 剧集：出演集数 */
+  episodeCount?: number;
+  /** BGM 条目类型码（2 动画 / 6 三次元 …） */
+  subjectType?: number;
+};
+
+/** 演员页的人物资料（TMDB / Bangumi 归一后的统一形状） */
+export type PersonInfo = {
+  source: PersonSource;
+  /** tmdbId / bgmId 归一后的 id */
+  id: number;
+  name: string;
+  originalName?: string;
+  /** 已解析为可直接使用的图片 URL */
+  profile?: string;
+  /** TMDB 传记 */
+  biography?: string;
+  /** Bangumi 简介 */
+  summary?: string;
+  birthday?: string;
+  deathday?: string;
+  placeOfBirth?: string;
+  /** TMDB：known_for_department */
+  knownFor?: string;
+  /** Bangumi：职业列表 */
+  career?: string[];
+  bloodType?: string;
+  works: PersonWork[];
+};
+
 /** [更新与维护] 后端 `app_info()`：软件名 / 版本 / 仓库地址 / 简介。
  *  前端优先用它填「关于」，字段为空时回退到占位常量。 */
 export type AppInfo = {
@@ -348,6 +415,9 @@ export type AppSettings = {
   /** 多地址列表（故障转移，≤4 条；danmuApiBase 恒等于第一条） */
   danmuApiBases: string[];
   danmuApiBase: string;
+  /** 弹幕引擎（camelCase 映射 Rust `danmu_engine`）："node" = 默认/稳定，"rust" = 测试版。
+   *  仅在「自建弹幕接口」启用时生效；旧缓存可能缺省 → 读取时回退 "node"。 */
+  danmuEngine?: "node" | "rust";
   /** 手柄：开关与高级参数（真值与处理均在 Rust；前端只做编辑与显示） */
   gamepadEnabled?: boolean;
   gamepadDeadzone?: number;

@@ -1,7 +1,7 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Menu as IcoMenuL, X as IcoXL } from "lucide-react";
+import { Copy as IcoCopy, Menu as IcoMenuL, Minus as IcoMinus, Square as IcoSquare, X as IcoXL } from "lucide-react";
 import { ChromeTone } from "../../types";
 
 /* ────────────────────────── 顶栏二值色调采样 ──────────────────────────
@@ -344,6 +344,38 @@ export function TitleBar({
   const win = getCurrentWindow();
   const tone = useTitlebarTone(page, nav);
   const crumb = page === "discover" ? "发现" : "首页";
+  // [fix] 最大化状态：用于把"最大化/还原"按钮的图标在 Square（最大化）与 Copy（还原）之间切换。
+  // 优先用 Tauri 的 isMaximized() 初始化，并监听窗口 resize（拖动改变大小/双击标题栏等都会触发）持续同步。
+  const [isMaximized, setIsMaximized] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    let unlisten: (() => void) | undefined;
+    const sync = () => {
+      win
+        .isMaximized()
+        .then((v) => {
+          if (alive) setIsMaximized(v);
+        })
+        .catch(() => {
+          /* 非 Tauri 环境/查询失败：保留上一次状态 */
+        });
+    };
+    sync();
+    win
+      .onResized(sync)
+      .then((fn) => {
+        if (alive) unlisten = fn;
+        else fn(); // 组件已卸载：立刻注销，避免监听泄漏
+      })
+      .catch(() => {
+        /* 注册失败：仅失去实时同步，按钮点击仍可用 */
+      });
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <>
       {/* [lc-1703] 二值色调：data-tone 决定图标/文字用**实心纯黑**还是**实心纯白**。
@@ -401,10 +433,18 @@ export function TitleBar({
         <div className="tb-right" data-tauri-drag-region>
           <div className="tb-buttons">
             <button className="tb-btn" title="最小化" onClick={() => win.minimize()}>
-              ─
+              <IcoMinus size={16} strokeWidth={1.8} />
             </button>
-            <button className="tb-btn" title="最大化/还原" onClick={() => win.toggleMaximize()}>
-              ▢
+            <button
+              className="tb-btn"
+              title={isMaximized ? "还原" : "最大化"}
+              onClick={() => win.toggleMaximize()}
+            >
+              {isMaximized ? (
+                <IcoCopy size={15} strokeWidth={1.8} />
+              ) : (
+                <IcoSquare size={15} strokeWidth={1.8} />
+              )}
             </button>
           </div>
         </div>

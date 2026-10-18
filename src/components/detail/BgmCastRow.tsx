@@ -10,6 +10,7 @@ export function BgmCastRow({
   avatar,
   img,
   fallback,
+  onClick,
 }: {
   name?: string;
   tag?: string;
@@ -18,6 +19,8 @@ export function BgmCastRow({
   /** 已解析的完整图片 URL（优先于 avatar） */
   img?: string;
   fallback: string;
+  /** [lc-1700] 可点击（进演员页）：有 id 的人物才传；飞牛兜底条目没有 id，不传 */
+  onClick?: () => void;
 }) {
   const src = img || bgmImg(avatar);
   // [lc-1403] 图片加载失败 → 退回占位图标（否则 .bgmc-avatar 的圆形底色会留一个灰圆，
@@ -25,7 +28,22 @@ export function BgmCastRow({
   const [failed, setFailed] = useState(false);
   const showImg = !!src && !failed;
   return (
-    <li className="bgmc-item">
+    <li
+      className={`bgmc-item${onClick ? " clickable" : ""}`}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
+    >
       {showImg ? (
         <img
           className="bgmc-avatar"

@@ -1,0 +1,544 @@
+/* [lc-1700] 演员页（TMDB / Bangumi 人物）：
+   顶部横幅（竖版头像 + 姓名/标签/简介）→ 筛选标签 → 自适应海报墙。
+   全部颜色取自 01-tokens.css 的变量，深浅主题通用；动效统一 cubic-bezier 缓动，
+   prefers-reduced-motion 下全部关闭。 */
+
+.pp-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.pp-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ── 顶部横幅 ── */
+.pp-banner {
+  display: flex;
+  gap: 22px;
+  padding: 18px;
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-card);
+}
+
+.pp-avatar {
+  width: 150px;
+  flex: none;
+  aspect-ratio: 2 / 3;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--ph-bg);
+  border: 1px solid var(--line);
+}
+
+.pp-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.pp-avatar-fb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 42px;
+  font-weight: 800;
+  color: var(--muted);
+  background: linear-gradient(160deg, var(--bg-1), var(--bg-3));
+}
+
+.pp-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pp-name {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  color: var(--text-strong);
+}
+
+.pp-src {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  color: var(--accent);
+  background: rgba(108, 155, 255, 0.14);
+  border: 1px solid rgba(108, 155, 255, 0.35);
+}
+
+.pp-src.bgm {
+  color: var(--accent-2);
+  background: rgba(143, 108, 255, 0.14);
+  border-color: rgba(143, 108, 255, 0.35);
+}
+
+.pp-orig {
+  margin-top: -4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.pp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pp-chip {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  color: var(--text-2);
+  background: var(--hover);
+  border: 1px solid var(--line);
+}
+
+.pp-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.pp-stats b {
+  margin-right: 3px;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text-strong);
+}
+
+.pp-stats .sep {
+  width: 1px;
+  height: 12px;
+  background: var(--line-strong);
+}
+
+.pp-bio p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.8;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.pp-bio.open p {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+
+.pp-bio-toggle {
+  margin-top: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.pp-bio-toggle:hover {
+  text-decoration: underline;
+}
+
+/* ── 筛选标签 ── */
+.pp-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.pp-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+
+.pp-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.18s cubic-bezier(0.22, 0.61, 0.36, 1),
+    color 0.18s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.pp-tab:hover {
+  background: var(--hover);
+}
+
+.pp-tab.on {
+  background: var(--accent-grad);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(108, 155, 255, 0.3);
+}
+
+.pp-tab-n {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--text-2);
+}
+
+.pp-tab.on .pp-tab-n {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+
+.pp-total {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+/* ── 海报墙 ── */
+.pp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 20px 14px;
+  padding-bottom: 8px;
+}
+
+.pw-card {
+  position: relative;
+  min-width: 0;
+  border-radius: var(--radius);
+  animation: pwIn 0.38s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  animation-delay: calc(var(--pw-i, 0) * 32ms);
+  transition: transform 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* 无论能否打开都保留 hover 反馈（不能跳转的条目也不该"死气沉沉"） */
+.pw-card:hover {
+  transform: translateY(-4px);
+}
+
+@keyframes pwIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.pw-card.clickable {
+  cursor: pointer;
+}
+
+.pw-card.clickable:focus-visible {
+  outline: 2px solid rgba(108, 155, 255, 0.7);
+  outline-offset: 3px;
+}
+
+.pw-cv {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--ph-bg);
+  border: 1px solid var(--line);
+  transition: border-color 0.18s ease, box-shadow 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.pw-card.clickable:hover .pw-cv {
+  border-color: rgba(108, 155, 255, 0.55);
+  box-shadow: 0 10px 26px rgba(31, 41, 90, 0.18);
+}
+
+.pw-cv img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.35s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.pw-card:hover .pw-cv img {
+  transform: scale(1.045);
+}
+
+.pw-cv-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 34px;
+  font-weight: 800;
+  color: var(--muted);
+  background: linear-gradient(160deg, var(--bg-1), var(--bg-3));
+}
+
+.pw-year {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+.pw-role {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 18px 8px 7px;
+  font-size: 11.5px;
+  line-height: 1.3;
+  color: #fff;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.78));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pw-nm {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.pw-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.pw-type {
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: var(--hover);
+  color: var(--text-2);
+}
+
+.pw-score {
+  color: #e0a030;
+  font-weight: 700;
+}
+
+/* ── 骨架 ── */
+.pp-skel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.pp-skel-banner {
+  display: flex;
+  gap: 22px;
+  padding: 18px;
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+
+.pp-skel-avatar {
+  width: 150px;
+  flex: none;
+  aspect-ratio: 2 / 3;
+  border-radius: 12px;
+}
+
+.pp-skel-lines {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 6px;
+}
+
+.pp-skel-line {
+  height: 14px;
+  border-radius: 7px;
+}
+
+.pp-skel-line.w40 {
+  width: 40%;
+}
+.pp-skel-line.w70 {
+  width: 70%;
+}
+.pp-skel-line.w80 {
+  width: 80%;
+}
+.pp-skel-line.w90 {
+  width: 90%;
+}
+
+.pp-skel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 20px 14px;
+}
+
+.pp-skel-card {
+  aspect-ratio: 2 / 3;
+  border-radius: 12px;
+}
+
+.pp-skel-avatar,
+.pp-skel-line,
+.pp-skel-card {
+  background: linear-gradient(90deg, var(--skel-base) 25%, var(--skel-shine) 37%, var(--skel-base) 63%);
+  background-size: 400% 100%;
+  animation: ppShimmer 1.4s ease infinite;
+}
+
+@keyframes ppShimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+/* ── 空态 / 错误态 ── */
+.pp-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 56px 0;
+  text-align: center;
+}
+
+.pp-state-t {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.pp-state-d {
+  max-width: 520px;
+  font-size: 12.5px;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.pp-state-btn {
+  margin-top: 8px;
+}
+
+/* ── 详情页里可点击的人物行（hover / focus 反馈） ── */
+.bgmc-item.clickable {
+  cursor: pointer;
+  transition: background 0.16s ease;
+}
+
+.bgmc-item.clickable:hover {
+  background: var(--hover);
+}
+
+.bgmc-item.clickable:focus-visible {
+  outline: 2px solid rgba(108, 155, 255, 0.7);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+
+.mv-cast-item.clickable {
+  cursor: pointer;
+  margin: -6px;
+  padding: 6px;
+  border-radius: 12px;
+  transition: background 0.18s ease;
+}
+
+.mv-cast-item.clickable:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.mv-cast-item.clickable:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.65);
+  outline-offset: 2px;
+}
+
+/* ── 窄屏 ── */
+@media (max-width: 760px) {
+  .pp-banner {
+    flex-direction: column;
+  }
+  .pp-avatar,
+  .pp-skel-avatar {
+    width: 120px;
+  }
+}
+
+/* ── 减弱动态效果 ── */
+@media (prefers-reduced-motion: reduce) {
+  .pw-card,
+  .pp-skel-avatar,
+  .pp-skel-line,
+  .pp-skel-card {
+    animation: none;
+  }
+  .pw-card.clickable,
+  .pw-card:hover,
+  .pw-cv img,
+  .pw-cv,
+  .pp-tab,
+  .bgmc-item.clickable,
+  .mv-cast-item.clickable {
+    transition: none;
+  }
+  .pw-card:hover {
+    transform: none;
+  }
+  .pw-card:hover .pw-cv img {
+    transform: none;
+  }
+}

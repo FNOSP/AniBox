@@ -47,3 +47,5 @@
 @import "./41-still-lightbox.css";
 /* [lc-1658] 关联标签页：BGM 无关联时的 TMDB 推荐卡片行 */
 @import "./42-related-tmdb.css";
+/* [lc-1700] 演员页（TMDB / Bangumi 人物） */
+@import "./43-person.css";

@@ -185,6 +185,10 @@
   color: var(--tb-fg);
   font-size: 12px;
   cursor: pointer;
+  /* [fix] 最小化/最大化改用 Lucide SVG：与关闭键一致地水平垂直居中（原文本字形靠 text-align 居中） */
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .tb-btn:hover {
   background: var(--tb-hover-bg);

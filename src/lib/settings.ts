@@ -7,9 +7,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   carouselLogo: true,
   launchPage: "home",
   autoLogin: false,
-  // [lc-1561] 自建弹幕接口默认关闭 = 完全走内置 B站 链路（与接入前行为一致，对齐主仓库默认）
-  danmuApiEnabled: false,
+  // [lc-1561] 自建弹幕接口默认开启：地址留空即用随包内置源（本地 danmu_api）
+  danmuApiEnabled: true,
   danmuApiBases: [],
   danmuApiBase: "",
+  // 弹幕引擎默认 node = 与接入前行为完全一致（Rust 侧 `danmu_engine` 默认同为 "node"）
+  danmuEngine: "node",
 };
 /** 平均亮度阈值（0..255）：> 阈值 = 亮底 → 深色 chrome */

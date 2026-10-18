@@ -69,6 +69,35 @@ const SET_TABS = [
 ] as const;
 type SetTabKey = (typeof SET_TABS)[number]["key"];
 
+/** [bili-account] B 站账号体检结果（Rust `bili_account_status` 返回）。 */
+type BiliStatus = {
+  loggedIn: boolean;
+  /** missing | valid | expired | error | unknown | no_script_dir */
+  status: string;
+  uname?: string | null;
+  reason?: string | null;
+  cookiePresent: boolean;
+};
+
+/** [bili-qr] 扫码登录二维码（Rust `bili_qr_generate` 返回）。 */
+type BiliQr = { url: string; qrcodeKey: string; image: string };
+
+/** [bili-qr] 扫码轮询结果（Rust `bili_qr_poll` 返回）。 */
+type BiliQrPoll = {
+  /** 0=成功 / 86101=未扫码 / 86090=已扫码待确认 / 86038=已过期 */
+  code: number;
+  message: string;
+  ok: boolean;
+  uname?: string | null;
+  cookieSaved?: boolean;
+};
+
+/** [bili-qr] 扫码登录的界面状态机。 */
+type BiliQrPhase = "idle" | "loading" | "waiting" | "scanned" | "success" | "expired" | "error";
+
+/** [bili-account] 本机 Node 检测结果（Rust `detect_node` 返回）。 */
+type NodeInfo = { found: boolean; version: string; path: string; error?: string };
+
 const asText = (v: unknown): string => {
   if (Array.isArray(v)) return v.map((x) => String(x)).join("\n");
   return v === null || v === undefined ? "" : String(v);
@@ -753,7 +782,8 @@ export function SettingsPanel({
     try {
       const list = parseBases(dmBases);
       if (!list.length) {
-        setDmNote("请先填写服务地址");
+        // 留空 = 测试内置源
+        setDmNote(await invoke<string>("test_danmu_api", { url: "" }));
         return;
       }
       const out: string[] = [];
@@ -767,6 +797,235 @@ export function SettingsPanel({
       setDmTesting(false);
     }
   };
+
+  /* [danmaku-cache] 清空当前条目弹幕缓存并重新三源搜索。
+     · 「清空缓存并重新搜索」→ danmaku_refresh（后端清缓存后通知 mpv 重走自动匹配链）
+     · 「清空全部缓存」→ danmaku_clear_cache(scope="all")（无法定位当前条目时的兜底）
+     二次确认复用现有 .set-confirm 弹层样式；后端有互斥锁，重复点击不会并发清理。 */
+  const [dmClearConfirm, setDmClearConfirm] = useState<null | "current" | "all">(null);
+  const [dmClearing, setDmClearing] = useState(false);
+  const [dmClearNote, setDmClearNote] = useState("");
+
+  const runDanmakuClear = async (scope: "current" | "all") => {
+    setDmClearing(true);
+    setDmClearNote("");
+    try {
+      const r =
+        scope === "all"
+          ? await invoke<{ removed?: number; message?: string }>("danmaku_clear_cache", {
+              scope: "all",
+            })
+          : await invoke<{ removed?: number; message?: string }>("danmaku_refresh");
+      setDmClearNote(r?.message ?? `已完成（清理 ${r?.removed ?? 0} 个文件）`);
+    } catch (e) {
+      setDmClearNote(String(e));
+    } finally {
+      setDmClearing(false);
+      setDmClearConfirm(null);
+    }
+  };
+
+  /* [bili-account] B 站账号 + Node 环境（弹幕分类）。
+     Cookie 真值沿用现有存储：mpv 脚本目录下的 bili_cookie.txt（bili_danmaku.js 直接读它），
+     不复制进 config.json；后端命令只做读写与体检，不写日志。 */
+  const [bili, setBili] = useState<BiliStatus | null>(null);
+  const [biliCookie, setBiliCookie] = useState("");
+  const [biliBusy, setBiliBusy] = useState(false);
+  const [biliNote, setBiliNote] = useState("");
+  const [node, setNode] = useState<NodeInfo | null>(null);
+  const [nodeBusy, setNodeBusy] = useState(false);
+  const [setupNote, setSetupNote] = useState("");
+
+  /* [bili-qr] 扫码登录：二维码由后端生成（SVG data URI），前端每 2s 轮询一次。
+     qrSeq 用于让「切换分区 / 关闭弹层 / 重新生成」后仍在飞的旧轮询失效，
+     避免旧请求把新状态覆盖掉。 */
+  const [biliQr, setBiliQr] = useState<BiliQr | null>(null);
+  const [biliQrPhase, setBiliQrPhase] = useState<BiliQrPhase>("idle");
+  const [biliQrNote, setBiliQrNote] = useState("");
+  const qrTimer = useRef<number | null>(null);
+  const qrSeq = useRef(0);
+
+  const refreshBili = async () => {
+    setBiliBusy(true);
+    setBiliNote("");
+    try {
+      setBili(await invoke<BiliStatus>("bili_account_status"));
+    } catch (e) {
+      setBiliNote(String(e));
+    } finally {
+      setBiliBusy(false);
+    }
+  };
+
+  const saveBili = async () => {
+    const c = biliCookie.trim();
+    if (!c) {
+      setBiliNote("请先粘贴 Cookie");
+      return;
+    }
+    setBiliBusy(true);
+    setBiliNote("");
+    try {
+      const s = await invoke<BiliStatus>("bili_set_cookie", { cookie: c });
+      setBili(s);
+      setBiliCookie("");
+      setBiliNote(
+        s.loggedIn
+          ? `已登录${s.uname ? `：${s.uname}` : ""}`
+          : `Cookie 已保存，但校验未通过：${s.reason || s.status}`,
+      );
+    } catch (e) {
+      setBiliNote(String(e));
+    } finally {
+      setBiliBusy(false);
+    }
+  };
+
+  const clearBili = async () => {
+    setBiliBusy(true);
+    setBiliNote("");
+    try {
+      setBili(await invoke<BiliStatus>("bili_clear_cookie"));
+      setBiliNote("已清除 B 站 Cookie（退出登录）");
+    } catch (e) {
+      setBiliNote(String(e));
+    } finally {
+      setBiliBusy(false);
+    }
+  };
+
+  /** [bili-qr] 停止轮询（幂等）。 */
+  const stopQrPoll = () => {
+    if (qrTimer.current !== null) {
+      window.clearInterval(qrTimer.current);
+      qrTimer.current = null;
+    }
+  };
+
+  /** [bili-qr] 关闭扫码层并让所有在飞请求失效。 */
+  const cancelQrLogin = () => {
+    qrSeq.current += 1;
+    stopQrPoll();
+    setBiliQr(null);
+    setBiliQrPhase("idle");
+    setBiliQrNote("");
+  };
+
+  /** [bili-qr] 轮询一次；seq 不匹配说明已被取消/重建，直接丢弃结果。 */
+  const pollQr = async (qrcodeKey: string, seq: number) => {
+    if (seq !== qrSeq.current) return;
+    try {
+      const p = await invoke<BiliQrPoll>("bili_qr_poll", { qrcodeKey });
+      if (seq !== qrSeq.current) return;
+      if (p.ok && p.code === 0) {
+        stopQrPoll();
+        setBiliQrPhase("success");
+        setBiliQrNote(
+          p.cookieSaved === false
+            ? p.message
+            : `登录成功${p.uname ? `：${p.uname}` : ""}`,
+        );
+        setBiliQr(null);
+        await refreshBili();
+      } else if (p.code === 86090) {
+        setBiliQrPhase("scanned");
+        setBiliQrNote("已扫码，请在手机上确认登录");
+      } else if (p.code === 86038) {
+        stopQrPoll();
+        setBiliQrPhase("expired");
+        setBiliQrNote("二维码已过期，请刷新");
+      } else if (p.code === 86101) {
+        setBiliQrPhase("waiting");
+        setBiliQrNote("等待扫码…");
+      } else {
+        // 其他业务码（含 Cookie 提取失败）：不停止轮询，把原因显示出来
+        setBiliQrNote(p.message || "登录状态异常");
+      }
+    } catch (e) {
+      // 网络抖动不终止轮询，下一次继续尝试
+      if (seq === qrSeq.current) setBiliQrNote(String(e));
+    }
+  };
+
+  /** [bili-qr] 生成二维码并开始轮询。 */
+  const startQrLogin = async () => {
+    stopQrPoll();
+    const seq = ++qrSeq.current;
+    setBiliQr(null);
+    setBiliQrPhase("loading");
+    setBiliQrNote("正在获取二维码…");
+    try {
+      const r = await invoke<BiliQr>("bili_qr_generate");
+      if (seq !== qrSeq.current) return;
+      setBiliQr(r);
+      setBiliQrPhase("waiting");
+      setBiliQrNote("请使用 B 站手机客户端扫码");
+      qrTimer.current = window.setInterval(() => {
+        void pollQr(r.qrcodeKey, seq);
+      }, 2000);
+    } catch (e) {
+      if (seq === qrSeq.current) {
+        setBiliQrPhase("error");
+        setBiliQrNote(String(e));
+      }
+    }
+  };
+
+  const refreshNode = async () => {
+    try {
+      setNode(await invoke<NodeInfo>("detect_node"));
+    } catch (e) {
+      setNode({ found: false, version: "", path: "", error: String(e) });
+    }
+  };
+
+  /** 一键免配置自建弹幕源：后端启用自建接口 → 启动内置源 → 启动/复用弹幕 shim。 */
+  const setupBuiltin = async () => {
+    setNodeBusy(true);
+    setSetupNote("");
+    try {
+      const r = await invoke<{
+        ok: boolean;
+        nodeVersion: string;
+        base: string;
+        usingBuiltin: boolean;
+      }>("setup_builtin_danmaku");
+      setSetupNote(
+        `已就绪：Node ${r.nodeVersion} · ${r.usingBuiltin ? "内置源" : "自定义地址"} ${r.base}`,
+      );
+      // 后端已落盘；同步前端设置快照（避免面板仍显示「未启用」）
+      onSettings({
+        danmuApiEnabled: true,
+        danmuApiBases: settings.danmuApiBases ?? [],
+        danmuEngine: settings.danmuEngine ?? "node",
+      });
+      await refreshNode();
+    } catch (e) {
+      setSetupNote(String(e));
+    } finally {
+      setNodeBusy(false);
+    }
+  };
+
+  // 面板打开即检测（命令只读，不启动任何进程）
+  useEffect(() => {
+    void refreshBili();
+    void refreshNode();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* [bili-qr] 轮询清理：切换分区 / 关闭面板 / 组件卸载时停止定时器并让在飞请求失效。 */
+  useEffect(() => {
+    if (tab !== "danmu") cancelQrLogin();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+  useEffect(
+    () => () => {
+      qrSeq.current += 1;
+      stopQrPoll();
+    },
+    [],
+  );
 
   /** [lc-1437] 自启开关：真值在系统注册表里，前端只在 localStorage 记一份 UI 状态。   *  写入失败（权限/杀软拦截）时**回滚开关**并把错误显示出来 —— 不能出现
    *  "界面显示已开启、实际没写进注册表"这种静默不一致。 */
@@ -1140,6 +1399,135 @@ export function SettingsPanel({
               {/* ── 弹幕 ── */}
               {tab === "danmu" && (
                 <>
+                  {/* ── B 站账号 ── */}
+                  <div className="set-row">
+                    <span className="set-k">B 站账号</span>
+                    <span className="set-v">
+                      {bili === null
+                        ? "检测中…"
+                        : bili.loggedIn
+                          ? `已登录${bili.uname ? ` · ${bili.uname}` : ""}`
+                          : bili.cookiePresent
+                            ? `未登录（Cookie ${bili.status === "expired" ? "已过期" : "无效"}）`
+                            : "未登录"}
+                    </span>
+                  </div>
+                  <div className="set-row set-row-col">
+                    <span className="set-k">Cookie / SESSDATA</span>
+                    <textarea
+                      className="set-ta"
+                      rows={2}
+                      placeholder="粘贴完整 Cookie（含 SESSDATA=…），或只粘贴 SESSDATA 的值"
+                      value={biliCookie}
+                      disabled={biliBusy}
+                      onChange={(e) => setBiliCookie(e.target.value)}
+                    />
+                    <div className="set-actions">
+                      <button
+                        className="set-btn"
+                        disabled={biliBusy || !biliCookie.trim()}
+                        onClick={saveBili}
+                      >
+                        {biliBusy ? "处理中…" : "保存并验证"}
+                      </button>
+                      <button className="set-btn" disabled={biliBusy} onClick={refreshBili}>
+                        刷新状态
+                      </button>
+                      <button
+                        className="set-btn primary"
+                        disabled={biliQrPhase === "loading"}
+                        onClick={startQrLogin}
+                      >
+                        {biliQrPhase === "loading" ? "获取二维码…" : "扫码登录"}
+                      </button>
+                      {bili?.cookiePresent && (
+                        <button className="set-btn danger" disabled={biliBusy} onClick={clearBili}>
+                          退出登录
+                        </button>
+                      )}
+                      <span className="set-note">{biliNote}</span>
+                    </div>
+                    {/* [bili-qr] 扫码登录层：二维码由后端渲染成 SVG data URI */}
+                    {biliQrPhase !== "idle" && (
+                      <div className="set-qr">
+                        {(biliQrPhase === "waiting" || biliQrPhase === "scanned") && biliQr ? (
+                          <>
+                            <img
+                              className="set-qr-img"
+                              src={biliQr.image}
+                              alt="B 站登录二维码"
+                            />
+                            <div className={`set-qr-tip${biliQrPhase === "scanned" ? " ok" : ""}`}>
+                              {biliQrNote}
+                            </div>
+                            <button className="set-btn" onClick={cancelQrLogin}>
+                              取消
+                            </button>
+                          </>
+                        ) : biliQrPhase === "expired" || biliQrPhase === "error" ? (
+                          <>
+                            <div className="set-qr-tip err">{biliQrNote}</div>
+                            <div className="set-qr-actions">
+                              <button className="set-btn primary" onClick={startQrLogin}>
+                                刷新二维码
+                              </button>
+                              <button className="set-btn" onClick={cancelQrLogin}>
+                                关闭
+                              </button>
+                            </div>
+                          </>
+                        ) : biliQrPhase === "success" ? (
+                          <>
+                            <div className="set-qr-tip ok">{biliQrNote}</div>
+                            <button className="set-btn" onClick={cancelQrLogin}>
+                              完成
+                            </button>
+                          </>
+                        ) : (
+                          <div className="set-qr-tip">{biliQrNote}</div>
+                        )}
+                      </div>
+                    )}
+                    <div className="set-desc">
+                      登录态可绕过 B 站匿名风控、提升弹幕获取成功率。浏览器登录 bilibili.com 后，
+                      在开发者工具 → Application → Cookies 复制 SESSDATA（或整段 Cookie）。
+                      Cookie 仅保存在本机 mpv 脚本目录（bili_cookie.txt），不会写入日志。
+                    </div>
+                  </div>
+
+                  {/* ── Node 环境 / 一键自建源 ── */}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">Node.js 环境</span>
+                      <div className="set-desc">
+                        {node === null
+                          ? "检测中…"
+                          : node.found
+                            ? `已检测到 ${node.version}（${node.path}）`
+                            : "未检测到 Node.js。自建弹幕源与弹幕服务需要本机安装 Node.js（建议 LTS 版本）。"}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                      <button className="set-btn" onClick={() => void refreshNode()}>
+                        重新检测
+                      </button>
+                      {node?.found && (
+                        <button className="set-btn" disabled={nodeBusy} onClick={() => void setupBuiltin()}>
+                          {nodeBusy ? "配置中…" : "一键配置自建弹幕源"}
+                        </button>
+                      )}
+                      {node && !node.found && (
+                        <button
+                          className="set-btn"
+                          onClick={() => void openExternal("https://nodejs.org/zh-cn/download")}
+                        >
+                          安装指引
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {setupNote && <div className="set-note">{setupNote}</div>}
+
                   <div className="set-row">
                     <div>
                       <span className="set-k">自建弹幕接口</span>
@@ -1186,6 +1574,7 @@ export function SettingsPanel({
                     </div>
                     <div className="set-desc">
                       每行一条（最多 4 条，故障转移）。地址只存本机，不写入 mpv 配置。
+                      内置弹幕源需要本机安装 Node.js；未安装时会自动降级为内置 B 站弹幕。
                     </div>
                   </div>
                   <div className="set-row">
@@ -1209,6 +1598,80 @@ export function SettingsPanel({
                       }
                     />
                   </div>
+
+                  {/* ── 弹幕缓存：清空当前条目并重新三源搜索 ── */}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">弹幕缓存</span>
+                      <div className="set-desc">
+                        清空当前播放条目的弹幕缓存，并重新执行「自建源 → 内置 B 站 → 弹弹play」
+                        三源搜索；播放器会重新加载弹幕。若当前没有正在播放的条目，可改用「清空全部缓存」。
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                      {dmClearConfirm === "current" ? (
+                        <div className="set-confirm">
+                          <span className="set-confirm-q">清空当前条目缓存并重新搜索？</span>
+                          <button
+                            className="set-btn"
+                            disabled={dmClearing}
+                            onClick={() => setDmClearConfirm(null)}
+                          >
+                            取消
+                          </button>
+                          <button
+                            className="set-btn danger"
+                            disabled={dmClearing}
+                            onClick={() => void runDanmakuClear("current")}
+                          >
+                            {dmClearing ? "处理中…" : "确定"}
+                          </button>
+                        </div>
+                      ) : dmClearConfirm === "all" ? (
+                        <div className="set-confirm">
+                          <span className="set-confirm-q">清空全部弹幕缓存？此操作不可撤销。</span>
+                          <button
+                            className="set-btn"
+                            disabled={dmClearing}
+                            onClick={() => setDmClearConfirm(null)}
+                          >
+                            取消
+                          </button>
+                          <button
+                            className="set-btn danger"
+                            disabled={dmClearing}
+                            onClick={() => void runDanmakuClear("all")}
+                          >
+                            {dmClearing ? "处理中…" : "确定"}
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <button
+                            className="set-btn"
+                            disabled={dmClearing}
+                            onClick={() => {
+                              setDmClearNote("");
+                              setDmClearConfirm("current");
+                            }}
+                          >
+                            {dmClearing ? "处理中…" : "清空缓存并重新搜索"}
+                          </button>
+                          <button
+                            className="set-btn danger"
+                            disabled={dmClearing}
+                            onClick={() => {
+                              setDmClearNote("");
+                              setDmClearConfirm("all");
+                            }}
+                          >
+                            清空全部缓存
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {dmClearNote && <div className="set-note">{dmClearNote}</div>}
 
                 </>
               )}

@@ -19,7 +19,7 @@
 import { useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { focusNav, isEditableFocused } from "../lib/focusNav";
+import { focusNav } from "../lib/focusNav";
 
 /* ────────────────────────── 按键定义 ────────────────────────── */
 
@@ -44,7 +44,7 @@ export const GAMEPAD_KEY_TABLE: { btn: PadBtnName; label: string; action: string
 /** 仅用于前端 UI 兜底显示；真值由 Rust `get_settings` / `set_settings` 持有，
  *  死区/阈值/长按连跳的实际处理也在 Rust 侧。 */
 export const GAMEPAD_DEFAULTS = {
-  enabled: false,
+  enabled: true,
   stickDeadzone: 0.3,
   directionThreshold: 0.4,
   repeatDelay: 320,
@@ -229,17 +229,35 @@ export function useGamepad(callbacks: GamepadCallbacks = {}): void {
       }
     };
 
+    /** 手柄接管导航前的焦点处理（只在手柄路径调用，不影响键盘输入）：
+     *  - `input[type=range]`：保留焦点，放行给 focusNav.move()（其左右键会调值）；
+     *  - 文本类输入（input / textarea / select / contentEditable）：先 blur，
+     *    让手柄重新接管焦点导航；
+     *  - 其他元素：不动。 */
+    const releaseEditableFocus = () => {
+      const ae = document.activeElement as HTMLElement | null;
+      if (!ae || ae === document.body) return;
+      if (ae instanceof HTMLInputElement && ae.type === "range") return;
+      const tag = ae.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || ae.isContentEditable) {
+        ae.blur();
+      }
+    };
+
     const onNavButton = (btn: PadBtnName) => {
       switch (btn) {
         case "A":
-          if (isEditableFocused()) return;
+          releaseEditableFocus();
           if (focusNav.isActive()) focusNav.select();
           else focusNav.activate();
           break;
         case "B":
         case "BACK":
-          focusNav.back();
-          dispatchEscape();
+          // 优先级：页面「返回」按钮 → Escape（关弹层）→ 隐藏白框兜底。
+          if (!focusNav.clickBack()) {
+            dispatchEscape();
+            focusNav.back();
+          }
           break;
         case "LB":
           if (!focusNav.hasOpenOverlay()) cbRef.current.onSwitchPage?.(-1);
@@ -259,7 +277,7 @@ export function useGamepad(callbacks: GamepadCallbacks = {}): void {
     };
 
     const moveFocus = (dir: "up" | "down" | "left" | "right") => {
-      if (isEditableFocused()) return;
+      releaseEditableFocus();
       focusNav.move(dir);
     };
 
@@ -289,9 +307,10 @@ export function useGamepad(callbacks: GamepadCallbacks = {}): void {
       if (dirAction === "back") {
         if (playing) {
           cmd("player_stop");
-        } else {
-          focusNav.back();
+        } else if (!focusNav.clickBack()) {
+          // 无可见「返回」按钮：派发 Escape 关弹层，再隐藏白框兜底。
           dispatchEscape();
+          focusNav.back();
         }
         return;
       }

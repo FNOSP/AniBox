@@ -3,7 +3,7 @@ import { BgmListSkeleton } from "../BgmListSkeleton";
 import { BgmCastRow } from "../BgmCastRow";
 import { tmdbImg, imgUrl } from "../../../lib/images";
 import { CHAR_TYPE_LABEL, fnosCast } from "../helpers";
-import { BgmCharacter, BgmPerson, TmdbCreditPerson, TmdbCredits } from "../../../types";
+import { BgmCharacter, BgmPerson, PersonTarget, TmdbCreditPerson, TmdbCredits } from "../../../types";
 
 type Props = {
   cast: any[];
@@ -22,8 +22,34 @@ type Props = {
   persons: BgmPerson[];
   retryCredits: () => void;
   retryMore: () => void;
+  /** [lc-1700] 点人物 → 打开演员页（TMDB cast/crew、BGM 角色声优/制作人员） */
+  onOpenPerson?: (t: PersonTarget) => void;
 };
-export function CastTab({ cast, castFrom, showCast, chars, credits, creditsBusy, creditsCast, creditsErr, crew, fbCast, moreBusy, moreErr, moreProbed, persons, retryCredits, retryMore }: Props) {
+export function CastTab({ cast, castFrom, showCast, chars, credits, creditsBusy, creditsCast, creditsErr, crew, fbCast, moreBusy, moreErr, moreProbed, persons, retryCredits, retryMore, onOpenPerson }: Props) {
+  /** TMDB 人物（cast / crew 通用）：id > 0 才可点 */
+  const openTmdb = (c: any) => {
+    const id = Number(c?.id ?? 0);
+    if (!onOpenPerson || !(id > 0)) return undefined;
+    return () =>
+      onOpenPerson({
+        source: "tmdb",
+        id,
+        name: String(c?.name ?? ""),
+        profile: c?.profile ? String(c.profile) : undefined,
+      });
+  };
+  /** Bangumi 人物：id 存在才可点 */
+  const openBgm = (id: unknown, name: unknown, profile?: unknown) => {
+    const n = Number(id ?? 0);
+    if (!onOpenPerson || !(n > 0)) return undefined;
+    return () =>
+      onOpenPerson({
+        source: "bgm",
+        id: n,
+        name: String(name ?? ""),
+        profile: profile ? String(profile) : undefined,
+      });
+  };
   return (
     <>
       <div className="dpanel dmore">
@@ -56,6 +82,7 @@ export function CastTab({ cast, castFrom, showCast, chars, credits, creditsBusy,
                   sub={Number(c.episodes ?? 0) > 0 ? `出演 ${c.episodes} 集` : ""}
                   img={c.profile ? tmdbImg(String(c.profile), "w185") : ""}
                   fallback="未知演员"
+                  onClick={openTmdb(c)}
                 />
               ))}
             </ul>
@@ -76,6 +103,7 @@ export function CastTab({ cast, castFrom, showCast, chars, credits, creditsBusy,
                   sub={Number(c.episodes ?? 0) > 0 ? `${c.episodes} 集` : ""}
                   img={c.profile ? tmdbImg(String(c.profile), "w185") : ""}
                   fallback="未知"
+                  onClick={openTmdb(c)}
                 />
               ))}
             </ul>
@@ -135,6 +163,7 @@ export function CastTab({ cast, castFrom, showCast, chars, credits, creditsBusy,
                   sub={c.actors?.[0]?.name ? `CV：${c.actors[0].name}` : ""}
                   avatar={c.images?.large || c.images?.grid || c.images?.medium || c.images?.small}
                   fallback="未知角色"
+                  onClick={openBgm(c.actors?.[0]?.id, c.actors?.[0]?.name, c.actors?.[0]?.images?.grid)}
                 />
               ))}
             </ul>
@@ -155,6 +184,7 @@ export function CastTab({ cast, castFrom, showCast, chars, credits, creditsBusy,
                   tag={p.relation || (Array.isArray(p.career) ? p.career.join(" / ") : "")}
                   avatar={p.images?.large || p.images?.grid || p.images?.medium || p.images?.small}
                   fallback="未知"
+                  onClick={openBgm(p.id, p.name, p.images?.grid)}
                 />
               ))}
             </ul>

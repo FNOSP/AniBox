@@ -24,18 +24,21 @@ import { fmtDur, pick } from "../../lib/format";
 import { bgmImg, imgUrl, pickLargestImg, tmdbImg } from "../../lib/images";
 import { prefersReducedMotion } from "../../lib/motion";
 import { useRefresh } from "../../hooks/useRefresh";
-import { BgmCharacter, BgmComment, BgmEpisodeRow, BgmMatch, BgmPerson, BgmRelated, BgmReview, BgmTag, Episode, MediaItem, Season, TmdbCreditPerson, TmdbCredits } from "../../types";
+import { BgmCharacter, BgmComment, BgmEpisodeRow, BgmMatch, BgmPerson, BgmRelated, BgmReview, BgmTag, Episode, MediaItem, PersonTarget, Season, TmdbCreditPerson, TmdbCredits } from "../../types";
 
 
 export function DetailView({
   base,
   onBack,
   onOpenTmdb,
+  onOpenPerson,
 }: {
   base: MediaItem;
   onBack: () => void;
   /** [lc-1658] 关联标签页 TMDB 推荐卡片点击 → 打开对应 TMDB 条目详情（与发现页同一链路） */
   onOpenTmdb?: (tmdbId: number, title: string, year: string, mediaType: "tv" | "movie") => void;
+  /** [lc-1700] 演职人员点击 → 打开演员页 */
+  onOpenPerson?: (t: PersonTarget) => void;
 }) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
@@ -1167,6 +1170,17 @@ export function DetailView({
           onPlay={startPlay}
           onBack={onBack}
           onMeta={() => setMetaTarget({ guid: base.guid, title: title || base.title, type: "Movie" })}
+          onOpenPerson={
+            onOpenPerson
+              ? (c) =>
+                  onOpenPerson({
+                    source: "tmdb",
+                    id: Number(c.id ?? 0),
+                    name: String(c.name ?? ""),
+                    profile: c.profile ? String(c.profile) : undefined,
+                  })
+              : undefined
+          }
           favItem={{
             guid: base.guid,
             title,
@@ -1297,6 +1311,7 @@ export function DetailView({
             persons={persons}
             retryCredits={retryCredits}
             retryMore={retryMore}
+            onOpenPerson={onOpenPerson}
           />
 
         )}
@@ -1481,7 +1496,12 @@ export function DetailView({
                           <IcoClapL size={18} strokeWidth={1.8} />
                         </div>
                       )}
-                      <span className="dv2e-play">{playing ? "◉" : "▶"}</span>
+                      {/* 左下角操作区：播放按钮 + 「已看」徽标同一行、垂直居中。
+                          徽标从右上角移到这里，紧跟播放按钮右侧。 */}
+                      <div className="dv2e-actions">
+                        <span className="dv2e-play">{playing ? "◉" : "▶"}</span>
+                        {seen && <span className="ep-mark seen"><IcoCheckL size={11} strokeWidth={2.2} /> 已看</span>}
+                      </div>
                       {/* [lc-1629] 每集「元数据」入口（对齐飞牛网页端每集海报的右键菜单）：
                           编辑元数据 / 手动匹配影片 / 解除匹配 / 刷新元数据。stopPropagation 防止误触播放。 */}
                       <button
@@ -1501,7 +1521,6 @@ export function DetailView({
                       >
                         ⋯
                       </button>
-                      {seen && <span className="ep-mark seen"><IcoCheckL size={11} strokeWidth={2.2} /> 已看</span>}
                       {!seen && progress > 0 && <span className="ep-mark now">看到 {Math.round(progress)}%</span>}
                       {progress > 0 && (
                         <div className="progress">

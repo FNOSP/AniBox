@@ -577,11 +577,26 @@
 .dv2e-thumb .poster-empty {
   font-size: 20px;
 }
-/* 剧照上的播放角标：默认半透明，hover/播放中才明显（与首页海报卡同一套语言） */
-.dv2e-play {
+/* 剧照左下角操作区：播放按钮 + 「已看」徽标同一行、垂直居中。
+   徽标从右上角移到这里，紧跟在播放按钮右侧（间距 8px）。 */
+.dv2e-actions {
   position: absolute;
   left: 7px;
   bottom: 7px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 1;
+}
+/* 操作区内的「已看」徽标取消右上角绝对定位，参与 flex 排布；
+   颜色/圆角/字号/内边距仍沿用 .ep-mark 原样式。 */
+.dv2e-actions .ep-mark {
+  position: static;
+  top: auto;
+  right: auto;
+}
+/* 剧照上的播放角标：默认半透明，hover/播放中才明显（与首页海报卡同一套语言） */
+.dv2e-play {
   width: 24px;
   height: 24px;
   border-radius: 50%;
@@ -594,6 +609,7 @@
   backdrop-filter: blur(6px);
   opacity: 0.85;
   transition: opacity 0.15s ease, background 0.15s ease;
+  flex: 0 0 auto;
 }
 .dv2e-row:hover .dv2e-play,
 .dv2e-row.playing .dv2e-play {

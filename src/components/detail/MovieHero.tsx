@@ -31,6 +31,8 @@ type Props = {
   onPlay: () => void;
   onBack: () => void;
   onMeta?: () => void;
+  /** [lc-1700] 点演职员 → 打开演员页（TMDB id > 0 才可点） */
+  onOpenPerson?: (c: TmdbCreditPerson) => void;
   favItem: Record<string, unknown> | null;
 };
 
@@ -52,6 +54,7 @@ export function MovieHero({
   onPlay,
   onBack,
   onMeta,
+  onOpenPerson,
   favItem,
 }: Props) {
   const favGuid = String((favItem?.guid as string) ?? "").trim();
@@ -184,8 +187,25 @@ export function MovieHero({
                 <div className="mv-cast">
                   {topCast.map((c, i) => {
                     const av = c.profile ? (c.profile.startsWith("/") ? tmdbImg(c.profile, "w185") : imgUrl(c.profile)) : "";
+                    const clickable = !!onOpenPerson && Number(c.id ?? 0) > 0;
                     return (
-                      <div className="mv-cast-item" key={`${c.id ?? i}`}>
+                      <div
+                        className={`mv-cast-item${clickable ? " clickable" : ""}`}
+                        key={`${c.id ?? i}`}
+                        role={clickable ? "button" : undefined}
+                        tabIndex={clickable ? 0 : undefined}
+                        onClick={clickable ? () => onOpenPerson?.(c) : undefined}
+                        onKeyDown={
+                          clickable
+                            ? (e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  onOpenPerson?.(c);
+                                }
+                              }
+                            : undefined
+                        }
+                      >
                         <div
                           className="mv-cast-avatar"
                           style={av ? { backgroundImage: `url("${av}")` } : undefined}

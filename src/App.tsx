@@ -17,6 +17,8 @@ import { HomeSkeleton } from "./components/home/HomeSkeleton";
 import { HomeView } from "./components/home/HomeView";
 import { LibView } from "./components/library/LibView";
 import { LoginPage } from "./components/login/LoginPage";
+// [lc-1700] 演员页（详情页演职人员点击进入）
+import { PersonPage } from "./components/person/PersonPage";
 import { FeedbackPanel } from "./components/feedback/FeedbackPanel";
 import { DisclaimerModal } from "./components/disclaimer/DisclaimerModal";
 import { DISCLAIMER_ACK_KEY } from "./components/disclaimer/DisclaimerText";
@@ -33,7 +35,7 @@ import { pick } from "./lib/format";
 import { bgmImg, pickImgStr, pickLargestImg, tmdbImg } from "./lib/images";
 import { prefersReducedMotion } from "./lib/motion";
 import { DEFAULT_SETTINGS } from "./lib/settings";
-import { AppSettings, BgmCalendarItem, ChromeTone, Config, Lib, MediaItem, PlayItem, PlayTarget, TmdbDiscoverItem } from "./types";
+import { AppSettings, BgmCalendarItem, ChromeTone, Config, Lib, MediaItem, PersonTarget, PersonWork, PlayItem, PlayTarget, TmdbDiscoverItem } from "./types";
 import "./styles/index.css";
 
 /** 启动页取值归一：历史配置里的 "continue"（已移除）及任何未知值一律回落到首页。 */
@@ -43,7 +45,7 @@ function normalizeLaunchPage(v: unknown): AppSettings["launchPage"] {
 
 function App() {
   // [lc-1615] 新增 "history"（观影记录页；侧栏快捷操作卡入口）
-  const [view, setView] = useState<"login" | "home" | "discover" | "lib" | "detail" | "history">("login");
+  const [view, setView] = useState<"login" | "home" | "discover" | "lib" | "detail" | "history" | "person">("login");
   // [lc-123] 「页」= 顶栏胶囊的两个面（首页/发现）。与 view 分开：在库里/详情页时胶囊仍要
   // 记住用户是从哪一页进去的（发现页点条目进 Bangumi 详情，左上角应仍显示「发现」）。
   const [page, setPage] = useState<"home" | "discover">("home");
@@ -82,7 +84,9 @@ function App() {
   // [lc-1444] 进详情的来源（返回键的目标）：lib = 库里进，discover = 发现页进，home = 首页进。
   // 不用 view 现查 —— 用户从发现页进详情后 view 已是 "detail"，现查只能靠猜。
   // [lc-1615] 增加 history = 观影记录页进。
-  const [detailFrom, setDetailFrom] = useState<"lib" | "discover" | "home" | "history">("home");
+  const [detailFrom, setDetailFrom] = useState<"lib" | "discover" | "home" | "history" | "person">("home");
+  // [lc-1700] 演员页目标（从详情页演职人员点进来）：只存最少字段，资料由 PersonPage 自己拉
+  const [personTarget, setPersonTarget] = useState<PersonTarget | null>(null);
   const [err, setErr] = useState("");
   // [lc-1607] 首次启动的免责声明同意闸门：localStorage 未置位 → 弹；同意后置位，不再弹。
   const [disclaimerOpen, setDisclaimerOpen] = useState(() => {
@@ -585,6 +589,8 @@ function App() {
   const [pageAnim, setPageAnim] = useState<string | null>(null);
   const [libEnterAnim, setLibEnterAnim] = useState(false);
   const [detailMounted, detailClosing] = useDelayedUnmount(view === "detail" && !!detailItem);
+  // [lc-1700] 演员页：条件挂载 + 延迟卸载（与详情页同套转场）
+  const [personMounted, personClosing] = useDelayedUnmount(view === "person" && !!personTarget);
   const [libMounted, libClosing] = useDelayedUnmount(view === "lib" && !!activeLib);
   // [lc-1615] 观影记录页：条件挂载 + 延迟卸载（与库页同套转场）
   const [historyMounted, historyClosing] = useDelayedUnmount(view === "history");
@@ -826,6 +832,42 @@ function App() {
     setDetailItem(item);
     setDetailFrom("history");
     setView("detail");
+  }, []);
+
+  // [lc-1700] 详情页演职人员 → 演员页（target 只带 source/id/name/profile）
+  const openPerson = useCallback((t: PersonTarget) => {
+    setPersonTarget(t);
+    setView("person");
+  }, []);
+
+  // [lc-1700] 演员页点作品 → 复用现有详情链路（discover-* 占位条目）。
+  //   detailFrom = "person"：详情页的返回键回到演员页（detailItem 保留不动）。
+  const openPersonWork = useCallback((w: PersonWork) => {
+    if (w.tmdbId) {
+      setDetailItem({
+        guid: `discover-${w.tmdbId}`,
+        title: w.title,
+        release_date: w.year ? `${String(w.year).slice(0, 4)}-01-01` : "",
+        tmdb_id: w.tmdbId,
+        type: w.mediaType === "movie" ? "Movie" : "TV",
+      });
+      setDetailFrom("person");
+      setView("detail");
+      return;
+    }
+    if (w.bgmId) {
+      setDetailItem({
+        guid: `discover-bgm-${w.bgmId}`,
+        title: w.title,
+        release_date: w.year ? String(w.year) : "",
+        poster: w.poster ? bgmImg(w.poster) : undefined,
+        bgm_id: w.bgmId,
+        type: "TV",
+      });
+      setDetailFrom("person");
+      setView("detail");
+    }
+    // 两种 id 都没有：不做跳转（卡片仍保留 hover 反馈）
   }, []);
 
   useEffect(() => {
@@ -1092,13 +1134,15 @@ function App() {
               <DetailView
                 base={detailItem}
                 onOpenTmdb={openTmdbRecommendation}
+                onOpenPerson={openPerson}
                 onBack={() => {
                   // 返回动画：目标 pane 补一次进入淡入（class 添加即触发，animationend 后移除）
                   if (detailFrom === "lib") setLibEnterAnim(true);
                   // [lc-1615] history 不补 pageAnim：本 pane 重新挂载时自带 view-in。
                   // （pageAnim 只被 home/discover 的 animationend 清理；目标 pane 非激活时会滞留，
                   //   下次进首页才补播一次「过期的」淡入。）
-                  else if (detailFrom !== "history") setPageAnim("view-in");
+                  // [lc-1700] person 同理（演员页 pane 重新挂载自带 view-in）。
+                  else if (detailFrom !== "history" && detailFrom !== "person") setPageAnim("view-in");
                   setView(
                     detailFrom === "discover"
                       ? "discover"
@@ -1106,10 +1150,21 @@ function App() {
                         ? "lib"
                         : detailFrom === "history"
                           ? "history"
-                          : "home",
+                          : detailFrom === "person"
+                            ? "person"
+                            : "home",
                   );
                 }}
               />
+            </div>
+          )}
+          {/* [lc-1700] 演员页：条件挂载 + 延迟卸载（与详情页同套 view-in/view-out 转场）。
+              返回 → setView("detail")，detailItem 原样保留（从哪部作品进来就回哪部）。 */}
+          {(view === "person" || personMounted) && personTarget && (
+            <div
+              className={`view-pane active${personClosing ? " view-out" : " view-in"}${view !== "person" ? " pane-exit" : ""}`}
+            >
+              <PersonPage target={personTarget} onBack={() => setView("detail")} onOpenWork={openPersonWork} />
             </div>
           )}
         </div>

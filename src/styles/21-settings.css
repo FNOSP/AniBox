@@ -517,6 +517,45 @@
   align-items: stretch;
   gap: 6px;
 }
+/* ── [bili-qr] B 站扫码登录：二维码居中展示（SVG data URI，后端生成） ── */
+.set-qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  margin-top: 4px;
+  background: var(--input-bg);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+}
+.set-qr-img {
+  display: block;
+  width: 200px;
+  height: 200px;
+  padding: 6px;
+  box-sizing: border-box;
+  background: #fff;
+  border-radius: 6px;
+}
+.set-qr-tip {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  text-align: center;
+}
+.set-qr-tip.ok {
+  color: var(--accent);
+}
+.set-qr-tip.err {
+  color: #e5484d;
+}
+.set-qr-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
 .set-ta {
   width: 100%;
   box-sizing: border-box;

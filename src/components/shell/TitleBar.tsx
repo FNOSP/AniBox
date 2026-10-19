@@ -1,320 +1,40 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Copy as IcoCopy, Menu as IcoMenuL, Minus as IcoMinus, Square as IcoSquare, X as IcoXL } from "lucide-react";
 import { ChromeTone } from "../../types";
+import type { MediaItem } from "../../types";
+import { Tone, useAdaptiveTone } from "../../lib/adaptiveTone";
+import { SearchLauncher } from "../search/SearchLauncher";
 
-/* ────────────────────────── 顶栏二值色调采样 ──────────────────────────
- * [lc-1703] 用户否掉了上一版 `mix-blend-mode: difference`：反相结果是彩色/半透明/灰，
- * 要求图标/文字**要么实心纯白、要么实心纯黑**（完全不透明），按背景亮度自动二选一。
- *
- * 策略（优先级从高到低）：
- *   1) 在顶栏 40px 高度的一条横带上取若干采样点，用 `elementsFromPoint` 穿透顶栏浮层，
- *      找到**实际**压在下面的背景元素：
- *        · <img> / background-image:url(...) → 用 canvas 画它"顶栏那一条"再算平均亮度；
- *        · 纯色 background-color → 直接按颜色算亮度（alpha<1 时与主题底色合成）。
- *   2) 图片跨域污染 canvas / 加载失败 / 根本没找到背景 → 回退到主题：
- *      浅色主题 → 纯黑图标；深色主题 → 纯白图标。
- *
- * 亮度阈值 150（0–255）：高 → data-tone="light"（背景亮，图标纯黑）；
- * 低 → data-tone="dark"（背景暗，图标纯白）。
- * 采样成本：1s 轮询，但只有"背景签名"（图 URL / 颜色 / 尺寸 / 主题）变化时才真正读像素；
- * resize 200ms 防抖、主题 class 变化、页面切换都会强制重采。
- * ───────────────────────────────────────────────────────────────────── */
-
-type TbTone = "light" | "dark";
-
-const TONE_LUMA_THRESHOLD = 150;
-/** 顶栏高度（与 CSS .titlebar height 保持一致） */
+/* [lc-1709] 顶栏二值色调采样已抽到 src/lib/adaptiveTone.ts（与详情页头图共用同一实现）。
+ * 这里只声明顶栏的采样区域：窗口顶部 40px 横带；跳过顶栏自身浮层，穿透到真实背景。 */
 const SAMPLE_BAND = 40;
-/** 顶栏自身的浮层：采样时跳过，穿透到真实背景 */
 const OVERLAY_SELECTOR = ".titlebar, .tb-brand-layer, .tb-close-layer";
 
-type CssColor = { r: number; g: number; b: number; a: number };
-type BackdropCand = { el: Element; kind: "image" | "color" };
-
-function parseCssColor(input: string): CssColor | null {
-  const m = input.match(
-    /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?\s*\)/i,
-  );
-  if (!m) return null;
-  return {
-    r: Number(m[1]),
-    g: Number(m[2]),
-    b: Number(m[3]),
-    a: m[4] === undefined ? 1 : Number(m[4]),
-  };
-}
-
-function relLuma(r: number, g: number, b: number): number {
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-function isDarkTheme(): boolean {
-  return document.documentElement.classList.contains("dark");
-}
-
-/** 主题兜底：浅色主题背景亮 → 纯黑图标；深色主题背景暗 → 纯白图标 */
-function themeTone(): TbTone {
-  return isDarkTheme() ? "dark" : "light";
-}
-
-/** 主题底色（用于把半透明背景色合成出不透明结果） */
-function themeBase(): [number, number, number] {
-  return isDarkTheme() ? [13, 15, 22] : [246, 248, 252];
-}
-
-function extractCssUrl(bgImage: string): string | null {
-  const m = bgImage.match(/url\((['"]?)(.*?)\1\)/i);
-  return m ? m[2] : null;
-}
-
-function classifyBackdrop(el: Element): "image" | "color" | null {
-  if (el instanceof HTMLImageElement) {
-    return (el.currentSrc || el.src) && el.naturalWidth > 0 ? "image" : null;
-  }
-  const cs = getComputedStyle(el);
-  const bi = cs.backgroundImage;
-  if (bi && bi !== "none" && bi.includes("url(")) return "image";
-  const c = parseCssColor(cs.backgroundColor);
-  if (c && c.a > 0.05) return "color";
-  return null;
-}
-
-/** 沿顶栏横带取采样点，穿透浮层拿到真实背景元素（每个点取最上层可采样者） */
-function pickBackdrops(): BackdropCand[] {
+function titlebarPoints(): { x: number; y: number }[] {
   const w = window.innerWidth;
   const h = window.innerHeight;
   if (w <= 0 || h <= 0) return [];
   const y = Math.min(SAMPLE_BAND / 2, h - 1);
-  const xs = [0.05, 0.2, 0.35, 0.5, 0.65, 0.8, 0.95].map((r) =>
-    Math.min(w - 1, Math.round(w * r)),
+  return [0.05, 0.2, 0.35, 0.5, 0.65, 0.8, 0.95].map((r) => ({
+    x: Math.min(w - 1, Math.round(w * r)),
+    y,
+  }));
+}
+
+/** 顶栏色调：初始值直接取主题，避免首帧闪白/闪黑。 */
+function useTitlebarTone(page?: string, nav?: boolean): Tone {
+  return useAdaptiveTone(
+    {
+      points: titlebarPoints,
+      overlaySelector: OVERLAY_SELECTOR,
+      band: () => ({ top: 0, bottom: SAMPLE_BAND }),
+      extraKey: `${page ?? ""}|${nav ? 1 : 0}`,
+    },
+    [page, nav],
   );
-  const seen = new Set<Element>();
-  const out: BackdropCand[] = [];
-  for (const x of xs) {
-    const stack = document.elementsFromPoint(x, y);
-    for (const el of stack) {
-      if (el.closest(OVERLAY_SELECTOR)) continue;
-      const kind = classifyBackdrop(el);
-      if (!kind) continue;
-      if (!seen.has(el)) {
-        seen.add(el);
-        out.push({ el, kind });
-      }
-      break;
-    }
-  }
-  return out;
 }
-
-/** 背景签名：用于避免每秒重复读像素 */
-function backdropSignature(): string {
-  const parts = pickBackdrops().map(({ el, kind }) => {
-    const r = el.getBoundingClientRect();
-    const box = `${kind}:${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)},${Math.round(r.height)}`;
-    if (el instanceof HTMLImageElement) return `${box}:${el.currentSrc || el.src}`;
-    const cs = getComputedStyle(el);
-    return `${box}:${cs.backgroundImage}:${cs.backgroundColor}`;
-  });
-  return `${parts.join(";")}|${window.innerWidth}x${window.innerHeight}|${isDarkTheme() ? "d" : "l"}`;
-}
-
-/** 纯色背景亮度：alpha < 1 时与主题底色合成 */
-function colorLuma(el: Element): number | null {
-  const c = parseCssColor(getComputedStyle(el).backgroundColor);
-  if (!c) return null;
-  const [br, bg, bb] = themeBase();
-  const r = c.r * c.a + br * (1 - c.a);
-  const g = c.g * c.a + bg * (1 - c.a);
-  const b = c.b * c.a + bb * (1 - c.a);
-  return relLuma(r, g, b);
-}
-
-const imageCache = new Map<string, Promise<HTMLImageElement | null>>();
-
-function loadImage(src: string): Promise<HTMLImageElement | null> {
-  const hit = imageCache.get(src);
-  if (hit) return hit;
-  const p = new Promise<HTMLImageElement | null>((resolve) => {
-    const img = new Image();
-    let settled = false;
-    let timer = 0;
-    const done = (v: HTMLImageElement | null) => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timer);
-      resolve(v);
-    };
-    img.crossOrigin = "anonymous"; // 不带会被画布污染 → getImageData 抛 SecurityError
-    img.decoding = "async";
-    img.onload = () => done(img);
-    img.onerror = () => {
-      imageCache.delete(src); // 失败不永久缓存，后续轮询可重试
-      done(null);
-    };
-    // 兜底：网络挂起时别让 busy 永远卡住
-    timer = window.setTimeout(() => {
-      imageCache.delete(src);
-      done(null);
-    }, 4000);
-    img.src = src;
-  });
-  imageCache.set(src, p);
-  return p;
-}
-
-/**
- * 取"元素在顶栏那一条"的平均亮度。
- * <img> 走 object-fit 的 cover/contain/fill 映射；CSS background-image 用 background-size 近似。
- * 跨域污染 / 图片加载失败 → null（调用方走主题兜底）。
- */
-async function imageLuma(el: Element): Promise<number | null> {
-  const rect = el.getBoundingClientRect();
-  if (rect.width < 1 || rect.height < 1) return null;
-
-  let src: string | null = null;
-  let natW = 0;
-  let natH = 0;
-  let fit: "cover" | "contain" | "fill" = "fill";
-
-  if (el instanceof HTMLImageElement) {
-    src = el.currentSrc || el.src;
-    natW = el.naturalWidth;
-    natH = el.naturalHeight;
-    const of = getComputedStyle(el).objectFit;
-    fit = of === "cover" || of === "contain" ? of : "fill";
-  } else {
-    const cs = getComputedStyle(el);
-    src = extractCssUrl(cs.backgroundImage);
-    const bs = cs.backgroundSize;
-    fit = bs === "cover" ? "cover" : bs === "contain" ? "contain" : "fill";
-  }
-  if (!src) return null;
-
-  const img = await loadImage(src);
-  if (!img) return null;
-  if (!natW || !natH) {
-    natW = img.naturalWidth;
-    natH = img.naturalHeight;
-  }
-  if (!natW || !natH) return null;
-
-  // 顶栏横带 [0, SAMPLE_BAND] 与该元素可见矩形的交集（元素局部坐标）
-  const localTop = Math.max(0, -rect.top);
-  const localBottom = Math.min(SAMPLE_BAND, rect.bottom) - rect.top;
-  if (localBottom <= localTop) return null;
-
-  let sx = 0;
-  let sy = 0;
-  let sw = natW;
-  let sh = natH;
-  if (fit === "cover" || fit === "contain") {
-    const scale =
-      fit === "cover"
-        ? Math.max(rect.width / natW, rect.height / natH)
-        : Math.min(rect.width / natW, rect.height / natH);
-    const dispW = natW * scale;
-    const dispH = natH * scale;
-    const offX = (dispW - rect.width) / 2; // cover 时为裁掉的量；contain 时可能为负（留白）
-    const offY = (dispH - rect.height) / 2;
-    sx = Math.max(0, offX) / scale;
-    sy = Math.max(0, offY) / scale + localTop / scale;
-    sw = Math.min(natW - sx, rect.width / scale);
-    sh = Math.min(natH - sy, (localBottom - localTop) / scale);
-  } else {
-    sy = (localTop / rect.height) * natH;
-    sh = ((localBottom - localTop) / rect.height) * natH;
-  }
-  if (sw <= 0 || sh <= 0) return null;
-
-  const dw = 64;
-  const dh = Math.max(1, Math.min(16, Math.round(dw * (sh / sw))));
-  const cv = document.createElement("canvas");
-  cv.width = dw;
-  cv.height = dh;
-  const ctx = cv.getContext("2d", { willReadFrequently: true });
-  if (!ctx) return null;
-  try {
-    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, dw, dh);
-    const { data } = ctx.getImageData(0, 0, dw, dh);
-    let sum = 0;
-    let n = 0;
-    for (let i = 0; i < data.length; i += 4) {
-      const a = data[i + 3] / 255;
-      if (a === 0) continue;
-      sum += relLuma(data[i], data[i + 1], data[i + 2]) * a;
-      n += a;
-    }
-    return n > 0 ? sum / n : null;
-  } catch {
-    return null; // 跨域污染（SecurityError）→ 兜底主题
-  }
-}
-
-async function sampleTone(): Promise<TbTone> {
-  const cands = pickBackdrops();
-  const lumas: number[] = [];
-  for (const c of cands) {
-    const l = c.kind === "image" ? await imageLuma(c.el) : colorLuma(c.el);
-    if (l != null) lumas.push(l);
-  }
-  if (!lumas.length) return themeTone();
-  const avg = lumas.reduce((a, b) => a + b, 0) / lumas.length;
-  return avg > TONE_LUMA_THRESHOLD ? "light" : "dark";
-}
-
-/** 顶栏色调：初始值直接取主题，避免首帧闪白/闪黑 */
-function useTitlebarTone(page?: string, nav?: boolean): TbTone {
-  const [tone, setTone] = useState<TbTone>(() => themeTone());
-  const busyRef = useRef(false);
-  const sigRef = useRef("");
-
-  useEffect(() => {
-    let alive = true;
-    let timer = 0;
-
-    const run = async (force: boolean) => {
-      if (!alive || busyRef.current) return;
-      busyRef.current = true;
-      try {
-        const sig = backdropSignature();
-        if (!force && sig === sigRef.current) return;
-        sigRef.current = sig;
-        const next = await sampleTone();
-        if (alive) setTone((prev) => (prev === next ? prev : next));
-      } catch {
-        // 采样失败静默：保留上一次 tone（首帧则保留主题兜底）
-      } finally {
-        busyRef.current = false;
-      }
-    };
-    const schedule = (delay: number) => {
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => void run(true), delay);
-    };
-
-    const raf = requestAnimationFrame(() => void run(true));
-    const poll = window.setInterval(() => void run(false), 1000);
-    const onResize = () => schedule(200);
-    window.addEventListener("resize", onResize);
-    // 主题切换 = <html> class 变化；页面/轮播内容变化由轮询签名兜住
-    const mo = new MutationObserver(() => schedule(0));
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
-
-    return () => {
-      alive = false;
-      cancelAnimationFrame(raf);
-      window.clearInterval(poll);
-      window.clearTimeout(timer);
-      window.removeEventListener("resize", onResize);
-      mo.disconnect();
-    };
-  }, [page, nav]);
-
-  return tone;
-}
-
 export function TitleBar({
   title,
   nav,
@@ -325,6 +45,8 @@ export function TitleBar({
   refreshing,
   onToggleTheme,
   onHome,
+  onSearchOpenItem,
+  searchDisabled,
 }: {
   title: string;
   nav?: boolean;
@@ -340,6 +62,10 @@ export function TitleBar({
   chrome?: ChromeTone;
   /** [lc-1661] 点击左上角页名快速回首页；不传则仍渲染为纯文本（向后兼容） */
   onHome?: () => void;
+  /** [lc-1725] 顶栏全局搜索：选中结果后的跳转（不传则不渲染搜索入口） */
+  onSearchOpenItem?: (item: MediaItem) => void;
+  /** [lc-1725] 登录页/游客态禁用搜索（不渲染入口） */
+  searchDisabled?: boolean;
 }) {
   const win = getCurrentWindow();
   const tone = useTitlebarTone(page, nav);
@@ -434,6 +160,8 @@ export function TitleBar({
         {/* [lc-1702] 中部只保留窗口按钮里的最小化/最大化（关闭键独立成层）。
             整条顶栏仍是拖拽区：中间的空白不拦截拖拽。 */}
         <div className="tb-right" data-tauri-drag-region>
+          {/* [lc-1725] 全局搜索入口：胶囊按钮 + Ctrl/Cmd+K；不参与拖拽 */}
+          {onSearchOpenItem && <SearchLauncher onOpenItem={onSearchOpenItem} disabled={searchDisabled} />}
           <div className="tb-buttons">
             <button className="tb-btn" title="最小化" onClick={() => win.minimize()}>
               <IcoMinus size={16} strokeWidth={1.8} />

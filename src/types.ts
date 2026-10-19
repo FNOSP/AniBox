@@ -73,11 +73,52 @@ export type MediaItem = {
   ts?: number;
   duration?: number;
   air_date?: string;
+  /** [lc-1713] item/list 的剧集/季元数据（媒体库卡片聚合展示用；部分条目缺省） */
+  number_of_episodes?: number;
+  number_of_seasons?: number;
+  local_number_of_episodes?: number;
+  local_number_of_seasons?: number;
+  /** [lc-1713] 入库时间（秒级时间戳或日期串），媒体库卡片「最近更新」用 */
+  create_time?: number | string;
   media_stream?: unknown;
   /** [lc-1444] 发现页条目自带的 TMDB id（无飞牛 guid 时用它直连 TMDB 定位） */
   tmdb_id?: number;
   /** [lc-1444] 已知的 Bangumi subject id（发现页右栏新番表条目自带）：详情页直连，免标题匹配 */
   bgm_id?: number;
+  /** [lc-1720] 本地元数据覆盖用的剧 guid（部分接口把剧 guid 放在这些字段里） */
+  series_guid?: string;
+  parent_guid?: string;
+  /** [lc-1720] 后端覆盖后给集/季条目补的剧级字段（前端可选使用） */
+  series_poster?: string;
+  series_rating?: number;
+};
+
+/** [lc-1725] 全局聚合搜索：后端 search_items 归一后的单条结果。
+ *  `item` 是飞牛原始条目（MediaItem），进详情页直接复用；其余字段供下拉列表展示。 */
+export type SearchResultItem = {
+  guid: string;
+  title: string;
+  /** 飞牛类型：Movie / TV / LiveChannel / Person / Video / Episode / Season … */
+  type: string;
+  poster: string;
+  /** 从 release_date/first_air_date 提取的 4 位年份；缺失为空串 */
+  year: string;
+  /** vote_average 原值（字符串，如 "8.5"）；缺失为空串 */
+  rating: string;
+  episodes: number | null;
+  seasons: number | null;
+  /** 人物结果的作品数（number_of_item）；非人物为 null */
+  works: number | null;
+  overview: string;
+  item: MediaItem;
+};
+
+export type SearchResponse = {
+  list: SearchResultItem[];
+  total: number;
+  query: string;
+  category?: string | null;
+  page?: number;
 };
 
 /** play/list（继续观看）返回的条目，camelCase 为主，读取时做双格式兼容 */
@@ -101,6 +142,33 @@ export type Episode = {
   /** media_stream.resolutions[0] 去 p 尾（如 1080），原版标题旁的清晰度小徽标 */
   quality?: string;
   media_stream?: { resolutions?: string[] } | null;
+};
+
+/**
+ * [版本] 同一剧/集的多版本（多文件）—— 对应飞牛 `GET /v/api/v1/stream/list/{guid}`
+ * 的 `video_streams[]`（照抄 FlyNarwhal `VideoStream`）。
+ *
+ * 飞牛服务端把「同一剧集的两个版本」归到同一个 item 下，每个媒体文件一条视频流，
+ * `media_guid` 不同；客户端以 `video_streams.length > 1` 判定多版本。
+ */
+export type MediaVersion = {
+  media_guid: string;
+  title?: string;
+  /** 分辨率（如 1080 / 2160；展示时 toUpperCase） */
+  resolution_type?: string;
+  /** 色域（如 SDR / HDR / DolbyVision；DolbyVision 显示「杜比视界」） */
+  color_range_type?: string;
+  codec_name?: string;
+  codec_type?: string;
+  width?: number;
+  height?: number;
+  bit_depth?: number;
+  dv_profile?: number;
+  bps?: number;
+  duration?: number;
+  is_bluray?: boolean;
+  /** 占位视频流（STRM 等，ext1 == -1） */
+  is_not_exist?: boolean;
 };
 
 

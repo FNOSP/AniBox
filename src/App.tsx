@@ -10,6 +10,8 @@ import { Lock as IcoLock } from "lucide-react";
 import { DetailView } from "./components/detail/DetailView";
 // [lc-1654] 海报卡「⋯ → 编辑元数据」复用详情页同一套弹层
 import { MetaEditModal, type MetaTarget } from "./components/detail/MetaEditModal";
+// [lc-1720] 海报卡「⋯ → 刷新元数据」改为手动获取（TMDB/BGM 镜像搜索 + 本地覆盖）
+import { MetadataPickerModal, type MetadataPickTarget } from "./components/common/MetadataPickerModal";
 import { DiscoverView } from "./components/discover/DiscoverView";
 // [lc-1615] 观影记录页（侧栏快捷操作卡入口；飞牛 play/list ∪ 本机播放历史）
 import { WatchHistoryView } from "./components/history/WatchHistoryView";
@@ -85,6 +87,8 @@ function App() {
   const [detailItem, setDetailItem] = useState<MediaItem | null>(null);
   // [lc-1654] 海报卡「⋯ → 编辑元数据」的目标（弹层挂在 App 根部，不塞进卡片）
   const [posterMetaTarget, setPosterMetaTarget] = useState<MetaTarget | null>(null);
+  // [lc-1720] 海报卡「⋯ → 刷新元数据」→ 手动获取元数据弹窗
+  const [posterPickTarget, setPosterPickTarget] = useState<MetadataPickTarget | null>(null);
   // [lc-1444] 进详情的来源（返回键的目标）：lib = 库里进，discover = 发现页进，home = 首页进。
   // 不用 view 现查 —— 用户从发现页进详情后 view 已是 "detail"，现查只能靠猜。
   // [lc-1615] 增加 history = 观影记录页进。
@@ -669,17 +673,17 @@ function App() {
       type: item.type === "Movie" ? "Movie" : "TV",
     });
   }, []);
-  const posterRefreshMeta = useCallback(
-    async (item: MediaItem) => {
-      try {
-        await invoke("refresh_item", { guid: item.guid, mode: "immediate" });
-        onRefresh();
-      } catch {
-        /* 刷新失败保持原状 */
-      }
-    },
-    [onRefresh],
-  );
+  // [lc-1720] 「刷新元数据」不再让飞牛重刮，而是打开手动获取弹窗：
+  //   默认填当前标题 → TMDB/BGM 镜像搜索 → 选定后只写本地，按剧 guid 覆盖后续展示。
+  const posterRefreshMeta = useCallback((item: MediaItem) => {
+    const seriesGuid = String(item.series_guid || item.guid || "").trim();
+    if (!seriesGuid) return;
+    setPosterPickTarget({
+      seriesGuid,
+      title: String(item.title || item.tv_title || "").trim(),
+      mediaType: item.type === "Movie" ? "movie" : "tv",
+    });
+  }, []);
 
   // [lc-1600] 从登录页进入游客模式（标记已由 LoginPage 写入）：切态 + 切首页；
   // 内存里已有数据（引导弹窗折返回登录页又点「先逛逛」）就直接复用，不重拉。
@@ -977,6 +981,24 @@ function App() {
     setDetailFrom("history");
     setView("detail");
   }, []);
+
+  // [lc-1725] 顶栏全局搜索选中结果 → 复用现有详情链路。
+  //   返回目标沿用当前页（库/观影记录/发现）；已在详情页时不改，保持原返回目标。
+  const openSearchItem = useCallback(
+    (item: MediaItem) => {
+      if (guest) {
+        setGuestAsk(true);
+        return;
+      }
+      setDetailItem(item);
+      if (view === "lib") setDetailFrom("lib");
+      else if (view === "history") setDetailFrom("history");
+      else if (view === "discover") setDetailFrom("discover");
+      else if (view !== "detail") setDetailFrom("home");
+      setView("detail");
+    },
+    [guest, view],
+  );
 
   // [lc-1700] 详情页演职人员 → 演员页（target 只带 source/id/name/profile）
   const openPerson = useCallback((t: PersonTarget) => {
@@ -1283,6 +1305,7 @@ function App() {
               {/* [lc-1444] 返回目标按进详情的来源（detailFrom）决定，不用 view/activeLib 现猜 */}
               <DetailView
                 base={detailItem}
+                continueList={continueList}
                 onOpenTmdb={openTmdbRecommendation}
                 onOpenPerson={openPerson}
                 onBack={() => {
@@ -1406,6 +1429,9 @@ function App() {
         onToggleTheme={toggleTheme}
         // [lc-1661] 顶栏左上角「首页/发现」可点击：快速回首页（goHome 有内存数据就不重拉）。
         onHome={goHome}
+        // [lc-1725] 顶栏全局搜索：选中结果进详情；登录页/游客态不渲染入口。
+        onSearchOpenItem={openSearchItem}
+        searchDisabled={view === "login" || guest}
       />
       {err && view !== "login" && <div className="err global-err">{err}</div>}
       {settingsOpen && (
@@ -1529,6 +1555,17 @@ function App() {
           onClose={() => setPosterMetaTarget(null)}
           onDone={() => {
             setPosterMetaTarget(null);
+            onRefresh();
+          }}
+        />
+      )}
+      {/* [lc-1720] 海报卡「⋯ → 刷新元数据」→ 手动获取元数据弹层（保存后刷新当前视图） */}
+      {posterPickTarget && (
+        <MetadataPickerModal
+          target={posterPickTarget}
+          onClose={() => setPosterPickTarget(null)}
+          onDone={() => {
+            setPosterPickTarget(null);
             onRefresh();
           }}
         />

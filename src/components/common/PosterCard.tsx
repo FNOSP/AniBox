@@ -24,10 +24,56 @@ import { MediaItem } from "../../types";
 /** 真实媒体条目才显示四项操作（Directory / discover-* 占位不要） */
 const REAL_MEDIA_TYPES = new Set(["Movie", "TV", "Episode", "Video"]);
 
+const numOf = (v: unknown): number => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+/** 入库时间紧凑展示：支持秒/毫秒时间戳与 "YYYY-MM-DD" 字符串 → "M/D"。 */
+const fmtShortDate = (v: unknown): string => {
+  const asDate = (n: number): string => {
+    if (!Number.isFinite(n) || n <= 0) return "";
+    const d = new Date(n > 1e12 ? n : n * 1000);
+    return Number.isNaN(d.getTime()) ? "" : `${d.getMonth() + 1}/${d.getDate()}`;
+  };
+  if (typeof v === "number") return asDate(v);
+  const s = String(v ?? "").trim();
+  if (/^\d{9,}$/.test(s)) return asDate(Number(s));
+  const m = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${Number(m[2])}/${Number(m[3])}` : "";
+};
+
+/** [lc-1714] 卡片元信息行：字段全部来自 item/list，缺失项直接隐藏（不占位）。
+ *  参考飞牛原生卡片：年份 · 季/集 · 更新日期，继续观看剩余时长。 */
+function buildCardMeta(item: MediaItem): { line: string; remain: string } {
+  const dateStr = String(item.release_date || item.air_date || "");
+  const year = /^\d{4}/.test(dateStr) ? dateStr.slice(0, 4) : "";
+  const seasons = numOf(item.number_of_seasons) || numOf(item.local_number_of_seasons);
+  const episodes = numOf(item.number_of_episodes) || numOf(item.local_number_of_episodes);
+  const updated = fmtShortDate(item.create_time);
+  const parts = [
+    year,
+    seasons > 0 ? `${seasons} 季` : "",
+    episodes > 0 ? `共 ${episodes} 集` : "",
+    updated ? `更新 ${updated}` : "",
+  ].filter(Boolean);
+
+  const ts = numOf(item.ts);
+  const duration = numOf(item.duration);
+  const remain =
+    duration > 0 && ts > 0 && ts < duration
+      ? `剩余 ${Math.max(1, Math.round((duration - ts) / 60))} 分钟`
+      : "";
+
+  return { line: parts.join(" · "), remain };
+}
+
+
 export function PosterCard({
   item,
   onOpen,
   subtitle,
+  showMeta,
   onEditMeta,
   onRefreshMeta,
   onShowDetail,
@@ -37,6 +83,8 @@ export function PosterCard({
   item: MediaItem;
   onOpen: (item: MediaItem) => void;
   subtitle?: string;
+  /** [lc-1714] 首页媒体库行：标题下方补充年份/季集/更新时间/续看剩余（缺字段自动隐藏） */
+  showMeta?: boolean;
   /** [lc-1654] 父组件注入：打开元数据编辑弹窗 */
   onEditMeta?: (item: MediaItem) => void;
   /** [lc-1654] 父组件注入：刷新元数据（缺省时卡片自己调 refresh_item） */
@@ -50,6 +98,7 @@ export function PosterCard({
   const isPlayable = item.type === "Movie" || item.type === "Episode";
   const progress =
     item.ts && item.duration && item.duration > 0 ? Math.min(100, (item.ts / item.duration) * 100) : 0;
+  const meta = showMeta ? buildCardMeta(item) : null;
 
   const [watched, setWatched] = useState(item.watched === 1);
   const [favorited, setFavorited] = useState(item.is_favorite === 1);
@@ -154,12 +203,17 @@ export function PosterCard({
   const doRefreshMeta = (e: MouseEvent) => {
     stop(e);
     setMenuOpen(false);
-    if (onRefreshMeta) onRefreshMeta(item);
-    else void invoke("refresh_item", { guid: item.guid, mode: "immediate" }).catch(() => {});
+    // [lc-1720] 「刷新元数据」已改为手动获取（弹窗由父组件注入）；未注入时不做任何事，
+    // 不再直接调用飞牛的 refresh_item 重刮。
+    onRefreshMeta?.(item);
   };
 
   return (
-    <div className="card" onClick={() => onOpen(item)} title={item.title}>
+    <div
+      className={`card${showMeta ? " card-meta-center" : ""}`}
+      onClick={() => onOpen(item)}
+      title={item.title}
+    >
       <div className="poster-box">
         {item.poster ? (
           <>
@@ -243,6 +297,12 @@ export function PosterCard({
       </div>
       <div className="card-title">{subtitle || item.title}</div>
       {subtitle && item.title !== subtitle && <div className="card-sub">{item.title}</div>}
+      {meta && (meta.line || meta.remain) && (
+        <div className="card-meta">
+          {meta.line && <div className="card-meta-line">{meta.line}</div>}
+          {meta.remain && <div className="card-meta-cont">{meta.remain}</div>}
+        </div>
+      )}
     </div>
   );
 }

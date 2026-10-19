@@ -32,7 +32,7 @@ import { fmtDur, pick } from "../../lib/format";
 import { bgmImg, imgUrl, pickLargestImg, tmdbImg } from "../../lib/images";
 import { prefersReducedMotion } from "../../lib/motion";
 import { useRefresh } from "../../hooks/useRefresh";
-import { BgmCharacter, BgmComment, BgmEpisodeRow, BgmMatch, BgmPerson, BgmRelated, BgmReview, BgmTag, Episode, MediaItem, PersonTarget, Season, TmdbCreditPerson, TmdbCredits } from "../../types";
+import { BgmCharacter, BgmComment, BgmEpisodeRow, BgmMatch, BgmPerson, BgmRelated, BgmReview, BgmTag, Episode, MediaItem, MediaVersion, PersonTarget, PlayItem, Season, TmdbCreditPerson, TmdbCredits } from "../../types";
 
 
 /* ══════════════════ 选集显示样式（用户可切换，localStorage 持久化） ══════════════════
@@ -77,9 +77,229 @@ function readEpViewMode(): EpViewMode {
   }
 }
 
+/* ══════════════════ [版本] 同一剧/集的多版本（多文件）══════════════════
+   照抄 FlyNarwhal（lib/ui/features/movie_detail/movie_detail_screen.dart）：
+   · 飞牛服务端把同一剧集的多个版本归到同一个 item；`stream/list` 的
+     `video_streams[]` 每个文件一条（各自 media_guid），长度 > 1 即「多版本」。
+   · 展示标签 = 分辨率大写 + 色域；`DolbyVision` 显示「杜比视界」。
+   · 默认选中 = play/info 的 media_guid（服务端记住的上次播放版本）→ 本地记忆 → 第一条。
+   · 用户选择写入 localStorage（每个条目/集 guid 一条），下次进入沿用。 */
+const MEDIA_VERSION_KEY_PREFIX = "fntv-media-version:";
+
+function readMediaVersion(guid: string): string {
+  try {
+    return localStorage.getItem(MEDIA_VERSION_KEY_PREFIX + guid)?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function saveMediaVersion(guid: string, mediaGuid: string) {
+  try {
+    if (guid && mediaGuid) localStorage.setItem(MEDIA_VERSION_KEY_PREFIX + guid, mediaGuid);
+  } catch {
+    /* localStorage 不可用：仅本次会话生效 */
+  }
+}
+
+/** 版本盒子文案（与 FlyNarwhal `_MediaSourceBoxes` 同口径）。 */
+function versionLabel(v: MediaVersion): string {
+  const res = String(v.resolution_type ?? "").trim().toUpperCase();
+  const colorRaw = String(v.color_range_type ?? "").trim();
+  const color = colorRaw === "DolbyVision" ? "杜比视界" : colorRaw;
+  const label = [res, color].filter(Boolean).join(" ").trim();
+  return label || String(v.title ?? "").trim() || "默认版本";
+}
+
+/** 默认版本优先级：本地记忆 → play/info（服务端上次播放）→ 第一条。 */
+function chooseMediaVersion(guid: string, versions: MediaVersion[], serverSelected?: string): string {
+  const remembered = readMediaVersion(guid);
+  if (remembered && versions.some((v) => v.media_guid === remembered)) return remembered;
+  if (serverSelected && versions.some((v) => v.media_guid === serverSelected)) return serverSelected;
+  return versions[0]?.media_guid ?? "";
+}
+
+/* ══════════════════ [选集定位] 上次观看集自动定位 ══════════════════
+   目标：打开剧集详情页时，把右栏选集滚到「上次观看的那一集」，而不是停在顶部。
+   数据来源（全部复用现有能力，不新增接口）：
+     ① 继续观看 play/list（App 的 continueList）—— 条目级最近记录，含 guid/parent_guid/
+        season_number/episode_number；
+     ② 本机集列表自带的进度（episode.ts / duration / watched）—— 当前季兜底；
+     ③ 详情页 base 自带的 season_number / episode_number —— 最后兜底。
+   匹配优先级：父季 guid / 条目 guid（当前季） > 父剧 guid > 标题匹配 > 本地进度 > base。
+   跨季时先切季，等该季 episodes 到位后再定位；每个条目只自动定位一次。 */
+
+type EpisodeLocateTarget = {
+  /** 目标季下标；-1 = 未知（沿用当前季） */
+  seasonIdx: number;
+  /** 目标集 guid（最可靠） */
+  guid?: string;
+  /** 目标集号（guid 找不到时按集号兜底） */
+  num?: number;
+};
+
+/** play/list 字段双格式读取（snake_case / camelCase）。 */
+function locateStr(it: PlayItem, keys: string[]): string {
+  for (const k of keys) {
+    const v = it[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  }
+  return "";
+}
+
+function locateNum(it: PlayItem, keys: string[]): number | null {
+  for (const k of keys) {
+    const v = it[k];
+    const n = typeof v === "number" ? v : typeof v === "string" && v.trim() ? Number(v) : NaN;
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+/** 标题归一化：忽略大小写、空白与常见分隔符（play/list 的 tv_title 与库内标题常有细微差异）。 */
+function locateTitleKey(s: string): string {
+  return s.trim().toLowerCase().replace(/[\s·:：\-—_]+/g, "");
+}
+
+/** 解析「上次观看」目标集。返回 null = 没有任何可用记录（保持默认：第一集/顶部）。 */
+function resolveEpisodeLocateTarget(args: {
+  base: MediaItem;
+  seasons: Season[];
+  episodes: Episode[];
+  seasonIdx: number;
+  continueList: PlayItem[];
+}): EpisodeLocateTarget | null {
+  const { base, seasons, episodes, seasonIdx, continueList } = args;
+  const seasonIdxByGuid = new Map<string, number>();
+  const seasonIdxByNo = new Map<number, number>();
+  seasons.forEach((s, i) => {
+    if (s.guid) seasonIdxByGuid.set(s.guid, i);
+    const n = Number(s.season_number);
+    if (Number.isFinite(n)) seasonIdxByNo.set(n, i);
+  });
+  const names = new Set(
+    [locateTitleKey(base.title), locateTitleKey(base.tv_title ?? "")].filter(Boolean),
+  );
+
+  // 强匹配（guid / 季 guid / 剧 guid）与弱匹配（仅标题）分开：弱匹配排在本地进度之后，
+  // 避免同名作品把用户带到错误的一集。
+  let best: { rank: number; at: number; order: number; target: EpisodeLocateTarget } | null = null;
+  let titleOnly: EpisodeLocateTarget | null = null;
+
+  for (let order = 0; order < continueList.length; order++) {
+    const it = continueList[order];
+    if (!it || typeof it !== "object") continue;
+    const type = locateStr(it, ["type"]).toLowerCase();
+    if (type.includes("movie")) continue;
+    const guid = locateStr(it, ["guid"]);
+    const parent = locateStr(it, ["parent_guid", "parentGuid"]);
+    const series = locateStr(it, ["series_guid", "seriesGuid"]);
+    const seasonNo = locateNum(it, ["season_number", "seasonNumber"]);
+    const epNo = locateNum(it, ["episode_number", "episodeNumber"]);
+    const name = locateStr(it, ["tv_title", "tvTitle"]) || locateStr(it, ["title"]);
+
+    let rank = 0;
+    let sIdx = -1;
+    if (guid && episodes.some((e) => e.guid === guid)) {
+      // ① 条目 guid 命中当前季集列表：最可靠
+      rank = 5;
+      sIdx = seasonIdx;
+    } else if (parent && seasonIdxByGuid.has(parent)) {
+      // ② 父季 guid 命中：跨季也能定位
+      rank = 4;
+      sIdx = seasonIdxByGuid.get(parent)!;
+    } else if (series && series === base.guid) {
+      // ③ 富化后的父剧 guid 命中
+      rank = 4;
+    } else if (parent && parent === base.guid) {
+      // ④ 部分接口把剧 guid 直接放在 parent_guid
+      rank = 3;
+    } else if (name && names.has(locateTitleKey(name)) && epNo != null && epNo > 0) {
+      // ⑤ 仅标题匹配：弱信号，放最后
+      rank = 1;
+    } else {
+      continue;
+    }
+    if (sIdx < 0 && seasonNo != null && seasonIdxByNo.has(seasonNo)) sIdx = seasonIdxByNo.get(seasonNo)!;
+    const target: EpisodeLocateTarget = { seasonIdx: sIdx, guid: guid || undefined, num: epNo ?? undefined };
+    if (rank === 1) {
+      if (!titleOnly) titleOnly = target;
+      continue;
+    }
+    const at =
+      locateNum(it, [
+        "played_at",
+        "playedAt",
+        "last_played",
+        "lastPlayed",
+        "last_played_at",
+        "lastPlayedAt",
+        "watchedAt",
+        "watched_at",
+      ]) ?? 0;
+    if (
+      !best ||
+      rank > best.rank ||
+      (rank === best.rank && (at > best.at || (at === best.at && order < best.order)))
+    ) {
+      best = { rank, at, order, target };
+    }
+  }
+  if (best) {
+    const b = best as { target: EpisodeLocateTarget };
+    return b.target;
+  }
+
+  // 本地进度兜底（当前季）：
+  //   ① 优先「有进度且未看完」的最大集号（与「继续播放」按钮同口径）；
+  //   ② 若整季都看完了，则回退到「有观看痕迹（进度>0 或 watched=1）」的最大集号
+  //      —— 避免看完最后一集后进详情页又跳回顶部。
+  const numbered = episodes
+    .map((e, i) => ({ e, num: Number(e.episode_number ?? i + 1) }))
+    .filter(({ num }) => Number.isFinite(num) && num > 0);
+  const inProgress = numbered.filter(
+    ({ e }) => (e.ts ?? 0) > 0 && !(e.duration && e.ts! >= e.duration),
+  );
+  const touched = numbered.filter(({ e }) => (e.ts ?? 0) > 0 || Number(e.watched) === 1);
+  const pool = inProgress.length ? inProgress : touched;
+  if (pool.length) {
+    const picked = pool.reduce((b, c) => (c.num > b.num ? c : b));
+    return { seasonIdx, guid: picked.e.guid, num: picked.num };
+  }
+
+  if (titleOnly) return titleOnly;
+
+  // 详情页 base 自带的当前集（例如从「继续观看」条目直接进详情）。
+  const baseNum = Number(base.episode_number ?? 0);
+  if (Number.isFinite(baseNum) && baseNum > 0) {
+    const bSeason = Number(base.season_number ?? NaN);
+    let sIdx = seasonIdx;
+    if (Number.isFinite(bSeason)) {
+      const i = seasons.findIndex((s) => Number(s.season_number) === bSeason);
+      if (i >= 0) sIdx = i;
+    }
+    return { seasonIdx: sIdx, num: baseNum };
+  }
+  return null;
+}
+
+/** 在选集容器里找目标集元素（列表行 / 网格方块都带 data-ep-guid / data-ep-num）。 */
+function findEpisodeElement(list: HTMLElement, t: EpisodeLocateTarget): HTMLElement | null {
+  const nodes = Array.from(list.querySelectorAll<HTMLElement>("[data-ep-guid], [data-ep-num]"));
+  if (t.guid) {
+    const byGuid = nodes.find((n) => n.dataset.epGuid === t.guid);
+    if (byGuid) return byGuid;
+  }
+  if (t.num != null) {
+    const byNum = nodes.find((n) => n.dataset.epNum === String(t.num));
+    if (byNum) return byNum;
+  }
+  return null;
+}
+
 /** 集号 → 展示文本。 */
-function epLabelOf(num: number, _seasonNo: number, mode: EpLabelMode): string {
-  if (mode === "num") return String(num);
+function epLabelOf(num: number, _seasonNo: number, mode: EpLabelMode): string {  if (mode === "num") return String(num);
   return `第 ${num} 集`;
 }
 
@@ -99,6 +319,7 @@ export function DetailView({
   onBack,
   onOpenTmdb,
   onOpenPerson,
+  continueList = [],
 }: {
   base: MediaItem;
   onBack: () => void;
@@ -106,11 +327,28 @@ export function DetailView({
   onOpenTmdb?: (tmdbId: number, title: string, year: string, mediaType: "tv" | "movie") => void;
   /** [lc-1700] 演职人员点击 → 打开演员页 */
   onOpenPerson?: (t: PersonTarget) => void;
+  /** [选集定位] 继续观看 play/list（App 已加载）：用于定位「上次观看集」 */
+  continueList?: PlayItem[];
 }) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [seasonIdx, setSeasonIdx] = useState(0);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
+  /* [版本] 当前展示的版本列表（属于 versionGuid 这个条目/集）。
+     多版本判定与展示照抄 FlyNarwhal：video_streams.length > 1 才显示版本盒子。 */
+  const [mediaVersions, setMediaVersions] = useState<MediaVersion[]>([]);
+  const [versionGuid, setVersionGuid] = useState("");
+  const [selectedMediaGuid, setSelectedMediaGuid] = useState("");
+  /* [版本] 每个 guid 的版本列表缓存 + 请求令牌（快速切集时只接受最后一次结果）。 */
+  const versionCacheRef = useRef<Map<string, { versions: MediaVersion[]; selected: string }>>(new Map());
+  const versionReqRef = useRef(0);
+  /* [版本] 点「多版本」的某一集时弹出的版本选择器（选完即播）。 */
+  const [versionPicker, setVersionPicker] = useState<{
+    guid: string;
+    label: string;
+    versions: MediaVersion[];
+    selected: string;
+  } | null>(null);
   /* [单集封面兜底] TMDB 季度剧照映射：key = `${tmdbId}:${seasonNumber}`，
      value = { 集号 → still 文件路径（/abc.jpg） }。飞牛缺单集海报时按季拉一次，切季按需再拉。 */
   const [seasonStills, setSeasonStills] = useState<Record<string, Record<number, string>>>({});
@@ -144,6 +382,21 @@ export function DetailView({
   /* 集列表请求令牌：快速连点不同季时，只接受最后一次请求的结果，
      避免先发的旧季响应晚到、把新季列表覆盖掉（"点了后面季却还是第一季"的另一种成因）。 */
   const epReqRef = useRef(0);
+  /* [选集定位] 右栏选集滚动容器 + 自动定位状态。
+     · done：本条目只自动定位一次（数据晚到/重渲染不再把用户拉回）；
+     · userTouched：用户手动滚动/点击过 → 放弃尚未执行的自动定位；
+     · skipOnce：切条目后的第一轮 effect 跳过（此时 seasons/episodes 还是上一条目的旧值）。 */
+  const epListRef = useRef<HTMLDivElement | null>(null);
+  /* 当前 episodes 实际属于哪一季（在 get_episodes 成功回调里写入）。
+     切季瞬间 episodes 还是上一季的旧数组，定位 effect 必须等它换成目标季才能滚，
+     否则会按旧季的集号滚到错误位置。 */
+  const loadedSeasonGuidRef = useRef("");
+  const autoLocateRef = useRef<{ guid: string; done: boolean; userTouched: boolean }>({
+    guid: "",
+    done: true,
+    userTouched: false,
+  });
+  const autoLocateSkipRef = useRef(false);
   // [lc-1595] 播放结束 → 强制刷新观看进度：`ts`/`watched` 随每次播放变化，而本页原先只在
   //   挂载/切条目/切季时取数 ⇒ 用户「看完第 3 集退出来，状态还是之前的」。
   //   事件来自 Rust（mpv.rs）：正常看完/退出 = `mpv-load{phase:"ended"}`；播放失败 = `mpv-end`。
@@ -471,9 +724,10 @@ export function DetailView({
     }
     // 请求令牌：快速连点季时丢弃旧响应（见 epReqRef 声明处）。
     const req = ++epReqRef.current;
-    invoke<Episode[]>("get_episodes", { guid: s.guid, force })
+    invoke<Episode[]>("get_episodes", { guid: s.guid, force, seriesGuid: base.guid })
       .then((eps) => {
         if (req !== epReqRef.current) return;
+        loadedSeasonGuidRef.current = s.guid;
         setEpisodes(
           (Array.isArray(eps) ? eps : []).map((e) => ({
             ...e,
@@ -486,6 +740,60 @@ export function DetailView({
       })
       .catch(() => {});
   }, [seasons, seasonIdx, progTick]);
+
+  /* [选集定位] 切换条目：重置自动定位状态。skipOnce 让同一轮 commit 的定位 effect 先跳过，
+     避免拿上一条目的 seasons/episodes 去定位新条目。 */
+  useEffect(() => {
+    autoLocateRef.current = { guid: base.guid, done: false, userTouched: false };
+    autoLocateSkipRef.current = true;
+    loadedSeasonGuidRef.current = "";
+  }, [base.guid]);
+
+  /* [选集定位] 数据就绪后定位「上次观看集」：
+     · 等 seasons + 当前季 episodes 都到位才执行（列表/进度常常晚于组件挂载）；
+     · 目标在别的季 → 先 setSeasonIdx，等该季集列表回来后再滚；
+     · 只滚动 .dv2e-list 容器（scrollTop 计算），不带动整页；
+     · 每个条目只执行一次；用户手动滚动/点击后放弃。 */
+  useEffect(() => {
+    if (!isSeries || noFnOS) return;
+    if (autoLocateSkipRef.current) {
+      autoLocateSkipRef.current = false;
+      return;
+    }
+    const st = autoLocateRef.current;
+    if (st.guid !== base.guid || st.done || st.userTouched) return;
+    if (!seasons.length || !episodes.length) return;
+    // 切季瞬间 episodes 仍是上一季的旧数组：等目标季的集列表真正到位（loadedSeasonGuidRef 对齐）再定位。
+    const curSeasonGuid = seasons[seasonIdx]?.guid ?? "";
+    if (curSeasonGuid && loadedSeasonGuidRef.current !== curSeasonGuid) return;
+    const list = epListRef.current;
+    if (!list) return;
+
+    const target = resolveEpisodeLocateTarget({ base, seasons, episodes, seasonIdx, continueList });
+    // 没有可用记录时**不标记 done**：continueList 常常晚于季/集到达，
+    // 等它到达后本 effect 会随依赖变化再跑一次；仍无记录就保持默认（第一集/顶部）。
+    if (!target) return;
+    // 跨季：先切季；等目标季的 episodes 到位后本 effect 会再跑（done 仍为 false）。
+    if (target.seasonIdx >= 0 && target.seasonIdx !== seasonIdx) {
+      setSeasonIdx(target.seasonIdx);
+      return;
+    }
+    const el = findEpisodeElement(list, target);
+    // 目标元素还没渲染出来（极端时序）：不标记 done，留给下一次依赖变化重试。
+    if (!el) return;
+    st.done = true;
+    // 只算容器内偏移：不调用 scrollIntoView，避免带动整页/左列滚动。
+    // 注意：这里**不注册 cleanup 取消 rAF** —— effect 若因 continueList/episodes 更新重跑，
+    // 取消会让这次唯一的自动定位丢失；改为在回调里校验元素仍挂载、用户未接管。
+    requestAnimationFrame(() => {
+      if (autoLocateRef.current.userTouched) return;
+      if (!el.isConnected || !list.isConnected) return;
+      const lr = list.getBoundingClientRect();
+      const rr = el.getBoundingClientRect();
+      const top = list.scrollTop + (rr.top - lr.top) - (list.clientHeight - rr.height) / 2;
+      list.scrollTo({ top: Math.max(0, top), behavior: "auto" });
+    });
+  }, [isSeries, noFnOS, base, seasons, seasonIdx, episodes, continueList]);
 
   // TMDB 完整详情（剧照/相似/更多/演职人员）：主仓库 fetchShowDetails 同款链路，失败静默降级
   // [lc-128] 额外带上 trim_id / tmdb_id / imdb_id 锚点：能精确定位就不靠标题搜索（matchedBy 见日志）
@@ -989,7 +1297,10 @@ export function DetailView({
         if (bgmRef.current) return; // (1) 就绪 → legacy 任务立即退场
         const ep = queue.shift()!;
         try {
-          const d = await invoke<Record<string, unknown>>("get_item_detail", { guid: ep.guid });
+          const d = await invoke<Record<string, unknown>>("get_item_detail", {
+            guid: ep.guid,
+            seriesGuid: base.guid,
+          });
           const ov = pick(d, ["overview"]);
           if (alive && ov) {
             setEpisodes((prev) =>
@@ -1179,11 +1490,31 @@ export function DetailView({
         }];
       })
     : [];
-  const ratingScore = bgmScore > 0 ? bgmScore : tmdbScore > 0 ? tmdbScore : null;
-  const ratingSource: "bgm" | "tmdb" | "none" = bgmScore > 0 ? "bgm" : tmdbScore > 0 ? "tmdb" : "none";
+  // [lc-1720] 本地手动元数据覆盖：评分/首播日期优先用用户选定的值（Rust 侧打 `_metadata_override` 标记）。
+  const overrideActive = Boolean(pick(data ?? {}, ["_metadata_override"]));
+  const overrideRating = Number(pick(data ?? {}, ["_override_rating"]) ?? 0) || 0;
+  const overrideDate = String(pick(data ?? {}, ["_override_date"]) ?? "").trim();
+  const ratingScore =
+    overrideActive && overrideRating > 0
+      ? overrideRating
+      : bgmScore > 0
+        ? bgmScore
+        : tmdbScore > 0
+          ? tmdbScore
+          : null;
+  const ratingSource: "bgm" | "tmdb" | "none" =
+    overrideActive && overrideRating > 0
+      ? "tmdb"
+      : bgmScore > 0
+        ? "bgm"
+        : tmdbScore > 0
+          ? "tmdb"
+          : "none";
   const ratingTotal = bgmScore > 0 ? bgmTotal : tmdbVotes;
   const airDate =
-    String(pick(bgmSub ?? {}, ["date"]) ?? "").trim() || String(pick(tmdb ?? {}, ["airDate"]) ?? "").trim();
+    (overrideActive && overrideDate ? overrideDate : "") ||
+    String(pick(bgmSub ?? {}, ["date"]) ?? "").trim() ||
+    String(pick(tmdb ?? {}, ["airDate"]) ?? "").trim();
   const ratingSubjectId = bgm?.subject_id ?? base.bgm_id ?? null;
   // [lc-1598] 「有观看记录」判据（给评分组件的状态按钮用）：条目级 watched/ts 有值，或任意一集有进度/已看。
   //   为 true 时 RatingWidget 会把「未追 / 想看」默认改成「在看」（用户要求）。
@@ -1383,10 +1714,63 @@ export function DetailView({
   const [playNote, setPlayNote] = useState("");
   const [playing, setPlaying] = useState(false);
   const [playingGuid, setPlayingGuid] = useState<string | null>(null);
-  /** 选集（列表行 / 网格方块共用）：记录当前集并拉起独立播放器。 */
-  const playEpisode = (guid: string) => {
+
+  /* [版本] 取某条目/集的版本列表（带内存缓存）：调 Rust `get_media_versions`，
+     返回 video_streams + play/info 记住的 media_guid（与 FlyNarwhal 同口径）。 */
+  const fetchMediaVersions = useCallback(async (guid: string) => {
+    const cached = versionCacheRef.current.get(guid);
+    if (cached) return cached;
+    const r = await invoke<{ versions?: MediaVersion[]; selected_media_guid?: string }>(
+      "get_media_versions",
+      { guid },
+    );
+    const versions = (r?.versions ?? []).filter((v) => v && v.media_guid);
+    const selected = chooseMediaVersion(guid, versions, r?.selected_media_guid);
+    const out = { versions, selected };
+    versionCacheRef.current.set(guid, out);
+    return out;
+  }, []);
+
+  /** [版本] 用户切换版本：写本地记忆 + 更新缓存/当前选中（不立即播放）。 */
+  const selectVersion = (guid: string, mediaGuid: string) => {
+    if (!guid || !mediaGuid) return;
+    saveMediaVersion(guid, mediaGuid);
+    const cached = versionCacheRef.current.get(guid);
+    versionCacheRef.current.set(guid, {
+      versions: cached?.versions ?? (versionGuid === guid ? mediaVersions : []),
+      selected: mediaGuid,
+    });
+    if (versionGuid === guid) setSelectedMediaGuid(mediaGuid);
+  };
+
+  /** [版本] 用指定版本起播（mediaGuid 为空 → 交给服务端默认版本）。 */
+  const playWithVersion = (guid: string, mediaGuid?: string) => {
     setPlayingGuid(guid);
-    invoke("play_item", { guid }).catch((e) => setErr(String(e)));
+    invoke("play_item", { guid, mediaGuid: mediaGuid || undefined }).catch((e) => setErr(String(e)));
+  };
+
+  /** 选集（列表行 / 网格方块共用）：先查版本；多版本弹选择器，单版本直接播。 */
+  const playEpisode = async (guid: string) => {
+    // [选集定位] 用户已手动选集 → 放弃尚未执行的自动定位，不再把列表拉回去。
+    autoLocateRef.current.userTouched = true;
+    try {
+      const { versions, selected } = await fetchMediaVersions(guid);
+      if (versions.length > 1) {
+        const ep = episodes.find((e) => e.guid === guid);
+        const num = ep?.episode_number ?? (ep ? episodes.indexOf(ep) + 1 : 0);
+        setVersionPicker({
+          guid,
+          label: ep ? `第 ${num} 集${ep.title ? ` · ${ep.title}` : ""}` : "本集",
+          versions,
+          selected,
+        });
+        return;
+      }
+      playWithVersion(guid, versions.length === 1 ? selected : undefined);
+    } catch {
+      // 版本接口失败不阻断播放：交给服务端默认版本。
+      playWithVersion(guid);
+    }
   };
   const startPlay = async () => {
     const ep = episodes[0];
@@ -1394,7 +1778,14 @@ export function DetailView({
     setPlaying(true);
     setPlayNote("正在打开独立播放器…");
     try {
-      await invoke("play_item", { guid });
+      let mediaGuid: string | undefined;
+      try {
+        const r = await fetchMediaVersions(guid);
+        mediaGuid = r.selected || undefined;
+      } catch {
+        mediaGuid = undefined;
+      }
+      await invoke("play_item", { guid, mediaGuid });
       setPlayNote("已在独立播放器窗口播放（可回到本页继续浏览）");
     } catch (e) {
       setPlayNote(String(e));
@@ -1402,6 +1793,40 @@ export function DetailView({
       setPlaying(false);
     }
   };
+
+  /* [版本] 当前要展示版本盒子的目标：
+     · 电影 = 条目本身；
+     · 剧集 = 续播目标集（没有则第一集）—— 对齐 FlyNarwhal「剧集详情页按单集展示版本」。 */
+  const versionTargetGuid = isMovie
+    ? (noFnOS ? "" : base.guid)
+    : (resumeTarget?.guid ?? episodes[0]?.guid ?? "");
+  useEffect(() => {
+    if (!dataReady || noFnOS || !versionTargetGuid) {
+      setMediaVersions([]);
+      setVersionGuid("");
+      setSelectedMediaGuid("");
+      return;
+    }
+    let alive = true;
+    const req = ++versionReqRef.current;
+    fetchMediaVersions(versionTargetGuid)
+      .then(({ versions, selected }) => {
+        if (!alive || req !== versionReqRef.current) return;
+        setMediaVersions(versions);
+        setVersionGuid(versionTargetGuid);
+        setSelectedMediaGuid(selected);
+      })
+      .catch(() => {
+        if (!alive || req !== versionReqRef.current) return;
+        setMediaVersions([]);
+        setVersionGuid(versionTargetGuid);
+        setSelectedMediaGuid("");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [dataReady, noFnOS, versionTargetGuid, fetchMediaVersions]);
+
 
   return (
     <main className={`content detail-full${isMovie ? " mv-detail" : ""}`} onScroll={onDetailScroll}>
@@ -1486,6 +1911,13 @@ export function DetailView({
             seasonNumber: 0,
             episodeNumber: 0,
           }}
+          versions={
+            versionGuid === base.guid
+              ? mediaVersions.map((v) => ({ mediaGuid: v.media_guid, label: versionLabel(v) }))
+              : undefined
+          }
+          selectedVersion={versionGuid === base.guid ? selectedMediaGuid : undefined}
+          onVersionChange={(mg) => selectVersion(base.guid, mg)}
         />
       )}
 
@@ -1689,8 +2121,12 @@ export function DetailView({
                   className="dv2e-play-btn"
                   disabled={playing}
                   onClick={() => {
-                    setPlayingGuid(resumeTarget.guid);
-                    invoke("play_item", { guid: resumeTarget.guid }).catch((e) => setErr(String(e)));
+                    // [版本] 续播沿用当前选中版本（未加载则交给服务端默认版本）。
+                    const mg =
+                      versionGuid === resumeTarget.guid
+                        ? selectedMediaGuid
+                        : versionCacheRef.current.get(resumeTarget.guid)?.selected;
+                    playWithVersion(resumeTarget.guid, mg || undefined);
                   }}
                   title={
                     resumePct > 0
@@ -1785,6 +2221,25 @@ export function DetailView({
                 <h3 className="dv2e-hd-h">选集</h3>
               )}
             </div>
+            {/* [版本] 同一剧集多版本：照抄 FlyNarwhal 的版本盒子（仅 video_streams > 1 显示）。
+                默认选中 = play/info 记住的版本；点选即写本地记忆，播放时按选中版本拉流。 */}
+            {isSeries && versionGuid && mediaVersions.length > 1 && (
+              <div className="dv2e-versions" role="group" aria-label="选择版本">
+                <span className="dv2e-versions-h">版本</span>
+                {mediaVersions.map((v) => (
+                  <button
+                    key={v.media_guid}
+                    type="button"
+                    className={`dv2e-version${v.media_guid === selectedMediaGuid ? " active" : ""}`}
+                    title={v.title || versionLabel(v)}
+                    aria-pressed={v.media_guid === selectedMediaGuid}
+                    onClick={() => selectVersion(versionGuid, v.media_guid)}
+                  >
+                    {versionLabel(v)}
+                  </button>
+                ))}
+              </div>
+            )}
             {isSeries && seasons.length > 1 && (
               <div className="dv2e-seasons">
                 <div className="season-tabs" ref={seasonRailRef} role="tablist" aria-label="选择季">
@@ -1798,7 +2253,11 @@ export function DetailView({
                         aria-selected={i === seasonIdx}
                         className={`season-tab ${i === seasonIdx ? "active" : ""}`}
                         title={`${sl.no}${sl.name ? ` · ${sl.name}` : ""}`}
-                        onClick={() => setSeasonIdx(i)}
+                        onClick={() => {
+                          // [选集定位] 用户手动切季 → 不再自动定位（尊重用户选择）。
+                          autoLocateRef.current.userTouched = true;
+                          setSeasonIdx(i);
+                        }}
                       >
                         <span className="season-no">{sl.no}</span>
                         {sl.name && <span className="season-name">{sl.name}</span>}
@@ -1811,7 +2270,11 @@ export function DetailView({
                   className="season-select"
                   aria-label="选择季"
                   value={seasonIdx}
-                  onChange={(e) => setSeasonIdx(Number(e.target.value))}
+                  onChange={(e) => {
+                    // [选集定位] 用户手动切季 → 不再自动定位。
+                    autoLocateRef.current.userTouched = true;
+                    setSeasonIdx(Number(e.target.value));
+                  }}
                 >
                   {seasons.map((sn, i) => {
                     const sl = seasonLabelOf(sn, i);
@@ -1826,7 +2289,20 @@ export function DetailView({
               </div>
             )}
           </div>
-          <div className={`dv2e-list${isSeries && epView === "grid" ? " dv2e-list-grid" : ""}`}>
+          <div
+            ref={epListRef}
+            className={`dv2e-list${isSeries && epView === "grid" ? " dv2e-list-grid" : ""}`}
+            /* [选集定位] 用户一旦手动滚动/触摸/点击，就放弃尚未执行的自动定位。 */
+            onWheel={() => {
+              autoLocateRef.current.userTouched = true;
+            }}
+            onTouchStart={() => {
+              autoLocateRef.current.userTouched = true;
+            }}
+            onPointerDown={() => {
+              autoLocateRef.current.userTouched = true;
+            }}
+          >
             {!isSeries ? (
               <div className="empty">本条目不是剧集</div>
             ) : episodes.length === 0 && seasons.length === 0 && !noFnOS ? (
@@ -1882,6 +2358,8 @@ export function DetailView({
                       key={ep.guid}
                       role="listitem"
                       tabIndex={0}
+                      data-ep-guid={ep.guid}
+                      data-ep-num={String(num)}
                       className={`dv2e-cell${isPlaying ? " playing" : ""}${seen ? " seen" : ""}`}
                       title={`播放 ${epLabel}`}
                       onClick={() => playEpisode(ep.guid)}
@@ -1949,6 +2427,8 @@ export function DetailView({
                 return (
                   <div
                     key={ep.guid}
+                    data-ep-guid={ep.guid}
+                    data-ep-num={String(num)}
                     className={`dv2e-row${playing ? " playing" : ""}${seen ? " seen" : ""}`}
                     onClick={() => playEpisode(ep.guid)}
                     title={`播放 ${epLabel}`}
@@ -2009,6 +2489,54 @@ export function DetailView({
         </aside>
       </div>
       )}
+
+      {/* [版本] 点「多版本」的某一集：先选版本再播（照抄飞鲸详情页的版本盒子）。
+          单版本的集不会弹这个层，直接播放。 */}
+      {versionPicker &&
+        createPortal(
+          <div className="ddet-mask" onClick={() => setVersionPicker(null)}>
+            <div className="sum-modal version-picker" onClick={(e) => e.stopPropagation()}>
+              <div className="sum-modal-h">
+                <h3>选择版本{versionPicker.label ? ` · ${versionPicker.label}` : ""}</h3>
+                <button
+                  className="ddet-close sum-modal-x"
+                  title="关闭（Esc）"
+                  onClick={() => setVersionPicker(null)}
+                >
+                  <IcoXL size={15} strokeWidth={1.8} />
+                </button>
+              </div>
+              <div className="sum-modal-b">
+                <div className="dv2e-versions version-picker-boxes" role="group" aria-label="选择版本">
+                  {versionPicker.versions.map((v) => (
+                    <button
+                      key={v.media_guid}
+                      type="button"
+                      className={`dv2e-version${v.media_guid === versionPicker.selected ? " active" : ""}`}
+                      aria-pressed={v.media_guid === versionPicker.selected}
+                      onClick={() => {
+                        const guid = versionPicker.guid;
+                        selectVersion(guid, v.media_guid);
+                        setVersionPicker(null);
+                        playWithVersion(guid, v.media_guid);
+                      }}
+                    >
+                      <span className="dv2e-version-label">{versionLabel(v)}</span>
+                      {(v.width ?? 0) > 0 && (v.height ?? 0) > 0 && (
+                        <span className="dv2e-version-sub">
+                          {v.width}×{v.height}
+                          {(v.bit_depth ?? 0) > 0 ? ` · ${v.bit_depth}bit` : ""}
+                          {v.codec_name ? ` · ${v.codec_name}` : ""}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
 
       {/* [lc-1423] 简介弹窗：完整正文（容器固定高度 + 截断后，全文在这里看）。
           Esc / 点背景关闭；正文可滚动（长简介比一屏更长）。 */}

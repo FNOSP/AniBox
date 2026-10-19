@@ -415,11 +415,12 @@ export function HomeView({
                 全部 ›
               </span>
             </div>
-            <ScrollRow>
+            <ScrollRow center>
               {items.map((it) => (
                 <PosterCard
                   key={it.guid}
                   item={it}
+                  showMeta
                   onEditMeta={onEditMeta}
                   onRefreshMeta={onRefreshMeta}
                   onOpen={(x) =>

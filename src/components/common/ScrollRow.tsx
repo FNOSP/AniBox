@@ -6,6 +6,7 @@ export function ScrollRow({
   boxClass,
   imgSel = ".poster-box",
   inSec = false,
+  center = false,
 }: {
   children: ReactNode;
   boxClass?: string;
@@ -13,6 +14,8 @@ export function ScrollRow({
   imgSel?: string;
   /** 这一行嵌在带内边距的卡片里（如 .tmdb-sec）→ 箭头左右内收到 14px，不压卡片边框 */
   inSec?: boolean;
+  /** [lc-1714] 首页媒体库行：卡片轨道在容器内水平居中；超宽时照常横向滚动 */
+  center?: boolean;
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -73,8 +76,11 @@ export function ScrollRow({
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
-      <div className={boxClass ? `hscroll ${boxClass}` : "hscroll"} ref={boxRef}>
-        {children}
+      <div
+        className={`hscroll${boxClass ? ` ${boxClass}` : ""}${center ? " srow-center" : ""}`}
+        ref={boxRef}
+      >
+        {center ? <div className="srow-track">{children}</div> : children}
       </div>
       <button
         type="button"

@@ -1,5 +1,5 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { IcoFolder, IcoGrid, IcoHome, IcoLive, IcoMovie, IcoStar, IcoTv } from "../../icons";
 import { Clock as IcoClockL, MessageSquare as IcoMsgL, Settings as IcoGearL } from "lucide-react";
@@ -30,9 +30,13 @@ export function Sidebar({
   onOpenSettings,
   onOpenFeedback,
   onOpenHistory,
+  feedbackUnread = 0,
+  rootRef,
 }: {
   activeGuid: string | null;
   collapsed?: boolean;
+  /** [lc-1708] 侧栏根节点引用：供 App 做「点击侧栏外部自动收起」的命中判断。 */
+  rootRef?: Ref<HTMLElement>;
   username?: string;
   server?: string;
   sum: Record<string, number>;
@@ -46,12 +50,14 @@ export function Sidebar({
   onOpenFeedback: () => void;
   /** [lc-1615] 打开观影记录页（原「阶段3接入」toast 占位改真页面） */
   onOpenHistory: () => void;
+  /** [lc-1701] 未读工单数（>0 时「反馈」入口显示红色数字角标） */
+  feedbackUnread?: number;
 }) {
   // 快捷操作卡折叠态：持久化键与主仓库 embyWall.ts 相同（'1'=收起成图标行，缺省=展开）
   const [cardFold, setCardFold] = useState(
     () => localStorage.getItem("fntvSidebarActions.collapsed") === "1",
   );
-  const [appVer, setAppVer] = useState("0.1.0");
+  const [appVer, setAppVer] = useState("4.0.0");
   // [lc-1665] 快捷操作卡展开/收起：高度补间 + 内容淡入（优雅过渡，不再是硬切）
   const panelRef = useRef<HTMLDivElement>(null);
   const prevHeightRef = useRef<number | null>(null);
@@ -86,7 +92,7 @@ export function Sidebar({
     });
   }, [cardFold]);
   return (
-    <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
+    <aside ref={rootRef} className={`sidebar ${collapsed ? "collapsed" : ""}`}>
       <div className={`side-item ${activeGuid === null ? "active" : ""}`} onClick={onHome}>
         <span className="side-ico">
           <IcoHome />
@@ -112,10 +118,13 @@ export function Sidebar({
       })}
       {/* 底部：用户行 + 快捷操作卡 —— 结构与样式逐行复刻主仓库 embyWall.ts injectSettingsUI */}
       <div className="side-userrow">
-        <div className="side-avatar">{(username || "U").slice(0, 1).toUpperCase()}</div>
+        <img className="side-avatar" src="/anibox-logo.png" alt="AniBox" />
         <div className="side-usermeta">
           <div className="side-user-name">{username || "未登录"}</div>
-          <div className="side-user-server">{server ? server.replace(/^https?:\/\//, "") : "未连接"}</div>
+          {/* 未登录（游客态）时不展示上一次登录残留的服务器地址，避免误导 */}
+          <div className="side-user-server">
+            {username && server ? server.replace(/^https?:\/\//, "") : "未连接"}
+          </div>
         </div>
       </div>
       <div className="side-actions" ref={panelRef}>
@@ -127,8 +136,18 @@ export function Sidebar({
             <button type="button" className="sa-ico" title="观影记录" onClick={onOpenHistory}>
               <IcoClockL size={15} strokeWidth={1.8} />
             </button>
-            <button type="button" className="sa-ico" title="反馈" onClick={onOpenFeedback}>
+            <button
+              type="button"
+              className="sa-ico"
+              title={feedbackUnread > 0 ? `反馈（${feedbackUnread} 条更新）` : "反馈"}
+              onClick={onOpenFeedback}
+            >
               <IcoMsgL size={15} strokeWidth={1.8} />
+              {feedbackUnread > 0 && (
+                <span className="sa-badge" aria-label={`${feedbackUnread} 条未读反馈`}>
+                  {feedbackUnread > 99 ? "99+" : feedbackUnread}
+                </span>
+              )}
             </button>
             <button type="button" className="sa-ico sa-expand" title="展开快捷操作" onClick={() => setFold(false)}>
               ∧
@@ -146,8 +165,18 @@ export function Sidebar({
             <button type="button" className="sa-btn" onClick={onOpenHistory}>
               <IcoClockL size={14} strokeWidth={1.8} /> 观影记录
             </button>
-            <button type="button" className="sa-btn" onClick={onOpenFeedback}>
+            <button
+              type="button"
+              className="sa-btn"
+              title={feedbackUnread > 0 ? `反馈（${feedbackUnread} 条更新）` : "反馈"}
+              onClick={onOpenFeedback}
+            >
               <IcoMsgL size={14} strokeWidth={1.8} /> 反馈
+              {feedbackUnread > 0 && (
+                <span className="sa-badge" aria-label={`${feedbackUnread} 条未读反馈`}>
+                  {feedbackUnread > 99 ? "99+" : feedbackUnread}
+                </span>
+              )}
             </button>
             <div className="sa-ver">v{appVer}</div>
             {/* [lc-122] 数据来源署名（关于区=版本行下）：TMDB 条款强制原文 + Bangumi 署名。

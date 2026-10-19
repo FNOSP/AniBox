@@ -1,7 +1,7 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
 // [lc-123-rev8] 图标统一用 Lucide（ISC 许可，https://lucide.dev）：stroke=currentColor、24 viewBox，
 // 按需导入 tree-shake；仓库内不再保留手拷贝的 SVG path。
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
@@ -23,11 +23,14 @@ import { FeedbackPanel } from "./components/feedback/FeedbackPanel";
 import { DisclaimerModal } from "./components/disclaimer/DisclaimerModal";
 import { DISCLAIMER_ACK_KEY } from "./components/disclaimer/DisclaimerText";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
+import { UpdatePrompt } from "./components/update/UpdatePrompt";
 import { NavCapsule } from "./components/shell/NavCapsule";
 import { TitleBar } from "./components/shell/TitleBar";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { useDelayedUnmount } from "./hooks/useDelayedUnmount";
 import { useGamepad } from "./hooks/useGamepad";
+import { useFeedbackUnread } from "./hooks/useFeedbackUnread";
+import { usePlaybackProgress } from "./hooks/usePlaybackProgress";
 import { RefreshContext } from "./hooks/useRefresh";
 import { focusNav } from "./lib/focusNav";
 import { fetchLibItems } from "./lib/api";
@@ -35,7 +38,8 @@ import { pick } from "./lib/format";
 import { bgmImg, pickImgStr, pickLargestImg, tmdbImg } from "./lib/images";
 import { prefersReducedMotion } from "./lib/motion";
 import { DEFAULT_SETTINGS } from "./lib/settings";
-import { AppSettings, BgmCalendarItem, ChromeTone, Config, Lib, MediaItem, PersonTarget, PersonWork, PlayItem, PlayTarget, TmdbDiscoverItem } from "./types";
+import { normalizeCheck } from "./lib/update";
+import { AppSettings, BgmCalendarItem, ChromeTone, Config, Lib, MediaItem, PersonTarget, PersonWork, PlayItem, PlayTarget, TmdbDiscoverItem, UpdateCheckResult } from "./types";
 import "./styles/index.css";
 
 /** 启动页取值归一：历史配置里的 "continue"（已移除）及任何未知值一律回落到首页。 */
@@ -101,6 +105,29 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // [lc-1653] 侧栏里任一导航/面板入口触发后自动收起侧栏。
   const closeSidebar = () => setSidebarOpen(false);
+  // [lc-1708] 侧栏根节点：用于「点击侧栏外部自动收起」的命中判断。
+  const sidebarRef = useRef<HTMLElement | null>(null);
+  /* [lc-1708] 侧栏展开时，点击**侧栏以外的任意位置**自动收起。
+     · 用 `pointerdown`（捕获阶段）同时覆盖鼠标 / 触摸 / 触控笔，且比 click 早，
+       点空白后不会把这次点击再传给底下的内容；
+     · 命中判断：目标在侧栏容器内 → 忽略；是顶栏汉堡键（data-sidebar-toggle）→ 忽略，
+       否则 `pointerdown` 先收起、随后 click 又切回展开，会表现为"点按钮没反应"；
+     · 展开瞬间不会误关：打开动作的 pointerdown 发生在 effect 绑定监听之前，
+       之后的 click 不会触发 pointerdown，无需 setTimeout 兜底；
+     · 只在展开时绑定一次，收起/卸载时立即解绑，不会重复注册。
+     侧栏原有的 `.sidebar-scrim` 点击收起仍保留（覆盖内容区，作为兜底）。 */
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target;
+      if (!(target instanceof Node)) return;
+      if (sidebarRef.current?.contains(target)) return;
+      if (target instanceof Element && target.closest("[data-sidebar-toggle]")) return;
+      setSidebarOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [sidebarOpen]);
   // 深浅主题：默认浅色；html.dark 类由本状态驱动，首帧前 main.tsx 已按存储值预置防闪烁
   const [theme, setTheme] = useState<"light" | "dark">(() =>
     localStorage.getItem("fntv-theme") === "dark" ? "dark" : "light",
@@ -149,6 +176,17 @@ function App() {
   useEffect(() => {
     document.documentElement.classList.toggle("perf", settings.perfMode);
   }, [settings.perfMode]);
+  // 界面透明度：把百分比写到根元素 CSS 变量，.app-shell / .sidebar 的 color-mix 直接读取。
+  // 用 useLayoutEffect：首帧就用 localStorage 里的值，避免"先 90% 再跳变"。
+  // 旧缓存缺省 → 85；越界值在这里夹住（Rust 侧 set_settings 同口径）。
+  useLayoutEffect(() => {
+    const raw = Number(settings.uiOpacity);
+    const pct = Number.isFinite(raw) ? Math.min(100, Math.max(60, Math.round(raw))) : 85;
+    const root = document.documentElement;
+    root.style.setProperty("--ui-surface-alpha", `${pct}%`);
+    // 侧栏玻璃比外壳略实一点（+4%），保证导航文字可读
+    root.style.setProperty("--ui-sidebar-alpha", `${Math.min(100, pct + 4)}%`);
+  }, [settings.uiOpacity]);
   // 启动时拉一次真实配置（校正本地镜像；失败就继续用本地值）
   useEffect(() => {
     invoke<AppSettings>("get_settings")
@@ -245,6 +283,12 @@ function App() {
   const [guest, setGuest] = useState(() => localStorage.getItem("anibox-guest") === "1");
   // [lc-1600] 「查看详情 / 播放需要登录」引导弹窗
   const [guestAsk, setGuestAsk] = useState(false);
+  // [lc-1710] 启动更新提示弹窗：有更新时在进入主界面后自动弹出
+  const [updatePrompt, setUpdatePrompt] = useState<{ info: UpdateCheckResult } | null>(null);
+  // 启动自动检查只做一次；同一版本本次运行只弹一次（「稍后」后也不再弹）
+  const autoUpdateTimer = useRef<number | null>(null);
+  const autoUpdateDone = useRef(false);
+  const promptedVersions = useRef<Set<string>>(new Set());
   const [sum, setSum] = useState<Record<string, number>>({});
   const [favTotal, setFavTotal] = useState<number | null>(null);
 
@@ -273,6 +317,94 @@ function App() {
   useEffect(() => {
     if (view === "home") void refreshFavTotal();
   }, [view, refreshFavTotal]);
+
+  /* ── [lc-1710] 启动自动检查更新 ──
+     进入主界面（非登录页、启动会话检查完成、免责声明已处理）后延迟 5 秒再请求一次
+     `update_check`，避开首屏加载抢资源。无更新/请求失败一律静默；
+     同一版本本次运行只弹一次（promptedVersions 在弹出时即记账，「稍后」后不再弹）。 */
+  useEffect(() => {
+    if (booting || view === "login" || disclaimerOpen) return;
+    if (autoUpdateDone.current || autoUpdateTimer.current !== null) return;
+    autoUpdateTimer.current = window.setTimeout(() => {
+      autoUpdateTimer.current = null;
+      autoUpdateDone.current = true;
+      invoke<unknown>("update_check")
+        .then((raw) => {
+          const r = normalizeCheck(raw);
+          if (!r.hasUpdate || !r.latestVersion) return;
+          if (promptedVersions.current.has(r.latestVersion)) return;
+          promptedVersions.current.add(r.latestVersion);
+          setUpdatePrompt({ info: r });
+        })
+        .catch(() => {
+          /* 静默：更新检查失败不打扰用户 */
+        });
+    }, 5000);
+  }, [booting, view, disclaimerOpen]);
+
+  // 卸载时清掉还没触发的定时器（组件卸载 = 应用关闭，正常不会发生）
+  useEffect(
+    () => () => {
+      if (autoUpdateTimer.current !== null) window.clearTimeout(autoUpdateTimer.current);
+    },
+    [],
+  );
+
+  /* ── dev 调试：真实更新弹窗 ──
+     控制台调用 `__aniboxRealUpdate("3.9.0")` 打开可点击的更新弹窗，
+     按钮会真正调用 update_download / update_install。 */
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const openRealUpdate = (version = "3.9.0", type: "full" | "hotfix" = "full") => {
+      setUpdatePrompt({
+        info: {
+          hasUpdate: true,
+          currentVersion: "v4.0.0",
+          latestVersion: version,
+          updateType: type,
+          notes: "真实下载测试：点击下方按钮将调用 update_download / update_install。",
+          publishedAt: "",
+          downloadUrl: "",
+          patchUrl: "",
+          htmlUrl: "https://github.com/FNOSP/AniBox/releases",
+        },
+      });
+    };
+    window.__aniboxRealUpdate = openRealUpdate;
+    return () => {
+      if (window.__aniboxRealUpdate === openRealUpdate) delete window.__aniboxRealUpdate;
+    };
+  }, []);
+
+  /* [progress] 首页「继续观看」刷新：后端把进度回传飞牛 `play/record` 成功后广播
+     `watch-progress`，这里防抖 1.2s 再拉 `get_continue_watching`（飞牛 play/list）。
+     起播后第一条进度即触发 → 继续观看卡片马上出现；播放结束再兜底刷一次。 */
+  useEffect(() => {
+    if (guest) return;
+    let timer: number | undefined;
+    let disposed = false;
+    const schedule = () => {
+      if (disposed) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        invoke<PlayItem[]>("get_continue_watching")
+          .then((c) => {
+            if (!disposed) setContinueList(Array.isArray(c) ? c : []);
+          })
+          .catch(() => {});
+      }, 1200);
+    };
+    const un1 = listen("watch-progress", schedule);
+    const un2 = listen<{ phase?: string }>("mpv-load", (e) => {
+      if (e.payload?.phase === "ended") schedule();
+    });
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+      un1.then((f) => f()).catch(() => {});
+      un2.then((f) => f()).catch(() => {});
+    };
+  }, [guest]);
 
   useEffect(() => {
     // 用户名 / 服务器地址：侧栏底部卡片展示用
@@ -618,6 +750,18 @@ function App() {
     [page, goDiscover, goHome, clearPaneAnim],
   );
 
+  /* [progress] 全局播放进度上报：必须在 App 顶层无条件挂载（不依赖任何页面）。
+     详见 src/hooks/usePlaybackProgress.ts 头部注释。 */
+  usePlaybackProgress();
+
+  /* [lc-1701] 反馈工单未读：App 层常驻低频轮询（60s，页面隐藏时跳过），
+     列表同时作为反馈面板的数据源，避免面板与角标各拉一次。
+     打开面板即确认（侧栏角标清零），行内「有新回复」标记保留到点开该工单。 */
+  const fb = useFeedbackUnread(feedbackOpen);
+  useEffect(() => {
+    if (feedbackOpen) fb.ackPanel();
+  }, [feedbackOpen, fb.items, fb.ackPanel]);
+
   /* 手柄：Start 开关设置面板；LB/RB 切「首页 ↔ 发现」；X 收藏当前焦点卡片。
      播放中的按键（暂停/seek/倍速/停止）由 useGamepad 内部直接调用 Tauri 命令。 */
   useGamepad({
@@ -948,7 +1092,10 @@ function App() {
         invoke<Config>("get_config")
           .then((c) => {
             const autoArmed = !!(c?.auto_login && c?.password && c?.username && c?.server);
-            if (c?.server && !autoArmed) {
+            // [访问码] 配了访问码 → 会话/网关重建失败必须回登录页重输，
+            // 否则没有重建入口，后续 API 会被门禁持续拦成门户 HTML。
+            const needsAccessCode = !!c?.access_code;
+            if (c?.server && !autoArmed && !needsAccessCode) {
               setGuest(true);
               setPage("home");
               setView("home");
@@ -1012,6 +1159,7 @@ function App() {
           />
         )}
         <Sidebar
+          rootRef={sidebarRef}
           // [lc-1615] history 页没有任何侧栏项应高亮（"_history" 不匹配首页/收藏/分类）
           activeGuid={view === "home" ? null : view === "history" ? "_history" : activeLib?.guid ?? null}
           collapsed={!sidebarOpen}
@@ -1021,6 +1169,8 @@ function App() {
           server={server}
           sum={sum}
           favTotal={favTotal}
+          // [lc-1701] 未读工单数 → 侧栏「反馈」按钮红点角标
+          feedbackUnread={fb.badge}
           // [lc-1653] 每个入口先收起侧栏，再执行原回调（导航/开面板）。
           onOpenFav={() => {
             closeSidebar();
@@ -1299,7 +1449,21 @@ function App() {
       {/* [lc-1599] 反馈面板（工单制）：入口在侧栏快捷操作卡（反馈）。
           page = 当前视图名，随工单一起上报（日志环境块的 page=xxx 同源）。 */}
       {feedbackOpen && (
-        <FeedbackPanel page={view} onClose={() => setFeedbackOpen(false)} />
+        <FeedbackPanel
+          page={view}
+          onClose={() => setFeedbackOpen(false)}
+          items={fb.items}
+          listErr={fb.listErr}
+          refreshList={fb.refresh}
+          unread={fb.unread}
+          onTicketRead={fb.markTicketRead}
+        />
+      )}
+      {/* [lc-1701] 工单更新提醒：复用侧栏 toast 样式，出现在窗口底部居中 */}
+      {fb.toast && !feedbackOpen && (
+        <div className="side-toast fb-toast" role="status">
+          {fb.toast}
+        </div>
       )}
       {/* [lc-1600] 游客「查看详情 / 播放」引导弹窗（portal 到 body，与详情页弹窗同一套） */}
       {guestAsk && (
@@ -1385,6 +1549,13 @@ function App() {
           }}
           onExit={() => invoke("resolve_close", { action: "exit" }).catch(() => {})}
           onClose={() => setDisclaimerOpen(false)}
+        />
+      )}
+      {/* [lc-1710] 启动更新提示弹窗：启动后检测到新版本自动弹出（portal 到 body，不阻塞主界面） */}
+      {updatePrompt && (
+        <UpdatePrompt
+          info={updatePrompt.info}
+          onClose={() => setUpdatePrompt(null)}
         />
       )}
     </div>

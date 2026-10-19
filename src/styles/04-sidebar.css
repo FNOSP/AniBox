@@ -17,7 +17,9 @@
   width: 224px;
   /* 背景 = 半透明 + 动态模糊（用户要求"背景色做动态模糊不要实心色"）。
      半透明度刻意压低，模糊才看得出来；底色仍走主题变量，深浅主题都自然。 */
-  background: color-mix(in srgb, var(--bg-2) 62%, transparent);
+  /* 动态模糊玻璃：半透明底色 + backdrop-filter。透明度取 0.82，
+     既保留毛玻璃质感，又不会让背后内容清楚透出来。 */
+  background: rgba(244, 247, 252, 0.82);
   backdrop-filter: blur(22px) saturate(1.35);
   -webkit-backdrop-filter: blur(22px) saturate(1.35);
   border-right: 1px solid var(--line);
@@ -44,6 +46,20 @@
   will-change: transform;
 }
 /* 收起态：整体左移出屏 + 淡出 + 轻微缩小（不是"挤没"，是"抽走"） */
+/* 深色主题：同样半透明 + 模糊，透明度略高于浅色主题以保证可读 */
+html.dark .sidebar {
+  background: rgba(23, 26, 36, 0.82);
+}
+/* [ui-opacity] 侧栏玻璃跟随「界面透明度」：比外壳略实 4%（--ui-sidebar-alpha），
+   模糊与描边不变。不支持 color-mix 时保留上面的 rgba 回退。 */
+@supports (background: color-mix(in srgb, red 50%, transparent)) {
+  .sidebar {
+    background: color-mix(in srgb, #f4f7fc var(--ui-sidebar-alpha, 89%), transparent);
+  }
+  html.dark .sidebar {
+    background: color-mix(in srgb, #171a24 var(--ui-sidebar-alpha, 89%), transparent);
+  }
+}
 /* 收起态：平滑滑出屏（不缩放、不淡出 —— 淡出会让"滑走"失去实体感） */
 .sidebar.collapsed {
   transform: translateX(-100%);
@@ -59,7 +75,10 @@
 /* 无毛玻璃支持时（极旧 WebView）：退回接近实心的主题底色，至少保证可读 */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .sidebar {
-    background: var(--bg-2);
+    background: #f4f7fc;
+  }
+  html.dark .sidebar {
+    background: #171a24;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -80,14 +99,16 @@
   width: 32px;
   height: 32px;
   min-width: 32px;
-  border-radius: 50%;
-  background: var(--accent-grad);
+  border-radius: 8px;
+  background: transparent;
   color: #fff;
   font-size: 13px;
   font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
+  object-fit: contain;
+  overflow: hidden;
 }
 .side-usermeta {
   min-width: 0;

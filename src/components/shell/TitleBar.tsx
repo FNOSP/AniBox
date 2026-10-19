@@ -386,6 +386,9 @@ export function TitleBar({
           {nav && onToggleSidebar && (
             <button
               className="tb-icon"
+              // [lc-1708] 标记为侧栏开关：App 的「点击外部收起」会跳过它，
+              // 避免 pointerdown 先收起、click 又把它切回展开。
+              data-sidebar-toggle=""
               title={sidebarOpen ? "收起侧栏" : "展开侧栏"}
               onClick={onToggleSidebar}
             >

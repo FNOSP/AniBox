@@ -13,5 +13,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   danmuApiBase: "",
   // 弹幕引擎默认 node = 与接入前行为完全一致（Rust 侧 `danmu_engine` 默认同为 "node"）
   danmuEngine: "node",
+  // 界面不透明度（百分比）：默认 85，范围 60–100（Rust 侧 set_settings 同口径 clamp）
+  uiOpacity: 85,
 };
 /** 平均亮度阈值（0..255）：> 阈值 = 亮底 → 深色 chrome */

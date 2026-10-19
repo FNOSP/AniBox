@@ -5,7 +5,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Check as IcoCheck, ChevronDown as IcoChevron, X as IcoXL } from "lucide-react";
+import { Check as IcoCheck, ChevronDown as IcoChevron, Star as IcoStar, X as IcoXL } from "lucide-react";
 import { DisclaimerModal } from "../disclaimer/DisclaimerModal";
 import {
   GAMEPAD_DEFAULTS,
@@ -23,9 +23,11 @@ import {
   PatchCheckResult,
   UpdateCheckResult,
   UpdateDownloadResult,
+  UpdateProbeReport,
   UpdateProgress,
-  UpdateType,
+  Webview2Status,
 } from "../../types";
+import { formatSpeed, normalizeCheck } from "../../lib/update";
 
 /* [更新与维护] 「关于」区的占位文案。
    TODO: 等后端 `app_info()` 正式接入并返回稳定字段后，可删掉这两个常量，
@@ -34,7 +36,7 @@ import {
 const SOFTWARE_DESC =
   "AniBox 是一款基于 Tauri + React 的影视与番剧聚合播放器：支持飞牛影视库、Bangumi 追番、" +
   "TMDB 元数据与自建弹幕源。";
-const PROJECT_URL = "https://github.com/AniBox/AniBox";
+const PROJECT_URL = "https://github.com/FNOSP/AniBox";
 
 /** 用系统默认浏览器打开外链。
  *  Tauri/WebView2 会丢弃 target="_blank" 的新窗口请求，所以必须走 opener 插件；
@@ -98,27 +100,38 @@ type BiliQrPhase = "idle" | "loading" | "waiting" | "scanned" | "success" | "exp
 /** [bili-account] 本机 Node 检测结果（Rust `detect_node` 返回）。 */
 type NodeInfo = { found: boolean; version: string; path: string; error?: string };
 
+/** [danmaku-diagnose] 单项诊断结果（Rust `danmaku_diagnose` 返回）。 */
+type DiagStatus = "ok" | "warn" | "fail";
+type DiagCheck = {
+  id: string;
+  label: string;
+  ok: boolean;
+  status: DiagStatus;
+  detail: string;
+  timeMs: number;
+};
+type DiagResult = {
+  keyword: string;
+  /** custom（用户输入）/ playing（当前播放标题）/ builtin（内置测试词） */
+  keywordSource: string;
+  enabled: boolean;
+  checks: DiagCheck[];
+};
+
+const DIAG_SOURCE_LABEL: Record<string, string> = {
+  custom: "手动输入",
+  playing: "当前播放标题",
+  builtin: "内置测试词",
+};
+
+const diagIcon = (status: DiagStatus) =>
+  status === "ok" ? "✅" : status === "warn" ? "⚠️" : "❌";
+
+
 const asText = (v: unknown): string => {
   if (Array.isArray(v)) return v.map((x) => String(x)).join("\n");
   return v === null || v === undefined ? "" : String(v);
 };
-
-/** 后端字段可能是 camelCase 或 snake_case（并行开发期两版都可能出现），统一归一。 */
-function normalizeCheck(raw: unknown): UpdateCheckResult {
-  const r = (raw ?? {}) as Record<string, unknown>;
-  const type = asText(r.updateType ?? r.update_type).toLowerCase();
-  return {
-    hasUpdate: Boolean(r.hasUpdate ?? r.has_update ?? false),
-    currentVersion: asText(r.currentVersion ?? r.current_version),
-    latestVersion: asText(r.latestVersion ?? r.latest_version),
-    updateType: (type === "hotfix" ? "hotfix" : "full") as UpdateType,
-    notes: asText(r.notes ?? r.changelog ?? r.body),
-    publishedAt: asText(r.publishedAt ?? r.published_at),
-    downloadUrl: asText(r.downloadUrl ?? r.download_url),
-    patchUrl: asText(r.patchUrl ?? r.patch_url),
-    htmlUrl: asText(r.htmlUrl ?? r.html_url),
-  };
-}
 
 /** 设置面板专用下拉选择器（替换原生 <select>）。
  *
@@ -364,12 +377,19 @@ export function SettingsPanel({
   const [stats, setStats] = useState<Stats | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
-  const [ver, setVer] = useState("0.1.0");
+  const [ver, setVer] = useState("4.0.0");
   const [user, setUser] = useState("");
   const [server, setServer] = useState("");
   const [confirmLogout, setConfirmLogout] = useState(false);
   // [lc-1607] 设置 → 关于 → 免责声明：打开只读态弹窗（只有「关闭」）
   const [showDisclaimer, setShowDisclaimer] = useState(false);
+  // 关闭动画：先挂 class 让遮罩淡出 + 卡片缩下沉，动画走完再真正卸载
+  const [closing, setClosing] = useState(false);
+  const requestClose = useCallback(() => {
+    if (closing) return;
+    setClosing(true);
+    window.setTimeout(onClose, 170); // 与 CSS 动画时长对齐
+  }, [closing, onClose]);
   const [autostart, setAutostart] = useState(
     () => localStorage.getItem("fntv-autostart") === "1",
   );
@@ -409,6 +429,11 @@ export function SettingsPanel({
      死区/阈值/长按连跳也由 Rust 侧消费；前端只负责编辑与显示。
      连接状态由 `gamepad-status` 事件刷新，初始化调 `gamepad_status`。 */
   const padEnabled = settings.gamepadEnabled ?? GAMEPAD_DEFAULTS.enabled;
+  // 界面透明度（60–100，默认 85）：旧缓存缺省/越界都夹到合法区间，滑块不会显示空值。
+  const uiOpacity = Math.min(
+    100,
+    Math.max(60, Math.round(settings.uiOpacity ?? 85)),
+  );
   const padValues = {
     stickDeadzone: settings.gamepadDeadzone ?? GAMEPAD_DEFAULTS.stickDeadzone,
     directionThreshold:
@@ -547,6 +572,23 @@ export function SettingsPanel({
      progress   : update-progress / patch-progress 事件的最新进度
      phase      : 当前操作阶段，用来决定按钮/禁用态 */
   const [appMeta, setAppMeta] = useState<AppInfo | null>(null);
+  /* [webview2] Windows 运行时状态：应用能启动但运行时缺失/过旧时，「关于」页给下载入口。
+     注意：运行时**完全缺失**时应用通常根本起不来，那时只能靠根目录的
+     `安装WebView2.cmd`（tools/ensure-webview2.ps1）兜底，见 README。 */
+  const [wv2, setWv2] = useState<Webview2Status | null>(null);
+  const [wv2Busy, setWv2Busy] = useState(false);
+  const [wv2Err, setWv2Err] = useState("");
+  const checkWebview2 = useCallback(async () => {
+    setWv2Busy(true);
+    setWv2Err("");
+    try {
+      setWv2(await invoke<Webview2Status>("check_webview2"));
+    } catch (e) {
+      setWv2Err(String(e));
+    } finally {
+      setWv2Busy(false);
+    }
+  }, []);
   const [upd, setUpd] = useState<UpdateCheckResult | null>(lastCheck);
   const [updChecking, setUpdChecking] = useState(false);
   const [updError, setUpdError] = useState("");
@@ -554,8 +596,14 @@ export function SettingsPanel({
   const [downloaded, setDownloaded] = useState<UpdateDownloadResult | null>(lastDownload);
   const [applying, setApplying] = useState(false);
   const [patchApplied, setPatchApplied] = useState(false);
-  const [progress, setProgress] = useState<{ percent: number; message: string } | null>(null);
+  const [progress, setProgress] = useState<{ percent: number; message: string; speed: number } | null>(null);
   const [showNotes, setShowNotes] = useState(false);
+  // 「检测源」探测结果与冷却
+  const [probe, setProbe] = useState<UpdateProbeReport | null>(null);
+  const [probeBusy, setProbeBusy] = useState(false);
+  const [probeError, setProbeError] = useState("");
+  const [probeCooldown, setProbeCooldown] = useState(0);
+  const [probeCopied, setProbeCopied] = useState(false);
   // 「取消」是用户主动发起的：此后 update_download 的 reject 不再当成错误展示
   const cancelRequested = useRef(false);
 
@@ -601,14 +649,14 @@ export function SettingsPanel({
     cancelRequested.current = false;
     setDownloading(true);
     setUpdError("");
-    setProgress({ percent: 0, message: "准备下载…" });
+    setProgress({ percent: 0, message: "准备下载…", speed: 0 });
     try {
       const r = await invoke<UpdateDownloadResult>("update_download", {
         version: upd.latestVersion,
       });
       lastDownload = r;
       setDownloaded(r);
-      setProgress({ percent: 100, message: "下载完成" });
+      setProgress({ percent: 100, message: "下载完成", speed: 0 });
     } catch (e) {
       if (!cancelRequested.current) setUpdError(String(e));
       else setProgress(null);
@@ -631,7 +679,7 @@ export function SettingsPanel({
     if (!upd) return;
     setApplying(true);
     setUpdError("");
-    setProgress({ percent: 0, message: "正在应用补丁…" });
+    setProgress({ percent: 0, message: "正在应用补丁…", speed: 0 });
     try {
       const r = await invoke<{ applied: boolean }>("patch_apply", {
         version: upd.latestVersion,
@@ -669,6 +717,51 @@ export function SettingsPanel({
     }
   }, [downloaded]);
 
+  /* [更新与维护] 检测源：只做探测（不改更新状态），每源 30s 冷却由后端保证。 */
+  const runProbe = useCallback(async () => {
+    if (probeBusy || probeCooldown > 0) return;
+    setProbeBusy(true);
+    setProbeError("");
+    setProbeCopied(false);
+    try {
+      const r = await invoke<UpdateProbeReport>("update_source_probe");
+      setProbe(r);
+      setProbeCooldown(Math.max(30, r?.cooldownRemaining ?? 0));
+    } catch (e) {
+      setProbeError(String(e));
+    } finally {
+      setProbeBusy(false);
+    }
+  }, [probeBusy, probeCooldown]);
+
+  useEffect(() => {
+    if (probeCooldown <= 0) return;
+    const t = window.setInterval(() => {
+      setProbeCooldown((v) => (v > 0 ? v - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(t);
+  }, [probeCooldown > 0]);
+
+  const copyProbe = useCallback(async () => {
+    if (!probe) return;
+    const text = probe.items
+      .map((i) =>
+        i.skipped
+          ? `${i.label}: 冷却中（剩余 ${i.cooldownRemaining}s）`
+          : `${i.label}: ${i.ok ? "正常" : "失败"}${i.status ? ` HTTP ${i.status}` : ""} · ${i.elapsedMs}ms` +
+            (i.version ? ` · 版本 ${i.version}` : "") +
+            (i.error ? ` · ${i.error}` : ""),
+      )
+      .join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setProbeCopied(true);
+      window.setTimeout(() => setProbeCopied(false), 1800);
+    } catch (e) {
+      setProbeError(`复制失败: ${String(e)}`);
+    }
+  }, [probe]);
+
   const refresh = useCallback(() => {
     invoke<Stats>("cache_stats")
       .then(setStats)
@@ -691,13 +784,15 @@ export function SettingsPanel({
         if (info?.version) setVer(info.version);
       })
       .catch(() => {});
+    // [webview2] 只读检测（注册表/目录），开销可忽略；缺失时「关于」页显示下载入口
+    void checkWebview2();
     const h = (e: KeyboardEvent) => {
       // [lc-1607] 免责声明弹窗打开时，Esc 归它（只关弹窗，不连设置面板一起关）
-      if (e.key === "Escape" && !showDisclaimer) onClose();
+      if (e.key === "Escape" && !showDisclaimer) requestClose();
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [onClose, refresh, showDisclaimer]);
+  }, [requestClose, refresh, showDisclaimer, checkWebview2]);
 
   /* [更新与维护] 监听下载/补丁进度事件；组件卸载时取消监听。
      兼容：percent 缺省时用 loaded/total 现算；message 缺省时退回 phase。 */
@@ -712,7 +807,12 @@ export function SettingsPanel({
       }
       percent = Math.max(0, Math.min(100, percent));
       const message = asText(p.message ?? p.phase);
-      setProgress({ percent, message });
+      const speed = Number(p.speed);
+      setProgress({
+        percent,
+        message,
+        speed: Number.isFinite(speed) && speed > 0 ? speed : 0,
+      });
     };
     const u1 = listen("update-progress", onProgress);
     const u2 = listen("patch-progress", onProgress);
@@ -759,6 +859,14 @@ export function SettingsPanel({
   const [dmNote, setDmNote] = useState("");
   const [dmTesting, setDmTesting] = useState(false);
 
+  /* [danmaku-diagnose] 手动诊断：一次后端调用返回全部检查项，前端只展示。
+     关键词留空 = 后端优先用当前播放标题，取不到再用内置测试词。 */
+  const [diagKeyword, setDiagKeyword] = useState("");
+  const [diagRunning, setDiagRunning] = useState(false);
+  const [diagResult, setDiagResult] = useState<DiagResult | null>(null);
+  const [diagError, setDiagError] = useState("");
+  const [diagCopied, setDiagCopied] = useState(false);
+
   const parseBases = (text: string) =>
     text
       .split(/[\n;；]/)
@@ -798,30 +906,57 @@ export function SettingsPanel({
     }
   };
 
-  /* [danmaku-cache] 清空当前条目弹幕缓存并重新三源搜索。
-     · 「清空缓存并重新搜索」→ danmaku_refresh（后端清缓存后通知 mpv 重走自动匹配链）
-     · 「清空全部缓存」→ danmaku_clear_cache(scope="all")（无法定位当前条目时的兜底）
-     二次确认复用现有 .set-confirm 弹层样式；后端有互斥锁，重复点击不会并发清理。 */
-  const [dmClearConfirm, setDmClearConfirm] = useState<null | "current" | "all">(null);
-  const [dmClearing, setDmClearing] = useState(false);
-  const [dmClearNote, setDmClearNote] = useState("");
-
-  const runDanmakuClear = async (scope: "current" | "all") => {
-    setDmClearing(true);
-    setDmClearNote("");
+  /* [danmaku-diagnose] 运行诊断：失败只记录错误，不影响面板其它内容。 */
+  const runDiagnose = async () => {
+    setDiagRunning(true);
+    setDiagError("");
+    setDiagCopied(false);
     try {
-      const r =
-        scope === "all"
-          ? await invoke<{ removed?: number; message?: string }>("danmaku_clear_cache", {
-              scope: "all",
-            })
-          : await invoke<{ removed?: number; message?: string }>("danmaku_refresh");
-      setDmClearNote(r?.message ?? `已完成（清理 ${r?.removed ?? 0} 个文件）`);
+      const kw = diagKeyword.trim();
+      const r = await invoke<DiagResult>("danmaku_diagnose", {
+        keyword: kw || null,
+      });
+      setDiagResult(r);
     } catch (e) {
-      setDmClearNote(String(e));
+      setDiagError(String(e));
     } finally {
-      setDmClearing(false);
-      setDmClearConfirm(null);
+      setDiagRunning(false);
+    }
+  };
+
+  /** 诊断结果转纯文本（便于贴给开发者排查）。 */
+  const diagPlainText = (r: DiagResult): string => {
+    const src = DIAG_SOURCE_LABEL[r.keywordSource] ?? r.keywordSource;
+    const lines = [
+      `AniBox 弹幕诊断 · 关键词：${r.keyword}（${src}）`,
+      `自建接口：${r.enabled ? "已启用" : "未启用"}`,
+      ...r.checks.map(
+        (c) => `${diagIcon(c.status)} ${c.label}（${c.timeMs}ms）：${c.detail}`,
+      ),
+    ];
+    return lines.join("\n");
+  };
+
+  const copyDiag = async () => {
+    if (!diagResult) return;
+    const text = diagPlainText(diagResult);
+    try {
+      await navigator.clipboard.writeText(text);
+      setDiagCopied(true);
+    } catch {
+      // WebView 剪贴板不可用时退回 textarea + execCommand
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+        setDiagCopied(true);
+      } finally {
+        document.body.removeChild(ta);
+      }
     }
   };
 
@@ -1076,9 +1211,9 @@ export function SettingsPanel({
   const softwareDesc = appMeta?.description?.trim() || SOFTWARE_DESC;
 
   return (
-    <div className="ddet-mask" onClick={onClose}>
+    <div className={`ddet-mask${closing ? " set-mask-closing" : ""}`} onClick={requestClose}>
       <div className="ddet set-card" onClick={(e) => e.stopPropagation()}>
-        <button className="ddet-close" title="关闭（Esc）" onClick={onClose}>
+        <button className="ddet-close" title="关闭（Esc）" onClick={requestClose}>
           <IcoXL size={15} strokeWidth={1.8} />
         </button>
         <header className="ddet-hd">
@@ -1379,6 +1514,27 @@ export function SettingsPanel({
                       onClick={() => onSettings({ perfMode: !settings.perfMode })}
                     />
                   </div>
+                  <div className="set-row set-slider-row">
+                    <div>
+                      <span className="set-k">界面透明度</span>
+                      <div className="set-desc">
+                        调整窗口底色与玻璃面板的透明程度，不影响文字对比
+                      </div>
+                    </div>
+                    <div className="set-range-wrap">
+                      <input
+                        type="range"
+                        className="set-range"
+                        min={60}
+                        max={100}
+                        step={1}
+                        value={uiOpacity}
+                        aria-label="界面透明度"
+                        onChange={(e) => onSettings({ uiOpacity: Number(e.target.value) })}
+                      />
+                      <span className="set-range-val">{uiOpacity}%</span>
+                    </div>
+                  </div>
                   <div className="set-row">
                     <div>
                       <span className="set-k">轮播透明标题</span>
@@ -1445,7 +1601,7 @@ export function SettingsPanel({
                           退出登录
                         </button>
                       )}
-                      <span className="set-note">{biliNote}</span>
+                      {biliNote && <span className="set-note">{biliNote}</span>}
                     </div>
                     {/* [bili-qr] 扫码登录层：二维码由后端渲染成 SVG data URI */}
                     {biliQrPhase !== "idle" && (
@@ -1556,6 +1712,23 @@ export function SettingsPanel({
                       onBlur={() => saveDanmu(settings.danmuApiEnabled, dmBases)}
                     />
                     <div className="set-actions">
+                      <input
+                        className="set-input set-diag-kw"
+                        placeholder="测试关键词（留空=当前播放标题/内置词）"
+                        value={diagKeyword}
+                        disabled={diagRunning}
+                        onChange={(e) => setDiagKeyword(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !diagRunning) void runDiagnose();
+                        }}
+                      />
+                      <button
+                        className="set-btn"
+                        disabled={diagRunning}
+                        onClick={() => void runDiagnose()}
+                      >
+                        {diagRunning ? "诊断中…" : "诊断"}
+                      </button>
                       <button
                         className="set-btn"
                         disabled={dmTesting}
@@ -1576,6 +1749,45 @@ export function SettingsPanel({
                       每行一条（最多 4 条，故障转移）。地址只存本机，不写入 mpv 配置。
                       内置弹幕源需要本机安装 Node.js；未安装时会自动降级为内置 B 站弹幕。
                     </div>
+                    {/* [danmaku-diagnose] 诊断结果面板：逐项 ✅/⚠️/❌ + 说明 + 耗时 */}
+                    {(diagRunning || diagResult || diagError) && (
+                      <div className="set-diag">
+                        <div className="set-diag-head">
+                          <span className="set-k">诊断结果</span>
+                          {diagResult && (
+                            <span className="set-diag-src">
+                              关键词：{diagResult.keyword}（
+                              {DIAG_SOURCE_LABEL[diagResult.keywordSource] ??
+                                diagResult.keywordSource}
+                              ）
+                            </span>
+                          )}
+                          <button
+                            className="set-btn"
+                            disabled={!diagResult}
+                            onClick={() => void copyDiag()}
+                          >
+                            {diagCopied ? "已复制" : "复制诊断信息"}
+                          </button>
+                        </div>
+                        {diagError && <div className="set-diag-err">诊断失败：{diagError}</div>}
+                        {diagResult && (
+                          <ul className="set-diag-list">
+                            {diagResult.checks.map((c) => (
+                              <li key={c.id} className={`set-diag-item ${c.status}`}>
+                                <span className="set-diag-ico">{diagIcon(c.status)}</span>
+                                <span className="set-diag-label">{c.label}</span>
+                                <span className="set-diag-time">{c.timeMs}ms</span>
+                                <span className="set-diag-detail">{c.detail}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {diagRunning && (
+                          <div className="set-diag-run">正在检查…（每项最长 5s）</div>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="set-row">
                     <div>
@@ -1598,80 +1810,6 @@ export function SettingsPanel({
                       }
                     />
                   </div>
-
-                  {/* ── 弹幕缓存：清空当前条目并重新三源搜索 ── */}
-                  <div className="set-row">
-                    <div>
-                      <span className="set-k">弹幕缓存</span>
-                      <div className="set-desc">
-                        清空当前播放条目的弹幕缓存，并重新执行「自建源 → 内置 B 站 → 弹弹play」
-                        三源搜索；播放器会重新加载弹幕。若当前没有正在播放的条目，可改用「清空全部缓存」。
-                      </div>
-                    </div>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                      {dmClearConfirm === "current" ? (
-                        <div className="set-confirm">
-                          <span className="set-confirm-q">清空当前条目缓存并重新搜索？</span>
-                          <button
-                            className="set-btn"
-                            disabled={dmClearing}
-                            onClick={() => setDmClearConfirm(null)}
-                          >
-                            取消
-                          </button>
-                          <button
-                            className="set-btn danger"
-                            disabled={dmClearing}
-                            onClick={() => void runDanmakuClear("current")}
-                          >
-                            {dmClearing ? "处理中…" : "确定"}
-                          </button>
-                        </div>
-                      ) : dmClearConfirm === "all" ? (
-                        <div className="set-confirm">
-                          <span className="set-confirm-q">清空全部弹幕缓存？此操作不可撤销。</span>
-                          <button
-                            className="set-btn"
-                            disabled={dmClearing}
-                            onClick={() => setDmClearConfirm(null)}
-                          >
-                            取消
-                          </button>
-                          <button
-                            className="set-btn danger"
-                            disabled={dmClearing}
-                            onClick={() => void runDanmakuClear("all")}
-                          >
-                            {dmClearing ? "处理中…" : "确定"}
-                          </button>
-                        </div>
-                      ) : (
-                        <>
-                          <button
-                            className="set-btn"
-                            disabled={dmClearing}
-                            onClick={() => {
-                              setDmClearNote("");
-                              setDmClearConfirm("current");
-                            }}
-                          >
-                            {dmClearing ? "处理中…" : "清空缓存并重新搜索"}
-                          </button>
-                          <button
-                            className="set-btn danger"
-                            disabled={dmClearing}
-                            onClick={() => {
-                              setDmClearNote("");
-                              setDmClearConfirm("all");
-                            }}
-                          >
-                            清空全部缓存
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  {dmClearNote && <div className="set-note">{dmClearNote}</div>}
 
                 </>
               )}
@@ -1822,12 +1960,62 @@ export function SettingsPanel({
                     </button>
                   </div>
 
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">检测源</span>
+                      <div className="set-desc">
+                        依次探测 自建镜像 → Gitee → 原生 GitHub（只读，不改变更新状态；每源 30 秒冷却）
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="set-btn"
+                      disabled={probeBusy || probeCooldown > 0}
+                      onClick={() => void runProbe()}
+                    >
+                      {probeBusy ? "检测中…" : probeCooldown > 0 ? `冷却 ${probeCooldown}s` : "检测源"}
+                    </button>
+                  </div>
+
+                  {(probe || probeError) && (
+                    <div className="set-row set-row-col set-upd">
+                      <div className="set-upd-status">
+                        <span className="set-upd-status-text">源探测结果</span>
+                        {probe && (
+                          <button type="button" className="set-btn" onClick={() => void copyProbe()}>
+                            {probeCopied ? "已复制" : "复制结果"}
+                          </button>
+                        )}
+                      </div>
+                      {probeError && <div className="set-upd-err"><span>{probeError}</span></div>}
+                      {probe?.items.map((it) => (
+                        <div key={it.id} className="set-row" style={{ padding: "4px 0" }}>
+                          <div>
+                            <span className="set-k">{it.label}</span>
+                            <div className="set-desc">{it.url}</div>
+                          </div>
+                          <span className="set-v">
+                            {it.skipped
+                              ? `冷却中 ${it.cooldownRemaining}s`
+                              : it.ok
+                                ? `正常 · ${it.elapsedMs}ms${it.version ? ` · v${it.version.replace(/^v/i, "")}` : ""}`
+                                : `${it.status ? `HTTP ${it.status} · ` : ""}${it.elapsedMs}ms${it.error ? ` · ${it.error}` : ""}`}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {(updStatus || updError) && (
                     <div className="set-row set-row-col set-upd">
                       <div className="set-upd-status">
                         {updStatus && <span className={`set-upd-dot ${updStatus.tone}`} />}
                         <span className="set-upd-status-text">{updStatus?.text}</span>
                         {upd?.publishedAt && <span className="set-upd-date">发布于 {upd.publishedAt}</span>}
+                        {upd?.source && <span className="set-upd-date">更新源 {upd.source}</span>}
+                        {!!upd?.fromCache && upd.cooldownRemaining ? (
+                          <span className="set-upd-date">冷却缓存（{upd.cooldownRemaining}s）</span>
+                        ) : null}
                       </div>
 
                       {!!upd?.notes && (
@@ -1851,6 +2039,7 @@ export function SettingsPanel({
                           </div>
                           <div className="set-upd-progress-meta">
                             <span className="set-upd-pct">{Math.round(progress.percent)}%</span>
+                            {progress.speed > 0 && <span className="set-upd-msg">{formatSpeed(progress.speed)}</span>}
                             {progress.message && <span className="set-upd-msg">{progress.message}</span>}
                           </div>
                         </div>
@@ -1923,14 +2112,86 @@ export function SettingsPanel({
                     <span className="set-k">软件说明</span>
                     <div className="set-desc">{softwareDesc}</div>
                   </div>
+                  {/* [webview2] 运行时状态：缺失/版本过低 → 官方 Bootstrapper 下载入口。
+                      运行时完全缺失时本应用通常无法启动，此时请用根目录「安装WebView2.cmd」。 */}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">WebView2 运行时</span>
+                      <div className="set-desc">
+                        {wv2Busy && !wv2
+                          ? "检测中…"
+                          : wv2
+                            ? !wv2.installed
+                              ? "未检测到（应用可能无法正常显示界面）"
+                              : wv2.outdated
+                                ? `版本过低（v${wv2.version || "?"}，需要 ≥ v${wv2.minimumVersion}）`
+                                : `已安装${wv2.version ? ` · v${wv2.version}` : ""}`
+                            : wv2Err
+                              ? `检测失败：${wv2Err}`
+                              : "未检测"}
+                      </div>
+                    </div>
+                    <div className="set-actions">
+                      {wv2 && (!wv2.installed || wv2.outdated) && (
+                        <button
+                          type="button"
+                          className="set-btn primary"
+                          onClick={() => void openExternal(wv2.downloadUrl)}
+                        >
+                          下载安装
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="set-btn"
+                        disabled={wv2Busy}
+                        onClick={() => void checkWebview2()}
+                      >
+                        {wv2Busy ? "检测中…" : "重新检测"}
+                      </button>
+                    </div>
+                  </div>
+                  {wv2 && (!wv2.installed || wv2.outdated) && (
+                    <div className="set-row set-row-col">
+                      <div className="set-desc">
+                        下载安装包会自动打开微软官方页面（Evergreen Bootstrapper，约 1.8 MB）。
+                        无网络/内网环境可改用
+                        <a
+                          href={wv2.standaloneUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ marginLeft: 4 }}
+                          onClick={(e) => {
+                            // WebView2 会丢弃 target="_blank"：统一走 opener 插件
+                            e.preventDefault();
+                            void openExternal(wv2.standaloneUrl);
+                          }}
+                        >
+                          官方 x64 离线安装包
+                        </a>
+                        ；安装完成后点「重新检测」。
+                      </div>
+                    </div>
+                  )}
                   <div className="set-row">
                     <div>
                       <span className="set-k">项目地址</span>
                       <div className="set-desc">{projectUrl}</div>
                     </div>
-                    <button type="button" className="set-btn" onClick={() => openExternal(projectUrl)}>
-                      打开
-                    </button>
+                    <div className="set-actions">
+                      <button
+                        type="button"
+                        className="set-btn"
+                        onClick={() => openExternal(PROJECT_URL)}
+                        title="在 GitHub 上给 AniBox 点个星标"
+                      >
+                        <IcoStar size={14} strokeWidth={1.8} style={{ marginRight: 6, verticalAlign: "-2px" }} />
+                        点个星标
+                      </button>
+                      <button type="button" className="set-btn" onClick={() => openExternal(projectUrl)}>
+                        打开
+                      </button>
+                    </div>
                   </div>
                   <div className="set-attrib">
                     <span>This product uses the TMDB API but is not endorsed or certified by TMDB.</span>

@@ -56,6 +56,11 @@
        · .lib-strip / .lsc-pop 的基准**已经是 26**（定位祖先 .hero-zone 就在 .home-full
          的 26px 内容盒内）⇒ 必须写 0，写变量就是 26+26=52（实测踩过） */
   --home-pad: 26px;
+  /* 界面透明度（设置面板「外观 → 界面透明度」）：
+     App 在 <html> 上写入实际百分比（60%–100%），这两个值只是 CSS 侧兜底。
+     .app-shell 用 --ui-surface-alpha，.sidebar 用略高的 --ui-sidebar-alpha。 */
+  --ui-surface-alpha: 85%;
+  --ui-sidebar-alpha: 89%;
 }
 
 html.dark {
@@ -114,8 +119,33 @@ body,
   border: none;
   border-radius: 10px; /* 窗口形状由 DWM 系统圆角裁定(抗锯齿)；CSS 弧略大使其处于系统弧内侧 */
   overflow: hidden;
-  background: linear-gradient(160deg, var(--bg-1), var(--bg-0) 55%);
+  /* 接近不透明：--bg-0/--bg-1 本身只有 40%~55% 不透明度，叠加后整窗几乎全透，
+     桌面壁纸会清楚透进来。这里提高外壳底色不透明度，只保留轻微玻璃感。
+     第一行是**不支持 color-mix 时的回退**（旧 WebView2）；支持时由下方 @supports
+     用设置项里的 --ui-surface-alpha 实时覆盖。 */
+  background: linear-gradient(160deg, rgba(243, 246, 251, 0.94), rgba(246, 248, 252, 0.9) 55%);
   animation: pageIn 0.28s ease;
+}
+html.dark .app-shell {
+  background: linear-gradient(160deg, rgba(18, 20, 29, 0.94), rgba(13, 15, 22, 0.92) 55%);
+}
+/* [ui-opacity] 外壳底色跟随「界面透明度」：浅色基色 #f3f6fb/#f6f8fc，深色 #12141d/#0d0f16。
+   用 @supports 包住：不支持的 WebView 保留上面的原实色渐变。 */
+@supports (background: color-mix(in srgb, red 50%, transparent)) {
+  .app-shell {
+    background: linear-gradient(
+      160deg,
+      color-mix(in srgb, #f3f6fb var(--ui-surface-alpha, 85%), transparent),
+      color-mix(in srgb, #f6f8fc var(--ui-surface-alpha, 85%), transparent) 55%
+    );
+  }
+  html.dark .app-shell {
+    background: linear-gradient(
+      160deg,
+      color-mix(in srgb, #12141d var(--ui-surface-alpha, 85%), transparent),
+      color-mix(in srgb, #0d0f16 var(--ui-surface-alpha, 85%), transparent) 55%
+    );
+  }
 }
 
 /* [lc-094] 无边框窗口的边缘缩放热区（6px 边 / 12px 角）。

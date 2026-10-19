@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+# 与 badge-commits 共用同一把锁，避免两个 workflow 同时写 badge-data 互相覆盖。
+concurrency:
+  group: badge-data-write
+  cancel-in-progress: false
+
 # 已删旧仓库（Fntv-Plus-old / 上游时期）无法再从 API 统计的下载量，取删除当天从
 # releases.json 备份固化的冻结值；如后续又有需要并入的固定量，直接改这个常量。
 env:
@@ -43,20 +48,31 @@ jobs:
           CURRENT: ${{ steps.sum.outputs.current }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -e
+          set -euo pipefail
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           json=$(printf '{"total":%s,"githubCurrent":%s,"legacy":1967,"updatedAt":"%s"}' \
             "$TOTAL" "$CURRENT" "$(date -u +%FT%TZ)")
           msg="downloads: $TOTAL (current=$CURRENT + legacy=1967) @ $(date -u +%FT%TZ)"
-          # 孤儿分支只放一个 downloads.json，每次整个覆盖推送（无需处理文件 sha / 分支不存在）
           workdir=$(mktemp -d)
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # 基于现有 badge-data 分支增量提交，保留 commits.json 等其它徽章数据；
+          # 分支不存在时才创建孤儿分支。
+          if git ls-remote --exit-code --heads "$remote" badge-data >/dev/null 2>&1; then
+            git clone -q --depth 1 --branch badge-data "$remote" "$workdir"
+          else
+            mkdir -p "$workdir"
+            git -C "$workdir" init -q .
+            git -C "$workdir" checkout -q --orphan badge-data
+            git -C "$workdir" remote add origin "$remote"
+          fi
           cd "$workdir"
-          git init -q .
-          git checkout -q --orphan badge-data
           printf '%s' "$json" > downloads.json
           git add downloads.json
+          if git diff --cached --quiet; then
+            echo "downloads.json 内容未变化，跳过推送"
+            exit 0
+          fi
           git commit -q -m "$msg"
-          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git push -q -f origin badge-data
+          git push -q origin HEAD:badge-data
           echo "badge-data/downloads.json 已推送 (total=$TOTAL): $json"

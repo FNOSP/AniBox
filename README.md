@@ -2,6 +2,7 @@
 
 <div align="center">
 
+[![Version](https://img.shields.io/badge/version-4.0.0-2ea44f)](https://github.com/FNOSP/AniBox/releases)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![Rust](https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
@@ -12,7 +13,7 @@
 [![Stars](https://img.shields.io/github/stars/FNOSP/AniBox?style=flat&logo=github&logoColor=white)](https://github.com/FNOSP/AniBox/stargazers)
 [![Forks](https://img.shields.io/github/forks/FNOSP/AniBox?style=flat&logo=github&logoColor=white)](https://github.com/FNOSP/AniBox/forks)
 [![Issues](https://img.shields.io/github/issues/FNOSP/AniBox?logo=github)](https://github.com/FNOSP/AniBox/issues)
-[![Commits](https://img.shields.io/badge/commits-1067-2ea44f?logo=git&logoColor=white)](https://github.com/FNOSP/AniBox/commits)
+[![Commits](https://img.shields.io/github/commit-activity/total/FNOSP/AniBox?label=commits&logo=git&logoColor=white)](https://github.com/FNOSP/AniBox/commits)
 [![Last Commit](https://img.shields.io/github/last-commit/FNOSP/AniBox/release?logo=git&logoColor=white)](https://github.com/FNOSP/AniBox/commits)
 [![Gitee](https://img.shields.io/badge/Gitee-mirror-F47040?logo=gitee&logoColor=white)](https://gitee.com/YDMY007/fntv-plus)
 
@@ -38,39 +39,41 @@
 ## <img src="https://api.iconify.design/mdi/image-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 界面截图
 
 <div align="center">
-  <img src="docs/pic/home.jpg" width="100%" alt="">
-  <p><em>图：首页全屏 Hero 轮播</em></p>
+  <img src="docs/pic/home.jpg" width="100%" alt="AniBox 首页：全屏 Hero 轮播、顶栏全局搜索与媒体库横排">
+  <p><em>图：首页全屏 Hero 轮播（顶栏已含全局聚合搜索入口）</em></p>
 </div>
 
 <div align="center">
-<img src="docs/pic/find.jpg" width="100%" alt="">
+<img src="docs/pic/find.jpg" width="100%" alt="AniBox 发现页：TMDB 与 Bangumi 双面板">
   <p><em>图：发现页 TMDB / Bangumi 双面板</em></p>
 </div>
 
 <div align="center">
-<img src="docs/pic/details.jpg" width="100%" alt="">
-  <p><em>图：两栏沉浸式详情页与标签页</em></p>
+<img src="docs/pic/details.jpg" width="100%" alt="AniBox 详情页：两栏沉浸式布局、选集与标签页">
+  <p><em>图：两栏沉浸式详情页与标签页（含多版本切换、选集自动定位）</em></p>
 </div>
 
 <div align="center">
-<img src="docs/pic/playhistory.jpg" width="100%" alt="">
+<img src="docs/pic/playhistory.jpg" width="100%" alt="AniBox 观影记录与年度报告">
   <p><em>图：观影记录与年度报告</em></p>
 </div>
 
 <div align="center">
-<img src="docs/pic/mpv.jpg" width="100%" alt="">
+<img src="docs/pic/mpv.jpg" width="100%" alt="AniBox 调用 mpv 播放并加载多源弹幕">
   <p><em>图：mpv 三源弹幕丰富影视体验</em></p>
 </div>
 
 <div align="center">
-<img src="docs/pic/potplay.jpg" width="100%" alt="">
-  <p><em>图：兼容本机自带potplayer调用</em></p>
+<img src="docs/pic/potplay.jpg" width="100%" alt="AniBox 调用本机 PotPlayer 播放">
+  <p><em>图：兼容本机自带 PotPlayer 调用</em></p>
 </div>
 
 <div align="center">
-<img src="docs/pic/actor.jpg" width="100%" alt="">
+<img src="docs/pic/actor.jpg" width="100%" alt="AniBox 演员页与作品入库信息">
   <p><em>图：演员信息入库检测</em></p>
 </div>
+
+> 截图均为 AniBox 桌面端实机画面。全局搜索、手动元数据、多版本等新增功能的截图尚未补充，后续会随版本更新。
 
 ---
 
@@ -118,8 +121,15 @@
   - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 追到一半的片子直接从这里接着看，不用再翻媒体库。
 - **<img src="https://api.iconify.design/mdi/folder-multiple-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 按媒体库横排与展示管理** — 首页按媒体库分组横排，可隐藏指定库：
   - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 库太多显得杂乱时，在设置里隐藏不常看的库，首页更清爽。
+- **<img src="https://api.iconify.design/mdi/magnify.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 顶栏全局聚合搜索** — 顶栏搜索入口（`Ctrl K` / `⌘ K`）一次检索媒体库全部内容，结果按「全部 / 电影 / 电视剧 / 电视直播 / 人物 / 其他」分页：
+  - 支持键盘上下选择、左右切页、回车直达详情；人物结果进入演员页，可直接续播的条目一键跳转。
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 片名只记得一半时，不用先想它在哪个库，直接 `Ctrl K` 搜。
 - **<img src="https://api.iconify.design/mdi/compass-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 侧栏导航** — 首页、收藏、全部 / 电影 / 电视节目 / 电视直播 / 其他分类；底部为用户信息与快捷操作卡：
   - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 分类切换集中在左侧栏，路径统一。
+- **<img src="https://api.iconify.design/mdi/card-text-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 媒体库卡片信息增强** — 首页媒体库横排的海报卡补充年份 / 季集数 / 更新时间 / 续看剩余等信息，缺失字段自动隐藏：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 不点进详情也能判断「这是第几季、更新到哪、还剩多少没看」。
+- **<img src="https://api.iconify.design/mdi/theme-light-dark.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 外观与性能模式** — 浅色 / 深色主题、界面透明度滑杆（默认 85%）、性能模式（关闭动画与磨砂）：
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 性能模式下透明度不再被磨砂层「吃掉」，外壳底色跟随设置正确生效；低配机可关闭动效换流畅度。
 
 ### 发现与元数据
 
@@ -131,6 +141,10 @@
   - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 详情页的放送时间更精确，方便卡点追更。
 - **<img src="https://api.iconify.design/mdi/link-variant.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> Bangumi 账号绑定** — 手动粘贴 Access Token 绑定，支持追番收藏状态同步与冲突策略：
   - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 绑定后追番状态可在客户端与 Bangumi 之间同步。
+- **<img src="https://api.iconify.design/mdi/database-search-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 手动获取元数据（本地覆盖）** — 海报卡「⋯ → 刷新元数据」打开手动匹配弹窗，同时搜索 **TMDB** 与 **Bangumi 镜像**，两路结果分区展示、单选确认：
+  - 选定后**只写本地**（`metadata_overrides.json`），**不调用飞牛任何写接口**；按「剧 guid」统一覆盖该剧在首页 / 媒体库 / 详情页 / 轮播中的标题、简介、评分、海报、季集数等字段。
+  - 可随时「清除覆盖」恢复飞牛原始数据；原始响应不会被修改。
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 飞牛自动刮削匹配错片时，手动选一次正确的 TMDB / Bangumi 条目即可，不必改 NAS 上的文件。
 
 ### 媒体库与收藏
 
@@ -145,6 +159,12 @@
 
 - **<img src="https://api.iconify.design/mdi/drama-masks.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 两栏沉浸式详情** — 左侧选集、右侧详情，全屏背景海报：
   - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 点进作品即进入沉浸式布局，选集与信息一屏可见。
+- **<img src="https://api.iconify.design/mdi/format-list-numbered.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 选集自动定位** — 打开剧集详情时，右栏选集自动滚动到「上次观看的那一集」，跨季会先切季再定位：
+  - 每个条目只自动定位一次；用户手动滚动或点选后立即放弃定位，不会把正在翻选的你拉回去。
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 几十集的年番不用再一集集往下翻。
+- **<img src="https://api.iconify.design/mdi/layers-triple-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 多版本切换** — 同一电影 / 剧集存在多个文件（多版本）时显示版本选择器：
+  - 默认选中「上次播放的版本」（服务端记忆）→ 本机记忆 → 第一个版本；电影详情页与剧集选集共用同一套版本盒子，仅版本数 > 1 时显示。
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 同一部片同时有 1080p / 4K / 导演剪辑版时，起播前先挑清楚。
 - **<img src="https://api.iconify.design/mdi/folder-multiple-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 标签页** — 详情 / 评论 / 吐槽 / 关联 / 角色 / 更多（无 Bangumi 条目 id 时隐藏评论与吐槽）：
   - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 想快速看评论、关联作品或角色，切换标签即可。
 - **<img src="https://api.iconify.design/mdi/image-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 剧照灯箱与预告** — 演职人员、角色、关联条目、TMDB 剧照与预告、剧照灯箱：
@@ -169,6 +189,12 @@
   - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 习惯 PotPlayer 快捷键 / 滤镜的用户可切换为外部播放器。
 - **<img src="https://api.iconify.design/mdi/comment-text-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 弹幕** — 本地 `127.0.0.1:22347` shim 为 uosc_danmaku 提供 B 站弹幕接口；可选自建 `danmu_api` 作为优选源（最多 4 个地址故障转移），未命中自动降级内置 B 站：
   - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 弹幕随视频自动加载；自建源不可用时自动降级，不中断观看。
+- **<img src="https://api.iconify.design/mdi/skip-forward-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 片头片尾跳过** — mpv 内 `smart_skip` 脚本 + **TheIntroDB v4** 自动识别片头 / 片尾并跳过；也支持手动标记：
+  - Rust 侧按「guid → TMDB ID / 季 / 集」下发 `skip-metadata`，无 TMDB 锚点时不误触发；识别不到时保持正常播放。
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 追番连播时不必每次手动拖过 OP / ED。
+- **<img src="https://api.iconify.design/mdi/television-play.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 电视直播直链** — 直播条目直接取 `play/info.live_channels[]` 的可播地址起播（不走 Go 代理的 `playvideo`，该接口对直播返回 500）：
+  - 自动挑选可用线路并记录线路名；直播无剧集概念，不写弹幕匹配元数据，避免空搜。
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 侧栏「电视直播」里的频道现在可以直接点了。
 - **<img src="https://api.iconify.design/mdi/timer-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 播放历史** — 起播即记录到本机 `history.json`，与飞牛记录合并展示：
   - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 本机记录作为飞牛记录的补充，跨端也能对上。
 
@@ -194,6 +220,14 @@
   - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 遇到问题直接在客户端提交工单，无需另开网页。
 - **<img src="https://api.iconify.design/mdi/stethoscope.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 日志与诊断** — 诊断日志、mpv 日志、调试日志开关、组件级过滤、诊断信息导出：
   - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 反馈内容与日志在提交前做脱敏处理。
+
+### 网页端增强（fpk · 可选）
+
+- **<img src="https://api.iconify.design/mdi/puzzle-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> AniBox fpk 微应用** — 仓库内 `fpk/` 为飞牛影视（fnOS）的网页端增强微应用，安装后从 NAS 桌面进入增强版影视网页，电视 / 平板 / 手机 / 电脑全设备生效，影视应用文件零改动：
+  - 已随主仓库统一改名为 **AniBox**，安装包产物为 `AniBox-<版号>.fpk`（ARM64 为 `AniBox-<版号>-arm64.fpk`）。
+  - 元数据 / 图片经内置镜像取数（缺密钥时自动降级官方域），并内置弹幕源、界面美化、片头片尾跳过与跨设备播放记忆。
+  - 桌面端与网页端共用同一套前端增强逻辑：桌面版先行开发，确认后移植到 `fpk/src/preload`。
+  - 详见 [`fpk/README.md`](fpk/README.md)。
 
 ### 在线资源（不提供）
 
@@ -296,13 +330,14 @@ AniBox/                            # 仓库目录名（产品名 AniBox）
 │   │   ├── webrs/                 # 在线资源面板（不在发布范围）
 │   │   ├── feedback/              # 反馈工单与日志诊断
 │   │   ├── settings/              # 设置面板
+│   │   ├── search/                # 顶栏全局聚合搜索（Ctrl K，分页 / 键盘导航）
 │   │   ├── sidebar/ shell/        # 侧栏、标题栏、导航胶囊
 │   │   ├── login/                 # 登录页
 │   │   ├── disclaimer/            # 首次启动免责声明
-│   │   └── common/                # 海报卡、滚动行、头像兜底等
+│   │   └── common/                # 海报卡、滚动行、元数据手动匹配弹窗、头像兜底等
 │   ├── hooks/                     # useGamepad、useLibIndex、useRefresh 等
-│   ├── lib/                       # api、焦点导航、图片、格式化、主题等
-│   ├── styles/                    # 分层 CSS（tokens、shell、各页面）
+│   ├── lib/                       # api、焦点导航、图片、自适应色调、格式化、主题等
+│   ├── styles/                    # 分层 CSS（tokens、shell、各页面、45-search）
 │   └── assets/                    # 内置字体与静态资源
 ├── src-tauri/                     # Rust 桌面端
 │   ├── src/
@@ -322,6 +357,7 @@ AniBox/                            # 仓库目录名（产品名 AniBox）
 │   │   ├── disk_cache.rs          # 三级缓存与 LRU
 │   │   ├── history.rs             # 本机播放历史、合并、年度报告数据
 │   │   ├── watched.rs / favorites.rs
+│   │   ├── metadata_override.rs   # 手动元数据本地覆盖（按剧 guid 叠加，不写飞牛）
 │   │   ├── feedback.rs            # 反馈工单、日志与诊断
 │   │   ├── usage_stats.rs         # 匿名统计
 │   │   ├── update.rs              # 全量更新 + 热补丁 + fntvweb 协议
@@ -334,6 +370,7 @@ AniBox/                            # 仓库目录名（产品名 AniBox）
 │   ├── Cargo.toml                 # Rust 依赖与 release 配置
 │   └── tauri.conf.json            # 窗口、打包、资源与 identifier
 ├── public/                        # Vite 公共静态资源
+├── fpk/                           # 飞牛影视网页端增强微应用（AniBox fpk，选择性入库）
 ├── dev.cmd                        # 开发启动脚本（清残留 → tauri dev）
 ├── index.html                     # 前端入口 HTML
 ├── package.json                   # 前端依赖与脚本
@@ -483,6 +520,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 | `cache_limit_mb` | `2048` | 磁盘缓存上限（MB）；`0` = 不限 |
 | `exit_mode` | `"ask"` | 关闭按钮行为：`exit` / `tray` / `ask` |
 | `perf_mode` | `false` | 性能模式：关闭动画与磨砂 |
+| `ui_opacity` | `85` | 界面透明度（0–100，设置面板「外观 → 界面透明度」）；性能模式下同样生效 |
 | `carousel_logo` | `true` | 首页轮播优先使用影片透明 Logo |
 | `launch_page` | `"home"` | 登录后进入 `home` 或 `discover` |
 | `bgm_token` | 空 | Bangumi 个人 Access Token |

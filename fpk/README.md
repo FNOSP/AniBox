@@ -22,19 +22,21 @@
 ---
 
 <div align="center">
-  <img src="resource/docs/home.png" width="100%" alt="">
-  <p><em>图：web端实机展示</em></p>
+  <img src="resource/docs/home.jpg" width="100%" alt="AniBox fpk：飞牛影视网页端首页增强（轮播、继续观看、媒体库）">
+  <p><em>图：Web 端实机展示（首页增强）</em></p>
 </div>
 
 <div align="center">
-  <img src="resource/docs/detail.png" width="100%" alt="">
+  <img src="resource/docs/detail.jpg" width="100%" alt="AniBox fpk：影视详情页增强">
   <p><em>图：详情页增强</em></p>
 </div>
 
 <div align="center">
-  <img src="resource/docs/actor.png" width="100%" alt="">
+  <img src="resource/docs/actor.jpg" width="100%" alt="AniBox fpk：演员信息入库检测">
   <p><em>图：演员入库检测</em></p>
 </div>
+
+> 截图为较早版本，界面元素与当前 AniBox 版本可能略有差异；后续会随版本更新。
 
 ## 实现方式
 

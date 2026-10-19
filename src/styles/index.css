@@ -51,3 +51,5 @@
 @import "./43-person.css";
 /* [lc-1710] 启动更新提示弹窗 */
 @import "./44-update.css";
+/* [lc-1725] 顶栏全局聚合搜索（胶囊入口 + 分类 Tab + 结果覆盖层） */
+@import "./45-search.css";

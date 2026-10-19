@@ -21,6 +21,17 @@
 .hscroll::-webkit-scrollbar {
   height: 7px;
 }
+/* [lc-1714] 首页媒体库行居中：外层保持 overflow-x:auto，内层轨道按内容宽度水平居中。
+   卡片少时两侧留白对称；卡片超宽时 auto 外边距归零、宽度撑开，外层照常横向滚动。 */
+.hscroll.srow-center {
+  display: block;
+}
+.hscroll.srow-center .srow-track {
+  display: flex;
+  gap: 16px;
+  width: max-content;
+  margin-inline: auto;
+}
 .continue-card .poster-box {
   aspect-ratio: 16 / 10;
 }

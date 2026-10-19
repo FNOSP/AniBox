@@ -171,6 +171,47 @@
   text-overflow: ellipsis;
 }
 
+/* [lc-1714] 首页媒体库行卡片：标题下方的元信息（年份/季集/更新日期 · 续看剩余）。
+   字段缺失时组件不渲染对应行，这里只负责排版与主题色（深浅色均走 token）。 */
+.card-meta {
+  margin-top: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.card-meta-line {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-meta-cont {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* [lc-1714] 仅首页媒体库行（showMeta）：海报下方的标题与元信息整体水平居中。
+   多行标题同样居中（-webkit-box 各行跟随 text-align）；其它 PosterCard 用法不受影响。 */
+.card-meta-center .card-title,
+.card-meta-center .card-sub,
+.card-meta-center .card-meta {
+  text-align: center;
+}
+.card-meta-center .card-meta {
+  align-items: center;
+  justify-content: center;
+}
+.card-meta-center .card-meta-line,
+.card-meta-center .card-meta-cont {
+  width: 100%;
+}
+
 
 /* ─────────── [lc-1654] 海报卡四项操作（对齐飞牛网页端卡片） ───────────
    覆盖层：中间大圆播放 + 底部一行（已看 / 收藏 / 更多），悬停显形。

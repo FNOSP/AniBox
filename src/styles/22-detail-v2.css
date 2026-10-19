@@ -1296,3 +1296,208 @@
   color: #e5787a;
 }
 
+
+/* ───────────────── [lc-1720] 手动获取元数据弹窗（MetadataPickerModal） ─────────────────
+   复用 .meta-mask/.meta-modal/.meta-* 的玻璃与主题变量；这里只补结果网格与底栏。
+   所有颜色都走既有 token，自动适配暗色/亮色、85% 透明度与性能模式。 */
+.mp-modal {
+  width: min(820px, 94vw);
+}
+.mp-search {
+  margin-top: 6px;
+}
+.mp-notice {
+  color: var(--accent, #6aa9ff);
+}
+.mp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+.mp-card {
+  display: flex;
+  gap: 10px;
+  padding: 8px;
+  text-align: left;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-2, var(--hover));
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+.mp-card:hover {
+  background: var(--hover-strong);
+}
+.mp-card.is-on {
+  border-color: var(--accent, #6aa9ff);
+  box-shadow: 0 0 0 1px var(--accent, #6aa9ff) inset;
+}
+.mp-poster {
+  position: relative;
+  flex: 0 0 auto;
+  width: 62px;
+  height: 90px;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mp-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.mp-noimg {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.mp-pick {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-grad);
+  color: #fff;
+  box-shadow: var(--shadow-card);
+}
+.mp-body {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mp-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mp-orig {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mp-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.mp-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-2);
+}
+.mp-overview {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.mp-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+.mp-foot-left,
+.mp-foot-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ══════════ [版本] 同一剧集多版本（多文件）盒子 ══════════
+   照抄 FlyNarwhal `_MediaSourceBoxes`：仅在 video_streams.length > 1 时渲染。
+   标签 = 分辨率大写 + 色域（DolbyVision → 杜比视界）。 */
+.dv2e-versions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0 2px;
+}
+.dv2e-versions-h {
+  font-size: 12px;
+  color: var(--muted);
+  margin-right: 2px;
+}
+.dv2e-version {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.dv2e-version:hover {
+  border-color: var(--accent, #4ea1ff);
+  color: var(--text-1);
+}
+.dv2e-version.active {
+  border-color: var(--accent, #4ea1ff);
+  background: color-mix(in srgb, var(--accent, #4ea1ff) 18%, transparent);
+  color: var(--text-1);
+}
+.dv2e-version:focus-visible {
+  outline: 2px solid var(--accent, #4ea1ff);
+  outline-offset: 2px;
+}
+
+/* 集选择弹层里的版本盒子：纵向排列，带分辨率/位深/编码副标题。 */
+.version-picker-boxes {
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0;
+}
+.version-picker-boxes .dv2e-version {
+  height: auto;
+  min-height: 44px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  border-radius: 10px;
+  padding: 8px 12px;
+  text-align: left;
+}
+.dv2e-version-label {
+  font-size: 13px;
+  font-weight: 700;
+}
+.dv2e-version-sub {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}

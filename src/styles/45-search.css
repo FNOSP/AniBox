@@ -1,0 +1,355 @@
+/* ═══════════════════ [lc-1725] 顶栏全局聚合搜索 ═══════════════════
+   信息架构对齐 FlyNarwhal：顶栏胶囊入口 + 分类 Tab + 结果下拉/覆盖层。
+   · 入口按钮在 .titlebar 内，颜色走 --tb-fg（随顶栏自适应反色），并 no-drag；
+   · 覆盖层通过 portal 挂到 body，z-index 200（高于设置面板 90 / 反馈 70 / 灯箱 80）；
+   · 面板用主题 token，浅色/深色自动适配；性能模式（html.perf）降级为实底。 */
+
+/* ── 顶栏入口 ── */
+.tb-search {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  margin-right: 8px;
+  align-self: center;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--tb-fg) 20%, transparent);
+  background: color-mix(in srgb, var(--tb-fg) 6%, transparent);
+  color: var(--tb-fg);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.tb-search:hover {
+  background: var(--tb-hover-bg);
+  border-color: color-mix(in srgb, var(--tb-fg) 32%, transparent);
+  color: var(--tb-fg);
+}
+.tb-search:active {
+  transform: none;
+}
+.tb-search-kbd {
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.62;
+  padding: 1px 4px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--tb-fg) 22%, transparent);
+}
+.tb-search-label {
+  letter-spacing: 0.02em;
+}
+
+/* ── 覆盖层 ── */
+.search-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 54px 16px 16px;
+  background: rgba(6, 8, 14, 0.32);
+  animation: search-fade 0.16s ease-out;
+}
+@keyframes search-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.search-panel {
+  width: min(720px, 100%);
+  max-height: min(72vh, 640px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid var(--line-strong);
+  background: color-mix(in srgb, var(--bg-3) 88%, transparent);
+  box-shadow: var(--shadow-card), 0 24px 60px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
+  color: var(--text);
+  animation: search-pop 0.18s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+html.dark .search-panel {
+  background: color-mix(in srgb, var(--bg-3) 92%, transparent);
+}
+@keyframes search-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+/* 性能模式：去掉磨砂后必须实底，避免透出桌面 */
+.perf .search-panel {
+  background: var(--panel) !important;
+}
+
+/* ── 输入行 ── */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.search-bar-ico {
+  flex: none;
+  color: var(--muted);
+}
+.search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-strong);
+  font-size: 15px;
+  font-family: inherit;
+  line-height: 1.4;
+}
+.search-input::placeholder {
+  color: var(--muted);
+}
+.search-clear {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.search-clear:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.search-clear:active {
+  transform: none;
+}
+.search-esc {
+  flex: none;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+}
+
+/* ── 分类 Tab ── */
+.search-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.search-tabs::-webkit-scrollbar {
+  display: none;
+}
+.search-tab {
+  flex: none;
+  padding: 5px 12px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.search-tab:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.search-tab:active {
+  transform: none;
+}
+.search-tab.on {
+  background: var(--accent-grad);
+  color: #fff;
+  box-shadow: 0 3px 10px rgba(108, 155, 255, 0.32);
+}
+
+/* ── 结果区 ── */
+.search-body {
+  flex: 1;
+  min-height: 160px;
+  overflow-y: auto;
+  padding: 6px;
+}
+.search-body::-webkit-scrollbar {
+  width: 8px;
+}
+.search-body::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+}
+
+.search-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 160px;
+  padding: 24px 16px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+.search-state.err {
+  flex-direction: column;
+  color: var(--err-text);
+}
+.search-err-text {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.search-retry {
+  padding: 5px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--hover);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.search-retry:hover {
+  background: var(--hover-strong);
+}
+
+.search-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  animation: search-spin 0.7s linear infinite;
+}
+@keyframes search-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.search-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.search-row:hover,
+.search-row.on {
+  background: var(--hover-strong);
+  border-color: var(--line);
+}
+.search-row:active {
+  transform: none;
+}
+.search-row.disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+.search-row.disabled:hover {
+  background: var(--hover);
+  border-color: transparent;
+}
+
+.search-thumb {
+  flex: none;
+  width: 42px;
+  height: 60px;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ph-bg);
+  color: var(--muted);
+}
+.search-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.search-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.search-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-meta {
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-badge {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--ph-bg);
+}
+
+/* 性能模式 / 减少动效：去掉入场动画（.perf * 已全局压时长，这里补系统偏好） */
+@media (prefers-reduced-motion: reduce) {
+  .search-overlay,
+  .search-panel {
+    animation: none;
+  }
+}

@@ -32,6 +32,9 @@
   --skel-base: rgba(30, 50, 110, 0.06);
   --skel-shine: rgba(30, 50, 110, 0.13);
   --option-bg: #ffffff;
+  /* 实底面板色：性能模式（.perf，关闭磨砂后）与关闭询问弹窗使用。
+     必须是**不透明**颜色 —— 半透明面板在没有 backdrop-filter 时会直接透出桌面。 */
+  --panel: #f8fafd;
   --glass-bg: rgba(255, 255, 255, 0.55);
   --glass-border: rgba(30, 50, 110, 0.16);
   --glass-btn-bg: rgba(30, 50, 110, 0.06);
@@ -83,6 +86,8 @@ html.dark {
   --skel-base: rgba(255, 255, 255, 0.05);
   --skel-shine: rgba(255, 255, 255, 0.11);
   --option-bg: #1a1d28;
+  /* 实底面板色（深色）：性能模式与关闭询问弹窗使用，见 :root 注释 */
+  --panel: #1a1d28;
   --glass-bg: rgba(30, 34, 52, 0.38);
   --glass-border: rgba(255, 255, 255, 0.28);
   --glass-btn-bg: rgba(255, 255, 255, 0.1);

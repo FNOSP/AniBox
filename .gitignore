@@ -68,6 +68,14 @@ spike-*/
 tests/*test*
 tests/**/*test*
 tools/*test*
+# 测试产物 / 临时目录 / 一次性探针（tests/ 整体不入库，仅本地开发使用）
+/tests/
+/tests/artifacts/
+/tests/tmp/
+/tests/spikes/
+**/verify-*.cjs
+**/verify-*.py
+tests/*.exe
 # 本地状态 / 个人数据 / 工具目录
 .rea-*/
 .workbuddy/
@@ -81,6 +89,8 @@ on
 /src-tauri/bundle-resources/
 # 自绘安装器构建产物（SetupUi.exe / www.zip / totalsize.txt 等，不入库）
 /src-tauri/installer/staged/
+# 自绘安装器的 NuGet 依赖二进制（WebView2 WPF/Core DLL，构建时还原，不入库）
+/src-tauri/installer/vendor/
 
 # 内置弹幕源 danmu_api：源码入库；运行时依赖/生成物不入库
 src-tauri/resources/danmu-api/node_modules/

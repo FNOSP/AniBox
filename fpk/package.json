@@ -1,0 +1,16 @@
+{
+  "name": "fntvplus",
+  "displayName": "AniBox",
+  "version": "0.1.0",
+  "private": true,
+  "license": "GPL-3.0",
+  "type": "module",
+  "description": "AniBox 飞牛影视增强微应用（FPK）：复用 AniBox 客户端 preload 代码，经反代注入飞牛影视网页。",
+  "scripts": {
+    "build:userjs": "node scripts/build-userjs.mjs",
+    "dev": "node scripts/build-userjs.mjs && node scripts/serve.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5"
+  }
+}

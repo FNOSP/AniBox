@@ -13,7 +13,7 @@
 [![Stars](https://img.shields.io/github/stars/FNOSP/AniBox?style=flat&logo=github&logoColor=white)](https://github.com/FNOSP/AniBox/stargazers)
 [![Forks](https://img.shields.io/github/forks/FNOSP/AniBox?style=flat&logo=github&logoColor=white)](https://github.com/FNOSP/AniBox/forks)
 [![Issues](https://img.shields.io/github/issues/FNOSP/AniBox?logo=github)](https://github.com/FNOSP/AniBox/issues)
-[![Commits](https://img.shields.io/github/commit-activity/total/FNOSP/AniBox?label=commits&logo=git&logoColor=white)](https://github.com/FNOSP/AniBox/commits)
+[![Commits 1943](https://img.shields.io/badge/commits-1943-blue?logo=git&logoColor=white "累计提交数：release 分支 1596 + main 分支 347（两分支无共同祖先，按累计口径统计）")](https://github.com/FNOSP/AniBox/commits)
 [![Last Commit](https://img.shields.io/github/last-commit/FNOSP/AniBox/release?logo=git&logoColor=white)](https://github.com/FNOSP/AniBox/commits)
 [![Gitee](https://img.shields.io/badge/Gitee-mirror-F47040?logo=gitee&logoColor=white)](https://gitee.com/YDMY007/fntv-plus)
 

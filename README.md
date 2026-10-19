@@ -14,7 +14,7 @@
 [![Forks](https://img.shields.io/github/forks/FNOSP/AniBox?style=flat&logo=github&logoColor=white)](https://github.com/FNOSP/AniBox/forks)
 [![Issues](https://img.shields.io/github/issues/FNOSP/AniBox?logo=github)](https://github.com/FNOSP/AniBox/issues)
 [![Commits](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/FNOSP/AniBox/badge-data/commits.json&logo=git&logoColor=white)](https://github.com/FNOSP/AniBox/commits)
-[![Last Commit](https://img.shields.io/github/last-commit/FNOSP/AniBox/release?logo=git&logoColor=white)](https://github.com/FNOSP/AniBox/commits)
+[![Last Commit](https://img.shields.io/github/last-commit/FNOSP/AniBox/main?logo=git&logoColor=white)](https://github.com/FNOSP/AniBox/commits)
 [![Gitee](https://img.shields.io/badge/Gitee-mirror-F47040?logo=gitee&logoColor=white)](https://gitee.com/YDMY007/fntv-plus)
 
 <img src="https://count.getloli.com/get/@AniBox?theme=rule34" alt="访问计数" width="320">

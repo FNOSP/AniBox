@@ -16,7 +16,9 @@ REM DevTools no longer opens on every start. To get it back:
 REM     set FNTV_DEVTOOLS=1  &&  dev.cmd          (or press F12 / Ctrl+Shift+I in the app)
 if not defined FNTV_DEVTOOLS set "FNTV_DEVTOOLS=0"
 REM Chromium/WebView2 own logging to the console (protocol errors, CSS/JS problems, ...)
-set "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--enable-logging=stderr --v=0"
+REM 默认关闭：开启后 WebView2 会额外弹出一个 msedgewebview2.exe 控制台窗口。
+REM 需要排查 WebView 日志时再显式设置 FNTV_WEBVIEW_LOG=1。
+if "%FNTV_WEBVIEW_LOG%"=="1" set "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--enable-logging=stderr --v=0"
 if not defined RUST_LOG set "RUST_LOG=info"
 REM Unattended playback smoke test (plays 5s after start, results land in the app log):
 REM     set FNTV_AUTOPLAY_TEST=<item-guid>  &&  dev.cmd
@@ -67,6 +69,12 @@ if defined FNTV_TMDB_SECRET echo [dev] FNTV_TMDB_SECRET already set in this shel
 if not defined FNTV_TMDB_SECRET if exist "%FNTV_TMDB_SECRET_FILE%" for /f "usebackq tokens=1,* delims==" %%a in ("%FNTV_TMDB_SECRET_FILE%") do if /i "%%a"=="FNTV_TMDB_SECRET" if not defined FNTV_TMDB_SECRET set "FNTV_TMDB_SECRET=%%b"
 if defined FNTV_TMDB_WAS_UNSET if defined FNTV_TMDB_SECRET echo [dev] FNTV_TMDB_SECRET loaded from %FNTV_TMDB_SECRET_FILE% -- in-process only, not persisted
 if not defined FNTV_TMDB_SECRET echo [dev] WARN: %FNTV_TMDB_SECRET_FILE% missing or unparsable -- mirror is skipped (no WARN-free path); direct fallback needs your own tmdbApiKey in %APPDATA%\fntv\config.json or FNTV_TMDB_KEY. Set FNTV_TMDB_SECRET to use the mirror.
+
+REM ---- GitHub mirror admission secret (update check / gh mirror). NAME=value format.
+set "FNTV_GH_SECRET_FILE=%~dp0secrets\gh-mirror\.secret.local"
+if not defined FNTV_GH_SECRET if exist "%FNTV_GH_SECRET_FILE%" for /f "usebackq tokens=1,* delims==" %%a in ("%FNTV_GH_SECRET_FILE%") do if /i "%%a"=="FNTV_GH_SECRET" if not defined FNTV_GH_SECRET set "FNTV_GH_SECRET=%%b"
+if defined FNTV_GH_SECRET echo [dev] FNTV_GH_SECRET loaded from %FNTV_GH_SECRET_FILE% -- in-process only, not persisted
+if not defined FNTV_GH_SECRET echo [dev] WARN: %FNTV_GH_SECRET_FILE% missing or unparsable -- self-hosted GitHub mirror will return 401; update check will fall back to Gitee/GitHub.
 
 where cargo >nul 2>&1
 if %errorlevel% neq 0 (

@@ -55,6 +55,8 @@ vite.config.d.ts
 /release.cmd
 .release-dryrun.cmd
 .dryrun*.cmd
+# 构建产物输出目录（安装包，不入库）
+/release/
 # 测试 / 验证脚本与一次性探针
 **/verify_*.js
 **/verify-*.js
@@ -75,6 +77,10 @@ on
 # 第三方运行时二进制 / 配置（mpv、proxy、potplayer 等）与 fpk 均不入库
 /third_party/
 /fpk/
+# 打包 staging：tools/stage-bundle-resources.mjs 从 third_party 裁剪复制而来（含二进制/字体，不入库）
+/src-tauri/bundle-resources/
+# 自绘安装器构建产物（SetupUi.exe / www.zip / totalsize.txt 等，不入库）
+/src-tauri/installer/staged/
 
 # 内置弹幕源 danmu_api：源码入库；运行时依赖/生成物不入库
 src-tauri/resources/danmu-api/node_modules/

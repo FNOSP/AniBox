@@ -342,7 +342,12 @@ AniBox/                            # 仓库目录名（产品名 AniBox）
 └── LICENSE                        # GNU GPL-3.0
 ```
 
-> 说明：`mpv.exe`、`proxy.exe` 与 `portable_config` **不在本仓库内**，由用户自行提供并通过配置指定路径。
+> 说明：`mpv.exe`、`proxy.exe` 与 `portable_config` **不在本仓库内**（`third_party/` 按仓库规则不入库）。
+> 发布构建前需在本地准备 `third_party/fntv-mpv/` 与 `third_party/proxy/proxy.exe`：
+> `tauri.conf.json` 的 `beforeBuildCommand` 会调用 `tools/stage-bundle-resources.mjs`，
+> 把它们裁剪（排除 Cookie、播放记录、缓存、日志与备份）后复制到
+> `src-tauri/bundle-resources/`，再由 `bundle.resources` 打进安装包。
+> 缺少 `third_party/` 时发布构建会明确报错；日常 `dev.cmd` 不受影响。
 > 发布 / 运维脚本按仓库规则不入库（本地脚本）。
 
 ---
@@ -359,6 +364,44 @@ AniBox/                            # 仓库目录名（产品名 AniBox）
 | <img src="https://api.iconify.design/mdi/puzzle-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 热补丁 | 补丁包（`-hotfix`） | 由应用内更新面板获取，重载即生效，无需下载全量包。 |
 
 > 当前发布目标为 **Windows 10 / 11 x64**；其他平台未验证。
+
+### Windows 运行环境：WebView2 Runtime
+
+AniBox（Tauri v2）在 Windows 上依赖 **Microsoft Edge WebView2 Runtime**（Evergreen）。
+**运行时缺失时应用会直接退出或白屏**，连设置面板都打不开。
+
+- **安装包已内置兜底**：`src-tauri/tauri.conf.json` 的
+  `bundle.windows.webviewInstallMode` 设为 `downloadBootstrapper`（`silent: true`）。
+  NSIS/MSI 安装时会自动检测并下载安装 WebView2（需要联网）。
+  如需离线分发，可改为 `offlineInstaller`（安装包 +约 127 MB）或
+  `embedBootstrapper`（+约 1.8 MB，仍需联网下载运行时）。
+- **应用内入口**：设置 →「关于」→「WebView2 运行时」显示已安装版本；
+  未安装或版本低于 109 时提供「下载安装」按钮（打开微软官方 Bootstrapper）。
+- **应用完全无法启动时**：双击仓库根目录的 **`安装WebView2.cmd`**
+  （或手动运行 `tools/ensure-webview2.ps1`）。脚本只做检测 + 下载/启动官方安装器，
+  不随仓库分发任何二进制：
+
+  ```powershell
+  # 只检测（退出码 0=正常，1=缺失/过低）
+  pwsh -NoProfile -File .\tools\ensure-webview2.ps1 -CheckOnly
+
+  # 询问后下载并启动安装器
+  pwsh -NoProfile -File .\tools\ensure-webview2.ps1
+
+  # 静默安装（适合脚本/部署）
+  pwsh -NoProfile -File .\tools\ensure-webview2.ps1 -Silent
+  ```
+
+- 官方下载地址：
+  [Evergreen Bootstrapper](https://go.microsoft.com/fwlink/p/?LinkId=2124703)（约 1.8 MB）、
+  [x64 离线安装包](https://go.microsoft.com/fwlink/?linkid=2124701)。
+  微软未提供官方国内镜像；第三方镜像可能过期或被篡改，本项目不内置。
+
+> 检测口径：注册表
+> `HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F1E7B9A0-…}\pv`
+> （兼容 `HKLM\SOFTWARE\Microsoft\...`，按显示名含 `WebView2` 匹配，不硬编码完整 GUID），
+> 以及 `%ProgramFiles(x86)%\Microsoft\EdgeWebView\Application\<版本>\msedgewebview2.exe`
+> （兼容 `%ProgramFiles%` 与 `%LOCALAPPDATA%` 的按用户安装）。
 
 ### 本地构建
 
@@ -432,10 +475,10 @@ cargo test --manifest-path src-tauri/Cargo.toml
 | `username` / `token` | 空 | 登录账号与会话 token |
 | `password` | 空 | 勾选「记住密码」时保存（**本机明文，勿分享该文件**） |
 | `auto_login` | `false` | 启动时用记住的密码静默重登 |
-| `mpv_path` | 开发机示例路径 | `mpv.exe` 完整路径 |
+| `mpv_path` | 空（自动解析） | `mpv.exe` 完整路径；空/失效时回落到安装目录 `third_party/fntv-mpv/mpv.exe` |
 | `player_kind` | `"mpv"` | `mpv`（默认）或 `potplayer` |
 | `potplayer_path` | 空 | PotPlayer 路径；空 = 起播时自动探测 |
-| `proxy_path` | 开发机示例路径 | Go 代理 `proxy.exe` 路径 |
+| `proxy_path` | 空（自动解析） | Go 代理 `proxy.exe` 路径；空/失效时回落到安装目录 `third_party/proxy/proxy.exe` |
 | `nas_proxy_enabled` | `false` | 是否走 NAS 代理播放链路 |
 | `cache_limit_mb` | `2048` | 磁盘缓存上限（MB）；`0` = 不限 |
 | `exit_mode` | `"ask"` | 关闭按钮行为：`exit` / `tray` / `ask` |
@@ -498,7 +541,7 @@ AniBox 使用「**热补丁优先、全量兜底**」的双通道更新：
 ## <img src="https://api.iconify.design/mdi/help-circle-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 常见问题
 
 **Q：为什么提示找不到 mpv / 点播放没反应？**
-A：AniBox 不随包分发播放内核。请准备 `mpv.exe` 与 `portable_config`，在登录页「高级设置」或 `config.json` 的 `mpv_path` 中指定路径。
+A：正式安装包已内置 `mpv.exe`、`libmpv` 与 `portable_config`（安装目录下的 `third_party/fntv-mpv/`），正常安装无需额外配置。若你使用开发构建，或手动删除了随包资源，请自行准备 `mpv.exe` 与 `portable_config`，在登录页「高级设置」或 `config.json` 的 `mpv_path` 中指定路径。配置为空或路径失效时，启动会自动回落到随包资源。
 
 **Q：TMDB / Bangumi 加载失败怎么办？**
 A：客户端默认优先走自建镜像。缺少镜像准入密钥时会降级（Bangumi 直连官方域、TMDB 使用你自己的 key）；无 key 时 TMDB 相关功能可能不可用。

@@ -1,0 +1,81 @@
+name: Commits Badge
+
+# 每次 main / release 有 push 时，重新计算两分支的累计唯一提交数，
+# 写入 badge-data 分支的 commits.json，供 README 的 shields.io endpoint 徽章读取。
+# 不监听 badge-data 分支本身，避免自触发无限循环。
+on:
+  push:
+    branches: [main, release]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 与 download-badge 共用同一把锁，避免两个 workflow 同时写 badge-data 互相覆盖。
+concurrency:
+  group: badge-data-write
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # 推送 badge-data 分支
+    steps:
+      - name: 检出完整历史
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 需要完整历史才能正确 rev-list --count
+
+      - name: 计算累计唯一提交数
+        id: count
+        run: |
+          set -euo pipefail
+          # main 与 release 无共同祖先时 rev-list 自动相加；将来有重叠也只计一次。
+          refs=()
+          for b in main release; do
+            if git rev-parse --verify -q "origin/$b" >/dev/null; then
+              refs+=("origin/$b")
+            else
+              echo "warn: origin/$b 不存在，跳过"
+            fi
+          done
+          if [ ${#refs[@]} -eq 0 ]; then
+            echo "error: main / release 均不存在，无法统计" >&2
+            exit 1
+          fi
+          COUNT=$(git rev-list --count "${refs[@]}")
+          echo "refs=${refs[*]} count=$COUNT"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: 写入 badge-data 分支
+        env:
+          COUNT: ${{ steps.count.outputs.count }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          json=$(printf '{"schemaVersion":1,"label":"commits","message":"%s","color":"blue"}' "$COUNT")
+          msg="commits: $COUNT @ $(date -u +%FT%TZ)"
+          workdir=$(mktemp -d)
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # 基于现有 badge-data 分支增量提交，保留 downloads.json 等其它徽章数据。
+          if git ls-remote --exit-code --heads "$remote" badge-data >/dev/null 2>&1; then
+            git clone -q --depth 1 --branch badge-data "$remote" "$workdir"
+          else
+            mkdir -p "$workdir"
+            git -C "$workdir" init -q .
+            git -C "$workdir" checkout -q --orphan badge-data
+            git -C "$workdir" remote add origin "$remote"
+          fi
+          cd "$workdir"
+          printf '%s' "$json" > commits.json
+          git add commits.json
+          if git diff --cached --quiet; then
+            echo "commits.json 内容未变化，跳过推送"
+            exit 0
+          fi
+          git commit -q -m "$msg"
+          git push -q origin HEAD:badge-data
+          echo "badge-data/commits.json 已更新: $json"

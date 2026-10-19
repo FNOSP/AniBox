@@ -5,6 +5,132 @@
 //! - 自签证书：内网 NAS 预期自签，PoC 直接 accept_invalid_certs（对齐 lc-286 私有地址免验）
 
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
+use std::sync::{Mutex, OnceLock};
+
+/* ───────────────────────── 网关 Cookie 会话 ─────────────────────────
+ * AniBox 是纯 Rust HTTP 客户端（不像旧项目 Electron 有 persist:fntv 会话）。
+ * fnOS 的「应用访问码」网关授权靠 Set-Cookie 建立，后续 /v/api/ 请求必须带上，
+ * 否则会被门禁拦成门户 HTML。这里用进程内按 host 保存的简单 Cookie 表等价实现：
+ *   · 每个响应（含 3xx）都调用 capture_cookies 落表；
+ *   · 发请求时把同 host 的 Cookie 拼进 Cookie 头（Trim-MC-token / mode 由显式逻辑负责，
+ *     这里跳过，避免重复与覆盖）。
+ * 只保存 name=value，不落盘、不写日志。 */
+fn cookie_store() -> &'static Mutex<BTreeMap<String, BTreeMap<String, String>>> {
+    static STORE: OnceLock<Mutex<BTreeMap<String, BTreeMap<String, String>>>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn url_host(url: &str) -> Option<String> {
+    url::Url::parse(url).ok().and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase()))
+}
+
+/// 记录响应中的 Set-Cookie（按 host 保存）。敏感值只驻留内存。
+pub(crate) fn capture_cookies(url: &str, headers: &reqwest::header::HeaderMap) {
+    let Some(host) = url_host(url) else { return };
+    let Ok(mut store) = cookie_store().lock() else { return };
+    let entry = store.entry(host).or_default();
+    for value in headers.get_all(reqwest::header::SET_COOKIE).iter() {
+        let Ok(raw) = value.to_str() else { continue };
+        let first = raw.split(';').next().unwrap_or("").trim();
+        let Some(eq) = first.find('=') else { continue };
+        let name = first[..eq].trim();
+        let val = first[eq + 1..].trim();
+        if name.is_empty() {
+            continue;
+        }
+        let lower = raw.to_ascii_lowercase();
+        if val.is_empty() || lower.contains("max-age=0") {
+            entry.remove(name);
+        } else {
+            entry.insert(name.to_string(), val.to_string());
+        }
+    }
+}
+
+/// 取该 URL 同 host 的 Cookie 串（不含显式鉴权字段）。
+pub(crate) fn gateway_cookies(url: &str) -> String {
+    let Some(host) = url_host(url) else { return String::new() };
+    let Ok(store) = cookie_store().lock() else { return String::new() };
+    let Some(map) = store.get(&host) else { return String::new() };
+    map.iter()
+        .filter(|(name, _)| {
+            !name.eq_ignore_ascii_case("Trim-MC-token") && !name.eq_ignore_ascii_case("mode")
+        })
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/* ───────────────────────── fnOS 端口自动探测 ─────────────────────────
+ * 对齐旧项目 auth.ts detectFnOsPort：飞牛影视挂在 fnOS 系统 Web 端口 /v 下，
+ * 系统默认 5666 / 5667，公测遗留 8000 / 8001，80 仅作重定向兜底。
+ * 仅当用户裸填「私有地址且未带端口」时触发；命中返回端口，否则 None 回落手填。 */
+fn is_private_host(host: &str) -> bool {
+    let h = host.trim().to_ascii_lowercase();
+    if h == "localhost" || h == "127.0.0.1" || h == "::1" {
+        return true;
+    }
+    let octets: Vec<u8> = h.split('.').filter_map(|p| p.parse::<u8>().ok()).collect();
+    if octets.len() == 4 {
+        return matches!(octets[0], 10 | 127)
+            || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+            || (octets[0] == 192 && octets[1] == 168);
+    }
+    h.starts_with("fe80:") || h.starts_with("fc") || h.starts_with("fd")
+}
+
+async fn probe_port(client: &reqwest::Client, host: &str, port: u16) -> bool {
+    let url = format!("http://{host}:{port}/v");
+    let Ok(resp) = client.get(&url).send().await else { return false };
+    if resp.status().as_u16() >= 500 {
+        return false;
+    }
+    let ct = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !ct.is_empty() && !ct.contains("text/html") {
+        return false;
+    }
+    let body = resp.text().await.unwrap_or_default();
+    let lower = body.to_ascii_lowercase();
+    lower.contains("fnos") || lower.contains("trim") || body.contains("飞牛")
+}
+
+pub async fn detect_fn_os_port(raw: &str) -> Option<u16> {
+    let s = raw.trim().replace('：', ":");
+    let s = s.trim_start_matches("http://").trim_start_matches("https://");
+    let hostport = s.split('/').next().unwrap_or("");
+    // 已带端口 / IPv6（含冒号）不探测
+    if hostport.contains(':') || hostport.is_empty() || !is_private_host(hostport) {
+        return None;
+    }
+    let candidates = [5666u16, 8000, 5667, 8001, 80];
+    let Ok(client) = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_millis(1500))
+        .build()
+    else {
+        return None;
+    };
+    let mut set = tokio::task::JoinSet::new();
+    for port in candidates {
+        let client = client.clone();
+        let host = hostport.to_string();
+        set.spawn(async move { (port, probe_port(&client, &host, port).await) });
+    }
+    let mut hit = std::collections::HashSet::new();
+    while let Some(joined) = set.join_next().await {
+        if let Ok((port, true)) = joined {
+            hit.insert(port);
+        }
+    }
+    candidates.iter().copied().find(|p| hit.contains(p))
+}
 
 pub struct FnClient {
     http: reqwest::Client,
@@ -105,17 +231,24 @@ impl FnClient {
         let mut current = normalize_server(base);
         for _ in 0..4 {
             let url = format!("{}/v/api/v1/user/info", current);
+            let mut cookie = format!("mode=relay; Trim-MC-token={}", token);
+            let gateway = gateway_cookies(&url);
+            if !gateway.is_empty() {
+                cookie.push_str("; ");
+                cookie.push_str(&gateway);
+            }
             let resp = self
                 .http
                 .get(&url)
                 .header("Authorization", token)
-                .header("Cookie", format!("mode=relay; Trim-MC-token={}", token))
+                .header("Cookie", cookie)
                 .send()
                 .await;
             let resp = match resp {
                 Ok(r) => r,
                 Err(_) => return current,
             };
+            capture_cookies(&url, resp.headers());
             let st = resp.status().as_u16();
             if matches!(st, 301 | 302 | 307 | 308) {
                 let loc = resp
@@ -173,12 +306,18 @@ impl FnClient {
         };
 
         let authx = crate::authx::authx(path, if has_body { Some(body_json.as_str()) } else { None });
-        let cookie = if token.is_empty() {
+        let url = format!("{}{}", base, path);
+        // 显式鉴权 Cookie + 网关授权 Cookie（访问码）合并；后者来自 Set-Cookie 会话表。
+        let mut cookie = if token.is_empty() {
             "mode=relay".to_string()
         } else {
             format!("mode=relay; Trim-MC-token={}", token)
         };
-        let url = format!("{}{}", base, path);
+        let gateway = gateway_cookies(&url);
+        if !gateway.is_empty() {
+            cookie.push_str("; ");
+            cookie.push_str(&gateway);
+        }
 
         // [lc-1629] 按 method 正确构造请求（原来只区分 post/get，PUT/DELETE 会被错发成 GET）。
         //   reqwest 的 post/put/patch/get/delete 都返回 RequestBuilder，故可统一 match。
@@ -207,6 +346,8 @@ impl FnClient {
                 format!("网络错误: {}", e)
             }
         })?;
+        // 先记录 Set-Cookie（访问码网关授权 / 会话 Cookie），再处理状态与重定向
+        capture_cookies(&url, resp.headers());
         let status = resp.status().as_u16();
 
         if matches!(status, 301 | 302 | 307 | 308) {

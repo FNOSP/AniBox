@@ -28,11 +28,19 @@ export function DetailSkeleton() {
         </div>
       </div>
       <aside className="dv2-right">
-        {/* [lc-1421] 骨架与真实头部同构：播放按钮在左、标题与元信息跟其后（一排） */}
+        {/* [选季重做] 真实头部现在是「第一层 flex-wrap + 第二层选季轨道」两层结构，
+            骨架同样套一层 .dv2e-hd-top，避免三个占位块被纵向堆叠（高度会突变）。 */}
         <div className="dv2e-hd">
-          <div className="dsk dsk-playbtn" />
-          <div className="dsk dsk-hd" />
-          <div className="dsk dsk-hd2" />
+          <div className="dv2e-hd-top">
+            {/* 与真实头部两行对齐：上面控件行，下面文本行 */}
+            <div className="dv2e-hd-pills">
+              <div className="dsk dsk-playbtn" />
+              <div className="dsk dsk-hd2" />
+            </div>
+            <div className="dv2e-hd-meta">
+              <div className="dsk dsk-hd" />
+            </div>
+          </div>
         </div>
         <div className="dv2e-list">
           {[0, 1, 2].map((i) => (

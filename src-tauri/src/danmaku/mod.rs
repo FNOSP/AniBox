@@ -9,6 +9,8 @@
 
 pub mod builtin;
 pub mod client;
+// [danmaku-diagnose] 设置面板「诊断」：逐项检查 Node / 自建源 / 业务匹配 / shim / Cookie / 播放上下文
+pub mod diagnose;
 pub mod matching;
 pub mod memory;
 pub mod server;

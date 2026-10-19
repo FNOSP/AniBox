@@ -246,11 +246,26 @@
   opacity: 0.55;
   cursor: default;
 }
+/* 已观看 / 已收藏：用明显的实色底 + 内描边区分，不再是同样的深色圆底 */
 .pa-btn.is-on {
   color: #fff;
+  background: rgba(61, 220, 151, 0.82);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.38),
+    0 4px 12px rgba(61, 220, 151, 0.35);
+}
+.pa-btn.is-on:hover {
+  background: rgba(61, 220, 151, 0.95);
 }
 .pa-heart.is-on {
-  color: #ff6b8a;
+  color: #fff;
+  background: rgba(255, 107, 138, 0.86);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.38),
+    0 4px 12px rgba(255, 107, 138, 0.38);
+}
+.pa-heart.is-on:hover {
+  background: rgba(255, 107, 138, 0.97);
 }
 .pa-more-wrap {
   position: relative;
@@ -263,9 +278,13 @@
   min-width: 132px;
   padding: 6px;
   border-radius: 10px;
-  background: rgba(24, 27, 35, 0.97);
-  border: 1px solid var(--line);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55);
+  /* 跟随主题：浅色主题白底深字、深色主题深底浅字，避免深底配深字看不清 */
+  background: var(--bg-3);
+  color: var(--text-strong);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   display: flex;
   flex-direction: column;
   z-index: 20;
@@ -274,7 +293,7 @@
   appearance: none;
   border: 0;
   background: transparent;
-  color: var(--text);
+  color: var(--text-strong);
   font-size: 13px;
   text-align: left;
   padding: 8px 10px;
@@ -283,5 +302,5 @@
   white-space: nowrap;
 }
 .pa-menu button:hover {
-  background: var(--semi-color-fill-3, rgba(255, 255, 255, 0.08));
+  background: var(--hover-strong);
 }

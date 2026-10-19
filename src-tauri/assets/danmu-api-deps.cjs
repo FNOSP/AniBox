@@ -14,6 +14,8 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const vm = require('vm');
+const { createRequire } = require('module');
 
 const CONF_PATH = path.join(os.tmpdir(), 'anibox-danmu-config.json');
 
@@ -114,6 +116,46 @@ function getScriptDir() {
 }
 
 /**
+ * [fix-bili-esm] 以 **CommonJS 语义**加载外部 .js 脚本，且**不受最近 package.json 的
+ * `"type": "module"` 影响**。
+ *
+ * 背景：`bili_danmaku.js` 位于 mpv 便携目录（开发态即仓库内的
+ * `third_party/fntv-mpv/portable_config/scripts/uosc_danmaku/`）。仓库根 `package.json`
+ * 声明了 `"type": "module"`，于是 `require(绝对路径)` 会按 ESM 解析该文件：
+ *   - 旧版 Node 直接抛 `ERR_REQUIRE_ESM`；
+ *   - Node ≥22 的 require(esm) 虽不抛，但 `require`/`module` 在 ESM 作用域内不存在，
+ *     脚本求值失败或返回空命名空间 ⇒ `mod.run` / `mod.cookie_check` 全部缺失，
+ *     B站弹幕分支与 Cookie 体检 100% 失败。
+ *
+ * 做法：用 `vm.compileFunction` 构造标准 CJS 包装器，语义与 Node 原生 CJS 一致：
+ *   - `__filename` / `__dirname` = 脚本真实路径与其所在目录（脚本内 `SCRIPT_DIR = __dirname`
+ *     读取同目录 `bili_cookie.txt` / `danmaku_block_types.json` / `danmaku_source_cache.json`
+ *     的行为不变）；
+ *   - `require` 用 `createRequire(脚本路径)` 生成，相对 require 以**脚本所在目录**为基准；
+ *   - `module` / `exports` / `this` 与 CJS 一致。
+ * 这样既不依赖修改仓库 package.json，也不要求脚本落盘为 `.cjs`（复制会破坏同目录相对解析）。
+ *
+ * @param {string} jsPath 脚本绝对/相对路径
+ * @returns {any} 脚本的 module.exports
+ */
+function loadCjsModule(jsPath) {
+    const abs = path.resolve(String(jsPath));
+    const code = fs.readFileSync(abs, 'utf8');
+    const dir = path.dirname(abs);
+    const localRequire = createRequire(abs);
+    const mod = { id: abs, filename: abs, path: dir, exports: {}, loaded: false, children: [], paths: [] };
+    // 形参顺序与 Node 的 CJS 包装器一致；V8 原生支持脚本首行的 #! hashbang。
+    const fn = vm.compileFunction(
+        code,
+        ['exports', 'require', 'module', '__filename', '__dirname'],
+        { filename: abs }
+    );
+    fn.call(mod.exports, mod.exports, localRequire, mod, abs, dir);
+    mod.loaded = true;
+    return mod.exports;
+}
+
+/**
  * 弹弹play 源（MPV 链路）的替身：**本模块不实现**。
  *
  * 主仓库 `src/main/common/dandanplay.ts` 内嵌**第三方服务的凭证密文常量**（`enc:v1:` +
@@ -154,5 +196,6 @@ module.exports = {
     resolveProxyAgent,
     setScriptDir,
     getScriptDir,
+    loadCjsModule,
     dandanplayLuaOwned,
 };

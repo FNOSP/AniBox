@@ -9,7 +9,6 @@
         + 我的 5 星评分/评语（持久化到 Rust 侧 ratings.json）+ 播放记录 sessions。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import {
   CalendarDays as IcoCalL,
   Clock as IcoClockL,
@@ -79,64 +78,9 @@ type HistoryResp = {
   heat?: HistoryHeatDay[];
 };
 
-/* ── [lc-1631] 播放会话计时（模块级，App 启动即注册；本文件被 App 静态 import）──
-   为什么在这里：年度报告要「实际观看时长」，而起播那一刻拿不到 —— 只能等播放结束。
-   Rust 侧 mpv 已把 time-pos(id=1)/duration(id=2) 作为 `mpv-event` 广播到前端，mpv 的
-   起止则由 `mpv-load {phase:start|ended}` / `mpv-end` 标记。本模块据此累计「本次会话看过的
-   最大播放位置」，在会话结束时把真实时长回填给 Rust（record_watch_session）。
-   不新增播放器钩子、不动 mpv.rs/DetailView —— 两条播放链路（库内/在线源）都走同一套事件。 */
-let _sessGuid = "";
-let _sessMaxPos = 0;
-let _sessDur = 0;
-
-function finalizeSession(): void {
-  const guid = _sessGuid;
-  const pos = _sessMaxPos;
-  const dur = _sessDur;
-  _sessMaxPos = 0;
-  _sessDur = 0;
-  // 几乎没播（< 3 秒，多为误触/立刻切走）不记，避免污染统计
-  if (!guid || pos <= 3) return;
-  const watchedMs = Math.round(pos * 1000);
-  const progress = dur > 0 ? Math.min(1, pos / dur) : 0;
-  const finished = dur > 0 && pos >= dur * 0.92;
-  invoke("record_watch_session", { guid, watchedMs, progress, finished }).catch(() => {
-    /* 回填失败不影响播放；下次播放会重新记录 */
-  });
-}
-
-// 播放器起播（含复用会话的 loadfile）→ 清空计数准备本段。
-// 为什么不在 start 结算上一段：切集时 mpv 会先对上一段发 end-file（reason=stop/redirect →
-// mpv-load ended），已在那里结算；若在此再结算，可能与随后到达的 history-recorded（新 guid）
-// 抢跑，把上一段的时长记到新条目上。故 start 只做「清零」，结算统一交给 ended/mpv-end。
-void listen("mpv-load", (e) => {
-  const phase = (e.payload as { phase?: string } | null)?.phase;
-  if (phase === "start") {
-    _sessMaxPos = 0;
-    _sessDur = 0;
-  } else if (phase === "ended") {
-    finalizeSession();
-  }
-});
-// 播放失败（加载错误/崩溃）→ 把已看的那点也结算掉
-void listen("mpv-end", () => finalizeSession());
-// 属性变化：累计最大播放位置 + 记住总时长
-void listen("mpv-event", (e) => {
-  const p = e.payload as { event?: string; id?: number; data?: unknown } | null;
-  if (!p || p.event !== "property-change") return;
-  const d = typeof p.data === "number" ? p.data : NaN;
-  if (Number.isNaN(d)) return;
-  if (p.id === 1) {
-    if (d > _sessMaxPos) _sessMaxPos = d;
-  } else if (p.id === 2 && d > 0) {
-    _sessDur = d;
-  }
-});
-// Rust 每次落播放记录都会广播 guid —— 前端据此把时长回填给「刚起播的那一条」
-void listen("history-recorded", (e) => {
-  const g = (e.payload as { guid?: string } | null)?.guid;
-  if (typeof g === "string" && g) _sessGuid = g;
-});
+/* [progress] 播放进度上报已提升为全局 hook（`src/hooks/usePlaybackProgress.ts`，
+   在 App.tsx 顶层无条件挂载）——本页只负责展示/读取，不再监听播放器事件，
+   避免双份上报。 */
 
 /* [lc-1667] 在线源已搁置：不再提供「在线源」筛选（数据侧也已整条隐藏）。 */
 type Filter = "全部" | "电影" | "剧集";
@@ -319,6 +263,7 @@ export function WatchHistoryView({
   const [reportOpen, setReportOpen] = useState(false);
   const noteTimer = useRef<number | null>(null);
   const heatWrapRef = useRef<HTMLDivElement | null>(null);
+  const heatScrollRef = useRef<HTMLDivElement | null>(null);
   const [tip, setTip] = useState<{ x: number; y: number; text: string } | null>(null);
 
   function showNote(msg: string) {
@@ -441,6 +386,17 @@ export function WatchHistoryView({
 
   const heat = useMemo(() => buildHeat(heatDays ?? []), [heatDays]);
 
+  /* 热力图默认滚到最右（最近日期）。卡片宽度通常放不下 53 周，不滚的话
+     用户看到的是去年的月份，会误以为数据/时间截止到过去。 */
+  useEffect(() => {
+    const el = heatScrollRef.current;
+    if (!el) return;
+    const id = requestAnimationFrame(() => {
+      el.scrollLeft = el.scrollWidth;
+    });
+    return () => cancelAnimationFrame(id);
+  }, [heat]);
+
   /** 卡片点击 → 打开详情浮层（[lc-1616] 不再直接跳详情；浮层内「查看详情」再走详情链路） */
   const handleOpen = (it: HistoryItem) => setDetail(it);
 
@@ -546,7 +502,7 @@ export function WatchHistoryView({
             </div>
           )}
 
-          {items.length === 0 ? (
+          {items.length === 0 && (heatDays?.length ?? 0) === 0 ? (
             <div className="hist-empty">
               <IcoClockL size={26} strokeWidth={1.6} />
               <div className="hist-empty-t">暂无观影记录</div>
@@ -606,7 +562,7 @@ export function WatchHistoryView({
                         </span>
                       ))}
                     </div>
-                    <div className="hist-heat-scroll">
+                    <div className="hist-heat-scroll" ref={heatScrollRef}>
                       <div className="hist-heat-inner">
                         <div className="hist-heat-months">
                           {heat.months.map((m) => (

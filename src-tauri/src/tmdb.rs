@@ -76,6 +76,13 @@ const THROTTLE_MAX_BACKOFF_MS: u64 = 8_000;
 const CREDITS_TTL_SECS: u64 = 120 * 24 * 3600;
 /// 条目详情（tmdb_show_details）的 TTL，与上面同值、单独命名以便日后分别调整
 const SHOW_TTL_SECS: u64 = 120 * 24 * 3600;
+/// 单集剧照（tmdb_season_stills，`/3/tv/{id}/season/{n}`）的落盘 TTL：**24 小时**。
+/// 取舍：旧值 120 天对「追更剧」是致命的 —— 新集加入后默认路径会一直读到旧缓存（缺新集剧照）。
+/// 24h 让缓存最多陈旧一天；而**新集刚出现时前端会带 `force: true` 主动重拉**（跳过缓存并覆盖），
+/// 因此这里只需兜住「普通进入页面」的场景，不必为了追更把 TTL 压到几分钟（那会显著增加镜像请求）。
+/// 代价：非追更的老剧一天后也会重拉一次季度剧照，请求量很小、可接受。
+const SEASON_STILLS_TTL_SECS: u64 = 24 * 3600;
+
 /// [lc-1576] 评分分布（tmdb_rating_details，镜像 /rating-details 路由）的落盘 TTL：**24 小时**。
 /// 分布数据变化很慢（但比演员表/详情"活"一点——新评分每天都在涨），24h 是平衡点。
 const RATING_TTL_SECS: u64 = 24 * 3600;
@@ -1809,6 +1816,77 @@ pub async fn tmdb_person(arg: Value) -> Result<Value, String> {
     Ok(out)
 }
 
+/// 单集剧照：`GET /3/tv/{tmdbId}/season/{seasonNumber}?language=zh-CN`。
+/// **镜像优先**（get_json）；镜像 404（路由未提供）也允许回退官方直连（有用户 key 时），
+/// 与人物接口同一封装（get_json_person_mirror_first）。
+/// 按 `json:season_stills:{tmdbId}:{seasonNumber}` 落盘缓存，TTL 24 小时。返回归一化结构：
+///   { tmdbId, seasonNumber, episodes: [{ episodeNumber, still, name, overview }] }
+/// `still` 取 `still_path`（缺失 → 空串），`episodes` 按 episode_number 升序。
+///
+/// `force`（可选 bool，默认 false）：**追更场景**用。`true` 时跳过磁盘缓存读取，重新请求
+/// 并覆盖缓存 —— 保证新集加入后能拿到新集的 `still_path`，而不是永远读旧缓存。
+#[tauri::command]
+pub async fn tmdb_season_stills(arg: Value) -> Result<Value, String> {
+    let tmdb_id = arg
+        .get("tmdbId")
+        .and_then(|v| v.as_i64())
+        .filter(|i| *i > 0)
+        .ok_or_else(|| "tmdb_season_stills 缺少合法 tmdbId".to_string())?;
+    let season_number = arg
+        .get("seasonNumber")
+        .and_then(|v| v.as_i64())
+        .filter(|i| *i >= 0)
+        .ok_or_else(|| "tmdb_season_stills 缺少合法 seasonNumber".to_string())?;
+    let force = arg
+        .get("force")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let key = format!("json:season_stills:{tmdb_id}:{season_number}");
+    if force {
+        crate::libmpv::trace(&format!("[tmdb] season_stills force=true 跳过缓存 {key}"));
+    } else if let Some(v) = disk_cache::json_get(&key, SEASON_STILLS_TTL_SECS) {
+        crate::libmpv::trace(&format!("[tmdb] season_stills 命中缓存 {key}"));
+        return Ok(v);
+    }
+    let path = format!("/3/tv/{tmdb_id}/season/{season_number}?language={LANG}");
+    let d = get_json_person_mirror_first(&path).await?;
+    let out = normalize_season_stills(&d, tmdb_id, season_number);
+    disk_cache::json_put(&key, &out);
+    crate::libmpv::trace(&format!(
+        "[tmdb] season_stills tv={tmdb_id} s={season_number} 已拉取并落盘 {key}（{} 集）",
+        out.get("episodes")
+            .and_then(|e| e.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0)
+    ));
+    Ok(out)
+}
+
+/// 归一化季度剧照响应（纯函数，可单测）。
+/// `episodes[].episode_number` 升序；缺字段一律降级为空串（不影响前端按集号映射）。
+fn normalize_season_stills(d: &Value, tmdb_id: i64, season_number: i64) -> Value {
+    let mut episodes: Vec<Value> = Vec::new();
+    if let Some(arr) = d.get("episodes").and_then(|v| v.as_array()) {
+        for e in arr {
+            let Some(num) = e.get("episode_number").and_then(|v| v.as_i64()) else {
+                continue;
+            };
+            episodes.push(json!({
+                "episodeNumber": num,
+                "still": str_of(e, "still_path"),
+                "name": str_of(e, "name"),
+                "overview": str_of(e, "overview"),
+            }));
+        }
+    }
+    episodes.sort_by_key(|e| e.get("episodeNumber").and_then(|v| v.as_i64()).unwrap_or(0));
+    json!({
+        "tmdbId": tmdb_id,
+        "seasonNumber": season_number,
+        "episodes": episodes,
+    })
+}
+
 /// 取字符串字段（缺失/非字符串 → 空串）。
 fn str_of(v: &Value, k: &str) -> String {
     v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
@@ -2741,5 +2819,49 @@ mod tests {
         assert_eq!(works[1]["title"], "权力的游戏");
         assert_eq!(works[1]["year"], "2011");
         assert_eq!(works[1]["episodeCount"], 73);
+    }
+
+    /// 季度剧照归一化（**离线、零网络**）：按 episode_number 升序、still 取 still_path、
+    /// 缺字段降级空串、没有 episode_number 的条目被丢弃。
+    #[test]
+    fn normalize_season_stills_sorts_and_defaults() {
+        let d = json!({
+            "id": 1399,
+            "season_number": 1,
+            "episodes": [
+                // 刻意乱序：输入顺序 3 → 1 → 2
+                {"episode_number": 3, "still_path": "/e3.jpg", "name": "第三集", "overview": "ov3"},
+                {"episode_number": 1, "still_path": null, "name": "第一集"},
+                {"episode_number": 2, "name": "第二集", "overview": null},
+                // 缺 episode_number → 丢弃
+                {"still_path": "/bad.jpg", "name": "坏数据"}
+            ]
+        });
+        let out = super::normalize_season_stills(&d, 1399, 1);
+        assert_eq!(out["tmdbId"], 1399);
+        assert_eq!(out["seasonNumber"], 1);
+        let eps = out["episodes"].as_array().unwrap();
+        assert_eq!(eps.len(), 3, "缺 episode_number 的条目被丢弃");
+        assert_eq!(eps[0]["episodeNumber"], 1);
+        assert_eq!(eps[1]["episodeNumber"], 2);
+        assert_eq!(eps[2]["episodeNumber"], 3);
+        assert_eq!(eps[0]["still"], "", "still_path=null → 空串");
+        assert_eq!(eps[0]["overview"], "", "overview 缺失 → 空串");
+        assert_eq!(eps[1]["still"], "", "still_path 缺失 → 空串");
+        assert_eq!(eps[1]["overview"], "", "overview=null → 空串");
+        assert_eq!(eps[2]["still"], "/e3.jpg");
+        assert_eq!(eps[2]["name"], "第三集");
+    }
+
+    /// 空/异常响应也必须给出稳定结构（前端按空映射处理，不报错）。
+    #[test]
+    fn normalize_season_stills_handles_empty_and_missing() {
+        let out = super::normalize_season_stills(&json!({}), 42, 2);
+        assert_eq!(out["tmdbId"], 42);
+        assert_eq!(out["seasonNumber"], 2);
+        assert_eq!(out["episodes"].as_array().unwrap().len(), 0);
+        // episodes 非数组同样降级为空
+        let out = super::normalize_season_stills(&json!({"episodes": "oops"}), 42, 2);
+        assert_eq!(out["episodes"].as_array().unwrap().len(), 0);
     }
 }

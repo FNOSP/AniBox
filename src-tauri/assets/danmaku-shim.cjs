@@ -41,7 +41,10 @@ if (!scriptDir || !fs.existsSync(path.join(scriptDir, 'bili_danmaku.js'))) {
 let mod = null;
 function loadMod() {
     if (!mod) {
-        mod = require(path.join(scriptDir, 'bili_danmaku.js'));
+        // [fix-bili-esm] 与 bili-runner.cjs 同一问题：脚本可能位于含 "type": "module"
+        // 的目录树下，直接 require(jsPath) 会被当 ESM 解析而失败，统一走 CJS 包装器。
+        const deps = require('./danmu-api-deps.cjs');
+        mod = deps.loadCjsModule(path.join(scriptDir, 'bili_danmaku.js'));
         if (typeof mod.setLogSink === 'function') {
             mod.setLogSink((line) => console.log('[bili_danmaku] ' + line));
         }
@@ -333,6 +336,64 @@ function buildSourceTraces(r) {
 }
 
 /**
+ * 逐源状态归一化（[lc-1660]）：runner 的 traces 只有 attempted/used/detail/error，
+ * 失败时 UI 只能笼统显示「尝试过但未命中」。这里为每个源补齐
+ * `status`（success / no-result / failed / skipped）、`count`、`error`、`time`，
+ * 让「无结果」与「请求失败」在菜单里可区分，并且失败/空结果也能留下逐源记录。
+ * 向后兼容：runner 若已带 status 则原样保留；旧字段缺失按 used/attempted 推导。
+ */
+function looksLikeNoResult(err) {
+    const t = String(err || '');
+    return /未命中|未找到|未收录|无匹配|无结果|没有匹配|没有找到|0\s*条|为空|未取到/.test(t);
+}
+function sourceStatusOf(s) {
+    if (s && s.status)
+        return String(s.status);
+    if (!s)
+        return 'skipped';
+    if (s.used)
+        return 'success';
+    if (s.attempted)
+        return looksLikeNoResult(s.error) ? 'no-result' : 'failed';
+    return 'skipped';
+}
+function normalizeSourceTraces(traces) {
+    const now = new Date().toISOString();
+    const arr = Array.isArray(traces) ? traces : [];
+    const out = [];
+    for (const s of arr) {
+        if (!s || typeof s !== 'object')
+            continue;
+        const status = sourceStatusOf(s);
+        out.push({
+            ...s,
+            status,
+            count: s.count == null ? 0 : (Number(s.count) || 0),
+            error: s.error == null ? null : String(s.error),
+            time: s.time || now,
+        });
+    }
+    // 三源缺一不可：runner 某些提前返回分支（如自建源低于阈值但 B站 叠加失败）只推了
+    // 部分 traces，这里补齐缺失源，保证 UI 每个源都有明确状态而不是空白。
+    const seen = new Set(out.map((s) => s.id));
+    for (const id of ['danmu_api', 'bilibili', 'dandanplay']) {
+        if (!seen.has(id)) {
+            out.push({
+                id,
+                attempted: false,
+                used: false,
+                skippedReason: '本轮未参与',
+                status: 'skipped',
+                count: 0,
+                error: null,
+                time: now,
+            });
+        }
+    }
+    return out;
+}
+
+/**
  * [lc-1560] B站 Cookie 体检 → 状态文件写进脚本目录。
  * Lua 的「B站 Cookie 状态」一行直接读 `bili_cookie_status.json`（menu.lua:589）；
  * 主仓库由 playbackShim 每日体检写入，迁移后该文件长期停留在 Electron 时代的旧时间戳
@@ -507,13 +568,19 @@ async function handle(req, res) {
                     season_id: r.season_id == null ? null : r.season_id,
                     epid: r.epid == null ? null : r.epid,
                     season_mismatch: !!r.season_mismatch,
-                    // 逐源 traces 由编排器给出（真实记录）；缺省才兜底
-                    sources: (r.sources && r.sources.length ? r.sources : buildSourceTraces(r)),
+                    // 逐源 traces 由编排器给出（真实记录）；缺省才兜底。统一补齐 status/count/error/time
+                    sources: normalizeSourceTraces(r.sources && r.sources.length ? r.sources : buildSourceTraces(r)),
                     self_count: r.self_count == null ? null : r.self_count,
                     bilibili_count: r.bilibili_count == null ? null : r.bilibili_count,
                 });
             } else {
-                json(res, 200, { ok: false, error: (r && r.error) || '未命中', sources: buildSourceTraces(r) });
+                // [lc-1660] 失败/空结果也必须保留 runner 返回的真实逐源记录（含 status/count/error/time），
+                // 不能丢弃后只给一条兜底 bilibili 记录，否则 UI 又变成「尚未取过弹幕」。
+                json(res, 200, {
+                    ok: false,
+                    error: (r && r.error) || '未命中',
+                    sources: normalizeSourceTraces(r && r.sources && r.sources.length ? r.sources : buildSourceTraces(r)),
+                });
             }
             return;
         }
@@ -590,10 +657,14 @@ async function handle(req, res) {
                     source: r.source || '',
                     cid: r.cid == null ? null : r.cid,
                     cookie_status: r.cookie_status || null,
-                    sources: (r.sources && r.sources.length ? r.sources : buildSourceTraces(r)),
+                    sources: normalizeSourceTraces(r.sources && r.sources.length ? r.sources : buildSourceTraces(r)),
                 });
             } else {
-                json(res, 200, { ok: false, error: (r && r.error) || '未命中', sources: buildSourceTraces(r) });
+                json(res, 200, {
+                    ok: false,
+                    error: (r && r.error) || '未命中',
+                    sources: normalizeSourceTraces(r && r.sources && r.sources.length ? r.sources : buildSourceTraces(r)),
+                });
             }
             return;
         }

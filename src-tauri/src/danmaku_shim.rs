@@ -291,6 +291,11 @@ pub fn write_danmu_config(cfg: &crate::config::Config) -> Result<(), String> {
     let base = crate::danmaku::effective_base(cfg);
     let payload = serde_json::json!({
         "enabled": cfg.danmu_api_enabled,
+        // [auto-dd] 用户是否**显式配置**了自建源（开关打开且至少填了一个地址）。
+        // 注意不能看上面的 base/bases：地址留空时 Rust 会回落内置实例（127.0.0.1:22352），
+        // Lua 侧据此无法区分「用户填的」和「内置兜底」。MPV 起播的自动判定需要这个原始事实：
+        // 未配置自建源 + 未登录 B站 → 直接走弹弹play（见 apis/dandanplay.lua:dd_auto_preferred）。
+        "userConfigured": cfg.danmu_api_enabled && !crate::danmaku::user_bases(cfg).is_empty(),
         "base": base,
         "bases": bases,
         // 飞牛地址/令牌：系列记忆键解析（play-meta 缺失时的兜底）与自建源无关，仅供桩里的
@@ -306,218 +311,26 @@ pub fn write_danmu_config(cfg: &crate::config::Config) -> Result<(), String> {
     Ok(())
 }
 
-// ───────────────────── 弹幕缓存清理（设置面板「清空缓存并重新搜索」）─────────────────────
-//
-// 缓存目录与键（与 uosc_danmaku/apis/extra.lua:565-566、danmaku-shim.cjs:84-95、
-// xml.rs:52-64 同口径）：
-//   %PUBLIC%\fnos-danmaku（首选；回退 %ProgramData%、%TEMP%）
-//   B站/自建源合并结果：bili_danmaku_<safe_title>_<episode>.xml
-//   （safe_title = 解析出的番名去掉 \/:*?"<>|；episode = 集数，电影/无集为 0）
-// 其它运行期文件（danmaku-<pid>.ass/json、dandanplay_<id>.json、danmaku_source_cache.json）
-// 由 Lua 的 clear_danmaku_refetch 负责，这里只处理按条目可定位的 XML 缓存。
-
-/// 弹幕 XML 缓存根目录（去重，只返回存在的目录由调用方判断）。
-pub fn cache_roots() -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = Vec::new();
-    for var in ["PUBLIC", "ProgramData"] {
-        if let Ok(base) = std::env::var(var) {
-            let base = base.trim();
-            if !base.is_empty() {
-                out.push(Path::new(base).join("fnos-danmaku"));
-            }
-        }
-    }
-    out.push(std::env::temp_dir().join("fnos-danmaku"));
-    out
-}
-
-fn re_se() -> &'static regex::Regex {
-    static R: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    R.get_or_init(|| regex::Regex::new(r"(?i)^(.*?)\s*-\s*S\d+\s*E\s*(\d+)").unwrap())
-}
-
-fn re_cn_ep() -> &'static regex::Regex {
-    static R: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    R.get_or_init(|| regex::Regex::new(r"第\s*(\d+)\s*[话集回話]").unwrap())
-}
-
-/// 从 mpv 的 `media-title`（`剧名 - S1E2: 集名`）解析出「番名 + 集数」。
-/// 与 Lua 的 bili_fast_parse/guess_bili_title_ep_v2 口径一致：番名取 ` - SxEy` 之前，
-/// 无季集标记时整串都当番名（电影/单集 → ep=0）。
-pub fn parse_media_title(media_title: &str) -> (String, i64) {
-    let s = media_title.trim();
-    if s.is_empty() {
-        return (String::new(), 0);
-    }
-    if let Some(c) = re_se().captures(s) {
-        let title = c.get(1).map(|m| m.as_str().trim().to_string()).unwrap_or_default();
-        let ep = c.get(2).and_then(|m| m.as_str().parse::<i64>().ok()).unwrap_or(0);
-        if !title.is_empty() {
-            return (title, ep);
-        }
-    }
-    if let Some(c) = re_cn_ep().captures(s) {
-        let ep = c.get(1).and_then(|m| m.as_str().parse::<i64>().ok()).unwrap_or(0);
-        let title = s[..c.get(0).map(|m| m.start()).unwrap_or(0)].trim().to_string();
-        if !title.is_empty() {
-            return (title, ep);
-        }
-    }
-    (s.to_string(), 0)
-}
-
-/// 比较用的标题归一化：去掉空白与标点，统一小写（保留 CJK/字母/数字）。
-fn norm_title(s: &str) -> String {
-    s.chars()
-        .filter(|c| {
-            !c.is_whitespace()
-                && !matches!(
-                    c,
-                    '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '，' | '。' | '！'
-                        | '？' | '、' | '；' | '：' | '·' | '—' | '–' | '-' | '_' | '.' | '('
-                        | ')' | '[' | ']' | '【' | '】' | '「' | '」' | '『' | '』' | '!' | ','
-                        | ';' | '\'' | '’' | '“' | '”' | '《' | '》'
-                )
-        })
-        .flat_map(|c| c.to_lowercase())
-        .collect()
-}
-
-/// 判断缓存文件名是否属于「当前条目」（纯函数，便于单测）。
-fn cache_file_matches(name: &str, wanted_title: &str, episode: i64) -> bool {
-    if wanted_title.is_empty() {
-        return false;
-    }
-    let Some(stem) = name.strip_suffix(".xml") else { return false };
-    let Some(rest) = stem.strip_prefix("bili_danmaku_") else { return false };
-    let Some((title_part, ep_str)) = rest.rsplit_once('_') else { return false };
-    let Ok(ep) = ep_str.parse::<i64>() else { return false };
-    if ep != episode {
-        return false;
-    }
-    let nf = norm_title(title_part);
-    if nf.is_empty() {
-        return false;
-    }
-    nf.contains(wanted_title) || (nf.chars().count() >= 2 && wanted_title.contains(&nf))
-}
-
-/// 收集「当前条目」对应的缓存 XML。定位规则：
-///   · 文件名必须是 `bili_danmaku_<title>_<ep>.xml` 且 ep 与当前集数一致；
-///   · 文件名里的番名（归一化后）必须包含当前番名（防止误删同集数的其它番）。
-/// 定位不到（番名为空）时返回空 —— 调用方应提示改用「清空全部缓存」。
-pub fn collect_current_cache_files(title: &str, episode: i64) -> Vec<PathBuf> {
-    let nt = norm_title(title);
-    if nt.is_empty() {
-        return Vec::new();
-    }
-    let mut files = Vec::new();
-    for root in cache_roots() {
-        let Ok(rd) = std::fs::read_dir(&root) else { continue };
-        for entry in rd.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
-            if cache_file_matches(name, &nt, episode) {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    files.dedup();
-    files
-}
-
-/// 收集「全部弹幕缓存」文件（`bili_danmaku_*.xml` + 运行期 danmaku 中间文件）。
-pub fn collect_all_cache_files() -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    for root in cache_roots() {
-        let Ok(rd) = std::fs::read_dir(&root) else { continue };
-        for entry in rd.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
-            let hit = name.starts_with("bili_danmaku_")
-                || name.starts_with("bili_d")
-                || name.starts_with("dandanplay_")
-                || (name.starts_with("danmaku-") && (name.ends_with(".ass") || name.ends_with(".json")))
-                || (name.starts_with("bahamut-") && name.ends_with(".json"));
-            if hit {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    files.dedup();
-    files
-}
-
-/// 先移到临时目录再删（失败可回滚）：全部移动成功后才删除备份目录。
-/// 任一移动失败 → 把已移动的文件移回原处并返回错误，保证原缓存不被破坏。
-fn move_to_trash_then_delete(paths: &[PathBuf]) -> Result<Vec<String>, String> {
-    if paths.is_empty() {
-        return Ok(Vec::new());
-    }
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let trash = std::env::temp_dir().join(format!("anibox-danmaku-trash-{stamp}"));
-    std::fs::create_dir_all(&trash)
-        .map_err(|e| format!("创建弹幕缓存备份目录失败：{e}"))?;
-
-    let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
-    for p in paths {
-        let Some(fname) = p.file_name() else { continue };
-        let dest = trash.join(fname);
-        match std::fs::rename(p, &dest) {
-            Ok(()) => moved.push((p.clone(), dest)),
-            Err(e) => {
-                for (orig, bak) in moved.iter().rev() {
-                    let _ = std::fs::rename(bak, orig);
-                }
-                let _ = std::fs::remove_dir_all(&trash);
-                return Err(format!("移动弹幕缓存失败（已回滚，原缓存保留）：{e}"));
-            }
-        }
-    }
-
-    let names = moved
-        .iter()
-        .filter_map(|(p, _)| p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
-        .collect();
-    // 删除失败不影响结果（文件已移出缓存目录），只是临时目录里会留一份备份。
-    let _ = std::fs::remove_dir_all(&trash);
-    Ok(names)
-}
-
-/// 清空「当前条目」缓存，返回被清理的文件名。
-pub fn clear_current_cache(title: &str, episode: i64) -> Result<Vec<String>, String> {
-    if norm_title(title).is_empty() {
-        return Err("无法从当前条目标题定位弹幕缓存，请改用「清空全部缓存」".into());
-    }
-    let files = collect_current_cache_files(title, episode);
-    move_to_trash_then_delete(&files)
-}
-
-/// 清空全部弹幕缓存，返回被清理的文件名。
-pub fn clear_all_cache() -> Result<Vec<String>, String> {
-    let files = collect_all_cache_files();
-    move_to_trash_then_delete(&files)
-}
-
 /// [lc-1561] 把本次播放的条目元信息写给 Node 侧：自建源的「系列级匹配记忆」需要季 guid
 /// （原项目 `resolveSeriesKey` 要再发一次 play/info HTTP 才拿到；我们在 play_item 里已经
 /// 解析过响应，直传更省一次往返）。
-pub fn write_play_meta(episode_guid: &str, parent_guid: &str) {
+///
+/// [danmaku-diagnose] 追加 `title/season/episode`：设置面板的「诊断」需要当前播放上下文
+/// （番名/季/集）作为默认测试关键词。Node 侧只读 guid 字段，新增字段对其无影响。
+pub fn write_play_meta(
+    episode_guid: &str,
+    parent_guid: &str,
+    title: &str,
+    season: i64,
+    episode: i64,
+) {
     let path = std::env::temp_dir().join("anibox-play-meta.json");
     let payload = serde_json::json!({
         "episodeGuid": episode_guid,
         "parentGuid": parent_guid,
+        "title": title,
+        "season": season,
+        "episode": episode,
     });
     if let Ok(s) = serde_json::to_string_pretty(&payload) {
         let _ = std::fs::write(&path, s);
@@ -525,43 +338,3 @@ pub fn write_play_meta(episode_guid: &str, parent_guid: &str) {
 }
 
 
-#[cfg(test)]
-mod cache_tests {
-    use super::*;
-
-    #[test]
-    fn parse_media_title_se_and_cn() {
-        let (t, e) = parse_media_title("世界最强魔女，就此开始 - S1E2: 试着使用了互联网！");
-        assert_eq!(t, "世界最强魔女，就此开始");
-        assert_eq!(e, 2);
-
-        let (t, e) = parse_media_title("某剧场版");
-        assert_eq!(t, "某剧场版");
-        assert_eq!(e, 0);
-
-        let (t, e) = parse_media_title("番名 第12话 副标题");
-        assert_eq!(t, "番名");
-        assert_eq!(e, 12);
-    }
-
-    #[test]
-    fn cache_file_match_requires_episode_and_title() {
-        let nt = norm_title("世界最强魔女，就此开始");
-        // 同番同集（Lua 侧解析出的标题会带副标题）→ 命中
-        assert!(cache_file_matches(
-            "bili_danmaku_世界最强魔女，就此开始 - 试着使用了互联网！_2.xml",
-            &nt,
-            2
-        ));
-        // 同番不同集 → 不命中
-        assert!(!cache_file_matches(
-            "bili_danmaku_世界最强魔女，就此开始 - 试着使用了互联网！_3.xml",
-            &nt,
-            2
-        ));
-        // 同集但别的番 → 不命中
-        assert!(!cache_file_matches("bili_danmaku_另一部番_2.xml", &nt, 2));
-        // 非弹幕缓存文件 → 不命中
-        assert!(!cache_file_matches("danmaku-1234.ass", &nt, 2));
-    }
-}

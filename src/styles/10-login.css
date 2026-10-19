@@ -1,31 +1,157 @@
 /* ─────────────── 登录页 ─────────────── */
 
 .login-wrap {
+  position: relative;
+  isolation: isolate;
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 70px;
   padding: 40px;
+  overflow: hidden;
+  /* 背景遮罩：不再使用白色/浅色薄纱（否则会白蒙蒙一层）。
+     仅保留极淡的暗色渐变，轻微压住高光，保证背景图上的文字可读。 */
+  --login-veil: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.08) 0%,
+    rgba(0, 0, 0, 0.03) 45%,
+    rgba(0, 0, 0, 0.22) 100%
+  );
+  /* [可读性] 左侧文案的**局部**底衬：只在 .login-hero 文字背后铺一层
+     横向由左向右渐隐的玻璃底，不覆盖右侧卡片、也不改动整页背景轮换。
+     浅色主题文字是深色 → 用浅色底衬；深色主题文字是浅色 → 用暗色底衬。 */
+  --login-hero-veil: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.9) 0%,
+    rgba(255, 255, 255, 0.68) 45%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  /* 浅色底上原来的 #6c9bff→#8f6cff 渐变只有 ~2.7:1，标题看不清；
+     改用同色相压深一档的渐变（≈4.4:1 / 5.3:1），卖点小圆点同步用深蓝。 */
+  --login-hero-title-grad: linear-gradient(135deg, #4a74d9 0%, #7450e0 100%);
+  --login-hero-dot: #4a74d9;
+  --login-hero-text-shadow: none;
+}
+
+/* 深色主题：同一张图改用稍重的暗色渐变，文字保持高对比 */
+html.dark .login-wrap {
+  --login-veil: linear-gradient(
+    180deg,
+    rgba(9, 11, 18, 0.62) 0%,
+    rgba(9, 11, 18, 0.4) 45%,
+    rgba(7, 9, 14, 0.82) 100%
+  );
+  --login-hero-veil: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.62) 0%,
+    rgba(0, 0, 0, 0.46) 45%,
+    rgba(0, 0, 0, 0) 100%
+  );
+  --login-hero-title-grad: var(--accent-grad);
+  --login-hero-dot: var(--accent-grad);
+  /* 渐变边缘淡出处仍可能压到亮部，给文字一点暗色投影兜底 */
+  --login-hero-text-shadow: 0 1px 4px rgba(0, 0, 0, 0.62);
+}
+
+/* ── 背景层：public/login/ 横图随机轮换 + 交叉淡入淡出 ── */
+.login-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+.login-bg-img {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  opacity: 0;
+  transition: opacity 1.8s ease;
+}
+.login-bg-img.active {
+  opacity: 1;
+}
+.login-bg-veil {
+  position: absolute;
+  inset: 0;
+  background: var(--login-veil);
+}
+
+/* 内容压在背景之上 */
+.login-hero,
+.login-card {
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-bg-img {
+    transition: none;
+  }
 }
 .login-hero {
-  position: relative;
   text-align: left;
+  max-width: 460px;
+  /* 让 ::before 的负 z-index 只退到 hero 自身之下，
+     而不会掉到 .login-bg 背景层后面。 */
+  isolation: isolate;
+}
+/* 局部底衬：柔化边缘（blur），只盖住文字区域左侧 40–50% 的横向范围 */
+.login-hero::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -34px -72px -34px -44px;
+  border-radius: 28px;
+  background: var(--login-hero-veil);
+  filter: blur(20px);
+  pointer-events: none;
 }
 .login-hero h1 {
   font-size: 56px;
   font-weight: 800;
   letter-spacing: 2px;
   margin: 0;
-  background: var(--accent-grad);
+  background: var(--login-hero-title-grad);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
 .login-hero p {
-  color: var(--muted);
+  /* 原来用 --muted（浅色主题 60% 透明）在图上偏灰，提升到正文色 */
+  color: var(--text);
   margin: 10px 0 0;
   letter-spacing: 1px;
+  text-shadow: var(--login-hero-text-shadow);
+}
+/* 卖点列表：小圆点 + 次要文字色，保持与现有视觉语言一致 */
+.login-feats {
+  list-style: none;
+  margin: 24px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+.login-feats li {
+  position: relative;
+  padding-left: 20px;
+  color: var(--text-2);
+  font-size: 13.5px;
+  line-height: 1.6;
+  letter-spacing: 0.2px;
+  text-shadow: var(--login-hero-text-shadow);
+}
+.login-feats li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--login-hero-dot);
 }
 .login-hero-glow {
   position: absolute;
@@ -100,7 +226,9 @@
 .linklike:hover {
   text-decoration: underline;
 }
-.primary {
+/* 仅作用于登录卡片内，避免全局 `.primary` 串味到其它弹层/设置按钮
+   （例如 .gst-btn.primary / .set-btn.primary 被这里的 padding:12px、margin-top:16px 撑大）。 */
+.login-card .primary {
   margin-top: 16px;
   background: var(--accent-grad);
   border: none;
@@ -113,11 +241,11 @@
   box-shadow: 0 8px 22px rgba(108, 155, 255, 0.35);
   transition: filter 0.15s, transform 0.15s;
 }
-.primary:hover {
+.login-card .primary:hover {
   filter: brightness(1.08);
   transform: translateY(-1px);
 }
-.primary:disabled {
+.login-card .primary:disabled {
   opacity: 0.55;
   cursor: default;
   transform: none;

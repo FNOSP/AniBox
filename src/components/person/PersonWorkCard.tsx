@@ -30,11 +30,14 @@ function posterOf(w: PersonWork): string {
 export function PersonWorkCard({
   work,
   index = 0,
+  owned = false,
   onOpen,
 }: {
   work: PersonWork;
   /** 入场错峰序号 */
   index?: number;
+  /** [lc-1701] 是否已在本地媒体库（命中才显示绿色「已入库」徽章） */
+  owned?: boolean;
   /** 有可打开的 id 时才可点 */
   onOpen?: (w: PersonWork) => void;
 }) {
@@ -78,6 +81,11 @@ export function PersonWorkCard({
           </div>
         )}
         {year && <span className="pw-year">{year}</span>}
+        {owned && (
+          <span className="pw-stock" title="已在本地媒体库中">
+            已入库
+          </span>
+        )}
         {sub && (
           <span className="pw-role" title={sub}>
             {sub}

@@ -334,3 +334,13 @@
     padding: 18px 16px 30px;
   }
 }
+
+/* 电影头图手动切换：复用首页 .mist-nav（透明无底色），悬停头图时淡入 */
+.mv-hero .mist-nav {
+  opacity: 0;
+  z-index: 5;
+}
+.mv-hero:hover .mist-nav,
+.mv-hero:focus-within .mist-nav {
+  opacity: 1;
+}

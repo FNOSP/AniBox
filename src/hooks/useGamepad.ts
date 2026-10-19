@@ -13,7 +13,7 @@
  *  - 非播放：方向 = 焦点导航；A = 确认；B/Back = 返回；LB/RB = 切页；
  *    Start = 打开设置；X = 收藏（点当前焦点卡片内的心形按钮）。
  *  - 播放中（监听 mpv-load / mpv-end）：A = 暂停/继续；LB/RB = ±5s；
- *    LT/RT = 倍速 ±0.25；B = 停止；Y = 下一集（预留事件，当前后端无命令）。
+ *    LT/RT = 倍速 ±0.25；B = 停止；Y = 下一集（操作 mpv 播放列表）。
  */
 
 import { useEffect, useRef } from "react";
@@ -30,7 +30,7 @@ export const GAMEPAD_KEY_TABLE: { btn: PadBtnName; label: string; action: string
   { btn: "A", label: "A", action: "确认 / 播放暂停" },
   { btn: "B", label: "B", action: "返回 / 停止播放" },
   { btn: "X", label: "X", action: "收藏（当前卡片）" },
-  { btn: "Y", label: "Y", action: "下一集（预留）" },
+  { btn: "Y", label: "Y", action: "下一集" },
   { btn: "LB", label: "LB", action: "上一页 / 快退 5s" },
   { btn: "RB", label: "RB", action: "下一页 / 快进 5s" },
   { btn: "LT", label: "LT", action: "倍速 −" },
@@ -214,12 +214,8 @@ export function useGamepad(callbacks: GamepadCallbacks = {}): void {
           cmd("mpv_set_rate", { rate });
           break;
         case "Y":
-          // 后端目前没有「下一集」命令：派发预留事件，供后续 DetailView 接入。
-          try {
-            window.dispatchEvent(new CustomEvent("fntv-gamepad-next"));
-          } catch {
-            /* ignore */
-          }
+          // [playlist] 下一集：直接操作 mpv 播放列表（整季列表由 play_item 一次性写入）。
+          cmd("mpv_next_episode");
           break;
         case "START":
           cbRef.current.onStart?.();

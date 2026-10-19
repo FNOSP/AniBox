@@ -227,6 +227,8 @@ pub async fn stop_all(app: &AppHandle, state: &AppState, emit_end: bool) {
 /// - `resume_secs` / `duration_secs`：续播点与总时长（仅 PotPlayer 的 `/seek` 使用）。
 /// - `headers`：在线源 Referer/UA；mpv 走启动参数，PotPlayer 走 relay。
 /// - `subs`：外挂字幕路径（仅 PotPlayer 使用，重复 `-sub=`）。
+/// - `playlist_start`：`url` 是**多条目播放列表文件**时，从哪一条开始播（0 基）。
+///   `None` = 单条媒体（沿用 force-media-title / loadfile 逻辑）。
 #[allow(clippy::too_many_arguments)]
 pub async fn launch(
     app: &AppHandle,
@@ -238,13 +240,14 @@ pub async fn launch(
     duration_secs: f64,
     headers: Option<&HttpHeaders>,
     subs: &[String],
+    playlist_start: Option<usize>,
 ) -> Result<(), String> {
     let (kind, path) = resolve_player(cfg)?;
     crate::libmpv::trace(&format!(
-        "[player] launch kind={kind} path={path} url={url} resume={resume_secs} dur={duration_secs}"
+        "[player] launch kind={kind} path={path} url={url} resume={resume_secs} dur={duration_secs} playlist_start={playlist_start:?}"
     ));
     match kind.as_str() {
-        "mpv" => launch_mpv(app, state, cfg, url, title, headers).await,
+        "mpv" => launch_mpv(app, state, cfg, url, title, headers, playlist_start).await,
         "potplayer" => {
             launch_potplayer(
                 app,
@@ -270,13 +273,19 @@ async fn launch_mpv(
     url: &str,
     title: &str,
     headers: Option<&HttpHeaders>,
+    playlist_start: Option<usize>,
 ) -> Result<(), String> {
-    let extra = match headers {
+    let mut extra = match headers {
         Some(h) if h.needs_relay() => {
             crate::mpv::http_header_args(h.referer.as_deref(), h.user_agent.as_deref())
         }
         _ => Vec::new(),
     };
+    // [playlist] 多条目播放列表：命令行 `--playlist-start=<idx>` 指定起播集，
+    // 与「先启动再 IPC jump」不同，起播零 IPC 依赖（启动期 IPC 会卡数秒，见 lib.rs lc-1559）。
+    if let Some(idx) = playlist_start {
+        extra.push(format!("--playlist-start={idx}"));
+    }
     let mut slot = state.mpv.lock().await;
     let existing = match slot.as_ref() {
         Some(m) if !m.is_dead().await => Some(m.clone()),
@@ -289,8 +298,14 @@ async fn launch_mpv(
     let s = match existing {
         Some(m) => {
             // 复用会话：mpv 已过启动期，IPC 不卡。标题先于 loadfile。
+            // 多条目播放列表靠 #EXTINF 标题驱动 media-title（弹幕链按集名匹配），
+            // 此时不能写 force-media-title —— 它会把所有集都盖成同一个标题。
             let _ = m
-                .command(json!(["set", "force-media-title", title.to_string()]))
+                .command(json!([
+                    "set",
+                    "force-media-title",
+                    if playlist_start.is_some() { "" } else { title }
+                ]))
                 .await;
             if let Some(h) = headers {
                 let (r, u, hf) =
@@ -313,17 +328,35 @@ async fn launch_mpv(
                 m.command_no_reply(json!(["set", "http-header-fields", ""]))
                     .await;
             }
-            m.command(json!(["loadfile", url.to_string(), "replace"]))
-                .await?;
+            match playlist_start {
+                Some(idx) => {
+                    // loadlist 会整体替换播放列表；随后把播放位置定到点击的那一集。
+                    m.command(json!(["loadlist", url.to_string(), "replace"]))
+                        .await?;
+                    let _ = m
+                        .command(json!(["set", "playlist-pos", idx]))
+                        .await;
+                }
+                None => {
+                    m.command(json!(["loadfile", url.to_string(), "replace"]))
+                        .await?;
+                }
+            }
             let _ = m.command(json!(["set", "pause", "no"])).await;
             m
         }
         None => {
+            // 多条目播放列表：标题由 #EXTINF 提供，不传 force-media-title。
+            let force_title = if playlist_start.is_some() {
+                String::new()
+            } else {
+                title.to_string()
+            };
             crate::mpv::MpvSession::launch(
                 app.clone(),
                 &cfg.mpv_path,
                 Some(url.to_string()),
-                Some(title.to_string()),
+                Some(force_title),
                 extra,
             )
             .await?
@@ -498,6 +531,8 @@ fn spawn_potplayer_watcher(app: AppHandle, pid: u32, generation: u64, potctl: Op
                     let pos = (pos_ms / 1000.0).floor();
                     let dur = (dur_ms / 1000.0).floor();
                     if dur > 0.0 {
+                        // [progress] 退出兜底跟踪（PotPlayer 无 filename，当前集沿用起播时的那一集）。
+                        crate::fnos_progress::tick(pos, dur);
                         let _ = app.emit(
                             "mpv-event",
                             json!({ "event": "property-change", "id": 1, "data": pos }),
@@ -1013,7 +1048,10 @@ mod tests {
 
     #[test]
     fn player_kind_defaults_to_mpv_and_resolves() {
-        let cfg = Config::default();
+        // [bundle-mpv] 默认 mpv_path 为空，真实路径由 config::load 的
+        // resolve_bundled_paths 注入；这里模拟已解析后的配置。
+        let mut cfg = Config::default();
+        cfg.mpv_path = "mpv.exe".into();
         let (kind, path) = resolve_player(&cfg).unwrap();
         assert_eq!(kind, "mpv");
         assert_eq!(path, cfg.mpv_path);

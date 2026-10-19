@@ -181,6 +181,24 @@ fn status_json(cookie_present: bool, v: Value) -> Value {
     })
 }
 
+/// 把一次体检结果写进 `bili_cookie_status.json`（与弹幕 shim 同一份契约）。
+///
+/// 为什么登录/退出时也要写：MPV 起播的自动判定会读这个文件决定「B站 是否已登录」。
+/// 如果只在 shim 启动时体检，用户刚登录完再起播会读到登录前的旧结论（missing/expired），
+/// 被误判成未登录而直接走弹弹play。这里在保存/清除 Cookie 后立即刷新，保证
+/// 「登录 B站 后恢复原优先级」不需要等下一次体检。
+fn write_cookie_status(dir: &Path, payload: &Value) {
+    let path = dir.join("bili_cookie_status.json");
+    match serde_json::to_string_pretty(payload) {
+        Ok(body) => {
+            if let Err(e) = std::fs::write(&path, body) {
+                crate::libmpv::trace(&format!("[bili-account] 写 Cookie 状态失败: {e}"));
+            }
+        }
+        Err(e) => crate::libmpv::trace(&format!("[bili-account] 序列化 Cookie 状态失败: {e}")),
+    }
+}
+
 /// 设置面板「B 站账号」状态：读 Cookie 文件 + 体检。
 #[tauri::command]
 pub async fn bili_account_status(state: State<'_, AppState>) -> Result<Value, String> {
@@ -224,7 +242,10 @@ pub async fn bili_set_cookie(state: State<'_, AppState>, cookie: String) -> Resu
             v = s;
         }
     }
-    Ok(status_json(true, v))
+    let out = status_json(true, v);
+    // [auto-dd] 登录后立即刷新状态文件：MPV 起播据此恢复「B站 优先」。
+    write_cookie_status(&dir, &out);
+    Ok(out)
 }
 
 /// 退出 B 站账号：删除 Cookie 文件。
@@ -235,9 +256,16 @@ pub async fn bili_clear_cookie(state: State<'_, AppState>) -> Result<Value, Stri
     };
     let path = cookie_path(&dir);
     match std::fs::remove_file(&path) {
-        Ok(_) => Ok(status_json(false, json!({ "status": "missing" }))),
+        Ok(_) => {
+            let out = status_json(false, json!({ "status": "missing" }));
+            // [auto-dd] 退出后立即把状态写成 missing：避免旧「valid」让起播判定误以为仍已登录。
+            write_cookie_status(&dir, &out);
+            Ok(out)
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Ok(status_json(false, json!({ "status": "missing" })))
+            let out = status_json(false, json!({ "status": "missing" }));
+            write_cookie_status(&dir, &out);
+            Ok(out)
         }
         Err(e) => Err(format!("删除 Cookie 失败: {e}")),
     }
@@ -246,7 +274,7 @@ pub async fn bili_clear_cookie(state: State<'_, AppState>) -> Result<Value, Stri
 // ───────────────────────── Node 检测 / 一键自建源 ─────────────────────────
 
 /// 把 `node`（PATH 里的相对名）解析成绝对路径用于展示；解析失败时原样返回。
-fn display_node_path(p: &Path) -> String {
+pub(crate) fn display_node_path(p: &Path) -> String {
     if p.components().count() > 1 {
         return p.display().to_string();
     }
@@ -273,7 +301,7 @@ fn display_node_path(p: &Path) -> String {
     p.display().to_string()
 }
 
-fn node_version(p: &Path) -> String {
+pub(crate) fn node_version(p: &Path) -> String {
     Command::new(p)
         .arg("--version")
         .stdin(Stdio::null())

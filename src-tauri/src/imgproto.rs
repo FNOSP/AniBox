@@ -71,6 +71,8 @@ enum Target {
     Nas(String),
     /// 免鉴权图片上游（TMDB 镜像 / Bangumi）
     Public { key: String, url: String },
+    /// [library-cover] 本机自定义封面副本（app_data_dir/library-covers/<文件名>）
+    Local(String),
 }
 
 /// [lc-1569] BGM 图片的取图 URL：有镜像密钥 → 自建镜像 `/img/*`（签名轨，与 API 同密钥）；
@@ -109,6 +111,13 @@ fn resolve_target(path: &str) -> Result<Target, (u16, String)> {
             key: format!("img:tmdb:{rest}"),
             url: format!("{TMDB_IMG_BASE}/img/{rest}"),
         });
+    }
+    if let Some(rest) = path.strip_prefix("/__cover/") {
+        // [library-cover] 本机自定义封面：文件名必须是单段白名单（无 `/`、无 `..`）。
+        if rest.is_empty() || rest.contains('/') || !safe_rel(rest) {
+            return Err((400, "bad cover path".into()));
+        }
+        return Ok(Target::Local(rest.to_string()));
     }
     if let Some(rest) = path.strip_prefix("/__bgm/") {
         if !safe_rel(rest) {
@@ -223,6 +232,20 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
         Target::Public { key, url } => {
             // 免鉴权上游：不需要登录/配置，命中缓存直接返回（绝不重复请求）
             return proxy_public(&key, &url).await;
+        }
+        Target::Local(name) => {
+            // [library-cover] 本机封面副本：直接读盘返回（无需登录/网络）。
+            // 文件名带时间戳，换图即换 URL ⇒ 可以放心长缓存。
+            return match crate::libcover::read_cover(&app, &name) {
+                Some((ct, bytes)) => Response::builder()
+                    .status(200)
+                    .header("Content-Type", ct)
+                    .header("Cache-Control", "max-age=86400")
+                    .header("Access-Control-Allow-Origin", "*")
+                    .body(bytes)
+                    .unwrap_or_else(|_| Response::builder().status(500).body(Vec::new()).unwrap()),
+                None => plain(404, "cover not found"),
+            };
         }
         Target::Nas(p) => (format!("img:nas:{p}"), p),
     };

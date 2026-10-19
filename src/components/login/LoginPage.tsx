@@ -3,12 +3,49 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Config } from "../../types";
 
+/* [lc-17xx] 登录页背景：public/login/ 下的横图随机轮换。
+   · 首帧随机选一张，之后每 20s 交叉淡入淡出切换；
+   · prefers-reduced-motion 下只保留首帧、不自动切换；
+   · 只用仓库内图片（无外部 URL），遮罩由 10-login.css 的主题变量控制。 */
+const LOGIN_BACKGROUNDS = ["/login/bg-login.webp", "/login/bg-login.jpg"] as const;
+const LOGIN_BG_INTERVAL_MS = 20000;
+
+function LoginBackdrop() {
+  const [active, setActive] = useState(() =>
+    Math.floor(Math.random() * LOGIN_BACKGROUNDS.length),
+  );
+
+  useEffect(() => {
+    if (LOGIN_BACKGROUNDS.length < 2) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const timer = window.setInterval(() => {
+      setActive((i) => (i + 1) % LOGIN_BACKGROUNDS.length);
+    }, LOGIN_BG_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="login-bg" aria-hidden="true">
+      {LOGIN_BACKGROUNDS.map((src, i) => (
+        <div
+          key={src}
+          className={`login-bg-img${i === active ? " active" : ""}`}
+          style={{ backgroundImage: `url("${src}")` }}
+        />
+      ))}
+      <div className="login-bg-veil" />
+    </div>
+  );
+}
 
 export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: () => void }) {
   const [cfg, setCfg] = useState<Config | null>(null);
   const [server, setServer] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  // [访问码] fnOS 网关「应用访问码」：可选，留空表示服务器未开启门禁。
+  // 与旧项目 Fntv-Plus 一致：非空时登录前先向 /access_code_verify 验证并建立网关会话。
+  const [accessCode, setAccessCode] = useState("");
   const [remember, setRemember] = useState(false);
   const [autoLogin, setAutoLogin] = useState(false);
   const [mpvPath, setMpvPath] = useState("");
@@ -25,6 +62,7 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
       setServer(c.server);
       setUsername(c.username);
       setPassword(c.password || "");
+      setAccessCode(c.access_code || "");
       setRemember(!!c.password);
       setAutoLogin(c.auto_login && !!c.password);
       setMpvPath(c.mpv_path);
@@ -43,12 +81,18 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
           server: server.trim(),
           username,
           password: remember ? password : "",
+          access_code: accessCode.trim(),
           auto_login: remember && autoLogin,
           mpv_path: mpvPath,
           proxy_path: proxyPath,
         },
       });
-      await invoke("login", { server: server.trim(), username, password });
+      await invoke("login", {
+        server: server.trim(),
+        username,
+        password,
+        accessCode: accessCode.trim(),
+      });
       onDone();
     } catch (e) {
       setErr(String(e));
@@ -64,7 +108,12 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
     if (!cfg.auto_login || !cfg.password || !cfg.server || !cfg.username) return;
     autoTried.current = true;
     setBusy(true);
-    invoke("login", { server: cfg.server, username: cfg.username, password: cfg.password })
+    invoke("login", {
+      server: cfg.server,
+      username: cfg.username,
+      password: cfg.password,
+      accessCode: cfg.access_code || "",
+    })
       .then(() => onDone())
       .catch((e) => {
         setErr("自动登录失败：" + String(e));
@@ -74,10 +123,18 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
 
   return (
     <div className="login-wrap">
+      <LoginBackdrop />
       <div className="login-hero">
         <div className="login-hero-glow" />
-        <h1>FN·TV</h1>
-        <p>自绘 UI · 直调飞牛 API · 内嵌 mpv</p>
+        <h1>AniBox</h1>
+        <p>把飞牛影视，变成你桌面上的私人影院</p>
+        <ul className="login-feats">
+          <li>自绘界面持续优化，本地媒体库、收藏与继续观看一目了然</li>
+          <li>支持 mpv 与 PotPlayer 播放，字幕、着色器与播放控制原生可用</li>
+          <li>追剧日历轻松追踪，放送时间与观看进度不再错过</li>
+          <li>聚合 TMDB / Bangumi / AniList 等丰富影视数据</li>
+          <li>弹幕、全局手柄与自建镜像，完善的追剧观影体验</li>
+        </ul>
       </div>
       <form className="login-card" onSubmit={submit}>
         <h2>登录飞牛影视</h2>
@@ -92,6 +149,14 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
         <input value={username} onChange={(e) => setUsername(e.target.value)} required />
         <label>密码</label>
         <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+        <label>访问码（可选）</label>
+        <input
+          type="password"
+          value={accessCode}
+          onChange={(e) => setAccessCode(e.target.value)}
+          placeholder="服务器未开启访问码门禁时请留空"
+          autoComplete="off"
+        />
         <div className="login-opts">
           <label className="login-check">
             <input

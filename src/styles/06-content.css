@@ -2,6 +2,10 @@
 
 .content {
   flex: 1;
+  /* 关键：作为 flex 子项必须能收缩到父容器高度以内，否则会按内容高度撑开
+     （`.app-shell` 是 overflow:hidden，撑开后内容被裁掉、自身也失去滚动空间）。
+     发现页的 `.dscroll` 早就有这一条，首页 `.content` 之前漏了。 */
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 62px 26px 46px;

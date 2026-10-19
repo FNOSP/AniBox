@@ -262,6 +262,58 @@ function collectCandidates(scope?: HTMLElement | null): HTMLElement[] {
   return list.filter((el) => !dropped.has(el));
 }
 
+/** 找到 el 在指定轴上真正的滚动祖先。
+ *
+ *  为什么不用 `scrollIntoView`：本项目首页的滚动容器是 `<main class="content home-full">`
+ *  （`overflow-y:auto`，见 06-content.css），它外面还套着 `.view-pane / .view-stack /
+ *  .main-row / .app-shell` 这些 `overflow:hidden` 的外壳；卡片又在 `.hscroll`
+ *  （`overflow-x:auto`，CSS 规范会把另一轴也算成 auto）这种嵌套滚动容器里。
+ *  `scrollIntoView({block:"nearest"})` 在这种「多层 overflow + hidden 外壳」结构下
+ *  经常只滚最内层（`.hscroll` 垂直方向根本没有可滚空间）而**滚不到 `.content`**，
+ *  表现就是「方向键焦点到了下一行，但视口不动」。这里直接沿祖先链找**真正有溢出**的
+ *  滚动容器，显式写 scrollTop/scrollLeft，绕开 scrollIntoView 的这套不确定性。 */
+function findScrollable(el: HTMLElement, axis: "x" | "y"): HTMLElement | null {
+  let p = el.parentElement;
+  while (p && p !== document.body && p !== document.documentElement) {
+    const st = getComputedStyle(p);
+    if (axis === "y") {
+      const oy = st.overflowY;
+      if (
+        (oy === "auto" || oy === "scroll" || oy === "overlay") &&
+        p.scrollHeight > p.clientHeight + 1
+      ) {
+        return p;
+      }
+    } else {
+      const ox = st.overflowX;
+      if (
+        (ox === "auto" || ox === "scroll" || ox === "overlay") &&
+        p.scrollWidth > p.clientWidth + 1
+      ) {
+        return p;
+      }
+    }
+    p = p.parentElement;
+  }
+  return null;
+}
+
+/** 平滑设置滚动容器的某个轴；不支持 scrollTo 时退回直接赋值。 */
+function setScroll(el: HTMLElement, axis: "top" | "left", value: number): void {
+  const target = Math.max(0, value);
+  const withScrollTo = el as HTMLElement & { scrollTo?: (o: ScrollToOptions) => void };
+  if (typeof withScrollTo.scrollTo === "function") {
+    try {
+      withScrollTo.scrollTo({ [axis]: target, behavior: "smooth" } as ScrollToOptions);
+      return;
+    } catch {
+      /* 旧内核不支持 ScrollToOptions：落到直接赋值 */
+    }
+  }
+  if (axis === "top") el.scrollTop = target;
+  else el.scrollLeft = target;
+}
+
 /** 只按当前 rect 重画白框（不触发滚动，避免打断进行中的平滑滚动）。 */
 function placeFrame(el: HTMLElement): void {
   const r = el.getBoundingClientRect();
@@ -277,18 +329,50 @@ function placeFrame(el: HTMLElement): void {
 
 let settleTimer = 0;
 
-/** 把目标平滑滚入最近的可滚动容器（首页 .content / 发现页 .dscroll 等），
- *  滚动结束后再校准一次白框位置。 */
+/** 把目标滚入它**真正所在的**滚动容器（首页 `.content` / 发现页 `.dscroll` /
+ *  横排 `.hscroll`），滚动结束后再校准一次白框位置。
+ *
+ *  垂直/水平分别找各自的滚动祖先并显式写 scrollTop / scrollLeft —— 这是修复
+ *  「首页方向键向下焦点动了、视口不动」的关键：原来的 `scrollIntoView` 在
+ *  `.app-shell(overflow:hidden) > .view-pane > .content(overflow:auto)` 这种
+ *  多层嵌套 + 卡片外层 `.hscroll(overflow-x:auto)` 的结构里会失效。
+ *  外层 `overflow:hidden` 的壳不参与滚动（findScrollable 只认 auto/scroll），
+ *  由内层真正的滚动容器负责，避免整页被 hidden 壳裁掉后无处可滚。 */
 function scrollToEl(el: HTMLElement): void {
-  try {
-    el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
-  } catch {
+  const r = el.getBoundingClientRect();
+  const margin = 24;
+
+  const vBox = findScrollable(el, "y");
+  if (vBox) {
+    const c = vBox.getBoundingClientRect();
+    let top = vBox.scrollTop;
+    if (r.top < c.top + margin) top -= c.top + margin - r.top;
+    else if (r.bottom > c.bottom - margin) top += r.bottom - (c.bottom - margin);
+    if (Math.abs(top - vBox.scrollTop) > 1) setScroll(vBox, "top", top);
+  }
+
+  const hBox = findScrollable(el, "x");
+  if (hBox) {
+    const c = hBox.getBoundingClientRect();
+    let left = hBox.scrollLeft;
+    if (r.left < c.left + margin) left -= c.left + margin - r.left;
+    else if (r.right > c.right - margin) left += r.right - (c.right - margin);
+    if (Math.abs(left - hBox.scrollLeft) > 1) setScroll(hBox, "left", left);
+  }
+
+  // 找不到显式滚动容器时（例如整页由 window 滚动）才退回 scrollIntoView。
+  if (!vBox && !hBox) {
     try {
-      el.scrollIntoView({ block: "nearest", inline: "nearest" });
+      el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
     } catch {
-      /* ignore */
+      try {
+        el.scrollIntoView({ block: "nearest", inline: "nearest" });
+      } catch {
+        /* ignore */
+      }
     }
   }
+
   window.clearTimeout(settleTimer);
   settleTimer = window.setTimeout(() => {
     if (active && focusedEl === el && el.isConnected) placeFrame(el);
@@ -441,23 +525,50 @@ export const focusNav = {
     const curCx = cr.left + cr.width / 2;
     const curCy = cr.top + cr.height / 2;
 
-    // 固定壳层（顶栏 / 胶囊）只在“没有弹层”时做特殊排序：
+    // 固定壳层（顶栏 / 胶囊）只在“没有弹层”时做特殊处理：
     //  - 从内容里向下/水平移动：直接排除（否则滚动后会被吸回顶部）；
-    //  - 从内容里向上移动：降权为兜底（先把内容往上滚完，再落到胶囊/顶栏）；
-    //  - 焦点本来就在壳层里：水平移动只在壳层内走（首页 ↔ 发现）。
+    //  - 从内容里向上移动：内容候选优先；内容上方再没有候选时，**无条件兜底**到胶囊
+    //    （不受严格几何 `r.bottom < curTop` 限制 —— 否则焦点停在视口最顶部那行时，
+    //    胶囊底边只比它高几个像素就永远够不到，表现为「胶囊选不中」）；
+    //  - 焦点本来就在壳层里：水平移动只在同一层里走（首页 ↔ 发现 / 顶栏图标之间）。
     const chromeEnabled = !scope;
     const curIsChrome = chromeEnabled && !!cur && isChromeCandidate(cur);
 
     let best: HTMLElement | null = null;
     let bestScore = Infinity;
+    // 向上移动时的“顶部停靠点”兜底：胶囊优先，其次顶栏图标/窗口按钮。
+    let capsuleBest: HTMLElement | null = null;
+    let capsuleScore = Infinity;
+    let topChromeBest: HTMLElement | null = null;
+    let topChromeScore = Infinity;
 
     for (const el of cands) {
       if (cur && el === cur) continue;
       const chrome = chromeEnabled && isChromeCandidate(el);
+
+      if (chromeEnabled && !curIsChrome && dir === "up" && chrome) {
+        const r0 = el.getBoundingClientRect();
+        // 胶囊（.navbar 内）按水平距离取最近的那一个槽位（首页/发现）；
+        // 顶栏图标只作最后兜底（无胶囊页面才用得上）。
+        if (el.closest(".navbar")) {
+          const d0 = Math.abs((r0.left + r0.right) / 2 - curCx);
+          if (d0 < capsuleScore) {
+            capsuleScore = d0;
+            capsuleBest = el;
+          }
+        } else if (isTopChrome(el)) {
+          const d0 = Math.abs((r0.left + r0.right) / 2 - curCx);
+          if (d0 < topChromeScore) {
+            topChromeScore = d0;
+            topChromeBest = el;
+          }
+        }
+      }
+
       if (chromeEnabled) {
         if (!curIsChrome) {
-          // 从内容里向下/水平移动：固定壳层不参与（否则滚动后会被吸回顶部）。
-          if (dir === "down" || dir === "left" || dir === "right") continue;
+          // 从内容里向下/水平/向上移动：固定壳层不参与正常打分（向上由上面的兜底负责）。
+          if (chrome) continue;
         } else if (dir === "left" || dir === "right") {
           // 焦点在壳层内：水平移动只在同一层里走（首页 ↔ 发现 / 顶栏图标之间）。
           if (!chrome || isTopChrome(el) !== isTopChrome(cur as HTMLElement)) continue;
@@ -465,34 +576,57 @@ export const focusNav = {
       }
       const r = el.getBoundingClientRect();
       if (dir === "left" || dir === "right") {
-        const inDir = dir === "right" ? r.left > curRight + 2 : r.right < curLeft - 2;
+        // 容差用 -2：胶囊两个 `.nav-cap-l` 是**无间隙相邻**（gap:0），
+        // 严格 `r.left > curRight + 2` 会把紧挨着的另一个按钮排除掉 → 左右永远切不过去。
+        const inDir = dir === "right" ? r.left > curRight - 2 : r.right < curLeft + 2;
         if (!inDir) continue;
         const sameRow = r.top < curBottom && curTop < r.bottom;
         const gap = dir === "right" ? r.left - curRight : curLeft - r.right;
         const dy = Math.abs((r.top + r.bottom) / 2 - curCy);
-        let score = sameRow ? gap : dy * 20 + gap;
-        if (chromeEnabled && chrome && !curIsChrome) score += isTopChrome(el) ? 2e6 : 1e6;
+        const score = sameRow ? gap : dy * 20 + gap;
         if (score < bestScore) {
           bestScore = score;
           best = el;
         }
       } else {
-        const inDir = dir === "down" ? r.top > curBottom + 2 : r.bottom < curTop - 2;
+        // 同理：上下相邻（0 间隙）的元素也要能被选中。
+        const inDir = dir === "down" ? r.top > curBottom - 2 : r.bottom < curTop + 2;
         if (!inDir) continue;
         const sameCol = r.left < curRight && curLeft < r.right;
         const gap = dir === "down" ? r.top - curBottom : curTop - r.bottom;
         const dx = Math.abs((r.left + r.right) / 2 - curCx);
-        let score = sameCol ? gap : dx * 20 + gap;
-        // 向上：先走内容（含屏幕外的候选，靠平滑滚动带入视口）；
-        // 内容走完后才落到胶囊（1e6），最后才是顶栏图标/窗口按钮（2e6）。
-        if (chromeEnabled && chrome && !curIsChrome) score += isTopChrome(el) ? 2e6 : 1e6;
+        const score = sameCol ? gap : dx * 20 + gap;
         if (score < bestScore) {
           bestScore = score;
           best = el;
         }
       }
     }
-    if (!best) return false;
+
+    // 向上且上方已无任何内容候选：落到胶囊（首页/发现）；无胶囊页面再落到顶栏。
+    if (!best && dir === "up" && chromeEnabled && !curIsChrome) {
+      best = capsuleBest ?? topChromeBest;
+    }
+    if (!best) {
+      // 兜底：该方向确实没有候选了，但如果当前滚动容器还有余量，至少翻动视口一屏。
+      // 保证「方向键向下」在任何页面都不会完全没有反应（候选被裁切/未渲染时也能继续滚）。
+      if (dir === "down" || dir === "up") {
+        const box = findScrollable(cur ?? document.body, "y");
+        if (box) {
+          const step = Math.max(80, box.clientHeight * 0.8);
+          const max = box.scrollHeight - box.clientHeight;
+          const next =
+            dir === "down"
+              ? Math.min(max, box.scrollTop + step)
+              : Math.max(0, box.scrollTop - step);
+          if (Math.abs(next - box.scrollTop) > 1) {
+            setScroll(box, "top", next);
+            return true;
+          }
+        }
+      }
+      return false;
+    }
     focusEl(best);
     return true;
   },
@@ -513,17 +647,25 @@ export const focusNav = {
       ? el
       : ((el.querySelector("a[href]") as HTMLElement | null) ?? el);
     try {
-      target.dispatchEvent(
-        new MouseEvent("click", {
-          bubbles: true,
-          cancelable: true,
-          view: window,
-          button: 0,
-        }),
-      );
+      // 原生 `.click()` 会走完整的激活流程（button 的默认激活、checkbox 切换、a 的跳转），
+      // React 的 onClick 也能收到（事件冒泡到 root）。比手写 MouseEvent 更可靠 ——
+      // 胶囊 `.nav-cap-l` 之前「点不了」就是靠这条命中 React onClick。
+      target.click();
       return true;
     } catch {
-      return false;
+      try {
+        target.dispatchEvent(
+          new MouseEvent("click", {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            button: 0,
+          }),
+        );
+        return true;
+      } catch {
+        return false;
+      }
     }
   },
 

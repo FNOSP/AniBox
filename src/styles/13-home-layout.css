@@ -54,9 +54,20 @@
   inset: 0;
 }
 .lsc-bg img {
+  display: block;
   width: 100%;
   height: 100%;
+  /* [library-cover] 只按比例裁切，绝不拉伸/放大：
+     object-fit: cover 保持原始宽高比；显式 transform: none + 无过渡，
+     保证 hover（包括卡片自身的位移）不会触发任何 scale/zoom。 */
   object-fit: cover;
+  object-position: center;
+  transform: none;
+  transition: none;
+}
+/* [library-cover] 显式钉死 hover 状态也不缩放（卡片只做上浮，不动图片）。 */
+.lib-strip-card:hover .lsc-bg img {
+  transform: none;
 }
 .lsc-shade {
   position: absolute;
@@ -110,6 +121,43 @@
   background: rgba(229, 72, 77, 0.55);
   border-color: rgba(255, 140, 140, 0.6);
   color: #fff;
+}
+/* [library-cover] 卡片左上角「更换封面」；已有自定义封面时旁边再出现「恢复默认」 */
+.lsc-cover {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 3;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.45);
+  color: rgba(255, 255, 255, 0.85);
+  line-height: 1;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+.lib-strip-card:hover .lsc-cover {
+  opacity: 1;
+}
+.lsc-cover:hover {
+  background: rgba(108, 155, 255, 0.55);
+  border-color: rgba(160, 190, 255, 0.6);
+  color: #fff;
+}
+.lib-strip-card:hover .lsc-cover:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+.lsc-cover-reset {
+  left: 34px;
 }
 .lsc-manage {
   align-self: center;

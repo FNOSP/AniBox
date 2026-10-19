@@ -3070,6 +3070,9 @@ pub async fn webrs_play(
     };
     let headers = crate::player::HttpHeaders::new(referer.clone(), ua.clone());
     let header_ref = if headers.needs_relay() { Some(&headers) } else { None };
+    // [progress] 在线源没有飞牛 item：清空退出兜底跟踪器，避免 mpv 复用会话时
+    // 把上一部库内作品的进度误回传到飞牛「继续观看」。
+    crate::fnos_progress::begin("", "");
     let launch_res = crate::player::launch(
         &app,
         &state,
@@ -3080,6 +3083,7 @@ pub async fn webrs_play(
         0.0,
         header_ref,
         &[],
+        None,
     )
     .await;
     crate::libmpv::trace("[webrs] play: player::launch 完成");

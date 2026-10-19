@@ -9,7 +9,9 @@
    以及从旧 Electron 设置面板迁移来的日志/诊断命令：feedback_log_info / feedback_open_log /
    feedback_read_log / feedback_diagnostics / feedback_export_diagnostics；
    调试日志设置走固定契约 feedback_log_settings_get / feedback_log_settings_set。
-   会话视图打开期间每 20 秒轮询一次（实时状态同步）；网络失败只行内提示、保留已有内容。 */
+   会话视图打开期间每 20 秒轮询一次（实时状态同步）；网络失败只行内提示、保留已有内容。
+   [lc-1701] 工单列表改由 App 层的 useFeedbackUnread 统一维护（60s 低频轮询 + 未读快照），
+   面板通过 props 消费列表与未读标记，打开工单时回写已读。 */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
@@ -31,17 +33,7 @@ import {
   X as IcoXL,
 } from "lucide-react";
 import { fmtSize } from "../../lib/format";
-
-/** feedback_list 返回项（Rust 侧本地索引 + 远端状态合并；远端缺失时 status="unknown"） */
-type FbListItem = {
-  id: string;
-  ts: number;
-  title: string;
-  status: string;
-  updated: number | null;
-  lastRole: string | null;
-  lastTs: number | null;
-};
+import type { FbListItem, FbUnreadInfo } from "../../lib/feedbackUnread";
 
 /** feedback_thread 的 ticket 段（服务端冻结字段） */
 type FbTicket = {
@@ -128,7 +120,9 @@ async function openExternal(url: string) {
   }
 }
 
-const badgeCls = (s: string) => (KNOWN_STATUS.includes(s) ? s : "unknown");
+/* 前缀化状态类名：`progress`/`open` 等裸类名会和全局进度条 `.progress`
+   （position:absolute; bottom:0; left:0）撞车，导致徽章被定位到行左下角。 */
+const badgeCls = (s: string) => (KNOWN_STATUS.includes(s) ? `fbx-st-${s}` : "fbx-st-unknown");
 const statusText = (s: string) => STATUS_TEXT[s] ?? "未同步";
 
 /** 时间戳格式化：秒/毫秒自适应（服务端字段单位未知时兜底）；今年只显示 MM-DD HH:mm */
@@ -140,6 +134,26 @@ function fmtTs(ts: number | null | undefined): string {
   const p = (n: number) => String(n).padStart(2, "0");
   const base = `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
   return d.getFullYear() === new Date().getFullYear() ? base : `${d.getFullYear()}-${base}`;
+}
+
+/** 消息气泡：头像（我 / 官）+ 角色与时间行 + 正文。
+    头像用文字而非图片：无额外资源、深浅主题都靠 token 取色。 */
+function MsgBubble({ role, ts, text }: { role: string; ts: number; text: string }) {
+  const admin = role === "admin";
+  return (
+    <div className={`fbx-msg ${admin ? "admin" : "user"}`}>
+      <span className="fbx-msg-ava" aria-hidden="true">
+        {admin ? "官" : "我"}
+      </span>
+      <div className="fbx-msg-body">
+        <div className="fbx-msg-head">
+          <span className="fbx-msg-role">{admin ? "官方" : "我"}</span>
+          <span className="fbx-msg-time">{fmtTs(ts)}</span>
+        </div>
+        <div className="fbx-msg-txt">{text}</div>
+      </div>
+    </div>
+  );
 }
 
 /** 关闭退场动画时长（与 33-feedback.css 的 fbxMaskOut / fbxCardOut 对齐） */
@@ -154,7 +168,26 @@ function prefersReducedMotion(): boolean {
   );
 }
 
-export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: string }) {
+export function FeedbackPanel({
+  onClose,
+  page,
+  items,
+  listErr,
+  refreshList,
+  unread,
+  onTicketRead,
+}: {
+  onClose: () => void;
+  page?: string;
+  /** 工单列表由 App 层的全局轮询统一维护（避免面板与角标重复请求） */
+  items: FbListItem[] | null;
+  listErr: string;
+  refreshList: () => Promise<void>;
+  /** 工单 id → 未读标记（新回复 / 状态更新） */
+  unread: Record<string, FbUnreadInfo>;
+  /** 打开工单后推进已读快照 */
+  onTicketRead: (t: { id: string; status: string; lastTs: number | null }) => void;
+}) {
   // 关闭退场：先挂 fbx-closing 播淡出+缩放，动画结束后再真正调用 onClose（由 App 卸载）
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
@@ -178,9 +211,7 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
   // 一级分区（常驻导航）与反馈区二级视图
   const [section, setSection] = useState<"feedback" | "diag">("feedback");
   const [fbTab, setFbTab] = useState<"tickets" | "new">("tickets");
-  // 列表
-  const [items, setItems] = useState<FbListItem[] | null>(null);
-  const [listErr, setListErr] = useState("");
+  // 列表数据来自 App 层（items / listErr / refreshList 为 props）
   // 新建
   const [msg, setMsg] = useState("");
   const [contact, setContact] = useState("");
@@ -211,18 +242,6 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
   const [statsAvailable, setStatsAvailable] = useState<boolean | null>(null);
   const [savingStats, setSavingStats] = useState(false);
   const [statsErr, setStatsErr] = useState("");
-
-  const loadList = useCallback(async () => {
-    setListErr("");
-    try {
-      const list = await invoke<FbListItem[]>("feedback_list");
-      setItems(Array.isArray(list) ? list : []);
-    } catch (e) {
-      // 理论上 Rust 侧已降级不报错；真出错也只提示、保留已有内容
-      setListErr(String(e));
-      setItems((prev) => prev ?? []);
-    }
-  }, []);
 
   const loadLogInfo = useCallback(async () => {
     try {
@@ -311,10 +330,12 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
     }
   };
 
-  // 进入工单列表时拉取（打开面板 / 从新建或会话返回）
+  // 首次进入工单列表时补拉一次（之后由 App 层 60s 轮询维护；提交/回复后也会主动刷新）
   useEffect(() => {
-    if (section === "feedback" && fbTab === "tickets" && !threadOpen) void loadList();
-  }, [section, fbTab, threadOpen, loadList]);
+    if (section === "feedback" && fbTab === "tickets" && !threadOpen && items === null) {
+      void refreshList();
+    }
+  }, [section, fbTab, threadOpen, items, refreshList]);
 
   // 面板打开即取日志信息（新建视图的“当前日志”提示也要用）
   useEffect(() => {
@@ -332,15 +353,26 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
     }
   }, [section, loadLogInfo, loadDiag, loadLogSettings, loadUsageStats]);
 
-  const loadThread = useCallback(async (id: string) => {
-    try {
-      const t = await invoke<FbThread>("feedback_thread", { id });
-      setThread(t);
-      setThreadErr("");
-    } catch (e) {
-      setThreadErr(String(e)); // 网络失败：行内提示，保留已有内容
-    }
-  }, []);
+  const loadThread = useCallback(
+    async (id: string) => {
+      try {
+        const t = await invoke<FbThread>("feedback_thread", { id });
+        setThread(t);
+        setThreadErr("");
+        // [lc-1701] 会话已展开 = 该工单已读：推进本地快照（状态 + 最后消息时间），
+        // 行内「有新回复 / 状态已更新」标记与侧栏角标随之清除。
+        const lastTs = Math.max(
+          Number(t?.ticket?.ts) || 0,
+          Number(t?.ticket?.updated) || 0,
+          ...(Array.isArray(t?.messages) ? t.messages.map((m) => Number(m.ts) || 0) : []),
+        );
+        onTicketRead({ id, status: t?.ticket?.status || "unknown", lastTs: lastTs || null });
+      } catch (e) {
+        setThreadErr(String(e)); // 网络失败：行内提示，保留已有内容
+      }
+    },
+    [onTicketRead],
+  );
 
   // 会话视图打开期间每 20 秒轮询一次（实时状态同步；失败不打断，等下一轮自愈）
   useEffect(() => {
@@ -387,6 +419,7 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
       });
       setMsg("");
       setContact("");
+      void refreshList(); // 新工单进入列表（含本地索引）
       openThread(r.id); // 成功后切到该工单的会话视图
     } catch (e) {
       setSubmitErr(String(e));
@@ -416,6 +449,7 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
           : prev,
       );
       await loadThread(threadId);
+      void refreshList(); // 自己回复后 lastTs 变化，同步列表时间
     } catch (e) {
       setThreadErr(String(e));
     } finally {
@@ -595,7 +629,7 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
                   {fbTab === "tickets" && (
                     <button
                       className="fbx-btn subtle"
-                      onClick={() => void loadList()}
+                      onClick={() => void refreshList()}
                       disabled={items === null}
                       title="刷新工单"
                     >
@@ -611,7 +645,7 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
                   {listErr && items && items.length > 0 && (
                     <div className="fbx-note err" role="alert">
                       <span>{listErr}</span>
-                      <button className="fbx-linkbtn" onClick={() => void loadList()}>
+                      <button className="fbx-linkbtn" onClick={() => void refreshList()}>
                         重试
                       </button>
                     </div>
@@ -630,7 +664,7 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
                           </span>
                           <p className="fbx-state-title">工单列表加载失败</p>
                           <p className="fbx-state-txt">{listErr}</p>
-                          <button className="fbx-btn" onClick={() => void loadList()}>
+                          <button className="fbx-btn" onClick={() => void refreshList()}>
                             <IcoRefresh size={14} aria-hidden="true" />
                             重试
                           </button>
@@ -657,22 +691,38 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
                         </div>
                       )
                     ) : (
-                      items.map((it) => (
-                        <button key={it.id} className="fbx-row" onClick={() => openThread(it.id)}>
-                          <span className="fbx-row-main">
-                            <span className="fbx-row-title">{it.title || "（无标题）"}</span>
-                            <span className="fbx-row-meta">
-                              提交 {fmtTs(it.ts)}
-                              {it.lastTs ? ` · 最后回复 ${fmtTs(it.lastTs)}` : ""}
+                      items.map((it) => {
+                        const u = unread[it.id];
+                        return (
+                          <button
+                            key={it.id}
+                            className={`fbx-row${u ? " is-unread" : ""}`}
+                            onClick={() => openThread(it.id)}
+                            aria-label={`${it.title || "无标题工单"}${
+                              u ? "（有更新）" : ""
+                            }`}
+                          >
+                            <span className="fbx-row-main">
+                              <span className="fbx-row-title">{it.title || "（无标题）"}</span>
+                              <span className="fbx-row-meta">
+                                <span className="fbx-row-metatext">
+                                  提交 {fmtTs(it.ts)}
+                                  {it.lastTs ? ` · 最后回复 ${fmtTs(it.lastTs)}` : ""}
+                                </span>
+                                <span className={`fbx-badge ${badgeCls(it.status)}`}>
+                                  {statusText(it.status)}
+                                </span>
+                              </span>
                             </span>
-                          </span>
-                          <span className="fbx-row-side">
-                            <span className={`fbx-badge ${badgeCls(it.status)}`}>
-                              {statusText(it.status)}
+                            <span className="fbx-row-side">
+                              {u?.newReply && <span className="fbx-tag new">有新回复</span>}
+                              {u?.statusChanged && (
+                                <span className="fbx-tag status">状态已更新</span>
+                              )}
                             </span>
-                          </span>
-                        </button>
-                      ))
+                          </button>
+                        );
+                      })
                     )}
                   </div>
                 </>
@@ -810,6 +860,11 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
                 <span className={`fbx-badge ${badgeCls(ticketStatus)}`}>
                   {thread ? statusText(ticketStatus) : "…"}
                 </span>
+                {/* 未读标记只在数据到达前显示：会话一打开即视为已读（loadThread 会清除） */}
+                {unread[threadId]?.newReply && <span className="fbx-tag new">有新回复</span>}
+                {unread[threadId]?.statusChanged && (
+                  <span className="fbx-tag status">状态已更新</span>
+                )}
                 {thread?.ticket?.has_log && <span className="fbx-chip">含日志</span>}
                 <span className="fbx-tidwrap">
                   <button className="fbx-tid" title="点击复制工单号" onClick={() => void copyId()}>
@@ -838,18 +893,9 @@ export function FeedbackPanel({ onClose, page }: { onClose: () => void; page?: s
                   </div>
                 ) : (
                   <>
-                    <div className="fbx-msg user">
-                      <div className="fbx-msg-txt">{thread.ticket.message}</div>
-                      <div className="fbx-msg-time">{fmtTs(thread.ticket.ts)}</div>
-                    </div>
+                    <MsgBubble role="user" ts={thread.ticket.ts} text={thread.ticket.message} />
                     {msgs.map((m, i) => (
-                      <div
-                        key={`${m.ts}-${i}`}
-                        className={`fbx-msg ${m.role === "admin" ? "admin" : "user"}`}
-                      >
-                        <div className="fbx-msg-txt">{m.text}</div>
-                        <div className="fbx-msg-time">{fmtTs(m.ts)}</div>
-                      </div>
+                      <MsgBubble key={`${m.ts}-${i}`} role={m.role} ts={m.ts} text={m.text} />
                     ))}
                     {msgs.length === 0 && (
                       <p className="fbx-thread-empty">

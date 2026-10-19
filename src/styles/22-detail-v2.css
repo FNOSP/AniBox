@@ -266,50 +266,102 @@
    割裂的成因是**头部与列表各自带边框** —— 交界处压出两层线，看着像两个容器。
    现在按"一个卡片两块区域"处理：外框由头部画（左右上三边），列表只画左右下三边，
    两块背景同为 --bg-2 → 接缝消失。头部同时重排为：左侧标题+元信息+季切换，右侧播放入口。 */
-/* [lc-1421] 头部 = **一整排**（用户要求："做成一排显示，播放按钮在左边"）。
-   `flex-wrap: nowrap` 保证不折成两行；`overflow-x: auto` 是最后兜底 ——
-   真的窄到放不下时横向滚，而不是把内容挤变形或折行。
-   顺序（DOM 决定）：播放按钮 → 选集标题 → 集数/完结/更新 → 季切换。 */
+/* [选季/更新时间重做] 头部改为**两层**，彻底去掉旧的 nowrap + overflow-x：
+   旧版把「更新至」和后面的季胶囊排在同一行，宽度不够时直接裁到右边界外，
+   头部里的横向滚动条又几乎不可见 → 用户表现为"更新至被遮挡、后面几季点不了"。
+   第一层（.dv2e-hd-top）内部再分两行：上行 .dv2e-hd-pills 只放胶囊/按钮
+   （播放 / 状态 / 集数样式 / 视图切换），下行 .dv2e-hd-meta 只放纯文本
+   （已入库集数 / 更新至日期）；两行各自 flex-wrap。
+   第二层（.dv2e-seasons）是独立的选季轨道：横向滚动 + 两端箭头，窄窗换下拉。 */
 .dv2e-hd {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 9px;
   padding: 12px 14px;
   border-radius: var(--radius) var(--radius) 0 0;
   background: var(--bg-2);
   border: 1px solid var(--line);
   border-bottom: none;
 }
-/* 头部里的「选集」标题：不参与收缩、不换行 */
-.dv2e-hd-h {
-  flex: 0 0 auto;
-  margin: 0;
-  font-size: 14px;
-  font-weight: 800;
-  color: var(--text-strong);
-  white-space: nowrap;
+.dv2e-hd-top {
+  --dv2e-ctl-h: 30px;   /* 控件行所有控件共用高度：播放胶囊 / 状态胶囊 / 集数样式 / 视图切换 */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;             /* 控件行 ↔ 文本行 */
+  min-width: 0;
 }
-/* 元信息与季切换在一排里也不换行（宽度不够时整体横向滚） */
-.dv2e-meta,
-.season-tabs {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-/* 集数 / 完结状态 / 上次更新 三项 */
-.dv2e-meta {
+/* 上面一行：只放胶囊 / 按钮类控件，保持一行；窄窗由媒体查询允许换行 */
+.dv2e-hd-pills {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  min-width: 0;
+}
+/* 头部里的「已入库」标签：不参与收缩、不换行，字号/字重与右侧元信息同档 */
+.dv2e-hd-h {
+  flex: 0 0 auto;
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.01em;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+/* 下面一行：「已入库 + 集数 + 更新至」纯文本信息簇（基线对齐）；
+   放不下时簇内整项换行，「更新至 YYYY-MM-DD」自身不拆开。 */
+.dv2e-hd-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   flex-wrap: wrap;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-2);
+}
+.dv2e-meta-n {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.dv2e-meta-d {
+  flex: 0 0 auto;
+  max-width: 100%;
+  white-space: nowrap;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
 }
+/* 季/集与缺集信息：与「更新至」同档的纯文本，不抢控件行重量；
+   窄窗允许换行（集号列表可能较长），不撑破右栏。 */
+.dv2e-meta-season {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+/* 状态胶囊：与播放按钮/分段控件同高（--dv2e-ctl-h = 30px），inline-flex 居中 */
 .dv2e-state {
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: var(--dv2e-ctl-h, 30px);
+  padding: 0 11px;
+  font-size: 11.5px;
   font-weight: 700;
-  padding: 1px 7px;
+  line-height: 1;
+  white-space: nowrap;
   border-radius: 999px;
   border: 1px solid;
 }
@@ -338,7 +390,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 32px;
+  height: var(--dv2e-ctl-h);
   padding: 0 13px;
   border: 1px solid var(--line-strong);
   border-radius: 999px;
@@ -346,6 +398,7 @@
   color: var(--text);
   font-size: 12.5px;
   font-weight: 600;
+  line-height: 1;
   font-family: inherit;
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
@@ -371,13 +424,163 @@
   font-weight: 600;
   color: var(--muted);
 }
+/* ── 集数显示样式 + 视图切换（网格 / 列表） ──
+   属于控件行，靠 margin-left:auto 靠右；窄到放不下时在 .dv2e-hd-pills 内换行。 */
+.dv2e-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.ep-mode {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: var(--dv2e-ctl-h);
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--hover);
+  box-sizing: border-box;
+}
+.ep-mode-btn {
+  height: 24px;
+  padding: 0 9px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+.ep-mode-btn:hover {
+  color: var(--text-strong);
+  background: var(--hover-strong);
+}
+/* 选中态：accent 淡底 + 内描边，深浅主题下都清晰（不依赖面板底色） */
+.ep-mode-btn.active {
+  color: var(--text-strong);
+  background: rgba(108, 155, 255, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(108, 155, 255, 0.5);
+}
+/* 网格 / 列表视图切换：与集数样式同一套「安静胶囊」语言，图标按钮 */
+.dv2e-view {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+  height: var(--dv2e-ctl-h);
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--hover);
+  box-sizing: border-box;
+}
+.dv2e-view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+.dv2e-view-btn:hover {
+  color: var(--text-strong);
+  background: var(--hover-strong);
+}
+.dv2e-view-btn.active {
+  color: var(--text-strong);
+  background: rgba(108, 155, 255, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(108, 155, 255, 0.5);
+}
+/* 键盘焦点：与 hover 区分开，避免只在深色下靠颜色变化 */
+.ep-mode-btn:focus-visible,
+.dv2e-view-btn:focus-visible,
+.dv2e-play-btn:focus-visible {
+  outline: 2px solid rgba(108, 155, 255, 0.55);
+  outline-offset: 1px;
+}
+
+/* ── 选季轨道：横向滚动 + 两端箭头；所有季都能滚到并点击 ──
+   [重做原因] 旧版季胶囊直接塞在 nowrap 的头部里，第 3 季以后被裁到容器外，
+   头部横向滚动条几乎不可见 → 用户"后面几季点不了"。 */
+.dv2e-seasons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.dv2e-seasons .season-tabs {
+  position: relative;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 1px 1px 3px;
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hover-strong) transparent;
+}
+.dv2e-seasons .season-tabs::-webkit-scrollbar {
+  height: 5px;
+}
+.dv2e-seasons .season-tabs::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dv2e-seasons .season-tabs::-webkit-scrollbar-thumb {
+  background: var(--hover-strong);
+  border-radius: 99px;
+}
+.dv2e-seasons .season-tab {
+  flex: 0 0 auto;
+  max-width: 210px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.season-tab .season-no {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.season-tab .season-name {
+  color: var(--muted);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.season-tab.active .season-name {
+  color: var(--text-2);
+}
+/* 窄窗下拉：默认隐藏，≤720px 时替代轨道（季再多也能完整选择）。 */
+.season-select {
+  display: none;
+}
 /* [lc-1421] 头部标题的类名从 `h3` 元素选择器改为 `.dv2e-hd-h` 显式类
    （一排布局下它需要 flex:0 0 auto / nowrap，元素选择器不好写这些）。
    这条保留作为兼容兜底。 */
 .dv2e-hd h3 {
   margin: 0;
-  font-size: 14px;
-  font-weight: 800;
+  font-size: 12.5px;
+  font-weight: 700;
   color: var(--text-strong);
 }
 .dv2e-hd .muted {
@@ -400,6 +603,149 @@
 .dv2e-list::-webkit-scrollbar-thumb {
   background: var(--hover-strong);
   border-radius: 99px;
+}
+/* ── 网格视图（用户截图样式）──
+   每行按可用宽度自适应列数（右栏窄时 4-5 列，窗口拉宽自动变多）；
+   方块 1:1、集号居中；当前集 accent 渐变反白；已看弱化 + 左上勾标；
+   有进度时底部 3px 细条。 */
+.dv2e-list-grid {
+  padding: 12px;
+}
+.dv2e-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 8px;
+}
+.dv2e-cell {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-3);
+  color: var(--text-strong);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  user-select: none;
+  overflow: hidden;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.dv2e-cell:hover {
+  background: var(--hover-strong);
+  border-color: var(--line-strong);
+}
+.dv2e-cell:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.dv2e-cell.playing {
+  background: var(--accent-grad);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(108, 155, 255, 0.35);
+}
+.dv2e-cell.seen:not(.playing) {
+  background: var(--hover);
+  color: var(--muted);
+}
+.dv2e-cell-no {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.15;
+  text-align: center;
+}
+/* 长标签（第N集 / S01E02）缩小字号：64px 方块里也不溢出 */
+.dv2e-grid[data-label="ep"] .dv2e-cell-no,
+.dv2e-grid[data-label="sxe"] .dv2e-cell-no {
+  font-size: 10.5px;
+  letter-spacing: -0.2px;
+}
+.dv2e-cell-mark {
+  position: absolute;
+  top: 4px;
+  left: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  opacity: 0.85;
+}
+.dv2e-cell.playing .dv2e-cell-mark {
+  color: #fff;
+}
+.dv2e-cell-prog {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--hover-strong);
+}
+.dv2e-cell-prog i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.dv2e-cell.playing .dv2e-cell-prog {
+  background: rgba(255, 255, 255, 0.3);
+}
+.dv2e-cell.playing .dv2e-cell-prog i {
+  background: #fff;
+}
+/* 每集元数据入口：悬停/键盘聚焦时出现（与列表行的 ⋯ 一致） */
+.dv2e-cell-meta {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.dv2e-cell:hover .dv2e-cell-meta,
+.dv2e-cell:focus-within .dv2e-cell-meta {
+  opacity: 1;
+}
+.dv2e-cell-meta:hover {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+.dv2e-cell.playing .dv2e-cell-meta {
+  color: rgba(255, 255, 255, 0.8);
+}
+.dv2e-cell.playing .dv2e-cell-meta:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+.dv2e-cell-sk {
+  background: var(--skel-base);
+  border-color: transparent;
+  cursor: default;
+}
+.dv2e-cell-sk:hover {
+  background: var(--skel-base);
+  border-color: transparent;
 }
 .dv2e-row {
   display: flex;
@@ -461,6 +807,17 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 集号样式只作用于这个独立片段，标题正文保持原样 */
+.dv2e-epno {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: var(--hover);
+  color: var(--text-2);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
 .dv2e-dur {
   font-size: 11px;
   color: var(--muted);
@@ -505,6 +862,40 @@
   }
   .dv2e-list {
     max-height: 420px;
+  }
+}
+
+/* ── 更窄（≤720px）：选季轨道换成原生下拉，避免箭头+胶囊在窄条里互相挤压 ── */
+@media (max-width: 720px) {
+  .dv2e-seasons .season-tabs {
+    display: none;
+  }
+  .dv2e-seasons .season-select {
+    display: block;
+    width: 100%;
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--bg-2);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  /* 窄窗：控件行内部自然换行；两行间距略收紧 */
+  .dv2e-hd-top {
+    gap: 6px;
+  }
+  .dv2e-hd-pills {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .dv2e-hd-meta {
+    gap: 6px 8px;
+  }
+  .dv2e-tools {
+    margin-left: auto;
   }
 }
 

@@ -2,6 +2,7 @@
 //! 命令面向前端：配置 / 登录 / 媒体库 / 播放控制。
 
 mod anilist;
+mod access_code;
 mod authx;
 mod bgm;
 mod bgm_account;
@@ -18,11 +19,17 @@ mod favorites;
 // [lc-1599] 应用内反馈（工单制）：提交/列表/会话/回复（脱敏与本地索引见 feedback.rs 头部）
 mod feedback;
 mod fnapi;
+// [progress] 把播放进度回传飞牛 `play/record`（「继续观看」的数据源；旧项目同名链路）
+mod fnos_progress;
 // [gamepad] 全局手柄：原生 gilrs 后台轮询（mpv/PotPlayer 前台时同样可用）
 mod gamepad;
 // [lc-1615] 本地播放历史（观影记录页数据源之一）：history.json 落盘 + 与飞牛 play/list 合并
 mod history;
 mod libmpv;
+// [library-cover] 首页媒体库卡片自定义封面：app_data_dir 落盘 + /__cover 协议读取
+mod libcover;
+// [lc-1701] 演员页「入库状态」：作品批量与飞牛媒体库比对（强标识 + 归一化标题/年份）
+mod libmatch;
 mod imgproto;
 mod migrate;
 mod mirror_sign;
@@ -37,6 +44,8 @@ mod update;
 mod usage_stats;
 mod watched;
 mod webrs;
+// [webview2] Windows WebView2 Runtime 检测 + 应用内下载兜底（见模块头注释）
+mod webview2;
 
 /// [lc-1417] 详情页数据的落盘 TTL：**120 天**（用户指定）。
 /// 覆盖：飞牛条目详情 / 季列表 / 集列表 / TMDB 详情。
@@ -66,8 +75,6 @@ pub struct AppState {
     pub proxy_child: Mutex<Option<std::process::Child>>,
     /// [lc-1560] 弹幕 shim 子进程（node 跑 danmaku-shim.js，供 uosc_danmaku 调 22347）
     pub danmaku_child: Mutex<Option<std::process::Child>>,
-    /// 弹幕缓存清理/重搜互斥锁：重复点击不产生并发清理
-    pub danmaku_cache_lock: Mutex<()>,
     /// 内置自建弹幕源 danmu_api 子进程（127.0.0.1:22352）
     pub builtin_child: Mutex<Option<std::process::Child>>,
     /// [player] 当前由本应用拉起的 PotPlayer PID（用于新播放前/退出时清理）
@@ -83,7 +90,6 @@ impl Default for AppState {
             mpv: Mutex::new(None),
             proxy_child: Mutex::new(None),
             danmaku_child: Mutex::new(None),
-            danmaku_cache_lock: Mutex::new(()),
             builtin_child: Mutex::new(None),
             potplayer_pid: Mutex::new(None),
             last_light: std::sync::Mutex::new(None),
@@ -112,6 +118,8 @@ async fn save_config(app: AppHandle, state: State<'_, AppState>, config: Config)
         config.bgm_token = cur.bgm_token.clone();
         config.bgm_username = cur.bgm_username.clone();
         config.bgm_remember = cur.bgm_remember;
+        // [访问码] 只能由 login / logout 流程维护；登录页整份快照回写不得冲掉当前值
+        config.access_code = cur.access_code.clone();
         // [lc-1661] 日志设置只能由 feedback_log_settings_set 修改（前端 Config 快照不含/易过期）。
         config.log_debug = cur.log_debug;
         config.log_modules = cur.log_modules.clone();
@@ -227,129 +235,6 @@ async fn test_danmu_api(app: AppHandle, url: String) -> Result<String, String> {
     }
 }
 
-// ───────────────────────── 弹幕缓存 ─────────────────────────
-
-/// 读取当前正在播放条目的 mpv 属性（路径 / media-title）。
-/// 没有 mpv 会话或未加载媒体 → 明确报「当前没有正在播放的条目」。
-async fn current_playing_media(
-    state: &AppState,
-) -> Result<(Arc<mpv::MpvSession>, String, String), String> {
-    let session = {
-        let slot = state.mpv.lock().await;
-        slot.as_ref().cloned()
-    }
-    .ok_or_else(|| "当前没有正在播放的条目".to_string())?;
-    if session.is_dead().await {
-        return Err("当前没有正在播放的条目".into());
-    }
-    let path = mpv_prop_str(&session, "path").await;
-    if path.trim().is_empty() {
-        return Err("当前没有正在播放的条目".into());
-    }
-    let media_title = mpv_prop_str(&session, "media-title").await;
-    Ok((session, path, media_title))
-}
-
-async fn mpv_prop_str(session: &Arc<mpv::MpvSession>, key: &str) -> String {
-    session
-        .command(json!(["get_property", key]))
-        .await
-        .ok()
-        .and_then(|v| {
-            v.get("data")
-                .and_then(|d| d.as_str())
-                .map(|s| s.to_string())
-        })
-        .unwrap_or_default()
-}
-
-/// [danmaku-cache] 清空当前条目（或全部）已缓存弹幕。
-///
-/// `scope`：`current`（默认，只清当前播放条目）| `all`（无法定位当前条目时的兜底）。
-/// 清理采用「先移到临时目录再删」：任一移动失败会回滚，原缓存保持不变。
-#[tauri::command]
-async fn danmaku_clear_cache(
-    state: State<'_, AppState>,
-    scope: Option<String>,
-) -> Result<Value, String> {
-    // 互斥：重复点击不会产生并发清理
-    let _guard = state
-        .danmaku_cache_lock
-        .try_lock()
-        .map_err(|_| "弹幕缓存清理正在进行，请稍候".to_string())?;
-    let scope = scope.unwrap_or_else(|| "current".into());
-    if scope == "all" {
-        let removed = danmaku_shim::clear_all_cache()?;
-        return Ok(json!({
-            "ok": true,
-            "scope": "all",
-            "removed": removed.len(),
-            "files": removed,
-            "message": format!("已清空全部弹幕缓存（{} 个文件）", removed.len()),
-        }));
-    }
-    let (_session, _path, media_title) = current_playing_media(&state).await?;
-    let (title, episode) = danmaku_shim::parse_media_title(&media_title);
-    let removed = danmaku_shim::clear_current_cache(&title, episode)?;
-    Ok(json!({
-        "ok": true,
-        "scope": "current",
-        "title": title,
-        "episode": episode,
-        "removed": removed.len(),
-        "files": removed,
-        "message": format!("已清空当前条目弹幕缓存（{} 个文件）", removed.len()),
-    }))
-}
-
-/// [danmaku-cache] 清空当前条目缓存并**重新三源搜索**。
-///
-/// 重新搜索复用 Lua 侧现成的 `clear-danmaku-refetch`（uosc_danmaku/modules/menu.lua）：
-/// 它清运行态、删中间缓存并按当前视频重走「自建源 → 内置 B 站 → 弹弹play」自动匹配链。
-#[tauri::command]
-async fn danmaku_refresh(state: State<'_, AppState>) -> Result<Value, String> {
-    let _guard = state
-        .danmaku_cache_lock
-        .try_lock()
-        .map_err(|_| "弹幕缓存清理正在进行，请稍候".to_string())?;
-    let (session, _path, media_title) = current_playing_media(&state).await?;
-    let (title, episode) = danmaku_shim::parse_media_title(&media_title);
-    let removed = danmaku_shim::clear_current_cache(&title, episode)?;
-    // ① Lua 侧 clear_danmaku_refetch：清运行态/中间缓存，并重走一次自动匹配（弹弹play 等）。
-    session
-        .command(json!(["script-message", "clear-danmaku-refetch"]))
-        .await
-        .map_err(|e| {
-            format!(
-                "已清空当前条目缓存（{} 个文件），但触发重新搜索失败：{e}",
-                removed.len()
-            )
-        })?;
-    // ② 再显式触发一次 B站/自建源链路（clear_danmaku_refetch 对网络流不会主动跑 B站 搜索，
-    //    只会在弹弹play 命中后补源；这里补上 bili_search_now 保证「三源」都被重新问到）。
-    session
-        .command(json!(["script-message", "bili_search_now"]))
-        .await
-        .map_err(|e| {
-            format!(
-                "已清空当前条目缓存（{} 个文件），但触发 B站/自建源搜索失败：{e}",
-                removed.len()
-            )
-        })?;
-    Ok(json!({
-        "ok": true,
-        "scope": "current",
-        "title": title,
-        "episode": episode,
-        "removed": removed.len(),
-        "files": removed,
-        "message": format!(
-            "已清空当前条目缓存（{} 个文件），正在重新搜索弹幕…",
-            removed.len()
-        ),
-    }))
-}
-
 // ───────────────────────── 登录 / 会话 ─────────────────────────
 
 #[tauri::command]
@@ -359,10 +244,46 @@ async fn login(
     server: String,
     username: String,
     password: String,
+    access_code: Option<String>,
 ) -> Result<Value, String> {
+    if server.trim().is_empty() || username.trim().is_empty() || password.is_empty() {
+        return Err("请提供完整的登录信息。".into());
+    }
+
+    let raw = server.trim().to_string();
+    // [端口探测] 对齐旧项目 auth.ts：裸填私有 IP 且未带端口时，试 fnOS 常见端口。
+    let mut server = match fnapi::detect_fn_os_port(&raw).await {
+        Some(port) => {
+            let stripped = raw.replace('：', ":");
+            let stripped = stripped
+                .trim_start_matches("http://")
+                .trim_start_matches("https://");
+            let host = stripped.split('/').next().unwrap_or("").split(':').next().unwrap_or("");
+            format!("http://{host}:{port}")
+        }
+        None => fnapi::normalize_server(&raw),
+    };
+
+    // [访问码] 与旧项目一致：非空时先向 fnOS 网关 /access_code_verify 预验证并建立会话；
+    // 网关授权 Cookie 由 fnapi 的进程内会话表携带到后续登录/API 请求。
+    let access_code = access_code.unwrap_or_default().trim().to_string();
+    if !access_code.is_empty() {
+        match access_code::establish(&server, &access_code).await {
+            Ok(resolved) if !resolved.is_empty() => server = resolved,
+            Ok(_) => {}
+            Err(access_code::AccessCodeError::Rejected) => {
+                return Err("访问码错误，请检查后重试。".into());
+            }
+            Err(access_code::AccessCodeError::Network(e)) => {
+                return Err(format!(
+                    "无法连接到访问码验证服务，请检查地址、证书或网络连接。（{e}）"
+                ));
+            }
+        }
+    }
+
     let client = fnapi::new_client();
-    let server = fnapi::normalize_server(&server);
-    let data = client
+    let data = match client
         .call(
             &server,
             "/v/api/v1/login",
@@ -370,7 +291,16 @@ async fn login(
             "",
             Some(json!({ "app_name": "trimemedia-web", "username": username, "password": password })),
         )
-        .await?;
+        .await
+    {
+        Ok(d) => d,
+        // [访问码] 未填访问码但服务器开启了门禁：接口会返回门户 HTML 而非 JSON。
+        // 给出与旧项目一致的明确引导，而不是笼统的「地址/端口填错」。
+        Err(e) if e.contains("返回了网页") => {
+            return Err("登录被访问码门禁拦截（服务器返回网页）。请在登录页填写「访问码」后重试。".into());
+        }
+        Err(e) => return Err(e),
+    };
     let token = data
         .get("token")
         .and_then(|t| t.as_str())
@@ -384,6 +314,7 @@ async fn login(
     cfg.server = server;
     cfg.username = username;
     cfg.token = token;
+    cfg.access_code = access_code;
     config::save(&app, &cfg).await?;
     *state.config.write().await = cfg.clone();
     Ok(json!({ "ok": true }))
@@ -409,6 +340,25 @@ async fn check_session(state: State<'_, AppState>, app: AppHandle) -> Result<Val
     let mut cfg = state.config.read().await.clone();
     if cfg.token.is_empty() || cfg.server.is_empty() {
         return Err("未登录".into());
+    }
+    // [访问码] 对齐旧项目 winctrl.setupCookieRestore：启动时用持久化访问码重建网关会话。
+    // 进程内 Cookie 表随重启清空，不重建的话已开访问码的服务器会把 /user/info 拦成门户 HTML。
+    // 被拒绝 → 会话不可用，回登录页；网络失败 → 同样回登录页（登录页会回填访问码，点一次登录即可）。
+    if !cfg.access_code.is_empty() {
+        match access_code::establish(&cfg.server, &cfg.access_code).await {
+            Ok(base) if !base.is_empty() && base != cfg.server => {
+                cfg.server = base;
+                let _ = config::save(&app, &cfg).await;
+                *state.config.write().await = cfg.clone();
+            }
+            Ok(_) => {}
+            Err(access_code::AccessCodeError::Rejected) => {
+                return Err("访问码错误，请检查后重试。".into());
+            }
+            Err(access_code::AccessCodeError::Network(e)) => {
+                return Err(format!("访问码会话重建失败：{e}"));
+            }
+        }
     }
     let client = fnapi::new_client();
     let data = client
@@ -568,6 +518,61 @@ fn get_watch_report(app: AppHandle) -> Value {
 #[tauri::command]
 fn record_watch_session(app: AppHandle, guid: String, watched_ms: u64, progress: f64, finished: bool) {
     history::backfill_session(&app, &guid, watched_ms, progress, finished);
+}
+
+/// [progress] 播放中的进度上报（前端每 10s 一次 + 起播/暂停/切集/退出时立即一次）。
+///
+/// 两条链路一起走：
+///   ① 本地：只更新**已存在**的那条记录（起播时由 [`play_item`] 写入），按剧级去重，绝不新增；
+///   ② 飞牛：`POST /v/api/v1/play/record` —— 首页「继续观看」读的是服务端 `play/list`，
+///      不回传这里就永远不会有进度/卡片（旧项目 Fntv-Plus 同链路）。
+///
+/// `guid` = 本地历史记录键（`history-recorded` 给的那条，整季自动切集时保持不变）；
+/// `item_guid` = **当前正在播的那一集**（前端从 mpv `filename` 解析，切集后会变）；
+/// 在线源（`webrs:`）不回传飞牛。
+#[tauri::command]
+async fn report_watch_progress(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    guid: String,
+    item_guid: Option<String>,
+    position_ms: u64,
+    duration_ms: u64,
+) -> Result<bool, String> {
+    let local = history::update_progress(&app, &guid, position_ms, duration_ms);
+
+    let cfg = state.config.read().await.clone();
+    let item = item_guid
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(guid.as_str())
+        .to_string();
+    if !item.starts_with("webrs:") && !cfg.token.is_empty() && position_ms > 0 && duration_ms > 0 {
+        match fnos_progress::report(
+            &cfg,
+            &item,
+            position_ms as f64 / 1000.0,
+            duration_ms as f64 / 1000.0,
+        )
+        .await
+        {
+            Ok(()) => {
+                // 首页「继续观看」刷新信号（前端防抖后重新拉 play/list）。
+                let _ = app.emit(
+                    "watch-progress",
+                    json!({
+                        "guid": guid,
+                        "itemGuid": item,
+                        "positionMs": position_ms,
+                        "durationMs": duration_ms,
+                    }),
+                );
+            }
+            Err(e) => libmpv::trace(&format!("[progress] 飞牛 play/record 失败: {e}")),
+        }
+    }
+    Ok(local)
 }
 
 /// [lc-1616] 写某作品「我的评分/评语」：score 夹到 0..=5；score=0 且评语空 = 清除。
@@ -870,6 +875,71 @@ async fn get_items_global(
         .await
 }
 
+/// [lc-1701] 演员页「入库状态」批量匹配。
+/// 前端一次传入演员的全部作品（`works: [{ tmdbId?, bgmId?, title, originalTitle?, year?, mediaType }]`），
+/// 后端分页拉取全局白名单（Movie/TV）媒体库后**本地一次性比对**，避免前端 N 次请求。
+/// 返回 `{ owned: bool[], guids: (string|null)[], libraryCount }`，与入参下标一一对应。
+/// 拉库失败直接返回 Err（前端据此隐藏徽章，不阻塞演员页）。
+const LIB_MATCH_PAGE_SIZE: usize = 60;
+const LIB_MATCH_MAX_PAGES: usize = 20; // 上限 1200 条（库内影视条目通常远低于此）
+
+#[tauri::command]
+async fn match_library_works(state: State<'_, AppState>, arg: Value) -> Result<Value, String> {
+    let works = arg
+        .get("works")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if works.is_empty() {
+        return Ok(json!({ "owned": [], "guids": [], "libraryCount": 0 }));
+    }
+    let cfg = state.config.read().await.clone();
+    let client = fnapi::new_client();
+    let mut items: Vec<Value> = Vec::new();
+    for page in 1..=LIB_MATCH_MAX_PAGES {
+        let v = client
+            .call(
+                &cfg.server,
+                "/v/api/v1/item/list",
+                "POST",
+                &cfg.token,
+                Some(json!({
+                    "tags": { "type": ["Movie", "TV"] },
+                    "sort_type": "DESC",
+                    "sort_column": "create_time",
+                    "exclude_grouped_video": 1,
+                    "page": page,
+                    "page_size": LIB_MATCH_PAGE_SIZE
+                })),
+            )
+            .await?;
+        let list = v
+            .get("list")
+            .and_then(|x| x.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let n = list.len();
+        items.extend(list);
+        if n < LIB_MATCH_PAGE_SIZE {
+            break; // 不足一页 = 已到底
+        }
+    }
+    let idx = libmatch::build_index(&items);
+    let mut owned: Vec<bool> = Vec::with_capacity(works.len());
+    let mut guids: Vec<Option<String>> = Vec::with_capacity(works.len());
+    for w in &works {
+        let key = libmatch::WorkKey::from_json(w);
+        let g = libmatch::match_work(&idx, &key);
+        owned.push(g.is_some());
+        guids.push(g);
+    }
+    Ok(json!({
+        "owned": owned,
+        "guids": guids,
+        "libraryCount": items.len()
+    }))
+}
+
 /// 条目详情：端点与响应字段对齐 FlyNarwhal（GET /v/api/v1/item/{guid}，camelCase 字段）
 /// [lc-1417] **落盘缓存 120 天**：这是详情页最重的一次请求（简介/海报/演职员/评分全在里面），
 /// 原来每次进页面都重拉 —— 用户反馈"每次打开是重新拉了一遍数据吗，要等一会才出现"。
@@ -960,6 +1030,12 @@ async fn relogin(app: &AppHandle, cfg: &Config) -> Result<Config, String> {
 struct PlayResolution {
     /// 拉流用 guid（Episode/Movie）
     play_guid: String,
+    /// [progress] 该条目的媒体/流 guid（play/info 顶层字段）——回传飞牛 `play/record` 必需。
+    /// 缺任何一个都只影响「继续观看」回传，不影响本地播放/本地历史。
+    media_guid: String,
+    video_guid: String,
+    audio_guid: String,
+    subtitle_guid: String,
     /// 类型（Movie / Episode / ...）
     kind: String,
     /// 展示标题（`剧名 - SxxEyy: 集名` 形态，供 mpv force-media-title）
@@ -1072,7 +1148,7 @@ async fn resolve_play_guid(
                         .map(|s| s.to_string())
                 })
                 .unwrap_or_else(|| g.clone());
-            danmaku_shim::write_play_meta(&g, &parent_guid);
+            danmaku_shim::write_play_meta(&g, &parent_guid, &media_title, season, episode);
             libmpv::trace(&format!(
                 "[play/info] ok type={t} 原始={guid} → 拉流用={g} 标题={media_title:?} 系列键={parent_guid}"
             ));
@@ -1087,8 +1163,26 @@ async fn resolve_play_guid(
             // [lc-1631] 总时长（秒 → 毫秒）：年度报告折算观看量的依据。
             let dur_sec = get_n("duration");
             let duration_ms = if dur_sec > 0 { (dur_sec as u64) * 1000 } else { 0 };
+            // [progress] 飞牛 `play/record` 需要的流 guid（play/info 顶层，实测同旧项目）。
+            let top_s = |k: &str| {
+                info.get(k)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string()
+            };
+            let (media_guid, video_guid, audio_guid, subtitle_guid) = (
+                top_s("media_guid"),
+                top_s("video_guid"),
+                top_s("audio_guid"),
+                top_s("subtitle_guid"),
+            );
             Ok(PlayResolution {
                 play_guid: g,
+                media_guid,
+                video_guid,
+                audio_guid,
+                subtitle_guid,
                 kind: t.to_string(),
                 media_title,
                 tv_title: tv_title.unwrap_or_default(),
@@ -1107,6 +1201,65 @@ async fn resolve_play_guid(
             Err(format!("获取播放信息失败：{e}"))
         }
     }
+}
+
+/// [playlist] 播放列表条目（整季连播用）。
+#[derive(Clone)]
+struct PlaylistEntry {
+    guid: String,
+    title: String,
+    duration_secs: f64,
+}
+
+/// [playlist] 拼单集展示标题：与 `resolve_play_guid` 的 media_title 同口径
+/// （`剧名 - SxxEyy: 集名`；缺季集号时退化为 `剧名 - 集名` / 集名）。
+fn playlist_episode_title(tv: &str, season: i64, episode: i64, ep_title: &str) -> String {
+    let tv = tv.trim();
+    let ep_title = ep_title.trim();
+    match (tv.is_empty(), season > 0 && episode > 0, ep_title.is_empty()) {
+        (false, true, _) => format!("{tv} - S{season}E{episode}: {ep_title}"),
+        (false, false, false) => format!("{tv} - {ep_title}"),
+        (false, false, true) => tv.to_string(),
+        _ => ep_title.to_string(),
+    }
+}
+
+/// [playlist] 拉整季集列表（优先命中详情页同一份 10 分钟磁盘缓存，避免重复请求）。
+async fn season_episode_values(cfg: &Config, season_guid: &str) -> Result<Vec<Value>, String> {
+    let key = format!("detail:episodes:{}", season_guid);
+    if let Some(v) = disk_cache::json_get(&key, DETAIL_LIST_TTL_SECS) {
+        if let Some(arr) = v.as_array() {
+            return Ok(arr.clone());
+        }
+    }
+    let client = fnapi::new_client();
+    let path = format!("/v/api/v1/episode/list/{}", season_guid);
+    let v = client.call(&cfg.server, &path, "GET", &cfg.token, None).await?;
+    disk_cache::json_put(&key, &v);
+    Ok(v.as_array().cloned().unwrap_or_default())
+}
+
+/// [playlist] 构建多条目 M3U 播放列表：每条 = 本机 Go 代理 URL（含 token），
+/// `#EXTINF` 标题用于 mpv/PotPlayer 的 media-title 与播放列表面板显示。
+///
+/// URL 时效说明：这里写入的是 `http://127.0.0.1:22346/api/v1/playvideo/<guid>` 形式的
+/// **本机代理地址**，不是源站直链；真正的云盘/网盘直链由 Go 代理在 mpv 请求该条目时
+/// 按需解析。因此一次性构建整季列表是安全的（不会提前消耗/过期任何直链），
+/// 上下集切换也不需要后端再解析一次。token 失效时由既有 end-file error 链路提示。
+fn build_playlist_m3u(cfg: &Config, entries: &[PlaylistEntry]) -> String {
+    let mut s = String::from("#EXTM3U\n");
+    for e in entries {
+        let title = e.title.replace(['\r', '\n'], " ");
+        let dur = if e.duration_secs > 0.0 {
+            e.duration_secs.round() as i64
+        } else {
+            -1
+        };
+        s.push_str(&format!("#EXTINF:{dur},{title}\n"));
+        s.push_str(&proxy::play_url(cfg, &e.guid));
+        s.push('\n');
+    }
+    s
 }
 
 /// [lc-105] **页面内播放（B站/爱奇艺式真内嵌）**的直链 + 元信息。
@@ -1174,6 +1327,16 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     //   → mpv 命令行直接带该 M3U8 ⇒ 窗口出现即开始加载，无 idle 空窗。
     let res = resolve_play_guid(&app, &state, &mut cfg, &guid).await?;
     stage("guid-resolved");
+    // [progress] 起播即记住这一集的流 guid：首帧进度回传时无需再发一次 play/info。
+    fnos_progress::remember(fnos_progress::PlayMeta {
+        item_guid: res.play_guid.clone(),
+        media_guid: res.media_guid.clone(),
+        video_guid: res.video_guid.clone(),
+        audio_guid: res.audio_guid.clone(),
+        subtitle_guid: res.subtitle_guid.clone(),
+    });
+    // 退出兜底跟踪器：series guid = 本地历史记录键（下面 history::record 用的同一个 guid）。
+    fnos_progress::begin(&guid, &res.play_guid);
     proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
     stage("proxy-ready");
     let direct_url = proxy::play_url(&cfg, &res.play_guid);
@@ -1184,18 +1347,101 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
         .trim()
         .to_string();
 
-    // 播放器：自带 mpv 用「单条目 M3U8」入口（#EXTINF 标题 → media-title → 弹幕链）；
-    // PotPlayer 没有 media-title / 弹幕链概念，直接播代理直链（本地 127.0.0.1，无需 header）。
+    // 播放列表：剧集 → 拉整季 `episode/list` 构建多条目列表；电影/单集/列表拉取失败 →
+    // 回退单条目（行为与修复前一致，确保单集电影不受影响）。
     let (kind, _player_path) = player::resolve_player(&cfg)?;
+    let mut entries: Vec<PlaylistEntry> = Vec::new();
+    let mut start_index = 0usize;
+    if res.kind == "Episode" && !res.parent_guid.is_empty() {
+        match season_episode_values(&cfg, &res.parent_guid).await {
+            Ok(list) if list.len() > 1 => {
+                for ep in &list {
+                    let g = ep
+                        .get("guid")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    if g.is_empty() {
+                        continue;
+                    }
+                    let se = ep
+                        .get("season_number")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(res.season);
+                    let no = ep
+                        .get("episode_number")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    let t = ep
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    let dur = ep
+                        .get("duration")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
+                    entries.push(PlaylistEntry {
+                        guid: g,
+                        title: playlist_episode_title(&res.tv_title, se, no, &t),
+                        duration_secs: dur,
+                    });
+                }
+                // 定位被点击的那一集：play/info 返回的 guid 与 episode/list 的 guid 通常一致；
+                // 两者任一命中即可。找不到就整季回退单集，避免"点了 A 却从第 1 集播"。
+                match entries
+                    .iter()
+                    .position(|e| e.guid == res.play_guid)
+                    .or_else(|| entries.iter().position(|e| e.guid == guid))
+                {
+                    Some(idx) => start_index = idx,
+                    None => {
+                        libmpv::trace("[playlist] 当前集不在 episode/list 中，回退单集播放");
+                        entries.clear();
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(e) => libmpv::trace(&format!("[playlist] 拉取整季集列表失败，回退单集: {e}")),
+        }
+    }
+    let multi = entries.len() > 1;
+
+    // 自带 mpv：多条目 M3U（自然顺序 + --playlist-start 定位），单条沿用原单条目 M3U8；
+    // PotPlayer：无 start-index 参数，多条目时把点击集旋转到首位（播放器面板顺序与之一致），
+    // 单条仍直接播代理直链。
+    let mut playlist_start: Option<usize> = None;
     let url = if kind == "potplayer" {
-        direct_url.clone()
+        if multi {
+            let mut ordered = entries.clone();
+            let rot = if ordered.is_empty() {
+                0
+            } else {
+                start_index.min(ordered.len() - 1)
+            };
+            ordered.rotate_left(rot);
+            let path = std::env::temp_dir().join("anibox-playlist.m3u");
+            let m3u = build_playlist_m3u(&cfg, &ordered);
+            std::fs::write(&path, m3u).map_err(|e| format!("写播放列表失败: {e}"))?;
+            path.to_string_lossy().to_string()
+        } else {
+            direct_url.clone()
+        }
+    } else if multi {
+        let path = std::env::temp_dir().join("anibox-playlist.m3u");
+        let m3u = build_playlist_m3u(&cfg, &entries);
+        std::fs::write(&path, m3u).map_err(|e| format!("写播放列表失败: {e}"))?;
+        playlist_start = Some(start_index);
+        path.to_string_lossy().to_string()
     } else {
         let m3u8_path = std::env::temp_dir().join("anibox-play.m3u8");
         let m3u8 = format!("#EXTM3U\n#EXTINF:-1,{}\n{}\n", display_title, direct_url);
         std::fs::write(&m3u8_path, m3u8).map_err(|e| format!("写播放列表失败: {e}"))?;
         m3u8_path.to_string_lossy().to_string()
     };
-    stage("url-prepared");
+    stage(if multi { "playlist-prepared" } else { "url-prepared" });
 
     // ② 统一入口：mpv 内部复用会话/新建；PotPlayer 逐集拉起。
     let duration_secs = if res.duration_ms > 0 {
@@ -1213,6 +1459,7 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
         duration_secs,
         None,
         &[],
+        playlist_start,
     )
     .await;
     stage("player-launched");
@@ -1373,6 +1620,50 @@ async fn mpv_set_rate(state: State<'_, AppState>, rate: f64) -> Result<(), Strin
     Ok(())
 }
 
+/// [playlist] 下一集 / 上一集：直接操作 mpv 播放列表（uosc 底栏的「上一集/下一集」按钮
+/// 走的就是 input.conf 里的 `playlist-prev`/`playlist-next`；这两个命令供手柄/页面调用）。
+/// 单集场景下 mpv 的 playlist-next/prev 会返回 success 但不动作，属预期。
+#[tauri::command]
+async fn mpv_next_episode(state: State<'_, AppState>) -> Result<(), String> {
+    let slot = state.mpv.lock().await;
+    if let Some(m) = slot.as_ref() {
+        m.command(json!(["playlist-next"])).await?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn mpv_prev_episode(state: State<'_, AppState>) -> Result<(), String> {
+    let slot = state.mpv.lock().await;
+    if let Some(m) = slot.as_ref() {
+        m.command(json!(["playlist-prev"])).await?;
+    }
+    Ok(())
+}
+
+/// [playlist] 当前播放列表位置：`{ pos, count }`（pos 从 0 开始，-1 = 空闲）。
+/// 前端/手柄可用于显示「第 N/M 集」或做边界判断。
+#[tauri::command]
+async fn mpv_playlist_info(state: State<'_, AppState>) -> Result<Value, String> {
+    let slot = state.mpv.lock().await;
+    let Some(m) = slot.as_ref() else {
+        return Ok(json!({ "pos": -1, "count": 0 }));
+    };
+    let pos = m
+        .command(json!(["get_property", "playlist-pos"]))
+        .await
+        .ok()
+        .and_then(|v| v.get("data").and_then(|d| d.as_i64()))
+        .unwrap_or(-1);
+    let count = m
+        .command(json!(["get_property", "playlist-count"]))
+        .await
+        .ok()
+        .and_then(|v| v.get("data").and_then(|d| d.as_i64()))
+        .unwrap_or(0);
+    Ok(json!({ "pos": pos, "count": count }))
+}
+
 // ───────────────────────── 缓存（图片/数据落盘） ─────────────────────────
 
 /// 缓存统计：占用字节 / 条目数 / 上限(MB) / 目录。设置面板「缓存」一栏的三个要素之二。
@@ -1445,6 +1736,8 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         "gamepadDirectionThreshold": cfg.gamepad_direction_threshold,
         "gamepadRepeatDelay": cfg.gamepad_repeat_delay,
         "gamepadRepeatInterval": cfg.gamepad_repeat_interval,
+        // [ui-opacity] 界面透明度（百分比；clamp 在 set_settings）
+        "uiOpacity": cfg.ui_opacity,
     }))
 }
 
@@ -1563,6 +1856,14 @@ async fn set_settings(
                 config::GAMEPAD_REPEAT_INTERVAL_MAX as i64,
             ) as u32;
     }
+    // [ui-opacity] 界面透明度：60–100（越界静默夹住，与手柄滑块同口径）
+    if let Some(v) = arg.get("uiOpacity") {
+        let n = v.as_f64().ok_or("uiOpacity 必须是数字")?;
+        cfg.ui_opacity = (n.round() as i64).clamp(
+            config::UI_OPACITY_MIN as i64,
+            config::UI_OPACITY_MAX as i64,
+        ) as u8;
+    }
     config::save(&app, &cfg).await?;
     *state.config.write().await = cfg.clone();
     // [lc-1561] 弹幕接口副作用：只在所有校验通过、配置成功落盘后再同步
@@ -1597,6 +1898,8 @@ async fn set_settings(
         "gamepadDirectionThreshold": cfg.gamepad_direction_threshold,
         "gamepadRepeatDelay": cfg.gamepad_repeat_delay,
         "gamepadRepeatInterval": cfg.gamepad_repeat_interval,
+        // [ui-opacity] 界面透明度（百分比；clamp 在 set_settings）
+        "uiOpacity": cfg.ui_opacity,
     }))
 }
 
@@ -1927,7 +2230,11 @@ pub fn run() {
     if let Some(d) = &mig.localappdata {
         libmpv::trace(&format!("[lc-1440] 数据目录迁移 LOCALAPPDATA → {d}"));
     }
-    if mig.appdata.is_none() && mig.localappdata.is_none() {
+    // [upgrade-3.9] 旧 Electron 版（≤3.9.0）用户数据：字段映射 + 缓存/封面/Cookie 归档
+    if let Some(d) = &mig.electron {
+        libmpv::trace(&format!("[upgrade-3.9] 旧 Electron 数据迁移: {d}"));
+    }
+    if mig.appdata.is_none() && mig.localappdata.is_none() && mig.electron.is_none() {
         libmpv::trace("[lc-1440] 无需迁移（新目录已存在，或旧目录不存在）");
     }
 
@@ -2140,6 +2447,8 @@ pub fn run() {
             tmdb::tmdb_rating_details,
             // 演员/人物页：TMDB 人物详情 + 参演作品（combined_credits 去重排序）
             tmdb::tmdb_person,
+            // 详情页单集封面兜底：飞牛缺单集海报时按季拉 TMDB 剧照（镜像优先，120 天落盘）
+            tmdb::tmdb_season_stills,
             // [lc-119] Bangumi（全线走自建镜像，见 bgm.rs 头部说明）
             bgm::bgm_match,
             bgm::bgm_subject,
@@ -2162,9 +2471,6 @@ pub fn run() {
             save_config,
             // [lc-1561] 自建弹幕接口连通测试（设置面板）
             test_danmu_api,
-            // [danmaku-cache] 设置面板：清空当前条目弹幕缓存 / 清空全部 / 清空并重新三源搜索
-            danmaku_clear_cache,
-            danmaku_refresh,
             // [bili-account] B 站账号 Cookie 读写/体检 + Node 检测 + 一键自建弹幕源
             bili_account::bili_account_status,
             bili_account::bili_set_cookie,
@@ -2176,6 +2482,8 @@ pub fn run() {
             bili_qr::bili_qr_poll,
             // [danmaku] 自建弹幕源 Rust 版：只跑三跳的调试命令
             danmaku::danmaku_fetch_selfhosted,
+            // [danmaku-diagnose] 设置面板「诊断」：Node / 自建源 / 业务匹配 / shim / Cookie / 播放上下文
+            danmaku::diagnose::danmaku_diagnose,
             // [lc-1434] 设置面板（通用/外观）：白名单子集读写 + 启动页查询
             get_settings,
             set_settings,
@@ -2213,7 +2521,10 @@ pub fn run() {
             resolve_close,
             // [update] 应用信息 / 全量更新（自建下载器 + NSIS）/ 前端热补丁
             update::app_info,
+            // [webview2] 设置「关于」页：WebView2 Runtime 检测（缺失时给下载入口）
+            webview2::check_webview2,
             update::update_check,
+            update::update_source_probe,
             update::update_download,
             update::update_cancel,
             update::update_install,
@@ -2229,6 +2540,10 @@ pub fn run() {
             check_session,
             get_media_libs,
             get_media_sum,
+            // [library-cover] 首页媒体库卡片自定义封面（保存/读取/恢复默认）
+            libcover::get_library_covers,
+            libcover::save_library_cover,
+            libcover::reset_library_cover,
             get_favorites,
             favorites::favorite_get,
             favorites::favorite_toggle,
@@ -2237,6 +2552,8 @@ pub fn run() {
             watched::set_item_watched,
             get_items_global,
             get_items,
+            // [lc-1701] 演员页「入库状态」批量匹配
+            match_library_works,
             get_continue_watching,
             // [lc-1615] 观影记录：飞牛 play/list ∪ 本机播放历史（合并/富化见 history.rs）
             get_watch_history,
@@ -2245,6 +2562,7 @@ pub fn run() {
             // [lc-1631] 年度报告数据源 + 播放结束回填真实观看时长
             get_watch_report,
             record_watch_session,
+            report_watch_progress,
             get_seasons,
             get_episodes,
             get_edit_detail,
@@ -2263,6 +2581,10 @@ pub fn run() {
             mpv_seek,
             mpv_set_volume,
             mpv_set_rate,
+            // [playlist] 整季播放列表：上下集操作 + 当前位置查询
+            mpv_next_episode,
+            mpv_prev_episode,
+            mpv_playlist_info,
             // [lc-1515] Bangumi 账号绑定 + 追番状态同步（Kazumi 同款）
             bgm_account::bgm_account_status,
             bgm_account::bgm_account_bind,
@@ -2347,5 +2669,45 @@ mod tests {
             super::DETAIL_LIST_TTL_SECS * 1000 < super::DETAIL_TTL_SECS,
             "列表 TTL 必须远小于 item 详情 TTL（否则新集长时间不可见）"
         );
+    }
+
+    /// [playlist] 单集标题拼接：完整季集号 / 只有番名+集名 / 只有集名 三种形态。
+    #[test]
+    fn playlist_episode_title_shapes() {
+        assert_eq!(
+            super::playlist_episode_title("番名", 1, 5, "集名"),
+            "番名 - S1E5: 集名"
+        );
+        assert_eq!(
+            super::playlist_episode_title("番名", 0, 0, "集名"),
+            "番名 - 集名"
+        );
+        assert_eq!(super::playlist_episode_title("", 1, 5, "集名"), "集名");
+    }
+
+    /// [playlist] 整季 M3U：每条一个 #EXTINF + 本机代理 URL，顺序与条目一致。
+    #[test]
+    fn playlist_m3u_has_every_entry_in_order() {
+        let cfg = crate::config::Config::default();
+        let entries = vec![
+            super::PlaylistEntry {
+                guid: "ep1".into(),
+                title: "番名 - S1E1: 第一集".into(),
+                duration_secs: 1440.0,
+            },
+            super::PlaylistEntry {
+                guid: "ep2".into(),
+                title: "番名 - S1E2: 第二集".into(),
+                duration_secs: 0.0,
+            },
+        ];
+        let out = super::build_playlist_m3u(&cfg, &entries);
+        assert!(out.starts_with("#EXTM3U\n"));
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 5, "首行 + 2×(EXTINF+URL)");
+        assert_eq!(lines[1], "#EXTINF:1440,番名 - S1E1: 第一集");
+        assert!(lines[2].contains("/api/v1/playvideo/ep1?"));
+        assert_eq!(lines[3], "#EXTINF:-1,番名 - S1E2: 第二集");
+        assert!(lines[4].contains("/api/v1/playvideo/ep2?"));
     }
 }

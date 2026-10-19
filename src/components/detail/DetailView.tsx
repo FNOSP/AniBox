@@ -3,7 +3,15 @@ import { type UIEvent, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { createPortal } from "react-dom";
-import { Check as IcoCheckL, Clapperboard as IcoClapL, Film as IcoFilmL, Play as IcoPlayL, X as IcoXL } from "lucide-react";
+import {
+  Check as IcoCheckL,
+  Clapperboard as IcoClapL,
+  Film as IcoFilmL,
+  LayoutGrid as IcoGridL,
+  LayoutList as IcoListL,
+  Play as IcoPlayL,
+  X as IcoXL,
+} from "lucide-react";
 import { DetailSkeleton } from "./DetailSkeleton";
 // [lc-1629] 飞牛每集/条目自定义元数据操作弹层（编辑元数据 / 手动匹配 / 刷新 / 解除匹配）
 import { MetaEditModal, type MetaTarget } from "./MetaEditModal";
@@ -27,6 +35,65 @@ import { useRefresh } from "../../hooks/useRefresh";
 import { BgmCharacter, BgmComment, BgmEpisodeRow, BgmMatch, BgmPerson, BgmRelated, BgmReview, BgmTag, Episode, MediaItem, PersonTarget, Season, TmdbCreditPerson, TmdbCredits } from "../../types";
 
 
+/* ══════════════════ 选集显示样式（用户可切换，localStorage 持久化） ══════════════════
+   · num = 纯数字（1 2 3）
+   · ep  = 第 N 集（默认）
+   只影响**标签文本**：点击/播放/进度/已看徽标仍绑定 ep.guid，与样式无关。 */
+type EpLabelMode = "num" | "ep";
+const EP_LABEL_KEY = "fntv-ep-label-mode";
+const EP_LABEL_MODES: { key: EpLabelMode; label: string; hint: string }[] = [
+  { key: "num", label: "1 2 3", hint: "纯数字集号（1 2 3）" },
+  { key: "ep", label: "第N集", hint: "第 N 集" },
+];
+
+/** 读取已保存的集数样式；非法/首次默认「第N集」。 */
+function readEpLabelMode(): EpLabelMode {
+  try {
+    const v = localStorage.getItem(EP_LABEL_KEY);
+    if (v === "num" || v === "ep") return v;
+    // 旧版本保存过 sxe：已移除该模式，回落到默认「第N集」
+    if (v === "sxe") return "ep";
+  } catch {
+    /* 隐私模式等拿不到 localStorage：静默回落，不阻断页面 */
+  }
+  return "ep";
+}
+
+/* ══════════════════ 选集视图（网格 / 列表，localStorage 持久化） ══════════════════
+   · list = 现有竖向列表（默认，保持老用户观感）
+   · grid = 数字方块网格（用户截图样式）
+   两种视图共用同一份 episodes 数据与播放逻辑。 */
+type EpViewMode = "list" | "grid";
+const EP_VIEW_KEY = "fntv-ep-view-mode";
+/* [追更重拉] 同一季「缺剧照集号签名」变化后的最小请求间隔（60s）：
+   防止接口抖动 / 集列表反复变化时来回重拉，形成请求循环。 */
+const STILL_RETRY_COOLDOWN_MS = 60_000;
+
+function readEpViewMode(): EpViewMode {
+  try {
+    return localStorage.getItem(EP_VIEW_KEY) === "grid" ? "grid" : "list";
+  } catch {
+    return "list";
+  }
+}
+
+/** 集号 → 展示文本。 */
+function epLabelOf(num: number, _seasonNo: number, mode: EpLabelMode): string {
+  if (mode === "num") return String(num);
+  return `第 ${num} 集`;
+}
+
+/** 季 → {季号文案, 可选季名}。飞牛多数把 title 直接写成「第 N 季」，此时不重复展示。 */
+function seasonLabelOf(sn: Season, i: number): { no: string; name: string } {
+  const rawNo = Number(sn.season_number);
+  const n = Number.isFinite(rawNo) ? rawNo : i + 1;
+  const no = n === 0 ? "特别篇" : `第 ${n} 季`;
+  const raw = String(sn.title || "").trim();
+  const name = raw && raw !== no && !new RegExp(`^第\\s*${n}\\s*季$`).test(raw) ? raw : "";
+  return { no, name };
+}
+
+
 export function DetailView({
   base,
   onBack,
@@ -44,6 +111,39 @@ export function DetailView({
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [seasonIdx, setSeasonIdx] = useState(0);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
+  /* [单集封面兜底] TMDB 季度剧照映射：key = `${tmdbId}:${seasonNumber}`，
+     value = { 集号 → still 文件路径（/abc.jpg） }。飞牛缺单集海报时按季拉一次，切季按需再拉。 */
+  const [seasonStills, setSeasonStills] = useState<Record<string, Record<number, string>>>({});
+  /* [追更重拉] 每季最近一次请求的「缺剧照集号签名」+ 时间戳：
+       · 同一签名不重复请求（去重，避免每次 render 都打网络）；
+       · 签名变化（新集加入 / 集列表更新）→ 带 force 重拉一次；
+       · 换签名后 60s 冷却，防止接口抖动 / 集列表来回变化导致请求循环。
+     失败也静默降级，不阻塞页面。 */
+  const stillReqRef = useRef<Map<string, { sig: string; at: number }>>(new Map());
+  /* [选集样式] 集号显示模式：纯数字 / 第N集 / SxxExx。选择写入 localStorage，
+     下次进任何剧集详情页都沿用（与 fntv-history-view 等键同一套做法）。 */
+  const [epLabelMode, setEpLabelMode] = useState<EpLabelMode>(readEpLabelMode);
+  useEffect(() => {
+    try {
+      localStorage.setItem(EP_LABEL_KEY, epLabelMode);
+    } catch {
+      /* localStorage 不可用：仅本次会话生效 */
+    }
+  }, [epLabelMode]);
+  /* [选集视图] 网格 / 列表：与集数样式一样持久化，下次进任何剧集详情页都沿用。 */
+  const [epView, setEpView] = useState<EpViewMode>(readEpViewMode);
+  useEffect(() => {
+    try {
+      localStorage.setItem(EP_VIEW_KEY, epView);
+    } catch {
+      /* localStorage 不可用：仅本次会话生效 */
+    }
+  }, [epView]);
+  /* [选季控件] 横向滚动轨道的 ref + 两端是否还有内容（决定箭头可用态）。 */
+  const seasonRailRef = useRef<HTMLDivElement | null>(null);
+  /* 集列表请求令牌：快速连点不同季时，只接受最后一次请求的结果，
+     避免先发的旧季响应晚到、把新季列表覆盖掉（"点了后面季却还是第一季"的另一种成因）。 */
+  const epReqRef = useRef(0);
   // [lc-1595] 播放结束 → 强制刷新观看进度：`ts`/`watched` 随每次播放变化，而本页原先只在
   //   挂载/切条目/切季时取数 ⇒ 用户「看完第 3 集退出来，状态还是之前的」。
   //   事件来自 Rust（mpv.rs）：正常看完/退出 = `mpv-load{phase:"ended"}`；播放失败 = `mpv-end`。
@@ -182,6 +282,54 @@ export function DetailView({
     return { trimId: trim, tmdbId, imdbId };
   })();
 
+  /* [单集封面兜底 / 追更重拉] 当前季有集缺 `poster` 时，向 TMDB 拉该季剧照（`tmdb_season_stills`），
+     按 episode_number 建映射。规则：
+       · 需要有效 tmdbId（发现页占位条目没有飞牛选集，直接跳过）；
+       · 用「缺剧照的集号集合」做签名 `s{season}:{nums}`：
+         - 同一签名只请求一次（去重）；
+         - 签名变化（新集加入 / 集列表更新）→ 带 `force: true` 重拉，避免后端旧缓存挡住新集；
+         - 换签名后 60s 内不再发第二次（防接口抖动 / 集列表来回变化造成循环）；
+       · 切季时 cacheKey 与签名都变，自然按新季请求；
+       · 该季所有集都有剧照 → 签名不存在，不请求；
+       · 请求失败静默降级 —— 不影响页面，缩略图回落到剧集横图/竖版海报/空占位。 */
+  useEffect(() => {
+    if (!isSeries || noFnOS || episodes.length === 0) return;
+    const missingNums = episodes
+      .map((ep, i) => ({ ep, num: Number(ep.episode_number ?? i + 1) }))
+      .filter(({ ep, num }) => !ep.poster && Number.isFinite(num) && num > 0)
+      .map(({ num }) => num)
+      .sort((a, b) => a - b);
+    if (missingNums.length === 0) return;
+    const tmdbId = Number(tmdbAnchor.tmdbId);
+    if (!Number.isFinite(tmdbId) || tmdbId <= 0) return;
+    const seasonNo =
+      Number(seasons[seasonIdx]?.season_number ?? seasonIdx + 1) || 1;
+    const cacheKey = `${tmdbId}:${seasonNo}`;
+    const sig = `s${seasonNo}:${missingNums.join(",")}`;
+    const prev = stillReqRef.current.get(cacheKey);
+    const now = Date.now();
+    if (prev) {
+      if (prev.sig === sig) return; // 同一签名：已请求过，去重
+      if (now - prev.at < STILL_RETRY_COOLDOWN_MS) return; // 换签名：短冷却
+    }
+    stillReqRef.current.set(cacheKey, { sig, at: now });
+    invoke<{ episodes?: { episodeNumber?: number; still?: string }[] }>("tmdb_season_stills", {
+      arg: { tmdbId, seasonNumber: seasonNo, force: true },
+    })
+      .then((r) => {
+        const map: Record<number, string> = {};
+        for (const e of r?.episodes ?? []) {
+          const n = Number(e?.episodeNumber);
+          const s = String(e?.still ?? "").trim();
+          if (Number.isFinite(n) && s) map[n] = s;
+        }
+        setSeasonStills((prev) => ({ ...prev, [cacheKey]: map }));
+      })
+      .catch(() => {
+        /* 静默降级：不弹错、不影响选集与播放 */
+      });
+  }, [isSeries, noFnOS, episodes, tmdbAnchor.tmdbId, seasons, seasonIdx]);
+
   // [lc-1629] 统一的「带 force 重取」：置三个 force ref + bump progTick，让条目详情/季/集都跳过缓存。
   //   播放结束（lc-1595）与元数据写操作成功后（编辑/匹配/刷新/解除）共用同一条路径。
   const refreshAll = useCallback(() => {
@@ -247,26 +395,69 @@ export function DetailView({
     setSeasons([]);
     setSeasonIdx(0);
     setEpisodes([]);
+    // 让上一条目的在途集请求失效，避免它晚到后把新条目的选集覆盖掉。
+    epReqRef.current++;
     if (noFnOS) {
       // 发现页条目：无飞牛条目，跳过详情/季/集三条飞牛请求；清掉可能残留的详情错误
       setErr("");
       return;
     }
+    // 切条目后旧请求的响应一律丢弃（快速连点不同条目时尤其明显）。
+    let alive = true;
     // [lc-1629] 读一次 force 并消费：播放结束/元数据写操作成功后置真 → 详情也跳过 120 天缓存，
     //   否则「编辑元数据」改完标题/简介看不到变化。
     const forceItem = forceSeasonRef.current;
     forceSeasonRef.current = false;
     invoke<Record<string, unknown>>("get_item_detail", { guid: base.guid, force: forceItem })
-      .then((d) => setData(d))
-      .catch((e) => setErr(String(e)));
+      .then((d) => {
+        if (alive) setData(d);
+      })
+      .catch((e) => {
+        if (alive) setErr(String(e));
+      });
     // 层级：剧 → 季 → 集。episode/list 的入参是季 guid（传剧 guid 实测 data:null），
     // 所以先 season/list/{剧guid}，选中季后再 episode/list/{季guid}。
     if (isSeries) {
       invoke<Season[]>("get_seasons", { guid: base.guid, force: forceItem })
-        .then((ss) => setSeasons(Array.isArray(ss) ? ss : []))
+        .then((ss) => {
+          if (!alive) return;
+          const list = (Array.isArray(ss) ? ss : []).slice();
+          /* 按季号升序：飞牛返回顺序不保证（特别篇 season_number=0 排最前），
+             否则「第 3 季」可能夹在第 1、2 季中间，用户更难找到。缺季号保持原序。 */
+          list.sort((a, b) => {
+            const an = Number(a.season_number);
+            const bn = Number(b.season_number);
+            if (Number.isFinite(an) && Number.isFinite(bn)) return an - bn;
+            return 0;
+          });
+          setSeasons(list);
+        })
         .catch(() => {});
     }
+    return () => {
+      alive = false;
+    };
   }, [base.guid, isSeries, noFnOS, progTick]);
+
+  // 季列表刷新后索引可能越界（例如缓存回填成更短的列表）：回到第一季，避免右侧空白。
+  useEffect(() => {
+    if (seasonIdx > 0 && seasonIdx >= seasons.length) setSeasonIdx(0);
+  }, [seasons, seasonIdx]);
+
+  /* [选季控件] 当前季始终滚到可视区中间：切季/首次渲染都能看到高亮项。 */
+  useEffect(() => {
+    const el = seasonRailRef.current;
+    if (!el) return;
+    const btn = el.querySelector<HTMLElement>(".season-tab.active");
+    if (!btn) return;
+    const railRect = el.getBoundingClientRect();
+    const btnRect = btn.getBoundingClientRect();
+    const target = el.scrollLeft + (btnRect.left - railRect.left) - (el.clientWidth - btnRect.width) / 2;
+    el.scrollTo({
+      left: Math.max(0, target),
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+    });
+  }, [seasonIdx, seasons.length]);
 
   useEffect(() => {
     const s = seasons[seasonIdx];
@@ -278,8 +469,11 @@ export function DetailView({
       lastEpGuidRef.current = s.guid;
       setEpisodes([]);
     }
+    // 请求令牌：快速连点季时丢弃旧响应（见 epReqRef 声明处）。
+    const req = ++epReqRef.current;
     invoke<Episode[]>("get_episodes", { guid: s.guid, force })
-      .then((eps) =>
+      .then((eps) => {
+        if (req !== epReqRef.current) return;
         setEpisodes(
           (Array.isArray(eps) ? eps : []).map((e) => ({
             ...e,
@@ -288,8 +482,8 @@ export function DetailView({
                 ? String(e.media_stream.resolutions[0]).replace(/p$/i, "")
                 : undefined,
           })),
-        ),
-      )
+        );
+      })
       .catch(() => {});
   }, [seasons, seasonIdx, progTick]);
 
@@ -830,6 +1024,22 @@ export function DetailView({
     (pick(data ?? {}, ["posters", "poster"]) as string) ||
     base.poster ||
     "";
+  /* [单集封面兜底] 当前季 TMDB 剧照映射（集号 → still 文件路径）；没有就是空对象。 */
+  const currentStillMap =
+    seasonStills[
+      `${Number(tmdbAnchor.tmdbId) || 0}:${Number(seasons[seasonIdx]?.season_number ?? seasonIdx + 1) || 1}`
+    ] ?? {};
+  /* [单集封面兜底] 剧集横图：TMDB heroBackdrop（面积最大）→ 飞牛 backdrops → 竖版 poster → 空。
+     只用于「单集既无飞牛海报、TMDB 也没有该集剧照」时的缩略图兜底。 */
+  const episodeThumbFallback = (() => {
+    const tb = String((tmdb ?? {}).heroBackdrop ?? "");
+    if (tb) return tmdbImg(tb, "w780");
+    const fnb =
+      pickLargestImg((data ?? {}).backdrops) ||
+      String(pick(data ?? {}, ["backdrops", "backdrop"]) ?? "");
+    if (fnb) return imgUrl(fnb);
+    return poster ? imgUrl(poster) : "";
+  })();
   // [lc-1507] 简介兜底链：飞牛详情 → 飞牛条目自带 → **Bangumi subject.summary**（发现页
   //   Bangumi 条目 TMDB 匹配不上时，简介不至于空白 —— bgmSub 进页面就拉了）
   const bgmSummary = String(pick(bgmSub ?? {}, ["summary"]) ?? "").trim();
@@ -1049,10 +1259,91 @@ export function DetailView({
   const airDates = episodes.map((e) => String(e.air_date ?? "")).filter(Boolean).sort();
   const lastAir = airDates.length ? airDates[airDates.length - 1] : String(pick(bgmSub ?? {}, ["date"]) ?? "");
 
+  // [季/集与缺集检测] 「已入库」同一行的季/集补充信息。
+  //   · 季号：飞牛 season_number（0 = 特别篇）；季总数 = seasons.length。
+  //   · 本季应有集数：优先 season.number_of_episodes（飞牛季级元数据）；否则用 Bangumi
+  //     subject 的 eps（totalEps）——Bangumi 一个 subject 通常只对应**一季**，多季条目里
+  //     无法确定它描述的是哪一季，故仅在单季条目上采用；再否则用已入库集号的最大值
+  //     （此时只能发现 1..最大值 之间的空档，不硬报最大值之后的缺集）。
+  //   · 缺集：以本季应有集数为范围对比 episode_number 集合；小数集（如 1.5 的拆分/特别集）
+  //     不参与整数集号判断，避免把 1 或 2 误报为缺失；0 起的连续编号识别为 0-based；
+  //     特别篇（season_number=0）只报集数、不做缺集判断。
+  const seasonEpInfo = (() => {
+    if (!isSeries || noFnOS || episodes.length === 0) return null;
+    const cur = seasons[seasonIdx];
+    const nums = new Set<number>();
+    for (const ep of episodes) {
+      if (ep.episode_number == null || String(ep.episode_number).trim() === "") continue;
+      const n = Number(ep.episode_number);
+      // 只认整数集号；小数集不参与缺集比较（宁可少报，也不误报）。
+      if (!Number.isInteger(n) || n < 0) continue;
+      nums.add(n);
+    }
+    const seen = nums.size;
+    const maxNum = seen ? Math.max(...nums) : 0;
+    // 季级 total 与 Bangumi total 都必须不小于已见最大集号，否则是别季/整部的数字，不可用。
+    const seasonTotalRaw = Number(cur?.number_of_episodes);
+    const seasonTotal =
+      Number.isFinite(seasonTotalRaw) && seasonTotalRaw > 0 && (maxNum === 0 || seasonTotalRaw >= maxNum)
+        ? Math.floor(seasonTotalRaw)
+        : 0;
+    // 多季条目的 Bangumi subject 只匹配其中一季，拿它当本季总集会误报 → 只信单季条目。
+    const bgmTotal =
+      seasons.length <= 1 && totalEps > 0 && (maxNum === 0 || totalEps >= maxNum) ? totalEps : 0;
+    const expected = seasonTotal || bgmTotal || maxNum;
+    const seasonNoRaw = Number(cur?.season_number);
+    const special = Number.isFinite(seasonNoRaw) && seasonNoRaw === 0;
+
+    const parts: string[] = [];
+    if (cur) {
+      const label = seasonLabelOf(cur, seasonIdx).no;
+      parts.push(seasons.length > 1 ? `${label} / 共 ${seasons.length} 季` : label);
+    }
+    // 一个集号都拿不到（字段缺失/全是异常值）：不猜缺集，只标注未知。
+    if (seen === 0) {
+      if (expected > 0) parts.push(`共 ${expected} 集`);
+      parts.push("集数未知");
+      return { text: parts.join(" · "), title: "" };
+    }
+    if (expected <= 0) {
+      parts.push("集数未知");
+      return { text: parts.join(" · "), title: "" };
+    }
+    parts.push(`共 ${expected} 集`);
+    // 特别篇没有 1..N 的语义：只报季/集数，不判断缺集。
+    if (special) return { text: parts.join(" · "), title: "" };
+    // 0 起编号：仅在「有 0、没有 expected、集号都 < expected」时按 0..expected-1 处理，
+    // 避免把「特别篇 0 + 正片 1..N」误判成 0-based（歧义时宁可少报，不误报）。
+    const zeroBased = nums.has(0) && !nums.has(expected) && maxNum < expected;
+    const start = zeroBased ? 0 : 1;
+    const end = zeroBased ? expected - 1 : expected;
+    const missing: number[] = [];
+    for (let n = start; n <= end; n++) if (!nums.has(n)) missing.push(n);
+    if (!missing.length) {
+      parts.push("无缺失");
+      return { text: parts.join(" · "), title: "" };
+    }
+    const short = missing.length <= 5;
+    parts.push(short ? `缺 ${missing.length} 集（第 ${missing.join("、")} 集）` : `缺 ${missing.length} 集`);
+    return {
+      text: parts.join(" · "),
+      // 截断时用 title 给出完整列表；短列表也带上，方便悬停确认。
+      title: `缺失集号：第 ${missing.join("、")} 集`,
+    };
+  })();
+
   // [lc-1419] 续播目标：有播放记录（ts>0 且未看完）就跳那一集并带进度，
-  //   否则从第 1 集开始。原「海报上的播放按钮」用的就是 episodes[0]，这里升级为"上次的位置"。
-  const resumeEp =
-    episodes.find((e) => (e.ts ?? 0) > 0 && !(e.duration && e.ts! >= e.duration)) ?? episodes[0];
+  //   否则从第 1 集开始。多集都有进度时取**集号最大**的那一集（最近在看的），
+  //   不能按数组顺序取第一条，否则看完第 2 集后仍会显示「继续播放第 1 集」。
+  const resumeEp = (() => {
+    // 集号可能缺失（飞牛部分条目只有顺序），用「episode_number ?? 数组下标+1」
+    // 作为比较口径，否则第 2 集会按 0 参与比较，永远输给第 1 集。
+    const candidates = episodes
+      .map((e, i) => ({ e, num: e.episode_number ?? i + 1 }))
+      .filter(({ e }) => (e.ts ?? 0) > 0 && !(e.duration && e.ts! >= e.duration));
+    if (!candidates.length) return episodes[0];
+    return candidates.reduce((best, cur) => (cur.num > best.num ? cur : best)).e;
+  })();
   const resumeTarget = resumeEp ?? null;
   // 进度百分比（给按钮上的小字用）
   const resumePct =
@@ -1092,6 +1383,11 @@ export function DetailView({
   const [playNote, setPlayNote] = useState("");
   const [playing, setPlaying] = useState(false);
   const [playingGuid, setPlayingGuid] = useState<string | null>(null);
+  /** 选集（列表行 / 网格方块共用）：记录当前集并拉起独立播放器。 */
+  const playEpisode = (guid: string) => {
+    setPlayingGuid(guid);
+    invoke("play_item", { guid }).catch((e) => setErr(String(e)));
+  };
   const startPlay = async () => {
     const ep = episodes[0];
     const guid = isSeries && ep ? ep.guid : base.guid;
@@ -1373,89 +1669,188 @@ export function DetailView({
               <span>{playing ? "打开中…" : resumeAt ? "继续播放" : "播放"}</span>
             </button>
           )}
-          {/* [lc-1421] 头部改成**一整行**（用户要求："做成一排显示，播放按钮在左边"）。
-              顺序 = 播放按钮 → 选集标题 → 集数/完结/更新 → 季切换。
-              原来按钮独占右侧、标题与信息在上面一行，一窄就分成两行（用户截图就是那样）。
-              `.dv2e-hd` 用 flex + nowrap + 允许横向溢出，保证"一排"；窄到实在放不下时才换行。 */}
+          {/* [选季/更新时间重做] 头部不再是一整排 nowrap + overflow-x（旧版把季切换和
+              「更新至」挤到右边界外，横向滚动条在 44px 高的头部里几乎看不见，于是
+              "后面几季点不了"、"更新至被截断"）。
+              现在分两层：第一层是两行信息（上行胶囊/按钮、下行纯文本，各自 flex-wrap），
+              第二层是独立的选季轨道 —— 季多时横向滚动 + 左右箭头，窄窗自动换成原生下拉，永不裁切。 */}
           <div className="dv2e-hd">
-            {/* 播放入口（原来在右侧，现移到最左）。语义：
-                有播放记录 → 「观看至 第 N 集 · N%」（[lc-1424] 文案由"继续观看"改为"观看至"：
-                更贴合"已经看到第 N 集的第 N%"这个事实）；没有记录 → 「播放 第 1 集」。 */}
-            {isSeries && resumeTarget && (
-              <button
-                className="dv2e-play-btn"
-                disabled={playing}
-                onClick={() => {
-                  setPlayingGuid(resumeTarget.guid);
-                  invoke("play_item", { guid: resumeTarget.guid }).catch((e) => setErr(String(e)));
-                }}
-                title={
-                  resumePct > 0
-                    ? `从第 ${resumeTarget.episode_number ?? 1} 集的 ${resumePct}% 继续播放`
-                    : `播放 第 ${resumeTarget.episode_number ?? 1} 集`
-                }
-              >
-                <IcoPlayL size={14} strokeWidth={2.4} />
-                <span>
-                  {playing
-                    ? "打开中…"
-                    : resumePct > 0
-                      ? `观看至 第 ${resumeTarget.episode_number ?? 1} 集`
-                      : `播放 第 ${resumeTarget.episode_number ?? 1} 集`}
-                </span>
-                {resumePct > 0 && <i className="dv2e-play-pct">{resumePct}%</i>}
-              </button>
-            )}
-            <h3 className="dv2e-hd-h">选集</h3>
-            {/* [lc-1419] 集数/完结/上次更新（"一眼确认状态"） */}
-            {isSeries && (
-              <span className="dv2e-meta">
-                <span className="dv2e-meta-n">
-                  {/* [lc-1444] 发现页条目没有本机集数：显示 Bangumi 总集数（若有），否则 "—" */}
-                  {noFnOS
-                    ? totalEps > 0
-                      ? totalEps
-                      : "—"
-                    : `${episodes.length}${totalEps > 0 && totalEps !== episodes.length ? ` / ${totalEps}` : ""}`}{" "}
-                  集
-                </span>
+            <div className="dv2e-hd-top">
+              {/* [头部两行重排] 上面一行只放胶囊 / 按钮类控件：
+                  播放胶囊 · 连载中/已完结状态胶囊 · 集数样式分段控件 · 网格/列表切换。
+                  下面一行只放纯文本：已入库 6/7 集、更新至 YYYY-MM-DD。
+                  两行各自 flex-wrap，窄窗自然换行，日期整体不拆。 */}
+              {isSeries && (
+                <div className="dv2e-hd-pills">
+              {/* 播放入口（原来在右侧，现移到最左）。语义：
+                  有播放记录 → 「继续播放 第 N 集 · N%」；没有记录 → 「播放 第 1 集」。 */}
+              {isSeries && resumeTarget && (
+                <button
+                  className="dv2e-play-btn"
+                  disabled={playing}
+                  onClick={() => {
+                    setPlayingGuid(resumeTarget.guid);
+                    invoke("play_item", { guid: resumeTarget.guid }).catch((e) => setErr(String(e)));
+                  }}
+                  title={
+                    resumePct > 0
+                      ? `从第 ${resumeTarget.episode_number ?? 1} 集的 ${resumePct}% 继续播放`
+                      : `继续播放 第 ${resumeTarget.episode_number ?? 1} 集`
+                  }
+                >
+                  <IcoPlayL size={14} strokeWidth={2.4} />
+                  <span>
+                    {playing
+                      ? "打开中…"
+                      : `继续播放 第 ${resumeTarget.episode_number ?? 1} 集`}
+                  </span>
+                  {resumePct > 0 && <i className="dv2e-play-pct">{resumePct}%</i>}
+                </button>
+              )}
+              {/* 状态胶囊属于控件行：与播放按钮、分段控件同高（30px）。 */}
+              {isSeries && (
                 <span className={`dv2e-state${finished ? " done" : " airing"}`}>
                   {finished ? "已完结" : "连载中"}
                 </span>
-                {lastAir && <span className="dv2e-meta-d">更新至 {String(lastAir).slice(0, 10)}</span>}
-              </span>
-            )}
-            {seasons.length > 1 && (
-              <div className="season-tabs">
-                {seasons.map((sn, i) => (
-                  <button
-                    key={sn.guid}
-                    className={`season-tab ${i === seasonIdx ? "active" : ""}`}
-                    onClick={() => setSeasonIdx(i)}
-                  >
-                    {sn.title || `第 ${sn.season_number ?? i + 1} 季`}
-                  </button>
-                ))}
+              )}
+              {/* 集数显示样式 + 视图切换（网格 / 列表）：都只影响展示，不影响点击/进度/已看逻辑。 */}
+              {isSeries && (
+                <div className="dv2e-tools">
+                  <div className="ep-mode" role="group" aria-label="集数显示样式">
+                    {EP_LABEL_MODES.map((m) => (
+                      <button
+                        key={m.key}
+                        type="button"
+                        className={`ep-mode-btn${epLabelMode === m.key ? " active" : ""}`}
+                        title={m.hint}
+                        aria-pressed={epLabelMode === m.key}
+                        onClick={() => setEpLabelMode(m.key)}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="dv2e-view" role="group" aria-label="选集视图">
+                    <button
+                      type="button"
+                      className={`dv2e-view-btn${epView === "grid" ? " active" : ""}`}
+                      title="网格视图"
+                      aria-label="网格视图"
+                      aria-pressed={epView === "grid"}
+                      onClick={() => setEpView("grid")}
+                    >
+                      <IcoGridL size={15} strokeWidth={2} />
+                    </button>
+                    <button
+                      type="button"
+                      className={`dv2e-view-btn${epView === "list" ? " active" : ""}`}
+                      title="列表视图"
+                      aria-label="列表视图"
+                      aria-pressed={epView === "list"}
+                      onClick={() => setEpView("list")}
+                    >
+                      <IcoListL size={15} strokeWidth={2} />
+                    </button>
+                  </div>
+                </div>
+              )}
+                </div>
+              )}
+              {/* 下面一行：纯文本信息（不参与控件行的高度与对齐）。 */}
+              {isSeries ? (
+                <div className="dv2e-hd-meta">
+                  {/* [已入库] 本机集数 = 已入库集数，Bangumi 总集数仍作为分母。
+                      · 发现页条目（noFnOS）没有本机库，标签回退为「总集数」，计数口径不变。 */}
+                  <h3 className="dv2e-hd-h">{noFnOS ? "总集数" : "已入库"}</h3>
+                  <span className="dv2e-meta-n">
+                    {/* [lc-1444] 发现页条目没有本机集数：显示 Bangumi 总集数（若有），否则 "—" */}
+                    {noFnOS
+                      ? totalEps > 0
+                        ? totalEps
+                        : "—"
+                      : `${episodes.length}${totalEps > 0 && totalEps !== episodes.length ? ` / ${totalEps}` : ""}`}{" "}
+                    集
+                  </span>
+                  {/* [季/集与缺集检测] 季号 / 本季集数 / 缺集结论（纯文本，与「更新至」同档，
+                      不抢上方胶囊控件的视觉重量；窄窗由 CSS 允许换行）。 */}
+                  {seasonEpInfo && (
+                    <span className="dv2e-meta-season" title={seasonEpInfo.title || undefined}>
+                      {seasonEpInfo.text}
+                    </span>
+                  )}
+                  {lastAir && <span className="dv2e-meta-d">更新至 {String(lastAir).slice(0, 10)}</span>}
+                </div>
+              ) : (
+                /* 非剧集（发现页电影等）没有集数可入库，保留原「选集」标题占位 */
+                <h3 className="dv2e-hd-h">选集</h3>
+              )}
+            </div>
+            {isSeries && seasons.length > 1 && (
+              <div className="dv2e-seasons">
+                <div className="season-tabs" ref={seasonRailRef} role="tablist" aria-label="选择季">
+                  {seasons.map((sn, i) => {
+                    const sl = seasonLabelOf(sn, i);
+                    return (
+                      <button
+                        key={sn.guid}
+                        type="button"
+                        role="tab"
+                        aria-selected={i === seasonIdx}
+                        className={`season-tab ${i === seasonIdx ? "active" : ""}`}
+                        title={`${sl.no}${sl.name ? ` · ${sl.name}` : ""}`}
+                        onClick={() => setSeasonIdx(i)}
+                      >
+                        <span className="season-no">{sl.no}</span>
+                        {sl.name && <span className="season-name">{sl.name}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+                {/* 窄窗兜底：原生下拉，季再多也能完整选到（CSS 在 ≤720px 时替换轨道）。 */}
+                <select
+                  className="season-select"
+                  aria-label="选择季"
+                  value={seasonIdx}
+                  onChange={(e) => setSeasonIdx(Number(e.target.value))}
+                >
+                  {seasons.map((sn, i) => {
+                    const sl = seasonLabelOf(sn, i);
+                    return (
+                      <option key={sn.guid} value={i}>
+                        {sl.no}
+                        {sl.name ? ` · ${sl.name}` : ""}
+                      </option>
+                    );
+                  })}
+                </select>
               </div>
             )}
           </div>
-          <div className="dv2e-list">
+          <div className={`dv2e-list${isSeries && epView === "grid" ? " dv2e-list-grid" : ""}`}>
             {!isSeries ? (
               <div className="empty">本条目不是剧集</div>
             ) : episodes.length === 0 && seasons.length === 0 && !noFnOS ? (
               /* [lc-1420] **分块骨架**：条目详情（data）到得很快，所以整页骨架一闪就没了；
                  但季/集是另外两条请求 —— 它们没回来之前右栏是空的，用户看着就是"还在等数据"。
                  这里单独给右栏摆骨架（用真实行高，数据到位时不跳）。 */
-              [0, 1, 2, 3].map((i) => (
-                <div className="dv2e-row" key={`sk${i}`}>
-                  <div className="dv2e-thumb"><div className="dsk dsk-dthumb" /></div>
-                  <div className="dv2e-main">
-                    <div className="dsk dsk-sline" />
-                    <div className={`dsk dsk-sline${i % 2 ? " short" : ""}`} />
-                    <div className="dsk dsk-sline short" />
-                  </div>
+              epView === "grid" ? (
+                <div className="dv2e-grid" aria-hidden="true">
+                  {Array.from({ length: 12 }, (_, i) => (
+                    <div className="dv2e-cell dv2e-cell-sk" key={`skg${i}`} />
+                  ))}
                 </div>
-              ))
+              ) : (
+                [0, 1, 2, 3].map((i) => (
+                  <div className="dv2e-row" key={`sk${i}`}>
+                    <div className="dv2e-thumb"><div className="dsk dsk-dthumb" /></div>
+                    <div className="dv2e-main">
+                      <div className="dsk dsk-sline" />
+                      <div className={`dsk dsk-sline${i % 2 ? " short" : ""}`} />
+                      <div className="dsk dsk-sline short" />
+                    </div>
+                  </div>
+                ))
+              )
             ) : episodes.length === 0 ? (
               /* [lc-1444] 发现页条目没有飞牛选集数据。
                  [lc-1627] 用户要求：**在线播放先搁置** —— 无源条目不再挂在线资源面板，
@@ -1466,9 +1861,75 @@ export function DetailView({
               ) : (
                 <div className="empty">暂无剧集</div>
               )
+            ) : epView === "grid" ? (
+              /* 数字方块网格（用户截图样式）：每格一个集号，当前集 accent 高亮。
+                 集数样式（1 2 3 / 第N集 / S01E02）作用于格内文本；已看弱化 + 勾标，
+                 有进度时底部画细进度条。右键元数据入口与列表模式一致。 */
+              <div className="dv2e-grid" data-label={epLabelMode} role="list" aria-label="选集">
+                {episodes.map((ep, i) => {
+                  const num = ep.episode_number ?? i + 1;
+                  const seasonNo =
+                    Number(ep.season_number ?? seasons[seasonIdx]?.season_number ?? seasonIdx + 1) || 1;
+                  const epLabel = epLabelOf(num, seasonNo, epLabelMode);
+                  const bgmEp = bgmEpByNum.get(num);
+                  const sub = String(bgmEp?.name_cn || bgmEp?.name || "").trim();
+                  const progress =
+                    ep.ts && ep.duration && ep.duration > 0 ? Math.min(100, (ep.ts / ep.duration) * 100) : 0;
+                  const seen = Number(ep.watched) === 1 || progress >= 80;
+                  const isPlaying = playingGuid === ep.guid;
+                  return (
+                    <div
+                      key={ep.guid}
+                      role="listitem"
+                      tabIndex={0}
+                      className={`dv2e-cell${isPlaying ? " playing" : ""}${seen ? " seen" : ""}`}
+                      title={`播放 ${epLabel}`}
+                      onClick={() => playEpisode(ep.guid)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          playEpisode(ep.guid);
+                        }
+                      }}
+                    >
+                      <span className="dv2e-cell-no">{epLabel}</span>
+                      {seen && (
+                        <span className="dv2e-cell-mark" title="已看">
+                          <IcoCheckL size={10} strokeWidth={2.4} />
+                        </span>
+                      )}
+                      {progress > 0 && (
+                        <span className="dv2e-cell-prog" aria-hidden="true">
+                          <i style={{ width: `${progress}%` }} />
+                        </span>
+                      )}
+                      <button
+                        className="dv2e-cell-meta"
+                        title="本集元数据（编辑 / 手动匹配 / 解除匹配 / 刷新）"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMetaTarget({
+                            guid: ep.guid,
+                            title: `第 ${num} 集${ep.title ? `. ${ep.title}` : sub ? `. ${sub}` : ""}`,
+                            type: "TV",
+                            seasonNumber: ep.season_number,
+                            episodeNumber: ep.episode_number ?? num,
+                            isEpisode: true,
+                          });
+                        }}
+                      >
+                        ⋯
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             ) : (
               episodes.map((ep, i) => {
                 const num = ep.episode_number ?? i + 1;
+                // 集号样式只影响展示文本；seasonNo 优先取本集自带的季号。
+                const seasonNo = Number(ep.season_number ?? seasons[seasonIdx]?.season_number ?? seasonIdx + 1) || 1;
+                const epLabel = epLabelOf(num, seasonNo, epLabelMode);
                 const bgmEp = bgmEpByNum.get(num);
                 const sub = String(bgmEp?.name_cn || bgmEp?.name || "").trim();
                 const desc = String(ep.overview || bgmEp?.desc || "").trim();
@@ -1478,19 +1939,23 @@ export function DetailView({
                 //   「观看进度超过 80 后打上已观看的标记」）。飞牛自己的 `watched=1` 仍然优先。
                 const seen = Number(ep.watched) === 1 || progress >= 80;
                 const playing = playingGuid === ep.guid;
+                /* [单集封面兜底] 优先级：飞牛单集海报 → TMDB 该集剧照 → 剧集横图 → 剧集竖版海报 → 空占位。
+                   整条链路都走 imgUrl（tmdbImg 内部已走 fntvimg 代理，imgUrl 幂等直通）。 */
+                const thumb = ep.poster
+                  ? imgUrl(ep.poster)
+                  : currentStillMap[num]
+                    ? imgUrl(tmdbImg(currentStillMap[num], "w300"))
+                    : episodeThumbFallback;
                 return (
                   <div
                     key={ep.guid}
                     className={`dv2e-row${playing ? " playing" : ""}${seen ? " seen" : ""}`}
-                    onClick={() => {
-                      setPlayingGuid(ep.guid);
-                      invoke("play_item", { guid: ep.guid }).catch((e) => setErr(String(e)));
-                    }}
-                    title={`播放 第 ${num} 集`}
+                    onClick={() => playEpisode(ep.guid)}
+                    title={`播放 ${epLabel}`}
                   >
                     <div className="dv2e-thumb">
-                      {ep.poster ? (
-                        <img src={imgUrl(ep.poster)} loading="lazy" alt="" draggable={false} />
+                      {thumb ? (
+                        <img src={thumb} loading="lazy" alt="" draggable={false} />
                       ) : (
                         <div className="poster-empty">
                           <IcoClapL size={18} strokeWidth={1.8} />
@@ -1501,6 +1966,7 @@ export function DetailView({
                       <div className="dv2e-actions">
                         <span className="dv2e-play">{playing ? "◉" : "▶"}</span>
                         {seen && <span className="ep-mark seen"><IcoCheckL size={11} strokeWidth={2.2} /> 已看</span>}
+                        {!seen && progress > 0 && <span className="ep-mark now">看到 {Math.round(progress)}%</span>}
                       </div>
                       {/* [lc-1629] 每集「元数据」入口（对齐飞牛网页端每集海报的右键菜单）：
                           编辑元数据 / 手动匹配影片 / 解除匹配 / 刷新元数据。stopPropagation 防止误触播放。 */}
@@ -1521,7 +1987,6 @@ export function DetailView({
                       >
                         ⋯
                       </button>
-                      {!seen && progress > 0 && <span className="ep-mark now">看到 {Math.round(progress)}%</span>}
                       {progress > 0 && (
                         <div className="progress">
                           <div style={{ width: `${progress}%` }} />
@@ -1530,7 +1995,7 @@ export function DetailView({
                     </div>
                     <div className="dv2e-main">
                       <div className="dv2e-t">
-                        <span className="dv2e-name">第 {num} 集{ep.title ? `. ${ep.title}` : sub ? `. ${sub}` : ""}</span>
+                        <span className="dv2e-name"><span className="dv2e-epno">{epLabel}</span>{ep.title ? `. ${ep.title}` : sub ? `. ${sub}` : ""}</span>
                         {ep.quality && <span className="ep-quality">{ep.quality}</span>}
                       </div>
                       {desc && <p className="dv2e-desc">{desc}</p>}

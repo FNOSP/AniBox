@@ -127,6 +127,29 @@ export function MovieHero({
             />
           ),
         )}
+        {/* 手动切换头图：复用首页轮播的 .mist-nav 样式（无背景色，悬停出现） */}
+        {slides.length > 1 && (
+          <>
+            <button
+              type="button"
+              className="mist-nav mist-nav-prev"
+              title="上一张"
+              aria-label="上一张"
+              onClick={() => setSlideIdx((i) => (i - 1 + slides.length) % slides.length)}
+            >
+              ‹
+            </button>
+            <button
+              type="button"
+              className="mist-nav mist-nav-next"
+              title="下一张"
+              aria-label="下一张"
+              onClick={() => setSlideIdx((i) => (i + 1) % slides.length)}
+            >
+              ›
+            </button>
+          </>
+        )}
         {/* [lc-1697] 顶部薄雾 .mv-hero-topscrim 与底部/整体暗化遮罩 .mv-hero-shade
             已按用户要求删除；头图只保留背景图与内容本身，不再叠加任何装饰层。 */}
 

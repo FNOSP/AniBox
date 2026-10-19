@@ -49,3 +49,5 @@
 @import "./42-related-tmdb.css";
 /* [lc-1700] 演员页（TMDB / Bangumi 人物） */
 @import "./43-person.css";
+/* [lc-1710] 启动更新提示弹窗 */
+@import "./44-update.css";

@@ -1,8 +1,8 @@
 [package]
 name = "anibox"
-version = "0.1.0"
+version = "4.0.0"
 description = "AniBox —— 飞牛影视（fnOS）桌面客户端"
-authors = ["Fntv-Plus"]
+authors = ["AniBox"]
 edition = "2024"
 
 [lib]
@@ -30,6 +30,12 @@ urlencoding = "2"
 # （与 Fntv-Plus/bgm-mirror/worker.js verify 对齐；两 crate 版本已在 Cargo.lock 中，无新增传递依赖）
 sha2 = "0.10"
 base64 = "0.22"
+# [访问码加密] config.json 的 access_code 落盘为 AES-256-GCM 密文（enc:v1:<base64>）。
+# 只新增 aes-gcm 一个 crate（aes/ghash/aead 均为轻量纯 Rust 实现），不引入重型依赖。
+aes-gcm = "0.10"
+# [upgrade-3.9] 旧 Electron 版访问码/密码是 AES-256-CBC(hex)，迁移时需解密后重加密为 GCM。
+# `aes` 本就是 aes-gcm 的传递依赖（Cargo.lock 已有 0.8.4），这里只是把它提升为直接依赖。
+aes = "0.8"
 # [lc-1500] 在线资源（Kazumi 规则源）：HTML 解析 + URL 拼接 + 直链正则
 scraper = "0.23"
 ego-tree = "0.10"

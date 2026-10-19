@@ -6,6 +6,8 @@ export type Config = {
   username: string;
   token: string;
   password: string;
+  /** [访问码] fnOS 网关「应用访问码」：留空表示服务器未开启门禁 */
+  access_code?: string;
   auto_login: boolean;
   mpv_path: string;
   proxy_path: string;
@@ -42,7 +44,14 @@ export type BgmAccountState = {
 };
 
 
-export type Lib = { guid: string; title: string; category: string; posters?: string[] };
+export type Lib = {
+  guid: string;
+  title: string;
+  category: string;
+  posters?: string[];
+  /** [library-cover] 库自带的横图（部分 fnOS 版本 mediadb/list 会返回；形态可能是字符串或数组） */
+  backdrops?: unknown;
+};
 
 /** item/list（分页查询）返回的条目，snake_case */
 
@@ -359,6 +368,22 @@ export type AppInfo = {
   description: string;
 };
 
+/** [webview2] 后端 `check_webview2()` 的返回（camelCase）。
+ *  Windows 缺失/版本过低时前端给官方下载入口；其它平台 installed=true、source=not-required。 */
+export type Webview2Status = {
+  installed: boolean;
+  outdated: boolean;
+  version: string;
+  minimumVersion: string;
+  path: string;
+  downloadUrl: string;
+  standaloneUrl: string;
+  docsUrl: string;
+  /** registry | directory | none | not-required */
+  source: string;
+  platform: string;
+};
+
 /** [更新与维护] 更新类型：hotfix = 热补丁（无需重装）；full = 全量安装包 */
 export type UpdateType = "hotfix" | "full";
 
@@ -374,6 +399,34 @@ export type UpdateCheckResult = {
   downloadUrl: string;
   patchUrl: string;
   htmlUrl: string;
+  /** 本机平台标识（win / mac / linux）；后端按当前平台校验下载地址 */
+  platform?: string;
+  /** 本机架构标识（x64 / arm64） */
+  arch?: string;
+  /** 实际命中的更新源（自建镜像 / Gitee / 原生 GitHub） */
+  source?: string;
+  /** >0 表示命中 30s 冷却缓存，未真正请求 */
+  cooldownRemaining?: number;
+  fromCache?: boolean;
+};
+
+/** [更新与维护] `update_source_probe` 的单源探测结果 */
+export type UpdateProbeItem = {
+  id: string;
+  label: string;
+  url: string;
+  ok: boolean;
+  status?: number | null;
+  elapsedMs: number;
+  version: string;
+  error: string;
+  cooldownRemaining: number;
+  skipped: boolean;
+};
+
+export type UpdateProbeReport = {
+  items: UpdateProbeItem[];
+  cooldownRemaining: number;
 };
 
 /** [更新与维护] 后端 `update_download()` 的返回：落盘路径与字节数 */
@@ -389,6 +442,8 @@ export type UpdateProgress = {
   loaded: number;
   total: number;
   percent: number;
+  /** 瞬时速度（字节/秒）；非下载阶段为 0 */
+  speed?: number;
   message: string;
 };
 
@@ -418,6 +473,9 @@ export type AppSettings = {
   /** 弹幕引擎（camelCase 映射 Rust `danmu_engine`）："node" = 默认/稳定，"rust" = 测试版。
    *  仅在「自建弹幕接口」启用时生效；旧缓存可能缺省 → 读取时回退 "node"。 */
   danmuEngine?: "node" | "rust";
+  /** 界面不透明度百分比（60–100，默认 90）：外壳底色与侧栏玻璃面板的透明程度。
+   *  旧缓存/旧 config 缺失时前端回退 90。 */
+  uiOpacity?: number;
   /** 手柄：开关与高级参数（真值与处理均在 Rust；前端只做编辑与显示） */
   gamepadEnabled?: boolean;
   gamepadDeadzone?: number;

@@ -24,6 +24,57 @@
 .continue-card .poster-box {
   aspect-ratio: 16 / 10;
 }
+/* 继续观看卡片中间的播放按钮：点击直接续播；卡片其它区域点击进详情 */
+.continue-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 46px;
+  height: 46px;
+  padding: 0 0 2px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 50%;
+  background: rgba(16, 20, 30, 0.55);
+  color: #fff;
+  font-size: 17px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  transition: background 0.18s ease, transform 0.18s ease, opacity 0.18s ease;
+  z-index: 3;
+  /* 默认隐藏，悬停卡片时出现 */
+  opacity: 0;
+  pointer-events: none;
+}
+.continue-card:hover .continue-play,
+.continue-card:focus-within .continue-play {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* 触屏设备没有 hover：始终显示 */
+@media (hover: none) {
+  .continue-play {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.continue-play:hover {
+  background: rgba(108, 155, 255, 0.85);
+  transform: translate(-50%, -50%) scale(1.06);
+}
+.continue-play:active {
+  transform: translate(-50%, -50%) scale(0.96);
+}
+/* 已有中间播放按钮，不再显示 hover 的「▶ 续播」胶囊 */
+.continue-card .card-hover {
+  display: none;
+}
 
 /* [lc-1646] 继续观看：标题与信息行都居中（用户要求），与海报视觉居中对齐 */
 .continue-card .card-title,

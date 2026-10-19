@@ -68,6 +68,20 @@
   /* 比单栏面板宽一些：左侧标签固定列 + 内容列；仍受 94vw 约束，窄窗不溢出 */
   width: min(780px, 94vw);
 }
+
+/* 关闭动画：遮罩淡出 + 卡片微缩下沉（与 GuestLoginPrompt 同一套 keyframes） */
+.ddet-mask.set-mask-closing {
+  animation: gstMaskOut 0.17s ease forwards;
+}
+.ddet-mask.set-mask-closing .set-card {
+  animation: gstModalOut 0.17s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ddet-mask.set-mask-closing,
+  .ddet-mask.set-mask-closing .set-card {
+    animation: none;
+  }
+}
 .set-layout {
   display: flex;
   flex: 1 1 auto;
@@ -650,7 +664,16 @@
 .set-btn.primary {
   color: #fff;
   background: var(--accent);
-  border-color: transparent;
+  /* 完整复位 .set-btn 的尺寸：避免与 10-login.css 的通用 .primary
+     （margin-top:16px / padding:12px / font-size:14px / box-shadow）串味，
+     导致扫码登录等主按钮被顶偏、比同行按钮高。 */
+  border: 1px solid transparent;
+  border-radius: 9px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+  box-shadow: none;
 }
 .set-btn.primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 82%, #000);
@@ -807,6 +830,10 @@
 .set-pad-slider {
   align-items: center;
 }
+/* 通用滑块行（外观 → 界面透明度等）：与手柄滑块同一套 .set-range-* 控件 */
+.set-slider-row {
+  align-items: center;
+}
 .set-range-wrap {
   display: flex;
   align-items: center;
@@ -932,3 +959,83 @@
 }
 
 
+
+/* ── [danmaku-diagnose] 自建源手动诊断 ──
+   结果面板与设置行同色系：容器用 --hover，条目只做文字色区分（ok/warn/fail），
+   避免在深浅主题下写死底色。关键词输入复用 .set-input，仅收窄宽度。 */
+.set-diag-kw {
+  width: 240px;
+  flex: 0 1 240px;
+}
+.set-diag {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--hover);
+}
+.set-diag-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.set-diag-head .set-k {
+  margin-right: auto;
+}
+.set-diag-src {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.set-diag-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.set-diag-item {
+  display: grid;
+  grid-template-columns: 18px auto auto 1fr;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.set-diag-ico {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.set-diag-label {
+  font-weight: 600;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+.set-diag-time {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.set-diag-detail {
+  min-width: 0;
+  word-break: break-word;
+}
+.set-diag-item.warn .set-diag-label {
+  color: #d99a2b;
+}
+.set-diag-item.fail .set-diag-label {
+  color: #e5484d;
+}
+.set-diag-err {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #e5484d;
+  word-break: break-word;
+}
+.set-diag-run {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}

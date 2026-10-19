@@ -1,12 +1,13 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Clapperboard as IcoClapL, Film as IcoFilmL, Settings as IcoGearL, X as IcoXL } from "lucide-react";
+import { Clapperboard as IcoClapL, Film as IcoFilmL, ImagePlus as IcoImagePlusL, RotateCcw as IcoRotateL, Settings as IcoGearL, X as IcoXL } from "lucide-react";
 import { PosterCard } from "../common/PosterCard";
 import { ScrollRow } from "../common/ScrollRow";
 import { CarouselView } from "./CarouselView";
 import { pick } from "../../lib/format";
-import { imgUrl } from "../../lib/images";
+import { imgUrl, pickLargestImg } from "../../lib/images";
+import { loadCustomCovers, resetLibraryCover, resolveDefaultCover, uploadLibraryCover } from "../../lib/libCovers";
 import { ChromeTone, Lib, MediaItem, PlayItem, PlayTarget } from "../../types";
 
 /** [lc-1646] 去掉标题里的装饰性音乐符号（飞牛单集标题里常见 ♪ ♫ 等），用户明确不要出现。 */
@@ -57,6 +58,12 @@ export function HomeView({
   onRefreshMeta?: (item: MediaItem) => void;
 }) {
   const [manageOpen, setManageOpen] = useState(false);
+  // [library-cover] 自定义封面（libGuid → /__cover/<file>）与默认横图封面（libGuid → 图片地址）
+  const [customCovers, setCustomCovers] = useState<Record<string, string>>({});
+  const [defaultCovers, setDefaultCovers] = useState<Record<string, string>>({});
+  const [coverBusy, setCoverBusy] = useState<string | null>(null);
+  const coverInputRef = useRef<HTMLInputElement | null>(null);
+  const coverTargetLib = useRef<string | null>(null);
   const shownLibs = libs.filter((l) => !hiddenLibs.includes(l.guid));
   // [lc-1439] 启动页 = 继续观看：等「继续观看」区块渲染出来后把它滚到视口顶部。
   //   用 ref + scrollIntoView 而不是算像素：hero 是 100vh，偏移量随窗口高度变，
@@ -107,6 +114,80 @@ export function HomeView({
     return () => window.clearTimeout(t);
   }, []);
 
+  // [library-cover] 启动时读回已保存的自定义封面映射（重启后仍生效）。
+  useEffect(() => {
+    let dead = false;
+    loadCustomCovers()
+      .then((map) => {
+        if (!dead) setCustomCovers(map);
+      })
+      .catch(() => {});
+    return () => {
+      dead = true;
+    };
+  }, []);
+
+  // [library-cover] 默认封面：复用首页已加载的库条目，取最新一条的横图（内部带 6h TTL 缓存）。
+  //   每个库最多一次 get_item_detail（Rust 侧还有 120 天落盘缓存），不会随滚动重复请求。
+  useEffect(() => {
+    let dead = false;
+    for (const { lib, items } of libRows) {
+      if (!items.length) continue;
+      resolveDefaultCover(lib.guid, items)
+        .then((url) => {
+          if (dead || !url) return;
+          setDefaultCovers((prev) => (prev[lib.guid] === url ? prev : { ...prev, [lib.guid]: url }));
+        })
+        .catch(() => {});
+    }
+    return () => {
+      dead = true;
+    };
+  }, [libRows]);
+
+  const pickCover = (libGuid: string) => {
+    coverTargetLib.current = libGuid;
+    coverInputRef.current?.click();
+  };
+
+  const onCoverFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // 允许连续选同一文件
+    const libGuid = coverTargetLib.current;
+    coverTargetLib.current = null;
+    if (!file || !libGuid) return;
+    if (!file.type.startsWith("image/")) {
+      window.alert("请选择图片文件（JPG / PNG / WebP / GIF 等）");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      window.alert("封面图片不能超过 10MB");
+      return;
+    }
+    setCoverBusy(libGuid);
+    try {
+      const url = await uploadLibraryCover(libGuid, file);
+      setCustomCovers((prev) => ({ ...prev, [libGuid]: url }));
+    } catch (err) {
+      window.alert(`更换封面失败：${String(err)}`);
+    } finally {
+      setCoverBusy(null);
+    }
+  };
+
+  const restoreDefaultCover = async (libGuid: string) => {
+    try {
+      await resetLibraryCover(libGuid);
+      setCustomCovers((prev) => {
+        const next = { ...prev };
+        delete next[libGuid];
+        return next;
+      });
+    } catch (err) {
+      window.alert(`恢复默认封面失败：${String(err)}`);
+    }
+  };
+
   return (
     <main className="content home-full" ref={homeRef}>
       {/* 全屏 hero 轮播 + 底部媒体库条（Emby 布局） */}
@@ -120,31 +201,65 @@ export function HomeView({
           onTone={onHeroTone}
         />
         <div className="lib-strip">
-          {shownLibs.map((lib) => (
-            <div key={lib.guid} className="lib-strip-card" onClick={() => onOpenLib(lib)}>
-              <div className="lsc-bg">
-                {lib.posters && lib.posters[0] ? (
-                  <img src={imgUrl(lib.posters[0])} loading="lazy" alt={lib.title} />
-                ) : (
-                  <div className="poster-empty"><IcoClapL size={22} strokeWidth={1.8} /></div>
+          {shownLibs.map((lib) => {
+            // [library-cover] 优先级：自定义封面 → 最新条目横图 → 库自带横图 → 库海报。
+            const cover =
+              customCovers[lib.guid] ||
+              defaultCovers[lib.guid] ||
+              pickLargestImg(lib.backdrops) ||
+              (lib.posters && lib.posters[0]) ||
+              "";
+            return (
+              <div key={lib.guid} className="lib-strip-card" onClick={() => onOpenLib(lib)}>
+                <div className="lsc-bg">
+                  {cover ? (
+                    <img src={imgUrl(cover)} loading="lazy" alt={lib.title} />
+                  ) : (
+                    <div className="poster-empty"><IcoClapL size={22} strokeWidth={1.8} /></div>
+                  )}
+                </div>
+                <div className="lsc-shade" />
+                <div className="lsc-title">{lib.title}</div>
+                <div className="lsc-cat">{lib.category}</div>
+                <button
+                  type="button"
+                  className="lsc-cover"
+                  title={coverBusy === lib.guid ? "上传中…" : "更换封面"}
+                  disabled={coverBusy === lib.guid}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    pickCover(lib.guid);
+                  }}
+                >
+                  <IcoImagePlusL size={13} strokeWidth={1.8} />
+                </button>
+                {customCovers[lib.guid] && (
+                  <button
+                    type="button"
+                    className="lsc-cover lsc-cover-reset"
+                    title="恢复默认封面"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void restoreDefaultCover(lib.guid);
+                    }}
+                  >
+                    <IcoRotateL size={13} strokeWidth={1.8} />
+                  </button>
                 )}
+                <button
+                  type="button"
+                  className="lsc-hide"
+                  title="首页不展示该库"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleHiddenLib(lib.guid);
+                  }}
+                >
+                  <IcoXL size={13} strokeWidth={1.8} />
+                </button>
               </div>
-              <div className="lsc-shade" />
-              <div className="lsc-title">{lib.title}</div>
-              <div className="lsc-cat">{lib.category}</div>
-              <button
-                type="button"
-                className="lsc-hide"
-                title="首页不展示该库"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleHiddenLib(lib.guid);
-                }}
-              >
-                <IcoXL size={13} strokeWidth={1.8} />
-              </button>
-            </div>
-          ))}
+            );
+          })}
           <div
             className={`lsc-manage ${shownLibs.length === 0 ? "always" : ""}`}
             title="管理首页媒体库展示"
@@ -153,6 +268,14 @@ export function HomeView({
             <IcoGearL size={15} strokeWidth={1.8} /> 管理
           </div>
         </div>
+        {/* [library-cover] 隐藏的文件选择器：卡片上的「更换封面」按钮触发 */}
+        <input
+          ref={coverInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: "none" }}
+          onChange={onCoverFile}
+        />
         {manageOpen && (
           <>
             <div className="lsc-pop-mask" onClick={() => setManageOpen(false)} />
@@ -219,7 +342,23 @@ export function HomeView({
                 <div
                   key={guid}
                   className="card continue-card"
-                  onClick={() => onPlay({ guid, title: rawTitle || mainTitle, tvTitle })}
+                  onClick={() => {
+                    // 点卡片空白处 → 进该剧详情；中间播放按钮单独直接播放
+                    const parentGuid = String(
+                      pick(raw, ["parent_guid", "parentGuid", "series_guid", "seriesGuid"]) ?? "",
+                    );
+                    onOpenItem({
+                      guid: parentGuid || guid,
+                      title: mainTitle,
+                      tv_title: tvTitle || undefined,
+                      type,
+                      poster,
+                      season_number: sn,
+                      episode_number: en,
+                      ts,
+                      duration,
+                    });
+                  }}
                 >
                   <div className="poster-box wide">
                     {poster ? (
@@ -227,6 +366,19 @@ export function HomeView({
                     ) : (
                       <div className="poster-empty"><IcoFilmL size={22} strokeWidth={1.8} /></div>
                     )}
+                    {/* 中间播放按钮：只负责直接续播，阻止冒泡避免触发卡片进详情 */}
+                    <button
+                      type="button"
+                      className="continue-play"
+                      title="直接播放"
+                      aria-label="直接播放"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onPlay({ guid, title: rawTitle || mainTitle, tvTitle });
+                      }}
+                    >
+                      ▶
+                    </button>
                     <div className="card-hover">
                       <span className="play-pill">▶ 续播</span>
                     </div>

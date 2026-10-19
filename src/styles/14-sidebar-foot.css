@@ -78,6 +78,7 @@
   margin-top: -3px;
 }
 .sa-btn {
+  position: relative;
   box-sizing: border-box;
   width: calc(100% - 28px);
   margin: 0 14px;
@@ -142,6 +143,7 @@
   flex-wrap: wrap;
 }
 .sa-ico {
+  position: relative;
   box-sizing: border-box;
   width: 38px;
   height: 36px;
@@ -177,6 +179,61 @@
   background: var(--glass-btn-bg);
   color: var(--glass-text);
   transform: none;
+}
+/* [lc-1701] 反馈未读角标：收起态贴图标右上角，展开态贴按钮右侧居中。
+   红底白字 + 与卡片同色的描边环，保证在玻璃底和深浅主题上都清楚。 */
+.sa-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  box-sizing: border-box;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #e5484d;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 2px var(--glass-bg);
+  pointer-events: none;
+  animation: saBadgeIn 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.sa-btn .sa-badge {
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+}
+@keyframes saBadgeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.sa-btn .sa-badge {
+  animation-name: saBadgeInY;
+}
+@keyframes saBadgeInY {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-50%) scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sa-badge {
+    animation: none;
+  }
 }
 .side-toast {
   position: fixed;

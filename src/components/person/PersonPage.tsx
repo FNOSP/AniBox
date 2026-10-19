@@ -10,7 +10,12 @@ import { bgmImg, tmdbImg } from "../../lib/images";
 import type { PersonInfo, PersonSource, PersonTarget, PersonWork } from "../../types";
 import { PersonWorkCard } from "./PersonWorkCard";
 
-type Filter = "all" | "series" | "movie";
+type Filter = "all" | "series" | "movie" | "stock";
+
+/** [lc-1701] 作品稳定键：与去重口径一致，用于把后端匹配结果映射回卡片 */
+function workKey(w: PersonWork): string {
+  return w.tmdbId ? `t${w.tmdbId}` : w.bgmId ? `b${w.bgmId}` : `${w.title}|${w.year ?? ""}`;
+}
 
 /** TMDB 部门名 → 中文（未知原样展示） */
 const DEPARTMENT_CN: Record<string, string> = {
@@ -55,7 +60,7 @@ function dedupeWorks(works: PersonWork[]): PersonWork[] {
   const seen = new Set<string>();
   const out: PersonWork[] = [];
   for (const w of works) {
-    const key = w.tmdbId ? `t${w.tmdbId}` : w.bgmId ? `b${w.bgmId}` : `${w.title}|${w.year ?? ""}`;
+    const key = workKey(w);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(w);
@@ -134,6 +139,10 @@ export function PersonPage({
   const [nonce, setNonce] = useState(0);
   const [filter, setFilter] = useState<Filter>("all");
   const [bioOpen, setBioOpen] = useState(false);
+  // [lc-1701] 入库状态：ok 才会显示徽章/「已入库」筛选；失败或空库静默降级
+  const [stock, setStock] = useState<{ state: "idle" | "loading" | "ok" | "fail"; owned: Set<string> }>(
+    { state: "idle", owned: new Set() },
+  );
 
   useEffect(() => {
     let alive = true;
@@ -159,21 +168,64 @@ export function PersonPage({
   }, [target.source, target.id, nonce]);
 
   const works = info?.works ?? [];
+
+  /* [lc-1701] 作品入库匹配：人物资料到位后一次性批量请求（后端拉一次库、本地比对），
+     失败/无库数据不阻塞页面，仅不显示徽章。 */
+  useEffect(() => {
+    const list = info?.works ?? [];
+    if (!info || list.length === 0) {
+      setStock({ state: "idle", owned: new Set() });
+      return;
+    }
+    let alive = true;
+    setStock({ state: "loading", owned: new Set() });
+    invoke<{ owned?: boolean[]; guids?: (string | null)[] }>("match_library_works", {
+      arg: {
+        works: list.map((w) => ({
+          tmdbId: w.tmdbId ?? null,
+          bgmId: w.bgmId ?? null,
+          title: w.title ?? "",
+          originalTitle: w.originalTitle ?? "",
+          year: w.year ?? null,
+          mediaType: w.mediaType,
+        })),
+      },
+    })
+      .then((r) => {
+        if (!alive) return;
+        const owned = new Set<string>();
+        const flags = Array.isArray(r?.owned) ? r.owned : [];
+        list.forEach((w, i) => {
+          if (flags[i]) owned.add(workKey(w));
+        });
+        setStock({ state: "ok", owned });
+      })
+      .catch(() => {
+        if (alive) setStock({ state: "fail", owned: new Set() });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [info]);
+
   const counts = useMemo(() => {
     let movie = 0;
     let series = 0;
+    let stocked = 0;
     for (const w of works) {
       const b = bucketOf(w);
       if (b === "movie") movie += 1;
       else if (b === "series") series += 1;
+      if (stock.owned.has(workKey(w))) stocked += 1;
     }
-    return { total: works.length, movie, series };
-  }, [works]);
+    return { total: works.length, movie, series, stock: stocked };
+  }, [works, stock]);
 
-  const shown = useMemo(
-    () => (filter === "all" ? works : works.filter((w) => bucketOf(w) === filter)),
-    [works, filter],
-  );
+  const shown = useMemo(() => {
+    if (filter === "all") return works;
+    if (filter === "stock") return works.filter((w) => stock.owned.has(workKey(w)));
+    return works.filter((w) => bucketOf(w) === filter);
+  }, [works, filter, stock]);
 
   const displayName = info?.name || target.name;
   const avatar = info?.profile || profileUrl(target.source, target.profile);
@@ -192,6 +244,8 @@ export function PersonPage({
     { key: "series", label: "剧集", n: counts.series },
     { key: "movie", label: "电影", n: counts.movie },
   ];
+  // [lc-1701] 库数据可用时才出现「已入库」筛选（失败/无库不显示空标签）
+  if (stock.state === "ok") tabs.push({ key: "stock", label: "已入库", n: counts.stock });
 
   const retry = useCallback(() => setNonce((n) => n + 1), []);
 
@@ -277,6 +331,14 @@ export function PersonPage({
                 <span>
                   <b>{counts.series}</b> 部剧集
                 </span>
+                {stock.state === "ok" && (
+                  <>
+                    <span className="sep" aria-hidden="true" />
+                    <span>
+                      <b>{counts.stock}</b> 部已入库
+                    </span>
+                  </>
+                )}
               </div>
               {bio && (
                 <div className={`pp-bio${bioOpen ? " open" : ""}`}>
@@ -326,6 +388,7 @@ export function PersonPage({
                   key={`${w.tmdbId ?? w.bgmId ?? w.title}-${i}`}
                   work={w}
                   index={i}
+                  owned={stock.owned.has(workKey(w))}
                   onOpen={onOpenWork}
                 />
               ))}

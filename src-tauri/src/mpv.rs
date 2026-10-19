@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
 /// 观察 id ↔ 属性名（前端 switch 依赖这些 id；6=fullscreen 只用于镜像到 Tauri 窗口）
-const OBSERVED: [(u64, &str); 9] = [
+const OBSERVED: [(u64, &str); 13] = [
     (1, "time-pos"),
     (2, "duration"),
     (3, "pause"),
@@ -31,6 +31,16 @@ const OBSERVED: [(u64, &str); 9] = [
     (7, "paused-for-cache"),
     (8, "cache-buffering-state"),
     (9, "idle-active"),
+    // [playlist] 当前播放列表位置/总数：整季播放列表下，前端与 uosc 都能据此显示「第 N/M 集」。
+    (10, "playlist-pos"),
+    (11, "playlist-count"),
+    // [progress] 百分比进度（0..100，mpv 在时长已知后才会给出）：前端可直接用于展示/上报，
+    // 但进度回传仍以 time-pos/duration 为准（percent-pos 在时长为 0 时是 null）。
+    (12, "percent-pos"),
+    // [progress] 当前播放条目的文件名/URL：整季播放列表自动切集后，前端据此解析出
+    // 「当前正在播的是哪一集（guid）」，把进度回传给飞牛对应的 item（旧项目同做法：
+    // 从 `/api/v1/playvideo/<guid>` 的 URL 里取 guid）。
+    (13, "filename"),
 ];
 
 pub struct MpvSession {
@@ -150,9 +160,9 @@ impl MpvSession {
             // 但加载失败时 mpv 会自动跑 `ytdl_hook/on_load_fail`（实测会去叫 yt-dlp，白折腾 0.3s+
             // 并污染日志）。关掉让失败路径干净。
             "--ytdl=no".to_string(),
-            // [lc-105] mpv 的 Windows 默认是 --player-operation-mode=pseudo-gui，它自带
-            // 「拖画面移动窗口」→ 用户反馈"能随意在坑里拖动"。嵌入场景一律关掉。
-            "--window-dragging=no".to_string(),
+            // 允许拖动画面/边缘移动窗口（border=no 时这是唯一的拖动方式）。
+            // 之前关掉是为了避免误拖，但用户反馈窗口无法移动，这里恢复默认行为。
+            "--window-dragging=yes".to_string(),
             format!("--log-file={}", log_path.to_string_lossy()),
         ];
         // [lc-1559] 启动即加载（可选）：命令行直接带 M3U8/URL ⇒ 无 idle 空窗，
@@ -316,6 +326,25 @@ impl MpvSession {
                     let Some(id) = v.get("id").and_then(|i| i.as_u64()) else {
                         continue;
                     };
+                    // [progress] 退出兜底：在 Rust 侧维护最后位置/当前集（见 fnos_progress）。
+                    match id {
+                        1 => {
+                            if let Some(d) = v.get("data").and_then(|x| x.as_f64()) {
+                                crate::fnos_progress::tick(d, 0.0);
+                            }
+                        }
+                        2 => {
+                            if let Some(d) = v.get("data").and_then(|x| x.as_f64()) {
+                                crate::fnos_progress::tick(0.0, d);
+                            }
+                        }
+                        13 => {
+                            if let Some(s) = v.get("data").and_then(|x| x.as_str()) {
+                                crate::fnos_progress::set_item_from_url(s);
+                            }
+                        }
+                        _ => {}
+                    }
                     if id == 6 {
                         // [lc-093] fullscreen 现在承载两件事：① App 形态（内嵌/全页）的镜像；
                         // ② uosc 底栏双形态的判据（uosc 用 mp.get_property_bool('fullscreen')
@@ -350,6 +379,16 @@ impl MpvSession {
                 // 否则页面里会留下一个"坑"：洞还在挖，但宿主窗后面没人画（子窗消失后不会自动擦底），
                 // 于是透出主窗的亚克力浅色底 —— 就是用户报的「把 mpv 窗口关闭后那里直接是个坑」。
                 // [lc-106] 独立窗口模式：mpv 自己的窗没了就是没了，无需处理页面上的"坑"。
+                //
+                // [progress] 读线程结束 = mpv 已退出（关窗/崩溃/被杀）。此时 mpv 不可能再发
+                // `end-file`，若不在这里补一个「结束」事件，前端最后一小段进度就永远不会 flush。
+                // 统一走 `mpv-load {phase:"ended"}`（前端在 ended 里结算进度；重复结算幂等）。
+                // [progress] 同时由 Rust 直接落盘一次（App 正在退出时前端 invoke 可能来不及）。
+                crate::fnos_progress::flush_on_exit(app2.clone());
+                let _ = app2.emit(
+                    "mpv-load",
+                    json!({ "phase": "ended", "reason": "ipc-closed" }),
+                );
                 crate::libmpv::trace("IPC 读线程结束（mpv 退出或管道断开）");
             });
         }

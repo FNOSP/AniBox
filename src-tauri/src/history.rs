@@ -718,7 +718,16 @@ pub fn record(app: &AppHandle, rec: WatchRecord) {
     bump_day(&mut days, &today_key(), &series_key, rec.source != "webrs");
     save_days(app, &days);
     // 通知前端「刚起播的是哪一条」：mpv 事件流不带 guid，前端靠这条事件知道该把时长回填给谁。
-    let _ = app.emit("history-recorded", json!({ "guid": rec.guid, "playedAt": rec.played_at }));
+    // [progress] 一并带上 source / seriesKey：前端据此决定要不要回传飞牛（webrs 不回传）。
+    let _ = app.emit(
+        "history-recorded",
+        json!({
+            "guid": rec.guid,
+            "playedAt": rec.played_at,
+            "source": rec.source,
+            "seriesKey": series_key,
+        }),
+    );
 }
 
 /// [lc-1631] 播放结束回填：把前端统计到的真实观看时长/进度/看完状态补进对应记录。
@@ -736,6 +745,81 @@ pub fn backfill_session(app: &AppHandle, guid: &str, watched_ms: u64, progress: 
         r.finished = r.finished || finished;
         save(app, &list);
     }
+}
+
+/// [progress] 进度上报纯逻辑（供单测）：把「当前位置 / 总时长」合并进一条记录。
+///
+/// 语义（与 [`backfill_session`] 一致，只增不减，避免 seek/乱序把数据冲小）：
+///   · `duration_ms`：仅在拿到更大值时补齐（起播时可能未知）；
+///   · `watched_ms`：取 `max(旧, position)` —— 位置是「实际看到哪」的下界；
+///   · `progress`：`position / duration` 夹到 0..1，取较大值；
+///   · `finished`：进度 ≥ 98% 时置真（与前端 92% 阈值口径独立，后端只做兜底）。
+///
+/// 返回是否有字段变化（调用方据此决定要不要落盘）。
+fn apply_progress(r: &mut WatchRecord, position_ms: u64, duration_ms: u64) -> bool {
+    let mut changed = false;
+    if duration_ms > r.duration_ms {
+        r.duration_ms = duration_ms;
+        changed = true;
+    }
+    if position_ms > r.watched_ms {
+        r.watched_ms = position_ms;
+        changed = true;
+    }
+    let dur = if duration_ms > 0 {
+        duration_ms
+    } else {
+        r.duration_ms
+    };
+    if dur > 0 {
+        let p = (position_ms as f64 / dur as f64).clamp(0.0, 1.0);
+        if p > r.progress {
+            r.progress = p;
+            changed = true;
+        }
+        if p >= 0.98 && !r.finished {
+            r.finished = true;
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// [progress] 播放中定期 / 暂停 / 切集 / 退出时回传进度：**只更新已有记录，绝不新增**。
+///
+/// 为什么按 `guid` 找：`guid` 来自 `history-recorded`（起播时后端刚写的那条），
+/// 而 `history::record` 已按剧级 `series_key` 去重 —— 因此这里命中的就是「这部剧」的唯一
+/// 记录，同一部剧重复观看不会多出记录。找不到（记录已被裁剪/竞态）时静默忽略。
+pub fn update_progress(app: &AppHandle, guid: &str, position_ms: u64, duration_ms: u64) -> bool {
+    if guid.is_empty() {
+        return false;
+    }
+    let _guard = LOCK.lock();
+    let mut list = load(app);
+    let Some(r) = list.iter_mut().find(|r| r.guid == guid) else {
+        return false;
+    };
+    let changed = apply_progress(r, position_ms, duration_ms);
+    let series_key = series_key_of(r);
+    if changed {
+        save(app, &list);
+    }
+    // [heat] 兜底：只要「有进度回传」就确保这部剧今天在日级台账里（按剧去重，重复不计数）。
+    // 起播时 history::record 已经写过一次；这里只补「当时没写成/被裁掉」的缺口，
+    // 正常路径下 `series` 已包含该键 → 不重复计数、也不额外写盘。
+    if !series_key.trim().is_empty() {
+        let today = today_key();
+        let mut days = load_days(app);
+        let already = days
+            .get(&today)
+            .map(|d| d.series.contains(series_key.trim()))
+            .unwrap_or(false);
+        if !already {
+            bump_day(&mut days, &today, &series_key, true);
+            save_days(app, &days);
+        }
+    }
+    changed
 }
 
 /// 插入/更新（纯函数，供单测）：**同一部剧（series_key）**用新记录覆盖、空字段从旧记录补齐；
@@ -1327,6 +1411,51 @@ mod tests {
             source: "fnos".into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn apply_progress_merges_monotonically() {
+        let mut r = rec("g1", 1);
+        // 起播：时长未知，位置 30s → 进度按已知时长算（0 时不写 progress）
+        assert!(apply_progress(&mut r, 30_000, 0));
+        assert_eq!(r.watched_ms, 30_000);
+        assert_eq!(r.progress, 0.0);
+        // 拿到总时长（20 分钟）→ 进度 2.5%
+        assert!(apply_progress(&mut r, 30_000, 1_200_000));
+        assert_eq!(r.duration_ms, 1_200_000);
+        assert!((r.progress - 0.025).abs() < 1e-9);
+        // 往回 seek 不应把已有进度/观看时长冲小
+        assert!(!apply_progress(&mut r, 10_000, 1_200_000));
+        assert_eq!(r.watched_ms, 30_000);
+        assert!((r.progress - 0.025).abs() < 1e-9);
+        // 播到 98% 以上 → finished
+        assert!(apply_progress(&mut r, 1_190_000, 1_200_000));
+        assert!(r.finished);
+        assert!(r.progress >= 0.98);
+        // 已 finished 后重复上报同一位置 → 无变化（避免频繁写盘）
+        assert!(!apply_progress(&mut r, 1_190_000, 1_200_000));
+    }
+
+    #[test]
+    fn series_upsert_keeps_single_record() {
+        // 纯逻辑层面：apply_progress 只改传入记录；这里断言「同一部剧再次起播不新增记录」
+        // （update_progress 只 find 不 insert 由实现保证，单测不依赖 AppHandle）。
+        let mut list = vec![rec("g1", 1)];
+        let before = list.len();
+        let series = series_key_of(&list[0]);
+        upsert(
+            &mut list,
+            WatchRecord {
+                guid: "g2".into(),
+                title: "T-g1".into(),
+                played_at: 2,
+                source: "fnos".into(),
+                series_key: series,
+                ..Default::default()
+            },
+        );
+        // 同一部剧第二次起播仍是同一条记录（剧级去重），不是新增
+        assert_eq!(list.len(), before);
     }
 
     #[test]

@@ -87,8 +87,11 @@ function loadModule() {
     if (!fs.existsSync(jsPath)) {
         throw new Error('bili_danmaku.js 不存在: ' + jsPath);
     }
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const mod = require(jsPath);
+    // [fix-bili-esm] 不能用 require(jsPath)：脚本位于 mpv 便携目录，开发态在仓库内，
+    // 最近 package.json 的 "type": "module" 会让 Node 把 .js 当 ESM 执行
+    // （require is not defined in ES module scope / 空命名空间）⇒ B站分支恒失败。
+    // 改由 deps 的 loadCjsModule 以标准 CJS 语义求值（__dirname/相对 require 语义不变）。
+    const mod = require("./danmu-api-deps.cjs").loadCjsModule(jsPath);
     if (!logSinkBound && typeof mod.setLogSink === 'function') {
         // 把弹幕脚本内部日志转发到主进程 logger（进 app.log），便于排查
         mod.setLogSink((line) => log.info('[bili_danmaku] ' + line));

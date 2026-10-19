@@ -60,6 +60,7 @@ exports.isValidBase = isValidBase;
 exports.consumeLastFailReason = consumeLastFailReason;
 exports.normalizeTitle = normalizeTitle;
 exports.splitSeason = splitSeason;
+exports.exactMatchTier = exactMatchTier;
 exports.extractEpisodeTitle = extractEpisodeTitle;
 exports.autoFetch = autoFetch;
 exports.candidates = candidates;
@@ -411,17 +412,144 @@ async function getJson(u, timeoutMs) {
     }
 }
 // ===================== 标题相关性 =====================
+/**
+ * 常见异体/繁简写法 → 统一字符。中文番名在聚合源里「身分/身份」「分/份」「里/裏」
+ * 混用极普遍（实测主标题「…自己身为圣女」与源条目「…圣女的身分」判不相等）。
+ * 只做**确定等价**的字符级替换，不做任何词义猜测；两个方向都映射到同一规范字，
+ * 因此无论哪一侧用哪种写法都能归一。表按实际数据出现频率补充。
+ */
+const TITLE_VARIANT_MAP = {
+    '份': '分', '裏': '里', '裡': '里', '臺': '台', '檯': '台',
+    '為': '为', '與': '与', '這': '这', '說': '说', '們': '们',
+    '個': '个', '隻': '只', '著': '着', '麼': '么', '處': '处',
+    '衛': '卫', '髮': '发', '鬥': '斗', '啟': '启', '歷': '历',
+};
+function applyVariantMap(s) {
+    return String(s || '').replace(/./g, (ch) => TITLE_VARIANT_MAP[ch] || ch);
+}
 /** 归一化番名：去年份/类型标签/来源后缀/包裹符号/装饰符，与 biliDanmaku.ts:32 的清洗口径一致并更激进。 */
 function normalizeTitle(s) {
-    return String(s || '')
+    return applyVariantMap(String(s || '')
+        // NFKC 先把全角字母/数字/符号折成半角（全角「：」「１」等），再去标点才彻底
+        .normalize('NFKC')
         .replace(/【[^】]*】/g, '')
         .replace(/[\[(（](?:19|20)\d{2}[\])）]/g, '')
         // 末尾「from <平台>」后缀必须锚定行尾、且不能用 \bfrom：标题以 ASCII 数字结尾时
         // （《流浪地球2》去年份后成「流浪地球2from 360」）数字与 f 之间无词边界，\b 会整段漏剥
         // （实测产出「流浪地球2from360」，精确匹配退化为前缀匹配）。锚定行尾也避免误伤片名含 From 的作品。
         .replace(/\s*from\s+[a-z0-9]+\s*$/i, '')
-        .replace(/[『』「」〔〕《》〈〉""''（）()·:：!！?？,，.。、\-_—~～△▲★☆♥・\s]/g, '')
+        .replace(/[『』「」〔〕《》〈〉""''（）()·:：!！?？,，.。、\-_—~～△▲★☆♥・\s]/g, ''))
         .toLowerCase();
+}
+/**
+ * 剥「副标题」：只对含中日韩文字的标题生效，避免把 `Fate: Zero` 这类英文标题
+ * 切到只剩 `fate` 造成跨作品误配。分隔符只认中文逗号/冒号与两侧带空格的破折号；
+ * 首段至少 3 字才采用（`悬案 - 矢量` 首段仅 2 字不剥，交给 keywordCandidates 处理）。
+ */
+function stripSubtitle(s) {
+    const raw = String(s || '').trim();
+    if (!/[\u3400-\u9fff]/.test(raw))
+        return raw;
+    const m = raw.match(/[，,：:]|\s[-–—]\s/);
+    if (!m || m.index <= 0)
+        return raw;
+    const head = raw.slice(0, m.index).trim();
+    return head.length >= 3 ? head : raw;
+}
+function levenshtein(a, b) {
+    const m = a.length, n = b.length;
+    if (!m)
+        return n;
+    if (!n)
+        return m;
+    let prev = Array.from({ length: n + 1 }, (_, j) => j);
+    for (let i = 1; i <= m; i++) {
+        const cur = [i];
+        for (let j = 1; j <= n; j++) {
+            cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        }
+        prev = cur;
+    }
+    return prev[n];
+}
+/** 字符级 Dice（多重集）：对「改词换句」的同一作品比二元组更稳，实测长副标题差异下仍保留 0.67。 */
+function diceUnigram(a, b) {
+    if (!a || !b)
+        return 0;
+    const counts = new Map();
+    for (const ch of a)
+        counts.set(ch, (counts.get(ch) || 0) + 1);
+    let common = 0;
+    for (const ch of b) {
+        const n = counts.get(ch) || 0;
+        if (n > 0) {
+            common++;
+            counts.set(ch, n - 1);
+        }
+    }
+    return (2 * common) / (a.length + b.length);
+}
+/**
+ * 「续作数字尾缀」判定：《命运石之门》vs《命运石之门0》、《流浪地球》vs《流浪地球2》
+ * 这类只差尾部数字/罗马数字的，是**不同作品**，包含/相似度层级一律拒收（季号由 splitSeason 处理）。
+ */
+function isSequelVariant(longer, shorter) {
+    if (longer.length <= shorter.length)
+        return false;
+    if (longer.slice(0, shorter.length) !== shorter)
+        return false;
+    return /^[0-9ivxlcdm]+$/i.test(longer.slice(shorter.length));
+}
+/** 包含/前缀匹配（保守）：两串都 ≥4 字、长度比 ≥0.5，且不是「续作数字尾缀」。 */
+function containmentMatch(a, b) {
+    if (!a || !b)
+        return false;
+    const min = Math.min(a.length, b.length);
+    const max = Math.max(a.length, b.length);
+    if (min < 4 || min / max < 0.5)
+        return false;
+    const [longer, shorter] = a.length >= b.length ? [a, b] : [b, a];
+    if (!longer.includes(shorter))
+        return false;
+    return !isSequelVariant(longer, shorter);
+}
+/**
+ * 字符相似度（保守）：两串都 ≥5 字、长度比 ≥0.8、前 2 字相同、非续作数字尾缀，
+ * 取 Levenshtein 相似度与字符 Dice 的较大值。阈值 0.8 —— 低于此值宁可判未命中
+ * （挂错片比没弹幕更糟，lc-1109 原则不变）。
+ */
+const TITLE_SIM_THRESHOLD = 0.8;
+function similarityScore(a, b) {
+    if (!a || !b)
+        return 0;
+    const min = Math.min(a.length, b.length);
+    const max = Math.max(a.length, b.length);
+    if (min < 5 || min / max < 0.8)
+        return 0;
+    if (a.slice(0, 2) !== b.slice(0, 2))
+        return 0;
+    const [longer, shorter] = a.length >= b.length ? [a, b] : [b, a];
+    if (isSequelVariant(longer, shorter))
+        return 0;
+    return Math.max(1 - levenshtein(a, b) / max, diceUnigram(a, b));
+}
+// 标题命中层级（越小越可信）：0 精确 → 1 去副标题 → 2 包含/前缀 → 3 字符相似度
+const TITLE_MATCH_EXACT = 0;
+const TITLE_MATCH_NO_SUBTITLE = 1;
+const TITLE_MATCH_CONTAINS = 2;
+const TITLE_MATCH_SIMILAR = 3;
+function titleTierOf(q, c) {
+    if (!q.name || !c.name)
+        return null;
+    if (q.name === c.name)
+        return TITLE_MATCH_EXACT;
+    if (q.main && c.main && q.main === c.main)
+        return TITLE_MATCH_NO_SUBTITLE;
+    if (containmentMatch(q.name, c.name) || containmentMatch(q.main, c.main))
+        return TITLE_MATCH_CONTAINS;
+    if (Math.max(similarityScore(q.name, c.name), similarityScore(q.main, c.main)) >= TITLE_SIM_THRESHOLD)
+        return TITLE_MATCH_SIMILAR;
+    return null;
 }
 /** 中文季号 → 数字（服务端实测只出现 一~十，多留两位防「十一」这类写法）。 */
 const CN_NUM = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
@@ -452,7 +580,8 @@ function splitSeason(raw) {
             season = seasonToInt(cn || en || sn);
         return ' ';
     });
-    return { name: normalizeTitle(body), season };
+    // main = 剥掉「逗号/冒号/破折号」后的主标题，供「去副标题」层级比较
+    return { name: normalizeTitle(body), main: normalizeTitle(stripSubtitle(body)), season };
 }
 /**
  * 季号匹配档位（主名精确相等之后才轮到它，越小越优先）：
@@ -473,16 +602,18 @@ const SEASON_TIER_UNMARKED = 2;
  */
 const SEASON_TIER_UNMARKED_VERIFY = 3;
 /**
- * 自建源准入 = 精确匹配：主名归一化后**完全相等**，且季号一致。命中返回档位，不匹配返回 null。
+ * 自建源准入 = 标题多级匹配 + 季号一致。命中返回 `{titleTier, seasonTier}`，不匹配返回 null。
  *
- * ⚠️ 自建源不做模糊匹配（lc-1109 实机挂错）：它聚合多平台、条目极密，同名/近名作品扎堆 ——
- * 查《悬案》返回 37 条，混着《探案新窍门 第一季》(aliases 含「悬案神探」)、《李小龙悬案》
- * 《酱园弄·悬案》《悬案委托行》《悬案密码N》。旧的相关性打分（前缀 0.95 / 包含按长度罚分 /
- * 别名封顶 0.6 / 二元组 Jaccard，下限 0.34）只要有任一条错挂条目被 MAX_TRIES 首试且有弹幕，
- * 就把别片的弹幕当本片交出去；季数优先排序键还曾把 0.6 的别名命中抬到 1.0 的精确命中之前。
- * 精确口径下这 37 条只剩《悬案(2026)》youku/360 两条真命中。
- * 模糊匹配保留给内置 B站 链路（bili_danmaku.js）：那边只查 B站、条目少，且是原有行为，不动。
- * 附带好处：`解说版`/`手语版`/`字幕助听版`/`独家专访` 等衍生条目主名不等，自动落空。
+ * 标题层级（高置信度优先，见 TITLE_MATCH_*）：
+ *   0 精确相等 → 1 去副标题相等 → 2 包含/前缀 → 3 字符相似度（阈值 0.8）。
+ * 仍然坚持「宁可漏，不可错」（lc-1109 实机挂错）：聚合源条目极密（查《悬案》返回 37 条，
+ * 混着《探案新窍门》《李小龙悬案》《酱园弄·悬案》《悬案密码N》）。因此：
+ *   - 包含/前缀要求两串都 ≥4 字、长度比 ≥0.5（「悬案」这类 2 字短名不会命中任何长条目）；
+ *   - 相似度要求两串都 ≥5 字、长度比 ≥0.8、前 2 字相同、非「续作数字尾缀」；
+ *   - 《命运石之门》vs《命运石之门0》、《流浪地球》vs《流浪地球2》由 isSequelVariant 拒收；
+ *   - 排序先按 titleTier 再按 seasonTier，精确命中永远优先于模糊命中。
+ * 内置 B站 链路（bili_danmaku.js）的模糊匹配行为不动。
+ * 附带好处：`解说版`/`手语版`/`字幕助听版`/`独家专访` 等衍生条目主名不等且相似度低，仍自动落空。
  *
  * [lc-1220] 季号口径更新：want>1 且候选未标季号的条目不再一律拒收（返回
  * SEASON_TIER_UNMARKED_VERIFY），改由 pickVerifiedEpisode 核对分集标题后放行——
@@ -492,20 +623,31 @@ const SEASON_TIER_UNMARKED_VERIFY = 3;
 function exactMatchTier(query, querySeason, candTitle, returnUnverified = false) {
     const q = splitSeason(query);
     const c = splitSeason(candTitle);
-    if (!q.name || q.name !== c.name)
+    // 标题多级匹配：精确 → 去副标题 → 包含/前缀 → 字符相似度（保守阈值）。
+    // 命中层级随结果返回并写入 hit.titleTier，排序时高置信度优先。
+    const titleTier = titleTierOf(q, c);
+    if (titleTier === null)
         return null;
     const want = querySeason > 0 ? querySeason : q.season;
+    let seasonTier;
     if (c.season > 0) {
         if (c.season === want)
-            return SEASON_TIER_EXACT;
-        if (want === 0 && c.season === 1)
-            return SEASON_TIER_IMPLIED_FIRST;
-        return null;
+            seasonTier = SEASON_TIER_EXACT;
+        else if (want === 0 && c.season === 1)
+            seasonTier = SEASON_TIER_IMPLIED_FIRST;
+        else
+            return null;
     }
-    if (want <= 1)
-        return SEASON_TIER_UNMARKED;
-    // want>1 且候选未标季：仅在有集标题可核验时放行为「待核验」候选
-    return returnUnverified ? SEASON_TIER_UNMARKED_VERIFY : null;
+    else if (want <= 1) {
+        seasonTier = SEASON_TIER_UNMARKED;
+    }
+    else {
+        // want>1 且候选未标季：仅在有集标题可核验时放行为「待核验」候选
+        if (!returnUnverified)
+            return null;
+        seasonTier = SEASON_TIER_UNMARKED_VERIFY;
+    }
+    return { titleTier, seasonTier };
 }
 // ===================== 搜索 / 分集 =====================
 /**
@@ -610,24 +752,35 @@ async function searchWithKeyword(keyword, season, epTitle = '', timeoutMs = 1200
         // 比对对象是**搜索关键词**而不是整串 title：整串常粘着集标题（「悬案 - : 矢量」），
         // 归一化后主名不可能相等，拿它比会把所有条目判空。
         // [lc-1220] 有集标题时允许「未标季条目」进候选（待核验档），由 pickVerifiedEpisode 兜底把关。
-        const tier = exactMatchTier(keyword, season, animeTitle, !!epTitle);
-        if (tier === null)
+        const matched = exactMatchTier(keyword, season, animeTitle, !!epTitle);
+        if (matched === null)
             continue;
         hits.push({
             animeId: id,
             animeTitle,
             episodeCount: Number((a && a.episodeCount) || 0),
             source: String((a && a.source) || ''),
-            seasonTier: tier,
+            seasonTier: matched.seasonTier,
+            // 标题命中层级（0 精确 / 1 去副标题 / 2 包含 / 3 相似度），排序与日志用
+            titleTier: matched.titleTier,
         });
     }
     hits.sort((x, y) => {
+        if (x.titleTier !== y.titleTier)
+            return x.titleTier - y.titleTier;
         if (x.seasonTier !== y.seasonTier)
             return x.seasonTier - y.seasonTier;
         const bx = x.source === 'bilibili' ? 1 : 0;
         const by = y.source === 'bilibili' ? 1 : 0;
         return by - bx;
     });
+    // 高置信度命中存在时，丢弃低置信度候选：精确/去副标题已命中，就没必要再拿
+    // 「包含/相似度」候选去试（多平台重复条目仍保留，它们同层级）。这条是 lc-1109
+    // 「防挂错」在新多级匹配下的最后一道闸。
+    if (hits.length && hits[0].titleTier <= TITLE_MATCH_NO_SUBTITLE) {
+        const best = hits[0].titleTier;
+        return hits.filter((h) => h.titleTier === best);
+    }
     return hits;
 }
 /** 取分集列表（带缓存），失败返回空数组。 */
@@ -901,7 +1054,7 @@ async function autoFetch(title, ep, out, season = 0, epTitle = '', seriesKey = '
                 // [lc-1637] 把「搜不到」拆成两种根因，别再用一句「近名条目被拒收」把「服务端压根 0 条」也糊过去
                 // （lc-1635 实测《佐佐木与文鸟小哔》就是 success=true / animes=0，服务端一条都没有）。
                 lastFailReason = lastRawAnimeCount > 0
-                    ? `自建源有 ${lastRawAnimeCount} 条近名条目，但均非「主名+季号」精确匹配（已拒收，防挂错片）；可换源或手动匹配`
+                    ? `自建源有 ${lastRawAnimeCount} 条近名条目，但均未通过「标题+季号」匹配（精确/去副标题/包含/相似度均未达阈值，已拒收防挂错片）；可换源或手动匹配`
                     : '自建源未收录该条目（服务端 0 条结果）；可换源或等自建源补源';
             }
             log.info(`[danmuApi] 未命中（无精确匹配条目）→ 降级内置B站(模糊匹配) | title=${title} ep=${ep} season=${season}${altTitle ? ' alt=' + altTitle : ''}`);
@@ -919,7 +1072,7 @@ async function autoFetch(title, ep, out, season = 0, epTitle = '', seriesKey = '
             if (count > 0) {
                 if (seriesKey)
                     rememberSeries(seriesKey, hit);
-                log.info(`[danmuApi] ✅ 精确命中 | ${hit.animeTitle} · ${e.episodeTitle || ('第' + ep + '集')} | ${count} 条 (seasonTier=${hit.seasonTier} src=${hit.source})`);
+                log.info(`[danmuApi] ✅ 命中 | ${hit.animeTitle} · ${e.episodeTitle || ('第' + ep + '集')} | ${count} 条 (titleTier=${hit.titleTier} seasonTier=${hit.seasonTier} src=${hit.source})`);
                 return okResult(count, title, hit.animeTitle, 1);
             }
         }

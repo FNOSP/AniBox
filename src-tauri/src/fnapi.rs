@@ -190,6 +190,38 @@ fn split_redirect(base: &str, location: &str) -> (String, String) {
     }
 }
 
+/// GET 查询串的签名载荷。
+///
+/// 飞牛 `Authx` 的 dataMd5 规则（对齐 FlyNarwhal `auth_interceptor.dart`）：
+/// - 有 JSON body → md5(实际发送的 body 序列化串)
+/// - 无 body 但有 query → md5(按 key 升序拼接的 `k=v&k=v`，**用原始值，不做 URL 编码**)
+/// - 都没有 → md5("")
+///
+/// 因此 GET 带参请求不能复用 `call()`（它按 md5("") 签名），需要单独带上这里的 sign。
+#[derive(Clone)]
+struct QuerySpec {
+    /// 真正拼进 URL 的查询串（已 URL 编码，不含前导 `?`）
+    url: String,
+    /// 参与签名的原始 `k=v&k=v` 串（key 升序）
+    sign: String,
+}
+
+fn build_query(query: &[(&str, String)]) -> QuerySpec {
+    let mut pairs: Vec<(&str, &String)> = query.iter().map(|(k, v)| (*k, v)).collect();
+    pairs.sort_by(|a, b| a.0.cmp(b.0));
+    let sign = pairs
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("&");
+    let url = pairs
+        .iter()
+        .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+        .collect::<Vec<_>>()
+        .join("&");
+    QuerySpec { url, sign }
+}
+
 impl FnClient {
     pub async fn call(
         &self,
@@ -209,7 +241,40 @@ impl FnClient {
                 tokio::time::sleep(std::time::Duration::from_millis(*backoff_ms)).await;
             }
             match self
-                .call_inner(&base, path, method, token, body.clone(), 0)
+                .call_inner(&base, path, method, token, body.clone(), None, 0)
+                .await
+            {
+                Ok(v) => return Ok(v),
+                Err(e) => {
+                    let retryable = e.contains("返回非 JSON") || e.contains("接口返回了网页");
+                    if !retryable {
+                        return Err(e);
+                    }
+                    last_err = e;
+                }
+            }
+        }
+        Err(format!("{last_err}（已重试 2 次，疑似 NAS 限流或会话被弹回登录页）"))
+    }
+
+    /// GET + 查询串（按飞牛规则对 query 签名）。用于 `/search/list?q=...` 这类
+    /// 官方网页端以 GET 参数调用的只读接口。
+    pub async fn call_get_query(
+        &self,
+        base: &str,
+        path: &str,
+        token: &str,
+        query: &[(&str, String)],
+    ) -> Result<Value, String> {
+        let base = normalize_server(base);
+        let spec = build_query(query);
+        let mut last_err = String::new();
+        for (i, backoff_ms) in [0u64, 400, 1200].iter().enumerate() {
+            if i > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(*backoff_ms)).await;
+            }
+            match self
+                .call_inner(&base, path, "GET", token, None, Some(spec.clone()), 0)
                 .await
             {
                 Ok(v) => return Ok(v),
@@ -276,6 +341,7 @@ impl FnClient {
         method: &'a str,
         token: &'a str,
         body: Option<Value>,
+        query: Option<QuerySpec>,
         depth: u32,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send + 'a>>
     {
@@ -305,8 +371,12 @@ impl FnClient {
             String::new()
         };
 
-        let authx = crate::authx::authx(path, if has_body { Some(body_json.as_str()) } else { None });
-        let url = format!("{}{}", base, path);
+        // 签名依据：有 query 用 query 的原始 k=v 串，否则用 body（无 body 即 md5("")）。
+        let (url, sign_data) = match &query {
+            Some(q) if !q.url.is_empty() => (format!("{}{}?{}", base, path, q.url), q.sign.clone()),
+            _ => (format!("{}{}", base, path), body_json.clone()),
+        };
+        let authx = crate::authx::authx(path, if sign_data.is_empty() { None } else { Some(sign_data.as_str()) });
         // 显式鉴权 Cookie + 网关授权 Cookie（访问码）合并；后者来自 Set-Cookie 会话表。
         let mut cookie = if token.is_empty() {
             "mode=relay".to_string()
@@ -359,7 +429,7 @@ impl FnClient {
                 .to_string();
             if !loc.is_empty() {
                 let (nb, np) = split_redirect(base, &loc);
-                return self.call_inner(&nb, &np, method, token, body, depth + 1).await;
+                return self.call_inner(&nb, &np, method, token, body, query, depth + 1).await;
             }
         }
 
@@ -379,7 +449,7 @@ impl FnClient {
         let code = v.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
         if code == 5000 {
             // invalid sign：随机数/时序偶发冲突，重试一次（对齐 request.ts 重试逻辑）
-            return self.call_inner(base, path, method, token, body, depth).await;
+            return self.call_inner(base, path, method, token, body, query, depth).await;
         }
         if code != 0 {
             // [lc-1654] 飞牛部分未实现路由回的是 `{"message":"Not Implemented..."}`（没有 `msg`），

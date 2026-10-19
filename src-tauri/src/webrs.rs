@@ -3084,6 +3084,7 @@ pub async fn webrs_play(
         header_ref,
         &[],
         None,
+        false,
     )
     .await;
     crate::libmpv::trace("[webrs] play: player::launch 完成");

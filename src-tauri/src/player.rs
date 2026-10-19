@@ -229,6 +229,8 @@ pub async fn stop_all(app: &AppHandle, state: &AppState, emit_end: bool) {
 /// - `subs`：外挂字幕路径（仅 PotPlayer 使用，重复 `-sub=`）。
 /// - `playlist_start`：`url` 是**多条目播放列表文件**时，从哪一条开始播（0 基）。
 ///   `None` = 单条媒体（沿用 force-media-title / loadfile 逻辑）。
+/// - `direct`：`url` 是**源站直链**（电视直播 `live_channels[].path`）。为 `true` 时
+///   PotPlayer 直接播该地址，不注册本地 relay（旧项目 lc-632：直播直链绕过 shim）。
 #[allow(clippy::too_many_arguments)]
 pub async fn launch(
     app: &AppHandle,
@@ -241,10 +243,11 @@ pub async fn launch(
     headers: Option<&HttpHeaders>,
     subs: &[String],
     playlist_start: Option<usize>,
+    direct: bool,
 ) -> Result<(), String> {
     let (kind, path) = resolve_player(cfg)?;
     crate::libmpv::trace(&format!(
-        "[player] launch kind={kind} path={path} url={url} resume={resume_secs} dur={duration_secs} playlist_start={playlist_start:?}"
+        "[player] launch kind={kind} path={path} url={url} resume={resume_secs} dur={duration_secs} playlist_start={playlist_start:?} direct={direct}"
     ));
     match kind.as_str() {
         "mpv" => launch_mpv(app, state, cfg, url, title, headers, playlist_start).await,
@@ -259,6 +262,7 @@ pub async fn launch(
                 duration_secs,
                 headers,
                 subs,
+                direct,
             )
             .await
         }
@@ -377,6 +381,7 @@ async fn launch_potplayer(
     duration_secs: f64,
     headers: Option<&HttpHeaders>,
     subs: &[String],
+    direct: bool,
 ) -> Result<(), String> {
     // 1) 新播放前清理上一个 PotPlayer（PotPlayer 默认单实例，残留会抢新参数）。
     stop_potplayer(app, state, false).await;
@@ -393,22 +398,34 @@ async fn launch_potplayer(
         }
     }
 
-    // 2) 一律经本地 relay 转发，并在 URL 路径里附带可读文件名：
+    // 2) 常规媒体：经本地 relay 转发，并在 URL 路径里附带可读文件名：
     //    PotPlayer 把 URL 末段当作标题/播放列表项名，直链（GUID/查询串）会显示成一串字符。
     //    与旧项目 playbackShim 同思路：`/relay/<id>/<剧名 - 集名>.mp4`，relay 仍只按 id 转发。
     //    无 Referer/UA 时 relay 仅做本机逐字节转发（Range 透传），不影响 /seek、-sub。
-    ensure_relay().await?;
-    let relay_headers = headers.cloned().unwrap_or_default();
-    let id = relay_register(RelayTarget {
-        url: url.to_string(),
-        headers: relay_headers,
-    });
-    let play_url = relay_url_named(&id, title);
-    crate::libmpv::trace(&format!(
-        "[player] potplayer relay 注册: {url} -> {play_url}（referer={:?} ua={:?} title={title:?}）",
-        headers.and_then(|h| h.referer.as_deref()),
-        headers.and_then(|h| h.user_agent.as_deref()),
-    ));
+    //
+    //    [live] `direct=true`（电视直播）：旧项目 lc-632 实测直播直链必须**原样**交给
+    //    PotPlayer —— 直播源是 1905 网关 302 → 外部 CDN HLS，经 relay 包一层既无必要，
+    //    还会把播放列表地址变成 relay 地址，源站 302/分片鉴权容易失败。
+    let play_url = if direct {
+        crate::libmpv::trace(&format!(
+            "[player] potplayer 直播直链（跳过 relay）: {url}（title={title:?}）"
+        ));
+        url.to_string()
+    } else {
+        ensure_relay().await?;
+        let relay_headers = headers.cloned().unwrap_or_default();
+        let id = relay_register(RelayTarget {
+            url: url.to_string(),
+            headers: relay_headers,
+        });
+        let u = relay_url_named(&id, title);
+        crate::libmpv::trace(&format!(
+            "[player] potplayer relay 注册: {url} -> {u}（referer={:?} ua={:?} title={title:?}）",
+            headers.and_then(|h| h.referer.as_deref()),
+            headers.and_then(|h| h.user_agent.as_deref()),
+        ));
+        u
+    };
 
     // 3) 构建参数并启动（不等待，记录 PID）。
     let args = build_potplayer_args(&play_url, resume_secs, duration_secs, subs);

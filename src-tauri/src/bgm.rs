@@ -802,6 +802,25 @@ pub async fn bgm_match(
     Ok(out)
 }
 
+/// [lc-1720] 手动元数据搜索：POST /v0/search/subjects，**返回原始候选列表**（不做打分/挑最佳）。
+/// 仅供 `metadata_search` 使用；走与 `bgm_match` 相同的镜像 + 直连降级链路。
+/// `limit` 为返回条数上限（1..=50）。
+pub async fn search_subjects(query: &str, limit: usize) -> Result<Vec<Value>, String> {
+    let q = query.trim();
+    if q.is_empty() {
+        return Ok(Vec::new());
+    }
+    let n = limit.clamp(1, 50);
+    // 不限定 type：既可能搜动画（type=2），也可能是真人剧/电影（type=1/3/6）。
+    let resp = post_json("/v0/search/subjects", &json!({ "keyword": q })).await?;
+    let items = resp
+        .get("data")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default();
+    Ok(items.into_iter().take(n).collect())
+}
+
 /// 条目详情：GET /v0/subjects/{id}（按 subject_id 落盘，TTL 6h）。
 #[tauri::command]
 pub async fn bgm_subject(id: i64) -> Result<Value, String> {

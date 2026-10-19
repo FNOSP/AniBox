@@ -32,6 +32,8 @@ mod libcover;
 mod libmatch;
 mod imgproto;
 mod migrate;
+// [lc-1720] 手动获取元数据：本地按剧 guid 覆盖飞牛返回（不写飞牛）
+mod metadata_override;
 mod mirror_sign;
 mod mpv;
 // [player] 统一播放启动封装（mpv / 本机 PotPlayer）+ 本地 HTTP relay
@@ -393,6 +395,7 @@ async fn get_media_libs(state: State<'_, AppState>) -> Result<Value, String> {
 ///   （FlyNarwhal 注释：钻取带 1 会让原始视频文件夹返回空），sort_title ASC 对齐网页。
 #[tauri::command]
 async fn get_items(
+    app: AppHandle,
     state: State<'_, AppState>,
     ancestor_guid: Option<String>,
     parent_guid: Option<String>,
@@ -422,9 +425,12 @@ async fn get_items(
             "tags": { "type": browse_types }
         })
     };
-    client
+    let mut v = client
         .call(&cfg.server, "/v/api/v1/item/list", "POST", &cfg.token, Some(body))
-        .await
+        .await?;
+    // [lc-1720] 本地手动元数据覆盖（只读叠加，不写飞牛）
+    metadata_override::apply_response_list(&app, &mut v);
+    Ok(v)
 }
 
 /// 继续观看：GET /v/api/v1/play/list（实测为 snake_case 字段，前端读取时双格式兼容）
@@ -614,21 +620,38 @@ async fn get_seasons(
 /// 播放结束/窗口回焦时必须拿最新的一份，否则详情页停在旧进度（用户实测：看完第 3 集退出仍是旧状态）。
 #[tauri::command]
 async fn get_episodes(
+    app: AppHandle,
     state: State<'_, AppState>,
     guid: String,
     force: Option<bool>,
+    series_guid: Option<String>,
 ) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let key = format!("detail:episodes:{}", guid);
-    if !force.unwrap_or(false) {
-        if let Some(v) = disk_cache::json_get(&key, DETAIL_LIST_TTL_SECS) {
-            return Ok(v);
+    let mut v = if !force.unwrap_or(false) {
+        match disk_cache::json_get(&key, DETAIL_LIST_TTL_SECS) {
+            Some(v) => v,
+            None => {
+                let client = fnapi::new_client();
+                let path = format!("/v/api/v1/episode/list/{}", guid);
+                let v = client.call(&cfg.server, &path, "GET", &cfg.token, None).await?;
+                disk_cache::json_put(&key, &v);
+                v
+            }
+        }
+    } else {
+        let client = fnapi::new_client();
+        let path = format!("/v/api/v1/episode/list/{}", guid);
+        let v = client.call(&cfg.server, &path, "GET", &cfg.token, None).await?;
+        disk_cache::json_put(&key, &v);
+        v
+    };
+    // [lc-1720] 集列表：补剧级标题/封面/简介（不覆盖集标题与集号）
+    if let Some(sg) = series_guid.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(list) = v.as_array_mut() {
+            metadata_override::apply_to_list(&app, list, sg);
         }
     }
-    let client = fnapi::new_client();
-    let path = format!("/v/api/v1/episode/list/{}", guid);
-    let v = client.call(&cfg.server, &path, "GET", &cfg.token, None).await?;
-    disk_cache::json_put(&key, &v);
     Ok(v)
 }
 
@@ -845,19 +868,23 @@ async fn get_favorites(
             }
         }
     }
-    Ok(json!({ "total": list.len(), "list": list }))
+    let mut out = json!({ "total": list.len(), "list": list });
+    // [lc-1720] 收藏卡片同样吃本地元数据覆盖
+    metadata_override::apply_response_list(&app, &mut out);
+    Ok(out)
 }
 
 /// 全局分类浏览：不带 ancestor/parent，按 tags.type 过滤（电影/电视节目/直播/其他）
 #[tauri::command]
 async fn get_items_global(
+    app: AppHandle,
     state: State<'_, AppState>,
     type_filter: Option<Vec<String>>,
     page: Option<i64>,
 ) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let client = fnapi::new_client();
-    client
+    let mut v = client
         .call(
             &cfg.server,
             "/v/api/v1/item/list",
@@ -872,7 +899,9 @@ async fn get_items_global(
                 "page_size": 60
             })),
         )
-        .await
+        .await?;
+    metadata_override::apply_response_list(&app, &mut v);
+    Ok(v)
 }
 
 /// [lc-1701] 演员页「入库状态」批量匹配。
@@ -947,31 +976,219 @@ async fn match_library_works(state: State<'_, AppState>, arg: Value) -> Result<V
 /// 飞牛侧内容已变，详情页必须拿最新一份，否则标题/简介停在旧值（缓存 120 天，不 force 就看不到改动）。
 #[tauri::command]
 async fn get_item_detail(
+    app: AppHandle,
     state: State<'_, AppState>,
     guid: String,
     force: Option<bool>,
+    series_guid: Option<String>,
 ) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let key = format!("detail:item:{}", guid);
-    if !force.unwrap_or(false) {
-        if let Some(v) = disk_cache::json_get(&key, DETAIL_TTL_SECS) {
-            return Ok(v);
+    let mut v = if !force.unwrap_or(false) {
+        match disk_cache::json_get(&key, DETAIL_TTL_SECS) {
+            Some(v) => v,
+            None => {
+                let client = fnapi::new_client();
+                let path = format!("/v/api/v1/item/{}", guid);
+                let v = client.call(&cfg.server, &path, "GET", &cfg.token, None).await?;
+                disk_cache::json_put(&key, &v);
+                v
+            }
+        }
+    } else {
+        let client = fnapi::new_client();
+        let path = format!("/v/api/v1/item/{}", guid);
+        let v = client.call(&cfg.server, &path, "GET", &cfg.token, None).await?;
+        disk_cache::json_put(&key, &v);
+        v
+    };
+    // [lc-1720] 本地手动元数据覆盖（剧根条目全字段；集条目仅补剧级信息）
+    metadata_override::apply_to_item(&app, &mut v, series_guid.as_deref());
+    Ok(v)
+}
+
+/// 全局聚合搜索（飞牛 `GET /v/api/v1/search/list?q=`，对齐 FlyNarwhal
+/// `media_remote_data_source.dart:196` 的实际调用方式）。
+///
+/// 说明：
+/// - 上游只接受 `q` 一个查询参数，**没有服务端分类过滤**；`category` 由前端在结果上过滤
+///   （与 FlyNarwhal `capsule_search_box.dart:_filterItems` 一致）。这里仅透传回显，便于前端契约稳定。
+/// - `page` 同理：该接口一次返回全部命中（`data` 是数组），不做分页；保留参数只为契约兼容。
+/// - 返回统一视图：`guid/title/type/poster/year/rating/episodes/seasons/works/overview`，
+///   并附 `item`（上游原始对象，供详情页直接复用）。缺失字段留空，不臆造。
+#[tauri::command]
+async fn search_items(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    query: String,
+    category: Option<String>,
+    page: Option<i64>,
+) -> Result<Value, String> {
+    let q = query.trim().to_string();
+    if q.is_empty() {
+        return Ok(json!({
+            "list": [], "total": 0, "query": q,
+            "category": category, "page": page.unwrap_or(1)
+        }));
+    }
+    let cfg = state.config.read().await.clone();
+    let client = fnapi::new_client();
+    let v = match client
+        .call_get_query(
+            &cfg.server,
+            "/v/api/v1/search/list",
+            &cfg.token,
+            &[("q", q.clone())],
+        )
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            // 兼容分支：个别 fnOS 版本的该路由只接受 POST body（历史网页实现）。
+            // 仅在「路由未实现/方法不允许」时降级重试，网络/鉴权错误照常上报。
+            let lower = e.to_ascii_lowercase();
+            let method_rejected = lower.contains("not implemented")
+                || lower.contains("method not allowed")
+                || lower.contains("404")
+                || lower.contains("405");
+            if method_rejected {
+                client
+                    .call(
+                        &cfg.server,
+                        "/v/api/v1/search/list",
+                        "POST",
+                        &cfg.token,
+                        Some(json!({ "q": q.clone() })),
+                    )
+                    .await?
+            } else {
+                return Err(e);
+            }
+        }
+    };
+    // 上游 data 直接是数组；兼容个别版本包成 { list: [...] } 的形态。
+    let mut resp = if v.is_array() {
+        json!({ "list": v })
+    } else if v.get("list").is_some() {
+        v
+    } else {
+        json!({ "list": [] })
+    };
+    // 本地手动元数据覆盖（只读叠加，与 get_items / get_items_global 同口径）
+    metadata_override::apply_response_list(&app, &mut resp);
+    let mut out: Vec<Value> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    if let Some(list) = resp.get("list").and_then(|x| x.as_array()) {
+        for raw in list {
+            let view = search_item_view(raw);
+            let guid = view.get("guid").and_then(|x| x.as_str()).unwrap_or("");
+            // guid 缺失或重复：跳过（搜索接口偶发重复命中）
+            if guid.is_empty() || seen.insert(guid.to_string()) {
+                out.push(view);
+            }
         }
     }
-    let client = fnapi::new_client();
-    let path = format!("/v/api/v1/item/{}", guid);
-    let v = client.call(&cfg.server, &path, "GET", &cfg.token, None).await?;
-    disk_cache::json_put(&key, &v);
-    Ok(v)
+    let total = out.len();
+    Ok(json!({
+        "list": out,
+        "total": total,
+        "query": q,
+        "category": category,
+        "page": page.unwrap_or(1)
+    }))
+}
+
+fn search_str(o: &serde_json::Map<String, Value>, keys: &[&str]) -> String {
+    for k in keys {
+        if let Some(v) = o.get(*k) {
+            if let Some(s) = v.as_str() {
+                let s = s.trim();
+                if !s.is_empty() {
+                    return s.to_string();
+                }
+            } else if let Some(n) = v.as_i64() {
+                return n.to_string();
+            } else if let Some(n) = v.as_f64() {
+                return n.to_string();
+            }
+        }
+    }
+    String::new()
+}
+
+fn search_num(o: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<i64> {
+    for k in keys {
+        if let Some(v) = o.get(*k) {
+            if let Some(n) = v.as_i64() {
+                return Some(n);
+            }
+            if let Some(s) = v.as_str() {
+                if let Ok(n) = s.trim().parse::<i64>() {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 把上游条目归一为搜索下拉用的统一视图；`item` 保留原始对象。
+fn search_item_view(raw: &Value) -> Value {
+    let empty = serde_json::Map::new();
+    let o = raw.as_object().unwrap_or(&empty);
+    let guid = search_str(o, &["guid", "id"]);
+    let title = search_str(o, &["title", "name", "tv_title"]);
+    let ty = search_str(o, &["type"]);
+    let mut poster = search_str(o, &["poster", "profile", "avatar", "image"]);
+    if poster.is_empty() {
+        if let Some(first) = o
+            .get("poster_list")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+        {
+            if let Some(s) = first.as_str() {
+                poster = s.to_string();
+            } else if let Some(p) = first.get("path").and_then(|x| x.as_str()) {
+                poster = p.to_string();
+            }
+        }
+    }
+    let date = search_str(o, &["release_date", "first_air_date", "air_date", "date"]);
+    let year = {
+        let head: String = date.chars().take(4).collect();
+        if head.len() == 4 && head.chars().all(|c| c.is_ascii_digit()) {
+            head
+        } else {
+            String::new()
+        }
+    };
+    let rating = search_str(o, &["vote_average", "rating"]);
+    let episodes = search_num(o, &["number_of_episodes", "local_number_of_episodes"]);
+    let seasons = search_num(o, &["number_of_seasons", "local_number_of_seasons"]);
+    let works = search_num(o, &["number_of_item", "number_of_works"]);
+    let overview = search_str(o, &["overview", "description", "biography"]);
+    json!({
+        "guid": guid,
+        "title": title,
+        "type": ty,
+        "poster": poster,
+        "year": year,
+        "rating": rating,
+        "episodes": episodes,
+        "seasons": seasons,
+        "works": works,
+        "overview": overview,
+        "item": raw.clone()
+    })
 }
 
 /// 轮播数据：全局白名单查询（对齐主仓库 itemListApi.ts —— type:['Movie','TV']、
 /// 最近更新在前、排除未识别/直播/个人视频），不限定库。
 #[tauri::command]
-async fn get_carousel_items(state: State<'_, AppState>) -> Result<Value, String> {
+async fn get_carousel_items(app: AppHandle, state: State<'_, AppState>) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let client = fnapi::new_client();
-    client
+    let mut v = client
         .call(
             &cfg.server,
             "/v/api/v1/item/list",
@@ -986,7 +1203,102 @@ async fn get_carousel_items(state: State<'_, AppState>) -> Result<Value, String>
                 "page_size": 24
             })),
         )
+        .await?;
+    metadata_override::apply_response_list(&app, &mut v);
+    Ok(v)
+}
+
+/* ───────────────── [版本] 同一剧/集的多版本（多文件）─────────────────
+   照抄 FlyNarwhal 的语义与展示方式（lib/ui/features/movie_detail/movie_detail_screen.dart
+   的 `_MediaSourceBoxes` / `_initializeSelection` / `_onVideoStreamSelected`）：
+
+   · **识别**：不是客户端按剧名/季集/文件名去猜，而是飞牛服务端已经把「同一剧集的两个版本」
+     归到同一个 item 下；`GET /v/api/v1/stream/list/{guid}` 的 `video_streams[]` 会为每个
+     媒体文件返回一条记录（各自的 `media_guid`）。客户端判定「多版本」= video_streams.len() > 1。
+   · **展示**：详情页把每条视频流渲染成一个可点选的「版本盒子」，标签为
+     `分辨率大写 + 色域`（`color_range_type == "DolbyVision"` 显示「杜比视界」）。
+   · **默认版本**：`POST /v/api/v1/play/info {item_guid}` 返回的 `media_guid`
+     （服务端记住的上次播放版本；无记录时是服务端默认版本）；没有则取第一条。
+   · **播放**：把选中的 `media_guid` 回传给 `play/info`（见 resolve_play_guid），
+     服务端据此返回该文件对应的拉流 guid / 音频字幕流。
+
+   本命令只读，不写任何服务端状态。 */
+#[tauri::command]
+async fn get_media_versions(state: State<'_, AppState>, guid: String) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    if cfg.token.is_empty() {
+        return Err("未登录".into());
+    }
+    let client = fnapi::new_client();
+    let path = format!("/v/api/v1/stream/list/{}", guid);
+    let raw = client
+        .call(&cfg.server, &path, "GET", &cfg.token, None)
+        .await?;
+    // 兼容两种响应形态：{code,data:{...}} 或直接 {...}
+    let data = raw.get("data").cloned().unwrap_or(raw);
+    let streams = data
+        .get("video_streams")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let str_of = |s: &Value, k: &str| {
+        s.get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let num_of = |s: &Value, k: &str| {
+        s.get(k)
+            .and_then(|v| v.as_i64())
+            .or_else(|| s.get(k).and_then(|v| v.as_f64()).map(|f| f as i64))
+            .unwrap_or(0)
+    };
+    let versions: Vec<Value> = streams
+        .iter()
+        .map(|s| {
+            json!({
+                "media_guid": str_of(s, "media_guid"),
+                "title": str_of(s, "title"),
+                "resolution_type": str_of(s, "resolution_type"),
+                "color_range_type": str_of(s, "color_range_type"),
+                "codec_name": str_of(s, "codec_name"),
+                "codec_type": str_of(s, "codec_type"),
+                "width": num_of(s, "width"),
+                "height": num_of(s, "height"),
+                "bit_depth": num_of(s, "bit_depth"),
+                "dv_profile": num_of(s, "dv_profile"),
+                "bps": num_of(s, "bps"),
+                "duration": num_of(s, "duration"),
+                "is_bluray": s.get("is_bluray").and_then(|v| v.as_bool()).unwrap_or(false),
+                // 与 FlyNarwhal `VideoStream.isNotExist` 同口径（ext1 == -1 为 STRM 等占位流）
+                "is_not_exist": num_of(s, "ext1") == -1,
+            })
+        })
+        .filter(|v| v.get("media_guid").and_then(|x| x.as_str()).map(|s| !s.is_empty()).unwrap_or(false))
+        .collect();
+    // 默认选中 = play/info 的 media_guid（服务端记住的上次播放版本）。
+    // 失败不致命：前端回落到本地记忆 / 第一条。
+    let selected_media_guid = client
+        .call(
+            &cfg.server,
+            "/v/api/v1/play/info",
+            "POST",
+            &cfg.token,
+            Some(json!({ "item_guid": guid })),
+        )
         .await
+        .ok()
+        .and_then(|p| {
+            p.get("media_guid")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+        })
+        .unwrap_or_default();
+    Ok(json!({
+        "versions": versions,
+        "selected_media_guid": selected_media_guid,
+    }))
 }
 
 // ───────────────────────── 播放 / mpv 控制 ─────────────────────────
@@ -1057,6 +1369,48 @@ struct PlayResolution {
     /// [lc-1631] 条目总时长（ms；0 = 未知）。play/info 的 item.duration（秒）折算，
     /// 年度报告按「进度 × 总时长」折算观看量时需要。
     duration_ms: u64,
+    /// [live] 电视直播直链（`play/info.live_channels[].path`）。
+    ///
+    /// 直播**不能**走 Go 代理 `playvideo`（该接口对直播返回 500，旧项目 Fntv-Plus
+    /// `media.ts:926-941` 的 lc-631/lc-632 结论相同），必须把 path 原样交给播放器。
+    /// `Some` 时 `play_guid`/`media_guid` 等进度字段均无意义。
+    live_url: Option<String>,
+}
+
+/// [live] 从 `play/info` 响应里挑选直播线路，返回 `(path, 线路名)`。
+///
+/// 规则（照抄旧项目 Fntv-Plus `processSingleMedia`）：
+///   1. 优先第一条 `can_play != 0`（缺省视为可播）且有非空 `path` 的线路；
+///   2. 若没有可播标记，退回第一条有非空 `path` 的线路；
+///   3. 完全没有 `live_channels` / 无可用 path → `None`（按普通媒体走代理）。
+fn pick_live_channel(info: &Value) -> Option<(String, Option<String>)> {
+    let arr = info.get("live_channels")?.as_array()?;
+    let has_path = |c: &&Value| {
+        c.get("path")
+            .and_then(|p| p.as_str())
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false)
+    };
+    let chan = arr
+        .iter()
+        .find(|c| {
+            has_path(c)
+                && c.get("can_play")
+                    .and_then(|x| x.as_i64())
+                    .map(|n| n != 0)
+                    .unwrap_or(true)
+        })
+        .or_else(|| arr.iter().find(has_path))?;
+    let path = chan.get("path")?.as_str()?.trim().to_string();
+    if path.is_empty() {
+        return None;
+    }
+    let name = chan
+        .get("file_name")
+        .and_then(|p| p.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    Some((path, name))
 }
 
 /// [lc-105] 解析「真正要拉流的 guid」：`POST /v/api/v1/play/info {item_guid}` → 取回 `data.guid`
@@ -1067,9 +1421,20 @@ async fn resolve_play_guid(
     state: &AppState,
     cfg: &mut Config,
     guid: &str,
+    media_guid: Option<&str>,
 ) -> Result<PlayResolution, String> {
     let client = fnapi::new_client();
-    let body = || json!({ "item_guid": guid });
+    // [版本] 照抄 FlyNarwhal：选中某个版本时把它的 `media_guid` 一并交给 play/info，
+    // 服务端返回该媒体文件对应的拉流 guid / 音频字幕流；不传则由服务端按
+    // 「上次播放的版本」/ 默认版本决定（与飞鲸详情页的默认选中逻辑一致）。
+    let media_guid = media_guid.map(|s| s.trim()).filter(|s| !s.is_empty());
+    let body = || {
+        let mut b = json!({ "item_guid": guid });
+        if let Some(mg) = media_guid {
+            b["media_guid"] = json!(mg);
+        }
+        b
+    };
     let mut probe = client
         .call(&cfg.server, "/v/api/v1/play/info", "POST", &cfg.token, Some(body()))
         .await;
@@ -1112,7 +1477,39 @@ async fn resolve_play_guid(
                     .or_else(|| it.get(k).and_then(|v| v.as_f64()).map(|f| f as i64))
                     .unwrap_or(0)
             };
-            let ep_title = get_s("title").unwrap_or_else(|| get_s("name").unwrap_or_default());
+            // [progress] 飞牛 `play/record` 需要的流 guid（play/info 顶层，实测同旧项目）。
+            let top_s = |k: &str| {
+                info.get(k)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string()
+            };
+            // [live] 电视直播：play/info 顶层 `live_channels[]` 才是可播地址
+            // （如 `http://192.168.31.170:1905/{streamId}`，网关 302 → 外部 CDN HLS）。
+            // 与旧项目 Fntv-Plus `src/main/handlers/plugins/media.ts:926-941` 一致。
+            let live = pick_live_channel(&info);
+            let live_url = live.as_ref().map(|(u, _)| u.clone());
+            let live_name = live.as_ref().and_then(|(_, n)| n.clone());
+            if let Some(u) = &live_url {
+                libmpv::trace(&format!(
+                    "[play/info] 直播线路: {} → {}",
+                    live_name.as_deref().unwrap_or("线路"),
+                    &u.chars().take(120).collect::<String>()
+                ));
+            }
+            let ep_title = get_s("title")
+                .or_else(|| get_s("name"))
+                .or_else(|| {
+                    let t = top_s("title");
+                    (!t.is_empty()).then_some(t)
+                })
+                .or_else(|| {
+                    let t = top_s("name");
+                    (!t.is_empty()).then_some(t)
+                })
+                .or_else(|| live_name.clone())
+                .unwrap_or_default();
             let tv_title = get_s("tv_title");
             let season = get_n("season_number");
             let episode = get_n("episode_number");
@@ -1148,7 +1545,10 @@ async fn resolve_play_guid(
                         .map(|s| s.to_string())
                 })
                 .unwrap_or_else(|| g.clone());
-            danmaku_shim::write_play_meta(&g, &parent_guid, &media_title, season, episode);
+            // [live] 直播无剧集概念，不写弹幕匹配元数据（避免 uosc_danmaku 空搜）。
+            if live_url.is_none() {
+                danmaku_shim::write_play_meta(&g, &parent_guid, &media_title, season, episode);
+            }
             libmpv::trace(&format!(
                 "[play/info] ok type={t} 原始={guid} → 拉流用={g} 标题={media_title:?} 系列键={parent_guid}"
             ));
@@ -1163,14 +1563,6 @@ async fn resolve_play_guid(
             // [lc-1631] 总时长（秒 → 毫秒）：年度报告折算观看量的依据。
             let dur_sec = get_n("duration");
             let duration_ms = if dur_sec > 0 { (dur_sec as u64) * 1000 } else { 0 };
-            // [progress] 飞牛 `play/record` 需要的流 guid（play/info 顶层，实测同旧项目）。
-            let top_s = |k: &str| {
-                info.get(k)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .trim()
-                    .to_string()
-            };
             let (media_guid, video_guid, audio_guid, subtitle_guid) = (
                 top_s("media_guid"),
                 top_s("video_guid"),
@@ -1183,7 +1575,11 @@ async fn resolve_play_guid(
                 video_guid,
                 audio_guid,
                 subtitle_guid,
-                kind: t.to_string(),
+                kind: if live_url.is_some() {
+                    "LiveChannel".to_string()
+                } else {
+                    t.to_string()
+                },
                 media_title,
                 tv_title: tv_title.unwrap_or_default(),
                 ep_title,
@@ -1194,6 +1590,7 @@ async fn resolve_play_guid(
                 episode,
                 parent_guid,
                 duration_ms,
+                live_url,
             })
         }
         Err(e) => {
@@ -1209,6 +1606,10 @@ struct PlaylistEntry {
     guid: String,
     title: String,
     duration_secs: f64,
+    /// [theintrodb] 该集的季/集号（0 = episode/list 未提供）：随 skip-metadata 下发给
+    /// smart_skip，使整季连播时每一集都能按自己的集号查片头片尾，而不是沿用起播集。
+    season: i64,
+    episode: i64,
 }
 
 /// [playlist] 拼单集展示标题：与 `resolve_play_guid` 的 media_title 同口径
@@ -1262,6 +1663,76 @@ fn build_playlist_m3u(cfg: &Config, entries: &[PlaylistEntry]) -> String {
     s
 }
 
+/// [theintrodb] 组装 smart_skip 的 `skip-metadata` 载荷（guid → 元数据）。
+///
+/// 键必须与 Lua 侧 `mutils.extract_id_and_query` 的解析结果一致：它从播放地址
+/// `/api/v1/playvideo/<guid>?...` 里取 guid。整季播放列表每条都是本机代理 URL，
+/// 所以键正好是 `PlaylistEntry::guid`；单条播放则用 `play/info` 返回的 `play_guid`。
+///
+/// 值：`{ tmdb, season?, episode? }`。tmdb 为空或非数字时返回**空对象** ——
+/// 没有 TMDB 锚点就查不到 theintrodb，下发空表不会误触发（Lua 侧 `meta == nil` 时静默等待）。
+fn build_skip_metadata(
+    tmdb_id: &str,
+    current_guid: &str,
+    season: i64,
+    episode: i64,
+    entries: &[PlaylistEntry],
+) -> Value {
+    let tmdb = tmdb_id.trim();
+    let mut map = serde_json::Map::new();
+    if tmdb.is_empty() || !tmdb.bytes().all(|b| b.is_ascii_digit()) {
+        return Value::Object(map);
+    }
+    let meta = |season: i64, episode: i64| {
+        let mut m = serde_json::Map::new();
+        m.insert("tmdb".to_string(), json!(tmdb));
+        // 0 = 未知：省略该键，Lua 侧按「无季集号」查询（电影/单集不拼 S0E0）。
+        if season > 0 {
+            m.insert("season".to_string(), json!(season));
+        }
+        if episode > 0 {
+            m.insert("episode".to_string(), json!(episode));
+        }
+        Value::Object(m)
+    };
+    if entries.is_empty() {
+        if !current_guid.is_empty() {
+            map.insert(current_guid.to_string(), meta(season, episode));
+        }
+    } else {
+        for e in entries {
+            if !e.guid.is_empty() {
+                map.insert(e.guid.clone(), meta(e.season, e.episode));
+            }
+        }
+    }
+    Value::Object(map)
+}
+
+/// [theintrodb] 把 skip 元数据推给 mpv 内的 smart_skip 脚本（fire-and-forget）。
+///
+/// 用 `script-message skip-metadata <json>` 而不是写配置/重启脚本：
+///   · 脚本在 `file-loaded` 时按当前播放地址的 guid 查表，整季列表一次下发即可逐集命中；
+///   · 失败（mpv 已退出/管道断开）只影响兜底，不影响播放；
+///   · 空表不发，避免无意义的脚本消息。
+async fn push_skip_metadata(state: &AppState, payload: Value) {
+    // 空对象也要发：脚本侧 `skip_meta_map = meta` 是**整表替换**，
+    // 发空表可清掉上一部片的残留，避免换片后仍按旧表查（换集/换片必须同步）。
+    if !payload.is_object() {
+        return;
+    }
+    // 先克隆 Arc 再释放锁：command_no_reply 内部可能等待写管道，不占着 state.mpv。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session {
+        m.command_no_reply(json!([
+            "script-message",
+            "skip-metadata",
+            payload.to_string()
+        ]))
+        .await;
+    }
+}
+
 /// [lc-105] **页面内播放（B站/爱奇艺式真内嵌）**的直链 + 元信息。
 /// 前端把返回的 url 直接喂给页面里的 `<video>` —— 视频成为 DOM 的一部分：
 /// 随页面滚动/圆角/裁剪，HTML 控件随便盖，没有窗口套窗口、没有挖洞。
@@ -1277,17 +1748,29 @@ async fn player_source(
     if cfg.token.is_empty() {
         return Err("未登录".into());
     }
-    proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
-    let res = resolve_play_guid(&app, &state, &mut cfg, &guid).await?;
+    let res = resolve_play_guid(&app, &state, &mut cfg, &guid, None).await?;
+    // [live] 直播直链不走 Go 代理（当前前端未使用本入口，仍保持一致语义）。
+    let url = match res.live_url.clone() {
+        Some(live) => live,
+        None => {
+            proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
+            proxy::play_url(&cfg, &res.play_guid)
+        }
+    };
     Ok(json!({
-        "url": proxy::play_url(&cfg, &res.play_guid),
+        "url": url,
         "guid": res.play_guid,
         "type": res.kind,
     }))
 }
 
 #[tauri::command]
-async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> Result<(), String> {
+async fn play_item(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    guid: String,
+    media_guid: Option<String>,
+) -> Result<(), String> {
     let mut cfg = state.config.read().await.clone();
     if cfg.token.is_empty() {
         return Err("未登录".into());
@@ -1325,21 +1808,31 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     // 现在回归主仓库形态：
     //   解析 guid（飞牛 API）→ 写单条目 M3U8（#EXTINF 标题 → media-title → 弹幕链）
     //   → mpv 命令行直接带该 M3U8 ⇒ 窗口出现即开始加载，无 idle 空窗。
-    let res = resolve_play_guid(&app, &state, &mut cfg, &guid).await?;
+    let res = resolve_play_guid(&app, &state, &mut cfg, &guid, media_guid.as_deref()).await?;
     stage("guid-resolved");
-    // [progress] 起播即记住这一集的流 guid：首帧进度回传时无需再发一次 play/info。
-    fnos_progress::remember(fnos_progress::PlayMeta {
-        item_guid: res.play_guid.clone(),
-        media_guid: res.media_guid.clone(),
-        video_guid: res.video_guid.clone(),
-        audio_guid: res.audio_guid.clone(),
-        subtitle_guid: res.subtitle_guid.clone(),
-    });
-    // 退出兜底跟踪器：series guid = 本地历史记录键（下面 history::record 用的同一个 guid）。
-    fnos_progress::begin(&guid, &res.play_guid);
-    proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
-    stage("proxy-ready");
-    let direct_url = proxy::play_url(&cfg, &res.play_guid);
+    // [live] 直播直链：不经 Go 代理，也不回传进度（直播没有 media_guid/duration）。
+    let is_live = res.live_url.is_some();
+    if is_live {
+        fnos_progress::begin("", "");
+    } else {
+        // [progress] 起播即记住这一集的流 guid：首帧进度回传时无需再发一次 play/info。
+        fnos_progress::remember(fnos_progress::PlayMeta {
+            item_guid: res.play_guid.clone(),
+            media_guid: res.media_guid.clone(),
+            video_guid: res.video_guid.clone(),
+            audio_guid: res.audio_guid.clone(),
+            subtitle_guid: res.subtitle_guid.clone(),
+        });
+        // 退出兜底跟踪器：series guid = 本地历史记录键（下面 history::record 用的同一个 guid）。
+        fnos_progress::begin(&guid, &res.play_guid);
+    }
+    let direct_url = if let Some(live) = res.live_url.clone() {
+        live
+    } else {
+        proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
+        stage("proxy-ready");
+        proxy::play_url(&cfg, &res.play_guid)
+    };
 
     let display_title: String = res
         .media_title
@@ -1387,6 +1880,8 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
                         guid: g,
                         title: playlist_episode_title(&res.tv_title, se, no, &t),
                         duration_secs: dur,
+                        season: se,
+                        episode: no,
                     });
                 }
                 // 定位被点击的那一集：play/info 返回的 guid 与 episode/list 的 guid 通常一致；
@@ -1413,7 +1908,11 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     // PotPlayer：无 start-index 参数，多条目时把点击集旋转到首位（播放器面板顺序与之一致），
     // 单条仍直接播代理直链。
     let mut playlist_start: Option<usize> = None;
-    let url = if kind == "potplayer" {
+    let url = if is_live {
+        // [live] 直播：直链原样交给播放器（mpv 自己跟随 302 拉 HLS；
+        // PotPlayer 由 player::launch 的 direct 分支跳过 relay）。
+        direct_url.clone()
+    } else if kind == "potplayer" {
         if multi {
             let mut ordered = entries.clone();
             let rot = if ordered.is_empty() {
@@ -1460,6 +1959,7 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
         None,
         &[],
         playlist_start,
+        is_live,
     )
     .await;
     stage("player-launched");
@@ -1502,6 +2002,27 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     // 记录已落盘，再决定是否向调用方报播放器启动错误。
     launch_res?;
 
+    // [theintrodb] 真实接入：把「guid → TMDB/季/集」下发给 mpv 内的 smart_skip 脚本。
+    //
+    // 触发链：这里 `script-message skip-metadata` → `scripts/smart_skip/main.lua`
+    // 的 `register_script_message('skip-metadata')` → 写入 `skip_meta_map` →
+    // `file-loaded` 时 `load_server_config` 在飞牛无跳过数据的情况下调用
+    // `try_theintrodb_fallback` → `api.get_theintrodb` 请求 v4 `/media?tmdb_id=...`。
+    //
+    // 整季播放列表一次下发全部集：mpv 自动切集时 `path` 变成下一条代理 URL，
+    // Lua 按 guid 查表自然取到新一集的季集号，不会沿用上一集。
+    // 失败安全：消息只是「尽力而为」，mpv 未就绪/已退出都只影响兜底，不影响播放。
+    if kind == "mpv" && !is_live {
+        let payload = build_skip_metadata(
+            &res.tmdb_id,
+            &res.play_guid,
+            res.season,
+            res.episode,
+            &entries,
+        );
+        push_skip_metadata(&state, payload).await;
+    }
+
     // ③ [lc-1557] probe 只在后台跑，**不挡起播**。
     //
     // probe 会对代理直链发一次真实 GET —— NAS/网络慢时要等 20s（reqwest 超时上限），
@@ -1510,8 +2031,9 @@ async fn play_item(state: State<'_, AppState>, app: AppHandle, guid: String) -> 
     // probe 的"提前报错"价值不再值得它挡路。
     //
     // 两条路谁先到都行：probe 若先于 mpv 发现代理 500，照样把代理给的明确文案 emit 给前端。
-    let probe_url = direct_url.clone();
-    {
+    // [live] 直播不预检：源是持续流/302 网关，GET 预检没有意义，还可能误报错误。
+    if !is_live {
+        let probe_url = direct_url.clone();
         let app2 = app.clone();
         tokio::spawn(async move {
             if let Err(e) = proxy::probe(&probe_url).await {
@@ -2378,7 +2900,7 @@ pub fn run() {
                 let h3 = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
-                    match play_item(h3.state::<AppState>(), h3.clone(), guid).await {
+                    match play_item(h3.state::<AppState>(), h3.clone(), guid, None).await {
                         Ok(_) => libmpv::trace("AUTOPLAY: play_item ok"),
                         Err(e) => libmpv::trace(&format!("AUTOPLAY play_item err: {}", e)),
                     }
@@ -2467,6 +2989,11 @@ pub fn run() {
             bgm::bgm_calendar,
             // [lc-1605] 发现页右栏「总表查询」弹窗：往季番表（镜像 /v0/subjects?year&month 路由）
             bgm::bgm_season,
+            // [lc-1720] 手动获取元数据（TMDB + BGM 镜像搜索；选定后仅本地保存）
+            metadata_override::metadata_search,
+            metadata_override::metadata_get_override,
+            metadata_override::metadata_set_override,
+            metadata_override::metadata_clear_override,
             get_config,
             save_config,
             // [lc-1561] 自建弹幕接口连通测试（设置面板）
@@ -2552,6 +3079,8 @@ pub fn run() {
             watched::set_item_watched,
             get_items_global,
             get_items,
+            // [lc-1725] 全局聚合搜索（顶栏胶囊：GET /v/api/v1/search/list?q=）
+            search_items,
             // [lc-1701] 演员页「入库状态」批量匹配
             match_library_works,
             get_continue_watching,
@@ -2573,6 +3102,8 @@ pub fn run() {
             scrap_unscrap,
             get_item_detail,
             get_carousel_items,
+            // [版本] 同一剧/集的多版本（多文件）：stream/list 的 video_streams
+            get_media_versions,
             play_item,
             player_stop,
             mpv_toggle_pause,
@@ -2671,6 +3202,41 @@ mod tests {
         );
     }
 
+    /// [live] 直播线路挑选：优先可播线路；全部不可播时退回第一条有 path 的；
+    /// 没有 live_channels / 没有 path 时返回 None（普通媒体继续走 Go 代理）。
+    #[test]
+    fn pick_live_channel_rules() {
+        use serde_json::json;
+        // 第一条 can_play=0，第二条可播 → 选第二条
+        let v = json!({ "live_channels": [
+            { "path": "http://gw/1", "file_name": "线路1", "can_play": 0 },
+            { "path": "http://gw/2", "file_name": "线路2", "can_play": 1 },
+        ]});
+        assert_eq!(
+            super::pick_live_channel(&v),
+            Some(("http://gw/2".to_string(), Some("线路2".to_string())))
+        );
+        // 全部不可播 → 仍退回第一条有 path 的（避免直播完全播不了）
+        let v = json!({ "live_channels": [
+            { "path": "http://gw/1", "can_play": 0 },
+            { "path": "http://gw/2", "can_play": 0 },
+        ]});
+        assert_eq!(
+            super::pick_live_channel(&v),
+            Some(("http://gw/1".to_string(), None))
+        );
+        // 缺省 can_play 视为可播
+        let v = json!({ "live_channels": [ { "path": " http://gw/9 ", "file_name": "CCTV" } ]});
+        assert_eq!(
+            super::pick_live_channel(&v),
+            Some(("http://gw/9".to_string(), Some("CCTV".to_string())))
+        );
+        // 空 path / 无 live_channels → None
+        let v = json!({ "live_channels": [ { "path": "  ", "can_play": 1 } ]});
+        assert_eq!(super::pick_live_channel(&v), None);
+        assert_eq!(super::pick_live_channel(&json!({ "type": "Movie" })), None);
+    }
+
     /// [playlist] 单集标题拼接：完整季集号 / 只有番名+集名 / 只有集名 三种形态。
     #[test]
     fn playlist_episode_title_shapes() {
@@ -2694,11 +3260,15 @@ mod tests {
                 guid: "ep1".into(),
                 title: "番名 - S1E1: 第一集".into(),
                 duration_secs: 1440.0,
+                season: 1,
+                episode: 1,
             },
             super::PlaylistEntry {
                 guid: "ep2".into(),
                 title: "番名 - S1E2: 第二集".into(),
                 duration_secs: 0.0,
+                season: 1,
+                episode: 2,
             },
         ];
         let out = super::build_playlist_m3u(&cfg, &entries);
@@ -2709,5 +3279,45 @@ mod tests {
         assert!(lines[2].contains("/api/v1/playvideo/ep1?"));
         assert_eq!(lines[3], "#EXTINF:-1,番名 - S1E2: 第二集");
         assert!(lines[4].contains("/api/v1/playvideo/ep2?"));
+    }
+
+    /// [theintrodb] skip-metadata 载荷：整季按 guid 分集、单条用 play_guid、
+    /// 无 TMDB 锚点（空/非数字）时下发空表（不误触发兜底）。
+    #[test]
+    fn skip_metadata_maps_each_episode_by_guid() {
+        let entries = vec![
+            super::PlaylistEntry {
+                guid: "ep1".into(),
+                title: "S1E1".into(),
+                duration_secs: 0.0,
+                season: 1,
+                episode: 1,
+            },
+            super::PlaylistEntry {
+                guid: "ep2".into(),
+                title: "S1E2".into(),
+                duration_secs: 0.0,
+                season: 1,
+                episode: 2,
+            },
+        ];
+        let m = super::build_skip_metadata("12345", "ep1", 1, 1, &entries);
+        assert_eq!(m.pointer("/ep1/tmdb").and_then(|v| v.as_str()), Some("12345"));
+        assert_eq!(m.pointer("/ep1/season").and_then(|v| v.as_i64()), Some(1));
+        assert_eq!(m.pointer("/ep2/episode").and_then(|v| v.as_i64()), Some(2));
+
+        // 单条（电影/单集）：用 play_guid 作键；季集号 0 时省略，避免拼 S0E0。
+        let single = super::build_skip_metadata("777", "movie-guid", 0, 0, &[]);
+        assert_eq!(
+            single.pointer("/movie-guid/tmdb").and_then(|v| v.as_str()),
+            Some("777")
+        );
+        assert!(single.pointer("/movie-guid/season").is_none());
+
+        // 没有 TMDB id / 非数字：空对象（Lua 侧当作「暂无元数据」）。
+        for bad in ["", "  ", "tt123", "bg456"] {
+            let empty = super::build_skip_metadata(bad, "g", 1, 1, &[]);
+            assert_eq!(empty.as_object().map(|o| o.len()), Some(0), "{bad:?}");
+        }
     }
 }

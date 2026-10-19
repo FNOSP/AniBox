@@ -1,0 +1,234 @@
+/* ═══════════════ [lc-1710] 启动更新提示弹窗（UpdatePrompt） ═══════════════
+   外壳复用 .ddet-mask / .ddet / .ddet-close（同设置面板）；这里只定义卡片尺寸与内部排版。
+   颜色全部走 01-tokens 变量 —— 深浅主题自动成立；窄窗（94vw）不溢出。 */
+
+.upx-modal {
+  width: min(560px, 94vw);
+  max-height: min(84vh, 720px);
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-3));
+  animation: upxModalIn 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* 顶部 3px accent 渐变细线（靠 .ddet 的 overflow:hidden 收边） */
+.upx-modal::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--accent-grad);
+  z-index: 1;
+}
+@keyframes upxModalIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 关闭动画：遮罩淡出 + 卡片微缩下沉（与 GuestLoginPrompt / SettingsPanel 同一套节奏） */
+.ddet-mask.upx-mask-closing {
+  animation: upxMaskOut 0.17s ease forwards;
+}
+.ddet-mask.upx-mask-closing .upx-modal {
+  animation: upxModalOut 0.17s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+@keyframes upxMaskOut {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes upxModalOut {
+  to {
+    opacity: 0;
+    transform: scale(0.97) translateY(6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .upx-modal,
+  .ddet-mask.upx-mask-closing,
+  .ddet-mask.upx-mask-closing .upx-modal {
+    animation: none;
+  }
+}
+
+/* ── 头部：图标徽章 + 标题 + 元信息 ── */
+.upx-hd {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 22px 22px 14px;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.upx-badge {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.upx-hdm {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-right: 22px; /* 给右上角关闭按钮留位 */
+}
+.upx-title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.35;
+  font-weight: 700;
+  color: var(--text-strong);
+  word-break: break-word;
+}
+.upx-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.upx-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.upx-chip.hot {
+  border-color: color-mix(in srgb, #d29922 45%, transparent);
+  background: color-mix(in srgb, #d29922 12%, transparent);
+  color: #b9821b;
+}
+html.dark .upx-chip.hot {
+  color: #e3b341;
+}
+
+/* ── 正文：更新说明（纯文本、可滚动、限高）+ 进度/提示 ── */
+.upx-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 22px;
+  overscroll-behavior: contain;
+}
+.upx-notes {
+  margin: 0;
+  max-height: min(38vh, 280px);
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--hover);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.upx-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+}
+.upx-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--hover);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.upx-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.18s ease;
+}
+.upx-progress-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+  min-width: 0;
+}
+.upx-pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  font-weight: 600;
+}
+.upx-msg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.upx-speed {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.upx-star {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+}
+.upx-hint {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--muted);
+  word-break: break-word;
+}
+.upx-hint.ok {
+  color: #3fb950;
+}
+.upx-err {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #e5484d;
+  word-break: break-word;
+}
+
+/* ── 底部按钮：与设置面板 .set-btn 同尺寸；窄窗自动换行 ── */
+.upx-acts {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 14px 22px 18px;
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 520px) {
+  .upx-acts {
+    justify-content: stretch;
+  }
+  .upx-acts .set-btn {
+    flex: 1 1 auto;
+  }
+}

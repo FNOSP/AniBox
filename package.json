@@ -2,6 +2,16 @@
   "name": "anibox",
   "private": true,
   "version": "4.0.0",
+  "description": "AniBox —— 飞牛影视（fnOS）第三方桌面客户端",
+  "license": "GPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FNOSP/AniBox.git"
+  },
+  "homepage": "https://github.com/FNOSP/AniBox",
+  "bugs": {
+    "url": "https://github.com/FNOSP/AniBox/issues"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -4,6 +4,9 @@ version = "4.0.0"
 description = "AniBox —— 飞牛影视（fnOS）桌面客户端"
 authors = ["AniBox"]
 edition = "2024"
+license = "GPL-3.0"
+repository = "https://github.com/FNOSP/AniBox"
+homepage = "https://github.com/FNOSP/AniBox"
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary

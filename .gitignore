@@ -57,6 +57,10 @@ vite.config.d.ts
 .dryrun*.cmd
 # 构建产物输出目录（安装包，不入库）
 /release/
+# WebView2 离线安装包缓存（约 190~214MB，由 tools/fetch-webview2-offline.ps1 下载；
+# Tauri offlineInstaller 打包时也会自行下载到用户缓存，绝不入库）
+/src-tauri/webview2/
+/vendor/webview2/
 # 测试 / 验证脚本与一次性探针
 **/verify_*.js
 **/verify-*.js

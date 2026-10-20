@@ -54,7 +54,7 @@
     ],
     "windows": {
       "webviewInstallMode": {
-        "type": "downloadBootstrapper",
+        "type": "offlineInstaller",
         "silent": true
       },
       "minimumWebview2Version": "109.0.0.0",

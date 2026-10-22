@@ -50,3 +50,13 @@
 ## Node.js
 
 内置实例使用用户机器上的 Node.js 运行时（系统 PATH 或 `ANIBOX_NODE_PATH`），本仓库不随包分发 Node.js 二进制。
+
+## zhconv（Rust crate）
+
+- 名称：zhconv-rs（`zhconv` crate）
+- 上游仓库：https://github.com/Gowee/zhconv-rs
+- 许可证：**GPL-2.0-or-later**（与本项目 GPL-3.0 兼容）
+- 使用方式：编译期内嵌 MediaWiki 简繁转换表（仅启用 `mediawiki-hans`），用于把播放器展示标题
+  （mpv `force-media-title` / 整季 `#EXTINF` / PotPlayer 标题）从繁体归一化为简体，运行时无网络请求。
+- 转换表来源：MediaWiki `ZhConversion.php`（GPL-2.0-or-later）。
+

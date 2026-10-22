@@ -95,6 +95,8 @@ Var WixMode
 Var OldMainBinaryName
 ; 安装模式：0=currentUser（默认）, 1=allUsers
 Var InstallModeAll
+; WebView2 安装同意标记（1=用户已在自绘 UI 中明确同意）
+Var Wv2Consent
 !ifndef BUILD_UNINSTALLER
   Var ipcDir
   Var uiBase
@@ -463,6 +465,13 @@ Function .onInit
     StrCpy $InstallModeAll 0
   ${EndIf}
 
+  ; WebView2 安装同意：自绘 UI 在用户点「立即安装」并安装成功后以 /_WV2_CONSENT=1 拉起
+  StrCpy $Wv2Consent 0
+  ${GetOptions} $CMDLINE "/_WV2_CONSENT=" $0
+  ${IfNot} ${Errors}
+    StrCpy $Wv2Consent 1
+  ${EndIf}
+
   ${If} $InstallModeAll = 1
     UserInfo::GetAccountType
     Pop $0
@@ -518,58 +527,140 @@ Section EarlyChecks
   !endif
 SectionEnd
 
-Section WebView2
+; ── WebView2 Runtime 检测（注册表双视图 + 安装目录兜底）──
+; 返回 $R9 = 检测到的最高版本（"" 表示未安装）。
+; 与自绘 UI 的 WebView2Detect.cs 口径一致：
+;   HKLM/HKCU 的 EdgeUpdate\Clients\{F3017226-...}\pv（含 WOW6432Node），
+;   以及 Program Files / Program Files (x86) / LOCALAPPDATA 下的
+;   Microsoft\EdgeWebView\Application\<版本>\msedgewebview2.exe。
+Function AniBoxWebView2Detect
+  StrCpy $R9 ""
+  StrCpy $R8 ""
+
   ${If} ${RunningX64}
-    ReadRegStr $4 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
-  ${Else}
-    ReadRegStr $4 HKLM "SOFTWARE\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
+    ReadRegStr $R8 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
   ${EndIf}
-  ${If} $4 == ""
-    ReadRegStr $4 HKCU "SOFTWARE\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
+  ${If} $R8 == ""
+    ReadRegStr $R8 HKLM "SOFTWARE\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
+  ${EndIf}
+  ${If} $R8 == ""
+    ReadRegStr $R8 HKCU "SOFTWARE\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
+  ${EndIf}
+  ${If} $R8 != ""
+    StrCpy $R9 "$R8"
   ${EndIf}
 
-  ${If} $4 == ""
-    ${If} $UpdateMode <> 1
-      !if "${INSTALLWEBVIEW2MODE}" == "downloadBootstrapper"
-        Delete "$TEMP\MicrosoftEdgeWebview2Setup.exe"
-        DetailPrint "$(webview2Downloading)"
-        NSISdl::download "https://go.microsoft.com/fwlink/p/?LinkId=2124703" "$TEMP\MicrosoftEdgeWebview2Setup.exe"
-        Pop $0
-        ${If} $0 == "success"
-          DetailPrint "$(webview2DownloadSuccess)"
-        ${Else}
-          DetailPrint "$(webview2DownloadError)"
-          Abort "$(webview2AbortError)"
-        ${EndIf}
-        StrCpy $6 "$TEMP\MicrosoftEdgeWebview2Setup.exe"
-        Goto install_webview2
-      !endif
-      !if "${INSTALLWEBVIEW2MODE}" == "embedBootstrapper"
-        Delete "$TEMP\MicrosoftEdgeWebview2Setup.exe"
-        File "/oname=$TEMP\MicrosoftEdgeWebview2Setup.exe" "${WEBVIEW2BOOTSTRAPPERPATH}"
-        DetailPrint "$(installingWebview2)"
-        StrCpy $6 "$TEMP\MicrosoftEdgeWebview2Setup.exe"
-        Goto install_webview2
-      !endif
-      !if "${INSTALLWEBVIEW2MODE}" == "offlineInstaller"
-        Delete "$TEMP\MicrosoftEdgeWebView2RuntimeInstaller.exe"
-        File "/oname=$TEMP\MicrosoftEdgeWebView2RuntimeInstaller.exe" "${WEBVIEW2INSTALLERPATH}"
-        DetailPrint "$(installingWebview2)"
-        StrCpy $6 "$TEMP\MicrosoftEdgeWebView2RuntimeInstaller.exe"
-        Goto install_webview2
-      !endif
-      Goto webview2_done
-      install_webview2:
-        DetailPrint "$(installingWebview2)"
-        ExecWait "$6 ${WEBVIEW2INSTALLERARGS} /install" $1
-        ${If} $1 = 0
-          DetailPrint "$(webview2InstallSuccess)"
-        ${Else}
-          DetailPrint "$(webview2InstallError)"
-          Abort "$(webview2AbortError)"
-        ${EndIf}
-      webview2_done:
+  ${If} $R9 == ""
+    ${If} ${RunningX64}
+      StrCpy $R7 "$PROGRAMFILES64\Microsoft\EdgeWebView\Application"
+    ${Else}
+      StrCpy $R7 "$PROGRAMFILES\Microsoft\EdgeWebView\Application"
     ${EndIf}
+    Call AniBoxScanWebView2Dir
+    ${If} $R9 == ""
+      StrCpy $R7 "$PROGRAMFILES\Microsoft\EdgeWebView\Application"
+      Call AniBoxScanWebView2Dir
+    ${EndIf}
+    ${If} $R9 == ""
+      StrCpy $R7 "$LOCALAPPDATA\Microsoft\EdgeWebView\Application"
+      Call AniBoxScanWebView2Dir
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+
+; 扫描 $R7 下的版本目录（目录名即版本），取含 msedgewebview2.exe 的最大版本 → $R9
+Function AniBoxScanWebView2Dir
+  ${IfNot} ${FileExists} "$R7\*.*"
+    Return
+  ${EndIf}
+  FindFirst $0 $1 "$R7\*.*"
+  anibox_wv2_dir_loop:
+    StrCmp $1 "" anibox_wv2_dir_done
+    ${If} ${FileExists} "$R7\$1\msedgewebview2.exe"
+      ${If} $R9 == ""
+        StrCpy $R9 "$1"
+      ${Else}
+        ${VersionCompare} "$1" "$R9" $2
+        ${If} $2 = 2
+          StrCpy $R9 "$1"
+        ${EndIf}
+      ${EndIf}
+    ${EndIf}
+    FindNext $0 $1
+    Goto anibox_wv2_dir_loop
+  anibox_wv2_dir_done:
+  FindClose $0
+FunctionEnd
+
+Section WebView2
+  Call AniBoxWebView2Detect
+  StrCpy $4 "$R9"
+
+  ${If} $4 == ""
+    ; 静默直装（不是自绘 UI 发起的、也不是升级）默认不自动安装：
+    ; 必须由用户明确同意（UI 传 /_WV2_CONSENT=1），否则中止并说明原因。
+    ${If} ${Silent}
+    ${AndIf} $Wv2Consent <> 1
+    ${AndIf} $UpdateMode <> 1
+      Abort "缺少 Microsoft Edge WebView2 Runtime，AniBox 将无法运行，安装已中止。$\r$\n$\r$\n请运行图形安装程序，或先手动安装 WebView2 Runtime：$\r$\nhttps://go.microsoft.com/fwlink/p/?LinkId=2124703"
+    ${EndIf}
+
+    !if "${INSTALLWEBVIEW2MODE}" == "downloadBootstrapper"
+      Delete "$TEMP\MicrosoftEdgeWebview2Setup.exe"
+      DetailPrint "$(webview2Downloading)"
+      NSISdl::download "https://go.microsoft.com/fwlink/p/?LinkId=2124703" "$TEMP\MicrosoftEdgeWebview2Setup.exe"
+      Pop $0
+      ${If} $0 != "success"
+        DetailPrint "官方下载通道失败，改用系统 curl 重试…"
+        nsExec::ExecToLog `cmd /c curl.exe -fL --retry 2 --connect-timeout 20 -o "$TEMP\MicrosoftEdgeWebview2Setup.exe" "https://go.microsoft.com/fwlink/p/?LinkId=2124703"`
+        Pop $0
+      ${EndIf}
+      ${IfNot} ${FileExists} "$TEMP\MicrosoftEdgeWebview2Setup.exe"
+        DetailPrint "curl 不可用，改用 PowerShell 重试…"
+        nsExec::ExecToLog `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile '$TEMP\MicrosoftEdgeWebview2Setup.exe' -UseBasicParsing"`
+        Pop $0
+      ${EndIf}
+      ${IfNot} ${FileExists} "$TEMP\MicrosoftEdgeWebview2Setup.exe"
+        DetailPrint "$(webview2DownloadError)"
+        Abort "WebView2 Runtime 下载失败（网络/代理/防火墙限制），安装已中止。$\r$\n请手动下载安装后重试：$\r$\nhttps://go.microsoft.com/fwlink/p/?LinkId=2124703"
+      ${EndIf}
+      StrCpy $6 "$TEMP\MicrosoftEdgeWebview2Setup.exe"
+      Goto install_webview2
+    !endif
+    !if "${INSTALLWEBVIEW2MODE}" == "embedBootstrapper"
+      Delete "$TEMP\MicrosoftEdgeWebview2Setup.exe"
+      File "/oname=$TEMP\MicrosoftEdgeWebview2Setup.exe" "${WEBVIEW2BOOTSTRAPPERPATH}"
+      DetailPrint "$(installingWebview2)"
+      StrCpy $6 "$TEMP\MicrosoftEdgeWebview2Setup.exe"
+      Goto install_webview2
+    !endif
+    !if "${INSTALLWEBVIEW2MODE}" == "offlineInstaller"
+      Delete "$TEMP\MicrosoftEdgeWebView2RuntimeInstaller.exe"
+      File "/oname=$TEMP\MicrosoftEdgeWebView2RuntimeInstaller.exe" "${WEBVIEW2INSTALLERPATH}"
+      DetailPrint "$(installingWebview2)"
+      StrCpy $6 "$TEMP\MicrosoftEdgeWebView2RuntimeInstaller.exe"
+      Goto install_webview2
+    !endif
+    Goto webview2_done
+    install_webview2:
+      DetailPrint "$(installingWebview2)"
+      ExecWait "$6 ${WEBVIEW2INSTALLERARGS} /install" $1
+      Delete "$6"
+      ${If} $1 = 0
+      ${OrIf} $1 = 3010
+        DetailPrint "$(webview2InstallSuccess)"
+      ${Else}
+        DetailPrint "$(webview2InstallError)"
+        Abort "WebView2 Runtime 安装失败（错误码 $1），安装已中止。$\r$\n请手动下载安装后重试：$\r$\nhttps://go.microsoft.com/fwlink/p/?LinkId=2124703"
+      ${EndIf}
+      ; 安装后重新检测：仍缺失则中止，绝不带着缺失的运行时继续装主程序
+      Sleep 1500
+      Call AniBoxWebView2Detect
+      ${If} $R9 == ""
+        Abort "WebView2 Runtime 安装后仍未被检测到，安装已中止。$\r$\n请手动安装后重试：$\r$\nhttps://go.microsoft.com/fwlink/p/?LinkId=2124703"
+      ${EndIf}
+      StrCpy $4 "$R9"
+    webview2_done:
   ${Else}
     !if "${MINIMUMWEBVIEW2VERSION}" != ""
       ${VersionCompare} "${MINIMUMWEBVIEW2VERSION}" "$4" $R0

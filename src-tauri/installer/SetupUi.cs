@@ -222,6 +222,19 @@ namespace AniBoxSetupUi {
                 _instDir = string.IsNullOrEmpty(_existingDir) ? _defaultUserPath : _existingDir;
             }
 
+            // ── WebView2 Runtime 前置检查（必须在创建 WebView2 之前）──
+            // 本 UI 由 WebView2 渲染；运行时缺失时窗口是空白的，连提示都显示不出来。
+            // 因此这里用原生 MessageBox 说明「缺少 WebView2 将无法运行」，得到用户同意后
+            // 在线下载安装，安装成功重新检测，仍缺失则中止（安装）或回退原生卸载界面（卸载）。
+            if (!_dev && !Args.Has(_launchArgs, "skip-webview2-check")) {
+                if (!WebView2Runtime.EnsureInteractive(_uninstallMode)) {
+                    Log("webview2: aborted by user or install failed");
+                    if (_uninstallMode) FallbackNativeUninstall();
+                    Shutdown(1);
+                    return;
+                }
+            }
+
             _win = new Window {
                 Title = _uninstallMode ? "AniBox 卸载" : "AniBox 安装",
                 Width = 780,
@@ -283,6 +296,35 @@ namespace AniBoxSetupUi {
                 } catch (Exception ex) { Log("corner pref: " + ex.Message); }
             };
             _win.Show();
+        }
+
+        // WebView2 缺失且用户拒绝安装时，卸载仍要能进行：
+        // 回退到 NSIS 原生卸载界面（不依赖 WebView2）。`/_UNINST=` 空值让 un.onInit
+        // 跳过「解压自绘 UI」，直接进入原生确认/进度页。
+        void FallbackNativeUninstall() {
+            try {
+                string exe = _uninstallExe;
+                if (string.IsNullOrEmpty(exe) || !File.Exists(exe)) {
+                    string guess = Path.Combine(_instDir ?? "", "uninstall.exe");
+                    if (File.Exists(guess)) exe = guess;
+                }
+                if (string.IsNullOrEmpty(exe) || !File.Exists(exe)) {
+                    MessageBox.Show("找不到卸载程序，无法继续卸载。请重新运行安装包进行覆盖安装后再卸载。",
+                        "AniBox 卸载", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+                Log("uninstall fallback -> native UI: " + exe);
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo {
+                    FileName = exe,
+                    Arguments = "/_UNINST=",
+                    UseShellExecute = true,
+                    WorkingDirectory = Path.GetTempPath()
+                });
+            } catch (Exception ex) {
+                Log("uninstall fallback failed: " + ex.Message);
+                MessageBox.Show("无法启动原生卸载界面：" + ex.Message,
+                    "AniBox 卸载", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         void EnsureRound(IntPtr hwnd) {
@@ -567,7 +609,8 @@ namespace AniBoxSetupUi {
                 // NSIS /D= 必须是最后一个参数且不加引号(路径含空格也原样);
                 // /_IPC 带引号, 兼容带空格的 TEMP 路径
                 string ipcFlag = " /_IPC=\"" + _workDir + "\"";
-                string args = "/S" + (mode == "all" ? " /allusers" : " /currentuser") + ipcFlag + " /D=" + _instDir;
+                string args = "/S" + (mode == "all" ? " /allusers" : " /currentuser")
+                    + " /_WV2_CONSENT=1" + ipcFlag + " /D=" + _instDir;
                 var psi = new System.Diagnostics.ProcessStartInfo {
                     FileName = _setupExe,
                     Arguments = args,

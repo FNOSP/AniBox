@@ -101,6 +101,7 @@ const cscArgs = [
   "-win32icon:" + ICON,
   ...refs.map((r) => "-r:" + r),
   path.join(INSTALLER, "InstallDetect.cs"),
+  path.join(INSTALLER, "WebView2Detect.cs"),
   path.join(INSTALLER, "SetupUi.cs"),
 ];
 log("编译 SetupUi.exe ...");

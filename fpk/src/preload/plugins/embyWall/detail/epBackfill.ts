@@ -26,6 +26,8 @@ import { S } from '../state';
 import { fnosGetEditDetail } from '../carousel/logo';
 import { extractTmdbId } from '../carousel/api';
 import { DETAIL_HERO_SEL, findActiveDetailView } from './glass';
+// [mirror-error] 分集补全失败统一文案：错误里带镜像 URL 时不显示到按钮/title。
+import { friendlyError } from '../../../core/mirrorError';
 
 const BTN_ID = 'fnos-epfix-btn';
 const ANCHOR_MARK = 'data-fnos-epfix-anchor';
@@ -345,7 +347,7 @@ async function runBackfill(btn: HTMLButtonElement): Promise<void> {
       tmdbId: tmdbId || undefined, title: title || undefined, seasonNumber,
     });
     if (!r || !r.ok || !r.data || !Array.isArray(r.data.episodes)) {
-      throw new Error((r && r.error) || 'TMDB 获取失败');
+      throw new Error(friendlyError(r && r.error, 'TMDB 获取失败'));
     }
     const tmdbByNum = new Map<number, any>();
     for (const e of r.data.episodes) tmdbByNum.set(e.episodeNumber, e);
@@ -454,8 +456,10 @@ async function runBackfill(btn: HTMLButtonElement): Promise<void> {
       + ' fallback=' + stats.upgraded + ' unchanged=' + stats.unchanged
       + ' unmatched=' + stats.unmatched + ' failed=' + stats.failed);
   } catch (e: any) {
-    const msg = String(e && e.message || e).substring(0, 80);
-    log('[epBackfill] 失败: ' + msg);
+    // 日志保留原始错误（含地址）便于排查；按钮/title 只展示过滤后的文案。
+    const rawMsg = String(e && e.message || e);
+    const msg = friendlyError(e).substring(0, 80);
+    log('[epBackfill] 失败: ' + rawMsg.substring(0, 120));
     if (btn.isConnected) {
       setBtn(btn, '⚠ ' + msg, msg);
       btn.style.color = 'var(--fnos-ui-warn,#b06a3a)';

@@ -780,7 +780,7 @@ func (b *Bridge) tmdbFetchMulti(urlStr, bearer string) (int, map[string]any, err
 // tmdbShow 完整详情（append_to_response 聚合 + include_image_language + 季摘要）。
 func (b *Bridge) tmdbShow(w http.ResponseWriter, r *http.Request) {
 	if !b.tmdbReady() {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "TMDB 镜像不可用，且未配置自有 TMDB API Key（可在设置中填写）。"})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": mirrorUnavailableMsg})
 		return
 	}
 	var req struct {
@@ -826,7 +826,7 @@ func (b *Bridge) tmdbShow(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := b.resolveShowID(mt, req.TmdbID.Int64(), req.Title, req.Year)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": publicError(err)})
 		return
 	}
 	appendList := "credits,external_ids,keywords,alternative_titles,images,videos,release_dates,watch/providers,recommendations"
@@ -841,7 +841,8 @@ func (b *Bridge) tmdbShow(w http.ResponseWriter, r *http.Request) {
 	status, d, ferr := b.tmdbGetPWQ(fmt.Sprintf("/3/%s/%d?%s", mt, id, q.Encode()))
 	if ferr != nil {
 		logf("[tmdb] show 详情拉取失败: %v", ferr)
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "TMDB 连接失败（镜像不可用且直连失败）：" + ferr.Error() + "。可在设置→TMDB 直连点「更新 IP」后重试，或检查 NAS 网络/代理。"})
+		// 原始错误（含镜像地址/域名）只进日志；界面统一显示镜像故障文案。
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": mirrorUnavailableMsg})
 		return
 	}
 	if status != http.StatusOK || d == nil {
@@ -904,7 +905,7 @@ func (b *Bridge) tmdbSeasonEpisodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !b.tmdbReady() {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "TMDB 镜像不可用，且未配置自有 TMDB API Key（可在设置中填写）。"})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": mirrorUnavailableMsg})
 		return
 	}
 	mt := "tv"
@@ -927,7 +928,7 @@ func (b *Bridge) tmdbSeasonEpisodes(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := b.resolveShowID(mt, req.TmdbID.Int64(), req.Title, "")
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": publicError(err)})
 		return
 	}
 	pull := func(lang string) []map[string]any {

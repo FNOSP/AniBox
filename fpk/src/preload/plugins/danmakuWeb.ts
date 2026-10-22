@@ -22,6 +22,8 @@ import { ipcRenderer } from 'electron';
 import { registerHook, HookType } from '../core/hooks';
 import logger from '../core/logger';
 import { t } from '../core/i18n';
+// [mirror-error] 弹幕源失败原因统一文案：含 URL/镜像域名时不在「来源详情」里透出。
+import { friendlyError } from '../core/mirrorError';
 import { installMobileFlag } from './embyWall/detail/beautifyStyle';
 // [lc-1319] 布局模式（手动切换）真源：播放页字号等"手机口径"跟随模式
 import { getUiMode } from './mobileStyle';
@@ -1637,7 +1639,7 @@ async function prepareAndLoad(targetGuid?: string | null): Promise<void> {
             meta = {
                 searchTitle: res?.title || '', matchedTitle: res?.title || '',
                 source: res?.source || '', ep: res?.ep ?? 0, season: res?.season || 0, isMovie: !!res?.isMovie,
-                count: 0, error: res?.error || '空',
+                count: 0, error: friendlyError(res?.error, '空'),
             };
             log.info('[danmakuWeb] 无弹幕: ' + (res?.error || '空'));
             loadedGuids.add(guid);
@@ -2313,12 +2315,14 @@ async function runSearch(kw: string): Promise<void> {
             dmSearchResults = res.candidates;
         } else {
             dmSearchResults = [];
-            dmSearchErr = (res && res.error) || t('没有可用的搜索结果');
+            dmSearchErr = friendlyError(res && res.error, t('没有可用的搜索结果'));
         }
     } catch (e: any) {
         dmSearchResults = [];
         const msg = String(e?.message || e);
-        dmSearchErr = msg.indexOf('超时') >= 0 ? t('搜索请求超时，请稍后重试或刷新页面') : t('搜索异常') + ': ' + msg;
+        dmSearchErr = msg.indexOf('超时') >= 0
+            ? t('搜索请求超时，请稍后重试或刷新页面')
+            : friendlyError(t('搜索异常') + ': ' + msg);
     } finally {
         dmSearchBusy = false;
         renderSearchBody();
@@ -2351,12 +2355,12 @@ async function pickCandidate(c: any): Promise<void> {
             if (enabled) startRender();
             log.info('[danmakuWeb] 手动选定弹幕: ' + items.length + ' 条 bvid=' + c.bvid);
         } else {
-            const err = (res && res.error) || t('选定失败');
+            const err = friendlyError(res && res.error, t('选定失败'));
             if (meta) meta.error = err;   // 让「来源详情→备注」同步显示失败原因
             dmSearchErr = err;
         }
     } catch (e: any) {
-        dmSearchErr = t('选定失败') + ': ' + (e?.message || e);
+        dmSearchErr = friendlyError(t('选定失败') + ': ' + (e?.message || e));
     } finally {
         dmSearchBusy = false;
         renderSearchBody();
@@ -2456,7 +2460,7 @@ function renderDetailRows(): void {
         ['目标季数', meta.season > 0 ? `第 ${meta.season} 季（优先精确匹配）` : '未指定（仅按番名+集数）'],
         ['弹幕条数', String(meta.count)],
     ];
-    if (meta.error) rows.push(['备注', meta.error]);
+    if (meta.error) rows.push(['备注', friendlyError(meta.error)]);
 
     // 非有效登录态且最终用的是 B站：醒目红色横幅提示（优选源与 Cookie 无关，不误报）
     if (!isPreferred && cookie.warn) {
@@ -2554,9 +2558,9 @@ function renderDetailRows(): void {
             }
             // 未参与（开关关/未配置）：原因直接作为状态行；跑过但没采用：单列原因
             if (!s.enabled) {
-                if (s.note) sRows.push(['状态', s.note]);
+                if (s.note) sRows.push(['状态', friendlyError(s.note)]);
             } else if (!s.used && s.note) {
-                sRows.push(['未采用原因', s.note]);
+                sRows.push(['未采用原因', friendlyError(s.note)]);
             }
             if (sRows.length) appendRows(card, sRows, false);
             body.appendChild(card);
@@ -2841,7 +2845,8 @@ function hookRouteChanges(): void {
             if (typeof orig !== 'function') continue;
             h[m] = function (this: History, ...a: any[]): void {
                 orig.apply(this, a);      // 抛错（如跨域 url）就让它照常抛，不做判断
-                checkLeave();             // 此刻 location 已更新
+                // [nav-guard] 路由副作用异常隔离: checkLeave 抛错不得冒泡回 React Router
+                try { checkLeave(); } catch (e) { console.warn('[fntv-web] nav side-effect failed (danmakuWeb)', e); }
             };
         }
     } catch { /* ignore */ }

@@ -186,7 +186,7 @@ func (b *Bridge) fanartLogosHandler(w http.ResponseWriter, r *http.Request) {
 	req2.Header.Set("User-Agent", skipUA)
 	resp, err := b.extHTTP().Do(req2)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": err.Error()})
+		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": publicError(err)})
 		return
 	}
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))

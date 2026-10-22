@@ -1,4 +1,7 @@
-import { ABOUT_LINK_URL, openFeedbackChoiceModal } from './embyWall/modals/feedback';
+import { ABOUT_LINK_URL, openQQGroup } from './embyWall/modals/feedback';
+// 构建时间由 scripts/build-userjs.mjs 的 esbuild define 在打包时注入（本地时间，精确到分钟）。
+// 源码直跑 / 未注入时兜底为空字符串，关于页只显示版本号。
+declare const __BUILD_TIME__: string | undefined;
 // [lc-1319] UI 模式（手动切换）真源：轮播选路/面板口径跟随 mobileStyle.getUiMode
 import { getUiMode } from './mobileStyle';
 import { UiThemeMode, applyUiTheme, getEffectiveDark, getUiTheme, injectUiThemeStyle, removeThemeModeSetting, setUiTheme } from './embyWall/theme';
@@ -7,9 +10,10 @@ import { buildCard as buildCustomLogoCard, refreshCard as refreshCustomLogoCard 
 import { applyLoginBgVar } from './embyWall/login';
 import { destroyCarousel, findMediaLibrarySection, injectCarousel, isModalOpen, resumeCarousel } from './embyWall/carousel/render';
 import { fntvOpenPatchApplyPopup } from './embyWall/modals/patch';
-import { buildStatsCard, buildFeedbackBody } from './embyWall/modals/telemetry'; // [v1.12.0] 匿名使用统计卡（关于页）
+import { buildStatsCard } from './embyWall/modals/telemetry'; // [v1.12.0] 匿名使用统计卡（关于页）
 import { injectVideoPreviewExternalPlay } from './embyWall/nav/inject';
-import { isDetailPage } from './embyWall/detail/glass';
+import { isDetailPage, ACTIVE_VIEW_SEL } from './embyWall/detail/glass';
+import { revealActiveView } from './embyWall/detail/castNav';
 import { applyDetailBeautify, teardownDetailBeautify } from './embyWall/detail/immersive';
 import { scheduleEpBackfill, ensureEpFixButton } from './embyWall/detail/epBackfill';
 import { ensureVirtualBandFix } from './embyWall/detail/virtualBand';
@@ -37,8 +41,10 @@ import { armBootCover } from './embyWall/carousel/bootCover'; // [lc-066] 极简
 import { ipcRenderer } from 'electron';
 import { registerHook } from '../core/hooks';
 import { HookType } from '../core/hooks';
-import { isFntvTvPage, pagePath, pagePathOf, navToTvPage } from '../core/pageMode';
+import { isFntvTvPage, pagePath, pagePathOf, navToTvPage, tvHref } from '../core/pageMode';
 import { getLang, setLang, t } from '../core/i18n'; // [lc-1065] 设置面板语言切换
+// [mirror-error] Bangumi 诊断/同步状态里的网络错误：带 URL 时统一显示镜像故障文案。
+import { friendlyError } from '../core/mirrorError';
 // [lc-563] 轮播数据源 = 复用 hotUpdates.ts 已验证可行的 ensureLibraryIndex（稳定构建 97 项），取 Map 前 10 项 = 首屏 DOM 顺序 = 最近更新在前。
 // 兜底 = 当前首页已渲染 DOM 真实卡片。绝不用硬编码数据。绝不在隐藏 iframe 内强制要求 poster（fnOS 懒加载图永远没真实 URL → 跳过 → 0 个）。
 import { ensureLibraryIndex } from './hotUpdates';
@@ -153,7 +159,9 @@ function handle(): void {
       log('[TV类同步]', location.pathname, 'isTv=', isFntvTvPage());
     }
   }, 400);
-  window.addEventListener('beforeunload', () => window.clearInterval(_tvClassTimer));
+  // [lc-1400] beforeunload→pagehide：恢复 bfcache。仅真实卸载(e.persisted===false)才清理；
+  //   进入 bfcache 时保留 observer/interval，返回(pageshow)后增强继续工作。
+  window.addEventListener('pagehide', (e) => { if (!e.persisted) window.clearInterval(_tvClassTimer); });
 
   // [飞牛影视特化 v0.13.0] 非影视页（原生系统页）零注入：旧的「切换系统页面 → 返回影视」整套机制
   //   已随「切换系统页面」按钮删除而废弃——原生页不再注入任何 AniBox 元素（返回影视/外部播放
@@ -182,7 +190,7 @@ function handle(): void {
     _themeTimer = window.setTimeout(() => { applyUiTheme(); removeThemeModeSetting(); }, 150);
   });
   _themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'], childList: true, subtree: true });
-  window.addEventListener('beforeunload', () => _themeObserver.disconnect());
+  window.addEventListener('pagehide', (e) => { if (!e.persisted) _themeObserver.disconnect(); });
   // [v400] 跟随系统: 系统明暗偏好变化时, 若当前为 system 则实时换肤
   try {
     const _mq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -457,7 +465,7 @@ function handle(): void {
     }, 200);
   });
   _rcObs.observe(document.body, { childList: true, subtree: true });
-  window.addEventListener('beforeunload', () => { _rcObs.disconnect(); clearInterval(_rcInterval); });
+  window.addEventListener('pagehide', (e) => { if (!e.persisted) { _rcObs.disconnect(); clearInterval(_rcInterval); } });
   const _rcInterval = setInterval(_globalRoundedCornerEnforcer, 20000);
 
   // 三重触发: 立即一次 + MutationObserver(DOM变化时) + 定时巡检(兜底漏网)
@@ -478,7 +486,7 @@ function handle(): void {
     }, 200);
   });
   _wwObs.observe(document.body, { childList: true, subtree: true });
-  window.addEventListener('beforeunload', () => _wwObs.disconnect());
+  window.addEventListener('pagehide', (e) => { if (!e.persisted) _wwObs.disconnect(); });
   setInterval(() => {
     _globalWhitewashRemover(); // 心跳兜底全扫(lc-1011: 6s → 20s, 常驻全扫是卡顿热点)
     _forceDatePickerDark(); // [lc-657] 同步巡检日期选择器弹层
@@ -537,7 +545,7 @@ function handle(): void {
         const el = descendants[j] as HTMLElement;
         // 跳过我们注入的侧栏按钮（保持自身背景色）
         if (el.id === 'fnos-switch-system-btn' || el.id === 'fnos-settings-btn'
-          || el.id === 'fnos-feedback-choice-btn' || el.closest('#fnos-sidebar-actions')) continue;
+          || el.id === 'fnos-qq-group-btn' || el.closest('#fnos-sidebar-actions')) continue;
         const bg = getComputedStyle(el).backgroundColor;
         // 命中不透明/半透明的白系或浅灰底 → 透明, 让浅蓝透上来
         if (isOpaqueLightBg(bg)) {
@@ -583,7 +591,7 @@ function handle(): void {
       panel.appendChild(ctrl);
     }
     // [飞牛影视特化 v0.8.0] 侧边栏左下角「切换系统页面」（切换NAS界面）按钮已按需移除；
-    //  523/529 行的历史 id 守卫无副作用保留。侧栏容器现在只有：设置 → 软件反馈建议。
+    //  523/529 行的历史 id 守卫无副作用保留。侧栏容器现在只有：设置 → 加入Q群。
 
     if (ctrl.querySelector('#fnos-settings-btn')) return; // 幂等
 
@@ -610,32 +618,33 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
       // [lc-705] 复刻飞牛原生类目按钮：点击后自动收起侧边栏抽屉（设置面板挂在 body，不受影响）
       (window as any).fntvCloseSidebar?.();
     });
-    ctrl.prepend(btn); // [lc-633] 设置按钮置顶 → 最终顺序: 设置 → 切换系统页面 → 软件反馈建议
+    ctrl.prepend(btn); // [lc-633] 设置按钮置顶 → 最终顺序: 设置 → 加入Q群
 
-    // [lc-361] 合并"问卷反馈"与"Q群反馈"为单个"软件反馈建议"按钮(点击弹出选择弹窗)
-    if (!ctrl.querySelector('#fnos-feedback-choice-btn')) {
-      const fbChoiceBtn = document.createElement('button');
-      fbChoiceBtn.id = 'fnos-feedback-choice-btn';
-      fbChoiceBtn.type = 'button';
-      fbChoiceBtn.textContent = '💬';
+    // [v1.13.0] 原「软件反馈建议」按钮 → 「加入Q群」：点击直接打开 QQ 群加群链接
+    //   （反馈问卷 / 一键上传日志 / Bug 反馈卡等其它反馈入口已全部移除）
+    if (!ctrl.querySelector('#fnos-qq-group-btn')) {
+      const qqBtn = document.createElement('button');
+      qqBtn.id = 'fnos-qq-group-btn';
+      qqBtn.type = 'button';
+      qqBtn.textContent = '👥';
       // [v1.2.4] 文字包 span：收起态只留图标（与设置按钮同款）
       {
-        const _fbTxt = document.createElement('span');
-        _fbTxt.className = 'fnos-sb-btn-text';
-        _fbTxt.textContent = '软件反馈建议';
-        fbChoiceBtn.appendChild(_fbTxt);
+        const _qqTxt = document.createElement('span');
+        _qqTxt.className = 'fnos-sb-btn-text';
+        _qqTxt.textContent = 'Q群反馈';
+        qqBtn.appendChild(_qqTxt);
       }
-      fbChoiceBtn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-radius:12px;cursor:pointer;'
+      qqBtn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-radius:12px;cursor:pointer;'
         + 'background:var(--fnos-sidebar-btn-bg)!important;color:#fff;font-size:13px;font-weight:600;'
         + 'border:1px solid rgba(255,255,255,.28);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);'
         + 'box-shadow:0 4px 16px rgba(0,0,0,.18);text-align:center;';
-      fbChoiceBtn.addEventListener('click', (e: Event) => {
+      qqBtn.addEventListener('click', (e: Event) => {
         e.stopPropagation();
-        openFeedbackChoiceModal();
-        // [lc-705] 复刻飞牛原生类目按钮：点击后自动收起侧边栏抽屉（反馈弹窗挂在 body，不受影响）
+        openQQGroup();
+        // [lc-705] 复刻飞牛原生类目按钮：点击后自动收起侧边栏抽屉（外链在新标签/系统浏览器打开）
         (window as any).fntvCloseSidebar?.();
       });
-      ctrl.appendChild(fbChoiceBtn);
+      ctrl.appendChild(qqBtn);
     }
 
     // [lc-365] 侧栏设置框底部常规显示版本号（像大厂软件：小灰字 + 上分隔线，居中）
@@ -1176,7 +1185,7 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
         }
         bangumiSyncLine.textContent = t('最近同步：') + (s.ok
           ? `✓ ${s.detail || ''} · ${new Date(s.ts).toLocaleString('zh-CN')}`
-          : `✗ [${s.label || '失败'}] ${s.detail || ''} · ${new Date(s.ts).toLocaleString('zh-CN')}`);
+          : `✗ [${s.label || '失败'}] ${friendlyError(s.detail)} · ${new Date(s.ts).toLocaleString('zh-CN')}`);
         bangumiSyncLine.style.color = s.ok ? 'var(--fnos-ui-ok)' : 'var(--fnos-ui-warn)';
       }).catch(() => { bangumiSyncLine.textContent = t('最近同步：暂无记录'); });
     };
@@ -1196,20 +1205,20 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
           parts.push(`网络:正常(${r.network.latencyMs}ms,经${r.transport || r.network.via})`);
         } else {
           allOk = false;
-          parts.push(`网络:不通(${(r && r.network && r.network.detail) || '未知'})${(r && r.network && r.network.hint) ? '——' + r.network.hint : ''}`);
+          parts.push(`网络:不通(${friendlyError(r && r.network && r.network.detail, '未知')})${(r && r.network && r.network.hint) ? '——' + r.network.hint : ''}`);
         }
         if (r && r.token) {
           if (r.token.checked) {
             if (r.token.ok) parts.push('Token:有效');
-            else { allOk = false; parts.push(`Token:无效(${r.token.detail})`); }
+            else { allOk = false; parts.push(`Token:无效(${friendlyError(r.token.detail)})`); }
           } else {
-            parts.push(`Token:${r.token.detail}`);
+            parts.push(`Token:${friendlyError(r.token.detail)}`);
           }
         }
         bangumiProbeOut.textContent = parts.join('；');
         bangumiProbeOut.style.color = allOk ? 'var(--fnos-ui-ok)' : 'var(--fnos-ui-warn)';
       } catch (err: any) {
-        bangumiProbeOut.textContent = t('测试失败：') + String((err && err.message) || err);
+        bangumiProbeOut.textContent = t('测试失败：') + friendlyError(err);
         bangumiProbeOut.style.color = 'var(--fnos-ui-warn)';
       } finally {
         bangumiProbeBtn.disabled = false;
@@ -1323,217 +1332,18 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     });
     /* 布局统一在末尾 layout 区追加 */
 
-    // ===== 分组: TMDB API Key（用于「热门剧更新」浮层的 TMDB 电影/剧集数据源）=====
-    const secTmdb = section('TMDB API Key（可选兜底）');
+    // ===== 分组: 热门剧更新数据源（TMDB / 豆瓣）=====
+    // [remove-tmdb-settings] 已移除「TMDB API Key（可选兜底）」与「TMDB 免梯子直连（实验）」两项设置：
+    //   内置镜像取数不变；后端仍保留 tmdbApiKey / tmdbDirectConnect / tmdbDirectIp 的读取
+    //   （其它 TMDB 链路——详情卡/演员页/图片代理——仍在用），只是不再提供手动配置入口。
+    const secTmdb = section('热门剧更新数据源');
     const secBodyTmdb = secTmdb.body;
 
-    let tmdbReal = ''; // 真实 key（仅存于闭包，界面只显示掩码星号）
-    const maskTmdb = (t: string): string => '*'.repeat(Math.max(0, t.length));
-
-    const tmdbHintTop = document.createElement('div');
-    tmdbHintTop.style.cssText = 'font-size:11.5px;color:var(--fnos-ui-sub);margin-bottom:8px;line-height:1.5;';
-    tmdbHintTop.textContent = t('默认使用内置镜像取数，无需填写 Key；仅当镜像不可用时，才需要在此填写自有 TMDB API Key（或 v4 Read Access Token）作为兜底。');
-    secBodyTmdb.appendChild(tmdbHintTop);
-
-    // 单行 key 输入框
-    const tmdbInput = document.createElement('input');
-    tmdbInput.type = 'text';
-    tmdbInput.placeholder = t('可选：粘贴 TMDB API Key / Read Access Token');
-    tmdbInput.style.cssText = 'width:100%;height:32px;font-size:11px;color:var(--fnos-ui-text);'
-      + 'background:var(--fnos-ui-input-bg);border:1px solid var(--fnos-ui-border);border-radius:7px;'
-      + 'padding:6px 8px;box-sizing:border-box;';
-    secBodyTmdb.appendChild(tmdbInput);
-
-    tmdbInput.addEventListener('focus', () => {
-      if (tmdbInput.readOnly) { tmdbInput.readOnly = false; tmdbInput.value = ''; }
-    });
-    tmdbInput.addEventListener('blur', () => {
-      if (tmdbInput.value.trim() === '' && tmdbReal) {
-        tmdbInput.value = maskTmdb(tmdbReal);
-        tmdbInput.readOnly = true;
-      }
-    });
-
-    const tmdbBtns = document.createElement('div');
-    tmdbBtns.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
-    const saveTmdbBtn = mkBtn('保存', true);
-    const clearTmdbBtn = mkBtn('清除', true);
-    tmdbBtns.appendChild(saveTmdbBtn);
-    tmdbBtns.appendChild(clearTmdbBtn);
-    secBodyTmdb.appendChild(tmdbBtns);
-
-    const tmdbStatus = document.createElement('div');
-    tmdbStatus.style.cssText = 'font-size:11px;color:var(--fnos-ui-sub);margin-top:6px;min-height:14px;';
-    secBodyTmdb.appendChild(tmdbStatus);
-
-    // 底部提示：引导去 TMDB 申请
-    const tmdbHintBottom = document.createElement('div');
-    tmdbHintBottom.style.cssText = 'font-size:10.5px;color:var(--fnos-ui-muted);margin-top:10px;line-height:1.5;';
-    const tmdbLink = document.createElement('a');
-    tmdbLink.textContent = 'https://www.themoviedb.org/settings/api';
-    tmdbLink.href = 'https://www.themoviedb.org/settings/api';
-    tmdbLink.style.cssText = 'color:var(--fnos-ui-sec);text-decoration:underline;cursor:pointer;';
-    tmdbLink.addEventListener('click', (e: Event) => {
-      e.preventDefault();
-      e.stopPropagation();
-      ipcRenderer.invoke('settings:open-external', 'https://www.themoviedb.org/settings/api').catch(() => {});
-    });
-    tmdbHintBottom.appendChild(document.createTextNode('如需自定义兜底，可在 '));
-    tmdbHintBottom.appendChild(tmdbLink);
-    tmdbHintBottom.appendChild(document.createTextNode(' 免费申请 API Key。'));
-    secBodyTmdb.appendChild(tmdbHintBottom);
-
-    saveTmdbBtn.addEventListener('click', async (e: Event) => {
-      e.stopPropagation();
-      // 防误清空：同 Bangumi——掩码态保存已存真实 key；编辑态清空未填新值时保留已存 key。
-      let key: string;
-      if (tmdbInput.readOnly) {
-        key = tmdbReal;
-      } else {
-        const typed = tmdbInput.value.trim();
-        key = (typed === '' && tmdbReal) ? tmdbReal : typed;
-      }
-      try {
-        const r: any = await ipcRenderer.invoke('settings:set-tmdb-key', key);
-        if (!r || r.ok !== false) {
-          tmdbReal = key;
-          if (key) {
-            tmdbInput.value = maskTmdb(key);
-            tmdbInput.readOnly = true;
-            tmdbStatus.textContent = t('已保存 TMDB Key');
-            tmdbStatus.style.color = 'var(--fnos-ui-ok)';
-          } else {
-            tmdbInput.value = '';
-            tmdbInput.readOnly = false;
-            tmdbStatus.textContent = t('已清除 TMDB Key');
-            tmdbStatus.style.color = 'var(--fnos-ui-warn)';
-          }
-        } else {
-          tmdbStatus.textContent = t('保存失败');
-          tmdbStatus.style.color = 'var(--fnos-ui-warn)';
-        }
-      } catch {
-        tmdbStatus.textContent = t('保存失败');
-        tmdbStatus.style.color = 'var(--fnos-ui-warn)';
-      }
-    });
-    clearTmdbBtn.addEventListener('click', async (e: Event) => {
-      e.stopPropagation();
-      tmdbInput.value = '';
-      tmdbInput.readOnly = false;
-      tmdbReal = '';
-      try {
-        await ipcRenderer.invoke('settings:set-tmdb-key', '');
-        tmdbStatus.textContent = t('已清除 TMDB Key');
-        tmdbStatus.style.color = 'var(--fnos-ui-warn)';
-      } catch {
-        tmdbStatus.textContent = t('清除失败');
-        tmdbStatus.style.color = 'var(--fnos-ui-warn)';
-      }
-    });
-
-    // ===== TMDB 免梯子直连（实验）：用固定 IP 覆盖 DNS 解析，绕过污染直连，无需梯子 =====
-    // （此区块整体迁入设置面板「插件」标签页，见下方 secTmdbDirect，故此处不再挂到 TMDB Key 区）
-    const dcWrap = document.createElement('div');
-    dcWrap.style.cssText = 'margin-top:4px;';
-
-    const dcDesc = document.createElement('div');
-    dcDesc.style.cssText = 'font-size:11px;color:var(--fnos-ui-sub);line-height:1.5;margin-bottom:8px;';
-    dcDesc.textContent = t('开启后用固定 IP 覆盖 DNS 解析，绕过污染直连 TMDB（无需梯子）。IP 来自 CheckTMDB 项目，CDN 边缘节点可能变动，可点「更新 IP」拉取最新，或手动填写。');
-    dcWrap.appendChild(dcDesc);
-
-    const dcRow = document.createElement('label');
-    dcRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fnos-ui-text);cursor:pointer;margin-bottom:8px;';
-    const dcToggle = document.createElement('input');
-    dcToggle.type = 'checkbox';
-    // [lc-1043] 原内联 width:16px;height:16px 已删：inline 压掉面板全局 iOS 开关样式
-    // （38×22 轨道 + ::after 滑块），18px 滑块从 16px 轨道溢出压住「启」字（用户截图报障）。
-    // 交由 #fnos-settings-panel input[type=checkbox] 统一渲染，与其余 9 处开关同款。
-    const dcToggleLabel = document.createElement('span');
-    dcToggleLabel.textContent = t('启用免梯子直连');
-    dcRow.appendChild(dcToggle);
-    dcRow.appendChild(dcToggleLabel);
-    dcWrap.appendChild(dcRow);
-
-    const dcIpGrid = document.createElement('div');
-    dcIpGrid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;';
-    const dcApiInput = document.createElement('input');
-    dcApiInput.type = 'text';
-    dcApiInput.placeholder = t('api IP（如 65.8.20.79）');
-    dcApiInput.style.cssText = 'width:100%;height:30px;font-size:11px;color:var(--fnos-ui-text);';
-    const dcImgInput = document.createElement('input');
-    dcImgInput.type = 'text';
-    dcImgInput.placeholder = t('img IP（如 65.8.20.8）');
-    dcImgInput.style.cssText = 'width:100%;height:30px;font-size:11px;color:var(--fnos-ui-text);';
-    dcIpGrid.appendChild(dcApiInput);
-    dcIpGrid.appendChild(dcImgInput);
-    dcWrap.appendChild(dcIpGrid);
-
-    const dcBtns = document.createElement('div');
-    dcBtns.style.cssText = 'display:flex;gap:6px;';
-    const dcSaveBtn = mkBtn('保存', true);
-    const dcUpdateBtn = mkBtn('从 CheckTMDB 更新 IP', true);
-    dcBtns.appendChild(dcSaveBtn);
-    dcBtns.appendChild(dcUpdateBtn);
-    dcWrap.appendChild(dcBtns);
-
-    const dcStatus = document.createElement('div');
-    dcStatus.style.cssText = 'font-size:11px;color:var(--fnos-ui-sub);margin-top:6px;min-height:14px;';
-    dcWrap.appendChild(dcStatus);
-
-    dcSaveBtn.addEventListener('click', async (e: Event) => {
-      e.stopPropagation();
-      try {
-        const api = dcApiInput.value.trim();
-        const img = dcImgInput.value.trim();
-        const r: any = await ipcRenderer.invoke('settings:set-tmdb-direct', {
-          enabled: dcToggle.checked,
-          ip: { api: api || undefined, img: img || undefined },
-        });
-        if (!r || r.ok !== false) {
-          dcStatus.textContent = dcToggle.checked ? '已启用免梯子直连' : '已关闭免梯子直连';
-          dcStatus.style.color = 'var(--fnos-ui-ok)';
-        } else {
-          dcStatus.textContent = t('保存失败');
-          dcStatus.style.color = 'var(--fnos-ui-warn)';
-        }
-      } catch {
-        dcStatus.textContent = t('保存失败');
-        dcStatus.style.color = 'var(--fnos-ui-warn)';
-      }
-    });
-    dcUpdateBtn.addEventListener('click', async (e: Event) => {
-      e.stopPropagation();
-      dcStatus.textContent = t('正在从 CheckTMDB 拉取最新 IP…');
-      dcStatus.style.color = 'var(--fnos-ui-sub)';
-      try {
-        const r: any = await ipcRenderer.invoke('tmdb:update-ip');
-        if (r && r.ok) {
-          if (r.api) dcApiInput.value = r.api;
-          if (r.img) dcImgInput.value = r.img;
-          dcStatus.textContent = '已更新为最新 IP' + (r.api ? `（api ${r.api}）` : '');
-          dcStatus.style.color = 'var(--fnos-ui-ok)';
-        } else {
-          dcStatus.textContent = (r && r.error) || '更新失败';
-          dcStatus.style.color = 'var(--fnos-ui-warn)';
-        }
-      } catch {
-        dcStatus.textContent = t('更新失败');
-        dcStatus.style.color = 'var(--fnos-ui-warn)';
-      }
-    });
-
     // ===== 数据源切换：TMDB / 豆瓣（默认豆瓣，国内直连免 Key）=====
-    const tmdbSettingsWrap = document.createElement('div');
-    tmdbSettingsWrap.appendChild(tmdbHintTop);
-    tmdbSettingsWrap.appendChild(tmdbInput);
-    tmdbSettingsWrap.appendChild(tmdbBtns);
-    tmdbSettingsWrap.appendChild(tmdbStatus);
-    tmdbSettingsWrap.appendChild(tmdbHintBottom);
 
     const dsHint = document.createElement('div');
     dsHint.style.cssText = 'font-size:11.5px;color:var(--fnos-ui-sub);line-height:1.5;margin-bottom:8px;';
-    dsHint.textContent = t('选择「热门剧更新」浮层的数据源。豆瓣国内直连、免 Key、零配置；TMDB 数据更全但需 Key 且可能被墙（需免梯子直连/代理）。');
+    dsHint.textContent = t('选择「热门剧更新」浮层的数据源。豆瓣国内直连、免 Key、零配置；TMDB 数据更全（内置镜像取数，无需手动配置）。');
 
     const dsSeg = document.createElement('div');
     dsSeg.style.cssText = 'display:flex;gap:6px;margin-bottom:10px;';
@@ -1561,7 +1371,6 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
       dsDoubanBtn.style.color = isDouban ? '#fff' : 'var(--fnos-ui-text)';
       dsTmdbBtn.style.background = isDouban ? 'var(--fnos-ui-input-bg)' : 'var(--fnos-ui-sec)';
       dsTmdbBtn.style.color = isDouban ? 'var(--fnos-ui-text)' : '#fff';
-      tmdbSettingsWrap.style.display = isDouban ? 'none' : '';
       doubanHint.style.display = isDouban ? '' : 'none';
     };
 
@@ -1574,7 +1383,6 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
 
     secBodyTmdb.insertBefore(dsHint, secBodyTmdb.firstChild);
     secBodyTmdb.appendChild(dsSeg);
-    secBodyTmdb.appendChild(tmdbSettingsWrap);
     secBodyTmdb.appendChild(doubanHint);
 
     // 初始状态：异步从「磁盘真值」回填 UI（不写盘！）
@@ -1587,12 +1395,6 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
         reflectDs(S.hotSource);
       }).catch(() => { reflectDs(S.hotSource); });
     } catch { reflectDs(S.hotSource); }
-
-    // ===== 分组: TMDB 免梯子直连（实验）（从账号同步的 TMDB API Key 区迁出，独立放入「插件」标签页）=====
-    const secTmdbDirect = section('TMDB 免梯子直连（实验）');
-    secTmdbDirect.el.style.gridColumn = '1 / -1'; // 内容较多，占满整行
-    const secBodyTmdbDirect = secTmdbDirect.body;
-    secBodyTmdbDirect.appendChild(dcWrap);
 
     // ===== 分组: 豆瓣同步 =====
     const secDouban = section('豆瓣同步');
@@ -2414,9 +2216,7 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     // ===== 诊断信息（汇总运行态，减少"查日志"往返）=====
     const secDiag = section('诊断信息');
     const diagBody = secDiag.body;
-    // [lc-1197→web] Bug 反馈 + 日志上传卡（与桌面端诊断与日志分类同款；日志由后端自动打包脱敏）
-    const secFeedback = section('Bug 反馈与日志上传');
-    secFeedback.body.appendChild(buildFeedbackBody());
+    // [v1.13.0] 「Bug 反馈与日志上传」卡已移除：反馈入口统一为侧栏「加入Q群」
     const diagPre = document.createElement('pre');
     diagPre.style.cssText = 'margin:0;padding:10px;background:rgba(0,0,0,.18);border-radius:8px;font-size:10.5px;'
       + 'line-height:1.55;color:var(--fnos-ui-text);white-space:pre-wrap;word-break:break-all;max-height:260px;overflow:auto;';
@@ -2678,24 +2478,37 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     try {
       ipcRenderer.send('get-version');
       ipcRenderer.once('version-info', (_e: any, info: any) => {
-        if (info && info.version) aboutVer.textContent = '版本：v' + info.version;
+        if (!info || !info.version) return;
+        // 去掉网页端 shim 追加的 '-web' 标识，关于页统一显示纯版本号 + 构建时间
+        const ver = String(info.version).replace(/-web$/, '');
+        const bt = (typeof __BUILD_TIME__ !== 'undefined' && __BUILD_TIME__) ? ' (' + __BUILD_TIME__ + ')' : '';
+        aboutVer.textContent = '版本：v' + ver + bt;
       });
     } catch (_) {}
 
-    const aboutLink = document.createElement('a');
-    aboutLink.href = ABOUT_LINK_URL;
-    aboutLink.textContent = t('🔗 GitHub 项目地址');
-    aboutLink.style.cssText = 'display:inline-block;font-size:13px;font-weight:700;color:var(--fnos-ui-pill-text);text-decoration:none;'
-      + 'padding:8px 20px;border-radius:10px;background:var(--fnos-ui-pill-bg)!important;border:1px solid var(--fnos-ui-pill-border);'
-      + 'transition:background .15s,transform .1s;margin-top:6px;cursor:pointer;';
-    aboutLink.addEventListener('click', async (e: Event) => {
-      e.preventDefault();
-      e.stopPropagation();
-      try { await ipcRenderer.invoke('app:open-external', ABOUT_LINK_URL); } catch (_) {}
-    });
-    aboutLink.onmouseenter = () => { aboutLink.style.transform = 'scale(1.03)'; aboutLink.style.background = 'var(--fnos-ui-pill-hover)!important'; aboutLink.style.color = '#fff'; };
-    aboutLink.onmouseleave = () => { aboutLink.style.transform = ''; aboutLink.style.background = 'var(--fnos-ui-pill-bg)!important'; aboutLink.style.color = 'var(--fnos-ui-pill-text)'; };
-    secBodyAbout.appendChild(aboutLink);
+    // 按钮组：GitHub 项目地址 + 作者官网（同一行并排，间距一致，打开方式一致）
+    const AUTHOR_SITE_URL = 'https://690075.xyz';
+    const mkAboutLink = (url: string, label: string): HTMLAnchorElement => {
+      const a = document.createElement('a');
+      a.href = url;
+      a.textContent = t(label);
+      a.style.cssText = 'display:inline-block;font-size:13px;font-weight:700;color:var(--fnos-ui-pill-text);text-decoration:none;'
+        + 'padding:8px 20px;border-radius:10px;background:var(--fnos-ui-pill-bg)!important;border:1px solid var(--fnos-ui-pill-border);'
+        + 'transition:background .15s,transform .1s;cursor:pointer;';
+      a.addEventListener('click', async (e: Event) => {
+        e.preventDefault();
+        e.stopPropagation();
+        try { await ipcRenderer.invoke('app:open-external', url); } catch (_) {}
+      });
+      a.onmouseenter = () => { a.style.transform = 'scale(1.03)'; a.style.background = 'var(--fnos-ui-pill-hover)!important'; a.style.color = '#fff'; };
+      a.onmouseleave = () => { a.style.transform = ''; a.style.background = 'var(--fnos-ui-pill-bg)!important'; a.style.color = 'var(--fnos-ui-pill-text)'; };
+      return a;
+    };
+    const aboutLinks = document.createElement('div');
+    aboutLinks.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:6px;';
+    aboutLinks.appendChild(mkAboutLink(ABOUT_LINK_URL, '🔗 GitHub 项目地址'));
+    aboutLinks.appendChild(mkAboutLink(AUTHOR_SITE_URL, '作者官网'));
+    secBodyAbout.appendChild(aboutLinks);
 
     // [v1.12.0] 匿名使用统计卡（开关 / 立即上报 / 重置匿名 ID）——与桌面版「关于」页同款。
     secBodyAbout.appendChild(buildStatsCard());
@@ -3642,10 +3455,10 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
       { id: 'appearance', label: '通用', els: [secAppearance.el, secPageBg.el, secDaily.el, secUX.el, secSkip.el] },
       // [lc-1102] 三张「弹幕源」卡并列（内置降级源 → 弹弹play → 自建优选源），最后才是屏蔽/样式
       { id: 'danmaku', label: '弹幕', els: [secBili.el, secDandan.el, secDmApi.el, secDanmaku.el] },
-      { id: 'account', label: '账号与网络', els: [secBangumi.el, secTmdb.el, secDouban.el, secTrakt.el, secCustomProxy.el, secTmdbDirect.el] },
+      { id: 'account', label: '账号与网络', els: [secBangumi.el, secTmdb.el, secDouban.el, secTrakt.el, secCustomProxy.el] },
       // [v1.10.2] 自定义刮削源→Jav 刮削七卡从「账号与网络」拆出独立成类；开发中的「自定义刮削服务」置顶占位
       { id: 'scraper', label: '自定义刮削', els: [secScraperSvc.el, secScraper.el, secFanart.el, secTvmaze.el, secOmdb.el, secMal.el, secJav.el] },
-      { id: 'diag', label: '诊断与日志', els: [secDiag.el, secFeedback.el, secDebug.el] },
+      { id: 'diag', label: '诊断与日志', els: [secDiag.el, secDebug.el] },
       { id: 'about', label: '关于', els: [secAbout.el] },
     ];
     // 每个分类一个 pane(竖向卡片列); 清掉卡片在旧 grid 里设的 gridColumn(现已不在 grid 内)
@@ -4174,27 +3987,6 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
         swBangumiSync.checked = !!s.bangumiSyncEnabled;
         bangumiThresholdInput.value = String(s.bangumiSyncThreshold || 80);
       });
-      seg('tmdb', () => {
-        // TMDB Key 回填（已保存则显示星号掩码，不显示明文）
-        const kt: string | null = s.tmdbApiKey || null;
-        if (kt) {
-          tmdbReal = kt;
-          tmdbInput.value = maskTmdb(kt);
-          tmdbInput.readOnly = true;
-          tmdbStatus.textContent = t('已保存 TMDB Key');
-          tmdbStatus.style.color = 'var(--fnos-ui-ok)';
-        } else {
-          tmdbReal = '';
-          tmdbInput.value = '';
-          tmdbInput.readOnly = false;
-          tmdbStatus.textContent = '';
-        }
-        // TMDB 免梯子直连回填
-        dcToggle.checked = !!s.tmdbDirectConnect;
-        const dip: any = s.tmdbDirectIp || null;
-        dcApiInput.value = (dip && dip.api) || '';
-        dcImgInput.value = (dip && dip.img) || '';
-      });
       seg('bili-search', () => {
         // B站弹幕聚合阈值回填（默认 1500；<0 视为禁用=0）
         aggInput.value = String(s.mpvBiliAggregateThreshold == null ? 1500 : (s.mpvBiliAggregateThreshold < 0 ? 0 : s.mpvBiliAggregateThreshold));
@@ -4250,8 +4042,6 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
       //   弹窗关掉后直接"全部没了"而非回到设置面板。
       if (t instanceof Element) {
         const withinOtherUi = t.closest('#fnos-dialog-overlay')
-          || t.closest('#fnos-feedback-modal')
-          || t.closest('#fnos-qq-group-modal')
           || t.closest('#fnos-bili-modal')
           || t.closest('#fnos-history-overlay')
           || t.closest('#fntv-patch-apply-popup')
@@ -4423,12 +4213,44 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     //   委托到 document 后无论节点怎么换都命中当前节点，capture+stopImmediate 仍抢在 React 之前。
     if (!(window as any).__fnosBurgerDelegated) {
       (window as any).__fnosBurgerDelegated = '1';
+      // [fix-home] 只拦截「真正的汉堡图标」，其余一律放行（宁可放行也不误吞）。
+      //   实测顶栏结构（lc-989 / gamepadFocus 注释）：
+      //     div.gap-4.lg:!hidden > a[href] > svg.cursor-pointer  (🏠 首页)
+      //                            + svg.cursor-pointer         (≡ 汉堡)
+      //   🏠 包在 <a> 里（或带首页文案），≡ 是裸 svg。旧逻辑把容器内所有非 <a>、非文案 button
+      //   一律当汉堡吞掉 → 纯图标 home（svg/div，非 a、无文案）被误伤，点击既无导航也无日志。
+      //   新判据：容器内「最后一个不在 <a>/button 里的 svg」= 汉堡；只有点在它上面才拦截。
+      const isBurgerIcon = (t: Element, container: Element): boolean => {
+        const svg = t.closest('svg');
+        if (!svg) return false;
+        if (svg.closest('a,[href],button,[role="button"]')) return false; // 首页图标在 <a>/按钮内 → 非汉堡
+        const bareSvgs = Array.from(container.querySelectorAll('svg'))
+          .filter((s) => !s.closest('a,[href],button,[role="button"]'));
+        return bareSvgs.length > 0 && bareSvgs[bareSvgs.length - 1] === svg;
+      };
       document.addEventListener('click', (e: Event) => {
         const t = e.target as HTMLElement;
         if (!t || !t.closest) return;
-        if (t.closest('a')) return; // 🏠 首页链接放行(不拦截, 交给飞牛导航)
+        // ① 真实链接/带 href 元素：首页 home 键常为 <a href>，必须交给飞牛导航
+        if (t.closest('a,[href]')) return;
+        // ② 不在汉堡键容器内 → 与我们无关，放行
         const burgerHit = t.closest('[class*="lg:!hidden"]:not([class*="inset-0"])');
         if (!burgerHit) return;
+        // ③ 沿祖先链（到容器外为止）任一节点 aria-label/title/叶子文本命中「首页/返回」→ 放行。
+        //    仅叶子节点的 textContent 才算文案：容器自身 textContent 含整条导航的「首页」，不能用作判据。
+        let probe: Element | null = t;
+        while (probe && probe !== burgerHit.parentElement) {
+          const lab = ((probe.getAttribute('aria-label') || '') + ' '
+            + (probe.getAttribute('title') || '')).trim();
+          if (/首页|主页|返回|home|back/i.test(lab)) return;
+          if (probe.children.length === 0) {
+            const txt = (probe.textContent || '').trim();
+            if (txt && /首页|主页|返回|home|back/i.test(txt)) return;
+          }
+          probe = probe.parentElement;
+        }
+        // ④ 只有真正点在汉堡图标上才拦截；否则放行（避免再次误吞 home 导致点击失效）
+        if (!isBurgerIcon(t, burgerHit)) return;
         e.preventDefault();
         e.stopImmediatePropagation(); // 拦截飞牛原生 onClick, 避免双重控制
         const drawer = document.querySelector('.fixed.inset-0[class*="lg:!hidden"]') as HTMLElement | null;
@@ -4436,7 +4258,7 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
         if (drawer.classList.contains('drawer-open')) { animateCloseDrawer(drawer); log('BURGER -> CLOSE (anim)'); }
         else { openDrawer(drawer); log('BURGER -> OPEN (anim)'); }
       }, true); // capture 阶段, 抢在 React 之前拦截
-      log('BURGER click-hook installed (document delegation)');
+      log('BURGER click-hook installed (document delegation, burger-icon only)');
     }
     // ③ 遮罩/背板点击关闭: 点抽屉背板(非侧栏面板)即关闭
     //    [v326 修正] 之前用 `e.target === drawer` 太严格 —— 实际暗色背板是 drawer 的子元素(.absolute.inset-0),
@@ -4845,7 +4667,7 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
   window.addEventListener('resize', _tlOnScrollOrResize, { passive: true });
 
   // [lc-705] 暴露"收起侧边栏"全局钩子：侧栏底部 4 个自定义按钮（设置 / 切换系统页面 /
-  //   软件反馈建议 / 观影记录）点击后调用它，复刻飞牛原生类目按钮"点一下侧栏自动收起"的效果。
+  //   加入Q群 / 观影记录）点击后调用它，复刻飞牛原生类目按钮"点一下侧栏自动收起"的效果。
   //   设置/反馈/观影记录 等面板均挂载在 document.body，与抽屉无关，收起侧栏不会把它们一起藏掉。
   (window as any).fntvCloseSidebar = function (): void {
     const drawer = document.querySelector('.fixed.inset-0[class*="lg:!hidden"]') as HTMLElement | null;
@@ -4963,7 +4785,7 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     window.setTimeout(injectRefreshButton, 200);
   });
   _refreshObserver.observe(document.body, { childList: true, subtree: true });
-  window.addEventListener('beforeunload', () => _refreshObserver.disconnect());
+  window.addEventListener('pagehide', (e) => { if (!e.persisted) _refreshObserver.disconnect(); });
 
   // [v323] MutationObserver兜底: 飞牛SPA路由切换/重渲染头部时, 新汉堡键DOM无hook → 立即重绑
   // (解决: 轮播图整页导航→详情页头部重建→定时重试可能错过新元素 → hook丢失 → 点击失效)
@@ -4973,7 +4795,7 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     _burgerObsTimer = window.setTimeout(ensureBurgerVisible, 120); // 幂等: 重绑汉堡键+遮罩hook(飞牛SPA重渲染新元素时兜底)
   });
   _burgerObserver.observe(document.body, { childList: true, subtree: true });
-  window.addEventListener('beforeunload', () => _burgerObserver.disconnect());
+  window.addEventListener('pagehide', (e) => { if (!e.persisted) _burgerObserver.disconnect(); });
 
   // 页面切换过渡(防黑屏闪烁): 一层与背景同色的轻纱, 导航瞬间覆盖→淡出, 平滑揭示新页面。
   // [lc-1017] 实现已迁至 detail/veil.ts：详情页导航改为「持罩待美化」——veil 不再按固定
@@ -5014,6 +4836,15 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     }
 
     const candidates: HTMLElement[] = [];
+    // [lc-1400] 活跃视图改用 ACTIVE_VIEW_SEL（可见的 --exclude outlet）判定，而非 DOM 末尾：
+    //   fnOS 切页后旧视图不从 DOM 移除，只把 --exclude 换成 --cache，DOM 末尾≠活跃页。
+    const _activeOutlet = ((): HTMLElement | null => {
+      const list = document.querySelectorAll<HTMLElement>(ACTIVE_VIEW_SEL);
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i] && list[i].offsetParent !== null) return list[i];
+      }
+      return null;
+    })();
     const all = document.querySelectorAll<HTMLElement>('*');
     for (let i = 0; i < all.length; i++) {
       const el = all[i];
@@ -5024,6 +4855,9 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
       if (el.closest('[id^="fnos-"], [id^="fntv-"]')) continue;  // [lc-993] 我们的注入层**及其全部子节点**跳过
       if (el.classList.contains('absolute')) continue;     // 抽屉遮罩类跳过
       if (el.querySelector('video')) continue;             // [lc-278] 含视频的视图绝不隐藏(双保险)
+      // [lc-1400] 视图容器本身（--exclude 活跃 / --cache 缓存标记）不参与隐藏；活跃视图内部一律不动。
+      if (el.matches(ACTIVE_VIEW_SEL + ', .trim-ui__cache-outlet--cache')) continue;
+      if (_activeOutlet && _activeOutlet.contains(el)) continue;
       candidates.push(el);
     }
     // 按父元素分组, 同容器内多个全屏 absolute 视为视图栈
@@ -5041,15 +4875,36 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
       //   且同组内"末尾视图"不含详情内容(说明它是过渡层/浮层而非活跃页), 则跳过不隐藏——
       //   否则会 display:none 掉真正的详情页 → 白屏。末尾视图也含详情内容时(详情↔详情切换)仍按原逻辑隐藏旧视图。
       const _lastHasDetail = !!views[views.length - 1].querySelector('[data-id="details"], .fnos-season-2col, .card-root');
-      for (let i = 0; i < views.length - 1; i++) {
+      // [fix-home] 首页视图保护：含媒体库 section / 轮播 wrapper 的视图跳过隐藏，
+      //   避免返回首页时把真正的 home 视图 display:none 掉 → 白屏。
+      const _homeSec = findMediaLibrarySection();
+      const _isHomeView = (v: HTMLElement): boolean => {
+        if (S.carouselWrapper && v.contains(S.carouselWrapper)) return true;
+        if (_homeSec && v.contains(_homeSec)) return true;
+        if (v.querySelector('[class*="fnos-carousel"], [class*="fntv-carousel"], .swiper-wrapper')) return true;
+        const _h = v.querySelector('strong, h2, h3');
+        return !!_h && /媒体库|片库|影视库|library/i.test(_h.textContent || '');
+      };
+      for (let i = 0; i < views.length; i++) {
         const _v = views[i];
-        if (!_lastHasDetail && _v.querySelector('[data-id="details"], .fnos-season-2col, .card-root')) {
-          log('hideStaleViews: SKIP — 视图含真实详情内容, 避免白屏 | class=', _v.className.slice(0, 40));
-          continue;
+        // [lc-1400] 确为 --cache 的节点=fnOS 明确标记的缓存页 → 直接隐藏；
+        //   其余节点沿用旧「末尾=活跃」启发式 + 详情/首页保护，避免误藏活跃页。
+        const _inCache = !!_v.closest('.trim-ui__cache-outlet--cache');
+        if (!_inCache) {
+          if (i === views.length - 1) continue;                       // 末尾仍按旧规则视作活跃，不隐藏
+          if (_activeOutlet && (_activeOutlet === _v || _activeOutlet.contains(_v))) continue;
+          if (!_lastHasDetail && _v.querySelector('[data-id="details"], .fnos-season-2col, .card-root')) {
+            log('hideStaleViews: SKIP — 视图含真实详情内容, 避免白屏 | class=', _v.className.slice(0, 40));
+            continue;
+          }
+          if (_isHomeView(_v)) {
+            log('hideStaleViews: SKIP — 首页视图(媒体库/轮播)跳过隐藏, 避免回首页白屏 | class=', _v.className.slice(0, 40));
+            continue;
+          }
         }
         if (getComputedStyle(_v).display !== 'none') {
           _v.style.display = 'none';
-          log('hideStaleViews: hid stacked view', i + 1, '/', views.length, '| class=', _v.className.slice(0, 40));
+          log('hideStaleViews: hid stacked view', i + 1, '/', views.length, '| cache=', _inCache, '| class=', _v.className.slice(0, 40));
         }
       }
     }
@@ -5153,6 +5008,7 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     }
   };
 
+
   try {
     const _ps = history.pushState, _rs = history.replaceState;
     // [lc-906] 离开首页(从轮播/列表进入详情页)时立即停掉轮播的自动播放 timer 与事件监听:
@@ -5166,48 +5022,75 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
       try { destroyCarousel(); } catch (_) { /* ignore */ }
     };
     (history as any).pushState = function (...a: any[]) {
-      const prevPath = pagePath();
-      const newHref = (a && a.length >= 3 && typeof a[2] === 'string') ? a[2] : location.href;
-      _ps.apply(this, a as any);
-      logNav('pushState');
-      // [lc-937] 标记「离开过首页」: pushState 执行前 location 仍是旧路径; 旧路径是 /v 而新路径不是 → 离开首页。
-      //   返回首页时据此强制干净重建轮播(修复「轮播按钮 spaNav 打开详情页返回后海报不显示」)。
-      //   仅当 newHref 非空(空 url 表示沿用当前路径, 不算离开)才判定。
-      if ((prevPath === '/v' || prevPath === '/v/') && newHref) {
-        const np = newHref.indexOf('?') >= 0 ? newHref.split('?')[0] : newHref;
-        if (np !== '/v' && np !== '/v/') S.leftHome = true;
+      // [nav-guard] 前置取参数也做隔离: 任何异常都不允许发生在 _ps.apply 之前(否则 React Router 的 navigate 会被打断)
+      let prevPath = '';
+      let newHref: string = location.href;
+      try {
+        prevPath = pagePath();
+        newHref = (a && a.length >= 3 && typeof a[2] === 'string') ? a[2] : location.href;
+      } catch (_) { /* ignore */ }
+      _ps.apply(this, a as any); // 原生导航永远先执行, 且不包在 try 里(异常原样透出给调用方)
+      // [nav-guard] 增强副作用整体隔离: 任一副作用抛错都只记录告警, 绝不冒泡回 React Router
+      try {
+        logNav('pushState');
+        // [lc-937] 标记「离开过首页」: pushState 执行前 location 仍是旧路径; 旧路径是 /v 而新路径不是 → 离开首页。
+        //   返回首页时据此强制干净重建轮播(修复「轮播按钮 spaNav 打开详情页返回后海报不显示」)。
+        //   仅当 newHref 非空(空 url 表示沿用当前路径, 不算离开)才判定。
+        if ((prevPath === '/v' || prevPath === '/v/') && newHref) {
+          const np = newHref.indexOf('?') >= 0 ? newHref.split('?')[0] : newHref;
+          if (np !== '/v' && np !== '/v/') S.leftHome = true;
+        }
+        runPageTransition(isDetailPage()); setTimeout(ensureBurgerVisible, 300); setTimeout(closeDrawer, 300); setTimeout(hideStaleViews, 400); setTimeout(ensureHomepageEnhanced, 350); _stopCarouselOffHome(newHref); _scheduleTopLeftAfterNav();
+        applyDetailBeautify(); // [lc-980] 详情页美化：进详情铺加载层+一次性 observer 等 hero；非详情/关闭则 teardown
+        scheduleEpBackfill(); scheduleCustomScraperButton(); scheduleJavButton(); // [v1.5.0] 自定义刮削按钮：非季页自撤
+        scheduleFolderScraperButton(); // [自定义刮削] 个人视频文件夹页「⟳ 文件夹刮削」浮动按钮：非文件夹页自撤
+      } catch (e) {
+        console.warn('[fntv-web] nav side-effect failed (pushState)', e);
       }
-      runPageTransition(isDetailPage()); setTimeout(ensureBurgerVisible, 300); setTimeout(closeDrawer, 300); setTimeout(hideStaleViews, 400); setTimeout(ensureHomepageEnhanced, 350); _stopCarouselOffHome(newHref); _scheduleTopLeftAfterNav();
-      applyDetailBeautify(); // [lc-980] 详情页美化：进详情铺加载层+一次性 observer 等 hero；非详情/关闭则 teardown
-      scheduleEpBackfill(); scheduleCustomScraperButton(); scheduleJavButton(); // [v1.5.0] 自定义刮削按钮：非季页自撤
-      scheduleFolderScraperButton(); // [自定义刮削] 个人视频文件夹页「⟳ 文件夹刮削」浮动按钮：非文件夹页自撤
     };
     (history as any).replaceState = function (...a: any[]) {
-      const prevPath = pagePath();
-      const newHref = (a && a.length >= 3 && typeof a[2] === 'string') ? a[2] : location.href;
-      _rs.apply(this, a as any);
-      logNav('replaceState');
-      // [lc-937] 同 pushState: 离开首页时标记 S.leftHome(空 url 不算离开)
-      if ((prevPath === '/v' || prevPath === '/v/') && newHref) {
-        const np = newHref.indexOf('?') >= 0 ? newHref.split('?')[0] : newHref;
-        if (np !== '/v' && np !== '/v/') S.leftHome = true;
+      // [nav-guard] 同 pushState: 前置取参隔离 + 原生调用先执行 + 副作用整体 try/catch
+      let prevPath = '';
+      let newHref: string = location.href;
+      try {
+        prevPath = pagePath();
+        newHref = (a && a.length >= 3 && typeof a[2] === 'string') ? a[2] : location.href;
+      } catch (_) { /* ignore */ }
+      _rs.apply(this, a as any); // 原生导航永远先执行
+      try {
+        logNav('replaceState');
+        // [lc-937] 同 pushState: 离开首页时标记 S.leftHome(空 url 不算离开)
+        if ((prevPath === '/v' || prevPath === '/v/') && newHref) {
+          const np = newHref.indexOf('?') >= 0 ? newHref.split('?')[0] : newHref;
+          if (np !== '/v' && np !== '/v/') S.leftHome = true;
+        }
+        runPageTransition(isDetailPage()); setTimeout(closeDrawer, 300); setTimeout(hideStaleViews, 400); setTimeout(ensureHomepageEnhanced, 350); _stopCarouselOffHome(newHref); _scheduleTopLeftAfterNav();
+        applyDetailBeautify(); // [lc-980] 同 pushState
+        scheduleEpBackfill(); scheduleCustomScraperButton(); scheduleJavButton(); // [v1.5.0] 同 pushState
+        scheduleFolderScraperButton(); // [自定义刮削] 同 pushState
+      } catch (e) {
+        console.warn('[fntv-web] nav side-effect failed (replaceState)', e);
       }
-      runPageTransition(isDetailPage()); setTimeout(closeDrawer, 300); setTimeout(hideStaleViews, 400); setTimeout(ensureHomepageEnhanced, 350); _stopCarouselOffHome(newHref); _scheduleTopLeftAfterNav();
-      applyDetailBeautify(); // [lc-980] 同 pushState
-      scheduleEpBackfill(); scheduleCustomScraperButton(); scheduleJavButton(); // [v1.5.0] 同 pushState
-      scheduleFolderScraperButton(); // [自定义刮削] 同 pushState
     };
     window.addEventListener('popstate', () => {
-      logNav('popstate');
-      runPageTransition(isDetailPage());
-      setTimeout(ensureBurgerVisible, 300);
-      setTimeout(closeDrawer, 300);
-      setTimeout(hideStaleViews, 400);
-      _scheduleTopLeftAfterNav(); // [lc-925] 背景换了 → 重采样左上角图标亮度
-      setTimeout(ensureHomepageEnhanced, 350); // [lc-889] 返回首页强制重注入轮播
-      applyDetailBeautify(); // [lc-980] 前进/后退到详情页也套美化；退回首页则 teardown
-      scheduleEpBackfill(); scheduleCustomScraperButton(); scheduleJavButton(); // [v1.5.0] 同 popstate
-      scheduleFolderScraperButton(); // [自定义刮削] 同 popstate
+      // [nav-guard] popstate 的同步副作用链同样隔离: 抛错不应污染浏览器历史导航流程
+      try {
+        logNav('popstate');
+        runPageTransition(isDetailPage());
+        setTimeout(ensureBurgerVisible, 300);
+        setTimeout(closeDrawer, 300);
+        setTimeout(hideStaleViews, 400);
+        // [lc-1400] 视图清理后再兜底揭示活跃视图（把 castNav 的复原逻辑提到公共导航层），
+        //   防止 popstate 后退时活跃 outlet 被残留的 inline display:none 挡住 → 白屏。
+        setTimeout(revealActiveView, 460);
+        _scheduleTopLeftAfterNav(); // [lc-925] 背景换了 → 重采样左上角图标亮度
+        setTimeout(ensureHomepageEnhanced, 350); // [lc-889] 返回首页强制重注入轮播
+        applyDetailBeautify(); // [lc-980] 前进/后退到详情页也套美化；退回首页则 teardown
+        scheduleEpBackfill(); scheduleCustomScraperButton(); scheduleJavButton(); // [v1.5.0] 同 popstate
+        scheduleFolderScraperButton(); // [自定义刮削] 同 popstate
+      } catch (e) {
+        console.warn('[fntv-web] nav side-effect failed (popstate)', e);
+      }
     });
     window.addEventListener('hashchange', () => logNav('hashchange'));
     setTimeout(hideStaleViews, 1500); // 初始/深链到详情页时也清理一次
@@ -5326,6 +5209,7 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     // [lc-623] 数据已到达但未 reveal(详情补完流程进行中)时不抢先渲染——
     // 否则 MutationObserver 会用竖版 backdrop 渲染一次, 之后 revealOnce 再渲染横版
     // → '先竖版后横版'闪屏。只有骨架阶段(S.apiShows 空)或已 reveal 后才允许注入。
+    // [fix-carousel-display] 例外：首页上连容器都没有(首次注入失败/错过窗口)时无条件重试。
     if (!S.carouselInited && !(S.apiLoaded && !S.carouselRevealed)) injectCarousel();
   }).observe(document.body, { childList: true, subtree: true });
 
@@ -5336,6 +5220,21 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
       log('watchdog: carousel lost');
       destroyCarousel(); // [lc-876] 清理旧timer/listener
       S.carouselContainer = null;
+      S.carouselInited = false;
+      injectCarousel();
+      return;
+    }
+    // [fix-carousel-display] 首页上既没有容器也没标记已初始化（注入曾经失败/错过窗口）→ 重试。
+    //   旧 watchdog 只在「容器存在但脱离文档」时重试；容器为 null 时永远不重试，
+    //   一旦首次注入因 section 未渲染而 no target，轮播就再也不会出现。
+    if (!S.carouselInited && (!S.carouselContainer || !document.body.contains(S.carouselContainer))) {
+      log('watchdog: carousel missing, re-inject');
+      injectCarousel();
+      return;
+    }
+    // [fix-carousel-display] 已标记初始化但容器是空壳（构建中途异常）→ 复位重建。
+    if (S.carouselInited && S.carouselContainer && S.carouselContainer.childElementCount === 0) {
+      log('watchdog: carousel empty, re-inject');
       S.carouselInited = false;
       injectCarousel();
     }

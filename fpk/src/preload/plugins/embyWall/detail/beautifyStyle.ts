@@ -16,6 +16,9 @@
 //      标题栏白图标 11.06~11.32（12 种环境一致），且 y=31/y=32 两行逐像素恒等 → 接缝 1.0000。
 //      lc-993 起遮罩换色覆盖**两种形态**：Season/Movie 页的 .gradient-for-full（一个元素两层渐变、
 //      铺满整块 hero）与 Series 一级页的 .gradient（一层 0deg、贴底 45% 高），色标与 alpha 均照抄原生。
+//      [2026-10-22] 取色已由 heroTint.ts 的 ENABLE_DYNAMIC_TINT=false 关闭（用户要求：详情页底色
+//      只能是跟随明暗主题的深浅两套固定底色）。L/M/N/P 段的 tint 全部回落到原生中性色 25,25,26；
+//      页面底色见 B2 段的 var(--fnos-hero-bg)（浅 #eef1f6 / 深 #161a26）。
 //   5. 悬停用 CSS :hover（微底色 / 缩略图微放大），不用 JS 逐卡绑定，也不用 lift+大阴影。
 //   6. 两栏门控三个条件同时成立才启用：hero 是**直接**子节点 + 内含选集卡 [data-id="details"]
 //      + 至少有第 3 个直接子节点。∴ 只有 Season 二级页走两栏（实机 4 个子节点）；
@@ -107,6 +110,11 @@ const MOVIE_COL = 'div[class*="mb-[46px]"][class*="flex flex-col gap-3"]:has(> d
 export const BEAUTIFY_CSS = `
 /* ===== 0. 语义设计 token（明/暗两套；文本色沿用 Semi 主题变量，无需在此重复）===== */
 body.fnos-beautify{
+  /* [v1.3.0] 宿主视口内边距（body padding）。桌面宿主 = 32px 窗口标题栏安全区，网页模式 = 0。
+     运行时由 syncViewportInsets() 量取真实值写成 inline 变量（inline 覆盖本处默认）；
+     这里的默认值只在 JS 尚未量取/样式表已摘除时兜底，等价于旧版写死的 32px 假设。 */
+  --fntv-vp-top:32px;
+  --fntv-vp-bottom:0px;
   --fnos-accent:#0071e3;
   --fnos-hairline:rgba(0,0,0,.10);
   --fnos-hairline-soft:rgba(0,0,0,.055);
@@ -197,6 +205,31 @@ body.fnos-beautify ${COL} > div[class*="px-[46px]"]:has(a[href*="imdb.com"], a[h
 
 /* ===== B. 页面背景透明化：让注入的全屏底图透出（仅详情页 body.fnos-beautify 生效）===== */
 body.fnos-beautify [class*="bg-[var(--semi-color-bg-1)]"]{ background-color:transparent !important; }
+
+/* ===== B2. [v1.3.0] 兜底防露白 =====
+   满屏布局已按真实 body 内边距计算（N/O 段 --fntv-vp-*），但宿主/环境仍可能残留
+   亚像素或额外底边距。详情页作用域内把页面底色固定为**随主题切换的两套底色**：
+     · 浅色主题 #eef1f6（--fnos-hero-bg 的 :root 值）
+     · 深色主题 #161a26（--fnos-hero-bg 的 html.dark 值）
+   与首页轮播底座同源（theme.ts 的 --fnos-hero-bg），不新造主题判定。
+   [2026-10-22] 用户要求：详情页底色只允许深浅两套固定底色，**禁止从海报/背景图取色**。
+   旧版这里是 rgba(var(--fnos-hero-tint), 1)（封面主色）→ 整页被染成海报色（如青绿 #1d5a56）。
+   取色已由 heroTint.ts 的 ENABLE_DYNAMIC_TINT=false 关闭；本段改为固定色，改回取色只需
+   把该常量置 true 并把这里换回 tint 变量。
+   · html 也上色：html 背景位于根堆叠上下文最底层，绝不会盖住 z-index:-1 的全屏底图层。
+   · 用 background-color 而非 background 简写：玻璃模式的 body 环境光渐变（glassUI ①c）
+     是 background 简写，保留其渐变，只替换其下层的兜底纯色。
+   · 只在详情页 body class 下生效，离开详情页即失效。
+   · 拆成两条规则（不用逗号列表）：:has 不受支持的引擎上，列表里任何一条无效会拖垮整条规则。 */
+html:has(body.fnos-beautify){
+  background-color:var(--fnos-hero-bg, #eef1f6) !important;
+}
+body.fnos-beautify{
+  background-color:var(--fnos-hero-bg, #eef1f6) !important;
+}
+/* [v1.3.0] 详情页 body 底内边距清零：满屏高度只由 --fntv-vp-* 表达，宿主再给底 padding
+   会在内容列下方多留一条底色带。 */
+body.fnos-beautify{ padding-bottom:0 !important; }
 
 /* ===== C. 导航栏沉浸透明 ===== */
 body.fnos-beautify div.relative.z-20.flex.items-center.justify-between.px-11.py-5{
@@ -550,6 +583,8 @@ body.fnos-beautify ${HERO} img[class*="rounded"], body.fnos-beautify ${HERO} .sh
   background:var(--semi-color-bg-0,#0b0b0f) !important;
   border-radius:16px !important; /* [lc-1025] 进详情瞬间的全窗实心层，四角随窗口圆角 */
   transition:opacity .32s ease !important; overflow:hidden !important;
+  /* [fix-instant] 纯展示加载层：基态即不接收指针事件，避免进详情后 ~2s 内挡住顶栏 home/汉堡点击 */
+  pointer-events:none !important;
 }
 .fnos-instant-layer.is-hiding{ opacity:0 !important; pointer-events:none !important; }
 .fnos-instant-layer__bg{
@@ -966,12 +1001,18 @@ body.fnos-beautify #custom-titlebar[data-fntv-tb]::before{
 /* N1. col 满屏容器 */
 body.fnos-series-panel div[class*="mb-[46px]"][class*="flex flex-col gap-3"]:has(> div > .trim-mc__details--key-version){
   position:relative !important;
-  min-height:calc(100vh - 32px) !important;
+  /* [v1.3.0] 满屏高度按真实 body 内边距算（桌面 32 / 网页 0），否则底部会露出
+     (32 - 实际padding) 的页面底色白条。 */
+  min-height:calc(100vh - var(--fntv-vp-top, 32px) - var(--fntv-vp-bottom, 0px)) !important;
+  margin-bottom:0 !important;
+}
+/* N1b [v1.3.0] 防回归：不依赖 :has 的同义兜底（:has 失效的宿主上仍清掉 46px 底边距） */
+body.fnos-series-panel div[class*="mb-[46px]"][class*="flex flex-col gap-3"]{
   margin-bottom:0 !important;
 }
 /* N2. hero 满屏（覆盖 .trim-mc__details--key-version 类自带的 560/576/470/48vh/700 分档） */
 body.fnos-series-panel .trim-mc__details--key-version{
-  height:calc(100vh - 32px) !important;
+  height:calc(100vh - var(--fntv-vp-top, 32px) - var(--fntv-vp-bottom, 0px)) !important;
   min-height:0 !important; max-height:none !important;
 }
 /* 底部渐变遮罩重做（用户第二轮反馈：「半透效果可以看到最底下的横屏海报图」+「顶栏全透」）：
@@ -1021,8 +1062,9 @@ html:not([data-fntv-glass]) body.fnos-series-panel #custom-titlebar[data-fntv-tb
   content:none !important;
 }
 body.fnos-series-panel .trim-mc__details--key-version{
-  height:100vh !important;
-  margin-top:-32px !important;
+  /* [v1.3.0] 高度扣掉真实底内边距；上提量 = 真实顶内边距（桌面 32 / 网页 0） */
+  height:calc(100vh - var(--fntv-vp-bottom, 0px)) !important;
+  margin-top:calc(-1 * var(--fntv-vp-top, 32px)) !important;
 }
 body.fnos-series-panel #custom-titlebar[data-fntv-tb] button svg{
   filter:drop-shadow(0 1px 6px rgba(0,0,0,.4));
@@ -1062,7 +1104,7 @@ body.fnos-series-panel ${SERIES_PANEL}{
   position:absolute !important;
   bottom:18px !important; left:26px !important;
   width:min(600px, calc(100vw - 52px)) !important;
-  max-height:calc(100vh - 32px - 210px) !important;
+  max-height:calc(100vh - var(--fntv-vp-top, 32px) - var(--fntv-vp-bottom, 0px) - 210px) !important;
   padding:18px 20px !important;
   display:block !important;
   background:linear-gradient(160deg,
@@ -1253,17 +1295,22 @@ body.fnos-series-panel ${SERIES_PANEL} .fnos-showinfo__sec{
    · 演职人员/文件信息/视频信息保留在首屏折叠线以下自然滚动（电影独有数据，不隐藏）；
    · K/L/M/背景透明化因 hero/顶栏类名同族早已覆盖本页，本段只补布局与聚簇。
    门控 = body.fnos-movie-panel（tmdbCard._armSeriesPanel 按路由打，Movie 页不再吃 N 段）。 */
-/* O1. col 满屏容器（同 N1） */
+/* O1. col 满屏容器（同 N1；[v1.3.0] 高度按真实 body 内边距算） */
 body.fnos-movie-panel ${MOVIE_COL}{
   position:relative !important;
-  min-height:calc(100vh - 32px) !important;
+  min-height:calc(100vh - var(--fntv-vp-top, 32px) - var(--fntv-vp-bottom, 0px)) !important;
   margin-bottom:0 !important;
 }
-/* O2. hero 满屏 + 上提吃掉 32px 标题栏（直接采用 N2+lc-1024 的最终形态，用户已验收） */
+/* O1b [v1.3.0] 防回归：不依赖 :has 的同义兜底（同 N1b） */
+body.fnos-movie-panel div[class*="mb-[46px]"][class*="flex flex-col gap-3"]{
+  margin-bottom:0 !important;
+}
+/* O2. hero 满屏 + 上提吃掉标题栏安全区（直接采用 N2+lc-1024 的最终形态，用户已验收）
+   [v1.3.0] 上提量/高度都改用真实 body 内边距（桌面 32 / 网页 0） */
 body.fnos-movie-panel .trim-mc__details--key-version{
-  height:100vh !important;
+  height:calc(100vh - var(--fntv-vp-bottom, 0px)) !important;
   min-height:0 !important; max-height:none !important;
-  margin-top:-32px !important;
+  margin-top:calc(-1 * var(--fntv-vp-top, 32px)) !important;
 }
 /* 底部渐变遮罩重做（同 N2：25deg 对角渐隐，只护左下聚簇文字区；双类名打平 L 段同选择器） */
 body.fnos-movie-panel .trim-mc__details--key-version.trim-mc__details--key-version .gradient{
@@ -1329,12 +1376,13 @@ body.fnos-movie-panel ${MOVIE_PANEL}{
   min-height:320px !important;
   /* [lc-1028] top 锚定而非 bottom：Series 页面板是 col 末子节点（bottom:18=贴首屏底），
      电影页 col 在面板之后还有演职人员/文件信息（折叠线下延伸），col 底远在视口外——
-     bottom 会把面板锚到视窗外（首版真机截画面板消失的根因）。top = 100vh - 32(body
-     顶padding, 列顶随之下移) - cluster-h（cluster-h=面板高+18，JS 实测回填）恰使面板
-     底沿贴在首屏底沿上方 18px，与列高解耦（活体 geom.cjs：-32 前底沿 1014，后 982）。 */
-  top:calc(100vh - 32px - var(--fnos-cluster-h, 360px)) !important; left:26px !important;
+     bottom 会把面板锚到视窗外（首版真机截画面板消失的根因）。top = 100vh - 真实 body
+     顶内边距 - cluster-h（cluster-h=面板高+18，JS 实测回填）恰使面板底沿贴在首屏底沿上方
+     18px，与列高解耦（活体 geom.cjs：-32 前底沿 1014，后 982）。
+     [v1.3.0] 32 改为 var(--fntv-vp-top)（桌面 32 / 网页 0），并扣掉底内边距。 */
+  top:calc(100vh - var(--fntv-vp-top, 32px) - var(--fntv-vp-bottom, 0px) - var(--fnos-cluster-h, 360px)) !important; left:26px !important;
   width:min(600px, calc(100vw - 52px)) !important;
-  max-height:calc(100vh - 32px - 230px) !important;
+  max-height:calc(100vh - var(--fntv-vp-top, 32px) - var(--fntv-vp-bottom, 0px) - 230px) !important;
   padding:18px 20px !important;
   display:block !important;
   background:linear-gradient(160deg,
@@ -1506,6 +1554,51 @@ html.fnos-touch-narrow body.fnos-beautify ${COL_NUM} > :nth-child(3) > div.relat
 }
 `;
 
+/** [v1.3.0] 量取宿主给 body 的真实上下内边距 → CSS 变量 --fntv-vp-top / --fntv-vp-bottom。
+ *  满屏布局（N/O 段）与 veil 都消费这两个变量：桌面宿主 = 32px 窗口标题栏安全区，
+ *  网页模式 = 0。写死 32 会让网页模式底部露出 (32 - 实际padding) 的页面底色白条。
+ *  桌面/网页共用同一套 CSS，故必须运行时量取，不能按环境分支。
+ *  必须在 body.fnos-beautify 挂上、样式表已注入后调用：B2 段会强制 padding-bottom:0，
+ *  量到的底内边距因此与最终布局自洽。 */
+const VP_TOP_VAR = '--fntv-vp-top';
+const VP_BOTTOM_VAR = '--fntv-vp-bottom';
+let _vpTopCache = -1;
+let _vpBottomCache = -1;
+
+export function syncViewportInsets(): void {
+  const body = document.body;
+  if (!body) return;
+  let top = 0;
+  let bottom = 0;
+  try {
+    const cs = getComputedStyle(body);
+    top = parseFloat(cs.paddingTop) || 0;
+    bottom = parseFloat(cs.paddingBottom) || 0;
+  } catch { /* 量取失败 → 0，与网页模式等价 */ }
+  // 只在值变化时写，避免每次 apply / resize 都触发无谓的样式重算
+  if (top !== _vpTopCache) { body.style.setProperty(VP_TOP_VAR, top + 'px'); _vpTopCache = top; }
+  if (bottom !== _vpBottomCache) { body.style.setProperty(VP_BOTTOM_VAR, bottom + 'px'); _vpBottomCache = bottom; }
+}
+
+let _vpInsetsBound = false;
+let _vpInsetsRaf = 0;
+
+/** 立即量取一次 + 安装 resize 监听（只装一次）。SPA 换页由 injectBeautifyStyle 每次重调同步。 */
+function _installViewportInsets(): void {
+  syncViewportInsets();
+  if (_vpInsetsBound) return;
+  _vpInsetsBound = true;
+  try {
+    window.addEventListener('resize', () => {
+      if (_vpInsetsRaf) return;                 // rAF 合并：一帧内多次 resize 只量一次
+      _vpInsetsRaf = requestAnimationFrame(() => {
+        _vpInsetsRaf = 0;
+        syncViewportInsets();
+      });
+    }, { passive: true });
+  } catch { /* ignore */ }
+}
+
 /** 注入美化样式表（幂等：已存在则跳过）。全程只注入这一份 <style>，一次成型。
  *  [v1.4.0] 同时给 html 挂触屏窄屏标记类：手机单列段不直接依赖
  *  `@media (pointer: coarse)`——该查询在 Playwright full_page screenshot / 部分安卓
@@ -1519,6 +1612,7 @@ export function injectBeautifyStyle(): void {
     st.textContent = BEAUTIFY_CSS;
     (document.head || document.documentElement).appendChild(st);
   }
+  _installViewportInsets();   // [v1.3.0] 同步 --fntv-vp-top/bottom（每次导航/apply 都重测）
   installMobileFlag();
 }
 

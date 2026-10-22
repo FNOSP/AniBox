@@ -97,9 +97,9 @@ func describeTmdbStatus(status int, err error) string {
 	if err != nil {
 		msg := err.Error()
 		if strings.Contains(msg, "timeout") || strings.Contains(msg, "Timeout") || strings.Contains(msg, "Client.Timeout") {
-			return "TMDB 请求超时：后端无法连接 api.themoviedb.org。可在设置开启「免梯子直连」或配置自定义代理后重试。"
+			return mirrorUnavailableMsg
 		}
-		return msg
+		return publicError(err)
 	}
 	return ""
 }
@@ -138,7 +138,7 @@ func hotNormalizeTMDB(raw map[string]any, mediaType string) map[string]any {
 // 合并去重按 popularity 排序 → {ok, items, warning?}。需已配置 TMDB Key（v3/v4 双格式自动适配）。
 func (b *Bridge) tmdbDiscover(w http.ResponseWriter, r *http.Request) {
 	if !b.tmdbReady() {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "TMDB 镜像不可用，且未配置自有 TMDB API Key（可在设置中填写）。"})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": mirrorUnavailableMsg})
 		return
 	}
 	type resT struct {
@@ -414,16 +414,14 @@ func (b *Bridge) bangumiCalendar(w http.ResponseWriter, r *http.Request) {
 	// 内置镜像优先（公开数据免用户 Token）；镜像不可用自动回退官方直连。
 	data, err := b.bgmCalendarData()
 	if err != nil {
-		msg := "Bangumi 请求失败：" + err.Error()
-		if b.customProxyURL() == "" {
-			msg += "。可在设置「自定义代理」配置 http(s) 代理并保存后重试。"
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": msg})
+		// 原始错误（含镜像地址 / 官方域名）只进日志；界面统一显示镜像故障文案。
+		logf("[bangumi] calendar 取数失败: %v", err)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": mirrorUnavailableMsg})
 		return
 	}
 	var days []bgmDay
 	if err := json.Unmarshal(data, &days); err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "Bangumi 数据解析失败：" + err.Error()})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "Bangumi 数据解析失败：" + publicError(err)})
 		return
 	}
 	items := []map[string]any{}

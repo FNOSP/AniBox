@@ -237,10 +237,11 @@ function injectTitleBar(): void {
     // 路由切换时同步可见性
     try {
       const _ps2 = history.pushState, _rs2 = history.replaceState;
-      (history as any).pushState = function (...a: any[]) { _ps2.apply(this, a as any); updateLogoVisibility(); };
-      (history as any).replaceState = function (...a: any[]) { _rs2.apply(this, a as any); updateLogoVisibility(); };
-      window.addEventListener('popstate', updateLogoVisibility);
-      window.addEventListener('hashchange', updateLogoVisibility);
+      // [nav-guard] 副作用异常隔离: 原生导航先执行, updateLogoVisibility 抛错不阻断路由
+      (history as any).pushState = function (...a: any[]) { _ps2.apply(this, a as any); try { updateLogoVisibility(); } catch (e) { logger.warn('logo nav side-effect failed', e); } };
+      (history as any).replaceState = function (...a: any[]) { _rs2.apply(this, a as any); try { updateLogoVisibility(); } catch (e) { logger.warn('logo nav side-effect failed', e); } };
+      window.addEventListener('popstate', () => { try { updateLogoVisibility(); } catch (e) { logger.warn('logo popstate side-effect failed', e); } });
+      window.addEventListener('hashchange', () => { try { updateLogoVisibility(); } catch (e) { logger.warn('logo hashchange side-effect failed', e); } });
     } catch (e) { logger.error('logo nav hook err', String(e).substring(0, 60)); }
   }
 }

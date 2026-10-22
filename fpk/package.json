@@ -1,7 +1,7 @@
 {
   "name": "fntvplus",
   "displayName": "AniBox",
-  "version": "0.1.0",
+  "version": "1.3.0",
   "private": true,
   "license": "GPL-3.0",
   "type": "module",

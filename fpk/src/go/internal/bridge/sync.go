@@ -282,7 +282,7 @@ func (b *Bridge) doubanEnrich(w http.ResponseWriter, r *http.Request) {
 	if err != nil || st != http.StatusOK {
 		note := "TMDB 搜索失败"
 		if err != nil {
-			note += "（" + err.Error() + "）"
+			note += "（" + publicError(err) + "）"
 		} else {
 			note += fmt.Sprintf("（%d）", st)
 		}
@@ -618,7 +618,8 @@ func bangumiErrLabel(st int, err error) (string, string) {
 		case strings.Contains(msg, "tls") || strings.Contains(msg, "certificate") || strings.Contains(msg, "x509"):
 			return "网络", "TLS 握手失败(疑似劫持)"
 		}
-		return "网络", "网络异常: " + err.Error()
+		// 原始错误可能带 URL/镜像域名：只进日志，展示文案统一过滤。
+		return "网络", publicError(err)
 	}
 	switch {
 	case st == 401 || st == 403:

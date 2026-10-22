@@ -12,6 +12,8 @@ import { dlog, log } from '../log';
 import { fnosGetEditDetail } from '../carousel/logo';
 import { extractTmdbId } from '../carousel/api';
 import { DETAIL_HERO_SEL, findActiveDetailView } from './glass';
+// [mirror-error] TMDB 取数失败统一文案：绝不把镜像地址/域名透出到信息卡。
+import { friendlyError } from '../../../core/mirrorError';
 
 const CARD_ID = 'fnos-beautify-tmdb-card';
 
@@ -969,7 +971,7 @@ function _fetch(force = false): void {
         _tmdbInfoError = '';
         log('[lc-980] TMDB 卡就绪: ' + (r.data.title || ''));
       } else {
-        _tmdbInfoError = (r && r.error) || 'TMDB 获取失败';
+        _tmdbInfoError = friendlyError(r && r.error, 'TMDB 获取失败');
         // [lc-1010/1028] 一级页：失败即撤卡（面板 :has 自动收窄，不留错误框），状态仍记录供诊断
         if (_isOneLevel()) {
           const c = document.getElementById(CARD_ID);
@@ -977,7 +979,7 @@ function _fetch(force = false): void {
         }
       }
     } catch (e) {
-      _tmdbInfoError = String(e).substring(0, 120);
+      _tmdbInfoError = friendlyError(e).substring(0, 120);
       if (_isOneLevel()) {
         const c = document.getElementById(CARD_ID);
         if (c && c.parentNode) c.parentNode.removeChild(c);

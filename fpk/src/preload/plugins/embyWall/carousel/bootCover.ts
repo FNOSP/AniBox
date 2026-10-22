@@ -7,14 +7,15 @@
 //   · 顶部固定一条 3px 流动进度条（观感 = 原生「进度条加载」）
 // 揭示（lift，任一命中）：
 //   S.carouselInited（轮播已注入）/ S.carouselLoadedButNone（STRM 提示已渲染）/
-//   离开首页路径 / 2.5s 硬兜底（绝不长遮）。
+//   离开首页路径 / 450ms 硬兜底（[lc-1400] 由 2.5s 缩短：整页重载时 #root 若迟迟不揭
+//   就是白屏；正常 SPA 返回根本不会再走 armBootCover，故硬兜底可大胆缩短）。
 // ─────────────────────────────────────────────────────────────────────────────
 import { S } from '../state';
 
 const STYLE_ID = 'fntv-boot-style';
 const BAR_ID = 'fntv-boot-bar';
 const POLL_MS = 120;
-const HARD_LIFT_MS = 2500;
+const HARD_LIFT_MS = 450;
 
 let _armed = false;
 let _poll = 0;

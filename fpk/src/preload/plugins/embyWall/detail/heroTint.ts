@@ -14,6 +14,11 @@
 //   交给 beautifyStyle.ts 的 L 段消费（顶栏磨砂玻璃条 + hero 遮罩同色系换色）。
 //   换色后同一批采样点收敛到 9.72~11.00，标题「第 1 季」8.92。
 //
+//   [2026-10-22] **取色已默认关闭**（ENABLE_DYNAMIC_TINT=false）：用户要求详情页底色只能是
+//   跟随明暗主题的深浅两套固定底色，不允许从海报/背景图取色。关闭后本文件的 canvas 采样路径
+//   完全不执行，beautifyStyle.ts 的 L/M/N/P 段回落到原生中性色 25,25,26，B2 段页面底色改用
+//   var(--fnos-hero-bg)（浅 #eef1f6 / 深 #161a26）。把常量改回 true 即恢复本注释描述的取色玻璃。
+//
 //   [lc-993] 第 ② 层在 Series 一级页是**另一个类名**：.gradient（一层 0deg、absolute bottom-0
 //   h-[45%] 贴底，色标 1@0% / 1@18% / .92@42% / .64@72% / 0@100%）。本文件**代码零改动**即可覆盖它
 //   —— 取色只认 findHeroBackdropImg()，而 Series hero(组件 Zse)内的剧照由 TD 渲染成
@@ -37,6 +42,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { dlog } from '../log';
 import { findHeroBackdropImg, findActiveDetailView, findDetailHero } from './glass';
+
+/** [2026-10-22] 详情页动态取色总开关（用户要求）。
+ *  false = 完全关闭「从封面/背景图提取主色」：不建 canvas、不读像素、不写 --fnos-hero-tint /
+ *  data-fntv-hero-bright。所有消费点（beautifyStyle.ts 的 L/M/N/P 段）精确回落到原生中性色
+ *  25,25,26；页面底色改由 B2 段的 var(--fnos-hero-bg) 提供，按 html.dark 只切换深浅两套固定色
+ *  （浅色 #eef1f6 / 深色 #161a26，与首页轮播底座一致）。
+ *  true = 恢复旧的封面取色玻璃行为（本文件其余代码原样保留，无需其它联动改动）。
+ *  用户原话：「详情页底色默认只应该是深浅两种固定底色，不要从图片取色」。 */
+const ENABLE_DYNAMIC_TINT = false;
 
 /** 写出的 CSS 变量名。L 段的两处渐变都以 var(--fnos-hero-tint, 25,25,26) 消费。 */
 const TINT_VAR = '--fnos-hero-tint';
@@ -139,6 +153,9 @@ function tintFromImage(img: HTMLImageElement): { tint: string; lum: number } | n
 /** 给当前 hero 算出封面 tint 并写进 body 的 CSS 变量。幂等；失败静默。
  *  由 immersive.ts 在 _apply() 与 700ms 延迟重试里各调一次（剧照可能晚于 settle 才解码）。 */
 export function applyHeroTint(hero: HTMLElement): void {
+  // [2026-10-22] 取色开关关闭 → 直接退出（连 canvas 都不建）。顺手摘掉可能存在的旧变量/标记，
+  // 保证页面底色完全由 CSS 的固定深浅两套决定；消费点的 var(...,25,25,26) 回落即原生中性色。
+  if (!ENABLE_DYNAMIC_TINT) { clearHeroTint(); return; }
   const img = findHeroBackdropImg(hero);
   if (!img) return;
   const src = img.currentSrc || img.src || '';

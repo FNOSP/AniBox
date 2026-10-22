@@ -5,6 +5,8 @@ import { S } from '../state';
 import { applyTitleLogo, swapTitleToLogo } from './logo';
 import { autoFetchDescs, buildLoadingPlaceholder, buildStrmUnsupportedTip } from './progress';
 import { buildCarouselStyle2, buildCarouselStyle3, buildCarouselStyle4 } from './styles';
+// [lc-1291] 样式 5（触屏特供）：选路 resolveCarouselStyle 只在「手机/平板」UI 模式下返回 5，
+//   电脑模式选了 5 也回落 4；桌面原样式分支一行不动。
 import { buildCarouselStyle5, resolveCarouselStyle } from './mobile';
 import { fetchImageAuth } from './images';
 import { ipcRenderer } from 'electron';
@@ -128,30 +130,7 @@ export function injectCarousel(): void {
     target = findMediaLibrarySection();
     if (target) log('media-library section found via robust search');
   }
-  // [lc-1283] 复用的 section 也必须仍在文档中：wrapper 可能挂在已被 fnOS 移除的旧 section 下，
-  //   此时应回退到 DOM 搜索（否则新轮播注入到游离节点 → 页面看不到轮播）。
-  if (rebuild && (!target || !document.contains(target))) {
-    log('rebuild section detached, fallback to DOM search');
-    target = findMediaLibrarySection();
-    rebuild = false;
-    if (target) log('media-library section found via robust search (fallback)');
-  }
   if (!target) { log('no target'); return; }
-  // [lc-1278] 捕获当前骨架节点（buildLoadingPlaceholder 把自己的容器存在 S.carouselContainer）。
-  // 有骨架时揭示改为「交叉淡出」：骨架原地淡出、真实轮播淡入，消除白底骨架骤删后
-  // 露出容器深色底的黑屏帧（白骨架→纯黑→出图）。
-  // [lc-1284] ⚠ 只认骨架专属标记，绝不用 S.carouselContainer 推断！
-  //   该引用在真实轮播渲染时同样会被写入（render.ts 底部 S.carouselContainer = container），
-  //   而自动刷新/二次注入会在轮播已渲染后再次进入本函数 —— 此时按 S 引用取会把
-  //   **刚建好的真实轮播**当成骨架，520ms 后 remove() 掉（用户两次报告「轮播图没了」的根因）。
-  //   改为从 DOM 取带 data-fntv-skeleton 标记的节点，语义明确、无歧义。
-  // 查找范围：优先骨架 wrapper（S.carouselWrapper 此时可能仍指向骨架 wrapper），
-  //   兜底全文档查（wrapper 引用被 FNOS 重渲染打断时仍能找到骨架）。
-  // ⚠ 唯一判据就是这个标记本身，不再叠加 S.placeholderInited 等状态位——
-  //   那些状态位在「数据到达 / 自动刷新 / 二次注入」各路径的置位时机不同，叠加判断
-  //   反而会在某些时序下放行「把真实轮播当骨架」的错误分支。有标记才可能是骨架。
-  const skeletonEl = ((S.carouselWrapper && S.carouselWrapper.querySelector('[data-fntv-skeleton]'))
-    || document.querySelector('[data-fntv-skeleton]')) as HTMLElement | null;
   log('target found on', location.href, rebuild ? '(rebuild)' : '(first)');
 
   // [lc-773] 轮播行动按钮样式（Apple 风格）只注入一次。
@@ -256,25 +235,11 @@ export function injectCarousel(): void {
 
   // 统一容器: 重建时复用已有wrapper(保留padding:0 44px), 避免嵌套叠加导致宽度变宽
   let wrapper: HTMLElement;
-  // [lc-1283] 追加 document.contains 校验：S.carouselWrapper 可能指向已随骨架一起被摘除的
-  //   游离节点（骨架 wrapper 在揭示后被清理），复用它会让新轮播挂在文档外 → 轮播不可见。
-  if (rebuild && S.carouselWrapper && document.contains(S.carouselWrapper)) {
+  if (rebuild && S.carouselWrapper) {
     wrapper = S.carouselWrapper;
-    // [lc-1278] 首次揭示(rebuild 但 wrapper 里其实只有骨架)时保留骨架做交叉淡出
-    if (skeletonEl && skeletonEl.parentElement === wrapper) {
-      for (const child of Array.from(wrapper.childNodes)) {
-        if (child !== skeletonEl) (child as HTMLElement).remove?.();
-      }
-    } else {
-      wrapper.innerHTML = ''; // 清空旧container(我们自己的节点, 不影响飞牛DOM), 内部重建
-    }
+    wrapper.innerHTML = ''; // 清空旧container(我们自己的节点, 不影响飞牛DOM), 内部重建
   } else {
-    // [lc-1278] 保留骨架 wrapper(交叉淡出用), 其余内容(飞牛原生标题/卡片或旧节点)照旧清掉。
-    // 原 target.innerHTML='' 会把骨架一起删掉, 揭示序列就退化回「骨架骤删→黑屏帧→出图」。
-    const keep = skeletonEl ? skeletonEl.parentElement : null;
-    for (const child of Array.from(target.childNodes)) {
-      if (child !== keep) (child as HTMLElement).remove?.();
-    }
+    target.innerHTML = ''; // 首屏清空section原内容(媒体库标题+卡片)
     // [lc-444] 清掉飞牛section自身顶部边框/阴影/上边距, 避免与顶部导航栏之间出现细黑线
     target.style.borderTop = 'none';
     target.style.boxShadow = 'none';
@@ -289,80 +254,14 @@ export function injectCarousel(): void {
   container.style.cssText = 'position:relative;overflow:hidden;width:100%;max-height:calc(100vh - 380px);aspect-ratio:16/9;border-radius:24px;background:var(--fnos-hero-container);backdrop-filter:blur(24px) saturate(140%);-webkit-backdrop-filter:blur(24px) saturate(140%);margin:0 auto;box-shadow:none';
   // [lc-780→lc-1291] 轮播图样式开关：默认样式 4（立体堆叠）；1=竖向 2=横向 3=堆叠 4=立体 5=触屏特供。
   //   样式通过 [data-fntv-carousel-style="1..5"] 区分（CSS 或 JS 分支）。
-  //   样式 5 仅真触屏设备可用（resolveCarouselStyle 内判定），桌面选 5 自动回落 4。
+  //   选路交给 mobile.resolveCarouselStyle：仅 UI 模式=手机时返回 5，电脑模式一律落回 1~4。
   const _cs = resolveCarouselStyle();
   container.setAttribute('data-fntv-carousel-style', String(_cs));
-  // [lc-582] 加载完成后淡入, 不再"直接闪出全部"(骨架→轮播平滑过渡)
-  container.style.opacity = '0';
-  container.style.transition = 'opacity .45s ease';
+  // [fix-carousel-display] 不再用 opacity:0 → rAF 置 1 的门控：后台标签页/合成器节流时 rAF
+  //   可能不回调，容器会永远透明(用户所见「轮播不显示」)。容器创建即不透明可见。
+  container.style.opacity = '1';
   wrapper.appendChild(container);
   S.carouselContainer = container;
-  // [lc-1278] 揭示序列：骨架原地淡出 ↔ 轮播淡入，且淡入等首图解码完成。
-  //   原实现先清骨架、容器立即开始 opacity 淡入 —— 淡入前段只有容器自身的深色底
-  //   （暗色主题 --fnos-hero-container）而首图尚未解码，即「白骨架→纯黑→才出图」。
-  //   ①骨架不删：绝对定位叠在 section 顶部（与轮播同宽同 16:9 比例，几何一致），
-  //     容器淡入时骨架同步淡出，视觉无缝；
-  //   ②淡入门控：用第一张横版图（优先预载 blob）decode() 完成后再启动淡入，
-  //     淡入首帧图已就绪；1.2s 兜底超时防网络图卡住揭示。
-  if (skeletonEl && skeletonEl.parentElement) {
-    try {
-      const skelWrap = skeletonEl.parentElement;
-      // 与真实 wrapper 同享移动端边距 CSS(16px !important), 保证各视口下骨架与轮播对位一致
-      skelWrap.dataset.fntvCarouselWrapper = '1';
-      const cs = getComputedStyle(skelWrap);
-      skelWrap.style.position = 'relative';
-      // 骨架绝对定位: 内边距取 wrapper 的 computed padding(绝对定位以 padding box 为基准)
-      skeletonEl.style.position = 'absolute';
-      skeletonEl.style.top = cs.paddingTop;
-      skeletonEl.style.left = cs.paddingLeft;
-      skeletonEl.style.right = cs.paddingRight;
-      skeletonEl.style.width = 'auto';
-      skeletonEl.style.margin = '0';
-      skeletonEl.style.transition = 'opacity .45s ease';
-      skeletonEl.style.pointerEvents = 'none';
-      skeletonEl.style.zIndex = '1';
-    } catch (e) { /* 骨架定位失败 → 退化为直接淡入(与旧行为一致) */ }
-  }
-  const revealCarousel = (): void => {
-    requestAnimationFrame(() => {
-      container.style.opacity = '1';
-      if (skeletonEl) {
-        skeletonEl.style.opacity = '0';
-        // [lc-1283] ⚠ 只移除骨架节点自身，绝不能删它的父级！
-        //   rebuild 分支下 wrapper = S.carouselWrapper（骨架与真实轮播共用的同一个 wrapper），
-        //   原写法 (skeletonEl.parentElement || skeletonEl).remove() 会把**装着新轮播的 wrapper**
-        //   整个摘掉 → 淡入后 520ms 轮播整体消失（用户报告「海报轮播图直接没了」）。
-        window.setTimeout(() => {
-          try {
-            const p = skeletonEl.parentElement as HTMLElement | null;
-            skeletonEl.remove();
-            // 骨架用过的空 wrapper 才清理（仅当它已不含任何内容，避免误删真实轮播宿主）
-            if (p && p.childElementCount === 0) p.remove();
-          } catch (e) { /* 已被移除 */ }
-        }, 520);
-      }
-    });
-  };
-  const f0: any = shows[0] || {};
-  const raw0 = (f0._backdropBlob as string) || ((): string => {
-    const b = String(f0.backdrop || '');
-    if (!b) return '';
-    return (b.startsWith('http') || b.startsWith('/v/api/')) ? b : base + '/v/api/v1/' + b;
-  })();
-  if (raw0) {
-    const probe = new Image();
-    let done = false;
-    const finish = (): void => { if (!done) { done = true; window.clearTimeout(timer); revealCarousel(); } };
-    const timer = window.setTimeout(finish, 1200); // 解码过慢/异常兜底：最迟 1.2s 揭示
-    probe.onload = finish;
-    probe.onerror = finish;
-    probe.src = raw0; // ⚠ 先设 src 再 decode()：空 src 的 decode() 会立即 resolve 使门控失效
-    if (typeof probe.decode === 'function') {
-      probe.decode().then(finish, finish);
-    }
-  } else {
-    revealCarousel();
-  }
 
   // [lc-781] 样式 2（滑动切换 + 进度条）：早期分支，复用已建好的 container/wrapper，
   //   跳过下方样式 1 的 track / posterStrip / 竖向轮播逻辑，改走 buildCarouselStyle2。
@@ -386,7 +285,9 @@ export function injectCarousel(): void {
     return;
   }
 
-  // [lc-1291] 样式 5（触屏特供）：全宽单卡 + scroll-snap 原生横滑，仅触屏设备（resolveCarouselStyle 已兜底回落）。
+  // [lc-1291] 样式 5（触屏特供）：全宽单卡 + scroll-snap 原生横滑。入参与 s2/s3/s4 同构。
+  //   门控已在 resolveCarouselStyle 内完成（仅 UI 模式=手机返回 5），此处不做任何
+  //   可见性/尺寸/透明度判定，容器创建即 opacity:1。
   if (_cs === 5) {
     buildCarouselStyle5(container, wrapper, shows, base, rebuild);
     if (!rebuild) target.appendChild(wrapper);
@@ -733,14 +634,6 @@ export function injectCarousel(): void {
   posterStrip.addEventListener('mouseenter', _onEnter);
   posterStrip.addEventListener('mouseleave', _onLeave);
 
-  // [lc-1288] 上下滑手势 + 触摸端暂停/恢复自动轮播。
-  //   改前：手势只绑 mousedown/mouseup 指针事件，触摸设备不保证合成 mouse 事件
-  //   （无 preventDefault 时还会与页面滚动打架）→ 手机上等于没有上下滑。
-  //   且暂停自动轮播只挂 mouseenter/mouseleave，触摸端永不触发 → 6s 定时器持续翻页，
-  //   用户正在读简介时内容被强行切走（实测病灶）。
-  //   刻意**不**声明 touch-action：声明 none 会连带禁掉轮播区域的页面滚动，
-  //   得不偿失。浏览器一旦判定为滚动手势会发 touchcancel 而非 touchend，
-  //   于是「快速轻扫=翻页、慢速拖动=滚页面」自然分流，无需抢手势。
   let startY = 0, dragging = false;
   const _onDown = (e: MouseEvent): void => { startY = e.clientY; dragging = true; };
   const _onUp = (e: MouseEvent): void => {
@@ -749,29 +642,8 @@ export function injectCarousel(): void {
     if (dy < -50) goTo((currentIdx + 1) % shows.length);
     else if (dy > 50) goTo((currentIdx - 1 + shows.length) % shows.length);
   };
-  const _onTouchStart = (e: TouchEvent): void => {
-    dragging = true;
-    startY = e.touches[0] ? e.touches[0].clientY : 0;
-    clearInterval(timer);          // 触摸期间停自动轮播，抬手或被取消后再起
-  };
-  const _onTouchEnd = (e: TouchEvent): void => {
-    // 被浏览器判为滚动手势时走 touchcancel：只恢复定时器，不翻页、不动位置
-    if (e.type === 'touchend') {
-      const y = e.changedTouches[0] ? e.changedTouches[0].clientY : startY;
-      if (dragging) {
-        const dy = y - startY;
-        if (dy < -50) goTo((currentIdx + 1) % shows.length);
-        else if (dy > 50) goTo((currentIdx - 1 + shows.length) % shows.length);
-      }
-    }
-    dragging = false;
-    timer = setInterval(() => goTo((currentIdx + 1) % shows.length), 6000);
-  };
   container.addEventListener('mousedown', _onDown);
   container.addEventListener('mouseup', _onUp);
-  container.addEventListener('touchstart', _onTouchStart, { passive: true });
-  container.addEventListener('touchend', _onTouchEnd, { passive: true });
-  container.addEventListener('touchcancel', _onTouchEnd, { passive: true });
 
   // [lc-966] 注册销毁/恢复钩子: style-1 原漏注册 → destroyCarousel 对 style1 是 no-op,
   //   离开首页后 6s 定时器仍在脱离 DOM 上持续触发(后台自动翻页) + 监听泄漏。现与 styles 2/3/4 对齐。
@@ -783,9 +655,6 @@ export function injectCarousel(): void {
     posterStrip.removeEventListener('mouseleave', _onLeave);
     container.removeEventListener('mousedown', _onDown);
     container.removeEventListener('mouseup', _onUp);
-    container.removeEventListener('touchstart', _onTouchStart);
-    container.removeEventListener('touchend', _onTouchEnd);
-    container.removeEventListener('touchcancel', _onTouchEnd);
   };
   S.carouselResume = () => {
     if (!document.body.contains(container)) return; // 容器已游离则 no-op

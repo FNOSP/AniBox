@@ -113,6 +113,8 @@ export function injectUiThemeStyle(): void {
   --fnos-ui-exit-on:rgba(109,127,242,.92);
   --fnos-ui-exit-off:rgba(255,255,255,.55);
   --fnos-hero-container:rgba(244,246,252,.5);
+  /* [fix-black] 轮播/骨架主题自适应底色(替代写死的 #0b1219): 浅色取浅灰蓝, 深色取深蓝灰 */
+  --fnos-hero-bg:#eef1f6;
   --fnos-hero-panel:linear-gradient(160deg,rgba(247,249,253,.80),rgba(238,242,250,.86));
   --fnos-hero-dots:rgba(248,250,253,.65);
   --fnos-hero-edge:linear-gradient(90deg,transparent 66%,rgba(242,246,252,.85) 100%);
@@ -198,6 +200,7 @@ html.dark{
   --fnos-ui-exit-on:rgba(116,134,248,.95);
   --fnos-ui-exit-off:rgba(52,58,84,.30);
   --fnos-hero-container:rgba(36,40,58,.55);
+  --fnos-hero-bg:#161a26;
   --fnos-hero-panel:linear-gradient(160deg,rgba(36,40,58,.82),rgba(28,32,46,.88));
   --fnos-hero-dots:rgba(62,68,94,.72);
   --fnos-hero-edge:linear-gradient(90deg,transparent 66%,rgba(58,64,90,.92) 100%);
@@ -258,6 +261,7 @@ html.fnos-perf{
   --fnos-ui-panel-bg:#fafbfe;
   --fnos-ui-input-bg:#ffffff;
   --fnos-hero-container:#f4f6fc;
+  --fnos-hero-bg:#eef1f6;
   --fnos-hero-panel:#f7f9fd;
   --fnos-hero-dots:#f8fafd;
   --fnos-ui-veil:#f4f6fc;
@@ -272,6 +276,7 @@ html.fnos-perf.dark{
   --fnos-ui-panel-bg:#1e2130;
   --fnos-ui-input-bg:#343a54;
   --fnos-hero-container:#24283a;
+  --fnos-hero-bg:#161a26;
   --fnos-hero-panel:#24283a;
   --fnos-hero-dots:#3e445e;
   --fnos-ui-veil:#1c202e;

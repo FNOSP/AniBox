@@ -28,7 +28,8 @@ function getVeil(): HTMLElement {
   if (_veil && document.body.contains(_veil)) return _veil;
   const v = document.createElement('div');
   v.id = VEIL_ID;
-  v.style.cssText = `position:fixed;top:32px;left:0;right:0;bottom:0;z-index:9000;pointer-events:none;opacity:0;background:var(--fnos-ui-veil)!important;transition:opacity ${FADE_MS}ms ease;border-radius:0 0 16px 16px;overflow:hidden;`; // 行内 !important：页面背景自定义的 body>div 清透规则会清掉无 important 的行内底色，暗纱会失效
+  // [v1.3.0] top 用运行时量取的 body 顶内边距（桌面 32 / 网页 0），避免网页模式在标题栏区域铺纱。
+  v.style.cssText = `position:fixed;top:var(--fntv-vp-top,32px);left:0;right:0;bottom:0;z-index:9000;pointer-events:none;opacity:0;background:var(--fnos-ui-veil)!important;transition:opacity ${FADE_MS}ms ease;border-radius:0 0 16px 16px;overflow:hidden;`; // 行内 !important：页面背景自定义的 body>div 清透规则会清掉无 important 的行内底色，暗纱会失效
   document.body.appendChild(v);
   _veil = v;
   return v;

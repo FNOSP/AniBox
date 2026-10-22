@@ -8,10 +8,15 @@
 // （w342）；数据（主进程 7 天磁盘缓存+SWR）与图片（内存+磁盘）都有持久层，二次点开零网络。
 // 参考：第三方油猴插件 fnos-actor-tmdb v4.5（端点与匹配策略经其验证）。
 // ─────────────────────────────────────────────────────────────────────────────
-import { ipcRenderer, shell } from 'electron';
+import { ipcRenderer } from 'electron';
 import { registerHook } from '../core/hooks';
 import { pagePath } from '../core/pageMode';
 import { HookType } from '../core/hooks';
+// [fix-cast-page] 详情页「演职人员」点击 → 人物页的稳定导航（window capture 委托）。
+//   放在本插件安装，避免改动 embyWall.ts 的轮播/路由轮询区域（与并行任务隔离）。
+import { installCastNav, revealActiveView } from './embyWall/detail/castNav';
+// [mirror-error] 演员页 TMDB 取数失败：错误里带 URL/镜像域名时统一显示镜像故障文案。
+import { friendlyError } from '../core/mirrorError';
 
 
 const STYLE_ID = 'fnos-person-works-style';
@@ -113,6 +118,98 @@ function activeCol(): HTMLElement | null {
     return document.querySelector<HTMLElement>('div[class*="mb-[46px]"]');
 }
 
+// ── [fix-person-tmdb] 飞牛人物数据在同源前端抓取 ──────────────────────────────
+// 根因：网页端后端转发请求拿不到 httpOnly 会话 Cookie（Trim-MC-token），
+//   /v/api/v1/person/{guid} 被判未登录 → data 为空 → 后端只能报「未找到该演员（guid）」。
+//   这里改用已验证的「同源 fetch + credentials:include + Authx 签名」路径（jav/海报同款），
+//   把 name / imdbId / tmdbId / 库内作品 一并交给后端，后端只做 TMDB 解析与 owned 匹配。
+function fnNonce(): string {
+    return String(Math.floor(Math.random() * 900000) + 100000);
+}
+
+async function fnosJson(method: 'GET' | 'POST', path: string, body?: any): Promise<any> {
+    const headers: Record<string, string> = {};
+    try {
+        const authx = await ipcRenderer.invoke('fnos-gen-authx', path, body);
+        if (authx) headers.Authx = String(authx);
+    } catch { /* 签名不可用时仍尝试同源 cookie 请求 */ }
+    const init: any = { method, credentials: 'include', headers };
+    if (body !== undefined) {
+        headers['Content-Type'] = 'application/json';
+        init.body = JSON.stringify(body);
+    }
+    const resp = await fetch(location.origin + path, init);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    return resp.json();
+}
+
+/** 演员名 DOM 兜底：document.title 或活跃视图里的大标题。 */
+function personNameFromDom(): string {
+    const t = String(document.title || '').split(/\s+[-–—|]\s+/)[0].trim();
+    if (t && !/飞牛|影视|AniBox|FnTV/i.test(t)) return t;
+    const views = document.querySelectorAll<HTMLElement>('.trim-ui__cache-outlet--exclude');
+    for (let i = views.length - 1; i >= 0; i--) {
+        if (!views[i] || views[i].offsetParent === null) continue;
+        const h = views[i].querySelector<HTMLElement>('h1, h2');
+        const txt = h ? String(h.textContent || '').trim() : '';
+        if (txt) return txt;
+    }
+    return '';
+}
+
+/** 汇总飞牛人物提示：详情（name/imdb/tmdb id）+ 库内作品（owned 匹配键）。 */
+async function collectPersonHints(guid: string): Promise<any> {
+    const hints: any = { guid };
+    try {
+        const pd = await fnosJson('GET', '/v/api/v1/person/' + guid);
+        const p = pd && pd.data && typeof pd.data === 'object' ? pd.data : null;
+        if (p) {
+            hints.name = String(p.name || p.title || '').trim();
+            hints.imdbId = String(p.imdb_id || p.imdbId || '').trim();
+            const nested = (p.person && (p.person.tmdb_id || p.person.tmdbId))
+                || (p.external_ids && (p.external_ids.tmdb_id || p.external_ids.tmdbId));
+            const tid = Number(p.tmdb_id || p.tmdbId || nested || 0);
+            if (tid > 0) hints.tmdbId = tid;
+        }
+    } catch { /* 详情失败 → DOM 姓名兜底 */ }
+    if (!hints.name) hints.name = personNameFromDom();
+
+    const lib: any[] = [];
+    const seen = new Set<string>();
+    // [perf-person] 5 个 job 并发拉取（旧实现逐个串行 await，5 次 RTT 叠加），
+    // 仍按原 job 顺序合并 + 去重，结果与串行版一致。
+    const lists = await Promise.all(['Actor', 'Director', 'Writer', 'Screenplay', 'Producer'].map(async (job) => {
+        try {
+            const body = {
+                person_guid: guid, page: 1, page_size: 200, job,
+                sort_column: 'update_time', sort_type: 'desc', nonce: fnNonce(),
+            };
+            const j = await fnosJson('POST', '/v/api/v1/person/item/list', body);
+            return j && j.data && Array.isArray(j.data.list) ? j.data.list : [];
+        } catch { return []; /* 单 job 失败忽略 */ }
+    }));
+    for (const list of lists) {
+        for (const it of list) {
+            const title = String(it.title || it.name || it.original_title || it.original_name || '').trim();
+            if (!title) continue;
+            const key = String(it.guid || '') + '|' + title;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            lib.push({
+                title,
+                type: String(it.type || it.media_type || '').toLowerCase(),
+                guid: String(it.guid || ''),
+                tmdbId: Number(it.tmdb_id || it.tmdbId || 0) || undefined,
+                imdbId: String(it.imdb_id || it.imdbId || ''),
+            });
+            if (lib.length >= 600) break;
+        }
+        if (lib.length >= 600) break;
+    }
+    if (lib.length) hints.libItems = lib;
+    return hints;
+}
+
 function renderPanel(container: HTMLElement, data: any): void {
     let box = container.querySelector<HTMLDivElement>('#' + PANEL_ID);
     if (!box) {
@@ -149,7 +246,14 @@ function renderPanel(container: HTMLElement, data: any): void {
         el.addEventListener('click', (ev: Event) => {
             ev.preventDefault();
             const u = el.getAttribute('data-tmdb');
-            if (u) { try { shell.openExternal(u); } catch { window.open(u, '_blank'); } }
+            if (!u) return;
+            // [fix-cast-page] 网页端 shim 的 shell.openExternal 是空实现（不抛错）→ 旧代码
+            //   try{shell.openExternal(u)}catch{window.open} 的兜底永远不触发，点击缺失作品毫无反应。
+            //   改走统一的 app:open-external（网页端=window.open 新标签，桌面端=系统浏览器）。
+            try {
+                const p = ipcRenderer.invoke('app:open-external', u);
+                if (p && typeof p.catch === 'function') p.catch(() => { try { window.open(u, '_blank'); } catch { /* ignore */ } });
+            } catch { try { window.open(u, '_blank'); } catch { /* ignore */ } }
         });
     });
 }
@@ -179,19 +283,42 @@ function renderCollapsed(container: HTMLElement): void {
 
 /** [lc-1040] 点开才触发查询/下载（用户要求防限流）：数据走主进程磁盘缓存（lc-1039，7 天+SWR），
  *  二次点开毫秒级零网络；海报则由 observePosters 按“进视口”逐批下载。 */
-async function expandCurrent(): Promise<void> {
+async function expandCurrent(retry = 0): Promise<void> {
     const guid = _currentGuid;
-    const container = activeCol();
-    if (!guid || !container || _inflight.has(guid)) return;
+    if (!guid) return;
+    if (_inflight.has(guid)) return;
+    // [fix-cast-page] 不再静默失败：activeCol() 可能因作品列被 React 重建/路由切换而瞬时取不到，
+    //   此时回落到面板自身的父容器（面板头就在里面），仍取不到则给出可见提示并安排一次重试，
+    //   而不是「点了没反应」。
+    let container = activeCol();
+    if (!container) {
+        const box = document.getElementById(PANEL_ID);
+        container = (box && box.parentElement) as HTMLElement | null;
+    }
+    if (!container) {
+        log.warn('[personWorks] 展开失败：未找到演员页作品列');
+        if (retry < 2) setTimeout(() => { if (_currentGuid === guid) void expandCurrent(retry + 1); }, 800);
+        return;
+    }
     const cached = _cache.get(guid);
     if (cached) { renderPanel(container, cached); return; }
     _inflight.add(guid);
     _loadError = '';
-    renderMsg(container, '正在从 TMDB 拉取完整作品…');
+    renderMsg(container, '正在读取演员信息并从 TMDB 拉取完整作品…');
     try {
+        // [fix-person-tmdb] 先在页面同源抓取飞牛人物详情/库内作品（带 httpOnly 会话），
+        // 再把提示交给后端做 TMDB 解析——不再让后端用 guid 直接请求飞牛（必失败）。
+        let hints: any = { guid };
+        try {
+            hints = await collectPersonHints(guid);
+        } catch (e: any) {
+            log.warn('[personWorks] 飞牛人物信息读取失败，仅按 guid 请求：', e && e.message);
+        }
+        if (_currentGuid !== guid) return;
+
         let r: any = null;
         try {
-            r = await ipcRenderer.invoke('person:tmdb-credits', guid);
+            r = await ipcRenderer.invoke('person:tmdb-credits', hints);
         } catch (err: any) {
             const msg = String((err && err.message) || err);
             // [lc-1034] 主进程插件未加载（常见于只刷新了页面、主进程还是旧版）→ 给出可执行指引
@@ -202,17 +329,40 @@ async function expandCurrent(): Promise<void> {
             throw err;
         }
         if (_currentGuid !== guid) return; // 已切页
-        if (!r || r.error) { _loadError = (r && r.error) || '拉取失败'; renderCollapsed(container); return; }
+        if (!r || r.error) { _loadError = friendlyError(r && r.error, '拉取失败'); renderCollapsed(container); return; }
+        // [fix-person-tmdb] 未关联 TMDB 人物是明确的空状态，不是加载失败：不缓存、可重试。
+        if (r.unlinked || r.noImdb) {
+            renderMsg(container, unlinkedMessage(r));
+            return;
+        }
         _cache.set(guid, r);
-        if (r.noImdb) { renderMsg(container, '该演员无 IMDb 关联，无法获取 TMDB 完整作品'); return; }
+        if (!Array.isArray(r.items) || !r.items.length) {
+            renderMsg(container, 'TMDB 暂无该演员的作品记录');
+            return;
+        }
         renderPanel(container, r);
     } catch (e: any) {
         if (_currentGuid === guid) {
-            _loadError = '拉取失败: ' + (e && e.message ? e.message : e);
+            // [mirror-error] 原文含 URL/镜像域名 → 统一镜像故障文案；其余保留原文便于操作。
+            _loadError = friendlyError(e, '拉取失败');
             renderCollapsed(container); // 错误态回落收起头部，点击即重试
         }
     } finally {
         _inflight.delete(guid);
+    }
+}
+
+/** [fix-person-tmdb] 未关联时的可区分文案（不再显示成「未找到该演员（guid）」）。 */
+function unlinkedMessage(r: any): string {
+    const name = String((r && r.name) || '').trim();
+    const who = name ? `「${name}」` : '该演员';
+    switch (r && r.reason) {
+        case 'no-name':
+            return '未关联 TMDB 人物：未能读取演员姓名，无法在 TMDB 检索';
+        case 'no-external-id':
+            return `未关联 TMDB 人物：飞牛未提供 ${who} 的 TMDB/IMDb 关联，按姓名也未在 TMDB 找到匹配`;
+        default:
+            return `未关联 TMDB 人物：TMDB 未收录${who}`;
     }
 }
 
@@ -278,8 +428,11 @@ function enrichCast(): void {
         const m = (a.getAttribute('href') || '/').match(/([0-9a-f]{32})/i);
         if (!m) return;
         const guid = m[1].toLowerCase();
+        // [fix-person-tmdb] 带上姓名：后端无法直连飞牛详情时仍能按姓名解析 TMDB 人物。
+        const nameEl = a.querySelector('p[class*="text-base"]');
+        const personName = nameEl ? String(nameEl.textContent || '').trim() : '';
         setTimeout(() => {
-            ipcRenderer.invoke('person:tmdb-brief', guid).then((b: any) => {
+            ipcRenderer.invoke('person:tmdb-brief', { guid, name: personName }).then((b: any) => {
                 if (!b || b.error || !document.body.contains(a)) return;
                 const parts: string[] = [];
                 // [lc-1036] 原生角色文案已含职业分类（如角色 p 就是「演员」）时不重复推送
@@ -315,6 +468,10 @@ function checkRoute(): void {
         return;
     }
     const guid = m[1].toLowerCase();
+    // [fix-cast-page] 人物页已打开：确保它没有被视图清理逻辑(hideStaleViews)隐藏。
+    //   点击委托在导航后 450/900/1400ms 已复原一次；这里每轮询再兜一层，
+    //   覆盖「人物页渲染晚于 1.4s」的情况。
+    revealActiveView();
     if (guid === _currentGuid) return;
     _currentGuid = guid;
     _onlyMissing = false;
@@ -324,6 +481,9 @@ function checkRoute(): void {
 
 function handle(): void {
     try {
+        // [fix-cast-page] 演职人员点击委托（window capture）——只认 /v/person/<guid>，
+        //   抢在网关 shim 的整页跳转与原生 SPA 处理器之前接管，保证人物页一定打开。
+        installCastNav();
         setInterval(checkRoute, 1200);
         checkRoute();
         

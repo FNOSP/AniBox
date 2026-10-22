@@ -39,9 +39,13 @@ let _obs: MutationObserver | null = null;
 let _obsTargets = new WeakSet<Element>();
 let _rafId = 0;
 let _scheduledFor: string | null = null;
-/** 已覆盖的数组与 props（teardown 还原语义）。 */
+/** 已覆盖的数组与 props（teardown 还原语义）。
+ *  [fix-cast-page] props 必须记录**原始 itemWidth**再还原——旧版 teardown 直接 delete itemWidth，
+ *  而该 props 对象归 React 所有（视图缓存后仍存活）。删掉后 itemWidth=undefined，下次窗口重算
+ *  `宽度/(itemWidth+gap)` = NaN → slice(0,NaN) 返回空数组 → 演职人员/选集整带变空（用户视角
+ *  「演职人员打不开/不见了」）。改为存 {vl, itemWidth} 精确回写。 */
 const _patchedArrays: any[][] = [];
-const _patchedProps: any[] = [];
+const _patchedProps: Array<{ vl: any; itemWidth: any }> = [];
 
 function _clearTimers(): void {
   for (let i = 0; i < _timers.length; i++) clearTimeout(_timers[i]);
@@ -85,7 +89,7 @@ function _patchVl(ref: VlRef): boolean {
     }
   }
   if (vl.itemWidth !== 1) {
-    try { vl.itemWidth = 1; _patchedProps.push(vl); changed = true; } catch { /* ignore */ }
+    try { const orig = vl.itemWidth; vl.itemWidth = 1; _patchedProps.push({ vl, itemWidth: orig }); changed = true; } catch { /* ignore */ }
   }
   return changed;
 }
@@ -223,8 +227,8 @@ export function removeVirtualBandFix(): void {
     try { delete (arr as any).slice; delete (arr as any)[MARK]; } catch { /* ignore */ }
   }
   _patchedArrays.length = 0;
-  for (const vl of _patchedProps) {
-    try { delete vl.itemWidth; } catch { /* ignore */ }
+  for (const rec of _patchedProps) {
+    try { rec.vl.itemWidth = rec.itemWidth; } catch { /* ignore */ }
   }
   _patchedProps.length = 0;
   const lives = document.querySelectorAll('.' + LIVE_CLS);

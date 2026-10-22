@@ -927,11 +927,17 @@ const ipcRenderer = {
       return apiPost('/app/fntvplus/api/bridge/dandanplay/test', { keyword: a.keyword || '' });
     }
 
-    /* ── 人物页 TMDB 增强（fnOS person API → TMDB 链路待接）── */
+    /* ── 人物页 TMDB 增强（飞牛人物 → TMDB）── */
     if (channel === 'person:tmdb-brief' || channel === 'person:tmdb-credits') {
-      // 演员页 TMDB 增强（桌面版 personTmdb 同款管线）：后端 fnOS person API → imdb → TMDB find/credits
+      // 演员页 TMDB 增强（桌面版 personTmdb 同款管线）：飞牛人物 → imdb/tmdb/姓名 → TMDB
+      // [fix-person-tmdb] 支持对象参数 {guid, name, imdbId, tmdbId, libItems}：前端同源抓取的
+      //   飞牛人物信息随请求带给后端（后端转发拿不到 httpOnly 会话 Cookie）。
       const ep = channel === 'person:tmdb-brief' ? 'brief' : 'credits';
-      return apiPost('/app/fntvplus/api/bridge/person/' + ep, { guid: args[0], cookie: document.cookie });
+      const a = args[0];
+      const body = (a && typeof a === 'object')
+        ? Object.assign({}, a, { cookie: document.cookie })
+        : { guid: a, cookie: document.cookie };
+      return apiPost('/app/fntvplus/api/bridge/person/' + ep, body);
     }
 
     if (channel === 'settings:open-external') {
@@ -1010,7 +1016,9 @@ const ipcRenderer = {
 };
 
 const shell = {
-  openExternal() {},
+  // [fix-cast-page] 旧实现是空函数：调用方常写 try{shell.openExternal(u)}catch{window.open(u)}，
+  //   空函数不抛错 → 兜底永不执行 → 网页端「点击缺失作品/外链」毫无反应。这里直接新标签打开。
+  openExternal(u) { try { window.open(String(u || ''), '_blank', 'noopener'); } catch (e) { /* ignore */ } },
   openPath() {},
   showItemInFolder() {},
 };

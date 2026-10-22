@@ -3,8 +3,8 @@
 // [lc-???] 观看记录（Watch History）入口 + 面板
 // =============================================================================
 // 目标：把此前设计的「观看记录」功能接入软件。
-//   1) 侧边栏入口：在 embyWall 创建的 #fnos-sidebar-actions 容器内（⚙设置 / 切换系统页面 /
-//      软件反馈建议 所在的圆角卡片），用完全相同的按钮样式创建「观影记录」入口，
+//   1) 侧边栏入口：在 embyWall 创建的 #fnos-sidebar-actions 容器内（⚙设置 / 加入Q群
+//      加入Q群 所在的圆角卡片），用完全相同的按钮样式创建「观影记录」入口，
 //      插入到「设置」(#fnos-settings-btn) 正下方。首页/影视等 fnOS 导航不受影响；
 //      用 MutationObserver + keepAlive 兜底，应对 fnOS SPA（React）重渲染 / 抽屉重建丢失。
 //   2) 点击打开一个 AniBox 自有的全屏面板（fixed / 最高 z-index / 毛玻璃遮罩），
@@ -160,7 +160,7 @@ const SAMPLE: ShowItem[] = [
 
 // ───────────────────────── 侧边栏入口注入 ─────────────────────────
 // 目标容器：embyWall.ts 的 injectSettingsUI() 创建的 #fnos-sidebar-actions（圆角卡片，
-//   内含 #fnos-settings-btn / #fnos-switch-system-btn / #fnos-feedback-choice-btn）。
+//   内含 #fnos-settings-btn / #fnos-qq-group-btn / #fnos-switch-system-btn）。
 // 按钮样式与 embyWall 创建的按钮完全一致（同款圆角、毛玻璃、边框、阴影），确保视觉统一。
 
 /** 同款按钮 CSS（抄自 embyWall.ts injectSettingsUI 内的 btn.style.cssText） */

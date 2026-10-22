@@ -145,7 +145,7 @@ export function buildCarouselStyle2(
     // 背景：先渐变兜底，真实 backdrop 加载成功后替换
     const slideBg = document.createElement('div');
     slideBg.className = 'fnos-slide-bg';
-    slideBg.style.backgroundImage = `linear-gradient(160deg, ${accent.border}55, #0b1219)`;
+    slideBg.style.backgroundImage = `linear-gradient(160deg, ${accent.border}55, var(--fnos-hero-bg))`;
     slide.appendChild(slideBg);
 
     // 内容区（标题/简介用 textContent，避免 HTML 注入）
@@ -516,7 +516,7 @@ export function buildCarouselStyle3(
     // 背景：先渐变兜底，真实 backdrop 加载成功后替换
     const bg = document.createElement('div');
     bg.className = 'fntv-s3-bg';
-    bg.style.backgroundImage = `linear-gradient(160deg, ${accent}55, #0b1219)`;
+    bg.style.backgroundImage = `linear-gradient(160deg, ${accent}55, var(--fnos-hero-bg))`;
     card.appendChild(bg);
 
     const genreArr: string[] = (show as any).genres || [];
@@ -776,11 +776,7 @@ export function ensureStyle4Css(): void {
    用户截图（390px 竖屏）病灶：①轮播卡片溢出屏幕右缘——桌面给媒体库 section 预留的宽
    padding/边距在窄屏吃掉近四分之一宽，卡片 86% 宽再叠加 section 内边距即出屏；
    ②标题 2rem/简介 .95rem 在竖屏上占比过大，简介长文把按钮挤出卡外；
-   ③prev/next 卡 ±72% 位移在窄屏露出过多邻卡（视觉杂乱）。
-
-   [lc-1288] 文字层隐藏那一条已迁到 mobileStyle.ts §D2 统一接管：这里用
-   fnos-touch-narrow、那边用 fnos-narrow，两套标记同为 ≤640 但前者多一层触摸判定，
-   同屏时把 mobileStyle 精心写的手机排版整段盖掉。两处并存时以 mobileStyle 为准。 */
+   ③prev/next 卡 ±72% 位移在窄屏露出过多邻卡（视觉杂乱）。 */
 @media (max-width: 640px){
   html.fnos-touch-narrow [data-fntv-carousel-style="4"]{
     border-radius:16px;
@@ -791,8 +787,9 @@ export function ensureStyle4Css(): void {
   /* 邻卡位移收窄：390px 下 ±72% 会把邻卡大半推出屏，改为 ±58% 只露边缘暗示可滑 */
   html.fnos-touch-narrow [data-fntv-carousel-style="4"] .fntv-s4-card.prev{transform:scale(.86) translateX(-52%) rotateY(22deg)}
   html.fnos-touch-narrow [data-fntv-carousel-style="4"] .fntv-s4-card.next{transform:scale(.86) translateX(52%) rotateY(-22deg)}
-  /* [v1.4.8b] 文字层隐藏一条已迁至 mobileStyle.ts §D2（由 fnos-narrow 接管并给出手机排版），
-     此处不再重复声明，避免两套标记类互相覆盖。 */
+  /* [v1.4.8b 用户拍板] 手机上轮播直接不展示文字层（标题/简介/按钮整层隐藏），只留纯海报画面——
+     竖屏卡片空间小，文字层永远放不下；点卡片进详情看完整信息。dots 保留（位置指示+可点切换）。 */
+  html.fnos-touch-narrow [data-fntv-carousel-style="4"] .fntv-s4-info{display:none !important}
   html.fnos-touch-narrow [data-fntv-carousel-style="4"] .fntv-s4-dots{bottom:10px}
 }
 @media (max-width: 640px) and (orientation: portrait){
@@ -805,12 +802,11 @@ export function ensureStyle4Css(): void {
   }
 }
 
-/* ── [v1.4.8→lc-1290] 样式1/2/3 共用：wrapper 44px 桌面边距在 390px 视口吃掉近 1/4 宽。
-   wrapper 原生无类名，以 data-fntv-carousel-wrapper 定位（三处创建点统一打标）。
-   [lc-1290] 收窄数值已迁到 mobileStyle.ts B5c（8px，并与媒体库 section 的 px-[44px]
-   一起收 —— 原来只收 wrapper 一层，390px 下两侧仍各空 44~67px 即用户报的「轮播左右黑框」）。
-   两处并存会出现同特异性打架，故此处只保留 max-width 收口，padding 值由 mobileStyle 独家声明。 */
+/* ── [v1.4.8] 样式1/2/3 共用：wrapper 44px 桌面边距在 390px 视口吃掉近 1/4 宽 → 收窄 16px。
+   wrapper 原生无类名，以 data-fntv-carousel-wrapper 定位（三处创建点统一打标）。 */
 @media (max-width: 640px){
+  /* [fix-black] 旧的 padding-left/right:16px 已由 mobileStyle.ts 的 8px 规则接管，
+     此处删除避免同特异性规则打架（8px 更适合窄屏呼吸位）。 */
   /* 容器统一不出屏：媒体库 section 父级若有横向溢出（原生横滑带），强制我们这层不参与 */
   html.fnos-touch-narrow [data-fntv-carousel-wrapper] > div{max-width:100% !important}
 }
@@ -866,7 +862,7 @@ export function buildCarouselStyle4(
     // 背景：先渐变兜底，真实 backdrop 加载成功后替换
     const bg = document.createElement('div');
     bg.className = 'fntv-s4-bg';
-    bg.style.backgroundImage = `linear-gradient(160deg, ${accent}55, #0b1219)`;
+    bg.style.backgroundImage = `linear-gradient(160deg, ${accent}55, var(--fnos-hero-bg))`;
     card.appendChild(bg);
 
     const genreArr: string[] = (show as any).genres || [];

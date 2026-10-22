@@ -207,7 +207,10 @@ export function installDiag(): void {
       const r = e.reason;
       push('[unhandledrejection] ' + ((r && (r.stack || r.message)) || String(r)));
     });
-    window.addEventListener('beforeunload', flush);
+    // [lc-1400] beforeunload 会禁用 bfcache（后退不能秒回）。改用 pagehide + 页面隐藏时
+    // flush：既恢复 bfcache，又不丢日志持久化（bfcache 进入时同样触发 pagehide/visibilitychange）。
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });
   } catch (_) {}
 
   push('[diag] installed @' + location.pathname);

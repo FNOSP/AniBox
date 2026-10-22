@@ -12,7 +12,6 @@ import { t } from '../../../core/i18n';
 //    浏览器拿不到也无需拿到完整匿名 ID（后端只回前 8 位）。
 //  - 触发点从「应用启动」改成「反代注入成功」：装了却没人用的 NAS 不算活跃。
 
-const SUB = 'var(--fnos-ui-sub,#888)';
 const MUTED = 'var(--fnos-ui-muted,#999)';
 
 /** 小开关（与「外观」页同款：隐藏 input + 轨道 + 滑块） */
@@ -58,18 +57,6 @@ function mkNote(text: string): HTMLElement {
   return d;
 }
 
-function mkBtn(text: string, primary: boolean): HTMLButtonElement {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.textContent = t(text);
-  b.style.cssText = 'padding:7px 12px;border-radius:9px;cursor:pointer;font-size:11.5px;font-weight:600;border:none;'
-    + (primary ? 'background:var(--fnos-ui-btn-bg2)!important;' : 'background:var(--fnos-ui-btn-bg)!important;')
-    + 'color:var(--fnos-ui-btn-text);transition:background .15s;';
-  b.onmouseenter = () => { b.style.background = (primary ? 'var(--fnos-ui-btn-hover2)' : 'var(--fnos-ui-btn-hover)') + '!important'; };
-  b.onmouseleave = () => { b.style.background = (primary ? 'var(--fnos-ui-btn-bg2)' : 'var(--fnos-ui-btn-bg)') + '!important'; };
-  return b;
-}
-
 /**
  * [v1.12.0] 匿名使用统计卡（「关于」页）。
  * 只显示/控制：开关、上次上报结果、重置匿名 ID、手动上报一次。
@@ -85,13 +72,58 @@ export function buildStatsCard(): HTMLElement {
     ipcRenderer.invoke('stats:set-enabled', v).catch(() => {});
   });
 
+  // ── 可折叠头部：默认收起，点击标题栏展开/收起（保留原「📊 匿名使用统计」标题）──
+  const header = document.createElement('button');
+  header.type = 'button';
+  header.setAttribute('aria-expanded', 'false');
+  header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;'
+    + 'width:100%;padding:0;margin:0;background:none;border:0;cursor:pointer;color:inherit;font:inherit;text-align:left;';
+
   const title = document.createElement('div');
   title.style.cssText = 'font-size:12.5px;font-weight:700;color:var(--fnos-ui-pill-text);';
   title.textContent = t('📊 匿名使用统计');
-  wrap.appendChild(title);
-  wrap.appendChild(mkRow('参与匿名统计', toggle.el));
-  wrap.appendChild(mkNote('开启后收集必须的应用版本 + 系统类型，用于日志反馈收集需要的系统信息，方便排查故障 Bug。'
+  header.appendChild(title);
+
+  const chevron = document.createElement('span');
+  chevron.setAttribute('aria-hidden', 'true');
+  chevron.textContent = '▸';
+  chevron.style.cssText = 'flex:none;font-size:12px;line-height:1;color:' + MUTED + ';'
+    + 'transition:transform .2s ease;transform:rotate(0deg);';
+  header.appendChild(chevron);
+
+  const body = document.createElement('div');
+  body.id = 'fnos-stats-body';
+  header.setAttribute('aria-controls', body.id);
+  body.style.cssText = 'overflow:hidden;max-height:0;opacity:0;'
+    + 'transition:max-height .25s ease,opacity .2s ease;';
+  body.appendChild(mkRow('参与匿名统计', toggle.el));
+  body.appendChild(mkNote('开启后收集必须的应用版本 + 系统类型，用于日志反馈收集需要的系统信息，方便排查故障 Bug。'
     + '不涉及账号、IP、媒体库及文件路径等隐私数据，服务端亦不做 IP 存储，可随时在这里关闭。'));
+
+  let open = false;
+  const applyOpen = (): void => {
+    header.setAttribute('aria-expanded', open ? 'true' : 'false');
+    chevron.style.transform = open ? 'rotate(90deg)' : 'rotate(0deg)';
+    if (open) {
+      body.style.maxHeight = body.scrollHeight + 'px';
+      body.style.opacity = '1';
+    } else {
+      // 从 max-height:none 收起前先固定为像素值，否则无法过渡
+      if (body.style.maxHeight === 'none') {
+        body.style.maxHeight = body.scrollHeight + 'px';
+        void body.offsetHeight;
+      }
+      body.style.maxHeight = '0px';
+      body.style.opacity = '0';
+    }
+  };
+  header.addEventListener('click', () => { open = !open; applyOpen(); });
+  body.addEventListener('transitionend', (e: TransitionEvent) => {
+    if (e.propertyName === 'max-height' && open) body.style.maxHeight = 'none';
+  });
+
+  wrap.appendChild(header);
+  wrap.appendChild(body);
 
   // [lc-1250] 精简：移除「立即上报一次」「重置匿名 ID」按钮（匿名 ID 已是机器级固定, 重置无意义）
   // [lc-1250-web] 状态行整行不显示（读取中/上报结果/计划提示等一律不展示），仅保留开关同步
@@ -105,60 +137,5 @@ export function buildStatsCard(): HTMLElement {
 }
 
 /**
- * [lc-1197→web] Bug 反馈 + 日志上传卡（「诊断与日志」分类）。
- * 网页端适配：日志全部在 NAS 后端（fntvplus.log + client.log，提交时自动打包脱敏），
- * 无需桌面版的「选择日志文件上传 / 打开日志目录」——填描述点提交即完成一键反馈。
+ * [v1.13.0] 「Bug 反馈 + 日志上传」卡已移除：反馈入口统一为侧栏「加入Q群」。
  */
-export function buildFeedbackBody(): HTMLElement {
-  const wrap = document.createElement('div');
-  wrap.style.cssText = 'display:flex;flex-direction:column;';
-
-  const tip = mkNote('遇到问题？在这里直接提交。提交会自动附带最近的前后端日志（账号、令牌、密钥、手机号、邮箱一律打码；保留 NAS 地址与域名便于排查网络问题）与设备环境信息（应用版本 / fnOS 版本 / 时间 / 当前页面）。');
-  wrap.appendChild(tip);
-
-  const area = document.createElement('textarea');
-  area.placeholder = t('描述你遇到的问题 / 复现步骤（必填）…');
-  area.style.cssText = 'width:100%;box-sizing:border-box;min-height:88px;margin-top:8px;padding:10px 12px;'
-    + 'border-radius:10px;font-size:12.5px;line-height:1.6;font-family:inherit;resize:vertical;'
-    + 'background:var(--fnos-ui-input-bg)!important;color:var(--fnos-ui-text);'
-    + 'border:1px solid var(--fnos-ui-border3);outline:none;';
-  wrap.appendChild(area);
-
-  const contact = document.createElement('input');
-  contact.type = 'text';
-  contact.placeholder = t('联系方式（选填，方便回复你：QQ / 邮箱）');
-  contact.style.cssText = 'width:100%;box-sizing:border-box;margin-top:8px;padding:9px 12px;border-radius:10px;'
-    + 'font-size:12.5px;font-family:inherit;background:var(--fnos-ui-input-bg)!important;'
-    + 'color:var(--fnos-ui-text);border:1px solid var(--fnos-ui-border3);outline:none;';
-  wrap.appendChild(contact);
-
-  const status = document.createElement('div');
-  status.style.cssText = 'font-size:11px;color:' + SUB + ';margin-top:8px;min-height:14px;';
-  wrap.appendChild(status);
-
-  const btnRow = document.createElement('div');
-  btnRow.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;';
-  const submitBtn = mkBtn('提交反馈', true);
-  btnRow.appendChild(submitBtn);
-  wrap.appendChild(btnRow);
-
-  submitBtn.addEventListener('click', () => {
-    const msg = area.value.trim();
-    if (!msg) { status.textContent = t('请先填写问题描述。'); area.focus(); return; }
-    submitBtn.disabled = true;
-    status.textContent = t('提交中…');
-    ipcRenderer.invoke('feedback:submit', { message: msg, contact: contact.value.trim(), page: location.href })
-      .then((r: any) => {
-        if (r && r.ok) {
-          status.textContent = t('提交成功，感谢反馈！编号：') + (r.id ? String(r.id).slice(0, 8) : '—');
-          area.value = '';
-        } else {
-          status.textContent = t('提交失败：') + ((r && r.error) || t('未知错误'));
-        }
-      })
-      .catch((e: any) => { status.textContent = t('提交失败：') + String((e && e.message) || e); })
-      .finally(() => { submitBtn.disabled = false; });
-  });
-
-  return wrap;
-}

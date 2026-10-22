@@ -532,14 +532,7 @@ html.fnos-compact #fnos-dialog-overlay [data-fnos-dialog-card="1"]{
   max-width:calc(100vw - 32px) !important;
   padding:18px 16px 14px !important;
 }
-/* F2. 反馈/QQ群弹窗 300~320px 定宽 + 22~24px padding → 360px 下溢出，统一夹到视口内。 */
-html.fnos-compact #fnos-feedback-modal,
-html.fnos-compact #fnos-feedback-choice-modal,
-html.fnos-compact #fnos-qq-group-modal{
-  width:calc(100vw - 32px) !important;
-  max-width:340px !important;
-  padding:18px 16px !important;
-}
+/* F2. [v1.13.0] 原「反馈/QQ群」弹窗已移除（入口改为直接打开加群链接），此处不再需要收口。 */
 /* F3. 补丁弹窗 340px 定宽（无 max-width），同上收口。 */
 html.fnos-compact #fntv-patch-apply-popup{
   width:calc(100vw - 32px) !important;

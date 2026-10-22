@@ -24,6 +24,7 @@ import { log } from '../log';
 import { resolveSeasonHref } from './href';
 import { resolveShowLogo } from './logo';
 import { applyCarouselBackdrop, fetchPortraitFallback } from './images';
+import { carouselPlaceholderGradient, applyBackdropImage, hasBackdropImage } from './placeholder';
 // [lc-1319] 布局模式（手动切换）真源：本模块选路跟随 mobileStyle.getUiMode
 import { getUiMode } from '../../mobileStyle';
 
@@ -72,7 +73,7 @@ export function ensureStyle5Css(): void {
 [data-fntv-carousel-style="5"] .fntv-s5-slide{
   position:relative;flex:0 0 100%;width:100%;height:100%;
   scroll-snap-align:center;scroll-snap-stop:always;  /* 一屏一停，禁止连滑掠过 */
-  overflow:hidden;border-radius:18px;background:#10141c;
+  overflow:hidden;border-radius:18px;background:var(--fnos-hero-bg,#10141c);
 }
 /* 遮罩：底部单层渐变（信息可读），顶部不压——海报上部是视觉主体，保留原画亮度 */
 [data-fntv-carousel-style="5"] .fntv-s5-shade{
@@ -170,7 +171,8 @@ export function buildCarouselStyle5(
 
   ensureStyle5Css();
   wrapper.dataset.fntvCarouselWrapper = '1';
-  wrapper.style.cssText = 'display:block;padding:0;margin:0';
+  // [fix-carousel-regress] 保留 position:relative（骨架绝对定位的包含块）。
+  wrapper.style.cssText = 'display:block;padding:0;margin:0;position:relative';
   container.style.width = '100%';
   // 桌面遗留的内联几何全清掉（render.ts 侧建的 container 带 aspect-ratio/maxHeight），
   // 高度交给样式表里的 min(56vw,340px)，避免内联样式压过 CSS。
@@ -203,12 +205,12 @@ export function buildCarouselStyle5(
     slide.className = 'fntv-s5-slide';
     slide.dataset.index = String(i);
 
-    // 海报图：先渐变兜底，backdrop 拉到后铺上（复用横版校验 + base64 自包含链路）。
-    // ⚠ 必须用 div —— applyCarouselBackdrop 写的是 style.backgroundImage，
+    // 海报图：先主题占位（骨架微光）兜底，backdrop 拉到后淡入（复用横版校验 + base64 自包含链路）。
+    // ⚠ 必须用 div —— applyCarouselBackdrop 写的是背景图层，
     //   目标若是 <img> 则完全不可见（images.ts 的既有契约，s2/s3/s4 均传 div）。
     const bg = document.createElement('div');
     bg.className = 'fntv-s5-img';
-    bg.style.cssText = 'position:absolute;inset:0;background-size:cover;background-position:center 25%;background-color:#10141c';
+    bg.style.cssText = 'position:absolute;inset:0;background-size:cover;background-position:center 25%;background-image:' + carouselPlaceholderGradient(undefined, getEffectiveDark());
     slide.appendChild(bg);
     applyCarouselBackdrop(show, bg, base);
     // [lc-1326] 竖版海报兜底：真实手机慢网下，预载（imgGate 并发 5 + 8s 超时）可能让
@@ -218,14 +220,12 @@ export function buildCarouselStyle5(
     if (!(show as any)._backdropBlob) {
       window.setTimeout(() => {
         if (!document.body.contains(slide)) return;
-        const cur = getComputedStyle(bg).backgroundImage;
-        if (cur && cur !== 'none') return;   // 横版已到手
+        if (hasBackdropImage(bg)) return;   // 横版已到手
         fetchPortraitFallback(show, base).then((dataUrl) => {
-          if (dataUrl && document.body.contains(slide) && getComputedStyle(bg).backgroundImage === 'none') {
-            bg.style.backgroundImage = `url("${dataUrl}")`;
-            bg.style.backgroundPosition = 'center 20%';   // 竖版海报上部是人物/标题主体
+          if (dataUrl && document.body.contains(slide) && !hasBackdropImage(bg)) {
+            applyBackdropImage(bg, dataUrl, { position: 'center 20%' });   // 竖版海报上部是人物/标题主体
           }
-        }).catch(() => { /* 拉不到就保持黑底渐变 */ });
+        }).catch(() => { /* 拉不到就保留主题占位色 */ });
       }, 1200);
     }
 

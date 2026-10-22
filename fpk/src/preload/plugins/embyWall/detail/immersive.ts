@@ -47,8 +47,11 @@ function _disconnectObs(): void {
 
 /** 套用美化（三闸已过、hero 已就绪）：一次成型，之后全靠 CSS，无任何 per-tick 工作。 */
 function _apply(view: HTMLElement, hero: HTMLElement): void {
-  injectBeautifyStyle();                 // 幂等，全程只一份 <style>
+  // [v1.3.0] 先挂 body class 再注入样式：injectBeautifyStyle 内部会量取 body 的
+  // 真实上下内边距写 --fntv-vp-*，而 B2 段在该 class 下强制 padding-bottom:0 ——
+  // 顺序反过来会量到尚未被清零的底内边距，满屏高度少算一截（底部露白条）。
   document.body.classList.add('fnos-beautify');
+  injectBeautifyStyle();                 // 幂等，全程只一份 <style>
   injectBackdrop(hero);                  // 复用 hero 已加载剧照，无新网络请求
   applyHeroTint(hero);                   // 从同一张剧照取主色 → 顶栏玻璃条 + hero 遮罩的同色系底色
   hideInstantLayer();                    // 内容就绪 → 淡出瞬间加载层

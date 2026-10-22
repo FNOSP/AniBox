@@ -176,7 +176,8 @@ func injectGatewayShim(html string) string {
 //   - popstate（capture，且本脚本最先注册 → 先于路由监听执行）：网关地址先剥前缀再让路由读。
 //   - #root 渲染完成后把地址翻回网关前缀；宽限期(1.2s)后无论渲染与否都翻（lc-1333：
 //     空渲染/慢渲染时地址栏停在原生 /v/*，一刷新即跳出增强）。
-//   - 硬导航（<a href> 点击 / location.assign|replace）同样加回前缀（lc-1333）。
+//   - 硬导航兜底（<a href> 点击 / location.assign|replace）加回前缀（lc-1333）；
+//     但 <a href="/v/..."> 点击优先放行给 SPA 路由，仅在 SPA 未接管时整页兜底（lc-1400）。
 //
 // 另外挂载启动期 API 捕获（window.__fntvApiCap）：本脚本位于 <head> 最前，必然先于
 // 影视 SPA 的所有脚本执行——SPA 自己发出的 item/list（带合法 Authx）请求在此被记录
@@ -206,25 +207,50 @@ function toGw(u){
 history.pushState=function(s,t,u){return ps.call(history,s,t,toGw(u));};
 history.replaceState=function(s,t,u){return rs.call(history,s,t,toGw(u));};
 // [lc-1333] 硬导航兜底：SPA 里除了 pushState，还有整页跳转 —— <a href="/v/..."> 与
-// location.assign/replace。前者拦点击（capture，先于站点的 SPA 路由处理），后者包
-// Location.prototype（assign/replace 可改；location.href= 是 [LegacyUnforgeable]，
-// 拦不到，只能靠下面的回填 + 常驻自愈把地址栏尽快拉回网关形态）。
+// location.assign/replace。后者包 Location.prototype（assign/replace 可改；location.href=
+// 是 [LegacyUnforgeable]，拦不到，只能靠下面的回填 + 常驻自愈把地址栏尽快拉回网关形态）。
 try{
   var la=Location.prototype.assign,lr=Location.prototype.replace;
   Location.prototype.assign=function(u){return la.call(this,toGw(u));};
   Location.prototype.replace=function(u){return lr.call(this,toGw(u));};
 }catch(e){}
+// [lc-1400] 详情导航走 SPA（治本）：旧实现在 capture 阶段无条件 preventDefault()+整页
+// location.assign，导致每次点海报都整页重载、返回即重载首页（白屏 / 骨架卡很久）。
+// 现改为两段式：
+//   ① capture：仅登记候选链接，不拦截 —— 让 fnOS React Router 的 <Link> onClick 接管
+//     （其内部 preventDefault + pushState，pushState 已被上面包装成网关前缀）。
+//   ② bubble（document 冒泡，晚于 React 根监听器）：用 defaultPrevented / URL 是否已同步
+//     变化判断 SPA 是否接管；接管则放行；未接管（普通 <a href> / 自定义处理器没拦默认行为）
+//     才 preventDefault + 整页兜底到网关路径，行为与旧版一致，不破坏原生路由。
+// 选择理由：defaultPrevented + 同步 URL 变化是"SPA 是否接管"最可靠的同步信号；若改用
+//   "短延时后 URL 未变再 assign"，届时默认导航已提交、无法再 preventDefault 取消，反而双跳。
 try{
+  var _clickHref=null;
   document.addEventListener('click',function(e){
+    _clickHref=null;
     try{
       var t=e.target,a=t&&t.closest?t.closest('a[href]'):null;
       if(!a||(a.target&&a.target!=='_self'))return;
       var url=new URL(a.getAttribute('href'),location.href);
       if(url.origin!==location.origin||!isV(url.pathname)||isGw(url.pathname))return;
+      _clickHref=location.href; // 登记候选；不 preventDefault，交给 SPA
+    }catch(err){}
+  },true);
+  document.addEventListener('click',function(e){
+    if(_clickHref===null)return;
+    var start=_clickHref; _clickHref=null;
+    try{
+      // SPA 已接管：React Router 会 preventDefault；或自定义处理器已同步改 URL(pushState)。
+      if(e.defaultPrevented)return;
+      if(location.href!==start){e.preventDefault();return;} // 已 pushState，取消原生默认跳转
+      var t=e.target,a=t&&t.closest?t.closest('a[href]'):null;
+      if(!a)return;
+      var url=new URL(a.getAttribute('href'),location.href);
+      if(url.origin!==location.origin||!isV(url.pathname)||isGw(url.pathname))return;
       e.preventDefault();
       la.call(location,P+url.pathname+url.search+url.hash);
     }catch(err){}
-  },true);
+  },false);
 }catch(e){}
 window.addEventListener('popstate',function(e){
   try{

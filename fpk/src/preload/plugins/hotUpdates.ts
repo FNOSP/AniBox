@@ -9,8 +9,10 @@
 import { ipcRenderer } from 'electron';
 import { registerHook } from '../core/hooks';
 import { HookType } from '../core/hooks';
-import { isFntvTvPage, pagePath, tvHref } from '../core/pageMode';
+import { isFntvTvPage, pagePath } from '../core/pageMode';
 import logger from '../core/logger';
+// [mirror-error] 统一镜像故障文案：错误里带 URL/镜像域名时不透出到浮层。
+import { friendlyError } from '../core/mirrorError';
 // [lc-1087] 库索引主源: item/list API 客户端(叶子模块)。不能 import ./embyWall/carousel/api ——
 //   api.ts 已 import 本文件的 ensureLibraryIndex 当轮播兜底1, 反向 import 会成环。
 import { fetchLibraryItems } from './embyWall/carousel/itemListApi';
@@ -276,14 +278,23 @@ function injectStyle(): void {
 .fntv-hot-inlib { background: rgba(46,204,113,.22); color: #6fe39a;
   padding: 1.5px 7.5px; border-radius: 999px; font-weight: 600; }
 
-/* 不感兴趣按钮：默认隐藏，hover 卡片时浮现于右上角 */
+/* 不感兴趣按钮：默认隐藏（不占视觉焦点、不拦截点击），仅在鼠标悬停卡片或键盘聚焦卡片内时浮现于右上角 */
 .fntv-hot-block { position: absolute; top: 6px; right: 6px;
   width: 22px; height: 22px; border: none; border-radius: 50%;
   background: rgba(0,0,0,.45); color: #fff; font-size: 13px; line-height: 1;
   display: flex; align-items: center; justify-content: center; cursor: pointer;
-  opacity: 0; transform: scale(.7); transition: opacity .15s, transform .15s, background .15s; }
-.fntv-hot-card:hover .fntv-hot-block { opacity: 1; transform: scale(1); }
+  opacity: 0; visibility: hidden; pointer-events: none; transform: scale(.7);
+  transition: opacity .15s ease, transform .15s ease, background .15s ease, visibility .15s ease; }
+/* 鼠标悬停卡片 或 键盘 Tab 聚焦到卡片内（按钮自身可聚焦 → 触发 :focus-within）时显示 */
+.fntv-hot-card:hover .fntv-hot-block,
+.fntv-hot-card:focus-within .fntv-hot-block {
+  opacity: 1; visibility: visible; pointer-events: auto; transform: scale(1); }
 .fntv-hot-block:hover { background: rgba(255,80,80,.85); }
+.fntv-hot-block:focus-visible { outline: 2px solid rgba(255,255,255,.8); outline-offset: 1px; }
+/* 触屏设备无 hover 概念：保持按钮常驻可见，避免无法屏蔽 */
+@media (hover: none) {
+  .fntv-hot-block { opacity: 1; visibility: visible; pointer-events: auto; transform: scale(1); }
+}
 
 /* 屏蔽恢复条 */
 #fntv-hot-reset { display: none; padding: 8px 14px; text-align: center;
@@ -394,7 +405,7 @@ function renderBgCard(it: any): string {
   const wd = weekdayCnOf(it) ? `<span class="fntv-hot-wd">${weekdayCnOf(it)}</span>` : '';
   const rt = typeof it.rating === 'number' && it.rating ? `<span class="fntv-hot-rt">★ ${it.rating.toFixed(1)}</span>` : '';
   return `
-  <div class="fntv-hot-card" data-id="bg|${it.id}" data-url="${it.url}" data-title-cn="${escapeHtml(titleCn)}" data-title="${escapeHtml(titleOrig)}">
+  <div class="fntv-hot-card" data-id="bg|${it.id}" data-url="${escapeHtml(it.url || '')}" data-title-cn="${escapeHtml(titleCn)}" data-title="${escapeHtml(titleOrig)}">
     ${img ? `<img class="fntv-hot-poster" data-poster="${img}" referrerpolicy="no-referrer" loading="lazy" alt="">`
            : `<div class="fntv-hot-poster"></div>`}
     <div class="fntv-hot-meta">
@@ -417,7 +428,7 @@ function renderTmdbCard(it: any): string {
   const rt = typeof it.rating === 'number' && it.rating ? `<span class="fntv-hot-rt">★ ${it.rating.toFixed(1)}</span>` : '';
   // 海报走主进程图片代理（tmdb:image），规避渲染进程 DNS 污染；data-poster 由 hydratePosters 填充
   return `
-  <div class="fntv-hot-card" data-id="tm|${it.id}" data-url="${it.url}" data-title-cn="${escapeHtml(titleCn)}" data-title="${escapeHtml(titleOrig)}">
+  <div class="fntv-hot-card" data-id="tm|${it.id}" data-url="${escapeHtml(it.url || '')}" data-title-cn="${escapeHtml(titleCn)}" data-title="${escapeHtml(titleOrig)}">
     ${img ? `<img class="fntv-hot-poster" data-poster="${img}" referrerpolicy="no-referrer" loading="lazy" alt="">`
            : `<div class="fntv-hot-poster"></div>`}
     <div class="fntv-hot-meta">
@@ -542,8 +553,9 @@ function applyHotTheme(): void {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // [lc-457] 每日放送 → 飞牛影视库联动
-//   点击卡片：库内已有该剧 → 直接站内跳详情页(/v/tv|movie/{hash})；
-//            库内没有   → 退回打开 Bangumi / TMDB 外部链接。
+//   库索引仅用于给卡片标注「已入库」角标。
+//   [fix-daily-link] 点击卡片一律直接打开条目自身链接（Bangumi 条目页 / TMDB 页），
+//   不再按番剧名做库匹配、也不再跳站内详情/剧集页（旧逻辑会乱跳到错误剧集）。
 //   实现：后台隐藏 iframe 抓 /v/list/all 全量条目(标题+详情页 hash)，去重缓存；
 //        点击时用番剧名(中/原)与库索引做匹配。库索引只在首次懒加载一次。
 // ═══════════════════════════════════════════════════════════════════════════
@@ -829,25 +841,20 @@ function animateCardsIn(root: ParentNode): void {
   } catch { /* ignore */ }
 }
 
-/** 站内跳飞牛影视详情页：复用 embyWall「开始观看」的 SPA 跳法(pushState+popstate, 兜底整页导航) */
-function navigateToDetail(href: string): void {
-  try {
-    history.pushState({}, '', href);
-    window.dispatchEvent(new PopStateEvent('popstate'));
-    // [lc-941] 仅当 fnOS 确实未接管导航时才兜底整页跳转(同 embyWall spaNav 修复)。
-    // 旧逻辑用「返回按钮是否存在」单一判定: 详情页加载慢会误判 → location.href 整页刷新重置模块状态。
-    // 现改双重判定「首页轮播仍可见 且 详情返回键未出现」才视为未接管。
-    setTimeout(() => {
-      const backBtn = !!document.querySelector('button[aria-label="返回"]');
-      // [lc-944] 兜底判据改为「季页内容是否真渲染」, 修复 lc-941 引入的白屏(同 embyWall spaNav):
-      //   fnOS 收合成 popstate 后可能进入半死状态(首页隐藏→轮播尺寸归零, 但季页内容未渲染、返回键也未出现),
-      //   旧 carouselVisible 判定此时为 false → 兜底不触发 → 整页卡白屏。现以「返回键 或 季页内容已渲染」为接管判据。
-      const seasonRendered = !!document.querySelector('[data-id="details"]')
-        || !!document.querySelector('.fnos-season-2col')
-        || !!document.querySelector('a[href*="/v/person/"]');
-      if (!backBtn && !seasonRendered) location.href = tvHref(href);
-    }, 600);
-  } catch (e) { try { location.href = tvHref(href); } catch { /* ignore */ } }
+/** [fix-daily-link] 解析每日放送卡片要打开的外链。
+ *  历史 bug（点击乱跳错误剧集）：旧实现在点击时用番剧名与本地影视库做模糊匹配
+ *  （normalizeTitle 去掉季数/年份后双向 includes），多季或同名作品极易命中错误条目，
+ *  随后走 navigateToDetail 的 SPA 详情跳转 → 落到错误剧集/播放页。
+ *  现在只按条目自身链接打开，不再做任何库匹配或剧集跳转。
+ *  优先级：卡片 data-url（后端返回的 url，如 https://bgm.tv/subject/<id>）
+ *         → Bangumi 条目 id 拼接 → 空字符串（调用方记录日志并忽略点击）。 */
+function resolveCardUrl(card: HTMLElement): string {
+  const raw = (card.getAttribute('data-url') || '').trim();
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const key = card.getAttribute('data-id') || '';
+  const m = key.match(/^bg\|(\d+)$/);
+  if (m) return `https://bgm.tv/subject/${m[1]}`;
+  return '';
 }
 
 /** 把时间戳格式化为底部小字：当天显示 HH:MM，跨天显示 M/D HH:MM（缓存可能是昨天的快照） */
@@ -1053,22 +1060,15 @@ function buildPanel(): void {
     }
     const card = target.closest('.fntv-hot-card') as HTMLElement | null;
     if (!card) return;
-    const url = card.getAttribute('data-url');
-    const titleCn = card.getAttribute('data-title-cn') || '';
-    const titleOrig = card.getAttribute('data-title') || '';
-    // [lc-457-fix] 异步等待库索引就绪再匹配: 即便索引还在滚动构建中也不误判为"库内无",
-    // 避免错跳外链。正常情况(OnReady 已预取)下 _libIndex 早已存在, 此处同步 resolve 无延迟。
-    ensureLibraryIndex().then(() => {
-      const hit = matchLibrary(titleCn, titleOrig);
-      if (hit) {
-        logger.info('[hotUpdates] 库内命中，跳详情页', hit);
-        navigateToDetail(hit);
-      } else if (url) {
-        ipcRenderer.invoke('app:open-external', url).catch(() => {});
-      }
-    }).catch(() => {
-      if (url) ipcRenderer.invoke('app:open-external', url).catch(() => {});
-    });
+    // [fix-daily-link] 直接打开条目对应链接（Bangumi 条目页 / TMDB 页），
+    // 不再做飞牛库模糊匹配与详情/剧集跳转（旧逻辑会乱跳到错误剧集）。
+    const url = resolveCardUrl(card);
+    if (!url) {
+      logger.warn('[hotUpdates] 条目缺少可用链接，忽略点击', card.getAttribute('data-id') || '');
+      return;
+    }
+    logger.info('[hotUpdates] 打开条目链接', url);
+    ipcRenderer.invoke('app:open-external', url).catch(() => {});
   });
 
   // 恢复屏蔽项
@@ -1138,7 +1138,7 @@ function buildPanel(): void {
     try {
       const res = await ipcRenderer.invoke('bangumi:calendar', !!force);
       if (!res || !res.ok) {
-        body.innerHTML = `<div class="fntv-hot-err">获取失败：${escapeHtml((res && res.error) || '未知错误')}</div>`;
+        body.innerHTML = `<div class="fntv-hot-err">获取失败：${escapeHtml(friendlyError(res && res.error, '未知错误'))}</div>`;
         return;
       }
       hotCacheSet('bangumi', res);
@@ -1147,7 +1147,7 @@ function buildPanel(): void {
       updateFoot(res);
       render();
     } catch (e: any) {
-      body.innerHTML = `<div class="fntv-hot-err">获取失败：${escapeHtml(String((e && e.message) || e))}</div>`;
+      body.innerHTML = `<div class="fntv-hot-err">获取失败：${escapeHtml(friendlyError(e))}</div>`;
     }
   }
 
@@ -1170,7 +1170,7 @@ function buildPanel(): void {
       const res = await ipcRenderer.invoke(channel, !!force);
       if (!res || !res.ok) {
         const base = source === 'douban' ? '豆瓣数据获取失败' : 'TMDB 数据获取失败';
-        body.innerHTML = `<div class="fntv-hot-err">获取失败：${escapeHtml((res && res.error) || base)}</div>`;
+        body.innerHTML = `<div class="fntv-hot-err">获取失败：${escapeHtml(friendlyError(res && res.error, base))}</div>`;
         return;
       }
       hotCacheSet(source, res);
@@ -1180,16 +1180,16 @@ function buildPanel(): void {
       if (!allTm.length) {
         const tip = res.warning || (source === 'douban'
           ? '豆瓣未返回数据（可能网络波动，请稍后重试）。'
-          : 'TMDB 未返回数据（可能 Key 无效，或本机网络无法连接 api.themoviedb.org；请在设置开启「免梯子直连」或设置 HTTPS_PROXY 后重试，详见日志 [TMDB诊断]）');
-        body.innerHTML = `<div class="fntv-hot-err">${escapeHtml(tip)}</div>`;
+          : 'TMDB 未返回数据（可能本机网络无法连接 api.themoviedb.org；可配置「自定义代理」或设置 HTTPS_PROXY 后重试，详见日志 [TMDB诊断]）');
+        body.innerHTML = `<div class="fntv-hot-err">${escapeHtml(friendlyError(tip))}</div>`;
         return;
       }
       render();
       if (res.warning) {
-        body.insertAdjacentHTML('afterbegin', `<div class="fntv-hot-warn">⚠ ${escapeHtml(res.warning)}</div>`);
+        body.insertAdjacentHTML('afterbegin', `<div class="fntv-hot-warn">⚠ ${escapeHtml(friendlyError(res.warning))}</div>`);
       }
     } catch (e: any) {
-      body.innerHTML = `<div class="fntv-hot-err">获取失败：${escapeHtml(String((e && e.message) || e))}</div>`;
+      body.innerHTML = `<div class="fntv-hot-err">获取失败：${escapeHtml(friendlyError(e))}</div>`;
     }
   }
 }
@@ -1207,10 +1207,11 @@ function initHotUpdates(): void {
   // 不破坏 embyWall 导航逻辑；另加 popstate/hashchange 覆盖浏览器前进后退与 hash 路由）
   try {
     const _ps = history.pushState, _rs = history.replaceState;
-    (history as any).pushState = function (...a: any[]) { _ps.apply(this, a as any); syncHomeVisibility(); };
-    (history as any).replaceState = function (...a: any[]) { _rs.apply(this, a as any); syncHomeVisibility(); };
-    window.addEventListener('popstate', syncHomeVisibility);
-    window.addEventListener('hashchange', syncHomeVisibility);
+    // [nav-guard] 副作用异常隔离: 原生导航先执行, syncHomeVisibility 抛错不影响路由
+    (history as any).pushState = function (...a: any[]) { _ps.apply(this, a as any); try { syncHomeVisibility(); } catch (e) { logger.warn('[hotUpdates] nav side-effect failed', e); } };
+    (history as any).replaceState = function (...a: any[]) { _rs.apply(this, a as any); try { syncHomeVisibility(); } catch (e) { logger.warn('[hotUpdates] nav side-effect failed', e); } };
+    window.addEventListener('popstate', () => { try { syncHomeVisibility(); } catch (e) { logger.warn('[hotUpdates] popstate side-effect failed', e); } });
+    window.addEventListener('hashchange', () => { try { syncHomeVisibility(); } catch (e) { logger.warn('[hotUpdates] hashchange side-effect failed', e); } });
   } catch (e) { logger.error('[hotUpdates] nav hook err', String(e).substring(0, 60)); }
 
   // 兜底：某些导航可能绕过 history API（如整页加载/特殊路由），定时核对一次首页状态

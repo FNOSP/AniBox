@@ -151,10 +151,7 @@ export function applyCarouselBackdrop(show: any, target: HTMLElement, base: stri
     target.style.backgroundImage = `url("${dataUrl}")`;
     return;
   }
-  // [lc-1280] 无 blob 时不早退：_backdropIsPortrait 是历史遗留标记（当前代码从不赋值），
-  //   若曾为 true 会永久阻断补图 → 轮播「有文字无海报」。改为仅在有 backdrop 可拉时跳过，
-  //   且竖版判定交给 startFetchFallback 内部的横版校验（拉回后 w<h 即丢弃），
-  //   这样即便标记为竖版也能靠 item API 的横版地址补上。
+  if (show && (show as any)._backdropIsPortrait) return; // 已知竖版 → 不拉(保留渐变兜底)
   startFetchFallback(show, target, base, title);
 }
 
@@ -242,28 +239,6 @@ export async function fetchItemDetail(base: string, id: string): Promise<any | n
   }
 }
 
-/** [lc-1274] 从 fnOS item 数据提取 TMDB id（显式字段 → trimId 剥前缀），供轮播 logo 等
- *  TMDB 查询走 id 精确匹配（标题搜索对长中文描述性标题常落空）。与 api.ts 的 extractTmdbId
- *  同逻辑；本文件是叶子模块（api.ts import 本文件），不能反向 import api.ts，故此处独立实现。
- *  返回 0 = 无可用 id（调用方回退标题搜索）。 */
-export function tmdbIdFromItemData(d: any): number {
-  if (!d || typeof d !== 'object') return 0;
-  const direct = [
-    d.tmdbId, d.tmdb_id,
-    d.ProviderIds && (d.ProviderIds.Tmdb || d.ProviderIds.tmdb),
-    d.externalIds && (d.externalIds.tmdb_id || d.externalIds.tmdb),
-  ];
-  for (const c of direct) {
-    if (c != null && /^\d+$/.test(String(c).trim())) return Number(String(c).trim());
-  }
-  const trimId = d.trimId || d.trim_id;
-  if (typeof trimId === 'string') {
-    const m = trimId.match(/^(?:tt|tm)(\d+)$/i);
-    if (m) return Number(m[1]);
-  }
-  return 0;
-}
-
 /** item/{guid} JSON → 轮播详情字段映射（自 fetchItemDetail 抽出, 供捕获响应与网络响应共用）。 */
 function mapItemDetail(json: any, id: string, base: string): any {
   const d = (json && json.data) || {};
@@ -341,8 +316,6 @@ function mapItemDetail(json: any, id: string, base: string): any {
       backdrop, poster, logo, // [lc-606] poster = 竖版(item API data.posters, 右侧海报条用)
       totalEps, localEps, totalSeasons, localSeasons,
       year: rawYear, rating, statusText, genres,
-      // [lc-1274] 携带 TMDB id（trim_id 剥前缀），轮播 logo 查询可走 id 精确匹配
-      tmdbId: tmdbIdFromItemData(d),
       desc: (d.overview || '').trim(),
       title: (d.title || d.name || '').trim(),
       strmTag, // [DIAG] 携带来源标签，供轮播渲染/看门狗诊断

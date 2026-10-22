@@ -133,7 +133,7 @@
 | **正式发布版** | 双击 `打包.bat` → GUI 选「正式发布版」，填显示名与版号（或 `build-fpk.exe release --name … --version …`） | GUI 填写的正式版号（`x.y.z`，无 v/V 前缀） | `AniBox-<版号>.fpk` |
 
 > **目标架构**（lc-1387）：GUI「目标架构」选 x86 / ARM64 / 两者连打；命令行加 `--arch arm64`（默认 `amd64`，兼容 `--arch x86` 等写法）。
-> ARM 包 = 同路径放 arm64 后端 + manifest `platform=arm`，产物加 `-arm64` 后缀（如 `AniBox-1.2.0-arm64.fpk`）。
+> ARM 包 = 同路径放 arm64 后端 + manifest `platform=arm`，产物加 `-arm64` 后缀（如 `AniBox-1.3.0-arm64.fpk`）。
 > 飞牛商店 `platform` 三选一：`x86` / `arm` / `all`，包内二进制必须与之一致（`cmd/main` 启动脚本与架构无关，只有 `app/server/fntvplus` 一个原生二进制）。
 > 两种通道的产物都自动输出到 `<仓库根>/release/`；引擎缺失时 GUI 会自动用 go 编译。
 

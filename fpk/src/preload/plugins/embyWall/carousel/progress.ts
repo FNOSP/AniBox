@@ -3,69 +3,11 @@ import { ensureStyle4Css } from './styles';
 import { isSurfaceDark } from '../theme';
 import { ipcRenderer } from 'electron';
 import { log, clog } from '../log';
+// [lc-1291] 骨架选路与真实轮播同口径（mobile.resolveCarouselStyle 也读 getUiMode）。
+import { getUiMode } from '../../mobileStyle';
 
 // embyWall/carousel/progress.ts — 轮播骨架屏与加载进度：占位构建、进度条推进、完成收尾、STRM 不支持提示
 // 由 scripts/embywall-split.js 从 embyWall.ts 整段抽取；改实现请改这里，不要在入口文件里补。
-
-// [lc-1290] 样式4 骨架文字色板（深/浅两套，构建与主题翻转刷新共用同一来源）
-const SKEL_TEXT = {
-  dark: { tip: 'rgba(225,218,245,.85)', pct: 'rgba(232,221,208,.92)' },
-  light: { tip: 'rgba(96,88,74,.92)', pct: 'rgba(60,50,40,.92)' },
-} as const;
-
-// [lc-1290] 骨架主题翻转跟随：html.dark 增删时同步 data-fntv-skel 属性与 s4 内联文字色。
-// 卡片底色(--fnos-skel-card 变量)与占位条/指示点/进度条([data-fntv-skel] 选择器)由 CSS
-// 自动切换，这里只改属性 + 文字色。观察器常驻，仅骨架在屏时有实际动作；
-// 骨架被真轮播替换后 container.isConnected 为假即空转（与桌面版 lc-1290 同步）。
-let _skelTheme: { container: HTMLElement; tipEls: HTMLElement[]; pctEls: HTMLElement[]; cardBgs: HTMLElement[] } | null = null;
-let _skelThemeObserver: MutationObserver | null = null;
-
-function applySkelTheme(isDark: boolean): void {
-  const t = _skelTheme;
-  if (!t || !t.container.isConnected) return;
-  const c = isDark ? SKEL_TEXT.dark : SKEL_TEXT.light;
-  t.container.setAttribute('data-fntv-skel', isDark ? 'dark' : 'light');
-  for (const el of t.tipEls) el.style.color = c.tip;
-  for (const el of t.pctEls) el.style.color = c.pct;
-  // [lc-1294] 卡片底色不再依赖 var(--fnos-skel-card)（html.dark 信号可能与页面所见打架）：
-  // 按采样结论直接内联 hex，所见即所得。
-  const cardBg = isDark ? SKEL_CARD_BG.dark : SKEL_CARD_BG.light;
-  for (const el of t.cardBgs) el.style.background = cardBg;
-}
-
-// [lc-1294] 页面表面真实明暗：从骨架容器向上找第一个「不透明计算背景」采样亮度。
-// isSurfaceDark() 读 html.dark/body theme-mode 标记，但注入页上这些标记与飞牛原生主题
-// 可能互相打架（我们/系统写 dark，飞牛 React 自己渲染浅色）→ 样式4 骨架卡片底色的
-// html.dark 分支跟着变深，而页面看起来是浅色（用户报 fpk 浅色模式样式4 骨架深色块）。
-// 采样「所见即所得」：页面渲染成什么底，骨架就配什么深浅；采样失败回落 isSurfaceDark()。
-const SKEL_CARD_BG = { dark: '#1e1b17', light: '#e8f0fe' } as const;
-
-function sampleSurfaceDark(): boolean {
-    try {
-        let el: HTMLElement | null = _skelTheme ? _skelTheme.container : null;
-        while (el) {
-            const bg = getComputedStyle(el).backgroundColor;
-            const m = bg.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)/);
-            if (m) {
-                const a = m[4] === undefined ? 1 : parseFloat(m[4]);
-                if (a >= 0.5) {
-                    const lum = 0.2126 * parseFloat(m[1]) + 0.7152 * parseFloat(m[2]) + 0.0722 * parseFloat(m[3]);
-                    return lum < 128;
-                }
-            }
-            el = el.parentElement;
-        }
-    } catch { /* ignore */ }
-    return isSurfaceDark();
-}
-
-function ensureSkelThemeObserver(): void {
-  if (_skelThemeObserver) return;
-  _skelThemeObserver = new MutationObserver(() => {
-    if (_skelTheme && _skelTheme.container.isConnected) applySkelTheme(sampleSurfaceDark());
-  });
-  _skelThemeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-}
 
 export function buildLoadingPlaceholder(target: HTMLElement): void {
   // shimmer / spinner 动画样式只注入一次
@@ -134,8 +76,6 @@ export function buildLoadingPlaceholder(target: HTMLElement): void {
   }
 
   target.innerHTML = '';
-  _skelTheme = null;            // [lc-1290] 重建即作废旧骨架的主题跟随登记
-  ensureSkelThemeObserver();
   // [lc-444] 同上: 清掉section自身顶部边框/阴影/上边距, 避免细黑线
   target.style.borderTop = 'none';
   target.style.boxShadow = 'none';
@@ -147,23 +87,16 @@ export function buildLoadingPlaceholder(target: HTMLElement): void {
 
   // [lc-805/lc-815] 按当前轮播样式 + 系统明暗渲染骨架: 样式2 用满铺暗底+底部内容占位(与样式2 轮播视觉一致),
   //   浅色模式改用浅色骨架, 避免"先样式1 紫底骨架→加载完才切样式2"或"暗色骨架压在浅色 fnOS 上的突兀跳变。
+  // [lc-1291] 骨架选路与 mobile.resolveCarouselStyle 完全同口径（这里复刻同一段纯逻辑，
+  //   避免 progress ← mobile ← images/logo 的依赖方向绕回骨架模块）。
+  //   仅 UI 模式=手机返回 5；电脑模式选了 5 也回落 4，桌面骨架几何一行不动。
   const _cs = ((): number => {
-    // [lc-1291→lc-1309] 与 mobile.resolveCarouselStyle 同口径（不 import 是因 progress.ts
-    //   与 render.ts 的既有依赖方向，此处复制并注明来源）。
-    //   [lc-1309] 用户明确要求新布局**只对手机端和平板的尺寸规格生效**、PC 原样式不动：
-    //   门控 = 触屏 + 短边≤820px 双条件（触屏一体机/触屏笔记本的 PC 短边 > 820 → 仍走 4）。
-    //   [lc-1308] 手机/平板上存量 '4' 是 lc-780 时代默认值、非知情选择 → 与空值同等对待
-    //   走样式 5；显式选过 1/2/3 才尊重。
     let stored: string | null = null;
     try { stored = localStorage.getItem('fnos-carousel-style'); } catch { /* 视为未选过 */ }
-    let touch = false, mobileSpec = false;
-    try {
-      touch = ('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0;
-      mobileSpec = Math.min(window.innerWidth, window.innerHeight) <= 820;
-    } catch { touch = false; mobileSpec = false; }
-    if (touch && mobileSpec) {
-      const tv = parseInt(stored || '4', 10);
-      return (tv === 1 || tv === 2 || tv === 3) ? tv : 5;
+    if (getUiMode() === 'mobile') {
+      const v = parseInt(stored || '4', 10);
+      if (v === 1 || v === 2 || v === 3) return v;
+      return 5;
     }
     const v = parseInt(stored || '4', 10);
     if (v === 5) return 4;
@@ -174,32 +107,27 @@ export function buildLoadingPlaceholder(target: HTMLElement): void {
   const container = document.createElement('div');
   container.setAttribute('data-fntv-carousel-style', String(_cs));
   const _blur = 'backdrop-filter:blur(24px) saturate(140%);-webkit-backdrop-filter:blur(24px) saturate(140%)';
-  if (!_isDark && _cs !== 4) {
+  if (!_isDark && _cs !== 4 && _cs !== 5) {
     // [lc-815] 浅色模式: 统一浅色容器(适配 fnOS 浅色主题); 样式4 例外(透明无框, 见下方分支, 与真实样式4 一致)
     container.style.cssText = `position:relative;overflow:hidden;width:100%;max-height:calc(100vh - 380px);aspect-ratio:16/9;border-radius:24px;background:linear-gradient(160deg,#eef1f6,#dde3ec);${_blur};margin:0 auto;box-shadow:0 18px 50px -14px rgba(40,50,80,.18)`;
   } else if (_cs === 2 || _cs === 3) {
     // 样式2/3 暗色骨架: 高度与真实轮播一致, 满铺暗底, 避免加载完高度跳变
-    container.style.cssText = `position:relative;overflow:hidden;width:100%;max-height:calc(100vh - 380px);aspect-ratio:16/9;border-radius:24px;background:linear-gradient(160deg,rgba(120,130,160,.22),#0b1219);${_blur};box-shadow:0 26px 60px -12px rgba(0,0,0,.55)`;
+    container.style.cssText = `position:relative;overflow:hidden;width:100%;max-height:calc(100vh - 380px);aspect-ratio:16/9;border-radius:24px;background:linear-gradient(160deg,rgba(120,130,160,.22),var(--fnos-hero-bg));${_blur};box-shadow:0 26px 60px -12px rgba(0,0,0,.55)`;
   } else if (_cs === 4) {
     // [lc-834] 样式4 骨架容器: 透明无框(与真实样式4 一致, 无背景无边框); 高度走 calc(100vh - 380px) 与真实样式4/样式1 一致, 避免加载完高度跳变
     container.style.cssText = `position:relative;overflow:hidden;width:100%;max-height:calc(100vh - 380px);aspect-ratio:16/9;border-radius:24px;background:transparent;margin:0 auto;box-shadow:none`;
   } else if (_cs === 5) {
-    // [lc-1291] 样式5 骨架容器: 与真实样式5 同几何（高 min(56vw,340px)、圆角 18px、暗底、
-    // 无 aspect-ratio）—— 骨架→真实轮播零跳变。真实高度由 ensureStyle5Css 的样式表给出，
-    // 骨架阶段该表可能未注入，这里按同公式给内联兜底。
-    container.style.cssText = `position:relative;overflow:hidden;width:100%;height:min(56vw,340px);border-radius:18px;background:#10141c;margin:0 auto;box-shadow:none`;
+    // [lc-1291] 样式5 骨架容器: 与真实样式5 同几何（高 min(56vw,340px)、圆角 18px、
+    //   无 aspect-ratio）—— 骨架→真实轮播零跳变。底色用主题变量（浅色跟随 --fnos-hero-bg），不写死黑底。
+    container.style.cssText = `position:relative;overflow:hidden;width:100%;height:min(56vw,340px);border-radius:18px;background:var(--fnos-hero-bg,#10141c);margin:0 auto;box-shadow:none`;
   } else {
     container.style.cssText = `position:relative;overflow:hidden;width:100%;max-height:calc(100vh - 380px);aspect-ratio:16/9;border-radius:24px;background:linear-gradient(155deg,rgba(145,115,215,.22),rgba(70,50,120,.34));${_blur};margin:0 auto;box-shadow:none`;
   }
   S.carouselContainer = container;
-  // [lc-1284] 骨架专属标记：揭示逻辑据此**唯一**识别骨架节点。
-  //   此前靠 S.carouselContainer 猜（该引用在真实轮播渲染时也会被覆写），
-  //   自动刷新/二次注入场景下会把刚渲染好的真实轮播误当骨架摘除 → 「轮播没了」。
-  container.dataset.fntvSkeleton = '1';
 
   let fillEl: HTMLElement, percentEl: HTMLElement, statusEl: HTMLElement;
 
-  if (!_isDark && _cs !== 4) {
+  if (!_isDark && _cs !== 4 && _cs !== 5) {
     // [lc-815] 浅色模式骨架: 统一浅色设计(复用 .fnos-ph-skel 的浅色微光, var 随 html.dark 自动切换), 布局与暗色样式2 一致; 样式4 例外(见下方 _cs===4 分支, 自带暗色 3D 骨架不受主题影响)
     const overlay = document.createElement('div');
     overlay.className = 'fntv-ph-l-overlay';
@@ -295,11 +223,12 @@ export function buildLoadingPlaceholder(target: HTMLElement): void {
     ensureStyle4Css();
     container.setAttribute('data-fntv-skel', _isDark ? 'dark' : 'light');
     // 深浅配色(占位条/指示点/进度条文字): 深色模式用浅色文字, 浅色模式用深棕文字
-    const sk = SKEL_TEXT[_isDark ? 'dark' : 'light'];
+    const sk = _isDark
+      ? { tip: 'rgba(225,218,245,.85)', pct: 'rgba(232,221,208,.92)' }
+      : { tip: 'rgba(96,88,74,.92)', pct: 'rgba(60,50,40,.92)' };
     // 3D 舞台(track) + 三张卡(中间 active + 左右 prev/next, 与真实一致, 侧卡被 overflow:hidden 裁掉只露肩)
     const track = document.createElement('div');
     track.className = 'fntv-s4-track';
-    const cardBgs: HTMLElement[] = []; // [lc-1294] 登记三张卡的底色块，采样校正/主题翻转时统一重涂
     const mkS4Card = (cls: string): HTMLElement => {
       const card = document.createElement('div');
       card.className = 'fntv-s4-card' + (cls ? ' ' + cls : '');
@@ -307,16 +236,7 @@ export function buildLoadingPlaceholder(target: HTMLElement): void {
       const bg = document.createElement('div');
       bg.className = 'fntv-s4-skelbg'; // [lc-842] 不复用 .fntv-s4-bg(其 ::before 写死黑色渐变遮罩, 会把浅色卡片压成深色); 仅作纯色占位 + shimmer
       bg.style.backgroundImage = 'none';
-      // [lc-1286] ⚠ 不写死内联色，改用随主题实时变化的 CSS 变量。
-      //   原实现 `_isDark ? '#1e1b17' : '#e8f0fe'` 把颜色烤进内联样式：骨架在页面早期创建，
-      //   那一刻 isSurfaceDark() 的判定可能因 html.dark 尚未写入/中途切换而与最终主题不符
-      //   → 骨架卡片固定成深色，而同屏其它元素（走 CSS 变量）随后变浅，出现「浅色页面里
-      //   一块深色空档」（用户报告：占位图本来浅色、后面突然变深/成了空块）。
-      //   --fnos-skel-card 由 theme.ts 的 :root / html.dark 两套值定义，切主题即时生效。
-      //   [lc-1294] 初值仅作占位：挂载后 sampleSurfaceDark() 按页面真实背景亮度重涂 hex
-      //   （var 的 html.dark 分支在标记与页面所见打架时会误深，fpk 浅色样式4 骨架深色块即此因）。
-      bg.style.background = 'var(--fnos-skel-card, #e8f0fe)';
-      cardBgs.push(bg);
+      bg.style.background = _isDark ? '#1e1b17' : '#e8f0fe'; // [lc-843→844] 浅色模式用淡蓝底(非灰非纯白); 深色保留 #1e1b17
       const shine = document.createElement('div');
       shine.className = 'fntv-s4-skel';
       shine.style.cssText = 'position:absolute;inset:0;opacity:.5;z-index:0';
@@ -376,13 +296,12 @@ export function buildLoadingPlaceholder(target: HTMLElement): void {
     s4BarBox.appendChild(s4Track);
     container.appendChild(s4BarBox);
     statusEl = tip4;
-    _skelTheme = { container, tipEls: [tip4], pctEls: [percentEl], cardBgs }; // [lc-1290/1294] 登记主题翻转跟随
   } else if (_cs === 5) {
-    // [lc-1291] 样式5 骨架 = 真实样式5 的「暂停态空壳」：满铺暗底单卡 + 底部信息占位条 +
-    // 卡外指示点，与真实触屏轮播视觉零跳变。不依赖 ensureStyle5Css（骨架阶段样式表可能未注入），
-    // 全部内联 + 复用 .fnos-ph-skel/.fnos-ph-track 公共类。
+    // [lc-1291] 样式5 骨架 = 真实样式5 的「暂停态空壳」：满铺单卡 + 底部信息占位条 + 卡外指示点，
+    //   与真实触屏轮播视觉零跳变。不依赖 ensureStyle5Css（骨架阶段样式表可能未注入），
+    //   全部内联 + 复用 .fnos-ph-skel/.fnos-ph-track 公共类。底色用主题变量，不写死黑底。
     const slideBg = document.createElement('div');
-    slideBg.style.cssText = 'position:absolute;inset:0;background:#151a24;overflow:hidden;border-radius:18px';
+    slideBg.style.cssText = 'position:absolute;inset:0;background:var(--fnos-hero-bg,#151a24);overflow:hidden;border-radius:18px';
     const shine = document.createElement('div');
     shine.className = 'fnos-ph-skel';
     shine.style.cssText = 'position:absolute;inset:0;opacity:.4';
@@ -512,24 +431,6 @@ export function buildLoadingPlaceholder(target: HTMLElement): void {
 
   wrapper.appendChild(container);
   target.appendChild(wrapper);
-
-  // [lc-1294] 挂载后按页面真实背景亮度校正一次深浅：初值用的是 isSurfaceDark() 标记判定，
-  //   注入页上 html.dark/body theme-mode 标记可能与页面所见（飞牛原生主题）打架，
-  //   样式4 骨架卡片底色随之误深。采样骨架向上的第一个不透明背景，「所见即所得」。
-  // [lc-1294→1297] 深浅校正改为骨架存续期「持续重采样」（400ms 低频）：
-  //   强刷（清缓存）时骨架可能建在飞牛原生「启动暗底」阶段——React 还没注水、真实浅色
-  //   主题背景未生效，此刻一次性采样取到的是暗色启动底 → 误涂深色，且之后无人纠正
-  //   （主题观察器只盯 html class 翻转，飞牛注水不改 class）。持续重采样 = 页面真实
-  //   背景一亮出来骨架立刻跟随换浅色；骨架被真轮播替换（断连）后自动停表。
-  if (_skelTheme) {
-    const theme = _skelTheme;   // 闭包身份守卫：骨架被重建（_skelTheme 换新）时旧表自行退场
-    let last = _isDark;
-    const resampleTimer = window.setInterval(() => {
-      if (_skelTheme !== theme || !theme.container.isConnected) { clearInterval(resampleTimer); return; }
-      const s = sampleSurfaceDark();
-      if (s !== last) { last = s; applySkelTheme(s); }
-    }, 400);
-  }
 
   // [lc-561] 记录数字元素, 供 fetchShowsViaIPC 抓取过程中实时更新"已加载 N 个"
   S.carouselProgressEl = null; // [lc-583] 已改用长条进度, 数字元素废弃

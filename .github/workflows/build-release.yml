@@ -115,12 +115,27 @@ jobs:
           cp src-tauri/target/release/bundle/rpm/*.rpm out/ 2>/dev/null || true
           cp src-tauri/target/release/bundle/appimage/*.AppImage out/ 2>/dev/null || true
           cp src-tauri/target/release/bundle/dmg/*.dmg out/ 2>/dev/null || true
-          # macOS：把 .app 目录打成 tar.gz
+          # macOS：把 .app 目录打成 tar.gz（若 Tauri 保留）
           for app in src-tauri/target/release/bundle/macos/*.app; do
             [ -d "$app" ] || continue
             base="$(basename "$app" .app)"
             arch="$(uname -m)"
             tar -C "$(dirname "$app")" -czf "out/${base}_${arch}.app.tar.gz" "$(basename "$app")"
+          done
+          # macOS：Tauri 打完 dmg 会清理 .app 目录，改为从 dmg 里取出 .app 再打包
+          for dmg in src-tauri/target/release/bundle/dmg/*.dmg; do
+            [ -f "$dmg" ] || continue
+            mnt="$(mktemp -d)"
+            if hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg" >/dev/null 2>&1; then
+              appdir="$(ls -d "$mnt"/*.app 2>/dev/null | head -1)"
+              if [ -n "$appdir" ]; then
+                base="$(basename "$appdir" .app)"
+                arch="$(uname -m)"
+                tar -C "$mnt" -czf "out/${base}_${arch}.app.tar.gz" "$(basename "$appdir")"
+              fi
+              hdiutil detach "$mnt" >/dev/null 2>&1 || true
+            fi
+            rmdir "$mnt" 2>/dev/null || true
           done
           echo "=== 产物清单 ==="
           ls -lh out/ || true

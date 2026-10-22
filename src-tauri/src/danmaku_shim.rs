@@ -26,6 +26,21 @@ pub const NODE_INTERNAL_PORT: u16 = 22351;
 /// shim 脚本本体（随 bin 打包，见 tauri.conf.json 的 resources）
 const SHIM_JS: &str = include_str!("../assets/danmaku-shim.cjs");
 
+/// [authx-inject] 解析飞牛签名材料：运行时环境变量优先，回退构建期注入值（`option_env!`）。
+/// 空串视为未设置。返回 `None` 表示不注入（shim 侧不加 Authx 头）。
+fn resolve_authx_material(name: &str, compiled: Option<&'static str>) -> Option<String> {
+    if let Ok(v) = std::env::var(name) {
+        let v = v.trim();
+        if !v.is_empty() {
+            return Some(v.to_string());
+        }
+    }
+    compiled
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+}
+
 fn port_ready(port: u16) -> bool {
     std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
 }
@@ -152,19 +167,30 @@ pub async fn ensure(
         .open(&shim_log)
         .ok();
     let err = out.as_ref().and_then(|f| f.try_clone().ok());
-    let child = std::process::Command::new("node")
-        .arg(&js)
-        .arg(&dir)
-        .arg(node_port.to_string())
-        // stdin 用 piped：JS 侧监听 stdin end → 父进程（我们）退出时自动跟退，不留孤儿
-        .stdin(Stdio::piped())
-        .stdout(out.map(Stdio::from).unwrap_or_else(Stdio::null))
-        .stderr(err.map(Stdio::from).unwrap_or_else(Stdio::null))
-        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-        .spawn()
-        .map_err(|e| {
+    let child = {
+        let mut cmd = std::process::Command::new("node");
+        cmd.arg(&js)
+            .arg(&dir)
+            .arg(node_port.to_string())
+            // stdin 用 piped：JS 侧监听 stdin end → 父进程（我们）退出时自动跟退，不留孤儿
+            .stdin(Stdio::piped())
+            .stdout(out.map(Stdio::from).unwrap_or_else(Stdio::null))
+            .stderr(err.map(Stdio::from).unwrap_or_else(Stdio::null))
+            .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        // [authx-inject] 飞牛签名材料：运行时环境变量优先，回退构建期注入值；
+        // 都缺失则**不注入**（shim 侧随之不加 Authx 头）。绝不把明文写进脚本。
+        for (name, compiled) in [
+            ("ANIBOX_FN_AUTHX_KEY", option_env!("ANIBOX_FN_AUTHX_KEY")),
+            ("ANIBOX_FN_AUTHX_SECRET", option_env!("ANIBOX_FN_AUTHX_SECRET")),
+        ] {
+            if let Some(v) = resolve_authx_material(name, compiled) {
+                cmd.env(name, v);
+            }
+        }
+        cmd.spawn().map_err(|e| {
             format!("拉起弹幕 shim 失败（需要系统装有 Node.js）: {e}")
-        })?;
+        })?
+    };
     *holder.lock().await = Some(child);
 
     for _ in 0..50 {

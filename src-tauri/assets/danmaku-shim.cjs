@@ -121,16 +121,20 @@ function withTimeout(promise, ms, label) {
 // src/main/common/playbackShim.ts:1087-1240 的契约逐条补齐，请求签名对齐
 // src-tauri/src/authx.rs（同一套公开客户端 key/secret，与 Rust 侧完全同源）。
 
-const FN_API_KEY = 'NDzZTVxnRKP8Z0jXg1VAMonaG8akvh';
-const FN_API_SECRET = '16CCEB3D-AB42-077D-36A1-F355324E4237';
+// 签名材料由 Rust 侧拉起时通过环境变量注入（见 danmaku_shim.rs），不硬编码进脚本/产物。
+// 未注入 → authxHeader() 返回空串，fnCall() 不加 Authx 头，请求照常发出（网关按未签名处理）。
+const FN_API_KEY = (process.env.ANIBOX_FN_AUTHX_KEY || '').trim();
+const FN_API_SECRET = (process.env.ANIBOX_FN_AUTHX_SECRET || '').trim();
 const SUB_CACHE_DIR = path.join(os.tmpdir(), 'anibox-subtitles');
 
 function md5hex(s) {
     return crypto.createHash('md5').update(s, 'utf8').digest('hex');
 }
 
-/** Authx 头：sign = md5(apiKey_path_nonce_ts_md5(body)_apiSecret)，与 authx.rs 逐字节对齐 */
+/** Authx 头：sign = md5(apiKey_path_nonce_ts_md5(body)_apiSecret)，与 authx.rs 逐字节对齐。
+ *  未注入签名材料时返回空串（调用方据此不加 Authx 头）。 */
 function authxHeader(urlPath, bodyStr) {
+    if (!FN_API_KEY || !FN_API_SECRET) return '';
     const nonce = String(Math.floor(Math.random() * 900000) + 100000);
     const ts = Date.now();
     const dataMd5 = md5hex(bodyStr || '');
@@ -183,11 +187,13 @@ function fnCall(base, urlPath, method, token, bodyObj, timeoutMs) {
                 'Content-Type': 'application/json',
                 Authorization: token || '',
                 Cookie: token ? `mode=relay; Trim-MC-token=${token}` : 'mode=relay',
-                Authx: authxHeader(curPath, hasBody ? bodyStr : ''),
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) anibox',
                 'x-trim-client': 'web',
                 'x-trim-client-version': '616',
             };
+            // 未注入签名材料时不加 Authx 头（网关按未签名处理）
+            const authx = authxHeader(curPath, hasBody ? bodyStr : '');
+            if (authx) headers.Authx = authx;
             if (hasBody) headers['Content-Length'] = Buffer.byteLength(bodyStr);
             const req = mod.request(
                 {

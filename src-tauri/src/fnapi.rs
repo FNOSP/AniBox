@@ -402,8 +402,14 @@ impl FnClient {
             .header("Content-Type", "application/json")
             .header("Authorization", token)
             .header("Cookie", cookie)
-            .header("Authx", authx)
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) anibox");
+        // [authx-inject] 未注入飞牛签名材料时不加 Authx 头，请求照常发出（网关按未签名处理）。
+        match authx {
+            Some(a) => req = req.header("Authx", a),
+            None => crate::libmpv::trace(&format!(
+                "[fnapi] 未注入飞牛签名材料（ANIBOX_FN_AUTHX_KEY/SECRET），本次请求不带 Authx 头: {path}"
+            )),
+        }
 
         let resp = req.send().await.map_err(|e| {
             if e.is_builder() {

@@ -42,12 +42,21 @@ import (
 )
 
 // Authx 签名材料不再硬编码进二进制（审核红线：第三方应用内嵌官方签名密钥观感差、
-// 也防泄漏扩散）。fnOS 上由 cmd/main 经环境变量注入（值与官方影视应用一致），
-// 本地调试可用 FNTV_AUTHX_KEY / FNTV_AUTHX_SECRET 环境变量提供。
+// 也防泄漏扩散）。
+//
+// 注入通道：打包脚本（tools/buildfpk）从 secrets/fn-authx.local 读取后以
+// `-ldflags -X` 烧入下面两个包级变量；本地调试仍可用 FNTV_AUTHX_KEY /
+// FNTV_AUTHX_SECRET 环境变量覆盖（运行时优先于编译期注入值）。
 var (
-	authxKey    = envOr("FNTV_AUTHX_KEY", "")
-	authxSecret = envOr("FNTV_AUTHX_SECRET", "")
+	authxKey    = ""
+	authxSecret = ""
 )
+
+// effectiveAuthx 返回当前生效的签名材料：运行时环境变量优先，其次编译期注入值。
+// 两者任一为空即视为未配置（不签 Authx 头）。
+func effectiveAuthx() (string, string) {
+	return envOr("FNTV_AUTHX_KEY", authxKey), envOr("FNTV_AUTHX_SECRET", authxSecret)
+}
 
 func envOr(key, def string) string {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
@@ -170,12 +179,13 @@ func md5hex(s string) string {
 }
 
 func genAuthx(path, dataJSON string) string {
-	if authxKey == "" || authxSecret == "" {
+	key, secret := effectiveAuthx()
+	if key == "" || secret == "" {
 		return "" // 未注入签名材料：不加 Authx 头，由上游按未签名请求处理
 	}
 	nonce := fmt.Sprintf("%d", 100000+rand.Intn(900000))
 	ts := time.Now().UnixMilli()
-	sign := md5hex(strings.Join([]string{authxKey, path, nonce, fmt.Sprintf("%d", ts), md5hex(dataJSON), authxSecret}, "_"))
+	sign := md5hex(strings.Join([]string{key, path, nonce, fmt.Sprintf("%d", ts), md5hex(dataJSON), secret}, "_"))
 	return fmt.Sprintf("nonce=%s&timestamp=%d&sign=%s", nonce, ts, sign)
 }
 
@@ -526,7 +536,7 @@ func (b *Bridge) handleTMDBImage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": lastErr.Error()})
+	writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": publicError(lastErr)})
 }
 
 /* ========== Trakt ========== */
@@ -928,6 +938,38 @@ func (b *Bridge) tmdbReady() bool {
 	return b.tmdbSecret() != "" || strings.TrimSpace(b.tmdbAPIKey()) != ""
 }
 
+// mirrorUnavailableMsg 镜像/上游取数失败时给前端的统一文案。
+// 约定：任何会写进 JSON 的 error/detail 字段都不得包含 URL、镜像域名或
+// 「HTTP 状态 + URL」拼接串；原始错误只进 logf。
+const mirrorUnavailableMsg = "当前镜像站点故障，请稍后尝试"
+
+// hasUpstreamAddress 判断错误文本里是否带地址 / 镜像域名 / 镜像失败特征。
+func hasUpstreamAddress(msg string) bool {
+	l := strings.ToLower(msg)
+	for _, p := range []string{
+		"http://", "https://",
+		"690075.xyz", "workers.dev", "themoviedb.org", "tmdb.org", "image.tmdb.org", "bgm.tv",
+		"镜像不可用", "镜像取数失败", "镜像站点",
+	} {
+		if strings.Contains(l, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// publicError 把底层错误转成可展示文案：含地址/镜像特征 → 统一镜像故障文案；
+// 其余（如「缺少季号」这类可操作提示）保留原文。
+func publicError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if hasUpstreamAddress(err.Error()) {
+		return mirrorUnavailableMsg
+	}
+	return err.Error()
+}
+
 // tmdbMirrorGet 走内置镜像（/3/... + 准入签名）。pathWithQuery 必须已含 /3 前缀与 query。
 // 返回 (状态码, 解析后的 JSON, 错误)。错误为 *mirror.Error 时可用 mirror.IsDegradable 分类。
 func (b *Bridge) tmdbMirrorGet(pathWithQuery string) (int, map[string]any, error) {
@@ -960,7 +1002,7 @@ func (b *Bridge) tmdbMirrorGet(pathWithQuery string) (int, map[string]any, error
 func (b *Bridge) tmdbDirectPWQ(pathWithQuery string) (int, map[string]any, error) {
 	key := strings.TrimSpace(b.tmdbAPIKey())
 	if key == "" {
-		return 0, nil, fmt.Errorf("TMDB 镜像不可用，且未配置自有 TMDB API Key（可在设置中填写）")
+		return 0, nil, fmt.Errorf("TMDB 镜像不可用（内置镜像取数失败）")
 	}
 	bearer, queryKey := authForKey(key)
 	apiPath := strings.TrimPrefix(pathWithQuery, "/3")
@@ -1214,7 +1256,7 @@ const tmdbLogoCacheTTL = 24 * time.Hour
 //  ④查询结果内存缓存 24h。
 func (b *Bridge) tmdbLogo(w http.ResponseWriter, r *http.Request) {
 	if !b.tmdbReady() {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "TMDB 镜像不可用，且未配置自有 TMDB API Key（可在设置中填写）"})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": mirrorUnavailableMsg})
 		return
 	}
 	var req struct {
@@ -1238,7 +1280,7 @@ func (b *Bridge) tmdbLogo(w http.ResponseWriter, r *http.Request) {
 	if id <= 0 && req.Title != "" {
 		found, err := b.tmdbSearchID(mt, req.Title)
 		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": err.Error()})
+			writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": publicError(err)})
 			return
 		}
 		if found <= 0 {
@@ -1253,7 +1295,7 @@ func (b *Bridge) tmdbLogo(w http.ResponseWriter, r *http.Request) {
 	}
 	st, out, err := b.tmdbGet("/"+mt+"/"+fmt.Sprintf("%d", id)+"/images", map[string]string{"include_image_language": "zh,ja,en,null"})
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": err.Error()})
+		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": publicError(err)})
 		return
 	}
 	if st != http.StatusOK {

@@ -332,6 +332,7 @@ func buildBackend(bin, arch string) error {
 		ldflags = append(ldflags, "-X", "main.buildVersion="+v)
 	}
 	ldflags = append(ldflags, mirrorSecretLdflags()...)
+	ldflags = append(ldflags, authxSecretLdflags()...)
 	if len(ldflags) > 0 {
 		args = append(args, "-ldflags", strings.Join(ldflags, " "))
 	}
@@ -392,6 +393,70 @@ func mirrorSecretLdflags() []string {
 		}
 		out = append(out, "-X", s.varName+"="+val)
 		fmt.Printf("[info] 已注入镜像密钥 %s（来源：%s）\n", s.env, src)
+	}
+	return out
+}
+
+// authxSecretLdflags 返回 fnOS Authx 签名材料的 -X 注入项。
+// 来源优先级：进程环境变量 FNTV_AUTHX_KEY/SECRET → <仓库根>/secrets/fn-authx.local
+// 的 ANIBOX_FN_AUTHX_KEY/KEY 与 ANIBOX_FN_AUTHX_SECRET/SECRET。
+// 缺失时只打印提示、不注入（运行期不带 Authx 头）；**绝不打印密钥值**。
+func authxSecretLdflags() []string {
+	specs := []struct {
+		env     string
+		keys    []string
+		varName string
+	}{
+		{"FNTV_AUTHX_KEY", []string{"ANIBOX_FN_AUTHX_KEY", "KEY"}, "fntvplus/internal/bridge.authxKey"},
+		{"FNTV_AUTHX_SECRET", []string{"ANIBOX_FN_AUTHX_SECRET", "SECRET"}, "fntvplus/internal/bridge.authxSecret"},
+	}
+	path := filepath.Join(filepath.Dir(root), "secrets", "fn-authx.local")
+	kv := readKeyValueFile(path)
+	var out []string
+	for _, s := range specs {
+		val := strings.TrimSpace(os.Getenv(s.env))
+		src := "环境变量 " + s.env
+		if val == "" {
+			for _, k := range s.keys {
+				if v := strings.TrimSpace(kv[k]); v != "" {
+					val = v
+					src = path + " (" + k + ")"
+					break
+				}
+			}
+		}
+		if val == "" {
+			fmt.Printf("[warn] 未找到 %s（来源：%s）→ 不注入，运行期不带 Authx 头\n", s.env, path)
+			continue
+		}
+		if strings.ContainsAny(val, " \t\r\n\"'") {
+			fmt.Printf("[warn] %s 含空白/引号，跳过注入（避免 ldflags 解析问题）\n", s.env)
+			continue
+		}
+		out = append(out, "-X", s.varName+"="+val)
+		fmt.Printf("[info] 已注入 Authx 材料 %s（来源：%s）\n", s.env, src)
+	}
+	return out
+}
+
+// readKeyValueFile 解析 `KEY=value` 行（忽略空行与 `#` 注释；值两侧引号去掉）。
+// 键名统一转大写便于大小写不敏感匹配。文件缺失返回空 map。
+func readKeyValueFile(path string) map[string]string {
+	out := map[string]string{}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return out
+	}
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		out[strings.ToUpper(strings.TrimSpace(k))] = strings.Trim(strings.TrimSpace(v), "\"'")
 	}
 	return out
 }

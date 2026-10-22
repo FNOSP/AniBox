@@ -86,9 +86,13 @@ tests/*.exe
 node_modules/
 nul
 on
-# 第三方运行时二进制 / 配置（mpv、proxy、potplayer 等）与 fpk 均不入库
+# 第三方运行时二进制 / 配置（mpv、proxy、potplayer 等）不入库
 /third_party/
-/fpk/
+# fpk 只入库构建必需的 Go/TS 源码（fpk/src、fpk/scripts、fpk/tools、fpk/cmd、fpk/config 等）；
+# 以下为非源码 / 大图 / 内部报告 / 生成物，一律不入库
+/fpk/docs/
+/fpk/resource/
+/fpk/app/ui/images/
 # 打包 staging：tools/stage-bundle-resources.mjs 从 third_party 裁剪复制而来（含二进制/字体，不入库）
 /src-tauri/bundle-resources/
 # 自绘安装器构建产物（SetupUi.exe / www.zip / totalsize.txt 等，不入库）
@@ -103,3 +107,34 @@ src-tauri/resources/danmu-api/.cache/
 # 迁移后的本地密钥目录：整个 secrets/ 与所有 *.local 一律不入库
 /secrets/
 *.local
+
+# ==== A 级止血：AI 规则 / 凭据 / 二进制 / 生成数据 / 设计稿 / 开发辅助脚本 ====
+# AI 助手规则与配置（个人化，不入库）
+/AGENTS.md
+/CLAUDE.md
+/GEMINI.md
+/.zcode/
+/.claude/
+/.cursor/
+/.codex/
+/.mcp.json
+# 内置凭证的密文常量（含弹弹play AppID/Secret，任何形态都不入库）
+/fpk/src/go/internal/secret/builtin.go
+# 运行时二进制：potctl.exe（第三方提供，构建前本地放置 / 从第三方下载）
+/src-tauri/resources/potctl.exe
+# 生成数据（CI / 运行时写入，不入库）
+/docs/wiki/test-index.json
+/docs/wiki/update-check.json
+# 设计稿（本地素材，不入库）
+/design/
+# 开发辅助脚本（仅本机调试用；构建必需脚本 build-installer.ps1 / build-setup-ui.mjs /
+# stage-bundle-resources.mjs 保留入库）
+/tools/dev-run.ps1
+/tools/dev-diag.ps1
+/tools/ensure-webview2.ps1
+/tools/fetch-webview2-offline.ps1
+# 产物：fpk 安装包与用户脚本（构建生成，不入库）
+*.fpk
+*.user.js
+# 例外：注入载荷是构建必需的源码，保留入库
+!fpk/src/go/internal/inject/payload/fntv-plus.user.js

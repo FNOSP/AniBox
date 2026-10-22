@@ -46,9 +46,16 @@ const OBSERVED: [(u64, &str); 13] = [
     (13, "path"),
 ];
 
+/// mpv IPC 连接类型：Windows 是命名管道（用 File 打开），
+/// Linux/macOS 是 Unix domain socket（必须用 UnixStream 连接，open() 打不开 socket 文件）。
+#[cfg(target_os = "windows")]
+type IpcStream = std::fs::File;
+#[cfg(not(target_os = "windows"))]
+type IpcStream = std::os::unix::net::UnixStream;
+
 pub struct MpvSession {
     /// IPC 写端（JSON 行）
-    tx: Arc<Mutex<Option<std::fs::File>>>,
+    tx: Arc<Mutex<Option<IpcStream>>>,
     /// request_id → 回包等待者
     pending: Arc<Mutex<HashMap<u64, std_mpsc::Sender<Value>>>>,
     next_id: Arc<AtomicU64>,
@@ -63,8 +70,20 @@ pub struct MpvSession {
 unsafe impl Send for MpvSession {}
 unsafe impl Sync for MpvSession {}
 
+/// mpv `--input-ipc-server` 的地址：
+///   · Windows：命名管道 `\\.\pipe\<name>`；
+///   · Linux/macOS：Unix domain socket 文件（mpv 只接受路径，不认 Windows 管道名）。
+#[cfg(target_os = "windows")]
 fn pipe_path(name: &str) -> String {
     format!(r"\\.\pipe\{}", name)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn pipe_path(name: &str) -> String {
+    std::env::temp_dir()
+        .join(format!("{name}.sock"))
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// [lc-1621] 归一化在线源 HTTP 头：去空白、滤空值，并额外拼出 `http-header-fields` 串。
@@ -182,6 +201,12 @@ impl MpvSession {
         if let Some(u) = initial_url {
             args.push(u);
         }
+        // 非 Windows：Unix socket 文件若残留（上次异常退出），mpv 会因 bind 失败而启动不了，
+        // 先清掉旧文件。
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = std::fs::remove_file(&path);
+        }
         let mut command = tokio::process::Command::new(mpv_path);
         command
             .args(&args)
@@ -205,16 +230,29 @@ impl MpvSession {
         // 退出统一走 shutdown() 的 taskkill /PID（它只认 pid，不需要句柄）。
         drop(child);
 
-        // ── 2) 连 IPC 管道（mpv 起得要一会儿，重试 ~20s）
-        let mut file = None;
+        // ── 2) 连 IPC（mpv 起得要一会儿，重试 ~20s）
+        // Windows：命名管道 → File::open；Linux/macOS：Unix socket → UnixStream::connect。
+        let mut file: Option<IpcStream> = None;
         for _ in 0..100 {
-            match std::fs::OpenOptions::new().read(true).write(true).open(&path) {
-                Ok(f) => {
-                    file = Some(f);
-                    break;
+            let conn = {
+                #[cfg(target_os = "windows")]
+                {
+                    std::fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open(&path)
+                        .ok()
                 }
-                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(200)).await,
+                #[cfg(not(target_os = "windows"))]
+                {
+                    std::os::unix::net::UnixStream::connect(&path).ok()
+                }
+            };
+            if let Some(f) = conn {
+                file = Some(f);
+                break;
             }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
         let file = file.ok_or_else(|| {
             format!(
@@ -346,6 +384,8 @@ impl MpvSession {
                                 // `redirect` 是同一内容被内部重开（位置连续），不能当结束结算。
                                 if reason != "redirect" {
                                     crate::fnos_progress::settle_current(&app2);
+                                    // [speed] 单集结束/停止：把该剧最后一次调速落盘。
+                                    crate::playback_speed::flush(&app2);
                                 }
                                 // 用户主动切片/停止/重定向不算失败，别弹错；
                                 // 另外 "Opening failed or was aborted" / "Failed writing received
@@ -424,8 +464,47 @@ impl MpvSession {
                         }
                         13 => {
                             if let Some(s) = v.get("data").and_then(|x| x.as_str()) {
+                                // [speed] 切集前先把该剧最后一次调速落盘（防抖线程可能还没到点）。
+                                crate::playback_speed::flush(&app2);
                                 // 切集：结算上一集 + 重置本集计时（见 fnos_progress）。
                                 crate::fnos_progress::set_item_from_url(&app2, s);
+                                // [speed] 应用**本剧的**速度：有记录用它，没有就回 1.0。
+                                // key 是剧级键（`fnos_progress::current_speed_key`，起播时按
+                                // play/info 的剧级标识算好），同剧切集**沿用**、换剧才换记录 ——
+                                // 这是本版相对上一版（按单集 item guid）的关键行为差异。
+                                // 必须在 set_item_from_url 之后取（切集后 tracker 的 item_guid
+                                // 已更新，但 speed_key 本就同剧不变）。
+                                // 首帧（observe_property 的初始值）也会走这里，所以「打开 App 直接
+                                // 播某集」同样能恢复速度，不依赖用户先切一次集。
+                                let key = crate::fnos_progress::current_speed_key();
+                                let speed = crate::playback_speed::speed_for(&app2, &key)
+                                    .unwrap_or(crate::playback_speed::DEFAULT_SPEED);
+                                // 同步更新跟踪器：若 mpv 因「速度未变」不发事件，快照里也不会
+                                // 残留上一集的旧速度（set_item_from_url 已把 speed 重置为 1.0）。
+                                crate::fnos_progress::set_speed(speed);
+                                let line = json!({
+                                    "command": ["set_property", "speed", speed],
+                                })
+                                .to_string()
+                                    + "\n";
+                                if let Some(f) = tx.lock().unwrap().as_mut() {
+                                    let _ = f.write_all(line.as_bytes());
+                                    let _ = f.flush();
+                                }
+                            }
+                        }
+                        4 => {
+                            // [speed] mpv 的 speed 变化（用户 uosc/快捷键/手柄调速，或我们自己
+                            // 切集时 set_property 的回抛）。按**剧级键**记入本地持久化 →
+                            // 同剧各集共享这一个倍速。
+                            if let Some(d) = crate::playback_speed::speed_from_value(
+                                v.get("data").unwrap_or(&Value::Null),
+                            ) {
+                                crate::fnos_progress::set_speed(d);
+                                let key = crate::fnos_progress::current_speed_key();
+                                if !key.is_empty() {
+                                    crate::playback_speed::record_speed(&app2, &key, d);
+                                }
                             }
                         }
                         _ => {}
@@ -470,6 +549,8 @@ impl MpvSession {
                 // 统一走 `mpv-load {phase:"ended"}`（前端在 ended 里结算进度；重复结算幂等）。
                 // [progress] 同时由 Rust 直接落盘一次（App 正在退出时前端 invoke 可能来不及）。
                 crate::fnos_progress::flush_on_exit(app2.clone());
+                // [speed] mpv 退出：把最后一次调速立即落盘（防抖线程可能被进程一起带走）。
+                crate::playback_speed::flush(&app2);
                 let _ = app2.emit(
                     "mpv-load",
                     json!({ "phase": "ended", "reason": "ipc-closed" }),
@@ -551,14 +632,29 @@ impl MpvSession {
         let pid = *self.pid.lock().unwrap();
         match pid {
             Some(pid) => {
-                // tasklist 查一下即可（轮询频率低，代价可接受）
-                let out = tokio::process::Command::new("tasklist")
-                    .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-                    .output()
-                    .await;
-                match out {
-                    Ok(o) => !String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()),
-                    Err(_) => false,
+                #[cfg(target_os = "windows")]
+                {
+                    // tasklist 查一下即可（轮询频率低，代价可接受）
+                    let out = tokio::process::Command::new("tasklist")
+                        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+                        .output()
+                        .await;
+                    match out {
+                        Ok(o) => !String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()),
+                        Err(_) => false,
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    // `kill -0`：进程存在 → 退出码 0；不存在 → 非 0。
+                    match tokio::process::Command::new("kill")
+                        .args(["-0", &pid.to_string()])
+                        .output()
+                        .await
+                    {
+                        Ok(o) => !o.status.success(),
+                        Err(_) => false,
+                    }
                 }
             }
             None => true,
@@ -590,10 +686,20 @@ impl MpvSession {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         let pid_now = *self.pid.lock().unwrap();
         if let Some(pid) = pid_now {
-            let _ = tokio::process::Command::new("taskkill")
-                .args(["/F", "/PID", &pid.to_string()])
-                .output()
-                .await;
+            #[cfg(target_os = "windows")]
+            {
+                let _ = tokio::process::Command::new("taskkill")
+                    .args(["/F", "/PID", &pid.to_string()])
+                    .output()
+                    .await;
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = tokio::process::Command::new("kill")
+                    .args(["-9", &pid.to_string()])
+                    .output()
+                    .await;
+            }
         }
         *self.tx.lock().unwrap() = None;
     }

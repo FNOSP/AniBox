@@ -36,6 +36,8 @@ mod migrate;
 mod metadata_override;
 mod mirror_sign;
 mod mpv;
+// [speed] 按剧集（item guid）持久化 mpv 播放速度（app_data_dir/playback-speed.json）
+mod playback_speed;
 // [player] 统一播放启动封装（mpv / 本机 PotPlayer）+ 本地 HTTP relay
 mod player;
 mod proxy;
@@ -574,6 +576,9 @@ async fn report_watch_progress(
                         "itemGuid": item,
                         "positionMs": position_ms,
                         "durationMs": duration_ms,
+                        // [speed] 当前播放速度（本地跟踪器；仅用于前端展示/调试，
+                        // 飞牛 play/record 无速率字段，不随远程回传）。
+                        "speed": fnos_progress::current_speed(),
                     }),
                 );
             }
@@ -1375,6 +1380,10 @@ struct PlayResolution {
     episode: i64,
     /// 所属季 guid（剧集 = play/info 的 parent_guid；电影为空）
     parent_guid: String,
+    /// [speed] **剧级** guid（跨季也同一部剧）：play/info 顶层或 item 上的
+    /// `series_guid`/`seriesGuid`。飞牛多数版本没有该字段 → 空串，倍速键回退到
+    /// 「季 guid / 剧名」规则（与 `history::series_key_of` 一致）。
+    series_guid: String,
     /// [lc-1631] 条目总时长（ms；0 = 未知）。play/info 的 item.duration（秒）折算，
     /// 年度报告按「进度 × 总时长」折算观看量时需要。
     duration_ms: u64,
@@ -1572,6 +1581,17 @@ async fn resolve_play_guid(
                         .map(|s| s.to_string())
                 })
                 .unwrap_or_else(|| g.clone());
+            // [speed] 剧级 guid（优先于季 guid，跨季也能同剧共享倍速）：
+            // 飞牛多数版本的 play/info 不带这个字段 → 空串，调用方回退季 guid。
+            let series_guid = info
+                .get("series_guid")
+                .and_then(|x| x.as_str())
+                .or_else(|| info.get("seriesGuid").and_then(|x| x.as_str()))
+                .or_else(|| it.get("series_guid").and_then(|x| x.as_str()))
+                .or_else(|| it.get("seriesGuid").and_then(|x| x.as_str()))
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_default();
             // [live] 直播无剧集概念，不写弹幕匹配元数据（避免 uosc_danmaku 空搜）。
             if live_url.is_none() {
                 danmaku_shim::write_play_meta(&g, &parent_guid, &media_title, season, episode);
@@ -1616,6 +1636,7 @@ async fn resolve_play_guid(
                 season,
                 episode,
                 parent_guid,
+                series_guid,
                 duration_ms,
                 live_url,
             })
@@ -1872,7 +1893,32 @@ async fn play_item(
             subtitle_guid: res.subtitle_guid.clone(),
         });
         // 退出兜底跟踪器：series guid = 本地历史记录键（下面 history::record 用的同一个 guid）。
-        fnos_progress::begin(&guid, &res.play_guid);
+        //
+        // [speed] 同时算一个**剧级倍速键**（与 history 去重键同一套规则）：
+        // 同一部剧的所有集共用一个键 → 任意一集调的倍速，切到同剧其它集沿用；
+        // 换剧则用该剧自己的记录（无记录回 1.0）。拿不到剧级标识（直播 / 本地文件 /
+        // 在线源）时为空串 → playback_speed 不持久化，保持 1.0。
+        //   · guid 用 play/info 解析出的实际条目 guid（电影 = 自身）；
+        //   · title 只取「剧名」层级（tv_title → 顶层 media_title），绝不用集标题 ——
+        //     否则同剧各集会被拆成不同键，又退回「按集」。
+        let speed_key = if !res.series_guid.is_empty() {
+            // 有剧级 guid（跨季同一部剧）→ 最精确的剧级键。
+            format!("series:{}", res.series_guid)
+        } else {
+            history::series_key_from_parts(
+                &res.play_guid,
+                &res.parent_guid,
+                &res.kind,
+                &res.tmdb_id,
+                &res.bgm_id,
+                if !res.tv_title.is_empty() {
+                    &res.tv_title
+                } else {
+                    &res.media_title
+                },
+            )
+        };
+        fnos_progress::begin_with_speed_key(&guid, &res.play_guid, &speed_key);
     }
     let direct_url = if let Some(live) = res.live_url.clone() {
         live

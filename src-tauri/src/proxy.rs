@@ -18,9 +18,13 @@ pub async fn ensure(
         return Ok(());
     }
     if !std::path::Path::new(proxy_path).exists() {
+        #[cfg(target_os = "windows")]
+        let hint = "third_party/proxy/proxy.exe";
+        #[cfg(not(target_os = "windows"))]
+        let hint = "third_party/proxy/proxy";
         return Err(format!(
-            "Go 代理不存在: {}（可在登录页高级设置里改为安装目录下的 third_party/proxy/proxy.exe）",
-            proxy_path
+            "Go 代理不存在: {}（可在登录页高级设置里改为安装目录下的 {}）",
+            proxy_path, hint
         ));
     }
     let mut cmd = std::process::Command::new(proxy_path);

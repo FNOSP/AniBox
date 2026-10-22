@@ -122,7 +122,7 @@ pub fn resolve_player(cfg: &Config) -> Result<(String, String), String> {
     match cfg.player_kind.trim() {
         "" | "mpv" => {
             if cfg.mpv_path.trim().is_empty() {
-                Err("mpv 路径未配置".into())
+                Err(crate::config::mpv_missing_message())
             } else {
                 Ok(("mpv".into(), cfg.mpv_path.clone()))
             }
@@ -454,6 +454,10 @@ async fn launch_potplayer(
 
 /// potctl.exe 路径解析：resources / exe 同级 / dev 目录 / 旧项目目录兜底。
 pub fn potctl_path(app: &AppHandle) -> Option<PathBuf> {
+    // potctl 是 Windows 专用助手（PotPlayer 只有 Windows 版），非 Windows 直接跳过。
+    if !cfg!(target_os = "windows") {
+        return None;
+    }
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(dir) = app.path().resource_dir() {
         candidates.push(dir.join("potctl.exe"));

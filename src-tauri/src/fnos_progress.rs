@@ -151,8 +151,15 @@ struct Tracker {
     series_guid: String,
     /// 当前正在播的那一集 guid（mpv `path` 变化时更新）
     item_guid: String,
+    /// [speed] **剧级**倍速键（`history::series_key_of` 同一套规则；空 = 不持久化倍速）。
+    /// 与 `series_guid` 不同：后者是本地历史记录键（可能等于单集 guid），
+    /// 这里只用于 [`crate::playback_speed`]，同剧各集共享、切集不变。
+    speed_key: String,
     pos_ms: u64,
     dur_ms: u64,
+    /// [speed] 当前播放速度（mpv `speed` 事件，见 [`set_speed`]）。
+    /// 只写进本地进度快照，**不进**飞牛 `play/record`（该接口无速率字段，见模块头注释）。
+    speed: f64,
     /// 上次写 pending 文件的时间（仅内存，不参与上报语义）
     last_persist: Option<Instant>,
 }
@@ -160,6 +167,41 @@ struct Tracker {
 fn tracker() -> &'static Mutex<Tracker> {
     static TRACKER: OnceLock<Mutex<Tracker>> = OnceLock::new();
     TRACKER.get_or_init(|| Mutex::new(Tracker::default()))
+}
+
+/// 跟踪器里的速度：0/非法值一律按 1.0（旧逻辑/未收到事件时的默认）。
+fn tracker_speed(t: &Tracker) -> f64 {
+    if t.speed.is_finite() && t.speed > 0.0 {
+        t.speed
+    } else {
+        1.0
+    }
+}
+
+/// [speed] mpv `speed` 变化时调用（mpv.rs 观察 id=4）。
+pub fn set_speed(speed: f64) {
+    if !speed.is_finite() || speed <= 0.0 {
+        return;
+    }
+    if let Ok(mut t) = tracker().lock() {
+        t.speed = speed;
+    }
+}
+
+/// 当前播放速度（给上报/快照用；未知时 1.0）。
+pub fn current_speed() -> f64 {
+    tracker()
+        .lock()
+        .map(|t| tracker_speed(&t))
+        .unwrap_or(1.0)
+}
+
+/// [speed] 当前这次播放的**剧级**倍速键（同剧各集相同；空 = 不持久化倍速）。
+pub fn current_speed_key() -> String {
+    tracker()
+        .lock()
+        .map(|t| t.speed_key.clone())
+        .unwrap_or_default()
 }
 
 /// 落盘间隔：即使进程被强杀，最多也只丢这几秒。
@@ -175,7 +217,14 @@ struct PendingProgress {
     item_guid: String,
     pos_ms: u64,
     dur_ms: u64,
+    /// [speed] 快照时的播放速度。旧快照没有该字段 → `serde(default)` 回落 1.0。
+    #[serde(default = "default_speed")]
+    speed: f64,
     updated_at_ms: u64,
+}
+
+fn default_speed() -> f64 {
+    1.0
 }
 
 fn now_ms() -> u64 {
@@ -203,6 +252,7 @@ fn persist(app: &AppHandle, t: &Tracker) {
         item_guid: t.item_guid.clone(),
         pos_ms: t.pos_ms,
         dur_ms: t.dur_ms,
+        speed: tracker_speed(t),
         updated_at_ms: now_ms(),
     };
     let Ok(bytes) = serde_json::to_vec(&snap) else { return };
@@ -219,13 +269,23 @@ fn clear_pending(app: &AppHandle) {
 }
 
 /// 起播时调用：重置跟踪器（新一次播放）。
+///
+/// 无剧级倍速键（在线源 / 直播 / 本地文件）→ 用 [`begin`]，倍速不持久化。
 pub fn begin(series_guid: &str, item_guid: &str) {
+    begin_with_speed_key(series_guid, item_guid, "");
+}
+
+/// [speed] 起播时调用：除 [`begin`] 的字段外，额外带上**剧级倍速键**
+/// （由 `lib.rs::play_item` 用 `history::series_key_of` 同一套规则算出）。
+pub fn begin_with_speed_key(series_guid: &str, item_guid: &str, speed_key: &str) {
     if let Ok(mut t) = tracker().lock() {
         *t = Tracker {
             series_guid: series_guid.to_string(),
             item_guid: item_guid.to_string(),
+            speed_key: speed_key.to_string(),
             pos_ms: 0,
             dur_ms: 0,
+            speed: 1.0,
             last_persist: None,
         };
     }
@@ -343,6 +403,9 @@ pub fn set_item_from_url(app: &AppHandle, url: &str) {
         t.item_guid = guid;
         t.pos_ms = 0;
         t.dur_ms = 0;
+        // [speed] 切集只重置本集计时，**不动剧级 speed_key**（同剧各集共享倍速）。
+        // 速度值先归 1.0；若该剧有记录，mpv.rs 会紧接着按剧级键 set speed 并回抛事件覆盖。
+        t.speed = 1.0;
         prev
     };
     let (old_guid, old_pos, old_dur) = prev;
@@ -513,6 +576,7 @@ mod tests {
             item_guid: "ep1".into(),
             pos_ms: 12345,
             dur_ms: 1440000,
+            speed: 1.25,
             updated_at_ms: 1_700_000_000_000,
         };
         let s = serde_json::to_string(&p).unwrap();
@@ -520,5 +584,15 @@ mod tests {
         assert_eq!(back.item_guid, "ep1");
         assert_eq!(back.pos_ms, 12345);
         assert_eq!(back.dur_ms, 1440000);
+        assert_eq!(back.speed, 1.25);
+    }
+
+    /// [speed] 旧版本快照没有 `speed` 字段：反序列化必须成功并回落 1.0（不能因缺字段丢快照）。
+    #[test]
+    fn pending_progress_legacy_without_speed() {
+        let legacy = r#"{"series_guid":"s","item_guid":"ep1","pos_ms":1000,"dur_ms":2000,"updated_at_ms":1}"#;
+        let back: PendingProgress = serde_json::from_str(legacy).unwrap();
+        assert_eq!(back.item_guid, "ep1");
+        assert_eq!(back.speed, 1.0);
     }
 }

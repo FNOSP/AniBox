@@ -29,8 +29,11 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const IS_WIN = process.platform === 'win32';
 const SRC_MPV = path.join(ROOT, 'third_party', 'fntv-mpv');
-const SRC_PROXY = path.join(ROOT, 'third_party', 'proxy', 'proxy.exe');
+// Windows 是 proxy.exe；Linux/macOS 由 Go 源码构建出无后缀的 proxy
+const PROXY_NAME = IS_WIN ? 'proxy.exe' : 'proxy';
+const SRC_PROXY = path.join(ROOT, 'third_party', 'proxy', PROXY_NAME);
 const OUT = path.join(ROOT, 'src-tauri', 'bundle-resources');
 const STAMP = path.join(OUT, '.stamp');
 
@@ -112,34 +115,43 @@ function collect() {
     if (!fs.existsSync(SRC_MPV)) {
       fail(
         `缺少 ${SRC_MPV}\n` +
-          '发布构建需要本地准备 third_party/fntv-mpv（mpv.exe + libmpv + portable_config）。\n' +
+          '发布构建需要本地准备 third_party/fntv-mpv（Windows：mpv.exe + libmpv + portable_config；' +
+          'Linux/macOS：至少需要 portable_config，供系统 mpv 使用）。\n' +
           '该目录按仓库规则不入库；开发态可直接运行 dev.cmd，不需要 staging。',
       );
     }
     fail(
       `缺少 ${SRC_PROXY}\n` +
-        '发布构建需要本地准备 third_party/proxy/proxy.exe（Go 代理）。',
+        `发布构建需要本地准备 third_party/proxy/${PROXY_NAME}（Go 代理；` +
+        (IS_WIN ? 'Windows 用预编译的 proxy.exe' : 'Linux/macOS 由 proxy/ 源码 go build 生成') +
+        '）。',
     );
   }
 
   const items = [];
 
-  // 1) mpv 根目录：只取运行时二进制（DLL/exe/com），跳过 updater 与未知杂项。
-  for (const ent of fs.readdirSync(SRC_MPV, { withFileTypes: true })) {
-    if (!ent.isFile()) continue;
-    if (!/\.(dll|exe|com)$/i.test(ent.name)) continue;
-    items.push({
-      abs: path.join(SRC_MPV, ent.name),
-      rel: `third_party/fntv-mpv/${ent.name}`,
-    });
-  }
-  // mpv/fonts.conf（mpv 的 fontconfig 配置）
-  const fontsConf = path.join(SRC_MPV, 'mpv', 'fonts.conf');
-  if (fs.existsSync(fontsConf)) {
-    items.push({ abs: fontsConf, rel: 'third_party/fntv-mpv/mpv/fonts.conf' });
+  // 1) Windows：mpv 根目录的运行时二进制（DLL/exe/com）。Linux/macOS 用系统 mpv，
+  //    只打包 portable_config，绝不把 Windows 二进制塞进非 Windows 安装包。
+  if (IS_WIN) {
+    for (const ent of fs.readdirSync(SRC_MPV, { withFileTypes: true })) {
+      if (!ent.isFile()) continue;
+      if (!/\.(dll|exe|com)$/i.test(ent.name)) continue;
+      items.push({
+        abs: path.join(SRC_MPV, ent.name),
+        rel: `third_party/fntv-mpv/${ent.name}`,
+      });
+    }
+    // mpv/fonts.conf（mpv 的 fontconfig 配置）
+    const fontsConf = path.join(SRC_MPV, 'mpv', 'fonts.conf');
+    if (fs.existsSync(fontsConf)) {
+      items.push({ abs: fontsConf, rel: 'third_party/fntv-mpv/mpv/fonts.conf' });
+    }
   }
 
   // 2) portable_config：白名单根文件 + 白名单子目录。
+  if (!fs.existsSync(PC)) {
+    fail(`缺少 ${PC}（portable_config 是各平台都需要的便携配置）`);
+  }
   for (const ent of fs.readdirSync(PC, { withFileTypes: true })) {
     const abs = path.join(PC, ent.name);
     const rel = `third_party/fntv-mpv/portable_config/${ent.name}`;
@@ -154,8 +166,8 @@ function collect() {
     }
   }
 
-  // 3) Go 代理（potctl.exe 已在 src-tauri/resources 里，单独映射）。
-  items.push({ abs: SRC_PROXY, rel: 'third_party/proxy/proxy.exe' });
+  // 3) Go 代理（potctl.exe 仅 Windows，已在 src-tauri/resources 里，单独映射）。
+  items.push({ abs: SRC_PROXY, rel: `third_party/proxy/${PROXY_NAME}` });
 
   items.sort((a, b) => a.rel.localeCompare(b.rel));
   return items;

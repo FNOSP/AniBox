@@ -70,15 +70,31 @@ const NODE_FILES: &[(&str, &str)] = &[
 /// 由 mpv 路径推导 uosc_danmaku 脚本目录：<mpv 目录>/portable_config/scripts/uosc_danmaku
 pub fn script_dir_from_mpv(mpv_path: &str) -> Option<PathBuf> {
     let exe = Path::new(mpv_path);
-    let dir = exe.parent()?;
-    let cand = dir.join("portable_config").join("scripts").join("uosc_danmaku");
-    if cand.join("bili_danmaku.js").is_file() {
-        return Some(cand);
+    if let Some(dir) = exe.parent() {
+        let cand = dir.join("portable_config").join("scripts").join("uosc_danmaku");
+        if cand.join("bili_danmaku.js").is_file() {
+            return Some(cand);
+        }
+        // 兜底：便携配置也可能叫 scripts（少数布局）；再试一层根目录下的 scripts
+        let cand2 = dir.join("scripts").join("uosc_danmaku");
+        if cand2.join("bili_danmaku.js").is_file() {
+            return Some(cand2);
+        }
     }
-    // 兜底：便携配置也可能叫 scripts（少数布局）；再试一层根目录下的 scripts
-    let cand2 = dir.join("scripts").join("uosc_danmaku");
-    if cand2.join("bili_danmaku.js").is_file() {
-        return Some(cand2);
+    // 非 Windows：系统 mpv 的配置目录。`config::ensure_portable_config` 启动时已把
+    // 随包的 portable_config 复制到 `~/.config/mpv`，脚本目录就在这里。
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(home) = std::env::var_os("HOME") {
+            let cand = PathBuf::from(home)
+                .join(".config")
+                .join("mpv")
+                .join("scripts")
+                .join("uosc_danmaku");
+            if cand.join("bili_danmaku.js").is_file() {
+                return Some(cand);
+            }
+        }
     }
     None
 }

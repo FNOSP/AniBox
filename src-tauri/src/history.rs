@@ -126,25 +126,45 @@ pub fn series_key_of(r: &WatchRecord) -> String {
     if !r.series_key.trim().is_empty() {
         return r.series_key.trim().to_string();
     }
-    let bgm = r.bgm_id.trim();
+    series_key_from_parts(
+        &r.guid,
+        &r.parent_guid,
+        &r.media_type,
+        &r.tmdb_id,
+        &r.bgm_id,
+        &r.title,
+    )
+}
+
+/// [`series_key_of`] 的字段级版本：**同一套规则**，供非历史记录场景复用
+/// （例如 `lib.rs::play_item` 给 mpv 倍速持久化算剧级键，见 [`crate::playback_speed`]）。
+pub fn series_key_from_parts(
+    guid: &str,
+    parent_guid: &str,
+    media_type: &str,
+    tmdb_id: &str,
+    bgm_id: &str,
+    title: &str,
+) -> String {
+    let bgm = bgm_id.trim();
     if !bgm.is_empty() {
         return format!("bgm:{bgm}");
     }
-    let tmdb = r.tmdb_id.trim();
+    let tmdb = tmdb_id.trim();
     if !tmdb.is_empty() {
         return format!("tmdb:{tmdb}");
     }
-    let parent = r.parent_guid.trim();
-    let guid = r.guid.trim();
+    let parent = parent_guid.trim();
+    let guid = guid.trim();
     // 剧集类（Episode/TV/Season）与在线源：按「剧」聚合，而不是按集。
-    let episodic = r.media_type.contains("Episode")
-        || matches!(r.media_type.as_str(), "TV" | "Season" | "webrs");
+    let episodic = media_type.contains("Episode")
+        || matches!(media_type, "TV" | "Season" | "webrs");
     if episodic {
         if !parent.is_empty() && parent != guid {
             return format!("parent:{parent}");
         }
-        if !r.title.trim().is_empty() {
-            return format!("title:{}", r.title.trim());
+        if !title.trim().is_empty() {
+            return format!("title:{}", title.trim());
         }
     }
     if !guid.is_empty() {
@@ -153,8 +173,8 @@ pub fn series_key_of(r: &WatchRecord) -> String {
     if !parent.is_empty() {
         return format!("parent:{parent}");
     }
-    if !r.title.trim().is_empty() {
-        return format!("title:{}", r.title.trim());
+    if !title.trim().is_empty() {
+        return format!("title:{}", title.trim());
     }
     String::new()
 }
@@ -1862,6 +1882,34 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(series_key_of(&web), "title:在线番");
+    }
+
+    /// [speed] 倍速持久化复用同一套剧级规则：同剧不同集得到**同一个**键，不同剧不同键。
+    #[test]
+    fn series_key_from_parts_matches_record_rule() {
+        // 同一部剧的第 1 集 / 第 2 集（不同条目 guid、同一季 guid）→ 同键
+        let k1 = series_key_from_parts("e1", "season1", "Episode", "", "", "剧A");
+        let k2 = series_key_from_parts("e2", "season1", "Episode", "", "", "剧A");
+        assert_eq!(k1, "parent:season1");
+        assert_eq!(k1, k2);
+        // 另一部剧 → 不同键
+        assert_eq!(
+            series_key_from_parts("e9", "season9", "Episode", "", "", "剧B"),
+            "parent:season9"
+        );
+        // 与 series_key_of 完全一致
+        let r = ep("e1", "season1", "剧A", "S1E1", 1);
+        assert_eq!(
+            series_key_from_parts(&r.guid, &r.parent_guid, &r.media_type, &r.tmdb_id, &r.bgm_id, &r.title),
+            series_key_of(&r)
+        );
+        // 电影：自身即作品
+        assert_eq!(
+            series_key_from_parts("m1", "", "Movie", "", "", "电影"),
+            "guid:m1"
+        );
+        // 全空 → 空串（调用方据此决定不持久化倍速）
+        assert_eq!(series_key_from_parts("", "", "", "", "", ""), "");
     }
 
     #[test]

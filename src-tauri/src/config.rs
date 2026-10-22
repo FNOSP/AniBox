@@ -392,8 +392,155 @@ fn find_bundled(app: &tauri::AppHandle, rel: &str) -> Option<std::path::PathBuf>
         .find(|p| p.is_file())
 }
 
+/// 目录版 `find_bundled`（用于 portable_config 这种目录资源）。
+#[allow(dead_code)]
+fn find_bundled_dir(app: &tauri::AppHandle, rel: &str) -> Option<std::path::PathBuf> {
+    bundled_candidates(app, rel)
+        .into_iter()
+        .find(|p| p.is_dir())
+}
+
 fn path_is_file(p: &str) -> bool {
     !p.trim().is_empty() && std::path::Path::new(p).is_file()
+}
+
+/// 当前平台标签（纯函数口径，便于单测）。
+#[allow(dead_code)]
+fn current_os_tag() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        "other"
+    }
+}
+
+/// 非 Windows 平台 mpv 的候选安装路径（按优先级）。
+///
+/// 与参考项目 Fntv-Plus `src/main/handlers/plugins/media.ts::getMpvPlayerPath`
+/// 的 macOS / Linux 候选列表保持一致。抽成纯函数便于单测。
+pub fn mpv_candidates_for(os: &str) -> Vec<&'static str> {
+    match os {
+        // Apple Silicon Homebrew → Intel Homebrew/手动安装 → .app 包
+        "macos" => vec![
+            "/opt/homebrew/bin/mpv",
+            "/usr/local/bin/mpv",
+            "/Applications/mpv.app/Contents/MacOS/mpv",
+        ],
+        // 发行版包管理器 → 手动编译 → Snap → 部分发行版 → 可选安装位
+        "linux" => vec![
+            "/usr/bin/mpv",
+            "/usr/local/bin/mpv",
+            "/snap/bin/mpv",
+            "/usr/games/mpv",
+            "/opt/mpv/bin/mpv",
+        ],
+        _ => Vec::new(),
+    }
+}
+
+/// 在给定 PATH 串里查找可执行文件。`exists` 注入便于单测（不依赖真实文件系统）。
+pub fn find_in_path_with<F>(path_env: &str, exe: &str, exists: F) -> Option<std::path::PathBuf>
+where
+    F: Fn(&std::path::Path) -> bool,
+{
+    for dir in std::env::split_paths(path_env) {
+        let cand = dir.join(exe);
+        if exists(&cand) {
+            return Some(cand);
+        }
+    }
+    None
+}
+
+/// 非 Windows：按「候选固定路径 → PATH 查找」定位系统 mpv。
+#[allow(dead_code)]
+fn find_system_mpv() -> Option<std::path::PathBuf> {
+    for c in mpv_candidates_for(current_os_tag()) {
+        let p = std::path::PathBuf::from(c);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    let path_env = std::env::var_os("PATH").unwrap_or_default();
+    find_in_path_with(&path_env.to_string_lossy(), "mpv", |p| p.is_file())
+}
+
+/// 未找到 mpv 时给用户的明确提示（而不是静默失败/崩溃）。
+pub fn mpv_missing_message() -> String {
+    if cfg!(target_os = "macos") {
+        "未找到 mpv，请先安装：macOS 执行 `brew install mpv`；或在「设置 → 播放器」里手动指定 mpv 路径".into()
+    } else if cfg!(target_os = "linux") {
+        "未找到 mpv，请先安装：Ubuntu/Debian 执行 `sudo apt install mpv`，Fedora 执行 `sudo dnf install mpv`；或在「设置 → 播放器」里手动指定 mpv 路径".into()
+    } else {
+        "未找到 mpv（third_party/fntv-mpv/mpv.exe），请在「设置 → 播放器」里手动指定 mpv 路径".into()
+    }
+}
+
+/// 递归复制目录，**只补缺失文件，绝不覆盖已有文件**（避免冲掉用户自定义配置）。
+/// 跳过缓存 / 日志 / 备份 / 播放记录等运行时状态。
+#[allow(dead_code)]
+fn copy_dir_missing(src: &std::path::Path, dst: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(src) else {
+        return;
+    };
+    if std::fs::create_dir_all(dst).is_err() {
+        return;
+    }
+    for ent in entries.flatten() {
+        let name = ent.file_name();
+        let name_s = name.to_string_lossy();
+        // 运行时状态不复制
+        if matches!(
+            name_s.as_ref(),
+            "cache" | "watch_later" | "files" | "scripts-backup" | "__pycache__"
+        ) || name_s.ends_with(".log")
+            || name_s.ends_with(".bak")
+            || name_s == "bili_cookie.txt"
+            || name_s == "bili_cookie_status.json"
+            || name_s == "danmaku_source_cache.json"
+            || name_s == "danmaku-history.json"
+            || name_s == "recent.json"
+            || name_s == "persistent_config.json"
+            || name_s == "anibox-shaders.conf"
+        {
+            continue;
+        }
+        let sp = ent.path();
+        let dp = dst.join(&name);
+        if sp.is_dir() {
+            copy_dir_missing(&sp, &dp);
+        } else if sp.is_file() && !dp.exists() {
+            let _ = std::fs::copy(&sp, &dp);
+        }
+    }
+}
+
+/// 非 Windows：把随包的 `portable_config` 复制到用户 mpv 配置目录（`~/.config/mpv`）。
+///
+/// 为什么必须复制：Linux/macOS 用**系统 mpv**，其默认配置目录是 `~/.config/mpv`，
+/// 不会读取安装目录里的 `portable_config`。参考项目 Fntv-Plus 也是同样的做法
+/// （`mpvConfig.ts::checkAndCopyMpvConfig` → `~/.config/mpv`）。Windows 不需要
+/// （便携配置就在 mpv.exe 同目录，mpv 自动生效）。
+pub fn ensure_portable_config(app: &tauri::AppHandle, _cfg: &Config) {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = app;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let Some(src) = find_bundled_dir(app, "third_party/fntv-mpv/portable_config") else {
+            return;
+        };
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+        let dst = home.join(".config").join("mpv");
+        copy_dir_missing(&src, &dst);
+    }
 }
 
 /// [bundle-mpv] 把空路径 / 失效路径（例如从开发机迁移来的 `D:/GitHub/AniBox/...`）
@@ -402,14 +549,36 @@ fn path_is_file(p: &str) -> bool {
 /// 必须在 `config::load()` 里执行：mpv / proxy 的所有使用点（player、mpv、
 /// danmaku_shim、proxy 预热）都直接读 `cfg.mpv_path` / `cfg.proxy_path`，
 /// 在入口归一化一次即可，无需改每个调用点。
+///
+/// 平台差异（照搬参考项目 Fntv-Plus）：
+///   · Windows：随包 `third_party/fntv-mpv/mpv.exe`；
+///   · Linux/macOS：包内若内置了 `third_party/fntv-mpv/mpv` 则用之，否则查找
+///     **系统 mpv**（固定候选路径 → PATH）。
 pub fn resolve_bundled_paths(app: &tauri::AppHandle, cfg: &mut Config) {
     if !path_is_file(&cfg.mpv_path) {
         if let Some(p) = find_bundled(app, "third_party/fntv-mpv/mpv.exe") {
             cfg.mpv_path = p.to_string_lossy().into_owned();
         }
+        #[cfg(not(target_os = "windows"))]
+        {
+            if !path_is_file(&cfg.mpv_path) {
+                if let Some(p) = find_bundled(app, "third_party/fntv-mpv/mpv") {
+                    cfg.mpv_path = p.to_string_lossy().into_owned();
+                }
+            }
+            if !path_is_file(&cfg.mpv_path) {
+                if let Some(p) = find_system_mpv() {
+                    cfg.mpv_path = p.to_string_lossy().into_owned();
+                }
+            }
+        }
     }
     if !path_is_file(&cfg.proxy_path) {
-        if let Some(p) = find_bundled(app, "third_party/proxy/proxy.exe") {
+        #[cfg(target_os = "windows")]
+        let rel = "third_party/proxy/proxy.exe";
+        #[cfg(not(target_os = "windows"))]
+        let rel = "third_party/proxy/proxy";
+        if let Some(p) = find_bundled(app, rel) {
             cfg.proxy_path = p.to_string_lossy().into_owned();
         }
     }
@@ -418,6 +587,7 @@ pub fn resolve_bundled_paths(app: &tauri::AppHandle, cfg: &mut Config) {
 pub async fn load(app: &tauri::AppHandle) -> Config {
     let mut cfg = load_raw(app).await;
     resolve_bundled_paths(app, &mut cfg);
+    ensure_portable_config(app, &cfg);
     cfg
 }
 
@@ -493,6 +663,42 @@ pub async fn save(app: &tauri::AppHandle, cfg: &Config) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mpv_candidate_lists_match_reference_per_platform() {
+        // 与参考项目 Fntv-Plus media.ts::getMpvPlayerPath 的候选顺序一致
+        let mac = mpv_candidates_for("macos");
+        assert_eq!(mac.first(), Some(&"/opt/homebrew/bin/mpv"));
+        assert!(mac.contains(&"/usr/local/bin/mpv"));
+        assert!(mac.contains(&"/Applications/mpv.app/Contents/MacOS/mpv"));
+
+        let linux = mpv_candidates_for("linux");
+        assert_eq!(linux.first(), Some(&"/usr/bin/mpv"));
+        assert!(linux.contains(&"/usr/local/bin/mpv"));
+        assert!(linux.contains(&"/snap/bin/mpv"));
+
+        // Windows 不走候选列表（用随包 mpv.exe）
+        assert!(mpv_candidates_for("windows").is_empty());
+    }
+
+    #[test]
+    fn find_in_path_picks_first_existing() {
+        // 用 join_paths 生成平台正确的 PATH 分隔符（Windows ';' / Unix ':'）
+        let a = std::path::PathBuf::from("/a");
+        let b = std::path::PathBuf::from("/b");
+        let c = std::path::PathBuf::from("/c");
+        let env = std::env::join_paths([&a, &b, &c]).unwrap();
+
+        // 模拟 PATH：只有 /b 目录里存在 mpv
+        let hit = find_in_path_with(&env.to_string_lossy(), "mpv", |p| {
+            p.parent() == Some(std::path::Path::new("/b"))
+        });
+        assert_eq!(hit, Some(b.join("mpv")));
+
+        // 全不存在 → None
+        let none = find_in_path_with(&env.to_string_lossy(), "mpv", |_| false);
+        assert!(none.is_none());
+    }
 
     #[test]
     fn player_fields_have_backward_compatible_defaults() {

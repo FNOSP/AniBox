@@ -5,6 +5,11 @@
     "beforeBundleCommand": "true"
   },
   "bundle": {
-    "targets": ["dmg"]
+    "targets": ["dmg"],
+    "macOS": {
+      "hardenedRuntime": true,
+      "entitlements": "entitlements.plist",
+      "signingIdentity": null
+    }
   }
 }

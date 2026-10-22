@@ -83,6 +83,74 @@ jobs:
             npm install
           fi
 
+      # ─────────────────────────────────────────────────────────────
+      # macOS 代码签名 + 公证（Developer ID）
+      # 凭据全部来自 GitHub Secrets，任何步骤都不打印证书 / 密码 / 身份明文。
+      # 未配置 Secrets 时以下签名步骤自动跳过，构建照常完成（产物未签名），
+      # 并在日志中给出 warning，不会让作业变红。
+      # ─────────────────────────────────────────────────────────────
+      - name: 检测 macOS 签名凭据
+        if: runner.os == 'macOS'
+        id: macsign
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -n "${APPLE_CERTIFICATE:-}" ] && [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "✅ 签名凭据已配置：将执行 Developer ID 签名 + notarytool 公证 + staple。"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::未配置签名凭据（APPLE_CERTIFICATE / APPLE_ID / APPLE_TEAM_ID 有空值），本次 macOS 产物未签名、未公证。"
+          fi
+
+      - name: 导入 macOS 签名证书到临时 keychain
+        if: runner.os == 'macOS' && steps.macsign.outputs.enabled == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASS="$(openssl rand -hex 24)"
+
+          # 解码 base64 p12（不落日志，用完即删）
+          printf '%s' "$APPLE_CERTIFICATE" | openssl base64 -d -A -out "$RUNNER_TEMP/cert.p12"
+
+          security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild
+          # 允许 codesign 无交互访问私钥
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "$KEYCHAIN_PASS" "$KEYCHAIN" >/dev/null
+          # 临时 keychain 加入搜索列表，同时保留原有 keychain
+          existing="$(security list-keychains -d user | tr -d '"')"
+          security list-keychains -d user -s "$KEYCHAIN" $existing
+          security default-keychain -s "$KEYCHAIN"
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+          echo "证书已导入临时 keychain（内容与密码均未输出）。可用签名身份："
+          security find-identity -v -p codesigning "$KEYCHAIN" | sed 's/^/  /' || true
+
+          # 只在本步骤成功（即签名已启用）时，才把公证相关变量注入后续构建步骤。
+          # 注意：APPLE_CERTIFICATE 由本步骤消费，不再传给 tauri，
+          # 避免 tauri 二次导入同一证书导致 codesign 出现歧义身份。
+          {
+            echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY"
+            echo "APPLE_ID=$APPLE_ID"
+            echo "APPLE_PASSWORD=$APPLE_APP_SPECIFIC_PASSWORD"
+            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
+          } >> "$GITHUB_ENV"
+
       - name: 注入 fnOS 签名凭据（值来自 GitHub Secrets，绝不打印）
         env:
           FN_KEY: ${{ secrets.ANIBOX_FN_AUTHX_KEY }}
@@ -100,6 +168,54 @@ jobs:
           else
             echo "已写入签名材料（长度 key=${#FN_KEY} secret=${#FN_SECRET}）"
           fi
+
+      - name: 安装 Go（构建本地 Go 代理）
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: proxy/go.sum
+
+      - name: 准备 portable_config（非 Windows 也需便携配置）
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p third_party/fntv-mpv
+          URL=$(curl -fsSL -H "Authorization: token $GH_TOKEN" \
+            https://api.github.com/repos/QiaoKes/fntv-mpv-config/releases/latest \
+            | sed -n 's/.*"browser_download_url": "\(https[^"]*\.zip\)".*/\1/p' | head -1)
+          if [ -z "$URL" ]; then
+            echo "::error::未找到 fntv-mpv-config 的 zip 下载地址"; exit 1
+          fi
+          TMPD=$(mktemp -d)
+          curl -fL -H "Authorization: token $GH_TOKEN" -o "$TMPD/c.zip" "$URL"
+          unzip -oq "$TMPD/c.zip" -d "$TMPD/x"
+          shopt -s dotglob
+          items=("$TMPD"/x/*)
+          if [ ${#items[@]} -eq 1 ] && [ -d "${items[0]}" ]; then
+            mv "${items[0]}"/* third_party/fntv-mpv/ 2>/dev/null || true
+          else
+            mv "$TMPD"/x/* third_party/fntv-mpv/ 2>/dev/null || true
+          fi
+          rm -rf "$TMPD"
+          test -d third_party/fntv-mpv/portable_config || {
+            echo "::error::portable_config 缺失，无法打包弹幕/播放器配置"; exit 1; }
+
+      - name: 构建 Go 代理（按目标平台）
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p third_party/proxy
+          case "${{ matrix.name }}" in
+            linux-*)     GOOS=linux;  GOARCH=amd64 ;;
+            macos-arm64) GOOS=darwin; GOARCH=arm64 ;;
+            macos-x64)   GOOS=darwin; GOARCH=amd64 ;;
+            *)           GOOS=$(go env GOOS); GOARCH=$(go env GOARCH) ;;
+          esac
+          ( cd proxy && CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath -o ../third_party/proxy/proxy . )
+          chmod +x third_party/proxy/proxy
+          ls -lh third_party/proxy/proxy
 
       - name: 构建 Tauri bundle
         run: npx tauri build --bundles ${{ matrix.bundles }}
@@ -143,6 +259,48 @@ jobs:
             echo "::error::没有生成任何安装包"
             exit 1
           fi
+
+      - name: 校验 macOS 签名与公证（仅输出校验信息，不含敏感数据）
+        if: runner.os == 'macOS' && steps.macsign.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -uo pipefail
+          app="$(ls -d src-tauri/target/release/bundle/macos/*.app 2>/dev/null | head -1)"
+          if [ -z "$app" ]; then
+            # Tauri 打完 dmg 可能清掉 .app，回退到从 dmg 里挂载取出
+            dmg="$(ls src-tauri/target/release/bundle/dmg/*.dmg 2>/dev/null | head -1)"
+            if [ -n "$dmg" ]; then
+              mnt="$(mktemp -d)"
+              if hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg" >/dev/null 2>&1; then
+                app="$(ls -d "$mnt"/*.app 2>/dev/null | head -1)"
+                echo "从 dmg 挂载校验：$dmg"
+              fi
+            fi
+          fi
+          if [ -z "$app" ]; then
+            echo "::warning::未找到 .app，跳过签名校验。"
+            exit 0
+          fi
+
+          echo "== codesign -dv --verbose=4 =="
+          codesign -dv --verbose=4 "$app" 2>&1 || true
+          echo "== codesign --verify --deep --strict =="
+          codesign --verify --deep --strict --verbose=2 "$app" 2>&1 || true
+          echo "== spctl -a -vv =="
+          spctl -a -vv -t exec "$app" 2>&1 || true
+
+          # 释放临时挂载点
+          case "$app" in
+            /tmp/*|/var/folders/*) hdiutil detach "$(dirname "$app")" >/dev/null 2>&1 || true ;;
+          esac
+
+      - name: 清理临时 keychain
+        if: always() && runner.os == 'macOS' && steps.macsign.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -uo pipefail
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          security delete-keychain "$KEYCHAIN" 2>/dev/null || true
 
       - name: 上传到已有 Release
         env:

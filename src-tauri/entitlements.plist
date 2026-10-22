@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      AniBox macOS entitlements（Hardened Runtime）。
+      参考 Fntv-Plus 的 build/entitlements.mac.plist，按 Tauri 运行时实际需要做了裁剪。
+      Tauri 使用 WKWebView（系统框架，独立进程）不需要 Electron 那些 V8 相关权限，
+      但 AniBox 会：①访问网络与本地代理端口；②启动外部 mpv 子进程；③读写用户选择的文件。
+    -->
+
+    <!-- 允许 JIT：WKWebView 的 JavaScriptCore 需要 -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!-- 允许无符号可执行内存（部分 WebView / 解码路径需要） -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- 关闭库验证：允许加载非同签名团队的动态库（mpv / sidecar 相关） -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- 允许通过环境变量注入 DYLD_*（启动外部播放器时需要） -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+
+    <!-- 允许传出网络连接（访问 fnOS / TMDB / Bangumi 等） -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- 允许传入网络连接（本地 danmu-api / 代理监听端口） -->
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- 允许读写用户选择的文件（导入/导出、选择本地媒体） -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+
+    <!-- 允许读取下载目录（播放/缓存） -->
+    <key>com.apple.security.files.downloads.read-write</key>
+    <true/>
+</dict>
+</plist>

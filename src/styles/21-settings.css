@@ -515,22 +515,14 @@
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
-/* [perf-opaque] 性能模式必须整窗不透明。
-   原因：外壳 .app-shell 的底色是 `color-mix(... var(--ui-surface-alpha) ..., transparent)`
-   （默认 85%），正常模式下靠 DWM 模糊/桌面透出一点没关系；性能模式关掉磨砂后，
-   若仍只有这层半透明底色，桌面壁纸会直接透进来，看起来像"整页全透明"。
-   这里用 !important 覆盖掉 85% 的 color-mix，只作用于 html.perf；关掉性能模式即恢复用户设定值。 */
-.perf .app-shell {
-  background: linear-gradient(160deg, #f3f6fb, #f6f8fc 55%) !important;
-}
-html.dark.perf .app-shell {
-  background: linear-gradient(160deg, #12141d, #0d0f16 55%) !important;
-}
-/* 磨砂去掉后，原本靠模糊掩盖的"半透明面板"会显得脏：把几处关键面板补成实底。
-   注意变量必须是**已定义的不透明色**（--panel，见 01-tokens.css）：
-   之前这里写了一个未定义的 --panel，`background: var(--panel)` 在计算值阶段失效，
-   整条声明回退为 `transparent`，导致侧栏/设置卡/详情卡/胶囊/浮层全部变透明。 */
-.perf .sidebar,
+/* [perf-opaque] 性能模式：磨砂（backdrop-filter）已关，但**外壳与侧栏仍跟随「界面透明度」**。
+   [ui-opacity-fix] 早先这里用 `!important` 把 .app-shell / .sidebar 强制成实色，
+   结果性能模式下透明度滑杆对整窗/侧栏完全失效（用户反馈「侧栏透明度恒为 85%」）。
+   现在只把「靠模糊掩盖、必须实底才不脏」的浮层补成 --panel，外壳与侧栏交回
+   --ui-surface-alpha / --ui-sidebar-alpha（默认 85%，低配机想更实可自行调高）。
+   注意变量必须是**已定义的不透明色**（--panel，见 01-tokens.css）：之前这里写了一个
+   未定义的 --panel，`background: var(--panel)` 在计算值阶段失效，整条声明回退为
+   `transparent`，导致设置卡/详情卡/胶囊/浮层全部变透明。 */
 .perf .set-card,
 .perf .ddet,
 .perf .navbar,

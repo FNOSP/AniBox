@@ -283,11 +283,18 @@ pub(crate) fn display_node_path(p: &Path) -> String {
     } else {
         ("which", "node")
     };
-    if let Ok(out) = Command::new(cmd)
-        .arg(arg)
-        .stdin(Stdio::null())
-        .output()
-    {
+    if let Ok(out) = {
+        // [no-console] CREATE_NO_WINDOW：设置面板打开即调 detect_node，
+        // 若不隐藏控制台，`where node` 会弹一个黑框一闪（用户反馈「开设置页后台窗口闪一下」）。
+        let mut probe = Command::new(cmd);
+        probe.arg(arg).stdin(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            probe.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        probe.output()
+    } {
         if out.status.success() {
             if let Some(line) = String::from_utf8_lossy(&out.stdout)
                 .lines()
@@ -302,10 +309,15 @@ pub(crate) fn display_node_path(p: &Path) -> String {
 }
 
 pub(crate) fn node_version(p: &Path) -> String {
-    Command::new(p)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .output()
+    // [no-console] CREATE_NO_WINDOW：避免 `node --version` 弹控制台（见 display_node_path 注释）
+    let mut cmd = Command::new(p);
+    cmd.arg("--version").stdin(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd.output()
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())

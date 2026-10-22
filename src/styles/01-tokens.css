@@ -135,22 +135,23 @@ html.dark .app-shell {
   background: linear-gradient(160deg, rgba(18, 20, 29, 0.94), rgba(13, 15, 22, 0.92) 55%);
 }
 /* [ui-opacity] 外壳底色跟随「界面透明度」：浅色基色 #f3f6fb/#f6f8fc，深色 #12141d/#0d0f16。
-   用 @supports 包住：不支持的 WebView 保留上面的原实色渐变。 */
-@supports (background: color-mix(in srgb, red 50%, transparent)) {
-  .app-shell {
-    background: linear-gradient(
-      160deg,
-      color-mix(in srgb, #f3f6fb var(--ui-surface-alpha, 85%), transparent),
-      color-mix(in srgb, #f6f8fc var(--ui-surface-alpha, 85%), transparent) 55%
-    );
-  }
-  html.dark .app-shell {
-    background: linear-gradient(
-      160deg,
-      color-mix(in srgb, #12141d var(--ui-surface-alpha, 85%), transparent),
-      color-mix(in srgb, #0d0f16 var(--ui-surface-alpha, 85%), transparent) 55%
-    );
-  }
+   用 `rgb(R G B / alpha)`（CSS Color 4，WebView2 109 起即支持）而不是 `color-mix()`：
+   color-mix 需要 WebView2 ≥ 111，而本应用声明的最低 WebView2 是 109 —— 在 109/110 上
+   `@supports (color-mix)` 为假，会落到上面**固定 alpha** 的兜底值，表现就是「调了没反应」。
+   这里无条件消费 App 写入的 --ui-surface-alpha，任何受支持的 WebView 都会跟随设置。 */
+.app-shell {
+  background: linear-gradient(
+    160deg,
+    rgb(243 246 251 / var(--ui-surface-alpha, 85%)),
+    rgb(246 248 252 / var(--ui-surface-alpha, 85%)) 55%
+  );
+}
+html.dark .app-shell {
+  background: linear-gradient(
+    160deg,
+    rgb(18 20 29 / var(--ui-surface-alpha, 85%)),
+    rgb(13 15 22 / var(--ui-surface-alpha, 85%)) 55%
+  );
 }
 
 /* [lc-094] 无边框窗口的边缘缩放热区（6px 边 / 12px 角）。

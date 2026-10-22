@@ -51,14 +51,13 @@ html.dark .sidebar {
   background: rgba(23, 26, 36, 0.82);
 }
 /* [ui-opacity] 侧栏玻璃跟随「界面透明度」：比外壳略实 4%（--ui-sidebar-alpha），
-   模糊与描边不变。不支持 color-mix 时保留上面的 rgba 回退。 */
-@supports (background: color-mix(in srgb, red 50%, transparent)) {
-  .sidebar {
-    background: color-mix(in srgb, #f4f7fc var(--ui-sidebar-alpha, 89%), transparent);
-  }
-  html.dark .sidebar {
-    background: color-mix(in srgb, #171a24 var(--ui-sidebar-alpha, 89%), transparent);
-  }
+   模糊与描边不变。用 `rgb(R G B / alpha)`（WebView2 109 起即支持）而不是 color-mix()：
+   color-mix 需要 WebView2 ≥ 111，在 109/110 上会落到上面固定 alpha 的兜底值（调了没反应）。 */
+.sidebar {
+  background: rgb(244 247 252 / var(--ui-sidebar-alpha, 89%));
+}
+html.dark .sidebar {
+  background: rgb(23 26 36 / var(--ui-sidebar-alpha, 89%));
 }
 /* 收起态：平滑滑出屏（不缩放、不淡出 —— 淡出会让"滑走"失去实体感） */
 .sidebar.collapsed {

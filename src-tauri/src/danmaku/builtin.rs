@@ -116,12 +116,21 @@ pub fn resolve_node(app: &AppHandle) -> Result<PathBuf, String> {
         }
     }
     // 系统 PATH
-    let probe = Command::new("node")
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
+    // [no-console] CREATE_NO_WINDOW：设置面板打开即调 detect_node → resolve_node，
+    // 不隐藏控制台时 `node --version` 会弹一个黑框一闪（用户反馈「开设置页后台窗口闪一下」）。
+    let probe = {
+        let mut cmd = Command::new("node");
+        cmd.arg("--version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        cmd.output()
+    };
     if probe.map(|o| o.status.success()).unwrap_or(false) {
         return Ok(PathBuf::from("node"));
     }

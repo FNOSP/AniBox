@@ -40,6 +40,7 @@ import { pick } from "./lib/format";
 import { bgmImg, pickImgStr, pickLargestImg, tmdbImg } from "./lib/images";
 import { prefersReducedMotion } from "./lib/motion";
 import { DEFAULT_SETTINGS } from "./lib/settings";
+import { computeUiAlpha } from "./lib/uiOpacity";
 import { normalizeCheck } from "./lib/update";
 import { AppSettings, BgmCalendarItem, ChromeTone, Config, Lib, MediaItem, PersonTarget, PersonWork, PlayItem, PlayTarget, TmdbDiscoverItem, UpdateCheckResult } from "./types";
 import "./styles/index.css";
@@ -180,16 +181,15 @@ function App() {
   useEffect(() => {
     document.documentElement.classList.toggle("perf", settings.perfMode);
   }, [settings.perfMode]);
-  // 界面透明度：把百分比写到根元素 CSS 变量，.app-shell / .sidebar 的 color-mix 直接读取。
+  // 界面透明度：把百分比写到根元素 CSS 变量，.app-shell / .sidebar 的 rgb(... / alpha) 直接读取。
   // 用 useLayoutEffect：首帧就用 localStorage 里的值，避免"先 90% 再跳变"。
-  // 旧缓存缺省 → 85；越界值在这里夹住（Rust 侧 set_settings 同口径）。
+  // 取值口径（60–100、默认 85、侧栏 +4%）集中在 lib/uiOpacity.ts，与 Rust 侧 set_settings 同口径。
   useLayoutEffect(() => {
-    const raw = Number(settings.uiOpacity);
-    const pct = Number.isFinite(raw) ? Math.min(100, Math.max(60, Math.round(raw))) : 85;
+    const { surface, sidebar } = computeUiAlpha(settings.uiOpacity);
     const root = document.documentElement;
-    root.style.setProperty("--ui-surface-alpha", `${pct}%`);
+    root.style.setProperty("--ui-surface-alpha", `${surface}%`);
     // 侧栏玻璃比外壳略实一点（+4%），保证导航文字可读
-    root.style.setProperty("--ui-sidebar-alpha", `${Math.min(100, pct + 4)}%`);
+    root.style.setProperty("--ui-sidebar-alpha", `${sidebar}%`);
   }, [settings.uiOpacity]);
   // 启动时拉一次真实配置（校正本地镜像；失败就继续用本地值）
   useEffect(() => {

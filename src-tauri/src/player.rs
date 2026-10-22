@@ -302,14 +302,11 @@ async fn launch_mpv(
     let s = match existing {
         Some(m) => {
             // 复用会话：mpv 已过启动期，IPC 不卡。标题先于 loadfile。
-            // 多条目播放列表靠 #EXTINF 标题驱动 media-title（弹幕链按集名匹配），
-            // 此时不能写 force-media-title —— 它会把所有集都盖成同一个标题。
+            // 多条目播放列表也先写「起播集」标题：容器 Title tag 会顶掉 #EXTINF，
+            // 留空会让首集退化成容器标题（只剩剧名）。后续每一集由 mpv.rs 的
+            // start-file/file-loaded 把该条 #EXTINF 标题逐集写回 force-media-title。
             let _ = m
-                .command(json!([
-                    "set",
-                    "force-media-title",
-                    if playlist_start.is_some() { "" } else { title }
-                ]))
+                .command(json!(["set", "force-media-title", title]))
                 .await;
             if let Some(h) = headers {
                 let (r, u, hf) =
@@ -350,17 +347,13 @@ async fn launch_mpv(
             m
         }
         None => {
-            // 多条目播放列表：标题由 #EXTINF 提供，不传 force-media-title。
-            let force_title = if playlist_start.is_some() {
-                String::new()
-            } else {
-                title.to_string()
-            };
+            // 多条目播放列表：命令行仍带起播集标题（容器 Title tag 会顶掉 #EXTINF），
+            // 后续每集由 mpv.rs 在 start-file/file-loaded 时按 #EXTINF 逐集写回。
             crate::mpv::MpvSession::launch(
                 app.clone(),
                 &cfg.mpv_path,
                 Some(url.to_string()),
-                Some(force_title),
+                Some(title.to_string()),
                 extra,
             )
             .await?
@@ -549,7 +542,7 @@ fn spawn_potplayer_watcher(app: AppHandle, pid: u32, generation: u64, potctl: Op
                     let dur = (dur_ms / 1000.0).floor();
                     if dur > 0.0 {
                         // [progress] 退出兜底跟踪（PotPlayer 无 filename，当前集沿用起播时的那一集）。
-                        crate::fnos_progress::tick(pos, dur);
+                        crate::fnos_progress::tick(&app, pos, dur);
                         let _ = app.emit(
                             "mpv-event",
                             json!({ "event": "property-change", "id": 1, "data": pos }),

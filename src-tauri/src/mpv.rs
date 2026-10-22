@@ -37,10 +37,13 @@ const OBSERVED: [(u64, &str); 13] = [
     // [progress] 百分比进度（0..100，mpv 在时长已知后才会给出）：前端可直接用于展示/上报，
     // 但进度回传仍以 time-pos/duration 为准（percent-pos 在时长为 0 时是 null）。
     (12, "percent-pos"),
-    // [progress] 当前播放条目的文件名/URL：整季播放列表自动切集后，前端据此解析出
+    // [progress] 当前播放条目的**完整 URL**：整季播放列表自动切集后，前端据此解析出
     // 「当前正在播的是哪一集（guid）」，把进度回传给飞牛对应的 item（旧项目同做法：
     // 从 `/api/v1/playvideo/<guid>` 的 URL 里取 guid）。
-    (13, "filename"),
+    // [fix] 必须观察 `path` 而不是 `filename`：`filename` 是 URL 的最后一段（basename），
+    // `/api/v1/playvideo/` 前缀会被剥掉 → 解析永远为空（切集进度记到第一集上的根因）。
+    // 参照随包 Lua 脚本 `fntv_nas_sub.lua` 也是用 `path` 匹配 `/playvideo/`。
+    (13, "path"),
 ];
 
 pub struct MpvSession {
@@ -243,8 +246,14 @@ impl MpvSession {
             let fs_expect2 = fs_expect.clone();
             // [lc-101] start-file → file-loaded 的耗时（"拉取半天"到底花在哪一步，有数可查）
             let load_started2: Arc<Mutex<Option<std::time::Instant>>> = Arc::new(Mutex::new(None));
+            // [title] 逐集标题回填状态机（整季 M3U 专用，见下方 start-file/file-loaded 分支）：
+            //   playlist-pos → playlist/<pos>/title → set force-media-title
+            // 两个 request_id 记在这里，回包在同一个读线程里消化，不占用 pending 表。
+            let next_id2 = next_id.clone();
             std::thread::spawn(move || {
                 let first_event = std::sync::atomic::AtomicBool::new(true);
+                let mut pos_req: Option<u64> = None;
+                let mut title_req: Option<u64> = None;
                 let reader = BufReader::new(read_file);
                 for line in reader.lines() {
                     let Ok(line) = line else { break };
@@ -255,6 +264,48 @@ impl MpvSession {
                         continue;
                     };
                     if let Some(rid) = v.get("request_id").and_then(|r| r.as_u64()) {
+                        // [title] 逐集标题回填：pos 回包 → 取该条 #EXTINF 标题；标题回包 → 写回。
+                        if pos_req == Some(rid) {
+                            pos_req = None;
+                            if let Some(pos) = v.get("data").and_then(|d| d.as_i64()) {
+                                if pos >= 0 {
+                                    let rid2 = next_id2.fetch_add(1, Ordering::SeqCst);
+                                    title_req = Some(rid2);
+                                    let line = json!({
+                                        "command": ["get_property", format!("playlist/{pos}/title")],
+                                        "request_id": rid2,
+                                    })
+                                    .to_string()
+                                        + "\n";
+                                    if let Some(f) = tx.lock().unwrap().as_mut() {
+                                        let _ = f.write_all(line.as_bytes());
+                                        let _ = f.flush();
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                        if title_req == Some(rid) {
+                            title_req = None;
+                            let title = v
+                                .get("data")
+                                .and_then(|d| d.as_str())
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty());
+                            if let Some(t) = title {
+                                // 容器自带的 Title tag 会顶掉 #EXTINF，只有 force-media-title 优先级更高。
+                                let line = json!({
+                                    "command": ["set", "force-media-title", t],
+                                })
+                                .to_string()
+                                    + "\n";
+                                if let Some(f) = tx.lock().unwrap().as_mut() {
+                                    let _ = f.write_all(line.as_bytes());
+                                    let _ = f.flush();
+                                }
+                            }
+                            continue;
+                        }
                         if let Some(tx) = pending2.lock().unwrap().remove(&rid) {
                             let _ = tx.send(v);
                         }
@@ -286,6 +337,12 @@ impl MpvSession {
                             "end-file" => {
                                 let reason = v.get("reason").and_then(|r| r.as_str()).unwrap_or("");
                                 let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+                                // [fix] 切集/停止/播完时**先结算当前集**（跟踪器里还是这一集的终值），
+                                // 再把计数清零；否则下一集的 time-pos 会顶掉上一集的最后位置。
+                                // `redirect` 是同一内容被内部重开（位置连续），不能当结束结算。
+                                if reason != "redirect" {
+                                    crate::fnos_progress::settle_current(&app2);
+                                }
                                 // 用户主动切片/停止/重定向不算失败，别弹错；
                                 // 另外 "Opening failed or was aborted" / "Failed writing received
                                 // data…" 是 `loadfile replace` 打断上一次加载留下的产物（实测日志里
@@ -321,6 +378,29 @@ impl MpvSession {
                             }
                             _ => {}
                         }
+                        // [title] 每个文件开始加载 / 加载完成时，把**该条 #EXTINF 标题**写回
+                        // `force-media-title`。原因（实测 mpv v0.41）：media-title 的优先级是
+                        // `force-media-title` → 容器 Title tag → 播放列表条目标题；fnOS 出的 MP4
+                        // 自带繁体 `Title` tag，会把整季 M3U 的 #EXTINF（`剧名 - S1E3: 集名`）
+                        // 整个顶掉，窗口标题只剩剧名。逐集写 force-media-title 既能把季/集/集名
+                        // 带回来，又不会像命令行那样把**所有集**盖成同一个标题。
+                        if matches!(ev, "start-file" | "file-loaded")
+                            && pos_req.is_none()
+                            && title_req.is_none()
+                        {
+                            let rid = next_id2.fetch_add(1, Ordering::SeqCst);
+                            pos_req = Some(rid);
+                            let line = json!({
+                                "command": ["get_property", "playlist-pos"],
+                                "request_id": rid,
+                            })
+                            .to_string()
+                                + "\n";
+                            if let Some(f) = tx.lock().unwrap().as_mut() {
+                                let _ = f.write_all(line.as_bytes());
+                                let _ = f.flush();
+                            }
+                        }
                         continue;
                     }
                     let Some(id) = v.get("id").and_then(|i| i.as_u64()) else {
@@ -330,17 +410,18 @@ impl MpvSession {
                     match id {
                         1 => {
                             if let Some(d) = v.get("data").and_then(|x| x.as_f64()) {
-                                crate::fnos_progress::tick(d, 0.0);
+                                crate::fnos_progress::tick(&app2, d, 0.0);
                             }
                         }
                         2 => {
                             if let Some(d) = v.get("data").and_then(|x| x.as_f64()) {
-                                crate::fnos_progress::tick(0.0, d);
+                                crate::fnos_progress::tick(&app2, 0.0, d);
                             }
                         }
                         13 => {
                             if let Some(s) = v.get("data").and_then(|x| x.as_str()) {
-                                crate::fnos_progress::set_item_from_url(s);
+                                // 切集：结算上一集 + 重置本集计时（见 fnos_progress）。
+                                crate::fnos_progress::set_item_from_url(&app2, s);
                             }
                         }
                         _ => {}

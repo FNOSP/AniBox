@@ -48,6 +48,8 @@ mod watched;
 mod webrs;
 // [webview2] Windows WebView2 Runtime 检测 + 应用内下载兜底（见模块头注释）
 mod webview2;
+// [title] 展示标题繁 → 简（仅 mpv/#EXTINF 等展示字段，匹配元数据保持原文）
+mod zh;
 
 /// [lc-1417] 详情页数据的落盘 TTL：**120 天**（用户指定）。
 /// 覆盖：飞牛条目详情 / 季列表 / 集列表 / TMDB 详情。
@@ -1132,6 +1134,12 @@ fn search_num(o: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<i64> 
     None
 }
 
+/// [lc-1726] 取第一个**正数**字段（0/缺失继续找下一个）。
+/// 季/集数用：`local_*`（实际入库）为 0 时仍能回退到 `number_*`。
+fn search_num_pos(o: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<i64> {
+    keys.iter().find_map(|k| search_num(o, &[*k]).filter(|n| *n > 0))
+}
+
 /// 把上游条目归一为搜索下拉用的统一视图；`item` 保留原始对象。
 fn search_item_view(raw: &Value) -> Value {
     let empty = serde_json::Map::new();
@@ -1163,8 +1171,9 @@ fn search_item_view(raw: &Value) -> Value {
         }
     };
     let rating = search_str(o, &["vote_average", "rating"]);
-    let episodes = search_num(o, &["number_of_episodes", "local_number_of_episodes"]);
-    let seasons = search_num(o, &["number_of_seasons", "local_number_of_seasons"]);
+    // [lc-1726] 季/集数与海报卡同口径：优先 local_*（实际入库），再回退 number_*。
+    let episodes = search_num_pos(o, &["local_number_of_episodes", "number_of_episodes"]);
+    let seasons = search_num_pos(o, &["local_number_of_seasons", "number_of_seasons"]);
     let works = search_num(o, &["number_of_item", "number_of_works"]);
     let overview = search_str(o, &["overview", "description", "biography"]);
     json!({
@@ -1475,6 +1484,12 @@ async fn resolve_play_guid(
                 it.get(k)
                     .and_then(|v| v.as_i64())
                     .or_else(|| it.get(k).and_then(|v| v.as_f64()).map(|f| f as i64))
+                    // 部分版本把集号/季号写成字符串（"3"），别因此退化成 0。
+                    .or_else(|| {
+                        it.get(k)
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| s.trim().parse::<i64>().ok())
+                    })
                     .unwrap_or(0)
             };
             // [progress] 飞牛 `play/record` 需要的流 guid（play/info 顶层，实测同旧项目）。
@@ -1500,6 +1515,8 @@ async fn resolve_play_guid(
             }
             let ep_title = get_s("title")
                 .or_else(|| get_s("name"))
+                // 最后兜底：个别条目只有文件名（带扩展名，聊胜于无）。
+                .or_else(|| get_s("file_name"))
                 .or_else(|| {
                     let t = top_s("title");
                     (!t.is_empty()).then_some(t)
@@ -1510,25 +1527,35 @@ async fn resolve_play_guid(
                 })
                 .or_else(|| live_name.clone())
                 .unwrap_or_default();
-            let tv_title = get_s("tv_title");
-            let season = get_n("season_number");
-            let episode = get_n("episode_number");
+            // [title] 剧名来源：`item.tv_title` 并非每集都有；飞牛 `play/info` 的条目上
+            // 更常见的字段是 `item.parent_title`（旧项目 skip/douban 同步都用
+            // `parent_title || title`）。只读 tv_title 会让剧集标题退化成「只剩集标题」，
+            // 弹幕按番名匹配自然失败。这里按 tv_title → parent_title → 顶层同名字段逐级兜底。
+            let tv_title = get_s("tv_title")
+                .or_else(|| get_s("parent_title"))
+                .or_else(|| {
+                    let t = top_s("parent_title");
+                    (!t.is_empty()).then_some(t)
+                })
+                .or_else(|| {
+                    let t = top_s("tv_title");
+                    (!t.is_empty()).then_some(t)
+                });
+            // 季/集号同样做 snake_case / camelCase 双格式兼容（飞牛各版本不一致）。
+            let season = get_n("season_number").max(get_n("seasonNumber"));
+            let episode = get_n("episode_number").max(get_n("episodeNumber"));
             // [lc-1561] 季/集号缺失时不拼 "S0E0"：那会在弹幕面板的番名里留下 "- : " 残渣
             // （fnOS 未提供 season/episode 时 season=episode=0 → "番名 - S0E0: 集名" →
             // uosc_danmaku 的 bili_fast_parse 剥掉 "S0E0" 后只剩 "番名 - : 集名"）。
-            // 主仓库 getTitle 靠 tvTitle 是否存在分支；这里再按「季集号是否有效」细一档，
-            // 三种形态：完整 S/E、只有番名+集名、只有集名。
-            // [lc-1615] 用 as_deref 匹配：tv_title 之后还要进历史记录，不能被 match 移走。
-            let media_title = match tv_title.as_deref() {
-                Some(tv) if !tv.is_empty() && season > 0 && episode > 0 => {
-                    format!("{tv} - S{season}E{episode}: {ep_title}")
-                }
-                Some(tv) if !tv.is_empty() && !ep_title.is_empty() => {
-                    format!("{tv} - {ep_title}")
-                }
-                Some(tv) if !tv.is_empty() => tv.to_string(),
-                _ => ep_title.clone(),
-            };
+            // 现在统一交给 `playlist_episode_title`：集号 > 0 才拼 SxxEyy（季号缺省记 0，
+            // 特别篇也能看出集号），集名缺失时保留 SxxEyy 而不留裸冒号。
+            // [lc-1615] tv_title 之后还要进历史记录，这里只借用不移动。
+            let media_title = playlist_episode_title(
+                tv_title.as_deref().unwrap_or(""),
+                season,
+                episode,
+                &ep_title,
+            );
             // [lc-1561] 自建源的「系列级匹配记忆」用季 guid 做键（同一部剧的各集共用，
             // 命中一次后续集免搜索）。主仓库要再发一次 play/info 才拿到（resolveSeriesKey），
             // 这里响应就在手上，直取省一次往返。字段名与主仓库同口径：
@@ -1612,16 +1639,37 @@ struct PlaylistEntry {
     episode: i64,
 }
 
-/// [playlist] 拼单集展示标题：与 `resolve_play_guid` 的 media_title 同口径
-/// （`剧名 - SxxEyy: 集名`；缺季集号时退化为 `剧名 - 集名` / 集名）。
+/// [playlist] 拼单集展示标题（`resolve_play_guid` 的 media_title 与整季 #EXTINF 共用）：
+/// `剧名 - SxxEyy: 集名`；集名为空时保留 `剧名 - SxxEyy`（不留下裸的 `": "`）；
+/// 季集号缺失时退化为 `剧名 - 集名` / `剧名` / 集名。
+///
+/// 判据是 **集号 > 0**（不是「季号 > 0 且集号 > 0」）：飞牛对部分剧集只给
+/// `episode_number`、季号缺省为 0（特别篇/未分季），旧写法会把 `S0E3` 整个丢掉，
+/// 弹幕脚本与 uosc 就看不出这是第几集。电影/个人视频的集号是 0，因此不会出现 `S0E0`。
+///
+/// [title] 拼装前先把剧名/集名转简体：本函数是 `media_title`、整季 `#EXTINF`、
+/// `write_play_meta` 展示字段与 PotPlayer 标题的**共同源头**，在这里转换即可一次覆盖，
+/// 且格式（`剧名 - S1E3: 集名`）不受影响。`PlayResolution` 里的原始 `tv_title`/
+/// `ep_title` 保持繁体原样，继续供弹幕/跳过/历史匹配使用。
 fn playlist_episode_title(tv: &str, season: i64, episode: i64, ep_title: &str) -> String {
-    let tv = tv.trim();
-    let ep_title = ep_title.trim();
-    match (tv.is_empty(), season > 0 && episode > 0, ep_title.is_empty()) {
-        (false, true, _) => format!("{tv} - S{season}E{episode}: {ep_title}"),
+    let tv = zh::to_simplified(tv.trim());
+    let ep_title = zh::to_simplified(ep_title.trim());
+    let tv = tv.as_str();
+    let ep_title = ep_title.as_str();
+    let has_ep = episode > 0;
+    let se = if has_ep {
+        format!("S{}E{}", season.max(0), episode)
+    } else {
+        String::new()
+    };
+    match (tv.is_empty(), has_ep, ep_title.is_empty()) {
+        (false, true, false) => format!("{tv} - {se}: {ep_title}"),
+        (false, true, true) => format!("{tv} - {se}"),
         (false, false, false) => format!("{tv} - {ep_title}"),
         (false, false, true) => tv.to_string(),
-        _ => ep_title.to_string(),
+        (true, true, false) => format!("{se}: {ep_title}"),
+        (true, true, true) => se,
+        (true, false, _) => ep_title.to_string(),
     }
 }
 
@@ -1858,19 +1906,30 @@ async fn play_item(
                     if g.is_empty() {
                         continue;
                     }
-                    let se = ep
-                        .get("season_number")
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(res.season);
-                    let no = ep
-                        .get("episode_number")
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(0);
-                    let t = ep
-                        .get("title")
-                        .and_then(|v| v.as_str())
+                    // [title] 逐集字段兼容：飞牛 `episode/list` 各版本字段名不一致
+                    // （snake_case / camelCase），集标题还可能只在 `name` / `file_name` 上。
+                    // 取不到时按「缺省」处理：季号回落起播集的季号，集号/集名留空
+                    // （宁可只显示剧名，也不要凭空造一个集号去喂 skip-metadata）。
+                    let num_of = |keys: &[&str]| -> Option<i64> {
+                        keys.iter().find_map(|k| {
+                            ep.get(*k).and_then(|v| {
+                                v.as_i64().or_else(|| {
+                                    v.as_str().and_then(|s| s.trim().parse::<i64>().ok())
+                                })
+                            })
+                        })
+                    };
+                    let se = num_of(&["season_number", "seasonNumber"]).unwrap_or(res.season);
+                    let no = num_of(&["episode_number", "episodeNumber"]).unwrap_or(0);
+                    let t = ["title", "name", "file_name", "fileName"]
+                        .iter()
+                        .find_map(|k| {
+                            ep.get(*k)
+                                .and_then(|v| v.as_str())
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty())
+                        })
                         .unwrap_or("")
-                        .trim()
                         .to_string();
                     let dur = ep
                         .get("duration")
@@ -2803,6 +2862,9 @@ pub fn run() {
                 disk_cache::init(root, cfg.cache_limit_mb);
             }
             *app.state::<AppState>().config.blocking_write() = cfg.clone();
+            // [progress] 上次进程被强杀（任务管理器 / kill）前落盘的最后进度：启动时补报一次。
+            // 必须在 config 就绪之后（补报要读 token / 服务器地址）。
+            fnos_progress::replay_pending(app.handle());
             // [gamepad] 全局手柄轮询（默认关闭；后台线程，退出时由 RunEvent::Exit 停止）
             gamepad::spawn(app.handle().clone(), gamepad::GamepadSettings::from(&cfg));
             // [lc-1561] 自建弹幕接口配置桥（Node 侧每次读盘 ⇒ 这里先写一份，后续 save_config
@@ -3153,6 +3215,10 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
+                // [progress][fix] 退出前**同步** flush 最后一次进度（网络上限 3s），
+                // 必须放在杀 mpv / 丢异步运行时之前 —— 否则 `flush_on_exit` spawn 出去的任务
+                // 根本没机会跑，这就是「直接关掉软件最后一次进度丢失」的根因。
+                let _ = tauri::async_runtime::block_on(fnos_progress::flush_on_exit_sync(app_handle));
                 // 退出时清场：mpv 子进程 + 嵌入窗口 + Go 代理
                 let st = app_handle.state::<AppState>();
                 // [gamepad] 停止手柄轮询线程（≤8ms 自行退出）
@@ -3244,11 +3310,68 @@ mod tests {
             super::playlist_episode_title("番名", 1, 5, "集名"),
             "番名 - S1E5: 集名"
         );
+        // 集标题缺失：保留 SxxExx，不留裸的 ": "。
+        assert_eq!(
+            super::playlist_episode_title("番名", 1, 5, ""),
+            "番名 - S1E5"
+        );
+        // 特别篇/未分季：季号缺省为 0 时仍要带集号（旧写法会整段丢掉）。
+        assert_eq!(
+            super::playlist_episode_title("番名", 0, 3, "集名"),
+            "番名 - S0E3: 集名"
+        );
+        // 电影/个人视频：集号 0 → 不出现 S0E0。
+        assert_eq!(
+            super::playlist_episode_title("电影", 0, 0, ""),
+            "电影"
+        );
         assert_eq!(
             super::playlist_episode_title("番名", 0, 0, "集名"),
             "番名 - 集名"
         );
-        assert_eq!(super::playlist_episode_title("", 1, 5, "集名"), "集名");
+        assert_eq!(
+            super::playlist_episode_title("", 1, 5, "集名"),
+            "S1E5: 集名"
+        );
+        assert_eq!(super::playlist_episode_title("", 0, 0, "集名"), "集名");
+    }
+
+    /// [title] 繁体剧名/集名 → 简体，且格式严格保持 `剧名 - S1E3: 集名`。
+    #[test]
+    fn playlist_episode_title_converts_traditional() {
+        assert_eq!(
+            super::playlist_episode_title(
+                "亂世千金倪亞．利斯頓轉生為嬌弱千金的弒神武人華麗無雙錄",
+                1,
+                3,
+                "舞台落幕之後"
+            ),
+            "乱世千金倪亚．利斯顿转生为娇弱千金的弑神武人华丽无双录 - S1E3: 舞台落幕之后"
+        );
+        // 集名缺失：`剧名 - S1E3`，不出现裸冒号。
+        assert_eq!(
+            super::playlist_episode_title("愛蜜莉雅", 1, 3, ""),
+            "爱蜜莉雅 - S1E3"
+        );
+        // 特别篇：S0Exx 同样保留。
+        assert_eq!(
+            super::playlist_episode_title("繁體番名", 0, 7, "特別篇"),
+            "繁体番名 - S0E7: 特别篇"
+        );
+        // 电影：无 SxxExx，只拼 `剧名 - 集名`。
+        assert_eq!(
+            super::playlist_episode_title("劇場版", 0, 0, "覺醒"),
+            "剧场版 - 觉醒"
+        );
+        // 非中文原样保留（英文/数字/假名/拉丁标点）。
+        assert_eq!(
+            super::playlist_episode_title("Re:Zero", 1, 3, "Memory Snow"),
+            "Re:Zero - S1E3: Memory Snow"
+        );
+        assert_eq!(
+            super::playlist_episode_title("この素晴らしい世界に祝福を！", 0, 0, "第1話"),
+            "この素晴らしい世界に祝福を！ - 第1话"
+        );
     }
 
     /// [playlist] 整季 M3U：每条一个 #EXTINF + 本机代理 URL，顺序与条目一致。

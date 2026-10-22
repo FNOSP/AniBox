@@ -51,6 +51,12 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # [lc-1599] Win32_System_SystemInformation：反馈日志环境块取**本地时间**（GetLocalTime）。
 # 同 crate 加 feature（不新增任何依赖），模块本身只依赖已启用的 Foundation。
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Registry", "Win32_Security", "Win32_System_SystemInformation", "Win32_System_Time"] }
+# [title] 展示标题繁 → 简（仅 mpv/#EXTINF/PotPlayer 标题，不碰匹配元数据）。
+# zhconv：纯 Rust、编译期内嵌 MediaWiki/OpenCC 转换表，运行时零网络；许可证
+# GPL-2.0-or-later 与本项目 GPL-3.0 兼容（"or later"）。
+# 关掉默认的 compress（避免引入 zstd(C)/ruzstd），只编 mediawiki-hans 一张表，
+# 内嵌数据约 1.2 MiB（实测 ZH_TO_HANS.daac 1.14 MiB + 词表 40 KiB）。
+zhconv = { version = "0.4", default-features = false, features = ["mediawiki-hans"] }
 # [gamepad] 全局手柄：显式选择 XInput 后端。
 # - WGI（Windows.Gaming.Input，gilrs 的默认 feature）只有在进程拥有**前台焦点窗口**时才产出事件；
 #   本应用的核心场景是 mpv/PotPlayer 在前台、AniBox 在后台，WGI 会「显示已连接但按键无输入」。

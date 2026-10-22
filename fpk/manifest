@@ -1,6 +1,6 @@
 appname=fntvplus
-release_version=1.2.0
-version=1.2.0
+release_version=1.3.0
+version=1.3.0
 display_name=AniBox
 desc=AniBox 飞牛影视增强微应用（fnOS 微应用）：点开即用的影视网页增强版，电视/平板/手机/电脑全设备生效，影视文件零改动、卸载即还原。主要功能：TMDB 信息卡、多源弹幕（自建源 / B站 / 弹弹play，扫码登录、来源可视）、界面美化（首页轮播、海报墙、详情页柔光玻璃、Logo 自定义）、片头片尾手动标记与自动跳过、播放记忆跨设备同步、豆瓣 / Bangumi / Trakt 同步、观影记录与年度报告。PC 重度观影可选 AniBox 桌面客户端（MPV 硬解 / 原盘）。
 source=thirdparty

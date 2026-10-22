@@ -285,7 +285,10 @@ try{if(typeof window!=='undefined'){if(typeof window.require==='undefined'){wind
         const r = e.reason;
         push("[unhandledrejection] " + (r && (r.stack || r.message) || String(r)));
       });
-      window.addEventListener("beforeunload", flush);
+      window.addEventListener("pagehide", flush);
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") flush();
+      });
     } catch (_) {
     }
     push("[diag] installed @" + location.pathname);
@@ -1388,7 +1391,9 @@ try{if(typeof window!=='undefined'){if(typeof window.require==='undefined'){wind
           }
           if (channel === "person:tmdb-brief" || channel === "person:tmdb-credits") {
             const ep = channel === "person:tmdb-brief" ? "brief" : "credits";
-            return apiPost("/app/fntvplus/api/bridge/person/" + ep, { guid: args[0], cookie: document.cookie });
+            const a = args[0];
+            const body = a && typeof a === "object" ? Object.assign({}, a, { cookie: document.cookie }) : { guid: a, cookie: document.cookie };
+            return apiPost("/app/fntvplus/api/bridge/person/" + ep, body);
           }
           if (channel === "settings:open-external") {
             try {
@@ -1468,7 +1473,13 @@ try{if(typeof window!=='undefined'){if(typeof window.require==='undefined'){wind
         }
       };
       shell = {
-        openExternal() {
+        // [fix-cast-page] 旧实现是空函数：调用方常写 try{shell.openExternal(u)}catch{window.open(u)}，
+        //   空函数不抛错 → 兜底永不执行 → 网页端「点击缺失作品/外链」毫无反应。这里直接新标签打开。
+        openExternal(u) {
+          try {
+            window.open(String(u || ""), "_blank", "noopener");
+          } catch (e) {
+          }
         },
         openPath() {
         },
@@ -1775,8 +1786,7 @@ try{if(typeof window!=='undefined'){if(typeof window.require==='undefined'){wind
     "\u8BED\u8A00 / Language": "Language",
     "B\u7AD9\u5F39\u5E55": "Bilibili danmaku",
     "Bangumi \u767B\u5F55": "Bangumi login",
-    "TMDB API Key": "TMDB API Key",
-    "TMDB \u514D\u68AF\u5B50\u76F4\u8FDE\uFF08\u5B9E\u9A8C\uFF09": "TMDB direct access (experimental)",
+    "\u70ED\u95E8\u5267\u66F4\u65B0\u6570\u636E\u6E90": "Trending data source",
     "\u8C46\u74E3\u540C\u6B65": "Douban sync",
     "Trakt \u540C\u6B65": "Trakt sync",
     "\u5F39\u5F39play": "dandanplay",
@@ -1813,7 +1823,6 @@ try{if(typeof window!=='undefined'){if(typeof window.require==='undefined'){wind
     "\u9ED8\u8BA4\u5F00\u542F\u63D2\u5E27\uFF08\u542F\u52A8\u5373\u751F\u6548\uFF09": "Interpolation on by default (at startup)",
     "\u542F\u7528\u8C46\u74E3\u540C\u6B65": "Enable Douban sync",
     "\u542F\u7528\u81EA\u5B9A\u4E49\u4EE3\u7406": "Enable custom proxy",
-    "\u542F\u7528\u514D\u68AF\u5B50\u76F4\u8FDE": "Enable direct access (no proxy)",
     "\u542F\u7528 MPV B\u7AD9\u5F39\u5E55\u641C\u7D22": "Enable MPV Bilibili danmaku search",
     "\u542F\u7528 Bangumi \u96C6\u6570\u540C\u6B65": "Enable Bangumi episode sync",
     "\u81EA\u52A8\u8DF3\u8FC7\u7247\u5934\u7247\u5C3E": "Auto-skip intro / outro",
@@ -1962,7 +1971,7 @@ try{if(typeof window!=='undefined'){if(typeof window.require==='undefined'){wind
     "img IP\uFF08\u5982 65.8.20.8\uFF09": "img IP (e.g. 65.8.20.8)",
     "\u6B63\u5728\u4ECE CheckTMDB \u62C9\u53D6\u6700\u65B0 IP\u2026": "Fetching latest IP from CheckTMDB\u2026",
     "\u66F4\u65B0\u5931\u8D25": "Update failed",
-    "\u9009\u62E9\u300C\u70ED\u95E8\u5267\u66F4\u65B0\u300D\u6D6E\u5C42\u7684\u6570\u636E\u6E90\u3002\u8C46\u74E3\u56FD\u5185\u76F4\u8FDE\u3001\u514D Key\u3001\u96F6\u914D\u7F6E\uFF1BTMDB \u6570\u636E\u66F4\u5168\u4F46\u9700 Key \u4E14\u53EF\u80FD\u88AB\u5899\uFF08\u9700\u514D\u68AF\u5B50\u76F4\u8FDE/\u4EE3\u7406\uFF09\u3002": 'Choose the data source for the "Trending" overlay. Douban works in China with no key; TMDB is richer but needs a key and may be blocked.',
+    "\u9009\u62E9\u300C\u70ED\u95E8\u5267\u66F4\u65B0\u300D\u6D6E\u5C42\u7684\u6570\u636E\u6E90\u3002\u8C46\u74E3\u56FD\u5185\u76F4\u8FDE\u3001\u514D Key\u3001\u96F6\u914D\u7F6E\uFF1BTMDB \u6570\u636E\u66F4\u5168\uFF08\u5185\u7F6E\u955C\u50CF\u53D6\u6570\uFF0C\u65E0\u9700\u624B\u52A8\u914D\u7F6E\uFF09\u3002": 'Choose the data source for the "Trending" overlay. Douban works in China with no key; TMDB is richer (built-in mirror, no manual config).',
     "\u2713 \u5DF2\u9009\u8C46\u74E3\uFF1A\u56FD\u5185\u76F4\u8FDE\u3001\u514D Key\u3001\u96F6\u914D\u7F6E\uFF0C\u65E0\u9700\u4EFB\u4F55\u989D\u5916\u8BBE\u7F6E\u3002\u300C\u70ED\u95E8\u5267\u66F4\u65B0\u300D\u6D6E\u5C42\u5C06\u5C55\u793A\u8C46\u74E3\u70ED\u95E8\u5F71\u89C6\u3002": '\u2713 Douban selected: direct in China, no key, zero config. "Trending" shows Douban picks.',
     "\u8BF7\u5728\u5F39\u51FA\u7684\u7A97\u53E3\u4E2D\u7528\u8C46\u74E3 App \u626B\u7801\u2026": "Scan the QR with the Douban app in the popup\u2026",
     "\u6253\u5F00\u767B\u5F55\u7A97\u53E3\u5931\u8D25": "Failed to open login window",
@@ -2006,6 +2015,9 @@ try{if(typeof window!=='undefined'){if(typeof window.require==='undefined'){wind
     "\u8FDE\u63A5\u6B63\u5E38 \xB7 {src} \xB7 {ms}ms \xB7 \u547D\u4E2D {n} \u6761 {sample}": "Connection OK \xB7 {src} \xB7 {ms}ms \xB7 {n} hits {sample}",
     "\u8FDE\u63A5\u5931\u8D25\uFF1A": "Connection failed: ",
     "\u672A\u77E5\u9519\u8BEF": "Unknown error",
+    // 镜像站点故障统一文案（core/mirrorError.ts；TMDB / Bangumi 取数失败一律用它，
+    // 绝不把镜像地址 / 域名 / URL 透出到界面）
+    "\u5F53\u524D\u955C\u50CF\u7AD9\u70B9\u6545\u969C\uFF0C\u8BF7\u7A0D\u540E\u5C1D\u8BD5": "The mirror site is currently unavailable \u2014 please try again later",
     "\u6D4B\u8BD5\u5931\u8D25": "Test failed",
     "\u5DF2\u5F00\u542F\u4F46\u672A\u586B\u670D\u52A1\u5730\u5740 \u2014\u2014 \u5C55\u5F00\u300C\u670D\u52A1\u5730\u5740\u4E0E\u8FDE\u901A\u6D4B\u8BD5\u300D\u586B\u5199\u540E\u70B9\u4FDD\u5B58\u3002": 'Enabled but no service address \u2014 open "Service address & connection test", fill it in and save.',
     "\u586B\u5165 NAS \u4E0A\u90E8\u7F72\u7684 danmu_api \u670D\u52A1\u5730\u5740\uFF08\u805A\u5408\u591A\u5E73\u53F0\u5F39\u5E55\uFF0C\u5BC6\u5EA6\u9AD8\u4E8E\u5355\u6E90 B\u7AD9\uFF09\u3002\u5F00\u542F\u540E\u4F5C\u4E3A\u4F18\u9009\u6E90\uFF0C\u672A\u547D\u4E2D\u81EA\u52A8\u964D\u7EA7\u5185\u7F6E B\u7AD9\uFF1B\u4E0B\u6B21 MPV \u64AD\u653E\u65F6\u751F\u6548\u3002": "Enter the danmu_api service address deployed on your NAS (aggregates multiple platforms, denser than Bilibili alone). When on it becomes the preferred danmaku source and falls back to the built-in Bilibili fetch on a miss. Takes effect on next MPV play.",
@@ -2035,6 +2047,7 @@ try{if(typeof window!=='undefined'){if(typeof window.require==='undefined'){wind
     "\u57FA\u4E8E\u98DE\u725B\u5F71\u89C6\uFF08fnOS TV\uFF09\u6253\u9020\u7684\u589E\u5F3A\u684C\u9762\u5BA2\u6237\u7AEF\uFF0C\u91C7\u7528 Electron + \u4E9A\u514B\u529B\u73BB\u7483 UI\u3002\u652F\u6301 MPV \u64AD\u653E\u5668\u3001B\u7AD9\u5F39\u5E55\u3001\u81EA\u5B9A\u4E49\u900F\u660E\u5EA6\u4E0E\u6A21\u7CCA\u6548\u679C\u3002": "An enhanced desktop client for fnOS TV, built with Electron + an acrylic glass UI. Supports MPV, Bilibili danmaku, custom transparency & blur.",
     "\u7248\u672C\uFF1A\u83B7\u53D6\u4E2D\u2026": "Version: loading\u2026",
     "\u{1F517} GitHub \u9879\u76EE\u5730\u5740": "\u{1F517} GitHub project",
+    "\u4F5C\u8005\u5B98\u7F51": "Author website",
     "\u5DF2\u91CD\u7F6E\u4E3A\u81EA\u52A8\uFF08\u5F53\u524D\u5F71\u89C6\u8FDE\u63A5\u6839\u8DEF\u5F84\uFF09": "Reset to auto (current TV connection root)",
     "\u91CD\u7F6E\u5931\u8D25": "Reset failed",
     "\u4E3A Bangumi \u6BCF\u65E5\u653E\u9001\u3001TMDB\uFF08\u5F71\u89C6\u53D1\u73B0/\u6D77\u62A5\uFF09\u7B49\u6570\u636E\u6E90\u6307\u5B9A\u4EE3\u7406\u5165\u53E3\u3002\u652F\u6301 HTTP / HTTPS\uFF0C\u53EF\u586B\u8D26\u53F7\u5BC6\u7801\u9274\u6743\u3002\u4F18\u5148\u7EA7\u4F4E\u4E8E\u73AF\u5883\u53D8\u91CF HTTPS_PROXY\uFF08\u5DF2\u8BBE\u73AF\u5883\u53D8\u91CF\u5219\u5B83\u5148\u751F\u6548\uFF09\u3002\u5F00\u542F\u5F00\u5173\u5E76\u586B\u5199\u5730\u5740\u540E\u624D\u751F\u6548\u3002": "Proxy endpoint for Bangumi daily / TMDB (discovery / posters) sources. HTTP / HTTPS with optional auth. Lower priority than the HTTPS_PROXY env var. Takes effect after enabling and filling the address.",
@@ -3478,6 +3491,25 @@ try{if(typeof window!=='undefined'){if(typeof window.require==='undefined'){wind
   init_electron();
   init_logger();
 
+  // src/preload/core/mirrorError.ts
+  var MIRROR_UNAVAILABLE = "\u5F53\u524D\u955C\u50CF\u7AD9\u70B9\u6545\u969C\uFF0C\u8BF7\u7A0D\u540E\u5C1D\u8BD5";
+  var UPSTREAM_ADDRESS_RE = /https?:\/\/|690075\.xyz|workers\.dev|themoviedb\.org|tmdb\.org|image\.tmdb\.org|bgm\.tv|镜像不可用|镜像取数失败|镜像站点/i;
+  function rawText(raw) {
+    if (typeof raw === "string") return raw;
+    if (raw == null) return "";
+    if (typeof raw === "object") {
+      const msg = raw.message;
+      if (typeof msg === "string") return msg;
+    }
+    return String(raw);
+  }
+  function friendlyError(raw, fallback = "") {
+    const text = rawText(raw).trim();
+    if (!text) return fallback;
+    if (UPSTREAM_ADDRESS_RE.test(text)) return t(MIRROR_UNAVAILABLE);
+    return text;
+  }
+
   // src/preload/plugins/mobileStyle.ts
   var STYLE_ID2 = "fnos-mobile-css";
   var UI_MODE_KEY = "fntv_ui_mode";
@@ -3947,14 +3979,7 @@ html.fnos-compact #fnos-dialog-overlay [data-fnos-dialog-card="1"]{
   max-width:calc(100vw - 32px) !important;
   padding:18px 16px 14px !important;
 }
-/* F2. \u53CD\u9988/QQ\u7FA4\u5F39\u7A97 300~320px \u5B9A\u5BBD + 22~24px padding \u2192 360px \u4E0B\u6EA2\u51FA\uFF0C\u7EDF\u4E00\u5939\u5230\u89C6\u53E3\u5185\u3002 */
-html.fnos-compact #fnos-feedback-modal,
-html.fnos-compact #fnos-feedback-choice-modal,
-html.fnos-compact #fnos-qq-group-modal{
-  width:calc(100vw - 32px) !important;
-  max-width:340px !important;
-  padding:18px 16px !important;
-}
+/* F2. [v1.13.0] \u539F\u300C\u53CD\u9988/QQ\u7FA4\u300D\u5F39\u7A97\u5DF2\u79FB\u9664\uFF08\u5165\u53E3\u6539\u4E3A\u76F4\u63A5\u6253\u5F00\u52A0\u7FA4\u94FE\u63A5\uFF09\uFF0C\u6B64\u5904\u4E0D\u518D\u9700\u8981\u6536\u53E3\u3002 */
 /* F3. \u8865\u4E01\u5F39\u7A97 340px \u5B9A\u5BBD\uFF08\u65E0 max-width\uFF09\uFF0C\u540C\u4E0A\u6536\u53E3\u3002 */
 html.fnos-compact #fntv-patch-apply-popup{
   width:calc(100vw - 32px) !important;
@@ -3989,6 +4014,11 @@ html.fnos-narrow #fntv-wh .wh-detail img{
   var BEAUTIFY_CSS = `
 /* ===== 0. \u8BED\u4E49\u8BBE\u8BA1 token\uFF08\u660E/\u6697\u4E24\u5957\uFF1B\u6587\u672C\u8272\u6CBF\u7528 Semi \u4E3B\u9898\u53D8\u91CF\uFF0C\u65E0\u9700\u5728\u6B64\u91CD\u590D\uFF09===== */
 body.fnos-beautify{
+  /* [v1.3.0] \u5BBF\u4E3B\u89C6\u53E3\u5185\u8FB9\u8DDD\uFF08body padding\uFF09\u3002\u684C\u9762\u5BBF\u4E3B = 32px \u7A97\u53E3\u6807\u9898\u680F\u5B89\u5168\u533A\uFF0C\u7F51\u9875\u6A21\u5F0F = 0\u3002
+     \u8FD0\u884C\u65F6\u7531 syncViewportInsets() \u91CF\u53D6\u771F\u5B9E\u503C\u5199\u6210 inline \u53D8\u91CF\uFF08inline \u8986\u76D6\u672C\u5904\u9ED8\u8BA4\uFF09\uFF1B
+     \u8FD9\u91CC\u7684\u9ED8\u8BA4\u503C\u53EA\u5728 JS \u5C1A\u672A\u91CF\u53D6/\u6837\u5F0F\u8868\u5DF2\u6458\u9664\u65F6\u515C\u5E95\uFF0C\u7B49\u4EF7\u4E8E\u65E7\u7248\u5199\u6B7B\u7684 32px \u5047\u8BBE\u3002 */
+  --fntv-vp-top:32px;
+  --fntv-vp-bottom:0px;
   --fnos-accent:#0071e3;
   --fnos-hairline:rgba(0,0,0,.10);
   --fnos-hairline-soft:rgba(0,0,0,.055);
@@ -4079,6 +4109,31 @@ body.fnos-beautify ${COL} > div[class*="px-[46px]"]:has(a[href*="imdb.com"], a[h
 
 /* ===== B. \u9875\u9762\u80CC\u666F\u900F\u660E\u5316\uFF1A\u8BA9\u6CE8\u5165\u7684\u5168\u5C4F\u5E95\u56FE\u900F\u51FA\uFF08\u4EC5\u8BE6\u60C5\u9875 body.fnos-beautify \u751F\u6548\uFF09===== */
 body.fnos-beautify [class*="bg-[var(--semi-color-bg-1)]"]{ background-color:transparent !important; }
+
+/* ===== B2. [v1.3.0] \u515C\u5E95\u9632\u9732\u767D =====
+   \u6EE1\u5C4F\u5E03\u5C40\u5DF2\u6309\u771F\u5B9E body \u5185\u8FB9\u8DDD\u8BA1\u7B97\uFF08N/O \u6BB5 --fntv-vp-*\uFF09\uFF0C\u4F46\u5BBF\u4E3B/\u73AF\u5883\u4ECD\u53EF\u80FD\u6B8B\u7559
+   \u4E9A\u50CF\u7D20\u6216\u989D\u5916\u5E95\u8FB9\u8DDD\u3002\u8BE6\u60C5\u9875\u4F5C\u7528\u57DF\u5185\u628A\u9875\u9762\u5E95\u8272\u56FA\u5B9A\u4E3A**\u968F\u4E3B\u9898\u5207\u6362\u7684\u4E24\u5957\u5E95\u8272**\uFF1A
+     \xB7 \u6D45\u8272\u4E3B\u9898 #eef1f6\uFF08--fnos-hero-bg \u7684 :root \u503C\uFF09
+     \xB7 \u6DF1\u8272\u4E3B\u9898 #161a26\uFF08--fnos-hero-bg \u7684 html.dark \u503C\uFF09
+   \u4E0E\u9996\u9875\u8F6E\u64AD\u5E95\u5EA7\u540C\u6E90\uFF08theme.ts \u7684 --fnos-hero-bg\uFF09\uFF0C\u4E0D\u65B0\u9020\u4E3B\u9898\u5224\u5B9A\u3002
+   [2026-10-22] \u7528\u6237\u8981\u6C42\uFF1A\u8BE6\u60C5\u9875\u5E95\u8272\u53EA\u5141\u8BB8\u6DF1\u6D45\u4E24\u5957\u56FA\u5B9A\u5E95\u8272\uFF0C**\u7981\u6B62\u4ECE\u6D77\u62A5/\u80CC\u666F\u56FE\u53D6\u8272**\u3002
+   \u65E7\u7248\u8FD9\u91CC\u662F rgba(var(--fnos-hero-tint), 1)\uFF08\u5C01\u9762\u4E3B\u8272\uFF09\u2192 \u6574\u9875\u88AB\u67D3\u6210\u6D77\u62A5\u8272\uFF08\u5982\u9752\u7EFF #1d5a56\uFF09\u3002
+   \u53D6\u8272\u5DF2\u7531 heroTint.ts \u7684 ENABLE_DYNAMIC_TINT=false \u5173\u95ED\uFF1B\u672C\u6BB5\u6539\u4E3A\u56FA\u5B9A\u8272\uFF0C\u6539\u56DE\u53D6\u8272\u53EA\u9700
+   \u628A\u8BE5\u5E38\u91CF\u7F6E true \u5E76\u628A\u8FD9\u91CC\u6362\u56DE tint \u53D8\u91CF\u3002
+   \xB7 html \u4E5F\u4E0A\u8272\uFF1Ahtml \u80CC\u666F\u4F4D\u4E8E\u6839\u5806\u53E0\u4E0A\u4E0B\u6587\u6700\u5E95\u5C42\uFF0C\u7EDD\u4E0D\u4F1A\u76D6\u4F4F z-index:-1 \u7684\u5168\u5C4F\u5E95\u56FE\u5C42\u3002
+   \xB7 \u7528 background-color \u800C\u975E background \u7B80\u5199\uFF1A\u73BB\u7483\u6A21\u5F0F\u7684 body \u73AF\u5883\u5149\u6E10\u53D8\uFF08glassUI \u2460c\uFF09
+     \u662F background \u7B80\u5199\uFF0C\u4FDD\u7559\u5176\u6E10\u53D8\uFF0C\u53EA\u66FF\u6362\u5176\u4E0B\u5C42\u7684\u515C\u5E95\u7EAF\u8272\u3002
+   \xB7 \u53EA\u5728\u8BE6\u60C5\u9875 body class \u4E0B\u751F\u6548\uFF0C\u79BB\u5F00\u8BE6\u60C5\u9875\u5373\u5931\u6548\u3002
+   \xB7 \u62C6\u6210\u4E24\u6761\u89C4\u5219\uFF08\u4E0D\u7528\u9017\u53F7\u5217\u8868\uFF09\uFF1A:has \u4E0D\u53D7\u652F\u6301\u7684\u5F15\u64CE\u4E0A\uFF0C\u5217\u8868\u91CC\u4EFB\u4F55\u4E00\u6761\u65E0\u6548\u4F1A\u62D6\u57AE\u6574\u6761\u89C4\u5219\u3002 */
+html:has(body.fnos-beautify){
+  background-color:var(--fnos-hero-bg, #eef1f6) !important;
+}
+body.fnos-beautify{
+  background-color:var(--fnos-hero-bg, #eef1f6) !important;
+}
+/* [v1.3.0] \u8BE6\u60C5\u9875 body \u5E95\u5185\u8FB9\u8DDD\u6E05\u96F6\uFF1A\u6EE1\u5C4F\u9AD8\u5EA6\u53EA\u7531 --fntv-vp-* \u8868\u8FBE\uFF0C\u5BBF\u4E3B\u518D\u7ED9\u5E95 padding
+   \u4F1A\u5728\u5185\u5BB9\u5217\u4E0B\u65B9\u591A\u7559\u4E00\u6761\u5E95\u8272\u5E26\u3002 */
+body.fnos-beautify{ padding-bottom:0 !important; }
 
 /* ===== C. \u5BFC\u822A\u680F\u6C89\u6D78\u900F\u660E ===== */
 body.fnos-beautify div.relative.z-20.flex.items-center.justify-between.px-11.py-5{
@@ -4432,6 +4487,8 @@ body.fnos-beautify ${HERO} img[class*="rounded"], body.fnos-beautify ${HERO} .sh
   background:var(--semi-color-bg-0,#0b0b0f) !important;
   border-radius:16px !important; /* [lc-1025] \u8FDB\u8BE6\u60C5\u77AC\u95F4\u7684\u5168\u7A97\u5B9E\u5FC3\u5C42\uFF0C\u56DB\u89D2\u968F\u7A97\u53E3\u5706\u89D2 */
   transition:opacity .32s ease !important; overflow:hidden !important;
+  /* [fix-instant] \u7EAF\u5C55\u793A\u52A0\u8F7D\u5C42\uFF1A\u57FA\u6001\u5373\u4E0D\u63A5\u6536\u6307\u9488\u4E8B\u4EF6\uFF0C\u907F\u514D\u8FDB\u8BE6\u60C5\u540E ~2s \u5185\u6321\u4F4F\u9876\u680F home/\u6C49\u5821\u70B9\u51FB */
+  pointer-events:none !important;
 }
 .fnos-instant-layer.is-hiding{ opacity:0 !important; pointer-events:none !important; }
 .fnos-instant-layer__bg{
@@ -4848,12 +4905,18 @@ body.fnos-beautify #custom-titlebar[data-fntv-tb]::before{
 /* N1. col \u6EE1\u5C4F\u5BB9\u5668 */
 body.fnos-series-panel div[class*="mb-[46px]"][class*="flex flex-col gap-3"]:has(> div > .trim-mc__details--key-version){
   position:relative !important;
-  min-height:calc(100vh - 32px) !important;
+  /* [v1.3.0] \u6EE1\u5C4F\u9AD8\u5EA6\u6309\u771F\u5B9E body \u5185\u8FB9\u8DDD\u7B97\uFF08\u684C\u9762 32 / \u7F51\u9875 0\uFF09\uFF0C\u5426\u5219\u5E95\u90E8\u4F1A\u9732\u51FA
+     (32 - \u5B9E\u9645padding) \u7684\u9875\u9762\u5E95\u8272\u767D\u6761\u3002 */
+  min-height:calc(100vh - var(--fntv-vp-top, 32px) - var(--fntv-vp-bottom, 0px)) !important;
+  margin-bottom:0 !important;
+}
+/* N1b [v1.3.0] \u9632\u56DE\u5F52\uFF1A\u4E0D\u4F9D\u8D56 :has \u7684\u540C\u4E49\u515C\u5E95\uFF08:has \u5931\u6548\u7684\u5BBF\u4E3B\u4E0A\u4ECD\u6E05\u6389 46px \u5E95\u8FB9\u8DDD\uFF09 */
+body.fnos-series-panel div[class*="mb-[46px]"][class*="flex flex-col gap-3"]{
   margin-bottom:0 !important;
 }
 /* N2. hero \u6EE1\u5C4F\uFF08\u8986\u76D6 .trim-mc__details--key-version \u7C7B\u81EA\u5E26\u7684 560/576/470/48vh/700 \u5206\u6863\uFF09 */
 body.fnos-series-panel .trim-mc__details--key-version{
-  height:calc(100vh - 32px) !important;
+  height:calc(100vh - var(--fntv-vp-top, 32px) - var(--fntv-vp-bottom, 0px)) !important;
   min-height:0 !important; max-height:none !important;
 }
 /* \u5E95\u90E8\u6E10\u53D8\u906E\u7F69\u91CD\u505A\uFF08\u7528\u6237\u7B2C\u4E8C\u8F6E\u53CD\u9988\uFF1A\u300C\u534A\u900F\u6548\u679C\u53EF\u4EE5\u770B\u5230\u6700\u5E95\u4E0B\u7684\u6A2A\u5C4F\u6D77\u62A5\u56FE\u300D+\u300C\u9876\u680F\u5168\u900F\u300D\uFF09\uFF1A
@@ -4903,8 +4966,9 @@ html:not([data-fntv-glass]) body.fnos-series-panel #custom-titlebar[data-fntv-tb
   content:none !important;
 }
 body.fnos-series-panel .trim-mc__details--key-version{
-  height:100vh !important;
-  margin-top:-32px !important;
+  /* [v1.3.0] \u9AD8\u5EA6\u6263\u6389\u771F\u5B9E\u5E95\u5185\u8FB9\u8DDD\uFF1B\u4E0A\u63D0\u91CF = \u771F\u5B9E\u9876\u5185\u8FB9\u8DDD\uFF08\u684C\u9762 32 / \u7F51\u9875 0\uFF09 */
+  height:calc(100vh - var(--fntv-vp-bottom, 0px)) !important;
+  margin-top:calc(-1 * var(--fntv-vp-top, 32px)) !important;
 }
 body.fnos-series-panel #custom-titlebar[data-fntv-tb] button svg{
   filter:drop-shadow(0 1px 6px rgba(0,0,0,.4));
@@ -4944,7 +5008,7 @@ body.fnos-series-panel ${SERIES_PANEL2}{
   position:absolute !important;
   bottom:18px !important; left:26px !important;
   width:min(600px, calc(100vw - 52px)) !important;
-  max-height:calc(100vh - 32px - 210px) !important;
+  max-height:calc(100vh - var(--fntv-vp-top, 32px) - var(--fntv-vp-bottom, 0px) - 210px) !important;
   padding:18px 20px !important;
   display:block !important;
   background:linear-gradient(160deg,
@@ -5135,17 +5199,22 @@ body.fnos-series-panel ${SERIES_PANEL2} .fnos-showinfo__sec{
    \xB7 \u6F14\u804C\u4EBA\u5458/\u6587\u4EF6\u4FE1\u606F/\u89C6\u9891\u4FE1\u606F\u4FDD\u7559\u5728\u9996\u5C4F\u6298\u53E0\u7EBF\u4EE5\u4E0B\u81EA\u7136\u6EDA\u52A8\uFF08\u7535\u5F71\u72EC\u6709\u6570\u636E\uFF0C\u4E0D\u9690\u85CF\uFF09\uFF1B
    \xB7 K/L/M/\u80CC\u666F\u900F\u660E\u5316\u56E0 hero/\u9876\u680F\u7C7B\u540D\u540C\u65CF\u65E9\u5DF2\u8986\u76D6\u672C\u9875\uFF0C\u672C\u6BB5\u53EA\u8865\u5E03\u5C40\u4E0E\u805A\u7C07\u3002
    \u95E8\u63A7 = body.fnos-movie-panel\uFF08tmdbCard._armSeriesPanel \u6309\u8DEF\u7531\u6253\uFF0CMovie \u9875\u4E0D\u518D\u5403 N \u6BB5\uFF09\u3002 */
-/* O1. col \u6EE1\u5C4F\u5BB9\u5668\uFF08\u540C N1\uFF09 */
+/* O1. col \u6EE1\u5C4F\u5BB9\u5668\uFF08\u540C N1\uFF1B[v1.3.0] \u9AD8\u5EA6\u6309\u771F\u5B9E body \u5185\u8FB9\u8DDD\u7B97\uFF09 */
 body.fnos-movie-panel ${MOVIE_COL}{
   position:relative !important;
-  min-height:calc(100vh - 32px) !important;
+  min-height:calc(100vh - var(--fntv-vp-top, 32px) - var(--fntv-vp-bottom, 0px)) !important;
   margin-bottom:0 !important;
 }
-/* O2. hero \u6EE1\u5C4F + \u4E0A\u63D0\u5403\u6389 32px \u6807\u9898\u680F\uFF08\u76F4\u63A5\u91C7\u7528 N2+lc-1024 \u7684\u6700\u7EC8\u5F62\u6001\uFF0C\u7528\u6237\u5DF2\u9A8C\u6536\uFF09 */
+/* O1b [v1.3.0] \u9632\u56DE\u5F52\uFF1A\u4E0D\u4F9D\u8D56 :has \u7684\u540C\u4E49\u515C\u5E95\uFF08\u540C N1b\uFF09 */
+body.fnos-movie-panel div[class*="mb-[46px]"][class*="flex flex-col gap-3"]{
+  margin-bottom:0 !important;
+}
+/* O2. hero \u6EE1\u5C4F + \u4E0A\u63D0\u5403\u6389\u6807\u9898\u680F\u5B89\u5168\u533A\uFF08\u76F4\u63A5\u91C7\u7528 N2+lc-1024 \u7684\u6700\u7EC8\u5F62\u6001\uFF0C\u7528\u6237\u5DF2\u9A8C\u6536\uFF09
+   [v1.3.0] \u4E0A\u63D0\u91CF/\u9AD8\u5EA6\u90FD\u6539\u7528\u771F\u5B9E body \u5185\u8FB9\u8DDD\uFF08\u684C\u9762 32 / \u7F51\u9875 0\uFF09 */
 body.fnos-movie-panel .trim-mc__details--key-version{
-  height:100vh !important;
+  height:calc(100vh - var(--fntv-vp-bottom, 0px)) !important;
   min-height:0 !important; max-height:none !important;
-  margin-top:-32px !important;
+  margin-top:calc(-1 * var(--fntv-vp-top, 32px)) !important;
 }
 /* \u5E95\u90E8\u6E10\u53D8\u906E\u7F69\u91CD\u505A\uFF08\u540C N2\uFF1A25deg \u5BF9\u89D2\u6E10\u9690\uFF0C\u53EA\u62A4\u5DE6\u4E0B\u805A\u7C07\u6587\u5B57\u533A\uFF1B\u53CC\u7C7B\u540D\u6253\u5E73 L \u6BB5\u540C\u9009\u62E9\u5668\uFF09 */
 body.fnos-movie-panel .trim-mc__details--key-version.trim-mc__details--key-version .gradient{
@@ -5211,12 +5280,13 @@ body.fnos-movie-panel ${MOVIE_PANEL2}{
   min-height:320px !important;
   /* [lc-1028] top \u951A\u5B9A\u800C\u975E bottom\uFF1ASeries \u9875\u9762\u677F\u662F col \u672B\u5B50\u8282\u70B9\uFF08bottom:18=\u8D34\u9996\u5C4F\u5E95\uFF09\uFF0C
      \u7535\u5F71\u9875 col \u5728\u9762\u677F\u4E4B\u540E\u8FD8\u6709\u6F14\u804C\u4EBA\u5458/\u6587\u4EF6\u4FE1\u606F\uFF08\u6298\u53E0\u7EBF\u4E0B\u5EF6\u4F38\uFF09\uFF0Ccol \u5E95\u8FDC\u5728\u89C6\u53E3\u5916\u2014\u2014
-     bottom \u4F1A\u628A\u9762\u677F\u951A\u5230\u89C6\u7A97\u5916\uFF08\u9996\u7248\u771F\u673A\u622A\u753B\u9762\u677F\u6D88\u5931\u7684\u6839\u56E0\uFF09\u3002top = 100vh - 32(body
-     \u9876padding, \u5217\u9876\u968F\u4E4B\u4E0B\u79FB) - cluster-h\uFF08cluster-h=\u9762\u677F\u9AD8+18\uFF0CJS \u5B9E\u6D4B\u56DE\u586B\uFF09\u6070\u4F7F\u9762\u677F
-     \u5E95\u6CBF\u8D34\u5728\u9996\u5C4F\u5E95\u6CBF\u4E0A\u65B9 18px\uFF0C\u4E0E\u5217\u9AD8\u89E3\u8026\uFF08\u6D3B\u4F53 geom.cjs\uFF1A-32 \u524D\u5E95\u6CBF 1014\uFF0C\u540E 982\uFF09\u3002 */
-  top:calc(100vh - 32px - var(--fnos-cluster-h, 360px)) !important; left:26px !important;
+     bottom \u4F1A\u628A\u9762\u677F\u951A\u5230\u89C6\u7A97\u5916\uFF08\u9996\u7248\u771F\u673A\u622A\u753B\u9762\u677F\u6D88\u5931\u7684\u6839\u56E0\uFF09\u3002top = 100vh - \u771F\u5B9E body
+     \u9876\u5185\u8FB9\u8DDD - cluster-h\uFF08cluster-h=\u9762\u677F\u9AD8+18\uFF0CJS \u5B9E\u6D4B\u56DE\u586B\uFF09\u6070\u4F7F\u9762\u677F\u5E95\u6CBF\u8D34\u5728\u9996\u5C4F\u5E95\u6CBF\u4E0A\u65B9
+     18px\uFF0C\u4E0E\u5217\u9AD8\u89E3\u8026\uFF08\u6D3B\u4F53 geom.cjs\uFF1A-32 \u524D\u5E95\u6CBF 1014\uFF0C\u540E 982\uFF09\u3002
+     [v1.3.0] 32 \u6539\u4E3A var(--fntv-vp-top)\uFF08\u684C\u9762 32 / \u7F51\u9875 0\uFF09\uFF0C\u5E76\u6263\u6389\u5E95\u5185\u8FB9\u8DDD\u3002 */
+  top:calc(100vh - var(--fntv-vp-top, 32px) - var(--fntv-vp-bottom, 0px) - var(--fnos-cluster-h, 360px)) !important; left:26px !important;
   width:min(600px, calc(100vw - 52px)) !important;
-  max-height:calc(100vh - 32px - 230px) !important;
+  max-height:calc(100vh - var(--fntv-vp-top, 32px) - var(--fntv-vp-bottom, 0px) - 230px) !important;
   padding:18px 20px !important;
   display:block !important;
   background:linear-gradient(160deg,
@@ -5387,6 +5457,47 @@ html.fnos-touch-narrow body.fnos-beautify ${COL_NUM} > :nth-child(3) > div.relat
   grid-area:5 / 1 / 6 / 2 !important;
 }
 `;
+  var VP_TOP_VAR = "--fntv-vp-top";
+  var VP_BOTTOM_VAR = "--fntv-vp-bottom";
+  var _vpTopCache = -1;
+  var _vpBottomCache = -1;
+  function syncViewportInsets() {
+    const body = document.body;
+    if (!body) return;
+    let top = 0;
+    let bottom = 0;
+    try {
+      const cs = getComputedStyle(body);
+      top = parseFloat(cs.paddingTop) || 0;
+      bottom = parseFloat(cs.paddingBottom) || 0;
+    } catch {
+    }
+    if (top !== _vpTopCache) {
+      body.style.setProperty(VP_TOP_VAR, top + "px");
+      _vpTopCache = top;
+    }
+    if (bottom !== _vpBottomCache) {
+      body.style.setProperty(VP_BOTTOM_VAR, bottom + "px");
+      _vpBottomCache = bottom;
+    }
+  }
+  var _vpInsetsBound = false;
+  var _vpInsetsRaf = 0;
+  function _installViewportInsets() {
+    syncViewportInsets();
+    if (_vpInsetsBound) return;
+    _vpInsetsBound = true;
+    try {
+      window.addEventListener("resize", () => {
+        if (_vpInsetsRaf) return;
+        _vpInsetsRaf = requestAnimationFrame(() => {
+          _vpInsetsRaf = 0;
+          syncViewportInsets();
+        });
+      }, { passive: true });
+    } catch {
+    }
+  }
   function injectBeautifyStyle() {
     if (!document.getElementById(STYLE_ID3)) {
       const st = document.createElement("style");
@@ -5394,6 +5505,7 @@ html.fnos-touch-narrow body.fnos-beautify ${COL_NUM} > :nth-child(3) > div.relat
       st.textContent = BEAUTIFY_CSS;
       (document.head || document.documentElement).appendChild(st);
     }
+    _installViewportInsets();
     installMobileFlag();
   }
   var _mobileFlagBound = false;
@@ -6783,7 +6895,7 @@ html.fnos-touch-narrow .fntv-dm-list.active{
           season: (res == null ? void 0 : res.season) || 0,
           isMovie: !!(res == null ? void 0 : res.isMovie),
           count: 0,
-          error: (res == null ? void 0 : res.error) || "\u7A7A"
+          error: friendlyError(res == null ? void 0 : res.error, "\u7A7A")
         };
         log8.info("[danmakuWeb] \u65E0\u5F39\u5E55: " + ((res == null ? void 0 : res.error) || "\u7A7A"));
         loadedGuids.add(guid);
@@ -7348,12 +7460,12 @@ html.fnos-touch-narrow .fntv-dm-list.active{
         dmSearchResults = res.candidates;
       } else {
         dmSearchResults = [];
-        dmSearchErr = res && res.error || t("\u6CA1\u6709\u53EF\u7528\u7684\u641C\u7D22\u7ED3\u679C");
+        dmSearchErr = friendlyError(res && res.error, t("\u6CA1\u6709\u53EF\u7528\u7684\u641C\u7D22\u7ED3\u679C"));
       }
     } catch (e) {
       dmSearchResults = [];
       const msg = String((e == null ? void 0 : e.message) || e);
-      dmSearchErr = msg.indexOf("\u8D85\u65F6") >= 0 ? t("\u641C\u7D22\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u6216\u5237\u65B0\u9875\u9762") : t("\u641C\u7D22\u5F02\u5E38") + ": " + msg;
+      dmSearchErr = msg.indexOf("\u8D85\u65F6") >= 0 ? t("\u641C\u7D22\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u6216\u5237\u65B0\u9875\u9762") : friendlyError(t("\u641C\u7D22\u5F02\u5E38") + ": " + msg);
     } finally {
       dmSearchBusy = false;
       renderSearchBody();
@@ -7386,12 +7498,12 @@ html.fnos-touch-narrow .fntv-dm-list.active{
         if (enabled2) startRender();
         log8.info("[danmakuWeb] \u624B\u52A8\u9009\u5B9A\u5F39\u5E55: " + items.length + " \u6761 bvid=" + c.bvid);
       } else {
-        const err = res && res.error || t("\u9009\u5B9A\u5931\u8D25");
+        const err = friendlyError(res && res.error, t("\u9009\u5B9A\u5931\u8D25"));
         if (meta) meta.error = err;
         dmSearchErr = err;
       }
     } catch (e) {
-      dmSearchErr = t("\u9009\u5B9A\u5931\u8D25") + ": " + ((e == null ? void 0 : e.message) || e);
+      dmSearchErr = friendlyError(t("\u9009\u5B9A\u5931\u8D25") + ": " + ((e == null ? void 0 : e.message) || e));
     } finally {
       dmSearchBusy = false;
       renderSearchBody();
@@ -7475,7 +7587,7 @@ html.fnos-touch-narrow .fntv-dm-list.active{
       ["\u76EE\u6807\u5B63\u6570", meta.season > 0 ? `\u7B2C ${meta.season} \u5B63\uFF08\u4F18\u5148\u7CBE\u786E\u5339\u914D\uFF09` : "\u672A\u6307\u5B9A\uFF08\u4EC5\u6309\u756A\u540D+\u96C6\u6570\uFF09"],
       ["\u5F39\u5E55\u6761\u6570", String(meta.count)]
     ];
-    if (meta.error) rows.push(["\u5907\u6CE8", meta.error]);
+    if (meta.error) rows.push(["\u5907\u6CE8", friendlyError(meta.error)]);
     if (!isPreferred && cookie.warn) {
       const banner = document.createElement("div");
       banner.textContent = "\u26A0\uFE0F " + cookie.detail;
@@ -7576,9 +7688,9 @@ html.fnos-touch-narrow .fntv-dm-list.active{
           sRows.push(["\u5F39\u5E55\u6761\u6570", `${s.count}${s.blocked > 0 ? `\uFF08\u62C9\u53D6 ${s.rawCount}\uFF0C\u5C4F\u853D ${s.blocked}\uFF09` : ""}`]);
         }
         if (!s.enabled) {
-          if (s.note) sRows.push(["\u72B6\u6001", s.note]);
+          if (s.note) sRows.push(["\u72B6\u6001", friendlyError(s.note)]);
         } else if (!s.used && s.note) {
-          sRows.push(["\u672A\u91C7\u7528\u539F\u56E0", s.note]);
+          sRows.push(["\u672A\u91C7\u7528\u539F\u56E0", friendlyError(s.note)]);
         }
         if (sRows.length) appendRows(card, sRows, false);
         body.appendChild(card);
@@ -7864,7 +7976,11 @@ html.fnos-touch-narrow .fntv-dm-list.active{
         if (typeof orig !== "function") continue;
         h[m] = function(...a) {
           orig.apply(this, a);
-          checkLeave();
+          try {
+            checkLeave();
+          } catch (e) {
+            console.warn("[fntv-web] nav side-effect failed (danmakuWeb)", e);
+          }
         };
       }
     } catch {
@@ -7875,283 +7991,23 @@ html.fnos-touch-narrow .fntv-dm-list.active{
   // src/preload/plugins/embyWall/modals/feedback.ts
   init_electron();
   var ABOUT_LINK_URL = "https://github.com/FNOSP/AniBox";
-  var FEEDBACK_LINK_URL = "https://wj.qq.com/s2/27390788/787a/";
   var QQ_GROUP_URL = "https://qm.qq.com/q/dUnIQVvoIw";
-  var openFeedbackModal = async () => {
-    let modal = document.getElementById("fnos-feedback-modal");
-    if (!modal) {
-      modal = document.createElement("div");
-      modal.id = "fnos-feedback-modal";
-      modal.setAttribute("data-fnos-ui", "1");
-      modal.style.cssText = "position:fixed;z-index:2147483701;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5);";
-      modal.addEventListener("click", (e) => {
-        if (e.target === modal) modal.style.display = "none";
-      });
-      const card = document.createElement("div");
-      card.style.cssText = "width:300px;border-radius:18px;padding:24px;color:var(--fnos-ui-text);background:var(--fnos-ui-panel-bg)!important;border:1px solid var(--fnos-ui-border-outer);box-shadow:0 18px 50px rgba(80,60,120,.28),0 4px 16px rgba(80,60,120,.14);backdrop-filter:blur(30px) saturate(150%);-webkit-backdrop-filter:blur(30px) saturate(150%);text-align:center;";
-      card.innerHTML = '<div id="fnos-feedback-back" style="display:flex;align-items:center;gap:6px;margin-bottom:16px;cursor:pointer;font-size:13px;font-weight:600;color:var(--fnos-ui-pill-text);"><span style="font-size:17px;line-height:1;">\u2190</span><span>\u8FD4\u56DE</span></div><div style="font-size:20px;font-weight:800;color:var(--fnos-ui-pill-text);margin-bottom:6px;">\u{1F4AC} \u610F\u89C1\u53CD\u9988</div><div style="font-size:12.5px;line-height:1.7;color:var(--fnos-ui-text);opacity:.82;margin-bottom:16px;">\u6B22\u8FCE\u626B\u7801\u586B\u5199\u95EE\u5377\uFF0C\u5411\u6211\u4EEC\u53CD\u9988\u4F7F\u7528\u4F53\u9A8C\u4E0E\u5EFA\u8BAE\u3002</div><div id="fnos-feedback-qr" style="width:180px;height:180px;margin:0 auto 14px;background:#fff;border-radius:12px;overflow:hidden;display:flex;align-items:center;justify-content:center;"></div><div style="font-size:11px;opacity:.65;margin-bottom:14px;">\u626B\u7801\u53C2\u4E0E\u7528\u6237\u8C03\u7814</div><a id="fnos-feedback-link" href="' + FEEDBACK_LINK_URL + '" style="display:inline-block;font-size:13px;font-weight:700;color:var(--fnos-ui-pill-text);text-decoration:none;padding:8px 20px;border-radius:10px;background:var(--fnos-ui-pill-bg)!important;border:1px solid var(--fnos-ui-pill-border);transition:background .15s,transform .1s;">\u{1F517} \u7528\u6237\u8C03\u7814\u95EE\u5377</a>';
-      modal.appendChild(card);
-      document.body.appendChild(modal);
-      document.getElementById("fnos-feedback-back").addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        modal.style.display = "none";
-        const choice = document.getElementById("fnos-feedback-choice-modal");
-        if (choice) choice.style.display = "flex";
-      });
-      document.getElementById("fnos-feedback-link").addEventListener("click", async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+  var openExternalUrl = (url) => {
+    try {
+      ipcRenderer.invoke("app:open-external", url).catch(() => {
         try {
-          await ipcRenderer.invoke("app:open-external", FEEDBACK_LINK_URL);
-        } catch (_) {
+          window.open(url, "_blank", "noopener");
+        } catch {
         }
       });
-      const flink = document.getElementById("fnos-feedback-link");
-      flink.onmouseenter = () => {
-        flink.style.transform = "scale(1.03)";
-        flink.style.background = "var(--fnos-ui-pill-hover)!important";
-        flink.style.color = "#fff";
-      };
-      flink.onmouseleave = () => {
-        flink.style.transform = "";
-        flink.style.background = "var(--fnos-ui-pill-bg)!important";
-        flink.style.color = "var(--fnos-ui-pill-text)";
-      };
-    }
-    modal.style.display = "flex";
-    const qrBox = document.getElementById("fnos-feedback-qr");
-    if (qrBox && !qrBox.querySelector("img")) {
+    } catch {
       try {
-        const res = await ipcRenderer.invoke("app:qr-image");
-        if (res && res.ok && res.dataUri) {
-          const img = document.createElement("img");
-          img.src = res.dataUri;
-          img.style.cssText = "width:100%;height:100%;object-fit:contain;display:block;";
-          qrBox.appendChild(img);
-        } else {
-          qrBox.textContent = "QR";
-        }
-      } catch (e) {
-        qrBox.textContent = "QR";
+        window.open(url, "_blank", "noopener");
+      } catch {
       }
     }
   };
-  var openFeedbackChoiceModal = () => {
-    let modal = document.getElementById("fnos-feedback-choice-modal");
-    if (!modal) {
-      modal = document.createElement("div");
-      modal.id = "fnos-feedback-choice-modal";
-      modal.setAttribute("data-fnos-ui", "1");
-      modal.style.cssText = "position:fixed;z-index:2147483702;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5);";
-      modal.addEventListener("click", (e) => {
-        if (e.target === modal) modal.style.display = "none";
-      });
-      const card = document.createElement("div");
-      card.style.cssText = "width:320px;border-radius:18px;padding:22px;color:var(--fnos-ui-text);background:var(--fnos-ui-panel-bg)!important;border:1px solid var(--fnos-ui-border-outer);box-shadow:0 18px 50px rgba(80,60,120,.28),0 4px 16px rgba(80,60,120,.14);backdrop-filter:blur(30px) saturate(150%);-webkit-backdrop-filter:blur(30px) saturate(150%);";
-      card.innerHTML = '<div style="font-size:19px;font-weight:800;color:var(--fnos-ui-pill-text);margin-bottom:4px;">\u8F6F\u4EF6\u53CD\u9988\u5EFA\u8BAE</div><div style="font-size:12.5px;line-height:1.6;color:var(--fnos-ui-text);opacity:.8;margin-bottom:16px;">\u8BF7\u9009\u62E9\u53CD\u9988\u65B9\u5F0F\uFF1A</div>';
-      const optSurvey = document.createElement("button");
-      optSurvey.type = "button";
-      optSurvey.style.cssText = "display:flex;flex-direction:column;align-items:center;gap:3px;width:100%;box-sizing:border-box;padding:14px 16px;margin-bottom:12px;border-radius:14px;cursor:pointer;text-align:center;background:var(--fnos-ui-input-bg)!important;border:1px solid var(--fnos-ui-border3);color:var(--fnos-ui-text);transition:background .15s,border-color .15s;";
-      optSurvey.innerHTML = '<div style="font-size:14px;font-weight:700;">\u{1F4DD} \u7528\u6237\u8C03\u7814\u95EE\u5377</div><div style="font-size:11.5px;opacity:.7;">\u586B\u5199\u95EE\u5377\uFF0C\u53CD\u9988\u4F7F\u7528\u4F53\u9A8C\u4E0E\u5EFA\u8BAE</div>';
-      optSurvey.addEventListener("click", () => {
-        if (modal) modal.style.display = "none";
-        openFeedbackModal();
-      });
-      const optQQ = document.createElement("button");
-      optQQ.type = "button";
-      optQQ.style.cssText = "display:flex;flex-direction:column;align-items:center;gap:3px;width:100%;box-sizing:border-box;padding:14px 16px;border-radius:14px;cursor:pointer;text-align:center;background:var(--fnos-ui-input-bg)!important;border:1px solid var(--fnos-ui-border3);color:var(--fnos-ui-text);transition:background .15s,border-color .15s;";
-      optQQ.innerHTML = '<div style="font-size:14px;font-weight:700;">\u{1F4AC} QQ \u4EA4\u6D41\u7FA4</div><div style="font-size:11.5px;opacity:.7;">\u52A0\u5165 QQ \u7FA4\uFF0C\u5B9E\u65F6\u4EA4\u6D41\u53CD\u9988</div>';
-      optQQ.addEventListener("click", () => {
-        if (modal) modal.style.display = "none";
-        openQQGroupModal();
-      });
-      const optUpload = document.createElement("button");
-      optUpload.type = "button";
-      optUpload.style.cssText = "display:flex;flex-direction:column;align-items:center;gap:3px;width:100%;box-sizing:border-box;padding:14px 16px;margin-bottom:12px;border-radius:14px;cursor:pointer;text-align:center;background:var(--fnos-ui-input-bg)!important;border:1px solid var(--fnos-ui-border3);color:var(--fnos-ui-text);transition:background .15s,border-color .15s;";
-      optUpload.innerHTML = '<div style="font-size:14px;font-weight:700;">\u{1F4EE} \u4E00\u952E\u4E0A\u4F20\u65E5\u5FD7\u53CD\u9988</div><div style="font-size:11.5px;opacity:.7;">\u5199\u4E00\u53E5\u95EE\u9898\u63CF\u8FF0\u5373\u53EF\uFF0C\u81EA\u52A8\u9644\u5E26\u524D\u540E\u7AEF\u65E5\u5FD7\uFF08\u5DF2\u8131\u654F\uFF09\u4E0E\u73AF\u5883\u4FE1\u606F</div>';
-      optUpload.addEventListener("click", () => {
-        if (modal) modal.style.display = "none";
-        openFeedbackUploadModal();
-      });
-      card.insertBefore(optUpload, optSurvey);
-      const optEnv = document.createElement("button");
-      optEnv.type = "button";
-      optEnv.style.cssText = "display:flex;flex-direction:column;align-items:center;gap:3px;width:100%;box-sizing:border-box;padding:12px 16px;margin-bottom:12px;border-radius:14px;cursor:pointer;text-align:center;background:var(--fnos-ui-input-bg)!important;border:1px solid var(--fnos-ui-border3);color:var(--fnos-ui-text);transition:background .15s,border-color .15s;";
-      optEnv.innerHTML = '<div style="font-size:14px;font-weight:700;">\u{1F4CB} \u590D\u5236\u8BBE\u5907\u73AF\u5883\u4FE1\u606F</div><div style="font-size:11.5px;opacity:.7;">\u5E94\u7528\u7248\u672C / \u9875\u9762 / \u65F6\u95F4 / \u6D4F\u89C8\u5668\uFF0C\u7C98\u8D34\u5230\u95EE\u5377\u6216\u7FA4\u91CC\u4FBF\u4E8E\u6392\u67E5</div>';
-      optEnv.addEventListener("click", async () => {
-        let ver = "";
-        try {
-          const info = await ipcRenderer.invoke("stats:get-info");
-          if (info && info.version) ver = String(info.version);
-        } catch {
-        }
-        const lines = [
-          "===== AniBox Web \u7248\u8BBE\u5907\u73AF\u5883 =====",
-          "\u5E94\u7528\u7248\u672C: " + (ver || "\u672A\u77E5"),
-          "\u9875\u9762: " + location.href,
-          "\u65F6\u95F4: " + (/* @__PURE__ */ new Date()).toString(),
-          "\u5C4F\u5E55: " + window.screen.width + "x" + window.screen.height + " @" + (window.devicePixelRatio || 1) + "x",
-          "\u6D4F\u89C8\u5668: " + navigator.userAgent
-        ];
-        const text = lines.join("\n");
-        let ok = false;
-        try {
-          await navigator.clipboard.writeText(text);
-          ok = true;
-        } catch {
-        }
-        if (!ok) {
-          try {
-            const ta = document.createElement("textarea");
-            ta.value = text;
-            ta.style.cssText = "position:fixed;left:-9999px;top:0;";
-            document.body.appendChild(ta);
-            ta.select();
-            ok = document.execCommand("copy");
-            document.body.removeChild(ta);
-          } catch {
-            ok = false;
-          }
-        }
-        optEnv.innerHTML = ok ? '<div style="font-size:14px;font-weight:700;">\u2713 \u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F</div><div style="font-size:11.5px;opacity:.7;">\u7C98\u8D34\u5230\u95EE\u5377\u6216 QQ \u7FA4\u5373\u53EF</div>' : '<div style="font-size:14px;font-weight:700;">\u26A0 \u590D\u5236\u5931\u8D25</div><div style="font-size:11.5px;opacity:.7;">\u8BF7\u624B\u52A8\u622A\u56FE\u672C\u9875\u7248\u672C\u4FE1\u606F</div>';
-        window.setTimeout(() => {
-          optEnv.innerHTML = '<div style="font-size:14px;font-weight:700;">\u{1F4CB} \u590D\u5236\u8BBE\u5907\u73AF\u5883\u4FE1\u606F</div><div style="font-size:11.5px;opacity:.7;">\u5E94\u7528\u7248\u672C / \u9875\u9762 / \u65F6\u95F4 / \u6D4F\u89C8\u5668\uFF0C\u7C98\u8D34\u5230\u95EE\u5377\u6216\u7FA4\u91CC\u4FBF\u4E8E\u6392\u67E5</div>';
-        }, 4e3);
-      });
-      card.insertBefore(optEnv, optSurvey);
-      [optUpload, optSurvey, optQQ, optEnv].forEach((b) => {
-        b.addEventListener("mouseenter", () => {
-          b.style.background = "var(--fnos-ui-pill-hover)!important";
-          b.style.borderColor = "var(--fnos-ui-pill-border)";
-        });
-        b.addEventListener("mouseleave", () => {
-          b.style.background = "var(--fnos-ui-input-bg)!important";
-          b.style.borderColor = "var(--fnos-ui-border3)";
-        });
-      });
-      card.appendChild(optSurvey);
-      card.appendChild(optQQ);
-      modal.appendChild(card);
-      document.body.appendChild(modal);
-    }
-    modal.style.display = "flex";
-  };
-  var openQQGroupModal = () => {
-    let modal = document.getElementById("fnos-qq-group-modal");
-    if (!modal) {
-      modal = document.createElement("div");
-      modal.id = "fnos-qq-group-modal";
-      modal.setAttribute("data-fnos-ui", "1");
-      modal.style.cssText = "position:fixed;z-index:2147483703;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5);";
-      modal.addEventListener("click", (e) => {
-        if (e.target === modal) modal.style.display = "none";
-      });
-      const card = document.createElement("div");
-      card.style.cssText = "width:320px;border-radius:18px;padding:22px;color:var(--fnos-ui-text);background:var(--fnos-ui-panel-bg)!important;border:1px solid var(--fnos-ui-border-outer);box-shadow:0 18px 50px rgba(80,60,120,.28),0 4px 16px rgba(80,60,120,.14);backdrop-filter:blur(30px) saturate(150%);-webkit-backdrop-filter:blur(30px) saturate(150%);";
-      card.innerHTML = '<div id="fnos-qq-back" style="display:flex;align-items:center;gap:6px;margin-bottom:16px;cursor:pointer;font-size:13px;font-weight:600;color:var(--fnos-ui-pill-text);"><span style="font-size:17px;line-height:1;">\u2190</span><span>\u8FD4\u56DE</span></div><div style="font-size:20px;font-weight:800;color:var(--fnos-ui-pill-text);margin-bottom:6px;">\u{1F4AC} QQ \u4EA4\u6D41\u7FA4</div><div style="font-size:12.5px;line-height:1.7;color:var(--fnos-ui-text);opacity:.82;margin-bottom:18px;">\u70B9\u51FB\u4E0B\u65B9\u6309\u94AE\u52A0\u5165 QQ \u7FA4\uFF0C\u5B9E\u65F6\u4EA4\u6D41\u4F7F\u7528\u4F53\u9A8C\u4E0E\u5EFA\u8BAE\u3002</div><a id="fnos-qq-join" href="' + QQ_GROUP_URL + '" style="display:inline-block;font-size:13px;font-weight:700;color:var(--fnos-ui-pill-text);text-decoration:none;padding:9px 22px;border-radius:10px;background:var(--fnos-ui-pill-bg)!important;border:1px solid var(--fnos-ui-pill-border);transition:background .15s,transform .1s;">\u2795 \u52A0\u5165 QQ \u7FA4</a>';
-      modal.appendChild(card);
-      document.body.appendChild(modal);
-      document.getElementById("fnos-qq-back").addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        modal.style.display = "none";
-        const choice = document.getElementById("fnos-feedback-choice-modal");
-        if (choice) choice.style.display = "flex";
-      });
-      document.getElementById("fnos-qq-join").addEventListener("click", async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        try {
-          await ipcRenderer.invoke("app:open-external", QQ_GROUP_URL);
-        } catch (_) {
-        }
-      });
-      const qjoin = document.getElementById("fnos-qq-join");
-      qjoin.onmouseenter = () => {
-        qjoin.style.transform = "scale(1.03)";
-        qjoin.style.background = "var(--fnos-ui-pill-hover)!important";
-        qjoin.style.color = "#fff";
-      };
-      qjoin.onmouseleave = () => {
-        qjoin.style.transform = "";
-        qjoin.style.background = "var(--fnos-ui-pill-bg)!important";
-        qjoin.style.color = "var(--fnos-ui-pill-text)";
-      };
-    }
-    modal.style.display = "flex";
-  };
-  var openFeedbackUploadModal = () => {
-    let modal = document.getElementById("fnos-feedback-upload-modal");
-    if (!modal) {
-      modal = document.createElement("div");
-      modal.id = "fnos-feedback-upload-modal";
-      modal.setAttribute("data-fnos-ui", "1");
-      modal.style.cssText = "position:fixed;z-index:2147483702;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5);";
-      modal.addEventListener("click", (e) => {
-        if (e.target === modal) modal.style.display = "none";
-      });
-      const card = document.createElement("div");
-      card.style.cssText = "width:420px;max-width:92vw;border-radius:18px;padding:22px;color:var(--fnos-ui-text);background:var(--fnos-ui-panel-bg)!important;border:1px solid var(--fnos-ui-border-outer);box-shadow:0 18px 50px rgba(80,60,120,.28),0 4px 16px rgba(80,60,120,.14);backdrop-filter:blur(30px) saturate(150%);-webkit-backdrop-filter:blur(30px) saturate(150%);";
-      card.innerHTML = '<div style="font-size:19px;font-weight:800;color:var(--fnos-ui-pill-text);margin-bottom:4px;">\u{1F4EE} \u4E00\u952E\u4E0A\u4F20\u65E5\u5FD7\u53CD\u9988</div><div style="font-size:11.5px;line-height:1.6;color:var(--fnos-ui-text);opacity:.75;margin-bottom:12px;">\u63D0\u4EA4\u540E\u4F1A\u81EA\u52A8\u9644\u5E26\uFF1A\u8BBE\u5907\u73AF\u5883\uFF08\u5E94\u7528\u7248\u672C / fnOS \u7248\u672C / \u65F6\u95F4 / \u9875\u9762\uFF09+ \u524D\u540E\u7AEF\u65E5\u5FD7\uFF08\u6700\u8FD1\u7247\u6BB5\uFF0C\u51ED\u636E\u7C7B\u4FE1\u606F\u5DF2\u6253\u7801\uFF1B\u4FDD\u7559 NAS \u5730\u5740\u4FBF\u4E8E\u6392\u67E5\u7F51\u7EDC\u95EE\u9898\uFF09\u3002\u4EC5\u5728\u4F60\u70B9\u51FB\u300C\u4E0A\u4F20\u300D\u65F6\u624D\u53D1\u9001\u3002</div>';
-      const area = document.createElement("textarea");
-      area.placeholder = "\u63CF\u8FF0\u4F60\u9047\u5230\u7684\u95EE\u9898 / \u590D\u73B0\u6B65\u9AA4\uFF08\u5FC5\u586B\uFF09\u2026";
-      area.style.cssText = "width:100%;box-sizing:border-box;min-height:88px;padding:10px 12px;border-radius:10px;font-size:12.5px;line-height:1.6;font-family:inherit;resize:vertical;background:var(--fnos-ui-input-bg)!important;color:var(--fnos-ui-text);border:1px solid var(--fnos-ui-border3);outline:none;";
-      card.appendChild(area);
-      const contact = document.createElement("input");
-      contact.type = "text";
-      contact.placeholder = "\u8054\u7CFB\u65B9\u5F0F\uFF08\u9009\u586B\uFF0C\u65B9\u4FBF\u56DE\u590D\u4F60\uFF1AQQ / \u90AE\u7BB1\uFF09";
-      contact.style.cssText = "width:100%;box-sizing:border-box;margin-top:8px;padding:9px 12px;border-radius:10px;font-size:12.5px;font-family:inherit;background:var(--fnos-ui-input-bg)!important;color:var(--fnos-ui-text);border:1px solid var(--fnos-ui-border3);outline:none;";
-      card.appendChild(contact);
-      const status = document.createElement("div");
-      status.style.cssText = "font-size:11.5px;color:var(--fnos-ui-text);opacity:.75;margin-top:8px;min-height:16px;";
-      card.appendChild(status);
-      const btnRow = document.createElement("div");
-      btnRow.style.cssText = "display:flex;gap:8px;justify-content:flex-end;margin-top:10px;";
-      const cancelBtn = document.createElement("button");
-      cancelBtn.type = "button";
-      cancelBtn.textContent = "\u53D6\u6D88";
-      cancelBtn.style.cssText = "padding:8px 18px;border-radius:10px;cursor:pointer;font-size:12.5px;background:var(--fnos-ui-input-bg)!important;border:1px solid var(--fnos-ui-border3);color:var(--fnos-ui-text);";
-      const submitBtn = document.createElement("button");
-      submitBtn.type = "button";
-      submitBtn.textContent = "\u4E0A\u4F20";
-      submitBtn.style.cssText = "padding:8px 22px;border-radius:10px;cursor:pointer;font-size:12.5px;font-weight:700;background:var(--fnos-ui-accent)!important;border:none;color:#fff;";
-      btnRow.appendChild(cancelBtn);
-      btnRow.appendChild(submitBtn);
-      card.appendChild(btnRow);
-      cancelBtn.addEventListener("click", () => {
-        if (modal) modal.style.display = "none";
-      });
-      submitBtn.addEventListener("click", () => {
-        const msg = area.value.trim();
-        if (!msg) {
-          status.textContent = "\u8BF7\u5148\u586B\u5199\u95EE\u9898\u63CF\u8FF0\u3002";
-          area.focus();
-          return;
-        }
-        submitBtn.disabled = true;
-        status.textContent = "\u4E0A\u4F20\u4E2D\u2026\uFF08\u6B63\u5728\u6253\u5305\u524D\u540E\u7AEF\u65E5\u5FD7\u4E0E\u73AF\u5883\u4FE1\u606F\uFF09";
-        ipcRenderer.invoke("feedback:submit", { message: msg, contact: contact.value.trim(), page: location.href }).then((r) => {
-          if (r && r.ok) {
-            status.textContent = "\u2713 \u4E0A\u4F20\u6210\u529F\uFF0C\u611F\u8C22\u53CD\u9988\uFF01\uFF08\u73AF\u5883\u4E0E\u65E5\u5FD7\u5DF2\u9644\u5E26\uFF09";
-            area.value = "";
-            window.setTimeout(() => {
-              if (modal) modal.style.display = "none";
-            }, 1600);
-          } else {
-            status.textContent = "\u4E0A\u4F20\u5931\u8D25\uFF1A" + (r && r.error || "\u672A\u77E5\u9519\u8BEF");
-          }
-        }).catch((e) => {
-          status.textContent = "\u4E0A\u4F20\u5931\u8D25\uFF1A" + String(e && e.message || e);
-        }).finally(() => {
-          submitBtn.disabled = false;
-        });
-      });
-      modal.appendChild(card);
-      document.body.appendChild(modal);
-    }
-    modal.style.display = "flex";
-  };
+  var openQQGroup = () => openExternalUrl(QQ_GROUP_URL);
 
   // src/preload/plugins/embyWall/state.ts
   var S = {
@@ -8317,6 +8173,8 @@ html.fnos-touch-narrow .fntv-dm-list.active{
   --fnos-ui-exit-on:rgba(109,127,242,.92);
   --fnos-ui-exit-off:rgba(255,255,255,.55);
   --fnos-hero-container:rgba(244,246,252,.5);
+  /* [fix-black] \u8F6E\u64AD/\u9AA8\u67B6\u4E3B\u9898\u81EA\u9002\u5E94\u5E95\u8272(\u66FF\u4EE3\u5199\u6B7B\u7684 #0b1219): \u6D45\u8272\u53D6\u6D45\u7070\u84DD, \u6DF1\u8272\u53D6\u6DF1\u84DD\u7070 */
+  --fnos-hero-bg:#eef1f6;
   --fnos-hero-panel:linear-gradient(160deg,rgba(247,249,253,.80),rgba(238,242,250,.86));
   --fnos-hero-dots:rgba(248,250,253,.65);
   --fnos-hero-edge:linear-gradient(90deg,transparent 66%,rgba(242,246,252,.85) 100%);
@@ -8402,6 +8260,7 @@ html.dark{
   --fnos-ui-exit-on:rgba(116,134,248,.95);
   --fnos-ui-exit-off:rgba(52,58,84,.30);
   --fnos-hero-container:rgba(36,40,58,.55);
+  --fnos-hero-bg:#161a26;
   --fnos-hero-panel:linear-gradient(160deg,rgba(36,40,58,.82),rgba(28,32,46,.88));
   --fnos-hero-dots:rgba(62,68,94,.72);
   --fnos-hero-edge:linear-gradient(90deg,transparent 66%,rgba(58,64,90,.92) 100%);
@@ -8462,6 +8321,7 @@ html.fnos-perf{
   --fnos-ui-panel-bg:#fafbfe;
   --fnos-ui-input-bg:#ffffff;
   --fnos-hero-container:#f4f6fc;
+  --fnos-hero-bg:#eef1f6;
   --fnos-hero-panel:#f7f9fd;
   --fnos-hero-dots:#f8fafd;
   --fnos-ui-veil:#f4f6fc;
@@ -8476,6 +8336,7 @@ html.fnos-perf.dark{
   --fnos-ui-panel-bg:#1e2130;
   --fnos-ui-input-bg:#343a54;
   --fnos-hero-container:#24283a;
+  --fnos-hero-bg:#161a26;
   --fnos-hero-panel:#24283a;
   --fnos-hero-dots:#3e445e;
   --fnos-ui-veil:#1c202e;
@@ -8691,6 +8552,7 @@ html.fnos-perf.dark{
       target.style.backgroundImage = `url("${dataUrl}")`;
       return;
     }
+    if (show && show._backdropIsPortrait) return;
     startFetchFallback(show, target, base, title);
   }
   function startFetchFallback(show, target, base, title) {
@@ -8778,24 +8640,6 @@ html.fnos-perf.dark{
       return null;
     }
   }
-  function tmdbIdFromItemData(d) {
-    if (!d || typeof d !== "object") return 0;
-    const direct = [
-      d.tmdbId,
-      d.tmdb_id,
-      d.ProviderIds && (d.ProviderIds.Tmdb || d.ProviderIds.tmdb),
-      d.externalIds && (d.externalIds.tmdb_id || d.externalIds.tmdb)
-    ];
-    for (const c of direct) {
-      if (c != null && /^\d+$/.test(String(c).trim())) return Number(String(c).trim());
-    }
-    const trimId = d.trimId || d.trim_id;
-    if (typeof trimId === "string") {
-      const m = trimId.match(/^(?:tt|tm)(\d+)$/i);
-      if (m) return Number(m[1]);
-    }
-    return 0;
-  }
   function mapItemDetail(json, id, base) {
     const d = json && json.data || {};
     const strmTag = detectStrmOrCloud(d);
@@ -8870,8 +8714,6 @@ html.fnos-perf.dark{
       rating,
       statusText,
       genres,
-      // [lc-1274] 携带 TMDB id（trim_id 剥前缀），轮播 logo 查询可走 id 精确匹配
-      tmdbId: tmdbIdFromItemData(d),
       desc: (d.overview || "").trim(),
       title: (d.title || d.name || "").trim(),
       strmTag
@@ -8991,8 +8833,7 @@ html.fnos-perf.dark{
         // 横版大图仍由 fetchItemDetail(data.backdrops) 补
         desc: String(it.overview || "").trim(),
         mediaType: mediaTypeOf(it),
-        tmdbId: tmdbIdFromItemData(it),
-        // [lc-1274] trim_id 剥前缀，logo 查询走 id 精确匹配
+        tmdbId: 0,
         totalEps: Number(it.number_of_episodes) || 0,
         localEps: Number(it.local_number_of_episodes) || 0,
         totalSeasons: Number(it.number_of_seasons) || 0,
@@ -9326,14 +9167,23 @@ html.fnos-perf.dark{
 .fntv-hot-inlib { background: rgba(46,204,113,.22); color: #6fe39a;
   padding: 1.5px 7.5px; border-radius: 999px; font-weight: 600; }
 
-/* \u4E0D\u611F\u5174\u8DA3\u6309\u94AE\uFF1A\u9ED8\u8BA4\u9690\u85CF\uFF0Chover \u5361\u7247\u65F6\u6D6E\u73B0\u4E8E\u53F3\u4E0A\u89D2 */
+/* \u4E0D\u611F\u5174\u8DA3\u6309\u94AE\uFF1A\u9ED8\u8BA4\u9690\u85CF\uFF08\u4E0D\u5360\u89C6\u89C9\u7126\u70B9\u3001\u4E0D\u62E6\u622A\u70B9\u51FB\uFF09\uFF0C\u4EC5\u5728\u9F20\u6807\u60AC\u505C\u5361\u7247\u6216\u952E\u76D8\u805A\u7126\u5361\u7247\u5185\u65F6\u6D6E\u73B0\u4E8E\u53F3\u4E0A\u89D2 */
 .fntv-hot-block { position: absolute; top: 6px; right: 6px;
   width: 22px; height: 22px; border: none; border-radius: 50%;
   background: rgba(0,0,0,.45); color: #fff; font-size: 13px; line-height: 1;
   display: flex; align-items: center; justify-content: center; cursor: pointer;
-  opacity: 0; transform: scale(.7); transition: opacity .15s, transform .15s, background .15s; }
-.fntv-hot-card:hover .fntv-hot-block { opacity: 1; transform: scale(1); }
+  opacity: 0; visibility: hidden; pointer-events: none; transform: scale(.7);
+  transition: opacity .15s ease, transform .15s ease, background .15s ease, visibility .15s ease; }
+/* \u9F20\u6807\u60AC\u505C\u5361\u7247 \u6216 \u952E\u76D8 Tab \u805A\u7126\u5230\u5361\u7247\u5185\uFF08\u6309\u94AE\u81EA\u8EAB\u53EF\u805A\u7126 \u2192 \u89E6\u53D1 :focus-within\uFF09\u65F6\u663E\u793A */
+.fntv-hot-card:hover .fntv-hot-block,
+.fntv-hot-card:focus-within .fntv-hot-block {
+  opacity: 1; visibility: visible; pointer-events: auto; transform: scale(1); }
 .fntv-hot-block:hover { background: rgba(255,80,80,.85); }
+.fntv-hot-block:focus-visible { outline: 2px solid rgba(255,255,255,.8); outline-offset: 1px; }
+/* \u89E6\u5C4F\u8BBE\u5907\u65E0 hover \u6982\u5FF5\uFF1A\u4FDD\u6301\u6309\u94AE\u5E38\u9A7B\u53EF\u89C1\uFF0C\u907F\u514D\u65E0\u6CD5\u5C4F\u853D */
+@media (hover: none) {
+  .fntv-hot-block { opacity: 1; visibility: visible; pointer-events: auto; transform: scale(1); }
+}
 
 /* \u5C4F\u853D\u6062\u590D\u6761 */
 #fntv-hot-reset { display: none; padding: 8px 14px; text-align: center;
@@ -9436,7 +9286,7 @@ html.fnos-perf.dark{
     const wd = weekdayCnOf(it) ? `<span class="fntv-hot-wd">${weekdayCnOf(it)}</span>` : "";
     const rt = typeof it.rating === "number" && it.rating ? `<span class="fntv-hot-rt">\u2605 ${it.rating.toFixed(1)}</span>` : "";
     return `
-  <div class="fntv-hot-card" data-id="bg|${it.id}" data-url="${it.url}" data-title-cn="${escapeHtml(titleCn)}" data-title="${escapeHtml(titleOrig)}">
+  <div class="fntv-hot-card" data-id="bg|${it.id}" data-url="${escapeHtml(it.url || "")}" data-title-cn="${escapeHtml(titleCn)}" data-title="${escapeHtml(titleOrig)}">
     ${img ? `<img class="fntv-hot-poster" data-poster="${img}" referrerpolicy="no-referrer" loading="lazy" alt="">` : `<div class="fntv-hot-poster"></div>`}
     <div class="fntv-hot-meta">
       <div class="fntv-hot-title">${escapeHtml(title)}</div>
@@ -9455,7 +9305,7 @@ html.fnos-perf.dark{
     const yr = it.year ? `<span class="fntv-hot-yr">${escapeHtml(it.year)}</span>` : "";
     const rt = typeof it.rating === "number" && it.rating ? `<span class="fntv-hot-rt">\u2605 ${it.rating.toFixed(1)}</span>` : "";
     return `
-  <div class="fntv-hot-card" data-id="tm|${it.id}" data-url="${it.url}" data-title-cn="${escapeHtml(titleCn)}" data-title="${escapeHtml(titleOrig)}">
+  <div class="fntv-hot-card" data-id="tm|${it.id}" data-url="${escapeHtml(it.url || "")}" data-title-cn="${escapeHtml(titleCn)}" data-title="${escapeHtml(titleOrig)}">
     ${img ? `<img class="fntv-hot-poster" data-poster="${img}" referrerpolicy="no-referrer" loading="lazy" alt="">` : `<div class="fntv-hot-poster"></div>`}
     <div class="fntv-hot-meta">
       <div class="fntv-hot-title">${escapeHtml(title)}</div>
@@ -9819,21 +9669,13 @@ html.fnos-perf.dark{
     } catch {
     }
   }
-  function navigateToDetail(href) {
-    try {
-      history.pushState({}, "", href);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-      setTimeout(() => {
-        const backBtn = !!document.querySelector('button[aria-label="\u8FD4\u56DE"]');
-        const seasonRendered = !!document.querySelector('[data-id="details"]') || !!document.querySelector(".fnos-season-2col") || !!document.querySelector('a[href*="/v/person/"]');
-        if (!backBtn && !seasonRendered) location.href = tvHref(href);
-      }, 600);
-    } catch (e) {
-      try {
-        location.href = tvHref(href);
-      } catch {
-      }
-    }
+  function resolveCardUrl(card) {
+    const raw = (card.getAttribute("data-url") || "").trim();
+    if (/^https?:\/\//i.test(raw)) return raw;
+    const key = card.getAttribute("data-id") || "";
+    const m = key.match(/^bg\|(\d+)$/);
+    if (m) return `https://bgm.tv/subject/${m[1]}`;
+    return "";
   }
   function fmtFootTime(ts) {
     const d = new Date(ts);
@@ -10016,21 +9858,13 @@ html.fnos-perf.dark{
       }
       const card = target.closest(".fntv-hot-card");
       if (!card) return;
-      const url = card.getAttribute("data-url");
-      const titleCn = card.getAttribute("data-title-cn") || "";
-      const titleOrig = card.getAttribute("data-title") || "";
-      ensureLibraryIndex().then(() => {
-        const hit = matchLibrary(titleCn, titleOrig);
-        if (hit) {
-          logger_default.info("[hotUpdates] \u5E93\u5185\u547D\u4E2D\uFF0C\u8DF3\u8BE6\u60C5\u9875", hit);
-          navigateToDetail(hit);
-        } else if (url) {
-          ipcRenderer.invoke("app:open-external", url).catch(() => {
-          });
-        }
-      }).catch(() => {
-        if (url) ipcRenderer.invoke("app:open-external", url).catch(() => {
-        });
+      const url = resolveCardUrl(card);
+      if (!url) {
+        logger_default.warn("[hotUpdates] \u6761\u76EE\u7F3A\u5C11\u53EF\u7528\u94FE\u63A5\uFF0C\u5FFD\u7565\u70B9\u51FB", card.getAttribute("data-id") || "");
+        return;
+      }
+      logger_default.info("[hotUpdates] \u6253\u5F00\u6761\u76EE\u94FE\u63A5", url);
+      ipcRenderer.invoke("app:open-external", url).catch(() => {
       });
     });
     resetEl.addEventListener("click", () => {
@@ -10095,7 +9929,7 @@ html.fnos-perf.dark{
       try {
         const res = await ipcRenderer.invoke("bangumi:calendar", !!force);
         if (!res || !res.ok) {
-          body.innerHTML = `<div class="fntv-hot-err">\u83B7\u53D6\u5931\u8D25\uFF1A${escapeHtml(res && res.error || "\u672A\u77E5\u9519\u8BEF")}</div>`;
+          body.innerHTML = `<div class="fntv-hot-err">\u83B7\u53D6\u5931\u8D25\uFF1A${escapeHtml(friendlyError(res && res.error, "\u672A\u77E5\u9519\u8BEF"))}</div>`;
           return;
         }
         hotCacheSet("bangumi", res);
@@ -10104,7 +9938,7 @@ html.fnos-perf.dark{
         updateFoot(res);
         render3();
       } catch (e) {
-        body.innerHTML = `<div class="fntv-hot-err">\u83B7\u53D6\u5931\u8D25\uFF1A${escapeHtml(String(e && e.message || e))}</div>`;
+        body.innerHTML = `<div class="fntv-hot-err">\u83B7\u53D6\u5931\u8D25\uFF1A${escapeHtml(friendlyError(e))}</div>`;
       }
     }
     async function loadTm(force) {
@@ -10125,7 +9959,7 @@ html.fnos-perf.dark{
         const res = await ipcRenderer.invoke(channel, !!force);
         if (!res || !res.ok) {
           const base = source2 === "douban" ? "\u8C46\u74E3\u6570\u636E\u83B7\u53D6\u5931\u8D25" : "TMDB \u6570\u636E\u83B7\u53D6\u5931\u8D25";
-          body.innerHTML = `<div class="fntv-hot-err">\u83B7\u53D6\u5931\u8D25\uFF1A${escapeHtml(res && res.error || base)}</div>`;
+          body.innerHTML = `<div class="fntv-hot-err">\u83B7\u53D6\u5931\u8D25\uFF1A${escapeHtml(friendlyError(res && res.error, base))}</div>`;
           return;
         }
         hotCacheSet(source2, res);
@@ -10133,16 +9967,16 @@ html.fnos-perf.dark{
         for (const it of res.items || []) allTm.push(it);
         updateFoot(res);
         if (!allTm.length) {
-          const tip = res.warning || (source2 === "douban" ? "\u8C46\u74E3\u672A\u8FD4\u56DE\u6570\u636E\uFF08\u53EF\u80FD\u7F51\u7EDC\u6CE2\u52A8\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\uFF09\u3002" : "TMDB \u672A\u8FD4\u56DE\u6570\u636E\uFF08\u53EF\u80FD Key \u65E0\u6548\uFF0C\u6216\u672C\u673A\u7F51\u7EDC\u65E0\u6CD5\u8FDE\u63A5 api.themoviedb.org\uFF1B\u8BF7\u5728\u8BBE\u7F6E\u5F00\u542F\u300C\u514D\u68AF\u5B50\u76F4\u8FDE\u300D\u6216\u8BBE\u7F6E HTTPS_PROXY \u540E\u91CD\u8BD5\uFF0C\u8BE6\u89C1\u65E5\u5FD7 [TMDB\u8BCA\u65AD]\uFF09");
-          body.innerHTML = `<div class="fntv-hot-err">${escapeHtml(tip)}</div>`;
+          const tip = res.warning || (source2 === "douban" ? "\u8C46\u74E3\u672A\u8FD4\u56DE\u6570\u636E\uFF08\u53EF\u80FD\u7F51\u7EDC\u6CE2\u52A8\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\uFF09\u3002" : "TMDB \u672A\u8FD4\u56DE\u6570\u636E\uFF08\u53EF\u80FD\u672C\u673A\u7F51\u7EDC\u65E0\u6CD5\u8FDE\u63A5 api.themoviedb.org\uFF1B\u53EF\u914D\u7F6E\u300C\u81EA\u5B9A\u4E49\u4EE3\u7406\u300D\u6216\u8BBE\u7F6E HTTPS_PROXY \u540E\u91CD\u8BD5\uFF0C\u8BE6\u89C1\u65E5\u5FD7 [TMDB\u8BCA\u65AD]\uFF09");
+          body.innerHTML = `<div class="fntv-hot-err">${escapeHtml(friendlyError(tip))}</div>`;
           return;
         }
         render3();
         if (res.warning) {
-          body.insertAdjacentHTML("afterbegin", `<div class="fntv-hot-warn">\u26A0 ${escapeHtml(res.warning)}</div>`);
+          body.insertAdjacentHTML("afterbegin", `<div class="fntv-hot-warn">\u26A0 ${escapeHtml(friendlyError(res.warning))}</div>`);
         }
       } catch (e) {
-        body.innerHTML = `<div class="fntv-hot-err">\u83B7\u53D6\u5931\u8D25\uFF1A${escapeHtml(String(e && e.message || e))}</div>`;
+        body.innerHTML = `<div class="fntv-hot-err">\u83B7\u53D6\u5931\u8D25\uFF1A${escapeHtml(friendlyError(e))}</div>`;
       }
     }
   }
@@ -10156,14 +9990,34 @@ html.fnos-perf.dark{
       const _ps = history.pushState, _rs = history.replaceState;
       history.pushState = function(...a) {
         _ps.apply(this, a);
-        syncHomeVisibility();
+        try {
+          syncHomeVisibility();
+        } catch (e) {
+          logger_default.warn("[hotUpdates] nav side-effect failed", e);
+        }
       };
       history.replaceState = function(...a) {
         _rs.apply(this, a);
-        syncHomeVisibility();
+        try {
+          syncHomeVisibility();
+        } catch (e) {
+          logger_default.warn("[hotUpdates] nav side-effect failed", e);
+        }
       };
-      window.addEventListener("popstate", syncHomeVisibility);
-      window.addEventListener("hashchange", syncHomeVisibility);
+      window.addEventListener("popstate", () => {
+        try {
+          syncHomeVisibility();
+        } catch (e) {
+          logger_default.warn("[hotUpdates] popstate side-effect failed", e);
+        }
+      });
+      window.addEventListener("hashchange", () => {
+        try {
+          syncHomeVisibility();
+        } catch (e) {
+          logger_default.warn("[hotUpdates] hashchange side-effect failed", e);
+        }
+      });
     } catch (e) {
       logger_default.error("[hotUpdates] nav hook err", String(e).substring(0, 60));
     }
@@ -10342,7 +10196,7 @@ html.fnos-perf.dark{
       slide.setAttribute("data-index", String(i));
       const slideBg = document.createElement("div");
       slideBg.className = "fnos-slide-bg";
-      slideBg.style.backgroundImage = `linear-gradient(160deg, ${accent.border}55, #0b1219)`;
+      slideBg.style.backgroundImage = `linear-gradient(160deg, ${accent.border}55, var(--fnos-hero-bg))`;
       slide.appendChild(slideBg);
       const content = document.createElement("div");
       content.className = "fnos-slide-content";
@@ -10707,7 +10561,7 @@ html.fnos-perf.dark{
       card.setAttribute("data-index", String(i));
       const bg = document.createElement("div");
       bg.className = "fntv-s3-bg";
-      bg.style.backgroundImage = `linear-gradient(160deg, ${accent}55, #0b1219)`;
+      bg.style.backgroundImage = `linear-gradient(160deg, ${accent}55, var(--fnos-hero-bg))`;
       card.appendChild(bg);
       const genreArr = show.genres || [];
       const info = document.createElement("div");
@@ -10952,11 +10806,7 @@ html.fnos-perf.dark{
    \u7528\u6237\u622A\u56FE\uFF08390px \u7AD6\u5C4F\uFF09\u75C5\u7076\uFF1A\u2460\u8F6E\u64AD\u5361\u7247\u6EA2\u51FA\u5C4F\u5E55\u53F3\u7F18\u2014\u2014\u684C\u9762\u7ED9\u5A92\u4F53\u5E93 section \u9884\u7559\u7684\u5BBD
    padding/\u8FB9\u8DDD\u5728\u7A84\u5C4F\u5403\u6389\u8FD1\u56DB\u5206\u4E4B\u4E00\u5BBD\uFF0C\u5361\u7247 86% \u5BBD\u518D\u53E0\u52A0 section \u5185\u8FB9\u8DDD\u5373\u51FA\u5C4F\uFF1B
    \u2461\u6807\u9898 2rem/\u7B80\u4ECB .95rem \u5728\u7AD6\u5C4F\u4E0A\u5360\u6BD4\u8FC7\u5927\uFF0C\u7B80\u4ECB\u957F\u6587\u628A\u6309\u94AE\u6324\u51FA\u5361\u5916\uFF1B
-   \u2462prev/next \u5361 \xB172% \u4F4D\u79FB\u5728\u7A84\u5C4F\u9732\u51FA\u8FC7\u591A\u90BB\u5361\uFF08\u89C6\u89C9\u6742\u4E71\uFF09\u3002
-
-   [lc-1288] \u6587\u5B57\u5C42\u9690\u85CF\u90A3\u4E00\u6761\u5DF2\u8FC1\u5230 mobileStyle.ts \xA7D2 \u7EDF\u4E00\u63A5\u7BA1\uFF1A\u8FD9\u91CC\u7528
-   fnos-touch-narrow\u3001\u90A3\u8FB9\u7528 fnos-narrow\uFF0C\u4E24\u5957\u6807\u8BB0\u540C\u4E3A \u2264640 \u4F46\u524D\u8005\u591A\u4E00\u5C42\u89E6\u6478\u5224\u5B9A\uFF0C
-   \u540C\u5C4F\u65F6\u628A mobileStyle \u7CBE\u5FC3\u5199\u7684\u624B\u673A\u6392\u7248\u6574\u6BB5\u76D6\u6389\u3002\u4E24\u5904\u5E76\u5B58\u65F6\u4EE5 mobileStyle \u4E3A\u51C6\u3002 */
+   \u2462prev/next \u5361 \xB172% \u4F4D\u79FB\u5728\u7A84\u5C4F\u9732\u51FA\u8FC7\u591A\u90BB\u5361\uFF08\u89C6\u89C9\u6742\u4E71\uFF09\u3002 */
 @media (max-width: 640px){
   html.fnos-touch-narrow [data-fntv-carousel-style="4"]{
     border-radius:16px;
@@ -10967,8 +10817,9 @@ html.fnos-perf.dark{
   /* \u90BB\u5361\u4F4D\u79FB\u6536\u7A84\uFF1A390px \u4E0B \xB172% \u4F1A\u628A\u90BB\u5361\u5927\u534A\u63A8\u51FA\u5C4F\uFF0C\u6539\u4E3A \xB158% \u53EA\u9732\u8FB9\u7F18\u6697\u793A\u53EF\u6ED1 */
   html.fnos-touch-narrow [data-fntv-carousel-style="4"] .fntv-s4-card.prev{transform:scale(.86) translateX(-52%) rotateY(22deg)}
   html.fnos-touch-narrow [data-fntv-carousel-style="4"] .fntv-s4-card.next{transform:scale(.86) translateX(52%) rotateY(-22deg)}
-  /* [v1.4.8b] \u6587\u5B57\u5C42\u9690\u85CF\u4E00\u6761\u5DF2\u8FC1\u81F3 mobileStyle.ts \xA7D2\uFF08\u7531 fnos-narrow \u63A5\u7BA1\u5E76\u7ED9\u51FA\u624B\u673A\u6392\u7248\uFF09\uFF0C
-     \u6B64\u5904\u4E0D\u518D\u91CD\u590D\u58F0\u660E\uFF0C\u907F\u514D\u4E24\u5957\u6807\u8BB0\u7C7B\u4E92\u76F8\u8986\u76D6\u3002 */
+  /* [v1.4.8b \u7528\u6237\u62CD\u677F] \u624B\u673A\u4E0A\u8F6E\u64AD\u76F4\u63A5\u4E0D\u5C55\u793A\u6587\u5B57\u5C42\uFF08\u6807\u9898/\u7B80\u4ECB/\u6309\u94AE\u6574\u5C42\u9690\u85CF\uFF09\uFF0C\u53EA\u7559\u7EAF\u6D77\u62A5\u753B\u9762\u2014\u2014
+     \u7AD6\u5C4F\u5361\u7247\u7A7A\u95F4\u5C0F\uFF0C\u6587\u5B57\u5C42\u6C38\u8FDC\u653E\u4E0D\u4E0B\uFF1B\u70B9\u5361\u7247\u8FDB\u8BE6\u60C5\u770B\u5B8C\u6574\u4FE1\u606F\u3002dots \u4FDD\u7559\uFF08\u4F4D\u7F6E\u6307\u793A+\u53EF\u70B9\u5207\u6362\uFF09\u3002 */
+  html.fnos-touch-narrow [data-fntv-carousel-style="4"] .fntv-s4-info{display:none !important}
   html.fnos-touch-narrow [data-fntv-carousel-style="4"] .fntv-s4-dots{bottom:10px}
 }
 @media (max-width: 640px) and (orientation: portrait){
@@ -10981,12 +10832,11 @@ html.fnos-perf.dark{
   }
 }
 
-/* \u2500\u2500 [v1.4.8\u2192lc-1290] \u6837\u5F0F1/2/3 \u5171\u7528\uFF1Awrapper 44px \u684C\u9762\u8FB9\u8DDD\u5728 390px \u89C6\u53E3\u5403\u6389\u8FD1 1/4 \u5BBD\u3002
-   wrapper \u539F\u751F\u65E0\u7C7B\u540D\uFF0C\u4EE5 data-fntv-carousel-wrapper \u5B9A\u4F4D\uFF08\u4E09\u5904\u521B\u5EFA\u70B9\u7EDF\u4E00\u6253\u6807\uFF09\u3002
-   [lc-1290] \u6536\u7A84\u6570\u503C\u5DF2\u8FC1\u5230 mobileStyle.ts B5c\uFF088px\uFF0C\u5E76\u4E0E\u5A92\u4F53\u5E93 section \u7684 px-[44px]
-   \u4E00\u8D77\u6536 \u2014\u2014 \u539F\u6765\u53EA\u6536 wrapper \u4E00\u5C42\uFF0C390px \u4E0B\u4E24\u4FA7\u4ECD\u5404\u7A7A 44~67px \u5373\u7528\u6237\u62A5\u7684\u300C\u8F6E\u64AD\u5DE6\u53F3\u9ED1\u6846\u300D\uFF09\u3002
-   \u4E24\u5904\u5E76\u5B58\u4F1A\u51FA\u73B0\u540C\u7279\u5F02\u6027\u6253\u67B6\uFF0C\u6545\u6B64\u5904\u53EA\u4FDD\u7559 max-width \u6536\u53E3\uFF0Cpadding \u503C\u7531 mobileStyle \u72EC\u5BB6\u58F0\u660E\u3002 */
+/* \u2500\u2500 [v1.4.8] \u6837\u5F0F1/2/3 \u5171\u7528\uFF1Awrapper 44px \u684C\u9762\u8FB9\u8DDD\u5728 390px \u89C6\u53E3\u5403\u6389\u8FD1 1/4 \u5BBD \u2192 \u6536\u7A84 16px\u3002
+   wrapper \u539F\u751F\u65E0\u7C7B\u540D\uFF0C\u4EE5 data-fntv-carousel-wrapper \u5B9A\u4F4D\uFF08\u4E09\u5904\u521B\u5EFA\u70B9\u7EDF\u4E00\u6253\u6807\uFF09\u3002 */
 @media (max-width: 640px){
+  /* [fix-black] \u65E7\u7684 padding-left/right:16px \u5DF2\u7531 mobileStyle.ts \u7684 8px \u89C4\u5219\u63A5\u7BA1\uFF0C
+     \u6B64\u5904\u5220\u9664\u907F\u514D\u540C\u7279\u5F02\u6027\u89C4\u5219\u6253\u67B6\uFF088px \u66F4\u9002\u5408\u7A84\u5C4F\u547C\u5438\u4F4D\uFF09\u3002 */
   /* \u5BB9\u5668\u7EDF\u4E00\u4E0D\u51FA\u5C4F\uFF1A\u5A92\u4F53\u5E93 section \u7236\u7EA7\u82E5\u6709\u6A2A\u5411\u6EA2\u51FA\uFF08\u539F\u751F\u6A2A\u6ED1\u5E26\uFF09\uFF0C\u5F3A\u5236\u6211\u4EEC\u8FD9\u5C42\u4E0D\u53C2\u4E0E */
   html.fnos-touch-narrow [data-fntv-carousel-wrapper] > div{max-width:100% !important}
 }
@@ -11024,7 +10874,7 @@ html.fnos-perf.dark{
       card.setAttribute("data-index", String(i));
       const bg = document.createElement("div");
       bg.className = "fntv-s4-bg";
-      bg.style.backgroundImage = `linear-gradient(160deg, ${accent}55, #0b1219)`;
+      bg.style.backgroundImage = `linear-gradient(160deg, ${accent}55, var(--fnos-hero-bg))`;
       card.appendChild(bg);
       const genreArr = show.genres || [];
       const info = document.createElement("div");
@@ -11210,49 +11060,6 @@ html.fnos-perf.dark{
   }
 
   // src/preload/plugins/embyWall/carousel/progress.ts
-  var SKEL_TEXT = {
-    dark: { tip: "rgba(225,218,245,.85)", pct: "rgba(232,221,208,.92)" },
-    light: { tip: "rgba(96,88,74,.92)", pct: "rgba(60,50,40,.92)" }
-  };
-  var _skelTheme = null;
-  var _skelThemeObserver = null;
-  function applySkelTheme(isDark) {
-    const t2 = _skelTheme;
-    if (!t2 || !t2.container.isConnected) return;
-    const c = isDark ? SKEL_TEXT.dark : SKEL_TEXT.light;
-    t2.container.setAttribute("data-fntv-skel", isDark ? "dark" : "light");
-    for (const el of t2.tipEls) el.style.color = c.tip;
-    for (const el of t2.pctEls) el.style.color = c.pct;
-    const cardBg = isDark ? SKEL_CARD_BG.dark : SKEL_CARD_BG.light;
-    for (const el of t2.cardBgs) el.style.background = cardBg;
-  }
-  var SKEL_CARD_BG = { dark: "#1e1b17", light: "#e8f0fe" };
-  function sampleSurfaceDark() {
-    try {
-      let el = _skelTheme ? _skelTheme.container : null;
-      while (el) {
-        const bg = getComputedStyle(el).backgroundColor;
-        const m = bg.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)/);
-        if (m) {
-          const a = m[4] === void 0 ? 1 : parseFloat(m[4]);
-          if (a >= 0.5) {
-            const lum = 0.2126 * parseFloat(m[1]) + 0.7152 * parseFloat(m[2]) + 0.0722 * parseFloat(m[3]);
-            return lum < 128;
-          }
-        }
-        el = el.parentElement;
-      }
-    } catch {
-    }
-    return isSurfaceDark();
-  }
-  function ensureSkelThemeObserver() {
-    if (_skelThemeObserver) return;
-    _skelThemeObserver = new MutationObserver(() => {
-      if (_skelTheme && _skelTheme.container.isConnected) applySkelTheme(sampleSurfaceDark());
-    });
-    _skelThemeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
-  }
   function buildLoadingPlaceholder(target) {
     if (!document.getElementById("fnos-ph-style")) {
       const st = document.createElement("style");
@@ -11318,8 +11125,6 @@ html.fnos-perf.dark{
       (document.head || document.documentElement).appendChild(st);
     }
     target.innerHTML = "";
-    _skelTheme = null;
-    ensureSkelThemeObserver();
     target.style.borderTop = "none";
     target.style.boxShadow = "none";
     target.style.marginTop = "0";
@@ -11333,17 +11138,10 @@ html.fnos-perf.dark{
         stored = localStorage.getItem("fnos-carousel-style");
       } catch {
       }
-      let touch = false, mobileSpec = false;
-      try {
-        touch = "ontouchstart" in window || (navigator.maxTouchPoints || 0) > 0;
-        mobileSpec = Math.min(window.innerWidth, window.innerHeight) <= 820;
-      } catch {
-        touch = false;
-        mobileSpec = false;
-      }
-      if (touch && mobileSpec) {
-        const tv = parseInt(stored || "4", 10);
-        return tv === 1 || tv === 2 || tv === 3 ? tv : 5;
+      if (getUiMode() === "mobile") {
+        const v2 = parseInt(stored || "4", 10);
+        if (v2 === 1 || v2 === 2 || v2 === 3) return v2;
+        return 5;
       }
       const v = parseInt(stored || "4", 10);
       if (v === 5) return 4;
@@ -11353,21 +11151,20 @@ html.fnos-perf.dark{
     const container = document.createElement("div");
     container.setAttribute("data-fntv-carousel-style", String(_cs));
     const _blur = "backdrop-filter:blur(24px) saturate(140%);-webkit-backdrop-filter:blur(24px) saturate(140%)";
-    if (!_isDark && _cs !== 4) {
+    if (!_isDark && _cs !== 4 && _cs !== 5) {
       container.style.cssText = `position:relative;overflow:hidden;width:100%;max-height:calc(100vh - 380px);aspect-ratio:16/9;border-radius:24px;background:linear-gradient(160deg,#eef1f6,#dde3ec);${_blur};margin:0 auto;box-shadow:0 18px 50px -14px rgba(40,50,80,.18)`;
     } else if (_cs === 2 || _cs === 3) {
-      container.style.cssText = `position:relative;overflow:hidden;width:100%;max-height:calc(100vh - 380px);aspect-ratio:16/9;border-radius:24px;background:linear-gradient(160deg,rgba(120,130,160,.22),#0b1219);${_blur};box-shadow:0 26px 60px -12px rgba(0,0,0,.55)`;
+      container.style.cssText = `position:relative;overflow:hidden;width:100%;max-height:calc(100vh - 380px);aspect-ratio:16/9;border-radius:24px;background:linear-gradient(160deg,rgba(120,130,160,.22),var(--fnos-hero-bg));${_blur};box-shadow:0 26px 60px -12px rgba(0,0,0,.55)`;
     } else if (_cs === 4) {
       container.style.cssText = `position:relative;overflow:hidden;width:100%;max-height:calc(100vh - 380px);aspect-ratio:16/9;border-radius:24px;background:transparent;margin:0 auto;box-shadow:none`;
     } else if (_cs === 5) {
-      container.style.cssText = `position:relative;overflow:hidden;width:100%;height:min(56vw,340px);border-radius:18px;background:#10141c;margin:0 auto;box-shadow:none`;
+      container.style.cssText = `position:relative;overflow:hidden;width:100%;height:min(56vw,340px);border-radius:18px;background:var(--fnos-hero-bg,#10141c);margin:0 auto;box-shadow:none`;
     } else {
       container.style.cssText = `position:relative;overflow:hidden;width:100%;max-height:calc(100vh - 380px);aspect-ratio:16/9;border-radius:24px;background:linear-gradient(155deg,rgba(145,115,215,.22),rgba(70,50,120,.34));${_blur};margin:0 auto;box-shadow:none`;
     }
     S.carouselContainer = container;
-    container.dataset.fntvSkeleton = "1";
     let fillEl, percentEl, statusEl;
-    if (!_isDark && _cs !== 4) {
+    if (!_isDark && _cs !== 4 && _cs !== 5) {
       const overlay = document.createElement("div");
       overlay.className = "fntv-ph-l-overlay";
       container.appendChild(overlay);
@@ -11493,18 +11290,16 @@ html.fnos-perf.dark{
     } else if (_cs === 4) {
       ensureStyle4Css();
       container.setAttribute("data-fntv-skel", _isDark ? "dark" : "light");
-      const sk = SKEL_TEXT[_isDark ? "dark" : "light"];
+      const sk = _isDark ? { tip: "rgba(225,218,245,.85)", pct: "rgba(232,221,208,.92)" } : { tip: "rgba(96,88,74,.92)", pct: "rgba(60,50,40,.92)" };
       const track = document.createElement("div");
       track.className = "fntv-s4-track";
-      const cardBgs = [];
       const mkS4Card = (cls) => {
         const card = document.createElement("div");
         card.className = "fntv-s4-card" + (cls ? " " + cls : "");
         const bg = document.createElement("div");
         bg.className = "fntv-s4-skelbg";
         bg.style.backgroundImage = "none";
-        bg.style.background = "var(--fnos-skel-card, #e8f0fe)";
-        cardBgs.push(bg);
+        bg.style.background = _isDark ? "#1e1b17" : "#e8f0fe";
         const shine = document.createElement("div");
         shine.className = "fntv-s4-skel";
         shine.style.cssText = "position:absolute;inset:0;opacity:.5;z-index:0";
@@ -11574,10 +11369,9 @@ html.fnos-perf.dark{
       s4BarBox.appendChild(s4Track);
       container.appendChild(s4BarBox);
       statusEl = tip4;
-      _skelTheme = { container, tipEls: [tip4], pctEls: [percentEl], cardBgs };
     } else if (_cs === 5) {
       const slideBg = document.createElement("div");
-      slideBg.style.cssText = "position:absolute;inset:0;background:#151a24;overflow:hidden;border-radius:18px";
+      slideBg.style.cssText = "position:absolute;inset:0;background:var(--fnos-hero-bg,#151a24);overflow:hidden;border-radius:18px";
       const shine = document.createElement("div");
       shine.className = "fnos-ph-skel";
       shine.style.cssText = "position:absolute;inset:0;opacity:.4";
@@ -11703,21 +11497,6 @@ html.fnos-perf.dark{
     }, 120);
     wrapper.appendChild(container);
     target.appendChild(wrapper);
-    if (_skelTheme) {
-      const theme = _skelTheme;
-      let last = _isDark;
-      const resampleTimer = window.setInterval(() => {
-        if (_skelTheme !== theme || !theme.container.isConnected) {
-          clearInterval(resampleTimer);
-          return;
-        }
-        const s = sampleSurfaceDark();
-        if (s !== last) {
-          last = s;
-          applySkelTheme(s);
-        }
-      }, 400);
-    }
     S.carouselProgressEl = null;
     S.carouselProgressCount = 0;
     const phTimer = window.setTimeout(() => {
@@ -12650,6 +12429,97 @@ html.fnos-perf.dark{
     }
   }
 
+  // src/preload/plugins/embyWall/carousel/placeholder.ts
+  var SKEL_STYLE_ID = "fntv-carousel-img-skel-style";
+  var LAYER_CLASS = "fntv-bg-layer";
+  var LOADING_CLASS = "fntv-img-loading";
+  function ensurePlaceholderCss() {
+    if (document.getElementById(SKEL_STYLE_ID)) return;
+    const st = document.createElement("style");
+    st.id = SKEL_STYLE_ID;
+    st.textContent = `
+@keyframes fntv-img-shimmer{0%{transform:translateX(-120%)}100%{transform:translateX(120%)}}
+/* \u56FE\u7247\u52A0\u8F7D\u4E2D\u7684\u9AA8\u67B6\uFF1A\u4E3B\u9898\u81EA\u9002\u5E94\u5E95\u8272\u7531\u5185\u8054 background \u7ED9\u51FA\uFF0C\u8FD9\u91CC\u53EA\u8D1F\u8D23\u5FAE\u5149\u626B\u8FC7 */
+.${LOADING_CLASS}{position:relative;overflow:hidden}
+.${LOADING_CLASS}::after{
+  content:'';position:absolute;inset:0;z-index:1;pointer-events:none;
+  transform:translateX(-120%);animation:fntv-img-shimmer 1.4s ease-in-out infinite;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.16),transparent);
+}
+.${LOADING_CLASS}[data-fntv-skel="light"]::after{
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.72),transparent);
+}
+/* \u771F\u5B9E\u56FE\u7247\u5C42\uFF1A\u53E0\u5728\u5360\u4F4D\u5E95\u8272\u4E4B\u4E0A\uFF0C\u52A0\u8F7D\u5B8C\u6210\u540E\u6DE1\u5165 */
+.${LAYER_CLASS}{
+  position:absolute;inset:0;z-index:0;
+  background-size:cover;background-position:center 25%;
+  opacity:0;transition:opacity .5s ease;pointer-events:none;
+}
+@media (prefers-reduced-motion: reduce){
+  .${LOADING_CLASS}::after{animation:none;background:transparent}
+  .${LAYER_CLASS}{transition:none}
+}
+`;
+    (document.head || document.documentElement).appendChild(st);
+  }
+  function carouselPlaceholderGradient(accent, dark) {
+    const isDark = dark === void 0 ? isSurfaceDark() : dark;
+    const base = isDark ? "rgba(30,34,50,.92)" : "rgba(232,237,246,.96)";
+    if (accent) return `linear-gradient(160deg, ${accent}55, ${base})`;
+    return `linear-gradient(160deg, ${isDark ? "rgba(58,64,90,.55)" : "rgba(210,218,232,.9)"}, ${base})`;
+  }
+  function hasBackdropImage(target) {
+    const layer = target.querySelector(":scope > ." + LAYER_CLASS);
+    return !!(layer && layer.style.backgroundImage && layer.style.backgroundImage !== "none");
+  }
+  function getImageLayer(target) {
+    ensurePlaceholderCss();
+    let layer = target.querySelector(":scope > ." + LAYER_CLASS);
+    if (!layer) {
+      if (getComputedStyle(target).position === "static") target.style.position = "relative";
+      layer = document.createElement("div");
+      layer.className = LAYER_CLASS;
+      target.appendChild(layer);
+    }
+    return layer;
+  }
+  function preloadImage(url) {
+    return new Promise((resolve2) => {
+      try {
+        const im = new Image();
+        let settled = false;
+        const done = (ok) => {
+          if (!settled) {
+            settled = true;
+            resolve2(ok);
+          }
+        };
+        im.onload = () => done(true);
+        im.onerror = () => done(false);
+        im.src = url;
+        if (im.complete && im.naturalWidth > 0) done(true);
+      } catch (e) {
+        resolve2(false);
+      }
+    });
+  }
+  function applyBackdropImage(target, url, opts) {
+    if (!url) return;
+    const layer = getImageLayer(target);
+    if (opts && opts.position) layer.style.backgroundPosition = opts.position;
+    preloadImage(url).then((ok) => {
+      if (!ok) return;
+      layer.style.backgroundImage = `url("${url}")`;
+      const show = () => {
+        layer.style.opacity = "1";
+      };
+      requestAnimationFrame(show);
+      window.setTimeout(show, 80);
+      target.classList.remove(LOADING_CLASS);
+      target.removeAttribute("data-fntv-skel");
+    });
+  }
+
   // src/preload/plugins/embyWall/carousel/mobile.ts
   function resolveCarouselStyle() {
     let stored = null;
@@ -12691,7 +12561,7 @@ html.fnos-perf.dark{
 [data-fntv-carousel-style="5"] .fntv-s5-slide{
   position:relative;flex:0 0 100%;width:100%;height:100%;
   scroll-snap-align:center;scroll-snap-stop:always;  /* \u4E00\u5C4F\u4E00\u505C\uFF0C\u7981\u6B62\u8FDE\u6ED1\u63A0\u8FC7 */
-  overflow:hidden;border-radius:18px;background:#10141c;
+  overflow:hidden;border-radius:18px;background:var(--fnos-hero-bg,#10141c);
 }
 /* \u906E\u7F69\uFF1A\u5E95\u90E8\u5355\u5C42\u6E10\u53D8\uFF08\u4FE1\u606F\u53EF\u8BFB\uFF09\uFF0C\u9876\u90E8\u4E0D\u538B\u2014\u2014\u6D77\u62A5\u4E0A\u90E8\u662F\u89C6\u89C9\u4E3B\u4F53\uFF0C\u4FDD\u7559\u539F\u753B\u4EAE\u5EA6 */
 [data-fntv-carousel-style="5"] .fntv-s5-shade{
@@ -12776,7 +12646,7 @@ html.fnos-perf.dark{
     const log52 = (...a) => log9("[s5]", ...a);
     ensureStyle5Css();
     wrapper.dataset.fntvCarouselWrapper = "1";
-    wrapper.style.cssText = "display:block;padding:0;margin:0";
+    wrapper.style.cssText = "display:block;padding:0;margin:0;position:relative";
     container.style.width = "100%";
     container.style.height = "";
     container.style.minHeight = "0";
@@ -12803,18 +12673,16 @@ html.fnos-perf.dark{
       slide.dataset.index = String(i);
       const bg = document.createElement("div");
       bg.className = "fntv-s5-img";
-      bg.style.cssText = "position:absolute;inset:0;background-size:cover;background-position:center 25%;background-color:#10141c";
+      bg.style.cssText = "position:absolute;inset:0;background-size:cover;background-position:center 25%;background-image:" + carouselPlaceholderGradient(void 0, getEffectiveDark());
       slide.appendChild(bg);
       applyCarouselBackdrop(show, bg, base);
       if (!show._backdropBlob) {
         window.setTimeout(() => {
           if (!document.body.contains(slide)) return;
-          const cur = getComputedStyle(bg).backgroundImage;
-          if (cur && cur !== "none") return;
+          if (hasBackdropImage(bg)) return;
           fetchPortraitFallback(show, base).then((dataUrl) => {
-            if (dataUrl && document.body.contains(slide) && getComputedStyle(bg).backgroundImage === "none") {
-              bg.style.backgroundImage = `url("${dataUrl}")`;
-              bg.style.backgroundPosition = "center 20%";
+            if (dataUrl && document.body.contains(slide) && !hasBackdropImage(bg)) {
+              applyBackdropImage(bg, dataUrl, { position: "center 20%" });
             }
           }).catch(() => {
           });
@@ -13071,7 +12939,6 @@ html.fnos-perf.dark{
     );
   }
   function injectCarousel() {
-    var _a, _b;
     log9("injectCarousel called, S.carouselInited=", S.carouselInited, "S.apiShows.length=", S.apiShows.length);
     if (S.carouselInited) return;
     destroyCarousel();
@@ -13092,17 +12959,10 @@ html.fnos-perf.dark{
       target = findMediaLibrarySection();
       if (target) log9("media-library section found via robust search");
     }
-    if (rebuild && (!target || !document.contains(target))) {
-      log9("rebuild section detached, fallback to DOM search");
-      target = findMediaLibrarySection();
-      rebuild = false;
-      if (target) log9("media-library section found via robust search (fallback)");
-    }
     if (!target) {
       log9("no target");
       return;
     }
-    const skeletonEl = S.carouselWrapper && S.carouselWrapper.querySelector("[data-fntv-skeleton]") || document.querySelector("[data-fntv-skeleton]");
     log9("target found on", location.href, rebuild ? "(rebuild)" : "(first)");
     if (!document.getElementById("fnos-hero-action-style")) {
       const actSt = document.createElement("style");
@@ -13188,20 +13048,11 @@ html.fnos-perf.dark{
     let currentIdx = 0;
     const infos = [];
     let wrapper;
-    if (rebuild && S.carouselWrapper && document.contains(S.carouselWrapper)) {
+    if (rebuild && S.carouselWrapper) {
       wrapper = S.carouselWrapper;
-      if (skeletonEl && skeletonEl.parentElement === wrapper) {
-        for (const child of Array.from(wrapper.childNodes)) {
-          if (child !== skeletonEl) (_a = child.remove) == null ? void 0 : _a.call(child);
-        }
-      } else {
-        wrapper.innerHTML = "";
-      }
+      wrapper.innerHTML = "";
     } else {
-      const keep = skeletonEl ? skeletonEl.parentElement : null;
-      for (const child of Array.from(target.childNodes)) {
-        if (child !== keep) (_b = child.remove) == null ? void 0 : _b.call(child);
-      }
+      target.innerHTML = "";
       target.style.borderTop = "none";
       target.style.boxShadow = "none";
       target.style.marginTop = "0";
@@ -13215,70 +13066,9 @@ html.fnos-perf.dark{
     container.style.cssText = "position:relative;overflow:hidden;width:100%;max-height:calc(100vh - 380px);aspect-ratio:16/9;border-radius:24px;background:var(--fnos-hero-container);backdrop-filter:blur(24px) saturate(140%);-webkit-backdrop-filter:blur(24px) saturate(140%);margin:0 auto;box-shadow:none";
     const _cs = resolveCarouselStyle();
     container.setAttribute("data-fntv-carousel-style", String(_cs));
-    container.style.opacity = "0";
-    container.style.transition = "opacity .45s ease";
+    container.style.opacity = "1";
     wrapper.appendChild(container);
     S.carouselContainer = container;
-    if (skeletonEl && skeletonEl.parentElement) {
-      try {
-        const skelWrap = skeletonEl.parentElement;
-        skelWrap.dataset.fntvCarouselWrapper = "1";
-        const cs = getComputedStyle(skelWrap);
-        skelWrap.style.position = "relative";
-        skeletonEl.style.position = "absolute";
-        skeletonEl.style.top = cs.paddingTop;
-        skeletonEl.style.left = cs.paddingLeft;
-        skeletonEl.style.right = cs.paddingRight;
-        skeletonEl.style.width = "auto";
-        skeletonEl.style.margin = "0";
-        skeletonEl.style.transition = "opacity .45s ease";
-        skeletonEl.style.pointerEvents = "none";
-        skeletonEl.style.zIndex = "1";
-      } catch (e) {
-      }
-    }
-    const revealCarousel = () => {
-      requestAnimationFrame(() => {
-        container.style.opacity = "1";
-        if (skeletonEl) {
-          skeletonEl.style.opacity = "0";
-          window.setTimeout(() => {
-            try {
-              const p2 = skeletonEl.parentElement;
-              skeletonEl.remove();
-              if (p2 && p2.childElementCount === 0) p2.remove();
-            } catch (e) {
-            }
-          }, 520);
-        }
-      });
-    };
-    const f0 = shows[0] || {};
-    const raw0 = f0._backdropBlob || (() => {
-      const b = String(f0.backdrop || "");
-      if (!b) return "";
-      return b.startsWith("http") || b.startsWith("/v/api/") ? b : base + "/v/api/v1/" + b;
-    })();
-    if (raw0) {
-      const probe = new Image();
-      let done = false;
-      const finish = () => {
-        if (!done) {
-          done = true;
-          window.clearTimeout(timer3);
-          revealCarousel();
-        }
-      };
-      const timer3 = window.setTimeout(finish, 1200);
-      probe.onload = finish;
-      probe.onerror = finish;
-      probe.src = raw0;
-      if (typeof probe.decode === "function") {
-        probe.decode().then(finish, finish);
-      }
-    } else {
-      revealCarousel();
-    }
     if (_cs === 2) {
       buildCarouselStyle2(container, wrapper, shows, base, rebuild);
       if (!rebuild) target.appendChild(wrapper);
@@ -13592,28 +13382,8 @@ html.fnos-perf.dark{
       if (dy < -50) goTo((currentIdx + 1) % shows.length);
       else if (dy > 50) goTo((currentIdx - 1 + shows.length) % shows.length);
     };
-    const _onTouchStart = (e) => {
-      dragging = true;
-      startY = e.touches[0] ? e.touches[0].clientY : 0;
-      clearInterval(timer2);
-    };
-    const _onTouchEnd = (e) => {
-      if (e.type === "touchend") {
-        const y = e.changedTouches[0] ? e.changedTouches[0].clientY : startY;
-        if (dragging) {
-          const dy = y - startY;
-          if (dy < -50) goTo((currentIdx + 1) % shows.length);
-          else if (dy > 50) goTo((currentIdx - 1 + shows.length) % shows.length);
-        }
-      }
-      dragging = false;
-      timer2 = setInterval(() => goTo((currentIdx + 1) % shows.length), 6e3);
-    };
     container.addEventListener("mousedown", _onDown);
     container.addEventListener("mouseup", _onUp);
-    container.addEventListener("touchstart", _onTouchStart, { passive: true });
-    container.addEventListener("touchend", _onTouchEnd, { passive: true });
-    container.addEventListener("touchcancel", _onTouchEnd, { passive: true });
     S.carouselCleanup = () => {
       clearInterval(timer2);
       container.removeEventListener("mouseenter", _onEnter);
@@ -13622,9 +13392,6 @@ html.fnos-perf.dark{
       posterStrip.removeEventListener("mouseleave", _onLeave);
       container.removeEventListener("mousedown", _onDown);
       container.removeEventListener("mouseup", _onUp);
-      container.removeEventListener("touchstart", _onTouchStart);
-      container.removeEventListener("touchend", _onTouchEnd);
-      container.removeEventListener("touchcancel", _onTouchEnd);
     };
     S.carouselResume = () => {
       if (!document.body.contains(container)) return;
@@ -15018,14 +14785,14 @@ html.fnos-perf.dark{
           _tmdbInfoError = "";
           log9("[lc-980] TMDB \u5361\u5C31\u7EEA: " + (r.data.title || ""));
         } else {
-          _tmdbInfoError = r && r.error || "TMDB \u83B7\u53D6\u5931\u8D25";
+          _tmdbInfoError = friendlyError(r && r.error, "TMDB \u83B7\u53D6\u5931\u8D25");
           if (_isOneLevel()) {
             const c = document.getElementById(CARD_ID2);
             if (c && c.parentNode) c.parentNode.removeChild(c);
           }
         }
       } catch (e) {
-        _tmdbInfoError = String(e).substring(0, 120);
+        _tmdbInfoError = friendlyError(e).substring(0, 120);
         if (_isOneLevel()) {
           const c = document.getElementById(CARD_ID2);
           if (c && c.parentNode) c.parentNode.removeChild(c);
@@ -15233,8 +15000,9 @@ html.fnos-perf.dark{
     }
     if (vl.itemWidth !== 1) {
       try {
+        const orig = vl.itemWidth;
         vl.itemWidth = 1;
-        _patchedProps.push(vl);
+        _patchedProps.push({ vl, itemWidth: orig });
         changed = true;
       } catch {
       }
@@ -15376,9 +15144,9 @@ html.fnos-perf.dark{
       }
     }
     _patchedArrays.length = 0;
-    for (const vl of _patchedProps) {
+    for (const rec of _patchedProps) {
       try {
-        delete vl.itemWidth;
+        rec.vl.itemWidth = rec.itemWidth;
       } catch {
       }
     }
@@ -15579,6 +15347,7 @@ html.fnos-perf.dark{
   }
 
   // src/preload/plugins/embyWall/detail/heroTint.ts
+  var ENABLE_DYNAMIC_TINT = false;
   var TINT_VAR = "--fnos-hero-tint";
   var BRIGHT_ATTR = "data-fntv-hero-bright";
   var BRIGHT_LUM = 0.5;
@@ -15674,6 +15443,10 @@ html.fnos-perf.dark{
     return { tint: tint[0] + "," + tint[1] + "," + tint[2], lum: lumSum / used };
   }
   function applyHeroTint(hero) {
+    if (!ENABLE_DYNAMIC_TINT) {
+      clearHeroTint();
+      return;
+    }
     const img = findHeroBackdropImg(hero);
     if (!img) return;
     const src = img.currentSrc || img.src || "";
@@ -15721,7 +15494,7 @@ html.fnos-perf.dark{
     if (_veil && document.body.contains(_veil)) return _veil;
     const v = document.createElement("div");
     v.id = VEIL_ID;
-    v.style.cssText = `position:fixed;top:32px;left:0;right:0;bottom:0;z-index:9000;pointer-events:none;opacity:0;background:var(--fnos-ui-veil)!important;transition:opacity ${FADE_MS}ms ease;border-radius:0 0 16px 16px;overflow:hidden;`;
+    v.style.cssText = `position:fixed;top:var(--fntv-vp-top,32px);left:0;right:0;bottom:0;z-index:9000;pointer-events:none;opacity:0;background:var(--fnos-ui-veil)!important;transition:opacity ${FADE_MS}ms ease;border-radius:0 0 16px 16px;overflow:hidden;`;
     document.body.appendChild(v);
     _veil = v;
     return v;
@@ -15774,8 +15547,8 @@ html.fnos-perf.dark{
     }
   }
   function _apply(view, hero) {
-    injectBeautifyStyle();
     document.body.classList.add("fnos-beautify");
+    injectBeautifyStyle();
     injectBackdrop(hero);
     applyHeroTint(hero);
     hideInstantLayer();
@@ -16141,7 +15914,6 @@ html.fnos-perf.dark{
 
   // src/preload/plugins/embyWall/modals/telemetry.ts
   init_electron();
-  var SUB = "var(--fnos-ui-sub,#888)";
   var MUTED = "var(--fnos-ui-muted,#999)";
   function mkToggle(on, onChange) {
     const label = document.createElement("label");
@@ -16187,19 +15959,6 @@ html.fnos-perf.dark{
     d.textContent = t(text);
     return d;
   }
-  function mkBtn(text, primary) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.textContent = t(text);
-    b.style.cssText = "padding:7px 12px;border-radius:9px;cursor:pointer;font-size:11.5px;font-weight:600;border:none;" + (primary ? "background:var(--fnos-ui-btn-bg2)!important;" : "background:var(--fnos-ui-btn-bg)!important;") + "color:var(--fnos-ui-btn-text);transition:background .15s;";
-    b.onmouseenter = () => {
-      b.style.background = (primary ? "var(--fnos-ui-btn-hover2)" : "var(--fnos-ui-btn-hover)") + "!important";
-    };
-    b.onmouseleave = () => {
-      b.style.background = (primary ? "var(--fnos-ui-btn-bg2)" : "var(--fnos-ui-btn-bg)") + "!important";
-    };
-    return b;
-  }
   function buildStatsCard() {
     const card = document.createElement("div");
     card.style.cssText = "width:100%;max-width:440px;text-align:left;margin-top:14px;padding:12px 14px;border-radius:12px;background:var(--fnos-ui-input-bg)!important;border:1px solid var(--fnos-ui-border3);";
@@ -16208,12 +15967,50 @@ html.fnos-perf.dark{
       ipcRenderer.invoke("stats:set-enabled", v).catch(() => {
       });
     });
+    const header = document.createElement("button");
+    header.type = "button";
+    header.setAttribute("aria-expanded", "false");
+    header.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:0;margin:0;background:none;border:0;cursor:pointer;color:inherit;font:inherit;text-align:left;";
     const title = document.createElement("div");
     title.style.cssText = "font-size:12.5px;font-weight:700;color:var(--fnos-ui-pill-text);";
     title.textContent = t("\u{1F4CA} \u533F\u540D\u4F7F\u7528\u7EDF\u8BA1");
-    wrap.appendChild(title);
-    wrap.appendChild(mkRow("\u53C2\u4E0E\u533F\u540D\u7EDF\u8BA1", toggle.el));
-    wrap.appendChild(mkNote("\u5F00\u542F\u540E\u6536\u96C6\u5FC5\u987B\u7684\u5E94\u7528\u7248\u672C + \u7CFB\u7EDF\u7C7B\u578B\uFF0C\u7528\u4E8E\u65E5\u5FD7\u53CD\u9988\u6536\u96C6\u9700\u8981\u7684\u7CFB\u7EDF\u4FE1\u606F\uFF0C\u65B9\u4FBF\u6392\u67E5\u6545\u969C Bug\u3002\u4E0D\u6D89\u53CA\u8D26\u53F7\u3001IP\u3001\u5A92\u4F53\u5E93\u53CA\u6587\u4EF6\u8DEF\u5F84\u7B49\u9690\u79C1\u6570\u636E\uFF0C\u670D\u52A1\u7AEF\u4EA6\u4E0D\u505A IP \u5B58\u50A8\uFF0C\u53EF\u968F\u65F6\u5728\u8FD9\u91CC\u5173\u95ED\u3002"));
+    header.appendChild(title);
+    const chevron = document.createElement("span");
+    chevron.setAttribute("aria-hidden", "true");
+    chevron.textContent = "\u25B8";
+    chevron.style.cssText = "flex:none;font-size:12px;line-height:1;color:" + MUTED + ";transition:transform .2s ease;transform:rotate(0deg);";
+    header.appendChild(chevron);
+    const body = document.createElement("div");
+    body.id = "fnos-stats-body";
+    header.setAttribute("aria-controls", body.id);
+    body.style.cssText = "overflow:hidden;max-height:0;opacity:0;transition:max-height .25s ease,opacity .2s ease;";
+    body.appendChild(mkRow("\u53C2\u4E0E\u533F\u540D\u7EDF\u8BA1", toggle.el));
+    body.appendChild(mkNote("\u5F00\u542F\u540E\u6536\u96C6\u5FC5\u987B\u7684\u5E94\u7528\u7248\u672C + \u7CFB\u7EDF\u7C7B\u578B\uFF0C\u7528\u4E8E\u65E5\u5FD7\u53CD\u9988\u6536\u96C6\u9700\u8981\u7684\u7CFB\u7EDF\u4FE1\u606F\uFF0C\u65B9\u4FBF\u6392\u67E5\u6545\u969C Bug\u3002\u4E0D\u6D89\u53CA\u8D26\u53F7\u3001IP\u3001\u5A92\u4F53\u5E93\u53CA\u6587\u4EF6\u8DEF\u5F84\u7B49\u9690\u79C1\u6570\u636E\uFF0C\u670D\u52A1\u7AEF\u4EA6\u4E0D\u505A IP \u5B58\u50A8\uFF0C\u53EF\u968F\u65F6\u5728\u8FD9\u91CC\u5173\u95ED\u3002"));
+    let open = false;
+    const applyOpen = () => {
+      header.setAttribute("aria-expanded", open ? "true" : "false");
+      chevron.style.transform = open ? "rotate(90deg)" : "rotate(0deg)";
+      if (open) {
+        body.style.maxHeight = body.scrollHeight + "px";
+        body.style.opacity = "1";
+      } else {
+        if (body.style.maxHeight === "none") {
+          body.style.maxHeight = body.scrollHeight + "px";
+          void body.offsetHeight;
+        }
+        body.style.maxHeight = "0px";
+        body.style.opacity = "0";
+      }
+    };
+    header.addEventListener("click", () => {
+      open = !open;
+      applyOpen();
+    });
+    body.addEventListener("transitionend", (e) => {
+      if (e.propertyName === "max-height" && open) body.style.maxHeight = "none";
+    });
+    wrap.appendChild(header);
+    wrap.appendChild(body);
     ipcRenderer.invoke("stats:get-info").then((s) => {
       if (!s) return;
       toggle.set(s.enabled !== false);
@@ -16221,52 +16018,6 @@ html.fnos-perf.dark{
     });
     card.appendChild(wrap);
     return card;
-  }
-  function buildFeedbackBody() {
-    const wrap = document.createElement("div");
-    wrap.style.cssText = "display:flex;flex-direction:column;";
-    const tip = mkNote("\u9047\u5230\u95EE\u9898\uFF1F\u5728\u8FD9\u91CC\u76F4\u63A5\u63D0\u4EA4\u3002\u63D0\u4EA4\u4F1A\u81EA\u52A8\u9644\u5E26\u6700\u8FD1\u7684\u524D\u540E\u7AEF\u65E5\u5FD7\uFF08\u8D26\u53F7\u3001\u4EE4\u724C\u3001\u5BC6\u94A5\u3001\u624B\u673A\u53F7\u3001\u90AE\u7BB1\u4E00\u5F8B\u6253\u7801\uFF1B\u4FDD\u7559 NAS \u5730\u5740\u4E0E\u57DF\u540D\u4FBF\u4E8E\u6392\u67E5\u7F51\u7EDC\u95EE\u9898\uFF09\u4E0E\u8BBE\u5907\u73AF\u5883\u4FE1\u606F\uFF08\u5E94\u7528\u7248\u672C / fnOS \u7248\u672C / \u65F6\u95F4 / \u5F53\u524D\u9875\u9762\uFF09\u3002");
-    wrap.appendChild(tip);
-    const area = document.createElement("textarea");
-    area.placeholder = t("\u63CF\u8FF0\u4F60\u9047\u5230\u7684\u95EE\u9898 / \u590D\u73B0\u6B65\u9AA4\uFF08\u5FC5\u586B\uFF09\u2026");
-    area.style.cssText = "width:100%;box-sizing:border-box;min-height:88px;margin-top:8px;padding:10px 12px;border-radius:10px;font-size:12.5px;line-height:1.6;font-family:inherit;resize:vertical;background:var(--fnos-ui-input-bg)!important;color:var(--fnos-ui-text);border:1px solid var(--fnos-ui-border3);outline:none;";
-    wrap.appendChild(area);
-    const contact = document.createElement("input");
-    contact.type = "text";
-    contact.placeholder = t("\u8054\u7CFB\u65B9\u5F0F\uFF08\u9009\u586B\uFF0C\u65B9\u4FBF\u56DE\u590D\u4F60\uFF1AQQ / \u90AE\u7BB1\uFF09");
-    contact.style.cssText = "width:100%;box-sizing:border-box;margin-top:8px;padding:9px 12px;border-radius:10px;font-size:12.5px;font-family:inherit;background:var(--fnos-ui-input-bg)!important;color:var(--fnos-ui-text);border:1px solid var(--fnos-ui-border3);outline:none;";
-    wrap.appendChild(contact);
-    const status = document.createElement("div");
-    status.style.cssText = "font-size:11px;color:" + SUB + ";margin-top:8px;min-height:14px;";
-    wrap.appendChild(status);
-    const btnRow = document.createElement("div");
-    btnRow.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;";
-    const submitBtn = mkBtn("\u63D0\u4EA4\u53CD\u9988", true);
-    btnRow.appendChild(submitBtn);
-    wrap.appendChild(btnRow);
-    submitBtn.addEventListener("click", () => {
-      const msg = area.value.trim();
-      if (!msg) {
-        status.textContent = t("\u8BF7\u5148\u586B\u5199\u95EE\u9898\u63CF\u8FF0\u3002");
-        area.focus();
-        return;
-      }
-      submitBtn.disabled = true;
-      status.textContent = t("\u63D0\u4EA4\u4E2D\u2026");
-      ipcRenderer.invoke("feedback:submit", { message: msg, contact: contact.value.trim(), page: location.href }).then((r) => {
-        if (r && r.ok) {
-          status.textContent = t("\u63D0\u4EA4\u6210\u529F\uFF0C\u611F\u8C22\u53CD\u9988\uFF01\u7F16\u53F7\uFF1A") + (r.id ? String(r.id).slice(0, 8) : "\u2014");
-          area.value = "";
-        } else {
-          status.textContent = t("\u63D0\u4EA4\u5931\u8D25\uFF1A") + (r && r.error || t("\u672A\u77E5\u9519\u8BEF"));
-        }
-      }).catch((e) => {
-        status.textContent = t("\u63D0\u4EA4\u5931\u8D25\uFF1A") + String(e && e.message || e);
-      }).finally(() => {
-        submitBtn.disabled = false;
-      });
-    });
-    return wrap;
   }
 
   // src/preload/plugins/embyWall/nav/inject.ts
@@ -16351,7 +16102,7 @@ html.fnos-perf.dark{
       const card = document.createElement("div");
       card.style.cssText = "min-width:300px;max-width:90vw;padding:20px 22px;border-radius:14px;background:var(--semi-color-bg-1,#fff);box-shadow:0 8px 30px rgba(0,0,0,0.25);color:var(--semi-color-text-0);";
       card.innerHTML = '<div style="font-weight:600;font-size:15px;margin-bottom:4px;">\u9009\u62E9\u64AD\u653E\u65B9\u5F0F</div><div style="opacity:0.7;font-size:12px;margin-bottom:14px;">\u8981\u5982\u4F55\u64AD\u653E\u6B64\u89C6\u9891\uFF1F</div>';
-      const mkBtn3 = (label, primary, onClick) => {
+      const mkBtn2 = (label, primary, onClick) => {
         const b = document.createElement("button");
         b.textContent = label;
         b.style.cssText = "display:block;width:100%;margin-top:10px;padding:10px 14px;border:0;border-radius:10px;cursor:pointer;font-size:14px;font-weight:600;" + (primary ? "background:var(--semi-color-primary,#3370ff);color:#fff;" : "background:var(--semi-color-fill-0,#f0f0f0);color:var(--semi-color-text-0);");
@@ -16370,11 +16121,11 @@ html.fnos-perf.dark{
       const playNative = () => {
         unfreezeVideo(video);
       };
-      card.appendChild(mkBtn3("\u{1F3AC} \u5916\u7F6E\u64AD\u653E\u5668 (PotPlayer / MPV)", true, () => {
+      card.appendChild(mkBtn2("\u{1F3AC} \u5916\u7F6E\u64AD\u653E\u5668 (PotPlayer / MPV)", true, () => {
         closeDialog();
         launchExternal(modal);
       }));
-      card.appendChild(mkBtn3("\u25B6 \u98DE\u725B\u539F\u751F\u64AD\u653E", false, () => {
+      card.appendChild(mkBtn2("\u25B6 \u98DE\u725B\u539F\u751F\u64AD\u653E", false, () => {
         closeDialog();
         playNative();
       }));
@@ -16420,6 +16171,112 @@ html.fnos-perf.dark{
     observer.observe(document.body, { childList: true, subtree: true });
     document.querySelectorAll(".trim-ui__app-layout--window").forEach((m) => handleModal(m));
     log9("[\u89C6\u9891\u9884\u89C8\u5916\u653E] \u5DF2\u6CE8\u5165(\u81EA\u52A8\u5F39\u7A97\u9009\u62E9 + \u6807\u9898\u680F\u5916\u90E8\u6253\u5F00\u6309\u94AE)");
+  }
+
+  // src/preload/plugins/embyWall/detail/castNav.ts
+  var PERSON_HREF_RE = /\/v\/person\/([0-9a-f]{32})/i;
+  var PERSON_PATH_RE = /^\/v\/person\/[0-9a-f]{32}/i;
+  var ACTIVE_VIEW_SEL2 = ".trim-ui__cache-outlet--exclude";
+  var DETAIL_HERO_SEL2 = ':is(.semi-always-dark[class*="h-[470px]"],.semi-always-dark[class*="min-h-[390px]"],.trim-mc__details--key-version)';
+  var _busyUntil = 0;
+  function personHref(guid) {
+    return tvHref("/v/person/" + guid);
+  }
+  function activeOutlet() {
+    const list = document.querySelectorAll(ACTIVE_VIEW_SEL2);
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i] && list[i].offsetParent !== null) return list[i];
+    }
+    return null;
+  }
+  function revealActiveView() {
+    const outlets = Array.from(document.querySelectorAll(ACTIVE_VIEW_SEL2));
+    if (!outlets.length) return;
+    for (const outlet of outlets) {
+      let el = outlet;
+      for (let i = 0; el && el !== document.body && i < 8; i++) {
+        if (el.style && el.style.display === "none") {
+          el.style.display = "";
+          log9("castNav: \u590D\u539F\u88AB\u89C6\u56FE\u6E05\u7406\u9690\u85CF\u7684\u6D3B\u8DC3\u89C6\u56FE | class=", String(el.className).slice(0, 40));
+        }
+        el = el.parentElement;
+      }
+      outlet.querySelectorAll('[style*="display"]').forEach((child) => {
+        if (!child.style || child.style.display !== "none") return;
+        if (child.closest('[id^="fnos-"], [id^="fntv-"]')) return;
+        let pos = "";
+        try {
+          pos = getComputedStyle(child).position;
+        } catch {
+        }
+        if (pos !== "absolute") return;
+        child.style.display = "";
+        log9("castNav: \u590D\u539F\u88AB\u89C6\u56FE\u6E05\u7406\u9690\u85CF\u7684\u5B50\u89C6\u56FE | class=", String(child.className).slice(0, 40));
+      });
+    }
+  }
+  function stillShowingDetail() {
+    const active2 = activeOutlet();
+    if (!active2) return false;
+    return !!active2.querySelector(DETAIL_HERO_SEL2);
+  }
+  function goPerson(guid) {
+    const now = Date.now();
+    if (now < _busyUntil) return;
+    _busyUntil = now + 900;
+    const path = "/v/person/" + guid;
+    const href = personHref(guid);
+    let pushed = false;
+    try {
+      history.pushState({}, "", path);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      pushed = true;
+    } catch (e) {
+      log9("castNav: pushState \u5931\u8D25\uFF0C\u6574\u9875\u515C\u5E95 |", e && e.message);
+    }
+    if (!pushed) {
+      try {
+        location.assign(href);
+      } catch {
+      }
+      return;
+    }
+    [450, 900, 1400].forEach((ms) => {
+      window.setTimeout(() => {
+        if (!PERSON_PATH_RE.test(pagePath())) return;
+        revealActiveView();
+        const notRendered = stillShowingDetail() || ms >= 1400 && !activeOutlet();
+        if (ms >= 900 && notRendered) {
+          log9("castNav: \u4EBA\u7269\u9875\u672A\u6E32\u67D3\uFF0C\u6574\u9875\u515C\u5E95 \u2192", href);
+          try {
+            location.assign(href);
+          } catch {
+          }
+        }
+      }, ms);
+    });
+  }
+  function installCastNav() {
+    if (typeof window === "undefined") return;
+    if (window.__fntvCastNav) return;
+    window.__fntvCastNav = "1";
+    window.addEventListener("click", (e) => {
+      if (e.defaultPrevented) return;
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const t2 = e.target;
+      if (!t2 || typeof t2.closest !== "function") return;
+      const a = t2.closest('a[href*="/v/person/"]');
+      if (!a) return;
+      if (a.target && a.target !== "_self") return;
+      const m = (a.getAttribute("href") || "").match(PERSON_HREF_RE);
+      if (!m) return;
+      const guid = m[1].toLowerCase();
+      e.preventDefault();
+      e.stopPropagation();
+      log9("castNav: \u70B9\u51FB\u6F14\u804C\u4EBA\u5458 \u2192 /v/person/" + guid);
+      goPerson(guid);
+    }, true);
+    log9("castNav: \u6F14\u804C\u4EBA\u5458\u70B9\u51FB\u59D4\u6258\u5DF2\u5B89\u88C5(window capture)");
   }
 
   // src/preload/plugins/embyWall/detail/epBackfill.ts
@@ -16708,7 +16565,7 @@ html.fnos-perf.dark{
         seasonNumber
       });
       if (!r || !r.ok || !r.data || !Array.isArray(r.data.episodes)) {
-        throw new Error(r && r.error || "TMDB \u83B7\u53D6\u5931\u8D25");
+        throw new Error(friendlyError(r && r.error, "TMDB \u83B7\u53D6\u5931\u8D25"));
       }
       const tmdbByNum = /* @__PURE__ */ new Map();
       for (const e of r.data.episodes) tmdbByNum.set(e.episodeNumber, e);
@@ -16829,8 +16686,9 @@ html.fnos-perf.dark{
       }
       log9("[epBackfill] \u5B8C\u6210 S" + seasonNumber + " total=" + stats.total + " filled=" + stats.filled + " fallback=" + stats.upgraded + " unchanged=" + stats.unchanged + " unmatched=" + stats.unmatched + " failed=" + stats.failed);
     } catch (e) {
-      const msg = String(e && e.message || e).substring(0, 80);
-      log9("[epBackfill] \u5931\u8D25: " + msg);
+      const rawMsg = String(e && e.message || e);
+      const msg = friendlyError(e).substring(0, 80);
+      log9("[epBackfill] \u5931\u8D25: " + rawMsg.substring(0, 120));
       if (btn.isConnected) {
         setBtn(btn, "\u26A0 " + msg, msg);
         btn.style.color = "var(--fnos-ui-warn,#b06a3a)";
@@ -18082,7 +17940,7 @@ html.fnos-perf.dark{
   var STYLE_ID6 = "fntv-boot-style";
   var BAR_ID = "fntv-boot-bar";
   var POLL_MS = 120;
-  var HARD_LIFT_MS = 2500;
+  var HARD_LIFT_MS = 450;
   var _armed = false;
   var _poll = 0;
   var isHome = () => {
@@ -18205,7 +18063,9 @@ html.fntv-boot-hide #root{visibility:hidden}
         log9("[TV\u7C7B\u540C\u6B65]", location.pathname, "isTv=", isFntvTvPage());
       }
     }, 400);
-    window.addEventListener("beforeunload", () => window.clearInterval(_tvClassTimer));
+    window.addEventListener("pagehide", (e) => {
+      if (!e.persisted) window.clearInterval(_tvClassTimer);
+    });
     if (!isFntvTvPage()) return;
     document.documentElement.classList.add("fnos-tv-page");
     const logNav = (label) => log9("NAV", label, location.href);
@@ -18222,7 +18082,9 @@ html.fntv-boot-hide #root{visibility:hidden}
       }, 150);
     });
     _themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style"], childList: true, subtree: true });
-    window.addEventListener("beforeunload", () => _themeObserver.disconnect());
+    window.addEventListener("pagehide", (e) => {
+      if (!e.persisted) _themeObserver.disconnect();
+    });
     try {
       const _mq = window.matchMedia("(prefers-color-scheme: dark)");
       const _onSys = () => {
@@ -18434,9 +18296,11 @@ html.fntv-boot-hide #root{visibility:hidden}
       }, 200);
     });
     _rcObs.observe(document.body, { childList: true, subtree: true });
-    window.addEventListener("beforeunload", () => {
-      _rcObs.disconnect();
-      clearInterval(_rcInterval);
+    window.addEventListener("pagehide", (e) => {
+      if (!e.persisted) {
+        _rcObs.disconnect();
+        clearInterval(_rcInterval);
+      }
     });
     const _rcInterval = setInterval(_globalRoundedCornerEnforcer, 2e4);
     setTimeout(() => {
@@ -18464,7 +18328,9 @@ html.fntv-boot-hide #root{visibility:hidden}
       }, 200);
     });
     _wwObs.observe(document.body, { childList: true, subtree: true });
-    window.addEventListener("beforeunload", () => _wwObs.disconnect());
+    window.addEventListener("pagehide", (e) => {
+      if (!e.persisted) _wwObs.disconnect();
+    });
     setInterval(() => {
       _globalWhitewashRemover();
       _forceDatePickerDark();
@@ -18490,7 +18356,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         const descendants = panel.querySelectorAll("*");
         for (let j = 0; j < descendants.length; j++) {
           const el = descendants[j];
-          if (el.id === "fnos-switch-system-btn" || el.id === "fnos-settings-btn" || el.id === "fnos-feedback-choice-btn" || el.closest("#fnos-sidebar-actions")) continue;
+          if (el.id === "fnos-switch-system-btn" || el.id === "fnos-settings-btn" || el.id === "fnos-qq-group-btn" || el.closest("#fnos-sidebar-actions")) continue;
           const bg = getComputedStyle(el).backgroundColor;
           if (isOpaqueLightBg(bg)) {
             el.style.setProperty("background", "transparent", "important");
@@ -18536,25 +18402,25 @@ html.fntv-boot-hide #root{visibility:hidden}
         (_a = window.fntvCloseSidebar) == null ? void 0 : _a.call(window);
       });
       ctrl.prepend(btn);
-      if (!ctrl.querySelector("#fnos-feedback-choice-btn")) {
-        const fbChoiceBtn = document.createElement("button");
-        fbChoiceBtn.id = "fnos-feedback-choice-btn";
-        fbChoiceBtn.type = "button";
-        fbChoiceBtn.textContent = "\u{1F4AC}";
+      if (!ctrl.querySelector("#fnos-qq-group-btn")) {
+        const qqBtn = document.createElement("button");
+        qqBtn.id = "fnos-qq-group-btn";
+        qqBtn.type = "button";
+        qqBtn.textContent = "\u{1F465}";
         {
-          const _fbTxt = document.createElement("span");
-          _fbTxt.className = "fnos-sb-btn-text";
-          _fbTxt.textContent = "\u8F6F\u4EF6\u53CD\u9988\u5EFA\u8BAE";
-          fbChoiceBtn.appendChild(_fbTxt);
+          const _qqTxt = document.createElement("span");
+          _qqTxt.className = "fnos-sb-btn-text";
+          _qqTxt.textContent = "Q\u7FA4\u53CD\u9988";
+          qqBtn.appendChild(_qqTxt);
         }
-        fbChoiceBtn.style.cssText = "box-sizing:border-box;width:100%;padding:10px 12px;border-radius:12px;cursor:pointer;background:var(--fnos-sidebar-btn-bg)!important;color:#fff;font-size:13px;font-weight:600;border:1px solid rgba(255,255,255,.28);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:0 4px 16px rgba(0,0,0,.18);text-align:center;";
-        fbChoiceBtn.addEventListener("click", (e) => {
+        qqBtn.style.cssText = "box-sizing:border-box;width:100%;padding:10px 12px;border-radius:12px;cursor:pointer;background:var(--fnos-sidebar-btn-bg)!important;color:#fff;font-size:13px;font-weight:600;border:1px solid rgba(255,255,255,.28);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:0 4px 16px rgba(0,0,0,.18);text-align:center;";
+        qqBtn.addEventListener("click", (e) => {
           var _a;
           e.stopPropagation();
-          openFeedbackChoiceModal();
+          openQQGroup();
           (_a = window.fntvCloseSidebar) == null ? void 0 : _a.call(window);
         });
-        ctrl.appendChild(fbChoiceBtn);
+        ctrl.appendChild(qqBtn);
       }
       if (!ctrl.querySelector("#fnos-sidebar-version")) {
         const verLine = document.createElement("div");
@@ -18617,7 +18483,7 @@ html.fntv-boot-hide #root{visibility:hidden}
     }
     function buildSettingsPanel() {
       if (document.getElementById("fnos-settings-panel")) return;
-      const mkBtn3 = (text, small = false) => {
+      const mkBtn2 = (text, small = false) => {
         const b = document.createElement("button");
         b.type = "button";
         b.textContent = t(text);
@@ -18851,9 +18717,9 @@ html.fntv-boot-hide #root{visibility:hidden}
       const biliFoldBody = biliFold.body;
       const biliBtns = document.createElement("div");
       biliBtns.style.cssText = "display:flex;gap:6px;margin-top:6px;";
-      const scanBtn = mkBtn3("\u626B\u7801\u767B\u5F55", true);
-      const logoutBiliBtn = mkBtn3("\u9000\u51FA\u767B\u5F55", true);
-      const saveBiliCookieBtn = mkBtn3("\u4FDD\u5B58 Cookie", true);
+      const scanBtn = mkBtn2("\u626B\u7801\u767B\u5F55", true);
+      const logoutBiliBtn = mkBtn2("\u9000\u51FA\u767B\u5F55", true);
+      const saveBiliCookieBtn = mkBtn2("\u4FDD\u5B58 Cookie", true);
       biliBtns.appendChild(scanBtn);
       biliBtns.appendChild(logoutBiliBtn);
       biliBtns.appendChild(saveBiliCookieBtn);
@@ -18916,8 +18782,8 @@ html.fntv-boot-hide #root{visibility:hidden}
       });
       const bangumiBtns = document.createElement("div");
       bangumiBtns.style.cssText = "display:flex;gap:6px;margin-top:8px;";
-      const saveBangumiBtn = mkBtn3("\u4FDD\u5B58", true);
-      const clearBangumiBtn = mkBtn3("\u6E05\u9664", true);
+      const saveBangumiBtn = mkBtn2("\u4FDD\u5B58", true);
+      const clearBangumiBtn = mkBtn2("\u6E05\u9664", true);
       bangumiBtns.appendChild(saveBangumiBtn);
       bangumiBtns.appendChild(clearBangumiBtn);
       secBodyBangumi.appendChild(bangumiBtns);
@@ -18930,7 +18796,7 @@ html.fntv-boot-hide #root{visibility:hidden}
       secBodyBangumi.appendChild(bangumiSyncLine);
       const bangumiProbeRow = document.createElement("div");
       bangumiProbeRow.style.cssText = "display:flex;align-items:center;gap:8px;margin-top:6px;";
-      const bangumiProbeBtn = mkBtn3(t("\u6D4B\u8BD5\u8FDE\u63A5"), true);
+      const bangumiProbeBtn = mkBtn2(t("\u6D4B\u8BD5\u8FDE\u63A5"), true);
       bangumiProbeRow.appendChild(bangumiProbeBtn);
       const bangumiProbeNote = document.createElement("span");
       bangumiProbeNote.style.cssText = "font-size:10.5px;color:var(--fnos-ui-muted);flex:1;line-height:1.4;";
@@ -18947,7 +18813,7 @@ html.fntv-boot-hide #root{visibility:hidden}
             bangumiSyncLine.style.color = "var(--fnos-ui-muted)";
             return;
           }
-          bangumiSyncLine.textContent = t("\u6700\u8FD1\u540C\u6B65\uFF1A") + (s.ok ? `\u2713 ${s.detail || ""} \xB7 ${new Date(s.ts).toLocaleString("zh-CN")}` : `\u2717 [${s.label || "\u5931\u8D25"}] ${s.detail || ""} \xB7 ${new Date(s.ts).toLocaleString("zh-CN")}`);
+          bangumiSyncLine.textContent = t("\u6700\u8FD1\u540C\u6B65\uFF1A") + (s.ok ? `\u2713 ${s.detail || ""} \xB7 ${new Date(s.ts).toLocaleString("zh-CN")}` : `\u2717 [${s.label || "\u5931\u8D25"}] ${friendlyError(s.detail)} \xB7 ${new Date(s.ts).toLocaleString("zh-CN")}`);
           bangumiSyncLine.style.color = s.ok ? "var(--fnos-ui-ok)" : "var(--fnos-ui-warn)";
         }).catch(() => {
           bangumiSyncLine.textContent = t("\u6700\u8FD1\u540C\u6B65\uFF1A\u6682\u65E0\u8BB0\u5F55");
@@ -18968,23 +18834,23 @@ html.fntv-boot-hide #root{visibility:hidden}
             parts.push(`\u7F51\u7EDC:\u6B63\u5E38(${r.network.latencyMs}ms,\u7ECF${r.transport || r.network.via})`);
           } else {
             allOk = false;
-            parts.push(`\u7F51\u7EDC:\u4E0D\u901A(${r && r.network && r.network.detail || "\u672A\u77E5"})${r && r.network && r.network.hint ? "\u2014\u2014" + r.network.hint : ""}`);
+            parts.push(`\u7F51\u7EDC:\u4E0D\u901A(${friendlyError(r && r.network && r.network.detail, "\u672A\u77E5")})${r && r.network && r.network.hint ? "\u2014\u2014" + r.network.hint : ""}`);
           }
           if (r && r.token) {
             if (r.token.checked) {
               if (r.token.ok) parts.push("Token:\u6709\u6548");
               else {
                 allOk = false;
-                parts.push(`Token:\u65E0\u6548(${r.token.detail})`);
+                parts.push(`Token:\u65E0\u6548(${friendlyError(r.token.detail)})`);
               }
             } else {
-              parts.push(`Token:${r.token.detail}`);
+              parts.push(`Token:${friendlyError(r.token.detail)}`);
             }
           }
           bangumiProbeOut.textContent = parts.join("\uFF1B");
           bangumiProbeOut.style.color = allOk ? "var(--fnos-ui-ok)" : "var(--fnos-ui-warn)";
         } catch (err) {
-          bangumiProbeOut.textContent = t("\u6D4B\u8BD5\u5931\u8D25\uFF1A") + String(err && err.message || err);
+          bangumiProbeOut.textContent = t("\u6D4B\u8BD5\u5931\u8D25\uFF1A") + friendlyError(err);
           bangumiProbeOut.style.color = "var(--fnos-ui-warn)";
         } finally {
           bangumiProbeBtn.disabled = false;
@@ -19090,192 +18956,11 @@ html.fntv-boot-hide #root{visibility:hidden}
           bangumiStatus.style.color = "var(--fnos-ui-warn)";
         }
       });
-      const secTmdb = section("TMDB API Key\uFF08\u53EF\u9009\u515C\u5E95\uFF09");
+      const secTmdb = section("\u70ED\u95E8\u5267\u66F4\u65B0\u6570\u636E\u6E90");
       const secBodyTmdb = secTmdb.body;
-      let tmdbReal = "";
-      const maskTmdb = (t2) => "*".repeat(Math.max(0, t2.length));
-      const tmdbHintTop = document.createElement("div");
-      tmdbHintTop.style.cssText = "font-size:11.5px;color:var(--fnos-ui-sub);margin-bottom:8px;line-height:1.5;";
-      tmdbHintTop.textContent = t("\u9ED8\u8BA4\u4F7F\u7528\u5185\u7F6E\u955C\u50CF\u53D6\u6570\uFF0C\u65E0\u9700\u586B\u5199 Key\uFF1B\u4EC5\u5F53\u955C\u50CF\u4E0D\u53EF\u7528\u65F6\uFF0C\u624D\u9700\u8981\u5728\u6B64\u586B\u5199\u81EA\u6709 TMDB API Key\uFF08\u6216 v4 Read Access Token\uFF09\u4F5C\u4E3A\u515C\u5E95\u3002");
-      secBodyTmdb.appendChild(tmdbHintTop);
-      const tmdbInput = document.createElement("input");
-      tmdbInput.type = "text";
-      tmdbInput.placeholder = t("\u53EF\u9009\uFF1A\u7C98\u8D34 TMDB API Key / Read Access Token");
-      tmdbInput.style.cssText = "width:100%;height:32px;font-size:11px;color:var(--fnos-ui-text);background:var(--fnos-ui-input-bg);border:1px solid var(--fnos-ui-border);border-radius:7px;padding:6px 8px;box-sizing:border-box;";
-      secBodyTmdb.appendChild(tmdbInput);
-      tmdbInput.addEventListener("focus", () => {
-        if (tmdbInput.readOnly) {
-          tmdbInput.readOnly = false;
-          tmdbInput.value = "";
-        }
-      });
-      tmdbInput.addEventListener("blur", () => {
-        if (tmdbInput.value.trim() === "" && tmdbReal) {
-          tmdbInput.value = maskTmdb(tmdbReal);
-          tmdbInput.readOnly = true;
-        }
-      });
-      const tmdbBtns = document.createElement("div");
-      tmdbBtns.style.cssText = "display:flex;gap:6px;margin-top:8px;";
-      const saveTmdbBtn = mkBtn3("\u4FDD\u5B58", true);
-      const clearTmdbBtn = mkBtn3("\u6E05\u9664", true);
-      tmdbBtns.appendChild(saveTmdbBtn);
-      tmdbBtns.appendChild(clearTmdbBtn);
-      secBodyTmdb.appendChild(tmdbBtns);
-      const tmdbStatus = document.createElement("div");
-      tmdbStatus.style.cssText = "font-size:11px;color:var(--fnos-ui-sub);margin-top:6px;min-height:14px;";
-      secBodyTmdb.appendChild(tmdbStatus);
-      const tmdbHintBottom = document.createElement("div");
-      tmdbHintBottom.style.cssText = "font-size:10.5px;color:var(--fnos-ui-muted);margin-top:10px;line-height:1.5;";
-      const tmdbLink = document.createElement("a");
-      tmdbLink.textContent = "https://www.themoviedb.org/settings/api";
-      tmdbLink.href = "https://www.themoviedb.org/settings/api";
-      tmdbLink.style.cssText = "color:var(--fnos-ui-sec);text-decoration:underline;cursor:pointer;";
-      tmdbLink.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        ipcRenderer.invoke("settings:open-external", "https://www.themoviedb.org/settings/api").catch(() => {
-        });
-      });
-      tmdbHintBottom.appendChild(document.createTextNode("\u5982\u9700\u81EA\u5B9A\u4E49\u515C\u5E95\uFF0C\u53EF\u5728 "));
-      tmdbHintBottom.appendChild(tmdbLink);
-      tmdbHintBottom.appendChild(document.createTextNode(" \u514D\u8D39\u7533\u8BF7 API Key\u3002"));
-      secBodyTmdb.appendChild(tmdbHintBottom);
-      saveTmdbBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        let key;
-        if (tmdbInput.readOnly) {
-          key = tmdbReal;
-        } else {
-          const typed = tmdbInput.value.trim();
-          key = typed === "" && tmdbReal ? tmdbReal : typed;
-        }
-        try {
-          const r = await ipcRenderer.invoke("settings:set-tmdb-key", key);
-          if (!r || r.ok !== false) {
-            tmdbReal = key;
-            if (key) {
-              tmdbInput.value = maskTmdb(key);
-              tmdbInput.readOnly = true;
-              tmdbStatus.textContent = t("\u5DF2\u4FDD\u5B58 TMDB Key");
-              tmdbStatus.style.color = "var(--fnos-ui-ok)";
-            } else {
-              tmdbInput.value = "";
-              tmdbInput.readOnly = false;
-              tmdbStatus.textContent = t("\u5DF2\u6E05\u9664 TMDB Key");
-              tmdbStatus.style.color = "var(--fnos-ui-warn)";
-            }
-          } else {
-            tmdbStatus.textContent = t("\u4FDD\u5B58\u5931\u8D25");
-            tmdbStatus.style.color = "var(--fnos-ui-warn)";
-          }
-        } catch {
-          tmdbStatus.textContent = t("\u4FDD\u5B58\u5931\u8D25");
-          tmdbStatus.style.color = "var(--fnos-ui-warn)";
-        }
-      });
-      clearTmdbBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        tmdbInput.value = "";
-        tmdbInput.readOnly = false;
-        tmdbReal = "";
-        try {
-          await ipcRenderer.invoke("settings:set-tmdb-key", "");
-          tmdbStatus.textContent = t("\u5DF2\u6E05\u9664 TMDB Key");
-          tmdbStatus.style.color = "var(--fnos-ui-warn)";
-        } catch {
-          tmdbStatus.textContent = t("\u6E05\u9664\u5931\u8D25");
-          tmdbStatus.style.color = "var(--fnos-ui-warn)";
-        }
-      });
-      const dcWrap = document.createElement("div");
-      dcWrap.style.cssText = "margin-top:4px;";
-      const dcDesc = document.createElement("div");
-      dcDesc.style.cssText = "font-size:11px;color:var(--fnos-ui-sub);line-height:1.5;margin-bottom:8px;";
-      dcDesc.textContent = t("\u5F00\u542F\u540E\u7528\u56FA\u5B9A IP \u8986\u76D6 DNS \u89E3\u6790\uFF0C\u7ED5\u8FC7\u6C61\u67D3\u76F4\u8FDE TMDB\uFF08\u65E0\u9700\u68AF\u5B50\uFF09\u3002IP \u6765\u81EA CheckTMDB \u9879\u76EE\uFF0CCDN \u8FB9\u7F18\u8282\u70B9\u53EF\u80FD\u53D8\u52A8\uFF0C\u53EF\u70B9\u300C\u66F4\u65B0 IP\u300D\u62C9\u53D6\u6700\u65B0\uFF0C\u6216\u624B\u52A8\u586B\u5199\u3002");
-      dcWrap.appendChild(dcDesc);
-      const dcRow = document.createElement("label");
-      dcRow.style.cssText = "display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fnos-ui-text);cursor:pointer;margin-bottom:8px;";
-      const dcToggle = document.createElement("input");
-      dcToggle.type = "checkbox";
-      const dcToggleLabel = document.createElement("span");
-      dcToggleLabel.textContent = t("\u542F\u7528\u514D\u68AF\u5B50\u76F4\u8FDE");
-      dcRow.appendChild(dcToggle);
-      dcRow.appendChild(dcToggleLabel);
-      dcWrap.appendChild(dcRow);
-      const dcIpGrid = document.createElement("div");
-      dcIpGrid.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;";
-      const dcApiInput = document.createElement("input");
-      dcApiInput.type = "text";
-      dcApiInput.placeholder = t("api IP\uFF08\u5982 65.8.20.79\uFF09");
-      dcApiInput.style.cssText = "width:100%;height:30px;font-size:11px;color:var(--fnos-ui-text);";
-      const dcImgInput = document.createElement("input");
-      dcImgInput.type = "text";
-      dcImgInput.placeholder = t("img IP\uFF08\u5982 65.8.20.8\uFF09");
-      dcImgInput.style.cssText = "width:100%;height:30px;font-size:11px;color:var(--fnos-ui-text);";
-      dcIpGrid.appendChild(dcApiInput);
-      dcIpGrid.appendChild(dcImgInput);
-      dcWrap.appendChild(dcIpGrid);
-      const dcBtns = document.createElement("div");
-      dcBtns.style.cssText = "display:flex;gap:6px;";
-      const dcSaveBtn = mkBtn3("\u4FDD\u5B58", true);
-      const dcUpdateBtn = mkBtn3("\u4ECE CheckTMDB \u66F4\u65B0 IP", true);
-      dcBtns.appendChild(dcSaveBtn);
-      dcBtns.appendChild(dcUpdateBtn);
-      dcWrap.appendChild(dcBtns);
-      const dcStatus = document.createElement("div");
-      dcStatus.style.cssText = "font-size:11px;color:var(--fnos-ui-sub);margin-top:6px;min-height:14px;";
-      dcWrap.appendChild(dcStatus);
-      dcSaveBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        try {
-          const api = dcApiInput.value.trim();
-          const img = dcImgInput.value.trim();
-          const r = await ipcRenderer.invoke("settings:set-tmdb-direct", {
-            enabled: dcToggle.checked,
-            ip: { api: api || void 0, img: img || void 0 }
-          });
-          if (!r || r.ok !== false) {
-            dcStatus.textContent = dcToggle.checked ? "\u5DF2\u542F\u7528\u514D\u68AF\u5B50\u76F4\u8FDE" : "\u5DF2\u5173\u95ED\u514D\u68AF\u5B50\u76F4\u8FDE";
-            dcStatus.style.color = "var(--fnos-ui-ok)";
-          } else {
-            dcStatus.textContent = t("\u4FDD\u5B58\u5931\u8D25");
-            dcStatus.style.color = "var(--fnos-ui-warn)";
-          }
-        } catch {
-          dcStatus.textContent = t("\u4FDD\u5B58\u5931\u8D25");
-          dcStatus.style.color = "var(--fnos-ui-warn)";
-        }
-      });
-      dcUpdateBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        dcStatus.textContent = t("\u6B63\u5728\u4ECE CheckTMDB \u62C9\u53D6\u6700\u65B0 IP\u2026");
-        dcStatus.style.color = "var(--fnos-ui-sub)";
-        try {
-          const r = await ipcRenderer.invoke("tmdb:update-ip");
-          if (r && r.ok) {
-            if (r.api) dcApiInput.value = r.api;
-            if (r.img) dcImgInput.value = r.img;
-            dcStatus.textContent = "\u5DF2\u66F4\u65B0\u4E3A\u6700\u65B0 IP" + (r.api ? `\uFF08api ${r.api}\uFF09` : "");
-            dcStatus.style.color = "var(--fnos-ui-ok)";
-          } else {
-            dcStatus.textContent = r && r.error || "\u66F4\u65B0\u5931\u8D25";
-            dcStatus.style.color = "var(--fnos-ui-warn)";
-          }
-        } catch {
-          dcStatus.textContent = t("\u66F4\u65B0\u5931\u8D25");
-          dcStatus.style.color = "var(--fnos-ui-warn)";
-        }
-      });
-      const tmdbSettingsWrap = document.createElement("div");
-      tmdbSettingsWrap.appendChild(tmdbHintTop);
-      tmdbSettingsWrap.appendChild(tmdbInput);
-      tmdbSettingsWrap.appendChild(tmdbBtns);
-      tmdbSettingsWrap.appendChild(tmdbStatus);
-      tmdbSettingsWrap.appendChild(tmdbHintBottom);
       const dsHint = document.createElement("div");
       dsHint.style.cssText = "font-size:11.5px;color:var(--fnos-ui-sub);line-height:1.5;margin-bottom:8px;";
-      dsHint.textContent = t("\u9009\u62E9\u300C\u70ED\u95E8\u5267\u66F4\u65B0\u300D\u6D6E\u5C42\u7684\u6570\u636E\u6E90\u3002\u8C46\u74E3\u56FD\u5185\u76F4\u8FDE\u3001\u514D Key\u3001\u96F6\u914D\u7F6E\uFF1BTMDB \u6570\u636E\u66F4\u5168\u4F46\u9700 Key \u4E14\u53EF\u80FD\u88AB\u5899\uFF08\u9700\u514D\u68AF\u5B50\u76F4\u8FDE/\u4EE3\u7406\uFF09\u3002");
+      dsHint.textContent = t("\u9009\u62E9\u300C\u70ED\u95E8\u5267\u66F4\u65B0\u300D\u6D6E\u5C42\u7684\u6570\u636E\u6E90\u3002\u8C46\u74E3\u56FD\u5185\u76F4\u8FDE\u3001\u514D Key\u3001\u96F6\u914D\u7F6E\uFF1BTMDB \u6570\u636E\u66F4\u5168\uFF08\u5185\u7F6E\u955C\u50CF\u53D6\u6570\uFF0C\u65E0\u9700\u624B\u52A8\u914D\u7F6E\uFF09\u3002");
       const dsSeg = document.createElement("div");
       dsSeg.style.cssText = "display:flex;gap:6px;margin-bottom:10px;";
       const mkDsBtn = (label, val) => {
@@ -19302,7 +18987,6 @@ html.fntv-boot-hide #root{visibility:hidden}
         dsDoubanBtn.style.color = isDouban ? "#fff" : "var(--fnos-ui-text)";
         dsTmdbBtn.style.background = isDouban ? "var(--fnos-ui-input-bg)" : "var(--fnos-ui-sec)";
         dsTmdbBtn.style.color = isDouban ? "var(--fnos-ui-text)" : "#fff";
-        tmdbSettingsWrap.style.display = isDouban ? "none" : "";
         doubanHint.style.display = isDouban ? "" : "none";
       };
       const setDs = (val) => {
@@ -19316,7 +19000,6 @@ html.fntv-boot-hide #root{visibility:hidden}
       };
       secBodyTmdb.insertBefore(dsHint, secBodyTmdb.firstChild);
       secBodyTmdb.appendChild(dsSeg);
-      secBodyTmdb.appendChild(tmdbSettingsWrap);
       secBodyTmdb.appendChild(doubanHint);
       try {
         ipcRenderer.invoke("settings:get-hot-source").then((s) => {
@@ -19328,10 +19011,6 @@ html.fntv-boot-hide #root{visibility:hidden}
       } catch {
         reflectDs(S.hotSource);
       }
-      const secTmdbDirect = section("TMDB \u514D\u68AF\u5B50\u76F4\u8FDE\uFF08\u5B9E\u9A8C\uFF09");
-      secTmdbDirect.el.style.gridColumn = "1 / -1";
-      const secBodyTmdbDirect = secTmdbDirect.body;
-      secBodyTmdbDirect.appendChild(dcWrap);
       const secDouban = section("\u8C46\u74E3\u540C\u6B65");
       secDouban.el.style.gridColumn = "1 / -1";
       const secBodyDouban = secDouban.body;
@@ -19373,9 +19052,9 @@ html.fntv-boot-hide #root{visibility:hidden}
       });
       const doubanBtns = document.createElement("div");
       doubanBtns.style.cssText = "display:flex;gap:6px;margin-top:6px;";
-      const scanDoubanBtn = mkBtn3("\u626B\u7801\u767B\u5F55", true);
-      const logoutDoubanBtn = mkBtn3("\u9000\u51FA\u767B\u5F55", true);
-      const manualBtn = mkBtn3("\u4FDD\u5B58 Cookie", true);
+      const scanDoubanBtn = mkBtn2("\u626B\u7801\u767B\u5F55", true);
+      const logoutDoubanBtn = mkBtn2("\u9000\u51FA\u767B\u5F55", true);
+      const manualBtn = mkBtn2("\u4FDD\u5B58 Cookie", true);
       doubanBtns.appendChild(scanDoubanBtn);
       doubanBtns.appendChild(logoutDoubanBtn);
       doubanBtns.appendChild(manualBtn);
@@ -19431,7 +19110,7 @@ html.fntv-boot-hide #root{visibility:hidden}
       watchedStatus.style.cssText = "font-size:10.5px;color:var(--fnos-ui-sub);margin-bottom:6px;min-height:14px;line-height:1.5;";
       watchedStatus.textContent = t("\u8BFB\u53D6\u98DE\u725B\u300C\u5DF2\u89C2\u770B\u300D\u5217\u8868\uFF0C\u6279\u91CF\u6807\u8BB0\u5230\u8C46\u74E3\uFF08\u5DF2\u6807\u8BB0\u7684\u4F1A\u8DF3\u8FC7\uFF0C\u4E0D\u91CD\u590D\u6253\uFF09\u3002");
       watchedWrap.appendChild(watchedStatus);
-      const syncBtn = mkBtn3("\u7ACB\u5373\u540C\u6B65\u5DF2\u89C2\u770B\u5217\u8868", true);
+      const syncBtn = mkBtn2("\u7ACB\u5373\u540C\u6B65\u5DF2\u89C2\u770B\u5217\u8868", true);
       syncBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         syncBtn.setAttribute("disabled", "true");
@@ -19459,7 +19138,7 @@ html.fntv-boot-hide #root{visibility:hidden}
       autoInput.min = "0";
       autoInput.step = "5";
       autoInput.style.cssText = "width:64px;font-size:11px;color:var(--fnos-ui-text);background:var(--fnos-ui-input-bg);border:1px solid var(--fnos-ui-border);border-radius:6px;padding:4px 6px;";
-      const autoSave = mkBtn3("\u4FDD\u5B58", true);
+      const autoSave = mkBtn2("\u4FDD\u5B58", true);
       autoSave.style.fontSize = "11px";
       autoRow.appendChild(autoLabel);
       autoRow.appendChild(autoInput);
@@ -19561,8 +19240,8 @@ html.fntv-boot-hide #root{visibility:hidden}
       traBody.appendChild(traSecretInput);
       const traBtnRow1 = document.createElement("div");
       traBtnRow1.style.cssText = "display:flex;gap:6px;";
-      const traSaveBtn = mkBtn3("\u4FDD\u5B58\u51ED\u8BC1", true);
-      const traClearBtn = mkBtn3("\u6E05\u9664\u51ED\u8BC1", true);
+      const traSaveBtn = mkBtn2("\u4FDD\u5B58\u51ED\u8BC1", true);
+      const traClearBtn = mkBtn2("\u6E05\u9664\u51ED\u8BC1", true);
       traBtnRow1.appendChild(traSaveBtn);
       traBtnRow1.appendChild(traClearBtn);
       traBody.appendChild(traBtnRow1);
@@ -19621,9 +19300,9 @@ html.fntv-boot-hide #root{visibility:hidden}
       });
       const traBtnRow2 = document.createElement("div");
       traBtnRow2.style.cssText = "display:flex;gap:6px;margin-top:8px;";
-      const traConnectBtn = mkBtn3("\u8FDE\u63A5 Trakt", true);
-      const traSyncBtn = mkBtn3("\u7ACB\u5373\u540C\u6B65\u89C2\u5F71\u8BB0\u5F55", true);
-      const traDiscBtn = mkBtn3("\u65AD\u5F00\u8FDE\u63A5", true);
+      const traConnectBtn = mkBtn2("\u8FDE\u63A5 Trakt", true);
+      const traSyncBtn = mkBtn2("\u7ACB\u5373\u540C\u6B65\u89C2\u5F71\u8BB0\u5F55", true);
+      const traDiscBtn = mkBtn2("\u65AD\u5F00\u8FDE\u63A5", true);
       traBtnRow2.appendChild(traConnectBtn);
       traBtnRow2.appendChild(traSyncBtn);
       traBtnRow2.appendChild(traDiscBtn);
@@ -19646,7 +19325,7 @@ html.fntv-boot-hide #root{visibility:hidden}
       traScrobSub.textContent = t("\u64AD\u653E\u65F6\u5B9E\u65F6\u6253\u70B9\u5230 Trakt\uFF08\u5F00\u59CB/\u6682\u505C/\u770B\u5B8C\u226580% \u81EA\u52A8\u8BB0\u5F55\uFF09\uFF0C\u9700\u5148\u8FDE\u63A5 Trakt\u3002");
       traScrobLabelWrap.appendChild(traScrobLabel);
       traScrobLabelWrap.appendChild(traScrobSub);
-      const traScrobBtn = mkBtn3("\u2026", true);
+      const traScrobBtn = mkBtn2("\u2026", true);
       traScrobRow.appendChild(traScrobLabelWrap);
       traScrobRow.appendChild(traScrobBtn);
       traBody.appendChild(traScrobRow);
@@ -19866,9 +19545,9 @@ html.fntv-boot-hide #root{visibility:hidden}
       ddFoldBody.appendChild(ddSecretInput);
       const ddBtns = document.createElement("div");
       ddBtns.style.cssText = "display:flex;gap:6px;";
-      const ddSaveBtn = mkBtn3("\u4FDD\u5B58\u51ED\u8BC1", true);
-      const ddClearBtn = mkBtn3("\u6E05\u9664\u51ED\u8BC1", true);
-      const ddTestBtn = mkBtn3("\u6D4B\u8BD5\u8FDE\u63A5", true);
+      const ddSaveBtn = mkBtn2("\u4FDD\u5B58\u51ED\u8BC1", true);
+      const ddClearBtn = mkBtn2("\u6E05\u9664\u51ED\u8BC1", true);
+      const ddTestBtn = mkBtn2("\u6D4B\u8BD5\u8FDE\u63A5", true);
       ddBtns.appendChild(ddSaveBtn);
       ddBtns.appendChild(ddClearBtn);
       ddBtns.appendChild(ddTestBtn);
@@ -20035,8 +19714,8 @@ html.fntv-boot-hide #root{visibility:hidden}
       dmApiFoldBody.appendChild(dmApiInput);
       const dmApiBtns = document.createElement("div");
       dmApiBtns.style.cssText = "display:flex;gap:6px;";
-      const dmApiSaveBtn = mkBtn3("\u4FDD\u5B58", true);
-      const dmApiTestBtn = mkBtn3("\u6D4B\u8BD5\u8FDE\u63A5", true);
+      const dmApiSaveBtn = mkBtn2("\u4FDD\u5B58", true);
+      const dmApiTestBtn = mkBtn2("\u6D4B\u8BD5\u8FDE\u63A5", true);
       dmApiBtns.appendChild(dmApiSaveBtn);
       dmApiBtns.appendChild(dmApiTestBtn);
       dmApiFoldBody.appendChild(dmApiBtns);
@@ -20063,7 +19742,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         e.stopPropagation();
         dmApiSave();
       });
-      const dmApiDiagBtn = mkBtn3("\u8FD0\u884C\u5206\u5C42\u8BCA\u65AD", true);
+      const dmApiDiagBtn = mkBtn2("\u8FD0\u884C\u5206\u5C42\u8BCA\u65AD", true);
       dmApiBtns.appendChild(dmApiDiagBtn);
       let dmApiDiagPre = null;
       dmApiDiagBtn.addEventListener("click", async (e) => {
@@ -20122,15 +19801,13 @@ html.fntv-boot-hide #root{visibility:hidden}
       ssvBody.appendChild(ssvDesc);
       const secDiag = section("\u8BCA\u65AD\u4FE1\u606F");
       const diagBody = secDiag.body;
-      const secFeedback = section("Bug \u53CD\u9988\u4E0E\u65E5\u5FD7\u4E0A\u4F20");
-      secFeedback.body.appendChild(buildFeedbackBody());
       const diagPre = document.createElement("pre");
       diagPre.style.cssText = "margin:0;padding:10px;background:rgba(0,0,0,.18);border-radius:8px;font-size:10.5px;line-height:1.55;color:var(--fnos-ui-text);white-space:pre-wrap;word-break:break-all;max-height:260px;overflow:auto;";
       diagPre.textContent = t("\u70B9\u51FB\u300C\u5237\u65B0\u300D\u52A0\u8F7D\u8BCA\u65AD\u4FE1\u606F\u2026");
       const diagBtns = document.createElement("div");
       diagBtns.style.cssText = "display:flex;gap:6px;padding:8px 0 0;";
-      const diagRefresh = mkBtn3("\u5237\u65B0", true);
-      const diagCopy = mkBtn3("\u590D\u5236", true);
+      const diagRefresh = mkBtn2("\u5237\u65B0", true);
+      const diagCopy = mkBtn2("\u590D\u5236", true);
       diagBtns.appendChild(diagRefresh);
       diagBtns.appendChild(diagCopy);
       const loadDiag = async () => {
@@ -20249,9 +19926,9 @@ html.fntv-boot-hide #root{visibility:hidden}
       logFooter.appendChild(logDivider);
       const logRow = document.createElement("div");
       logRow.style.cssText = "display:flex;gap:10px;align-items:center;flex-wrap:wrap;";
-      const liveBtn = mkBtn3("\u5237\u65B0", true);
+      const liveBtn = mkBtn2("\u5237\u65B0", true);
       logRow.appendChild(liveBtn);
-      const copyBtn = mkBtn3("\u590D\u5236\u65E5\u5FD7", true);
+      const copyBtn = mkBtn2("\u590D\u5236\u65E5\u5FD7", true);
       logRow.appendChild(copyBtn);
       logFooter.appendChild(logRow);
       const livePre = document.createElement("pre");
@@ -20380,33 +20057,44 @@ html.fntv-boot-hide #root{visibility:hidden}
       try {
         ipcRenderer.send("get-version");
         ipcRenderer.once("version-info", (_e, info) => {
-          if (info && info.version) aboutVer.textContent = "\u7248\u672C\uFF1Av" + info.version;
+          if (!info || !info.version) return;
+          const ver = String(info.version).replace(/-web$/, "");
+          const bt = "2026-10-22 16:20" ? " (2026-10-22 16:20)" : "";
+          aboutVer.textContent = "\u7248\u672C\uFF1Av" + ver + bt;
         });
       } catch (_) {
       }
-      const aboutLink = document.createElement("a");
-      aboutLink.href = ABOUT_LINK_URL;
-      aboutLink.textContent = t("\u{1F517} GitHub \u9879\u76EE\u5730\u5740");
-      aboutLink.style.cssText = "display:inline-block;font-size:13px;font-weight:700;color:var(--fnos-ui-pill-text);text-decoration:none;padding:8px 20px;border-radius:10px;background:var(--fnos-ui-pill-bg)!important;border:1px solid var(--fnos-ui-pill-border);transition:background .15s,transform .1s;margin-top:6px;cursor:pointer;";
-      aboutLink.addEventListener("click", async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        try {
-          await ipcRenderer.invoke("app:open-external", ABOUT_LINK_URL);
-        } catch (_) {
-        }
-      });
-      aboutLink.onmouseenter = () => {
-        aboutLink.style.transform = "scale(1.03)";
-        aboutLink.style.background = "var(--fnos-ui-pill-hover)!important";
-        aboutLink.style.color = "#fff";
+      const AUTHOR_SITE_URL = "https://690075.xyz";
+      const mkAboutLink = (url, label) => {
+        const a = document.createElement("a");
+        a.href = url;
+        a.textContent = t(label);
+        a.style.cssText = "display:inline-block;font-size:13px;font-weight:700;color:var(--fnos-ui-pill-text);text-decoration:none;padding:8px 20px;border-radius:10px;background:var(--fnos-ui-pill-bg)!important;border:1px solid var(--fnos-ui-pill-border);transition:background .15s,transform .1s;cursor:pointer;";
+        a.addEventListener("click", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          try {
+            await ipcRenderer.invoke("app:open-external", url);
+          } catch (_) {
+          }
+        });
+        a.onmouseenter = () => {
+          a.style.transform = "scale(1.03)";
+          a.style.background = "var(--fnos-ui-pill-hover)!important";
+          a.style.color = "#fff";
+        };
+        a.onmouseleave = () => {
+          a.style.transform = "";
+          a.style.background = "var(--fnos-ui-pill-bg)!important";
+          a.style.color = "var(--fnos-ui-pill-text)";
+        };
+        return a;
       };
-      aboutLink.onmouseleave = () => {
-        aboutLink.style.transform = "";
-        aboutLink.style.background = "var(--fnos-ui-pill-bg)!important";
-        aboutLink.style.color = "var(--fnos-ui-pill-text)";
-      };
-      secBodyAbout.appendChild(aboutLink);
+      const aboutLinks = document.createElement("div");
+      aboutLinks.style.cssText = "display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:6px;";
+      aboutLinks.appendChild(mkAboutLink(ABOUT_LINK_URL, "\u{1F517} GitHub \u9879\u76EE\u5730\u5740"));
+      aboutLinks.appendChild(mkAboutLink(AUTHOR_SITE_URL, "\u4F5C\u8005\u5B98\u7F51"));
+      secBodyAbout.appendChild(aboutLinks);
       secBodyAbout.appendChild(buildStatsCard());
       const secAppearance = section("\u5916\u89C2");
       const secBodyAppearance = secAppearance.body;
@@ -20630,7 +20318,7 @@ html.fntv-boot-hide #root{visibility:hidden}
       hotIntervalRow.appendChild(hotIntervalLabel);
       hotIntervalRow.appendChild(hotIntervalSel);
       secBodyDaily.appendChild(hotIntervalRow);
-      const hotRefreshBtn = mkBtn3("\u7ACB\u5373\u5237\u65B0\u6570\u636E", true);
+      const hotRefreshBtn = mkBtn2("\u7ACB\u5373\u5237\u65B0\u6570\u636E", true);
       hotRefreshBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         try {
@@ -20767,8 +20455,8 @@ html.fntv-boot-hide #root{visibility:hidden}
       const mkExtBtnRow = (body) => {
         const row2 = document.createElement("div");
         row2.style.cssText = "display:flex;gap:6px;margin-top:8px;";
-        const save = mkBtn3("\u4FDD\u5B58", true);
-        const clear = mkBtn3("\u6E05\u9664", true);
+        const save = mkBtn2("\u4FDD\u5B58", true);
+        const clear = mkBtn2("\u6E05\u9664", true);
         row2.appendChild(save);
         row2.appendChild(clear);
         body.appendChild(row2);
@@ -20989,9 +20677,9 @@ html.fntv-boot-hide #root{visibility:hidden}
       }
       const cpBtns = document.createElement("div");
       cpBtns.style.cssText = "display:flex;gap:6px;";
-      const cpSaveBtn = mkBtn3("\u4FDD\u5B58", true);
-      const cpTestBtn = mkBtn3("\u6D4B\u8BD5\u8FDE\u63A5", true);
-      const cpResetBtn = mkBtn3("\u5173\u95ED\u4EE3\u7406", true);
+      const cpSaveBtn = mkBtn2("\u4FDD\u5B58", true);
+      const cpTestBtn = mkBtn2("\u6D4B\u8BD5\u8FDE\u63A5", true);
+      const cpResetBtn = mkBtn2("\u5173\u95ED\u4EE3\u7406", true);
       cpBtns.appendChild(cpSaveBtn);
       cpBtns.appendChild(cpTestBtn);
       cpBtns.appendChild(cpResetBtn);
@@ -21357,10 +21045,10 @@ html.fntv-boot-hide #root{visibility:hidden}
         { id: "appearance", label: "\u901A\u7528", els: [secAppearance.el, secPageBg.el, secDaily.el, secUX.el, secSkip.el] },
         // [lc-1102] 三张「弹幕源」卡并列（内置降级源 → 弹弹play → 自建优选源），最后才是屏蔽/样式
         { id: "danmaku", label: "\u5F39\u5E55", els: [secBili.el, secDandan.el, secDmApi.el, secDanmaku.el] },
-        { id: "account", label: "\u8D26\u53F7\u4E0E\u7F51\u7EDC", els: [secBangumi.el, secTmdb.el, secDouban.el, secTrakt.el, secCustomProxy.el, secTmdbDirect.el] },
+        { id: "account", label: "\u8D26\u53F7\u4E0E\u7F51\u7EDC", els: [secBangumi.el, secTmdb.el, secDouban.el, secTrakt.el, secCustomProxy.el] },
         // [v1.10.2] 自定义刮削源→Jav 刮削七卡从「账号与网络」拆出独立成类；开发中的「自定义刮削服务」置顶占位
         { id: "scraper", label: "\u81EA\u5B9A\u4E49\u522E\u524A", els: [secScraperSvc.el, secScraper.el, secFanart.el, secTvmaze.el, secOmdb.el, secMal.el, secJav.el] },
-        { id: "diag", label: "\u8BCA\u65AD\u4E0E\u65E5\u5FD7", els: [secDiag.el, secFeedback.el, secDebug.el] },
+        { id: "diag", label: "\u8BCA\u65AD\u4E0E\u65E5\u5FD7", els: [secDiag.el, secDebug.el] },
         { id: "about", label: "\u5173\u4E8E", els: [secAbout.el] }
       ];
       const panes = {};
@@ -21883,25 +21571,6 @@ html.fntv-boot-hide #root{visibility:hidden}
           swBangumiSync.checked = !!s.bangumiSyncEnabled;
           bangumiThresholdInput.value = String(s.bangumiSyncThreshold || 80);
         });
-        seg2("tmdb", () => {
-          const kt = s.tmdbApiKey || null;
-          if (kt) {
-            tmdbReal = kt;
-            tmdbInput.value = maskTmdb(kt);
-            tmdbInput.readOnly = true;
-            tmdbStatus.textContent = t("\u5DF2\u4FDD\u5B58 TMDB Key");
-            tmdbStatus.style.color = "var(--fnos-ui-ok)";
-          } else {
-            tmdbReal = "";
-            tmdbInput.value = "";
-            tmdbInput.readOnly = false;
-            tmdbStatus.textContent = "";
-          }
-          dcToggle.checked = !!s.tmdbDirectConnect;
-          const dip = s.tmdbDirectIp || null;
-          dcApiInput.value = dip && dip.api || "";
-          dcImgInput.value = dip && dip.img || "";
-        });
         seg2("bili-search", () => {
           aggInput.value = String(s.mpvBiliAggregateThreshold == null ? 1500 : s.mpvBiliAggregateThreshold < 0 ? 0 : s.mpvBiliAggregateThreshold);
         });
@@ -21933,7 +21602,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         const sb = document.getElementById("fnos-settings-btn");
         if (sb && sb.contains(t2)) return;
         if (t2 instanceof Element) {
-          const withinOtherUi = t2.closest("#fnos-dialog-overlay") || t2.closest("#fnos-feedback-modal") || t2.closest("#fnos-qq-group-modal") || t2.closest("#fnos-bili-modal") || t2.closest("#fnos-history-overlay") || t2.closest("#fntv-patch-apply-popup") || t2.closest("#fntv-test-wizard") || t2.closest("#fntv-version-switch-modal") || t2.closest("#fntv-unlock-modal");
+          const withinOtherUi = t2.closest("#fnos-dialog-overlay") || t2.closest("#fnos-bili-modal") || t2.closest("#fnos-history-overlay") || t2.closest("#fntv-patch-apply-popup") || t2.closest("#fntv-test-wizard") || t2.closest("#fntv-version-switch-modal") || t2.closest("#fntv-unlock-modal");
           if (withinOtherUi) return;
         }
         overlay.style.display = "none";
@@ -22063,12 +21732,30 @@ html.fntv-boot-hide #root{visibility:hidden}
       }
       if (!window.__fnosBurgerDelegated) {
         window.__fnosBurgerDelegated = "1";
+        const isBurgerIcon = (t2, container) => {
+          const svg = t2.closest("svg");
+          if (!svg) return false;
+          if (svg.closest('a,[href],button,[role="button"]')) return false;
+          const bareSvgs = Array.from(container.querySelectorAll("svg")).filter((s) => !s.closest('a,[href],button,[role="button"]'));
+          return bareSvgs.length > 0 && bareSvgs[bareSvgs.length - 1] === svg;
+        };
         document.addEventListener("click", (e) => {
           const t2 = e.target;
           if (!t2 || !t2.closest) return;
-          if (t2.closest("a")) return;
+          if (t2.closest("a,[href]")) return;
           const burgerHit = t2.closest('[class*="lg:!hidden"]:not([class*="inset-0"])');
           if (!burgerHit) return;
+          let probe = t2;
+          while (probe && probe !== burgerHit.parentElement) {
+            const lab = ((probe.getAttribute("aria-label") || "") + " " + (probe.getAttribute("title") || "")).trim();
+            if (/首页|主页|返回|home|back/i.test(lab)) return;
+            if (probe.children.length === 0) {
+              const txt = (probe.textContent || "").trim();
+              if (txt && /首页|主页|返回|home|back/i.test(txt)) return;
+            }
+            probe = probe.parentElement;
+          }
+          if (!isBurgerIcon(t2, burgerHit)) return;
           e.preventDefault();
           e.stopImmediatePropagation();
           const drawer2 = document.querySelector('.fixed.inset-0[class*="lg:!hidden"]');
@@ -22081,7 +21768,7 @@ html.fntv-boot-hide #root{visibility:hidden}
             log9("BURGER -> OPEN (anim)");
           }
         }, true);
-        log9("BURGER click-hook installed (document delegation)");
+        log9("BURGER click-hook installed (document delegation, burger-icon only)");
       }
       const drawer = document.querySelector('.fixed.inset-0[class*="lg:!hidden"]');
       if (drawer && !drawer.dataset.maskHooked) {
@@ -22568,14 +22255,18 @@ html.fntv-boot-hide #root{visibility:hidden}
       window.setTimeout(injectRefreshButton, 200);
     });
     _refreshObserver.observe(document.body, { childList: true, subtree: true });
-    window.addEventListener("beforeunload", () => _refreshObserver.disconnect());
+    window.addEventListener("pagehide", (e) => {
+      if (!e.persisted) _refreshObserver.disconnect();
+    });
     let _burgerObsTimer = 0;
     const _burgerObserver = new MutationObserver(() => {
       clearTimeout(_burgerObsTimer);
       _burgerObsTimer = window.setTimeout(ensureBurgerVisible, 120);
     });
     _burgerObserver.observe(document.body, { childList: true, subtree: true });
-    window.addEventListener("beforeunload", () => _burgerObserver.disconnect());
+    window.addEventListener("pagehide", (e) => {
+      if (!e.persisted) _burgerObserver.disconnect();
+    });
     const hideStaleViews = () => {
       const vw = window.innerWidth, vh = window.innerHeight;
       if (document.querySelector("video")) {
@@ -22587,6 +22278,13 @@ html.fntv-boot-hide #root{visibility:hidden}
         return;
       }
       const candidates = [];
+      const _activeOutlet = (() => {
+        const list = document.querySelectorAll(ACTIVE_VIEW_SEL);
+        for (let i = list.length - 1; i >= 0; i--) {
+          if (list[i] && list[i].offsetParent !== null) return list[i];
+        }
+        return null;
+      })();
       const all = document.querySelectorAll("*");
       for (let i = 0; i < all.length; i++) {
         const el = all[i];
@@ -22597,6 +22295,8 @@ html.fntv-boot-hide #root{visibility:hidden}
         if (el.closest('[id^="fnos-"], [id^="fntv-"]')) continue;
         if (el.classList.contains("absolute")) continue;
         if (el.querySelector("video")) continue;
+        if (el.matches(ACTIVE_VIEW_SEL + ", .trim-ui__cache-outlet--cache")) continue;
+        if (_activeOutlet && _activeOutlet.contains(el)) continue;
         candidates.push(el);
       }
       const byParent = /* @__PURE__ */ new Map();
@@ -22609,15 +22309,32 @@ html.fntv-boot-hide #root{visibility:hidden}
       for (const [parent, views] of byParent) {
         if (views.length < 2) continue;
         const _lastHasDetail = !!views[views.length - 1].querySelector('[data-id="details"], .fnos-season-2col, .card-root');
-        for (let i = 0; i < views.length - 1; i++) {
+        const _homeSec = findMediaLibrarySection();
+        const _isHomeView = (v) => {
+          if (S.carouselWrapper && v.contains(S.carouselWrapper)) return true;
+          if (_homeSec && v.contains(_homeSec)) return true;
+          if (v.querySelector('[class*="fnos-carousel"], [class*="fntv-carousel"], .swiper-wrapper')) return true;
+          const _h = v.querySelector("strong, h2, h3");
+          return !!_h && /媒体库|片库|影视库|library/i.test(_h.textContent || "");
+        };
+        for (let i = 0; i < views.length; i++) {
           const _v = views[i];
-          if (!_lastHasDetail && _v.querySelector('[data-id="details"], .fnos-season-2col, .card-root')) {
-            log9("hideStaleViews: SKIP \u2014 \u89C6\u56FE\u542B\u771F\u5B9E\u8BE6\u60C5\u5185\u5BB9, \u907F\u514D\u767D\u5C4F | class=", _v.className.slice(0, 40));
-            continue;
+          const _inCache = !!_v.closest(".trim-ui__cache-outlet--cache");
+          if (!_inCache) {
+            if (i === views.length - 1) continue;
+            if (_activeOutlet && (_activeOutlet === _v || _activeOutlet.contains(_v))) continue;
+            if (!_lastHasDetail && _v.querySelector('[data-id="details"], .fnos-season-2col, .card-root')) {
+              log9("hideStaleViews: SKIP \u2014 \u89C6\u56FE\u542B\u771F\u5B9E\u8BE6\u60C5\u5185\u5BB9, \u907F\u514D\u767D\u5C4F | class=", _v.className.slice(0, 40));
+              continue;
+            }
+            if (_isHomeView(_v)) {
+              log9("hideStaleViews: SKIP \u2014 \u9996\u9875\u89C6\u56FE(\u5A92\u4F53\u5E93/\u8F6E\u64AD)\u8DF3\u8FC7\u9690\u85CF, \u907F\u514D\u56DE\u9996\u9875\u767D\u5C4F | class=", _v.className.slice(0, 40));
+              continue;
+            }
           }
           if (getComputedStyle(_v).display !== "none") {
             _v.style.display = "none";
-            log9("hideStaleViews: hid stacked view", i + 1, "/", views.length, "| class=", _v.className.slice(0, 40));
+            log9("hideStaleViews: hid stacked view", i + 1, "/", views.length, "| cache=", _inCache, "| class=", _v.className.slice(0, 40));
           }
         }
       }
@@ -22726,61 +22443,84 @@ html.fntv-boot-hide #root{visibility:hidden}
         }
       };
       history.pushState = function(...a) {
-        const prevPath = pagePath();
-        const newHref = a && a.length >= 3 && typeof a[2] === "string" ? a[2] : location.href;
-        _ps.apply(this, a);
-        logNav("pushState");
-        if ((prevPath === "/v" || prevPath === "/v/") && newHref) {
-          const np = newHref.indexOf("?") >= 0 ? newHref.split("?")[0] : newHref;
-          if (np !== "/v" && np !== "/v/") S.leftHome = true;
+        let prevPath = "";
+        let newHref = location.href;
+        try {
+          prevPath = pagePath();
+          newHref = a && a.length >= 3 && typeof a[2] === "string" ? a[2] : location.href;
+        } catch (_) {
         }
-        runPageTransition(isDetailPage());
-        setTimeout(ensureBurgerVisible, 300);
-        setTimeout(closeDrawer, 300);
-        setTimeout(hideStaleViews, 400);
-        setTimeout(ensureHomepageEnhanced, 350);
-        _stopCarouselOffHome(newHref);
-        _scheduleTopLeftAfterNav();
-        applyDetailBeautify();
-        scheduleEpBackfill();
-        scheduleCustomScraperButton();
-        scheduleJavButton();
-        scheduleFolderScraperButton();
+        _ps.apply(this, a);
+        try {
+          logNav("pushState");
+          if ((prevPath === "/v" || prevPath === "/v/") && newHref) {
+            const np = newHref.indexOf("?") >= 0 ? newHref.split("?")[0] : newHref;
+            if (np !== "/v" && np !== "/v/") S.leftHome = true;
+          }
+          runPageTransition(isDetailPage());
+          setTimeout(ensureBurgerVisible, 300);
+          setTimeout(closeDrawer, 300);
+          setTimeout(hideStaleViews, 400);
+          setTimeout(ensureHomepageEnhanced, 350);
+          _stopCarouselOffHome(newHref);
+          _scheduleTopLeftAfterNav();
+          applyDetailBeautify();
+          scheduleEpBackfill();
+          scheduleCustomScraperButton();
+          scheduleJavButton();
+          scheduleFolderScraperButton();
+        } catch (e) {
+          console.warn("[fntv-web] nav side-effect failed (pushState)", e);
+        }
       };
       history.replaceState = function(...a) {
-        const prevPath = pagePath();
-        const newHref = a && a.length >= 3 && typeof a[2] === "string" ? a[2] : location.href;
-        _rs.apply(this, a);
-        logNav("replaceState");
-        if ((prevPath === "/v" || prevPath === "/v/") && newHref) {
-          const np = newHref.indexOf("?") >= 0 ? newHref.split("?")[0] : newHref;
-          if (np !== "/v" && np !== "/v/") S.leftHome = true;
+        let prevPath = "";
+        let newHref = location.href;
+        try {
+          prevPath = pagePath();
+          newHref = a && a.length >= 3 && typeof a[2] === "string" ? a[2] : location.href;
+        } catch (_) {
         }
-        runPageTransition(isDetailPage());
-        setTimeout(closeDrawer, 300);
-        setTimeout(hideStaleViews, 400);
-        setTimeout(ensureHomepageEnhanced, 350);
-        _stopCarouselOffHome(newHref);
-        _scheduleTopLeftAfterNav();
-        applyDetailBeautify();
-        scheduleEpBackfill();
-        scheduleCustomScraperButton();
-        scheduleJavButton();
-        scheduleFolderScraperButton();
+        _rs.apply(this, a);
+        try {
+          logNav("replaceState");
+          if ((prevPath === "/v" || prevPath === "/v/") && newHref) {
+            const np = newHref.indexOf("?") >= 0 ? newHref.split("?")[0] : newHref;
+            if (np !== "/v" && np !== "/v/") S.leftHome = true;
+          }
+          runPageTransition(isDetailPage());
+          setTimeout(closeDrawer, 300);
+          setTimeout(hideStaleViews, 400);
+          setTimeout(ensureHomepageEnhanced, 350);
+          _stopCarouselOffHome(newHref);
+          _scheduleTopLeftAfterNav();
+          applyDetailBeautify();
+          scheduleEpBackfill();
+          scheduleCustomScraperButton();
+          scheduleJavButton();
+          scheduleFolderScraperButton();
+        } catch (e) {
+          console.warn("[fntv-web] nav side-effect failed (replaceState)", e);
+        }
       };
       window.addEventListener("popstate", () => {
-        logNav("popstate");
-        runPageTransition(isDetailPage());
-        setTimeout(ensureBurgerVisible, 300);
-        setTimeout(closeDrawer, 300);
-        setTimeout(hideStaleViews, 400);
-        _scheduleTopLeftAfterNav();
-        setTimeout(ensureHomepageEnhanced, 350);
-        applyDetailBeautify();
-        scheduleEpBackfill();
-        scheduleCustomScraperButton();
-        scheduleJavButton();
-        scheduleFolderScraperButton();
+        try {
+          logNav("popstate");
+          runPageTransition(isDetailPage());
+          setTimeout(ensureBurgerVisible, 300);
+          setTimeout(closeDrawer, 300);
+          setTimeout(hideStaleViews, 400);
+          setTimeout(revealActiveView, 460);
+          _scheduleTopLeftAfterNav();
+          setTimeout(ensureHomepageEnhanced, 350);
+          applyDetailBeautify();
+          scheduleEpBackfill();
+          scheduleCustomScraperButton();
+          scheduleJavButton();
+          scheduleFolderScraperButton();
+        } catch (e) {
+          console.warn("[fntv-web] nav side-effect failed (popstate)", e);
+        }
       });
       window.addEventListener("hashchange", () => logNav("hashchange"));
       setTimeout(hideStaleViews, 1500);
@@ -22896,6 +22636,17 @@ html.fntv-boot-hide #root{visibility:hidden}
         log9("watchdog: carousel lost");
         destroyCarousel();
         S.carouselContainer = null;
+        S.carouselInited = false;
+        injectCarousel();
+        return;
+      }
+      if (!S.carouselInited && (!S.carouselContainer || !document.body.contains(S.carouselContainer))) {
+        log9("watchdog: carousel missing, re-inject");
+        injectCarousel();
+        return;
+      }
+      if (S.carouselInited && S.carouselContainer && S.carouselContainer.childElementCount === 0) {
+        log9("watchdog: carousel empty, re-inject");
         S.carouselInited = false;
         injectCarousel();
       }
@@ -24538,6 +24289,92 @@ html.fntv-boot-hide #root{visibility:hidden}
     }
     return document.querySelector('div[class*="mb-[46px]"]');
   }
+  function fnNonce6() {
+    return String(Math.floor(Math.random() * 9e5) + 1e5);
+  }
+  async function fnosJson(method, path, body) {
+    const headers = {};
+    try {
+      const authx = await ipcRenderer.invoke("fnos-gen-authx", path, body);
+      if (authx) headers.Authx = String(authx);
+    } catch {
+    }
+    const init = { method, credentials: "include", headers };
+    if (body !== void 0) {
+      headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(body);
+    }
+    const resp = await fetch(location.origin + path, init);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    return resp.json();
+  }
+  function personNameFromDom() {
+    const t2 = String(document.title || "").split(/\s+[-–—|]\s+/)[0].trim();
+    if (t2 && !/飞牛|影视|AniBox|FnTV/i.test(t2)) return t2;
+    const views = document.querySelectorAll(".trim-ui__cache-outlet--exclude");
+    for (let i = views.length - 1; i >= 0; i--) {
+      if (!views[i] || views[i].offsetParent === null) continue;
+      const h = views[i].querySelector("h1, h2");
+      const txt = h ? String(h.textContent || "").trim() : "";
+      if (txt) return txt;
+    }
+    return "";
+  }
+  async function collectPersonHints(guid) {
+    const hints = { guid };
+    try {
+      const pd = await fnosJson("GET", "/v/api/v1/person/" + guid);
+      const p = pd && pd.data && typeof pd.data === "object" ? pd.data : null;
+      if (p) {
+        hints.name = String(p.name || p.title || "").trim();
+        hints.imdbId = String(p.imdb_id || p.imdbId || "").trim();
+        const nested = p.person && (p.person.tmdb_id || p.person.tmdbId) || p.external_ids && (p.external_ids.tmdb_id || p.external_ids.tmdbId);
+        const tid = Number(p.tmdb_id || p.tmdbId || nested || 0);
+        if (tid > 0) hints.tmdbId = tid;
+      }
+    } catch {
+    }
+    if (!hints.name) hints.name = personNameFromDom();
+    const lib = [];
+    const seen = /* @__PURE__ */ new Set();
+    const lists = await Promise.all(["Actor", "Director", "Writer", "Screenplay", "Producer"].map(async (job) => {
+      try {
+        const body = {
+          person_guid: guid,
+          page: 1,
+          page_size: 200,
+          job,
+          sort_column: "update_time",
+          sort_type: "desc",
+          nonce: fnNonce6()
+        };
+        const j = await fnosJson("POST", "/v/api/v1/person/item/list", body);
+        return j && j.data && Array.isArray(j.data.list) ? j.data.list : [];
+      } catch {
+        return [];
+      }
+    }));
+    for (const list of lists) {
+      for (const it of list) {
+        const title = String(it.title || it.name || it.original_title || it.original_name || "").trim();
+        if (!title) continue;
+        const key = String(it.guid || "") + "|" + title;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        lib.push({
+          title,
+          type: String(it.type || it.media_type || "").toLowerCase(),
+          guid: String(it.guid || ""),
+          tmdbId: Number(it.tmdb_id || it.tmdbId || 0) || void 0,
+          imdbId: String(it.imdb_id || it.imdbId || "")
+        });
+        if (lib.length >= 600) break;
+      }
+      if (lib.length >= 600) break;
+    }
+    if (lib.length) hints.libItems = lib;
+    return hints;
+  }
   function renderPanel2(container, data) {
     let box = container.querySelector("#" + PANEL_ID2);
     if (!box) {
@@ -24576,11 +24413,19 @@ html.fntv-boot-hide #root{visibility:hidden}
       el.addEventListener("click", (ev) => {
         ev.preventDefault();
         const u = el.getAttribute("data-tmdb");
-        if (u) {
+        if (!u) return;
+        try {
+          const p = ipcRenderer.invoke("app:open-external", u);
+          if (p && typeof p.catch === "function") p.catch(() => {
+            try {
+              window.open(u, "_blank");
+            } catch {
+            }
+          });
+        } catch {
           try {
-            shell.openExternal(u);
-          } catch {
             window.open(u, "_blank");
+          } catch {
           }
         }
       });
@@ -24612,10 +24457,22 @@ html.fntv-boot-hide #root{visibility:hidden}
       void expandCurrent();
     });
   }
-  async function expandCurrent() {
+  async function expandCurrent(retry = 0) {
     const guid = _currentGuid;
-    const container = activeCol();
-    if (!guid || !container || _inflight.has(guid)) return;
+    if (!guid) return;
+    if (_inflight.has(guid)) return;
+    let container = activeCol();
+    if (!container) {
+      const box = document.getElementById(PANEL_ID2);
+      container = box && box.parentElement;
+    }
+    if (!container) {
+      log.warn("[personWorks] \u5C55\u5F00\u5931\u8D25\uFF1A\u672A\u627E\u5230\u6F14\u5458\u9875\u4F5C\u54C1\u5217");
+      if (retry < 2) setTimeout(() => {
+        if (_currentGuid === guid) void expandCurrent(retry + 1);
+      }, 800);
+      return;
+    }
     const cached2 = _cache.get(guid);
     if (cached2) {
       renderPanel2(container, cached2);
@@ -24623,11 +24480,18 @@ html.fntv-boot-hide #root{visibility:hidden}
     }
     _inflight.add(guid);
     _loadError = "";
-    renderMsg(container, "\u6B63\u5728\u4ECE TMDB \u62C9\u53D6\u5B8C\u6574\u4F5C\u54C1\u2026");
+    renderMsg(container, "\u6B63\u5728\u8BFB\u53D6\u6F14\u5458\u4FE1\u606F\u5E76\u4ECE TMDB \u62C9\u53D6\u5B8C\u6574\u4F5C\u54C1\u2026");
     try {
+      let hints = { guid };
+      try {
+        hints = await collectPersonHints(guid);
+      } catch (e) {
+        log.warn("[personWorks] \u98DE\u725B\u4EBA\u7269\u4FE1\u606F\u8BFB\u53D6\u5931\u8D25\uFF0C\u4EC5\u6309 guid \u8BF7\u6C42\uFF1A", e && e.message);
+      }
+      if (_currentGuid !== guid) return;
       let r = null;
       try {
-        r = await ipcRenderer.invoke("person:tmdb-credits", guid);
+        r = await ipcRenderer.invoke("person:tmdb-credits", hints);
       } catch (err) {
         const msg = String(err && err.message || err);
         if (msg.indexOf("No handler registered") !== -1) {
@@ -24638,23 +24502,39 @@ html.fntv-boot-hide #root{visibility:hidden}
       }
       if (_currentGuid !== guid) return;
       if (!r || r.error) {
-        _loadError = r && r.error || "\u62C9\u53D6\u5931\u8D25";
+        _loadError = friendlyError(r && r.error, "\u62C9\u53D6\u5931\u8D25");
         renderCollapsed(container);
         return;
       }
+      if (r.unlinked || r.noImdb) {
+        renderMsg(container, unlinkedMessage(r));
+        return;
+      }
       _cache.set(guid, r);
-      if (r.noImdb) {
-        renderMsg(container, "\u8BE5\u6F14\u5458\u65E0 IMDb \u5173\u8054\uFF0C\u65E0\u6CD5\u83B7\u53D6 TMDB \u5B8C\u6574\u4F5C\u54C1");
+      if (!Array.isArray(r.items) || !r.items.length) {
+        renderMsg(container, "TMDB \u6682\u65E0\u8BE5\u6F14\u5458\u7684\u4F5C\u54C1\u8BB0\u5F55");
         return;
       }
       renderPanel2(container, r);
     } catch (e) {
       if (_currentGuid === guid) {
-        _loadError = "\u62C9\u53D6\u5931\u8D25: " + (e && e.message ? e.message : e);
+        _loadError = friendlyError(e, "\u62C9\u53D6\u5931\u8D25");
         renderCollapsed(container);
       }
     } finally {
       _inflight.delete(guid);
+    }
+  }
+  function unlinkedMessage(r) {
+    const name = String(r && r.name || "").trim();
+    const who = name ? `\u300C${name}\u300D` : "\u8BE5\u6F14\u5458";
+    switch (r && r.reason) {
+      case "no-name":
+        return "\u672A\u5173\u8054 TMDB \u4EBA\u7269\uFF1A\u672A\u80FD\u8BFB\u53D6\u6F14\u5458\u59D3\u540D\uFF0C\u65E0\u6CD5\u5728 TMDB \u68C0\u7D22";
+      case "no-external-id":
+        return `\u672A\u5173\u8054 TMDB \u4EBA\u7269\uFF1A\u98DE\u725B\u672A\u63D0\u4F9B ${who} \u7684 TMDB/IMDb \u5173\u8054\uFF0C\u6309\u59D3\u540D\u4E5F\u672A\u5728 TMDB \u627E\u5230\u5339\u914D`;
+      default:
+        return `\u672A\u5173\u8054 TMDB \u4EBA\u7269\uFF1ATMDB \u672A\u6536\u5F55${who}`;
     }
   }
   var _posterIO = null;
@@ -24724,8 +24604,10 @@ html.fntv-boot-hide #root{visibility:hidden}
       const m = (a.getAttribute("href") || "/").match(/([0-9a-f]{32})/i);
       if (!m) return;
       const guid = m[1].toLowerCase();
+      const nameEl = a.querySelector('p[class*="text-base"]');
+      const personName = nameEl ? String(nameEl.textContent || "").trim() : "";
       setTimeout(() => {
-        ipcRenderer.invoke("person:tmdb-brief", guid).then((b) => {
+        ipcRenderer.invoke("person:tmdb-brief", { guid, name: personName }).then((b) => {
           if (!b || b.error || !document.body.contains(a)) return;
           const parts = [];
           const roleEl = a.querySelector('p:not([class*="text-base"])');
@@ -24764,6 +24646,7 @@ html.fntv-boot-hide #root{visibility:hidden}
       return;
     }
     const guid = m[1].toLowerCase();
+    revealActiveView();
     if (guid === _currentGuid) return;
     _currentGuid = guid;
     _onlyMissing = false;
@@ -24772,6 +24655,7 @@ html.fntv-boot-hide #root{visibility:hidden}
   }
   function handle4() {
     try {
+      installCastNav();
       setInterval(checkRoute, 1200);
       checkRoute();
     } catch (e) {
@@ -25194,7 +25078,7 @@ html.fntv-boot-hide #root{visibility:hidden}
     } catch {
     }
   }
-  function mkBtn2(label, ghost) {
+  function mkBtn(label, ghost) {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "fntv-mk-btn" + (ghost ? " fntv-mk-ghost" : "");
@@ -25555,7 +25439,7 @@ button.fntv-mk-btn.fntv-mk-ghost:hover{background-color:rgba(255,255,255,.13)}
     panelEl.appendChild(mkPanelRow("\u7247\u5C3E\u7EC8\u70B9", inOutroEnd, false));
     const seekRow = document.createElement("div");
     seekRow.className = "fntv-mk-row";
-    const seekIntro = mkBtn2("\u8BD5\u8DF3\u7247\u5934\u5C3E", false);
+    const seekIntro = mkBtn("\u8BD5\u8DF3\u7247\u5934\u5C3E", false);
     seekIntro.addEventListener("click", (e) => {
       e.stopPropagation();
       const v = getVideo();
@@ -25568,7 +25452,7 @@ button.fntv-mk-btn.fntv-mk-ghost:hover{background-color:rgba(255,255,255,.13)}
       v.currentTime = end;
       if (backJumpBtn) backJumpBtn.style.display = "";
     });
-    const seekOutro = mkBtn2("\u8BD5\u8DF3\u7247\u5C3E", false);
+    const seekOutro = mkBtn("\u8BD5\u8DF3\u7247\u5C3E", false);
     seekOutro.addEventListener("click", (e) => {
       e.stopPropagation();
       const v = getVideo();
@@ -25581,7 +25465,7 @@ button.fntv-mk-btn.fntv-mk-ghost:hover{background-color:rgba(255,255,255,.13)}
       v.currentTime = start;
       if (backJumpBtn) backJumpBtn.style.display = "";
     });
-    backJumpBtn = mkBtn2("\u56DE\u5230\u539F\u4F4D", true);
+    backJumpBtn = mkBtn("\u56DE\u5230\u539F\u4F4D", true);
     backJumpBtn.style.display = "none";
     backJumpBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -25622,18 +25506,18 @@ button.fntv-mk-btn.fntv-mk-ghost:hover{background-color:rgba(255,255,255,.13)}
     panelEl.appendChild(scopeRow);
     const actRow = document.createElement("div");
     actRow.className = "fntv-mk-row fntv-mk-row-last";
-    const saveBtn = mkBtn2("\u4FDD\u5B58", false);
+    const saveBtn = mkBtn("\u4FDD\u5B58", false);
     saveBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       void savePanel();
     });
-    restoreBtnEl = mkBtn2("\u6062\u590D\u81EA\u52A8", true);
+    restoreBtnEl = mkBtn("\u6062\u590D\u81EA\u52A8", true);
     restoreBtnEl.style.display = "none";
     restoreBtnEl.addEventListener("click", (e) => {
       e.stopPropagation();
       void restoreAuto();
     });
-    const closeBtn = mkBtn2("\u5173\u95ED", true);
+    const closeBtn = mkBtn("\u5173\u95ED", true);
     closeBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       closePanel2();
@@ -28037,7 +27921,7 @@ button.fntv-mk-btn.fntv-mk-ghost:hover{background-color:rgba(255,255,255,.13)}
   var ACCENT_GRAD = "linear-gradient(135deg,#6d7ff2,#8a63e8)";
   var CARD_BG = "linear-gradient(165deg,rgba(250,251,254,.97),rgba(240,243,250,.99))";
   var INK = "#262c44";
-  var SUB2 = "#5a6480";
+  var SUB = "#5a6480";
   function fmtHours(ms) {
     const h = Math.round(ms / 36e5);
     return h >= 1e4 ? (ms / 36e5 / 1e4).toFixed(1) + " \u4E07" : String(h);
@@ -28240,15 +28124,15 @@ button.fntv-mk-btn.fntv-mk-ghost:hover{background-color:rgba(255,255,255,.13)}
       return `<div style="position:absolute;inset:0;background:linear-gradient(165deg,rgba(109,127,242,.10),rgba(138,99,232,.06));
             display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;">
             ${head("FNTV-PLUS \xB7 " + r.year + " \u5E74\u5EA6\u89C2\u5F71\u62A5\u544A")}
-            <div style="font-size:15px;font-weight:700;color:${SUB2};">\u8FD9\u4E00\u5E74\uFF0C\u4F60\u5728 AniBox \u770B\u4E86</div>
+            <div style="font-size:15px;font-weight:700;color:${SUB};">\u8FD9\u4E00\u5E74\uFF0C\u4F60\u5728 AniBox \u770B\u4E86</div>
             <div style="display:flex;align-items:baseline;gap:8px;">
                 <span style="font-size:74px;font-weight:900;background:${ACCENT_GRAD};-webkit-background-clip:text;background-clip:text;color:transparent;">${fmtHours(r.totalMs)}</span>
                 <span style="font-size:20px;font-weight:800;color:${INK};">\u5C0F\u65F6</span>
             </div>
             <div style="display:flex;gap:26px;margin-top:6px;">
-                <div style="text-align:center;"><div style="font-size:24px;font-weight:900;color:${INK};">${r.titles}</div><div style="font-size:11px;color:${SUB2};">\u90E8\u4F5C\u54C1</div></div>
-                <div style="text-align:center;"><div style="font-size:24px;font-weight:900;color:${INK};">${r.activeDays}</div><div style="font-size:11px;color:${SUB2};">\u5929\u6709\u89C2\u5F71</div></div>
-                <div style="text-align:center;"><div style="font-size:24px;font-weight:900;color:${INK};">${r.finished}</div><div style="font-size:11px;color:${SUB2};">\u90E8\u770B\u5B8C</div></div>
+                <div style="text-align:center;"><div style="font-size:24px;font-weight:900;color:${INK};">${r.titles}</div><div style="font-size:11px;color:${SUB};">\u90E8\u4F5C\u54C1</div></div>
+                <div style="text-align:center;"><div style="font-size:24px;font-weight:900;color:${INK};">${r.activeDays}</div><div style="font-size:11px;color:${SUB};">\u5929\u6709\u89C2\u5F71</div></div>
+                <div style="text-align:center;"><div style="font-size:24px;font-weight:900;color:${INK};">${r.finished}</div><div style="font-size:11px;color:${SUB};">\u90E8\u770B\u5B8C</div></div>
             </div>
             ${r.ignored > 0 ? `<div style="font-size:11px;color:#b06a3a;background:rgba(176,106,58,.10);border:1px solid rgba(176,106,58,.28);border-radius:8px;padding:5px 12px;margin-top:10px;">\u{1F6E0} \u5DF2\u81EA\u52A8\u4FEE\u6B63 ${r.ignored} \u6761\u5F02\u5E38\u65F6\u95F4\u8BB0\u5F55\uFF08\u64AD\u653E\u65F6\u95F4\u65E9\u4E8E 2000 \u5E74\u7684\u810F\u6570\u636E\uFF0C\u4E0D\u8BA1\u5165\u7EDF\u8BA1\uFF09</div>` : ""}
             ${r.synthetic ? `<div style="font-size:11px;color:#4a5fd0;background:rgba(109,127,242,.10);border:1px solid rgba(109,127,242,.28);border-radius:8px;padding:5px 12px;margin-top:10px;">\u{1F4CA} \u98DE\u725B\u4FA7\u64AD\u653E\u65F6\u95F4\u7F3A\u5931\uFF0C\u672C\u62A5\u544A\u6309\u89C2\u5F71\u53F0\u8D26\u4F30\u7B97\uFF08\u6BCF\u65E5\u8BB0\u5F55 \xD7 30 \u5206\u949F\uFF09</div>` : ""}
@@ -28263,7 +28147,7 @@ button.fntv-mk-btn.fntv-mk-ghost:hover{background-color:rgba(255,255,255,.13)}
         return `<div style="display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;">
                 <div style="font-size:9px;color:${hot ? "#4a5fd0" : "transparent"};font-weight:700;">\u5CF0\u503C</div>
                 <div style="width:60%;height:${h}px;border-radius:7px;background:${hot ? ACCENT_GRAD : "linear-gradient(180deg,rgba(109,127,242,.55),rgba(109,127,242,.25))"};"></div>
-                <div style="font-size:10px;color:${SUB2};">${i + 1}\u6708</div>
+                <div style="font-size:10px;color:${SUB};">${i + 1}\u6708</div>
             </div>`;
       }).join("");
       return `<div style="position:absolute;inset:0;padding:56px 46px 30px;">
@@ -28278,14 +28162,14 @@ button.fntv-mk-btn.fntv-mk-ghost:hover{background-color:rgba(255,255,255,.13)}
         const hh = h > 9 ? String(h) : "0" + h;
         return `<div title="${hh}:00" style="display:flex;flex-direction:column;align-items:center;gap:3px;flex:1;">
                 <div style="width:70%;height:${Math.max(3, Math.round(ms / max * 110))}px;border-radius:4px 4px 0 0;background:${h >= 0 && h < 5 ? ACCENT_GRAD : "rgba(109,127,242,.35)"};"></div>
-                ${h % 3 === 0 ? `<div style="font-size:8.5px;color:${SUB2};">${hh}</div>` : '<div style="font-size:8.5px;">&nbsp;</div>'}
+                ${h % 3 === 0 ? `<div style="font-size:8.5px;color:${SUB};">${hh}</div>` : '<div style="font-size:8.5px;">&nbsp;</div>'}
             </div>`;
       }).join("");
       const owl = r.nightRatio > 0.25 ? "\u91CD\u5EA6\u591C\u732B \u{1F989}" : r.nightRatio > 0.1 ? "\u8F7B\u5EA6\u591C\u732B \u{1F319}" : "\u517B\u751F\u4F5C\u606F \u2600\uFE0F";
       return `<div style="position:absolute;inset:0;padding:56px 46px 30px;">
             ${head("PAGE 3 \xB7 \u89C2\u5F71\u65F6\u523B")}
             <div style="font-size:24px;font-weight:900;color:${INK};margin:14px 0 4px;">\u4F60\u662F <span style="background:${ACCENT_GRAD};-webkit-background-clip:text;background-clip:text;color:transparent;">${owl}</span></div>
-            <div style="font-size:12px;color:${SUB2};margin-bottom:18px;">\u6DF1\u591C\u65F6\u6BB5(00-05\u70B9)\u89C2\u770B\u5360\u6BD4 ${(r.nightRatio * 100).toFixed(1)}%</div>
+            <div style="font-size:12px;color:${SUB};margin-bottom:18px;">\u6DF1\u591C\u65F6\u6BB5(00-05\u70B9)\u89C2\u770B\u5360\u6BD4 ${(r.nightRatio * 100).toFixed(1)}%</div>
             <div style="display:flex;align-items:flex-end;height:140px;">${bars}</div>
         </div>`;
     }
@@ -28298,7 +28182,7 @@ button.fntv-mk-btn.fntv-mk-ghost:hover{background-color:rgba(255,255,255,.13)}
                 <div style="flex:1;min-width:0;">
                     <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;">
                         <span style="font-size:14px;font-weight:700;color:${INK};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc4(t2.name)}</span>
-                        <span style="font-size:11px;color:${SUB2};flex-shrink:0;">${fmtHours(t2.ms)} \u5C0F\u65F6${t2.prog >= 1 ? " \xB7 \u5DF2\u770B\u5B8C" : ""}</span>
+                        <span style="font-size:11px;color:${SUB};flex-shrink:0;">${fmtHours(t2.ms)} \u5C0F\u65F6${t2.prog >= 1 ? " \xB7 \u5DF2\u770B\u5B8C" : ""}</span>
                     </div>
                     <div style="margin-top:5px;height:7px;border-radius:99px;background:rgba(109,127,242,.14);">
                         <div style="height:100%;width:${Math.max(4, Math.round(t2.ms / max * 100))}%;border-radius:99px;background:${ACCENT_GRAD};"></div>
@@ -28318,11 +28202,11 @@ button.fntv-mk-btn.fntv-mk-ghost:hover{background-color:rgba(255,255,255,.13)}
         ${head("PAGE 5 \xB7 \u603B\u7ED3")}
         <div style="font-size:26px;font-weight:900;color:${INK};">${r.year} \u5E74\uFF0C\u6700\u5927\u8FDE\u7EED\u89C2\u5F71 <span style="background:${ACCENT_GRAD};-webkit-background-clip:text;background-clip:text;color:transparent;">${r.maxStreak} \u5929</span></div>
         <div style="display:flex;gap:34px;">
-            <div style="text-align:center;"><div style="font-size:30px;font-weight:900;color:${INK};">${doneRate}%</div><div style="font-size:11px;color:${SUB2};">\u770B\u5B8C\u7387</div></div>
-            <div style="text-align:center;"><div style="font-size:30px;font-weight:900;color:${INK};">${r.rated}</div><div style="font-size:11px;color:${SUB2};">\u6253\u8FC7\u5206</div></div>
-            <div style="text-align:center;"><div style="font-size:30px;font-weight:900;color:${INK};">${r.activeDays}</div><div style="font-size:11px;color:${SUB2};">\u89C2\u5F71\u5929\u6570</div></div>
+            <div style="text-align:center;"><div style="font-size:30px;font-weight:900;color:${INK};">${doneRate}%</div><div style="font-size:11px;color:${SUB};">\u770B\u5B8C\u7387</div></div>
+            <div style="text-align:center;"><div style="font-size:30px;font-weight:900;color:${INK};">${r.rated}</div><div style="font-size:11px;color:${SUB};">\u6253\u8FC7\u5206</div></div>
+            <div style="text-align:center;"><div style="font-size:30px;font-weight:900;color:${INK};">${r.activeDays}</div><div style="font-size:11px;color:${SUB};">\u89C2\u5F71\u5929\u6570</div></div>
         </div>
-        <div style="font-size:12.5px;color:${SUB2};margin-top:8px;">\u671F\u5F85 ${r.year + 1} \u5E74\u7EE7\u7EED\u4E0E\u4F60\u76F8\u4F34 \u{1F3AC}</div>
+        <div style="font-size:12.5px;color:${SUB};margin-top:8px;">\u671F\u5F85 ${r.year + 1} \u5E74\u7EE7\u7EED\u4E0E\u4F60\u76F8\u4F34 \u{1F3AC}</div>
         <div style="font-size:10.5px;color:#8a93ad;">\u70B9\u51FB\u5E95\u90E8\u300C\u5BFC\u51FA\u957F\u56FE\u300D\u4FDD\u5B58\u5206\u4EAB</div>
     </div>`;
   }

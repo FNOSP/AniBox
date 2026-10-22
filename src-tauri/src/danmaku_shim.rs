@@ -129,6 +129,31 @@ fn materialize_node_files() -> Result<PathBuf, String> {
     Ok(shim_path)
 }
 
+/// [macos] 解析 node 可执行文件。
+///
+/// 从 Finder / Launchpad 启动的 macOS 应用继承的是 launchd 的最小 PATH
+/// （`/usr/bin:/bin:/usr/sbin:/sbin`），Homebrew 的 `/opt/homebrew/bin` 不在其中，
+/// 直接 `Command::new("node")` 会 ENOENT → 弹幕 shim 起不来（B站弹幕降级为弹弹play）。
+/// 因此先按 Homebrew / 常见安装位固定查找，再退回 PATH。
+fn node_bin() -> PathBuf {
+    if let Ok(p) = std::env::var("ANIBOX_NODE_PATH") {
+        let p = PathBuf::from(p);
+        if p.is_file() {
+            return p;
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        for c in ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"] {
+            let p = PathBuf::from(c);
+            if p.is_file() {
+                return p;
+            }
+        }
+    }
+    PathBuf::from("node")
+}
+
 /// 就绪则直接返回；否则拉起 node 跑 shim 并等待端口监听（最长 10s）。
 ///
 /// `mpv_path`：本机 mpv.exe 路径（用于推导脚本目录）。
@@ -183,7 +208,7 @@ pub async fn ensure(
         .ok();
     let err = out.as_ref().and_then(|f| f.try_clone().ok());
     let child = {
-        let mut cmd = std::process::Command::new("node");
+        let mut cmd = std::process::Command::new(node_bin());
         cmd.arg(&js)
             .arg(&dir)
             .arg(node_port.to_string())

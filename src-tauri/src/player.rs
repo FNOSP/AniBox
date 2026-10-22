@@ -119,6 +119,18 @@ pub fn resolve_potplayer_path(configured: &str) -> Result<String, String> {
 
 /// 解析播放器：返回 (kind, path)。kind 为 "mpv" | "potplayer"。
 pub fn resolve_player(cfg: &Config) -> Result<(String, String), String> {
+    // [macos/linux] PotPlayer 是 Windows 专属软件，非 Windows 平台没有可执行文件。
+    // 若用户的 config.json 是从 Windows 迁移来的（player_kind=potplayer），在 mac 上
+    // 会直接报「未找到 PotPlayer」→ 无法播放。这里统一降级为随包/系统 mpv，
+    // 与参考项目 Fntv-Plus 在 mac 上只用 mpv 的行为一致。
+    #[cfg(not(target_os = "windows"))]
+    if cfg.player_kind.trim().eq_ignore_ascii_case("potplayer") {
+        return if cfg.mpv_path.trim().is_empty() {
+            Err(crate::config::mpv_missing_message())
+        } else {
+            Ok(("mpv".into(), cfg.mpv_path.clone()))
+        };
+    }
     match cfg.player_kind.trim() {
         "" | "mpv" => {
             if cfg.mpv_path.trim().is_empty() {

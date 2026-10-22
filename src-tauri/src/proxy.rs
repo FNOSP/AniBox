@@ -27,6 +27,20 @@ pub async fn ensure(
             proxy_path, hint
         ));
     }
+    // [macos] 打包进 .app 的 proxy 可能丢失可执行位（dmg → 拖进 /Applications 的复制链路
+    // 不保证保留 mode）。spawn 前主动补一次 0o755；失败不致命（真没权限时 spawn 会报清晰错误）。
+    #[cfg(not(target_os = "windows"))]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        if let Ok(meta) = std::fs::metadata(proxy_path) {
+            if meta.permissions().mode() & 0o111 == 0 {
+                let _ = std::fs::set_permissions(
+                    proxy_path,
+                    std::fs::Permissions::from_mode(0o755),
+                );
+            }
+        }
+    }
     let mut cmd = std::process::Command::new(proxy_path);
     cmd.stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());

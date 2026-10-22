@@ -110,6 +110,14 @@ pub fn resolve_node(app: &AppHandle) -> Result<PathBuf, String> {
         candidates.push(root.join("node.exe"));
         candidates.push(root.join("node").join("node.exe"));
     }
+    // [macos/linux] Finder/Launchpad 启动的 App 继承 launchd 最小 PATH，Homebrew 的
+    // /opt/homebrew/bin 不在其中 → 必须按固定安装位查找，否则「设置 → 检测 Node」显示未找到。
+    #[cfg(not(target_os = "windows"))]
+    {
+        for c in ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"] {
+            candidates.push(PathBuf::from(c));
+        }
+    }
     for c in candidates {
         if c.is_file() {
             return Ok(c);

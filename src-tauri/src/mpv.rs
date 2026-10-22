@@ -683,22 +683,48 @@ impl MpvSession {
     /// 退出 mpv 并销毁内嵌子窗
     pub async fn shutdown(&self) {
         let _ = self.command(json!(["quit"])).await;
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         let pid_now = *self.pid.lock().unwrap();
         if let Some(pid) = pid_now {
             #[cfg(target_os = "windows")]
             {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 let _ = tokio::process::Command::new("taskkill")
                     .args(["/F", "/PID", &pid.to_string()])
                     .output()
                     .await;
             }
+            // [macos/linux] 不要直接 `kill -9`：那会跳过 mpv 的正常退出流程（写 watch_later /
+            // 关窗 / 落盘），下次起播可能丢续播点。顺序改为：
+            //   ① 等 IPC `quit` 让 mpv 自己退（最多 ~1.2s）
+            //   ② 仍在 → SIGTERM（再等最多 ~1s）
+            //   ③ 还在 → 才 SIGKILL 兜底
+            // 参考项目 node-mpv 也是「发 quit 命令 + 等进程退出」这一路。
             #[cfg(not(target_os = "windows"))]
             {
-                let _ = tokio::process::Command::new("kill")
-                    .args(["-9", &pid.to_string()])
-                    .output()
-                    .await;
+                for _ in 0..8 {
+                    if self.is_dead().await {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                }
+                if !self.is_dead().await {
+                    let _ = tokio::process::Command::new("kill")
+                        .args(["-TERM", &pid.to_string()])
+                        .output()
+                        .await;
+                    for _ in 0..10 {
+                        if self.is_dead().await {
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                }
+                if !self.is_dead().await {
+                    let _ = tokio::process::Command::new("kill")
+                        .args(["-9", &pid.to_string()])
+                        .output()
+                        .await;
+                }
             }
         }
         *self.tx.lock().unwrap() = None;

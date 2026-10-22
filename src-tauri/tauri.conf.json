@@ -40,7 +40,6 @@
     "shortDescription": "为飞牛影视（fnOS）定制的第三方 Windows 桌面客户端",
     "longDescription": "AniBox 是为飞牛影视（fnOS / 飞牛私有云）定制的第三方 Windows 桌面客户端。以 React 自绘界面直连飞牛影视 API，配合独立 mpv 进程播放，并聚合 Bangumi / TMDB 元数据，把看片做成一套完整的桌面体验。\n\n主要特性：\n• 首页全屏 Hero 轮播\n• 发现页 TMDB / Bangumi 双面板\n• 两栏沉浸式详情页与标签页\n• 观影记录与年度报告\n• mpv 三源弹幕，丰富影视体验\n• 兼容本机自带 PotPlayer 调用\n• 演员信息入库检测",
     "resources": {
-      "resources/potctl.exe": "potctl.exe",
       "resources/danmu-api/": "danmu-api/",
       "bundle-resources/third_party/fntv-mpv/": "third_party/fntv-mpv/",
       "bundle-resources/third_party/proxy/": "third_party/proxy/"

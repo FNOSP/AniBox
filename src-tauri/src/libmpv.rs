@@ -179,6 +179,8 @@ pub fn trace_reset(header: &str) {
 
 /// 进程内 VEH 崩溃记录器：致命异常瞬间把 异常码/故障模块/偏移 写进诊断日志，
 /// 等价于崩溃转储的关键结论，无需外部调试器（本机无 cdb/procdump）。
+/// VEH 是 Win32 专有机制，仅 Windows 实现；其它平台为空操作。
+#[cfg(target_os = "windows")]
 pub fn install_crash_logger() {
     use windows_sys::Win32::System::Diagnostics::Debug::{
         AddVectoredExceptionHandler, EXCEPTION_CONTINUE_SEARCH, EXCEPTION_POINTERS,
@@ -234,6 +236,10 @@ pub fn install_crash_logger() {
         trace("CRASHLOGGER: AddVectoredExceptionHandler failed");
     }
 }
+
+/// 非 Windows 平台的空实现（保持 `lib.rs` 里的调用点无需 cfg）。
+#[cfg(not(target_os = "windows"))]
+pub fn install_crash_logger() {}
 
 #[cfg(test)]
 mod tests {

@@ -1,0 +1,145 @@
+name: Build Release (Linux / macOS)
+
+# 手动触发：为已建好的 GitHub Release 构建 Linux(x64) 与 macOS(arm64/x64) 安装包并上传。
+# 不新建 Release，只往指定 tag 追加资产。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "目标 Release tag（必须已存在）"
+        required: true
+        default: "v4.0.0"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-release-${{ github.event.inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.tag }}
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-22.04
+            bundles: deb,rpm,appimage
+          - name: macos-arm64
+            os: macos-14
+            bundles: dmg
+          - name: macos-x64
+            os: macos-15-intel
+            bundles: dmg
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust 缓存
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: 安装 Linux 系统依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libudev-dev \
+            rpm \
+            patchelf
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 安装前端依赖
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: 注入 fnOS 签名凭据（值来自 GitHub Secrets，绝不打印）
+        env:
+          FN_KEY: ${{ secrets.ANIBOX_FN_AUTHX_KEY }}
+          FN_SECRET: ${{ secrets.ANIBOX_FN_AUTHX_SECRET }}
+        run: |
+          mkdir -p secrets
+          {
+            printf 'ANIBOX_FN_AUTHX_KEY=%s\n' "$FN_KEY"
+            printf 'ANIBOX_FN_AUTHX_SECRET=%s\n' "$FN_SECRET"
+          } > secrets/fn-authx.local
+          chmod 600 secrets/fn-authx.local
+          # 只报告是否为空，不输出任何值
+          if [ -z "$FN_KEY" ] || [ -z "$FN_SECRET" ]; then
+            echo "::warning::ANIBOX_FN_AUTHX_KEY/SECRET 未配置或为空，本次构建将不带 Authx 签名（功能降级）"
+          else
+            echo "已写入签名材料（长度 key=${#FN_KEY} secret=${#FN_SECRET}）"
+          fi
+
+      - name: 构建 Tauri bundle
+        run: npx tauri build --bundles ${{ matrix.bundles }} --verbose
+
+      - name: 整理产物
+        id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          shopt -s nullglob
+          cp src-tauri/target/release/bundle/deb/*.deb out/ 2>/dev/null || true
+          cp src-tauri/target/release/bundle/rpm/*.rpm out/ 2>/dev/null || true
+          cp src-tauri/target/release/bundle/appimage/*.AppImage out/ 2>/dev/null || true
+          cp src-tauri/target/release/bundle/dmg/*.dmg out/ 2>/dev/null || true
+          # macOS：把 .app 目录打成 tar.gz
+          for app in src-tauri/target/release/bundle/macos/*.app; do
+            [ -d "$app" ] || continue
+            base="$(basename "$app" .app)"
+            arch="$(uname -m)"
+            tar -C "$(dirname "$app")" -czf "out/${base}_${arch}.app.tar.gz" "$(basename "$app")"
+          done
+          echo "=== 产物清单 ==="
+          ls -lh out/ || true
+          if [ -z "$(ls -A out 2>/dev/null)" ]; then
+            echo "::error::没有生成任何安装包"
+            exit 1
+          fi
+
+      - name: 上传到已有 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(out/*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::无可上传文件"
+            exit 1
+          fi
+          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          echo "已上传 ${#files[@]} 个文件到 $RELEASE_TAG"

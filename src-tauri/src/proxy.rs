@@ -23,11 +23,16 @@ pub async fn ensure(
             proxy_path
         ));
     }
-    use std::os::windows::process::CommandExt as _;
-    let child = std::process::Command::new(proxy_path)
-        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+    let mut cmd = std::process::Command::new(proxy_path);
+    cmd.stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    // CREATE_NO_WINDOW 仅 Windows 有；其它平台无需处理。
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt as _;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let child = cmd
         .spawn()
         .map_err(|e| format!("启动 Go 代理失败: {}", e))?;
     let _ = holder.lock().await.insert(child);

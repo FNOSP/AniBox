@@ -155,7 +155,6 @@ pub async fn ensure(
         if rust_mode { "rust" } else { "node" }
     ));
 
-    use std::os::windows::process::CommandExt as _;
     // [lc-1560] shim 的输出**落日志文件**而不是 null：它的诊断只在 stderr/stdout 里
     // （B站 搜索/分P/cid 解析、Cookie 体检、异常栈）。原实现丢进 Stdio::null 导致
     // 弹幕出问题时"应用日志里一个字都没有"，只能靠进程列表猜 —— 迁移期这个盲区
@@ -175,8 +174,13 @@ pub async fn ensure(
             // stdin 用 piped：JS 侧监听 stdin end → 父进程（我们）退出时自动跟退，不留孤儿
             .stdin(Stdio::piped())
             .stdout(out.map(Stdio::from).unwrap_or_else(Stdio::null))
-            .stderr(err.map(Stdio::from).unwrap_or_else(Stdio::null))
-            .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+            .stderr(err.map(Stdio::from).unwrap_or_else(Stdio::null));
+        // CREATE_NO_WINDOW 仅 Windows 有；其它平台无需处理。
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt as _;
+            cmd.creation_flags(0x0800_0000);
+        }
         // [authx-inject] 飞牛签名材料：运行时环境变量优先，回退构建期注入值；
         // 都缺失则**不注入**（shim 侧随之不加 Authx 头）。绝不把明文写进脚本。
         for (name, compiled) in [

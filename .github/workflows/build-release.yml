@@ -102,7 +102,7 @@ jobs:
           fi
 
       - name: 构建 Tauri bundle
-        run: npx tauri build --bundles ${{ matrix.bundles }} --verbose
+        run: npx tauri build --bundles ${{ matrix.bundles }}
 
       - name: 整理产物
         id: collect

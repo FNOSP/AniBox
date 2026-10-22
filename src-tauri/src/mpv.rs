@@ -187,9 +187,13 @@ impl MpvSession {
             .args(&args)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            // CREATE_NO_WINDOW：别给 mpv 弹一个控制台窗口（pwsh 时代由 -WindowStyle Hidden 承担）
-            .creation_flags(0x0800_0000);
+            .stderr(std::process::Stdio::null());
+        // CREATE_NO_WINDOW：别给 mpv 弹一个控制台窗口（pwsh 时代由 -WindowStyle Hidden 承担）。
+        // 仅 Windows 有该方法；其它平台无需处理。
+        #[cfg(target_os = "windows")]
+        {
+            command.creation_flags(0x0800_0000);
+        }
         let child = command
             .spawn()
             .map_err(|e| format!("拉起 mpv 失败: {e}"))?;

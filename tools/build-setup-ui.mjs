@@ -10,6 +10,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// 自绘 NSIS 安装器是 **Windows 专用** 产物（AniBoxSetupUi.exe / WebView2 DLL / icon.ico）。
+// tauri.conf.json 的 beforeBundleCommand 会在所有平台执行本脚本，而 macOS/Linux 的
+// target/release 里没有 anibox.exe → 旧逻辑会 fail() 直接中断 macOS 的 dmg 打包。
+// 非 Windows 直接跳过（打包交给 Tauri 自身的 dmg / appimage 流程）。
+if (process.platform !== "win32") {
+  console.log("[setup-ui] 非 Windows 平台，跳过自绘安装器资源构建");
+  process.exit(0);
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const INSTALLER = path.join(ROOT, "src-tauri", "installer");

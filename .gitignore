@@ -105,7 +105,11 @@ src-tauri/resources/danmu-api/node_modules/
 src-tauri/resources/danmu-api/config/.env
 src-tauri/resources/danmu-api/.cache/
 # 迁移后的本地密钥目录：整个 secrets/ 与所有 *.local 一律不入库
+# 例外：secrets/fn-authx.local.example 是占位示例（无真实值），可入库
 /secrets/
+!/secrets/
+/secrets/*
+!/secrets/fn-authx.local.example
 *.local
 
 # ==== A 级止血：AI 规则 / 凭据 / 二进制 / 生成数据 / 设计稿 / 开发辅助脚本 ====

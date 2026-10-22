@@ -3058,15 +3058,17 @@ pub async fn webrs_play(
     //   · PotPlayer：命令行不支持 Referer/UA → player 内部注册到本地 relay（22349）再播放；
     //     relay URL 路径附带「番名 - 集名」，PotPlayer 标题/播放列表项显示可读中文名。
     // [lc-1615] 拼一个可读标题供播放器显示（历史记录仍用 title/episode 原字段）。
+    // [title] 在线源的番名/集名也可能是繁体：展示层统一转简体，匹配/历史仍用原值。
     let display_title = {
         let t = title.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let e = episode.as_deref().map(str::trim).filter(|s| !s.is_empty());
-        match (t, e) {
+        let raw = match (t, e) {
             (Some(t), Some(e)) => format!("{t} - {e}"),
             (Some(t), None) => t.to_string(),
             (None, Some(e)) => e.to_string(),
             (None, None) => String::new(),
-        }
+        };
+        crate::zh::to_simplified(&raw)
     };
     let headers = crate::player::HttpHeaders::new(referer.clone(), ua.clone());
     let header_ref = if headers.needs_relay() { Some(&headers) } else { None };

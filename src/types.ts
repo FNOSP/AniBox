@@ -73,7 +73,8 @@ export type MediaItem = {
   ts?: number;
   duration?: number;
   air_date?: string;
-  /** [lc-1713] item/list 的剧集/季元数据（媒体库卡片聚合展示用；部分条目缺省） */
+  /** [lc-1713] item/list 的剧集/季元数据（媒体库卡片聚合展示用；部分条目缺省）
+   *  [lc-1726] 展示只认实际入库口径：优先 local_*，缺失才回退 number_*。 */
   number_of_episodes?: number;
   number_of_seasons?: number;
   local_number_of_episodes?: number;
@@ -177,6 +178,19 @@ export type Season = {
   title: string;
   season_number?: number;
   number_of_episodes?: number;
+  /** [lc-1727] 飞牛 `season/list` 返回的季级元数据：详情页切季时用于刷新头部
+   *  （简介 / 封面 / 评分 / 首播日期）。`number_of_episodes` 常为 0，
+   *  实际入库集数看 `local_number_of_episodes`。 */
+  tv_title?: string;
+  overview?: string;
+  poster?: string;
+  vote_average?: string | number;
+  release_date?: string;
+  air_date?: string;
+  local_number_of_episodes?: number;
+  local_number_of_seasons?: number;
+  trim_id?: string;
+  imdb_id?: string;
 };
 
 /** [lc-119] Bangumi 匹配结果（src-tauri/src/bgm.rs::bgm_match；全线走自建镜像） */

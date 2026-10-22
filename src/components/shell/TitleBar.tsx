@@ -1,7 +1,7 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Copy as IcoCopy, Menu as IcoMenuL, Minus as IcoMinus, Square as IcoSquare, X as IcoXL } from "lucide-react";
+import { Copy as IcoCopy, Menu as IcoMenuL, Minus as IcoMinus, RotateCw as IcoRotateCw, Square as IcoSquare, X as IcoXL } from "lucide-react";
 import { ChromeTone } from "../../types";
 import type { MediaItem } from "../../types";
 import { Tone, useAdaptiveTone } from "../../lib/adaptiveTone";
@@ -147,7 +147,12 @@ export function TitleBar({
               onClick={onRefresh}
               disabled={refreshing}
             >
-              <span className="tb-spin">⟳</span>
+              {/* [fix] 旋转图标改用对称 viewBox 的 SVG（原字符 ⟳ 的字形墨迹在行盒里不居中，
+                  绕行盒中心旋转时视觉上会偏心/画圈）。SVG 外再包一层定宽定高的 flex 盒，
+                  保证旋转原点 = 图标几何中心。 */}
+              <span className="tb-spin">
+                <IcoRotateCw size={15} strokeWidth={1.8} />
+              </span>
             </button>
           )}
           {onToggleTheme && (

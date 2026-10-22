@@ -686,6 +686,14 @@ fn credits_path(mt: &str, id: i64) -> String {
     )
 }
 
+/// [季级演员] 某一季的演员表：`/3/tv/{id}/season/{n}/credits`。
+/// 注意 TMDB 的季 credits **只给 cast（本季登场演员），没有 crew**；制作人员仍用剧级
+/// aggregate credits（见 tmdb_credits 的 crew 兜底）。这样切季后演员表按季变化，
+/// 不会一直显示整部剧/第一季的聚合名单。
+fn season_credits_path(id: i64, season: i64) -> String {
+    format!("/3/tv/{id}/season/{season}/credits?language={LANG}")
+}
+
 /// 发现页：`language` 同样显式；`vote_min` 只有"当季"能带（未开播条目 vote_count=0 会被滤空）
 fn discover_path(
     media_type: &str,
@@ -969,6 +977,8 @@ fn normalize_credits(d: &Value) -> (Vec<Value>, Vec<Value>) {
     let cast_src = d
         .pointer("/aggregate_credits/cast")
         .or_else(|| d.pointer("/credits/cast"))
+        // [季级演员] /3/tv/{id}/season/{n}/credits 的 cast 在**顶层**，没有 credits 包装
+        .or_else(|| d.pointer("/cast"))
         .and_then(|v| v.as_array());
     let mut cast = Vec::new();
     if let Some(arr) = cast_src {
@@ -1026,6 +1036,7 @@ fn normalize_credits(d: &Value) -> (Vec<Value>, Vec<Value>) {
     let crew_src = d
         .pointer("/aggregate_credits/crew")
         .or_else(|| d.pointer("/credits/crew"))
+        .or_else(|| d.pointer("/crew"))
         .and_then(|v| v.as_array());
     let mut crew: Vec<Value> = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -1508,6 +1519,8 @@ pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
 /// arg:
 ///   title/year/mediaType —— 搜索兜底与展示用
 ///   trimId/tmdbId/imdbId —— 精确锚点（能定位就不搜索）
+///   seasonNumber        —— [季级演员] 剧集传入当前季号（>0）时改取 `/season/{n}/credits` 的本季 cast；
+///                          缺省/0 仍取剧级 aggregate credits（含 crew）
 ///   cacheKey            —— fnOS 条目 guid（同一部剧不同季/集共用一条缓存时传同一个键）
 /// 返回 { tmdbId, mediaType, matchedBy, cast[], crew[] }（字段形状见 normalize_credits）。
 #[tauri::command]
@@ -1524,9 +1537,22 @@ pub async fn tmdb_credits(arg: Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
+    // [季级演员] seasonNumber > 0 且为剧集时，演员表按「该季 credits」取（TMDB 季端点只给 cast）；
+    //   制作人员仍回落到剧级 aggregate credits（季端点没有 crew）。
+    let season = if mt == "tv" {
+        arg.get("seasonNumber")
+            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+            .filter(|n| *n > 0)
+    } else {
+        None
+    };
 
-    // ① 条目级缓存（guid → 结果）：命中就完全不发请求，连"定位"都省了
-    let guid_key = cache_key.as_ref().map(|k| format!("json:credits:guid:{k}"));
+    // ① 条目级缓存（guid → 结果）：命中就完全不发请求，连"定位"都省了。
+    //   季级请求的 guid 由前端传「季 guid」，且再拼上 `:s{n}` 双保险，避免与剧级缓存串味。
+    let guid_key = cache_key.as_ref().map(|k| match season {
+        Some(n) => format!("json:credits:guid:{k}:s{n}"),
+        None => format!("json:credits:guid:{k}"),
+    });
     if let Some(k) = &guid_key {
         if let Some(v) = disk_cache::json_get(k, CREDITS_TTL_SECS) {
             crate::libmpv::trace(&format!("[tmdb] credits 缓存命中（guid {k}）"));
@@ -1536,7 +1562,10 @@ pub async fn tmdb_credits(arg: Value) -> Result<Value, String> {
 
     // ② 定位 TMDB id（精确锚优先）
     let Resolved { id, matched_by } = resolve_tmdb_id(&arg, mt, &title, &year).await?;
-    let data_key = format!("json:credits:{mt}:{id}");
+    let data_key = match season {
+        Some(n) => format!("json:credits:{mt}:{id}:s{n}"),
+        None => format!("json:credits:{mt}:{id}"),
+    };
 
     // ③ 条目共享缓存（tmdb id → 演员表）：同一部剧的季/集条目共用
     let payload = if let Some(mut v) = disk_cache::json_get(&data_key, CREDITS_TTL_SECS) {
@@ -1548,18 +1577,38 @@ pub async fn tmdb_credits(arg: Value) -> Result<Value, String> {
         }
         v
     } else {
-        let d = get_json(&credits_path(mt, id)).await?;
-        let (cast, crew) = normalize_credits(&d);
-        let v = json!({
-            "tmdbId": id,
-            "mediaType": mt,
-            "matchedBy": matched_by,
-            "cached": false,
-            "cast": cast,
-            "crew": crew,
-        });
-        disk_cache::json_put(&data_key, &v);
-        v
+        match season {
+            Some(n) => {
+                // 季级：只取 cast（本季登场演员）；crew 留空 → 前端回落剧级 showCrew。
+                let d = get_json(&season_credits_path(id, n)).await?;
+                let (cast, _crew) = normalize_credits(&d);
+                let v = json!({
+                    "tmdbId": id,
+                    "mediaType": mt,
+                    "seasonNumber": n,
+                    "matchedBy": matched_by,
+                    "cached": false,
+                    "cast": cast,
+                    "crew": [],
+                });
+                disk_cache::json_put(&data_key, &v);
+                v
+            }
+            None => {
+                let d = get_json(&credits_path(mt, id)).await?;
+                let (cast, crew) = normalize_credits(&d);
+                let v = json!({
+                    "tmdbId": id,
+                    "mediaType": mt,
+                    "matchedBy": matched_by,
+                    "cached": false,
+                    "cast": cast,
+                    "crew": crew,
+                });
+                disk_cache::json_put(&data_key, &v);
+                v
+            }
+        }
     };
 
     if let Some(k) = &guid_key {

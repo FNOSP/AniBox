@@ -44,12 +44,15 @@ const fmtShortDate = (v: unknown): string => {
 };
 
 /** [lc-1714] 卡片元信息行：字段全部来自 item/list，缺失项直接隐藏（不占位）。
- *  参考飞牛原生卡片：年份 · 季/集 · 更新日期，继续观看剩余时长。 */
+ *  参考飞牛原生卡片：年份 · 季/集 · 更新日期，继续观看剩余时长。
+ *  [lc-1726] 季/集数只取**飞牛实际入库**口径：优先 local_*（本机实际入库数量），
+ *  缺失时才回退 number_*。本地 TMDB/BGM 元数据覆盖已不再改写这两组字段，
+ *  所以无论用户是否选了元数据，卡片显示的都是入库数量。 */
 function buildCardMeta(item: MediaItem): { line: string; remain: string } {
   const dateStr = String(item.release_date || item.air_date || "");
   const year = /^\d{4}/.test(dateStr) ? dateStr.slice(0, 4) : "";
-  const seasons = numOf(item.number_of_seasons) || numOf(item.local_number_of_seasons);
-  const episodes = numOf(item.number_of_episodes) || numOf(item.local_number_of_episodes);
+  const seasons = numOf(item.local_number_of_seasons) || numOf(item.number_of_seasons);
+  const episodes = numOf(item.local_number_of_episodes) || numOf(item.number_of_episodes);
   const updated = fmtShortDate(item.create_time);
   const parts = [
     year,

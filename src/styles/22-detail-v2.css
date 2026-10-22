@@ -943,6 +943,13 @@
   color: var(--muted);
   margin-left: 2px;
 }
+/* [lc-1727] 多季剧集标题后的当前季标识（切季即时变化） */
+.dv2-rail-season {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--accent, #6c9bff);
+  margin-left: 2px;
+}
 
 /* [lc-1403] 右栏选集：改回「剧照 + 第N集.标题 + 简介 + 时长」（对齐飞牛原版版式，用户截图为准）。
    剧照 16:9（飞牛侧 poster 就是横向截图），左侧固定宽度，右侧文字可换行。 */

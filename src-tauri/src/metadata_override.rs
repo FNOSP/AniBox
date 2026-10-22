@@ -8,10 +8,14 @@
 //! 选 `metadata_clear_override` 删除该键即恢复飞牛原始数据（原始响应未被修改）。
 //!
 //! 覆盖策略（只在字段有值时才覆盖，缺省保留飞牛原值）：
-//!   · 剧/电影根条目：title / overview / vote_average / release_date / air_date /
-//!     poster / number_of_seasons / number_of_episodes
+//!   · 剧/电影根条目：title / overview / vote_average / release_date / air_date / poster
 //!   · 集/季条目：tv_title、series_poster、series_rating（前端可选用），
 //!     并仅在原字段为空时补 overview / air_date —— **不覆盖集标题与集号**。
+//!
+//! [lc-1726] **季/集数不参与覆盖**：`number_of_seasons` / `number_of_episodes` /
+//! `local_number_of_seasons` / `local_number_of_episodes` 一律保持飞牛原值，
+//! 卡片与详情页展示的季/集数只反映**实际入库**数量，不随 TMDB/BGM 元数据变化。
+//! `MetadataChoice.seasons/episodes` 仅用于搜索结果的展示，不再写回条目。
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -49,8 +53,11 @@ pub struct MetadataChoice {
     pub poster: String,
     #[serde(default)]
     pub backdrop: String,
+    /// [lc-1726] 搜索结果里的季数 —— **仅用于搜索/选择界面展示**，不写回条目
+    /// （卡片/详情页的季数必须是飞牛实际入库数量）。
     #[serde(default)]
     pub seasons: i64,
+    /// [lc-1726] 搜索结果里的集数 —— 同上，不写回条目。
     #[serde(default)]
     pub episodes: i64,
     /// 保存时刻（ms）
@@ -163,12 +170,10 @@ pub fn apply_choice(item: &mut Value, choice: &MetadataChoice, is_root: bool) {
         if !choice.poster.is_empty() {
             obj.insert("poster".into(), json!(choice.poster));
         }
-        if choice.seasons > 0 {
-            obj.insert("number_of_seasons".into(), json!(choice.seasons));
-        }
-        if choice.episodes > 0 {
-            obj.insert("number_of_episodes".into(), json!(choice.episodes));
-        }
+        // [lc-1726] 刻意**不覆盖** number_of_seasons / number_of_episodes：
+        // 这两个字段（以及 local_*）是飞牛入库口径，卡片「N 季 · 共 M 集」必须反映
+        // 实际入库数量，不能被 TMDB/BGM 的总季/总集数改写。choice.seasons/episodes
+        // 只用于搜索结果展示，不落到条目上。
         // 供详情页识别「这是本地覆盖」并按覆盖值显示评分/年份（详情页的评分原本只读 BGM/TMDB）。
         obj.insert("_metadata_override".into(), json!(true));
         obj.insert("_override_rating".into(), json!(choice.rating));
@@ -261,7 +266,19 @@ pub fn apply_to_list(app: &AppHandle, list: &mut Vec<Value>, series_guid: &str) 
         return;
     };
     for it in list.iter_mut() {
+        let had_overview = it
+            .get("overview")
+            .and_then(|v| v.as_str())
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
         apply_choice(it, choice, false);
+        // [多季] 集列表里的 `overview` 是**单集简介**，绝不能把「剧/第一季的整部简介」灌进去，
+        //   否则多季条目每一集都会显示同一段（第一季）简介。原为空就保持为空，交给前端按集回填。
+        if !had_overview {
+            if let Some(obj) = it.as_object_mut() {
+                obj.remove("overview");
+            }
+        }
     }
 }
 
@@ -546,16 +563,40 @@ mod tests {
         let mut item = json!({
             "guid": "tv1", "type": "TV", "title": "旧标题",
             "overview": "旧简介", "vote_average": "5.0", "release_date": "2020-01-01",
-            "poster": "/old.jpg", "number_of_seasons": 1
+            "poster": "/old.jpg", "number_of_seasons": 1,
+            "number_of_episodes": 13, "local_number_of_seasons": 1,
+            "local_number_of_episodes": 12
         });
         apply_choice(&mut item, &choice(), true);
         assert_eq!(item["title"], "新标题");
         assert_eq!(item["overview"], "新简介");
         assert_eq!(item["vote_average"], "8.6");
         assert_eq!(item["release_date"], "2024-04-01");
-        assert_eq!(item["number_of_seasons"], 2);
-        assert_eq!(item["number_of_episodes"], 24);
         assert!(item["poster"].as_str().unwrap().contains("/__tmdb/"));
+    }
+
+    /// [lc-1726] 季/集数必须保持飞牛入库口径，不被 TMDB/BGM 覆盖。
+    #[test]
+    fn apply_root_keeps_library_season_and_episode_counts() {
+        let mut item = json!({
+            "guid": "tv1", "type": "TV",
+            "number_of_seasons": 1, "number_of_episodes": 13,
+            "local_number_of_seasons": 1, "local_number_of_episodes": 12
+        });
+        apply_choice(&mut item, &choice(), true); // choice: seasons=2, episodes=24
+        assert_eq!(item["number_of_seasons"], 1);
+        assert_eq!(item["number_of_episodes"], 13);
+        assert_eq!(item["local_number_of_seasons"], 1);
+        assert_eq!(item["local_number_of_episodes"], 12);
+    }
+
+    /// 条目原本没有季/集字段时，覆盖也不得凭空写入元数据的季/集总数。
+    #[test]
+    fn apply_root_does_not_invent_counts() {
+        let mut item = json!({ "guid": "tv1", "type": "TV", "title": "旧标题" });
+        apply_choice(&mut item, &choice(), true);
+        assert!(item.get("number_of_seasons").is_none());
+        assert!(item.get("number_of_episodes").is_none());
     }
 
     #[test]

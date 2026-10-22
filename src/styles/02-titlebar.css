@@ -144,16 +144,34 @@
   opacity: 1;
   cursor: default;
 }
-/* [lc-1639] 旋转只作用在**字形**上（.tb-spin 包一层）：原来直接转按钮，
+/* [lc-1639] 旋转只作用在**图标**上（.tb-spin 包一层）：原来直接转按钮，
    hover 背景方框会跟着一起转（用户报的「背景方框跟着旋转」）。
-   注意：transform 对 inline 元素无效 → 这个 span 必须 inline-block。 */
+   [fix] 原实现转的是字符 ⟳：字符的墨迹（ink）在行盒里并不居中（行高/基线/字体回退都会
+   让字形中心偏离盒中心），绕行盒中心转就会「偏心画圈」，表现为旋转时图标歪、晃。
+   现在改为：外层 .tb-spin 是**定宽定高的 inline-flex 盒**（尺寸 = 图标尺寸），里面放
+   对称 viewBox 的 SVG（display:block，无基线留白）。旋转原点显式锁到 50% 50%，
+   盒中心与图标几何中心重合 → 绕自身中心平稳旋转，结束后回到原位。 */
 .tb-spin {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  line-height: 0; /* 去掉行盒基线留白，避免盒内产生垂直偏移 */
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+.tb-spin > svg {
+  display: block;
+  transform-origin: 50% 50%;
 }
 .tb-icon.spinning .tb-spin {
   animation: tb-spin 0.9s linear infinite;
 }
 @keyframes tb-spin {
+  from {
+    transform: rotate(0deg);
+  }
   to {
     transform: rotate(360deg);
   }

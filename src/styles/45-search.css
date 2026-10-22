@@ -104,6 +104,7 @@ html.dark .search-panel {
 .search-bar {
   display: flex;
   align-items: center;
+  flex: none; /* 固定高度行：面板高度受限时不参与收缩 */
   gap: 10px;
   padding: 14px 16px;
   border-bottom: 1px solid var(--line);
@@ -158,13 +159,22 @@ html.dark .search-panel {
   border: 1px solid var(--line);
 }
 
-/* ── 分类 Tab ── */
+/* ── 分类 Tab ──
+   [lc-fix] 关键修复：本行是面板（flex column，max-height 受限）的 flex item。
+   旧版只写 `overflow-x:auto` 而没设 flex-shrink / 显式 min-height：
+   一旦面板高度被 max-height 压紧，`overflow-x:auto` 会把纵向自动最小尺寸算成 0，
+   于是这一行被压缩成十几像素高、文字与「全部」胶囊被上下裁切。
+   现在：flex:none + 显式 min-height + align-items:center，行高恒等于内容高度。 */
 .search-tabs {
   display: flex;
+  align-items: center;
+  flex: none; /* 禁止在面板高度受限时被压扁 */
   gap: 4px;
+  min-height: 42px; /* 显式下限，覆盖 overflow 导致的自动最小尺寸 0 */
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
-  overflow-x: auto;
+  overflow-x: auto; /* 空间不足时横向滚动，而不是压缩裁切 */
+  overflow-y: hidden;
   scrollbar-width: none;
 }
 .search-tabs::-webkit-scrollbar {
@@ -172,6 +182,10 @@ html.dark .search-panel {
 }
 .search-tab {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px; /* 胶囊高度稳定，文字垂直居中，不被压扁 */
   padding: 5px 12px;
   border: none;
   border-radius: 999px;
@@ -179,6 +193,8 @@ html.dark .search-panel {
   color: var(--muted);
   font-size: 12.5px;
   font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap; /* 标签不换行 */
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
@@ -197,8 +213,10 @@ html.dark .search-panel {
 
 /* ── 结果区 ── */
 .search-body {
-  flex: 1;
-  min-height: 160px;
+  /* [lc-fix] flex-basis 用 auto + min-height:0：面板被 max-height 压紧时，
+     由结果区承担收缩并内部滚动，而不是把上方 Tab 行压扁。 */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding: 6px;
 }

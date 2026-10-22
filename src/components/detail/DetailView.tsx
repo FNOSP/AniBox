@@ -252,7 +252,7 @@ function resolveEpisodeLocateTarget(args: {
   }
 
   // 本地进度兜底（当前季）：
-  //   ① 优先「有进度且未看完」的最大集号（与「继续播放」按钮同口径）；
+  //   ① 优先「有进度且未看完」的最大集号（与「继续看」按钮同口径）；
   //   ② 若整季都看完了，则回退到「有观看痕迹（进度>0 或 watched=1）」的最大集号
   //      —— 避免看完最后一集后进详情页又跳回顶部。
   const numbered = episodes
@@ -313,6 +313,19 @@ function seasonLabelOf(sn: Season, i: number): { no: string; name: string } {
   return { no, name };
 }
 
+/** [lc-1728] 判断 Bangumi 条目名是否明确指向第 n 季（用于校验季匹配是否真的命中当前季，
+ *  而不是 bgm_match 去掉季后缀后回落到的第一季）。 */
+function looksLikeSeason(name: string, n: number): boolean {
+  const s = name.trim().toLowerCase();
+  if (!s || n <= 0) return false;
+  const zh = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"][n] ?? "";
+  if (s.includes(`第${n}季`) || s.includes(`第${n}期`)) return true;
+  if (zh && (s.includes(`第${zh}季`) || s.includes(`第${zh}期`))) return true;
+  if (s.includes(`season ${n}`) || s.includes(`season${n}`)) return true;
+  if (s.includes(`${n}nd season`) || s.includes(`${n}rd season`) || s.includes(`${n}th season`)) return true;
+  return false;
+}
+
 
 export function DetailView({
   base,
@@ -334,6 +347,8 @@ export function DetailView({
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [seasonIdx, setSeasonIdx] = useState(0);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
+  // [lc-1727] 切季时清空旧季集列表后，右栏先显示「加载中」而不是「暂无剧集」，避免误判。
+  const [epsLoading, setEpsLoading] = useState(false);
   /* [版本] 当前展示的版本列表（属于 versionGuid 这个条目/集）。
      多版本判定与展示照抄 FlyNarwhal：video_streams.length > 1 才显示版本盒子。 */
   const [mediaVersions, setMediaVersions] = useState<MediaVersion[]>([]);
@@ -405,6 +420,11 @@ export function DetailView({
   const forceSeasonRef = useRef(false);
   const forceEpsRef = useRef(false);
   const lastEpGuidRef = useRef("");
+  // [lc-1727] 上一次渲染的条目 guid：区分「切条目」与「播放结束/刷新重取」，
+  //   后者不能重置 seasonIdx（否则看完当前季会被打回第 1 季）。
+  const lastBaseGuidRef = useRef("");
+  /* [lc-1728] 首次进入某条目时，把默认季落在「第 1 季」而不是排在最前的特别篇（season 0）。 */
+  const seasonInitRef = useRef("");
   // [lc-1597] 播放结束后是否要跑一次「BGM 分集看过」同步（见下方 syncBgmRef 的 effect）
   const syncBgmRef = useRef(false);
   // TMDB 完整详情（剧照/相似/更多）：「详情」「更多」两个标签页的 TMDB 侧数据源
@@ -422,6 +442,10 @@ export function DetailView({
   // [lc-119] 吐槽（Bangumi 评论）：懒加载 —— 用户切到该分段时才匹配+拉评论（避免拖慢首屏）
   const [bgm, setBgm] = useState<BgmMatch | null>(null);
   const bgmRef = useRef<BgmMatch | null>(null); // 供 legacy 回填任务/翻页读最新值（不进依赖数组）
+  /* [lc-1728] 本次 BGM 匹配是否**命中了当前季**（多季时按「剧名 + 季名/季号」重搜）。
+     只有命中当前季，才允许用 BGM 集号映射单集标题/简介；否则（回落剧根/第一季）必须禁用，
+     避免把第一季内容串到其它季。 */
+  const bgmSeasonMatchedRef = useRef(false);
   // [lc-1401] 匹配是否已尝试（成败都置位）。旧版用它给「吐槽」分段做入口闸门；
   //   新版式标签条恒在（不增删项），这个标志只作诊断用途 —— 保留 setter 以沿用同一条匹配路径。
   const [, setBgmProbed] = useState(false);
@@ -492,29 +516,100 @@ export function DetailView({
   const noFnOS = /^discover-/.test(base.guid);
   const dataReady = !!data || noFnOS;
 
+  /* [lc-1728] 当前选中季 = 所有按季数据的**唯一来源**。
+     · multiSeason：是否多季（单季条目沿用原有链路，不做额外按季处理）；
+     · seasonGuid / seasonNo：当前季的 guid / 季号；
+     · bgmSeasonKey：按季派生状态（BGM / 演员表 / 评论…）的重置与请求依赖键。
+     ⚠ 这里放在 resolveBgm 之前：BGM 匹配、演员表缓存键都要带当前季。 */
+  const multiSeason = isSeries && seasons.length > 1;
+  const seasonGuid = isSeries ? String(seasons[seasonIdx]?.guid ?? "") : "";
+  // 保留 0（特别篇）；缺失时才用下标+1 兜底。
+  const seasonNo = (() => {
+    if (!isSeries) return 0;
+    const raw = Number(seasons[seasonIdx]?.season_number);
+    return Number.isFinite(raw) ? raw : seasonIdx + 1;
+  })();
+  const bgmSeasonKey = multiSeason ? seasonGuid || `idx${seasonIdx}` : "";
+  /* [lc-1728] 是否允许用 Bangumi 集号映射单集标题/简介：
+     · 单季、多季第一季 → 允许（剧根 subject 就是这一季）；
+     · 多季其它季 → 仅当本次 BGM 匹配确实命中了「当前季」且与剧根 subject 不同才允许，
+       否则（回落剧根/第一季）一律禁用，避免把第一季的集标题/简介串过来。 */
+  const bgmSeriesSubjectId = Number(base.bgm_id ?? 0) || 0;
+  const bgmCurrentSubjectId = Number(bgm?.subject_id ?? 0) || 0;
+  const bgmMappingAllowed =
+    !multiSeason ||
+    seasonNo === 1 ||
+    (bgmSeasonMatchedRef.current &&
+      bgmCurrentSubjectId > 0 &&
+      bgmCurrentSubjectId !== bgmSeriesSubjectId);
+
   // [lc-1444] Bangumi 定位统一入口：发现页右栏条目自带 bgm_id → **直连**（省一次标题匹配，
   //   也不会匹配错同名番）；否则 bgm_match(标题+年)。结果写 bgmRef + setBgm，供
   //   首屏标签框 / 影评 / 吐槽 / 更多 / 关联五个懒加载点共用同一条路径。
+  // [lc-1728] 多季条目：Bangumi 的 subject 是「按季」的（第二季是独立 subject）。原来只用剧根
+  //   标题匹配 → 永远命中第一季，于是切到第 2 季时标签/评分/角色/评论/关联全是第一季的数据。
+  //   现在第 2 季起用「剧名 + 季名/季号」重搜一次（cacheKey = 季 guid，独立缓存）；搜不到
+  //   才回落到剧根匹配（此时禁用按集号映射，避免串季）。
   const resolveBgm = useCallback(async (): Promise<BgmMatch | null> => {
     const cached = bgmRef.current;
     if (cached) return cached;
+    const d = data ?? {};
+    const seriesTitle = String(pick(d, ["tvTitle", "title"]) ?? base.title).trim() || base.title;
     let m: BgmMatch | null = null;
-    if (base.bgm_id) {
-      m = { subject_id: base.bgm_id };
-    } else {
-      const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
-      const r = await invoke<BgmMatch | null>("bgm_match", {
-        query: title,
-        year: String(base.release_date || "").slice(0, 4) || null,
-        mediaType: base.type ?? null,
-        cacheKey: base.guid,
-      });
-      m = r && r.subject_id ? r : null;
+    let seasonMatched = false;
+    if (multiSeason && seasonNo > 1) {
+      const sn = seasons[seasonIdx];
+      const rawSeasonTitle = String(sn?.title ?? "").trim();
+      const label = seasonLabelOf(sn, seasonIdx).no;
+      // 季名若是「第 N 季」这类泛称，就拼成「剧名 第N季」；否则若已含剧名直接用，避免重复。
+      const isGeneric = !rawSeasonTitle || /^第\s*\d+\s*季$/.test(rawSeasonTitle) || rawSeasonTitle === label;
+      const query = isGeneric
+        ? `${seriesTitle} ${label}`
+        : rawSeasonTitle.includes(seriesTitle)
+          ? rawSeasonTitle
+          : `${seriesTitle} ${rawSeasonTitle}`;
+      const year =
+        String(sn?.release_date || sn?.air_date || "").slice(0, 4) ||
+        String(base.release_date || "").slice(0, 4) ||
+        null;
+      try {
+        const r = await invoke<BgmMatch | null>("bgm_match", {
+          query,
+          year,
+          mediaType: base.type ?? null,
+          cacheKey: seasonGuid || `season-${seasonNo}`,
+        });
+        if (r && r.subject_id) {
+          // 校验确实命中「当前季」：与剧根 subject 不同，或条目名里带明确季标记。
+          // 否则视为 bgm_match 去掉季后缀后的回落（第一季），不标记 seasonMatched，
+          // 从而禁用按集号映射，避免把第一季内容串过来。
+          const nm = `${r.name ?? ""} ${r.name_cn ?? ""}`;
+          const distinctFromSeries = bgmSeriesSubjectId > 0 && r.subject_id !== bgmSeriesSubjectId;
+          seasonMatched = distinctFromSeries || looksLikeSeason(nm, seasonNo);
+          m = r;
+        }
+      } catch {
+        /* 季匹配失败 → 回落剧根匹配（下面） */
+      }
     }
+    if (!m) {
+      if (base.bgm_id && (!multiSeason || seasonNo <= 1)) {
+        m = { subject_id: base.bgm_id };
+      } else {
+        const r = await invoke<BgmMatch | null>("bgm_match", {
+          query: seriesTitle,
+          year: String(base.release_date || "").slice(0, 4) || null,
+          mediaType: base.type ?? null,
+          cacheKey: base.guid,
+        });
+        m = r && r.subject_id ? r : null;
+      }
+    }
+    bgmSeasonMatchedRef.current = seasonMatched;
     bgmRef.current = m;
     setBgm(m);
     return m;
-  }, [base.bgm_id, base.guid, base.title, base.type, base.release_date, data]);
+  }, [base.bgm_id, base.guid, base.title, base.type, base.release_date, data, multiSeason, seasonIdx, seasons, seasonGuid, seasonNo, bgmSeriesSubjectId]);
 
   /** [lc-128] TMDB 精确锚点：飞牛条目 `trim_id` 形如 `tm63578`（TMDB id）/ `tt325158`（IMDb id）/
    *  `bg456080`（Bangumi，无 TMDB id）；另有显式 `tmdb_id`/`imdb_id` 字段时优先。有锚点就**直接定位**，
@@ -644,12 +739,21 @@ export function DetailView({
   }, [refreshAll]);
 
   useEffect(() => {
-    setData(null);
-    setSeasons([]);
-    setSeasonIdx(0);
-    setEpisodes([]);
-    // 让上一条目的在途集请求失效，避免它晚到后把新条目的选集覆盖掉。
-    epReqRef.current++;
+    // [lc-1727] 只有**切条目**才清空数据并回到第 1 季；播放结束 / 顶栏刷新（progTick 变化）只重取，
+    //   绝不能把用户正在看的季重置回第 1 季 —— 否则「看完第 2 季又跳回第 1 季」。
+    const baseChanged = lastBaseGuidRef.current !== base.guid;
+    if (baseChanged) {
+      lastBaseGuidRef.current = base.guid;
+      setData(null);
+      setSeasons([]);
+      setSeasonIdx(0);
+      setEpisodes([]);
+      setEpsLoading(false);
+      // 新条目第一季即使 guid 与旧条目相同也要重新拉取并进入加载态。
+      lastEpGuidRef.current = "";
+      // 让上一条目的在途集请求失效，避免它晚到后把新条目的选集覆盖掉。
+      epReqRef.current++;
+    }
     if (noFnOS) {
       // 发现页条目：无飞牛条目，跳过详情/季/集三条飞牛请求；清掉可能残留的详情错误
       setErr("");
@@ -697,6 +801,18 @@ export function DetailView({
     if (seasonIdx > 0 && seasonIdx >= seasons.length) setSeasonIdx(0);
   }, [seasons, seasonIdx]);
 
+  /* [lc-1728] 首次进入条目：默认选中「第 1 季」——飞牛季列表按 season_number 升序，特别篇(0)
+     排在最前，直接 seasonIdx=0 会默认展示特别篇。每个条目只初始化一次；刷新/播放结束不改。 */
+  useEffect(() => {
+    if (!isSeries || seasons.length === 0) return;
+    if (seasonInitRef.current === base.guid) return;
+    seasonInitRef.current = base.guid;
+    let idx = seasons.findIndex((s) => Number(s.season_number) === 1);
+    if (idx < 0) idx = seasons.findIndex((s) => Number(s.season_number) > 0);
+    if (idx < 0) idx = 0;
+    setSeasonIdx(idx);
+  }, [isSeries, seasons, base.guid]);
+
   /* [选季控件] 当前季始终滚到可视区中间：切季/首次渲染都能看到高亮项。 */
   useEffect(() => {
     const el = seasonRailRef.current;
@@ -718,9 +834,11 @@ export function DetailView({
     const force = forceEpsRef.current;
     forceEpsRef.current = false;
     // 只在**换季**时清空列表：播放结束的刷新保留现有行（否则右栏会闪一下空白）
-    if (s.guid !== lastEpGuidRef.current) {
+    const seasonChanged = s.guid !== lastEpGuidRef.current;
+    if (seasonChanged) {
       lastEpGuidRef.current = s.guid;
       setEpisodes([]);
+      setEpsLoading(true);
     }
     // 请求令牌：快速连点季时丢弃旧响应（见 epReqRef 声明处）。
     const req = ++epReqRef.current;
@@ -737,8 +855,11 @@ export function DetailView({
                 : undefined,
           })),
         );
+        setEpsLoading(false);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (req === epReqRef.current) setEpsLoading(false);
+      });
   }, [seasons, seasonIdx, progTick]);
 
   /* [选集定位] 切换条目：重置自动定位状态。skipOnce 让同一轮 commit 的定位 effect 先跳过，
@@ -914,6 +1035,50 @@ export function DetailView({
     setZoom("");
   }, [base.guid]);
 
+  /* [lc-1728] 切季（多季条目）：把所有**按季派生**的状态清空，避免 React state 复用上一季的
+     BGM 匹配 / 标签 / 评分 / 角色 / 评论 / 关联 / 演员表。清空后，下面依赖 bgmSeasonKey 的
+     effect 会用「当前季」重新请求（BGM 匹配 cacheKey=季 guid，演员表 cacheKey=季 guid）。
+     单季条目没有「切季」概念，直接跳过。 */
+  useEffect(() => {
+    if (!multiSeason) return;
+    bgmRef.current = null;
+    bgmSeasonMatchedRef.current = false;
+    setBgm(null);
+    setBgmProbed(false);
+    setBgmSub(null);
+    setBgmEps([]);
+    commentsOffset.current = 0;
+    commentsDoneRef.current = false;
+    commentsBusyRef.current = false;
+    setComments([]);
+    setCommentsErr("");
+    setCommentsBusy(false);
+    setCommentsMoreBusy(false);
+    setCommentsDone(false);
+    reviewsOffset.current = 0;
+    reviewsDoneRef.current = false;
+    reviewsBusyRef.current = false;
+    setReviews([]);
+    setReviewsErr("");
+    setReviewsBusy(false);
+    setReviewsMoreBusy(false);
+    setReviewsDone(false);
+    moreLoadedRef.current = false;
+    setChars([]);
+    setPersons([]);
+    setMoreErr("");
+    setMoreBusy(false);
+    setMoreProbed(false);
+    creditsLoadedRef.current = false;
+    setCredits(null);
+    setCreditsErr("");
+    setCreditsBusy(false);
+    relatedLoadedRef.current = false;
+    setRelated([]);
+    setRelatedErr("");
+    setRelatedBusy(false);
+  }, [bgmSeasonKey, multiSeason]);
+
   // [lc-1401] 条目详情（bgm_subject）：新版式顶部的「标签框」用它（tags[]），**必须一开始就有**，
   // 所以不再等用户点某个标签页 —— 匹配 + 详情两次请求在进页面时就发（都走镜像 + 落盘缓存：
   // match 30 天、subject 6h），首屏不等它们（标签框自己显示骨架屏）。
@@ -937,7 +1102,7 @@ export function DetailView({
     return () => {
       alive = false;
     };
-  }, [base.guid, data]);
+  }, [base.guid, data, bgmSeasonKey]);
 
   // [lc-1412] 评论（长影评）懒加载：与吐槽同款（切到该页才发、复用 bgmRef 匹配、nonce 重试），
   // 数据源换成 /p1/.../reviews。与吐槽**互相独立**：各自有自己的 offset/到底/错误态。
@@ -983,7 +1148,7 @@ export function DetailView({
     return () => {
       alive = false;
     };
-  }, [tab, reviewsNonce, base.guid]);
+  }, [tab, reviewsNonce, base.guid, bgmSeasonKey]);
 
   // [lc-119] 吐槽懒加载（只在切到「吐槽」分段时才开始）：先 bgm_match（结果按 base.guid 落盘缓存），
   // 再拉第一页 /p1/.../comments。重试按钮通过 commentsNonce 重新走这段。已有数据则不重复拉。
@@ -1029,7 +1194,7 @@ export function DetailView({
     return () => {
       alive = false;
     };
-  }, [tab, commentsNonce, base.guid]);
+  }, [tab, commentsNonce, base.guid, bgmSeasonKey]);
 
   // 更多分段懒加载（只在切到「更多」时才开始）：复用 bgm 匹配结果（bgmRef）——
   // 吐槽先点过就直接用，两边都没匹配过才发 bgm_match（同 title/年份/type/cacheKey 参数）。
@@ -1069,7 +1234,7 @@ export function DetailView({
     return () => {
       alive = false;
     };
-  }, [tab, moreNonce, base.guid]);
+  }, [tab, moreNonce, base.guid, bgmSeasonKey]);
 
   /** 失败重试：清掉错误从头发一次（数据成功前 moreLoadedRef 恒为 false，无需额外重置） */
   const retryMore = () => setMoreNonce((n) => n + 1);
@@ -1103,7 +1268,7 @@ export function DetailView({
     return () => {
       alive = false;
     };
-  }, [tab, relatedNonce, base.guid]);
+  }, [tab, relatedNonce, base.guid, bgmSeasonKey]);
 
   /** 失败重试（关联条目）：与 retryMore 同款 —— 成功前 relatedLoadedRef 恒为 false */
   const retryRelated = () => setRelatedNonce((n) => n + 1);
@@ -1132,7 +1297,10 @@ export function DetailView({
                 : undefined // 右栏新番条目没有 TMDB id → 走标题搜索
               : tmdbAnchor.tmdbId || undefined,
             imdbId: tmdbAnchor.imdbId || undefined,
-            cacheKey: base.guid,
+            // [lc-1728] 多季：按当前季取演员表（TMDB season credits），缓存键用季 guid；
+            //   单季保持剧级 aggregate credits 不变。
+            seasonNumber: multiSeason ? seasonNo : undefined,
+            cacheKey: multiSeason ? seasonGuid || base.guid : base.guid,
           },
         });
         if (!alive) return;
@@ -1148,7 +1316,7 @@ export function DetailView({
       alive = false;
     };
     // data 到位后才拿得到 trim_id 锚点：进「更多」早于详情返回时，数据一到会带着锚点重跑一次
-  }, [tab, creditsNonce, base.guid, data, tmdbAnchor.trimId, tmdbAnchor.tmdbId, tmdbAnchor.imdbId]);
+  }, [tab, creditsNonce, base.guid, data, bgmSeasonKey, seasonNo, tmdbAnchor.trimId, tmdbAnchor.tmdbId, tmdbAnchor.imdbId]);
 
   /** [lc-128] 失败重试：清掉错误从头发一次（成功前 creditsLoadedRef 恒为 false） */
   const retryCredits = () => setCreditsNonce((n) => n + 1);
@@ -1252,11 +1420,13 @@ export function DetailView({
   //      worker 每轮先看 bgmRef：匹配一到位就退场，把补齐工作交给 (1) 的 desc（不再堆 NAS 请求）。
   useEffect(() => {
     if (!episodes.length) return;
+    // [lc-1727/1728] 多季条目：Bangumi subject 只覆盖一季，按集号回填会把第一季的简介串到其它季。
+    //   现在只有「BGM 命中当前季」（bgmMappingAllowed）才用 BGM desc 按集号回填；否则
+    //   **仍然保留**按集取详情（get_item_detail，并发上限 3）—— 这是本季每一集自己的简介，
+    //   不是第一季数据。旧版在这里直接 `return` 导致多季选集永远没有集简介，一并修掉。
     let alive = true;
-    const missing = episodes.filter((ep) => !ep.overview);
-    if (!missing.length) return;
 
-    if (bgm?.subject_id) {
+    if (bgm?.subject_id && bgmMappingAllowed) {
       invoke<{ data?: BgmEpisodeRow[] }>("bgm_episodes", {
         id: bgm.subject_id,
         limit: 200,
@@ -1264,7 +1434,7 @@ export function DetailView({
         .then((r) => {
           if (!alive) return;
           const rows = Array.isArray(r?.data) ? r.data : [];
-          if (rows.length) setBgmEps(rows); // [lc-1401] 右栏选集用它拿「第N话 小标题 + 单集简介」
+          setBgmEps(rows); // [lc-1401] 右栏选集用它拿「第N话 小标题 + 单集简介」
           const byNum = new Map<number, string>();
           for (const e of rows) {
             // Bangumi 集号：sort 是数字序号（ep 是展示号，可能带小数/字母），优先 sort
@@ -1291,10 +1461,15 @@ export function DetailView({
       };
     }
 
+    // 非「命中当前季」的 BGM：不要用上一季的 bgmEps 显示小标题/简介。
+    setBgmEps([]);
+    const missing = episodes.filter((ep) => !ep.overview);
+    if (!missing.length) return;
     const queue = [...missing];
     const worker = async () => {
       while (alive && queue.length) {
-        if (bgmRef.current) return; // (1) 就绪 → legacy 任务立即退场
+        // 若本轮期间 BGM 恰好命中当前季，交给 BGM desc（避免重复请求）。
+        if (bgmRef.current && bgmSeasonMatchedRef.current) return;
         const ep = queue.shift()!;
         try {
           const d = await invoke<Record<string, unknown>>("get_item_detail", {
@@ -1316,7 +1491,17 @@ export function DetailView({
     return () => {
       alive = false;
     };
-  }, [episodes.length, bgm?.subject_id]);
+  }, [episodes.length, bgm?.subject_id, bgmMappingAllowed, bgmSeasonKey, base.guid]);
+
+  // [lc-1727] 当前选中季的季级元数据：飞牛 `season/list` 已随季返回 overview / poster /
+  //   vote_average / release_date / local_number_of_episodes。多季剧集切季时，头部（简介 /
+  //   封面 / 评分 / 首播日期）必须换成该季，而不是永远用剧根条目（飞牛把剧根当第一季聚合）。
+  //   单季剧集 selSeason 也在，但值通常与剧根一致，不产生副作用。
+  const selSeason = isSeries ? seasons[seasonIdx] : undefined;
+  const seasonLabel = selSeason ? seasonLabelOf(selSeason, seasonIdx).no : "";
+  const seasonOverview = String(selSeason?.overview ?? "").trim();
+  const seasonPosterPath = String(selSeason?.poster ?? "").trim();
+  const seasonDate = String(selSeason?.release_date || selSeason?.air_date || "").trim();
 
   const title = String(pick(data ?? {}, ["tvTitle", "title"]) ?? base.title);
   // [lc-1433] 竖版海报：**TMDB 高清优先**（用户要求"直接取 tmdb 的或者 bgm 的高清大图"）。
@@ -1330,6 +1515,10 @@ export function DetailView({
   //   纯属浪费 —— 多出的解码时间与内存都花在把 2000px 缩到 132px 上。
   //   （轮播 hero 那边是满屏宽度，才必须用 original。）
   const poster =
+    // [lc-1727] 多季剧集：当前选中季的飞牛季封面优先（每季封面不同，切季必须换），
+    //   其次才是 TMDB 剧级海报 / 剧根 posters / 列表页 base.poster。
+    //   单季剧集保持原有优先级（TMDB 高清优先），避免无谓改变既有展示。
+    (isSeries && seasons.length > 1 && seasonPosterPath ? imgUrl(seasonPosterPath) : "") ||
     (tmdbHeroPoster ? tmdbImg(tmdbHeroPoster, "w500") : "") ||
     pickLargestImg((data ?? {}).posters) ||
     (pick(data ?? {}, ["posters", "poster"]) as string) ||
@@ -1355,6 +1544,9 @@ export function DetailView({
   //   Bangumi 条目 TMDB 匹配不上时，简介不至于空白 —— bgmSub 进页面就拉了）
   const bgmSummary = String(pick(bgmSub ?? {}, ["summary"]) ?? "").trim();
   const overview = (() => {
+    // [lc-1727] 多季剧集：优先当前季的季简介（飞牛 season/list 自带），切季即换；
+    //   没有季简介才回退剧根详情 → 列表页 → Bangumi。单季保持原有链路。
+    if (isSeries && seasons.length > 1 && seasonOverview) return seasonOverview;
     const a = String(pick(data ?? {}, ["overview"]) ?? "").trim();
     if (a) return a;
     const b = String(base.overview ?? "").trim();
@@ -1494,33 +1686,44 @@ export function DetailView({
   const overrideActive = Boolean(pick(data ?? {}, ["_metadata_override"]));
   const overrideRating = Number(pick(data ?? {}, ["_override_rating"]) ?? 0) || 0;
   const overrideDate = String(pick(data ?? {}, ["_override_date"]) ?? "").trim();
+  // [lc-1728] 多季：当前季自带的评分（飞牛 season/list 的 vote_average，来源即 TMDB 季评分）。
+  //   BGM 未命中当前季时用它兜底，避免整页评分一直显示第一季/整部剧的分。
+  const seasonVote = Number(selSeason?.vote_average ?? 0) || 0;
   const ratingScore =
     overrideActive && overrideRating > 0
       ? overrideRating
       : bgmScore > 0
         ? bgmScore
-        : tmdbScore > 0
-          ? tmdbScore
-          : null;
+        : multiSeason && seasonVote > 0
+          ? seasonVote
+          : tmdbScore > 0
+            ? tmdbScore
+            : null;
   const ratingSource: "bgm" | "tmdb" | "none" =
     overrideActive && overrideRating > 0
       ? "tmdb"
       : bgmScore > 0
         ? "bgm"
-        : tmdbScore > 0
+        : multiSeason && seasonVote > 0
           ? "tmdb"
-          : "none";
+          : tmdbScore > 0
+            ? "tmdb"
+            : "none";
   const ratingTotal = bgmScore > 0 ? bgmTotal : tmdbVotes;
   const airDate =
+    // [lc-1727] 多季剧集：首播日期随当前季变化（飞牛季条目的 release_date/air_date）。
+    (isSeries && seasons.length > 1 && seasonDate ? seasonDate : "") ||
     (overrideActive && overrideDate ? overrideDate : "") ||
     String(pick(bgmSub ?? {}, ["date"]) ?? "").trim() ||
     String(pick(tmdb ?? {}, ["airDate"]) ?? "").trim();
   const ratingSubjectId = bgm?.subject_id ?? base.bgm_id ?? null;
   // [lc-1598] 「有观看记录」判据（给评分组件的状态按钮用）：条目级 watched/ts 有值，或任意一集有进度/已看。
   //   为 true 时 RatingWidget 会把「未追 / 想看」默认改成「在看」（用户要求）。
+  // [lc-1728] 多季：剧根的 watched/ts 是「整部/第一季」口径，不能代表当前季；只认本季各集进度。
   const hasWatchRecord =
-    Number(pick(data ?? {}, ["watched"]) ?? 0) === 1 ||
-    Number(pick(data ?? {}, ["ts"]) ?? 0) > 0 ||
+    (!multiSeason &&
+      (Number(pick(data ?? {}, ["watched"]) ?? 0) === 1 ||
+        Number(pick(data ?? {}, ["ts"]) ?? 0) > 0)) ||
     episodes.some((e) => Number(e.watched) === 1 || (e.ts ?? 0) > 0);
   // [lc-1576] 评分透视兜底：**BGM 没有评分分布（rating.count）时改用 TMDB 的分布**（镜像签名路由
   //   /rating-details/...；Rust 侧落盘缓存 24h）。转成与 BGM 同形的 {"1":count,...} 供组件直接用；
@@ -1588,7 +1791,21 @@ export function DetailView({
   }[];
   const finished = infoBox.some((b) => String(b?.key ?? "").includes("放送结束"));
   const airDates = episodes.map((e) => String(e.air_date ?? "")).filter(Boolean).sort();
-  const lastAir = airDates.length ? airDates[airDates.length - 1] : String(pick(bgmSub ?? {}, ["date"]) ?? "");
+  // [lc-1728] 多季：本季没有集播出日期时，回退当前季的首播日期，而不是剧根/Bangumi（第一季）日期。
+  const lastAir = airDates.length
+    ? airDates[airDates.length - 1]
+    : multiSeason && seasonDate
+      ? seasonDate
+      : String(pick(bgmSub ?? {}, ["date"]) ?? "");
+  // [lc-1728] 「已入库 X / 总数」的分母：多季时用**当前季**的集数，而不是 Bangumi 剧根 subject 的
+  //   集数（那是第一季的数字，会把第 2 季显示成 "12 / 12" 之类的第一季口径）。
+  const seasonLibraryTotal = (() => {
+    if (!multiSeason) return totalEps;
+    const local = Number(selSeason?.local_number_of_episodes ?? 0) || 0;
+    const remote = Number(selSeason?.number_of_episodes ?? 0) || 0;
+    // 拿不到本季集数时不回退 Bangumi 剧根（第一季）数字，宁可不显示分母。
+    return local > 0 ? local : remote > 0 ? remote : 0;
+  })();
 
   // [季/集与缺集检测] 「已入库」同一行的季/集补充信息。
   //   · 季号：飞牛 season_number（0 = 特别篇）；季总数 = seasons.length。
@@ -1613,7 +1830,11 @@ export function DetailView({
     const seen = nums.size;
     const maxNum = seen ? Math.max(...nums) : 0;
     // 季级 total 与 Bangumi total 都必须不小于已见最大集号，否则是别季/整部的数字，不可用。
-    const seasonTotalRaw = Number(cur?.number_of_episodes);
+    // [lc-1727] 与卡片口径一致：优先 local_number_of_episodes（实际入库），再回退 number_of_episodes。
+    const seasonTotalLocal = Number(cur?.local_number_of_episodes);
+    const seasonTotalRemote = Number(cur?.number_of_episodes);
+    const seasonTotalRaw =
+      Number.isFinite(seasonTotalLocal) && seasonTotalLocal > 0 ? seasonTotalLocal : seasonTotalRemote;
     const seasonTotal =
       Number.isFinite(seasonTotalRaw) && seasonTotalRaw > 0 && (maxNum === 0 || seasonTotalRaw >= maxNum)
         ? Math.floor(seasonTotalRaw)
@@ -1662,10 +1883,14 @@ export function DetailView({
       title: `缺失集号：第 ${missing.join("、")} 集`,
     };
   })();
+  /* [lc-1728] 多季条目的完结判定：Bangumi subject（第一季）的「放送结束」不代表本季。
+     当本季集数齐全（seasonEpInfo 判为「无缺失」）时，也视为已完结。 */
+  const seasonComplete = multiSeason && !!seasonEpInfo && seasonEpInfo.text.includes("无缺失");
+  const seriesFinished = finished || seasonComplete;
 
   // [lc-1419] 续播目标：有播放记录（ts>0 且未看完）就跳那一集并带进度，
   //   否则从第 1 集开始。多集都有进度时取**集号最大**的那一集（最近在看的），
-  //   不能按数组顺序取第一条，否则看完第 2 集后仍会显示「继续播放第 1 集」。
+  //   不能按数组顺序取第一条，否则看完第 2 集后仍会显示「继续看第 1 集」。
   const resumeEp = (() => {
     // 集号可能缺失（飞牛部分条目只有顺序），用「episode_number ?? 数组下标+1」
     // 作为比较口径，否则第 2 集会按 0 参与比较，永远输给第 1 集。
@@ -1683,10 +1908,14 @@ export function DetailView({
       : 0;
 
   // [lc-1401] 右栏选集：本机集号 → Bangumi 那集的 {小标题, 简介}（集号对齐 sort 优先，与回填逻辑一致）
+  // [lc-1727/1728] 只有 BGM 命中当前季（bgmMappingAllowed）时才按集号映射；否则只用飞牛本季自带的
+  //   集标题/简介，避免把第一季内容串到其它季。
   const bgmEpByNum = new Map<number, BgmEpisodeRow>();
-  for (const e of bgmEps) {
-    const num = Number.isInteger(e?.sort) ? (e.sort as number) : Number.isInteger(e?.ep) ? (e.ep as number) : NaN;
-    if (Number.isFinite(num) && !bgmEpByNum.has(num)) bgmEpByNum.set(num, e);
+  if (bgmMappingAllowed) {
+    for (const e of bgmEps) {
+      const num = Number.isInteger(e?.sort) ? (e.sort as number) : Number.isInteger(e?.ep) ? (e.ep as number) : NaN;
+      if (Number.isFinite(num) && !bgmEpByNum.has(num)) bgmEpByNum.set(num, e);
+    }
   }
 
   // [lc-1597] 播放结束后：把**本地进度 ≥80%**（或飞牛已标 watched）的集在 BGM 上标「看过」。
@@ -1844,6 +2073,10 @@ export function DetailView({
             完全相同（或为空）时不显示括号，避免出现「进击的巨人（进击的巨人）」。 */}
         <h1 className="dv2-rail-title">
           {title || "（无标题）"}
+          {/* [lc-1727] 多季剧集：标题后显示当前季，切季即时变化，明确"现在看的是第几季"。 */}
+          {isSeries && seasons.length > 1 && seasonLabel && (
+            <span className="dv2-rail-season"> · {seasonLabel}</span>
+          )}
           {originalTitle && originalTitle !== title && (
             <span className="dv2-rail-orig">（{originalTitle}）</span>
           )}
@@ -2115,7 +2348,7 @@ export function DetailView({
               {isSeries && (
                 <div className="dv2e-hd-pills">
               {/* 播放入口（原来在右侧，现移到最左）。语义：
-                  有播放记录 → 「继续播放 第 N 集 · N%」；没有记录 → 「播放 第 1 集」。 */}
+                  有播放记录 → 「继续看 第 N 集 · N%」；没有记录 → 「播放 第 1 集」。 */}
               {isSeries && resumeTarget && (
                 <button
                   className="dv2e-play-btn"
@@ -2130,23 +2363,23 @@ export function DetailView({
                   }}
                   title={
                     resumePct > 0
-                      ? `从第 ${resumeTarget.episode_number ?? 1} 集的 ${resumePct}% 继续播放`
-                      : `继续播放 第 ${resumeTarget.episode_number ?? 1} 集`
+                      ? `从第 ${resumeTarget.episode_number ?? 1} 集的 ${resumePct}% 继续看`
+                      : `继续看 第 ${resumeTarget.episode_number ?? 1} 集`
                   }
                 >
                   <IcoPlayL size={14} strokeWidth={2.4} />
                   <span>
                     {playing
                       ? "打开中…"
-                      : `继续播放 第 ${resumeTarget.episode_number ?? 1} 集`}
+                      : `继续看 第 ${resumeTarget.episode_number ?? 1} 集`}
                   </span>
                   {resumePct > 0 && <i className="dv2e-play-pct">{resumePct}%</i>}
                 </button>
               )}
               {/* 状态胶囊属于控件行：与播放按钮、分段控件同高（30px）。 */}
               {isSeries && (
-                <span className={`dv2e-state${finished ? " done" : " airing"}`}>
-                  {finished ? "已完结" : "连载中"}
+                <span className={`dv2e-state${seriesFinished ? " done" : " airing"}`}>
+                  {seriesFinished ? "已完结" : "连载中"}
                 </span>
               )}
               {/* 集数显示样式 + 视图切换（网格 / 列表）：都只影响展示，不影响点击/进度/已看逻辑。 */}
@@ -2204,7 +2437,7 @@ export function DetailView({
                       ? totalEps > 0
                         ? totalEps
                         : "—"
-                      : `${episodes.length}${totalEps > 0 && totalEps !== episodes.length ? ` / ${totalEps}` : ""}`}{" "}
+                      : `${episodes.length}${seasonLibraryTotal > 0 && seasonLibraryTotal !== episodes.length ? ` / ${seasonLibraryTotal}` : ""}`}{" "}
                     集
                   </span>
                   {/* [季/集与缺集检测] 季号 / 本季集数 / 缺集结论（纯文本，与「更新至」同档，
@@ -2332,7 +2565,9 @@ export function DetailView({
                  [lc-1627] 用户要求：**在线播放先搁置** —— 无源条目不再挂在线资源面板，
                  直接显示「未查询到资源」。（WebrsPanel 代码保留，恢复时把下面换回
                  `<WebrsPanel title={title || base.title} />` 并放开文件头部的 import 即可。） */
-              noFnOS ? (
+              epsLoading ? (
+                <div className="empty">加载中…</div>
+              ) : noFnOS ? (
                 <div className="empty">未查询到资源</div>
               ) : (
                 <div className="empty">暂无剧集</div>

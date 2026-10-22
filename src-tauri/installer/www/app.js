@@ -243,7 +243,18 @@
     var txt = $('instInfoText');
     var date = m.releaseDate || '';
     var legacyCount = parseInt(m.legacyCount || '0', 10) || 0;
-    if (legacyCount > 0) {
+    var sameVersion = m.sameVersion === '1' || m.sameVersion === 1 || m.sameVersion === true;
+    if (sameVersion && m.installed) {
+      // 本机已装同一版本：显示「覆盖重装」，即便还有旧版残留也不能说成「升级安装」。
+      el.classList.add('upgrade');
+      txt.innerHTML = '<b>覆盖重装</b> · 已安装 v' + m.installed + ' · 将覆盖修复（配置保留）';
+      if (legacyCount > 0) {
+        var note2 = document.createElement('span');
+        note2.className = 'ii-legacy';
+        note2.textContent = '另检测到旧版残留：' + (m.legacyVersions || '') + '，安装时将一并清理';
+        txt.appendChild(note2);
+      }
+    } else if (legacyCount > 0) {
       el.classList.add('upgrade');
       var from = m.installed ? ('v' + m.installed) : '旧版本';
       txt.innerHTML = '<b>升级安装</b> · ' + from + ' → v' + m.version +

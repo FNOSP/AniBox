@@ -26,6 +26,7 @@ namespace AniBoxSetupUi {
         public string Kind = "tauri";      // "electron" = Fntv-Plus, "tauri" = 旧 AniBox
         public string Source = "";         // registry:HKCU / fs:...
         public string Root = "";           // HKCU / HKLM64 / ...
+        public string KeyPath = "";        // 命中的完整注册表键路径(诊断日志用)
     }
 
     internal sealed class DetectionResult {
@@ -73,14 +74,22 @@ namespace AniBoxSetupUi {
             return new Version(v.Major, v.Minor, v.Build < 0 ? 0 : v.Build, v.Revision < 0 ? 0 : v.Revision);
         }
 
+        // 语义化版本比较(分段数值)：a>b 返回正数，a<b 返回负数，相等返回 0。
+        // 绝不直接比较字符串，否则 "4.0.0" < "3.9.0" 这类字典序问题会误判。
+        public static int CompareVersion(string a, string b) {
+            a = CleanVersion(a);
+            b = CleanVersion(b);
+            Version va, vb;
+            bool pa = Version.TryParse(a, out va);
+            bool pb = Version.TryParse(b, out vb);
+            if (pa && pb) return Pad(va).CompareTo(Pad(vb));
+            if (pa) return 1;    // 可解析的版本视为更高
+            if (pb) return -1;
+            return string.Compare(a, b, StringComparison.OrdinalIgnoreCase);
+        }
+
         static int CompareVersionDesc(DetectedInstall x, DetectedInstall y) {
-            Version vx, vy;
-            bool px = Version.TryParse(CleanVersion(x.Version), out vx);
-            bool py = Version.TryParse(CleanVersion(y.Version), out vy);
-            if (px && py) return vy.CompareTo(vx);
-            if (px) return -1;
-            if (py) return 1;
-            return string.Compare(y.Version, x.Version, StringComparison.OrdinalIgnoreCase);
+            return CompareVersion(y.Version, x.Version);
         }
 
         sealed class RegRoot {
@@ -155,7 +164,9 @@ namespace AniBoxSetupUi {
                                             UninstallString = unstr,
                                             Kind = kind,
                                             Source = "registry:" + root.Name,
-                                            Root = root.Name
+                                            Root = root.Name,
+                                            KeyPath = root.Name + "\\" +
+                                                @"Software\Microsoft\Windows\CurrentVersion\Uninstall\" + sub
                                         };
                                         AddUnique(all, seenDirs, d);
                                     }
@@ -208,20 +219,26 @@ namespace AniBoxSetupUi {
                     // Electron 主 exe 的 FileVersion 是 Electron 内核版本（38.x），
                     // 不能用来判断应用版本；卸载器 exe 才是应用版本（3.9.0）。
                     var uninst = Path.Combine(norm, "Uninstall Fntv-Plus.exe");
-                    if (!File.Exists(uninst)) continue;   // hooks 也只认卸载器
+                    // 关键：必须存在"主程序文件"，只有卸载器说明这是上次卸载留下的残骸
+                    // （旧 hooks 用 _?= 运行卸载器，卸载器不会删自身，目录会残留）。
+                    // 若把这种残骸当成"已安装 3.9.0"，就会出现装了 4.0.0 还显示升级安装。
+                    if (!HasAppFiles(norm, "Uninstall Fntv-Plus.exe")) continue;
                     version = FileVersion(uninst);
                     display = "Fntv-Plus " + version;
-                    unstr = "\"" + uninst + "\" /currentuser";
+                    if (File.Exists(uninst)) unstr = "\"" + uninst + "\" /currentuser";
                 } else {
                     var uninst = Path.Combine(norm, "uninstall.exe");
                     var appExe = Path.Combine(norm, "anibox.exe");
-                    if (!File.Exists(uninst) && !File.Exists(appExe)) continue; // 纯数据目录
+                    // 同上：只有 uninstall.exe 的目录是卸载残骸，不算已安装。
+                    if (!HasAppFiles(norm, "uninstall.exe")) continue;
                     version = FileVersion(appExe);
                     if (version.Length == 0) version = FileVersion(uninst);
                     display = "AniBox " + version;
                     if (File.Exists(uninst)) unstr = "\"" + uninst + "\" /S";
                 }
                 if (version.Length == 0) version = VersionFromName(display);
+                // 版本未知的目录不当作"已安装"，避免误报升级。
+                if (version.Length == 0) continue;
 
                 var d = new DetectedInstall {
                     DisplayName = display.Trim(),
@@ -234,6 +251,20 @@ namespace AniBoxSetupUi {
                 };
                 AddUnique(all, seenDirs, d);
             }
+        }
+
+        // 目录里是否存在"主程序"文件（排除卸载器本身）。
+        // 只有卸载器的目录 = 上次卸载残留，不能算作已安装版本。
+        static bool HasAppFiles(string dir, string uninstallerName) {
+            try {
+                if (File.Exists(Path.Combine(dir, "resources", "app.asar"))) return true; // Electron
+                foreach (var f in Directory.EnumerateFiles(dir, "*.exe")) {
+                    var n = Path.GetFileName(f);
+                    if (string.Equals(n, uninstallerName, StringComparison.OrdinalIgnoreCase)) continue;
+                    return true;
+                }
+            } catch { /* 目录不可读按"非安装"处理 */ }
+            return false;
         }
 
         static string FileVersion(string exe) {

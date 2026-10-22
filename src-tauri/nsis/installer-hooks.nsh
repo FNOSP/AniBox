@@ -190,6 +190,12 @@ FunctionEnd
         ExecWait '$AniBoxLegacyUninstall /S' $AniBoxLegacyRc
       ${EndIf}
       ${If} $AniBoxLegacyRc == 0
+        ; _?= 模式下卸载器不会删除自身 → 手动清掉残留卸载器与空目录，
+        ; 否则 InstallDetect 会把残留目录误判成"仍装有旧版"。
+        ${If} $AniBoxLegacyDir != ""
+          Delete "$AniBoxLegacyDir\Uninstall Fntv-Plus.exe"
+          RMDir "$AniBoxLegacyDir"
+        ${EndIf}
         StrCpy $AniBoxLegacyDeleteKey 1
         StrCpy $AniBoxLegacyMsg "legacy: uninstall OK ($AniBoxLegacyDisplayName)"
       ${Else}
@@ -228,6 +234,9 @@ Function AniBoxTryElectronUninstall
     StrCpy $AniBoxLegacyMsg "legacy: found Fntv-Plus uninstaller in $R0"
     Call AniBoxLegacyLog
     ExecWait '"$R0\Uninstall Fntv-Plus.exe" /S _?=$R0' $AniBoxLegacyRc
+    ; _?= 模式卸载器不删自身，手动清残留，避免被检测当成"仍装有旧版"
+    Delete "$R0\Uninstall Fntv-Plus.exe"
+    RMDir "$R0"
     ${If} $AniBoxLegacyRc == 0
       StrCpy $AniBoxLegacyMsg "legacy: file-based uninstall OK ($R0)"
     ${Else}

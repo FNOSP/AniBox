@@ -23,6 +23,40 @@ internal static class Dwm {
     public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
 }
 
+// 读取子进程累计写入字节数(GetProcessIoCounters)。
+// 为什么用它而不是轮询 INSTDIR 体积: 覆盖/升级安装时目标目录里旧文件仍在,
+// 目录体积一开始就等于"已装完", 换算出的百分比会瞬间顶到上限(94%)并卡住。
+// 进程 I/O 计数器统计的是"本次真正写出的字节", 全新安装与覆盖安装都准确。
+internal static class ProcIo {
+    [StructLayout(LayoutKind.Sequential)]
+    struct IO_COUNTERS {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
+    }
+    const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetProcessIoCounters(IntPtr h, out IO_COUNTERS c);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool CloseHandle(IntPtr h);
+
+    // 成功返回累计写入字节数(>=0); 失败(权限/进程已退出等)返回 -1, 调用方回退到目录体积。
+    public static long WrittenBytes(int pid) {
+        if (pid <= 0) return -1;
+        IntPtr h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (h == IntPtr.Zero) return -1;
+        try {
+            IO_COUNTERS c;
+            if (!GetProcessIoCounters(h, out c)) return -1;
+            return (long)c.WriteTransferCount;
+        } finally { CloseHandle(h); }
+    }
+}
+
 namespace AniBoxSetupUi {
     static class Args {
         public static string Get(string[] a, string name, string def = null) {
@@ -139,6 +173,12 @@ namespace AniBoxSetupUi {
         bool _dev, _installing, _finished, _launched;
         System.Diagnostics.Process _child;
         DispatcherTimer _poll;
+        // 进度采样: 本次已写字节(单调递增) / 安装前目标目录基线 / 上次百分比(防回退)
+        long _baselineSize, _writtenBytes;
+        // 开始写文件(extract.flag)那一刻的进程写入基线, 用来剔除解压前的杂项写入
+        // (例如 WebView2 引导程序下载/解压), -1 表示尚未采样
+        long _ioBaseline = -1;
+        int _lastPct;
         string _defaultUserPath, _defaultAllPath;
 
         // ── 卸载模式 ──
@@ -412,20 +452,34 @@ namespace AniBoxSetupUi {
             try {
                 var r = InstallDetect.Detect(_version, _exeName, _defaultUserPath, _defaultAllPath);
                 foreach (var d in r.All)
-                    Log("detect hit: src=" + d.Source + " name=" + d.DisplayName + " ver=" + d.Version +
-                        " dir=" + d.Dir + " kind=" + d.Kind);
+                    Log("detect hit: src=" + d.Source + " key=" + d.KeyPath + " name=" + d.DisplayName +
+                        " ver=" + d.Version + " dir=" + d.Dir + " kind=" + d.Kind);
 
                 _legacyCount = r.Legacy.Count;
                 _sameVersionInstalled = r.SameVersion.Count > 0;
 
-                if (_legacyCount > 0) {
+                // 已安装版本 = 所有命中项中的最高版本（语义比较）。
+                // 修复：旧逻辑只在有旧版时才取 Primary.Version，于是当机器上同时存在
+                // 4.0.0 与某条 3.9.0 残留时，会显示成「升级安装 v3.9.0 → v4.0.0」。
+                DetectedInstall highestItem = null;
+                foreach (var d in r.All) {
+                    if (string.IsNullOrEmpty(d.Version)) continue;
+                    if (highestItem == null ||
+                        InstallDetect.CompareVersion(d.Version, highestItem.Version) > 0)
+                        highestItem = d;
+                }
+                if (highestItem != null) _installedVersion = highestItem.Version;
+
+                if (r.SameVersion.Count > 0) {
+                    // 已装同版本：以新装项为准（覆盖修复），旧版残留仅作提示。
+                    var same = r.SameVersion[0];
+                    if (string.IsNullOrEmpty(_installedVersion)) _installedVersion = same.Version;
+                    _existingDir = same.Dir;
+                    _existingMode = ModeForInstall(same);
+                    if (_legacyCount > 0) _legacyVersions = JoinLegacyNames(r.Legacy);
+                } else if (_legacyCount > 0) {
                     // 多个旧版：以版本最高者为主显示，全部列出供 UI 说明「一并清理」。
-                    var names = new List<string>();
-                    foreach (var d in r.Legacy) {
-                        string label = string.IsNullOrEmpty(d.DisplayName) ? ("v" + d.Version) : d.DisplayName;
-                        if (!names.Contains(label)) names.Add(label);
-                    }
-                    _legacyVersions = string.Join("、", names.ToArray());
+                    _legacyVersions = JoinLegacyNames(r.Legacy);
                     _installedVersion = r.Primary.Version;
                     _existingMode = ModeForInstall(r.Primary);
 
@@ -436,11 +490,6 @@ namespace AniBoxSetupUi {
                     } else {
                         _existingDir = "";
                     }
-                } else if (r.SameVersion.Count > 0) {
-                    var same = r.SameVersion[0];
-                    _installedVersion = same.Version;
-                    _existingDir = same.Dir;
-                    _existingMode = ModeForInstall(same);
                 }
             } catch (Exception ex) {
                 Log("detect: " + ex);
@@ -448,6 +497,15 @@ namespace AniBoxSetupUi {
             Log("detect result: installed=" + _installedVersion + " legacyCount=" + _legacyCount +
                 " sameVersion=" + _sameVersionInstalled + " legacyVersions=" + _legacyVersions +
                 " dir=" + _existingDir + " mode=" + _existingMode);
+        }
+
+        static string JoinLegacyNames(System.Collections.Generic.List<DetectedInstall> legacy) {
+            var names = new List<string>();
+            foreach (var d in legacy) {
+                string label = string.IsNullOrEmpty(d.DisplayName) ? ("v" + d.Version) : d.DisplayName;
+                if (!names.Contains(label)) names.Add(label);
+            }
+            return string.Join("、", names.ToArray());
         }
 
         string ModeForInstall(DetectedInstall d) {
@@ -563,24 +621,32 @@ namespace AniBoxSetupUi {
                     } catch (Exception ex) { Log("reinstall open: " + ex.Message); }
                     break;
                 case "launch":
-                    if (!_launched && _finished) {
+                    // 修复: 旧实现只 Post("close") 给网页层, 而 app.js 没有处理 close,
+                    // 于是向导永远不关, 应用窗口被压在向导后面 → 用户以为"点立即体验没反应"。
+                    // 现在: 启动成功后由 C# 直接关闭向导(应用已在独立进程里运行, 关向导不影响它)。
+                    if (!_finished) break;
+                    if (!_launched) {
                         // 刚写盘的新 exe 可能被杀软短暂锁定 → 最多重试 3 次, 间隔 600ms
                         string exePath = Path.Combine(_instDir, _exeName);
                         for (int attempt = 1; attempt <= 3 && !_launched; attempt++) {
                             try {
                                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo {
                                     FileName = exePath,
+                                    WorkingDirectory = _instDir,
                                     UseShellExecute = true
                                 });
                                 _launched = true;
                             } catch (Exception ex) {
                                 Log("launch attempt " + attempt + " failed: " + ex.Message);
-                                if (attempt == 3) Post(MiniJson.Obj("type", "error", "msg", "启动应用失败: " + ex.Message));
-                                else Thread.Sleep(600);
+                                if (attempt == 3) {
+                                    Post(MiniJson.Obj("type", "error", "msg", "启动应用失败: " + ex.Message));
+                                    return;   // 启动失败时保留窗口, 让用户看到提示
+                                }
+                                Thread.Sleep(600);
                             }
                         }
                     }
-                    Post(MiniJson.Obj("type", "close"));
+                    if (_launched) Shutdown(0);
                     break;
                 case "minimize":
                     _win.WindowState = WindowState.Minimized;
@@ -601,6 +667,11 @@ namespace AniBoxSetupUi {
 
         void StartInstall(string mode) {
             _installing = true;
+            // 记录安装前目录体积 + 清零进度状态(覆盖安装时目录已有旧文件, 不能当成本次进度)
+            _baselineSize = DirSizeSafe(_instDir);
+            _writtenBytes = 0;
+            _ioBaseline = -1;
+            _lastPct = 0;
             if (_dev || string.IsNullOrEmpty(_setupExe) || !File.Exists(_setupExe)) {
                 SimulateInstall();
                 return;
@@ -640,10 +711,28 @@ namespace AniBoxSetupUi {
             _poll.Tick += (s, e) => {
                 tick++;
                 if (_child == null) return;
-                _child.Refresh();
-                bool exited = _child.HasExited;
-                long size = DirSizeSafe(_instDir);
-                int pct = total > 0 ? (int)Math.Min(94, size * 94 / total) : Math.Min(94, tick);
+                bool exited;
+                try { _child.Refresh(); exited = _child.HasExited; } catch { exited = false; }
+
+                bool extracting = File.Exists(Path.Combine(_workDir, "extract.flag"));
+
+                // 进度优先用子进程累计写入字节(覆盖安装也准确);
+                // 取不到(权限/已退出)时回退到"目录体积 - 安装前基线"。
+                long written = ProcIo.WrittenBytes(_child.Id);
+                if (written >= 0) {
+                    if (extracting && _ioBaseline < 0) _ioBaseline = written;   // 开始写文件时定基线
+                    long delta = _ioBaseline >= 0 ? written - _ioBaseline : 0;
+                    if (delta > _writtenBytes) _writtenBytes = delta;
+                } else {
+                    long grown = DirSizeSafe(_instDir) - _baselineSize;
+                    if (grown > _writtenBytes) _writtenBytes = grown;
+                }
+                // 留 6% 给收尾(注册表/快捷方式/自身 exe), 等 done.flag 再给 100
+                int pct = total > 0
+                    ? (int)Math.Min(94, _writtenBytes * 94 / total)
+                    : Math.Min(94, tick);
+                if (pct < _lastPct) pct = _lastPct; else _lastPct = pct;
+
                 if (!_finished) {
                     if (File.Exists(Path.Combine(_workDir, "done.flag"))) {
                         OnInstallDone();
@@ -651,7 +740,7 @@ namespace AniBoxSetupUi {
                         if (_child.ExitCode == 0) OnInstallDone();
                         else { _installing = false; Post(MiniJson.Obj("type", "error", "msg", "安装器异常退出 (代码 " + _child.ExitCode + ")")); }
                     } else {
-                        string phase = File.Exists(Path.Combine(_workDir, "extract.flag")) ? "extract" : "prepare";
+                        string phase = extracting ? "extract" : "prepare";
                         Post(MiniJson.Obj("type", "progress", "pct", pct.ToString(),
                             "phase", phase, "file", ""));
                     }
@@ -663,6 +752,7 @@ namespace AniBoxSetupUi {
         void OnInstallDone() {
             if (_finished) return;
             _finished = true;
+            _installing = false;
             Post(MiniJson.Obj("type", "progress", "pct", "100", "phase", "done", "file", "安装完成"));
             Post(MiniJson.Obj("type", "installed"));
             if (_poll != null) _poll.Stop();

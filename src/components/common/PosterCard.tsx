@@ -124,15 +124,20 @@ export function PosterCard({
     void loadWatchedOverrides().then((set) => {
       if (alive && set.has(item.guid)) setWatched(true);
     });
-    void invoke<boolean>("favorite_get", { guid: item.guid })
-      .then((v) => {
-        if (alive) setFavorited(!!v);
-      })
-      .catch(() => {});
+    // [lc-1744] 列表条目自带收藏标记时（收藏页 `get_favorites` 会给每个条目置
+    // `is_favorite: 1`）以列表为准，不再逐卡回查 —— 收藏页里的卡片本来就都是已收藏，
+    // 逐卡 `favorite_get` 一旦失败 / 键不一致就会把已点亮的心形又刷回空心。
+    if (item.is_favorite !== 1) {
+      void invoke<boolean>("favorite_get", { guid: item.guid })
+        .then((v) => {
+          if (alive) setFavorited(!!v);
+        })
+        .catch(() => {});
+    }
     return () => {
       alive = false;
     };
-  }, [item.guid, isRealMedia]);
+  }, [item.guid, isRealMedia, item.is_favorite]);
 
   // 菜单点外部关闭
   useEffect(() => {
@@ -178,6 +183,10 @@ export function PosterCard({
     stop(e);
     if (busyFavorite) return;
     setBusyFavorite(true);
+    // [lc-1744] 乐观更新：先翻转本地状态（心形立即实心/变空），失败再回滚 ——
+    // 以前只在 await 成功后改 state，网络慢时点了没反馈，像「按钮坏了」。
+    const prev = favorited;
+    setFavorited(!prev);
     try {
       const r = await invoke<{ favorited: boolean }>("favorite_toggle", {
         item: { ...item, tvTitle: item.tv_title ?? "" },
@@ -187,7 +196,8 @@ export function PosterCard({
       // [lc-1660] 通知 App 刷新侧栏收藏计数（收藏/取消都派发）
       window.dispatchEvent(new Event("anibox-favorites-changed"));
     } catch {
-      /* 失败保持原状态 */
+      // 失败回滚到点击前的状态
+      setFavorited(prev);
     } finally {
       setBusyFavorite(false);
     }

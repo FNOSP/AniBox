@@ -308,6 +308,13 @@
 .pa-heart.is-on:hover {
   background: rgba(255, 107, 138, 0.97);
 }
+/* [lc-1744] 心形激活态要「实心」：lucide 图标默认 fill="none"，只有给带 `.fill`
+   的 svg 补 fill 才会从空心描边变成实心（此前只有 `.pa-play .fill` 有这条规则，
+   心形漏了 → 即使加了 is-on 也一直是空心描边，看起来像没点亮）。 */
+.pa-heart .fill {
+  fill: currentColor;
+  stroke: none;
+}
 .pa-more-wrap {
   position: relative;
 }

@@ -176,6 +176,27 @@ export function LibView({
     setLevels((ls) => (ls.length > 1 ? ls.slice(0, -1) : ls));
   }
 
+  /* [lc-1744] 收藏页里取消收藏 → 立即把该卡从当前层移除（心形已在卡片内乐观变空，
+     这里等 `favorite_toggle` 成功后收尾）。其它入口（库 / 分类）不动列表。 */
+  const onFavoriteChange = useCallback(
+    (item: MediaItem, favorited: boolean) => {
+      if (lib.guid !== "_fav" || favorited) return;
+      setLevels((ls) => {
+        const i = ls.length - 1;
+        if (i < 0) return ls;
+        const cur = ls[i];
+        const next = [...ls];
+        next[i] = {
+          ...cur,
+          items: cur.items.filter((it) => it.guid !== item.guid),
+          total: Math.max(0, cur.total - 1),
+        };
+        return next;
+      });
+    },
+    [lib.guid],
+  );
+
   return (
     <main className="content">
       <div className="page-head">
@@ -190,7 +211,7 @@ export function LibView({
       {!loading && (
         <div className="grid">
           {items.map((it) => (
-            <PosterCard key={it.guid} item={it} onOpen={openItem} onEditMeta={onEditMeta} onRefreshMeta={onRefreshMeta} />
+            <PosterCard key={it.guid} item={it} onOpen={openItem} onEditMeta={onEditMeta} onRefreshMeta={onRefreshMeta} onFavoriteChange={onFavoriteChange} />
           ))}
         </div>
       )}

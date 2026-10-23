@@ -875,6 +875,15 @@ async fn get_favorites(
             }
         }
     }
+    // [lc-1744] 收藏列表里的每一条**本来就是已收藏**：显式打上 `is_favorite: 1`。
+    // 前端海报卡此前只靠逐卡 `favorite_get(guid)` 判定，收藏页一旦回查失败 / 键不一致，
+    // 心形就会被刷成空心（用户报的「收藏页红心没点亮」）。列表标记作为权威信号，
+    // 卡片据此直接点亮，不再依赖逐卡回查。
+    for it in list.iter_mut() {
+        if let Some(obj) = it.as_object_mut() {
+            obj.insert("is_favorite".into(), json!(1));
+        }
+    }
     let mut out = json!({ "total": list.len(), "list": list });
     // [lc-1720] 收藏卡片同样吃本地元数据覆盖
     metadata_override::apply_response_list(&app, &mut out);

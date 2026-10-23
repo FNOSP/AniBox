@@ -124,13 +124,15 @@ export function MovieHero({
 
   // [lc-1709] 与顶栏按钮同款的自适应反色：按头图（当前可见那一层）的亮度，
   //   在 data-tone="light"（亮底→深色文字）/ "dark"（暗底→浅色文字）之间切换。
-  const bodyRef = useRef<HTMLDivElement | null>(null);
+  // [lc-1743] 采样区收窄到「文字区」(.mv-head 的矩形)：只关心标题/元信息背后的背景亮度，
+  //   不再被下方简介玻璃卡拖偏；extraKey 带上 slideIdx，头图轮播每换一张就重新采样 → 实时反色。
+  const headRef = useRef<HTMLDivElement | null>(null);
   const tone = useAdaptiveTone(
     {
-      points: () => pointsInRect(bodyRef.current),
-      overlaySelector: ".mv-hero-body, .mv-topbar, .mv-hero .mist-nav",
+      points: () => pointsInRect(headRef.current),
+      overlaySelector: ".mv-hero-body, .mv-head, .mv-topbar, .mv-hero .mist-nav",
       band: () => {
-        const r = bodyRef.current?.getBoundingClientRect();
+        const r = headRef.current?.getBoundingClientRect();
         return r ? { top: r.top, bottom: r.bottom } : null;
       },
       extraKey: `${slideKey}|${slideIdx}`,
@@ -197,11 +199,11 @@ export function MovieHero({
           </button>
         </div>
 
-        <div className="mv-hero-body" ref={bodyRef}>
-          {/* [lc-1740] 顶部信息区（标题 / 元信息 / 按钮 / 版本条）统一包进 .mv-head，
-              加与 .mv-glass 同款的一层浅色毛玻璃底；.mv-glass 仍留在外层作为兄弟节点，
-              避免两层 backdrop-filter 嵌套叠加导致画面糊掉。 */}
-          <div className="mv-head">
+        <div className="mv-hero-body">
+          {/* [lc-1743] 顶部信息区（标题 / 元信息 / 按钮 / 版本条）包进 .mv-head 作为布局与
+              自适应反色的采样容器：内部元素靠 --mv-fg 系列变量实时反色，不再有胶囊底。
+              .mv-glass（简介卡）仍是外层兄弟节点，保留自己的主题玻璃底。 */}
+          <div className="mv-head" ref={headRef}>
             <h1 className="mv-title">{title || "（无标题）"}</h1>
             {originalTitle && originalTitle !== title && <div className="mv-subtitle">{originalTitle}</div>}
 

@@ -32,6 +32,8 @@
   --mv-fg-body: rgba(215, 219, 228, 0.92);
   --mv-fg-dim: rgba(210, 214, 222, 0.62);
   --mv-divider: rgba(255, 255, 255, 0.28);
+  /* [lc-1743] 文字阴影兜底：深底用深色投影，浅底由 [data-tone="light"] 换成浅色投影 */
+  --mv-shadow: 0 1px 3px rgba(0, 0, 0, 0.55), 0 2px 10px rgba(0, 0, 0, 0.42);
 }
 /* 头图偏亮 → 深色文字（同顶栏 data-tone="light" 的语义：背景亮，前景纯黑）。
    注：信息区 .mv-glass 已改为跟随应用主题的独立底色（见下方 --mv-info-*），
@@ -42,6 +44,8 @@
   --mv-fg-body: rgba(11, 13, 18, 0.82);
   --mv-fg-dim: rgba(11, 13, 18, 0.58);
   --mv-divider: rgba(11, 13, 18, 0.22);
+  /* 浅底上换成浅色投影，深字才从杂乱背景里“浮”出来 */
+  --mv-shadow: 0 1px 3px rgba(255, 255, 255, 0.6), 0 2px 10px rgba(255, 255, 255, 0.45);
 }
 /* 常驻基础层（backdrop → poster）：轮播剧照层叠在它上面，加载失败时自然露出，不会空白 */
 .mv-hero-bg {
@@ -307,142 +311,107 @@ html.dark .mv-glass {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
 }
 
-/* [lc-1742] 用户要求：顶部标题 / 副标题 / 元信息胶囊 / 版本胶囊全部改成与「收藏」按钮
-   完全一致的玻璃质感（同样的半透底、同样的 blur 强度与 saturate、同样的描边/圆角语言）。
-   做法：把 .mv-btn-ghost / .mv-btn-square 生效的玻璃参数抽成 --mv-glass-* 变量集中定义，
-   各处复用；按钮本身视觉不变（值完全一致）。.mv-head 仍是透明布局 wrapper，不加 blur，
-   避免与子元素自身的 blur 叠成两层。 */
+/* [lc-1743] 用户改主意：撤掉顶部胶囊玻璃底，回到「自适应反色 + 轻阴影」的纯文字方案。
+   反色由 MovieHero 的 useAdaptiveTone（src/lib/adaptiveTone.ts）实时计算：头图每次轮播/切换
+   （slideIdx / slideKey 变化）都会用 canvas 重新采样文字区背景亮度，在 .mv-hero 上切换
+   data-tone，从而翻转 --mv-fg / --mv-fg-2 / --mv-fg-dim / --mv-divider / --mv-shadow。
+   这里只负责「用这些变量上色 + 加文字阴影」，不再加任何胶囊底。 */
 .mv-head {
-  /* 浅色主题（默认）：玻璃底/描边/模糊参数，与 .mv-btn-ghost 生效值一致 */
-  --mv-glass-bg: rgb(0 0 0 / 0.05);
-  --mv-glass-border: rgb(0 0 0 / 0.12);
-  --mv-glass-blur: 20px;
-  --mv-glass-saturate: 1.3;
-  --mv-glass-fg: #20242c; /* 与按钮字色一致（比纯黑略柔和） */
-  --mv-head-fg: #20242c;
-  --mv-head-fg-2: rgba(32, 36, 44, 0.74);
   max-width: 820px;
-  color: var(--mv-glass-fg);
-}
-html.dark .mv-head {
-  --mv-glass-bg: rgb(255 255 255 / 0.1);
-  --mv-glass-border: rgb(255 255 255 / 0.2);
-  --mv-glass-fg: #eef1f6;
-  --mv-head-fg: #eef1f6;
-  --mv-head-fg-2: rgba(230, 233, 240, 0.78);
 }
 /* 顶部散点区与下方 .mv-glass 之间留 16px 间隙 */
 .mv-head + .mv-glass {
   margin-top: 16px;
 }
 
-/* 标题：块级但宽度贴合内容（width: fit-content），玻璃底只比字大一圈，不铺满整行 */
+/* 标题：透明、贴合内容；深/浅字由 --mv-fg 实时切换，阴影由 --mv-shadow 兜底可读 */
 .mv-head .mv-title {
   display: block;
   width: fit-content;
   max-width: 100%;
-  color: var(--mv-glass-fg);
-  background: var(--mv-glass-bg);
-  border: 1px solid var(--mv-glass-border);
-  border-radius: 12px;
-  padding: 4px 14px;
-  backdrop-filter: blur(var(--mv-glass-blur)) saturate(var(--mv-glass-saturate));
-  -webkit-backdrop-filter: blur(var(--mv-glass-blur)) saturate(var(--mv-glass-saturate));
-  /* 多行时每行都带底（单行无副作用） */
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
+  color: var(--mv-fg);
+  background: none;
+  border: none;
+  padding: 0;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  text-shadow: var(--mv-shadow);
 }
-/* 副标题：同款玻璃小胶囊 */
+/* 副标题 */
 .mv-head .mv-subtitle {
   display: block;
   width: fit-content;
   max-width: 100%;
-  color: var(--mv-head-fg-2);
-  background: var(--mv-glass-bg);
-  border: 1px solid var(--mv-glass-border);
-  border-radius: 10px;
-  padding: 3px 12px;
-  backdrop-filter: blur(var(--mv-glass-blur)) saturate(var(--mv-glass-saturate));
-  -webkit-backdrop-filter: blur(var(--mv-glass-blur)) saturate(var(--mv-glass-saturate));
+  color: var(--mv-fg-2);
+  background: none;
+  border: none;
+  padding: 0;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  text-shadow: var(--mv-shadow);
 }
-
-/* 元信息：每个片段各自做成玻璃小胶囊；去掉竖线分隔，改用 flex gap */
+/* 元信息：整行文字色 + 阴影，恢复原竖线分隔（不再有胶囊底） */
 .mv-head .mv-meta-row {
-  color: var(--mv-glass-fg);
-  gap: 8px;
+  color: var(--mv-fg-2);
+  text-shadow: var(--mv-shadow);
 }
 .mv-head .mv-meta-row > span {
-  background: var(--mv-glass-bg);
-  border: 1px solid var(--mv-glass-border);
-  border-radius: 999px;
-  padding: 2px 10px;
-  color: var(--mv-glass-fg);
-  backdrop-filter: blur(var(--mv-glass-blur)) saturate(var(--mv-glass-saturate));
-  -webkit-backdrop-filter: blur(var(--mv-glass-blur)) saturate(var(--mv-glass-saturate));
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
-/* 片段间不再画竖线分隔符（改用 gap） */
-.mv-head .mv-meta-row > span + span::before {
-  content: none;
+/* 评分：去掉胶囊底/描边，只留金色星星 + 自适应字色 */
+.mv-head .mv-rating {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--mv-fg);
+  text-shadow: var(--mv-shadow);
 }
 .mv-head .mv-votes {
-  color: var(--mv-head-fg-2);
+  color: var(--mv-fg-dim);
 }
-/* 评分胶囊：本身已是胶囊，统一成同款玻璃底；星星仍金色 */
-.mv-head .mv-rating {
-  background: var(--mv-glass-bg);
-  border-color: var(--mv-glass-border);
-  color: var(--mv-glass-fg);
-}
-/* 次按钮（收藏 / ⋯）：用抽出的同一套变量，视觉与之前完全一致；保留自身 backdrop 模糊 */
+/* 次按钮（收藏 / ⋯）：随反色自适应（深底→白玻璃、浅底→深玻璃），保证两种背景下都可见 */
 .mv-head .mv-btn-ghost,
 .mv-head .mv-btn-square {
-  background: var(--mv-glass-bg);
-  border: 1px solid var(--mv-glass-border);
-  color: var(--mv-glass-fg);
+  background: color-mix(in srgb, var(--mv-fg) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--mv-fg) 28%, transparent);
+  color: var(--mv-fg);
+  text-shadow: none;
 }
 .mv-head .mv-btn-ghost:hover:not(:disabled),
 .mv-head .mv-btn-square:hover {
-  background: rgb(0 0 0 / 0.1);
-  border-color: rgb(0 0 0 / 0.22);
+  background: color-mix(in srgb, var(--mv-fg) 22%, transparent);
+  border-color: color-mix(in srgb, var(--mv-fg) 42%, transparent);
 }
-html.dark .mv-head .mv-btn-ghost:hover:not(:disabled),
-html.dark .mv-head .mv-btn-square:hover {
-  background: rgb(255 255 255 / 0.18);
-  border-color: rgb(255 255 255 / 0.32);
-}
-/* 「已收藏」仍保留品牌粉/红色 */
+/* 「已收藏」保留品牌粉/红 */
 .mv-head .mv-btn-ghost.on {
-  color: #e23a5e;
-  border-color: rgba(226, 58, 94, 0.45);
-}
-html.dark .mv-head .mv-btn-ghost.on {
   color: #ff8fa3;
   border-color: rgba(255, 143, 163, 0.5);
 }
-/* 版本胶囊：未选中项用同款玻璃底；选中项保持品牌蓝高亮（模糊参数一致） */
+/* 版本胶囊：无底色，仅描边（颜色随反色）；选中项保留品牌蓝高亮 */
 .mv-head .mv-version {
-  background: var(--mv-glass-bg);
-  border-color: var(--mv-glass-border);
-  color: var(--mv-glass-fg);
-  backdrop-filter: blur(var(--mv-glass-blur)) saturate(var(--mv-glass-saturate));
-  -webkit-backdrop-filter: blur(var(--mv-glass-blur)) saturate(var(--mv-glass-saturate));
+  background: transparent;
+  border-color: color-mix(in srgb, var(--mv-fg) 32%, transparent);
+  color: var(--mv-fg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  text-shadow: var(--mv-shadow);
 }
 .mv-head .mv-version:hover {
-  border-color: rgb(0 0 0 / 0.3);
+  border-color: var(--mv-fg);
 }
 .mv-head .mv-version.active {
   border-color: var(--accent, #4ea1ff);
-  background: color-mix(in srgb, var(--accent, #4ea1ff) 22%, transparent);
-  color: var(--mv-glass-fg);
-}
-html.dark .mv-head .mv-version:hover {
-  border-color: rgb(255 255 255 / 0.45);
-}
-html.dark .mv-head .mv-version.active {
-  background: color-mix(in srgb, var(--accent, #4ea1ff) 30%, transparent);
+  background: color-mix(in srgb, var(--accent, #4ea1ff) 26%, transparent);
+  color: var(--mv-fg);
 }
 .mv-head .mv-note {
-  color: var(--mv-head-fg-2);
+  color: var(--mv-fg-dim);
+  text-shadow: var(--mv-shadow);
 }
 .mv-desc {
   margin: 0;

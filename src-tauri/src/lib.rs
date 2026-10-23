@@ -1268,11 +1268,34 @@ async fn get_media_versions(state: State<'_, AppState>, guid: String) -> Result<
             .or_else(|| s.get(k).and_then(|v| v.as_f64()).map(|f| f as i64))
             .unwrap_or(0)
     };
+    // [版本文案] 上游 `video_streams[].title` 实测恒为空、云端/STRM 条目分辨率与色域也空，
+    // 唯一可区分信息在同响应的 `files[]`：`files[].guid === video_streams[].media_guid`。
+    // 这里只取 `file_name`（绝不带 `path`，避免把 NAS 目录暴露给前端）。
+    let file_names: std::collections::HashMap<String, String> = data
+        .get("files")
+        .and_then(|v| v.as_array())
+        .map(|files| {
+            files
+                .iter()
+                .filter_map(|f| {
+                    let g = str_of(f, "guid");
+                    let name = str_of(f, "file_name");
+                    if g.is_empty() || name.is_empty() {
+                        None
+                    } else {
+                        Some((g, name))
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let versions: Vec<Value> = streams
         .iter()
         .map(|s| {
+            let media_guid = str_of(s, "media_guid");
             json!({
-                "media_guid": str_of(s, "media_guid"),
+                "media_guid": media_guid,
+                "file_name": file_names.get(&media_guid).cloned().unwrap_or_default(),
                 "title": str_of(s, "title"),
                 "resolution_type": str_of(s, "resolution_type"),
                 "color_range_type": str_of(s, "color_range_type"),

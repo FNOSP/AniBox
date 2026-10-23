@@ -154,6 +154,9 @@ export type Episode = {
  */
 export type MediaVersion = {
   media_guid: string;
+  /** [版本文案] 上游 `files[].file_name`（按 media_guid 匹配）；含分辨率/编码/集号/来源，
+   *  是云端 / STRM 条目唯一可区分的文案来源。仅文件名，不含 NAS 路径。 */
+  file_name?: string;
   title?: string;
   /** 分辨率（如 1080 / 2160；展示时 toUpperCase） */
   resolution_type?: string;

@@ -384,6 +384,11 @@
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
+  /* [版本文案] 文件名兜底标签可能很长：限宽 + 省略号，完整名称见 title。 */
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .mv-version:hover {
   border-color: rgba(255, 255, 255, 0.5);

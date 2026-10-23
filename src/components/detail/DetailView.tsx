@@ -102,13 +102,53 @@ function saveMediaVersion(guid: string, mediaGuid: string) {
   }
 }
 
-/** 版本盒子文案（与 FlyNarwhal `_MediaSourceBoxes` 同口径）。 */
+/** 去掉文件扩展名（仅取文件名，不含目录；用于版本标签兜底）。 */
+function stripExt(name: string): string {
+  const base = String(name ?? "").trim().split(/[\\/]/).pop() ?? "";
+  return base.replace(/\.[A-Za-z0-9]{1,5}$/, "").trim();
+}
+
+/** 版本盒子文案（与 FlyNarwhal `_MediaSourceBoxes` 同口径）。
+ *  [版本文案] 上游 title 常为空、云端/STRM 条目分辨率与色域也空，故补回退链：
+ *  分辨率+色域 → 高度P+编码+位深 → title → 文件名去扩展名 → 「默认版本」。 */
 function versionLabel(v: MediaVersion): string {
   const res = String(v.resolution_type ?? "").trim().toUpperCase();
   const colorRaw = String(v.color_range_type ?? "").trim();
   const color = colorRaw === "DolbyVision" ? "杜比视界" : colorRaw;
-  const label = [res, color].filter(Boolean).join(" ").trim();
-  return label || String(v.title ?? "").trim() || "默认版本";
+  const primary = [res, color].filter(Boolean).join(" ").trim();
+  if (primary) return primary;
+
+  const h = Number(v.height ?? 0);
+  const spec = [
+    h > 0 ? `${h}P` : "",
+    String(v.codec_name ?? "").trim(),
+    Number(v.bit_depth ?? 0) > 0 ? `${v.bit_depth}bit` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  if (spec) return spec;
+
+  const title = String(v.title ?? "").trim();
+  if (title) return title;
+
+  const file = stripExt(String(v.file_name ?? ""));
+  return file || "默认版本";
+}
+
+/** 批量生成版本标签：重复时追加 ` · 文件名`，仍重复则追加 ` · 序号`，保证可区分。 */
+function versionLabels(versions: MediaVersion[]): string[] {
+  const base = versions.map((v) => versionLabel(v));
+  const count = new Map<string, number>();
+  for (const b of base) count.set(b, (count.get(b) ?? 0) + 1);
+
+  const withFile = base.map((b, i) => {
+    if ((count.get(b) ?? 0) <= 1) return b;
+    const file = stripExt(String(versions[i]?.file_name ?? ""));
+    return file ? `${b} · ${file}` : b;
+  });
+  const count2 = new Map<string, number>();
+  for (const b of withFile) count2.set(b, (count2.get(b) ?? 0) + 1);
+  return withFile.map((b, i) => ((count2.get(b) ?? 0) > 1 ? `${b} · ${i + 1}` : b));
 }
 
 /** 默认版本优先级：本地记忆 → play/info（服务端上次播放）→ 第一条。 */
@@ -2146,7 +2186,10 @@ export function DetailView({
           }}
           versions={
             versionGuid === base.guid
-              ? mediaVersions.map((v) => ({ mediaGuid: v.media_guid, label: versionLabel(v) }))
+              ? mediaVersions.map((v, i) => ({
+                  mediaGuid: v.media_guid,
+                  label: versionLabels(mediaVersions)[i],
+                }))
               : undefined
           }
           selectedVersion={versionGuid === base.guid ? selectedMediaGuid : undefined}
@@ -2459,18 +2502,21 @@ export function DetailView({
             {isSeries && versionGuid && mediaVersions.length > 1 && (
               <div className="dv2e-versions" role="group" aria-label="选择版本">
                 <span className="dv2e-versions-h">版本</span>
-                {mediaVersions.map((v) => (
+                {mediaVersions.map((v, i) => {
+                  const label = versionLabels(mediaVersions)[i];
+                  return (
                   <button
                     key={v.media_guid}
                     type="button"
                     className={`dv2e-version${v.media_guid === selectedMediaGuid ? " active" : ""}`}
-                    title={v.title || versionLabel(v)}
+                    title={label}
                     aria-pressed={v.media_guid === selectedMediaGuid}
                     onClick={() => selectVersion(versionGuid, v.media_guid)}
                   >
-                    {versionLabel(v)}
+                    {label}
                   </button>
-                ))}
+                  );
+                })}
               </div>
             )}
             {isSeries && seasons.length > 1 && (
@@ -2743,11 +2789,12 @@ export function DetailView({
               </div>
               <div className="sum-modal-b">
                 <div className="dv2e-versions version-picker-boxes" role="group" aria-label="选择版本">
-                  {versionPicker.versions.map((v) => (
+                  {versionPicker.versions.map((v, i) => (
                     <button
                       key={v.media_guid}
                       type="button"
                       className={`dv2e-version${v.media_guid === versionPicker.selected ? " active" : ""}`}
+                      title={versionLabels(versionPicker.versions)[i]}
                       aria-pressed={v.media_guid === versionPicker.selected}
                       onClick={() => {
                         const guid = versionPicker.guid;
@@ -2756,7 +2803,7 @@ export function DetailView({
                         playWithVersion(guid, v.media_guid);
                       }}
                     >
-                      <span className="dv2e-version-label">{versionLabel(v)}</span>
+                      <span className="dv2e-version-label">{versionLabels(versionPicker.versions)[i]}</span>
                       {(v.width ?? 0) > 0 && (v.height ?? 0) > 0 && (
                         <span className="dv2e-version-sub">
                           {v.width}×{v.height}

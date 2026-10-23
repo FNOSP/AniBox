@@ -247,6 +247,7 @@ export function MovieHero({
                   key={v.mediaGuid}
                   type="button"
                   className={`mv-version${v.mediaGuid === selectedVersion ? " active" : ""}`}
+                  title={v.label}
                   aria-pressed={v.mediaGuid === selectedVersion}
                   onClick={() => onVersionChange?.(v.mediaGuid)}
                 >

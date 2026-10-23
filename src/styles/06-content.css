@@ -98,3 +98,47 @@ h3 {
   margin: 0;
 }
 
+
+/* [lc-1727] 媒体库「滚动加载更多」的状态行。
+   之前库页只取第一页（60 条）且没有触底加载，>60 条的库看不到后面的内容。 */
+.lib-more-busy {
+  padding: 16px 0 6px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12.5px;
+  letter-spacing: 0.5px;
+}
+.lib-more-err {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px 0 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.lib-more-err .back {
+  height: 28px;
+  min-width: 28px;
+  font-size: 12px;
+  padding: 0 10px;
+}
+.lib-more-sentinel {
+  height: 1px;
+}
+.lib-retry {
+  margin-left: 10px;
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.lib-retry:hover {
+  color: var(--text-strong);
+  background: var(--hover);
+}

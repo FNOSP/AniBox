@@ -1291,7 +1291,18 @@ function App() {
               className={`view-pane active${libClosing ? " view-out" : libEnterAnim ? " view-in" : ""}${view !== "lib" ? " pane-exit" : ""}`}
               onAnimationEnd={() => setLibEnterAnim(false)}
             >
-              <LibView lib={activeLib} initialFolder={libFolder} onBackHome={goHome} onOpenItem={openItem} onEditMeta={posterEditMeta} onRefreshMeta={posterRefreshMeta} />
+              {/* [lc-1727] key = 库 + 起始文件夹：切库/换入口时强制重挂载，
+                  把层级栈与分页游标（page/total）一起重置，避免上一库的「已加载 120 条」
+                  被带到新库里（表现为新库只显示半截或从第 2 页接着取）。 */}
+              <LibView
+                key={`${activeLib.guid}:${libFolder?.guid ?? ""}`}
+                lib={activeLib}
+                initialFolder={libFolder}
+                onBackHome={goHome}
+                onOpenItem={openItem}
+                onEditMeta={posterEditMeta}
+                onRefreshMeta={posterRefreshMeta}
+              />
             </div>
           )}
           {/* [lc-1615] 观影记录页：条件挂载 + view-in/view-out 转场（与库/详情页同套）。

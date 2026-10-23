@@ -1,11 +1,21 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type UIEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { PosterCard } from "../common/PosterCard";
-import { fetchLibItems } from "../../lib/api";
+import { fetchLibPage, LIB_PAGE_SIZE, type LibPage } from "../../lib/api";
 import { useRefresh } from "../../hooks/useRefresh";
 import { Lib, MediaItem } from "../../types";
 
+/** [lc-1727] 「还要不要继续翻页」的判停条件（与 Rust `should_load_more` 同口径）：
+ *  - 已加载条数达到服务端 `total` → 到底；
+ *  - 本页不足一页（loaded 不是 pageSize 的整数倍）→ 到底；
+ *  - 空列表 / 非法 pageSize → 不翻页。
+ *  total 缺失（0/未知）时退回「本页是否满页」判断 —— 满页就再要一页，空页自然停。 */
+export function shouldLoadMore(loaded: number, total: number, pageSize: number): boolean {
+  if (pageSize <= 0 || loaded <= 0) return false;
+  if (total > 0 && loaded >= total) return false;
+  return loaded % pageSize === 0;
+}
 
 export function LibView({
   lib,
@@ -32,12 +42,18 @@ export function LibView({
   // [lc-1648] 每层带自增 id：异步取数回来时按 id 定位，层已被弹掉就丢弃结果 ——
   // 否则「点文件夹 → 立刻按返回」时，晚到的列表会写进**返回后的那一层**，
   // 看起来就是返回键没反应（内容纹丝不动）。
-  type Level = { id: number; folder: MediaItem | null; items: MediaItem[] };
+  // [lc-1727] 每层再记 `page`（已取到第几页）与 `total`（服务端总数）：
+  // 滚动加载更多按层累加，返回上一层时已加载的部分原样保留，不用重拉。
+  type Level = { id: number; folder: MediaItem | null; items: MediaItem[]; page: number; total: number };
   const nextLevelId = useRef(1);
-  const [levels, setLevels] = useState<Level[]>([{ id: 0, folder: initialFolder ?? null, items: [] }]);
-  const [total, setTotal] = useState(0);
+  const [levels, setLevels] = useState<Level[]>([
+    { id: 0, folder: initialFolder ?? null, items: [], page: 0, total: 0 },
+  ]);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
+  // [lc-1727] 加载更多：进行中 / 失败（失败给「重试」，不打断已显示的列表）
+  const [moreBusy, setMoreBusy] = useState(false);
+  const [moreErr, setMoreErr] = useState("");
 
   const levelsRef = useRef(levels);
   useEffect(() => {
@@ -47,98 +63,142 @@ export function LibView({
   const top = levels[levels.length - 1];
   const items = top.items;
   const current = top.folder;
+  const total = top.total;
+  const hasMore = shouldLoadMore(items.length, total, LIB_PAGE_SIZE);
 
-  /** 把取回的列表写进指定层（层已不存在则丢弃） */
-  const applyItems = useCallback((list: MediaItem[], levelId?: number) => {
+  // [lc-1727] 竞态防护：
+  //  - `reqSeq`：每次「重置取数 / 加载更多」自增；回包时序号不匹配就整包丢弃 ——
+  //    快速滚动连发、切换库/文件夹、点刷新，旧请求都不会覆盖新列表。
+  //  - `loadingRef` / `moreBusyRef`：state 更新是异步的，滚动事件可能在一次渲染内连发多次，
+  //    用 ref 做同步闸门，避免同一页被重复请求。
+  const reqSeq = useRef(0);
+  const loadingRef = useRef(true);
+  const moreBusyRef = useRef(false);
+
+  /** 把第一页结果写进指定层（层已不存在则丢弃） */
+  const applyLevel = useCallback((levelId: number, list: MediaItem[], page: number, total: number) => {
     setLevels((ls) => {
-      const id = levelId ?? ls[ls.length - 1]?.id;
       let hit = false;
       const next = ls.map((l) => {
-        if (l.id !== id) return l;
+        if (l.id !== levelId) return l;
         hit = true;
-        return { ...l, items: list };
+        return { ...l, items: list, page, total };
       });
       return hit ? next : ls;
     });
   }, []);
+
+  /** [lc-1727] 按当前入口（库根 / 文件夹 / 收藏 / 分类）取第 page 页。 */
+  const fetchPage = useCallback(
+    async (parentGuid: string | null, page: number): Promise<LibPage> => {
+      if (parentGuid) return fetchLibPage(lib.guid, parentGuid, page);
+      // 虚拟库根层：收藏 / 全局分类浏览
+      if (lib.guid === "_fav") {
+        const d = await invoke<{ total?: number; list?: MediaItem[] | null }>("get_favorites", { page });
+        return { list: d.list ?? [], total: Number(d.total ?? 0) || 0 };
+      }
+      if (lib.guid.startsWith("_cat:")) {
+        const types = lib.guid.slice(5).split(",").filter(Boolean);
+        const d = await invoke<{ list?: MediaItem[]; total?: number }>("get_items_global", {
+          typeFilter: types,
+          page,
+        });
+        return { list: d.list ?? [], total: Number(d.total ?? 0) || 0 };
+      }
+      return fetchLibPage(lib.guid, null, page);
+    },
+    [lib.guid],
+  );
 
   const load = useCallback(
     async (parentGuid: string | null, levelId?: number) => {
       // 记下这次取数要写进哪一层（层 id 在弹栈后不会复用）。
       // 钻取时由 openItem 直接传新层 id —— setLevels 是异步的，此刻 levelsRef 里还没有新层。
       const targetId = levelId ?? levelsRef.current[levelsRef.current.length - 1]?.id;
+      const seq = ++reqSeq.current;
+      loadingRef.current = true;
+      moreBusyRef.current = false;
       setLoading(true);
       setErr("");
-      // [lc-1648] **钻取优先**：parentGuid 非空 = 已进入某个文件夹，必须按 parent_guid 拉子项。
-      // 之前这段判断排在「收藏/全部分类」之后，_cat/_fav 入口下点文件夹会落回根查询 ——
-      // 列表内容不变（点一下闪一下、看起来进不去），面包屑却变了，用户只能干瞪眼。
-      if (parentGuid) {
-        try {
-          const list = await fetchLibItems(lib.guid, parentGuid);
-          applyItems(list, targetId);
-          setTotal(list.length);
-          if (list.length === 0) setErr("该文件夹为空");
-        } catch (e) {
-          applyItems([], targetId);
-          setTotal(0);
-          setErr(String(e));
-        }
-        setLoading(false);
-        return;
-      }
-      // 虚拟库根层：收藏 / 全局分类浏览
-      if (lib.guid === "_fav") {
-        try {
-          const d = await invoke<{ total: number; list: MediaItem[] | null }>("get_favorites", {
-            page: 1,
-          });
-          applyItems(d.list ?? [], targetId);
-          setTotal(d.total ?? 0);
-          if (!d.list?.length) setErr("还没有收藏");
-        } catch (e) {
-          applyItems([], targetId);
-          setErr(String(e));
-        }
-        setLoading(false);
-        return;
-      }
-      if (lib.guid.startsWith("_cat:")) {
-        try {
-          const types = lib.guid.slice(5).split(",").filter(Boolean);
-          const d = await invoke<{ list: MediaItem[]; total: number }>("get_items_global", {
-            typeFilter: types,
-            page: 1,
-          });
-          applyItems(d.list ?? [], targetId);
-          setTotal(d.total ?? 0);
-          if (!d.list?.length) setErr("该分类暂无已识别条目");
-        } catch (e) {
-          applyItems([], targetId);
-          setErr(String(e));
-        }
-        setLoading(false);
-        return;
-      }
+      setMoreErr("");
+      setMoreBusy(false);
       try {
-        const list = await fetchLibItems(lib.guid, null);
-        applyItems(list, targetId);
-        setTotal(list.length);
-        if (list.length === 0) setErr("该库暂无已识别条目");
+        // [lc-1727] 一律从第 1 页开始：刷新/切库/钻取都要重置分页游标。
+        const d = await fetchPage(parentGuid, 1);
+        if (seq !== reqSeq.current) return;
+        applyLevel(targetId, d.list, 1, d.total);
+        if (d.list.length === 0) {
+          if (parentGuid) setErr("该文件夹为空");
+          else if (lib.guid === "_fav") setErr("还没有收藏");
+          else if (lib.guid.startsWith("_cat:")) setErr("该分类暂无已识别条目");
+          else setErr("该库暂无已识别条目");
+        }
       } catch (e) {
+        if (seq !== reqSeq.current) return;
         // [lc-1647] 原来没有 try/catch：get_items 一旦 reject，setLoading(false) 永远走不到，
         // 页面就卡在「加载中…」—— 个人视频/网盘类库最常见的「打不开」表象。
-        applyItems([], targetId);
-        setTotal(0);
+        applyLevel(targetId, [], 0, 0);
         setErr(String(e));
+      } finally {
+        if (seq === reqSeq.current) {
+          loadingRef.current = false;
+          setLoading(false);
+        }
       }
-      setLoading(false);
     },
-    [lib.guid, applyItems],
+    [fetchPage, applyLevel, lib.guid],
   );
+
+  /** [lc-1727] 滚动加载下一页：只追加、不重置；层已弹掉 / 已有请求在飞 / 已到底时直接返回。 */
+  const loadMore = useCallback(async () => {
+    if (loadingRef.current || moreBusyRef.current) return;
+    const lv = levelsRef.current[levelsRef.current.length - 1];
+    if (!lv || !shouldLoadMore(lv.items.length, lv.total, LIB_PAGE_SIZE)) return;
+    moreBusyRef.current = true;
+    setMoreBusy(true);
+    setMoreErr("");
+    const seq = ++reqSeq.current;
+    const levelId = lv.id;
+    const nextPage = lv.page + 1;
+    const parentGuid = lv.folder ? lv.folder.guid : null;
+    try {
+      const d = await fetchPage(parentGuid, nextPage);
+      if (seq !== reqSeq.current) return;
+      if (d.list.length === 0) {
+        // 空页 = 服务端也没有更多了：把 total 收敛为已加载数，避免反复请求。
+        setLevels((ls) =>
+          ls.map((l) =>
+            l.id === levelId
+              ? { ...l, page: nextPage, total: l.items.length }
+              : l,
+          ),
+        );
+        return;
+      }
+      setLevels((ls) => {
+        const i = ls.findIndex((l) => l.id === levelId);
+        if (i < 0) return ls; // 层已被弹掉：丢弃
+        const cur = ls[i];
+        const seen = new Set(cur.items.map((it) => it.guid));
+        const add = d.list.filter((it) => it.guid && !seen.has(it.guid));
+        const merged = [...cur.items, ...add];
+        // total 优先用服务端的；服务端没给就按已加载数记（等价于「不再翻」）。
+        const nextTotal = d.total > 0 ? d.total : Math.max(merged.length, cur.total);
+        const next = [...ls];
+        next[i] = { ...cur, items: merged, page: nextPage, total: nextTotal };
+        return next;
+      });
+    } catch (e) {
+      if (seq === reqSeq.current) setMoreErr(String(e));
+    } finally {
+      moreBusyRef.current = false;
+      if (seq === reqSeq.current) setMoreBusy(false);
+    }
+  }, [fetchPage]);
 
   useEffect(() => {
     // [lc-1647] 有起始文件夹就直接钻进去，否则从库根开始
-    load(initialFolder ? initialFolder.guid : null);
+    void load(initialFolder ? initialFolder.guid : null);
   }, [load, initialFolder]);
 
   /* [lc-1640] 顶栏 ⟳：强制刷新**当前所在层**（库根或正在钻取的文件夹）。
@@ -157,6 +217,35 @@ export function LibView({
     void load(currentGuidRef.current).finally(() => reportBusy("lib", false));
   }, [refreshTick, load, reportBusy]);
 
+  /* [lc-1727] 滚动触底加载更多。
+     `.content` 自己就是滚动容器（06-content.css：overflow-y:auto），所以监听它即可。
+     除了 onScroll 兜底，再用 IntersectionObserver 观察列表末尾的哨兵：
+     列表恰好撑不满一屏时不会有滚动事件，靠哨兵进入视口自动续取，直到填满或到底。 */
+  const contentRef = useRef<HTMLElement | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  function onScroll(e: UIEvent<HTMLElement>) {
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight > 480) return;
+    void loadMore();
+  }
+
+  useEffect(() => {
+    const root = contentRef.current;
+    const target = sentinelRef.current;
+    if (!root || !target || loading || moreErr) return;
+    if (typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((en) => en.isIntersecting)) void loadMore();
+      },
+      // 提前 600px 触发，滚到底之前就把下一页接上，避免「滚到底停一下」。
+      { root, rootMargin: "600px 0px" },
+    );
+    io.observe(target);
+    return () => io.disconnect();
+  }, [loading, loadMore, items.length, moreBusy, moreErr]);
+
   async function openItem(item: MediaItem) {
     // 只有未识别文件夹（Directory）继续逐层钻取；
     // TV/Movie/Episode/Video 一律进详情页 —— 已识别剧集的「季/集」由详情页走
@@ -167,7 +256,7 @@ export function LibView({
     }
     // 新开一层：上一层的列表原样留在 levels 里，返回时零请求还原
     const id = nextLevelId.current++;
-    setLevels((ls) => [...ls, { id, folder: item, items: [] }]);
+    setLevels((ls) => [...ls, { id, folder: item, items: [], page: 0, total: 0 }]);
     await load(item.guid, id);
   }
 
@@ -198,7 +287,7 @@ export function LibView({
   );
 
   return (
-    <main className="content">
+    <main className="content" ref={contentRef} onScroll={onScroll}>
       <div className="page-head">
         <button className="back" onClick={levels.length > 1 ? pop : onBackHome}>
           ‹
@@ -206,7 +295,17 @@ export function LibView({
         <h3>{current ? current.title : lib.title}</h3>
         <span className="muted">{total || items.length} 项</span>
       </div>
-      {err && <div className="err">{err}</div>}
+      {err && (
+        <div className="err">
+          <span>{err}</span>
+          {/* [lc-1727] 首屏失败给「重试」（以前只能靠顶栏 ⟳，用户不一定找得到） */}
+          {!loading && (
+            <button className="lib-retry" onClick={() => void load(currentGuidRef.current)}>
+              重试
+            </button>
+          )}
+        </div>
+      )}
       {loading && <div className="empty">加载中…</div>}
       {!loading && (
         <div className="grid">
@@ -216,6 +315,16 @@ export function LibView({
         </div>
       )}
       {!loading && items.length === 0 && !err && <div className="empty">暂无内容</div>}
+      {!loading && moreBusy && <div className="lib-more-busy">加载更多…</div>}
+      {!loading && moreErr && (
+        <div className="lib-more-err">
+          <span>加载更多失败：{moreErr}</span>
+          <button className="back" onClick={() => void loadMore()}>
+            重试
+          </button>
+        </div>
+      )}
+      {!loading && hasMore && <div ref={sentinelRef} className="lib-more-sentinel" />}
     </main>
   );
 }

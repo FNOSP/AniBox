@@ -18,7 +18,7 @@ use crate::AppState;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex as StdMutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -391,17 +391,11 @@ async fn launch_potplayer(
     // 1) 新播放前清理上一个 PotPlayer（PotPlayer 默认单实例，残留会抢新参数）。
     stop_potplayer(app, state, false).await;
 
-    // 1.5) HLS + 必须带头：relay 只能代转播放列表本身，分段请求由 PotPlayer 直接发起
-    // （拿不到 Referer/UA）→ 必然失败。这里明确报错，避免"窗口起来但播不动"的静默失败。
-    if let Some(h) = headers {
-        if h.needs_relay() && looks_like_hls(url) {
-            return Err(
-                "该在线源是 HLS 且需要 Referer/UA，PotPlayer 无法为分段请求携带请求头。\
-                 请到「设置 → 播放器」切回自带 mpv 播放。"
-                    .into(),
-            );
-        }
-    }
+    // [lc-1749] 旧版在这里「HLS + 需要头 → 直接报错拒播」：webrs 的 UA 恒非空
+    // （effective_ua 有随机兜底），needs_relay() 恒真 ⇒ **所有 m3u8 在线源**在
+    // PotPlayer 模式下一律失败（用户报的「调用 potplayer 播放失败」主根因）。
+    // 现在 relay 会把 HLS 分段/密钥也一并代转（带同一套头，见 handle_relay_conn），
+    // 不再需要前置拦截；真正的失败由 potplayer-relay-error 事件回传面板。
 
     // 2) 常规媒体：经本地 relay 转发，并在 URL 路径里附带可读文件名：
     //    PotPlayer 把 URL 末段当作标题/播放列表项名，直链（GUID/查询串）会显示成一串字符。
@@ -417,13 +411,15 @@ async fn launch_potplayer(
         ));
         url.to_string()
     } else {
-        ensure_relay().await?;
+        ensure_relay_with(app).await?;
         let relay_headers = headers.cloned().unwrap_or_default();
         let id = relay_register(RelayTarget {
             url: url.to_string(),
             headers: relay_headers,
         });
-        let u = relay_url_named(&id, title);
+        // [lc-1749] 上游是 HLS 就用 .m3u8 扩展名（PotPlayer 按 URL 扩展挑分离器）。
+        let ext = if looks_like_hls(url) { "m3u8" } else { "mp4" };
+        let u = relay_url_named_ext(&id, title, ext);
         crate::libmpv::trace(&format!(
             "[player] potplayer relay 注册: {url} -> {u}（referer={:?} ua={:?} title={title:?}）",
             headers.and_then(|h| h.referer.as_deref()),
@@ -620,8 +616,6 @@ pub struct RelayTarget {
 }
 
 static RELAYS: OnceLock<StdMutex<HashMap<String, RelayTarget>>> = OnceLock::new();
-static RELAY_SERVER: OnceLock<()> = OnceLock::new();
-static RELAY_READY: AtomicBool = AtomicBool::new(false);
 
 fn relay_map() -> &'static StdMutex<HashMap<String, RelayTarget>> {
     RELAYS.get_or_init(|| StdMutex::new(HashMap::new()))
@@ -638,11 +632,10 @@ pub fn relay_lookup(id: &str) -> Option<RelayTarget> {
     relay_map().lock().unwrap().get(id).cloned()
 }
 
-/// 测试/清理用（仅测试构建）。
-#[cfg(test)]
-pub fn relay_clear() {
-    relay_map().lock().unwrap().clear();
-}
+// [lc-1749] 不再提供 relay_clear()：单测并行跑时，一个测试 clear 全局表会与另一个
+// 测试的 register→lookup 窗口交错（实测表现为 relay e2e 随机 404「target expired」，
+// 15 次里中 1~2 次，干净分支同样复现）。各测试用随机 id 注册、只查自己的 id 即可，
+// 表在本进程内多留几条测试目标没有影响。
 
 /// 不带可读名的 relay URL（保留给测试/调试；播放路径统一用 [`relay_url_named`]）。
 #[allow(dead_code)]
@@ -678,10 +671,10 @@ pub fn sanitize_display_name(title: &str) -> String {
 /// PotPlayer 会把 URL 末段当作显示标题，因此把剧名/集名编码进路径即可让它显示中文名，
 /// 而不是一串 GUID/查询串。relay 路由只取 `/relay/` 后的**第一段**作为 id，
 /// 后续文件名段被忽略，仍按 id 转发（见 [`relay_id_from_path`]）。
+/// （播放路径已改用 [`relay_url_named_ext`] 按内容挑扩展名；本函数保留给测试/调试。）
+#[allow(dead_code)]
 pub fn relay_url_named(id: &str, display_name: &str) -> String {
-    let stem = sanitize_display_name(display_name);
-    let encoded = urlencoding::encode(&stem);
-    format!("http://127.0.0.1:{RELAY_PORT}/relay/{id}/{encoded}.mp4")
+    relay_url_named_ext(id, display_name, "mp4")
 }
 
 /// 从请求路径中取出 relay id：`/relay/<id>` 与 `/relay/<id>/<可读名>.mp4` 都返回 `<id>`。
@@ -701,13 +694,27 @@ pub fn is_hls_content_type(ct: &str) -> bool {
     c.contains("mpegurl") || c.contains("vnd.apple.mpegurl")
 }
 
-/// 把 HLS 播放列表里的相对 URI 重写为绝对 URL。
+/// 把 HLS 播放列表里的相对 URI 重写为绝对 URL；有 `wrap_prefix` 时再包一层 relay。
 ///
 /// 经 relay 转发后，PotPlayer 看到的播放列表地址是 `http://127.0.0.1:22349/relay/<id>/<名>.mp4`，
 /// 若列表里是相对分片 URI，PotPlayer 会向 `/relay/<id>/xxx.ts` 请求，被 relay 误当成同 id 的
-/// 播放列表请求。这里按最终上游地址（`base`，含 302 后的地址）解析成绝对 URL，
-/// 让 PotPlayer 直接去源站取分片。仅用于「无 Referer/UA」的 HLS（有头时 launch 已提前报错）。
-pub fn rewrite_hls_playlist(body: &str, base: &url::Url) -> String {
+/// 播放列表请求。这里按最终上游地址（`base`，含 302 后的地址）解析成绝对 URL，再按需包装：
+/// · `wrap_prefix = None`（无头场景）：让 PotPlayer 直接去源站取分片，省一层本机转发；
+/// · `wrap_prefix = Some("http://127.0.0.1:22349/relay/<id>")`（[lc-1749] 有头场景）：
+///   分片/密钥/子播放列表改写成 `<prefix>/~u/<percent-encoded 绝对URL>` —— PotPlayer
+///   仍请求 relay，relay 解码出绝对地址后**带同一套 Referer/UA** 代取（对齐 mpv 链路：
+///   ffmpeg(hls) 的分段请求同样带播放头）。没有这层包装，防盗链 CDN 会对分段 403，
+///   表现为「列表能打开、一播就失败」。
+pub fn rewrite_hls_playlist(body: &str, base: &url::Url, wrap_prefix: Option<&str>) -> String {
+    let abs = |u: &str| -> String {
+        match base.join(u) {
+            Ok(a) => match wrap_prefix {
+                Some(p) => format!("{p}/~u/{}", urlencoding::encode(a.as_str())),
+                None => a.to_string(),
+            },
+            Err(_) => u.to_string(),
+        }
+    };
     let mut out = String::with_capacity(body.len() + 64);
     for line in body.lines() {
         let t = line.trim();
@@ -715,20 +722,16 @@ pub fn rewrite_hls_playlist(body: &str, base: &url::Url) -> String {
             out.push_str(line);
         } else if t.starts_with('#') {
             // #EXT-X-KEY / #EXT-X-MAP 的 URI="..." 也可能是相对地址（加密密钥、fMP4 初始化段）。
-            out.push_str(&rewrite_uri_attributes(line, base));
+            out.push_str(&rewrite_uri_attributes(line, &abs));
         } else {
-            match base.join(t) {
-                Ok(abs) => out.push_str(abs.as_str()),
-                Err(_) => out.push_str(line),
-            }
+            out.push_str(&abs(t));
         }
         out.push('\n');
     }
     out
 }
 
-/// 把一行标签里的 `URI="..."` 属性解析成绝对地址。
-fn rewrite_uri_attributes(line: &str, base: &url::Url) -> String {
+fn rewrite_uri_attributes(line: &str, abs: &dyn Fn(&str) -> String) -> String {
     let mut out = String::with_capacity(line.len() + 32);
     let mut rest = line;
     while let Some(pos) = rest.find("URI=\"") {
@@ -736,10 +739,7 @@ fn rewrite_uri_attributes(line: &str, base: &url::Url) -> String {
         out.push_str(before);
         if let Some(endq) = after.find('"') {
             let uri = &after[..endq];
-            match base.join(uri) {
-                Ok(abs) => out.push_str(abs.as_str()),
-                Err(_) => out.push_str(uri),
-            }
+            out.push_str(&abs(uri));
             out.push('"');
             rest = &after[endq + 1..];
         } else {
@@ -749,6 +749,29 @@ fn rewrite_uri_attributes(line: &str, base: &url::Url) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// [lc-1749] 从请求路径解析 relay 子资源（HLS 分段/密钥/子播放列表）：
+/// `/relay/<id>/~u/<percent-encoded 绝对URL>` → 还原出绝对地址。
+/// 不带 `~u/` 段（纯 id 或可读文件名）→ None = 播放列表本体，按 id 转发注册地址。
+/// 可读文件名经 [`urlencoding::encode`] 后是单个路径段、不以 `~u/` 开头，无歧义。
+pub fn relay_sub_resource(path: &str, id: &str) -> Option<String> {
+    let rest = path.strip_prefix(&format!("/relay/{id}/"))?;
+    let enc = rest.strip_prefix("~u/")?;
+    let decoded = urlencoding::decode(enc).ok()?.to_string();
+    if decoded.starts_with("http://") || decoded.starts_with("https://") {
+        Some(decoded)
+    } else {
+        None
+    }
+}
+
+/// [lc-1749] 指定扩展名版本：上游是 HLS 时用 `.m3u8`（PotPlayer 按 URL 扩展名挑
+/// 分离器，`.mp4` 名字配 m3u8 内容依赖内容嗅探；给对扩展名不赌运气）。
+pub fn relay_url_named_ext(id: &str, display_name: &str, ext: &str) -> String {
+    let stem = sanitize_display_name(display_name);
+    let encoded = urlencoding::encode(&stem);
+    format!("http://127.0.0.1:{RELAY_PORT}/relay/{id}/{encoded}.{ext}")
 }
 
 /// 构建转发给源站的请求头（纯函数，可测）。
@@ -769,31 +792,66 @@ pub fn relay_upstream_headers(target: &RelayTarget, incoming_range: Option<&str>
     out
 }
 
-/// 惰性启动 relay 服务（幂等）。端口已被占用时视为已有实例在跑。
+/// [lc-1749] relay 服务持有的 AppHandle：转发失败/上游拒流时 emit
+/// `potplayer-relay-error` 给前端（PotPlayer 自己不会把错误报到面板）。
+static RELAY_APP: OnceLock<StdMutex<Option<AppHandle>>> = OnceLock::new();
+
+fn relay_app_handle() -> Option<AppHandle> {
+    RELAY_APP
+        .get_or_init(|| StdMutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+}
+
+/// 带 AppHandle 的 [`ensure_relay`]：注册转发失败事件所需的句柄（播放路径统一走这个）。
+pub async fn ensure_relay_with(app: &AppHandle) -> Result<(), String> {
+    if let Ok(mut g) = RELAY_APP
+        .get_or_init(|| StdMutex::new(None))
+        .lock()
+    {
+        if g.is_none() {
+            *g = Some(app.clone());
+        }
+    }
+    ensure_relay().await
+}
+
+/// 惰性启动 relay 服务（幂等、自愈）。端口已被占用时视为已有实例在跑。
+///
+/// [lc-1749] 不再用「OnceLock/AtomicBool 记住已启动」的短路标志：accept 循环可能
+/// 随所属 runtime 一起消亡（单测里每个 `#[tokio::test]` 一个 runtime，上一次测试
+/// 结束后监听就没了），旧标志却仍声称服务在跑 → 后续请求一律连接被拒且永不自愈。
+/// 现在每次调用都**尝试重新 bind**：端口仍被占（服务还活着）→ 视为已有实例；
+/// 端口空闲（旧循环已死）→ 重新起一个。bind 一次的开销可忽略（每次播放才调一次）。
 pub async fn ensure_relay() -> Result<(), String> {
-    if RELAY_READY.load(Ordering::SeqCst) {
-        return Ok(());
-    }
-    if RELAY_SERVER.get().is_some() {
-        RELAY_READY.store(true, Ordering::SeqCst);
-        return Ok(());
-    }
     let listener = match tokio::net::TcpListener::bind(("127.0.0.1", RELAY_PORT)).await {
         Ok(l) => l,
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-            RELAY_SERVER.set(()).ok();
-            RELAY_READY.store(true, Ordering::SeqCst);
-            return Ok(());
+            // 已有监听则复用。真伪校验：连一下，能通 = 有活实例（本进程旧循环或另一
+            // 个 AniBox）；连不上 = 端口被 TIME_WAIT 之类的残连接占着（刚退出/刚跑过
+            // 单测的 60s 内常见），此时绝不能谎报成功，否则后续请求全部落空。
+            match tokio::net::TcpStream::connect(("127.0.0.1", RELAY_PORT)).await {
+                Ok(_) => return Ok(()),
+                Err(_) => {
+                    return Err(format!(
+                        "播放转发端口 127.0.0.1:{RELAY_PORT} 被占用且无服务应答（可能是刚退出的残留连接，稍等约 1 分钟再试）"
+                    ))
+                }
+            }
         }
         Err(e) => return Err(format!("启动播放转发服务失败（127.0.0.1:{RELAY_PORT}）：{e}")),
     };
-    RELAY_SERVER.set(()).ok();
-    RELAY_READY.store(true, Ordering::SeqCst);
-    tauri::async_runtime::spawn(async move {
+    // [lc-1749] 用 tokio::spawn（当前 runtime）而不是 tauri::async_runtime::spawn：
+    // 生产里两者等价（ensure_relay 只会在 tauri 命令上下文被调）；但 listener 是在
+    // **当前 runtime** 上 bind 的，跨 runtime 轮询 IO 会随机失效（单测里每个
+    // #[tokio::test] 一个 runtime，全局 runtime 上的 accept 任务摸着别的 runtime 的
+    // listener，服务一两个连接后就死 → 连接被拒）。同 runtime 内 spawn 才稳定。
+    tokio::spawn(async move {
         loop {
             match listener.accept().await {
                 Ok((stream, _)) => {
-                    tauri::async_runtime::spawn(async move {
+                    tokio::spawn(async move {
                         let _ = handle_relay_conn(stream).await;
                     });
                 }
@@ -869,6 +927,12 @@ async fn handle_relay_conn(mut stream: tokio::net::TcpStream) {
 
     let client = match reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::limited(10))
+        // [lc-1749] 口径对齐：webrs 的 http() 与 mpv/ffmpeg 默认都不校验证书，
+        // 在线源 CDN 常见自签/过期证书 —— relay 若校验，就会出现「mpv 能播、
+        // PotPlayer 502(证书错误)」的分叉。只留连接超时，**不设总超时**（正片
+        // 可能要连续转发数小时）。
+        .danger_accept_invalid_certs(true)
+        .connect_timeout(std::time::Duration::from_secs(10))
         .build()
     {
         Ok(c) => c,
@@ -882,22 +946,38 @@ async fn handle_relay_conn(mut stream: tokio::net::TcpStream) {
     } else {
         reqwest::Method::GET
     };
-    let mut req = client.request(upstream_method, &t.url);
+    // [lc-1749] 子资源（`~u`）：HLS 分段/密钥/子播放列表的代取地址；无 `~u` 段则
+    // 转发注册的原始地址（播放列表本体）。两类请求带**同一套** Referer/UA —— 与
+    // mpv 链路一致（ffmpeg(hls) 分段请求也带播放头）。
+    let sub = relay_sub_resource(path, id);
+    let upstream_url = sub.clone().unwrap_or_else(|| t.url.clone());
+    let mut req = client.request(upstream_method, &upstream_url);
     for (k, v) in relay_upstream_headers(&t, headers.get("range").map(|s| s.as_str())) {
         req = req.header(k, v);
     }
     let resp = match req.send().await {
         Ok(r) => r,
         Err(e) => {
-            crate::libmpv::trace(&format!("[relay] 转发失败 {}: {e}", t.url));
+            crate::libmpv::trace(&format!("[relay] 转发失败 {upstream_url}: {e}"));
+            if sub.is_none() {
+                emit_relay_error(&t.url, format!("转发失败: {e}"));
+            }
             let _ = write_plain(&mut stream, 502, "Bad Gateway", format!("转发失败: {e}").as_bytes())
                 .await;
             return;
         }
     };
+    // 播放列表本体被上游拒绝（4xx/5xx）→ PotPlayer 只会在自己窗口里报错，面板一无所知。
+    // 回传一条失败事件（分段级失败不回传，避免几百个分片刷屏）。
+    if sub.is_none() && !resp.status().is_success() {
+        let status = resp.status();
+        crate::libmpv::trace(&format!("[relay] 上游拒绝 {} → {status}", t.url));
+        emit_relay_error(&t.url, format!("上游返回 {status}"));
+    }
 
-    // HLS：播放列表里的相对分片 URI 要重写成绝对地址，否则 PotPlayer 会把
-    // `/relay/<id>/xxx.ts` 当成同一 id 再请求一次播放列表。仅无头场景（有头 HLS 已提前报错）。
+    // HLS：播放列表里的 URI 要重写，否则 PotPlayer 会把 `/relay/<id>/xxx.ts`
+    // 当成同一 id 再请求一次播放列表。有头场景把 URI 包回 relay（`~u`，分段也带头）；
+    // 无头场景绝对化直连源站（省一层本机转发）。
     let upstream_ct = resp
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
@@ -905,13 +985,17 @@ async fn handle_relay_conn(mut stream: tokio::net::TcpStream) {
         .unwrap_or("")
         .to_string();
     let upstream_is_hls = is_hls_content_type(&upstream_ct)
-        || looks_like_hls(t.url.as_str())
+        || looks_like_hls(upstream_url.as_str())
         || looks_like_hls(resp.url().as_str());
     if upstream_is_hls && resp.status().is_success() && method != "HEAD" {
         let base = resp.url().clone();
         match resp.text().await {
             Ok(text) => {
-                let rewritten = rewrite_hls_playlist(&text, &base);
+                let wrap_prefix = t
+                    .headers
+                    .needs_relay()
+                    .then(|| format!("http://127.0.0.1:{RELAY_PORT}/relay/{id}"));
+                let rewritten = rewrite_hls_playlist(&text, &base, wrap_prefix.as_deref());
                 let body = rewritten.as_bytes();
                 let head = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -1021,6 +1105,14 @@ async fn write_plain(
     stream.flush().await
 }
 
+/// [lc-1749] relay 播放列表级失败 → 前端（PotPlayer 链路没有 mpv-end，失败原本
+/// 只能靠用户肉眼看 PotPlayer 窗口里的报错）。WebrsPanel 按 60s 起播窗口归因展示。
+fn emit_relay_error(url: &str, error: String) {
+    if let Some(app) = relay_app_handle() {
+        let _ = app.emit("potplayer-relay-error", json!({ "url": url, "error": error }));
+    }
+}
+
 // ───────────────────────── 单测（纯逻辑，不触网） ─────────────────────────
 
 #[cfg(test)]
@@ -1114,7 +1206,7 @@ mod tests {
 
     #[test]
     fn relay_register_lookup_and_headers() {
-        relay_clear();
+        // [lc-1749] 不 clear 全局表（并行测试会互相清掉对方刚注册的目标 → e2e 随机 404）。
         let target = RelayTarget {
             url: "https://example.test/a.m3u8".into(),
             headers: HttpHeaders::new(Some(" https://ref.test/ ".into()), Some(" UA/1 ".into())),
@@ -1138,7 +1230,6 @@ mod tests {
             ]
         );
         assert!(relay_lookup("nope").is_none());
-        relay_clear();
     }
 
     #[test]
@@ -1197,7 +1288,8 @@ mod tests {
     fn hls_playlist_rewrites_relative_uris() {
         let base = url::Url::parse("https://cdn.test/hls/index.m3u8").unwrap();
         let body = "#EXTM3U\n#EXTINF:10,\nseg-1.ts\n/abs/seg-2.ts\nhttps://other/x.ts\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n";
-        let out = rewrite_hls_playlist(body, &base);
+        // 无头场景：绝对化直连源站（旧行为不变）
+        let out = rewrite_hls_playlist(body, &base, None);
         assert!(out.contains("https://cdn.test/hls/seg-1.ts"));
         assert!(out.contains("https://cdn.test/abs/seg-2.ts"));
         assert!(out.contains("https://other/x.ts"));
@@ -1205,6 +1297,43 @@ mod tests {
         assert!(out.contains("#EXTINF:10,"));
         assert!(is_hls_content_type("application/vnd.apple.mpegurl"));
         assert!(!is_hls_content_type("video/mp4"));
+    }
+
+    #[test]
+    fn relay_sub_resource_parses_wrapped_and_ignores_names() {
+        let enc = urlencoding::encode("https://cdn.test/hls/seg-1.ts?token=a b");
+        assert_eq!(
+            relay_sub_resource(&format!("/relay/abc/~u/{enc}"), "abc").as_deref(),
+            Some("https://cdn.test/hls/seg-1.ts?token=a b")
+        );
+        assert_eq!(relay_sub_resource("/relay/abc/%E5%89%A7%E5%90%8D.mp4", "abc"), None);
+        assert_eq!(relay_sub_resource("/relay/abc", "abc"), None);
+        assert_eq!(relay_sub_resource("/relay/abc/~u/ftp://x", "abc"), None);
+    }
+
+    #[test]
+    fn relay_url_named_ext_picks_hls_extension() {
+        assert!(relay_url_named_ext("abc123", "ju", "m3u8").ends_with(".m3u8"));
+    }
+
+    /// [lc-1749] 有头场景：分片/密钥 URI 一律包回 relay（`~u`），分段请求才能带头。
+    #[test]
+    fn hls_playlist_wraps_uris_through_relay_when_headers() {
+        let base = url::Url::parse("https://cdn.test/hls/index.m3u8").unwrap();
+        let body = "#EXTM3U\n#EXTINF:10,\nseg-1.ts\nhttps://other/x.ts\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n";
+        let prefix = "http://127.0.0.1:22349/relay/abcd0123abcd0123";
+        let out = rewrite_hls_playlist(body, &base, Some(prefix));
+        let wrap = |u: &str| format!("{prefix}/~u/{}", urlencoding::encode(u));
+        assert!(out.contains(&wrap("https://cdn.test/hls/seg-1.ts")));
+        assert!(out.contains(&wrap("https://other/x.ts")));
+        assert!(out.contains(&format!("URI=\"{}\"", wrap("https://cdn.test/hls/key.bin"))));
+        // 包装出的分片路径要能被 relay_sub_resource 完整还原（含查询串）
+        let seg = wrap("https://cdn.test/hls/seg-1.ts");
+        let path = seg.trim_start_matches("http://127.0.0.1:22349");
+        assert_eq!(
+            relay_sub_resource(path, "abcd0123abcd0123").as_deref(),
+            Some("https://cdn.test/hls/seg-1.ts")
+        );
     }
 
     #[test]
@@ -1218,11 +1347,19 @@ mod tests {
     }
 
     /// 端到端：本地 relay 把 Range 与 Referer/UA 转发给上游，并把 206 原样回给客户端。
-    /// 全部走 127.0.0.1，不触外网。
+    /// [lc-1749] 追加 HLS 分段代转段：有头 HLS 的播放列表分片被包回 relay（`~u`），
+    /// 客户端（模拟 PotPlayer）请求包装后的分片地址时，relay 解码绝对地址并带**同一套
+    /// Referer/UA** 代取 —— 这是「HLS 在线源在 PotPlayer 模式可播」的关键（旧版在此
+    /// 直接拒播）。全部走 127.0.0.1，不触外网。
+    ///
+    /// 注意：两条 e2e 流程合在**同一个** #[tokio::test] 里 —— relay 监听 22349 的
+    /// 生命周期跟所属 runtime 走，拆成两个测试在 `--test-threads=1` 下必挂（上一个
+    /// 测试的 runtime 连同监听一起销毁，端口又卡 TIME_WAIT，本测试重绑失败）。
     #[tokio::test]
     async fn relay_forwards_range_and_headers() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+        // 假源站 ①：mp4 直链（Range 场景），收 1 个连接，请求头经 oneshot 回传。
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -1242,7 +1379,38 @@ mod tests {
             s.flush().await.unwrap();
         });
 
-        relay_clear();
+        // 假源站 ②：/hls/index.m3u8 返回相对分片列表；其余路径返回分片字节。
+        // 收 2 个连接（播放列表 + 分片），各记一份请求头。
+        let hls_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let hls_addr = hls_listener.local_addr().unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen_c = seen.clone();
+        tokio::spawn(async move {
+            for _ in 0..2 {
+                let Ok((mut s, _)) = hls_listener.accept().await else { break };
+                let mut buf = [0u8; 4096];
+                let n = s.read(&mut buf).await.unwrap();
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                seen_c.lock().unwrap().push(req.to_ascii_lowercase());
+                let is_playlist = req.contains("index.m3u8");
+                let (ct, body) = if is_playlist {
+                    ("application/vnd.apple.mpegurl", "#EXTM3U\n#EXTINF:10,\nseg-1.ts\n")
+                } else {
+                    ("video/mp2t", "SEGDATA")
+                };
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {ct}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                s.write_all(head.as_bytes()).await.unwrap();
+                s.write_all(body.as_bytes()).await.unwrap();
+                s.flush().await.unwrap();
+                drop(s);
+            }
+        });
+
+        // （[lc-1749] 不 clear 全局表：并行测试会互相清掉对方的目标 → 随机 404）
+        // ── ① Range/头透传（原有断言，保持不变）──
         let id = relay_register(RelayTarget {
             url: format!("http://{addr}/video.mp4"),
             headers: HttpHeaders::new(Some("https://ref.test/".into()), Some("UA/9".into())),
@@ -1267,6 +1435,43 @@ mod tests {
         assert!(upstream.contains("range: bytes=0-10"), "Range 必须透传: {upstream}");
         assert!(upstream.contains("referer: https://ref.test/"), "Referer 必须转发: {upstream}");
         assert!(upstream.contains("user-agent: ua/9"), "UA 必须转发: {upstream}");
-        relay_clear();
+
+        // ── ② [lc-1749] 有头 HLS：分片包回 relay 代转 ──
+        let hls_id = relay_register(RelayTarget {
+            url: format!("http://{hls_addr}/hls/index.m3u8"),
+            headers: HttpHeaders::new(Some("https://ref.test/".into()), Some("UA/9".into())),
+        });
+        // 播放列表：分片被包回 relay
+        let resp = reqwest::Client::new().get(relay_url(&hls_id)).send().await.unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
+        assert!(resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .contains("mpegurl"));
+        let body = resp.text().await.unwrap();
+        let seg_line = body
+            .lines()
+            .find(|l| l.starts_with(&format!("http://127.0.0.1:{RELAY_PORT}/")))
+            .expect("分片 URI 应被包回 relay");
+        let expected = format!(
+            "http://127.0.0.1:{RELAY_PORT}/relay/{hls_id}/~u/{}",
+            urlencoding::encode(&format!("http://{hls_addr}/hls/seg-1.ts"))
+        );
+        assert_eq!(seg_line, &expected, "播放列表分片应包装为 ~u 形态: {body}");
+
+        // 请求包装后的分片地址 → relay 解码绝对地址代取，字节原样回传
+        let resp2 = reqwest::Client::new().get(seg_line).send().await.unwrap();
+        assert_eq!(resp2.status(), reqwest::StatusCode::OK);
+        assert_eq!(&resp2.bytes().await.unwrap()[..], b"SEGDATA");
+
+        // HLS 的两次上游请求（列表 + 分片）都必须带 Referer/UA
+        let reqs = seen.lock().unwrap();
+        assert_eq!(reqs.len(), 2, "应恰好发生两次上游请求: {reqs:?}");
+        for r in reqs.iter() {
+            assert!(r.contains("referer: https://ref.test/"), "Referer 必须代转: {r}");
+            assert!(r.contains("user-agent: ua/9"), "UA 必须代转: {r}");
+        }
     }
 }

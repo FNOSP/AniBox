@@ -20,7 +20,30 @@ const KEYS: &[(&str, &str)] = &[
 
 fn main() {
     emit_authx_materials();
+    emit_common_controls_dependency();
     tauri_build::build()
+}
+
+/// [lc-1749] 给链接器补 Common-Controls v6 清单依赖（Windows/MSVC）。
+///
+/// 背景：正式 `anibox.exe` 的清单由 tauri_build 经 winres 嵌入（含
+/// Microsoft.Windows.Common-Controls v6，tray-icon/muda 引入的 `TaskDialogIndirect`
+/// 等导入需要它）。但 **lib 单测可执行文件没有清单** —— 一旦（因代码引用或链接器
+/// GC 的边际变化）测试二进制引用到那些导入，加载器解析到 comctl32 v5.82，找不到
+/// `TaskDialogIndirect`，进程直接以 `STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139)` 退出，
+/// `cargo test --lib` 整体跑不起来，且换个写法又"自愈"，极难定位。
+/// 链接器会把该依赖并入清单（对正式 exe 是与 winres 嵌入清单的同名去重合并，不改变行为）。
+fn emit_common_controls_dependency() {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    if target_os != "windows" || target_env != "msvc" {
+        return;
+    }
+    println!(
+        "cargo:rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' \
+         name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
+         publicKeyToken='6595b64144ccf1df' language='*' processorArchitecture='*'"
+    );
 }
 
 fn emit_authx_materials() {

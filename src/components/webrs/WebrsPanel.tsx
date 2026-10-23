@@ -97,6 +97,9 @@ export function WebrsPanel({ title }: { title: string }) {
   const [resolving, setResolving] = useState(false);
   // [lc-1747] 手动验证兜底：webrs_captcha_visible 已请求打开可见窗（loading 行换文案）
   const [manualVerify, setManualVerify] = useState<{ rule: string } | null>(null);
+  // [lc-1748] 最近一次 webrs 起播时间（ms）：mpv-end 只在该窗口内才归因到在线源播放，
+  // 避免把库内播放的失败误报到本面板。
+  const lastPlayAt = useRef(0);
 
   const isEnabled = useCallback(
     (name: string) => enabled == null || enabled.includes(name),
@@ -357,6 +360,30 @@ export function WebrsPanel({ title }: { title: string }) {
     };
   }, []);
 
+  // [lc-1748] 播放失败回显：mpv 的 end-file(error)（Rust 侧 emit mpv-end + OSD）。
+  // 起播后 60s 内的失败才归因到本面板的在线源播放（mpv 会话是全局的，库内播放的
+  // 失败不该报到这里）。之前 subBusy 停在「已在独立播放器窗口播放…」、真失败只在
+  // mpv 窗口 OSD 上一闪而过 —— 用户报的「显示加载成功拉起播放器后显示播放失败」
+  // 缺的正是这条行内回显。
+  useEffect(() => {
+    let alive = true;
+    let un: (() => void) | undefined;
+    listen<{ reason?: string; error?: string }>("mpv-end", (e) => {
+      if (!alive) return;
+      if (Date.now() - lastPlayAt.current > 60_000) return;
+      lastPlayAt.current = 0;
+      const err = e.payload?.error || e.payload?.reason || "未知错误";
+      setSubBusy(`播放器报告播放失败：${err}`);
+    }).then((u) => {
+      if (alive) un = u;
+      else u();
+    });
+    return () => {
+      alive = false;
+      un?.();
+    };
+  }, []);
+
   // 进面板：拉源列表 + 自动按标题搜一次（只搜勾选的）
   const autoDone = useRef(false);
   useEffect(() => {
@@ -427,6 +454,8 @@ export function WebrsPanel({ title }: { title: string }) {
         ruleName: sel.rule,
         episodeUrl: ep.url,
       });
+      // [lc-1748] 记起播时间：此后 60s 内的 mpv-end(error) 归因到本次在线源播放
+      lastPlayAt.current = Date.now();
       setSubBusy(`已在独立播放器窗口播放 · ${sel.item.name} · ${ep.name}（${r.via === "webview" ? "嗅探直链" : "页面直解"}）`);
     } catch (e) {
       setErr(String(e));

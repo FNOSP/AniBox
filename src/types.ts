@@ -558,8 +558,8 @@ export type AppSettings = {
   /** 弹幕引擎（camelCase 映射 Rust `danmu_engine`）："node" = 默认/稳定，"rust" = 测试版。
    *  仅在「自建弹幕接口」启用时生效；旧缓存可能缺省 → 读取时回退 "node"。 */
   danmuEngine?: "node" | "rust";
-  /** 界面不透明度百分比（60–100，默认 90）：外壳底色与侧栏玻璃面板的透明程度。
-   *  旧缓存/旧 config 缺失时前端回退 90。 */
+  /** 界面不透明度百分比（60–100，默认 85）：外壳底色与侧栏玻璃面板的透明程度。
+   *  旧缓存/旧 config 缺失时前端回退 85。 */
   uiOpacity?: number;
   /** 手柄：开关与高级参数（真值与处理均在 Rust；前端只做编辑与显示） */
   gamepadEnabled?: boolean;

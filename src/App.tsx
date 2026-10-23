@@ -182,15 +182,15 @@ function App() {
     document.documentElement.classList.toggle("perf", settings.perfMode);
   }, [settings.perfMode]);
   // 界面透明度：把百分比写到根元素 CSS 变量，.app-shell / .sidebar 的 rgb(... / alpha) 直接读取。
-  // 用 useLayoutEffect：首帧就用 localStorage 里的值，避免"先 90% 再跳变"。
-  // 取值口径（60–100、默认 85、侧栏 +4%）集中在 lib/uiOpacity.ts，与 Rust 侧 set_settings 同口径。
+  // 用 useLayoutEffect：首帧就用固定值，避免"先 90% 再跳变"。
+  // **产品要求：锁死 85**（侧栏 +4% → 89%），不受设置滑块影响，见 lib/uiOpacity.ts。
   useLayoutEffect(() => {
-    const { surface, sidebar } = computeUiAlpha(settings.uiOpacity);
+    const { surface, sidebar } = computeUiAlpha();
     const root = document.documentElement;
     root.style.setProperty("--ui-surface-alpha", `${surface}%`);
     // 侧栏玻璃比外壳略实一点（+4%），保证导航文字可读
     root.style.setProperty("--ui-sidebar-alpha", `${sidebar}%`);
-  }, [settings.uiOpacity]);
+  }, []);
   // 启动时拉一次真实配置（校正本地镜像；失败就继续用本地值）
   useEffect(() => {
     invoke<AppSettings>("get_settings")

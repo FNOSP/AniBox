@@ -429,11 +429,6 @@ export function SettingsPanel({
      死区/阈值/长按连跳也由 Rust 侧消费；前端只负责编辑与显示。
      连接状态由 `gamepad-status` 事件刷新，初始化调 `gamepad_status`。 */
   const padEnabled = settings.gamepadEnabled ?? GAMEPAD_DEFAULTS.enabled;
-  // 界面透明度（60–100，默认 85）：旧缓存缺省/越界都夹到合法区间，滑块不会显示空值。
-  const uiOpacity = Math.min(
-    100,
-    Math.max(60, Math.round(settings.uiOpacity ?? 85)),
-  );
   const padValues = {
     stickDeadzone: settings.gamepadDeadzone ?? GAMEPAD_DEFAULTS.stickDeadzone,
     directionThreshold:
@@ -1513,27 +1508,6 @@ export function SettingsPanel({
                       aria-label="性能模式"
                       onClick={() => onSettings({ perfMode: !settings.perfMode })}
                     />
-                  </div>
-                  <div className="set-row set-slider-row">
-                    <div>
-                      <span className="set-k">界面透明度</span>
-                      <div className="set-desc">
-                        调整窗口底色与玻璃面板的透明程度，不影响文字对比
-                      </div>
-                    </div>
-                    <div className="set-range-wrap">
-                      <input
-                        type="range"
-                        className="set-range"
-                        min={60}
-                        max={100}
-                        step={1}
-                        value={uiOpacity}
-                        aria-label="界面透明度"
-                        onChange={(e) => onSettings({ uiOpacity: Number(e.target.value) })}
-                      />
-                      <span className="set-range-val">{uiOpacity}%</span>
-                    </div>
                   </div>
                   <div className="set-row">
                     <div>

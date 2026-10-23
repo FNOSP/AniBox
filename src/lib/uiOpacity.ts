@@ -1,10 +1,10 @@
 /**
  * [ui-opacity] 界面透明度链路的**纯计算部分**（无 DOM / 无 Tauri 依赖，可直接单测）。
  *
- * 设置面板「外观 → 界面透明度」的取值口径集中在这里：
- *   · 取值范围 60–100（与 Rust `config.rs` 的 UI_OPACITY_MIN/MAX、`set_settings` 的 clamp 同口径）
- *   · 默认 85（历史默认值，见项目记忆「透明度默认 85%」）
- *   · 侧栏玻璃比外壳略实 4%（保证导航文字可读），但不超过 100%
+ * **产品要求：界面/侧边栏透明度锁死 85**，不再受设置滑块影响（滑块已从设置面板移除）。
+ *   · 锁定值 85（`UI_OPACITY_LOCKED`），无论入参是什么都恒用 85
+ *   · 侧栏玻璃比外壳略实 4% → `--ui-sidebar-alpha: 89%`
+ *   · 60–100 的常量仅为兼容旧配置/旧代码保留，不再作为可调范围
  *
  * App 只负责把这里算出的百分比写到根元素 CSS 变量；CSS 侧用
  * `rgb(R G B / var(--ui-*-alpha))` 读取。**不要**再退回 `color-mix()`：那需要
@@ -18,6 +18,8 @@ export const UI_OPACITY_MIN = 60;
 export const UI_OPACITY_MAX = 100;
 /** 历史默认值（百分比）。 */
 export const UI_OPACITY_DEFAULT = 85;
+/** [产品要求] 界面/侧边栏透明度锁死值：不再受设置滑块影响。 */
+export const UI_OPACITY_LOCKED = 85;
 /** 侧栏玻璃相对外壳多出的不透明度（百分比）。 */
 export const SIDEBAR_ALPHA_BONUS = 4;
 
@@ -35,9 +37,12 @@ export function normalizeUiOpacity(raw: unknown): number {
  * 计算要写入 CSS 变量的两个 alpha：
  *   surface = 外壳底色（.app-shell）
  *   sidebar = 侧栏玻璃（.sidebar），比外壳略实 4%，封顶 100
+ *
+ * **产品要求：锁死 85** —— 入参被忽略，恒用 `UI_OPACITY_LOCKED`，
+ * 这样即使 config.json / localStorage 里存了 60/100 等旧值，界面也不会变。
  */
-export function computeUiAlpha(raw: unknown): { surface: number; sidebar: number } {
-  const surface = normalizeUiOpacity(raw);
+export function computeUiAlpha(_raw?: unknown): { surface: number; sidebar: number } {
+  const surface = UI_OPACITY_LOCKED;
   return {
     surface,
     sidebar: Math.min(UI_OPACITY_MAX, surface + SIDEBAR_ALPHA_BONUS),

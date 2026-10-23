@@ -10,7 +10,17 @@ export type WebrsSearchItem = { name: string; url: string };
 export type WebrsRoad = { name: string; index: number; episodes: WebrsSearchItem[] };
 
 // [lc-1606] 新增 captcha 状态：该源返回了反爬验证挑战页，需要人机验证
-export type WebrsGroup = { name: string; status: "ok" | "empty" | "error" | "captcha"; error: string; items: WebrsSearchItem[] };
+// [lc-1747] via:"harvest"（可选）：结果来自验证通过后的收割页缓存（无需网络），Rust 侧按需附加
+export type WebrsGroup = { name: string; status: "ok" | "empty" | "error" | "captcha"; error: string; items: WebrsSearchItem[]; via?: string };
+
+// [lc-1747] 嗅探进度事件（webrs-sniff-status，Rust 契约：字段名恒定、message 恒存在无话为空串）。
+// 解析直链的 WebView 段发射；按 rule/url 匹配当前解析任务，无关事件忽略。
+type SniffStatus = {
+  rule: string;
+  url: string;
+  status: "loading" | "hooked" | "hit" | "timeout" | "failed";
+  message: string;
+};
 
 export type WebrsRuleInfo = { name: string; version?: string; mode?: string };
 
@@ -77,6 +87,17 @@ export function WebrsPanel({ title }: { title: string }) {
   const captchaAttempts = useRef<Record<string, number>>({});
   const captchaBusyRef = useRef(false);
 
+  // [lc-1747] 嗅探进度（webrs-sniff-status）：sniffTask 登记「当前在等的那次直链解析」，
+  // 事件按 rule/url 匹配（Rust 侧 join 过 base_url，回传的是绝对地址，条目 URL 可能是
+  // 相对路径 → 用前后缀兜底匹配）；lastSniffUrl 记每源最近一次嗅探页面 URL，
+  // 供「打开网页手动验证」兜底取 URL（搜索 URL 模板不暴露给前端，同站页面等效）。
+  const sniffTask = useRef<{ rule: string; url: string } | null>(null);
+  const lastSniffUrl = useRef<Record<string, string>>({});
+  // 解析中标志：比 subBusy 文本前缀可靠（嗅探进度会实时改写 subBusy，前缀判断会漏）
+  const [resolving, setResolving] = useState(false);
+  // [lc-1747] 手动验证兜底：webrs_captcha_visible 已请求打开可见窗（loading 行换文案）
+  const [manualVerify, setManualVerify] = useState<{ rule: string } | null>(null);
+
   const isEnabled = useCallback(
     (name: string) => enabled == null || enabled.includes(name),
     [enabled],
@@ -135,12 +156,58 @@ export function WebrsPanel({ title }: { title: string }) {
     setCaptcha(null);
     setCode("");
     setCaptchaMsg(null);
+    setManualVerify(null);
     try {
       await invoke("webrs_captcha_cancel");
     } catch {
       /* 忽略：窗口可能已自行销毁 */
     }
   }, []);
+
+  // [lc-1747] 手动验证兜底用的 URL：优先该源最近一次嗅探上报的页面 URL（绝对地址），
+  // 其次选集条目 URL（仅当本身已是绝对地址 —— webrs_captcha_visible 不会代拼 base_url）。
+  // 注：规则的搜索 URL 模板（@keyword）不暴露给前端，这里取同站页面等效过验
+  // （站点级挑战如 Cloudflare 过一次全站生效，收割的是 cookie+UA）。
+  const manualVerifyUrlFor = useCallback(
+    (rule: string): string | null => {
+      const sniffed = lastSniffUrl.current[rule];
+      if (sniffed && /^https?:\/\//i.test(sniffed)) return sniffed;
+      if (sel?.rule === rule && /^https?:\/\//i.test(sel.item.url)) return sel.item.url;
+      return null;
+    },
+    [sel],
+  );
+
+  // [lc-1747] 打开可见验证窗手动过验（隐藏窗自动验证兜不住的复杂挑战）：
+  // 发起即返回；结果走现有 webrs-captcha-status（verified 后自动重搜，与自动验证同通道）。
+  // 用户关窗 = cancelled（Rust 侧判定）。防重复：loading 期间 failed 行/弹窗不渲染按钮，
+  // 且 captchaBusyRef 占住会话，「去验证」等自动流程不会再顶掉它。
+  const openManualVerify = useCallback(
+    async (rule: string) => {
+      if (captchaBusyRef.current && manualVerify?.rule === rule) return;
+      const url = manualVerifyUrlFor(rule);
+      if (!url) return;
+      captchaBusyRef.current = true;
+      setCaptcha(null);
+      setCode("");
+      setManualVerify({ rule });
+      setCaptchaMsg({ rule, status: "loading", error: "" });
+      try {
+        await invoke("webrs_captcha_visible", { ruleName: rule, url });
+        // [lc-1747] 发起瞬间的「顶掉旧会话」会先发一条 cancelled（把上面设的态清掉），
+        // flow 的 loading 事件又把 busy/captchaMsg 立回来 —— invoke 返回后会话已登记，
+        // 这里统一重立「手动」标记，保证 loading 行文案正确（不依赖事件到达顺序）。
+        captchaBusyRef.current = true;
+        setManualVerify({ rule });
+        setCaptchaMsg({ rule, status: "loading", error: "" });
+      } catch (e) {
+        captchaBusyRef.current = false;
+        setManualVerify(null);
+        setCaptchaMsg({ rule, status: "failed", error: String(e) });
+      }
+    },
+    [manualVerify, manualVerifyUrlFor],
+  );
 
   const doSearch = useCallback(
     async (k: string) => {
@@ -203,21 +270,35 @@ export function WebrsPanel({ title }: { title: string }) {
     listen<{ rule: string; status: string; error: string }>("webrs-captcha-status", (e) => {
       if (!alive) return;
       const p = e.payload;
+      if (p.status === "loading") {
+        // [lc-1747] 验证 flow 的起步信号（隐藏自动流 / 可见手动流都会发）：
+        // 重立 busy + loading 态 —— 紧前面「被取代」旧会话的 cancelled 可能刚清过。
+        // 手动流的专属文案由 openManualVerify 在 invoke 返回后统一重立（不依赖事件顺序）。
+        captchaBusyRef.current = true;
+        setCaptcha(null);
+        setCaptchaMsg({ rule: p.rule, status: "loading", error: "" });
+        return;
+      }
       if (p.status === "verified") {
         captchaBusyRef.current = false;
         setCaptcha(null);
+        setManualVerify(null);
         setCaptchaMsg({ rule: p.rule, status: "verified", error: "" });
         // 自动重试：cookie 已入 jar，重搜这次就能拿到结果
         doSearchRef.current(kwRef.current);
       } else if (p.status === "failed") {
         captchaBusyRef.current = false;
         setCaptcha(null);
+        setManualVerify(null);
         setCaptchaMsg({ rule: p.rule, status: "failed", error: p.error });
       } else if (p.status === "cancelled") {
         // [lc-1624] 取消 / 被新会话顶掉**不是验证失败**：清态即可，不弹「验证失败」。
         // 后端已按原因分型（用户取消 / 被取代），这里一律静默收尾，避免误报。
+        // [lc-1747] 若紧随其后的是手动验证流程的 loading 信号（Rust 先取消旧会话再起
+        // 新流程、事件有序），下一步会把 loading / manualVerify 重新立起来。
         captchaBusyRef.current = false;
         setCaptcha(null);
+        setManualVerify(null);
         setCaptchaMsg(null);
       }
     }).then((u) => {
@@ -228,6 +309,51 @@ export function WebrsPanel({ title }: { title: string }) {
       alive = false;
       un1?.();
       un2?.();
+    };
+  }, []);
+
+  // [lc-1747] 嗅探进度（webrs-sniff-status）：解析直链的 WebView 段进度，融进现有的
+  // subBusy 行内提示（webrs-note），不另起新弹层。按 rule/url 匹配 sniffTask 登记
+  // 的当前任务，无关事件忽略；任何状态都顺手记 lastSniffUrl（手动验证兜底取 URL 用）。
+  useEffect(() => {
+    let alive = true;
+    let un: (() => void) | undefined;
+    listen<SniffStatus>("webrs-sniff-status", (e) => {
+      if (!alive) return;
+      const p = e.payload;
+      if (p.rule && /^https?:\/\//i.test(p.url)) lastSniffUrl.current[p.rule] = p.url;
+      const task = sniffTask.current;
+      // Rust 侧 join 过 base_url：事件 url 是绝对地址，任务登记的条目 url 可能是相对路径 → 前后缀兜底
+      const matched =
+        !!task &&
+        task.rule === p.rule &&
+        (task.url === p.url || p.url.endsWith(task.url) || task.url.endsWith(p.url));
+      if (!matched) return;
+      switch (p.status) {
+        case "loading":
+          setSubBusy("正在解析直链…");
+          break;
+        case "hooked":
+          setSubBusy("已挂钩，等待命中…");
+          break;
+        case "hit":
+          // 命中即收尾：后续提示由 playEp 接管（「正在拉起独立播放器…」），迟到的同任务事件忽略
+          sniffTask.current = null;
+          break;
+        case "timeout":
+          setSubBusy("解析超时，可稍后重试");
+          break;
+        case "failed":
+          setSubBusy(p.message || "解析失败");
+          break;
+      }
+    }).then((u) => {
+      if (alive) un = u;
+      else u();
+    });
+    return () => {
+      alive = false;
+      un?.();
     };
   }, []);
 
@@ -277,14 +403,19 @@ export function WebrsPanel({ title }: { title: string }) {
   };
 
   const playEp = async (ep: WebrsSearchItem) => {
-    if (!sel) return;
-    setSubBusy("解析视频直链…（页面藏得深时会拉起嗅探，最多等 40s）");
+    if (!sel || resolving) return;
+    // [lc-1747] 登记当前解析任务：嗅探进度事件（webrs-sniff-status）按 rule/url 匹配它，
+    // 只把本次解析的进度写进 subBusy；hit / 出错 / 播放启动后任务即结束。
+    sniffTask.current = { rule: sel.rule, url: ep.url };
+    setResolving(true);
     setErr("");
+    setSubBusy("解析视频直链…（页面藏得深时拉起嗅探，最多约 20s）");
     try {
       const r = await invoke<{ url: string; referer: string; ua: string; via: string }>(
         "webrs_resolve",
         { ruleName: sel.rule, url: ep.url },
       );
+      sniffTask.current = null;
       setSubBusy("正在拉起独立播放器…");
       // [lc-1615] 附观影记录元数据（番剧名/集名/源名/集页 URL）—— Rust 侧落本地历史用，不影响播放
       await invoke("webrs_play", {
@@ -300,6 +431,9 @@ export function WebrsPanel({ title }: { title: string }) {
     } catch (e) {
       setErr(String(e));
       setSubBusy("");
+    } finally {
+      sniffTask.current = null;
+      setResolving(false);
     }
   };
 
@@ -462,7 +596,8 @@ export function WebrsPanel({ title }: { title: string }) {
   const statusMeta = (g: WebrsGroup): { icon: string; label: string; cls: string } => {
     switch (g.status) {
       case "ok":
-        return { icon: "✅", label: `可直接播放 · ${g.items.length} 个结果`, cls: "ok" };
+        // [lc-1747] via:"harvest" = 验证通过后收割页缓存的结果（本次没发网络请求）
+        return { icon: "✅", label: `可直接播放 · ${g.items.length} 个结果${g.via === "harvest" ? "（验证缓存）" : ""}`, cls: "ok" };
       case "captcha":
         return { icon: "🔒", label: "需要验证", cls: "captcha" };
       case "empty":
@@ -500,18 +635,35 @@ export function WebrsPanel({ title }: { title: string }) {
         </button>
       </div>
       {busy && <div className="webrs-note">正在搜索 {enabledNames.length} 个已勾选源…</div>}
-      {err && <div className="webrs-err">{err}</div>}
+      {err && (
+        <div className="webrs-err">
+          {err}
+          {/* [lc-1747] 选集视图里解析/嗅探失败 → 手动验证兜底入口（同站点挑战过一次全站生效） */}
+          {sel && (
+            <ManualVerifyButton rule={sel.rule} urlFor={manualVerifyUrlFor} onOpen={openManualVerify} />
+          )}
+        </div>
+      )}
       {srcHint && !err && <div className="webrs-hint">{srcHint}</div>}
       {subBusy && <div className="webrs-note">{subBusy}</div>}
       {/* [lc-1606] 反爬验证状态 */}
       {captchaMsg?.status === "loading" && (
-        <div className="webrs-note">人机验证 · {captchaMsg.rule} —— 正在等待网站响应…</div>
+        <div className="webrs-note">
+          {manualVerify?.rule === captchaMsg.rule
+            ? `已打开验证窗口 · ${captchaMsg.rule} —— 请在弹出的网页里手动完成验证，过完自动继续…`
+            : `人机验证 · ${captchaMsg.rule} —— 正在等待网站响应…`}
+        </div>
       )}
       {captchaMsg?.status === "verified" && (
         <div className="webrs-captcha-ok">✓ 验证通过 · {captchaMsg.rule} —— 正在重新检索…</div>
       )}
       {captchaMsg?.status === "failed" && (
-        <div className="webrs-err">人机验证失败 · {captchaMsg.rule}：{captchaMsg.error}</div>
+        <div className="webrs-err webrs-err-acts">
+          <span>
+            人机验证失败 · {captchaMsg.rule}：{captchaMsg.error}
+          </span>
+          <ManualVerifyButton rule={captchaMsg.rule} urlFor={manualVerifyUrlFor} onOpen={openManualVerify} />
+        </div>
       )}
 
       {/* 二级视图：选集（返回时播退出动画；roads 在动画期间保留，内容不闪空） */}
@@ -539,7 +691,7 @@ export function WebrsPanel({ title }: { title: string }) {
           )}
           <div className="webrs-eps">
             {(roads[roadIdx]?.episodes ?? []).map((ep) => (
-              <button key={ep.url} disabled={subBusy.startsWith("解析")} onClick={() => playEp(ep)} title={ep.url}>
+              <button key={ep.url} disabled={resolving} onClick={() => playEp(ep)} title={ep.url}>
                 {ep.name}
               </button>
             ))}
@@ -799,6 +951,16 @@ export function WebrsPanel({ title }: { title: string }) {
                   <button className="webrs-captcha-cancel" onClick={cancelCaptcha}>
                     取消
                   </button>
+                  {/* [lc-1747] 看不清图/自动流程兜不住 → 手动验证兜底（有可用页面地址才显示） */}
+                  {manualVerifyUrlFor(captcha.rule) && (
+                    <button
+                      className="webrs-captcha-cancel webrs-captcha-manual"
+                      onClick={() => openManualVerify(captcha.rule)}
+                      title="在可见窗口打开该源页面，手动完成网站验证"
+                    >
+                      打开网页手动验证
+                    </button>
+                  )}
                   <button className="webrs-go" disabled={!code.trim()} onClick={submitCaptcha}>
                     验证
                   </button>
@@ -809,6 +971,31 @@ export function WebrsPanel({ title }: { title: string }) {
           document.body,
         )}
     </div>
+  );
+}
+
+/** [lc-1747] 「打开网页手动验证」入口：可见窗手动过验（webrs_captcha_visible）。
+ *  自动验证（隐藏窗）失败 / 嗅探失败（页面可能需验证）时出现在错误态区域。
+ *  无可用 URL（前端拿不到该源任何绝对地址）时禁用，悬浮提示原因。 */
+function ManualVerifyButton({
+  rule,
+  urlFor,
+  onOpen,
+}: {
+  rule: string;
+  urlFor: (rule: string) => string | null;
+  onOpen: (rule: string) => void;
+}) {
+  const url = urlFor(rule);
+  return (
+    <button
+      className="webrs-manual"
+      disabled={!url}
+      title={url ? `在可见窗口打开该源页面手动完成验证：${url}` : "暂无该源可用页面地址 —— 先播放/嗅探一次后再试"}
+      onClick={() => onOpen(rule)}
+    >
+      打开网页手动验证
+    </button>
   );
 }
 

@@ -121,6 +121,42 @@
   border-radius: 8px;
   padding: 6px 10px;
 }
+/* [lc-1747] 行内状态行（搜索中 / 嗅探进度 / 拉起播放器）：小号次级文本。
+   此前一直没有样式（裸 div），嗅探进度也走这里后补上，与 hint 同排不抢眼。 */
+.webrs-note {
+  font-size: 12px;
+  color: var(--text-2);
+  padding: 0 2px;
+  word-break: break-all;
+}
+/* [lc-1747] 错误行带操作（人机验证失败 + 「打开网页手动验证」兜底） */
+.webrs-err.webrs-err-acts {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+/* [lc-1747] 「打开网页手动验证」兜底按钮：同 .webrs-g-verify 规格（小号玻璃钮） */
+.webrs-manual {
+  flex: 0 0 auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--glass-btn-bg);
+  color: var(--accent);
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.webrs-manual:hover:not(:disabled) {
+  background: var(--hover-strong);
+  border-color: var(--accent);
+}
+.webrs-manual:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .webrs-list {
   display: flex;
   flex-direction: column;
@@ -675,6 +711,11 @@
 .webrs-captcha-cancel:hover {
   background: var(--hover-strong);
   border-color: var(--accent);
+}
+/* [lc-1747] 弹窗里的「打开网页手动验证」兜底：同取消钮规格，accent 字色示「这是出路」 */
+.webrs-captcha-acts .webrs-captcha-manual {
+  color: var(--accent);
+  margin-right: auto;
 }
 @keyframes webrsCapIn {
   from { opacity: 0; transform: translateY(6px) scale(0.98); }

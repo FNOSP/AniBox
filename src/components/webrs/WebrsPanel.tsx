@@ -365,22 +365,32 @@ export function WebrsPanel({ title }: { title: string }) {
   // 失败不该报到这里）。之前 subBusy 停在「已在独立播放器窗口播放…」、真失败只在
   // mpv 窗口 OSD 上一闪而过 —— 用户报的「显示加载成功拉起播放器后显示播放失败」
   // 缺的正是这条行内回显。
+  // [lc-1749] PotPlayer 是独立链路（无 mpv-end）：relay 转发失败/上游拒流时
+  // Rust 侧 emit potplayer-relay-error，同一 60s 窗口、同一行内回显兜底。
   useEffect(() => {
     let alive = true;
-    let un: (() => void) | undefined;
-    listen<{ reason?: string; error?: string }>("mpv-end", (e) => {
+    const unsubs: (() => void)[] = [];
+    const onFail = (err: string | undefined, fallback: string) => {
       if (!alive) return;
       if (Date.now() - lastPlayAt.current > 60_000) return;
       lastPlayAt.current = 0;
-      const err = e.payload?.error || e.payload?.reason || "未知错误";
-      setSubBusy(`播放器报告播放失败：${err}`);
+      setSubBusy(`播放器报告播放失败：${err || fallback}`);
+    };
+    listen<{ reason?: string; error?: string }>("mpv-end", (e) => {
+      onFail(e.payload?.error || e.payload?.reason, "未知错误");
     }).then((u) => {
-      if (alive) un = u;
+      if (alive) unsubs.push(u);
+      else u();
+    });
+    listen<{ url?: string; error?: string }>("potplayer-relay-error", (e) => {
+      onFail(e.payload?.error, "PotPlayer 转发失败");
+    }).then((u) => {
+      if (alive) unsubs.push(u);
       else u();
     });
     return () => {
       alive = false;
-      un?.();
+      unsubs.forEach((u) => u());
     };
   }, []);
 

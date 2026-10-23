@@ -8,6 +8,7 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { Check as IcoCheckL, Search as IcoSearchL, Star as IcoStarL, Trash2 as IcoTrashL, X as IcoXL } from "lucide-react";
 import { imgUrl } from "../../lib/images";
+import { backfillFnosText, writeMetadataOverride } from "../../lib/metaApply";
 
 export type MetadataPickTarget = {
   /** 覆盖键：剧/电影的飞牛 guid（集卡片请传父剧 guid） */
@@ -137,11 +138,13 @@ export function MetadataPickerModal({
     setSaving(true);
     setErr("");
     try {
-      await invoke("metadata_set_override", {
-        seriesGuid: target.seriesGuid,
-        choice: { ...chosen, updatedAt: Date.now() },
-      });
+      // [lc-1728] ① 本地覆盖先行（关键步骤）：写成功立即关闭弹窗并刷新当前视图；
+      //   失败则留在弹窗内报红（不允许静默无反应）。
+      await writeMetadataOverride(target.seriesGuid, chosen);
       onDone();
+      // [lc-1728] ② best-effort 回填飞牛（标题/简介带 *_locked，防下次刮削覆盖）：
+      //   失败只 console.warn + 轻提示，绝不影响本地已生效的覆盖。
+      void backfillFnosText(target.seriesGuid, chosen.title, chosen.overview ?? "");
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -235,7 +238,8 @@ export function MetadataPickerModal({
             </button>
           </div>
           <p className="meta-dim">
-            搜索走自建镜像（TMDB / Bangumi）。选定后仅保存在本地，不修改飞牛数据；该剧的所有剧集/选集都会使用这份元数据。
+            搜索走自建镜像（TMDB / Bangumi）。选定后先写本地覆盖（该剧/电影的所有展示立即生效），
+            再尽力把标题/简介回填飞牛（带锁定防下次刮削覆盖；回填失败不影响本地结果）。
           </p>
 
           {err && <p className="meta-err">{err}</p>}

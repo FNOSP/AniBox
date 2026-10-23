@@ -2128,7 +2128,12 @@ export function DetailView({
             className="dv2-meta-btn"
             title="元数据操作（编辑 / 手动匹配 / 解除匹配 / 刷新）"
             onClick={() =>
-              setMetaTarget({ guid: base.guid, title: title || base.title, type: isSeries ? "TV" : "Movie" })
+              setMetaTarget({
+                guid: base.guid,
+                title: title || base.title,
+                type: isSeries ? "TV" : "Movie",
+                seriesGuid: base.guid,
+              })
             }
           >
             ⋯
@@ -2163,7 +2168,7 @@ export function DetailView({
           playing={playing}
           onPlay={startPlay}
           onBack={onBack}
-          onMeta={() => setMetaTarget({ guid: base.guid, title: title || base.title, type: "Movie" })}
+          onMeta={() => setMetaTarget({ guid: base.guid, title: title || base.title, type: "Movie", seriesGuid: base.guid })}
           onOpenPerson={
             onOpenPerson
               ? (c) =>
@@ -2671,6 +2676,7 @@ export function DetailView({
                             guid: ep.guid,
                             title: `第 ${num} 集${ep.title ? `. ${ep.title}` : sub ? `. ${sub}` : ""}`,
                             type: "TV",
+                            seriesGuid: base.guid,
                             seasonNumber: ep.season_number,
                             episodeNumber: ep.episode_number ?? num,
                             isEpisode: true,
@@ -2740,6 +2746,7 @@ export function DetailView({
                             guid: ep.guid,
                             title: `第 ${num} 集${ep.title ? `. ${ep.title}` : sub ? `. ${sub}` : ""}`,
                             type: "TV",
+                            seriesGuid: base.guid,
                             seasonNumber: ep.season_number,
                             episodeNumber: ep.episode_number ?? num,
                             isEpisode: true,

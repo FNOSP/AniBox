@@ -1320,6 +1320,45 @@ a.fbx-btn {
   line-height: 1.5;
 }
 
+/* ── [lc-1728] 全局轻提示（showAppToast / AppToastHost）：复用 .side-toast 玻璃外观，
+      底部居中、无阻塞；用于「本地已生效 + 回填飞牛失败」这类 best-effort 提醒。 ── */
+.app-toast-wrap {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 26px;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+.app-toast {
+  max-width: min(520px, 86vw);
+  padding: 10px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--hover);
+  color: var(--text-strong);
+  box-shadow: var(--shadow-card);
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: center;
+  white-space: normal;
+  animation: app-toast-in 0.18s ease;
+}
+@keyframes app-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* ── 窄窗口适配（侧栏展开/收起、窄面板） ── */
 @media (max-width: 640px) {
   .fbx-card {

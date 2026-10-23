@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { Check as IcoCheckL, Link2Off as IcoUnlinkL, RefreshCw as IcoRefreshL, Search as IcoSearchL, X as IcoXL } from "lucide-react";
+import { showAppToast, writeMetadataOverride } from "../../lib/metaApply";
 
 /** 操作目标：一集、一个季、或整部剧/电影条目 */
 export type MetaTarget = {
@@ -19,6 +20,9 @@ export type MetaTarget = {
   title: string;
   /** rescrap 用的资源类型（飞牛枚举 `Movie` / `TV`） */
   type: "Movie" | "TV";
+  /** [lc-1728] 本地元数据覆盖的键（剧/电影 guid）。集/季目标必传父剧 guid；
+      缺省回落到 guid（剧/电影根条目时两者本就相同）。 */
+  seriesGuid?: string;
   /** 集目标才有：用于 rescrap 的 season/episode 号与 scrap_tv_type */
   seasonNumber?: number;
   episodeNumber?: number;
@@ -164,18 +168,39 @@ export function MetaEditModal({
     }
   }, [keyword, source, target.guid]);
 
-  // 应用匹配：把选中的搜索结果交给 rescrap，触发飞牛重新刮削。
-  // [lc-1632] 逐字段对齐飞牛网页端实测请求：
-  //   · item_guid    = **当前被匹配条目**的 guid（不是搜索结果里的 id —— 实测即当前条目）
-  //   · source/source_id/type = 选中搜索结果**自带的字段原样透传**（实测 source="trim_id"、
-  //                    source_id=trim id 如 tt220542、type="TV"）—— 不做映射/不改名/不用自造枚举
-  //   · media_guids  = []（实测为空）
-  //   · season_number/episode_number = 对话框里填的两个值；scrap_tv_type = "SingleEpisode"
-  //   · 后三项仅集级匹配携带（Movie/整剧匹配飞牛不传，避免用 0 覆盖飞牛侧）
+  // 应用匹配。[lc-1728] 改为「本地覆盖先行」——此前只走飞牛 rescrap：NAS 侧失败/无可见
+  // 变化时整个动作就"没反应"（错误只有弹层底部一行小字）。现在：
+  //   ① 先把选中结果写进**本地元数据覆盖**（键 = 剧 guid，字段与 metadata_override 对齐：
+  //     标题/首播日期；overview/海报等命中里没有的字段留空 = 不覆盖），成功后立即关闭弹层
+  //     并让详情页带 force 重取 —— 覆盖当场可见；失败则留在弹层内报红。
+  //   ② 再 best-effort 让飞牛 rescrap 重刮（请求体仍按 [lc-1632] 实测对齐）；失败只
+  //     console.warn + 轻提示，**不影响本地已生效的结果**。
   const onApply = useCallback(
     async (hit: ScrapHit) => {
+      const seriesGuid = String(target.seriesGuid || target.guid || "").trim();
+      const hitTitle = String(hit.title ?? "").trim() || target.title;
+      const hitDate = String(hit.first_air_date ?? "").trim();
       setBusy("match");
       setErr("");
+      try {
+        // ① 本地覆盖（关键步骤，失败必须在弹层内可见）
+        await writeMetadataOverride(seriesGuid, {
+          source: String(hit.source ?? "").trim() || "trim_id",
+          id: String(hit.source_id ?? "").trim() || seriesGuid,
+          title: hitTitle,
+          date: hitDate,
+          year: hitDate.slice(0, 4),
+        });
+      } catch (e) {
+        fail(e);
+        setBusy("");
+        return;
+      }
+      setBusy("");
+      onDone(); // 详情页带 force 重取，覆盖立即生效
+      onClose(); // 匹配已应用，关闭弹层
+      // ② best-effort：飞牛按选中结果重新刮削（rescrap 请求体逐字段照 [lc-1632] 实测）。
+      //    弹层此时已卸载，这里不得再碰任何组件状态。
       try {
         const args: Record<string, unknown> = {
           itemGuid: target.guid,
@@ -190,15 +215,12 @@ export function MetaEditModal({
           args.scrapTvType = "SingleEpisode";
         }
         await invoke("scrap_rescrap", args);
-        onDone();
-        flash("已提交匹配，飞牛正在重新刮削");
       } catch (e) {
-        fail(e);
-      } finally {
-        setBusy("");
+        console.warn("[MetaEditModal] 飞牛 rescrap 回填失败（本地覆盖已生效）:", e);
+        showAppToast("本地匹配已生效；飞牛重新匹配失败（可稍后重试）");
       }
     },
-    [target, season, episode, onDone],
+    [target, season, episode, onDone, onClose],
   );
 
   const onRefresh = useCallback(async () => {
@@ -331,8 +353,9 @@ export function MetaEditModal({
               </ul>
             )}
             <p className="meta-dim">
-              匹配请求体已按飞牛网页端实测对齐（source/source_id 取自选中结果、media_guids 为空、
-              集级匹配带季/集号与 scrap_tv_type=SingleEpisode）。
+              点「用此匹配」先把选中结果写入本地覆盖（立即生效并刷新详情），再让飞牛按该结果重新刮削
+              （rescrap 请求体按飞牛网页端实测对齐：source/source_id 取自选中结果、media_guids 为空、
+              集级匹配带季/集号与 scrap_tv_type=SingleEpisode；飞牛失败不影响本地）。
             </p>
           </section>
 

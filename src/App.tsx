@@ -12,6 +12,8 @@ import { DetailView } from "./components/detail/DetailView";
 import { MetaEditModal, type MetaTarget } from "./components/detail/MetaEditModal";
 // [lc-1720] 海报卡「⋯ → 刷新元数据」改为手动获取（TMDB/BGM 镜像搜索 + 本地覆盖）
 import { MetadataPickerModal, type MetadataPickTarget } from "./components/common/MetadataPickerModal";
+// [lc-1728] 全局轻提示宿主：best-effort 回填飞牛失败等非阻塞提醒
+import { AppToastHost } from "./components/common/AppToastHost";
 import { DiscoverView } from "./components/discover/DiscoverView";
 // [lc-1615] 观影记录页（侧栏快捷操作卡入口；飞牛 play/list ∪ 本机播放历史）
 import { WatchHistoryView } from "./components/history/WatchHistoryView";
@@ -671,6 +673,8 @@ function App() {
       guid: item.guid,
       title: item.title,
       type: item.type === "Movie" ? "Movie" : "TV",
+      // [lc-1728] 本地覆盖键 = 剧 guid（海报卡条目本身就是剧/电影根，两者一致；集卡兜底用 series_guid）
+      seriesGuid: String(item.series_guid || item.guid || "").trim(),
     });
   }, []);
   // [lc-1720] 「刷新元数据」不再让飞牛重刮，而是打开手动获取弹窗：
@@ -1570,6 +1574,8 @@ function App() {
           }}
         />
       )}
+      {/* [lc-1728] 全局轻提示：本地覆盖已生效 / 回填飞牛失败等非阻塞提醒（portal 到 body） */}
+      <AppToastHost />
       {/* [lc-1607] 首次启动的免责声明同意闸门：未同意过则弹（登录页/主界面都覆盖，portal 到 body）。
           「我已阅读并同意」→ 置位 localStorage 并关闭；「不同意并退出」→ 走仓库既有退出链路
           （resolve_close("exit") = app.exit(0)，退场清理必然执行）。 */}

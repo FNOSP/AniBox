@@ -229,10 +229,11 @@
   - 桌面端与网页端共用同一套前端增强逻辑：桌面版先行开发，确认后移植到 `fpk/src/preload`。
   - 详见 [`fpk/README.md`](fpk/README.md)。
 
-### 在线资源（不提供）
+### 在线资源（第三方规则源）
 
-> **本软件不提供在线资源观看 / 播放功能**，在线资源相关能力不在发布范围。
-> 请使用你自己的 NAS、本地文件或合法来源观看内容。详见下方「版权与合规」一节。
+- **<img src="https://api.iconify.design/mdi/movie-search-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 规则源检索与播放** — 无飞牛选集数据的条目，右栏自动换成「在线资源」面板：按标题多源并行搜索 → 按源分组（可直接播放 / 需要验证 / 无结果 / 检索失败）→ 线路与选集 → 解析直链 → 独立 mpv 播放：
+  - 规则采用社区 [Predidit/KazumiRules](https://github.com/Predidit/KazumiRules) 目录格式，面板内可检查更新、逐条安装 / 全部更新；直链解析带嗅探进度提示，反爬验证支持图片验证码与「打开网页手动验证」兜底。
+  - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 内容**全部由用户自行安装的第三方规则（站点）提供**：本软件不内置、不运营任何内容站点，也不提供、不存储、不分发任何影视内容；请遵守当地法律，详见下方「版权与合规」。
 
 ---
 
@@ -327,7 +328,7 @@ AniBox/                            # 仓库目录名（产品名 AniBox）
 │   │   ├── library/               # 媒体库网格与分类
 │   │   ├── detail/                # 详情页、标签页、评分、元数据编辑、剧照灯箱
 │   │   ├── history/               # 观影记录与年度报告
-│   │   ├── webrs/                 # 在线资源面板（不在发布范围）
+│   │   ├── webrs/                 # 在线资源面板（规则源搜索 / 选集 / 嗅探播放）
 │   │   ├── feedback/              # 反馈工单与日志诊断
 │   │   ├── settings/              # 设置面板
 │   │   ├── search/                # 顶栏全局聚合搜索（Ctrl K，分页 / 键盘导航）
@@ -349,7 +350,7 @@ AniBox/                            # 仓库目录名（产品名 AniBox）
 │   │   ├── player.rs              # mpv / PotPlayer 统一启动 + 本地 relay
 │   │   ├── proxy.rs               # Go 代理守护（22346）
 │   │   ├── danmaku_shim.rs        # 弹幕 shim（22347）
-│   │   ├── webrs.rs               # 在线资源规则模块（不在发布范围）
+│   │   ├── webrs.rs               # 在线资源规则模块（Kazumi 规则兼容）
 │   │   ├── bgm.rs / bgm_account.rs# Bangumi 数据与账号同步
 │   │   ├── tmdb.rs / anilist.rs   # TMDB 元数据 / AniList 放送时刻
 │   │   ├── mirror_sign.rs         # 镜像准入签名（BGM / TMDB 共用）
@@ -594,7 +595,7 @@ A：先在设置中打开「手柄」总开关；窗口失焦时 WebView 会暂�
 A：PotPlayer 模式不支持内置弹幕、uosc 底栏与精确的暂停 / 跳转 / 倍速控制；需要 Referer / UA 的 HLS 源依赖本地 relay，仍可能受目标站限制。
 
 **Q：AniBox 提供在线资源观看吗？**
-A：**不提供。** 在线资源相关能力不在发布范围，请使用你自己的 NAS、本地文件或合法来源。
+A：**提供检索与播放能力，不提供内容。** 在线内容由你自行安装的第三方规则（[Predidit/KazumiRules](https://github.com/Predidit/KazumiRules) 社区目录格式）接入，本软件不内置、不运营任何内容站点；请遵守当地法律与内容平台条款。
 
 **Q：配置和数据存在哪里？**
 A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json` 等；该目录可能含密码 / token，请勿分享。
@@ -607,7 +608,7 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 2. **PotPlayer 模式**：不支持内置弹幕、uosc 底栏与精确暂停 / 跳转 / 倍速控制；需要 Referer / UA 的 HLS 源依赖本地 relay，仍可能受目标站限制。
 3. **热补丁边界**：只能覆盖前端静态资源；Rust / 原生依赖改动必须全量更新；dev（Vite）模式下覆盖层不生效。
 4. **镜像依赖**：缺少镜像密钥时会降级（Bangumi 直连官方域、TMDB 使用用户自己的 key）；无 key 时 TMDB 相关功能可能不可用。
-5. **在线资源**：**本版本不提供在线资源观看 / 播放功能**，相关能力不在发布范围。
+5. **在线资源**：检索与播放依赖用户自行安装的第三方规则（KazumiRules 社区目录），站点可用性、直链解析成功率与反爬验证难度由对应站点决定，无法保证始终可播。
 6. **AniList**：直连官方 API，受其限流约束，仅按天缓存，失败时前端静默隐藏放送时刻。
 7. **手柄**：采用 Xbox 布局标准映射；窗口失焦时浏览器 / WebView 会暂停手柄输入，点回窗口恢复；`Y` 键「下一集」直接操作 mpv 播放列表（`playlist-next`）。
 8. **登录方式**：当前为 NAS 地址 + 用户名 / 密码；FN Connect / OAuth 远程登录尚未实现（TODO）。
@@ -640,12 +641,12 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 - 分发时应保留「数据与部分内容来自 Bangumi 番组计划」的署名，并遵守其 API 使用条款。
 - AniList 数据来自 [AniList](https://anilist.co/) 官方 GraphQL API，遵守其非商业与限流条款。
 
-### 在线资源（不提供）
+### 在线资源（第三方规则）
 
-- **本软件不提供在线资源观看 / 播放功能**，在线资源相关能力不在发布范围。
-- 本仓库不内置、不分发、不托管任何影视内容，也不提供第三方站点的访问入口。
+- 本软件提供在线资源的**检索与播放能力**：内容全部由用户自行安装的第三方规则（[Predidit/KazumiRules](https://github.com/Predidit/KazumiRules) 社区目录格式）所接入的第三方网站提供。
+- 本软件不内置、不运营、不托管任何内容站点，不提供、不存储、不分发任何影视内容。
 - 任何第三方站点的内容、可用性与合法性均由该站点负责。
-- 请仅通过你自己的 NAS、本地文件或合法来源观看内容，并遵守当地法律与内容平台条款。
+- 请通过合法来源观看内容，并遵守当地法律与内容平台条款。
 
 ### 弹幕数据（弹弹play）
 
@@ -663,7 +664,7 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 
 ### 内容与版权边界
 
-- AniBox **不提供在线资源观看 / 播放功能**，也不存储、不分发任何影视内容；内容版权归原站 / 权利人所有。
+- AniBox 提供在线资源的检索与播放能力，但本身不存储、不分发任何影视内容；在线内容由用户自行安装的第三方规则（站点）提供，内容版权归原站 / 权利人所有。
 - 媒体库内容由用户自己的 NAS 或合法来源提供。
 - 请勿使用本软件侵犯任何第三方的知识产权。
 

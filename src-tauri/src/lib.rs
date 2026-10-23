@@ -487,6 +487,10 @@ async fn get_watch_history(app: AppHandle, state: State<'_, AppState>) -> Result
     history::enrich_series(&mut items, &cfg.server, &cfg.token).await;
     // [lc-1616] 富化（拿到剧 guid）之后再按**作品**聚合：同一部剧只出一张卡。
     let mut items = history::aggregate_by_series(&items);
+    // [lc-1728] 本地手动元数据覆盖在观影记录「作品卡」上也生效（标题/海报/评分/年份）。
+    // 此前只在 item/list、item/detail 等链路应用，观影记录行永远显示飞牛原始标题 ——
+    // 用户在弹窗里选定的元数据"看起来没反应"。
+    metadata_override::apply_to_items(&app, &mut items);
     // 把用户自己的评分/评语（ratings.json）贴到作品上，前端浮层可零额外往返直接显示。
     let ratings = history::load_ratings(&app);
     for it in items.iter_mut() {

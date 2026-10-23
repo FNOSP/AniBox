@@ -259,6 +259,33 @@ pub fn apply_to_item(app: &AppHandle, item: &mut Value, series_guid: Option<&str
     apply_choice(item, choice, is_root);
 }
 
+/// [lc-1728] 对一组条目就地应用覆盖（每条自选键；整表只读一次盘）。
+/// 用于「作品聚合卡」类响应（如 get_watch_history 的观影记录：guid = 作品/剧 guid，
+/// 字段形状与 item/list 不同，走 [`series_key_of`] 自选键 + guid==key 判根）。
+pub fn apply_to_items(app: &AppHandle, items: &mut [Value]) {
+    let map = load(app);
+    if map.is_empty() {
+        return;
+    }
+    for item in items.iter_mut() {
+        apply_with_map(item, &map);
+    }
+}
+
+/// [`apply_to_items`] 的内层纯逻辑（不触盘，便于单测）：自选键命中覆盖表后按根/集应用。
+fn apply_with_map(item: &mut Value, map: &HashMap<String, MetadataChoice>) {
+    let Some(key) = series_key_of(item) else {
+        return;
+    };
+    let Some(choice) = map.get(&key) else {
+        return;
+    };
+    let guid = str_of(item, &["guid"]);
+    let typ = str_of(item, &["type", "mediaType", "media_type"]).to_ascii_lowercase();
+    let is_root = guid == key || typ == "tv" || typ == "movie" || typ == "film";
+    apply_choice(item, choice, is_root);
+}
+
 /// 对一组条目应用覆盖（get_episodes 的集列表）。`series_guid` 为剧 guid。
 pub fn apply_to_list(app: &AppHandle, list: &mut Vec<Value>, series_guid: &str) {
     let map = load(app);
@@ -556,6 +583,25 @@ mod tests {
     fn series_key_uses_tv_guid() {
         let it = json!({ "guid": "tv1", "type": "TV" });
         assert_eq!(series_key_of(&it).as_deref(), Some("tv1"));
+    }
+
+    /// [lc-1728] 观影记录「作品聚合卡」形状：guid = 作品/剧 guid、无 type 字段 ——
+    /// apply_to_items 的内层逻辑应能按 guid 命中并按根条目覆盖标题/海报，未命中的条目不动。
+    #[test]
+    fn apply_with_map_hits_aggregated_work_card() {
+        let mut items = vec![
+            json!({ "guid": "tv1", "title": "旧标题", "poster": "/old.jpg" }),
+            json!({ "guid": "other", "title": "无关条目" }),
+        ];
+        let mut map = HashMap::new();
+        map.insert("tv1".to_string(), choice());
+        for it in items.iter_mut() {
+            apply_with_map(it, &map);
+        }
+        assert_eq!(items[0]["title"], "新标题");
+        assert_eq!(items[0]["tv_title"], "新标题");
+        assert!(items[0]["poster"].as_str().unwrap().contains("/__tmdb/"));
+        assert_eq!(items[1]["title"], "无关条目", "未命中的条目不得被改写");
     }
 
     #[test]

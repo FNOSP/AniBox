@@ -133,7 +133,9 @@ pub async fn detect_fn_os_port(raw: &str) -> Option<u16> {
 }
 
 pub struct FnClient {
-    http: reqwest::Client,
+    /// [nas-subtitle] pub(crate)：字幕下载（/subtitle/dl 返回二进制）要复用同一套
+    /// 客户端（默认头 x-trim-client / 超时 / 自签证书放行），call() 只回 JSON 不够用。
+    pub(crate) http: reqwest::Client,
 }
 
 /// 服务器地址归一化：宽容处理用户输入（思路对齐主仓库 auth.ts）——

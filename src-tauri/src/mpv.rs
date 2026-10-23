@@ -297,12 +297,18 @@ impl MpvSession {
             let app2 = app.clone();
             let pending2 = pending.clone();
             let fs_expect2 = fs_expect.clone();
-            // [lc-101] start-file → file-loaded 的耗时（"拉取半天"到底花在哪一步，有数可查）
-            let load_started2: Arc<Mutex<Option<std::time::Instant>>> = Arc::new(Mutex::new(None));
-            // [title] 逐集标题回填状态机（整季 M3U 专用，见下方 start-file/file-loaded 分支）：
-            //   playlist-pos → playlist/<pos>/title → set force-media-title
-            // 两个 request_id 记在这里，回包在同一个读线程里消化，不占用 pending 表。
-            let next_id2 = next_id.clone();
+        // [lc-101] start-file → file-loaded 的耗时（"拉取半天"到底花在哪一步，有数可查）
+        let load_started2: Arc<Mutex<Option<std::time::Instant>>> = Arc::new(Mutex::new(None));
+        // [title] 逐集标题回填状态机（整季 M3U 专用，见下方 start-file/file-loaded 分支）：
+        //   playlist-pos → playlist/<pos>/title → set force-media-title
+        // 两个 request_id 记在这里，回包在同一个读线程里消化，不占用 pending 表。
+        let next_id2 = next_id.clone();
+        // [nas-subtitle] 当前集标题槽：标题状态机写回 force-media-title 的同一个值。
+        // 字幕自动挂载任务按重试节奏重读（path 事件常先于标题回填到达）。
+        let title_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let title_slot2 = title_slot.clone();
+        // [nas-subtitle] 挂载任务的 IPC 写端（往命名管道写一行 JSON，fire-and-forget）。
+        let tx_subtitle = Arc::clone(&tx);
             std::thread::spawn(move || {
                 let first_event = std::sync::atomic::AtomicBool::new(true);
                 let mut pos_req: Option<u64> = None;
@@ -356,6 +362,8 @@ impl MpvSession {
                                     let _ = f.write_all(line.as_bytes());
                                     let _ = f.flush();
                                 }
+                                // [nas-subtitle] 同步标题槽：字幕自动挂载按此做剧集防错配匹配。
+                                *title_slot2.lock().unwrap() = Some(t.to_string());
                             }
                             continue;
                         }
@@ -502,6 +510,27 @@ impl MpvSession {
                                     let _ = f.write_all(line.as_bytes());
                                     let _ = f.flush();
                                 }
+                            }
+
+                            // [nas-subtitle] NAS 外挂字幕自动挂载：path 变化（起播 / 整季自动切集）
+                            // → 后台「stream/list → 选最佳外挂 → 下载 → sub-add select」。
+                            // 库内媒体对 mpv 是代理 URL，sub-auto 永远扫不到 NAS 同目录字幕，
+                            // 这条应用侧链路是对齐主仓库 mountSubtitlesWithRetry 的唯一自动挂载。
+                            // 弹幕走副字幕轨（secondary-sid），sub-add select 只动主字幕轨，互不冲突；
+                            // 非代理 URL（在线源/直播）在 parse_proxy_url 里就地返回，不触发。
+                            if let Some(url_now) = v.get("data").and_then(|x| x.as_str()) {
+                                let tx_sub = Arc::clone(&tx_subtitle);
+                                let writer: crate::nas_subtitle::IpcWriter = Arc::new(move |line: &str| {
+                                    let mut g = tx_sub.lock().unwrap();
+                                    if let Some(f) = g.as_mut() {
+                                        let _ = f.write_all(line.as_bytes());
+                                        let _ = f.flush();
+                                    }
+                                });
+                                let slot = Arc::clone(&title_slot);
+                                let title_get: crate::nas_subtitle::TitleGetter =
+                                    Arc::new(move || slot.lock().unwrap().clone().unwrap_or_default());
+                                crate::nas_subtitle::spawn_mount(url_now, title_get, writer);
                             }
                         }
                         4 => {

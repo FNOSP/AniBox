@@ -36,6 +36,7 @@ mod migrate;
 mod metadata_override;
 mod mirror_sign;
 mod mpv;
+mod nas_subtitle;
 // [speed] 按剧集（item guid）持久化 mpv 播放速度（app_data_dir/playback-speed.json）
 mod playback_speed;
 // [player] 统一播放启动封装（mpv / 本机 PotPlayer）+ 本地 HTTP relay

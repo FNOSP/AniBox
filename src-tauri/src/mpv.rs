@@ -92,6 +92,17 @@ fn pipe_path(name: &str) -> String {
 ///   ① 新建 mpv 会话时 → `http_header_args()` 拼成命令行参数；
 ///   ② 复用 mpv 会话时 → IPC `set referrer/user-agent/http-header-fields`。
 /// 两处必须用**同一套**头，否则「首次播」（新建）与「连续播下一集」（复用）表现不一致。
+///
+/// [lc-1748] `http-header-fields` 的两条硬约束（本机 mpv 实测，探针见 tests/artifacts）：
+///   ① **字段间分隔符必须是 `,`（不带空格）**——`, ` 会让第二个字段带前导空格，
+///     ffmpeg 拼请求头时把它按 obs-fold 折进上一个头的值里：实测 `Referer` 变成
+///     `"https://x/\r\n User-Agent: …"`，防盗链 CDN 看到**畸形 Referer** 直接
+///     403/404（这是「同源 Kazumi 能播、AniBox 显示 404 / 播放失败」的主根因）；
+///   ② **User-Agent 绝不能进 http-header-fields**——UA 值自带逗号
+///     （`KHTML, like Gecko`），mpv 的 string-list 按逗号切分会把 UA 撕成碎字段。
+///     UA 由 `--user-agent` / IPC `user-agent` 单独下发即可（实测 ffmpeg(hls) 的
+///     **分片**请求同样带上，不需要在 header-fields 里重复）。
+/// 值里含逗号的头一律不进 http-header-fields（进去了必然被撕碎，宁缺毋滥）。
 pub fn normalize_http_headers(
     referrer: Option<&str>,
     ua: Option<&str>,
@@ -104,16 +115,16 @@ pub fn normalize_http_headers(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
-    // [lc-1506] 再补一份 http-header-fields：ffmpeg(hls) 的分段请求走它
+    // [lc-1506][lc-1748] http-header-fields：ffmpeg(hls) 的分段请求走它
     // （mpv 的 `referrer` 属性只覆盖部分加载路径，缺了它分段会被源站 403）。
+    // 只装「值里没有逗号」的 Referer（见上方两条硬约束），分隔符用 `,`。
     let mut hf: Vec<String> = Vec::new();
     if let Some(r) = &r {
-        hf.push(format!("Referer: {r}"));
+        if !r.contains(',') {
+            hf.push(format!("Referer: {r}"));
+        }
     }
-    if let Some(u) = &u {
-        hf.push(format!("User-Agent: {u}"));
-    }
-    let hf = if hf.is_empty() { None } else { Some(hf.join(", ")) };
+    let hf = if hf.is_empty() { None } else { Some(hf.join(",")) };
     (r, u, hf)
 }
 
@@ -728,5 +739,52 @@ impl MpvSession {
             }
         }
         *self.tx.lock().unwrap() = None;
+    }
+}
+
+// ───────────────────────── 单测（纯逻辑，不触网） ─────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// [lc-1748] http-header-fields 的 obs-fold 硬约束：字段分隔符必须是 `,` 而非 `, `。
+    /// 实测（本机 mpv + 本地 HTTP 探针）：`, ` 分隔时 ffmpeg 把带前导空格的第二个字段
+    /// 折进 Referer 的值（`"https://x/\r\n User-Agent: …"`）→ 防盗链 CDN 403/404。
+    #[test]
+    fn header_fields_join_without_space() {
+        let (_, _, hf) = normalize_http_headers(Some("https://ref.test/"), Some("UA"));
+        assert_eq!(hf.as_deref(), Some("Referer: https://ref.test/"));
+        // 多字段也不允许出现 ", "（当前只有 Referer 一种，此处防回归写死）
+        assert!(!hf.unwrap().contains(", "), "分隔符不得带空格（obs-fold 会折坏上一个头）");
+    }
+
+    /// [lc-1748] UA 不进 http-header-fields：UA 值自带逗号（KHTML, like Gecko），
+    /// mpv 的 string-list 按逗号切分会把 UA 撕碎 —— 只允许 --user-agent / IPC user-agent 下发。
+    #[test]
+    fn user_agent_never_rides_header_fields() {
+        let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+        let args = http_header_args(Some("https://ref.test/"), Some(ua));
+        // 命令行形态：referrer/user-agent 各自一个参数；header-fields 只含 Referer
+        assert!(args.contains(&format!("--referrer=https://ref.test/")));
+        assert!(args.contains(&format!("--user-agent={ua}")));
+        let hf = args.iter().find(|a| a.starts_with("--http-header-fields=")).unwrap();
+        assert_eq!(hf, "--http-header-fields=Referer: https://ref.test/");
+        assert!(!hf.contains("Mozilla"), "UA 值（含逗号）绝不能进 http-header-fields");
+    }
+
+    /// [lc-1748] 值里含逗号的 Referer 不进 http-header-fields（进去必被撕碎，宁缺毋滥；
+    /// mpv 侧仍带 --referrer，主流路径不受影响）。
+    #[test]
+    fn comma_in_referer_drops_header_fields_entry() {
+        let (_, _, hf) = normalize_http_headers(Some("https://a.test/?x=1,y=2"), Some("UA"));
+        assert!(hf.is_none(), "含逗号的值进 list 会被切碎，应整条丢弃");
+    }
+
+    /// 空头：什么参数都不出。
+    #[test]
+    fn empty_headers_produce_no_args() {
+        assert!(http_header_args(None, None).is_empty());
+        assert!(http_header_args(Some("  "), Some("")).is_empty());
     }
 }

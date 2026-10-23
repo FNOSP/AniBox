@@ -362,6 +362,20 @@ fn rule_referer(rule: &Rule) -> String {
     format!("{}/", rule.base_url.trim_end_matches('/'))
 }
 
+/// [lc-1748] **播放阶段**的 Referer：只有规则显式配置 `referer` 才下发，**不用**
+/// baseURL 兜底 —— 与 Kazumi 对齐（video_controller 的播放头只在
+/// `currentPlugin.referer.isNotEmpty` 时加 referer，未配置就一个都不发）。
+///
+/// 为什么搜索/选集（`rule_referer`）和播放（本函数）口径不同：
+/// · 规则页请求（搜索/详情/播放页 HTML）Kazumi 的 rule_engine 确实默认带
+///   `referer: baseURL/`（发页面请求讨好站点）；
+/// · 直链/CDN 请求相反 —— 防盗链 CDN 普遍「空 Referer 放行、陌生 Referer 拒绝
+///   （403/404）」，我们凭空发一个站点 Referer 反而中招。真机实测「同源
+///   Kazumi 能播、AniBox 显示 404」的差异点之一就在这。
+fn play_referer(rule: &Rule) -> String {
+    rule.referer.trim().to_string()
+}
+
 /// [lc-1624] HTTP 客户端构建**返回 Result**（原来是 `.expect("reqwest client build")`）。
 /// release 是 `panic = "abort"` —— 客户端构建一旦失败（TLS 后端/系统代理等异常），
 /// expect 就是**直接崩进程**，而这条路径在「每次点播放 / 每次搜索」上都会走到。
@@ -1988,6 +2002,9 @@ pub async fn webrs_resolve(
     let rule = find_rule(&rules, &rule_name)?.clone();
     let ua = effective_ua(&rule);
     let referer = rule_referer(&rule);
+    // [lc-1748] 回传给播放器的 Referer 用「仅显式配置」口径（play_referer），
+    // 与 Kazumi 的播放头一致；页面请求仍用 rule_referer（baseURL 兜底）。
+    let out_referer = play_referer(&rule);
     let page_url = join_url(&rule.base_url, &url).ok_or("播放页 URL 无效")?;
     // [lc-1606] useLegacyParser：该站的播放器藏在 iframe 里，外层页拿不到直链
     let legacy = rule.use_legacy_parser;
@@ -1999,7 +2016,7 @@ pub async fn webrs_resolve(
         Ok(resp) if resp.status.is_success() => {
             if let Some(hit) = extract_from_html(&resp.body, &page_url) {
                 crate::libmpv::trace(&format!("[webrs] HTTP 命中: {hit}"));
-                return Ok(json!({ "url": hit, "referer": referer, "ua": ua, "via": "http" }));
+                return Ok(json!({ "url": hit, "referer": out_referer, "ua": ua, "via": "http" }));
             }
             // [lc-1606] legacy：外层页没有直链时，取第一个 iframe[src] 再解一次
             if legacy {
@@ -2008,7 +2025,7 @@ pub async fn webrs_resolve(
                     if let Ok(r2) = fetch_text(&inner, &ua, &referer, &rule.name).await {
                         if r2.status.is_success() {
                             if let Some(hit) = extract_from_html(&r2.body, &inner) {
-                                return Ok(json!({ "url": hit, "referer": referer, "ua": ua, "via": "legacy" }));
+                                return Ok(json!({ "url": hit, "referer": out_referer, "ua": ua, "via": "legacy" }));
                             }
                         }
                     }
@@ -2035,7 +2052,7 @@ pub async fn webrs_resolve(
         }
     }
     crate::libmpv::trace(&format!("[webrs] WebView 命中: {hit}"));
-    Ok(json!({ "url": hit, "referer": referer, "ua": ua, "via": "webview" }))
+    Ok(json!({ "url": hit, "referer": out_referer, "ua": ua, "via": "webview" }))
 }
 
 /// [lc-1606] 是否为直链媒体（m3u8/mp4/flv）。
@@ -2124,8 +2141,8 @@ fn sniff_script(beacon_port: u16) -> String {
       } catch (e) {}
     });
   } catch (e) {}
-  // 网络活动计数（bump）：XHR.open / Response.text 每次调用 +1，并冒泡给主 frame。
-  // 只数这两个既有钩子，不新增 fetch 猴补面（hls.js 走 XHR；漏数只让早退更保守）。
+  // 网络活动计数（bump）：XHR.open / fetch / Response.text 每次调用 +1，并冒泡给主 frame。
+  // [lc-1748] fetch 也计数并顺手按 URL 命中（部分播放器全走 fetch，XHR 钩子扫不到）。
   function bump() {
     try { window.__aniboxSniffNet = (window.__aniboxSniffNet || 0) + 1; } catch (e) {}
     try { if (window.top && window.top !== window) window.top.postMessage({ __aniboxSniffNetBump: 1 }, '*'); } catch (e) {}
@@ -2201,6 +2218,37 @@ fn sniff_script(beacon_port: u16) -> String {
       };
     }
   } catch (e) {}
+  // [lc-1748] fetch 本体也挂：调用时按 URL 命中（对齐 XHR.open 的做法）。
+  // 只hook 主 frame 的 window.fetch；跨域 iframe 由 initialization_script 各自注入。
+  try {
+    if (window.fetch) {
+      var off_ = window.fetch;
+      window.fetch = function (input, init) {
+        try {
+          var fu = typeof input === 'string' ? input : (input && input.url) || '';
+          bump();
+          deliver(fu);
+        } catch (e) {}
+        return off_.apply(this, arguments);
+      };
+    }
+  } catch (e) {}
+  // [lc-1748] 静音隐藏窗：嗅探窗继承了主窗口的 --autoplay-policy=no-user-gesture-required
+  //（lc-1613 建窗参数对齐是红线，动不得），页面播放器会**自动开播出声** —— 用户听到
+  // 「有声音但播放器拉不起来」（嗅探没截到直链时 mpv 根本没起）。对齐 Kazumi 的
+  // mediaPlaybackRequiresUserGesture:true 思路：JS 侧把所有媒体元素静音 + 暂停。
+  // 静音/暂停不影响网络钩子（清单请求在播放器初始化时就已发出，deliver 照常命中）。
+  function quietMedia() {
+    try {
+      var me = document.querySelectorAll('video,audio');
+      for (var q = 0; q < me.length; q++) {
+        try {
+          me[q].muted = true;
+          if (!me[q].paused) me[q].pause();
+        } catch (e) {}
+      }
+    } catch (e) {}
+  }
   // video/source 标签扫描 + 轮询兜底（Kazumi 的 timer scan 同款）
   function scan() {
     if (done) return;
@@ -2230,8 +2278,10 @@ fn sniff_script(beacon_port: u16) -> String {
       }
     } catch (e) {}
   }
+  quietMedia();
   scan();
   var iv = setInterval(function () {
+    quietMedia();
     if (done) { clearInterval(iv); return; }
     scan();
   }, 900);
@@ -3350,6 +3400,11 @@ pub async fn webrs_play(
     ));
 
     // 直链预检（带 Referer/UA；只看状态码，不读 body）
+    // [lc-1748] 预检降级为「留痕不拦截」：reqwest 的指纹（TLS / 头序）与 mpv/ffmpeg
+    // 完全不同，部分 CDN/WAF 对非浏览器指纹直接 403/404 —— 真机能播的直链被预检
+    // 误杀（用户实测「同源 Kazumi 能播、AniBox 显示 404」的主路径之一；Kazumi
+    // 从不做预检，直链直接交 media_kit）。真正的失败由 mpv 的 end-file(error)
+    // 报告（mpv.rs 会 emit mpv-end + OSD），前端已有兜底显示，不丢诊断。
     {
         let client = http()?;
         let mut req = client
@@ -3360,19 +3415,21 @@ pub async fn webrs_play(
                 req = req.header("referer", r);
             }
         }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| {
-                crate::libmpv::trace(&format!("[webrs] play: 直链预检请求失败: {e}"));
-                format!("直链不可达: {e}")
-            })?;
-        let status = resp.status();
-        if !(status.is_success() || status == reqwest::StatusCode::PARTIAL_CONTENT) {
-            crate::libmpv::trace(&format!("[webrs] play: 直链预检返回 {status}（源可能失效）"));
-            return Err(format!("直链返回 {status}，源可能失效"));
+        match req.send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.is_success() || status == reqwest::StatusCode::PARTIAL_CONTENT {
+                    crate::libmpv::trace(&format!("[webrs] 直链预检 ok: {status} {url}"));
+                } else {
+                    crate::libmpv::trace(&format!(
+                        "[webrs] play: 直链预检返回 {status}（reqwest 指纹可能被 CDN 拒，不拦截，交给 mpv 实播验证）"
+                    ));
+                }
+            }
+            Err(e) => {
+                crate::libmpv::trace(&format!("[webrs] play: 直链预检请求失败: {e}（不拦截，交给 mpv）"));
+            }
         }
-        crate::libmpv::trace(&format!("[webrs] 直链预检 ok: {status} {url}"));
     }
 
     // [player] 统一入口：
@@ -3903,6 +3960,7 @@ mod tests {
 
     /// 嗅探脚本无参化哨兵：不含按任务替换的 LEGACY 开关（单例 initialization_script
     /// 一次注入的前提），iframe 改走运行期状态由 Rust 侧消费。
+    /// [lc-1748] 同时钉死两个新增钩子：fetch 本体命中 + 隐藏窗静音（autoplay 出声）。
     #[test]
     fn sniff_script_is_task_agnostic() {
         let s = sniff_script(22348);
@@ -3911,5 +3969,34 @@ mod tests {
         assert!(s.contains("__aniboxSniffIframe"), "应记录 iframe URL 供 legacy 任务消费");
         assert!(s.contains("__aniboxSniffNet"), "应维护网络活动计数供早退判定");
         assert!(s.contains("22348"), "beacon 端口应注入");
+        // [lc-1748] fetch 钩子：调用时按 URL 命中（对齐 XHR.open）
+        assert!(s.contains("window.fetch = function"), "fetch 本体应挂钩（部分播放器全走 fetch）");
+        // [lc-1748] 静音：隐藏窗 autoplay 出声 = 用户听到的「有声音但播放器拉不起」
+        assert!(s.contains("function quietMedia"), "应有媒体静音函数");
+        assert!(s.contains("me[q].muted = true"), "静音应写 muted");
+        assert!(s.contains("me[q].pause()"), "静音应暂停在播媒体");
+    }
+
+    /// [lc-1748] 播放阶段 Referer 口径：只有规则**显式配置** referer 才下发，
+    /// 不用 baseURL 兜底（对齐 Kazumi 播放头；防盗链 CDN 空 Referer 放行、
+    /// 陌生 Referer 拒绝）。
+    #[test]
+    fn play_referer_only_when_rule_configured() {
+        let mut rule = dalvdm_like_rule();
+        // 未配置：空（哪怕 baseURL 存在）
+        rule.referer = String::new();
+        assert_eq!(play_referer(&rule), "");
+        // 显式配置：原样下发（trim）
+        rule.referer = " https://m.ezdmw.org/ ".into();
+        assert_eq!(play_referer(&rule), "https://m.ezdmw.org/");
+    }
+
+    /// 页面请求 Referer（rule_referer）与播放 Referer（play_referer）口径分家：
+    /// 前者 baseURL 兜底（对齐 Kazumi rule_engine 的页面请求），后者不兜底。
+    #[test]
+    fn rule_referer_defaults_but_play_referer_does_not() {
+        let rule = dalvdm_like_rule(); // baseURL=https://www.sbdl.cc/，referer 未配
+        assert_eq!(rule_referer(&rule), "https://www.sbdl.cc/");
+        assert_eq!(play_referer(&rule), "");
     }
 }

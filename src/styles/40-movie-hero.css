@@ -32,19 +32,16 @@
   --mv-fg-body: rgba(215, 219, 228, 0.92);
   --mv-fg-dim: rgba(210, 214, 222, 0.62);
   --mv-divider: rgba(255, 255, 255, 0.28);
-  --mv-glass-bg: rgba(16, 18, 26, 0.6);
-  --mv-glass-border: rgba(255, 255, 255, 0.09);
 }
-/* 头图偏亮 → 深色文字（同顶栏 data-tone="light" 的语义：背景亮，前景纯黑） */
+/* 头图偏亮 → 深色文字（同顶栏 data-tone="light" 的语义：背景亮，前景纯黑）。
+   注：信息区 .mv-glass 已改为跟随应用主题的独立底色（见下方 --mv-info-*），
+   不再受 data-tone 影响，因此这里不再定义玻璃卡颜色。 */
 .mv-hero[data-tone="light"] {
   --mv-fg: #0b0d12;
   --mv-fg-2: rgba(11, 13, 18, 0.72);
   --mv-fg-body: rgba(11, 13, 18, 0.82);
   --mv-fg-dim: rgba(11, 13, 18, 0.58);
   --mv-divider: rgba(11, 13, 18, 0.22);
-  /* 玻璃简介卡跟着反色：浅色半透明底 + 深色文字，保证浅头图上的对比度 */
-  --mv-glass-bg: rgba(255, 255, 255, 0.58);
-  --mv-glass-border: rgba(11, 13, 18, 0.12);
 }
 /* 常驻基础层（backdrop → poster）：轮播剧照层叠在它上面，加载失败时自然露出，不会空白 */
 .mv-hero-bg {
@@ -278,21 +275,42 @@
   margin: -14px 0 16px;
 }
 
-/* [lc-1667] 简介卡：去掉 backdrop-filter: blur(24px)。
-   这块卡片横跨头图下半，模糊滤镜会把身后的剧照整片糊掉 —— 用户看到的"下部模糊"主要来自它。
-   改用略高的底色不透明度保证文字对比，头图在卡片周围/边缘保持清晰。 */
+/* [lc-1738] 信息区（简介 + 演职员）改为「随应用主题」的浅色/深色毛玻璃底，
+   不再依赖头图亮度自动反色 —— 浅色海报上自动反色常常判不准，白字/浅底糊在一起。
+   现在：浅色主题恒为半透明白底 + 深色文字；深色主题为半透明黑底 + 浅色文字。
+   与侧栏/面板的玻璃语言一致（--mv-info-* 变量集中定义，便于统一调整）。
+   注：模糊刻意保持克制（14px），避免 [lc-1667] 反馈过的「身后剧照被整片糊掉」。 */
 .mv-glass {
-  background: var(--mv-glass-bg);
-  border: 1px solid var(--mv-glass-border);
+  /* 浅色主题（默认） */
+  --mv-info-bg: rgb(255 255 255 / 0.55);
+  --mv-info-border: rgb(11 13 18 / 0.12);
+  --mv-info-fg: #1a1d24;
+  --mv-info-fg-2: rgba(26, 29, 36, 0.74);
+  --mv-info-divider: rgb(11 13 18 / 0.14);
+  background: var(--mv-info-bg);
+  border: 1px solid var(--mv-info-border);
   border-radius: 16px;
   padding: 24px 26px;
   max-width: 820px;
+  color: var(--mv-info-fg);
+  backdrop-filter: blur(14px) saturate(1.35);
+  -webkit-backdrop-filter: blur(14px) saturate(1.35);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
+}
+html.dark .mv-glass {
+  --mv-info-bg: rgb(0 0 0 / 0.45);
+  --mv-info-border: rgb(255 255 255 / 0.14);
+  --mv-info-fg: #eef1f6;
+  --mv-info-fg-2: rgba(230, 233, 240, 0.78);
+  --mv-info-divider: rgb(255 255 255 / 0.16);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
 }
 .mv-desc {
   margin: 0;
   font-size: 14.5px;
   line-height: 1.8;
-  color: var(--mv-fg-body);
+  /* [lc-1738] 跟随信息区底色（浅底深字 / 深底浅字），不再用头图反色变量 */
+  color: var(--mv-info-fg-2);
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
@@ -303,7 +321,7 @@
   gap: 26px;
   align-items: center;
   flex-wrap: wrap;
-  border-top: 1px solid var(--mv-glass-border);
+  border-top: 1px solid var(--mv-info-divider);
   margin-top: 18px;
   padding-top: 18px;
 }
@@ -317,19 +335,19 @@
   height: 46px;
   border-radius: 50%;
   background: #2a2f3a center/cover no-repeat;
-  border: 2px solid rgba(255, 255, 255, 0.18);
+  border: 2px solid var(--mv-info-border);
   flex: none;
 }
 .mv-cast-info h4 {
   margin: 0 0 2px;
   font-size: 13.5px;
   font-weight: 600;
-  color: var(--mv-fg);
+  color: var(--mv-info-fg);
 }
 .mv-cast-info p {
   margin: 0;
   font-size: 12px;
-  color: var(--mv-fg-dim);
+  color: var(--mv-info-fg-2);
 }
 
 /* ── 下方标签页：电影模式单列 ── */

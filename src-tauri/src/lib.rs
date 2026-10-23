@@ -2506,13 +2506,10 @@ async fn set_settings(
                 config::GAMEPAD_REPEAT_INTERVAL_MAX as i64,
             ) as u32;
     }
-    // [ui-opacity] 界面透明度：60–100（越界静默夹住，与手柄滑块同口径）
-    if let Some(v) = arg.get("uiOpacity") {
-        let n = v.as_f64().ok_or("uiOpacity 必须是数字")?;
-        cfg.ui_opacity = (n.round() as i64).clamp(
-            config::UI_OPACITY_MIN as i64,
-            config::UI_OPACITY_MAX as i64,
-        ) as u8;
+    // [ui-opacity] 界面/侧边栏透明度**锁死 85**（产品要求）：无论前端传什么，一律写 85。
+    // 前端已移除滑块；此处兜底，避免旧客户端把持久化值改回 60/100。
+    if arg.get("uiOpacity").is_some() {
+        cfg.ui_opacity = config::UI_OPACITY_LOCKED;
     }
     config::save(&app, &cfg).await?;
     *state.config.write().await = cfg.clone();

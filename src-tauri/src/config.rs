@@ -299,12 +299,11 @@ fn default_gamepad_repeat_interval() -> u32 {
     130
 }
 
-// [ui-opacity] 取值边界集中在这里：config 默认值、set_settings 的 clamp、前端滑块共用口径。
-pub const UI_OPACITY_MIN: u8 = 60;
-pub const UI_OPACITY_MAX: u8 = 100;
+// [ui-opacity] 界面/侧边栏透明度锁死 85（产品要求，滑块已移除）；不再保留可调范围。
+pub const UI_OPACITY_LOCKED: u8 = 85;
 
 fn default_ui_opacity() -> u8 {
-    85
+    UI_OPACITY_LOCKED
 }
 
 impl Default for Config {
@@ -636,8 +635,10 @@ fn for_disk(cfg: &Config) -> Config {
 }
 
 /// 磁盘 → 内存：解密 access_code（旧明文原样保留），其余字段不变。
+/// [ui-opacity] 界面透明度锁死 85：磁盘里残留的 60/100 等旧值一律规整，保证持久化一致。
 fn from_disk(mut cfg: Config) -> Config {
     cfg.access_code = decrypt_access_code(&cfg.access_code);
+    cfg.ui_opacity = UI_OPACITY_LOCKED;
     cfg
 }
 
@@ -788,8 +789,16 @@ mod tests {
         // 显式值可被解析
         let c2: Config = serde_json::from_str(r#"{"ui_opacity":75}"#).unwrap();
         assert_eq!(c2.ui_opacity, 75);
-        assert_eq!(UI_OPACITY_MIN, 60);
-        assert_eq!(UI_OPACITY_MAX, 100);
+    }
+
+    #[test]
+    fn ui_opacity_locked_to_85_on_load() {
+        // [产品要求] 磁盘里残留的旧值（60/100）在加载时一律规整为 85。
+        let c: Config = serde_json::from_str(r#"{"ui_opacity":60}"#).unwrap();
+        assert_eq!(from_disk(c).ui_opacity, UI_OPACITY_LOCKED);
+        let c: Config = serde_json::from_str(r#"{"ui_opacity":100}"#).unwrap();
+        assert_eq!(from_disk(c).ui_opacity, UI_OPACITY_LOCKED);
+        assert_eq!(UI_OPACITY_LOCKED, 85);
     }
 
     #[test]

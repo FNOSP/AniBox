@@ -12,6 +12,12 @@
 //! 3. **播放**：直链交给独立 mpv，Referer/UA 通过 mpv 的 `referrer`/`user-agent`
 //!    属性设置（HLS 分段请求会沿用）。
 //!
+//! [lc-1747] 隐藏窗架构：嗅探 / 验证共用**常驻单例窗**（懒创建、任务结束只泊车不销毁、
+//! App 退出统一清理），基建见 `webrs_webview.rs`。直链解析带 `webrs-sniff-status`
+//! 进度事件（loading/hooked/hit/timeout/failed），验证支持可见窗手动兜底
+//! （`webrs_captcha_visible`）。验证通过的收割页会尝试按搜索规则解析并缓存，
+//! 随后同关键词的搜索直接命中（对齐 Kazumi tryParseHarvestedSearch，via: "harvest"）。
+//!
 //! 规则目录：app_data_dir/webrs-rules/*.json。首次运行写入两条内置默认规则
 //! （AGE / mutefun，内容取自 Predidit/KazumiRules）；用户可自行丢社区规则进来。
 //!
@@ -22,10 +28,15 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
+
+use crate::webrs_webview::{
+    ensure_persistent, eval_json, park_webview, main_window_browser_args, CAPTCHA_LABEL,
+    SNIFFER_LABEL, WEBVIEW_UA,
+};
 
 use url::Url;
 
@@ -440,6 +451,45 @@ fn effective_ua(rule: &Rule) -> String {
         }
     }
     rule_ua(rule)
+}
+
+// ───────────────── [lc-1747] 收割页搜索结果缓存（对齐 Kazumi tryParseHarvestedSearch） ─────────────────
+//
+// 反爬验证通过后收割到的 outerHTML 通常**就是**那次搜索的结果页（验证页 URL =
+// searchURL 替换 @keyword）。Kazumi 会直接按搜索规则解析它，省一次整源重搜；
+// AniBox 旧实现是整源重发请求。这里把「用搜索 XPath 解析收割页」的结果按
+// (规则名, 关键词) 存进内存缓存，**一次性消费**：前端在 verified 事件后用同一
+// 关键词重搜（WebrsPanel 的自动重试链路）直接命中返回（multi 分组带 via:"harvest"），
+// 第二次或换关键词自然 miss 走网络。解析不出（仍是挑战页 / 跳转中转页）不缓存。
+
+static HARVEST_CACHE: OnceLock<std::sync::Mutex<HashMap<String, Vec<(String, String)>>>> =
+    OnceLock::new();
+
+fn harvest_cache() -> &'static std::sync::Mutex<HashMap<String, Vec<(String, String)>>> {
+    HARVEST_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+fn harvest_cache_key(rule_name: &str, keyword: &str) -> String {
+    // 规则名大小写不敏感（find_rule 同口径）；\u{0} 分隔避免拼接歧义
+    format!("{}\u{0}{}", rule_name.to_lowercase(), keyword)
+}
+
+/// 验证收割页解析出结果后写入（仅非空；覆盖同键旧值）。
+fn set_harvest_cache(rule_name: &str, keyword: &str, items: Vec<(String, String)>) {
+    if items.is_empty() {
+        return;
+    }
+    if let Ok(mut g) = harvest_cache().lock() {
+        g.insert(harvest_cache_key(rule_name, keyword), items);
+    }
+}
+
+/// 取走该 (规则, 关键词) 的收割缓存（一次性消费；miss 返回 None）。
+fn take_harvest_cache(rule_name: &str, keyword: &str) -> Option<Vec<(String, String)>> {
+    harvest_cache()
+        .lock()
+        .ok()
+        .and_then(|mut g| g.remove(&harvest_cache_key(rule_name, keyword)))
 }
 
 /// 一次 HTTP 取回的原始响应：状态码 + 正文 + `cf-mitigated: challenge` 标记。
@@ -1191,36 +1241,46 @@ async fn rule_search(rule: &Rule, keyword: &str) -> Result<Vec<(String, String)>
         if detects_captcha_challenge(&resp, &rule.anti_crawler_config) {
             return Err(SearchError::Captcha);
         }
-        let doc = Html::parse_document(&resp.body);
-        let root = vec![doc.tree.root().id()];
-        // [lc-1624] 给 XPath 解析/求值错误带上**字段名**，坏源一眼可查；
-        // 错误只影响这一个源（多源聚合里各源独立 catch），不会带崩整条链路。
-        let list = eval_nodes(&doc, &root, &rule.search_list)
-            .map_err(|e| format!("searchList 选择器失败：{e}"))?;
-        let mut out = Vec::new();
-        for node in list.into_iter().take(60) {
-            let name = match eval_xpath(&doc, &[node], &parse_xpath(&rule.search_name)
-                .map_err(|e| format!("searchName 选择器失败：{e}"))?)? {
-                EvalOut::Str(v) => v.first().cloned().unwrap_or_default(),
-                EvalOut::Nodes(v) => v.first().map(|n| text_of(&doc, *n)).unwrap_or_default(),
-            };
-            let href = match eval_xpath(&doc, &[node], &parse_xpath(&rule.search_result)
-                .map_err(|e| format!("searchResult 选择器失败：{e}"))?)? {
-                EvalOut::Str(v) => v.first().cloned().unwrap_or_default(),
-                EvalOut::Nodes(v) => v.first().and_then(|n| attr_of(&doc, *n, "href")).unwrap_or_default(),
-            };
-            let name = name.trim().to_string();
-            if name.is_empty() {
-                continue;
-            }
-            let Some(full) = join_url(&rule.base_url, &href) else {
-                continue;
-            };
-            out.push((name, full));
-        }
-        out
+        return parse_search_items(rule, &resp.body).map_err(SearchError::Other);
     };
     Ok(items)
+}
+
+/// [lc-1747] 用规则的搜索 XPath 在一段 HTML 上解析 `[(name, url)]`（**不发请求**）。
+/// `rule_search` 的 xpath 分支与验证收割页复用（对齐 Kazumi tryParseHarvestedSearch）
+/// 共用这一份解析体；收割场景对错误只关心「能不能解析出结果」，吞错即可。
+fn parse_search_items(rule: &Rule, html: &str) -> Result<Vec<(String, String)>, String> {
+    if rule.search_list.is_empty() {
+        return Err("规则缺少 searchList".into());
+    }
+    let doc = Html::parse_document(html);
+    let root = vec![doc.tree.root().id()];
+    // [lc-1624] 给 XPath 解析/求值错误带上**字段名**，坏源一眼可查；
+    // 错误只影响这一个源（多源聚合里各源独立 catch），不会带崩整条链路。
+    let list = eval_nodes(&doc, &root, &rule.search_list)
+        .map_err(|e| format!("searchList 选择器失败：{e}"))?;
+    let mut out = Vec::new();
+    for node in list.into_iter().take(60) {
+        let name = match eval_xpath(&doc, &[node], &parse_xpath(&rule.search_name)
+            .map_err(|e| format!("searchName 选择器失败：{e}"))?)? {
+            EvalOut::Str(v) => v.first().cloned().unwrap_or_default(),
+            EvalOut::Nodes(v) => v.first().map(|n| text_of(&doc, *n)).unwrap_or_default(),
+        };
+        let href = match eval_xpath(&doc, &[node], &parse_xpath(&rule.search_result)
+            .map_err(|e| format!("searchResult 选择器失败：{e}"))?)? {
+            EvalOut::Str(v) => v.first().cloned().unwrap_or_default(),
+            EvalOut::Nodes(v) => v.first().and_then(|n| attr_of(&doc, *n, "href")).unwrap_or_default(),
+        };
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let Some(full) = join_url(&rule.base_url, &href) else {
+            continue;
+        };
+        out.push((name, full));
+    }
+    Ok(out)
 }
 
 /// [lc-1500] 单源搜索（保留给单源场景 / 调试）。
@@ -1231,6 +1291,15 @@ pub async fn webrs_search(app: AppHandle, rule_name: String, keyword: String) ->
     let keyword = keyword.trim().to_string();
     if keyword.is_empty() {
         return Err("搜索词为空".into());
+    }
+    // [lc-1747] 收割缓存命中（一次性消费）：验证通过后的重搜直接返回收割页解析结果，
+    // 免一次整源重搜。返回结构与网络路径完全一致（[{name,url}] 数组），前端契约不变。
+    if let Some(items) = take_harvest_cache(&rule_name, &keyword) {
+        crate::libmpv::trace(&format!("[webrs] 搜索命中收割缓存: {rule_name} · {keyword}"));
+        return Ok(json!(items
+            .into_iter()
+            .map(|(name, url)| json!({ "name": name, "url": url }))
+            .collect::<Vec<_>>()));
     }
     let items = match rule_search(&rule, &keyword).await {
         Ok(v) => v,
@@ -1278,6 +1347,22 @@ pub async fn webrs_search_multi(
         let keyword = keyword.clone();
         set.spawn(async move {
             let name = rule.name.clone();
+            // [lc-1747] 收割缓存命中（一次性消费）：验证通过后的自动重搜直接返回
+            // 收割页解析结果。分组对象多带一个可选 `via:"harvest"` 字段（JSON 天然兼容）。
+            if let Some(items) = take_harvest_cache(&rule.name, &keyword) {
+                crate::libmpv::trace(&format!("[webrs] 搜索命中收割缓存: {name} · {keyword}"));
+                return json!({
+                    "name": name,
+                    "status": "ok",
+                    "error": "",
+                    "via": "harvest",
+                    "items": items
+                        .into_iter()
+                        .take(20)
+                        .map(|(n, u)| json!({ "name": n, "url": u }))
+                        .collect::<Vec<_>>()
+                });
+            }
             match rule_search(&rule, &keyword).await {
                 Ok(items) if items.is_empty() => json!({ "name": name, "status": "empty", "error": "", "items": [] }),
                 Ok(items) => json!({
@@ -1937,8 +2022,8 @@ pub async fn webrs_resolve(
         Err(e) => crate::libmpv::trace(&format!("[webrs] 页面拉取失败（转 WebView 嗅探）: {e}")),
     }
 
-    // ── 2) WebView 嗅探 ──
-    let mut hit = webview_sniff(&app, &page_url, &ua, &referer, legacy).await?;
+    // ── 2) WebView 嗅探（常驻单例窗，进度走 webrs-sniff-status 事件）──
+    let mut hit = webview_sniff(&app, &rule.name, &page_url, legacy).await?;
     // legacy 的嗅探回传可能是 iframe 播放页 URL（非直链）—— 再 HTTP 解一次
     if legacy && !is_media_url(&hit) {
         if let Ok(r) = fetch_text(&hit, &ua, &referer, &rule.name).await {
@@ -1976,10 +2061,15 @@ fn first_iframe_src(html: &str, base: &str) -> Option<String> {
 
 // ── WebView 嗅探（Kazumi video_webview 的 JS 钩子思路）──
 
-const SNIFF_LABEL: &str = "webrs-sniffer";
+const SNIFF_LABEL: &str = SNIFFER_LABEL;
 const SNIFF_SCHEME: &str = "anibox-sniff";
+/// [lc-1747] 嗅探总预算：40s → 20s（用户反馈太久；早退启发式再往下压无活动页面的等待）。
+const SNIFF_TIMEOUT_SECS: u64 = 20;
+/// [lc-1747] 早退窗口：页面 load 完成（readyState=complete）后静默这么久且
+/// 零网络活动、零 iframe → 提前失败（详见 sniff_early_exit）。
+const SNIFF_EARLY_EXIT_AFTER_SECS: f64 = 8.0;
 
-// ── [lc-1622] 嗅探回传：主通道改「JS 写全局 + Rust 轮询」 ──
+// ── [lc-1622] 嗅探回传：主通道「JS 写全局 + Rust 轮询」──
 //
 // 背景（真凶）：注入脚本命中直链后走 `<img src="http://127.0.0.1:<beacon>/sniff?u=…">`
 // 回传，但**页面 CSP 只管得住页面自己的资源加载**：强 CSP 站点（如 hhplayer 系）
@@ -1999,18 +2089,27 @@ const SNIFF_SCHEME: &str = "anibox-sniff";
 //   ① 全局变量 + Rust 轮询 —— 主通道，**不受页面 CSP 限制**（跨域 frame 靠 postMessage 冒泡）；
 //   ② 本地 beacon（image/fetch/sendBeacon）—— 页面/iframe 无 CSP 时必达，强 CSP 站点会被拦；
 //   ③ anibox-sniff:// 伪导航（on_navigation 拦截）—— 兜底。
-fn sniff_script(beacon_port: u16, legacy: bool) -> String {
+//
+// [lc-1747] 单例化改造：这段脚本改为**无任务参数**（beacon 端口进程级固定），作为
+// initialization_script 在建窗时装一次、每次导航由 WebView2 自动重放——这是常驻单例
+// 复用嗅探窗的核心前提。原先按任务注入的两处差异改为**运行期状态**，由 Rust 轮询读取：
+//   · `window.__aniboxSniffNet` —— 网络活动计数（XHR.open / Response.text 每次调用 +1，
+//     跨 frame 经 postMessage `{__aniboxSniffNetBump:1}` 冒泡到主 frame 累加），
+//     供早退启发式判定「连非 m3u8 的网络活动都没有」；
+//   · `window.__aniboxSniffIframe` —— 首个非媒体 iframe 的绝对 URL（原 legacy 模式下
+//     JS 直接回传 iframe 页 URL，现在恒记录、由 Rust 侧按本任务的 legacy 标志消费）。
+fn sniff_script(beacon_port: u16) -> String {
     r#"(function () {
-  // __aniboxSniffInit 防同 frame 重复注入；__aniboxSniff 是给 Rust 轮询读的结果对象
-  // （不再是布尔哨兵）。
+  // __aniboxSniffInit 防同 frame 重复注入；__aniboxSniff 是给 Rust 轮询读的结果对象。
   if (window.__aniboxSniffInit) return;
   window.__aniboxSniffInit = true;
+  window.__aniboxSniffNet = 0;
   var done = false;
   var seen = {};
-  var LEGACY = __LEGACY__;
   var BEACON = 'http://127.0.0.1:PORT/sniff?u=';
-  // [lc-1622] 主 frame 监听子 frame 冒泡：跨域 iframe 里命中的直链经 postMessage 冒泡上来。
-  // （本监听在每个 frame 都会装，但只有主 frame 会真正收到 top 定向的 message。）
+  // [lc-1622] 主 frame 监听子 frame 冒泡：跨域 iframe 里命中的直链 / 网络计数经
+  // postMessage 冒泡上来。（本监听在每个 frame 都会装，但只有主 frame 会真正收到
+  // top 定向的 message。）
   try {
     window.addEventListener('message', function (ev) {
       try {
@@ -2019,18 +2118,26 @@ fn sniff_script(beacon_port: u16, legacy: bool) -> String {
           if (!(window.__aniboxSniff && window.__aniboxSniff.url)) {
             window.__aniboxSniff = { url: d.__aniboxSniff, ts: Date.now() };
           }
+        } else if (d && d.__aniboxSniffNetBump) {
+          window.__aniboxSniffNet = (window.__aniboxSniffNet || 0) + 1;
         }
       } catch (e) {}
     });
   } catch (e) {}
-  // [lc-1622] 统一回传：isRaw=true 时跳过「媒体扩展名 / prestrain」校验（legacy 回传 iframe 页 URL 用）。
-  function deliver(u, isRaw) {
+  // 网络活动计数（bump）：XHR.open / Response.text 每次调用 +1，并冒泡给主 frame。
+  // 只数这两个既有钩子，不新增 fetch 猴补面（hls.js 走 XHR；漏数只让早退更保守）。
+  function bump() {
+    try { window.__aniboxSniffNet = (window.__aniboxSniffNet || 0) + 1; } catch (e) {}
+    try { if (window.top && window.top !== window) window.top.postMessage({ __aniboxSniffNetBump: 1 }, '*'); } catch (e) {}
+  }
+  // 统一回传（仅媒体直链；prestrain 广告页排除）。
+  function deliver(u) {
     if (!u || typeof u !== 'string' || done) return false;
     if (!/^https?:\/\//i.test(u)) return false;
     var l = u.toLowerCase();
     if (/googleads|googlesyndication|adtrafficquality|doubleclick/.test(l)) return false;
-    if (!isRaw && /prestrain\.html|prestrain%2ehtml/.test(l)) return false;
-    if (!isRaw && !/\.(m3u8|mp4|flv)(\?|#|$)/i.test(l)) return false;
+    if (/prestrain\.html|prestrain%2ehtml/.test(l)) return false;
+    if (!/\.(m3u8|mp4|flv)(\?|#|$)/i.test(l)) return false;
     if (seen[u]) return false;
     seen[u] = 1;
     done = true;
@@ -2049,21 +2156,28 @@ fn sniff_script(beacon_port: u16, legacy: bool) -> String {
     try { location.href = nav; } catch (e) {}
     return true;
   }
-  function emit(u) { return deliver(u, false); }
-  // [lc-1606] useLegacyParser：不回传直链，而是回传 iframe 播放页 URL（外层页没有
-  // 直链、播放器被塞进 iframe 的站，如 xfdmneo）。Rust 侧拿到后再 HTTP 解一次。
-  function emitRaw(u) { return deliver(u, true); }
+  // [lc-1747] legacy（useLegacyParser）支持：单例脚本无任务参数，无法在 JS 侧按规则切换
+  // 「回传 iframe 页 URL」的行为，改为恒记录首个非媒体 iframe 的绝对 URL（不置 done、
+  // 不回传），Rust 轮询到后按本任务的 legacy 标志消费。
+  function noteIframe(src) {
+    try {
+      if (window.__aniboxSniffIframe) return;
+      var abs = new URL(src, location.href).href;
+      if (!/\.(m3u8|mp4|flv)(\?|#|$)/i.test(abs)) window.__aniboxSniffIframe = abs;
+    } catch (e) {}
+  }
   // XHR（Kazumi 同款）：open 时按 URL 命中（hls.js 拉 m3u8 清单必经之路），
   // load 后再查响应体是否 #EXTM3U 开头（覆盖无扩展名的动态清单接口）
   try {
     var oo = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function (m, u) {
       var self = this, u0 = u;
-      try { emit(u0); } catch (e) {}
+      bump();
+      try { deliver(u0); } catch (e) {}
       this.addEventListener('load', function () {
         try {
           if (self.responseText && self.responseText.trim().indexOf('#EXTM3U') === 0) {
-            emit(self.responseURL || u0);
+            deliver(self.responseURL || u0);
           }
         } catch (e) {}
       });
@@ -2077,9 +2191,10 @@ fn sniff_script(beacon_port: u16, legacy: bool) -> String {
       Response.prototype.text = function () {
         var p = ot.apply(this, arguments);
         var self = this;
+        bump();
         try {
           p.then(function (t) {
-            try { if (t && t.trim().indexOf('#EXTM3U') === 0) emit(self.url || ''); } catch (e) {}
+            try { if (t && t.trim().indexOf('#EXTM3U') === 0) deliver(self.url || ''); } catch (e) {}
           });
         } catch (e) {}
         return p;
@@ -2094,28 +2209,26 @@ fn sniff_script(beacon_port: u16, legacy: bool) -> String {
       for (var i = 0; i < els.length; i++) {
         var s1 = els[i].getAttribute('src') || '';
         if (s1.indexOf('blob:') === 0) continue;
-        emit(s1);
-        emit(els[i].src || '');
+        deliver(s1);
+        deliver(els[i].src || '');
       }
     } catch (e) {}
     try {
       // 页面 JS 里的直链常被写成 https:\/\/…（\/ 转义），先归一化再匹配
       var flat = document.documentElement.innerHTML.split('\\/').join('/');
       var m = flat.match(/https?:\/\/[^"'\\\s<>]{8,300}?\.m3u8(?:\?[^"'\\\s<>]{0,200})?/i);
-      if (m) emit(m[0]);
+      if (m) deliver(m[0]);
       var m2 = flat.match(/["'](\/[^"'\\\s<>]{4,200}?\.m3u8[^"'\\\s<>]{0,100})["']/i);
-      if (m2) emit(location.origin + m2[1]);
+      if (m2) deliver(location.origin + m2[1]);
     } catch (e) {}
-    // [lc-1606] legacy：没有直链时回传 iframe 播放页 URL（Kazumi legacy 分支）
-    if (LEGACY) {
-      try {
-        var ifs = document.querySelectorAll('iframe');
-        for (var j = 0; j < ifs.length; j++) {
-          var s = ifs[j].getAttribute('src') || '';
-          if (s && !/\.(m3u8|mp4|flv)(\?|#|$)/i.test(s)) emitRaw(s);
-        }
-      } catch (e) {}
-    }
+    // [lc-1747] iframe 记录（原 legacy 分支改恒记录；Rust 侧按任务 legacy 标志消费）
+    try {
+      var ifs = document.querySelectorAll('iframe');
+      for (var j = 0; j < ifs.length; j++) {
+        var s = ifs[j].getAttribute('src') || ifs[j].src || '';
+        if (s) noteIframe(s);
+      }
+    } catch (e) {}
   }
   scan();
   var iv = setInterval(function () {
@@ -2126,39 +2239,79 @@ fn sniff_script(beacon_port: u16, legacy: bool) -> String {
 })();
 "#
     .replace("PORT", &beacon_port.to_string())
-    .replace("__LEGACY__", if legacy { "1" } else { "0" })
 }
 
 /// 本地嗅探回传 beacon：嗅探 JS 命中直链后向 `http://127.0.0.1:<port>/sniff?u=<url>`
 /// 发请求（image/fetch/sendBeacon 三连），这里收下转交等待者。比伪导航可靠 ——
 /// WebView2 对未知 scheme 的 location.href 未必触发顶层 NavigationStarting。
 static BEACON_PORT: OnceLock<u16> = OnceLock::new();
-static SNIFF_TX: OnceLock<std::sync::Mutex<Option<std::sync::mpsc::Sender<String>>>> = OnceLock::new();
 
-/// [lc-1624] 同一时刻只允许一次嗅探。
-///
-/// 两次并发解析会：① 抢同一个 `SNIFF_LABEL`，后一次建窗会把前一次的窗 `destroy` 掉；
-/// ② 覆盖 `SNIFF_TX` 里的等待者（谁后注册谁生效），先注册的那次从此收不到回传；
-/// ③ 先结束的那次 `reset_sniff_waiters()` 又会把后一次的登记清空。结果是两边都拿不到直链、
-/// 还各自留一个隐藏窗。用一个进程内闸门把「解析」串行化，第二次直接给可诊断错误。
-static SNIFF_ACTIVE: AtomicBool = AtomicBool::new(false);
+// ── [lc-1747] 嗅探结果统一槽 ──
+//
+// 三个回传通道（伪导航 / beacon / Rust eval 轮询命中）全部汇到这里；当前嗅探任务
+// 把 receiver 挂上来，任务结束摘除。**单例常驻窗的关键前提**：窗的 on_navigation
+// 闭包在建窗时绑定一次，不能捕获任务态（旧实现闭包捕获当次任务的 tx，窗每次新建
+// 才成立）；改为引用本静态槽后，窗与任务解耦，复用永久有效。
+type SniffResultTx = std::sync::mpsc::Sender<Result<String, String>>;
+static SNIFF_RESULT_TX: OnceLock<std::sync::Mutex<Option<SniffResultTx>>> = OnceLock::new();
 
-struct SniffGuard;
+fn sniff_result_slot() -> &'static std::sync::Mutex<Option<SniffResultTx>> {
+    SNIFF_RESULT_TX.get_or_init(|| std::sync::Mutex::new(None))
+}
 
-impl SniffGuard {
-    fn acquire() -> Option<Self> {
-        SNIFF_ACTIVE
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .ok()
-            .map(|_| SniffGuard)
+/// 向当前嗅探任务回传一个结果（无任务在等时静默丢弃）。
+fn sniff_result_send(v: Result<String, String>) {
+    if let Some(tx) = sniff_result_slot()
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+    {
+        let _ = tx.send(v);
     }
 }
 
-impl Drop for SniffGuard {
-    // 无论正常返回还是中途 `?` 早退 / panic 展开，都会复位，不会把闸门永久锁死
-    fn drop(&mut self) {
-        SNIFF_ACTIVE.store(false, Ordering::SeqCst);
+/// [lc-1747] 嗅探任务锁：同一时刻只有一个嗅探任务在用常驻窗，后来者**排队等待**
+/// （旧 SniffGuard 直接拒绝第二次解析；单例窗 + 排队后，连续点几个视频不再报
+/// 「已有一次直链解析在进行中」，而是依次完成）。tokio Mutex 的 RAII 守卫保证
+/// 早退 / panic 展开都会释放。
+fn sniff_task_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// [lc-1747] 撤销嗅探等待者登记（任务收尾时调用；beacon / 伪导航随后的回传被静默丢弃）。
+fn reset_sniff_waiters() {
+    if let Ok(mut g) = sniff_result_slot().lock() {
+        *g = None;
     }
+}
+
+/// [lc-1747] 嗅探早退启发式（纯函数，单测覆盖）：
+/// 页面 load 完成（readyState=complete）后满 `SNIFF_EARLY_EXIT_AFTER_SECS` 秒且
+/// ① 零网络活动（`__aniboxSniffNet == 0`，连非 m3u8 的 XHR/Response 请求都没有 ——
+///   播放器一定会拉清单 / 配置，零网络说明根本没有播放器在跑）；
+/// ② 页面无 iframe（播放器 iframe / 嵌套页都算「有动静」，保守不早退）；
+/// ③ 尚未命中直链
+/// → 提前失败，不再空等满 20s。
+fn sniff_early_exit(complete_for_secs: Option<f64>, net: u64, iframes: usize, has_hit: bool) -> bool {
+    match complete_for_secs {
+        Some(s) if s >= SNIFF_EARLY_EXIT_AFTER_SECS => net == 0 && iframes == 0 && !has_hit,
+        _ => false,
+    }
+}
+
+/// [lc-1747] `webrs-sniff-status` 事件（跨模块契约，事件名与 payload 字段钉死不许偏）：
+/// `{ rule: string, url: string, status: "loading" | "hooked" | "hit" | "timeout" | "failed", message?: string }`
+fn emit_sniff_status(app: &AppHandle, rule: &str, url: &str, status: &str, message: Option<&str>) {
+    let _ = app.emit(
+        "webrs-sniff-status",
+        json!({
+            "rule": rule,
+            "url": url,
+            "status": status,
+            "message": message.unwrap_or(""),
+        }),
+    );
 }
 
 fn ensure_beacon() -> Result<u16, String> {
@@ -2166,14 +2319,13 @@ fn ensure_beacon() -> Result<u16, String> {
         return Ok(*p);
     }
     // [lc-1560] 22347 让给弹幕 shim（uosc_danmaku 的 Lua 硬编码该端口，
-// 见 main.lua / menu.lua / extra.lua 的 127.0.0.1:22347 调用）——嗅探 beacon
-// 从 22348 起找，避免两个本地服务抢同一端口。
+    // 见 main.lua / menu.lua / extra.lua 的 127.0.0.1:22347 调用）——嗅探 beacon
+    // 从 22348 起找，避免两个本地服务抢同一端口。
     for port in [22348u16, 22349, 22350] {
         let Ok(listener) = std::net::TcpListener::bind(("127.0.0.1", port)) else {
             continue;
         };
         let _ = BEACON_PORT.set(port);
-        let _ = SNIFF_TX.set(std::sync::Mutex::new(None));
         std::thread::spawn(move || {
             for conn in listener.incoming() {
                 let Ok(mut sock) = conn else { continue };
@@ -2190,11 +2342,9 @@ fn ensure_beacon() -> Result<u16, String> {
                                         .map(|s| s.to_string())
                                         .unwrap_or_default();
                                     if !url.is_empty() {
-                                        if let Some(tx) =
-                                            SNIFF_TX.get().and_then(|m| m.lock().ok().and_then(|g| g.clone()))
-                                        {
-                                            let _ = tx.send(url);
-                                        }
+                                        // [lc-1747] 直接进统一结果槽（beacon 线程与
+                                        // 伪导航闭包、Rust 轮询三通道同槽）
+                                        sniff_result_send(Ok(url));
                                     }
                                     break;
                                 }
@@ -2214,161 +2364,8 @@ fn ensure_beacon() -> Result<u16, String> {
     Err("嗅探回传端口（22347-22349）全部被占用".into())
 }
 
-// ─────────────── [lc-1613] 隐藏 WebView 创建：对齐主窗口参数 + 失败重试 ───────────────
-//
-// 根因：主窗口（tauri.conf.json `app.windows[0].additionalBrowserArgs`）设了
-// `--autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI`，
-// 而本文件追加创建的隐藏窗口（嗅探 / 验证）没设该项，落到 wry 的默认值
-// `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`。
-//
-// WebView2 规则（见 wry `web_context.rs` 注释 + MS 文档）：**同一 user data folder 下
-// 若已存在运行中的实例，且两次 Environment 的 CoreWebView2EnvironmentOptions 不一致，
-// 则新的 CreateCoreWebView2EnvironmentWithOptions 直接失败**，返回
-// ERROR_INVALID_STATE(0x8007139F)「组或资源的状态不是执行请求操作的正确状态」。
-// 主窗口是进程里第一个 environment（所以能建），追加窗口 options 不同 ⇒ 每次必挂。
-//
-// 修法：追加窗口**逐字对齐主窗口的 additionalBrowserArgs**（运行期从配置读，避免硬编码，
-// 改了 tauri.conf.json 也不会再错位）。兜底：建窗失败自动换新 label 重试一次；仍失败给出
-// 可诊断文案。
-
-/// 主窗口（配置里首个设了 additionalBrowserArgs 的窗口）的浏览器参数。
-/// 返回 None 表示主窗口也没设 ⇒ 追加窗口同样保持 None（两边都用 wry 默认值，天然一致）。
-fn main_window_browser_args(app: &AppHandle) -> Option<String> {
-    app.config()
-        .app
-        .windows
-        .iter()
-        .find_map(|w| w.additional_browser_args.clone())
-}
-
-/// [lc-1613] 把建窗失败翻译成带排查建议的文案（识别 ERROR_INVALID_STATE 0x8007139F）。
-fn describe_webview_error(err: &tauri::Error) -> String {
-    let raw = err.to_string();
-    let invalid_state = raw.contains("8007139F")
-        || raw.contains("8007139f")
-        || raw.contains("-2147019873") // 0x8007139F 的有符号 i32 形式
-        || raw.contains("正确状态")
-        || raw.contains("not in the correct state");
-    if invalid_state {
-        format!(
-            "{raw}\n（WebView2 ERROR_INVALID_STATE：常见于「同一用户数据目录下 Environment \
-             选项不一致」或「上次退出残留 WebView2 进程占用用户数据目录」。排查：① 任务管理器\
-             结束所有 msedgewebview2.exe 后重开应用；② 到「设置→应用」修复/更新 Microsoft \
-             Edge WebView2 Runtime；③ 若装了会拦截进程的安全软件，请放行本应用。）"
-        )
-    } else {
-        raw
-    }
-}
-
-/// [lc-1613] 在主线程序列上创建隐藏 WebView。
-/// `make(app, label)` 负责按给定 label 组装并 build 窗口，最多被调用 2 次；
-/// 第 2 次换新 label（`{base}-r1`）以规避上一次残留 / 瞬时状态。
-/// 成功返回**实际使用的 label**（调用方据此销毁窗口）；失败返回可诊断错误。
-///
-/// [lc-1624] 防「孤儿隐藏窗」（这是「点几次播放就崩」的关键成因之一）：
-/// 等待方一旦超时（20s）就给 `aborted` 置位；主线程闭包**建成后**把 label 交回等待方，
-/// 交不回（等待方已放弃）或已 aborted，就**立刻把刚建的窗销毁**。
-/// 否则会出现「等待方已经返回失败、闭包稍后才把窗建出来」——那个窗没有任何人负责销毁，
-/// 每次失败都漏一个完整 WebView2 实例，点几次就耗尽资源把进程拖崩。
-///
-/// 同时去掉原来在主线程里的 `std::thread::sleep(300ms)` 重试退避：主线程就是事件循环，
-/// 占住它反而会拖慢其它已排队的建窗 / 销毁，把 20s 超时逼出来、制造孤儿窗；
-/// 换 label 本身已经能绕开 0x8007139F 的 EnvironmentOptions 冲突，不需要阻塞主线程。
-async fn create_hidden_webview<F>(
-    app: &AppHandle,
-    base_label: &str,
-    make: F,
-) -> Result<String, String>
-where
-    F: Fn(&AppHandle, &str) -> Result<(), tauri::Error> + Send + 'static,
-{
-    let (tx, rx) = std::sync::mpsc::channel::<Result<String, String>>();
-    let app2 = app.clone();
-    let base = base_label.to_string();
-    let aborted = Arc::new(AtomicBool::new(false));
-    let aborted2 = aborted.clone();
-    app.run_on_main_thread(move || {
-        let mut last_err = String::from("创建 WebView 失败");
-        for attempt in 0..2u32 {
-            let label = if attempt == 0 {
-                base.clone()
-            } else {
-                format!("{base}-r{attempt}")
-            };
-            // 清掉可能残留的同名窗口（只有此前创建成功过才会有）
-            if let Some(w) = app2.get_webview_window(&label) {
-                let _ = w.destroy();
-            }
-            match make(&app2, &label) {
-                Ok(()) => {
-                    // [lc-1618] 埋点：建窗成功也留痕。
-                    // [lc-1624] 但**先**看等待方还要不要这个窗：交不回 / 已放弃 → 立即自毁。
-                    let delivered = tx.send(Ok(label.clone())).is_ok();
-                    if delivered && !aborted2.load(Ordering::Relaxed) {
-                        crate::libmpv::trace(&format!(
-                            "[webrs] 隐藏窗创建成功 label={label}（第 {} 次尝试）",
-                            attempt + 1
-                        ));
-                    } else {
-                        if let Some(w) = app2.get_webview_window(&label) {
-                            let _ = w.destroy();
-                        }
-                        crate::libmpv::trace(&format!(
-                            "[webrs] 隐藏窗创建成功但等待方已放弃 → 立即销毁 label={label}"
-                        ));
-                    }
-                    return;
-                }
-                Err(e) => {
-                    last_err = describe_webview_error(&e);
-                    crate::libmpv::trace(&format!(
-                        "[webrs] 隐藏窗创建失败 label={label}（第 {} 次尝试）: {last_err}",
-                        attempt + 1
-                    ));
-                }
-            }
-        }
-        let _ = tx.send(Err(last_err));
-    })
-    .map_err(|e| format!("窗口调度失败: {e}"))?;
-
-    let aborted3 = aborted.clone();
-    let res = tokio::task::spawn_blocking(move || {
-        match rx.recv_timeout(std::time::Duration::from_secs(20)) {
-            Ok(v) => v,
-            Err(_) => {
-                // 等待方放弃：置位，让主线程闭包若稍后建成就自毁，别留孤儿窗
-                aborted3.store(true, Ordering::Relaxed);
-                Err("创建 WebView 超时（20s）".to_string())
-            }
-        }
-    })
-    .await
-    .map_err(|e| format!("等待窗口失败: {e}"))?;
-
-    if res.is_err() {
-        // 兜底：两个可能用过的 label 都再 best-effort 清一次（闭包可能刚建好、置位晚一拍）
-        for l in [base_label.to_string(), format!("{base_label}-r1")] {
-            let app2 = app.clone();
-            let _ = app.run_on_main_thread(move || {
-                if let Some(w) = app2.get_webview_window(&l) {
-                    let _ = w.destroy();
-                }
-            });
-        }
-    }
-    res
-}
-
-/// [lc-1613] 撤销嗅探等待者登记（早退 / 收尾时调用）。
-fn reset_sniff_waiters() {
-    if let Some(m) = SNIFF_TX.get() {
-        if let Ok(mut g) = m.lock() {
-            *g = None;
-        }
-    }
-}
+// ── [lc-1613] 建窗基建（对齐主窗口 browser args、失败换 label 重试、交不回自毁握手）
+//    已随 [lc-1747] 单例化迁至 webrs_webview.rs（create_hidden_webview 等）。 ──
 
 /// 隐藏 WebView 加载播放页，等待直链回传。三通道（取先到）：
 /// ① [lc-1622] 注入脚本写页面全局 `window.__aniboxSniff`，本函数用宿主 eval 轮询
@@ -2377,75 +2374,69 @@ fn reset_sniff_waiters() {
 /// ② 本地 beacon（嗅探 JS 的 image/fetch/sendBeacon 三连，页面/iframe 无 CSP 时必达）
 /// ③ 伪导航 anibox-sniff://（on_navigation 拦截，兜底）
 /// JS hook 注入全 frame（WebView2 AddScriptToExecuteOnDocumentCreated 覆盖 iframe）。
+///
+/// [lc-1747] 单例化：窗懒创建常驻（`ensure_persistent`），任务结束只**泊车**（导航
+/// about:blank 释放页面资源）不销毁，App 退出统一清理；窗意外死亡时下次任务自动重建。
+/// 并发任务在 `sniff_task_lock` 上**排队**（旧 SniffGuard 直接拒绝第二次）。
+/// 进度经 `webrs-sniff-status` 事件上报；总预算 20s，另有「load 完成后 8s 零网络活动」
+/// 的早退启发式（sniff_early_exit）。
 async fn webview_sniff(
     app: &AppHandle,
+    rule_name: &str,
     page_url: &str,
-    ua: &str,
-    _referer: &str,
     legacy: bool,
 ) -> Result<String, String> {
     use std::sync::mpsc;
 
-    // [lc-1624] 串行化：闸门在函数返回/早退时随 SniffGuard::drop 自动复位
-    let _sniff_guard = SniffGuard::acquire()
-        .ok_or_else(|| "已有一次直链解析在进行中，请等它结束再试".to_string())?;
+    // [lc-1747] 任务级排队：窗忙则等待（RAII 守卫，早退 / panic 展开都会释放）
+    let _task_guard = sniff_task_lock().lock().await;
 
     let beacon_port = ensure_beacon()?;
+    emit_sniff_status(app, rule_name, page_url, "loading", None);
+
+    // 本任务的回传 receiver 挂上全局槽：伪导航 / beacon / Rust 轮询三通道都往这里发
     let (tx, rx) = mpsc::channel::<Result<String, String>>();
-
-    // 等待者登记：beacon（发纯 URL）经转发线程并入统一回传通道
-    let (btx, brx) = mpsc::channel::<String>();
     {
-        let slot = SNIFF_TX.get().ok_or("beacon 未初始化")?;
-        *slot.lock().map_err(|e| e.to_string())? = Some(btx);
-    }
-    {
-        let tx_fwd = tx.clone();
-        std::thread::spawn(move || {
-            // rx 在等待结束后被 drop → brx 断开 → 本线程自然退出
-            while let Ok(u) = brx.recv() {
-                if tx_fwd.send(Ok(u)).is_err() {
-                    break;
-                }
-            }
-        });
+        let mut slot = sniff_result_slot().lock().map_err(|e| e.to_string())?;
+        // 正常情况前一任务已摘除；防御性覆盖（旧等待者的 rx 已 drop，其 recv 立即 Err）
+        *slot = Some(tx);
     }
 
-    let page = page_url.to_string();
-    let ua_owned = ua.to_string();
-    let script = sniff_script(beacon_port, legacy);
-    let tx_nav = tx.clone();
-
-    // 目标 URL 无效则直接失败，不必起窗口
-    let target = match Url::parse(&page) {
+    // 目标 URL 无效则直接失败，不必动窗
+    let target = match Url::parse(page_url) {
         Ok(u) => u,
         Err(_) => {
             reset_sniff_waiters();
-            return Err(format!("播放页 URL 无效: {page}"));
+            let e = format!("播放页 URL 无效: {page_url}");
+            emit_sniff_status(app, rule_name, page_url, "failed", Some(&e));
+            return Err(e);
         }
     };
 
-    // 组装建窗闭包（最多调用 2 次，故用 Fn 且每次 clone 捕获物）：
-    // ① on_navigation 拦截 anibox-sniff:// 伪导航回传直链；
-    // ② [lc-1613] 必须与主窗口传**完全相同**的 additionalBrowserArgs，否则同一
-    //    user data folder 下 EnvironmentOptions 不一致 → 0x8007139F。
+    // 建窗闭包（仅首次建窗 / 窗死亡重建时被调用）：
+    // · initialization_script 是**无任务参数**的嗅探钩子 —— WebView2 的
+    //   AddScriptToExecuteOnDocumentCreated 对每次导航的新文档自动重放，
+    //   单例窗复用时每次导航都等于重新装钩子（load 前后全覆盖）；
+    // · on_navigation 只引用全局结果槽、不捕获任务态 —— 闭包随窗一次绑定、永久有效；
+    // · [lc-1613] 必须与主窗口传**完全相同**的 additionalBrowserArgs（0x8007139F 对齐，
+    //   红线逻辑，见 webrs_webview.rs）。
+    let script = sniff_script(beacon_port);
+    let target_make = target.clone();
     let make = move |app: &AppHandle, label: &str| {
-        let tx_nav = tx_nav.clone();
-        let target = target.clone();
         let mut b = tauri::webview::WebviewWindowBuilder::new(
             app,
             label,
-            tauri::WebviewUrl::External(target),
+            tauri::WebviewUrl::External(target_make.clone()),
         )
         .title("AniBox 资源解析")
         .visible(false)
         .initialization_script(&script)
-        .user_agent(&ua_owned)
+        .user_agent(WEBVIEW_UA)
         .on_navigation(move |u| {
             if u.scheme() == SNIFF_SCHEME {
                 for (_, v) in u.query_pairs() {
                     if !v.is_empty() {
-                        let _ = tx_nav.send(Ok(v.to_string()));
+                        sniff_result_send(Ok(v.to_string()));
                     }
                 }
                 return false; // 取消这次伪导航，页面保持原状
@@ -2458,96 +2449,183 @@ async fn webview_sniff(
         b.build().map(|_| ())
     };
 
-    let used_label = match create_hidden_webview(app, SNIFF_LABEL, make).await {
-        Ok(l) => l,
+    let (label, created) = match ensure_persistent(app, SNIFF_LABEL, make).await {
+        Ok(v) => v,
         Err(e) => {
             reset_sniff_waiters();
-            return Err(format!("创建嗅探 WebView 失败: {e}"));
+            let e = format!("创建嗅探 WebView 失败: {e}");
+            emit_sniff_status(app, rule_name, page_url, "failed", Some(&e));
+            return Err(e);
         }
     };
-
-    // [lc-1622] 主通道：宿主侧定时 eval 读**主 frame** 的 window.__aniboxSniff。
-    // ExecuteScript/eval 是宿主行为，**不受页面 CSP（img-src / connect-src）限制** ——
-    // 这正是「强 CSP 源站把本地 beacon 图片拦死」的正解。子 frame 命中后经 postMessage
-    // 冒泡到 top（见 sniff_script），故只需轮询主 frame。
-    {
-        let app_poll = app.clone();
-        let label_poll = used_label.clone();
-        let tx_poll = tx.clone();
-        tokio::spawn(async move {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(40);
-            loop {
-                if std::time::Instant::now() >= deadline {
-                    break;
-                }
-                // 与验证流程同一节奏（350ms 档），首次略等一下让页面开始跑
-                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                let Some(w) = app_poll.get_webview_window(&label_poll) else {
-                    break; // 窗口已销毁（等待结束后的清理）→ 退出
-                };
-                let Some(raw) = eval_json(
-                    &w,
-                    "window.__aniboxSniff && window.__aniboxSniff.url || ''",
-                )
-                .await
-                else {
-                    continue;
-                };
-                let Ok(url) = serde_json::from_str::<String>(&raw) else {
-                    continue;
-                };
-                if !url.is_empty() {
-                    crate::libmpv::trace(&format!("[webrs] 轮询命中（{label_poll}）: {url}"));
-                    let _ = tx_poll.send(Ok(url));
-                    break;
-                }
-            }
-        });
+    // 复用路径：导航到本任务目标页（initialization_script 随导航自动重放 = 重新装钩子）
+    if !created {
+        let Some(w) = app.get_webview_window(&label) else {
+            reset_sniff_waiters();
+            let e = "嗅探窗在复用时丢失".to_string();
+            emit_sniff_status(app, rule_name, page_url, "failed", Some(&e));
+            return Err(e);
+        };
+        if let Err(e) = w.navigate(target) {
+            reset_sniff_waiters();
+            let e = format!("嗅探窗导航失败: {e}");
+            emit_sniff_status(app, rule_name, page_url, "failed", Some(&e));
+            return Err(e);
+        }
     }
 
-    // 等结果（最长 40s）
-    let wait = tokio::task::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(40)))
-        .await
-        .map_err(|e| format!("嗅探等待失败: {e}"));
-
-    // 清理：撤销等待者 + 销毁嗅探窗（用实际 label，重试过就是 `-r1`）
-    reset_sniff_waiters();
-    let app3 = app.clone();
-    let app4 = app.clone();
-    let used_label2 = used_label.clone();
-    let _ = app3.run_on_main_thread(move || {
-        if let Some(w) = app4.get_webview_window(&used_label2) {
-            let _ = w.destroy();
+    // [lc-1622] 主通道：宿主侧定时 eval 读**主 frame** 的聚合状态
+    // （命中直链 / 钩子就位 / 网络计数 / iframe 记录 / readyState / iframe 数）。
+    // ExecuteScript/eval 是宿主行为，**不受页面 CSP（img-src / connect-src）限制** ——
+    // 这正是「强 CSP 源站把本地 beacon 图片拦死」的正解。子 frame 命中/计数由脚本
+    // postMessage 冒泡到 top（见 sniff_script），故只需轮询主 frame。
+    let app_poll = app.clone();
+    let label_poll = label.clone();
+    let rule_poll = rule_name.to_string();
+    let url_poll = page_url.to_string();
+    let legacy_poll = legacy;
+    let poll_handle = tokio::spawn(async move {
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_secs(SNIFF_TIMEOUT_SECS);
+        let mut hooked_seen = false;
+        let mut complete_at: Option<std::time::Instant> = None;
+        let mut eval_dead_streak = 0u32;
+        loop {
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+            // 与验证流程同一节奏（350ms 档），首次略等一下让页面开始跑
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            let Some(w) = app_poll.get_webview_window(&label_poll) else {
+                break; // 窗已不在（收尾泊车竞争 / 异常）→ 轮询自然退出
+            };
+            let Some(raw) = eval_json(
+                &w,
+                r#"JSON.stringify({
+                    url: (window.__aniboxSniff && window.__aniboxSniff.url) || '',
+                    init: !!window.__aniboxSniffInit,
+                    net: window.__aniboxSniffNet || 0,
+                    iframe: window.__aniboxSniffIframe || '',
+                    iframes: document.querySelectorAll('iframe').length,
+                    rs: document.readyState
+                })"#,
+            )
+            .await
+            else {
+                // 窗在但 eval 连续不可用（WebView 内容进程死亡）→ 判坏窗：本任务报错，
+                // 窗留给下次任务由 ensure_persistent 重建（自愈路径，不再销毁-重建抖动）
+                eval_dead_streak += 1;
+                if eval_dead_streak >= 20 {
+                    sniff_result_send(Err(
+                        "嗅探窗无响应（WebView 可能已崩溃），本次解析失败".into(),
+                    ));
+                    return;
+                }
+                continue;
+            };
+            eval_dead_streak = 0;
+            let Ok(v) = serde_json::from_str::<Value>(&raw) else {
+                continue;
+            };
+            let hit = v.get("url").and_then(|s| s.as_str()).unwrap_or("");
+            let init = v.get("init").and_then(|b| b.as_bool()).unwrap_or(false);
+            let net = v.get("net").and_then(|n| n.as_u64()).unwrap_or(0);
+            let iframe_hit = v.get("iframe").and_then(|s| s.as_str()).unwrap_or("");
+            let iframes = v.get("iframes").and_then(|n| n.as_u64()).unwrap_or(0) as usize;
+            let rs = v.get("rs").and_then(|s| s.as_str()).unwrap_or("");
+            if init && !hooked_seen {
+                hooked_seen = true;
+                emit_sniff_status(&app_poll, &rule_poll, &url_poll, "hooked", None);
+            }
+            if !hit.is_empty() {
+                crate::libmpv::trace(&format!("[webrs] 轮询命中（{label_poll}）: {hit}"));
+                sniff_result_send(Ok(hit.to_string()));
+                return;
+            }
+            // [lc-1747] legacy 任务：直链零命中但记录到非媒体 iframe 页 → 以 iframe URL
+            // 作为嗅探结果返回（外层 webrs_resolve 会再 HTTP 解一次，对齐 lc-1606 行为）
+            if legacy_poll && !iframe_hit.is_empty() {
+                crate::libmpv::trace(&format!(
+                    "[webrs] 轮询取 iframe 播放页（legacy，{label_poll}）: {iframe_hit}"
+                ));
+                sniff_result_send(Ok(iframe_hit.to_string()));
+                return;
+            }
+            if rs == "complete" && complete_at.is_none() {
+                complete_at = Some(std::time::Instant::now());
+            }
+            if let Some(t0) = complete_at {
+                let secs = std::time::Instant::now().duration_since(t0).as_secs_f64();
+                if sniff_early_exit(Some(secs), net, iframes, !hit.is_empty()) {
+                    crate::libmpv::trace(&format!(
+                        "[webrs] 嗅探早退（{label_poll}）：load 完成 {secs:.0}s 零网络活动零 iframe"
+                    ));
+                    sniff_result_send(Err(
+                        "嗅探早退：页面加载完成 8 秒内没有任何网络请求，该页面大概没有可解析的播放器".into(),
+                    ));
+                    return;
+                }
+            }
         }
     });
 
+    // 等结果（与轮询同预算 20s）
+    let wait = tokio::task::spawn_blocking(move || {
+        rx.recv_timeout(std::time::Duration::from_secs(SNIFF_TIMEOUT_SECS))
+    })
+    .await
+    .map_err(|e| format!("嗅探等待失败: {e}"));
+
+    // 收尾：停轮询 + 摘等待者 + 泊车（导航 about:blank 释放页面资源，**窗保留复用**）
+    poll_handle.abort();
+    reset_sniff_waiters();
+    park_webview(app, &label);
+
     match wait {
         Ok(Ok(Ok(url))) => {
-            crate::libmpv::trace(&format!("[webrs] 嗅探命中（{used_label}）: {url}"));
+            crate::libmpv::trace(&format!("[webrs] 嗅探命中（{label}）: {url}"));
+            emit_sniff_status(app, rule_name, page_url, "hit", None);
             Ok(url)
         }
-        Ok(Ok(Err(e))) => Err(e),
+        Ok(Ok(Err(e))) => {
+            emit_sniff_status(app, rule_name, page_url, "failed", Some(&e));
+            Err(e)
+        }
         Ok(Err(_)) => {
             // [lc-1618] 埋点：嗅探超时是最常见的「在线源播不了」成因（页面没截到直链 /
             // 需验证 / 加密方案不支持），过去只把文案冒给前端、日志里没有对应记录。
             crate::libmpv::trace(&format!(
-                "[webrs] 嗅探超时（{used_label}）40s 内未截到视频流 —— 页面可能需验证 / 加密方案不支持"
+                "[webrs] 嗅探超时（{label}）{}s 内未截到视频流 —— 页面可能需验证 / 加密方案不支持",
+                SNIFF_TIMEOUT_SECS
             ));
-            Err("嗅探超时（40s 内没截到视频流）——该站点可能需要验证或用了不支持的加密方案，换一个源试试".into())
+            let msg = format!(
+                "嗅探超时（{SNIFF_TIMEOUT_SECS}s 内没截到视频流）——该站点可能需要验证或用了不支持的加密方案，换一个源试试"
+            );
+            emit_sniff_status(app, rule_name, page_url, "timeout", Some(&msg));
+            Err(msg)
         }
-        Err(e) => Err(e),
+        Err(e) => {
+            emit_sniff_status(app, rule_name, page_url, "failed", Some(&e));
+            Err(e)
+        }
     }
 }
 // ───────────────────────── [lc-1606] 反爬验证流程 ─────────────────────────
 //
 // 对齐 Kazumi `captcha_verification_service.dart` + `captcha_webview_windows_impl.dart`：
 // 用隐藏 WebView 加载搜索页，按 captchaType 完成验证，再统一收尾（收割 cookie + UA +
-// HTML、卸载窗口），随后前端自动重试检索（此时 cookie 已在内存 jar 里）。
+// HTML、泊车窗口），随后前端自动重试检索（此时 cookie 已在内存 jar 里）。
 // 三型：1 图片验证码（抓图 → 前端输入 → 回填提交）；2 自动点击按钮；3 自定义 JS。
 //
-// 与本项目既有 webview_sniff 一样走隐藏 WebviewWindow + initialization_script；
-// 但验证需要「双向」通信，这里改用 `eval_with_callback` 轮询页面里由注入脚本维护的
+// [lc-1747] 单例化：验证窗是常驻单例（webrs-captcha），**不再每次建/销**。
+// 与嗅探窗的关键差异：验证脚本按规则配置不同（IMG/INPUT/BTN/TYPE），**不能**进
+// initialization_script（建窗一次绑定、无法按任务切换），改为「导航后 eval 注入 +
+// 轮询补注」——脚本是 DOM 扫描器 + MutationObserver 而非网络猴补，晚 1-2 个 tick
+// 注入无损；轮询里发现 `window.__aniboxCaptcha` 缺失就再注一次（幂等），SPA / 慢加载
+// 页面在 load 前后都能覆盖。双向通信沿用 `eval_with_callback` 轮询
 // `window.__aniboxCaptcha` 状态对象（避开 CSP 对本地 beacon 的限制）。
+// 另有可见窗手动验证兜底（webrs_captcha_visible）：隐藏窗自动验证兜不住的场景
+// （如复杂 Cloudflare 交互挑战），把单例窗显示出来让用户手动过。
 
 /// 取消原因码（[lc-1624]）：区分「用户主动取消 / 被新会话顶掉」——两者都**不是验证失败**，
 /// 不该用「人机验证失败」的文案糊到用户脸上（这正是用户报的「失败 · dalvdm：已取消」）。
@@ -2564,7 +2642,6 @@ struct CaptchaHandle {
 }
 
 static CAPTCHA_SESSION: OnceLock<std::sync::Mutex<Option<CaptchaHandle>>> = OnceLock::new();
-static CAPTCHA_SEQ: AtomicU64 = AtomicU64::new(0);
 /// [lc-1624] 串行化「发起验证」：两次并发发起会各自建窗、互相顶掉，且后注册的覆盖会话，
 /// 先注册的那个 flow 会一直跑到超时（窗还泄漏）。整段持锁，保证同一时刻只有一个会话在建立。
 static CAPTCHA_START_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -2575,25 +2652,6 @@ fn captcha_start_lock() -> &'static tokio::sync::Mutex<()> {
 
 fn captcha_session() -> &'static std::sync::Mutex<Option<CaptchaHandle>> {
     CAPTCHA_SESSION.get_or_init(|| std::sync::Mutex::new(None))
-}
-
-/// 在隐藏窗里 eval 一段 JS 表达式并取回 JSON 序列化结果（超时 5s 返回 None）。
-/// 表达式异常时返回 null（Windows 下 eval 的异常会被吞掉，故 JS 里自带 try/catch）。
-async fn eval_json(w: &tauri::WebviewWindow, expr: &str) -> Option<String> {
-    let js = format!("(function(){{ try {{ return {expr}; }} catch (e) {{ return null; }} }})()");
-    // 用 std mpsc（Sender::send 取 &self，闭包可 Fn 重复调用；oneshot 会 move self 不适用）
-    let (tx, rx) = std::sync::mpsc::channel::<String>();
-    if w.eval_with_callback(js, move |s| {
-        let _ = tx.send(s);
-    })
-    .is_err()
-    {
-        return None;
-    }
-    tokio::task::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(5)).ok())
-        .await
-        .ok()
-        .flatten()
 }
 
 /// 注入到验证页的脚本：维护 `window.__aniboxCaptcha = {status,image,log,url}`。
@@ -2720,18 +2778,11 @@ fn captcha_submit_script(cfg: &AntiCrawlerConfig, code: &str) -> String {
         .replace("__CODE__", &code)
 }
 
-fn destroy_captcha_window(app: &AppHandle, label: &str) {
-    let app2 = app.clone();
-    let label = label.to_string();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(w) = app2.get_webview_window(&label) {
-            let _ = w.destroy();
-        }
-    });
-}
-
-/// [lc-1624] 撤销当前验证会话并销毁窗口。`reason` 用上面的 CANCEL_* 常量，
-/// 让正在跑的 flow 能区分「用户取消」与「被新会话顶掉」，从而给出正确文案。
+/// [lc-1624] 撤销当前验证会话（置取消标志 + 泊车窗）。
+/// `reason` 用上面的 CANCEL_* 常量，让正在跑的 flow 能区分「用户取消」与
+/// 「被新会话顶掉」，从而给出正确文案。
+/// [lc-1747] 不再销毁窗（单例常驻）：泊车（隐藏 + about:blank）即可；正在跑的
+/// flow 会在下个轮询 tick 看到 cancel 标志自行收尾。
 fn cancel_captcha(app: &AppHandle, reason: u8) {
     let label = {
         let Ok(mut g) = captcha_session().lock() else {
@@ -2745,11 +2796,22 @@ fn cancel_captcha(app: &AppHandle, reason: u8) {
             None => return,
         }
     };
-    destroy_captcha_window(app, &label);
+    park_webview(app, &label);
 }
 
-/// 收尾：收割 HTML + UA + cookie 存入内存 jar，卸载窗口（对齐 Kazumi `_saveCookiesAndUnload`）。
-async fn harvest_captcha(app: &AppHandle, rule: &Rule, label: &str, page_url: &str) {
+/// 收尾：收割 HTML + UA + cookie 存入内存 jar（对齐 Kazumi `_saveCookiesAndUnload`）。
+/// [lc-1747] 收割页复用（对齐 Kazumi tryParseHarvestedSearch）：验证页 URL =
+/// searchURL 替换 @keyword，验证通过后的 outerHTML 多半**就是**那次搜索的结果页 ——
+/// 直接按规则的搜索 XPath 解析，解析出结果就写入一次性缓存（set_harvest_cache），
+/// 前端 verified 事件后的自动重搜直接命中（via:"harvest"）；解析为空（仍是挑战页 /
+/// 跳转中转页）不缓存，照旧走网络。api 模式的搜索页是 JSON 接口，HTML 复用无意义，跳过。
+async fn harvest_captcha(
+    app: &AppHandle,
+    rule: &Rule,
+    keyword: &str,
+    label: &str,
+    page_url: &str,
+) {
     let Some(w) = app.get_webview_window(label) else {
         return;
     };
@@ -2778,10 +2840,31 @@ async fn harvest_captcha(app: &AppHandle, rule: &Rule, label: &str, page_url: &s
         cookies.len()
     ));
     save_cookies(&rule.name, cookies, Some(ua));
+    if !html.is_empty() && !keyword.is_empty() && rule.search_mode != "api" {
+        match parse_search_items(rule, &html) {
+            Ok(items) if !items.is_empty() => {
+                crate::libmpv::trace(&format!(
+                    "[webrs] 收割页复用: {} · {} 解析出 {} 条搜索结果，已写入缓存",
+                    rule.name,
+                    keyword,
+                    items.len()
+                ));
+                set_harvest_cache(&rule.name, keyword, items);
+            }
+            _ => {}
+        }
+    }
 }
 
-/// 轮询验证页状态直到通过/失败/超时，然后统一收尾。
-async fn run_captcha_flow(app: AppHandle, rule: Rule, label: String, initial_url: String, cancel: Arc<AtomicU8>) {
+/// 轮询验证页状态直到通过/失败/超时，然后统一收尾（[lc-1747] 泊车窗，不销毁）。
+async fn run_captcha_flow(
+    app: AppHandle,
+    rule: Rule,
+    label: String,
+    initial_url: String,
+    keyword: String,
+    cancel: Arc<AtomicU8>,
+) {
     let cfg = rule.anti_crawler_config.clone();
     let name = rule.name.clone();
     let _ = app.emit(
@@ -2792,6 +2875,12 @@ async fn run_captcha_flow(app: AppHandle, rule: Rule, label: String, initial_url
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
     let mut last_image = String::new();
     let mut saw_action = false;
+    // [lc-1747] 补注/坏窗计数：验证脚本不进 initialization_script（按规则不同），
+    // 导航后的新文档里 window.__aniboxCaptcha 为 null —— 发现缺失就 eval 注入一次
+    // （幂等，脚本自带 if (window.__aniboxCaptcha) return），SPA / 慢加载页面
+    // load 前后都能覆盖。eval 通道持续失败则判坏窗（下次任务自动重建）。
+    let mut inject_misses = 0u32;
+    let mut eval_fail_streak = 0u32;
     let outcome: Result<(), String> = loop {
         // [lc-1624] 取消原因分型：被新会话顶掉 ≠ 用户取消 ≠ 失败
         let cancel_reason = cancel.load(Ordering::Relaxed);
@@ -2809,12 +2898,31 @@ async fn run_captcha_flow(app: AppHandle, rule: Rule, label: String, initial_url
         let Some(w) = app.get_webview_window(&label) else {
             break Err("验证窗口已关闭".into());
         };
-        let Some(raw) = eval_json(&w, "window.__aniboxCaptcha || null").await else {
-            continue;
+        let raw = match eval_json(&w, "window.__aniboxCaptcha || null").await {
+            Some(v) => v,
+            None => {
+                // eval 调用本身失败（窗死 / 超时）：计坏窗，连续 60 次（≈21s）判死
+                eval_fail_streak += 1;
+                if eval_fail_streak >= 60 {
+                    break Err("验证窗无响应（WebView 可能已崩溃），请重试".into());
+                }
+                continue;
+            }
         };
+        eval_fail_streak = 0;
         let Ok(v) = serde_json::from_str::<Value>(&raw) else {
             continue;
         };
+        // [lc-1747] 补注：新文档尚未注入（导航后 / SPA 路由切换）→ eval 注入后下轮再看
+        if v.is_null() {
+            inject_misses += 1;
+            let _ = w.eval(captcha_script(&cfg));
+            if inject_misses >= 100 {
+                break Err("验证脚本注入不生效（页面持续导航或 WebView 异常），请重试".into());
+            }
+            continue;
+        }
+        inject_misses = 0;
         let status = v.get("status").and_then(|s| s.as_str()).unwrap_or("");
         let image = v.get("image").and_then(|s| s.as_str()).unwrap_or("");
         let url = v.get("url").and_then(|s| s.as_str()).unwrap_or("");
@@ -2844,9 +2952,10 @@ async fn run_captcha_flow(app: AppHandle, rule: Rule, label: String, initial_url
     };
 
     if outcome.is_ok() {
-        harvest_captcha(&app, &rule, &label, &initial_url).await;
+        harvest_captcha(&app, &rule, &keyword, &label, &initial_url).await;
     }
-    destroy_captcha_window(&app, &label);
+    // [lc-1747] 泊车（隐藏 + about:blank 释放页面资源），窗保留给下次验证复用
+    park_webview(&app, &label);
     // 清会话（仅当仍是本会话，避免误清新会话）
     if let Ok(mut g) = captcha_session().lock() {
         if g.as_ref().map(|h| h.label.as_str()) == Some(label.as_str()) {
@@ -2882,7 +2991,8 @@ async fn run_captcha_flow(app: AppHandle, rule: Rule, label: String, initial_url
     }
 }
 
-/// [lc-1606] 发起反爬验证：建隐藏窗加载搜索页并按 captchaType 注入脚本。
+/// [lc-1606] 发起反爬验证：懒创建/复用常驻单例窗（webrs-captcha）加载搜索页，
+/// 验证脚本由 flow 导航后 eval 注入 + 轮询补注。
 /// 立即返回；结果经 `webrs-captcha`（type1 图）/`webrs-captcha-status` 事件回传。
 #[tauri::command]
 pub async fn webrs_captcha_start(
@@ -2902,46 +3012,52 @@ pub async fn webrs_captcha_start(
     let url = rule.search_url.replace("@keyword", &encoded);
 
     // [lc-1624] 串行化整个「发起验证」：保证同一时刻只有一个会话在建立。
-    // 否则两次并发发起会各自建窗、互相顶掉；后注册的覆盖会话，先注册的 flow 会一直跑到
-    // 90s 超时（窗口还泄漏）。持锁到会话登记完成为止。
+    // 持锁到会话登记完成为止。
     let _start_guard = captcha_start_lock().lock().await;
 
     // 撤掉可能存在的旧会话 —— 用 SUPERSEDED 原因，让它给"被取代"文案而不是"验证失败"
     cancel_captcha(&app, CAPTCHA_CANCEL_SUPERSEDED);
     let cancel = Arc::new(AtomicU8::new(CAPTCHA_CANCEL_NONE));
-    let label_base = format!(
-        "webrs-captcha-{}",
-        CAPTCHA_SEQ.fetch_add(1, Ordering::Relaxed)
-    );
 
-    let ua = effective_ua(&rule);
-    let script = captcha_script(&rule.anti_crawler_config);
-    // 验证页 URL 无效则直接失败，不必起窗口
+    // 验证页 URL 无效则直接失败，不必动窗
     let target = Url::parse(&url).map_err(|_| format!("验证页 URL 无效: {url}"))?;
 
-    // 组装建窗闭包（最多调用 2 次）：[lc-1613] 必须与主窗口传**完全相同**的
-    // additionalBrowserArgs，否则同一 user data folder 下 EnvironmentOptions
-    // 不一致 → CreateCoreWebView2EnvironmentWithOptions 返回 0x8007139F。
+    // 建窗闭包（仅首次建窗 / 窗死亡重建时调用）：
+    // · **不设** initialization_script —— 验证脚本按规则配置不同（IMG/INPUT/BTN/TYPE），
+    //   单例窗一次性绑定切不了任务；改为 flow 里导航后 eval 注入 + 轮询补注。
+    // · 窗 UA 恒定 WEBVIEW_UA（clearance cookie 与签发 UA 绑定，收割闭环天然一致）。
+    // · [lc-1613] 必须与主窗口传**完全相同**的 additionalBrowserArgs（0x8007139F 对齐）。
+    let target_make = target.clone();
     let make = move |app: &AppHandle, label: &str| {
         let mut b = tauri::webview::WebviewWindowBuilder::new(
             app,
             label,
-            tauri::WebviewUrl::External(target.clone()),
+            tauri::WebviewUrl::External(target_make.clone()),
         )
         .title("AniBox 人机验证")
         .visible(false)
-        .initialization_script(&script)
-        .user_agent(&ua);
+        .inner_size(480.0, 600.0)
+        .center()
+        .user_agent(WEBVIEW_UA);
         if let Some(args) = main_window_browser_args(app) {
             b = b.additional_browser_args(&args);
         }
         b.build().map(|_| ())
     };
 
-    let label = match create_hidden_webview(&app, &label_base, make).await {
-        Ok(l) => l,
+    let (label, created) = match ensure_persistent(&app, CAPTCHA_LABEL, make).await {
+        Ok(v) => v,
         Err(e) => return Err(format!("创建验证窗口失败: {e}")),
     };
+    // 复用路径：单例窗导航到本任务验证页（确保隐藏；上个会话可能刚手动验证过）
+    if !created {
+        let w = app
+            .get_webview_window(&label)
+            .ok_or("验证窗口不可用，请重试")?;
+        w.navigate(target)
+            .map_err(|e| format!("验证窗口导航失败: {e}"))?;
+        let _ = w.hide();
+    }
 
     // 建窗成功后才登记会话（label 可能因重试变成 `-r1`，提交/取消都按它找窗）
     {
@@ -2955,7 +3071,7 @@ pub async fn webrs_captcha_start(
 
     let app3 = app.clone();
     tauri::async_runtime::spawn(async move {
-        run_captcha_flow(app3, rule, label, url, cancel).await;
+        run_captcha_flow(app3, rule, label, url, keyword, cancel).await;
     });
     Ok(())
 }
@@ -2989,13 +3105,219 @@ pub async fn webrs_captcha_submit(
     Ok(())
 }
 
-/// [lc-1606] 用户取消验证：撤销会话并销毁窗口。
+/// [lc-1606] 用户取消验证：撤销会话并泊车窗口（[lc-1747] 单例不销毁）。
 /// [lc-1624] 用 USER 原因 —— 正在跑的 flow 会发 `cancelled` 状态（而非 `failed`），
 /// 前端据此清态，不再误报「人机验证失败 · …：已取消」。
 #[tauri::command]
 pub async fn webrs_captcha_cancel(app: AppHandle) -> Result<(), String> {
     cancel_captcha(&app, CAPTCHA_CANCEL_USER);
     Ok(())
+}
+
+/// [lc-1747] 可见窗手动验证兜底：把 `webrs-captcha` 常驻单例窗显示出来
+/// （480x600、居中、置前）加载 `url`，用户在**真实可见的网页**里手动完成任意验证
+/// （复杂 Cloudflare 交互挑战这类隐藏窗自动验证兜不住的场景）。
+/// Rust 侧继续轮询判定「验证完成」（见 run_visible_captcha_flow），过完收割
+/// cookie+UA（复用现有收割逻辑）、重新隐藏、泊车，并发 `webrs-captcha-status`
+/// （status:"verified"）——前端与自动验证同一通道。
+/// 命令本身发起即返回（Ok），结果全走事件。
+#[tauri::command]
+pub async fn webrs_captcha_visible(
+    app: AppHandle,
+    rule_name: String,
+    url: String,
+) -> Result<(), String> {
+    let rules = load_rules(&app).await?;
+    let rule = find_rule(&rules, &rule_name)?.clone();
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        return Err("URL 为空".into());
+    }
+    let target = Url::parse(&url).map_err(|_| format!("验证页 URL 无效: {url}"))?;
+
+    let _start_guard = captcha_start_lock().lock().await;
+    // 与自动验证共用单例窗：顶掉旧会话（同一时刻只有一个验证会话）
+    cancel_captcha(&app, CAPTCHA_CANCEL_SUPERSEDED);
+    let cancel = Arc::new(AtomicU8::new(CAPTCHA_CANCEL_NONE));
+
+    // 建窗闭包与 webrs_captcha_start 一致（隐藏建、导航后展示；不设验证脚本）
+    let target_make = target.clone();
+    let make = move |app: &AppHandle, label: &str| {
+        let mut b = tauri::webview::WebviewWindowBuilder::new(
+            app,
+            label,
+            tauri::WebviewUrl::External(target_make.clone()),
+        )
+        .title("AniBox 人机验证（手动）")
+        .visible(false)
+        .inner_size(480.0, 600.0)
+        .center()
+        .user_agent(WEBVIEW_UA);
+        if let Some(args) = main_window_browser_args(app) {
+            b = b.additional_browser_args(&args);
+        }
+        b.build().map(|_| ())
+    };
+
+    let (label, created) = match ensure_persistent(&app, CAPTCHA_LABEL, make).await {
+        Ok(v) => v,
+        Err(e) => return Err(format!("创建验证窗口失败: {e}")),
+    };
+    let w = app
+        .get_webview_window(&label)
+        .ok_or("验证窗口不可用，请重试")?;
+    if !created {
+        w.navigate(target)
+            .map_err(|e| format!("验证窗口导航失败: {e}"))?;
+    }
+    // 展示：尺寸/位置归位（上个会话可能动过）+ 居中 + 置前
+    let _ = w.set_size(tauri::LogicalSize::new(480.0, 600.0));
+    let _ = w.center();
+    let _ = w.show();
+    let _ = w.set_focus();
+
+    {
+        let mut g = captcha_session().lock().map_err(|e| e.to_string())?;
+        *g = Some(CaptchaHandle {
+            rule: rule.name.clone(),
+            label: label.clone(),
+            cancel: cancel.clone(),
+        });
+    }
+
+    let app3 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        run_visible_captcha_flow(app3, rule, label, url, cancel).await;
+    });
+    Ok(())
+}
+
+/// [lc-1747] 可见窗验证轮询。完成判定信号（满足其一即算过）：
+/// ① 反爬检测器由**命中转不命中**（`saw_challenge && !challenge_now` —— SPA 内完成
+///    验证、URL 不变的形态）；
+/// ② 已**导航离开**初始挑战页且当前页不再命中检测器（`url != initial_url`）。
+/// 起步 3s 保护（页面没加载起来前空白 / 旧文档不参与判定）；outerHTML 检测降频到
+/// 2s 一次（eval 回传大页面有开销），URL 检查每 500ms。
+/// 180s 无完成信号只记一条日志、**继续等**（窗口保持打开，用户可能还在操作），
+/// 不算失败；用户直接关窗视为取消。
+async fn run_visible_captcha_flow(
+    app: AppHandle,
+    rule: Rule,
+    label: String,
+    initial_url: String,
+    cancel: Arc<AtomicU8>,
+) {
+    let cfg = rule.anti_crawler_config.clone();
+    let name = rule.name.clone();
+    let _ = app.emit(
+        "webrs-captcha-status",
+        json!({ "rule": name, "status": "loading", "error": "" }),
+    );
+
+    let start = std::time::Instant::now();
+    let mut saw_challenge = false;
+    let mut last_check = std::time::Instant::now();
+    let mut noop_logged = false;
+    let outcome: Result<(), String> = loop {
+        let cancel_reason = cancel.load(Ordering::Relaxed);
+        if cancel_reason != CAPTCHA_CANCEL_NONE {
+            break Err(if cancel_reason == CAPTCHA_CANCEL_SUPERSEDED {
+                "已被新的验证会话取代".to_string()
+            } else {
+                "已取消".to_string()
+            });
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let Some(w) = app.get_webview_window(&label) else {
+            // 用户直接关掉可见窗 = 主动取消（发 cancelled 而非 failed）
+            cancel.store(CAPTCHA_CANCEL_USER, Ordering::Relaxed);
+            break Err("用户关闭了验证窗口".into());
+        };
+        // 180s 无动作：仅日志，继续等（用户可能还在操作，窗口保持打开）
+        if !noop_logged && start.elapsed() >= std::time::Duration::from_secs(180) {
+            noop_logged = true;
+            crate::libmpv::trace(&format!(
+                "[webrs] 手动验证 {name}: 180s 无完成信号，窗口保持打开继续等待"
+            ));
+        }
+        // 起步保护：页面加载初期（空白 / 旧文档）不参与判定
+        if start.elapsed() < std::time::Duration::from_secs(3) {
+            continue;
+        }
+        let state = eval_json(&w, "JSON.stringify({ u: location.href })")
+            .await
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok());
+        let Some(state) = state else { continue };
+        let page_url = state.get("u").and_then(|s| s.as_str()).unwrap_or("");
+        let left_initial = !page_url.is_empty() && page_url != initial_url;
+        // 检测降频（2s 一次）：未到检测窗口的 tick 只更新导航状态，不做完成判定
+        // （避免把「还没测」当作「仍挑战/不挑战」，误置 saw_challenge）。
+        if last_check.elapsed() < std::time::Duration::from_secs(2) {
+            continue;
+        }
+        last_check = std::time::Instant::now();
+        let challenge_now = eval_json(
+            &w,
+            "document.documentElement ? document.documentElement.outerHTML : ''",
+        )
+        .await
+        .and_then(|s| serde_json::from_str::<String>(&s).ok())
+        .map(|html| {
+            // webview 内拿不到 cf-mitigated 响应头，只用 xpath/text/regex 检测器
+            detects_captcha_challenge(
+                &HttpResp {
+                    status: reqwest::StatusCode::OK,
+                    body: html,
+                    cf_mitigated: false,
+                },
+                &cfg,
+            )
+        })
+        .unwrap_or(false); // 拿不到 HTML：保守视为仍挑战（不触发完成判定）
+        if challenge_now {
+            saw_challenge = true;
+            continue;
+        }
+        if saw_challenge || left_initial {
+            break Ok(());
+        }
+    };
+
+    if outcome.is_ok() {
+        // 手动验证入口没有关键词（keyword 留空 → 不写搜索缓存，只收 cookie+UA）
+        harvest_captcha(&app, &rule, "", &label, &initial_url).await;
+    }
+    park_webview(&app, &label);
+    if let Ok(mut g) = captcha_session().lock() {
+        if g.as_ref().map(|h| h.label.as_str()) == Some(label.as_str()) {
+            *g = None;
+        }
+    }
+    match outcome {
+        Ok(()) => {
+            crate::libmpv::trace(&format!("[webrs] 手动验证通过: {name}"));
+            let _ = app.emit(
+                "webrs-captcha-status",
+                json!({ "rule": name, "status": "verified", "error": "" }),
+            );
+        }
+        Err(e) => {
+            let cancel_reason = cancel.load(Ordering::Relaxed);
+            if cancel_reason != CAPTCHA_CANCEL_NONE {
+                crate::libmpv::trace(&format!("[webrs] 手动验证中止: {name} · {e}"));
+                let _ = app.emit(
+                    "webrs-captcha-status",
+                    json!({ "rule": name, "status": "cancelled", "error": e }),
+                );
+            } else {
+                crate::libmpv::trace(&format!("[webrs] 手动验证失败: {name} · {e}"));
+                let _ = app.emit(
+                    "webrs-captcha-status",
+                    json!({ "rule": name, "status": "failed", "error": e }),
+                );
+            }
+        }
+    }
 }
 
 // ───────────────────────── mpv 播放 ─────────────────────────
@@ -3482,5 +3804,112 @@ mod tests {
         // 目录里不应留下任何文件
         assert!(!dir.join("demo.json").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ───────────────── [lc-1747] 常驻窗 / 嗅探体验 / 收割页复用 ─────────────────
+
+    /// dalvdm 的真实搜索规则字段（builtin_rules.json 原文），fixture 与其配套。
+    fn dalvdm_like_rule() -> Rule {
+        serde_json::from_str(
+            r#"{
+            "name": "dalvdm-test",
+            "baseURL": "https://www.sbdl.cc/",
+            "searchURL": "https://www.sbdl.cc/index.php/vod/search.html?wd=@keyword",
+            "searchList": "//div[contains(@class, 'myui-vodbox-content')]",
+            "searchName": "//div[@class='card-info']//div[@class='title']",
+            "searchResult": "//a[contains(@href, '/index.php/vod/detail/')]"
+        }"#,
+        )
+        .unwrap()
+    }
+
+    /// 嗅探总预算锁 20s（用户反馈 40s 太久；`webrs-sniff-status` 的 timeout 语义与此一致），
+    /// 早退窗口必须显著小于总预算（否则早退没有意义）。
+    #[test]
+    fn sniff_timeout_locked_at_20s() {
+        assert_eq!(SNIFF_TIMEOUT_SECS, 20);
+        assert!(SNIFF_EARLY_EXIT_AFTER_SECS < SNIFF_TIMEOUT_SECS as f64);
+    }
+
+    /// [lc-1747] 早退启发式：load 完成 ≥8s + 零网络活动 + 零 iframe + 未命中才早退。
+    #[test]
+    fn sniff_early_exit_rules() {
+        // 满足全部条件 → 早退
+        assert!(sniff_early_exit(Some(8.0), 0, 0, false));
+        assert!(sniff_early_exit(Some(11.5), 0, 0, false));
+        // 还没 load 完成 / 不满 8s → 不早退
+        assert!(!sniff_early_exit(None, 0, 0, false));
+        assert!(!sniff_early_exit(Some(7.9), 0, 0, false));
+        // 有任何网络活动（连非 m3u8 的请求都算播放器在跑）→ 不早退
+        assert!(!sniff_early_exit(Some(30.0), 3, 0, false));
+        // 页面里有 iframe（播放器 iframe 算动静，保守不早退——legacy 站播放器就在 iframe 里）
+        assert!(!sniff_early_exit(Some(30.0), 0, 1, false));
+        // 已命中直链 → 不早退（正常返回路径）
+        assert!(!sniff_early_exit(Some(30.0), 0, 0, true));
+    }
+
+    /// 收割缓存：按 (规则, 关键词) 存取、一次性消费、大小写不敏感、空结果不缓存。
+    #[test]
+    fn harvest_cache_is_one_shot_and_keyed_by_keyword() {
+        let items = vec![("少女终末旅行".into(), "https://x/1.html".into())];
+        set_harvest_cache("harvest-rule", "少女", items);
+        // 同 (rule, keyword) 第一次命中（规则名大小写不敏感，与 find_rule 同口径）
+        let got = take_harvest_cache("Harvest-Rule", "少女").expect("应命中收割缓存");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, "少女终末旅行");
+        // 一次性消费：第二次 miss（走网络路径）
+        assert!(take_harvest_cache("harvest-rule", "少女").is_none());
+        // 不同关键词 miss（收割缓存只对触发验证的那次搜索有效）
+        set_harvest_cache("harvest-rule2", "少女", vec![("a".into(), "https://x".into())]);
+        assert!(take_harvest_cache("harvest-rule2", "别的").is_none());
+        // 空结果不缓存（harvest 侧"解析不出不缓存"的哨兵）
+        set_harvest_cache("harvest-rule3", "k", vec![]);
+        assert!(take_harvest_cache("harvest-rule3", "k").is_none());
+    }
+
+    /// 「收割页 = 搜索结果页」：dalvdm 真实搜索规则 + 结果页结构 → 直接解析出条目
+    /// （Kazumi tryParseHarvestedSearch 的对齐验证：验证通过后免一次整源重搜）。
+    #[test]
+    fn parse_search_items_from_harvested_result_page() {
+        let rule = dalvdm_like_rule();
+        let harvested = r#"<html><body>
+          <div class="myui-vodbox-content"><div class="card-info">
+            <div class="title">少女终末旅行</div>
+            <a href="/index.php/vod/detail/1.html">看</a></div></div>
+          <div class="myui-vodbox-content"><div class="card-info">
+            <div class="title">少女☆歌剧</div>
+            <a href="https://www.sbdl.cc/index.php/vod/detail/2.html">看</a></div></div>
+          </body></html>"#;
+        let items = parse_search_items(&rule, harvested).unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].0, "少女终末旅行");
+        // 相对 href 对 baseURL 做 join
+        assert_eq!(items[0].1, "https://www.sbdl.cc/index.php/vod/detail/1.html");
+        // 绝对 URL 原样保留
+        assert_eq!(items[1].1, "https://www.sbdl.cc/index.php/vod/detail/2.html");
+    }
+
+    /// 收割到的还是挑战页（dalvdm 真实 mac_msg_jump 结构）→ 解析为空 → 不缓存，
+    /// 随后的搜索照旧走网络（复用逻辑对失败形态零副作用）。
+    #[test]
+    fn parse_search_items_ignores_challenge_page() {
+        let rule = dalvdm_like_rule();
+        let challenge = r#"<html><body><div class="mac_msg_jump">
+          <img class="mac_verify_img" src="/v"><input name="verify" type="text">
+          <input class="verify_submit" type="submit"></div></body></html>"#;
+        let items = parse_search_items(&rule, challenge).unwrap();
+        assert!(items.is_empty(), "挑战页不应解析出搜索结果");
+    }
+
+    /// 嗅探脚本无参化哨兵：不含按任务替换的 LEGACY 开关（单例 initialization_script
+    /// 一次注入的前提），iframe 改走运行期状态由 Rust 侧消费。
+    #[test]
+    fn sniff_script_is_task_agnostic() {
+        let s = sniff_script(22348);
+        assert!(!s.contains("__LEGACY__"), "嗅探脚本不得再带任务参数 LEGACY");
+        assert!(!s.contains("emitRaw"), "iframe 不再由 JS 直接回传（改记录 __aniboxSniffIframe）");
+        assert!(s.contains("__aniboxSniffIframe"), "应记录 iframe URL 供 legacy 任务消费");
+        assert!(s.contains("__aniboxSniffNet"), "应维护网络活动计数供早退判定");
+        assert!(s.contains("22348"), "beacon 端口应注入");
     }
 }

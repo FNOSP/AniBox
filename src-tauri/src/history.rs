@@ -930,14 +930,11 @@ pub fn merge(fnos: Option<&Value>, local: Vec<WatchRecord>) -> Vec<Value> {
     out
 }
 
-/// [lc-1667] 观影记录可见口径（用户定稿）：
-///   · **在线源（webrs）已搁置** → 列表 / 统计 / 年度报告一律不展示、不计算；
-///   · **个人视频（type=Video）取不到封面（poster 为空）** → 默认不计算；
+/// 观影记录可见口径：
+///   · [lc-1667] **个人视频（type=Video/Directory）取不到封面（poster 为空）** → 默认不计算；
 ///     正规影视条目即便暂时缺海报仍保留，避免误伤刮削失败的内容。
-pub fn visible_in_history(media_type: &str, source: &str, poster: &str) -> bool {
-    if source == "webrs" || media_type == "webrs" {
-        return false;
-    }
+///   · [lc-1747] 在线源（webrs）功能恢复：不再按 source 整条隐藏，列表 / 年度报告同口径可见。
+pub fn visible_in_history(media_type: &str, poster: &str) -> bool {
     !(matches!(media_type, "Video" | "Directory") && poster.trim().is_empty())
 }
 
@@ -1375,11 +1372,8 @@ pub fn report_data(app: &AppHandle) -> Value {
     }
     let events: Vec<Value> = recs
         .iter()
-        // [lc-1667] 与观影记录同口径：在线源已搁置、无封面个人视频不计算（年度报告也不含）
-        .filter(|r| {
-            r.played_at >= MIN_VALID_MS
-                && visible_in_history(&r.media_type, &r.source, &r.poster)
-        })
+        // [lc-1667] 与观影记录同口径：无封面个人视频不计算；[lc-1747] 在线源恢复计入（年度报告同口径）
+        .filter(|r| r.played_at >= MIN_VALID_MS && visible_in_history(&r.media_type, &r.poster))
         .map(|r| {
             json!({
                 "ts": r.played_at,
@@ -1487,16 +1481,16 @@ mod tests {
 
     #[test]
     fn history_visibility_policy() {
-        // 在线源已搁置：无论有没有海报都不展示
-        assert!(!visible_in_history("webrs", "webrs", ""));
-        assert!(!visible_in_history("Movie", "webrs", "/p.webp"));
-        // 个人视频：取不到封面 → 不计算；有封面则保留
-        assert!(!visible_in_history("Video", "fnos", ""));
-        assert!(!visible_in_history("Directory", "fnos", "  "));
-        assert!(visible_in_history("Video", "fnos", "/p.webp"));
+        // [lc-1747] 在线源恢复：不再按 source 隐藏，与库内条目同口径可见
+        assert!(visible_in_history("webrs", ""));
+        assert!(visible_in_history("Movie", "/p.webp"));
+        // 个人视频：取不到封面 → 不计算；有封面则保留（[lc-1667]）
+        assert!(!visible_in_history("Video", ""));
+        assert!(!visible_in_history("Directory", "  "));
+        assert!(visible_in_history("Video", "/p.webp"));
         // 正规影视条目缺海报（刮削失败）仍保留，避免误伤
-        assert!(visible_in_history("Movie", "fnos", ""));
-        assert!(visible_in_history("Episode", "fnos", ""));
+        assert!(visible_in_history("Movie", ""));
+        assert!(visible_in_history("Episode", ""));
     }
 
     #[test]

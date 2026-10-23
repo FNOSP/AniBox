@@ -48,6 +48,8 @@ mod update;
 mod usage_stats;
 mod watched;
 mod webrs;
+// [lc-1747] webrs 常驻隐藏 WebView 单例服务（嗅探 / 反爬验证共用基建）
+mod webrs_webview;
 // [webview2] Windows WebView2 Runtime 检测 + 应用内下载兜底（见模块头注释）
 mod webview2;
 // [title] 展示标题繁 → 简（仅 mpv/#EXTINF 等展示字段，匹配元数据保持原文）
@@ -518,11 +520,11 @@ async fn get_watch_history(app: AppHandle, state: State<'_, AppState>) -> Result
         }
     }
     let mut items = history::merge(fnos.as_ref(), local);
-    // [lc-1667] 观影记录口径：在线源已搁置（整条隐藏）；无封面的个人视频默认不计算。
-    // 在「富化 / 聚合」之前过滤 —— 既让列表与统计一致，也省掉这些条目无谓的网络富化。
+    // [lc-1667] 观影记录口径：无封面的个人视频默认不计算；[lc-1747] 在线源（webrs）恢复，不再按 source 过滤。
+    // 在「富化 / 聚合」之前过滤 —— 省掉这些条目无谓的网络富化。
     items.retain(|it| {
         let s = |k: &str| it.get(k).and_then(|x| x.as_str()).unwrap_or("");
-        history::visible_in_history(s("type"), s("source"), s("poster"))
+        history::visible_in_history(s("type"), s("poster"))
     });
     history::enrich_series(&mut items, &cfg.server, &cfg.token).await;
     // [lc-1616] 富化（拿到剧 guid）之后再按**作品**聚合：同一部剧只出一张卡。
@@ -3325,6 +3327,8 @@ pub fn run() {
             webrs::webrs_captcha_start,
             webrs::webrs_captcha_submit,
             webrs::webrs_captcha_cancel,
+            // [lc-1747] 可见窗手动验证兜底（隐藏窗自动验证兜不住的交互挑战）
+            webrs::webrs_captcha_visible,
             // [lc-1608] 在线规则目录 + 一键更新（拉 KazumiRules index.json / 装/更新单条 / 查可更新）
             webrs::webrs_catalog,
             webrs::webrs_install_rule,
@@ -3335,6 +3339,8 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
+                // [lc-1747] 销毁 webrs 常驻隐藏窗（嗅探 / 验证单例），别把 WebView2 进程留到退出后
+                webrs_webview::shutdown_webviews(app_handle);
                 // [progress][fix] 退出前**同步** flush 最后一次进度（网络上限 3s），
                 // 必须放在杀 mpv / 丢异步运行时之前 —— 否则 `flush_on_exit` spawn 出去的任务
                 // 根本没机会跑，这就是「直接关掉软件最后一次进度丢失」的根因。

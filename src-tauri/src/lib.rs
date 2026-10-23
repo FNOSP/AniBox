@@ -2090,29 +2090,23 @@ async fn play_item(
     let multi = entries.len() > 1;
 
     // 自带 mpv：多条目 M3U（自然顺序 + --playlist-start 定位），单条沿用原单条目 M3U8；
-    // PotPlayer：无 start-index 参数，多条目时把点击集旋转到首位（播放器面板顺序与之一致），
-    // 单条仍直接播代理直链。
+    // PotPlayer：一律播「点击集」的代理直链（relay 包可读名）。
+    //
+    // [lc-1751] 旧版在 PotPlayer 多集时把**本地 m3u 文件路径**交给 player::launch ——
+    // launch_potplayer 会把它注册进本地 relay，relay 再拿 reqwest 去取 `C:\...\anibox-playlist.m3u`
+    // 这种 Windows 路径 → reqwest URL 构建直接报错 → 每个请求都 502，PotPlayer 窗口报
+    // 「服务已关闭或地址错误」（真机日志：19 连发 `转发失败 … builder error for url`）。
+    // 对标原项目 Fntv-Plus potplayer.ts（lc-297）：PotPlayer 起播只带**单集** shim URL，
+    // 其余集在窗口就绪后用 `/Current /add` 追加进面板（见下方 panel append），从不喂 m3u 文件。
     let mut playlist_start: Option<usize> = None;
     let url = if is_live {
         // [live] 直播：直链原样交给播放器（mpv 自己跟随 302 拉 HLS；
         // PotPlayer 由 player::launch 的 direct 分支跳过 relay）。
         direct_url.clone()
     } else if kind == "potplayer" {
-        if multi {
-            let mut ordered = entries.clone();
-            let rot = if ordered.is_empty() {
-                0
-            } else {
-                start_index.min(ordered.len() - 1)
-            };
-            ordered.rotate_left(rot);
-            let path = std::env::temp_dir().join("anibox-playlist.m3u");
-            let m3u = build_playlist_m3u(&cfg, &ordered);
-            std::fs::write(&path, m3u).map_err(|e| format!("写播放列表失败: {e}"))?;
-            path.to_string_lossy().to_string()
-        } else {
-            direct_url.clone()
-        }
+        // [lc-1751] PotPlayer（单集/多集一致）：播「点击集」的代理直链（launch 内经 relay
+        // 包可读名 URL）；整季面板其余集在起播后经 `/Current /add` 追加（见下方 panel append）。
+        direct_url.clone()
     } else if multi {
         let path = std::env::temp_dir().join("anibox-playlist.m3u");
         let m3u = build_playlist_m3u(&cfg, &entries);
@@ -2133,12 +2127,22 @@ async fn play_item(
     } else {
         0.0
     };
+    // [lc-1751] PotPlayer 的 relay 可读名（PotPlayer 把 URL 末段当标题显示）：多集时用
+    // 「剧名 - S01E03: 集标题」逐集形态（对标原项目 shim 名），其余沿用剧名。
+    let player_title = if kind == "potplayer" && !is_live && multi {
+        entries
+            .get(start_index)
+            .map(|e| e.title.clone())
+            .unwrap_or_else(|| display_title.clone())
+    } else {
+        display_title.clone()
+    };
     let launch_res = player::launch(
         &app,
         &state,
         &cfg,
         &url,
-        &display_title,
+        &player_title,
         0.0,
         duration_secs,
         None,
@@ -2186,6 +2190,37 @@ async fn play_item(
     );
     // 记录已落盘，再决定是否向调用方报播放器启动错误。
     launch_res?;
+
+    // [lc-1751] PotPlayer 整季面板追加（对标 Fntv-Plus potplayer.ts populatePlaylistPanel，
+    // lc-297）：起播只带点击集；窗口就绪后把其余集以可读名 relay URL 经 `/Current /add`
+    // 追加进 PotPlayer 播放列表面板 —— 面板显示整季、本集播完由 PotPlayer 顺序连播。
+    // 库内播放经 Go 代理自带鉴权（token 在 URL 里），relay 目标无需额外播放头。
+    // 延时 + 代次号双保险：窗口未就绪时 /Current 会丢；用户已切下一部时追加必须放弃。
+    if kind == "potplayer" && multi && !is_live {
+        let urls: Vec<String> = player::panel_append_order(entries.len(), start_index)
+            .into_iter()
+            .filter_map(|i| entries.get(i))
+            .map(|e| {
+                let id = player::relay_register(player::RelayTarget {
+                    url: proxy::play_url(&cfg, &e.guid),
+                    headers: player::HttpHeaders::default(),
+                });
+                player::relay_url_named_ext(&id, &e.title, "mp4")
+            })
+            .collect();
+        if !urls.is_empty() {
+            crate::libmpv::trace(&format!(
+                "[playlist] PotPlayer 面板追加安排：{} 集（点击集={}）",
+                urls.len(),
+                start_index
+            ));
+            player::schedule_potplayer_panel_append(
+                _player_path.clone(),
+                urls,
+                player::potplayer_generation(),
+            );
+        }
+    }
 
     // [theintrodb] 真实接入：把「guid → TMDB/季/集」下发给 mpv 内的 smart_skip 脚本。
     //

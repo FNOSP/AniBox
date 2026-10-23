@@ -554,7 +554,12 @@ fn spawn_potplayer_watcher(app: AppHandle, pid: u32, generation: u64, potctl: Op
                     let dur = (dur_ms / 1000.0).floor();
                     if dur > 0.0 {
                         // [progress] 退出兜底跟踪（PotPlayer 无 filename，当前集沿用起播时的那一集）。
-                        crate::fnos_progress::tick(&app, pos, dur);
+                        // [lc-1751] ended 已结算（含面板连播到下一集）后冻结回写：`/Current /add`
+                        // 追加的下一集起播后位置归零，继续 tick 会把「下一集的位置」写成本集
+                        // 进度，污染 fnOS「继续观看」记录（本集在 ended 时已按近片尾结算）。
+                        if !ended_sent {
+                            crate::fnos_progress::tick(&app, pos, dur);
+                        }
                         let _ = app.emit(
                             "mpv-event",
                             json!({ "event": "property-change", "id": 1, "data": pos }),
@@ -578,6 +583,77 @@ fn spawn_potplayer_watcher(app: AppHandle, pid: u32, generation: u64, potctl: Op
                         }
                     }
                 }
+            }
+        }
+    });
+}
+
+// ───────────────────────── [lc-1751] PotPlayer 整季面板 ─────────────────────────
+
+/// PotPlayer 整季面板追加顺序：点击集（索引 `clicked`）已在播，其余集按**自然集序**
+/// 尾部环绕排列 —— `[clicked+1..len, 0..clicked]`。对标 Fntv-Plus potplayer.ts 的
+/// rotate（`slice(pos) + slice(0, pos)`）后 `/add` 除首集外全部：本集播完 PotPlayer
+/// 顺着面板连播到下一集，而不是从头一集。
+pub fn panel_append_order(len: usize, clicked: usize) -> Vec<usize> {
+    if len == 0 {
+        return Vec::new();
+    }
+    let c = clicked.min(len - 1);
+    ((c + 1)..len).chain(0..c).collect()
+}
+
+/// 当前 PotPlayer 代次号（`launch_potplayer`/`stop_potplayer` 每次自增）。
+/// 面板追加任务延时结束后据此判断「本集会话是否已被下一次播放/停止取代」。
+pub fn potplayer_generation() -> u64 {
+    POTPLAYER_GEN.load(Ordering::SeqCst)
+}
+
+/// [lc-1751] 把整季其余集经 `/Current /add` 追加进**正在运行**的 PotPlayer 播放列表面板
+/// （对标 Fntv-Plus populatePlaylistPanel，display + PotPlayer 原生顺序连播）。
+///
+/// · 延时 ~1.2s：起播实例刚 spawn 时单实例握手未就绪，立刻 `/Current` 会丢参数
+///   （原项目实测用 900ms，这里稍放宽）。
+/// · 代次号校验：延时期间用户点了别的集 / 停止播放 → 本次追加作废，避免把旧剧的
+///   集追加进新会话的面板。
+/// · 转发进程（PotPlayerMini64.exe /Current …）把参数交给运行中的实例后自行退出，
+///   不跟踪、不等待（与原项目 spawn + unref 同款）。
+pub fn schedule_potplayer_panel_append(path: String, urls: Vec<String>, generation: u64) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+        if POTPLAYER_GEN.load(Ordering::SeqCst) != generation {
+            crate::libmpv::trace("[player] PotPlayer 面板追加取消：播放会话已切换");
+            return;
+        }
+        let mut args: Vec<String> = Vec::with_capacity(urls.len() * 2 + 1);
+        args.push("/Current".into());
+        for u in &urls {
+            args.push("/add".into());
+            args.push(u.clone());
+        }
+        let mut command = std::process::Command::new(&path);
+        command
+            .args(&args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt as _;
+            command.creation_flags(0x0800_0000);
+        }
+        match command.spawn() {
+            Ok(child) => {
+                let pid = child.id();
+                drop(child); // 转发进程自己退出，不等待
+                crate::libmpv::trace(&format!(
+                    "[player] PotPlayer 面板追加已转发 pid={pid}（{} 集）",
+                    urls.len()
+                ));
+            }
+            Err(e) => {
+                crate::libmpv::trace(&format!(
+                    "[player] PotPlayer 面板追加拉起失败（不影响当前播放）: {e}"
+                ));
             }
         }
     });
@@ -751,12 +827,19 @@ fn rewrite_uri_attributes(line: &str, abs: &dyn Fn(&str) -> String) -> String {
     out
 }
 
-/// [lc-1749] 从请求路径解析 relay 子资源（HLS 分段/密钥/子播放列表）：
+/// [lc-1749] 从请求目标中解析 relay 子资源（HLS 分段/密钥/子播放列表）：
 /// `/relay/<id>/~u/<percent-encoded 绝对URL>` → 还原出绝对地址。
 /// 不带 `~u/` 段（纯 id 或可读文件名）→ None = 播放列表本体，按 id 转发注册地址。
 /// 可读文件名经 [`urlencoding::encode`] 后是单个路径段、不以 `~u/` 开头，无歧义。
-pub fn relay_sub_resource(path: &str, id: &str) -> Option<String> {
-    let rest = path.strip_prefix(&format!("/relay/{id}/"))?;
+///
+/// [lc-1751] 入参改为**未截断的原始请求目标**（`target`，含查询串）：部分播放器
+/// （含 PotPlayer 的部分形态）会把百分号编码先解码成原文再发请求 —— 包装后的绝对
+/// URL 变成 `~u/https://x/a.ts?tok=1`，查询串在 `?` 之后。若调用方先按 `?` 截断，
+/// token 会被整段丢掉（上游 403）。这里取 `~u/` 之后的**全部剩余内容**再解码：
+/// · 编码形态：`%3Ftok%3D1` 在路径里，解码后还原成 `?tok=1`（与旧行为一致）；
+/// · 解码形态：字面 `?tok=1` 原样保留。
+pub fn relay_sub_resource(target: &str, id: &str) -> Option<String> {
+    let rest = target.strip_prefix(&format!("/relay/{id}/"))?;
     let enc = rest.strip_prefix("~u/")?;
     let decoded = urlencoding::decode(enc).ok()?.to_string();
     if decoded.starts_with("http://") || decoded.starts_with("https://") {
@@ -925,6 +1008,30 @@ async fn handle_relay_conn(mut stream: tokio::net::TcpStream) {
         return;
     };
 
+    // [lc-1749] 子资源（`~u`）：HLS 分段/密钥/子播放列表的代取地址；无 `~u` 段则
+    // 转发注册的原始地址（播放列表本体）。两类请求带**同一套** Referer/UA —— 与
+    // mpv 链路一致（ffmpeg(hls) 分段请求也带播放头）。
+    // [lc-1751] 子资源解析改用**未截断的原始 target**（含查询串）：PotPlayer 若把
+    // 百分号编码解码成原文再发请求，`~u/https://x/a.ts?tok=1` 的 `?tok=1` 是查询串，
+    // 先按 `?` 截断再解析会丢 token → 分段 403。见 [`relay_sub_resource`]。
+    let sub = relay_sub_resource(&target_path, id);
+    let upstream_url = sub.clone().unwrap_or_else(|| t.url.clone());
+    // [lc-1751] 防御性校验：转发目标必须是 http/https。真机事故根因（lc-1751 修复前）：
+    // 多集库播放把本地 m3u **文件路径**注册成 relay 目标，reqwest 构建 URL 直接失败，
+    // 每个请求都 502，PotPlayer 只会报「服务已关闭或地址错误」。这里把同类错误前置成
+    // 可诊断的 400 + potplayer-relay-error 事件，不再让播放器只看到含糊的 502。
+    if !upstream_url.starts_with("http://") && !upstream_url.starts_with("https://") {
+        crate::libmpv::trace(&format!(
+            "[relay] 转发失败拦截：目标不是 http/https 地址: {}",
+            t.url
+        ));
+        if sub.is_none() {
+            emit_relay_error(&t.url, "转发目标不是 http/https 地址（本地文件路径不可经 relay 转发）".into());
+        }
+        let _ = write_plain(&mut stream, 400, "Bad Request", b"relay target must be http(s)").await;
+        return;
+    }
+
     let client = match reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::limited(10))
         // [lc-1749] 口径对齐：webrs 的 http() 与 mpv/ffmpeg 默认都不校验证书，
@@ -946,11 +1053,6 @@ async fn handle_relay_conn(mut stream: tokio::net::TcpStream) {
     } else {
         reqwest::Method::GET
     };
-    // [lc-1749] 子资源（`~u`）：HLS 分段/密钥/子播放列表的代取地址；无 `~u` 段则
-    // 转发注册的原始地址（播放列表本体）。两类请求带**同一套** Referer/UA —— 与
-    // mpv 链路一致（ffmpeg(hls) 分段请求也带播放头）。
-    let sub = relay_sub_resource(path, id);
-    let upstream_url = sub.clone().unwrap_or_else(|| t.url.clone());
     let mut req = client.request(upstream_method, &upstream_url);
     for (k, v) in relay_upstream_headers(&t, headers.get("range").map(|s| s.as_str())) {
         req = req.header(k, v);
@@ -1311,6 +1413,42 @@ mod tests {
         assert_eq!(relay_sub_resource("/relay/abc/~u/ftp://x", "abc"), None);
     }
 
+    /// [lc-1751] 解码形态：播放器把百分号编码解码成原文再发请求时，`~u` 后是字面
+    /// URL（含 `?query`）。解析必须保留查询串（丢 token = 分段 403）。
+    #[test]
+    fn relay_sub_resource_keeps_query_in_decoded_form() {
+        // 解码形态（字面 URL，查询串在 ? 之后）
+        assert_eq!(
+            relay_sub_resource("/relay/abc/~u/https://cdn.test/hls/seg-1.ts?token=ab&sig=1", "abc")
+                .as_deref(),
+            Some("https://cdn.test/hls/seg-1.ts?token=ab&sig=1")
+        );
+        // 编码形态（%3F 在路径里）——与旧行为一致
+        let enc = urlencoding::encode("https://cdn.test/hls/seg-1.ts?token=ab");
+        assert_eq!(
+            relay_sub_resource(&format!("/relay/abc/~u/{enc}"), "abc").as_deref(),
+            Some("https://cdn.test/hls/seg-1.ts?token=ab")
+        );
+        // 可读名段带了无关查询串也不影响（无 ~u → 播放列表本体）
+        assert_eq!(
+            relay_sub_resource("/relay/abc/%E5%89%A7%E5%90%8D.mp4?range=0-", "abc"),
+            None
+        );
+    }
+
+    /// [lc-1751] PotPlayer 面板追加顺序：自然集序尾部环绕（对标 Fntv-Plus rotate+/add）。
+    #[test]
+    fn panel_append_order_wraps_naturally() {
+        assert_eq!(panel_append_order(0, 0), Vec::<usize>::new());
+        assert_eq!(panel_append_order(1, 0), Vec::<usize>::new());
+        assert_eq!(panel_append_order(3, 0), vec![1, 2]);
+        assert_eq!(panel_append_order(3, 1), vec![2, 0]);
+        assert_eq!(panel_append_order(3, 2), vec![0, 1]);
+        assert_eq!(panel_append_order(5, 2), vec![3, 4, 0, 1]);
+        // clicked 越界钳制到最后一个
+        assert_eq!(panel_append_order(3, 9), vec![0, 1]);
+    }
+
     #[test]
     fn relay_url_named_ext_picks_hls_extension() {
         assert!(relay_url_named_ext("abc123", "ju", "m3u8").ends_with(".m3u8"));
@@ -1351,9 +1489,17 @@ mod tests {
     /// 客户端（模拟 PotPlayer）请求包装后的分片地址时，relay 解码绝对地址并带**同一套
     /// Referer/UA** 代取 —— 这是「HLS 在线源在 PotPlayer 模式可播」的关键（旧版在此
     /// 直接拒播）。全部走 127.0.0.1，不触外网。
+    /// [lc-1751] 追加三段真实时序场景：
+    ///   ⓪ **秒连竞态**：`ensure_relay` 返回后**立即**并发连接（模拟 PotPlayer 秒开）——
+    ///      监听 bind 在 ensure_relay 内同步完成、accept 循环异步起步，连接先进内核
+    ///      backlog，8 连发必须全部 200（此前真机 502 的怀疑方向之一，就此钉死）；
+    ///   ③ **非 http(s) 目标回归**：本地文件路径被误注册成转发目标（lc-1751 修复前的
+    ///      真机根因）必须立刻 400 + 明确文案，不再是含糊的 502 builder error；
+    ///   ④ **无头 HLS 直通**（库内 NAS-HLS 经 Go 代理的形态）：无 Referer/UA 时分片
+    ///      绝对化直连源站、不包 `~u`。
     ///
-    /// 注意：两条 e2e 流程合在**同一个** #[tokio::test] 里 —— relay 监听 22349 的
-    /// 生命周期跟所属 runtime 走，拆成两个测试在 `--test-threads=1` 下必挂（上一个
+    /// 注意：所有 e2e 流程合在**同一个** #[tokio::test] 里 —— relay 监听 22349 的
+    /// 生命周期跟所属 runtime 走，拆成多个测试在 `--test-threads=1` 下必挂（上一个
     /// 测试的 runtime 连同监听一起销毁，端口又卡 TIME_WAIT，本测试重绑失败）。
     #[tokio::test]
     async fn relay_forwards_range_and_headers() {
@@ -1409,12 +1555,68 @@ mod tests {
             }
         });
 
+        // 假源站 ③（秒连竞态用）：无限接受连接，每连接回 1 字节 mp4。
+        let burst_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let burst_addr = burst_listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut s, _)) = burst_listener.accept().await else { break };
+                let mut buf = [0u8; 2048];
+                let _ = s.read(&mut buf).await;
+                let head = "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Type: video/mp4\r\nConnection: close\r\n\r\n";
+                let _ = s.write_all(head.as_bytes()).await;
+                let _ = s.write_all(b"B").await;
+                let _ = s.flush().await;
+            }
+        });
+
+        // 假源站 ④（无头 HLS 直通用）：单连接，返回相对分片播放列表。
+        let plain_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let plain_addr = plain_listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            if let Ok((mut s, _)) = plain_listener.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf).await;
+                let body = "#EXTM3U\n#EXTINF:10,\nseg-x.ts\n";
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = s.write_all(head.as_bytes()).await;
+                let _ = s.write_all(body.as_bytes()).await;
+                let _ = s.flush().await;
+            }
+        });
+
         // （[lc-1749] 不 clear 全局表：并行测试会互相清掉对方的目标 → 随机 404）
+
+        // ── ⓪ [lc-1751] 秒连竞态：bind 完成后**零等待**并发连接，必须全部 200 ──
+        let burst_id = relay_register(RelayTarget {
+            url: format!("http://{burst_addr}/burst.mp4"),
+            headers: HttpHeaders::default(),
+        });
+        ensure_relay().await.unwrap();
+        let mut burst = Vec::new();
+        for _ in 0..8 {
+            let u = relay_url(&burst_id);
+            burst.push(tokio::spawn(async move {
+                reqwest::Client::new().get(&u).send().await.unwrap().status()
+            }));
+        }
+        for h in burst {
+            assert_eq!(
+                h.await.unwrap(),
+                reqwest::StatusCode::OK,
+                "ensure_relay 返回后立即连接（PotPlayer 秒开时序）必须成功"
+            );
+        }
+
         // ── ① Range/头透传（原有断言，保持不变）──
         let id = relay_register(RelayTarget {
             url: format!("http://{addr}/video.mp4"),
             headers: HttpHeaders::new(Some("https://ref.test/".into()), Some("UA/9".into())),
         });
+        // ⓪ 已 ensure 过：这里走 AddrInUse → 连接探测 → 复用路径（生产里每次播放都会经过）
         ensure_relay().await.unwrap();
 
         let resp = reqwest::Client::new()
@@ -1473,5 +1675,34 @@ mod tests {
             assert!(r.contains("referer: https://ref.test/"), "Referer 必须代转: {r}");
             assert!(r.contains("user-agent: ua/9"), "UA 必须代转: {r}");
         }
+        drop(reqs);
+
+        // ── ③ [lc-1751] 回归：本地文件路径被误注册成转发目标（真机根因形态）→ 400 ──
+        let bad_id = relay_register(RelayTarget {
+            url: r"C:\Users\x\AppData\Local\Temp\anibox-playlist.m3u".into(),
+            headers: HttpHeaders::default(),
+        });
+        let resp = reqwest::Client::new().get(relay_url(&bad_id)).send().await.unwrap();
+        assert_eq!(
+            resp.status(),
+            reqwest::StatusCode::BAD_REQUEST,
+            "非 http(s) 转发目标必须 400（修复前是 502 builder error → PotPlayer「服务已关闭或地址错误」）"
+        );
+        let body = resp.bytes().await.unwrap();
+        assert_eq!(&body[..], b"relay target must be http(s)");
+
+        // ── ④ [lc-1751] 无头 HLS 直通（库内 NAS-HLS 形态）：分片绝对化、不包 ~u ──
+        let plain_id = relay_register(RelayTarget {
+            url: format!("http://{plain_addr}/hls/index.m3u8"),
+            headers: HttpHeaders::default(),
+        });
+        let resp = reqwest::Client::new().get(relay_url(&plain_id)).send().await.unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
+        let body = resp.text().await.unwrap();
+        assert!(
+            body.contains(&format!("http://{plain_addr}/hls/seg-x.ts")),
+            "相对分片应绝对化为源站地址: {body}"
+        );
+        assert!(!body.contains("~u/"), "无头场景不应包 ~u: {body}");
     }
 }

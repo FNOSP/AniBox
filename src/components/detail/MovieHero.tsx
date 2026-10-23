@@ -198,65 +198,70 @@ export function MovieHero({
         </div>
 
         <div className="mv-hero-body" ref={bodyRef}>
-          <h1 className="mv-title">{title || "（无标题）"}</h1>
-          {originalTitle && originalTitle !== title && <div className="mv-subtitle">{originalTitle}</div>}
+          {/* [lc-1740] 顶部信息区（标题 / 元信息 / 按钮 / 版本条）统一包进 .mv-head，
+              加与 .mv-glass 同款的一层浅色毛玻璃底；.mv-glass 仍留在外层作为兄弟节点，
+              避免两层 backdrop-filter 嵌套叠加导致画面糊掉。 */}
+          <div className="mv-head">
+            <h1 className="mv-title">{title || "（无标题）"}</h1>
+            {originalTitle && originalTitle !== title && <div className="mv-subtitle">{originalTitle}</div>}
 
-          <div className="mv-meta-row">
-            {rating != null && rating > 0 && (
-              <span className="mv-rating">
-                <IcoStarL size={13} strokeWidth={0} className="mv-rating-star" aria-hidden="true" />{" "}
-                {rating.toFixed(1)}
-              </span>
-            )}
-            {year && <span>{year}</span>}
-            {runtimeMin > 0 && <span>{runtimeMin} 分钟</span>}
-            {genres.length > 0 && <span>{genres.slice(0, 3).join(" / ")}</span>}
-            {votes > 0 && <span className="mv-votes">{votes} 人评分</span>}
-          </div>
-
-          <div className="mv-actions">
-            <button className="mv-btn-primary" onClick={onPlay} disabled={playing}>
-              ▶ {playing ? "打开中…" : resumeAt ? "继续播放" : "立即播放"}
-            </button>
-            <button className={`mv-btn-ghost${fav ? " on" : ""}`} onClick={toggleFav} disabled={!favGuid || favBusy}>
-              <svg viewBox="0 0 24 24" fill={fav ? "currentColor" : "none"} stroke="currentColor" strokeWidth={fav ? 0 : 1.8}>
-                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-              </svg>
-              {favBusy ? "处理中…" : fav ? "已收藏" : "收藏"}
-            </button>
-            {/* 元数据入口：小正方形按钮，紧挨「收藏」右侧 */}
-            {onMeta && (
-              <button
-                className="mv-btn-square"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onMeta();
-                }}
-                title="元数据操作（编辑 / 手动匹配 / 刷新）"
-                aria-label="元数据操作"
-              >
-                ⋯
-              </button>
-            )}
-          </div>
-          {/* [版本] 同一电影多版本：与剧集详情页同一套版本盒子（仅 > 1 显示）。 */}
-          {versions && versions.length > 1 && (
-            <div className="mv-versions" role="group" aria-label="选择版本">
-              {versions.map((v) => (
-                <button
-                  key={v.mediaGuid}
-                  type="button"
-                  className={`mv-version${v.mediaGuid === selectedVersion ? " active" : ""}`}
-                  title={v.label}
-                  aria-pressed={v.mediaGuid === selectedVersion}
-                  onClick={() => onVersionChange?.(v.mediaGuid)}
-                >
-                  {v.label}
-                </button>
-              ))}
+            <div className="mv-meta-row">
+              {rating != null && rating > 0 && (
+                <span className="mv-rating">
+                  <IcoStarL size={13} strokeWidth={0} className="mv-rating-star" aria-hidden="true" />{" "}
+                  {rating.toFixed(1)}
+                </span>
+              )}
+              {year && <span>{year}</span>}
+              {runtimeMin > 0 && <span>{runtimeMin} 分钟</span>}
+              {genres.length > 0 && <span>{genres.slice(0, 3).join(" / ")}</span>}
+              {votes > 0 && <span className="mv-votes">{votes} 人评分</span>}
             </div>
-          )}
-          {note && <div className="mv-note">{note}</div>}
+
+            <div className="mv-actions">
+              <button className="mv-btn-primary" onClick={onPlay} disabled={playing}>
+                ▶ {playing ? "打开中…" : resumeAt ? "继续播放" : "立即播放"}
+              </button>
+              <button className={`mv-btn-ghost${fav ? " on" : ""}`} onClick={toggleFav} disabled={!favGuid || favBusy}>
+                <svg viewBox="0 0 24 24" fill={fav ? "currentColor" : "none"} stroke="currentColor" strokeWidth={fav ? 0 : 1.8}>
+                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                </svg>
+                {favBusy ? "处理中…" : fav ? "已收藏" : "收藏"}
+              </button>
+              {/* 元数据入口：小正方形按钮，紧挨「收藏」右侧 */}
+              {onMeta && (
+                <button
+                  className="mv-btn-square"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onMeta();
+                  }}
+                  title="元数据操作（编辑 / 手动匹配 / 刷新）"
+                  aria-label="元数据操作"
+                >
+                  ⋯
+                </button>
+              )}
+            </div>
+            {/* [版本] 同一电影多版本：与剧集详情页同一套版本盒子（仅 > 1 显示）。 */}
+            {versions && versions.length > 1 && (
+              <div className="mv-versions" role="group" aria-label="选择版本">
+                {versions.map((v) => (
+                  <button
+                    key={v.mediaGuid}
+                    type="button"
+                    className={`mv-version${v.mediaGuid === selectedVersion ? " active" : ""}`}
+                    title={v.label}
+                    aria-pressed={v.mediaGuid === selectedVersion}
+                    onClick={() => onVersionChange?.(v.mediaGuid)}
+                  >
+                    {v.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {note && <div className="mv-note">{note}</div>}
+          </div>
 
           {(overview || topCast.length > 0) && (
             <div className="mv-glass">

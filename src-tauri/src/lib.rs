@@ -391,12 +391,49 @@ async fn get_media_libs(state: State<'_, AppState>) -> Result<Value, String> {
         .await
 }
 
+/// [lc-1727] item/list 单页条数：默认 60（历史值），上限 200。
+/// 前端「滚动加载更多」逐页取；这里只做区间收敛，避免误传 0/负数/巨大值把 NAS 拖死。
+const ITEM_LIST_PAGE_SIZE: i64 = 60;
+const ITEM_LIST_PAGE_SIZE_MAX: i64 = 200;
+
+/// [lc-1727] 单页条数收敛：缺省/非法 → 60；正数 → 夹到 [1, 200]。
+fn item_list_page_size(raw: Option<i64>) -> i64 {
+    match raw {
+        Some(n) if n > 0 => n.min(ITEM_LIST_PAGE_SIZE_MAX),
+        _ => ITEM_LIST_PAGE_SIZE,
+    }
+}
+
+/// [lc-1727] 分页终止判定（纯函数，前端 `shouldLoadMore` 同口径）：
+/// - `loaded`：已累计的条目数（含本页）
+/// - `total`：服务端返回的总数（None/0 = 未知）
+/// - `page_size`：每页条数
+///
+/// 返回 true = 还应继续翻页。规则：
+/// 1. total 已知（>0）且 loaded 已达标 → 停；
+/// 2. 本页不足一页（loaded 不是 page_size 的整数倍）→ 停（最后一页）；
+/// 3. 其余继续。
+/// 空页（本页 0 条）由调用方直接判停 —— loaded 不变时这里无法区分「空页」与「整页」。
+fn should_load_more(loaded: usize, total: Option<i64>, page_size: usize) -> bool {
+    if page_size == 0 {
+        return false;
+    }
+    if let Some(t) = total {
+        if t > 0 && loaded as i64 >= t {
+            return false;
+        }
+    }
+    loaded % page_size == 0
+}
+
 /// 条目分页查询（形状经测试 NAS 实测 + FlyNarwhal 源码互证）：
 /// - 库根浏览：只传 ancestor_guid（parent_guid 传库 guid 服务端返回 0 条）；
 ///   实测同库白名单 151 条 vs 无过滤 2635 条剧集混排 —— Episode 全靠白名单滤掉，
 ///   tags.type 白名单不含 Season/Episode（对齐 FlyNarwhal libraryBrowseValues）。
 /// - 文件夹钻取（未识别 Directory/fv_*）：只传 parent_guid，exclude_grouped_video=0
 ///   （FlyNarwhal 注释：钻取带 1 会让原始视频文件夹返回空），sort_title ASC 对齐网页。
+/// - [lc-1727] 分页：`page`（1 起）+ `page_size`（默认 60，可传参，上限 200）。
+///   响应里的 `total` 是**服务端总数**（不受本页条数限制），前端据此判断是否还有下一页。
 #[tauri::command]
 async fn get_items(
     app: AppHandle,
@@ -404,18 +441,21 @@ async fn get_items(
     ancestor_guid: Option<String>,
     parent_guid: Option<String>,
     page: Option<i64>,
+    page_size: Option<i64>,
 ) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let client = fnapi::new_client();
     let browse_types = json!(["Movie", "TV", "Directory", "Video", "LiveChannel"]);
+    let page = page.unwrap_or(1).max(1);
+    let page_size = item_list_page_size(page_size);
     let body = if let Some(parent) = parent_guid {
         json!({
             "parent_guid": parent,
             "exclude_grouped_video": 0,
             "sort_type": "ASC",
             "sort_column": "sort_title",
-            "page_size": 60,
-            "page": page.unwrap_or(1),
+            "page_size": page_size,
+            "page": page,
             "tags": { "type": browse_types }
         })
     } else {
@@ -424,8 +464,8 @@ async fn get_items(
             "exclude_grouped_video": 1,
             "sort_type": "DESC",
             "sort_column": "create_time",
-            "page_size": 60,
-            "page": page.unwrap_or(1),
+            "page_size": page_size,
+            "page": page,
             "tags": { "type": browse_types }
         })
     };
@@ -969,8 +1009,9 @@ async fn match_library_works(state: State<'_, AppState>, arg: Value) -> Result<V
             .unwrap_or_default();
         let n = list.len();
         items.extend(list);
-        if n < LIB_MATCH_PAGE_SIZE {
-            break; // 不足一页 = 已到底
+        // [lc-1727] 空页 / 本页不足一页 → 已到底（与前端 shouldLoadMore 同口径）
+        if n == 0 || !should_load_more(items.len(), None, LIB_MATCH_PAGE_SIZE) {
+            break;
         }
     }
     let idx = libmatch::build_index(&items);
@@ -3334,6 +3375,38 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    /// [lc-1727] 媒体库分页终止条件（纯函数）：60 一页 + 滚动加载更多的判停口径。
+    /// 背景：v4.0.0 里库列表只请求了第 1 页（60 条）就再也不翻页，
+    /// 超过 60 条的库从第 61 条起永远看不到 —— 这条测试锁住「什么时候该继续翻」。
+    #[test]
+    fn item_pagination_stop_rules() {
+        // 首页整页、总数更多 → 继续
+        assert!(super::should_load_more(60, Some(151), 60));
+        // total 已知且已达标 → 停（即使刚好整页）
+        assert!(!super::should_load_more(120, Some(120), 60));
+        assert!(!super::should_load_more(180, Some(151), 60));
+        // 最后一页不足一页 → 停（total 缺失时同样能停）
+        assert!(!super::should_load_more(151, Some(151), 60));
+        assert!(!super::should_load_more(151, None, 60));
+        // total 缺失且刚好整页 → 继续（可能还有下一页）
+        assert!(super::should_load_more(120, None, 60));
+        // total=0 视为未知
+        assert!(super::should_load_more(60, Some(0), 60));
+        // 防御：page_size=0 不翻页
+        assert!(!super::should_load_more(60, Some(600), 0));
+    }
+
+    /// [lc-1727] page_size 收敛：默认 60，正数夹到 [1, 200]，非法值回默认。
+    #[test]
+    fn item_list_page_size_clamps() {
+        assert_eq!(super::item_list_page_size(None), 60);
+        assert_eq!(super::item_list_page_size(Some(0)), 60);
+        assert_eq!(super::item_list_page_size(Some(-5)), 60);
+        assert_eq!(super::item_list_page_size(Some(30)), 30);
+        assert_eq!(super::item_list_page_size(Some(200)), 200);
+        assert_eq!(super::item_list_page_size(Some(5000)), 200);
+    }
+
     /// [lc-1578] 哨兵：**季/集列表**的 TTL 必须远短于 item 详情（10 分钟 vs 120 天）。
     /// 反过来（列表也挂 120 天）正是用户报的「飞牛里三集、软件只显示两集」——这条测试让它变红。
     /// 真机取证（2026-10-15）：`detail:episodes` 缓存 17:04 写入（当时 2 集）、23:25 仍被命中返回，

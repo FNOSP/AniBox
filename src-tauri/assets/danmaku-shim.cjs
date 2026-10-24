@@ -250,6 +250,25 @@ function nasParams(res, q) {
     return { itemGuid, token, domain };
 }
 
+/**
+ * [lc-1764] 条目 guid（集/电影条目）→ 文件级 media_guid。
+ * fnOS 的 subtitle/search 与 subtitle/download 只认 play/info 返回的 media_guid，
+ * 拿条目 guid 直接调会被拒（实测 Permission Error -5）——官方 App / 飞鲸同款换算。
+ * 会话内缓存（一个条目一次 play/info）。
+ */
+const mediaGuidCache = new Map(); // itemGuid -> media_guid
+async function resolveMediaGuid(domain, token, itemGuid) {
+    const hit = mediaGuidCache.get(itemGuid);
+    if (hit) return hit;
+    const r = await fnCall(domain, '/v/api/v1/play/info', 'POST', token, { item_guid: itemGuid }, 15000);
+    const mg = r.json && r.json.code === 0 && r.json.data ? String(r.json.data.media_guid || '') : '';
+    if (!mg) {
+        throw new Error('play/info 未返回 media_guid（无法换算字幕检索目标）');
+    }
+    mediaGuidCache.set(itemGuid, mg);
+    return mg;
+}
+
 /** GET /v/api/v1/stream/list/{guid} → subtitle_streams（失败返回空数组） */
 async function fetchSubtitleStreams(domain, token, itemGuid) {
     const r = await fnCall(domain, `/v/api/v1/stream/list/${encodeURIComponent(itemGuid)}`, 'GET', token, null, 12000);
@@ -486,7 +505,9 @@ async function handle(req, res) {
         const p = nasParams(res, q);
         if (!p) return;
         const lan = q('lan') || 'zh-CN';
-        fnCall(p.domain, '/v/api/v1/subtitle/search', 'POST', p.token, { lan, media_guid: p.itemGuid }, 25000)
+        // [lc-1764] 先换算文件级 media_guid（条目 guid 直接调会被服务端拒绝）
+        resolveMediaGuid(p.domain, p.token, p.itemGuid)
+            .then((mg) => fnCall(p.domain, '/v/api/v1/subtitle/search', 'POST', p.token, { lan, media_guid: mg }, 25000))
             .then((r) => {
                 if (!r.json || r.json.code !== 0 || !r.json.data) {
                     json(res, 200, { ok: false, error: (r.json && (r.json.msg || r.json.message)) || 'fnOS 在线字幕搜索失败' });
@@ -509,12 +530,14 @@ async function handle(req, res) {
             return;
         }
         (async () => {
+            // [lc-1764] 与搜索同口径：文件级 media_guid
+            const mg = await resolveMediaGuid(p.domain, p.token, p.itemGuid);
             const r = await fnCall(
                 p.domain,
                 '/v/api/v1/subtitle/download',
                 'POST',
                 p.token,
-                { media_guid: p.itemGuid, trim_id: trimId, sync_download: 1 },
+                { media_guid: mg, trim_id: trimId, sync_download: 1 },
                 25000,
             );
             if (!r.json || r.json.code !== 0 || !r.json.data) {

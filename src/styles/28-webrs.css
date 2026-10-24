@@ -482,21 +482,22 @@
 }
 .webrs-recent-list {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
 }
+/* [lc-1775] 每条记录独立一横行：左集标签、中源名徽标、右相对时间 */
 .webrs-recent-chip {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  width: 100%;
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   background: var(--input-bg);
   color: var(--text-strong);
-  padding: 6px 10px;
+  padding: 7px 12px;
   font-size: 12px;
   cursor: pointer;
-  max-width: 100%;
   transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
 }
 .webrs-recent-chip:hover {
@@ -524,8 +525,10 @@
   text-overflow: ellipsis;
 }
 .webrs-recent-ago {
+  margin-left: auto;
   font-size: 11px;
   color: var(--muted);
+  white-space: nowrap;
 }
 
 /* ── [lc-1752] 添加采集源表单（苹果CMS V10，只填一个接口地址） ── */

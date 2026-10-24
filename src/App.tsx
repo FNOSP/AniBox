@@ -885,26 +885,27 @@ function App() {
         setGuestAsk(true);
         return;
       }
-      // [lc-1774] 集/季条目自归一（对齐飞鲸 /tv/season/ 的页面内归一）：季详情的
-      // parent_guid 才是剧 guid——拿它重开剧级详情，杜绝「Episode 透传 → 电影版式
-      // + 季数据乱匹配」。get_item_detail 走磁盘缓存（detail:item:*），常态秒回。
-      // 后端 get_continue_watching 的剧级改写若已生效（guid 已是剧），这里直接跳过。
+      // [lc-1774] 集/季条目 → 按剧名（tv_title）全局搜索导航（用户方案：卡片本来就
+      // 带剧名，搜出来的剧条目天然是剧级 guid + TV 类型，绕开 parent_guid 季/剧层级
+      // 的一切坑）。命中取第一条剧集类结果；搜不到回落原条目打开。
       const t = String((item as Record<string, unknown>).type ?? "");
       if (t === "Episode" || t === "Season") {
-        const parent = String(
-          (item as Record<string, unknown>).parent_guid ??
-            (item as Record<string, unknown>).parentGuid ??
+        const q = String(
+          (item as Record<string, unknown>).tv_title ??
+            (item as Record<string, unknown>).tvTitle ??
+            item.title ??
             "",
         ).trim();
-        if (parent) {
-          invoke<Record<string, unknown>>("get_item_detail", { guid: parent })
-            .then((d) => {
-              const seriesGuid = String(d?.parent_guid ?? d?.parentGuid ?? "").trim();
-              if (!seriesGuid) {
-                setDetailItem(item);
-                return;
-              }
-              setDetailItem({ ...item, guid: seriesGuid, type: "TV" });
+        if (q) {
+          invoke<{ list?: MediaItem[] | null }>("search_items", { query: q })
+            .then((r) => {
+              const list = Array.isArray(r?.list) ? r.list : [];
+              const hit =
+                list.find((x) => {
+                  const xt = String((x as Record<string, unknown>).type ?? "");
+                  return xt === "TV" || xt === "TvSeries" || xt.includes("电视剧");
+                }) ?? list[0];
+              setDetailItem(hit ?? item);
             })
             .catch(() => setDetailItem(item))
             .finally(() => {

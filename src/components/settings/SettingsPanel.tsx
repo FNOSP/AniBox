@@ -869,6 +869,8 @@ export function SettingsPanel({
   const [subNewToken, setSubNewToken] = useState("");
   const [subKeyId, setSubKeyId] = useState("");
   const [subKeyOsub, setSubKeyOsub] = useState("");
+  const [acgUser, setAcgUser] = useState("");
+  const [acgPass, setAcgPass] = useState("");
   const [ddNote, setDdNote] = useState("");
   const ddLoaded = useRef(false);
 
@@ -1423,7 +1425,7 @@ export function SettingsPanel({
                   <div className="set-row set-row-col">
                     <span className="set-k">字幕源</span>
                     <div className="set-desc">
-                      内置三源固定：迅雷（手雷官方接口，无需账号）+ assrt.net + OpenSubtitles。
+                      源类型：迅雷（官方接口，免账号）/ assrt.net / OpenSubtitles / ACG 论坛（账号见下方）。
                       自上而下为优先级，请求失败自动切下一个。下方「自定义密钥」填自己的
                       token / Api-Key 时直接顶掉内置共享凭证（优先级最高）。
                       列表存本机 subtitle-sources.json。
@@ -1442,10 +1444,10 @@ export function SettingsPanel({
                           }}
                         />
                         <span
-                          className={`sp-badge sp-${s.kind === "opensubtitles" ? "osub" : s.kind}`}
+                          className={`sp-badge sp-${s.kind === "opensubtitles" ? "osub" : s.kind === "acgrip" ? "assrt" : s.kind}`}
                           style={{ flex: "0 0 92px", textAlign: "center" }}
                         >
-                          {s.kind === "xunlei" ? "迅雷" : s.kind === "assrt" ? "assrt" : "OpenSubs"}
+                          {s.kind === "xunlei" ? "迅雷" : s.kind === "assrt" ? "assrt" : s.kind === "acgrip" ? "ACG" : "OpenSubs"}
                         </span>
                         <input
                           className="set-input"
@@ -1494,6 +1496,7 @@ export function SettingsPanel({
                         <option value="xunlei">迅雷</option>
                         <option value="assrt">assrt.net</option>
                         <option value="opensubtitles">OpenSubtitles</option>
+                        <option value="acgrip">ACG 论坛</option>
                       </select>
                       <input
                         className="set-input"
@@ -1502,7 +1505,7 @@ export function SettingsPanel({
                         value={subNewName}
                         onChange={(e) => setSubNewName(e.target.value)}
                       />
-                      {subNewKind !== "xunlei" && (
+                      {(subNewKind === "assrt" || subNewKind === "opensubtitles") && (
                         <input
                           className="set-input"
                           style={{ flex: 1 }}
@@ -1516,7 +1519,7 @@ export function SettingsPanel({
                         onClick={() => {
                           const it: SubSource = {
                             kind: subNewKind,
-                            name: subNewName.trim() || (subNewKind === "xunlei" ? "迅雷" : subNewKind === "assrt" ? "assrt.net" : "OpenSubtitles"),
+                            name: subNewName.trim() || (subNewKind === "xunlei" ? "迅雷" : subNewKind === "assrt" ? "assrt.net" : subNewKind === "acgrip" ? "ACG 论坛" : "OpenSubtitles"),
                             token: subNewToken.trim(),
                             useBuiltin: subNewToken.trim() === "",
                             enabled: true,
@@ -1584,6 +1587,42 @@ export function SettingsPanel({
                         }}
                       >
                         保存密钥
+                      </button>
+                    </div>
+                    {/* [lc-1790] ACG 论坛账号（Discuz 登录换 Cookie，附件下载需登录；
+                        清空保存=登出。Cookie 缓存本机 acgrip-cookie.txt） */}
+                    <div className="set-row" style={{ flexWrap: "wrap" }}>
+                      <span className="set-k" style={{ flex: "0 0 100%" }}>
+                        ACG 论坛账号（bbs.acgrip.com，附件下载需登录）
+                      </span>
+                      <input
+                        className="set-input"
+                        style={{ flex: 1 }}
+                        placeholder={settings.acgUserSet ? "用户名已设置（清空保存=登出）" : "论坛用户名（游客也可搜索，仅下载需登录）"}
+                        onChange={(e) => setAcgUser(e.target.value)}
+                      />
+                      <input
+                        className="set-input"
+                        style={{ flex: 1 }}
+                        type="password"
+                        placeholder="论坛密码"
+                        onChange={(e) => setAcgPass(e.target.value)}
+                      />
+                      <button
+                        className="set-btn"
+                        onClick={() => {
+                          const has = acgUser.trim() !== "" && acgPass.trim() !== "";
+                          if (acgUser.trim() !== "" && acgPass.trim() === "") {
+                            setSubNote("密码不能为空");
+                            return;
+                          }
+                          onSettings({ acgUser: acgUser.trim(), acgPass: acgPass.trim() });
+                          setAcgUser("");
+                          setAcgPass("");
+                          setSubNote(has ? "论坛账号已保存（下次搜索时自动登录）" : "已登出 ACG 论坛（游客模式搜索）");
+                        }}
+                      >
+                        保存账号
                       </button>
                     </div>
                   </div>

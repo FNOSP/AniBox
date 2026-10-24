@@ -107,7 +107,7 @@ fn defaults() -> Vec<SubtitleSource> {
 }
 
 fn valid_kind(k: &str) -> bool {
-    k == "assrt" || k == "opensubtitles" || k == "xunlei"
+    k == "assrt" || k == "opensubtitles" || k == "xunlei" || k == "acgrip"
 }
 
 /// 读列表（缺失/损坏 → 内置默认；坏项丢弃，面板一保存即修复）。
@@ -251,6 +251,20 @@ mod tests {
             assert_eq!(opensub_hash(&p).unwrap(), os_exp, "{name} oshash");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn acg_cookie_merge_overwrites() {
+        let merged = acg_merge_cookie("a=1; b=2", &["b=3; path=/".to_string(), "c=4".to_string()]).unwrap();
+        assert_eq!(merged, "a=1; b=3; c=4");
+        assert!(acg_merge_cookie("a=1", &[]).is_none());
+        let del = acg_merge_cookie("a=1; b=2", &["b=deleted".to_string()]).unwrap();
+        assert_eq!(del, "a=1");
+    }
+
+    #[test]
+    fn acg_strip_tags_unescapes() {
+        assert_eq!(strip_tags("<b>你好&nbsp;</b>&amp;再见"), "你好 &再见");
     }
 
     #[test]
@@ -465,10 +479,33 @@ pub async fn subtitle_search(
         out
     };
 
-    let (a, b, c) = tokio::join!(xunlei_fut, assrt_fut, osub_fut);
+    // [lc-1790] ACG 论坛：配了账号且还没 Cookie 时先登录（一次）；未配账号也允许游客搜索
+    let acg_fut = async {
+        if !list.iter().any(|s| s.kind == "acgrip" && s.enabled) {
+            return Vec::new();
+        }
+        let cfg = state.config.read().await;
+        let (u, p) = (cfg.acg_user.trim().to_string(), cfg.acg_pass.trim().to_string());
+        drop(cfg);
+        if !u.is_empty() && !p.is_empty() && !acg_load_cookie().contains("auth") {
+            if let Err(e) = acg_login(&u, &p).await {
+                crate::libmpv::trace(&format!("[subtitle] ACG 登录失败（继续游客搜索）: {e}"));
+            }
+        }
+        match acg_search(&q).await {
+            Ok(v) => v,
+            Err(e) => {
+                crate::libmpv::trace(&format!("[subtitle] ACG 源不可用: {e}"));
+                Vec::new()
+            }
+        }
+    };
+
+    let (a, b, c, d) = tokio::join!(xunlei_fut, assrt_fut, osub_fut, acg_fut);
     let mut items = a;
     items.extend(b);
     items.extend(c);
+    items.extend(d);
     Ok(json!({ "query": q, "items": items }))
 }
 
@@ -549,6 +586,10 @@ pub async fn subtitle_download(
             let name = v.get("file_name").and_then(|x| x.as_str()).unwrap_or("subtitle.srt").to_string();
             (link, name)
         }
+        "acgrip" => {
+            // 帖子 id → 页内第一个字幕附件直链
+            acg_download(&id).await?
+        }
         _ => return Err(format!("未知源类型 {kind}")),
     };
 
@@ -592,4 +633,234 @@ pub async fn subtitle_download(
         "title": safe,
         "mounted": mounted,
     }))
+}
+
+// ───────────────────────── [lc-1790] ACG 字幕论坛（bbs.acgrip.com，Discuz）─────────────────────────
+// 账号源：设置面板「论坛账号」填用户名/密码 → 登录换 Cookie（缓存 app_data_dir/acgrip-cookie.txt）
+// → 搜索 search.php（结果=帖子）→ 下载打开帖子取第一个字幕附件（mod=attachment&aid=）。
+// ⚠ Cloudflare：论坛在 CF 后面，非浏览器 TLS 指纹的请求可能 403 —— 此时返回明确错误
+// （「被论坛防火墙拦截」），不影响其它源。
+// SubHD（subhd.me）经实测：免登录可搜，但详情页版本列表与下载链接全部由前端 JS 组装
+// （无静态 dl 链接），reqwest 复刻不可靠 —— 不做，待后续用内置浏览器（open_browser_window
+// 同款 WebView）承接。
+
+const ACG_HOST: &str = "https://bbs.acgrip.com";
+
+fn acg_cookie_path() -> Option<std::path::PathBuf> {
+    std::env::var("APPDATA").ok().map(|ad| {
+        std::path::PathBuf::from(ad)
+            .join("com.anibox.app")
+            .join("acgrip-cookie.txt")
+    })
+}
+
+fn acg_ua() -> &'static str {
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+}
+
+fn acg_load_cookie() -> String {
+    acg_cookie_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+fn acg_store_cookie(cookie: &str) {
+    if let Some(p) = acg_cookie_path() {
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let _ = std::fs::write(&p, cookie);
+    }
+}
+
+/// 从 Set-Cookie 头收集/合并 Cookie（极简 jar：键值对合并，新值覆盖旧值）。
+fn acg_merge_cookie(old: &str, set_cookies: &[String]) -> Option<String> {
+    let mut map: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    for kv in old.split(';').filter_map(|s| {
+        let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+        s.split_once('=')
+    }) {
+        map.insert(kv.0.to_string(), kv.1.to_string());
+    }
+    let mut changed = false;
+    for sc in set_cookies {
+        // Set-Cookie: name=value; path=/ ...
+        if let Some(pair) = sc.split(';').next() {
+            if let Some((k, v)) = pair.split_once('=') {
+                if v.is_empty() || v.eq_ignore_ascii_case("deleted") {
+                    if map.remove(k.trim()).is_some() {
+                        changed = true;
+                    }
+                } else {
+                    map.insert(k.trim().to_string(), v.trim().to_string());
+                    changed = true;
+                }
+            }
+        }
+    }
+    if !changed {
+        return None;
+    }
+    Some(
+        map.iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("; "),
+    )
+}
+
+async fn acg_get(path_q: &str, referer: Option<&str>) -> Result<(String, u16, String), String> {
+    let url = format!("{ACG_HOST}{path_q}");
+    let mut req = http_client()
+        .get(&url)
+        .header("user-agent", acg_ua())
+        .header("accept-language", "zh-CN,zh;q=0.9");
+    let cookie = acg_load_cookie();
+    if !cookie.is_empty() {
+        req = req.header("cookie", &cookie);
+    }
+    if let Some(r) = referer {
+        req = req.header("referer", r);
+    }
+    let resp = req.send().await.map_err(|e| format!("ACG 请求失败: {e}"))?;
+    let status = resp.status().as_u16();
+    let setc: Vec<String> = resp
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok().map(|s| s.to_string()))
+        .collect();
+    let body = resp.text().await.unwrap_or_default();
+    if let Some(merged) = acg_merge_cookie(&cookie, &setc) {
+        acg_store_cookie(&merged);
+    }
+    Ok((body, status, cookie))
+}
+
+/// 登录（formhash 两段式）。成功条件：返回体含欢迎/成功标记且拿到 Cookie。
+async fn acg_login(user: &str, pass: &str) -> Result<(), String> {
+    let (page, st, _) = acg_get("/member.php?mod=logging&action=login&infloat=yes", None).await?;
+    if st == 403 {
+        return Err("ACG 论坛被 Cloudflare 拦截（非浏览器请求被拦），此源在当前网络不可用".into());
+    }
+    let formhash = extract_first(&page, r#"name="formhash" value="([a-f0-9]+)""#)
+        .or_else(|| extract_first(&page, r#"formhash=([a-f0-9]+)"#))
+        .ok_or("ACG 登录页未取到 formhash")?;
+    let body = format!(
+        "formhash={formhash}&username={}&password={}&loginfield=username&cookietime=2592000&questionid=&answer=&handlekey=login&loginsubmit=yes&lssubmit=yes&inajax=1",
+        urlencoding::encode(user),
+        urlencoding::encode(pass)
+    );
+    let url = format!("{ACG_HOST}/member.php?mod=logging&action=login&loginsubmit=yes&lssubmit=yes&inajax=1");
+    let resp = http_client()
+        .post(&url)
+        .header("user-agent", acg_ua())
+        .header("content-type", "application/x-www-form-urlencoded")
+        .header("referer", format!("{ACG_HOST}/member.php?mod=logging&action=login"))
+        .header("cookie", acg_load_cookie())
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("ACG 登录请求失败: {e}"))?;
+    let text = resp.text().await.unwrap_or_default();
+    if text.contains("succeedhandle_login") || text.contains("欢迎") || text.contains("成功") {
+        return Ok(());
+    }
+    // 失败时把响应里的提示抽出来
+    let msg = extract_first(&text, r#"CDATA\[(.{2,80})\]"#).unwrap_or_else(|| "用户名或密码错误".into());
+    Err(format!("ACG 登录失败: {msg}"))
+}
+
+fn extract_first(html: &str, re: &str) -> Option<String> {
+    let re = regex::Regex::new(re).ok()?;
+    re.captures(html)
+        .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
+}
+
+/// HTML 实体/标签清洗（结果标题展示用）。
+fn strip_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for ch in s.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .trim()
+        .to_string()
+}
+
+/// ACG 搜索（结果=帖子列表）。未登录时 Discuz 也能搜，但附件下载需要登录。
+async fn acg_search(query: &str) -> Result<Vec<Value>, String> {
+    let kw = urlencoding::encode(query);
+    let (body, st, _) = acg_get(&format!("/search.php?mod=forum&adv=yes&srchtxt={kw}"), Some(ACG_HOST)).await?;
+    if st == 403 {
+        return Err("ACG 论坛被 Cloudflare 拦截".into());
+    }
+    if body.contains("verify_check") || body.contains("seccode") {
+        return Err("ACG 搜索触发验证码（短时间搜索过频），稍后再试".into());
+    }
+    let re = regex::Regex::new(
+        r#"(?s)<a[^>]+href="(?:https?://bbs\.acgrip\.com)?/(?:forum\.php\?mod=viewthread&tid=|thread-\d+-1-1\.html|thread-search\.php[^"]*tid=)(\d+)[^"]*"[^>]*>(.{2,120}?)</a>"#,
+    )
+    .map_err(|e| e.to_string())?;
+    let mut out: Vec<Value> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for c in re.captures_iter(&body) {
+        let tid = c.get(1).map(|m| m.as_str()).unwrap_or("").to_string();
+        let title = strip_tags(c.get(2).map(|m| m.as_str()).unwrap_or(""));
+        if tid.is_empty() || title.is_empty() || !seen.insert(tid.clone()) {
+            continue;
+        }
+        out.push(source_item("acgrip", &tid, &title, "ACG论坛·帖子"));
+        if out.len() >= 10 {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// ACG 下载：帖子页取第一个字幕附件（mod=attachment&aid=）。
+async fn acg_download(tid: &str) -> Result<(String, String), String> {
+    let (body, st, _) = acg_get(&format!("/forum.php?mod=viewthread&tid={tid}"), Some(ACG_HOST)).await?;
+    if st == 403 {
+        return Err("ACG 论坛被 Cloudflare 拦截".into());
+    }
+    if body.contains("您尚未登录") || body.contains("请先登录") {
+        return Err("ACG 附件下载需登录（设置→播放器→字幕源→论坛账号）".into());
+    }
+    // 附件：aid 与文件名（Discuz：filedown/attachment 链接 + 附近文件名文本）
+    let re = regex::Regex::new(r#"(?s)href="(?:https?://bbs\.acgrip\.com)?/(?:forum\.php\?mod=attachment&|attachment\.php\?)(?:aid|id)=(\d+)[^"]*"[^>]*>(.{0,80}?)</a>"#)
+        .map_err(|e| e.to_string())?;
+    let mut pick: Option<(String, String)> = None;
+    for c in re.captures_iter(&body) {
+        let aid = c.get(1).map(|m| m.as_str()).unwrap_or("").to_string();
+        let name = strip_tags(c.get(2).map(|m| m.as_str()).unwrap_or(""));
+        let ext_ok = |n: &str| {
+            let e = n.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+            matches!(e.as_str(), "srt" | "ass" | "ssa" | "vtt" | "sub" | "zip" | "rar" | "7z")
+        };
+        // 优先裸字幕文件名；都不带扩展名时取第一个附件
+        if !aid.is_empty() && ext_ok(&name) {
+            pick = Some((aid, name));
+            break;
+        }
+        if pick.is_none() && !aid.is_empty() && !name.is_empty() {
+            pick = Some((aid, if name.contains('.') { name } else { format!("{name}.zip") }));
+        }
+    }
+    let (aid, name) = pick.ok_or("帖子内没有找到字幕附件")?;
+    let url = format!("{ACG_HOST}/forum.php?mod=attachment&aid={aid}");
+    Ok((url, name))
 }

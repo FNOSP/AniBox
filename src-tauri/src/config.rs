@@ -179,6 +179,11 @@ pub struct Config {
     pub sub_assrt_token: String,
     #[serde(default)]
     pub sub_osub_key: String,
+    /// [lc-1790] ACG 字幕论坛（bbs.acgrip.com，Discuz）账号：登录换 Cookie 后搜索/下载。
+    #[serde(default)]
+    pub acg_user: String,
+    #[serde(default)]
+    pub acg_pass: String,
     /// 弹幕引擎："node"（默认，行为与接入前完全一致）| "rust"（Rust 直接接管 22347，
     /// 自建源三跳由 Rust 实现，B站/字幕端点反代到内部 Node 端口）。
     /// 环境变量 `ANIBOX_DANMAKU_ENGINE=rust` 可临时覆盖（便于测试）。
@@ -354,6 +359,8 @@ impl Default for Config {
             danmu_dd_app_secret: String::new(),
             sub_assrt_token: String::new(),
             sub_osub_key: String::new(),
+            acg_user: String::new(),
+            acg_pass: String::new(),
             danmu_engine: default_danmu_engine(),
             feedback_aid: String::new(),
             log_debug: true,

@@ -568,6 +568,10 @@ export type AppSettings = {
   subOsubKeySet?: boolean;
   subAssrtToken?: string;
   subOsubKey?: string;
+  /** [lc-1790] ACG 论坛账号（回显仅 Set；写入口成对提交，空=登出） */
+  acgUserSet?: boolean;
+  acgUser?: string;
+  acgPass?: string;
   danmuApiBase: string;
   /** 弹幕引擎（camelCase 映射 Rust `danmu_engine`）："node" = 默认/稳定，"rust" = 测试版。
    *  仅在「自建弹幕接口」启用时生效；旧缓存可能缺省 → 读取时回退 "node"。 */

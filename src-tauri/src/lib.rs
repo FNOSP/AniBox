@@ -3374,6 +3374,8 @@ pub fn run() {
             danmaku_sources::danmaku_sources_set,
             subtitle_sources::subtitle_sources_get,
             subtitle_sources::subtitle_sources_set,
+            subtitle_sources::subtitle_search,
+            subtitle_sources::subtitle_download,
             player_stop,
             mpv_toggle_pause,
             player_source,

@@ -230,3 +230,68 @@
   font-size: 12.5px;
   cursor: pointer;
 }
+
+/* ══════════════════════ [lc-1783] 应用内下载字幕弹窗 ══════════════════════ */
+
+.sp-modal {
+  max-width: 640px;
+}
+
+.sp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.sp-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--glass);
+}
+
+.sp-badge {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.sp-xunlei {
+  background: rgba(56, 152, 255, 0.18);
+  color: #6db2ff;
+}
+
+.sp-assrt {
+  background: rgba(255, 176, 66, 0.16);
+  color: #ffb042;
+}
+
+.sp-osub {
+  background: rgba(94, 200, 148, 0.16);
+  color: #5ec894;
+}
+
+.sp-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+
+.sp-hint {
+  flex: none;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  opacity: 0.55;
+}

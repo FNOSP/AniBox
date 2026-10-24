@@ -27,6 +27,8 @@ import { RatingWidget } from "./RatingWidget";
 import { MovieHero } from "./MovieHero";
 // [lc-1747] 在线播放恢复挂载（lc-1627 曾因功能搁置而注释，配套 Rust 加固已就位）。
 import { WebrsPanel } from "../webrs/WebrsPanel";
+// [lc-1783] 应用内下载字幕弹窗（迅雷/assrt/OpenSubtitles 扇出，下载自动挂载）
+import { SubtitlePickerModal } from "../common/SubtitlePickerModal";
 import { fmtDur, pick } from "../../lib/format";
 import { bgmImg, imgUrl, pickLargestImg, tmdbImg } from "../../lib/images";
 import { prefersReducedMotion } from "../../lib/motion";
@@ -484,6 +486,8 @@ export function DetailView({
   //   注意语义与 lc-1410 之前不同 —— 那时是"就地铺开"（会撑高容器、拉长海报），
   //   现在是"**弹出弹窗**看全文"，容器高度不受影响。
   const [introFull, setIntroFull] = useState(false);
+  // [lc-1783] 下载字幕弹窗开关（默认词 = 详情页标题）
+  const [subPickerOpen, setSubPickerOpen] = useState(false);
   // [lc-119] 吐槽（Bangumi 评论）：懒加载 —— 用户切到该分段时才匹配+拉评论（避免拖慢首屏）
   const [bgm, setBgm] = useState<BgmMatch | null>(null);
   const bgmRef = useRef<BgmMatch | null>(null); // 供 legacy 回填任务/翻页读最新值（不进依赖数组）
@@ -2144,6 +2148,15 @@ export function DetailView({
             ⋯
           </button>
         )}
+        {/* [lc-1783] 应用内下载字幕（此前只能进 mpv 的 uosc 菜单搜）：
+            弹窗扇出 迅雷/assrt/OpenSubtitles，下载后 mpv 在播时自动挂载。 */}
+        <button
+          className="dv2-meta-btn"
+          title="下载字幕（迅雷 / assrt / OpenSubtitles）"
+          onClick={() => setSubPickerOpen(true)}
+        >
+          字
+        </button>
       </div>
 
       {err && <div className="err">{err}</div>}
@@ -2929,6 +2942,13 @@ export function DetailView({
           target={metaTarget}
           onClose={() => setMetaTarget(null)}
           onDone={() => refreshAll()}
+        />
+      )}
+      {/* [lc-1783] 应用内下载字幕：默认词=当前标题，下载后 mpv 在播时自动挂载 */}
+      {subPickerOpen && (
+        <SubtitlePickerModal
+          defaultQuery={title || base.title}
+          onClose={() => setSubPickerOpen(false)}
         />
       )}
     </main>

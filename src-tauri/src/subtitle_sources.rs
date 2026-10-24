@@ -16,6 +16,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha1::{Digest as Sha1Digest, Sha1};
+use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
 const MAX_SOURCES: usize = 12;
@@ -189,6 +190,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 实测（网络，#[ignore]）：应用内搜索扇出 —— 迅雷 oracle 必须返回真实条目；
+    /// assrt 在无外网环境会被跳过（单源失败不拖垮整体）。验证时 -- --ignored。
+    #[tokio::test]
+    #[ignore]
+    async fn subtitle_search_live() {
+        let v = subtitle_search("葬送的芙莉莲".into()).await.expect("search 不应 Err");
+        let items = v.get("items").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+        let xunlei = items.iter().filter(|i| i.get("kind").and_then(|k| k.as_str()) == Some("xunlei")).count();
+        assert!(xunlei > 0, "迅雷源应有结果，实际: {v}");
+        for i in &items {
+            assert!(i.get("id").and_then(|x| x.as_str()).unwrap_or("") != "");
+            assert!(i.get("title").and_then(|x| x.as_str()).unwrap_or("") != "");
+        }
+        println!("search OK: {} 条（迅雷 {}）", items.len(), xunlei);
+    }
+
     #[test]
     fn kind_whitelist() {
         assert!(valid_kind("assrt"));
@@ -196,4 +213,298 @@ mod tests {
         assert!(valid_kind("xunlei"));
         assert!(!valid_kind("subhd"));
     }
+}
+
+// ───────────────────────── [lc-1783] 应用内字幕搜索/下载（复用外置源列表）─────────────────────────
+// 面向 SubtitlePickerModal（详情页入口）：搜索走本模块扇出（与 mpv 侧 sub-assrt.lua 同源同参数），
+// 下载落地 %TEMP%/anibox-subtitles（与 nas_subtitle/shim 手动菜单互享缓存），
+// mpv 在播时自动 sub-add select 挂主字幕轨（弹幕在副字幕轨，不冲突）。
+
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .user_agent("Mozilla/5.0 AniBox/4")
+            .connect_timeout(Duration::from_secs(8))
+            .timeout(Duration::from_secs(20))
+            .build()
+            .expect("subtitle http client")
+    })
+}
+
+/// assrt token：用户在列表里配的优先，否则内置共享。
+fn effective_assrt_token(list: &[SubtitleSource]) -> String {
+    list.iter()
+        .find(|s| s.kind == "assrt" && s.enabled && !s.token.trim().is_empty())
+        .map(|s| s.token.trim().to_string())
+        .unwrap_or_else(|| DEFAULT_ASSRT_TOKEN.to_string())
+}
+
+fn source_item(kind: &str, id: &str, title: &str, hint: &str) -> Value {
+    json!({ "kind": kind, "id": id, "title": title, "hint": hint })
+}
+
+/// 读源列表（内部版，不经 AppHandle）。文件缺失 → 内置默认。
+async fn read_list() -> Vec<SubtitleSource> {
+    let p = if let Ok(ad) = std::env::var("APPDATA") {
+        std::path::PathBuf::from(ad).join("com.anibox.app/subtitle-sources.json")
+    } else {
+        return defaults();
+    };
+    match std::fs::read_to_string(p) {
+        Ok(s) => serde_json::from_str::<Value>(&s)
+            .ok()
+            .and_then(|v| v.get("sources").and_then(|x| x.as_array()).cloned())
+            .map(|arr| {
+                arr.into_iter()
+                    .filter_map(|s| serde_json::from_value::<SubtitleSource>(s).ok())
+                    .filter(|s| valid_kind(&s.kind))
+                    .collect()
+            })
+            .filter(|l: &Vec<SubtitleSource>| !l.is_empty())
+            .unwrap_or_else(defaults),
+        Err(_) => defaults(),
+    }
+}
+
+/// 应用内字幕搜索：并行扇出 迅雷(名称) + assrt + OpenSubtitles(若配 key)。
+/// 返回 {items:[{kind,id,title,hint}]}；单源失败不拖垮整体（跳过即可）。
+#[tauri::command]
+pub async fn subtitle_search(query: String) -> Result<Value, String> {
+    let q = query.trim().to_string();
+    if q.is_empty() {
+        return Err("搜索词为空".into());
+    }
+    let list = read_list().await;
+    let token = effective_assrt_token(&list);
+    let osub_key = list
+        .iter()
+        .find(|s| s.kind == "opensubtitles" && s.enabled && !s.token.trim().is_empty())
+        .map(|s| s.token.trim().to_string());
+    let want_xunlei = list.iter().any(|s| s.kind == "xunlei" && s.enabled);
+    let want_assrt = list.iter().any(|s| s.kind == "assrt" && s.enabled);
+
+    let enc = urlencoding::encode(&q).to_string();
+    let xunlei_fut = async {
+        if !want_xunlei {
+            return Vec::new();
+        }
+        let url = format!("https://api-shoulei-ssl.xunlei.com/oracle/subtitle?gcid=&cid=&name={enc}");
+        let Ok(v) = http_client().get(&url).send().await else { return Vec::new() };
+        let Ok(v) = v.json::<Value>().await else { return Vec::new() };
+        let mut out = Vec::new();
+        if let Some(arr) = v.get("data").and_then(|d| d.as_array()) {
+            for s in arr.iter().take(10) {
+                let url = s.get("url").and_then(|x| x.as_str()).unwrap_or("");
+                if url.is_empty() {
+                    continue;
+                }
+                let name = s.get("name").and_then(|x| x.as_str()).unwrap_or("字幕");
+                let simple = s.get("simple_name").and_then(|x| x.as_str()).unwrap_or("");
+                let ext = s.get("ext").and_then(|x| x.as_str()).unwrap_or("");
+                // 应用内只收裸字幕文件（压缩包此路不处理；mpv 菜单那条路也一样）
+                if !matches!(ext, "ass" | "srt" | "ssa" | "vtt") {
+                    continue;
+                }
+                let hint = format!("迅雷·{}", if simple.is_empty() { ext } else { simple });
+                out.push(source_item("xunlei", url, name, &hint));
+            }
+        }
+        out
+    };
+    let assrt_fut = async {
+        if !want_assrt {
+            return Vec::new();
+        }
+        let url = format!("https://api.assrt.net/v1/sub/search?token={token}&q={enc}&no_muxer=1&pos=0");
+        let Ok(v) = http_client().get(&url).send().await else { return Vec::new() };
+        let Ok(v) = v.json::<Value>().await else { return Vec::new() };
+        let mut out = Vec::new();
+        if v.get("status").and_then(|s| s.as_i64()) == Some(0) {
+            if let Some(subs) = v.pointer("/sub/subs").and_then(|s| s.as_array()) {
+                for s in subs.iter().take(10) {
+                    let id = s
+                        .get("id")
+                        .or_else(|| s.get("fileid"))
+                        .and_then(|x| x.as_i64())
+                        .unwrap_or(0);
+                    if id == 0 {
+                        continue;
+                    }
+                    let name = s
+                        .get("video_chinese_name")
+                        .and_then(|x| x.as_str())
+                        .filter(|x| !x.is_empty())
+                        .or_else(|| s.get("native_name").and_then(|x| x.as_str()))
+                        .or_else(|| s.get("videoname").and_then(|x| x.as_str()))
+                        .unwrap_or("字幕");
+                    let lang = s.pointer("/lang/desc").and_then(|x| x.as_str()).unwrap_or("");
+                    let hint = format!("assrt·{}", lang);
+                    out.push(source_item("assrt", &id.to_string(), name, &hint));
+                }
+            }
+        }
+        out
+    };
+    let osub_fut = async {
+        let Some(key) = osub_key else { return Vec::new() };
+        let url = format!("https://api.opensubtitles.com/api/v1/subtitles?query={enc}&languages=zh-cn,zh,en");
+        let Ok(resp) = http_client()
+            .get(&url)
+            .header("Api-Key", &key)
+            .send()
+            .await
+        else {
+            return Vec::new();
+        };
+        let Ok(v) = resp.json::<Value>().await else { return Vec::new() };
+        let mut out = Vec::new();
+        if let Some(arr) = v.get("data").and_then(|d| d.as_array()) {
+            for e in arr.iter().take(10) {
+                let Some(file) = e.pointer("/attributes/files/0") else { continue };
+                let fid = file.get("file_id").and_then(|x| x.as_i64()).unwrap_or(0);
+                if fid == 0 {
+                    continue;
+                }
+                let name = file
+                    .get("file_name")
+                    .and_then(|x| x.as_str())
+                    .or_else(|| e.pointer("/attributes/release").and_then(|x| x.as_str()))
+                    .unwrap_or("字幕");
+                let lang = e.pointer("/attributes/language").and_then(|x| x.as_str()).unwrap_or("");
+                let hint = format!("OpenSubs·{}", lang);
+                out.push(source_item("osub", &fid.to_string(), name, &hint));
+            }
+        }
+        out
+    };
+
+    let (a, b, c) = tokio::join!(xunlei_fut, assrt_fut, osub_fut);
+    let mut items = a;
+    items.extend(b);
+    items.extend(c);
+    Ok(json!({ "query": q, "items": items }))
+}
+
+/// 下载字幕并（mpv 在播时）挂载。kind ∈ xunlei(url 直链)/assrt(sub id 两段式)/osub(file_id 两段式)。
+/// 返回 {path, mounted, title}。
+#[tauri::command]
+pub async fn subtitle_download(
+    state: tauri::State<'_, crate::AppState>,
+    kind: String,
+    id: String,
+    filename: Option<String>,
+) -> Result<Value, String> {
+    let dir = std::env::temp_dir().join("anibox-subtitles");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("建缓存目录失败: {e}"))?;
+
+    let (url, fallback_name) = match kind.as_str() {
+        "xunlei" => (id.clone(), filename.clone().unwrap_or_else(|| "字幕.srt".into())),
+        "assrt" => {
+            let list = read_list().await;
+            let token = effective_assrt_token(&list);
+            let durl = format!("https://api.assrt.net/v1/sub/detail?token={token}&id={id}");
+            let v: Value = http_client()
+                .get(&durl)
+                .send()
+                .await
+                .map_err(|e| format!("assrt 详情请求失败: {e}"))?
+                .json()
+                .await
+                .map_err(|e| format!("assrt 详情解析失败: {e}"))?;
+            if v.get("status").and_then(|s| s.as_i64()) != Some(0) {
+                let msg = v.get("errmsg").and_then(|x| x.as_str()).unwrap_or("unknown");
+                return Err(format!("assrt 详情失败: {msg}"));
+            }
+            let files = v
+                .pointer("/sub/subs/0/filelist")
+                .and_then(|x| x.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let pick = files
+                .iter()
+                .find(|f| {
+                    let name = f.get("f").and_then(|x| x.as_str()).unwrap_or("");
+                    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+                    matches!(ext.as_str(), "ass" | "srt" | "ssa" | "vtt")
+                })
+                .or_else(|| files.first())
+                .ok_or("assrt 详情无字幕文件")?;
+            let url = pick.get("url").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            if url.is_empty() {
+                return Err("assrt 详情无下载地址".into());
+            }
+            let name = pick.get("f").and_then(|x| x.as_str()).unwrap_or("字幕.srt").to_string();
+            (url, name)
+        }
+        "osub" => {
+            let list = read_list().await;
+            let key = list
+                .iter()
+                .find(|s| s.kind == "opensubtitles" && s.enabled && !s.token.trim().is_empty())
+                .map(|s| s.token.trim().to_string());
+            let Some(key) = key else {
+                return Err("未配置 OpenSubtitles Api-Key".into());
+            };
+            let fid = id.parse::<i64>().map_err(|_| "file_id 非法")?;
+            let v: Value = http_client()
+                .post("https://api.opensubtitles.com/api/v1/download")
+                .header("Api-Key", &key)
+                .json(&json!({ "file_id": fid }))
+                .send()
+                .await
+                .map_err(|e| format!("OpenSubtitles 请求失败: {e}"))?
+                .json()
+                .await
+                .map_err(|e| format!("OpenSubtitles 解析失败: {e}"))?;
+            let link = v.get("link").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            if link.is_empty() {
+                return Err("OpenSubtitles 未返回下载链接".into());
+            }
+            let name = v.get("file_name").and_then(|x| x.as_str()).unwrap_or("subtitle.srt").to_string();
+            (link, name)
+        }
+        _ => return Err(format!("未知源类型 {kind}")),
+    };
+
+    // 文件名安全化（去 Windows 非法字符）+ 落地
+    let safe: String = fallback_name
+        .chars()
+        .map(|c| {
+            if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let path = dir.join(format!("web_{}", safe));
+    let bytes = http_client()
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("字幕下载失败: {e}"))?
+        .bytes()
+        .await
+        .map_err(|e| format!("字幕读取失败: {e}"))?;
+    std::fs::write(&path, &bytes).map_err(|e| format!("字幕写盘失败: {e}"))?;
+
+    // 挂载：mpv 在播则 sub-add select（idle 会话会失败 → mounted:false，文件已在缓存随时可手动挂）
+    let mut mounted = false;
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session {
+        let title = safe
+            .rsplit_once('.')
+            .map(|(t, _)| t.to_string())
+            .unwrap_or_else(|| safe.clone());
+        mounted = m
+            .command(json!(["sub-add", path.to_string_lossy(), "select", title]))
+            .await
+            .is_ok();
+    }
+    Ok(json!({
+        "path": path.to_string_lossy(),
+        "title": safe,
+        "mounted": mounted,
+    }))
 }

@@ -349,13 +349,15 @@ export function HomeView({
                     //   `parentGuid || guid` 的兜底会拿集 guid 冒充剧 guid，详情页
                     //   按 guid 拉到的数据与 TMDB/季定位全部串台（用户实测点所有卡
                     //   都进同一部错剧 + 电影版式，两层错乱的根源都在这）。
-                    const parentGuid = String(
-                      pick(raw, ["parent_guid", "parentGuid", "series_guid", "seriesGuid"]) ?? "",
+                    // guid 优先级：seriesGuid（后端富化出的**剧级** guid）→ 兜底不跳转。
+                    // ⚠️ parent_guid 是**季** guid，直接用会整页渲染成「Season 1」。
+                    const seriesGuid = String(
+                      pick(raw, ["seriesGuid", "series_guid"]) ?? "",
                     ).trim();
                     const openType = type === "Episode" || type === "Season" ? "TV" : type;
-                    if ((type === "Episode" || type === "Season") && !parentGuid) return;
+                    if ((type === "Episode" || type === "Season") && !seriesGuid) return;
                     onOpenItem({
-                      guid: openType === "TV" ? parentGuid : guid,
+                      guid: openType === "TV" ? seriesGuid : guid,
                       title: mainTitle,
                       tv_title: tvTitle || undefined,
                       type: openType,

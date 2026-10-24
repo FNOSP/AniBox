@@ -485,9 +485,27 @@ async fn get_items(
 async fn get_continue_watching(state: State<'_, AppState>) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let client = fnapi::new_client();
-    client
+    let mut v = client
         .call(&cfg.server, "/v/api/v1/play/list", "GET", &cfg.token, None)
-        .await
+        .await?;
+    // [lc-1774] 集条目的 parent_guid 是**季** guid，直接给详情页会整页渲染成
+    // 「Season 1」。复用观影记录的 enrich_series（季 guid → item/detail →
+    // 剧 guid），为每个集条目补 seriesGuid（剧级）；字段先归一到 camelCase。
+    if let Some(list) = v
+        .get_mut("data")
+        .and_then(|d| d.get_mut("list"))
+        .and_then(|l| l.as_array_mut())
+    {
+        for it in list.iter_mut() {
+            let snake = it.get("parent_guid").and_then(|x| x.as_str()).unwrap_or("");
+            let camel = it.get("parentGuid").and_then(|x| x.as_str()).unwrap_or("");
+            if !snake.is_empty() && camel.is_empty() {
+                it["parentGuid"] = json!(snake);
+            }
+        }
+        crate::history::enrich_series(list, &cfg.server, &cfg.token).await;
+    }
+    Ok(v)
 }
 
 /// [lc-1615] 观影记录：飞牛 play/list ∪ 本机播放历史（history.rs）。

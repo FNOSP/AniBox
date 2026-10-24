@@ -97,6 +97,19 @@ type ViewMode = "grid" | "list" | "timeline";
 const VIEW_KEY = "fntv-history-view";
 
 /** 读取已保存的展示方式；非法/首次一律回落到「海报网格」（默认视图，一屏放最多）。 */
+/* [lc-1770] 数据源开关（右侧两个 toggle）：在线源 / 个人视频 是否参与展示。
+   独立于分类胶囊（胶囊管看哪类，开关管某类数据整块显隐），选择记 localStorage。 */
+const TOGGLE_WBRS_KEY = "fntv-history-show-webrs";
+const TOGGLE_PERSONAL_KEY = "fntv-history-show-personal";
+function readToggle(key: string, def = true): boolean {
+  try {
+    const v = localStorage.getItem(key);
+    if (v === "0") return false;
+    if (v === "1") return true;
+  } catch { /* 隐私模式：回落默认 */ }
+  return def;
+}
+
 function readView(): ViewMode {
   try {
     const v = localStorage.getItem(VIEW_KEY);
@@ -257,6 +270,9 @@ export function WatchHistoryView({
   const [filter, setFilter] = useState<Filter>("全部");
   /** [lc-1620] 展示方式（默认海报网格；从 localStorage 恢复） */
   const [view, setView] = useState<ViewMode>(readView);
+  /** [lc-1770] 数据源开关：在线源 / 个人视频 是否展示（默认都展示） */
+  const [showWebrs, setShowWebrs] = useState(() => readToggle(TOGGLE_WBRS_KEY));
+  const [showPersonal, setShowPersonal] = useState(() => readToggle(TOGGLE_PERSONAL_KEY));
   const [note, setNote] = useState("");
   /** 我的评分/评语（作品键 → 值）；从 items 初始化，保存后就地更新，卡片星星随之刷新 */
   const [myRatings, setMyRatings] = useState<Record<string, { score: number; review: string }>>({});
@@ -331,10 +347,14 @@ export function WatchHistoryView({
     return c;
   }, [items]);
 
-  const filtered = useMemo(
-    () => (filter === "全部" ? items : items.filter((it) => catOf(it) === filter)),
-    [items, filter],
-  );
+  const filtered = useMemo(() => {
+    let out = filter === "全部" ? items : items.filter((it) => catOf(it) === filter);
+    // [lc-1770] 数据源开关：独立于分类胶囊，整块显隐（判定口径与 Rust 侧个人视频一致）
+    if (!showWebrs) out = out.filter((it) => it.source !== "webrs");
+    if (!showPersonal)
+      out = out.filter((it) => it.type !== "Video" && it.type !== "Directory");
+    return out;
+  }, [items, filter, showWebrs, showPersonal]);
 
   // 双栏拆分（照抄原项目：已看完 = 进度≥1；其余 = 在观看）
   const done = useMemo(() => filtered.filter((it) => (it.progress ?? 0) >= 1), [filtered]);
@@ -474,6 +494,31 @@ export function WatchHistoryView({
                 {f} ({counts[f]})
               </button>
             ))}
+            {/* [lc-1770] 数据源开关：在线源 / 个人视频 是否展示（on=展示，点击切换；持久化） */}
+            <button
+              className={`hist-pill hist-toggle${showWebrs ? "" : " off"}`}
+              aria-pressed={showWebrs}
+              title="点击切换：观影记录里是否展示在线源（第三方源）播放的条目"
+              onClick={() => {
+                const v = !showWebrs;
+                setShowWebrs(v);
+                try { localStorage.setItem(TOGGLE_WBRS_KEY, v ? "1" : "0"); } catch { /* ignore */ }
+              }}
+            >
+              在线源
+            </button>
+            <button
+              className={`hist-pill hist-toggle${showPersonal ? "" : " off"}`}
+              aria-pressed={showPersonal}
+              title="点击切换：观影记录里是否展示个人视频（本地 Video/目录条目）"
+              onClick={() => {
+                const v = !showPersonal;
+                setShowPersonal(v);
+                try { localStorage.setItem(TOGGLE_PERSONAL_KEY, v ? "1" : "0"); } catch { /* ignore */ }
+              }}
+            >
+              个人视频
+            </button>
             <div className="hist-views" role="group" aria-label="展示方式">
               <button
                 className={`hist-vbtn${view === "grid" ? " on" : ""}`}

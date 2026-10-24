@@ -84,6 +84,8 @@
   white-space: nowrap;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
+/* [lc-1770] 数据源开关（在线源/个人视频）：off 态整体弱化表示"这类数据被隐藏" */
+.hist-toggle.off { opacity: .45; filter: saturate(.4); }
 .hist-pill:hover {
   background: var(--hover-strong);
   color: var(--text-strong);

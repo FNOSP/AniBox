@@ -885,6 +885,35 @@ function App() {
         setGuestAsk(true);
         return;
       }
+      // [lc-1774] 集/季条目自归一（对齐飞鲸 /tv/season/ 的页面内归一）：季详情的
+      // parent_guid 才是剧 guid——拿它重开剧级详情，杜绝「Episode 透传 → 电影版式
+      // + 季数据乱匹配」。get_item_detail 走磁盘缓存（detail:item:*），常态秒回。
+      // 后端 get_continue_watching 的剧级改写若已生效（guid 已是剧），这里直接跳过。
+      const t = String((item as Record<string, unknown>).type ?? "");
+      if (t === "Episode" || t === "Season") {
+        const parent = String(
+          (item as Record<string, unknown>).parent_guid ??
+            (item as Record<string, unknown>).parentGuid ??
+            "",
+        ).trim();
+        if (parent) {
+          invoke<Record<string, unknown>>("get_item_detail", { guid: parent })
+            .then((d) => {
+              const seriesGuid = String(d?.parent_guid ?? d?.parentGuid ?? "").trim();
+              if (!seriesGuid) {
+                setDetailItem(item);
+                return;
+              }
+              setDetailItem({ ...item, guid: seriesGuid, type: "TV" });
+            })
+            .catch(() => setDetailItem(item))
+            .finally(() => {
+              setDetailFrom(view === "lib" ? "lib" : "home");
+              setView("detail");
+            });
+          return;
+        }
+      }
       setDetailItem(item);
       setDetailFrom(view === "lib" ? "lib" : "home");
       setView("detail");

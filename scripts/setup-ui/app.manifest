@@ -10,7 +10,12 @@
   </trustInfo>
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>
-      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <!-- [lc-1766] PerMonitorV2 → System：WebView2(WPF) 控件在 PerMonitorV2 下的
+           HWND/内容缩放不同步（4K 225% 实测内容放大被裁、改 175 也不变）。
+           安装器是一次性短命 UI：System aware 每次新进程按当前系统 DPI 干净渲染
+           （主屏缩放正确且清晰），跨屏/热改缩放由系统位图兜底（至多略糊，绝不裁剪）。 -->
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">System</dpiAwareness>
     </windowsSettings>
   </application>
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">

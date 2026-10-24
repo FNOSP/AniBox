@@ -36,6 +36,8 @@ export type WebrsUpdateItem = { name: string; localVersion: string; remoteVersio
 
 
 export const WEBRS_ENABLED_KEY = "anibox.webrs.enabledSources";
+// [lc-1755] 采集源（TMDB 剧集侧）独立勾选存储 —— 与 Kazumi 规则源完全分家
+export const WEBRS_MACCMS_KEY = "anibox.webrs.maccmsEnabled";
 
 /** 已勾选源名单（localStorage 持久化）。null = 从未改过 → 视为全启用。 */
 
@@ -67,6 +69,18 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
     [srcs, kind],
   );
   const [enabled, setEnabled] = useState<string[] | null>(null); // null = 全启用
+  // [lc-1755] 勾选状态按源体系分家存储：采集源用独立 key，规则源沿用旧 key
+  const enabledKey = kind === "maccms" ? WEBRS_MACCMS_KEY : WEBRS_ENABLED_KEY;
+  const loadEnabledFor = (): string[] | null => {
+    try {
+      const raw = localStorage.getItem(enabledKey);
+      if (raw == null) return null;
+      const v = JSON.parse(raw);
+      return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+    } catch {
+      return null;
+    }
+  };
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [addText, setAddText] = useState("");
@@ -413,12 +427,21 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
   useEffect(() => {
     if (autoDone.current) return;
     autoDone.current = true;
-    setEnabled(loadEnabled());
+    setEnabled(loadEnabledFor());
     refreshRules().then((r) => {
-      const en = loadEnabled();
-      const picked = r.filter((x) => en == null || en.includes(x.name)).map((x) => x.name);
-      if (r.length > 0 && picked.length > 0) doSearch(title);
-      else setSrcHint(r.length > 0 ? "还没有勾选任何源，点右侧 ⚙ 选择要用的源" : "还没有可用源，点 ⚙ 添加规则");
+      const en = loadEnabledFor();
+      // [lc-1755] 自动首搜只看当前视图（kind 过滤后）的源：另一类源勾没勾不影响本面板
+      const scope = kind ? r.filter((x) => (x.kind ?? "kazumi") === kind) : r;
+      const picked = scope.filter((x) => en == null || en.includes(x.name)).map((x) => x.name);
+      if (scope.length > 0 && picked.length > 0) doSearch(title);
+      else
+        setSrcHint(
+          scope.length > 0
+            ? "还没有勾选任何源，点右侧 ⚙ 选择要用的源"
+            : kind === "maccms"
+              ? "还没有可用采集源，点 ⚙ 用「＋ 采集源」添加"
+              : "还没有可用规则源，点 ⚙ 添加或到规则目录安装",
+        );
     });
   }, []);
 
@@ -426,7 +449,7 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
     const cur = srcs.filter((r) => isEnabled(r.name)).map((r) => r.name);
     const next = cur.includes(name) ? cur.filter((x) => x !== name) : [...cur, name];
     setEnabled(next);
-    localStorage.setItem(WEBRS_ENABLED_KEY, JSON.stringify(next));
+    localStorage.setItem(enabledKey, JSON.stringify(next));
   };
   const setAllSources = (on: boolean) => {
     // [lc-1754] 全选/清空只作用于当前视图（kind 过滤后）的源：另一类源的勾选状态不动。
@@ -434,7 +457,7 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
     const others = (enabled ?? srcs.map((r) => r.name)).filter((x) => !viewNames.has(x));
     const next = on ? [...others, ...viewSrcs.map((r) => r.name)] : others;
     setEnabled(next);
-    localStorage.setItem(WEBRS_ENABLED_KEY, JSON.stringify(next));
+    localStorage.setItem(enabledKey, JSON.stringify(next));
   };
 
   const openChapters = async (rule: string, item: WebrsSearchItem) => {
@@ -604,7 +627,7 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
       await refreshRules();
       const next = (enabled ?? srcs.map((r) => r.name)).filter((x) => x !== name);
       setEnabled(next);
-      localStorage.setItem(WEBRS_ENABLED_KEY, JSON.stringify(next));
+      localStorage.setItem(enabledKey, JSON.stringify(next));
       setGroups((g) => (g ? g.filter((x) => x.name !== name) : g));
     } catch (e) {
       setErr(String(e));
@@ -891,9 +914,10 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
           <div className="ddet-mask" onClick={() => setSettingsOpen(false)}>
           <div className="sum-modal webrs-add-modal" onClick={(e) => e.stopPropagation()}>
             <div className="sum-modal-h">
-              <h3>
-                源管理 <span className="webrs-mgr-count">已勾选 {enabledNames.length} / {viewSrcs.length}</span>
-              </h3>
+                <h3>
+                  {kind === "maccms" ? "采集源管理" : "规则源管理"}{" "}
+                  <span className="webrs-mgr-count">已勾选 {enabledNames.length} / {viewSrcs.length}</span>
+                </h3>
               <button className="ddet-close sum-modal-x" onClick={() => setSettingsOpen(false)}>
                 ×
               </button>
@@ -905,13 +929,17 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
                 </button>
                 <button onClick={() => setAllSources(true)}>全选</button>
                 <button onClick={() => setAllSources(false)}>清空</button>
-                <button className="webrs-mgr-addbtn" onClick={() => setAddOpen((v) => !v)}>
-                  {addOpen ? "收起" : "＋ 添加源"}
-                </button>
+                {kind !== "maccms" && (
+                  <button className="webrs-mgr-addbtn" onClick={() => setAddOpen((v) => !v)}>
+                    {addOpen ? "收起" : "＋ 添加源"}
+                  </button>
+                )}
                 {/* [lc-1752] 苹果CMS 采集源：只填一个接口地址，自动生成 delimited 规则 */}
-                <button className="webrs-mgr-addbtn" onClick={() => setMacOpen((v) => !v)}>
-                  {macOpen ? "收起" : "＋ 采集源"}
-                </button>
+                {kind === "maccms" && (
+                  <button className="webrs-mgr-addbtn" onClick={() => setMacOpen((v) => !v)}>
+                    {macOpen ? "收起" : "＋ 采集源"}
+                  </button>
+                )}
               </div>
             {macOpen && (
               <div className="webrs-mac-form">
@@ -1005,7 +1033,9 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
               )}
               </div>
 
-              {/* [lc-1608] 在线规则目录（KazumiRules index.json）：检查更新 / 逐条安装·更新 / 全部更新 */}
+              {/* [lc-1608] 在线规则目录（KazumiRules index.json）：检查更新 / 逐条安装·更新 / 全部更新。
+                  [lc-1755] 属 Kazumi 规则源生态 —— 采集源视图隐藏（两版彻底分开）。 */}
+              {kind !== "maccms" && (
               <div className="webrs-cat">
                 <div className="webrs-cat-hd">
                   <span className="webrs-cat-title">在线规则</span>
@@ -1074,9 +1104,12 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
                   <div className="webrs-note">点「检查更新」从 KazumiRules 拉取在线规则目录（带 6 小时缓存）</div>
                 )}
               </div>
+              )}
 
               <div className="webrs-mgr-tip">
-                勾选后关闭本面板，搜索只查已勾选的源；内置源删除后下次启动会恢复。一键测试用搜索框关键词（空则「少女」）。
+                {kind === "maccms"
+                  ? "勾选后关闭本面板，搜索只查已勾选的采集源。一键测试用搜索框关键词（空则「少女」）。"
+                  : "勾选后关闭本面板，搜索只查已勾选的源；内置源删除后下次启动会恢复。一键测试用搜索框关键词（空则「少女」）。"}
               </div>
             </div>
           </div>

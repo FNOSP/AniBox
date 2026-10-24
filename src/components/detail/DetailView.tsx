@@ -2620,7 +2620,20 @@ export function DetailView({
                 </div>
               )
             ) : !isSeries ? (
-              <div className="empty">本条目不是剧集</div>
+              /* [lc-1768] 电影条目右列原先恒为死占位——开启在线搜索后与剧集同款挂面板
+                  （无 BGM 编号的电影走采集源，剧场版动画带编号走全源），两边都能搜。 */
+              webrsOn ? (
+                <WebrsPanel
+                  title={title || base.title}
+                  kind={
+                    Number(base.bgm_id ?? 0) > 0 || Number(bgm?.subject_id ?? 0) > 0
+                      ? undefined
+                      : "maccms"
+                  }
+                />
+              ) : (
+                <div className="empty">本条目不是剧集</div>
+              )
             ) : episodes.length === 0 && seasons.length === 0 && !noFnOS ? (
               /* [lc-1420] **分块骨架**：条目详情（data）到得很快，所以整页骨架一闪就没了；
                  但季/集是另外两条请求 —— 它们没回来之前右栏是空的，用户看着就是"还在等数据"。

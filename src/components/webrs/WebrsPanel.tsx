@@ -970,7 +970,7 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
           <div className="sum-modal webrs-add-modal" onClick={(e) => e.stopPropagation()}>
             <div className="sum-modal-h">
                 <h3>
-                  {kind === "maccms" ? "采集源管理" : "规则源管理"}{" "}
+                  {kind === "maccms" ? "采集源管理" : kind === "kazumi" ? "规则源管理" : "源管理"}{" "}
                   <span className="webrs-mgr-count">已勾选 {enabledNames.length} / {viewSrcs.length}</span>
                 </h3>
               <button className="ddet-close sum-modal-x" onClick={() => setSettingsOpen(false)}>
@@ -989,8 +989,9 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
                     {addOpen ? "收起" : "＋ 添加源"}
                   </button>
                 )}
-                {/* [lc-1752] 苹果CMS 采集源：只填一个接口地址，自动生成 delimited 规则 */}
-                {kind === "maccms" && (
+                {/* [lc-1752/1758] 苹果CMS 采集源：只填一个接口地址，自动生成 delimited 规则。
+                    采集源视图与全源视图（番剧页）都显示。 */}
+                {kind !== "kazumi" && (
                   <button className="webrs-mgr-addbtn" onClick={() => setMacOpen((v) => !v)}>
                     {macOpen ? "收起" : "＋ 采集源"}
                   </button>
@@ -1088,9 +1089,9 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
               )}
               </div>
 
-              {/* [lc-1757] 在线采集源目录（上游 = AniBox 仓库 docs/maccms-catalog/）：
-                  检查更新 / 逐条安装·更新。仅采集源视图显示（与 Kazumi 规则目录两版分开）。 */}
-              {kind === "maccms" && (
+              {/* [lc-1757/1758] 在线采集源目录（上游 = AniBox 仓库 docs/maccms-catalog/）：
+                  检查更新 / 逐条安装·更新。采集源视图与全源视图（番剧页）都显示。 */}
+              {kind !== "kazumi" && (
               <div className="webrs-cat">
                 <div className="webrs-cat-hd">
                   <span className="webrs-cat-title">在线采集源</span>
@@ -1214,7 +1215,7 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
               <div className="webrs-mgr-tip">
                 {kind === "maccms"
                   ? "勾选后关闭本面板，搜索只查已勾选的采集源。一键测试用搜索框关键词（空则「少女」）。"
-                  : "勾选后关闭本面板，搜索只查已勾选的源；内置源删除后下次启动会恢复。一键测试用搜索框关键词（空则「少女」）。"}
+                  : "勾选后关闭本面板，搜索只查已勾选的源；内置规则源删除后随启动恢复，采集源删除后可到「检查更新」重装。一键测试用搜索框关键词（空则「少女」）。"}
               </div>
             </div>
           </div>

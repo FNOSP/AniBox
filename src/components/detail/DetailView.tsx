@@ -2623,11 +2623,16 @@ export function DetailView({
               epsLoading ? (
                 <div className="empty">加载中…</div>
               ) : webrsOn ? (
-                /* [lc-1754] 按编号分源：有 BGM 编号（发现页自带 bgm_id 或 BGM 匹配命中）
-                   = 番剧 → Kazumi 规则源；无编号 = TMDB 剧集/电影 → 苹果CMS 采集源。 */
+                /* [lc-1754→1758] 按编号分源：无编号（TMDB 剧集/电影）→ 只挂采集源；
+                   有 BGM 编号（番剧）→ 不过滤 = Kazumi 规则源 + 采集源都挂
+                   （采集站也收录动漫，多一路兜底；规则源只有番剧没有剧集）。 */
                 <WebrsPanel
                   title={title || base.title}
-                  kind={Number(base.bgm_id ?? 0) > 0 || Number(bgm?.subject_id ?? 0) > 0 ? "kazumi" : "maccms"}
+                  kind={
+                    Number(base.bgm_id ?? 0) > 0 || Number(bgm?.subject_id ?? 0) > 0
+                      ? undefined
+                      : "maccms"
+                  }
                 />
               ) : noFnOS ? (
                 <div className="empty">未查询到资源</div>

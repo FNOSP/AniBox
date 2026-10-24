@@ -155,6 +155,11 @@ pub struct Config {
     /// 自建弹幕接口开关（默认开启：使用内置实例或用户填写的地址）
     #[serde(default = "default_true")]
     pub danmu_api_enabled: bool,
+    /// [lc-1753] 在线资源搜索开关（默认关闭）：设置面板开启前展示「不存储、不分发
+    /// 任何资源」声明；开启后才在无资源的剧集/动漫详情页显示在线资源搜索面板。
+    /// 内容全部来自用户自行添加的第三方规则/采集源，本软件不内置任何源。
+    #[serde(default)]
+    pub webrs_panel_enabled: bool,
     /// 单地址（恒等于 bases[0]，兼容旧读取方与 uosc conf 同步）
     #[serde(default)]
     pub danmu_api_base: String,
@@ -329,6 +334,7 @@ impl Default for Config {
             bgm_remember: true,
             bgm_username: String::new(),
             danmu_api_enabled: true,
+            webrs_panel_enabled: false,
             danmu_api_base: String::new(),
             danmu_api_bases: Vec::new(),
             danmu_engine: default_danmu_engine(),

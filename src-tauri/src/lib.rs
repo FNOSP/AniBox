@@ -2470,6 +2470,8 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         "danmuApiEnabled": cfg.danmu_api_enabled,
         "danmuApiBases": cfg.danmu_api_bases,
         "danmuApiBase": cfg.danmu_api_base,
+        // [lc-1753] 在线资源搜索（默认关闭；开启前用户已知悉「不存储不分发资源」声明）
+        "webrsPanelEnabled": cfg.webrs_panel_enabled,
         // 弹幕引擎（camelCase 映射 `danmu_engine`）
         "danmuEngine": cfg.danmu_engine,
         // [gamepad] 全局手柄（camelCase；范围 clamp 在 set_settings）
@@ -2537,6 +2539,10 @@ async fn set_settings(
     // [lc-1561] 自建弹幕接口：多地址（逐行去空/去尾斜杠/去重，上限 4 条 —— 与原项目同口径）。
     // 改完**立即**桥给 Node 客户端并同步 Lua 闸门（不这样得等下次启动才生效）。
     let mut danmu_changed = false;
+    // [lc-1753] 在线资源搜索开关：纯 UI 布尔，无联动副作用。
+    if let Some(v) = arg.get("webrsPanelEnabled") {
+        cfg.webrs_panel_enabled = v.as_bool().ok_or("webrsPanelEnabled 必须是布尔值")?;
+    }
     if let Some(v) = arg.get("danmuApiEnabled") {
         cfg.danmu_api_enabled = v.as_bool().ok_or("danmuApiEnabled 必须是布尔值")?;
         danmu_changed = true;
@@ -2631,6 +2637,7 @@ async fn set_settings(
         "danmuApiEnabled": cfg.danmu_api_enabled,
         "danmuApiBases": cfg.danmu_api_bases,
         "danmuApiBase": cfg.danmu_api_base,
+        "webrsPanelEnabled": cfg.webrs_panel_enabled,
         "danmuEngine": cfg.danmu_engine,
         "gamepadEnabled": cfg.gamepad_enabled,
         "gamepadDeadzone": cfg.gamepad_deadzone,

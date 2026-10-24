@@ -284,6 +284,37 @@ pub fn rules_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     Ok(dir)
 }
 
+/// [lc-1755] 苹果CMS 采集源的独立目录（TMDB 剧集侧的源体系，与 Kazumi 规则完全分家：
+/// 存储/删除/目录互不相干，只有 load 时合并出列表）。
+pub fn maccms_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("无法解析数据目录: {e}"))?
+        .join("webrs-maccms");
+    Ok(dir)
+}
+
+/// [lc-1755] 按规则内容判定归属目录：delimited 选集 = 采集源（webrs-maccms/），
+/// 其余 = Kazumi 规则（webrs-rules/）。
+fn rule_home_dir(app: &AppHandle, v: &Value) -> Result<std::path::PathBuf, String> {
+    if is_maccms_rule(v) {
+        maccms_dir(app)
+    } else {
+        rules_dir(app)
+    }
+}
+
+/// [lc-1755] delimited 选集格式 = 苹果CMS 采集源（TMDB 剧集侧），与 webrs_rules 的
+/// kind 标记同一判定口径。
+fn is_maccms_rule(v: &Value) -> bool {
+    v.get("chapterApiConfig")
+        .and_then(|c| c.get("format"))
+        .and_then(|f| f.as_str())
+        .map(|f| f.eq_ignore_ascii_case("delimited"))
+        .unwrap_or(false)
+}
+
 /// 把内置规则逐条补种进 webrs-rules/（**缺哪个补哪个**，已有同名文件不覆盖 ——
 /// 尊重用户改动；用户删掉的内置源会在下次启动补回，行为等同"恢复默认"）。
 async fn seed_rules(app: &AppHandle) -> Result<(), String> {
@@ -309,15 +340,26 @@ async fn seed_rules(app: &AppHandle) -> Result<(), String> {
 }
 
 /// 列出全部可用规则（宽容解析：坏文件跳过）。
+/// [lc-1755] 合并两个源体系：webrs-rules/（Kazumi 规则）+ webrs-maccms/（采集源）。
 pub async fn load_rules(app: &AppHandle) -> Result<Vec<Rule>, String> {
     seed_rules(app).await?;
-    let dir = rules_dir(app)?;
     let mut out = Vec::new();
-    let mut rd = match tokio::fs::read_dir(&dir).await {
+    for dir in [rules_dir(app)?, maccms_dir(app)?] {
+        read_rules_dir(&dir, &mut out).await?;
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+/// 读单个规则目录（宽容：坏文件跳过，只 trace 日志）。
+async fn read_rules_dir(dir: &std::path::Path, out: &mut Vec<Rule>) -> Result<(), String> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    let mut rd = match tokio::fs::read_dir(dir).await {
         Ok(rd) => rd,
         Err(e) => return Err(format!("读规则目录失败: {e}")),
     };
-    let mut names: Vec<String> = Vec::new();
     while let Ok(Some(ent)) = rd.next_entry().await {
         let p = ent.path();
         if p.extension().and_then(|e| e.to_str()) != Some("json") {
@@ -340,7 +382,6 @@ pub async fn load_rules(app: &AppHandle) -> Result<Vec<Rule>, String> {
                     if r.chapter_mode.is_empty() {
                         r.chapter_mode = "xpath".into();
                     }
-                    names.push(r.name.clone());
                     out.push(r);
                 }
                 Err(e) => crate::libmpv::trace(&format!(
@@ -351,9 +392,7 @@ pub async fn load_rules(app: &AppHandle) -> Result<Vec<Rule>, String> {
             Err(e) => crate::libmpv::trace(&format!("[webrs] 规则 {} 读取失败: {e}", p.display())),
         }
     }
-    let _ = names; // 调试用
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(out)
+    Ok(())
 }
 
 fn find_rule<'a>(rules: &'a [Rule], name: &str) -> Result<&'a Rule, String> {
@@ -1465,8 +1504,9 @@ pub async fn webrs_search_multi(
     Ok(json!(groups))
 }
 
-/// [lc-1501] 用户加源：粘贴 Kazumi 规则 JSON → 校验 → 落盘 webrs-rules/{name}.json。
-/// 返回规则名。同名已存在则报错（先删再加）。
+/// [lc-1501] 用户加源：粘贴规则 JSON → 校验 → 落盘。返回规则名。同名已存在则报错（先删再加）。
+/// [lc-1755] 按内容路由目录：delimited 采集源 → webrs-maccms/，其余 Kazumi 规则 → webrs-rules/；
+/// 同名检查跨两个目录（两类源共用一个名字空间，避免搜索时同名歧义）。
 #[tauri::command]
 pub async fn webrs_add_rule(app: AppHandle, json_text: String) -> Result<String, String> {
     let v: Value = serde_json::from_str(json_text.trim())
@@ -1482,33 +1522,40 @@ pub async fn webrs_add_rule(app: AppHandle, json_text: String) -> Result<String,
     }
     serde_json::from_value::<Rule>(v.clone())
         .map_err(|e| format!("规则字段不合法: {e}"))?;
-    let dir = rules_dir(&app)?;
+    for d in [rules_dir(&app)?, maccms_dir(&app)?] {
+        if d.join(format!("{name}.json")).exists() {
+            return Err(format!("规则「{name}」已存在，先删掉再加"));
+        }
+    }
+    let dir = rule_home_dir(&app, &v)?;
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| format!("创建规则目录失败: {e}"))?;
     let p = dir.join(format!("{name}.json"));
-    if p.exists() {
-        return Err(format!("规则「{name}」已存在，先删掉再加"));
-    }
     tokio::fs::write(&p, serde_json::to_string_pretty(&v).unwrap_or_default())
         .await
         .map_err(|e| format!("写入规则失败: {e}"))?;
-    crate::libmpv::trace(&format!("[webrs] 新增规则: {name}"));
+    crate::libmpv::trace(&format!("[webrs] 新增规则: {name} ({})", dir.display()));
     Ok(name)
 }
 
 /// [lc-1501] 用户删源。内置源删掉后下次启动会被补种（等同"恢复默认"）。
+/// [lc-1755] 两个目录都找（采集源在 webrs-maccms/，Kazumi 规则在 webrs-rules/）。
 #[tauri::command]
 pub async fn webrs_remove_rule(app: AppHandle, rule_name: String) -> Result<(), String> {
     let name = rule_name.trim().to_string();
     if name.is_empty() || name.contains(['/', '\\', ':']) || name.contains("..") {
         return Err("规则名不合法".into());
     }
-    let p = rules_dir(&app)?.join(format!("{name}.json"));
-    match tokio::fs::remove_file(&p).await {
-        Ok(_) => Ok(()),
-        Err(e) => Err(format!("删除失败: {e}")),
+    for d in [maccms_dir(&app)?, rules_dir(&app)?] {
+        let p = d.join(format!("{name}.json"));
+        if tokio::fs::try_exists(&p).await.unwrap_or(false) {
+            return tokio::fs::remove_file(&p)
+                .await
+                .map_err(|e| format!("删除失败: {e}"));
+        }
     }
+    Err(format!("没找到源「{name}」"))
 }
 
 // ───────────────────────── [lc-1608] 在线规则目录 + 一键更新 ─────────────────────────
@@ -4270,5 +4317,24 @@ mod tests {
         assert!(!is_media_direct_url("https://www.7sefun.com/search?q=1"));
         assert!(!is_media_direct_url("https://x.com/v.m3u8.ts")); // ts 分片不是完整媒体
         assert!(!is_media_direct_url("https://x.com/play/index.html"));
+    }
+
+    /// [lc-1755] 存储分家路由：delimited → 采集源目录；xpath/api+nested → Kazumi 规则目录。
+    #[test]
+    fn maccms_rule_routing_by_content() {
+        let maccms: Value = serde_json::from_str(
+            r#"{"name":"量子资源","chapterMode":"api","chapterApiConfig":{"format":"delimited","roadEpisodesPath":"$.list[*].vod_play_url"}}"#,
+        )
+        .unwrap();
+        assert!(is_maccms_rule(&maccms));
+        let kazumi_xpath: Value =
+            serde_json::from_str(r#"{"name":"7sefun","searchMode":"xpath","searchList":"//div"}"#)
+                .unwrap();
+        assert!(!is_maccms_rule(&kazumi_xpath));
+        let kazumi_api_nested: Value = serde_json::from_str(
+            r#"{"name":"mutefun","searchMode":"api","chapterMode":"api","chapterApiConfig":{"format":"nested","roadsPath":"$.data.roads[*]"}}"#,
+        )
+        .unwrap();
+        assert!(!is_maccms_rule(&kazumi_api_nested));
     }
 }

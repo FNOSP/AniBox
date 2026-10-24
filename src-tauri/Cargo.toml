@@ -1,6 +1,6 @@
 [package]
 name = "anibox"
-version = "4.0.0"
+version = "4.0.1"
 description = "AniBox —— 飞牛影视（fnOS）桌面客户端"
 authors = ["AniBox"]
 edition = "2024"

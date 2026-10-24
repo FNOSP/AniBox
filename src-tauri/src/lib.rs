@@ -491,11 +491,8 @@ async fn get_continue_watching(state: State<'_, AppState>) -> Result<Value, Stri
     // [lc-1774] 集条目的 parent_guid 是**季** guid，直接给详情页会整页渲染成
     // 「Season 1」。复用观影记录的 enrich_series（季 guid → item/detail →
     // 剧 guid），为每个集条目补 seriesGuid（剧级）；字段先归一到 camelCase。
-    if let Some(list) = v
-        .get_mut("data")
-        .and_then(|d| d.get_mut("list"))
-        .and_then(|l| l.as_array_mut())
-    {
+    // play/list 的 data 直接就是条目数组（实测 {code,data:[...]}，无 list 包层）
+    if let Some(list) = v.get_mut("data").and_then(|d| d.as_array_mut()) {
         for it in list.iter_mut() {
             let snake = it.get("parent_guid").and_then(|x| x.as_str()).unwrap_or("");
             let camel = it.get("parentGuid").and_then(|x| x.as_str()).unwrap_or("");

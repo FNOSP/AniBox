@@ -1672,9 +1672,10 @@ export function DetailView({
   //     0 / undefined / null 一律视为无效。其余四个标签（详情/关联/角色/更多）顺序与行为不变。
   const hasBgmId =
     Number(bgm?.subject_id ?? 0) > 0 || Number(base.bgm_id ?? 0) > 0;
+  // [lc-1759] 末位恒在「Switch」：把右列选集区切成在线资源搜索（本地有资源也可切换）
   const tabIds: string[] = hasBgmId
-    ? ["overview", "reviews", "comments", "related", "more", "extra"]
-    : ["overview", "related", "more", "extra"];
+    ? ["overview", "reviews", "comments", "related", "more", "extra", "switch"]
+    : ["overview", "related", "more", "extra", "switch"];
   // [lc-1423] 简介是否需要"展开"：与之前同一套字数近似（>96 字≈4~5 行）
   const longIntro = overview.length > 96;
   // Esc 关简介弹窗（与项目其它弹层同一套键盘约定）
@@ -2330,6 +2331,12 @@ export function DetailView({
 
         {/* [lc-1565] 「更多」页：原「详情」页底部的 更多 块（别名/关键词/热度/编号/链接）独立成页 */}
         {activeTab === "extra" && <ExtraTab tmdb={tmdb} tmdbDone={tmdbDone} />}
+        {/* [lc-1759] Switch：内容在右列选集区（在线资源搜索面板），左列只放指引 */}
+        {activeTab === "switch" && (
+          <div className="empty">
+            已切换到在线资源搜索 —— 面板在右侧选集区；点其他标签返回本地选集
+          </div>
+        )}
 
         {/* [lc-1412] 评论（长影评，用户设计稿版式）：
               封面 + 标题（链接色）+ 摘要（3 行截断）+ 作者 · 日期 · N 回复。
@@ -2590,7 +2597,24 @@ export function DetailView({
               autoLocateRef.current.userTouched = true;
             }}
           >
-            {!isSeries ? (
+            {/* [lc-1759] Switch 模式：右列整体切为在线资源搜索（本地有资源也可切换到在线）。
+                开关未开时给指引而不是硬挂面板（合规开关是前置条件）。 */}
+            {activeTab === "switch" ? (
+              webrsOn ? (
+                <WebrsPanel
+                  title={title || base.title}
+                  kind={
+                    Number(base.bgm_id ?? 0) > 0 || Number(bgm?.subject_id ?? 0) > 0
+                      ? undefined
+                      : "maccms"
+                  }
+                />
+              ) : (
+                <div className="empty">
+                  在线资源搜索未开启 —— 到「设置 → 播放器」打开「在线资源搜索」开关后，再用 Switch 切换
+                </div>
+              )
+            ) : !isSeries ? (
               <div className="empty">本条目不是剧集</div>
             ) : episodes.length === 0 && seasons.length === 0 && !noFnOS ? (
               /* [lc-1420] **分块骨架**：条目详情（data）到得很快，所以整页骨架一闪就没了；

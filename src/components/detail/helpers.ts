@@ -40,6 +40,8 @@ export const TAB_LABEL: Record<string, string> = {
   more: "角色",
   // [lc-1565] 新增「更多」页：原「详情」页底部的 更多 块（别名/关键词/热度/编号/链接）
   extra: "更多",
+  // [lc-1759] Switch：右列选集区切换为在线资源搜索（本地有资源也可换在线模式）
+  switch: "Switch",
 };
 
 /** [lc-119] 吐槽分页页大小（p1 上游默认 20；分页推进以**实际返回条数**为准，不假定 limit 生效） */

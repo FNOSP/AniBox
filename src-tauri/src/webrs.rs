@@ -1171,7 +1171,22 @@ pub async fn webrs_rules(app: AppHandle) -> Result<Vec<Value>, String> {
     let rules = load_rules(&app).await?;
     Ok(rules
         .iter()
-        .map(|r| json!({ "name": r.name, "version": r.version, "mode": r.search_mode }))
+        .map(|r| {
+            // [lc-1754] 源分组：delimited 选集 = 苹果CMS 采集源（剧集类）；
+            // 其余（xpath / api+nested）= Kazumi 规则源（番剧类）。前端按条目
+            // 有无 BGM 编号决定挂哪组：有编号走 kazumi、无编号走 maccms。
+            let kind = if r
+                .chapter_api_config
+                .as_ref()
+                .map(|c| c.format.eq_ignore_ascii_case("delimited"))
+                .unwrap_or(false)
+            {
+                "maccms"
+            } else {
+                "kazumi"
+            };
+            json!({ "name": r.name, "version": r.version, "mode": r.search_mode, "kind": kind })
+        })
         .collect())
 }
 

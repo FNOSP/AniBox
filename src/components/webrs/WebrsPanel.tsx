@@ -77,12 +77,14 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
     () => (kind ? srcs.filter((s) => (s.kind ?? "kazumi") === kind) : srcs),
     [srcs, kind],
   );
-  const [enabled, setEnabled] = useState<string[] | null>(null); // null = 全启用
-  // [lc-1755] 勾选状态按源体系分家存储：采集源用独立 key，规则源沿用旧 key
-  const enabledKey = kind === "maccms" ? WEBRS_MACCMS_KEY : WEBRS_ENABLED_KEY;
-  const loadEnabledFor = (): string[] | null => {
+  // [lc-1755→1758] 勾选状态**按源类型**分家存储（而不是按视图）：kazumi 规则源永远读写
+  // enabledSources key、采集源永远读写 maccmsEnabled key —— 同一个源在番剧页（全源视图）
+  // 和 TMDB 页（采集源视图）的勾选状态一致，不会互相看不见/互相覆盖。
+  const [enKaz, setEnKaz] = useState<string[] | null>(null); // null = 该类从未改过 → 全启用
+  const [enMac, setEnMac] = useState<string[] | null>(null);
+  const readEnabledKey = (key: string): string[] | null => {
     try {
-      const raw = localStorage.getItem(enabledKey);
+      const raw = localStorage.getItem(key);
       if (raw == null) return null;
       const v = JSON.parse(raw);
       return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
@@ -143,10 +145,29 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
   // 避免把库内播放的失败误报到本面板。
   const lastPlayAt = useRef(0);
 
-  const isEnabled = useCallback(
-    (name: string) => enabled == null || enabled.includes(name),
-    [enabled],
+  const kindOf = useCallback(
+    (name: string): "kazumi" | "maccms" =>
+      srcs.find((r) => r.name === name)?.kind ?? "kazumi",
+    [srcs],
   );
+  const isEnabled = useCallback(
+    (name: string) => {
+      const list = kindOf(name) === "maccms" ? enMac : enKaz;
+      return list == null || list.includes(name);
+    },
+    [kindOf, enKaz, enMac],
+  );
+  /** 写某一类的勾选快照（null = 恢复「全启用」，不落盘）。 */
+  const writeEnabled = (isMac: boolean, next: string[] | null) => {
+    if (isMac) setEnMac(next);
+    else setEnKaz(next);
+    if (next != null) {
+      localStorage.setItem(
+        isMac ? WEBRS_MACCMS_KEY : WEBRS_ENABLED_KEY,
+        JSON.stringify(next),
+      );
+    }
+  };
   const enabledNames = useMemo(() => viewSrcs.filter((r) => isEnabled(r.name)).map((r) => r.name), [viewSrcs, isEnabled]);
 
   const refreshRules = useCallback(async () => {
@@ -441,12 +462,19 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
   useEffect(() => {
     if (autoDone.current) return;
     autoDone.current = true;
-    setEnabled(loadEnabledFor());
+    const k = readEnabledKey(WEBRS_ENABLED_KEY);
+    const m = readEnabledKey(WEBRS_MACCMS_KEY);
+    setEnKaz(k);
+    setEnMac(m);
     refreshRules().then((r) => {
-      const en = loadEnabledFor();
-      // [lc-1755] 自动首搜只看当前视图（kind 过滤后）的源：另一类源勾没勾不影响本面板
+      // [lc-1755] 自动首搜只看当前视图（kind 过滤后）的源；勾选按源类型各自判定
       const scope = kind ? r.filter((x) => (x.kind ?? "kazumi") === kind) : r;
-      const picked = scope.filter((x) => en == null || en.includes(x.name)).map((x) => x.name);
+      const picked = scope
+        .filter((x) => {
+          const list = (x.kind ?? "kazumi") === "maccms" ? m : k;
+          return list == null || list.includes(x.name);
+        })
+        .map((x) => x.name);
       if (scope.length > 0 && picked.length > 0) doSearch(title);
       else
         setSrcHint(
@@ -460,18 +488,26 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
   }, []);
 
   const toggleSource = (name: string) => {
-    const cur = srcs.filter((r) => isEnabled(r.name)).map((r) => r.name);
+    const isMac = kindOf(name) === "maccms";
+    const list = isMac ? enMac : enKaz;
+    // null（从未改过）→ 快照该类型当前全部源名再切换，与旧语义一致
+    const cur =
+      list ?? srcs.filter((r) => (r.kind ?? "kazumi") === (isMac ? "maccms" : "kazumi")).map((r) => r.name);
     const next = cur.includes(name) ? cur.filter((x) => x !== name) : [...cur, name];
-    setEnabled(next);
-    localStorage.setItem(enabledKey, JSON.stringify(next));
+    writeEnabled(isMac, next);
   };
   const setAllSources = (on: boolean) => {
-    // [lc-1754] 全选/清空只作用于当前视图（kind 过滤后）的源：另一类源的勾选状态不动。
-    const viewNames = new Set(viewSrcs.map((r) => r.name));
-    const others = (enabled ?? srcs.map((r) => r.name)).filter((x) => !viewNames.has(x));
-    const next = on ? [...others, ...viewSrcs.map((r) => r.name)] : others;
-    setEnabled(next);
-    localStorage.setItem(enabledKey, JSON.stringify(next));
+    // [lc-1754/1758] 全选/清空只作用于当前视图（kind 过滤后）的源，且按源类型分别写
+    // 各自的存储 —— 当前视图没有某类源时该类的勾选完全不动。
+    for (const t of ["kazumi", "maccms"] as const) {
+      const viewNames = new Set(viewSrcs.filter((r) => (r.kind ?? "kazumi") === t).map((r) => r.name));
+      if (viewNames.size === 0) continue;
+      const list = t === "maccms" ? enMac : enKaz;
+      const cur = list ?? srcs.filter((r) => (r.kind ?? "kazumi") === t).map((r) => r.name);
+      const kept = cur.filter((x) => !viewNames.has(x));
+      const next = on ? Array.from(new Set([...kept, ...viewNames])) : kept;
+      writeEnabled(t === "maccms", next);
+    }
   };
 
   const openChapters = async (rule: string, item: WebrsSearchItem) => {
@@ -639,9 +675,9 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
     try {
       await invoke("webrs_remove_rule", { ruleName: name });
       await refreshRules();
-      const next = (enabled ?? srcs.map((r) => r.name)).filter((x) => x !== name);
-      setEnabled(next);
-      localStorage.setItem(enabledKey, JSON.stringify(next));
+      const isMac = kindOf(name) === "maccms";
+      const list = isMac ? enMac : enKaz;
+      if (list != null) writeEnabled(isMac, list.filter((x) => x !== name));
       setGroups((g) => (g ? g.filter((x) => x.name !== name) : g));
     } catch (e) {
       setErr(String(e));

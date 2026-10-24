@@ -907,7 +907,7 @@ export function SettingsPanel({
 
   /* [lc-1781] 字幕源（subtitle-sources.json）：kind ∈ xunlei/assrt/opensubtitles。
      mpv 侧 sub-assrt.lua 同读这份文件扇出搜索；迅雷无需 token。 */
-  type SubSource = { kind: string; name: string; token: string; enabled: boolean };
+  type SubSource = { kind: string; name: string; token: string; useBuiltin: boolean; enabled: boolean };
   const [subSources, setSubSources] = useState<SubSource[]>([]);
   const [subNote, setSubNote] = useState("");
   const subLoaded = useRef(false);
@@ -1460,17 +1460,34 @@ export function SettingsPanel({
                           onBlur={() => void saveSubSources(subSources)}
                         />
                         {s.kind !== "xunlei" && (
-                          <input
-                            className="set-input"
-                            style={{ flex: 1 }}
-                            value={s.token}
-                            placeholder={s.kind === "assrt" ? "assrt token（空=内置共享）" : "OpenSubtitles Api-Key（留空=应用内置共享 Key）"}
-                            onChange={(e) => {
-                              const next = subSources.map((x, j) => (j === i ? { ...x, token: e.target.value } : x));
-                              setSubSources(next);
-                            }}
-                            onBlur={() => void saveSubSources(subSources)}
-                          />
+                          <>
+                            {/* [lc-1786] 凭证来源开关：开=内置共享（token 忽略）；关=用自定义 token */}
+                            <button
+                              type="button"
+                              className={`set-sw${s.useBuiltin ? " on" : ""}`}
+                              aria-pressed={s.useBuiltin}
+                              aria-label={`${s.name} 使用内置凭证`}
+                              title={s.useBuiltin ? "使用内置共享凭证（点此切换为自定义）" : "使用自定义凭证（点此切回内置共享）"}
+                              onClick={() => {
+                                const next = subSources.map((x, j) => (j === i ? { ...x, useBuiltin: !x.useBuiltin } : x));
+                                setSubSources(next);
+                                void saveSubSources(next);
+                              }}
+                            />
+                            <span className="set-desc" style={{ flex: "none", opacity: 0.7 }}>内置</span>
+                            <input
+                              className="set-input"
+                              style={{ flex: 1, opacity: s.useBuiltin ? 0.55 : 1 }}
+                              disabled={s.useBuiltin}
+                              value={s.useBuiltin ? "" : s.token}
+                              placeholder={s.useBuiltin ? "已启用内置共享凭证" : s.kind === "assrt" ? "自定义 assrt token" : "自定义 OpenSubtitles Api-Key"}
+                              onChange={(e) => {
+                                const next = subSources.map((x, j) => (j === i ? { ...x, token: e.target.value } : x));
+                                setSubSources(next);
+                              }}
+                              onBlur={() => void saveSubSources(subSources)}
+                            />
+                          </>
                         )}
                         <button
                           className="set-btn"
@@ -1502,7 +1519,7 @@ export function SettingsPanel({
                       <button
                         className="set-btn"
                         onClick={() => {
-                          const next = [...subSources, { kind: "opensubtitles", name: "OpenSubtitles", token: "", enabled: true }];
+                          const next = [...subSources, { kind: "opensubtitles", name: "OpenSubtitles", token: "", useBuiltin: true, enabled: true }];
                           setSubSources(next);
                         }}
                       >

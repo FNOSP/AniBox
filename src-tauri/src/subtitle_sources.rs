@@ -31,11 +31,12 @@ const BUILTIN_OPENSUB_KEY: &str = match option_env!("ANIBOX_OPENSUB_KEY") {
     None => "",
 };
 
-/// 生效的 OpenSubtitles key：用户自配优先，否则内置共享。
+/// [lc-1786] 生效的 OpenSubtitles key：use_builtin=true → 内置共享（未注入=None）；
+/// false → 用户 token（空则回落内置，防手滑失效）。
 fn effective_osub_key(list: &[SubtitleSource]) -> Option<String> {
     if let Some(k) = list
         .iter()
-        .find(|s| s.kind == "opensubtitles" && s.enabled && !s.token.trim().is_empty())
+        .find(|s| s.kind == "opensubtitles" && s.enabled && !s.use_builtin && !s.token.trim().is_empty())
         .map(|s| s.token.trim().to_string())
     {
         return Some(k);
@@ -56,7 +57,16 @@ pub struct SubtitleSource {
     /// assrt 的 token / opensubtitles 的 Api-Key；xunlei 不需要（空串）
     #[serde(default)]
     pub token: String,
+    /// [lc-1786] 凭证来源开关：true=内置共享（打包注入；token 字段忽略），
+    /// false=用上面的 token（用户自填）。旧 JSON 无此字段 → 默认 true（与旧「空 token=内置」语义兼容）。
+    /// xunlei 无凭证，忽略。
+    #[serde(default = "default_true")]
+    pub use_builtin: bool,
     pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn file_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
@@ -72,19 +82,21 @@ fn defaults() -> Vec<SubtitleSource> {
             kind: "xunlei".into(),
             name: "迅雷（按文件哈希精确匹配）".into(),
             token: String::new(),
+            use_builtin: false,
             enabled: true,
         },
         SubtitleSource {
             kind: "assrt".into(),
             name: "assrt.net".into(),
-            token: DEFAULT_ASSRT_TOKEN.into(),
+            token: String::new(),
+            use_builtin: true,
             enabled: true,
         },
         SubtitleSource {
             kind: "opensubtitles".into(),
             name: "OpenSubtitles".into(),
-            // 空 = 内置共享 Key（构建期注入；未注入时该源自动跳过）
             token: String::new(),
+            use_builtin: true,
             enabled: true,
         },
     ]
@@ -98,7 +110,7 @@ fn valid_kind(k: &str) -> bool {
 #[tauri::command]
 pub async fn subtitle_sources_get(app: AppHandle) -> Result<Value, String> {
     let p = file_path(&app)?;
-    let list: Vec<SubtitleSource> = match std::fs::read_to_string(&p) {
+    let mut list: Vec<SubtitleSource> = match std::fs::read_to_string(&p) {
         Ok(s) => serde_json::from_str::<Value>(&s)
             .ok()
             .and_then(|v| v.get("sources").and_then(|x| x.as_array()).cloned())
@@ -112,6 +124,21 @@ pub async fn subtitle_sources_get(app: AppHandle) -> Result<Value, String> {
             .unwrap_or_else(defaults),
         Err(_) => defaults(),
     };
+    // [lc-1786] 旧 JSON 迁移：补 osub 默认条目并立即落盘（用户之后删除即显式不用）
+    let need_migrate = p.is_file() && !list.iter().any(|s| s.kind == "opensubtitles");
+    if !list.iter().any(|s| s.kind == "opensubtitles") {
+        if let Some(d) = defaults().into_iter().find(|s| s.kind == "opensubtitles") {
+            list.push(d);
+        }
+    }
+    if need_migrate {
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(body) = serde_json::to_string_pretty(&json!({ "sources": list })) {
+            let _ = std::fs::write(&p, body);
+        }
+    }
     Ok(json!({ "sources": list }))
 }
 
@@ -125,9 +152,9 @@ pub async fn subtitle_sources_set(app: AppHandle, sources: Vec<SubtitleSource>) 
         if !valid_kind(&s.kind) {
             return Err(format!("第 {} 个源的 kind 非法（assrt/opensubtitles/xunlei）", i + 1));
         }
-        // [lc-1784] OpenSubtitles token 可留空 = 用内置共享 Key；assrt 必填（有内置兜底 token，空即恢复默认）
-        if s.kind == "assrt" && s.token.trim().is_empty() {
-            return Err(format!("「{}」需要填写 token", s.name));
+        // [lc-1786] 内置开关关闭（use_builtin=false）时自定义 token 必填；开启时 token 忽略（可留空）。
+        if !s.use_builtin && (s.kind == "assrt" || s.kind == "opensubtitles") && s.token.trim().is_empty() {
+            return Err(format!("「{}」已关闭内置凭证，需填写自定义 token / Api-Key", s.name));
         }
         if s.name.trim().is_empty() {
             return Err(format!("第 {} 个源缺少名称", i + 1));
@@ -264,10 +291,11 @@ fn http_client() -> &'static reqwest::Client {
     })
 }
 
-/// assrt token：用户在列表里配的优先，否则内置共享。
+/// [lc-1786] assrt 凭证：use_builtin=true → 内置共享；false → 用户 token（空则回落内置，
+/// 避免手滑关了开关没填 token 导致整源失效）。
 fn effective_assrt_token(list: &[SubtitleSource]) -> String {
     list.iter()
-        .find(|s| s.kind == "assrt" && s.enabled && !s.token.trim().is_empty())
+        .find(|s| s.kind == "assrt" && s.enabled && !s.use_builtin && !s.token.trim().is_empty())
         .map(|s| s.token.trim().to_string())
         .unwrap_or_else(|| DEFAULT_ASSRT_TOKEN.to_string())
 }
@@ -297,7 +325,7 @@ async fn read_list() -> Vec<SubtitleSource> {
     } else {
         return defaults();
     };
-    match std::fs::read_to_string(p) {
+    let mut list = match std::fs::read_to_string(p) {
         Ok(s) => serde_json::from_str::<Value>(&s)
             .ok()
             .and_then(|v| v.get("sources").and_then(|x| x.as_array()).cloned())
@@ -310,7 +338,15 @@ async fn read_list() -> Vec<SubtitleSource> {
             .filter(|l: &Vec<SubtitleSource>| !l.is_empty())
             .unwrap_or_else(defaults),
         Err(_) => defaults(),
+    };
+    // [lc-1786] 迁移：旧 JSON 无 osub 条目 → 补默认（use_builtin=true）。内置共享的意义是
+    // 零配置可用；用户之后删除 = 显式不用，不再复活。
+    if !list.iter().any(|s| s.kind == "opensubtitles") {
+        if let Some(d) = defaults().into_iter().find(|s| s.kind == "opensubtitles") {
+            list.push(d);
+        }
     }
+    list
 }
 
 /// 应用内字幕搜索：并行扇出 迅雷(名称) + assrt + OpenSubtitles(若配 key)。

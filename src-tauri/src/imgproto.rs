@@ -258,15 +258,24 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
     if let Some((ct, bytes)) = disk_cache::get(&key) {
         return cached_response(&ct, bytes);
     }
+    // [lc-1765] 服务端缩放（借鉴飞鲸 `?w=400`）：sys/img 支持 w 参数出缩略图。
+    // 此前拉原图（海报 webp 常见 1~5MB），公网 NAS 一次列表几百张直接把出带宽打爆，
+    // NAS 回「System busy」限流（用户实测 play/info 都被连坐）→ 整片裂图。
+    // 卡片/详情封面场景 w=500 足够；缓存键不变（全局只有这一档尺寸）。
+    // [lc-1765] 外层是 busy 限流重试轮（continue 'nas 回到这里重新起一轮含重定向的请求），
+    // 内层循环手动跟随重定向（带上鉴权头；最多 4 跳）。
+    let mut busy_retries = 0u8;
+    let mut final_resp;
+    'nas: loop {
+    final_resp = None;
     let mut current = format!(
-        "{}{}{}",
+        "{}{}{}?w=500",
         cfg.server.trim_end_matches('/'),
         "/v/api/v1/sys/img",
         nas_path
     );
 
     // 手动跟随重定向（带上鉴权头；最多 4 跳）
-    let mut final_resp = None;
     for _ in 0..4 {
         let r = http_client()
             .get(&current)
@@ -303,7 +312,7 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
         }
     }
 
-    match final_resp {
+    let resp = match final_resp {
         Some(r) => {
             let status = r.status();
             let ct = r
@@ -314,10 +323,22 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
                 .to_lowercase();
             let bytes = r.bytes().await.unwrap_or_default().to_vec();
             // 未鉴权/被打到错误页时 NAS 会返回 200+JSON/HTML（不是图片）。
-            // [lc-114] 这种情况优先按**可重试的临时故障**处理（限流/网关页），返回 503 + Retry-After，
-            // 让浏览器稍后自动重试；只有明确不是图片时才回 404。
+            // [lc-1765] 「System busy」是 fnOS 的过载限流响应（公网被大图打爆时高频出现）：
+            // <img> 不会按 Retry-After 自动重试，必须由本代理**内部退避重试**，
+            // 否则一张图一旦撞上限流就永久裂到下次冷启动。重试 2 次（800ms / 2000ms 退避）。
             if ct.contains("application/json") || ct.contains("text/html") {
+                let body_text = String::from_utf8_lossy(&bytes[..bytes.len().min(512)]).to_lowercase();
+                let looks_busy = body_text.contains("system busy") || body_text.contains("busy");
                 let looks_like_login = bytes.len() < 20_000 && (bytes.starts_with(b"<!DOCTYPE") || bytes.starts_with(b"<html"));
+                if looks_busy && busy_retries < 2 {
+                    busy_retries += 1;
+                    let backoff = if busy_retries == 1 { 800 } else { 2000 };
+                    crate::libmpv::trace(&format!(
+                        "[img] NAS 限流（System busy），{backoff}ms 后第 {busy_retries}/2 次重试: {nas_path}"
+                    ));
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
+                    continue 'nas;
+                }
                 if looks_like_login {
                     return Response::builder()
                         .status(503)
@@ -340,7 +361,9 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
                 .unwrap_or_else(|_| Response::builder().status(500).body(Vec::new()).unwrap())
         }
         None => plain(502, "img proxy: redirect loop"),
-    }
+    };
+    return resp;
+    } // 'nas busy-retry round
 }
 
 #[cfg(test)]

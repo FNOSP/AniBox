@@ -452,6 +452,38 @@
   margin-top: 8px;
 }
 
+/* ── [lc-1775] 最近在线观看（标题 chips：点击重搜续看） ── */
+.webrs-recent {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.webrs-recent-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.webrs-recent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.webrs-recent-chip:hover { border-color: var(--accent); }
+.webrs-recent-ago { color: var(--muted); font-size: 11px; }
+
 /* ── [lc-1752] 添加采集源表单（苹果CMS V10，只填一个接口地址） ── */
 .webrs-mac-form {
   display: flex;

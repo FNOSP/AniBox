@@ -45,6 +45,18 @@ export type MaccmsCatItem = {
 
 
 export const WEBRS_ENABLED_KEY = "anibox.webrs.enabledSources";
+
+/** [lc-1775] 相对时间（最近观看 chips 用；无时间戳 → 空串不渲染） */
+function agoOf(ts?: number): string {
+  if (!ts || ts <= 0) return "";
+  const mins = Math.floor((Date.now() - ts) / 60000);
+  if (mins < 1) return "刚刚";
+  if (mins < 60) return `${mins}分钟前`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}小时前`;
+  const days = Math.floor(hrs / 24);
+  return days < 30 ? `${days}天前` : `${Math.floor(days / 30)}个月前`;
+}
 // [lc-1755] 采集源（TMDB 剧集侧）独立勾选存储 —— 与 Kazumi 规则源完全分家
 export const WEBRS_MACCMS_KEY = "anibox.webrs.maccmsEnabled";
 
@@ -91,6 +103,27 @@ export function WebrsPanel({
   // 和 TMDB 页（采集源视图）的勾选状态一致，不会互相看不见/互相覆盖。
   const [enKaz, setEnKaz] = useState<string[] | null>(null); // null = 该类从未改过 → 全启用
   const [enMac, setEnMac] = useState<string[] | null>(null);
+  // [lc-1775] 最近在线观看（本机 history 的 webrs 记录，标题+时间；点击重搜续看）
+  const [recent, setRecent] = useState<{ title: string; episode: string; playedAt?: number }[]>([]);
+  const loadRecent = useCallback(async () => {
+    try {
+      const r = await invoke<{ items?: { title?: string; episode?: string; playedAt?: number; source?: string }[] }>(
+        "get_watch_history",
+      );
+      const list = (Array.isArray(r?.items) ? r.items : [])
+        .filter((x) => x && x.source === "webrs" && String(x.title ?? "").trim())
+        .slice(0, 8);
+      setRecent(
+        list.map((x) => ({
+          title: String(x.title),
+          episode: String(x.episode ?? ""),
+          playedAt: x.playedAt,
+        })),
+      );
+    } catch {
+      /* 记录是锦上添花，失败静默 */
+    }
+  }, []);
   const readEnabledKey = (key: string): string[] | null => {
     try {
       const raw = localStorage.getItem(key);
@@ -471,6 +504,7 @@ export function WebrsPanel({
   useEffect(() => {
     if (autoDone.current) return;
     autoDone.current = true;
+    loadRecent();
     const k = readEnabledKey(WEBRS_ENABLED_KEY);
     const m = readEnabledKey(WEBRS_MACCMS_KEY);
     setEnKaz(k);
@@ -566,6 +600,8 @@ export function WebrsPanel({
       });
       // [lc-1771] 诊断：观影记录封面链路（poster 是否传到播放命令）
       console.debug("[webrs] play 记录封面:", poster ? `${poster.slice(0, 48)}…` : "(空)");
+      // [lc-1775] 记一笔后刷新「最近在线观看」
+      loadRecent();
       // [lc-1748] 记起播时间：此后 60s 内的 mpv-end(error) 归因到本次在线源播放
       lastPlayAt.current = Date.now();
       setSubBusy(`已在独立播放器窗口播放 · ${sel.item.name} · ${ep.name}（${r.via === "webview" ? "嗅探直链" : "页面直解"}）`);
@@ -869,6 +905,27 @@ export function WebrsPanel({
         <button className="webrs-go" disabled={busy} onClick={() => doSearch(kw)}>
           {busy ? "搜索中" : "搜索"}
         </button>
+        {/* [lc-1775] 最近在线观看（本机记录，不进首页继续观看）：标题+时间，点击重搜 */}
+        {recent.length > 0 && (
+          <div className="webrs-recent">
+            <span className="webrs-recent-label">最近观看</span>
+            {recent.map((r) => (
+              <button
+                key={r.title + (r.playedAt ?? 0)}
+                className="webrs-recent-chip"
+                title={`${r.title} ${r.episode} · ${agoOf(r.playedAt)}`}
+                onClick={() => {
+                  setKw(r.title);
+                  doSearch(r.title);
+                }}
+              >
+                {r.title}
+                {r.episode ? ` ${r.episode}` : ""}
+                <span className="webrs-recent-ago">{agoOf(r.playedAt)}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <button
           className="webrs-gear"
           title={`源管理（已勾选 ${enabledNames.length}/${viewSrcs.length}）`}

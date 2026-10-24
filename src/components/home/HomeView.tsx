@@ -351,7 +351,9 @@ export function HomeView({
                       guid: parentGuid || guid,
                       title: mainTitle,
                       tv_title: tvTitle || undefined,
-                      type,
+                      // [lc-1774] guid 已归一到剧级，type 必须同步归一：集条目透传 "Episode"
+                      // 会让详情页 isSeries 判否 → 整卡进「电影详情页」（剧数据+电影版式全错乱）
+                      type: type === "Episode" || type === "Season" ? "TV" : type,
                       poster,
                       season_number: sn,
                       episode_number: en,

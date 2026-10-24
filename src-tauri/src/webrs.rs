@@ -3851,9 +3851,10 @@ pub async fn webrs_play(
     // [lc-1618] 埋点：入口留痕（含直链与是否带 Referer/UA），便于把「播不了」定位到
     // 「预检没过 / 会话没起 / loadfile 失败 / 加载后源站拒流」中的哪一步。
     crate::libmpv::trace(&format!(
-        "[webrs] play: 收到播放请求 url={url} referer={:?} ua={:?}",
+        "[webrs] play: 收到播放请求 url={url} referer={:?} ua={:?} poster_len={}",
         referer.as_deref().filter(|s| !s.is_empty()),
-        ua.as_deref().filter(|s| !s.is_empty())
+        ua.as_deref().filter(|s| !s.is_empty()),
+        poster.as_deref().map(|p| p.len()).unwrap_or(0)
     ));
 
     // 直链预检（带 Referer/UA；只看状态码，不读 body）
@@ -3937,7 +3938,7 @@ pub async fn webrs_play(
             guid: format!("webrs:{}", key),
             title: title.unwrap_or_default(),
             episode: episode.unwrap_or_default(),
-            poster: poster.unwrap_or_default(),
+            poster: poster.clone().unwrap_or_default(),
             tmdb_id: String::new(),
             bgm_id: String::new(),
             media_type: "webrs".into(),

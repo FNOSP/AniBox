@@ -564,6 +564,8 @@ export function WebrsPanel({
         episodeUrl: ep.url,
         poster: poster || undefined,
       });
+      // [lc-1771] 诊断：观影记录封面链路（poster 是否传到播放命令）
+      console.debug("[webrs] play 记录封面:", poster ? `${poster.slice(0, 48)}…` : "(空)");
       // [lc-1748] 记起播时间：此后 60s 内的 mpv-end(error) 归因到本次在线源播放
       lastPlayAt.current = Date.now();
       setSubBusy(`已在独立播放器窗口播放 · ${sel.item.name} · ${ep.name}（${r.via === "webview" ? "嗅探直链" : "页面直解"}）`);

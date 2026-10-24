@@ -2613,7 +2613,7 @@ export function DetailView({
                       ? undefined
                       : "maccms"
                   }
-                  poster={poster || undefined}
+                  poster={poster || movieBackdrop || undefined}
                 />
               ) : (
                 <div className="empty">
@@ -2631,7 +2631,7 @@ export function DetailView({
                       ? undefined
                       : "maccms"
                   }
-                  poster={poster || undefined}
+                  poster={poster || movieBackdrop || undefined}
                 />
               ) : (
                 <div className="empty">本条目不是剧集</div>
@@ -2677,7 +2677,7 @@ export function DetailView({
                       ? undefined
                       : "maccms"
                   }
-                  poster={poster || undefined}
+                  poster={poster || movieBackdrop || undefined}
                 />
               ) : noFnOS ? (
                 <div className="empty">未查询到资源</div>

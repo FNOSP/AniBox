@@ -7,6 +7,7 @@ mod access_code;
 mod authx;
 mod bgm;
 mod bgm_account;
+mod cloud115;
 // [bili-account] B 站账号（Cookie 读写/体检）+ Node 检测 + 一键自建弹幕源
 mod bili_account;
 // [bili-qr] B 站二维码扫码登录（generate/poll，Cookie 落盘复用 bili_account）
@@ -3361,6 +3362,12 @@ pub fn run() {
             // [版本] 同一剧/集的多版本（多文件）：stream/list 的 video_streams
             get_media_versions,
             play_item,
+            cloud115::cloud115_qr_start,
+            cloud115::cloud115_qr_poll,
+            cloud115::cloud115_status,
+            cloud115::cloud115_logout,
+            cloud115::cloud115_list,
+            cloud115::cloud115_play,
             player_stop,
             mpv_toggle_pause,
             player_source,

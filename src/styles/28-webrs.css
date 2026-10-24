@@ -454,7 +454,6 @@
 
 /* ── [lc-1775] 本条目在线观看记录（最近几集 + 上次源 + 时间，玻璃卡） ── */
 .webrs-recent {
-  flex-basis: 100%;
   margin-top: 10px;
   border: 1px solid var(--line);
   border-radius: 12px;

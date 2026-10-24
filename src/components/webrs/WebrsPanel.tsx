@@ -916,32 +916,6 @@ export function WebrsPanel({
         <button className="webrs-go" disabled={busy} onClick={() => doSearch(kw)}>
           {busy ? "搜索中" : "搜索"}
         </button>
-        {/* [lc-1775] 本条目的在线观看记录（最近几集 + 上次源 + 时间），点击重搜续看 */}
-        {recent.length > 0 && (
-          <div className="webrs-recent">
-            <div className="webrs-recent-head">
-              <span className="webrs-recent-title">上次观看</span>
-              <span className="webrs-recent-sub">共 {recent.length} 条在线观看记录</span>
-            </div>
-            <div className="webrs-recent-list">
-              {recent.map((r) => (
-                <button
-                  key={(r.playedAt ?? 0) + r.episode}
-                  className="webrs-recent-chip"
-                  title={`${r.episode || r.title} · ${r.sourceName || "在线源"} · ${agoOf(r.playedAt)}`}
-                  onClick={() => {
-                    setKw(r.title);
-                    doSearch(r.title);
-                  }}
-                >
-                  <span className="webrs-recent-ep">{r.episode || r.title}</span>
-                  {r.sourceName && <span className="webrs-recent-src">{r.sourceName}</span>}
-                  <span className="webrs-recent-ago">{agoOf(r.playedAt)}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
         <button
           className="webrs-gear"
           title={`源管理（已勾选 ${enabledNames.length}/${viewSrcs.length}）`}
@@ -953,6 +927,33 @@ export function WebrsPanel({
           ⚙
         </button>
       </div>
+      {/* [lc-1775] 本条目的在线观看记录（最近几集 + 上次源 + 时间）——独立一行，
+          搜索栏结构与样式保持原样不动；点击记录即重搜续看 */}
+      {recent.length > 0 && (
+        <div className="webrs-recent">
+          <div className="webrs-recent-head">
+            <span className="webrs-recent-title">上次观看</span>
+            <span className="webrs-recent-sub">共 {recent.length} 条在线观看记录</span>
+          </div>
+          <div className="webrs-recent-list">
+            {recent.map((r) => (
+              <button
+                key={(r.playedAt ?? 0) + r.episode}
+                className="webrs-recent-chip"
+                title={`${r.episode || r.title} · ${r.sourceName || "在线源"} · ${agoOf(r.playedAt)}`}
+                onClick={() => {
+                  setKw(r.title);
+                  doSearch(r.title);
+                }}
+              >
+                <span className="webrs-recent-ep">{r.episode || r.title}</span>
+                {r.sourceName && <span className="webrs-recent-src">{r.sourceName}</span>}
+                <span className="webrs-recent-ago">{agoOf(r.playedAt)}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {busy && <div className="webrs-note">正在搜索 {enabledNames.length} 个已勾选源…</div>}
       {err && (
         <div className="webrs-err">

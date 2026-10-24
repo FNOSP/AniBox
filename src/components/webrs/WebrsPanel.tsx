@@ -103,27 +103,35 @@ export function WebrsPanel({
   // 和 TMDB 页（采集源视图）的勾选状态一致，不会互相看不见/互相覆盖。
   const [enKaz, setEnKaz] = useState<string[] | null>(null); // null = 该类从未改过 → 全启用
   const [enMac, setEnMac] = useState<string[] | null>(null);
-  // [lc-1775] 最近在线观看（本机 history 的 webrs 记录，标题+时间；点击重搜续看）
-  const [recent, setRecent] = useState<{ title: string; episode: string; playedAt?: number }[]>([]);
+  // [lc-1775] 最近在线观看：**只显示当前条目**的 webrs 记录（标题+集+上次源+时间）
+  const [recent, setRecent] = useState<
+    { title: string; episode: string; sourceName: string; playedAt?: number }[]
+  >([]);
   const loadRecent = useCallback(async () => {
     try {
-      const r = await invoke<{ items?: { title?: string; episode?: string; playedAt?: number; source?: string }[] }>(
-        "get_watch_history",
-      );
+      const r = await invoke<{
+        items?: { title?: string; episode?: string; playedAt?: number; source?: string; sourceName?: string }[];
+      }>("get_watch_history");
       const list = (Array.isArray(r?.items) ? r.items : [])
-        .filter((x) => x && x.source === "webrs" && String(x.title ?? "").trim())
-        .slice(0, 8);
+        .filter(
+          (x) =>
+            x &&
+            x.source === "webrs" &&
+            String(x.title ?? "").trim() === title.trim(),
+        )
+        .slice(0, 5);
       setRecent(
         list.map((x) => ({
           title: String(x.title),
           episode: String(x.episode ?? ""),
+          sourceName: String(x.sourceName ?? ""),
           playedAt: x.playedAt,
         })),
       );
     } catch {
       /* 记录是锦上添花，失败静默 */
     }
-  }, []);
+  }, [title]);
   const readEnabledKey = (key: string): string[] | null => {
     try {
       const raw = localStorage.getItem(key);
@@ -692,6 +700,9 @@ export function WebrsPanel({
     }
   };
 
+  // [lc-1775] title 变化（面板复用）时重拉当前条目的观看记录
+  useEffect(() => { loadRecent(); }, [loadRecent]);
+
   // [lc-1503] 一键测试：全部源（不管勾没勾）各跑一次搜索，结果挂到每行徽标。
   // 测试词用搜索框关键词（空则用通用词「少女」——各站收录差异最小的探针）。
   const testAll = async () => {
@@ -905,25 +916,30 @@ export function WebrsPanel({
         <button className="webrs-go" disabled={busy} onClick={() => doSearch(kw)}>
           {busy ? "搜索中" : "搜索"}
         </button>
-        {/* [lc-1775] 最近在线观看（本机记录，不进首页继续观看）：标题+时间，点击重搜 */}
+        {/* [lc-1775] 本条目的在线观看记录（最近几集 + 上次源 + 时间），点击重搜续看 */}
         {recent.length > 0 && (
           <div className="webrs-recent">
-            <span className="webrs-recent-label">最近观看</span>
-            {recent.map((r) => (
-              <button
-                key={r.title + (r.playedAt ?? 0)}
-                className="webrs-recent-chip"
-                title={`${r.title} ${r.episode} · ${agoOf(r.playedAt)}`}
-                onClick={() => {
-                  setKw(r.title);
-                  doSearch(r.title);
-                }}
-              >
-                {r.title}
-                {r.episode ? ` ${r.episode}` : ""}
-                <span className="webrs-recent-ago">{agoOf(r.playedAt)}</span>
-              </button>
-            ))}
+            <div className="webrs-recent-head">
+              <span className="webrs-recent-title">上次观看</span>
+              <span className="webrs-recent-sub">共 {recent.length} 条在线观看记录</span>
+            </div>
+            <div className="webrs-recent-list">
+              {recent.map((r) => (
+                <button
+                  key={(r.playedAt ?? 0) + r.episode}
+                  className="webrs-recent-chip"
+                  title={`${r.episode || r.title} · ${r.sourceName || "在线源"} · ${agoOf(r.playedAt)}`}
+                  onClick={() => {
+                    setKw(r.title);
+                    doSearch(r.title);
+                  }}
+                >
+                  <span className="webrs-recent-ep">{r.episode || r.title}</span>
+                  {r.sourceName && <span className="webrs-recent-src">{r.sourceName}</span>}
+                  <span className="webrs-recent-ago">{agoOf(r.playedAt)}</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
         <button

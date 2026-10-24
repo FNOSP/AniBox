@@ -452,37 +452,81 @@
   margin-top: 8px;
 }
 
-/* ── [lc-1775] 最近在线观看（标题 chips：点击重搜续看） ── */
+/* ── [lc-1775] 本条目在线观看记录（最近几集 + 上次源 + 时间，玻璃卡） ── */
 .webrs-recent {
   flex-basis: 100%;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0.28) 100%);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 4px 14px rgba(96, 130, 190, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  padding: 10px 12px;
+}
+.webrs-recent-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.webrs-recent-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-strong);
+  letter-spacing: 0.5px;
+}
+.webrs-recent-sub {
+  font-size: 11px;
+  color: var(--muted);
+}
+.webrs-recent-list {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-}
-.webrs-recent-label {
-  font-size: 12px;
-  color: var(--muted);
+  gap: 8px;
 }
 .webrs-recent-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  max-width: 220px;
+  gap: 8px;
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  border-radius: 10px;
   background: var(--input-bg);
   color: var(--text-strong);
-  padding: 4px 10px;
+  padding: 6px 10px;
   font-size: 12px;
   cursor: pointer;
+  max-width: 100%;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+.webrs-recent-chip:hover {
+  border-color: var(--accent);
+  box-shadow: 0 2px 10px rgba(96, 130, 190, 0.16);
+  transform: translateY(-1px);
+}
+.webrs-recent-ep {
+  font-weight: 600;
+  max-width: 180px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.webrs-recent-chip:hover { border-color: var(--accent); }
-.webrs-recent-ago { color: var(--muted); font-size: 11px; }
+.webrs-recent-src {
+  font-size: 11px;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-radius: 999px;
+  padding: 1px 8px;
+  max-width: 110px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.webrs-recent-ago {
+  font-size: 11px;
+  color: var(--muted);
+}
 
 /* ── [lc-1752] 添加采集源表单（苹果CMS V10，只填一个接口地址） ── */
 .webrs-mac-form {

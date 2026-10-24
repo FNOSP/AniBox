@@ -1415,11 +1415,11 @@ export function SettingsPanel({
                   <div className="set-row set-row-col">
                     <span className="set-k">字幕源</span>
                     <div className="set-desc">
-                      播放器「下载字幕」菜单的搜索来源。迅雷=按文件哈希精确匹配（仅本地文件，
-                      服务端点不稳定时自动跳过）；assrt.net=中文字幕库（可换自己的 token）；
-                      OpenSubtitles=国际库（moviehash 哈希精确匹配，需到
-                      opensubtitles.com 注册免费 Api-Key）。自上而下为优先级，哈希命中排最前。
-                      列表存本机 subtitle-sources.json。
+                      播放器「下载字幕」菜单的搜索来源。迅雷=手雷官方接口（本地文件带 gcid
+                      哈希精确匹配，URL 流自动退名称搜索，无需账号）；assrt.net=中文字幕库
+                      （可换自己的 token）；OpenSubtitles=国际库（moviehash 哈希精确匹配，
+                      需到 opensubtitles.com 注册免费 Api-Key）。自上而下为优先级，哈希命中排最前；
+                      assrt 挂了自动降级外置源。列表存本机 subtitle-sources.json。
                     </div>
                     {subSources.map((s, i) => (
                       <div className="set-row" key={`${i}-${s.kind}-${s.name}`}>

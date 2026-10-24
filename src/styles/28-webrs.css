@@ -452,6 +452,32 @@
   margin-top: 8px;
 }
 
+/* ── [lc-1752] 添加采集源表单（苹果CMS V10，只填一个接口地址） ── */
+.webrs-mac-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.webrs-mac-hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.webrs-mac-input {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--input-bg);
+  color: var(--text-strong);
+  padding: 9px 10px;
+  font-size: 12px;
+  outline: none;
+}
+.webrs-mac-input:focus {
+  border-color: var(--accent);
+}
+
 /* ── [lc-1502] 源管理设置面板（⚙ 勾选启用）；搜索栏控件规格见上方统一规则 ── */
 .webrs-mgr-count {
   font-size: 12px;

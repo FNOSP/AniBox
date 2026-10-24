@@ -64,6 +64,13 @@ export function WebrsPanel({ title }: { title: string }) {
   const [addOpen, setAddOpen] = useState(false);
   const [addText, setAddText] = useState("");
   const [addErr, setAddErr] = useState("");
+  // [lc-1752] 添加采集源（苹果CMS V10）：名称 + 采集接口地址，拼成 delimited 规则走 add_rule
+  const [macOpen, setMacOpen] = useState(false);
+  const [macName, setMacName] = useState("");
+  const [macApi, setMacApi] = useState("");
+  const [macReferer, setMacReferer] = useState("");
+  const [macBusy, setMacBusy] = useState(false);
+  const [macErr, setMacErr] = useState("");
   // [lc-1503] 一键测试源：对全部源各发一次真实搜索，行内显示 ✓ n / 无结果 / ✗
   const [tests, setTests] = useState<Record<string, { status: string; count: number; error: string }>>({});
   const [testing, setTesting] = useState(false);
@@ -490,6 +497,70 @@ export function WebrsPanel({ title }: { title: string }) {
     }
   };
 
+  // [lc-1752] 添加采集源：把「名称 + 苹果CMS 采集接口地址」拼成 delimited 规则 JSON，
+  // 走现有 webrs_add_rule 入库；搜索 ?ac=videolist&wd=、选集 ?ac=detail&ids=、
+  // vod_play_url 直链（后端 delimited 拆分 + 直链短路免嗅探）。
+  const addMacSource = async () => {
+    setMacErr("");
+    const name = macName.trim();
+    const api = macApi.trim();
+    const referer = macReferer.trim();
+    if (!name) {
+      setMacErr("请填写源名称");
+      return;
+    }
+    if (!/^https?:\/\//i.test(api)) {
+      setMacErr("采集接口必须以 http:// 或 https:// 开头");
+      return;
+    }
+    let base: string;
+    try {
+      base = new URL(api).origin;
+    } catch {
+      setMacErr("采集接口地址无效");
+      return;
+    }
+    if (referer && !/^https?:\/\//i.test(referer)) {
+      setMacErr("Referer 必须以 http:// 或 https:// 开头");
+      return;
+    }
+    const rule = {
+      name,
+      version: "1.0.0",
+      baseURL: base,
+      ...(referer ? { referer } : {}),
+      searchMode: "api",
+      searchApiConfig: {
+        request: { method: "GET", url: api, query: { ac: "videolist", wd: "@keyword" } },
+        listPath: "$.list[*]",
+        namePath: "$.vod_name",
+        sourcePath: "$.vod_id",
+      },
+      chapterMode: "api",
+      chapterApiConfig: {
+        request: { method: "GET", url: api, query: { ac: "detail", ids: "@source" } },
+        format: "delimited",
+        roadNamesPath: "$.list[*].vod_play_from",
+        roadEpisodesPath: "$.list[*].vod_play_url",
+      },
+    };
+    setMacBusy(true);
+    try {
+      await invoke<string>("webrs_add_rule", { jsonText: JSON.stringify(rule, null, 2) });
+      setMacOpen(false);
+      setMacName("");
+      setMacApi("");
+      setMacReferer("");
+      await refreshRules();
+      setErr("");
+      setSrcHint(`已添加采集源「${name}」，记得在列表里勾选它`);
+    } catch (e) {
+      setMacErr(String(e));
+    } finally {
+      setMacBusy(false);
+    }
+  };
+
   // [lc-1503] 一键测试：全部源（不管勾没勾）各跑一次搜索，结果挂到每行徽标。
   // 测试词用搜索框关键词（空则用通用词「少女」——各站收录差异最小的探针）。
   const testAll = async () => {
@@ -827,7 +898,47 @@ export function WebrsPanel({ title }: { title: string }) {
                 <button className="webrs-mgr-addbtn" onClick={() => setAddOpen((v) => !v)}>
                   {addOpen ? "收起" : "＋ 添加源"}
                 </button>
+                {/* [lc-1752] 苹果CMS 采集源：只填一个接口地址，自动生成 delimited 规则 */}
+                <button className="webrs-mgr-addbtn" onClick={() => setMacOpen((v) => !v)}>
+                  {macOpen ? "收起" : "＋ 采集源"}
+                </button>
               </div>
+            {macOpen && (
+              <div className="webrs-mac-form">
+                <div className="webrs-mac-hint">
+                  苹果CMS V10 采集接口（剧集/电影资源站），地址形如 https://xxx/api.php/provide/vod
+                  —— 只填地址即可，搜索与选集自动按标准协议生成。
+                </div>
+                <input
+                  className="webrs-mac-input"
+                  value={macName}
+                  onChange={(e) => setMacName(e.target.value)}
+                  placeholder="源名称（如：量子资源）"
+                />
+                <input
+                  className="webrs-mac-input"
+                  value={macApi}
+                  onChange={(e) => setMacApi(e.target.value)}
+                  placeholder="采集接口地址 https://xxx/api.php/provide/vod"
+                />
+                <input
+                  className="webrs-mac-input"
+                  value={macReferer}
+                  onChange={(e) => setMacReferer(e.target.value)}
+                  placeholder="Referer（可选，一般留空）"
+                />
+                {macErr && <div className="webrs-err">{macErr}</div>}
+                <div className="webrs-add-acts">
+                  <button
+                    className="webrs-go"
+                    disabled={macBusy || !macName.trim() || !macApi.trim()}
+                    onClick={addMacSource}
+                  >
+                    {macBusy ? "添加中…" : "添加"}
+                  </button>
+                </div>
+              </div>
+            )}
             {addOpen && (
               <>
                 <textarea

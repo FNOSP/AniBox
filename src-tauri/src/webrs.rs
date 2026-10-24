@@ -3842,6 +3842,8 @@ pub async fn webrs_play(
     episode: Option<String>,
     rule_name: Option<String>,
     episode_url: Option<String>,
+    // [lc-1769] 详情页竖版海报（完整代理 URL）——观影记录在线源条目的封面来源
+    poster: Option<String>,
 ) -> Result<(), String> {
     let cfg = state.config.read().await.clone();
     // 播放器可用性前置校验（mpv 路径非空 / PotPlayer 路径有效）
@@ -3935,7 +3937,7 @@ pub async fn webrs_play(
             guid: format!("webrs:{}", key),
             title: title.unwrap_or_default(),
             episode: episode.unwrap_or_default(),
-            poster: String::new(),
+            poster: poster.unwrap_or_default(),
             tmdb_id: String::new(),
             bgm_id: String::new(),
             media_type: "webrs".into(),

@@ -2606,13 +2606,14 @@ export function DetailView({
                 （本地有资源也可切换到在线）。开关未开时给指引而不是硬挂面板。 */}
             {onlineMode ? (
               webrsOn ? (
-                <WebrsPanel
+<WebrsPanel
                   title={title || base.title}
                   kind={
                     Number(base.bgm_id ?? 0) > 0 || Number(bgm?.subject_id ?? 0) > 0
                       ? undefined
                       : "maccms"
                   }
+                  poster={poster || undefined}
                 />
               ) : (
                 <div className="empty">
@@ -2623,13 +2624,14 @@ export function DetailView({
               /* [lc-1768] 电影条目右列原先恒为死占位——开启在线搜索后与剧集同款挂面板
                   （无 BGM 编号的电影走采集源，剧场版动画带编号走全源），两边都能搜。 */
               webrsOn ? (
-                <WebrsPanel
+<WebrsPanel
                   title={title || base.title}
                   kind={
                     Number(base.bgm_id ?? 0) > 0 || Number(bgm?.subject_id ?? 0) > 0
                       ? undefined
                       : "maccms"
                   }
+                  poster={poster || undefined}
                 />
               ) : (
                 <div className="empty">本条目不是剧集</div>
@@ -2668,13 +2670,14 @@ export function DetailView({
                 /* [lc-1754→1758] 按编号分源：无编号（TMDB 剧集/电影）→ 只挂采集源；
                    有 BGM 编号（番剧）→ 不过滤 = Kazumi 规则源 + 采集源都挂
                    （采集站也收录动漫，多一路兜底；规则源只有番剧没有剧集）。 */
-                <WebrsPanel
+<WebrsPanel
                   title={title || base.title}
                   kind={
                     Number(base.bgm_id ?? 0) > 0 || Number(bgm?.subject_id ?? 0) > 0
                       ? undefined
                       : "maccms"
                   }
+                  poster={poster || undefined}
                 />
               ) : noFnOS ? (
                 <div className="empty">未查询到资源</div>

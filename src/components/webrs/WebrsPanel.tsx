@@ -64,7 +64,16 @@ export function loadEnabled(): string[] | null {
 
 /** [lc-1754] kind：按条目来源分源——有 BGM 编号（番剧）挂 kazumi 规则源，
  *  无编号（TMDB 剧集/电影）挂 maccms 采集源；undefined = 不过滤（全源，兼容旧调用）。 */
-export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "maccms" }) {
+export function WebrsPanel({
+  title,
+  kind,
+  poster,
+}: {
+  title: string;
+  kind?: "kazumi" | "maccms";
+  /** [lc-1769] 详情页竖版海报（代理 URL）——随播放写入观影记录，在线源条目不再缺封面 */
+  poster?: string;
+}) {
   const [groups, setGroups] = useState<WebrsGroup[] | null>(null); // null = 尚未搜索
   const [kw, setKw] = useState(title);
   const [busy, setBusy] = useState(false);
@@ -553,6 +562,7 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
         episode: ep.name,
         ruleName: sel.rule,
         episodeUrl: ep.url,
+        poster: poster || undefined,
       });
       // [lc-1748] 记起播时间：此后 60s 内的 mpv-end(error) 归因到本次在线源播放
       lastPlayAt.current = Date.now();

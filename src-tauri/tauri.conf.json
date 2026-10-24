@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "AniBox",
-  "version": "4.0.1",
+  "version": "4.1.0",
   "identifier": "com.anibox.app",
   "build": {
     "beforeDevCommand": "node tools/stage-bundle-resources.mjs --dev && npm run dev",

@@ -2623,7 +2623,12 @@ export function DetailView({
               epsLoading ? (
                 <div className="empty">加载中…</div>
               ) : webrsOn ? (
-                <WebrsPanel title={title || base.title} />
+                /* [lc-1754] 按编号分源：有 BGM 编号（发现页自带 bgm_id 或 BGM 匹配命中）
+                   = 番剧 → Kazumi 规则源；无编号 = TMDB 剧集/电影 → 苹果CMS 采集源。 */
+                <WebrsPanel
+                  title={title || base.title}
+                  kind={Number(base.bgm_id ?? 0) > 0 || Number(bgm?.subject_id ?? 0) > 0 ? "kazumi" : "maccms"}
+                />
               ) : noFnOS ? (
                 <div className="empty">未查询到资源</div>
               ) : (

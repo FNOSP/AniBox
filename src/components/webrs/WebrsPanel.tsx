@@ -22,7 +22,7 @@ type SniffStatus = {
   message: string;
 };
 
-export type WebrsRuleInfo = { name: string; version?: string; mode?: string };
+export type WebrsRuleInfo = { name: string; version?: string; mode?: string; kind?: "kazumi" | "maccms" };
 
 // [lc-1608] 在线规则目录条目（对应 Rust CatalogItem）+ 可更新项
 export type WebrsCatalogItem = {
@@ -51,7 +51,9 @@ export function loadEnabled(): string[] | null {
 }
 
 
-export function WebrsPanel({ title }: { title: string }) {
+/** [lc-1754] kind：按条目来源分源——有 BGM 编号（番剧）挂 kazumi 规则源，
+ *  无编号（TMDB 剧集/电影）挂 maccms 采集源；undefined = 不过滤（全源，兼容旧调用）。 */
+export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "maccms" }) {
   const [groups, setGroups] = useState<WebrsGroup[] | null>(null); // null = 尚未搜索
   const [kw, setKw] = useState(title);
   const [busy, setBusy] = useState(false);
@@ -59,6 +61,11 @@ export function WebrsPanel({ title }: { title: string }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   // 源管理
   const [srcs, setSrcs] = useState<WebrsRuleInfo[]>([]);
+  // [lc-1754] 当前上下文可见的源（按 kind 过滤；缺 kind 字段的老源视为 kazumi）
+  const viewSrcs = useMemo(
+    () => (kind ? srcs.filter((s) => (s.kind ?? "kazumi") === kind) : srcs),
+    [srcs, kind],
+  );
   const [enabled, setEnabled] = useState<string[] | null>(null); // null = 全启用
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -112,7 +119,7 @@ export function WebrsPanel({ title }: { title: string }) {
     (name: string) => enabled == null || enabled.includes(name),
     [enabled],
   );
-  const enabledNames = useMemo(() => srcs.filter((r) => isEnabled(r.name)).map((r) => r.name), [srcs, isEnabled]);
+  const enabledNames = useMemo(() => viewSrcs.filter((r) => isEnabled(r.name)).map((r) => r.name), [viewSrcs, isEnabled]);
 
   const refreshRules = useCallback(async () => {
     try {
@@ -223,7 +230,7 @@ export function WebrsPanel({ title }: { title: string }) {
     async (k: string) => {
       const key = k.trim();
       if (!key) return;
-      const picked = srcs.filter((r) => isEnabled(r.name)).map((r) => r.name);
+      const picked = viewSrcs.filter((r) => isEnabled(r.name)).map((r) => r.name);
       if (picked.length === 0) {
         setSrcHint("还没有勾选任何源，点右侧 ⚙ 选择要用的源");
         return;
@@ -258,7 +265,7 @@ export function WebrsPanel({ title }: { title: string }) {
         setBusy(false);
       }
     },
-    [srcs, isEnabled, startCaptcha],
+    [viewSrcs, isEnabled, startCaptcha],
   );
 
   // [lc-1606] 验证事件：type1 收到图 → 弹窗；status verified → 自动重搜
@@ -422,7 +429,10 @@ export function WebrsPanel({ title }: { title: string }) {
     localStorage.setItem(WEBRS_ENABLED_KEY, JSON.stringify(next));
   };
   const setAllSources = (on: boolean) => {
-    const next = on ? srcs.map((r) => r.name) : [];
+    // [lc-1754] 全选/清空只作用于当前视图（kind 过滤后）的源：另一类源的勾选状态不动。
+    const viewNames = new Set(viewSrcs.map((r) => r.name));
+    const others = (enabled ?? srcs.map((r) => r.name)).filter((x) => !viewNames.has(x));
+    const next = on ? [...others, ...viewSrcs.map((r) => r.name)] : others;
     setEnabled(next);
     localStorage.setItem(WEBRS_ENABLED_KEY, JSON.stringify(next));
   };
@@ -569,12 +579,12 @@ export function WebrsPanel({ title }: { title: string }) {
     setTesting(true);
     setAddErr("");
     const loading: Record<string, { status: string; count: number; error: string }> = {};
-    for (const r of srcs) loading[r.name] = { status: "loading", count: 0, error: "" };
+    for (const r of viewSrcs) loading[r.name] = { status: "loading", count: 0, error: "" };
     setTests(loading);
     try {
       const r = await invoke<WebrsGroup[]>("webrs_search_multi", {
         keyword: key,
-        rules: srcs.map((s) => s.name),
+        rules: viewSrcs.map((s) => s.name),
       });
       const next: Record<string, { status: string; count: number; error: string }> = {};
       for (const g of r) next[g.name] = { status: g.status, count: g.items.length, error: g.error };
@@ -735,7 +745,7 @@ export function WebrsPanel({ title }: { title: string }) {
         </button>
         <button
           className="webrs-gear"
-          title={`源管理（已勾选 ${enabledNames.length}/${srcs.length}）`}
+          title={`源管理（已勾选 ${enabledNames.length}/${viewSrcs.length}）`}
           onClick={() => {
             setSettingsOpen(true);
             setAddErr("");
@@ -882,7 +892,7 @@ export function WebrsPanel({ title }: { title: string }) {
           <div className="sum-modal webrs-add-modal" onClick={(e) => e.stopPropagation()}>
             <div className="sum-modal-h">
               <h3>
-                源管理 <span className="webrs-mgr-count">已勾选 {enabledNames.length} / {srcs.length}</span>
+                源管理 <span className="webrs-mgr-count">已勾选 {enabledNames.length} / {viewSrcs.length}</span>
               </h3>
               <button className="ddet-close sum-modal-x" onClick={() => setSettingsOpen(false)}>
                 ×
@@ -957,7 +967,7 @@ export function WebrsPanel({ title }: { title: string }) {
               </>
             )}
             <div className="webrs-mgr-list">
-              {srcs.map((r) => {
+              {viewSrcs.map((r) => {
                 const t = tests[r.name];
                 return (
                   <div key={r.name} className={`webrs-mgr-row${isEnabled(r.name) ? " on" : ""}`}>
@@ -986,7 +996,13 @@ export function WebrsPanel({ title }: { title: string }) {
                   </div>
                 );
               })}
-              {srcs.length === 0 && <div className="webrs-note">没有可用源 —— 「＋ 添加源」导入一条规则</div>}
+              {viewSrcs.length === 0 && (
+                <div className="webrs-note">
+                  {kind === "maccms"
+                    ? "没有可用采集源 —— 「＋ 采集源」填一个苹果CMS 接口地址即可"
+                    : "没有可用规则源 —— 「＋ 添加源」导入 Kazumi 规则，或到「规则目录」安装"}
+                </div>
+              )}
               </div>
 
               {/* [lc-1608] 在线规则目录（KazumiRules index.json）：检查更新 / 逐条安装·更新 / 全部更新 */}

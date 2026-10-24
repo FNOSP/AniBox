@@ -1881,6 +1881,188 @@ pub async fn webrs_check_updates(app: AppHandle) -> Result<Value, String> {
     Ok(json!({ "items": out }))
 }
 
+// ───────────── [lc-1757] 在线采集源目录（TMDB 剧集侧，对齐 Kazumi 规则目录模式） ─────────────
+//
+// 上游 = 本仓库的 docs/maccms-catalog/index.json（随主仓库发布，改文件推送即更新目录）。
+// 条目只维护「name/version/api(采集接口)/referer?」四个字段 —— 完整规则在安装时按
+// delimited 模板现场生成（与前端「＋ 采集源」同一模板），上游维护成本 = 一行 JSON。
+// raw 直连优先，jsdelivr CDN 回退（国内可达性）。
+
+const MACCMS_CATALOG_BASE: &str = "https://raw.githubusercontent.com/FNOSP/AniBox/main/docs/maccms-catalog/";
+const MACCMS_CATALOG_MIRROR: &str = "https://cdn.jsdelivr.net/gh/FNOSP/AniBox@main/docs/maccms-catalog/";
+
+/// 目录条目：一条公共苹果CMS 采集接口。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MaccmsCatalogItem {
+    pub name: String,
+    pub version: String,
+    /// 采集接口地址（如 https://xxx/api.php/provide/vod）
+    pub api: String,
+    /// 可选防盗链 Referer
+    pub referer: String,
+}
+
+static MACCMS_MEM: OnceLock<std::sync::Mutex<Option<(u64, Vec<MaccmsCatalogItem>)>>> = OnceLock::new();
+
+fn maccms_mem() -> &'static std::sync::Mutex<Option<(u64, Vec<MaccmsCatalogItem>)>> {
+    MACCMS_MEM.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+fn maccms_mem_guard() -> std::sync::MutexGuard<'static, Option<(u64, Vec<MaccmsCatalogItem>)>> {
+    maccms_mem().lock().unwrap_or_else(|e| e.into_inner())
+}
+
+async fn fetch_maccms_index() -> Result<String, String> {
+    let client = http()?;
+    let mut last = String::from("未知错误");
+    for base in [MACCMS_CATALOG_BASE, MACCMS_CATALOG_MIRROR] {
+        let url = format!("{base}index.json");
+        match client.get(&url).send().await {
+            Ok(r) => {
+                let st = r.status();
+                match r.text().await {
+                    Ok(t) if st.is_success() => return Ok(t),
+                    Ok(_) => last = format!("HTTP {st}（{url}）"),
+                    Err(e) => last = format!("读响应失败: {e}（{url}）"),
+                }
+            }
+            Err(e) => last = format!("请求失败: {e}（{url}）"),
+        }
+    }
+    Err(format!("采集源目录拉取失败（直连与 CDN 均不可用）：{last}"))
+}
+
+/// 目录取数：内存缓存 → 落盘缓存（webrs-maccms-catalog.json）→ 网络，TTL 同规则目录。
+async fn maccms_catalog_items(app: &AppHandle, force: bool) -> Result<Vec<MaccmsCatalogItem>, String> {
+    if !force {
+        if let Some((at, items)) = maccms_mem_guard().as_ref() {
+            if now_secs().saturating_sub(*at) < CATALOG_TTL_SECS {
+                return Ok(items.clone());
+            }
+        }
+        let cache = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| format!("无法解析数据目录: {e}"))?
+            .join("webrs-maccms-catalog.json");
+        if let Ok(s) = tokio::fs::read_to_string(&cache).await {
+            if let Ok(v) = serde_json::from_str::<Value>(&s) {
+                let at = v.get("fetchedAt").and_then(|x| x.as_u64()).unwrap_or(0);
+                if now_secs().saturating_sub(at) < CATALOG_TTL_SECS {
+                    if let Ok(items) = serde_json::from_value::<Vec<MaccmsCatalogItem>>(
+                        v.get("items").cloned().unwrap_or(Value::Null),
+                    ) {
+                        *maccms_mem_guard() = Some((at, items.clone()));
+                        return Ok(items);
+                    }
+                }
+            }
+        }
+    }
+    let text = fetch_maccms_index().await?;
+    let arr: Vec<Value> =
+        serde_json::from_str(text.trim()).map_err(|e| format!("采集源目录不是合法 JSON 数组: {e}"))?;
+    let mut items = Vec::new();
+    for v in &arr {
+        if let Ok(it) = serde_json::from_value::<MaccmsCatalogItem>(v.clone()) {
+            if !it.name.trim().is_empty() && it.api.trim().starts_with("http") {
+                items.push(it);
+            }
+        }
+    }
+    if !arr.is_empty() && items.is_empty() {
+        return Err("采集源目录里没有可用条目".into());
+    }
+    *maccms_mem_guard() = Some((now_secs(), items.clone()));
+    let cache = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("无法解析数据目录: {e}"))?
+        .join("webrs-maccms-catalog.json");
+    let _ = tokio::fs::write(
+        &cache,
+        serde_json::to_string(&json!({ "fetchedAt": now_secs(), "items": items })).unwrap_or_default(),
+    )
+    .await;
+    Ok(items)
+}
+
+/// 按目录条目生成完整 delimited 规则（与前端「＋ 采集源」同模板）。
+fn maccms_rule_from_item(it: &MaccmsCatalogItem) -> Value {
+    let base = Url::parse(it.api.trim())
+        .map(|u| u.origin().ascii_serialization())
+        .unwrap_or_default();
+    json!({
+        "name": it.name.trim(),
+        "version": it.version.trim(),
+        "baseURL": base,
+        "referer": it.referer.trim(),
+        "searchMode": "api",
+        "searchApiConfig": {
+            "request": { "method": "GET", "url": it.api.trim(), "query": { "ac": "videolist", "wd": "@keyword" } },
+            "listPath": "$.list[*]",
+            "namePath": "$.vod_name",
+            "sourcePath": "$.vod_id"
+        },
+        "chapterMode": "api",
+        "chapterApiConfig": {
+            "request": { "method": "GET", "url": it.api.trim(), "query": { "ac": "detail", "ids": "@source" } },
+            "format": "delimited",
+            "roadNamesPath": "$.list[*].vod_play_from",
+            "roadEpisodesPath": "$.list[*].vod_play_url"
+        }
+    })
+}
+
+/// 拉在线采集源目录：条目附安装态（installed / localVersion / updatable）。
+#[tauri::command]
+pub async fn webrs_maccms_catalog(app: AppHandle, force: Option<bool>) -> Result<Value, String> {
+    let items = maccms_catalog_items(&app, force.unwrap_or(false)).await?;
+    let rules = load_rules(&app).await?;
+    let out: Vec<Value> = items
+        .iter()
+        .map(|it| {
+            let local = rules
+                .iter()
+                .find(|r| r.name == it.name.trim())
+                .map(|r| r.version.trim().to_string());
+            let updatable = local
+                .as_deref()
+                .map(|l| remote_is_newer(l, it.version.trim()))
+                .unwrap_or(false);
+            json!({
+                "name": it.name, "version": it.version, "api": it.api,
+                "installed": local.is_some(),
+                "localVersion": local.unwrap_or_default(),
+                "updatable": updatable,
+            })
+        })
+        .collect();
+    Ok(json!({ "items": out }))
+}
+
+/// 安装/更新一条采集源（覆盖式写入 webrs-maccms/；安装与更新同一动作）。
+#[tauri::command]
+pub async fn webrs_maccms_install(app: AppHandle, name: String) -> Result<Value, String> {
+    let items = maccms_catalog_items(&app, false).await?;
+    let it = items
+        .iter()
+        .find(|x| x.name.trim() == name.trim())
+        .ok_or_else(|| format!("目录里没有「{name}」"))?;
+    let rule = maccms_rule_from_item(it);
+    let dir = maccms_dir(&app)?;
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| format!("创建采集源目录失败: {e}"))?;
+    let p = dir.join(format!("{}.json", it.name.trim()));
+    tokio::fs::write(&p, serde_json::to_string_pretty(&rule).unwrap_or_default())
+        .await
+        .map_err(|e| format!("写入采集源失败: {e}"))?;
+    crate::libmpv::trace(&format!("[webrs] 安装/更新采集源: {}", it.name));
+    Ok(json!({ "name": it.name, "version": it.version }))
+}
+
 fn json_path<'a>(root: &'a Value, path: &str) -> Option<Vec<&'a Value>> {
     // 支持 `$.a.b[*]`、`$[*]`（根数组，xfdmnext 用）与 `$`（原样）
     let mut p = path.trim().strip_prefix('$')?;
@@ -4376,5 +4558,30 @@ mod tests {
         )
         .unwrap();
         assert!(!is_maccms_rule(&kazumi_api_nested));
+    }
+
+    /// [lc-1757] 目录条目 → 完整 delimited 规则（在线安装用模板，与前端「＋ 采集源」同构）。
+    #[test]
+    fn maccms_rule_from_catalog_item() {
+        let it = MaccmsCatalogItem {
+            name: "量子资源".into(),
+            version: "1.0.0".into(),
+            api: "https://cj.lziapi.com/api.php/provide/vod/".into(),
+            referer: " ".into(),
+        };
+        let r = maccms_rule_from_item(&it);
+        assert_eq!(r["name"], "量子资源");
+        assert_eq!(r["baseURL"], "https://cj.lziapi.com");
+        assert_eq!(r["chapterApiConfig"]["format"], "delimited");
+        assert_eq!(r["chapterApiConfig"]["request"]["query"]["ids"], "@source");
+        assert_eq!(r["searchApiConfig"]["request"]["query"]["wd"], "@keyword");
+        // 生成的规则能被 Rule 结构反序列化（落盘后可读回），且判定为采集源
+        let rule: Rule = serde_json::from_value(r).unwrap();
+        assert_eq!(rule.name, "量子资源");
+        assert!(rule
+            .chapter_api_config
+            .as_ref()
+            .map(|c| c.format.eq_ignore_ascii_case("delimited"))
+            .unwrap_or(false));
     }
 }

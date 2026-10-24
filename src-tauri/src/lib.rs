@@ -3376,7 +3376,10 @@ pub fn run() {
             webrs::webrs_catalog,
             webrs::webrs_install_rule,
             webrs::webrs_update_rule,
-            webrs::webrs_check_updates
+            webrs::webrs_check_updates,
+            // [lc-1757] 在线采集源目录（TMDB 剧集侧，上游 = 本仓库 docs/maccms-catalog/）
+            webrs::webrs_maccms_catalog,
+            webrs::webrs_maccms_install
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -557,6 +557,12 @@ export type AppSettings = {
   webrsPanelEnabled?: boolean;
   /** 多地址列表（故障转移，≤4 条；danmuApiBase 恒等于第一条） */
   danmuApiBases: string[];
+  /** [lc-1788] 弹弹play 自定义凭证（留空=内置共享；填写优先于内置）。回显仅 Set 布尔，值不回填 */
+  danmuDdAppIdSet?: boolean;
+  danmuDdSecretSet?: boolean;
+  /** [lc-1788] 写入口（设置面板「保存凭证」提交；回显走上面的 *Set 布尔） */
+  danmuDdAppId?: string;
+  danmuDdSecret?: string;
   danmuApiBase: string;
   /** 弹幕引擎（camelCase 映射 Rust `danmu_engine`）："node" = 默认/稳定，"rust" = 测试版。
    *  仅在「自建弹幕接口」启用时生效；旧缓存可能缺省 → 读取时回退 "node"。 */

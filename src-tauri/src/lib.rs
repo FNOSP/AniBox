@@ -2532,6 +2532,9 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         "danmuApiEnabled": cfg.danmu_api_enabled,
         "danmuApiBases": cfg.danmu_api_bases,
         "danmuApiBase": cfg.danmu_api_base,
+        // [lc-1788] 弹弹play 自定义凭证（回填仅判有无，值不回显到明文日志之外的面板外）
+        "danmuDdAppIdSet": !cfg.danmu_dd_app_id.trim().is_empty(),
+        "danmuDdSecretSet": !cfg.danmu_dd_app_secret.trim().is_empty(),
         // [lc-1753] 在线资源搜索（默认关闭；开启前用户已知悉「不存储不分发资源」声明）
         "webrsPanelEnabled": cfg.webrs_panel_enabled,
         // 弹幕引擎（camelCase 映射 `danmu_engine`）
@@ -2608,6 +2611,13 @@ async fn set_settings(
     if let Some(v) = arg.get("danmuApiEnabled") {
         cfg.danmu_api_enabled = v.as_bool().ok_or("danmuApiEnabled 必须是布尔值")?;
         danmu_changed = true;
+    }
+    // [lc-1788] 弹弹play 自定义凭证：填写即优先于内置（lua 侧覆盖链）；只存本机 config.json
+    if let Some(v) = arg.get("danmuDdAppId") {
+        cfg.danmu_dd_app_id = v.as_str().ok_or("danmuDdAppId 必须是字符串")?.trim().to_string();
+    }
+    if let Some(v) = arg.get("danmuDdSecret") {
+        cfg.danmu_dd_app_secret = v.as_str().ok_or("danmuDdSecret 必须是字符串")?.trim().to_string();
     }
     if let Some(v) = arg.get("danmuApiBases") {
         let arr = v.as_array().ok_or("danmuApiBases 必须是数组")?;

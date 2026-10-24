@@ -861,6 +861,8 @@ export function SettingsPanel({
   const [ddSources, setDdSources] = useState<DdSource[]>([]);
   const [ddNewName, setDdNewName] = useState("");
   const [ddNewUrl, setDdNewUrl] = useState("");
+  const [ddCredId, setDdCredId] = useState("");
+  const [ddCredSecret, setDdCredSecret] = useState("");
   const [ddNote, setDdNote] = useState("");
   const ddLoaded = useRef(false);
 
@@ -2002,6 +2004,46 @@ export function SettingsPanel({
                         添加
                       </button>
                       <span className="set-note">{ddNote}</span>
+                    </div>
+                    {/* [lc-1788] 弹弹play 自定义凭证：填写即**优先于内置**（直接顶掉内置共享凭证，
+                        lua dd_custom_credentials 覆盖链）；留空保存=恢复内置。只存本机 config.json。 */}
+                    <div className="set-row" style={{ flexWrap: "wrap" }}>
+                      <span className="set-k" style={{ flex: "0 0 100%" }}>
+                        弹弹play 自定义凭证
+                      </span>
+                      <input
+                        className="set-input"
+                        style={{ flex: 1 }}
+                        placeholder={
+                          settings.danmuDdAppIdSet
+                            ? "AppId 已设置（清空两个框并保存 = 恢复内置）"
+                            : "AppId（留空 = 使用内置共享凭证）"
+                        }
+                        onChange={(e) => setDdCredId(e.target.value)}
+                      />
+                      <input
+                        className="set-input"
+                        style={{ flex: 1 }}
+                        placeholder={settings.danmuDdSecretSet ? "Secret 已设置" : "Secret（留空 = 内置）"}
+                        onChange={(e) => setDdCredSecret(e.target.value)}
+                      />
+                      <button
+                        className="set-btn"
+                        onClick={() => {
+                          onSettings({ danmuDdAppId: ddCredId.trim(), danmuDdSecret: ddCredSecret.trim() });
+                          setDdCredId("");
+                          setDdCredSecret("");
+                          setDdNote(
+                            ddCredId.trim() && ddCredSecret.trim()
+                              ? "已启用自定义凭证（优先于内置，重启播放器生效）"
+                              : ddCredId.trim() || ddCredSecret.trim()
+                                ? "AppId 与 Secret 需成对填写；本次未保存"
+                                : "已清空自定义凭证，恢复内置共享（重启播放器生效）",
+                          );
+                        }}
+                      >
+                        保存凭证
+                      </button>
                     </div>
                   </div>
                   <div className="set-row set-row-col">

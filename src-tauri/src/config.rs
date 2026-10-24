@@ -166,6 +166,13 @@ pub struct Config {
     /// 多地址列表（故障转移；主仓库上限 4 条）
     #[serde(default)]
     pub danmu_api_bases: Vec<String>,
+    /// [lc-1788] 弹弹play 自定义凭证（AppId/Secret）：留空=用应用内置共享凭证；
+    /// 填写则**优先于内置**（lua dd_custom_credentials 命中即覆盖）。只存本机 config.json，
+    /// 绝不写 portable_config 的 uosc_danmaku.conf（该目录随包分发，见 sync_lua_gate 注释）。
+    #[serde(default)]
+    pub danmu_dd_app_id: String,
+    #[serde(default)]
+    pub danmu_dd_app_secret: String,
     /// 弹幕引擎："node"（默认，行为与接入前完全一致）| "rust"（Rust 直接接管 22347，
     /// 自建源三跳由 Rust 实现，B站/字幕端点反代到内部 Node 端口）。
     /// 环境变量 `ANIBOX_DANMAKU_ENGINE=rust` 可临时覆盖（便于测试）。
@@ -337,6 +344,8 @@ impl Default for Config {
             webrs_panel_enabled: false,
             danmu_api_base: String::new(),
             danmu_api_bases: Vec::new(),
+            danmu_dd_app_id: String::new(),
+            danmu_dd_app_secret: String::new(),
             danmu_engine: default_danmu_engine(),
             feedback_aid: String::new(),
             log_debug: true,

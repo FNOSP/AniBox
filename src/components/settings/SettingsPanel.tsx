@@ -854,6 +854,57 @@ export function SettingsPanel({
   const [dmNote, setDmNote] = useState("");
   const [dmTesting, setDmTesting] = useState(false);
 
+  /* [lc-1780] 弹弹play 兼容源（外置 danmaku-api-sources.json）：mpv 侧 dandanplay.lua
+     同读这份文件（首个启用的为默认源，失败轮换）。全量读写走 danmaku_sources_get/set，
+     每次变更即时保存；mpv 会话缓存列表，重启播放器后生效。 */
+  type DdSource = { name: string; baseUrl: string; enabled: boolean };
+  const [ddSources, setDdSources] = useState<DdSource[]>([]);
+  const [ddNewName, setDdNewName] = useState("");
+  const [ddNewUrl, setDdNewUrl] = useState("");
+  const [ddNote, setDdNote] = useState("");
+  const ddLoaded = useRef(false);
+
+  const saveDdSources = async (list: DdSource[]) => {
+    try {
+      await invoke("danmaku_sources_set", { sources: list });
+      setDdNote(`已保存 ${list.length} 条（重启播放器生效）`);
+    } catch (e) {
+      setDdNote(String(e));
+    }
+  };
+
+  const addDdSource = async () => {
+    const url = ddNewUrl.trim().replace(/\/+$/, "");
+    if (!url) return;
+    if (!/^https?:\/\//.test(url)) {
+      setDdNote("地址必须以 http(s):// 开头");
+      return;
+    }
+    if (ddSources.some((s) => s.baseUrl === url)) {
+      setDdNote("该地址已在列表中");
+      return;
+    }
+    if (ddSources.length >= 12) {
+      setDdNote("最多 12 条");
+      return;
+    }
+    const next = [...ddSources, { name: ddNewName.trim() || url, baseUrl: url, enabled: true }];
+    setDdSources(next);
+    setDdNewName("");
+    setDdNewUrl("");
+    await saveDdSources(next);
+  };
+
+  useEffect(() => {
+    if (ddLoaded.current) return;
+    ddLoaded.current = true;
+    invoke<{ sources: DdSource[] }>("danmaku_sources_get")
+      .then((r) => {
+        if (Array.isArray(r?.sources)) setDdSources(r.sources);
+      })
+      .catch((e) => setDdNote(String(e)));
+  }, []);
+
   /* [danmaku-diagnose] 手动诊断：一次后端调用返回全部检查项，前端只展示。
      关键词留空 = 后端优先用当前播放标题，取不到再用内置测试词。 */
   const [diagKeyword, setDiagKeyword] = useState("");
@@ -1694,6 +1745,106 @@ export function SettingsPanel({
                       aria-label="自建弹幕接口"
                       onClick={() => saveDanmu(!settings.danmuApiEnabled, dmBases)}
                     />
+                  </div>
+
+                  {/* [lc-1780] 弹弹play 兼容源（外置 danmaku-api-sources.json）：
+                      增删/启停/排序；首个启用的为默认源，传输层失败按序自动切换。
+                      mpv 侧脚本加载时读一次，改动需重启播放器生效。 */}
+                  <div className="set-row set-row-col">
+                    <span className="set-k">弹弹play 兼容源</span>
+                    <div className="set-desc">
+                      自建弹幕接口与 B 站都未命中时的兜底弹幕库（弹弹play API 兼容端点）。
+                      自上而下为优先级，请求失败自动切下一个；自定义源需兼容 dandanplay 开放 API。
+                      修改后需重启播放器（mpv）生效。列表存本机 danmaku-api-sources.json。
+                    </div>
+                    {ddSources.map((s, i) => (
+                      <div className="set-row" key={`${i}-${s.baseUrl}`}>
+                        <button
+                          type="button"
+                          className={`set-sw${s.enabled ? " on" : ""}`}
+                          aria-pressed={s.enabled}
+                          aria-label={`${s.name} 启停`}
+                          onClick={() => {
+                            const next = ddSources.map((x, j) => (j === i ? { ...x, enabled: !x.enabled } : x));
+                            setDdSources(next);
+                            void saveDdSources(next);
+                          }}
+                        />
+                        <input
+                          className="set-input"
+                          style={{ flex: "0 0 150px" }}
+                          value={s.name}
+                          placeholder="名称"
+                          onChange={(e) => {
+                            const next = ddSources.map((x, j) => (j === i ? { ...x, name: e.target.value } : x));
+                            setDdSources(next);
+                          }}
+                          onBlur={() => void saveDdSources(ddSources)}
+                        />
+                        <input
+                          className="set-input"
+                          style={{ flex: 1 }}
+                          value={s.baseUrl}
+                          placeholder="https://…（dandanplay 兼容 API）"
+                          onChange={(e) => {
+                            const next = ddSources.map((x, j) => (j === i ? { ...x, baseUrl: e.target.value } : x));
+                            setDdSources(next);
+                          }}
+                          onBlur={() => void saveDdSources(ddSources)}
+                        />
+                        <button
+                          className="set-btn"
+                          title="上移（提高优先级）"
+                          disabled={i === 0}
+                          onClick={() => {
+                            const next = ddSources.slice();
+                            [next[i - 1], next[i]] = [next[i], next[i - 1]];
+                            setDdSources(next);
+                            void saveDdSources(next);
+                          }}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          className="set-btn"
+                          title="删除此源"
+                          onClick={() => {
+                            const next = ddSources.filter((_, j) => j !== i);
+                            setDdSources(next);
+                            void saveDdSources(next);
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    <div className="set-actions">
+                      <input
+                        className="set-input"
+                        style={{ flex: "0 0 150px" }}
+                        placeholder="新源名称"
+                        value={ddNewName}
+                        onChange={(e) => setDdNewName(e.target.value)}
+                      />
+                      <input
+                        className="set-input"
+                        style={{ flex: 1 }}
+                        placeholder="https://…（dandanplay 兼容 API 根地址）"
+                        value={ddNewUrl}
+                        onChange={(e) => setDdNewUrl(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void addDdSource();
+                        }}
+                      />
+                      <button
+                        className="set-btn"
+                        disabled={!ddNewUrl.trim()}
+                        onClick={() => void addDdSource()}
+                      >
+                        添加
+                      </button>
+                      <span className="set-note">{ddNote}</span>
+                    </div>
                   </div>
                   <div className="set-row set-row-col">
                     <span className="set-k">服务地址</span>

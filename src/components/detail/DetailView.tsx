@@ -478,6 +478,8 @@ export function DetailView({
   const [err, setErr] = useState("");
   // [lc-118] 详情页分段栏当前项
   const [tab, setTab] = useState("overview");
+  // [lc-1759→1761] Switch 独立按钮（不占标签页）：切换右列「本地选集 ↔ 在线资源搜索」
+  const [onlineMode, setOnlineMode] = useState(false);
   // [lc-1423] 重新引入简介展开态：true = 弹窗打开（看完整简介）。
   //   注意语义与 lc-1410 之前不同 —— 那时是"就地铺开"（会撑高容器、拉长海报），
   //   现在是"**弹出弹窗**看全文"，容器高度不受影响。
@@ -1672,10 +1674,9 @@ export function DetailView({
   //     0 / undefined / null 一律视为无效。其余四个标签（详情/关联/角色/更多）顺序与行为不变。
   const hasBgmId =
     Number(bgm?.subject_id ?? 0) > 0 || Number(base.bgm_id ?? 0) > 0;
-  // [lc-1759] 末位恒在「Switch」：把右列选集区切成在线资源搜索（本地有资源也可切换）
   const tabIds: string[] = hasBgmId
-    ? ["overview", "reviews", "comments", "related", "more", "extra", "switch"]
-    : ["overview", "related", "more", "extra", "switch"];
+    ? ["overview", "reviews", "comments", "related", "more", "extra"]
+    : ["overview", "related", "more", "extra"];
   // [lc-1423] 简介是否需要"展开"：与之前同一套字数近似（>96 字≈4~5 行）
   const longIntro = overview.length > 96;
   // Esc 关简介弹窗（与项目其它弹层同一套键盘约定）
@@ -2268,6 +2269,16 @@ export function DetailView({
                 {TAB_LABEL[id]}
               </button>
             ))}
+            {/* [lc-1761] Switch 是独立开关按钮（不切标签页）：选中字体变色，右列切在线搜索 */}
+            <button
+              role="button"
+              aria-pressed={onlineMode}
+              className={`dseg-btn dv2-switch${onlineMode ? " switch-on" : ""}`}
+              title="切换右列：本地选集 ↔ 在线资源搜索"
+              onClick={() => setOnlineMode((v) => !v)}
+            >
+              Switch
+            </button>
           </nav>
 
           {/* 标签页内容 */}
@@ -2331,12 +2342,6 @@ export function DetailView({
 
         {/* [lc-1565] 「更多」页：原「详情」页底部的 更多 块（别名/关键词/热度/编号/链接）独立成页 */}
         {activeTab === "extra" && <ExtraTab tmdb={tmdb} tmdbDone={tmdbDone} />}
-        {/* [lc-1759] Switch：内容在右列选集区（在线资源搜索面板），左列只放指引 */}
-        {activeTab === "switch" && (
-          <div className="empty">
-            已切换到在线资源搜索 —— 面板在右侧选集区；点其他标签返回本地选集
-          </div>
-        )}
 
         {/* [lc-1412] 评论（长影评，用户设计稿版式）：
               封面 + 标题（链接色）+ 摘要（3 行截断）+ 作者 · 日期 · N 回复。
@@ -2597,9 +2602,9 @@ export function DetailView({
               autoLocateRef.current.userTouched = true;
             }}
           >
-            {/* [lc-1759] Switch 模式：右列整体切为在线资源搜索（本地有资源也可切换到在线）。
-                开关未开时给指引而不是硬挂面板（合规开关是前置条件）。 */}
-            {activeTab === "switch" ? (
+            {/* [lc-1759/1761] Switch 模式（独立按钮触发）：右列整体切为在线资源搜索
+                （本地有资源也可切换到在线）。开关未开时给指引而不是硬挂面板。 */}
+            {onlineMode ? (
               webrsOn ? (
                 <WebrsPanel
                   title={title || base.title}

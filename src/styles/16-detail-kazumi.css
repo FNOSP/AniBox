@@ -181,6 +181,10 @@
 .dseg-btn.active {
   color: var(--text-strong);
 }
+/* [lc-1761] Switch 独立开关按钮：选中字体变色（accent），未选中保持默认 */
+.dseg-btn.switch-on {
+  color: var(--accent);
+}
 .dseg-btn::after {
   content: "";
   position: absolute;

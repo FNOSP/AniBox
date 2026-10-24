@@ -905,6 +905,32 @@ export function SettingsPanel({
       .catch((e) => setDdNote(String(e)));
   }, []);
 
+  /* [lc-1781] 字幕源（subtitle-sources.json）：kind ∈ xunlei/assrt/opensubtitles。
+     mpv 侧 sub-assrt.lua 同读这份文件扇出搜索；迅雷无需 token。 */
+  type SubSource = { kind: string; name: string; token: string; enabled: boolean };
+  const [subSources, setSubSources] = useState<SubSource[]>([]);
+  const [subNote, setSubNote] = useState("");
+  const subLoaded = useRef(false);
+
+  const saveSubSources = async (list: SubSource[]) => {
+    try {
+      await invoke("subtitle_sources_set", { sources: list });
+      setSubNote(`已保存 ${list.length} 条`);
+    } catch (e) {
+      setSubNote(String(e));
+    }
+  };
+
+  useEffect(() => {
+    if (subLoaded.current) return;
+    subLoaded.current = true;
+    invoke<{ sources: SubSource[] }>("subtitle_sources_get")
+      .then((r) => {
+        if (Array.isArray(r?.sources)) setSubSources(r.sources);
+      })
+      .catch((e) => setSubNote(String(e)));
+  }, []);
+
   /* [danmaku-diagnose] 手动诊断：一次后端调用返回全部检查项，前端只展示。
      关键词留空 = 后端优先用当前播放标题，取不到再用内置测试词。 */
   const [diagKeyword, setDiagKeyword] = useState("");
@@ -1382,6 +1408,108 @@ export function SettingsPanel({
                         onSettings({ webrsPanelEnabled: !settings.webrsPanelEnabled })
                       }
                     />
+                  </div>
+
+                  {/* [lc-1781] 字幕源外置管理（subtitle-sources.json）：迅雷哈希/assrt/OpenSubtitles。
+                      播放器字幕菜单（uosc「下载字幕」）按列表扇出搜索；哈希匹配仅本地文件可用。 */}
+                  <div className="set-row set-row-col">
+                    <span className="set-k">字幕源</span>
+                    <div className="set-desc">
+                      播放器「下载字幕」菜单的搜索来源。迅雷=按文件哈希精确匹配（仅本地文件，
+                      服务端点不稳定时自动跳过）；assrt.net=中文字幕库（可换自己的 token）；
+                      OpenSubtitles=国际库（moviehash 哈希精确匹配，需到
+                      opensubtitles.com 注册免费 Api-Key）。自上而下为优先级，哈希命中排最前。
+                      列表存本机 subtitle-sources.json。
+                    </div>
+                    {subSources.map((s, i) => (
+                      <div className="set-row" key={`${i}-${s.kind}-${s.name}`}>
+                        <button
+                          type="button"
+                          className={`set-sw${s.enabled ? " on" : ""}`}
+                          aria-pressed={s.enabled}
+                          aria-label={`${s.name} 启停`}
+                          onClick={() => {
+                            const next = subSources.map((x, j) => (j === i ? { ...x, enabled: !x.enabled } : x));
+                            setSubSources(next);
+                            void saveSubSources(next);
+                          }}
+                        />
+                        <select
+                          className="set-input"
+                          style={{ flex: "0 0 130px" }}
+                          value={s.kind}
+                          onChange={(e) => {
+                            const next = subSources.map((x, j) => (j === i ? { ...x, kind: e.target.value } : x));
+                            setSubSources(next);
+                            void saveSubSources(next);
+                          }}
+                        >
+                          <option value="xunlei">迅雷·哈希</option>
+                          <option value="assrt">assrt.net</option>
+                          <option value="opensubtitles">OpenSubtitles</option>
+                        </select>
+                        <input
+                          className="set-input"
+                          style={{ flex: "0 0 130px" }}
+                          value={s.name}
+                          placeholder="名称"
+                          onChange={(e) => {
+                            const next = subSources.map((x, j) => (j === i ? { ...x, name: e.target.value } : x));
+                            setSubSources(next);
+                          }}
+                          onBlur={() => void saveSubSources(subSources)}
+                        />
+                        {s.kind !== "xunlei" && (
+                          <input
+                            className="set-input"
+                            style={{ flex: 1 }}
+                            value={s.token}
+                            placeholder={s.kind === "assrt" ? "assrt token（空=内置共享）" : "OpenSubtitles Api-Key（必填）"}
+                            onChange={(e) => {
+                              const next = subSources.map((x, j) => (j === i ? { ...x, token: e.target.value } : x));
+                              setSubSources(next);
+                            }}
+                            onBlur={() => void saveSubSources(subSources)}
+                          />
+                        )}
+                        <button
+                          className="set-btn"
+                          title="上移（提高优先级）"
+                          disabled={i === 0}
+                          onClick={() => {
+                            const next = subSources.slice();
+                            [next[i - 1], next[i]] = [next[i], next[i - 1]];
+                            setSubSources(next);
+                            void saveSubSources(next);
+                          }}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          className="set-btn"
+                          title="删除此源"
+                          onClick={() => {
+                            const next = subSources.filter((_, j) => j !== i);
+                            setSubSources(next);
+                            void saveSubSources(next);
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    <div className="set-actions">
+                      <button
+                        className="set-btn"
+                        onClick={() => {
+                          const next = [...subSources, { kind: "opensubtitles", name: "OpenSubtitles", token: "", enabled: true }];
+                          setSubSources(next);
+                        }}
+                      >
+                        添加源
+                      </button>
+                      <span className="set-note">{subNote}</span>
+                    </div>
                   </div>
                   <div className="set-row">
                     <div>

@@ -31,6 +31,7 @@ rand = "0.9"
 urlencoding = "2"
 # [lc-119] Bangumi 镜像准入签名：内层 hex(sha256(body)) + 外层 base64(sha256(...))
 # （与 Fntv-Plus/bgm-mirror/worker.js verify 对齐；两 crate 版本已在 Cargo.lock 中，无新增传递依赖）
+sha1 = "0.10"
 sha2 = "0.10"
 base64 = "0.22"
 # [访问码加密] config.json 的 access_code 落盘为 AES-256-GCM 密文（enc:v1:<base64>）。

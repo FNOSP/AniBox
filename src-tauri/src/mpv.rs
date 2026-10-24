@@ -219,6 +219,11 @@ impl MpvSession {
             let _ = std::fs::remove_file(&path);
         }
         let mut command = tokio::process::Command::new(mpv_path);
+        // [lc-1781] 把应用自身路径带给 mpv：sub-assrt.lua 用它作哈希助手
+        // （`<exe> --subtitle-hash <file>` → 迅雷 gcid / OpenSubtitles moviehash）。
+        if let Ok(exe) = std::env::current_exe() {
+            command.env("ANIBOX_EXE", exe);
+        }
         command
             .args(&args)
             .stdin(std::process::Stdio::null())

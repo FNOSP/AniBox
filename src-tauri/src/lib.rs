@@ -16,6 +16,7 @@ mod config;
 mod danmaku;
 mod danmaku_shim;
 mod danmaku_sources;
+pub mod subtitle_sources;
 mod disk_cache;
 // [lc-1651] 本地收藏（侧边栏「收藏」写入端；飞牛 item/favorite 在本机 NAS 上未实现）
 mod favorites;
@@ -3371,6 +3372,8 @@ pub fn run() {
             cloud115::cloud115_play,
             danmaku_sources::danmaku_sources_get,
             danmaku_sources::danmaku_sources_set,
+            subtitle_sources::subtitle_sources_get,
+            subtitle_sources::subtitle_sources_set,
             player_stop,
             mpv_toggle_pause,
             player_source,

@@ -320,6 +320,14 @@ async fn launch_mpv(
             let _ = m
                 .command(json!(["set", "force-media-title", title]))
                 .await;
+            // [lc-1772] 在线源换片：先清弹幕脚本的会话内匹配缓存（弹弹play 干净标题等
+            // 残留会把上一部片的弹幕搜给本片），必须在 loadfile 之前广播才赶在
+            // file-loaded 自动流程之前生效。库内播放（headers=None）不广播：
+            // NAS 连播场景弹幕自动跟随是既定行为。
+            if headers.is_some() {
+                m.command_no_reply(json!(["script-message", "reset-state"]))
+                    .await;
+            }
             if let Some(h) = headers {
                 let (r, u, hf) =
                     crate::mpv::normalize_http_headers(h.referer.as_deref(), h.user_agent.as_deref());

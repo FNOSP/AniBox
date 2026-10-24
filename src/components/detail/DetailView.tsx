@@ -372,6 +372,7 @@ export function DetailView({
   onOpenTmdb,
   onOpenPerson,
   continueList = [],
+  webrsOn = false,
 }: {
   base: MediaItem;
   onBack: () => void;
@@ -381,6 +382,9 @@ export function DetailView({
   onOpenPerson?: (t: PersonTarget) => void;
   /** [选集定位] 继续观看 play/list（App 已加载）：用于定位「上次观看集」 */
   continueList?: PlayItem[];
+  /** [lc-1753] 在线资源搜索开关（App 的 settings.webrsPanelEnabled）：开启后才在
+   *  无资源的剧集/动漫详情页挂 WebrsPanel；关闭时维持「未查询到资源/暂无剧集」占位。 */
+  webrsOn?: boolean;
 }) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
@@ -2613,11 +2617,15 @@ export function DetailView({
             ) : episodes.length === 0 ? (
               /* [lc-1444] 发现页条目没有飞牛选集数据。
                  [lc-1500] 无源条目的"看"法 = 在线资源面板（Kazumi 规则源 → mpv）。
-                 [lc-1747] lc-1627 曾把这里换成「未查询到资源」占位，现随功能恢复换回面板。 */
+                 [lc-1747] lc-1627 曾把这里换成「未查询到资源」占位，现随功能恢复换回面板。
+                 [lc-1753] 面板改由设置开关控制（默认关闭，声明「不存储不分发资源」后开启）：
+                 开启时无资源的条目（发现页无源 / 库内暂无剧集）都挂面板；关闭维持占位。 */
               epsLoading ? (
                 <div className="empty">加载中…</div>
-              ) : noFnOS ? (
+              ) : webrsOn ? (
                 <WebrsPanel title={title || base.title} />
+              ) : noFnOS ? (
+                <div className="empty">未查询到资源</div>
               ) : (
                 <div className="empty">暂无剧集</div>
               )

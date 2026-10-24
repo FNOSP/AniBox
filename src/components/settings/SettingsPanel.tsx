@@ -1311,6 +1311,27 @@ export function SettingsPanel({
               {/* ── 播放器 ── */}
               {tab === "player" && (
                 <>
+                  {/* [lc-1753] 在线资源搜索：默认关闭；声明「不存储不分发」后手动开启 */}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">在线资源搜索</span>
+                      <div className="set-desc">
+                        本软件不存储、不分发任何影视资源；搜索与播放的内容均来自你自行添加的
+                        第三方规则/采集源。开启即表示你已知悉并同意遵守当地法律法规。 开启后，
+                        没有资源的剧集/动漫详情页会显示在线资源搜索面板。
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${settings.webrsPanelEnabled ? " on" : ""}`}
+                      aria-pressed={!!settings.webrsPanelEnabled}
+                      aria-label="在线资源搜索"
+                      title="本软件不存储、不分发任何影视资源；内容来自你自行添加的第三方源"
+                      onClick={() =>
+                        onSettings({ webrsPanelEnabled: !settings.webrsPanelEnabled })
+                      }
+                    />
+                  </div>
                   <div className="set-row">
                     <div>
                       <span className="set-k">播放器选择</span>

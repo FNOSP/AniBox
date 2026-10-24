@@ -9,6 +9,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoLogin: false,
   // [lc-1561] 自建弹幕接口默认开启：地址留空即用随包内置源（本地 danmu_api）
   danmuApiEnabled: true,
+  // [lc-1753] 在线资源搜索默认关闭：需在设置面板知悉「不存储不分发资源」声明后手动开启
+  webrsPanelEnabled: false,
   danmuApiBases: [],
   danmuApiBase: "",
   // 弹幕引擎默认 node = 与接入前行为完全一致（Rust 侧 `danmu_engine` 默认同为 "node"）

@@ -1321,6 +1321,7 @@ function App() {
               <DetailView
                 base={detailItem}
                 continueList={continueList}
+                webrsOn={!!settings.webrsPanelEnabled}
                 onOpenTmdb={openTmdbRecommendation}
                 onOpenPerson={openPerson}
                 onBack={() => {

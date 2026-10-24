@@ -17,7 +17,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// 观察 id ↔ 属性名（前端 switch 依赖这些 id；6=fullscreen 只用于镜像到 Tauri 窗口）
 const OBSERVED: [(u64, &str); 13] = [
@@ -530,7 +530,14 @@ impl MpvSession {
                                 let slot = Arc::clone(&title_slot);
                                 let title_get: crate::nas_subtitle::TitleGetter =
                                     Arc::new(move || slot.lock().unwrap().clone().unwrap_or_default());
-                                crate::nas_subtitle::spawn_mount(url_now, title_get, writer);
+                                crate::nas_subtitle::spawn_mount(
+                                    url_now,
+                                    title_get,
+                                    writer,
+                                    // [lc-1763] 当前会话票兜底：URL 里的 token 是拼 URL 那刻的，
+                                    // 重登录/长会话后可能滞后于配置里的新票
+                                    app2.state::<crate::AppState>().config.blocking_read().token.clone(),
+                                );
                             }
                         }
                         4 => {

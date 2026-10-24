@@ -39,6 +39,8 @@ pub struct NasCtx {
     pub item_guid: String,
     pub token: String,
     pub domain: String,
+    /// [lc-1763] 当前会话 token（播放 URL 里的 token 失效时的重试票；探针/测试可空）。
+    pub fallback_token: String,
 }
 
 /// 判断是否为本工程代理播放 URL（`http://127.0.0.1:2234[67]/…/playvideo/<guid>?token&domain`）。
@@ -77,6 +79,7 @@ pub fn parse_proxy_url(path: &str) -> Option<NasCtx> {
         item_guid: guid.to_string(),
         token,
         domain,
+        fallback_token: String::new(),
     })
 }
 
@@ -346,14 +349,44 @@ pub fn pick_best<'a>(streams: &'a [SubStream], video_title: Option<&str>) -> Opt
 // ───────────────────────── fnOS 请求（stream/list + 字幕下载） ─────────────────────────
 
 /// GET `/v/api/v1/stream/list/{guid}` → 全量字幕流（失败返回 Err）。
+///
+/// [lc-1763] 诊断加固：失败时把响应**原文**（前 300 字符）带进错误与日志 —— 此前只打
+/// msg 字段，服务端返回无 msg 的错误码（如 -6 Not Found / 会话失效形态）时只剩「未知错误」，
+/// 真机无法定位（实测 Node/Rust 探针同 guid 同凭据可成功，需原文比对 App 现场）。
+/// `fallback_token` 非空且与 ctx.token 不同时，失败后用它重试一次：播放 URL 里的 token
+/// 是拼 URL 那一刻的会话票，长会话/重登录后可能滞后于当前有效 token。
 pub async fn fetch_streams(ctx: &NasCtx) -> Result<Vec<SubStream>, String> {
+    match fetch_streams_with_token(ctx, &ctx.token).await {
+        Ok(v) => Ok(v),
+        Err(primary_err) => {
+            if !ctx.fallback_token.is_empty() && ctx.fallback_token != ctx.token {
+                crate::libmpv::trace(&format!(
+                    "[nas-subtitle] stream/list 主 token 失败（{primary_err}），用当前会话 token 重试"
+                ));
+                match fetch_streams_with_token(ctx, &ctx.fallback_token).await {
+                    Ok(v) => Ok(v),
+                    Err(retry_err) => {
+                        crate::libmpv::trace(&format!(
+                            "[nas-subtitle] stream/list 重试仍失败：{retry_err}"
+                        ));
+                        Err(retry_err)
+                    }
+                }
+            } else {
+                Err(primary_err)
+            }
+        }
+    }
+}
+
+async fn fetch_streams_with_token(ctx: &NasCtx, token: &str) -> Result<Vec<SubStream>, String> {
     let client = fnapi::new_client();
     let v = client
         .call(
             &ctx.domain,
             &format!("/v/api/v1/stream/list/{}", urlencoding::encode(&ctx.item_guid)),
             "GET",
-            &ctx.token,
+            token,
             None,
         )
         .await?;
@@ -366,10 +399,9 @@ pub async fn fetch_streams(ctx: &NasCtx) -> Result<Vec<SubStream>, String> {
                 .unwrap_or("stream/list 返回失败")
                 .to_string());
         }
-        return Err(format!(
-            "stream/list 返回非 0：{}",
-            v.get("msg").and_then(|m| m.as_str()).unwrap_or("未知错误")
-        ));
+        let body = serde_json::to_string(&v).unwrap_or_default();
+        let head: String = body.chars().take(300).collect();
+        return Err(format!("stream/list 返回非 0（响应原文: {head}）"));
     }
     Ok(parse_streams(&v))
 }
@@ -505,7 +537,7 @@ pub type TitleGetter = Arc<dyn Fn() -> String + Send + Sync>;
 /// 首次尝试留 ~1.5s 宽限：逐集标题（#EXTINF）由 mpv.rs 的标题状态机在
 /// start-file 后经两跳 IPC 取回，path 事件可能先到；标题空着会退化成
 /// 「电影模式」（挂最佳一条），剧集防错配判据就失效了 —— 等一下更稳。
-pub fn spawn_mount(url: &str, title_get: TitleGetter, writer: IpcWriter) {
+pub fn spawn_mount(url: &str, title_get: TitleGetter, writer: IpcWriter, session_token: String) {
     // 代次号**无条件**先递增：切到非代理 URL（在线源/直播/本地文件）也要让上一集
     // 还在重试的挂载任务立即过期 —— 否则「NAS → 在线源」快速切换时，旧任务可能
     // 把 NAS 字幕 sub-add 到在线播放上。
@@ -513,6 +545,9 @@ pub fn spawn_mount(url: &str, title_get: TitleGetter, writer: IpcWriter) {
     let Some(ctx) = parse_proxy_url(url) else {
         return;
     };
+    // [lc-1763] 注入当前会话票：URL 里的 token 是拼 URL 那刻的，长会话后可能滞后
+    let mut ctx = ctx;
+    ctx.fallback_token = session_token;
     let ctx = Arc::new(ctx);
     tauri::async_runtime::spawn(async move {
         // 空结果退避重试：fnOS 刚开播时流元数据可能未就绪（主仓库实测，最多 3 次）
@@ -593,6 +628,38 @@ pub fn spawn_mount(url: &str, title_get: TitleGetter, writer: IpcWriter) {
 
 #[cfg(test)]
 mod tests {
+    /// [lc-1763 真机探针] 手动跑（--ignored）：复现「stream/list 返回非 0」——用本机
+    /// config.json 的 NAS 凭据 + 日志里失败的 guid 走与 fetch_streams 完全相同的链路，
+    /// dump 响应原文定位与 Node 探针的差异（Node 同 guid 能拿到字幕）。
+    #[test]
+    #[ignore = "真机网络探针：需本机 config.json 与 NAS 可达"]
+    fn probe_stream_list_on_real_nas() {
+        let cfg_path = std::env::var("APPDATA")
+            .map(|d| std::path::PathBuf::from(d).join("com.anibox.app/config.json"))
+            .unwrap();
+        let cfg: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cfg_path).expect("读 config.json"))
+                .expect("config.json 解析");
+        let ctx = NasCtx {
+            item_guid: "2cc6b30e1a994a69bd66943daea11cff".into(),
+            token: cfg["token"].as_str().expect("token").to_string(),
+            domain: cfg["server"].as_str().expect("server").to_string(),
+            fallback_token: String::new(),
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let client = crate::fnapi::new_client();
+        let path = format!(
+            "/v/api/v1/stream/list/{}",
+            urlencoding::encode(&ctx.item_guid)
+        );
+        let v: serde_json::Value = rt
+            .block_on(client.call(&ctx.domain, &path, "GET", &ctx.token, None))
+            .expect("call 本身失败（网络层）");
+        panic!("响应原文: {}", serde_json::to_string_pretty(&v).unwrap());
+    }
     use super::*;
     use serde_json::json;
 

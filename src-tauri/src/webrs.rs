@@ -149,12 +149,13 @@ pub struct ApiSearchConfig {
 
 /// [lc-1501] API 选集配置（sorani / xfdmnext）：模板请求拿 JSON，roadsPath 逐线路、
 /// episodesPath 逐集，episodePage.url 用 `@source` / `@episodeUrl` 拼出播放页。
-/// 只实现 Kazumi 的 "nested" 格式（delimited 的 $$$ 打包形态社区已无人用）。
-#[derive(Debug, Clone, Deserialize, Default)]
+/// nested 之外 [lc-1752] 实现 Kazumi 的 "delimited" 打包格式（苹果CMS 采集源的
+/// `vod_play_url`：`$$$` 分线路、`#` 分集、`$` 分名/址），分隔符默认值对齐 Kazumi。
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ApiChapterConfig {
     pub request: ApiRequest,
-    pub format: String, // "nested"
+    pub format: String, // "nested" | "delimited"
     #[serde(rename = "roadsPath")]
     pub roads_path: String,
     #[serde(rename = "roadNamePath")]
@@ -167,6 +168,39 @@ pub struct ApiChapterConfig {
     pub episode_url_path: String,
     #[serde(rename = "episodePage")]
     pub episode_page: ApiEpisodePage,
+    /// delimited：线路名打包串（苹果CMS 的 `vod_play_from`），`$$$` 拆分对应各线路。
+    #[serde(rename = "roadNamesPath")]
+    pub road_names_path: String,
+    /// delimited：剧集打包串（苹果CMS 的 `vod_play_url`）。
+    #[serde(rename = "roadEpisodesPath")]
+    pub road_episodes_path: String,
+    #[serde(rename = "roadSeparator")]
+    pub road_separator: String,
+    #[serde(rename = "episodeSeparator")]
+    pub episode_separator: String,
+    #[serde(rename = "fieldSeparator")]
+    pub field_separator: String,
+}
+
+impl Default for ApiChapterConfig {
+    fn default() -> Self {
+        // 分隔符缺省对齐 Kazumi api_rule_config.dart（$$$/#/$）；nested 分支不消费这些字段。
+        Self {
+            request: ApiRequest::default(),
+            format: String::new(),
+            roads_path: String::new(),
+            road_name_path: String::new(),
+            episodes_path: String::new(),
+            episode_name_path: String::new(),
+            episode_url_path: String::new(),
+            episode_page: ApiEpisodePage::default(),
+            road_names_path: String::new(),
+            road_episodes_path: String::new(),
+            road_separator: "$$$".to_string(),
+            episode_separator: "#".to_string(),
+            field_separator: "$".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -1806,6 +1840,69 @@ fn json_path_str(v: &Value, path: &str) -> Option<String> {
 
 // ───────────────────────── 线路 / 选集 ─────────────────────────
 
+/// [lc-1752] delimited 打包串 → 线路/选集（对齐 Kazumi `_parseDelimited`）。
+/// 苹果CMS 采集源的标准形态：`vod_play_from` 与 `vod_play_url` 都以 `$$$` 分线路，
+/// 每条线路内 `#` 分集、每集 `集名$地址`。脏数据（缺分隔符/空段/空线路）逐条跳过，
+/// 不让单条坏集拖垮整条线路。
+fn parse_delimited_roads(
+    names: &str,
+    episodes: &str,
+    road_sep: &str,
+    ep_sep: &str,
+    field_sep: &str,
+) -> Vec<(String, Vec<(String, String)>)> {
+    if episodes.trim().is_empty() || road_sep.is_empty() || ep_sep.is_empty() || field_sep.is_empty()
+    {
+        return Vec::new();
+    }
+    let road_names: Vec<&str> = if names.trim().is_empty() {
+        Vec::new()
+    } else {
+        names.split(road_sep).collect()
+    };
+    let mut out = Vec::new();
+    for (idx, group) in episodes.split(road_sep).enumerate() {
+        let mut eps = Vec::new();
+        for entry in group.split(ep_sep) {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                continue;
+            }
+            match entry.find(field_sep) {
+                Some(pos) => {
+                    let name = entry[..pos].trim();
+                    let url = entry[pos + field_sep.len()..].trim();
+                    if url.is_empty() {
+                        continue;
+                    }
+                    let name = if name.is_empty() {
+                        format!("第{}集", eps.len() + 1)
+                    } else {
+                        name.to_string()
+                    };
+                    eps.push((name, url.to_string()));
+                }
+                None => continue, // 缺字段分隔符：坏条目跳过
+            }
+        }
+        if eps.is_empty() {
+            continue; // 整条线路没有有效集：跳过该线路
+        }
+        let configured = road_names
+            .get(idx)
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("");
+        let road_name = if configured.is_empty() {
+            format!("线路 {}", out.len() + 1)
+        } else {
+            configured.to_string()
+        };
+        out.push((road_name, eps));
+    }
+    out
+}
+
 /// [lc-1500] 详情页 → 线路 + 选集（对齐 Kazumi parseChapters：
 /// chapterRoads 每个节点是一条线路，chapterResult 相对求值出每集的 href + 文本）。
 #[tauri::command]
@@ -1819,12 +1916,67 @@ pub async fn webrs_chapters(app: AppHandle, rule_name: String, url: String) -> R
             .chapter_api_config
             .clone()
             .ok_or("规则缺少 chapterApiConfig")?;
-        if cfg.format.eq_ignore_ascii_case("delimited") {
-            return Err("该规则使用 delimited 打包格式，暂不支持".into());
-        }
         let src_id = url.trim().to_string();
         if src_id.is_empty() {
             return Err("缺少资源 id".into());
+        }
+        // [lc-1752] delimited 打包格式（苹果CMS 采集源）：roadNamesPath/roadEpisodesPath
+        // 各取一条打包串（如 `$.list[*].vod_play_from` / `$.list[*].vod_play_url`），
+        // 拆出线路与选集；地址通常是 m3u8 直链，episodePage 为空时直接可播（免嗅探）。
+        if cfg.format.eq_ignore_ascii_case("delimited") {
+            if cfg.road_episodes_path.trim().is_empty() {
+                return Err("delimited 选集缺少 roadEpisodesPath".into());
+            }
+            let body = api_request(&rule, &cfg.request, &[("@source", &src_id)]).await?;
+            let v: Value = serde_json::from_str(body.trim())
+                .map_err(|e| format!("API 选集返回的不是 JSON: {e}"))?;
+            let names = if cfg.road_names_path.trim().is_empty() {
+                String::new()
+            } else {
+                json_path_str(&v, &cfg.road_names_path).unwrap_or_default()
+            };
+            let episodes =
+                json_path_str(&v, &cfg.road_episodes_path).ok_or("roadEpisodesPath 解析失败")?;
+            let parsed = parse_delimited_roads(
+                &names,
+                &episodes,
+                &cfg.road_separator,
+                &cfg.episode_separator,
+                &cfg.field_separator,
+            );
+            if parsed.is_empty() {
+                return Err("没解析到播放线路（delimited 选集）".into());
+            }
+            let mut roads: Vec<Value> = Vec::new();
+            for (rname, eps) in parsed {
+                let eps_json: Vec<Value> = eps
+                    .into_iter()
+                    .filter_map(|(name, eurl)| {
+                        if !cfg.episode_page.url.is_empty() {
+                            // 与 nested 分支同口径：配了 episodePage 就拼播放页（resolve 阶段嗅探）
+                            let page = cfg
+                                .episode_page
+                                .url
+                                .replace("@source", &src_id)
+                                .replace("@episodeUrl", &eurl);
+                            if page.is_empty() {
+                                return None;
+                            }
+                            Some(json!({ "name": name, "url": page }))
+                        } else {
+                            Some(json!({ "name": name, "url": eurl }))
+                        }
+                    })
+                    .collect();
+                if eps_json.is_empty() {
+                    continue;
+                }
+                roads.push(json!({ "name": rname, "index": roads.len(), "episodes": eps_json }));
+            }
+            if roads.is_empty() {
+                return Err("没解析到播放线路（delimited 选集）".into());
+            }
+            return Ok(json!({ "roads": roads, "pageUrl": url }));
         }
         let body = api_request(&rule, &cfg.request, &[("@source", &src_id)]).await?;
         let v: Value = serde_json::from_str(body.trim())
@@ -1966,6 +2118,18 @@ fn rel_regex() -> &'static regex::Regex {
 }
 
 /// 页面源码正则抽直链（多数站的播放器配置明文写在 JS 里）。m3u8 优先，其次 mp4/flv。
+/// [lc-1752] 判断 URL 本身是否媒体直链（path 以 .m3u8/.mp4/.flv 结尾，忽略 query）。
+/// delimited 采集源与部分直播源的选集地址直接就是可播直链，resolve 阶段免抓免嗅探。
+fn is_media_direct_url(url: &str) -> bool {
+    let path = match url.split_once('?') {
+        Some((p, _)) => p,
+        None => url,
+    };
+    let path = path.split('#').next().unwrap_or(path);
+    let lower = path.to_lowercase();
+    [".m3u8", ".mp4", ".flv"].iter().any(|ext| lower.ends_with(ext))
+}
+
 fn extract_from_html(html: &str, page_url: &str) -> Option<String> {
     // 常见转义（\/ → /）先还原
     let unescaped = html.replace("\\/", "/");
@@ -2010,6 +2174,13 @@ pub async fn webrs_resolve(
     let legacy = rule.use_legacy_parser;
 
     crate::libmpv::trace(&format!("[webrs] resolve: {page_url}"));
+
+    // [lc-1752] 媒体直链短路：delimited 采集源的选集地址本身就是 m3u8/mp4 直链，
+    // 再按播放页抓一遍（m3u8 文本里找不到直链）只会白跑一轮并落进 WebView 嗅探。
+    if is_media_direct_url(&page_url) {
+        crate::libmpv::trace(&format!("[webrs] 直链透传: {page_url}"));
+        return Ok(json!({ "url": page_url, "referer": out_referer, "ua": ua, "via": "direct" }));
+    }
 
     // ── 1) HTTP 直解 ──
     match fetch_text(&page_url, &ua, &referer, &rule.name).await {
@@ -3998,5 +4169,91 @@ mod tests {
         let rule = dalvdm_like_rule(); // baseURL=https://www.sbdl.cc/，referer 未配
         assert_eq!(rule_referer(&rule), "https://www.sbdl.cc/");
         assert_eq!(play_referer(&rule), "");
+    }
+
+    // ───────── [lc-1752] delimited 选集（苹果CMS 采集源） ─────────
+
+    /// 量子资源「凡人修仙传2020」detail 响应的真实形态（截段，多线路 + 大量分集）。
+    #[test]
+    fn delimited_parses_maccms_play_url() {
+        let names = "lzm3u8$$$ykyun";
+        let episodes = "第01集$https://v.cdnlz21.com/a/index.m3u8#第02集$https://vip.lz-cdn3.com/b/index.m3u8$$$第01集$https://ykyun.com/1.mp4";
+        let roads = parse_delimited_roads(names, episodes, "$$$", "#", "$");
+        assert_eq!(roads.len(), 2);
+        assert_eq!(roads[0].0, "lzm3u8");
+        assert_eq!(roads[0].1.len(), 2);
+        assert_eq!(roads[0].1[0], ("第01集".into(), "https://v.cdnlz21.com/a/index.m3u8".into()));
+        assert_eq!(roads[1].0, "ykyun");
+        assert_eq!(roads[1].1.len(), 1);
+    }
+
+    /// 脏数据容忍：缺字段分隔符的条目、空段、无名条目（回退「第N集」）、
+    /// 空线路整体跳过、线路名数量不匹配按索引兜底。
+    #[test]
+    fn delimited_tolerates_dirty_input() {
+        let episodes = "第1集$ok1.m3u8##坏条目无分隔符#$ok2.m3u8";
+        let roads = parse_delimited_roads("", episodes, "$$$", "#", "$");
+        assert_eq!(roads.len(), 1);
+        assert_eq!(roads[0].0, "线路 1"); // names 空 → 兜底
+        assert_eq!(roads[0].1.len(), 2);
+        assert_eq!(roads[0].1[0].0, "第1集");
+        assert_eq!(roads[0].1[1].0, "第2集"); // 无名条目回退按序号
+        assert_eq!(roads[0].1[1].1, "ok2.m3u8");
+
+        // 第二条线路全是坏条目 → 只剩一条线路
+        let eps2 = "第1集$ok.m3u8$$$坏条目";
+        let roads2 = parse_delimited_roads("线路A$$$线路B", eps2, "$$$", "#", "$");
+        assert_eq!(roads2.len(), 1);
+        assert_eq!(roads2[0].0, "线路A");
+
+        // 空串 / 分隔符为空：返回空
+        assert!(parse_delimited_roads("", "", "$$$", "#", "$").is_empty());
+        assert!(parse_delimited_roads("a$b", "x", "", "#", "$").is_empty());
+    }
+
+    /// delimited 规则 JSON 按新字段反序列化（分隔符缺省对齐 Kazumi 的 $$$/#/$）。
+    #[test]
+    fn delimited_chapter_config_deserializes() {
+        let cfg: ApiChapterConfig = serde_json::from_str(
+            r#"{
+                "request": {"method":"GET","url":"https://cj.lziapi.com/api.php/provide/vod","query":{"ac":"detail","ids":"@source"}},
+                "format": "delimited",
+                "roadNamesPath": "$.list[*].vod_play_from",
+                "roadEpisodesPath": "$.list[*].vod_play_url"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.format, "delimited");
+        assert_eq!(cfg.road_names_path, "$.list[*].vod_play_from");
+        assert_eq!(cfg.road_episodes_path, "$.list[*].vod_play_url");
+        assert_eq!(cfg.road_separator, "$$$");
+        assert_eq!(cfg.episode_separator, "#");
+        assert_eq!(cfg.field_separator, "$");
+    }
+
+    /// 采集源 detail 真实响应 → json_path 取打包串 → delimited 拆分 全链路（纯逻辑段）。
+    #[test]
+    fn delimited_end_to_end_from_fixture() {
+        let body = r#"{"code":1,"list":[{"vod_id":397,"vod_name":"凡人修仙传2020",
+            "vod_play_from":"lzm3u8","vod_play_url":"第01集$https://v.cdnlz21.com/648/index.m3u8#第02集$https://vip.lz-cdn3.com/1032/index.m3u8"}]}"#;
+        let v: Value = serde_json::from_str(body).unwrap();
+        let names = json_path_str(&v, "$.list[*].vod_play_from").unwrap();
+        let episodes = json_path_str(&v, "$.list[*].vod_play_url").unwrap();
+        assert_eq!(names, "lzm3u8");
+        let roads = parse_delimited_roads(&names, &episodes, "$$$", "#", "$");
+        assert_eq!(roads.len(), 1);
+        assert_eq!(roads[0].1.len(), 2);
+        assert!(roads[0].1[0].1.ends_with("index.m3u8"));
+    }
+
+    /// 媒体直链短路：.m3u8/.mp4/.flv 后缀（带 query 也认），页面/分片路径不误判。
+    #[test]
+    fn media_direct_url_short_circuit() {
+        assert!(is_media_direct_url("https://v.cdnlz21.com/a/index.m3u8"));
+        assert!(is_media_direct_url("https://x.com/v.mp4?sign=abc"));
+        assert!(is_media_direct_url("http://x.com/v.FLV"));
+        assert!(!is_media_direct_url("https://www.7sefun.com/search?q=1"));
+        assert!(!is_media_direct_url("https://x.com/v.m3u8.ts")); // ts 分片不是完整媒体
+        assert!(!is_media_direct_url("https://x.com/play/index.html"));
     }
 }

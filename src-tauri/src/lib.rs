@@ -1,6 +1,7 @@
 //! AniBox —— 自绘 UI + 直调飞牛 API + mpv 双层窗口内嵌。
 //! 命令面向前端：配置 / 登录 / 媒体库 / 播放控制。
 
+mod ai_title;
 mod anilist;
 mod access_code;
 mod authx;

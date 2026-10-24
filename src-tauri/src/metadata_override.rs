@@ -348,8 +348,55 @@ pub fn bgm_img(url: &str) -> String {
 
 // ───────────────────────── Tauri 命令 ─────────────────────────
 
+/// [lc-1778] 一轮「TMDB + Bangumi」并发搜索（tmdb_q / bgm_q 分开传：
+/// AI 兜底重搜时 BGM 用原名/别名更易命中；year 仅喂 TMDB 做消歧）。
+async fn search_both(
+    tmdb_q: &str,
+    bgm_q: &str,
+    want_movie: bool,
+    want_tv: bool,
+    year: Option<u16>,
+) -> (Result<Value, String>, Result<Vec<Value>, String>) {
+    // TMDB：按提示类型搜索；未指定时 tv/movie 两路并发合并。
+    let tmdb_fut = async {
+        let mut a = json!({ "query": tmdb_q, "page": 1 });
+        if let Some(y) = year {
+            a["year"] = json!(y);
+        }
+        let fut = |mt: &'static str| {
+            let mut args = a.clone();
+            args["mediaType"] = json!(mt);
+            crate::tmdb::tmdb_search(args)
+        };
+        if want_movie {
+            fut("movie").await
+        } else if want_tv {
+            fut("tv").await
+        } else {
+            let (tv, mv) = tokio::join!(fut("tv"), fut("movie"));
+            match (tv, mv) {
+                (Ok(mut x), Ok(y)) => {
+                    if let (Some(xs), Some(ys)) =
+                        (x.get_mut("items").and_then(|v| v.as_array_mut()), y.get("items").and_then(|v| v.as_array()))
+                    {
+                        xs.extend(ys.iter().cloned());
+                    }
+                    Ok(x)
+                }
+                (Ok(x), Err(_)) => Ok(x),
+                (Err(_), Ok(y)) => Ok(y),
+                (Err(e), Err(_)) => Err(e),
+            }
+        }
+    };
+    let bgm_fut = crate::bgm::search_subjects(bgm_q, 20);
+    tokio::join!(tmdb_fut, bgm_fut)
+}
+
 /// 手动搜索元数据：并行走 TMDB 与 Bangumi 镜像，返回两路统一结构。
 /// 单路失败不整体报错（errors 里回传原因），两路都失败才 Err。
+/// [lc-1778] 两路都**成功但 0 结果**且配置了 AI 端点时，用 LLM 清洗关键词重搜一轮
+/// （响应带 `refinedQuery` 标记，前端提示「已按 AI 识别标题重搜」）。
 #[tauri::command]
 pub async fn metadata_search(query: String, media_type: Option<String>) -> Result<Value, String> {
     let q = query.trim().to_string();
@@ -360,35 +407,7 @@ pub async fn metadata_search(query: String, media_type: Option<String>) -> Resul
     let want_movie = mt == "movie";
     let want_tv = mt == "tv";
 
-    // TMDB：按提示类型搜索；未指定时 tv/movie 两路并发合并。
-    let tmdb_fut = async {
-        if want_movie {
-            crate::tmdb::tmdb_search(json!({ "query": q.as_str(), "mediaType": "movie", "page": 1 })).await
-        } else if want_tv {
-            crate::tmdb::tmdb_search(json!({ "query": q.as_str(), "mediaType": "tv", "page": 1 })).await
-        } else {
-            let (tv, mv) = tokio::join!(
-                crate::tmdb::tmdb_search(json!({ "query": q.as_str(), "mediaType": "tv", "page": 1 })),
-                crate::tmdb::tmdb_search(json!({ "query": q.as_str(), "mediaType": "movie", "page": 1 })),
-            );
-            match (tv, mv) {
-                (Ok(mut a), Ok(b)) => {
-                    if let (Some(x), Some(y)) =
-                        (a.get_mut("items").and_then(|v| v.as_array_mut()), b.get("items").and_then(|v| v.as_array()))
-                    {
-                        x.extend(y.iter().cloned());
-                    }
-                    Ok(a)
-                }
-                (Ok(a), Err(_)) => Ok(a),
-                (Err(_), Ok(b)) => Ok(b),
-                (Err(e), Err(_)) => Err(e),
-            }
-        }
-    };
-    let bgm_fut = crate::bgm::search_subjects(&q, 20);
-
-    let (tmdb_res, bgm_res) = tokio::join!(tmdb_fut, bgm_fut);
+    let (tmdb_res, bgm_res) = search_both(&q, &q, want_movie, want_tv, None).await;
 
     let mut errors = serde_json::Map::new();
     let tmdb_items = match tmdb_res {
@@ -407,6 +426,46 @@ pub async fn metadata_search(query: String, media_type: Option<String>) -> Resul
     };
     if tmdb_items.is_empty() && bgm_items.is_empty() {
         if errors.is_empty() {
+            // [lc-1778] AI 标题兜底：真 0 结果（不是镜像故障）才值得花一次 LLM。
+            // 未配置端点 / LLM 失败 / 提取无效 → 行为与从前完全一致（返回空结果）。
+            if let Ok(Some(refined)) = crate::ai_title::refine_title(&q).await {
+                let (retry_movie, retry_tv) = if want_movie || want_tv {
+                    (want_movie, want_tv)
+                } else if refined.kind.as_deref() == Some("movie") {
+                    (true, false)
+                } else if refined.kind.as_deref() == Some("tv") {
+                    (false, true)
+                } else {
+                    (false, false)
+                };
+                let bgm_q = refined.alt_title.as_deref().unwrap_or(&refined.title);
+                // 带年先搜（消歧），0 结果再退无年（LLM 年份判错很常见，别让它杀掉重搜）
+                let year_variants: [Option<u16>; 2] = [refined.year, None];
+                for yv in year_variants {
+                    if yv.is_none() && refined.year.is_none() {
+                        continue; // 本来就没年，只跑一轮
+                    }
+                    let (t2, b2) =
+                        search_both(&refined.title, bgm_q, retry_movie, retry_tv, yv).await;
+                    let tmdb_items2 = match t2 {
+                        Ok(v) => tmdb_search_items(&v),
+                        Err(_) => Vec::new(),
+                    };
+                    let bgm_items2 = match b2 {
+                        Ok(items) => bgm_search_items(&items),
+                        Err(_) => Vec::new(),
+                    };
+                    if !tmdb_items2.is_empty() || !bgm_items2.is_empty() {
+                        return Ok(json!({
+                            "query": q,
+                            "refinedQuery": refined.title,
+                            "tmdb": tmdb_items2,
+                            "bgm": bgm_items2,
+                            "errors": {},
+                        }));
+                    }
+                }
+            }
             return Ok(json!({ "query": q, "tmdb": [], "bgm": [], "errors": {} }));
         }
         return Err(format!(
@@ -671,3 +730,4 @@ mod tests {
         );
     }
 }
+

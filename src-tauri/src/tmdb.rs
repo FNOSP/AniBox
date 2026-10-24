@@ -1817,8 +1817,16 @@ pub async fn tmdb_search(arg: Value) -> Result<Value, String> {
             "total": 0, "totalPages": 0, "items": [],
         }));
     }
+    // [lc-1778] 可选年份消歧（AI 兜底重搜传入；调用方负责「带年 0 结果退无年」重试，
+    // 与 tmdb_search_best 的先精确后宽泛同思路）。前端正常搜索不传 → 行为不变。
+    let year = arg
+        .get("year")
+        .and_then(|v| v.as_i64())
+        .filter(|y| (1900..=2100).contains(y))
+        .map(|y| y.to_string())
+        .unwrap_or_default();
     let today = today_ymd();
-    let path = format!("{}&page={page}", search_path(media_type, &query, ""));
+    let path = format!("{}&page={page}", search_path(media_type, &query, &year));
     let raw = get_json(&path).await?;
     let mut out = discover_payload(&raw, is_movie, &today, "search", media_type, false, "", "", page);
     if let Value::Object(ref mut m) = out {

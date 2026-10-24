@@ -37,6 +37,8 @@ type PickResult = {
 
 type SearchResp = {
   query?: string;
+  /** [lc-1778] 原词 0 结果时 AI 清洗出的重搜标题（出现即代表已用它重搜） */
+  refinedQuery?: string;
   tmdb?: PickResult[];
   bgm?: PickResult[];
   errors?: Record<string, string>;
@@ -87,14 +89,17 @@ export function MetadataPickerModal({
         setTmdb(t);
         setBgm(b);
         const errs = r?.errors ?? {};
+        // [lc-1778] AI 兜底提示：后端在 0 结果时用 AI 清洗标题重搜过（refinedQuery 出现即代表重搜生效）
+        const refinedNote = r?.refinedQuery ? `原词无结果，已按 AI 识别标题「${r.refinedQuery}」重搜` : "";
         if (!t.length && !b.length) {
-          setErr("没有搜到匹配结果，换个关键词再试");
+          setErr(refinedNote ? `${refinedNote}，仍无结果，换个关键词再试` : "没有搜到匹配结果，换个关键词再试");
         } else if (Object.keys(errs).length) {
-          setNotice(
-            `部分来源失败：${Object.entries(errs)
-              .map(([k, v]) => `${k === "tmdb" ? "TMDB" : "Bangumi"}（${v}）`)
-              .join("；")}`,
-          );
+          const parts = [refinedNote, `部分来源失败：${Object.entries(errs)
+            .map(([k, v]) => `${k === "tmdb" ? "TMDB" : "Bangumi"}（${v}）`)
+            .join("；")}`].filter(Boolean);
+          setNotice(parts.join("；"));
+        } else if (refinedNote) {
+          setNotice(refinedNote);
         }
       } catch (e) {
         if (alive.current) setErr(String(e));

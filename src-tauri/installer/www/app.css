@@ -4,11 +4,13 @@
 /* hidden 属性必须赢过任何 display 声明(许可弹层曾是 display:flex, 压掉 hidden
    后变成看不见的全屏点击拦截层 —— 全部按钮点不动的元凶之一, 勿删) */
 [hidden] { display: none !important; }
-html, body { width: 780px; height: 520px; overflow: hidden; }
+/* [lc-1762] 缩放防御：视口按 100% 铺满（min 兜住设计稿尺寸），WebView2 视口与
+   设计尺寸不一致的 DPI/多屏场景不再留白或裁切；布局锚点自动跟随实际视口。 */
+html, body { width: 100%; height: 100%; min-width: 780px; min-height: 520px; overflow: hidden; }
 body { font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif; background: #f6f9ff; }
 
 /* ── 舞台: 淡蓝渐变 + 柔焦光斑 + 噪点 ── */
-.stage { position: relative; width: 780px; height: 520px; overflow: hidden;
+.stage { position: relative; width: 100%; height: 100%; overflow: hidden;
   background: linear-gradient(160deg, #f8fbff 0%, #eef4fe 22%, #e3eefc 45%, #d9e6fa 62%, #e6eefc 82%, #f0f6ff 100%); }
 .blob { position: absolute; border-radius: 50%; filter: blur(64px); opacity: .5; pointer-events: none; }
 .b1 { width: 400px; height: 400px; left: -220px; top: -180px;  background: rgba(140,180,255,.55); }

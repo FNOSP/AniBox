@@ -275,6 +275,10 @@ impl ApiRequest {
 /// 打包成一个 JSON 数组随二进制分发；文件内容 = KazumiRules 仓库原文。
 const BUILTIN_RULES_JSON: &str = include_str!("builtin_rules.json");
 
+/// [lc-1756] 内置采集源（苹果CMS V10 标准接口，2026-10-24 实测可用；站点失效时
+/// 删掉即可，不随启动补种 —— 采集站的存活周期比番剧站短得多，补种会反复复活死源）。
+const BUILTIN_MACCMS_JSON: &str = include_str!("builtin_maccms.json");
+
 pub fn rules_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app
         .path()
@@ -339,10 +343,46 @@ async fn seed_rules(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// [lc-1756] 采集源一次性播种：目录不存在或为空时写入全部内置源；此后不再补种
+/// （采集站存活周期短，删掉的死源不该复活；要恢复内置源删空目录即可）。
+async fn seed_maccms(app: &AppHandle) -> Result<(), String> {
+    let dir = maccms_dir(app)?;
+    if !tokio::fs::try_exists(&dir).await.unwrap_or(false) {
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .map_err(|e| format!("创建采集源目录失败: {e}"))?;
+    }
+    let mut has_any = false;
+    let mut rd = match tokio::fs::read_dir(&dir).await {
+        Ok(rd) => rd,
+        Err(e) => return Err(format!("读采集源目录失败: {e}")),
+    };
+    while let Ok(Some(ent)) = rd.next_entry().await {
+        if ent.path().extension().and_then(|e| e.to_str()) == Some("json") {
+            has_any = true;
+            break;
+        }
+    }
+    if has_any {
+        return Ok(());
+    }
+    for v in serde_json::from_str::<Vec<Value>>(BUILTIN_MACCMS_JSON).unwrap_or_default() {
+        let Some(name) = v.get("name").and_then(|n| n.as_str()) else { continue };
+        if name.is_empty() {
+            continue;
+        }
+        let p = dir.join(format!("{name}.json"));
+        let body = serde_json::to_string_pretty(&v).unwrap_or_default();
+        let _ = tokio::fs::write(&p, body).await;
+    }
+    Ok(())
+}
+
 /// 列出全部可用规则（宽容解析：坏文件跳过）。
 /// [lc-1755] 合并两个源体系：webrs-rules/（Kazumi 规则）+ webrs-maccms/（采集源）。
 pub async fn load_rules(app: &AppHandle) -> Result<Vec<Rule>, String> {
     seed_rules(app).await?;
+    seed_maccms(app).await?;
     let mut out = Vec::new();
     for dir in [rules_dir(app)?, maccms_dir(app)?] {
         read_rules_dir(&dir, &mut out).await?;

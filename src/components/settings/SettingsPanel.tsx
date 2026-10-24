@@ -863,6 +863,12 @@ export function SettingsPanel({
   const [ddNewUrl, setDdNewUrl] = useState("");
   const [ddCredId, setDdCredId] = useState("");
   const [ddCredSecret, setDdCredSecret] = useState("");
+  /* [lc-1789] 字幕源添加区 + 自定义密钥输入（值不回填，仅 Set 状态回显） */
+  const [subNewKind, setSubNewKind] = useState("opensubtitles");
+  const [subNewName, setSubNewName] = useState("");
+  const [subNewToken, setSubNewToken] = useState("");
+  const [subKeyId, setSubKeyId] = useState("");
+  const [subKeyOsub, setSubKeyOsub] = useState("");
   const [ddNote, setDdNote] = useState("");
   const ddLoaded = useRef(false);
 
@@ -1417,11 +1423,10 @@ export function SettingsPanel({
                   <div className="set-row set-row-col">
                     <span className="set-k">字幕源</span>
                     <div className="set-desc">
-                      播放器「下载字幕」菜单的搜索来源。迅雷=手雷官方接口（本地文件带 gcid
-                      哈希精确匹配，URL 流自动退名称搜索，无需账号）；assrt.net=中文字幕库
-                      （可换自己的 token）；OpenSubtitles=国际库（moviehash 哈希精确匹配，
-                      需到 opensubtitles.com 注册免费 Api-Key）。自上而下为优先级，哈希命中排最前；
-                      assrt 挂了自动降级外置源。列表存本机 subtitle-sources.json。
+                      内置三源固定：迅雷（手雷官方接口，无需账号）+ assrt.net + OpenSubtitles。
+                      自上而下为优先级，请求失败自动切下一个。下方「自定义密钥」填自己的
+                      token / Api-Key 时直接顶掉内置共享凭证（优先级最高）。
+                      列表存本机 subtitle-sources.json。
                     </div>
                     {subSources.map((s, i) => (
                       <div className="set-row" key={`${i}-${s.kind}-${s.name}`}>
@@ -1436,23 +1441,15 @@ export function SettingsPanel({
                             void saveSubSources(next);
                           }}
                         />
-                        <select
-                          className="set-input"
-                          style={{ flex: "0 0 130px" }}
-                          value={s.kind}
-                          onChange={(e) => {
-                            const next = subSources.map((x, j) => (j === i ? { ...x, kind: e.target.value } : x));
-                            setSubSources(next);
-                            void saveSubSources(next);
-                          }}
+                        <span
+                          className={`sp-badge sp-${s.kind === "opensubtitles" ? "osub" : s.kind}`}
+                          style={{ flex: "0 0 92px", textAlign: "center" }}
                         >
-                          <option value="xunlei">迅雷·哈希</option>
-                          <option value="assrt">assrt.net</option>
-                          <option value="opensubtitles">OpenSubtitles</option>
-                        </select>
+                          {s.kind === "xunlei" ? "迅雷" : s.kind === "assrt" ? "assrt" : "OpenSubs"}
+                        </span>
                         <input
                           className="set-input"
-                          style={{ flex: "0 0 130px" }}
+                          style={{ flex: 1 }}
                           value={s.name}
                           placeholder="名称"
                           onChange={(e) => {
@@ -1461,36 +1458,6 @@ export function SettingsPanel({
                           }}
                           onBlur={() => void saveSubSources(subSources)}
                         />
-                        {s.kind !== "xunlei" && (
-                          <>
-                            {/* [lc-1786] 凭证来源开关：开=内置共享（token 忽略）；关=用自定义 token */}
-                            <button
-                              type="button"
-                              className={`set-sw${s.useBuiltin ? " on" : ""}`}
-                              aria-pressed={s.useBuiltin}
-                              aria-label={`${s.name} 使用内置凭证`}
-                              title={s.useBuiltin ? "使用内置共享凭证（点此切换为自定义）" : "使用自定义凭证（点此切回内置共享）"}
-                              onClick={() => {
-                                const next = subSources.map((x, j) => (j === i ? { ...x, useBuiltin: !x.useBuiltin } : x));
-                                setSubSources(next);
-                                void saveSubSources(next);
-                              }}
-                            />
-                            <span className="set-desc" style={{ flex: "none", opacity: 0.7 }}>内置</span>
-                            <input
-                              className="set-input"
-                              style={{ flex: 1, opacity: s.useBuiltin ? 0.55 : 1 }}
-                              disabled={s.useBuiltin}
-                              value={s.useBuiltin ? "" : s.token}
-                              placeholder={s.useBuiltin ? "已启用内置共享凭证" : s.kind === "assrt" ? "自定义 assrt token" : "自定义 OpenSubtitles Api-Key"}
-                              onChange={(e) => {
-                                const next = subSources.map((x, j) => (j === i ? { ...x, token: e.target.value } : x));
-                                setSubSources(next);
-                              }}
-                              onBlur={() => void saveSubSources(subSources)}
-                            />
-                          </>
-                        )}
                         <button
                           className="set-btn"
                           title="上移（提高优先级）"
@@ -1518,29 +1485,106 @@ export function SettingsPanel({
                       </div>
                     ))}
                     <div className="set-actions">
+                      <select
+                        className="set-input"
+                        style={{ flex: "0 0 110px" }}
+                        value={subNewKind}
+                        onChange={(e) => setSubNewKind(e.target.value)}
+                      >
+                        <option value="xunlei">迅雷</option>
+                        <option value="assrt">assrt.net</option>
+                        <option value="opensubtitles">OpenSubtitles</option>
+                      </select>
+                      <input
+                        className="set-input"
+                        style={{ flex: "0 0 140px" }}
+                        placeholder="新源名称"
+                        value={subNewName}
+                        onChange={(e) => setSubNewName(e.target.value)}
+                      />
+                      {subNewKind !== "xunlei" && (
+                        <input
+                          className="set-input"
+                          style={{ flex: 1 }}
+                          placeholder={subNewKind === "assrt" ? "token（可留空=用密钥区/内置）" : "Api-Key（可留空=用密钥区/内置）"}
+                          value={subNewToken}
+                          onChange={(e) => setSubNewToken(e.target.value)}
+                        />
+                      )}
                       <button
                         className="set-btn"
                         onClick={() => {
-                          const next = [...subSources, { kind: "opensubtitles", name: "OpenSubtitles", token: "", useBuiltin: true, enabled: true }];
+                          const it: SubSource = {
+                            kind: subNewKind,
+                            name: subNewName.trim() || (subNewKind === "xunlei" ? "迅雷" : subNewKind === "assrt" ? "assrt.net" : "OpenSubtitles"),
+                            token: subNewToken.trim(),
+                            useBuiltin: subNewToken.trim() === "",
+                            enabled: true,
+                          };
+                          if (subSources.length >= 12) {
+                            setSubNote("最多 12 条");
+                            return;
+                          }
+                          const next = [...subSources, it];
                           setSubSources(next);
+                          setSubNewName("");
+                          setSubNewToken("");
+                          void saveSubSources(next);
                         }}
                       >
                         添加源
                       </button>
-                      {/* [lc-1785] 内置浏览器打开注册页：注册后开「允许匿名下载」，复制 Api-Key 粘到上面 token 框 */}
                       <button
                         className="set-btn"
-                        title="用内置浏览器打开 OpenSubtitles 注册/管理页；拿到 Api-Key 后粘到上面的 token 框（不填则用应用内置共享 Key）"
+                        title="恢复默认三源（迅雷/assrt/OpenSubtitles）"
                         onClick={() => {
-                          void invoke("open_browser_window", {
-                            url: "https://www.opensubtitles.com/zh-cn-cn/consumers",
-                            title: "OpenSubtitles · 注册 / API Key",
-                          }).catch((e) => setSubNote(String(e)));
+                          const next: SubSource[] = [
+                            { kind: "xunlei", name: "迅雷（按文件哈希精确匹配）", token: "", useBuiltin: false, enabled: true },
+                            { kind: "assrt", name: "assrt.net", token: "", useBuiltin: true, enabled: true },
+                            { kind: "opensubtitles", name: "OpenSubtitles", token: "", useBuiltin: true, enabled: true },
+                          ];
+                          setSubSources(next);
+                          void saveSubSources(next);
                         }}
                       >
-                        注册 OpenSubtitles
+                        恢复默认
                       </button>
                       <span className="set-note">{subNote}</span>
+                    </div>
+                    {/* [lc-1789] 自定义密钥：填了直接顶掉内置（config.json 层，优先级最高）；
+                        清空保存=恢复内置。mpv 菜单与应用内搜索两条路同享。 */}
+                    <div className="set-row" style={{ flexWrap: "wrap" }}>
+                      <span className="set-k" style={{ flex: "0 0 100%" }}>
+                        自定义密钥（优先于内置）
+                      </span>
+                      <input
+                        className="set-input"
+                        style={{ flex: 1 }}
+                        placeholder={settings.subAssrtTokenSet ? "assrt token 已设置（清空保存=恢复内置）" : "assrt token（留空=内置共享）"}
+                        onChange={(e) => setSubKeyId(e.target.value)}
+                      />
+                      <input
+                        className="set-input"
+                        style={{ flex: 1 }}
+                        placeholder={settings.subOsubKeySet ? "OpenSubtitles Api-Key 已设置（清空保存=恢复内置）" : "OpenSubtitles Api-Key（留空=内置共享）"}
+                        onChange={(e) => setSubKeyOsub(e.target.value)}
+                      />
+                      <button
+                        className="set-btn"
+                        onClick={() => {
+                          const any = subKeyId.trim() !== "" || subKeyOsub.trim() !== "";
+                          onSettings({ subAssrtToken: subKeyId.trim(), subOsubKey: subKeyOsub.trim() });
+                          setSubKeyId("");
+                          setSubKeyOsub("");
+                          setSubNote(
+                            any
+                              ? "自定义密钥已保存（优先于内置，重启播放器生效）"
+                              : "已清空自定义密钥，恢复内置共享（重启播放器生效）",
+                          );
+                        }}
+                      >
+                        保存密钥
+                      </button>
                     </div>
                   </div>
                   <div className="set-row">

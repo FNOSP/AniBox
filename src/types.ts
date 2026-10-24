@@ -563,6 +563,11 @@ export type AppSettings = {
   /** [lc-1788] 写入口（设置面板「保存凭证」提交；回显走上面的 *Set 布尔） */
   danmuDdAppId?: string;
   danmuDdSecret?: string;
+  /** [lc-1789] 字幕源自定义密钥（写入口+Set 回显；空=内置） */
+  subAssrtTokenSet?: boolean;
+  subOsubKeySet?: boolean;
+  subAssrtToken?: string;
+  subOsubKey?: string;
   danmuApiBase: string;
   /** 弹幕引擎（camelCase 映射 Rust `danmu_engine`）："node" = 默认/稳定，"rust" = 测试版。
    *  仅在「自建弹幕接口」启用时生效；旧缓存可能缺省 → 读取时回退 "node"。 */

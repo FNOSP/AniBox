@@ -173,6 +173,12 @@ pub struct Config {
     pub danmu_dd_app_id: String,
     #[serde(default)]
     pub danmu_dd_app_secret: String,
+    /// [lc-1789] 字幕源自定义密钥（设置面板「自定义密钥」区）：留空=内置共享；
+    /// 填写则**优先于内置**（effective 链第一层）。只存本机 config.json。
+    #[serde(default)]
+    pub sub_assrt_token: String,
+    #[serde(default)]
+    pub sub_osub_key: String,
     /// 弹幕引擎："node"（默认，行为与接入前完全一致）| "rust"（Rust 直接接管 22347，
     /// 自建源三跳由 Rust 实现，B站/字幕端点反代到内部 Node 端口）。
     /// 环境变量 `ANIBOX_DANMAKU_ENGINE=rust` 可临时覆盖（便于测试）。
@@ -346,6 +352,8 @@ impl Default for Config {
             danmu_api_bases: Vec::new(),
             danmu_dd_app_id: String::new(),
             danmu_dd_app_secret: String::new(),
+            sub_assrt_token: String::new(),
+            sub_osub_key: String::new(),
             danmu_engine: default_danmu_engine(),
             feedback_aid: String::new(),
             log_debug: true,

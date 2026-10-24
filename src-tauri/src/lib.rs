@@ -2535,6 +2535,9 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         // [lc-1788] 弹弹play 自定义凭证（回填仅判有无，值不回显到明文日志之外的面板外）
         "danmuDdAppIdSet": !cfg.danmu_dd_app_id.trim().is_empty(),
         "danmuDdSecretSet": !cfg.danmu_dd_app_secret.trim().is_empty(),
+        // [lc-1789] 字幕源自定义密钥（仅回显 Set 状态，值不回填）
+        "subAssrtTokenSet": !cfg.sub_assrt_token.trim().is_empty(),
+        "subOsubKeySet": !cfg.sub_osub_key.trim().is_empty(),
         // [lc-1753] 在线资源搜索（默认关闭；开启前用户已知悉「不存储不分发资源」声明）
         "webrsPanelEnabled": cfg.webrs_panel_enabled,
         // 弹幕引擎（camelCase 映射 `danmu_engine`）
@@ -2618,6 +2621,13 @@ async fn set_settings(
     }
     if let Some(v) = arg.get("danmuDdSecret") {
         cfg.danmu_dd_app_secret = v.as_str().ok_or("danmuDdSecret 必须是字符串")?.trim().to_string();
+    }
+    // [lc-1789] 字幕源自定义密钥（空串=清除恢复内置）
+    if let Some(v) = arg.get("subAssrtToken") {
+        cfg.sub_assrt_token = v.as_str().ok_or("subAssrtToken 必须是字符串")?.trim().to_string();
+    }
+    if let Some(v) = arg.get("subOsubKey") {
+        cfg.sub_osub_key = v.as_str().ok_or("subOsubKey 必须是字符串")?.trim().to_string();
     }
     if let Some(v) = arg.get("danmuApiBases") {
         let arr = v.as_array().ok_or("danmuApiBases 必须是数组")?;

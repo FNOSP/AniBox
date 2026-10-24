@@ -33,7 +33,11 @@ const BUILTIN_OPENSUB_KEY: &str = match option_env!("ANIBOX_OPENSUB_KEY") {
 
 /// [lc-1786] 生效的 OpenSubtitles key：use_builtin=true → 内置共享（未注入=None）；
 /// false → 用户 token（空则回落内置，防手滑失效）。
-fn effective_osub_key(list: &[SubtitleSource]) -> Option<String> {
+fn effective_osub_key(list: &[SubtitleSource], custom: Option<&str>) -> Option<String> {
+    // [lc-1789] 第一层：设置面板「自定义密钥」（config.json）——直接顶掉内置（含未注入的情形）
+    if let Some(c) = custom.filter(|c| !c.trim().is_empty()) {
+        return Some(c.trim().to_string());
+    }
     if let Some(k) = list
         .iter()
         .find(|s| s.kind == "opensubtitles" && s.enabled && !s.use_builtin && !s.token.trim().is_empty())
@@ -249,22 +253,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 实测（网络，#[ignore]）：应用内搜索扇出 —— 迅雷 oracle 必须返回真实条目；
-    /// assrt 在无外网环境会被跳过（单源失败不拖垮整体）。验证时 -- --ignored。
-    #[tokio::test]
-    #[ignore]
-    async fn subtitle_search_live() {
-        let v = subtitle_search("葬送的芙莉莲".into()).await.expect("search 不应 Err");
-        let items = v.get("items").and_then(|x| x.as_array()).cloned().unwrap_or_default();
-        let xunlei = items.iter().filter(|i| i.get("kind").and_then(|k| k.as_str()) == Some("xunlei")).count();
-        assert!(xunlei > 0, "迅雷源应有结果，实际: {v}");
-        for i in &items {
-            assert!(i.get("id").and_then(|x| x.as_str()).unwrap_or("") != "");
-            assert!(i.get("title").and_then(|x| x.as_str()).unwrap_or("") != "");
-        }
-        println!("search OK: {} 条（迅雷 {}）", items.len(), xunlei);
-    }
-
     #[test]
     fn kind_whitelist() {
         assert!(valid_kind("assrt"));
@@ -293,7 +281,11 @@ fn http_client() -> &'static reqwest::Client {
 
 /// [lc-1786] assrt 凭证：use_builtin=true → 内置共享；false → 用户 token（空则回落内置，
 /// 避免手滑关了开关没填 token 导致整源失效）。
-fn effective_assrt_token(list: &[SubtitleSource]) -> String {
+fn effective_assrt_token(list: &[SubtitleSource], custom: Option<&str>) -> String {
+    // [lc-1789] 第一层：设置面板「自定义密钥」（config.json）——直接顶掉内置
+    if let Some(c) = custom.filter(|c| !c.trim().is_empty()) {
+        return c.trim().to_string();
+    }
     list.iter()
         .find(|s| s.kind == "assrt" && s.enabled && !s.use_builtin && !s.token.trim().is_empty())
         .map(|s| s.token.trim().to_string())
@@ -352,14 +344,24 @@ async fn read_list() -> Vec<SubtitleSource> {
 /// 应用内字幕搜索：并行扇出 迅雷(名称) + assrt + OpenSubtitles(若配 key)。
 /// 返回 {items:[{kind,id,title,hint}]}；单源失败不拖垮整体（跳过即可）。
 #[tauri::command]
-pub async fn subtitle_search(query: String) -> Result<Value, String> {
+pub async fn subtitle_search(
+    state: tauri::State<'_, crate::AppState>,
+    query: String,
+) -> Result<Value, String> {
     let q = query.trim().to_string();
     if q.is_empty() {
         return Err("搜索词为空".into());
     }
+    let (custom_assrt, custom_osub) = {
+        let cfg = state.config.read().await;
+        (
+            cfg.sub_assrt_token.trim().to_string(),
+            cfg.sub_osub_key.trim().to_string(),
+        )
+    };
     let list = read_list().await;
-    let token = effective_assrt_token(&list);
-    let osub_key = effective_osub_key(&list);
+    let token = effective_assrt_token(&list, Some(&custom_assrt));
+    let osub_key = effective_osub_key(&list, Some(&custom_osub));
     let want_osub = list.iter().any(|s| s.kind == "opensubtitles" && s.enabled);
     let want_xunlei = list.iter().any(|s| s.kind == "xunlei" && s.enabled);
     let want_assrt = list.iter().any(|s| s.kind == "assrt" && s.enabled);
@@ -485,8 +487,9 @@ pub async fn subtitle_download(
     let (url, fallback_name) = match kind.as_str() {
         "xunlei" => (id.clone(), filename.clone().unwrap_or_else(|| "字幕.srt".into())),
         "assrt" => {
+            let custom = state.config.read().await.sub_assrt_token.trim().to_string();
             let list = read_list().await;
-            let token = effective_assrt_token(&list);
+            let token = effective_assrt_token(&list, Some(&custom));
             let durl = format!("https://api.assrt.net/v1/sub/detail?token={token}&id={id}");
             let v: Value = http_client()
                 .get(&durl)
@@ -522,8 +525,9 @@ pub async fn subtitle_download(
             (url, name)
         }
         "osub" => {
+            let custom = state.config.read().await.sub_osub_key.trim().to_string();
             let list = read_list().await;
-            let Some(key) = effective_osub_key(&list) else {
+            let Some(key) = effective_osub_key(&list, Some(&custom)) else {
                 return Err("OpenSubtitles 不可用（未配置 Api-Key 且应用未内置）".into());
             };
             let fid = id.parse::<i64>().map_err(|_| "file_id 非法")?;

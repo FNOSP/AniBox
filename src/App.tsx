@@ -295,6 +295,8 @@ function App() {
   const [updatePrompt, setUpdatePrompt] = useState<{ info: UpdateCheckResult } | null>(null);
   // 启动自动检查只做一次；同一版本本次运行只弹一次（「稍后」后也不再弹）
   const autoUpdateTimer = useRef<number | null>(null);
+  // [lc-1787] 12 小时定时复查句柄（卸载时清理）
+  const autoUpdateInterval = useRef<number | null>(null);
   const autoUpdateDone = useRef(false);
   const promptedVersions = useRef<Set<string>>(new Set());
   const [sum, setSum] = useState<Record<string, number>>({});
@@ -326,16 +328,16 @@ function App() {
     if (view === "home") void refreshFavTotal();
   }, [view, refreshFavTotal]);
 
-  /* ── [lc-1710] 启动自动检查更新 ──
-     进入主界面（非登录页、启动会话检查完成、免责声明已处理）后延迟 5 秒再请求一次
-     `update_check`，避开首屏加载抢资源。无更新/请求失败一律静默；
-     同一版本本次运行只弹一次（promptedVersions 在弹出时即记账，「稍后」后不再弹）。 */
+  /* ── [lc-1710] 启动自动检查更新 + [lc-1787] 常驻 12 小时定时复查 ──
+     进入主界面（非登录页、启动会话检查完成、免责声明已处理）后延迟 5 秒请求一次
+     `update_check`，避开首屏加载抢资源；之后**每 12 小时复查一次**（应用挂后台/长驻
+     不重启的用户也能在发新版当天收到提醒）。无更新/请求失败一律静默；
+     同一版本本次运行只弹一次（promptedVersions 在弹出时即记账，「稍后」后 12 小时
+     后的复查也不会再弹同版本；出了更新的版本号才再弹）。 */
   useEffect(() => {
     if (booting || view === "login" || disclaimerOpen) return;
     if (autoUpdateDone.current || autoUpdateTimer.current !== null) return;
-    autoUpdateTimer.current = window.setTimeout(() => {
-      autoUpdateTimer.current = null;
-      autoUpdateDone.current = true;
+    const runCheck = () =>
       invoke<unknown>("update_check")
         .then((raw) => {
           const r = normalizeCheck(raw);
@@ -347,7 +349,19 @@ function App() {
         .catch(() => {
           /* 静默：更新检查失败不打扰用户 */
         });
+    autoUpdateTimer.current = window.setTimeout(() => {
+      autoUpdateTimer.current = null;
+      autoUpdateDone.current = true;
+      void runCheck();
+      // [lc-1787] 12h 定时复查（update_check 后端自带 30s 结果缓存，长间隔下无请求浪费）
+      autoUpdateInterval.current = window.setInterval(() => void runCheck(), 12 * 3600 * 1000);
     }, 5000);
+    return () => {
+      if (autoUpdateInterval.current !== null) {
+        window.clearInterval(autoUpdateInterval.current);
+        autoUpdateInterval.current = null;
+      }
+    };
   }, [booting, view, disclaimerOpen]);
 
   // 卸载时清掉还没触发的定时器（组件卸载 = 应用关闭，正常不会发生）

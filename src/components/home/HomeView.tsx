@@ -343,17 +343,22 @@ export function HomeView({
                   key={guid}
                   className="card continue-card"
                   onClick={() => {
-                    // 点卡片空白处 → 进该剧详情；中间播放按钮单独直接播放
+                    // 点卡片空白处 → 进详情（对齐飞鲸 _handleItemNavigation 的传参口径）：
+                    // · Movie/Video → 自身 guid 进电影页；· Episode/Season → 必须
+                    //   parent_guid（剧级）进剧页，**父 guid 缺失不跳转**——此前
+                    //   `parentGuid || guid` 的兜底会拿集 guid 冒充剧 guid，详情页
+                    //   按 guid 拉到的数据与 TMDB/季定位全部串台（用户实测点所有卡
+                    //   都进同一部错剧 + 电影版式，两层错乱的根源都在这）。
                     const parentGuid = String(
                       pick(raw, ["parent_guid", "parentGuid", "series_guid", "seriesGuid"]) ?? "",
-                    );
+                    ).trim();
+                    const openType = type === "Episode" || type === "Season" ? "TV" : type;
+                    if ((type === "Episode" || type === "Season") && !parentGuid) return;
                     onOpenItem({
-                      guid: parentGuid || guid,
+                      guid: openType === "TV" ? parentGuid : guid,
                       title: mainTitle,
                       tv_title: tvTitle || undefined,
-                      // [lc-1774] guid 已归一到剧级，type 必须同步归一：集条目透传 "Episode"
-                      // 会让详情页 isSeries 判否 → 整卡进「电影详情页」（剧数据+电影版式全错乱）
-                      type: type === "Episode" || type === "Season" ? "TV" : type,
+                      type: openType,
                       poster,
                       season_number: sn,
                       episode_number: en,

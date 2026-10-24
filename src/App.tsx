@@ -1321,6 +1321,7 @@ function App() {
             <div className={`view-pane active${detailClosing ? " view-out" : " view-in"}${view !== "detail" ? " pane-exit" : ""}`}>
               {/* [lc-1444] 返回目标按进详情的来源（detailFrom）决定，不用 view/activeLib 现猜 */}
               <DetailView
+                key={detailItem.guid}
                 base={detailItem}
                 continueList={continueList}
                 webrsOn={!!settings.webrsPanelEnabled}

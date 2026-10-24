@@ -1508,6 +1508,19 @@ export function SettingsPanel({
                       >
                         添加源
                       </button>
+                      {/* [lc-1785] 内置浏览器打开注册页：注册后开「允许匿名下载」，复制 Api-Key 粘到上面 token 框 */}
+                      <button
+                        className="set-btn"
+                        title="用内置浏览器打开 OpenSubtitles 注册/管理页；拿到 Api-Key 后粘到上面的 token 框（不填则用应用内置共享 Key）"
+                        onClick={() => {
+                          void invoke("open_browser_window", {
+                            url: "https://www.opensubtitles.com/zh-cn-cn/consumers",
+                            title: "OpenSubtitles · 注册 / API Key",
+                          }).catch((e) => setSubNote(String(e)));
+                        }}
+                      >
+                        注册 OpenSubtitles
+                      </button>
                       <span className="set-note">{subNote}</span>
                     </div>
                   </div>

@@ -112,6 +112,36 @@ impl Default for AppState {
 
 // ───────────────────────── 配置 ─────────────────────────
 
+/// [lc-1785] 内置浏览器窗口（可见 WebView）：打开外部注册/管理页（首个使用方：
+/// OpenSubtitles Api-Key 注册）。同 label 单例复用——已开则导航到新 URL 并前置。
+/// · additionalBrowserArgs 与主窗完全一致（0x8007139F 对齐红线，见 webrs_webview.rs）；
+/// · 外部页面不经 IPC，capability 无需放行；关闭由用户自理（随 App 退出销毁）。
+#[tauri::command]
+async fn open_browser_window(app: AppHandle, url: String, title: String) -> Result<(), String> {
+    use tauri::Manager;
+    const LABEL: &str = "app-browser";
+    if let Some(w) = app.get_webview_window(LABEL) {
+        // 已开：导航 + 前置（eval 异步发火即可，失败不致命——用户可手动刷新）
+        let u = url.replace('\\', "\\\\").replace('\'', "\\'");
+        let _ = w.eval(&format!("location.href='{u}'"));
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    let mut b = tauri::webview::WebviewWindowBuilder::new(
+        &app,
+        LABEL,
+        tauri::WebviewUrl::External(url.parse().map_err(|e| format!("URL 非法: {e}"))?),
+    )
+    .title(&title)
+    .inner_size(980.0, 1040.0)
+    .min_inner_size(640.0, 560.0)
+    .center();
+    if let Some(args) = crate::webrs_webview::main_window_browser_args(&app) {
+        b = b.additional_browser_args(&args);
+    }
+    b.build().map(|_| ()).map_err(|e| format!("打开内置浏览器失败: {e}"))
+}
+
 #[tauri::command]
 async fn get_config(state: State<'_, AppState>) -> Result<Config, String> {
     Ok(state.config.read().await.clone())
@@ -3378,6 +3408,7 @@ pub fn run() {
             subtitle_sources::subtitle_sources_set,
             subtitle_sources::subtitle_search,
             subtitle_sources::subtitle_download,
+            open_browser_window,
             player_stop,
             mpv_toggle_pause,
             player_source,

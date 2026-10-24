@@ -501,6 +501,19 @@ async fn get_continue_watching(state: State<'_, AppState>) -> Result<Value, Stri
             }
         }
         crate::history::enrich_series(list, &cfg.server, &cfg.token).await;
+        // [lc-1774] 富化出剧 guid 后**直接改写条目**为剧级形态（guid=剧、type=TV）：
+        // 前端卡片原样透传即可，不再依赖它自己挑 guid 字段（挑错就是 Season 1 / 错剧）。
+        // 保留 season/episode 号供详情页定位；电影条目（type=Movie/Video）不动。
+        for it in list.iter_mut() {
+            let t = it.get("type").and_then(|x| x.as_str()).unwrap_or("");
+            if t == "Episode" || t == "Season" {
+                let series = it.get("seriesGuid").and_then(|x| x.as_str()).unwrap_or("");
+                if !series.is_empty() {
+                    it["guid"] = json!(series);
+                    it["type"] = json!("TV");
+                }
+            }
+        }
     }
     Ok(v)
 }

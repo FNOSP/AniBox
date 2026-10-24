@@ -1200,7 +1200,10 @@ pub async fn enrich_series(items: &mut [Value], server: &str, token: &str) {
         for (i, sg) in chunk {
             let key = format!("detail:item:{}", sg);
             if let Some(v) = crate::disk_cache::json_get(&key, crate::DETAIL_TTL_SECS) {
-                apply_enrich(&mut items[*i], &v);
+                // [lc-1774] 缓存存的是完整响应外壳（{code,data}），字段在 data 里 ——
+                // 此前直接把外壳喂给 apply_enrich，parent_guid 永远读不到 → 富化从没生效
+                let inner = v.get("data").unwrap_or(&v);
+                apply_enrich(&mut items[*i], inner);
             } else if budget > 0 {
                 budget -= 1;
                 pending.push((*i, sg.clone()));
@@ -1225,7 +1228,8 @@ pub async fn enrich_series(items: &mut [Value], server: &str, token: &str) {
         while let Some(joined) = set.join_next().await {
             if let Ok((i, sg, Ok(v))) = joined {
                 crate::disk_cache::json_put(&format!("detail:item:{}", sg), &v);
-                apply_enrich(&mut items[i], &v);
+                let inner = v.get("data").unwrap_or(&v); // [lc-1774] 同上：剥响应外壳
+                apply_enrich(&mut items[i], inner);
             }
         }
     }

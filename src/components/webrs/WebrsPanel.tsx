@@ -33,6 +33,15 @@ export type WebrsCatalogItem = {
   lastUpdate?: number;
 };
 export type WebrsUpdateItem = { name: string; localVersion: string; remoteVersion: string };
+// [lc-1757] 在线采集源目录条目（Rust MaccmsCatalogItem + 安装态）
+export type MaccmsCatItem = {
+  name: string;
+  version: string;
+  api: string;
+  installed: boolean;
+  localVersion: string;
+  updatable: boolean;
+};
 
 
 export const WEBRS_ENABLED_KEY = "anibox.webrs.enabledSources";
@@ -97,6 +106,11 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
   const [testing, setTesting] = useState(false);
   // [lc-1608] 在线规则目录：目录列表 + 可更新项 + 检查进度 + 行内安装/更新忙态
   const [catalog, setCatalog] = useState<WebrsCatalogItem[] | null>(null);
+  // [lc-1757] 在线采集源目录（TMDB 剧集侧）
+  const [mcat, setMcat] = useState<MaccmsCatItem[] | null>(null);
+  const [mcatBusy, setMcatBusy] = useState(false);
+  const [mcatMsg, setMcatMsg] = useState<{ kind: "ok" | "err" | "note"; text: string } | null>(null);
+  const [mcatBusyName, setMcatBusyName] = useState("");
   const [updates, setUpdates] = useState<WebrsUpdateItem[]>([]);
   const [catBusy, setCatBusy] = useState(false);
   const [catMsg, setCatMsg] = useState<{ kind: "ok" | "err" | "note"; text: string } | null>(null);
@@ -647,6 +661,47 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
     return m;
   }, [updates]);
 
+  // ───────── [lc-1757] 在线采集源目录：检查 / 安装 / 更新 ─────────
+  const checkMCatalog = useCallback(
+    async (force: boolean) => {
+      if (mcatBusy) return;
+      setMcatBusy(true);
+      setMcatMsg({ kind: "note", text: force ? "正在刷新在线采集源…" : "正在读取在线采集源…" });
+      try {
+        const c = await invoke<{ items: MaccmsCatItem[] }>("webrs_maccms_catalog", { force });
+        setMcat(c.items ?? []);
+        const up = (c.items ?? []).filter((x) => x.updatable).length;
+        const miss = (c.items ?? []).filter((x) => !x.installed).length;
+        setMcatMsg({
+          kind: "ok",
+          text: `目录 ${c.items?.length ?? 0} 条采集源：${miss} 条未安装、${up} 条可更新`,
+        });
+      } catch (e) {
+        setMcatMsg({ kind: "err", text: String(e) });
+      } finally {
+        setMcatBusy(false);
+      }
+    },
+    [mcatBusy],
+  );
+
+  const installMaccms = useCallback(
+    async (name: string) => {
+      if (mcatBusyName) return;
+      setMcatBusyName(name);
+      try {
+        await invoke("webrs_maccms_install", { name });
+        await refreshRules();
+        await checkMCatalog(true);
+      } catch (e) {
+        setMcatMsg({ kind: "err", text: String(e) });
+      } finally {
+        setMcatBusyName("");
+      }
+    },
+    [mcatBusyName, refreshRules, checkMCatalog],
+  );
+
   const checkUpdates = useCallback(async (force: boolean) => {
     if (catBusy) return;
     setCatBusy(true);
@@ -1032,6 +1087,56 @@ export function WebrsPanel({ title, kind }: { title: string; kind?: "kazumi" | "
                 </div>
               )}
               </div>
+
+              {/* [lc-1757] 在线采集源目录（上游 = AniBox 仓库 docs/maccms-catalog/）：
+                  检查更新 / 逐条安装·更新。仅采集源视图显示（与 Kazumi 规则目录两版分开）。 */}
+              {kind === "maccms" && (
+              <div className="webrs-cat">
+                <div className="webrs-cat-hd">
+                  <span className="webrs-cat-title">在线采集源</span>
+                  <button onClick={() => checkMCatalog(true)} disabled={mcatBusy}>
+                    {mcatBusy ? "检查中…" : "检查更新"}
+                  </button>
+                </div>
+                {mcatMsg && (
+                  <div className={`webrs-cat-msg ${mcatMsg.kind === "err" ? "err" : mcatMsg.kind === "ok" ? "ok" : ""}`}>
+                    {mcatMsg.text}
+                  </div>
+                )}
+                {mcat && (
+                  <div className="webrs-cat-list">
+                    {mcat.map((x) => {
+                      const state = !x.installed ? "new" : x.updatable ? "update" : "installed";
+                      return (
+                        <div key={x.name} className="webrs-cat-row">
+                          <span className="webrs-cat-name" title={x.api}>{x.name}</span>
+                          <span className="webrs-cat-ver">v{x.version}</span>
+                          <span className={`webrs-cat-state ${state}`}>
+                            {state === "new"
+                              ? "未装"
+                              : state === "update"
+                                ? `可更新 v${x.localVersion} → v${x.version}`
+                                : `已装 v${x.localVersion || x.version}`}
+                          </span>
+                          {state !== "installed" && (
+                            <button
+                              className="webrs-cat-act"
+                              disabled={mcatBusyName === x.name || mcatBusy}
+                              onClick={() => installMaccms(x.name)}
+                            >
+                              {mcatBusyName === x.name ? "…" : state === "new" ? "安装" : "更新"}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {!mcat && !mcatBusy && (
+                  <div className="webrs-note">点「检查更新」拉取在线采集源目录（带 6 小时缓存）</div>
+                )}
+              </div>
+              )}
 
               {/* [lc-1608] 在线规则目录（KazumiRules index.json）：检查更新 / 逐条安装·更新 / 全部更新。
                   [lc-1755] 属 Kazumi 规则源生态 —— 采集源视图隐藏（两版彻底分开）。 */}

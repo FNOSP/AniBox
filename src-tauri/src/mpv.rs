@@ -682,7 +682,10 @@ impl MpvSession {
                 #[cfg(target_os = "windows")]
                 {
                     // tasklist 查一下即可（轮询频率低，代价可接受）
-                    let out = tokio::process::Command::new("tasklist")
+                    let mut probe = tokio::process::Command::new("tasklist");
+                    #[cfg(target_os = "windows")]
+                    probe.creation_flags(0x0800_0000); // CREATE_NO_WINDOW：轮询高频，不隐藏会狂闪 cmd 窗
+                    let out = probe
                         .args(["/FI", &format!("PID eq {pid}"), "/NH"])
                         .output()
                         .await;
@@ -735,7 +738,11 @@ impl MpvSession {
             #[cfg(target_os = "windows")]
             {
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                let _ = tokio::process::Command::new("taskkill")
+                #[allow(unused_mut)]
+                let mut kill = tokio::process::Command::new("taskkill");
+                #[cfg(target_os = "windows")]
+                kill.creation_flags(0x0800_0000);
+                let _ = kill
                     .args(["/F", "/PID", &pid.to_string()])
                     .output()
                     .await;

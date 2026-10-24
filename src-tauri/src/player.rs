@@ -203,7 +203,11 @@ pub async fn stop_potplayer(app: &AppHandle, state: &AppState, emit_end: bool) {
     POTPLAYER_GEN.fetch_add(1, Ordering::SeqCst);
     let pid = state.potplayer_pid.lock().await.take();
     if let Some(pid) = pid {
-        let ok = tokio::process::Command::new("taskkill")
+        #[allow(unused_mut)]
+        let mut kill = tokio::process::Command::new("taskkill");
+        #[cfg(target_os = "windows")]
+        kill.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        let ok = kill
             .args(["/F", "/PID", &pid.to_string()])
             .output()
             .await
@@ -211,7 +215,11 @@ pub async fn stop_potplayer(app: &AppHandle, state: &AppState, emit_end: bool) {
             .unwrap_or(false);
         if !ok {
             // PID 已失效/被重启：按镜像名兜底（只针对我们刚记录的 PotPlayer 进程）
-            let _ = tokio::process::Command::new("taskkill")
+            #[allow(unused_mut)]
+            let mut kill2 = tokio::process::Command::new("taskkill");
+            #[cfg(target_os = "windows")]
+            kill2.creation_flags(0x0800_0000);
+            let _ = kill2
                 .args(["/F", "/IM", "PotPlayerMini64.exe"])
                 .output()
                 .await;
@@ -668,7 +676,10 @@ pub fn schedule_potplayer_panel_append(path: String, urls: Vec<String>, generati
 }
 
 async fn pid_alive(pid: u32) -> bool {
-    let out = tokio::process::Command::new("tasklist")
+    let mut probe = tokio::process::Command::new("tasklist");
+    #[cfg(target_os = "windows")]
+    probe.creation_flags(0x0800_0000); // CREATE_NO_WINDOW：轮询高频，不隐藏会狂闪 cmd 窗
+    let out = probe
         .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
         .output()
         .await;

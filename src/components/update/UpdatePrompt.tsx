@@ -14,6 +14,51 @@ import { asText, formatSpeed, versionLabel } from "../../lib/update";
 
 const STAR_URL = "https://github.com/FNOSP/AniBox";
 
+/** [lc-1776] 极简 markdown → HTML（更新日志渲染；不引入依赖）：
+ *  支持标题/加粗/行内代码/无序列表/引用/水平线/链接/表格；其余按段落文本。
+ *  先整体转义，再做行内替换，杜绝日志内容注入 HTML。 */
+function escHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function inlineMd(s: string): string {
+  return escHtml(s)
+    .replace(/`([^`]+)`/g, '<code class="upx-md-code">$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+}
+function mdToHtml(md: string): string {
+  const lines = md.replace(/\r/g, "").split("\n");
+  const out: string[] = [];
+  let inList = false;
+  let tableRows: string[][] = [];
+  const flushList = () => { if (inList) { out.push("</ul>"); inList = false; } };
+  const flushTable = () => {
+    if (!tableRows.length) return;
+    const rows = tableRows.filter((r) => !r.every((c) => /^-{2,}$/.test(c.trim().replace(/\|/g, "")) || c.trim() === ""));
+    if (rows.length) {
+      const th = rows[0].map((c) => `<th>${inlineMd(c.trim())}</th>`).join("");
+      const trs = rows.slice(1).map((r) => `<tr>${r.map((c) => `<td>${inlineMd(c.trim())}</td>`).join("")}</tr>`).join("");
+      out.push(`<table class="upx-md-table"><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`);
+    }
+    tableRows = [];
+  };
+  for (const line of lines) {
+    const t = line.trim();
+    if (/^\|.*\|$/.test(t)) { flushList(); tableRows.push(t.slice(1, -1).split("|")); continue; }
+    flushTable();
+    if (!t) { flushList(); continue; }
+    const h = /^(#{1,4})\s+(.*)$/.exec(t);
+    if (h) { flushList(); const lv = Math.min(h[1].length + 1, 5); out.push(`<h${lv} class="upx-md-h">${inlineMd(h[2])}</h${lv}>`); continue; }
+    if (/^(---+|\*\*\*+)$/.test(t)) { flushList(); out.push('<hr class="upx-md-hr" />'); continue; }
+    if (t.startsWith("> ")) { flushList(); out.push(`<blockquote class="upx-md-quote">${inlineMd(t.slice(2))}</blockquote>`); continue; }
+    if (/^[-*+]\s+/.test(t)) { if (!inList) { out.push('<ul class="upx-md-ul">'); inList = true; } out.push(`<li>${inlineMd(t.replace(/^[-*+]\s+/, ""))}</li>`); continue; }
+    flushList();
+    out.push(`<p class="upx-md-p">${inlineMd(t)}</p>`);
+  }
+  flushList(); flushTable();
+  return out.join("\n");
+}
+
 /** 用系统默认浏览器打开外链（同 SettingsPanel / FeedbackPanel 的做法）。 */
 async function openExternal(url: string) {
   try {
@@ -198,7 +243,11 @@ export function UpdatePrompt({
 
         <div className="upx-body">
           {/* 纯文本渲染：React 默认转义，不解析/执行 HTML */}
-          <pre className="upx-notes">{info.notes.trim() || "本次更新暂无详细说明。"}</pre>
+          {/* [lc-1776] 更新日志按 markdown 渲染（此前 <pre> 裸文本暴露 # ** 等符号） */}
+          <div
+            className="upx-notes upx-md"
+            dangerouslySetInnerHTML={{ __html: mdToHtml(info.notes.trim() || "本次更新暂无详细说明。") }}
+          />
 
           {progress && (
             <div className="upx-progress">

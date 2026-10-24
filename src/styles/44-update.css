@@ -129,6 +129,18 @@ html.dark .upx-chip.hot {
   padding: 14px 22px;
   overscroll-behavior: contain;
 }
+.upx-md :where(h2, h3, h4, h5) { margin: 12px 0 6px; font-size: 14px; font-weight: 700; color: var(--text-strong); }
+.upx-md .upx-md-p { margin: 4px 0; }
+.upx-md .upx-md-ul { margin: 4px 0 4px 18px; padding: 0; }
+.upx-md .upx-md-ul li { margin: 2px 0; }
+.upx-md .upx-md-quote { margin: 6px 0; padding: 4px 10px; border-left: 3px solid var(--accent); color: var(--muted); }
+.upx-md .upx-md-code { background: var(--hover); border-radius: 4px; padding: 0 4px; font-family: Consolas, monospace; font-size: 11px; }
+.upx-md .upx-md-hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
+.upx-md .upx-md-table { border-collapse: collapse; margin: 8px 0; font-size: 12px; }
+.upx-md .upx-md-table th, .upx-md .upx-md-table td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+.upx-md .upx-md-table th { background: var(--hover); font-weight: 600; }
+.upx-md a { color: var(--accent); }
+
 .upx-notes {
   margin: 0;
   max-height: min(38vh, 280px);

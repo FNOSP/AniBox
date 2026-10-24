@@ -45,7 +45,7 @@ export function HomeView({
   carouselLogoOn: boolean;
   /** [lc-1439] 启动页设置：`"continue"` = 首页加载后自动滚到「继续观看」 */
   launchPage: "home" | "continue";
-  libRows: { lib: Lib; items: MediaItem[] }[];
+  libRows: { lib: Lib; items: MediaItem[]; total: number }[];
   onOpenLib: (lib: Lib) => void;
   /** [lc-1647] 首页横排里点到「未识别文件夹」→ 直接开库并钻到该层（个人视频/网盘库的根层就是文件夹） */
   onOpenFolder: (lib: Lib, folder: MediaItem) => void;
@@ -405,12 +405,14 @@ export function HomeView({
       {/* 按库顺序的剧集横排（隐藏的库不展示） */}
       {libRows
         .filter(({ lib }) => !hiddenLibs.includes(lib.guid))
-        .map(({ lib, items }) =>
+        .map(({ lib, items, total }) =>
         items.length > 0 ? (
           <section className="home-sec" key={lib.guid}>
             <div className="section-head">
               <h3>{lib.title}</h3>
-              <span className="muted">{items.length} 项</span>
+              {/* [lc-1773] 库总数用服务端 total（分页后 items 恒为首页 60 条，
+                  显示 items.length 会恒为 60）；total 缺失回落已加载数 */}
+              <span className="muted">{total > 0 ? total : items.length} 项</span>
               <span className="row-more" onClick={() => onOpenLib(lib)}>
                 全部 ›
               </span>

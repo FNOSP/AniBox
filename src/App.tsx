@@ -37,7 +37,7 @@ import { useFeedbackUnread } from "./hooks/useFeedbackUnread";
 import { usePlaybackProgress } from "./hooks/usePlaybackProgress";
 import { RefreshContext } from "./hooks/useRefresh";
 import { focusNav } from "./lib/focusNav";
-import { fetchLibItems } from "./lib/api";
+import { fetchLibPage } from "./lib/api";
 import { pick } from "./lib/format";
 import { bgmImg, pickImgStr, pickLargestImg, tmdbImg } from "./lib/images";
 import { prefersReducedMotion } from "./lib/motion";
@@ -63,7 +63,7 @@ function App() {
   const [carousel, setCarousel] = useState<MediaItem[]>([]);
   const [carouselBds, setCarouselBds] = useState<Record<string, string>>({});
   const [carouselLogos, setCarouselLogos] = useState<Record<string, string>>({});
-  const [libRows, setLibRows] = useState<{ lib: Lib; items: MediaItem[] }[]>([]);
+  const [libRows, setLibRows] = useState<{ lib: Lib; items: MediaItem[]; total: number }[]>([]);
   // 首页不展示的媒体库（仅影响首页媒体库条与按库横排；localStorage 持久化）
   const [hiddenLibs, setHiddenLibs] = useState<string[]>(() => {
     try {
@@ -452,7 +452,7 @@ function App() {
       setLibs(libsArr);
       setContinueList(contArr);
       setCarousel(carList);
-      setLibRows(libsArr.map((l) => ({ lib: l, items: [] })));
+      setLibRows(libsArr.map((l) => ({ lib: l, items: [], total: 0 })));
       setPage("home");
       setView("home");
 
@@ -552,11 +552,11 @@ function App() {
       // [lc-112] 原来只有 .then() 没有 .catch()：任何一个库取数失败都会被静默吞掉，
       // 该库 items 永远为空 ⇒ 整排不渲染（首页看起来"少了几个库"），且没有任何报错提示。
       libsArr.forEach((lib, idx) => {
-        fetchLibItems(lib.guid, null)
-          .then((items) => {
+        fetchLibPage(lib.guid, null, 1)
+          .then(({ list, total }) => {
             setLibRows((rows) => {
               const next = [...rows];
-              if (next[idx]) next[idx] = { lib, items };
+              if (next[idx]) next[idx] = { lib, items: list, total };
               return next;
             });
           })
@@ -1079,23 +1079,25 @@ function App() {
             const rows0 =
               Array.isArray(c.libRows) && c.libRows.length
                 ? c.libRows
-                : c.libs.map((l: Lib) => ({ lib: l, items: [] }));
+                : c.libs.map((l: Lib) => ({ lib: l, items: [], total: 0 }));
             setLibRows(rows0);
             // [lc-112] 快照直出后**仍要把各库第一页补齐**：快照里 items 常是空的
             // （写快照那一刻往往还没填完），空 items ⇒ 整排不渲染；而 restored=true
             // 意味着不会再走完整加载 —— 结果就是"首页只剩继续观看"，且 30 分钟内反复出现。
-            rows0.forEach((row: { lib: Lib; items: MediaItem[] }, idx: number) => {
-              if (row.items.length) return;
-              fetchLibItems(row.lib.guid, null)
-                .then((items) => {
-                  setLibRows((prev) => {
-                    const next = [...prev];
-                    if (next[idx]) next[idx] = { lib: next[idx].lib, items };
-                    return next;
-                  });
-                })
-                .catch((e) => setErr(`加载媒体库「${row.lib.title}」失败：${String(e)}`));
-            });
+            rows0.forEach(
+              (row: { lib: Lib; items: MediaItem[]; total?: number }, idx: number) => {
+                if (row.items.length) return;
+                fetchLibPage(row.lib.guid, null, 1)
+                  .then((pg: { list: MediaItem[]; total: number }) => {
+                    setLibRows((prev) => {
+                      const next = [...prev];
+                      if (next[idx])
+                        next[idx] = { lib: next[idx].lib, items: pg.list, total: pg.total };
+                      return next;
+                    });
+                  })
+                  .catch((e) => setErr(`加载媒体库「${row.lib.title}」失败：${String(e)}`));
+              });
             setPage("home");
             setView("home");
             restored = true;

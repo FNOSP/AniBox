@@ -20,6 +20,7 @@ const KEYS: &[(&str, &str)] = &[
 
 fn main() {
     emit_authx_materials();
+    emit_opensub_key();
     emit_common_controls_dependency();
     tauri_build::build()
 }
@@ -94,6 +95,39 @@ fn emit_authx_materials() {
             "cargo:warning=未注入飞牛签名材料（secrets/fn-authx.local 不存在或为空），\
              相关功能将不可用；配置方法见 docs/SECURITY-notes.md"
         );
+    }
+}
+
+/// [lc-1784] OpenSubtitles 内置共享 Api-Key（可选功能，缺失不致命）。
+/// 来源：`<repo>/secrets/opensubtitles.local`（**单行裸 key**，gitignore 覆盖；示例见
+/// `opensubtitles.local.example`）。注入 `ANIBOX_OPENSUB_KEY` 供
+/// subtitle_sources::BUILTIN_OPENSUB_KEY 编译期常量使用。
+/// 官方口径（forum.opensubtitles.com t/8038）：应用内置消费级 key 是预期模式（一应用一 key）；
+/// 匿名下载配额按 **IP + key** 计（每用户每天 ~5 次下载），不随用户数挤兑。
+/// 注册注意：key 设置里必须开启「允许匿名下载」，否则 /download 一律 401。
+fn emit_opensub_key() {
+    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default());
+    let repo_root = manifest.parent().map(Path::to_path_buf).unwrap_or(manifest);
+    let file = repo_root.join("secrets").join("opensubtitles.local");
+    if file.is_file() {
+        println!("cargo:rerun-if-changed={}", file.display());
+    }
+    let value = std::fs::read_to_string(&file)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            std::env::var("ANIBOX_OPENSUB_KEY")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        });
+    match value {
+        Some(v) => println!("cargo:rustc-env=ANIBOX_OPENSUB_KEY={v}"),
+        None => println!(
+            "cargo:warning=未注入 ANIBOX_OPENSUB_KEY（secrets/opensubtitles.local 缺失）：\
+             OpenSubtitles 字幕源将不可用（可选功能，其余源不受影响）"
+        ),
     }
 }
 

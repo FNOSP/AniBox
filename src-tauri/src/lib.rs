@@ -3041,6 +3041,8 @@ pub fn run() {
             // VEH 崩溃记录器：任意致命异常（D3D 视频输出崩因定位）写出异常码+故障模块+偏移，
             // 落 %TEMP%/anibox.log（lc-082 视频输出专项）
             libmpv::install_crash_logger();
+            // [lc-1784] OpenSubtitles 内置共享 Key 落地（供 mpv 侧 sub-assrt.lua 读；空则清理）
+            subtitle_sources::sync_builtin_key(app.handle());
             // [update] 载入前端补丁覆盖层指针；release 且存在补丁时切到 fntvweb 协议
             update::init(app.handle());
             // 启动时从磁盘读回配置（token/路径），否则每次重启都要重新登录

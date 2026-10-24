@@ -23,6 +23,30 @@ const MAX_SOURCES: usize = 12;
 /// 内置共享 assrt token（与 sub-assrt.lua 的默认一致；用户可在设置里换成自己的）。
 const DEFAULT_ASSRT_TOKEN: &str = "tNjXZUnOJWcHznHDyalNMYqqP6IdDdpQ";
 
+/// [lc-1784] OpenSubtitles 内置共享 Api-Key：构建期由 secrets/opensubtitles.local 注入
+/// （见 build.rs emit_opensub_key）。官方预期「一应用一 key」模式；匿名下载配额按
+/// IP+key 计（每用户约 5 次/天），内置不会随用户数挤兑。未注入 = 空串 = 源不可用（非致命）。
+const BUILTIN_OPENSUB_KEY: &str = match option_env!("ANIBOX_OPENSUB_KEY") {
+    Some(v) => v,
+    None => "",
+};
+
+/// 生效的 OpenSubtitles key：用户自配优先，否则内置共享。
+fn effective_osub_key(list: &[SubtitleSource]) -> Option<String> {
+    if let Some(k) = list
+        .iter()
+        .find(|s| s.kind == "opensubtitles" && s.enabled && !s.token.trim().is_empty())
+        .map(|s| s.token.trim().to_string())
+    {
+        return Some(k);
+    }
+    if BUILTIN_OPENSUB_KEY.is_empty() {
+        None
+    } else {
+        Some(BUILTIN_OPENSUB_KEY.to_string())
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct SubtitleSource {
@@ -54,6 +78,13 @@ fn defaults() -> Vec<SubtitleSource> {
             kind: "assrt".into(),
             name: "assrt.net".into(),
             token: DEFAULT_ASSRT_TOKEN.into(),
+            enabled: true,
+        },
+        SubtitleSource {
+            kind: "opensubtitles".into(),
+            name: "OpenSubtitles".into(),
+            // 空 = 内置共享 Key（构建期注入；未注入时该源自动跳过）
+            token: String::new(),
             enabled: true,
         },
     ]
@@ -94,8 +125,9 @@ pub async fn subtitle_sources_set(app: AppHandle, sources: Vec<SubtitleSource>) 
         if !valid_kind(&s.kind) {
             return Err(format!("第 {} 个源的 kind 非法（assrt/opensubtitles/xunlei）", i + 1));
         }
-        if s.kind != "xunlei" && s.token.trim().is_empty() {
-            return Err(format!("「{}」需要填写 token / Api-Key", s.name));
+        // [lc-1784] OpenSubtitles token 可留空 = 用内置共享 Key；assrt 必填（有内置兜底 token，空即恢复默认）
+        if s.kind == "assrt" && s.token.trim().is_empty() {
+            return Err(format!("「{}」需要填写 token", s.name));
         }
         if s.name.trim().is_empty() {
             return Err(format!("第 {} 个源缺少名称", i + 1));
@@ -240,6 +272,20 @@ fn effective_assrt_token(list: &[SubtitleSource]) -> String {
         .unwrap_or_else(|| DEFAULT_ASSRT_TOKEN.to_string())
 }
 
+/// [lc-1784] 启动时把内置共享 Key 落地到 `app_data_dir/opensub-builtin.key`
+/// （仅本机；与用户在 subtitle-sources.json 自填 key 同等暴露面），供 mpv 侧
+/// sub-assrt.lua 读取——否则 lua 拿不到编译期注入的常量。内置为空则删掉旧文件。
+pub fn sync_builtin_key(app: &AppHandle) {
+    let Ok(dir) = app.path().app_data_dir() else { return };
+    let p = dir.join("opensub-builtin.key");
+    if BUILTIN_OPENSUB_KEY.is_empty() {
+        let _ = std::fs::remove_file(&p);
+        return;
+    }
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(&p, BUILTIN_OPENSUB_KEY);
+}
+
 fn source_item(kind: &str, id: &str, title: &str, hint: &str) -> Value {
     json!({ "kind": kind, "id": id, "title": title, "hint": hint })
 }
@@ -277,10 +323,8 @@ pub async fn subtitle_search(query: String) -> Result<Value, String> {
     }
     let list = read_list().await;
     let token = effective_assrt_token(&list);
-    let osub_key = list
-        .iter()
-        .find(|s| s.kind == "opensubtitles" && s.enabled && !s.token.trim().is_empty())
-        .map(|s| s.token.trim().to_string());
+    let osub_key = effective_osub_key(&list);
+    let want_osub = list.iter().any(|s| s.kind == "opensubtitles" && s.enabled);
     let want_xunlei = list.iter().any(|s| s.kind == "xunlei" && s.enabled);
     let want_assrt = list.iter().any(|s| s.kind == "assrt" && s.enabled);
 
@@ -347,11 +391,15 @@ pub async fn subtitle_search(query: String) -> Result<Value, String> {
         out
     };
     let osub_fut = async {
+        if !want_osub {
+            return Vec::new();
+        }
         let Some(key) = osub_key else { return Vec::new() };
         let url = format!("https://api.opensubtitles.com/api/v1/subtitles?query={enc}&languages=zh-cn,zh,en");
         let Ok(resp) = http_client()
             .get(&url)
             .header("Api-Key", &key)
+            .header("User-Agent", "AniBox v4")
             .send()
             .await
         else {
@@ -439,17 +487,14 @@ pub async fn subtitle_download(
         }
         "osub" => {
             let list = read_list().await;
-            let key = list
-                .iter()
-                .find(|s| s.kind == "opensubtitles" && s.enabled && !s.token.trim().is_empty())
-                .map(|s| s.token.trim().to_string());
-            let Some(key) = key else {
-                return Err("未配置 OpenSubtitles Api-Key".into());
+            let Some(key) = effective_osub_key(&list) else {
+                return Err("OpenSubtitles 不可用（未配置 Api-Key 且应用未内置）".into());
             };
             let fid = id.parse::<i64>().map_err(|_| "file_id 非法")?;
             let v: Value = http_client()
                 .post("https://api.opensubtitles.com/api/v1/download")
                 .header("Api-Key", &key)
+                .header("User-Agent", "AniBox v4")
                 .json(&json!({ "file_id": fid }))
                 .send()
                 .await

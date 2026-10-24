@@ -1464,7 +1464,7 @@ export function SettingsPanel({
                             className="set-input"
                             style={{ flex: 1 }}
                             value={s.token}
-                            placeholder={s.kind === "assrt" ? "assrt token（空=内置共享）" : "OpenSubtitles Api-Key（必填）"}
+                            placeholder={s.kind === "assrt" ? "assrt token（空=内置共享）" : "OpenSubtitles Api-Key（留空=应用内置共享 Key）"}
                             onChange={(e) => {
                               const next = subSources.map((x, j) => (j === i ? { ...x, token: e.target.value } : x));
                               setSubSources(next);

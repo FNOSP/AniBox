@@ -570,6 +570,10 @@ export type AppSettings = {
   subOsubKey?: string;
   /** [lc-1790] ACG 论坛账号（回显仅 Set；写入口成对提交，空=登出） */
   acgUserSet?: boolean;
+  /** [lc-1791] SubHD 账号（回显仅 Set） */
+  subhdEmailSet?: boolean;
+  subhdEmail?: string;
+  subhdPass?: string;
   acgUser?: string;
   acgPass?: string;
   danmuApiBase: string;

@@ -871,6 +871,8 @@ export function SettingsPanel({
   const [subKeyOsub, setSubKeyOsub] = useState("");
   const [acgUser, setAcgUser] = useState("");
   const [acgPass, setAcgPass] = useState("");
+  const [sbEmail, setSbEmail] = useState("");
+  const [sbPass, setSbPass] = useState("");
   const [ddNote, setDdNote] = useState("");
   const ddLoaded = useRef(false);
 
@@ -1447,7 +1449,7 @@ export function SettingsPanel({
                           className={`sp-badge sp-${s.kind === "opensubtitles" ? "osub" : s.kind === "acgrip" ? "assrt" : s.kind}`}
                           style={{ flex: "0 0 92px", textAlign: "center" }}
                         >
-                          {s.kind === "xunlei" ? "迅雷" : s.kind === "assrt" ? "assrt" : s.kind === "acgrip" ? "ACG" : "OpenSubs"}
+                          {s.kind === "xunlei" ? "迅雷" : s.kind === "assrt" ? "assrt" : s.kind === "acgrip" ? "ACG" : s.kind === "subhd" ? "SubHD" : "OpenSubs"}
                         </span>
                         <input
                           className="set-input"
@@ -1497,6 +1499,7 @@ export function SettingsPanel({
                         <option value="assrt">assrt.net</option>
                         <option value="opensubtitles">OpenSubtitles</option>
                         <option value="acgrip">ACG 论坛</option>
+                        <option value="subhd">SubHD</option>
                       </select>
                       <input
                         className="set-input"
@@ -1519,7 +1522,7 @@ export function SettingsPanel({
                         onClick={() => {
                           const it: SubSource = {
                             kind: subNewKind,
-                            name: subNewName.trim() || (subNewKind === "xunlei" ? "迅雷" : subNewKind === "assrt" ? "assrt.net" : subNewKind === "acgrip" ? "ACG 论坛" : "OpenSubtitles"),
+                            name: subNewName.trim() || (subNewKind === "xunlei" ? "迅雷" : subNewKind === "assrt" ? "assrt.net" : subNewKind === "acgrip" ? "ACG 论坛" : subNewKind === "subhd" ? "SubHD" : "OpenSubtitles"),
                             token: subNewToken.trim(),
                             useBuiltin: subNewToken.trim() === "",
                             enabled: true,
@@ -1620,6 +1623,41 @@ export function SettingsPanel({
                           setAcgUser("");
                           setAcgPass("");
                           setSubNote(has ? "论坛账号已保存（下次搜索时自动登录）" : "已登出 ACG 论坛（游客模式搜索）");
+                        }}
+                      >
+                        保存账号
+                      </button>
+                    </div>
+                    {/* [lc-1791] SubHD 账号（搜索免登录；下载需免费账号，邮箱+密码） */}
+                    <div className="set-row" style={{ flexWrap: "wrap" }}>
+                      <span className="set-k" style={{ flex: "0 0 100%" }}>
+                        SubHD 账号（subhd.me，搜索免登录 · 下载需账号）
+                      </span>
+                      <input
+                        className="set-input"
+                        style={{ flex: 1 }}
+                        placeholder={settings.subhdEmailSet ? "邮箱已设置（清空保存=登出）" : "SubHD 邮箱"}
+                        onChange={(e) => setSbEmail(e.target.value)}
+                      />
+                      <input
+                        className="set-input"
+                        style={{ flex: 1 }}
+                        type="password"
+                        placeholder="SubHD 密码"
+                        onChange={(e) => setSbPass(e.target.value)}
+                      />
+                      <button
+                        className="set-btn"
+                        onClick={() => {
+                          const has = sbEmail.trim() !== "" && sbPass.trim() !== "";
+                          if (sbEmail.trim() !== "" && sbPass.trim() === "") {
+                            setSubNote("密码不能为空");
+                            return;
+                          }
+                          onSettings({ subhdEmail: sbEmail.trim(), subhdPass: sbPass.trim() });
+                          setSbEmail("");
+                          setSbPass("");
+                          setSubNote(has ? "SubHD 账号已保存（下载时自动登录）" : "已清空 SubHD 账号（仅游客搜索）");
                         }}
                       >
                         保存账号

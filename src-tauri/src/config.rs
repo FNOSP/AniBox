@@ -184,6 +184,11 @@ pub struct Config {
     pub acg_user: String,
     #[serde(default)]
     pub acg_pass: String,
+    /// [lc-1791] SubHD 账号（邮箱/密码；下载需免费账号，搜索免登录）。
+    #[serde(default)]
+    pub subhd_email: String,
+    #[serde(default)]
+    pub subhd_pass: String,
     /// 弹幕引擎："node"（默认，行为与接入前完全一致）| "rust"（Rust 直接接管 22347，
     /// 自建源三跳由 Rust 实现，B站/字幕端点反代到内部 Node 端口）。
     /// 环境变量 `ANIBOX_DANMAKU_ENGINE=rust` 可临时覆盖（便于测试）。
@@ -361,6 +366,8 @@ impl Default for Config {
             sub_osub_key: String::new(),
             acg_user: String::new(),
             acg_pass: String::new(),
+            subhd_email: String::new(),
+            subhd_pass: String::new(),
             danmu_engine: default_danmu_engine(),
             feedback_aid: String::new(),
             log_debug: true,

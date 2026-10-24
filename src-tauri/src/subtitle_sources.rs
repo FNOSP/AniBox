@@ -107,7 +107,7 @@ fn defaults() -> Vec<SubtitleSource> {
 }
 
 fn valid_kind(k: &str) -> bool {
-    k == "assrt" || k == "opensubtitles" || k == "xunlei" || k == "acgrip"
+    k == "assrt" || k == "opensubtitles" || k == "xunlei" || k == "acgrip" || k == "subhd"
 }
 
 /// 读列表（缺失/损坏 → 内置默认；坏项丢弃，面板一保存即修复）。
@@ -272,7 +272,7 @@ mod tests {
         assert!(valid_kind("assrt"));
         assert!(valid_kind("opensubtitles"));
         assert!(valid_kind("xunlei"));
-        assert!(!valid_kind("subhd"));
+        assert!(valid_kind("subhd"));
     }
 }
 
@@ -501,11 +501,26 @@ pub async fn subtitle_search(
         }
     };
 
-    let (a, b, c, d) = tokio::join!(xunlei_fut, assrt_fut, osub_fut, acg_fut);
+    // [lc-1791] SubHD：搜索免登录（下载才需要账号）
+    let subhd_fut = async {
+        if !list.iter().any(|s| s.kind == "subhd" && s.enabled) {
+            return Vec::new();
+        }
+        match subhd_search(&q).await {
+            Ok(v) => v,
+            Err(e) => {
+                crate::libmpv::trace(&format!("[subtitle] SubHD 源不可用: {e}"));
+                Vec::new()
+            }
+        }
+    };
+
+    let (a, b, c, d, e) = tokio::join!(xunlei_fut, assrt_fut, osub_fut, acg_fut, subhd_fut);
     let mut items = a;
     items.extend(b);
     items.extend(c);
     items.extend(d);
+    items.extend(e);
     Ok(json!({ "query": q, "items": items }))
 }
 
@@ -589,6 +604,36 @@ pub async fn subtitle_download(
         "acgrip" => {
             // 帖子 id → 页内第一个字幕附件直链
             acg_download(&id).await?
+        }
+        "subhd" => {
+            // [lc-1791] SubHD：prepare-download → /down 直链字节（自带 referer/cookie，独立落盘）
+            let (email, pass) = {
+                let cfg = state.config.read().await;
+                (cfg.subhd_email.trim().to_string(), cfg.subhd_pass.trim().to_string())
+            };
+            let (bytes, fname) = subhd_download(&id, &email, &pass).await?;
+            let dir = std::env::temp_dir().join("anibox-subtitles");
+            std::fs::create_dir_all(&dir).map_err(|e2| format!("建缓存目录失败: {e2}"))?;
+            let safe: String = fname
+                .chars()
+                .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
+                .collect();
+            let path = dir.join(format!("subhd_{}", safe));
+            std::fs::write(&path, &bytes).map_err(|e2| format!("字幕写盘失败: {e2}"))?;
+            let mut mounted = false;
+            let session = state.mpv.lock().await.clone();
+            if let Some(m) = session {
+                let title = safe.rsplit_once('.').map(|(t, _)| t.to_string()).unwrap_or_else(|| safe.clone());
+                mounted = m
+                    .command(json!(["sub-add", path.to_string_lossy(), "select", title]))
+                    .await
+                    .is_ok();
+            }
+            return Ok(json!({
+                "path": path.to_string_lossy(),
+                "title": safe,
+                "mounted": mounted,
+            }));
         }
         _ => return Err(format!("未知源类型 {kind}")),
     };
@@ -863,4 +908,188 @@ async fn acg_download(tid: &str) -> Result<(String, String), String> {
     let (aid, name) = pick.ok_or("帖子内没有找到字幕附件")?;
     let url = format!("{ACG_HOST}/forum.php?mod=attachment&aid={aid}");
     Ok((url, name))
+}
+
+// ───────────────────────── [lc-1791] SubHD（subhd.me）─────────────────────────
+// 官方 JS（/public/js/subhd.js）实证链路：
+//   登录 POST /set/login（email/password）→ 登录态详情页渲染 .subtitle-prepare-download
+//   按钮（data-sid）→ POST /api/sub/prepare-download {"sid":…} → {success,url:"/down/<t>"}
+//   → GET https://subhd.me/down/<t>（302 → dl.subhd.me，需 referer）。
+// 搜索免登录（实测 200）。下载需免费账号（设置面板「SubHD 账号」邮箱/密码）。
+// Cookie 复用 ACG 的极简 jar（subhd-cookie.txt）。
+
+const SUBHD_HOST: &str = "https://subhd.me";
+
+fn subhd_cookie_path() -> Option<std::path::PathBuf> {
+    std::env::var("APPDATA").ok().map(|ad| {
+        std::path::PathBuf::from(ad)
+            .join("com.anibox.app")
+            .join("subhd-cookie.txt")
+    })
+}
+
+fn subhd_load_cookie() -> String {
+    subhd_cookie_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// 带 Cookie 的 GET（回落通用 UA 常量在 acg_ua；SubHD 同款浏览器 UA 即可）。
+async fn subhd_get(path_q: &str, referer: Option<&str>) -> Result<(String, u16), String> {
+    let url = if path_q.starts_with("http") {
+        path_q.to_string()
+    } else {
+        format!("{SUBHD_HOST}{path_q}")
+    };
+    let mut req = http_client()
+        .get(&url)
+        .header("user-agent", acg_ua())
+        .header("accept-language", "zh-CN,zh;q=0.9");
+    let ck = subhd_load_cookie();
+    if !ck.is_empty() {
+        req = req.header("cookie", &ck);
+    }
+    if let Some(r) = referer {
+        req = req.header("referer", r);
+    }
+    let resp = req.send().await.map_err(|e| format!("SubHD 请求失败: {e}"))?;
+    let status = resp.status().as_u16();
+    let setc: Vec<String> = resp
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok().map(|s| s.to_string()))
+        .collect();
+    let body = resp.text().await.unwrap_or_default();
+    if let Some(merged) = acg_merge_cookie(&ck, &setc) {
+        if let Some(p) = subhd_cookie_path() {
+            if let Some(d) = p.parent() {
+                let _ = std::fs::create_dir_all(d);
+            }
+            let _ = std::fs::write(&p, &merged);
+        }
+    }
+    Ok((body, status))
+}
+
+/// 登录：GET /set/login 拿初始 Cookie → POST email/password → 复查登录页确认。
+async fn subhd_login(email: &str, pass: &str) -> Result<(), String> {
+    let _ = subhd_get("/set/login", Some(SUBHD_HOST)).await?;
+    let body = format!("email={}&password={}", urlencoding::encode(email), urlencoding::encode(pass));
+    let resp = http_client()
+        .post(format!("{SUBHD_HOST}/set/login"))
+        .header("user-agent", acg_ua())
+        .header("content-type", "application/x-www-form-urlencoded")
+        .header("referer", format!("{SUBHD_HOST}/set/login"))
+        .header("cookie", subhd_load_cookie())
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("SubHD 登录请求失败: {e}"))?;
+    let setc: Vec<String> = resp
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok().map(|s| s.to_string()))
+        .collect();
+    let text = resp.text().await.unwrap_or_default();
+    let ck = subhd_load_cookie();
+    if let Some(merged) = acg_merge_cookie(&ck, &setc) {
+        if let Some(p) = subhd_cookie_path() {
+            let _ = std::fs::write(&p, &merged);
+        }
+    }
+    if text.contains("密码") && text.contains("email") && text.len() < 20000 {
+        return Err("SubHD 登录失败（邮箱或密码错误）".into());
+    }
+    // 复查：登录页不再出现密码框 = 已登录
+    let (page, _) = subhd_get("/set/login", Some(SUBHD_HOST)).await?;
+    if page.contains(r#"name="password""#) {
+        return Err("SubHD 登录未生效（站点风控？稍后再试）".into());
+    }
+    Ok(())
+}
+
+/// 搜索（免登录）：/search/<kw> → /d/<id> + 标题。
+async fn subhd_search(query: &str) -> Result<Vec<Value>, String> {
+    let kw = urlencoding::encode(query);
+    let (body, st) = subhd_get(&format!("/search/{kw}"), Some(SUBHD_HOST)).await?;
+    if st != 200 {
+        return Err(format!("SubHD 搜索返回 {st}"));
+    }
+    if body.contains("please login") {
+        return Err("SubHD 要求登录后才可搜索（在设置里配置 SubHD 账号）".into());
+    }
+    let re = regex::Regex::new(r#"(?s)<a[^>]+href="(?:https?://subhd\.me)?(/d/(\d+))"[^>]*>(.{2,120}?)</a>"#)
+        .map_err(|e| e.to_string())?;
+    let mut out: Vec<Value> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for c in re.captures_iter(&body) {
+        let id = c.get(2).map(|m| m.as_str()).unwrap_or("").to_string();
+        let title = strip_tags(c.get(3).map(|m| m.as_str()).unwrap_or(""));
+        if id.is_empty() || title.is_empty() || !seen.insert(id.clone()) {
+            continue;
+        }
+        out.push(source_item("subhd", &id, &title, "SubHD·条目"));
+        if out.len() >= 10 {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// 下载：详情页（登录态）取第一个版本 sid → prepare-download → /down 直链字节。
+async fn subhd_download(did: &str, email: &str, pass: &str) -> Result<(Vec<u8>, String), String> {
+    // 有凭证且无会话 → 先登录
+    if !email.is_empty() && !pass.is_empty() {
+        if let Err(e) = subhd_login(email, pass).await {
+            crate::libmpv::trace(&format!("[subtitle] SubHD 登录失败: {e}"));
+        }
+    }
+    let (page, st) = subhd_get(&format!("/d/{did}"), Some(SUBHD_HOST)).await?;
+    if st != 200 {
+        return Err(format!("SubHD 详情页返回 {st}"));
+    }
+    let sid = extract_first(&page, r#"data-sid="(\d+)""#)
+        .ok_or("详情页没有可下载版本（SubHD 下载需登录，请在设置配置账号）")?;
+    // 版本行标题（sid 附近文本兜底）
+    let name = extract_first(&page, r#"(?s)data-sid="\d+"[^>]*>.{0,200}?download-prepare-text[^>]*>\s*([^<]{2,60})"#)
+        .map(|n| strip_tags(&n))
+        .unwrap_or_else(|| format!("subhd_{sid}.zip"));
+    let display = if name.contains('.') { name } else { format!("{name}.zip") };
+    // prepare-download（官方 JS 同款）
+    let resp = http_client()
+        .post(format!("{SUBHD_HOST}/api/sub/prepare-download"))
+        .header("user-agent", acg_ua())
+        .header("content-type", "application/json; charset=utf-8")
+        .header("referer", format!("{SUBHD_HOST}/d/{did}"))
+        .header("cookie", subhd_load_cookie())
+        .body(json!({ "sid": sid }).to_string())
+        .send()
+        .await
+        .map_err(|e| format!("SubHD prepare-download 失败: {e}"))?;
+    let v: Value = resp.json().await.map_err(|e| format!("SubHD 响应解析失败: {e}"))?;
+    if v.get("success").and_then(|x| x.as_bool()) != Some(true) {
+        let msg = v.get("msg").and_then(|x| x.as_str()).unwrap_or("未知错误");
+        return Err(format!("SubHD 不允许下载: {msg}"));
+    }
+    let down_path = v.get("url").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    if !down_path.starts_with("/down/") {
+        return Err("SubHD 未返回下载地址".into());
+    }
+    // 下载直链（302 → dl.subhd.me；referer 必带）
+    let dl = format!("{SUBHD_HOST}{down_path}");
+    let bytes = http_client()
+        .get(&dl)
+        .header("user-agent", acg_ua())
+        .header("referer", format!("{SUBHD_HOST}/d/{did}"))
+        .header("cookie", subhd_load_cookie())
+        .send()
+        .await
+        .map_err(|e| format!("SubHD 下载失败: {e}"))?
+        .bytes()
+        .await
+        .map_err(|e| format!("SubHD 下载读取失败: {e}"))?;
+    Ok((bytes.to_vec(), display))
 }

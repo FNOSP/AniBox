@@ -17,7 +17,12 @@
 [![Last Commit](https://img.shields.io/github/last-commit/FNOSP/AniBox/main?logo=git&logoColor=white)](https://github.com/FNOSP/AniBox/commits)
 [![Gitee](https://img.shields.io/badge/Gitee-mirror-F47040?logo=gitee&logoColor=white)](https://gitee.com/YDMY007/fntv-plus)
 
-<img src="https://count.getloli.com/get/@AniBox?theme=rule34" alt="访问计数" width="320">
+<a href="https://star-history.com/#FNOSP/AniBox&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=FNOSP/AniBox&type=Date&color=%236c9bff" />
+    <img src="https://api.star-history.com/svg?repos=FNOSP/AniBox&type=Date" alt="Star History Chart" width="480" />
+  </picture>
+</a>
 
 </div>
 

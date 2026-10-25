@@ -1261,11 +1261,31 @@ pub(crate) async fn resolve_play(
     prefer_hls: bool,
 ) -> Result<(String, bool, String, String), String> {
     match provider {
-        // 115：cloud115 模块的解析（直链 webapi download / 转码 115.com m3u8）
+        // 115：cloud115 模块的解析（直链 webapi download / 转码 115.com m3u8）。
+        // [lc-1828] 直链模式加 Range 探活（bytes=0-0）：编码不兼容/限速的直链 CDN 可能
+        // 返回异常——探测失败自动回退 m3u8（服务端转码永远兼容）。
         "115" => {
             let jar = crate::cloud115::load_jar().ok_or("未登录 115（请先扫码）")?;
             let u = crate::cloud115::resolve_play_url(&jar, file_id, prefer_hls).await?;
-            Ok((u, prefer_hls, "https://115.com/".into(), crate::cloud115::UA_115.to_string()))
+            if prefer_hls {
+                return Ok((u, true, "https://115.com/".into(), crate::cloud115::UA_115.to_string()));
+            }
+            // 直链探活：Range bytes=0-0，206/200 = 可用；非 2xx = 回退 m3u8
+            let probe = client_noredir()
+                .get(&u)
+                .header("Range", "bytes=0-0")
+                .header("Referer", "https://115.com/")
+                .header("User-Agent", crate::cloud115::UA_115)
+                .send()
+                .await;
+            let ok = matches!(&probe, Ok(r) if r.status().is_success() || r.status().as_u16() == 206);
+            if ok {
+                Ok((u, false, "https://115.com/".into(), crate::cloud115::UA_115.to_string()))
+            } else {
+                crate::libmpv::trace("[cloud] 115 直链探活失败，自动回退服务端转码 m3u8");
+                let m3u8 = crate::cloud115::resolve_play_url(&jar, file_id, true).await?;
+                Ok((m3u8, true, "https://115.com/".into(), crate::cloud115::UA_115.to_string()))
+            }
         }
         // 夸克：prefer_hls → v2/play（video_list m3u8）；直链 → file/download（302）
         "quark" => {

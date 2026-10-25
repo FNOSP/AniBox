@@ -1476,7 +1476,7 @@ export function SettingsPanel({
                           className={`sub-cred-btn${settings.subAssrtTokenSet ? " on" : ""}`}
                           onClick={() => setCredOpen(credOpen === "assrt" ? null : "assrt")}
                         >
-                          {settings.subAssrtTokenSet ? "自定义已启用 · 点击修改" : "默认内置 · 点击使用自定义密钥"}
+                          {settings.subAssrtTokenSet ? "自定义密钥已保存 · 点击修改" : "默认内置 · 点击使用自定义密钥"}
                         </button>
                       </div>
                       {credOpen === "assrt" && (
@@ -1520,7 +1520,7 @@ export function SettingsPanel({
                           className={`sub-cred-btn${settings.subOsubKeySet ? " on" : ""}`}
                           onClick={() => setCredOpen(credOpen === "osub" ? null : "osub")}
                         >
-                          {settings.subOsubKeySet ? "自定义已启用 · 点击修改" : "默认内置 · 点击使用自定义密钥"}
+                          {settings.subOsubKeySet ? "自定义密钥已保存 · 点击修改" : "默认内置 · 点击使用自定义密钥"}
                         </button>
                       </div>
                       {credOpen === "osub" && (
@@ -1564,7 +1564,7 @@ export function SettingsPanel({
                           className={`sub-cred-btn${settings.acgUserSet ? " on" : ""}`}
                           onClick={() => setCredOpen(credOpen === "acg" ? null : "acg")}
                         >
-                          {settings.acgUserSet ? "账号已启用 · 点击修改" : "游客模式 · 点击填写账号"}
+                          {settings.acgUserSet ? "账号已保存 · 点击修改" : "点击填写账号（游客可搜索）"}
                         </button>
                       </div>
                       {credOpen === "acg" && (
@@ -1621,7 +1621,7 @@ export function SettingsPanel({
                           className={`sub-cred-btn${settings.subhdEmailSet ? " on" : ""}`}
                           onClick={() => setCredOpen(credOpen === "subhd" ? null : "subhd")}
                         >
-                          {settings.subhdEmailSet ? "账号已启用 · 点击修改" : "游客模式 · 点击填写账号"}
+                          {settings.subhdEmailSet ? "账号已保存 · 点击修改" : "点击填写账号（游客可搜索）"}
                         </button>
                       </div>
                       {credOpen === "subhd" && (

@@ -169,7 +169,7 @@ pub async fn ai_enhance_set_engine(
         "# AniBox 插帧配置（设置面板「AI 增强」写入，请勿手动编辑）
 # 引擎档：auto(=builtin) / builtin / rife / nvidia
 # rife = RIFE v4.6 AI 2×（VapourSynth+ncnn Vulkan，全显卡），需 AI 增强组件就绪。
-# 画质档位联动补帧：extreme/balanced=时间插值平滑；smooth=关闭省 GPU
+# 运动平滑基线：extreme/balanced=时间插值平滑；smooth=关闭省 GPU
 
 engine={new_engine}
 quality_tier={tier}
@@ -256,7 +256,7 @@ pub async fn ai_enhance_set_tier(
 ) -> Result<Value, String> {
     let t = tier.trim().to_lowercase();
     if !matches!(t.as_str(), "extreme" | "balanced" | "smooth") {
-        return Err(format!("未知画质档位 {t}（只允许 extreme/balanced/smooth）"));
+        return Err(format!("未知运动平滑档位 {t}（只允许 extreme/balanced/smooth）"));
     }
     let Some(dir) = crate::config::mpv_portable_config_dir(&app) else {
         return Err("找不到 mpv 配置目录".into());
@@ -267,7 +267,7 @@ pub async fn ai_enhance_set_tier(
     let body = format!(
         "# AniBox 插帧配置（设置面板「AI 增强」写入，请勿手动编辑）
 # 引擎档：auto(=builtin) / builtin / rife / nvidia
-# 画质档位联动补帧：extreme/balanced=时间插值平滑；smooth=关闭省 GPU
+# 运动平滑基线：extreme/balanced=时间插值平滑；smooth=关闭省 GPU
 
 engine={engine}
 quality_tier={t}

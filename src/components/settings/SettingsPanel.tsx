@@ -3066,7 +3066,7 @@ function AiEnhanceRow() {
       </div>
       {/* [lc-1825] 画质档位联动补帧（LumiPlayer 口径） */}
       <div className="set-row" style={{ gap: 10, paddingLeft: 4 }}>
-        <span className="set-k" style={{ flex: "none" }}>画质档位</span>
+        <span className="set-k" style={{ flex: "none" }}>运动平滑</span>
         {(
           [
             ["extreme", "极致"],

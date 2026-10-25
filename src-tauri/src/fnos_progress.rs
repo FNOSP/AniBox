@@ -160,6 +160,10 @@ struct Tracker {
     /// [speed] 当前播放速度（mpv `speed` 事件，见 [`set_speed`]）。
     /// 只写进本地进度快照，**不进**飞牛 `play/record`（该接口无速率字段，见模块头注释）。
     speed: f64,
+    /// [lc-1845] **我们主动套用**的倍速（id=13 起播/切集时 set 的值）。用于识别
+    /// speed 事件回声：套用动作本身会让 mpv 回发一条 speed 事件，若不过滤，
+    /// 「key 查漏→套用 1.0」的回声会把 1.0 写进记录，**永久覆盖**用户设过的值。
+    applied_speed: Option<f64>,
     /// 上次写 pending 文件的时间（仅内存，不参与上报语义）
     last_persist: Option<Instant>,
 }
@@ -176,6 +180,23 @@ fn tracker_speed(t: &Tracker) -> f64 {
     } else {
         1.0
     }
+}
+
+/// [lc-1845] 记录「我们主动套用」的倍速（套用前调用；识别回声用）。
+pub fn set_applied_speed(v: f64) {
+    if let Ok(mut t) = tracker().lock() {
+        t.applied_speed = Some(v);
+    }
+}
+
+/// [lc-1845] 该值是否为我们主动套用的值（回声判定，±0.001 容差）。
+pub fn is_applied_speed(v: f64) -> bool {
+    if let Ok(t) = tracker().lock() {
+        if let Some(a) = t.applied_speed {
+            return (a - v).abs() < 0.001;
+        }
+    }
+    false
 }
 
 /// [speed] mpv `speed` 变化时调用（mpv.rs 观察 id=4）。
@@ -286,6 +307,7 @@ pub fn begin_with_speed_key(series_guid: &str, item_guid: &str, speed_key: &str)
             pos_ms: 0,
             dur_ms: 0,
             speed: 1.0,
+            applied_speed: None,
             last_persist: None,
         };
     }

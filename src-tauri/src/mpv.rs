@@ -549,6 +549,10 @@ impl MpvSession {
                                 // 同步更新跟踪器：若 mpv 因「速度未变」不发事件，快照里也不会
                                 // 残留上一集的旧速度（set_item_from_url 已把 speed 重置为 1.0）。
                                 crate::fnos_progress::set_speed(speed);
+                                // [lc-1845] 记下主动套用值：随后 mpv 回发的 speed 事件
+                                // 是回声，不再进 record_speed（防「查漏→套 1.0→回声覆盖」
+                                // 把用户设过的倍速永久写坏）。
+                                crate::fnos_progress::set_applied_speed(speed);
                                 let line = json!({
                                     "command": ["set_property", "speed", speed],
                                 })
@@ -606,8 +610,11 @@ impl MpvSession {
                                 v.get("data").unwrap_or(&Value::Null),
                             ) {
                                 crate::fnos_progress::set_speed(d);
+                                // [lc-1845] 回声不回写：值==刚主动套用的值时，这条事件
+                                // 是我们 set 出来的（不代表用户选择），跳过 record_speed。
+                                let echo = crate::fnos_progress::is_applied_speed(d);
                                 let key = crate::fnos_progress::current_speed_key();
-                                if !key.is_empty() {
+                                if !echo && !key.is_empty() {
                                     crate::playback_speed::record_speed(&app2, &key, d);
                                 }
                             }

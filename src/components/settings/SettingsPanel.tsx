@@ -3128,22 +3128,29 @@ function AiEnhanceRow() {
           const cur = status?.engine ?? "auto";
           const on = cur === val || (cur === "auto" && val === "builtin");
           const rifeLocked = val === "rife" && !status?.ready;
+          const nvidiaDead = val === "nvidia"; // [lc-1860] 实测紫屏冲突，禁用
           return (
             <button
               key={val}
               type="button"
               className={`sub-cred-btn${on ? " on" : ""}`}
-              style={{ opacity: rifeLocked ? 0.4 : 1 }}
+              style={{ opacity: rifeLocked || nvidiaDead ? 0.4 : 1 }}
               title={
-                rifeLocked
-                  ? "RIFE：AI 在帧间补新帧，效果最好——需先下载 AI 增强组件"
-                  : val === "nvidia"
-                    ? "N 卡驱动级补帧：RTX 50 系 + 在 NVIDIA App 按 exe 注册开启 Smooth Motion"
+                nvidiaDead
+                  ? "实测禁用：内核 Vulkan 呈现上下文与驱动帧生成冲突（画面紫屏/黑屏）——1080P 补帧请改用内置平滑，720P 可用 RIFE"
+                  : rifeLocked
+                    ? "RIFE：AI 在帧间补新帧，效果最好——需先下载 AI 增强组件"
                     : val === "rife"
-                      ? "RIFE：AI 在帧间补新帧，效果最好。硬性要求：720P 源需 RTX4060/RX6600 级以上；1080P 源实测 RTX5070 都跟不上（跟不上会自动回退）。1080P 请用 N卡 Smooth Motion"
+                      ? "RIFE：AI 在帧间补新帧，效果最好。硬性要求：720P 源需 RTX4060/RX6600 级以上；1080P 源实测 RTX5070 都跟不上（跟不上会自动回退）"
                       : "内置平滑：MPV 自带时间插值，零开销，效果一般"
               }
-              onClick={() => (rifeLocked ? setErr("RIFE 档需先下载 AI 增强组件") : void pickEngine(val))}
+              onClick={() =>
+                nvidiaDead
+                  ? setErr("N 卡 Smooth Motion 实测与内核冲突（紫屏/黑屏），已禁用——请用内置平滑或 RIFE（720P）")
+                  : rifeLocked
+                    ? setErr("RIFE 档需先下载 AI 增强组件")
+                    : void pickEngine(val)
+              }
             >
               {label}
             </button>

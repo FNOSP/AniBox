@@ -245,6 +245,14 @@ pub async fn ai_enhance_set_engine(
     if e == "rife" && !runtime_ready(&app) {
         return Err("AI 增强组件未就绪，无法选择 RIFE 档（先下载组件）".into());
     }
+    // [lc-1860] N 卡 SM 档实测禁用：gpu-context=winvk（Vulkan 呈现，SM 前置条件）+
+    // 驱动 Smooth Motion = 画面紫屏/黑屏（yaozhi 内核 Vulkan 上下文与驱动帧生成冲突，
+    // 用户实测）。应用层无解，直接拒绝并把现场恢复。
+    if e == "nvidia" {
+        return Err(
+            "N 卡 Smooth Motion 实测与内核 Vulkan 呈现上下文冲突（画面紫屏/黑屏，已恢复现场），暂不可用——请改用 RIFE（720P 源）或内置平滑".into(),
+        );
+    }
     let Some(dir) = crate::config::mpv_portable_config_dir(&app) else {
         return Err("找不到 mpv 配置目录".into());
     };

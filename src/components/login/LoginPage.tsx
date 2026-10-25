@@ -46,6 +46,12 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
   // [访问码] fnOS 网关「应用访问码」：可选，留空表示服务器未开启门禁。
   // 与旧项目 Fntv-Plus 一致：非空时登录前先向 /access_code_verify 验证并建立网关会话。
   const [accessCode, setAccessCode] = useState("");
+  // [lc-1851] 登录方式：account=账号密码（原样） / fnid=FN ID 远程登录（旧项目 Fntv-Plus
+  // 3.x 已有、AniBox 移植回来——出差/外网场景经飞牛官方 FN Connect 中继连回家）
+  const [mode, setMode] = useState<"account" | "fnid">("account");
+  const [fnId, setFnId] = useState(() => {
+    try { return localStorage.getItem("anibox-fnid") || ""; } catch { return ""; }
+  });
   const [remember, setRemember] = useState(false);
   const [autoLogin, setAutoLogin] = useState(false);
   const [mpvPath, setMpvPath] = useState("");
@@ -101,6 +107,23 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
     }
   }
 
+  // [lc-1851] FN ID 登录：后端打开 OAuth 窗口走 FN Connect（5ddd.com → NAS 授权 →
+  // code 换 token），成功即已写配置，直接 onDone。FN ID 记 localStorage 供下次预填。
+  async function submitFnId(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setErr("");
+    try {
+      await invoke("fn_id_login", { fnId: fnId.trim(), accessCode: accessCode.trim() });
+      try { localStorage.setItem("anibox-fnid", fnId.trim()); } catch { /* 尽力预填 */ }
+      onDone();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // 启动自动登录：token 已由 check_session 把过关，走到登录页即代表失效；
   // 记住了密码且开了自动登录 → 用记住的凭据静默重登一次（成功直接进首页）
   useEffect(() => {
@@ -136,8 +159,53 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
           <li>弹幕、全局手柄与自建镜像，完善的追剧观影体验</li>
         </ul>
       </div>
-      <form className="login-card" onSubmit={submit}>
+      <form className="login-card" onSubmit={mode === "account" ? submit : submitFnId}>
         <h2>登录飞牛影视</h2>
+        {/* [lc-1851] 登录方式切换：账号密码（局域网/直连） / FN ID（远程，经飞牛官方中继） */}
+        <div className="login-opts" style={{ marginBottom: 8 }}>
+          <label className="login-check" style={{ marginRight: 16 }}>
+            <input
+              type="radio"
+              name="login-mode"
+              checked={mode === "account"}
+              onChange={() => setMode("account")}
+            />
+            账号密码登录
+          </label>
+          <label className="login-check">
+            <input
+              type="radio"
+              name="login-mode"
+              checked={mode === "fnid"}
+              onChange={() => setMode("fnid")}
+            />
+            FN ID 远程登录
+          </label>
+        </div>
+        {mode === "fnid" ? (
+          <>
+            <label>FN ID（飞牛后台 FN Connect 页获取）</label>
+            <input
+              value={fnId}
+              onChange={(e) => setFnId(e.target.value)}
+              placeholder="FN Connect 里给你的那串 ID"
+              required
+            />
+            <label>访问码（可选）</label>
+            <input
+              type="password"
+              value={accessCode}
+              onChange={(e) => setAccessCode(e.target.value)}
+              placeholder="NAS 开启访问码门禁时填写"
+              autoComplete="off"
+            />
+            <p className="set-desc" style={{ margin: "4px 0 0", fontSize: 12 }}>
+              将打开飞牛官方授权窗口：登录你的飞牛 ID 并点「授权」即可，无需知道 NAS 地址。
+              中继首次连接可能较慢（最长约 4 分钟）。
+            </p>
+          </>
+        ) : (
+          <>
         <label>服务器地址</label>
         <input
           value={server}
@@ -157,6 +225,10 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
           placeholder="服务器未开启访问码门禁时请留空"
           autoComplete="off"
         />
+            </>
+        )}
+        {mode === "account" && (
+          <>
         <div className="login-opts">
           <label className="login-check">
             <input
@@ -190,9 +262,11 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
             <input value={proxyPath} onChange={(e) => setProxyPath(e.target.value)} />
           </>
         )}
+          </>
+        )}
         {err && <div className="err">{err}</div>}
         <button className="primary" disabled={busy}>
-          {busy ? "登录中…" : "登 录"}
+          {busy ? "登录中…" : mode === "fnid" ? "打开飞牛授权窗口" : "登 录"}
         </button>
         {/* [lc-1600] 游客入口：未登录也能用（首页轮播走 AniList 当季 + TMDB 热门兜底；
             详情/播放引导登录）。标记写进 localStorage，启动流程据此跳过会话检查。 */}

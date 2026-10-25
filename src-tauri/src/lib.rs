@@ -34,6 +34,8 @@ mod feedback;
 mod fnapi;
 // [progress] 把播放进度回传飞牛 `play/record`（「继续观看」的数据源；旧项目同名链路）
 mod fnos_progress;
+// [lc-1851] FN ID（飞牛 ID / FN Connect）远程登录：OAuth 窗口 + 伪导航信号（旧项目移植）
+mod fnid;
 // [gamepad] 全局手柄：原生 gilrs 后台轮询（mpv/PotPlayer 前台时同样可用）
 mod gamepad;
 // [lc-1615] 本地播放历史（观影记录页数据源之一）：history.json 落盘 + 与飞牛 play/list 合并
@@ -3842,6 +3844,7 @@ pub fn run() {
             cloud::cloud_play,
             cloud::cloud_rename,
             cloud_proxy::cloud_ffmpeg_available,
+            fnid::fn_id_login,
             enhance::ai_enhance_status,
             enhance::ai_enhance_set_engine,
             enhance::ai_enhance_set_superres,

@@ -55,6 +55,9 @@ export function LibView({
   const [moreBusy, setMoreBusy] = useState(false);
   const [moreErr, setMoreErr] = useState("");
 
+  // [lc-1805c] 服务端排序（真 NAS 实测四列全支持）：create_time/release_date/sort_title/vote_average
+  const [sortKey, setSortKey] = useState("");
+
   const levelsRef = useRef(levels);
   useEffect(() => {
     levelsRef.current = levels;
@@ -100,16 +103,22 @@ export function LibView({
       if (lib.guid.startsWith("_cat:")) {
         // [lc-1805] 影视分类行走服务端 type；其余维度走 filters（item/list tags 透传）
         const types = catTypesRef.current ?? lib.guid.slice(5).split(",").filter(Boolean);
+        const [sc, st] = sortKey ? sortKey.split("|") : [null, null];
         const d = await invoke<{ list?: MediaItem[]; total?: number }>("get_items_global", {
           typeFilter: types,
           page,
           filters: serverFilters(),
+          sortColumn: sc,
+          sortType: st,
         });
         return { list: d.list ?? [], total: Number(d.total ?? 0) || 0 };
       }
-      return fetchLibPage(lib.guid, null, page, serverFilters() ?? undefined);
+      {
+        const [sc, st] = sortKey ? sortKey.split("|") : [null, null];
+        return fetchLibPage(lib.guid, null, page, serverFilters() ?? undefined, sc, st);
+      }
     },
-    [lib.guid],
+    [lib.guid, sortKey],
   );
 
   const load = useCallback(
@@ -416,10 +425,49 @@ export function LibView({
           </button>
         </div>
       )}
-      {atRoot && collapsed && (
-        <button type="button" className="libf-open" onClick={() => setCollapsed(false)}>
-          筛选{filterActive ? "（生效中）" : " ▾"}
-        </button>
+      {atRoot && (
+        <div className="libf-bar">
+          <button type="button" className={`libf-open${filterActive ? " on" : ""}`} onClick={() => setCollapsed(!collapsed)}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+            </svg>
+            筛选{filterActive ? " · 生效中" : ""}{collapsed ? " ▾" : " ▴"}
+          </button>
+          <select
+            className="libf-sort"
+            value={sortKey}
+            onChange={(e) => {
+              setSortKey(e.target.value);
+              setLevels((ls) => {
+                const i2 = ls.length - 1;
+                if (i2 < 0) return ls;
+                const nv = [...ls];
+                nv[i2] = { ...ls[i2], items: [], page: 0, total: 0 };
+                return nv;
+              });
+              void load(null);
+            }}
+          >
+            <option value="">最近添加</option>
+            <option value="release_date|DESC">年份 新→旧</option>
+            <option value="release_date|ASC">年份 旧→新</option>
+            <option value="sort_title|ASC">名称 A→Z</option>
+            <option value="vote_average|DESC">评分 高→低</option>
+          </select>
+          {(f.cat !== null || sortKey !== "") && (
+            <button
+              type="button"
+              className="libf-open ghost"
+              onClick={() => {
+                setSortKey("");
+                catTypesRef.current = null;
+                refetch(EMPTY_F);
+              }}
+            >
+              重置
+            </button>
+          )}
+        </div>
       )}
       {err && (
         <div className="err">

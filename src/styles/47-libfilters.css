@@ -139,3 +139,32 @@ button.libf-toggle[style],
 .libf-open:hover {
   border-color: var(--accent, #8ab4f8);
 }
+
+/* [lc-1805c] 工具行：筛选切换 + 服务端排序 + 重置 */
+.libf-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.libf-bar .libf-open {
+  margin-top: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.libf-open.on {
+  border-color: var(--accent, #8ab4f8);
+  color: var(--accent, #8ab4f8);
+  font-weight: 600;
+}
+
+.libf-open.ghost {
+  opacity: 0.7;
+}
+
+.libf-bar .libf-sort {
+  height: 28px;
+}

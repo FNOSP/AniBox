@@ -505,7 +505,15 @@ async fn get_items(
     page: Option<i64>,
     page_size: Option<i64>,
     filters: Option<Value>,
+    sort_column: Option<String>,
+    sort_type: Option<String>,
 ) -> Result<Value, String> {
+    // [lc-1805c] 服务端排序白名单（真 NAS 实测四列全支持；钻取分支不受影响仍用 sort_title）
+    const SORT_COLS: [&str; 4] = ["create_time", "release_date", "sort_title", "vote_average"];
+    let sort_column = sort_column
+        .and_then(|c| SORT_COLS.iter().find(|x| **x == c.as_str()).map(|x| x.to_string()))
+        .unwrap_or_else(|| "create_time".to_string());
+    let sort_type = if sort_type.as_deref() == Some("ASC") { "ASC" } else { "DESC" };
     let cfg = state.config.read().await.clone();
     let client = fnapi::new_client();
     let browse_types = json!(["Movie", "TV", "Directory", "Video", "LiveChannel"]);
@@ -541,8 +549,8 @@ async fn get_items(
         json!({
             "ancestor_guid": ancestor_guid,
             "exclude_grouped_video": 1,
-            "sort_type": "DESC",
-            "sort_column": "create_time",
+            "sort_type": sort_type,
+            "sort_column": sort_column,
             "page_size": page_size,
             "page": page,
             "tags": root_tags
@@ -1183,6 +1191,8 @@ async fn get_items_global(
     type_filter: Option<Vec<String>>,
     page: Option<i64>,
     filters: Option<Value>,
+    sort_column: Option<String>,
+    sort_type: Option<String>,
 ) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let client = fnapi::new_client();
@@ -1210,8 +1220,8 @@ async fn get_items_global(
             &cfg.token,
             Some(json!({
                 "tags": tags,
-                "sort_type": "DESC",
-                "sort_column": "create_time",
+                "sort_type": sort_type.as_deref().unwrap_or("DESC"),
+                "sort_column": sort_column.as_deref().unwrap_or("create_time"),
                 "exclude_grouped_video": 1,
                 "page": page.unwrap_or(1),
                 "page_size": 60

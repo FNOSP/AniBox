@@ -15,12 +15,16 @@ export async function fetchLibPage(
   parentGuid: string | null,
   page = 1,
   filters?: Record<string, unknown> | null,
+  sortColumn?: string | null,
+  sortType?: string | null,
 ): Promise<LibPage> {
   const d = await invoke<{ list?: MediaItem[] | null; total?: number }>("get_items", {
     ancestorGuid: parentGuid === null ? libGuid : null,
     parentGuid,
     page,
     filters: filters ?? null,
+    sortColumn: sortColumn ?? null,
+    sortType: sortType ?? null,
   });
   return { list: d.list ?? [], total: Number(d.total ?? 0) || 0 };
 }

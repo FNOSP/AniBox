@@ -864,11 +864,26 @@ export function SettingsPanel({
   const [ddCredId, setDdCredId] = useState("");
   const [ddCredSecret, setDdCredSecret] = useState("");
   /* [lc-1789] 字幕源添加区 + 自定义密钥输入（值不回填，仅 Set 状态回显） */
-  const [subNewKind, setSubNewKind] = useState("opensubtitles");
-  const [subNewName, setSubNewName] = useState("");
-  const [subNewToken, setSubNewToken] = useState("");
   const [subKeyId, setSubKeyId] = useState("");
   const [subKeyOsub, setSubKeyOsub] = useState("");
+  // [lc-1792] 固定五行布局：按 kind 取启停（缺省 true），开关写回 JSON 全量
+  const subEnabled = (kind: string) => subSources.find((x) => x.kind === kind)?.enabled ?? true;
+  const toggleSub = (kind: string) => {
+    const FIXED: SubSource[] = [
+      { kind: "xunlei", name: "迅雷", token: "", useBuiltin: false, enabled: true },
+      { kind: "assrt", name: "assrt.net", token: "", useBuiltin: true, enabled: true },
+      { kind: "opensubtitles", name: "OpenSubtitles", token: "", useBuiltin: true, enabled: true },
+      { kind: "acgrip", name: "ACG 论坛", token: "", useBuiltin: false, enabled: true },
+      { kind: "subhd", name: "SubHD", token: "", useBuiltin: false, enabled: true },
+    ];
+    const cur = new Map(subSources.map((x) => [x.kind, x]));
+    const next = FIXED.map((f) => {
+      const c = cur.get(f.kind);
+      return c ? { ...c, enabled: f.kind === kind ? !c.enabled : c.enabled } : { ...f, enabled: f.kind === kind ? false : true };
+    });
+    setSubSources(next);
+    void saveSubSources(next);
+  };
   const [acgUser, setAcgUser] = useState("");
   const [acgPass, setAcgPass] = useState("");
   const [sbEmail, setSbEmail] = useState("");
@@ -1427,241 +1442,150 @@ export function SettingsPanel({
                   <div className="set-row set-row-col">
                     <span className="set-k">字幕源</span>
                     <div className="set-desc">
-                      源类型：迅雷（官方接口，免账号）/ assrt.net / OpenSubtitles / ACG 论坛（账号见下方）。
-                      自上而下为优先级，请求失败自动切下一个。下方「自定义密钥」填自己的
-                      token / Api-Key 时直接顶掉内置共享凭证（优先级最高）。
-                      列表存本机 subtitle-sources.json。
+                      每行固定一个源：开关=启停；后面输入框填**自己的凭证**（留空=用应用内置共享凭证，
+                      填写即直接顶掉内置，优先级最高）。搜索五路并行，失败自动跳过。
                     </div>
-                    {subSources.map((s, i) => (
-                      <div className="set-row" key={`${i}-${s.kind}-${s.name}`}>
-                        <button
-                          type="button"
-                          className={`set-sw${s.enabled ? " on" : ""}`}
-                          aria-pressed={s.enabled}
-                          aria-label={`${s.name} 启停`}
-                          onClick={() => {
-                            const next = subSources.map((x, j) => (j === i ? { ...x, enabled: !x.enabled } : x));
-                            setSubSources(next);
-                            void saveSubSources(next);
-                          }}
-                        />
-                        <span
-                          className={`sp-badge sp-${s.kind === "opensubtitles" ? "osub" : s.kind === "acgrip" ? "assrt" : s.kind}`}
-                          style={{ flex: "0 0 92px", textAlign: "center" }}
-                        >
-                          {s.kind === "xunlei" ? "迅雷" : s.kind === "assrt" ? "assrt" : s.kind === "acgrip" ? "ACG" : s.kind === "subhd" ? "SubHD" : "OpenSubs"}
-                        </span>
-                        <input
-                          className="set-input"
-                          style={{ flex: 1 }}
-                          value={s.name}
-                          placeholder="名称"
-                          onChange={(e) => {
-                            const next = subSources.map((x, j) => (j === i ? { ...x, name: e.target.value } : x));
-                            setSubSources(next);
-                          }}
-                          onBlur={() => void saveSubSources(subSources)}
-                        />
-                        <button
-                          className="set-btn"
-                          title="上移（提高优先级）"
-                          disabled={i === 0}
-                          onClick={() => {
-                            const next = subSources.slice();
-                            [next[i - 1], next[i]] = [next[i], next[i - 1]];
-                            setSubSources(next);
-                            void saveSubSources(next);
-                          }}
-                        >
-                          ↑
-                        </button>
-                        <button
-                          className="set-btn"
-                          title="删除此源"
-                          onClick={() => {
-                            const next = subSources.filter((_, j) => j !== i);
-                            setSubSources(next);
-                            void saveSubSources(next);
-                          }}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
-                    <div className="set-actions">
-                      <select
-                        className="set-input"
-                        style={{ flex: "0 0 110px" }}
-                        value={subNewKind}
-                        onChange={(e) => setSubNewKind(e.target.value)}
-                      >
-                        <option value="xunlei">迅雷</option>
-                        <option value="assrt">assrt.net</option>
-                        <option value="opensubtitles">OpenSubtitles</option>
-                        <option value="acgrip">ACG 论坛</option>
-                        <option value="subhd">SubHD</option>
-                      </select>
-                      <input
-                        className="set-input"
-                        style={{ flex: "0 0 140px" }}
-                        placeholder="新源名称"
-                        value={subNewName}
-                        onChange={(e) => setSubNewName(e.target.value)}
+                    {/* 迅雷：免账号，只有开关 */}
+                    <div className="set-row">
+                      <button
+                        type="button"
+                        className={`set-sw${subEnabled("xunlei") ? " on" : ""}`}
+                        aria-pressed={subEnabled("xunlei")}
+                        aria-label="迅雷源启停"
+                        onClick={() => toggleSub("xunlei")}
                       />
-                      {(subNewKind === "assrt" || subNewKind === "opensubtitles") && (
-                        <input
-                          className="set-input"
-                          style={{ flex: 1 }}
-                          placeholder={subNewKind === "assrt" ? "token（可留空=用密钥区/内置）" : "Api-Key（可留空=用密钥区/内置）"}
-                          value={subNewToken}
-                          onChange={(e) => setSubNewToken(e.target.value)}
-                        />
-                      )}
-                      <button
-                        className="set-btn"
-                        onClick={() => {
-                          const it: SubSource = {
-                            kind: subNewKind,
-                            name: subNewName.trim() || (subNewKind === "xunlei" ? "迅雷" : subNewKind === "assrt" ? "assrt.net" : subNewKind === "acgrip" ? "ACG 论坛" : subNewKind === "subhd" ? "SubHD" : "OpenSubtitles"),
-                            token: subNewToken.trim(),
-                            useBuiltin: subNewToken.trim() === "",
-                            enabled: true,
-                          };
-                          if (subSources.length >= 12) {
-                            setSubNote("最多 12 条");
-                            return;
-                          }
-                          const next = [...subSources, it];
-                          setSubSources(next);
-                          setSubNewName("");
-                          setSubNewToken("");
-                          void saveSubSources(next);
-                        }}
-                      >
-                        添加源
-                      </button>
-                      <button
-                        className="set-btn"
-                        title="恢复默认三源（迅雷/assrt/OpenSubtitles）"
-                        onClick={() => {
-                          const next: SubSource[] = [
-                            { kind: "xunlei", name: "迅雷（按文件哈希精确匹配）", token: "", useBuiltin: false, enabled: true },
-                            { kind: "assrt", name: "assrt.net", token: "", useBuiltin: true, enabled: true },
-                            { kind: "opensubtitles", name: "OpenSubtitles", token: "", useBuiltin: true, enabled: true },
-                          ];
-                          setSubSources(next);
-                          void saveSubSources(next);
-                        }}
-                      >
-                        恢复默认
-                      </button>
-                      <span className="set-note">{subNote}</span>
+                      <span className="sp-badge sp-xunlei" style={{ flex: "0 0 96px", textAlign: "center" }}>迅雷</span>
+                      <span className="set-desc" style={{ flex: 1 }}>官方接口 · 按文件哈希精确匹配 · 免账号</span>
                     </div>
-                    {/* [lc-1789] 自定义密钥：填了直接顶掉内置（config.json 层，优先级最高）；
-                        清空保存=恢复内置。mpv 菜单与应用内搜索两条路同享。 */}
-                    <div className="set-row" style={{ flexWrap: "wrap" }}>
-                      <span className="set-k" style={{ flex: "0 0 100%" }}>
-                        自定义密钥（优先于内置）
-                      </span>
+                    {/* assrt：自定义 token */}
+                    <div className="set-row">
+                      <button
+                        type="button"
+                        className={`set-sw${subEnabled("assrt") ? " on" : ""}`}
+                        aria-pressed={subEnabled("assrt")}
+                        aria-label="assrt 源启停"
+                        onClick={() => toggleSub("assrt")}
+                      />
+                      <span className="sp-badge sp-assrt" style={{ flex: "0 0 96px", textAlign: "center" }}>assrt</span>
+                      <span className="set-desc" style={{ flex: "0 0 auto" }}>中文字幕库</span>
                       <input
                         className="set-input"
                         style={{ flex: 1 }}
-                        placeholder={settings.subAssrtTokenSet ? "assrt token 已设置（清空保存=恢复内置）" : "assrt token（留空=内置共享）"}
+                        placeholder={settings.subAssrtTokenSet ? "自定义 token 已设置（清空保存=恢复内置）" : "自定义 token（留空=内置共享）"}
                         onChange={(e) => setSubKeyId(e.target.value)}
                       />
+                    </div>
+                    {/* OpenSubtitles：自定义 Api-Key */}
+                    <div className="set-row">
+                      <button
+                        type="button"
+                        className={`set-sw${subEnabled("opensubtitles") ? " on" : ""}`}
+                        aria-pressed={subEnabled("opensubtitles")}
+                        aria-label="OpenSubtitles 源启停"
+                        onClick={() => toggleSub("opensubtitles")}
+                      />
+                      <span className="sp-badge sp-osub" style={{ flex: "0 0 96px", textAlign: "center" }}>OpenSubs</span>
+                      <span className="set-desc" style={{ flex: "0 0 auto" }}>国际库 · 哈希精确</span>
                       <input
                         className="set-input"
                         style={{ flex: 1 }}
-                        placeholder={settings.subOsubKeySet ? "OpenSubtitles Api-Key 已设置（清空保存=恢复内置）" : "OpenSubtitles Api-Key（留空=内置共享）"}
+                        placeholder={settings.subOsubKeySet ? "自定义 Api-Key 已设置（清空保存=恢复内置）" : "自定义 Api-Key（留空=内置共享）"}
                         onChange={(e) => setSubKeyOsub(e.target.value)}
                       />
-                      <button
-                        className="set-btn"
-                        onClick={() => {
-                          const any = subKeyId.trim() !== "" || subKeyOsub.trim() !== "";
-                          onSettings({ subAssrtToken: subKeyId.trim(), subOsubKey: subKeyOsub.trim() });
-                          setSubKeyId("");
-                          setSubKeyOsub("");
-                          setSubNote(
-                            any
-                              ? "自定义密钥已保存（优先于内置，重启播放器生效）"
-                              : "已清空自定义密钥，恢复内置共享（重启播放器生效）",
-                          );
-                        }}
-                      >
-                        保存密钥
-                      </button>
                     </div>
-                    {/* [lc-1790] ACG 论坛账号（Discuz 登录换 Cookie，附件下载需登录；
-                        清空保存=登出。Cookie 缓存本机 acgrip-cookie.txt） */}
-                    <div className="set-row" style={{ flexWrap: "wrap" }}>
-                      <span className="set-k" style={{ flex: "0 0 100%" }}>
-                        ACG 论坛账号（bbs.acgrip.com，附件下载需登录）
-                      </span>
+                    {/* ACG 论坛：用户名/密码 */}
+                    <div className="set-row">
+                      <button
+                        type="button"
+                        className={`set-sw${subEnabled("acgrip") ? " on" : ""}`}
+                        aria-pressed={subEnabled("acgrip")}
+                        aria-label="ACG 论坛源启停"
+                        onClick={() => toggleSub("acgrip")}
+                      />
+                      <span className="sp-badge sp-assrt" style={{ flex: "0 0 96px", textAlign: "center" }}>ACG</span>
+                      <span className="set-desc" style={{ flex: "0 0 auto" }}>bbs.acgrip.com · 附件下载需账号</span>
                       <input
                         className="set-input"
-                        style={{ flex: 1 }}
-                        placeholder={settings.acgUserSet ? "用户名已设置（清空保存=登出）" : "论坛用户名（游客也可搜索，仅下载需登录）"}
+                        style={{ flex: 1, minWidth: 110 }}
+                        placeholder={settings.acgUserSet ? "用户名已设置" : "论坛用户名"}
                         onChange={(e) => setAcgUser(e.target.value)}
                       />
                       <input
                         className="set-input"
-                        style={{ flex: 1 }}
+                        style={{ flex: 1, minWidth: 110 }}
                         type="password"
                         placeholder="论坛密码"
                         onChange={(e) => setAcgPass(e.target.value)}
                       />
-                      <button
-                        className="set-btn"
-                        onClick={() => {
-                          const has = acgUser.trim() !== "" && acgPass.trim() !== "";
-                          if (acgUser.trim() !== "" && acgPass.trim() === "") {
-                            setSubNote("密码不能为空");
-                            return;
-                          }
-                          onSettings({ acgUser: acgUser.trim(), acgPass: acgPass.trim() });
-                          setAcgUser("");
-                          setAcgPass("");
-                          setSubNote(has ? "论坛账号已保存（下次搜索时自动登录）" : "已登出 ACG 论坛（游客模式搜索）");
-                        }}
-                      >
-                        保存账号
-                      </button>
                     </div>
-                    {/* [lc-1791] SubHD 账号（搜索免登录；下载需免费账号，邮箱+密码） */}
-                    <div className="set-row" style={{ flexWrap: "wrap" }}>
-                      <span className="set-k" style={{ flex: "0 0 100%" }}>
-                        SubHD 账号（subhd.me，搜索免登录 · 下载需账号）
-                      </span>
+                    {/* SubHD：邮箱/密码 */}
+                    <div className="set-row">
+                      <button
+                        type="button"
+                        className={`set-sw${subEnabled("subhd") ? " on" : ""}`}
+                        aria-pressed={subEnabled("subhd")}
+                        aria-label="SubHD 源启停"
+                        onClick={() => toggleSub("subhd")}
+                      />
+                      <span className="sp-badge sp-assrt" style={{ flex: "0 0 96px", textAlign: "center" }}>SubHD</span>
+                      <span className="set-desc" style={{ flex: "0 0 auto" }}>subhd.me · 下载需账号</span>
                       <input
                         className="set-input"
-                        style={{ flex: 1 }}
-                        placeholder={settings.subhdEmailSet ? "邮箱已设置（清空保存=登出）" : "SubHD 邮箱"}
+                        style={{ flex: 1, minWidth: 130 }}
+                        placeholder={settings.subhdEmailSet ? "邮箱已设置" : "SubHD 邮箱"}
                         onChange={(e) => setSbEmail(e.target.value)}
                       />
                       <input
                         className="set-input"
-                        style={{ flex: 1 }}
+                        style={{ flex: 1, minWidth: 110 }}
                         type="password"
                         placeholder="SubHD 密码"
                         onChange={(e) => setSbPass(e.target.value)}
                       />
+                    </div>
+                    <div className="set-actions">
                       <button
                         className="set-btn"
                         onClick={() => {
-                          const has = sbEmail.trim() !== "" && sbPass.trim() !== "";
-                          if (sbEmail.trim() !== "" && sbPass.trim() === "") {
-                            setSubNote("密码不能为空");
+                          const anyCred =
+                            subKeyId.trim() !== "" ||
+                            subKeyOsub.trim() !== "" ||
+                            acgUser.trim() !== "" ||
+                            acgPass.trim() !== "" ||
+                            sbEmail.trim() !== "" ||
+                            sbPass.trim() !== "";
+                          const credOk =
+                            (subKeyId.trim() === "" || true) &&
+                            (acgUser.trim() === "" || acgPass.trim() !== "") &&
+                            (sbEmail.trim() === "" || sbPass.trim() !== "");
+                          if (!credOk) {
+                            setSubNote("账号类凭证用户名与密码需成对填写");
                             return;
                           }
-                          onSettings({ subhdEmail: sbEmail.trim(), subhdPass: sbPass.trim() });
+                          onSettings({
+                            subAssrtToken: subKeyId.trim(),
+                            subOsubKey: subKeyOsub.trim(),
+                            acgUser: acgUser.trim(),
+                            acgPass: acgPass.trim(),
+                            subhdEmail: sbEmail.trim(),
+                            subhdPass: sbPass.trim(),
+                          });
+                          setSubKeyId("");
+                          setSubKeyOsub("");
+                          setAcgUser("");
+                          setAcgPass("");
                           setSbEmail("");
                           setSbPass("");
-                          setSubNote(has ? "SubHD 账号已保存（下载时自动登录）" : "已清空 SubHD 账号（仅游客搜索）");
+                          setSubNote(
+                            anyCred
+                              ? "凭证已保存（自定义优先于内置；清空输入框保存即恢复内置/登出，重启播放器生效）"
+                              : "已恢复内置共享凭证 / 登出论坛账号（重启播放器生效）",
+                          );
                         }}
                       >
-                        保存账号
+                        保存凭证
                       </button>
+                      <span className="set-note">{subNote}</span>
                     </div>
                   </div>
                   <div className="set-row">

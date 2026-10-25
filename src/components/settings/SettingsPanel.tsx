@@ -2939,6 +2939,7 @@ function AiEnhanceRow() {
     tensorrtReady: boolean;
     superresEngine: string;
     qualityTier: string;
+    gpu?: string;
   } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
@@ -2956,6 +2957,7 @@ function AiEnhanceRow() {
       tensorrtReady: boolean;
       superresEngine: string;
       qualityTier: string;
+      gpu?: string;
     }>("ai_enhance_status")
       .then(setStatus)
       .catch(() => setStatus(null));
@@ -3096,6 +3098,16 @@ function AiEnhanceRow() {
           极致/均衡 = 开插值平滑；流畅 = 关闭省 GPU。手动选 RIFE/N 卡引擎时以引擎为准。
         </span>
       </div>
+      {/* [lc-1856] 显卡名动态展示：RIFE/超分硬性要求让用户对号入座 */}
+      {status?.gpu ? (
+        <div className="set-row" style={{ paddingLeft: 4 }}>
+          <span className="set-desc">
+            当前显卡：<b style={{ color: "var(--text-strong)" }}>{status.gpu}</b>
+            　·　RIFE 补帧硬性要求：720P 源需 RTX4060/RX6600 级以上；
+            1080P 源实测 RTX5070 都跟不上（1080P 请用 N卡 Smooth Motion）
+          </span>
+        </div>
+      ) : null}
       <div className="set-row" style={{ gap: 10, paddingLeft: 4 }}>
         <span className="set-k" style={{ flex: "none" }}>插帧引擎</span>
         {(
@@ -3120,7 +3132,7 @@ function AiEnhanceRow() {
                   : val === "nvidia"
                     ? "N 卡驱动级补帧：RTX 50 系 + 在 NVIDIA App 按 exe 注册开启 Smooth Motion"
                     : val === "rife"
-                      ? "RIFE：AI 在帧间补新帧，效果最好；1080P 源实测跟不上会自动回退，720P 可用"
+                      ? "RIFE：AI 在帧间补新帧，效果最好。硬性要求：720P 源需 RTX4060/RX6600 级以上；1080P 源实测 RTX5070 都跟不上（跟不上会自动回退）。1080P 请用 N卡 Smooth Motion"
                       : "内置平滑：MPV 自带时间插值，零开销，效果一般"
               }
               onClick={() => (rifeLocked ? setErr("RIFE 档需先下载 AI 增强组件") : void pickEngine(val))}

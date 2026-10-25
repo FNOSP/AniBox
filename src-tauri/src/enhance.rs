@@ -69,6 +69,35 @@ pub const TENSORRT_FILES: &[&str] = &[
     "runtime/vs-plugins/vsmlrt-cuda/nvinfer_10.dll",
 ];
 
+
+/// [lc-1856] 显卡名探测（注册表显示适配器类，过滤虚拟/远程显卡；进程内缓存一次）。
+/// 用于 AI 增强 UI 的「你的显卡：xxx」展示与 RIFE 硬性要求提示（用户普遍不清楚
+/// 自己的卡带不带得动——5070 实测 1080P RIFE 都跟不上）。
+fn detect_gpu_name() -> String {
+    static GPU: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    GPU.get_or_init(|| {
+        #[cfg(target_os = "windows")]
+        use std::os::windows::process::CommandExt;
+        let out = std::process::Command::new("pwsh")
+            .args(["-NoProfile", "-Command",
+                "(Get-ItemProperty 'HKLM:/SYSTEM/CurrentControlSet/Control/Class/{4d36e968-e325-11ce-bfc1-08002be10318}/0*' -ErrorAction SilentlyContinue | Where-Object DriverDesc | Select-Object -ExpandProperty DriverDesc) -join ' | '"])
+            .creation_flags(0x0800_0000)
+            .output();
+        let Ok(o) = out else { return String::new() };
+        let text = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        // 过滤虚拟/远程显示适配器，取第一块真卡
+        text.split(" | ")
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .find(|n| {
+                let low = n.to_lowercase();
+                !low.contains("virtual") && !low.contains("remote") && !low.contains("basic")
+            })
+            .unwrap_or("")
+            .to_string()
+    }).clone()
+}
+
 pub fn superres_dml_ready(app: &AppHandle) -> bool {
     let Some(root) = enhance_root(app) else { return false };
     SUPERRES_DML_FILES.iter().all(|rel| root.join(rel).is_file())
@@ -228,6 +257,8 @@ pub async fn ai_enhance_status(app: AppHandle) -> Result<Value, String> {
         "tensorrtReady": tensorrt_ready(&app),
         "superresEngine": read_superres_engine(&app),
         "qualityTier": read_quality_tier(&app),
+        // [lc-1856] 显卡名（RIFE 硬性要求提示用；虚拟显卡已过滤）
+        "gpu": detect_gpu_name(),
     }))
 }
 

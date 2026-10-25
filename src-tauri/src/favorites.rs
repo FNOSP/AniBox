@@ -66,7 +66,12 @@ pub async fn favorite_toggle(app: AppHandle, item: Value) -> Result<Value, Strin
         return Err("缺少 guid".into());
     }
     let mut map = load(&app);
-    let was_favorited = map.contains_key(&guid);
+    // [lc-1806b] 方向判定必须用「真实收藏态」：服务端列表标记（item.is_favorite=1）或本地表命中
+    // 任意一个即视为已收藏。上一版只查本地表 —— 服务端已收藏、本地无记录的条目第一次点击
+    // 会被判成「未收藏」走去加收藏（PUT），服务端无变化、返回 favorited=true 心形保持亮，
+    // 表现为「要点两次才取消」；且服务端从未取消，返回首页刷新又回来。
+    let was_favorited = map.contains_key(&guid)
+        || item.get("is_favorite").and_then(|v| v.as_i64()) == Some(1);
     // [lc-1806] 服务端优先（飞鲸口径，真 NAS 实测）：
     //   加 = PUT  /v/api/v1/item/favorite  body {"item_guid": guid}（snake 才认，camel 回 Not Found）
     //   取消 = DELETE 同路由 body {"itemGuid": guid}（camel 实测 true）

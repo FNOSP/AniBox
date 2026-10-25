@@ -1786,6 +1786,9 @@ struct PlayResolution {
     /// [lc-1631] 条目总时长（ms；0 = 未知）。play/info 的 item.duration（秒）折算，
     /// 年度报告按「进度 × 总时长」折算观看量时需要。
     duration_ms: u64,
+    /// [lc-1841] 服务端续播点（play/info item.ts，秒；0 = 无进度）。mpv 的 watch-later
+    /// 在 Windows 强杀退出时会丢，起播用它兜底（详情页进度条与实际起播终于同源）。
+    pos_secs: f64,
     /// [live] 电视直播直链（`play/info.live_channels[].path`）。
     ///
     /// 直播**不能**走 Go 代理 `playvideo`（该接口对直播返回 500，旧项目 Fntv-Plus
@@ -2009,6 +2012,8 @@ async fn resolve_play_guid(
             // [lc-1631] 总时长（秒 → 毫秒）：年度报告折算观看量的依据。
             let dur_sec = get_n("duration");
             let duration_ms = if dur_sec > 0 { (dur_sec as u64) * 1000 } else { 0 };
+            // [lc-1841] 服务端续播点（item.ts，秒；get_n 返回整数秒，转 f64）
+            let pos_secs = get_n("ts") as f64;
             let (media_guid, video_guid, audio_guid, subtitle_guid) = (
                 top_s("media_guid"),
                 top_s("video_guid"),
@@ -2037,6 +2042,7 @@ async fn resolve_play_guid(
                 parent_guid,
                 series_guid,
                 duration_ms,
+                pos_secs,
                 live_url,
             })
         }
@@ -2338,6 +2344,10 @@ async fn play_item(
     let (kind, _player_path) = player::resolve_player(&cfg)?;
     let mut entries: Vec<PlaylistEntry> = Vec::new();
     let mut start_index = 0usize;
+    // [lc-1841] 起播集续播点：episode/list 的 ts 字段（与详情页进度条同源）；电影/拉取
+    // 失败回退 play/info 的 pos_secs。仅服务端进度兜底——本地 watch-later 仍在时 mpv
+    // 加载时会优先恢复它，两层互补。
+    let mut resume_secs = 0.0f64;
     if res.kind == "Episode" && !res.parent_guid.is_empty() {
         match season_episode_values(&cfg, &res.parent_guid).await {
             Ok(list) if list.len() > 1 => {
@@ -2350,6 +2360,11 @@ async fn play_item(
                         .to_string();
                     if g.is_empty() {
                         continue;
+                    }
+                    // [lc-1841] 记起播集的服务端进度（play/info 与 episode/list 的 guid
+                    // 通常一致，两者任一命中即可——与下方 start_index 定位同规则）
+                    if resume_secs <= 0.0 && (g == res.play_guid || g == guid) {
+                        resume_secs = ep.get("ts").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     }
                     // [title] 逐集字段兼容：飞牛 `episode/list` 各版本字段名不一致
                     // （snake_case / camelCase），集标题还可能只在 `name` / `file_name` 上。
@@ -2407,6 +2422,10 @@ async fn play_item(
         }
     }
     let multi = entries.len() > 1;
+    // [lc-1841] 电影 / 整季列表没拉到：回退 play/info 的服务端进度
+    if !is_live && resume_secs <= 0.0 {
+        resume_secs = res.pos_secs;
+    }
 
     // 自带 mpv：多条目 M3U（自然顺序 + --playlist-start 定位），单条沿用原单条目 M3U8；
     // PotPlayer：一律播「点击集」的代理直链（relay 包可读名）。
@@ -2462,7 +2481,7 @@ async fn play_item(
         &cfg,
         &url,
         &player_title,
-        0.0,
+        resume_secs,
         duration_secs,
         None,
         &[],

@@ -428,6 +428,20 @@ impl MpvSession {
                                     .unwrap_or(0);
                                 crate::libmpv::trace(&format!("mpv file-loaded（媒体就绪，加载耗时 {took}ms）"));
                                 let _ = app2.emit("mpv-load", json!({ "phase": "loaded" }));
+                                // [lc-1841] start 只作用于本次加载（续播 seek 在加载时已消费）：
+                                // file-loaded 即清回 none，整季列表自动切下一集不会被误 seek。
+                                {
+                                    let line = json!({
+                                        "command": ["set_property", "start", "none"],
+                                    })
+                                    .to_string()
+                                        + "
+";
+                                    if let Some(f) = tx.lock().unwrap().as_mut() {
+                                        let _ = f.write_all(line.as_bytes());
+                                        let _ = f.flush();
+                                    }
+                                }
                             }
                             "end-file" => {
                                 let reason = v.get("reason").and_then(|r| r.as_str()).unwrap_or("");
@@ -781,15 +795,41 @@ impl MpvSession {
         if let Some(pid) = pid_now {
             #[cfg(target_os = "windows")]
             {
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                #[allow(unused_mut)]
-                let mut kill = tokio::process::Command::new("taskkill");
-                #[cfg(target_os = "windows")]
-                kill.creation_flags(0x0800_0000);
-                let _ = kill
-                    .args(["/F", "/PID", &pid.to_string()])
-                    .output()
-                    .await;
+                // [lc-1841] Windows 也要给优雅退出机会（对齐下方 mac/linux 注释早已写明的坑）：
+                // 200ms 后直接 taskkill /F 硬杀会跳过 auto-save-state.lua 的 on_unload
+                // 保存钩子 → watch-later 丢失 → 下次从头播（用户实测「记录 70% 却从头开始」
+                // 的根因之一；播放中的周期保存也只在暂停时才真正落盘）。
+                // 顺序：IPC quit 已发 → 轮询等自退（≤1.2s）→ taskkill（WM_CLOSE，≤0.8s）
+                // → 仍存活才 /F 兜底。
+                for _ in 0..8 {
+                    if self.is_dead().await {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                }
+                if !self.is_dead().await {
+                    #[allow(unused_mut)]
+                    let mut kill = tokio::process::Command::new("taskkill");
+                    #[cfg(target_os = "windows")]
+                    kill.creation_flags(0x0800_0000);
+                    let _ = kill.args(["/PID", &pid.to_string()]).output().await;
+                    for _ in 0..5 {
+                        if self.is_dead().await {
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(160)).await;
+                    }
+                    if !self.is_dead().await {
+                        #[allow(unused_mut)]
+                        let mut kill = tokio::process::Command::new("taskkill");
+                        #[cfg(target_os = "windows")]
+                        kill.creation_flags(0x0800_0000);
+                        let _ = kill
+                            .args(["/F", "/PID", &pid.to_string()])
+                            .output()
+                            .await;
+                    }
+                }
             }
             // [macos/linux] 不要直接 `kill -9`：那会跳过 mpv 的正常退出流程（写 watch_later /
             // 关窗 / 落盘），下次起播可能丢续播点。顺序改为：

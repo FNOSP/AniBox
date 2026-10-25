@@ -301,7 +301,7 @@ pub async fn launch(
         "[player] launch kind={kind} path={path} url={url} resume={resume_secs} dur={duration_secs} playlist_start={playlist_start:?} direct={direct}"
     ));
     match kind.as_str() {
-        "mpv" => launch_mpv(app, state, cfg, url, title, headers, playlist_start).await,
+        "mpv" => launch_mpv(app, state, cfg, url, title, resume_secs, duration_secs, headers, playlist_start).await,
         "potplayer" => {
             launch_potplayer(
                 app,
@@ -321,12 +321,15 @@ pub async fn launch(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn launch_mpv(
     app: &AppHandle,
     state: &AppState,
     cfg: &Config,
     url: &str,
     title: &str,
+    resume_secs: f64,
+    duration_secs: f64,
     headers: Option<&HttpHeaders>,
     playlist_start: Option<usize>,
 ) -> Result<(), String> {
@@ -340,6 +343,12 @@ async fn launch_mpv(
     // 与「先启动再 IPC jump」不同，起播零 IPC 依赖（启动期 IPC 会卡数秒，见 lib.rs lc-1559）。
     if let Some(idx) = playlist_start {
         extra.push(format!("--playlist-start={idx}"));
+    }
+    // [lc-1841] 续播点兜底：mpv 的 watch-later 在 Windows 强杀退出时会丢（见
+    // mpv.rs shutdown 注释），显式 --start 用服务端进度保底起播；mpv.rs 会在首个
+    // file-loaded 后把 start 清回 none，整季列表切下一集不会被误 seek。
+    if should_seek(resume_secs, duration_secs) {
+        extra.push(format!("--start={}", format_seek(resume_secs)));
     }
     let mut slot = state.mpv.lock().await;
     let existing = match slot.as_ref() {
@@ -386,6 +395,14 @@ async fn launch_mpv(
                 // 库内播放：清掉上一部在线源可能残留的头（fire-and-forget，不拖起播）。
                 m.command_no_reply(json!(["set", "referrer", ""])).await;
                 m.command_no_reply(json!(["set", "http-header-fields", ""]))
+                    .await;
+            }
+            // [lc-1841] 复用会话的续播点：loadfile 前把 start 写成进度（加载时消费），
+            // file-loaded 后由 mpv.rs 事件循环清回 none；本地 watch-later 若存在，
+            // 其恢复发生在加载时、会覆盖这里的值（两处进度本就同源近似）。
+            if should_seek(resume_secs, duration_secs) {
+                let _ = m
+                    .command(json!(["set", "start", format_seek(resume_secs)]))
                     .await;
             }
             match playlist_start {

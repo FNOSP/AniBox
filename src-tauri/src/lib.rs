@@ -1126,7 +1126,10 @@ async fn mdb_tags_get(
         .collect();
     rec.insert(0, json!({ "label": "全部", "value": null }));
 
-    let mut genres_out: Vec<Value> = genres
+    // [lc-1805e] 类型行：按 tag/list.genres 的 **id 顺序**（= 飞牛原生 chips 顺序）取
+    // tag/genres 中文表名；同名多 id（如 878/10765 都叫"科幻奇幻"）去重只留首个，
+    // 选中时 genres 用**首个 id** 过滤（item/list 的 genres 只认单 id）。
+    let genre_zh: std::collections::HashMap<i64, String> = genres
         .as_ref()
         .ok()
         .and_then(|v| v.as_array().cloned())
@@ -1134,10 +1137,26 @@ async fn mdb_tags_get(
         .iter()
         .filter_map(|g| {
             let id = g.get("id").and_then(|x| x.as_i64())?;
-            let name = g.get("value").and_then(|x| x.as_str()).unwrap_or("");
-            Some(json!({ "label": name, "value": id }))
+            let name = g.get("value").and_then(|x| x.as_str())?.to_string();
+            Some((id, name))
         })
         .collect();
+    let list_genre_ids: Vec<i64> = tl
+        .get("genres")
+        .and_then(|x| x.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_i64()).collect())
+        .unwrap_or_default();
+    let mut genres_out: Vec<Value> = Vec::new();
+    let mut genre_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut genre_first_id: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for id in &list_genre_ids {
+        let Some(name) = genre_zh.get(id) else { continue };
+        if !genre_seen.insert(name.clone()) {
+            continue;
+        }
+        genre_first_id.insert(name.clone(), *id);
+        genres_out.push(json!({ "label": name, "value": *id }));
+    }
     genres_out.insert(0, json!({ "label": "全部", "value": null }));
 
     let iso_map: std::collections::HashMap<String, String> = iso

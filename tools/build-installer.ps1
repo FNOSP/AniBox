@@ -236,7 +236,13 @@ while ($attempt -lt $MaxAttempts -and -not $buildSucceeded) {
     Stop-BuildToolProcesses -Reason "第 $attempt 次构建前清理"
 
     $attemptStart = Get-Date
-    $output = & npm run tauri build -- --bundles nsis 2>&1 | Tee-Object -FilePath $LogFile -Append
+    # [lc-1818] 实时日志：纯 `$output = … | Tee-Object` 会把整条管道吞进变量，stdout
+    # 一行不出（GUI 日志区全程空白，打包完成才见分晓）。ForEach-Object 每行**到达时**
+    # Write-Host 直出（GUI 的 stdout 管道逐行实时拿到），再传下游写文件 + 存变量。
+    $output = & npm run tauri build -- --bundles nsis 2>&1 | ForEach-Object {
+        Write-Host $_.ToString()
+        $_
+    } | Tee-Object -FilePath $LogFile -Append
     $exitCode = $LASTEXITCODE
     $elapsed  = (Get-Date) - $attemptStart
     $text     = ($output | Out-String)

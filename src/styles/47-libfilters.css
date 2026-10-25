@@ -168,3 +168,56 @@ button.libf-toggle[style],
 .libf-bar .libf-sort {
   height: 28px;
 }
+
+/* [lc-1805d] 工具行与网格间距 + 自定义排序下拉 */
+.libf-bar {
+  margin-bottom: 16px;
+}
+
+.libf-dd {
+  position: relative;
+}
+
+.libf-dd-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.libf-dd-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 41;
+  min-width: 150px;
+  display: flex;
+  flex-direction: column;
+  padding: 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--glass);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.3);
+}
+
+.libf-dd-item {
+  border: 0;
+  background: none;
+  padding: 7px 12px;
+  border-radius: 7px;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.libf-dd-item:hover {
+  background: var(--line);
+}
+
+.libf-dd-item.on {
+  color: var(--accent, #8ab4f8);
+  font-weight: 600;
+}

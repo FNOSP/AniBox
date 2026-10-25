@@ -57,6 +57,7 @@ export function LibView({
 
   // [lc-1805c] 服务端排序（真 NAS 实测四列全支持）：create_time/release_date/sort_title/vote_average
   const [sortKey, setSortKey] = useState("");
+  const [sortOpen, setSortOpen] = useState(false);
 
   const levelsRef = useRef(levels);
   useEffect(() => {
@@ -433,11 +434,19 @@ export function LibView({
             </svg>
             筛选{filterActive ? " · 生效中" : ""}{collapsed ? " ▾" : " ▴"}
           </button>
-          <select
-            className="libf-sort"
-            value={sortKey}
-            onChange={(e) => {
-              setSortKey(e.target.value);
+          {(() => {
+            const SORTS: [string, string][] = [
+              ["", "最近添加"],
+              ["release_date|DESC", "年份 新→旧"],
+              ["release_date|ASC", "年份 旧→新"],
+              ["sort_title|ASC", "名称 A→Z"],
+              ["vote_average|DESC", "评分 高→低"],
+            ];
+            const cur = SORTS.find(([k]) => k === sortKey) ?? SORTS[0];
+            const pick = (k: string) => {
+              setSortOpen(false);
+              if (k === sortKey) return;
+              setSortKey(k);
               setLevels((ls) => {
                 const i2 = ls.length - 1;
                 if (i2 < 0) return ls;
@@ -446,14 +455,30 @@ export function LibView({
                 return nv;
               });
               void load(null);
-            }}
-          >
-            <option value="">最近添加</option>
-            <option value="release_date|DESC">年份 新→旧</option>
-            <option value="release_date|ASC">年份 旧→新</option>
-            <option value="sort_title|ASC">名称 A→Z</option>
-            <option value="vote_average|DESC">评分 高→低</option>
-          </select>
+            };
+            return (
+              <div className="libf-dd">
+                <button type="button" className={`libf-open${sortKey ? " on" : ""}`} onClick={() => setSortOpen(!sortOpen)}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M3 6h18M6 12h12M10 18h4" />
+                  </svg>
+                  {cur[1]} {sortOpen ? "▴" : "▾"}
+                </button>
+                {sortOpen && (
+                  <>
+                    <div className="libf-dd-mask" onClick={() => setSortOpen(false)} />
+                    <div className="libf-dd-menu">
+                      {SORTS.map(([k, label]) => (
+                        <button key={k || "default"} type="button" className={`libf-dd-item${k === sortKey ? " on" : ""}`} onClick={() => pick(k)}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
           {(f.cat !== null || sortKey !== "") && (
             <button
               type="button"

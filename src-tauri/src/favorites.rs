@@ -74,7 +74,7 @@ pub async fn favorite_toggle(app: AppHandle, item: Value) -> Result<Value, Strin
         || item.get("is_favorite").and_then(|v| v.as_i64()) == Some(1);
     // [lc-1806] 服务端优先（飞鲸口径，真 NAS 实测）：
     //   加 = PUT  /v/api/v1/item/favorite  body {"item_guid": guid}（snake 才认，camel 回 Not Found）
-    //   取消 = DELETE 同路由 body {"itemGuid": guid}（camel 实测 true）
+    //   取消 = DELETE 同路由 body {"item_guid": guid}（snake；camel 返回 true 是幂等假阳性）
     // 当年「NAS 未实现」的结论是 POST 打错方法；服务端状态从没被取消过，导致
     // 「取消收藏 → 刷新又回来」（列表 is_favorite 来自服务端）。失败回落纯本地（离线兜底）。
     let server_ok = {
@@ -84,11 +84,9 @@ pub async fn favorite_toggle(app: AppHandle, item: Value) -> Result<Value, Strin
             false
         } else {
             let client = crate::fnapi::new_client();
-            let body = if was_favorited {
-                json!({ "itemGuid": guid })
-            } else {
-                json!({ "item_guid": guid })
-            };
+            // [lc-1806c] PUT/DELETE 一律 snake：同族 DELETE /item/watched 实测要 {item_guid}
+            //（lc-1654）；此前 camel 的 {itemGuid} 返回 true 是幂等假阳性，收藏并未真取消。
+            let body = json!({ "item_guid": guid });
             let method = if was_favorited { "DELETE" } else { "PUT" };
             match client
                 .call(&cfg.server, "/v/api/v1/item/favorite", method, &cfg.token, Some(body))

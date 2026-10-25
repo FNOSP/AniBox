@@ -66,6 +66,38 @@ pub async fn favorite_toggle(app: AppHandle, item: Value) -> Result<Value, Strin
         return Err("缺少 guid".into());
     }
     let mut map = load(&app);
+    let was_favorited = map.contains_key(&guid);
+    // [lc-1806] 服务端优先（飞鲸口径，真 NAS 实测）：
+    //   加 = PUT  /v/api/v1/item/favorite  body {"item_guid": guid}（snake 才认，camel 回 Not Found）
+    //   取消 = DELETE 同路由 body {"itemGuid": guid}（camel 实测 true）
+    // 当年「NAS 未实现」的结论是 POST 打错方法；服务端状态从没被取消过，导致
+    // 「取消收藏 → 刷新又回来」（列表 is_favorite 来自服务端）。失败回落纯本地（离线兜底）。
+    let server_ok = {
+        let state = app.state::<crate::AppState>();
+        let cfg = state.config.read().await.clone();
+        if cfg.token.is_empty() {
+            false
+        } else {
+            let client = crate::fnapi::new_client();
+            let body = if was_favorited {
+                json!({ "itemGuid": guid })
+            } else {
+                json!({ "item_guid": guid })
+            };
+            let method = if was_favorited { "DELETE" } else { "PUT" };
+            match client
+                .call(&cfg.server, "/v/api/v1/item/favorite", method, &cfg.token, Some(body))
+                .await
+            {
+                Ok(_) => true,
+                Err(e) => {
+                    crate::libmpv::trace(&format!("[favorites] 服务端收藏切换失败，回落本地: {e}"));
+                    false
+                }
+            }
+        }
+    };
+    let _ = server_ok;
     let favorited = if map.remove(&guid).is_some() {
         false
     } else {

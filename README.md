@@ -7,6 +7,7 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![Rust](https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![飞牛影视](https://img.shields.io/badge/%E9%A3%9E%E7%89%9B%E5%BD%B1%E8%A7%86-fnOS-056de2)](https://www.fnnas.com/)
+[![网页版](https://img.shields.io/badge/%E7%BD%91%E9%A1%B5%E7%89%88-AniBox%20fpk-8a6fd6)](fpk/README.md)
 [![Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FFNOSP%2FAniBox%2Fbadge-data%2Fdownloads.json&query=%24.total&label=%E4%B8%8B%E8%BD%BD&suffix=%E6%AC%A1&color=2ea44f&logo=github&logoColor=white)](https://github.com/FNOSP/AniBox/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)](https://github.com/FNOSP/AniBox/releases)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
@@ -40,6 +41,8 @@
 > **把飞牛影视，变成你桌面上的私人影院。** AniBox 是一个**为飞牛影视（fnOS / 飞牛私有云）定制的第三方 Windows 桌面客户端**：它不把网页塞进浏览器，而是用 **React 自绘界面**直接调用飞牛影视 API，以**独立 `mpv.exe` 进程**承担播放；再用 Bangumi / TMDB / AniList 元数据聚合、本地弹幕 shim、原生全局手柄、磁盘缓存与双通道更新，把「看片」这件事做成一套完整、可长期维护的桌面体验。
 
 > <img src="https://api.iconify.design/mdi/web.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> **项目地址 / 官网：https://690075.xyz** —— 下载与更新以本仓库 Releases 为唯一官方渠道。
+
+> <img src="https://api.iconify.design/mdi/monitor.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> **网页版入口 —— [AniBox fpk · 飞牛影视网页端增强](fpk/README.md)**：在 fnOS 应用中心装一次 fpk，电视 / 平板 / 手机 / 电脑打开浏览器就是增强版影视网页，影视应用零改动、卸载即还原。实机截图、功能清单与安装步骤见 **[fpk/README.md](fpk/README.md)**。
 
 ## <img src="https://api.iconify.design/mdi/image-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 界面截图
 

@@ -1873,6 +1873,8 @@ export function SettingsPanel({
                         需要 Referer/UA 的 HLS 源会提示切回 mpv。
                       </div>
 
+                  {/* [lc-1820] AI 增强可选组件：RIFE AI 2× 补帧运行时（软件内下载，约 50MB） */}
+                  <AiEnhanceRow />
                 </>
               )}
                   {playerKind === "mpv-local" && (
@@ -2917,3 +2919,118 @@ export function SettingsPanel({
 }
 
 /* ────────────────────────── 根组件 ────────────────────────── */
+
+
+/* ── [lc-1820] AI 增强（可选组件）：RIFE AI 2× 补帧 ──────────────────────
+   运行时（Python+VapourSynth+ncnn Vulkan+RIFE v4.6，约 50MB）不进安装包，
+   软件内下载到 %APPDATA%/com.anibox.app/ai-enhance（卸载不残留安装目录）。
+   就绪后：播放器「插帧」按钮 / 右键菜单选 RIFE 档（engine=rife），
+   全显卡通用（Vulkan）；倍速/HDR/超4K 片源自动回退内置平滑（安全契约）。 */
+function AiEnhanceRow() {
+  const [status, setStatus] = useState<{ installed: boolean; ready: boolean; version: string; installedAt: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [pct, setPct] = useState(-1);
+
+  const refresh = useCallback(() => {
+    invoke<{ installed: boolean; ready: boolean; version: string; installedAt: string }>("ai_enhance_status")
+      .then(setStatus)
+      .catch(() => setStatus(null));
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const un = listen<{ downloaded: number; total: number }>("ai-enhance-progress", (e) => {
+      const { downloaded, total } = e.payload;
+      setPct(total > 0 ? Math.floor((downloaded / total) * 100) : 0);
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, [refresh]);
+
+  const download = async () => {
+    setErr("");
+    setBusy(true);
+    setPct(0);
+    try {
+      await invoke("ai_enhance_download");
+      refresh();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+      setPct(-1);
+    }
+  };
+
+  const remove = async () => {
+    setErr("");
+    setBusy(true);
+    try {
+      await invoke("ai_enhance_delete");
+      refresh();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="set-row set-row-col" style={{ gap: 8 }}>
+      <div className="set-row" style={{ flex: 1, gap: 10 }}>
+        <span className="set-k">AI 增强 · RIFE AI 2× 补帧</span>
+        <span className="set-desc" style={{ flex: 1 }}>
+          {status === null
+            ? "检测中…"
+            : status.ready
+              ? `已就绪（${status.version}${status.installedAt ? " · " + status.installedAt : ""}）`
+              : status.installed
+                ? `已安装 ${status.version}，但组件文件不完整——重新下载可修复`
+                : "未安装 · 运行时约 50MB，下载到用户目录（不占安装盘）"}
+        </span>
+        {status?.ready ? (
+          <button type="button" className="sub-cred-btn" onClick={remove} disabled={busy}>
+            删除组件
+          </button>
+        ) : (
+          <button type="button" className="sub-cred-btn on" onClick={download} disabled={busy}>
+            {busy ? "下载中…" : status?.installed ? "重新下载" : "下载并启用"}
+          </button>
+        )}
+      </div>
+      {busy && pct >= 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 4 }}>
+          <div
+            style={{
+              flex: 1,
+              height: 6,
+              borderRadius: 999,
+              background: "var(--line)",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                width: `${pct}%`,
+                height: "100%",
+                borderRadius: 999,
+                background: "var(--accent-grad, #6c9bff)",
+                transition: "width 0.2s ease",
+              }}
+            />
+          </div>
+          <span className="set-desc" style={{ flex: "none", minWidth: 64, textAlign: "right" }}>
+            {pct}%
+          </span>
+        </div>
+      )}
+      <div className="set-desc">
+        RIFE v4.6 光流补帧（24fps→48fps），Vulkan 后端全显卡可用；倍速 / HDR / 超 4K
+        片源自动回退内置平滑。就绪后在播放器的「插帧」按钮长按或右键菜单选择 RIFE 档。
+      </div>
+      {err && <div className="set-warn">{err}</div>}
+    </div>
+  );
+}

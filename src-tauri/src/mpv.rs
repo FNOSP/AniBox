@@ -224,6 +224,24 @@ impl MpvSession {
         if let Ok(exe) = std::env::current_exe() {
             command.env("ANIBOX_EXE", exe);
         }
+        // [lc-1820] AI 增强组件就绪时注入 VapourSynth 运行环境：mpv 的 vapoursynth
+        // 滤镜经 VSScript.dll（PATH 定位）加载组件内 Python；PATH 前置 runtime 与
+        // vapoursynth 子目录。进程启动前设好，运行时切引擎无需再动环境。
+        if crate::enhance::runtime_ready(&app) {
+            if let Some(root) = crate::enhance::enhance_root(&app) {
+                let rt = root.join("runtime");
+                let vs_py = rt.join("Lib").join("site-packages").join("vapoursynth");
+                command.env("VSSCRIPT_PATH", vs_py.join("vsscript.dll"));
+                command.env("PYTHONNOUSERSITE", "1");
+                command.env("PYTHONDONTWRITEBYTECODE", "1");
+                if let Ok(path_var) = std::env::var("PATH") {
+                    command.env(
+                        "PATH",
+                        format!("{};{};{}", rt.display(), vs_py.display(), path_var),
+                    );
+                }
+            }
+        }
         command
             .args(&args)
             .stdin(std::process::Stdio::null())

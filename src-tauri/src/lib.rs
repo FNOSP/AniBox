@@ -14,6 +14,8 @@ mod cloud;
 mod cloud_proxy;
 // [lc-1811] WebDAV 媒体源（多账号 + PROPFIND 浏览 + Basic Auth 播放 + 随片字幕）
 mod webdav;
+// [lc-1820] AI 增强可选组件（RIFE Vulkan 运行时：软件内下载/状态/删除）
+mod enhance;
 // [bili-account] B 站账号（Cookie 读写/体检）+ Node 检测 + 一键自建弹幕源
 mod bili_account;
 // [bili-qr] B 站二维码扫码登录（generate/poll，Cookie 落盘复用 bili_account）
@@ -3821,6 +3823,9 @@ pub fn run() {
             cloud::cloud_play,
             cloud::cloud_rename,
             cloud_proxy::cloud_ffmpeg_available,
+            enhance::ai_enhance_status,
+            enhance::ai_enhance_download,
+            enhance::ai_enhance_delete,
             webdav::webdav_accounts,
             webdav::webdav_account_add,
             webdav::webdav_account_del,

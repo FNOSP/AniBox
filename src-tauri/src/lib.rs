@@ -8,6 +8,8 @@ mod authx;
 mod bgm;
 mod bgm_account;
 mod cloud115;
+// [lc-1810] 多云盘资源库：夸克/百度/阿里/天翼/123/光鸭 统一接入（LumiPlayer direct_cloud 口径）
+mod cloud;
 // [bili-account] B 站账号（Cookie 读写/体检）+ Node 检测 + 一键自建弹幕源
 mod bili_account;
 // [bili-qr] B 站二维码扫码登录（generate/poll，Cookie 落盘复用 bili_account）
@@ -3803,6 +3805,13 @@ pub fn run() {
             cloud115::cloud115_logout,
             cloud115::cloud115_list,
             cloud115::cloud115_play,
+            // [lc-1810] 多云盘资源库（115 之外六家 + 统一入口）
+            cloud::cloud_providers,
+            cloud::cloud_qr_start,
+            cloud::cloud_qr_poll,
+            cloud::cloud_logout,
+            cloud::cloud_list,
+            cloud::cloud_play,
             danmaku_sources::danmaku_sources_get,
             danmaku_sources::danmaku_sources_set,
             subtitle_sources::subtitle_sources_get,

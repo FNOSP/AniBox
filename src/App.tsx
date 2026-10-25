@@ -23,8 +23,8 @@ import { LibView } from "./components/library/LibView";
 import { LoginPage } from "./components/login/LoginPage";
 // [lc-1700] 演员页（详情页演职人员点击进入）
 import { PersonPage } from "./components/person/PersonPage";
-// [lc-1779] 115 网盘面板（扫码登录 + 文件浏览 + 直链/服务端转码播放）
-import { Cloud115Panel } from "./components/cloud115/Cloud115Panel";
+// [lc-1810] 多云盘资源库面板（7 家网盘：扫码登录 + 文件浏览 + 直链播放；115 含服务端转码）
+import { CloudPanel } from "./components/cloud115/CloudPanel";
 import { FeedbackPanel } from "./components/feedback/FeedbackPanel";
 import { DisclaimerModal } from "./components/disclaimer/DisclaimerModal";
 import { DISCLAIMER_ACK_KEY } from "./components/disclaimer/DisclaimerText";
@@ -1364,10 +1364,10 @@ function App() {
               <WatchHistoryView onBack={goHome} onOpenItem={openHistoryItem} />
             </div>
           )}
-          {/* [lc-1779] 115 网盘页：与观影记录同款条件挂载（view-in 转场），返回走 goHome。 */}
+          {/* [lc-1810] 多云盘资源库页：与观影记录同款条件挂载（view-in 转场），返回走 goHome。 */}
           {view === "cloud115" && (
             <div className="view-pane active view-in">
-              <Cloud115Panel onBack={goHome} />
+              <CloudPanel onBack={goHome} />
             </div>
           )}
           {/* [lc-1513] 详情/库页：进入播 view-in；返回时（view 切走）先播 view-out

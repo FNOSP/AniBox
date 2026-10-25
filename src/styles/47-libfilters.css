@@ -1,0 +1,60 @@
+/* ══════════════════════ [lc-1796] 库筛选条（类型 / 年份 / 排序）══════════════════════ */
+
+.libf {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0 6px;
+}
+
+.libf-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.libf-k {
+  flex: none;
+  font-size: 12px;
+  opacity: 0.55;
+  margin-right: 2px;
+}
+
+.libf-chip {
+  box-sizing: border-box;
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 13px;
+  background: var(--glass);
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.libf-chip:hover {
+  border-color: var(--accent, #8ab4f8);
+}
+
+.libf-chip.on {
+  border-color: var(--accent, #8ab4f8);
+  font-weight: 600;
+}
+
+.libf-sort {
+  box-sizing: border-box;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--glass);
+  color: var(--ink);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.libf-busy {
+  font-size: 11.5px;
+  opacity: 0.55;
+}

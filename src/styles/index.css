@@ -55,3 +55,5 @@
 @import "./45-search.css";
 /* [lc-1779] 115 网盘面板（扫码登录 + 文件浏览 + 直链/转码播放） */
 @import "./46-cloud115.css";
+/* [lc-1796] 库/分类根层筛选条（飞鲸式：类型/年份 chips + 排序） */
+@import "./47-libfilters.css";

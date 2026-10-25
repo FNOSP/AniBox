@@ -286,6 +286,88 @@ export function LibView({
     [lib.guid],
   );
 
+  /* ── [lc-1796] 飞鲸式筛选条（库根/分类根层）：类型 / 年份 chips + 排序 ──
+     不赌 fnOS API 的过滤参数：筛选/排序一旦激活，前端把该层**全量**拉下来（上限 20 页）
+     再本地过滤；全部清空则回到服务端分页 + 无限滚动的默认模式。 */
+  const atRoot = levels.length === 1;
+  const [fWatched, setFWatched] = useState<"yes" | "no" | null>(null);
+  const [fYear, setFYear] = useState<string | null>(null);
+  const [fSort, setFSort] = useState("");
+  const [fullItems, setFullItems] = useState<MediaItem[] | null>(null);
+  const [fullBusy, setFullBusy] = useState(false);
+  const filterActive = atRoot && (fWatched !== null || fYear !== null || fSort !== "");
+
+  /** 激活筛选时确保全量：基于 fetchPage 循环翻页（复用判停），上限 20 页防失控。 */
+  const ensureFull = useCallback(async () => {
+    if (fullItems || fullBusy) return;
+    setFullBusy(true);
+    try {
+      const acc: MediaItem[] = [];
+      let page = 1;
+      let total = 0;
+      for (; page <= 20; page++) {
+        const d = await fetchPage(null, page);
+        acc.push(...d.list.filter((it) => it.guid));
+        total = d.total > 0 ? d.total : acc.length;
+        if (!shouldLoadMore(acc.length, total, LIB_PAGE_SIZE)) break;
+      }
+      setFullItems(acc);
+    } catch {
+      setFullItems([]); // 失败：仅筛已加载（items 不足以全量）——下面用 items 兜底
+    } finally {
+      setFullBusy(false);
+    }
+  }, [fetchPage, fullItems, fullBusy]);
+
+  useEffect(() => {
+    if (filterActive) void ensureFull();
+  }, [filterActive, ensureFull]);
+
+  // 切层/切库时清空筛选态（levels 变化且不在根层，或 lib.guid 变化）
+  useEffect(() => {
+    setFWatched(null);
+    setFYear(null);
+    setFSort("");
+    setFullItems(null);
+  }, [lib.guid, levels.length === 1]);
+
+  const base = filterActive ? (fullItems ?? []) : items;
+  // chips 数据源：筛选模式下用全量聚合（未拉完先聚合已到的）。年份取 release_date 前 4 位
+  const yearSet = new Set<string>();
+  for (const it of base) {
+    const y = String(it.release_date ?? "").slice(0, 4);
+    if (/^\d{4}$/.test(y)) yearSet.add(y);
+  }
+  const years = [...yearSet].sort((a, b) => (a < b ? 1 : -1));
+  const recentYears = years.slice(0, 8);
+  const olderYears = years.slice(8);
+  const yearChips: string[] = olderYears.length ? [...recentYears, "更早"] : recentYears;
+
+  let shown = base;
+  if (filterActive) {
+    shown = base.filter((it) => {
+      if (fWatched === "yes" && !it.watched) return false;
+      if (fWatched === "no" && it.watched) return false;
+      if (fYear) {
+        const y = String(it.release_date ?? "").slice(0, 4);
+        if (fYear === "更早") {
+          if (!olderYears.includes(y)) return false;
+        } else if (y !== fYear) return false;
+      }
+      return true;
+    });
+    if (fSort === "year_desc") shown = [...shown].sort((a, b) => String(b.release_date ?? "").localeCompare(String(a.release_date ?? "")));
+    if (fSort === "year_asc") shown = [...shown].sort((a, b) => String(a.release_date ?? "").localeCompare(String(b.release_date ?? "")));
+    if (fSort === "name_asc")
+      shown = [...shown].sort((a, b) => (a.title ?? "").localeCompare(b.title ?? "", "zh-Hans-CN"));
+  }
+
+  const chip = (label: string, on: boolean, onClick: () => void) => (
+    <button key={label} type="button" className={`libf-chip${on ? " on" : ""}`} onClick={onClick}>
+      {label}
+    </button>
+  );
+
   return (
     <main className="content" ref={contentRef} onScroll={onScroll}>
       <div className="page-head">
@@ -293,8 +375,51 @@ export function LibView({
           ‹
         </button>
         <h3>{current ? current.title : lib.title}</h3>
-        <span className="muted">{total || items.length} 项</span>
+        <span className="muted">{filterActive ? shown.length : total || items.length} 项</span>
       </div>
+      {/* [lc-1796] 飞鲸式筛选条：仅根层（库根 / 分类根）显示；文件夹钻取层不带 */}
+      {atRoot && yearChips.length > 0 && (
+        <div className="libf">
+          <div className="libf-row">
+            <span className="libf-k">观看</span>
+            {chip("全部", fWatched === null, () => setFWatched(null))}
+            {chip("看过", fWatched === "yes", () => setFWatched(fWatched === "yes" ? null : "yes"))}
+            {chip("未看过", fWatched === "no", () => setFWatched(fWatched === "no" ? null : "no"))}
+          </div>
+          <div className="libf-row">
+            <span className="libf-k">年份</span>
+            {chip("全部", fYear === null, () => setFYear(null))}
+            {yearChips.map((y) => chip(y, fYear === y, () => setFYear(fYear === y ? null : y)))}
+          </div>
+          <div className="libf-row">
+            <span className="libf-k">排序</span>
+            <select
+              className="libf-sort"
+              value={fSort}
+              onChange={(e) => setFSort(e.target.value)}
+            >
+              <option value="">默认（最近添加）</option>
+              <option value="year_desc">年份 新→旧</option>
+              <option value="year_asc">年份 旧→新</option>
+              <option value="name_asc">名称 A→Z</option>
+            </select>
+            {filterActive && (
+              <button
+                type="button"
+                className="libf-chip"
+                onClick={() => {
+                  setFWatched(null);
+                  setFYear(null);
+                  setFSort("");
+                }}
+              >
+                清除筛选
+              </button>
+            )}
+            {fullBusy && <span className="libf-busy">正在汇总全部条目…</span>}
+          </div>
+        </div>
+      )}
       {err && (
         <div className="err">
           <span>{err}</span>
@@ -309,12 +434,14 @@ export function LibView({
       {loading && <div className="empty">加载中…</div>}
       {!loading && (
         <div className="grid">
-          {items.map((it) => (
+          {(filterActive ? shown : items).map((it) => (
             <PosterCard key={it.guid} item={it} onOpen={openItem} onEditMeta={onEditMeta} onRefreshMeta={onRefreshMeta} onFavoriteChange={onFavoriteChange} />
           ))}
         </div>
       )}
-      {!loading && items.length === 0 && !err && <div className="empty">暂无内容</div>}
+      {!loading && (filterActive ? shown : items).length === 0 && !err && (
+        <div className="empty">{filterActive ? "没有符合筛选的条目" : "暂无内容"}</div>
+      )}
       {!loading && moreBusy && <div className="lib-more-busy">加载更多…</div>}
       {!loading && moreErr && (
         <div className="lib-more-err">
@@ -324,7 +451,7 @@ export function LibView({
           </button>
         </div>
       )}
-      {!loading && hasMore && <div ref={sentinelRef} className="lib-more-sentinel" />}
+      {!loading && hasMore && !filterActive && <div ref={sentinelRef} className="lib-more-sentinel" />}
     </main>
   );
 }

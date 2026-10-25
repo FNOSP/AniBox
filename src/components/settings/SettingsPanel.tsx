@@ -60,15 +60,13 @@ let lastDownload: UpdateDownloadResult | null = null;
  *  避免设置项「无处可去」或重复渲染。 */
 const SET_TABS = [
   { key: "general", label: "通用" },
-  { key: "account", label: "账号" },
   { key: "player", label: "播放器" },
+  { key: "enhance", label: "AI 增强" },
   { key: "appearance", label: "外观" },
   { key: "danmu", label: "弹幕" },
-  { key: "gamepad", label: "手柄" },
-  { key: "storage", label: "缓存与存储" },
-  { key: "diagnostics", label: "诊断" },
-  { key: "update", label: "更新" },
-  { key: "about", label: "关于" },
+  { key: "account", label: "账号" },
+  { key: "maintenance", label: "存储与诊断" },
+  { key: "about", label: "更新与关于" },
 ] as const;
 type SetTabKey = (typeof SET_TABS)[number]["key"];
 
@@ -1942,114 +1940,15 @@ export function SettingsPanel({
                   )}
 
 
-              {/* [lc-1820/1823] AI 增强可选组件（只在播放器 tab 显示）：
-                  基础组件下载 + 画质档位 + AI 超分引擎 + TensorRT 大包 + 插帧引擎。 */}
-              <AiEnhanceRow />
                 </>
               )}
 
-              {/* ── 手柄 ── */}
-              {tab === "gamepad" && (
-                <>
-                  <div className="set-row">
-                    <div>
-                      <span className="set-k">手柄操作</span>
-                      <div className="set-desc">用 Xbox 布局手柄浏览界面、控制播放</div>
-                    </div>
-                    <button
-                      type="button"
-                      className={`set-sw${padEnabled ? " on" : ""}`}
-                      aria-pressed={padEnabled}
-                      aria-label="手柄操作"
-                      onClick={() => onSettings({ gamepadEnabled: !padEnabled })}
-                    />
-                  </div>
-                  <div className="set-row">
-                    <div>
-                      <span className="set-k">连接状态</span>
-                      <div className="set-desc">浏览器需先按一下手柄才会识别设备</div>
-                    </div>
-                    <div className="set-pad-status">
-                      <span className={`set-pad-dot${padConn.connected ? " on" : " off"}`} />
-                      <span className="set-pad-name" title={padConn.name}>
-                        {padConn.connected ? padConn.name || "已连接" : "未检测到"}
-                      </span>
-                      <button
-                        type="button"
-                        className="set-btn"
-                        onClick={() => void detectPad()}
-                      >
-                        检测
-                      </button>
-                    </div>
-                  </div>
-                  {(
-                    [
-                      {
-                        key: "stickDeadzone",
-                        label: "摇杆死区",
-                        desc: "低于此值视为没有推杆（0.10–0.50）",
-                        fmt: (v: number) => v.toFixed(2),
-                      },
-                      {
-                        key: "directionThreshold",
-                        label: "方向阈值",
-                        desc: "推杆超过此值才触发方向（0.20–0.80）",
-                        fmt: (v: number) => v.toFixed(2),
-                      },
-                      {
-                        key: "repeatDelay",
-                        label: "长按延迟",
-                        desc: "按住多久开始连续移动（100–800ms）",
-                        fmt: (v: number) => `${Math.round(v)}ms`,
-                      },
-                      {
-                        key: "repeatInterval",
-                        label: "连跳间隔",
-                        desc: "连续移动的间隔（50–400ms）",
-                        fmt: (v: number) => `${Math.round(v)}ms`,
-                      },
-                    ] as const
-                  ).map((s) => {
-                    const range = GAMEPAD_RANGES[s.key];
-                    return (
-                      <div className="set-row set-pad-slider" key={s.key}>
-                        <div>
-                          <span className="set-k">{s.label}</span>
-                          <div className="set-desc">{s.desc}</div>
-                        </div>
-                        <div className="set-range-wrap">
-                          <input
-                            type="range"
-                            className="set-range"
-                            min={range.min}
-                            max={range.max}
-                            step={range.step}
-                            value={padValues[s.key]}
-                            disabled={!padEnabled}
-                            aria-label={s.label}
-                            onChange={(e) => setPadNum(s.key, Number(e.target.value))}
-                          />
-                          <span className="set-range-val">{s.fmt(padValues[s.key])}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  <div className="set-pad-keys" aria-label="手柄按键说明">
-                    {GAMEPAD_KEY_TABLE.map((k) => (
-                      <div className="set-pad-key" key={k.btn}>
-                        <span className="set-pad-btn">{k.label}</span>
-                        <span className="set-pad-act">{k.action}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="set-hint">
-                    播放时 A 暂停、LB/RB 快退/快进 5 秒、LT/RT 调倍速、B 停止；界面中方向键移动白色焦点框，
-                    A 确认。窗口失去焦点时浏览器会暂停 Gamepad API，重新点回窗口即可恢复。
-                  </div>
-
-                </>
+              {/* ── AI 增强（独立 tab）：组件/画质档位/AI超分/TRT/插帧引擎 ── */}
+              {tab === "enhance" && (
+                <AiEnhanceRow />
               )}
+
+              {/* ── 手柄 → 存储与诊断 tab ── */}
 
               {/* ── 外观 ── */}
               {tab === "appearance" && (
@@ -2541,7 +2440,109 @@ export function SettingsPanel({
               )}
 
               {/* ── 缓存 ── */}
-              {tab === "storage" && (
+              {tab === "maintenance" && (
+                <>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">手柄操作</span>
+                      <div className="set-desc">用 Xbox 布局手柄浏览界面、控制播放</div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${padEnabled ? " on" : ""}`}
+                      aria-pressed={padEnabled}
+                      aria-label="手柄操作"
+                      onClick={() => onSettings({ gamepadEnabled: !padEnabled })}
+                    />
+                  </div>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">连接状态</span>
+                      <div className="set-desc">浏览器需先按一下手柄才会识别设备</div>
+                    </div>
+                    <div className="set-pad-status">
+                      <span className={`set-pad-dot${padConn.connected ? " on" : " off"}`} />
+                      <span className="set-pad-name" title={padConn.name}>
+                        {padConn.connected ? padConn.name || "已连接" : "未检测到"}
+                      </span>
+                      <button
+                        type="button"
+                        className="set-btn"
+                        onClick={() => void detectPad()}
+                      >
+                        检测
+                      </button>
+                    </div>
+                  </div>
+                  {(
+                    [
+                      {
+                        key: "stickDeadzone",
+                        label: "摇杆死区",
+                        desc: "低于此值视为没有推杆（0.10–0.50）",
+                        fmt: (v: number) => v.toFixed(2),
+                      },
+                      {
+                        key: "directionThreshold",
+                        label: "方向阈值",
+                        desc: "推杆超过此值才触发方向（0.20–0.80）",
+                        fmt: (v: number) => v.toFixed(2),
+                      },
+                      {
+                        key: "repeatDelay",
+                        label: "长按延迟",
+                        desc: "按住多久开始连续移动（100–800ms）",
+                        fmt: (v: number) => `${Math.round(v)}ms`,
+                      },
+                      {
+                        key: "repeatInterval",
+                        label: "连跳间隔",
+                        desc: "连续移动的间隔（50–400ms）",
+                        fmt: (v: number) => `${Math.round(v)}ms`,
+                      },
+                    ] as const
+                  ).map((s) => {
+                    const range = GAMEPAD_RANGES[s.key];
+                    return (
+                      <div className="set-row set-pad-slider" key={s.key}>
+                        <div>
+                          <span className="set-k">{s.label}</span>
+                          <div className="set-desc">{s.desc}</div>
+                        </div>
+                        <div className="set-range-wrap">
+                          <input
+                            type="range"
+                            className="set-range"
+                            min={range.min}
+                            max={range.max}
+                            step={range.step}
+                            value={padValues[s.key]}
+                            disabled={!padEnabled}
+                            aria-label={s.label}
+                            onChange={(e) => setPadNum(s.key, Number(e.target.value))}
+                          />
+                          <span className="set-range-val">{s.fmt(padValues[s.key])}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div className="set-pad-keys" aria-label="手柄按键说明">
+                    {GAMEPAD_KEY_TABLE.map((k) => (
+                      <div className="set-pad-key" key={k.btn}>
+                        <span className="set-pad-btn">{k.label}</span>
+                        <span className="set-pad-act">{k.action}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="set-hint">
+                    播放时 A 暂停、LB/RB 快退/快进 5 秒、LT/RT 调倍速、B 停止；界面中方向键移动白色焦点框，
+                    A 确认。窗口失去焦点时浏览器会暂停 Gamepad API，重新点回窗口即可恢复。
+                  </div>
+
+                </>
+              )}
+
+              {tab === "maintenance" && (
                 <>
                   <div className="set-row">
                     <span className="set-k">占用上限</span>
@@ -2585,7 +2586,7 @@ export function SettingsPanel({
               )}
 
               {/* ── 诊断 ── */}
-              {tab === "diagnostics" && (
+              {tab === "maintenance" && (
                 <>
                   <div className="set-row">
                     <span className="set-k">打开目录</span>
@@ -2611,7 +2612,7 @@ export function SettingsPanel({
               )}
 
               {/* ── 更新与维护 ── */}
-              {tab === "update" && (
+              {tab === "about" && (
                 <>
                   <div className="set-row">
                     <span className="set-k">当前版本</span>

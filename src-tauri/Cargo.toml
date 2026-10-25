@@ -26,7 +26,9 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "process", "fs"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+# [lc-1811] 云盘续签代理：bytes_stream 流式转发（futures-util 是 reqwest stream 的传递依赖，显式声明零新增）
+futures-util = { version = "0.3", default-features = false }
 md5 = "0.7"
 rand = "0.9"
 urlencoding = "2"

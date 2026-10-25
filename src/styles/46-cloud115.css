@@ -374,3 +374,106 @@
   border-color: var(--accent, var(--ink));
   opacity: 1;
 }
+
+/* ══════════════════════ [lc-1811] WebDAV 账号管理 + 行内改名 ══════════════════════ */
+
+.c115-wdlist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(480px, 100%);
+}
+
+.c115-wdrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.c115-wdpick {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--glass);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.c115-wdpick:hover {
+  opacity: 0.85;
+}
+
+.c115-wdname {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.c115-wdurl {
+  font-size: 11.5px;
+  opacity: 0.55;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.c115-mini.danger {
+  color: #e5484d;
+}
+
+.c115-wdform {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(480px, 100%);
+}
+
+.c115-wdform input {
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--glass);
+  color: var(--ink);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.c115-wdform input:focus {
+  border-color: var(--accent, var(--ink));
+}
+
+.c115-wdform-btns {
+  display: flex;
+  gap: 8px;
+}
+
+.c115-rename {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--accent, var(--ink));
+  border-radius: 6px;
+  background: var(--glass);
+  color: var(--ink);
+  font-size: 12px;
+  outline: none;
+}
+
+.c115-play.ghost {
+  color: var(--ink);
+  opacity: 0.5;
+}
+
+.c115-play.ghost:hover {
+  opacity: 1;
+}

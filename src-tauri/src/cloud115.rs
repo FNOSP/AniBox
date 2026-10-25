@@ -17,31 +17,32 @@
 
 use serde_json::{json, Value};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 /// 115 对 web 端口有 UA 校验的接口（aps/proapi）认 "115Browser" 标识；
 /// qrcodeapi/webapi 较宽松，统一带上无害。
-const UA_115: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) 115Browser/27.0.5.7 Chrome/122.0.0.0 Safari/537.36";
+pub(crate) const UA_115: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) 115Browser/27.0.5.7 Chrome/122.0.0.0 Safari/537.36";
 
 const LIST_LIMIT: usize = 100;
 
 // ───────────────────────── Cookie 存取（app_data_dir/cloud115.json） ─────────────────────────
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
-struct CookieJar {
-    uid: String,
-    cid: String,
-    seid: String,
+pub(crate) struct CookieJar {
+    pub(crate) uid: String,
+    pub(crate) cid: String,
+    pub(crate) seid: String,
     user_name: String,
     saved_at_ms: u64,
 }
 
-fn jar_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.path().app_data_dir().ok().map(|d| d.join("cloud115.json"))
+/// [lc-1811] 路径改走全局快照（续签代理无 AppHandle，与 cloud.rs 同一来源）。
+fn jar_path() -> Option<std::path::PathBuf> {
+    crate::cloud::app_data_dir().map(|d| d.join("cloud115.json"))
 }
 
-fn load_jar(app: &AppHandle) -> Option<CookieJar> {
-    let p = jar_path(app)?;
+pub(crate) fn load_jar() -> Option<CookieJar> {
+    let p = jar_path()?;
     let s = std::fs::read_to_string(p).ok()?;
     let j: CookieJar = serde_json::from_str(&s).ok()?;
     if j.uid.is_empty() || j.cid.is_empty() || j.seid.is_empty() {
@@ -50,8 +51,8 @@ fn load_jar(app: &AppHandle) -> Option<CookieJar> {
     Some(j)
 }
 
-fn save_jar(app: &AppHandle, jar: &CookieJar) -> Result<(), String> {
-    let p = jar_path(app).ok_or("拿不到 app_data_dir")?;
+fn save_jar(jar: &CookieJar) -> Result<(), String> {
+    let p = jar_path().ok_or("app_data_dir 未初始化")?;
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
     }
@@ -59,8 +60,8 @@ fn save_jar(app: &AppHandle, jar: &CookieJar) -> Result<(), String> {
     std::fs::write(&p, s).map_err(|e| format!("写 Cookie 文件失败: {e}"))
 }
 
-fn require_jar(app: &AppHandle) -> Result<CookieJar, String> {
-    load_jar(app).ok_or_else(|| "未登录 115（请先扫码）".into())
+fn require_jar() -> Result<CookieJar, String> {
+    load_jar().ok_or_else(|| "未登录 115（请先扫码）".into())
 }
 
 fn cookie_header(jar: &CookieJar) -> String {
@@ -151,7 +152,7 @@ pub async fn cloud115_qr_start() -> Result<Value, String> {
 /// 轮询扫码状态。status：0=待扫码 1=已扫待确认 2=已确认（此时完成登录并落盘 Cookie）。
 #[tauri::command]
 pub async fn cloud115_qr_poll(
-    app: AppHandle,
+    _app: AppHandle,
     uid: String,
     time: String,
     sign: String,
@@ -169,7 +170,7 @@ pub async fn cloud115_qr_poll(
         user_name,
         saved_at_ms: now_ms(),
     };
-    save_jar(&app, &jar)?;
+    save_jar(&jar)?;
     Ok(json!({ "status": 2, "ok": true, "userName": jar.user_name }))
 }
 
@@ -251,15 +252,15 @@ async fn qr_poll_core(
 
 /// 登录状态（不打网络，只看本地 Cookie + 名称）。
 #[tauri::command]
-pub async fn cloud115_status(app: AppHandle) -> Result<Value, String> {
-    let logged = load_jar(&app).is_some();
-    let user = load_jar(&app).map(|j| j.user_name).unwrap_or_default();
+pub async fn cloud115_status(_app: AppHandle) -> Result<Value, String> {
+    let logged = load_jar().is_some();
+    let user = load_jar().map(|j| j.user_name).unwrap_or_default();
     Ok(json!({ "logged": logged, "userName": user }))
 }
 
 #[tauri::command]
-pub async fn cloud115_logout(app: AppHandle) -> Result<(), String> {
-    if let Some(p) = jar_path(&app) {
+pub async fn cloud115_logout(_app: AppHandle) -> Result<(), String> {
+    if let Some(p) = jar_path() {
         let _ = std::fs::remove_file(p);
     }
     Ok(())
@@ -274,11 +275,11 @@ const VIDEO_EXTS: &[&str] = &[
 /// 列目录。cid=0 为根；返回条目（文件夹 + 视频/音频文件）、总数、是否还有下一页。
 #[tauri::command]
 pub async fn cloud115_list(
-    app: AppHandle,
+    _app: AppHandle,
     cid: Option<String>,
     offset: Option<u32>,
 ) -> Result<Value, String> {
-    let jar = require_jar(&app)?;
+    let jar = require_jar()?;
     let cid = cid.filter(|c| !c.is_empty()).unwrap_or_else(|| "0".into());
     let offset = offset.unwrap_or(0);
     let url = format!(
@@ -344,7 +345,7 @@ pub async fn cloud115_list(
 
 /// 取可播地址。hls=false → 直链（webapi files/download，JSON url 或 302 Location）；
 /// hls=true → 115 服务端转码 HLS（115.com/api/video/m3u8，返回 …m3u8?definition=…）。
-async fn resolve_play_url(jar: &CookieJar, pickcode: &str, hls: bool) -> Result<String, String> {
+pub(crate) async fn resolve_play_url(jar: &CookieJar, pickcode: &str, hls: bool) -> Result<String, String> {
     if hls {
         let t = ts();
         let url = format!("https://115.com/api/video/m3u8?pickcode={pickcode}&share_id=0&pc=0&_={t}");
@@ -412,7 +413,7 @@ pub async fn cloud115_play(
     name: String,
     hls: Option<bool>,
 ) -> Result<Value, String> {
-    let jar = require_jar(&app)?;
+    let jar = require_jar()?;
     if pickcode.trim().is_empty() {
         return Err("pickcode 为空".into());
     }

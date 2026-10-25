@@ -10,6 +10,10 @@ mod bgm_account;
 mod cloud115;
 // [lc-1810] 多云盘资源库：夸克/百度/阿里/天翼/123/光鸭 统一接入（LumiPlayer direct_cloud 口径）
 mod cloud;
+// [lc-1811] 云盘直链本地续签代理 + ffmpeg HLS 本地转码（播放中途换链）
+mod cloud_proxy;
+// [lc-1811] WebDAV 媒体源（多账号 + PROPFIND 浏览 + Basic Auth 播放 + 随片字幕）
+mod webdav;
 // [bili-account] B 站账号（Cookie 读写/体检）+ Node 检测 + 一键自建弹幕源
 mod bili_account;
 // [bili-qr] B 站二维码扫码登录（generate/poll，Cookie 落盘复用 bili_account）
@@ -3469,6 +3473,9 @@ pub fn run() {
             // VEH 崩溃记录器：任意致命异常（D3D 视频输出崩因定位）写出异常码+故障模块+偏移，
             // 落 %TEMP%/anibox.log（lc-082 视频输出专项）
             libmpv::install_crash_logger();
+            // [lc-1811] app_data_dir 全局快照：云盘凭据仓 / 115 Cookie / WebDAV 账号
+            // 都从续签代理等无 AppHandle 的上下文取路径，setup 时固化一次
+            cloud::init_app_data(app.handle());
             // [lc-1784] OpenSubtitles 内置共享 Key 落地（供 mpv 侧 sub-assrt.lua 读；空则清理）
             subtitle_sources::sync_builtin_key(app.handle());
             // [update] 载入前端补丁覆盖层指针；release 且存在补丁时切到 fntvweb 协议
@@ -3812,6 +3819,13 @@ pub fn run() {
             cloud::cloud_logout,
             cloud::cloud_list,
             cloud::cloud_play,
+            cloud::cloud_rename,
+            cloud_proxy::cloud_ffmpeg_available,
+            webdav::webdav_accounts,
+            webdav::webdav_account_add,
+            webdav::webdav_account_del,
+            webdav::webdav_list,
+            webdav::webdav_play,
             danmaku_sources::danmaku_sources_get,
             danmaku_sources::danmaku_sources_set,
             subtitle_sources::subtitle_sources_get,

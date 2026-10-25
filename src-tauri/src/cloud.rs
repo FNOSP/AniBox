@@ -40,12 +40,27 @@ const ALI_CANARY: &str = "client=web,app=adrive,version=v6.8.12";
 
 // ───────────────────────── 凭据仓（app_data_dir/direct-cloud-auth.json） ─────────────────────────
 
-fn auth_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.path().app_data_dir().ok().map(|d| d.join("direct-cloud-auth.json"))
+/// [lc-1811] app_data_dir 全局快照：续签代理在 accept 循环里没有 AppHandle，
+/// setup 时初始化一次，之后凭据读写全部走这里（路径永远一致）。
+static APP_DATA_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+pub fn init_app_data(app: &AppHandle) {
+    if let Some(d) = app.path().app_data_dir().ok() {
+        let _ = APP_DATA_DIR.set(d);
+    }
 }
 
-fn load_auth(app: &AppHandle) -> serde_json::Map<String, Value> {
-    let Some(p) = auth_path(app) else { return Default::default() };
+/// app_data_dir 全局快照读取（cloud115 的 Cookie 路径同源）。
+pub fn app_data_dir() -> Option<std::path::PathBuf> {
+    APP_DATA_DIR.get().cloned()
+}
+
+fn auth_path() -> Option<std::path::PathBuf> {
+    APP_DATA_DIR.get().map(|d| d.join("direct-cloud-auth.json"))
+}
+
+fn load_auth() -> serde_json::Map<String, Value> {
+    let Some(p) = auth_path() else { return Default::default() };
     let Ok(s) = std::fs::read_to_string(p) else { return Default::default() };
     serde_json::from_str::<Value>(&s)
         .ok()
@@ -53,21 +68,21 @@ fn load_auth(app: &AppHandle) -> serde_json::Map<String, Value> {
         .unwrap_or_default()
 }
 
-fn save_provider_auth(app: &AppHandle, provider: &str, cred: Value) -> Result<(), String> {
-    let p = auth_path(app).ok_or("拿不到 app_data_dir")?;
+fn save_provider_auth(provider: &str, cred: Value) -> Result<(), String> {
+    let p = auth_path().ok_or("app_data_dir 未初始化")?;
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
     }
-    let mut all = load_auth(app);
+    let mut all = load_auth();
     all.insert(provider.to_string(), cred);
     let s = serde_json::to_string_pretty(&Value::Object(all.clone()))
         .map_err(|e| format!("序列化凭据失败: {e}"))?;
     std::fs::write(&p, s).map_err(|e| format!("写凭据文件失败: {e}"))
 }
 
-fn drop_provider_auth(app: &AppHandle, provider: &str) {
-    if let Some(p) = auth_path(app) {
-        let mut all = load_auth(app);
+fn drop_provider_auth(provider: &str) {
+    if let Some(p) = auth_path() {
+        let mut all = load_auth();
         all.remove(provider);
         if let Ok(s) = serde_json::to_string_pretty(&Value::Object(all)) {
             let _ = std::fs::write(&p, s);
@@ -75,8 +90,8 @@ fn drop_provider_auth(app: &AppHandle, provider: &str) {
     }
 }
 
-fn require_cred(app: &AppHandle, provider: &str, keys: &[&str]) -> Result<Value, String> {
-    let all = load_auth(app);
+fn require_cred(provider: &str, keys: &[&str]) -> Result<Value, String> {
+    let all = load_auth();
     let Some(c) = all.get(provider).cloned() else {
         return Err(format!("未登录（请先扫码）"));
     };
@@ -290,7 +305,7 @@ pub const PROVIDERS: &[(&str, &str)] = &[
 
 #[tauri::command]
 pub async fn cloud_providers(app: AppHandle) -> Result<Value, String> {
-    let all = load_auth(&app);
+    let all = load_auth();
     let mut out = Vec::new();
     for (id, label) in PROVIDERS {
         let (logged, user) = if *id == "115" {
@@ -318,7 +333,7 @@ pub async fn cloud_logout(app: AppHandle, provider: String) -> Result<(), String
     if provider == "115" {
         return crate::cloud115::cloud115_logout(app).await;
     }
-    drop_provider_auth(&app, &provider);
+    drop_provider_auth(&provider);
     Ok(())
 }
 
@@ -510,7 +525,7 @@ pub async fn cloud_qr_start(provider: String) -> Result<Value, String> {
 
 /// 轮询扫码状态：status 0=待扫码 1=已扫待确认 2=已确认（凭据已落盘）。
 #[tauri::command]
-pub async fn cloud_qr_poll(app: AppHandle, provider: String, state: String) -> Result<Value, String> {
+pub async fn cloud_qr_poll(_app: AppHandle, provider: String, state: String) -> Result<Value, String> {
     if provider == "115" {
         // 115 走自家模块，前端按旧三元组直调 cloud115_qr_poll；这里只为统一入口兜底
         return Ok(json!({ "status": 0, "ok": false }));
@@ -524,7 +539,7 @@ pub async fn cloud_qr_poll(app: AppHandle, provider: String, state: String) -> R
         return Ok(json!({ "status": status, "ok": false }));
     }
     let cred = cred.ok_or("扫码已确认但未取回凭据（内部状态不一致）")?;
-    save_provider_auth(&app, &provider, cred.clone())?;
+    save_provider_auth(&provider, cred.clone())?;
     let user_name = user_name.unwrap_or_default();
     Ok(json!({ "status": 2, "ok": true, "userName": user_name }))
 }
@@ -828,7 +843,7 @@ pub async fn cloud_list(
         }
         // 夸克：file/sort（cursor = 页号，_page 从 1 起）
         "quark" => {
-            let cred = require_cred(&app, "quark", &["cookies"])?;
+            let cred = require_cred("quark", &["cookies"])?;
             let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
             let page: u32 = if cursor.is_empty() { 1 } else { cursor.parse().unwrap_or(1) };
             let url = format!(
@@ -861,7 +876,7 @@ pub async fn cloud_list(
         }
         // 百度：api/list（dir = 路径；cursor = 页号）
         "baidu" => {
-            let cred = require_cred(&app, "baidu", &["cookies"])?;
+            let cred = require_cred("baidu", &["cookies"])?;
             let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
             let page: u32 = if cursor.is_empty() { 1 } else { cursor.parse().unwrap_or(1) };
             let dir = if fid.is_empty() { "/" } else { fid.as_str() };
@@ -890,7 +905,7 @@ pub async fn cloud_list(
         }
         // 阿里：openFile/list（cursor = next_marker）
         "aliyun" => {
-            let cred = require_cred(&app, "aliyun", &["access_token", "drive_id"])?;
+            let cred = require_cred("aliyun", &["access_token", "drive_id"])?;
             let token = cred.get("access_token").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let drive_id = cred.get("drive_id").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let parent = if fid.is_empty() { "root".to_string() } else { fid.clone() };
@@ -902,7 +917,7 @@ pub async fn cloud_list(
                 "order_by": "name",
                 "order_direction": "ASC",
             });
-            let (v, _token_new) = aliyun_list_call(&app, &token, body).await?;
+            let (v, _token_new) = aliyun_list_call(&token, body).await?;
             let items = v.get("items").and_then(|x| x.as_array()).cloned().unwrap_or_default();
             let next_marker = g_str(&v, &["/next_marker"], &["next_marker"]);
             let next_cursor = if next_marker.is_empty() { String::new() } else { next_marker };
@@ -935,7 +950,7 @@ pub async fn cloud_list(
         }
         // 天翼：listFiles.action（cursor = 页号；文件夹在 fileListAO.folderList）
         "tianyi" => {
-            let cred = require_cred(&app, "tianyi", &["cookies"])?;
+            let cred = require_cred("tianyi", &["cookies"])?;
             let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
             let page: u32 = if cursor.is_empty() { 1 } else { cursor.parse().unwrap_or(1) };
             let folder = if fid.is_empty() { "-11" } else { fid.as_str() };
@@ -992,7 +1007,7 @@ pub async fn cloud_list(
         }
         // 123：file/list/new（cursor = next）
         "123" => {
-            let cred = require_cred(&app, "123", &["cookies"])?;
+            let cred = require_cred("123", &["cookies"])?;
             let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
             let parent = if fid.is_empty() { "0" } else { fid.as_str() };
             let mut url = format!(
@@ -1050,7 +1065,7 @@ pub async fn cloud_list(
         }
         // 光鸭：nd.biz/userres.s/v1/file/get_file_list（cursor = page）
         "guangya" => {
-            let cred = require_cred(&app, "guangya", &["access_token"])?;
+            let cred = require_cred("guangya", &["access_token"])?;
             let token = cred.get("access_token").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let page: u32 = if cursor.is_empty() { 1 } else { cursor.parse().unwrap_or(1) };
             let v = post_json(
@@ -1199,7 +1214,6 @@ async fn aliyun_refresh(refresh_token: &str) -> Result<Value, String> {
 /// 阿里带鉴权调用：invalid access_token 时用凭据仓里的 refresh_token 续期重试一次，
 /// 成功后把新凭据写回（下次调用直接用新 token）。
 async fn aliyun_list_call(
-    app: &AppHandle,
     token: &str,
     body: Value,
 ) -> Result<(Value, String), String> {
@@ -1214,7 +1228,7 @@ async fn aliyun_list_call(
     match post_json("https://openapi.alipan.com/adrive/v1.0/openFile/list", body.clone(), &hdrs(token)).await {
         Ok(v) => Ok((v, token.to_string())),
         Err(e) if e.contains("401") || e.contains("AccessToken") || e.contains("invalid") => {
-            let rt = load_auth(app)
+            let rt = load_auth()
                 .get("aliyun")
                 .and_then(|c| c.get("refresh_token"))
                 .and_then(|x| x.as_str())
@@ -1229,7 +1243,7 @@ async fn aliyun_list_call(
                 return Err(e);
             }
             let v = post_json("https://openapi.alipan.com/adrive/v1.0/openFile/list", body, &hdrs(&new_token)).await?;
-            let _ = save_provider_auth(app, "aliyun", cred);
+            let _ = save_provider_auth("aliyun", cred);
             Ok((v, new_token))
         }
         Err(e) => Err(e),
@@ -1238,44 +1252,50 @@ async fn aliyun_list_call(
 
 // ───────────────────────── 播放 ─────────────────────────
 
-/// 统一取直链：返回 (url, 是否 HLS, Referer, UA)。
-async fn resolve_play(
-    app: &AppHandle,
+/// [lc-1811] 统一取播放地址：返回 (url, 是否 HLS, Referer, UA)。
+/// `prefer_hls`：优先服务端转码（115 m3u8 / 夸克 v2/play / 阿里 live_transcoding）；
+/// false 时优先直链。pub(crate) 供续签代理重签复用。
+pub(crate) async fn resolve_play(
     provider: &str,
     file_id: &str,
+    prefer_hls: bool,
 ) -> Result<(String, bool, String, String), String> {
     match provider {
-        // 夸克：v2/play（video_list m3u8）→ file/download（fids, 302 Location）
+        // 115：cloud115 模块的解析（直链 webapi download / 转码 115.com m3u8）
+        "115" => {
+            let jar = crate::cloud115::load_jar().ok_or("未登录 115（请先扫码）")?;
+            let u = crate::cloud115::resolve_play_url(&jar, file_id, prefer_hls).await?;
+            Ok((u, prefer_hls, "https://115.com/".into(), crate::cloud115::UA_115.to_string()))
+        }
+        // 夸克：prefer_hls → v2/play（video_list m3u8）；直链 → file/download（302）
         "quark" => {
-            let cred = require_cred(app, "quark", &["cookies"])?;
+            let cred = require_cred("quark", &["cookies"])?;
             let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
-            let hdrs = vec![
-                ("Cookie".to_string(), cookies.to_string()),
-                ("Referer".into(), "https://pan.quark.cn/".into()),
-            ];
-            let url = format!(
-                "https://drive-pc.quark.cn/1/clouddrive/file/v2/play?pr=ucpro&fr=pc&fids={}&resolutions=normal%2Chigh%2Csuper%2C2k%2C4k&supports=fmp4_av%2Cm3u8%2Cdolby_vision",
-                urlencoding::encode(file_id)
-            );
-            let v = get_json(&url, &hdrs).await?;
-            // video_list：[{video_info:{url…}, resolution…}]，取最后一个（通常最高清）
-            let mut best = String::new();
-            if let Some(list) = v.pointer("/data/video_list").and_then(|x| x.as_array()) {
-                for it in list {
-                    let u = g_str(it, &["/video_info/url", "/url"], &["url"]);
-                    if u.contains(".m3u8") || u.starts_with("http") {
-                        best = u;
+            if prefer_hls {
+                let hdrs = vec![
+                    ("Cookie".to_string(), cookies.to_string()),
+                    ("Referer".into(), "https://pan.quark.cn/".into()),
+                ];
+                let url = format!(
+                    "https://drive-pc.quark.cn/1/clouddrive/file/v2/play?pr=ucpro&fr=pc&fids={}&resolutions=normal%2Chigh%2Csuper%2C2k%2C4k&supports=fmp4_av%2Cm3u8%2Cdolby_vision",
+                    urlencoding::encode(file_id)
+                );
+                let v = get_json(&url, &hdrs).await?;
+                let mut best = String::new();
+                if let Some(list) = v.pointer("/data/video_list").and_then(|x| x.as_array()) {
+                    for it in list {
+                        let u = g_str(it, &["/video_info/url", "/url"], &["url"]);
+                        if u.contains(".m3u8") {
+                            best = u;
+                        }
                     }
                 }
+                if !best.is_empty() {
+                    return Ok((best, true, "https://pan.quark.cn/".into(), UA_CHROME.into()));
+                }
+                return Err("夸克未返回转码 HLS（可能非会员或文件不可预览）".into());
             }
-            if !best.is_empty() {
-                return Ok((best, true, "https://pan.quark.cn/".into(), UA_CHROME.into()));
-            }
-            let dl = g_str(&v, &["/data/download_url"], &["download_url"]);
-            if !dl.is_empty() {
-                return Ok((dl, false, "https://pan.quark.cn/".into(), UA_CHROME.into()));
-            }
-            // 兜底：file/download 302
+            // 直链：file/download 302
             let resp = client_noredir()
                 .get(format!(
                     "https://drive-pc.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc&fids={}",
@@ -1295,7 +1315,7 @@ async fn resolve_play(
         }
         // 百度：xpan/multimedia filemetas → dlink（mpv 侧需带同款 UA + Referer）
         "baidu" => {
-            let cred = require_cred(app, "baidu", &["cookies"])?;
+            let cred = require_cred("baidu", &["cookies"])?;
             let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
             let url = format!(
                 "https://pan.baidu.com/rest/2.0/xpan/multimedia?method=filemetas&fsids=[{}]&thumb=0&extra=1&app_id=250528",
@@ -1326,9 +1346,9 @@ async fn resolve_play(
             }
             Ok((dlink, false, "https://pan.baidu.com/".into(), UA_CHROME.into()))
         }
-        // 阿里：openFile/getDownloadUrl → cdn_url
+        // 阿里：直链 openFile/getDownloadUrl → cdn_url；prefer_hls → get_video_preview_play_info
         "aliyun" => {
-            let cred = require_cred(app, "aliyun", &["access_token", "drive_id"])?;
+            let cred = require_cred("aliyun", &["access_token", "drive_id"])?;
             let token = cred.get("access_token").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let drive_id = cred.get("drive_id").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let hdrs = vec![
@@ -1337,6 +1357,29 @@ async fn resolve_play(
                 ("Content-Type".into(), "application/json".into()),
                 ("Referer".into(), "https://www.alipan.com/".into()),
             ];
+            if prefer_hls {
+                // [lc-1811] 服务端转码（LumiPlayer 口径：v2/file/get_video_preview_play_info
+                // → live_transcoding 任务 → video_list[].url m3u8）
+                let v = post_json(
+                    "https://api.aliyundrive.com/v2/file/get_video_preview_play_info",
+                    json!({ "drive_id": drive_id, "file_id": file_id, "category": "live_transcoding", "template_id": "" }),
+                    &hdrs,
+                )
+                .await?;
+                let mut best = String::new();
+                if let Some(list) = v.pointer("/video_list").and_then(|x| x.as_array()) {
+                    for it in list {
+                        let u = g_str(it, &["/url"], &["url"]);
+                        if u.contains(".m3u8") {
+                            best = u;
+                        }
+                    }
+                }
+                if !best.is_empty() {
+                    return Ok((best, true, "https://www.alipan.com/".into(), UA_CHROME.into()));
+                }
+                return Err("阿里未返回转码 HLS".into());
+            }
             let v = post_json(
                 "https://openapi.alipan.com/adrive/v1.0/openFile/getDownloadUrl",
                 json!({ "drive_id": drive_id, "file_id": file_id }),
@@ -1351,7 +1394,7 @@ async fn resolve_play(
         }
         // 天翼：batchGetFileDownloadUrl.action（fileIds[]）
         "tianyi" => {
-            let cred = require_cred(app, "tianyi", &["cookies"])?;
+            let cred = require_cred("tianyi", &["cookies"])?;
             let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
             let url = format!(
                 "https://cloud.189.cn/api/open/file/batchGetFileDownloadUrl.action?fileIds%5B%5D={}",
@@ -1379,7 +1422,7 @@ async fn resolve_play(
         }
         // 123：file/download_info → DownloadUrl → yun.123pan.cn/Origin 跳转链（跟到最终直链）
         "123" => {
-            let cred = require_cred(app, "123", &["cookies"])?;
+            let cred = require_cred("123", &["cookies"])?;
             let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
             let mut hdrs: Vec<(String, String)> = headers_123()
                 .into_iter()
@@ -1428,7 +1471,7 @@ async fn resolve_play(
         }
         // 光鸭：nd.biz/userres.s/v1/get_res_download_url → signedURL
         "guangya" => {
-            let cred = require_cred(app, "guangya", &["access_token"])?;
+            let cred = require_cred("guangya", &["access_token"])?;
             let token = cred.get("access_token").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let v = post_json(
                 "https://api.guangyapan.com/nd.biz/userres.s/v1/get_res_download_url",
@@ -1450,8 +1493,18 @@ async fn resolve_play(
     }
 }
 
-/// 统一播放：解析直链 → player::launch（mpv 复用会话）。115 委托 cloud115_play。
-/// 播放同 115/直播口径：不走 Go 代理、不回传飞牛进度、不落本机播放历史。
+/// 续签代理入口（cloud_proxy::renew 调）：只要新直链，不要 HLS。
+pub(crate) async fn resolve_play_for_renew(
+    provider: &str,
+    file_id: &str,
+) -> Result<(String, bool, String, String), String> {
+    resolve_play(provider, file_id, false).await
+}
+
+/// [lc-1811] 播放三档（对齐 LumiPlayer 播放决策）：
+/// - mode=""（默认·直链）：解析直链 → 注册续签代理 → mpv 拿稳定本地地址（过期自动换链）
+/// - mode="server"（服务端转码）：115 m3u8 / 夸克 v2/play / 阿里 live_transcoding（CDN 直连）
+/// - mode="local"（本地转码）：ffmpeg -c copy remux HLS（无服务端转码的源 + 系统有 ffmpeg）
 #[tauri::command]
 pub async fn cloud_play(
     app: AppHandle,
@@ -1459,17 +1512,34 @@ pub async fn cloud_play(
     provider: String,
     file_id: String,
     name: String,
+    mode: Option<String>,
 ) -> Result<Value, String> {
-    if provider == "115" {
-        return crate::cloud115::cloud115_play(app, state, file_id, name, Some(false)).await;
-    }
     if file_id.trim().is_empty() {
         return Err("fileId 为空".into());
     }
+    let mode = mode.unwrap_or_default();
     let _ = app.emit("mpv-load", json!({ "phase": "start" }));
-    let (url, is_hls, referer, ua) = resolve_play(&app, &provider, file_id.trim()).await?;
     let cfg = state.config.read().await.clone();
     crate::fnos_progress::begin("", "");
+
+    let (url, headers) = match mode.as_str() {
+        // 服务端转码：CDN 直连（m3u8 分段长效，无需续签代理）
+        "server" => {
+            let (u, _, referer, ua) = resolve_play(&provider, file_id.trim(), true).await?;
+            (u, Some(crate::player::HttpHeaders::new(Some(referer), Some(ua))))
+        }
+        // 本地 ffmpeg remux HLS：注册会话（代理持有直链+续签）→ m3u8 端点给 mpv
+        "local" => {
+            let u = crate::cloud_proxy::register_hls(&provider, file_id.trim(), &name).await?;
+            (u, None)
+        }
+        // 默认直链：续签代理（TTL 提前续 + 403 强制重签 = 播放中途换链）
+        _ => {
+            let u = crate::cloud_proxy::register_direct(&provider, file_id.trim(), &name).await?;
+            (u, None)
+        }
+    };
+
     crate::player::launch(
         &app,
         &state,
@@ -1478,13 +1548,140 @@ pub async fn cloud_play(
         &name,
         0.0,
         0.0,
-        Some(&crate::player::HttpHeaders::new(Some(referer), Some(ua))),
+        headers.as_ref(),
         &[],
         None,
         true,
     )
     .await?;
-    Ok(json!({ "url": url, "hls": is_hls }))
+    Ok(json!({ "url": url, "mode": mode }))
+}
+
+/// [lc-1811] 重命名（LumiPlayer rename 端点口径：夸克/阿里/115/百度/123；
+/// 天翼/光鸭字符串池无 rename 证据，不实现）。
+#[tauri::command]
+pub async fn cloud_rename(provider: String, file_id: String, new_name: String) -> Result<(), String> {
+    let new_name = new_name.trim().to_string();
+    if new_name.is_empty() {
+        return Err("新名称不能为空".into());
+    }
+    if new_name.contains('/') || new_name.contains('\\') || new_name.contains('|') {
+        return Err("新名称含有非法字符".into());
+    }
+    match provider.as_str() {
+        // 夸克：file/rename {fid, file_name}
+        "quark" => {
+            let cred = require_cred("quark", &["cookies"])?;
+            let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
+            let v = post_json(
+                "https://drive-pc.quark.cn/1/clouddrive/file/rename?pr=ucpro&fr=pc",
+                json!({ "fid": file_id, "file_name": new_name }),
+                &[
+                    ("Cookie".into(), cookies.to_string()),
+                    ("Referer".into(), "https://pan.quark.cn/".into()),
+                ],
+            )
+            .await?;
+            if v.pointer("/data/fid").is_none() && v.get("data").is_none() {
+                return Err(format!("夸克改名被拒: {v}"));
+            }
+            Ok(())
+        }
+        // 阿里：openFile/update {drive_id, file_id, name}
+        "aliyun" => {
+            let cred = require_cred("aliyun", &["access_token", "drive_id"])?;
+            let token = cred.get("access_token").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let drive_id = cred.get("drive_id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let v = post_json(
+                "https://openapi.alipan.com/adrive/v1.0/openFile/update",
+                json!({ "drive_id": drive_id, "file_id": file_id, "name": new_name, "check_name_mode": "refuse" }),
+                &[
+                    ("Authorization".into(), format!("Bearer {token}")),
+                    ("X-Canary".into(), ALI_CANARY.into()),
+                    ("Referer".into(), "https://www.alipan.com/".into()),
+                ],
+            )
+            .await?;
+            if v.get("name").and_then(|x| x.as_str()) != Some(new_name.as_str()) {
+                return Err(format!("阿里改名未生效: {v}"));
+            }
+            Ok(())
+        }
+        // 115：files/batch_rename（files_new_name[0]={fid}|{new}）
+        "115" => {
+            let jar = crate::cloud115::load_jar().ok_or("未登录 115（请先扫码）")?;
+            let body = format!(
+                "files_new_name[0]={}%7C{}",
+                urlencoding::encode(&file_id),
+                urlencoding::encode(&new_name)
+            );
+            let resp = client()
+                .post("https://webapi.115.com/files/batch_rename")
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("Cookie", format!("UID={}; CID={}; SEID={}", jar.uid, jar.cid, jar.seid))
+                .header("Referer", "https://115.com/")
+                .body(body)
+                .send()
+                .await
+                .map_err(|e| format!("115 改名请求失败: {e}"))?;
+            let v: Value = resp.json().await.map_err(|e| format!("115 改名响应解析失败: {e}"))?;
+            if v.get("state").and_then(|x| x.as_bool()) != Some(true) {
+                return Err(format!("115 改名被拒: {}", v.get("error").and_then(|e| e.as_str()).unwrap_or("未知错误")));
+            }
+            Ok(())
+        }
+        // 百度：filemanager?method=rename（path + newname）
+        "baidu" => {
+            let cred = require_cred("baidu", &["cookies"])?;
+            let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
+            let v = get_json(
+                &format!(
+                    "https://pan.baidu.com/api/filemanager?method=rename&app_id=250528&opera=rename&path={}&newname={}",
+                    urlencoding::encode(&file_id),
+                    urlencoding::encode(&new_name)
+                ),
+                &[
+                    ("Cookie".into(), cookies.to_string()),
+                    ("Referer".into(), "https://pan.baidu.com/disk/main".into()),
+                ],
+            )
+            .await?;
+            let errno = v.get("errno").and_then(|x| x.as_i64()).unwrap_or(-1);
+            if errno != 0 {
+                return Err(format!("百度改名被拒 errno={errno}"));
+            }
+            Ok(())
+        }
+        // 123：b/api/file/rename {fileId, fileName}
+        "123" => {
+            let cred = require_cred("123", &["cookies"])?;
+            let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
+            let mut hdrs: Vec<(String, String)> = headers_123()
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect();
+            hdrs.push(("Cookie".into(), cookies.to_string()));
+            hdrs.push(("Referer".into(), "https://yun.123pan.cn/".into()));
+            let fid = file_id.parse::<i64>().unwrap_or_else(|_| {
+                // 非纯数字 id（防御）：透传字符串会导致上游 4xx，直接报参数错
+                0
+            });
+            if fid == 0 {
+                return Err("123 文件 id 非法".into());
+            }
+            let v = post_json(
+                "https://api.123278.com/b/api/file/rename",
+                json!({ "fileId": fid, "fileName": new_name }),
+                &hdrs,
+            )
+            .await?;
+            if v.get("code").and_then(|x| x.as_i64()).unwrap_or(-1) != 0 {
+                return Err(format!("123 改名被拒: {v}"));
+            }
+            Ok(())
+        }
+        _ => Err(format!("{provider} 暂不支持改名")),
+    }
 }
 
 // ───────────────────────── 测试 ─────────────────────────

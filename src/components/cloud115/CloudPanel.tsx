@@ -1,10 +1,12 @@
-/* [lc-1810] 多云盘资源库面板：7 家网盘统一扫码登录 → 文件浏览 → 播放。
-   · 厂商清单/登录态：cloud_providers 一次拉全；tab 切换厂商，各自独立登录。
-   · 登录：cloud_qr_start 出二维码（图片 URL 或本地渲 SVG data URI）+ state，
-     cloud_qr_poll 2s 轮询；115 走原 cloud115_qr_start/poll 旧三元组。
-   · 凭据只落本机（115: cloud115.json；其余: direct-cloud-auth.json），不上传。
-   · 浏览：cloud_list 统一 cursor 分页（nextCursor 空串 = 到底）。
-   · 播放：cloud_play 现取现用直链（各家链接都有 TTL）；115 保留「转码播放」档。 */
+/* [lc-1810/1811] 多云盘资源库面板：7 家网盘 + WebDAV 统一接入。
+   · 登录：cloud_qr_start/poll（扫码）；WebDAV 走账号表单（连通性验证后落盘）。
+   · 浏览：cloud_list / webdav_list 统一 cursor 分页。
+   · 播放三档（LumiPlayer 播放决策对齐）：
+     - 直链（默认）：Rust 续签代理 → mpv 拿稳定本地地址（过期自动换链，播放不中断）
+     - 服务端转码：115/夸克/阿里（各家 m3u8，CDN 直连）
+     - 本地转码：其余家 + 系统检测到 ffmpeg（-c copy remux HLS）
+   · 改名：夸克/阿里/115/百度/123（行内编辑，✎ 按钮）。
+   · 凭据只落本机（cloud115.json / direct-cloud-auth.json / webdav-accounts.json）。 */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -13,8 +15,11 @@ import {
   FileVideo as IcoVideoL,
   Folder as IcoFolderL,
   LogOut as IcoLogoutL,
+  Pencil as IcoRenameL,
   Play as IcoPlayL,
+  Plus as IcoPlusL,
   RefreshCw as IcoRefreshL,
+  Trash2 as IcoTrashL,
 } from "lucide-react";
 
 type ProviderInfo = { id: string; label: string; logged: boolean; userName: string };
@@ -22,15 +27,16 @@ type ProviderInfo = { id: string; label: string; logged: boolean; userName: stri
 type Entry = {
   fileId: string;
   navId?: string;
+  path?: string;
   name: string;
   isDir: boolean;
   size: number;
-  kind: "dir" | "video" | "audio" | "other";
+  kind: "dir" | "video" | "audio" | "other" | "sub";
 };
 
 type ListResp = { items: Entry[]; nextCursor: string; count?: number };
-
 type Crumb = { fid: string; name: string };
+type WebdavAccount = { id: string; name: string; url: string; username: string };
 
 const HINTS: Record<string, string> = {
   "115": "打开 115 生活 App（或 115 App）扫一扫登录",
@@ -41,6 +47,10 @@ const HINTS: Record<string, string> = {
   "123": "打开 123 云盘 App 扫一扫登录",
   guangya: "打开光鸭云盘 App 扫一扫登录",
 };
+
+/** [lc-1811] 播放档能力矩阵（server=服务端转码；local=本地 ffmpeg） */
+const SERVER_HLS = new Set(["115", "quark", "aliyun"]);
+const RENAMEABLE = new Set(["115", "quark", "aliyun", "baidu", "123"]);
 
 const fmtSize = (n: number) => {
   if (!n) return "";
@@ -64,7 +74,14 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
   const [cursor, setCursor] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const [hls, setHls] = useState(false); // 仅 115：直链 / 转码播放
+  const [mode, setMode] = useState(""); // "" 直链(续签) | "server" | "local"
+  const [ffmpegOk, setFfmpegOk] = useState<boolean | null>(null);
+  // [lc-1811] 改名（行内编辑）
+  const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
+  // [lc-1811] WebDAV
+  const [wdAccounts, setWdAccounts] = useState<WebdavAccount[]>([]);
+  const [wdActive, setWdActive] = useState<string | null>(null);
+  const [wdForm, setWdForm] = useState<{ name: string; url: string; user: string; pass: string } | null>(null);
   const alive = useRef(true);
   const pollTimer = useRef<number | null>(null);
 
@@ -76,7 +93,8 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
   };
 
   const cur = providers.find((p) => p.id === active);
-  const logged = !!cur?.logged;
+  const isWebdav = active === "webdav";
+  const logged = isWebdav ? !!wdActive : !!cur?.logged;
 
   const refreshProviders = useCallback(async (): Promise<ProviderInfo[]> => {
     const r = await invoke<ProviderInfo[]>("cloud_providers");
@@ -85,18 +103,11 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
   }, []);
 
   const loadList = useCallback(
-    async (fid: string, cur: string, replace: boolean, provider: string) => {
+    async (fid: string, cur_: string, replace: boolean, provider: string) => {
       setLoading(true);
       setErr("");
       try {
-        const r =
-          provider === "115"
-            ? await invoke<{ items: Entry[]; nextCursor: string }>("cloud_list", {
-                provider,
-                fid: fid || null,
-                cursor: cur || null,
-              })
-            : await invoke<ListResp>("cloud_list", { provider, fid: fid || null, cursor: cur || null });
+        const r = await invoke<ListResp>("cloud_list", { provider, fid: fid || null, cursor: cur_ || null });
         if (!alive.current) return;
         setItems((prev) => (replace ? r.items : [...prev, ...r.items]));
         setCursor(r.nextCursor || "");
@@ -108,6 +119,31 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
     },
     [],
   );
+
+  const loadWebdav = useCallback(async (accountId: string, path: string, replace: boolean) => {
+    setLoading(true);
+    setErr("");
+    try {
+      const r = await invoke<ListResp>("webdav_list", { accountId, path: path || null });
+      if (!alive.current) return;
+      setItems((prev) => (replace ? r.items : [...prev, ...r.items]));
+      setCursor(r.nextCursor || "");
+    } catch (e) {
+      if (alive.current) setErr(String(e));
+    } finally {
+      if (alive.current) setLoading(false);
+    }
+  }, []);
+
+  const loadWdAccounts = useCallback(async () => {
+    try {
+      const r = await invoke<WebdavAccount[]>("webdav_accounts");
+      if (alive.current) setWdAccounts(r);
+      return r;
+    } catch {
+      return [];
+    }
+  }, []);
 
   const startQr = useCallback(
     async (provider: string) => {
@@ -173,15 +209,19 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
     [loadList, refreshProviders],
   );
 
-  // 初次挂载：拉厂商状态；当前 tab 已登录则直接列目录
   useEffect(() => {
     alive.current = true;
     refreshProviders()
       .then((list) => {
         const a = list.find((p) => p.id === active);
         if (a?.logged) void loadList("", "", true, active);
+        else if (!a?.logged) void startQr(active);
       })
       .catch((e) => alive.current && setErr(String(e)));
+    loadWdAccounts();
+    invoke<{ available: boolean }>("cloud_ffmpeg_available")
+      .then((r) => alive.current && setFfmpegOk(r.available))
+      .catch(() => alive.current && setFfmpegOk(false));
     return () => {
       alive.current = false;
       stopPoll();
@@ -189,7 +229,6 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 切 tab：重置浏览态；已登录列目录，未登录起扫码
   const switchProvider = (id: string) => {
     if (id === active) return;
     stopPoll();
@@ -199,7 +238,13 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
     setErr("");
     setItems([]);
     setCursor("");
+    setMode("");
     setCrumbs([{ fid: "", name: "根目录" }]);
+    setRenaming(null);
+    if (id === "webdav") {
+      if (wdActive) void loadWebdav(wdActive, "", true);
+      return;
+    }
     const p = providers.find((x) => x.id === id);
     if (p?.logged) void loadList("", "", true, id);
     else void startQr(id);
@@ -208,22 +253,26 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
   const openDir = (e: Entry) => {
     const nav = e.navId ?? e.fileId;
     setCrumbs((prev) => [...prev, { fid: nav, name: e.name }]);
-    void loadList(nav, "", true, active);
+    setRenaming(null);
+    if (isWebdav) void loadWebdav(wdActive!, e.path || nav, true);
+    else void loadList(nav, "", true, active);
   };
 
   const jumpCrumb = (i: number) => {
     const next = crumbs.slice(0, i + 1);
     setCrumbs(next);
-    void loadList(next[next.length - 1].fid, "", true, active);
+    setRenaming(null);
+    if (isWebdav) void loadWebdav(wdActive!, next[next.length - 1].fid, true);
+    else void loadList(next[next.length - 1].fid, "", true, active);
   };
 
   const play = async (e: Entry) => {
     setErr("");
     try {
-      if (active === "115") {
-        await invoke("cloud115_play", { pickcode: e.fileId, name: e.name, hls });
+      if (isWebdav) {
+        await invoke("webdav_play", { accountId: wdActive, url: e.fileId, name: e.name });
       } else {
-        await invoke("cloud_play", { provider: active, fileId: e.fileId, name: e.name });
+        await invoke("cloud_play", { provider: active, fileId: e.fileId, name: e.name, mode: mode || null });
       }
     } catch (ex) {
       setErr(String(ex));
@@ -232,12 +281,71 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
 
   const logout = async () => {
     stopPoll();
+    if (isWebdav) {
+      setWdActive(null);
+      setItems([]);
+      setCrumbs([{ fid: "", name: "根目录" }]);
+      return;
+    }
     await invoke("cloud_logout", { provider: active }).catch(() => {});
     await refreshProviders();
     setItems([]);
     setCrumbs([{ fid: "", name: "根目录" }]);
     void startQr(active);
   };
+
+  // 改名提交
+  const submitRename = async (e: Entry) => {
+    if (!renaming || !renaming.value.trim() || renaming.value === e.name) {
+      setRenaming(null);
+      return;
+    }
+    setErr("");
+    try {
+      await invoke("cloud_rename", { provider: active, fileId: e.fileId, newName: renaming.value.trim() });
+      setItems((prev) => prev.map((it) => (it.fileId === e.fileId ? { ...it, name: renaming.value.trim() } : it)));
+      setRenaming(null);
+    } catch (ex) {
+      setErr(String(ex));
+    }
+  };
+
+  // WebDAV 账号操作
+  const addWdAccount = async () => {
+    if (!wdForm) return;
+    setErr("");
+    try {
+      await invoke("webdav_account_add", { name: wdForm.name, url: wdForm.url, username: wdForm.user, password: wdForm.pass });
+      setWdForm(null);
+      const list = await loadWdAccounts();
+      if (list.length) {
+        setWdActive(list[list.length - 1].id);
+        void loadWebdav(list[list.length - 1].id, "", true);
+      }
+    } catch (ex) {
+      setErr(String(ex));
+    }
+  };
+
+  const delWdAccount = async (id: string) => {
+    await invoke("webdav_account_del", { id }).catch(() => {});
+    const list = await loadWdAccounts();
+    if (wdActive === id) {
+      setWdActive(list.length ? list[0].id : null);
+      setItems([]);
+      setCrumbs([{ fid: "", name: "根目录" }]);
+      if (list.length) void loadWebdav(list[0].id, "", true);
+    }
+  };
+
+  const pickWdAccount = (id: string) => {
+    setWdActive(id);
+    setCrumbs([{ fid: "", name: "根目录" }]);
+    void loadWebdav(id, "", true);
+  };
+
+  const showServerHls = !isWebdav && SERVER_HLS.has(active);
+  const showLocalHls = !showServerHls && ffmpegOk === true && active !== "115";
 
   return (
     <div className="c115 view-scroll">
@@ -248,7 +356,7 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
         <h2 className="c115-title">
           <IcoCloudL size={17} strokeWidth={2} /> 网盘接入
         </h2>
-        {logged && cur && (
+        {logged && !isWebdav && cur && (
           <>
             <span className="c115-user">{cur.userName ? `已登录：${cur.userName}` : "已登录"}</span>
             <button className="c115-mini" onClick={logout} title="退出登录（清除本机凭据）">
@@ -256,19 +364,32 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
             </button>
           </>
         )}
-        {logged && active === "115" && (
-          <div className="c115-mode" title="编码不兼容或不想占本地 CPU 时用转码播放（115 服务端转 HLS）">
-            <button type="button" className={`c115-seg${!hls ? " on" : ""}`} onClick={() => setHls(false)}>
-              直链播放
+        {isWebdav && wdActive && (
+          <button className="c115-mini" onClick={logout} title="断开当前账号（不删除配置）">
+            <IcoLogoutL size={13} strokeWidth={2} /> 断开
+          </button>
+        )}
+        {/* [lc-1811] 播放三档：直链(续签) / 服务端转码 / 本地转码 */}
+        {logged && (showServerHls || showLocalHls) && (
+          <div className="c115-mode" title="直链走本地续签代理（链接过期自动换新，播放不中断）；转码档用于编码不兼容或非会员限速">
+            <button type="button" className={`c115-seg${mode === "" ? " on" : ""}`} onClick={() => setMode("")}>
+              直链·自动续签
             </button>
-            <button type="button" className={`c115-seg${hls ? " on" : ""}`} onClick={() => setHls(true)}>
-              转码播放
-            </button>
+            {showServerHls && (
+              <button type="button" className={`c115-seg${mode === "server" ? " on" : ""}`} onClick={() => setMode("server")}>
+                服务端转码
+              </button>
+            )}
+            {showLocalHls && (
+              <button type="button" className={`c115-seg${mode === "local" ? " on" : ""}`} onClick={() => setMode("local")}>
+                本地转码
+              </button>
+            )}
           </div>
         )}
       </div>
 
-      {/* [lc-1810] 厂商 tab 行 */}
+      {/* 厂商 tab 行（含 WebDAV） */}
       <div className="c115-tabs">
         {providers.map((p) => (
           <button
@@ -281,11 +402,53 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
             <span className={`c115-dot${p.logged ? " ok" : ""}`} title={p.logged ? "已登录" : "未登录"} />
           </button>
         ))}
+        <button type="button" className={`c115-tab${isWebdav ? " on" : ""}`} onClick={() => switchProvider("webdav")}>
+          WebDAV
+          <span className={`c115-dot${wdActive ? " ok" : ""}`} title={wdActive ? "已连接" : "未连接"} />
+        </button>
       </div>
 
       {err && <p className="c115-err">{err}</p>}
 
-      {providers.length > 0 && !logged && (
+      {/* WebDAV：账号管理（未连接时） */}
+      {isWebdav && !wdActive && (
+        <div className="c115-login">
+          <div className="c115-wdlist">
+            {wdAccounts.map((a) => (
+              <div key={a.id} className="c115-wdrow">
+                <button type="button" className="c115-wdpick" onClick={() => pickWdAccount(a.id)}>
+                  <span className="c115-wdname">{a.name}</span>
+                  <span className="c115-wdurl">{a.url}</span>
+                </button>
+                <button className="c115-mini danger" title="删除账号" onClick={() => void delWdAccount(a.id)}>
+                  <IcoTrashL size={13} strokeWidth={2} />
+                </button>
+              </div>
+            ))}
+            {wdAccounts.length === 0 && <p className="c115-dim">还没有 WebDAV 账号 —— 支持 NAS / Alist / 坚果云等任意 WebDAV 服务</p>}
+          </div>
+          {wdForm ? (
+            <div className="c115-wdform">
+              <input placeholder="名称（如：家里 NAS）" value={wdForm.name} onChange={(e) => setWdForm({ ...wdForm, name: e.target.value })} />
+              <input placeholder="地址 https://dav.example.com/dav" value={wdForm.url} onChange={(e) => setWdForm({ ...wdForm, url: e.target.value })} />
+              <input placeholder="账号" value={wdForm.user} onChange={(e) => setWdForm({ ...wdForm, user: e.target.value })} />
+              <input placeholder="密码" type="password" value={wdForm.pass} onChange={(e) => setWdForm({ ...wdForm, pass: e.target.value })} />
+              <div className="c115-wdform-btns">
+                <button className="c115-mini" onClick={addWdAccount}>验证并保存</button>
+                <button className="c115-mini" onClick={() => setWdForm(null)}>取消</button>
+              </div>
+            </div>
+          ) : (
+            <button className="c115-mini" onClick={() => setWdForm({ name: "", url: "", user: "", pass: "" })}>
+              <IcoPlusL size={13} strokeWidth={2} /> 添加 WebDAV 账号
+            </button>
+          )}
+          <p className="c115-dim">密码用本机 AES-256-GCM 加密存储（enc:v1），不会上传到任何服务器。</p>
+        </div>
+      )}
+
+      {/* 扫码登录（网盘厂商） */}
+      {providers.length > 0 && !isWebdav && !logged && (
         <div className="c115-login">
           {qr ? (
             <>
@@ -326,14 +489,42 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
                 <span className={`c115-ico ${e.kind}`}>
                   {e.isDir ? <IcoFolderL size={15} strokeWidth={1.8} /> : <IcoVideoL size={15} strokeWidth={1.8} />}
                 </span>
-                <span className="c115-name" title={e.name}>
-                  {e.name}
-                </span>
+                {/* 改名态：行内编辑；WebDAV 不支持改名（协议侧无 rename 证据） */}
+                {renaming?.id === e.fileId ? (
+                  <input
+                    className="c115-rename"
+                    autoFocus
+                    value={renaming.value}
+                    onClick={(ev) => ev.stopPropagation()}
+                    onChange={(ev) => setRenaming({ id: e.fileId, value: ev.target.value })}
+                    onKeyDown={(ev) => {
+                      if (ev.key === "Enter") void submitRename(e);
+                      if (ev.key === "Escape") setRenaming(null);
+                    }}
+                    onBlur={() => void submitRename(e)}
+                  />
+                ) : (
+                  <span className="c115-name" title={e.name}>
+                    {e.name}
+                  </span>
+                )}
                 <span className="c115-size">{fmtSize(e.size)}</span>
-                {!e.isDir && e.kind !== "other" && (
+                {!isWebdav && RENAMEABLE.has(active) && !e.isDir && renaming?.id !== e.fileId && (
+                  <button
+                    className="c115-play ghost"
+                    title="重命名"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      setRenaming({ id: e.fileId, value: e.name });
+                    }}
+                  >
+                    <IcoRenameL size={12} strokeWidth={2} />
+                  </button>
+                )}
+                {!e.isDir && e.kind !== "other" && e.kind !== "sub" && (
                   <button
                     className="c115-play"
-                    title={active === "115" && hls ? "转码播放（115 服务端转 HLS）" : "直链播放"}
+                    title={mode === "server" ? "服务端转码播放" : mode === "local" ? "本地 ffmpeg 转码播放" : "直链播放（过期自动续链）"}
                     onClick={(ev) => {
                       ev.stopPropagation();
                       void play(e);
@@ -347,7 +538,7 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
           </div>
           {loading && <p className="c115-dim">加载中…</p>}
           {!loading && items.length === 0 && <p className="c115-dim">空目录（或没有可播放的媒体文件）</p>}
-          {cursor && !loading && (
+          {cursor && !loading && !isWebdav && (
             <button className="c115-more" onClick={() => loadList(crumbs[crumbs.length - 1].fid, cursor, false, active)}>
               加载更多
             </button>

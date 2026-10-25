@@ -3825,6 +3825,8 @@ pub fn run() {
             cloud_proxy::cloud_ffmpeg_available,
             enhance::ai_enhance_status,
             enhance::ai_enhance_set_engine,
+            enhance::ai_enhance_set_superres,
+            enhance::ai_enhance_set_tier,
             enhance::ai_enhance_download,
             enhance::ai_enhance_delete,
             webdav::webdav_accounts,

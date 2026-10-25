@@ -2939,6 +2939,7 @@ function AiEnhanceRow() {
     superresDmlReady: boolean;
     tensorrtReady: boolean;
     superresEngine: string;
+    qualityTier: string;
   } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
@@ -2955,6 +2956,7 @@ function AiEnhanceRow() {
       superresDmlReady: boolean;
       tensorrtReady: boolean;
       superresEngine: string;
+      qualityTier: string;
     }>("ai_enhance_status")
       .then(setStatus)
       .catch(() => setStatus(null));
@@ -3006,6 +3008,16 @@ function AiEnhanceRow() {
       setPct(-1);
     }
   };
+  const pickTier = async (tier: string) => {
+    if (tier === (status?.qualityTier ?? "balanced")) return;
+    setErr("");
+    try {
+      await invoke("ai_enhance_set_tier", { tier });
+      refresh();
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
   const pickSuperres = async (engine: string) => {
     if (engine === (status?.superresEngine ?? "off")) return;
     setErr("");
@@ -3052,6 +3064,37 @@ function AiEnhanceRow() {
             {busy === "base" ? "下载中…" : status?.installed ? "重新下载" : "下载并启用"}
           </button>
         )}
+      </div>
+      {/* [lc-1825] 画质档位联动补帧（LumiPlayer 口径） */}
+      <div className="set-row" style={{ gap: 10, paddingLeft: 4 }}>
+        <span className="set-k" style={{ flex: "none" }}>画质档位</span>
+        {(
+          [
+            ["extreme", "极致"],
+            ["balanced", "均衡"],
+            ["smooth", "流畅"],
+          ] as const
+        ).map(([val, label]) => {
+          const cur = status?.qualityTier ?? "balanced";
+          return (
+            <button
+              key={val}
+              type="button"
+              className={`sub-cred-btn${cur === val ? " on" : ""}`}
+              title={
+                val === "smooth"
+                  ? "关闭时间插值——高刷屏播 24fps 时显示重采样会白烧 GPU，性能紧张/笔记本用这档"
+                  : "时间插值平滑（interpolation + display-resample）——消除 24fps 在高刷屏上的抖动；GPU 开销小"
+              }
+              onClick={() => void pickTier(val)}
+            >
+              {label}
+            </button>
+          );
+        })}
+        <span className="set-desc" style={{ flex: 1, minWidth: 0 }}>
+          极致/均衡 = 插值平滑防抖动；流畅 = 关闭省 GPU（手动选 RIFE/N 卡引擎时以引擎为准）。
+        </span>
       </div>
       <div className="set-row" style={{ gap: 10, paddingLeft: 4 }}>
         <span className="set-k" style={{ flex: "none" }}>插帧引擎</span>

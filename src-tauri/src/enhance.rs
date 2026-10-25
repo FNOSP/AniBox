@@ -144,12 +144,15 @@ pub async fn ai_enhance_set_engine(
     let (cur_engine, cur_default) = read_interp_opts(&app);
     let new_engine = if e == "auto" { "auto" } else { e.as_str() };
     let new_default = default_on.unwrap_or(cur_default);
+    let tier = read_quality_tier(&app);
     let body = format!(
         "# AniBox 插帧配置（设置面板「AI 增强」写入，请勿手动编辑）
 # 引擎档：auto(=builtin) / builtin / rife / nvidia
 # rife = RIFE v4.6 AI 2×（VapourSynth+ncnn Vulkan，全显卡），需 AI 增强组件就绪。
+# 画质档位联动补帧：extreme/balanced=时间插值平滑；smooth=关闭省 GPU
 
 engine={new_engine}
+quality_tier={tier}
 # 启动播放时即开启插帧（默认关=否）
 default_on={}
 ",
@@ -184,6 +187,7 @@ pub async fn ai_enhance_status(app: AppHandle) -> Result<Value, String> {
         "superresDmlReady": superres_dml_ready(&app),
         "tensorrtReady": tensorrt_ready(&app),
         "superresEngine": read_superres_engine(&app),
+        "qualityTier": read_quality_tier(&app),
     }))
 }
 
@@ -200,6 +204,53 @@ fn read_superres_engine(app: &AppHandle) -> String {
         }
     }
     "off".into()
+}
+
+/// 读画质档位（script-opts/fntv_interp.conf；缺失=balanced）。
+fn read_quality_tier(app: &AppHandle) -> String {
+    if let Some(p) = interp_conf_path(app) {
+        if let Ok(text) = std::fs::read_to_string(&p) {
+            for line in text.lines() {
+                if let Some(v) = line.trim().strip_prefix("quality_tier=") {
+                    let v = v.trim();
+                    if matches!(v, "extreme" | "balanced" | "smooth") {
+                        return v.to_string();
+                    }
+                }
+            }
+        }
+    }
+    "balanced".into()
+}
+
+/// [lc-1825] 设置画质档位（极致/均衡=时间插值平滑；流畅=关闭省 GPU）——
+/// 只改基线，手动插帧引擎/按钮优先（lua 同款语义）。
+#[tauri::command]
+pub async fn ai_enhance_set_tier(app: AppHandle, tier: String) -> Result<Value, String> {
+    let t = tier.trim().to_lowercase();
+    if !matches!(t.as_str(), "extreme" | "balanced" | "smooth") {
+        return Err(format!("未知画质档位 {t}（只允许 extreme/balanced/smooth）"));
+    }
+    let Some(dir) = crate::config::mpv_portable_config_dir(&app) else {
+        return Err("找不到 mpv 配置目录".into());
+    };
+    let so = dir.join("script-opts");
+    std::fs::create_dir_all(&so).map_err(|err| format!("创建 script-opts 失败: {err}"))?;
+    let (engine, default_on) = read_interp_opts(&app);
+    let body = format!(
+        "# AniBox 插帧配置（设置面板「AI 增强」写入，请勿手动编辑）
+# 引擎档：auto(=builtin) / builtin / rife / nvidia
+# 画质档位联动补帧：extreme/balanced=时间插值平滑；smooth=关闭省 GPU
+
+engine={engine}
+quality_tier={t}
+default_on={}
+",
+        if default_on { "yes" } else { "no" }
+    );
+    std::fs::write(so.join("fntv_interp.conf"), body)
+        .map_err(|err| format!("写入配置失败: {err}"))?;
+    Ok(json!({ "qualityTier": t }))
 }
 
 /// [lc-1823] 设置超分引擎档：off / dml / tensorrt（写 script-opts/fntv_superres.conf，

@@ -1661,9 +1661,7 @@ export function SettingsPanel({
                         </div>
                       )}
                     </div>
-                    <div className="set-actions">
-                      <span className="set-note">{subNote}</span>
-                    </div>
+                    {subNote && <span className="set-note">{subNote}</span>}
                   </div>
                   <div className="set-row">
                     <div>

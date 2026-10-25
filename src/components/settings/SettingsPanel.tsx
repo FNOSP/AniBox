@@ -1872,9 +1872,6 @@ export function SettingsPanel({
                         PotPlayer 模式不支持内置弹幕、uosc 底栏与精确暂停/跳转/倍速控制；
                         需要 Referer/UA 的 HLS 源会提示切回 mpv。
                       </div>
-
-                  {/* [lc-1820] AI 增强可选组件：RIFE AI 2× 补帧运行时（软件内下载，约 50MB） */}
-                  <AiEnhanceRow />
                 </>
               )}
                   {playerKind === "mpv-local" && (
@@ -1947,6 +1944,11 @@ export function SettingsPanel({
 
                 </>
               )}
+
+              {/* [lc-1820/1823] AI 增强可选组件（与播放器类型无关）：
+                  基础组件下载 + 插帧引擎（内置/RIFE/N卡SM）+ AI 超分引擎（关/DML/TensorRT）
+                  + TensorRT 大包，面板自选、R2 分发按需下载。 */}
+              <AiEnhanceRow />
 
               {/* ── 手柄 ── */}
               {tab === "gamepad" && (

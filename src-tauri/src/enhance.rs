@@ -98,6 +98,57 @@ fn detect_gpu_name() -> String {
     }).clone()
 }
 
+/// [lc-1857] N 卡 SM 半自动注册：驱动不暴露 Smooth Motion 的按名设置查询（NVAPI 实测
+/// GetSettingIdFromName 返回 NULL），全自动此路不通。退而求其次把手动步骤压到最少：
+/// mpv.exe 完整路径复制到剪贴板 + 直接拉起 NVIDIA App（找到 exe 才拉）。
+/// 返回给用户的下一步指引文本。
+fn nvidia_sm_prepare() -> String {
+    #[cfg(target_os = "windows")]
+    use std::os::windows::process::CommandExt;
+    let mpv = crate::config::default_mpv();
+    let mut clip_note = String::new();
+    match arboard::Clipboard::new().and_then(|mut c| c.set_text(mpv.clone())) {
+        Ok(_) => "mpv.exe 完整路径已复制到剪贴板；".clone().into(),
+        Err(e) => format!("（剪贴板写入失败 {e}，请手动浏览 mpv.exe）"),
+    }
+    .clone_into(&mut clip_note);
+    let candidates = [
+        std::env::var("LOCALAPPDATA").ok().map(|d| {
+            std::path::PathBuf::from(&d)
+                .join("NVIDIA Corporation")
+                .join("NVIDIA App")
+                .join("NVIDIA App.exe")
+        }),
+        Some(
+            ["C:", "Program Files", "NVIDIA Corporation", "NVIDIA App", "NVIDIA App.exe"]
+                .iter()
+                .collect::<std::path::PathBuf>(),
+        ),
+    ];
+    let mut launched = false;
+    for c in candidates.into_iter().flatten() {
+        if c.is_file() {
+            #[cfg(target_os = "windows")]
+            {
+                #[allow(unused_mut)]
+                let mut cmd = std::process::Command::new(&c);
+                cmd.creation_flags(0x0800_0000);
+                let _ = cmd.spawn();
+            }
+            launched = true;
+            break;
+        }
+    }
+    let app_note = if launched {
+        "NVIDIA App 已打开；"
+    } else {
+        "未能自动打开 NVIDIA App（请手动打开）；"
+    };
+    format!(
+        "{clip_note}{app_note}在「图形 → 程序设置」添加程序时直接粘贴路径，开启 Smooth Motion 后重启播放器生效"
+    )
+}
+
 pub fn superres_dml_ready(app: &AppHandle) -> bool {
     let Some(root) = enhance_root(app) else { return false };
     SUPERRES_DML_FILES.iter().all(|rel| root.join(rel).is_file())
@@ -230,7 +281,12 @@ gpu-context=winvk
     if new_default && new_engine != "auto" {
         push_to_live_mpv(&state, &["fntv-interp-engine", new_engine]).await;
     }
-    Ok(json!({ "engine": new_engine, "defaultOn": new_default }))
+    let mut resp = json!({ "engine": new_engine, "defaultOn": new_default });
+    // [lc-1857] N 卡引擎选中 → 半自动注册准备（剪贴板 + 拉起 NVIDIA App），指引随响应回面板
+    if new_engine == "nvidia" {
+        resp["nvidiaHint"] = json!(nvidia_sm_prepare());
+    }
+    Ok(resp)
 }
 
 /// 状态查询（面板展示 + fntv_interp 侧同源自检）。

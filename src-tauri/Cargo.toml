@@ -68,6 +68,9 @@ zhconv = { version = "0.4", default-features = false, features = ["mediawiki-han
 # - WGI 与 xinput 两个 feature 互斥（gilrs-core 里同时开会 compile_error），因此必须关掉默认 feature。
 # - 兼容性限制：XInput 后端只识别 XInput 设备，DS4 / Switch Pro 等非 XInput 设备不在覆盖范围。
 gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
+nvapi-sys = "0.1.3"
+libloading = "0.9.0"
+arboard = "3.7.0"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

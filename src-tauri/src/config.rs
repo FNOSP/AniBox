@@ -285,7 +285,7 @@ fn default_gamepad_enabled() -> bool {
 /// [bundle-mpv] 默认留空：真实路径在 `load()` 里由 `resolve_bundled_paths` 按
 /// 「安装目录 resource_dir → exe 同级 → 开发仓库」顺序解析。写死开发机绝对路径
 /// 会让安装包在用户机器上必然找不到 mpv/proxy。
-fn default_mpv() -> String {
+pub fn default_mpv() -> String {
     String::new()
 }
 

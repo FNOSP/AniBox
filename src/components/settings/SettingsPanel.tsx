@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { showAppToast } from "../../lib/metaApply";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check as IcoCheck, ChevronDown as IcoChevron, Star as IcoStar, X as IcoXL } from "lucide-react";
@@ -2968,8 +2969,15 @@ function AiEnhanceRow() {
     if (engine === (status?.engine ?? "auto")) return;
     setErr("");
     try {
-      await invoke("ai_enhance_set_engine", { engine, defaultOn: null });
+      const r = await invoke<{ nvidiaHint?: string }>("ai_enhance_set_engine", {
+        engine,
+        defaultOn: null,
+      });
       refresh();
+      // [lc-1857] N 卡引擎：半自动注册指引（剪贴板已就绪 + NVIDIA App 已拉起）
+      if (r?.nvidiaHint) {
+        showAppToast(r.nvidiaHint);
+      }
     } catch (e) {
       setErr(String(e));
     }

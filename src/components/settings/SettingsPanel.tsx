@@ -502,6 +502,36 @@ export function SettingsPanel({
   const [mpvLocalPath, setMpvLocalPath] = useState(() => settings.mpvPath ?? "");
   const [mpvStatus, setMpvStatus] = useState<{ tone: "ok" | "err" | "dim"; text: string } | null>(null);
   const [mpvBusy, setMpvBusy] = useState(false);
+  /* [lc-1802] 着色器（与播放器菜单同预设；默认空=不着色器；播放中设置实时生效）。 */
+  const [shaderPreset, setShaderPreset] = useState("");
+  const [shaderCustom, setShaderCustom] = useState(false);
+  const [shaderNote, setShaderNote] = useState("");
+  const shaderLoaded = useRef(false);
+  useEffect(() => {
+    if (shaderLoaded.current) return;
+    shaderLoaded.current = true;
+    invoke<{ preset?: string; custom?: boolean }>("shader_settings_get")
+      .then((r) => {
+        setShaderPreset(r?.preset ?? "");
+        setShaderCustom(!!r?.custom);
+      })
+      .catch(() => {});
+  }, []);
+
+  const setShader = async (preset: string) => {
+    setShaderPreset(preset);
+    setShaderCustom(false);
+    try {
+      const r = await invoke<{ applied: boolean }>("shader_settings_set", { preset });
+      setShaderNote(
+        preset === ""
+          ? "已关闭着色器（恢复默认）" + (r?.applied ? "，本次播放已生效" : "")
+          : "着色器已保存" + (r?.applied ? "，本次播放已生效" : "（下次播放生效）"),
+      );
+    } catch (e) {
+      setShaderNote(String(e));
+    }
+  };
   useEffect(() => {
     setMpvLocalPath(settings.mpvPath ?? "");
   }, [settings.mpvPath]);
@@ -1747,6 +1777,33 @@ export function SettingsPanel({
                       onChange={choosePlayer}
                     />
                   </div>
+                  {/* [lc-1802] 着色器：默认空（不着色器）；预设与播放器内 Ctrl+1~6 一致，两边互相同步 */}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">着色器</span>
+                      <div className="set-desc">
+                        默认为空（不着色器）。选择后立即保存并同步到播放器；与播放器内
+                        「着色器」菜单（Ctrl+1~6）是同一份配置。
+                        {shaderCustom && " （当前为播放器侧设置的自定义链，选择预设将覆盖）"}
+                      </div>
+                    </div>
+                    <SetSelect
+                      label="着色器"
+                      value={shaderPreset}
+                      disabled={busy}
+                      options={[
+                        { value: "", label: shaderCustom ? "自定义（见说明）" : "默认（不着色器）" },
+                        { value: "a1", label: "模式A（1080p 动画）" },
+                        { value: "a2", label: "模式B（720p 动画）" },
+                        { value: "a3", label: "模式A+A（高质量）" },
+                        { value: "a4", label: "模式B+B（高质量）" },
+                        { value: "light", label: "轻量模式（低配）" },
+                        { value: "denoise", label: "仅降噪" },
+                      ]}
+                      onChange={(v) => void setShader(v)}
+                    />
+                  </div>
+                  {shaderNote && <span className="set-note">{shaderNote}</span>}
                   {playerKind === "potplayer" && (
                     <>
                       <div className="set-row set-row-col">

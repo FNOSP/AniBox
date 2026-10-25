@@ -2785,6 +2785,89 @@ async fn set_settings(
 }
 
 /// [player] 自动探测本机 PotPlayer：返回 `{ path }`（未找到时 path 为空串）。
+// ───────────────────────── [lc-1802] 着色器设置（应用面板直配）─────────────────────────
+// 与 mpv 侧 fntv_shader.lua 同一份持久化文件（%APPDATA%\\\\com.anibox.app\\\\anibox-shaders.conf）
+// 和同一组预设（PRESETS 键/链与 lua 严格同构）；写入后 mpv 在播则 IPC 实时生效，
+// 下次启动由 lua 启动恢复逻辑接管。默认空（不着色器）。
+
+/// (key, 显示名, 链) —— 链字符串与 fntv_shader.lua PRESETS 逐字符一致。
+fn shader_preset_table() -> Vec<(&'static str, &'static str, &'static str)> {
+    vec![
+        ("a1", "模式A（1080p 动画）", "~~/shaders/Anime4K_Clamp_Highlights.glsl;~~/shaders/Anime4K_Restore_CNN_M.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl;~~/shaders/Anime4K_AutoDownscalePre_x2.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl"),
+        ("a2", "模式B（720p 动画）", "~~/shaders/Anime4K_Clamp_Highlights.glsl;~~/shaders/Anime4K_Restore_CNN_Soft_M.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl;~~/shaders/Anime4K_AutoDownscalePre_x2.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl"),
+        ("a3", "模式A+A（高质量）", "~~/shaders/Anime4K_Clamp_Highlights.glsl;~~/shaders/Anime4K_Restore_CNN_L.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl;~~/shaders/Anime4K_AutoDownscalePre_x2.glsl;~~/shaders/Anime4K_Restore_CNN_L.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl"),
+        ("a4", "模式B+B（高质量）", "~~/shaders/Anime4K_Clamp_Highlights.glsl;~~/shaders/Anime4K_Restore_CNN_Soft_L.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl;~~/shaders/Anime4K_AutoDownscalePre_x2.glsl;~~/shaders/Anime4K_Restore_CNN_Soft_L.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl"),
+        ("light", "轻量模式（低配）", "~~/shaders/Anime4K_Restore_CNN_S.glsl;~~/shaders/Anime4K_Upscale_CNN_S.glsl;~~/shaders/Anime4K_AutoDownscalePre_x2.glsl;~~/shaders/Anime4K_Upscale_CNN_S.glsl"),
+        ("denoise", "仅降噪", "~~/shaders/Anime4K_Denoise_Bilateral_Mode.glsl"),
+    ]
+}
+
+fn shader_conf_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    app.path().app_data_dir().ok().map(|d| d.join("anibox-shaders.conf"))
+}
+
+/// 读当前着色器配置：preset=命中的预设键（""=空/关闭），raw=conf 里的原始链，
+/// custom=true 表示链不匹配任何预设（播放器菜单/外部设置的自定义链，仅展示）。
+#[tauri::command]
+async fn shader_settings_get(app: AppHandle) -> Result<Value, String> {
+    let raw = shader_conf_path(&app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|text| {
+            let mut v: Option<String> = None;
+            for line in text.lines() {
+                if let Some(x) = line.trim().strip_prefix("glsl-shaders=") {
+                    v = Some(x.trim().to_string());
+                }
+            }
+            v
+        })
+        .unwrap_or_default();
+    let table = shader_preset_table();
+    let hit = table.iter().find(|(_, _, chain)| *chain == raw);
+    Ok(json!({
+        "preset": hit.map(|(k, _, _)| k.to_string()).unwrap_or_default(),
+        "custom": hit.is_none() && !raw.is_empty(),
+        "raw": raw,
+    }))
+}
+
+/// 设着色器预设：空串=关闭；写 conf + mpv 在播实时生效。
+#[tauri::command]
+async fn shader_settings_set(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    preset: String,
+) -> Result<Value, String> {
+    let chain = if preset.is_empty() {
+        String::new()
+    } else {
+        shader_preset_table()
+            .into_iter()
+            .find(|(k, _, _)| *k == preset)
+            .map(|(_, _, c)| c.to_string())
+            .ok_or_else(|| format!("未知着色器预设: {preset}"))?
+    };
+    let body = format!(
+        "# AniBox 着色器持久化（设置面板 / 播放器菜单共用；删除本文件即恢复默认）\\nglsl-shaders={chain}\\n"
+    );
+    let p = shader_conf_path(&app).ok_or("拿不到 app_data_dir")?;
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d).map_err(|e| format!("建目录失败: {e}"))?;
+    }
+    std::fs::write(&p, body).map_err(|e| format!("写着色器配置失败: {e}"))?;
+    // mpv 在播：实时应用（空闲会话失败不致命——下次启动由 lua 恢复）
+    let mut applied = false;
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session {
+        applied = m
+            .command(json!(["set", "glsl-shaders", chain]))
+            .await
+            .is_ok();
+    }
+    Ok(json!({ "applied": applied, "preset": preset }))
+}
+
 #[tauri::command]
 async fn detect_mpv_local() -> Result<Value, String> {
     Ok(json!({ "path": player::detect_mpv_local_path().unwrap_or_default() }))
@@ -3398,6 +3481,8 @@ pub fn run() {
             gamepad::gamepad_detect,
             // [player] 播放器选择：自动探测 / 路径校验
             detect_mpv_local,
+            shader_settings_get,
+            shader_settings_set,
             validate_mpv_local_path,
             detect_potplayer,
             validate_potplayer_path,

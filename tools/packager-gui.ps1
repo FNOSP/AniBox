@@ -285,13 +285,19 @@ $btnBuild.Add_Click({
         # （字节偏移推进，\r 刷新的 cargo 进度行也拆行显示）→ 日志区实时滚动。
         $errLog = Join-Path $env:TEMP "anibox-packager-err-$PID.log"
         if (Test-Path -LiteralPath $errLog) { Remove-Item -LiteralPath $errLog -Force }
+        # [lc-1817] 乱码根因：chcp 65001 对无 console 的子进程无效（代码页无从设置），
+        # pwsh 输出仍按 OEM(936/GBK) 进管道，GUI 按 UTF-8 读全是乱码。改在子 pwsh
+        # 内部设 [Console]::OutputEncoding=UTF8（-File 不支持前置语句，换 -Command
+        # 包装）；父侧 StandardOutputEncoding 同步 UTF8（默认也按 OEM 解码）。
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = 'cmd.exe'
-        $psi.Arguments = "/c chcp 65001>nul & pwsh -NoProfile -ExecutionPolicy Bypass -File `"$RepoRoot\tools\build-installer.ps1`"$(if ($StopApp) { ' -StopApp' }) 2>`"$errLog`""
+        $psi.Arguments = "/c pwsh -NoProfile -ExecutionPolicy Bypass -Command `"[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; & '$RepoRoot/tools/build-installer.ps1'$(if ($StopApp) { ' -StopApp' })`" 2>`"$errLog`""
         $psi.WorkingDirectory = $RepoRoot
         $psi.UseShellExecute = $false
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
+        $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+        $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
         $psi.CreateNoWindow = $true
         $proc = [System.Diagnostics.Process]::Start($psi)
         $t = $null

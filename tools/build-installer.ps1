@@ -54,7 +54,14 @@ function Write-Log {
         default { 'Gray' }
     }
     Write-Host $line -ForegroundColor $color
-    Add-Content -LiteralPath $LogFile -Value $line -Encoding utf8
+    # [lc-1817] build.log 被别的进程占用（编辑器/资源管理器预览/上次构建残留）时
+    # 重试一次再放弃 —— 日志只是佐证，绝不让它中断构建本身。
+    try {
+        Add-Content -LiteralPath $LogFile -Value $line -Encoding utf8 -ErrorAction Stop
+    } catch {
+        Start-Sleep -Milliseconds 150
+        try { Add-Content -LiteralPath $LogFile -Value $line -Encoding utf8 -ErrorAction Stop } catch {}
+    }
 }
 
 function Write-Section {

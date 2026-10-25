@@ -22,6 +22,7 @@ tauri-build = { version = "2", features = [] }
 # [lc-1435] tray-icon：系统托盘（隐藏到托盘 / 托盘退出）
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "process", "fs"] }

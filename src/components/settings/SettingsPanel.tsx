@@ -3,6 +3,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import { createPortal } from "react-dom";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check as IcoCheck, ChevronDown as IcoChevron, Star as IcoStar, X as IcoXL } from "lucide-react";
@@ -487,6 +488,16 @@ export function SettingsPanel({
     text: string;
   } | null>(null);
   const [potBusy, setPotBusy] = useState(false);
+  /** [lc-1799] 浏览按钮统一实现：系统文件选择器选 .exe，取消返回 null。 */
+  const browseExe = async (): Promise<string | null> => {
+    const picked = await openFileDialog({
+      multiple: false,
+      title: "选择可执行文件",
+      filters: [{ name: "可执行文件", extensions: ["exe"] }],
+    });
+    if (typeof picked === "string" && picked.trim()) return picked.trim();
+    return null;
+  };
   /* [lc-1798] 本机 mpv 路径（与 PotPlayer 同款：留空自动探测 + 探测/校验按钮 + 状态行）。 */
   const [mpvLocalPath, setMpvLocalPath] = useState(() => settings.mpvPath ?? "");
   const [mpvStatus, setMpvStatus] = useState<{ tone: "ok" | "err" | "dim"; text: string } | null>(null);
@@ -577,8 +588,8 @@ export function SettingsPanel({
   };
 
   /** 校验路径：save=true 时通过后落盘（用于失焦保存）。空路径不校验，按「自动探测」处理。 */
-  const validatePot = async (save: boolean) => {
-    const p = potPath.trim();
+  const validatePot = async (save: boolean, overridePath?: string) => {
+    const p = (overridePath ?? potPath).trim();
     if (!p) {
       setPotStatus({
         tone: "dim",
@@ -1765,6 +1776,19 @@ export function SettingsPanel({
                             type="button"
                             className="set-btn"
                             disabled={busy || potBusy}
+                            onClick={async () => {
+                              const p = await browseExe();
+                              if (!p) return;
+                              setPotPath(p);
+                              await validatePot(true, p);
+                            }}
+                          >
+                            浏览…
+                          </button>
+                          <button
+                            type="button"
+                            className="set-btn"
+                            disabled={busy || potBusy}
                             onClick={detectPot}
                           >
                             自动探测
@@ -1817,6 +1841,19 @@ export function SettingsPanel({
                           }}
                         />
                         <div className="set-actions">
+                          <button
+                            type="button"
+                            className="set-btn"
+                            disabled={busy || mpvBusy}
+                            onClick={async () => {
+                              const p = await browseExe();
+                              if (!p) return;
+                              setMpvLocalPath(p);
+                              await validateMpvLocal();
+                            }}
+                          >
+                            浏览…
+                          </button>
                           <button
                             type="button"
                             className="set-btn"

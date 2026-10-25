@@ -3111,6 +3111,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         // 协议名沿用 "fntvimg" 不改名：图片 URL 会进 WebView 缓存与 localStorage，改名 = 老缓存全 404
         .register_asynchronous_uri_scheme_protocol("fntvimg", |ctx, request, responder| {

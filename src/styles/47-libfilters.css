@@ -1,45 +1,72 @@
-/* ══════════════════════ [lc-1796] 库筛选条（类型 / 年份 / 排序）══════════════════════ */
+/* ══════════════════════ [lc-1797] 库筛选面板（复刻飞牛影视原生 Semi 样式）══════════════════════
+   原生口径（/v/list/all 实测 DOM）：圆角 12 卡片 + 玻璃底 + 内部滚动（max-height）；
+   每行 = 84px 次要色标签列 + 文字 chips（无边框无底色，选中=强调色+500 字重）。 */
 
 .libf {
+  margin-top: 8px;
+  border-radius: 12px;
+  background: var(--glass);
+  border: 1px solid var(--line);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  padding: 18px 6px 14px 20px;
+  position: relative;
+}
+
+.libf-scroll {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px 0 6px;
+  max-height: 380px;
+  overflow-y: auto;
+  padding-right: 12px;
 }
 
 .libf-row {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 14px;
 }
 
 .libf-k {
   flex: none;
-  font-size: 12px;
+  width: 84px;
+  padding-top: 4px;
+  font-size: 12.5px;
+  line-height: 1.4;
   opacity: 0.55;
-  margin-right: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.libf-row > .libf-chip,
+.libf-row > .libf-sort {
+  margin-top: 1px;
 }
 
 .libf-chip {
-  box-sizing: border-box;
-  height: 26px;
-  padding: 0 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: 13px;
-  background: var(--glass);
+  border: 0;
+  background: none;
+  padding: 3px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 20px;
   color: var(--ink);
-  font-size: 12px;
+  opacity: 0.75;
   cursor: pointer;
+  border-radius: 6px;
 }
 
 .libf-chip:hover {
-  border-color: var(--accent, #8ab4f8);
+  opacity: 1;
 }
 
 .libf-chip.on {
-  border-color: var(--accent, #8ab4f8);
-  font-weight: 600;
+  color: var(--accent, #8ab4f8);
+  font-weight: 500;
+  opacity: 1;
 }
 
 .libf-sort {
@@ -48,13 +75,33 @@
   padding: 0 8px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
-  background: var(--glass);
+  background: transparent;
   color: var(--ink);
-  font-size: 12px;
+  font-size: 12.5px;
   font-family: inherit;
 }
 
-.libf-busy {
-  font-size: 11.5px;
+.libf-toggle {
+  position: absolute;
+  right: 12px;
+  bottom: 6px;
+  border: 0;
+  background: none;
+  color: var(--ink);
   opacity: 0.55;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.libf-toggle:hover {
+  opacity: 0.9;
+}
+
+/* 收起后的独立小按钮（面板外） */
+button.libf-toggle[style],
+.libf + .libf-toggle {
+  position: static;
+  margin-top: 6px;
 }

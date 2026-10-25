@@ -98,7 +98,8 @@ export function LibView({
         return { list: d.list ?? [], total: Number(d.total ?? 0) || 0 };
       }
       if (lib.guid.startsWith("_cat:")) {
-        const types = lib.guid.slice(5).split(",").filter(Boolean);
+        // [lc-1797] 「影视分类」筛选行在面板里换服务端 type（catTypesRef 覆盖入口分类）
+        const types = catTypesRef.current ?? lib.guid.slice(5).split(",").filter(Boolean);
         const d = await invoke<{ list?: MediaItem[]; total?: number }>("get_items_global", {
           typeFilter: types,
           page,
@@ -286,26 +287,51 @@ export function LibView({
     [lib.guid],
   );
 
-  /* ── [lc-1796] 飞鲸式筛选条（库根/分类根层）：类型 / 年份 chips + 排序 ──
-     不赌 fnOS API 的过滤参数：筛选/排序一旦激活，前端把该层**全量**拉下来（上限 20 页）
-     再本地过滤；全部清空则回到服务端分页 + 无限滚动的默认模式。 */
-  const atRoot = levels.length === 1;
-  const [fWatched, setFWatched] = useState<"yes" | "no" | null>(null);
-  const [fYear, setFYear] = useState<string | null>(null);
-  const [fSort, setFSort] = useState("");
+  /* ── [lc-1797] 原生飞牛影视同款筛选（复刻 /v/list/all 面板：文字 chips + 84px 标签列，
+     卡片容器内滚）——逻辑同原生（点击零请求=前端全量过滤）：激活任一条件时把该层
+     全量拉取（上限 20 页）本地筛；「影视分类」行走服务端 tags.type（_cat: 全部页专用）。 ── */
+  type Filters = {
+    cat: string | null; // 影视分类：Movie / TV（null=全部）
+    res: string | null; // 分辨率：8K/4K/1080P/720P/480P/其他
+    hdr: string | null; // 动态范围：杜比视界/HDR10/SDR/其他(null)
+    audio: string | null; // 音频：杜比全景声/DTS/立体声/其他(null)
+    year: string | null; // 年代：今年/2020年代/…/其他
+    watched: "yes" | "no" | null;
+  };
+  const EMPTY_F: Filters = { cat: null, res: null, hdr: null, audio: null, year: null, watched: null };
+  const [f, setF] = useState<Filters>(EMPTY_F);
+  const [sort, setSort] = useState("");
   const [fullItems, setFullItems] = useState<MediaItem[] | null>(null);
   const [fullBusy, setFullBusy] = useState(false);
-  const filterActive = atRoot && (fWatched !== null || fYear !== null || fSort !== "");
+  const [collapsed, setCollapsed] = useState(false);
+  const atRoot = levels.length === 1;
+  const isAllCat = lib.guid.startsWith("_cat:");
+  const filterActive =
+    atRoot && (f.cat !== null || f.res !== null || f.hdr !== null || f.audio !== null || f.year !== null || f.watched !== null || sort !== "");
 
-  /** 激活筛选时确保全量：基于 fetchPage 循环翻页（复用判停），上限 20 页防失控。 */
+  /** 影视分类行：直接换服务端 type（重拉第 1 页），不进全量过滤模式。 */
+  const pickCat = (c: string | null) => {
+    setF({ ...f, cat: c });
+    const types = c ? [c] : lib.guid.slice(5).split(",").filter(Boolean);
+    setLevels((ls) => {
+      const i = ls.length - 1;
+      if (i < 0) return ls;
+      const next = [...ls];
+      next[i] = { ...ls[i], items: [], page: 0, total: 0 };
+      return next;
+    });
+    catTypesRef.current = types;
+    void load(null);
+  };
+  const catTypesRef = useRef<string[] | null>(null);
+
   const ensureFull = useCallback(async () => {
     if (fullItems || fullBusy) return;
     setFullBusy(true);
     try {
       const acc: MediaItem[] = [];
-      let page = 1;
       let total = 0;
-      for (; page <= 20; page++) {
+      for (let page = 1; page <= 20; page++) {
         const d = await fetchPage(null, page);
         acc.push(...d.list.filter((it) => it.guid));
         total = d.total > 0 ? d.total : acc.length;
@@ -313,7 +339,7 @@ export function LibView({
       }
       setFullItems(acc);
     } catch {
-      setFullItems([]); // 失败：仅筛已加载（items 不足以全量）——下面用 items 兜底
+      setFullItems([]);
     } finally {
       setFullBusy(false);
     }
@@ -323,49 +349,76 @@ export function LibView({
     if (filterActive) void ensureFull();
   }, [filterActive, ensureFull]);
 
-  // 切层/切库时清空筛选态（levels 变化且不在根层，或 lib.guid 变化）
   useEffect(() => {
-    setFWatched(null);
-    setFYear(null);
-    setFSort("");
+    setF(EMPTY_F);
+    setSort("");
     setFullItems(null);
+    catTypesRef.current = null;
   }, [lib.guid, levels.length === 1]);
 
-  const base = filterActive ? (fullItems ?? []) : items;
-  // chips 数据源：筛选模式下用全量聚合（未拉完先聚合已到的）。年份取 release_date 前 4 位
-  const yearSet = new Set<string>();
-  for (const it of base) {
-    const y = String(it.release_date ?? "").slice(0, 4);
-    if (/^\d{4}$/.test(y)) yearSet.add(y);
-  }
-  const years = [...yearSet].sort((a, b) => (a < b ? 1 : -1));
-  const recentYears = years.slice(0, 8);
-  const olderYears = years.slice(8);
-  const yearChips: string[] = olderYears.length ? [...recentYears, "更早"] : recentYears;
+  // ── 条目取值帮手（对齐飞牛字段：media_stream.resolutions/color_range_type/audio_type）──
+  const msOf = (it: MediaItem) => {
+    const ms = it.media_stream as { resolutions?: string[]; color_range_type?: string | null; audio_type?: string | null } | null | undefined;
+    return { res: ms?.resolutions ?? [], hdr: ms?.color_range_type ?? null, audio: ms?.audio_type ?? null };
+  };
+  const normRes = (r: string): string => {
+    const u = r.toUpperCase();
+    if (u.includes("8K")) return "8K";
+    if (u.includes("4K") || u.includes("2160")) return "4K";
+    if (u.includes("1080")) return "1080P";
+    if (u.includes("720")) return "720P";
+    if (u.includes("480")) return "480P";
+    return "其他";
+  };
+  const yearBucket = (it: MediaItem): string | null => {
+    const y = Number(String(it.release_date ?? "").slice(0, 4));
+    if (!y || y < 1990) return y ? "其他" : null;
+    const now = new Date().getFullYear();
+    if (y === now) return "今年";
+    return `${Math.floor(y / 10) * 10}年代`;
+  };
 
-  let shown = base;
-  if (filterActive) {
-    shown = base.filter((it) => {
-      if (fWatched === "yes" && !it.watched) return false;
-      if (fWatched === "no" && it.watched) return false;
-      if (fYear) {
-        const y = String(it.release_date ?? "").slice(0, 4);
-        if (fYear === "更早") {
-          if (!olderYears.includes(y)) return false;
-        } else if (y !== fYear) return false;
+  let shown = items;
+  if (filterActive && fullItems) {
+    shown = fullItems.filter((it) => {
+      if (f.res) {
+        const rs = msOf(it).res.map(normRes);
+        const hit = rs.includes(f.res) || (f.res === "其他" && rs.length === 0);
+        if (!hit) return false;
       }
+      if (f.hdr) {
+        const h = msOf(it).hdr;
+        if (f.hdr === "其他") {
+          if (h) return false;
+        } else if ((h ?? "") !== f.hdr) return false;
+      }
+      if (f.audio) {
+        const a = msOf(it).audio;
+        if (f.audio === "其他") {
+          if (a) return false;
+        } else if ((a ?? "") !== f.audio) return false;
+      }
+      if (f.year && yearBucket(it) !== f.year) return false;
+      if (f.watched === "yes" && !it.watched) return false;
+      if (f.watched === "no" && it.watched) return false;
       return true;
     });
-    if (fSort === "year_desc") shown = [...shown].sort((a, b) => String(b.release_date ?? "").localeCompare(String(a.release_date ?? "")));
-    if (fSort === "year_asc") shown = [...shown].sort((a, b) => String(a.release_date ?? "").localeCompare(String(b.release_date ?? "")));
-    if (fSort === "name_asc")
-      shown = [...shown].sort((a, b) => (a.title ?? "").localeCompare(b.title ?? "", "zh-Hans-CN"));
+    if (sort === "year_desc") shown = [...shown].sort((a, b) => String(b.release_date ?? "").localeCompare(String(a.release_date ?? "")));
+    if (sort === "year_asc") shown = [...shown].sort((a, b) => String(a.release_date ?? "").localeCompare(String(b.release_date ?? "")));
+    if (sort === "name_asc") shown = [...shown].sort((a, b) => (a.title ?? "").localeCompare(b.title ?? "", "zh-Hans-CN"));
   }
 
   const chip = (label: string, on: boolean, onClick: () => void) => (
-    <button key={label} type="button" className={`libf-chip${on ? " on" : ""}`} onClick={onClick}>
+    <button key={label + (on ? "*" : "")} type="button" className={`libf-chip${on ? " on" : ""}`} onClick={onClick}>
       {label}
     </button>
+  );
+  const row = (key: string, label: string, opts: readonly string[], cur: string | null, set: (v: string | null) => void) => (
+    <div className="libf-row" key={key}>
+      <span className="libf-k">{label}</span>
+      {chip("全部", cur === null, () => set(null))}
+      {opts.map((o) => chip(o, cur === o, () => set(cur === o ? null : o)))}
+    </div>
   );
 
   return (
@@ -377,48 +430,55 @@ export function LibView({
         <h3>{current ? current.title : lib.title}</h3>
         <span className="muted">{filterActive ? shown.length : total || items.length} 项</span>
       </div>
-      {/* [lc-1796] 飞鲸式筛选条：仅根层（库根 / 分类根）显示；文件夹钻取层不带 */}
-      {atRoot && yearChips.length > 0 && (
+      {/* [lc-1797] 原生飞牛影视同款筛选面板（文字 chips；影视分类行仅 _cat: 全部页） */}
+      {atRoot && !collapsed && (
         <div className="libf">
-          <div className="libf-row">
-            <span className="libf-k">观看</span>
-            {chip("全部", fWatched === null, () => setFWatched(null))}
-            {chip("看过", fWatched === "yes", () => setFWatched(fWatched === "yes" ? null : "yes"))}
-            {chip("未看过", fWatched === "no", () => setFWatched(fWatched === "no" ? null : "no"))}
-          </div>
-          <div className="libf-row">
-            <span className="libf-k">年份</span>
-            {chip("全部", fYear === null, () => setFYear(null))}
-            {yearChips.map((y) => chip(y, fYear === y, () => setFYear(fYear === y ? null : y)))}
-          </div>
-          <div className="libf-row">
-            <span className="libf-k">排序</span>
-            <select
-              className="libf-sort"
-              value={fSort}
-              onChange={(e) => setFSort(e.target.value)}
-            >
-              <option value="">默认（最近添加）</option>
-              <option value="year_desc">年份 新→旧</option>
-              <option value="year_asc">年份 旧→新</option>
-              <option value="name_asc">名称 A→Z</option>
-            </select>
-            {filterActive && (
-              <button
-                type="button"
-                className="libf-chip"
-                onClick={() => {
-                  setFWatched(null);
-                  setFYear(null);
-                  setFSort("");
-                }}
-              >
-                清除筛选
-              </button>
+          <div className="libf-scroll">
+            {isAllCat &&
+              row("cat", "影视分类", ["电影", "电视节目"], f.cat, (v) => {
+                if (v === null) pickCat(null);
+                else pickCat(v === "电影" ? "Movie" : "TV");
+              })}
+            {row("res", "分辨率", ["8K", "4K", "1080P", "720P", "480P", "其他"], f.res, (v) => setF({ ...f, res: v }))}
+            {row("hdr", "视频动态范围", ["杜比视界", "HDR10", "SDR", "其他"], f.hdr, (v) => setF({ ...f, hdr: v }))}
+            {row("audio", "音频规格", ["杜比全景声", "DTS", "立体声", "其他"], f.audio, (v) => setF({ ...f, audio: v }))}
+            {row(
+              "year",
+              "发行年份",
+              ["今年", "2020年代", "2010年代", "2000年代", "1990年代", "其他"],
+              f.year,
+              (v) => setF({ ...f, year: v }),
             )}
-            {fullBusy && <span className="libf-busy">正在汇总全部条目…</span>}
+            {row(
+              "watched",
+              "是否已观看",
+              ["已观看", "未观看"],
+              f.watched,
+              (v) => setF({ ...f, watched: v === null ? null : v === "已观看" ? "yes" : "no" }),
+            )}
+            <div className="libf-row">
+              <span className="libf-k">排序</span>
+              <select
+                className="libf-sort"
+                value={sort}
+                onChange={(e) => setSort(e.target.value)}
+              >
+                <option value="">默认（最近添加）</option>
+                <option value="year_desc">年份 新→旧</option>
+                <option value="year_asc">年份 旧→新</option>
+                <option value="name_asc">名称 A→Z</option>
+              </select>
+            </div>
           </div>
+          <button type="button" className="libf-toggle" onClick={() => setCollapsed(true)}>
+            收起
+          </button>
         </div>
+      )}
+      {atRoot && collapsed && (
+        <button type="button" className="libf-toggle" onClick={() => setCollapsed(false)}>
+          筛选{filterActive ? "（生效中）" : ""}
+        </button>
       )}
       {err && (
         <div className="err">

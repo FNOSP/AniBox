@@ -429,11 +429,16 @@ fn find_bundled(app: &tauri::AppHandle, rel: &str) -> Option<std::path::PathBuf>
 }
 
 /// 目录版 `find_bundled`（用于 portable_config 这种目录资源）。
-#[allow(dead_code)]
 fn find_bundled_dir(app: &tauri::AppHandle, rel: &str) -> Option<std::path::PathBuf> {
     bundled_candidates(app, rel)
         .into_iter()
         .find(|p| p.is_dir())
+}
+
+/// [lc-1822] 随包 mpv 的 portable_config 目录（设置面板写 script-opts 用；
+/// 开发态指向 third_party，安装态指向资源目录）。
+pub fn mpv_portable_config_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    find_bundled_dir(app, "third_party/fntv-mpv/portable_config")
 }
 
 fn path_is_file(p: &str) -> bool {

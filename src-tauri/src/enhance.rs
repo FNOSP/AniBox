@@ -60,11 +60,77 @@ fn local_manifest(app: &AppHandle) -> Option<Value> {
     serde_json::from_str(&s).ok()
 }
 
+/// script-opts/fntv_interp.conf 路径（mpv 启动时读）。
+fn interp_conf_path(app: &AppHandle) -> Option<PathBuf> {
+    crate::config::mpv_portable_config_dir(app)
+        .map(|d| d.join("script-opts").join("fntv_interp.conf"))
+}
+
+/// 读当前引擎档与默认开关（文件缺失 → 默认 auto/false）。
+fn read_interp_opts(app: &AppHandle) -> (String, bool) {
+    let mut engine = "auto".into();
+    let mut default_on = false;
+    if let Some(p) = interp_conf_path(app) {
+        if let Ok(text) = std::fs::read_to_string(&p) {
+            for line in text.lines() {
+                let l = line.trim();
+                if let Some(v) = l.strip_prefix("engine=") {
+                    engine = v.trim().to_string();
+                } else if let Some(v) = l.strip_prefix("default_on=") {
+                    default_on = v.trim() == "yes";
+                }
+            }
+        }
+    }
+    (engine, default_on)
+}
+
+/// [lc-1822] 设置插帧引擎与默认开关：重写 script-opts/fntv_interp.conf
+/// （mpv 启动时读取——改动对「下次播放」生效；当前会话用播放器插帧按钮切）。
+#[tauri::command]
+pub async fn ai_enhance_set_engine(
+    app: AppHandle,
+    engine: String,
+    default_on: Option<bool>,
+) -> Result<Value, String> {
+    let e = engine.trim().to_lowercase();
+    if !matches!(e.as_str(), "auto" | "builtin" | "rife" | "nvidia") {
+        return Err(format!("未知引擎档 {e}（只允许 auto/builtin/rife/nvidia）"));
+    }
+    if e == "rife" && !runtime_ready(&app) {
+        return Err("AI 增强组件未就绪，无法选择 RIFE 档（先下载组件）".into());
+    }
+    let Some(dir) = crate::config::mpv_portable_config_dir(&app) else {
+        return Err("找不到 mpv 配置目录".into());
+    };
+    let so = dir.join("script-opts");
+    std::fs::create_dir_all(&so).map_err(|err| format!("创建 script-opts 失败: {err}"))?;
+    let (cur_engine, cur_default) = read_interp_opts(&app);
+    let new_engine = if e == "auto" { "auto" } else { e.as_str() };
+    let new_default = default_on.unwrap_or(cur_default);
+    let body = format!(
+        "# AniBox 插帧配置（设置面板「AI 增强」写入，请勿手动编辑）
+# 引擎档：auto(=builtin) / builtin / rife / nvidia
+# rife = RIFE v4.6 AI 2×（VapourSynth+ncnn Vulkan，全显卡），需 AI 增强组件就绪。
+
+engine={new_engine}
+# 启动播放时即开启插帧（默认关=否）
+default_on={}
+",
+        if new_default { "yes" } else { "no" }
+    );
+    std::fs::write(so.join("fntv_interp.conf"), body)
+        .map_err(|err| format!("写入配置失败（安装目录可能只读）: {err}"))?;
+    let _ = cur_engine;
+    Ok(json!({ "engine": new_engine, "defaultOn": new_default }))
+}
+
 /// 状态查询（面板展示 + fntv_interp 侧同源自检）。
 #[tauri::command]
 pub async fn ai_enhance_status(app: AppHandle) -> Result<Value, String> {
     let ready = runtime_ready(&app);
     let manifest = local_manifest(&app);
+    let (engine, default_on) = read_interp_opts(&app);
     Ok(json!({
         "installed": manifest.is_some(),
         "ready": ready,
@@ -77,6 +143,8 @@ pub async fn ai_enhance_status(app: AppHandle) -> Result<Value, String> {
             .and_then(|m| m.get("installed_at"))
             .and_then(|v| v.as_str())
             .unwrap_or(""),
+        "engine": engine,
+        "defaultOn": default_on,
     }))
 }
 

@@ -2927,16 +2927,51 @@ export function SettingsPanel({
    就绪后：播放器「插帧」按钮 / 右键菜单选 RIFE 档（engine=rife），
    全显卡通用（Vulkan）；倍速/HDR/超4K 片源自动回退内置平滑（安全契约）。 */
 function AiEnhanceRow() {
-  const [status, setStatus] = useState<{ installed: boolean; ready: boolean; version: string; installedAt: string } | null>(null);
+  const [status, setStatus] = useState<{
+    installed: boolean;
+    ready: boolean;
+    version: string;
+    installedAt: string;
+    engine: string;
+    defaultOn: boolean;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [pct, setPct] = useState(-1);
 
   const refresh = useCallback(() => {
-    invoke<{ installed: boolean; ready: boolean; version: string; installedAt: string }>("ai_enhance_status")
+    invoke<{
+      installed: boolean;
+      ready: boolean;
+      version: string;
+      installedAt: string;
+      engine: string;
+      defaultOn: boolean;
+    }>("ai_enhance_status")
       .then(setStatus)
       .catch(() => setStatus(null));
   }, []);
+
+  // [lc-1822] 引擎档写入（下次播放生效；当前会话用播放器插帧按钮切）
+  const pickEngine = async (engine: string) => {
+    if (engine === (status?.engine ?? "auto")) return;
+    setErr("");
+    try {
+      await invoke("ai_enhance_set_engine", { engine, defaultOn: null });
+      refresh();
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+  const toggleDefaultOn = async () => {
+    setErr("");
+    try {
+      await invoke("ai_enhance_set_engine", { engine: status?.engine ?? "auto", defaultOn: !(status?.defaultOn ?? false) });
+      refresh();
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
 
   useEffect(() => {
     refresh();
@@ -2999,6 +3034,51 @@ function AiEnhanceRow() {
             {busy ? "下载中…" : status?.installed ? "重新下载" : "下载并启用"}
           </button>
         )}
+      </div>
+      <div className="set-row" style={{ gap: 10, paddingLeft: 4 }}>
+        <span className="set-k" style={{ flex: "none" }}>插帧引擎</span>
+        {(
+          [
+            ["builtin", "内置平滑"],
+            ["rife", "RIFE AI 2×"],
+            ["nvidia", "N 卡 SM"],
+          ] as const
+        ).map(([val, label]) => {
+          const cur = status?.engine ?? "auto";
+          const on = cur === val || (cur === "auto" && val === "builtin");
+          const rifeLocked = val === "rife" && !status?.ready;
+          return (
+            <button
+              key={val}
+              type="button"
+              className={`sub-cred-btn${on ? " on" : ""}`}
+              style={{ opacity: rifeLocked ? 0.4 : 1 }}
+              title={
+                rifeLocked
+                  ? "需先下载 AI 增强组件"
+                  : val === "nvidia"
+                    ? "RTX 50 系 + 在 NVIDIA App 按 exe 注册开启 Smooth Motion"
+                    : val === "rife"
+                      ? "全显卡 · 需 AI 增强组件"
+                      : "MPV 内置（时间轴重采样，零开销）"
+              }
+              onClick={() => (rifeLocked ? setErr("RIFE 档需先下载 AI 增强组件") : void pickEngine(val))}
+            >
+              {label}
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          className={`sub-cred-btn${status?.defaultOn ? " on" : ""}`}
+          title="开启后每次播放自动挂所选引擎（倍速/HDR 自动让路）"
+          onClick={() => void toggleDefaultOn()}
+        >
+          {status?.defaultOn ? "播放时自动开 ✓" : "播放时自动开"}
+        </button>
+        <span className="set-desc" style={{ flex: 1, minWidth: 0 }}>
+          引擎切换下次播放生效；当前正在播放时用播放器的「插帧」按钮实时切。
+        </span>
       </div>
       {busy && pct >= 0 && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 4 }}>

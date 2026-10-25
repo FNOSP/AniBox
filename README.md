@@ -226,19 +226,84 @@
 - **<img src="https://api.iconify.design/mdi/stethoscope.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 日志与诊断** — 诊断日志、mpv 日志、调试日志开关、组件级过滤、诊断信息导出：
   - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 反馈内容与日志在提交前做脱敏处理。
 
-### 网页端增强（fpk · 可选）
-
-- **<img src="https://api.iconify.design/mdi/puzzle-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> AniBox fpk 微应用** — 仓库内 `fpk/` 为飞牛影视（fnOS）的网页端增强微应用，安装后从 NAS 桌面进入增强版影视网页，电视 / 平板 / 手机 / 电脑全设备生效，影视应用文件零改动：
-  - 已随主仓库统一改名为 **AniBox**，安装包产物为 `AniBox-<版号>.fpk`（ARM64 为 `AniBox-<版号>-arm64.fpk`）。
-  - 元数据 / 图片经内置镜像取数（缺密钥时自动降级官方域），并内置弹幕源、界面美化、片头片尾跳过与跨设备播放记忆。
-  - 桌面端与网页端共用同一套前端增强逻辑：桌面版先行开发，确认后移植到 `fpk/src/preload`。
-  - 详见 [`fpk/README.md`](fpk/README.md)。
-
 ### 在线资源（第三方规则源）
 
 - **<img src="https://api.iconify.design/mdi/movie-search-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 规则源检索与播放** — 无飞牛选集数据的条目，右栏自动换成「在线资源」面板：按标题多源并行搜索 → 按源分组（可直接播放 / 需要验证 / 无结果 / 检索失败）→ 线路与选集 → 解析直链 → 独立 mpv 播放：
   - 规则采用社区 [Predidit/KazumiRules](https://github.com/Predidit/KazumiRules) 目录格式，面板内可检查更新、逐条安装 / 全部更新；直链解析带嗅探进度提示，反爬验证支持图片验证码与「打开网页手动验证」兜底。
   - <img src="https://api.iconify.design/mdi/lightbulb-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 内容**全部由用户自行安装的第三方规则（站点）提供**：本软件不内置、不运营任何内容站点，也不提供、不存储、不分发任何影视内容；请遵守当地法律，详见下方「版权与合规」。
+
+---
+
+## <img src="https://api.iconify.design/mdi/web.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 网页端（fpk）· NAS 装一次，全设备即用
+
+> **AniBox 不止桌面端。** 仓库内 `fpk/` 是同一套体验的**网页版形态**：一个 **fnOS 微应用**，在飞牛 NAS 应用中心装一次 fpk，电视 / 平板 / 手机 / 电脑打开浏览器就是**增强版影视网页**——零安装、免客户端、影视应用文件零改动、卸载即还原，手机尺寸也做了适配。
+>
+> - 与桌面端**共用同一套前端增强逻辑**：桌面版先行开发验证，确认后移植到 `fpk/src/preload` 这份网页端副本。
+> - 与桌面端同仓库开发、随同一个 Release 发布：安装包为 `AniBox-<版号>.fpk`（ARM64 为 `AniBox-<版号>-arm64.fpk`）。
+> - 安装、功能清单、打包与安全细节见 [`fpk/README.md`](fpk/README.md)。
+
+### 实机截图
+
+<div align="center">
+  <img src="docs/pic/fpk/home.jpg" width="100%" alt="AniBox fpk：网页端首页全屏 Hero 轮播与热门更新面板">
+  <p><em>图：网页端首页 —— 全屏 Hero 轮播（透明 Logo / 随作品取色）、Bangumi「热门更新」每日放送（含已入库角标）与「继续观看」横排</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/pic/fpk/detail-backdrop.jpg" width="100%" alt="AniBox fpk：一级详情全屏大背板">
+  <p><em>图：一级详情 —— 全屏大背板配海报，评分 / 放送信息 / 简介一屏可读</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/pic/fpk/detail-episodes.jpg" width="100%" alt="AniBox fpk：二级详情分集列表与相关作品">
+  <p><em>图：二级详情 —— 分集列表、剧照、相似推荐与 TMDB 元数据，完全跑在浏览器里</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/pic/fpk/danmu.jpg" width="100%" alt="AniBox fpk：网页播放器弹幕与弹幕源详情面板">
+  <p><em>图：网页播放器弹幕 —— 原生播放器 canvas 渲染，弹幕源详情面板逐项可视（命中条数 / 分集映射 / 凭证 / 未采用原因）</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/pic/fpk/history.jpg" width="100%" alt="AniBox fpk：观影记录热力图与海报墙">
+  <p><em>图：观影记录 —— 日历热力图与活跃度统计、已看完 / 在观看海报墙、年度观影报告</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/pic/fpk/actor.jpg" width="100%" alt="AniBox fpk：演员资料卡与入库检测">
+  <p><em>图：演员资料卡 —— 生平与代表作、TMDB 完整作品整理，「已入库」角标一眼可见</em></p>
+</div>
+
+> 截图均为 fpk 网页端实机画面，桌面端截图见上文「界面截图」。
+
+### 网页端功能一览
+
+- **<img src="https://api.iconify.design/mdi/puzzle-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> fnOS 微应用，影视应用零改动** — 增强前端打包成单文件 payload，由应用内 Go 服务在影视网页取回后注入，其余 API / 视频 / 图片请求原样透传；桌面图标经飞牛统一网关（Unix socket + 登录态校验）直达增强页面，服务本体不对局域网开放任何 TCP 端口。不 root、不写系统目录、卸载 fpk 即还原原生影视。
+- **<img src="https://api.iconify.design/mdi/image-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 界面增强** — 首页轮播 4 种样式（含 3D 立体旋转木马）、轮播 / 首页 Logo 自定义（TMDB 透明标识 + 24 个流媒体平台预设）、详情页沉浸美化与序号视图、TMDB / Bangumi / 豆瓣每日放送聚合、库索引与「已入库」角标。
+- **<img src="https://api.iconify.design/mdi/comment-text-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 播放与弹幕** — 浏览器原生播放器 + canvas 弹幕：B 站三路搜索（扫码登录）→ 自建 `danmu_api` 优选 → 弹弹play 开放 API 兜底（内置凭证开箱即用）+ 手动搜索候选；命中条数低于下限自动向下探源，来源详情与 B 站 Cookie 每日体检；跳过片头片尾（自动数据 + 手动标记面板，支持整季应用与写回飞牛）、播放记忆跨设备同步；按钮热区 / 面板窄屏自适应的手机触控适配。
+- **<img src="https://api.iconify.design/mdi/link-variant.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 同步与刮削** — 豆瓣（播放进度 → 在看、标记已看 → 看过）、Bangumi（进度阈值自动标记，多路传输）、Trakt（设备授权 + 播放 scrobble + 全库已观看）三路同步；自定义刮削源一键回填分集标题与简介——一律走飞牛官方编辑接口 + 字段锁，从不直写数据库。
+- **<img src="https://api.iconify.design/mdi/chart-box-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 观影与工具** — 观影记录面板与年度观影报告、诊断与实时日志（版本 / 上游连通性 / 前后端日志合并视图）、可关闭的匿名使用统计（每天最多一次心跳，只报匿名 ID / 版本 / 系统 / 日期）。
+
+### 安装（三步，全屋可用）
+
+1. 按 NAS 架构选包：`AniBox-<版号>.fpk`（x86_64）/ `AniBox-<版号>-arm64.fpk`（ARM64 包未在真机验证）；
+2. fnOS 应用中心 →「手动安装」→ 上传对应 `.fpk`，安装后桌面出现 **AniBox**（增强页面）与 **AniBox 设置** 两个入口，自动复用 NAS 登录态；
+3. 电视 / 平板 / 手机 / 电脑浏览器打开即增强版；升级时在应用中心卸载选「保留数据」再装新包，卸载即还原原生影视。
+
+### Web 版 vs 桌面客户端
+
+| | Web 版（fpk） | 桌面客户端 |
+|---|:---:|:---:|
+| 形态 | fnOS 应用，NAS 装一次全设备浏览器即用 | Windows 安装包 |
+| 海报墙 / 轮播 / 详情页美化 / Logo | ✅ | ✅ |
+| B 站弹幕 + 弹弹play + 自建源 + 手动搜索 | ✅（网页渲染） | ✅（MPV 渲染） |
+| 手机网页适配 | ✅ | — |
+| 豆瓣 / Bangumi / Trakt 同步 | ✅ | ✅ |
+| 跳过片头 / 播放记忆 / 观影记录 | ✅ | ✅ |
+| MPV 硬解 / 原盘 / 高级字幕 / 外部播放器 | ❌ | ✅ |
+| 手柄遥控 / 播放器内缩略图预览 | ❌ | ✅ |
+
+> 电视 / 平板 / 手机为主 → **Web 版**；Windows PC 重度观影 → **桌面客户端**。两者可共存。
 
 ---
 
@@ -404,9 +469,10 @@ AniBox/                            # 仓库目录名（产品名 AniBox）
 | 平台 | 文件类型 | 说明 |
 |------|----------|------|
 | <img src="https://api.iconify.design/mdi/laptop.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> Windows | NSIS 安装包（`.exe`） | 支持自定义安装路径、创建桌面 / 开始菜单快捷方式。 |
+| <img src="https://api.iconify.design/mdi/server.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> fnOS（NAS） | fpk 应用包（`.fpk`） | 网页端：NAS 装一次，电视 / 平板 / 手机 / 电脑浏览器即用；x86_64 / ARM64 双架构，详见 [`fpk/README.md`](fpk/README.md)。 |
 | <img src="https://api.iconify.design/mdi/puzzle-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 热补丁 | 补丁包（`-hotfix`） | 由应用内更新面板获取，重载即生效，无需下载全量包。 |
 
-> 当前发布目标为 **Windows 10 / 11 x64**；其他平台未验证。
+> 桌面端当前发布目标为 **Windows 10 / 11 x64**，其他桌面平台未验证；网页端 fpk 面向**飞牛 fnOS**（x86_64 / ARM64）。
 
 ### Windows 运行环境：WebView2 Runtime
 

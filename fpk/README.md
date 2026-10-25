@@ -22,21 +22,26 @@
 ---
 
 <div align="center">
-  <img src="resource/docs/home.jpg" width="100%" alt="AniBox fpk：飞牛影视网页端首页增强（轮播、继续观看、媒体库）">
-  <p><em>图：Web 端实机展示（首页增强）</em></p>
+  <img src="../docs/pic/fpk/home.jpg" width="100%" alt="AniBox fpk：网页端首页全屏 Hero 轮播与热门更新面板">
+  <p><em>图：网页端首页 —— 全屏 Hero 轮播、Bangumi「热门更新」每日放送（含已入库角标）与「继续观看」</em></p>
 </div>
 
 <div align="center">
-  <img src="resource/docs/detail.jpg" width="100%" alt="AniBox fpk：影视详情页增强">
-  <p><em>图：详情页增强</em></p>
+  <img src="../docs/pic/fpk/detail-backdrop.jpg" width="100%" alt="AniBox fpk：一级详情全屏大背板">
+  <p><em>图：一级详情 —— 全屏大背板配海报，评分 / 放送信息 / 简介一屏可读</em></p>
 </div>
 
 <div align="center">
-  <img src="resource/docs/actor.jpg" width="100%" alt="AniBox fpk：演员信息入库检测">
-  <p><em>图：演员入库检测</em></p>
+  <img src="../docs/pic/fpk/danmu.jpg" width="100%" alt="AniBox fpk：网页播放器弹幕与弹幕源详情面板">
+  <p><em>图：网页播放器弹幕 —— canvas 渲染，弹幕源详情面板逐项可视（自建源 / B 站 / 弹弹play 三源）</em></p>
 </div>
 
-> 截图为较早版本，界面元素与当前 AniBox 版本可能略有差异；后续会随版本更新。
+<div align="center">
+  <img src="../docs/pic/fpk/actor.jpg" width="100%" alt="AniBox fpk：演员资料卡与入库检测">
+  <p><em>图：演员资料卡与「已入库」检测</em></p>
+</div>
+
+> 截图均为 AniBox fpk 网页端实机画面；桌面端截图见主仓库 [README](../README.md#界面截图)。
 
 ## 实现方式
 

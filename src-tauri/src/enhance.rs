@@ -180,6 +180,23 @@ default_on={}
     );
     std::fs::write(so.join("fntv_interp.conf"), body)
         .map_err(|err| format!("写入配置失败（安装目录可能只读）: {err}"))?;
+    // [lc-1855] N 卡 Smooth Motion 需要 Vulkan 呈现上下文（gpu-context=winvk，启动项）：
+    // 写入随包 portable_config/mpv-interp-nvidia.conf（被 mpv-user.conf include）。
+    // 此前该文件只有"应用会自动重写"的注释、无任何代码写它——N 卡档是张空头支票。
+    // 选其它引擎时恢复空桩（撤掉 winvk，避免 Vulkan 上下文残留影响非 N 卡场景）。
+    let nvidia_conf = dir.join("mpv-interp-nvidia.conf");
+    let nvidia_body = if new_engine == "nvidia" {
+        "# AniBox · N 卡 Smooth Motion（RTX50 驱动级）
+# 由「设置 > AI 增强」选择 N 卡引擎时写入；重启播放器后生效。
+# 还需在 NVIDIA App「图形/程序设置」把本播放器 mpv.exe 加入并开启 Smooth Motion。
+gpu-context=winvk
+".to_string()
+    } else {
+        "# AniBox · N 卡 Smooth Motion（RTX50 驱动级）
+# 仅当「插帧引擎=N 卡」时由应用写入；请勿手动编辑。
+".to_string()
+    };
+    let _ = std::fs::write(&nvidia_conf, nvidia_body);
     let _ = cur_engine;
     if new_default && new_engine != "auto" {
         push_to_live_mpv(&state, &["fntv-interp-engine", new_engine]).await;

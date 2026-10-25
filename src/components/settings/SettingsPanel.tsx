@@ -3120,7 +3120,7 @@ function AiEnhanceRow() {
                   : val === "nvidia"
                     ? "N 卡驱动级补帧：RTX 50 系 + 在 NVIDIA App 按 exe 注册开启 Smooth Motion"
                     : val === "rife"
-                      ? "RIFE：AI 在帧间补新帧，效果最好；1080P 源可能跟不上（会自动回退）"
+                      ? "RIFE：AI 在帧间补新帧，效果最好；1080P 源实测跟不上会自动回退，720P 可用"
                       : "内置平滑：MPV 自带时间插值，零开销，效果一般"
               }
               onClick={() => (rifeLocked ? setErr("RIFE 档需先下载 AI 增强组件") : void pickEngine(val))}

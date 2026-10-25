@@ -116,34 +116,68 @@ $btnBuild.Add_Click({
     $btnBuild.Enabled = $false
     $tbLog.Clear()
     try {
-        Log-Line "1/4 写入版本号 $ver（tauri.conf.json + Cargo.toml）…"
-        $confP = Join-Path $RepoRoot 'src-tauri/tauri.conf.json'
-        $conf = Get-Content -LiteralPath $confP -Raw | ConvertFrom-Json
-        $conf.version = $ver
-        $conf | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $confP -Encoding utf8
-        $cargoP = Join-Path $RepoRoot 'src-tauri/Cargo.toml'
-        $cargo = Get-Content -LiteralPath $cargoP -Raw
-        $cargo = [regex]::Replace($cargo, '(?m)^(version\s*=\s*)"[^"]+"', "`$1`"$ver`"", 1)
-        Set-Content -LiteralPath $cargoP -Value $cargo -Encoding utf8
+        if ($ver -ne $curVersion) {
+            Log-Line "1/4 写入版本号 $ver（tauri.conf.json + Cargo.toml）…"
+            $confP = Join-Path $RepoRoot 'src-tauri/tauri.conf.json'
+            $conf = Get-Content -LiteralPath $confP -Raw | ConvertFrom-Json
+            $conf.version = $ver
+            $conf | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $confP -Encoding utf8
+            $cargoP = Join-Path $RepoRoot 'src-tauri/Cargo.toml'
+            $cargo = Get-Content -LiteralPath $cargoP -Raw
+            $cargo = [regex]::Replace($cargo, '(?m)^(version\s*=\s*)"[^"]+"', "`$1`"$ver`"", 1)
+            Set-Content -LiteralPath $cargoP -Value $cargo -Encoding utf8
+        } else {
+            Log-Line "1/4 版本与 tauri.conf.json 一致（$ver），跳过改写"
+        }
 
         Log-Line "2/4 运行 tools\build-installer.ps1（密钥注入+重试+SHA-256）…"
+        # [lc-1814] 卡死根因：cargo/tauri 的编译进度与告警全走 **stderr**（OS 级句柄——
+        # pwsh `-Command … 2>&1` 的流合流对原生进程 stderr 无效，实测照样死锁），
+        # 旧版只重定向不读：stderr 管道缓冲(4-64KB)写满后子进程 write() 阻塞，
+        # 父进程 ReadLine() 又在等 stdout 下一行 → 互等死锁，UI 未响应。修法：
+        #   ① stderr 用 **cmd /c … 2>文件** 在 OS 层落盘（错误全进 %TEMP% 日志，
+        #      永不堵管道），构建结束后尾部 40 行回放进日志区；
+        #   ② stdout 单管道 + ReadLineAsync + DoEvents 轮询（无输出期窗口不白；
+        #      task 未完成时不可重入，排干前先等在飞 task 完成）。
+        $errLog = Join-Path $env:TEMP "anibox-packager-err-$PID.log"
+        if (Test-Path -LiteralPath $errLog) { Remove-Item -LiteralPath $errLog -Force }
         $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = 'pwsh'
-        $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$RepoRoot\tools\build-installer.ps1`"$(if ($StopApp) { ' -StopApp' })"
+        $psi.FileName = 'cmd.exe'
+        $psi.Arguments = "/c chcp 65001>nul & pwsh -NoProfile -ExecutionPolicy Bypass -File `"$RepoRoot\tools\build-installer.ps1`"$(if ($StopApp) { ' -StopApp' }) 2>`"$errLog`""
         $psi.WorkingDirectory = $RepoRoot
         $psi.UseShellExecute = $false
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
         $psi.CreateNoWindow = $true
         $proc = [System.Diagnostics.Process]::Start($psi)
+        $t = $null
         while (-not $proc.HasExited) {
-            $line = $proc.StandardOutput.ReadLine()
-            if ($line) { Log-Line $line.TrimEnd() }
-            [System.Windows.Forms.Application]::DoEvents()
+            if ($null -eq $t -or $t.IsCompleted) { $t = $proc.StandardOutput.ReadLineAsync() }
+            while (-not $t.IsCompleted -and -not $proc.HasExited) {
+                [System.Windows.Forms.Application]::DoEvents()
+                Start-Sleep -Milliseconds 40
+            }
+            if ($t.IsCompleted -and $t.Result) { Log-Line $t.Result.TrimEnd() }
         }
-        $errTail = $proc.StandardError.ReadToEnd()
+        # 排干：先等在飞的 ReadLineAsync 完成（task 未完成时流被占用，同步 ReadLine
+        # 会抛 "stream is in use"；进程已退出 → 行或 EOF 很快到达），再同步排干缓存行。
+        $drainWait = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($null -ne $t -and -not $t.IsCompleted -and $drainWait.Elapsed.TotalMilliseconds -lt 3000) {
+            [System.Windows.Forms.Application]::DoEvents()
+            Start-Sleep -Milliseconds 20
+        }
+        if ($null -ne $t -and $t.IsCompleted -and $t.Result) { Log-Line $t.Result.TrimEnd() }
+        while ($null -ne ($line = $proc.StandardOutput.ReadLine())) { Log-Line $line.TrimEnd() }
+        # stderr 落盘文件的尾部（构建告警/错误）回放进日志区
+        if (Test-Path -LiteralPath $errLog) {
+            $tail = Get-Content -LiteralPath $errLog -Tail 40 -ErrorAction SilentlyContinue
+            if ($tail) {
+                Log-Line '── stderr 尾部 ──'
+                $tail | ForEach-Object { Log-Line $_ }
+            }
+        }
         if ($proc.ExitCode -ne 0) {
-            Log-Line "构建失败（code $($proc.ExitCode)）$errTail"
+            Log-Line "构建失败（code $($proc.ExitCode)，详见上方日志）"
             [System.Windows.Forms.MessageBox]::Show('构建失败，详见日志区', 'AniBox 打包') | Out-Null
             return
         }
@@ -171,6 +205,7 @@ $btnBuild.Add_Click({
         Log-Line "4/4 完成：$dest"
         Log-Line ("大小 {0} MB · SHA-256 {1}" -f $mb, $sha)
 
+        if (Test-Path -LiteralPath $errLog) { Remove-Item -LiteralPath $errLog -Force -ErrorAction SilentlyContinue }
         $state.OutDir = $out; $state.Overwrite = [bool]$cbOver.Checked; $state.LastVersion = $ver
         Save-State
         [System.Windows.Forms.MessageBox]::Show("打包完成`n$dest", 'AniBox 打包') | Out-Null

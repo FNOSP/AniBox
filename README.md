@@ -47,6 +47,14 @@
 ## <img src="https://api.iconify.design/mdi/image-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 界面截图
 
 <div align="center">
+
+![正在展示：桌面端 Windows 实机](https://img.shields.io/badge/%E6%AD%A3%E5%9C%A8%E5%B1%95%E7%A4%BA-%E6%A1%8C%E9%9D%A2%E7%AB%AF%20Windows%20%E5%AE%9E%E6%9C%BA-2ea44f) [![点击切换：网页版 fpk](https://img.shields.io/badge/%E7%82%B9%E5%87%BB%E5%88%87%E6%8D%A2-%E7%BD%91%E9%A1%B5%E7%89%88%20fpk%20%E2%86%92-8a6fd6)](fpk/README.md)
+
+<sub>下方截图均为 <b>桌面端（Windows）</b>实机画面；<b>网页版 fpk</b> 的实机截图在 <a href="fpk/README.md"><b>fpk/README.md</b></a>，点击上方紫色徽章即可切换过去。</sub>
+
+</div>
+
+<div align="center">
   <img src="docs/pic/home.jpg" width="100%" alt="AniBox 首页：全屏 Hero 轮播、顶栏全局搜索与媒体库横排">
   <p><em>图：首页全屏 Hero 轮播（顶栏已含全局聚合搜索入口）</em></p>
 </div>

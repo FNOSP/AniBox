@@ -104,7 +104,7 @@ export function LibView({
       if (lib.guid.startsWith("_cat:")) {
         // [lc-1805] 影视分类行走服务端 type；其余维度走 filters（item/list tags 透传）
         const types = catTypesRef.current ?? lib.guid.slice(5).split(",").filter(Boolean);
-        const [sc, st] = sortKey ? sortKey.split("|") : [null, null];
+        const [sc, st] = sortKeyRef.current ? sortKeyRef.current.split("|") : [null, null];
         const d = await invoke<{ list?: MediaItem[]; total?: number }>("get_items_global", {
           typeFilter: types,
           page,
@@ -115,11 +115,11 @@ export function LibView({
         return { list: d.list ?? [], total: Number(d.total ?? 0) || 0 };
       }
       {
-        const [sc, st] = sortKey ? sortKey.split("|") : [null, null];
+        const [sc, st] = sortKeyRef.current ? sortKeyRef.current.split("|") : [null, null];
         return fetchLibPage(lib.guid, null, page, serverFilters() ?? undefined, sc, st);
       }
     },
-    [lib.guid, sortKey],
+    [lib.guid],
   );
 
   const load = useCallback(
@@ -314,6 +314,11 @@ export function LibView({
   };
   const EMPTY_F: Filters = { cat: null, genres: null, resolution: null, colorRange: null, audioType: null, locate: null, decade: null, recognition: null, watched: null };
   const [f, setF] = useState<Filters>(EMPTY_F);
+  // [lc-1809] 同步 ref：点筛选/排序的同一 tick 就发起重拉，而 useState 的新值要下一次渲染
+  // 才可见 —— fetchPage 闭包里读到的还是旧值（表现为「点了筛选闪一下又回到未筛选」）。
+  // 飞鲸是先改 _selectedFilters 字段再 _refresh()（同步可见），React 下的等价物就是 ref。
+  const fRef = useRef<Filters>(EMPTY_F);
+  const sortKeyRef = useRef("");
   // [lc-1805b] 默认收起（用户要求）；点「筛选」展开
   const [collapsed, setCollapsed] = useState(true);
   const [dim, setDim] = useState<Record<string, Opt[]> | null>(null);
@@ -329,6 +334,7 @@ export function LibView({
   const catTypesRef = useRef<string[] | null>(null);
   useEffect(() => {
     catTypesRef.current = null;
+    fRef.current = EMPTY_F;
     setF(EMPTY_F);
     setDim(null);
   }, [lib.guid]);
@@ -349,21 +355,23 @@ export function LibView({
    *  [lc-1805f] cat 一并入 filters.type（库页/分类页同一套：影视类型选中即整体替换 tags.type，
    *  飞鲸 _buildTags 口径；Rust get_items/get_items_global 白名单已含 "type"）。 */
   const serverFilters = () => {
+    const fv = fRef.current;
     const o: Record<string, unknown> = {};
-    if (f.cat !== null) o.type = [f.cat];
-    if (f.genres !== null) o.genres = f.genres;
-    if (f.resolution) o.resolution = f.resolution;
-    if (f.colorRange) o.color_range = f.colorRange;
-    if (f.audioType) o.audio_type = f.audioType;
-    if (f.locate) o.locate = f.locate;
-    if (f.decade) o.decade = f.decade;
-    if (f.recognition) o.recognition_status = f.recognition;
-    if (f.watched) o.watched = f.watched;
+    if (fv.cat !== null) o.type = [fv.cat];
+    if (fv.genres !== null) o.genres = fv.genres;
+    if (fv.resolution) o.resolution = fv.resolution;
+    if (fv.colorRange) o.color_range = fv.colorRange;
+    if (fv.audioType) o.audio_type = fv.audioType;
+    if (fv.locate) o.locate = fv.locate;
+    if (fv.decade) o.decade = fv.decade;
+    if (fv.recognition) o.recognition_status = fv.recognition;
+    if (fv.watched) o.watched = fv.watched;
     return Object.keys(o).length ? o : null;
   };
 
   /** 任一条件变更 → 服务端重拉第 1 页（分页继续服务端）。 */
   const refetch = (next: Filters) => {
+    fRef.current = next;
     setF(next);
     setLevels((ls) => {
       const i = ls.length - 1;
@@ -376,8 +384,11 @@ export function LibView({
     void load(null);
   };
 
-  const chip = (label: string, on: boolean, onClick: () => void) => (
-    <button key={label + (on ? "*" : "")} type="button" className={`libf-chip${on ? " on" : ""}`} onClick={onClick}>
+  // [lc-1809] key 必须用唯一 value（id/代码），不能用中文 label —— 同名类型（科幻奇幻有
+  // id9/id90001 两枚）label 撞 key，React 复用错节点，表现为每点一次多复制一份 chip、
+  // 选中态错乱。飞鲸是 Flutter 无此问题；label 可重复，key 唯一即可。
+  const chip = (label: string, on: boolean, onClick: () => void, keyStr: string) => (
+    <button key={keyStr} type="button" className={`libf-chip${on ? " on" : ""}`} onClick={onClick}>
       {label}
     </button>
   );
@@ -386,7 +397,7 @@ export function LibView({
     return (
       <div className="libf-row" key={key}>
         <span className="libf-k">{label}</span>
-        {opts.map((o) => chip(String(o.label), cur === o.value, () => set(cur === o.value ? null : o.value)))}
+        {opts.map((o) => chip(String(o.label), cur === o.value, () => set(cur === o.value ? null : o.value), String(o.value)))}
       </div>
     );
   };
@@ -458,7 +469,8 @@ export function LibView({
             const cur = SORTS.find(([k]) => k === sortKey) ?? SORTS[0];
             const pick = (k: string) => {
               setSortOpen(false);
-              if (k === sortKey) return;
+              if (k === sortKeyRef.current) return;
+              sortKeyRef.current = k;
               setSortKey(k);
               setLevels((ls) => {
                 const i2 = ls.length - 1;
@@ -497,6 +509,7 @@ export function LibView({
               type="button"
               className="libf-open ghost"
               onClick={() => {
+                sortKeyRef.current = "";
                 setSortKey("");
                 catTypesRef.current = null;
                 refetch(EMPTY_F);

@@ -119,6 +119,12 @@ fn nvidia_sm_prepare() -> String {
                 .join("NVIDIA App")
                 .join("NVIDIA App.exe")
         }),
+        // 实测安装布局（本机 11.0.9）：主程序在 CEF 子目录，不在根目录
+        Some(
+            ["C:", "Program Files", "NVIDIA Corporation", "NVIDIA App", "CEF", "NVIDIA App.exe"]
+                .iter()
+                .collect::<std::path::PathBuf>(),
+        ),
         Some(
             ["C:", "Program Files", "NVIDIA Corporation", "NVIDIA App", "NVIDIA App.exe"]
                 .iter()

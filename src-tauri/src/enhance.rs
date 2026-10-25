@@ -39,6 +39,8 @@ pub fn enhance_root(app: &AppHandle) -> Option<PathBuf> {
 /// 就绪判定：runtime 关键文件齐备（对齐 fntv_interp.lua 的同名判定，口径一致）。
 pub const REQUIRED_FILES: &[&str] = &[
     "vs/rife.vpy",
+    "vs/superres.vpy",
+    "vs/superres_trt.vpy",
     "runtime/Lib/site-packages/vapoursynth/vsscript.dll",
     "runtime/libvapoursynth.dll",
     "runtime/plugins/librife.dll",
@@ -46,6 +48,40 @@ pub const REQUIRED_FILES: &[&str] = &[
     "runtime/models/rife-v4.6/flownet.bin",
     "runtime/models/rife-v4.6/flownet.param",
 ];
+
+/// [lc-1823] AnimeJaNai 超分（DML 后端，基础包内）就绪文件。
+pub const SUPERRES_DML_FILES: &[&str] = &[
+    "vs/superres.vpy",
+    "runtime/plugins/vsort.dll",
+    "runtime/plugins/vsort/onnxruntime.dll",
+    "runtime/plugins/vsort/DirectML.dll",
+    "runtime/Lib/site-packages/vsmlrt.py",
+    "runtime/models/animejanai/animejanai-v2-l1-x2-fp16.onnx",
+];
+
+/// [lc-1823] TensorRT 扩展包（RTX 限定大包）就绪文件（ai-enhance/tensorrt/ 下）。
+pub const TENSORRT_FILES: &[&str] = &[
+    "runtime/VSScript.dll",
+    "runtime/python314.dll",
+    "runtime/vs-plugins/vstrt.dll",
+    "runtime/vs-plugins/vsmlrt-cuda/nvinfer_10.dll",
+];
+
+pub fn superres_dml_ready(app: &AppHandle) -> bool {
+    let Some(root) = enhance_root(app) else { return false };
+    SUPERRES_DML_FILES.iter().all(|rel| root.join(rel).is_file())
+}
+
+/// 当前超分档是否为 tensorrt（mpv.rs 注入环境分流用）。
+pub fn superres_engine_is_trt(app: &AppHandle) -> bool {
+    read_superres_engine(app) == "tensorrt"
+}
+
+pub fn tensorrt_ready(app: &AppHandle) -> bool {
+    let Some(root) = enhance_root(app) else { return false };
+    let trt = root.join("tensorrt");
+    TENSORRT_FILES.iter().all(|rel| trt.join(rel).is_file())
+}
 
 pub fn runtime_ready(app: &AppHandle) -> bool {
     let Some(root) = enhance_root(app) else { return false };
@@ -145,13 +181,58 @@ pub async fn ai_enhance_status(app: AppHandle) -> Result<Value, String> {
             .unwrap_or(""),
         "engine": engine,
         "defaultOn": default_on,
+        "superresDmlReady": superres_dml_ready(&app),
+        "tensorrtReady": tensorrt_ready(&app),
+        "superresEngine": read_superres_engine(&app),
     }))
+}
+
+/// 读超分引擎档（script-opts/fntv_superres.conf；缺失=off）。
+fn read_superres_engine(app: &AppHandle) -> String {
+    if let Some(p) = crate::config::mpv_portable_config_dir(app) {
+        let f = p.join("script-opts").join("fntv_superres.conf");
+        if let Ok(text) = std::fs::read_to_string(&f) {
+            for line in text.lines() {
+                if let Some(v) = line.trim().strip_prefix("superres_engine=") {
+                    return v.trim().to_string();
+                }
+            }
+        }
+    }
+    "off".into()
+}
+
+/// [lc-1823] 设置超分引擎档：off / dml / tensorrt（写 script-opts/fntv_superres.conf，
+/// fntv_superres.lua 播放时读取挂载；dml/tensorrt 档前置就绪校验）。
+#[tauri::command]
+pub async fn ai_enhance_set_superres(app: AppHandle, engine: String) -> Result<Value, String> {
+    let e = engine.trim().to_lowercase();
+    if !matches!(e.as_str(), "off" | "dml" | "tensorrt") {
+        return Err(format!("未知超分引擎 {e}（只允许 off/dml/tensorrt）"));
+    }
+    if e == "dml" && !superres_dml_ready(&app) {
+        return Err("AI 增强组件未就绪（DML 超分文件缺失，请重新下载基础包）".into());
+    }
+    if e == "tensorrt" && !tensorrt_ready(&app) {
+        return Err("TensorRT 扩展包未安装（先下载 RTX 大包）".into());
+    }
+    let Some(dir) = crate::config::mpv_portable_config_dir(&app) else {
+        return Err("找不到 mpv 配置目录".into());
+    };
+    let so = dir.join("script-opts");
+    std::fs::create_dir_all(&so).map_err(|err| format!("创建 script-opts 失败: {err}"))?;
+    let body = "# AniBox AI 超分配置（设置面板写入）\n# 引擎档：off / dml（AnimeJaNai DirectML·全显卡）/ tensorrt（RTX 40/50）\nsuperres_engine=".to_string() + &e + "\n";
+    std::fs::write(so.join("fntv_superres.conf"), body)
+        .map_err(|err| format!("写入配置失败: {err}"))?;
+    Ok(json!({ "superresEngine": e }))
 }
 
 /// 下载并安装：远端 manifest → zip 流式下载（进度事件）→ sha256 校验 →
 /// 解压（pwsh Expand-Archive，CREATE_NO_WINDOW 零前台）→ 原子替换。
 #[tauri::command]
-pub async fn ai_enhance_download(app: AppHandle) -> Result<Value, String> {
+pub async fn ai_enhance_download(app: AppHandle, pack: Option<String>) -> Result<Value, String> {
+    let pack = pack.unwrap_or_else(|| "base".into());
+    let is_trt = pack == "tensorrt";
     let emit = |downloaded: u64, total: u64| {
         let _ = app.emit(
             "ai-enhance-progress",
@@ -175,66 +256,169 @@ pub async fn ai_enhance_download(app: AppHandle) -> Result<Value, String> {
         .json()
         .await
         .map_err(|e| format!("组件清单解析失败: {e}"))?;
-    let zip_url = manifest
-        .get("zipUrl")
-        .and_then(|v| v.as_str())
-        .ok_or("清单缺 zipUrl")?
-        .to_string();
-    let want_sha = manifest
-        .get("zipSha256")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let version = manifest
+    let entry = if is_trt {
+        manifest
+            .get("packs")
+            .and_then(|pk| pk.get("tensorrt"))
+            .cloned()
+            .ok_or("清单缺 packs.tensorrt（TRT 扩展包未发布）")?
+    } else {
+        manifest.clone()
+    };
+    let version = entry
         .get("version")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown")
         .to_string();
 
-    // 2) 流式下载到临时文件
+    // 2) 流式下载到临时文件（[lc-1823] 分卷包：wrangler 单文件 300MiB 上限，
+    //    TRT 大包拆 parts 逐卷流式 append + 逐卷 sha 校验；无 parts 走单 zip）。
     let tmp_zip = std::env::temp_dir().join(format!("anibox-ai-enhance-{}.zip", std::process::id()));
-    let resp = client
-        .get(&zip_url)
-        .send()
-        .await
-        .map_err(|e| format!("组件包下载失败: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("组件包下载 HTTP {}", resp.status().as_u16()));
-    }
-    let total: u64 = resp
-        .headers()
-        .get(reqwest::header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let mut file = std::fs::File::create(&tmp_zip).map_err(|e| format!("临时文件创建失败: {e}"))?;
     use std::io::Write as _;
     use futures_util::StreamExt as _;
-    let mut stream = resp.bytes_stream();
-    let mut downloaded: u64 = 0;
-    let mut hasher = Sha256::new();
-    let mut last_emit = 0u64;
-    while let Some(chunk) = stream.next().await {
-        let bytes = chunk.map_err(|e| format!("下载中断: {e}"))?;
-        hasher.update(&bytes);
-        file.write_all(&bytes).map_err(|e| format!("写临时文件失败: {e}"))?;
-        downloaded += bytes.len() as u64;
-        // 每 1MB 报一次进度（emit 有 IPC 开销，别逐 chunk）
-        if downloaded - last_emit >= 1024 * 1024 || (total > 0 && downloaded >= total) {
-            emit(downloaded, total);
-            last_emit = downloaded;
+
+    /// 单个 URL 流式下载到 writer，返回 (本段字节数, 全量 hasher 增量后的 sha 十六进制)。
+    async fn stream_to(
+        client: &reqwest::Client,
+        url: &str,
+        file: &mut std::fs::File,
+        hasher: &mut Sha256,
+        progress: &(dyn Fn(u64, u64) + Send + Sync),
+        downloaded_before: u64,
+        total_hint: u64,
+    ) -> Result<u64, String> {
+        let resp = client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| format!("组件包下载失败: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("组件包下载 HTTP {}", resp.status().as_u16()));
         }
+        let mut stream = resp.bytes_stream();
+        let mut seg: u64 = 0;
+        let mut last_emit = 0u64;
+        while let Some(chunk) = stream.next().await {
+            let bytes = chunk.map_err(|e| format!("下载中断: {e}"))?;
+            hasher.update(&bytes);
+            file.write_all(&bytes).map_err(|e| format!("写临时文件失败: {e}"))?;
+            seg += bytes.len() as u64;
+            if seg - last_emit >= 1024 * 1024 {
+                progress(downloaded_before + seg, total_hint);
+                last_emit = seg;
+            }
+        }
+        progress(downloaded_before + seg, total_hint);
+        Ok(seg)
     }
+
+    let parts: Vec<(String, String, u64)> = entry
+        .get("parts")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|e| {
+                    Some((
+                        e.get("url")?.as_str()?.to_string(),
+                        e.get("sha256")?.as_str()?.to_ascii_lowercase(),
+                        e.get("sizeBytes")?.as_u64()?,
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut file = std::fs::File::create(&tmp_zip).map_err(|e| format!("临时文件创建失败: {e}"))?;
+    let mut hasher = Sha256::new();
+    if !parts.is_empty() {
+        let grand: u64 = parts.iter().map(|p| p.2).sum();
+        let mut done: u64 = 0;
+        for (i, (url, want, size)) in parts.iter().enumerate() {
+            let seg = stream_to(
+                &client,
+                url,
+                &mut file,
+                &mut hasher,
+                &|d, t| emit(d, t),
+                done,
+                grand,
+            )
+            .await?;
+            if &seg != size {
+                let _ = std::fs::remove_file(&tmp_zip);
+                return Err(format!("分卷 {} 大小不符（期望 {} 实得 {}）", i + 1, size, seg));
+            }
+            // 逐卷独立校验（hasher 是全量累计，这里对卷单独算）
+            let part_hash = {
+                let mut h = Sha256::new();
+                let mut f = std::fs::File::open(&tmp_zip).map_err(|e| e.to_string())?;
+                use std::io::Seek as _;
+                use std::io::Read as _;
+                f.seek(std::io::SeekFrom::Start(done)).map_err(|e| e.to_string())?;
+                let mut left = seg;
+                let mut buf = vec![0u8; 1024 * 1024];
+                while left > 0 {
+                    let n = std::cmp::min(left, buf.len() as u64) as usize;
+                    f.read_exact(&mut buf[..n]).map_err(|e| e.to_string())?;
+                    h.update(&buf[..n]);
+                    left -= n as u64;
+                }
+                format!("{:x}", h.finalize())
+            };
+            if part_hash != *want {
+                let _ = std::fs::remove_file(&tmp_zip);
+                return Err(format!(
+                    "分卷 {} 校验失败（sha256 不匹配，下载可能损坏）",
+                    i + 1
+                ));
+            }
+            done += seg;
+        }
+    } else {
+        let zip_url = entry
+            .get("zipUrl")
+            .and_then(|v| v.as_str())
+            .ok_or("清单缺 zipUrl")?
+            .to_string();
+        let want_sha = entry
+            .get("zipSha256")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let resp = client
+            .get(&zip_url)
+            .send()
+            .await
+            .map_err(|e| format!("组件包下载失败: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("组件包下载 HTTP {}", resp.status().as_u16()));
+        }
+        let total: u64 = resp
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let mut stream = resp.bytes_stream();
+        let mut downloaded: u64 = 0;
+        let mut last_emit = 0u64;
+        while let Some(chunk) = stream.next().await {
+            let bytes = chunk.map_err(|e| format!("下载中断: {e}"))?;
+            hasher.update(&bytes);
+            file.write_all(&bytes).map_err(|e| format!("写临时文件失败: {e}"))?;
+            downloaded += bytes.len() as u64;
+            // 每 1MB 报一次进度（emit 有 IPC 开销，别逐 chunk）
+            if downloaded - last_emit >= 1024 * 1024 || (total > 0 && downloaded >= total) {
+                emit(downloaded, total);
+                last_emit = downloaded;
+            }
+        }
+        // 校验统一在收尾处（hasher.finalize 消费性）
+        let _ = &want_sha;
+    }
+
     drop(file);
+    let done_total: u64 = std::fs::metadata(&tmp_zip).map(|m| m.len()).unwrap_or(0);
     let got_sha = format!("{:x}", hasher.finalize());
-    if !want_sha.is_empty() && got_sha != want_sha {
-        let _ = std::fs::remove_file(&tmp_zip);
-        return Err(format!(
-            "组件包校验失败（sha256 不匹配，下载可能损坏）\n期望 {}… 实得 {}…",
-            &want_sha[..12.min(want_sha.len())],
-            &got_sha[..12.min(got_sha.len())]
-        ));
-    }
 
     // 3) 解压到临时目录（零前台：pwsh CREATE_NO_WINDOW）
     let tmp_dir = std::env::temp_dir().join(format!("anibox-ai-enhance-unzip-{}", std::process::id()));
@@ -277,8 +461,27 @@ pub async fn ai_enhance_download(app: AppHandle) -> Result<Value, String> {
         return Err("组件包结构异常（找不到 runtime/）".into());
     };
 
-    // 4) 原子替换：旧目录 → .old → 新目录就位 → 删旧
+    // 4) 落位：base 包整目录原子替换；tensorrt 包解到 ai-enhance/tensorrt/
     let root = enhance_root(&app).ok_or("app_data_dir 不可用")?;
+    if is_trt {
+        let trt = root.join("tensorrt");
+        let trt_old = trt.with_extension("old");
+        let _ = std::fs::remove_dir_all(&trt_old);
+        if trt.exists() && std::fs::rename(&trt, &trt_old).is_err() {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Err("替换 TensorRT 扩展失败（文件被占用，请关闭播放器后重试）".into());
+        }
+        if let Err(e) = std::fs::rename(&src_root, &trt) {
+            if trt_old.exists() {
+                let _ = std::fs::rename(&trt_old, &trt);
+            }
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Err(format!("TensorRT 扩展就位失败: {e}"));
+        }
+        let _ = std::fs::remove_dir_all(&trt_old);
+        emit(done_total, done_total);
+        return Ok(json!({ "version": version, "ready": tensorrt_ready(&app) }));
+    }
     let old = root.with_extension("old");
     let _ = std::fs::remove_dir_all(&old);
     if root.exists() && std::fs::rename(&root, &old).is_err() {
@@ -305,14 +508,22 @@ pub async fn ai_enhance_download(app: AppHandle) -> Result<Value, String> {
         }))
         .unwrap_or_default(),
     );
-    emit(total, total);
+    emit(done_total, done_total);
     Ok(json!({ "version": version, "ready": runtime_ready(&app) }))
 }
 
 /// 删除组件（释放 ~50MB；播放器若在用 RIFE 需重启播放器）。
 #[tauri::command]
-pub async fn ai_enhance_delete(app: AppHandle) -> Result<(), String> {
+pub async fn ai_enhance_delete(app: AppHandle, pack: Option<String>) -> Result<(), String> {
     let Some(root) = enhance_root(&app) else { return Ok(()) };
+    if pack.as_deref() == Some("tensorrt") {
+        let trt = root.join("tensorrt");
+        if trt.exists() && std::fs::remove_dir_all(&trt).is_err() {
+            return Err("删除失败（文件被播放器占用，请先关闭播放器）".into());
+        }
+        let _ = std::fs::remove_dir_all(trt.with_extension("old"));
+        return Ok(());
+    }
     if root.exists() && std::fs::remove_dir_all(&root).is_err() {
         return Err("删除失败（组件文件被播放器占用，请先关闭播放器）".into());
     }

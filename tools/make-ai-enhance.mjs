@@ -11,12 +11,19 @@ const SRC = path.join(process.env.APPDATA, "com.anibox.app", "ai-enhance");
 const OUT_DIR = path.resolve("release", "ai-enhance");
 const REQUIRED = [
   "vs/rife.vpy",
+  "vs/superres.vpy",
+  "vs/superres_trt.vpy",
   "runtime/Lib/site-packages/vapoursynth/vsscript.dll",
   "runtime/libvapoursynth.dll",
   "runtime/plugins/librife.dll",
   "runtime/plugins/MiscFilters.dll",
+  "runtime/plugins/vsort.dll",
+  "runtime/plugins/vsort/onnxruntime.dll",
+  "runtime/plugins/vsort/DirectML.dll",
+  "runtime/Lib/site-packages/vsmlrt.py",
   "runtime/models/rife-v4.6/flownet.bin",
   "runtime/models/rife-v4.6/flownet.param",
+  "runtime/models/animejanai/animejanai-v2-l1-x2-fp16.onnx",
 ];
 
 if (!fs.existsSync(SRC)) {

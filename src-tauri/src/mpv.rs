@@ -227,10 +227,21 @@ impl MpvSession {
         // [lc-1820] AI 增强组件就绪时注入 VapourSynth 运行环境：mpv 的 vapoursynth
         // 滤镜经 VSScript.dll（PATH 定位）加载组件内 Python；PATH 前置 runtime 与
         // vapoursynth 子目录。进程启动前设好，运行时切引擎无需再动环境。
-        if crate::enhance::runtime_ready(&app) {
-            if let Some(root) = crate::enhance::enhance_root(&app) {
-                let rt = root.join("runtime");
-                let vs_py = rt.join("Lib").join("site-packages").join("vapoursynth");
+        // [lc-1823] 环境按超分档分流：tensorrt 档注入 TRT 扩展包运行时（Python3.14 体系，
+        // 与基础包 Python3.12 互斥——切档需重启播放器，lua 侧同款提示）；否则基础运行时。
+        if let Some(root) = crate::enhance::enhance_root(&app) {
+            let base_ok = crate::enhance::runtime_ready(&app);
+            let use_trt = crate::enhance::superres_engine_is_trt(&app)
+                && crate::enhance::tensorrt_ready(&app);
+            if base_ok || use_trt {
+                let (rt, vs_py) = if use_trt {
+                    let trt = root.join("tensorrt").join("runtime");
+                    (trt.clone(), trt.join("Lib").join("site-packages").join("vapoursynth"))
+                } else {
+                    let rt = root.join("runtime");
+                    let vs_py = rt.join("Lib").join("site-packages").join("vapoursynth");
+                    (rt, vs_py)
+                };
                 command.env("VSSCRIPT_PATH", vs_py.join("vsscript.dll"));
                 command.env("PYTHONNOUSERSITE", "1");
                 command.env("PYTHONDONTWRITEBYTECODE", "1");

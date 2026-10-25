@@ -2934,8 +2934,11 @@ function AiEnhanceRow() {
     installedAt: string;
     engine: string;
     defaultOn: boolean;
+    superresDmlReady: boolean;
+    tensorrtReady: boolean;
+    superresEngine: string;
   } | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
   const [pct, setPct] = useState(-1);
 
@@ -2947,6 +2950,9 @@ function AiEnhanceRow() {
       installedAt: string;
       engine: string;
       defaultOn: boolean;
+      superresDmlReady: boolean;
+      tensorrtReady: boolean;
+      superresEngine: string;
     }>("ai_enhance_status")
       .then(setStatus)
       .catch(() => setStatus(null));
@@ -2984,31 +2990,41 @@ function AiEnhanceRow() {
     };
   }, [refresh]);
 
-  const download = async () => {
+  const download = async (pack?: string) => {
     setErr("");
-    setBusy(true);
+    setBusy(pack ?? "base");
     setPct(0);
     try {
-      await invoke("ai_enhance_download");
+      await invoke("ai_enhance_download", { pack: pack ?? null });
       refresh();
     } catch (e) {
       setErr(String(e));
     } finally {
-      setBusy(false);
+      setBusy(null);
       setPct(-1);
     }
   };
-
-  const remove = async () => {
+  const pickSuperres = async (engine: string) => {
+    if (engine === (status?.superresEngine ?? "off")) return;
     setErr("");
-    setBusy(true);
     try {
-      await invoke("ai_enhance_delete");
+      await invoke("ai_enhance_set_superres", { engine });
+      refresh();
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  const remove = async (pack?: string) => {
+    setErr("");
+    setBusy(pack ?? "base");
+    try {
+      await invoke("ai_enhance_delete", { pack: pack ?? null });
       refresh();
     } catch (e) {
       setErr(String(e));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -3026,12 +3042,12 @@ function AiEnhanceRow() {
                 : "未安装 · 运行时约 50MB，下载到用户目录（不占安装盘）"}
         </span>
         {status?.ready ? (
-          <button type="button" className="sub-cred-btn" onClick={remove} disabled={busy}>
+          <button type="button" className="sub-cred-btn" onClick={() => void remove()} disabled={!!busy}>
             删除组件
           </button>
         ) : (
-          <button type="button" className="sub-cred-btn on" onClick={download} disabled={busy}>
-            {busy ? "下载中…" : status?.installed ? "重新下载" : "下载并启用"}
+          <button type="button" className="sub-cred-btn on" onClick={() => void download()} disabled={!!busy}>
+            {busy === "base" ? "下载中…" : status?.installed ? "重新下载" : "下载并启用"}
           </button>
         )}
       </div>
@@ -3106,9 +3122,71 @@ function AiEnhanceRow() {
           </span>
         </div>
       )}
+      <div className="set-row" style={{ gap: 10, paddingLeft: 4 }}>
+        <span className="set-k" style={{ flex: "none" }}>AI 超分引擎</span>
+        {(
+          [
+            ["off", "关闭"],
+            ["dml", "AnimeJaNai · DML"],
+            ["tensorrt", "AnimeJaNai · TensorRT"],
+          ] as const
+        ).map(([val, label]) => {
+          const cur = status?.superresEngine ?? "off";
+          const on = cur === val;
+          const locked =
+            (val === "dml" && !status?.superresDmlReady) ||
+            (val === "tensorrt" && !status?.tensorrtReady);
+          return (
+            <button
+              key={val}
+              type="button"
+              className={`sub-cred-btn${on ? " on" : ""}`}
+              style={{ opacity: locked ? 0.4 : 1 }}
+              title={
+                val === "dml"
+                  ? "AnimeJaNai V2 L1 x2 · DirectML · 全显卡（需基础组件）"
+                  : val === "tensorrt"
+                    ? "AnimeJaNai TensorRT FP16 · 仅 RTX 40/50 · 需下方大包"
+                    : "不挂 AI 超分（GLSL 着色器链不受影响）"
+              }
+              onClick={() =>
+                locked
+                  ? setErr(val === "tensorrt" ? "需先下载 TensorRT 大包（约 1.1GB）" : "需先下载基础组件")
+                  : void pickSuperres(val)
+              }
+            >
+              {label}
+            </button>
+          );
+        })}
+        <span className="set-desc" style={{ flex: 1, minWidth: 0 }}>
+          AI 超分限 SDR 且源 ≤1920x1200，超限自动跳过回退 GLSL 链。
+        </span>
+      </div>
+
+      {/* TensorRT 扩展大包（RTX 40/50 限定） */}
+      <div className="set-row" style={{ gap: 10, paddingLeft: 4 }}>
+        <span className="set-k" style={{ flex: "none" }}>TensorRT 大包</span>
+        <span className="set-desc" style={{ flex: 1 }}>
+          {status?.tensorrtReady
+            ? "已安装（vstrt + CUDA/TensorRT 运行库）"
+            : "未安装 · 约 1.1GB，仅 RTX 40/50 系列；其他显卡无需下载"}
+        </span>
+        {status?.tensorrtReady ? (
+          <button type="button" className="sub-cred-btn" onClick={() => void remove("tensorrt")} disabled={!!busy}>
+            删除大包
+          </button>
+        ) : (
+          <button type="button" className="sub-cred-btn on" onClick={() => void download("tensorrt")} disabled={!!busy}>
+            {busy === "tensorrt" ? "下载中…" : "下载大包（1.1GB）"}
+          </button>
+        )}
+      </div>
+
       <div className="set-desc">
-        RIFE v4.6 光流补帧（24fps→48fps），Vulkan 后端全显卡可用；倍速 / HDR / 超 4K
-        片源自动回退内置平滑。就绪后在播放器的「插帧」按钮长按或右键菜单选择 RIFE 档。
+        RIFE v4.6 光流补帧（24fps→48fps，Vulkan 全显卡）+ AnimeJaNai AI 超分（可选）。
+        补帧：倍速 / HDR / 超 4K 自动回退内置平滑；超分：SDR 且 ≤1920x1200。
+        引擎切换下次播放生效，播放中用播放器的「插帧」按钮实时切。
       </div>
       {err && <div className="set-warn">{err}</div>}
     </div>

@@ -487,6 +487,58 @@ export function SettingsPanel({
     text: string;
   } | null>(null);
   const [potBusy, setPotBusy] = useState(false);
+  /* [lc-1798] 本机 mpv 路径（与 PotPlayer 同款：留空自动探测 + 探测/校验按钮 + 状态行）。 */
+  const [mpvLocalPath, setMpvLocalPath] = useState(() => settings.mpvPath ?? "");
+  const [mpvStatus, setMpvStatus] = useState<{ tone: "ok" | "err" | "dim"; text: string } | null>(null);
+  const [mpvBusy, setMpvBusy] = useState(false);
+  useEffect(() => {
+    setMpvLocalPath(settings.mpvPath ?? "");
+  }, [settings.mpvPath]);
+
+  const detectMpvLocal = async () => {
+    setMpvBusy(true);
+    setMpvStatus(null);
+    try {
+      const r = await invoke<{ path?: string }>("detect_mpv_local");
+      const p = (r?.path ?? "").trim();
+      if (!p) {
+        setMpvStatus({ tone: "err", text: "未探测到本机 mpv（可手动填写 mpv.exe 完整路径）" });
+        return;
+      }
+      setMpvLocalPath(p);
+      onSettings({ mpvPath: p });
+      setMpvStatus({ tone: "ok", text: `已定位：${p}` });
+    } catch (e) {
+      setMpvStatus({ tone: "err", text: String(e) });
+    } finally {
+      setMpvBusy(false);
+    }
+  };
+
+  const validateMpvLocal = async () => {
+    setMpvBusy(true);
+    setMpvStatus(null);
+    try {
+      const t = mpvLocalPath.trim();
+      if (!t) {
+        onSettings({ mpvPath: "" });
+        setMpvStatus({ tone: "dim", text: "已保存：留空 = 起播时自动探测常见安装路径" });
+        return;
+      }
+      const r = await invoke<{ valid: boolean; resolved: string }>("validate_mpv_local_path", { path: t });
+      if (r?.valid && r.resolved) {
+        setMpvLocalPath(r.resolved);
+        onSettings({ mpvPath: r.resolved });
+        setMpvStatus({ tone: "ok", text: `路径有效：${r.resolved}` });
+      } else {
+        setMpvStatus({ tone: "err", text: `无效路径：${t}（需为已存在的 mpv.exe）` });
+      }
+    } catch (e) {
+      setMpvStatus({ tone: "err", text: String(e) });
+    } finally {
+      setMpvBusy(false);
+    }
+  };
 
   useEffect(() => {
     setPotPath(settings.potplayerPath ?? "");
@@ -1739,8 +1791,63 @@ export function SettingsPanel({
                         PotPlayer 模式不支持内置弹幕、uosc 底栏与精确暂停/跳转/倍速控制；
                         需要 Referer/UA 的 HLS 源会提示切回 mpv。
                       </div>
+
                 </>
               )}
+                  {playerKind === "mpv-local" && (
+                    <>
+                      <div className="set-row set-row-col">
+                        <span className="set-k">本机 mpv 路径</span>
+                        <input
+                          className="set-input"
+                          type="text"
+                          spellCheck={false}
+                          placeholder="留空将自动探测常见安装路径，或填写 mpv.exe 的完整路径"
+                          value={mpvLocalPath}
+                          disabled={busy || mpvBusy}
+                          onChange={(e) => setMpvLocalPath(e.target.value)}
+                          onBlur={() => {
+                            if (mpvLocalPath.trim() !== (settings.mpvPath ?? "")) void validateMpvLocal();
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void validateMpvLocal();
+                            }
+                          }}
+                        />
+                        <div className="set-actions">
+                          <button
+                            type="button"
+                            className="set-btn"
+                            disabled={busy || mpvBusy}
+                            onClick={detectMpvLocal}
+                          >
+                            自动探测
+                          </button>
+                          <button
+                            type="button"
+                            className="set-btn"
+                            disabled={busy || mpvBusy}
+                            onClick={() => void validateMpvLocal()}
+                          >
+                            校验
+                          </button>
+                          {mpvStatus && (
+                            <span className={`set-pot-status ${mpvStatus.tone}`}>{mpvStatus.text}</span>
+                          )}
+                        </div>
+                        <div className="set-desc">
+                          路径为空时，将在起播时自动探测常见安装路径（Program Files / winget / PATH）；填写后需指向已存在的 mpv.exe。
+                        </div>
+                      </div>
+                      <div className="set-warn">
+                        本机 mpv 不包含应用自带播放器的配套能力（uosc 底栏、内置弹幕、字幕搜索/挂载、
+                        快进快捷键等脚本均不加载）；出现兼容问题请自行处理，应用不做适配修复。
+                      </div>
+                    </>
+                  )}
+
 
                 </>
               )}

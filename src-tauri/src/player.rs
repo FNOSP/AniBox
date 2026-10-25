@@ -94,6 +94,36 @@ fn strip_verbatim_prefix(s: &str) -> String {
     s.strip_prefix(r"\\?\").unwrap_or(s).to_string()
 }
 
+/// [lc-1798] 本机 mpv 路径校验（存在 + .exe），口径同 PotPlayer。
+pub fn validate_mpv_local_path(path: &str) -> Result<String, String> {
+    let raw = path.trim();
+    if raw.is_empty() {
+        return Err("mpv 路径为空".into());
+    }
+    let p = Path::new(raw);
+    if !p.exists() {
+        return Err(format!("mpv 不存在：{raw}"));
+    }
+    if !p.is_file() {
+        return Err(format!("不是可执行文件：{raw}"));
+    }
+    let is_exe = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("exe"))
+        .unwrap_or(false);
+    if !is_exe {
+        return Err(format!("不是 .exe 文件：{raw}"));
+    }
+    let abs = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    Ok(strip_verbatim_prefix(&abs.to_string_lossy()))
+}
+
+/// 本机 mpv 自动探测（config::detect_local_mpv：候选 + PATH）。
+pub fn detect_mpv_local_path() -> Option<String> {
+    crate::config::detect_local_mpv()
+}
+
 /// 常见安装位置探测（不访问注册表，避免额外依赖）。
 pub fn detect_potplayer_path() -> Option<String> {
     let mut candidates: Vec<PathBuf> = POTPLAYER_CANDIDATES.iter().map(PathBuf::from).collect();

@@ -597,7 +597,7 @@ pub fn ensure_portable_config(app: &tauri::AppHandle, _cfg: &Config) {
 ///   · Linux/macOS：包内若内置了 `third_party/fntv-mpv/mpv` 则用之，否则查找
 ///     **系统 mpv**（固定候选路径 → PATH）。
 /// [lc-1794] 探测本机安装的 mpv：固定候选 → PATH 扫描。返回 None = 未找到。
-fn detect_local_mpv() -> Option<String> {
+pub(crate) fn detect_local_mpv() -> Option<String> {
     let tag = if cfg!(windows) { "windows" } else if cfg!(target_os = "macos") { "macos" } else { "linux" };
     for c in mpv_candidates_for(tag) {
         let p = std::path::Path::new(c);
@@ -627,15 +627,23 @@ pub fn resolve_bundled_paths(app: &tauri::AppHandle, cfg: &mut Config) {
         .map(|p| p.to_string_lossy().into_owned());
     let local_kind = cfg.player_kind.trim().eq_ignore_ascii_case("mpv-local");
     if local_kind {
-        match detect_local_mpv() {
-            Some(p) => {
-                crate::libmpv::trace(&format!("[player] mpv 来源: 本机安装（{p}）—— 兼容问题不在应用修复范围"));
-                cfg.mpv_path = p;
-            }
-            None => {
-                if let Some(b) = &bundled_mpv {
-                    crate::libmpv::trace("[player] 未探测到本机 mpv，已回落随包版本");
-                    cfg.mpv_path = b.clone();
+        // [lc-1798] 显式路径优先（设置面板「本机 mpv 路径」），空/失效再自动探测
+        if path_is_file(&cfg.mpv_path) {
+            crate::libmpv::trace(&format!(
+                "[player] mpv 来源: 本机安装·自定义路径（{}）—— 兼容问题不在应用修复范围",
+                cfg.mpv_path
+            ));
+        } else {
+            match detect_local_mpv() {
+                Some(p) => {
+                    crate::libmpv::trace(&format!("[player] mpv 来源: 本机安装·自动检测（{p}）—— 兼容问题不在应用修复范围"));
+                    cfg.mpv_path = p;
+                }
+                None => {
+                    if let Some(b) = &bundled_mpv {
+                        crate::libmpv::trace("[player] 未探测到本机 mpv，已回落随包版本");
+                        cfg.mpv_path = b.clone();
+                    }
                 }
             }
         }

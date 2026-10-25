@@ -548,6 +548,8 @@ export type AppSettings = {
   autoLogin: boolean;
   /** [player] 播放器选择（默认 mpv = 随包自带）。后端始终返回，旧缓存可能缺省。 */
   playerKind?: PlayerKind;
+  /** [lc-1798] 本机 mpv 显式路径（仅 mpv-local 模式；空=自动探测） */
+  mpvPath?: string;
   /** [player] PotPlayer 可执行文件路径；空串 = 播放时自动探测常见安装路径 */
   potplayerPath?: string;
   /** [lc-1561] 自建弹幕接口（danmu_api）开关 —— 对齐主仓库同名设置 */

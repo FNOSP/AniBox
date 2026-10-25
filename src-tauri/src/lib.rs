@@ -2528,6 +2528,8 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         // [player] 播放器选择（默认自带 mpv；potplayer 路径空 = 自动探测）
         "playerKind": cfg.player_kind,
         "potplayerPath": cfg.potplayer_path,
+        // [lc-1798] 本机 mpv 显式路径（仅 mpv-local 模式回显；其它模式启动时被重置随包）
+        "mpvPath": if cfg.player_kind.trim().eq_ignore_ascii_case("mpv-local") { cfg.mpv_path.clone() } else { String::new() },
         // [lc-1561] 自建弹幕接口（地址非敏感，明文回填；多地址逐行）
         "danmuApiEnabled": cfg.danmu_api_enabled,
         "danmuApiBases": cfg.danmu_api_bases,
@@ -2596,6 +2598,17 @@ async fn set_settings(
             return Err(format!("playerKind 非法：{s}（只允许 mpv/mpv-local/potplayer）"));
         }
         cfg.player_kind = s.to_string();
+    }
+    // [lc-1798] 本机 mpv 显式路径：仅 mpv-local 模式接受（其它模式走随包，防旧残留通道复活）
+    if let Some(v) = arg.get("mpvPath") {
+        let s2 = v.as_str().ok_or("mpvPath 必须是字符串")?.trim().to_string();
+        if cfg.player_kind.trim().eq_ignore_ascii_case("mpv-local") {
+            if s2.is_empty() {
+                cfg.mpv_path.clear();
+            } else {
+                cfg.mpv_path = player::validate_mpv_local_path(&s2)?;
+            }
+        }
     }
     if let Some(v) = arg.get("potplayerPath") {
         let s = v.as_str().ok_or("potplayerPath 必须是字符串")?.trim().to_string();
@@ -2748,6 +2761,20 @@ async fn set_settings(
 }
 
 /// [player] 自动探测本机 PotPlayer：返回 `{ path }`（未找到时 path 为空串）。
+#[tauri::command]
+async fn detect_mpv_local() -> Result<Value, String> {
+    Ok(json!({ "path": player::detect_mpv_local_path().unwrap_or_default() }))
+}
+
+/// [lc-1798] 校验本机 mpv 路径（valid=false 不抛错，前端即时提示）。
+#[tauri::command]
+async fn validate_mpv_local_path(path: String) -> Result<Value, String> {
+    match player::validate_mpv_local_path(&path) {
+        Ok(resolved) => Ok(json!({ "valid": true, "resolved": resolved })),
+        Err(_) => Ok(json!({ "valid": false, "resolved": "" })),
+    }
+}
+
 #[tauri::command]
 async fn detect_potplayer() -> Result<Value, String> {
     Ok(json!({ "path": player::detect_potplayer_path().unwrap_or_default() }))
@@ -3345,6 +3372,8 @@ pub fn run() {
             gamepad::gamepad_status,
             gamepad::gamepad_detect,
             // [player] 播放器选择：自动探测 / 路径校验
+            detect_mpv_local,
+            validate_mpv_local_path,
             detect_potplayer,
             validate_potplayer_path,
             get_launch_page,

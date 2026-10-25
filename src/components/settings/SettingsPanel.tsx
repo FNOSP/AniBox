@@ -1942,13 +1942,11 @@ export function SettingsPanel({
                   )}
 
 
+              {/* [lc-1820/1823] AI 增强可选组件（只在播放器 tab 显示）：
+                  基础组件下载 + 画质档位 + AI 超分引擎 + TensorRT 大包 + 插帧引擎。 */}
+              <AiEnhanceRow />
                 </>
               )}
-
-              {/* [lc-1820/1823] AI 增强可选组件（与播放器类型无关）：
-                  基础组件下载 + 插帧引擎（内置/RIFE/N卡SM）+ AI 超分引擎（关/DML/TensorRT）
-                  + TensorRT 大包，面板自选、R2 分发按需下载。 */}
-              <AiEnhanceRow />
 
               {/* ── 手柄 ── */}
               {tab === "gamepad" && (

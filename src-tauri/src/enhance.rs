@@ -29,7 +29,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 /// 远端 manifest 地址（部署 R2 后替换为正式地址；含 zipUrl/zipSha256/version/sizeBytes）。
 /// 占位指向 AniBox 官方桶的约定路径，桶未就绪时下载入口报「服务未配置」而不是空转。
-pub const AI_ENHANCE_MANIFEST_URL: &str = "https://pub-anibox-ai-enhance.r2.dev/manifest.json";
+pub const AI_ENHANCE_MANIFEST_URL: &str = "https://ai.690075.xyz/manifest.json";
 
 /// 组件根目录。
 pub fn enhance_root(app: &AppHandle) -> Option<PathBuf> {
@@ -92,6 +92,8 @@ pub async fn ai_enhance_download(app: AppHandle) -> Result<Value, String> {
     };
     // 1) 远端 manifest
     let client = reqwest::Client::builder()
+        // CF 边缘会拦无 UA 的请求（实测 Python 裸 UA 403）——客户端固定 UA
+        .user_agent(concat!("Mozilla/5.0 AniBox/", env!("CARGO_PKG_VERSION")))
         .danger_accept_invalid_certs(true)
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(600))

@@ -46,7 +46,7 @@ const buf = fs.readFileSync(zip);
 const sha = crypto.createHash("sha256").update(buf).digest("hex");
 const manifest = {
   version,
-  zipUrl: `https://pub-anibox-ai-enhance.r2.dev/anibox-ai-enhance-${version}.zip`,
+  zipUrl: `https://ai.690075.xyz/anibox-ai-enhance-${version}.zip`,
   zipSha256: sha,
   sizeBytes: buf.length,
   minAppVersion: "4.1.0",

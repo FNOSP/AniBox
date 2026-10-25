@@ -888,6 +888,8 @@ export function SettingsPanel({
   const [acgPass, setAcgPass] = useState("");
   const [sbEmail, setSbEmail] = useState("");
   const [sbPass, setSbPass] = useState("");
+  // [lc-1793] 行右侧凭证按钮的展开态（同一时间只展开一行）
+  const [credOpen, setCredOpen] = useState<"assrt" | "osub" | "acg" | "subhd" | null>(null);
   const [ddNote, setDdNote] = useState("");
   const ddLoaded = useRef(false);
 
@@ -1442,8 +1444,8 @@ export function SettingsPanel({
                   <div className="set-row set-row-col">
                     <span className="set-k">字幕源</span>
                     <div className="set-desc">
-                      每行固定一个源：开关=启停；后面输入框填**自己的凭证**（留空=用应用内置共享凭证，
-                      填写即直接顶掉内置，优先级最高）。搜索五路并行，失败自动跳过。
+                      每行固定一个源：开关=启停；右侧按钮点击展开填写**自己的凭证**（留空保存=用
+                      应用内置共享凭证，填写即直接顶掉内置，优先级最高）。五路并行搜索，失败自动跳过。
                     </div>
                     {/* 迅雷：免账号，只有开关 */}
                     <div className="set-row">
@@ -1457,134 +1459,209 @@ export function SettingsPanel({
                       <span className="sp-badge sp-xunlei" style={{ flex: "0 0 96px", textAlign: "center" }}>迅雷</span>
                       <span className="set-desc" style={{ flex: 1 }}>官方接口 · 按文件哈希精确匹配 · 免账号</span>
                     </div>
-                    {/* assrt：自定义 token */}
-                    <div className="set-row">
-                      <button
-                        type="button"
-                        className={`set-sw${subEnabled("assrt") ? " on" : ""}`}
-                        aria-pressed={subEnabled("assrt")}
-                        aria-label="assrt 源启停"
-                        onClick={() => toggleSub("assrt")}
-                      />
-                      <span className="sp-badge sp-assrt" style={{ flex: "0 0 96px", textAlign: "center" }}>assrt</span>
-                      <span className="set-desc" style={{ flex: "0 0 auto" }}>中文字幕库</span>
-                      <input
-                        className="set-input"
-                        style={{ flex: 1 }}
-                        placeholder={settings.subAssrtTokenSet ? "自定义 token 已设置（清空保存=恢复内置）" : "自定义 token（留空=内置共享）"}
-                        onChange={(e) => setSubKeyId(e.target.value)}
-                      />
+                    {/* assrt */}
+                    <div className="set-row set-row-col" style={{ gap: 6 }}>
+                      <div className="set-row" style={{ flex: 1, gap: 10 }}>
+                        <button
+                          type="button"
+                          className={`set-sw${subEnabled("assrt") ? " on" : ""}`}
+                          aria-pressed={subEnabled("assrt")}
+                          aria-label="assrt 源启停"
+                          onClick={() => toggleSub("assrt")}
+                        />
+                        <span className="sp-badge sp-assrt" style={{ flex: "0 0 96px", textAlign: "center" }}>assrt</span>
+                        <span className="set-desc" style={{ flex: 1 }}>中文字幕库</span>
+                        <button
+                          type="button"
+                          className={`sub-cred-btn${settings.subAssrtTokenSet ? " on" : ""}`}
+                          onClick={() => setCredOpen(credOpen === "assrt" ? null : "assrt")}
+                        >
+                          {settings.subAssrtTokenSet ? "自定义已启用 · 点击修改" : "默认内置 · 点击使用自定义密钥"}
+                        </button>
+                      </div>
+                      {credOpen === "assrt" && (
+                        <div className="set-row" style={{ gap: 8, paddingLeft: 40 }}>
+                          <input
+                            className="set-input"
+                            style={{ flex: 1 }}
+                            autoFocus
+                            placeholder="assrt 自定义 token"
+                            value={subKeyId}
+                            onChange={(e) => setSubKeyId(e.target.value)}
+                          />
+                          <button
+                            className="set-btn"
+                            onClick={() => {
+                              onSettings({ subAssrtToken: subKeyId.trim() });
+                              setSubKeyId("");
+                              setCredOpen(null);
+                              setSubNote(subKeyId.trim() ? "assrt：自定义密钥已启用（优先于内置）" : "assrt：已恢复内置共享");
+                            }}
+                          >
+                            保存
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    {/* OpenSubtitles：自定义 Api-Key */}
-                    <div className="set-row">
-                      <button
-                        type="button"
-                        className={`set-sw${subEnabled("opensubtitles") ? " on" : ""}`}
-                        aria-pressed={subEnabled("opensubtitles")}
-                        aria-label="OpenSubtitles 源启停"
-                        onClick={() => toggleSub("opensubtitles")}
-                      />
-                      <span className="sp-badge sp-osub" style={{ flex: "0 0 96px", textAlign: "center" }}>OpenSubs</span>
-                      <span className="set-desc" style={{ flex: "0 0 auto" }}>国际库 · 哈希精确</span>
-                      <input
-                        className="set-input"
-                        style={{ flex: 1 }}
-                        placeholder={settings.subOsubKeySet ? "自定义 Api-Key 已设置（清空保存=恢复内置）" : "自定义 Api-Key（留空=内置共享）"}
-                        onChange={(e) => setSubKeyOsub(e.target.value)}
-                      />
+                    {/* OpenSubtitles */}
+                    <div className="set-row set-row-col" style={{ gap: 6 }}>
+                      <div className="set-row" style={{ flex: 1, gap: 10 }}>
+                        <button
+                          type="button"
+                          className={`set-sw${subEnabled("opensubtitles") ? " on" : ""}`}
+                          aria-pressed={subEnabled("opensubtitles")}
+                          aria-label="OpenSubtitles 源启停"
+                          onClick={() => toggleSub("opensubtitles")}
+                        />
+                        <span className="sp-badge sp-osub" style={{ flex: "0 0 96px", textAlign: "center" }}>OpenSubs</span>
+                        <span className="set-desc" style={{ flex: 1 }}>国际库 · 哈希精确</span>
+                        <button
+                          type="button"
+                          className={`sub-cred-btn${settings.subOsubKeySet ? " on" : ""}`}
+                          onClick={() => setCredOpen(credOpen === "osub" ? null : "osub")}
+                        >
+                          {settings.subOsubKeySet ? "自定义已启用 · 点击修改" : "默认内置 · 点击使用自定义密钥"}
+                        </button>
+                      </div>
+                      {credOpen === "osub" && (
+                        <div className="set-row" style={{ gap: 8, paddingLeft: 40 }}>
+                          <input
+                            className="set-input"
+                            style={{ flex: 1 }}
+                            autoFocus
+                            placeholder="OpenSubtitles 自定义 Api-Key"
+                            value={subKeyOsub}
+                            onChange={(e) => setSubKeyOsub(e.target.value)}
+                          />
+                          <button
+                            className="set-btn"
+                            onClick={() => {
+                              onSettings({ subOsubKey: subKeyOsub.trim() });
+                              setSubKeyOsub("");
+                              setCredOpen(null);
+                              setSubNote(subKeyOsub.trim() ? "OpenSubtitles：自定义密钥已启用" : "OpenSubtitles：已恢复内置共享");
+                            }}
+                          >
+                            保存
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    {/* ACG 论坛：用户名/密码 */}
-                    <div className="set-row">
-                      <button
-                        type="button"
-                        className={`set-sw${subEnabled("acgrip") ? " on" : ""}`}
-                        aria-pressed={subEnabled("acgrip")}
-                        aria-label="ACG 论坛源启停"
-                        onClick={() => toggleSub("acgrip")}
-                      />
-                      <span className="sp-badge sp-assrt" style={{ flex: "0 0 96px", textAlign: "center" }}>ACG</span>
-                      <span className="set-desc" style={{ flex: "0 0 auto" }}>bbs.acgrip.com · 附件下载需账号</span>
-                      <input
-                        className="set-input"
-                        style={{ flex: 1, minWidth: 110 }}
-                        placeholder={settings.acgUserSet ? "用户名已设置" : "论坛用户名"}
-                        onChange={(e) => setAcgUser(e.target.value)}
-                      />
-                      <input
-                        className="set-input"
-                        style={{ flex: 1, minWidth: 110 }}
-                        type="password"
-                        placeholder="论坛密码"
-                        onChange={(e) => setAcgPass(e.target.value)}
-                      />
+                    {/* ACG 论坛 */}
+                    <div className="set-row set-row-col" style={{ gap: 6 }}>
+                      <div className="set-row" style={{ flex: 1, gap: 10 }}>
+                        <button
+                          type="button"
+                          className={`set-sw${subEnabled("acgrip") ? " on" : ""}`}
+                          aria-pressed={subEnabled("acgrip")}
+                          aria-label="ACG 论坛源启停"
+                          onClick={() => toggleSub("acgrip")}
+                        />
+                        <span className="sp-badge sp-assrt" style={{ flex: "0 0 96px", textAlign: "center" }}>ACG</span>
+                        <span className="set-desc" style={{ flex: 1 }}>bbs.acgrip.com · 附件下载需账号</span>
+                        <button
+                          type="button"
+                          className={`sub-cred-btn${settings.acgUserSet ? " on" : ""}`}
+                          onClick={() => setCredOpen(credOpen === "acg" ? null : "acg")}
+                        >
+                          {settings.acgUserSet ? "账号已启用 · 点击修改" : "游客模式 · 点击填写账号"}
+                        </button>
+                      </div>
+                      {credOpen === "acg" && (
+                        <div className="set-row" style={{ gap: 8, paddingLeft: 40 }}>
+                          <input
+                            className="set-input"
+                            style={{ flex: 1 }}
+                            autoFocus
+                            placeholder="论坛用户名"
+                            value={acgUser}
+                            onChange={(e) => setAcgUser(e.target.value)}
+                          />
+                          <input
+                            className="set-input"
+                            style={{ flex: 1 }}
+                            type="password"
+                            placeholder="论坛密码"
+                            value={acgPass}
+                            onChange={(e) => setAcgPass(e.target.value)}
+                          />
+                          <button
+                            className="set-btn"
+                            onClick={() => {
+                              if (acgUser.trim() !== "" && acgPass.trim() === "") {
+                                setSubNote("ACG：密码不能为空");
+                                return;
+                              }
+                              onSettings({ acgUser: acgUser.trim(), acgPass: acgPass.trim() });
+                              setAcgUser("");
+                              setAcgPass("");
+                              setCredOpen(null);
+                              setSubNote(acgUser.trim() ? "ACG：账号已保存（下载时自动登录）" : "ACG：已登出（游客模式）");
+                            }}
+                          >
+                            保存
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    {/* SubHD：邮箱/密码 */}
-                    <div className="set-row">
-                      <button
-                        type="button"
-                        className={`set-sw${subEnabled("subhd") ? " on" : ""}`}
-                        aria-pressed={subEnabled("subhd")}
-                        aria-label="SubHD 源启停"
-                        onClick={() => toggleSub("subhd")}
-                      />
-                      <span className="sp-badge sp-assrt" style={{ flex: "0 0 96px", textAlign: "center" }}>SubHD</span>
-                      <span className="set-desc" style={{ flex: "0 0 auto" }}>subhd.me · 下载需账号</span>
-                      <input
-                        className="set-input"
-                        style={{ flex: 1, minWidth: 130 }}
-                        placeholder={settings.subhdEmailSet ? "邮箱已设置" : "SubHD 邮箱"}
-                        onChange={(e) => setSbEmail(e.target.value)}
-                      />
-                      <input
-                        className="set-input"
-                        style={{ flex: 1, minWidth: 110 }}
-                        type="password"
-                        placeholder="SubHD 密码"
-                        onChange={(e) => setSbPass(e.target.value)}
-                      />
+                    {/* SubHD */}
+                    <div className="set-row set-row-col" style={{ gap: 6 }}>
+                      <div className="set-row" style={{ flex: 1, gap: 10 }}>
+                        <button
+                          type="button"
+                          className={`set-sw${subEnabled("subhd") ? " on" : ""}`}
+                          aria-pressed={subEnabled("subhd")}
+                          aria-label="SubHD 源启停"
+                          onClick={() => toggleSub("subhd")}
+                        />
+                        <span className="sp-badge sp-assrt" style={{ flex: "0 0 96px", textAlign: "center" }}>SubHD</span>
+                        <span className="set-desc" style={{ flex: 1 }}>subhd.me · 下载需账号</span>
+                        <button
+                          type="button"
+                          className={`sub-cred-btn${settings.subhdEmailSet ? " on" : ""}`}
+                          onClick={() => setCredOpen(credOpen === "subhd" ? null : "subhd")}
+                        >
+                          {settings.subhdEmailSet ? "账号已启用 · 点击修改" : "游客模式 · 点击填写账号"}
+                        </button>
+                      </div>
+                      {credOpen === "subhd" && (
+                        <div className="set-row" style={{ gap: 8, paddingLeft: 40 }}>
+                          <input
+                            className="set-input"
+                            style={{ flex: 1 }}
+                            autoFocus
+                            placeholder="SubHD 邮箱"
+                            value={sbEmail}
+                            onChange={(e) => setSbEmail(e.target.value)}
+                          />
+                          <input
+                            className="set-input"
+                            style={{ flex: 1 }}
+                            type="password"
+                            placeholder="SubHD 密码"
+                            value={sbPass}
+                            onChange={(e) => setSbPass(e.target.value)}
+                          />
+                          <button
+                            className="set-btn"
+                            onClick={() => {
+                              if (sbEmail.trim() !== "" && sbPass.trim() === "") {
+                                setSubNote("SubHD：密码不能为空");
+                                return;
+                              }
+                              onSettings({ subhdEmail: sbEmail.trim(), subhdPass: sbPass.trim() });
+                              setSbEmail("");
+                              setSbPass("");
+                              setCredOpen(null);
+                              setSubNote(sbEmail.trim() ? "SubHD：账号已保存（下载时自动登录）" : "SubHD：已清空账号（仅游客搜索）");
+                            }}
+                          >
+                            保存
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <div className="set-actions">
-                      <button
-                        className="set-btn"
-                        onClick={() => {
-                          const anyCred =
-                            subKeyId.trim() !== "" ||
-                            subKeyOsub.trim() !== "" ||
-                            acgUser.trim() !== "" ||
-                            acgPass.trim() !== "" ||
-                            sbEmail.trim() !== "" ||
-                            sbPass.trim() !== "";
-                          const credOk =
-                            (subKeyId.trim() === "" || true) &&
-                            (acgUser.trim() === "" || acgPass.trim() !== "") &&
-                            (sbEmail.trim() === "" || sbPass.trim() !== "");
-                          if (!credOk) {
-                            setSubNote("账号类凭证用户名与密码需成对填写");
-                            return;
-                          }
-                          onSettings({
-                            subAssrtToken: subKeyId.trim(),
-                            subOsubKey: subKeyOsub.trim(),
-                            acgUser: acgUser.trim(),
-                            acgPass: acgPass.trim(),
-                            subhdEmail: sbEmail.trim(),
-                            subhdPass: sbPass.trim(),
-                          });
-                          setSubKeyId("");
-                          setSubKeyOsub("");
-                          setAcgUser("");
-                          setAcgPass("");
-                          setSbEmail("");
-                          setSbPass("");
-                          setSubNote(
-                            anyCred
-                              ? "凭证已保存（自定义优先于内置；清空输入框保存即恢复内置/登出，重启播放器生效）"
-                              : "已恢复内置共享凭证 / 登出论坛账号（重启播放器生效）",
-                          );
-                        }}
-                      >
-                        保存凭证
-                      </button>
                       <span className="set-note">{subNote}</span>
                     </div>
                   </div>

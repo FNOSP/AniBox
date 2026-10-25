@@ -295,3 +295,30 @@
   font-size: 11px;
   opacity: 0.55;
 }
+
+/* [lc-1793] 字幕源行右侧统一凭证按钮（未配置=浅字提示，已配置=强调） */
+.sub-cred-btn {
+  flex: none;
+  box-sizing: border-box;
+  height: 30px;
+  margin-left: auto;
+  padding: 0 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  opacity: 0.55;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sub-cred-btn:hover {
+  opacity: 0.85;
+}
+
+.sub-cred-btn.on {
+  border-style: solid;
+  opacity: 1;
+  font-weight: 600;
+}

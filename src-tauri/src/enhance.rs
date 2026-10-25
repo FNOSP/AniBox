@@ -102,16 +102,19 @@ fn detect_gpu_name() -> String {
 /// GetSettingIdFromName 返回 NULL），全自动此路不通。退而求其次把手动步骤压到最少：
 /// mpv.exe 完整路径复制到剪贴板 + 直接拉起 NVIDIA App（找到 exe 才拉）。
 /// 返回给用户的下一步指引文本。
-fn nvidia_sm_prepare() -> String {
+fn nvidia_sm_prepare(mpv_path: &str) -> String {
     #[cfg(target_os = "windows")]
     use std::os::windows::process::CommandExt;
-    let mpv = crate::config::default_mpv();
-    let mut clip_note = String::new();
-    match arboard::Clipboard::new().and_then(|mut c| c.set_text(mpv.clone())) {
-        Ok(_) => "mpv.exe 完整路径已复制到剪贴板；".clone().into(),
-        Err(e) => format!("（剪贴板写入失败 {e}，请手动浏览 mpv.exe）"),
+    // [lc-1859] 空路径直出提示（此前误用 default_mpv()=空串：arboard 写空不报错，
+    // 提示「已复制」但剪贴板是空的——用户实测「没有复制到剪贴板」即此）
+    if mpv_path.trim().is_empty() {
+        return "未能确定 mpv.exe 路径（未登录或未配置），请先完成登录后重试".into();
     }
-    .clone_into(&mut clip_note);
+    let mpv = mpv_path.to_string();
+    let clip_note = match arboard::Clipboard::new().and_then(|mut c| c.set_text(mpv.clone())) {
+        Ok(_) => "mpv.exe 完整路径已复制到剪贴板；".to_string(),
+        Err(e) => format!("（剪贴板写入失败 {e}，请手动浏览 mpv.exe）"),
+    };
     let candidates = [
         std::env::var("LOCALAPPDATA").ok().map(|d| {
             std::path::PathBuf::from(&d)
@@ -290,7 +293,8 @@ gpu-context=winvk
     let mut resp = json!({ "engine": new_engine, "defaultOn": new_default });
     // [lc-1857] N 卡引擎选中 → 半自动注册准备（剪贴板 + 拉起 NVIDIA App），指引随响应回面板
     if new_engine == "nvidia" {
-        resp["nvidiaHint"] = json!(nvidia_sm_prepare());
+        let mpv_path = state.config.read().await.mpv_path.clone();
+        resp["nvidiaHint"] = json!(nvidia_sm_prepare(&mpv_path));
     }
     Ok(resp)
 }

@@ -354,7 +354,10 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
           <IcoBackL size={16} strokeWidth={2} />
         </button>
         <h2 className="c115-title">
-          <IcoCloudL size={17} strokeWidth={2} /> 网盘接入
+          <span className="c115-title-ico">
+            <IcoCloudL size={16} strokeWidth={2.2} />
+          </span>
+          网盘接入
         </h2>
         {logged && !isWebdav && cur && (
           <>
@@ -452,11 +455,15 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
         <div className="c115-login">
           {qr ? (
             <>
-              <img className="c115-qr" src={qr.qrcode} alt="登录二维码" />
+              <div className="c115-qrwrap">
+                <img className="c115-qr" src={qr.qrcode} alt="登录二维码" />
+              </div>
               <p className="c115-qrmsg">{qrMsg || HINTS[active]}</p>
             </>
           ) : (
-            <p className="c115-qrmsg">二维码加载中…</p>
+            <div className="c115-qrwrap">
+              <div className="c115-qr" aria-hidden="true" />
+            </div>
           )}
           <button className="c115-mini" onClick={() => void startQr(active)}>
             <IcoRefreshL size={13} strokeWidth={2} /> 刷新二维码
@@ -536,8 +543,13 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
               </div>
             ))}
           </div>
-          {loading && <p className="c115-dim">加载中…</p>}
-          {!loading && items.length === 0 && <p className="c115-dim">空目录（或没有可播放的媒体文件）</p>}
+          {loading && <div className="c115-loading">加载中…</div>}
+          {!loading && items.length === 0 && (
+            <div className="c115-empty">
+              <IcoFolderL size={34} strokeWidth={1.4} />
+              <p>空目录（或没有可播放的媒体文件）</p>
+            </div>
+          )}
           {cursor && !loading && !isWebdav && (
             <button className="c115-more" onClick={() => loadList(crumbs[crumbs.length - 1].fid, cursor, false, active)}>
               加载更多

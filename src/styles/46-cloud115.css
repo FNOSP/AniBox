@@ -1,15 +1,22 @@
-/* ══════════════════════ [lc-1779] 115 网盘面板 ══════════════════════
-   扫码登录卡 + 目录面包屑 + 文件行列表 + 播放方式分段开关。
-   配色/材质沿用 tokens（var(--line)/var(--glass)/…），与 webrs/设置面板同一套语言。 */
+/* ══════════════════════ [lc-1779/1812] 多云盘面板（美化版） ══════════════════════
+   玻璃卡 · accent 渐变 · hover 上浮 · 分类着色图标 · 扫码扫描线。
+   全部用 tokens（--accent-grad/--shadow-card/--glass…），与首页/设置同一套语言。 */
 
 .c115 {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 26px 30px 40px;
+  gap: 16px;
+  padding: 26px 30px 44px;
   max-width: 980px;
+  animation: c115-fade-up 0.28s ease-out;
 }
 
+@keyframes c115-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ── 头部 ── */
 .c115-hd {
   display: flex;
   align-items: center;
@@ -21,28 +28,51 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--glass);
   color: var(--ink);
   cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.c115-back:hover {
+  transform: translateX(-2px);
+  border-color: var(--accent);
 }
 
 .c115-title {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   margin: 0;
   font-size: 19px;
-  font-weight: 650;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+/* 标题图标渐变底座（与侧栏网盘入口同一记忆点） */
+.c115-title-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--accent-grad);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(108, 155, 255, 0.35);
 }
 
 .c115-user {
   font-size: 12.5px;
   color: var(--ink-dim, var(--ink));
-  opacity: 0.75;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: var(--glass-btn-bg, rgba(30, 50, 110, 0.06));
+  border: 1px solid var(--line);
 }
 
 .c115-mini {
@@ -51,88 +81,177 @@
   gap: 6px;
   box-sizing: border-box;
   height: 30px;
-  padding: 0 12px;
+  padding: 0 13px;
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: 999px;
   background: var(--glass);
   color: var(--ink);
   font-size: 12.5px;
   cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease;
 }
 
+.c115-mini:hover {
+  border-color: var(--accent);
+  background: var(--glass-btn-hover, rgba(30, 50, 110, 0.11));
+  transform: translateY(-1px);
+}
+
+.c115-mini.danger:hover {
+  border-color: #e5484d;
+  color: #e5484d;
+}
+
+/* ── 播放档分段：玻璃轨道 + 渐变选中块 ── */
 .c115-mode {
   display: inline-flex;
+  gap: 2px;
+  padding: 3px;
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  overflow: hidden;
+  border-radius: 999px;
+  background: var(--glass);
   margin-left: auto;
 }
 
 .c115-seg {
   box-sizing: border-box;
-  height: 30px;
+  height: 26px;
   padding: 0 13px;
   border: 0;
+  border-radius: 999px;
   background: transparent;
   color: var(--ink);
-  font-size: 12.5px;
-  opacity: 0.7;
+  font-size: 12px;
+  opacity: 0.65;
   cursor: pointer;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.c115-seg:hover {
+  opacity: 0.95;
 }
 
 .c115-seg.on {
-  background: var(--accent, #e8e8ec);
+  background: var(--accent-grad);
+  color: #fff;
   opacity: 1;
   font-weight: 600;
+  box-shadow: 0 3px 10px rgba(108, 155, 255, 0.35);
 }
 
 .c115-err {
   margin: 0;
   padding: 10px 13px;
   border: 1px solid rgba(255, 92, 92, 0.4);
-  border-radius: 10px;
+  border-radius: 12px;
   background: rgba(255, 92, 92, 0.08);
   font-size: 12.5px;
   color: #ff7b7b;
   word-break: break-all;
+  animation: c115-fade-up 0.2s ease-out;
 }
 
 .c115-dim {
   margin: 0;
   font-size: 12px;
   opacity: 0.6;
+  text-align: center;
+  max-width: 440px;
 }
 
+/* ── 扫码登录卡：顶部渐变光带 + 白底二维码卡 + 扫描线 ── */
 .c115-login {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 14px;
-  padding: 30px 20px;
+  padding: 34px 20px 26px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius, 14px);
   background: var(--glass);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  animation: c115-fade-up 0.3s ease-out;
+}
+
+.c115-login::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: var(--accent-grad);
+  opacity: 0.85;
+}
+
+.c115-login::after {
+  content: "";
+  position: absolute;
+  top: -70px;
+  right: -70px;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(108, 155, 255, 0.18), transparent);
+  pointer-events: none;
+}
+
+.c115-qrwrap {
+  position: relative;
+  padding: 10px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(31, 41, 90, 0.16);
 }
 
 .c115-qr {
-  width: 210px;
-  height: 210px;
-  border-radius: 10px;
+  display: block;
+  width: 200px;
+  height: 200px;
+  border-radius: 8px;
   background: #fff;
-  padding: 8px;
+}
+
+.c115-qrwrap::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 8px;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--accent-grad);
+  box-shadow: 0 0 12px rgba(108, 155, 255, 0.8);
+  animation: c115-scan 2.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes c115-scan {
+  0% { top: 8px; opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { top: calc(100% - 11px); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .c115-qrwrap::after { animation: none; opacity: 0; }
+  .c115, .c115-login { animation: none; }
 }
 
 .c115-qrmsg {
   margin: 0;
-  font-size: 13px;
+  font-size: 13.5px;
+  font-weight: 600;
 }
 
+/* ── 面包屑：当前项胶囊高亮 ── */
 .c115-crumbs {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 2px;
   font-size: 12.5px;
+  padding: 2px 0;
 }
 
 .c115-crumb button {
@@ -141,33 +260,46 @@
   color: var(--ink);
   font-size: 12.5px;
   cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 6px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  transition: background 0.15s ease;
 }
 
 .c115-crumb button:hover {
-  background: var(--line);
+  background: var(--glass-btn-hover, rgba(30, 50, 110, 0.11));
+}
+
+.c115-crumb:last-child button {
+  background: var(--glass-btn-bg, rgba(30, 50, 110, 0.06));
+  font-weight: 650;
+  cursor: default;
+}
+
+.c115-crumb:last-child button:hover {
+  background: var(--glass-btn-bg, rgba(30, 50, 110, 0.06));
 }
 
 .c115-sep {
-  opacity: 0.4;
-  margin: 0 2px;
+  opacity: 0.35;
+  margin: 0 1px;
 }
 
+/* ── 文件行：分类着色图标 + hover 按钮浮现 ── */
 .c115-grid {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
 }
 
 .c115-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
+  gap: 11px;
+  padding: 8px 12px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--glass);
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
 }
 
 .c115-item.dir {
@@ -175,18 +307,47 @@
 }
 
 .c115-item.dir:hover {
+  border-color: var(--accent);
+  background: var(--glass-btn-hover, rgba(30, 50, 110, 0.08));
+  transform: translateY(-1px);
+}
+
+.c115-item:not(.dir):hover {
   border-color: var(--line-strong);
+  background: var(--glass-btn-hover, rgba(30, 50, 110, 0.05));
 }
 
 .c115-ico {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: var(--line);
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--glass-btn-bg, rgba(30, 50, 110, 0.08));
+  color: var(--ink);
   flex: none;
+}
+
+.c115-ico.dir {
+  background: rgba(255, 193, 69, 0.16);
+  color: #ffb020;
+}
+
+.c115-ico.video {
+  background: var(--accent-grad);
+  color: #fff;
+  box-shadow: 0 3px 9px rgba(108, 155, 255, 0.3);
+}
+
+.c115-ico.audio {
+  background: rgba(143, 108, 255, 0.16);
+  color: #a88bff;
+}
+
+.c115-ico.sub {
+  background: rgba(94, 200, 148, 0.16);
+  color: #5ec894;
 }
 
 .c115-name {
@@ -200,35 +361,107 @@
 
 .c115-size {
   flex: none;
-  font-size: 11.5px;
-  opacity: 0.55;
+  font-size: 11px;
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
 }
 
 .c115-play {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 29px;
+  height: 29px;
   border: 0;
   border-radius: 50%;
-  background: var(--accent, #e8e8ec);
-  color: #111;
+  background: var(--accent-grad);
+  color: #fff;
   cursor: pointer;
   flex: none;
+  opacity: 0.45;
+  transform: scale(0.92);
+  transition: opacity 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.c115-item:hover .c115-play {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.c115-play:hover {
+  box-shadow: 0 0 0 4px rgba(108, 155, 255, 0.22);
+}
+
+.c115-play.ghost {
+  background: var(--glass-btn-bg, rgba(30, 50, 110, 0.1));
+  color: var(--ink);
+}
+
+.c115-play.ghost:hover {
+  box-shadow: 0 0 0 4px rgba(30, 50, 110, 0.1);
 }
 
 .c115-more {
   align-self: center;
   box-sizing: border-box;
-  height: 30px;
-  padding: 0 16px;
+  height: 32px;
+  padding: 0 20px;
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: 999px;
   background: var(--glass);
   color: var(--ink);
   font-size: 12.5px;
   cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.c115-more:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+/* ── 空状态 ── */
+.c115-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 46px 0 30px;
+}
+
+.c115-empty svg {
+  opacity: 0.32;
+}
+
+.c115-empty p {
+  margin: 0;
+  font-size: 12.5px;
+  opacity: 0.6;
+}
+
+/* ── 加载态（spinner） ── */
+.c115-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+  padding: 18px 0;
+  font-size: 12.5px;
+  opacity: 0.7;
+}
+
+.c115-loading::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  animation: c115-spin 0.8s linear infinite;
+}
+
+@keyframes c115-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ══════════════════════ [lc-1783] 应用内下载字幕弹窗 ══════════════════════ */
@@ -323,12 +556,12 @@
   font-weight: 600;
 }
 
-/* ══════════════════════ [lc-1810] 多云盘厂商 tab 行 ══════════════════════ */
+/* ══════════════════════ [lc-1810/1812] 多云盘厂商 tab 行（美化） ══════════════════════ */
 
 .c115-tabs {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   flex-wrap: wrap;
 }
 
@@ -337,42 +570,47 @@
   align-items: center;
   gap: 7px;
   box-sizing: border-box;
-  height: 32px;
-  padding: 0 14px;
+  height: 33px;
+  padding: 0 15px;
   border: 1px solid var(--line-strong);
   border-radius: 999px;
   background: var(--glass);
   color: var(--ink);
   font-size: 12.5px;
-  opacity: 0.6;
+  opacity: 0.62;
   cursor: pointer;
   white-space: nowrap;
+  transition: opacity 0.15s ease, transform 0.15s ease, border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
 .c115-tab:hover {
-  opacity: 0.85;
+  opacity: 0.9;
+  transform: translateY(-1px);
 }
 
 .c115-tab.on {
-  border-color: var(--accent, var(--ink));
+  border-color: transparent;
+  background: var(--accent-grad);
+  color: #fff;
   opacity: 1;
   font-weight: 600;
+  box-shadow: 0 4px 14px rgba(108, 155, 255, 0.35);
 }
 
-/* 登录态小圆点：已登录 = 强调色，未登录 = 描边空心 */
 .c115-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  border: 1px solid var(--ink);
-  opacity: 0.4;
+  border: 1.5px solid currentColor;
+  opacity: 0.45;
   flex: none;
 }
 
 .c115-dot.ok {
-  background: var(--accent, var(--ink));
-  border-color: var(--accent, var(--ink));
+  background: #4ade80;
+  border-color: #4ade80;
   opacity: 1;
+  box-shadow: 0 0 6px rgba(74, 222, 128, 0.7);
 }
 
 /* ══════════════════════ [lc-1811] WebDAV 账号管理 + 行内改名 ══════════════════════ */
@@ -476,4 +714,46 @@
 
 .c115-play.ghost:hover {
   opacity: 1;
+}
+
+/* ══════════════════════ [lc-1812] WebDAV 表单/账号行精修 ══════════════════════ */
+
+.c115-wdpick {
+  border-radius: 12px;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.c115-wdpick:hover {
+  border-color: var(--accent);
+  background: var(--glass-btn-hover, rgba(30, 50, 110, 0.11));
+  transform: translateY(-1px);
+  opacity: 1;
+}
+
+.c115-wdform {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--glass);
+}
+
+.c115-wdform input {
+  border-radius: 10px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.c115-wdform input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(108, 155, 255, 0.18);
+}
+
+.c115-wdform .c115-wdform-btns .c115-mini:first-child {
+  background: var(--accent-grad);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+}
+
+.c115-wdform .c115-wdform-btns .c115-mini:first-child:hover {
+  box-shadow: 0 4px 14px rgba(108, 155, 255, 0.35);
 }

@@ -3092,7 +3092,8 @@ function AiEnhanceRow() {
           );
         })}
         <span className="set-desc" style={{ flex: 1, minWidth: 0 }}>
-          极致/均衡 = 插值平滑防抖动；流畅 = 关闭省 GPU（手动选 RIFE/N 卡引擎时以引擎为准）。
+          运动平滑（插帧）= 在帧间补新帧，**动起来更顺滑**，不提高清晰度。
+          极致/均衡 = 开插值平滑；流畅 = 关闭省 GPU。手动选 RIFE/N 卡引擎时以引擎为准。
         </span>
       </div>
       <div className="set-row" style={{ gap: 10, paddingLeft: 4 }}>
@@ -3115,12 +3116,12 @@ function AiEnhanceRow() {
               style={{ opacity: rifeLocked ? 0.4 : 1 }}
               title={
                 rifeLocked
-                  ? "需先下载 AI 增强组件"
+                  ? "RIFE：AI 在帧间补新帧，效果最好——需先下载 AI 增强组件"
                   : val === "nvidia"
-                    ? "RTX 50 系 + 在 NVIDIA App 按 exe 注册开启 Smooth Motion"
+                    ? "N 卡驱动级补帧：RTX 50 系 + 在 NVIDIA App 按 exe 注册开启 Smooth Motion"
                     : val === "rife"
-                      ? "全显卡 · 需 AI 增强组件"
-                      : "MPV 内置（时间轴重采样，零开销）"
+                      ? "RIFE：AI 在帧间补新帧，效果最好；1080P 源可能跟不上（会自动回退）"
+                      : "内置平滑：MPV 自带时间插值，零开销，效果一般"
               }
               onClick={() => (rifeLocked ? setErr("RIFE 档需先下载 AI 增强组件") : void pickEngine(val))}
             >
@@ -3137,7 +3138,8 @@ function AiEnhanceRow() {
           {status?.defaultOn ? "播放时自动开 ✓" : "播放时自动开"}
         </button>
         <span className="set-desc" style={{ flex: 1, minWidth: 0 }}>
-          引擎切换下次播放生效；当前正在播放时用播放器的「插帧」按钮实时切。
+          插帧 = 动起来更顺滑（不提高清晰度）。引擎切换下次播放生效；
+          正在播放时用播放器右键「AI增强 › 插帧 开/关」实时切。
         </span>
       </div>
       {busy && pct >= 0 && (

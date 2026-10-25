@@ -186,6 +186,30 @@ async fn save_config(app: AppHandle, state: State<'_, AppState>, config: Config)
         config.danmu_api_enabled = cur.danmu_api_enabled;
         config.danmu_api_base = cur.danmu_api_base.clone();
         config.danmu_api_bases = cur.danmu_api_bases.clone();
+        // [lc-1800] 设置面板拥有的其余字段一律保留现值——登录页的 Config 是**挂载时刻的旧快照**，
+        // 整份回写会把用户后来在设置面板里改的值静默翻回旧值（用户报「在线资源搜索总是自动关闭」
+        // 的根因：开 true 后走一次重新登录，快照 false 写回）。登录页只准写登录语义字段
+        // （server/username/password/access_code/auto_login/mpv_path/proxy_path）。
+        config.webrs_panel_enabled = cur.webrs_panel_enabled;
+        config.exit_mode = cur.exit_mode.clone();
+        config.perf_mode = cur.perf_mode;
+        config.carousel_logo = cur.carousel_logo;
+        config.launch_page = cur.launch_page.clone();
+        config.player_kind = cur.player_kind.clone();
+        config.potplayer_path = cur.potplayer_path.clone();
+        // mpv_path：mpv-local 模式的自定义路径由设置面板维护；登录页高级项不再回写
+        //（随包/自动探测路径在启动时由 resolve_bundled_paths 重算，保护现值无副作用）
+        config.mpv_path = cur.mpv_path.clone();
+        config.ui_opacity = cur.ui_opacity;
+        // [lc-1788~1791] 弹弹play 自定义凭证 / 字幕源密钥 / ACG / SubHD 账号
+        config.danmu_dd_app_id = cur.danmu_dd_app_id.clone();
+        config.danmu_dd_app_secret = cur.danmu_dd_app_secret.clone();
+        config.sub_assrt_token = cur.sub_assrt_token.clone();
+        config.sub_osub_key = cur.sub_osub_key.clone();
+        config.acg_user = cur.acg_user.clone();
+        config.acg_pass = cur.acg_pass.clone();
+        config.subhd_email = cur.subhd_email.clone();
+        config.subhd_pass = cur.subhd_pass.clone();
     }
     config::save(&app, &config).await?;
     // [lc-1661] 日志设置随整份配置保存后同步到运行态（本函数保留旧值，实际不会变，稳妥起见仍同步）

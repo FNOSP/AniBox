@@ -460,6 +460,12 @@ fn current_os_tag() -> &'static str {
 /// 的 macOS / Linux 候选列表保持一致。抽成纯函数便于单测。
 pub fn mpv_candidates_for(os: &str) -> Vec<&'static str> {
     match os {
+        // [lc-1794] Windows 常见安装位（安装包 / winget / scoop / chocolatey）
+        "windows" => vec![
+            "C:\\\\Program Files\\\\mpv\\\\mpv.exe",
+            "C:\\\\Program Files (x86)\\\\mpv\\\\mpv.exe",
+            "C:\\\\mpv\\\\mpv.exe",
+        ],
         // Apple Silicon Homebrew → Intel Homebrew/手动安装 → .app 包
         "macos" => vec![
             "/opt/homebrew/bin/mpv",
@@ -590,11 +596,69 @@ pub fn ensure_portable_config(app: &tauri::AppHandle, _cfg: &Config) {
 ///   · Windows：随包 `third_party/fntv-mpv/mpv.exe`；
 ///   · Linux/macOS：包内若内置了 `third_party/fntv-mpv/mpv` 则用之，否则查找
 ///     **系统 mpv**（固定候选路径 → PATH）。
-pub fn resolve_bundled_paths(app: &tauri::AppHandle, cfg: &mut Config) {
-    if !path_is_file(&cfg.mpv_path) {
-        if let Some(p) = find_bundled(app, "third_party/fntv-mpv/mpv.exe") {
-            cfg.mpv_path = p.to_string_lossy().into_owned();
+/// [lc-1794] 探测本机安装的 mpv：固定候选 → PATH 扫描。返回 None = 未找到。
+fn detect_local_mpv() -> Option<String> {
+    let tag = if cfg!(windows) { "windows" } else if cfg!(target_os = "macos") { "macos" } else { "linux" };
+    for c in mpv_candidates_for(tag) {
+        let p = std::path::Path::new(c);
+        if p.is_file() {
+            return Some(c.to_string());
         }
+    }
+    let exe = if cfg!(windows) { "mpv.exe" } else { "mpv" };
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let p = dir.join(exe);
+            if p.is_file() {
+                return Some(p.to_string_lossy().into_owned());
+            }
+        }
+    }
+    None
+}
+
+pub fn resolve_bundled_paths(app: &tauri::AppHandle, cfg: &mut Config) {
+    // [lc-1794] mpv 来源三态：
+    //   player_kind=mpv-local → 本机 mpv（候选+PATH 探测；找不到回落随包并记警告）
+    //   旧版残留的自定义 mpv_path（新版 UI 已无该入口）→ 重置随包 + 记日志（升级用户被锁
+    //   在本机旧 mpv 的 bug 修复）；player_kind 本身不动，用户要本机就走 mpv-local。
+    //   其余 → 随包。
+    let bundled_mpv = find_bundled(app, "third_party/fntv-mpv/mpv.exe")
+        .map(|p| p.to_string_lossy().into_owned());
+    let local_kind = cfg.player_kind.trim().eq_ignore_ascii_case("mpv-local");
+    if local_kind {
+        match detect_local_mpv() {
+            Some(p) => {
+                crate::libmpv::trace(&format!("[player] mpv 来源: 本机安装（{p}）—— 兼容问题不在应用修复范围"));
+                cfg.mpv_path = p;
+            }
+            None => {
+                if let Some(b) = &bundled_mpv {
+                    crate::libmpv::trace("[player] 未探测到本机 mpv，已回落随包版本");
+                    cfg.mpv_path = b.clone();
+                }
+            }
+        }
+    } else {
+        if path_is_file(&cfg.mpv_path)
+            && bundled_mpv.as_deref() != Some(cfg.mpv_path.trim())
+        {
+            crate::libmpv::trace(&format!(
+                "[player] 检测到旧版残留的自定义 mpv 路径（{}），已重置为随包版本；如需本机 mpv 请在 设置→播放器 选择「本机 mpv」",
+                cfg.mpv_path
+            ));
+            cfg.mpv_path = String::new();
+        }
+        if !path_is_file(&cfg.mpv_path) {
+            if let Some(p) = &bundled_mpv {
+                crate::libmpv::trace(&format!("[player] mpv 来源: 随包（{}）", p));
+                cfg.mpv_path = p.clone();
+            }
+        } else {
+            crate::libmpv::trace(&format!("[player] mpv 来源: 随包（{}）", cfg.mpv_path));
+        }
+    }
+    if !path_is_file(&cfg.mpv_path) {
         #[cfg(not(target_os = "windows"))]
         {
             if !path_is_file(&cfg.mpv_path) {
@@ -716,7 +780,7 @@ mod tests {
         assert!(linux.contains(&"/snap/bin/mpv"));
 
         // Windows 不走候选列表（用随包 mpv.exe）
-        assert!(mpv_candidates_for("windows").is_empty());
+        assert!(!mpv_candidates_for("windows").is_empty());
     }
 
     #[test]

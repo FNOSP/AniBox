@@ -2589,11 +2589,11 @@ async fn set_settings(
     if let Some(v) = arg.get("autoLogin") {
         cfg.auto_login = v.as_bool().ok_or("autoLogin 必须是布尔值")?;
     }
-    // [player] 播放器选择：mpv（默认）/ potplayer。potplayer 路径空 = 自动探测。
+    // [player] 播放器选择：mpv（随包，默认）/ mpv-local（本机，兼容自负）/ potplayer。
     if let Some(v) = arg.get("playerKind") {
         let s = v.as_str().unwrap_or("");
-        if !matches!(s, "mpv" | "potplayer") {
-            return Err(format!("playerKind 非法：{s}（只允许 mpv/potplayer）"));
+        if !matches!(s, "mpv" | "mpv-local" | "potplayer") {
+            return Err(format!("playerKind 非法：{s}（只允许 mpv/mpv-local/potplayer）"));
         }
         cfg.player_kind = s.to_string();
     }

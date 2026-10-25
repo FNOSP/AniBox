@@ -492,9 +492,10 @@ export function SettingsPanel({
     setPotPath(settings.potplayerPath ?? "");
   }, [settings.potplayerPath]);
 
-  /** 切换播放器：立即落盘（与面板其它设置同一条 set_settings 流程）。 */
+  /** 切换播放器：立即落盘（与面板其它设置同一条 set_settings 流程）。
+   * [lc-1794] 三选：mpv（随包）/ mpv-local（本机安装，自动检测，兼容问题不修）/ potplayer。 */
   const choosePlayer = (v: string) => {
-    const kind = v === "potplayer" ? "potplayer" : "mpv";
+    const kind = v === "potplayer" ? "potplayer" : v === "mpv-local" ? "mpv-local" : "mpv";
     setPotStatus(null);
     onSettings({ playerKind: kind });
   };
@@ -1667,7 +1668,8 @@ export function SettingsPanel({
                     <div>
                       <span className="set-k">播放器选择</span>
                       <div className="set-desc">
-                        默认使用随包自带的 mpv；也可改用本机安装的 PotPlayer
+                        默认随包自带 mpv；也可改用本机安装的 mpv（自动检测常见安装路径）或 PotPlayer。
+                        本机 mpv 出现兼容问题时请自行处理，应用不对其做适配修复。
                       </div>
                     </div>
                     <SetSelect
@@ -1676,6 +1678,7 @@ export function SettingsPanel({
                       disabled={busy}
                       options={[
                         { value: "mpv", label: "自带 mpv（推荐）" },
+                        { value: "mpv-local", label: "本机 mpv（兼容自负）" },
                         { value: "potplayer", label: "本机 PotPlayer" },
                       ]}
                       onChange={choosePlayer}

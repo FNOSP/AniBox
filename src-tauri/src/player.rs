@@ -132,7 +132,8 @@ pub fn resolve_player(cfg: &Config) -> Result<(String, String), String> {
         };
     }
     match cfg.player_kind.trim() {
-        "" | "mpv" => {
+        // [lc-1794] mpv-local：本机 mpv（路径已在 resolve_bundled_paths 解析进 mpv_path）
+        "" | "mpv" | "mpv-local" => {
             if cfg.mpv_path.trim().is_empty() {
                 Err(crate::config::mpv_missing_message())
             } else {
@@ -141,7 +142,7 @@ pub fn resolve_player(cfg: &Config) -> Result<(String, String), String> {
         }
         "potplayer" => Ok(("potplayer".into(), resolve_potplayer_path(&cfg.potplayer_path)?)),
         other => Err(format!(
-            "未知播放器类型：{other}（只允许 mpv/potplayer）"
+            "未知播放器类型：{other}（只允许 mpv/mpv-local/potplayer）"
         )),
     }
 }

@@ -533,7 +533,7 @@ export type UpdateProgress = {
 };
 
 /** [player] 播放器类型：mpv = 随包自带（默认）；potplayer = 本机安装的 PotPlayer */
-export type PlayerKind = "mpv" | "potplayer";
+export type PlayerKind = "mpv" | "mpv-local" | "potplayer";
 
 export type ChromeTone = "auto" | "dark" | "light" | "fallback";
 /** [lc-1437] 设置面板的项（Rust 侧 `get_settings`/`set_settings` 的白名单子集）。

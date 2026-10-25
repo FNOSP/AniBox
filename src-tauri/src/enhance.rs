@@ -27,6 +27,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::AppState;
+
 /// 远端 manifest 地址（部署 R2 后替换为正式地址；含 zipUrl/zipSha256/version/sizeBytes）。
 /// 占位指向 AniBox 官方桶的约定路径，桶未就绪时下载入口报「服务未配置」而不是空转。
 pub const AI_ENHANCE_MANIFEST_URL: &str = "https://ai.690075.xyz/manifest.json";
@@ -121,10 +123,28 @@ fn read_interp_opts(app: &AppHandle) -> (String, bool) {
     (engine, default_on)
 }
 
+/// [lc-1833] 写完 conf 后把改动同步到**正在运行**的播放器会话（与右键菜单同一
+/// script-message 端点；lua 收到后即改即生效，并回写同一份 conf——两边默认值一致）。
+/// 会话不在/已死则静默跳过（conf 已落盘，下次起播生效）。
+async fn push_to_live_mpv(state: &tauri::State<'_, AppState>, args: &[&str]) {
+    let Some(sess) = state.mpv.lock().await.clone() else { return };
+    if sess.is_dead().await {
+        return;
+    }
+    let cmd: Vec<Value> = std::iter::once(json!("script-message"))
+        .chain(args.iter().map(|a| json!(a)))
+        .collect();
+    sess.command_no_reply(Value::Array(cmd)).await;
+}
+
 /// [lc-1822] 设置插帧引擎与默认开关：重写 script-opts/fntv_interp.conf
 /// （mpv 启动时读取——改动对「下次播放」生效；当前会话用播放器插帧按钮切）。
+/// [lc-1833] default_on=yes 时同时推送到运行中的会话立即切引擎（「起播即开」语义
+/// 下引擎自然当下生效）；default_on=no 只改默认、不动当前会话——避免「面板换个
+/// 引擎档，播放中的画面突然开始插帧」的意外副作用。
 #[tauri::command]
 pub async fn ai_enhance_set_engine(
+    state: tauri::State<'_, AppState>,
     app: AppHandle,
     engine: String,
     default_on: Option<bool>,
@@ -161,6 +181,9 @@ default_on={}
     std::fs::write(so.join("fntv_interp.conf"), body)
         .map_err(|err| format!("写入配置失败（安装目录可能只读）: {err}"))?;
     let _ = cur_engine;
+    if new_default && new_engine != "auto" {
+        push_to_live_mpv(&state, &["fntv-interp-engine", new_engine]).await;
+    }
     Ok(json!({ "engine": new_engine, "defaultOn": new_default }))
 }
 
@@ -226,7 +249,11 @@ fn read_quality_tier(app: &AppHandle) -> String {
 /// [lc-1825] 设置画质档位（极致/均衡=时间插值平滑；流畅=关闭省 GPU）——
 /// 只改基线，手动插帧引擎/按钮优先（lua 同款语义）。
 #[tauri::command]
-pub async fn ai_enhance_set_tier(app: AppHandle, tier: String) -> Result<Value, String> {
+pub async fn ai_enhance_set_tier(
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+    tier: String,
+) -> Result<Value, String> {
     let t = tier.trim().to_lowercase();
     if !matches!(t.as_str(), "extreme" | "balanced" | "smooth") {
         return Err(format!("未知画质档位 {t}（只允许 extreme/balanced/smooth）"));
@@ -250,13 +277,19 @@ default_on={}
     );
     std::fs::write(so.join("fntv_interp.conf"), body)
         .map_err(|err| format!("写入配置失败: {err}"))?;
+    // [lc-1833] 档位是纯基线（不改变插帧开关状态），安全地推给运行中的会话即时生效
+    push_to_live_mpv(&state, &["fntv-interp-tier", t.as_str()]).await;
     Ok(json!({ "qualityTier": t }))
 }
 
 /// [lc-1823] 设置超分引擎档：off / dml / tensorrt（写 script-opts/fntv_superres.conf，
 /// fntv_superres.lua 播放时读取挂载；dml/tensorrt 档前置就绪校验）。
 #[tauri::command]
-pub async fn ai_enhance_set_superres(app: AppHandle, engine: String) -> Result<Value, String> {
+pub async fn ai_enhance_set_superres(
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+    engine: String,
+) -> Result<Value, String> {
     let e = engine.trim().to_lowercase();
     if !matches!(e.as_str(), "off" | "dml" | "tensorrt") {
         return Err(format!("未知超分引擎 {e}（只允许 off/dml/tensorrt）"));
@@ -275,6 +308,8 @@ pub async fn ai_enhance_set_superres(app: AppHandle, engine: String) -> Result<V
     let body = "# AniBox AI 超分配置（设置面板写入）\n# 引擎档：off / dml（AnimeJaNai DirectML·全显卡）/ tensorrt（RTX 40/50）\nsuperres_engine=".to_string() + &e + "\n";
     std::fs::write(so.join("fntv_superres.conf"), body)
         .map_err(|err| format!("写入配置失败: {err}"))?;
+    // [lc-1833] 超分档即改即挂载/卸载（evaluate 无插帧那类联动副作用），直接推运行会话
+    push_to_live_mpv(&state, &["fntv-superres-set", e.as_str()]).await;
     Ok(json!({ "superresEngine": e }))
 }
 

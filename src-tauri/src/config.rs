@@ -405,6 +405,20 @@ fn config_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
 fn bundled_candidates(app: &tauri::AppHandle, rel: &str) -> Vec<std::path::PathBuf> {
     use tauri::Manager;
     let mut out: Vec<std::path::PathBuf> = Vec::new();
+    // [lc-1833] dev 构建（exe 在仓库 target/ 下）把仓库 third_party 提到**最前**：
+    // tauri dev 的 resource_dir() 就是 target/debug，而打包/调试在 target/debug 下
+    // 残留的整套 third_party 旧拷贝（旧 input.conf/旧 lua）会遮蔽仓库里正在改的
+    // 脚本与菜单——表现为「播放器行为停留在旧版、新菜单不出现、面板写的 script-opts
+    // 落进旧拷贝」。安装态（exe 在安装目录）不受影响，仍按 resource_dir 优先。
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let dev_build = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|d| d.to_path_buf()))
+        .map(|d| d.starts_with(&manifest))
+        .unwrap_or(false);
+    if dev_build {
+        out.push(manifest.join("..").join(rel));
+    }
     if let Ok(dir) = app.path().resource_dir() {
         out.push(dir.join(rel));
         out.push(dir.join("resources").join(rel));
@@ -415,8 +429,8 @@ fn bundled_candidates(app: &tauri::AppHandle, rel: &str) -> Vec<std::path::PathB
             out.push(dir.join("resources").join(rel));
         }
     }
-    // 开发态：src-tauri/../third_party/...（以及 src-tauri/third_party/... 的兼容位）
-    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // 开发态回落位（dev_build 时上面已插过同一路径，find 重复无妨）：
+    // src-tauri/../third_party/...（以及 src-tauri/third_party/... 的兼容位）
     out.push(manifest.join("..").join(rel));
     out.push(manifest.join(rel));
     out

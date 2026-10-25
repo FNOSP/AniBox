@@ -10,7 +10,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  ArrowLeft as IcoBackL,
   Cloud as IcoCloudL,
   FileVideo as IcoVideoL,
   Folder as IcoFolderL,
@@ -348,48 +347,16 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
   const showLocalHls = !showServerHls && ffmpegOk === true && active !== "115";
 
   return (
-    <div className="c115 view-scroll">
-      <div className="c115-hd">
-        <button className="c115-back" onClick={onBack} title="返回">
-          <IcoBackL size={16} strokeWidth={2} />
-        </button>
-        <h2 className="c115-title">
+    <main className="c115">
+      {/* 头部与库/观影记录页同构：page-head + 统一 back 胶囊 */}
+      <div className="page-head">
+        <button className="back" onClick={onBack}>‹ 返回</button>
+        <h3 className="c115-title">
           <span className="c115-title-ico">
             <IcoCloudL size={16} strokeWidth={2.2} />
           </span>
           网盘接入
-        </h2>
-        {logged && !isWebdav && cur && (
-          <>
-            <span className="c115-user">{cur.userName ? `已登录：${cur.userName}` : "已登录"}</span>
-            <button className="c115-mini" onClick={logout} title="退出登录（清除本机凭据）">
-              <IcoLogoutL size={13} strokeWidth={2} /> 退出
-            </button>
-          </>
-        )}
-        {isWebdav && wdActive && (
-          <button className="c115-mini" onClick={logout} title="断开当前账号（不删除配置）">
-            <IcoLogoutL size={13} strokeWidth={2} /> 断开
-          </button>
-        )}
-        {/* [lc-1811] 播放三档：直链(续签) / 服务端转码 / 本地转码 */}
-        {logged && (showServerHls || showLocalHls) && (
-          <div className="c115-mode" title="直链走本地续签代理（链接过期自动换新，播放不中断）；转码档用于编码不兼容或非会员限速">
-            <button type="button" className={`c115-seg${mode === "" ? " on" : ""}`} onClick={() => setMode("")}>
-              直链·自动续签
-            </button>
-            {showServerHls && (
-              <button type="button" className={`c115-seg${mode === "server" ? " on" : ""}`} onClick={() => setMode("server")}>
-                服务端转码
-              </button>
-            )}
-            {showLocalHls && (
-              <button type="button" className={`c115-seg${mode === "local" ? " on" : ""}`} onClick={() => setMode("local")}>
-                本地转码
-              </button>
-            )}
-          </div>
-        )}
+        </h3>
       </div>
 
       {/* 厂商 tab 行（含 WebDAV） */}
@@ -410,6 +377,43 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
           <span className={`c115-dot${wdActive ? " ok" : ""}`} title={wdActive ? "已连接" : "未连接"} />
         </button>
       </div>
+
+      {/* 工具行：用户/退出（左）+ 播放档（右） */}
+      {logged && (
+        <div className="c115-bar">
+          {!isWebdav && cur && (
+            <>
+              <span className="c115-user">{cur.userName ? `已登录：${cur.userName}` : "已登录"}</span>
+              <button className="c115-mini" onClick={logout} title="退出登录（清除本机凭据）">
+                <IcoLogoutL size={13} strokeWidth={2} /> 退出
+              </button>
+            </>
+          )}
+          {isWebdav && wdActive && (
+            <button className="c115-mini" onClick={logout} title="断开当前账号（不删除配置）">
+              <IcoLogoutL size={13} strokeWidth={2} /> 断开
+            </button>
+          )}
+          {/* [lc-1811] 播放三档：直链(续签) / 服务端转码 / 本地转码 */}
+          {(showServerHls || showLocalHls) && (
+            <div className="c115-mode" title="直链走本地续签代理（链接过期自动换新，播放不中断）；转码档用于编码不兼容或非会员限速">
+              <button type="button" className={`c115-seg${mode === "" ? " on" : ""}`} onClick={() => setMode("")}>
+                直链·自动续签
+              </button>
+              {showServerHls && (
+                <button type="button" className={`c115-seg${mode === "server" ? " on" : ""}`} onClick={() => setMode("server")}>
+                  服务端转码
+                </button>
+              )}
+              {showLocalHls && (
+                <button type="button" className={`c115-seg${mode === "local" ? " on" : ""}`} onClick={() => setMode("local")}>
+                  本地转码
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {err && <p className="c115-err">{err}</p>}
 
@@ -557,6 +561,6 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
           )}
         </>
       )}
-    </div>
+    </main>
   );
 }

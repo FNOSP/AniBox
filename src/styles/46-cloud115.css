@@ -3,11 +3,18 @@
    全部用 tokens（--accent-grad/--shadow-card/--glass…），与首页/设置同一套语言。 */
 
 .c115 {
+  /* view-pane.active(flex column) 的直接子项：自撑满 + 自滚动 */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto; /* 整面板水平居中 */
   display: flex;
   flex-direction: column;
   gap: 16px;
   padding: 26px 30px 44px;
-  max-width: 980px;
   animation: c115-fade-up 0.28s ease-out;
 }
 
@@ -16,31 +23,12 @@
   to { opacity: 1; transform: none; }
 }
 
-/* ── 头部 ── */
-.c115-hd {
+/* ── 工具行：用户/退出（左）+ 播放档（右） ── */
+.c115-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
-}
-
-.c115-back {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  background: var(--glass);
-  color: var(--ink);
-  cursor: pointer;
-  transition: transform 0.15s ease, border-color 0.15s ease;
-}
-
-.c115-back:hover {
-  transform: translateX(-2px);
-  border-color: var(--accent);
 }
 
 .c115-title {
@@ -48,9 +36,9 @@
   align-items: center;
   gap: 10px;
   margin: 0;
-  font-size: 19px;
+  font-size: 20px;
   font-weight: 700;
-  letter-spacing: 0.2px;
+  letter-spacing: 0.3px;
 }
 
 /* 标题图标渐变底座（与侧栏网盘入口同一记忆点） */
@@ -111,6 +99,7 @@
   border-radius: 999px;
   background: var(--glass);
   margin-left: auto;
+  margin-right: 2px;
 }
 
 .c115-seg {

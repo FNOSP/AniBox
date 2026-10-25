@@ -2680,9 +2680,10 @@ export function DetailView({
                 </div>
               )
             ) : !isSeries ? (
-              /* [lc-1768] 电影条目右列原先恒为死占位——开启在线搜索后与剧集同款挂面板
-                  （无 BGM 编号的电影走采集源，剧场版动画带编号走全源），两边都能搜。 */
-              webrsOn ? (
+              /* [lc-1768→1842] 电影右列：**库内条目默认不自动挂搜索面板**（用户口径：
+                  有库内资源就优先库内——点上方「播放」起播本片，要看在线资源用 Switch
+                  显式切换）；仅无源条目（发现页）保留自动挂面板——在线搜索是它唯一看点。 */
+              noFnOS && webrsOn ? (
 <WebrsPanel
                   title={title || base.title}
                   kind={
@@ -2693,7 +2694,11 @@ export function DetailView({
                   poster={poster || movieBackdrop || undefined}
                 />
               ) : (
-                <div className="empty">本条目不是剧集</div>
+                <div className="empty">
+                  {webrsOn
+                    ? "电影条目 · 本片在库内：点上方「播放」起播；Switch 可切在线资源搜索"
+                    : "本条目不是剧集"}
+                </div>
               )
             ) : episodes.length === 0 && seasons.length === 0 && !noFnOS ? (
               /* [lc-1420] **分块骨架**：条目详情（data）到得很快，所以整页骨架一闪就没了；
@@ -2721,14 +2726,17 @@ export function DetailView({
               /* [lc-1444] 发现页条目没有飞牛选集数据。
                  [lc-1500] 无源条目的"看"法 = 在线资源面板（Kazumi 规则源 → mpv）。
                  [lc-1747] lc-1627 曾把这里换成「未查询到资源」占位，现随功能恢复换回面板。
-                 [lc-1753] 面板改由设置开关控制（默认关闭，声明「不存储不分发资源」后开启）：
-                 开启时无资源的条目（发现页无源 / 库内暂无剧集）都挂面板；关闭维持占位。 */
+                 [lc-1753] 面板改由设置开关控制（默认关闭，声明「不存储不分发资源」后开启）。
+                 [lc-1842] 自动挂面板收窄到**无源条目（发现页）**；库内条目（含本季
+                 暂无集）默认保持库内视角，只给 Switch 指引——用户口径：库内优先。 */
               epsLoading ? (
                 <div className="empty">加载中…</div>
-              ) : webrsOn ? (
+              ) : noFnOS && webrsOn ? (
                 /* [lc-1754→1758] 按编号分源：无编号（TMDB 剧集/电影）→ 只挂采集源；
                    有 BGM 编号（番剧）→ 不过滤 = Kazumi 规则源 + 采集源都挂
-                   （采集站也收录动漫，多一路兜底；规则源只有番剧没有剧集）。 */
+                   （采集站也收录动漫，多一路兜底；规则源只有番剧没有剧集）。
+                   [lc-1842] 面板只给无源条目（发现页）自动挂；库内条目本季没集时
+                   给占位 + Switch 指引，不再默认切走库内视角。 */
 <WebrsPanel
                   title={title || base.title}
                   kind={
@@ -2738,6 +2746,8 @@ export function DetailView({
                   }
                   poster={poster || movieBackdrop || undefined}
                 />
+              ) : webrsOn ? (
+                <div className="empty">本季暂无剧集 · Switch 可切在线资源搜索</div>
               ) : noFnOS ? (
                 <div className="empty">未查询到资源</div>
               ) : (

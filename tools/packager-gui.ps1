@@ -12,7 +12,7 @@
     仅本地构建，无任何上传动作。
 #>
 [CmdletBinding()]
-param([switch]$StopApp)
+param([switch]$StopApp, [switch]$DumpLayout)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -74,11 +74,12 @@ function New-Card([int]$x, [int]$y, [int]$w, [int]$h) {
     $pn.Location = New-Object System.Drawing.Point($x, $y)
     $pn.Size = New-Object System.Drawing.Size($w, $h)
     $pn.BackColor = $C_CARD
-    $pn.Region = New-Object System.Drawing.Region((New-RoundPath $w $h 10))
+    # [DPI] 不用 Region 圆角（缩放不跟随）；直角描边同样干净
     $pn.Add_Paint({
         param($sender, $e)
-        $e.Graphics.SmoothingMode = 'AntiAlias'
-        $e.Graphics.DrawPath((New-Object System.Drawing.Pen($script:C_LINE, 1)), (New-RoundPath $sender.Width $sender.Height 10))
+        try {
+            $e.Graphics.DrawRectangle((New-Object System.Drawing.Pen($script:C_LINE, 1)), 0, 0, $sender.Width - 1, $sender.Height - 1)
+        } catch {}
     })
     $pn
 }
@@ -90,19 +91,19 @@ function Set-FlatButton($btn, [System.Drawing.Color]$bg, [System.Drawing.Color]$
     $btn.Cursor = 'Hand'
     $btn.FlatAppearance.BorderSize = 0
     $btn.FlatAppearance.MouseOverBackColor = $hoverBg
-    $btn.Region = New-Object System.Drawing.Region((New-RoundPath $btn.Width $btn.Height 8))
 }
 
 # ── 窗体（可调大小；双缓冲防闪） ──
 $f = New-Object System.Windows.Forms.Form
 $f.Text = 'AniBox 打包'
 $f.Font = $F_MAIN
-$f.Size = New-Object System.Drawing.Size(620, 640)
-$f.MinimumSize = New-Object System.Drawing.Size(620, 560)
+$f.Size = New-Object System.Drawing.Size(640, 680)
+$f.MinimumSize = New-Object System.Drawing.Size(640, 620)
 $f.StartPosition = 'CenterScreen'
 $f.BackColor = $C_BG
 $f.FormBorderStyle = 'Sizable'
 $f.MaximizeBox = $true
+$f.AutoScaleMode = 'None'   # 缩放统一在末尾用 Form.Scale 按 DPI 因子手动做（见 ShowDialog 前）
 # DoubleBuffered 是 protected 属性，PowerShell 直接赋值会报错——走反射开双缓冲防闪
 $f.GetType().GetProperty('DoubleBuffered', [System.Reflection.BindingFlags]'Instance,NonPublic').SetValue($f, $true)
 
@@ -110,15 +111,17 @@ $f.GetType().GetProperty('DoubleBuffered', [System.Reflection.BindingFlags]'Inst
 $logo = New-Object System.Windows.Forms.Panel
 $logo.Location = New-Object System.Drawing.Point(20, 18)
 $logo.Size = New-Object System.Drawing.Size(40, 40)
-$logo.Region = New-Object System.Drawing.Region((New-RoundPath 40 40 11))
 $logo.Add_Paint({
     param($sender, $e)
-    $rect = New-Object System.Drawing.Rectangle(0, 0, $sender.Width, $sender.Height)
-    $brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush($rect, $script:C_ACCENT, $script:C_ACCENT2, 35)
-    $e.Graphics.FillRectangle($brush, $rect)
-    $fmt = New-Object System.Drawing.StringFormat
-    $fmt.Alignment = 'Center'; $fmt.LineAlignment = 'Center'
-    $e.Graphics.DrawString('A', (New-Object System.Drawing.Font('Segoe UI', 15, [System.Drawing.FontStyle]::Bold)), [System.Drawing.Brushes]::White, $rect, $fmt)
+    try {
+        # DrawString 该重载要 RectangleF（float）——传 Rectangle 会被绑去 PointF 重载并抛错
+        $rect = New-Object System.Drawing.RectangleF(0, 0, $sender.Width, $sender.Height)
+        $brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush($rect, $script:C_ACCENT, $script:C_ACCENT2, 35)
+        $e.Graphics.FillRectangle($brush, $rect)
+        $fmt = New-Object System.Drawing.StringFormat
+        $fmt.Alignment = 'Center'; $fmt.LineAlignment = 'Center'
+        $e.Graphics.DrawString('A', (New-Object System.Drawing.Font('Segoe UI', 13, [System.Drawing.FontStyle]::Bold)), [System.Drawing.Brushes]::White, $rect, $fmt)
+    } catch {}
 })
 $f.Controls.Add($logo)
 
@@ -132,16 +135,16 @@ $f.Controls.Add($lbTitle)
 $lbSub = New-Object System.Windows.Forms.Label
 $lbSub.Text = "本地构建 · 密钥注入 · 当前版本 $curVersion"
 $lbSub.ForeColor = $C_MUTED
-$lbSub.Location = New-Object System.Drawing.Point(74, 46)
+$lbSub.Location = New-Object System.Drawing.Point(74, 58)
 $lbSub.AutoSize = $true
 $f.Controls.Add($lbSub)
 
 # ── 输入卡片 ──
-$card = New-Card 20 74 ($f.ClientSize.Width - 40) 118
+$card = New-Card 20 74 (($f.ClientSize.Width - 40)) 132
 $f.Controls.Add($card)
 
 $lb1 = New-Object System.Windows.Forms.Label
-$lb1.Text = '版本号'; $lb1.Location = '18,16'; $lb1.AutoSize = $true; $lb1.ForeColor = $C_TEXT
+$lb1.Text = '版本号'; $lb1.Location = New-Object System.Drawing.Point(18, 18); $lb1.AutoSize = $true; $lb1.ForeColor = $C_TEXT
 $card.Controls.Add($lb1)
 $tbVer = New-Object System.Windows.Forms.TextBox
 $tbVer.Location = New-Object System.Drawing.Point(90, 12)
@@ -151,28 +154,28 @@ if ($state.LastVersion) { $tbVer.Text = $state.LastVersion } else { $tbVer.Text 
 $card.Controls.Add($tbVer)
 $lbCur = New-Object System.Windows.Forms.Label
 $lbCur.Text = "tauri.conf.json：$curVersion"
-$lbCur.Location = New-Object System.Drawing.Point(252, 16); $lbCur.AutoSize = $true; $lbCur.ForeColor = $C_MUTED
+$lbCur.Location = New-Object System.Drawing.Point(252, 21); $lbCur.AutoSize = $true; $lbCur.ForeColor = $C_MUTED
 $card.Controls.Add($lbCur)
 
 $cbOver = New-Object System.Windows.Forms.CheckBox
 $cbOver.Text = '覆盖同名安装包（不勾 = 自动加时间戳后缀）'
-$cbOver.Location = New-Object System.Drawing.Point(18, 46)
+$cbOver.Location = New-Object System.Drawing.Point(18, 52)
 $cbOver.AutoSize = $true; $cbOver.ForeColor = $C_TEXT
 $cbOver.Checked = [bool]$state.Overwrite
 $card.Controls.Add($cbOver)
 
 $lb2 = New-Object System.Windows.Forms.Label
-$lb2.Text = '出包位置'; $lb2.Location = '18,80'; $lb2.AutoSize = $true; $lb2.ForeColor = $C_TEXT
+$lb2.Text = '出包位置'; $lb2.Location = New-Object System.Drawing.Point(18, 88); $lb2.AutoSize = $true; $lb2.ForeColor = $C_TEXT
 $card.Controls.Add($lb2)
 $tbOut = New-Object System.Windows.Forms.TextBox
-$tbOut.Location = New-Object System.Drawing.Point(90, 76)
+$tbOut.Location = New-Object System.Drawing.Point(90, 84)
 $tbOut.Size = New-Object System.Drawing.Size(330, 26)
 $tbOut.Font = $F_MAIN
 $tbOut.Text = $state.OutDir
 $card.Controls.Add($tbOut)
 $btnPick = New-Object System.Windows.Forms.Button
 $btnPick.Text = '浏览…'
-$btnPick.Location = New-Object System.Drawing.Point(430, 74)
+$btnPick.Location = New-Object System.Drawing.Point(430, 82)
 $btnPick.Size = New-Object System.Drawing.Size(78, 30)
 Set-FlatButton $btnPick $C_CARD $C_ACCENT $C_BG
 $card.Controls.Add($btnPick)
@@ -185,7 +188,7 @@ $btnPick.Add_Click({
 # ── 操作行：开始打包 + 步骤进度 ──
 $btnBuild = New-Object System.Windows.Forms.Button
 $btnBuild.Text = '开始打包'
-$btnBuild.Location = New-Object System.Drawing.Point(20, 206)
+$btnBuild.Location = New-Object System.Drawing.Point(20, 224)
 $btnBuild.Size = New-Object System.Drawing.Size(132, 40)
 Set-FlatButton $btnBuild $C_ACCENT ([System.Drawing.Color]::White) $C_ACCENT_DK
 $f.Controls.Add($btnBuild)
@@ -193,18 +196,18 @@ $f.Controls.Add($btnBuild)
 $lbStep = New-Object System.Windows.Forms.Label
 $lbStep.Text = '就绪'
 $lbStep.ForeColor = $C_MUTED
-$lbStep.Location = New-Object System.Drawing.Point(168, 210)
+$lbStep.Location = New-Object System.Drawing.Point(168, 230)
 $lbStep.AutoSize = $true
 $f.Controls.Add($lbStep)
 $lbElapsed = New-Object System.Windows.Forms.Label
 $lbElapsed.Text = ''
 $lbElapsed.ForeColor = $C_MUTED
-$lbElapsed.Location = New-Object System.Drawing.Point(168, 230)
+$lbElapsed.Location = New-Object System.Drawing.Point(168, 250)
 $lbElapsed.AutoSize = $true
 $f.Controls.Add($lbElapsed)
 
 $pb = New-Object System.Windows.Forms.ProgressBar
-$pb.Location = New-Object System.Drawing.Point(($f.ClientSize.Width - 240), 216)
+$pb.Location = New-Object System.Drawing.Point(($f.ClientSize.Width - 240), 234)
 $pb.Size = New-Object System.Drawing.Size(220, 18)
 $pb.Style = 'Continuous'
 $pb.Value = 0
@@ -215,7 +218,7 @@ $f.Controls.Add($pb)
 $lbLogTitle = New-Object System.Windows.Forms.Label
 $lbLogTitle.Text = '构建日志（实时）'
 $lbLogTitle.ForeColor = $C_MUTED
-$lbLogTitle.Location = New-Object System.Drawing.Point(22, 258)
+$lbLogTitle.Location = New-Object System.Drawing.Point(22, 282)
 $lbLogTitle.AutoSize = $true
 $f.Controls.Add($lbLogTitle)
 $tbLog = New-Object System.Windows.Forms.TextBox
@@ -225,8 +228,8 @@ $tbLog.BackColor = $C_TERM_BG
 $tbLog.ForeColor = $C_TERM_FG
 $tbLog.Font = $F_MONO
 $tbLog.BorderStyle = 'None'
-$tbLog.Location = New-Object System.Drawing.Point(20, 280)
-$tbLog.Size = New-Object System.Drawing.Size(($f.ClientSize.Width - 40), ($f.ClientSize.Height - 320))
+$tbLog.Location = New-Object System.Drawing.Point(20, 304)
+$tbLog.Size = New-Object System.Drawing.Size(($f.ClientSize.Width - 40), ($f.ClientSize.Height - 328))
 $tbLog.Anchor = 'Top,Bottom,Left,Right'
 $f.Controls.Add($tbLog)
 
@@ -389,4 +392,24 @@ $btnBuild.Add_Click({
     }
 })
 
+# ── [DPI 修复] 坐标按 96dpi 设计；高 DPI（125%/150%）下字体自动放大而坐标不动
+#    → AutoSize 控件变大挤压重叠（用户实测 150%「挨在一起」）。在所有控件构造完后
+#    用 Form.Scale 把窗口与全部子控件按 DPI 因子等比缩放（Anchor 基准同步更新）。
+$gDpi = [System.Drawing.Graphics]::FromHwnd([IntPtr]::Zero)
+$dpiScale = [double]::Round($gDpi.DpiX / 96.0, 3)
+$gDpi.Dispose()
+if ($dpiScale -gt 1.0) {
+    $f.Scale((New-Object System.Drawing.SizeF([float]$dpiScale, [float]$dpiScale)))
+}
+
+if ($DumpLayout) {
+    # 布局调试：Scale 之后再遍历（等价真实显示状态）
+    function Walk($ctrl, [int]$depth) {
+        $rel = "$($ctrl.Location.X),$($ctrl.Location.Y) $($ctrl.Width)x$($ctrl.Height)"
+        Write-Output (("  " * $depth) + "$($ctrl.GetType().Name)[$($ctrl.Text -replace '\r|\n',' ')'.Trim()] @ $rel")
+        foreach ($c in $ctrl.Controls) { Walk $c ($depth + 1) }
+    }
+    Walk $f 0
+    return
+}
 [void]$f.ShowDialog()

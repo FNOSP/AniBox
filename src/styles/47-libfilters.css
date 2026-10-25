@@ -119,3 +119,23 @@ button.libf-toggle[style],
   cursor: pointer;
   padding: 2px 6px;
 }
+
+/* [lc-1805b] 收起态的展开按钮（普通静态胶囊，不用 absolute——之前复用 libf-toggle 被
+   面板内 absolute 定位带到页面角落外，表现为「收起后按钮消失」） */
+.libf-open {
+  box-sizing: border-box;
+  height: 28px;
+  margin: 8px 0 0;
+  padding: 0 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--glass);
+  color: var(--ink);
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.libf-open:hover {
+  border-color: var(--accent, #8ab4f8);
+}

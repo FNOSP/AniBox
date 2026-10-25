@@ -304,7 +304,8 @@ export function LibView({
   };
   const EMPTY_F: Filters = { cat: null, genres: null, resolution: null, colorRange: null, audioType: null, locate: null, decade: null, recognition: null, watched: null };
   const [f, setF] = useState<Filters>(EMPTY_F);
-  const [collapsed, setCollapsed] = useState(false);
+  // [lc-1805b] 默认收起（用户要求）；点「筛选」展开
+  const [collapsed, setCollapsed] = useState(true);
   const [dim, setDim] = useState<Record<string, Opt[]> | null>(null);
   const atRoot = levels.length === 1;
   const isAllCat = lib.guid.startsWith("_cat:");
@@ -416,8 +417,8 @@ export function LibView({
         </div>
       )}
       {atRoot && collapsed && (
-        <button type="button" className="libf-toggle" onClick={() => setCollapsed(false)}>
-          筛选{filterActive ? "（生效中）" : ""}
+        <button type="button" className="libf-open" onClick={() => setCollapsed(false)}>
+          筛选{filterActive ? "（生效中）" : " ▾"}
         </button>
       )}
       {err && (

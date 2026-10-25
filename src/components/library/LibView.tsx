@@ -319,6 +319,10 @@ export function LibView({
   const [dim, setDim] = useState<Record<string, Opt[]> | null>(null);
   const atRoot = levels.length === 1;
   const isAllCat = lib.guid.startsWith("_cat:");
+  // [lc-1805f] 一比一飞鲸的页型判定：收藏页（get_favorites 不吃筛选/排序，面板全是死的，
+  // 干脆不显示）；直播页（库 category=IPTV 或「电视直播」分类）面板只留「类型」一行。
+  const isFav = lib.guid === "_fav";
+  const isLive = lib.category === "IPTV" || lib.guid === "_cat:LiveChannel";
   const filterActive =
     atRoot && (f.cat !== null || f.genres !== null || f.resolution !== null || f.colorRange !== null || f.audioType !== null || f.locate !== null || f.decade !== null || f.recognition !== null || f.watched !== null);
 
@@ -329,18 +333,24 @@ export function LibView({
     setDim(null);
   }, [lib.guid]);
 
-  // 根层拉一次维度选项（tag/genres + tag/list + tag/iso3166）
+  // 根层拉一次维度选项（tag/genres + tag/list + tag/iso3166）。
+  // [lc-1805f] 真实库按库范围拉（Rust 侧把 ancestor_guid 传给 tag/list，飞鲸口径）；
+  // 直播分类页无库 guid，飞鲸用 type=LiveChannel 收窄维度。
   useEffect(() => {
-    if (!atRoot || dim) return;
-    const ag = lib.guid.startsWith("_cat:") || lib.guid === "_fav" ? null : lib.guid;
-    invoke<Record<string, Opt[]>>("mdb_tags_get", { ancestorGuid: ag })
+    if (!atRoot || isFav || dim) return;
+    const ag = isAllCat ? null : lib.guid;
+    const tagType = lib.guid === "_cat:LiveChannel" ? "LiveChannel" : null;
+    invoke<Record<string, Opt[]>>("mdb_tags_get", { ancestorGuid: ag, tagType })
       .then((r) => setDim(r ?? {}))
       .catch(() => setDim({}));
-  }, [atRoot, dim, lib.guid]);
+  }, [atRoot, isFav, dim, lib.guid]);
 
-  /** 把当前筛选（除 cat 外）编码成 Rust filters 参数（服务端过滤）。 */
+  /** 把当前筛选编码成 Rust filters 参数（服务端过滤）。
+   *  [lc-1805f] cat 一并入 filters.type（库页/分类页同一套：影视类型选中即整体替换 tags.type，
+   *  飞鲸 _buildTags 口径；Rust get_items/get_items_global 白名单已含 "type"）。 */
   const serverFilters = () => {
     const o: Record<string, unknown> = {};
+    if (f.cat !== null) o.type = [f.cat];
     if (f.genres !== null) o.genres = f.genres;
     if (f.resolution) o.resolution = f.resolution;
     if (f.colorRange) o.color_range = f.colorRange;
@@ -390,27 +400,29 @@ export function LibView({
         <h3>{current ? current.title : lib.title}</h3>
         <span className="muted">{total || items.length} 项</span>
       </div>
-      {/* [lc-1805] 筛选面板：飞鲸同款维度（动态选项，服务端过滤） */}
-      {atRoot && !collapsed && (
+      {/* [lc-1805] 筛选面板：飞鲸同款维度（动态选项，服务端过滤）。
+          [lc-1805f] 收藏页不显示（get_favorites 不吃筛选）；直播页只留「类型」行（飞鲸 liveOnly）。 */}
+      {atRoot && !isFav && !collapsed && (
         <div className="libf">
           <div className="libf-scroll">
-            {isAllCat &&
-              row("cat", "影视分类", [
+            {/* [lc-1805f] 影视类型行：库页/分类页都有（直播页除外），选项对齐飞鲸三项；
+                选中即整体替换 tags.type（serverFilters().type → Rust 白名单 "type"）。 */}
+            {!isLive &&
+              row("cat", "影视类型", [
                 { label: "全部", value: null },
                 { label: "电影", value: "Movie" },
-                { label: "电视节目", value: "TV" },
-                { label: "电视直播", value: "LiveChannel" },
+                { label: "电视剧", value: "TV" },
               ], f.cat, (v) => {
                 if (typeof v === "string" || v === null) refetch({ ...f, cat: v as string | null });
               })}
             {row("genres", "类型", dim?.genres, f.genres, (v) => refetch({ ...f, genres: typeof v === "number" ? v : null }))}
-            {row("resolution", "分辨率", dim?.resolutions, f.resolution, (v) => refetch({ ...f, resolution: v as string | null }))}
-            {row("colorRange", "视频动态范围", dim?.colorRange, f.colorRange, (v) => refetch({ ...f, colorRange: v as string | null }))}
-            {row("audioType", "音频规格", dim?.audioType, f.audioType, (v) => refetch({ ...f, audioType: v as string | null }))}
-            {row("locate", "国家和地区", dim?.locate, f.locate, (v) => refetch({ ...f, locate: v as string | null }))}
-            {row("decade", "发行年份", dim?.decades, f.decade, (v) => refetch({ ...f, decade: v as string | null }))}
-            {row("recognition", "匹配状态", dim?.recognition, f.recognition, (v) => refetch({ ...f, recognition: v as string | null }))}
-            {row("watched", "是否已观看", [
+            {!isLive && row("resolution", "分辨率", dim?.resolutions, f.resolution, (v) => refetch({ ...f, resolution: v as string | null }))}
+            {!isLive && row("colorRange", "视频动态范围", dim?.colorRange, f.colorRange, (v) => refetch({ ...f, colorRange: v as string | null }))}
+            {!isLive && row("audioType", "音频规格", dim?.audioType, f.audioType, (v) => refetch({ ...f, audioType: v as string | null }))}
+            {!isLive && row("locate", "国家和地区", dim?.locate, f.locate, (v) => refetch({ ...f, locate: v as string | null }))}
+            {!isLive && row("decade", "发行年份", dim?.decades, f.decade, (v) => refetch({ ...f, decade: v as string | null }))}
+            {!isLive && row("recognition", "匹配状态", dim?.recognition, f.recognition, (v) => refetch({ ...f, recognition: v as string | null }))}
+            {!isLive && row("watched", "是否已观看", [
               { label: "全部", value: null },
               { label: "已观看", value: "1" },
               { label: "未观看", value: "0" },
@@ -426,7 +438,8 @@ export function LibView({
           </button>
         </div>
       )}
-      {atRoot && (
+      {/* [lc-1805f] 收藏页无筛选/排序（后端不吃这些参数），整行不显示 */}
+      {atRoot && !isFav && (
         <div className="libf-bar">
           <button type="button" className={`libf-open${filterActive ? " on" : ""}`} onClick={() => setCollapsed(!collapsed)}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

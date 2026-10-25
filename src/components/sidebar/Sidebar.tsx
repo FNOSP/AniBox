@@ -6,10 +6,13 @@ import { Clock as IcoClockL, Cloud as IcoCloudL, MessageSquare as IcoMsgL, Setti
 
 
 export const SIDEBAR_CATS = [
-  { key: "全部", types: [] as string[], ico: <IcoGrid />, sumKey: "total" },
+  // [lc-1805f] 分类 types 对齐飞鲸 MediaType.fromCategory：全部 = commonlyUsed 四类
+  // （空数组会以 tags.type:[] 发给服务端，行为未定义）；直播 = "LiveChannel"
+  // （"Live" 不是合法类型值，服务端当未知类型过滤，直播分类页结果不对）。
+  { key: "全部", types: ["Movie", "TV", "Directory", "Video"] as string[], ico: <IcoGrid />, sumKey: "total" },
   { key: "电影", types: ["Movie"], ico: <IcoMovie />, sumKey: "movie" },
   { key: "电视节目", types: ["TV"], ico: <IcoTv />, sumKey: "tv" },
-  { key: "电视直播", types: ["Live"], ico: <IcoLive />, sumKey: "live" },
+  { key: "电视直播", types: ["LiveChannel"], ico: <IcoLive />, sumKey: "live" },
   // [lc-1650] 「其他」必须带上 Directory：飞牛 mediadb/sum 的 video 计数把**未识别文件夹**
   // 也算进去了（实测 sum.video=2，而 tags.type=["Video"] 查出来 0 条、那 2 条其实是 Directory）。
   // 只查 Video 会出现「侧栏显示 2、点进去空的」。

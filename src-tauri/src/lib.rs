@@ -519,12 +519,14 @@ async fn get_items(
     let browse_types = json!(["Movie", "TV", "Directory", "Video", "LiveChannel"]);
     let page = page.unwrap_or(1).max(1);
     let page_size = item_list_page_size(page_size);
-    // [lc-1805] 根层筛选维度透传（飞鲸口径；钻取分支不带）
+    // [lc-1805] 根层筛选维度透传（飞鲸口径；钻取分支不带）。
+    // [lc-1805f] 白名单加 "type"：库页「影视类型」行选中即整体替换默认类型集
+    // （飞鲸 _buildTags：types 默认全量，影视类型选中 → types=[value]）。
     let mut root_tags = json!({ "type": browse_types });
     if let Some(f) = &filters {
         if let (Some(dst), Some(src)) = (root_tags.as_object_mut(), f.as_object()) {
             for k in [
-                "genres", "resolution", "color_range", "audio_type", "locate",
+                "type", "genres", "resolution", "color_range", "audio_type", "locate",
                 "decade", "recognition_status", "watched",
             ] {
                 if let Some(v) = src.get(k) {
@@ -1058,17 +1060,28 @@ async fn get_favorites(
 async fn mdb_tags_get(
     state: State<'_, AppState>,
     ancestor_guid: Option<String>,
+    tag_type: Option<String>,
 ) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let client = fnapi::new_client();
     let ag = ancestor_guid.filter(|s| !s.trim().is_empty()).unwrap_or_default();
 
     let q = [("lan", "zh-CN".to_string())];
-    let list_fut = client.call_get_query(&cfg.server, "/v/api/v1/tag/list", &cfg.token, &q);
+    // [lc-1805f] tag/list 按库范围拉（飞鲸口径：ancestor_guid + is_favorite=0）——
+    // 探针实测各库 genres 不同（TV 库含 90001/90002、Mix 库含 18），
+    // 全局拉会把别的库的维度混进来。直播分类页无库 guid，飞鲸用 type=LiveChannel
+    // 收窄维度（只出直播类型 chips）；call_get_query 的 query 参与排序签名，可任意带参。
+    let mut lq = vec![("is_favorite", "0".to_string()), ("lan", "zh-CN".to_string())];
+    if !ag.is_empty() {
+        lq.push(("ancestor_guid", ag));
+    }
+    if let Some(t) = tag_type.filter(|s| !s.trim().is_empty()) {
+        lq.push(("type", t));
+    }
+    let list_fut = client.call_get_query(&cfg.server, "/v/api/v1/tag/list", &cfg.token, &lq);
     let genres_fut = client.call_get_query(&cfg.server, "/v/api/v1/tag/genres", &cfg.token, &q);
     let iso_fut = client.call_get_query(&cfg.server, "/v/api/v1/tag/iso3166", &cfg.token, &q);
     let (list, genres, iso) = tokio::join!(list_fut, genres_fut, iso_fut);
-    let _ = ag; // tag/list 的 ancestor_guid 过滤按飞鲸口径带 query；fnapi call 目前只支持 path 拼接
 
     let audio_label = |v: &str| -> String {
         match v {
@@ -1126,9 +1139,11 @@ async fn mdb_tags_get(
         .collect();
     rec.insert(0, json!({ "label": "全部", "value": null }));
 
-    // [lc-1805e] 类型行：按 tag/list.genres 的 **id 顺序**（= 飞牛原生 chips 顺序）取
-    // tag/genres 中文表名；同名多 id（如 878/10765 都叫"科幻奇幻"）去重只留首个，
-    // 选中时 genres 用**首个 id** 过滤（item/list 的 genres 只认单 id）。
+    // [lc-1805f] 类型行：按 tag/list.genres 的 **id 顺序**（= 飞牛原生 chips 顺序）取
+    // tag/genres 中文表名。**同名不去重**（一比一飞鲸 `_buildFilterGroups`：同名多 id
+    // 各自出 chip、各用各的 id 过滤）——探针实测服务端 genres 按 id 精确匹配、同名 id
+    // 不互通（「科幻奇幻」id9 剧集 25 部 / id90001 剧集 72 部），此前「去重取首 id」
+    // 在剧集页永远用电影侧 id（18 → 剧集 0 部），表现为剧集筛选漏结果/空结果。
     let genre_zh: std::collections::HashMap<i64, String> = genres
         .as_ref()
         .ok()
@@ -1146,17 +1161,14 @@ async fn mdb_tags_get(
         .and_then(|x| x.as_array())
         .map(|a| a.iter().filter_map(|x| x.as_i64()).collect())
         .unwrap_or_default();
-    let mut genres_out: Vec<Value> = Vec::new();
-    let mut genre_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut genre_first_id: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-    for id in &list_genre_ids {
-        let Some(name) = genre_zh.get(id) else { continue };
-        if !genre_seen.insert(name.clone()) {
-            continue;
-        }
-        genre_first_id.insert(name.clone(), *id);
-        genres_out.push(json!({ "label": name, "value": *id }));
-    }
+    let genres_out: Vec<Value> = list_genre_ids
+        .iter()
+        .filter_map(|id| {
+            let name = genre_zh.get(id)?;
+            Some(json!({ "label": name, "value": *id }))
+        })
+        .collect();
+    let mut genres_out = genres_out;
     genres_out.insert(0, json!({ "label": "全部", "value": null }));
 
     let iso_map: std::collections::HashMap<String, String> = iso
@@ -1189,11 +1201,25 @@ async fn mdb_tags_get(
             .map(|v| json!({ "label": v.as_str().unwrap_or(""), "value": v.as_str().unwrap_or("") }))
             .collect()
     };
+    // [lc-1805f] 动态范围中文 label（飞鲸同款：仅 DolbyVision 有中文名，其余直出）
+    let cr_label = |v: &str| -> String {
+        match v {
+            "DolbyVision" => "杜比视界".into(),
+            x => x.to_string(),
+        }
+    };
+    let color_range: Vec<Value> = arr(&tl, "color_range")
+        .iter()
+        .map(|v| {
+            let raw = v.as_str().unwrap_or("");
+            json!({ "label": cr_label(raw), "value": raw })
+        })
+        .collect();
 
     Ok(json!({
         "genres": genres_out,
         "resolutions": with_all(str_opts(arr(&tl, "resolutions"))),
-        "colorRange": with_all(str_opts(arr(&tl, "color_range"))),
+        "colorRange": with_all(color_range),
         "audioType": audio,
         "locate": locate,
         "decades": decades,
@@ -1216,11 +1242,12 @@ async fn get_items_global(
     let cfg = state.config.read().await.clone();
     let client = fnapi::new_client();
     // [lc-1805] 筛选维度透传（飞鲸口径：tags 除 type 外的九个键，全部服务端过滤）
+    // [lc-1805f] "type" 同入白名单：与 get_items 一套合并规则（影视类型行整体替换 type）
     let mut tags = json!({ "type": type_filter.unwrap_or_default() });
     if let Some(f) = filters {
         if let (Some(dst), Some(src)) = (tags.as_object_mut(), f.as_object()) {
             for k in [
-                "genres", "resolution", "color_range", "audio_type", "locate",
+                "type", "genres", "resolution", "color_range", "audio_type", "locate",
                 "decade", "recognition_status", "watched",
             ] {
                 if let Some(v) = src.get(k) {

@@ -30,6 +30,8 @@ import { WebrsPanel } from "../webrs/WebrsPanel";
 // [lc-1783] 应用内下载字幕弹窗（迅雷/assrt/OpenSubtitles 扇出，下载自动挂载）
 import { SubtitlePickerModal } from "../common/SubtitlePickerModal";
 import { fmtDur, pick } from "../../lib/format";
+// [lc-1832] 单集手动「已看」：飞牛接口降级时标记落 watched.json，这里拉本地覆盖集合
+import { loadWatchedOverrides, setWatchedOverride } from "../../lib/watched";
 import { bgmImg, imgUrl, pickLargestImg, tmdbImg } from "../../lib/images";
 import { prefersReducedMotion } from "../../lib/motion";
 import { useRefresh } from "../../hooks/useRefresh";
@@ -392,6 +394,22 @@ export function DetailView({
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [seasonIdx, setSeasonIdx] = useState(0);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
+  /* [lc-1832] 单集手动「已看」标记（剧集页分集网格/列表都可切换）：
+     · epWatchedManual：本会话的手动覆盖，**双向优先**于服务端判据 —— 手动标 false
+       也能压掉「进度≥80% 视为已看」（lc-1596）的推断；
+     · localWatched：飞牛 watched 接口降级时落在 watched.json 的 guid 集合
+       （与海报卡共用 lib/watched 单例缓存），刷新/重进详情页后仍能亮标。 */
+  const [epWatchedManual, setEpWatchedManual] = useState<Record<string, boolean>>({});
+  const [localWatched, setLocalWatched] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    let alive = true;
+    void loadWatchedOverrides().then((s) => {
+      if (alive) setLocalWatched(new Set(s));
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
   // [lc-1727] 切季时清空旧季集列表后，右栏先显示「加载中」而不是「暂无剧集」，避免误判。
   const [epsLoading, setEpsLoading] = useState(false);
   /* [版本] 当前展示的版本列表（属于 versionGuid 这个条目/集）。
@@ -2027,6 +2045,34 @@ export function DetailView({
     invoke("play_item", { guid, mediaGuid: mediaGuid || undefined }).catch((e) => setErr(String(e)));
   };
 
+  /** [lc-1832] 手动切换某集「已看」：乐观更新覆盖层 → 飞牛 item/watched（失败降级
+      watched.json 由 Rust 侧落盘），失败回滚。与海报卡同一条命令、同一个本地降级缓存。 */
+  const toggleEpWatched = async (ep: Episode, current: boolean) => {
+    const next = !current;
+    setEpWatchedManual((m) => ({ ...m, [ep.guid]: next }));
+    try {
+      const r = await invoke<{ watched: boolean; local: boolean }>("set_item_watched", {
+        guid: ep.guid,
+        watched: next,
+      });
+      setEpWatchedManual((m) => ({ ...m, [ep.guid]: !!r.watched }));
+      setWatchedOverride(ep.guid, !!r.local && !!r.watched);
+      setLocalWatched((prev) => {
+        const s = new Set(prev);
+        if (r.local && r.watched) s.add(ep.guid);
+        else s.delete(ep.guid);
+        return s;
+      });
+    } catch {
+      // 失败回滚：清掉本集的手动覆盖，回到服务端/进度判据的原样
+      setEpWatchedManual((m) => {
+        const c = { ...m };
+        delete c[ep.guid];
+        return c;
+      });
+    }
+  };
+
   /** 选集（列表行 / 网格方块共用）：先查版本；多版本弹选择器，单版本直接播。 */
   const playEpisode = async (guid: string) => {
     // [选集定位] 用户已手动选集 → 放弃尚未执行的自动定位，不再把列表拉回去。
@@ -2711,7 +2757,10 @@ export function DetailView({
                   const sub = String(bgmEp?.name_cn || bgmEp?.name || "").trim();
                   const progress =
                     ep.ts && ep.duration && ep.duration > 0 ? Math.min(100, (ep.ts / ep.duration) * 100) : 0;
-                  const seen = Number(ep.watched) === 1 || progress >= 80;
+                  // [lc-1832] 手动标记双向优先：手动 true/false 都压过服务端 watched 与「进度≥80」推断
+                  const seen =
+                    epWatchedManual[ep.guid] ??
+                    (localWatched.has(ep.guid) || Number(ep.watched) === 1 || progress >= 80);
                   const isPlaying = playingGuid === ep.guid;
                   return (
                     <div
@@ -2731,11 +2780,21 @@ export function DetailView({
                       }}
                     >
                       <span className="dv2e-cell-no">{epLabel}</span>
-                      {seen && (
-                        <span className="dv2e-cell-mark" title="已看">
-                          <IcoCheckL size={10} strokeWidth={2.4} />
-                        </span>
-                      )}
+                      {/* [lc-1832] 左上角勾标 = 手动「已看」开关：已看时常显（点击取消），
+                          未看时悬停浮现半透明勾（点击标记）。与服务端 watched/进度推断无关，
+                          手动结果写飞牛 item/watched（降级落本地 watched.json）。 */}
+                      <button
+                        type="button"
+                        className={`dv2e-cell-mark${seen ? " on" : ""}`}
+                        title={seen ? "已看（点击取消标记）" : "标记为已看"}
+                        aria-pressed={seen}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void toggleEpWatched(ep, seen);
+                        }}
+                      >
+                        <IcoCheckL size={10} strokeWidth={2.4} />
+                      </button>
                       {progress > 0 && (
                         <span className="dv2e-cell-prog" aria-hidden="true">
                           <i style={{ width: `${progress}%` }} />
@@ -2776,7 +2835,10 @@ export function DetailView({
                   ep.ts && ep.duration && ep.duration > 0 ? Math.min(100, (ep.ts / ep.duration) * 100) : 0;
                 // [lc-1596] 「已看」门槛：本地进度 **≥80%** 即视为已观看（原为 95% —— 用户要求
                 //   「观看进度超过 80 后打上已观看的标记」）。飞牛自己的 `watched=1` 仍然优先。
-                const seen = Number(ep.watched) === 1 || progress >= 80;
+                // [lc-1832] 手动标记（网格勾标/本行勾按钮）双向优先于以上判据。
+                const seen =
+                  epWatchedManual[ep.guid] ??
+                  (localWatched.has(ep.guid) || Number(ep.watched) === 1 || progress >= 80);
                 const playing = playingGuid === ep.guid;
                 /* [单集封面兜底] 优先级：飞牛单集海报 → TMDB 该集剧照 → 剧集横图 → 剧集竖版海报 → 空占位。
                    整条链路都走 imgUrl（tmdbImg 内部已走 fntvimg 代理，imgUrl 幂等直通）。 */
@@ -2809,6 +2871,20 @@ export function DetailView({
                         {seen && <span className="ep-mark seen"><IcoCheckL size={11} strokeWidth={2.2} /> 已看</span>}
                         {!seen && progress > 0 && <span className="ep-mark now">看到 {Math.round(progress)}%</span>}
                       </div>
+                      {/* [lc-1832] 手动「已看」开关：与 ⋯ 并排在剧照右上角，已看时常显高亮
+                          （点击取消）、未看时随行悬停出现。stopPropagation 防止误触播放。 */}
+                      <button
+                        type="button"
+                        className={`dv2e-watched-btn${seen ? " on" : ""}`}
+                        title={seen ? "已看（点击取消标记）" : "标记为已看"}
+                        aria-pressed={seen}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void toggleEpWatched(ep, seen);
+                        }}
+                      >
+                        <IcoCheckL size={11} strokeWidth={2.2} />
+                      </button>
                       {/* [lc-1629] 每集「元数据」入口（对齐飞牛网页端每集海报的右键菜单）：
                           编辑元数据 / 手动匹配影片 / 解除匹配 / 刷新元数据。stopPropagation 防止误触播放。 */}
                       <button

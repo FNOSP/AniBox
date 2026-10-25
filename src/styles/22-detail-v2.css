@@ -669,17 +669,43 @@
   font-size: 10.5px;
   letter-spacing: -0.2px;
 }
+/* [lc-1832] 左上角勾标从纯展示改成「已看」开关按钮：已看(.on)常显（点击取消），
+   未看时隐身、方块悬停/键盘聚焦才浮现半透明勾（与右上 ⋯ 同一交互语言）。 */
 .dv2e-cell-mark {
   position: absolute;
-  top: 4px;
-  left: 5px;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
   color: var(--muted);
+  cursor: pointer;
   opacity: 0.85;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.dv2e-cell-mark:not(.on) {
+  opacity: 0;
+}
+.dv2e-cell:hover .dv2e-cell-mark:not(.on),
+.dv2e-cell:focus-within .dv2e-cell-mark:not(.on) {
+  opacity: 0.7;
+}
+.dv2e-cell-mark:hover {
+  background: var(--hover-strong);
+  color: var(--accent);
+  opacity: 1;
 }
 .dv2e-cell.playing .dv2e-cell-mark {
+  color: #fff;
+}
+.dv2e-cell.playing .dv2e-cell-mark:hover {
+  background: rgba(255, 255, 255, 0.18);
   color: #fff;
 }
 .dv2e-cell-prog {
@@ -1063,6 +1089,43 @@
 }
 .dv2e-meta-btn:hover {
   background: rgba(0, 0, 0, 0.72);
+}
+/* [lc-1832] 列表行手动「已看」勾：⋯ 左侧的同款玻璃按钮；已看(.on)常显 accent 高亮，
+   未看时随行悬停出现（与网格方块勾标同一语义）。 */
+.dv2e-watched-btn {
+  position: absolute;
+  right: 34px;
+  top: 6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+  z-index: 2;
+}
+.dv2e-row:hover .dv2e-watched-btn,
+.dv2e-watched-btn:focus-visible {
+  opacity: 0.8;
+}
+.dv2e-watched-btn.on {
+  opacity: 0.95;
+  color: var(--accent);
+}
+.dv2e-watched-btn:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.72);
+}
+.dv2e-watched-btn.on:hover {
+  color: #fff;
 }
 
 .dv2-meta-btn {

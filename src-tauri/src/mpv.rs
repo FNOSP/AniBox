@@ -535,6 +535,16 @@ impl MpvSession {
                                 let slot = Arc::clone(&title_slot);
                                 let title_get: crate::nas_subtitle::TitleGetter =
                                     Arc::new(move || slot.lock().unwrap().clone().unwrap_or_default());
+                                // [lc-1803] 字幕记忆挂载（用户手选下载的，晚于 NAS 自动挂载后挂为主轨）
+                                {
+                                    let writer2 = Arc::clone(&writer) as crate::nas_subtitle::IpcWriter;
+                                    let app3: tauri::AppHandle = app2.clone();
+                                    crate::subtitle_memory::spawn_mount(
+                                        app3,
+                                        url_now.to_string(),
+                                        writer2,
+                                    );
+                                }
                                 crate::nas_subtitle::spawn_mount(
                                     url_now,
                                     title_get,

@@ -528,6 +528,7 @@ pub async fn subtitle_search(
 /// 返回 {path, mounted, title}。
 #[tauri::command]
 pub async fn subtitle_download(
+    app: AppHandle,
     state: tauri::State<'_, crate::AppState>,
     kind: String,
     id: String,
@@ -628,6 +629,16 @@ pub async fn subtitle_download(
                     .command(json!(["sub-add", path.to_string_lossy(), "select", title]))
                     .await
                     .is_ok();
+                // [lc-1803] 记忆（同通用分支）
+                if mounted {
+                    if let Ok(mp) = m.command(json!(["get_property", "path"])).await {
+                        if let Some(k) = mp.as_str() {
+                            if !k.trim().is_empty() {
+                                crate::subtitle_memory::remember(&app, k, &path.to_string_lossy());
+                            }
+                        }
+                    }
+                }
             }
             return Ok(json!({
                 "path": path.to_string_lossy(),
@@ -672,6 +683,16 @@ pub async fn subtitle_download(
             .command(json!(["sub-add", path.to_string_lossy(), "select", title]))
             .await
             .is_ok();
+        // [lc-1803] 记忆：同一条目（mpv path）下次起播自动重挂这份字幕
+        if mounted {
+            if let Ok(mp) = m.command(json!(["get_property", "path"])).await {
+                if let Some(k) = mp.as_str() {
+                    if !k.trim().is_empty() {
+                        crate::subtitle_memory::remember(&app, k, &path.to_string_lossy());
+                    }
+                }
+            }
+        }
     }
     Ok(json!({
         "path": path.to_string_lossy(),

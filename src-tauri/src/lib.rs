@@ -17,6 +17,7 @@ mod danmaku;
 mod danmaku_shim;
 mod danmaku_sources;
 pub mod subtitle_sources;
+mod subtitle_memory;
 mod disk_cache;
 // [lc-1651] 本地收藏（侧边栏「收藏」写入端；飞牛 item/favorite 在本机 NAS 上未实现）
 mod favorites;

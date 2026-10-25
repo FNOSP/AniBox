@@ -14,11 +14,13 @@ export async function fetchLibPage(
   libGuid: string,
   parentGuid: string | null,
   page = 1,
+  filters?: Record<string, unknown> | null,
 ): Promise<LibPage> {
   const d = await invoke<{ list?: MediaItem[] | null; total?: number }>("get_items", {
     ancestorGuid: parentGuid === null ? libGuid : null,
     parentGuid,
     page,
+    filters: filters ?? null,
   });
   return { list: d.list ?? [], total: Number(d.total ?? 0) || 0 };
 }

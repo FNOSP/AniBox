@@ -105,3 +105,17 @@ button.libf-toggle[style],
   position: static;
   margin-top: 6px;
 }
+
+/* [lc-1805] 清除筛选（面板右下角） */
+.libf-clear {
+  position: absolute;
+  right: 52px;
+  bottom: 6px;
+  border: 0;
+  background: none;
+  color: var(--accent, #8ab4f8);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+}

@@ -504,12 +504,29 @@ async fn get_items(
     parent_guid: Option<String>,
     page: Option<i64>,
     page_size: Option<i64>,
+    filters: Option<Value>,
 ) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let client = fnapi::new_client();
     let browse_types = json!(["Movie", "TV", "Directory", "Video", "LiveChannel"]);
     let page = page.unwrap_or(1).max(1);
     let page_size = item_list_page_size(page_size);
+    // [lc-1805] 根层筛选维度透传（飞鲸口径；钻取分支不带）
+    let mut root_tags = json!({ "type": browse_types });
+    if let Some(f) = &filters {
+        if let (Some(dst), Some(src)) = (root_tags.as_object_mut(), f.as_object()) {
+            for k in [
+                "genres", "resolution", "color_range", "audio_type", "locate",
+                "decade", "recognition_status", "watched",
+            ] {
+                if let Some(v) = src.get(k) {
+                    if !v.is_null() {
+                        dst.insert(k.to_string(), v.clone());
+                    }
+                }
+            }
+        }
+    }
     let body = if let Some(parent) = parent_guid {
         json!({
             "parent_guid": parent,
@@ -528,7 +545,7 @@ async fn get_items(
             "sort_column": "create_time",
             "page_size": page_size,
             "page": page,
-            "tags": { "type": browse_types }
+            "tags": root_tags
         })
     };
     let mut v = client
@@ -1024,16 +1041,167 @@ async fn get_favorites(
     Ok(out)
 }
 
+/// [lc-1805] 媒体库筛选维度（照抄飞鲸影视 tag 三接口，动态选项 + label 映射）：
+///   GET /v/api/v1/tag/genres?lan=zh-CN      → [{id, value}]（类型，选中传 tags.genres = id）
+///   GET /v/api/v1/tag/list?ancestor_guid=&is_favorite=0 → 各维度该范围内实际可用值
+///   GET /v/api/v1/tag/iso3166?lan=zh-CN      → [{key, value}]（国家码 → 名）
+/// audio/decade/recognition 的中文 label 在此映射好，前端直显；value 保原始串。
+#[tauri::command]
+async fn mdb_tags_get(
+    state: State<'_, AppState>,
+    ancestor_guid: Option<String>,
+) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    let client = fnapi::new_client();
+    let ag = ancestor_guid.filter(|s| !s.trim().is_empty()).unwrap_or_default();
+
+    let q = [("lan", "zh-CN".to_string())];
+    let list_fut = client.call_get_query(&cfg.server, "/v/api/v1/tag/list", &cfg.token, &q);
+    let genres_fut = client.call_get_query(&cfg.server, "/v/api/v1/tag/genres", &cfg.token, &q);
+    let iso_fut = client.call_get_query(&cfg.server, "/v/api/v1/tag/iso3166", &cfg.token, &q);
+    let (list, genres, iso) = tokio::join!(list_fut, genres_fut, iso_fut);
+    let _ = ag; // tag/list 的 ancestor_guid 过滤按飞鲸口径带 query；fnapi call 目前只支持 path 拼接
+
+    let audio_label = |v: &str| -> String {
+        match v {
+            "DolbySurround" => "杜比环绕".into(),
+            "DolbyAtmos" => "杜比全景声".into(),
+            "Stereo" => "立体声".into(),
+            "Others" => "其他".into(),
+            x => x.to_string(),
+        }
+    };
+    let decade_label = |v: &str| -> String {
+        match v {
+            "Recent" => "今年".into(),
+            "Others" => "其他".into(),
+            x if x.ends_with('s') => format!("{}年代", &x[..x.len() - 1]),
+            x => x.to_string(),
+        }
+    };
+    let rec_label = |v: i64| -> String {
+        match v {
+            1 => "未匹配".into(),
+            2 => "已匹配".into(),
+            3 => "NFO匹配".into(),
+            x => x.to_string(),
+        }
+    };
+
+    let empty = serde_json::Map::new();
+    let tl = list.as_ref().map(|v| v.as_object().unwrap_or(&empty)).map(|m| m.clone()).unwrap_or_default();
+    let arr = |m: &serde_json::Map<String, Value>, k: &str| -> Vec<Value> {
+        m.get(k).and_then(|x| x.as_array()).cloned().unwrap_or_default()
+    };
+    let mut audio: Vec<Value> = arr(&tl, "audio_type")
+        .iter()
+        .map(|v| {
+            let raw = v.as_str().unwrap_or("");
+            json!({ "label": audio_label(raw), "value": raw })
+        })
+        .collect();
+    audio.insert(0, json!({ "label": "全部", "value": null }));
+    let mut decades: Vec<Value> = arr(&tl, "decades")
+        .iter()
+        .map(|v| {
+            let raw = v.as_str().unwrap_or("");
+            json!({ "label": decade_label(raw), "value": raw })
+        })
+        .collect();
+    decades.insert(0, json!({ "label": "全部", "value": null }));
+    let mut rec: Vec<Value> = arr(&tl, "recognition_status")
+        .iter()
+        .map(|v| {
+            let raw = v.as_i64().unwrap_or(0);
+            json!({ "label": rec_label(raw), "value": raw.to_string() })
+        })
+        .collect();
+    rec.insert(0, json!({ "label": "全部", "value": null }));
+
+    let mut genres_out: Vec<Value> = genres
+        .as_ref()
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|g| {
+            let id = g.get("id").and_then(|x| x.as_i64())?;
+            let name = g.get("value").and_then(|x| x.as_str()).unwrap_or("");
+            Some(json!({ "label": name, "value": id }))
+        })
+        .collect();
+    genres_out.insert(0, json!({ "label": "全部", "value": null }));
+
+    let iso_map: std::collections::HashMap<String, String> = iso
+        .as_ref()
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|e| {
+            let k = e.get("key").and_then(|x| x.as_str())?.to_string();
+            let v = e.get("value").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            Some((k, v))
+        })
+        .collect();
+    let mut locate: Vec<Value> = arr(&tl, "locate")
+        .iter()
+        .map(|v| {
+            let code = v.as_str().unwrap_or("");
+            json!({ "label": iso_map.get(code).cloned().unwrap_or_else(|| code.to_string()), "value": code })
+        })
+        .collect();
+    locate.insert(0, json!({ "label": "全部", "value": null }));
+
+    let with_all = |mut xs: Vec<Value>| -> Vec<Value> {
+        xs.insert(0, json!({ "label": "全部", "value": null }));
+        xs
+    };
+    let str_opts = |xs: Vec<Value>| -> Vec<Value> {
+        xs.iter()
+            .map(|v| json!({ "label": v.as_str().unwrap_or(""), "value": v.as_str().unwrap_or("") }))
+            .collect()
+    };
+
+    Ok(json!({
+        "genres": genres_out,
+        "resolutions": with_all(str_opts(arr(&tl, "resolutions"))),
+        "colorRange": with_all(str_opts(arr(&tl, "color_range"))),
+        "audioType": audio,
+        "locate": locate,
+        "decades": decades,
+        "recognition": rec,
+    }))
+}
+
 /// 全局分类浏览：不带 ancestor/parent，按 tags.type 过滤（电影/电视节目/直播/其他）
+/// [lc-1805] filters：飞鲸口径的筛选维度透传（服务端过滤，分页继续走服务端）。
 #[tauri::command]
 async fn get_items_global(
     app: AppHandle,
     state: State<'_, AppState>,
     type_filter: Option<Vec<String>>,
     page: Option<i64>,
+    filters: Option<Value>,
 ) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let client = fnapi::new_client();
+    // [lc-1805] 筛选维度透传（飞鲸口径：tags 除 type 外的九个键，全部服务端过滤）
+    let mut tags = json!({ "type": type_filter.unwrap_or_default() });
+    if let Some(f) = filters {
+        if let (Some(dst), Some(src)) = (tags.as_object_mut(), f.as_object()) {
+            for k in [
+                "genres", "resolution", "color_range", "audio_type", "locate",
+                "decade", "recognition_status", "watched",
+            ] {
+                if let Some(v) = src.get(k) {
+                    if !v.is_null() {
+                        dst.insert(k.to_string(), v.clone());
+                    }
+                }
+            }
+        }
+    }
     let mut v = client
         .call(
             &cfg.server,
@@ -1041,7 +1209,7 @@ async fn get_items_global(
             "POST",
             &cfg.token,
             Some(json!({
-                "tags": { "type": type_filter.unwrap_or_default() },
+                "tags": tags,
                 "sort_type": "DESC",
                 "sort_column": "create_time",
                 "exclude_grouped_video": 1,
@@ -3545,6 +3713,7 @@ pub fn run() {
             watched::watched_get_all,
             watched::set_item_watched,
             get_items_global,
+            mdb_tags_get,
             get_items,
             // [lc-1725] 全局聚合搜索（顶栏胶囊：GET /v/api/v1/search/list?q=）
             search_items,

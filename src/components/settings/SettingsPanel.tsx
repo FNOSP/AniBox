@@ -531,6 +531,23 @@ export function SettingsPanel({
       setShaderNote(String(e));
     }
   };
+  /* [lc-1870] 画面预设：与播放器右键菜单同一套 lua 编排（picture-preset）。
+     mpv 侧无属性可查当前预设，故仅回显本次会话内选择，不做跨会话回显。 */
+  const [picturePreset, setPicturePreset] = useState<"" | "anime" | "drama" | "off">("");
+  const [pictureNote, setPictureNote] = useState("");
+  const setPicture = async (preset: "anime" | "drama" | "off") => {
+    setPicturePreset(preset);
+    try {
+      const r = await invoke<{ applied: boolean }>("set_picture_preset", { preset });
+      const label =
+        preset === "anime" ? "动漫" : preset === "drama" ? "真人剧集" : "关闭";
+      setPictureNote(
+        `已切换画面预设：${label}` + (r?.applied ? "，本次播放已生效" : "（当前未在播放，起播后请重新选择）"),
+      );
+    } catch (e) {
+      setPictureNote(String(e));
+    }
+  };
   useEffect(() => {
     setMpvLocalPath(settings.mpvPath ?? "");
   }, [settings.mpvPath]);
@@ -1798,11 +1815,42 @@ export function SettingsPanel({
                         { value: "a4", label: "模式B+B（高质量）" },
                         { value: "light", label: "轻量模式（低配）" },
                         { value: "denoise", label: "仅降噪" },
+                        { value: "live", label: "模式真人（FSRCNNX 锐化）" },
                       ]}
                       onChange={(v) => void setShader(v)}
                     />
                   </div>
                   {shaderNote && <span className="set-note">{shaderNote}</span>}
+                  {/* [lc-1870] 画面预设：与播放器右键菜单「画面预设」同一套 lua 编排，
+                      一键切换 着色器 + 超分 + MVTools 补帧；沿用 .set-row-col/.set-btn-row 紧凑布局 */}
+                  <div className="set-row set-row-col" style={{ paddingLeft: 4 }}>
+                    <div className="set-btn-row">
+                      <span className="set-k" style={{ flex: "none" }}>画面预设</span>
+                      {(
+                        [
+                          ["anime", "动漫", "Anime4K A+A + MVTools 补帧"],
+                          ["drama", "真人剧集", "FSRCNNX 锐化 + MVTools 补帧"],
+                          ["off", "关闭", "关闭着色器/超分/补帧（省电）"],
+                        ] as const
+                      ).map(([val, label, title]) => (
+                        <button
+                          key={val}
+                          type="button"
+                          className={`sub-cred-btn${picturePreset === val ? " on" : ""}`}
+                          title={title}
+                          onClick={() => void setPicture(val)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="set-desc">
+                      一键切换画质编排，与播放器右键「画面预设」同一套逻辑（着色器 + 超分 + 补帧）。
+                      动漫 = Anime4K A+A + MVTools 补帧；真人剧集 = FSRCNNX 锐化 + MVTools 补帧；
+                      关闭 = 全关省电。播放中即时生效。
+                    </span>
+                    {pictureNote && <span className="set-note">{pictureNote}</span>}
+                  </div>
                   {playerKind === "potplayer" && (
                     <>
                       <div className="set-row set-row-col">
@@ -2938,6 +2986,8 @@ function AiEnhanceRow() {
     defaultOn: boolean;
     superresDmlReady: boolean;
     tensorrtReady: boolean;
+    rifeDmlReady: boolean;
+    mvtoolsReady: boolean;
     superresEngine: string;
     qualityTier: string;
     gpu?: string;
@@ -2956,6 +3006,8 @@ function AiEnhanceRow() {
       defaultOn: boolean;
       superresDmlReady: boolean;
       tensorrtReady: boolean;
+      rifeDmlReady: boolean;
+      mvtoolsReady: boolean;
       superresEngine: string;
       qualityTier: string;
       gpu?: string;
@@ -3075,7 +3127,8 @@ function AiEnhanceRow() {
         )}
       </div>
       {/* [lc-1825] 画质档位联动补帧（LumiPlayer 口径） */}
-      <div className="set-row" style={{ gap: 10, paddingLeft: 4 }}>
+      <div className="set-row set-row-col" style={{ paddingLeft: 4 }}>
+        <div className="set-btn-row">
         <span className="set-k" style={{ flex: "none" }}>运动平滑</span>
         {(
           [
@@ -3101,7 +3154,8 @@ function AiEnhanceRow() {
             </button>
           );
         })}
-        <span className="set-desc" style={{ flex: 1, minWidth: 0 }}>
+        </div>
+        <span className="set-desc">
           运动平滑（插帧）= 在帧间补新帧，**动起来更顺滑**，不提高清晰度。
           极致/均衡 = 开插值平滑；流畅 = 关闭省 GPU。手动选 RIFE/N 卡引擎时以引擎为准。
         </span>
@@ -3116,40 +3170,49 @@ function AiEnhanceRow() {
           </span>
         </div>
       ) : null}
-      <div className="set-row" style={{ gap: 10, paddingLeft: 4 }}>
+      <div className="set-row set-row-col" style={{ paddingLeft: 4 }}>
+        <div className="set-btn-row">
         <span className="set-k" style={{ flex: "none" }}>插帧引擎</span>
         {(
           [
             ["builtin", "内置平滑"],
             ["rife", "RIFE AI 2×"],
+            ["mvtools", "MVTools 60FPS"],
             ["nvidia", "N 卡 SM"],
           ] as const
         ).map(([val, label]) => {
           const cur = status?.engine ?? "auto";
           const on = cur === val || (cur === "auto" && val === "builtin");
-          const rifeLocked = val === "rife" && !status?.ready;
+          const rifeLocked = val === "rife" && !status?.ready && !status?.rifeDmlReady;
+          const mvtoolsLocked = val === "mvtools" && !status?.mvtoolsReady;
           const nvidiaDead = val === "nvidia"; // [lc-1860] 实测紫屏冲突，禁用
           return (
             <button
               key={val}
               type="button"
               className={`sub-cred-btn${on ? " on" : ""}`}
-              style={{ opacity: rifeLocked || nvidiaDead ? 0.4 : 1 }}
+              style={{ opacity: rifeLocked || mvtoolsLocked || nvidiaDead ? 0.4 : 1 }}
               title={
                 nvidiaDead
                   ? "实测禁用：内核 Vulkan 呈现上下文与驱动帧生成冲突（画面紫屏/黑屏）——1080P 补帧请改用内置平滑，720P 可用 RIFE"
                   : rifeLocked
                     ? "RIFE：AI 在帧间补新帧，效果最好——需先下载 AI 增强组件"
                     : val === "rife"
-                      ? "RIFE：AI 在帧间补新帧，效果最好。硬性要求：720P 源需 RTX4060/RX6600 级以上；1080P 源实测 RTX5070 都跟不上（跟不上会自动回退）"
-                      : "内置平滑：MPV 自带时间插值，零开销，效果一般"
+                      ? "RIFE：AI 在帧间补新帧，效果最好（优先 DirectML，其次 ncnn Vulkan）。跟不上实时会自动降级 MVTools 60FPS"
+                      : mvtoolsLocked
+                        ? "MVTools：真实运动补偿补帧，廉价全显卡——需随包 mvtools.dll（待补）"
+                        : val === "mvtools"
+                          ? "MVTools：运动补偿补帧到 2×（24→48/30→60），代价低、全显卡；RIFE 跟不上时的兜底档"
+                          : "内置平滑：MPV 自带时间插值，零开销，效果一般"
               }
               onClick={() =>
                 nvidiaDead
                   ? setErr("N 卡 Smooth Motion 实测与内核冲突（紫屏/黑屏），已禁用——请用内置平滑或 RIFE（720P）")
                   : rifeLocked
                     ? setErr("RIFE 档需先下载 AI 增强组件")
-                    : void pickEngine(val)
+                    : mvtoolsLocked
+                      ? setErr("MVTools 档需随包 mvtools.dll（当前缺失，待补）")
+                      : void pickEngine(val)
               }
             >
               {label}
@@ -3164,7 +3227,8 @@ function AiEnhanceRow() {
         >
           {status?.defaultOn ? "播放时自动开 ✓" : "播放时自动开"}
         </button>
-        <span className="set-desc" style={{ flex: 1, minWidth: 0 }}>
+        </div>
+        <span className="set-desc">
           插帧 = 动起来更顺滑（不提高清晰度）。引擎切换下次播放生效；
           正在播放时用播放器右键「AI增强 › 插帧 开/关」实时切。
         </span>
@@ -3195,7 +3259,8 @@ function AiEnhanceRow() {
           </span>
         </div>
       )}
-      <div className="set-row" style={{ gap: 10, paddingLeft: 4 }}>
+      <div className="set-row set-row-col" style={{ paddingLeft: 4 }}>
+        <div className="set-btn-row">
         <span className="set-k" style={{ flex: "none" }}>AI 超分引擎</span>
         {(
           [
@@ -3232,7 +3297,8 @@ function AiEnhanceRow() {
             </button>
           );
         })}
-        <span className="set-desc" style={{ flex: 1, minWidth: 0 }}>
+        </div>
+        <span className="set-desc">
           AI 超分限 SDR 且源 ≤1920x1200，超限自动跳过回退 GLSL 链。
         </span>
       </div>

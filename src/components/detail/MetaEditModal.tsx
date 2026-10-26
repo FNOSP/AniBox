@@ -168,18 +168,66 @@ export function MetaEditModal({
     }
   }, [keyword, source, target.guid]);
 
-  // 应用匹配。[lc-1728] 改为「本地覆盖先行」——此前只走飞牛 rescrap：NAS 侧失败/无可见
-  // 变化时整个动作就"没反应"（错误只有弹层底部一行小字）。现在：
-  //   ① 先把选中结果写进**本地元数据覆盖**（键 = 剧 guid，字段与 metadata_override 对齐：
-  //     标题/首播日期；overview/海报等命中里没有的字段留空 = 不覆盖），成功后立即关闭弹层
-  //     并让详情页带 force 重取 —— 覆盖当场可见；失败则留在弹层内报红。
-  //   ② 再 best-effort 让飞牛 rescrap 重刮（请求体仍按 [lc-1632] 实测对齐）；失败只
-  //     console.warn + 轻提示，**不影响本地已生效的结果**。
+  // 应用匹配。
+  // [lc-1728] 剧/电影目标：**本地覆盖先行** —— 先把选中结果写进剧级 metadata override
+  //   （标题/首播日期），成功即刷新详情、覆盖当场可见；再 best-effort 让飞牛 rescrap。
+  // [lc-1862] 集目标：**不再写剧级覆盖**。此前单集匹配写的是「剧 guid」的覆盖，会把
+  //   整部剧的标题（tv_title）改成命中项、而该集自身标题/简介/剧照仍不变 —— 与飞牛
+  //   官方「单集匹配只改该集」的行为不一致（用户报「和飞牛官方版不一样」）。现改为：
+  //   只提交飞牛 `scrap/rescrap`（异步后台刮削，只作用于该集），把**真实失败原因**
+  //   （HTTP 状态码 + 业务 code + msg，见 fnapi::call_inner）显示在弹层内；提交后延时
+  //   多次强制刷新，让异步刮削结果尽快反映到详情页。
   const onApply = useCallback(
     async (hit: ScrapHit) => {
       const seriesGuid = String(target.seriesGuid || target.guid || "").trim();
       const hitTitle = String(hit.title ?? "").trim() || target.title;
       const hitDate = String(hit.first_air_date ?? "").trim();
+
+      // rescrap 请求体逐字段照 [lc-1632] 实测对齐（source/source_id 原样透传、media_guids 空、
+      // 集级带季/集号 + scrap_tv_type=SingleEpisode）。
+      const buildArgs = (): Record<string, unknown> => {
+        const args: Record<string, unknown> = {
+          itemGuid: target.guid,
+          sourceId: hit.source_id ?? "",
+          source: hit.source ?? "",
+          type: hit.type || target.type,
+          mediaGuids: [],
+        };
+        if (target.isEpisode) {
+          args.seasonNumber = season;
+          args.episodeNumber = episode;
+          args.scrapTvType = "SingleEpisode";
+        }
+        return args;
+      };
+
+      // ── 集级匹配：只走飞牛异步 rescrap，不写剧级覆盖（避免整部剧被改名）──
+      if (target.isEpisode) {
+        setBusy("match");
+        setErr("");
+        try {
+          await invoke("scrap_rescrap", buildArgs());
+        } catch (e) {
+          const m = String(e);
+          // 飞牛 rescrap 为异步任务：上一轮还没刮完就再点会返回 `code=-14 Task duplicate`。
+          fail(
+            /duplicate/i.test(m)
+              ? "飞牛已有刮削任务在进行，请稍后点『刷新元数据』查看结果"
+              : `飞牛重新匹配失败：${m}`,
+          );
+          setBusy("");
+          return;
+        }
+        setBusy("");
+        onClose();
+        showAppToast("已提交飞牛重新匹配（后台刮削，稍后自动刷新该集）");
+        // 异步刮削：延时多次强制刷新（refreshAll 会带 force 重取季/集），尽快反映结果。
+        window.setTimeout(() => onDone(), 2500);
+        window.setTimeout(() => onDone(), 7000);
+        return;
+      }
+
+      // ── 剧/电影级匹配：本地覆盖先行 ──
       setBusy("match");
       setErr("");
       try {
@@ -199,25 +247,18 @@ export function MetaEditModal({
       setBusy("");
       onDone(); // 详情页带 force 重取，覆盖立即生效
       onClose(); // 匹配已应用，关闭弹层
-      // ② best-effort：飞牛按选中结果重新刮削（rescrap 请求体逐字段照 [lc-1632] 实测）。
-      //    弹层此时已卸载，这里不得再碰任何组件状态。
+      // ② best-effort：飞牛按选中结果重新刮削（请求体逐字段照 [lc-1632] 实测）。
+      //    弹层此时已卸载，这里不得再碰任何组件状态；失败只提示真实原因，不影响本地覆盖。
       try {
-        const args: Record<string, unknown> = {
-          itemGuid: target.guid,
-          sourceId: hit.source_id ?? "",
-          source: hit.source ?? "",
-          type: hit.type || target.type,
-          mediaGuids: [],
-        };
-        if (target.isEpisode) {
-          args.seasonNumber = season;
-          args.episodeNumber = episode;
-          args.scrapTvType = "SingleEpisode";
-        }
-        await invoke("scrap_rescrap", args);
+        await invoke("scrap_rescrap", buildArgs());
       } catch (e) {
-        console.warn("[MetaEditModal] 飞牛 rescrap 回填失败（本地覆盖已生效）:", e);
-        showAppToast("本地匹配已生效；飞牛重新匹配失败（可稍后重试）");
+        const m = String(e);
+        showAppToast(
+          /duplicate/i.test(m)
+            ? "本地匹配已生效；飞牛已有刮削任务在进行，稍后刷新查看"
+            : `本地匹配已生效；飞牛重新匹配失败：${m}`,
+        );
+        console.warn("[MetaEditModal] 飞牛 rescrap 失败（本地覆盖已生效）:", e);
       }
     },
     [target, season, episode, onDone, onClose],
@@ -353,9 +394,9 @@ export function MetaEditModal({
               </ul>
             )}
             <p className="meta-dim">
-              点「用此匹配」先把选中结果写入本地覆盖（立即生效并刷新详情），再让飞牛按该结果重新刮削
-              （rescrap 请求体按飞牛网页端实测对齐：source/source_id 取自选中结果、media_guids 为空、
-              集级匹配带季/集号与 scrap_tv_type=SingleEpisode；飞牛失败不影响本地）。
+              点「用此匹配」：剧/电影条目先把选中结果写入本地覆盖（立即生效并刷新详情），再让飞牛按该结果重新刮削；
+              单集匹配只提交飞牛重新刮削（后台异步、只改该集，不动整部剧）。飞牛失败时在此显示具体原因
+              （HTTP 状态码 + 业务码 + 消息）；本地剧/电影覆盖不受飞牛失败影响。
             </p>
           </section>
 

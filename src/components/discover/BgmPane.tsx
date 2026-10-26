@@ -36,12 +36,18 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
   useEffect(() => {
     daysRef.current = days;
   }, [days]);
+  // [lc-1862] 库索引刷新令牌：手动 ⟳ / 顶栏刷新时自增 → useLibIndex 绕过会话缓存重拉一次
+  // （此前索引会话内只拉一次，新入库的剧会被旧索引判成「不在库」）。
+  const [libNonce, setLibNonce] = useState(0);
   // 库标题索引：与日历**并行**拉（不阻塞列表；没回来就先按普通列表渲染，回来再补标签/分组）
-  const lib = useLibIndex(active);
+  const lib = useLibIndex(active, libNonce);
   // [lc-1563] 点开统一入口：先查库索引 —— 命中（已在库）→ 开库内条目（真 guid，可播）；
   // 未命中 → 保持原链路（discover-* 占位详情，无源时右栏为在线资源面板）。
+  // [lc-1862] 中文名优先；中文名没命中再试日文原名（库标题偶尔直接存原名）。
   const openBgm = (it: BgmCalendarItem) => {
-    const hit = resolveLibItem(lib.byTitle, it.name_cn || it.name);
+    const hit =
+      resolveLibItem(lib.byTitle, it.name_cn || it.name) ||
+      (it.name_cn ? resolveLibItem(lib.byTitle, it.name) : null);
     // [lc-1564] onOpenLib 兜底：极端混版（热更半套）下缺回调也不让点击抛错，退原链路
     if (hit && onOpenLib) onOpenLib(hit);
     else onOpen(it);
@@ -92,6 +98,7 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
     reportBusy("bgm", true);
     forceRef.current = true;
     setNonce((n) => n + 1);
+    setLibNonce((n) => n + 1); // [lc-1862] 顺带重拉库索引（新入库的剧要能立刻判「在库」）
   }, [active, refreshTick, reportBusy]);
 
   // [lc-1580] 本地追番表（subject_id → 收藏类型）：算「今日已追订阅更新」用。
@@ -212,14 +219,22 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
   };
   const wdCn = WEEKDAYS.find((w) => w.id === wd)?.cn ?? "";
   // 逐条匹配：loading/partial 只给"命中"打标；只有 ok（索引完整）才敢分组和标"不在库"
-  const withLib = lib.state === "ok" || lib.state === "partial";
-  const rows = dayItems.map((it, i) => ({
-    it,
-    rank: i + 1, // 序号 = 该天列表内的位置（分组重排后也保持原序）
-    inLib: withLib ? libHasTitle(lib.titles, it.name_cn || it.name) : false,
-  }));
-  const inRows = rows.filter((r) => r.inLib);
-  const outRows = rows.filter((r) => !r.inLib);
+  // [lc-1862] 结果按 (当天条目, 库索引) 记忆：相似度兜底要跑 LCS，避免每次 render 重算。
+  const { rows, inRows, outRows } = useMemo(() => {
+    const withLib = lib.state === "ok" || lib.state === "partial";
+    // [lc-1862] 中文名优先；中文名没命中再试日文原名（库标题偶尔直接存原名）
+    const rowInLib = (it: BgmCalendarItem): boolean => {
+      if (!withLib) return false;
+      if (libHasTitle(lib.titles, it.name_cn || it.name)) return true;
+      return !!it.name_cn && libHasTitle(lib.titles, it.name);
+    };
+    const list = dayItems.map((it, i) => ({
+      it,
+      rank: i + 1, // 序号 = 该天列表内的位置（分组重排后也保持原序）
+      inLib: rowInLib(it),
+    }));
+    return { rows: list, inRows: list.filter((r) => r.inLib), outRows: list.filter((r) => !r.inLib) };
+  }, [dayItems, lib]);
   const renderRow = (r: (typeof rows)[number]) => (
     <BgmCalRow
       key={r.it.id}
@@ -245,6 +260,7 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
           onClick={() => {
             forceRef.current = true;
             setNonce((n) => n + 1);
+            setLibNonce((n) => n + 1); // [lc-1862] 手动刷新同时重拉库索引
           }}
         >
           ⟳
@@ -323,6 +339,7 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
                 // 失败重试：force + noEtag（强制全量重拉，别拿坏缓存反复撞）
                 hardRef.current = true;
                 setNonce((n) => n + 1);
+                setLibNonce((n) => n + 1); // [lc-1862] 库索引一起重试
               }}
             >
               重试
@@ -349,9 +366,11 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
           </>
         )}
       </div>
-      {/* [lc-1589] 「总表查询」弹窗（往季番表，[lc-1605] 数据改走 BGM 镜像 /v0/subjects） */}
+      {/* [lc-1589] 「总表查询」弹窗（往季番表，[lc-1605] 数据改走 BGM 镜像 /v0/subjects）
+          [lc-1862] 点条目必须走 openBgm（先查库索引）——此前直接传 onOpen，在库条目
+          也会落成 discover-* 占位详情（看起来就是「不在库」）。 */}
       {arcOpen && (
-        <SeasonArchive onClose={() => setArcOpen(false)} onOpenItem={onOpen} />
+        <SeasonArchive onClose={() => setArcOpen(false)} onOpenItem={openBgm} />
       )}
     </section>
   );

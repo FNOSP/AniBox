@@ -1,60 +1,18 @@
-/* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
-import { useEffect, useState } from "react";
+/* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。
+ * [lc-1862] 标题归一化/匹配抽到 `lib/libMatch.ts`（纯函数，可被静态脚本直接验证）；
+ * 本文件保留库索引拉取与 React Hook。对外仍从本文件导出这些函数，调用方无需改 import。 */
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { MediaItem } from "../types";
+import type { MediaItem } from "../types";
+import { libHasTitle, normTitle, resolveLibItem } from "../lib/libMatch";
+
+export { libHasTitle, normTitle, resolveLibItem };
 
 export const LIB_INDEX_PAGE = 60; // get_items_global 的 page_size 在 Rust 侧固定 60
 
 export const LIB_INDEX_MAX_PAGES = 8; // 上限 480 部；不足一页才算"到底"
 
 export const LIB_WHITELIST_TYPES = ["Movie", "TV"]; // 只要已识别的电影/剧集（排除文件夹/未识别视频）
-
-/** 归一化标题：NFKC（全角→半角）+ 小写 + 去掉空白/标点/符号（只留字母数字与汉字） */
-
-export function normTitle(raw?: string | null): string {
-  return String(raw ?? "")
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/[\s\p{P}\p{S}]/gu, "");
-}
-
-/** 标题是否命中库索引：先全等，再前缀兜底（「我推的孩子」↔「我推的孩子 第三季」这类季/篇后缀差异） */
-
-export function libHasTitle(titles: Set<string>, raw?: string | null): boolean {
-  const n = normTitle(raw);
-  if (n.length < 2) return false;
-  if (titles.has(n)) return true;
-  for (const t of titles) {
-    if (t.length >= 3 && n.length >= 3 && (t.startsWith(n) || n.startsWith(t))) return true;
-  }
-  return false;
-}
-
-/** [lc-1563] 解析到库内条目（点开用）：与 libHasTitle 同口径（先全等、再前缀兜底）；
- *  前缀命中多个时取「归一化标题与查询串长度最接近」的一个，避免季/篇后缀挑错。
- *  未命中返回 null —— 调用方维持原链路（Bangumi 占位详情）。 */
-
-export function resolveLibItem(byTitle: Map<string, MediaItem>, raw?: string | null): MediaItem | null {
-  // [lc-1564] 旧形状索引（热更残留）没有 byTitle —— 视为未命中、绝不抛错（点击路径的底线）
-  if (!byTitle) return null;
-  const n = normTitle(raw);
-  if (n.length < 2) return null;
-  const exact = byTitle.get(n);
-  if (exact) return exact;
-  let best: MediaItem | null = null;
-  let bestD = Number.POSITIVE_INFINITY;
-  for (const [t, it] of byTitle) {
-    if (t.length >= 3 && n.length >= 3 && (t.startsWith(n) || n.startsWith(t))) {
-      const d = Math.abs(t.length - n.length);
-      if (d < bestD) {
-        best = it;
-        bestD = d;
-      }
-    }
-  }
-  return best;
-}
-
 
 export type LibIndexState = "loading" | "ok" | "partial" | "none";
 
@@ -66,19 +24,25 @@ export type LibIndex = { state: LibIndexState; titles: Set<string>; byTitle: Map
 
 export let libIndexCache: LibIndex | null = null;
 
-/** 库标题索引（active 即拉，与日历并行；不阻塞列表渲染） */
-
-export function useLibIndex(active: boolean): LibIndex {
+/** 库标题索引（active 即拉，与日历并行；不阻塞列表渲染）
+ *
+ *  [lc-1862] `nonce`：手动刷新（⟳ / 顶栏刷新）时自增 → 绕过会话缓存重拉一次。
+ *  此前索引只在会话内拉一次、永不更新：用户新入库的剧在发现页仍按旧索引判「不在库」。 */
+export function useLibIndex(active: boolean, nonce = 0): LibIndex {
   const [idx, setIdx] = useState<LibIndex>(
     () => libIndexCache ?? { state: "loading", titles: new Set(), byTitle: new Map() },
   );
   // [lc-1564] 旧形状防御：热更残留的索引可能没有 byTitle —— ① 下游永远拿到形状完整的对象；
   // ② stale 进依赖数组，配合下面「采纳有效缓存」把索引自愈成新形状（正常会话恒为 no-op）。
   const stale = !idx.byTitle;
+  // [lc-1862] 记住上一次消费的刷新令牌：只有 nonce 变化才强制重拉（active 来回切仍走缓存）
+  const lastNonceRef = useRef(nonce);
   useEffect(() => {
     if (!active) return;
+    const force = nonce !== lastNonceRef.current;
+    lastNonceRef.current = nonce;
     // [lc-1564] 缓存有效性以 byTitle 为准；旧形状缓存（无 byTitle）不认，强制重拉
-    if (libIndexCache && libIndexCache.byTitle) {
+    if (!force && libIndexCache && libIndexCache.byTitle) {
       if (stale) setIdx(libIndexCache); // 热更残留：state 落后于缓存 → 直接采纳，免等一次网络
       return;
     }
@@ -108,11 +72,13 @@ export function useLibIndex(active: boolean): LibIndex {
           }
         }
       } catch {
-        if (alive) setIdx({ state: "none", titles: new Set(), byTitle: new Map() }); // 失败不写缓存（下次进来重试）
+        // [lc-1862] 刷新失败时保留已有索引（别因为一次网络抖动把「在库」全翻成「不在库」）；
+        // 首次拉取失败仍落 none，下次进页面重试。
+        if (alive && !libIndexCache) setIdx({ state: "none", titles: new Set(), byTitle: new Map() });
         return;
       }
       if (titles.size === 0) {
-        if (alive) setIdx({ state: "none", titles: new Set(), byTitle: new Map() });
+        if (alive && !libIndexCache) setIdx({ state: "none", titles: new Set(), byTitle: new Map() });
         return;
       }
       const next: LibIndex = { state: complete ? "ok" : "partial", titles, byTitle };
@@ -122,7 +88,7 @@ export function useLibIndex(active: boolean): LibIndex {
     return () => {
       alive = false;
     };
-  }, [active, stale]);
+  }, [active, stale, nonce]);
   return stale ? { ...idx, byTitle: new Map() } : idx;
 }
 

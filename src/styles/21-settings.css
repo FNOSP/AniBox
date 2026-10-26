@@ -537,6 +537,21 @@
   align-items: stretch;
   gap: 6px;
 }
+/* [lc-1861] 引擎/档位按钮组：允许换行 + 等尺寸，避免新增按钮把整行横向挤爆、
+   进而把右侧 .set-desc 压成极窄竖条导致整块纵向拉长。描述文字另起一行占满宽度。 */
+.set-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+/* 组内按钮取消 .sub-cred-btn 的 margin-left:auto（那是为右对齐单按钮设计的），
+   并统一最小宽度，使多按钮视觉等尺寸、换行整齐。 */
+.set-btn-row .sub-cred-btn {
+  margin-left: 0;
+  min-width: 96px;
+  text-align: center;
+}
 /* ── [bili-qr] B 站扫码登录：二维码居中展示（SVG data URI，后端生成） ── */
 .set-qr {
   display: flex;

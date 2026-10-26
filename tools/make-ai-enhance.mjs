@@ -11,15 +11,25 @@ const SRC = path.join(process.env.APPDATA, "com.anibox.app", "ai-enhance");
 const OUT_DIR = path.resolve("release", "ai-enhance");
 const REQUIRED = [
   "vs/rife.vpy",
+  "vs/rife_dml.vpy",
+  "vs/mvtools.vpy",
   "vs/superres.vpy",
   "vs/superres_trt.vpy",
   "runtime/Lib/site-packages/vapoursynth/vsscript.dll",
   "runtime/libvapoursynth.dll",
   "runtime/plugins/librife.dll",
   "runtime/plugins/MiscFilters.dll",
+  // MVTools 运动补偿补帧插件（官方 VapourSynth mvtools v24 win64 预编译版）。
+  // 来源：https://github.com/dubhater/vapoursynth-mvtools/releases/tag/v24
+  //   vapoursynth-mvtools-v24-win64.7z → libmvtools.dll（重命名为 mvtools.dll）
+  //   12,674,089 字节（≈12.1MB），x64 PE（machine=0x8664），导出 VapourSynthPluginInit
+  //   （API3，R79 兼容），SHA-256 530a2f003901a7c0…（与 vsrepo 官方清单一致）。
+  // 注意：v25+ 官方 release 不含 Windows 二进制，故 Windows x64 以 v24 为准。
+  "runtime/plugins/mvtools.dll",
   "runtime/plugins/vsort.dll",
   "runtime/plugins/vsort/onnxruntime.dll",
   "runtime/plugins/vsort/DirectML.dll",
+  "runtime/plugins/models/rife_v2/rife_v4.6.onnx",
   "runtime/Lib/site-packages/vsmlrt.py",
   "runtime/models/rife-v4.6/flownet.bin",
   "runtime/models/rife-v4.6/flownet.param",

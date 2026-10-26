@@ -25,7 +25,12 @@
 .dv2-right {
   min-width: 0;
   position: sticky; /* 右栏跟随：左列很长时选集始终在视野内 */
-  top: 54px;        /* = .detail-full 顶部 padding（悬浮标题栏 40px + 14px） */
+  /* [fix-ep-bottom] top 必须写 0（不是 54）：sticky 偏移量是相对**滚动容器内容盒**量的，
+     而 main.detail-full 已有 padding-top:54px（悬浮标题栏 40 + 14），内容盒顶边本就在视口 y=54。
+     旧写法 top:54 把 54 又叠在 padding 之上 → 右栏实际从 y=108 起（比左列低 54px），
+     再配 max-height:100vh-70 → 右栏底边落到 100vh+38，选集最后一排被视口底边切掉（用户报障：
+     161–164 集只露一半）。改 top:0 后右栏从 y=54 起、底边 100vh-16，最后一排完整可见。 */
+  top: 0;
   display: flex;
   flex-direction: column;
   /* [lc-1419] gap 归零：头部与列表是**同一张卡片的两块**，留缝就又把它们切开了 */
@@ -589,7 +594,12 @@
 }
 .dv2e-list {
   min-height: 0;         /* 关键：让它能在右栏 max-height 内滚动，而不是把右栏撑高 */
-  max-height: calc(100vh - 160px);
+  /* [fix-ep-bottom] 去掉脆弱的 max-height:calc(100vh-160px) 魔数（它假设头部高 90px，
+     头部一变高——版本行/多季轨道/meta 换行——列表底边就会溢出视口把最后一排切掉）。
+     改为让列表填充右栏（.dv2-right 已被 max-height:calc(100vh-70px) 封顶）：
+     flex:0 1 auto = 内容高则收缩、内容短则不拉伸；配合 min-height:0 即可精确贴合可用高度。 */
+  flex: 0 1 auto;
+  max-height: none;
   overflow-y: auto;
   /* [lc-1419] 只画左右下三边（上边由头部承担）—— 两块拼成一张卡片，交界处不再有双线 */
   border: 1px solid var(--line);
@@ -609,7 +619,9 @@
    方块 1:1、集号居中；当前集 accent 渐变反白；已看弱化 + 左上勾标；
    有进度时底部 3px 细条。 */
 .dv2e-list-grid {
-  padding: 12px;
+  /* [fix-ep-bottom] 底部留出安全内边距：滚到底时最后一排不再贴着滚动容器的下边框/视口底边，
+     并顺带避开右下角可能悬浮的控件。左右上仍为 12px 保持网格与列表行一致。 */
+  padding: 12px 12px max(24px, env(safe-area-inset-bottom, 0px));
 }
 .dv2e-grid {
   display: grid;

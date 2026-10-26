@@ -892,15 +892,29 @@ async fn save_edit_detail(state: State<'_, AppState>, payload: Value) -> Result<
         .await
 }
 
-/// 刷新元数据：让飞牛按当前匹配重新刮削该条目（`mode` = "immediate"|"await"，缺省 immediate）。
+/// 刷新元数据：让飞牛按当前匹配重新刮削该条目。
+/// [lc-1871] 实测（飞牛网页端抓包 + bundle 枚举 `Ol`）：`refresh_mode` 是**数字枚举**，
+/// 0 = ReplaceAll（替换所有元数据）、1 = ComplementMissing（仅补充缺失）。
+/// 真实请求 `POST /item/refresh {item_guid, refresh_mode:0}` 返回 code 0，页面提示
+/// 「刷新元数据中，请稍后刷新页面」，随后轮询 `GET /task/running`。
+/// 此前我们传字符串 "immediate" → 飞牛判为 Invalid Params，这就是点「刷新元数据」报错的原因。
 #[tauri::command]
 async fn refresh_item(
     state: State<'_, AppState>,
     guid: String,
-    mode: Option<String>,
+    mode: Option<Value>,
 ) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let client = fnapi::new_client();
+    // 兼容旧调用（字符串）与新调用（数字）；缺省 = 0 替换所有。
+    let refresh_mode: i64 = match mode {
+        Some(Value::Number(n)) => n.as_i64().unwrap_or(0),
+        Some(Value::String(s)) => match s.trim() {
+            "complement" | "missing" | "ComplementMissing" | "1" => 1,
+            _ => 0,
+        },
+        _ => 0,
+    };
     client
         .call(
             &cfg.server,
@@ -909,7 +923,7 @@ async fn refresh_item(
             &cfg.token,
             Some(json!({
                 "item_guid": guid,
-                "refresh_mode": mode.unwrap_or_else(|| "immediate".into()),
+                "refresh_mode": refresh_mode,
             })),
         )
         .await
@@ -968,12 +982,27 @@ async fn scrap_rescrap(
         "type": r#type,
         "media_guids": media_guids,
     });
-    // 集级匹配才带这三项（Movie / 整剧匹配飞牛不传，避免用 0 覆盖飞牛侧）；
-    // scrap_tv_type 实测固定为 "SingleEpisode"。
-    if let (Some(s), Some(e)) = (season_number, episode_number) {
+    // [lc-1871] 对齐飞牛网页端 `kG()` 的语义：TV 类目标**始终**带 season_number /
+    // episode_number（空值用 -1 哨兵，不是省略、也不是 0），并按季/集情况给 scrap_tv_type：
+    //   季=-1 且 集=-1 → SingleEpisode（飞牛按文件名自行判断单集）
+    //   季=-1 且 集为多集 → MultiEpisode
+    //   其余 → MultiSeasonMultiEpisode
+    let is_tv = matches!(r#type.as_str(), "TV" | "Season" | "Episode");
+    if is_tv {
+        let s = season_number.unwrap_or(-1);
+        let e = episode_number.unwrap_or(-1);
+        let tv_type = scrap_tv_type.unwrap_or_else(|| {
+            if s == -1 && e != -1 {
+                "MultiEpisode".into()
+            } else if s == -1 && e == -1 {
+                "SingleEpisode".into()
+            } else {
+                "SingleEpisode".into()
+            }
+        });
         body["season_number"] = json!(s);
         body["episode_number"] = json!(e);
-        body["scrap_tv_type"] = json!(scrap_tv_type.unwrap_or_else(|| "SingleEpisode".into()));
+        body["scrap_tv_type"] = json!(tv_type);
     }
     client
         .call(&cfg.server, "/v/api/v1/scrap/rescrap", "POST", &cfg.token, Some(body))

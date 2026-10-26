@@ -183,19 +183,21 @@ export function MetaEditModal({
       const hitTitle = String(hit.title ?? "").trim() || target.title;
       const hitDate = String(hit.first_air_date ?? "").trim();
 
-      // rescrap 请求体逐字段照 [lc-1632] 实测对齐（source/source_id 原样透传、media_guids 空、
-      // 集级带季/集号 + scrap_tv_type=SingleEpisode）。
+      // rescrap 请求体逐字段照飞牛网页端实测对齐（source/source_id 原样透传、media_guids 空）。
+      // [lc-1871] TV 类目标**始终**带 season_number / episode_number（空值传 -1 哨兵，
+      // 与官方 `kG()/DG()/OG()` 一致：不是省略、也不是 0）+ scrap_tv_type。
       const buildArgs = (): Record<string, unknown> => {
+        const hitType = String(hit.type || target.type || "");
         const args: Record<string, unknown> = {
           itemGuid: target.guid,
           sourceId: hit.source_id ?? "",
           source: hit.source ?? "",
-          type: hit.type || target.type,
+          type: hitType || "Movie",
           mediaGuids: [],
         };
-        if (target.isEpisode) {
-          args.seasonNumber = season;
-          args.episodeNumber = episode;
+        if (target.isEpisode || /^TV$/i.test(hitType)) {
+          args.seasonNumber = target.isEpisode ? season : -1;
+          args.episodeNumber = target.isEpisode ? episode : -1;
           args.scrapTvType = "SingleEpisode";
         }
         return args;
@@ -268,7 +270,8 @@ export function MetaEditModal({
     setBusy("refresh");
     setErr("");
     try {
-      await invoke("refresh_item", { guid: target.guid, mode: "immediate" });
+      // [lc-1871] refresh_mode 是数字枚举：0=替换所有、1=仅补充缺失（官方默认 0）。
+      await invoke("refresh_item", { guid: target.guid, mode: 0 });
       onDone();
       flash("已请求刷新元数据");
     } catch (e) {

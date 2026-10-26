@@ -36,6 +36,9 @@ mod fnapi;
 mod fnos_progress;
 // [lc-1851] FN ID（飞牛 ID / FN Connect）远程登录：OAuth 窗口 + 伪导航信号（旧项目移植）
 mod fnid;
+// [lc-1857] N 卡 Smooth Motion 一键注册（NVAPI DRS FFI，免开 NVIDIA App）
+#[cfg(target_os = "windows")]
+mod nvidia_sm;
 // [gamepad] 全局手柄：原生 gilrs 后台轮询（mpv/PotPlayer 前台时同样可用）
 mod gamepad;
 // [lc-1615] 本地播放历史（观影记录页数据源之一）：history.json 落盘 + 与飞牛 play/list 合并
@@ -2116,6 +2119,172 @@ async fn season_episode_values(cfg: &Config, season_guid: &str) -> Result<Vec<Va
     Ok(v.as_array().cloned().unwrap_or_default())
 }
 
+/// [folder-playlist] 个人视频（type=Video）的**整文件夹连播**取数。
+///
+/// 背景：个人视频在飞牛侧没有季/集概念，`play/info` 只解析出**当前这一个**文件；
+/// 旧实现因此只把它单条塞进播放器 —— 每次播放只能播一个，无法上下集切换。
+/// 修复口径（对齐「整季连播」的既有形态）：定位当前文件所属文件夹（Directory），
+/// 用 `item/list` 钻取同目录条目，只保留视频文件、按文件名自然排序，
+/// 当前文件定位到正确索引，交给 mpv 的多条目 M3U / PotPlayer 面板追加复用。
+///
+/// 安全边界：父级**必须**是未识别文件夹（Directory/Folder）才枚举；库根/虚拟库的
+/// 父 guid 不是文件夹，若照样枚举会把整个媒体库当播放列表 → 直接放弃，保持单条播放。
+async fn video_folder_values(
+    cfg: &Config,
+    res: &PlayResolution,
+    original_guid: &str,
+) -> Result<Vec<Value>, String> {
+    let client = fnapi::new_client();
+    // ① 定位所属文件夹 guid：优先 play/info 的 parent_guid；缺失/等于自身时再查 item/detail 兜底。
+    let mut folder_guid = res.parent_guid.trim().to_string();
+    if folder_guid.is_empty() || folder_guid == res.play_guid || folder_guid == original_guid {
+        let key = format!("detail:item:{}", original_guid);
+        let detail = if let Some(v) = disk_cache::json_get(&key, DETAIL_LIST_TTL_SECS) {
+            v
+        } else {
+            let v = client
+                .call(
+                    &cfg.server,
+                    &format!("/v/api/v1/item/{}", original_guid),
+                    "GET",
+                    &cfg.token,
+                    None,
+                )
+                .await?;
+            disk_cache::json_put(&key, &v);
+            v
+        };
+        let inner = detail.get("data").unwrap_or(&detail);
+        folder_guid = inner
+            .get("parent_guid")
+            .and_then(|x| x.as_str())
+            .or_else(|| inner.get("parentGuid").and_then(|x| x.as_str()))
+            .unwrap_or("")
+            .trim()
+            .to_string();
+    }
+    if folder_guid.is_empty() {
+        return Ok(Vec::new());
+    }
+    // ② 确认父级确实是文件夹：库根/虚拟库不枚举，避免把整库当播放列表。
+    let key = format!("detail:item:{}", folder_guid);
+    let parent_detail = if let Some(v) = disk_cache::json_get(&key, DETAIL_LIST_TTL_SECS) {
+        v
+    } else {
+        match client
+            .call(
+                &cfg.server,
+                &format!("/v/api/v1/item/{}", folder_guid),
+                "GET",
+                &cfg.token,
+                None,
+            )
+            .await
+        {
+            Ok(v) => {
+                disk_cache::json_put(&key, &v);
+                v
+            }
+            Err(_) => return Ok(Vec::new()),
+        }
+    };
+    let ptype = parent_detail
+        .get("data")
+        .unwrap_or(&parent_detail)
+        .get("type")
+        .and_then(|x| x.as_str())
+        .unwrap_or("");
+    if !(ptype == "Directory" || ptype == "Folder") {
+        return Ok(Vec::new());
+    }
+    // ③ 钻取同目录条目（对齐 get_items 文件夹分支：parent_guid + exclude_grouped_video=0）。
+    let body = json!({
+        "parent_guid": folder_guid,
+        "exclude_grouped_video": 0,
+        "sort_type": "ASC",
+        "sort_column": "sort_title",
+        "page_size": 200,
+        "page": 1,
+        "tags": { "type": ["Movie", "Video"] }
+    });
+    let v = client
+        .call(&cfg.server, "/v/api/v1/item/list", "POST", &cfg.token, Some(body))
+        .await?;
+    let mut list: Vec<Value> = v
+        .get("list")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+    // 只保留视频文件（滤掉子文件夹/Directory 等）；按文件名自然序，保证集数顺序（2 在 10 前）。
+    list.retain(|it| {
+        let t = it.get("type").and_then(|x| x.as_str()).unwrap_or("");
+        t == "Video" || t == "Movie"
+    });
+    list.sort_by(|a, b| natural_cmp(&video_sort_key(a), &video_sort_key(b)));
+    Ok(list)
+}
+
+/// [folder-playlist] 个人视频排序键：文件名（含扩展名）优先，缺省回退 title/name。
+/// 集数顺序通常体现在文件名（`01.mp4`、`第2话.mkv`），因此按原始文件名做自然序。
+fn video_sort_key(v: &Value) -> String {
+    ["file_name", "fileName", "title", "name"]
+        .iter()
+        .find_map(|k| {
+            v.get(*k)
+                .and_then(|x| x.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or("")
+        .to_string()
+}
+
+/// [folder-playlist] 去掉最后一个扩展名（仅用于播放列表展示标题）。
+fn strip_ext(name: &str) -> String {
+    match name.rfind('.') {
+        Some(pos) if pos > 0 => name[..pos].to_string(),
+        _ => name.to_string(),
+    }
+}
+
+/// [folder-playlist] 自然序比较：连续数字段按数值大小比较（`ep2` < `ep10`），
+/// 其余字符不区分 ASCII 大小写。用于把同目录视频按文件名排出正确集数顺序。
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let av: Vec<char> = a.chars().collect();
+    let bv: Vec<char> = b.chars().collect();
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < av.len() && j < bv.len() {
+        let (ca, cb) = (av[i], bv[j]);
+        if ca.is_ascii_digit() && cb.is_ascii_digit() {
+            let si = i;
+            while i < av.len() && av[i].is_ascii_digit() {
+                i += 1;
+            }
+            let sj = j;
+            while j < bv.len() && bv[j].is_ascii_digit() {
+                j += 1;
+            }
+            let na: String = av[si..i].iter().collect();
+            let nb: String = bv[sj..j].iter().collect();
+            let ta = na.trim_start_matches('0');
+            let tb = nb.trim_start_matches('0');
+            let ord = ta.len().cmp(&tb.len()).then_with(|| ta.cmp(tb));
+            if ord != Ordering::Equal {
+                return ord;
+            }
+        } else {
+            let ord = ca.to_ascii_lowercase().cmp(&cb.to_ascii_lowercase());
+            if ord != Ordering::Equal {
+                return ord;
+            }
+            i += 1;
+            j += 1;
+        }
+    }
+    (av.len() - i).cmp(&(bv.len() - j))
+}
+
 /// [playlist] 构建多条目 M3U 播放列表：每条 = 本机 Go 代理 URL（含 token），
 /// `#EXTINF` 标题用于 mpv/PotPlayer 的 media-title 与播放列表面板显示。
 ///
@@ -2421,6 +2590,47 @@ async fn play_item(
             }
             Ok(_) => {}
             Err(e) => libmpv::trace(&format!("[playlist] 拉取整季集列表失败，回退单集: {e}")),
+        }
+    } else if res.kind == "Video" && !is_live {
+        // [folder-playlist] 个人视频：把「当前文件所在文件夹」里的全部视频建成播放列表，
+        // 当前文件定位到正确索引（可上下集切换）。修复前只把单个文件塞进播放器。
+        match video_folder_values(&cfg, &res, &guid).await {
+            Ok(list) if list.len() > 1 => {
+                for it in &list {
+                    let g = it
+                        .get("guid")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    if g.is_empty() {
+                        continue;
+                    }
+                    let t = strip_ext(&video_sort_key(it));
+                    let dur = it.get("duration").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    entries.push(PlaylistEntry {
+                        guid: g,
+                        // 个人视频没有季/集号：`playlist_episode_title("",0,0,名)` 只留文件名。
+                        title: playlist_episode_title("", 0, 0, &t),
+                        duration_secs: dur,
+                        season: 0,
+                        episode: 0,
+                    });
+                }
+                match entries
+                    .iter()
+                    .position(|e| e.guid == res.play_guid)
+                    .or_else(|| entries.iter().position(|e| e.guid == guid))
+                {
+                    Some(idx) => start_index = idx,
+                    None => {
+                        libmpv::trace("[playlist] 当前视频不在文件夹列表中，回退单集播放");
+                        entries.clear();
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(e) => libmpv::trace(&format!("[playlist] 拉取文件夹视频列表失败，回退单集: {e}")),
         }
     }
     let multi = entries.len() > 1;
@@ -3053,6 +3263,8 @@ fn shader_preset_table() -> Vec<(&'static str, &'static str, &'static str)> {
         ("a4", "模式B+B（高质量）", "~~/shaders/Anime4K_Clamp_Highlights.glsl;~~/shaders/Anime4K_Restore_CNN_Soft_L.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl;~~/shaders/Anime4K_AutoDownscalePre_x2.glsl;~~/shaders/Anime4K_Restore_CNN_Soft_L.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl"),
         ("light", "轻量模式（低配）", "~~/shaders/Anime4K_Restore_CNN_S.glsl;~~/shaders/Anime4K_Upscale_CNN_S.glsl;~~/shaders/Anime4K_AutoDownscalePre_x2.glsl;~~/shaders/Anime4K_Upscale_CNN_S.glsl"),
         ("denoise", "仅降噪", "~~/shaders/Anime4K_Denoise_Bilateral_Mode.glsl"),
+        // [lc-1863] 真人向（FSRCNNX + SSimDownscaler），与 fntv_shader.lua 的 live 链逐字符一致
+        ("live", "模式真人（FSRCNNX 锐化）", "~~/shaders/FSRCNNX_x2_8-0-4-1.glsl;~~/shaders/SSimDownscaler.glsl"),
     ]
 }
 
@@ -3120,6 +3332,31 @@ async fn shader_settings_set(
             .is_ok();
     }
     Ok(json!({ "applied": applied, "preset": preset }))
+}
+
+/// [lc-1870] 画面预设：把设置面板的三选一（anime/drama/off）转发给播放器侧
+/// `fntv_menu.lua` 的 `picture-preset` 端点——与播放器右键菜单**同一套编排**
+/// （anime=Anime4K A+A + MVTools 补帧；drama=FSRCNNX 锐化 + MVTools 补帧；off=全关）。
+/// 仅对运行中的会话即时生效；空闲（无播放器）时返回 applied=false，由用户起播后再选。
+#[tauri::command]
+async fn set_picture_preset(
+    state: State<'_, AppState>,
+    preset: String,
+) -> Result<Value, String> {
+    let p = preset.trim().to_lowercase();
+    if !matches!(p.as_str(), "anime" | "drama" | "off") {
+        return Err(format!("未知画面预设 {p}（只允许 anime/drama/off）"));
+    }
+    let session = state.mpv.lock().await.clone();
+    let Some(m) = session else {
+        return Ok(json!({ "applied": false, "preset": p }));
+    };
+    if m.is_dead().await {
+        return Ok(json!({ "applied": false, "preset": p }));
+    }
+    m.command_no_reply(json!(["script-message", "picture-preset", p]))
+        .await;
+    Ok(json!({ "applied": true, "preset": p }))
 }
 
 #[tauri::command]
@@ -3740,6 +3977,7 @@ pub fn run() {
             detect_mpv_local,
             shader_settings_get,
             shader_settings_set,
+            set_picture_preset,
             validate_mpv_local_path,
             detect_potplayer,
             validate_potplayer_path,
@@ -4137,6 +4375,22 @@ mod tests {
         assert!(lines[2].contains("/api/v1/playvideo/ep1?"));
         assert_eq!(lines[3], "#EXTINF:-1,番名 - S1E2: 第二集");
         assert!(lines[4].contains("/api/v1/playvideo/ep2?"));
+    }
+
+    /// [folder-playlist] 个人视频文件夹按文件名自然序：数字段按数值比，2 在 10 前；
+    /// 大小写不敏感；strip_ext 只去掉最后一个扩展名。
+    #[test]
+    fn folder_video_natural_sort_and_strip_ext() {
+        use std::cmp::Ordering;
+        assert_eq!(super::natural_cmp("ep2.mp4", "ep10.mp4"), Ordering::Less);
+        assert_eq!(super::natural_cmp("Ep2.MKV", "ep10.mkv"), Ordering::Less);
+        assert_eq!(super::natural_cmp("01.mp4", "1.mp4"), Ordering::Equal);
+        assert_eq!(super::natural_cmp("a", "A"), Ordering::Equal);
+        assert_eq!(super::natural_cmp("第2话.mkv", "第10话.mkv"), Ordering::Less);
+        assert_eq!(super::natural_cmp("b.mp4", "a.mp4"), Ordering::Greater);
+        assert_eq!(super::strip_ext("01.个人视频.mp4"), "01.个人视频");
+        assert_eq!(super::strip_ext("无扩展名"), "无扩展名");
+        assert_eq!(super::strip_ext(".hidden"), ".hidden");
     }
 
     /// [theintrodb] skip-metadata 载荷：整季按 guid 分集、单条用 play_guid、

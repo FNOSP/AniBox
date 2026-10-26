@@ -449,7 +449,10 @@ impl FnClient {
             .to_lowercase();
         let text = resp.text().await.unwrap_or_default();
         if ct.contains("text/html") {
-            return Err("接口返回了网页(HTML)而非 JSON——服务器地址/端口可能填错".into());
+            return Err(format!(
+                "HTTP {} 接口返回了网页(HTML)而非 JSON——服务器地址/端口可能填错",
+                status
+            ));
         }
         let v: Value =
             serde_json::from_str(&text).map_err(|_| format!("HTTP {} 返回非 JSON 数据", status))?;
@@ -468,7 +471,11 @@ impl FnClient {
                 .and_then(|m| m.as_str())
                 .unwrap_or("未知业务错误")
                 .to_string();
-            return Err(msg);
+            // [lc-1862] 把 HTTP 状态码与业务 code 一并带回错误串，前端才能分辨到底是
+            //   401/404/400 还是飞牛字段校验/任务冲突（如 rescrap 的 `code=-14 Task duplicate`、
+            //   `code=-6 Not Found`、`code=-1 Invalid Params`），而不是只剩一句「保存失败」。
+            //   业务错误通常仍是 HTTP 200 + code!=0，这里保留原始 msg 原文便于排查。
+            return Err(format!("HTTP {} code={}: {}", status, code, msg));
         }
         Ok(v.get("data").cloned().unwrap_or(Value::Null))
         })

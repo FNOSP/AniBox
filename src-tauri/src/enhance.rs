@@ -69,6 +69,26 @@ pub const TENSORRT_FILES: &[&str] = &[
     "runtime/vs-plugins/vsmlrt-cuda/nvinfer_10.dll",
 ];
 
+/// RIFE DirectML（ONNX Runtime）补帧就绪文件：复用超分链路的 vsort + onnxruntime +
+/// DirectML，另需 vs/rife_dml.vpy 与 rife_v4.6.onnx（vsort 从 runtime/plugins/models/
+/// rife_v2/ 解析，见 rife_dml.vpy）。与 ncnn RIFE 是两条独立后端。
+pub const RIFE_DML_FILES: &[&str] = &[
+    "vs/rife_dml.vpy",
+    "runtime/plugins/vsort.dll",
+    "runtime/plugins/vsort/onnxruntime.dll",
+    "runtime/plugins/vsort/DirectML.dll",
+    "runtime/Lib/site-packages/vsmlrt.py",
+    "runtime/plugins/models/rife_v2/rife_v4.6.onnx",
+];
+
+/// MVTools 真实运动补偿补帧就绪文件：RIFE 跟不上实时时的降级目标（廉价、全显卡）。
+/// `mvtools.dll` 为小体积 VS 插件（约 1–2MB），随基础增强包一并分发，落于基础组件根的
+/// `runtime/plugins/`（与 rife 插件同目录）；`vs/mvtools.vpy` 同包。二者齐备才算就绪。
+pub const MVTOOLS_FILES: &[&str] = &[
+    "vs/mvtools.vpy",
+    "runtime/plugins/mvtools.dll",
+];
+
 
 /// [lc-1856] 显卡名探测（注册表显示适配器类，过滤虚拟/远程显卡；进程内缓存一次）。
 /// 用于 AI 增强 UI 的「你的显卡：xxx」展示与 RIFE 硬性要求提示（用户普遍不清楚
@@ -163,6 +183,18 @@ pub fn superres_dml_ready(app: &AppHandle) -> bool {
     SUPERRES_DML_FILES.iter().all(|rel| root.join(rel).is_file())
 }
 
+/// RIFE DirectML（ONNX Runtime，vsort 驱动）补帧就绪判定。
+pub fn rife_dml_ready(app: &AppHandle) -> bool {
+    let Some(root) = enhance_root(app) else { return false };
+    RIFE_DML_FILES.iter().all(|rel| root.join(rel).is_file())
+}
+
+/// MVTools 真实补帧就绪判定（mvtools.vpy + 基础增强包内的 mvtools.dll）。
+pub fn mvtools_ready(app: &AppHandle) -> bool {
+    let Some(root) = enhance_root(app) else { return false };
+    MVTOOLS_FILES.iter().all(|rel| root.join(rel).is_file())
+}
+
 /// 当前超分档是否为 tensorrt（mpv.rs 注入环境分流用）。
 pub fn superres_engine_is_trt(app: &AppHandle) -> bool {
     read_superres_engine(app) == "tensorrt"
@@ -239,11 +271,23 @@ pub async fn ai_enhance_set_engine(
     default_on: Option<bool>,
 ) -> Result<Value, String> {
     let e = engine.trim().to_lowercase();
-    if !matches!(e.as_str(), "auto" | "builtin" | "rife" | "nvidia") {
-        return Err(format!("未知引擎档 {e}（只允许 auto/builtin/rife/nvidia）"));
+    if !matches!(
+        e.as_str(),
+        "auto" | "builtin" | "rife" | "rife_dml" | "mvtools" | "nvidia"
+    ) {
+        return Err(format!(
+            "未知引擎档 {e}（只允许 auto/builtin/rife/rife_dml/mvtools/nvidia）"
+        ));
     }
-    if e == "rife" && !runtime_ready(&app) {
+    // "rife" = AI 2× 综合档（lua 侧优先 DirectML，其次 ncnn Vulkan）；"rife_dml" 仅 DirectML。
+    if e == "rife" && !runtime_ready(&app) && !rife_dml_ready(&app) {
         return Err("AI 增强组件未就绪，无法选择 RIFE 档（先下载组件）".into());
+    }
+    if e == "rife_dml" && !rife_dml_ready(&app) {
+        return Err("RIFE DirectML 资源未就绪（缺 rife_dml.vpy / vsort 或 rife_v4.6.onnx）".into());
+    }
+    if e == "mvtools" && !mvtools_ready(&app) {
+        return Err("MVTools 补帧资源未就绪（缺 mvtools.vpy / mvtools.dll）".into());
     }
     // [lc-1860] N 卡 SM 档实测禁用：gpu-context=winvk（Vulkan 呈现，SM 前置条件）+
     // 驱动 Smooth Motion = 画面紫屏/黑屏（yaozhi 内核 Vulkan 上下文与驱动帧生成冲突，
@@ -264,8 +308,9 @@ pub async fn ai_enhance_set_engine(
     let tier = read_quality_tier(&app);
     let body = format!(
         "# AniBox 插帧配置（设置面板「AI 增强」写入，请勿手动编辑）
-# 引擎档：auto(=builtin) / builtin / rife / nvidia
-# rife = RIFE v4.6 AI 2×（VapourSynth+ncnn Vulkan，全显卡），需 AI 增强组件就绪。
+# 引擎档：auto(=builtin) / builtin / rife(=AI 2×，优先 DirectML 其次 ncnn) / rife_dml / mvtools / nvidia
+# rife = RIFE v4.6 AI 2×（VapourSynth，DirectML/ncnn），需 AI 增强组件就绪。
+# mvtools = MVTools 真实运动补偿补帧（RIFE 跟不上时的廉价降级档）。
 # 运动平滑基线：extreme/balanced=时间插值平滑；smooth=关闭省 GPU
 
 engine={new_engine}
@@ -329,6 +374,8 @@ pub async fn ai_enhance_status(app: AppHandle) -> Result<Value, String> {
         "defaultOn": default_on,
         "superresDmlReady": superres_dml_ready(&app),
         "tensorrtReady": tensorrt_ready(&app),
+        "rifeDmlReady": rife_dml_ready(&app),
+        "mvtoolsReady": mvtools_ready(&app),
         "superresEngine": read_superres_engine(&app),
         "qualityTier": read_quality_tier(&app),
         // [lc-1856] 显卡名（RIFE 硬性要求提示用；虚拟显卡已过滤）
@@ -388,7 +435,7 @@ pub async fn ai_enhance_set_tier(
     let (engine, default_on) = read_interp_opts(&app);
     let body = format!(
         "# AniBox 插帧配置（设置面板「AI 增强」写入，请勿手动编辑）
-# 引擎档：auto(=builtin) / builtin / rife / nvidia
+# 引擎档：auto(=builtin) / builtin / rife(=AI 2×，优先 DirectML 其次 ncnn) / rife_dml / mvtools / nvidia
 # 运动平滑基线：extreme/balanced=时间插值平滑；smooth=关闭省 GPU
 
 engine={engine}

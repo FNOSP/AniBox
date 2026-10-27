@@ -78,26 +78,34 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (!password) {
+      setErr("请输入密码。");
+      return;
+    }
     setBusy(true);
     setErr("");
     try {
-      await invoke("save_config", {
-        config: {
-          ...cfg,
-          server: server.trim(),
-          username,
-          password: remember ? password : "",
-          access_code: accessCode.trim(),
-          auto_login: remember && autoLogin,
-          mpv_path: mpvPath,
-          proxy_path: proxyPath,
-        },
-      });
+      // 先登录：login 成功后会持久化 server（含解析出的真实端口）/ token / access_code。
       await invoke("login", {
         server: server.trim(),
         username,
         password,
         accessCode: accessCode.trim(),
+      });
+      // 登录成功后再回写登录语义字段（记住密码 / 自动登录 / 高级路径）。
+      // 用 get_config 取回刚由 login 写入的 server（真实基址）与 token，避免拿挂载时的
+      // 旧快照把解析出的端口和 token 冲回旧值；登录失败则不写盘 —— 保证「登录失败不抹掉
+      // 已记住的密码」，也避免旧版把 config.server 写成裸 IP 的坑。
+      const fresh = await invoke<Config>("get_config");
+      await invoke("save_config", {
+        config: {
+          ...fresh,
+          username,
+          password: remember ? password : "",
+          auto_login: remember && autoLogin,
+          mpv_path: mpvPath,
+          proxy_path: proxyPath,
+        },
       });
       onDone();
     } catch (e) {

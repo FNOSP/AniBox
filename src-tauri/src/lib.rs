@@ -318,6 +318,31 @@ async fn test_danmu_api(app: AppHandle, url: String) -> Result<String, String> {
 
 // ───────────────────────── 登录 / 会话 ─────────────────────────
 
+/// 把 `fnapi::call_inner` 透出的原始业务错误串（`HTTP 200 code=-15: Password Incorrect` 之类）
+/// 翻译成用户能看懂的登录提示。飞牛错误码见 fnOS 影视接口：
+///   -15 PasswordIncorrect / -6 账号不存在 / -1 参数非法 / 5000 invalid sign。
+/// 未识别的码原样返回（保留排查信息，不吞细节）。
+fn friendly_login_error(raw: &str) -> String {
+    let has = |c: &str| raw.contains(c);
+    if has("code=-15") {
+        return "密码错误，请检查后重试。".to_string();
+    }
+    if has("code=-6") {
+        return "账号不存在或未找到，请检查用户名。".to_string();
+    }
+    if has("code=-1") {
+        return "用户名或密码格式不正确，请检查后重试。".to_string();
+    }
+    if has("code=5000") {
+        return "请求签名失效，请重试。".to_string();
+    }
+    // 访问码门禁：接口被网关拦成门户 HTML（不是 JSON）。
+    if has("返回了网页") || has("返回非 JSON") {
+        return "登录被访问码门禁拦截（服务器返回网页）。请在登录页填写「访问码」后重试。".to_string();
+    }
+    raw.to_string()
+}
+
 #[tauri::command]
 async fn login(
     app: AppHandle,
@@ -375,12 +400,9 @@ async fn login(
         .await
     {
         Ok(d) => d,
-        // [访问码] 未填访问码但服务器开启了门禁：接口会返回门户 HTML 而非 JSON。
-        // 给出与旧项目一致的明确引导，而不是笼统的「地址/端口填错」。
-        Err(e) if e.contains("返回了网页") => {
-            return Err("登录被访问码门禁拦截（服务器返回网页）。请在登录页填写「访问码」后重试。".into());
-        }
-        Err(e) => return Err(e),
+        // 业务错误码（-15 密码错 / -6 账号不存在 / 门禁 HTML 等）统一翻成用户可读提示，
+        // 不再把 `HTTP 200 code=-15: Password Incorrect` 这种原始串直接抛给前端。
+        Err(e) => return Err(friendly_login_error(&e)),
     };
     let token = data
         .get("token")
@@ -1780,7 +1802,8 @@ async fn relogin(app: &AppHandle, cfg: &Config) -> Result<Config, String> {
             "",
             Some(json!({ "app_name": "trimemedia-web", "username": cfg.username, "password": cfg.password })),
         )
-        .await?;
+        .await
+        .map_err(|e| friendly_login_error(&e))?;
     let token = data
         .get("token")
         .and_then(|t| t.as_str())

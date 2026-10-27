@@ -81,6 +81,9 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
   const [wdAccounts, setWdAccounts] = useState<WebdavAccount[]>([]);
   const [wdActive, setWdActive] = useState<string | null>(null);
   const [wdForm, setWdForm] = useState<{ name: string; url: string; user: string; pass: string } | null>(null);
+  // [lc-1890] 网盘媒体库：把当前目录加入媒体库并扫描（cloud_library）
+  const [libNote, setLibNote] = useState("");
+  const [libBusy, setLibBusy] = useState(false);
   const alive = useRef(true);
   const pollTimer = useRef<number | null>(null);
 
@@ -238,6 +241,7 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
     setItems([]);
     setCursor("");
     setMode("");
+    setLibNote("");
     setCrumbs([{ fid: "", name: "根目录" }]);
     setRenaming(null);
     if (id === "webdav") {
@@ -343,6 +347,25 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
     void loadWebdav(id, "", true);
   };
 
+  // [lc-1890] 把当前所在目录加入媒体库并扫描（追加根，不覆盖已选根）
+  const addRootAndScan = async () => {
+    if (isWebdav || libBusy) return;
+    const last = crumbs[crumbs.length - 1];
+    setLibBusy(true);
+    setLibNote("正在扫描入库…");
+    setErr("");
+    try {
+      await invoke("cloud_library_add_root", { provider: active, fid: last.fid || "", name: last.name });
+      const r = await invoke<{ count: number; movies: number; episodes: number }>("cloud_library_scan", { provider: active });
+      setLibNote(`已入库 ${r.count} 项（电影 ${r.movies} / 剧集文件 ${r.episodes}）`);
+    } catch (ex) {
+      setLibNote("");
+      setErr(String(ex));
+    } finally {
+      setLibBusy(false);
+    }
+  };
+
   const showServerHls = !isWebdav && SERVER_HLS.has(active);
   const showLocalHls = !showServerHls && ffmpegOk === true && active !== "115";
 
@@ -412,8 +435,20 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
               )}
             </div>
           )}
+          {/* [lc-1890] 网盘媒体库：当前目录加入媒体库并扫描（识别标题/季集，为刮削与详情页打底） */}
+          {!isWebdav && (
+            <button
+              className="c115-mini"
+              disabled={libBusy}
+              title="把当前目录加入媒体库并扫描：识别标题与季集，后续接入 TMDB 刮削与详情页"
+              onClick={() => void addRootAndScan()}
+            >
+              {libBusy ? "扫描中…" : "加入媒体库"}
+            </button>
+          )}
         </div>
       )}
+      {libNote && <p className="c115-dim" style={{ margin: "4px 0 0" }}>{libNote}</p>}
 
       {err && <p className="c115-err">{err}</p>}
 

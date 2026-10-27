@@ -325,7 +325,11 @@ async fn test_danmu_api(app: AppHandle, url: String) -> Result<String, String> {
 fn friendly_login_error(raw: &str) -> String {
     let has = |c: &str| raw.contains(c);
     if has("code=-15") {
-        return "密码错误，请检查后重试。".to_string();
+        // 飞牛登录失败节流：短时间内多次 -15 会把账号临时封禁（manager/user/list 里
+        // is_banned=true / banned_until），封禁期间即使密码正确也一律返回 -15 ——
+        // 这正是「网页端能登、客户端一直密码错」的常见成因。这里提示等待而不是反复重试，
+        // 否则会一直撞在封禁窗口里。
+        return "密码错误，或账号因多次登录失败被临时锁定。请确认密码；若确认无误，请等待约 2 分钟后再试，期间请勿反复重试。".to_string();
     }
     if has("code=-6") {
         return "账号不存在或未找到，请检查用户名。".to_string();
@@ -341,6 +345,73 @@ fn friendly_login_error(raw: &str) -> String {
         return "登录被访问码门禁拦截（服务器返回网页）。请在登录页填写「访问码」后重试。".to_string();
     }
     raw.to_string()
+}
+
+/// 飞牛影视网页端登录所需的 `sha256(password)` 十六进制串（64 位小写 hex）。
+fn sha256_hex(s: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    format!("{:x}", h.finalize())
+}
+
+/// 按网页端（Trimemedia）当前的登录流程发起登录，返回登录响应 JSON（含 token）。
+///
+/// 取证结论（网页端 bundle）：`/v/login` 的登录提交对密码做 **SHA-256** 后再发：
+///   - 系统版本 ≥ 0.9.5（`sys/version` 的 `version` 字段）：`POST /v/api/v2/user/loginByPassword`，
+///     body `{ app_name:"trimemedia-web", username, password: sha256hex(明文) }`；
+///   - 老版本：`POST /v/api/v1/login`，`password` 为**明文**（旧接口）。
+///
+/// v2 若返回 `-1`（参数非法，极少数服务端不认 sha256）则回退到 v1 明文，保证兼容。
+async fn request_login_token(
+    client: &fnapi::FnClient,
+    server: &str,
+    username: &str,
+    password: &str,
+) -> Result<Value, String> {
+    // 探测系统版本决定登录接口（与网页端 isSysSupported('0.9.5') 对齐）。取不到版本时按老版本处理。
+    let use_v2 = match client
+        .call(server, "/v/api/v1/sys/version", "GET", "", None)
+        .await
+    {
+        Ok(v) => v
+            .get("version")
+            .and_then(|x| x.as_str())
+            .map(|ver| {
+                crate::update::compare_versions(ver, "0.9.5") != std::cmp::Ordering::Less
+            })
+            .unwrap_or(false),
+        Err(_) => false,
+    };
+
+    if use_v2 {
+        let body = json!({
+            "app_name": "trimemedia-web",
+            "username": username,
+            "password": sha256_hex(password),
+        });
+        match client
+            .call(server, "/v/api/v2/user/loginByPassword", "POST", "", Some(body))
+            .await
+        {
+            Ok(d) => return Ok(d),
+            Err(e) if e.contains("code=-1") => {
+                // 回退：该服务端不认 sha256，改走 v1 明文。
+                crate::libmpv::trace(&format!("[login] v2 登录返回 -1，回退 v1 明文登录: {e}"));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    client
+        .call(
+            server,
+            "/v/api/v1/login",
+            "POST",
+            "",
+            Some(json!({ "app_name": "trimemedia-web", "username": username, "password": password })),
+        )
+        .await
 }
 
 #[tauri::command]
@@ -389,18 +460,9 @@ async fn login(
     }
 
     let client = fnapi::new_client();
-    let data = match client
-        .call(
-            &server,
-            "/v/api/v1/login",
-            "POST",
-            "",
-            Some(json!({ "app_name": "trimemedia-web", "username": username, "password": password })),
-        )
-        .await
-    {
+    let data = match request_login_token(&client, &server, &username, &password).await {
         Ok(d) => d,
-        // 业务错误码（-15 密码错 / -6 账号不存在 / 门禁 HTML 等）统一翻成用户可读提示，
+        // 业务错误码（-15 密码错/临时锁定 / -6 账号不存在 / 门禁 HTML 等）统一翻成用户可读提示，
         // 不再把 `HTTP 200 code=-15: Password Incorrect` 这种原始串直接抛给前端。
         Err(e) => return Err(friendly_login_error(&e)),
     };
@@ -1794,14 +1856,7 @@ async fn get_media_versions(state: State<'_, AppState>, guid: String) -> Result<
 async fn relogin(app: &AppHandle, cfg: &Config) -> Result<Config, String> {
     let client = fnapi::new_client();
     let server = fnapi::normalize_server(&cfg.server);
-    let data = client
-        .call(
-            &server,
-            "/v/api/v1/login",
-            "POST",
-            "",
-            Some(json!({ "app_name": "trimemedia-web", "username": cfg.username, "password": cfg.password })),
-        )
+    let data = request_login_token(&client, &server, &cfg.username, &cfg.password)
         .await
         .map_err(|e| friendly_login_error(&e))?;
     let token = data

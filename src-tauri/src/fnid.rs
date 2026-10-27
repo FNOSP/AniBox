@@ -22,6 +22,7 @@
 //! 已知边界：官方中继隧道极慢时（>240s）超时退出；窗口被用户手关即取消。
 
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
@@ -251,6 +252,79 @@ fn inject_script(access_code_js: &str) -> String {
         .replace("__SIGNAL_HOST__", SIGNAL_HOST)
 }
 
+/// 主进程轮询中继子域 `/v/api/v1/sys/config`（对齐旧项目 `startRelaySubPoll`）。
+///
+/// **根因（实测取证）**：中继子域根页面是 FN Connect 隧道引导 SPA，页面内 `fetch` 不带
+/// `Authx` 签名头，被网关判为未签名请求 → `{"code":5000,"msg":"invalid sign"}`，永远
+/// 拿不到 `nas_oauth.app_id` → 卡在 fnOS 桌面。而主进程用 `FnClient`（自带 Authx 签名）
+/// 发普通 HTTP 请求即可直接拿到 JSON（实测 `code=0`，`data.nas_oauth.app_id=...`）。
+/// 因此由 Rust 侧轮询并主动导航到 `/signin`，完全绕开页面内隧道与签名问题。
+fn spawn_relay_sub_poll(
+    app: AppHandle,
+    label: String,
+    sub_base: String,
+    capture: Arc<Mutex<FnIdCapture>>,
+    started: Arc<AtomicBool>,
+) {
+    if started.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tokio::spawn(async move {
+        let client = fnapi::new_client();
+        for attempt in 1..=30u32 {
+            if app.get_webview_window(&label).is_none() {
+                return;
+            }
+            if capture.lock().unwrap().code.is_some() {
+                return;
+            }
+            match client
+                .call(&sub_base, "/v/api/v1/sys/config", "GET", "", None)
+                .await
+            {
+                Ok(v) => {
+                    let app_id = v
+                        .pointer("/data/nas_oauth/app_id")
+                        .and_then(|x| x.as_str())
+                        .or_else(|| v.pointer("/nas_oauth/app_id").and_then(|x| x.as_str()))
+                        .unwrap_or("")
+                        .to_string();
+                    if !app_id.is_empty() {
+                        capture.lock().unwrap().base = Some(sub_base.clone());
+                        let redirect_uri = format!("{}/v/oauth/result", sub_base);
+                        let target = format!(
+                            "{}/signin?client_id={}&redirect_uri={}",
+                            sub_base,
+                            urlencoding::encode(&app_id),
+                            urlencoding::encode(&redirect_uri)
+                        );
+                        flog(format!(
+                            "主进程轮询中继子域 sys/config 成功(第 {attempt} 次): app_id={app_id}，跳转授权页 {target}"
+                        ));
+                        if let Some(w) = app.get_webview_window(&label) {
+                            let js = format!(
+                                "location.href = {};",
+                                serde_json::to_string(&target).unwrap_or_else(|_| "\"\"".into())
+                            );
+                            let _ = w.eval(&js);
+                        }
+                        return;
+                    }
+                    let brief: String = v.to_string().chars().take(120).collect();
+                    flog(format!(
+                        "主进程轮询中继子域 sys/config 第 {attempt}/30 次: 无 app_id，body={brief:?}"
+                    ));
+                }
+                Err(e) => flog(format!(
+                    "主进程轮询中继子域 sys/config 第 {attempt}/30 次异常: {e}"
+                )),
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+        flog("主进程轮询中继子域 sys/config 耗尽(约 60s)仍未拿到 app_id");
+    });
+}
+
 /// FN ID 登录：打开 OAuth 窗口走 FN Connect 流程，成功后写配置（与账号密码登录同一收尾）。
 #[tauri::command]
 pub async fn fn_id_login(
@@ -278,6 +352,11 @@ pub async fn fn_id_login(
     let nav_capture = Arc::clone(&capture);
 
     let label = "fnid-oauth";
+    // 中继子域主进程轮询去重标志（对齐旧项目 relayPollStarted）
+    let relay_poll_started = Arc::new(AtomicBool::new(false));
+    let nav_app = app.clone();
+    let nav_relay_started = Arc::clone(&relay_poll_started);
+    let nav_label = label.to_string();
     // 复用残留窗（上次超时未关）：先销毁保证初始化脚本/状态干净
     if let Some(w) = app.get_webview_window(label) {
         let _ = w.destroy();
@@ -369,6 +448,18 @@ pub async fn fn_id_login(
 
             // ③ 其余导航一律放行（含 /signin 授权页、中继子域、5ddd 门户）
             flog(format!("放行导航: {}", u.as_str()));
+            // 官方中继子域（{fnId}.fnos.net，非门户根 fnos.net）→ 主进程带签名轮询 sys/config
+            // （页面内 fetch 无 Authx 签名会被网关判 invalid sign，永远拿不到 app_id → 卡桌面）
+            let h = host.to_ascii_lowercase();
+            if h.ends_with(".fnos.net") {
+                spawn_relay_sub_poll(
+                    nav_app.clone(),
+                    nav_label.clone(),
+                    format!("https://{h}"),
+                    Arc::clone(&nav_capture),
+                    Arc::clone(&nav_relay_started),
+                );
+            }
             true
         });
 

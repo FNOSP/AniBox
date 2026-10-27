@@ -37,6 +37,16 @@ fn flog(msg: impl AsRef<str>) {
     crate::libmpv::trace_mod("fnid", &format!("[fnid] {}", msg.as_ref()));
 }
 
+/// 取 `FnIdCapture` 锁；即使 Mutex 被 poison（曾有人持锁 panic）也**不 panic**。
+///
+/// 关键：本模块的锁在 `on_navigation` 回调里被持有。该回调运行在 WebView2 的
+/// `NavigationStarting` COM 事件（主线程，非 Tokio runtime），一旦在这里 panic 会
+/// 跨 FFI 边界无法 unwind → `non-unwinding panic` → 进程直接 abort（0xc0000409）。
+/// 所以任何回调路径上的锁都必须用 poison 兜底，禁止 `lock().unwrap()`。
+fn lock_capture(m: &Mutex<FnIdCapture>) -> std::sync::MutexGuard<'_, FnIdCapture> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[derive(Default, Clone)]
 struct FnIdCapture {
     /// sys/config 轮询确认可达的 NAS 基址（scheme://host[:port]）
@@ -269,13 +279,18 @@ fn spawn_relay_sub_poll(
     if started.swap(true, Ordering::SeqCst) {
         return;
     }
-    tokio::spawn(async move {
+    // ★ 必须用 tauri::async_runtime::spawn（全局 runtime 句柄），不能用 tokio::spawn：
+    // 本函数从 `on_navigation` 回调（WebView2 NavigationStarting COM 事件，主线程）同步调用，
+    // 主线程**没有** Tokio runtime 上下文，`tokio::spawn` 会走 `Handle::current()` → panic
+    // "there is no reactor running..."；且该 panic 跨 FFI 边界无法 unwind → 进程 abort
+    // （exit 0xc0000409 / non-unwinding panic）。async_runtime::spawn 用全局句柄，任意线程可用。
+    tauri::async_runtime::spawn(async move {
         let client = fnapi::new_client();
         for attempt in 1..=30u32 {
             if app.get_webview_window(&label).is_none() {
                 return;
             }
-            if capture.lock().unwrap().code.is_some() {
+            if lock_capture(&capture).code.is_some() {
                 return;
             }
             match client
@@ -290,7 +305,7 @@ fn spawn_relay_sub_poll(
                         .unwrap_or("")
                         .to_string();
                     if !app_id.is_empty() {
-                        capture.lock().unwrap().base = Some(sub_base.clone());
+                        lock_capture(&capture).base = Some(sub_base.clone());
                         let redirect_uri = format!("{}/v/oauth/result", sub_base);
                         let target = format!(
                             "{}/signin?client_id={}&redirect_uri={}",
@@ -386,7 +401,7 @@ pub async fn fn_id_login(
                     }
                 }
                 {
-                    let mut st = nav_capture.lock().unwrap();
+                    let mut st = lock_capture(&nav_capture);
                     if let Some(bs) = &base {
                         st.base = Some(bs.clone());
                     }
@@ -430,7 +445,7 @@ pub async fn fn_id_login(
             // ② 授权后 URL 直带回跳 code（不经过 XHR hook 的场景）
             if path.contains("/oauth/result") {
                 if let Some((_, c)) = u.query_pairs().find(|(k, _)| k == "code") {
-                    let mut st = nav_capture.lock().unwrap();
+                    let mut st = lock_capture(&nav_capture);
                     st.code = Some(c.to_string());
                     if st.base.is_none() {
                         st.base = Some(format!(
@@ -477,13 +492,13 @@ pub async fn fn_id_login(
             flog("OAuth 窗口被关闭，取消登录");
             return Err("FN ID 登录已取消（窗口被关闭）".into());
         }
-        let st = capture.lock().unwrap().clone();
+        let st = lock_capture(&capture).clone();
         if let (Some(b), Some(c)) = (st.base, st.code) {
             flog(format!("已拿到 base={b} 与 code，开始换取 token"));
             break (b, c);
         }
         if Instant::now() > deadline {
-            let st = capture.lock().unwrap().clone();
+            let st = lock_capture(&capture).clone();
             flog(format!(
                 "FN ID 登录超时 240s：base={:?} code={:?}（code 为空说明没走到 /signin 授权或未捕获 authorize 响应）",
                 st.base, st.code.map(|c| c.len())

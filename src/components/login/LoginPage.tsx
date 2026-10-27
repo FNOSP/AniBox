@@ -46,6 +46,24 @@ function isFnId(value: string): boolean {
   return !!value && !value.includes(".") && value.length >= 6 && value.length <= 30;
 }
 
+/* [lc-1885] 飞牛官方中继域名（{fnId}.fnos.net / *.5ddd.com）**不支持账号密码登录**：
+   实测同一账号在直连 IP 上 `POST /v/api/v1/login` 返回 code=0，但在中继域名上返回
+   `-15 Password Incorrect`（中继要求走 FN ID 授权/OAuth，而非影视密码接口）。
+   因此只要用户填的是中继域名，就自动改用 FN ID 授权流程，避免撞 -15。 */
+function relayFnId(value: string): string {
+  const host = value
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .split("/")[0]
+    .split(":")[0]
+    .toLowerCase();
+  if (host.endsWith(".fnos.net")) {
+    const sub = host.slice(0, -".fnos.net".length);
+    if (sub && !sub.includes(".")) return sub;
+  }
+  return "";
+}
+
 export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: () => void }) {
   const [cfg, setCfg] = useState<Config | null>(null);
   // [lc-1884] 单一输入框：IP / 域名 / FN ID 都填这里，提交时自动判别。
@@ -64,7 +82,9 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
   // 自动登录一次性闸门：失败后停在本页报错，绝不循环重试
   const autoTried = useRef(false);
 
-  const fnid = isFnId(domain.trim());
+  // 填的是 FN ID 或中继域名 → 走 FN ID 授权（中继域名不支持密码登录，见 relayFnId 注释）。
+  const fnidVal = isFnId(domain.trim()) ? domain.trim() : relayFnId(domain);
+  const fnid = !!fnidVal;
   // FN ID 走 OAuth，不需要用户名/密码；服务器地址登录则两者必填。
   const canSubmit = !!domain.trim() && (fnid || (!!username && !!password));
 
@@ -97,8 +117,8 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
     try {
       if (fnid) {
         // FN ID 远程登录：打开飞牛官方授权窗口（OAuth），成功后后端已写配置。
-        await invoke("fn_id_login", { fnId: domain.trim(), accessCode: accessCode.trim() });
-        try { localStorage.setItem("anibox-fnid", domain.trim()); } catch { /* 尽力预填 */ }
+        await invoke("fn_id_login", { fnId: fnidVal, accessCode: accessCode.trim() });
+        try { localStorage.setItem("anibox-fnid", fnidVal); } catch { /* 尽力预填 */ }
       } else {
         // 本地账号登录：先登录（成功后 login 已持久化 server/token/access_code），
         // 再回写登录语义字段，避免拿挂载时旧快照把解析出的端口和 token 冲回旧值。
@@ -174,7 +194,7 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
           required
         />
         <p className="set-desc" style={{ margin: "4px 0 0", fontSize: 12 }}>
-          填 IP / 域名用飞牛影视账号密码登录；填 FN ID 则打开飞牛官方授权窗口远程登录。
+          填内网 IP / 直连域名用账号密码登录；填 FN ID 或中继域名（*.fnos.net）则打开飞牛官方授权窗口远程登录。
         </p>
         <label>用户名</label>
         <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder={fnid ? "FN ID 登录时可留空" : ""} />

@@ -68,15 +68,22 @@ pub async fn establish(base_url: &str, access_code: &str) -> Result<String, Acce
         .map_err(|e| network(format!("访问码验证客户端初始化失败: {e}")))?;
 
     let encoded = encode_access_code(code);
+    // 官方中继子域（{fnId}.fnos.net）走 FN Connect 隧道，网关要求 `mode=relay`；
+    // 页面内提交访问码时也会设该 Cookie。主进程验证请求带上，避免被中继网关额外拦截。
+    let is_relay = current
+        .host_str()
+        .map(|h| h.to_ascii_lowercase().ends_with(".fnos.net"))
+        .unwrap_or(false);
 
     for _ in 0..=MAX_REDIRECTS {
-        let resp = client
+        let mut req = client
             .get(current.as_str())
             .header("x-access-code", &encoded)
-            .header("x-access-source", "web")
-            .send()
-            .await
-            .map_err(|e| {
+            .header("x-access-source", "web");
+        if is_relay {
+            req = req.header("Cookie", "mode=relay");
+        }
+        let resp = req.send().await.map_err(|e| {
                 if e.is_timeout() {
                     network("访问码验证请求超时")
                 } else if e.is_connect() {

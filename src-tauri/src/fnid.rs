@@ -53,6 +53,8 @@ struct FnIdCapture {
     base: Option<String>,
     /// OAuth 授权码
     code: Option<String>,
+    /// 致命错误（如访问码被网关拒绝）——主等待循环据此提前中止并回报用户。
+    error: Option<String>,
 }
 
 /// 注入脚本：每页自动重放（initialization_script 语义）。
@@ -275,6 +277,7 @@ fn spawn_relay_sub_poll(
     sub_base: String,
     capture: Arc<Mutex<FnIdCapture>>,
     started: Arc<AtomicBool>,
+    access_code: String,
 ) {
     if started.swap(true, Ordering::SeqCst) {
         return;
@@ -285,6 +288,32 @@ fn spawn_relay_sub_poll(
     // "there is no reactor running..."；且该 panic 跨 FFI 边界无法 unwind → 进程 abort
     // （exit 0xc0000409 / non-unwinding panic）。async_runtime::spawn 用全局句柄，任意线程可用。
     tauri::async_runtime::spawn(async move {
+        // [访问码] 关键修复：开启访问码门禁后，中继子域 `/v/api/v1/sys/config` 会被网关拦成
+        // 门户 HTML（日志：`HTTP 200 接口返回了网页(HTML)而非 JSON`），主进程轮询永远拿不到
+        // app_id → 不跳 /signin → 卡在 fnOS 桌面。
+        //
+        // 根因：页面内（WebView2）提交访问码只把授权 Cookie 写进 **webview 的 cookie jar**，
+        // 主进程 `reqwest` 客户端（FnClient）是另一套 Cookie 表，拿不到该授权 Cookie。
+        // 因此必须在这里主动向网关建立一次访问码会话 —— `access_code::establish` 的
+        // Set-Cookie 会落入 `fnapi` 的进程内 Cookie 表，后续 `client.call()` 自动携带
+        // （见 fnapi::gateway_cookies），sys/config 才会返回 JSON。
+        if !access_code.is_empty() {
+            match crate::access_code::establish(&sub_base, &access_code).await {
+                Ok(resolved) if resolved != sub_base => flog(format!(
+                    "[访问码] 中继子域访问码验证解析到真实源头: {sub_base} → {resolved}"
+                )),
+                Ok(_) => flog(format!("[访问码] 中继子域访问码会话已建立: {sub_base}")),
+                Err(crate::access_code::AccessCodeError::Rejected) => {
+                    flog("[访问码] 中继子域访问码验证被拒绝(401/403/429)，终止轮询并提示用户");
+                    lock_capture(&capture).error =
+                        Some("访问码错误，请检查后重试。".to_string());
+                    return;
+                }
+                Err(crate::access_code::AccessCodeError::Network(e)) => flog(format!(
+                    "[访问码] 中继子域访问码会话建立失败（继续尝试轮询 sys/config）: {e}"
+                )),
+            }
+        }
         let client = fnapi::new_client();
         for attempt in 1..=30u32 {
             if app.get_webview_window(&label).is_none() {
@@ -372,6 +401,8 @@ pub async fn fn_id_login(
     let nav_app = app.clone();
     let nav_relay_started = Arc::clone(&relay_poll_started);
     let nav_label = label.to_string();
+    // 访问码随中继子域轮询任务一起传入：主进程需要先用它建立网关会话，sys/config 才能拿到 JSON。
+    let nav_access_code = access_code.clone();
     // 复用残留窗（上次超时未关）：先销毁保证初始化脚本/状态干净
     if let Some(w) = app.get_webview_window(label) {
         let _ = w.destroy();
@@ -473,6 +504,7 @@ pub async fn fn_id_login(
                     format!("https://{h}"),
                     Arc::clone(&nav_capture),
                     Arc::clone(&nav_relay_started),
+                    nav_access_code.clone(),
                 );
             }
             true
@@ -493,6 +525,13 @@ pub async fn fn_id_login(
             return Err("FN ID 登录已取消（窗口被关闭）".into());
         }
         let st = lock_capture(&capture).clone();
+        if let Some(err) = st.error.clone() {
+            flog(format!("FN ID 登录中止: {err}"));
+            if let Some(w) = app.get_webview_window(label) {
+                let _ = w.destroy();
+            }
+            return Err(err);
+        }
         if let (Some(b), Some(c)) = (st.base, st.code) {
             flog(format!("已拿到 base={b} 与 code，开始换取 token"));
             break (b, c);

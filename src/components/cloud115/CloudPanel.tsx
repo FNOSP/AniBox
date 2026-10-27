@@ -357,7 +357,18 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
     try {
       await invoke("cloud_library_add_root", { provider: active, fid: last.fid || "", name: last.name });
       const r = await invoke<{ count: number; movies: number; episodes: number }>("cloud_library_scan", { provider: active });
-      setLibNote(`已入库 ${r.count} 项（电影 ${r.movies} / 剧集文件 ${r.episodes}）`);
+      // 扫完即刮削（增量：已有匹配的跳过）；失败不挡入库统计
+      let scrapeNote = "";
+      try {
+        const s = await invoke<{ matched: number; skipped: number; unmatched: string[] }>("cloud_library_scrape", {
+          provider: active,
+          force: false,
+        });
+        scrapeNote = `，TMDB 匹配 ${s.matched} 条${s.unmatched.length ? `（未匹配 ${s.unmatched.length}）` : ""}`;
+      } catch {
+        /* 刮削失败（如未配 TMDB 镜像）不影响入库 */
+      }
+      setLibNote(`已入库 ${r.count} 项（电影 ${r.movies} / 剧集文件 ${r.episodes}）${scrapeNote}`);
     } catch (ex) {
       setLibNote("");
       setErr(String(ex));

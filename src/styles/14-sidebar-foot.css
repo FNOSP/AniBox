@@ -10,6 +10,24 @@
   gap: 10px;
   padding: 6px 4px 10px;
 }
+/* [lc-1886] 用户行可点击：跳设置「账号」页 */
+.side-userrow-btn {
+  cursor: pointer;
+  border-radius: 12px;
+  transition: background-color 140ms ease;
+}
+.side-userrow-btn:hover {
+  background: var(--hover);
+}
+.side-userrow-btn:focus-visible {
+  outline: 2px solid var(--primary, #0066ff);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .side-userrow-btn {
+    transition: none;
+  }
+}
 .side-actions {
   position: sticky;
   bottom: 2px;

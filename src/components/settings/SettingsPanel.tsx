@@ -360,8 +360,11 @@ export function SettingsPanel({
   loggedIn = true,
   settings,
   onSettings,
+  initialTab,
 }: {
   onClose: () => void;
+  /** [lc-1886] 打开时默认选中的标签（如从侧栏用户行点进来直接落在「账号」）。 */
+  initialTab?: SetTabKey;
   /** 退出登录：由 App 负责清会话与切页（面板只发意图，不自己改全局状态） */
   onLogout: () => void;
   /** [lc-1623] 去飞牛登录页：飞牛未登录（游客态）时面板给「登录飞牛」入口。
@@ -397,7 +400,7 @@ export function SettingsPanel({
   /* ── 标签分类 ──
      只做布局状态，不参与任何设置真值；切换标签不会触发任何 invoke。
      桌面宽窗为左侧竖向标签，窄窗由 CSS 改为顶部横向可滚动标签（同一套 DOM）。 */
-  const [tab, setTab] = useState<SetTabKey>("general");
+  const [tab, setTab] = useState<SetTabKey>(initialTab ?? "general");
   const tabsRef = useRef<HTMLDivElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
 

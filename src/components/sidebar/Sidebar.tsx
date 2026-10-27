@@ -32,6 +32,7 @@ export function Sidebar({
   onOpenCloud115,
   onHome,
   onOpenSettings,
+  onOpenAccount,
   onOpenFeedback,
   onOpenHistory,
   feedbackUnread = 0,
@@ -52,6 +53,8 @@ export function Sidebar({
   onHome: () => void;
   /** [lc-128] 打开设置面板（缓存上限 / 占用 / 清理 + 关于） */
   onOpenSettings: () => void;
+  /** [lc-1886] 点击底部用户行（logo + 用户名 + 服务器）→ 打开设置面板并直接落到「账号」页 */
+  onOpenAccount: () => void;
   /** [lc-1599] 打开反馈面板（工单制：提交 / 我的工单 / 会话） */
   onOpenFeedback: () => void;
   /** [lc-1615] 打开观影记录页（原「阶段3接入」toast 占位改真页面） */
@@ -130,7 +133,19 @@ export function Sidebar({
         );
       })}
       {/* 底部：用户行 + 快捷操作卡 —— 结构与样式逐行复刻主仓库 embyWall.ts injectSettingsUI */}
-      <div className="side-userrow">
+      <div
+        className="side-userrow side-userrow-btn"
+        role="button"
+        tabIndex={0}
+        title="账号设置"
+        onClick={onOpenAccount}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onOpenAccount();
+          }
+        }}
+      >
         <img className="side-avatar" src="/anibox-logo.png" alt="AniBox" />
         <div className="side-usermeta">
           <div className="side-user-name">{username || "未登录"}</div>

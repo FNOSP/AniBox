@@ -283,6 +283,8 @@ function App() {
   const [server, setServer] = useState("");
   // [lc-128] 设置面板（缓存 + 关于）开关；入口在侧栏快捷操作卡（设置）
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // [lc-1886] 打开设置面板时默认选中的标签：点侧栏底部用户行 → "account"，齿轮 → "general"
+  const [settingsTab, setSettingsTab] = useState<"general" | "account">("general");
   // [lc-1599] 反馈面板（工单制）开关；入口在侧栏快捷操作卡（反馈）
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   // [lc-1600] 游客模式（未登录也能用）：true = 本会话按游客态走 —— 首页取数走
@@ -1265,6 +1267,13 @@ function App() {
           }}
           onOpenSettings={() => {
             closeSidebar();
+            setSettingsTab("general");
+            setSettingsOpen(true);
+          }}
+          // [lc-1886] 点击侧栏底部用户行 → 直接打开设置「账号」页
+          onOpenAccount={() => {
+            closeSidebar();
+            setSettingsTab("account");
             setSettingsOpen(true);
           }}
           onOpenFeedback={() => {
@@ -1517,6 +1526,7 @@ function App() {
       {settingsOpen && (
         <SettingsPanel
           onClose={() => setSettingsOpen(false)}
+          initialTab={settingsTab}
           settings={settings}
           onSettings={(patch) => void patchSettings(patch)}
           // [lc-1623] 飞牛未登录（游客态）时设置面板给「登录飞牛」入口 —— 退出/失效后进的是

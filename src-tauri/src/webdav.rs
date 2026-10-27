@@ -19,8 +19,9 @@ use serde_json::{json, Value};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
+/// [lc-1889] pub(crate)：登录页「内容来源」状态要读账号列表（cloud_sources_status）。
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
-struct WebdavAccount {
+pub(crate) struct WebdavAccount {
     id: String,
     name: String,
     /// 服务器根地址（https://dav.example.com/dav 或 Alist 端点）
@@ -38,7 +39,8 @@ fn accounts_path() -> Option<std::path::PathBuf> {
     crate::cloud::app_data_dir().map(|d| d.join("webdav-accounts.json"))
 }
 
-fn load_accounts() -> Vec<WebdavAccount> {
+/// [lc-1889] pub(crate)：登录页「内容来源」状态需要判断是否已配过 WebDAV 账号。
+pub(crate) fn load_accounts() -> Vec<WebdavAccount> {
     let Some(p) = accounts_path() else { return Vec::new() };
     let Ok(s) = std::fs::read_to_string(p) else { return Vec::new() };
     serde_json::from_str::<Vec<WebdavAccount>>(&s).unwrap_or_default()

@@ -4161,6 +4161,7 @@ pub fn run() {
             cloud115::cloud115_play,
             // [lc-1810] 多云盘资源库（115 之外六家 + 统一入口）
             cloud::cloud_providers,
+            cloud::cloud_sources_status,
             cloud::cloud_qr_start,
             cloud::cloud_qr_poll,
             cloud::cloud_logout,

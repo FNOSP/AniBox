@@ -328,6 +328,37 @@ pub async fn cloud_providers(app: AppHandle) -> Result<Value, String> {
     Ok(Value::Array(out))
 }
 
+/// [lc-1889] 登录页「内容来源」状态：飞牛是否已登录 + 已接入的网盘 + 是否配过 WebDAV。
+/// 网盘优先改造后，启动路由据此决定「直接进首页（游客/网盘态）」还是「停在登录页」——
+/// 只要任一来源可用就不再拿飞牛会话失效把整个 App 挡在门外。
+#[tauri::command]
+pub async fn cloud_sources_status(
+    app: AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<Value, String> {
+    let fnos = !state.config.read().await.token.is_empty();
+    let all = load_auth();
+    let mut clouds = Vec::new();
+    for (id, _) in PROVIDERS {
+        let logged = if *id == "115" {
+            crate::cloud115::cloud115_status(app.clone())
+                .await
+                .unwrap_or_default()
+                .get("logged")
+                .and_then(|x| x.as_bool())
+                .unwrap_or(false)
+        } else {
+            all.contains_key(*id)
+        };
+        if logged {
+            clouds.push(id.to_string());
+        }
+    }
+    let webdav = !crate::webdav::load_accounts().is_empty();
+    let any = fnos || !clouds.is_empty() || webdav;
+    Ok(json!({ "fnos": fnos, "clouds": clouds, "webdav": webdav, "any": any }))
+}
+
 #[tauri::command]
 pub async fn cloud_logout(app: AppHandle, provider: String) -> Result<(), String> {
     if provider == "115" {

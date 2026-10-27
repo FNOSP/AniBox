@@ -1162,6 +1162,9 @@ function App() {
         //   首页/媒体库这类飞牛依赖区仍按游客态处理（播放/详情引导登录），不误伤。
         //   两个例外仍回登录页：① 全新安装（无 server，否则新用户找不到飞牛登录入口）；
         //   ② 配了「自动登录」（记住的密码 + auto_login）—— 让登录页照旧静默重登，别把这个既有功能弄没了。
+        //   [lc-autologin] ③ 关了「自动登录」但磁盘上还留着上次的 token（auto_login=false 且 token 非空）
+        //   —— 此时后端 check_session 会直接拒绝恢复会话，前端**必须停在登录页重新输账号密码**，
+        //   不能落到游客态（否则用户想重登却回不到登录页）。这是「关自动登录后重启仍自动登录」的收口。
         //   重新登录飞牛的常规入口在设置面板「账号 → 登录飞牛」。
         invoke<Config>("get_config")
           .then((c) => {
@@ -1169,7 +1172,9 @@ function App() {
             // [访问码] 配了访问码 → 会话/网关重建失败必须回登录页重输，
             // 否则没有重建入口，后续 API 会被门禁持续拦成门户 HTML。
             const needsAccessCode = !!c?.access_code;
-            if (c?.server && !autoArmed && !needsAccessCode) {
+            // [lc-autologin] 有残留 token 但没开自动登录 → 必须回登录页（不回游客态）。
+            const staleToken = !c?.auto_login && !!c?.token;
+            if (c?.server && !autoArmed && !needsAccessCode && !staleToken) {
               setGuest(true);
               setPage("home");
               setView("home");
@@ -1524,15 +1529,21 @@ function App() {
           onLogout={() => {
             // [lc-1437] 退出登录：清会话 + 清首页快照（那是上一个账号的数据，
             // 留着会让下一个账号先看到别人的片单）。
-            // [lc-1623] 但**不回登录页**：飞牛退出不该牵连 BGM（两者已解耦）——进游客态，
-            // 发现页/BGM 面板照常可用；想重新登录飞牛走设置面板「账号 → 登录飞牛」。
-            // Rust 侧 logout 只清飞牛 token，绝不碰 bgm_token（见 lib.rs）。
+            // [lc-autologin] 退出 = 清干净所有鉴权痕迹，然后**回登录页**重新输账号密码：
+            //   · 后端 logout 清 token / password / auto_login（见 lib.rs）；
+            //   · 前端清鉴权相关 localStorage：首页快照、FN ID 预填、游客标记；
+            //     （BGM 的 anibox.bgmac.* 与飞牛无关，不动）
+            //   · 设置镜像里的 autoLogin 同步置 false，避免面板回显成「开」。
+            //   此前「退出只进游客态、不清密码」会让重启时被静默重登绕过开关，正是本 bug 的一半。
             setSettingsOpen(false);
             invoke("logout").catch(() => {});
-            try {
-              localStorage.removeItem("fntv-home-cache");
-            } catch {
-              /* ignore */
+            void patchSettings({ autoLogin: false });
+            for (const k of ["fntv-home-cache", "anibox-fnid", "anibox-guest"]) {
+              try {
+                localStorage.removeItem(k);
+              } catch {
+                /* ignore */
+              }
             }
             setCarousel([]);
             setCarouselBds({});
@@ -1540,10 +1551,9 @@ function App() {
             setLibRows([]);
             setLibs([]);
             setContinueList([]);
-            setGuest(true);
+            setGuest(false);
             setPage("home");
-            setView("home");
-            void loadGuestHome();
+            setView("login");
           }}
         />
       )}

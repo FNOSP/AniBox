@@ -406,11 +406,16 @@ async fn logout(app: AppHandle, state: State<'_, AppState>) -> Result<(), String
     // [lc-1623] 退出登录 = **只清飞牛侧**（会话 token），绝不动 `bgm_token` 与任何 BGM 追番状态：
     //   BGM 的登录态是独立的（cfg.bgm_token，见 bgm_account.rs），它的绑定/解绑只由
     //   bgm_account_bind / bgm_account_unbind 触发 —— 飞牛退出不该牵连它。
-    //   两处修正（原实现只改内存、不落盘，退出后重启会因磁盘上 token 还在而"自动登录"）：
-    //     · 补 config::save 落盘，让退出真正生效；
-    //     · 保留 server / username / password（供重新登录预填，server 亦是"曾配置过"的路由信号）。
+    // [lc-autologin] 退出必须「清干净鉴权字段」，否则重启会被静默重登绕过开关：
+    //   · token：会话凭据，清空；
+    //   · password：记住的密码，清空（否则登录页会拿它静默重登，退出等于没退）；
+    //   · auto_login：关掉（退出后本就不该自动登录）。
+    //   仅保留 server / username 供重新登录预填与「曾配置过」路由信号；访问码 access_code
+    //   属网关配置不参与自动登录，保留以免用户重登时还得再找一次访问码。
     let mut cfg = state.config.read().await.clone();
     cfg.token = String::new();
+    cfg.password = String::new();
+    cfg.auto_login = false;
     config::save(&app, &cfg).await?;
     *state.config.write().await = cfg;
     Ok(())
@@ -421,6 +426,13 @@ async fn check_session(state: State<'_, AppState>, app: AppHandle) -> Result<Val
     let mut cfg = state.config.read().await.clone();
     if cfg.token.is_empty() || cfg.server.is_empty() {
         return Err("未登录".into());
+    }
+    // [lc-autologin] 「自动登录」关闭时，不跨重启恢复持久化会话：
+    //   即使 config.json 里还留着上次登录的 token，启动也必须停在登录页重新输入账号密码。
+    //   token 只代表「本次会话凭据」，是否跨重启复用由 auto_login 决定 ——
+    //   原实现只看 token 是否存在，导致「关了自动登录仍然自动进首页」。
+    if !cfg.auto_login {
+        return Err("已关闭自动登录，请在登录页重新登录。".into());
     }
     // [访问码] 对齐旧项目 winctrl.setupCookieRestore：启动时用持久化访问码重建网关会话。
     // 进程内 Cookie 表随重启清空，不重建的话已开访问码的服务器会把 /user/info 拦成门户 HTML。

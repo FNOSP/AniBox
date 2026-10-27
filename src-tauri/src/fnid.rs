@@ -494,18 +494,30 @@ pub async fn fn_id_login(
 
             // ③ 其余导航一律放行（含 /signin 授权页、中继子域、5ddd 门户）
             flog(format!("放行导航: {}", u.as_str()));
-            // 官方中继子域（{fnId}.fnos.net，非门户根 fnos.net）→ 主进程带签名轮询 sys/config
-            // （页面内 fetch 无 Authx 签名会被网关判 invalid sign，永远拿不到 app_id → 卡桌面）
+            // 主进程带签名轮询 sys/config 拿 app_id（页面内 fetch 无 Authx 会被判 invalid sign）。
+            //
+            // [lc-1887] 不再只对 `{fnId}.fnos.net` 中继子域轮询：FN Connect 在**同局域网**时
+            // 会直接重定向到 NAS 的 LAN 地址（实测 `http://192.168.5.4:5666/`）。旧逻辑只认
+            // `.fnos.net`，LAN 直连时完全靠页面内 JS 轮询 → 无 Authx → `invalid sign` →
+            // 拿不到 app_id → 不跳 /signin → 授权页不出现（用户只看到 fnOS 桌面/登录页）。
+            // 现在凡「真实 NAS 主机」（排除 5ddd 门户与 fnos.net 门户根）都用主进程签名轮询，
+            // 并保留原始 scheme + 端口（LAN 是 http://IP:5666，中继是 https://子域）。
             let h = host.to_ascii_lowercase();
-            if h.ends_with(".fnos.net") {
-                spawn_relay_sub_poll(
-                    nav_app.clone(),
-                    nav_label.clone(),
-                    format!("https://{h}"),
-                    Arc::clone(&nav_capture),
-                    Arc::clone(&nav_relay_started),
-                    nav_access_code.clone(),
-                );
+            let is_portal = h == "5ddd.com"
+                || h.ends_with(".5ddd.com")
+                || h == "fnos.net";
+            if !is_portal {
+                let origin = u.origin().ascii_serialization();
+                if origin != "null" && !origin.is_empty() {
+                    spawn_relay_sub_poll(
+                        nav_app.clone(),
+                        nav_label.clone(),
+                        origin,
+                        Arc::clone(&nav_capture),
+                        Arc::clone(&nav_relay_started),
+                        nav_access_code.clone(),
+                    );
+                }
             }
             true
         });

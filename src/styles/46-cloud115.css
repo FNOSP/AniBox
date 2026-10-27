@@ -746,3 +746,13 @@
 .c115-wdform .c115-wdform-btns .c115-mini:first-child:hover {
   box-shadow: 0 4px 14px rgba(108, 155, 255, 0.35);
 }
+
+/* [lc-1892] 媒体库视图：海报卡片 */
+.c115-libposter {
+  width: 42px;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+  background: var(--hover);
+}

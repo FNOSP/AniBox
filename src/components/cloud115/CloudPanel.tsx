@@ -9,6 +9,7 @@
    · 凭据只落本机（cloud115.json / direct-cloud-auth.json / webdav-accounts.json）。 */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { tmdbImg } from "../../lib/images";
 import {
   Cloud as IcoCloudL,
   FileVideo as IcoVideoL,
@@ -34,6 +35,22 @@ type Entry = {
 };
 
 type ListResp = { items: Entry[]; nextCursor: string; count?: number };
+// [lc-1892] 网盘媒体库视图（cloud_library_items 的索引 + 元数据）
+type CloudLibItem = {
+  fileId: string;
+  parent: string;
+  name: string;
+  size: number;
+  kind: "movie" | "episode";
+  title: string;
+  epTitle: string;
+  year: number;
+  season: number;
+  episode: number;
+};
+type CloudMeta = { tmdbId: number; mediaType: string; title: string; poster: string; year: number };
+type LibResp = { provider: string; scannedAtMs: number; items: CloudLibItem[]; meta: Record<string, CloudMeta> };
+type LibGroup = { key: string; title: string; year: number; meta?: CloudMeta; files: CloudLibItem[] };
 type Crumb = { fid: string; name: string };
 type WebdavAccount = { id: string; name: string; url: string; username: string };
 
@@ -84,6 +101,9 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
   // [lc-1890] 网盘媒体库：把当前目录加入媒体库并扫描（cloud_library）
   const [libNote, setLibNote] = useState("");
   const [libBusy, setLibBusy] = useState(false);
+  // [lc-1892] 媒体库视图：按标题分组的索引 + TMDB 元数据海报
+  const [libView, setLibView] = useState(false);
+  const [libGroups, setLibGroups] = useState<LibGroup[] | null>(null);
   const alive = useRef(true);
   const pollTimer = useRef<number | null>(null);
 
@@ -242,6 +262,8 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
     setCursor("");
     setMode("");
     setLibNote("");
+    setLibView(false);
+    setLibGroups(null);
     setCrumbs([{ fid: "", name: "根目录" }]);
     setRenaming(null);
     if (id === "webdav") {
@@ -338,6 +360,50 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
       setItems([]);
       setCrumbs([{ fid: "", name: "根目录" }]);
       if (list.length) void loadWebdav(list[0].id, "", true);
+    }
+  };
+
+  // [lc-1892] 拉取媒体库索引并按 (类型|标题) 分组；文件按 季/集 排序
+  const openLibView = useCallback(async () => {
+    setErr("");
+    try {
+      const r = await invoke<LibResp>("cloud_library_items", { provider: active });
+      const meta = r.meta || {};
+      const gmap = new Map<string, LibGroup>();
+      for (const it of r.items) {
+        const media = it.kind === "movie" ? "movie" : "tv";
+        const nk = it.title.replace(/[ ._-～~·　]/g, "").toLowerCase();
+        const key = `${media}|${nk}`;
+        const g = gmap.get(key) || {
+          key,
+          title: meta[key]?.title || it.title,
+          year: meta[key]?.year || it.year,
+          meta: meta[key],
+          files: [],
+        };
+        g.files.push(it);
+        gmap.set(key, g);
+      }
+      const groups = [...gmap.values()].map((g) => ({
+        ...g,
+        files: [...g.files].sort((a, b) =>
+          a.kind === "episode" ? a.season - b.season || a.episode - b.episode : a.title.localeCompare(b.title),
+        ),
+      }));
+      groups.sort((a, b) => a.title.localeCompare(b.title, "zh"));
+      setLibGroups(groups);
+      setLibView(true);
+    } catch (e) {
+      setErr(String(e));
+    }
+  }, [active]);
+
+  const playLib = async (f: CloudLibItem) => {
+    setErr("");
+    try {
+      await invoke("cloud_play", { provider: active, fileId: f.fileId, name: f.name, mode: mode || null });
+    } catch (ex) {
+      setErr(String(ex));
     }
   };
 
@@ -457,6 +523,15 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
               {libBusy ? "扫描中…" : "加入媒体库"}
             </button>
           )}
+          {!isWebdav && (
+            <button
+              className="c115-mini"
+              title="按标题浏览已入库的影片（带 TMDB 海报），点击播第一集"
+              onClick={() => (libView ? setLibView(false) : void openLibView())}
+            >
+              {libView ? "文件浏览" : "媒体库"}
+            </button>
+          )}
         </div>
       )}
       {libNote && <p className="c115-dim" style={{ margin: "4px 0 0" }}>{libNote}</p>}
@@ -524,7 +599,7 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
-      {logged && (
+      {logged && !libView && (
         <>
           <div className="c115-crumbs">
             {crumbs.map((c, i) => (
@@ -604,6 +679,53 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
             <button className="c115-more" onClick={() => loadList(crumbs[crumbs.length - 1].fid, cursor, false, active)}>
               加载更多
             </button>
+          )}
+        </>
+      )}
+      {/* [lc-1892] 媒体库视图：按标题分组的索引卡片（TMDB 海报/年份/集数），点击播第一集 */}
+      {logged && !isWebdav && libView && (
+        <>
+          <div className="c115-crumbs">
+            <span className="c115-crumb">
+              <button type="button" onClick={() => setLibView(false)}>‹ 返回文件浏览</button>
+            </span>
+            <span className="c115-crumb">媒体库 · {libGroups?.length ?? 0} 部</span>
+          </div>
+          <div className="c115-grid">
+            {(libGroups || []).map((g) => (
+              <div key={g.key} className="c115-item" onClick={() => g.files[0] && void playLib(g.files[0])}>
+                {g.meta?.poster ? (
+                  <img className="c115-libposter" src={tmdbImg(g.meta.poster, "w185")} alt="" loading="lazy" />
+                ) : (
+                  <span className={`c115-ico ${g.files[0]?.kind === "episode" ? "video" : "other"}`}>
+                    <IcoVideoL size={15} strokeWidth={1.8} />
+                  </span>
+                )}
+                <span className="c115-name" title={g.title}>
+                  {g.title}
+                  {g.year ? ` (${g.year})` : ""}
+                </span>
+                <span className="c115-size">
+                  {g.files[0]?.kind === "episode" ? `S${g.files[0].season || 1} · ${g.files.length} 集` : "电影"}
+                </span>
+                <button
+                  className="c115-play"
+                  title="播放（直链自动续签）"
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    if (g.files[0]) void playLib(g.files[0]);
+                  }}
+                >
+                  <IcoPlayL size={13} strokeWidth={2.2} />
+                </button>
+              </div>
+            ))}
+          </div>
+          {libGroups && libGroups.length === 0 && (
+            <div className="c115-empty">
+              <IcoFolderL size={34} strokeWidth={1.4} />
+              <p>还没有入库 —— 进到媒体目录点「加入媒体库」扫描</p>
+            </div>
           )}
         </>
       )}

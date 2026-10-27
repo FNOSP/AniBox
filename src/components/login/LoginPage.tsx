@@ -1,6 +1,7 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { RefreshCw as IcoRefreshL, Trash2 as IcoTrashL } from "lucide-react";
 import { Config } from "../../types";
 
 /* [lc-17xx] 登录页背景：public/login/ 下的横图随机轮换。
@@ -64,6 +65,23 @@ function relayFnId(value: string): string {
   return "";
 }
 
+/* [lc-1889] 网盘优先：登录页从「登录飞牛」改为「选择内容来源」——
+   网盘扫码 / 飞牛 NAS / WebDAV 三张来源卡任意组合，都不接也能先进首页。
+   各来源的落盘沿用既有存储（config.json / direct-cloud-auth.json /
+   cloud115.json / webdav-accounts.json），登录页只做编排不造新存储。 */
+type ProviderInfo = { id: string; label: string; logged: boolean; userName: string };
+type WebdavAccount = { id: string; name: string; url: string; username: string };
+
+const QR_HINTS: Record<string, string> = {
+  "115": "打开 115 App 扫一扫登录",
+  quark: "打开夸克 App 扫一扫登录",
+  baidu: "打开百度网盘 App 扫一扫登录",
+  aliyun: "打开阿里云盘 App 扫一扫登录",
+  tianyi: "打开天翼云盘 App 扫一扫登录",
+  "123": "打开 123 云盘 App 扫一扫登录",
+  guangya: "打开光鸭云盘 App 扫一扫登录",
+};
+
 export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: () => void }) {
   const [cfg, setCfg] = useState<Config | null>(null);
   // [lc-1884] 单一输入框：IP / 域名 / FN ID 都填这里，提交时自动判别。
@@ -82,14 +100,144 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
   // 自动登录一次性闸门：失败后停在本页报错，绝不循环重试
   const autoTried = useRef(false);
 
-  // 填的是 FN ID 或中继域名 → 走 FN ID 授权（中继域名不支持密码登录，见 relayFnId 注释）。
-  const fnidVal = isFnId(domain.trim()) ? domain.trim() : relayFnId(domain);
-  const fnid = !!fnidVal;
-  // FN ID 走 OAuth，不需要用户名/密码；服务器地址登录则两者必填。
-  const canSubmit = !!domain.trim() && (fnid || (!!username && !!password));
+  // ── 来源卡折叠态 ──
+  const [openCard, setOpenCard] = useState<"cloud" | "fnos" | "webdav" | null>("cloud");
+
+  // ── 网盘来源（扫码） ──
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [activeProv, setActiveProv] = useState("");
+  const [qrImg, setQrImg] = useState("");
+  const [qrMsg, setQrMsg] = useState("");
+  const pollTimer = useRef<number | null>(null);
+  const alive = useRef(true);
+
+  // ── WebDAV 来源 ──
+  const [wdAccounts, setWdAccounts] = useState<WebdavAccount[]>([]);
+  const [wdForm, setWdForm] = useState<{ name: string; url: string; user: string; pass: string } | null>(null);
+  const [wdErr, setWdErr] = useState("");
+
+  const stopPoll = () => {
+    if (pollTimer.current !== null) {
+      window.clearInterval(pollTimer.current);
+      pollTimer.current = null;
+    }
+  };
+
+  const refreshProviders = useCallback(async (): Promise<ProviderInfo[]> => {
+    const r = await invoke<ProviderInfo[]>("cloud_providers");
+    if (alive.current) setProviders(r);
+    return r;
+  }, []);
+
+  const loadWdAccounts = useCallback(async () => {
+    try {
+      const r = await invoke<WebdavAccount[]>("webdav_accounts");
+      if (alive.current) setWdAccounts(r);
+      return r;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  // [lc-1889] 内嵌扫码：与 CloudPanel 同一套 cloud_qr_start/poll / cloud115_qr_start/poll，
+  // 成功后只刷新登录态，不进入文件浏览（浏览仍在「网盘接入」页）。
+  const startQr = useCallback(
+    async (provider: string) => {
+      setErr("");
+      setQrImg("");
+      setQrMsg("正在获取二维码…");
+      stopPoll();
+      try {
+        if (provider === "115") {
+          const r = await invoke<{ qrcode: string; uid: string; time: string; sign: string }>("cloud115_qr_start");
+          if (!alive.current) return;
+          setQrImg(r.qrcode);
+          setQrMsg(QR_HINTS[provider] || "扫码登录");
+          pollTimer.current = window.setInterval(async () => {
+            try {
+              const p = await invoke<{ status: number; ok: boolean }>("cloud115_qr_poll", {
+                uid: r.uid,
+                time: r.time,
+                sign: r.sign,
+              });
+              if (!alive.current) return stopPoll();
+              if (p.ok) {
+                stopPoll();
+                setQrImg("");
+                setQrMsg("登录成功");
+                void refreshProviders();
+              } else if (p.status === 1) {
+                setQrMsg("已扫码，请在手机上确认登录");
+              }
+            } catch (e) {
+              stopPoll();
+              if (alive.current) setErr(String(e));
+            }
+          }, 2000);
+          return;
+        }
+        const r = await invoke<{ qrcode: string; state: string; hint: string }>("cloud_qr_start", { provider });
+        if (!alive.current) return;
+        setQrImg(r.qrcode);
+        setQrMsg(r.hint || QR_HINTS[provider] || "扫码登录");
+        pollTimer.current = window.setInterval(async () => {
+          try {
+            const p = await invoke<{ status: number; ok: boolean }>("cloud_qr_poll", {
+              provider,
+              state: r.state,
+            });
+            if (!alive.current) return stopPoll();
+            if (p.ok) {
+              stopPoll();
+              setQrImg("");
+              setQrMsg("登录成功");
+              void refreshProviders();
+            } else if (p.status === 1) {
+              setQrMsg("已扫码，请在手机上确认登录");
+            }
+          } catch (e) {
+            stopPoll();
+            if (alive.current) setErr(String(e));
+          }
+        }, 2000);
+      } catch (e) {
+        if (alive.current) setErr(String(e));
+      }
+    },
+    [refreshProviders],
+  );
+
+  const pickProv = (id: string) => {
+    if (id === activeProv) return;
+    stopPoll();
+    setActiveProv(id);
+    setQrImg("");
+    setQrMsg("");
+    const p = providers.find((x) => x.id === id);
+    if (!p?.logged) void startQr(id);
+  };
+
+  const addWdAccount = async () => {
+    if (!wdForm) return;
+    setWdErr("");
+    try {
+      await invoke("webdav_account_add", { name: wdForm.name, url: wdForm.url, username: wdForm.user, password: wdForm.pass });
+      setWdForm(null);
+      void loadWdAccounts();
+    } catch (ex) {
+      setWdErr(String(ex));
+    }
+  };
+
+  const delWdAccount = async (id: string) => {
+    await invoke("webdav_account_del", { id }).catch(() => {});
+    void loadWdAccounts();
+  };
 
   useEffect(() => {
+    alive.current = true;
     invoke<Config>("get_config").then((c) => {
+      if (!alive.current) return;
       setCfg(c);
       setDomain(c.server);
       setUsername(c.username);
@@ -99,23 +247,44 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
       setAutoLogin(c.auto_login && !!c.password);
       setMpvPath(c.mpv_path);
       setProxyPath(c.proxy_path);
+      // 有飞牛配置时默认展开 NAS 卡，否则默认展示网盘卡
+      if (c.server) setOpenCard("fnos");
     });
+    refreshProviders().then((list) => {
+      if (!alive.current || !list.length) return;
+      setActiveProv(list[0].id);
+      if (!list[0].logged) void startQr(list[0].id);
+    });
+    void loadWdAccounts();
+    return () => {
+      alive.current = false;
+      stopPoll();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 填的是 FN ID 或中继域名 → 走 FN ID 授权（中继域名不支持密码登录，见 relayFnId 注释）。
+  const fnidVal = isFnId(domain.trim()) ? domain.trim() : relayFnId(domain);
+  const fnosMode = !!domain.trim(); // 用户打算接飞牛
+  const fnosReady = fnosMode && (!!fnidVal || (!!username && !!password));
+  const loggedClouds = providers.filter((p) => p.logged);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!domain.trim()) {
-      setErr("请输入服务器地址或 FN ID。");
+    // 没填飞牛 → 「开始使用」：直接进首页（游客态 + 已接入的网盘/WebDAV 照常可用）
+    if (!fnosMode) {
+      if (onGuest) onGuest();
+      else onDone();
       return;
     }
-    if (!fnid && (!username || !password)) {
+    if (!fnosReady) {
       setErr("请输入用户名和密码。");
       return;
     }
     setBusy(true);
     setErr("");
     try {
-      if (fnid) {
+      if (fnidVal) {
         // FN ID 远程登录：打开飞牛官方授权窗口（OAuth），成功后后端已写配置。
         await invoke("fn_id_login", { fnId: fnidVal, accessCode: accessCode.trim() });
         try { localStorage.setItem("anibox-fnid", fnidVal); } catch { /* 尽力预填 */ }
@@ -168,106 +337,222 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
       });
   }, [cfg, onDone]);
 
+  const curProv = providers.find((p) => p.id === activeProv);
+
   return (
     <div className="login-wrap">
       <LoginBackdrop />
       <div className="login-hero">
         <div className="login-hero-glow" />
         <h1>AniBox</h1>
-        <p>把飞牛影视，变成你桌面上的私人影院</p>
+        <p>把你的影视库，变成桌面上的私人影院</p>
         <ul className="login-feats">
-          <li>自绘界面持续优化，本地媒体库、收藏与继续观看一目了然</li>
-          <li>支持 mpv 与 PotPlayer 播放，字幕、着色器与播放控制原生可用</li>
-          <li>追剧日历轻松追踪，放送时间与观看进度不再错过</li>
+          <li>夸克 / 百度 / 阿里 / 天翼 / 123 / 115 扫码即接，WebDAV 通吃 NAS 与 Alist</li>
+          <li>飞牛影视原生支持：媒体库、追剧进度与播放状态双向同步</li>
+          <li>mpv 与 PotPlayer 播放，字幕、着色器与插帧原生可用</li>
           <li>聚合 TMDB / Bangumi / AniList 等丰富影视数据</li>
-          <li>弹幕、全局手柄与自建镜像，完善的追剧观影体验</li>
         </ul>
       </div>
       <form className="login-card" onSubmit={submit}>
-        <h2>登录飞牛影视</h2>
-        <label>服务器地址 / FN ID</label>
-        <input
-          value={domain}
-          onChange={(e) => setDomain(e.target.value)}
-          placeholder="IP、域名或 FN ID，如 192.168.31.170:18888"
-          spellCheck={false}
-          required
-        />
-        <p className="set-desc" style={{ margin: "4px 0 0", fontSize: 12 }}>
-          填内网 IP / 直连域名用账号密码登录；填 FN ID 或中继域名（*.fnos.net）则打开飞牛官方授权窗口远程登录。
-        </p>
-        <label>用户名</label>
-        <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder={fnid ? "FN ID 登录时可留空" : ""} />
-        <label>密码</label>
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder={fnid ? "FN ID 登录时可留空" : ""}
-        />
-        <label>访问码（可选）</label>
-        <input
-          type="password"
-          value={accessCode}
-          onChange={(e) => setAccessCode(e.target.value)}
-          placeholder="服务器未开启访问码门禁时请留空"
-          autoComplete="off"
-        />
-        <div className="login-opts">
-          <label className="login-check">
-            <input
-              type="checkbox"
-              checked={remember}
-              onChange={(e) => {
-                setRemember(e.target.checked);
-                if (!e.target.checked) setAutoLogin(false);
-              }}
-            />
-            记住密码
-          </label>
-          <label className="login-check">
-            <input
-              type="checkbox"
-              checked={autoLogin}
-              disabled={!remember}
-              onChange={(e) => setAutoLogin(e.target.checked)}
-            />
-            自动登录
-          </label>
-        </div>
-        <button type="button" className="linklike" onClick={() => setShowAdv(!showAdv)}>
-          高级设置（mpv / 代理路径）
-        </button>
-        {showAdv && (
-          <>
-            <label>mpv.exe 路径</label>
-            <input value={mpvPath} onChange={(e) => setMpvPath(e.target.value)} />
-            <label>Go 代理路径</label>
-            <input value={proxyPath} onChange={(e) => setProxyPath(e.target.value)} />
-          </>
-        )}
-        {err && <div className="err">{err}</div>}
-        <button className="primary" disabled={busy || !canSubmit}>
-          {busy ? (fnid ? "打开授权窗口…" : "登录中…") : "登 录"}
-        </button>
-        {/* [lc-1600] 游客入口：未登录也能用（首页轮播走 AniList 当季 + TMDB 热门兜底；
-            详情/播放引导登录）。标记写进 localStorage，启动流程据此跳过会话检查。 */}
-        {onGuest && (
+        <h2>选择内容来源</h2>
+        <p className="login-src-sub">按需组合接入；一个都不接也可以先进去看看</p>
+
+        {/* ── 来源卡：网盘账号 ── */}
+        <section className={`login-src${openCard === "cloud" ? " open" : ""}`}>
           <button
             type="button"
-            className="gst-enter"
-            disabled={busy}
-            onClick={() => {
-              try {
-                localStorage.setItem("anibox-guest", "1");
-              } catch {
-                /* 写不进也不拦：本次会话照常进游客态 */
-              }
-              onGuest();
-            }}
+            className="login-src-head"
+            aria-expanded={openCard === "cloud"}
+            onClick={() => setOpenCard(openCard === "cloud" ? null : "cloud")}
           >
-            先逛逛（游客模式）
+            网盘账号
+            {loggedClouds.length > 0 && <span className="login-src-badge">{loggedClouds.length}</span>}
+            <span className="login-src-chev" aria-hidden="true" />
           </button>
+          {openCard === "cloud" && (
+            <div className="login-src-body">
+              <div className="login-src-chips" role="tablist">
+                {providers.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={p.id === activeProv}
+                    className={`login-chip${p.id === activeProv ? " on" : ""}`}
+                    onClick={() => pickProv(p.id)}
+                  >
+                    {p.label}
+                    <span className={`login-chip-dot${p.logged ? " ok" : ""}`} title={p.logged ? "已登录" : "未登录"} />
+                  </button>
+                ))}
+              </div>
+              {curProv?.logged ? (
+                <p className="login-src-ok">已登录{curProv.userName ? `：${curProv.userName}` : ""}</p>
+              ) : qrImg ? (
+                <div className="login-qrrow">
+                  <img className="login-qr" src={qrImg} alt="登录二维码" />
+                  <div className="login-qrcol">
+                    <p className="login-qrmsg">{qrMsg}</p>
+                    <button type="button" className="login-minibtn" onClick={() => void startQr(activeProv)}>
+                      <IcoRefreshL size={12} strokeWidth={2} /> 刷新二维码
+                    </button>
+                    <p className="login-dim">凭据只保存在本机，不会上传到任何服务器。</p>
+                  </div>
+                </div>
+              ) : (
+                <p className="login-dim">{qrMsg || "正在获取二维码…"}</p>
+              )}
+            </div>
+          )}
+        </section>
+
+        {/* ── 来源卡：飞牛 NAS ── */}
+        <section className={`login-src${openCard === "fnos" ? " open" : ""}`}>
+          <button
+            type="button"
+            className="login-src-head"
+            aria-expanded={openCard === "fnos"}
+            onClick={() => setOpenCard(openCard === "fnos" ? null : "fnos")}
+          >
+            飞牛 NAS
+            {cfg?.token ? <span className="login-src-badge">已登录</span> : null}
+            <span className="login-src-chev" aria-hidden="true" />
+          </button>
+          {openCard === "fnos" && (
+            <div className="login-src-body">
+              <label>服务器地址 / FN ID</label>
+              <input
+                value={domain}
+                onChange={(e) => setDomain(e.target.value)}
+                placeholder="IP、域名或 FN ID，如 192.168.31.170:18888"
+                spellCheck={false}
+              />
+              <p className="login-dim" style={{ margin: "4px 0 0" }}>
+                填内网 IP / 直连域名用账号密码登录；填 FN ID 或中继域名（*.fnos.net）则打开飞牛官方授权窗口远程登录。
+              </p>
+              <label>用户名</label>
+              <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder={fnidVal ? "FN ID 登录时可留空" : ""} />
+              <label>密码</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={fnidVal ? "FN ID 登录时可留空" : ""}
+              />
+              <label>访问码（可选）</label>
+              <input
+                type="password"
+                value={accessCode}
+                onChange={(e) => setAccessCode(e.target.value)}
+                placeholder="服务器未开启访问码门禁时请留空"
+                autoComplete="off"
+              />
+              <div className="login-opts">
+                <label className="login-check">
+                  <input
+                    type="checkbox"
+                    checked={remember}
+                    onChange={(e) => {
+                      setRemember(e.target.checked);
+                      if (!e.target.checked) setAutoLogin(false);
+                    }}
+                  />
+                  记住密码
+                </label>
+                <label className="login-check">
+                  <input
+                    type="checkbox"
+                    checked={autoLogin}
+                    disabled={!remember}
+                    onChange={(e) => setAutoLogin(e.target.checked)}
+                  />
+                  自动登录
+                </label>
+              </div>
+              <button type="button" className="linklike" onClick={() => setShowAdv(!showAdv)}>
+                高级设置（mpv / 代理路径）
+              </button>
+              {showAdv && (
+                <>
+                  <label>mpv.exe 路径</label>
+                  <input value={mpvPath} onChange={(e) => setMpvPath(e.target.value)} />
+                  <label>Go 代理路径</label>
+                  <input value={proxyPath} onChange={(e) => setProxyPath(e.target.value)} />
+                </>
+              )}
+            </div>
+          )}
+        </section>
+
+        {/* ── 来源卡：WebDAV ── */}
+        <section className={`login-src${openCard === "webdav" ? " open" : ""}`}>
+          <button
+            type="button"
+            className="login-src-head"
+            aria-expanded={openCard === "webdav"}
+            onClick={() => setOpenCard(openCard === "webdav" ? null : "webdav")}
+          >
+            WebDAV
+            {wdAccounts.length > 0 && <span className="login-src-badge">{wdAccounts.length}</span>}
+            <span className="login-src-chev" aria-hidden="true" />
+          </button>
+          {openCard === "webdav" && (
+            <div className="login-src-body">
+              {wdAccounts.map((a) => (
+                <div key={a.id} className="login-wdrow">
+                  <span className="login-wdmeta">
+                    <b>{a.name}</b>
+                    <span>{a.url}</span>
+                  </span>
+                  <button type="button" className="login-minibtn" title="删除账号" onClick={() => void delWdAccount(a.id)}>
+                    <IcoTrashL size={12} strokeWidth={2} />
+                  </button>
+                </div>
+              ))}
+              {wdForm ? (
+                <div className="login-wdform">
+                  <input placeholder="名称（如：家里 NAS）" value={wdForm.name} onChange={(e) => setWdForm({ ...wdForm, name: e.target.value })} />
+                  <input placeholder="地址 https://dav.example.com/dav" value={wdForm.url} onChange={(e) => setWdForm({ ...wdForm, url: e.target.value })} />
+                  <input placeholder="账号" value={wdForm.user} onChange={(e) => setWdForm({ ...wdForm, user: e.target.value })} />
+                  <input placeholder="密码" type="password" value={wdForm.pass} onChange={(e) => setWdForm({ ...wdForm, pass: e.target.value })} />
+                  <div className="login-wdbtns">
+                    <button type="button" className="login-minibtn" onClick={() => void addWdAccount()}>
+                      验证并保存
+                    </button>
+                    <button type="button" className="login-minibtn" onClick={() => setWdForm(null)}>
+                      取消
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" className="login-minibtn" onClick={() => setWdForm({ name: "", url: "", user: "", pass: "" })}>
+                  添加 WebDAV 账号
+                </button>
+              )}
+              {wdErr && <p className="login-err-dim">{wdErr}</p>}
+              <p className="login-dim">支持 NAS / Alist / 坚果云等任意 WebDAV 服务；密码本机加密存储。</p>
+            </div>
+          )}
+        </section>
+
+        {err && <div className="err">{err}</div>}
+        <button className="primary" disabled={busy}>
+          {busy
+            ? fnosMode
+              ? fnidVal
+                ? "打开授权窗口…"
+                : "登录中…"
+              : "进入中…"
+            : fnosMode
+              ? fnidVal
+                ? "打开飞牛授权窗口"
+                : "登 录"
+              : "开始使用"}
+        </button>
+        {!fnosMode && (
+          <p className="login-dim" style={{ textAlign: "center", marginTop: -6 }}>
+            未接飞牛时以游客模式进入，已接入的网盘 / WebDAV 在「网盘接入」里浏览。
+          </p>
         )}
       </form>
     </div>

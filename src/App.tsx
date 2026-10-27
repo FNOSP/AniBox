@@ -1168,15 +1168,22 @@ function App() {
         //   —— 此时后端 check_session 会直接拒绝恢复会话，前端**必须停在登录页重新输账号密码**，
         //   不能落到游客态（否则用户想重登却回不到登录页）。这是「关自动登录后重启仍自动登录」的收口。
         //   重新登录飞牛的常规入口在设置面板「账号 → 登录飞牛」。
-        invoke<Config>("get_config")
-          .then((c) => {
+        //   [lc-1889] 网盘优先：已接入任一**网盘 / WebDAV** 来源时，飞牛会话失效不再挡门 ——
+        //   直接进游客态首页（网盘内容在「网盘接入」可达，飞牛从设置→账号重登）。
+        //   注意只看 clouds/webdav，不看 st.fnos：走到这里说明飞牛 token 已失效，不能算数。
+        Promise.all([
+          invoke<Config>("get_config").catch(() => null),
+          invoke<{ fnos: boolean; clouds: string[]; webdav: boolean; any: boolean }>("cloud_sources_status").catch(() => null),
+        ])
+          .then(([c, st]) => {
             const autoArmed = !!(c?.auto_login && c?.password && c?.username && c?.server);
             // [访问码] 配了访问码 → 会话/网关重建失败必须回登录页重输，
             // 否则没有重建入口，后续 API 会被门禁持续拦成门户 HTML。
             const needsAccessCode = !!c?.access_code;
             // [lc-autologin] 有残留 token 但没开自动登录 → 必须回登录页（不回游客态）。
             const staleToken = !c?.auto_login && !!c?.token;
-            if (c?.server && !autoArmed && !needsAccessCode && !staleToken) {
+            const hasCloudSource = !!st && (st.clouds.length > 0 || st.webdav);
+            if ((c?.server && !autoArmed && !needsAccessCode && !staleToken) || hasCloudSource) {
               setGuest(true);
               setPage("home");
               setView("home");

@@ -27,6 +27,7 @@ fn lib_path() -> Option<PathBuf> {
 
 /// 用户为某个网盘指定的媒体根目录
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct CloudRoot {
     pub fid: String,
     pub name: String,
@@ -34,6 +35,7 @@ pub struct CloudRoot {
 
 /// 解析后的单条媒体（文件）
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct CloudItem {
     pub provider: String,
     pub file_id: String,
@@ -56,6 +58,7 @@ pub struct CloudItem {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct CloudLib {
     pub provider: String,
     #[serde(default)]
@@ -433,6 +436,8 @@ pub async fn cloud_library_items(provider: String) -> Result<Value, String> {
         "roots": lib.map(|l| l.roots.clone()).unwrap_or_default(),
         "scannedAtMs": lib.map(|l| l.scanned_at_ms).unwrap_or(0),
         "items": lib.map(|l| l.items.clone()).unwrap_or_default(),
+        // 全局元数据表（key=media|归一化标题，跨盘共享同名匹配）
+        "meta": load_meta(),
     }))
 }
 
@@ -518,6 +523,7 @@ pub async fn cloud_library_remove(provider: String) -> Result<Value, String> {
 /// 单标题的刮削结果。key = `媒体类型|归一化标题`（与具体 file_id 无关——同剧多集共享一条）。
 /// 落 `cloud-metadata.json`：重新扫描不丢刮削结果（[lc-1889] 设计 §二.3）。
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct CloudMeta {
     pub tmdb_id: i64,
     pub media_type: String,

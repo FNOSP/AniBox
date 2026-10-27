@@ -4174,6 +4174,7 @@ pub fn run() {
             cloud_library::cloud_library_add_root,
             cloud_library::cloud_library_scan,
             cloud_library::cloud_library_remove,
+            cloud_library::cloud_library_scrape,
             cloud::cloud_rename,
             cloud_proxy::cloud_ffmpeg_available,
             fnid::fn_id_login,

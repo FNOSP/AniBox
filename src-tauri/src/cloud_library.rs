@@ -513,6 +513,117 @@ pub async fn cloud_library_remove(provider: String) -> Result<Value, String> {
     Ok(json!({ "ok": true }))
 }
 
+// ───────────────────────── TMDB 刮削（按标题去重，结果与索引分离） ─────────────────────────
+
+/// 单标题的刮削结果。key = `媒体类型|归一化标题`（与具体 file_id 无关——同剧多集共享一条）。
+/// 落 `cloud-metadata.json`：重新扫描不丢刮削结果（[lc-1889] 设计 §二.3）。
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct CloudMeta {
+    pub tmdb_id: i64,
+    pub media_type: String,
+    pub title: String,
+    #[serde(default)]
+    pub poster: String,
+    #[serde(default)]
+    pub year: u32,
+}
+
+fn meta_path() -> Option<PathBuf> {
+    crate::cloud::app_data_dir().map(|d| d.join("cloud-metadata.json"))
+}
+
+type MetaMap = std::collections::BTreeMap<String, CloudMeta>;
+
+fn load_meta() -> MetaMap {
+    let Some(p) = meta_path() else { return MetaMap::new() };
+    let Ok(s) = std::fs::read_to_string(p) else { return MetaMap::new() };
+    serde_json::from_str(&s).unwrap_or_default()
+}
+
+fn save_meta(m: &MetaMap) -> Result<(), String> {
+    let Some(p) = meta_path() else { return Err("app_data_dir 未初始化".into()) };
+    if let Some(dir) = p.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
+    }
+    let s = serde_json::to_string_pretty(m).map_err(|e| format!("序列化元数据失败: {e}"))?;
+    std::fs::write(&p, s).map_err(|e| format!("写元数据失败: {e}"))
+}
+
+fn normalize_title_key(s: &str) -> String {
+    s.chars()
+        .filter(|c| !matches!(c, ' ' | '.' | '_' | '-' | '～' | '~' | '·' | '　'))
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+fn meta_key(title: &str, media: &str) -> String {
+    format!("{}|{}", media, normalize_title_key(title))
+}
+
+/// 对某盘索引做 TMDB 刮削：按 (媒体类型, 归一化标题) 去重逐个搜；
+/// 已有结果的默认跳过（force=true 重刮全部）；先带年份搜，0 结果退无年重试。
+#[tauri::command]
+pub async fn cloud_library_scrape(provider: String, force: Option<bool>) -> Result<Value, String> {
+    let st = load_store();
+    let Some(lib) = st.libs.iter().find(|l| l.provider == provider) else {
+        return Err("该网盘还没有库索引，请先「加入媒体库」扫描".into());
+    };
+    // 分组：key -> (media, 展示标题, 年份)
+    let mut groups: std::collections::BTreeMap<String, (String, String, u32)> = Default::default();
+    for it in &lib.items {
+        if it.title.trim().is_empty() {
+            continue;
+        }
+        let media = if it.kind == "movie" { "movie" } else { "tv" }.to_string();
+        let key = meta_key(&it.title, &media);
+        groups.entry(key).or_insert_with(|| (media, it.title.clone(), it.year));
+    }
+    let force = force.unwrap_or(false);
+    let mut meta = load_meta();
+    let mut matched = 0usize;
+    let mut skipped = 0usize;
+    let mut unmatched: Vec<String> = Vec::new();
+    for (key, (media, title, year)) in &groups {
+        if !force && meta.contains_key(key) {
+            skipped += 1;
+            continue;
+        }
+        let mut hit: Option<CloudMeta> = None;
+        for with_year in [true, false] {
+            if with_year && *year == 0 {
+                continue; // 没解析到年份就只搜一次（无年）
+            }
+            let mut arg = json!({ "query": title, "mediaType": media });
+            if with_year {
+                arg["year"] = json!(year);
+            }
+            if let Ok(res) = crate::tmdb::tmdb_search(arg).await {
+                if let Some(first) = res.get("items").and_then(|x| x.as_array()).and_then(|a| a.first()) {
+                    let id = first.get("tmdbId").and_then(|v| v.as_i64()).unwrap_or(0);
+                    if id != 0 {
+                        hit = Some(CloudMeta {
+                            tmdb_id: id,
+                            media_type: media.clone(),
+                            title: first.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            poster: first.get("poster").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            year: first.get("year").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+        if let Some(m) = hit {
+            meta.insert(key.clone(), m);
+            matched += 1;
+        } else {
+            unmatched.push(title.clone());
+        }
+    }
+    save_meta(&meta)?;
+    Ok(json!({ "matched": matched, "skipped": skipped, "unmatched": unmatched }))
+}
+
 // ───────────────────────── 测试 ─────────────────────────
 
 #[cfg(test)]

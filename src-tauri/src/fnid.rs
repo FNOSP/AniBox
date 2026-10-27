@@ -52,13 +52,17 @@ fn inject_script(access_code_js: &str) -> String {
     }}
     function isPortal() {{ return (location.hostname || '').toLowerCase().indexOf('5ddd.com') !== -1; }}
     function isLogin() {{ return location.href.indexOf('/login') !== -1; }}
+    function isSignin() {{ return location.href.indexOf('/signin') !== -1; }}
 
-    // 1) sys/config 轮询：确认 NAS 可达并把基址报回（旧项目同款退避节奏）
+    // 1) sys/config 轮询 → 拿到 nas_oauth 后主动跳 /signin 授权页（旧项目 getInjectionScript 同款）。
+    //    ★ 关键：只报 base 不跳 /signin 会停在 fnOS 桌面，永远等不到 /oauthapi/authorize 的 code。
     function pollBase() {{
-        if (isPortal() || isLogin()) return;
+        if (isPortal() || isLogin() || isSignin()) return;
         var host = (location.hostname || '').toLowerCase();
         if (host === 'fnos.net') return; // 中继门户根只返回门户 HTML；真实 NAS 在子域
         var isRelay = host.endsWith('.fnos.net');
+        // 官方中继子域先置 mode=relay（旧项目 oauthSession.cookies.set 同款）
+        if (isRelay) {{ try {{ document.cookie = 'mode=relay; path=/'; }} catch (e) {{}} }}
         var max = isRelay ? 40 : 6, delay = isRelay ? 1500 : 700, n = 0;
         (function tick() {{
             n++;
@@ -70,6 +74,22 @@ fn inject_script(access_code_js: &str) -> String {
                         if (!window.__anibox_base_sent) {{
                             window.__anibox_base_sent = true;
                             go('/base', {{ u: location.origin }});
+                        }}
+                        // 解析 nas_oauth.app_id，构造 /signin 授权 URL 并导航（与旧项目一致：
+                        // redirect_uri = base + /v/oauth/result，authorize 回跳时 Rust 侧拦截取 code）
+                        var data = null;
+                        try {{ data = JSON.parse(t); }} catch (e) {{ data = null; }}
+                        var oauth = data && data.nas_oauth ? data.nas_oauth : null;
+                        if (oauth && oauth.app_id) {{
+                            var navigated = false;
+                            try {{ navigated = sessionStorage.getItem('__anibox_signin') === '1'; }} catch (e) {{}}
+                            if (!navigated) {{
+                                try {{ sessionStorage.setItem('__anibox_signin', '1'); }} catch (e) {{}}
+                                var base = location.origin;
+                                var redirectUri = base + '/v/oauth/result';
+                                location.href = base + '/signin?client_id=' + encodeURIComponent(oauth.app_id)
+                                    + '&redirect_uri=' + encodeURIComponent(redirectUri);
+                            }}
                         }}
                         return;
                     }}

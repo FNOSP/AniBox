@@ -435,6 +435,15 @@ async fn launch_mpv(
             .await?
         }
     };
+    // [lc-1896] 「补帧每次默认关闭」：default_on=no 时静默下发一次 off。
+    // 旧 conf / 画面预设残留（engine=mvtools、tier=balanced）会让起播就挂 MVTools 2× 补帧，
+    // 且 balanced 基线会开 display-resample → 倍速必然音画不同步（mpv 限制）。
+    // 这里按用户口径强制收敛；fntv-interp-off 只清 vf 与同步模式，不动 glsl-shaders，
+    // 所以「只开着色器」不受影响。
+    if !crate::enhance::interp_default_on(app) {
+        s.command_no_reply(json!(["script-message", "fntv-interp-off"]))
+            .await;
+    }
     *slot = Some(s);
     Ok(())
 }

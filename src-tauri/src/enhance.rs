@@ -244,6 +244,12 @@ fn read_interp_opts(app: &AppHandle) -> (String, bool) {
     (engine, default_on)
 }
 
+/// [lc-1896] 补帧是否"起播即开"。播放器起播时据此决定要不要强制下发 off
+/// （用户口径：补帧每次默认关闭；显式把 default_on 设成 yes 才保留）。
+pub(crate) fn interp_default_on(app: &AppHandle) -> bool {
+    read_interp_opts(app).1
+}
+
 /// [lc-1833] 写完 conf 后把改动同步到**正在运行**的播放器会话（与右键菜单同一
 /// script-message 端点；lua 收到后即改即生效，并回写同一份 conf——两边默认值一致）。
 /// 会话不在/已死则静默跳过（conf 已落盘，下次起播生效）。

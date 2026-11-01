@@ -56,6 +56,12 @@ mod metadata_override;
 mod mirror_sign;
 mod mpv;
 mod nas_subtitle;
+// [lc-1900] 子进程探活/终止：纯 Win32 API，退出路径不再 spawn tasklist/taskkill
+// （关机阶段 CreateProcess 会 0xc0000142 弹错误框 → 反噬成「ANIBOX 阻止关机」）
+mod winproc;
+// [lc-1900] Windows 会话结束（关机/重启/注销）兜底：收子进程 + 秒回 WM_QUERYENDSESSION
+#[cfg(target_os = "windows")]
+mod winshutdown;
 // [speed] 按剧集（item guid）持久化 mpv 播放速度（app_data_dir/playback-speed.json）
 mod playback_speed;
 // [player] 统一播放启动封装（mpv / 本机 PotPlayer）+ 本地 HTTP relay
@@ -3820,6 +3826,11 @@ pub fn run() {
             // VEH 崩溃记录器：任意致命异常（D3D 视频输出崩因定位）写出异常码+故障模块+偏移，
             // 落 %TEMP%/anibox.log（lc-082 视频输出专项）
             libmpv::install_crash_logger();
+            // [lc-1900] Windows 关机/注销兜底窗口（必须在主线程建窗，且尽早注册）：
+            // tao 不处理 WM_QUERYENDSESSION、WM_ENDSESSION 时直接 process::exit(0)，
+            // 没有这层就会留 mpv 孤儿 + 被系统判「阻止关机」。
+            #[cfg(target_os = "windows")]
+            winshutdown::install();
             // [lc-1811] app_data_dir 全局快照：云盘凭据仓 / 115 Cookie / WebDAV 账号
             // 都从续签代理等无 AppHandle 的上下文取路径，setup 时固化一次
             cloud::init_app_data(app.handle());
@@ -4251,10 +4262,16 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 // [lc-1747] 销毁 webrs 常驻隐藏窗（嗅探 / 验证单例），别把 WebView2 进程留到退出后
                 webrs_webview::shutdown_webviews(app_handle);
-                // [progress][fix] 退出前**同步** flush 最后一次进度（网络上限 3s），
-                // 必须放在杀 mpv / 丢异步运行时之前 —— 否则 `flush_on_exit` spawn 出去的任务
-                // 根本没机会跑，这就是「直接关掉软件最后一次进度丢失」的根因。
-                let _ = tauri::async_runtime::block_on(fnos_progress::flush_on_exit_sync(app_handle));
+                // [lc-1900] 会话结束（关机/注销）路径：跳过需要联网的进度 flush（上限 3s），
+                // 先保证会话能尽快结束 —— 系统给应用的关机时间窗很短，拖过时限就会被列进
+                // 「这些应用阻止关机」。正常退出（RunEvent::Exit）仍照旧 flush。
+                if !winproc::session_ending() {
+                    // [progress][fix] 退出前**同步** flush 最后一次进度（网络上限 3s），
+                    // 必须放在杀 mpv / 丢异步运行时之前 —— 否则 `flush_on_exit` spawn 出去的任务
+                    // 根本没机会跑，这就是「直接关掉软件最后一次进度丢失」的根因。
+                    let _ =
+                        tauri::async_runtime::block_on(fnos_progress::flush_on_exit_sync(app_handle));
+                }
                 // 退出时清场：mpv 子进程 + 嵌入窗口 + Go 代理
                 let st = app_handle.state::<AppState>();
                 // [gamepad] 停止手柄轮询线程（≤8ms 自行退出）

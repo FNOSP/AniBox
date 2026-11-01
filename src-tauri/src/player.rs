@@ -234,27 +234,14 @@ pub async fn stop_potplayer(app: &AppHandle, state: &AppState, emit_end: bool) {
     POTPLAYER_GEN.fetch_add(1, Ordering::SeqCst);
     let pid = state.potplayer_pid.lock().await.take();
     if let Some(pid) = pid {
-        #[allow(unused_mut)]
-        let mut kill = tokio::process::Command::new("taskkill");
-        #[cfg(target_os = "windows")]
-        kill.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-        let ok = kill
-            .args(["/F", "/PID", &pid.to_string()])
-            .output()
-            .await
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+        // [lc-1900] 退出路径禁止 spawn 外部进程（关机阶段 CreateProcess 会 0xc0000142
+        // 弹出硬错误框、反而拖住关机）：改用 TerminateProcess 直接终止。
+        let ok = crate::winproc::terminate(pid);
         if !ok {
-            // PID 已失效/被重启：按镜像名兜底（只针对我们刚记录的 PotPlayer 进程）
-            #[allow(unused_mut)]
-            let mut kill2 = tokio::process::Command::new("taskkill");
-            #[cfg(target_os = "windows")]
-            kill2.creation_flags(0x0800_0000);
-            let _ = kill2
-                .args(["/F", "/IM", "PotPlayerMini64.exe"])
-                .output()
-                .await;
+            // PID 已失效/被重启：按镜像名兜底（只针对 PotPlayer 进程，实现同 taskkill /IM）
+            crate::winproc::terminate_by_image_name("PotPlayerMini64.exe");
         }
+        crate::winproc::untrack(pid);
     }
     if emit_end {
         let _ = app.emit("mpv-load", json!({ "phase": "ended", "reason": "stop" }));
@@ -522,6 +509,8 @@ async fn launch_potplayer(
     let pid = child.id();
     drop(child); // 不等待：PotPlayer 要活过本次调用
     *state.potplayer_pid.lock().await = Some(pid);
+    // [lc-1900] 登记进「退出/会话结束时必须收掉」的名单（关机兜底见 winshutdown）。
+    crate::winproc::track(pid);
     crate::libmpv::trace(&format!(
         "[player] PotPlayer spawned pid={pid} args={args:?}"
     ));
@@ -570,8 +559,14 @@ fn spawn_potplayer_watcher(app: AppHandle, pid: u32, generation: u64, potctl: Op
             if POTPLAYER_GEN.load(Ordering::SeqCst) != generation {
                 return; // 已被新一次启动/停止取代
             }
+            // [lc-1900] 会话正在结束：不再 spawn potctl.exe（关机阶段 CreateProcess 会弹
+            // 0xc0000142 硬错误框），直接退出轮询，把清理交给 winshutdown / job 对象。
+            if crate::winproc::session_ending() {
+                crate::libmpv::trace("[player] 会话结束中，停止 PotPlayer watcher");
+                return;
+            }
 
-            let alive = pid_alive(pid).await;
+            let alive = pid_alive(pid);
             // potctl 一次查询同时用于「窗口是否仍在」与进度。
             let info = match potctl.as_ref() {
                 Some(p) => potctl_info(p).await,
@@ -601,6 +596,8 @@ fn spawn_potplayer_watcher(app: AppHandle, pid: u32, generation: u64, potctl: Op
                     if *slot == Some(pid) {
                         *slot = None;
                     }
+                    drop(slot);
+                    crate::winproc::untrack(pid);
                     return;
                 }
                 continue;
@@ -615,6 +612,8 @@ fn spawn_potplayer_watcher(app: AppHandle, pid: u32, generation: u64, potctl: Op
                 if *slot == Some(pid) {
                     *slot = None;
                 }
+                drop(slot);
+                crate::winproc::untrack(pid);
             }
 
             // potctl info → 进度事件（PotPlayer 无 IPC，进度只能轮询）
@@ -697,6 +696,11 @@ pub fn schedule_potplayer_panel_append(path: String, urls: Vec<String>, generati
             crate::libmpv::trace("[player] PotPlayer 面板追加取消：播放会话已切换");
             return;
         }
+        // [lc-1900] 会话正在结束：不再拉起转发进程（关机阶段 CreateProcess 会弹 0xc0000142）。
+        if crate::winproc::session_ending() {
+            crate::libmpv::trace("[player] PotPlayer 面板追加取消：会话结束中");
+            return;
+        }
         let mut args: Vec<String> = Vec::with_capacity(urls.len() * 2 + 1);
         args.push("/Current".into());
         for u in &urls {
@@ -732,19 +736,10 @@ pub fn schedule_potplayer_panel_append(path: String, urls: Vec<String>, generati
     });
 }
 
-async fn pid_alive(pid: u32) -> bool {
-    let mut probe = tokio::process::Command::new("tasklist");
-    #[cfg(target_os = "windows")]
-    probe.creation_flags(0x0800_0000); // CREATE_NO_WINDOW：轮询高频，不隐藏会狂闪 cmd 窗
-    let out = probe
-        .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
-        .output()
-        .await;
-    match out {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()),
-        // 查询失败时保守认为还活着，避免误发 ended。
-        Err(_) => true,
-    }
+/// [lc-1900] 进程探活：直接走 Win32 API，不再每 1s spawn 一次 tasklist。
+/// （关机阶段 tasklist 初始化会 0xc0000142 弹错误框，是「阻止关机」的直接帮凶。）
+fn pid_alive(pid: u32) -> bool {
+    crate::winproc::pid_alive(pid)
 }
 
 async fn potctl_info(potctl: &Path) -> Option<Value> {

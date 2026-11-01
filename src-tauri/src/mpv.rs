@@ -272,8 +272,14 @@ impl MpvSession {
             "mpv.exe spawned pid={pid:?} args={args:?}（直接 spawn，无 pwsh 中转）"
         ));
         // 不持有 child：mpv 要活过本次 launch（会话常驻，播放/停止只切状态），
-        // 退出统一走 shutdown() 的 taskkill /PID（它只认 pid，不需要句柄）。
+        // 退出统一走 shutdown() 的 TerminateProcess（它只认 pid，不需要句柄）。
         drop(child);
+        // [lc-1900] 登记 PID + 挂进「句柄关闭即杀」的 job：关机时 tao 直接 process::exit(0)，
+        // 本应用的退出钩子跑不到，靠 job 保证 mpv 不会留成孤儿（见 winproc 模块头）。
+        if let Some(pid) = pid {
+            crate::winproc::track(pid);
+            crate::winproc::assign_kill_on_close_job(pid);
+        }
 
         // ── 2) 连 IPC（mpv 起得要一会儿，重试 ~20s）
         // Windows：命名管道 → File::open；Linux/macOS：Unix socket → UnixStream::connect。
@@ -743,35 +749,10 @@ impl MpvSession {
     pub async fn is_dead(&self) -> bool {
         let pid = *self.pid.lock().unwrap();
         match pid {
-            Some(pid) => {
-                #[cfg(target_os = "windows")]
-                {
-                    // tasklist 查一下即可（轮询频率低，代价可接受）
-                    let mut probe = tokio::process::Command::new("tasklist");
-                    #[cfg(target_os = "windows")]
-                    probe.creation_flags(0x0800_0000); // CREATE_NO_WINDOW：轮询高频，不隐藏会狂闪 cmd 窗
-                    let out = probe
-                        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-                        .output()
-                        .await;
-                    match out {
-                        Ok(o) => !String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()),
-                        Err(_) => false,
-                    }
-                }
-                #[cfg(not(target_os = "windows"))]
-                {
-                    // `kill -0`：进程存在 → 退出码 0；不存在 → 非 0。
-                    match tokio::process::Command::new("kill")
-                        .args(["-0", &pid.to_string()])
-                        .output()
-                        .await
-                    {
-                        Ok(o) => !o.status.success(),
-                        Err(_) => false,
-                    }
-                }
-            }
+            // [lc-1900] 不再 spawn tasklist：关机阶段 CreateProcess 会以 0xc0000142 失败并
+            // 弹出「tasklist.exe - Application Error」模态框，反而把系统关机拖住。
+            // 直接走 OpenProcess + GetExitCodeProcess（零外部进程）。
+            Some(pid) => !crate::winproc::pid_alive(pid),
             None => true,
         }
     }
@@ -797,8 +778,18 @@ impl MpvSession {
 
     /// 退出 mpv 并销毁内嵌子窗
     pub async fn shutdown(&self) {
-        let _ = self.command(json!(["quit"])).await;
         let pid_now = *self.pid.lock().unwrap();
+        // [lc-1900] 会话正在结束（Windows 关机/注销）：连 IPC quit 都不发（最坏会卡 5s 等回包），
+        // 直接 TerminateProcess 收掉，避免系统判「本程序阻止关机」。
+        if crate::winproc::session_ending() {
+            if let Some(pid) = pid_now {
+                crate::winproc::terminate(pid);
+                crate::winproc::untrack(pid);
+            }
+            *self.tx.lock().unwrap() = None;
+            return;
+        }
+        let _ = self.command(json!(["quit"])).await;
         if let Some(pid) = pid_now {
             #[cfg(target_os = "windows")]
             {
@@ -806,8 +797,8 @@ impl MpvSession {
                 // 200ms 后直接 taskkill /F 硬杀会跳过 auto-save-state.lua 的 on_unload
                 // 保存钩子 → watch-later 丢失 → 下次从头播（用户实测「记录 70% 却从头开始」
                 // 的根因之一；播放中的周期保存也只在暂停时才真正落盘）。
-                // 顺序：IPC quit 已发 → 轮询等自退（≤1.2s）→ taskkill（WM_CLOSE，≤0.8s）
-                // → 仍存活才 /F 兜底。
+                // 顺序：IPC quit 已发 → 轮询等自退（≤1.2s）→ TerminateProcess 兜底
+                // （[lc-1900] 不再 taskkill：退出路径禁止 spawn 外部进程，见 winproc 模块头）。
                 for _ in 0..8 {
                     if self.is_dead().await {
                         break;
@@ -815,27 +806,8 @@ impl MpvSession {
                     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
                 }
                 if !self.is_dead().await {
-                    #[allow(unused_mut)]
-                    let mut kill = tokio::process::Command::new("taskkill");
-                    #[cfg(target_os = "windows")]
-                    kill.creation_flags(0x0800_0000);
-                    let _ = kill.args(["/PID", &pid.to_string()]).output().await;
-                    for _ in 0..5 {
-                        if self.is_dead().await {
-                            break;
-                        }
-                        tokio::time::sleep(std::time::Duration::from_millis(160)).await;
-                    }
-                    if !self.is_dead().await {
-                        #[allow(unused_mut)]
-                        let mut kill = tokio::process::Command::new("taskkill");
-                        #[cfg(target_os = "windows")]
-                        kill.creation_flags(0x0800_0000);
-                        let _ = kill
-                            .args(["/F", "/PID", &pid.to_string()])
-                            .output()
-                            .await;
-                    }
+                    // mpv 有独立的窗口消息循环，TerminateProcess 等价于原来的 taskkill /F。
+                    crate::winproc::terminate(pid);
                 }
             }
             // [macos/linux] 不要直接 `kill -9`：那会跳过 mpv 的正常退出流程（写 watch_later /
@@ -871,6 +843,8 @@ impl MpvSession {
                         .await;
                 }
             }
+            // 已收掉：从「退出时必须收掉」的名单里移除。
+            crate::winproc::untrack(pid);
         }
         *self.tx.lock().unwrap() = None;
     }

@@ -326,7 +326,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
   );
 
   return (
-    <main className="c115">
+    <main className="content">
       {/* 头部与媒体库页同款：圆返回 + 标题 + 计数 */}
       <div className="page-head">
         <button className="back" onClick={onBack}>‹</button>

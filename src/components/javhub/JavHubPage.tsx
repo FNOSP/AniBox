@@ -210,6 +210,22 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
     }
   };
 
+  const scanLocal = async () => {
+    if (fnosBusy) return;
+    setFnosBusy(true);
+    setNote("正在扫描本地文件夹（遍历 + 番号识别）…");
+    try {
+      const r = await invoke<{ results: { dir: string; videos: number; javDetected: number }[] }>("jav_local_scan");
+      const parts = r.results.map((x) => `${x.dir.split(/[\/]/).pop()} ${x.javDetected}/${x.videos} 条命中番号`);
+      setNote(`扫完了：${parts.join("，")}（刮削在媒体库页点「刮削本盘」）`);
+      await load();
+    } catch (e) {
+      setNote(String(e));
+    } finally {
+      setFnosBusy(false);
+    }
+  };
+
   const play = async (e: JavEntryT) => {
     const f = e.files[0];
     if (!f) return;
@@ -218,6 +234,9 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
       if (f.provider.startsWith("fnos:")) {
         // 飞牛媒体库来源：走既有 NAS 播放链路（play/info → mpv，带进度回传）
         await invoke("play_item", { guid: f.fileId });
+      } else if (f.provider.startsWith("local:")) {
+        // 本地文件夹来源：绝对路径直投 mpv
+        await invoke("jav_local_play", { path: f.fileId });
       } else {
         await invoke("cloud_play", { provider: f.provider, fileId: f.fileId, name: f.name, mode: null });
       }
@@ -393,6 +412,16 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
                 {fnosBusy ? "扫描中…" : "扫描启用的媒体库"}
               </button>
               <div className="hint">对设置 → 数据源里启用的飞牛媒体库做番号识别（元数据只叠加在本机，不写飞牛）。</div>
+              {fnosNote && <div className="hint">{fnosNote}</div>}
+            </span>
+          </div>
+          <div className="javset-item boolrow" style={{ cursor: "default" }}>
+            <label><span className="bl">扫描本地文件夹</span></label>
+            <span>
+              <button className="javset-btn ghost" disabled={fnosBusy} onClick={() => void scanLocal()}>
+                {fnosBusy ? "扫描中…" : "扫描本地文件夹"}
+              </button>
+              <div className="hint">对设置 → 数据源里添加的本地视频文件夹做番号识别（只读遍历，不改本地文件）。</div>
               {fnosNote && <div className="hint">{fnosNote}</div>}
             </span>
           </div>

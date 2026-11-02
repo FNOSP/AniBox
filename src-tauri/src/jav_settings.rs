@@ -171,6 +171,13 @@ pub struct FnosSettings {
     pub libs: Vec<FnosLibCfg>,
 }
 
+/// 本地文件夹数据源：用户在设置里挑的本地视频目录（绝对路径列表）
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LocalSettings {
+    pub dirs: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct JavSettings {
@@ -180,6 +187,7 @@ pub struct JavSettings {
     pub scrape: ScrapeSettings,
     pub ai: AiSettings,
     pub fnos: FnosSettings,
+    pub local: LocalSettings,
 }
 
 pub fn settings_path() -> Option<PathBuf> {
@@ -211,6 +219,14 @@ pub fn normalize(v: &mut JavSettings) {
     if v.ai.target_lang.trim().is_empty() {
         v.ai.target_lang = "zh".into();
     }
+    v.local.dirs = v
+        .local
+        .dirs
+        .iter()
+        .map(|d| d.trim().trim_end_matches(['/', '\\']).to_string())
+        .filter(|d| !d.is_empty())
+        .collect::<Vec<_>>();
+    v.local.dirs.dedup();
 }
 
 pub fn save(v: &JavSettings) -> Result<(), String> {

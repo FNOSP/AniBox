@@ -3152,7 +3152,10 @@ pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
         )
         .title("AniBox Player")
         .decorations(false)
-        .transparent(true)
+        // [lc-1919] 不做 alpha 透明 —— WebView2 对 transparent 窗直接报
+        // 0x8007139F（组或资源状态不正确），整条内嵌链路因此中断。
+        // Polaris 的 MPV Overlay 实测也不是透明窗（ex=NOACTIVATE|TOOLWINDOW|
+        // TRANSPARENT），它反正被 mpv 全盖住；控制层底色由前端画纯黑。
         .shadow(false)
         .skip_taskbar(true)
         .visible(false)
@@ -4559,6 +4562,8 @@ pub fn run() {
             jav_library::jav_fnos_libs,
             jav_library::jav_fnos_set_lib,
             jav_library::jav_fnos_scan,
+            jav_library::jav_local_scan,
+            jav_library::jav_local_play,
             jav_library::jav_library_items,
             jav_library::jav_library_scrape,
             cloud::cloud_rename,

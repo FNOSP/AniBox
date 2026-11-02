@@ -1811,6 +1811,12 @@ pub async fn jav_library_all() -> Result<Value, String> {
             // fnos:<媒体库guid> → 显示媒体库标题（tab 不再露一串 guid）
             let label = if let Some(rest) = l.provider.strip_prefix("fnos:") {
                 js.fnos.libs.iter().find(|x| x.guid == rest).map(|x| x.title.clone())
+            } else if let Some(rest) = l.provider.strip_prefix("local:") {
+                // 本地源显示文件夹名
+                std::path::Path::new(rest)
+                    .file_name()
+                    .map(|x| x.to_string_lossy().to_string())
+                    .or_else(|| Some(rest.to_string()))
             } else {
                 None
             };
@@ -2399,4 +2405,102 @@ pub async fn jav_entry_rate(provider: String, code_key: String, value: f64) -> R
     st.libs[pos].entries[idx].updated_at_ms = now_ms();
     save_store(&st)?;
     Ok(json!({ "userRating": st.libs[pos].entries[idx].user_rating }))
+}
+
+// ───────────────────────── 本地文件夹数据源 ─────────────────────────
+
+/// 扫描设置里的本地视频文件夹：只读遍历（深度/扩展名/跳过目录走扫描规则设置），
+/// 番号命中的入库（provider = "local:<目录绝对路径>"）；没命中的不收（与飞牛口径一致：
+/// 海报墙只留有番号数据的）。播放走 jav_local_play 直投 mpv。
+#[tauri::command]
+pub async fn jav_local_scan(app: AppHandle) -> Result<Value, String> {
+    let js = crate::jav_settings::load();
+    let dirs = js.local.dirs.clone();
+    if dirs.is_empty() {
+        return Err("还没有添加本地文件夹（设置 → 数据源）".into());
+    }
+    let exts: Vec<String> = js
+        .scan
+        .video_exts
+        .iter()
+        .map(|x| x.trim_start_matches('.').to_ascii_lowercase())
+        .collect();
+    let skip: Vec<String> = js.scan.skip_dirs.iter().map(|x| x.to_ascii_lowercase()).collect();
+    let prefixes: Vec<String> = js.scan.skip_prefixes.iter().map(|x| x.to_ascii_lowercase()).collect();
+    let max_depth = js.scan.max_depth as usize;
+    let root_of = |provider: &str| provider.strip_prefix("local:").unwrap_or(provider).to_string();
+
+    let results: Vec<Value> = tauri::async_runtime::spawn_blocking(move || {
+        let mut results: Vec<Value> = Vec::new();
+        for dir in &dirs {
+            let provider = format!("local:{dir}");
+            let mut cands: Vec<JavCandidate> = Vec::new();
+            let mut stack: Vec<(std::path::PathBuf, usize)> = vec![(std::path::PathBuf::from(dir), 0)];
+            while let Some((d, depth)) = stack.pop() {
+                let Ok(rd) = std::fs::read_dir(&d) else { continue };
+                for entry in rd.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let l = name.to_ascii_lowercase();
+                    let p = entry.path();
+                    if p.is_dir() {
+                        if depth < max_depth
+                            && !l.starts_with('.')
+                            && !skip.iter().any(|x| l == *x)
+                            && !prefixes.iter().any(|x| l.starts_with(x.as_str()))
+                        {
+                            stack.push((p, depth + 1));
+                        }
+                        continue;
+                    }
+                    let Some(ext) = p.extension().map(|x| x.to_string_lossy().to_ascii_lowercase()) else { continue };
+                    if !exts.contains(&ext) {
+                        continue;
+                    }
+                    let parent = d
+                        .file_name()
+                        .map(|x| x.to_string_lossy().to_string())
+                        .unwrap_or_else(|| dir.clone());
+                    cands.push(JavCandidate {
+                        file_id: p.to_string_lossy().to_string(),
+                        parent,
+                        name,
+                        size: entry.metadata().map(|m| m.len()).unwrap_or(0),
+                    });
+                }
+            }
+            let matched_total = cands.len();
+            let (_, matched) = split_candidates(&cands);
+            let entries =
+                ingest_scan(&provider, &cands, &matched, false, js.scan.merge_multipart).unwrap_or(0);
+            results.push(json!({
+                "dir": dir, "videos": matched_total,
+                "javDetected": matched.len(), "entries": entries,
+            }));
+        }
+        results
+    })
+    .await
+    .map_err(|e| format!("扫描任务失败: {e}"))?;
+    let _ = &app;
+    Ok(json!({ "results": results }))
+}
+
+/// 播放本地视频文件（绝对路径直投 mpv，无需代理/直链解析）
+#[tauri::command]
+pub async fn jav_local_play(
+    app: AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+    path: String,
+) -> Result<(), String> {
+    let p = std::path::PathBuf::from(path.trim());
+    if !p.is_file() {
+        return Err(format!("文件不存在或已移走：{}", p.display()));
+    }
+    let name = p
+        .file_name()
+        .map(|x| x.to_string_lossy().to_string())
+        .unwrap_or_else(|| "video".into());
+    let cfg = state.config.read().await.clone();
+    crate::player::launch(&app, &state, &cfg, &p.to_string_lossy(), &name, 0.0, 0.0, None, &[], None, true)
+        .await
 }

@@ -18,6 +18,7 @@ import {
   Wrench as IcoWrench,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { open as openDirDialog } from "@tauri-apps/plugin-dialog";
 
 type ScanSet = { maxDepth: number; mergeMultipart: boolean; pruneMissing: boolean; videoExts: string[]; skipDirs: string[]; skipPrefixes: string[] };
 type AutoSet = { enabled: boolean; intervalMinutes: number; scrapeNew: boolean; cleanupMissing: boolean; lastRunMs: number };
@@ -35,6 +36,7 @@ type JavSettings = {
   siteDefs?: { id: string; name: string; categories: string[] }[];
 };
 type FnosLib = { guid: string; title: string; category: string; enabled: boolean };
+type JavSettingsWithLocal = JavSettings & { local?: { dirs: string[] } };
 
 const SECTIONS = [
   { key: "sources", label: "数据源", icon: IcoDb },
@@ -89,6 +91,43 @@ export function JavSettingsModal({ onClose, onSaved }: { onClose: () => void; on
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [onClose]);
+
+  const addLocalDir = async () => {
+    const picked = await openDirDialog({ multiple: false, title: "选择本地视频文件夹" });
+    if (typeof picked !== "string" || !picked.trim()) return;
+    const dir = picked.trim();
+    setS((prev) => {
+      if (!prev) return prev;
+      const dirs = (prev as JavSettingsWithLocal).local?.dirs ?? [];
+      if (dirs.some((x) => x.toLowerCase() === dir.toLowerCase())) return prev;
+      const next = { ...prev, local: { dirs: [...dirs, dir] } } as JavSettingsWithLocal;
+      setDirty(true);
+      return next;
+    });
+    setNote("本地文件夹已添加，保存后点「扫描本地文件夹」生效");
+  };
+  const removeLocalDir = (dir: string) => {
+    setS((prev) => {
+      if (!prev) return prev;
+      const dirs = ((prev as JavSettingsWithLocal).local?.dirs ?? []).filter((x) => x !== dir);
+      setDirty(true);
+      return { ...prev, local: { dirs } } as JavSettingsWithLocal;
+    });
+  };
+  const scanLocal = async () => {
+    if (fnosBusy) return;
+    setFnosBusy(true);
+    setFnosNote("正在扫描本地文件夹（遍历 + 番号识别）…");
+    try {
+      const r = await invoke<{ results: { dir: string; videos: number; javDetected: number }[] }>("jav_local_scan");
+      const parts = r.results.map((x) => `${x.dir.split(/[\/]/).pop()} ${x.javDetected}/${x.videos} 条命中番号`);
+      setFnosNote(`扫完了：${parts.join("，")}（刮削在 JavHub 页点「刮削本盘」）`);
+    } catch (e) {
+      setFnosNote(String(e));
+    } finally {
+      setFnosBusy(false);
+    }
+  };
 
   const patch = useCallback((fn: (d: JavSettings) => void) => {
     setS((prev) => {
@@ -161,7 +200,9 @@ export function JavSettingsModal({ onClose, onSaved }: { onClose: () => void; on
       </span>
     </div>
   );
-  const Ro = ({ children }: { children: React.ReactNode }) => <div className="javset-ro">{children}</div>;
+  const Ro = ({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) => (
+    <div className="javset-ro" style={style}>{children}</div>
+  );
 
   /* ── 各节内容（字段 + 搜索关键词）── */
   const buildSections = (s2: JavSettings): Record<SecKey, { key: string; label: string; keywords: string; el: React.ReactNode }[]> => {
@@ -242,10 +283,29 @@ export function JavSettingsModal({ onClose, onSaved }: { onClose: () => void; on
           {fnosBusy ? "扫描中…" : "扫描启用的媒体库"}
         </button>
         {fnosNote && <Ro>{fnosNote}</Ro>}
+        <Ro style={{ fontWeight: 600 }}>本地文件夹</Ro>
+        {(((s as JavSettingsWithLocal).local?.dirs ?? []) as string[]).map((dir) => (
+          <div key={dir} className="javset-site">
+            <span className="sr-name" title={dir}>{dir.split(/[\/]/).pop()}</span>
+            <span className="cat" style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{dir}</span>
+            <button className="mv" title="移除" onClick={() => removeLocalDir(dir)}>×</button>
+          </div>
+        ))}
+        {((s as JavSettingsWithLocal).local?.dirs ?? []).length === 0 && (
+          <Ro>还没有本地文件夹 —— 点下面按钮挑一个视频目录。</Ro>
+        )}
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="javset-btn ghost" onClick={() => void addLocalDir()}>添加本地文件夹</button>
+          <button className="javset-btn ghost" disabled={fnosBusy || !((s as JavSettingsWithLocal).local?.dirs ?? []).length}
+            onClick={() => void scanLocal()}>
+            {fnosBusy ? "扫描中…" : "扫描本地文件夹"}
+          </button>
+        </div>
+        {fnosNote && <Ro>{fnosNote}</Ro>}
       </>
     );
     return {
-      sources: [{ key: "fnos", label: "飞牛媒体库", keywords: "飞牛 fnos 媒体库 nas 库 开关 刮削", el: fnosPart }],
+      sources: [{ key: "fnos", label: "飞牛媒体库", keywords: "飞牛 fnos 媒体库 nas 库 开关 刮削 本地 文件夹", el: fnosPart }],
       scan: [
         { key: "depth", label: "最大目录深度", keywords: "深度 depth 层", el: (
           <Item label="最大目录深度" path="scan.max_depth" hint="从扫描根目录往下最多翻几层。网盘上每翻一层都是一次目录枚举请求，别设太大。">

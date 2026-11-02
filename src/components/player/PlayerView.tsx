@@ -28,6 +28,10 @@ type MpvLoad = { phase?: string };
 export function PlayerView({ title, onExit }: { title: string; onExit: () => void }) {
   /** 矩形上报的参照元素：flex-1 的纯黑视频容器（顶栏不包含在内） */
   const stageRef = useRef<HTMLDivElement | null>(null);
+  /** 覆盖层根元素（退出动画用） */
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  /** 退出只走一次（返回键 + Esc 双入口防重） */
+  const exitingRef = useRef(false);
   // mpv 窗口钉上来之前容器中央的低调提示
   const [opening, setOpening] = useState(true);
   // StrictMode dev 双挂载去重：enter 只发一次（Rust 侧幂等，重复无害，但不浪费）
@@ -101,10 +105,19 @@ export function PlayerView({ title, onExit }: { title: string; onExit: () => voi
     };
   }, []);
 
-  // 返回：停播 + 退嵌（Rust 清内嵌状态并隐藏 mpv），然后关闭播放层回详情页
+  // 返回：停播 + 退嵌（Rust 清内嵌状态并隐藏 mpv），然后关闭播放层回详情页。
+  // 先给覆盖层加 .leaving 走 200ms 退出动画，再真正卸载（onExit 由父层延迟触发）。
   const exit = useCallback(() => {
+    if (exitingRef.current) return;
+    exitingRef.current = true;
     void invoke("player_embed_leave", { stop: true }).catch(() => {});
-    onExit();
+    const el = rootRef.current;
+    if (el && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      el.classList.add("leaving");
+      window.setTimeout(onExit, 200);
+    } else {
+      onExit();
+    }
   }, [onExit]);
 
   // Esc = 返回
@@ -117,7 +130,7 @@ export function PlayerView({ title, onExit }: { title: string; onExit: () => voi
   }, [exit]);
 
   return (
-    <div className="player-view" role="dialog" aria-label="播放">
+    <div className="player-view" role="dialog" aria-label="播放" ref={rootRef}>
       <div className="player-topbar">
         <button
           type="button"
@@ -132,7 +145,8 @@ export function PlayerView({ title, onExit }: { title: string; onExit: () => voi
       </div>
       <div className="player-stage" ref={stageRef}>
         <div className={`player-opening${opening ? "" : " gone"}`} aria-hidden={!opening}>
-          正在打开…
+          <span className="player-spin" />
+          <span className="player-opening-text">正在打开</span>
         </div>
       </div>
     </div>

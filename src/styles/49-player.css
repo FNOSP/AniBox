@@ -1,7 +1,13 @@
-/* ─────────────── [lc-1909] 软件内播放（内嵌播放页） ─────────────── */
+/* ─────────────── [lc-1909] 软件内播放（内嵌播放页） ───────────────
+   [lc-1910] 样式重做：视觉基准取自 Polaris osc-cinema（暗场克制、发丝线、
+   留白节奏），配色落本应用设计令牌（01-tokens.css），随浅/深主题自适应。
+
+   结构：顶部栏 48px（返回 + 标题，玻璃面）+ 视频容器（四周 12px 留白、
+   12px 圆角同心）。视频矩形由 Rust 侧钉到容器上；mpv 覆盖范围内的网页
+   元素不可点击，故 chrome 只存在于顶部栏区域。 */
 
 /* 全屏覆盖层：盖在内容区与侧栏（45）之上、标题栏（50）之下。
-   顶从 40px 起 —— 标题栏是拖拽区，视频区不能顶到它；矩形从容器顶边算起。 */
+   顶从 40px 起 —— 标题栏是拖拽区，视频区不能顶到它。 */
 .player-view {
   position: fixed;
   top: 40px;
@@ -11,46 +17,64 @@
   z-index: 46;
   display: flex;
   flex-direction: column;
-  background: #000;
+  /* 玻璃面：压住下层内容，又保留外壳的轻透感 */
+  background: var(--bg-2);
+  backdrop-filter: blur(18px) saturate(1.15);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
+  transform-origin: 50% 60%;
   animation: playerIn 0.25s ease-out both;
 }
 @keyframes playerIn {
   from {
     opacity: 0;
+    transform: scale(0.985);
   }
   to {
     opacity: 1;
+    transform: scale(1);
   }
 }
+/* 退出动画由卸载前的 .leaving 触发（TSX 侧先加类再卸载） */
+.player-view.leaving {
+  opacity: 0;
+  transform: scale(0.985);
+  transition: opacity 0.2s ease-in, transform 0.2s ease-in;
+  pointer-events: none;
+}
 
+/* ── 顶部栏：玻璃面 + 发丝线 ── */
 .player-topbar {
   flex: none;
-  height: 44px;
+  height: 48px;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 12px;
+  padding: 0 14px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
 }
 
 .player-back {
   flex: none;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: 0;
-  border-radius: 9px;
-  color: rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  color: var(--text-strong);
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
 .player-back:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--hover-strong);
 }
 .player-back:active {
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--hover);
+  transform: scale(0.96);
+  transition-duration: 0.12s;
 }
 
 .player-title {
@@ -58,28 +82,36 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.92);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-strong);
+  letter-spacing: 0.01em;
 }
 
-/* 纯黑视频容器：mpv 窗口由 Rust 侧钉到这个矩形上（物理像素上报见 PlayerView） */
+/* ── 视频容器：四周 12px 留白 + 12px 圆角（与外层留白同心）── */
 .player-stage {
   position: relative;
   flex: 1;
   min-height: 0;
+  margin: 12px;
+  margin-top: 12px;
   background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  /* 内发丝线：让纯黑容器在玻璃面上有边界感 */
+  box-shadow: inset 0 0 0 1px var(--line-strong);
 }
 
-/* mpv 钉上来之前的低调提示（样式口径照 .play-note：小字、克制）。
+/* mpv 钉上来之前的加载态：居中小 spinner + 一行小字。
    淡出走 ease-in 200ms；pointer-events 恒 none，不吃容器内的任何交互。 */
 .player-opening {
   position: absolute;
   inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.55);
+  gap: 10px;
   opacity: 1;
   transition: opacity 0.2s ease-in;
   pointer-events: none;
@@ -87,9 +119,33 @@
 .player-opening.gone {
   opacity: 0;
 }
+.player-spin {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--hover-strong);
+  border-top-color: var(--accent);
+  animation: playerSpin 0.8s linear infinite;
+}
+@keyframes playerSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.player-opening-text {
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .player-view {
+  .player-view,
+  .player-view.leaving {
+    animation: none;
+    transition: none;
+    transform: none;
+  }
+  .player-spin {
     animation: none;
   }
   .player-opening {

@@ -1799,12 +1799,20 @@ pub async fn jav_library_items(provider: String) -> Result<Value, String> {
 #[tauri::command]
 pub async fn jav_library_all() -> Result<Value, String> {
     let st = load_store();
+    let js = crate::jav_settings::load();
     let libs: Vec<Value> = st
         .libs
         .iter()
         .map(|l| {
+            // fnos:<媒体库guid> → 显示媒体库标题（tab 不再露一串 guid）
+            let label = if let Some(rest) = l.provider.strip_prefix("fnos:") {
+                js.fnos.libs.iter().find(|x| x.guid == rest).map(|x| x.title.clone())
+            } else {
+                None
+            };
             json!({
                 "provider": l.provider,
+                "label": label,
                 "scannedAtMs": l.scanned_at_ms,
                 "count": l.entries.len(),
                 "entries": l.entries.iter().map(entry_view).collect::<Vec<_>>(),
@@ -2304,37 +2312,32 @@ pub async fn jav_fnos_scan(app: AppHandle, state: tauri::State<'_, crate::AppSta
                 cands.push(JavCandidate { file_id: fg, parent: title.clone(), name: fname, size: 0 });
             }
         }
-        // 用户明确勾选了这个媒体库 = 库里全是 JAV 内容，**不做识别门槛全量入库**：
-        //   · 番号命中的 → 正常分类，刮削走站点引擎；
-        //   · 没命中的 → 「无番号」（unknown，key=U+md5(标题)），照样显示/播放/AI 汉化，
-        //     不进刮削队列（没有番号可查），后续「修正番号」接上后可手动归号。
+        // 用户明确勾选了这个媒体库 = 库里默认都是 JAV 内容：**只收番号命中的视频**，
+        // 没命中的（录屏/游戏录像/无番号杂项）不进 JavHub —— 展示墙只留有海报数据的。
+        // 识别优先级：文件名（附文件夹呼应）→ 文件夹名（JAV 库文件夹名=番号）。
         let matched_total = cands.len();
         let mut matched: Vec<(usize, Detection)> = Vec::new();
-        let mut unknown_count = 0usize;
         for (i, c) in cands.iter().enumerate() {
-            // 识别优先级：文件名（附文件夹呼应）→ 文件夹名（JAV 库文件夹名=番号）
-            let det = detect(&c.name, &c.parent)
+            if let Some(d) = detect(&c.name, &c.parent)
                 .filter(|d| d.category != CATEGORY_WESTERN)
-                .or_else(|| detect(&c.parent, "").filter(|d| d.category != CATEGORY_WESTERN));
-            match det {
-                Some(d) => matched.push((i, d)),
-                None => {
-                    unknown_count += 1;
-                    matched.push((i, Detection {
-                        code: c.name.clone(),
-                        category: CATEGORY_UNKNOWN,
-                        part: 0,
-                        part_hint: false,
-                        matched_by: "fnos-all",
-                    }));
-                }
+                .or_else(|| detect(&c.parent, "").filter(|d| d.category != CATEGORY_WESTERN))
+            {
+                matched.push((i, d));
             }
         }
         let entries = ingest_scan(&format!("fnos:{}", lib.guid), &cands, &matched, false, true).unwrap_or(0);
+        // 清掉历史遗留的无番号条目（旧版全量入库留下的）：JavHub 只展示有番号的
+        let mut st = load_store();
+        if let Some(pos) = st.libs.iter().position(|l| l.provider == format!("fnos:{}", lib.guid)) {
+            let before = st.libs[pos].entries.len();
+            st.libs[pos].entries.retain(|e| e.category != CATEGORY_UNKNOWN);
+            if before != st.libs[pos].entries.len() {
+                let _ = save_store(&st);
+            }
+        }
         results.push(json!({
             "guid": lib.guid, "title": lib.title,
-            "videos": matched_total, "javDetected": matched_total - unknown_count,
-            "unknown": unknown_count, "entries": entries,
+            "videos": matched_total, "javDetected": matched.len(), "entries": entries,
         }));
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     }

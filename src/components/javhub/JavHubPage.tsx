@@ -13,7 +13,6 @@ import {
   FolderOpen as IcoFolderL,
   LayoutDashboard as IcoDash,
   LayoutGrid as IcoGridL,
-  Play as IcoPlayL,
   Settings as IcoGearL,
   Tag as IcoTagL,
   Users as IcoUsersL,
@@ -36,7 +35,7 @@ type JavEntryT = {
   coverUrl: string;
   files: JavFileT[];
 };
-type JavLibT = { provider: string; scannedAtMs: number; count: number; entries: JavEntryT[] };
+type JavLibT = { provider: string; label?: string; scannedAtMs: number; count: number; entries: JavEntryT[] };
 type ProviderInfo = { id: string; label: string; logged: boolean; userName: string };
 
 type View = "library" | "actors" | "studios" | "tags" | "overview" | "workbench" | "tools";
@@ -250,37 +249,31 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
       e.tags.some((t) => t.toLowerCase() === q)
     );
   };
-  const entries = (cur?.entries || []).filter(matchFilter);
+  const entries = (cur?.entries || []).filter((e) => e.category !== "unknown").filter(matchFilter);
 
+  // 海报墙卡片（与媒体库海报墙同观感：竖版海报 + 标题 + meta）
   const mediaCards = entries.length
     ? entries.map((e) => (
-        <div key={e.codeKey} className="c115-item" onClick={() => e.files[0] && void play(e)}>
-          {e.coverUrl ? (
-            <img className="c115-libposter" src={imgUrl(e.coverUrl)} alt="" loading="lazy" />
-          ) : (
-            <span className="c115-ico video">
-              <IcoJavL size={15} strokeWidth={1.8} />
-            </span>
-          )}
-          <span className="c115-name" title={e.titleZh || e.title || e.code}>
+        <div key={e.codeKey} className="jvh-card" onClick={() => e.files[0] && void play(e)}>
+          <div className="jvh-poster">
+            {e.coverUrl ? (
+              <img src={imgUrl(e.coverUrl)} alt="" loading="lazy" />
+            ) : (
+              <span className="jvh-ph">
+                <IcoJavL size={26} strokeWidth={1.4} />
+              </span>
+            )}
+            {e.status === 0 && <i className="jvh-badge">待刮削</i>}
+            {e.status === 2 && <i className="jvh-badge warn">失败</i>}
+          </div>
+          <p className="jvh-title" title={e.titleZh || e.title || e.code}>
             {e.titleZh || e.title || e.code}
-          </span>
-          <span className="c115-size">
+          </p>
+          <p className="jvh-meta">
             {e.categoryLabel}
             {e.releaseDate ? ` ${e.releaseDate.slice(0, 7)}` : ""}
-            {` ${e.files.length} 段`}
-            {e.status === 0 ? " 待刮削" : e.status === 2 ? " 刮削失败" : ""}
-          </span>
-          <button
-            className="c115-play"
-            title="播放"
-            onClick={(ev) => {
-              ev.stopPropagation();
-              if (e.files[0]) void play(e);
-            }}
-          >
-            <IcoPlayL size={13} strokeWidth={2.2} />
-          </button>
+            {e.studio ? ` ${e.studio}` : ""}
+          </p>
         </div>
       ))
     : null;
@@ -288,26 +281,20 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
   /* 聚合卡片（演员 / 厂商 / 标签通用）：点击 → 媒体库按该项过滤 */
   const aggCards = (list: [string, { count: number; covers: string[] }][], emptyText: string) =>
     list.length ? (
-      <div className="c115-grid">
+      <div className="jvh-grid">
         {list.map(([name, x]) => (
-          <div key={name} className="c115-item" onClick={() => { setFilter(name); setView("library"); }}>
-            {x.covers[0] ? (
-              <img className="c115-libposter" src={imgUrl(x.covers[0])} alt="" loading="lazy" />
-            ) : (
-              <span className="c115-ico other">
-                <IcoJavL size={15} strokeWidth={1.8} />
-              </span>
-            )}
-            <span className="c115-name" title={name}>{name}</span>
-            <span className="c115-size">{x.count} 部</span>
-            <button className="c115-play" title={`在媒体库中查看 ${name}`}
-              onClick={(ev) => {
-                ev.stopPropagation();
-                setFilter(name);
-                setView("library");
-              }}>
-              <IcoPlayL size={13} strokeWidth={2.2} />
-            </button>
+          <div key={name} className="jvh-card" onClick={() => { setFilter(name); setView("library"); }}>
+            <div className="jvh-poster">
+              {x.covers[0] ? (
+                <img src={imgUrl(x.covers[0])} alt="" loading="lazy" />
+              ) : (
+                <span className="jvh-ph">
+                  <IcoJavL size={26} strokeWidth={1.4} />
+                </span>
+              )}
+            </div>
+            <p className="jvh-title" title={name}>{name}</p>
+            <p className="jvh-meta">{x.count} 部</p>
           </div>
         ))}
       </div>
@@ -364,7 +351,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
               {libs.map((l) => (
                 <button key={l.provider} type="button" className={`c115-tab${l.provider === active ? " on" : ""}`}
                   onClick={() => setActive(l.provider)}>
-                  {labels[l.provider] || l.provider}
+                  {l.label || labels[l.provider] || l.provider}
                   <span className="c115-dot ok" title={`${l.count} 部`} />
                 </button>
               ))}
@@ -377,14 +364,14 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
             </div>
           )}
           {mediaCards ? (
-            <div className="c115-grid">{mediaCards}</div>
+            <div className="jvh-grid">{mediaCards}</div>
           ) : (
             <div className="c115-empty">
               <IcoFolderL size={34} strokeWidth={1.4} />
               <p>
                 {filter
                   ? `没有 ${filter} 的条目`
-                  : "还没有 JAV 库 —— 去「网盘接入」进到媒体目录点「加入媒体库」，或在设置里启用飞牛媒体库扫描"}
+                  : "还没有条目 —— 扫描/刮削后，识别到番号的视频会以海报墙展示在这里"}
               </p>
             </div>
           )}
@@ -406,7 +393,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
             {stat("来源盘", String(libs.length))}
           </div>
           <div className="javset-ro">
-            {libs.map((l) => `${labels[l.provider] || l.provider}：${l.count} 部`).join("，") || "还没有数据"}
+            {libs.map((l) => `${l.label || labels[l.provider] || l.provider}：${l.count} 部`).join("，") || "还没有数据"}
           </div>
         </>
       )}

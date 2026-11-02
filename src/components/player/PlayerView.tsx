@@ -105,6 +105,20 @@ export function PlayerView({ title, onExit }: { title: string; onExit: () => voi
     };
   }, []);
 
+  // [lc-1913] Rust 侧 ESC 退出桥完成收尾（停播+隐藏+还原）后通知卸载 —— 不再 invoke leave
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    listen("mpv-embed-exit", () => {
+      exitingRef.current = true;
+      onExit();
+    })
+      .then((f) => {
+        un = f;
+      })
+      .catch(() => {});
+    return () => un?.();
+  }, [onExit]);
+
   // 返回：停播 + 退嵌（Rust 清内嵌状态并隐藏 mpv），然后关闭播放层回详情页。
   // 先给覆盖层加 .leaving 走 200ms 退出动画，再真正卸载（onExit 由父层延迟触发）。
   const exit = useCallback(() => {

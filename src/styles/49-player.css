@@ -6,15 +6,16 @@
    12px 圆角同心）。视频矩形由 Rust 侧钉到容器上；mpv 覆盖范围内的网页
    元素不可点击，故 chrome 只存在于顶部栏区域。 */
 
-/* 全屏覆盖层：盖在内容区与侧栏（45）之上、标题栏（50）之下。
-   顶从 40px 起 —— 标题栏是拖拽区，视频区不能顶到它。 */
+/* 全屏覆盖层：[lc-1913] 满屏化 —— 视频铺满整个窗口（Polaris 同款），顶栏不再保留
+   独立区域；z-index 抬到标题栏（50）之上、边缘缩放热区（60）之下。mpv 窗口由
+   Rust 侧满屏钉住（spawn 侧收编 + Resized 跟随），本层只是其下的底色。 */
 .player-view {
   position: fixed;
-  top: 40px;
+  top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 46;
+  z-index: 56;
   display: flex;
   flex-direction: column;
   /* 玻璃面：压住下层内容，又保留外壳的轻透感 */
@@ -88,18 +89,13 @@
   letter-spacing: 0.01em;
 }
 
-/* ── 视频容器：四周 12px 留白 + 12px 圆角（与外层留白同心）── */
+/* ── 视频容器：[lc-1913] 满屏 —— 无留白无圆角，矩形=整窗（Rust 侧同口径钉位）── */
 .player-stage {
   position: relative;
   flex: 1;
   min-height: 0;
-  margin: 12px;
-  margin-top: 12px;
   background: #000;
-  border-radius: 12px;
   overflow: hidden;
-  /* 内发丝线：让纯黑容器在玻璃面上有边界感 */
-  box-shadow: inset 0 0 0 1px var(--line-strong);
 }
 
 /* mpv 钉上来之前的加载态：居中小 spinner + 一行小字。

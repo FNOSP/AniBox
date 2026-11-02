@@ -120,6 +120,30 @@ pub fn set_hwnd(hwnd: isize) {
         .replace(hwnd);
 }
 
+/// [lc-1913] 把 mpv 窗口满屏钉到主窗口矩形上（Polaris 同款：mpv 覆盖整个应用窗口，
+/// 视频即应用）。物理像素绝对定位，SWP_NOACTIVATE 不抢焦点。
+pub fn pin_to_owner(owner_hwnd: isize) {
+    let Some(h) = get_hwnd() else { return };
+    unsafe {
+        if IsWindow(h as _) == 0 || IsWindow(owner_hwnd as _) == 0 {
+            return;
+        }
+        let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        if GetWindowRect(owner_hwnd as _, &mut rc) == 0 {
+            return;
+        }
+        SetWindowPos(
+            h as _,
+            std::ptr::null_mut(),
+            rc.left,
+            rc.top,
+            rc.right - rc.left,
+            rc.bottom - rc.top,
+            SWP_NOACTIVATE | SWP_NOZORDER,
+        );
+    }
+}
+
 /// 清槽（mpv 退出 / 窗口失效时）。
 pub fn clear_hwnd() {
     *MPV_HWND.lock().unwrap_or_else(|e| e.into_inner()) = None;

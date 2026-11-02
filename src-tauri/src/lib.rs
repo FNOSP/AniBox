@@ -2957,6 +2957,12 @@ async fn player_embed_adopt_loop(app: AppHandle, m: std::sync::Arc<crate::mpv::M
         if !crate::mpvwin::embed_is_active() {
             return;
         }
+        // [lc-1913] spawn 侧收编通常已完成（槽内 hwnd 有效 = 已满屏钉住）→ 不重收编，
+        // 否则 embed_adopt 会把已钉好的窗口藏起来等矩形（黑屏闪烁）。
+        if crate::mpvwin::get_hwnd().is_some() {
+            crate::libmpv::trace("[lc-1913] embed_enter：spawn 侧已收编并满屏钉住，跳过重收编");
+            return;
+        }
         let Some(pid) = *m.pid.lock().unwrap() else {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             continue;
@@ -2998,10 +3004,9 @@ async fn player_embed_enter(app: AppHandle, state: State<'_, AppState>) -> Resul
         crate::mpvwin::embed_set_active(true);
         // 内嵌态由 Moved 事件的内嵌跟随负责；owner 跟随（lc-1907 实验路径）在内嵌态不参与
         crate::mpvwin::set_owner_follow(false);
-        // 复用会话二次进入：槽内窗口直接隐藏，避免独立窗口在首个矩形前闪现
-        if let Some(h) = crate::mpvwin::get_hwnd() {
-            crate::mpvwin::embed_hide(h);
-        }
+        // [lc-1913] 不再隐藏等待矩形：spawn 侧收编已把 mpv 满屏钉在主窗口上（geometry
+        // 让首帧就落对位置），这里提前隐藏反而制造黑屏。矩形上报仍接受（PlayerView 若
+        // 挂载会重申矩形，二者一致）。
         // [lc-1911] 内嵌观感对齐 Polaris：隐藏 uosc 自绘顶栏（标题 / 窗口按钮 / 1·5 徽标）——
         // 它与网页顶栏重复，还提供一个会**直接退出 mpv 进程**的关闭按钮（内嵌态点它=整个
         // 播放器消失）。走 uosc 的 disable_elements 通道（handle_options → Manager:disable
@@ -3111,36 +3116,44 @@ fn merge_script_opts(orig: String, overrides: &[(&str, &str)]) -> String {
     pairs.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(",")
 }
 
-/// [lc-1909] 内嵌 leave：清内嵌状态；stop=true 走现有 IPC stop 并再次隐藏 mpv 窗口（实例保留）。
-#[tauri::command]
-async fn player_embed_leave(state: State<'_, AppState>, stop: bool) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        crate::mpvwin::embed_set_active(false);
-        crate::mpvwin::set_owner_follow(false);
-        let session = state.mpv.lock().await.clone();
-        // [lc-1911] 还原 uosc script-opts（进内嵌时存的原串）；独立窗口模式的顶栏必须回来
+/// [lc-1913] 内嵌退出流程（ESC 桥 / player_embed_leave{stop:true} 共用）：
+/// 停播 + 隐藏 mpv 窗口 + 清内嵌态 + 还原 script-opts（uosc 顶栏/影院 OSC 归位），
+/// 最后给前端发 `mpv-embed-exit` 让 PlayerView（若挂载）卸载。前端不挂也能退。
+pub async fn embed_exit_flow(app: AppHandle) {
+    crate::mpvwin::embed_set_active(false);
+    crate::mpvwin::set_owner_follow(false);
+    let session = app.state::<AppState>().mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         if let Some(orig) = crate::mpvwin::take_saved_script_opts() {
-            if let Some(m) = session.as_ref() {
-                if let Err(e) = m.command(json!(["set_property", "script-opts", orig])).await {
-                    crate::libmpv::trace(&format!("[lc-1911] 还原 uosc script-opts 失败: {e}"));
-                }
+            if let Err(e) = m.command(json!(["set_property", "script-opts", orig])).await {
+                crate::libmpv::trace(&format!("[lc-1913] 还原 script-opts 失败: {e}"));
             }
         }
+        if let Err(e) = m.stop().await {
+            // 不静默吞掉：stop 失败 = 返回后 mpv 继续播，排障要看这条
+            crate::libmpv::trace(&format!("[lc-1913] embed 退出 stop 失败: {e}"));
+        }
+    }
+    if let Some(h) = crate::mpvwin::get_hwnd() {
+        crate::mpvwin::embed_hide(h);
+    }
+    let _ = app.emit("mpv-embed-exit", json!({}));
+}
+
+/// [lc-1909] 内嵌 leave：清内嵌状态；stop=true 走现有 IPC stop 并再次隐藏 mpv 窗口（实例保留）。
+#[tauri::command]
+async fn player_embed_leave(app: AppHandle, stop: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
         if stop {
-            if let Some(m) = session {
-                if let Err(e) = m.stop().await {
-                    // [lc-1911] 不再静默吞掉：stop 失败 = 返回后 mpv 继续播，排障要看这条
-                    crate::libmpv::trace(&format!("[lc-1911] embed_leave stop 失败: {e}"));
-                }
-            }
-            if let Some(h) = crate::mpvwin::get_hwnd() {
-                crate::mpvwin::embed_hide(h);
-            }
+            crate::embed_exit_flow(app).await;
+        } else {
+            crate::mpvwin::embed_set_active(false);
+            crate::mpvwin::set_owner_follow(false);
         }
     }
     #[cfg(not(target_os = "windows"))]
-    let _ = (&state, &stop);
+    let _ = (&app, &stop);
     Ok(())
 }
 
@@ -4220,11 +4233,20 @@ pub fn run() {
             // 生效范围在 mpvwin 内部判：内嵌激活（EMBED_ACTIVE）→ 内嵌零延迟跟随；
             // 否则仅 mpv_window_owner=true 的收编路径（OWNER_FOLLOW）跟随；独立窗口模式不动。
             // 同步上下文：mpvwin 槽读取内部有 poison 兜底（lock().unwrap_or_else(into_inner)）。
-            // 注：Resized / ScaleFactorChanged（缩放跟随）刻意不做 —— 内嵌模式由前端重新
-            // 上报矩形；owner 收编改 mpv 窗口大小容易和用户手动调整打架。
             #[cfg(target_os = "windows")]
             if let tauri::WindowEvent::Moved(pos) = event {
                 crate::mpvwin::on_main_moved(pos.x, pos.y);
+            }
+            // [lc-1913] 主窗口 Resized → 内嵌态下把 mpv 重新满屏钉到主窗口矩形
+            //（满屏跟随：视频永远覆盖整个应用窗口，Polaris 同款）。ScaleFactorChanged
+            // 不单独处理 —— 缩放变化必然伴随 Resized，这里统一兜住。
+            #[cfg(target_os = "windows")]
+            if let tauri::WindowEvent::Resized(_) = event {
+                if crate::mpvwin::embed_is_active() {
+                    if let Some(h) = window.hwnd().ok().map(|h| h.0 as isize) {
+                        crate::mpvwin::pin_to_owner(h);
+                    }
+                }
             }
             // [lc-1435] 关闭按钮三态：exit 放行 / tray 隐藏 / ask 交给前端弹框。
             // 为什么用 on_window_event 而不是前端拦：WebView 里拦不住原生关闭按钮

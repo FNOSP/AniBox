@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// 观察 id ↔ 属性名（前端 switch 依赖这些 id；6=fullscreen 只用于镜像到 Tauri 窗口）
-const OBSERVED: [(u64, &str); 13] = [
+const OBSERVED: [(u64, &str); 14] = [
     (1, "time-pos"),
     (2, "duration"),
     (3, "pause"),
@@ -44,6 +44,9 @@ const OBSERVED: [(u64, &str); 13] = [
     // `/api/v1/playvideo/` 前缀会被剥掉 → 解析永远为空（切集进度记到第一集上的根因）。
     // 参照随包 Lua 脚本 `fntv_nas_sub.lua` 也是用 `path` 匹配 `/playvideo/`。
     (13, "path"),
+    // [lc-1913] 软件内播放退出桥：embed-bridge.lua 在 ESC（非全屏）时把此位置 true，
+    // 读线程见到 true 即 emit `mpv-embed-exit` 给前端（false 的复位事件忽略）。
+    (14, "user-data/anibox-embed-esc"),
 ];
 
 /// mpv IPC 连接类型：Windows 是命名管道（用 File 打开），
@@ -257,14 +260,31 @@ impl MpvSession {
         // [lc-1559] 启动即加载（可选）：命令行直接带 M3U8/URL ⇒ 无 idle 空窗，
         // 不依赖 IPC（启动头几秒 IPC 命令会卡，见 lib.rs lc-1559 注释）。
         let mut args = args.to_vec();
-        // [lc-1910] 软件内播放防闪窗：app 模式下 mpv **最小化启动**——窗口创建但不可见
-        // （--force-window=immediate 照旧建窗，--window-minimized=yes 让它 iconic），
-        // 等 player_embed_rect 钉位成功后再无焦点显示（mpvwin::embed_apply_rect 的
-        // SW_SHOWNOACTIVATE 路径）。之前可见启动 → 前端挂载才 enter，中间必然闪出
-        // 一个独立小窗。window 模式参数保持与历史逐字节一致。
-        // 最小化窗口仍带 WS_VISIBLE，EnumWindows+IsWindowVisible 能找到它（收编不受影响）。
+        // [lc-1913] 软件内播放 = 照抄 Polaris 的 spawn 形态：mpv 可见启动、**直接落在
+        // 主窗口矩形上**（--geometry 物理像素），随后的收编循环把它挂成 owner + 满屏钉住。
+        // 之前 lc-1910 的 --window-minimized 方案废弃：前端没走内嵌路径时（首页直连播放）
+        // 没人还原窗口 = 「音频在放、画面全黑」。Polaris 也不最小化。
+        // 顺带抄他们 spawn 参数里的 --no-keepaspect-window（自由拉伸）与 --network-timeout。
+        let mut embed_mode = false;
         if app.state::<crate::AppState>().config.read().await.player_open_mode == "app" {
-            args.push("--window-minimized=yes".to_string());
+            embed_mode = true;
+            if let Some(win) = app.get_webview_window("main") {
+                if let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) {
+                    args.push(format!(
+                        "--geometry={}x{}+{}+{}",
+                        size.width, size.height, pos.x, pos.y
+                    ));
+                }
+            }
+            args.push("--no-keepaspect-window".to_string());
+            args.push("--network-timeout=15".to_string());
+            // uosc 全家桶让位 + osc-cinema 接管（照抄 Polaris spawn 的 script-opts 注入方式）；
+            // 属性此时为空，append 不会覆盖任何 conf。
+            args.push(
+                "--script-opts-append=uosc-disable_elements=top_bar,timeline,controls,volume,pause_indicator,buffering_indicator,window_border"
+                    .to_string(),
+            );
+            args.push("--script-opts-append=osc_cinema-enabled=yes".to_string());
         }
         if let Some(t) = force_title {
             if !t.is_empty() {
@@ -344,6 +364,46 @@ impl MpvSession {
         if let Some(pid) = pid {
             crate::winproc::track(pid);
             crate::winproc::assign_kill_on_close_job(pid);
+            // [lc-1913] 照抄 Polaris：收编不依赖前端 —— spawn 后立即在 Rust 侧找窗口、
+            // 挂 owner、钉到主窗口矩形（geometry 已让首帧就落在正确位置，这里补上
+            // owner 关系 + 圆角 + 布局变化跟随）。前端 embed_enter/rect 仍可用，但不再是
+            // 必要路径（首页直连播放从此不依赖前端挂载内嵌层）。
+            if embed_mode {
+                let app2 = app.clone();
+                let pid2 = pid;
+                tauri::async_runtime::spawn(async move {
+                    for _ in 0..25u32 {
+                        let owner = app2
+                            .get_webview_window("main")
+                            .and_then(|w| w.hwnd().ok().map(|h| h.0 as isize));
+                        let Some(owner) = owner else {
+                            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                            continue;
+                        };
+                        // 复用会话时槽内 hwnd 仍有效（mpv 窗口已存在）；否则按 PID 枚举
+                        if crate::mpvwin::get_hwnd().is_some()
+                            || crate::mpvwin::find_mpv_hwnd(pid2).is_some()
+                        {
+                            match crate::mpvwin::adopt(pid2, owner) {
+                                Ok(_) => {
+                                    crate::mpvwin::embed_set_active(true);
+                                    crate::mpvwin::set_owner_follow(false);
+                                    crate::mpvwin::pin_to_owner(owner);
+                                    crate::libmpv::trace(&format!(
+                                        "[lc-1913] 内嵌收编完成（spawn 侧）：pid={pid2} owner={owner}，已满屏钉住"
+                                    ));
+                                }
+                                Err(e) => crate::libmpv::trace(&format!(
+                                    "[lc-1913] 内嵌收编失败（spawn 侧）: {e}"
+                                )),
+                            }
+                            return;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                    crate::libmpv::trace("[lc-1913] 内嵌收编重试超时（spawn 侧 5s），放弃");
+                });
+            }
         }
 
         // ── 2) 连 IPC（mpv 起得要一会儿，重试 ~20s）
@@ -721,6 +781,20 @@ impl MpvSession {
                         if !mirrored {
                             // 用户从 mpv 侧（按键 / uosc 全屏按钮）改的 → 抛给前端切「内嵌 ↔ 全页 + 窗口全屏」
                             let _ = app2.emit("mpv-fullscreen", json!({ "on": on }));
+                        }
+                        continue;
+                    }
+                    if id == 14 {
+                        // [lc-1913] 内嵌退出桥：embed-bridge.lua 在 ESC（非全屏）置位。
+                        // 退出流程 Rust 侧自治（Polaris 同款，前端挂不挂内嵌层都能退）：
+                        // 停播 + 隐藏 mpv 窗口 + 清内嵌态 + 还原 uosc/osc script-opts；
+                        // 再给前端发 mpv-embed-exit 让 PlayerView（若挂载）卸载。
+                        let on = v.get("data").and_then(|d| d.as_bool()).unwrap_or(false);
+                        if on {
+                            let app3 = app2.clone();
+                            tauri::async_runtime::spawn(async move {
+                                crate::embed_exit_flow(app3).await;
+                            });
                         }
                         continue;
                     }

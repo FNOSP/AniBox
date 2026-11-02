@@ -17,13 +17,12 @@ import {
   Settings as IcoGearL,
   Tag as IcoTagL,
   Users as IcoUsersL,
-  Wrench as IcoWrenchL,
 } from "lucide-react";
 
 type JavLibT = { provider: string; label?: string; scannedAtMs: number; count: number; entries: JavEntryT[] };
 type ProviderInfo = { id: string; label: string; logged: boolean; userName: string };
 
-type View = "library" | "actors" | "studios" | "tags" | "overview" | "workbench" | "tools";
+type View = "library" | "actors" | "studios" | "tags" | "overview" | "workbench";
 
 /* 分节导航（对照 JAVCloudHub 侧栏的三组：资料库 / 工作区 / 系统） */
 const NAV: { group: string; items: { key: View; label: string; icon: typeof IcoGridL }[] }[] = [
@@ -42,10 +41,6 @@ const NAV: { group: string; items: { key: View; label: string; icon: typeof IcoG
       { key: "overview", label: "概览", icon: IcoDash },
       { key: "workbench", label: "工作台", icon: IcoWork },
     ],
-  },
-  {
-    group: "系统",
-    items: [{ key: "tools", label: "工具", icon: IcoWrenchL }],
   },
 ];
 
@@ -342,6 +337,10 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
             </button>
           );
         })}
+        <button type="button" title="设置" className="libf-open" onClick={() => setSetOpen(true)}>
+          <IcoGearL size={13} strokeWidth={2} />
+          设置
+        </button>
       </div>
 
       {err && <p className="c115-err">{err}</p>}
@@ -435,19 +434,6 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
             </span>
           </div>
         </>
-      )}
-
-      {!loading && view === "tools" && (
-        <div className="javset-item boolrow" style={{ cursor: "default" }}>
-          <label><span className="bl">设置</span></label>
-          <span>
-            <button className="javset-btn ghost" onClick={() => setSetOpen(true)}>
-              <IcoGearL size={13} strokeWidth={2} style={{ verticalAlign: "-2px", marginRight: 4 }} />
-              打开设置
-            </button>
-            <div className="hint">扫描规则 / 定时扫描 / 网络与代理 / 刮削站点 / 内置 AI。</div>
-          </span>
-        </div>
       )}
 
       {detail && (

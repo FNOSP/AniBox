@@ -10,6 +10,7 @@ import { Lock as IcoLock } from "lucide-react";
 import { DetailView } from "./components/detail/DetailView";
 // [lc-1909] 软件内播放（内嵌播放页）：mpv 窗口由 Rust 侧钉到视频容器矩形
 import { PlayerView } from "./components/player/PlayerView";
+import { PlayerChrome } from "./components/player/PlayerChrome";
 // [lc-1654] 海报卡「⋯ → 编辑元数据」复用详情页同一套弹层
 import { MetaEditModal, type MetaTarget } from "./components/detail/MetaEditModal";
 // [lc-1720] 海报卡「⋯ → 刷新元数据」改为手动获取（TMDB/BGM 镜像搜索 + 本地覆盖）
@@ -1782,3 +1783,10 @@ function GuestLoginPrompt({ onClose, onGoLogin }: { onClose: () => void; onGoLog
 }
 
 export default App;
+
+// [lc-1915] 双窗根：主窗口渲染完整应用；mpv_overlay（播放器专用窗，Polaris "MPV
+// Overlay" 同角色）只渲染悬浮控制层 —— 视频由 Rust 侧 mpv 窗口压在本窗之上。
+export function Root() {
+  const label = getCurrentWindow().label;
+  return label === "mpv_overlay" ? <PlayerChrome /> : <App />;
+}

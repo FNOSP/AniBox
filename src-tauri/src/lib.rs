@@ -3065,8 +3065,10 @@ async fn player_embed_enter(app: AppHandle, state: State<'_, AppState>) -> Resul
 
 /// [lc-1909] 内嵌矩形上报：物理像素、相对前端内容区 (0,0)（decorations:false → 内容区=整窗，
 /// inner_position 即页面 (0,0) 的屏幕物理坐标）。
+/// [lc-1915] 只认 mpv_overlay 窗口的上报 —— 主窗口播放期间隐藏，它的旧上报一律忽略。
 #[tauri::command]
 async fn player_embed_rect(
+    window: tauri::Window,
     app: AppHandle,
     x: i32,
     y: i32,
@@ -3075,10 +3077,13 @@ async fn player_embed_rect(
 ) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        if window.label() != "mpv_overlay" {
+            return Ok(());
+        }
         if !crate::mpvwin::embed_is_active() {
             return Ok(());
         }
-        let Some(win) = app.get_webview_window("main") else {
+        let Some(win) = app.get_webview_window("mpv_overlay") else {
             return Ok(());
         };
         let Ok(orig) = win.inner_position() else {
@@ -3116,9 +3121,37 @@ fn merge_script_opts(orig: String, overrides: &[(&str, &str)]) -> String {
     pairs.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(",")
 }
 
+/// [lc-1915] 播放器专用窗口（Polaris 同款架构）：主窗口播放时隐藏，`mpv_overlay`
+/// 成为可见的播放窗（自己的 WebView 画控制层），mpv 满屏压在它上面、z 序紧贴其后。
+/// 懒创建；位置/尺寸按主窗口当前矩形（物理像素）。
+pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("mpv_overlay") {
+        let _ = w.show();
+        return Some(w);
+    }
+    let main = app.get_webview_window("main")?;
+    let pos = main.outer_position().ok()?;
+    let size = main.outer_size().ok()?;
+    let w = tauri::WebviewWindowBuilder::new(app, "mpv_overlay", tauri::WebviewUrl::App("index.html".into()))
+        .title("AniBox Player")
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .skip_taskbar(true)
+        .visible(false)
+        .resizable(true)
+        .build()
+        .ok()?;
+    let _ = w.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
+    let _ = w.set_size(tauri::PhysicalSize::new(size.width, size.height));
+    let _ = w.set_ignore_cursor_events(true);
+    Some(w)
+}
+
 /// [lc-1913] 内嵌退出流程（ESC 桥 / player_embed_leave{stop:true} 共用）：
 /// 停播 + 隐藏 mpv 窗口 + 清内嵌态 + 还原 script-opts（uosc 顶栏/影院 OSC 归位），
-/// 最后给前端发 `mpv-embed-exit` 让 PlayerView（若挂载）卸载。前端不挂也能退。
+/// 隐藏播放器专用窗口、**唤回主窗口**，最后给前端发 `mpv-embed-exit`。
 pub async fn embed_exit_flow(app: AppHandle) {
     crate::mpvwin::embed_set_active(false);
     crate::mpvwin::set_owner_follow(false);
@@ -3137,6 +3170,13 @@ pub async fn embed_exit_flow(app: AppHandle) {
     if let Some(h) = crate::mpvwin::get_hwnd() {
         crate::mpvwin::embed_hide(h);
     }
+    // [lc-1915] 播放器窗收起来，主界面回来（Polaris 同款：主窗播放期间是隐藏的）
+    if let Some(ov) = app.get_webview_window("mpv_overlay") {
+        let _ = ov.hide();
+    }
+    if let Some(m) = app.get_webview_window("main") {
+        let _ = m.show();
+    }
     let _ = app.emit("mpv-embed-exit", json!({}));
 }
 
@@ -3154,6 +3194,26 @@ async fn player_embed_leave(app: AppHandle, stop: bool) -> Result<(), String> {
     }
     #[cfg(not(target_os = "windows"))]
     let _ = (&app, &stop);
+    Ok(())
+}
+
+/// [lc-1915] 播放器控制层的鼠标穿透开关（Polaris 同款 set_ignore_cursor_events 通道）：
+/// 默认全窗穿透（鼠标全部落到 mpv），光标悬停到控制层可点元素上时由前端调 false。
+/// 只接受 mpv_overlay 窗口自己的调用。
+#[tauri::command]
+async fn player_chrome_ignore(
+    window: tauri::Window,
+    ignore: bool,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        if window.label() != "mpv_overlay" {
+            return Ok(());
+        }
+        let _ = window.set_ignore_cursor_events(ignore);
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (&window, &ignore);
     Ok(())
 }
 
@@ -4233,18 +4293,18 @@ pub fn run() {
             // 生效范围在 mpvwin 内部判：内嵌激活（EMBED_ACTIVE）→ 内嵌零延迟跟随；
             // 否则仅 mpv_window_owner=true 的收编路径（OWNER_FOLLOW）跟随；独立窗口模式不动。
             // 同步上下文：mpvwin 槽读取内部有 poison 兜底（lock().unwrap_or_else(into_inner)）。
+            // [lc-1915] 播放器专用窗（mpv_overlay）的移动/缩放驱动 mpv 跟随；
+            // 主窗口在播放期间是隐藏的，它的事件不再参与内嵌几何。
             #[cfg(target_os = "windows")]
-            if let tauri::WindowEvent::Moved(pos) = event {
-                crate::mpvwin::on_main_moved(pos.x, pos.y);
-            }
-            // [lc-1913] 主窗口 Resized → 内嵌态下把 mpv 重新满屏钉到主窗口矩形
-            //（满屏跟随：视频永远覆盖整个应用窗口，Polaris 同款）。ScaleFactorChanged
-            // 不单独处理 —— 缩放变化必然伴随 Resized，这里统一兜住。
-            #[cfg(target_os = "windows")]
-            if let tauri::WindowEvent::Resized(_) = event {
-                if crate::mpvwin::embed_is_active() {
-                    if let Some(h) = window.hwnd().ok().map(|h| h.0 as isize) {
-                        crate::mpvwin::pin_to_owner(h);
+            if window.label() == "mpv_overlay" {
+                if let tauri::WindowEvent::Moved(pos) = event {
+                    crate::mpvwin::on_main_moved(pos.x, pos.y);
+                }
+                if let tauri::WindowEvent::Resized(_) = event {
+                    if crate::mpvwin::embed_is_active() {
+                        if let Some(h) = window.hwnd().ok().map(|h| h.0 as isize) {
+                            crate::mpvwin::pin_to_owner(h);
+                        }
                     }
                 }
             }
@@ -4493,6 +4553,7 @@ pub fn run() {
             // 非 Windows 命令空转返回 Ok，注册保持全平台一致）
             player_embed_enter,
             player_embed_rect,
+            player_chrome_ignore,
             player_embed_leave,
             mpv_toggle_pause,
             player_source,

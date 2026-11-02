@@ -148,3 +148,44 @@
     transition: none;
   }
 }
+
+/* ─────────────── [lc-1915] mpv_overlay 控制层（PlayerChrome） ───────────────
+   独立播放窗的控制层：全窗透明 + 默认鼠标全穿透（Rust set_ignore_cursor_events(true)），
+   仅悬停到 [data-chrome] 元素时由命中测试关穿透让按钮可点 —— 点击/滚轮其余区域
+   全部落到 mpv。 */
+.player-chrome {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+}
+.player-chrome .chrome-back {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(12, 14, 20, 0.55);
+  color: rgba(255, 255, 255, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  pointer-events: auto;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: background 0.15s ease, transform 0.12s ease;
+}
+.player-chrome .chrome-back:hover {
+  background: rgba(12, 14, 20, 0.82);
+}
+.player-chrome .chrome-back:active {
+  transform: scale(0.94);
+}
+@media (prefers-reduced-motion: reduce) {
+  .player-chrome .chrome-back {
+    transition: none;
+  }
+}

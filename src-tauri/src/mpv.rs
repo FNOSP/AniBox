@@ -24,8 +24,11 @@ use tauri::{AppHandle, Emitter, Manager};
 // 任一变化即组装 cinema-episode-meta；原子的读多写少足够）
 static EP_POS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static EP_COUNT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+// [lc-1915] 控制层鼠标位置桥（embed-bridge.lua 转发 mpv mouse-pos；x=-1 = 光标已离开视频）
+static MOUSE_X: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static MOUSE_Y: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 
-const OBSERVED: [(u64, &str); 14] = [
+const OBSERVED: [(u64, &str); 16] = [
     (1, "time-pos"),
     (2, "duration"),
     (3, "pause"),
@@ -52,6 +55,9 @@ const OBSERVED: [(u64, &str); 14] = [
     // [lc-1913] 软件内播放退出桥：embed-bridge.lua 在 ESC（非全屏）时把此位置 true，
     // 读线程见到 true 即 emit `mpv-embed-exit` 给前端（false 的复位事件忽略）。
     (14, "user-data/anibox-embed-esc"),
+    // [lc-1915] 控制层鼠标位置桥：mpv mouse-pos → user-data → 读线程转发 overlay-mouse
+    (15, "user-data/anibox-mouse-x"),
+    (16, "user-data/anibox-mouse-y"),
 ];
 
 /// mpv IPC 连接类型：Windows 是命名管道（用 File 打开），
@@ -377,9 +383,15 @@ impl MpvSession {
                 let app2 = app.clone();
                 let pid2 = pid;
                 tauri::async_runtime::spawn(async move {
+                    // [lc-1915] Polaris 同款：主窗口让位，专用播放窗（mpv_overlay）登场，
+                    // mpv 满屏压在它上面；owner/钉位/跟随全部以播放窗为基准。
+                    let _ = crate::show_player_overlay(&app2);
+                    if let Some(m) = app2.get_webview_window("main") {
+                        let _ = m.hide();
+                    }
                     for _ in 0..25u32 {
                         let owner = app2
-                            .get_webview_window("main")
+                            .get_webview_window("mpv_overlay")
                             .and_then(|w| w.hwnd().ok().map(|h| h.0 as isize));
                         let Some(owner) = owner else {
                             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -394,8 +406,9 @@ impl MpvSession {
                                     crate::mpvwin::embed_set_active(true);
                                     crate::mpvwin::set_owner_follow(false);
                                     crate::mpvwin::pin_to_owner(owner);
+                                    crate::mpvwin::spawn_overlay_follow(app2.clone());
                                     crate::libmpv::trace(&format!(
-                                        "[lc-1913] 内嵌收编完成（spawn 侧）：pid={pid2} owner={owner}，已满屏钉住"
+                                        "[lc-1913] 内嵌收编完成（spawn 侧）：pid={pid2} owner=mpv_overlay(0x{owner:X})，已满屏钉住"
                                     ));
                                 }
                                 Err(e) => crate::libmpv::trace(&format!(
@@ -832,6 +845,26 @@ impl MpvSession {
                                     }
                                 });
                             }
+                        }
+                        continue;
+                    }
+                    if id == 15 || id == 16 {
+                        // [lc-1915] 控制层鼠标位置：转发给 mpv_overlay 的控制层做穿透开关。
+                        // x=-1 = 光标已离开视频区 → 控制层立即恢复全穿透。
+                        let val = v.get("data").and_then(|d| d.as_f64()).unwrap_or(-1.0) as i32;
+                        if id == 15 {
+                            MOUSE_X.store(val, Ordering::SeqCst);
+                        } else {
+                            MOUSE_Y.store(val, Ordering::SeqCst);
+                        }
+                        if crate::mpvwin::embed_is_active() {
+                            let _ = app2.emit(
+                                "overlay-mouse",
+                                json!({
+                                    "x": MOUSE_X.load(Ordering::SeqCst),
+                                    "y": MOUSE_Y.load(Ordering::SeqCst),
+                                }),
+                            );
                         }
                         continue;
                     }

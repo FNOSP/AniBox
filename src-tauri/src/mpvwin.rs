@@ -202,6 +202,51 @@ pub fn take_saved_script_opts() -> Option<String> {
         .take()
 }
 
+/// [lc-1915] 跟随循环（Polaris 同款架构的另一半）：拖动画面 = mpv 自己动（窗口拖拽），
+/// 本循环 33ms 轮询 mpv 矩形，把 `mpv_overlay` 窗口贴到 mpv 矩形上（z 序插在 mpv 正后方）。
+/// mpv 是锚、控制层窗是随动 —— 与 Polaris 的 WorkAreaListener 同思路。
+pub fn spawn_overlay_follow(app: tauri::AppHandle) {
+    use tauri::Manager;
+    tauri::async_runtime::spawn(async move {
+        while crate::mpvwin::embed_is_active() {
+            tokio::time::sleep(std::time::Duration::from_millis(33)).await;
+            if !crate::mpvwin::embed_is_active() {
+                break;
+            }
+            let (Some(mh), Some(ov)) = (
+                get_hwnd(),
+                app.get_webview_window("mpv_overlay")
+                    .and_then(|w| w.hwnd().ok().map(|h| h.0 as isize)),
+            ) else {
+                continue;
+            };
+            unsafe {
+                if IsWindow(mh as _) == 0 || IsWindow(ov as _) == 0 {
+                    continue;
+                }
+                let mut m = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                let mut o = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                if GetWindowRect(mh as _, &mut m) == 0 || GetWindowRect(ov as _, &mut o) == 0 {
+                    continue;
+                }
+                if m.left == o.left && m.top == o.top && m.right == o.right && m.bottom == o.bottom {
+                    continue;
+                }
+                // 位置/尺寸对齐 + z 序插到 mpv 正后方（InsertAfter=mpv）
+                SetWindowPos(
+                    ov as _,
+                    mh as _,
+                    m.left,
+                    m.top,
+                    m.right - m.left,
+                    m.bottom - m.top,
+                    SWP_NOACTIVATE,
+                );
+            }
+        }
+    });
+}
+
 /// 隐藏 mpv 窗口（enter 收编后 / leave stop=true），并标记隐藏态供矩形首报时显示。
 pub fn embed_hide(hwnd: isize) {
     unsafe {

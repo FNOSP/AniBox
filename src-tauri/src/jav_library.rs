@@ -2173,8 +2173,14 @@ pub async fn jav_fnos_set_lib(app: AppHandle, guid: String, title: String, enabl
     Ok(json!({ "ok": true }))
 }
 
-/// 扫描启用了番号刮削的飞牛媒体库：item/list 翻页取条目 → 标题番号识别 →
-/// 命中的进 JAV 库（provider = "fnos:<媒体库guid>"，播放走既有 play_item）。
+/// 扫描启用了番号刮削的飞牛媒体库：**递归下钻文件夹，把里面的视频文件拉出来**。
+///
+/// 飞牛的 JAV 库结构通常是「库 → 每部片一个文件夹（文件夹名=番号）→ 里面的视频文件」，
+/// 顶层 item/list 看到的多是文件夹（类型还常标成 Movie）——只在顶层扫就等于对文件夹刮削。
+/// 这里对每个顶层条目下钻（parent_guid + exclude_grouped_video=0），收集真实视频文件；
+/// 识别优先级：文件名 → 所在文件夹名（JAV 库的文件夹名基本就是番号）。
+/// 用户勾选库 = 全量入库：番号命中的按番号刮削，没命中的以「无番号」入库，
+/// 刮削成功的每个视频在 JavHub 单独成卡。
 #[tauri::command]
 pub async fn jav_fnos_scan(app: AppHandle, state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
@@ -2187,80 +2193,147 @@ pub async fn jav_fnos_scan(app: AppHandle, state: tauri::State<'_, crate::AppSta
         return Err("还没有启用任何飞牛媒体库（设置 → 数据源）".into());
     }
     let client = crate::fnapi::new_client();
-    let mut results: Vec<Value> = Vec::new();
-    for lib in enabled {
-        let mut cands: Vec<JavCandidate> = Vec::new();
-        let mut page = 1i64;
-        // 上限 40 页 × 200 条 = 8000：真实 JAV 库足够，防异常死循环
-        while page <= 40 {
-            let body = json!({
-                "ancestor_guid": lib.guid,
-                "exclude_grouped_video": 1,
-                "sort_type": "ASC",
-                "sort_column": "sort_title",
-                "page_size": 200,
-                "page": page,
-                // 类型集合与库页浏览（get_items）完全一致 —— 之前只给三项，
-                // 部分库（.strm / 特殊挂载）只回 1 条，表现为「0/1 条命中」
-                "tags": { "type": ["Movie", "TV", "Directory", "Video", "LiveChannel"] }
-            });
-            let v = match client
-                .call(&cfg.server, "/v/api/v1/item/list", "POST", &cfg.token, Some(body))
-                .await
-            {
-                Ok(v) => v,
-                Err(e) => {
-                    results.push(json!({ "guid": lib.guid, "title": lib.title, "error": format!("读取条目失败: {e}") }));
-                    break;
-                }
+    const PAGE_SIZE: i64 = 200;
+    const MAX_PAGES_PER_DIR: i64 = 10;
+    const MAX_DEPTH: usize = 4;
+    const MAX_CALLS_PER_LIB: usize = 150; // 防异常大树拖死：每库最多 150 次列目录
+
+    /// 列一个目录的全部条目（自动翻页）。mode: root=ancestor_guid 库根；dir=parent_guid 下钻
+    async fn list_dir(
+        client: &crate::fnapi::FnClient,
+        server: &str,
+        token: &str,
+        mode: &str,
+        guid: &str,
+    ) -> Result<Vec<Value>, String> {
+        let mut out: Vec<Value> = Vec::new();
+        for page in 1..=MAX_PAGES_PER_DIR {
+            let body = if mode == "root" {
+                json!({
+                    "ancestor_guid": guid,
+                    "exclude_grouped_video": 1,
+                    "sort_type": "ASC", "sort_column": "sort_title",
+                    "page_size": PAGE_SIZE, "page": page,
+                    "tags": { "type": ["Movie", "TV", "Directory", "Video", "LiveChannel"] }
+                })
+            } else {
+                json!({
+                    "parent_guid": guid,
+                    "exclude_grouped_video": 0,
+                    "sort_type": "ASC", "sort_column": "sort_title",
+                    "page_size": PAGE_SIZE, "page": page,
+                    "tags": { "type": ["Movie", "TV", "Directory", "Video", "LiveChannel"] }
+                })
             };
+            let v = client
+                .call(server, "/v/api/v1/item/list", "POST", token, Some(body))
+                .await?;
             let Some(list) = v.get("list").and_then(|x| x.as_array()) else { break };
             if list.is_empty() {
                 break;
             }
-            for it in list {
-                let guid = it.get("guid").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                let title = it
-                    .get("title")
-                    .or_else(|| it.get("sort_title"))
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                if guid.is_empty() || title.is_empty() {
-                    continue;
-                }
-                cands.push(JavCandidate { file_id: guid, parent: lib.title.clone(), name: title, size: 0 });
-            }
-            if (list.len() as i64) < 200 {
+            out.extend(list.iter().cloned());
+            if (list.len() as i64) < PAGE_SIZE {
                 break;
             }
-            page += 1;
+        }
+        Ok(out)
+    }
+
+    let mut results: Vec<Value> = Vec::new();
+    for lib in enabled {
+        let mut cands: Vec<JavCandidate> = Vec::new();
+        let mut calls = 0usize;
+        // 顶层枚举：每个顶层条目都是一个「片子容器」（文件夹），逐个下钻
+        let tops = match list_dir(&client, &cfg.server, &cfg.token, "root", &lib.guid).await {
+            Ok(v) => v,
+            Err(e) => {
+                results.push(json!({ "guid": lib.guid, "title": lib.title, "error": format!("读取条目失败: {e}") }));
+                continue;
+            }
+        };
+        calls += 1;
+        for top in &tops {
+            if calls >= MAX_CALLS_PER_LIB {
+                break;
+            }
+            let guid = top.get("guid").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let title = top
+                .get("title")
+                .or_else(|| top.get("sort_title"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            if guid.is_empty() {
+                continue;
+            }
+            // 下钻收集这个容器里的视频文件（BFS，深度受限）
+            let mut files: Vec<(String, String)> = Vec::new(); // (guid, 文件名)
+            let mut queue: std::collections::VecDeque<(String, String, usize)> =
+                std::collections::VecDeque::new();
+            queue.push_back((guid.clone(), title.clone(), 0));
+            while let Some((fguid, fname, depth)) = queue.pop_front() {
+                if calls >= MAX_CALLS_PER_LIB || depth >= MAX_DEPTH {
+                    continue;
+                }
+                calls += 1;
+                let Ok(items) = list_dir(&client, &cfg.server, &cfg.token, "dir", &fguid).await else { continue };
+                if items.is_empty() {
+                    continue;
+                }
+                for it in &items {
+                    let ig = it.get("guid").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let ity = it.get("title").or_else(|| it.get("sort_title")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    if ig.is_empty() || ity.is_empty() {
+                        continue;
+                    }
+                    let typ = it.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    if typ.eq_ignore_ascii_case("Directory") {
+                        queue.push_back((ig.clone(), ity, depth + 1));
+                    } else {
+                        files.push((ig, ity));
+                    }
+                }
+            }
+            if files.is_empty() {
+                // 下钻没拿到文件：顶层条目可能本身就是单视频文件，按原条目收
+                files.push((guid, title.clone()));
+            }
+            // 每个视频文件一个候选；识别用「文件名 + 所在文件夹名」两级
+            for (fg, fname) in files {
+                cands.push(JavCandidate { file_id: fg, parent: title.clone(), name: fname, size: 0 });
+            }
         }
         // 用户明确勾选了这个媒体库 = 库里全是 JAV 内容，**不做识别门槛全量入库**：
         //   · 番号命中的 → 正常分类，刮削走站点引擎；
         //   · 没命中的 → 「无番号」（unknown，key=U+md5(标题)），照样显示/播放/AI 汉化，
         //     不进刮削队列（没有番号可查），后续「修正番号」接上后可手动归号。
         let matched_total = cands.len();
-        let (_, mut matched) = split_candidates(&cands);
-        let hit_idx: std::collections::HashSet<usize> = matched.iter().map(|(i, _)| *i).collect();
+        let mut matched: Vec<(usize, Detection)> = Vec::new();
         let mut unknown_count = 0usize;
         for (i, c) in cands.iter().enumerate() {
-            if hit_idx.contains(&i) {
-                continue;
+            // 识别优先级：文件名（附文件夹呼应）→ 文件夹名（JAV 库文件夹名=番号）
+            let det = detect(&c.name, &c.parent)
+                .filter(|d| d.category != CATEGORY_WESTERN)
+                .or_else(|| detect(&c.parent, "").filter(|d| d.category != CATEGORY_WESTERN));
+            match det {
+                Some(d) => matched.push((i, d)),
+                None => {
+                    unknown_count += 1;
+                    matched.push((i, Detection {
+                        code: c.name.clone(),
+                        category: CATEGORY_UNKNOWN,
+                        part: 0,
+                        part_hint: false,
+                        matched_by: "fnos-all",
+                    }));
+                }
             }
-            unknown_count += 1;
-            matched.push((i, Detection {
-                code: c.name.clone(),
-                category: CATEGORY_UNKNOWN,
-                part: 0,
-                part_hint: false,
-                matched_by: "fnos-all",
-            }));
         }
         let entries = ingest_scan(&format!("fnos:{}", lib.guid), &cands, &matched, false, true).unwrap_or(0);
         results.push(json!({
             "guid": lib.guid, "title": lib.title,
-            "items": matched_total, "javDetected": matched_total - unknown_count,
+            "videos": matched_total, "javDetected": matched_total - unknown_count,
             "unknown": unknown_count, "entries": entries,
         }));
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;

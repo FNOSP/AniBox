@@ -142,9 +142,34 @@ async fn get_json(url: &str, hdrs: &[(String, String)]) -> Result<Value, String>
     if !status.is_success() {
         return Err(format!("上游 HTTP {}", status.as_u16()));
     }
-    serde_json::from_str(&text).map_err(|_| {
-        format!("返回非 JSON：{}", text.chars().take(120).collect::<String>())
-    })
+    // [lc-1902] 百度 channel/unicast 等接口回的是 JSONP（`bd__cbs__xxx({...})`），
+    // 这里必须和 post_form 走同一套剥壳逻辑，否则整条扫码轮询永远解析失败。
+    jsonp_or_json(&text)
+}
+
+/// 带自定义超时的 GET（百度 channel/unicast 是 30s 长轮询，默认 20s 全局超时会把它掐断）。
+async fn get_json_timeout(
+    url: &str,
+    hdrs: &[(String, String)],
+    timeout: Duration,
+) -> Result<Value, String> {
+    let mut req = client().get(url).timeout(timeout);
+    for (k, v) in hdrs {
+        req = req.header(k.as_str(), v.as_str());
+    }
+    let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| format!("响应读取失败: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("上游 HTTP {}", status.as_u16()));
+    }
+    jsonp_or_json(&text)
+}
+
+/// 是否为客户端侧超时（长轮询「没有新事件」在 HTTP 层就长这样，不能当错误处理）。
+fn is_timeout(e: &str) -> bool {
+    let l = e.to_ascii_lowercase();
+    l.contains("timed out") || l.contains("timeout") || l.contains("超时")
 }
 
 async fn post_json(url: &str, body: Value, hdrs: &[(String, String)]) -> Result<Value, String> {
@@ -378,6 +403,14 @@ struct QrState {
     exp_ms: u64,
 }
 
+/// 二维码有效期：与上游各家（115/夸克/百度/阿里/123）的 5 分钟一致。
+/// [lc-1902] 115 模块复用同一常量，避免前后端「倒计时」和「状态串 TTL」两套数字。
+pub(crate) const QR_TTL_MS: u64 = 5 * 60 * 1000;
+
+/// 状态 3 = 二维码已过期（前端据此自动换一张，而不是把轮询打死）。
+pub(crate) const QR_EXPIRED: i64 = 3;
+const QR_EXPIRED_MSG: &str = "二维码已过期，请刷新";
+
 impl QrState {
     fn pack(&self) -> String {
         STANDARD.encode(serde_json::to_string(self).unwrap_or_default().as_bytes())
@@ -388,13 +421,11 @@ impl QrState {
             .map_err(|_| "扫码状态无效，请刷新二维码".to_string())?;
         let st: QrState = serde_json::from_slice(&raw).map_err(|_| "扫码状态无效，请刷新二维码".to_string())?;
         if now_ms() > st.exp_ms {
-            return Err("二维码已过期，请刷新".into());
+            return Err(QR_EXPIRED_MSG.into());
         }
         Ok(st)
     }
 }
-
-const QR_TTL_MS: u64 = 5 * 60 * 1000;
 
 #[tauri::command]
 pub async fn cloud_qr_start(provider: String) -> Result<Value, String> {
@@ -551,7 +582,14 @@ pub async fn cloud_qr_start(provider: String) -> Result<Value, String> {
         _ => return Err(format!("不支持的网盘: {provider}")),
     };
     let st = QrState { provider: provider.clone(), data, exp_ms: now_ms() + QR_TTL_MS };
-    Ok(json!({ "qrcode": qrcode, "state": st.pack(), "hint": hint }))
+    Ok(json!({
+        "qrcode": qrcode,
+        "state": st.pack(),
+        "hint": hint,
+        // 前端据此显示倒计时并在到点时自动换码（与 QrState 同一个 TTL，不会各说各话）
+        "expiresAtMs": st.exp_ms,
+        "ttlMs": QR_TTL_MS,
+    }))
 }
 
 /// 轮询扫码状态：status 0=待扫码 1=已扫待确认 2=已确认（凭据已落盘）。
@@ -561,11 +599,22 @@ pub async fn cloud_qr_poll(_app: AppHandle, provider: String, state: String) -> 
         // 115 走自家模块，前端按旧三元组直调 cloud115_qr_poll；这里只为统一入口兜底
         return Ok(json!({ "status": 0, "ok": false }));
     }
-    let st = QrState::unpack(&state)?;
+    let st = match QrState::unpack(&state) {
+        Ok(st) => st,
+        // [lc-1902] 过期是正常状态而不是错误：作为 status=3 回给前端自动换码，
+        // 不要抛 Err 把轮询打断（旧行为会停在「二维码已过期，请刷新」死等用户手点）。
+        Err(e) if e == QR_EXPIRED_MSG => {
+            return Ok(json!({ "status": QR_EXPIRED, "expired": true, "ok": false }))
+        }
+        Err(e) => return Err(e),
+    };
     if st.provider != provider {
         return Err("扫码状态与厂商不匹配，请刷新二维码".into());
     }
     let (status, user_name, cred) = poll_provider(&provider, &st.data).await?;
+    if status == QR_EXPIRED {
+        return Ok(json!({ "status": QR_EXPIRED, "expired": true, "ok": false }));
+    }
     if status != 2 {
         return Ok(json!({ "status": status, "ok": false }));
     }
@@ -640,7 +689,21 @@ async fn poll_provider(
             let url = format!(
                 "https://passport.baidu.com/channel/unicast?channel_id={sign}&tpl=netdisk&apiver=v3&tt={tt}&callback=bd__cbs__anibox&_={tt}"
             );
-            let v = get_json(&url, &[("Referer".into(), "https://pan.baidu.com/".into())]).await?;
+            // [lc-1902] 这个接口是 **30s 长轮询**（实测空轮询 30.6s 才回 `bd__cbs__anibox({"errno":1})`）：
+            // ① 响应是 JSONP，必须剥壳（get_json 已统一走 jsonp_or_json）；
+            // ② 默认 20s 超时会先把它掐死，所以单独放宽到 40s；
+            // ③ 超时 = 这段时间没人扫码（正常空轮询），按「待扫码」继续下一轮，不能当错误中断。
+            let v = match get_json_timeout(
+                &url,
+                &[("Referer".into(), "https://pan.baidu.com/".into())],
+                Duration::from_secs(40),
+            )
+            .await
+            {
+                Ok(v) => v,
+                Err(e) if is_timeout(&e) => return Ok((0, None, None)),
+                Err(e) => return Err(e),
+            };
             let errno = v.get("errno").and_then(|x| x.as_i64()).unwrap_or(-1);
             if errno != 0 {
                 return Ok((0, None, None));
@@ -684,18 +747,21 @@ async fn poll_provider(
         "aliyun" => {
             let t = g_str(d, &["/t"], &["t"]);
             let ck = g_str(d, &["/ck"], &["ck"]);
-            let mut url = format!(
-                "https://passport.aliyundrive.com/newlogin/qrcode/query.do?appName=aliyun_drive&fromSite=52&appEntrance=request&t={t}"
-            );
-            if !ck.is_empty() {
-                url.push_str(&format!("&ck={ck}"));
-            }
-            let v = get_json(&url, &[("Referer".into(), "https://www.alipan.com/".into())]).await?;
+            // [lc-1902] **必须 POST + 表单体**（t/ck 放 body）。实测把 t/ck 拼在 query 上走 GET，
+            // 上游一律秒回 `{"qrCodeStatus":"EXPIRED","status":-1}` —— 这就是用户看到的
+            // 「二维码刚出来就过期」：不是有效期短，而是查询姿势不对。
+            let (v, _) = post_form(
+                "https://passport.aliyundrive.com/newlogin/qrcode/query.do?appName=aliyun_drive&fromSite=52&appEntrance=request",
+                &[("t".into(), t), ("ck".into(), ck)],
+                &[("Referer".into(), "https://www.alipan.com/".into())],
+            )
+            .await?;
             let status = g_str(&v, &["/content/data/qrCodeStatus"], &["qrCodeStatus"]);
             match status.as_str() {
                 "CONFIRMED" => {}
                 "SCANED" => return Ok((1, None, None)),
-                "EXPIRED" => return Err("二维码已过期，请刷新".into()),
+                // 上游确实说过期：按 status=3 交给前端自动换码（不是错误）
+                "EXPIRED" => return Ok((QR_EXPIRED, None, None)),
                 _ => return Ok((0, None, None)),
             }
             let biz = v.pointer("/content/data/bizExt").and_then(|x| x.as_str()).unwrap_or("");
@@ -803,6 +869,10 @@ async fn poll_provider(
                 return Ok((2, Some(cred.get("user_name").and_then(|x| x.as_str()).unwrap_or("123 云盘").to_string()), Some(cred)));
             }
             // loginStatus：实测假 uniID = 4（无效/过期）；1=待扫 2=已扫待确认（按业界惯例）
+            // [lc-1902] 4 是上游明确说的「无效/过期」，按 status=3 换码，别再当待扫码空转。
+            if status == 4 {
+                return Ok((QR_EXPIRED, None, None));
+            }
             Ok((if status == 2 { 1 } else { 0 }, None, None))
         }
         // 光鸭：OAuth 设备码轮询 grant_type=urn:ietf:params:oauth:grant-type:device_code

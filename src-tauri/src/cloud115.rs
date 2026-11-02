@@ -146,10 +146,19 @@ pub async fn cloud115_qr_start() -> Result<Value, String> {
     // 二维码图片 = qrcode 端点**直接返回 PNG 二进制**（实测 2026-10），前端 <img> 直指即可；
     // token 响应里的 `qrcode` 字段是扫码链接（115.com/scan/…）不是图片，不要用。
     let png = format!("https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode?uid={uid}");
-    Ok(json!({ "qrcode": png, "uid": uid, "time": time, "sign": sign }))
+    let exp_ms = now_ms() + crate::cloud::QR_TTL_MS;
+    Ok(json!({
+        "qrcode": png,
+        "uid": uid,
+        "time": time,
+        "sign": sign,
+        "expiresAtMs": exp_ms,
+        "ttlMs": crate::cloud::QR_TTL_MS,
+    }))
 }
 
-/// 轮询扫码状态。status：0=待扫码 1=已扫待确认 2=已确认（此时完成登录并落盘 Cookie）。
+/// 轮询扫码状态。status：0=待扫码 1=已扫待确认 2=已确认（此时完成登录并落盘 Cookie）
+/// 3=二维码已过期（上游 code 90033，前端应自动换码）。
 #[tauri::command]
 pub async fn cloud115_qr_poll(
     _app: AppHandle,
@@ -159,7 +168,9 @@ pub async fn cloud115_qr_poll(
 ) -> Result<Value, String> {
     let (status, cookies) = qr_poll_core(&uid, &time, &sign).await?;
     if status != 2 {
-        return Ok(json!({ "status": status, "ok": false }));
+        // status=3：上游明确说过期（code 90033），前端据此自动换一张码
+        let expired = status == crate::cloud::QR_EXPIRED;
+        return Ok(json!({ "status": status, "expired": expired, "ok": false }));
     }
     let (uid_c, cid_c, seid_c, user_name) =
         cookies.ok_or("扫码已确认但未取回 Cookie（内部状态不一致）")?;
@@ -172,6 +183,38 @@ pub async fn cloud115_qr_poll(
     };
     save_jar(&jar)?;
     Ok(json!({ "status": 2, "ok": true, "userName": jar.user_name }))
+}
+
+/// 115 status 响应 → 内部状态：0=待扫码 1=已扫待确认 2=已确认 3=已过期。
+///
+/// 实测（2026-10）：
+///   · 未扫码：`{state:false, code:90038, message:"请扫描二维码"}`（无 data.status）
+///   · 已过期：`{state:false, code:90033, message:"二维码已过期 请刷新重新获取二维码"}`
+///   · 已扫/已确认：`state:true` 且带 `data.status`
+///
+/// [lc-1902] 旧逻辑只认 90038，把 90033 误判成「待扫码」—— 码过期后界面一直停在
+/// 「等待扫码」，用户怎么扫都没反应（表现为「登录不上账号」）。抽成纯函数便于单测。
+fn map_status(v: &Value) -> i64 {
+    if let Some(s) = v
+        .pointer("/data/status")
+        .and_then(|x| x.as_i64())
+        .or_else(|| v.get("status").and_then(|x| x.as_i64()))
+    {
+        return s;
+    }
+    let code = v.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
+    let msg = v.get("message").and_then(|m| m.as_str()).unwrap_or("");
+    if v.get("state").and_then(|s| s.as_bool()) == Some(true) {
+        2
+    } else if code == 90033 || msg.contains("过期") {
+        crate::cloud::QR_EXPIRED
+    } else if code == 90038 {
+        0
+    } else if msg.contains("确认") || msg.contains("已扫") {
+        1
+    } else {
+        0
+    }
 }
 
 /// 轮询核心（不碰 AppHandle，便于实测）：status==2 时四元组 Some((UID, CID, SEID, user_name))。
@@ -188,26 +231,7 @@ async fn qr_poll_core(
         .await
         .map_err(|e| format!("查询扫码状态失败: {e}"))?;
     let v: Value = resp.json().await.map_err(|e| format!("解析扫码状态失败: {e}"))?;
-    // 实测（2026-10）：未扫码时返回 {state:false, code:90038, message:"请扫描二维码"}
-    // （没有 data.status）；已扫待确认/已确认才有状态值。做宽容映射，-1 才视为异常。
-    let status = v
-        .pointer("/data/status")
-        .and_then(|x| x.as_i64())
-        .or_else(|| v.get("status").and_then(|x| x.as_i64()))
-        .unwrap_or_else(|| {
-            if v.get("state").and_then(|s| s.as_bool()) == Some(true) {
-                2
-            } else if v.get("code").and_then(|c| c.as_i64()) == Some(90038) {
-                0
-            } else {
-                let msg = v.get("message").and_then(|m| m.as_str()).unwrap_or("");
-                if msg.contains("确认") || msg.contains("已扫") {
-                    1
-                } else {
-                    0
-                }
-            }
-        });
+    let status = map_status(&v);
     if status != 2 {
         return Ok((status, None));
     }
@@ -476,6 +500,22 @@ mod tests {
         let s = serde_json::to_string(&jar).unwrap();
         let back: CookieJar = serde_json::from_str(&s).unwrap();
         assert_eq!(back.user_name, "测试");
+    }
+
+    /// [lc-1902] 90033（已过期）必须映射成 status=3，不能被当成「待扫码」空转。
+    #[test]
+    fn status_mapping_covers_expiry() {
+        let cases = [
+            (json!({"state": false, "code": 90038, "message": "请扫描二维码"}), 0),
+            (json!({"state": false, "code": 90033, "message": "二维码已过期 请刷新重新获取二维码"}), 3),
+            (json!({"state": false, "message": "二维码已过期"}), 3),
+            (json!({"state": true, "data": {"status": 1}}), 1),
+            (json!({"state": true, "data": {"status": 2}}), 2),
+            (json!({"state": true}), 2),
+        ];
+        for (v, want) in cases {
+            assert_eq!(map_status(&v), want, "{v}");
+        }
     }
 
     #[test]

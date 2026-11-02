@@ -101,7 +101,12 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
     if (!f) return;
     setErr("");
     try {
-      await invoke("cloud_play", { provider: f.provider, fileId: f.fileId, name: f.name, mode: null });
+      if (f.provider.startsWith("fnos:")) {
+        // 飞牛媒体库来源：走既有 NAS 播放链路（play/info → mpv，带进度回传）
+        await invoke("play_item", { guid: f.fileId });
+      } else {
+        await invoke("cloud_play", { provider: f.provider, fileId: f.fileId, name: f.name, mode: null });
+      }
     } catch (ex) {
       setErr(String(ex));
     }

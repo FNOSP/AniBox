@@ -14,6 +14,7 @@ type NetSet = { proxy: string; trustEnv: boolean; timeoutSeconds: number; userAg
 type SiteCfg = { id: string; enabled: boolean; base: string };
 type ScrapeSet = { sites: SiteCfg[]; intervalSeconds: number; categories: string[]; maxAttempts: number };
 type AiSet = { enabled: boolean; baseUrl: string; apiKey: string; model: string; targetLang: string };
+type FnosLib = { guid: string; title: string; enabled: boolean };
 type JavSettings = {
   scan: ScanSet;
   autoScan: AutoSet;
@@ -45,12 +46,28 @@ export function JavSettingsModal({ onClose, onSaved }: { onClose: () => void; on
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState("");
   const [autoBusy, setAutoBusy] = useState(false);
+  const [fnosLibs, setFnosLibs] = useState<FnosLib[] | null>(null);
+  const [fnosBusy, setFnosBusy] = useState(false);
+  const [fnosNote, setFnosNote] = useState("");
 
   useEffect(() => {
     invoke<JavSettings>("jav_settings_get")
       .then((r) => setS(r))
       .catch((e) => setNote(String(e)));
   }, []);
+
+  // 飞牛媒体库清单（未登录会 Err，数据源节给空态即可）
+  const loadFnos = useCallback(async () => {
+    try {
+      const r = await invoke<{ libs: FnosLib[] }>("jav_fnos_libs");
+      setFnosLibs(r.libs);
+    } catch {
+      setFnosLibs([]);
+    }
+  }, []);
+  useEffect(() => {
+    void loadFnos();
+  }, [loadFnos]);
   useEffect(() => {
     const h = (ev: KeyboardEvent) => ev.key === "Escape" && onClose();
     window.addEventListener("keydown", h);
@@ -124,9 +141,48 @@ export function JavSettingsModal({ onClose, onSaved }: { onClose: () => void; on
         return (
           <>
             <p className="javset-ro">
-              数据源（网盘账号与 WebDAV）统一在「网盘接入」页管理 —— 这里不重复做登录与凭据。
-              已接入的盘扫描时会自动做番号识别，命中的文件归到 JavHub。
+              网盘（含 WebDAV）统一在「网盘接入」页管理，扫描时自动做番号识别。下面是对**飞牛媒体库**的番号刮削开关：
+              勾选后点「扫描」，库内条目会做番号识别与刮削，刮到的元数据只叠加在本机（不写飞牛），JavHub 页可播放。
             </p>
+            {(fnosLibs || []).map((l) => (
+              <div key={l.guid} className={`javset-site${l.enabled ? "" : " off"}`}>
+                <div className={`javset-field javset-bool${l.enabled ? " on" : ""}`} style={{ margin: 0 }}
+                  onClick={async () => {
+                    const next = !l.enabled;
+                    setFnosLibs((prev) => (prev || []).map((x) => (x.guid === l.guid ? { ...x, enabled: next } : x)));
+                    try {
+                      await invoke("jav_fnos_set_lib", { guid: l.guid, title: l.title, enabled: next });
+                    } catch (e) {
+                      setFnosNote(String(e));
+                      void loadFnos();
+                    }
+                  }}>
+                  <span className="sw" />
+                </div>
+                <span className="sr-name" title={l.title}>{l.title}</span>
+                <span className="hint" style={{ flex: 1, margin: 0 }}>飞牛媒体库</span>
+              </div>
+            ))}
+            {fnosLibs && fnosLibs.length === 0 && (
+              <p className="javset-ro" style={{ opacity: 0.75 }}>没有读到飞牛媒体库（未登录或 NAS 上还没有建库）。</p>
+            )}
+            <button className="javset-btn ghost" disabled={fnosBusy || !(fnosLibs || []).some((x) => x.enabled)}
+              onClick={async () => {
+                setFnosBusy(true);
+                setFnosNote("正在扫描启用的媒体库（翻页读取 + 番号识别）…");
+                try {
+                  const r = await invoke<{ results: { title?: string; error?: string; items?: number; javDetected?: number }[] }>("jav_fnos_scan");
+                  const parts = r.results.map((x) => (x.error ? `${x.title ?? ""} 失败` : `${x.title} ${x.javDetected}/${x.items} 条命中番号`));
+                  setFnosNote(`扫完了：${parts.join("，")}（刮削在 JavHub 页点「刮削本盘」或等定时任务）`);
+                } catch (e) {
+                  setFnosNote(String(e));
+                } finally {
+                  setFnosBusy(false);
+                }
+              }}>
+              {fnosBusy ? "扫描中…" : "扫描启用的媒体库"}
+            </button>
+            {fnosNote && <p className="javset-ro">{fnosNote}</p>}
           </>
         );
       case "roots":

@@ -554,8 +554,14 @@ pub fn split_candidates(cands: &[JavCandidate]) -> (Vec<usize>, Vec<(usize, Dete
 ///
 /// `full=false`（断点续扫）时只合并本批，已有条目原样保留；
 /// `full=true`（整库重扫）时以本批为准重建（已刮削的元数据按 code_key 保留）。
-pub fn ingest_scan(provider: &str, cands: &[JavCandidate], matched: &[(usize, Detection)], full: bool) -> Result<usize, String> {
-    if matched.is_empty() && full {
+pub fn ingest_scan(
+    provider: &str,
+    cands: &[JavCandidate],
+    matched: &[(usize, Detection)],
+    replace: bool,
+    merge: bool,
+) -> Result<usize, String> {
+    if matched.is_empty() && replace {
         // 整库重扫但一个番号都没有：清空该盘的 JAV 库
         let mut st = load_store();
         st.libs.retain(|l| l.provider != provider);
@@ -565,11 +571,17 @@ pub fn ingest_scan(provider: &str, cands: &[JavCandidate], matched: &[(usize, De
     if matched.is_empty() {
         return Ok(load_store().libs.iter().find(|l| l.provider == provider).map(|l| l.entries.len()).unwrap_or(0));
     }
-    // 分组：code_key → [(candidate, detection)]
+    // 分组：code_key → [(candidate, detection)]；合并分片关闭时每个文件自成条目
+    //（key 加文件后缀，条目 code 不变但互不合并）
     let mut groups: BTreeMap<String, Vec<(JavCandidate, Detection)>> = BTreeMap::new();
     for (i, d) in matched {
         let Some(c) = cands.get(*i) else { continue };
-        groups.entry(code_key(&d.code)).or_default().push((c.clone(), d.clone()));
+        let key = if merge {
+            code_key(&d.code)
+        } else {
+            format!("{}~{}", code_key(&d.code), code_key(&c.file_id))
+        };
+        groups.entry(key).or_default().push((c.clone(), d.clone()));
     }
 
     let mut st = load_store();
@@ -653,7 +665,7 @@ pub fn ingest_scan(provider: &str, cands: &[JavCandidate], matched: &[(usize, De
         built.push(entry);
     }
 
-    if full {
+    if replace {
         st.libs[pos].entries = built;
     } else {
         for e in built {
@@ -1666,6 +1678,30 @@ async fn scrape_one(ctx: &Ctx, app: &AppHandle, entry: &mut JavEntry, force: boo
                     entry.status = 1;
                     entry.last_error.clear();
                     entry.updated_at_ms = now_ms();
+                    // [lc-1907c] 飞牛媒体库来源：把刮削结果同步进本地元数据覆盖层 ——
+                    // 飞牛的列表/详情响应会叠加这份元数据（title/简介/日期/评分/封面），
+                    // 全程只写本机 metadata_overrides.json，不调飞牛任何写接口。
+                    let f0 = entry.files.first().cloned();
+                    if let Some(f) = f0 {
+                        if f.provider.starts_with("fnos:") && !f.file_id.is_empty() {
+                            let choice = crate::metadata_override::MetadataChoice {
+                                source: "javhub".into(),
+                                id: entry.code_key.clone(),
+                                title: if entry.title_zh.trim().is_empty() { entry.title.clone() } else { entry.title_zh.clone() },
+                                original_title: entry.title.clone(),
+                                year: entry.release_date.get(..4).unwrap_or("").to_string(),
+                                date: entry.release_date.clone(),
+                                overview: entry.summary.clone(),
+                                rating: entry.rating.clamp(0.0, 10.0),
+                                poster: if entry.cover.is_empty() { String::new() } else { format!("/__cover/{}", entry.cover) },
+                                backdrop: String::new(),
+                                seasons: 0,
+                                episodes: 0,
+                                updated_at: 0,
+                            };
+                            let _ = crate::metadata_override::metadata_set_override(app.clone(), f.file_id.clone(), choice).await;
+                        }
+                    }
                     return true;
                 }
                 Err(e) => errors.push(format!("{eng}: {e}")),
@@ -2015,4 +2051,145 @@ pub async fn jav_ai_translate(app: AppHandle, provider: String, force: Option<bo
     save_store(&st)?;
     let _ = &app;
     Ok(json!({ "translated": translated }))
+}
+
+// ───────────────────────── 飞牛媒体库接入（设置 → 数据源） ─────────────────────────
+
+/// 飞牛媒体库清单 + 各库的 JAV 刮削开关现状
+#[tauri::command]
+pub async fn jav_fnos_libs(
+    app: AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    if cfg.token.is_empty() {
+        return Err("未登录飞牛".into());
+    }
+    let client = crate::fnapi::new_client();
+    let v = client
+        .call(&cfg.server, "/v/api/v1/mediadb/list", "GET", &cfg.token, None)
+        .await
+        .map_err(|e| format!("读取媒体库失败: {e}"))?;
+    let saved = crate::jav_settings::load();
+    let mut libs: Vec<Value> = Vec::new();
+    if let Some(arr) = v.get("list").and_then(|x| x.as_array()) {
+        for l in arr {
+            let guid = l.get("guid").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            if guid.is_empty() {
+                continue;
+            }
+            let title = l
+                .get("title")
+                .or_else(|| l.get("name"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("未命名媒体库")
+                .to_string();
+            let enabled = saved
+                .fnos
+                .libs
+                .iter()
+                .find(|x| x.guid == guid)
+                .map(|x| x.enabled)
+                .unwrap_or(false);
+            libs.push(json!({ "guid": guid, "title": title, "enabled": enabled }));
+        }
+    }
+    Ok(json!({ "libs": libs }))
+}
+
+/// 开/关某个飞牛媒体库的番号刮削
+#[tauri::command]
+pub async fn jav_fnos_set_lib(app: AppHandle, guid: String, title: String, enabled: bool) -> Result<Value, String> {
+    let mut js = crate::jav_settings::load();
+    let guid = guid.trim().to_string();
+    if guid.is_empty() {
+        return Err("缺少媒体库 guid".into());
+    }
+    if let Some(x) = js.fnos.libs.iter_mut().find(|x| x.guid == guid) {
+        x.enabled = enabled;
+        if !title.trim().is_empty() {
+            x.title = title;
+        }
+    } else {
+        js.fnos.libs.push(crate::jav_settings::FnosLibCfg {
+            guid,
+            title: if title.trim().is_empty() { "未命名媒体库".into() } else { title },
+            enabled,
+        });
+    }
+    crate::jav_settings::save(&js)?;
+    Ok(json!({ "ok": true }))
+}
+
+/// 扫描启用了番号刮削的飞牛媒体库：item/list 翻页取条目 → 标题番号识别 →
+/// 命中的进 JAV 库（provider = "fnos:<媒体库guid>"，播放走既有 play_item）。
+#[tauri::command]
+pub async fn jav_fnos_scan(app: AppHandle, state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    if cfg.token.is_empty() {
+        return Err("未登录飞牛".into());
+    }
+    let js = crate::jav_settings::load();
+    let enabled: Vec<&crate::jav_settings::FnosLibCfg> = js.fnos.libs.iter().filter(|x| x.enabled).collect();
+    if enabled.is_empty() {
+        return Err("还没有启用任何飞牛媒体库（设置 → 数据源）".into());
+    }
+    let client = crate::fnapi::new_client();
+    let mut results: Vec<Value> = Vec::new();
+    for lib in enabled {
+        let mut cands: Vec<JavCandidate> = Vec::new();
+        let mut page = 1i64;
+        // 上限 40 页 × 200 条 = 8000：真实 JAV 库足够，防异常死循环
+        while page <= 40 {
+            let body = json!({
+                "ancestor_guid": lib.guid,
+                "exclude_grouped_video": 1,
+                "sort_type": "ASC",
+                "sort_column": "sort_title",
+                "page_size": 200,
+                "page": page,
+                "tags": { "type": ["Movie", "TV", "Video"] }
+            });
+            let v = match client
+                .call(&cfg.server, "/v/api/v1/item/list", "POST", &cfg.token, Some(body))
+                .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    results.push(json!({ "guid": lib.guid, "title": lib.title, "error": format!("读取条目失败: {e}") }));
+                    break;
+                }
+            };
+            let Some(list) = v.get("list").and_then(|x| x.as_array()) else { break };
+            if list.is_empty() {
+                break;
+            }
+            for it in list {
+                let guid = it.get("guid").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let title = it
+                    .get("title")
+                    .or_else(|| it.get("sort_title"))
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if guid.is_empty() || title.is_empty() {
+                    continue;
+                }
+                cands.push(JavCandidate { file_id: guid, parent: lib.title.clone(), name: title, size: 0 });
+            }
+            if (list.len() as i64) < 200 {
+                break;
+            }
+            page += 1;
+        }
+        let matched_total = cands.len();
+        let (_, matched) = split_candidates(&cands);
+        let entries = ingest_scan(&format!("fnos:{}", lib.guid), &cands, &matched, false, true).unwrap_or(0);
+        results.push(json!({
+            "guid": lib.guid, "title": lib.title,
+            "items": matched_total, "javDetected": matched.len(), "entries": entries,
+        }));
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    Ok(json!({ "results": results }))
 }

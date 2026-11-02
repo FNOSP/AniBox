@@ -156,6 +156,21 @@ impl Default for AiSettings {
     }
 }
 
+/// 飞牛媒体库接入：对哪些库启用番号刮削（用户在 设置 → 数据源 里勾选）
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FnosLibCfg {
+    pub guid: String,
+    pub title: String,
+    pub enabled: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FnosSettings {
+    pub libs: Vec<FnosLibCfg>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct JavSettings {
@@ -164,6 +179,7 @@ pub struct JavSettings {
     pub network: NetworkSettings,
     pub scrape: ScrapeSettings,
     pub ai: AiSettings,
+    pub fnos: FnosSettings,
 }
 
 pub fn settings_path() -> Option<PathBuf> {

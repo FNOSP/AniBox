@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { tmdbImg } from "../../lib/images";
+import { useCloudQrLogin } from "../../hooks/useCloudQrLogin";
 import {
   Cloud as IcoCloudL,
   FileVideo as IcoVideoL,
@@ -54,16 +55,6 @@ type LibGroup = { key: string; title: string; year: number; meta?: CloudMeta; fi
 type Crumb = { fid: string; name: string };
 type WebdavAccount = { id: string; name: string; url: string; username: string };
 
-const HINTS: Record<string, string> = {
-  "115": "打开 115 生活 App（或 115 App）扫一扫登录",
-  quark: "打开夸克 App（或夸克网盘 App）扫一扫登录",
-  baidu: "打开百度网盘 App 扫一扫登录",
-  aliyun: "打开阿里云盘 App 扫一扫登录",
-  tianyi: "打开天翼云盘 App 扫一扫登录",
-  "123": "打开 123 云盘 App 扫一扫登录",
-  guangya: "打开光鸭云盘 App 扫一扫登录",
-};
-
 /** [lc-1811] 播放档能力矩阵（server=服务端转码；local=本地 ffmpeg） */
 const SERVER_HLS = new Set(["115", "quark", "aliyun"]);
 const RENAMEABLE = new Set(["115", "quark", "aliyun", "baidu", "123"]);
@@ -83,8 +74,6 @@ const fmtSize = (n: number) => {
 export function CloudPanel({ onBack }: { onBack: () => void }) {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [active, setActive] = useState("115");
-  const [qr, setQr] = useState<{ qrcode: string; state?: string; uid?: string; time?: string; sign?: string } | null>(null);
-  const [qrMsg, setQrMsg] = useState("");
   const [crumbs, setCrumbs] = useState<Crumb[]>([{ fid: "", name: "根目录" }]);
   const [items, setItems] = useState<Entry[]>([]);
   const [cursor, setCursor] = useState("");
@@ -105,15 +94,6 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
   const [libView, setLibView] = useState(false);
   const [libGroups, setLibGroups] = useState<LibGroup[] | null>(null);
   const alive = useRef(true);
-  const pollTimer = useRef<number | null>(null);
-
-  const stopPoll = () => {
-    if (pollTimer.current !== null) {
-      window.clearInterval(pollTimer.current);
-      pollTimer.current = null;
-    }
-  };
-
   const cur = providers.find((p) => p.id === active);
   const isWebdav = active === "webdav";
   const logged = isWebdav ? !!wdActive : !!cur?.logged;
@@ -167,68 +147,18 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
     }
   }, []);
 
+  // [lc-1902] 扫码登录统一走 useCloudQrLogin（串行轮询 + 到点自动换码 + 有上限的重试）
+  const qrLogin = useCloudQrLogin(async (provider) => {
+    await refreshProviders();
+    if (alive.current) void loadList("", "", true, provider);
+  });
+  /** 手动/自动开始扫码前先清掉上一次的列表错误，避免旧报错和新二维码同屏 */
   const startQr = useCallback(
-    async (provider: string) => {
+    (provider: string) => {
       setErr("");
-      setQr(null);
-      setQrMsg("正在获取二维码…");
-      stopPoll();
-      try {
-        if (provider === "115") {
-          const r = await invoke<{ qrcode: string; uid: string; time: string; sign: string }>("cloud115_qr_start");
-          if (!alive.current) return;
-          setQr(r);
-          setQrMsg(HINTS[provider]);
-          pollTimer.current = window.setInterval(async () => {
-            try {
-              const p = await invoke<{ status: number; ok: boolean; userName?: string }>("cloud115_qr_poll", {
-                uid: r.uid,
-                time: r.time,
-                sign: r.sign,
-              });
-              if (!alive.current) return stopPoll();
-              if (p.ok) {
-                stopPoll();
-                await refreshProviders();
-                void loadList("", "", true, provider);
-              } else if (p.status === 1) {
-                setQrMsg("已扫码，请在手机上确认登录");
-              }
-            } catch (e) {
-              stopPoll();
-              if (alive.current) setErr(String(e));
-            }
-          }, 2000);
-          return;
-        }
-        const r = await invoke<{ qrcode: string; state: string; hint: string }>("cloud_qr_start", { provider });
-        if (!alive.current) return;
-        setQr(r);
-        setQrMsg(r.hint || HINTS[provider]);
-        pollTimer.current = window.setInterval(async () => {
-          try {
-            const p = await invoke<{ status: number; ok: boolean; userName?: string }>("cloud_qr_poll", {
-              provider,
-              state: r.state,
-            });
-            if (!alive.current) return stopPoll();
-            if (p.ok) {
-              stopPoll();
-              await refreshProviders();
-              void loadList("", "", true, provider);
-            } else if (p.status === 1) {
-              setQrMsg("已扫码，请在手机上确认登录");
-            }
-          } catch (e) {
-            stopPoll();
-            if (alive.current) setErr(String(e));
-          }
-        }, 2000);
-      } catch (e) {
-        if (alive.current) setErr(String(e));
-      }
+      void qrLogin.start(provider);
     },
-    [loadList, refreshProviders],
+    [qrLogin.start],
   );
 
   useEffect(() => {
@@ -246,17 +176,15 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
       .catch(() => alive.current && setFfmpegOk(false));
     return () => {
       alive.current = false;
-      stopPoll();
+      qrLogin.stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const switchProvider = (id: string) => {
     if (id === active) return;
-    stopPoll();
+    qrLogin.stop();
     setActive(id);
-    setQr(null);
-    setQrMsg("");
     setErr("");
     setItems([]);
     setCursor("");
@@ -305,7 +233,7 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
   };
 
   const logout = async () => {
-    stopPoll();
+    qrLogin.stop();
     if (isWebdav) {
       setWdActive(null);
       setItems([]);
@@ -578,19 +506,25 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
       {/* 扫码登录（网盘厂商） */}
       {providers.length > 0 && !isWebdav && !logged && (
         <div className="c115-login">
-          {qr ? (
+          {qrLogin.image ? (
             <>
               <div className="c115-qrwrap">
-                <img className="c115-qr" src={qr.qrcode} alt="登录二维码" />
+                <img className="c115-qr" src={qrLogin.image} alt="登录二维码" />
               </div>
-              <p className="c115-qrmsg">{qrMsg || HINTS[active]}</p>
+              <p className={`c115-qrmsg${qrLogin.phase === "error" ? " err" : ""}`}>
+                {qrLogin.message}
+                {qrLogin.phase !== "success" && qrLogin.secondsLeft > 0 ? ` · ${qrLogin.secondsLeft}s 后自动刷新` : ""}
+              </p>
             </>
           ) : (
             <div className="c115-qrwrap">
               <div className="c115-qr" aria-hidden="true" />
             </div>
           )}
-          <button className="c115-mini" onClick={() => void startQr(active)}>
+          {!qrLogin.image && qrLogin.message && (
+            <p className={`c115-qrmsg${qrLogin.phase === "error" ? " err" : ""}`}>{qrLogin.message}</p>
+          )}
+          <button className="c115-mini" onClick={() => void startQr(active)} disabled={qrLogin.phase === "loading"}>
             <IcoRefreshL size={13} strokeWidth={2} /> 刷新二维码
           </button>
           <p className="c115-dim">

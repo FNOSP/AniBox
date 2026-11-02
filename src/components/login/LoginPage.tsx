@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RefreshCw as IcoRefreshL, Trash2 as IcoTrashL } from "lucide-react";
 import { Config } from "../../types";
+import { useCloudQrLogin } from "../../hooks/useCloudQrLogin";
 
 /* [lc-17xx] 登录页背景：public/login/ 下的横图随机轮换。
    · 首帧随机选一张，之后每 20s 交叉淡入淡出切换；
@@ -72,16 +73,6 @@ function relayFnId(value: string): string {
 type ProviderInfo = { id: string; label: string; logged: boolean; userName: string };
 type WebdavAccount = { id: string; name: string; url: string; username: string };
 
-const QR_HINTS: Record<string, string> = {
-  "115": "打开 115 App 扫一扫登录",
-  quark: "打开夸克 App 扫一扫登录",
-  baidu: "打开百度网盘 App 扫一扫登录",
-  aliyun: "打开阿里云盘 App 扫一扫登录",
-  tianyi: "打开天翼云盘 App 扫一扫登录",
-  "123": "打开 123 云盘 App 扫一扫登录",
-  guangya: "打开光鸭云盘 App 扫一扫登录",
-};
-
 export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: () => void }) {
   const [cfg, setCfg] = useState<Config | null>(null);
   // [lc-1884] 单一输入框：IP / 域名 / FN ID 都填这里，提交时自动判别。
@@ -106,22 +97,12 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
   // ── 网盘来源（扫码） ──
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [activeProv, setActiveProv] = useState("");
-  const [qrImg, setQrImg] = useState("");
-  const [qrMsg, setQrMsg] = useState("");
-  const pollTimer = useRef<number | null>(null);
   const alive = useRef(true);
 
   // ── WebDAV 来源 ──
   const [wdAccounts, setWdAccounts] = useState<WebdavAccount[]>([]);
   const [wdForm, setWdForm] = useState<{ name: string; url: string; user: string; pass: string } | null>(null);
   const [wdErr, setWdErr] = useState("");
-
-  const stopPoll = () => {
-    if (pollTimer.current !== null) {
-      window.clearInterval(pollTimer.current);
-      pollTimer.current = null;
-    }
-  };
 
   const refreshProviders = useCallback(async (): Promise<ProviderInfo[]> => {
     const r = await invoke<ProviderInfo[]>("cloud_providers");
@@ -139,80 +120,24 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
     }
   }, []);
 
-  // [lc-1889] 内嵌扫码：与 CloudPanel 同一套 cloud_qr_start/poll / cloud115_qr_start/poll，
+  // [lc-1889] 内嵌扫码：与 CloudPanel 共用 useCloudQrLogin（串行轮询 + 到点自动换码），
   // 成功后只刷新登录态，不进入文件浏览（浏览仍在「网盘接入」页）。
+  const qrLogin = useCloudQrLogin(() => {
+    void refreshProviders();
+  });
+  /** 重新取码前清掉页面级报错（旧报错和新二维码同屏会误导） */
   const startQr = useCallback(
-    async (provider: string) => {
+    (provider: string) => {
       setErr("");
-      setQrImg("");
-      setQrMsg("正在获取二维码…");
-      stopPoll();
-      try {
-        if (provider === "115") {
-          const r = await invoke<{ qrcode: string; uid: string; time: string; sign: string }>("cloud115_qr_start");
-          if (!alive.current) return;
-          setQrImg(r.qrcode);
-          setQrMsg(QR_HINTS[provider] || "扫码登录");
-          pollTimer.current = window.setInterval(async () => {
-            try {
-              const p = await invoke<{ status: number; ok: boolean }>("cloud115_qr_poll", {
-                uid: r.uid,
-                time: r.time,
-                sign: r.sign,
-              });
-              if (!alive.current) return stopPoll();
-              if (p.ok) {
-                stopPoll();
-                setQrImg("");
-                setQrMsg("登录成功");
-                void refreshProviders();
-              } else if (p.status === 1) {
-                setQrMsg("已扫码，请在手机上确认登录");
-              }
-            } catch (e) {
-              stopPoll();
-              if (alive.current) setErr(String(e));
-            }
-          }, 2000);
-          return;
-        }
-        const r = await invoke<{ qrcode: string; state: string; hint: string }>("cloud_qr_start", { provider });
-        if (!alive.current) return;
-        setQrImg(r.qrcode);
-        setQrMsg(r.hint || QR_HINTS[provider] || "扫码登录");
-        pollTimer.current = window.setInterval(async () => {
-          try {
-            const p = await invoke<{ status: number; ok: boolean }>("cloud_qr_poll", {
-              provider,
-              state: r.state,
-            });
-            if (!alive.current) return stopPoll();
-            if (p.ok) {
-              stopPoll();
-              setQrImg("");
-              setQrMsg("登录成功");
-              void refreshProviders();
-            } else if (p.status === 1) {
-              setQrMsg("已扫码，请在手机上确认登录");
-            }
-          } catch (e) {
-            stopPoll();
-            if (alive.current) setErr(String(e));
-          }
-        }, 2000);
-      } catch (e) {
-        if (alive.current) setErr(String(e));
-      }
+      void qrLogin.start(provider);
     },
-    [refreshProviders],
+    [qrLogin.start],
   );
 
   const pickProv = (id: string) => {
     if (id === activeProv) return;
-    stopPoll();
+    qrLogin.stop();
     setActiveProv(id);
-    setQrImg("");
-    setQrMsg("");
     const p = providers.find((x) => x.id === id);
     if (!p?.logged) void startQr(id);
   };
@@ -258,7 +183,7 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
     void loadWdAccounts();
     return () => {
       alive.current = false;
-      stopPoll();
+      qrLogin.stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -388,19 +313,29 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
               </div>
               {curProv?.logged ? (
                 <p className="login-src-ok">已登录{curProv.userName ? `：${curProv.userName}` : ""}</p>
-              ) : qrImg ? (
+              ) : qrLogin.image ? (
                 <div className="login-qrrow">
-                  <img className="login-qr" src={qrImg} alt="登录二维码" />
+                  <img className="login-qr" src={qrLogin.image} alt="登录二维码" />
                   <div className="login-qrcol">
-                    <p className="login-qrmsg">{qrMsg}</p>
-                    <button type="button" className="login-minibtn" onClick={() => void startQr(activeProv)}>
+                    <p className={`login-qrmsg${qrLogin.phase === "error" ? " err" : ""}`}>
+                      {qrLogin.message}
+                      {qrLogin.phase !== "success" && qrLogin.secondsLeft > 0 ? ` · ${qrLogin.secondsLeft}s 后自动刷新` : ""}
+                    </p>
+                    <button
+                      type="button"
+                      className="login-minibtn"
+                      onClick={() => void startQr(activeProv)}
+                      disabled={qrLogin.phase === "loading"}
+                    >
                       <IcoRefreshL size={12} strokeWidth={2} /> 刷新二维码
                     </button>
                     <p className="login-dim">凭据只保存在本机，不会上传到任何服务器。</p>
                   </div>
                 </div>
               ) : (
-                <p className="login-dim">{qrMsg || "正在获取二维码…"}</p>
+                <p className={`login-dim${qrLogin.phase === "error" ? " err" : ""}`}>
+                  {qrLogin.message || "正在获取二维码…"}
+                </p>
               )}
             </div>
           )}

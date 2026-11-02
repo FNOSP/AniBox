@@ -9,7 +9,7 @@
    · 凭据只落本机（cloud115.json / direct-cloud-auth.json / webdav-accounts.json）。 */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { tmdbImg } from "../../lib/images";
+import { imgUrl, tmdbImg } from "../../lib/images";
 import { useCloudQrLogin } from "../../hooks/useCloudQrLogin";
 import {
   Cloud as IcoCloudL,
@@ -51,6 +51,24 @@ type CloudLibItem = {
 };
 type CloudMeta = { tmdbId: number; mediaType: string; title: string; poster: string; year: number };
 type LibResp = { provider: string; scannedAtMs: number; items: CloudLibItem[]; meta: Record<string, CloudMeta> };
+// [lc-1904] JAV 媒体库（jav_library_items）：番号识别 + 多站点刮削，封面走 /__cover 本机协议
+type JavFileT = { provider: string; fileId: string; name: string; size: number; part: number };
+type JavEntryT = {
+  code: string;
+  codeKey: string;
+  category: string;
+  categoryLabel: string;
+  status: number; // 0 待刮削 1 已刮削 2 失败
+  title: string;
+  actors: string[];
+  tags: string[];
+  releaseDate: string;
+  studio: string;
+  coverUrl: string;
+  files: JavFileT[];
+};
+type JavResp = { provider: string; scannedAtMs: number; entries: JavEntryT[] };
+type ScanResp = { ok: boolean; count: number; movies: number; episodes: number; jav: number; resumable: boolean };
 type LibGroup = { key: string; title: string; year: number; meta?: CloudMeta; files: CloudLibItem[] };
 type Crumb = { fid: string; name: string };
 type WebdavAccount = { id: string; name: string; url: string; username: string };
@@ -93,6 +111,12 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
   // [lc-1892] 媒体库视图：按标题分组的索引 + TMDB 元数据海报
   const [libView, setLibView] = useState(false);
   const [libGroups, setLibGroups] = useState<LibGroup[] | null>(null);
+  // [lc-1904] 媒体库视图分流：影视（TMDB） / JAV（番号刮削）；扫描断点续扫
+  const [libScope, setLibScope] = useState<"movie" | "jav">("movie");
+  const [javEntries, setJavEntries] = useState<JavEntryT[] | null>(null);
+  const [javBusy, setJavBusy] = useState(false);
+  const [javNote, setJavNote] = useState("");
+  const [scanResumable, setScanResumable] = useState(false);
   const alive = useRef(true);
   const cur = providers.find((p) => p.id === active);
   const isWebdav = active === "webdav";
@@ -216,6 +240,10 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
     setLibNote("");
     setLibView(false);
     setLibGroups(null);
+    setLibScope("movie");
+    setJavEntries(null);
+    setJavNote("");
+    setScanResumable(false);
     setCrumbs([{ fid: "", name: "根目录" }]);
     setRenaming(null);
     if (id === "webdav") {
@@ -359,6 +387,53 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
     }
   };
 
+  // [lc-1904] JAV 库：读取 / 刮削 / 播放（播放复用 cloud_play 直链续签）
+  const loadJav = useCallback(async () => {
+    try {
+      const r = await invoke<JavResp>("jav_library_items", { provider: active });
+      if (alive.current) setJavEntries(r.entries);
+    } catch (e) {
+      if (alive.current) setErr(String(e));
+    }
+  }, [active]);
+
+  const switchLibScope = (scope: "movie" | "jav") => {
+    setLibScope(scope);
+    setJavNote("");
+    if (scope === "jav") void loadJav();
+  };
+
+  const scrapeJav = async () => {
+    if (javBusy) return;
+    setJavBusy(true);
+    setJavNote("正在刮削番号元数据（r18.dev / jav321 / MGStage / HEYZO / FC2）…");
+    setErr("");
+    try {
+      const r = await invoke<{ scraped: number; failed: number; skipped: number }>("jav_library_scrape", {
+        provider: active,
+        force: false,
+      });
+      setJavNote(`刮削完成：成功 ${r.scraped}，失败 ${r.failed}（失败的可再点一次重试）`);
+      await loadJav();
+    } catch (ex) {
+      setJavNote("");
+      setErr(String(ex));
+    } finally {
+      setJavBusy(false);
+    }
+  };
+
+  const playJav = async (e: JavEntryT) => {
+    const f = e.files[0];
+    if (!f) return;
+    setErr("");
+    try {
+      await invoke("cloud_play", { provider: active, fileId: f.fileId, name: f.name, mode: mode || null });
+    } catch (ex) {
+      setErr(String(ex));
+    }
+  };
+
   const pickWdAccount = (id: string) => {
     setWdActive(id);
     setCrumbs([{ fid: "", name: "根目录" }]);
@@ -374,7 +449,8 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
     setErr("");
     try {
       await invoke("cloud_library_add_root", { provider: active, fid: last.fid || "", name: last.name });
-      const r = await invoke<{ count: number; movies: number; episodes: number }>("cloud_library_scan", { provider: active });
+      const r = await invoke<ScanResp>("cloud_library_scan", { provider: active, resume: scanResumable });
+      setScanResumable(!!r.resumable);
       // 扫完即刮削（增量：已有匹配的跳过）；失败不挡入库统计
       let scrapeNote = "";
       try {
@@ -386,7 +462,12 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
       } catch {
         /* 刮削失败（如未配 TMDB 镜像）不影响入库 */
       }
-      setLibNote(`已入库 ${r.count} 项（电影 ${r.movies} / 剧集文件 ${r.episodes}）${scrapeNote}`);
+      setLibNote(
+        `已入库 ${r.count} 项（电影 ${r.movies} / 剧集文件 ${r.episodes}），JAV 识别 ${r.jav} 条`
+          + (r.resumable ? "；没扫完，再点一次「继续扫描」接着跑" : "")
+          + scrapeNote,
+      );
+      if (r.jav > 0) void loadJav();
     } catch (ex) {
       setLibNote("");
       setErr(String(ex));
@@ -472,7 +553,7 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
               title="把当前目录加入媒体库并扫描：识别标题与季集，后续接入 TMDB 刮削与详情页"
               onClick={() => void addRootAndScan()}
             >
-              {libBusy ? "扫描中…" : "加入媒体库"}
+              {libBusy ? "扫描中…" : scanResumable ? "继续扫描" : "加入媒体库"}
             </button>
           )}
           {!isWebdav && (
@@ -640,49 +721,106 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
           )}
         </>
       )}
-      {/* [lc-1892] 媒体库视图：按标题分组的索引卡片（TMDB 海报/年份/集数），点击播第一集 */}
+      {/* [lc-1892/1904] 媒体库视图：影视（TMDB 海报）与 JAV（番号识别 + 番号刮削）分流 */}
       {logged && !isWebdav && libView && (
         <>
           <div className="c115-crumbs">
             <span className="c115-crumb">
               <button type="button" onClick={() => setLibView(false)}>‹ 返回文件浏览</button>
             </span>
-            <span className="c115-crumb">媒体库 · {libGroups?.length ?? 0} 部</span>
+            <span className="c115-crumb">
+              媒体库 · {libScope === "jav" ? (javEntries?.length ?? 0) : (libGroups?.length ?? 0)} 部
+            </span>
+            <span className="c115-mode" style={{ marginLeft: "auto" }}>
+              <button type="button" className={`c115-seg${libScope === "movie" ? " on" : ""}`} onClick={() => switchLibScope("movie")}>
+                影视
+              </button>
+              <button type="button" className={`c115-seg${libScope === "jav" ? " on" : ""}`} onClick={() => switchLibScope("jav")}>
+                JAV{javEntries?.length ? ` ${javEntries.length}` : ""}
+              </button>
+            </span>
+            {libScope === "jav" && (
+              <button className="c115-mini" disabled={javBusy} title="按番号刮削元数据与封面（增量：已成功的跳过）" onClick={() => void scrapeJav()}>
+                {javBusy ? "刮削中…" : "刮削"}
+              </button>
+            )}
           </div>
-          <div className="c115-grid">
-            {(libGroups || []).map((g) => (
-              <div key={g.key} className="c115-item" onClick={() => g.files[0] && void playLib(g.files[0])}>
-                {g.meta?.poster ? (
-                  <img className="c115-libposter" src={tmdbImg(g.meta.poster, "w185")} alt="" loading="lazy" />
-                ) : (
-                  <span className={`c115-ico ${g.files[0]?.kind === "episode" ? "video" : "other"}`}>
-                    <IcoVideoL size={15} strokeWidth={1.8} />
+          {javNote && <p className="c115-dim" style={{ margin: "4px 0 0" }}>{javNote}</p>}
+          {libScope === "jav" ? (
+            <div className="c115-grid">
+              {(javEntries || []).map((e) => (
+                <div key={e.codeKey} className="c115-item" onClick={() => e.files[0] && void playJav(e)}>
+                  {e.coverUrl ? (
+                    <img className="c115-libposter" src={imgUrl(e.coverUrl)} alt="" loading="lazy" />
+                  ) : (
+                    <span className="c115-ico video">
+                      <IcoVideoL size={15} strokeWidth={1.8} />
+                    </span>
+                  )}
+                  <span className="c115-name" title={e.title || e.code}>
+                    {e.title || e.code}
                   </span>
-                )}
-                <span className="c115-name" title={g.title}>
-                  {g.title}
-                  {g.year ? ` (${g.year})` : ""}
-                </span>
-                <span className="c115-size">
-                  {g.files[0]?.kind === "episode" ? `S${g.files[0].season || 1} · ${g.files.length} 集` : "电影"}
-                </span>
-                <button
-                  className="c115-play"
-                  title="播放（直链自动续签）"
-                  onClick={(ev) => {
-                    ev.stopPropagation();
-                    if (g.files[0]) void playLib(g.files[0]);
-                  }}
-                >
-                  <IcoPlayL size={13} strokeWidth={2.2} />
-                </button>
-              </div>
-            ))}
-          </div>
-          {libGroups && libGroups.length === 0 && (
+                  <span className="c115-size">
+                    {e.categoryLabel}
+                    {e.releaseDate ? ` ${e.releaseDate.slice(0, 7)}` : ""}
+                    {` ${e.files.length} 段`}
+                    {e.status === 0 ? " 待刮削" : e.status === 2 ? " 刮削失败" : ""}
+                  </span>
+                  <button
+                    className="c115-play"
+                    title="播放（直链自动续签）"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      if (e.files[0]) void playJav(e);
+                    }}
+                  >
+                    <IcoPlayL size={13} strokeWidth={2.2} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="c115-grid">
+              {(libGroups || []).map((g) => (
+                <div key={g.key} className="c115-item" onClick={() => g.files[0] && void playLib(g.files[0])}>
+                  {g.meta?.poster ? (
+                    <img className="c115-libposter" src={tmdbImg(g.meta.poster, "w185")} alt="" loading="lazy" />
+                  ) : (
+                    <span className={`c115-ico ${g.files[0]?.kind === "episode" ? "video" : "other"}`}>
+                      <IcoVideoL size={15} strokeWidth={1.8} />
+                    </span>
+                  )}
+                  <span className="c115-name" title={g.title}>
+                    {g.title}
+                    {g.year ? ` (${g.year})` : ""}
+                  </span>
+                  <span className="c115-size">
+                    {g.files[0]?.kind === "episode" ? `S${g.files[0].season || 1} · ${g.files.length} 集` : "电影"}
+                  </span>
+                  <button
+                    className="c115-play"
+                    title="播放（直链自动续签）"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      if (g.files[0]) void playLib(g.files[0]);
+                    }}
+                  >
+                    <IcoPlayL size={13} strokeWidth={2.2} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {libScope === "movie" && libGroups && libGroups.length === 0 && (
             <div className="c115-empty">
               <IcoFolderL size={34} strokeWidth={1.4} />
               <p>还没有入库 —— 进到媒体目录点「加入媒体库」扫描</p>
+            </div>
+          )}
+          {libScope === "jav" && javEntries && javEntries.length === 0 && (
+            <div className="c115-empty">
+              <IcoFolderL size={34} strokeWidth={1.4} />
+              <p>没有识别到番号 —— 扫描时会自动把番号文件分到这一栏，先回文件浏览重新扫描</p>
             </div>
           )}
         </>

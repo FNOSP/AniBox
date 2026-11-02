@@ -259,12 +259,18 @@ pub struct Config {
     #[serde(default = "default_ui_opacity")]
     pub ui_opacity: u8,
 
-    /* ── [lc-1907] mpv 窗口 owner 收编（原型 v1）──
-       true = mpv 独立窗口挂成主窗口的 owned window（跟随主窗口移动 + DWM 系统圆角）；
-       **设为 false 即完全回退旧行为**（mpv 完全独立顶层窗口，不挂 owner、不跟随）。
-       老 config.json 无此键 → 默认 true（本版就是要让用户直接看到收编效果），
-       不需要迁移脚本。设置面板 UI 另一轮接入，后端 get/set_settings 已留白名单口。 */
-    #[serde(default = "default_true")]
+    /* ── [lc-1909] 播放打开方式（设置面板）──
+       "app" = 软件内播放（默认：点播放 mpv 窗口被精确钉到前端视频区域矩形上，视觉内嵌）；
+       "window" = 独立 mpv 窗口（lc-1906 之前的原生窗口形态，完全不变）。
+       老 config.json 无此键 → 默认 "app"（本版默认点播放就走软件内），不需要迁移脚本。 */
+    #[serde(default = "default_player_open_mode")]
+    pub player_open_mode: String,
+
+    /* ── [lc-1907] mpv 窗口 owner 收编（实验开关）──
+       true = mpv 独立窗口挂成主窗口的 owned window（跟随主窗口移动 + DWM 系统圆角）。
+       **默认 false**：独立窗口模式保持 lc-1906 之前的原生形态（不挂 owner、不跟随），
+       true 仅供实验；软件内播放（内嵌）走 player_embed_* 命令的独立路径，不看这个开关。 */
+    #[serde(default)]
     pub mpv_window_owner: bool,
 }
 
@@ -299,6 +305,11 @@ pub fn default_mpv() -> String {
 
 fn default_player_kind() -> String {
     "mpv".into()
+}
+
+/// [lc-1909] 播放打开方式默认「软件内播放」。
+fn default_player_open_mode() -> String {
+    "app".into()
 }
 
 fn default_proxy() -> String {
@@ -391,7 +402,8 @@ impl Default for Config {
             gamepad_repeat_delay: default_gamepad_repeat_delay(),
             gamepad_repeat_interval: default_gamepad_repeat_interval(),
             ui_opacity: default_ui_opacity(),
-            mpv_window_owner: true,
+            player_open_mode: default_player_open_mode(),
+            mpv_window_owner: false,
         }
     }
 }

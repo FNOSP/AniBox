@@ -186,7 +186,11 @@ async fn adopt_window_owner(app: AppHandle, pid: u32) {
         if let Some(owner) = owner {
             if crate::mpvwin::find_mpv_hwnd(pid).is_some() {
                 match crate::mpvwin::adopt(pid, owner) {
-                    Ok(_) => {} // adopt 内已 trace pid+hwnd+owner
+                    Ok(_) => {
+                        // [lc-1909] Moved 跟随仅在本路径（mpv_window_owner=true）生效；
+                        // 内嵌模式走 player_embed_* 自己的跟随，退嵌后归 false。
+                        crate::mpvwin::set_owner_follow(true);
+                    }
                     Err(e) => {
                         crate::libmpv::trace(&format!("[lc-1907] 收编失败（不影响播放）: {e}"))
                     }

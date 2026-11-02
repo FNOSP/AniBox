@@ -14,18 +14,43 @@
 //!      静默清理，不影响后续新会话重新收编。
 //!
 //! 全程零 IPC 依赖、失败只打 trace 不报错：任何一步失败，行为都退化为今天的独立窗口。
+//!
+//! [lc-1909] 软件内播放（内嵌模式）：mpv 独立窗口被精确钉到前端上报的视频区域矩形上，
+//! 视觉上嵌在主窗口内。与 lc-1907 的 owner 收编是**两条独立路径**：
+//!   · owner 收编（`mpv_window_owner=true`，实验开关，默认 false）：independent 窗口挂 owner
+//!     + Moved 跟随，窗口形态保持原生；
+//!   · 内嵌（`player_embed_enter/rect/leave`，前端仅在 player_open_mode="app" 时调用）：
+//!     同样挂 owner（保 z-order：owned 永远压在主窗口之上），但窗口矩形由前端矩形上报
+//!     精确控制；收编成功后**先隐藏**，首个矩形上报时才定位 + 显示（独立窗口不闪现）。
+//!     仍不做 SetParent / WS_CHILD / 挖洞，也不动 mpv 窗口 ex-style。
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetWindowRect, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
-    SetWindowLongPtrW, SetWindowPos, GWLP_HWNDPARENT, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+    SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_HWNDPARENT, SW_HIDE, SW_SHOW,
+    SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
 };
 
 /// 当前已收编的 mpv 顶层窗口（isize，全仓 HWND 约定；None = 未收编 / 已失效清理）。
 static MPV_HWND: Mutex<Option<isize>> = Mutex::new(None);
 /// 上一次主窗口物理位置（Moved 求位移差用；None = 首跳，忽略绝对跳变）。
 static LAST_MAIN_POS: Mutex<Option<(i32, i32)>> = Mutex::new(None);
+
+// ───────────────────────── [lc-1909] 内嵌模式静态槽 ─────────────────────────
+
+/// 内嵌会话激活标记：`player_embed_enter` 置位 / `player_embed_leave` 清除。
+static EMBED_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// mpv 窗口当前是否被内嵌流程隐藏（enter 收编成功后隐藏，首个矩形上报时定位 + 显示）。
+static EMBED_HIDDEN: AtomicBool = AtomicBool::new(false);
+/// Moved 跟随开关：**仅** mpv_window_owner=true 的收编路径（mpv.rs `adopt_window_owner`）
+/// 成功后置 true。默认 false = 独立窗口模式不跟随（lc-1906 原行为）；
+/// 内嵌跟随不依赖它（走 EMBED_ACTIVE）。
+static OWNER_FOLLOW: AtomicBool = AtomicBool::new(false);
+/// 收编完成前上报的内嵌矩形缓存（**屏幕物理坐标**）：hwnd 未就绪时 rect 命令先落这里，
+/// `embed_adopt` 成功后隐藏补施。高频 rect 命令只做一次 Mutex 写，足够轻量。
+static EMBED_RECT: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
 
 // ───────────────────────── 查找 mpv 顶层窗口 ─────────────────────────
 
@@ -64,19 +89,25 @@ pub fn find_mpv_hwnd(pid: u32) -> Option<isize> {
 /// 成功后把 mpv HWND 写入槽（follow_move 的查询源）。
 pub fn adopt(pid: u32, owner_hwnd: isize) -> Result<isize, String> {
     let hwnd = find_mpv_hwnd(pid).ok_or_else(|| "未找到 mpv 的可见顶层窗口".to_string())?;
+    crate::libmpv::trace(&format!("[lc-1907] 收编：mpv hwnd={hwnd} pid={pid}"));
+    adopt_hwnd(hwnd, owner_hwnd);
+    Ok(hwnd)
+}
+
+/// 对已知 hwnd 挂 owner + DWM 系统圆角 + 写槽（`adopt` 与 `embed_adopt` 共用本体）。
+fn adopt_hwnd(hwnd: isize, owner_hwnd: isize) {
     unsafe {
         // GWLP_HWNDPARENT：设 owner（返回旧 owner）。mpv 与主窗口同线程无要求，
         // 跨线程设 owner 是允许的（影响的是消息路由与生命周期，不影响谁的线程建窗）。
         let old = SetWindowLongPtrW(hwnd as _, GWLP_HWNDPARENT, owner_hwnd);
         crate::libmpv::trace(&format!(
-            "[lc-1907] GWLP_HWNDPARENT：{old} → {owner_hwnd}（mpv hwnd={hwnd} pid={pid}）"
+            "[lc-1907] GWLP_HWNDPARENT：{old} → {owner_hwnd}（mpv hwnd={hwnd}）"
         ));
     }
     // DWM 系统圆角：复用主窗口同一套调用（DWMWCP_ROUND + 关 DWM 边框）。
     // mpv 本来 border=no，边框关不关无感；圆角让它与主窗口观感一致。
     crate::winvisual::set_system_round_corner(hwnd);
     set_hwnd(hwnd);
-    Ok(hwnd)
 }
 
 /// 写槽（收编成功后调用；重收编时覆盖旧值）。
@@ -104,6 +135,88 @@ pub fn get_hwnd() -> Option<isize> {
             None
         }
         None => None,
+    }
+}
+
+// ───────────────────────── [lc-1909] 内嵌模式：收编 / 矩形钉位 ─────────────────────────
+
+/// 内嵌会话是否激活（player_embed_enter 置位 / leave 清除）。
+pub fn embed_is_active() -> bool {
+    EMBED_ACTIVE.load(Ordering::SeqCst)
+}
+
+/// 置 / 清内嵌激活标记；清除时一并丢弃待补施矩形与隐藏标记（退嵌后不留残态）。
+pub fn embed_set_active(on: bool) {
+    EMBED_ACTIVE.store(on, Ordering::SeqCst);
+    if !on {
+        *EMBED_RECT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        EMBED_HIDDEN.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Moved 跟随开关（仅 mpv_window_owner=true 的收编路径置 true，见 OWNER_FOLLOW 注释）。
+pub fn set_owner_follow(on: bool) {
+    OWNER_FOLLOW.store(on, Ordering::SeqCst);
+}
+
+/// 隐藏 mpv 窗口（enter 收编后 / leave stop=true），并标记隐藏态供矩形首报时显示。
+pub fn embed_hide(hwnd: isize) {
+    unsafe {
+        if IsWindow(hwnd as _) == 0 {
+            return;
+        }
+        ShowWindow(hwnd as _, SW_HIDE);
+    }
+    EMBED_HIDDEN.store(true, Ordering::SeqCst);
+}
+
+/// 缓存收编完成前上报的矩形（屏幕物理坐标）。
+pub fn embed_set_pending_rect(x: i32, y: i32, w: i32, h: i32) {
+    *EMBED_RECT.lock().unwrap_or_else(|e| e.into_inner()) = Some((x, y, w, h));
+}
+
+fn embed_take_pending_rect() -> Option<(i32, i32, i32, i32)> {
+    EMBED_RECT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+}
+
+/// [lc-1909] 内嵌收编一步到位：找到（或复用槽内）mpv 窗口 → **先隐藏**（首个矩形上报前
+/// 独立窗口不得闪现）→ 挂 owner + DWM 圆角 + 写槽 → 补施收编前已上报的矩形（含显示）。
+/// 顺序刻意把「隐藏」放在「写槽」之前：写槽之后 rect 命令才可能拿到 hwnd，届时窗口必已隐藏。
+pub fn embed_adopt(pid: u32, owner_hwnd: isize) -> Result<isize, String> {
+    // 复用槽内仍有效的 hwnd（退嵌 stop=true 后 mpv 窗口被隐藏，EnumWindows 的
+    // IsWindowVisible 过滤找不到隐藏窗口，此时槽是唯一线索）；否则按 PID 枚举可见顶层窗口。
+    let hwnd = match get_hwnd() {
+        Some(h) => h,
+        None => find_mpv_hwnd(pid).ok_or_else(|| "未找到 mpv 的可见顶层窗口".to_string())?,
+    };
+    embed_hide(hwnd);
+    adopt_hwnd(hwnd, owner_hwnd);
+    crate::libmpv::trace(&format!(
+        "[lc-1909] 内嵌收编：mpv hwnd={hwnd} pid={pid}（已隐藏，待矩形上报）"
+    ));
+    // 收编期间前端已上报过的矩形：隐藏完成后立即定位 + 显示
+    if let Some((x, y, w, h)) = embed_take_pending_rect() {
+        embed_apply_rect(hwnd, x, y, w, h);
+    }
+    Ok(hwnd)
+}
+
+/// [lc-1909] 把内嵌矩形（屏幕物理坐标）钉到 mpv 窗口上；此前被隐藏则顺带显示。
+/// 高频调用路径：只做 SetWindowPos（绝对定位，SWP_NOACTIVATE|SWP_NOZORDER），
+/// 幂等轻量；窗口仍隐藏时先定位后显示，避免在旧位置闪现。
+pub fn embed_apply_rect(hwnd: isize, x: i32, y: i32, w: i32, h: i32) {
+    unsafe {
+        if IsWindow(hwnd as _) == 0 {
+            clear_hwnd();
+            return;
+        }
+        SetWindowPos(hwnd as _, std::ptr::null_mut(), x, y, w, h, SWP_NOACTIVATE | SWP_NOZORDER);
+        if EMBED_HIDDEN.swap(false, Ordering::SeqCst) {
+            ShowWindow(hwnd as _, SW_SHOW);
+        }
     }
 }
 
@@ -156,6 +269,12 @@ pub fn on_main_moved(x: i32, y: i32) {
     let (dx, dy) = (x - lx, y - ly);
     drop(last);
     if dx == 0 && dy == 0 {
+        return;
+    }
+    // [lc-1909] 内嵌激活 → 按位移差平移 mpv（拖动零延迟跟随，不依赖 owner 跟随开关）；
+    // 非内嵌 → 仅 mpv_window_owner=true 的收编路径（OWNER_FOLLOW）才跟随。
+    // 独立窗口模式（默认）完全不动 mpv 窗口（lc-1906 原行为）。
+    if !embed_is_active() && !OWNER_FOLLOW.load(Ordering::SeqCst) {
         return;
     }
     if let Some(h) = get_hwnd() {

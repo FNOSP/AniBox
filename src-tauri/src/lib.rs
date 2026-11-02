@@ -225,6 +225,8 @@ async fn save_config(app: AppHandle, state: State<'_, AppState>, config: Config)
         config.potplayer_path = cur.potplayer_path.clone();
         // [lc-1907] mpv 窗口 owner 收编开关只由 set_settings 修改（登录页整份快照不含该键）
         config.mpv_window_owner = cur.mpv_window_owner;
+        // [lc-1909] 播放打开方式只由 set_settings 修改（登录页整份快照不含该键）
+        config.player_open_mode = cur.player_open_mode.clone();
         // mpv_path：mpv-local 模式的自定义路径由设置面板维护；登录页高级项不再回写
         //（随包/自动探测路径在启动时由 resolve_bundled_paths 重算，保护现值无副作用）
         config.mpv_path = cur.mpv_path.clone();
@@ -2933,6 +2935,136 @@ async fn player_stop(app: AppHandle, state: State<'_, AppState>) -> Result<(), S
     Ok(())
 }
 
+// ───────────────────────── [lc-1909] 软件内播放（内嵌模式） ─────────────────────────
+// mpv 独立窗口被精确钉到前端上报的视频区域矩形上，视觉上嵌在主窗口内。
+// IPC 契约（前端仅在 player_open_mode="app" 时调用，后端不做模式门控）：
+//   · player_embed_enter：标记内嵌激活，后台收编 mpv 窗口（挂 owner + DWM 圆角）并
+//     **先行隐藏**——首个矩形上报前独立窗口不得闪现；hwnd 未就绪时限次重试，不阻塞返回。
+//   · player_embed_rect：物理像素、相对前端内容区 (0,0)；换算屏幕坐标后 SetWindowPos
+//     绝对定位（SWP_NOACTIVATE|SWP_NOZORDER），窗口仍隐藏则顺带显示。高频调用，幂等轻量。
+//   · player_embed_leave：清除内嵌状态；stop=true 走现有 IPC stop 并再次隐藏 mpv 窗口
+//     （实例保留），stop=false 仅清状态。
+// 内部实现全部在 mpvwin 模块（静态槽 + poison 兜底）；Moved 事件的内嵌跟随在
+// mpvwin::on_main_moved 内按 EMBED_ACTIVE 生效。
+
+/// enter 的后台收编循环（复用 lc-1907 的 25×200ms 重试模式）：mpv 窗口 / 主窗口 HWND
+/// 未就绪时限次等待；收编成功即隐藏 + 补施已上报矩形。期间退嵌（embed_is_active 转 false）
+/// 或 mpv 进程退出则静默放弃。任何失败只 trace，不报错。
+#[cfg(target_os = "windows")]
+async fn player_embed_adopt_loop(app: AppHandle, m: std::sync::Arc<crate::mpv::MpvSession>) {
+    for _attempt in 0..25u32 {
+        // 退嵌（leave 可能赶在收编完成前）→ 放弃，不再动窗口
+        if !crate::mpvwin::embed_is_active() {
+            return;
+        }
+        let Some(pid) = *m.pid.lock().unwrap() else {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            continue;
+        };
+        if !crate::winproc::pid_alive(pid) {
+            crate::libmpv::trace("[lc-1909] embed_enter：mpv 进程已退出，放弃收编");
+            return;
+        }
+        // 主窗口 HWND 每轮重取：托盘启动早期可能还没建好
+        if let Some(owner) = app
+            .get_webview_window("main")
+            .and_then(|w| w.hwnd().ok().map(|h| h.0 as isize))
+        {
+            // 槽内已有活窗口（退嵌 stop=true 后窗口被隐藏，EnumWindows 找不到）或
+            // PID 枚举命中，都可以收编；embed_adopt 内部处理两种来源。
+            if crate::mpvwin::get_hwnd().is_some() || crate::mpvwin::find_mpv_hwnd(pid).is_some() {
+                match crate::mpvwin::embed_adopt(pid, owner) {
+                    Ok(_) => {} // embed_adopt 内已 trace
+                    Err(e) => crate::libmpv::trace(&format!("[lc-1909] 内嵌收编失败: {e}")),
+                }
+                return;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    crate::libmpv::trace("[lc-1909] 内嵌收编重试超时（mpv 窗口/主窗口 5s 内未就绪），放弃");
+}
+
+/// [lc-1909] 内嵌 enter：标记激活 + 后台收编并隐藏 mpv 窗口。无 mpv 会话时 trace 后静默返回。
+#[tauri::command]
+async fn player_embed_enter(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let session = state.mpv.lock().await.clone();
+        let Some(m) = session else {
+            crate::libmpv::trace("[lc-1909] embed_enter：无 mpv 会话，忽略");
+            return Ok(());
+        };
+        crate::mpvwin::embed_set_active(true);
+        // 内嵌态由 Moved 事件的内嵌跟随负责；owner 跟随（lc-1907 实验路径）在内嵌态不参与
+        crate::mpvwin::set_owner_follow(false);
+        // 复用会话二次进入：槽内窗口直接隐藏，避免独立窗口在首个矩形前闪现
+        if let Some(h) = crate::mpvwin::get_hwnd() {
+            crate::mpvwin::embed_hide(h);
+        }
+        tauri::async_runtime::spawn(player_embed_adopt_loop(app, m));
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (&app, &state);
+    Ok(())
+}
+
+/// [lc-1909] 内嵌矩形上报：物理像素、相对前端内容区 (0,0)（decorations:false → 内容区=整窗，
+/// inner_position 即页面 (0,0) 的屏幕物理坐标）。
+#[tauri::command]
+async fn player_embed_rect(
+    app: AppHandle,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        if !crate::mpvwin::embed_is_active() {
+            return Ok(());
+        }
+        let Some(win) = app.get_webview_window("main") else {
+            return Ok(());
+        };
+        let Ok(orig) = win.inner_position() else {
+            return Ok(());
+        };
+        let (sx, sy) = (orig.x + x, orig.y + y);
+        // 有 hwnd 直接定位（幂等轻量）；hwnd 未就绪先缓存，收编成功后补施
+        if let Some(h) = crate::mpvwin::get_hwnd() {
+            crate::mpvwin::embed_apply_rect(h, sx, sy, width, height);
+        } else {
+            crate::mpvwin::embed_set_pending_rect(sx, sy, width, height);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (&app, &x, &y, &width, &height);
+    Ok(())
+}
+
+/// [lc-1909] 内嵌 leave：清内嵌状态；stop=true 走现有 IPC stop 并再次隐藏 mpv 窗口（实例保留）。
+#[tauri::command]
+async fn player_embed_leave(state: State<'_, AppState>, stop: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        crate::mpvwin::embed_set_active(false);
+        crate::mpvwin::set_owner_follow(false);
+        if stop {
+            let session = state.mpv.lock().await.clone();
+            if let Some(m) = session {
+                let _ = m.stop().await; // 现有 IPC stop：回 idle，实例保留
+            }
+            if let Some(h) = crate::mpvwin::get_hwnd() {
+                crate::mpvwin::embed_hide(h);
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (&state, &stop);
+    Ok(())
+}
+
 #[tauri::command]
 async fn mpv_toggle_pause(state: State<'_, AppState>) -> Result<(), String> {
     let slot = state.mpv.lock().await;
@@ -3142,8 +3274,10 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         "gamepadRepeatInterval": cfg.gamepad_repeat_interval,
         // [ui-opacity] 界面透明度（百分比；clamp 在 set_settings）
         "uiOpacity": cfg.ui_opacity,
-        // [lc-1907] mpv 窗口 owner 收编开关（默认 true；false = 完全回退旧行为）
+        // [lc-1907] mpv 窗口 owner 收编开关（默认 false；true 仅供实验）
         "mpvWindowOwner": cfg.mpv_window_owner,
+        // [lc-1909] 播放打开方式：app=软件内播放（默认）/ window=独立 mpv 窗口
+        "playerOpenMode": cfg.player_open_mode,
     }))
 }
 
@@ -3314,6 +3448,14 @@ async fn set_settings(
     if let Some(v) = arg.get("mpvWindowOwner") {
         cfg.mpv_window_owner = v.as_bool().ok_or("mpvWindowOwner 必须是布尔值")?;
     }
+    // [lc-1909] 播放打开方式：app=软件内播放（前端走 player_embed_* 内嵌路径）/ window=独立 mpv 窗口
+    if let Some(v) = arg.get("playerOpenMode") {
+        let s = v.as_str().unwrap_or("");
+        if !matches!(s, "app" | "window") {
+            return Err(format!("playerOpenMode 非法：{s}（只允许 app/window）"));
+        }
+        cfg.player_open_mode = s.to_string();
+    }
     config::save(&app, &cfg).await?;
     *state.config.write().await = cfg.clone();
     // [lc-1561] 弹幕接口副作用：只在所有校验通过、配置成功落盘后再同步
@@ -3353,6 +3495,8 @@ async fn set_settings(
         "uiOpacity": cfg.ui_opacity,
         // [lc-1907] mpv 窗口 owner 收编开关
         "mpvWindowOwner": cfg.mpv_window_owner,
+        // [lc-1909] 播放打开方式：app=软件内播放（默认）/ window=独立 mpv 窗口
+        "playerOpenMode": cfg.player_open_mode,
     }))
 }
 
@@ -3993,10 +4137,12 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // [lc-1907] mpv 收编跟随：主窗口 Moved → 按位移差平移已收编的 mpv 窗口。
+            // [lc-1907/1909] 主窗口 Moved → mpvwin::on_main_moved 按位移差平移 mpv 窗口。
+            // 生效范围在 mpvwin 内部判：内嵌激活（EMBED_ACTIVE）→ 内嵌零延迟跟随；
+            // 否则仅 mpv_window_owner=true 的收编路径（OWNER_FOLLOW）跟随；独立窗口模式不动。
             // 同步上下文：mpvwin 槽读取内部有 poison 兜底（lock().unwrap_or_else(into_inner)）。
-            // 注：Resized / ScaleFactorChanged（缩放跟随）v1 刻意不做 —— 改 mpv 窗口大小
-            // 容易和用户手动调整 mpv 窗口打架；全屏 / 最大化同样会触发 Moved，v1 接受跟随。
+            // 注：Resized / ScaleFactorChanged（缩放跟随）刻意不做 —— 内嵌模式由前端重新
+            // 上报矩形；owner 收编改 mpv 窗口大小容易和用户手动调整打架。
             #[cfg(target_os = "windows")]
             if let tauri::WindowEvent::Moved(pos) = event {
                 crate::mpvwin::on_main_moved(pos.x, pos.y);
@@ -4242,6 +4388,11 @@ pub fn run() {
             subtitle_sources::subtitle_download,
             open_browser_window,
             player_stop,
+            // [lc-1909] 软件内播放（内嵌模式）：enter / 矩形钉位 / leave（Windows 专属实现，
+            // 非 Windows 命令空转返回 Ok，注册保持全平台一致）
+            player_embed_enter,
+            player_embed_rect,
+            player_embed_leave,
             mpv_toggle_pause,
             player_source,
             mpv_set_ui_fullscreen,

@@ -8,6 +8,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Lock as IcoLock } from "lucide-react";
 import { DetailView } from "./components/detail/DetailView";
+// [lc-1909] 软件内播放（内嵌播放页）：mpv 窗口由 Rust 侧钉到视频容器矩形
+import { PlayerView } from "./components/player/PlayerView";
 // [lc-1654] 海报卡「⋯ → 编辑元数据」复用详情页同一套弹层
 import { MetaEditModal, type MetaTarget } from "./components/detail/MetaEditModal";
 // [lc-1720] 海报卡「⋯ → 刷新元数据」改为手动获取（TMDB/BGM 镜像搜索 + 本地覆盖）
@@ -91,6 +93,9 @@ function App() {
   // [lc-1647] 从首页横排直接点进「未识别文件夹」时的起始层（个人视频/网盘类库根层即文件夹）
   const [libFolder, setLibFolder] = useState<MediaItem | null>(null);
   const [detailItem, setDetailItem] = useState<MediaItem | null>(null);
+  // [lc-1909] 软件内播放层：DetailView 起播成功后挂上（playerOpenMode="app"）；
+  // 返回键（player_embed_leave stop=true 由 PlayerView 自己发）卸载回详情页。
+  const [player, setPlayer] = useState<{ title: string } | null>(null);
   // [lc-1654] 海报卡「⋯ → 编辑元数据」的目标（弹层挂在 App 根部，不塞进卡片）
   const [posterMetaTarget, setPosterMetaTarget] = useState<MetaTarget | null>(null);
   // [lc-1720] 海报卡「⋯ → 刷新元数据」→ 手动获取元数据弹窗
@@ -1413,6 +1418,10 @@ function App() {
                 base={detailItem}
                 continueList={continueList}
                 webrsOn={!!settings.webrsPanelEnabled}
+                // [lc-1909] playerOpenMode="window"（独立窗口）时不传回调 → 详情页完全走既有路径
+                onEmbedPlay={
+                  settings.playerOpenMode === "window" ? undefined : (title) => setPlayer({ title })
+                }
                 onOpenTmdb={openTmdbRecommendation}
                 onOpenPerson={openPerson}
                 onBack={() => {
@@ -1540,6 +1549,8 @@ function App() {
         onSearchOpenItem={openSearchItem}
         searchDisabled={view === "login" || guest}
       />
+      {/* [lc-1909] 软件内播放层：盖在内容区/侧栏之上、标题栏之下（z-index 见 49-player.css） */}
+      {player && <PlayerView title={player.title} onExit={() => setPlayer(null)} />}
       {err && view !== "login" && <div className="err global-err">{err}</div>}
       {settingsOpen && (
         <SettingsPanel

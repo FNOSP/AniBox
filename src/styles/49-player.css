@@ -1,0 +1,98 @@
+/* ─────────────── [lc-1909] 软件内播放（内嵌播放页） ─────────────── */
+
+/* 全屏覆盖层：盖在内容区与侧栏（45）之上、标题栏（50）之下。
+   顶从 40px 起 —— 标题栏是拖拽区，视频区不能顶到它；矩形从容器顶边算起。 */
+.player-view {
+  position: fixed;
+  top: 40px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 46;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+  animation: playerIn 0.25s ease-out both;
+}
+@keyframes playerIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.player-topbar {
+  flex: none;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+}
+
+.player-back {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.player-back:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.player-back:active {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.player-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+/* 纯黑视频容器：mpv 窗口由 Rust 侧钉到这个矩形上（物理像素上报见 PlayerView） */
+.player-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #000;
+}
+
+/* mpv 钉上来之前的低调提示（样式口径照 .play-note：小字、克制）。
+   淡出走 ease-in 200ms；pointer-events 恒 none，不吃容器内的任何交互。 */
+.player-opening {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.55);
+  opacity: 1;
+  transition: opacity 0.2s ease-in;
+  pointer-events: none;
+}
+.player-opening.gone {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-view {
+    animation: none;
+  }
+  .player-opening {
+    transition: none;
+  }
+}

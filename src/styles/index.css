@@ -58,3 +58,5 @@
 /* [lc-1796] 库/分类根层筛选条（飞鲸式：类型/年份 chips + 排序） */
 @import "./47-libfilters.css";
 @import "./48-javhub.css";
+/* [lc-1909] 软件内播放（内嵌播放页） */
+@import "./49-player.css";

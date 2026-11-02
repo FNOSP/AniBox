@@ -1,4 +1,4 @@
-/* [lc-1810/1811] 多云盘资源库面板：7 家网盘 + WebDAV 统一接入。
+/* [lc-1810/1811] 多云盘资源库面板：5 家网盘 + WebDAV 统一接入。
    · 登录：cloud_qr_start/poll（扫码）；WebDAV 走账号表单（连通性验证后落盘）。
    · 浏览：cloud_list / webdav_list 统一 cursor 分页。
    · 播放三档（LumiPlayer 播放决策对齐）：
@@ -148,9 +148,33 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
   }, []);
 
   // [lc-1902] 扫码登录统一走 useCloudQrLogin（串行轮询 + 到点自动换码 + 有上限的重试）
+  // [lc-1903] 确认后**不要立刻**取目录：上游发放凭据有几百毫秒~数秒延迟，刚确认就 list
+  // 会拿到「未授权/签名不存在」之类的 Err，被渲染成登录失败（用户看到的「确认了却没反应」）。
+  // 这里改成 3 次退避重试（0 / 600ms / 1200ms），仍失败才报一条明确文案。
   const qrLogin = useCloudQrLogin(async (provider) => {
     await refreshProviders();
-    if (alive.current) void loadList("", "", true, provider);
+    if (!alive.current) return;
+    setLoading(true);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt > 0) {
+        await new Promise<void>((r) => window.setTimeout(r, attempt === 1 ? 600 : 1200));
+      }
+      if (!alive.current) return;
+      try {
+        const r = await invoke<ListResp>("cloud_list", { provider, fid: null, cursor: null });
+        if (!alive.current) return;
+        setItems(r.items);
+        setCursor(r.nextCursor || "");
+        setErr("");
+        setLoading(false);
+        return;
+      } catch (e) {
+        if (attempt === 2 && alive.current) {
+          setLoading(false);
+          setErr(`已登录成功，但读取目录失败：${String(e)}（凭据可能还在生效中，重进「网盘接入」页可重试）`);
+        }
+      }
+    }
   });
   /** 手动/自动开始扫码前先清掉上一次的列表错误，避免旧报错和新二维码同屏 */
   const startQr = useCallback(

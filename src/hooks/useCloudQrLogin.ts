@@ -8,6 +8,11 @@
    这里改成「一轮结束再等 2s」的串行循环：到点（expiresAtMs，与后端 TTL 同源）自动换码，
    过期/瞬时网络失败都有上限重试，最终停在明确文案上等用户手点。
 
+   [lc-1903] 两处修正：
+     · 到点先进 90s 宽限窗继续问上游（确认往往发生在最后几秒），只有上游明确回 expires 才换码，
+       避免把「已确认的码」刷掉（表现就是「手机点了确认、桌面没反应」）；
+     · 失败按 网络 / 授权 / 限流 三类给文案，不再一律「网络不稳定」。
+
    状态：loading（取码中）→ waiting（待扫码）→ scanned（已扫待确认）→ success
         / expired（连续换码仍过期）/ error（重试后仍失败） */
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -28,12 +33,31 @@ type PollResp = { status: number; ok: boolean; userName?: string; expired?: bool
 
 const POLL_INTERVAL_MS = 2000;
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
+/** [lc-1903] 本地 TTL 到点后的宽限窗（继续问上游，避免把「刚确认」的码刷掉） */
+const QR_GRACE_MS = 90 * 1000;
 /** 连续自动换码上限：防止上游异常时无限刷码 */
 const MAX_AUTO_REFRESH = 3;
 /** 单次轮询允许的连续失败次数（网络抖动不打断整个流程） */
 const MAX_POLL_FAILURES = 2;
 
 const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
+
+/** [lc-1903] 失败分类：网络不通 / 授权换取失败 / 上游限流，文案不再一律「网络不稳定」 */
+type PollFailKind = "network" | "auth" | "rate";
+function classifyPollError(e: unknown): { kind: PollFailKind; detail: string } {
+  const detail = String(e).replace(/^Error:\s*/, "").trim();
+  const l = detail.toLowerCase();
+  const rate = /429|限流|频繁|too many|rate.?limit/.test(l);
+  const net = /timed? ?out|timeout|超时|dns|connect|network|网络|econn|请求失败|响应读取失败|上游 http 5\d\d/.test(l);
+  if (rate) return { kind: "rate", detail };
+  if (net) return { kind: "network", detail };
+  return { kind: "auth", detail };
+}
+function failText(kind: PollFailKind, detail: string): string {
+  if (kind === "network") return `查询扫码状态失败（网络）：${detail}`;
+  if (kind === "rate") return `上游限流，稍后自动重试：${detail}`;
+  return `查询扫码状态失败（授权）：${detail}`;
+}
 
 export function useCloudQrLogin(onSuccess: (provider: string) => void | Promise<void>) {
   const [provider, setProvider] = useState("");
@@ -104,10 +128,16 @@ export function useCloudQrLogin(onSuccess: (provider: string) => void | Promise<
       const cleanup = () => window.clearInterval(tick);
 
       let failures = 0;
+      // [lc-1903] 本地 TTL 到点后不立刻换码，先留一段「宽限窗」继续问上游：
+      //   · 上游各家真实有效期不一（阿里实测 15 分钟），本地 5 分钟只是保守估计；
+      //   · 用户常常在最后几秒才点确认，到点就换码会把「已确认的码」直接刷掉 → 「手机点了没反应」；
+      //   · 真过期时上游会回 status=3（expired），下面照样立刻换码，不会白等。
+      const hardDeadline = deadlineRef.current + QR_GRACE_MS;
+      let graceNoted = false;
       // 串行轮询：上一轮返回后再等 2s，绝不叠请求
       while (aliveRef.current && gen === genRef.current) {
-        const left = deadlineRef.current - Date.now();
-        if (left <= 0) {
+        const now = Date.now();
+        if (now > hardDeadline) {
           cleanup();
           if (autorefreshRef.current < MAX_AUTO_REFRESH) {
             autorefreshRef.current += 1;
@@ -120,7 +150,13 @@ export function useCloudQrLogin(onSuccess: (provider: string) => void | Promise<
           }
           return;
         }
-        await sleep(Math.min(POLL_INTERVAL_MS, left));
+        const left = deadlineRef.current - now;
+        const wait = left > 0 ? Math.min(POLL_INTERVAL_MS, left) : POLL_INTERVAL_MS;
+        if (left <= 0 && !graceNoted) {
+          graceNoted = true;
+          setMessage("二维码已到展示时限，正在确认登录结果…");
+        }
+        await sleep(wait);
         if (!aliveRef.current || gen !== genRef.current) return;
 
         try {
@@ -163,14 +199,20 @@ export function useCloudQrLogin(onSuccess: (provider: string) => void | Promise<
         } catch (e) {
           if (!aliveRef.current || gen !== genRef.current) return;
           failures += 1;
-          const msg = String(e);
+          const { kind, detail } = classifyPollError(e);
           if (failures > MAX_POLL_FAILURES) {
             cleanup();
             setPhase("error");
-            setMessage(`扫码状态查询失败：${msg}（可点「刷新二维码」重试）`);
+            setMessage(
+              kind === "network"
+                ? `${failText(kind, detail)}（检查网络/代理后点「刷新二维码」重试）`
+                : kind === "rate"
+                  ? `${failText(kind, detail)}（等 1 分钟后点「刷新二维码」）`
+                  : `${failText(kind, detail)}（点「刷新二维码」重新扫码）`,
+            );
             return;
           }
-          setMessage(`网络不稳定，正在重试…（${failures}/${MAX_POLL_FAILURES}）`);
+          setMessage(`${failText(kind, detail)}，重试中…（${failures}/${MAX_POLL_FAILURES}）`);
           await sleep(1000);
         }
       }

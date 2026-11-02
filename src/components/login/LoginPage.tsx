@@ -272,7 +272,7 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
         <h1>AniBox</h1>
         <p>把你的影视库，变成桌面上的私人影院</p>
         <ul className="login-feats">
-          <li>夸克 / 百度 / 阿里 / 天翼 / 123 / 115 扫码即接，WebDAV 通吃 NAS 与 Alist</li>
+          <li>夸克 / 百度 / 阿里 / 123 / 115 扫码即接，WebDAV 通吃 NAS 与 Alist</li>
           <li>飞牛影视原生支持：媒体库、追剧进度与播放状态双向同步</li>
           <li>mpv 与 PotPlayer 播放，字幕、着色器与插帧原生可用</li>
           <li>聚合 TMDB / Bangumi / AniList 等丰富影视数据</li>

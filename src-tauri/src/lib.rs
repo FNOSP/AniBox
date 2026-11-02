@@ -3183,7 +3183,12 @@ pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
             let _ = w.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
             let _ = w.set_size(tauri::PhysicalSize::new(size.width, size.height));
             let _ = w.set_ignore_cursor_events(true);
-            crate::libmpv::trace("[lc-1916] mpv_overlay 创建成功");
+            // [lc-1922] 新建路径漏了 show：窗口 visible(false) 建出后从未显示，
+            // mpv 被收编到它的矩形上正常可见，但承载控制层（右上角控件/加载转圈）
+            // 的 webview 一直隐形 —— 表现为「视频在播、控件没了」。
+            // 已存在窗口的早退分支本来就有 show()，补齐新建路径。
+            let _ = w.show();
+            crate::libmpv::trace("[lc-1916] mpv_overlay 创建成功（已显示）");
             Some(w)
         }
         Err(e) => {

@@ -3166,7 +3166,9 @@ pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
         .shadow(false)
         .skip_taskbar(true)
         .visible(false)
-        .resizable(true)
+        // [lc-1921] 播放窗不可用户缩放（Polaris 同款：样式里无 THICKFRAME）——尺寸只由
+        // 跟随循环按 mpv 矩形设定，杜绝双向缩放通路。
+        .resizable(false)
         .build()
         .map_err(|e| e.to_string());
         let _ = tx.send(built);
@@ -4335,21 +4337,10 @@ pub fn run() {
             // 生效范围在 mpvwin 内部判：内嵌激活（EMBED_ACTIVE）→ 内嵌零延迟跟随；
             // 否则仅 mpv_window_owner=true 的收编路径（OWNER_FOLLOW）跟随；独立窗口模式不动。
             // 同步上下文：mpvwin 槽读取内部有 poison 兜底（lock().unwrap_or_else(into_inner)）。
-            // [lc-1915] 播放器专用窗（mpv_overlay）的移动/缩放驱动 mpv 跟随；
-            // 主窗口在播放期间是隐藏的，它的事件不再参与内嵌几何。
-            #[cfg(target_os = "windows")]
-            if window.label() == "mpv_overlay" {
-                if let tauri::WindowEvent::Moved(pos) = event {
-                    crate::mpvwin::on_main_moved(pos.x, pos.y);
-                }
-                if let tauri::WindowEvent::Resized(_) = event {
-                    if crate::mpvwin::embed_is_active() {
-                        if let Some(h) = window.hwnd().ok().map(|h| h.0 as isize) {
-                            crate::mpvwin::pin_to_owner(h);
-                        }
-                    }
-                }
-            }
+            // [lc-1921] 同步严格单向：mpv 是唯一锚（拖画面动 mpv），mpv_overlay 只被
+            // 跟随循环贴向 mpv。此前的「播放窗 Moved/Resized → 反推 mpv」与跟随循环
+            // 构成正反馈（外加 overscan 每轮 +16px）→ mpv 无限放大飞出屏幕，已删除。
+            let _ = &window;
             // [lc-1435] 关闭按钮三态：exit 放行 / tray 隐藏 / ask 交给前端弹框。
             // 为什么用 on_window_event 而不是前端拦：WebView 里拦不住原生关闭按钮
             // （那是 OS 的窗口消息，不经过 JS），必须在这一层拦。

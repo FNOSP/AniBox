@@ -456,7 +456,7 @@ async fn scan_provider(app: &AppHandle, lib: &mut CloudLib, resume: bool) -> (us
     }
     // full + prune_missing=false → 只合并不丢条目（网盘上暂时看不到的文件保留原记录）
     let full = !(resume && !lib.cursor.is_empty()) && queue.is_empty();
-    let jav_count = match crate::jav_library::ingest_scan(&lib.provider, &cands, &jav_matched, full && js.scan.prune_missing) {
+    let jav_count = match crate::jav_library::ingest_scan(&lib.provider, &cands, &jav_matched, full && js.scan.prune_missing, js.scan.merge_multipart) {
         Ok(n) => n,
         Err(_) => 0, // 入库失败不挡正常库（下次扫描重试）
     };

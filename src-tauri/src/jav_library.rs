@@ -66,6 +66,8 @@ const KNOWN_LABELS: &[&str] = &[
     "TEK", "TEMU", "TKI", "TMEM", "TMRD", "TNOZ", "TPPN", "TRY", "TSUB", "URE", "UZ", "VAGU", "VEC", "VENU", "VNDS",
     "VRTM", "VSPDS", "WAAA", "WANZ", "WNZ", "WSS", "XRW", "XVSR", "YAG", "YMDD", "YRH", "ZEX", "ZMEN", "ZUKO",
     "MKBD", "MKD", "BGN", "BWBD",
+    // [lc-1907c] 实测库补充：白名单覆盖不到的现代厂牌
+    "SNOS", "MIDV", "FSDSS", "WAAA", "IPIT", "PRED", "CAWD", "DLDSS",
 ];
 
 /// 动漫/视频附赠文件里常见的「假番号」前缀：形状和有码番号一样，但绝不是 JAV。
@@ -269,15 +271,40 @@ fn detect_censored(cleaned: &str, folder_norm: &str) -> Option<Detection> {
         if NON_JAV_LABELS.contains(&label) {
             continue;
         }
-        let confident = KNOWN_LABELS.contains(&label) || (!folder_norm.is_empty() && folder_norm.contains(&code.replace('-', "")));
-        let det = Detection {
-            code,
-            category: CATEGORY_CENSORED,
-            part,
-            part_hint: hint,
-            matched_by: if KNOWN_LABELS.contains(&label) { "std-label" } else { "std-echo" },
+        // 放宽的几种高置信形态（白名单覆盖不了现实里的全部厂牌）：
+        //   ① 标签在白名单            SONE-123.mp4
+        //   ② 目录名呼应同一番号        ROYD-123.mp4（目录 ROYD-123 高清）
+        //   ③ 番号开头且剩余部分极短    SNOS-332-UC（-UC/-C 这类无码后缀）
+        //   ④ 番号开头且紧跟中日文标题   NMSL-024 婚約者に強○され…（JAV 文件名经典形态）
+        // 其余（BLACKEDRAW.19.01.22…、BEAUTIFUL GIRL 123）一律不认定。
+        let rest = cleaned[end..].trim();
+        let rest_is_suffix = {
+            let t = rest.trim_start_matches(['-', '_', ' ', '.']);
+            !t.is_empty() && t.chars().count() <= 3 && t.chars().all(|c| c.is_ascii_uppercase())
         };
-        if confident {
+        let rest_starts_cjk = rest
+            .chars()
+            .next()
+            .map(|c| ('\u{4e00}'..='\u{9fff}').contains(&c) || ('\u{3040}'..='\u{30ff}').contains(&c))
+            .unwrap_or(false);
+        let known = KNOWN_LABELS.contains(&label);
+        let echo = !folder_norm.is_empty() && folder_norm.contains(&code.replace('-', ""));
+        let bare = m.get(0).map(|g| g.start() == 0).unwrap_or(false)
+            && (rest.is_empty() || rest_is_suffix || rest_starts_cjk);
+        if known || echo || bare {
+            let det = Detection {
+                code,
+                category: CATEGORY_CENSORED,
+                part,
+                part_hint: hint,
+                matched_by: if known {
+                    "std-label"
+                } else if echo {
+                    "std-echo"
+                } else {
+                    "std-bare"
+                },
+            };
             return Some(det);
         }
     }
@@ -317,6 +344,12 @@ pub fn detect(name: &str, folder: &str) -> Option<Detection> {
 /// 唯一键：归一化去分隔符，避免 "SONE-123" / "sone_123" 重复入库。
 pub fn code_key(code: &str) -> String {
     code.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_uppercase()
+}
+
+/// 无番号条目的稳定键：U + md5(标题)（对齐 JAVCloudHub 的 _make_unknown_key）。
+/// 同一文件反复扫描得到同一个 key，不会凭空多出一堆重复条目。
+pub fn unknown_key(title: &str) -> String {
+    format!("U{:032x}", md5::compute(title.as_bytes()))
 }
 
 fn normalize_key(s: &str) -> String {
@@ -576,11 +609,12 @@ pub fn ingest_scan(
     let mut groups: BTreeMap<String, Vec<(JavCandidate, Detection)>> = BTreeMap::new();
     for (i, d) in matched {
         let Some(c) = cands.get(*i) else { continue };
-        let key = if merge {
-            code_key(&d.code)
+        let base = if d.category == CATEGORY_UNKNOWN {
+            unknown_key(&d.code)
         } else {
-            format!("{}~{}", code_key(&d.code), code_key(&c.file_id))
+            code_key(&d.code)
         };
+        let key = if merge { base } else { format!("{}~{}", base, code_key(&c.file_id)) };
         groups.entry(key).or_default().push((c.clone(), d.clone()));
     }
 
@@ -1854,10 +1888,15 @@ mod tests {
     }
 
     #[test]
-    fn detect_censored_unknown_label_needs_folder_echo() {
-        // ROYD 不在白名单：单文件不认定（走正常 TMDB 流程），目录呼应才改道
-        assert!(detect("ROYD-123.mp4", "").is_none());
-        assert!(detect("ROYD-123.mp4", "ROYD-123 高清").is_some());
+    fn detect_censored_bare_code_and_cjk_tail() {
+        // [lc-1907c] 放宽后的三种形态：裸番号、短后缀、番号+中日文标题
+        assert!(detect("ROYD-123.mp4", "").is_some());
+        assert!(detect("SNOS-332-UC.mp4", "").is_some());
+        assert!(detect("NMSL-024 婚約者に強○され告訴した女への復讐.mp4", "").is_some());
+        // 长英文标题 / 欧美日期串仍然不认定（remainder 太长且非 CJK）
+        assert!(detect("BEAUTIFUL GIRL 123.mp4", "").is_none());
+        // 欧美日期串：detect 返回 western（由扫描分流拦下，不进 JAV 库）
+        assert_eq!(detect("BLACKEDRAW.19.01.22.Bunny.Colby.mp4", "").unwrap().category, CATEGORY_WESTERN);
     }
 
     #[test]
@@ -2161,7 +2200,9 @@ pub async fn jav_fnos_scan(app: AppHandle, state: tauri::State<'_, crate::AppSta
                 "sort_column": "sort_title",
                 "page_size": 200,
                 "page": page,
-                "tags": { "type": ["Movie", "TV", "Video"] }
+                // 类型集合与库页浏览（get_items）完全一致 —— 之前只给三项，
+                // 部分库（.strm / 特殊挂载）只回 1 条，表现为「0/1 条命中」
+                "tags": { "type": ["Movie", "TV", "Directory", "Video", "LiveChannel"] }
             });
             let v = match client
                 .call(&cfg.server, "/v/api/v1/item/list", "POST", &cfg.token, Some(body))
@@ -2195,12 +2236,32 @@ pub async fn jav_fnos_scan(app: AppHandle, state: tauri::State<'_, crate::AppSta
             }
             page += 1;
         }
+        // 用户明确勾选了这个媒体库 = 库里全是 JAV 内容，**不做识别门槛全量入库**：
+        //   · 番号命中的 → 正常分类，刮削走站点引擎；
+        //   · 没命中的 → 「无番号」（unknown，key=U+md5(标题)），照样显示/播放/AI 汉化，
+        //     不进刮削队列（没有番号可查），后续「修正番号」接上后可手动归号。
         let matched_total = cands.len();
-        let (_, matched) = split_candidates(&cands);
+        let (_, mut matched) = split_candidates(&cands);
+        let hit_idx: std::collections::HashSet<usize> = matched.iter().map(|(i, _)| *i).collect();
+        let mut unknown_count = 0usize;
+        for (i, c) in cands.iter().enumerate() {
+            if hit_idx.contains(&i) {
+                continue;
+            }
+            unknown_count += 1;
+            matched.push((i, Detection {
+                code: c.name.clone(),
+                category: CATEGORY_UNKNOWN,
+                part: 0,
+                part_hint: false,
+                matched_by: "fnos-all",
+            }));
+        }
         let entries = ingest_scan(&format!("fnos:{}", lib.guid), &cands, &matched, false, true).unwrap_or(0);
         results.push(json!({
             "guid": lib.guid, "title": lib.title,
-            "items": matched_total, "javDetected": matched.len(), "entries": entries,
+            "items": matched_total, "javDetected": matched_total - unknown_count,
+            "unknown": unknown_count, "entries": entries,
         }));
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     }

@@ -333,28 +333,23 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
         <h3>JavHub</h3>
         <span className="muted">{total} 部</span>
       </div>
-      {/* 紧接一行：八个分节胶囊（统一样式、组间细分隔） */}
-      <div className="jvh-tabs">
-        {NAV.map((g) => (
-          <div key={g.group} className="jvh-group">
-            {g.items.map((x) => {
-              const Ico = x.icon;
-              const on = view === x.key;
-              return (
-                <button key={x.key} type="button" title={x.label}
-                  className={`jvh-tab${on ? " on" : ""}`}
-                  onClick={() => {
-                    setView(x.key);
-                    setFilter("");
-                  }}>
-                  <Ico size={14} strokeWidth={1.9} />
-                  {x.label}
-                </button>
-              );
-            })}
-            <i className="jvh-sep" />
-          </div>
-        ))}
+      {/* 第二段：分节胶囊 —— 直接复用库页筛选条原生类（libf-bar / libf-open），样式与「筛选/最近添加」完全一致 */}
+      <div className="libf-bar">
+        {NAV.flatMap((g) => g.items).map((x) => {
+          const Ico = x.icon;
+          const on = view === x.key;
+          return (
+            <button key={x.key} type="button" title={x.label}
+              className={`libf-open${on ? " on" : ""}`}
+              onClick={() => {
+                setView(x.key);
+                setFilter("");
+              }}>
+              <Ico size={13} strokeWidth={2} />
+              {x.label}
+            </button>
+          );
+        })}
       </div>
 
       {err && <p className="c115-err">{err}</p>}

@@ -158,6 +158,9 @@
   inset: 0;
   pointer-events: none;
   user-select: none;
+  /* [lc-1919] 播放窗本体不透明（WebView2 拒绝 transparent），控制层画纯黑兜底：
+     mpv 未盖满的缝隙露出的是黑，不是白/页面 */
+  background: #000;
 }
 .player-chrome .chrome-back {
   position: absolute;

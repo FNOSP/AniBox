@@ -285,9 +285,7 @@
   .javset-bool .sw, .javset-bool .sw::after { transition: none; }
 }
 
-/* ═══════════ JavHub 头部一排：返回/标题在左，分节胶囊统一样式 ═══════════ */
-.jvh-head { flex-wrap: nowrap; }
-.jvh-head .c115-title { margin-right: 10px; }
+/* ═══════════ JavHub 分节胶囊（紧跟 page-head 下一行，与 libf 筛选胶囊同风格） ═══════════ */
 .jvh-tabs {
   display: flex;
   align-items: center;

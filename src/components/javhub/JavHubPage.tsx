@@ -7,7 +7,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { imgUrl } from "../../lib/images";
 import { JavSettingsModal } from "./JavSettingsModal";
 import {
-  ArrowLeft as IcoBack,
   Box as IcoWork,
   Building2 as IcoStudio,
   Clapperboard as IcoJavL,
@@ -328,40 +327,34 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
 
   return (
     <main className="c115">
-      {/* 头部一排：返回 + 标题在左，分节胶囊紧随（统一样式、组间细分隔） */}
-      <div className="page-head jvh-head">
-        <button className="back" onClick={onBack}>
-          <IcoBack size={15} strokeWidth={2} style={{ verticalAlign: "-2px", marginRight: 2 }} />
-          返回
-        </button>
-        <h3 className="c115-title">
-          <span className="c115-title-ico">
-            <IcoJavL size={16} strokeWidth={2.2} />
-          </span>
-          JavHub
-        </h3>
-        <div className="jvh-tabs">
-          {NAV.map((g) => (
-            <div key={g.group} className="jvh-group">
-              {g.items.map((x) => {
-                const Ico = x.icon;
-                const on = view === x.key;
-                return (
-                  <button key={x.key} type="button" title={x.label}
-                    className={`jvh-tab${on ? " on" : ""}`}
-                    onClick={() => {
-                      setView(x.key);
-                      setFilter("");
-                    }}>
-                    <Ico size={14} strokeWidth={1.9} />
-                    {x.label}
-                  </button>
-                );
-              })}
-              <i className="jvh-sep" />
-            </div>
-          ))}
-        </div>
+      {/* 头部与媒体库页同款：圆返回 + 标题 + 计数 */}
+      <div className="page-head">
+        <button className="back" onClick={onBack}>‹</button>
+        <h3>JavHub</h3>
+        <span className="muted">{total} 部</span>
+      </div>
+      {/* 紧接一行：八个分节胶囊（统一样式、组间细分隔） */}
+      <div className="jvh-tabs">
+        {NAV.map((g) => (
+          <div key={g.group} className="jvh-group">
+            {g.items.map((x) => {
+              const Ico = x.icon;
+              const on = view === x.key;
+              return (
+                <button key={x.key} type="button" title={x.label}
+                  className={`jvh-tab${on ? " on" : ""}`}
+                  onClick={() => {
+                    setView(x.key);
+                    setFilter("");
+                  }}>
+                  <Ico size={14} strokeWidth={1.9} />
+                  {x.label}
+                </button>
+              );
+            })}
+            <i className="jvh-sep" />
+          </div>
+        ))}
       </div>
 
       {err && <p className="c115-err">{err}</p>}

@@ -3002,6 +3002,37 @@ async fn player_embed_enter(app: AppHandle, state: State<'_, AppState>) -> Resul
         if let Some(h) = crate::mpvwin::get_hwnd() {
             crate::mpvwin::embed_hide(h);
         }
+        // [lc-1911] 内嵌观感对齐 Polaris：隐藏 uosc 自绘顶栏（标题 / 窗口按钮 / 1·5 徽标）——
+        // 它与网页顶栏重复，还提供一个会**直接退出 mpv 进程**的关闭按钮（内嵌态点它=整个
+        // 播放器消失）。走 uosc 的 disable_elements 通道（handle_options → Manager:disable
+        // 会运行时销毁/重建元素），一个键搞定且不碰 top_bar_* 三个独立开关；退出按原串还原。
+        // 失败不阻塞（顶栏多显一轮，下次 enter 再试）。
+        let orig = m
+            .command(json!(["get_property", "script-opts"]))
+            .await
+            .ok()
+            .and_then(|v| v.get("data").and_then(|d| d.as_str()).map(|s| s.to_string()))
+            .unwrap_or_default();
+        crate::mpvwin::save_script_opts(orig.clone());
+        // 基值从原串读（不硬编码 conf 现值），去掉可能残留的 top_bar 后追加，避免重复 enter 叠写
+        let base_disable = orig
+            .split(',')
+            .find_map(|s| s.trim().strip_prefix("uosc-disable_elements="))
+            .unwrap_or("")
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty() && *s != "top_bar")
+            .collect::<Vec<_>>()
+            .join(",");
+        let disable = if base_disable.is_empty() {
+            "top_bar".to_string()
+        } else {
+            format!("{base_disable},top_bar")
+        };
+        let merged = merge_script_opts(orig, &[("uosc-disable_elements", &disable)]);
+        if let Err(e) = m.command(json!(["set_property", "script-opts", merged])).await {
+            crate::libmpv::trace(&format!("[lc-1911] 内嵌 uosc script-opts 下发失败: {e}"));
+        }
         tauri::async_runtime::spawn(player_embed_adopt_loop(app, m));
     }
     #[cfg(not(target_os = "windows"))]
@@ -3043,6 +3074,25 @@ async fn player_embed_rect(
     Ok(())
 }
 
+/// [lc-1911] 把 `k=v` 覆盖对合并进 script-opts 属性串（逗号分隔的 key=value 列表，
+/// 同 key 后写覆盖；mpv 的 script-opts 值本身不含逗号，按此约定切分）。
+fn merge_script_opts(orig: String, overrides: &[(&str, &str)]) -> String {
+    let mut pairs: Vec<(String, String)> = orig
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.split_once('=').map(|(k, v)| (k.trim().to_string(), v.trim().to_string())))
+        .collect();
+    for (k, v) in overrides {
+        if let Some(p) = pairs.iter_mut().find(|(pk, _)| pk == k) {
+            p.1 = v.to_string();
+        } else {
+            pairs.push((k.to_string(), v.to_string()));
+        }
+    }
+    pairs.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(",")
+}
+
 /// [lc-1909] 内嵌 leave：清内嵌状态；stop=true 走现有 IPC stop 并再次隐藏 mpv 窗口（实例保留）。
 #[tauri::command]
 async fn player_embed_leave(state: State<'_, AppState>, stop: bool) -> Result<(), String> {
@@ -3050,10 +3100,21 @@ async fn player_embed_leave(state: State<'_, AppState>, stop: bool) -> Result<()
     {
         crate::mpvwin::embed_set_active(false);
         crate::mpvwin::set_owner_follow(false);
+        let session = state.mpv.lock().await.clone();
+        // [lc-1911] 还原 uosc script-opts（进内嵌时存的原串）；独立窗口模式的顶栏必须回来
+        if let Some(orig) = crate::mpvwin::take_saved_script_opts() {
+            if let Some(m) = session.as_ref() {
+                if let Err(e) = m.command(json!(["set_property", "script-opts", orig])).await {
+                    crate::libmpv::trace(&format!("[lc-1911] 还原 uosc script-opts 失败: {e}"));
+                }
+            }
+        }
         if stop {
-            let session = state.mpv.lock().await.clone();
             if let Some(m) = session {
-                let _ = m.stop().await; // 现有 IPC stop：回 idle，实例保留
+                if let Err(e) = m.stop().await {
+                    // [lc-1911] 不再静默吞掉：stop 失败 = 返回后 mpv 继续播，排障要看这条
+                    crate::libmpv::trace(&format!("[lc-1911] embed_leave stop 失败: {e}"));
+                }
             }
             if let Some(h) = crate::mpvwin::get_hwnd() {
                 crate::mpvwin::embed_hide(h);

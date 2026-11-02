@@ -51,6 +51,8 @@ static OWNER_FOLLOW: AtomicBool = AtomicBool::new(false);
 /// 收编完成前上报的内嵌矩形缓存（**屏幕物理坐标**）：hwnd 未就绪时 rect 命令先落这里，
 /// `embed_adopt` 成功后隐藏补施。高频 rect 命令只做一次 Mutex 写，足够轻量。
 static EMBED_RECT: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
+/// [lc-1911] 进内嵌前的 mpv `script-opts` 原串（leave 时还原，独立窗口的 uosc 顶栏要回来）。
+static SAVED_SCRIPT_OPTS: Mutex<Option<String>> = Mutex::new(None);
 
 // ───────────────────────── 查找 mpv 顶层窗口 ─────────────────────────
 
@@ -159,6 +161,18 @@ pub fn set_owner_follow(on: bool) {
     OWNER_FOLLOW.store(on, Ordering::SeqCst);
 }
 
+/// [lc-1911] 存 / 取进内嵌前的 mpv `script-opts` 原串（leave 还原用；None=之前没存过）。
+pub fn save_script_opts(orig: String) {
+    *SAVED_SCRIPT_OPTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(orig);
+}
+
+pub fn take_saved_script_opts() -> Option<String> {
+    SAVED_SCRIPT_OPTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+}
+
 /// 隐藏 mpv 窗口（enter 收编后 / leave stop=true），并标记隐藏态供矩形首报时显示。
 pub fn embed_hide(hwnd: isize) {
     unsafe {
@@ -212,6 +226,11 @@ pub fn embed_adopt(pid: u32, owner_hwnd: isize) -> Result<isize, String> {
 /// 还原 —— 还原到「最近尺寸/位置」且不夺焦点；定位在还原**之后**做（iconic 态
 /// SetWindowPos 改的是还原矩形，先还原再钉位保证矩形不丢）。
 pub fn embed_apply_rect(hwnd: isize, x: i32, y: i32, w: i32, h: i32) {
+    // [lc-1911] 双保险：leave 之后迟到的 rect 一律忽略 —— 否则 swap 掉 EMBED_HIDDEN
+    // 会把刚隐藏的 mpv 窗口重新顶出来（表现就是「返回后 mpv 还以小窗挂在桌面上」）。
+    if !embed_is_active() {
+        return;
+    }
     unsafe {
         if IsWindow(hwnd as _) == 0 {
             clear_hwnd();

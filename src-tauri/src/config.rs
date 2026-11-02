@@ -258,6 +258,14 @@ pub struct Config {
     /// 界面不透明度百分比（60–100，默认 85）：应用外壳底色与侧栏玻璃面板。
     #[serde(default = "default_ui_opacity")]
     pub ui_opacity: u8,
+
+    /* ── [lc-1907] mpv 窗口 owner 收编（原型 v1）──
+       true = mpv 独立窗口挂成主窗口的 owned window（跟随主窗口移动 + DWM 系统圆角）；
+       **设为 false 即完全回退旧行为**（mpv 完全独立顶层窗口，不挂 owner、不跟随）。
+       老 config.json 无此键 → 默认 true（本版就是要让用户直接看到收编效果），
+       不需要迁移脚本。设置面板 UI 另一轮接入，后端 get/set_settings 已留白名单口。 */
+    #[serde(default = "default_true")]
+    pub mpv_window_owner: bool,
 }
 
 fn default_cache_limit_mb() -> u64 {
@@ -383,6 +391,7 @@ impl Default for Config {
             gamepad_repeat_delay: default_gamepad_repeat_delay(),
             gamepad_repeat_interval: default_gamepad_repeat_interval(),
             ui_opacity: default_ui_opacity(),
+            mpv_window_owner: true,
         }
     }
 }

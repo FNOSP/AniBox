@@ -63,6 +63,9 @@ mod winproc;
 // [lc-1900] Windows 会话结束（关机/重启/注销）兜底：收子进程 + 秒回 WM_QUERYENDSESSION
 #[cfg(target_os = "windows")]
 mod winshutdown;
+// [lc-1907] mpv 窗口 owner 收编（原型 v1）：挂 owner + 跟随主窗口移动 + DWM 圆角
+#[cfg(target_os = "windows")]
+mod mpvwin;
 // [speed] 按剧集（item guid）持久化 mpv 播放速度（app_data_dir/playback-speed.json）
 mod playback_speed;
 // [player] 统一播放启动封装（mpv / 本机 PotPlayer）+ 本地 HTTP relay
@@ -219,6 +222,8 @@ async fn save_config(app: AppHandle, state: State<'_, AppState>, config: Config)
         config.launch_page = cur.launch_page.clone();
         config.player_kind = cur.player_kind.clone();
         config.potplayer_path = cur.potplayer_path.clone();
+        // [lc-1907] mpv 窗口 owner 收编开关只由 set_settings 修改（登录页整份快照不含该键）
+        config.mpv_window_owner = cur.mpv_window_owner;
         // mpv_path：mpv-local 模式的自定义路径由设置面板维护；登录页高级项不再回写
         //（随包/自动探测路径在启动时由 resolve_bundled_paths 重算，保护现值无副作用）
         config.mpv_path = cur.mpv_path.clone();
@@ -3136,6 +3141,8 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         "gamepadRepeatInterval": cfg.gamepad_repeat_interval,
         // [ui-opacity] 界面透明度（百分比；clamp 在 set_settings）
         "uiOpacity": cfg.ui_opacity,
+        // [lc-1907] mpv 窗口 owner 收编开关（默认 true；false = 完全回退旧行为）
+        "mpvWindowOwner": cfg.mpv_window_owner,
     }))
 }
 
@@ -3302,6 +3309,10 @@ async fn set_settings(
     if arg.get("uiOpacity").is_some() {
         cfg.ui_opacity = config::UI_OPACITY_LOCKED;
     }
+    // [lc-1907] mpv 窗口 owner 收编开关（设置面板 UI 另一轮接入；后端白名单先留口）
+    if let Some(v) = arg.get("mpvWindowOwner") {
+        cfg.mpv_window_owner = v.as_bool().ok_or("mpvWindowOwner 必须是布尔值")?;
+    }
     config::save(&app, &cfg).await?;
     *state.config.write().await = cfg.clone();
     // [lc-1561] 弹幕接口副作用：只在所有校验通过、配置成功落盘后再同步
@@ -3339,6 +3350,8 @@ async fn set_settings(
         "gamepadRepeatInterval": cfg.gamepad_repeat_interval,
         // [ui-opacity] 界面透明度（百分比；clamp 在 set_settings）
         "uiOpacity": cfg.ui_opacity,
+        // [lc-1907] mpv 窗口 owner 收编开关
+        "mpvWindowOwner": cfg.mpv_window_owner,
     }))
 }
 
@@ -3977,6 +3990,14 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // [lc-1907] mpv 收编跟随：主窗口 Moved → 按位移差平移已收编的 mpv 窗口。
+            // 同步上下文：mpvwin 槽读取内部有 poison 兜底（lock().unwrap_or_else(into_inner)）。
+            // 注：Resized / ScaleFactorChanged（缩放跟随）v1 刻意不做 —— 改 mpv 窗口大小
+            // 容易和用户手动调整 mpv 窗口打架；全屏 / 最大化同样会触发 Moved，v1 接受跟随。
+            #[cfg(target_os = "windows")]
+            if let tauri::WindowEvent::Moved(pos) = event {
+                crate::mpvwin::on_main_moved(pos.x, pos.y);
+            }
             // [lc-1435] 关闭按钮三态：exit 放行 / tray 隐藏 / ask 交给前端弹框。
             // 为什么用 on_window_event 而不是前端拦：WebView 里拦不住原生关闭按钮
             // （那是 OS 的窗口消息，不经过 JS），必须在这一层拦。

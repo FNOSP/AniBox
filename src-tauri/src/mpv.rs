@@ -152,6 +152,58 @@ pub fn http_header_args(referrer: Option<&str>, ua: Option<&str>) -> Vec<String>
     a
 }
 
+/// [lc-1907] mpv 窗口 owner 收编（原型 v1，仅 Windows）：把 mpv 独立窗口挂成主窗口的
+/// owned window（跟随移动 + DWM 圆角），细节见 `mpvwin` 模块头。
+///
+/// 调用时机：IPC 管道连上之后（= mpv 进程已就绪）后台执行，**不阻塞 launch**。
+/// mpv 窗口可能比 IPC 管道晚出现：有限重试 25 × 200ms；主窗口 HWND 拿不到（托盘启动
+/// 早期等）同样在重试期内等，仍拿不到就放弃。任何失败只 trace 不报错、不 fail launch
+/// —— 收编失败 = 今天的独立窗口行为。
+#[cfg(target_os = "windows")]
+async fn adopt_window_owner(app: AppHandle, pid: u32) {
+    use tauri::Manager;
+    let enabled = app
+        .state::<crate::AppState>()
+        .config
+        .read()
+        .await
+        .mpv_window_owner;
+    if !enabled {
+        crate::libmpv::trace("[lc-1907] mpv_window_owner=false → 跳过窗口收编（旧行为）");
+        return;
+    }
+    // 会话复用防重：槽里已有活的 mpv hwnd 说明已收编过（正常路径 launch 只在无会话时
+    // 走，这里兜底，保证复用/重入不会对同一窗口重复设 owner）。
+    if crate::mpvwin::get_hwnd().is_some() {
+        crate::libmpv::trace("[lc-1907] 已有收编中的 mpv 窗口，跳过重复收编");
+        return;
+    }
+    for attempt in 0..25u32 {
+        // 主窗口 HWND 每轮重取：托盘启动早期可能还没建好，等它出现
+        let owner = app
+            .get_webview_window("main")
+            .and_then(|w| w.hwnd().ok().map(|h| h.0 as isize));
+        if let Some(owner) = owner {
+            if crate::mpvwin::find_mpv_hwnd(pid).is_some() {
+                match crate::mpvwin::adopt(pid, owner) {
+                    Ok(_) => {} // adopt 内已 trace pid+hwnd+owner
+                    Err(e) => {
+                        crate::libmpv::trace(&format!("[lc-1907] 收编失败（不影响播放）: {e}"))
+                    }
+                }
+                return;
+            }
+        } else {
+            crate::libmpv::trace(&format!(
+                "[lc-1907] 主窗口 HWND 未就绪（第 {} 次重试）",
+                attempt + 1
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    crate::libmpv::trace("[lc-1907] 收编重试超时（mpv 窗口/主窗口 5s 内未就绪），放弃（旧行为）");
+}
+
 impl MpvSession {
     /// 拉起独立 mpv 进程并连上 IPC（幂等：实例常驻，播放/停止只切播放状态）
     ///
@@ -311,6 +363,19 @@ impl MpvSession {
                 log_path.display()
             )
         })?;
+
+        // ── [lc-1907] mpv 窗口 owner 收编（原型 v1，仅 Windows）：IPC 连上 = mpv 已就绪，
+        // 后台异步收编，不阻塞 launch（失败只 trace，行为退化为独立窗口）。
+        // pid 在下方被 move 进 pid_slot，这里先取值（Option<u32> 是 Copy）。
+        #[cfg(target_os = "windows")]
+        {
+            let app2 = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(pid) = pid {
+                    adopt_window_owner(app2, pid).await;
+                }
+            });
+        }
 
         let tx = Arc::new(Mutex::new(Some(file)));
         let pending: Arc<Mutex<HashMap<u64, std_mpsc::Sender<Value>>>> =

@@ -4259,9 +4259,20 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
+            // [lc-1901] 退出链路打点：窗口关掉后事件循环却没退（dev 版 anibox.exe 变僵尸、
+            // 占住 target 产物导致下一次 cargo build 报 os error 32）时，靠这三行定位卡在
+            // ExitRequested 还是 Exit 清理里。
+            match &event {
+                tauri::RunEvent::ExitRequested { .. } => {
+                    libmpv::trace("[lc-1901] ExitRequested（窗口已全关）")
+                }
+                _ => {}
+            }
             if let tauri::RunEvent::Exit = event {
+                libmpv::trace("[lc-1901] RunEvent::Exit 清理开始");
                 // [lc-1747] 销毁 webrs 常驻隐藏窗（嗅探 / 验证单例），别把 WebView2 进程留到退出后
                 webrs_webview::shutdown_webviews(app_handle);
+                libmpv::trace("[lc-1901] webrs 隐藏窗已销毁");
                 // [lc-1900] 会话结束（关机/注销）路径：跳过需要联网的进度 flush（上限 3s），
                 // 先保证会话能尽快结束 —— 系统给应用的关机时间窗很短，拖过时限就会被列进
                 // 「这些应用阻止关机」。正常退出（RunEvent::Exit）仍照旧 flush。
@@ -4282,6 +4293,7 @@ pub fn run() {
                     }
                     *slot = None;
                 }
+                libmpv::trace("[lc-1901] 进度 flush / mpv 收尾完成");
                 // [lc-1560] 弹幕 shim 子进程同样收掉（别留孤儿 node）
                 if let Some(mut dc) = st.danmaku_child.blocking_lock().take() {
                     let _ = dc.kill();
@@ -4302,6 +4314,8 @@ pub fn run() {
                 if let Some(c) = pc.as_mut() {
                     let _ = c.kill();
                 }
+                drop(pc);
+                libmpv::trace("[lc-1901] 退出清理完成（进程即将结束）");
             }
         });
 }

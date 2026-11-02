@@ -1,6 +1,6 @@
 //! [lc-1811] 云盘直链本地续签代理 —— LumiPlayer「direct link renewal」机制落地。
 //!
-//! 解决网盘直连播放最痛的一环：直链有 TTL（夸克/天翼/123 几十分钟就失效），
+//! 解决网盘直连播放最痛的一环：直链有 TTL（夸克/123 几十分钟就失效），
 //! mpv 拿到的是**稳定的本地代理地址** `http://127.0.0.1:<port>/cloud-media/<id>/<名>`，
 //! 代理内部持有真实直链并按需续签 —— mpv 完全无感，即 LumiPlayer 日志串
 //! `playback link renewed mid-stream` 的「播放中途换链」。
@@ -13,7 +13,7 @@
 //!
 //! 顺带承载 **ffmpeg HLS 本地转码**（`/cloud-hls/<id>/...`）：LumiPlayer 播放决策
 //! 「编码兼容直连 / 不兼容走 ffmpeg HLS（可 copy-remux 就不重编码）」——夸克/阿里/115
-//! 有**服务端**转码（各自 m3u8 接口）；百度/天翼/123/光鸭/WebDAV 没有服务端转码，
+//! 有**服务端**转码（各自 m3u8 接口）；百度/123/WebDAV 没有服务端转码，
 //! 本地 ffmpeg `-c copy` remux 出 HLS（探测到无法 copy 时自动降级 `-c:v libx264`）。
 //! ffmpeg 从系统 PATH 找，找不到时报错诚实（不降级不硬撑）。
 

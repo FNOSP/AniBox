@@ -8,7 +8,7 @@ mod authx;
 mod bgm;
 mod bgm_account;
 mod cloud115;
-// [lc-1810] 多云盘资源库：夸克/百度/阿里/天翼/123/光鸭 统一接入（LumiPlayer direct_cloud 口径）
+// [lc-1810] 多云盘资源库：夸克/百度/阿里/123/115 统一接入（LumiPlayer direct_cloud 口径）
 mod cloud;
 // [lc-1811] 云盘直链本地续签代理 + ffmpeg HLS 本地转码（播放中途换链）
 mod cloud_proxy;

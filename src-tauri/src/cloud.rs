@@ -1,4 +1,4 @@
-//! [lc-1810] 多云盘资源库 —— 7 家网盘统一接入（LumiPlayer 2.2.1 `direct_cloud.rs` 逆向口径）。
+//! [lc-1810] 多云盘资源库 —— 5 家网盘统一接入（LumiPlayer 2.2.1 `direct_cloud.rs` 逆向口径）。
 //!
 //! 端点证据来源：lumiplayer-tauri.exe 字符串池（导出于 `tests/lumi-ascii-2M.txt`），
 //! 每个端点都能在字符串池里找到原文。各厂商一览：
@@ -9,9 +9,7 @@
 //! | 夸克    | uop.quark.cn cas/ajax getTokenForQrcodeLogin → getServiceTicketByQrcodeToken → su.quark.cn 换 Cookie | cookie | drive-pc.quark.cn/1/clouddrive/file/sort (pr=ucpro&fr=pc) | file/v2/play（video_list m3u8）/ file/download (fids, 302) |
 //! | 百度    | passport getqrcode → channel/unicast 长轮询 → v3/login/main/qrbdusslogin 落 BDUSS/STOKEN | cookie | pan.baidu.com/api/list (dir=路径, app_id=250528) | rest/2.0/xpan/multimedia method=filemetas → dlink |
 //! | 阿里    | passport.aliyundrive.com newlogin/qrcode/generate.do → query.do (bizExt base64) → api.aliyundrive.com/token/refresh | token | openapi.alipan.com/adrive/v1.0/openFile/list | openFile/getDownloadUrl → cdn_url |
-//! | 天翼    | open.e.189.cn logbox/oauth2 appConf→getUUID→image.do 二维码 → qrcodeLoginState.do → loginUrl 换 SESSION | cookie | cloud.189.cn/api/open/file/listFiles.action | api/open/file/batchGetFileDownloadUrl.action |
 //! | 123     | user.123pan.cn/api/user/qr-code/generate → qr-code/result | cookie | api.123278.com/b/api/file/list/new | file/download_info → yun.123pan.cn/Origin 跳转链 |
-//! | 光鸭    | account.guangyapan.com/v1/auth/device_code（OAuth 设备码，client_id=aMe-8VSlkrbQXpUR8） | token | api.guangyapan.com nd.biz/userres.s/v1/file/get_file_list | v1/get_res_download_url → signedURL |
 //!
 //! 统一口径（对齐 LumiPlayer）：
 //! - 凭据只落本机 `app_data_dir/direct-cloud-auth.json`（沿用 LumiPlayer 同名文件），绝不上传；
@@ -323,9 +321,7 @@ pub const PROVIDERS: &[(&str, &str)] = &[
     ("quark", "夸克网盘"),
     ("baidu", "百度网盘"),
     ("aliyun", "阿里云盘"),
-    ("tianyi", "天翼云盘"),
     ("123", "123 云盘"),
-    ("guangya", "光鸭云盘"),
 ];
 
 #[tauri::command]
@@ -409,6 +405,10 @@ pub(crate) const QR_TTL_MS: u64 = 5 * 60 * 1000;
 
 /// 状态 3 = 二维码已过期（前端据此自动换一张，而不是把轮询打死）。
 pub(crate) const QR_EXPIRED: i64 = 3;
+/// [lc-1903] 状态串的宽限窗：本地 TTL 只是「展示用保守值」（上游各家真实有效期不一，
+/// 阿里实测 15 分钟）。到点后仍允许再查 90s，由上游判定真过期（status=3）再换码——
+/// 否则用户恰好在最后一刻点确认，码会被本地规则刷掉，表现为「手机确认了桌面没反应」。
+pub(crate) const QR_GRACE_MS: u64 = 90 * 1000;
 const QR_EXPIRED_MSG: &str = "二维码已过期，请刷新";
 
 impl QrState {
@@ -420,7 +420,7 @@ impl QrState {
             .decode(s.trim())
             .map_err(|_| "扫码状态无效，请刷新二维码".to_string())?;
         let st: QrState = serde_json::from_slice(&raw).map_err(|_| "扫码状态无效，请刷新二维码".to_string())?;
-        if now_ms() > st.exp_ms {
+        if now_ms() > st.exp_ms.saturating_add(QR_GRACE_MS) {
             return Err(QR_EXPIRED_MSG.into());
         }
         Ok(st)
@@ -498,36 +498,6 @@ pub async fn cloud_qr_start(provider: String) -> Result<Value, String> {
                 "打开阿里云盘 App 扫一扫登录".to_string(),
             )
         }
-        // 天翼：appConf.do（lt/paramId/REQID）→ getUUID.do → image.do?uuid= 直接出二维码图
-        "tianyi" => {
-            let (conf, _) = post_form(
-                "https://open.e.189.cn/api/logbox/oauth2/appConf.do",
-                &[("version".into(), "2.0".into()), ("appKey".into(), "cloudlt".into())],
-                &[("Referer".into(), "https://cloud.189.cn/".into())],
-            )
-            .await?;
-            let lt = g_str(&conf, &["/data/lt"], &["lt"]);
-            let param_id = g_str(&conf, &["/data/paramId"], &["paramId"]);
-            let req_id = g_str(&conf, &["/data/REQID", "/data/reqId"], &["REQID", "reqId"]);
-            let uuid_resp = post_form(
-                "https://open.e.189.cn/api/logbox/oauth2/getUUID.do",
-                &[
-                    ("appId".into(), "cloudlt".into()),
-                    ("version".into(), "2.0".into()),
-                ],
-                &[("Referer".into(), "https://open.e.189.cn/".into())],
-            )
-            .await?;
-            let uuid = g_str(&uuid_resp.0, &["/data/uuid"], &["uuid"]);
-            if uuid.is_empty() {
-                return Err(format!("天翼二维码 uuid 获取失败: {}", uuid_resp.0));
-            }
-            (
-                json!({ "lt": lt, "paramId": param_id, "reqId": req_id, "uuid": uuid }),
-                format!("https://open.e.189.cn/api/logbox/oauth2/image.do?uuid={uuid}"),
-                "打开天翼云盘 App 扫一扫登录".to_string(),
-            )
-        }
         // 123：qr-code/generate → {url, uniID}（实测 2026-10）；二维码内容 = url?uniID=
         "123" => {
             let mut hdrs: Vec<(String, String)> = headers_123()
@@ -550,33 +520,6 @@ pub async fn cloud_qr_start(provider: String) -> Result<Value, String> {
                 json!({ "uniID": uni_id }),
                 qr_svg_data_uri(&content)?,
                 "打开 123 云盘 App 扫一扫登录".to_string(),
-            )
-        }
-        // 光鸭：OAuth 设备码 → verification_uri_complete 本地渲二维码
-        "guangya" => {
-            let v = post_json(
-                "https://account.guangyapan.com/v1/auth/device/code",
-                json!({ "client_id": "aMe-8VSlkrbQXpUR8" }),
-                &[
-                    ("x-client-id".into(), "aMe-8VSlkrbQXpUR8".into()),
-                    ("x-client-version".into(), "0.0.1".into()),
-                    ("Referer".into(), "https://www.guangyapan.com/".into()),
-                ],
-            )
-            .await?;
-            let device_code = g_str(&v, &["/device_code", "/data/device_code"], &["device_code"]);
-            let verify = g_str(
-                &v,
-                &["/verification_uri_complete", "/data/verification_uri_complete"],
-                &["verification_uri_complete"],
-            );
-            if device_code.is_empty() || verify.is_empty() {
-                return Err(format!("光鸭云盘设备码获取失败: {v}"));
-            }
-            (
-                json!({ "device_code": device_code }),
-                qr_svg_data_uri(&verify)?,
-                "打开光鸭云盘 App 扫一扫登录".to_string(),
             )
         }
         _ => return Err(format!("不支持的网盘: {provider}")),
@@ -612,6 +555,10 @@ pub async fn cloud_qr_poll(_app: AppHandle, provider: String, state: String) -> 
         return Err("扫码状态与厂商不匹配，请刷新二维码".into());
     }
     let (status, user_name, cred) = poll_provider(&provider, &st.data).await?;
+    // [lc-1903] 只打「有变化」的状态（status=0 待扫码每 2s 一拍，不刷屏）；不打凭据本身
+    if status != 0 {
+        crate::libmpv::trace(&format!("[lc-1903] qr_poll provider={provider} status={status}"));
+    }
     if status == QR_EXPIRED {
         return Ok(json!({ "status": QR_EXPIRED, "expired": true, "ok": false }));
     }
@@ -620,6 +567,7 @@ pub async fn cloud_qr_poll(_app: AppHandle, provider: String, state: String) -> 
     }
     let cred = cred.ok_or("扫码已确认但未取回凭据（内部状态不一致）")?;
     save_provider_auth(&provider, cred.clone())?;
+    crate::libmpv::trace(&format!("[lc-1903] qr_poll provider={provider} 凭据已落盘"));
     let user_name = user_name.unwrap_or_default();
     Ok(json!({ "status": 2, "ok": true, "userName": user_name }))
 }
@@ -706,20 +654,36 @@ async fn poll_provider(
             };
             let errno = v.get("errno").and_then(|x| x.as_i64()).unwrap_or(-1);
             if errno != 0 {
+                // errno=1 = 这一轮没人扫码（长轮询超时/空轮询），属正常
                 return Ok((0, None, None));
             }
-            // channel_v.v 是 JSON 数组字符串 ["{v}"]；空 = 未确认
-            let Some(raw) = v.pointer("/channel_v/v").and_then(|x| x.as_str()).map(|s| s.to_string()) else {
+            // [lc-1903] 真凶：`channel_v` 是 **JSON 字符串**（不是 JSON 对象），内容形如
+            // `"{\"v\":\"<临时 bduss>\",\"status\":1,\"u\":null}"`。旧代码用
+            // `v.pointer("/channel_v/v")` 直接在字符串里找子键，永远取不到 → 手机点了确认
+            // 桌面依旧当「待扫码」，界面一直停在等待（本轮用户实测症状）。
+            let has_channel = v
+                .get("channel_v")
+                .and_then(|x| x.as_str())
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
+            if !has_channel {
                 return Ok((0, None, None));
-            };
-            let arr: Value = serde_json::from_str(&raw).unwrap_or(json!([]));
-            let qrv = arr.get(0).and_then(|x| x.as_str()).unwrap_or("").to_string();
-            if qrv.is_empty() {
+            }
+            let Some(qrv) = baidu_confirm_v(&v) else {
+                // errno=0 但没有 v = 已扫码未确认
+                crate::libmpv::trace("[lc-1903] baidu poll: errno=0 无 v → 已扫待确认");
                 return Ok((1, None, None));
-            }
+            };
+            crate::libmpv::trace(&format!(
+                "[lc-1903] baidu poll: 已确认（v 长度 {}）→ qrbdusslogin 换 Cookie",
+                qrv.len()
+            ));
             // 已确认：qrbdusslogin 换 Cookie（Set-Cookie BDUSS/STOKEN/PTOKEN/bduss_bfess…）
+            // [lc-1903] v 是 base64 风格临时票，可能含 `+` `/` `=`，必须 URL 编码后再拼 query，
+            // 否则上游收到被截断的 v，一律回 310005「验证信息已过期」→ 表现为「确认了也登不上」。
             let login_url = format!(
-                "https://passport.baidu.com/v3/login/main/qrbdusslogin?v={qrv}&bduss=&u=https%3A%2F%2Fpan.baidu.com%2Fdisk%2Fmain&qrloginfromapi=1&tpl=netdisk"
+                "https://passport.baidu.com/v3/login/main/qrbdusslogin?v={}&bduss=&u=https%3A%2F%2Fpan.baidu.com%2Fdisk%2Fmain&qrloginfromapi=1&tpl=netdisk&apiver=v3",
+                urlencoding::encode(&qrv)
             );
             let resp = client_noredir()
                 .get(&login_url)
@@ -738,8 +702,14 @@ async fn poll_provider(
                 Some(&["BDUSS", "bduss_bfess", "STOKEN", "PTOKEN", "PANSCPANWEB", "panweb"]),
             );
             if !cookies.contains("BDUSS=") {
-                return Err("百度扫码确认但未拿到 BDUSS".into());
+                crate::libmpv::trace(&format!(
+                    "[lc-1903] baidu qrbdusslogin 未拿到 BDUSS（HTTP {}，Set-Cookie {} 条）",
+                    resp.status().as_u16(),
+                    setc.len()
+                ));
+                return Err("百度扫码已确认，但换取登录凭据失败（BDUSS 未下发），请重新扫码".into());
             }
+            crate::libmpv::trace("[lc-1903] baidu qrbdusslogin 成功，BDUSS 已写入");
             let cred = json!({ "cookies": cookies, "user_name": "百度网盘", "saved_at_ms": now_ms() });
             Ok((2, Some("百度网盘".into()), Some(cred)))
         }
@@ -766,76 +736,51 @@ async fn poll_provider(
             }
             let biz = v.pointer("/content/data/bizExt").and_then(|x| x.as_str()).unwrap_or("");
             if biz.is_empty() {
-                return Err("阿里扫码确认但缺 bizExt".into());
+                crate::libmpv::trace("[lc-1903] aliyun CONFIRMED 但响应里没有 bizExt");
+                return Err("阿里云盘已确认，但上游未返回登录凭据（bizExt 缺失），请重新扫码".into());
             }
             let decoded = STANDARD
                 .decode(biz.trim())
                 .map_err(|e| format!("bizExt 解码失败: {e}"))?;
             let bv: Value = serde_json::from_slice(&decoded).map_err(|e| format!("bizExt 解析失败: {e}"))?;
-            let refresh_token = bv
-                .pointer("/pds_login_result/refreshToken")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .to_string();
-            if refresh_token.is_empty() {
-                return Err("bizExt 里没有 refreshToken".into());
-            }
-            let cred = aliyun_refresh(&refresh_token).await?;
+            // [lc-1903] bizExt 解出来是 `pds_login_result`：正常给 refreshToken，部分版本/灰度
+            // 直接给 accessToken + defaultDriveId（camelCase 与 snake_case 都出现过）。
+            // 旧代码只认 `/pds_login_result/refreshToken`，字段一变就 Err → 前端显示「网络不稳定」。
+            let pick = |camel: &str, snake: &str| -> String {
+                let p1 = format!("/pds_login_result/{camel}");
+                let p2 = format!("/pds_login_result/{snake}");
+                g_str(&bv, &[p1.as_str(), p2.as_str()], &[camel, snake])
+            };
+            let refresh_token = pick("refreshToken", "refresh_token");
+            let access_token = pick("accessToken", "access_token");
+            let drive_id = pick("defaultDriveId", "default_drive_id");
+            let nick = pick("nickName", "nick_name");
+            let user_name = pick("userName", "user_name");
+            let cred = if !access_token.is_empty() && !drive_id.is_empty() {
+                // 上游已经把可用凭据直接给了，省掉一次 token/refresh（少一个失败点）
+                crate::libmpv::trace("[lc-1903] aliyun CONFIRMED：bizExt 直接带 accessToken，跳过 token/refresh");
+                json!({
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                    "drive_id": drive_id,
+                    "user_name": if !nick.is_empty() { nick } else if !user_name.is_empty() { user_name } else { "阿里云盘".to_string() },
+                    "saved_at_ms": now_ms(),
+                })
+            } else if !refresh_token.is_empty() {
+                crate::libmpv::trace("[lc-1903] aliyun CONFIRMED：bizExt 只带 refreshToken，走 token/refresh");
+                aliyun_refresh(&refresh_token).await?
+            } else {
+                crate::libmpv::trace(&format!(
+                    "[lc-1903] aliyun bizExt 无 access/refresh token（keys: {}）",
+                    bv.pointer("/pds_login_result")
+                        .and_then(|x| x.as_object())
+                        .map(|o| o.keys().cloned().collect::<Vec<_>>().join(","))
+                        .unwrap_or_default()
+                ));
+                return Err("阿里云盘已确认，但凭据里没有可用 token，请重新扫码".into());
+            };
             let user_name = cred.get("user_name").and_then(|x| x.as_str()).unwrap_or("").to_string();
             Ok((2, Some(user_name), Some(cred)))
-        }
-        // 天翼：qrcodeLoginState.do 轮询 → 成功返回 loginUrl（跟随落 SESSION cookie）
-        "tianyi" => {
-            let lt = g_str(d, &["/lt"], &["lt"]);
-            let param_id = g_str(d, &["/paramId"], &["paramId"]);
-            let req_id = g_str(d, &["/reqId"], &["reqId"]);
-            let uuid = g_str(d, &["/uuid"], &["uuid"]);
-            let (v, setc) = post_form(
-                "https://open.e.189.cn/api/logbox/oauth2/qrcodeLoginState.do",
-                &[
-                    ("REQID".into(), req_id.clone()),
-                    ("lt".into(), lt.clone()),
-                    ("paramId".into(), param_id.clone()),
-                    ("appId".into(), "cloudlt".into()),
-                    ("uuid".into(), uuid.clone()),
-                ],
-                &[("Referer".into(), "https://open.e.189.cn/".into())],
-            )
-            .await?;
-            // 确认态：data.loginUrl 出现（或 state==9）。其余全部当待扫码/待确认。
-            let login_url = g_str(&v, &["/data/loginUrl", "/loginUrl"], &["loginUrl"]);
-            let state = g_str(&v, &["/data/state", "/state"], &["state"]);
-            if login_url.is_empty() {
-                let scanned = state == "1" || state == "2";
-                return Ok((if scanned { 1 } else { 0 }, None, None));
-            }
-            // 跟 loginUrl 链收 cloud.189.cn 域 Cookie
-            let mut setc_all = setc;
-            let mut cur = login_url;
-            for _ in 0..4 {
-                let resp = client_noredir()
-                    .get(&cur)
-                    .header("Referer", "https://cloud.189.cn/")
-                    .send()
-                    .await
-                    .map_err(|e| format!("天翼登录跳转失败: {e}"))?;
-                setc_all.extend(
-                    resp.headers()
-                        .get_all(reqwest::header::SET_COOKIE)
-                        .iter()
-                        .filter_map(|h| h.to_str().ok().map(|s| s.to_string())),
-                );
-                match resp.headers().get(reqwest::header::LOCATION).and_then(|l| l.to_str().ok()) {
-                    Some(loc) if loc.starts_with("http") => cur = loc.to_string(),
-                    _ => break,
-                }
-            }
-            let cookies = cookie_str(&setc_all, None);
-            if cookies.is_empty() {
-                return Err("天翼扫码确认但未拿到 Cookie".into());
-            }
-            let cred = json!({ "cookies": cookies, "user_name": "天翼云盘", "saved_at_ms": now_ms() });
-            Ok((2, Some("天翼云盘".into()), Some(cred)))
         }
         // 123：qr-code/result?uniID=（实测轮询端点在；data.loginStatus 判态，
         // 确认时响应携带 Set-Cookie）
@@ -866,7 +811,14 @@ async fn poll_provider(
             if !cookies.is_empty() && status == 3 {
                 let user = g_str(&v, &["/data/userInfo/nickname", "/data/nickname"], &[]);
                 let cred = json!({ "cookies": cookies, "user_name": if user.is_empty() { "123 云盘".to_string() } else { user }, "saved_at_ms": now_ms() });
+                crate::libmpv::trace("[lc-1903] 123 已确认并拿到 Cookie");
                 return Ok((2, Some(cred.get("user_name").and_then(|x| x.as_str()).unwrap_or("123 云盘").to_string()), Some(cred)));
+            }
+            // [lc-1903] 已确认但本次没带 Cookie：旧代码会落到 status=0（待扫码），界面就一直
+            // 停在等待、什么都不发生。打点保留现场，并至少按「已扫待确认」上报。
+            if status == 3 {
+                crate::libmpv::trace("[lc-1903] 123 loginStatus=3 但本次响应无 Set-Cookie");
+                return Ok((1, None, None));
             }
             // loginStatus：实测假 uniID = 4（无效/过期）；1=待扫 2=已扫待确认（按业界惯例）
             // [lc-1902] 4 是上游明确说的「无效/过期」，按 status=3 换码，别再当待扫码空转。
@@ -875,44 +827,35 @@ async fn poll_provider(
             }
             Ok((if status == 2 { 1 } else { 0 }, None, None))
         }
-        // 光鸭：OAuth 设备码轮询 grant_type=urn:ietf:params:oauth:grant-type:device_code
-        "guangya" => {
-            let device_code = g_str(d, &["/device_code"], &["device_code"]);
-            let v = post_json(
-                "https://account.guangyapan.com/v1/auth/token",
-                json!({
-                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-                    "device_code": device_code,
-                    "client_id": "aMe-8VSlkrbQXpUR8"
-                }),
-                &[
-                    ("x-client-id".into(), "aMe-8VSlkrbQXpUR8".into()),
-                    ("x-client-version".into(), "0.0.1".into()),
-                    ("Referer".into(), "https://www.guangyapan.com/".into()),
-                ],
-            )
-            .await?;
-            let err = g_str(&v, &["/error"], &["error"]);
-            if !err.is_empty() {
-                // OAuth 设备码没有「已扫未确认」态：pending/slow_down 都按待扫码报
-                if err.contains("pending") || err.contains("slow") || err.contains("expired_token") {
-                    return Ok((0, None, None));
-                }
-                return Err(format!("光鸭云盘登录被拒: {err}"));
-            }
-            let access = g_str(&v, &["/access_token"], &["access_token"]);
-            if access.is_empty() {
-                return Ok((0, None, None));
-            }
-            let cred = json!({
-                "access_token": access,
-                "refresh_token": g_str(&v, &["/refresh_token"], &["refresh_token"]),
-                "user_name": "光鸭云盘",
-                "saved_at_ms": now_ms(),
-            });
-            Ok((2, Some("光鸭云盘".into()), Some(cred)))
-        }
         _ => Err(format!("不支持的网盘: {provider}")),
+    }
+}
+
+/// [lc-1903] 解析百度 `channel/unicast` 的 `channel_v`，取出「确认票」v。
+///
+/// 上游把 channel_v 当作**字符串**下发（双重嵌套 JSON）：
+/// `{"errno":0,"channel_v":"{\"v\":\"<临时 bduss>\",\"status\":1,\"u\":null}"}`。
+/// 返回 None = 还没确认（未扫 / 已扫待确认）。
+fn baidu_confirm_v(v: &Value) -> Option<String> {
+    let raw = v.get("channel_v").and_then(|x| x.as_str())?;
+    if raw.trim().is_empty() {
+        return None;
+    }
+    let cv: Value = serde_json::from_str(raw).ok()?;
+    // 对象形态 {"v":..}；兼容历史上出现过的数组形态 [".."]
+    let mut s = g_str(&cv, &["/v"], &["v"]);
+    if s.is_empty() {
+        s = cv
+            .as_array()
+            .and_then(|a| a.get(0))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+    }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
     }
 }
 
@@ -1049,63 +992,6 @@ pub async fn cloud_list(
                 .collect();
             Ok(json!({ "items": out, "nextCursor": next_cursor }))
         }
-        // 天翼：listFiles.action（cursor = 页号；文件夹在 fileListAO.folderList）
-        "tianyi" => {
-            let cred = require_cred("tianyi", &["cookies"])?;
-            let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
-            let page: u32 = if cursor.is_empty() { 1 } else { cursor.parse().unwrap_or(1) };
-            let folder = if fid.is_empty() { "-11" } else { fid.as_str() };
-            let url = format!(
-                "https://cloud.189.cn/api/open/file/listFiles.action?folderId={}&mediaType=&pageNum={page}&pageSize=500&iconOption=5&fileName=&descending=true",
-                urlencoding::encode(folder)
-            );
-            let v = get_json(
-                &url,
-                &[
-                    ("Cookie".into(), cookies.to_string()),
-                    ("Accept".into(), "application/json, text/plain, */*".into()),
-                    ("X-Requested-With".into(), "XMLHttpRequest".into()),
-                    ("Referer".into(), "https://cloud.189.cn/web/main/file/folder/".into()),
-                ],
-            )
-            .await?;
-            if v.pointer("/res_code").and_then(|x| x.as_i64()) == Some(-1) {
-                return Err("天翼登录已过期，请重新扫码".into());
-            }
-            let mut out = Vec::new();
-            for (arr, is_dir) in [
-                (v.pointer("/fileListAO/folderList"), true),
-                (v.pointer("/fileListAO/fileList"), false),
-            ] {
-                let Some(list) = arr.and_then(|x| x.as_array()) else { continue };
-                for it in list {
-                    let name = g_str(it, &["/name"], &["name"]);
-                    if name.is_empty() {
-                        continue;
-                    }
-                    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-                    let kind = if is_dir {
-                        "dir"
-                    } else if ["mkv", "mp4", "avi", "wmv", "flv", "mov", "iso", "m2ts", "webm", "ts", "rmvb", "mpg"].contains(&ext.as_str()) {
-                        "video"
-                    } else if ["mp3", "m4a", "aac", "wav", "ogg", "flac", "ape"].contains(&ext.as_str()) {
-                        "audio"
-                    } else {
-                        "other"
-                    };
-                    out.push(json!({
-                        "fileId": g_str(it, &["/id"], &["id"]),
-                        "navId": g_str(it, &["/id"], &["id"]),
-                        "name": name,
-                        "isDir": is_dir,
-                        "size": g_u64(it, &["size"]),
-                        "kind": kind,
-                    }));
-                }
-            }
-            let next_cursor = if out.len() >= 500 { (page + 1).to_string() } else { String::new() };
-            Ok(json!({ "items": out, "nextCursor": next_cursor }))
-        }
         // 123：file/list/new（cursor = next）
         "123" => {
             let cred = require_cred("123", &["cookies"])?;
@@ -1163,64 +1049,6 @@ pub async fn cloud_list(
                 })
                 .collect();
             Ok(json!({ "items": out, "nextCursor": next }))
-        }
-        // 光鸭：nd.biz/userres.s/v1/file/get_file_list（cursor = page）
-        "guangya" => {
-            let cred = require_cred("guangya", &["access_token"])?;
-            let token = cred.get("access_token").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let page: u32 = if cursor.is_empty() { 1 } else { cursor.parse().unwrap_or(1) };
-            let v = post_json(
-                "https://api.guangyapan.com/nd.biz/userres.s/v1/file/get_file_list",
-                json!({
-                    "page": page,
-                    "pageSize": 100,
-                    "parentFolderId": if fid.is_empty() { "0" } else { fid.as_str() },
-                }),
-                &[
-                    ("Authorization".into(), format!("Bearer {token}")),
-                    ("x-client-id".into(), "aMe-8VSlkrbQXpUR8".into()),
-                    ("Referer".into(), "https://www.guangyapan.com/".into()),
-                ],
-            )
-            .await?;
-            if g_str(&v, &["/code"], &["code"]) != "success" && v.get("data").is_none() {
-                return Err(format!("光鸭列目录被拒: {v}"));
-            }
-            let list = v
-                .pointer("/data/list")
-                .or_else(|| v.pointer("/data/items"))
-                .or_else(|| v.pointer("/list"))
-                .and_then(|x| x.as_array())
-                .cloned()
-                .unwrap_or_default();
-            let out: Vec<Value> = list
-                .iter()
-                .map(|it| {
-                    let is_dir = g_bool(it, &["is_dir", "isDir", "isFolder"])
-                        || g_str(it, &["/type"], &["type"]) == "folder";
-                    let name = g_str(it, &["/name", "/fileName", "/file_name"], &["name", "fileName"]);
-                    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-                    let kind = if is_dir {
-                        "dir"
-                    } else if ["mkv", "mp4", "avi", "wmv", "flv", "mov", "iso", "m2ts", "webm", "ts", "rmvb", "mpg"].contains(&ext.as_str()) {
-                        "video"
-                    } else if ["mp3", "m4a", "aac", "wav", "ogg", "flac", "ape"].contains(&ext.as_str()) {
-                        "audio"
-                    } else {
-                        "other"
-                    };
-                    json!({
-                        "fileId": g_str(it, &["/id", "/fileId", "/file_id"], &["id", "fileId"]),
-                        "navId": g_str(it, &["/id", "/folderId", "/fileId"], &["id", "folderId"]),
-                        "name": name,
-                        "isDir": is_dir,
-                        "size": g_u64(it, &["size", "fileSize", "Size"]),
-                        "kind": kind,
-                    })
-                })
-                .collect();
-            let next_cursor = if list.len() >= 100 { (page + 1).to_string() } else { String::new() };
-            Ok(json!({ "items": out, "nextCursor": next_cursor }))
         }
         _ => Err(format!("不支持的网盘: {provider}")),
     }
@@ -1513,34 +1341,6 @@ pub(crate) async fn resolve_play(
             }
             Ok((url, false, "https://www.alipan.com/".into(), UA_CHROME.into()))
         }
-        // 天翼：batchGetFileDownloadUrl.action（fileIds[]）
-        "tianyi" => {
-            let cred = require_cred("tianyi", &["cookies"])?;
-            let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
-            let url = format!(
-                "https://cloud.189.cn/api/open/file/batchGetFileDownloadUrl.action?fileIds%5B%5D={}",
-                urlencoding::encode(file_id)
-            );
-            let v = get_json(
-                &url,
-                &[
-                    ("Cookie".into(), cookies.to_string()),
-                    ("Accept".into(), "application/json, text/plain, */*".into()),
-                    ("X-Requested-With".into(), "XMLHttpRequest".into()),
-                    ("Referer".into(), "https://cloud.189.cn/web/main".into()),
-                ],
-            )
-            .await?;
-            let dl = g_str(
-                &v,
-                &["/fileDownloadUrlV2", "/fileDownloadUrl"],
-                &["fileDownloadUrlV2", "fileDownloadUrl"],
-            );
-            if dl.is_empty() {
-                return Err(format!("天翼未返回下载地址: {v}"));
-            }
-            Ok((dl, false, "https://cloud.189.cn/".into(), UA_CHROME.into()))
-        }
         // 123：file/download_info → DownloadUrl → yun.123pan.cn/Origin 跳转链（跟到最终直链）
         "123" => {
             let cred = require_cred("123", &["cookies"])?;
@@ -1589,26 +1389,6 @@ pub(crate) async fn resolve_play(
                 break;
             }
             Ok((final_url, false, "https://yun.123pan.cn/".into(), UA_CHROME.into()))
-        }
-        // 光鸭：nd.biz/userres.s/v1/get_res_download_url → signedURL
-        "guangya" => {
-            let cred = require_cred("guangya", &["access_token"])?;
-            let token = cred.get("access_token").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let v = post_json(
-                "https://api.guangyapan.com/nd.biz/userres.s/v1/get_res_download_url",
-                json!({ "fileId": file_id }),
-                &[
-                    ("Authorization".into(), format!("Bearer {token}")),
-                    ("x-client-id".into(), "aMe-8VSlkrbQXpUR8".into()),
-                    ("Referer".into(), "https://www.guangyapan.com/".into()),
-                ],
-            )
-            .await?;
-            let url = g_str(&v, &["/data/signedURL", "/data/signedUrl", "/signedURL"], &["signedURL", "signedUrl"]);
-            if url.is_empty() {
-                return Err(format!("光鸭未返回签名直链: {v}"));
-            }
-            Ok((url, false, "https://www.guangyapan.com/".into(), UA_CHROME.into()))
         }
         _ => Err(format!("不支持的网盘: {provider}")),
     }
@@ -1679,7 +1459,7 @@ pub async fn cloud_play(
 }
 
 /// [lc-1811] 重命名（LumiPlayer rename 端点口径：夸克/阿里/115/百度/123；
-/// 天翼/光鸭字符串池无 rename 证据，不实现）。
+/// 字符串池无 rename 证据的家不实现）。
 #[tauri::command]
 pub async fn cloud_rename(provider: String, file_id: String, new_name: String) -> Result<(), String> {
     let new_name = new_name.trim().to_string();
@@ -1839,6 +1619,24 @@ mod tests {
         assert_eq!(v.get("errno").and_then(|x| x.as_i64()), Some(0));
         let v = jsonp_or_json("{\"a\":2}").unwrap();
         assert_eq!(v.get("a").and_then(|x| x.as_i64()), Some(2));
+    }
+
+    #[test]
+    fn baidu_channel_v_parsing() {
+        // 已确认：channel_v 是「JSON 字符串」，v 里可能带 + / =（必须 URL 编码后再用）
+        let confirmed = json!({
+            "errno": 0,
+            "channel_v": "{\"v\":\"abc+/=\",\"status\":1,\"u\":null}"
+        });
+        assert_eq!(baidu_confirm_v(&confirmed).as_deref(), Some("abc+/="));
+        // 已扫未确认：channel_v 存在但没有 v
+        let scanned = json!({ "errno": 0, "channel_v": "{\"status\":1,\"u\":null}" });
+        assert!(baidu_confirm_v(&scanned).is_none());
+        // 兼容数组形态 [".."]
+        let arr = json!({ "channel_v": "[\"xyz\"]" });
+        assert_eq!(baidu_confirm_v(&arr).as_deref(), Some("xyz"));
+        // 未扫码：errno=1，没有 channel_v
+        assert!(baidu_confirm_v(&json!({ "errno": 1 })).is_none());
     }
 
     #[test]

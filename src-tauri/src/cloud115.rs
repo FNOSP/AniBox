@@ -167,6 +167,10 @@ pub async fn cloud115_qr_poll(
     sign: String,
 ) -> Result<Value, String> {
     let (status, cookies) = qr_poll_core(&uid, &time, &sign).await?;
+    // [lc-1903] 只打「有变化」的状态（0=待扫码每 2s 一拍，不刷屏）；不打 Cookie
+    if status != 0 {
+        crate::libmpv::trace(&format!("[lc-1903] 115 qr_poll status={status}"));
+    }
     if status != 2 {
         // status=3：上游明确说过期（code 90033），前端据此自动换一张码
         let expired = status == crate::cloud::QR_EXPIRED;
@@ -182,6 +186,7 @@ pub async fn cloud115_qr_poll(
         saved_at_ms: now_ms(),
     };
     save_jar(&jar)?;
+    crate::libmpv::trace("[lc-1903] 115 登录 Cookie 已落盘");
     Ok(json!({ "status": 2, "ok": true, "userName": jar.user_name }))
 }
 
@@ -260,7 +265,14 @@ async fn qr_poll_core(
         }
     }
     if uid_c.is_empty() || cid_c.is_empty() || seid_c.is_empty() {
-        return Err("扫码已确认但没拿到完整 Cookie（UID/CID/SEID），请重试".into());
+        crate::libmpv::trace(&format!(
+            "[lc-1903] 115 login/qrcode Cookie 不全（UID={} CID={} SEID={}，HTTP {}）",
+            !uid_c.is_empty(),
+            !cid_c.is_empty(),
+            !seid_c.is_empty(),
+            resp.status().as_u16()
+        ));
+        return Err("115 已确认，但换取登录 Cookie 失败（UID/CID/SEID 不全），请重新扫码".into());
     }
     let body = resp.text().await.unwrap_or_default();
     let user_name = serde_json::from_str::<Value>(&body)

@@ -50,6 +50,7 @@ vite.config.d.ts
 # 部署 / 运维脚手架与文档（内部资料）
 /bgm-mirror/
 /tmdb-mirror/
+/jav-mirror/
 /stats-server/
 /RELEASE.md
 /release.cmd

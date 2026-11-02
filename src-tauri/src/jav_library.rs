@@ -685,6 +685,103 @@ struct Meta {
     cover_url: String,
 }
 
+// ───────────────────────── 镜像轨（与 bgm/tmdb 镜像同一套准入签名） ─────────────────────────
+// r18.dev / jav321 / mgstage / heyzo / FC2 国内直连全挂（DNS 污染 + 阻断），
+// JAVCloudHub 原方案靠用户自己的梯子；这里由 jav.690075.xyz（Cloudflare Worker）代拉 ——
+// 与 bgm.690075.xyz 治 lain.bgm.tv DNS 污染同一思路。签名协议逐字符对齐 mirror_sign.rs，
+// 密钥复用 FNTV_BGM_SECRET（App 注入链路已有，不新增一条；轮换时两个 worker 一起换）。
+const MIRROR_BASES: &[&str] = &[
+    "https://javmirror.690075.xyz",
+    "https://fntv-jav-mirror2.122983191.workers.dev",
+];
+
+/// 站点 id → 直连上游（镜像不可用且没配密钥时的兜底，需要用户自己的代理）
+const SITE_BASES: &[(&str, &str)] = &[
+    ("r18", "https://r18.dev"),
+    ("j321", "https://www.jav321.com"),
+    ("mgs", "https://www.mgstage.com"),
+    ("heyzo", "https://www.heyzo.com"),
+    ("fc2", "https://adult.contents.fc2.com"),
+];
+
+fn site_base(site: &str) -> &'static str {
+    SITE_BASES.iter().find(|(k, _)| *k == site).map(|(_, v)| *v).unwrap_or("")
+}
+
+fn mirror_secret() -> Option<String> {
+    crate::mirror_sign::resolve_secret("FNTV_BGM_SECRET", option_env!("FNTV_BGM_SECRET"))
+}
+
+/// 组装一个请求（method/body/业务头；签名头由 apply_auth 在镜像轨上补）
+fn build_req(
+    cli: &reqwest::Client,
+    url: &str,
+    method: &str,
+    body: Option<&(&'static str, String)>,
+    headers: &[(&str, &str)],
+) -> reqwest::RequestBuilder {
+    let rb = match method {
+        "POST" => cli.post(url),
+        "PUT" => cli.put(url),
+        _ => cli.get(url),
+    };
+    let rb = if let Some((ct, b)) = body {
+        rb.header("content-type", *ct).body(b.clone())
+    } else {
+        rb
+    };
+    let mut rb = rb;
+    for (k, v) in headers {
+        rb = rb.header(*k, *v);
+    }
+    rb
+}
+
+/// 站点请求统一入口：有密钥 → 逐镜像端点（边缘代拉，国内直连）；全挂 → 直连上游。
+/// 镜像会把上游状态码原样透传，引擎里的 404/403 分支逻辑不变。
+async fn send_site(
+    site: &str,
+    method: &str,
+    path_and_query: &str,
+    body: Option<(&'static str, String)>,
+    headers: &[(&str, &str)],
+) -> Result<reqwest::Response, String> {
+    let cli = scrape_client();
+    if let Some(sec) = mirror_secret() {
+        for base in MIRROR_BASES {
+            let url = format!("{base}/{site}{path_and_query}");
+            let pwq = format!("/{site}{path_and_query}");
+            let bt = body.as_ref().map(|(_, b)| b.clone()).unwrap_or_default();
+            let rb = build_req(&cli, &url, method, body.as_ref(), headers);
+            let rb = crate::mirror_sign::apply_auth(rb, &sec, method, &pwq, &bt);
+            if let Ok(r) = rb.send().await {
+                return Ok(r);
+            }
+        }
+    }
+    let url = format!("{}{path_and_query}", site_base(site));
+    let rb = build_req(&cli, &url, method, body.as_ref(), headers);
+    rb.send()
+        .await
+        .map_err(|e| format!("{site} 直连失败（该站点在国内需要代理，或等镜像端点可用）: {e}"))
+}
+
+/// 封面 URL 能否走镜像的 /img/ 轨（host 在白名单内）
+fn img_mirror_path(url: &str) -> Option<String> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let (host, path) = rest.split_once('/')?;
+    const IMG_HOSTS: &[&str] = &[
+        "pics.dmm.co.jp", "p.dmm.co.jp", "c-pics.cdn-jav321.com", "www.mgstage.com",
+        "www.heyzo.com", "r18.dev", "adult.contents.fc2.com", "www.jav321.com",
+    ];
+    if !IMG_HOSTS.contains(&host) {
+        return None;
+    }
+    Some(format!("/img/{host}/{path}"))
+}
+
 fn scrape_client() -> &'static reqwest::Client {
     static C: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     C.get_or_init(|| {
@@ -827,15 +924,10 @@ fn uniq_keep_order(v: Vec<String>) -> Vec<String> {
 // ---------- r18.dev：公开 JSON，最稳的一手（无 Cookie、无年龄门） ----------
 
 async fn eng_r18dev(code: &str) -> Result<Meta, String> {
-    let base = "https://r18.dev";
-    let cli = scrape_client();
-    let get = |url: String| {
-        let url = url.clone();
+    let get = |path: String| {
+        let path = path.clone();
         async move {
-            let resp = cli
-                .get(&url)
-                .header("Accept", "application/json")
-                .send()
+            let resp = send_site("r18", "GET", &path, None, &[("Accept", "application/json")])
                 .await
                 .map_err(|e| format!("R18.dev 请求失败: {e}"))?;
             let st = resp.status().as_u16();
@@ -850,9 +942,9 @@ async fn eng_r18dev(code: &str) -> Result<Meta, String> {
         }
     };
     // dvd_id 优先（SONE-116），404 退 combined（部分番号只按 content_id 收录）
-    let item = match get(format!("{base}/videos/vod/movies/detail/-/dvd_id={code}/json")).await {
+    let item = match get(format!("/videos/vod/movies/detail/-/dvd_id={code}/json")).await {
         Ok(v) => v,
-        Err(e) if e == "notfound" => get(format!("{base}/videos/vod/movies/detail/-/combined={code}/json")).await?,
+        Err(e) if e == "notfound" => get(format!("/videos/vod/movies/detail/-/combined={code}/json")).await?,
         Err(e) => return Err(e),
     };
     if !item.is_object() || item.as_object().map(|o| o.is_empty()).unwrap_or(false) {
@@ -961,16 +1053,16 @@ fn unwrap_movie(v: Value) -> Value {
 // ---------- jav321：POST 表单检索，不吃 Cloudflare，JavBus/JavDB 被盾时的兜底 ----------
 
 async fn eng_jav321(code: &str) -> Result<Meta, String> {
-    let base = "https://www.jav321.com";
-    let cli = scrape_client();
-    let resp = cli
-        .post(format!("{base}/search"))
-        .form(&[("sn", code)])
-        .header("Referer", format!("{base}/"))
-        .header("Cookie", "over18=1")
-        .send()
-        .await
-        .map_err(|e| format!("jav321 请求失败: {e}"))?;
+    let body = format!("sn={}", urlencoding::encode(code));
+    let resp = send_site(
+        "j321",
+        "POST",
+        "/search",
+        Some(("application/x-www-form-urlencoded", body)),
+        &[("Referer", "https://www.jav321.com/"), ("Cookie", "over18=1")],
+    )
+    .await
+    .map_err(|e| format!("jav321 请求失败: {e}"))?;
     let st = resp.status().as_u16();
     if is_blocked_status(st) {
         return Err(format!("jav321 返回了拦截页（HTTP {st}）"));
@@ -1039,15 +1131,15 @@ async fn eng_jav321(code: &str) -> Result<Meta, String> {
 // ---------- mgstage：片商官方站（SOD / MIDE / SIRO / GANA），数据最准但只覆盖自家 ----------
 
 async fn eng_mgstage(code: &str) -> Result<Meta, String> {
-    let base = "https://www.mgstage.com";
-    let cli = scrape_client();
-    let resp = cli
-        .get(format!("{base}/product/product_detail/{code}/"))
-        .header("Referer", format!("{base}/"))
-        .header("Cookie", "adc=1")
-        .send()
-        .await
-        .map_err(|e| format!("MGStage 请求失败: {e}"))?;
+    let resp = send_site(
+        "mgs",
+        "GET",
+        &format!("/product/product_detail/{code}/"),
+        None,
+        &[("Referer", "https://www.mgstage.com/"), ("Cookie", "adc=1")],
+    )
+    .await
+    .map_err(|e| format!("MGStage 请求失败: {e}"))?;
     let st = resp.status().as_u16();
     if st == 404 {
         return Err(format!("MGStage 没有「{code}」这个作品（它只收录自家片商）"));
@@ -1120,14 +1212,15 @@ async fn eng_heyzo(code: &str) -> Result<Meta, String> {
     if num.is_empty() {
         return Err(format!("「{code}」不是 HEYZO 番号"));
     }
-    let base = "https://www.heyzo.com";
-    let cli = scrape_client();
-    let resp = cli
-        .get(format!("{base}/moviepages/{num}/index.html"))
-        .header("Cookie", "adc=1")
-        .send()
-        .await
-        .map_err(|e| format!("HEYZO 请求失败: {e}"))?;
+    let resp = send_site(
+        "heyzo",
+        "GET",
+        &format!("/moviepages/{num}/index.html"),
+        None,
+        &[("Cookie", "adc=1")],
+    )
+    .await
+    .map_err(|e| format!("HEYZO 请求失败: {e}"))?;
     let st = resp.status().as_u16();
     if st == 404 {
         return Err(format!("HEYZO 上没有 {code}"));
@@ -1217,15 +1310,15 @@ async fn eng_fc2(code: &str) -> Result<Meta, String> {
     if num.len() < 4 {
         return Err(format!("从「{code}」里提取不出合法的 FC2 作品编号"));
     }
-    let base = "https://adult.contents.fc2.com";
-    let cli = scrape_client();
-    let resp = cli
-        .get(format!("{base}/article/{num}/"))
-        .header("Referer", format!("{base}/"))
-        .header("Cookie", "adc=1")
-        .send()
-        .await
-        .map_err(|e| format!("FC2 请求失败: {e}"))?;
+    let resp = send_site(
+        "fc2",
+        "GET",
+        &format!("/article/{num}/"),
+        None,
+        &[("Referer", "https://adult.contents.fc2.com/"), ("Cookie", "adc=1")],
+    )
+    .await
+    .map_err(|e| format!("FC2 请求失败: {e}"))?;
     let st = resp.status().as_u16();
     if st == 404 {
         return Err("FC2 官方站上没有这个作品（PPV 作品经常下架，下架后官方页是「未找到商品」）".into());
@@ -1347,13 +1440,35 @@ async fn download_cover(url: &str, referer: &str) -> Result<(Vec<u8>, String), S
         return Err("没有封面地址".into());
     }
     let cli = scrape_client();
+    // 镜像 /img/ 轨优先（host 白名单内 + 有密钥）；全挂退直连（需代理）
+    let mut last_err = String::new();
+    if let (Some(p), Some(sec)) = (img_mirror_path(url), mirror_secret()) {
+        for base in MIRROR_BASES {
+            let rb = crate::mirror_sign::apply_auth(
+                cli.get(format!("{base}{p}")).timeout(std::time::Duration::from_secs(40)),
+                &sec,
+                "GET",
+                &p,
+                "",
+            );
+            match rb.send().await {
+                Ok(r) => return finish_cover(r).await,
+                Err(e) => last_err = format!("镜像封面下载失败: {e}"),
+            }
+        }
+    }
     let resp = cli
         .get(url)
         .header("Referer", referer)
         .timeout(std::time::Duration::from_secs(40))
         .send()
         .await
-        .map_err(|e| format!("封面下载失败: {e}"))?;
+        .map_err(|e| if last_err.is_empty() { format!("封面下载失败: {e}") } else { format!("{last_err}；直连失败: {e}") })?;
+    finish_cover(resp).await
+}
+
+/// 状态码检查（镜像与直连共用）
+async fn finish_cover(resp: reqwest::Response) -> Result<(Vec<u8>, String), String> {
     if !resp.status().is_success() {
         return Err(format!("封面下载 HTTP {}", resp.status().as_u16()));
     }
@@ -1369,7 +1484,7 @@ async fn download_cover(url: &str, referer: &str) -> Result<(Vec<u8>, String), S
     if bytes.len() > MAX_COVER_BYTES {
         return Err("封面文件异常大，已跳过".into());
     }
-    let ext = ext_of(&bytes, url);
+    let ext = ext_of(&bytes, "");
     Ok((bytes.to_vec(), ext.to_string()))
 }
 

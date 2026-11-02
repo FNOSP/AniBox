@@ -28,9 +28,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowRect, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
-    SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_HWNDPARENT, SW_HIDE, SW_SHOW,
-    SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+    EnumWindows, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible,
+    SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_HWNDPARENT, SW_HIDE,
+    SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
 };
 
 /// 当前已收编的 mpv 顶层窗口（isize，全仓 HWND 约定；None = 未收编 / 已失效清理）。
@@ -207,16 +207,20 @@ pub fn embed_adopt(pid: u32, owner_hwnd: isize) -> Result<isize, String> {
 /// [lc-1909] 把内嵌矩形（屏幕物理坐标）钉到 mpv 窗口上；此前被隐藏则顺带显示。
 /// 高频调用路径：只做 SetWindowPos（绝对定位，SWP_NOACTIVATE|SWP_NOZORDER），
 /// 幂等轻量；窗口仍隐藏时先定位后显示，避免在旧位置闪现。
+/// [lc-1910] app 模式 mpv 以 `--window-minimized=yes` 最小化启动（防闪窗）：
+/// 最小化（iconic）窗口对 SetWindowPos 的显示路径不生效，需要 SW_SHOWNOACTIVATE
+/// 还原 —— 还原到「最近尺寸/位置」且不夺焦点；定位在还原**之后**做（iconic 态
+/// SetWindowPos 改的是还原矩形，先还原再钉位保证矩形不丢）。
 pub fn embed_apply_rect(hwnd: isize, x: i32, y: i32, w: i32, h: i32) {
     unsafe {
         if IsWindow(hwnd as _) == 0 {
             clear_hwnd();
             return;
         }
-        SetWindowPos(hwnd as _, std::ptr::null_mut(), x, y, w, h, SWP_NOACTIVATE | SWP_NOZORDER);
-        if EMBED_HIDDEN.swap(false, Ordering::SeqCst) {
-            ShowWindow(hwnd as _, SW_SHOW);
+        if EMBED_HIDDEN.swap(false, Ordering::SeqCst) || IsIconic(hwnd as _) != 0 {
+            ShowWindow(hwnd as _, SW_SHOWNOACTIVATE);
         }
+        SetWindowPos(hwnd as _, std::ptr::null_mut(), x, y, w, h, SWP_NOACTIVATE | SWP_NOZORDER);
     }
 }
 

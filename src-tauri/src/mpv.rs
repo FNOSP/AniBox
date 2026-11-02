@@ -257,6 +257,15 @@ impl MpvSession {
         // [lc-1559] 启动即加载（可选）：命令行直接带 M3U8/URL ⇒ 无 idle 空窗，
         // 不依赖 IPC（启动头几秒 IPC 命令会卡，见 lib.rs lc-1559 注释）。
         let mut args = args.to_vec();
+        // [lc-1910] 软件内播放防闪窗：app 模式下 mpv **最小化启动**——窗口创建但不可见
+        // （--force-window=immediate 照旧建窗，--window-minimized=yes 让它 iconic），
+        // 等 player_embed_rect 钉位成功后再无焦点显示（mpvwin::embed_apply_rect 的
+        // SW_SHOWNOACTIVATE 路径）。之前可见启动 → 前端挂载才 enter，中间必然闪出
+        // 一个独立小窗。window 模式参数保持与历史逐字节一致。
+        // 最小化窗口仍带 WS_VISIBLE，EnumWindows+IsWindowVisible 能找到它（收编不受影响）。
+        if app.state::<crate::AppState>().config.read().await.player_open_mode == "app" {
+            args.push("--window-minimized=yes".to_string());
+        }
         if let Some(t) = force_title {
             if !t.is_empty() {
                 args.push(format!("--force-media-title={t}"));

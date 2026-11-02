@@ -533,3 +533,27 @@
 @media (prefers-reduced-motion: reduce) {
   .jvd-scrim, .jvd { animation: none; }
 }
+
+/* 我的评分星行 + 媒体文件行 */
+.jvd-stars { display: inline-flex; align-items: center; gap: 2px; }
+.jvd-star {
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 0 1px;
+  opacity: 0.55;
+}
+.jvd-star.on { color: var(--gold, #ffd479); opacity: 1; }
+.jvd-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 0;
+  font-size: 12.5px;
+  color: var(--text-strong);
+}
+.jvd-file + .jvd-file { border-top: 1px solid var(--line); }
+.jvd-fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

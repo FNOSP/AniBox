@@ -14,6 +14,7 @@ mod cloud;
 mod cloud_proxy;
 mod cloud_library;
 mod jav_library;
+mod jav_dict;
 mod jav_settings;
 // [lc-1811] WebDAV 媒体源（多账号 + PROPFIND 浏览 + Basic Auth 播放 + 随片字幕）
 mod webdav;
@@ -4553,6 +4554,7 @@ pub fn run() {
             jav_settings::jav_settings_get,
             jav_settings::jav_settings_set,
             jav_settings::jav_auto_scan_run,
+            jav_library::jav_entry_rate,
             jav_library::jav_entry_scrape,
             jav_library::jav_fnos_libs,
             jav_library::jav_fnos_set_lib,

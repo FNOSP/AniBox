@@ -27,6 +27,7 @@ export type JavEntryT = {
   director: string;
   rating: number;
   votes: number;
+  userRating: number;
   cup: string;
   age: number;
   height: number;
@@ -133,6 +134,16 @@ export function JavDetailDrawer({
     }
   };
 
+  const rate = async (v: number) => {
+    const next = Math.round(e.userRating) === v ? 0 : v; // 再点同一档 = 清除
+    setE({ ...e, userRating: next });
+    try {
+      await invoke("jav_entry_rate", { provider, codeKey: e.codeKey, value: next });
+    } catch (ex) {
+      setNote(String(ex));
+    }
+  };
+
   const filterBy = (name: string) => {
     onFilter(name);
     onClose();
@@ -230,6 +241,41 @@ export function JavDetailDrawer({
                   <button key={t} className="jvd-chip" onClick={() => filterBy(t)}>{t}</button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* 我的评分（10 星，点一下打分，再点同档清除） */}
+          <div className="jvd-card">
+            <div className="jvd-krow">
+              <span className="jvd-k">我的评分</span>
+              <span className="jvd-stars">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((v) => (
+                  <button key={v} type="button" title={`${v} 分`}
+                    className={`jvd-star${Math.round(e.userRating) >= v ? " on" : ""}`}
+                    onClick={() => void rate(v)}>
+                    ★
+                  </button>
+                ))}
+                <span className="jvd-dim" style={{ marginLeft: 6 }}>
+                  {e.userRating > 0 ? `${e.userRating} 分` : "点一下打分"}
+                </span>
+              </span>
+            </div>
+          </div>
+
+          {/* 媒体文件 */}
+          {e.files.length > 0 && (
+            <div className="jvd-card">
+              <div className="jvd-k">媒体文件</div>
+              {e.files.map((f) => (
+                <div key={f.fileId} className="jvd-file">
+                  <span className="jvd-fname" title={f.name}>{f.name}</span>
+                  <span className="jvd-dim">{fmtSize(f.size)}</span>
+                </div>
+              ))}
+              {e.releaseDate && (
+                <div className="jvd-k" style={{ marginTop: 6 }}>发行 {e.releaseDate}</div>
+              )}
             </div>
           )}
 

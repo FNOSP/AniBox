@@ -468,6 +468,9 @@ pub struct JavEntry {
     pub rating: f64,
     #[serde(default)]
     pub votes: u32,
+    /// 用户自己打的分（1~10，0=没打）。和站点评分分两列，重刮不抹口味
+    #[serde(default)]
+    pub user_rating: f64,
     #[serde(default)]
     pub cup: String,
     #[serde(default)]
@@ -1114,7 +1117,8 @@ async fn eng_r18dev(ctx: &Ctx, code: &str, base_override: &str) -> Result<Meta, 
         Vec::new()
     };
     let actors = names(&["actresses", "actress", "actors"], false);
-    let tags = names(&["categories", "genres"], true);
+    // 标签优先日文名 —— jav_dict 词典键是日文标签，展示层翻译成简中
+    let tags = names(&["categories", "genres"], false);
     let obj_name = |k: &str| -> String {
         match item.get(k) {
             Some(Value::String(s)) => s.trim().to_string(),
@@ -2379,4 +2383,20 @@ pub async fn jav_entry_scrape(app: AppHandle, provider: String, code_key: String
     st.libs[pos].entries[idx] = cur.clone();
     save_store(&st)?;
     Ok(json!({ "ok": cur.status == 1, "entry": entry_view(&cur) }))
+}
+
+/// 用户评分（1~10；0 = 清除）。与站点评分分开存，重刮不覆盖。
+#[tauri::command]
+pub async fn jav_entry_rate(provider: String, code_key: String, value: f64) -> Result<Value, String> {
+    let mut st = load_store();
+    let Some(pos) = st.libs.iter().position(|l| l.provider == provider) else {
+        return Err("该网盘还没有 JAV 库".into());
+    };
+    let Some(idx) = st.libs[pos].entries.iter().position(|e| e.code_key == code_key) else {
+        return Err("条目不存在".into());
+    };
+    st.libs[pos].entries[idx].user_rating = value.clamp(0.0, 10.0);
+    st.libs[pos].entries[idx].updated_at_ms = now_ms();
+    save_store(&st)?;
+    Ok(json!({ "userRating": st.libs[pos].entries[idx].user_rating }))
 }

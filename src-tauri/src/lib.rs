@@ -13,6 +13,7 @@ mod cloud;
 // [lc-1811] 云盘直链本地续签代理 + ffmpeg HLS 本地转码（播放中途换链）
 mod cloud_proxy;
 mod cloud_library;
+mod jav_library;
 // [lc-1811] WebDAV 媒体源（多账号 + PROPFIND 浏览 + Basic Auth 播放 + 随片字幕）
 mod webdav;
 // [lc-1820] AI 增强可选组件（RIFE Vulkan 运行时：软件内下载/状态/删除）
@@ -4186,6 +4187,8 @@ pub fn run() {
             cloud_library::cloud_library_scan,
             cloud_library::cloud_library_remove,
             cloud_library::cloud_library_scrape,
+            jav_library::jav_library_items,
+            jav_library::jav_library_scrape,
             cloud::cloud_rename,
             cloud_proxy::cloud_ffmpeg_available,
             fnid::fn_id_login,

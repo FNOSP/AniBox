@@ -8,18 +8,28 @@
 //! 存储：`app_data_dir/cloud-library.json`，凭据不落这里（凭据在各自既有文件）。
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use tauri::AppHandle;
 
-/// 扫描预算（防 API 限额）：单次扫描最多发起的列目录请求次数
-const MAX_LIST_CALLS: usize = 60;
+/// 扫描预算（防 API 限额）：单次扫描最多发起的列目录请求次数。
+/// 60 次扫不完一个真实网盘库（用户反馈"空壳"）——提升到 400，扫不完的部分
+/// 落断点游标（`cursor`），前端提示"继续扫描"接着跑，不再白扫一遍。
+const MAX_LIST_CALLS: usize = 400;
 /// 单个目录最多拉的分页数（cursor 翻页上限）
 const MAX_PAGES_PER_DIR: usize = 2;
 /// 单个目录最多收的条目数（防异常超大目录拖死扫描）
 const MAX_ENTRIES_PER_DIR: usize = 300;
-/// 扫描深度：root(0) → 子目录(1) → 孙目录(2)，共 3 层；第 3 层只收文件不再下钻
-const MAX_DEPTH: usize = 2;
+/// 扫描深度：root(0) → 子目录(1..3)，共 4 层；超过深度只收文件不再下钻
+const MAX_DEPTH: usize = 3;
+/// 单次扫描的时间上限（秒）：预算和时间双闸，到点保存断点返回
+const TIME_BUDGET_SECS: u64 = 90;
+/// 明显不是媒体目录的（借鉴 JAVCloudHub scanner 的 skip_dirs，省预算不省覆盖）
+const SKIP_DIRS: &[&str] = &[
+    "$recycle.bin", "system volume information", "@eadir", "#recycle", ".clouddrive",
+    "lost+found", "recycle", "$recycle", ".trash", "trash",
+];
 
 fn lib_path() -> Option<PathBuf> {
     crate::cloud::app_data_dir().map(|d| d.join("cloud-library.json"))
@@ -67,6 +77,19 @@ pub struct CloudLib {
     pub scanned_at_ms: u64,
     #[serde(default)]
     pub items: Vec<CloudItem>,
+    /// 扫描断点（借鉴 JAVCloudHub 的 checkpoint 思路）：预算/时间用尽时保存剩余队列，
+    /// 下次 scan(resume=true) 从这里接着跑，已扫到的条目不丢。
+    #[serde(default)]
+    pub cursor: Vec<ScanPos>,
+}
+
+/// 断点游标的一个位置：(目录 fid, 目录名, 深度)
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanPos {
+    pub fid: String,
+    pub name: String,
+    pub depth: usize,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -332,16 +355,42 @@ async fn list_dir_all(
     Ok((out, cursor))
 }
 
-async fn scan_provider(app: &AppHandle, lib: &mut CloudLib) -> (usize, usize, usize) {
-    let mut items: Vec<CloudItem> = Vec::new();
+/// 视频文件的原始候选（分流前）：JAV 识别与正常解析共用同一批目录项，零额外请求
+struct RawFile {
+    file_id: String,
+    parent: String,
+    name: String,
+    size: u64,
+}
+
+fn should_skip_dir(name: &str) -> bool {
+    let l = name.to_ascii_lowercase();
+    l.starts_with('.') || SKIP_DIRS.contains(&l.as_str())
+}
+
+async fn scan_provider(app: &AppHandle, lib: &mut CloudLib, resume: bool) -> (usize, usize, usize, usize, bool) {
+    let start = std::time::Instant::now();
+    // 断点续扫：条目从已有索引出发（按 file_id 去重追加），队列从游标接续
+    let mut items: Vec<CloudItem> = if resume && !lib.cursor.is_empty() { lib.items.clone() } else { Vec::new() };
+    let mut seen: HashSet<String> = items.iter().map(|i| i.file_id.clone()).collect();
+    let mut raw: Vec<RawFile> = Vec::new();
     let mut budget = MAX_LIST_CALLS;
     // BFS：queue 里放 (fid, name, depth)
     let mut queue: std::collections::VecDeque<(String, String, usize)> = std::collections::VecDeque::new();
-    for r in &lib.roots {
-        queue.push_back((r.fid.clone(), r.name.clone(), 0));
+    if resume && !lib.cursor.is_empty() {
+        for p in &lib.cursor {
+            queue.push_back((p.fid.clone(), p.name.clone(), p.depth));
+        }
+    } else {
+        for r in &lib.roots {
+            queue.push_back((r.fid.clone(), r.name.clone(), 0));
+        }
     }
     while let Some((fid, parent, depth)) = queue.pop_front() {
-        if budget == 0 || items.len() >= MAX_ENTRIES_PER_DIR * MAX_LIST_CALLS {
+        if budget == 0
+            || start.elapsed() >= std::time::Duration::from_secs(TIME_BUDGET_SECS)
+            || raw.len() + items.len() >= MAX_ENTRIES_PER_DIR * MAX_LIST_CALLS
+        {
             break;
         }
         let Ok((entries, _)) = list_dir_all(app, &lib.provider, &fid, &mut budget).await else {
@@ -360,38 +409,69 @@ async fn scan_provider(app: &AppHandle, lib: &mut CloudLib) -> (usize, usize, us
             }
             let is_dir = e.get("isDir").and_then(|x| x.as_bool()).unwrap_or(false);
             if is_dir {
-                // 深度受限下钻：跳过明显不是媒体目录的（样本/固件等不看扩展名，全下钻由预算兜底）
-                if depth < MAX_DEPTH {
+                // 深度受限下钻 + 跳过回收站/缩略图缓存这类注定没有媒体的目录
+                if depth < MAX_DEPTH && !should_skip_dir(&name) {
                     queue.push_back((file_id, name, depth + 1));
                 }
                 continue;
             }
-            if !is_video_name(&name) {
+            if !is_video_name(&name) || !seen.insert(file_id.clone()) {
                 continue;
             }
-            if items.iter().any(|it| it.file_id == file_id) {
-                continue;
-            }
-            let p = parse_name(&name);
-            items.push(CloudItem {
-                provider: lib.provider.clone(),
+            raw.push(RawFile {
                 file_id,
                 parent: parent.clone(),
                 name,
                 size: e.get("size").and_then(|x| x.as_u64()).unwrap_or(0),
-                kind: if p.is_episode { "episode" } else { "movie" }.into(),
-                title: p.title,
-                ep_title: p.ep_title,
-                year: p.year,
-                season: p.season,
-                episode: p.episode,
             });
         }
     }
+
+    // ── 分流：番号命中的改道 JAV 库，其余走 parse_name → TMDB ──
+    let cands: Vec<crate::jav_library::JavCandidate> = raw
+        .iter()
+        .map(|r| crate::jav_library::JavCandidate {
+            file_id: r.file_id.clone(),
+            parent: r.parent.clone(),
+            name: r.name.clone(),
+            size: r.size,
+        })
+        .collect();
+    let (normal_idx, jav_matched) = crate::jav_library::split_candidates(&cands);
+    for i in normal_idx {
+        let r = &raw[i];
+        let p = parse_name(&r.name);
+        items.push(CloudItem {
+            provider: lib.provider.clone(),
+            file_id: r.file_id.clone(),
+            parent: r.parent.clone(),
+            name: r.name.clone(),
+            size: r.size,
+            kind: if p.is_episode { "episode" } else { "movie" }.into(),
+            title: p.title,
+            ep_title: p.ep_title,
+            year: p.year,
+            season: p.season,
+            episode: p.episode,
+        });
+    }
+    let full = !(resume && !lib.cursor.is_empty()) && queue.is_empty();
+    let jav_count = match crate::jav_library::ingest_scan(&lib.provider, &cands, &jav_matched, full) {
+        Ok(n) => n,
+        Err(_) => 0, // 入库失败不挡正常库（下次扫描重试）
+    };
+
+    let resumable = !queue.is_empty()
+        && (budget == 0 || start.elapsed() >= std::time::Duration::from_secs(TIME_BUDGET_SECS));
+    lib.cursor = if resumable {
+        queue.into_iter().map(|(fid, name, depth)| ScanPos { fid, name, depth }).collect()
+    } else {
+        Vec::new()
+    };
     let movies = items.iter().filter(|i| i.kind == "movie").count();
     let episodes = items.iter().filter(|i| i.kind == "episode").count();
     lib.items = items;
-    (lib.items.len(), movies, episodes)
+    (lib.items.len(), movies, episodes, jav_count, resumable)
 }
 
 fn upsert_lib<'a>(st: &'a mut CloudLibraryStore, provider: &str) -> &'a mut CloudLib {
@@ -484,9 +564,11 @@ pub async fn cloud_library_set_roots(provider: String, roots: Vec<Value>) -> Res
     Ok(json!({ "ok": true, "count": count }))
 }
 
-/// 扫描某盘全部根目录 → 重建索引（懒扫描预算内，超预算的部分下次扫描补）
+/// 扫描某盘全部根目录 → 重建索引（预算/时间双闸内扫不完的部分落断点，resume=true 接着跑）。
+/// 分流：番号命中的文件进 JAV 库（jav-library.json），剧集/动漫走 TMDB 正常刮削。
 #[tauri::command]
-pub async fn cloud_library_scan(app: AppHandle, provider: String) -> Result<Value, String> {
+pub async fn cloud_library_scan(app: AppHandle, provider: String, resume: Option<bool>) -> Result<Value, String> {
+    let resume = resume.unwrap_or(false);
     let mut st = load_store();
     let roots = {
         let lib = upsert_lib(&mut st, &provider);
@@ -495,18 +577,30 @@ pub async fn cloud_library_scan(app: AppHandle, provider: String) -> Result<Valu
     if roots.is_empty() {
         return Err("请先选择媒体目录（在网盘接入页进入目录后点「加入媒体库」）".into());
     }
+    // 断点续扫要求游标存在；否则从头扫
+    let prev = st.libs.iter().find(|l| l.provider == provider);
+    let has_cursor = prev.map(|l| !l.cursor.is_empty()).unwrap_or(false);
+    let resume = resume && has_cursor;
     let mut lib = CloudLib {
         provider: provider.clone(),
         roots,
         scanned_at_ms: 0,
-        items: Vec::new(),
+        items: if resume {
+            prev.map(|l| l.items.clone()).unwrap_or_default()
+        } else {
+            Vec::new()
+        },
+        cursor: Vec::new(),
     };
-    let (count, movies, episodes) = scan_provider(&app, &mut lib).await;
+    let (count, movies, episodes, jav_count, resumable) = scan_provider(&app, &mut lib, resume).await;
     lib.scanned_at_ms = now_ms();
     st.libs.retain(|l| l.provider != provider);
     st.libs.push(lib);
     save_store(&st)?;
-    Ok(json!({ "ok": true, "count": count, "movies": movies, "episodes": episodes }))
+    Ok(json!({
+        "ok": true, "count": count, "movies": movies, "episodes": episodes,
+        "jav": jav_count, "resumable": resumable,
+    }))
 }
 
 /// 移除某盘的库（含索引；不动网盘里的文件）

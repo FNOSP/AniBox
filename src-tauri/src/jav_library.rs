@@ -1,0 +1,1691 @@
+//! JAV 媒体库：番号识别 + 多站点刮削 + 本地索引。
+//!
+//! 能力移植自 JAVCloudHub 1.9.31（逆向结论见 D:\REA-Work\JAVCloudHub\REPORT.md）：
+//!   · 识别（零请求）：文件名/目录名 → 番号（FC2 / 无码 / 有码 / 欧美 / 无番号），规则照抄其 codes.py；
+//!     Rust regex 不支持 lookaround，边界一律改写为「前缀捕获 + 非捕获尾巴」（与 cloud_library 同一约定）；
+//!   · 扫描分流：cloud_library 扫描时，番号命中的文件改道进本库（见 [`split_candidates`]），
+//!     剧集/动漫照旧走 parse_name → TMDB 正常刮削；
+//!   · 刮削：r18.dev（公开 JSON，最稳）→ jav321（POST 表单，不吃 CF）→ mgstage / heyzo / FC2（HTML），
+//!     按分类取引擎序，首个成功者胜出；封面落本机 library-covers/，经 fntvimg `/__cover/` 协议展示；
+//!   · 永远零写入网盘：刮削产物（封面/元数据）只落本机 jav-library.json 与封面目录。
+//!
+//! 存储：`app_data_dir/jav-library.json`（与 cloud-library.json 同级、同构：每盘一份 entries）。
+
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::{BTreeMap, HashSet};
+use std::path::PathBuf;
+use tauri::AppHandle;
+
+// ───────────────────────── 分类常量（对齐 codes.py） ─────────────────────────
+
+pub const CATEGORY_FC2: &str = "fc2";
+pub const CATEGORY_UNCENSORED: &str = "uncensored";
+pub const CATEGORY_CENSORED: &str = "censored";
+pub const CATEGORY_WESTERN: &str = "western";
+pub const CATEGORY_UNKNOWN: &str = "unknown";
+
+pub fn category_label(c: &str) -> &'static str {
+    match c {
+        CATEGORY_FC2 => "FC2",
+        CATEGORY_CENSORED => "有码",
+        CATEGORY_UNCENSORED => "无码",
+        CATEGORY_WESTERN => "欧美",
+        _ => "无番号",
+    }
+}
+
+/// 是否值得送去刮削（欧美/无番号不进 JAV 库，走正常 TMDB 流程自然落空）
+pub fn is_scrapable(category: &str) -> bool {
+    matches!(category, CATEGORY_FC2 | CATEGORY_UNCENSORED | CATEGORY_CENSORED)
+}
+
+// ───────────────────────── 识别（移植 codes.py） ─────────────────────────
+
+/// 已知片商/系列前缀白名单（照抄 codes.py 的 KNOWN_LABELS 块）。
+/// 有码番号只有「标签在白名单里」或「目录名呼应同一番号」才改道 JAV 库，
+/// 避免 `OVA-01.mp4` 这类动漫文件被当成番号误伤。
+const KNOWN_LABELS: &[&str] = &[
+    "SSIS", "SONE", "MIDE", "MIDV", "MIFD", "MIMK", "MISM", "MIUM", "MIZD", "MIAA", "MIAE", "MIGD", "MIRD",
+    "IPX", "IPZZ", "IPZ", "IPIT", "IPTD",
+    "STARS", "STAR", "START",
+    "ABP", "ABW", "ABSD",
+    "ADN", "ATOM", "AVOP", "AUKG", "AUKS",
+    "BAB", "BABP", "BBAN", "BBTU", "BEAUTY", "BF", "BKD", "BLK", "BLOR", "BOKD", "BOKE", "BOBB", "BONY", "CAWD", "CEMD",
+    "CHN", "CJOD", "CLOT", "CRNX", "DASD", "DASS", "DLDSS", "DLN", "DOCP", "DPMI", "DPN", "DVAJ", "DVE", "DVRT",
+    "EBOD", "EKDV", "EMRZ", "ENKI", "ESDV", "FCDC", "FERA", "FNS", "FONE", "FS", "FSDSS", "FSET", "FTP", "FTHT",
+    "GENM", "GESS", "GLOR", "GNAB", "GVG", "HAKU", "HND", "HNDS", "HODV", "HOMA", "HONB", "HSODA", "HTMS", "IBW",
+    "IDBD", "IENE", "IESP", "IESM", "JAC", "JAV", "JJBK", "JJDA", "JUL", "JUR", "JURB",
+    "KAAG", "KAM", "KAV", "KBI", "KCD", "KDK", "KEB", "KMHR", "KNMB", "KPB", "KPR", "KRV", "KUSE",
+    "LOL", "LULU", "MBDD", "MDBK", "MDD", "MDS", "MDTM", "MEYD", "MFC", "MFYD", "MIA", "MKMP", "MMB", "MMTU", "MOBB", "MOGI", "MOPE", "MPD", "MUD", "MUKD", "MUKO", "MVSD",
+    "MXGS", "MXSPS", "NEO", "NHDTB", "NHDTA", "NIKM", "NIN", "NKKD", "NNPJ", "NPG", "NPR", "NTK", "NTR", "NTRD",
+    "OFJE", "OKS", "OLM", "OMEG", "ONED", "ONGP", "ONIN", "OPPAI", "OYC", "PARM", "PBD", "PGD", "PKPD", "PPPD",
+    "PPPE", "PRED", "PRST", "PSD", "PTS", "PXH", "RBK", "RCTD", "RCT", "REBD", "RKI", "RMMA", "RTP", "SAN", "SANA",
+    "SCOP", "SDDE", "SDJS", "SDMF", "SDMU", "SDNM", "SDPT", "SGA", "SHKD", "SHN", "SIRO", "SILK", "SKY", "SNIS",
+    "SOE", "SORA", "SPAY", "SSND", "SVDVD", "SW", "TAAK", "TAMO", "TCD",
+    "TEK", "TEMU", "TKI", "TMEM", "TMRD", "TNOZ", "TPPN", "TRY", "TSUB", "URE", "UZ", "VAGU", "VEC", "VENU", "VNDS",
+    "VRTM", "VSPDS", "WAAA", "WANZ", "WNZ", "WSS", "XRW", "XVSR", "YAG", "YMDD", "YRH", "ZEX", "ZMEN", "ZUKO",
+    "MKBD", "MKD", "BGN", "BWBD",
+];
+
+/// 动漫/视频附赠文件里常见的「假番号」前缀：形状和有码番号一样，但绝不是 JAV。
+const NON_JAV_LABELS: &[&str] = &["OVA", "CM", "PV", "NCOP", "NCED", "MAD", "OP", "ED", "SP", "MENU", "TRAILER"];
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Detection {
+    pub code: String,
+    pub category: &'static str,
+    /// 分片段号（0 = 未标）
+    pub part: u32,
+    /// part 是从文件名显式读出来的（-1/_2/part3/CD2），不是排出来的
+    pub part_hint: bool,
+    pub matched_by: &'static str,
+}
+
+struct Res {
+    media_ext: regex::Regex,
+    bracket: regex::Regex,
+    sep: regex::Regex,
+    start_sep: regex::Regex,
+    spaces: regex::Regex,
+    fc2: regex::Regex,
+    heyzo: regex::Regex,
+    tokyo_hot: regex::Regex,
+    tokyo_bare: regex::Regex,
+    gachi: regex::Regex,
+    laf: regex::Regex,
+    unc_num: regex::Regex,
+    std_code: regex::Regex,
+    west_date: regex::Regex,
+    west_hint: regex::Regex,
+    tail_part: regex::Regex,
+    tail_letter: regex::Regex,
+    loose_part: regex::Regex,
+    padded5: regex::Regex,
+    cup: regex::Regex,
+    age: regex::Regex,
+    height: regex::Regex,
+    date_ymd: regex::Regex,
+    field_b: regex::Regex,
+    anchor_a: regex::Regex,
+    tags_a: regex::Regex,
+    noise_span: regex::Regex,
+}
+
+static RES: std::sync::OnceLock<Res> = std::sync::OnceLock::new();
+
+fn rx(p: &str) -> regex::Regex {
+    regex::Regex::new(p).expect("jav regex")
+}
+
+fn res() -> &'static Res {
+    RES.get_or_init(|| Res {
+        // 双扩展名（.mp4.mp4）逐段剥
+        media_ext: rx(r"(?i)\.(mp4|mkv|avi|wmv|mov|ts|m2ts|iso|rmvb|flv|mpg|mpeg|strm|webm|m4v|f4v|vob|3gp|asf|divx|ogm|rm|tp|trp)$"),
+        bracket: rx(r"[\[【（(｛{][^\]】）)｝}]*[\]】）)｝}]"),
+        sep: rx(r"[\\/|]+"),
+        start_sep: rx(r"^[\s\-_.··]+"),
+        spaces: rx(r"\s{2,}"),
+        // Rust regex 无 lookaround：边界 = 前缀捕获 + 非捕获尾巴（尾巴只影响 end 位置）
+        fc2: rx(r"(?:^|[^A-Z0-9])?FC2[\s\-_.]*(?:PPV[\s\-_.]*)?(\d{5,7})(?:$|[^0-9])"),
+        heyzo: rx(r"(?:^|[^A-Z0-9])?HEYZO[\s\-_.]*(\d{3,5})(?:$|[^0-9])"),
+        tokyo_hot: rx(r"(?:TOKYO[\s\-_.]*HOT|TOKYO-HOT)[\s\-_.]*([NK]?[\s\-_.]?\d{3,5})(?:$|[^0-9])"),
+        tokyo_bare: rx(r"(?:^|[^A-Z0-9])TH[\s\-_.]*([NK][\s\-_.]?\d{3,5})(?:$|[^0-9])"),
+        gachi: rx(r"(?:^|[^A-Z0-9])?GACHI[\s\-_.]*(\d{3,5})(?:$|[^0-9])"),
+        laf: rx(r"(?:^|[^A-Z0-9])?LAF[\s\-_.]*(\d{2,5})(?:$|[^0-9])"),
+        unc_num: rx(r"(?:^|[^0-9])(\d{6})[\s\-_.](\d{3})(?:$|[^0-9])"),
+        std_code: rx(r"(?:^|[^A-Z0-9])([A-Z]{2,6})[\s\-_.]?(\d{2,5})(?:$|[^0-9])"),
+        west_date: rx(r"(?:^|[^0-9])(\d{2})[.\-_](\d{2})[.\-_](\d{2})(?:$|[^0-9])"),
+        west_hint: rx(r"XXX|XXP|1080P|2160P|720P|WEB|KTR|RARBG|XXXHD|JAVHD|HEVC|MP4"),
+        tail_part: rx(r"^(?:CD|PART|PT|DISC|DISK|VOL|V)?[\s\-_.]*(\d{1,2})$"),
+        tail_letter: rx(r"^([A-D])$"),
+        loose_part: rx(r"[\s\-_.]+(\d{1,2})$"),
+        padded5: rx(r"^([A-Z]{2,6})[\-_.]?00(\d{3})$"),
+        cup: rx(r"(?i)(?:^|[^A-Za-z0-9])([A-Za-z])\s*[-－ー]?\s*(?:カップ|CUP|カツプ|罩杯)"),
+        age: rx(r"(?:^|[^0-9])(1[89]|[2-5][0-9]|60)\s*(?:歳|才|岁)"),
+        height: rx(r"(?:^|[^0-9])(1[3-8][0-9])\s*(?:cm|CM|センチ|公分)"),
+        date_ymd: rx(r"(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})"),
+        // jav321 详情块：`<b>标签</b>: 值<br>`
+        field_b: rx(r"(?is)<b>\s*(出演者|出演|ジャンル|類別|メーカー|メーカー名|厂商|片商|配信開始日|発売日|配信日|収録時間)\s*</b>\s*[:：]?\s*(.*?)(?:<br\s*/?>|</p>|$)"),
+        anchor_a: rx(r"(?is)<a[^>]*>(.*?)</a>"),
+        tags_a: rx(r"(?is)<a[^>]*>"),
+        noise_span: rx(r"(?i)\*{2,}[A-Za-z0-9-]+"),
+    })
+}
+
+/// 去媒体扩展名（容忍 .mp4.mp4 双扩展名，逐段剥）
+pub fn strip_media_ext(name: &str) -> String {
+    let mut s = name.to_string();
+    loop {
+        let next = res().media_ext.replace(&s, "").to_string();
+        if next == s {
+            break;
+        }
+        s = next;
+    }
+    s
+}
+
+/// 广告前缀 / 括号噪声 / 分隔符清洗，最后统一大写（只影响 ASCII，日文原样）。
+pub fn clean_name(raw: &str) -> String {
+    let mut s = strip_media_ext(raw);
+    // 贪婪删广告前缀：`XXXXX.com@FC2-...` → 取最后一个 @ 之后
+    if let Some(i) = s.rfind(['@', '＠']) {
+        let ch = s[i..].chars().next().unwrap_or('@');
+        s = s[i + ch.len_utf8()..].to_string();
+    }
+    let s = res().bracket.replace_all(&s, " ");
+    let s = s.replace('－', "-");
+    let s = res().sep.replace_all(&s, " ");
+    let s = res().spaces.replace_all(&s, " ");
+    let s = res().start_sep.replace(&s, "");
+    s.trim().to_uppercase()
+}
+
+/// 匹配结束位置之后找分片段号，返回 (part, 是否显式命中分片规则)。
+fn split_tail(tail: &str) -> (u32, bool) {
+    let t = tail.trim_matches(|c| matches!(c, ' ' | '-' | '_' | '.' | '·'));
+    let r = res();
+    if let Some(c) = r.tail_part.captures(t) {
+        if let Ok(p) = c[1].parse::<u32>() {
+            return (p, true);
+        }
+    }
+    if let Some(c) = r.tail_letter.captures(t) {
+        // A~D → 1~4
+        let b = c[1].as_bytes()[0];
+        return ((b - b'A' + 1) as u32, true);
+    }
+    if let Some(c) = r.loose_part.captures(t) {
+        if let Ok(p) = c[1].parse::<u32>() {
+            return (p, false);
+        }
+    }
+    (0, false)
+}
+
+fn detect_fc2(cleaned: &str) -> Option<Detection> {
+    let r = res();
+    let m = r.fc2.captures(cleaned)?;
+    let num = m.get(1)?.as_str().to_string();
+    let end = m.get(1)?.end();
+    let (part, hint) = split_tail(&cleaned[end..]);
+    Some(Detection {
+        code: format!("FC2-{num}"),
+        category: CATEGORY_FC2,
+        part,
+        part_hint: hint,
+        matched_by: "fc2",
+    })
+}
+
+fn detect_uncensored(cleaned: &str) -> Option<Detection> {
+    let r = res();
+    let hit = |code: String, cat: &'static str, by: &'static str, end: usize| -> Option<Detection> {
+        let (part, hint) = split_tail(&cleaned[end..]);
+        Some(Detection { code, category: cat, part, part_hint: hint, matched_by: by })
+    };
+    if let Some(m) = r.heyzo.captures(cleaned) {
+        let g = m.get(1)?;
+        return hit(format!("HEYZO-{}", g.as_str()), CATEGORY_UNCENSORED, "heyzo", g.end());
+    }
+    if let Some(m) = r.tokyo_hot.captures(cleaned) {
+        let g = m.get(1)?;
+        let inner: String = g.as_str().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        return hit(format!("TH-{inner}"), CATEGORY_UNCENSORED, "tokyohot", g.end());
+    }
+    if let Some(m) = r.tokyo_bare.captures(cleaned) {
+        let g = m.get(1)?;
+        let inner: String = g.as_str().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        return hit(format!("TH-{inner}"), CATEGORY_UNCENSORED, "tokyohot", g.end());
+    }
+    if let Some(m) = r.gachi.captures(cleaned) {
+        let g = m.get(1)?;
+        return hit(format!("GACHI-{}", g.as_str()), CATEGORY_UNCENSORED, "gachi", g.end());
+    }
+    if let Some(m) = r.laf.captures(cleaned) {
+        let g = m.get(1)?;
+        return hit(format!("LAF-{}", g.as_str()), CATEGORY_UNCENSORED, "laf", g.end());
+    }
+    // 素人无码数字番号（加勒比系 123456-001）：中等置信度
+    if let Some(m) = r.unc_num.captures(cleaned) {
+        let (a, b) = (m.get(1)?.as_str(), m.get(2)?.as_str());
+        let end = m.get(2)?.end();
+        return hit(format!("{a}-{b}"), CATEGORY_UNCENSORED, "uncensored-numeric", end);
+    }
+    None
+}
+
+fn detect_censored(cleaned: &str, folder_norm: &str) -> Option<Detection> {
+    let r = res();
+    // 只认「白名单标签」或「目录名呼应」两种高置信形态；其余一律不认定 ——
+    //  OVA-01 这类动漫文件、BLACKEDRAW.19.01.22 这类欧美日期串形状都像番号，放行就是误伤。
+    for m in r.std_code.captures_iter(cleaned) {
+        let label = m.get(1)?.as_str();
+        let num = m.get(2)?.as_str();
+        let end = m.get(2)?.end();
+        let code = format!("{label}-{num}");
+        let (part, hint) = split_tail(&cleaned[end..]);
+        if NON_JAV_LABELS.contains(&label) {
+            continue;
+        }
+        let confident = KNOWN_LABELS.contains(&label) || (!folder_norm.is_empty() && folder_norm.contains(&code.replace('-', "")));
+        let det = Detection {
+            code,
+            category: CATEGORY_CENSORED,
+            part,
+            part_hint: hint,
+            matched_by: if KNOWN_LABELS.contains(&label) { "std-label" } else { "std-echo" },
+        };
+        if confident {
+            return Some(det);
+        }
+    }
+    None
+}
+
+fn detect_western(cleaned: &str) -> Option<Detection> {
+    let r = res();
+    if r.west_date.is_match(cleaned) || r.west_hint.is_match(cleaned) {
+        return Some(Detection {
+            code: cleaned.to_string(),
+            category: CATEGORY_WESTERN,
+            part: 0,
+            part_hint: false,
+            matched_by: "western-date",
+        });
+    }
+    None
+}
+
+/// 从文件名（可附带所在目录名）识别番号。认不出 → None（走正常 TMDB 流程）。
+pub fn detect(name: &str, folder: &str) -> Option<Detection> {
+    let cleaned = clean_name(name);
+    if cleaned.is_empty() {
+        return None;
+    }
+    let folder_norm = normalize_key(folder);
+    if let Some(d) = detect_fc2(&cleaned).or_else(|| detect_uncensored(&cleaned)) {
+        return Some(d);
+    }
+    if let Some(d) = detect_censored(&cleaned, &folder_norm) {
+        return Some(d);
+    }
+    detect_western(&cleaned)
+}
+
+/// 唯一键：归一化去分隔符，避免 "SONE-123" / "sone_123" 重复入库。
+pub fn code_key(code: &str) -> String {
+    code.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_uppercase()
+}
+
+fn normalize_key(s: &str) -> String {
+    s.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_uppercase()
+}
+
+/// 补零番号的备选：SDMM-00201 → SDMM-201（只在「五位且 00 开头」时摘零）。
+pub fn alt_code(code: &str) -> Option<String> {
+    let up = code.to_uppercase();
+    let c = res().padded5.captures(&up)?;
+    Some(format!("{}-{}", &c[1], &c[2]))
+}
+
+// ───────────────────────── 身材信息（移植 physique.py，纯本地正则） ─────────────────────────
+
+/// 从若干段文本里抠 {cup, age, height}；先命中的赢（标题里的数字是片方自己标的卖点）。
+pub fn extract_physique(texts: &[&str]) -> (String, u32, u32) {
+    let r = res();
+    let mut cup = String::new();
+    let mut age = 0u32;
+    let mut height = 0u32;
+    for t in texts {
+        let t = t.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if cup.is_empty() {
+            if let Some(c) = r.cup.captures(t) {
+                cup = c[1].to_uppercase();
+            }
+        }
+        if age == 0 {
+            if let Some(c) = r.age.captures(t) {
+                age = c[1].parse().unwrap_or(0);
+            }
+        }
+        if height == 0 {
+            if let Some(c) = r.height.captures(t) {
+                height = c[1].parse().unwrap_or(0);
+            }
+        }
+    }
+    (cup, age, height)
+}
+
+/// 站点评分归一（移植 rating.py）：≤5 视为 5 分制 ×2；≤10 原样；>10 当百分制 ÷10。
+pub fn rating_to_ten(v: f64) -> f64 {
+    if v <= 0.0 {
+        return 0.0;
+    }
+    let out = if v <= 5.0 {
+        v * 2.0
+    } else if v <= 10.0 {
+        v
+    } else {
+        v / 10.0
+    };
+    (out * 10.0).round() / 10.0
+}
+
+// ───────────────────────── 存储（jav-library.json，与 cloud-library 同构） ─────────────────────────
+
+/// 扫描分流用的原始文件候选（cloud_library 收集，本模块判类）
+#[derive(Clone, Debug)]
+pub struct JavCandidate {
+    pub file_id: String,
+    pub parent: String,
+    pub name: String,
+    pub size: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct JavFile {
+    pub provider: String,
+    pub file_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub size: u64,
+    #[serde(default)]
+    pub part: u32,
+}
+
+/// 单条 JAV 条目（一部片一条，分片挂 files）
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct JavEntry {
+    pub code: String,
+    pub code_key: String,
+    pub category: String,
+    /// 0 待刮削 | 1 已刮削 | 2 失败
+    #[serde(default)]
+    pub status: i32,
+    #[serde(default)]
+    pub title: String,
+    /// 预留：AI 汉化标题（后续接 AniBox 既有链路）
+    #[serde(default)]
+    pub title_zh: String,
+    #[serde(default)]
+    pub actors: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub release_date: String,
+    #[serde(default)]
+    pub studio: String,
+    #[serde(default)]
+    pub series: String,
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub runtime: u32,
+    #[serde(default)]
+    pub director: String,
+    #[serde(default)]
+    pub rating: f64,
+    #[serde(default)]
+    pub votes: u32,
+    #[serde(default)]
+    pub cup: String,
+    #[serde(default)]
+    pub age: u32,
+    #[serde(default)]
+    pub height: u32,
+    /// library-covers/ 里的封面文件名（经 /__cover/ 协议展示）
+    #[serde(default)]
+    pub cover: String,
+    #[serde(default)]
+    pub cover_url: String,
+    #[serde(default)]
+    pub attempts: u32,
+    #[serde(default)]
+    pub last_error: String,
+    #[serde(default)]
+    pub updated_at_ms: u64,
+    #[serde(default)]
+    pub files: Vec<JavFile>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct JavLib {
+    pub provider: String,
+    #[serde(default)]
+    pub scanned_at_ms: u64,
+    #[serde(default)]
+    pub entries: Vec<JavEntry>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+struct JavStore {
+    #[serde(default)]
+    libs: Vec<JavLib>,
+}
+
+fn lib_path() -> Option<PathBuf> {
+    crate::cloud::app_data_dir().map(|d| d.join("jav-library.json"))
+}
+
+fn load_store() -> JavStore {
+    let Some(p) = lib_path() else { return JavStore::default() };
+    let Ok(s) = std::fs::read_to_string(p) else { return JavStore::default() };
+    serde_json::from_str(&s).unwrap_or_default()
+}
+
+fn save_store(st: &JavStore) -> Result<(), String> {
+    let Some(p) = lib_path() else { return Err("app_data_dir 未初始化".into()) };
+    if let Some(dir) = p.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
+    }
+    let s = serde_json::to_string_pretty(st).map_err(|e| format!("序列化 JAV 库失败: {e}"))?;
+    std::fs::write(&p, s).map_err(|e| format!("写 JAV 库失败: {e}"))
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 自然序：数字段按数值比较（"SONE-123-2" 排在 "SONE-123" 之后）
+fn natkey(s: &str) -> Vec<(u64, String)> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut cur_digit = false;
+    for ch in s.chars().chain(std::iter::once('\0')) {
+        let d = ch.is_ascii_digit();
+        if !cur.is_empty() && d != cur_digit {
+            if cur_digit {
+                out.push((cur.parse().unwrap_or(u64::MAX), String::new()));
+            } else {
+                out.push((u64::MAX, cur.to_lowercase()));
+            }
+            cur.clear();
+        }
+        cur_digit = d;
+        if ch != '\0' {
+            cur.push(ch);
+        }
+    }
+    out
+}
+
+/// 扫描分流：把候选文件分成（留在正常库的下标）与（改道 JAV 的下标 + 识别结果）。
+///
+/// 改道门槛（宁缺毋滥）：
+///   · FC2 / 无码番号：形状本身就强，直接改道；
+///   · 有码番号：标签在白名单里，或目录名呼应同一番号 ——
+///     `OVA-01.mp4` 这类动漫文件形状一样但绝不是 JAV，不放行；
+///   · 欧美 / 无番号：留在正常库（TMDB 刮不到就显示原名，属「个人视频」自然态）。
+pub fn split_candidates(cands: &[JavCandidate]) -> (Vec<usize>, Vec<(usize, Detection)>) {
+    let mut normal = Vec::new();
+    let mut jav = Vec::new();
+    for (i, c) in cands.iter().enumerate() {
+        match detect(&c.name, &c.parent) {
+            Some(d) if is_scrapable(d.category) => {
+                let ok = d.category != CATEGORY_CENSORED || d.matched_by != "std-echo" || {
+                    // std-echo 已经要求目录呼应，detect 内部把关；这里恒放行
+                    true
+                };
+                if ok {
+                    jav.push((i, d));
+                } else {
+                    normal.push(i);
+                }
+            }
+            _ => normal.push(i),
+        }
+    }
+    (normal, jav)
+}
+
+/// 把改道文件按番号归组、排段号并入库。
+///
+/// `full=false`（断点续扫）时只合并本批，已有条目原样保留；
+/// `full=true`（整库重扫）时以本批为准重建（已刮削的元数据按 code_key 保留）。
+pub fn ingest_scan(provider: &str, cands: &[JavCandidate], matched: &[(usize, Detection)], full: bool) -> Result<usize, String> {
+    if matched.is_empty() && full {
+        // 整库重扫但一个番号都没有：清空该盘的 JAV 库
+        let mut st = load_store();
+        st.libs.retain(|l| l.provider != provider);
+        save_store(&st)?;
+        return Ok(0);
+    }
+    if matched.is_empty() {
+        return Ok(load_store().libs.iter().find(|l| l.provider == provider).map(|l| l.entries.len()).unwrap_or(0));
+    }
+    // 分组：code_key → [(candidate, detection)]
+    let mut groups: BTreeMap<String, Vec<(JavCandidate, Detection)>> = BTreeMap::new();
+    for (i, d) in matched {
+        let Some(c) = cands.get(*i) else { continue };
+        groups.entry(code_key(&d.code)).or_default().push((c.clone(), d.clone()));
+    }
+
+    let mut st = load_store();
+    let pos = if let Some(i) = st.libs.iter().position(|l| l.provider == provider) {
+        i
+    } else {
+        st.libs.push(JavLib { provider: provider.to_string(), ..Default::default() });
+        st.libs.len() - 1
+    };
+
+    // 排段号：显式线索优先，无线索的补最小空闲段号（同批内结果稳定）
+    let mut built: Vec<JavEntry> = Vec::new();
+    for (key, mut files) in groups {
+        files.sort_by(|a, b| natkey(&a.0.name).cmp(&natkey(&b.0.name)));
+        let mut used: HashSet<u32> = HashSet::new();
+        let mut parts: Vec<u32> = Vec::new();
+        for (c, d) in &files {
+            if d.part_hint && d.part > 0 && used.insert(d.part) {
+                parts.push(d.part);
+            } else {
+                parts.push(0);
+            }
+            let _ = c;
+        }
+        let mut next = 1u32;
+        for p in parts.iter_mut() {
+            if *p == 0 {
+                while !used.insert(next) {
+                    next += 1;
+                }
+                *p = next;
+            }
+        }
+        let jf: Vec<JavFile> = files
+            .iter()
+            .zip(parts.iter())
+            .map(|((c, _), p)| JavFile {
+                provider: provider.to_string(),
+                file_id: c.file_id.clone(),
+                name: c.name.clone(),
+                size: c.size,
+                part: *p,
+            })
+            .collect();
+        let (code, category) = {
+            let d0 = &files[0].1;
+            (d0.code.clone(), d0.category)
+        };
+        let mut entry = JavEntry {
+            code,
+            code_key: key,
+            category: category.to_string(),
+            files: jf,
+            updated_at_ms: now_ms(),
+            ..Default::default()
+        };
+        // 已有条目：保留刮削元数据，仅更新文件清单
+        if let Some(prev) = st.libs[pos].entries.iter().find(|e| e.code_key == entry.code_key) {
+            entry.title = prev.title.clone();
+            entry.title_zh = prev.title_zh.clone();
+            entry.actors = prev.actors.clone();
+            entry.tags = prev.tags.clone();
+            entry.release_date = prev.release_date.clone();
+            entry.studio = prev.studio.clone();
+            entry.series = prev.series.clone();
+            entry.summary = prev.summary.clone();
+            entry.runtime = prev.runtime;
+            entry.director = prev.director.clone();
+            entry.rating = prev.rating;
+            entry.votes = prev.votes;
+            entry.cup = prev.cup.clone();
+            entry.age = prev.age;
+            entry.height = prev.height;
+            entry.cover = prev.cover.clone();
+            entry.cover_url = prev.cover_url.clone();
+            entry.status = prev.status;
+            entry.attempts = prev.attempts;
+            entry.last_error = prev.last_error.clone();
+        }
+        entry.files.sort_by_key(|f| f.part);
+        built.push(entry);
+    }
+
+    if full {
+        st.libs[pos].entries = built;
+    } else {
+        for e in built {
+            match st.libs[pos].entries.iter().position(|x| x.code_key == e.code_key) {
+                Some(i) => st.libs[pos].entries[i] = e,
+                None => st.libs[pos].entries.push(e),
+            }
+        }
+    }
+    let n = st.libs[pos].entries.len();
+    save_store(&st)?;
+    Ok(n)
+}
+
+// ───────────────────────── 刮削引擎 ─────────────────────────
+
+/// 引擎产出的元数据（对齐 scraper/meta.py 的 Meta 字段子集）
+#[derive(Default, Debug)]
+struct Meta {
+    title: String,
+    actors: Vec<String>,
+    tags: Vec<String>,
+    release_date: String,
+    studio: String,
+    series: String,
+    summary: String,
+    runtime: u32,
+    director: String,
+    cover_url: String,
+}
+
+fn scrape_client() -> &'static reqwest::Client {
+    static C: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    C.get_or_init(|| {
+        let mut b = reqwest::Client::builder()
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+            .connect_timeout(std::time::Duration::from_secs(8))
+            .timeout(std::time::Duration::from_secs(25))
+            .redirect(reqwest::redirect::Policy::limited(5));
+        // 借鉴 JAVCloudHub netproxy：手填环境变量 > Windows 系统代理（Clash/v2rayN 开「系统代理」
+        // 写的是 WinINET 注册表，不会给本进程塞环境变量 —— 只认环境变量就会「明明开着代理却连不上」）
+        if let Some(p) = effective_proxy() {
+            if let Ok(px) = reqwest::Proxy::all(&p) {
+                b = b.proxy(px);
+            }
+        }
+        b.build().expect("jav scrape client")
+    })
+}
+
+/// 环境变量 > Windows 系统代理（注册表 Internet Settings）
+fn effective_proxy() -> Option<String> {
+    for k in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"] {
+        if let Ok(v) = std::env::var(k) {
+            let v = v.trim().to_string();
+            if !v.is_empty() {
+                return Some(v);
+            }
+        }
+    }
+    system_proxy()
+}
+
+#[cfg(windows)]
+fn system_proxy() -> Option<String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
+
+    fn w(s: &str) -> Vec<u16> {
+        std::ffi::OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    }
+    unsafe {
+        let sub = w("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings");
+        let name = w("ProxyEnable");
+        let mut enable: u32 = 0;
+        let mut sz = 4u32;
+        if RegGetValueW(HKEY_CURRENT_USER, sub.as_ptr(), name.as_ptr(), RRF_RT_REG_DWORD, std::ptr::null_mut(), &mut enable as *mut u32 as _, &mut sz) != 0 || enable == 0 {
+            return None;
+        }
+        let name = w("ProxyServer");
+        let mut buf = [0u16; 512];
+        let mut sz = (buf.len() * 2) as u32;
+        if RegGetValueW(HKEY_CURRENT_USER, sub.as_ptr(), name.as_ptr(), RRF_RT_REG_SZ, std::ptr::null_mut(), buf.as_mut_ptr() as _, &mut sz) != 0 {
+            return None;
+        }
+        let raw = String::from_utf16_lossy(&buf[..((sz / 2) as usize)]).trim().to_string();
+        if raw.is_empty() {
+            return None;
+        }
+        // 形态一："127.0.0.1:7890"；形态二："http=…;https=…"（优先 https）
+        let picked = if raw.contains('=') {
+            raw.split(';')
+                .filter_map(|kv| kv.split_once('='))
+                .find(|(k, _)| k.eq_ignore_ascii_case("https"))
+                .or_else(|| raw.split(';').filter_map(|kv| kv.split_once('=')).next())
+                .map(|(_, v)| v.to_string())?
+        } else {
+            raw
+        };
+        if picked.is_empty() {
+            return None;
+        }
+        if picked.contains("://") {
+            Some(picked)
+        } else {
+            Some(format!("http://{picked}"))
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn system_proxy() -> Option<String> {
+    None
+}
+
+fn is_blocked_status(st: u16) -> bool {
+    matches!(st, 403 | 429 | 501 | 503)
+}
+
+/// `//cdn...` → `https://cdn...`
+fn abs_url(u: &str) -> String {
+    let u = u.trim();
+    if u.starts_with("//") {
+        format!("https:{u}")
+    } else {
+        u.to_string()
+    }
+}
+
+fn strip_tags(s: &str) -> String {
+    let r = res();
+    let no_a = r.anchor_a.replace_all(s, "$1");
+    let plain = r.tags_a.replace_all(&no_a, "");
+    let plain = plain.replace("</a>", "").replace("</b>", "");
+    html_unescape(&plain)
+}
+
+fn html_unescape(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ")
+}
+
+fn norm_date(s: &str) -> String {
+    if let Some(c) = res().date_ymd.captures(s) {
+        return format!("{}-{:02}-{:02}", &c[1], c[2].parse::<u32>().unwrap_or(0), c[3].parse::<u32>().unwrap_or(0));
+    }
+    String::new()
+}
+
+fn split_people(s: &str) -> Vec<String> {
+    s.split([',', '，', '、', '/', '|'])
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect()
+}
+
+fn uniq_keep_order(v: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for x in v {
+        if !x.is_empty() && !out.iter().any(|y| y == &x) {
+            out.push(x);
+        }
+    }
+    out
+}
+
+// ---------- r18.dev：公开 JSON，最稳的一手（无 Cookie、无年龄门） ----------
+
+async fn eng_r18dev(code: &str) -> Result<Meta, String> {
+    let base = "https://r18.dev";
+    let cli = scrape_client();
+    let get = |url: String| {
+        let url = url.clone();
+        async move {
+            let resp = cli
+                .get(&url)
+                .header("Accept", "application/json")
+                .send()
+                .await
+                .map_err(|e| format!("R18.dev 请求失败: {e}"))?;
+            let st = resp.status().as_u16();
+            if st == 404 {
+                return Err("notfound".to_string());
+            }
+            if !resp.status().is_success() {
+                return Err(format!("R18.dev 返回 HTTP {st}"));
+            }
+            let v: Value = resp.json().await.map_err(|_| "R18.dev 返回的不是 JSON".to_string())?;
+            Ok(unwrap_movie(v))
+        }
+    };
+    // dvd_id 优先（SONE-116），404 退 combined（部分番号只按 content_id 收录）
+    let item = match get(format!("{base}/videos/vod/movies/detail/-/dvd_id={code}/json")).await {
+        Ok(v) => v,
+        Err(e) if e == "notfound" => get(format!("{base}/videos/vod/movies/detail/-/combined={code}/json")).await?,
+        Err(e) => return Err(e),
+    };
+    if !item.is_object() || item.as_object().map(|o| o.is_empty()).unwrap_or(false) {
+        return Err(format!("R18.dev 上找不到「{code}」"));
+    }
+    let s = |k: &str| item.get(k).and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    let mut title = s("title");
+    if title.is_empty() {
+        title = s("title_en");
+    }
+    if title.is_empty() {
+        return Err("R18.dev 有返回但解析不出任何字段".into());
+    }
+    let names = |keys: &[&str], prefer_en: bool| -> Vec<String> {
+        for k in keys {
+            if let Some(arr) = item.get(*k).and_then(|x| x.as_array()) {
+                let mut out = Vec::new();
+                for el in arr {
+                    let v = if let Some(sv) = el.as_str() {
+                        sv.to_string()
+                    } else if let Some(o) = el.as_object() {
+                        let order: &[&str] = if prefer_en {
+                            &["name_en", "name_ja", "name", "name_romaji", "name_kanji"]
+                        } else {
+                            &["name_ja", "name", "name_kanji", "name_romaji"]
+                        };
+                        order.iter().find_map(|f| o.get(*f).and_then(|x| x.as_str()).filter(|s| !s.trim().is_empty()).map(|s| s.trim().to_string())).unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    if !v.trim().is_empty() {
+                        out.push(v.trim().to_string());
+                    }
+                }
+                if !out.is_empty() {
+                    return out;
+                }
+            }
+        }
+        Vec::new()
+    };
+    let actors = names(&["actresses", "actress", "actors"], false);
+    let tags = names(&["categories", "genres"], true);
+    let obj_name = |k: &str| -> String {
+        match item.get(k) {
+            Some(Value::String(s)) => s.trim().to_string(),
+            Some(v) => v.get("name").and_then(|x| x.as_str()).unwrap_or("").trim().to_string(),
+            None => String::new(),
+        }
+    };
+    let cover_url = item
+        .get("images")
+        .and_then(|im| im.get("jacket_image"))
+        .and_then(|j| ["large2", "large", "thumb"].iter().find_map(|k| j.get(*k).and_then(|x| x.as_str()).filter(|s| !s.is_empty())))
+        .unwrap_or("")
+        .to_string();
+    let runtime = item
+        .get("runtime_minutes")
+        .or_else(|| item.get("runtime"))
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0) as u32;
+    let director = match item.get("director") {
+        Some(Value::Array(a)) => a
+            .iter()
+            .filter_map(|x| if let Some(s) = x.as_str() { Some(s.to_string()) } else { x.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()) })
+            .collect::<Vec<_>>()
+            .join(", "),
+        Some(Value::String(s)) => s.clone(),
+        _ => String::new(),
+    };
+    Ok(Meta {
+        title,
+        actors,
+        tags,
+        release_date: norm_date(&s("release_date")),
+        studio: obj_name("maker"),
+        series: obj_name("series"),
+        summary: {
+            let d = s("description");
+            if d.is_empty() { s("summary") } else { d }
+        },
+        runtime,
+        director,
+        cover_url: abs_url(&cover_url),
+    })
+}
+
+/// 返回体可能裸对象、也可能套 {"result": …} / {"data": …}，往下钻一层
+fn unwrap_movie(v: Value) -> Value {
+    match &v {
+        Value::Array(a) => a.first().cloned().unwrap_or(Value::Null),
+        Value::Object(o) => {
+            for k in ["result", "data"] {
+                if let Some(inner) = o.get(k) {
+                    if inner.is_object() || inner.is_array() {
+                        return unwrap_movie(inner.clone());
+                    }
+                }
+            }
+            v
+        }
+        _ => v,
+    }
+}
+
+// ---------- jav321：POST 表单检索，不吃 Cloudflare，JavBus/JavDB 被盾时的兜底 ----------
+
+async fn eng_jav321(code: &str) -> Result<Meta, String> {
+    let base = "https://www.jav321.com";
+    let cli = scrape_client();
+    let resp = cli
+        .post(format!("{base}/search"))
+        .form(&[("sn", code)])
+        .header("Referer", format!("{base}/"))
+        .header("Cookie", "over18=1")
+        .send()
+        .await
+        .map_err(|e| format!("jav321 请求失败: {e}"))?;
+    let st = resp.status().as_u16();
+    if is_blocked_status(st) {
+        return Err(format!("jav321 返回了拦截页（HTTP {st}）"));
+    }
+    if !resp.status().is_success() {
+        return Err(format!("jav321 返回 HTTP {st}"));
+    }
+    let html = resp.text().await.map_err(|e| format!("jav321 读取失败: {e}"))?;
+    let doc = scraper::Html::parse_document(&html);
+    let first_text = |sel: &str| -> Option<String> {
+        let s = scraper::Selector::parse(sel).ok()?;
+        doc.select(&s).next().map(|el| {
+            el.text()
+                .collect::<String>()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+    };
+    let title = first_text("div.panel-heading h3").or_else(|| first_text("h3")).unwrap_or_default();
+    if title.is_empty() || title.contains("検索結果") || title.contains("Not Found") {
+        return Err(format!("jav321 搜不到「{code}」（这个站只覆盖日本有码片）"));
+    }
+    // 封面走 img 的 src 属性
+    let cover_url = scraper::Selector::parse("div.col-md-3 img, div.panel-body img")
+        .ok()
+        .and_then(|s| doc.select(&s).next())
+        .and_then(|el| el.value().attr("src").map(|s| abs_url(s)))
+        .unwrap_or_default();
+
+    let mut meta = Meta { title, cover_url, ..Default::default() };
+    for c in res().field_b.captures_iter(&html) {
+        let key = c[1].to_string();
+        let val_raw = c[2].to_string();
+        // `<a>名</a> / <a>名</a>` → 纯文本再拆
+        let val = {
+            let m = &res().anchor_a;
+            if m.is_match(&val_raw) {
+                m.captures_iter(&val_raw)
+                    .map(|x| html_unescape(&x[1]))
+                    .collect::<Vec<_>>()
+                    .join(" / ")
+            } else {
+                strip_tags(&val_raw)
+            }
+        };
+        let val = val.trim().to_string();
+        if val.is_empty() {
+            continue;
+        }
+        match key.as_str() {
+            "出演者" | "出演" => meta.actors = split_people(&val),
+            "ジャンル" | "類別" => meta.tags = split_people(&val),
+            "メーカー" | "メーカー名" | "厂商" | "片商" => meta.studio = val,
+            "配信開始日" | "発売日" | "配信日" => meta.release_date = norm_date(&val),
+            "収録時間" => {
+                let digits: String = val.chars().filter(|c| c.is_ascii_digit()).collect();
+                meta.runtime = digits.parse().unwrap_or(0);
+            }
+            _ => {}
+        }
+    }
+    Ok(meta)
+}
+
+// ---------- mgstage：片商官方站（SOD / MIDE / SIRO / GANA），数据最准但只覆盖自家 ----------
+
+async fn eng_mgstage(code: &str) -> Result<Meta, String> {
+    let base = "https://www.mgstage.com";
+    let cli = scrape_client();
+    let resp = cli
+        .get(format!("{base}/product/product_detail/{code}/"))
+        .header("Referer", format!("{base}/"))
+        .header("Cookie", "adc=1")
+        .send()
+        .await
+        .map_err(|e| format!("MGStage 请求失败: {e}"))?;
+    let st = resp.status().as_u16();
+    if st == 404 {
+        return Err(format!("MGStage 没有「{code}」这个作品（它只收录自家片商）"));
+    }
+    if is_blocked_status(st) {
+        return Err(format!("MGStage 返回了拦截页（HTTP {st}）"));
+    }
+    if !resp.status().is_success() {
+        return Err(format!("MGStage 返回 HTTP {st}"));
+    }
+    let html = resp.text().await.map_err(|e| format!("MGStage 读取失败: {e}"))?;
+    let doc = scraper::Html::parse_document(&html);
+    let text_of = |sel: &str| -> Option<String> {
+        let s = scraper::Selector::parse(sel).ok()?;
+        doc.select(&s)
+            .next()
+            .map(|el| el.text().collect::<String>().split_whitespace().collect::<Vec<_>>().join(" "))
+    };
+    let title = text_of("h1.tag").or_else(|| text_of("h1")).unwrap_or_default();
+    let title = regex::Regex::new(r"^【[^】]*】\s*").unwrap().replace_all(&title, "").trim().to_string();
+    if title.is_empty() {
+        return Err(format!("MGStage 上没有「{code}」"));
+    }
+    let cover_url = {
+        let s1 = scraper::Selector::parse("a.link_movie img").ok().and_then(|s| doc.select(&s).next().and_then(|el| el.value().attr("src").map(|x| x.to_string())));
+        let s2 = scraper::Selector::parse("meta[property='og:image']").ok().and_then(|s| doc.select(&s).next().and_then(|el| el.value().attr("content").map(|x| x.to_string())));
+        abs_url(&s1.or(s2).unwrap_or_default())
+    };
+    let mut meta = Meta { title, cover_url, ..Default::default() };
+    // 官方站详情是 th/td 表格，拍平取值
+    if let Ok(trs) = scraper::Selector::parse("table.detail tr, table tr") {
+        for tr in doc.select(&trs) {
+            let th = tr.select(&scraper::Selector::parse("th").unwrap()).next().map(|el| el.text().collect::<String>().trim().trim_end_matches([':', '：']).to_string());
+            let Some(th) = th else { continue };
+            let td = tr.select(&scraper::Selector::parse("td").unwrap()).next().map(|el| el.text().collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ")).unwrap_or_default();
+            if td.is_empty() {
+                continue;
+            }
+            match th.as_str() {
+                "出演" | "出演者" | "Actor" => meta.actors = split_people(&td),
+                "ジャンル" => meta.tags = split_people(&td),
+                "メーカー" | "レーベル" | "ブランド" => {
+                    if meta.studio.is_empty() {
+                        meta.studio = td
+                    }
+                }
+                "シリーズ" => meta.series = td,
+                "配信開始日" | "発売日" | "商品発売日" => {
+                    if meta.release_date.is_empty() {
+                        meta.release_date = norm_date(&td)
+                    }
+                }
+                "収録時間" | "再生時間" => {
+                    let digits: String = td.chars().filter(|c| c.is_ascii_digit()).collect();
+                    if meta.runtime == 0 {
+                        meta.runtime = digits.parse().unwrap_or(0)
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(meta)
+}
+
+// ---------- heyzo：片商官方站，专治 HEYZO-xxxx 无码片（无 Cookie、无年龄门） ----------
+
+async fn eng_heyzo(code: &str) -> Result<Meta, String> {
+    let num = res().heyzo.captures(&code.to_uppercase()).and_then(|c| c.get(1)).map(|g| g.as_str().to_string()).unwrap_or_default();
+    if num.is_empty() {
+        return Err(format!("「{code}」不是 HEYZO 番号"));
+    }
+    let base = "https://www.heyzo.com";
+    let cli = scrape_client();
+    let resp = cli
+        .get(format!("{base}/moviepages/{num}/index.html"))
+        .header("Cookie", "adc=1")
+        .send()
+        .await
+        .map_err(|e| format!("HEYZO 请求失败: {e}"))?;
+    let st = resp.status().as_u16();
+    if st == 404 {
+        return Err(format!("HEYZO 上没有 {code}"));
+    }
+    if is_blocked_status(st) {
+        return Err(format!("HEYZO 页面被拦了（HTTP {st}）"));
+    }
+    if !resp.status().is_success() {
+        return Err(format!("HEYZO 返回 HTTP {st}"));
+    }
+    let html = resp.text().await.map_err(|e| format!("HEYZO 读取失败: {e}"))?;
+    let doc = scraper::Html::parse_document(&html);
+    let text_of = |sel: &str| -> Option<String> {
+        let s = scraper::Selector::parse(sel).ok()?;
+        doc.select(&s)
+            .next()
+            .map(|el| el.text().collect::<String>().split_whitespace().collect::<Vec<_>>().join(" "))
+    };
+    let meta_attr = |sel: &str, attr: &str| -> Option<String> {
+        let s = scraper::Selector::parse(sel).ok()?;
+        doc.select(&s).next().and_then(|el| el.value().attr(attr).map(|x| x.to_string()))
+    };
+    let mut title = text_of("h1").or_else(|| meta_attr("meta[property='og:title']", "content")).unwrap_or_default();
+    if title.is_empty() {
+        return Err("HEYZO 页面上没找到标题".into());
+    }
+    let cover_url = abs_url(&meta_attr("meta[property='og:image']", "content").unwrap_or_default());
+    let info = scraper::Selector::parse("table.movieInfo")
+        .ok()
+        .and_then(|s| doc.select(&s).next())
+        .map(|el| {
+            let raw: String = el.text().collect();
+            raw.split_whitespace().collect::<Vec<_>>().join(" ")
+        })
+        .unwrap_or_default();
+    let grab = |re: &str, text: &str| -> String {
+        regex::Regex::new(re).ok().and_then(|r| r.captures(text)).map(|c| c[1].trim().to_string()).unwrap_or_default()
+    };
+    let actors_raw = grab(r"出演\s*(.+?)\s*(?:シリーズ|評価|投稿|女優タイプ|タグ|一括|$)", &info);
+    let paren = regex::Regex::new(r"\s*[（(][^)）]*[)）]").unwrap();
+    let actors: Vec<String> = actors_raw
+        .split(|c: char| c.is_whitespace() || matches!(c, '、' | ',' | '，' | '/'))
+        .map(|x| paren.replace_all(x.trim(), "").trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect();
+    // h1 常写成「标题 - 演员名」，后半截和 actors 重复，切掉
+    if let Some(a0) = actors.first() {
+        if !a0.is_empty() && title.ends_with(a0.as_str()) {
+            if let Some(i) = title.rfind(a0.as_str()) {
+                let head = title[..i].trim_end();
+                let head = head.trim_end_matches(['-', '–', '—', '|', ' ']);
+                if !head.is_empty() {
+                    title = head.to_string();
+                }
+            }
+        }
+    }
+    let date_raw = grab(r"公開日\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})", &info);
+    let tags_raw = grab(r"タグキーワード\s*(.+?)\s*(?:一括|$)", &info);
+    let tags: Vec<String> = tags_raw.split(|c: char| c.is_whitespace() || matches!(c, '、' | ',' | '，' | '/')).map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect();
+    let series = grab(r"シリーズ\s*(.+?)\s*(?:評価|投稿|女優タイプ|タグ|$)", &info);
+    let runtime = regex::Regex::new(r"(\d{1,2}):(\d{2}):(\d{2})")
+        .ok()
+        .and_then(|r| r.captures(&info))
+        .map(|c| c[1].parse::<u32>().unwrap_or(0))
+        .unwrap_or(0);
+    Ok(Meta {
+        title,
+        actors,
+        tags,
+        release_date: norm_date(&date_raw),
+        series,
+        runtime,
+        cover_url,
+        ..Default::default()
+    })
+}
+
+// ---------- FC2 官方站：FC2-PPV 一手来源（日本站，需代理） ----------
+
+async fn eng_fc2(code: &str) -> Result<Meta, String> {
+    // 各种写法（FC2-4966160 / FC2-PPV-4966160 / fc2_4966160）都取最长数字段
+    let num = code
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect::<String>();
+    if num.len() < 4 {
+        return Err(format!("从「{code}」里提取不出合法的 FC2 作品编号"));
+    }
+    let base = "https://adult.contents.fc2.com";
+    let cli = scrape_client();
+    let resp = cli
+        .get(format!("{base}/article/{num}/"))
+        .header("Referer", format!("{base}/"))
+        .header("Cookie", "adc=1")
+        .send()
+        .await
+        .map_err(|e| format!("FC2 请求失败: {e}"))?;
+    let st = resp.status().as_u16();
+    if st == 404 {
+        return Err("FC2 官方站上没有这个作品（PPV 作品经常下架，下架后官方页是「未找到商品」）".into());
+    }
+    if is_blocked_status(st) {
+        return Err(format!("FC2 返回了拦截页（HTTP {st}，可能需要代理）"));
+    }
+    if !resp.status().is_success() {
+        return Err(format!("FC2 返回 HTTP {st}"));
+    }
+    let html = resp.text().await.map_err(|e| format!("FC2 读取失败: {e}"))?;
+    if html.contains("お探しの商品") || html.contains("見つかりません") {
+        return Err("FC2 官方站上没有这个作品（可能已下架或删除）".into());
+    }
+    let doc = scraper::Html::parse_document(&html);
+    let meta_attr = |sel: &str, attr: &str| -> Option<String> {
+        let s = scraper::Selector::parse(sel).ok()?;
+        doc.select(&s).next().and_then(|el| el.value().attr(attr).map(|x| x.to_string()))
+    };
+    let text_of = |sel: &str| -> Option<String> {
+        let s = scraper::Selector::parse(sel).ok()?;
+        doc.select(&s)
+            .next()
+            .map(|el| el.text().collect::<String>().split_whitespace().collect::<Vec<_>>().join(" "))
+    };
+    // 标题：h3 优先（顺手摘掉 FC2 塞进标题里的反爬噪声 `***xjqnsqnjj`），og:title 兜底
+    let mut title = text_of(".items_article_headerInfo h3").unwrap_or_default();
+    if title.is_empty() {
+        title = meta_attr("meta[property='og:title']", "content")
+            .or_else(|| meta_attr("meta[name='twitter:title']", "content"))
+            .unwrap_or_default();
+    }
+    title = res().noise_span.replace_all(&title, "").trim().to_string();
+    if title.is_empty() {
+        return Err("FC2 页面能打开，但解析不出标题（可能改版或触发了风控中间页）".into());
+    }
+    let cover_url = {
+        let s1 = scraper::Selector::parse(".items_article_MainitemThumb img").ok().and_then(|s| doc.select(&s).next().and_then(|el| el.value().attr("src").map(|x| x.to_string())));
+        let s2 = meta_attr("meta[property='og:image']", "content").or_else(|| meta_attr("meta[name='twitter:image']", "content"));
+        abs_url(&s1.or(s2).unwrap_or_default())
+    };
+    let mut tags: Vec<String> = scraper::Selector::parse(".items_article_tag a[href*='/tags/'], a.tag.tagTag")
+        .ok()
+        .map(|s| doc.select(&s).map(|el| el.text().collect::<String>().trim().to_string()).filter(|t| !t.is_empty()).collect())
+        .unwrap_or_default();
+    tags.push("FC2".into());
+    let tags = uniq_keep_order(tags);
+    let actors: Vec<String> = scraper::Selector::parse("a[href*='/users/']")
+        .ok()
+        .map(|s| doc.select(&s).map(|el| el.text().collect::<String>().trim().to_string()).filter(|t| !t.is_empty()).collect())
+        .unwrap_or_default();
+    let date_raw = text_of(".items_article_Releasedate p, .items_article_softDevice p").unwrap_or_default();
+    let summary = meta_attr("meta[property='og:description']", "content").unwrap_or_default();
+    Ok(Meta {
+        title,
+        actors: uniq_keep_order(actors),
+        tags,
+        release_date: norm_date(&date_raw),
+        summary,
+        cover_url,
+        ..Default::default()
+    })
+}
+
+/// 某分类下的引擎尝试顺序（对齐 JAVCloudHub 的站点优先级）
+fn engine_order(category: &str) -> &'static [&'static str] {
+    match category {
+        CATEGORY_FC2 => &["fc2", "r18dev"],
+        CATEGORY_UNCENSORED => &["r18dev", "heyzo", "jav321"],
+        CATEGORY_CENSORED => &["r18dev", "jav321", "mgstage"],
+        _ => &[],
+    }
+}
+
+async fn run_engine(name: &str, code: &str) -> Result<Meta, String> {
+    match name {
+        "r18dev" => eng_r18dev(code).await,
+        "jav321" => eng_jav321(code).await,
+        "mgstage" => eng_mgstage(code).await,
+        "heyzo" => eng_heyzo(code).await,
+        "fc2" => eng_fc2(code).await,
+        _ => Err(format!("「{name}」的解析器不存在")),
+    }
+}
+
+// ───────────────────────── 封面落盘 ─────────────────────────
+
+fn covers_dir() -> Result<PathBuf, String> {
+    crate::cloud::app_data_dir()
+        .map(|d| d.join("library-covers"))
+        .ok_or_else(|| "app_data_dir 未初始化".into())
+}
+
+/// 按文件头魔数识别扩展名（不信任 URL / MIME）
+fn ext_of(bytes: &[u8], url: &str) -> &'static str {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        return "png";
+    }
+    if bytes.starts_with(&[b'R', b'I', b'F', b'F']) && bytes.len() > 11 && &bytes[8..12] == b"WEBP" {
+        return "webp";
+    }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return "jpg";
+    }
+    let lower = url.to_ascii_lowercase();
+    if lower.ends_with(".png") {
+        "png"
+    } else if lower.ends_with(".webp") {
+        "webp"
+    } else {
+        "jpg"
+    }
+}
+
+const MAX_COVER_BYTES: usize = 10 * 1024 * 1024;
+
+async fn download_cover(url: &str, referer: &str) -> Result<(Vec<u8>, String), String> {
+    if url.is_empty() {
+        return Err("没有封面地址".into());
+    }
+    let cli = scrape_client();
+    let resp = cli
+        .get(url)
+        .header("Referer", referer)
+        .timeout(std::time::Duration::from_secs(40))
+        .send()
+        .await
+        .map_err(|e| format!("封面下载失败: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("封面下载 HTTP {}", resp.status().as_u16()));
+    }
+    if let Some(len) = resp.content_length() {
+        if len as usize > MAX_COVER_BYTES {
+            return Err("封面文件异常大，已跳过".into());
+        }
+    }
+    let bytes = resp.bytes().await.map_err(|e| format!("封面下载失败: {e}"))?;
+    if bytes.is_empty() {
+        return Err("封面下载为空".into());
+    }
+    if bytes.len() > MAX_COVER_BYTES {
+        return Err("封面文件异常大，已跳过".into());
+    }
+    let ext = ext_of(&bytes, url);
+    Ok((bytes.to_vec(), ext.to_string()))
+}
+
+/// 封面写进 library-covers/（内容哈希命名，天然去重），返回文件名。
+fn save_cover(_app: &AppHandle, code_key: &str, bytes: &[u8], ext: &str) -> Result<String, String> {
+    let dir = covers_dir()?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("建封面目录失败: {e}"))?;
+    let hash = format!("{:x}", md5::compute(bytes));
+    let name = format!("jav-{}-{}.{}", code_key, &hash[..8.min(hash.len())], ext);
+    let path = dir.join(&name);
+    if !path.exists() {
+        let tmp = dir.join(format!("jav-{code_key}-{}.tmp", now_ms()));
+        std::fs::write(&tmp, bytes).map_err(|e| format!("写封面失败: {e}"))?;
+        std::fs::rename(&tmp, &path).map_err(|e| format!("落封面失败: {e}"))?;
+    }
+    Ok(name)
+}
+
+// ───────────────────────── 刮削主流程 ─────────────────────────
+
+/// 单条刮削：按分类引擎序依次降级，首个成功者胜出；封面永远落本机。
+async fn scrape_one(app: &AppHandle, entry: &mut JavEntry, force: bool) -> bool {
+    if entry.status == 1 && !force {
+        return false;
+    }
+    if entry.files.is_empty() {
+        return false;
+    }
+    entry.attempts += 1;
+    let mut errors: Vec<String> = Vec::new();
+    for &eng in engine_order(&entry.category) {
+        // 补零番号先试原样，再试备选（SDMM-00201 → SDMM-201）
+        for code in [entry.code.clone(), alt_code(&entry.code).unwrap_or_default()] {
+            if code.is_empty() {
+                continue;
+            }
+            match run_engine(eng, &code).await {
+                Ok(m) => {
+                    if m.title.trim().is_empty() && m.cover_url.is_empty() {
+                        errors.push(format!("{eng}: 返回内容为空"));
+                        continue;
+                    }
+                    entry.title = if m.title.is_empty() { entry.code.clone() } else { m.title };
+                    if !m.actors.is_empty() {
+                        entry.actors = m.actors;
+                    }
+                    if !m.tags.is_empty() {
+                        entry.tags = uniq_keep_order(m.tags);
+                    }
+                    if !m.release_date.is_empty() {
+                        entry.release_date = m.release_date;
+                    }
+                    if !m.studio.is_empty() {
+                        entry.studio = m.studio;
+                    }
+                    if !m.series.is_empty() {
+                        entry.series = m.series;
+                    }
+                    if !m.summary.is_empty() {
+                        entry.summary = m.summary;
+                    }
+                    if m.runtime > 0 {
+                        entry.runtime = m.runtime;
+                    }
+                    if !m.director.is_empty() {
+                        entry.director = m.director;
+                    }
+                    entry.cover_url = m.cover_url.clone();
+                    // 素人片没有演员档案，身材数字只存在于标题/简介里（纯本地正则，零请求）
+                    let (cup, age, height) = extract_physique(&[entry.title.as_str(), entry.summary.as_str()]);
+                    if !cup.is_empty() {
+                        entry.cup = cup;
+                    }
+                    if age > 0 {
+                        entry.age = age;
+                    }
+                    if height > 0 {
+                        entry.height = height;
+                    }
+                    // 封面下载：第三方图床有防盗链，落本机一次到位（引用站点首页当 Referer）
+                    if !m.cover_url.is_empty() {
+                        let referer = match eng {
+                            "fc2" => "https://adult.contents.fc2.com/",
+                            "jav321" => "https://www.jav321.com/",
+                            "mgstage" => "https://www.mgstage.com/",
+                            "heyzo" => "https://www.heyzo.com/",
+                            _ => "https://r18.dev/",
+                        };
+                        match download_cover(&m.cover_url, referer).await {
+                            Ok((bytes, ext)) => match save_cover(app, &entry.code_key, &bytes, &ext) {
+                                Ok(name) => entry.cover = name,
+                                Err(e) => errors.push(format!("{eng}: 封面落盘失败 {e}")),
+                            },
+                            Err(e) => errors.push(format!("{eng}: {e}")),
+                        }
+                    }
+                    entry.status = 1;
+                    entry.last_error.clear();
+                    entry.updated_at_ms = now_ms();
+                    return true;
+                }
+                Err(e) => errors.push(format!("{eng}: {e}")),
+            }
+        }
+    }
+    entry.status = 2;
+    entry.last_error = errors.join("；");
+    entry.updated_at_ms = now_ms();
+    false
+}
+
+// ───────────────────────── 命令 ─────────────────────────
+
+/// 某盘的 JAV 条目（含文件清单与封面 URL）
+#[tauri::command]
+pub async fn jav_library_items(provider: String) -> Result<Value, String> {
+    let st = load_store();
+    let lib = st.libs.iter().find(|l| l.provider == provider);
+    let entries: Vec<Value> = lib
+        .map(|l| {
+            l.entries
+                .iter()
+                .map(|e| {
+                    json!({
+                        "code": e.code,
+                        "codeKey": e.code_key,
+                        "category": e.category,
+                        "categoryLabel": category_label(&e.category),
+                        "status": e.status,
+                        "title": e.title,
+                        "titleZh": e.title_zh,
+                        "actors": e.actors,
+                        "tags": e.tags,
+                        "releaseDate": e.release_date,
+                        "studio": e.studio,
+                        "series": e.series,
+                        "summary": e.summary,
+                        "runtime": e.runtime,
+                        "director": e.director,
+                        "rating": e.rating,
+                        "votes": e.votes,
+                        "cup": e.cup,
+                        "age": e.age,
+                        "height": e.height,
+                        "coverUrl": if e.cover.is_empty() { "".to_string() } else { format!("/__cover/{}", e.cover) },
+                        "attempts": e.attempts,
+                        "lastError": e.last_error,
+                        "files": e.files,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(json!({
+        "provider": provider,
+        "scannedAtMs": lib.map(|l| l.scanned_at_ms).unwrap_or(0),
+        "entries": entries,
+    }))
+}
+
+/// 对某盘的 JAV 条目做番号刮削（增量：status=1 跳过；force=true 重刮全部）。
+#[tauri::command]
+pub async fn jav_library_scrape(app: AppHandle, provider: String, force: Option<bool>) -> Result<Value, String> {
+    let force = force.unwrap_or(false);
+    let mut st = load_store();
+    let Some(pos) = st.libs.iter().position(|l| l.provider == provider) else {
+        return Err("该网盘还没有 JAV 库，请先「加入媒体库」扫描".into());
+    };
+    let mut scraped = 0usize;
+    let mut failed = 0usize;
+    let mut skipped = 0usize;
+    let cap = 500usize; // 单轮上限：防止几千条的库把一次调用拖到十分钟以上
+    let mut done = 0usize;
+    let entries = st.libs[pos].entries.clone();
+    let mut updated = entries.clone();
+    for (i, e) in entries.iter().enumerate() {
+        if e.status == 1 && !force {
+            skipped += 1;
+            continue;
+        }
+        if done >= cap {
+            break;
+        }
+        done += 1;
+        let mut cur = e.clone();
+        if scrape_one(&app, &mut cur, force).await {
+            scraped += 1;
+        } else if cur.status == 2 {
+            failed += 1;
+        } else {
+            skipped += 1;
+        }
+        updated[i] = cur;
+        // 站点礼貌间隔：批量刮削最怕把第一个站打挂，剩下 2000 条全红
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    st.libs[pos].entries = updated;
+    st.libs[pos].scanned_at_ms = st.libs[pos].scanned_at_ms.max(now_ms());
+    save_store(&st)?;
+    Ok(json!({ "scraped": scraped, "failed": failed, "skipped": skipped }))
+}
+
+// ───────────────────────── 测试 ─────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_fc2_variants() {
+        for name in ["FC2-PPV-4966160.mp4", "XXXXX.com＠FC2_PPV-4966160.mp4", "fc2_4966160.mkv"] {
+            let d = detect(name, "").expect(name);
+            assert_eq!(d.category, CATEGORY_FC2, "{name}");
+            assert_eq!(d.code, "FC2-4966160", "{name}");
+        }
+    }
+
+    #[test]
+    fn detect_censored_known_label() {
+        let d = detect("SONE-123.mp4", "").unwrap();
+        assert_eq!((d.code.as_str(), d.category), ("SONE-123", CATEGORY_CENSORED));
+        assert_eq!(d.matched_by, "std-label");
+    }
+
+    #[test]
+    fn detect_censored_unknown_label_needs_folder_echo() {
+        // ROYD 不在白名单：单文件不认定（走正常 TMDB 流程），目录呼应才改道
+        assert!(detect("ROYD-123.mp4", "").is_none());
+        assert!(detect("ROYD-123.mp4", "ROYD-123 高清").is_some());
+    }
+
+    #[test]
+    fn anime_ova_never_diverts() {
+        assert!(detect("OVA-01.mp4", "").is_none());
+        assert!(detect("NCOP-02.mp4", "").is_none());
+    }
+
+    #[test]
+    fn detect_uncensored_variants() {
+        let d = detect("HEYZO-1234.mp4", "").unwrap();
+        assert_eq!((d.code.as_str(), d.category), ("HEYZO-1234", CATEGORY_UNCENSORED));
+        let d = detect("010123-001.mp4", "").unwrap();
+        assert_eq!((d.code.as_str(), d.category), ("010123-001", CATEGORY_UNCENSORED));
+        let d = detect("Tokyo Hot n0842.mp4", "").unwrap();
+        assert_eq!(d.category, CATEGORY_UNCENSORED);
+        assert!(d.code.starts_with("TH-"));
+    }
+
+    #[test]
+    fn part_from_filename() {
+        let d = detect("SONE-123-2.mp4", "").unwrap();
+        assert_eq!((d.part, d.part_hint), (2, true));
+        let d = detect("FC2-PPV-4889513-1.mp4", "").unwrap();
+        assert_eq!(d.part, 1);
+        let d = detect("SONE-123 CD2.mkv", "").unwrap();
+        assert_eq!((d.part, d.part_hint), (2, true));
+        let d = detect("SONE-123.mp4", "").unwrap();
+        assert_eq!(d.part, 0);
+    }
+
+    #[test]
+    fn ad_prefix_and_brackets() {
+        let d = detect("XXXXX.com@FC2-PPV-4966160【独占】.mp4", "").unwrap();
+        assert_eq!(d.code, "FC2-4966160");
+    }
+
+    #[test]
+    fn western_and_unknown_not_scrapable() {
+        let d = detect("BlackedRaw.19.01.22.Bunny.Colby.XXX.1080p.mp4", "").unwrap();
+        assert_eq!(d.category, CATEGORY_WESTERN);
+        assert!(!is_scrapable(d.category));
+        assert!(detect("2024年5月流出，B站清纯反差UP主.mp4", "").is_none());
+    }
+
+    #[test]
+    fn padded_code_alt() {
+        assert_eq!(alt_code("SDMM-00201").as_deref(), Some("SDMM-201"));
+        assert_eq!(alt_code("FC2-12345"), None);
+        assert_eq!(alt_code("300MIUM-123"), None);
+    }
+
+    #[test]
+    fn physique_from_title() {
+        let (cup, age, height) = extract_physique(&["【18歳】【Gカップ】【身長158cm】整った美少女"]);
+        assert_eq!((cup.as_str(), age, height), ("G", 18, 158));
+        let (cup, age, height) = extract_physique(&["20才 E cup 165公分"]);
+        assert_eq!((cup.as_str(), age, height), ("E", 20, 165));
+        // 不带单位的一概不认
+        assert_eq!(extract_physique(&["G 158 18"]).0, "");
+    }
+
+    #[test]
+    fn rating_normalization() {
+        assert!((rating_to_ten(4.32) - 8.6).abs() < 1e-9);
+        assert!((rating_to_ten(8.6) - 8.6).abs() < 1e-9);
+        assert!((rating_to_ten(85.0) - 8.5).abs() < 1e-9);
+        assert_eq!(rating_to_ten(0.0), 0.0);
+    }
+
+    #[test]
+    fn code_key_normalization() {
+        assert_eq!(code_key("sone_123"), "SONE123");
+        assert_eq!(code_key("FC2-PPV-4966160"), "FC2PPV4966160");
+    }
+
+    #[test]
+    fn split_candidates_routes() {
+        let mk = |id: &str, name: &str, parent: &str| JavCandidate { file_id: id.into(), parent: parent.into(), name: name.into(), size: 1 };
+        let cands = vec![
+            mk("1", "SONE-123.mp4", "jav"),
+            mk("2", "葬送的芙莉莲 S01E24.mp4", "anime"),
+            mk("3", "OVA-01.mp4", "anime"),
+            mk("4", "FC2-PPV-4966160.mp4", "fc2"),
+        ];
+        let (normal, jav) = split_candidates(&cands);
+        assert_eq!(normal, vec![1, 2]);
+        assert_eq!(jav.iter().map(|(_, d)| d.code.as_str()).collect::<Vec<_>>(), vec!["SONE-123", "FC2-4966160"]);
+    }
+}

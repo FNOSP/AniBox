@@ -2,7 +2,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { IcoFolder, IcoGrid, IcoHome, IcoLive, IcoMovie, IcoStar, IcoTv } from "../../icons";
-import { Clock as IcoClockL, Cloud as IcoCloudL, MessageSquare as IcoMsgL, Settings as IcoGearL } from "lucide-react";
+import { Clapperboard as IcoJavHubL, Clock as IcoClockL, Cloud as IcoCloudL, MessageSquare as IcoMsgL, Settings as IcoGearL } from "lucide-react";
 
 
 export const SIDEBAR_CATS = [
@@ -29,6 +29,7 @@ export function Sidebar({
   favTotal,
   onOpenFav,
   onOpenCat,
+  onOpenJavHub,
   onOpenCloud115,
   onHome,
   onOpenSettings,
@@ -48,6 +49,8 @@ export function Sidebar({
   favTotal: number | null;
   onOpenFav: () => void;
   onOpenCat: (cat: { key: string; types: string[] }) => void;
+  /** [lc-1907] 打开 JavHub 页（番号刮削媒体库） */
+  onOpenJavHub: () => void;
   /** [lc-1779] 打开 115 网盘页（扫码登录 + 文件浏览 + 直链/转码播放） */
   onOpenCloud115: () => void;
   onHome: () => void;
@@ -114,6 +117,13 @@ export function Sidebar({
         </span>{" "}
         收藏
         <span className="side-count">{favTotal ?? ""}</span>
+      </div>
+      {/* [lc-1907] JavHub：番号识别 + 番号刮削的条目页（扫描分流结果都在这） */}
+      <div className={`side-item ${activeGuid === "_javhub" ? "active" : ""}`} onClick={onOpenJavHub}>
+        <span className="side-ico">
+          <IcoJavHubL size={15} strokeWidth={1.8} />
+        </span>{" "}
+        JavHub
       </div>
       {/* [lc-1779] 115 网盘：扫码登录后浏览/播放网盘媒体（直链或服务端转码） */}
       <div className={`side-item ${activeGuid === "_cloud115" ? "active" : ""}`} onClick={onOpenCloud115}>

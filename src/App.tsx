@@ -25,6 +25,7 @@ import { LoginPage } from "./components/login/LoginPage";
 import { PersonPage } from "./components/person/PersonPage";
 // [lc-1810] 多云盘资源库面板（7 家网盘：扫码登录 + 文件浏览 + 直链播放；115 含服务端转码）
 import { CloudPanel } from "./components/cloud115/CloudPanel";
+import { JavHubPage } from "./components/javhub/JavHubPage";
 import { FeedbackPanel } from "./components/feedback/FeedbackPanel";
 import { DisclaimerModal } from "./components/disclaimer/DisclaimerModal";
 import { DISCLAIMER_ACK_KEY } from "./components/disclaimer/DisclaimerText";
@@ -56,7 +57,7 @@ function normalizeLaunchPage(v: unknown): AppSettings["launchPage"] {
 
 function App() {
   // [lc-1615] 新增 "history"（观影记录页；侧栏快捷操作卡入口）
-  const [view, setView] = useState<"login" | "home" | "discover" | "lib" | "detail" | "history" | "person" | "cloud115">("login");
+  const [view, setView] = useState<"login" | "home" | "discover" | "lib" | "detail" | "history" | "person" | "javhub" | "cloud115">("login");
   // [lc-123] 「页」= 顶栏胶囊的两个面（首页/发现）。与 view 分开：在库里/详情页时胶囊仍要
   // 记住用户是从哪一页进去的（发现页点条目进 Bangumi 详情，左上角应仍显示「发现」）。
   const [page, setPage] = useState<"home" | "discover">("home");
@@ -1291,6 +1292,10 @@ function App() {
             closeSidebar();
             openHistory();
           }}
+          onOpenJavHub={() => {
+            closeSidebar();
+            setView("javhub");
+          }}
           onOpenCloud115={() => {
             closeSidebar();
             setView("cloud115");
@@ -1383,6 +1388,12 @@ function App() {
           {(view === "history" || historyMounted) && (
             <div className={`view-pane active${historyClosing ? " view-out" : " view-in"}${view !== "history" ? " pane-exit" : ""}`}>
               <WatchHistoryView onBack={goHome} onOpenItem={openHistoryItem} />
+            </div>
+          )}
+          {/* [lc-1907] JavHub 页：番号刮削条目（与网盘接入同款条件挂载），返回走 goHome。 */}
+          {view === "javhub" && (
+            <div className="view-pane active view-in">
+              <JavHubPage onBack={goHome} />
             </div>
           )}
           {/* [lc-1810] 多云盘资源库页：与观影记录同款条件挂载（view-in 转场），返回走 goHome。 */}

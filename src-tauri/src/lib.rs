@@ -4187,6 +4187,7 @@ pub fn run() {
             cloud_library::cloud_library_scan,
             cloud_library::cloud_library_remove,
             cloud_library::cloud_library_scrape,
+            jav_library::jav_library_all,
             jav_library::jav_library_items,
             jav_library::jav_library_scrape,
             cloud::cloud_rename,

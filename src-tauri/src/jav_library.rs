@@ -1612,51 +1612,68 @@ async fn scrape_one(app: &AppHandle, entry: &mut JavEntry, force: bool) -> bool 
 
 // ───────────────────────── 命令 ─────────────────────────
 
+/// 单条条目 → 前端形状（coverUrl 走 fntvimg /__cover/ 协议）
+fn entry_view(e: &JavEntry) -> Value {
+    json!({
+        "code": e.code,
+        "codeKey": e.code_key,
+        "category": e.category,
+        "categoryLabel": category_label(&e.category),
+        "status": e.status,
+        "title": e.title,
+        "titleZh": e.title_zh,
+        "actors": e.actors,
+        "tags": e.tags,
+        "releaseDate": e.release_date,
+        "studio": e.studio,
+        "series": e.series,
+        "summary": e.summary,
+        "runtime": e.runtime,
+        "director": e.director,
+        "rating": e.rating,
+        "votes": e.votes,
+        "cup": e.cup,
+        "age": e.age,
+        "height": e.height,
+        "coverUrl": if e.cover.is_empty() { "".to_string() } else { format!("/__cover/{}", e.cover) },
+        "attempts": e.attempts,
+        "lastError": e.last_error,
+        "files": e.files,
+    })
+}
+
 /// 某盘的 JAV 条目（含文件清单与封面 URL）
 #[tauri::command]
 pub async fn jav_library_items(provider: String) -> Result<Value, String> {
     let st = load_store();
     let lib = st.libs.iter().find(|l| l.provider == provider);
     let entries: Vec<Value> = lib
-        .map(|l| {
-            l.entries
-                .iter()
-                .map(|e| {
-                    json!({
-                        "code": e.code,
-                        "codeKey": e.code_key,
-                        "category": e.category,
-                        "categoryLabel": category_label(&e.category),
-                        "status": e.status,
-                        "title": e.title,
-                        "titleZh": e.title_zh,
-                        "actors": e.actors,
-                        "tags": e.tags,
-                        "releaseDate": e.release_date,
-                        "studio": e.studio,
-                        "series": e.series,
-                        "summary": e.summary,
-                        "runtime": e.runtime,
-                        "director": e.director,
-                        "rating": e.rating,
-                        "votes": e.votes,
-                        "cup": e.cup,
-                        "age": e.age,
-                        "height": e.height,
-                        "coverUrl": if e.cover.is_empty() { "".to_string() } else { format!("/__cover/{}", e.cover) },
-                        "attempts": e.attempts,
-                        "lastError": e.last_error,
-                        "files": e.files,
-                    })
-                })
-                .collect()
-        })
+        .map(|l| l.entries.iter().map(entry_view).collect())
         .unwrap_or_default();
     Ok(json!({
         "provider": provider,
         "scannedAtMs": lib.map(|l| l.scanned_at_ms).unwrap_or(0),
         "entries": entries,
     }))
+}
+
+/// 全部盘的 JAV 库总览（JavHub 页一次拉全；按 provider 分组）
+#[tauri::command]
+pub async fn jav_library_all() -> Result<Value, String> {
+    let st = load_store();
+    let libs: Vec<Value> = st
+        .libs
+        .iter()
+        .map(|l| {
+            json!({
+                "provider": l.provider,
+                "scannedAtMs": l.scanned_at_ms,
+                "count": l.entries.len(),
+                "entries": l.entries.iter().map(entry_view).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    Ok(json!({ "libs": libs }))
 }
 
 /// 对某盘的 JAV 条目做番号刮削（增量：status=1 跳过；force=true 重刮全部）。

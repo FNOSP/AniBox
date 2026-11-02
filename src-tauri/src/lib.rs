@@ -4553,6 +4553,7 @@ pub fn run() {
             jav_settings::jav_settings_get,
             jav_settings::jav_settings_set,
             jav_settings::jav_auto_scan_run,
+            jav_library::jav_entry_scrape,
             jav_library::jav_fnos_libs,
             jav_library::jav_fnos_set_lib,
             jav_library::jav_fnos_scan,

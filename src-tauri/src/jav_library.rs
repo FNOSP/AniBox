@@ -2001,7 +2001,12 @@ mod tests {
 /// 批量把已刮削条目的标题译成目标语言（设置：内置 AI）。
 /// 只译 status=1 且 title_zh 为空的条目；单轮上限 30 条（对齐 JAVCloudHub 的 batch_size 默认）。
 #[tauri::command]
-pub async fn jav_ai_translate(app: AppHandle, provider: String, force: Option<bool>) -> Result<Value, String> {
+pub async fn jav_ai_translate(
+    app: AppHandle,
+    provider: String,
+    force: Option<bool>,
+    code_key: Option<String>,
+) -> Result<Value, String> {
     let js = crate::jav_settings::load();
     if !js.ai.enabled {
         return Err("内置 AI 没有打开（设置 → 内置 AI）".into());
@@ -2014,9 +2019,19 @@ pub async fn jav_ai_translate(app: AppHandle, provider: String, force: Option<bo
     let Some(pos) = st.libs.iter().position(|l| l.provider == provider) else {
         return Err("该网盘还没有 JAV 库".into());
     };
-    // 取待译清单
+    // 取待译清单（指定 code_key = 详情抽屉的单条翻译，强制重译）
     let mut todo: Vec<(usize, String, String)> = Vec::new(); // (index, title, actors)
     for (i, e) in st.libs[pos].entries.iter().enumerate() {
+        if let Some(ck) = &code_key {
+            if &e.code_key != ck {
+                continue;
+            }
+            if e.title.trim().is_empty() {
+                continue;
+            }
+            todo.push((i, e.title.clone(), e.actors.join(", ")));
+            break;
+        }
         if e.status != 1 || e.title.trim().is_empty() {
             continue;
         }
@@ -2342,4 +2357,26 @@ pub async fn jav_fnos_scan(app: AppHandle, state: tauri::State<'_, crate::AppSta
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     }
     Ok(json!({ "results": results }))
+}
+
+/// 单条刮削（详情抽屉的「重新刮削」）：强制重跑一遍引擎链
+#[tauri::command]
+pub async fn jav_entry_scrape(app: AppHandle, provider: String, code_key: String) -> Result<Value, String> {
+    let settings = crate::jav_settings::load();
+    let ctx = Ctx::new(settings.clone());
+    let mut st = load_store();
+    let Some(pos) = st.libs.iter().position(|l| l.provider == provider) else {
+        return Err("该网盘还没有 JAV 库".into());
+    };
+    let Some(idx) = st.libs[pos].entries.iter().position(|e| e.code_key == code_key) else {
+        return Err("条目不存在".into());
+    };
+    if st.libs[pos].entries[idx].files.is_empty() {
+        return Err("该条目没有可播放的文件记录，请先重新扫描".into());
+    }
+    let mut cur = st.libs[pos].entries[idx].clone();
+    scrape_one(&ctx, &app, &mut cur, true).await;
+    st.libs[pos].entries[idx] = cur.clone();
+    save_store(&st)?;
+    Ok(json!({ "ok": cur.status == 1, "entry": entry_view(&cur) }))
 }

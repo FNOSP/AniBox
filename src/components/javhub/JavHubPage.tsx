@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { imgUrl } from "../../lib/images";
 import { JavSettingsModal } from "./JavSettingsModal";
+import { JavDetailDrawer, type JavEntryT } from "./JavDetailDrawer";
 import {
   Box as IcoWork,
   Building2 as IcoStudio,
@@ -19,22 +20,6 @@ import {
   Wrench as IcoWrenchL,
 } from "lucide-react";
 
-type JavFileT = { provider: string; fileId: string; name: string; size: number; part: number };
-type JavEntryT = {
-  code: string;
-  codeKey: string;
-  category: string;
-  categoryLabel: string;
-  status: number; // 0 待刮削 1 已刮削 2 失败
-  title: string;
-  titleZh: string;
-  actors: string[];
-  tags: string[];
-  releaseDate: string;
-  studio: string;
-  coverUrl: string;
-  files: JavFileT[];
-};
 type JavLibT = { provider: string; label?: string; scannedAtMs: number; count: number; entries: JavEntryT[] };
 type ProviderInfo = { id: string; label: string; logged: boolean; userName: string };
 
@@ -87,6 +72,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
   const [err, setErr] = useState("");
   const [filter, setFilter] = useState(""); // 演员库/厂商库/标签库点卡片 → 媒体库过滤
   const [setOpen, setSetOpen] = useState(false);
+  const [detail, setDetail] = useState<JavEntryT | null>(null);
   const [fnosBusy, setFnosBusy] = useState(false);
   const [fnosNote, setFnosNote] = useState("");
   const alive = useRef(true);
@@ -254,7 +240,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
   // 海报墙卡片（与媒体库海报墙同观感：竖版海报 + 标题 + meta）
   const mediaCards = entries.length
     ? entries.map((e) => (
-        <div key={e.codeKey} className="jvh-card" onClick={() => e.files[0] && void play(e)}>
+        <div key={e.codeKey} className="jvh-card" onClick={() => setDetail(e)}>
           <div className="jvh-poster">
             {e.coverUrl ? (
               <img src={imgUrl(e.coverUrl)} alt="" loading="lazy" />
@@ -435,6 +421,28 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
+      {detail && (
+        <JavDetailDrawer
+          provider={active}
+          entry={detail}
+          onClose={() => setDetail(null)}
+          onPlay={(e) => void play(e)}
+          onFilter={(name) => {
+            setFilter(name);
+            setView("library");
+          }}
+          onUpdated={(ne) => {
+            // 单条刮削/翻译后原地同步（列表 + 当前抽屉）
+            setLibs((prev) =>
+              prev.map((l) =>
+                l.provider === active
+                  ? { ...l, entries: l.entries.map((x) => (x.codeKey === ne.codeKey ? ne : x)) }
+                  : l,
+              ),
+            );
+          }}
+        />
+      )}
       {setOpen && (
         <JavSettingsModal
           onClose={() => setSetOpen(false)}

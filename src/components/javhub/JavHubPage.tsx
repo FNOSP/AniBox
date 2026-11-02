@@ -10,7 +10,9 @@ import {
   FolderOpen as IcoFolderL,
   Play as IcoPlayL,
   RefreshCw as IcoRefreshL,
+  Settings as IcoGearL,
 } from "lucide-react";
+import { JavSettingsModal } from "./JavSettingsModal";
 
 type JavFileT = { provider: string; fileId: string; name: string; size: number; part: number };
 type JavEntryT = {
@@ -20,6 +22,7 @@ type JavEntryT = {
   categoryLabel: string;
   status: number; // 0 待刮削 1 已刮削 2 失败
   title: string;
+  titleZh: string;
   releaseDate: string;
   studio: string;
   coverUrl: string;
@@ -36,6 +39,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
+  const [setOpen, setSetOpen] = useState(false);
   const alive = useRef(true);
 
   const load = useCallback(async () => {
@@ -113,6 +117,14 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
           </span>
           JavHub
         </h3>
+        <button
+          className="c115-mini"
+          style={{ marginLeft: "auto" }}
+          title="扫描规则 / 定时扫描 / 网络与代理 / 刮削站点 / 内置 AI"
+          onClick={() => setSetOpen(true)}
+        >
+          <IcoGearL size={13} strokeWidth={2} /> 设置
+        </button>
       </div>
 
       {/* 盘 tab（只显示已有 JAV 库的盘） */}
@@ -156,8 +168,8 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
                   <IcoJavL size={15} strokeWidth={1.8} />
                 </span>
               )}
-              <span className="c115-name" title={e.title || e.code}>
-                {e.title || e.code}
+              <span className="c115-name" title={e.titleZh || e.title || e.code}>
+                {e.titleZh || e.title || e.code}
               </span>
               <span className="c115-size">
                 {e.categoryLabel}
@@ -191,6 +203,14 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
           <IcoFolderL size={34} strokeWidth={1.4} />
           <p>还没有 JAV 库 —— 去「网盘接入」进到媒体目录点「加入媒体库」，扫描时番号文件会自动归到这里</p>
         </div>
+      )}
+      {setOpen && (
+        <JavSettingsModal
+          onClose={() => setSetOpen(false)}
+          onSaved={() => {
+            void load();
+          }}
+        />
       )}
     </main>
   );

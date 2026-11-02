@@ -737,16 +737,49 @@ fn build_req(
     rb
 }
 
-/// 站点请求统一入口：有密钥 → 逐镜像端点（边缘代拉，国内直连）；全挂 → 直连上游。
-/// 镜像会把上游状态码原样透传，引擎里的 404/403 分支逻辑不变。
-async fn send_site(
+/// r18dev base 覆盖时的直连发送（镜像轨只认内置上游，覆盖域直连）
+async fn send_site_with(
+    ctx: &Ctx,
+    base: String,
     site: &str,
     method: &str,
     path_and_query: &str,
     body: Option<(&'static str, String)>,
     headers: &[(&str, &str)],
 ) -> Result<reqwest::Response, String> {
-    let cli = scrape_client();
+    let url = format!("{base}{path_and_query}");
+    let rb = build_req(&ctx.client, &url, method, body.as_ref(), headers);
+    rb.send().await.map_err(|e| format!("{site} 请求失败: {e}"))
+}
+
+/// 站点请求统一入口：有密钥 → 逐镜像端点（边缘代拉，国内直连）；全挂 → 直连上游。
+/// 镜像会把上游状态码原样透传，引擎里的 404/403 分支逻辑不变。
+async fn send_site(
+    ctx: &Ctx,
+    site: &str,
+    method: &str,
+    path_and_query: &str,
+    body: Option<(&'static str, String)>,
+    headers: &[(&str, &str)],
+) -> Result<reqwest::Response, String> {
+    let cli = &ctx.client;
+    // 用户给这个站填了自定义地址：跳过镜像，直连他的域（填自定义域多半就是为了直连可达）
+    let override_base = ctx
+        .settings
+        .scrape
+        .sites
+        .iter()
+        .find(|s| s.id == site)
+        .map(|s| s.base.trim().trim_end_matches('/').to_string())
+        .filter(|b| !b.is_empty());
+    if let Some(base) = override_base {
+        let url = format!("{base}{path_and_query}");
+        let rb = build_req(&cli, &url, method, body.as_ref(), headers);
+        return rb
+            .send()
+            .await
+            .map_err(|e| format!("{site} 自定义地址直连失败: {e}"));
+    }
     let mut blocked: Option<reqwest::Response> = None;
     if let Some(sec) = mirror_secret() {
         for base in MIRROR_BASES {
@@ -796,23 +829,54 @@ fn img_mirror_path(url: &str) -> Option<String> {
     Some(format!("/img/{host}/{path}"))
 }
 
-fn scrape_client() -> &'static reqwest::Client {
-    static C: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    C.get_or_init(|| {
+/// 一次刮削会话的上下文：客户端按**设置**现建（改代理/UA/超时立即生效），站点表随行
+pub struct Ctx {
+    pub client: reqwest::Client,
+    pub settings: crate::jav_settings::JavSettings,
+}
+
+impl Ctx {
+    pub fn new(settings: crate::jav_settings::JavSettings) -> Self {
+        let n = &settings.network;
+        // 代理优先级（借鉴 JAVCloudHub netproxy）：手填 > 环境变量 > Windows 注册表系统代理
+        //（Clash/v2rayN 开「系统代理」写的是 WinINET 注册表，不会给本进程塞环境变量）
+        let proxy: Option<String> = if !n.proxy.trim().is_empty() {
+            Some(normalize_proxy_input(&n.proxy))
+        } else if n.trust_env {
+            effective_proxy()
+        } else {
+            None
+        };
         let mut b = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+            .user_agent(if n.user_agent.trim().is_empty() {
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+            } else {
+                n.user_agent.trim()
+            })
             .connect_timeout(std::time::Duration::from_secs(8))
-            .timeout(std::time::Duration::from_secs(25))
+            .timeout(std::time::Duration::from_secs(n.timeout_seconds.clamp(5, 120) as u64))
             .redirect(reqwest::redirect::Policy::limited(5));
-        // 借鉴 JAVCloudHub netproxy：手填环境变量 > Windows 系统代理（Clash/v2rayN 开「系统代理」
-        // 写的是 WinINET 注册表，不会给本进程塞环境变量 —— 只认环境变量就会「明明开着代理却连不上」）
-        if let Some(p) = effective_proxy() {
+        if let Some(p) = proxy {
             if let Ok(px) = reqwest::Proxy::all(&p) {
                 b = b.proxy(px);
             }
         }
-        b.build().expect("jav scrape client")
-    })
+        Self { client: b.build().expect("jav scrape client"), settings }
+    }
+}
+
+/// 用户随手填的代理地址补协议头（127.0.0.1:10808 → http://…；本机默认 http，公网默认 https）
+fn normalize_proxy_input(raw: &str) -> String {
+    let r = raw.trim();
+    if r.contains("://") {
+        return r.to_string();
+    }
+    let host = r.split('/').next().unwrap_or(r);
+    if host.starts_with("127.") || host.starts_with("localhost") || host.starts_with("[") {
+        format!("http://{r}")
+    } else {
+        format!("https://{r}")
+    }
 }
 
 /// 环境变量 > Windows 系统代理（注册表 Internet Settings）
@@ -937,11 +1001,14 @@ fn uniq_keep_order(v: Vec<String>) -> Vec<String> {
 
 // ---------- r18.dev：公开 JSON，最稳的一手（无 Cookie、无年龄门） ----------
 
-async fn eng_r18dev(code: &str) -> Result<Meta, String> {
+async fn eng_r18dev(ctx: &Ctx, code: &str, base_override: &str) -> Result<Meta, String> {
+    let host = if base_override.is_empty() { "https://r18.dev" } else { base_override };
     let get = |path: String| {
         let path = path.clone();
+        let host = host.to_string();
+        let ctx_ref = ctx;
         async move {
-            let resp = send_site("r18", "GET", &path, None, &[("Accept", "application/json")])
+            let resp = send_site_with(ctx_ref, host, "r18", "GET", &path, None, &[("Accept", "application/json")])
                 .await
                 .map_err(|e| format!("R18.dev 请求失败: {e}"))?;
             let st = resp.status().as_u16();
@@ -1066,14 +1133,16 @@ fn unwrap_movie(v: Value) -> Value {
 
 // ---------- jav321：POST 表单检索，不吃 Cloudflare，JavBus/JavDB 被盾时的兜底 ----------
 
-async fn eng_jav321(code: &str) -> Result<Meta, String> {
+async fn eng_jav321(ctx: &Ctx, code: &str, base_override: &str) -> Result<Meta, String> {
+    let base = if base_override.is_empty() { "https://www.jav321.com" } else { base_override };
     let body = format!("sn={}", urlencoding::encode(code));
     let resp = send_site(
+        ctx,
         "j321",
         "POST",
         "/search",
         Some(("application/x-www-form-urlencoded", body)),
-        &[("Referer", "https://www.jav321.com/"), ("Cookie", "over18=1")],
+        &[("Referer", &format!("{base}/")), ("Cookie", "over18=1")],
     )
     .await
     .map_err(|e| format!("jav321 请求失败: {e}"))?;
@@ -1144,13 +1213,15 @@ async fn eng_jav321(code: &str) -> Result<Meta, String> {
 
 // ---------- mgstage：片商官方站（SOD / MIDE / SIRO / GANA），数据最准但只覆盖自家 ----------
 
-async fn eng_mgstage(code: &str) -> Result<Meta, String> {
+async fn eng_mgstage(ctx: &Ctx, code: &str, base_override: &str) -> Result<Meta, String> {
+    let base = if base_override.is_empty() { "https://www.mgstage.com" } else { base_override };
     let resp = send_site(
+        ctx,
         "mgs",
         "GET",
         &format!("/product/product_detail/{code}/"),
         None,
-        &[("Referer", "https://www.mgstage.com/"), ("Cookie", "adc=1")],
+        &[("Referer", &format!("{base}/")), ("Cookie", "adc=1")],
     )
     .await
     .map_err(|e| format!("MGStage 请求失败: {e}"))?;
@@ -1221,12 +1292,13 @@ async fn eng_mgstage(code: &str) -> Result<Meta, String> {
 
 // ---------- heyzo：片商官方站，专治 HEYZO-xxxx 无码片（无 Cookie、无年龄门） ----------
 
-async fn eng_heyzo(code: &str) -> Result<Meta, String> {
+async fn eng_heyzo(ctx: &Ctx, code: &str, _base_override: &str) -> Result<Meta, String> {
     let num = res().heyzo.captures(&code.to_uppercase()).and_then(|c| c.get(1)).map(|g| g.as_str().to_string()).unwrap_or_default();
     if num.is_empty() {
         return Err(format!("「{code}」不是 HEYZO 番号"));
     }
     let resp = send_site(
+        ctx,
         "heyzo",
         "GET",
         &format!("/moviepages/{num}/index.html"),
@@ -1315,7 +1387,7 @@ async fn eng_heyzo(code: &str) -> Result<Meta, String> {
 
 // ---------- FC2 官方站：FC2-PPV 一手来源（日本站，需代理） ----------
 
-async fn eng_fc2(code: &str) -> Result<Meta, String> {
+async fn eng_fc2(ctx: &Ctx, code: &str, _base_override: &str) -> Result<Meta, String> {
     // 各种写法（FC2-4966160 / FC2-PPV-4966160 / fc2_4966160）都取最长数字段
     let num = code
         .chars()
@@ -1325,6 +1397,7 @@ async fn eng_fc2(code: &str) -> Result<Meta, String> {
         return Err(format!("从「{code}」里提取不出合法的 FC2 作品编号"));
     }
     let resp = send_site(
+        ctx,
         "fc2",
         "GET",
         &format!("/article/{num}/"),
@@ -1397,23 +1470,18 @@ async fn eng_fc2(code: &str) -> Result<Meta, String> {
     })
 }
 
-/// 某分类下的引擎尝试顺序（对齐 JAVCloudHub 的站点优先级）
-fn engine_order(category: &str) -> &'static [&'static str] {
-    match category {
-        CATEGORY_FC2 => &["fc2", "r18dev"],
-        CATEGORY_UNCENSORED => &["r18dev", "heyzo", "jav321"],
-        CATEGORY_CENSORED => &["r18dev", "jav321", "mgstage"],
-        _ => &[],
-    }
+/// 某分类下的引擎尝试顺序：来自设置（站点顺序即优先级，停用/地址覆盖随设置）
+fn engine_order_ctx(ctx: &Ctx, category: &str) -> Vec<(String, String)> {
+    crate::jav_settings::engine_order(&ctx.settings, category)
 }
 
-async fn run_engine(name: &str, code: &str) -> Result<Meta, String> {
+async fn run_engine(ctx: &Ctx, name: &str, code: &str, base: &str) -> Result<Meta, String> {
     match name {
-        "r18dev" => eng_r18dev(code).await,
-        "jav321" => eng_jav321(code).await,
-        "mgstage" => eng_mgstage(code).await,
-        "heyzo" => eng_heyzo(code).await,
-        "fc2" => eng_fc2(code).await,
+        "r18dev" => eng_r18dev(ctx, code, base).await,
+        "jav321" => eng_jav321(ctx, code, base).await,
+        "mgstage" => eng_mgstage(ctx, code, base).await,
+        "heyzo" => eng_heyzo(ctx, code, base).await,
+        "fc2" => eng_fc2(ctx, code, base).await,
         _ => Err(format!("「{name}」的解析器不存在")),
     }
 }
@@ -1449,11 +1517,11 @@ fn ext_of(bytes: &[u8], url: &str) -> &'static str {
 
 const MAX_COVER_BYTES: usize = 10 * 1024 * 1024;
 
-async fn download_cover(url: &str, referer: &str) -> Result<(Vec<u8>, String), String> {
+async fn download_cover(ctx: &Ctx, url: &str, referer: &str) -> Result<(Vec<u8>, String), String> {
     if url.is_empty() {
         return Err("没有封面地址".into());
     }
-    let cli = scrape_client();
+    let cli = &ctx.client;
     // 镜像 /img/ 轨优先（host 白名单内 + 有密钥）；全挂退直连（需代理）
     let mut last_err = String::new();
     if let (Some(p), Some(sec)) = (img_mirror_path(url), mirror_secret()) {
@@ -1520,7 +1588,7 @@ fn save_cover(_app: &AppHandle, code_key: &str, bytes: &[u8], ext: &str) -> Resu
 // ───────────────────────── 刮削主流程 ─────────────────────────
 
 /// 单条刮削：按分类引擎序依次降级，首个成功者胜出；封面永远落本机。
-async fn scrape_one(app: &AppHandle, entry: &mut JavEntry, force: bool) -> bool {
+async fn scrape_one(ctx: &Ctx, app: &AppHandle, entry: &mut JavEntry, force: bool) -> bool {
     if entry.status == 1 && !force {
         return false;
     }
@@ -1529,13 +1597,13 @@ async fn scrape_one(app: &AppHandle, entry: &mut JavEntry, force: bool) -> bool 
     }
     entry.attempts += 1;
     let mut errors: Vec<String> = Vec::new();
-    for &eng in engine_order(&entry.category) {
+    for (eng, base) in engine_order_ctx(ctx, &entry.category) {
         // 补零番号先试原样，再试备选（SDMM-00201 → SDMM-201）
         for code in [entry.code.clone(), alt_code(&entry.code).unwrap_or_default()] {
             if code.is_empty() {
                 continue;
             }
-            match run_engine(eng, &code).await {
+            match run_engine(ctx, &eng, &code, &base).await {
                 Ok(m) => {
                     if m.title.trim().is_empty() && m.cover_url.is_empty() {
                         errors.push(format!("{eng}: 返回内容为空"));
@@ -1580,14 +1648,14 @@ async fn scrape_one(app: &AppHandle, entry: &mut JavEntry, force: bool) -> bool 
                     }
                     // 封面下载：第三方图床有防盗链，落本机一次到位（引用站点首页当 Referer）
                     if !m.cover_url.is_empty() {
-                        let referer = match eng {
+                        let referer = match eng.as_str() {
                             "fc2" => "https://adult.contents.fc2.com/",
                             "jav321" => "https://www.jav321.com/",
                             "mgstage" => "https://www.mgstage.com/",
                             "heyzo" => "https://www.heyzo.com/",
                             _ => "https://r18.dev/",
                         };
-                        match download_cover(&m.cover_url, referer).await {
+                        match download_cover(ctx, &m.cover_url, referer).await {
                             Ok((bytes, ext)) => match save_cover(app, &entry.code_key, &bytes, &ext) {
                                 Ok(name) => entry.cover = name,
                                 Err(e) => errors.push(format!("{eng}: 封面落盘失败 {e}")),
@@ -1684,6 +1752,10 @@ pub async fn jav_library_scrape(app: AppHandle, provider: String, force: Option<
     let Some(pos) = st.libs.iter().position(|l| l.provider == provider) else {
         return Err("该网盘还没有 JAV 库，请先「加入媒体库」扫描".into());
     };
+    let settings = crate::jav_settings::load();
+    // 设置里关掉的分类直接不刮（无番号 unknown 本就不在列表里）
+    let cats: Vec<&str> = settings.scrape.categories.iter().map(|x| x.as_str()).collect();
+    let ctx = Ctx::new(settings.clone());
     let mut scraped = 0usize;
     let mut failed = 0usize;
     let mut skipped = 0usize;
@@ -1696,12 +1768,16 @@ pub async fn jav_library_scrape(app: AppHandle, provider: String, force: Option<
             skipped += 1;
             continue;
         }
+        if !cats.contains(&e.category.as_str()) {
+            skipped += 1;
+            continue;
+        }
         if done >= cap {
             break;
         }
         done += 1;
         let mut cur = e.clone();
-        if scrape_one(&app, &mut cur, force).await {
+        if scrape_one(&ctx, &app, &mut cur, force).await {
             scraped += 1;
         } else if cur.status == 2 {
             failed += 1;
@@ -1709,8 +1785,9 @@ pub async fn jav_library_scrape(app: AppHandle, provider: String, force: Option<
             skipped += 1;
         }
         updated[i] = cur;
-        // 站点礼貌间隔：批量刮削最怕把第一个站打挂，剩下 2000 条全红
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        // 站点礼貌间隔（设置可调）：批量刮削最怕把第一个站打挂，剩下 2000 条全红
+        let gap = (settings.scrape.interval_seconds as f64).clamp(0.2, 60.0);
+        tokio::time::sleep(std::time::Duration::from_millis((gap * 1000.0) as u64)).await;
     }
     st.libs[pos].entries = updated;
     st.libs[pos].scanned_at_ms = st.libs[pos].scanned_at_ms.max(now_ms());
@@ -1834,4 +1911,108 @@ mod tests {
         assert_eq!(normal, vec![1, 2]);
         assert_eq!(jav.iter().map(|(_, d)| d.code.as_str()).collect::<Vec<_>>(), vec!["SONE-123", "FC2-4966160"]);
     }
+}
+
+// ───────────────────────── 内置 AI：标题汉化 ─────────────────────────
+
+/// 批量把已刮削条目的标题译成目标语言（设置：内置 AI）。
+/// 只译 status=1 且 title_zh 为空的条目；单轮上限 30 条（对齐 JAVCloudHub 的 batch_size 默认）。
+#[tauri::command]
+pub async fn jav_ai_translate(app: AppHandle, provider: String, force: Option<bool>) -> Result<Value, String> {
+    let js = crate::jav_settings::load();
+    if !js.ai.enabled {
+        return Err("内置 AI 没有打开（设置 → 内置 AI）".into());
+    }
+    if js.ai.api_key.trim().is_empty() {
+        return Err("没填 API Key（设置 → 内置 AI）".into());
+    }
+    let force = force.unwrap_or(false);
+    let mut st = load_store();
+    let Some(pos) = st.libs.iter().position(|l| l.provider == provider) else {
+        return Err("该网盘还没有 JAV 库".into());
+    };
+    // 取待译清单
+    let mut todo: Vec<(usize, String, String)> = Vec::new(); // (index, title, actors)
+    for (i, e) in st.libs[pos].entries.iter().enumerate() {
+        if e.status != 1 || e.title.trim().is_empty() {
+            continue;
+        }
+        if !force && !e.title_zh.trim().is_empty() {
+            continue;
+        }
+        if todo.len() >= 30 {
+            break;
+        }
+        todo.push((i, e.title.clone(), e.actors.join(", ")));
+    }
+    if todo.is_empty() {
+        return Ok(json!({ "translated": 0, "message": "没有待翻译的条目" }));
+    }
+    // 提示词对齐 JAVCloudHub ai.py：番号与人名保留原字、≤30 字、严格 JSON 出入
+    let lang = match js.ai.target_lang.as_str() {
+        "zh-TW" => "繁體中文",
+        "en" => "English",
+        "ja" => "日本語",
+        _ => "简体中文",
+    };
+    let items: Vec<Value> = todo
+        .iter()
+        .enumerate()
+        .map(|(k, (_, t, actors))| json!({ "id": k + 1, "jp": t, "actors": actors }))
+        .collect();
+    let sys = format!(
+        "你是日本成人影片资料库的编辑，任务是把日文标题翻译成简洁自然的{lang}。严格遵守：\n1. 输入是 JSON 数组，每项带 id 和 jp（日文标题）。只输出 JSON：{{\"items\":[{{\"id\":1,\"zh\":\"译名\"}}]}}，不要解释。\n2. 译名控制在 30 个字以内，不加书名号、引号、句号。\n3. 番号（FC2-PPV-123456、SONE-123）和人名（actors 字段里的人名）一律保留日文原字，不要音译。\n4. 输出的 id 必须与输入一一对应，条数一致。直接输出 JSON。"
+    );
+    let body = json!({
+        "model": js.ai.model,
+        "temperature": 0.3,
+        "response_format": { "type": "json_object" },
+        "messages": [ { "role": "system", "content": sys }, { "role": "user", "content": serde_json::to_string(&items).unwrap_or_default() } ],
+    });
+    let url = format!("{}/chat/completions", js.ai.base_url.trim().trim_end_matches('/'));
+    let cli = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .build()
+        .map_err(|e| format!("HTTP 客户端构建失败: {e}"))?;
+    let resp = cli
+        .post(&url)
+        .bearer_auth(js.ai.api_key.trim())
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("连不上 AI 服务: {e}"))?;
+    let st_code = resp.status().as_u16();
+    let text = resp.text().await.unwrap_or_default();
+    if st_code != 200 {
+        return Err(format!("AI 返回 HTTP {st_code}: {}", text.chars().take(200).collect::<String>()));
+    }
+    let v: Value = serde_json::from_str(&text).map_err(|_| "AI 返回的不是 JSON".to_string())?;
+    let content = v["choices"][0]["message"]["content"].as_str().unwrap_or("").trim().to_string();
+    if content.is_empty() {
+        return Err("AI 没有返回内容".into());
+    }
+    // 模型偶尔包 ```json 围栏，抠出来
+    let content = content
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim()
+        .to_string();
+    let parsed: Value = serde_json::from_str(&content).map_err(|e| format!("AI 返回的 JSON 解析失败: {e}"))?;
+    let mut translated = 0usize;
+    if let Some(items) = parsed["items"].as_array() {
+        for it in items {
+            let id = it["id"].as_u64().unwrap_or(0) as usize;
+            let zh = it["zh"].as_str().unwrap_or("").trim().to_string();
+            if id == 0 || zh.is_empty() || id > todo.len() {
+                continue;
+            }
+            let (idx, _, _) = &todo[id - 1];
+            st.libs[pos].entries[*idx].title_zh = zh;
+            translated += 1;
+        }
+    }
+    save_store(&st)?;
+    let _ = &app;
+    Ok(json!({ "translated": translated }))
 }

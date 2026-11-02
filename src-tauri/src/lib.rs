@@ -14,6 +14,7 @@ mod cloud;
 mod cloud_proxy;
 mod cloud_library;
 mod jav_library;
+mod jav_settings;
 // [lc-1811] WebDAV 媒体源（多账号 + PROPFIND 浏览 + Basic Auth 播放 + 随片字幕）
 mod webdav;
 // [lc-1820] AI 增强可选组件（RIFE Vulkan 运行时：软件内下载/状态/删除）
@@ -3848,6 +3849,8 @@ pub fn run() {
             // [lc-1811] app_data_dir 全局快照：云盘凭据仓 / 115 Cookie / WebDAV 账号
             // 都从续签代理等无 AppHandle 的上下文取路径，setup 时固化一次
             cloud::init_app_data(app.handle());
+            // [lc-1907] JavHub 定时扫描调度（jav-settings.json 里默认关闭，关闭时零动作）
+            jav_settings::spawn_auto_scan(app.handle().clone());
             // [lc-1784] OpenSubtitles 内置共享 Key 落地（供 mpv 侧 sub-assrt.lua 读；空则清理）
             subtitle_sources::sync_builtin_key(app.handle());
             // [update] 载入前端补丁覆盖层指针；release 且存在补丁时切到 fntvweb 协议
@@ -4209,6 +4212,9 @@ pub fn run() {
             cloud_library::cloud_library_remove,
             cloud_library::cloud_library_scrape,
             jav_library::jav_library_all,
+            jav_settings::jav_settings_get,
+            jav_settings::jav_settings_set,
+            jav_settings::jav_auto_scan_run,
             jav_library::jav_library_items,
             jav_library::jav_library_scrape,
             cloud::cloud_rename,

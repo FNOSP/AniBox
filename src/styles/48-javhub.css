@@ -1,0 +1,252 @@
+/* ═══════════════════════════════════════════════════════════════
+   [lc-1907] JavHub 设置弹层 —— 左侧分节导航 + 右侧字段（对照
+   JAVCloudHub 设置页的信息结构，视觉走 AniBox 主题 token）。
+   ═══════════════════════════════════════════════════════════════ */
+
+.javset-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+  background: rgba(10, 14, 30, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: javset-in 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+@keyframes javset-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.javset {
+  width: min(860px, 92vw);
+  height: min(600px, 86vh);
+  display: flex;
+  border-radius: var(--radius);
+  border: 1px solid var(--glass-border);
+  background: var(--panel);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+/* ── 左侧分节导航 ── */
+.javset-nav {
+  width: 168px;
+  flex: none;
+  border-right: 1px solid var(--line);
+  padding: 14px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+.javset-navhead {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 0 10px 8px;
+}
+.javset-navitem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.javset-navitem:hover { background: var(--hover); }
+.javset-navitem.on {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+/* ── 右侧内容 ── */
+.javset-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.javset-sechead {
+  padding: 16px 20px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.javset-sechead h4 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-strong);
+}
+.javset-sechead p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.javset-fields {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.javset-field label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-strong);
+  margin-bottom: 5px;
+}
+.javset-field .hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+.javset-field input[type="text"],
+.javset-field input[type="password"],
+.javset-field input[type="number"],
+.javset-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  background: var(--input-bg);
+  color: var(--text-strong);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+.javset-field textarea { min-height: 54px; resize: vertical; }
+.javset-field input:focus, .javset-field textarea:focus { border-color: var(--accent); }
+
+/* 开关行 */
+.javset-bool {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+.javset-bool .sw {
+  flex: none;
+  width: 34px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--input-bg);
+  border: 1px solid var(--line-strong);
+  position: relative;
+  transition: background 0.18s;
+  margin-top: 1px;
+}
+.javset-bool .sw::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--option-bg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform 0.18s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.javset-bool.on .sw { background: var(--accent); border-color: var(--accent); }
+.javset-bool.on .sw::after { transform: translateX(14px); }
+.javset-bool .bl {
+  font-size: 13px;
+  color: var(--text-strong);
+}
+.javset-bool .hint { margin-top: 3px; }
+
+/* 只读信息行 */
+.javset-ro {
+  padding: 9px 12px;
+  border-radius: 9px;
+  background: var(--ph-bg);
+  border: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--text);
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+/* 站点行 */
+.javset-site {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--ph-bg);
+}
+.javset-site.off { opacity: 0.55; }
+.javset-site .sr-name {
+  font-size: 13px;
+  color: var(--text-strong);
+  flex: none;
+  width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.javset-site input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--input-bg);
+  color: var(--text-strong);
+  font-size: 12.5px;
+  outline: none;
+}
+.javset-site .mv {
+  flex: none;
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+}
+.javset-site .mv:hover { color: var(--text-strong); }
+
+.javset-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+}
+.javset-foot .dirty {
+  flex: 1;
+  font-size: 12px;
+  color: var(--muted);
+}
+.javset-btn {
+  padding: 7px 18px;
+  border-radius: 9px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.javset-btn:disabled { opacity: 0.5; cursor: default; }
+.javset-btn.ghost {
+  background: var(--glass-btn-bg);
+  color: var(--text-strong);
+}
+.javset-btn.danger { background: #d05c5c; }
+
+@media (prefers-reduced-motion: reduce) {
+  .javset-scrim { animation: none; }
+  .javset-bool .sw, .javset-bool .sw::after { transition: none; }
+}

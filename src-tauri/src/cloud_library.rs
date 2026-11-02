@@ -17,19 +17,10 @@ use tauri::AppHandle;
 /// 60 次扫不完一个真实网盘库（用户反馈"空壳"）——提升到 400，扫不完的部分
 /// 落断点游标（`cursor`），前端提示"继续扫描"接着跑，不再白扫一遍。
 const MAX_LIST_CALLS: usize = 400;
-/// 单个目录最多拉的分页数（cursor 翻页上限）
-const MAX_PAGES_PER_DIR: usize = 2;
 /// 单个目录最多收的条目数（防异常超大目录拖死扫描）
 const MAX_ENTRIES_PER_DIR: usize = 300;
-/// 扫描深度：root(0) → 子目录(1..3)，共 4 层；超过深度只收文件不再下钻
-const MAX_DEPTH: usize = 3;
 /// 单次扫描的时间上限（秒）：预算和时间双闸，到点保存断点返回
 const TIME_BUDGET_SECS: u64 = 90;
-/// 明显不是媒体目录的（借鉴 JAVCloudHub scanner 的 skip_dirs，省预算不省覆盖）
-const SKIP_DIRS: &[&str] = &[
-    "$recycle.bin", "system volume information", "@eadir", "#recycle", ".clouddrive",
-    "lost+found", "recycle", "$recycle", ".trash", "trash",
-];
 
 fn lib_path() -> Option<PathBuf> {
     crate::cloud::app_data_dir().map(|d| d.join("cloud-library.json"))
@@ -303,16 +294,6 @@ pub fn parse_name(raw: &str) -> Parsed {
     }
 }
 
-fn is_video_name(name: &str) -> bool {
-    let Some(ext) = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()) else {
-        return false;
-    };
-    matches!(
-        ext.as_str(),
-        "mkv" | "mp4" | "avi" | "rmvb" | "flv" | "ts" | "m2ts" | "webm" | "wmv" | "mov" | "mpg"
-    )
-}
-
 // ───────────────────────── 扫描 ─────────────────────────
 
 /// 列一个目录（自动翻页，页数受限）。返回 (items, next_fid)。
@@ -355,6 +336,11 @@ async fn list_dir_all(
     Ok((out, cursor))
 }
 
+/// 哪些盘配过媒体根目录（定时扫描 / JavHub 设置页用）
+pub(crate) fn providers_with_roots() -> Vec<String> {
+    load_store().libs.iter().filter(|l| !l.roots.is_empty()).map(|l| l.provider.clone()).collect()
+}
+
 /// 视频文件的原始候选（分流前）：JAV 识别与正常解析共用同一批目录项，零额外请求
 struct RawFile {
     file_id: String,
@@ -363,13 +349,25 @@ struct RawFile {
     size: u64,
 }
 
-fn should_skip_dir(name: &str) -> bool {
-    let l = name.to_ascii_lowercase();
-    l.starts_with('.') || SKIP_DIRS.contains(&l.as_str())
-}
-
 async fn scan_provider(app: &AppHandle, lib: &mut CloudLib, resume: bool) -> (usize, usize, usize, usize, bool) {
     let start = std::time::Instant::now();
+    // [lc-1907] 扫描规则走设置（jav-settings.json）：深度/扩展名/跳过/合并/清理
+    let js = crate::jav_settings::load();
+    let skip_dirs: Vec<String> = js.scan.skip_dirs.iter().map(|x| x.to_ascii_lowercase()).collect();
+    let skip_prefixes: Vec<String> = js.scan.skip_prefixes.iter().map(|x| x.to_ascii_lowercase()).collect();
+    let video_exts: std::collections::HashSet<String> =
+        js.scan.video_exts.iter().map(|x| x.trim_start_matches('.').to_ascii_lowercase()).collect();
+    let should_skip = |name: &str| -> bool {
+        let l = name.to_ascii_lowercase();
+        l.starts_with('.') || skip_dirs.iter().any(|d| l == *d)
+            || skip_prefixes.iter().any(|p| !p.is_empty() && l.starts_with(p.as_str()))
+    };
+    let is_video = |name: &str| -> bool {
+        match name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()) {
+            Some(e) => video_exts.contains(&e),
+            None => false,
+        }
+    };
     // 断点续扫：条目从已有索引出发（按 file_id 去重追加），队列从游标接续
     let mut items: Vec<CloudItem> = if resume && !lib.cursor.is_empty() { lib.items.clone() } else { Vec::new() };
     let mut seen: HashSet<String> = items.iter().map(|i| i.file_id.clone()).collect();
@@ -393,6 +391,7 @@ async fn scan_provider(app: &AppHandle, lib: &mut CloudLib, resume: bool) -> (us
         {
             break;
         }
+        let _ = js.scan.max_depth;
         let Ok((entries, _)) = list_dir_all(app, &lib.provider, &fid, &mut budget).await else {
             continue;
         };
@@ -409,13 +408,13 @@ async fn scan_provider(app: &AppHandle, lib: &mut CloudLib, resume: bool) -> (us
             }
             let is_dir = e.get("isDir").and_then(|x| x.as_bool()).unwrap_or(false);
             if is_dir {
-                // 深度受限下钻 + 跳过回收站/缩略图缓存这类注定没有媒体的目录
-                if depth < MAX_DEPTH && !should_skip_dir(&name) {
+                // 深度受限下钻（设置可调）+ 跳过回收站/缩略图缓存这类注定没有媒体的目录
+                if depth < js.scan.max_depth as usize && !should_skip(&name) {
                     queue.push_back((file_id, name, depth + 1));
                 }
                 continue;
             }
-            if !is_video_name(&name) || !seen.insert(file_id.clone()) {
+            if !is_video(&name) || !seen.insert(file_id.clone()) {
                 continue;
             }
             raw.push(RawFile {
@@ -455,8 +454,9 @@ async fn scan_provider(app: &AppHandle, lib: &mut CloudLib, resume: bool) -> (us
             episode: p.episode,
         });
     }
+    // full + prune_missing=false → 只合并不丢条目（网盘上暂时看不到的文件保留原记录）
     let full = !(resume && !lib.cursor.is_empty()) && queue.is_empty();
-    let jav_count = match crate::jav_library::ingest_scan(&lib.provider, &cands, &jav_matched, full) {
+    let jav_count = match crate::jav_library::ingest_scan(&lib.provider, &cands, &jav_matched, full && js.scan.prune_missing) {
         Ok(n) => n,
         Err(_) => 0, // 入库失败不挡正常库（下次扫描重试）
     };

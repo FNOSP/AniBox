@@ -5,7 +5,7 @@
    · 存储位置 / 播放与导出 / 服务与窗口 / 桌面与托盘 → 不适用（AniBox 自身架构已覆盖）；
    · 删除 → AniBox 还没有网盘文件删除原语，暂缺。
    字段与提示文案以 JAVCloudHub 1.9.31 为蓝本改写。 */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 type ScanSet = { maxDepth: number; mergeMultipart: boolean; pruneMissing: boolean; videoExts: string[]; skipDirs: string[]; skipPrefixes: string[] };
@@ -27,7 +27,6 @@ type JavSettings = {
 
 const SECTIONS = [
   { key: "sources", label: "数据源" },
-  { key: "roots", label: "刮削目录" },
   { key: "scan", label: "扫描规则" },
   { key: "auto", label: "定时扫描" },
   { key: "network", label: "网络与代理" },
@@ -134,7 +133,7 @@ export function JavSettingsModal({ onClose, onSaved }: { onClose: () => void; on
     </div>
   );
 
-  const body = useMemo(() => {
+  const renderBody = () => {
     if (!s) return null;
     switch (sec) {
       case "sources":
@@ -183,15 +182,6 @@ export function JavSettingsModal({ onClose, onSaved }: { onClose: () => void; on
               {fnosBusy ? "扫描中…" : "扫描启用的媒体库"}
             </button>
             {fnosNote && <p className="javset-ro">{fnosNote}</p>}
-          </>
-        );
-      case "roots":
-        return (
-          <>
-            <p className="javset-ro">
-              刮削目录 = 每个盘的「媒体根目录」，在「网盘接入」页进入目录后点「加入媒体库」添加；
-              支持多个根、断点续扫。这里不做目录管理，避免两处改同一份配置。
-            </p>
           </>
         );
       case "scan":
@@ -376,7 +366,7 @@ export function JavSettingsModal({ onClose, onSaved }: { onClose: () => void; on
           </>
         );
     }
-  }, [s, sec, autoBusy]);
+  };
 
   return (
     <div className="javset-scrim" onClick={onClose}>
@@ -393,9 +383,8 @@ export function JavSettingsModal({ onClose, onSaved }: { onClose: () => void; on
           <div className="javset-sechead">
             <h4>{SECTIONS.find((x) => x.key === sec)?.label}</h4>
             {sec === "sources" && <p>网盘账号在「网盘接入」页管理</p>}
-            {sec === "roots" && <p>媒体根目录在「网盘接入」页添加</p>}
           </div>
-          <div className="javset-fields">{body || <p className="javset-ro">加载中…</p>}</div>
+          <div className="javset-fields">{s ? renderBody() : <p className="javset-ro">加载中…</p>}</div>
           <div className="javset-foot">
             <span className="dirty">{note || (dirty ? "有未保存的改动" : "")}</span>
             <button className="javset-btn ghost" onClick={onClose}>关闭</button>

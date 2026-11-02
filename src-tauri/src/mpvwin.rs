@@ -122,6 +122,11 @@ pub fn set_hwnd(hwnd: isize) {
 
 /// [lc-1913] 把 mpv 窗口满屏钉到主窗口矩形上（Polaris 同款：mpv 覆盖整个应用窗口，
 /// 视频即应用）。物理像素绝对定位，SWP_NOACTIVATE 不抢焦点。
+/// [lc-1914] 四周外扩 OVERSCAN_PX：Polaris 运行时实测其 mpv 也是独立顶层窗口
+/// （WS_CHILD=false / 无 owner），它的"无缝"靠底衬黑 + 同步紧。我们同理 —— 外扩几个
+/// 物理像素，把快速移动/缩放时同步滞后暴露的缝隙盖死（视频边缘裁掉几个像素无感）。
+const OVERSCAN_PX: i32 = 8;
+
 pub fn pin_to_owner(owner_hwnd: isize) {
     let Some(h) = get_hwnd() else { return };
     unsafe {
@@ -135,10 +140,10 @@ pub fn pin_to_owner(owner_hwnd: isize) {
         SetWindowPos(
             h as _,
             std::ptr::null_mut(),
-            rc.left,
-            rc.top,
-            rc.right - rc.left,
-            rc.bottom - rc.top,
+            rc.left - OVERSCAN_PX,
+            rc.top - OVERSCAN_PX,
+            (rc.right - rc.left) + OVERSCAN_PX * 2,
+            (rc.bottom - rc.top) + OVERSCAN_PX * 2,
             SWP_NOACTIVATE | SWP_NOZORDER,
         );
     }

@@ -20,6 +20,11 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// 观察 id ↔ 属性名（前端 switch 依赖这些 id；6=fullscreen 只用于镜像到 Tauri 窗口）
+// [lc-1914] osc-cinema 集数胶囊数据源（playlist-pos=10 / playlist-count=11 的最新值缓存，
+// 任一变化即组装 cinema-episode-meta；原子的读多写少足够）
+static EP_POS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static EP_COUNT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
 const OBSERVED: [(u64, &str); 14] = [
     (1, "time-pos"),
     (2, "duration"),
@@ -795,6 +800,38 @@ impl MpvSession {
                             tauri::async_runtime::spawn(async move {
                                 crate::embed_exit_flow(app3).await;
                             });
+                        }
+                        continue;
+                    }
+                    if id == 10 || id == 11 {
+                        // [lc-1914] osc-cinema 集数胶囊（E1/1）数据源：playlist-pos/count 变化
+                        // → script-message cinema-episode-meta（isEpisode="1" 当 count>1，
+                        // total=count，idx=0 基；lua 侧 clamp）。仅内嵌态发，独立窗口不干扰。
+                        let val = v.get("data").and_then(|d| d.as_i64()).unwrap_or(-1) as i32;
+                        if id == 10 {
+                            EP_POS.store(val, Ordering::SeqCst);
+                        } else {
+                            EP_COUNT.store(val, Ordering::SeqCst);
+                        }
+                        if crate::mpvwin::embed_is_active() {
+                            let count = EP_COUNT.load(Ordering::SeqCst);
+                            let pos = EP_POS.load(Ordering::SeqCst);
+                            if count > 0 && pos >= 0 {
+                                let tx_ep = Arc::clone(&tx_subtitle);
+                                let line = json!({
+                                    "command": ["script-message", "cinema-episode-meta",
+                                                if count > 1 { "1" } else { "0" },
+                                                count.to_string(), pos.to_string()]
+                                });
+                                let line = format!("{line}\n");
+                                std::thread::spawn(move || {
+                                    let mut g = tx_ep.lock().unwrap();
+                                    if let Some(f) = g.as_mut() {
+                                        let _ = f.write_all(line.as_bytes());
+                                        let _ = f.flush();
+                                    }
+                                });
+                            }
                         }
                         continue;
                     }

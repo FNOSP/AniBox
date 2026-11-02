@@ -893,6 +893,12 @@ function App() {
     setPlayMsg("");
     invoke("play_item", { guid: t.guid })
       .then(() => {
+        // [lc-1913] 软件内播放（app 模式默认）：首页直连也挂满屏播放层 —— 不只是 UI，
+        // 更是同步缝隙的黑色底衬：mpv 钉窗滞后一帧时露出的是纯黑而非底层页面。
+        if (settings.playerOpenMode !== "window") {
+          setPlayer({ title: t.title ?? "" });
+          return;
+        }
         setPlayMsg(`已在独立播放器窗口打开${t.title ? `：${t.title}` : ""}`);
         window.setTimeout(() => setPlayMsg(""), 4000);
       })
@@ -900,7 +906,7 @@ function App() {
         setPlayMsg(`播放失败：${String(e)}`);
         window.setTimeout(() => setPlayMsg(""), 6000);
       });
-  }, [guest]);
+  }, [guest, settings.playerOpenMode]);
 
   const openItem = useCallback(
     (item: MediaItem) => {

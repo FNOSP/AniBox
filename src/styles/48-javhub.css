@@ -285,59 +285,50 @@
   .javset-bool .sw, .javset-bool .sw::after { transition: none; }
 }
 
-/* ═══════════ JavHub 页面顶栏胶囊（与设置弹层同一套交互） ═══════════ */
+/* ═══════════ JavHub 头部一排：返回/标题在左，分节胶囊统一样式 ═══════════ */
+.jvh-head { flex-wrap: nowrap; }
+.jvh-head .c115-title { margin-right: 10px; }
 .jvh-tabs {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 0 10px;
+  flex: 1;
+  min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
+  padding-left: 6px;
 }
 .jvh-tabs::-webkit-scrollbar { display: none; }
 .jvh-group { display: flex; align-items: center; gap: 4px; }
 .jvh-sep {
   width: 1px;
-  height: 18px;
+  height: 16px;
   background: var(--line-strong);
-  margin: 0 6px;
+  margin: 0 7px;
   flex: none;
 }
 .jvh-tab {
   flex: none;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 0;
-  width: 32px;
+  gap: 6px;
   height: 30px;
-  padding: 0;
+  padding: 0 12px;
   border-radius: 999px;
   border: 1px solid transparent;
   background: none;
   color: var(--text);
-  cursor: pointer;
-  overflow: hidden;
-  transition: width 0.22s cubic-bezier(0.32, 0.72, 0, 1), background 0.15s, color 0.15s, padding 0.22s cubic-bezier(0.32, 0.72, 0, 1);
-}
-.jvh-tab .t {
-  max-width: 0;
-  opacity: 0;
-  overflow: hidden;
-  white-space: nowrap;
   font-size: 13px;
-  transition: max-width 0.22s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.15s, margin 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
 }
 .jvh-tab:hover { background: var(--hover); color: var(--text-strong); }
 .jvh-tab.on {
-  width: auto;
-  padding: 0 13px;
-  gap: 7px;
   background: var(--hover-strong);
   color: var(--text-strong);
   font-weight: 600;
 }
-.jvh-tab.on .t { max-width: 100px; opacity: 1; }
 
 /* 概览统计卡 */
 .jvh-stats {
@@ -357,5 +348,5 @@
 .jvh-stat span { font-size: 12px; color: var(--muted); }
 
 @media (prefers-reduced-motion: reduce) {
-  .jvh-tab, .jvh-tab .t { transition: none; }
+  .jvh-tab { transition: none; }
 }

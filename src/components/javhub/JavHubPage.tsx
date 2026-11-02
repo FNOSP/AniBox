@@ -328,7 +328,8 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
 
   return (
     <main className="c115">
-      <div className="page-head">
+      {/* 头部一排：返回 + 标题在左，分节胶囊紧随（统一样式、组间细分隔） */}
+      <div className="page-head jvh-head">
         <button className="back" onClick={onBack}>
           <IcoBack size={15} strokeWidth={2} style={{ verticalAlign: "-2px", marginRight: 2 }} />
           返回
@@ -339,30 +340,28 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
           </span>
           JavHub
         </h3>
-      </div>
-
-      {/* 顶部横排胶囊导航：默认单图标，选中展开标签名（组间细分隔） */}
-      <div className="jvh-tabs">
-        {NAV.map((g) => (
-          <div key={g.group} className="jvh-group">
-            {g.items.map((x) => {
-              const Ico = x.icon;
-              const on = view === x.key;
-              return (
-                <button key={x.key} type="button" title={x.label}
-                  className={`jvh-tab${on ? " on" : ""}`}
-                  onClick={() => {
-                    setView(x.key);
-                    setFilter("");
-                  }}>
-                  <Ico size={15} strokeWidth={1.9} />
-                  <span className="t">{x.label}</span>
-                </button>
-              );
-            })}
-            <i className="jvh-sep" />
-          </div>
-        ))}
+        <div className="jvh-tabs">
+          {NAV.map((g) => (
+            <div key={g.group} className="jvh-group">
+              {g.items.map((x) => {
+                const Ico = x.icon;
+                const on = view === x.key;
+                return (
+                  <button key={x.key} type="button" title={x.label}
+                    className={`jvh-tab${on ? " on" : ""}`}
+                    onClick={() => {
+                      setView(x.key);
+                      setFilter("");
+                    }}>
+                    <Ico size={14} strokeWidth={1.9} />
+                    {x.label}
+                  </button>
+                );
+              })}
+              <i className="jvh-sep" />
+            </div>
+          ))}
+        </div>
       </div>
 
       {err && <p className="c115-err">{err}</p>}

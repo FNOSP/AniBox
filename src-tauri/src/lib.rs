@@ -3014,22 +3014,40 @@ async fn player_embed_enter(app: AppHandle, state: State<'_, AppState>) -> Resul
             .and_then(|v| v.get("data").and_then(|d| d.as_str()).map(|s| s.to_string()))
             .unwrap_or_default();
         crate::mpvwin::save_script_opts(orig.clone());
-        // 基值从原串读（不硬编码 conf 现值），去掉可能残留的 top_bar 后追加，避免重复 enter 叠写
+        // [lc-1912] 内嵌观感 = Polaris 影院模式：uosc 全家桶让位（其 conf 同款 disable 集），
+        // osc-cinema.lua 接管底部影院控制条（细 seekbar + 圆形按钮 + 缩略图 + 3s 自动隐藏）。
+        // uosc 脚本本体保留（osc-cinema 借它的 open-menu 弹菜单），只禁元素。
+        const EMBED_UOSC_DISABLED: &[&str] = &[
+            "top_bar",
+            "timeline",
+            "controls",
+            "volume",
+            "pause_indicator",
+            "buffering_indicator",
+            "window_border",
+        ];
+        // 基值从原串读（不硬编码 conf 现值），去掉本轮要禁的元素后追加，避免重复 enter 叠写
         let base_disable = orig
             .split(',')
             .find_map(|s| s.trim().strip_prefix("uosc-disable_elements="))
             .unwrap_or("")
             .split(',')
             .map(|s| s.trim())
-            .filter(|s| !s.is_empty() && *s != "top_bar")
+            .filter(|s| !s.is_empty() && !EMBED_UOSC_DISABLED.contains(s))
             .collect::<Vec<_>>()
             .join(",");
         let disable = if base_disable.is_empty() {
-            "top_bar".to_string()
+            EMBED_UOSC_DISABLED.join(",")
         } else {
-            format!("{base_disable},top_bar")
+            format!("{base_disable},{}", EMBED_UOSC_DISABLED.join(","))
         };
-        let merged = merge_script_opts(orig, &[("uosc-disable_elements", &disable)]);
+        let merged = merge_script_opts(
+            orig,
+            &[
+                ("uosc-disable_elements", &disable),
+                ("osc_cinema-enabled", "yes"),
+            ],
+        );
         if let Err(e) = m.command(json!(["set_property", "script-opts", merged])).await {
             crate::libmpv::trace(&format!("[lc-1911] 内嵌 uosc script-opts 下发失败: {e}"));
         }

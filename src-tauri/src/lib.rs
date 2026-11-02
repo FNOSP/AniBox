@@ -3151,6 +3151,13 @@ pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
             tauri::WebviewUrl::App("index.html".into()),
         )
         .title("AniBox Player")
+        // [lc-1920] 0x8007139F 的真正根因：wry **每个窗口各自** CreateCoreWebView2Environment，
+        // WebView2 规定同一 user-data 目录下第二次建 Environment 的参数必须与第一次完全一致，
+        // 否则报 ERROR_INVALID_STATE。主窗口（tauri.conf.json）带 additionalBrowserArgs，
+        // 运行时建窗不带 → 参数不同 → 必败。这里逐字节复刻主窗口的参数（两处必须同步改）。
+        .additional_browser_args(
+            "--autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI",
+        )
         .decorations(false)
         // [lc-1919] 不做 alpha 透明 —— WebView2 对 transparent 窗直接报
         // 0x8007139F（组或资源状态不正确），整条内嵌链路因此中断。

@@ -4,7 +4,6 @@
    数据：jav_library_all（网盘扫描分流 + 飞牛媒体库扫描都落在这里）；播放走 cloud_play / play_item。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { getVersion } from "@tauri-apps/api/app";
 import { imgUrl } from "../../lib/images";
 import { JavSettingsModal } from "./JavSettingsModal";
 import {
@@ -13,7 +12,6 @@ import {
   Building2 as IcoStudio,
   Clapperboard as IcoJavL,
   FolderOpen as IcoFolderL,
-  Info as IcoInfo,
   LayoutDashboard as IcoDash,
   LayoutGrid as IcoGridL,
   Play as IcoPlayL,
@@ -42,7 +40,7 @@ type JavEntryT = {
 type JavLibT = { provider: string; scannedAtMs: number; count: number; entries: JavEntryT[] };
 type ProviderInfo = { id: string; label: string; logged: boolean; userName: string };
 
-type View = "library" | "actors" | "studios" | "tags" | "overview" | "workbench" | "tools" | "about";
+type View = "library" | "actors" | "studios" | "tags" | "overview" | "workbench" | "tools";
 
 /* 分节导航（对照 JAVCloudHub 侧栏的三组：资料库 / 工作区 / 系统） */
 const NAV: { group: string; items: { key: View; label: string; icon: typeof IcoGridL }[] }[] = [
@@ -64,10 +62,7 @@ const NAV: { group: string; items: { key: View; label: string; icon: typeof IcoG
   },
   {
     group: "系统",
-    items: [
-      { key: "tools", label: "工具", icon: IcoWrenchL },
-      { key: "about", label: "关于", icon: IcoInfo },
-    ],
+    items: [{ key: "tools", label: "工具", icon: IcoWrenchL }],
   },
 ];
 
@@ -93,7 +88,6 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
   const [filter, setFilter] = useState(""); // 演员库/厂商库/标签库点卡片 → 媒体库过滤
-  const [version, setVersion] = useState("");
   const [setOpen, setSetOpen] = useState(false);
   const [fnosBusy, setFnosBusy] = useState(false);
   const [fnosNote, setFnosNote] = useState("");
@@ -123,7 +117,6 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
         setLabels(m);
       })
       .catch(() => {});
-    getVersion().then(setVersion).catch(() => {});
     return () => {
       alive.current = false;
     };
@@ -465,14 +458,6 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
             </button>
             <div className="hint">扫描规则 / 定时扫描 / 网络与代理 / 刮削站点 / 内置 AI。</div>
           </span>
-        </div>
-      )}
-
-      {!loading && view === "about" && (
-        <div className="javset-ro">
-          <b>JavHub</b> —— AniBox 的番号媒体库（能力移植自 JAVCloudHub 1.9.31：番号识别 / 多站点刮削 /
-          飞牛与网盘零写入接入 / AI 标题汉化）。
-          {version ? ` 当前 AniBox 版本 ${version}。` : ""}
         </div>
       )}
 

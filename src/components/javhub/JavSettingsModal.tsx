@@ -14,7 +14,7 @@ type NetSet = { proxy: string; trustEnv: boolean; timeoutSeconds: number; userAg
 type SiteCfg = { id: string; enabled: boolean; base: string };
 type ScrapeSet = { sites: SiteCfg[]; intervalSeconds: number; categories: string[]; maxAttempts: number };
 type AiSet = { enabled: boolean; baseUrl: string; apiKey: string; model: string; targetLang: string };
-type FnosLib = { guid: string; title: string; enabled: boolean };
+type FnosLib = { guid: string; title: string; category: string; enabled: boolean };
 type JavSettings = {
   scan: ScanSet;
   autoScan: AutoSet;
@@ -160,7 +160,7 @@ export function JavSettingsModal({ onClose, onSaved }: { onClose: () => void; on
                   <span className="sw" />
                 </div>
                 <span className="sr-name" title={l.title}>{l.title}</span>
-                <span className="hint" style={{ flex: 1, margin: 0 }}>飞牛媒体库</span>
+                <span className="hint" style={{ flex: 1, margin: 0 }}>{l.category || "飞牛媒体库"}</span>
               </div>
             ))}
             {fnosLibs && fnosLibs.length === 0 && (

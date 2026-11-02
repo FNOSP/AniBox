@@ -2066,33 +2066,46 @@ pub async fn jav_fnos_libs(
         return Err("未登录飞牛".into());
     }
     let client = crate::fnapi::new_client();
+    // fnapi::call 已解包 data；mediadb/list 的 data 是**数组**（前端 invoke<Lib[]> 同款），
+    // 老版本可能给 {list:[…]}，两种都认
     let v = client
         .call(&cfg.server, "/v/api/v1/mediadb/list", "GET", &cfg.token, None)
         .await
         .map_err(|e| format!("读取媒体库失败: {e}"))?;
+    let arr = match v.as_array().cloned() {
+        Some(a) => a,
+        None => v
+            .get("list")
+            .and_then(|x| x.as_array())
+            .cloned()
+            .unwrap_or_default(),
+    };
     let saved = crate::jav_settings::load();
     let mut libs: Vec<Value> = Vec::new();
-    if let Some(arr) = v.get("list").and_then(|x| x.as_array()) {
-        for l in arr {
-            let guid = l.get("guid").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            if guid.is_empty() {
-                continue;
-            }
-            let title = l
-                .get("title")
-                .or_else(|| l.get("name"))
-                .and_then(|x| x.as_str())
-                .unwrap_or("未命名媒体库")
-                .to_string();
-            let enabled = saved
-                .fnos
-                .libs
-                .iter()
-                .find(|x| x.guid == guid)
-                .map(|x| x.enabled)
-                .unwrap_or(false);
-            libs.push(json!({ "guid": guid, "title": title, "enabled": enabled }));
+    for l in &arr {
+        let guid = l.get("guid").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        if guid.is_empty() {
+            continue;
         }
+        let title = l
+            .get("title")
+            .or_else(|| l.get("name"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("未命名媒体库")
+            .to_string();
+        let category = l
+            .get("category")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        let enabled = saved
+            .fnos
+            .libs
+            .iter()
+            .find(|x| x.guid == guid)
+            .map(|x| x.enabled)
+            .unwrap_or(false);
+        libs.push(json!({ "guid": guid, "title": title, "category": category, "enabled": enabled }));
     }
     Ok(json!({ "libs": libs }))
 }

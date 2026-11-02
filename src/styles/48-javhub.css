@@ -1,6 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════
-   [lc-1907] JavHub 设置弹层 —— 左侧分节导航 + 右侧字段（对照
-   JAVCloudHub 设置页的信息结构，视觉走 AniBox 主题 token）。
+   [lc-1907] JavHub 设置 —— 布局对照 JAVCloudHub 设置页（搜索条 +
+   分节 + .setitem 字段卡），侧边竖导航改为顶部横排胶囊。
+   视觉走 AniBox 主题 token。
    ═══════════════════════════════════════════════════════════════ */
 
 .javset-scrim {
@@ -19,9 +20,10 @@
 }
 
 .javset {
-  width: min(860px, 92vw);
-  height: min(600px, 86vh);
+  width: min(820px, 92vw);
+  height: min(640px, 88vh);
   display: flex;
+  flex-direction: column;
   border-radius: var(--radius);
   border: 1px solid var(--glass-border);
   background: var(--panel);
@@ -29,88 +31,112 @@
   overflow: hidden;
 }
 
-/* ── 左侧分节导航 ── */
-.javset-nav {
-  width: 168px;
-  flex: none;
-  border-right: 1px solid var(--line);
-  padding: 14px 8px;
+/* ── 顶部横排分节导航（原版是左侧竖排） ── */
+.javset-tabs {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  overflow-y: auto;
+  gap: 6px;
+  padding: 12px 16px 10px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: none;
 }
-.javset-navhead {
-  font-size: 12px;
-  color: var(--muted);
-  padding: 0 10px 8px;
-}
-.javset-navitem {
+.javset-tabs::-webkit-scrollbar { display: none; }
+/* 胶囊默认只显示图标（定宽圆钮），选中态展开露出名称 */
+.javset-tab {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  border-radius: 9px;
-  border: none;
+  gap: 0;
+  width: 34px;
+  height: 32px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
   background: none;
   color: var(--text);
-  font-size: 13px;
-  text-align: left;
   cursor: pointer;
-  transition: background 0.15s;
+  overflow: hidden;
+  transition: width 0.22s cubic-bezier(0.32, 0.72, 0, 1), background 0.15s, color 0.15s, padding 0.22s cubic-bezier(0.32, 0.72, 0, 1);
 }
-.javset-navitem:hover { background: var(--hover); }
-.javset-navitem.on {
+.javset-tab .t {
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 13px;
+  transition: max-width 0.22s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.15s, margin 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.javset-tab:hover { background: var(--hover); color: var(--text-strong); }
+.javset-tab.on {
+  width: auto;
+  padding: 0 14px;
+  gap: 7px;
   background: var(--hover-strong);
+  border-color: transparent;
   color: var(--text-strong);
   font-weight: 600;
 }
+.javset-tab.on .t { max-width: 130px; opacity: 1; }
 
-/* ── 右侧内容 ── */
-.javset-body {
-  flex: 1;
+/* ── 搜索条（照抄 setsearch：图标 + 输入 + 计数） ── */
+.javset-search {
   display: flex;
-  flex-direction: column;
-  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 16px 0;
+  padding: 7px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  background: var(--input-bg);
 }
-.javset-sechead {
-  padding: 16px 20px 10px;
-  border-bottom: 1px solid var(--line);
-}
-.javset-sechead h4 {
-  margin: 0;
-  font-size: 15px;
+.javset-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  outline: none;
   color: var(--text-strong);
+  font-size: 13px;
+  font-family: inherit;
 }
-.javset-sechead p {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--muted);
-}
+.javset-search .cnt { font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+/* ── 字段区 ── */
 .javset-fields {
   flex: 1;
   overflow-y: auto;
-  padding: 14px 20px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+  padding: 12px 16px 16px;
 }
-.javset-field label {
+.javset-sechead { margin: 2px 2px 10px; }
+.javset-sechead h4 { margin: 0; font-size: 15px; color: var(--text-strong); }
+.javset-sechead p { margin: 4px 0 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+/* 字段卡（对照 .setitem：卡内 label + 控件 + hint） */
+.javset-item {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--ph-bg);
+  margin-bottom: 10px;
+}
+.javset-item > label {
   display: block;
   font-size: 13px;
+  font-weight: 600;
   color: var(--text-strong);
-  margin-bottom: 5px;
+  margin-bottom: 7px;
 }
-.javset-field .hint {
-  font-size: 12px;
+.javset-item .key {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 10px;
   color: var(--muted);
-  margin-top: 4px;
-  line-height: 1.5;
+  margin-left: 7px;
+  font-weight: 400;
 }
-.javset-field input[type="text"],
-.javset-field input[type="password"],
-.javset-field input[type="number"],
-.javset-field textarea {
+.javset-item input[type="text"],
+.javset-item input[type="password"],
+.javset-item input[type="number"],
+.javset-item textarea {
   width: 100%;
   box-sizing: border-box;
   padding: 7px 10px;
@@ -122,16 +148,25 @@
   font-family: inherit;
   outline: none;
 }
-.javset-field textarea { min-height: 54px; resize: vertical; }
-.javset-field input:focus, .javset-field textarea:focus { border-color: var(--accent); }
-
-/* 开关行 */
-.javset-bool {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  cursor: pointer;
+.javset-item textarea { min-height: 54px; resize: vertical; }
+.javset-item input:focus, .javset-item textarea:focus { border-color: var(--accent); }
+.javset-item .hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+  line-height: 1.55;
 }
+.javset-item .hint code {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  background: var(--hover);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* 开关：整行一条，switch 在左、说明在右（照抄 switch 行） */
+.javset-item.boolrow { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; }
+.javset-item.boolrow > label { display: contents; }
 .javset-bool .sw {
   flex: none;
   width: 34px;
@@ -157,42 +192,47 @@
 }
 .javset-bool.on .sw { background: var(--accent); border-color: var(--accent); }
 .javset-bool.on .sw::after { transform: translateX(14px); }
-.javset-bool .bl {
-  font-size: 13px;
-  color: var(--text-strong);
-}
-.javset-bool .hint { margin-top: 3px; }
+.javset-bool .bl { font-size: 13px; font-weight: 600; color: var(--text-strong); }
+.javset-bool .hint { font-weight: 400; }
 
-/* 只读信息行 */
+/* 只读信息卡 */
 .javset-ro {
-  padding: 9px 12px;
-  border-radius: 9px;
+  padding: 11px 14px;
+  border-radius: 10px;
   background: var(--ph-bg);
   border: 1px solid var(--line);
   font-size: 12.5px;
   color: var(--text);
-  line-height: 1.6;
+  line-height: 1.65;
+  margin-bottom: 10px;
   word-break: break-all;
 }
 
-/* 站点行 */
+/* 站点行（开关 + 名称 + 地址 + 排序） */
 .javset-site {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 8px 10px;
-  border-radius: 9px;
+  padding: 9px 12px;
+  border-radius: 10px;
   border: 1px solid var(--line);
   background: var(--ph-bg);
+  margin-bottom: 8px;
 }
 .javset-site.off { opacity: 0.55; }
 .javset-site .sr-name {
   font-size: 13px;
+  font-weight: 600;
   color: var(--text-strong);
   flex: none;
-  width: 200px;
+  min-width: 190px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.javset-site .cat {
+  font-size: 11px;
+  color: var(--muted);
   white-space: nowrap;
 }
 .javset-site input {
@@ -213,22 +253,19 @@
   color: var(--muted);
   cursor: pointer;
   font-size: 14px;
-  padding: 2px 4px;
+  padding: 2px 5px;
 }
 .javset-site .mv:hover { color: var(--text-strong); }
 
+/* 底部保存条 */
 .javset-foot {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 20px;
+  padding: 12px 16px;
   border-top: 1px solid var(--line);
 }
-.javset-foot .dirty {
-  flex: 1;
-  font-size: 12px;
-  color: var(--muted);
-}
+.javset-foot .dirty { flex: 1; font-size: 12px; color: var(--muted); }
 .javset-btn {
   padding: 7px 18px;
   border-radius: 9px;
@@ -240,13 +277,10 @@
   cursor: pointer;
 }
 .javset-btn:disabled { opacity: 0.5; cursor: default; }
-.javset-btn.ghost {
-  background: var(--glass-btn-bg);
-  color: var(--text-strong);
-}
-.javset-btn.danger { background: #d05c5c; }
+.javset-btn.ghost { background: var(--glass-btn-bg); color: var(--text-strong); }
 
 @media (prefers-reduced-motion: reduce) {
   .javset-scrim { animation: none; }
+  .javset-tab, .javset-tab .t { transition: none; }
   .javset-bool .sw, .javset-bool .sw::after { transition: none; }
 }

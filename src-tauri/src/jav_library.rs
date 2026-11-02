@@ -747,6 +747,7 @@ async fn send_site(
     headers: &[(&str, &str)],
 ) -> Result<reqwest::Response, String> {
     let cli = scrape_client();
+    let mut blocked: Option<reqwest::Response> = None;
     if let Some(sec) = mirror_secret() {
         for base in MIRROR_BASES {
             let url = format!("{base}/{site}{path_and_query}");
@@ -754,16 +755,29 @@ async fn send_site(
             let bt = body.as_ref().map(|(_, b)| b.clone()).unwrap_or_default();
             let rb = build_req(&cli, &url, method, body.as_ref(), headers);
             let rb = crate::mirror_sign::apply_auth(rb, &sec, method, &pwq, &bt);
-            if let Ok(r) = rb.send().await {
-                return Ok(r);
+            match rb.send().await {
+                // 站点 WAF 挡机房 IP（实测 mgstage/heyzo 403）：先记下，直连有代理时能救回
+                Ok(r) if is_blocked_status(r.status().as_u16()) => {
+                    if blocked.is_none() {
+                        blocked = Some(r);
+                    }
+                }
+                Ok(r) => return Ok(r),
+                Err(_) => continue,
             }
         }
     }
+    // 直连兜底：镜像不可达，或镜像被站点 WAF 挡且用户自己有代理
     let url = format!("{}{path_and_query}", site_base(site));
     let rb = build_req(&cli, &url, method, body.as_ref(), headers);
-    rb.send()
-        .await
-        .map_err(|e| format!("{site} 直连失败（该站点在国内需要代理，或等镜像端点可用）: {e}"))
+    match rb.send().await {
+        Ok(r) => return Ok(r),
+        Err(e) if blocked.is_none() => {
+            return Err(format!("{site} 直连失败（该站点在国内需要代理，或等镜像端点可用）: {e}"))
+        }
+        Err(_) => {}
+    }
+    Ok(blocked.expect("blocked response"))
 }
 
 /// 封面 URL 能否走镜像的 /img/ 轨（host 在白名单内）

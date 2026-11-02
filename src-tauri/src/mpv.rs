@@ -278,24 +278,36 @@ impl MpvSession {
         // 顺带抄他们 spawn 参数里的 --no-keepaspect-window（自由拉伸）与 --network-timeout。
         let mut embed_mode = false;
         if app.state::<crate::AppState>().config.read().await.player_open_mode == "app" {
-            embed_mode = true;
-            if let Some(win) = app.get_webview_window("main") {
-                if let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) {
+            // [lc-1917] 照抄 Polaris 的时序：**先建播放窗（mpv_overlay），再按它的矩形拉
+            // mpv（--geometry）**。之前先按主窗矩形发 geometry，而 AniBox mpv.conf 的
+            // save-position-on-quit 会在启动时恢复上次保存的窗口位置把 geometry 顶掉
+            // （黑窗浮在旧位置的根因）。播放窗不存在/创建失败 → 放弃内嵌回退独立窗口。
+            if let Some(ov) = crate::show_player_overlay(&app) {
+                embed_mode = true;
+                if let Some(m) = app.get_webview_window("main") {
+                    let _ = m.hide();
+                }
+                if let (Ok(pos), Ok(size)) = (ov.outer_position(), ov.outer_size()) {
                     args.push(format!(
                         "--geometry={}x{}+{}+{}",
                         size.width, size.height, pos.x, pos.y
                     ));
                 }
+                args.push("--no-keepaspect-window".to_string());
+                args.push("--network-timeout=15".to_string());
+                // 窗口几何完全由应用掌控，禁止 mpv 自己记忆/恢复位置
+                args.push("--no-save-position-on-quit".to_string());
+                // uosc 全家桶让位 + idle 品牌标也关（加载期保持纯黑）+ osc-cinema 接管；
+                // 属性此时为空，append 不会覆盖任何 conf。
+                args.push(
+                    "--script-opts-append=uosc-disable_elements=top_bar,timeline,controls,volume,pause_indicator,buffering_indicator,window_border"
+                        .to_string(),
+                );
+                args.push("--script-opts-append=uosc-idle_branding=no".to_string());
+                args.push("--script-opts-append=osc_cinema-enabled=yes".to_string());
+            } else {
+                crate::libmpv::trace("[lc-1917] mpv_overlay 不可用 → 本次播放回退独立窗口模式");
             }
-            args.push("--no-keepaspect-window".to_string());
-            args.push("--network-timeout=15".to_string());
-            // uosc 全家桶让位 + osc-cinema 接管（照抄 Polaris spawn 的 script-opts 注入方式）；
-            // 属性此时为空，append 不会覆盖任何 conf。
-            args.push(
-                "--script-opts-append=uosc-disable_elements=top_bar,timeline,controls,volume,pause_indicator,buffering_indicator,window_border"
-                    .to_string(),
-            );
-            args.push("--script-opts-append=osc_cinema-enabled=yes".to_string());
         }
         if let Some(t) = force_title {
             if !t.is_empty() {
@@ -383,17 +395,8 @@ impl MpvSession {
                 let app2 = app.clone();
                 let pid2 = pid;
                 tauri::async_runtime::spawn(async move {
-                    // [lc-1915] Polaris 同款：主窗口让位，专用播放窗（mpv_overlay）登场，
-                    // mpv 满屏压在它上面；owner/钉位/跟随全部以播放窗为基准。
-                    // [lc-1916] 播放窗创建失败 → 放弃内嵌（保留主窗可见，mpv 独立窗口兜底），
-                    // 绝不允许「主窗已藏、播放窗没出来」的窗口全没事故。
-                    if crate::show_player_overlay(&app2).is_none() {
-                        crate::libmpv::trace("[lc-1916] mpv_overlay 不可用 → 放弃内嵌，回退独立窗口模式");
-                        return;
-                    }
-                    if let Some(m) = app2.get_webview_window("main") {
-                        let _ = m.hide();
-                    }
+                    // [lc-1917] 播放窗已在 spawn 前建好（geometry 即其矩形），这里只收编：
+                    // 挂 owner（=播放窗）→ 满屏钉位 → 启动跟随循环。
                     for _ in 0..25u32 {
                         let owner = app2
                             .get_webview_window("mpv_overlay")

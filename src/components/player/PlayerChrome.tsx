@@ -4,14 +4,21 @@
  * 鼠标穿透**（点击/滚轮全部落到 mpv），Rust 把 mpv 看到的光标位置经 overlay-mouse
  * 转发回来，这里做命中测试：悬停到 [data-chrome] 元素上才关穿透、让按钮可点。
  * 这是 Polaris set_ignore_cursor_events 通道的复刻。
+ *
+ * [lc-1918] 加载态：mpv 出画前显示 转圈 + 片名（mpv-load 事件带 title），
+ * loaded 后淡出、切集（start）重现 —— 主窗已隐藏，等待期不能是无反馈黑屏。
  */
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ArrowLeft as IcoArrowLeft } from "lucide-react";
 
+type MpvLoad = { phase?: string; title?: string };
+
 export function PlayerChrome() {
   const ignoreRef = useRef(true);
+  const [loading, setLoading] = useState(true);
+  const [title, setTitle] = useState("");
 
   const setIgnore = useCallback((v: boolean) => {
     if (ignoreRef.current === v) return;
@@ -40,6 +47,22 @@ export function PlayerChrome() {
     return () => un?.();
   }, [setIgnore]);
 
+  // 加载态（与主窗 PlayerView 同事件源）：loaded → 淡出；start（起播/切集）→ 重现
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    listen<MpvLoad>("mpv-load", (e) => {
+      const phase = e.payload?.phase;
+      if (e.payload?.title) setTitle(e.payload.title);
+      if (phase === "loaded") setLoading(false);
+      else if (phase === "start") setLoading(true);
+    })
+      .then((f) => {
+        un = f;
+      })
+      .catch(() => {});
+    return () => un?.();
+  }, []);
+
   return (
     <div className="player-chrome">
       <button
@@ -52,6 +75,10 @@ export function PlayerChrome() {
       >
         <IcoArrowLeft size={18} strokeWidth={1.8} />
       </button>
+      <div className={`chrome-opening${loading ? "" : " gone"}`} aria-hidden={!loading}>
+        <span className="player-spin" />
+        <span className="chrome-opening-title">{title || "正在打开"}</span>
+      </div>
     </div>
   );
 }

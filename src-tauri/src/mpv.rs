@@ -587,7 +587,8 @@ impl MpvSession {
                         match ev {
                             "start-file" => {
                                 *load_started2.lock().unwrap() = Some(std::time::Instant::now());
-                                let _ = app2.emit("mpv-load", json!({ "phase": "start" }));
+                                let t = title_slot.lock().unwrap().clone().unwrap_or_default();
+                                let _ = app2.emit("mpv-load", json!({ "phase": "start", "title": t }));
                             }
                             "file-loaded" => {
                                 let took = load_started2
@@ -597,7 +598,8 @@ impl MpvSession {
                                     .map(|t| t.elapsed().as_millis())
                                     .unwrap_or(0);
                                 crate::libmpv::trace(&format!("mpv file-loaded（媒体就绪，加载耗时 {took}ms）"));
-                                let _ = app2.emit("mpv-load", json!({ "phase": "loaded" }));
+                                let t = title_slot.lock().unwrap().clone().unwrap_or_default();
+                                let _ = app2.emit("mpv-load", json!({ "phase": "loaded", "title": t }));
                                 // [lc-1841] start 只作用于本次加载（续播 seek 在加载时已消费）：
                                 // file-loaded 即清回 none，整季列表自动切下一集不会被误 seek。
                                 {

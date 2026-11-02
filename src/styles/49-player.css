@@ -189,3 +189,45 @@
     transition: none;
   }
 }
+
+/* [lc-1918] 播放窗加载态：mpv 出画前 转圈 + 片名 居中，loaded 后淡出 */
+.chrome-opening {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  opacity: 1;
+  transition: opacity 0.2s ease-in;
+  pointer-events: none;
+}
+.chrome-opening.gone {
+  opacity: 0;
+}
+.chrome-opening .player-spin {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-top-color: #fff;
+  animation: playerSpin 0.8s linear infinite;
+}
+.chrome-opening-title {
+  max-width: 70%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.78);
+  letter-spacing: 0.02em;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chrome-opening {
+    transition: none;
+  }
+  .chrome-opening .player-spin {
+    animation: none;
+  }
+}

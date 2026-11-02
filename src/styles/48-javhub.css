@@ -284,3 +284,78 @@
   .javset-tab, .javset-tab .t { transition: none; }
   .javset-bool .sw, .javset-bool .sw::after { transition: none; }
 }
+
+/* ═══════════ JavHub 页面顶栏胶囊（与设置弹层同一套交互） ═══════════ */
+.jvh-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.jvh-tabs::-webkit-scrollbar { display: none; }
+.jvh-group { display: flex; align-items: center; gap: 4px; }
+.jvh-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--line-strong);
+  margin: 0 6px;
+  flex: none;
+}
+.jvh-tab {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: 32px;
+  height: 30px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  overflow: hidden;
+  transition: width 0.22s cubic-bezier(0.32, 0.72, 0, 1), background 0.15s, color 0.15s, padding 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.jvh-tab .t {
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 13px;
+  transition: max-width 0.22s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.15s, margin 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.jvh-tab:hover { background: var(--hover); color: var(--text-strong); }
+.jvh-tab.on {
+  width: auto;
+  padding: 0 13px;
+  gap: 7px;
+  background: var(--hover-strong);
+  color: var(--text-strong);
+  font-weight: 600;
+}
+.jvh-tab.on .t { max-width: 100px; opacity: 1; }
+
+/* 概览统计卡 */
+.jvh-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.jvh-stat {
+  min-width: 96px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--ph-bg);
+}
+.jvh-stat b { display: block; font-size: 20px; color: var(--text-strong); }
+.jvh-stat span { font-size: 12px; color: var(--muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  .jvh-tab, .jvh-tab .t { transition: none; }
+}

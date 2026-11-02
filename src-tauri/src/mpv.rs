@@ -385,7 +385,12 @@ impl MpvSession {
                 tauri::async_runtime::spawn(async move {
                     // [lc-1915] Polaris 同款：主窗口让位，专用播放窗（mpv_overlay）登场，
                     // mpv 满屏压在它上面；owner/钉位/跟随全部以播放窗为基准。
-                    let _ = crate::show_player_overlay(&app2);
+                    // [lc-1916] 播放窗创建失败 → 放弃内嵌（保留主窗可见，mpv 独立窗口兜底），
+                    // 绝不允许「主窗已藏、播放窗没出来」的窗口全没事故。
+                    if crate::show_player_overlay(&app2).is_none() {
+                        crate::libmpv::trace("[lc-1916] mpv_overlay 不可用 → 放弃内嵌，回退独立窗口模式");
+                        return;
+                    }
                     if let Some(m) = app2.get_webview_window("main") {
                         let _ = m.hide();
                     }

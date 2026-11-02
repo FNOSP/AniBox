@@ -2958,7 +2958,7 @@ async fn player_embed_adopt_loop(app: AppHandle, m: std::sync::Arc<crate::mpv::M
             return;
         }
         // [lc-1913] spawn 侧收编通常已完成（槽内 hwnd 有效 = 已满屏钉住）→ 不重收编，
-        // 否则 embed_adopt 会把已钉好的窗口藏起来等矩形（黑屏闪烁）。
+        // 否则把已钉好的窗口藏起来等矩形（黑屏闪烁）。
         if crate::mpvwin::get_hwnd().is_some() {
             crate::libmpv::trace("[lc-1913] embed_enter：spawn 侧已收编并满屏钉住，跳过重收编");
             return;
@@ -2971,24 +2971,30 @@ async fn player_embed_adopt_loop(app: AppHandle, m: std::sync::Arc<crate::mpv::M
             crate::libmpv::trace("[lc-1909] embed_enter：mpv 进程已退出，放弃收编");
             return;
         }
-        // 主窗口 HWND 每轮重取：托盘启动早期可能还没建好
+        // [lc-1916] owner = mpv_overlay（播放器专用窗，Polaris 同架构），不再是主窗口；
+        // overlay 未就绪时先补建。收编用**可见** adopt（绝不 embed_adopt 隐藏等待），
+        // 收编成功即满屏钉住 + 启动跟随循环。
         if let Some(owner) = app
-            .get_webview_window("main")
+            .get_webview_window("mpv_overlay")
+            .or_else(|| crate::show_player_overlay(&app))
             .and_then(|w| w.hwnd().ok().map(|h| h.0 as isize))
         {
-            // 槽内已有活窗口（退嵌 stop=true 后窗口被隐藏，EnumWindows 找不到）或
-            // PID 枚举命中，都可以收编；embed_adopt 内部处理两种来源。
-            if crate::mpvwin::get_hwnd().is_some() || crate::mpvwin::find_mpv_hwnd(pid).is_some() {
-                match crate::mpvwin::embed_adopt(pid, owner) {
-                    Ok(_) => {} // embed_adopt 内已 trace
-                    Err(e) => crate::libmpv::trace(&format!("[lc-1909] 内嵌收编失败: {e}")),
+            if crate::mpvwin::find_mpv_hwnd(pid).is_some() {
+                match crate::mpvwin::adopt(pid, owner) {
+                    Ok(_) => {
+                        crate::mpvwin::embed_set_active(true);
+                        crate::mpvwin::set_owner_follow(false);
+                        crate::mpvwin::pin_to_owner(owner);
+                        crate::mpvwin::spawn_overlay_follow(app.clone());
+                    }
+                    Err(e) => crate::libmpv::trace(&format!("[lc-1916] 内嵌收编失败: {e}")),
                 }
                 return;
             }
         }
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
-    crate::libmpv::trace("[lc-1909] 内嵌收编重试超时（mpv 窗口/主窗口 5s 内未就绪），放弃");
+    crate::libmpv::trace("[lc-1909] 内嵌收编重试超时（mpv 窗口/播放窗 5s 内未就绪），放弃");
 }
 
 /// [lc-1909] 内嵌 enter：标记激活 + 后台收编并隐藏 mpv 窗口。无 mpv 会话时 trace 后静默返回。
@@ -3133,7 +3139,16 @@ pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     let main = app.get_webview_window("main")?;
     let pos = main.outer_position().ok()?;
     let size = main.outer_size().ok()?;
-    let w = tauri::WebviewWindowBuilder::new(app, "mpv_overlay", tauri::WebviewUrl::App("index.html".into()))
+    // [lc-1916] 窗口创建派发到主线程（Tauri 窗口构建跨线程行为不稳），失败必须留痕 ——
+    // 上一版 .ok() 吞错：创建失败但主窗已隐藏 = 「窗口全没了」事故。
+    let app2 = app.clone();
+    let (tx, rx) = std::sync::mpsc::channel::<Result<tauri::WebviewWindow, String>>();
+    let dispatched = app.run_on_main_thread(move || {
+        let built = tauri::WebviewWindowBuilder::new(
+            &app2,
+            "mpv_overlay",
+            tauri::WebviewUrl::App("index.html".into()),
+        )
         .title("AniBox Player")
         .decorations(false)
         .transparent(true)
@@ -3142,11 +3157,27 @@ pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
         .visible(false)
         .resizable(true)
         .build()
-        .ok()?;
-    let _ = w.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
-    let _ = w.set_size(tauri::PhysicalSize::new(size.width, size.height));
-    let _ = w.set_ignore_cursor_events(true);
-    Some(w)
+        .map_err(|e| e.to_string());
+        let _ = tx.send(built);
+    });
+    if dispatched.is_err() {
+        crate::libmpv::trace("[lc-1916] mpv_overlay 创建：主线程派发失败");
+        return None;
+    }
+    let built = rx.recv().ok()?; // 主线程事件循环活着，必然回包
+    match built {
+        Ok(w) => {
+            let _ = w.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
+            let _ = w.set_size(tauri::PhysicalSize::new(size.width, size.height));
+            let _ = w.set_ignore_cursor_events(true);
+            crate::libmpv::trace("[lc-1916] mpv_overlay 创建成功");
+            Some(w)
+        }
+        Err(e) => {
+            crate::libmpv::trace(&format!("[lc-1916] mpv_overlay 创建失败: {e}"));
+            None
+        }
+    }
 }
 
 /// [lc-1913] 内嵌退出流程（ESC 桥 / player_embed_leave{stop:true} 共用）：

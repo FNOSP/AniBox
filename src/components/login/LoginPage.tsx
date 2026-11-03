@@ -121,7 +121,7 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
   }, []);
 
   // [lc-1889] 内嵌扫码：与 CloudPanel 共用 useCloudQrLogin（串行轮询 + 到点自动换码），
-  // 成功后只刷新登录态，不进入文件浏览（浏览仍在「网盘接入」页）。
+  // 成功后只刷新登录态，不进入文件浏览（浏览仍在「云盘接入」页）。
   const qrLogin = useCloudQrLogin(() => {
     void refreshProviders();
   });
@@ -486,7 +486,7 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
         </button>
         {!fnosMode && (
           <p className="login-dim" style={{ textAlign: "center", marginTop: -6 }}>
-            未接飞牛时以游客模式进入，已接入的网盘 / WebDAV 在「网盘接入」里浏览。
+            未接飞牛时以游客模式进入，已接入的网盘 / WebDAV 在「云盘接入」里浏览。
           </p>
         )}
       </form>

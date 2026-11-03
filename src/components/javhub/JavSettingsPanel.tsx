@@ -4,7 +4,7 @@
    [lc-1951] 不再以弹窗打开：作为 JavHub 页的「设置」标签页内嵌渲染（javset.embed）。
    按 AniBox 架构取舍：
    · 扫描规则 / 定时扫描 / 网络与代理 / 刮削站点 / 刮削行为 / 内置 AI / 高级 → 全量落地；
-   · 数据源 → 网盘指回「网盘接入」页，飞牛媒体库逐库开关 + 扫描按钮；
+   · 数据源 → 网盘指回「云盘接入」页，飞牛媒体库逐库开关 + 扫描按钮；
    · 存储位置 / 播放与导出 / 服务与窗口 / 桌面与托盘 → 不适用（AniBox 自身架构已覆盖）；
    · 删除 → AniBox 还没有网盘文件删除原语，暂缺。 */
 import { useCallback, useEffect, useState } from "react";
@@ -239,7 +239,7 @@ export function JavSettingsPanel({ onSaved }: { onSaved?: () => void }) {
     const fnosPart = (
       <>
         <Ro>
-          网盘在「网盘接入」页管理；勾选要刮削的<b>飞牛媒体库</b>，元数据只写本机（不写飞牛）。
+          网盘在「云盘接入」页管理；勾选要刮削的<b>飞牛媒体库</b>，元数据只写本机（不写飞牛）。
         </Ro>
         {(fnosLibs || []).map((l) => (
           <div key={l.guid} className={`javset-site${l.enabled ? "" : " off"}`}>

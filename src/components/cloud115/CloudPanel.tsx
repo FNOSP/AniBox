@@ -74,7 +74,7 @@ const fmtSize = (n: number) => {
 
 export function CloudPanel({ onBack }: { onBack: () => void }) {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [active, setActive] = useState("115");
+  const [active, setActive] = useState("webdav"); // [lc-1983] 原生网盘登录入口移除，固定走 WebDAV
   const [crumbs, setCrumbs] = useState<Crumb[]>([{ fid: "", name: "根目录" }]);
   const [items, setItems] = useState<Entry[]>([]);
   const [cursor, setCursor] = useState("");
@@ -174,7 +174,7 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
       } catch (e) {
         if (attempt === 2 && alive.current) {
           setLoading(false);
-          setErr(`已登录成功，但读取目录失败：${String(e)}（凭据可能还在生效中，重进「网盘接入」页可重试）`);
+          setErr(`已登录成功，但读取目录失败：${String(e)}（凭据可能还在生效中，重进「云盘接入」页可重试）`);
         }
       }
     }
@@ -190,13 +190,8 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
 
   useEffect(() => {
     alive.current = true;
-    refreshProviders()
-      .then((list) => {
-        const a = list.find((p) => p.id === active);
-        if (a?.logged) void loadList("", "", true, active);
-        else if (!a?.logged) void startQr(active);
-      })
-      .catch((e) => alive.current && setErr(String(e)));
+    // [lc-1983] 原生网盘登录入口移除：只加载 WebDAV 账号与 ffmpeg 探测，不再自动拉起扫码
+    refreshProviders().catch((e) => alive.current && setErr(String(e)));
     loadWdAccounts();
     invoke<{ available: boolean }>("cloud_ffmpeg_available")
       .then((r) => alive.current && setFfmpegOk(r.available))
@@ -416,23 +411,12 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
           <span className="c115-title-ico">
             <IcoCloudL size={16} strokeWidth={2.2} />
           </span>
-          网盘接入
+          云盘接入
         </h3>
       </div>
 
-      {/* 厂商 tab 行（含 WebDAV） */}
+      {/* [lc-1983] 厂商登录入口移除：只保留 WebDAV（NAS / OpenList 等） */}
       <div className="c115-tabs">
-        {providers.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            className={`c115-tab${p.id === active ? " on" : ""}`}
-            onClick={() => switchProvider(p.id)}
-          >
-            {p.label}
-            <span className={`c115-dot${p.logged ? " ok" : ""}`} title={p.logged ? "已登录" : "未登录"} />
-          </button>
-        ))}
         <button type="button" className={`c115-tab${isWebdav ? " on" : ""}`} onClick={() => switchProvider("webdav")}>
           WebDAV
           <span className={`c115-dot${wdActive ? " ok" : ""}`} title={wdActive ? "已连接" : "未连接"} />
@@ -514,7 +498,7 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
                 </button>
               </div>
             ))}
-            {wdAccounts.length === 0 && <p className="c115-dim">还没有 WebDAV 账号 —— 支持 NAS / Alist / 坚果云等任意 WebDAV 服务</p>}
+            {wdAccounts.length === 0 && <p className="c115-dim">还没有 WebDAV 账号 —— 支持 NAS / OpenList(alist) / 坚果云等任意 WebDAV 服务</p>}
           </div>
           {wdForm ? (
             <div className="c115-wdform">
@@ -524,13 +508,22 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
               <input placeholder="密码" type="password" value={wdForm.pass} onChange={(e) => setWdForm({ ...wdForm, pass: e.target.value })} />
               <div className="c115-wdform-btns">
                 <button className="c115-mini" onClick={addWdAccount}>验证并保存</button>
+                <button className="c115-mini" onClick={() => setWdForm({ name: "OpenList", url: "http://127.0.0.1:5244/dav", user: wdForm.user, pass: wdForm.pass })}>
+                  OpenList 预设
+                </button>
                 <button className="c115-mini" onClick={() => setWdForm(null)}>取消</button>
               </div>
+              <p className="c115-dim">OpenList / alist：地址填 <code>http://主机:5244/dav</code>，账号密码为 OpenList 的 WebDAV 凭据。</p>
             </div>
           ) : (
-            <button className="c115-mini" onClick={() => setWdForm({ name: "", url: "", user: "", pass: "" })}>
-              <IcoPlusL size={13} strokeWidth={2} /> 添加 WebDAV 账号
-            </button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="c115-mini" onClick={() => setWdForm({ name: "", url: "", user: "", pass: "" })}>
+                <IcoPlusL size={13} strokeWidth={2} /> 添加 WebDAV 账号
+              </button>
+              <button className="c115-mini" onClick={() => setWdForm({ name: "OpenList", url: "http://127.0.0.1:5244/dav", user: "", pass: "" })}>
+                OpenList 预设
+              </button>
+            </div>
           )}
           <p className="c115-dim">密码用本机 AES-256-GCM 加密存储（enc:v1），不会上传到任何服务器。</p>
         </div>

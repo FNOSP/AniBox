@@ -130,7 +130,7 @@ export function Sidebar({
         <span className="side-ico">
           <IcoCloudL size={15} strokeWidth={1.8} />
         </span>{" "}
-        网盘接入
+        云盘接入
       </div>
       <div className="side-head">分类</div>
       {SIDEBAR_CATS.map((c) => {

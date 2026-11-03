@@ -3903,17 +3903,13 @@ async fn player_window_minimize(app: AppHandle, window: tauri::Window) -> Result
         }
         use tauri::Manager;
         if crate::mpvwin::embed_is_active() {
-            if let Ok(h) = window.hwnd() {
-                crate::mpvwin::overlay_hide(h.0 as isize);
-            }
-            if let Some(mh) = crate::mpvwin::get_hwnd() {
-                crate::mpvwin::embed_hide(mh);
-            }
-            // [lc-1947] 主窗在播放期被 `m.hide()` 隐藏，对隐藏窗 minimize() 不会产生
-            // 任务栏条目（旧实现就是这样从桌面消失）。改为「先显示为最小化」：
-            // SW_SHOWMINNOACTIVE → 任务栏一定出现 AniBox，点它经 Focused(true) 恢复播放层。
-            // 标记放在最小化**之后**：万一 ShowWindow 同步触发了 Focused(true)，
-            // 也不会在窗口还最小化时就把播放层放出来。
+            // [lc-1952] 顺序：**先把主窗最小化，再收播放层**。此刻覆盖层 + mpv 还盖在
+            // 屏幕上，主窗的最小化动画/任何中间帧都被遮住，黑色播放页没有任何机会
+            // 露出来。旧顺序（先收覆盖层、藏 mpv，最后才动主窗）在主窗被真实显示过
+            // 的时候（点任务栏恢复过播放层，主窗停在可见态）会把黑色播放页整个漏给
+            // 用户 —— 「最小化后漏出黑色背景残留」的根因之一。
+            // minimize_main_to_taskbar 内部也改为「先进最小化态（隐藏窗保持隐藏、
+            // 不物化恢复态帧），再 SW_SHOWMINNOACTIVE 补任务栏条目」——双保险。
             if let Some(m) = app.get_webview_window("main") {
                 let state = m
                     .hwnd()
@@ -3921,13 +3917,21 @@ async fn player_window_minimize(app: AppHandle, window: tauri::Window) -> Result
                     .map(|h| crate::mpvwin::minimize_main_to_taskbar(h.0 as isize));
                 if let Some((visible, iconic)) = state {
                     crate::libmpv::trace(&format!(
-                        "[lc-1947] 最小化：播放层收起 + 主窗 visible={visible} iconic={iconic}（任务栏入口）"
+                        "[lc-1952] 最小化：主窗先行（被播放层遮住）+ 播放层收起 visible={visible} iconic={iconic}"
                     ));
                 } else {
                     let _ = m.minimize();
                     crate::libmpv::trace("[lc-1947] 最小化：取不到主窗 hwnd，退回 Tauri minimize");
                 }
             }
+            if let Ok(h) = window.hwnd() {
+                crate::mpvwin::overlay_hide(h.0 as isize);
+            }
+            if let Some(mh) = crate::mpvwin::get_hwnd() {
+                crate::mpvwin::embed_hide(mh);
+            }
+            // 标记放在收尾：万一 ShowWindow 同步触发了 Focused(true)，
+            // 也不会在窗口还最小化时就把播放层放出来。
             crate::mpvwin::request_minimize_restore();
         } else {
             let _ = window.minimize();

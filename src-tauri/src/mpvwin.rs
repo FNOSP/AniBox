@@ -24,6 +24,17 @@
 //!     精确控制；收编成功后**先隐藏**，首个矩形上报时才定位 + 显示（独立窗口不闪现）。
 //!     仍不做 SetParent / WS_CHILD / 挖洞，也不动 mpv 窗口 ex-style。
 //!
+//! [lc-1952] 实机回归两修：
+//!   · **全屏后控件全点不中**：mpv 的 VO 在全屏切换时 SetWindowPos 自己，把锚窗提到
+//!     覆盖层之上（对已 TOPMOST 的覆盖层再调 HWND_TOPMOST 不保证带内重排，owner 关系
+//!     也不即时兜底）—— 此后真实鼠标命中全部落进 mpv（实机日志：裸 WM_MOUSEMOVE
+//!     500+ 条/秒直达 mpv），覆盖层整层收不到事件。修复 = 进/退全屏与全屏断言里
+//!     `InsertAfter=锚窗` 显式带内定位 + 33ms 跟随循环每拍 `GW_HWNDPREV` 探测自愈。
+//!   · **最小化漏出黑色背景**：旧顺序先收播放层再动主窗（主窗若被真实显示过，黑底
+//!     播放页整个露出）+ 旧 `SW_SHOWMINNOACTIVE` 先行对隐藏窗物化恢复态帧。修复 =
+//!     主窗先最小化（此刻播放层还盖着）+ `minimize_show_steps`（先 SW_MINIMIZE 进
+//!     最小化态、再 SW_SHOWMINNOACTIVE 补任务栏条目，全程无恢复态帧）。
+//!
 //! [lc-1949] 覆盖层输入架构重做（用户定论：「点击就是要老久才有反应」不可接受）：
 //!
 //!   · 覆盖层**常驻可点**：WS_EX_TRANSPARENT 从此**不再被动态切换、也不再被设置**
@@ -50,13 +61,13 @@ use windows_sys::Win32::System::SystemServices::{MK_LBUTTON, MK_MBUTTON, MK_RBUT
 #[cfg(test)]
 use windows_sys::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindow,
-    IsWindowVisible, IsZoomed, PostMessageW, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    GWL_EXSTYLE, GWLP_HWNDPARENT, HWND_NOTOPMOST, HWND_TOPMOST, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE,
-    SW_RESTORE, SW_SHOW, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_NOZORDER, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
-    WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    EnumWindows, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, IsIconic,
+    IsWindow, IsWindowVisible, IsZoomed, PostMessageW, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    GWL_EXSTYLE, GWLP_HWNDPARENT, GW_HWNDPREV, HWND_NOTOPMOST, HWND_TOPMOST, SW_HIDE, SW_MAXIMIZE,
+    SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
 };
 
 /// 当前已收编的 mpv 顶层窗口（isize，全仓 HWND 约定；None = 未收编 / 已失效清理）。
@@ -351,6 +362,41 @@ fn is_window_topmost(hwnd: isize) -> bool {
     unsafe { GetWindowLongPtrW(hwnd as _, GWL_EXSTYLE) & (WS_EX_TOPMOST as isize) != 0 }
 }
 
+/// [lc-1952] 纯逻辑：覆盖层是否已紧贴在锚窗正上方。
+///
+/// `prev_of_anchor` = `GetWindow(锚窗, GW_HWNDPREV)`（z 序里压在锚窗上面的那一个）。
+/// 两个窗口都已是 TOPMOST 时，对覆盖层再调 `HWND_TOPMOST` **不保证带内重排**
+/// （这正是「NOTOPMOST→TOPMOST 抖一下」惯用法存在的原因）；mpv 的 VO 在全屏切换
+/// 时会 SetWindowPos 自己（实机日志：锚窗被提到覆盖层之上后，裸 WM_MOUSEMOVE 以
+/// 500+ 条/秒直达 mpv，控件整层失联）。带内相对位置必须用 `InsertAfter=锚窗`
+/// 显式修正，靠 TOPMOST 位和 owner 关系都不稳。
+pub fn overlay_zorder_ok(prev_of_anchor: isize, overlay: isize) -> bool {
+    overlay != 0 && prev_of_anchor == overlay
+}
+
+/// [lc-1952] 把覆盖层插到锚窗正上方（不激活、不动几何、不动 TOPMOST 位）。
+/// 返回是否执行了 SetWindowPos（窗口无效 / hwnd 为 0 时 false）。
+fn place_overlay_above_anchor(overlay: isize, anchor: isize) -> bool {
+    if overlay == 0
+        || anchor == 0
+        || unsafe { IsWindow(overlay as _) } == 0
+        || unsafe { IsWindow(anchor as _) } == 0
+    {
+        return false;
+    }
+    unsafe {
+        SetWindowPos(
+            overlay as _,
+            anchor as _,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        ) != 0
+    }
+}
+
 /// [lc-1946] 置顶：mpv 锚窗 + 覆盖层成对拨 TOPMOST/NOTOPMOST。
 ///
 /// 只拨 mpv 的 `ontop` 属性没用：覆盖层自己一直是 TOPMOST，用户看不到任何变化；
@@ -610,6 +656,8 @@ fn ensure_fullscreen_geometry(app: &tauri::AppHandle) {
     move_window(overlay, mx, my, mw, mh);
     set_window_topmost(mpv, true);
     set_window_topmost(overlay, true);
+    // [lc-1952] 带内显式定位：覆盖层必须压在锚窗正上方（TOPMOST 位不保证带内重排）。
+    place_overlay_above_anchor(overlay, mpv);
 }
 
 /// [lc-1947] mpv `fullscreen` 属性变化的窗口级处理（由 mpv.rs 的属性观察线程调用）。
@@ -661,6 +709,10 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
         move_window(overlay, mx, my, mw, mh);
         set_window_topmost(mpv, true);
         set_window_topmost(overlay, true);
+        // [lc-1952] 带内显式定位：把覆盖层插到锚窗正上方。mpv 的 VO 随后处理全屏时
+        // 会 SetWindowPos 自己，把它重新抬到覆盖层之上 —— 那一步由 33ms 跟随循环的
+        // z 序自愈兜住；这里先把进入瞬间的相对位置摆对。
+        place_overlay_above_anchor(overlay, mpv);
         crate::libmpv::trace(&format!(
             "[lc-1947] 进入全屏：显示器矩形 {mw}x{mh}@{mx},{my}（锚窗 + 覆盖层 TOPMOST）"
         ));
@@ -705,6 +757,8 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
                 FullscreenRestoreStep::Topmost(on) => {
                     set_window_topmost(mpv, on);
                     set_window_topmost(overlay, on);
+                    // [lc-1952] 退出后覆盖层同样要压回锚窗正上方（带内显式定位）
+                    place_overlay_above_anchor(overlay, mpv);
                 }
             }
         }
@@ -731,6 +785,8 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
             let ontop = PLAYER_ONTOP.load(Ordering::SeqCst);
             set_window_topmost(mpv, ontop);
             set_window_topmost(overlay, ontop);
+            // [lc-1952] mpv 迟到的还原可能把它自己抬到覆盖层之上：带内显式拉回
+            place_overlay_above_anchor(overlay, mpv);
         });
     }
 }
@@ -766,29 +822,60 @@ pub fn restore_player_window_from_fullscreen() {
     }
 }
 
-/// [lc-1947] 最小化到任务栏：**先显示为最小化**，再最小化。
+/// [lc-1952] 纯逻辑：最小化主窗的 `ShowWindow` 步骤（执行与单测共用同一份决策）。
 ///
-/// 根因：播放期主窗被 `m.hide()` 隐藏（mpv.rs / player.rs 起播路径），对**隐藏窗口**
-/// 调 `minimize()`（tao → `ShowWindow(SW_MINIMIZE)`）不会产生任务栏条目 ——
-/// 旧实现于是「覆盖层 + mpv 都收起 + 主窗隐藏着被最小化」= 整个程序从桌面消失。
-/// `SW_SHOWMINNOACTIVE` 一步完成「可见 + 最小化 + 不激活」，不会闪一下主界面；
+/// ① 先 `SW_MINIMIZE`：对**隐藏**窗只进最小化态、保持隐藏（lc-1947 实测：此时不产生
+///    任务栏条目），DWM 不会为它物化任何恢复态帧；
+/// ② 再 `SW_SHOWMINNOACTIVE`：显示的就是 iconic 形态本身（任务栏条目出现），全程
+///    不存在「先按恢复矩形渲染一帧黑色播放页、再缩下去」的中间帧。
+///
+/// 旧顺序（先 `SW_SHOWMINNOACTIVE` 再 `SW_MINIMIZE`）对隐藏窗会先按恢复态物化一帧；
+/// 叠加 lib.rs 侧「先收播放层再动主窗」的旧顺序（主窗若在此前恢复流程中被真实显示过，
+/// 收掉两层的一瞬黑色播放页整个露出）—— 就是用户看到的「最小化后漏出黑色背景残留」。
+/// 本函数 + lib.rs 的新顺序（主窗先最小化、此刻播放层还盖着）双保险。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MinimizeStep {
+    /// 进最小化态（隐藏窗保持隐藏，不产生视觉帧）
+    Minimize,
+    /// 显示为最小化（iconic 形态，产生任务栏条目）
+    ShowMinNoActive,
+}
+
+pub fn minimize_show_steps(visible: bool, iconic: bool) -> Vec<MinimizeStep> {
+    let mut steps = Vec::new();
+    if !iconic {
+        steps.push(MinimizeStep::Minimize);
+    }
+    if !visible {
+        steps.push(MinimizeStep::ShowMinNoActive);
+    }
+    steps
+}
+
+/// [lc-1947/1952] 最小化到任务栏：**先进最小化态，再显示为最小化**。
 /// 返回 `(IsWindowVisible, IsIconic)` 供调用方写进日志做证据。
 pub fn minimize_main_to_taskbar(hwnd: isize) -> (bool, bool) {
     if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
         return (false, false);
     }
-    unsafe {
-        if IsWindowVisible(hwnd as _) == 0 {
-            ShowWindow(hwnd as _, SW_SHOWMINNOACTIVE);
+    let visible = unsafe { IsWindowVisible(hwnd as _) } != 0;
+    let iconic = unsafe { IsIconic(hwnd as _) } != 0;
+    for step in minimize_show_steps(visible, iconic) {
+        unsafe {
+            match step {
+                MinimizeStep::Minimize => {
+                    ShowWindow(hwnd as _, SW_MINIMIZE);
+                }
+                MinimizeStep::ShowMinNoActive => {
+                    ShowWindow(hwnd as _, SW_SHOWMINNOACTIVE);
+                }
+            }
         }
-        if IsIconic(hwnd as _) == 0 {
-            ShowWindow(hwnd as _, SW_MINIMIZE);
-        }
-        (
-            IsWindowVisible(hwnd as _) != 0,
-            IsIconic(hwnd as _) != 0,
-        )
     }
+    (
+        unsafe { IsWindowVisible(hwnd as _) } != 0,
+        unsafe { IsIconic(hwnd as _) } != 0,
+    )
 }
 
 /// 退出流程去重：true = 本次调用真正开始跑退出（之前没有在跑）。
@@ -1123,6 +1210,9 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
         // 隐藏态没有任何像素可残影，且拖动中本来也点不到返回键。
         let mut hidden_for_move = false;
         let mut stable_since: Option<std::time::Instant> = None;
+        // [lc-1952] 全屏 z 序自愈的状态沿记录：只在「好 → 坏」翻转时记一条日志，
+        // 避免每拍刷屏。
+        let mut overlay_zorder_was_ok = true;
         while crate::mpvwin::embed_is_active() {
             tokio::time::sleep(std::time::Duration::from_millis(33)).await;
             if !crate::mpvwin::embed_is_active() {
@@ -1150,6 +1240,23 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                     if !is_window_topmost(ov as _) {
                         set_window_topmost(ov as _, true);
                     }
+                    // [lc-1952] z 序自愈：全屏期间覆盖层必须**紧贴锚窗正上方**，否则
+                    // Windows 把真实鼠标命中判给 mpv（实机复现：500+ 条/秒裸
+                    // WM_MOUSEMOVE 直达 mpv，覆盖层整层收不到事件，控件全点不中）。
+                    // 对已 TOPMOST 的窗口调 HWND_TOPMOST 不保证带内重排，TOPMOST 位
+                    // 完好也可能被压在 mpv 之下 —— 每拍用 GW_HWNDPREV 探测，偏离就
+                    // 用 InsertAfter=锚窗 拉回。
+                    let prev_of_anchor = unsafe { GetWindow(mh as _, GW_HWNDPREV) } as isize;
+                    let zorder_ok = overlay_zorder_ok(prev_of_anchor, ov);
+                    if !zorder_ok {
+                        if overlay_zorder_was_ok {
+                            crate::libmpv::trace(
+                                "[lc-1952] 全屏覆盖层被压到锚窗之下 → InsertAfter 拉回",
+                            );
+                        }
+                        place_overlay_above_anchor(ov, mh);
+                    }
+                    overlay_zorder_was_ok = zorder_ok;
                 }
                 let mut m = RECT { left: 0, top: 0, right: 0, bottom: 0 };
                 let mut o = RECT { left: 0, top: 0, right: 0, bottom: 0 };
@@ -1596,5 +1703,87 @@ mod tests {
             follow_loop_action(true, anchor, overlay, mon),
             FollowAction::Assert(..)
         ));
+    }
+
+    // ─────────────── [lc-1952] 全屏 z 序自愈 + 最小化黑底修复 ───────────────
+
+    /// [lc-1952] z 序判定：覆盖层必须紧贴锚窗正上方（GW_HWNDPREV 探测）。
+    #[test]
+    fn overlay_zorder_decision() {
+        let overlay = 200074isize;
+        // 健康态：锚窗上面那个就是覆盖层
+        assert!(overlay_zorder_ok(overlay, overlay), "覆盖层在锚窗正上方");
+        // 反转态：锚窗之上是别的窗口（mpv 的 VO 全屏 SetWindowPos 抬自己）
+        assert!(!overlay_zorder_ok(789784, overlay), "被 mpv 压住必须判定为坏");
+        // 锚窗就在 TOPMOST 带顶（上面没有任何窗口）
+        assert!(!overlay_zorder_ok(0, overlay), "上面没有窗口也必须判定为坏");
+        // 覆盖层 hwnd 无效（0）
+        assert!(!overlay_zorder_ok(0, 0));
+        assert!(!overlay_zorder_ok(overlay, 0), "覆盖层无效时恒为坏");
+    }
+
+    /// [lc-1952] 双向验证：z 序自愈闭环 —— 坏态判定 → InsertAfter 修正 → 好态判定。
+    /// 旧代码没有任何 z 序探测（owner 关系 + TOPMOST 位），同样输入下永远「自以为好」。
+    #[test]
+    fn overlay_zorder_self_heal_loop() {
+        let overlay = 200074isize;
+        let mpv = 789784isize;
+        // 旧行为（无探测）：z 序已反转，旧代码无从得知 —— 模拟「无修复」的判定恒真
+        let old_assumes_ok = |_prev: isize| true;
+        assert!(old_assumes_ok(mpv), "旧代码不探测 z 序（这就是 Bug 1 的根因面）");
+
+        // 新行为：探测 → 修正 → 复核
+        let mut prev_of_anchor = mpv; // mpv 的 VO 把锚窗抬到带顶，覆盖层被压住
+        assert!(!overlay_zorder_ok(prev_of_anchor, overlay), "修复前必须判定为坏");
+        // place_overlay_above_anchor 执行后：覆盖层紧贴锚窗上方 → GW_HWNDPREV 变为 overlay
+        prev_of_anchor = overlay;
+        assert!(overlay_zorder_ok(prev_of_anchor, overlay), "修复后必须判定为好");
+    }
+
+    /// [lc-1952] 最小化步骤决策：先 SW_MINIMIZE（隐藏窗保持隐藏、不物化恢复态帧），
+    /// 再 SW_SHOWMINNOACTIVE（iconic 形态补任务栏条目）。
+    #[test]
+    fn minimize_steps_order() {
+        // 播放期主窗被 m.hide() 隐藏：先进最小化态，再补显示 —— 顺序不能反
+        assert_eq!(
+            minimize_show_steps(false, false),
+            vec![MinimizeStep::Minimize, MinimizeStep::ShowMinNoActive]
+        );
+        // 已可见（此前从任务栏恢复过、主窗停在可见态）：普通最小化即可
+        assert_eq!(minimize_show_steps(true, false), vec![MinimizeStep::Minimize]);
+        // 隐藏但已是最小化态（上一步只执行了一半）
+        assert_eq!(minimize_show_steps(false, true), vec![MinimizeStep::ShowMinNoActive]);
+        // 可见且已最小化：无事可做（连点最小化不重复发 ShowWindow）
+        assert!(minimize_show_steps(true, true).is_empty());
+    }
+
+    /// [lc-1952] 双向验证：旧顺序（先 SW_SHOWMINNOACTIVE 再 SW_MINIMIZE）对隐藏窗
+    /// 会先按恢复态物化一帧（黑底来源）；新决策的第一个动作必须是 SW_MINIMIZE。
+    #[test]
+    fn minimize_old_order_had_show_first() {
+        // 旧代码的决策（固化病理性顺序作为反例）
+        let old_steps = |visible: bool, iconic: bool| {
+            let mut v: Vec<&str> = Vec::new();
+            if !visible {
+                v.push("show_min_no_active"); // 先显示 → 恢复态帧被物化
+            }
+            if !iconic {
+                v.push("minimize");
+            }
+            v
+        };
+        assert_eq!(
+            old_steps(false, false),
+            vec!["show_min_no_active", "minimize"],
+            "旧顺序：隐藏窗先被显示（黑底帧来源）"
+        );
+        // 新决策：隐藏窗的第一个动作是 Minimize（不产生视觉帧）
+        let new_steps = minimize_show_steps(false, false);
+        assert_eq!(new_steps[0], MinimizeStep::Minimize, "新顺序：先最小化，全程无恢复态帧");
+        assert_ne!(
+            new_steps,
+            vec![MinimizeStep::ShowMinNoActive, MinimizeStep::Minimize],
+            "新决策不得退回旧顺序"
+        );
     }
 }

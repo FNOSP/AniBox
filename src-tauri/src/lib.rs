@@ -5408,6 +5408,7 @@ pub fn run() {
             jav_library::jav_local_play,
             jav_library::jav_library_items,
             jav_library::jav_library_scrape,
+            jav_library::jav_ai_translate,
             cloud::cloud_rename,
             cloud_proxy::cloud_ffmpeg_available,
             fnid::fn_id_login,

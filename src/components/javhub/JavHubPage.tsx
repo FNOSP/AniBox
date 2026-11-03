@@ -71,6 +71,8 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
   const [fnosNote, setFnosNote] = useState("");
   const [translateBusy, setTranslateBusy] = useState(false);
   const [scanRunBusy, setScanRunBusy] = useState(false);
+  const [scrapeNote, setScrapeNote] = useState("");
+  const [translateNote, setTranslateNote] = useState("");
   const noteTimer = useRef<number | undefined>(undefined);
 
   /* 结果提示自动消失（进度行不残留：完成后 flash，切标签即清） */
@@ -166,13 +168,15 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
   const scrapeAll = async () => {
     if (busy) return;
     setBusy(true);
-    setNote("正在按番号刮削全部盘…");
+    setNote("");
     setErr("");
     try {
       let ok = 0;
       let bad = 0;
       let tr = 0;
-      for (const l of libs) {
+      for (const [i, l] of libs.entries()) {
+        const label = l.label || labels[l.provider] || l.provider;
+        setScrapeNote(`正在刮削 ${label}（${i + 1}/${libs.length}）…`);
         try {
           const r = await invoke<{ scraped: number; failed: number; translated?: number }>("jav_library_scrape", { provider: l.provider, force: false });
           ok += r.scraped;
@@ -186,6 +190,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
       await load();
     } finally {
       setBusy(false);
+      setScrapeNote("");
     }
   };
 
@@ -239,10 +244,12 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
   const translateAll = async () => {
     if (translateBusy) return;
     setTranslateBusy(true);
-    setNote("正在批量汉化…");
+    setNote("");
     let ok = 0;
     let errs = "";
-    for (const l of libs) {
+    for (const [i, l] of libs.entries()) {
+      const label = l.label || labels[l.provider] || l.provider;
+      setTranslateNote(`正在汉化 ${label}（${i + 1}/${libs.length}）…`);
       try {
         const r = await invoke<{ translated: number; error?: string }>("jav_ai_translate", { provider: l.provider, force: false });
         ok += r.translated ?? 0;
@@ -252,6 +259,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
       }
     }
     setTranslateBusy(false);
+    setTranslateNote("");
     await load();
     flashNote(ok ? `汉化完成：${ok} 条` : errs ? `汉化失败：${errs}` : "没有待汉化的条目", 8000);
   };
@@ -515,6 +523,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
                 {busy ? "刮削中…" : "刮削全部盘"}
               </button>
               <p className="hint">逐盘增量刮削，已成功的跳过；走镜像轨免梯子。</p>
+              {scrapeNote && <p className="hint">{scrapeNote}</p>}
             </div>
             <div className="jvh-tool">
               <h5>批量汉化</h5>
@@ -522,6 +531,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
                 {translateBusy ? "汉化中…" : "汉化全部盘"}
               </button>
               <p className="hint">配了 AI Key 走 AI 精翻；没配自动用 Google 免 Key 翻译（需代理）。</p>
+              {translateNote && <p className="hint">{translateNote}</p>}
             </div>
             <div className="jvh-tool">
               <h5>定时扫描</h5>

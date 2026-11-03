@@ -779,3 +779,19 @@
 }
 .jvd-file + .jvd-file { border-top: 1px solid var(--line); }
 .jvd-fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ═══════════ [lc-1982] 设置分节切换 + 返回首页过渡 ═══════════ */
+/* 设置面板分节切换：字段容器按 sec 重挂，播入场动画 */
+.javset.embed .javset-fields { animation: jvh-view-in 0.25s ease-out both; }
+
+/* 返回首页：整页交叉淡出/淡入（仅 JavHub 返回按钮触发 View Transition） */
+::view-transition-old(root) { animation: jvh-vt-out 0.2s ease-in both; }
+::view-transition-new(root) { animation: jvh-vt-in 0.25s ease-out both; }
+@keyframes jvh-vt-out { to { opacity: 0; } }
+@keyframes jvh-vt-in { from { opacity: 0; transform: translateY(6px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .javset.embed .javset-fields { animation: none; }
+  ::view-transition-old(root),
+  ::view-transition-new(root) { animation: none; }
+}

@@ -478,7 +478,7 @@ export function JavSettingsPanel({ onSaved }: { onSaved?: () => void }) {
           <input type="search" placeholder="搜设置项，比如「代理」「超时」「分片」…" value={q} onChange={(e) => setQ(e.target.value)} />
           {query && <span className="cnt">{matched.length} 项</span>}
         </div>
-        <div className="javset-fields">
+        <div className="javset-fields" key={sec}>
           {!s && <Ro>加载中…</Ro>}
           {s && query && matched.length === 0 && <Ro>没有匹配「{q}」的设置项。</Ro>}
           {s && query && matched.map(({ sec: sl, f }) => (

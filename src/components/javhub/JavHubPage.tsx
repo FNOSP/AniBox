@@ -3,6 +3,7 @@
    原版左侧竖导航改为**顶部横排胶囊**：默认单图标，选中展开标签名（与设置弹层同一套交互）。
    数据：jav_library_all（网盘扫描分流 + 飞牛媒体库扫描都落在这里）；播放走 cloud_play / play_item。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { imgUrl } from "../../lib/images";
 import { JavSettingsPanel } from "./JavSettingsPanel";
@@ -391,11 +392,24 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
       </div>
     );
 
+  /* 返回首页：整页交叉淡入淡出（View Transition；系统减动效时直接切） */
+  const handleBack = () => {
+    const d = document as Document & { startViewTransition?: (cb: () => void) => unknown };
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!d.startViewTransition || reduced) {
+      onBack();
+      return;
+    }
+    d.startViewTransition(() => {
+      flushSync(() => onBack());
+    });
+  };
+
   return (
     <main className="content jvh-page">
       {/* 头部与媒体库页同款：圆返回 + 标题 + 计数 */}
       <div className="page-head">
-        <button className="back" onClick={onBack}>‹</button>
+        <button className="back" onClick={handleBack}>‹</button>
         <h3>JavHub</h3>
         <span className="muted">{total} 部</span>
       </div>

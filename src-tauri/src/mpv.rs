@@ -331,6 +331,8 @@ impl MpvSession {
                         .to_string(),
                 );
                 args.push("--script-opts-append=uosc-idle_branding=no".to_string());
+                // [lc-1924] 原生时间轴 + 左下信息胶囊（硬解/码率/网络/弹幕）整块停用
+                args.push("--script-opts-append=uosc-anibox_hide_timeline=yes".to_string());
                 args.push("--script-opts-append=osc_cinema-enabled=yes".to_string());
                 // [lc-1924] 原生 UI 全面停用：控件与提示都由 App 覆盖层 DOM 承担
                 //（Polaris 同款：其 osc-cinema 自绘底栏被 if false 关掉、改由 mpv-overlay 接管）

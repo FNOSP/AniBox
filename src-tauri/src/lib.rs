@@ -3305,41 +3305,149 @@ pub fn player_overlay_abort(app: &AppHandle) {
     }
     crate::mpvwin::embed_set_active(false);
     crate::mpvwin::set_owner_follow(false);
-    use tauri::Manager;
-    if let Some(m) = app.get_webview_window("main") {
-        let _ = m.show();
-    }
+    restore_main_window(app);
     crate::libmpv::trace("[lc-1940] 起播失败 → 覆盖层/mpv 已收起，主窗口恢复");
+}
+
+/// [lc-1941] 主窗口唤回（关闭播放器 / 起播失败兜底共用）。
+///
+/// 顺序：Tauri `show()` 先把 tao 的 VISIBLE 缓存同步为 true（下一次起播的 `hide()` 才能生效），
+/// 再用原始 `ShowWindow(SW_SHOWNORMAL)` 做**真实可见性**兜底 —— 覆盖层显隐早已绕开 tao
+/// （`mpvwin::overlay_hide`）；若主窗在别的路径也被原始 ShowWindow 动过，tao 缓存就会与真实
+/// 状态脱钩，此时 `show()` 是空操作，只有系统调用能把它拉回来。
+fn restore_main_window(app: &AppHandle) {
+    use tauri::Manager;
+    let Some(m) = app.get_webview_window("main") else {
+        return;
+    };
+    let _ = m.unminimize();
+    let _ = m.show();
+    #[cfg(target_os = "windows")]
+    if let Ok(h) = m.hwnd() {
+        crate::mpvwin::window_force_show(h.0 as isize);
+    }
+    let _ = m.set_focus();
+    crate::libmpv::trace("[lc-1941] 主窗口唤回（show + 原始 ShowWindow + focus）");
+}
+
+/// [lc-1941] 退出兜底看门狗：stop 之后 mpv 会重新 show 自己的 idle 窗口（见
+/// `mpvwin::hide_visible_windows_for_pid` 注释），单次隐藏必被覆盖。这里按 100ms 周期
+/// 反复断言三件事，直到连续 ~500ms 稳定：
+///   ① 该会话的 mpv 窗口不可见；② 覆盖层不可见；③ 主窗口真实可见（IsWindowVisible）。
+/// 一旦检测到内嵌态重新激活（用户又点了播放）立即退出，绝不干扰新会话；
+/// 整个过程只调窗口 API，不杀进程、不碰其它 mpv 实例。
+#[cfg(target_os = "windows")]
+fn spawn_overlay_exit_watchdog(app: AppHandle, mpv_pid: Option<u32>) {
+    use tauri::Manager;
+    tauri::async_runtime::spawn(async move {
+        let mut stable = 0u32;
+        for _ in 0..14u32 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if crate::mpvwin::embed_is_active() {
+                crate::libmpv::trace("[lc-1941] 退出兜底中止：新的播放会话已开始");
+                return;
+            }
+            let mpv_hidden = match mpv_pid {
+                Some(pid) => match crate::mpvwin::hide_visible_windows_for_pid(pid) {
+                    Some(h) => {
+                        // 命中说明 mpv 重新显示了窗口：回写槽，复用会话下次起播仍能钉位
+                        crate::mpvwin::set_hwnd(h);
+                        false
+                    }
+                    None => true,
+                },
+                None => true,
+            };
+            hide_player_overlay(&app);
+            if let Some(m) = app.get_webview_window("main") {
+                let visible = m
+                    .hwnd()
+                    .map(|h| crate::mpvwin::window_is_visible(h.0 as isize))
+                    .unwrap_or(false);
+                if !visible {
+                    restore_main_window(&app);
+                }
+            }
+            if mpv_hidden {
+                stable += 1;
+                if stable >= 5 {
+                    crate::libmpv::trace("[lc-1941] 退出兜底完成：mpv/覆盖层已收起，主窗保持可见");
+                    return;
+                }
+            } else {
+                stable = 0;
+            }
+        }
+        crate::libmpv::trace("[lc-1941] 退出兜底结束（已达最大轮次；窗口已强制收起）");
+    });
 }
 
 /// [lc-1913] 内嵌退出流程（ESC 桥 / player_embed_leave{stop:true} 共用）：
 /// 停播 + 隐藏 mpv 窗口 + 清内嵌态 + 还原 script-opts（uosc 顶栏/影院 OSC 归位），
 /// 隐藏播放器专用窗口、**唤回主窗口**，最后给前端发 `mpv-embed-exit`。
+///
+/// [lc-1941] 关闭黑屏根因与修法：
+///   · 根因：stop 之后 mpv 的 idle VO 会**重新显示自己的窗口**。旧实现只在 stop 后对
+///     槽内句柄 SW_HIDE 一次，随即被 mpv 覆盖 → 满屏纯黑的 mpv idle 窗口留在最上层
+///     （主窗即使 show() 也被它盖住），用户看到「整屏全黑、回不到软件界面」，且后续
+///     点击全被这个黑窗吃掉。实测 `%TEMP%\anibox-mpv.log`：`Run command: stop @62.774`
+///     → `vo/gpu-next/win32 Window size changed to: 660:292:2520:1575 @62.823`。
+///   · 修法：stop/还原 script-opts 都加**等待上限**（mpv 无响应不能把退出拖成死等）；
+///     隐藏 mpv 先藏槽内句柄、再按会话 PID 枚举所有可见顶层窗口逐个 SW_HIDE；
+///     覆盖层收起后用原始 ShowWindow 唤回主窗；最后交给
+///     `spawn_overlay_exit_watchdog` 反复断言直到稳定。
 pub async fn embed_exit_flow(app: AppHandle) {
     crate::mpvwin::embed_set_active(false);
     crate::mpvwin::set_owner_follow(false);
     let session = app.state::<AppState>().mpv.lock().await.clone();
+    let mpv_pid = session
+        .as_ref()
+        .and_then(|m| *m.pid.lock().unwrap_or_else(|e| e.into_inner()));
     if let Some(m) = session.as_ref() {
         if let Some(orig) = crate::mpvwin::take_saved_script_opts() {
-            if let Err(e) = m.command(json!(["set_property", "script-opts", orig])).await {
-                crate::libmpv::trace(&format!("[lc-1913] 还原 script-opts 失败: {e}"));
+            // [lc-1941] 有上限：mpv 无响应（command 自带 5s 超时）也不能拖着主窗不回来
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(600),
+                m.command(json!(["set_property", "script-opts", orig])),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => crate::libmpv::trace(&format!("[lc-1913] 还原 script-opts 失败: {e}")),
+                Err(_) => {
+                    crate::libmpv::trace("[lc-1941] 还原 script-opts 超时（600ms）→ 继续退出")
+                }
             }
         }
-        if let Err(e) = m.stop().await {
+        match tokio::time::timeout(std::time::Duration::from_millis(1500), m.stop()).await {
+            Ok(Ok(())) => {}
             // 不静默吞掉：stop 失败 = 返回后 mpv 继续播，排障要看这条
-            crate::libmpv::trace(&format!("[lc-1913] embed 退出 stop 失败: {e}"));
+            Ok(Err(e)) => crate::libmpv::trace(&format!("[lc-1913] embed 退出 stop 失败: {e}")),
+            Err(_) => {
+                crate::libmpv::trace("[lc-1941] embed 退出 stop 超时（1.5s）→ 继续收起窗口")
+            }
         }
     }
+    // mpv 窗口：先藏槽内句柄，再按 PID 全量收起（mpv 可能已经换了一个 idle 窗口）
     if let Some(h) = crate::mpvwin::get_hwnd() {
         crate::mpvwin::embed_hide(h);
+    }
+    #[cfg(target_os = "windows")]
+    if let Some(pid) = mpv_pid {
+        if let Some(h) = crate::mpvwin::hide_visible_windows_for_pid(pid) {
+            crate::mpvwin::set_hwnd(h);
+        }
     }
     // [lc-1915] 播放器窗收起来，主界面回来（Polaris 同款：主窗播放期间是隐藏的）
     // [lc-1940] 必须走原始 ShowWindow，Tauri 的 hide() 对覆盖层是空操作（见 overlay_hide）
     hide_player_overlay(&app);
-    if let Some(m) = app.get_webview_window("main") {
-        let _ = m.show();
-    }
+    // [lc-1941] 先让主窗 React 卸载 PlayerView（回到详情页）再唤回主窗 ——
+    // 反过来会先露出播放层那张纯黑舞台一帧
     crate::mpv::emit_player(&app, "mpv-embed-exit", json!({}));
+    restore_main_window(&app);
+    #[cfg(target_os = "windows")]
+    spawn_overlay_exit_watchdog(app.clone(), mpv_pid);
+    crate::libmpv::trace("[lc-1941] embed 退出：覆盖层/mpv 已收起，主窗口已唤回");
 }
 
 /// [lc-1909] 内嵌 leave：清内嵌状态；stop=true 走现有 IPC stop 并再次隐藏 mpv 窗口（实例保留）。

@@ -30,8 +30,9 @@ use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetCursorPos, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
     IsIconic, IsWindow, IsWindowVisible, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE,
-    GWLP_HWNDPARENT, HWND_TOPMOST, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_NOZORDER, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    GWLP_HWNDPARENT, HWND_TOPMOST, SW_HIDE, SW_SHOWNOACTIVATE, SW_SHOWNORMAL, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TRANSPARENT,
 };
 
 /// 当前已收编的 mpv 顶层窗口（isize，全仓 HWND 约定；None = 未收编 / 已失效清理）。
@@ -164,6 +165,67 @@ pub fn overlay_hide(hwnd: isize) {
 
 /// [lc-1911] 进内嵌前的 mpv `script-opts` 原串（leave 时还原，独立窗口的 uosc 顶栏要回来）。
 static SAVED_SCRIPT_OPTS: Mutex<Option<String>> = Mutex::new(None);
+
+// ───────────────────── [lc-1941] 退出路径的窗口兜底 ─────────────────────
+
+/// [lc-1941] 窗口**真实**可见性（IsWindowVisible，不读 tao 缓存）。
+/// tao 的 `is_visible()` 只是 `WindowFlags::VISIBLE` 缓存，覆盖层在这套架构里早就不经过
+/// tao 显隐（见 `overlay_hide`），缓存可能和真实状态脱钩 —— 判断"主窗回来了没有"只能问系统。
+pub fn window_is_visible(hwnd: isize) -> bool {
+    hwnd != 0 && unsafe { IsWindow(hwnd as _) != 0 && IsWindowVisible(hwnd as _) != 0 }
+}
+
+/// [lc-1941] 强制显示窗口（原始 ShowWindow，和 tao 缓存解耦）。
+/// 用于关闭播放器后唤回主窗：先 Tauri `show()` 同步缓存，这里再补一发系统调用，
+/// 任何一条路径把主窗留在隐藏态都能被拉回来。已可见时不动（避免多余激活/闪烁）。
+pub fn window_force_show(hwnd: isize) {
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return;
+    }
+    unsafe {
+        if IsWindowVisible(hwnd as _) == 0 {
+            ShowWindow(hwnd as _, SW_SHOWNORMAL);
+        }
+    }
+}
+
+struct HideCtx {
+    pid: u32,
+    found: Option<isize>,
+}
+
+/// EnumWindows 回调：把该 PID 的**可见**顶层窗口逐个 SW_HIDE（不提前终止，全部收起）。
+unsafe extern "system" fn hide_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let ctx = unsafe { &mut *(lparam as *mut HideCtx) };
+    let mut proc_id: u32 = 0;
+    unsafe {
+        GetWindowThreadProcessId(hwnd, &mut proc_id);
+        if proc_id == ctx.pid && IsWindowVisible(hwnd) != 0 {
+            ShowWindow(hwnd, SW_HIDE);
+            ctx.found = Some(hwnd as isize);
+        }
+    }
+    1
+}
+
+/// [lc-1941] 按会话 PID 隐藏 mpv 的全部可见顶层窗口，返回最后命中的句柄。
+///
+/// 为什么单靠槽里的 hwnd 不够（关闭黑屏的真根因）：
+/// mpv 收到 `stop` 后进入 idle，并在几十毫秒后由 `vo/gpu-next/win32` 重新 reconfig
+/// 自己的窗口（实测 `%TEMP%\anibox-mpv.log`：`Run command: stop` @62.774 →
+/// `Window size changed to: 660:292:2520:1575` @62.823，窗口被重新 show）。
+/// 此前退出流程只在 stop 之后 SW_HIDE 一次，随即被 mpv 自己覆盖 → 留在屏幕上的是
+/// **满屏纯黑的 idle mpv 窗口**（还压在刚刚唤回的主窗之上），用户看到的就是
+/// 「点关闭直接整屏全黑、回不到软件界面」，且后续点击全被这个黑窗吃掉。
+///
+/// 这里按 PID 枚举（**不 taskkill、不碰其它 mpv 实例**），调用方可重复调用直到窗口稳定隐藏。
+pub fn hide_visible_windows_for_pid(pid: u32) -> Option<isize> {
+    let mut ctx = HideCtx { pid, found: None };
+    unsafe {
+        EnumWindows(Some(hide_proc), &mut ctx as *mut HideCtx as LPARAM);
+    }
+    ctx.found
+}
 
 // ───────────────────────── 查找 mpv 顶层窗口 ─────────────────────────
 

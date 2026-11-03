@@ -23,17 +23,40 @@
 //!     同样挂 owner（保 z-order：owned 永远压在主窗口之上），但窗口矩形由前端矩形上报
 //!     精确控制；收编成功后**先隐藏**，首个矩形上报时才定位 + 显示（独立窗口不闪现）。
 //!     仍不做 SetParent / WS_CHILD / 挖洞，也不动 mpv 窗口 ex-style。
+//!
+//! [lc-1949] 覆盖层输入架构重做（用户定论：「点击就是要老久才有反应」不可接受）：
+//!
+//!   · 覆盖层**常驻可点**：WS_EX_TRANSPARENT 从此**不再被动态切换、也不再被设置**
+//!     （lc-1939~1948 的「探针 + 拨穿透位」整套机制退役：16ms 探针、热区上报、粘滞、
+//!      hover-bridge 命中）。穿透位静态不存在 ⇒ 控件 `pointerdown` 即执行，链路里
+//!      **没有任何等待探针翻转的环节**，点击延迟从构造上归零。
+//!   · **视频区输入转发**：覆盖层收到的、落点不在控件上的鼠标事件由前端分流后经
+//!     `forward_mouse` PostMessage 给 mpv 锚窗（WM_MOUSEMOVE / LBUTTONDOWN /
+//!     LBUTTONUP / LBUTTONDBLCLK / RBUTTONDOWN / RBUTTONUP / MBUTTON* / MOUSEWHEEL），
+//!     mpv 像 Windows 队列里的真实输入一样处理（单击暂停、双击全屏、拖动窗口、滚轮
+//!     seek 全是 mpv 原生行为）。「拖动」不另走 HTCAPTION：mpv 以
+//!     `--input-builtin-dragging=yes` 启动，其内部实现正是
+//!     `ReleaseCapture + SendMessage(WM_NCLBUTTONDOWN, HTCAPTION)`，且在 mpv 自己的
+//!     线程里做、不跨进程同步阻塞我们的主线程 —— 比我们从外面发 HTCAPTION 更顺。
+//!   · 「在不在控件上」由前端在事件时决定（`closest("[data-chrome-hit]")`），Rust
+//!     不再做几何猜测；`overlay-cursor` / `overlay-geometry` 两条探针事件随之退役，
+//!     控件续显由 WebView 自身的 mousemove 驱动（覆盖层可点后天然可达）。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
+use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+use windows_sys::Win32::System::SystemServices::{MK_LBUTTON, MK_MBUTTON, MK_RBUTTON};
+// MK_CONTROL / MK_SHIFT 只在前端传来的 flags 位里出现（8 / 4），单测用它们验证透传
+#[cfg(test)]
+use windows_sys::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetCursorPos, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
-    IsIconic, IsWindow, IsWindowVisible, IsZoomed, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    EnumWindows, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindow,
+    IsWindowVisible, IsZoomed, PostMessageW, SetWindowLongPtrW, SetWindowPos, ShowWindow,
     GWL_EXSTYLE, GWLP_HWNDPARENT, HWND_NOTOPMOST, HWND_TOPMOST, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE,
     SW_RESTORE, SW_SHOW, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_NOZORDER, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+    SWP_NOSIZE, SWP_NOZORDER, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
+    WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
 };
 
 /// 当前已收编的 mpv 顶层窗口（isize，全仓 HWND 约定；None = 未收编 / 已失效清理）。
@@ -80,9 +103,6 @@ static FULLSCREEN_SAVED: Mutex<Option<(i32, i32, i32, i32, bool)>> = Mutex::new(
 /// 跟随循环在**非全屏**时持续记录的锚窗矩形。mpv 的 `fullscreen` 属性事件可能晚于
 /// 它自己的 resize，不能靠「事件到达那一刻的 GetWindowRect」当进入前的矩形。
 static LAST_NORMAL_RECT: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
-/// 探针上次见到的覆盖层**尺寸**。只比宽高：热区是窗口内坐标，窗口移动不影响；
-/// 尺寸一变（最大化 / 全屏 / 还原）就必须作废旧矩形。
-static LAST_OVERLAY_SIZE: Mutex<Option<(i32, i32)>> = Mutex::new(None);
 
 // ───────────────────────── [lc-1909] 内嵌模式静态槽 ─────────────────────────
 
@@ -102,155 +122,89 @@ static EMBED_RECT: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
 static OVERLAY_TRANSPARENT: AtomicBool = AtomicBool::new(false);
 /// [lc-1939] 覆盖层 UI 是否可用（透明建窗成功）。false = 退回 mpv 进程内 Lua OSC。
 static OVERLAY_UI_READY: AtomicBool = AtomicBool::new(false);
-/// [lc-1943] 光标探针是否已在跑（防重复 spawn）。
-static OVERLAY_PROBE_RUNNING: AtomicBool = AtomicBool::new(false);
 /// [lc-1939] 33ms 几何跟随循环是否已在跑（起播前预启动 + 收编后再调，需幂等）。
 static OVERLAY_FOLLOW_RUNNING: AtomicBool = AtomicBool::new(false);
 
-// ─────────────────── [lc-1943/1944] 覆盖层可点区（热区）───────────────────
+// ─────────────── [lc-1949] 视频区鼠标转发（替代探针穿透拨位）───────────────
 //
-// 机制：前端在布局/显隐变化时上报一次 `[data-chrome-hit]` 矩形 →
-// Rust 探针按 `GetCursorPos` 与矩形比 → **只拨 `WS_EX_TRANSPARENT`**。
-// 这是 Polaris 的原样做法（`mpv-overlay.html:125-126` / `:12733`：
-// 「Rust 探针(overlay_wiring.rs 每 50ms 推送物理坐标) → elementFromPoint →
-// _isOverlayHoverInteractive 白名单命中 → WS_EX_TRANSPARENT=false」）。
+// 覆盖层常驻可点后，落点不在控件上的鼠标事件必须由我们转给 mpv，否则 mpv 收不到
+// 任何输入（它的窗口被覆盖层整面盖住，Windows 不会跨过覆盖层把命中给它）。
+// 转发 = PostMessage 标准 WM_* 消息，mpv 的 win32 后端按真实输入处理：
+// 单击暂停 / 双击全屏 / 拖动（--input-builtin-dragging）/ 滚轮 seek 全是原生行为。
 //
-// [lc-1944] 本轮把「能不能换 OS 级同步命中」逐条查证了一遍，结论是**不换**：
-//   · Polaris 不是逐像素 alpha、不是小窗、不是 SetWindowRgn，也没有 WM_NCHITTEST
-//     （PE 里 `NCHITTEST`/`HTTRANSPARENT`/`UpdateLayeredWindow` 命中数全 0；
-//      `SetWindowRgn` 只用于 mpv 窗圆角，且其源码注释明确「不用 SetWindowRgn 裁本窗口」）；
-//   · `WM_NCHITTEST → HTTRANSPARENT` 只对**同一个线程**的窗口往下传递
-//     （Win32 文档原文，Wine `window_from_point` 同样只对同线程窗发 hit-test）。
-//     mpv 是**独立进程**，穿透点击到不了它 —— 用了就等于「点画面不再暂停/拖窗/滚轮」；
-//   · `SetWindowRgn` 是跨进程同步命中的唯一合法手段，但会把覆盖层的区域裁掉，
-//     底部 132px 对比渐变（lc-1942 视觉值）会被裁成矩形块，需要先实机确认 WebView2
-//     的 DComp 合成层是否真如 Polaris 注释所说「不受父窗区域裁剪」。
-// 因此本轮保持 Polaris 同款轮询机制，把「点半天」按实测证据修在别处：
-// 菜单数据 25 条 get_property 由串行改并发（实测串行会把后续点击排到 1.6s / 7.5s 之后）。
+// 为什么不用 WM_NCHITTEST→HTTRANSPARENT 让系统替我们转发：HTTRANSPARENT 只对
+// **同一线程**的窗口下传（Win32 文档原文，Wine 同实现），mpv 是独立进程收不到；
+// SetWindowRgn 会把覆盖层裁出洞（底部对比渐变会被裁坏）。逐事件 PostMessage 是
+// 跨进程场景下唯一可行的转发通道，且它**不经过任何轮询** —— 延迟就是一次
+// PostMessage（微秒级），与旧探针「最坏等 16ms 翻位 + 首击丢失竞态」不同代。
 
-/// 前端上报的可点区矩形：窗口内物理像素 `(x, y, w, h)`，已含外扩余量。
-static HOT_RECTS: Mutex<Vec<(i32, i32, i32, i32)>> = Mutex::new(Vec::new());
-/// 模态态（菜单面板打开 / 进度条拖拽）：整窗可点，不看矩形。
-static HOT_FULL: AtomicBool = AtomicBool::new(false);
-/// 是否已收到过前端上报（false = 用几何兜底带，见 `probe_fallback_rects`）。
-static HOT_REPORTED: AtomicBool = AtomicBool::new(false);
-/// 探针当前把窗口置成了「穿透」还是「可点」（只在变化时调 SetWindowLongPtrW）。
-static PROBE_CLICKTHROUGH: AtomicBool = AtomicBool::new(true);
-
-/// 探针周期。16ms ≈ 60Hz：一次显示器刷新内就能把穿透位拨到位。
-///
-/// [lc-1944] 与 Polaris 的对照：Polaris 是 50ms 采样 **+ eval + elementFromPoint +
-/// invoke + ack 四个来回**（`mpv-overlay.html:4604-4657`，还带 [40,120,300,700] 重试），
-/// 端到端最坏 ~70-90ms；我们是 16ms 采样 + 一次 SetWindowLongPtrW，端到端 ≤16ms。
-/// 机制同款、链路更短，所以**不**改成 50ms —— 那会把首击竞态窗口放大 3 倍。
-pub const PROBE_TICK_MS: u64 = 16;
-/// 可点区外扩（像素）：光标还没压到按钮上就先进可点态，消除边缘抖动。
-/// Polaris 用 elementFromPoint 精确命中（无外扩），但它的判定在 50ms 后才生效；
-/// 我们单跳 16ms，保留 16px 外扩是为了让「移入边缘 + 立刻点击」也能命中。
-pub const HOT_MARGIN_PX: i32 = 16;
-/// 离开可点区后的粘滞（毫秒）：越过边缘时短暂保持可点，避免穿透位来回拨。
-pub const LEAVE_HYSTERESIS_MS: u64 = 80;
-/// 光标移动通知的最小间隔：页面只需要「有移动」来续显控件，不需要每帧坐标。
-const CURSOR_NOTIFY_MS: u64 = 40;
-/// 触发「移动」判定的最小位移（像素）。
-const CURSOR_NOTIFY_PX: i32 = 3;
-
-/// 前端上报可点区（窗口内物理像素矩形 + 模态标记）。
-///
-/// 这里统一外扩 [`HOT_MARGIN_PX`]：光标还没精确压到按钮上就先进可点态，
-/// 用户从画面移向底栏的过程中窗口已经可点，不必等中心点命中。
-pub fn overlay_set_hot_rects(rects: Vec<(i32, i32, i32, i32)>, full: bool) {
-    let expanded = rects
-        .into_iter()
-        .filter(|&(_, _, w, h)| w > 0 && h > 0)
-        .map(|(x, y, w, h)| {
-            (
-                x - HOT_MARGIN_PX,
-                y - HOT_MARGIN_PX,
-                w + HOT_MARGIN_PX * 2,
-                h + HOT_MARGIN_PX * 2,
-            )
-        })
-        .collect();
-    *HOT_RECTS.lock().unwrap_or_else(|e| e.into_inner()) = expanded;
-    HOT_FULL.store(full, Ordering::SeqCst);
-    HOT_REPORTED.store(true, Ordering::SeqCst);
-}
-
-/// 点是否落在任一可点区内。
-fn hit_hot_rects(rects: &[(i32, i32, i32, i32)], x: i32, y: i32) -> bool {
-    rects
-        .iter()
-        .any(|&(rx, ry, rw, rh)| x >= rx && x < rx + rw && y >= ry && y < ry + rh)
-}
-
-/// 穿透决策（纯逻辑，便于单测）：true = 穿透（点击交给 mpv）。
-///
-/// · 光标在窗口外 → 穿透（覆盖层不在光标下，穿透态不影响任何事）；
-/// · 落在可点区 / 模态 → 不穿透；
-/// · 刚离开可点区且在粘滞窗口内 → 继续不穿透（越过边缘的抖动不再来回拨）。
-pub fn decide_clickthrough(inside: bool, hot: bool, ms_since_leave: Option<u64>) -> bool {
-    if !inside {
-        return true;
-    }
-    if hot {
-        return false;
-    }
-    match ms_since_leave {
-        Some(ms) if ms < LEAVE_HYSTERESIS_MS => false,
-        _ => true,
-    }
-}
-
-/// 几何兜底带：前端还没上报时可点区只按窗口尺寸估两段（底栏 + 右上窗控）。
-/// 只覆盖启动瞬间的几百毫秒；首次上报后完全由 `HOT_RECTS` 决定。
-fn probe_fallback_rects(w: i32, h: i32) -> Vec<(i32, i32, i32, i32)> {
-    let band_h = 160.min(h);
-    let top_w = 200.min(w);
-    vec![
-        (0, (h - band_h).max(0), w, band_h),
-        ((w - top_w).max(0), 0, top_w, 56.min(h)),
-    ]
-}
-
-/// [lc-1947] 纯逻辑：覆盖层尺寸变化判定（`None` = 首次观测，不算变化）。
-pub fn overlay_size_changed(prev: Option<(i32, i32)>, w: i32, h: i32) -> bool {
-    match prev {
-        Some((pw, ph)) => pw != w || ph != h,
-        None => false,
-    }
-}
-
-/// [lc-1947] 覆盖层尺寸变化 → 就地作废旧热区 + 请求前端重报。
-///
-/// 为什么必须在这里做：`HOT_RECTS` 存的是**窗口内绝对物理坐标**（见 [`HOT_RECTS`]），
-/// 窗口一旦变大（最大化 / 全屏），旧矩形的右上角就落在屏幕中部；此时若还认为
-/// `HOT_REPORTED=true`，探针会一直按旧矩形判定 → 真正的右上角永远不翻成可点态，
-/// 点击全部穿透给 mpv（用户体感「全屏后右上角控件全部失效」）。
-/// 作废后探针立刻改用按**新尺寸**计算的 [`probe_fallback_rects`]（底栏 + 右上角），
-/// 所以切换后的第一次点击也能命中，不必等前端下一次布局上报。
-fn note_overlay_geometry(app: &tauri::AppHandle, w: i32, h: i32) {
-    use tauri::Emitter;
-    if w <= 0 || h <= 0 {
-        return;
-    }
-    let prev = {
-        let mut g = LAST_OVERLAY_SIZE.lock().unwrap_or_else(|e| e.into_inner());
-        let prev = *g;
-        if !overlay_size_changed(prev, w, h) {
-            if prev.is_none() {
-                *g = Some((w, h));
-            }
-            return;
-        }
-        *g = Some((w, h));
-        prev
+/// [lc-1949] 纯逻辑：把一次鼠标事件打包成 `(message, wParam, lParam)`。
+/// `kind` 与前端 `mpv_forward_mouse` 命令的 kind 一致；`(x, y)` 为 mpv 客户区
+/// 物理像素（两窗同 rect，一般等于覆盖层窗口内坐标）；`win_origin` 是 mpv 窗口
+/// 屏幕原点（WM_MOUSEWHEEL 的 lParam 按约定要给**屏幕**坐标）。
+/// 测试可见、供 [`forward_mouse`] 调用。wParam/lParam 用 `isize`（windows-sys 的
+/// WPARAM/LPARAM 通道类型就是 isize，PostMessageW 直接收）。
+pub fn pack_mouse_message(
+    kind: &str,
+    x: i32,
+    y: i32,
+    flags: u32,
+    delta: i32,
+    win_origin: (i32, i32),
+) -> Option<(u32, isize, isize)> {
+    // lParam = MAKELPARAM(x, y)：低 16 位 x、高 16 位 y（补码按 u16 截断，负坐标合法）
+    let lp = |px: i32, py: i32| -> isize {
+        (((py as i16 as u16 as u32) << 16) | (px as i16 as u16 as u32)) as isize
     };
-    HOT_REPORTED.store(false, Ordering::SeqCst);
-    crate::libmpv::trace(&format!(
-        "[lc-1947] 覆盖层尺寸 {prev:?} → {w}x{h}：热区作废，先按新尺寸兜底并请求重报"
-    ));
-    let _ = app.emit_to("mpv_overlay", "overlay-geometry", serde_json::json!({ "w": w, "h": h }));
+    let lparam = lp(x, y);
+    match kind {
+        "move" => Some((WM_MOUSEMOVE, flags as isize, lparam)),
+        "down" => Some((WM_LBUTTONDOWN, (flags | MK_LBUTTON) as isize, lparam)),
+        "up" => Some((WM_LBUTTONUP, flags as isize, lparam)),
+        "dbl" => Some((WM_LBUTTONDBLCLK, (flags | MK_LBUTTON) as isize, lparam)),
+        "rdown" => Some((WM_RBUTTONDOWN, (flags | MK_RBUTTON) as isize, lparam)),
+        "rup" => Some((WM_RBUTTONUP, flags as isize, lparam)),
+        "mdown" => Some((WM_MBUTTONDOWN, (flags | MK_MBUTTON) as isize, lparam)),
+        "mup" => Some((WM_MBUTTONUP, flags as isize, lparam)),
+        "wheel" => {
+            // WM_MOUSEWHEEL：wParam 高字 = 滚动增量（WHEEL_DELTA 的倍数），
+            // lParam = **屏幕**坐标（OS 约定；mpv 自己 ScreenToClient 换回客户区）
+            let d = delta.clamp(-32768, 32767) as i16 as u16 as u32;
+            Some((
+                WM_MOUSEWHEEL,
+                ((d << 16) | flags) as isize,
+                lp(win_origin.0 + x, win_origin.1 + y),
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// [lc-1949] 把覆盖层分流的视频区鼠标事件转发给 mpv 锚窗（同步、不排队、不等待）。
+/// 返回 false = 没有 mpv 窗口 / kind 不识别 / PostMessage 失败；调用方（命令层）
+/// 把 false 静默吞掉即可 —— 转发失败只意味着「这次点击不走 mpv」，不影响 UI。
+pub fn forward_mouse(kind: &str, x: i32, y: i32, flags: u32, delta: i32) -> bool {
+    let Some(h) = get_hwnd() else {
+        return false;
+    };
+    let mut origin = (0, 0);
+    unsafe {
+        let mut rc = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        if IsWindow(h as _) != 0 && GetWindowRect(h as _, &mut rc) != 0 {
+            origin = (rc.left, rc.top);
+        } else {
+            return false;
+        }
+    }
+    let Some((msg, wparam, lparam)) = pack_mouse_message(kind, x, y, flags, delta, origin) else {
+        return false;
+    };
+    unsafe { PostMessageW(h as _, msg, wparam as usize, lparam) != 0 }
 }
 
 /// [lc-1947] 记录「非全屏」时的锚窗矩形（进全屏时以它为准保存还原态）。
@@ -264,12 +218,6 @@ fn record_normal_rect(x: i32, y: i32, w: i32, h: i32) {
     }
 }
 
-/// [lc-1944] 命中判定（纯逻辑，便于单测）：`true` = 不穿透（点击进 WebView），
-/// `false` = 穿透（点击交给 mpv）。语义与 [`decide_clickthrough`] 的 `hot` 分支一致。
-pub fn hit_gate_delivers(full: bool, hot: bool) -> bool {
-    full || hot
-}
-
 pub fn set_overlay_transparent(ok: bool) {
     OVERLAY_TRANSPARENT.store(ok, Ordering::SeqCst);
     OVERLAY_UI_READY.store(ok, Ordering::SeqCst);
@@ -279,8 +227,14 @@ pub fn overlay_ui_ready() -> bool {
     OVERLAY_UI_READY.load(Ordering::SeqCst)
 }
 
-/// [lc-1939] 覆盖层窗样式：NOACTIVATE（点击不抢焦点）+ TOOLWINDOW（不进任务栏/Alt-Tab）
-/// + **LAYERED**（Polaris MPV Overlay 常驻 WS_EX_LAYERED；WebView2 的逐像素透明靠它合成）。
+/// [lc-1939/1949] 覆盖层窗样式：NOACTIVATE（点击不抢焦点）+ TOOLWINDOW（不进任务栏/
+/// Alt-Tab）+ **LAYERED**（WebView2 的逐像素透明靠它合成）。
+///
+/// [lc-1949] 这是覆盖层 ex-style 的**唯一**写入点，且永远不含 `WS_EX_TRANSPARENT`：
+/// 覆盖层常驻可点，视频区点击由前端分流后 PostMessage 转给 mpv（见 [`forward_mouse`]）。
+/// 旧「探针 + 动态拨穿透位」机制全部退役 —— 也不能改用 tauri 的
+/// `set_ignore_cursor_events`（tao 把 TRANSPARENT 与 LAYERED 置成一组，会连透明一起
+/// 摘掉 → 黑块盖死视频，lc-1924~1931 的真根因）。
 pub fn overlay_style_noactivate(hwnd: isize) {
     if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
         return;
@@ -320,33 +274,9 @@ pub fn overlay_set_focusable(hwnd: isize, on: bool) {
     }
 }
 
-/// [lc-1939] **只**拨 WS_EX_TRANSPARENT，保留 WS_EX_LAYERED。
-///
-/// 不能用 tauri 的 `set_ignore_cursor_events`：tao 把这两位置成同一组
-/// （`IGNORE_CURSOR_EVENT → WS_EX_TRANSPARENT | WS_EX_LAYERED`），
-/// 关穿透时会连 LAYERED 一起摘掉 → 覆盖层失去逐像素透明、整块黑盖死视频。
-/// 这正是 lc-1924~1931「控件一出现画面就黑/点不动」的真根因；Polaris 的做法是
-/// LAYERED 常驻、只拨 TRANSPARENT（实测 ex 恒含 0x80000）。
-pub fn overlay_set_clickthrough(hwnd: isize, on: bool) {
-    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
-        return;
-    }
-    unsafe {
-        let ex = GetWindowLongPtrW(hwnd as _, GWL_EXSTYLE);
-        let next = if on {
-            ex | (WS_EX_TRANSPARENT as isize)
-        } else {
-            ex & !(WS_EX_TRANSPARENT as isize)
-        };
-        if next != ex {
-            SetWindowLongPtrW(hwnd as _, GWL_EXSTYLE, next);
-        }
-    }
-}
-
-/// [lc-1939] 置顶覆盖层：直接 SetWindowPos(HWND_TOPMOST)，**不走 Tauri 的
-/// set_always_on_top** —— tao 会从 WindowFlags 重算整份 style/exstyle，
-/// 把手工加的 LAYERED/NOACTIVATE/TRANSPARENT 一并抹掉（异步执行，顺序不可控）。
+/// [lc-1949] 置顶覆盖层。ex-style 只含 NOACTIVATE + TOOLWINDOW + LAYERED，一次成型
+/// （见 `overlay_style_noactivate`）：`WS_EX_TRANSPARENT` 从此不在任何路径上被设置
+/// 或摘除 —— 旧「探针拨穿透位」整套机制退役，覆盖层常驻可点。
 pub fn overlay_set_topmost(hwnd: isize) {
     if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
         return;
@@ -589,8 +519,6 @@ pub fn player_fullscreen() -> bool {
 pub fn reset_player_fullscreen() {
     PLAYER_FULLSCREEN.store(false, Ordering::SeqCst);
     *FULLSCREEN_SAVED.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    // 注意：**不清** LAST_OVERLAY_SIZE —— 它要与上一次观测到的尺寸比较，
-    // 这样「上一轮结束时尺寸和这一轮不同」也能触发热区作废。
 }
 
 fn overlay_hwnd_of(app: &tauri::AppHandle) -> isize {
@@ -682,7 +610,6 @@ fn ensure_fullscreen_geometry(app: &tauri::AppHandle) {
     move_window(overlay, mx, my, mw, mh);
     set_window_topmost(mpv, true);
     set_window_topmost(overlay, true);
-    note_overlay_geometry(app, mw, mh);
 }
 
 /// [lc-1947] mpv `fullscreen` 属性变化的窗口级处理（由 mpv.rs 的属性观察线程调用）。
@@ -734,7 +661,6 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
         move_window(overlay, mx, my, mw, mh);
         set_window_topmost(mpv, true);
         set_window_topmost(overlay, true);
-        note_overlay_geometry(app, mw, mh);
         crate::libmpv::trace(&format!(
             "[lc-1947] 进入全屏：显示器矩形 {mw}x{mh}@{mx},{my}（锚窗 + 覆盖层 TOPMOST）"
         ));
@@ -783,7 +709,6 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
             }
         }
         PLAYER_MAXIMIZED.store(zoomed, Ordering::SeqCst);
-        note_overlay_geometry(app, w, h);
         crate::libmpv::trace(&format!(
             "[lc-1947] 退出全屏：恢复 {w}x{h}@{x},{y} maximized={zoomed} ontop={ontop}"
         ));
@@ -1120,12 +1045,10 @@ pub fn embed_set_active(on: bool) {
         // [lc-1946] 会话结束：最小化待恢复 / 最大化标记都不该带到下一次播放
         PLAYER_MIN_RESTORE.store(false, Ordering::SeqCst);
         PLAYER_MAXIMIZED.store(false, Ordering::SeqCst);
-        // [lc-1947] 全屏标记 / 还原矩形 / 热区观测同样不能跨会话
+        // [lc-1947] 全屏标记 / 还原矩形同样不能跨会话
         PLAYER_FULLSCREEN.store(false, Ordering::SeqCst);
         *FULLSCREEN_SAVED.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *LAST_NORMAL_RECT.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        // LAST_OVERLAY_SIZE 保留：下一轮起播若窗口尺寸不同（例如上一轮全屏退出），
-        // note_overlay_geometry 会据此作废旧热区。
     }
 }
 
@@ -1216,6 +1139,18 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                 if IsWindow(mh as _) == 0 || IsWindow(ov as _) == 0 {
                     continue;
                 }
+                // [lc-1949]（原探针职责）全屏期间守住「压过任务栏」：mpv 的 ontop_mode.lua
+                // 会在暂停时把 ontop 置 false（= 对锚窗 SetWindowPos(NOTOPMOST)），视频
+                // 就会掉到任务栏下面。33ms 循环发现 TOPMOST 位丢了立刻复位。
+                if PLAYER_FULLSCREEN.load(Ordering::SeqCst) {
+                    if !is_window_topmost(mh as _) {
+                        set_window_topmost(mh as _, true);
+                        crate::libmpv::trace("[lc-1949] 全屏中锚窗丢失 TOPMOST → 复位");
+                    }
+                    if !is_window_topmost(ov as _) {
+                        set_window_topmost(ov as _, true);
+                    }
+                }
                 let mut m = RECT { left: 0, top: 0, right: 0, bottom: 0 };
                 let mut o = RECT { left: 0, top: 0, right: 0, bottom: 0 };
                 if GetWindowRect(mh as _, &mut m) == 0 || GetWindowRect(ov as _, &mut o) == 0 {
@@ -1254,7 +1189,6 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                                 fh,
                                 SWP_NOACTIVATE | SWP_NOZORDER,
                             );
-                            note_overlay_geometry(&app, fw, fh);
                         }
                     }
                     FollowAction::Copy => {
@@ -1283,8 +1217,6 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                                 m.bottom - m.top,
                                 SWP_NOACTIVATE | SWP_NOZORDER,
                             );
-                            // [lc-1947] 尺寸变了（最大化/全屏/还原）→ 作废旧热区，首击即按新几何命中
-                            note_overlay_geometry(&app, m.right - m.left, m.bottom - m.top);
                             continue;
                         }
                     }
@@ -1307,140 +1239,6 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
             }
         }
         OVERLAY_FOLLOW_RUNNING.store(false, Ordering::SeqCst);
-    });
-}
-
-/// [lc-1944] 光标探针（机制与 Polaris 同款：采样 + 只拨穿透位，见文件顶部 lc-1944 说明）。
-/// ① 把「光标在动」通知页面续显控件；② 把「是否悬在可点区」告诉页面（3s 自动隐藏让路）；
-/// ③ 只有状态真的变化时才 `SetWindowLongPtrW`，避免每拍一次样式写入。
-///
-/// 为什么不用 mpv 的 mouse-pos：mpv 报的是它自己的客户区坐标，覆盖层被穿透/被 mpv 压住时
-/// 事件链会滞后或压根没有（lc-1924~1931 的坑）；全局光标是唯一不依赖窗口事件源的坐标真源。
-pub fn spawn_overlay_probe(app: tauri::AppHandle) {
-    use tauri::{Emitter, Manager};
-    if OVERLAY_PROBE_RUNNING.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    tauri::async_runtime::spawn(async move {
-        // 探针启动时 `show_player_overlay` 刚把窗口拨成「穿透」，这里同步一次静态位 ——
-        // 否则上一轮播放结束时留下的 false 会让第一次判定误以为「已经是可点态」而跳过 SetWindowLongPtrW。
-        PROBE_CLICKTHROUGH.store(true, Ordering::SeqCst);
-        let mut was_inside = false;
-        let mut was_hot = false;
-        let mut left_hot_at: Option<std::time::Instant> = None;
-        let mut last_notify_at = std::time::Instant::now();
-        // None = 还没通知过任何位置（不用 i32::MIN 哨兵：lx - i32::MIN 会整型溢出）
-        let mut last_notify_pt: Option<(i32, i32)> = None;
-        while embed_is_active() && overlay_ui_ready() {
-            tokio::time::sleep(std::time::Duration::from_millis(PROBE_TICK_MS)).await;
-            if !embed_is_active() {
-                break;
-            }
-            let Some(ov) = app.get_webview_window("mpv_overlay") else {
-                break;
-            };
-            let Ok(h) = ov.hwnd() else { continue };
-            let hwnd = h.0 as isize;
-            unsafe {
-                if IsWindow(hwnd as _) == 0 {
-                    break;
-                }
-                if IsWindowVisible(hwnd as _) == 0 {
-                    was_inside = false;
-                    was_hot = false;
-                    left_hot_at = None;
-                    continue;
-                }
-                // [lc-1947] 全屏期间守住「压过任务栏」：mpv 的 ontop_mode.lua 会在暂停时
-                // 把 ontop 置 false（= 对锚窗 SetWindowPos(NOTOPMOST)），视频就会掉到
-                // 任务栏下面。这里发现 TOPMOST 位丢了就立刻复位（用户点暂停也会触发）。
-                if PLAYER_FULLSCREEN.load(Ordering::SeqCst) {
-                    let mpv = get_hwnd().unwrap_or(0);
-                    if mpv != 0 && !is_window_topmost(mpv) {
-                        set_window_topmost(mpv, true);
-                        crate::libmpv::trace("[lc-1947] 全屏中锚窗丢失 TOPMOST → 复位");
-                    }
-                    if !is_window_topmost(hwnd) {
-                        set_window_topmost(hwnd, true);
-                    }
-                }
-                let mut pt = POINT { x: 0, y: 0 };
-                if GetCursorPos(&mut pt) == 0 {
-                    continue;
-                }
-                let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-                if GetWindowRect(hwnd as _, &mut rc) == 0 {
-                    continue;
-                }
-                let (w, hgt) = (rc.right - rc.left, rc.bottom - rc.top);
-                // [lc-1947] 探针是 16ms 级，窗口尺寸一变的下一拍就能发现：
-                // 作废旧热区（先按新尺寸兜底）+ 请求前端重报，不等下一次布局上报。
-                record_normal_rect(rc.left, rc.top, w, hgt);
-                note_overlay_geometry(&app, w, hgt);
-                let (lx, ly) = (pt.x - rc.left, pt.y - rc.top);
-                let inside = lx >= 0 && lx < w && ly >= 0 && ly < hgt;
-
-                // 可点区：模态 → 整窗；否则按上报矩形（未上报时用几何兜底带）。
-                // 外扩 HOT_MARGIN_PX 由前端在上报时施加。
-                let full = HOT_FULL.load(Ordering::SeqCst);
-                let reported = HOT_REPORTED.load(Ordering::SeqCst);
-                let rects: Vec<(i32, i32, i32, i32)> = if reported {
-                    HOT_RECTS.lock().unwrap_or_else(|e| e.into_inner()).clone()
-                } else {
-                    probe_fallback_rects(w, hgt)
-                };
-                let hot = inside && (full || hit_hot_rects(&rects, lx, ly));
-
-                if hot {
-                    left_hot_at = None;
-                } else if was_hot {
-                    left_hot_at = Some(std::time::Instant::now());
-                }
-                let ms_since_leave = left_hot_at.map(|t| t.elapsed().as_millis() as u64);
-                let clickthrough = decide_clickthrough(inside, hot, ms_since_leave);
-
-                // 只在状态真的变化时拨 ex-style（SetWindowLongPtrW 不是免费调用）
-                if clickthrough != PROBE_CLICKTHROUGH.load(Ordering::SeqCst) {
-                    PROBE_CLICKTHROUGH.store(clickthrough, Ordering::SeqCst);
-                    overlay_set_clickthrough(hwnd, clickthrough);
-                    crate::libmpv::trace(&format!(
-                        "[lc-1943] 穿透切换 clickthrough={clickthrough}（inside={inside} hot={hot}）"
-                    ));
-                }
-
-                // 光标移动 → 通知页面续显控件（限频、限最小位移）。
-                // 穿透态下 WebView 收不到 mousemove，这是「动鼠标就唤出控件」的唯一信号源。
-                // 定向到覆盖层：`WebviewWindow::emit` 是广播，别把光标流也丢给主窗。
-                let moved = match last_notify_pt {
-                    None => true,
-                    Some((px, py)) => {
-                        (lx - px).abs() > CURSOR_NOTIFY_PX || (ly - py).abs() > CURSOR_NOTIFY_PX
-                    }
-                };
-                if inside
-                    && moved
-                    && last_notify_at.elapsed().as_millis() >= CURSOR_NOTIFY_MS as u128
-                {
-                    last_notify_at = std::time::Instant::now();
-                    last_notify_pt = Some((lx, ly));
-                    let _ = ov.emit_to(
-                        "mpv_overlay",
-                        "overlay-cursor",
-                        serde_json::json!({ "x": lx, "y": ly, "hot": hot, "inside": true }),
-                    );
-                } else if !inside && was_inside {
-                    last_notify_pt = None;
-                    let _ = ov.emit_to(
-                        "mpv_overlay",
-                        "overlay-cursor",
-                        serde_json::json!({ "x": -1, "y": -1, "hot": false, "inside": false }),
-                    );
-                }
-                was_inside = inside;
-                was_hot = hot;
-            }
-        }
-        OVERLAY_PROBE_RUNNING.store(false, Ordering::SeqCst);
     });
 }
 
@@ -1586,122 +1384,76 @@ pub fn on_main_moved(x: i32, y: i32) {
 mod tests {
     use super::*;
 
-    /// [lc-1943] 穿透决策：光标在窗口外一律穿透。
+    // ─────────────── [lc-1949] 视频区鼠标转发（替代探针拨位）───────────────
+
+    /// [lc-1949] 消息打包：单击按下 = WM_LBUTTONDOWN + MK_LBUTTON，lParam 低字 x 高字 y。
     #[test]
-    fn decide_outside_always_clickthrough() {
-        assert!(decide_clickthrough(false, false, None));
-        assert!(decide_clickthrough(false, true, None));
+    fn forward_pack_left_down() {
+        let (msg, wp, lp) = pack_mouse_message("down", 320, 240, 0, 0, (0, 0)).unwrap();
+        assert_eq!(msg, WM_LBUTTONDOWN);
+        assert_eq!(wp, MK_LBUTTON as isize, "按下必须带 MK_LBUTTON");
+        assert_eq!(lp & 0xFFFF, 320, "lParam 低 16 位 = x");
+        assert_eq!(lp >> 16, 240, "lParam 高 16 位 = y");
     }
 
-    /// [lc-1943] 落在可点区 → 立刻不穿透（没有粘滞、没有延迟）。
+    /// [lc-1949] 移动/抬起/双击的消息号与 MK 标志语义；Ctrl/Shift 从前端原样透传。
     #[test]
-    fn decide_hot_is_immediate() {
-        assert!(!decide_clickthrough(true, true, None));
-        assert!(!decide_clickthrough(true, true, Some(0)));
+    fn forward_pack_move_up_dbl_flags() {
+        let (msg, wp, _) = pack_mouse_message("move", 10, 20, MK_CONTROL, 0, (0, 0)).unwrap();
+        assert_eq!(msg, WM_MOUSEMOVE);
+        assert_eq!(wp, MK_CONTROL as isize);
+        let (msg, wp, _) = pack_mouse_message("up", 10, 20, MK_CONTROL, 0, (0, 0)).unwrap();
+        assert_eq!(msg, WM_LBUTTONUP);
+        assert_eq!(wp, MK_CONTROL as isize, "抬起时不带按钮位");
+        let (msg, wp, _) = pack_mouse_message("dbl", 10, 20, 0, 0, (0, 0)).unwrap();
+        assert_eq!(msg, WM_LBUTTONDBLCLK, "双击必须发 LBUTTONDBLCLK（PostMessage 不会自动合成）");
+        assert_eq!(wp, MK_LBUTTON as isize);
+        let (_, wp, _) = pack_mouse_message("down", 0, 0, MK_SHIFT, 0, (0, 0)).unwrap();
+        assert_eq!(wp, (MK_SHIFT | MK_LBUTTON) as isize, "修饰键与按钮位共存");
     }
 
-    /// [lc-1943] 离开可点区：粘滞窗口内保持可点，超时恢复穿透。
+    /// [lc-1949] 右键 / 中键 / 滚轮：滚轮 wParam 高字 = 增量，lParam = **屏幕**坐标
+    /// （mpv 按 OS 约定 ScreenToClient 换回客户区），客户区原点由 win_origin 平移。
     #[test]
-    fn decide_leave_hysteresis() {
-        assert!(
-            !decide_clickthrough(true, false, Some(0)),
-            "刚离开可点区（0ms）必须仍可点，避免边缘抖动来回拨"
-        );
-        assert!(
-            !decide_clickthrough(true, false, Some(LEAVE_HYSTERESIS_MS - 1)),
-            "粘滞窗口内仍可点"
-        );
-        assert!(
-            decide_clickthrough(true, false, Some(LEAVE_HYSTERESIS_MS)),
-            "粘滞窗口到期恢复穿透"
-        );
-        assert!(
-            decide_clickthrough(true, false, None),
-            "从未进过可点区 → 直接穿透"
-        );
+    fn forward_pack_right_mid_wheel() {
+        let (msg, wp, _) = pack_mouse_message("rdown", 5, 6, 0, 0, (0, 0)).unwrap();
+        assert_eq!(msg, WM_RBUTTONDOWN);
+        assert_eq!(wp, MK_RBUTTON as isize);
+        let (msg, _, _) = pack_mouse_message("rup", 5, 6, 0, 0, (0, 0)).unwrap();
+        assert_eq!(msg, WM_RBUTTONUP);
+        let (msg, wp, _) = pack_mouse_message("mdown", 5, 6, 0, 0, (0, 0)).unwrap();
+        assert_eq!(msg, WM_MBUTTONDOWN);
+        assert_eq!(wp, MK_MBUTTON as isize);
+        // 向上滚一格：delta=+120
+        let (msg, wp, lp) = pack_mouse_message("wheel", 30, 40, MK_CONTROL, 120, (100, 200)).unwrap();
+        assert_eq!(msg, WM_MOUSEWHEEL);
+        assert_eq!(wp >> 16, 120, "wParam 高 16 位 = 滚动增量");
+        assert_eq!(wp & 0xFFFF, MK_CONTROL as isize);
+        assert_eq!(lp & 0xFFFF, 130, "wheel lParam = 屏幕坐标（客户区 + 窗口原点）");
+        assert_eq!(lp >> 16, 240);
+        // 向下滚：负增量按补码进高字
+        let (_, wp, _) = pack_mouse_message("wheel", 30, 40, 0, -120, (0, 0)).unwrap();
+        assert_eq!(wp >> 16, 65416, "-120 的 16 位补码（65536 - 120）");
     }
 
-    /// [lc-1943] 矩形命中：左下闭右开 + 不含外扩（外扩由上报时施加）。
+    /// [lc-1949] 负坐标（多屏负向排列）的 lParam 打包：按 u16 截断补码，与 MAKELPARAM 一致。
     #[test]
-    fn hit_hot_rects_bounds() {
-        let rects = vec![(100, 200, 50, 40)];
-        assert!(hit_hot_rects(&rects, 100, 200));
-        assert!(hit_hot_rects(&rects, 149, 239));
-        assert!(!hit_hot_rects(&rects, 99, 200));
-        assert!(!hit_hot_rects(&rects, 150, 200));
-        assert!(!hit_hot_rects(&rects, 100, 240));
-        assert!(!hit_hot_rects(&[], 100, 200));
+    fn forward_pack_negative_coords() {
+        let (_, _, lp) = pack_mouse_message("move", -5, -3, 0, 0, (0, 0)).unwrap();
+        assert_eq!(lp & 0xFFFF, 65531);
+        assert_eq!(lp >> 16, 65533);
+        // 未知 kind 拒绝（前端拼错的 kind 不该变成任意消息）
+        assert!(pack_mouse_message("explode", 0, 0, 0, 0, (0, 0)).is_none());
     }
 
-    /// [lc-1944] 常量与 Polaris 对齐：探针 50ms；可点区**不外扩**（精确白名单命中）。
+    /// [lc-1949] 双向验证：旧架构的「点击先等探针把穿透位拨过来」路径在新架构里
+    /// **不存在**——打包函数只做纯消息换算，没有任何时间/轮询/状态输入。
+    /// 固化手段：断言输入完全决定输出（同输入两次打包结果逐位相同）。
     #[test]
-    fn margin_and_tick_constants() {
-        // [lc-1944] 与 Polaris 的对照结论：机制同款（采样 + 只拨穿透位），
-        // 我们单跳 16ms（Polaris 50ms 采样 + eval/elementFromPoint/invoke/ack ≈ 70-90ms）。
-        // 不改成 50ms：只会把「首击落在穿透拍」的窗口放大 3 倍。
-        assert_eq!(PROBE_TICK_MS, 16);
-        assert!(PROBE_TICK_MS < 50, "端到端必须短于 Polaris 的 50ms 采样链");
-        assert_eq!(HOT_MARGIN_PX, 16, "外扩给「移入边缘 + 立刻点击」留提前量");
-        assert!(LEAVE_HYSTERESIS_MS >= 60 && LEAVE_HYSTERESIS_MS <= 200);
-    }
-
-    /// [lc-1944] 首击相位模型（最坏情况量化，不夸大）：
-    ///
-    ///   光标进入可点区（含 16px 外扩）后，探针最多 PROBE_TICK_MS 才把穿透位拨过来；
-    ///   在这之前的一次 mousedown 会落到 mpv。外扩把「进入可点区」提前到指针离按钮
-    ///   边缘还有 16px 时就发生，正常移动速度下这段位移本身就要 ≥16ms —— 也就是
-    ///   绝大多数首击落在翻位之后。
-    ///
-    /// 断言：① 决策函数只看「这一拍的光标是否在可点区」，不看历史；
-    ///       ② 最坏窗口 = 一个探针周期（16ms），且 < Polaris 的 50ms。
-    #[test]
-    fn first_click_worst_case_window_is_one_tick() {
-        let rects = vec![(100, 200, 40, 34)]; // 未外扩的按钮
-        let expanded: Vec<(i32, i32, i32, i32)> = rects
-            .iter()
-            .map(|&(x, y, w, h)| {
-                (
-                    x - HOT_MARGIN_PX,
-                    y - HOT_MARGIN_PX,
-                    w + HOT_MARGIN_PX * 2,
-                    h + HOT_MARGIN_PX * 2,
-                )
-            })
-            .collect();
-        // 指针离按钮左边缘 8px（还没压到按钮，但已进入外扩区）
-        assert!(!hit_hot_rects(&rects, 92, 210), "精确矩形内不命中");
-        assert!(hit_hot_rects(&expanded, 92, 210), "外扩后命中 → 提前翻位");
-        // 决策只依赖「这一拍」：命中即不穿透，与之前跑过几拍无关。
-        for _ticks_already_run in 0..4 {
-            assert!(hit_gate_delivers(false, hit_hot_rects(&expanded, 92, 210)));
-        }
-        assert!(
-            PROBE_TICK_MS < 50,
-            "最坏相位窗口必须短于 Polaris 的 50ms 采样周期"
-        );
-    }
-
-    /// [lc-1944] 决策边界：模态整窗不穿透；矩形外/空表一律穿透给 mpv。
-    #[test]
-    fn hit_gate_bounds() {
-        assert!(hit_gate_delivers(true, false), "模态（菜单/拖拽）= 整窗可点");
-        assert!(hit_gate_delivers(false, true), "命中可点区 = 不穿透");
-        assert!(!hit_gate_delivers(false, false), "可点区外 = 穿透交给 mpv");
-    }
-
-    /// [lc-1943] 几何兜底带只在窗口内，且底栏一定贴着窗口底部。
-    #[test]
-    fn fallback_bands_inside_window() {
-        let (w, h) = (1440, 900);
-        let rects = probe_fallback_rects(w, h);
-        assert_eq!(rects.len(), 2);
-        let (bx, by, bw, bh) = rects[0];
-        assert_eq!((bx, by), (0, h - bh));
-        assert_eq!(bw, w);
-        assert!(by >= 0 && by + bh == h);
-        let (tx, ty, tw, th) = rects[1];
-        assert_eq!((tx, ty), (w - tw, 0));
-        assert!(tx >= 0 && ty + th <= h);
+    fn forward_pack_is_stateless() {
+        let a = pack_mouse_message("down", 100, 100, 0, 0, (0, 0));
+        let b = pack_mouse_message("down", 100, 100, 0, 0, (0, 0));
+        assert_eq!(a, b, "转发不依赖任何探针/时间状态：同输入必须同输出");
     }
 
     /// [lc-1946] 退出流程去重：连点关闭 / 关闭后又按 Esc 只跑第一条清理链。
@@ -1777,29 +1529,6 @@ mod tests {
             .position(|s| matches!(s, FullscreenRestoreStep::MoveTo(..)))
             .unwrap();
         assert!(mp < mi, "MoveTo 先于 Maximize");
-    }
-
-    /// [lc-1947] 只有**尺寸**变化才作废热区：窗口移动/拖动不能触发重报风暴
-    ///（热区是窗口内坐标，与窗口位置无关）。
-    #[test]
-    fn hot_rects_invalidated_only_on_size_change() {
-        assert!(!overlay_size_changed(None, 1440, 900), "首次观测不算变化");
-        assert!(!overlay_size_changed(Some((1440, 900)), 1440, 900));
-        assert!(overlay_size_changed(Some((1440, 900)), 3840, 2160), "全屏尺寸变化必须作废");
-        assert!(overlay_size_changed(Some((1440, 900)), 1440, 901));
-    }
-
-    /// [lc-1947] 全屏切换后的兜底带按**新**尺寸算：3840×2160 时右上窗控仍贴窗口右上角，
-    /// 也就是切换后的第一次点击不必等前端重报就能命中。
-    #[test]
-    fn fallback_bands_follow_fullscreen_size() {
-        let (w, h) = (3840, 2160);
-        let rects = probe_fallback_rects(w, h);
-        let (tx, ty, tw, th) = rects[1];
-        assert_eq!((tx + tw, ty), (w, 0), "右上角兜底带贴住新窗口右缘");
-        assert!(th >= 56 && th <= h);
-        let (bx, _, bw, _) = rects[0];
-        assert_eq!((bx, bw), (0, w), "底栏兜底带横跨新窗口全宽");
     }
 
     /// [lc-1948] 跟随循环决策矩阵：非全屏维持抄写；全屏一律断言/保持，绝不抄写。

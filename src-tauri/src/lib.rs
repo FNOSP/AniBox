@@ -2524,6 +2524,10 @@ async fn play_item(
         return Err("未登录".into());
     }
 
+    // [lc-1949] **点击「播放」当刻**就收主窗、亮覆盖层（用户指定：主窗任何一帧都不许漏）。
+    // 这里之后的所有失败路径都经 `gate_boot_failure` 唤回主窗（player_overlay_abort）。
+    let booted = boot_player_overlay_at_click(&app);
+
     // [lc-1551] 顺序重排：**mpv 先起来**，网络准备全部并行。
     //
     // 实测耗时（anibox.log）：launch 开始 → file-loaded 共 3.26s，而 mpv 自报的
@@ -2556,7 +2560,11 @@ async fn play_item(
     // 现在回归主仓库形态：
     //   解析 guid（飞牛 API）→ 写单条目 M3U8（#EXTINF 标题 → media-title → 弹幕链）
     //   → mpv 命令行直接带该 M3U8 ⇒ 窗口出现即开始加载，无 idle 空窗。
-    let res = resolve_play_guid(&app, &state, &mut cfg, &guid, media_guid.as_deref()).await?;
+    let res = gate_boot_failure(
+        &app,
+        booted,
+        resolve_play_guid(&app, &state, &mut cfg, &guid, media_guid.as_deref()).await,
+    )?;
     stage("guid-resolved");
     // [live] 直播直链：不经 Go 代理，也不回传进度（直播没有 media_guid/duration）。
     let is_live = res.live_url.is_some();
@@ -2602,7 +2610,11 @@ async fn play_item(
     let direct_url = if let Some(live) = res.live_url.clone() {
         live
     } else {
-        proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
+        gate_boot_failure(
+            &app,
+            booted,
+            proxy::ensure(&cfg.proxy_path, &state.proxy_child).await,
+        )?;
         stage("proxy-ready");
         proxy::play_url(&cfg, &res.play_guid)
     };
@@ -2615,7 +2627,7 @@ async fn play_item(
 
     // 播放列表：剧集 → 拉整季 `episode/list` 构建多条目列表；电影/单集/列表拉取失败 →
     // 回退单条目（行为与修复前一致，确保单集电影不受影响）。
-    let (kind, _player_path) = player::resolve_player(&cfg)?;
+    let (kind, _player_path) = gate_boot_failure(&app, booted, player::resolve_player(&cfg))?;
     let mut entries: Vec<PlaylistEntry> = Vec::new();
     let mut start_index = 0usize;
     // [lc-1841] 起播集续播点：episode/list 的 ts 字段（与详情页进度条同源）；电影/拉取
@@ -2763,13 +2775,13 @@ async fn play_item(
     } else if multi {
         let path = std::env::temp_dir().join("anibox-playlist.m3u");
         let m3u = build_playlist_m3u(&cfg, &entries);
-        std::fs::write(&path, m3u).map_err(|e| format!("写播放列表失败: {e}"))?;
+        gate_boot_failure(&app, booted, std::fs::write(&path, m3u).map_err(|e| format!("写播放列表失败: {e}")))?;
         playlist_start = Some(start_index);
         path.to_string_lossy().to_string()
     } else {
         let m3u8_path = std::env::temp_dir().join("anibox-play.m3u8");
         let m3u8 = format!("#EXTM3U\n#EXTINF:-1,{}\n{}\n", display_title, direct_url);
-        std::fs::write(&m3u8_path, m3u8).map_err(|e| format!("写播放列表失败: {e}"))?;
+        gate_boot_failure(&app, booted, std::fs::write(&m3u8_path, m3u8).map_err(|e| format!("写播放列表失败: {e}")))?;
         m3u8_path.to_string_lossy().to_string()
     };
     stage(if multi { "playlist-prepared" } else { "url-prepared" });
@@ -2842,7 +2854,9 @@ async fn play_item(
         },
     );
     // 记录已落盘，再决定是否向调用方报播放器启动错误。
-    launch_res?;
+    // [lc-1949] 预置已把主窗藏起来：launch 失败必须唤回主窗（launch_mpv 内部的
+    // abort 只覆盖 spawn/IPC 失败路径，这里兜住其余全部）。
+    gate_boot_failure(&app, booted, launch_res)?;
 
     // [lc-1751] PotPlayer 整季面板追加（对标 Fntv-Plus potplayer.ts populatePlaylistPanel，
     // lc-297）：起播只带点击集；窗口就绪后把其余集以可读名 relay URL 经 `/Current /add`
@@ -3305,15 +3319,13 @@ pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
         // [lc-1946] 每次起播重置为「置顶」：mpv 锚窗 + 覆盖层一起拨 TOPMOST
         //（顶栏「置顶」按钮据此切换；取消置顶后下一次起播回到置顶态）。
         crate::mpvwin::set_player_ontop(hwnd, true);
+        // [lc-1949] NOACTIVATE + TOOLWINDOW + LAYERED 一次成型，**没有** WS_EX_TRANSPARENT：
+        // 覆盖层常驻可点，画面区点击由前端分流后 PostMessage 转给 mpv（`mpv_forward_mouse`）。
+        // 旧「探针拨穿透位」机制已退役 —— 控件 pointerdown 即执行，链路里没有等待翻位的环节。
         crate::mpvwin::overlay_style_noactivate(hwnd);
-        // 默认穿透：画面区的点击/拖窗/滚轮全部归 mpv（只拨 TRANSPARENT，保留 LAYERED 透明）。
-        // [lc-1944] 已核查过「改成 OS 级同步命中」的方案（WM_NCHITTEST / SetWindowRgn），
-        // 结论见 `mpvwin.rs` 顶部：HTTRANSPARENT 只对同线程窗口生效（Win32 文档 + Wine），
-        // mpv 是独立进程收不到；SetWindowRgn 会裁掉底部对比渐变。Polaris 本身也是这套轮询。
-        crate::mpvwin::overlay_set_clickthrough(hwnd, true);
         crate::mpvwin::overlay_show_noactivate(hwnd);
     }
-    crate::libmpv::trace("[lc-1940] mpv_overlay 显示（透明 + 穿透 + NOACTIVATE）");
+    crate::libmpv::trace("[lc-1949] mpv_overlay 显示（透明 + 常驻可点 + NOACTIVATE）");
     Some(w)
 }
 
@@ -3339,6 +3351,56 @@ pub fn player_overlay_abort(app: &AppHandle) {
     crate::mpvwin::set_owner_follow(false);
     restore_main_window(app);
     crate::libmpv::trace("[lc-1940] 起播失败 → 覆盖层/mpv 已收起，主窗口恢复");
+}
+
+/// [lc-1949] **点击「播放」当刻**的起播预置：显示覆盖层（控件层的「正在打开」态）+
+/// 立即隐藏主窗口 + 激活内嵌会话。返回是否真正进入内嵌形态（= 主窗已被隐藏）。
+///
+/// 为什么必须在这里做（而不是等 `player::launch_mpv`）：play_item 在 launch 之前还有
+/// guid 解析 / Go 代理预热 / 播放列表准备等网络步骤（实测 49ms～数秒），旧时序把这些
+/// 步骤走完才藏主窗 —— 这段时间里详情页/首页**整帧可见**，正是用户说的
+/// 「原软件界面还是会漏出来」。现在点击 → invoke 到达的第一毫秒就把主窗收掉，
+/// mpv 画面前用户看到的是覆盖层的加载态（与 mpv 同 rect 的透明层）。
+///
+/// 后续 `launch_mpv` / `MpvSession::launch` 里的同类调用全部幂等（ensure/show/hide
+/// 都是「已就位就跳过」语义），保留它们作为换集 / 复用会话路径的兜底。
+pub fn boot_player_overlay_at_click(app: &AppHandle) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        if ensure_player_overlay(app).is_none() {
+            crate::libmpv::trace("[lc-1949] 覆盖层不可用 → 保持主窗口显示（独立窗口播放）");
+            return false;
+        }
+        crate::mpvwin::embed_set_active(true);
+        if crate::mpvwin::overlay_ui_ready() {
+            let _ = show_player_overlay(app);
+        }
+        crate::mpvwin::spawn_overlay_follow(app.clone());
+        // 藏主窗：Tauri hide() 同步 tao 缓存 + 原始 ShowWindow 兜底真实状态
+        //（最小化按钮用过 SW_SHOWMINNOACTIVE 时缓存与真实状态会脱钩，见 lc-1947）。
+        if let Some(m) = app.get_webview_window("main") {
+            let _ = m.hide();
+            if let Ok(h) = m.hwnd() {
+                crate::mpvwin::window_force_hide(h.0 as isize);
+            }
+        }
+        crate::libmpv::trace("[lc-1949] 起播预置完成：主窗已隐藏，覆盖层待命（点击当刻）");
+        true
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        false
+    }
+}
+
+/// [lc-1949] 起播预置后的失败闸门：预置把主窗藏起来之后，起播链上任何一步失败
+/// 都必须唤回主窗（否则用户面对的是「点播放 → 界面消失 → 什么也没发生」）。
+fn gate_boot_failure<T>(app: &AppHandle, booted: bool, r: Result<T, String>) -> Result<T, String> {
+    if booted && r.is_err() {
+        player_overlay_abort(app);
+    }
+    r
 }
 
 /// [lc-1941] 主窗口唤回（关闭播放器 / 起播失败兜底共用）。
@@ -3543,45 +3605,39 @@ async fn player_embed_leave(app: AppHandle, stop: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// [lc-1943] 覆盖层可点区上报：前端在布局/显隐变化时把 `[data-chrome-hit]` 元素矩形
-/// （窗口内**物理像素**）一次发过来，之后穿透判定完全在 Rust 探针里按几何做 ——
-/// 不再每帧 `eval` 回 WebView 做 `elementFromPoint`，也不再每帧 `invoke` 往返。
+/// [lc-1949] 视频区鼠标转发：覆盖层收到的、落点**不在控件上**的鼠标事件由前端分流后
+/// 经此命令 PostMessage 给 mpv 锚窗，mpv 的 win32 后端像处理真实输入一样处理
+/// （单击暂停 / 双击全屏 / 拖动窗口 / 滚轮 seek / 右键全是 mpv 原生行为）。
 ///
-/// `full=true` 表示模态（磨砂菜单打开 / 进度条拖拽）：整窗可点，点空白用于关面板。
-/// 只接受 mpv_overlay 自己的调用。
+/// 这是「覆盖层常驻可点」架构的另一半：穿透位（WS_EX_TRANSPARENT）已彻底退役，
+/// mpv 的窗口被覆盖层整面盖住、收不到真实命中，唯一能给它输入的就是这条通道。
+/// `kind`：move / down / up / dbl / rdown / rup / mdown / mup / wheel；
+/// `(x, y)` = mpv 客户区**物理像素**（覆盖层与 mpv 同 rect，前端直接给窗口内坐标）；
+/// `flags` = MK_* 位（按钮 + Ctrl/Shift）；`delta` = 滚轮增量（仅 wheel）。
+/// 同步命令、直发 PostMessage、不排队不等待 —— 延迟就是一次系统调用。
 #[tauri::command]
-async fn player_chrome_hot_rects(
-    window: tauri::Window,
-    rects: Vec<[f64; 4]>,
-    full: bool,
-) -> Result<(), String> {
+fn mpv_forward_mouse(
+    kind: String,
+    x: i32,
+    y: i32,
+    flags: Option<u32>,
+    delta: Option<i32>,
+) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
-        if window.label() != "mpv_overlay" {
-            return Ok(());
-        }
-        let converted: Vec<(i32, i32, i32, i32)> = rects
-            .into_iter()
-            .map(|r| {
-                (
-                    r[0].round() as i32,
-                    r[1].round() as i32,
-                    r[2].round() as i32,
-                    r[3].round() as i32,
-                )
-            })
-            .collect();
-        // [lc-1947] 留痕：全屏/最大化切换后应能看到一条「热区上报 n 条 full=…」，
-        // 与 mpvwin 的「覆盖层尺寸 → …热区作废」成对出现，便于确认重算链路真的走到。
-        crate::libmpv::trace(&format!(
-            "[lc-1947] 热区上报 {} 条 full={full}",
-            converted.len()
-        ));
-        crate::mpvwin::overlay_set_hot_rects(converted, full);
+        Ok(crate::mpvwin::forward_mouse(
+            &kind,
+            x,
+            y,
+            flags.unwrap_or(0),
+            delta.unwrap_or(0),
+        ))
     }
     #[cfg(not(target_os = "windows"))]
-    let _ = (&window, &rects, &full);
-    Ok(())
+    {
+        let _ = (kind, x, y, flags, delta);
+        Ok(false)
+    }
 }
 
 /// [lc-1943] 前端延迟采样落盘（临时诊断，`[lat]` 前缀）。前端拿不到进程日志，
@@ -3590,55 +3646,6 @@ async fn player_chrome_hot_rects(
 #[tauri::command]
 fn lat_trace(msg: String) {
     crate::libmpv::trace(&format!("[lat] {msg}"));
-}
-
-/// [lc-1944] 系统双击间隔（毫秒）—— 照抄 Polaris 的 `overlay-double-click-interval-ms`。
-///
-/// 覆盖层空白区仲裁要用**系统设置的真实值**做单击/双击判定（用户可在
-/// 「控制面板 → 鼠标」里改），不能用 500ms 这类硬编码近似：短了会把双击拆成两次单击
-/// （视频被暂停），长了会让单击明显发钝。
-#[tauri::command]
-fn overlay_double_click_interval_ms() -> u32 {
-    #[cfg(target_os = "windows")]
-    {
-        let ms = unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime() };
-        if (1..=5000).contains(&ms) {
-            return ms;
-        }
-        500
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        500
-    }
-}
-
-/// [lc-1939] 播放器控制层的鼠标穿透开关（Polaris 同款通道）：
-/// 默认全窗穿透（鼠标全部落到 mpv）。
-///
-/// [lc-1943] **覆盖层 UI 已不再调用这条命令** —— 穿透位改由 Rust 探针按可点区几何
-/// 独占决定（见 `mpvwin::spawn_overlay_probe`），避免「前端 elementFromPoint」与
-/// 「Rust 矩形判定」两个真源互相覆盖。保留此命令作为手动排障开关。
-/// **直接拨 WS_EX_TRANSPARENT**，不碰 WS_EX_LAYERED（tao 的 set_ignore_cursor_events
-/// 会把两位置成一组，关穿透时连透明一起摘掉 → 黑块盖死视频）。
-/// 只接受 mpv_overlay 窗口自己的调用。
-#[tauri::command]
-async fn player_chrome_ignore(
-    window: tauri::Window,
-    ignore: bool,
-) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        if window.label() != "mpv_overlay" {
-            return Ok(());
-        }
-        if let Ok(h) = window.hwnd() {
-            crate::mpvwin::overlay_set_clickthrough(h.0 as isize, ignore);
-        }
-    }
-    #[cfg(not(target_os = "windows"))]
-    let _ = (&window, &ignore);
-    Ok(())
 }
 
 /// [lc-1942] 覆盖层临时可聚焦开关：仅字幕搜索输入框使用。
@@ -5423,13 +5430,11 @@ pub fn run() {
             // 非 Windows 命令空转返回 Ok，注册保持全平台一致）
             player_embed_enter,
             player_embed_rect,
-            player_chrome_ignore,
-            // [lc-1943] 覆盖层可点区（热区）上报：穿透判定改在 Rust 探针里做几何计算
-            player_chrome_hot_rects,
+            // [lc-1949] 视频区鼠标转发（覆盖层常驻可点后 mpv 的唯一输入通道）；
+            // 旧的热区上报 / 穿透开关 / 空白区仲裁命令随探针机制一并退役
+            mpv_forward_mouse,
             // [lc-1943] 前端延迟采样落盘（临时诊断）
             lat_trace,
-            // [lc-1944] 空白区点击仲裁：系统双击间隔（与 Polaris 同名同语义）
-            overlay_double_click_interval_ms,
             // [lc-1942] 字幕搜索输入框需要临时摘掉 WS_EX_NOACTIVATE
             player_chrome_focusable,
             player_embed_leave,

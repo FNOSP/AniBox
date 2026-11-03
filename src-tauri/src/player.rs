@@ -371,7 +371,9 @@ async fn launch_mpv(
                 }
             }
             crate::mpvwin::spawn_overlay_follow(app.clone());
-            crate::mpvwin::spawn_overlay_probe(app.clone());
+            // [lc-1949] 16ms 光标探针（spawn_overlay_probe）已随「探针拨穿透位」机制退役：
+            // 覆盖层常驻可点，控件续显由 WebView 自身 mousemove 驱动，视频区点击走
+            // `mpv_forward_mouse` PostMessage 转发。
             if let Some(m) = app.get_webview_window("main") {
                 let _ = m.hide();
                 // [lc-1947] 与 mpv.rs 起播路径同一条兜底：原始隐藏，防 tao 缓存脱钩

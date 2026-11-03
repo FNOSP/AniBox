@@ -58,7 +58,7 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 #   Win32_System_Threading：OpenProcess / GetExitCodeProcess / TerminateProcess（替代 tasklist·taskkill）
 #   Win32_System_JobObjects：KILL_ON_JOB_CLOSE 句柄守卫（应用无论怎么退出都不留 mpv 孤儿）
 #   Win32_System_Diagnostics_ToolHelp：按映像名枚举进程（替代 taskkill /IM）
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Registry", "Win32_Security", "Win32_System_SystemInformation", "Win32_System_Time", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Registry", "Win32_Security", "Win32_System_SystemInformation", "Win32_System_Time", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp"] }
 # [title] 展示标题繁 → 简（仅 mpv/#EXTINF/PotPlayer 标题，不碰匹配元数据）。
 # zhconv：纯 Rust、编译期内嵌 MediaWiki/OpenCC 转换表，运行时零网络；许可证
 # GPL-2.0-or-later 与本项目 GPL-3.0 兼容（"or later"）。

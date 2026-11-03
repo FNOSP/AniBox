@@ -520,10 +520,9 @@ impl MpvSession {
                                     crate::mpvwin::set_owner_follow(false);
                                     crate::mpvwin::pin_to_owner(owner);
                                     crate::mpvwin::spawn_overlay_follow(app2.clone());
-                                    // [lc-1944] 光标探针（Polaris 同款机制）：只负责续显控件 /
-                                    // 悬停态；点击能否落在控件上由探针拨 WS_EX_TRANSPARENT 决定
-                                    // （命中 [data-chrome-hit] 矩形 → 不穿透）。
-                                    crate::mpvwin::spawn_overlay_probe(app2.clone());
+                                    // [lc-1949] 16ms 光标探针（spawn_overlay_probe）已随
+                                    // 「探针拨穿透位」机制退役：覆盖层常驻可点，视频区点击
+                                    // 由前端分流后经 mpv_forward_mouse PostMessage 转发。
                                     crate::libmpv::trace(&format!(
                                         "[lc-1913] 内嵌收编完成（spawn 侧）：pid={pid2} owner=mpv_overlay(0x{owner:X})，已满屏钉住"
                                     ));

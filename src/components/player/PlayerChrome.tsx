@@ -98,6 +98,10 @@ type PState = {
 const LAT_TRACE = true;
 let latT0 = 0;
 let latLabel = "";
+
+/* [lc-1988] NVIDIA 覆盖层拦截提示只弹一次：Rust fs-snap 命中根窗进程含 nvidia 时
+ * 广播 `nvidia-overlay-block`，这里显示一次性提示（覆盖层页面常驻，跨播放会话不复弹）。 */
+let nvHintShown = false;
 function latMark(label: string) {
   if (!LAT_TRACE) return;
   latT0 = performance.now();
@@ -466,6 +470,22 @@ export function PlayerChrome() {
     };
   }, [wake]);
 
+  /* ── [lc-1988] NVIDIA 覆盖层拦截的一次性提示 ──
+   * Rust fs-snap 判定全屏点击被 NVIDIA overlay 截走（根窗进程含 nvidia）时广播本事件。
+   * 提示 8s 自散；每次覆盖层页面生命周期只弹一次，不再打扰。 */
+  const [nvHint, setNvHint] = useState(false);
+  useEffect(() => {
+    const un = listen("nvidia-overlay-block", () => {
+      if (nvHintShown) return;
+      nvHintShown = true;
+      setNvHint(true);
+      window.setTimeout(() => setNvHint(false), 8000);
+    });
+    return () => {
+      void un.then((f) => f()).catch(() => {});
+    };
+  }, []);
+
   /* ── [lc-1960] hover 事务状态机（Polaris mpv-overlay-hover 同款）──
    * 穿透默认态：控件隐藏期间覆盖层 WS_EX_TRANSPARENT 恒置位（Rust 起播接线已置），
    * 真实鼠标直达 mpv（单击暂停/双击全屏/拖动全原生），WebView 收不到任何鼠标事件。
@@ -819,6 +839,32 @@ export function PlayerChrome() {
       if (e.ctrlKey) f |= 8;
       return f;
     };
+    /* [lc-1988] 全屏点击分流日志（与 Rust `[lc-1988] fwd-recv` 逐行对账）：
+     *   · local   = target 命中 [data-chrome-hit]，控件自己处理；
+     *   · fwd     = 落在空白区，转给 mpv；
+     *   · swallow = 菜单/抑制窗口吞掉；
+     * target= 实际命中元素、efpt= elementFromPoint(clientX,clientY) 的独立复核 ——
+     * 两者不一致 = WebView2 输入变换与 DOM 命中错位（全屏 resize/DPI 类问题的直接证据）。
+     * 只在全屏 + 按键类 pointerdown 打（move/滚轮/非全屏一律静默，防刷屏）。 */
+    const describeNode = (n: Element | null) => {
+      if (!n) return "null";
+      if (!n.isConnected) return "detached";
+      const hitEl = n.closest("[data-chrome-hit]");
+      const cls =
+        n instanceof HTMLElement && n.className
+          ? String(n.className).split(/\s+/)[0]
+          : n.tagName.toLowerCase();
+      return `${hitEl ? "hit" : "blank"}:${cls}`;
+    };
+    const routeLog = (route: string, e: PointerEvent) => {
+      const el = e.target instanceof Element ? e.target : null;
+      const ef = document.elementFromPoint(e.clientX, e.clientY);
+      void invoke("lat_trace", {
+        msg: `lc-1988 down ${route} target=${describeNode(el)} efpt=${describeNode(
+          ef,
+        )} btn=${e.button} x=${Math.round(e.clientX)} y=${Math.round(e.clientY)} dpr=${dpr()}`,
+      }).catch(() => {});
+    };
     const send = (kind: string, e: MouseEvent, delta = 0) => {
       void invoke("mpv_forward_mouse", {
         kind,
@@ -832,12 +878,23 @@ export function PlayerChrome() {
 
     const onDown = (e: PointerEvent) => {
       wake();
+      const chrome = overChrome(e.target);
       // 悬停态喂给 3s 自动隐藏的判定：光标停在控件上时不隐藏（旧探针 hot 位语义）
-      hoverInteractive.current = overChrome(e.target);
-      if (overChrome(e.target)) return;
+      hoverInteractive.current = chrome;
+      // [lc-1988] 分流日志：全屏 + 按键类点击才打（与 Rust `[lc-1988] fwd-recv` 对账）
+      const loggable =
+        stRef.current.fullscreen && (e.button === 0 || e.button === 1 || e.button === 2);
+      if (chrome) {
+        if (loggable) routeLog("local", e);
+        return;
+      }
       // 面板打开（点空白=关面板）与关面板抑制窗口内：这一击不归 mpv
-      if (menuOpenRef.current || Date.now() < ptSuppressUntil.current) return;
+      if (menuOpenRef.current || Date.now() < ptSuppressUntil.current) {
+        if (loggable) routeLog(menuOpenRef.current ? "swallow:menu" : "swallow:suppress", e);
+        return;
+      }
       if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
+      if (loggable) routeLog("fwd", e);
       // 上一轮按下没等到抬起（mpv 原生拖窗的 modal move loop 会吞掉释放事件）：
       // 先补一发 up 清掉 mpv 的按钮态，避免下一次点击被它的双击合成器误判。
       if (fwdRef.current) send(upKind(fwdRef.current.btn), e);
@@ -2301,6 +2358,29 @@ export function PlayerChrome() {
         <span className="player-spin" />
         <span className="pc-opening-title">{title || "正在打开"}</span>
       </div>
+
+      {/* [lc-1988] NVIDIA 覆盖层拦截的一次性提示（fs-snap 命中根窗进程含 nvidia 时触发） */}
+      {nvHint ? (
+        <div
+          style={{
+            position: "absolute",
+            top: 56,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 60,
+            padding: "8px 14px",
+            borderRadius: 12,
+            background: "rgba(18,18,18,.88)",
+            color: "#fff",
+            fontSize: 12,
+            fontWeight: 600,
+            whiteSpace: "nowrap",
+            pointerEvents: "none",
+          }}
+        >
+          检测到 NVIDIA 覆盖层弹窗，可能拦截点击：可在 NVIDIA App 关闭游戏内覆盖层
+        </div>
+      ) : null}
     </div>
   );
 }

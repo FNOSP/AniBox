@@ -107,6 +107,41 @@
 //!     （topmost 拨位 / 屏保级抬顶 / 带内插顶）都打 before→after + 原因。下次复现
 //!     按行定案，不再猜。
 //!
+//! [lc-1988] **进程归属一锤定音 + z 序零干预（所有权模型定案）**。两条证据线合流：
+//!
+//! ① lc-1981 复现日志：fs-snap 已排除 z 序（overlay-above）、穿透位（transp=0）、
+//!    输入锁、两层矩形，但 `hit=0x1B0F32 class="Chrome_RenderWidgetHostHWND"
+//!    hit_is=other` —— Chromium 渲染子窗类名谁家都有（我们覆盖层自己的 WebView2
+//!    子窗也叫这个），「other」定不了案。用户实测关掉 NVIDIA overlay 后问题依旧
+//!    → 命中极可能是**覆盖层自己的 WebView2 子窗**，点击物理上已到达覆盖层页面。
+//! ② Polaris 一手取证（polaris-player.exe 内嵌日志字符串 + mpv-overlay.html 全文，
+//!    禁用旧报告结论）：覆盖层是 mpv 的 **owned window**（GW_OWNER=mpv），层级靠
+//!    所有权系统保证，覆盖层非逐拍强推 TOPMOST；全屏唯一通路 = mpv fullscreen 属性
+//!    下发，宿主对锚窗/覆盖层**零几何/零 z 序干预**，覆盖层由原生跟随 1:1 挪窗；
+//!    隐藏/显示走 DWM（CLOAK + TRANSITIONS_FORCEDISABLED + park offscreen）。
+//!
+//! 本批落地（对照 Polaris 逐条对齐）：
+//!   · **fs-snap 进程归属**：命中窗 `pid=/exe=` + 根窗（`GetAncestor(GA_ROOT)`）
+//!     `root=/root_pid=/root_exe=/root_class=/root_title=`；分类升级 `classify_hit_ex`：
+//!     本进程 → `overlay-child`（点击到达覆盖层页面、问题在前端分流）、mpv.exe →
+//!     `mpv-anchor`、含 nvidia → `nvidia-overlay`（打点 + 前端一次性提示，处置 =
+//!     用户侧关游戏内覆盖层，不与第三方 topmost 抢 z）、其余 `other`。
+//!   · **转发链对账**：前端全屏 pointerdown 分流日志（`[lat] lc-1988 down local/fwd/
+//!     swallow …`，target= 实际命中 + efpt= elementFromPoint 独立复核）+ Rust
+//!     `forward_mouse` 接收日志（`[lc-1988] fwd-recv …`，kind≠move）逐行对账，
+//!     分辨「页面没收到」vs「收到但转错」vs「mpv 收到没消化」。
+//!   · **z 序零干预（本批主修）**：跟随循环全屏/窗口两分支的 TOPMOST/InsertAfter/
+//!     屏保级抬顶**全部退役**（所有权保证层级）；进全屏只 `move_window` 覆盖层
+//!     （锚窗不碰，置顶归 mpv/lua + `fntv-ontop-fs` 锁保留）；退全屏恢复步骤删除
+//!     Topmost 步骤与带内插顶；120ms reassert 只在几何不齐时 move（按需，稳态零
+//!     窗口操作）。旧路径的 4~5 次连续 SetWindowPos 中间态帧就是「进全屏闪烁/
+//!     卡顿」我们侧的来源。`set_player_ontop`（用户置顶按钮）保留：那是用户意图，
+//!     不是 z 序战术。
+//!   · **DWM 反闪烁**：覆盖层接线时一次性 `DWMWA_TRANSITIONS_FORCEDISABLED`
+//!     （Polaris 同位）。CLOAK/park-offscreen **评估结论：不采用** —— cloak 不摘
+//!     hit-test，我们的隐藏路径（会话收起 / 拖动防残影 SW_HIDE）都依赖「隐藏窗
+//!     不参与命中」，换 cloak 会引入隐形吃点击的回归。
+//!
 //! [lc-1952] 实机回归两修：
 //!   · **全屏后控件全点不中**：mpv 的 VO 在全屏切换时 SetWindowPos 自己，把锚窗提到
 //!     覆盖层之上（对已 TOPMOST 的覆盖层再调 HWND_TOPMOST 不保证带内重排，owner 关系
@@ -166,14 +201,15 @@ use windows_sys::Win32::System::SystemServices::{MK_LBUTTON, MK_MBUTTON, MK_RBUT
 #[cfg(test)]
 use windows_sys::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetCursorPos, GetWindow, GetWindowLongPtrW, GetWindowRect,
-    GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed,
-    PostMessageW, SetWindowLongPtrW, SetWindowPos, ShowWindow, WindowFromPoint, GWL_EXSTYLE,
-    GWLP_HWNDPARENT, GW_HWNDNEXT, GW_HWNDPREV, HWND_NOTOPMOST, HWND_TOPMOST, SW_HIDE, SW_MAXIMIZE,
-    SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP,
-    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+    EnumWindows, GA_ROOT, GetAncestor, GetClassNameW, GetCursorPos, GetWindow, GetWindowLongPtrW,
+    GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible,
+    IsZoomed, PostMessageW, SetWindowLongPtrW, SetWindowPos, ShowWindow, WindowFromPoint,
+    GWL_EXSTYLE, GWLP_HWNDPARENT, GW_HWNDNEXT, GW_HWNDPREV, HWND_NOTOPMOST, HWND_TOPMOST, SW_HIDE,
+    SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN,
+    WM_RBUTTONUP, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_EX_TRANSPARENT,
 };
 
 /// 当前已收编的 mpv 顶层窗口（isize，全仓 HWND 约定；None = 未收编 / 已失效清理）。
@@ -253,6 +289,9 @@ static OVERLAY_UI_READY: AtomicBool = AtomicBool::new(false);
 static OVERLAY_FOLLOW_RUNNING: AtomicBool = AtomicBool::new(false);
 /// [lc-1960] 50ms 光标探针是否已在跑（与跟随循环同生命周期，幂等）。
 static OVERLAY_PROBE_RUNNING: AtomicBool = AtomicBool::new(false);
+/// [lc-1988] 最近一次「NVIDIA overlay 截走点击」告警时刻（UNIX 毫秒）。10s 去重，
+/// 防止全屏期每拍快照都刷一条；换 pid / 换窗口由 fs-snap 变化行兜底可见。
+static NVIDIA_WARN_LAST_MS: AtomicU64 = AtomicU64::new(0);
 
 // ─────────────── [lc-1960] hover 事务协议状态（Polaris generation/seq 同款）───────────────
 
@@ -407,7 +446,22 @@ pub fn pack_mouse_message(
 /// [lc-1949] 把覆盖层分流的视频区鼠标事件转发给 mpv 锚窗（同步、不排队、不等待）。
 /// 返回 false = 没有 mpv 窗口 / kind 不识别 / PostMessage 失败；调用方（命令层）
 /// 把 false 静默吞掉即可 —— 转发失败只意味着「这次点击不走 mpv」，不影响 UI。
+///
+/// [lc-1988] 接收对账日志（kind≠move 全打）：与前端 `[lat] lc-1988 down …` 分流日志
+/// 逐行对账 —— 前端打了 fwd、这里没有 fwd-recv = 点击没离开页面（命令/桥接断）；
+/// 前端 fwd + 这里 ok=false = PostMessage 失败/锚窗没了；两边都有 = 转发链路通，
+/// 问题在 mpv 侧消化。move 不打（rAF 合帧下拖动期 ~60Hz，刷屏）。
 pub fn forward_mouse(kind: &str, x: i32, y: i32, flags: u32, delta: i32) -> bool {
+    let res = forward_mouse_inner(kind, x, y, flags, delta);
+    if kind != "move" {
+        crate::libmpv::trace(&format!(
+            "[lc-1988] fwd-recv kind={kind} x={x} y={y} flags=0x{flags:X} delta={delta} ok={res}"
+        ));
+    }
+    res
+}
+
+fn forward_mouse_inner(kind: &str, x: i32, y: i32, flags: u32, delta: i32) -> bool {
     let Some(h) = get_hwnd() else {
         return false;
     };
@@ -732,6 +786,27 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
                     let mut tbuf = [0u16; 128];
                     let tn = GetWindowTextW(hit, tbuf.as_mut_ptr(), 128);
                     let title = String::from_utf16_lossy(&tbuf[..tn.max(0).min(128) as usize]);
+                    // [lc-1988] 进程归属（一锤定音）：lc-1981 复现日志里 hit 是
+                    // Chrome_RenderWidgetHostHWND（Chromium 渲染子窗，类名谁家都有），
+                    // hit_is=other 定不了案。取命中窗进程 exe + 根窗（GA_ROOT）的
+                    // pid/exe/类名/标题，classify_hit_ex 直接写明「光标下是谁家的窗」。
+                    let (hit_pid, hit_exe) = window_process_exe(hit as isize);
+                    let root = root_of(hit as isize);
+                    let (root_pid, root_exe) = window_process_exe(root);
+                    let mut rbuf = [0u16; 64];
+                    let rn = if root != 0 {
+                        GetClassNameW(root as _, rbuf.as_mut_ptr(), 64)
+                    } else {
+                        0
+                    };
+                    let root_class = String::from_utf16_lossy(&rbuf[..rn.max(0).min(64) as usize]);
+                    let mut rtbuf = [0u16; 128];
+                    let rtn = if root != 0 {
+                        GetWindowTextW(root as _, rtbuf.as_mut_ptr(), 128)
+                    } else {
+                        0
+                    };
+                    let root_title = String::from_utf16_lossy(&rtbuf[..rtn.max(0).min(128) as usize]);
                     let anchor = get_hwnd().unwrap_or(0);
                     let mut m = RECT { left: 0, top: 0, right: 0, bottom: 0 };
                     let mut o = RECT { left: 0, top: 0, right: 0, bottom: 0 };
@@ -748,8 +823,17 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
                         ZorderRelation::AnchorAbove(d) => format!("ANCHOR-ABOVE(+{d})"),
                         ZorderRelation::Unknown => "unknown".to_string(),
                     };
+                    let kind = classify_hit_ex(
+                        hit as isize,
+                        hwnd,
+                        anchor,
+                        root,
+                        root_pid,
+                        std::process::id(),
+                        &root_exe,
+                    );
                     let body = format!(
-                        "cursor=({x},{y}) hit=0x{hit_x:X} class=\"{class}\" title=\"{title}\" hit_is={kind} z={rel_tag} ov_rect=({},{},{},{}) mpv_rect=({},{},{},{}) transp={} fs={} lock={}",
+                        "cursor=({x},{y}) hit=0x{hit_x:X} class=\"{class}\" title=\"{title}\" hit_is={kind} z={rel_tag} ov_rect=({},{},{},{}) mpv_rect=({},{},{},{}) transp={} fs={} lock={} pid={hit_pid} exe=\"{hit_exe}\" root=0x{root:X} root_pid={root_pid} root_exe=\"{root_exe}\" root_class=\"{root_class}\" root_title=\"{root_title}\"",
                         o.left,
                         o.top,
                         o.right,
@@ -764,7 +848,6 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
                         x = pt.x,
                         y = pt.y,
                         hit_x = hit as usize,
-                        kind = classify_hit(hit as isize, hwnd, anchor),
                     );
                     let changed = last_snap_body.as_deref() != Some(body.as_str());
                     let elapsed = last_snap_log.elapsed().as_millis();
@@ -776,6 +859,27 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
                             if changed { "change" } else { "heartbeat" },
                             body
                         ));
+                        // [lc-1988] NVIDIA 覆盖层截走点击：打点 + 通知前端一次性提示。
+                        // 处置 = 检测 + 提示 + 用户侧规避（NVIDIA App 关游戏内覆盖层），
+                        // 不与第三方 topmost 抢 z（同带内后来者居上，抢了只会加剧闪烁）。
+                        if kind == "nvidia-overlay" {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as u64)
+                                .unwrap_or(0);
+                            // 单一探针任务串行执行，load→store 无竞争；10s 去重防刷屏。
+                            let last = NVIDIA_WARN_LAST_MS.load(Ordering::SeqCst);
+                            if now.saturating_sub(last) >= 10_000 {
+                                NVIDIA_WARN_LAST_MS.store(now, Ordering::SeqCst);
+                                crate::libmpv::trace(&format!(
+                                    "[lc-1988] 全屏点击被 NVIDIA overlay 截走 (pid={root_pid} exe=\"{root_exe}\" root_class=\"{root_class}\") → 提示用户在 NVIDIA App 关闭游戏内覆盖层"
+                                ));
+                                let _ = app.emit(
+                                    "nvidia-overlay-block",
+                                    serde_json::json!({ "pid": root_pid, "exe": root_exe }),
+                                );
+                            }
+                        }
                     }
                 } else if inside {
                     // [lc-1964] 控件带热区直翻（架构保险 D）：每拍都判，不依赖前端
@@ -962,6 +1066,9 @@ pub fn overlay_insert_target(prev_of_anchor: isize) -> isize {
 /// 覆盖层被送到带顶（仍紧贴锚窗上方）。
 /// [lc-1981] 每次 z 序操作都留 before→after + 原因。
 /// 返回是否执行了 SetWindowPos（窗口无效 / hwnd 为 0 时 false）。
+/// [lc-1988] **退役**（所有权模型）：带内插顶战术不再参与任何运行路径 —— 层级由
+/// 「覆盖层是锚窗的 owned window」系统保证（lc-1924 接线）。留档备查。
+#[allow(dead_code)]
 fn place_overlay_above_anchor(overlay: isize, anchor: isize, reason: &str) -> bool {
     if overlay == 0
         || anchor == 0
@@ -998,6 +1105,9 @@ fn place_overlay_above_anchor(overlay: isize, anchor: isize, reason: &str) -> bo
 /// 再怎么 SetWindowPos 自己，最坏 33ms 后被本函数抬回来。
 /// [lc-1981] 本函数**只作用于覆盖层**，锚窗永远不被抬起；每次调用留 before→after。
 /// 返回是否两次 SetWindowPos 都成功。
+/// [lc-1988] **退役**（所有权模型）：NOTOPMOST→TOPMOST 强制回带顶战术不再参与任何
+/// 运行路径 —— 覆盖层 owned-by-mpv（lc-1924），层级由系统保证。留档备查。
+#[allow(dead_code)]
 fn overlay_raise_screen_saver_level(hwnd: isize, reason: &str) -> bool {
     if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
         return false;
@@ -1016,6 +1126,38 @@ fn overlay_raise_screen_saver_level(hwnd: isize, reason: &str) -> bool {
         ));
         down && up
     }
+}
+
+/// [lc-1988] 纯逻辑：全屏 reassert 的几何门 —— 覆盖层矩形是否已在显示器矩形上。
+/// 旧 `ensure_fullscreen_geometry` 无条件 `move_window`（矩形没变也发一次 SetWindowPos，
+/// 120ms 一次），稳态也在搅动 DWM；新逻辑先问这句，不齐才动。
+/// 输入：覆盖层 (l,t,r,b) 与显示器 (x,y,w,h)。负坐标多屏同样成立。
+pub fn fullscreen_rect_on_monitor(overlay: (i32, i32, i32, i32), mx: i32, my: i32, mw: i32, mh: i32) -> bool {
+    let (l, t, r, b) = overlay;
+    l == mx && t == my && (r - l) == mw && (b - t) == mh
+}
+
+/// [lc-1988] DWM 属性写入（反闪烁）：`DWMWA_TRANSITIONS_FORCEDISABLED` 让
+/// move/resize/show/hide 不再播系统过渡动画（进/退全屏的中间态帧少一路来源）。
+/// 返回是否成功（失败只影响观感，不报错）。
+pub fn window_disable_dwm_transitions(hwnd: isize, reason: &str) -> bool {
+    use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED};
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return false;
+    }
+    let disable: i32 = 1;
+    let hr = unsafe {
+        DwmSetWindowAttribute(
+            hwnd as _,
+            DWMWA_TRANSITIONS_FORCEDISABLED as u32,
+            &disable as *const i32 as *const core::ffi::c_void,
+            std::mem::size_of::<i32>() as u32,
+        )
+    };
+    crate::libmpv::trace(&format!(
+        "[lc-1988] DWM 过渡动画禁用 hwnd=0x{hwnd:X} hr=0x{hr:8X} reason={reason}"
+    ));
+    hr == 0
 }
 
 // ─────────────── [lc-1981] 全屏 z 序断言（相对锚窗）+ 诊断快照纯逻辑 ───────────────
@@ -1153,6 +1295,95 @@ pub fn classify_hit(hit: isize, overlay: isize, anchor: isize) -> &'static str {
     }
 }
 
+/// [lc-1988] 进程归属版归类（一锤定音）：lc-1981 复现日志
+/// `hit=0x1B0F32 class="Chrome_RenderWidgetHostHWND" hit_is=other` 只知道「不是我们
+/// 两层中的任何一层」，不知道它是**谁家的**。Chromium 系窗口（NVIDIA App 弹窗 /
+/// 我们覆盖层自己的 WebView2 子窗）类名撞车，唯有进程归属能定案。
+///
+/// 输入：命中 hwnd、覆盖层、锚窗、命中窗的根窗（`GetAncestor(GA_ROOT)`）、根窗
+/// 进程 pid、本进程 pid、根窗进程 exe 文件名。规则（按序判定）：
+///   · `none`：没有命中窗；
+///   · `overlay` / `mpv-anchor`：命中就是覆盖层 / 锚窗本体（或命中窗的根就是锚窗）；
+///   · `overlay-child`：根窗属于**本进程** —— 点击物理到达覆盖层自己的 WebView2
+///     子窗（Chrome_RenderWidgetHostHWND），问题在前端分流（[lc-1988] 前端日志对账）；
+///   · `mpv-anchor`：根窗进程是 mpv.exe（命中了 mpv 的子窗）；
+///   · `nvidia-overlay`：根窗进程名含 nvidia —— NVIDIA App/GeForce 覆盖层弹窗
+///     盖在覆盖层之上截走点击（提示用户侧关闭，不与第三方 topmost 抢 z）；
+///   · `other`：其余第三方窗口。
+pub fn classify_hit_ex(
+    hit: isize,
+    overlay: isize,
+    anchor: isize,
+    root: isize,
+    root_pid: u32,
+    own_pid: u32,
+    root_exe: &str,
+) -> &'static str {
+    if hit == 0 {
+        "none"
+    } else if hit == overlay {
+        "overlay"
+    } else if hit == anchor || root == anchor {
+        "mpv-anchor"
+    } else if root_pid != 0 && root_pid == own_pid {
+        "overlay-child"
+    } else if exe_is_mpv(root_exe) {
+        "mpv-anchor"
+    } else if root_exe.to_ascii_lowercase().contains("nvidia") {
+        "nvidia-overlay"
+    } else {
+        "other"
+    }
+}
+
+/// [lc-1988] exe 文件名是否为 mpv（mpv.exe / mpv.com / fntv-mpv.exe 等前缀命中）。
+fn exe_is_mpv(exe: &str) -> bool {
+    let e = exe.to_ascii_lowercase();
+    e.starts_with("mpv") || e.contains("mpv.exe")
+}
+
+/// [lc-1988] 取窗口所属进程的 (pid, exe 文件名)。打不开进程 / 无名字时 exe 为空串。
+fn window_process_exe(hwnd: isize) -> (u32, String) {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    if hwnd == 0 {
+        return (0, String::new());
+    }
+    let mut pid: u32 = 0;
+    unsafe {
+        GetWindowThreadProcessId(hwnd as _, &mut pid);
+        if pid == 0 {
+            return (0, String::new());
+        }
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return (pid, String::new());
+        }
+        let mut buf = [0u16; 512];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(h, PROCESS_NAME_WIN32, buf.as_mut_ptr(), &mut len);
+        CloseHandle(h);
+        if ok == 0 {
+            return (pid, String::new());
+        }
+        let full = String::from_utf16_lossy(&buf[..len as usize]);
+        // 只要文件名，不要路径
+        let base = full.rsplit(['\\', '/']).next().unwrap_or("").to_string();
+        (pid, base)
+    }
+}
+
+/// [lc-1988] 命中窗的根窗（`GetAncestor(GA_ROOT)`；无效 hwnd 返回 0）。
+fn root_of(hwnd: isize) -> isize {
+    if hwnd == 0 {
+        return 0;
+    }
+    unsafe { GetAncestor(hwnd as _, GA_ROOT) as isize }
+}
+
 /// [lc-1981] 纯逻辑：快照该不该打 —— 状态变化即打；无变化 `heartbeat_ms` 心跳。
 pub fn snapshot_should_log(key_changed: bool, since_last_log_ms: u128, heartbeat_ms: u128) -> bool {
     key_changed || since_last_log_ms >= heartbeat_ms
@@ -1285,6 +1516,9 @@ pub fn resume_embed_windows(overlay_hwnd: isize) {
 // ───────────────────── [lc-1947] 真全屏：窗口级切换 ─────────────────────
 
 /// [lc-1947] 纯逻辑：退出全屏的恢复步骤（执行与单测共用同一份决策）。
+/// [lc-1988] **Topmost 步骤退役**（Polaris 实锤：宿主对锚窗/覆盖层零 TOPMOST 干预，
+/// 层级由所有权保证）：退出只恢复几何；锚窗置顶交还 mpv/lua（`fntv-ontop-fs off`
+/// 恢复三态联动），覆盖层保持接线时的一次性 TOPMOST 基样式（P9.2 三件套同位）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FullscreenRestoreStep {
     /// 先清掉最大化/全屏样式（对 maximized 窗口直接 SetWindowPos 只改还原矩形）
@@ -1293,17 +1527,13 @@ pub enum FullscreenRestoreStep {
     MoveTo(i32, i32, i32, i32),
     /// 进入前是最大化 → 重新最大化
     Maximize,
-    /// 恢复用户「置顶」意图
-    Topmost(bool),
 }
 
 /// [lc-1947] 纯逻辑：退出全屏要按什么顺序恢复。
 /// 最大化必须在 MoveTo **之后**：SW_MAXIMIZE 会让系统覆盖还原矩形，顺序反了就丢矩形。
-pub fn fullscreen_restore_steps(
-    rect: (i32, i32, i32, i32),
-    zoomed: bool,
-    ontop: bool,
-) -> Vec<FullscreenRestoreStep> {
+/// [lc-1988] `ontop` 参数退役：不再由我们写 TOPMOST（锚窗交还 mpv/lua，覆盖层基样式
+/// 常驻）。参数保留占位以免波及调用方签名；实现里已不消费。
+pub fn fullscreen_restore_steps(rect: (i32, i32, i32, i32), zoomed: bool, _ontop: bool) -> Vec<FullscreenRestoreStep> {
     let mut steps = vec![
         FullscreenRestoreStep::Restore,
         FullscreenRestoreStep::MoveTo(rect.0, rect.1, rect.2, rect.3),
@@ -1311,7 +1541,6 @@ pub fn fullscreen_restore_steps(
     if zoomed {
         steps.push(FullscreenRestoreStep::Maximize);
     }
-    steps.push(FullscreenRestoreStep::Topmost(ontop));
     steps
 }
 
@@ -1398,14 +1627,17 @@ fn ensure_fullscreen_geometry(app: &tauri::AppHandle) {
     let Some((mx, my, mw, mh)) = monitor_rect(if mpv != 0 { mpv } else { overlay }) else {
         return;
     };
-    move_window(overlay, mx, my, mw, mh);
-    if overlay != 0 && !is_window_topmost(overlay as _) {
-        set_window_topmost(overlay, true, "fullscreen-reassert");
+    // [lc-1988] 只修覆盖层几何，且**按需**（矩形已齐 = 零窗口操作；旧版无条件 move +
+    // 无条件屏保级抬顶，稳态也在搅动 DWM）。z 序零干预：所有权保证层级（Polaris 同款），
+    // 锚窗几何与置顶都是 mpv 单一写者。
+    if overlay != 0 {
+        let mut o = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        if unsafe { GetWindowRect(overlay as _, &mut o) } != 0
+            && !fullscreen_rect_on_monitor((o.left, o.top, o.right, o.bottom), mx, my, mw, mh)
+        {
+            move_window(overlay, mx, my, mw, mh);
+        }
     }
-    // [lc-1964] 屏保级抬顶：已 TOPMOST 的覆盖层再调 HWND_TOPMOST 不保证带内重排，
-    // NOTOPMOST→TOPMOST 重置法强制回带顶（旧 InsertAfter=锚窗 方向反了，见模块头）。
-    // mpv 的 VO 若在这 120ms 里把自己抬到带顶，这里同样把它压回覆盖层之下。
-    overlay_raise_screen_saver_level(overlay, "fullscreen-reassert");
 }
 
 /// [lc-1947] mpv `fullscreen` 属性变化的窗口级处理（由 mpv.rs 的属性观察线程调用）。
@@ -1467,19 +1699,12 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
         // [lc-1960] 不再替 mpv 摆全屏矩形：`fullscreen` 属性下发后 mpv 的 VO 自己把
         // 窗口放到显示器矩形（lc-1947 实测 0:0:3840:2160），我们从外面抢写就是随后
         // 与它拉锯（-11,-11 3851x2171）的根源。锚窗几何 = mpv 单一写者（Polaris 同款）。
+        // [lc-1988] 覆盖层只做几何跟随（move_window，无 TOPMOST / 无带内插顶）：
+        // 覆盖层是锚窗的 owned window（lc-1924：GWLP_HWNDPARENT=mpv），「owned 恒在
+        // owner 之上」是系统保证 —— Polaris 实锤同款（覆盖层非强推 TOPMOST，层级靠
+        // 所有权；宿主对全屏几何零干预，仅跟随）。旧序 move → topmost → 屏保级抬顶
+        // 4~5 次 SetWindowPos 的中间态帧正是「进全屏闪烁/卡顿」我们侧的来源。
         move_window(overlay, mx, my, mw, mh);
-        // [lc-1981] 锚窗置顶只做**缺位补拨**（一次性）：对已 TOPMOST 的锚窗再调
-        // HWND_TOPMOST 会把它重插到带顶、盖到覆盖层之上 —— 旧逐拍强推正是 30Hz 拉锯
-        // 与「覆盖层被埋」的元凶。此后锚窗置顶交给 mpv 自己（下方 fntv-ontop-fs 抑制）。
-        if mpv != 0 && !is_window_topmost(mpv as _) {
-            set_window_topmost(mpv, true, "fullscreen-enter");
-        }
-        set_window_topmost(overlay, true, "fullscreen-enter");
-        // [lc-1964] 屏保级抬顶：覆盖层强制到 TOPMOST 带最顶。mpv 的 VO 随后处理全屏
-        // 时会 SetWindowPos 自己（可能把它抬到覆盖层之上）—— 那一步由 33ms 跟随循环
-        // 的相对锚窗断言兜住（最坏 33ms）。旧 `InsertAfter=锚窗` 方向反了（会把覆盖层
-        // 压到锚窗之下，全屏按钮全失效的真根因），见模块头 [lc-1964]。
-        overlay_raise_screen_saver_level(overlay, "fullscreen-enter");
         // [lc-1981] 全屏期 ontop 抑制：`ontop_mode.lua` 收到 `fntv-ontop-fs on` 后
         // 锁定 `ontop=true` 并停用「暂停置底」联动 —— lua 不再摘锚窗 TOPMOST，
         // 拉锯从源头消失（脚本本地改，不入库）。
@@ -1544,12 +1769,6 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
                         }
                     }
                 }
-                FullscreenRestoreStep::Topmost(on) => {
-                    set_window_topmost(mpv, on, "fullscreen-exit");
-                    set_window_topmost(overlay, on, "fullscreen-exit");
-                    // [lc-1952] 退出后覆盖层同样要压回锚窗正上方（带内显式定位）
-                    place_overlay_above_anchor(overlay, mpv, "fullscreen-exit");
-                }
             }
         }
         PLAYER_MAXIMIZED.store(zoomed, Ordering::SeqCst);
@@ -1557,6 +1776,7 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
             "[lc-1947] 退出全屏：恢复 {w}x{h}@{x},{y} maximized={zoomed} ontop={ontop}"
         ));
         // mpv 的还原可能在其 VO 线程稍后执行（会把窗口拉回它自己的矩形）：再断言一次
+        // [lc-1988] 复断言只修几何 —— TOPMOST/InsertAfter 全部退役（所有权保证层级）。
         let app2 = app.clone();
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(90)).await;
@@ -1572,11 +1792,6 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
                     ShowWindow(mpv as _, SW_MAXIMIZE);
                 }
             }
-            let ontop = PLAYER_ONTOP.load(Ordering::SeqCst);
-            set_window_topmost(mpv, ontop, "fullscreen-exit-reassert");
-            set_window_topmost(overlay, ontop, "fullscreen-exit-reassert");
-            // [lc-1952] mpv 迟到的还原可能把它自己抬到覆盖层之上：带内显式拉回
-            place_overlay_above_anchor(overlay, mpv, "fullscreen-exit-reassert");
         });
     }
 }
@@ -2033,9 +2248,6 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
         // 隐藏态没有任何像素可残影，且拖动中本来也点不到返回键。
         let mut hidden_for_move = false;
         let mut stable_since: Option<std::time::Instant> = None;
-        // [lc-1952] 全屏 z 序自愈的状态沿记录：只在「好 → 坏」翻转时记一条日志，
-        // 避免每拍刷屏。
-        let mut overlay_zorder_was_ok = true;
         while crate::mpvwin::embed_is_active() {
             tokio::time::sleep(std::time::Duration::from_millis(33)).await;
             if !crate::mpvwin::embed_is_active() {
@@ -2052,18 +2264,14 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                 if IsWindow(mh as _) == 0 || IsWindow(ov as _) == 0 {
                     continue;
                 }
-                // [lc-1981] 全屏分支拉锯根治：本分支**只动覆盖层**，锚窗一概不碰。
-                // 旧逻辑（lc-1949/1974）：每拍发现锚窗丢 TOPMOST 就 HWND_TOPMOST 重插
-                // 复位 —— 重插把锚窗放到 TOPMOST 带顶、盖到覆盖层之上；mpv 的
-                // ontop_mode.lua（暂停置底）反复摘带 → 30Hz 拉锯期间覆盖层反复被埋，
-                // 点击全漏给 mpv（用户实测 `[lc-1949] 全屏中锚窗丢失 TOPMOST → 复位`
-                // 每 33ms 一条刷屏 + 控件全失效）。新不变量：锚窗置顶由进全屏的一次性
-                // `fntv-ontop-fs on`（lua 锁 ontop=true）+ mpv 自己维护；这里只断言
-                // 「覆盖层恒在锚窗之上」，不满位才修（见 fullscreen_zorder_action）。
-                // [lc-1964] 窗口模式 z 序断言照旧：违例走修正后的带内 InsertAfter。
-                // lc-1952 的 InsertAfter=锚窗 方向反了（实证：SetWindowPos(B,
-                // insertAfter=A) 把 B 插到 A **正下方**），自愈变成每 33ms 把覆盖层
-                // 压回 mpv 之下 —— 全屏按钮全失效的真根因。
+                // [lc-1988] z 序**零干预**（Polaris 一手实锤定案）：覆盖层是锚窗的
+                // owned window（lc-1924 接线：GWLP_HWNDPARENT = mpv），「owned 恒在
+                // owner 之上」是 Win32 系统保证，mpv 的 VO / ontop_mode.lua 再怎么
+                // SetWindowPos 自己都翻不了这条（他们的全屏正是这么做到永不失效的）。
+                // 旧逐拍战术（lc-1949 每拍强推锚窗 TOPMOST → lc-1964/1974 覆盖层屏保级
+                // 抬顶 / 带内插顶 → lc-1981 相对锚窗断言）全部退役 —— 每拍带内重插/
+                // 摘回带本身就是 30Hz 拉锯与带顶闪跳的土壤。锚窗置顶归 mpv/lua
+                // （fntv-ontop-fs 锁保留）；本循环只剩：穿透位自愈（全屏）+ 几何跟随。
                 let fullscreen_now = PLAYER_FULLSCREEN.load(Ordering::SeqCst);
                 if fullscreen_now {
                     // [lc-1974] 穿透位自愈保留：输入锁下恒为摘除，任何漏网路径在此兜底。
@@ -2076,46 +2284,6 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                             i32::from(ok)
                         ));
                     }
-                    let anchor_top = is_window_topmost(mh as _);
-                    let overlay_top = is_window_topmost(ov as _);
-                    let prev_of_anchor = unsafe { GetWindow(mh as _, GW_HWNDPREV) } as isize;
-                    let action =
-                        fullscreen_zorder_action(anchor_top, overlay_top, prev_of_anchor, ov);
-                    match action {
-                        FullscreenZorderAction::Ok => {}
-                        FullscreenZorderAction::RaiseOverlay => {
-                            if overlay_zorder_was_ok {
-                                crate::libmpv::trace(
-                                    "[lc-1964] 全屏覆盖层失守（不在锚窗上方）→ 屏保级抬顶（NOTOPMOST→TOPMOST，只动覆盖层）",
-                                );
-                            }
-                            overlay_raise_screen_saver_level(ov, "fullscreen-follow");
-                        }
-                        FullscreenZorderAction::InsertOverlayAboveAnchor => {
-                            if overlay_zorder_was_ok {
-                                crate::libmpv::trace(
-                                    "[lc-1964] 全屏覆盖层失守（同带不贴位）→ InsertAfter 拉回锚窗正上方",
-                                );
-                            }
-                            place_overlay_above_anchor(ov, mh, "fullscreen-follow");
-                        }
-                    }
-                    overlay_zorder_was_ok = action == FullscreenZorderAction::Ok;
-                } else {
-                    // 两个窗不同带（ontop 拨动的过渡瞬间）时带内 InsertAfter 无意义，跳过一拍。
-                    let band_consistent =
-                        is_window_topmost(mh as _) == is_window_topmost(ov as _);
-                    let prev_of_anchor = unsafe { GetWindow(mh as _, GW_HWNDPREV) } as isize;
-                    let zorder_ok = band_consistent && overlay_zorder_ok(prev_of_anchor, ov);
-                    if !zorder_ok && band_consistent {
-                        if overlay_zorder_was_ok {
-                            crate::libmpv::trace(
-                                "[lc-1964] 窗口覆盖层失守 → InsertAfter(GW_HWNDPREV) 拉回锚窗正上方",
-                            );
-                        }
-                        place_overlay_above_anchor(ov, mh, "window-follow");
-                    }
-                    overlay_zorder_was_ok = zorder_ok;
                 }
                 let mut m = RECT { left: 0, top: 0, right: 0, bottom: 0 };
                 let mut o = RECT { left: 0, top: 0, right: 0, bottom: 0 };
@@ -2817,6 +2985,96 @@ mod tests {
         assert_eq!(classify_hit(0, overlay, anchor), "none");
     }
 
+    /// [lc-1988] 进程归属归类矩阵（四类全覆盖）+ 双向验证：
+    /// 旧 `classify_hit` 对「我们覆盖层自己的 WebView2 子窗 / NVIDIA 弹窗」都只能给
+    /// `other`（lc-1981 日志定不了案的根因）；`classify_hit_ex` 必须把它们分开。
+    #[test]
+    fn classify_hit_ex_matrix() {
+        let overlay = 0x311isize;
+        let anchor = 0x422isize;
+        let own_pid = 4242u32;
+        // ① 本进程 WebView2 渲染子窗：hit 是子窗、root 是覆盖层窗（本进程）
+        let wv_child = 0x1B0F32isize;
+        assert_eq!(
+            classify_hit_ex(wv_child, overlay, anchor, overlay, own_pid, own_pid, "anibox.exe"),
+            "overlay-child",
+            "根窗属于本进程 = 点击到达覆盖层自己的 WebView2"
+        );
+        // ② NVIDIA 覆盖层弹窗：第三方 topmost，root 进程名含 nvidia
+        assert_eq!(
+            classify_hit_ex(0x51D, overlay, anchor, 0x51D, 777, own_pid, "NVIDIA Overlay.exe"),
+            "nvidia-overlay"
+        );
+        assert_eq!(
+            classify_hit_ex(0x51D, overlay, anchor, 0x51D, 777, own_pid, "nvidia app.exe"),
+            "nvidia-overlay",
+            "大小写不敏感 + 关键词命中"
+        );
+        // ③ mpv 锚窗本体 / mpv 子窗
+        assert_eq!(
+            classify_hit_ex(anchor, overlay, anchor, anchor, 999, own_pid, "anibox.exe"),
+            "mpv-anchor"
+        );
+        assert_eq!(
+            classify_hit_ex(0x61E, overlay, anchor, anchor, 999, own_pid, "anibox.exe"),
+            "mpv-anchor",
+            "命中窗的根就是锚窗也归 mpv-anchor"
+        );
+        assert_eq!(
+            classify_hit_ex(0x61F, overlay, anchor, 0x61F, 888, own_pid, "mpv.exe"),
+            "mpv-anchor",
+            "根窗进程是 mpv"
+        );
+        // ④ 无关第三方
+        assert_eq!(
+            classify_hit_ex(0x71F, overlay, anchor, 0x71F, 666, own_pid, "chrome.exe"),
+            "other"
+        );
+        // 顺序边界：本进程优先于 exe 关键词（自己进程里就算有 mpv 字样也不误判）
+        assert_eq!(
+            classify_hit_ex(wv_child, overlay, anchor, overlay, own_pid, own_pid, "mpv-viewer.exe"),
+            "overlay-child"
+        );
+        // 命中即覆盖层 / 锚窗本体：不看归属
+        assert_eq!(classify_hit_ex(overlay, overlay, anchor, overlay, own_pid, own_pid, "anibox.exe"), "overlay");
+        assert_eq!(classify_hit_ex(0, overlay, anchor, 0, 0, own_pid, ""), "none");
+        // ── 双向：同样的输入，旧逻辑全部塌成 other（定不了案）──
+        assert_eq!(classify_hit(wv_child, overlay, anchor), "other");
+        assert_eq!(classify_hit(0x51D, overlay, anchor), "other");
+        assert_ne!(
+            classify_hit(wv_child, overlay, anchor),
+            classify_hit_ex(wv_child, overlay, anchor, overlay, own_pid, own_pid, "anibox.exe"),
+            "新逻辑必须能分辨旧逻辑分不清的 overlay-child"
+        );
+        // exe_is_mpv 边界
+        assert!(exe_is_mpv("mpv.exe"));
+        assert!(exe_is_mpv("MPV.exe"));
+        assert!(exe_is_mpv("fntv-mpv.exe"));
+        assert!(!exe_is_mpv("anibox.exe"));
+        assert!(!exe_is_mpv(""));
+    }
+
+    /// [lc-1988] 纯逻辑：全屏 reassert 几何门 + 双向验证（旧逻辑无条件动 = 稳态也发
+    /// SetWindowPos；新逻辑矩形已齐时必须零操作）。
+    #[test]
+    fn fullscreen_reassert_geometry_gate() {
+        // 正坐标：已在显示器矩形上 = 不动
+        assert!(fullscreen_rect_on_monitor((0, 0, 3840, 2160), 0, 0, 3840, 2160));
+        // 负坐标多屏
+        assert!(fullscreen_rect_on_monitor((-1920, 0, 0, 2160), -1920, 0, 1920, 2160));
+        // 偏了 1px 也要修
+        assert!(!fullscreen_rect_on_monitor((0, 0, 3840, 2159), 0, 0, 3840, 2160));
+        assert!(!fullscreen_rect_on_monitor((-11, -11, 3829, 2149), 0, 0, 3840, 2160),
+            "mpv 记忆矩形带偏的实测案例");
+        // 双向：对已就位矩形，旧 ensure_fullscreen_geometry 无条件 move（恒「动」），
+        // 新门必须判「已就位 = 不动」—— 同一输入，两个时代结论相反。
+        let placed = (0, 0, 3840, 2160);
+        assert!(fullscreen_rect_on_monitor(placed, 0, 0, 3840, 2160), "新逻辑：就位 → 跳过");
+        let old_would_move_anyway = true; // 旧逻辑无条件 move_window
+        assert!(old_would_move_anyway && fullscreen_rect_on_monitor(placed, 0, 0, 3840, 2160),
+            "旧恒动 vs 新按需：就位时新逻辑省掉一次 SetWindowPos");
+    }
+
     /// [lc-1981] 纯逻辑：快照频率控制 —— 状态变化即打；无变化 2s 心跳；1s 内不打心跳。
     #[test]
     fn snapshot_rate_limit() {
@@ -2828,7 +3086,8 @@ mod tests {
     }
 
 
-    /// [lc-1947] 退出全屏的恢复步骤：先清样式 → 回到进入前矩形 → 按需最大化 → 恢复置顶意图。
+    /// [lc-1947] 退出全屏的恢复步骤：先清样式 → 回到进入前矩形 → 按需最大化。
+    /// [lc-1988] Topmost 步骤退役（z 序零干预，置顶交还 mpv/lua + 覆盖层基样式）。
     #[test]
     fn fullscreen_restore_order() {
         let steps = fullscreen_restore_steps((660, 292, 2520, 1575), false, true);
@@ -2837,7 +3096,6 @@ mod tests {
             vec![
                 FullscreenRestoreStep::Restore,
                 FullscreenRestoreStep::MoveTo(660, 292, 2520, 1575),
-                FullscreenRestoreStep::Topmost(true),
             ]
         );
         let steps = fullscreen_restore_steps((0, 0, 3840, 2160), true, false);
@@ -2847,7 +3105,6 @@ mod tests {
                 FullscreenRestoreStep::Restore,
                 FullscreenRestoreStep::MoveTo(0, 0, 3840, 2160),
                 FullscreenRestoreStep::Maximize,
-                FullscreenRestoreStep::Topmost(false),
             ]
         );
         // 最大化必须排在 MoveTo 之后：SW_MAXIMIZE 会让系统用工作区几何覆盖还原矩形
@@ -2860,6 +3117,34 @@ mod tests {
             .position(|s| matches!(s, FullscreenRestoreStep::MoveTo(..)))
             .unwrap();
         assert!(mp < mi, "MoveTo 先于 Maximize");
+    }
+
+    /// [lc-1988] **不变量断言：全屏路径不得对锚窗/覆盖层写 TOPMOST**（所有权模型，
+    /// Polaris 实锤同款）。退出恢复步骤只允许几何类（Restore/MoveTo/Maximize）——
+    /// `FullscreenRestoreStep::Topmost` 变体已删除，编译期即挡住「恢复 TOPMOST 战术」
+    /// 的回潮；进全屏（on_player_fullscreen_changed 只 move_window 覆盖层）与跟随循环
+    /// （z 序分支已删）由执行路径评审保证。对旧逻辑必 FAIL：lc-1947~1981 的步骤以
+    /// `Topmost(ontop)` 收尾（写过 TOPMOST）——任何回潮都要先重新引入变体，本测试
+    /// 与编译器会一起拦下。
+    #[test]
+    fn fullscreen_paths_must_not_write_topmost() {
+        for zoomed in [false, true] {
+            for ontop in [false, true] {
+                let steps = fullscreen_restore_steps((0, 0, 3840, 2160), zoomed, ontop);
+                assert!(
+                    steps.iter().all(|s| matches!(
+                        s,
+                        FullscreenRestoreStep::Restore
+                            | FullscreenRestoreStep::MoveTo(..)
+                            | FullscreenRestoreStep::Maximize
+                    )),
+                    "退出全屏只允许几何步骤（zoomed={zoomed} ontop={ontop}）"
+                );
+                // ontop 参数已不消费：置顶交还 mpv/lua（fntv-ontop-fs off 恢复三态联动），
+                // 覆盖层保持接线时的一次性 TOPMOST 基样式 —— 退出路径零 z 序写入。
+                let _ = ontop;
+            }
+        }
     }
 
     /// [lc-1948] 跟随循环决策矩阵：非全屏维持抄写；全屏一律断言/保持，绝不抄写。

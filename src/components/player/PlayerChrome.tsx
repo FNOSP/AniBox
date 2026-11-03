@@ -250,7 +250,7 @@ export function PlayerChrome() {
             type="button"
             data-chrome-hit
             className="pc-round"
-            title="返回"
+            data-tip="返回"
             aria-label="返回"
             onClick={() => cmd("player_embed_leave", { stop: true })}
           >
@@ -264,7 +264,7 @@ export function PlayerChrome() {
             <button
               type="button"
               className={`pc-round${st.ontop ? " pc-active" : ""}`}
-              title={st.ontop ? "取消置顶" : "置顶"}
+              data-tip={st.ontop ? "取消置顶" : "置顶"}
               onClick={() => cmd("mpv_set_ontop", { on: !st.ontop })}
             >
               <Pin size={14} />
@@ -272,7 +272,7 @@ export function PlayerChrome() {
             <button
               type="button"
               className="pc-round"
-              title="最小化"
+              data-tip="最小化"
               onClick={() => cmd("mpv_window_minimize")}
             >
               <Minus size={14} />
@@ -280,7 +280,7 @@ export function PlayerChrome() {
             <button
               type="button"
               className="pc-round"
-              title="最大化"
+              data-tip="最大化"
               onClick={() => cmd("mpv_toggle_maximize")}
             >
               <Square size={12} />
@@ -288,7 +288,7 @@ export function PlayerChrome() {
             <button
               type="button"
               className="pc-round pc-close"
-              title="关闭"
+              data-tip="关闭"
               onClick={() => cmd("player_embed_leave", { stop: true })}
             >
               <X size={14} />
@@ -321,7 +321,7 @@ export function PlayerChrome() {
               <button
                 type="button"
                 className="pc-btn pc-icon"
-                title="选集"
+                data-tip="选集"
                 onClick={() => cmd("mpv_script_binding", { binding: "uosc/playlist" })}
               >
                 <ListVideo size={17} />
@@ -329,7 +329,7 @@ export function PlayerChrome() {
               <button
                 type="button"
                 className="pc-btn pc-icon"
-                title="字幕"
+                data-tip="字幕"
                 onClick={() => cmd("mpv_script_binding", { binding: "uosc/subtitles" })}
               >
                 <Subtitles size={17} />
@@ -337,7 +337,7 @@ export function PlayerChrome() {
               <button
                 type="button"
                 className="pc-btn pc-icon"
-                title="音频"
+                data-tip="音频"
                 onClick={() => cmd("mpv_script_binding", { binding: "uosc/audio" })}
               >
                 <AudioLines size={17} />
@@ -350,7 +350,7 @@ export function PlayerChrome() {
               <button
                 type="button"
                 className="pc-btn pc-text"
-                title="倍速（点一次 +0.25×，到 3× 归 1×）"
+                data-tip="倍速（点一次 +0.25×，到 3× 归 1×）"
                 onClick={() =>
                   cmd("mpv_set_rate", {
                     rate: speed >= 3 ? 1 : Math.round((speed + 0.25) * 100) / 100,
@@ -362,7 +362,7 @@ export function PlayerChrome() {
               <button
                 type="button"
                 className="pc-btn pc-play"
-                title={st.paused ? "播放" : "暂停"}
+                data-tip={st.paused ? "播放" : "暂停"}
                 onClick={() => cmd("mpv_toggle_pause")}
               >
                 {st.paused ? <Play size={26} /> : <Pause size={26} />}
@@ -370,7 +370,7 @@ export function PlayerChrome() {
               <button
                 type="button"
                 className="pc-btn pc-icon"
-                title="下一集"
+                data-tip="下一集"
                 onClick={() => cmd("mpv_next_episode")}
               >
                 <SkipForward size={17} />
@@ -384,7 +384,7 @@ export function PlayerChrome() {
                 <button
                   type="button"
                   className="pc-btn pc-icon"
-                  title={vol > 0 ? "静音" : "取消静音"}
+                  data-tip={vol > 0 ? "静音" : "取消静音"}
                   onClick={() => cmd("mpv_set_volume", { volume: vol > 0 ? 0 : 100 })}
                 >
                   {volIcon}
@@ -395,14 +395,14 @@ export function PlayerChrome() {
                   min={0}
                   max={100}
                   value={Math.round(vol)}
-                  title={`音量 ${Math.round(vol)}`}
+                  data-tip={`音量 ${Math.round(vol)}`}
                   onChange={(e) => cmd("mpv_set_volume", { volume: Number(e.target.value) })}
                 />
               </div>
               <button
                 type="button"
                 className="pc-btn pc-icon"
-                title="弹幕"
+                data-tip="弹幕"
                 onClick={() =>
                   cmd("mpv_script_message", {
                     name: "uosc_danmaku",
@@ -415,7 +415,7 @@ export function PlayerChrome() {
               <button
                 type="button"
                 className="pc-btn pc-icon"
-                title="片头片尾"
+                data-tip="片头片尾"
                 onClick={() => cmd("mpv_script_binding", { binding: "uosc/chapters" })}
               >
                 <ListOrdered size={17} />
@@ -423,7 +423,7 @@ export function PlayerChrome() {
               <button
                 type="button"
                 className="pc-btn pc-icon"
-                title="版本"
+                data-tip="版本"
                 onClick={() => cmd("mpv_script_binding", { binding: "uosc/video" })}
               >
                 <Layers size={17} />
@@ -431,7 +431,7 @@ export function PlayerChrome() {
               <button
                 type="button"
                 className="pc-btn pc-icon"
-                title="设置"
+                data-tip="设置"
                 onClick={() => cmd("mpv_script_binding", { binding: "uosc/menu-blurred" })}
               >
                 <Settings size={17} />
@@ -439,7 +439,7 @@ export function PlayerChrome() {
               <button
                 type="button"
                 className="pc-btn pc-icon"
-                title={st.fullscreen ? "退出全屏" : "全屏"}
+                data-tip={st.fullscreen ? "退出全屏" : "全屏"}
                 onClick={() => cmd("mpv_set_ui_fullscreen", { on: !st.fullscreen })}
               >
                 <Maximize2 size={17} />

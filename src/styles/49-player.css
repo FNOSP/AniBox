@@ -245,6 +245,7 @@
   text-shadow: 0 1px 2px rgba(0, 0, 0, .8);
 }
 .pc-round {
+  position: relative;
   width: 28px;
   height: 28px;
   padding: 0;
@@ -403,6 +404,7 @@
   gap: 8px;
 }
 .pc-btn {
+  position: relative;
   height: 28px;
   padding: 0 9px;
   border: 0;
@@ -471,6 +473,40 @@
   letter-spacing: -.2px;
 }
 
+/* 悬停提示：白底 + 细黑边 + 黑字、无圆角（用户指定的最终形态）。
+   顶栏向下弹；底栏贴近屏幕下沿 → 向上弹。 */
+.pc-round[data-tip]::after,
+.pc-btn[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  padding: 3px 7px;
+  background: #fff;
+  color: #111;
+  border: 1px solid #181818;
+  border-radius: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(-2px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  z-index: 12;
+}
+.pc-round[data-tip]::after {
+  top: calc(100% + 8px);
+}
+.pc-btn[data-tip]::after {
+  bottom: calc(100% + 8px);
+}
+.pc-round[data-tip]:hover::after,
+.pc-btn[data-tip]:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 /* 音量：悬停展开滑条（Polaris 音量药丸的简化版） */
 .pc-vol {
   display: flex;
@@ -537,7 +573,9 @@
   .pc-track,
   .pc-knob,
   .pc-vol-slider,
-  .pc-opening {
+  .pc-opening,
+  .pc-round[data-tip]::after,
+  .pc-btn[data-tip]::after {
     transition: none;
   }
   .pc-opening .player-spin {

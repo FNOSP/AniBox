@@ -22,32 +22,54 @@
   overflow: hidden;
 }
 
-/* [lc-1951] 内嵌标签页形态：随页面流布局，字段区自身滚动 */
+/* [lc-1967/1968] 内嵌设置页：限宽居中 + 固定双栏栅格，卡片同排等高，长控件独占整行 */
 .javset.embed {
   width: 100%;
+  max-width: 1100px;
   height: auto;
   max-height: calc(100vh - 200px);
-  margin-bottom: 16px;
+  margin: 0 auto 16px;
 }
-
-/* [lc-1967] 内嵌设置字段双栏化：字段卡自适应两列，长控件独占整行 */
 .javset.embed .javset-fields {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  align-items: start;
 }
-.javset.embed .javset-fields > div { min-width: 0; }
+.javset.embed .javset-fields > div { min-width: 0; display: flex; flex-direction: column; }
 .javset.embed .javset-item,
 .javset.embed .javset-ro { margin-bottom: 0; }
-.javset.embed .javset-fields > div:has(textarea),
-.javset.embed .javset-fields > div:has(.javset-site),
-.javset.embed .javset-fields > div:has(> .javset-ro),
-.javset.embed .javset-fields > div:has(.javset-sechead) {
+/* 分节头是栅格直接子元素，必须整行（lc-1968 修正：此前 :has 漏罩导致占格错位） */
+.javset.embed .javset-fields > .javset-sechead { grid-column: 1 / -1; margin: 2px 2px 4px; }
+/* 整行控件 */
+.javset.embed .javset-fields > div:has(textarea) { grid-column: 1 / -1; }
+/* 站点/飞牛库/本地目录行：外层字段自成内栅格，行两列排布；说明卡整行 */
+.javset.embed .javset-fields > div:has(.javset-site) {
   grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 8px;
 }
-/* 半宽卡里的开关行收紧行距，避免两栏高低差过大 */
-.javset.embed .javset-item.boolrow .hint { margin-top: 4px; }
+.javset.embed .javset-fields > div:has(.javset-site) > .javset-ro { grid-column: 1 / -1; }
+.javset.embed .javset-site { margin-bottom: 0; min-height: 42px; padding: 7px 12px; align-items: center; }
+.javset.embed .javset-site .sr-name { min-width: 0; flex: 1 1 auto; }
+.javset.embed .javset-site .cat { margin-left: auto; }
+/* 开关行：开关+标签一行，说明落到下一行，不再窄卡竖排 */
+.javset.embed .javset-item.boolrow { flex-wrap: wrap; row-gap: 6px; }
+.javset.embed .javset-item.boolrow > label { display: flex; align-items: center; gap: 10px; width: 100%; }
+.javset.embed .javset-item.boolrow > label .bl { white-space: nowrap; }
+.javset.embed .javset-item.boolrow > span { flex: 1 1 100%; }
+.javset.embed .javset-item.boolrow .hint { margin-top: 0; }
+/* 裸按钮字段（立即跑一轮）：撑满卡片与邻卡等高 */
+.javset.embed .javset-fields > div:has(> .javset-btn) { display: flex; }
+.javset.embed .javset-fields > div > .javset-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+@media (max-width: 880px) {
+  .javset.embed .javset-fields { grid-template-columns: minmax(0, 1fr); }
+}
 
 /* ── 顶部横排分节导航（原版是左侧竖排） ── */
 .javset-tabs {

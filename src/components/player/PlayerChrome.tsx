@@ -18,7 +18,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
-  ArrowLeft,
   AudioLines,
   Layers,
   ListOrdered,
@@ -244,18 +243,8 @@ export function PlayerChrome() {
       <div className="pc-layer">
         <div className="pc-scrim" aria-hidden="true" />
 
-        {/* ── 顶栏：返回 + 片名；右上窗控 ── */}
+        {/* ── 顶栏：左片名；右上窗控（[lc-1941] 返回键已移除，退出统一走右上关闭）── */}
         <header className="pc-top">
-          <button
-            type="button"
-            data-chrome-hit
-            className="pc-round"
-            data-tip="返回"
-            aria-label="返回"
-            onClick={() => cmd("player_embed_leave", { stop: true })}
-          >
-            <ArrowLeft size={14} />
-          </button>
           <div className="pc-title-wrap">
             <span className="pc-title">{title || "正在打开"}</span>
             {epLabel && <span className="pc-ep">{epLabel}</span>}

@@ -197,7 +197,9 @@
   pointer-events: none;
 }
 
-/* ── 顶栏：返回 + 片名；右上窗控 ── */
+/* ── 顶栏：左片名；右上窗控 ──
+   [lc-1941] 左上返回键已删除：片名直接占左起点，横向内距与下两行（进度条 24 / 控件栏 24）
+   对齐，右窗控也随之收到 24px，整块顶栏与底部左右缘齐平，不再留按钮空洞。 */
 .pc-top {
   position: absolute;
   top: 0;
@@ -205,8 +207,7 @@
   right: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 14px 14px 0 16px;
+  padding: 14px 24px 0;
   pointer-events: none;
 }
 .pc-top-right {

@@ -204,6 +204,15 @@ pub fn take_saved_script_opts() -> Option<String> {
 pub fn spawn_overlay_follow(app: tauri::AppHandle) {
     use tauri::Manager;
     tauri::async_runtime::spawn(async move {
+        // [lc-1923] 残影修复：覆盖层是**不透明**窗（WebView2 不透明渲染 + 控制层纯黑底），
+        // 拖动 mpv（原生拖窗，DWM 直接搬运视频窗）时它最多慢 1~2 帧 —— 那一两帧里
+        // 旧的「黑块 + 旧控件」就留在原地，用户看到的就是「拖动后有原来的界面残留」。
+        // Polaris 没有这个问题的根因是它的控件画在 mpv 里（osc-cinema Lua/ASS），覆盖层
+        // 只是透明面板；我们保留 WebView 覆盖层，改为**移动期间直接隐藏它**：
+        // 一旦检测到 mpv 矩形与覆盖层不一致就 SW_HIDE，稳定 220ms 后再 SW_SHOWNOACTIVATE。
+        // 隐藏态没有任何像素可残影，且拖动中本来也点不到返回键。
+        let mut hidden_for_move = false;
+        let mut stable_since: Option<std::time::Instant> = None;
         while crate::mpvwin::embed_is_active() {
             tokio::time::sleep(std::time::Duration::from_millis(33)).await;
             if !crate::mpvwin::embed_is_active() {
@@ -225,19 +234,46 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                 if GetWindowRect(mh as _, &mut m) == 0 || GetWindowRect(ov as _, &mut o) == 0 {
                     continue;
                 }
-                if m.left == o.left && m.top == o.top && m.right == o.right && m.bottom == o.bottom {
+                // 位置/尺寸对齐 + z 序插到 mpv 正后方（InsertAfter=mpv）
+                let same = m.left == o.left
+                    && m.top == o.top
+                    && m.right == o.right
+                    && m.bottom == o.bottom;
+                if !same {
+                    // 位移超过 2px 才算「在动」（避免 DPI 取整抖动导致反复隐藏/显示）
+                    let moving = (m.left - o.left).abs() > 2
+                        || (m.top - o.top).abs() > 2
+                        || (m.right - o.right).abs() > 2
+                        || (m.bottom - o.bottom).abs() > 2;
+                    if moving && !hidden_for_move {
+                        ShowWindow(ov as _, SW_HIDE);
+                        hidden_for_move = true;
+                    }
+                    stable_since = None;
+                    SetWindowPos(
+                        ov as _,
+                        mh as _,
+                        m.left,
+                        m.top,
+                        m.right - m.left,
+                        m.bottom - m.top,
+                        SWP_NOACTIVATE,
+                    );
                     continue;
                 }
-                // 位置/尺寸对齐 + z 序插到 mpv 正后方（InsertAfter=mpv）
-                SetWindowPos(
-                    ov as _,
-                    mh as _,
-                    m.left,
-                    m.top,
-                    m.right - m.left,
-                    m.bottom - m.top,
-                    SWP_NOACTIVATE,
-                );
+                // 已对齐：若因移动被隐藏，稳定 220ms 后恢复显示（拖完即回显控件）
+                if hidden_for_move {
+                    let now = std::time::Instant::now();
+                    match stable_since {
+                        Some(t) if now.duration_since(t).as_millis() >= 220 => {
+                            ShowWindow(ov as _, SW_SHOWNOACTIVATE);
+                            hidden_for_move = false;
+                            stable_since = None;
+                        }
+                        Some(_) => {}
+                        None => stable_since = Some(now),
+                    }
+                }
             }
         }
     });

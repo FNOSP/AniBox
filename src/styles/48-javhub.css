@@ -534,6 +534,56 @@
   .jvh-card .jvh-poster { transition: none; }
 }
 
+/* ═══════════ [lc-1975] 动效：视图切换入场 / 卡片错峰 / 封面缩放 / 按钮按压 ═══════════ */
+.jvh-view { animation: jvh-view-in 0.25s ease-out both; }
+@keyframes jvh-view-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+.jvh-view .jvh-grid .jvh-card { animation: jvh-card-in 0.28s ease-out both; }
+.jvh-view .jvh-grid .jvh-card:nth-child(2) { animation-delay: 0.03s; }
+.jvh-view .jvh-grid .jvh-card:nth-child(3) { animation-delay: 0.06s; }
+.jvh-view .jvh-grid .jvh-card:nth-child(4) { animation-delay: 0.09s; }
+.jvh-view .jvh-grid .jvh-card:nth-child(5) { animation-delay: 0.12s; }
+.jvh-view .jvh-grid .jvh-card:nth-child(6) { animation-delay: 0.15s; }
+.jvh-view .jvh-grid .jvh-card:nth-child(n + 7) { animation-delay: 0.18s; }
+@keyframes jvh-card-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+}
+
+/* 封面悬停微缩放（贴齐概览卡片的轻盈手感） */
+.jvh-card .jvh-poster img { transition: transform 0.2s ease-out; }
+.jvh-card:hover .jvh-poster img { transform: scale(1.05); }
+
+/* 按钮按压反馈：c115-tab/mini 的 transition 已含 transform，直接加 active */
+.jvh-page .c115-tab:active,
+.jvh-page .c115-mini:active { transform: scale(0.96); }
+.jvh-page .libf-open {
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.jvh-page .libf-open:active { transform: scale(0.96); }
+.jvh-page .javset-btn { transition: transform 0.12s ease, background 0.15s ease, opacity 0.15s ease; }
+.jvh-page .javset-btn:active { transform: scale(0.96); }
+
+/* 信息卡悬停轻抬（概览统计/工具卡） */
+.jvh-page .jvh-stat,
+.jvh-page .jvh-tool { transition: transform 0.18s ease-out, box-shadow 0.18s ease-out; }
+.jvh-page .jvh-tool:hover { transform: translateY(-2px); box-shadow: var(--shadow-card); }
+
+@media (prefers-reduced-motion: reduce) {
+  .jvh-view,
+  .jvh-view .jvh-grid .jvh-card { animation: none; }
+  .jvh-card .jvh-poster img,
+  .jvh-page .libf-open,
+  .jvh-page .javset-btn,
+  .jvh-page .jvh-stat,
+  .jvh-page .jvh-tool { transition: none; }
+  .jvh-page .libf-open:active,
+  .jvh-page .c115-tab:active,
+  .jvh-page .c115-mini:active,
+  .jvh-page .javset-btn:active { transform: none; }
+}
+
 /* ═══════════ 详情抽屉（对照 JAVCloudHub entry 抽屉） ═══════════ */
 .jvd-scrim {
   position: fixed;

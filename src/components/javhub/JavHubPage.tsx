@@ -392,7 +392,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
     );
 
   return (
-    <main className="content">
+    <main className="content jvh-page">
       {/* 头部与媒体库页同款：圆返回 + 标题 + 计数 */}
       <div className="page-head">
         <button className="back" onClick={onBack}>‹</button>
@@ -429,6 +429,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
         </button>
       </div>
 
+      <div key={view} className="jvh-view">
       {err && <p className="c115-err">{err}</p>}
       {note && <p className="c115-dim" style={{ margin: "4px 0 0" }}>{note}</p>}
 
@@ -566,6 +567,8 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
       )}
 
       {view === "settings" && <JavSettingsPanel onSaved={() => void load()} />}
+      </div>
+
       {detail && (
         <JavDetailDrawer
           provider={detailProvider || active}

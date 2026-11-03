@@ -89,7 +89,7 @@ export function JavSettingsPanel({ onSaved }: { onSaved?: () => void }) {
   }, [loadFnos]);
 
   const addLocalDir = async () => {
-    const picked = await openDirDialog({ multiple: false, title: "选择本地视频文件夹" });
+    const picked = await openDirDialog({ directory: true, multiple: false, title: "选择本地视频文件夹" });
     if (typeof picked !== "string" || !picked.trim()) return;
     const dir = picked.trim();
     setS((prev) => {

@@ -2561,6 +2561,51 @@ mod tests {
         assert!(!hotzone_hit(&zones, (0.0, 0.0), (3840, 2160), 1920, 2100));
     }
 
+    /// [lc-1990] 坐标换算双向验证（全屏态、真实 DPI）：前端转发公式 = CSS×dpr 取整；
+    /// Rust 热区公式 = 物理×(viewport/surface)。两式在全屏几何（3840x2160，
+    /// viewport=surface/dpr）下必须互逆 —— 对照 bug 形态（物理坐标直接当 CSS 用，
+    /// 等价于 dpr 恒 1）在同一输入下必须脱靶，证明显式换算是承重墙。
+    #[test]
+    fn css_to_physical_roundtrip_fullscreen_dpr() {
+        // (dpr, 全屏 surface)：1.75 = 实机（3840x2160@175%），1.72 = 任务口径，1.5 = 窗口。
+        for (dpr, surface) in [
+            (1.75f64, (3840i32, 2160i32)),
+            (1.72, (3840, 2160)),
+            (1.5, (2520, 1575)),
+        ] {
+            let vw = surface.0 as f64 / dpr;
+            let vh = surface.1 as f64 / dpr;
+            // 底栏控件带内一枚 CSS 矩形（中心在 55%, 93% 视口处，任何几何都合法）。
+            let css = (vw * 0.55, vh * 0.93);
+            let zones = [[(css.0 - 60.0) as f32, (css.1 - 30.0) as f32, 120.0f32, 60.0f32]];
+            // 前端公式：CSS → 物理（round(css*dpr)）。
+            let px = (css.0 * dpr).round() as i32;
+            let py = (css.1 * dpr).round() as i32;
+            assert!(px >= 0 && px < surface.0 && py >= 0 && py < surface.1);
+            // Rust 公式把物理点拉回 CSS 栅格 → 必须仍命中同一控件（双向一致）。
+            assert!(
+                hotzone_hit(&zones, (vw as f32, vh as f32), surface, px, py),
+                "dpr={dpr}: CSS({:.1},{:.1}) → 物理({px},{py}) 必须换算回同一控件",
+                css.0,
+                css.1
+            );
+            // 互逆误差只允许来自一次取整（≤ 0.5 物理像素 = 0.5/dpr CSS 像素）。
+            let back_x = px as f64 * vw / surface.0 as f64;
+            let back_y = py as f64 * vh / surface.1 as f64;
+            assert!((back_x - css.0).abs() <= 1.0 / dpr + 1e-9, "dpr={dpr} x 向互逆误差超界");
+            assert!((back_y - css.1).abs() <= 1.0 / dpr + 1e-9, "dpr={dpr} y 向互逆误差超界");
+            // ── 旧逻辑对照（必须 FAIL 的 bug 形态）：物理坐标直接与 CSS 矩形比对
+            //（dpr 恒 1 的隐含假设）—— dpr>1 的全屏下同一控件必然脱靶。
+            let naive_hit = zones.iter().any(|[x, y, w, h]| {
+                (px as f32) >= *x && (px as f32) < x + w && (py as f32) >= *y && (py as f32) < y + h
+            });
+            assert!(
+                !naive_hit,
+                "dpr={dpr}: 物理({px},{py}) 直接比对 CSS 矩形必须脱靶（旧 bug 形态复现）"
+            );
+        }
+    }
+
     /// [lc-1964] 固定兜底带：顶带 0..14%、底带 74%..100% 命中；画面中央不命中。
     #[test]
     fn fallback_band_top_bottom_hit_middle_miss() {

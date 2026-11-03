@@ -829,6 +829,32 @@ export function PlayerChrome() {
       if (el && !el.isConnected) return true;
       return !!(el && el.closest("[data-chrome-hit]"));
     };
+    /* [lc-1990] 几何兜底用：光标 CSS 点是否落在任一「有效可见」控件的矩形内。
+     * 可见判定与热区上报同一套规则（pointer-events 沿祖先链为 none = 隐藏态控件，
+     * 不参与兜底 —— 隐藏控件带内的点击必须照旧转发 mpv，不能被兜底吞掉）。 */
+    const inVisibleChromeRect = (x: number, y: number) => {
+      const nodes = document.querySelectorAll<HTMLElement>("[data-chrome-hit]");
+      for (let i = 0; i < nodes.length; i++) {
+        const el = nodes[i];
+        try {
+          let hidden = false;
+          let anc: HTMLElement | null = el;
+          while (anc) {
+            if (getComputedStyle(anc).pointerEvents === "none") {
+              hidden = true;
+              break;
+            }
+            anc = anc.parentElement;
+          }
+          if (hidden) continue;
+          const r = el.getBoundingClientRect();
+          if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return true;
+        } catch {
+          /* 单个节点异常不拖垮整次判定 */
+        }
+      }
+      return false;
+    };
     const mkFlags = (e: MouseEvent) => {
       // MK_*：0x1 左键 / 0x2 右键 / 0x4 Shift / 0x8 Ctrl / 0x10 中键
       let f = 0;
@@ -865,11 +891,20 @@ export function PlayerChrome() {
         )} btn=${e.button} x=${Math.round(e.clientX)} y=${Math.round(e.clientY)} dpr=${dpr()}`,
       }).catch(() => {});
     };
+    /* [lc-1990] CSS → mpv 客户区物理像素：唯一、显式的换算点。dpr() 就是 WebView 的
+     * 真实 CSS↔物理比（实机对账 lc-1990：clientX*dpr 与 Rust fs-snap 光标物理坐标
+     * 逐像素一致，dpr=1.75/3840x2160 与 1.72 全部成立）——分流判定（overChrome /
+     * elementFromPoint / 几何兜底）全程留在 CSS 域，只有转发 mpv 这一步换物理。 */
+    const cssToMpvPhysical = (e: MouseEvent) => ({
+      x: Math.round(e.clientX * dpr()),
+      y: Math.round(e.clientY * dpr()),
+    });
     const send = (kind: string, e: MouseEvent, delta = 0) => {
+      const pt = cssToMpvPhysical(e);
       void invoke("mpv_forward_mouse", {
         kind,
-        x: Math.round(e.clientX * dpr()),
-        y: Math.round(e.clientY * dpr()),
+        x: pt.x,
+        y: pt.y,
         flags: mkFlags(e),
         delta,
       }).catch(() => {});
@@ -894,6 +929,15 @@ export function PlayerChrome() {
         return;
       }
       if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
+      // [lc-1990] 几何兜底（纯 CSS 域内判断，坐标不换算）：全屏下若 DOM 分流判「空白」
+      // 但光标落在任一可见控件的 CSS 矩形内 —— DOM 命中与视觉错位（WebView 输入变换 /
+      // 布局抖动类问题的直接特征）—— 这一击按 local 处理不转发（转发必然表现为
+      // 「点啥都暂停」），并把控件带标记为可交互防 3s 自动隐藏。
+      if (stRef.current.fullscreen && inVisibleChromeRect(e.clientX, e.clientY)) {
+        if (loggable) routeLog("swallow:band", e);
+        hoverInteractive.current = true;
+        return;
+      }
       if (loggable) routeLog("fwd", e);
       // 上一轮按下没等到抬起（mpv 原生拖窗的 modal move loop 会吞掉释放事件）：
       // 先补一发 up 清掉 mpv 的按钮态，避免下一次点击被它的双击合成器误判。

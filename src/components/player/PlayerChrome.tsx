@@ -263,6 +263,7 @@ export function PlayerChrome() {
   const menuTriggerRef = useRef<HTMLElement | null>(null);
   const menuCloseTimer = useRef<number | null>(null);
   const menuPulling = useRef(false);
+  const keyboardFocusTimer = useRef<number | null>(null);
 
   const loading = st.phase !== "loaded" && st.phase !== "ended";
   const title = st.title || "";
@@ -458,10 +459,36 @@ export function PlayerChrome() {
     };
   }, [menu, sub, placeMenu]);
 
+  /* ── [lc-1942] 输入框键盘租约：覆盖层常驻 WS_EX_NOACTIVATE（点控件不抢 mpv 焦点），
+   * 只有搜索输入框真正需要键盘时才临时摘掉，失焦/关面板装回（Polaris 同款租约）。 ── */
+  const acquireKeyboard = useCallback((el: HTMLInputElement) => {
+    void invoke("player_chrome_focusable", { on: true }).catch(() => {});
+    // 摘 NOACTIVATE + set_focus 是异步的；50ms 后再 focus 一次，确保键盘真的落到输入框
+    if (keyboardFocusTimer.current) window.clearTimeout(keyboardFocusTimer.current);
+    keyboardFocusTimer.current = window.setTimeout(() => {
+      keyboardFocusTimer.current = null;
+      if (!document.contains(el)) return;
+      try {
+        el.focus();
+      } catch {
+        /* ignore */
+      }
+    }, 60);
+  }, []);
+
+  const releaseKeyboard = useCallback(() => {
+    if (keyboardFocusTimer.current) {
+      window.clearTimeout(keyboardFocusTimer.current);
+      keyboardFocusTimer.current = null;
+    }
+    void invoke("player_chrome_focusable", { on: false }).catch(() => {});
+  }, []);
+
   /* ── 打开 / 关闭（同一按钮再点一次、空白处、Esc 都关闭）── */
   const closeMenu = useCallback(() => {
     if (!menuOpenRef.current) return;
     menuOpenRef.current = false;
+    releaseKeyboard();
     setMenuClosing(true);
     if (menuCloseTimer.current) window.clearTimeout(menuCloseTimer.current);
     // 减少动态偏好：没有退场动画就直接卸载，别让面板多停 200ms
@@ -472,7 +499,13 @@ export function PlayerChrome() {
       setSub(null);
       setMenuPos(null);
     }, delay);
-  }, []);
+  }, [releaseKeyboard]);
+
+  /* 离开搜索子面板（返回 / 切菜单 / 关闭）时立刻归还键盘 */
+  useEffect(() => {
+    if (sub !== "subsearch") return;
+    return () => releaseKeyboard();
+  }, [sub, releaseKeyboard]);
 
   const openMenu = (id: MenuId, e: React.MouseEvent<HTMLElement>) => {
     const el = e.currentTarget;
@@ -498,6 +531,7 @@ export function PlayerChrome() {
   useEffect(() => {
     return () => {
       if (menuCloseTimer.current) window.clearTimeout(menuCloseTimer.current);
+      if (keyboardFocusTimer.current) window.clearTimeout(keyboardFocusTimer.current);
     };
   }, []);
 
@@ -512,6 +546,9 @@ export function PlayerChrome() {
     const onDown = (e: PointerEvent) => {
       const t = e.target as Node | null;
       if (!t) return;
+      // 输入框内的指针操作保留键盘；面板内其它位置（行/按钮）归还键盘
+      const el = t instanceof Element ? t : null;
+      if (!el?.closest(".pc-menu-input")) releaseKeyboard();
       if (menuPanelRef.current?.contains(t)) return;
       if (menuTriggerRef.current?.contains(t)) return;
       closeMenu();
@@ -522,7 +559,7 @@ export function PlayerChrome() {
       window.removeEventListener("keydown", onKey, true);
       document.removeEventListener("pointerdown", onDown, true);
     };
-  }, [menu, closeMenu]);
+  }, [menu, closeMenu, releaseKeyboard]);
 
   /* ── 菜单动作 ── */
   const applyProp = useCallback(
@@ -1107,6 +1144,8 @@ export function PlayerChrome() {
                 className="pc-menu-input"
                 value={subQuery}
                 placeholder="输入剧名 / 电影名"
+                onPointerDown={(e) => acquireKeyboard(e.currentTarget)}
+                onFocus={(e) => acquireKeyboard(e.currentTarget)}
                 onChange={(e) => setSubQuery(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !subBusy) void searchSubs();

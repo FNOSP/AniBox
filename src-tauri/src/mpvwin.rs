@@ -30,7 +30,7 @@ use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetCursorPos, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
     IsIconic, IsWindow, IsWindowVisible, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE,
-    GWLP_HWNDPARENT, HWND_TOPMOST, SW_HIDE, SW_SHOWNOACTIVATE, SW_SHOWNORMAL, SWP_NOACTIVATE,
+    GWLP_HWNDPARENT, HWND_TOPMOST, SW_HIDE, SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
     SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     WS_EX_TRANSPARENT,
 };
@@ -178,13 +178,21 @@ pub fn window_is_visible(hwnd: isize) -> bool {
 /// [lc-1941] 强制显示窗口（原始 ShowWindow，和 tao 缓存解耦）。
 /// 用于关闭播放器后唤回主窗：先 Tauri `show()` 同步缓存，这里再补一发系统调用，
 /// 任何一条路径把主窗留在隐藏态都能被拉回来。已可见时不动（避免多余激活/闪烁）。
+///
+/// 不用 SW_SHOWNORMAL：它会把**已最大化**的窗口按"原始尺寸"还原（退出播放器后主窗
+/// 突然变小）。这里只做"可见性"修复、不改窗口状态：最小化才 SW_RESTORE，其余 SW_SHOW
+/// （SW_SHOW 保留最大化/还原态，也不强制激活 —— 激活交给后面的 set_focus）。
 pub fn window_force_show(hwnd: isize) {
     if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
         return;
     }
     unsafe {
         if IsWindowVisible(hwnd as _) == 0 {
-            ShowWindow(hwnd as _, SW_SHOWNORMAL);
+            if IsIconic(hwnd as _) != 0 {
+                ShowWindow(hwnd as _, SW_RESTORE);
+            } else {
+                ShowWindow(hwnd as _, SW_SHOW);
+            }
         }
     }
 }

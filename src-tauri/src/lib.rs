@@ -3312,9 +3312,9 @@ pub fn player_overlay_abort(app: &AppHandle) {
 /// [lc-1941] 主窗口唤回（关闭播放器 / 起播失败兜底共用）。
 ///
 /// 顺序：Tauri `show()` 先把 tao 的 VISIBLE 缓存同步为 true（下一次起播的 `hide()` 才能生效），
-/// 再用原始 `ShowWindow(SW_SHOWNORMAL)` 做**真实可见性**兜底 —— 覆盖层显隐早已绕开 tao
+/// 再用原始 `ShowWindow` 做**真实可见性**兜底 —— 覆盖层显隐早已绕开 tao
 /// （`mpvwin::overlay_hide`）；若主窗在别的路径也被原始 ShowWindow 动过，tao 缓存就会与真实
-/// 状态脱钩，此时 `show()` 是空操作，只有系统调用能把它拉回来。
+/// 状态脱钩，此时 `show()` 是空操作，只有系统调用能把它拉回来（且不改最大化状态）。
 fn restore_main_window(app: &AppHandle) {
     use tauri::Manager;
     let Some(m) = app.get_webview_window("main") else {

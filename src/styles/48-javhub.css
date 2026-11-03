@@ -42,14 +42,28 @@
 }
 .javset.embed .javset-foot { background: none; }
 
-/* [lc-1967/1968] 内嵌设置页：限宽居中 + 固定双栏栅格，卡片同排等高，长控件独占整行 */
+/* [lc-1967/1968/1976] 内嵌设置页：无外框、随页面流全宽，固定双栏等高栅格 */
 .javset.embed {
   width: 100%;
-  max-width: 1100px;
+  max-width: none;
   height: auto;
-  max-height: calc(100vh - 200px);
-  margin: 0 auto 16px;
+  max-height: none;
+  margin: 0 0 20px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  border-radius: 0;
+  overflow: visible;
 }
+.javset.embed .javset-tabs { padding: 4px 0 10px; }
+.javset.embed .javset-search { padding: 0 0 12px; }
+.javset.embed .javset-fields { padding: 0; }
+.javset.embed .javset-foot { padding: 10px 2px 0; margin-top: 6px; }
+/* 输入控件不全宽拉长（双栏每列很宽时收住） */
+.javset.embed .javset-item input[type="text"],
+.javset.embed .javset-item input[type="password"],
+.javset.embed .javset-item input[type="number"],
+.javset.embed .javset-item textarea { max-width: 560px; }
 .javset.embed .javset-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

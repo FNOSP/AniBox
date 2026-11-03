@@ -166,16 +166,18 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
     try {
       let ok = 0;
       let bad = 0;
+      let tr = 0;
       for (const l of libs) {
         try {
-          const r = await invoke<{ scraped: number; failed: number }>("jav_library_scrape", { provider: l.provider, force: false });
+          const r = await invoke<{ scraped: number; failed: number; translated?: number }>("jav_library_scrape", { provider: l.provider, force: false });
           ok += r.scraped;
           bad += r.failed;
+          tr += r.translated ?? 0;
         } catch {
           /* 单盘失败不挡其余盘 */
         }
       }
-      flashNote(`全部刮削完成：成功 ${ok}，失败 ${bad}`);
+      flashNote(`全部刮削完成：成功 ${ok}，失败 ${bad}${tr ? `，汉化 ${tr} 条` : ""}`);
       await load();
     } finally {
       setBusy(false);

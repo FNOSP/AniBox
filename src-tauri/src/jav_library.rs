@@ -1982,7 +1982,45 @@ pub async fn jav_library_scrape(app: AppHandle, provider: String, force: Option<
     st.libs[pos].entries = updated;
     st.libs[pos].scanned_at_ms = st.libs[pos].scanned_at_ms.max(now_ms());
     save_store(&st)?;
-    Ok(json!({ "scraped": scraped, "failed": failed, "skipped": skipped }))
+    // [lc-1959] 刮完自动汉化（JAVCloudHub 同款「一点就出中文」）：
+    // 只对本轮新刮成功的条目跑，AI 未配 Key 自动走 Google gtx 免 Key 兜底
+    let mut translated = 0usize;
+    let mut translate_engine = "";
+    let mut translate_error: Option<String> = None;
+    if scraped > 0 {
+        let mut todo: Vec<(usize, String, String)> = Vec::new();
+        for (i, e) in st.libs[pos].entries.iter().enumerate() {
+            if e.status == 1 && !e.title.trim().is_empty() && e.title_zh.trim().is_empty() {
+                todo.push((i, e.title.clone(), e.actors.join(", ")));
+                if todo.len() >= 30 {
+                    break;
+                }
+            }
+        }
+        if !todo.is_empty() {
+            let (res, engine, err) = translate_titles_impl(&settings, &todo).await;
+            translate_engine = engine;
+            translate_error = err;
+            for (i, zh) in res.into_iter().enumerate() {
+                if let Some(zh) = zh {
+                    let (idx, _, _) = &todo[i];
+                    st.libs[pos].entries[*idx].title_zh = zh;
+                    translated += 1;
+                }
+            }
+            if translated > 0 {
+                save_store(&st)?;
+            }
+        }
+    }
+    let mut out = json!({ "scraped": scraped, "failed": failed, "skipped": skipped, "translated": translated });
+    if !translate_engine.is_empty() {
+        out["translateEngine"] = json!(translate_engine);
+    }
+    if let Some(e) = translate_error {
+        out["translateError"] = json!(e);
+    }
+    Ok(out)
 }
 
 // ───────────────────────── 测试 ─────────────────────────
@@ -2145,8 +2183,183 @@ mod tests {
 
 // ───────────────────────── 内置 AI：标题汉化 ─────────────────────────
 
-/// 批量把已刮削条目的标题译成目标语言（设置：内置 AI）。
-/// 只译 status=1 且 title_zh 为空的条目；单轮上限 30 条（对齐 JAVCloudHub 的 batch_size 默认）。
+const GOOGLE_TRANSLATE_ENDPOINT: &str = "https://translate.googleapis.com/translate_a/single";
+
+/// 把演员名替换成占位符（照抄 JAVCloudHub mask_actors：防止女优名被翻译音译）
+fn mask_actors(title: &str, actors: &str) -> (String, Vec<String>) {
+    let mut masked = title.to_string();
+    let mut used = Vec::new();
+    for (i, a) in actors.split([',', '，', '、']).map(|x| x.trim()).filter(|x| x.chars().count() >= 2).enumerate() {
+        if masked.contains(a) {
+            masked = masked.replace(a, &format!("{{ACTOR_{}}}", i));
+            used.push(a.to_string());
+        }
+    }
+    (masked, used)
+}
+
+/// 占位符换回演员原名
+fn restore_actors(text: &str, used: &[String]) -> String {
+    let mut out = text.to_string();
+    for (i, a) in used.iter().enumerate() {
+        out = out.replace(&format!("{{ACTOR_{}}}", i), a);
+    }
+    out
+}
+
+/// Google gtx 免 Key 翻译一句（照抄 JAVCloudHub _google_one：client=gtx&sl=auto&dt=t）。
+/// 国内直连被墙 —— 走 Ctx 的代理链（手动代理 > 环境变量 > 系统代理），失败由上层兜底。
+async fn google_one(cli: &reqwest::Client, text: &str, target: &str) -> Result<String, String> {
+    let resp = cli
+        .get(GOOGLE_TRANSLATE_ENDPOINT)
+        .query(&[("client", "gtx"), ("sl", "auto"), ("tl", target), ("dt", "t"), ("q", text)])
+        .send()
+        .await
+        .map_err(|e| format!("Google 翻译连不上: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Google 翻译 HTTP {}", resp.status().as_u16()));
+    }
+    let v: Value = resp.json().await.map_err(|_| "Google 翻译返回的不是 JSON".to_string())?;
+    let segs = v.get(0).and_then(|x| x.as_array()).ok_or("Google 翻译返回结构不对")?;
+    let out: String = segs
+        .iter()
+        .filter_map(|s| s.get(0).and_then(|x| x.as_str()))
+        .collect::<Vec<_>>()
+        .join("");
+    let out = out.trim().to_string();
+    if out.is_empty() {
+        Err("Google 翻译返回空".into())
+    } else {
+        Ok(out)
+    }
+}
+
+/// gtx 并发翻译一批（并发 8：原项目实测几十并发会 429）
+async fn google_translate_many(cli: &reqwest::Client, titles: Vec<String>, target: &str) -> Vec<Result<String, String>> {
+    let mut out = Vec::with_capacity(titles.len());
+    for chunk in titles.chunks(8) {
+        let futs = chunk.iter().map(|t| google_one(cli, t, target));
+        out.extend(futures_util::future::join_all(futs).await);
+    }
+    out
+}
+
+/// 翻译一批 (索引, 标题, 演员)：配了 AI key → AI 精翻；否则 → Google gtx 免 Key 兜底。
+/// 返回与 todo 等长的结果（None=该条失败）、实际使用的引擎、末次失败原因。
+async fn translate_titles_impl(
+    js: &crate::jav_settings::JavSettings,
+    todo: &[(usize, String, String)],
+) -> (Vec<Option<String>>, &'static str, Option<String>) {
+    let target = match js.ai.target_lang.as_str() {
+        "zh-TW" => "zh-TW",
+        "en" => "en",
+        "ja" => "ja",
+        _ => "zh-CN",
+    };
+    let none_vec = || vec![None; todo.len()];
+    // Google gtx：免 Key、零成本（JAVCloudHub 的默认引擎；「原项目一点就出中文」的正主）
+    if !(js.ai.enabled && !js.ai.api_key.trim().is_empty()) {
+        let ctx = Ctx::new(js.clone());
+        let (masked, used_list): (Vec<String>, Vec<Vec<String>>) = todo
+            .iter()
+            .map(|(_, t, a)| {
+                let (m, u) = mask_actors(t, a);
+                (m, u)
+            })
+            .unzip();
+        let rs = google_translate_many(&ctx.client, masked, target).await;
+        let mut out = none_vec();
+        let mut ok = 0usize;
+        let mut last_err: Option<String> = None;
+        for (i, r) in rs.into_iter().enumerate() {
+            match r {
+                Ok(zh) => {
+                    out[i] = Some(restore_actors(&zh, &used_list[i]));
+                    ok += 1;
+                }
+                Err(e) => last_err = Some(e),
+            }
+        }
+        let engine: &'static str = if ok > 0 { "google" } else { "google-failed" };
+        let err = if ok == 0 {
+            last_err.map(|e| format!("{e}。这个接口在国内要挂代理 —— 到「设置 → 网络」把代理配好，或在「内置 AI」里填 Key 走 AI 精翻"))
+        } else {
+            last_err
+        };
+        return (out, engine, err);
+    }
+    // AI 精翻：提示词对齐 JAVCloudHub ai.py（番号与人名保留原字、≤30 字、严格 JSON）
+    let lang = match js.ai.target_lang.as_str() {
+        "zh-TW" => "繁體中文",
+        "en" => "English",
+        "ja" => "日本語",
+        _ => "简体中文",
+    };
+    let items: Vec<Value> = todo
+        .iter()
+        .enumerate()
+        .map(|(k, (_, t, actors))| json!({ "id": k + 1, "jp": t, "actors": actors }))
+        .collect();
+    let sys = format!(
+        "你是日本成人影片资料库的编辑，任务是把日文标题翻译成简洁自然的{lang}。严格遵守：\n1. 输入是 JSON 数组，每项带 id 和 jp（日文标题）。只输出 JSON：{{\"items\":[{{\"id\":1,\"zh\":\"译名\"}}]}}，不要解释。\n2. 译名控制在 30 个字以内，不加书名号、引号、句号。\n3. 番号（FC2-PPV-123456、SONE-123）和人名（actors 字段里的人名）一律保留日文原字，不要音译。\n4. 输出的 id 必须与输入一一对应，条数一致。直接输出 JSON。"
+    );
+    let body = json!({
+        "model": js.ai.model,
+        "temperature": 0.3,
+        "response_format": { "type": "json_object" },
+        "messages": [ { "role": "system", "content": sys }, { "role": "user", "content": serde_json::to_string(&items).unwrap_or_default() } ],
+    });
+    let url = format!("{}/chat/completions", js.ai.base_url.trim().trim_end_matches('/'));
+    let cli = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build() {
+        Ok(c) => c,
+        Err(e) => return (none_vec(), "ai", Some(format!("HTTP 客户端构建失败: {e}"))),
+    };
+    let resp = match cli.post(&url).bearer_auth(js.ai.api_key.trim()).json(&body).send().await {
+        Ok(r) => r,
+        Err(e) => return (none_vec(), "ai", Some(format!("连不上 AI 服务: {e}"))),
+    };
+    let st_code = resp.status().as_u16();
+    let text = resp.text().await.unwrap_or_default();
+    if st_code != 200 {
+        return (none_vec(), "ai", Some(format!("AI 返回 HTTP {st_code}: {}", text.chars().take(200).collect::<String>())));
+    }
+    let v: Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => return (none_vec(), "ai", Some(format!("AI 返回的不是 JSON: {e}"))),
+    };
+    let content = v["choices"][0]["message"]["content"].as_str().unwrap_or("").trim().to_string();
+    if content.is_empty() {
+        return (none_vec(), "ai", Some("AI 没有返回内容".into()));
+    }
+    let content = content
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim()
+        .to_string();
+    let parsed: Value = match serde_json::from_str(&content) {
+        Ok(p) => p,
+        Err(e) => return (none_vec(), "ai", Some(format!("AI 返回的 JSON 解析失败: {e}"))),
+    };
+    let mut out = none_vec();
+    let mut ok = 0usize;
+    if let Some(items) = parsed["items"].as_array() {
+        for it in items {
+            let id = it["id"].as_u64().unwrap_or(0) as usize;
+            let zh = it["zh"].as_str().unwrap_or("").trim().to_string();
+            if id == 0 || zh.is_empty() || id > todo.len() {
+                continue;
+            }
+            out[id - 1] = Some(zh);
+            ok += 1;
+        }
+    }
+    (out, "ai", if ok == 0 { Some("AI 返回里没有可用译名".into()) } else { None })
+}
+
+/// 批量把已刮削条目的标题译成目标语言（设置：内置 AI 配了 Key 走 AI 精翻，
+/// 否则自动用 Google gtx 免 Key 兜底 —— JAVCloudHub 同款「一点就出中文」）。
+/// 只译 status=1 且 title_zh 为空的条目；单轮上限 30 条。
 #[tauri::command]
 pub async fn jav_ai_translate(
     app: AppHandle,
@@ -2155,12 +2368,6 @@ pub async fn jav_ai_translate(
     code_key: Option<String>,
 ) -> Result<Value, String> {
     let js = crate::jav_settings::load();
-    if !js.ai.enabled {
-        return Err("内置 AI 没有打开（设置 → 内置 AI）".into());
-    }
-    if js.ai.api_key.trim().is_empty() {
-        return Err("没填 API Key（设置 → 内置 AI）".into());
-    }
     let force = force.unwrap_or(false);
     let mut st = load_store();
     let Some(pos) = st.libs.iter().position(|l| l.provider == provider) else {
@@ -2193,73 +2400,22 @@ pub async fn jav_ai_translate(
     if todo.is_empty() {
         return Ok(json!({ "translated": 0, "message": "没有待翻译的条目" }));
     }
-    // 提示词对齐 JAVCloudHub ai.py：番号与人名保留原字、≤30 字、严格 JSON 出入
-    let lang = match js.ai.target_lang.as_str() {
-        "zh-TW" => "繁體中文",
-        "en" => "English",
-        "ja" => "日本語",
-        _ => "简体中文",
-    };
-    let items: Vec<Value> = todo
-        .iter()
-        .enumerate()
-        .map(|(k, (_, t, actors))| json!({ "id": k + 1, "jp": t, "actors": actors }))
-        .collect();
-    let sys = format!(
-        "你是日本成人影片资料库的编辑，任务是把日文标题翻译成简洁自然的{lang}。严格遵守：\n1. 输入是 JSON 数组，每项带 id 和 jp（日文标题）。只输出 JSON：{{\"items\":[{{\"id\":1,\"zh\":\"译名\"}}]}}，不要解释。\n2. 译名控制在 30 个字以内，不加书名号、引号、句号。\n3. 番号（FC2-PPV-123456、SONE-123）和人名（actors 字段里的人名）一律保留日文原字，不要音译。\n4. 输出的 id 必须与输入一一对应，条数一致。直接输出 JSON。"
-    );
-    let body = json!({
-        "model": js.ai.model,
-        "temperature": 0.3,
-        "response_format": { "type": "json_object" },
-        "messages": [ { "role": "system", "content": sys }, { "role": "user", "content": serde_json::to_string(&items).unwrap_or_default() } ],
-    });
-    let url = format!("{}/chat/completions", js.ai.base_url.trim().trim_end_matches('/'));
-    let cli = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(90))
-        .build()
-        .map_err(|e| format!("HTTP 客户端构建失败: {e}"))?;
-    let resp = cli
-        .post(&url)
-        .bearer_auth(js.ai.api_key.trim())
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("连不上 AI 服务: {e}"))?;
-    let st_code = resp.status().as_u16();
-    let text = resp.text().await.unwrap_or_default();
-    if st_code != 200 {
-        return Err(format!("AI 返回 HTTP {st_code}: {}", text.chars().take(200).collect::<String>()));
-    }
-    let v: Value = serde_json::from_str(&text).map_err(|_| "AI 返回的不是 JSON".to_string())?;
-    let content = v["choices"][0]["message"]["content"].as_str().unwrap_or("").trim().to_string();
-    if content.is_empty() {
-        return Err("AI 没有返回内容".into());
-    }
-    // 模型偶尔包 ```json 围栏，抠出来
-    let content = content
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim()
-        .to_string();
-    let parsed: Value = serde_json::from_str(&content).map_err(|e| format!("AI 返回的 JSON 解析失败: {e}"))?;
+    let (res, engine, err) = translate_titles_impl(&js, &todo).await;
     let mut translated = 0usize;
-    if let Some(items) = parsed["items"].as_array() {
-        for it in items {
-            let id = it["id"].as_u64().unwrap_or(0) as usize;
-            let zh = it["zh"].as_str().unwrap_or("").trim().to_string();
-            if id == 0 || zh.is_empty() || id > todo.len() {
-                continue;
-            }
-            let (idx, _, _) = &todo[id - 1];
+    for (i, zh) in res.into_iter().enumerate() {
+        if let Some(zh) = zh {
+            let (idx, _, _) = &todo[i];
             st.libs[pos].entries[*idx].title_zh = zh;
             translated += 1;
         }
     }
     save_store(&st)?;
     let _ = &app;
-    Ok(json!({ "translated": translated }))
+    let mut out = json!({ "translated": translated, "engine": engine });
+    if let Some(e) = err {
+        out["error"] = json!(e);
+    }
+    Ok(out)
 }
 
 // ───────────────────────── 飞牛媒体库接入（设置 → 数据源） ─────────────────────────

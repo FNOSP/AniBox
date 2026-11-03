@@ -335,6 +335,7 @@ impl MpvSession {
                 // [lc-1924] 原生 UI 全面停用：控件与提示都由 App 覆盖层 DOM 承担
                 //（Polaris 同款：其 osc-cinema 自绘底栏被 if false 关掉、改由 mpv-overlay 接管）
                 args.push("--script-opts-append=fntv_format_badge-enabled=no".to_string());
+                args.push("--script-opts-append=fntv_mediainfo-enabled=no".to_string());
                 args.push(
                     "--script-opts-append=alist_speed_indicator-show_mounted_drive_speed=no".to_string(),
                 );

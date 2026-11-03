@@ -198,7 +198,7 @@ export function PlayerChrome() {
           aria-label="返回"
           onClick={() => void invoke("player_embed_leave", { stop: true }).catch(() => {})}
         >
-          <IcoArrowLeft size={18} strokeWidth={1.9} />
+          <IcoArrowLeft size={20} strokeWidth={1.9} />
         </button>
         <div className="chrome-title" data-chrome title={title}>
           <span className="ct-main">{title || "正在打开"}</span>
@@ -212,7 +212,7 @@ export function PlayerChrome() {
             title={st.fullscreen ? "退出全屏" : "全屏"}
             onClick={() => cmd("mpv_set_ui_fullscreen", { on: !st.fullscreen })}
           >
-            {st.fullscreen ? <IcoMin size={17} strokeWidth={1.9} /> : <IcoMax size={17} strokeWidth={1.9} />}
+            {st.fullscreen ? <IcoMin size={20} strokeWidth={1.9} /> : <IcoMax size={20} strokeWidth={1.9} />}
           </button>
         </div>
       </header>
@@ -246,7 +246,7 @@ export function PlayerChrome() {
 
           <div className="chrome-ctrl">
             <button type="button" data-chrome className="chrome-btn" title="上一集" onClick={() => cmd("mpv_prev_episode")}>
-              <IcoPrev size={18} strokeWidth={1.9} />
+              <IcoPrev size={20} strokeWidth={1.9} />
             </button>
             <button
               type="button"
@@ -255,7 +255,7 @@ export function PlayerChrome() {
               title="后退 10 秒"
               onClick={() => cmd("mpv_seek", { seconds: -10, absolute: false })}
             >
-              <IcoBack10 size={17} strokeWidth={1.8} />
+              <IcoBack10 size={20} strokeWidth={1.9} />
             </button>
             <button
               type="button"
@@ -264,7 +264,7 @@ export function PlayerChrome() {
               title={st.paused ? "播放" : "暂停"}
               onClick={() => cmd("mpv_toggle_pause")}
             >
-              {st.paused ? <IcoPlay size={20} strokeWidth={2} /> : <IcoPause size={20} strokeWidth={2} />}
+              {st.paused ? <IcoPlay size={24} strokeWidth={2} /> : <IcoPause size={24} strokeWidth={2} />}
             </button>
             <button
               type="button"
@@ -273,10 +273,10 @@ export function PlayerChrome() {
               title="前进 10 秒"
               onClick={() => cmd("mpv_seek", { seconds: 10, absolute: false })}
             >
-              <IcoFwd10 size={17} strokeWidth={1.8} />
+              <IcoFwd10 size={20} strokeWidth={1.9} />
             </button>
             <button type="button" data-chrome className="chrome-btn" title="下一集" onClick={() => cmd("mpv_next_episode")}>
-              <IcoNext size={18} strokeWidth={1.9} />
+              <IcoNext size={20} strokeWidth={1.9} />
             </button>
           </div>
 
@@ -297,7 +297,7 @@ export function PlayerChrome() {
               title="弹幕搜索 / 换源"
               onClick={() => cmd("mpv_script_message", { name: "uosc_danmaku", args: ["open_search_danmaku_menu"] })}
             >
-              <IcoDm size={17} strokeWidth={1.8} />
+              <IcoDm size={20} strokeWidth={1.9} />
             </button>
             <button
               type="button"
@@ -306,7 +306,7 @@ export function PlayerChrome() {
               title="着色器（开/关 模式A+A）"
               onClick={() => void toggleShader()}
             >
-              <IcoShader size={17} strokeWidth={1.8} />
+              <IcoShader size={20} strokeWidth={1.9} />
             </button>
             <div className="chrome-vol">
               <button
@@ -317,11 +317,11 @@ export function PlayerChrome() {
                 onClick={() => cmd("mpv_set_volume", { volume: vol > 0 ? 0 : 100 })}
               >
                 {vol <= 0 ? (
-                  <IcoVolX size={17} strokeWidth={1.8} />
+                  <IcoVolX size={20} strokeWidth={1.9} />
                 ) : vol < 50 ? (
-                  <IcoVol1 size={17} strokeWidth={1.8} />
+                  <IcoVol1 size={20} strokeWidth={1.9} />
                 ) : (
-                  <IcoVol2 size={17} strokeWidth={1.8} />
+                  <IcoVol2 size={20} strokeWidth={1.9} />
                 )}
               </button>
               <input

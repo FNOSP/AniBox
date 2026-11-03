@@ -297,8 +297,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   border: 0;
   border-radius: 50%;
   background: rgba(16, 19, 28, 0.55);
@@ -311,15 +311,17 @@
 .chrome-btn:hover { background: rgba(255, 255, 255, 0.2); }
 .chrome-btn:active { transform: scale(0.94); }
 .chrome-btn.primary {
-  width: 44px;
-  height: 44px;
+  width: 52px;
+  height: 52px;
   background: rgba(255, 255, 255, 0.92);
   color: #12151d;
 }
 .chrome-btn.primary:hover { background: #fff; }
 .chrome-btn.text {
   width: auto;
-  padding: 0 10px;
+  height: 40px;
+  padding: 0 12px;
+  font-size: 14px;
   border-radius: 999px;
   font-size: 12.5px;
   font-weight: 600;
@@ -378,9 +380,9 @@
 }
 .chrome-time {
   flex: none;
-  min-width: 108px;
+  min-width: 120px;
   color: #f2f4f8;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
@@ -392,7 +394,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: 16px;
 }
 .chrome-right {
   flex: none;
@@ -416,3 +418,9 @@
   .player-chrome, .player-chrome .chrome-top, .player-chrome .chrome-bottom,
   .chrome-btn, .chrome-track-bg, .chrome-track-knob, .chrome-vol-slider { transition: none; }
 }
+
+/* [lc-1924] 图标尺寸兜底：lucide 组件的 width/height 会被某些全局 svg 规则的
+   等比缩放带偏（截图里按钮图标小得看不清），这里显式锁定并禁止压缩 */
+.chrome-btn svg { flex: none; width: 20px; height: 20px; }
+.chrome-btn.primary svg { width: 24px; height: 24px; }
+.chrome-btn.text svg { width: 18px; height: 18px; }

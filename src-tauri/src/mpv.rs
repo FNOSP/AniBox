@@ -336,8 +336,14 @@ impl MpvSession {
             // mpv（--geometry）**。之前先按主窗矩形发 geometry，而 AniBox mpv.conf 的
             // save-position-on-quit 会在启动时恢复上次保存的窗口位置把 geometry 顶掉
             // （黑窗浮在旧位置的根因）。播放窗不存在/创建失败 → 放弃内嵌回退独立窗口。
-            if let Some(ov) = crate::show_player_overlay(&app) {
+            if let Some(ov) = crate::ensure_player_overlay(&app) {
                 embed_mode = true;
+                // [lc-1940] 覆盖层只保证「存在」（owner + 几何）；是否显示由 UI 就绪决定。
+                // 未就绪（非透明 / 显式关闭）→ 保持隐藏，控件交回 mpv 进程内 Lua OSC。
+                let overlay_ui = crate::mpvwin::overlay_ui_ready();
+                if overlay_ui {
+                    let _ = crate::show_player_overlay(&app);
+                }
                 if let Some(m) = app.get_webview_window("main") {
                     let _ = m.hide();
                 }
@@ -358,9 +364,13 @@ impl MpvSession {
                         .to_string(),
                 );
                 args.push("--script-opts-append=uosc-idle_branding=no".to_string());
-                // [lc-1939] 控件由 Tauri 覆盖层（PlayerChrome）绘制：Lua OSC 只保留
-                // input.conf 的左键分发（画面区点击→暂停），一个像素都不画。
-                args.push("--script-opts-append=fntv_osc-overlay_controls=yes".to_string());
+                // [lc-1940] 只有覆盖层 UI 真的显示时才关掉 Lua OSC 绘制；
+                // 兜底路径保持脚本默认（画自己的 OSC），这就是 lc-1938 的形态。
+                if overlay_ui {
+                    // [lc-1939] 控件由 Tauri 覆盖层（PlayerChrome）绘制：Lua OSC 只保留
+                    // input.conf 的左键分发（画面区点击→暂停），一个像素都不画。
+                    args.push("--script-opts-append=fntv_osc-overlay_controls=yes".to_string());
+                }
                 args.push("--script-opts-append=uosc-anibox_hide_timeline=yes".to_string());
                 // [lc-1924] 原生 UI 全面停用：控件与提示都由 App 覆盖层 DOM 承担
                 //（Polaris 同款：其 osc-cinema 自绘底栏被 if false 关掉、改由 mpv-overlay 接管）

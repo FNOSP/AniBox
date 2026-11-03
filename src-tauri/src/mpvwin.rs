@@ -143,6 +143,25 @@ pub fn overlay_show_noactivate(hwnd: isize) {
     }
 }
 
+/// [lc-1940] 隐藏覆盖层 —— **必须**用原始 ShowWindow，不能用 `WebviewWindow::hide()`。
+///
+/// 黑屏根因（lc-1939 回归）：窗口以 `visible(false)` 建出，tao 缓存的
+/// `WindowFlags::VISIBLE` 恒为 false；lc-1939 又改用原始 `ShowWindow(SW_SHOWNOACTIVATE)`
+/// 显示（绕开 tao），缓存与实际状态彻底脱钩。此时 Tauri 的 `hide()` 只是把 VISIBLE
+/// 再置一次 false —— diff 为空，tao `apply_diff` 在 `window_state.rs` 里**直接 return**，
+/// 一句 `ShowWindow(SW_HIDE)` 都不会发。于是启动预建的覆盖层一直盖在主窗上：
+/// 透明 WebView 未加载内容时就是整屏黑窗（用户看到的「启动直接黑屏 mpv 窗口」）。
+///
+/// 结论：覆盖层的显隐全部走这里，和 tao 的缓存彻底解耦；绝不再对覆盖层调 Tauri hide/show。
+pub fn overlay_hide(hwnd: isize) {
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return;
+    }
+    unsafe {
+        ShowWindow(hwnd as _, SW_HIDE);
+    }
+}
+
 /// [lc-1911] 进内嵌前的 mpv `script-opts` 原串（leave 时还原，独立窗口的 uosc 顶栏要回来）。
 static SAVED_SCRIPT_OPTS: Mutex<Option<String>> = Mutex::new(None);
 
@@ -377,7 +396,9 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                     continue;
                 }
                 // 已对齐：若因移动被隐藏，稳定 220ms 后恢复显示（拖完即回显控件）
-                if hidden_for_move {
+                // [lc-1940] 只有 UI 就绪时才允许回显 —— 否则（Lua OSC 兜底 / 非透明）
+                // 这里绝不能把覆盖层重新露出来变成黑块。
+                if hidden_for_move && crate::mpvwin::overlay_ui_ready() {
                     let now = std::time::Instant::now();
                     match stable_since {
                         Some(t) if now.duration_since(t).as_millis() >= 220 => {

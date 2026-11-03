@@ -2977,7 +2977,7 @@ async fn player_embed_adopt_loop(app: AppHandle, m: std::sync::Arc<crate::mpv::M
         // 收编成功即满屏钉住 + 启动跟随循环。
         if let Some(owner) = app
             .get_webview_window("mpv_overlay")
-            .or_else(|| crate::show_player_overlay(&app))
+            .or_else(|| crate::ensure_player_overlay(&app))
             .and_then(|w| w.hwnd().ok().map(|h| h.0 as isize))
         {
             if crate::mpvwin::find_mpv_hwnd(pid).is_some() {
@@ -3128,37 +3128,36 @@ fn merge_script_opts(orig: String, overrides: &[(&str, &str)]) -> String {
     pairs.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(",")
 }
 
-/// [lc-1939] 播放器专用窗口（Polaris MPV Overlay 同角色）：主窗口播放时隐藏，
-/// 覆盖层始终**浮在 mpv 视频之上**（topmost + owned，透明、默认点击穿透），
-/// 控件画在它的 DOM 里；mpv 只负责播放与原生拖窗。
-/// 懒创建；位置/尺寸按主窗口当前矩形（物理像素）。
-pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
+/// [lc-1940] 覆盖层 UI 显式开关：`ANIBOX_NO_WEBVIEW_OVERLAY=1` 时强制退回 lc-1938 的
+/// mpv 进程内 Lua OSC（覆盖层窗只当 mpv 的隐藏 owner，一个像素都不显示）。默认开启。
+fn overlay_ui_enabled() -> bool {
+    !matches!(
+        std::env::var("ANIBOX_NO_WEBVIEW_OVERLAY").ok().as_deref(),
+        Some("1")
+    )
+}
+
+/// [lc-1940] 覆盖层窗的**创建/复用**入口：只保证窗口存在并贴住主窗口矩形，**绝不显示**。
+///
+/// 用途：启动预建（setup）、mpv 的 owner/几何锚点（含 Lua OSC 兜底路径）。
+/// 能不能当 UI 用只看 `mpvwin::overlay_ui_ready()`，与「窗口是否存在」解耦 ——
+/// 这样即使透明建窗失败，内嵌播放仍能挂在隐藏 owner 上（lc-1938 的形态）。
+pub fn ensure_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     use tauri::Manager;
     if let Some(w) = app.get_webview_window("mpv_overlay") {
-        // [lc-1939] 复用路径：透明建窗成功时覆盖层就是**播放期唯一可见的 UI 层**
-        //（Polaris 同款），必须显示；透明失败则保持隐藏，退回 mpv 进程内 Lua OSC。
-        if !crate::mpvwin::overlay_ui_ready() {
-            let _ = w.hide();
-            crate::libmpv::trace("[lc-1939] mpv_overlay 复用：透明不可用 → 保持隐藏（Lua OSC 兜底）");
-            return None;
-        }
+        // 复用路径：按主窗口当前矩形贴位（owner 几何锚点），显示交给 show_player_overlay。
         if let Some(main) = app.get_webview_window("main") {
             if let (Ok(pos), Ok(size)) = (main.outer_position(), main.outer_size()) {
                 let _ = w.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
                 let _ = w.set_size(tauri::PhysicalSize::new(size.width, size.height));
             }
         }
-        if let Ok(h) = w.hwnd() {
-            let hwnd = h.0 as isize;
-            // 先置顶（raw SetWindowPos，不动样式），再手工加 LAYERED/NOACTIVATE/TOOLWINDOW
-            // + 穿透 —— 顺序反了会被样式重算抹掉。
-            crate::mpvwin::overlay_set_topmost(hwnd);
-            crate::mpvwin::overlay_style_noactivate(hwnd);
-            // 默认穿透：画面区的点击/拖窗全部归 mpv（只拨 TRANSPARENT，保留 LAYERED 透明）
-            crate::mpvwin::overlay_set_clickthrough(hwnd, true);
-            crate::mpvwin::overlay_show_noactivate(hwnd);
+        if !crate::mpvwin::overlay_ui_ready() {
+            // [lc-1940] UI 不可用（非透明 / 显式关闭）→ 只能是隐藏 owner，绝不允许露出来。
+            if let Ok(h) = w.hwnd() {
+                crate::mpvwin::overlay_hide(h.0 as isize);
+            }
         }
-        crate::libmpv::trace("[lc-1939] mpv_overlay 复用并显示（控件由覆盖层接管）");
         return Some(w);
     }
     // [lc-1926] 窗口不存在则现建（正常路径下 setup 已建好，这里只做兜底）
@@ -3235,30 +3234,23 @@ pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     };
     match built {
         Ok(w) => {
-            crate::mpvwin::set_overlay_transparent(built_transparent);
-            if !built_transparent {
-                // [lc-1939] 不透明覆盖层会整块盖死视频：绝不允许它显示。
-                // 隐藏并回报 None → 本次播放退回独立窗口 / Lua OSC。
-                let _ = w.hide();
-                crate::libmpv::trace("[lc-1939] 覆盖层非透明 → 不显示，本轮回退 Lua OSC");
-                return None;
-            }
+            // [lc-1940] 只有「透明建窗成功 + 未被显式关闭」才允许当 UI 用；
+            // 非透明窗照样保留（当 mpv 的隐藏 owner），但绝不允许显示。
+            let ui_ok = built_transparent && overlay_ui_enabled();
+            crate::mpvwin::set_overlay_transparent(ui_ok);
             let _ = w.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
             let _ = w.set_size(tauri::PhysicalSize::new(size.width, size.height));
-            // [lc-1939] Polaris 同款：覆盖层常开 WS_EX_TRANSPARENT（点击穿透给 mpv），
-            // 只有 50ms 光标探针命中可交互 DOM 时才临时关掉（前端 → player_chrome_ignore）。
-            // 注意：这里不能用 set_ignore_cursor_events —— tao 会连 WS_EX_LAYERED 一起摘掉。
+            // [lc-1940] 建出来一律保持隐藏：显示只发生在真正起播时（show_player_overlay）。
+            // 且必须用原始 ShowWindow —— Tauri 的 hide() 对「未经它显示过」的窗是空操作
+            //（tao 的 VISIBLE 缓存没变 → apply_diff 直接 return），lc-1939 的黑屏就是这么来的。
             if let Ok(h) = w.hwnd() {
-                let hwnd = h.0 as isize;
-                // 顺序同复用分支：先 raw 置顶，再手工位（Tauri 的样式重算会抹掉手工位）。
-                crate::mpvwin::overlay_set_topmost(hwnd);
-                crate::mpvwin::overlay_style_noactivate(hwnd);
-                crate::mpvwin::overlay_set_clickthrough(hwnd, true);
-                crate::mpvwin::overlay_show_noactivate(hwnd);
-            } else {
-                let _ = w.show();
+                crate::mpvwin::overlay_hide(h.0 as isize);
             }
-            crate::libmpv::trace("[lc-1939] mpv_overlay 创建成功（透明 + 穿透 + NOACTIVATE，已显示）");
+            if ui_ok {
+                crate::libmpv::trace("[lc-1940] mpv_overlay 预建完成（透明，保持隐藏待起播）");
+            } else {
+                crate::libmpv::trace("[lc-1940] 覆盖层不可作 UI（非透明或已禁用）→ 仅作隐藏 owner，播放走 Lua OSC");
+            }
             Some(w)
         }
         Err(e) => {
@@ -3266,6 +3258,58 @@ pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
             None
         }
     }
+}
+
+/// [lc-1940] 播放期显示覆盖层：UI 可用（透明 + 未禁用）才显示；
+/// 否则保持隐藏并返回 None，调用方退回 mpv 进程内 Lua OSC（lc-1938 路径）。
+/// 绝不允许把「不透明 / 未就绪」的覆盖层显示出来盖死画面。
+pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
+    let w = ensure_player_overlay(app)?;
+    if !crate::mpvwin::overlay_ui_ready() {
+        if let Ok(h) = w.hwnd() {
+            crate::mpvwin::overlay_hide(h.0 as isize);
+        }
+        crate::libmpv::trace("[lc-1940] 覆盖层 UI 不可用 → 保持隐藏（Lua OSC 兜底）");
+        return None;
+    }
+    if let Ok(h) = w.hwnd() {
+        let hwnd = h.0 as isize;
+        // 先 raw 置顶，再手工加 LAYERED/NOACTIVATE/TOOLWINDOW + 穿透 —— 顺序反了会被样式重算抹掉。
+        crate::mpvwin::overlay_set_topmost(hwnd);
+        crate::mpvwin::overlay_style_noactivate(hwnd);
+        // 默认穿透：画面区的点击/拖窗全部归 mpv（只拨 TRANSPARENT，保留 LAYERED 透明）
+        crate::mpvwin::overlay_set_clickthrough(hwnd, true);
+        crate::mpvwin::overlay_show_noactivate(hwnd);
+    }
+    crate::libmpv::trace("[lc-1940] mpv_overlay 显示（透明 + 穿透 + NOACTIVATE）");
+    Some(w)
+}
+
+/// [lc-1940] 收起覆盖层（播放结束 / 启动兜底）。**不用 Tauri hide()**，理由见
+/// `mpvwin::overlay_hide`：显隐必须和 tao 的 VISIBLE 缓存彻底解耦。
+pub fn hide_player_overlay(app: &AppHandle) {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("mpv_overlay") {
+        if let Ok(h) = w.hwnd() {
+            crate::mpvwin::overlay_hide(h.0 as isize);
+        }
+    }
+}
+
+/// [lc-1940] 起播失败兜底：覆盖层收起、mpv 窗口收起、内嵌态清零、主窗口回来。
+/// 任何一条「藏主窗 + 显示覆盖层/mpv」的路径失败时都必须走到这里，绝不留黑窗。
+pub fn player_overlay_abort(app: &AppHandle) {
+    hide_player_overlay(app);
+    if let Some(hwnd) = crate::mpvwin::get_hwnd() {
+        crate::mpvwin::embed_hide(hwnd);
+    }
+    crate::mpvwin::embed_set_active(false);
+    crate::mpvwin::set_owner_follow(false);
+    use tauri::Manager;
+    if let Some(m) = app.get_webview_window("main") {
+        let _ = m.show();
+    }
+    crate::libmpv::trace("[lc-1940] 起播失败 → 覆盖层/mpv 已收起，主窗口恢复");
 }
 
 /// [lc-1913] 内嵌退出流程（ESC 桥 / player_embed_leave{stop:true} 共用）：
@@ -3290,9 +3334,8 @@ pub async fn embed_exit_flow(app: AppHandle) {
         crate::mpvwin::embed_hide(h);
     }
     // [lc-1915] 播放器窗收起来，主界面回来（Polaris 同款：主窗播放期间是隐藏的）
-    if let Some(ov) = app.get_webview_window("mpv_overlay") {
-        let _ = ov.hide();
-    }
+    // [lc-1940] 必须走原始 ShowWindow，Tauri 的 hide() 对覆盖层是空操作（见 overlay_hide）
+    hide_player_overlay(&app);
     if let Some(m) = app.get_webview_window("main") {
         let _ = m.show();
     }
@@ -4361,7 +4404,30 @@ pub fn run() {
             // 之前是「点播放时才在主线程同步建窗」，WebView 加载 + React 挂载 + 事件订阅
             // 全部挤在起播那几百毫秒里，表现为「控件过很久才出现 / 数据一直不刷新」。
             // Polaris 的 MPV Overlay 同样是常驻窗口，播放时只是 show/hide。
-            let _ = show_player_overlay(app.handle()).map(|w| { let _ = w.hide(); });
+            // [lc-1940] 覆盖层**只建不显示**：启动期任何情况下都不允许出现黑窗。
+            // lc-1939 在这里用的是会当场显示的路径，黑屏就是这么来的。
+            let _ = ensure_player_overlay(app.handle());
+            // [lc-1940] 启动看门狗：**非播放状态绝不允许覆盖层可见**。
+            // 上面的预建只建不显示，这里是最后一道保险 —— 万一将来又有人给覆盖层接上
+            // 会显示它的路径，启动后 2s/6s/15s 各查一次：没有 mpv 会话就强制收起。
+            // 有会话（用户已点播放）则不碰，避免把正在加载的控件层藏掉。
+            {
+                use tauri::Manager;
+                let h5 = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    for delay in [2000u64, 6000, 15000] {
+                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                        let has_session = {
+                            let st = h5.state::<AppState>();
+                            let slot = st.mpv.lock().await;
+                            slot.is_some()
+                        };
+                        if !has_session {
+                            hide_player_overlay(&h5);
+                        }
+                    }
+                });
+            }
             // [lc-1784] OpenSubtitles 内置共享 Key 落地（供 mpv 侧 sub-assrt.lua 读；空则清理）
             subtitle_sources::sync_builtin_key(app.handle());
             // [update] 载入前端补丁覆盖层指针；release 且存在补丁时切到 fntvweb 协议

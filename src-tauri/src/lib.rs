@@ -3165,6 +3165,11 @@ pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
         // TRANSPARENT），它反正被 mpv 全盖住；控制层底色由前端画纯黑。
         .shadow(false)
         .skip_taskbar(true)
+        // [lc-1924] 透明窗：UI 层要浮在 mpv 视频之上，空白区必须透出画面
+        // （Polaris 的 MPV Overlay 同样是 layered/transparent）。
+        // WebView2 的透明依赖 Environment 参数一致 —— lc-1920 已把 additional_browser_args
+        // 与主窗口对齐；万一仍被拒（0x8007139F），外层会重试并在 mpvwin 里退回旧方向。
+        .transparent(true)
         .visible(false)
         // [lc-1921] 播放窗不可用户缩放（Polaris 同款：样式里无 THICKFRAME）——尺寸只由
         // 跟随循环按 mpv 矩形设定，杜绝双向缩放通路。
@@ -3178,8 +3183,36 @@ pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
         return None;
     }
     let built = rx.recv().ok()?; // 主线程事件循环活着，必然回包
+    // 透明建窗失败 → 去掉 transparent 重试一次（宁可控件不可见，也不能让播放器起不来）
+    // 第一次带 transparent 建；失败则不带重试 → 记录最终是否透明
+    let mut built_transparent = true;
+    let built = match built {
+        Ok(w) => Ok(w),
+        Err(e) if e.contains("0x8007139F") || e.to_lowercase().contains("invalid") => {
+            crate::libmpv::trace(&format!("[lc-1924] 透明建窗失败（{e}），回退不透明重试"));
+            built_transparent = false;
+            let app3 = app.clone();
+            let (tx2, rx2) = std::sync::mpsc::channel::<Result<tauri::WebviewWindow, String>>();
+            let _ = app.run_on_main_thread(move || {
+                let b = tauri::WebviewWindowBuilder::new(&app3, "mpv_overlay", tauri::WebviewUrl::App("index.html".into()))
+                    .title("AniBox Player")
+                    .additional_browser_args("--autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI")
+                    .decorations(false)
+                    .shadow(false)
+                    .skip_taskbar(true)
+                    .visible(false)
+                    .resizable(false)
+                    .build()
+                    .map_err(|e| e.to_string());
+                let _ = tx2.send(b);
+            });
+            rx2.recv().unwrap_or_else(|e| Err(format!("回退建窗失败: {e}")))
+        }
+        Err(e) => Err(e),
+    };
     match built {
         Ok(w) => {
+            crate::mpvwin::set_overlay_transparent(built_transparent);
             let _ = w.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
             let _ = w.set_size(tauri::PhysicalSize::new(size.width, size.height));
             let _ = w.set_ignore_cursor_events(true);
@@ -3277,6 +3310,38 @@ async fn mpv_toggle_pause(state: State<'_, AppState>) -> Result<(), String> {
 
 /// [lc-093] App 形态（内嵌小窗 / 全页全屏）→ mpv 的 `fullscreen` 属性镜像。
 /// uosc 用它当底栏双形态判据（小窗只留 播放暂停+上下一集 | 时间 | 全屏；全屏保持原样）。
+/// [lc-1924] 读一个 mpv 属性（覆盖层 UI 用：如 glsl-shaders 判断着色器开关态）
+#[tauri::command]
+async fn mpv_get_prop(state: State<'_, AppState>, name: String) -> Result<serde_json::Value, String> {
+    let slot = state.mpv.lock().await;
+    if let Some(m) = slot.as_ref() {
+        let v = m.command(serde_json::json!(["get_property", name])).await?;
+        return Ok(v.get("data").cloned().unwrap_or(serde_json::Value::Null));
+    }
+    Ok(serde_json::Value::Null)
+}
+
+/// [lc-1924] 通用 script-message 通道：覆盖层 UI 的弹幕菜单 / 着色器切换等按钮
+/// 需要按名字戳 mpv 脚本（uosc 菜单、uosc_danmaku），不在 Rust 里逐个包语义。
+#[tauri::command]
+async fn mpv_script_message(
+    state: State<'_, AppState>,
+    name: String,
+    args: Option<Vec<String>>,
+) -> Result<(), String> {
+    let slot = state.mpv.lock().await;
+    if let Some(m) = slot.as_ref() {
+        let mut cmd = vec![serde_json::json!("script-message-to"), serde_json::json!(name)];
+        if let Some(a) = args {
+            for x in a {
+                cmd.push(serde_json::json!(x));
+            }
+        }
+        m.command(serde_json::Value::Array(cmd)).await?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn mpv_set_ui_fullscreen(state: State<'_, AppState>, on: bool) -> Result<(), String> {
     let slot = state.mpv.lock().await;
@@ -4598,6 +4663,8 @@ pub fn run() {
             player_chrome_ignore,
             player_embed_leave,
             mpv_toggle_pause,
+            mpv_script_message,
+            mpv_get_prop,
             player_source,
             mpv_set_ui_fullscreen,
             mpv_seek,

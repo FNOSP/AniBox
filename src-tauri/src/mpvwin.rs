@@ -51,6 +51,14 @@ static OWNER_FOLLOW: AtomicBool = AtomicBool::new(false);
 /// 收编完成前上报的内嵌矩形缓存（**屏幕物理坐标**）：hwnd 未就绪时 rect 命令先落这里，
 /// `embed_adopt` 成功后隐藏补施。高频 rect 命令只做一次 Mutex 写，足够轻量。
 static EMBED_RECT: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
+/// [lc-1924] UI 覆盖层是否成功建成**透明**窗。透明成功 → UI 层 owned by mpv（浮在视频上）；
+/// 透明失败（WebView2 拒绝）→ 退回旧方向（mpv owned by UI），宁可控件不可见也不能用不透明层盖住画面。
+static OVERLAY_TRANSPARENT: AtomicBool = AtomicBool::new(false);
+
+pub fn set_overlay_transparent(ok: bool) {
+    OVERLAY_TRANSPARENT.store(ok, Ordering::SeqCst);
+}
+
 /// [lc-1911] 进内嵌前的 mpv `script-opts` 原串（leave 时还原，独立窗口的 uosc 顶栏要回来）。
 static SAVED_SCRIPT_OPTS: Mutex<Option<String>> = Mutex::new(None);
 
@@ -97,19 +105,39 @@ pub fn adopt(pid: u32, owner_hwnd: isize) -> Result<isize, String> {
 }
 
 /// 对已知 hwnd 挂 owner + DWM 系统圆角 + 写槽（`adopt` 与 `embed_adopt` 共用本体）。
-fn adopt_hwnd(hwnd: isize, owner_hwnd: isize) {
+///
+/// [lc-1924] **owner 方向翻转**（对齐 Polaris 活体结构）：
+/// 之前是「mpv 挂到 ui 窗下」（ui=owner → mpv 作为 owned 永远压在 ui 之上 →
+/// 覆盖层里的控件被视频盖住，永远看不见，只能靠不透明黑底当挡板）。
+/// Polaris 实测是反的：`Tauri Window "MPV Overlay"` 的 GW_OWNER = **mpv 窗口**，
+/// 即 UI 层是 mpv 的 owned window —— 于是 UI 永远浮在视频之上，
+/// 且 mpv 原生拖动（begin-vo-dragging）时 UI 只是轻量跟随，不会让视频等 UI。
+/// 这里 `ui_hwnd` = 播放器 UI 覆盖层窗口；mpv 保持独立顶层窗（可被用户原生拖动）。
+fn adopt_hwnd(mpv_hwnd: isize, ui_hwnd: isize) {
+    // 透明没建成：回退旧方向（mpv 挂到 UI 下）——UI 层被视频盖住，但不会盖住画面
+    if !OVERLAY_TRANSPARENT.load(Ordering::SeqCst) {
+        unsafe {
+            let old = SetWindowLongPtrW(mpv_hwnd as _, GWLP_HWNDPARENT, ui_hwnd);
+            crate::libmpv::trace(&format!(
+                "[lc-1924] 覆盖层非透明 → 回退旧方向：mpv owner={ui_hwnd}（旧 {old}）"
+            ));
+        }
+        crate::winvisual::set_system_round_corner(mpv_hwnd);
+        set_hwnd(mpv_hwnd);
+        return;
+    }
     unsafe {
-        // GWLP_HWNDPARENT：设 owner（返回旧 owner）。mpv 与主窗口同线程无要求，
-        // 跨线程设 owner 是允许的（影响的是消息路由与生命周期，不影响谁的线程建窗）。
-        let old = SetWindowLongPtrW(hwnd as _, GWLP_HWNDPARENT, owner_hwnd);
-        crate::libmpv::trace(&format!(
-            "[lc-1907] GWLP_HWNDPARENT：{old} → {owner_hwnd}（mpv hwnd={hwnd}）"
-        ));
+        if ui_hwnd != 0 && IsWindow(ui_hwnd as _) != 0 {
+            let old = SetWindowLongPtrW(ui_hwnd as _, GWLP_HWNDPARENT, mpv_hwnd);
+            crate::libmpv::trace(&format!(
+                "[lc-1924] UI 层 owner：{old} → mpv {mpv_hwnd}（ui hwnd={ui_hwnd}）"
+            ));
+        }
     }
     // DWM 系统圆角：复用主窗口同一套调用（DWMWCP_ROUND + 关 DWM 边框）。
     // mpv 本来 border=no，边框关不关无感；圆角让它与主窗口观感一致。
-    crate::winvisual::set_system_round_corner(hwnd);
-    set_hwnd(hwnd);
+    crate::winvisual::set_system_round_corner(mpv_hwnd);
+    set_hwnd(mpv_hwnd);
 }
 
 /// 写槽（收编成功后调用；重收编时覆盖旧值）。
@@ -250,14 +278,15 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                         hidden_for_move = true;
                     }
                     stable_since = None;
+                    // [lc-1924] z 序交给 owner 关系（owned 恒在 owner 之上），这里只做几何同步
                     SetWindowPos(
                         ov as _,
-                        mh as _,
+                        std::ptr::null_mut(),
                         m.left,
                         m.top,
                         m.right - m.left,
                         m.bottom - m.top,
-                        SWP_NOACTIVATE,
+                        SWP_NOACTIVATE | SWP_NOZORDER,
                     );
                     continue;
                 }

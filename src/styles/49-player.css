@@ -158,9 +158,9 @@
   inset: 0;
   pointer-events: none;
   user-select: none;
-  /* [lc-1919] 播放窗本体不透明（WebView2 拒绝 transparent），控制层画纯黑兜底：
-     mpv 未盖满的缝隙露出的是黑，不是白/页面 */
-  background: #000;
+  /* [lc-1924] 覆盖层现在浮在 mpv 视频**之上**（owner 方向翻转 + 透明窗）：
+     这里必须透明，否则整块黑会把画面盖死。视频未出画前的黑由 .chrome-opening 承担。 */
+  background: transparent;
 }
 .player-chrome .chrome-back {
   position: absolute;
@@ -233,4 +233,186 @@
   .chrome-opening .player-spin {
     animation: none;
   }
+}
+
+/* ═══════════ [lc-1924] 播放器覆盖层 UI（Polaris 覆盖层同款：顶栏 + 底栏） ═══════════
+   布局口径取 osc-cinema.lua 实测值：顶栏 40、底栏按钮区距底 30、进度条高 8（hover 抬到 10）、
+   控件间距 14、3 秒自动隐藏。视觉走 AniBox 主题 token。 */
+.player-chrome {
+  transition: opacity 0.22s ease-out;
+}
+.player-chrome.hidden .chrome-top,
+.player-chrome.hidden .chrome-bottom {
+  opacity: 0;
+  pointer-events: none;
+}
+.player-chrome .chrome-top,
+.player-chrome .chrome-bottom {
+  transition: opacity 0.22s ease-out, transform 0.22s ease-out;
+}
+
+/* ── 顶栏 ── */
+.chrome-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  pointer-events: auto;
+  background: linear-gradient(180deg, rgba(8, 10, 16, 0.72) 0%, rgba(8, 10, 16, 0) 100%);
+}
+.chrome-top-right { margin-left: auto; display: flex; gap: 8px; }
+
+.chrome-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #f2f4f8;
+  font-size: 14px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+.chrome-title .ct-main {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.chrome-title .ct-ep {
+  flex: none;
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  font-weight: 500;
+}
+
+/* ── 通用圆形按钮 ── */
+.chrome-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(16, 19, 28, 0.55);
+  color: #eef1f6;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 0.15s, transform 0.12s, color 0.15s;
+  backdrop-filter: blur(6px);
+}
+.chrome-btn:hover { background: rgba(255, 255, 255, 0.2); }
+.chrome-btn:active { transform: scale(0.94); }
+.chrome-btn.primary {
+  width: 44px;
+  height: 44px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #12151d;
+}
+.chrome-btn.primary:hover { background: #fff; }
+.chrome-btn.text {
+  width: auto;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 底栏 ── */
+.chrome-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 0 16px 30px;
+  pointer-events: auto;
+  background: linear-gradient(0deg, rgba(8, 10, 16, 0.78) 0%, rgba(8, 10, 16, 0) 100%);
+}
+/* 进度条命中区（Polaris seekbarHitPadding=30 → 上下各 15px 可抓） */
+.chrome-track {
+  padding: 10px 0;
+  cursor: pointer;
+  touch-action: none;
+}
+.chrome-track-bg {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.22);
+  transition: height 0.15s ease-out;
+}
+.chrome-track:hover .chrome-track-bg { height: 10px; }
+.chrome-track-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 4px;
+  background: #fff;
+}
+.chrome-track-knob {
+  position: absolute;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -50%) scale(0.85);
+  opacity: 0;
+  transition: opacity 0.15s, transform 0.15s;
+}
+.chrome-track:hover .chrome-track-knob { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+
+.chrome-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 2px;
+}
+.chrome-time {
+  flex: none;
+  min-width: 108px;
+  color: #f2f4f8;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+}
+.chrome-time i { font-style: normal; opacity: 0.5; margin: 0 4px; }
+
+.chrome-ctrl {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+.chrome-right {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* 音量：滑条只在悬停时展开（Polaris 的 iOS 风音量滑块口径） */
+.chrome-vol { display: flex; align-items: center; gap: 6px; }
+.chrome-vol-slider {
+  width: 0;
+  opacity: 0;
+  transition: width 0.18s ease-out, opacity 0.18s;
+  accent-color: #fff;
+  cursor: pointer;
+}
+.chrome-vol:hover .chrome-vol-slider { width: 92px; opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .player-chrome, .player-chrome .chrome-top, .player-chrome .chrome-bottom,
+  .chrome-btn, .chrome-track-bg, .chrome-track-knob, .chrome-vol-slider { transition: none; }
 }

@@ -28,6 +28,33 @@ static EP_COUNT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::ne
 static MOUSE_X: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static MOUSE_Y: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 
+/// [lc-1924] 播放状态快照：覆盖层 UI（顶栏/底栏）的数据源。
+/// 与 Polaris 的 mpv-overlay.html 同思路 —— 控件画在 DOM 里，mpv 只负责播，
+/// 属性变化聚合成一份快照推过去，前端据此渲染进度/时间/音量/倍速/暂停态。
+static PSTATE: Mutex<Option<serde_json::Map<String, serde_json::Value>>> = Mutex::new(None);
+static PSTATE_AT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+/// 更新快照并（节流）推给前端。`force=false` 时最快 120ms 一次（time-pos 高频）。
+fn pstate_update(app: &tauri::AppHandle, key: &str, val: serde_json::Value, force: bool) {
+    let mut g = PSTATE.lock().unwrap_or_else(|e| e.into_inner());
+    let map = g.get_or_insert_with(serde_json::Map::new);
+    map.insert(key.to_string(), val);
+    let mut at = PSTATE_AT.lock().unwrap_or_else(|e| e.into_inner());
+    let now = std::time::Instant::now();
+    let due = match *at {
+        Some(t) => force || now.duration_since(t).as_millis() >= 120,
+        None => true,
+    };
+    if !due {
+        return;
+    }
+    *at = Some(now);
+    let snap = serde_json::Value::Object(map.clone());
+    drop(at);
+    drop(g);
+    let _ = app.emit("mpv-pstate", snap);
+}
+
 const OBSERVED: [(u64, &str); 16] = [
     (1, "time-pos"),
     (2, "duration"),
@@ -689,6 +716,25 @@ impl MpvSession {
                     let Some(id) = v.get("id").and_then(|i| i.as_u64()) else {
                         continue;
                     };
+                    // [lc-1924] 先喂状态流（覆盖层 UI 数据源），再做原有业务处理
+                    {
+                        let data = v.get("data").cloned().unwrap_or(serde_json::Value::Null);
+                        match id {
+                            1 => pstate_update(&app2, "pos", data, false),
+                            2 => pstate_update(&app2, "dur", data, true),
+                            3 => pstate_update(&app2, "paused", data, true),
+                            4 => pstate_update(&app2, "speed", data, true),
+                            5 => pstate_update(&app2, "volume", data, true),
+                            6 => pstate_update(&app2, "fullscreen", data, true),
+                            7 => pstate_update(&app2, "buffering", data, true),
+                            8 => pstate_update(&app2, "cachePct", data, true),
+                            9 => pstate_update(&app2, "idle", data, true),
+                            10 => pstate_update(&app2, "plPos", data, true),
+                            11 => pstate_update(&app2, "plCount", data, true),
+                            12 => pstate_update(&app2, "percent", data, false),
+                            _ => {}
+                        }
+                    }
                     // [progress] 退出兜底：在 Rust 侧维护最后位置/当前集（见 fnos_progress）。
                     match id {
                         1 => {

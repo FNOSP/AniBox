@@ -3264,7 +3264,7 @@ pub async fn embed_exit_flow(app: AppHandle) {
     if let Some(m) = app.get_webview_window("main") {
         let _ = m.show();
     }
-    let _ = app.emit("mpv-embed-exit", json!({}));
+    crate::mpv::emit_player(&app, "mpv-embed-exit", json!({}));
 }
 
 /// [lc-1909] 内嵌 leave：清内嵌状态；stop=true 走现有 IPC stop 并再次隐藏 mpv 窗口（实例保留）。

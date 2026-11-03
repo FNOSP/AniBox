@@ -57,7 +57,16 @@ fn pstate_update(app: &tauri::AppHandle, key: &str, val: serde_json::Value, forc
     PSTATE_LOGGED.call_once(|| {
         crate::libmpv::trace(&format!("[lc-1926] mpv-pstate 首帧: {snap}"));
     });
-    let _ = app.emit("mpv-pstate", snap);
+    emit_player(app, "mpv-pstate", snap);
+}
+
+
+/// [lc-1926] 播放事件发射：**广播 + 定向到 mpv_overlay**。
+/// 实测 `app.emit` 到不了播放器覆盖层窗口（`mpv-load{loaded}` 收不到 → 一直「正在打开」，
+/// `mpv-pstate` 收不到 → 进度/时间永远是 0）。这里对覆盖层再做一次 emit_to 兜底。
+pub fn emit_player(app: &tauri::AppHandle, event: &str, payload: serde_json::Value) {
+    let _ = app.emit(event, payload.clone());
+    let _ = app.emit_to("mpv_overlay", event, payload);
 }
 
 const OBSERVED: [(u64, &str); 16] = [
@@ -629,7 +638,7 @@ impl MpvSession {
                             "start-file" => {
                                 *load_started2.lock().unwrap() = Some(std::time::Instant::now());
                                 let t = title_slot.lock().unwrap().clone().unwrap_or_default();
-                                let _ = app2.emit("mpv-load", json!({ "phase": "start", "title": t }));
+                                emit_player(&app2, "mpv-load", json!({ "phase": "start", "title": t }));
                             }
                             "file-loaded" => {
                                 let took = load_started2
@@ -640,7 +649,7 @@ impl MpvSession {
                                     .unwrap_or(0);
                                 crate::libmpv::trace(&format!("mpv file-loaded（媒体就绪，加载耗时 {took}ms）"));
                                 let t = title_slot.lock().unwrap().clone().unwrap_or_default();
-                                let _ = app2.emit("mpv-load", json!({ "phase": "loaded", "title": t }));
+                                emit_player(&app2, "mpv-load", json!({ "phase": "loaded", "title": t }));
                                 // [lc-1841] start 只作用于本次加载（续播 seek 在加载时已消费）：
                                 // file-loaded 即清回 none，整季列表自动切下一集不会被误 seek。
                                 {
@@ -697,7 +706,7 @@ impl MpvSession {
                                         let _ = f.flush();
                                     }
                                 } else {
-                                    let _ = app2.emit("mpv-load", json!({ "phase": "ended", "reason": reason }));
+                                    emit_player(&app2, "mpv-load", json!({ "phase": "ended", "reason": reason }));
                                 }
                             }
                             _ => {}
@@ -868,7 +877,7 @@ impl MpvSession {
                         };
                         if !mirrored {
                             // 用户从 mpv 侧（按键 / uosc 全屏按钮）改的 → 抛给前端切「内嵌 ↔ 全页 + 窗口全屏」
-                            let _ = app2.emit("mpv-fullscreen", json!({ "on": on }));
+                            emit_player(&app2, "mpv-fullscreen", json!({ "on": on }));
                         }
                         continue;
                     }

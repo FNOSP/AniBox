@@ -508,7 +508,12 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
                 </button>
               </div>
             ))}
-            {wdAccounts.length === 0 && <p className="c115-dim">还没有 WebDAV 账号 —— 支持 NAS / OpenList(alist) / 坚果云等任意 WebDAV 服务</p>}
+            {wdAccounts.length === 0 && (
+              <>
+                <p className="c115-login-title">还没有 WebDAV 账号</p>
+                <p className="hint">支持 NAS / OpenList(alist) / 坚果云等任意 WebDAV 服务</p>
+              </>
+            )}
           </div>
           {wdForm ? (
             <div className="c115-wdform">

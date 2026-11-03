@@ -814,3 +814,8 @@
 
 /* [lc-1986] 容器换标准 .content 骨架（对齐 JavHub），废弃 .c115 自带 980 限宽+独立滚动 */
 .cloud-page .c115-login { width: 100%; max-width: 640px; margin: 0 auto; }
+
+/* [lc-1987] WebDAV 空态排版：主文案 + 短说明两行，长句不再硬换行 */
+.cloud-page .c115-login-title { margin: 0; font-size: 15px; font-weight: 600; color: var(--text-strong); }
+.cloud-page .c115-login .hint { margin: 0; }
+.cloud-page .c115-login .c115-dim { margin: 0; }

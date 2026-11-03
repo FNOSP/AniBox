@@ -1,14 +1,21 @@
 /* [lc-1939] 播放器覆盖层 UI —— 交互模型逐条照抄 Polaris 的 mpv-overlay：
  *
- *   · 覆盖层窗 layered + transparent，**常开 WS_EX_TRANSPARENT（点击穿透给 mpv）**；
- *   · Rust 50ms 全局光标探针（GetCursorPos）把窗口内物理坐标 eval 给页面
- *     → document.elementFromPoint → 命中 [data-chrome-hit] 才 invoke player_chrome_ignore(false)
- *     → 松开穿透，控件可点；离开控件立刻恢复穿透。
+ *   · 覆盖层窗 layered + transparent，**默认 WS_EX_TRANSPARENT（点击穿透给 mpv）**；
+ *   · [lc-1943] 穿透判定改由 Rust 16ms 探针**纯几何**完成：页面只在布局/显隐变化时
+ *     上报一次 `[data-chrome-hit]` 的矩形（`player_chrome_hot_rects`，窗口内物理像素），
+ *     Rust 拿 GetCursorPos 与矩形比 → 直接拨 WS_EX_TRANSPARENT，不再 eval/invoke 往返。
+ *     旧链路（50ms 探针 → eval 坐标 → elementFromPoint → invoke）最坏 ~70ms，
+ *     用户快速移入并点击时 mousedown 仍落在穿透窗上被 mpv 吃掉（首击失灵）。
  *   · 这条链路不依赖 WebView 的 mousemove（穿透态下根本收不到），也不依赖 mpv 的 mouse-pos
  *     （坐标是 mpv 客户区、且事件链会滞后）——lc-1924~1931 收不到点击的根因就此绕开。
- *   · 状态：mpv-pstate 事件 + 250ms invoke 快照双通道（历史版本事件到不了覆盖层，拉取兜底）。
- *   · 3 秒无操作自动隐藏（Polaris hideTimeout=3.0）；控件隐藏时 visibility:hidden
- *     自动退出 elementFromPoint 命中树，点击继续落到 mpv。
+ *   · 状态：`mpv-pstate` 事件为主通道 + 低频 invoke 快照兜底。
+ *     [lc-1943] 覆盖层此前**没有 matching capability**，`core:event:allow-listen` 被 ACL
+ *     拒绝 → `listen()` 一直 reject，事件从来没到过这里，只能等 250ms 轮询。
+ *     现在补上 `capabilities/overlay.json`，事件成为主通道；轮询降到 500ms 只做兜底。
+ *   · 控件一律 `pointerdown` 立即执行（`click` 只做键盘/兜底），并做乐观 UI：
+ *     点击当帧先翻转本地状态，mpv 回报只做校正。
+ *   · 3 秒无操作自动隐藏（Polaris hideTimeout=3.0）；控件隐藏时上报空可点区，
+ *     点击继续落到 mpv。
  *
  * 视觉：Polaris 的值 —— 底栏胶囊 rgba(18,18,18,.88) / 圆角 20 / 内距 4 / 按钮 34×34
  * 圆角 17、播放 40×40 圆角 20、图标 17（播放 26）/ 进度轨 7px（悬停 10）/ 时间 12px 700 /
@@ -19,7 +26,7 @@
  * 用户体感就是「点了没反应」。现在统一改成覆盖层内的磨砂玻璃面板（一个组件 + 多份数据）：
  *   · 面板数据全部来自 `player_menu_data`（真实轨道/章节/播放列表/字幕样式/弹幕状态）；
  *   · 设置项全部走 `mpv_set_prop` / `mpv_script_message` / `playlist-play-index`，无空桩；
- *   · 面板打开期间覆盖层保持「不穿透」，点空白/Esc/再点同一按钮关闭，只有一块面板存在。
+ *   · 面板打开期间可点区 = 整窗（模态），点空白/Esc/再点同一按钮关闭。
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -65,12 +72,38 @@ type PState = {
   title?: string;
 };
 
-type ProbeData = {
-  inside?: boolean;
-  physicalX?: number;
-  physicalY?: number;
-  surfacePhysicalWidth?: number;
-  surfacePhysicalHeight?: number;
+/* ── [lc-1943] 延迟采样：页面侧拿不到进程日志，把「点击 → invoke 返回」这类单次测量
+ * 经 `lat_trace` 写进 `anibox.log`（`[lat]` 前缀，与 Rust 侧 `[lat] mpv cmd=… rtt=…ms`
+ * 一起拼出完整链路）。只在点击动作上打点，不跟帧、不刷日志。 */
+const LAT_TRACE = true;
+let latT0 = 0;
+let latLabel = "";
+function latMark(label: string) {
+  if (!LAT_TRACE) return;
+  latT0 = performance.now();
+  latLabel = label;
+}
+function latDone(extra?: string) {
+  if (!LAT_TRACE || !latT0) return;
+  const dt = (performance.now() - latT0).toFixed(1);
+  const msg = `ui ${latLabel}${extra ? ` ${extra}` : ""} ${dt}ms`;
+  latT0 = 0;
+  void invoke("lat_trace", { msg }).catch(() => {});
+}
+
+/* mpv 属性名 → 菜单数据字段：乐观写入用（等 mpv 回报再校正，勾选不必等一轮拉取）。 */
+const PROP_FIELD: Record<string, keyof MenuData> = {
+  speed: "speed",
+  sid: "sid",
+  aid: "aid",
+  vid: "vid",
+  "secondary-sid": "secondarySid",
+  "sub-visibility": "subVisibility",
+  "secondary-sub-visibility": "secondarySubVisibility",
+  "sub-font-size": "subFontSize",
+  "sub-pos": "subPos",
+  "sub-border-size": "subBorderSize",
+  "user-data/uosc_danmaku/danmaku-switch": "danmakuOn",
 };
 
 /* ── [lc-1942] 菜单数据（与 Rust `player_menu_data` 对齐）── */
@@ -202,12 +235,26 @@ function MenuRow({
   onClick?: () => void;
   disabled?: boolean;
 }) {
+  /* [lc-1943] 按下即执行：`click` 要等 pointerup（用户按多久就等多久）才派发。 */
+  const lastTap = useRef(0);
+  const fire = () => {
+    if (disabled) return;
+    onClick?.();
+  };
   return (
     <button
       type="button"
       className="pc-menu-row"
       onMouseDown={(e) => e.preventDefault()}
-      onClick={onClick}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        lastTap.current = performance.now();
+        fire();
+      }}
+      onClick={() => {
+        if (performance.now() - lastTap.current < 700) return;
+        fire();
+      }}
       disabled={disabled}
     >
       <span className="pc-menu-row-main">
@@ -254,8 +301,6 @@ export function PlayerChrome() {
   const hideTimer = useRef<number | null>(null);
   const hoverInteractive = useRef(false);
   const dragLock = useRef(false);
-  const ignoreRef = useRef(true);
-  const lastProbe = useRef({ x: -1, y: -1 });
   const trackRef = useRef<HTMLDivElement | null>(null);
   const menuOpenRef = useRef(false);
   const menuPanelRef = useRef<HTMLDivElement | null>(null);
@@ -263,7 +308,10 @@ export function PlayerChrome() {
   const menuTriggerRef = useRef<HTMLElement | null>(null);
   const menuCloseTimer = useRef<number | null>(null);
   const menuPulling = useRef(false);
+  const menuPullAgain = useRef(false);
+  const pullTimer = useRef<number | null>(null);
   const keyboardFocusTimer = useRef<number | null>(null);
+  const tapAt = useRef(0);
 
   const loading = st.phase !== "loaded" && st.phase !== "ended";
   const title = st.title || "";
@@ -278,17 +326,76 @@ export function PlayerChrome() {
     void invoke(name, args as never).catch(() => {});
   }, []);
 
-  /* ── 穿透开关：只在状态真变化时过 IPC ── */
-  const setIgnore = useCallback((ignore: boolean) => {
-    if (ignoreRef.current === ignore) return;
-    ignoreRef.current = ignore;
-    void invoke("player_chrome_ignore", { ignore }).catch(() => {});
+  /** 带 `[lat]` 计时的命令：量「点击 → invoke 返回」（含 IPC + Rust 处理 + mpv 往返） */
+  const cmdLat = useCallback((label: string, name: string, args?: Record<string, unknown>) => {
+    latMark(label);
+    invoke(name, args as never)
+      .then(() => latDone())
+      .catch(() => latDone("err"));
   }, []);
 
-  const hitAt = (x: number, y: number) => {
-    const el = document.elementFromPoint(x, y);
-    return !!(el && el.closest("[data-chrome-hit]"));
-  };
+  /** [lc-1943] 按下即执行：`click` 要等 pointerup（用户按多久就等多久）+ 一次事件派发，
+   * 这是「点了要等一会儿」里唯一可控的固定开销。`pointerdown` 立刻触发，
+   * `onClick` 保留给键盘/兜底，700ms 内去重（一次物理点击只执行一次）。 */
+  const tap = useCallback(
+    (fn: (el: HTMLElement) => void) => ({
+      onMouseDown: (e: React.MouseEvent) => e.preventDefault(),
+      onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => {
+        if (e.button !== 0) return;
+        tapAt.current = performance.now();
+        fn(e.currentTarget);
+      },
+      onClick: (e: React.MouseEvent<HTMLButtonElement>) => {
+        if (performance.now() - tapAt.current < 700) return;
+        fn(e.currentTarget);
+      },
+    }),
+    [],
+  );
+
+  /* ── [lc-1943] 可点区上报：穿透判定由 Rust 探针独占，页面只负责「哪些矩形可点」──
+   * 只在布局/显隐变化时上报（一次交互最多 1 次 IPC），不再每帧 eval + invoke 往返。 */
+  const layoutRef = useRef({ showChrome: true, full: false });
+  layoutRef.current = { showChrome: visible || loading, full: !!menu || seeking };
+  const rectRaf = useRef<number | null>(null);
+  const reportRects = useCallback(() => {
+    if (rectRaf.current !== null) window.cancelAnimationFrame(rectRaf.current);
+    rectRaf.current = window.requestAnimationFrame(() => {
+      rectRaf.current = null;
+      const dpr = window.devicePixelRatio || 1;
+      const { showChrome, full } = layoutRef.current;
+      const rects: number[][] = [];
+      // 控件隐藏时不报任何矩形 → Rust 立刻恢复全窗穿透（点击继续交给 mpv）
+      if (showChrome || full) {
+        document.querySelectorAll("[data-chrome-hit]").forEach((el) => {
+          const r = el.getBoundingClientRect();
+          if (r.width <= 0 || r.height <= 0) return;
+          rects.push([
+            Math.round(r.left * dpr),
+            Math.round(r.top * dpr),
+            Math.round(r.width * dpr),
+            Math.round(r.height * dpr),
+          ]);
+        });
+      }
+      void invoke("player_chrome_hot_rects", { rects, full }).catch(() => {});
+    });
+  }, []);
+
+  useEffect(() => {
+    reportRects();
+  }, [visible, loading, menu, menuPos, menuClosing, sub, seeking, reportRects]);
+
+  useEffect(() => {
+    const onResize = () => reportRects();
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      if (rectRaf.current !== null) window.cancelAnimationFrame(rectRaf.current);
+      // 卸载时清空可点区：别把一个已经没人处理的窗口留在「可点」态
+      void invoke("player_chrome_hot_rects", { rects: [], full: false }).catch(() => {});
+    };
+  }, [reportRects]);
 
   /* ── 3 秒自动隐藏（面板打开时不隐藏）── */
   const wake = useCallback(() => {
@@ -307,65 +414,37 @@ export function PlayerChrome() {
     };
   }, [wake]);
 
-  /* ── Rust 光标探针入口：物理坐标 → CSS 视口坐标（不假定 DPI 比值）── */
+  /* ── [lc-1943] Rust 探针的「光标移动」通知：续显控件 / 记录是否悬在可点区 ── */
   useEffect(() => {
-    const w = window as unknown as { __aniboxProbe?: (d: ProbeData) => void };
-    w.__aniboxProbe = (data: ProbeData) => {
-      if (!data) return;
-      if (data.inside === false) {
-        hoverInteractive.current = false;
-        // [lc-1942] 面板打开期间不切回穿透：否则移出面板那一拍会把点击交给 mpv，
-        // 面板外点击无法命中「关闭面板」逻辑。
-        if (!dragLock.current && !menuOpenRef.current) setIgnore(true);
-        return;
-      }
-      const pw = Number(data.surfacePhysicalWidth);
-      const ph = Number(data.surfacePhysicalHeight);
-      const px = Number(data.physicalX);
-      const py = Number(data.physicalY);
-      const cw = document.documentElement.clientWidth;
-      const ch = document.documentElement.clientHeight;
-      if (!(pw > 0 && ph > 0 && cw > 0 && ch > 0)) return;
-      const x = (px * cw) / pw;
-      const y = (py * ch) / ph;
-      const lp = lastProbe.current;
-      if (Math.abs(x - lp.x) > 2 || Math.abs(y - lp.y) > 2) wake();
-      lastProbe.current = { x, y };
-      if (menuOpenRef.current) {
-        // 面板打开 = 模态：整窗可点（点空白处用于关闭面板）
-        hoverInteractive.current = true;
-        setIgnore(false);
-        return;
-      }
-      const hit = hitAt(x, y);
-      hoverInteractive.current = hit;
-      if (!dragLock.current) setIgnore(!hit);
-    };
+    let alive = true;
+    let un: (() => void) | undefined;
+    listen<{ x: number; y: number; hot: boolean; inside: boolean }>("overlay-cursor", (e) => {
+      if (!alive) return;
+      hoverInteractive.current = !!e.payload?.hot;
+      if (e.payload?.inside) wake();
+    })
+      .then((f) => {
+        un = f;
+      })
+      .catch(() => {
+        /* 非 Tauri 环境：控件仍可点，只是不再自动续显（3s 后隐藏） */
+      });
     return () => {
-      delete w.__aniboxProbe;
+      alive = false;
+      un?.();
     };
-  }, [setIgnore, wake]);
+  }, [wake]);
 
-  /* 已获得鼠标（穿透关闭）时，真实 mousemove 负责把穿透及时开回去 */
+  /* ── 状态：事件为主通道，低频快照兜底 ──
+   * [lc-1943] 之前 `listen` 因覆盖层缺少 capability 被 ACL 拒绝（promise reject），
+   * 事件从未到达，状态只能靠 250ms 轮询 → 每次点击要等 0~250ms 才有反应。
+   * 补上 `capabilities/overlay.json` 后事件成为主通道；轮询降到 500ms 只做兜底。 */
+  const lastPstateAt = useRef(0);
   useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      wake();
-      if (menuOpenRef.current) {
-        hoverInteractive.current = true;
-        setIgnore(false);
-        return;
-      }
-      const hit = hitAt(e.clientX, e.clientY);
-      hoverInteractive.current = hit;
-      if (!dragLock.current) setIgnore(!hit);
-    };
-    document.addEventListener("mousemove", onMove);
-    return () => document.removeEventListener("mousemove", onMove);
-  }, [setIgnore, wake]);
-
-  /* ── 状态：事件 + 轮询双通道 ── */
-  useEffect(() => {
-    const unP = listen<PState>("mpv-pstate", (e) => setSt((prev) => ({ ...prev, ...e.payload })));
+    const unP = listen<PState>("mpv-pstate", (e) => {
+      lastPstateAt.current = performance.now();
+      setSt((prev) => ({ ...prev, ...e.payload }));
+    });
     const unL = listen<{ phase?: string; title?: string }>("mpv-load", (e) => {
       setSt((prev) => ({
         ...prev,
@@ -384,22 +463,31 @@ export function PlayerChrome() {
     const pull = async () => {
       try {
         const s = await invoke<PState>("player_chrome_state");
-        if (alive && s) setSt((prev) => ({ ...prev, ...s }));
+        if (!alive || !s) return;
+        // 事件通道 300ms 内有推送 = 它比这份快照新；用旧采样覆盖会把乐观状态打回去
+        if (performance.now() - lastPstateAt.current < 300) return;
+        setSt((prev) => ({ ...prev, ...s }));
       } catch {
         /* 播放器未起时忽略 */
       }
     };
     void pull();
-    const id = window.setInterval(() => void pull(), 250);
+    const id = window.setInterval(() => void pull(), 500);
     return () => {
       alive = false;
       window.clearInterval(id);
     };
   }, []);
 
-  /* ── [lc-1942] 菜单数据拉取（同一时刻只允许一发，避免慢响应叠队）── */
+  /* ── [lc-1942] 菜单数据拉取（同一时刻只允许一发，避免慢响应叠队）──
+   * [lc-1943] 旧实现在「已有请求在飞」时**直接 return**，把这次刷新吞掉 ——
+   * 点了选项恰好撞上一次 1s 轮询，勾选/数值就要再等一整秒。现在记一笔「还欠一次」，
+   * 回来立刻补拉。 */
   const pullMenu = useCallback(async () => {
-    if (menuPulling.current) return;
+    if (menuPulling.current) {
+      menuPullAgain.current = true;
+      return;
+    }
     menuPulling.current = true;
     try {
       const d = await invoke<MenuData>("player_menu_data");
@@ -408,8 +496,24 @@ export function PlayerChrome() {
       /* 播放器未起时保持空态 */
     } finally {
       menuPulling.current = false;
+      if (menuPullAgain.current) {
+        menuPullAgain.current = false;
+        window.setTimeout(() => void pullMenu(), 80);
+      }
     }
   }, []);
+
+  /** 延迟合并一次拉取（连点/连拖滑块时只发最后一发） */
+  const schedulePull = useCallback(
+    (ms = 160) => {
+      if (pullTimer.current) window.clearTimeout(pullTimer.current);
+      pullTimer.current = window.setTimeout(() => {
+        pullTimer.current = null;
+        void pullMenu();
+      }, ms);
+    },
+    [pullMenu],
+  );
 
   useEffect(() => {
     if (!menu) return;
@@ -507,15 +611,14 @@ export function PlayerChrome() {
     return () => releaseKeyboard();
   }, [sub, releaseKeyboard]);
 
-  const openMenu = (id: MenuId, e: React.MouseEvent<HTMLElement>) => {
-    const el = e.currentTarget;
+  const openMenu = (id: MenuId, el: HTMLElement | null) => {
     if (menu === id && !menuClosing) {
       closeMenu();
       return;
     }
     if (menuCloseTimer.current) window.clearTimeout(menuCloseTimer.current);
     menuTriggerRef.current = el;
-    menuAnchorRef.current = el.getBoundingClientRect();
+    menuAnchorRef.current = el ? el.getBoundingClientRect() : null;
     menuOpenRef.current = true;
     setMenuClosing(false);
     setSub(null);
@@ -524,7 +627,8 @@ export function PlayerChrome() {
     setSubNotice("");
     setMenuPos(null);
     setMenu(id);
-    setIgnore(false);
+    // [lc-1943] 面板打开 = 模态：透传由 layoutRef → 可点区上报声明整窗可点，
+    // 不再需要单独 invoke 一次穿透开关。
     void pullMenu();
   };
 
@@ -561,30 +665,43 @@ export function PlayerChrome() {
     };
   }, [menu, closeMenu, releaseKeyboard]);
 
-  /* ── 菜单动作 ── */
+  /* ── 菜单动作 ──
+   * [lc-1943] 乐观 UI：先在本地把字段写成目标值（勾选/数值当帧就动），
+   * mpv 回报只做校正。面板关闭也提前到 IPC 之前 —— 用户看到的「点完立刻合上」
+   * 不再依赖 mpv 往返。 */
   const applyProp = useCallback(
     async (name: string, value: unknown, closeAfter = false) => {
+      const field = PROP_FIELD[name];
+      if (field) setMdata((prev) => ({ ...prev, [field]: value as never }));
+      if (closeAfter) closeMenu();
+      latMark(`prop:${name}`);
       try {
         await invoke("mpv_set_prop", { name, value });
       } catch {
-        /* 写入失败时保持面板，轮询会显示真实状态 */
+        /* 写入失败：稍后的一次拉取会把真实状态带回来 */
+      } finally {
+        latDone();
       }
-      if (closeAfter) closeMenu();
-      else void pullMenu();
+      schedulePull(160);
     },
-    [closeMenu, pullMenu],
+    [closeMenu, schedulePull],
   );
 
   const playIndex = useCallback(
     async (index: number) => {
+      setMdata((prev) => ({ ...prev, playlistPos: index }));
+      closeMenu();
+      latMark("playlist:play-index");
       try {
         await invoke("mpv_playlist_play_index", { index });
       } catch {
         /* ignore */
+      } finally {
+        latDone();
       }
-      closeMenu();
+      schedulePull(200);
     },
-    [closeMenu],
+    [closeMenu, schedulePull],
   );
 
   const seekTo = useCallback(
@@ -604,10 +721,12 @@ export function PlayerChrome() {
     async (delta: number) => {
       const base = isNum(mdata.danmakuDelay) ? mdata.danmakuDelay : 0;
       const next = Math.max(-30, Math.min(30, Math.round((base + delta) * 10) / 10));
+      // [lc-1943] 乐观写：偏移数值当帧就变，脚本回报后由拉取校正
+      setMdata((prev) => ({ ...prev, danmakuDelay: next }));
       cmd("mpv_script_message", { name: "uosc_danmaku", args: ["danmaku-delay", String(next)] });
-      window.setTimeout(() => void pullMenu(), 180);
+      schedulePull(180);
     },
-    [cmd, mdata.danmakuDelay, pullMenu],
+    [cmd, mdata.danmakuDelay, schedulePull],
   );
 
   const searchSubs = useCallback(async () => {
@@ -1229,7 +1348,11 @@ export function PlayerChrome() {
               type="button"
               className={`pc-round${st.ontop ? " pc-active" : ""}`}
               data-tip={st.ontop ? "取消置顶" : "置顶"}
-              onClick={() => cmd("mpv_set_ontop", { on: !st.ontop })}
+              {...tap(() => {
+                const next = !st.ontop;
+                setSt((p) => ({ ...p, ontop: next }));
+                cmdLat("ontop", "mpv_set_ontop", { on: next });
+              })}
             >
               <Pin size={14} />
             </button>
@@ -1237,7 +1360,7 @@ export function PlayerChrome() {
               type="button"
               className="pc-round"
               data-tip="最小化"
-              onClick={() => cmd("mpv_window_minimize")}
+              {...tap(() => cmd("mpv_window_minimize"))}
             >
               <Minus size={14} />
             </button>
@@ -1245,7 +1368,7 @@ export function PlayerChrome() {
               type="button"
               className="pc-round"
               data-tip="最大化"
-              onClick={() => cmd("mpv_toggle_maximize")}
+              {...tap(() => cmd("mpv_toggle_maximize"))}
             >
               <Square size={12} />
             </button>
@@ -1253,7 +1376,7 @@ export function PlayerChrome() {
               type="button"
               className="pc-round pc-close"
               data-tip="关闭"
-              onClick={() => cmd("player_embed_leave", { stop: true })}
+              {...tap(() => cmd("player_embed_leave", { stop: true }))}
             >
               <X size={14} />
             </button>
@@ -1286,7 +1409,7 @@ export function PlayerChrome() {
                 type="button"
                 className={`pc-btn pc-icon${menu === "episodes" ? " pc-open" : ""}`}
                 data-tip="选集"
-                onClick={(e) => openMenu("episodes", e)}
+                {...tap((el) => openMenu("episodes", el))}
               >
                 <ListVideo size={17} />
               </button>
@@ -1294,7 +1417,7 @@ export function PlayerChrome() {
                 type="button"
                 className={`pc-btn pc-icon${menu === "subtitles" ? " pc-open" : ""}`}
                 data-tip="字幕"
-                onClick={(e) => openMenu("subtitles", e)}
+                {...tap((el) => openMenu("subtitles", el))}
               >
                 <Subtitles size={17} />
               </button>
@@ -1302,7 +1425,7 @@ export function PlayerChrome() {
                 type="button"
                 className={`pc-btn pc-icon${menu === "audio" ? " pc-open" : ""}`}
                 data-tip="音频"
-                onClick={(e) => openMenu("audio", e)}
+                {...tap((el) => openMenu("audio", el))}
               >
                 <AudioLines size={17} />
               </button>
@@ -1315,7 +1438,7 @@ export function PlayerChrome() {
                 type="button"
                 className={`pc-btn pc-text${menu === "speed" ? " pc-open" : ""}`}
                 data-tip="播放速度"
-                onClick={(e) => openMenu("speed", e)}
+                {...tap((el) => openMenu("speed", el))}
               >
                 {Number(speed.toFixed(2))}×
               </button>
@@ -1323,7 +1446,11 @@ export function PlayerChrome() {
                 type="button"
                 className="pc-btn pc-play"
                 data-tip={st.paused ? "播放" : "暂停"}
-                onClick={() => cmd("mpv_toggle_pause")}
+                {...tap(() => {
+                  // 乐观：图标当帧翻转，mpv 回报只做校正
+                  setSt((p) => ({ ...p, paused: !p.paused }));
+                  cmdLat("pause", "mpv_toggle_pause");
+                })}
               >
                 {st.paused ? <Play size={26} /> : <Pause size={26} />}
               </button>
@@ -1331,7 +1458,7 @@ export function PlayerChrome() {
                 type="button"
                 className="pc-btn pc-icon"
                 data-tip="下一集"
-                onClick={() => cmd("mpv_next_episode")}
+                {...tap(() => cmdLat("next", "mpv_next_episode"))}
               >
                 <SkipForward size={17} />
               </button>
@@ -1345,7 +1472,11 @@ export function PlayerChrome() {
                   type="button"
                   className="pc-btn pc-icon"
                   data-tip={vol > 0 ? "静音" : "取消静音"}
-                  onClick={() => cmd("mpv_set_volume", { volume: vol > 0 ? 0 : 100 })}
+                  {...tap(() => {
+                    const next = vol > 0 ? 0 : 100;
+                    setSt((p) => ({ ...p, volume: next }));
+                    cmdLat("mute", "mpv_set_volume", { volume: next });
+                  })}
                 >
                   {volIcon}
                 </button>
@@ -1363,7 +1494,7 @@ export function PlayerChrome() {
                 type="button"
                 className={`pc-btn pc-icon${menu === "danmaku" ? " pc-open" : ""}`}
                 data-tip="弹幕"
-                onClick={(e) => openMenu("danmaku", e)}
+                {...tap((el) => openMenu("danmaku", el))}
               >
                 <MessageSquare size={17} />
               </button>
@@ -1371,7 +1502,7 @@ export function PlayerChrome() {
                 type="button"
                 className={`pc-btn pc-icon${menu === "chapters" ? " pc-open" : ""}`}
                 data-tip="片头片尾"
-                onClick={(e) => openMenu("chapters", e)}
+                {...tap((el) => openMenu("chapters", el))}
               >
                 <ListOrdered size={17} />
               </button>
@@ -1379,7 +1510,7 @@ export function PlayerChrome() {
                 type="button"
                 className={`pc-btn pc-icon${menu === "video" ? " pc-open" : ""}`}
                 data-tip="版本"
-                onClick={(e) => openMenu("video", e)}
+                {...tap((el) => openMenu("video", el))}
               >
                 <Layers size={17} />
               </button>
@@ -1387,7 +1518,7 @@ export function PlayerChrome() {
                 type="button"
                 className={`pc-btn pc-icon${menu === "settings" ? " pc-open" : ""}`}
                 data-tip="设置"
-                onClick={(e) => openMenu("settings", e)}
+                {...tap((el) => openMenu("settings", el))}
               >
                 <Settings size={17} />
               </button>
@@ -1395,7 +1526,11 @@ export function PlayerChrome() {
                 type="button"
                 className="pc-btn pc-icon"
                 data-tip={st.fullscreen ? "退出全屏" : "全屏"}
-                onClick={() => cmd("mpv_set_ui_fullscreen", { on: !st.fullscreen })}
+                {...tap(() => {
+                  const next = !st.fullscreen;
+                  setSt((p) => ({ ...p, fullscreen: next }));
+                  cmdLat("fullscreen", "mpv_set_ui_fullscreen", { on: next });
+                })}
               >
                 <Maximize2 size={17} />
               </button>

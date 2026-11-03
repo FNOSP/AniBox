@@ -1,37 +1,44 @@
-/* [lc-1924] mpv 播放器覆盖层 UI —— 逻辑照抄 Polaris（其 osc-cinema.lua 的自绘底栏被
- * `if false and` 关掉，注释写明「改由 mpv-overlay.html 覆盖层接管」）：
+/* [lc-1939] 播放器覆盖层 UI —— 交互模型逐条照抄 Polaris 的 mpv-overlay：
  *
- *   · 控件全部画在 DOM 里，mpv 只负责播与原生拖窗（begin-vo-dragging）；
- *   · 覆盖层窗 layered + transparent + owned by mpv → 浮在视频之上、空白区透出画面；
- *   · 默认整窗鼠标穿透（点视频 = 暂停 / 拖窗，全在 mpv 原生侧），
- *     只有指针压到 [data-chrome] 元素上才关穿透 —— Rust 经 overlay-mouse 回传光标做命中测试；
- *   · 控件 3 秒无操作自动隐藏（Polaris hideTimeout=3.0），鼠标一动即回显；
- *   · 布局取 osc-cinema 实测值：底栏下边距 100、按钮区 30、进度条高 8、按钮间距 14、顶栏 40。
+ *   · 覆盖层窗 layered + transparent，**常开 WS_EX_TRANSPARENT（点击穿透给 mpv）**；
+ *   · Rust 50ms 全局光标探针（GetCursorPos）把窗口内物理坐标 eval 给页面
+ *     → document.elementFromPoint → 命中 [data-chrome-hit] 才 invoke player_chrome_ignore(false)
+ *     → 松开穿透，控件可点；离开控件立刻恢复穿透。
+ *   · 这条链路不依赖 WebView 的 mousemove（穿透态下根本收不到），也不依赖 mpv 的 mouse-pos
+ *     （坐标是 mpv 客户区、且事件链会滞后）——lc-1924~1931 收不到点击的根因就此绕开。
+ *   · 状态：mpv-pstate 事件 + 250ms invoke 快照双通道（历史版本事件到不了覆盖层，拉取兜底）。
+ *   · 3 秒无操作自动隐藏（Polaris hideTimeout=3.0）；控件隐藏时 visibility:hidden
+ *     自动退出 elementFromPoint 命中树，点击继续落到 mpv。
  *
- * 数据：Rust 把 mpv 的 time-pos/duration/pause/volume/speed/playlist-pos/count
- * 聚合成 `mpv-pstate` 事件推来（Polaris 覆盖层同款数据源）。
+ * 视觉：Polaris 的值 —— 底栏胶囊 rgba(18,18,18,.88) / 圆角 20 / 内距 4 / 按钮 34×34
+ * 圆角 17、播放 40×40 圆角 20、图标 17（播放 26）/ 进度轨 7px（悬停 10）/ 时间 12px 700 /
+ * 顶栏圆钮 26。全层只有底部 132px 对比渐变，**顶部没有任何遮罩或渐变**。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
-  ArrowLeft as IcoArrowLeft,
-  Maximize as IcoMax,
-  Minimize as IcoMin,
-  Pause as IcoPause,
-  Play as IcoPlay,
-  RotateCcw as IcoBack10,
-  RotateCw as IcoFwd10,
-  SkipBack as IcoPrev,
-  SkipForward as IcoNext,
-  Sparkles as IcoShader,
-  MessageSquare as IcoDm,
-  Volume1 as IcoVol1,
-  Volume2 as IcoVol2,
-  VolumeX as IcoVolX,
+  ArrowLeft,
+  AudioLines,
+  Layers,
+  ListOrdered,
+  ListVideo,
+  Maximize2,
+  MessageSquare,
+  Minus,
+  Pause,
+  Pin,
+  Play,
+  Settings,
+  SkipForward,
+  Square,
+  Subtitles,
+  Volume1,
+  Volume2,
+  VolumeX,
+  X,
 } from "lucide-react";
 
-type MpvLoad = { phase?: string; title?: string };
 type PState = {
   pos?: number;
   dur?: number;
@@ -42,6 +49,17 @@ type PState = {
   plPos?: number;
   plCount?: number;
   fullscreen?: boolean;
+  ontop?: boolean;
+  phase?: string;
+  title?: string;
+};
+
+type ProbeData = {
+  inside?: boolean;
+  physicalX?: number;
+  physicalY?: number;
+  surfacePhysicalWidth?: number;
+  surfacePhysicalHeight?: number;
 };
 
 const fmt = (s?: number) => {
@@ -54,70 +72,51 @@ const fmt = (s?: number) => {
 };
 
 export function PlayerChrome() {
-  const [loading, setLoading] = useState(true);
-  const [title, setTitle] = useState("");
   const [st, setSt] = useState<PState>({});
-  const [uiVisible, setUiVisible] = useState(true);
+  const [visible, setVisible] = useState(true);
   const [seeking, setSeeking] = useState(false);
   const [seekPreview, setSeekPreview] = useState(0);
-  const hideTimer = useRef<number | null>(null);
-  const barRef = useRef<HTMLDivElement | null>(null);
-  const hoverRef = useRef(false);
 
-  /* 3 秒无操作自动隐藏（Polaris hideTimeout=3.0）；悬停底栏/拖进度/加载中不隐藏 */
-  const wake = useCallback(() => {
-    setUiVisible(true);
-    if (hideTimer.current) window.clearTimeout(hideTimer.current);
-    hideTimer.current = window.setTimeout(() => {
-      if (hoverRef.current) return;
-      setUiVisible(false);
-    }, 3000);
+  const hideTimer = useRef<number | null>(null);
+  const hoverInteractive = useRef(false);
+  const dragLock = useRef(false);
+  const ignoreRef = useRef(true);
+  const lastProbe = useRef({ x: -1, y: -1 });
+  const trackRef = useRef<HTMLDivElement | null>(null);
+
+  const loading = st.phase !== "loaded" && st.phase !== "ended";
+  const title = st.title || "";
+  const pos = st.pos || 0;
+  const dur = st.dur || 0;
+  const vol = st.volume ?? 100;
+  const speed = st.speed ?? 1;
+  const cur = seeking ? seekPreview : pos;
+  const pct = dur > 0 ? Math.min(1, Math.max(0, cur / dur)) : 0;
+
+  const cmd = useCallback((name: string, args?: Record<string, unknown>) => {
+    void invoke(name, args as never).catch(() => {});
   }, []);
 
-  /* [lc-1925] 空白区手势（Polaris 的 osc-cinema 同款语义）：
-     按住左键位移 > 4px → 拖动 mpv 窗口（begin-vo-dragging，DWM 原生搬运）；
-     松开且未位移 → 单击暂停；双击 → 全屏。控件区域 [data-chrome] 不参与。
-     位移死区 4px 与其 dragDeadzone 一致。 */
-  const gesture = useRef<{ x: number; y: number; t: number; moved: boolean } | null>(null);
-  const onRootPointerDown = (e: React.PointerEvent) => {
-    if ((e.target as HTMLElement).closest("[data-chrome]")) return;
-    if (e.button !== 0) return;
-    gesture.current = { x: e.clientX, y: e.clientY, t: Date.now(), moved: false };
-    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-  };
-  const onRootPointerMove = (e: React.PointerEvent) => {
-    const g = gesture.current;
-    if (!g || g.moved) return;
-    if (Math.abs(e.clientX - g.x) > 4 || Math.abs(e.clientY - g.y) > 4) {
-      g.moved = true;
-      cmd("mpv_begin_drag");
-    }
-  };
-  const onRootPointerUp = (e: React.PointerEvent) => {
-    const g = gesture.current;
-    gesture.current = null;
-    if (!g || g.moved) return;
-    if (e.detail >= 2) {
-      cmd("mpv_set_ui_fullscreen", { on: !st.fullscreen });
-      return;
-    }
-    cmd("mpv_toggle_pause");
+  /* ── 穿透开关：只在状态真变化时过 IPC ── */
+  const setIgnore = useCallback((ignore: boolean) => {
+    if (ignoreRef.current === ignore) return;
+    ignoreRef.current = ignore;
+    void invoke("player_chrome_ignore", { ignore }).catch(() => {});
+  }, []);
+
+  const hitAt = (x: number, y: number) => {
+    const el = document.elementFromPoint(x, y);
+    return !!(el && el.closest("[data-chrome-hit]"));
   };
 
-  /* 状态流 + 加载态 */
-  useEffect(() => {
-    const uns: Array<Promise<() => void>> = [
-      listen<PState>("mpv-pstate", (e) => setSt((prev) => ({ ...prev, ...e.payload }))),
-      listen<MpvLoad>("mpv-load", (e) => {
-        const phase = e.payload?.phase;
-        if (e.payload?.title) setTitle(e.payload.title);
-        if (phase === "loaded") setLoading(false);
-        else if (phase === "start") setLoading(true);
-      }),
-    ];
-    return () => {
-      uns.forEach((p) => void p.then((f) => f()).catch(() => {}));
-    };
+  /* ── 3 秒自动隐藏 ── */
+  const wake = useCallback(() => {
+    setVisible(true);
+    if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => {
+      if (hoverInteractive.current || dragLock.current) return;
+      setVisible(false);
+    }, 3000);
   }, []);
 
   useEffect(() => {
@@ -127,58 +126,108 @@ export function PlayerChrome() {
     };
   }, [wake]);
 
-  const pos = st.pos || 0;
-  const dur = st.dur || 0;
-  const pct = dur > 0 ? Math.min(1, Math.max(0, (seeking ? seekPreview : pos) / dur)) : 0;
-  const vol = st.volume ?? 100;
-  const speed = st.speed ?? 1;
+  /* ── Rust 光标探针入口：物理坐标 → CSS 视口坐标（不假定 DPI 比值）── */
+  useEffect(() => {
+    const w = window as unknown as { __aniboxProbe?: (d: ProbeData) => void };
+    w.__aniboxProbe = (data: ProbeData) => {
+      if (!data) return;
+      if (data.inside === false) {
+        hoverInteractive.current = false;
+        if (!dragLock.current) setIgnore(true);
+        return;
+      }
+      const pw = Number(data.surfacePhysicalWidth);
+      const ph = Number(data.surfacePhysicalHeight);
+      const px = Number(data.physicalX);
+      const py = Number(data.physicalY);
+      const cw = document.documentElement.clientWidth;
+      const ch = document.documentElement.clientHeight;
+      if (!(pw > 0 && ph > 0 && cw > 0 && ch > 0)) return;
+      const x = (px * cw) / pw;
+      const y = (py * ch) / ph;
+      const lp = lastProbe.current;
+      if (Math.abs(x - lp.x) > 2 || Math.abs(y - lp.y) > 2) wake();
+      lastProbe.current = { x, y };
+      const hit = hitAt(x, y);
+      hoverInteractive.current = hit;
+      if (!dragLock.current) setIgnore(!hit);
+    };
+    return () => {
+      delete w.__aniboxProbe;
+    };
+  }, [setIgnore, wake]);
 
-  const cmd = useCallback((name: string, args?: Record<string, unknown>) => {
-    void invoke(name, args as never).catch(() => {});
+  /* 已获得鼠标（穿透关闭）时，真实 mousemove 负责把穿透及时开回去 */
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      wake();
+      const hit = hitAt(e.clientX, e.clientY);
+      hoverInteractive.current = hit;
+      if (!dragLock.current) setIgnore(!hit);
+    };
+    document.addEventListener("mousemove", onMove);
+    return () => document.removeEventListener("mousemove", onMove);
+  }, [setIgnore, wake]);
+
+  /* ── 状态：事件 + 轮询双通道 ── */
+  useEffect(() => {
+    const unP = listen<PState>("mpv-pstate", (e) => setSt((prev) => ({ ...prev, ...e.payload })));
+    const unL = listen<{ phase?: string; title?: string }>("mpv-load", (e) => {
+      setSt((prev) => ({
+        ...prev,
+        phase: e.payload?.phase ?? prev.phase,
+        title: e.payload?.title || prev.title,
+      }));
+    });
+    return () => {
+      void unP.then((f) => f()).catch(() => {});
+      void unL.then((f) => f()).catch(() => {});
+    };
   }, []);
 
-  /** 着色器开关：读 glsl-shaders 现状 → 空则开模式A+A，非空则清空 */
-  const toggleShader = useCallback(async () => {
-    try {
-      const cur = await invoke<string>("mpv_get_prop", { name: "glsl-shaders" });
-      const on = String(cur || "").trim().length > 0;
-      await invoke("mpv_script_message", {
-        name: "fntv_shader",
-        args: on ? ["clear"] : ["preset", "a3"],
-      });
-    } catch {
-      /* 脚本未就绪时忽略 */
-    }
+  useEffect(() => {
+    let alive = true;
+    const pull = async () => {
+      try {
+        const s = await invoke<PState>("player_chrome_state");
+        if (alive && s) setSt((prev) => ({ ...prev, ...s }));
+      } catch {
+        /* 播放器未起时忽略 */
+      }
+    };
+    void pull();
+    const id = window.setInterval(() => void pull(), 250);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
   }, []);
 
-  const setHover = (v: boolean) => {
-    hoverRef.current = v;
-    if (!v) wake();
-  };
-
-  /* 进度条：按下即预览、拖动实时预览、松开才 seek（避免拖动中疯狂 seek） */
-  const seekFromEvent = (clientX: number) => {
-    const el = barRef.current;
+  /* ── 进度条：按下预览、拖动实时预览、松开才 seek ── */
+  const seekFrom = (clientX: number) => {
+    const el = trackRef.current;
     if (!el || dur <= 0) return 0;
     const r = el.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
-    return ratio * dur;
+    return Math.min(1, Math.max(0, (clientX - r.left) / r.width)) * dur;
   };
   const onTrackDown = (e: React.PointerEvent) => {
     if (dur <= 0) return;
+    dragLock.current = true;
     setSeeking(true);
-    setSeekPreview(seekFromEvent(e.clientX));
+    setSeekPreview(seekFrom(e.clientX));
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
   };
   const onTrackMove = (e: React.PointerEvent) => {
     if (!seeking) return;
-    setSeekPreview(seekFromEvent(e.clientX));
+    setSeekPreview(seekFrom(e.clientX));
   };
   const onTrackUp = (e: React.PointerEvent) => {
     if (!seeking) return;
-    const t = seekFromEvent(e.clientX);
+    const t = seekFrom(e.clientX);
     setSeeking(false);
+    dragLock.current = false;
     cmd("mpv_seek", { seconds: t, absolute: true });
+    wake();
   };
 
   const epLabel = useMemo(() => {
@@ -187,168 +236,223 @@ export function PlayerChrome() {
     return c > 1 && p >= 0 ? `${p + 1}/${c}` : "";
   }, [st.plCount, st.plPos]);
 
+  const volIcon =
+    vol <= 0 ? <VolumeX size={17} /> : vol < 50 ? <Volume1 size={17} /> : <Volume2 size={17} />;
+
   return (
-    <div
-      className={`player-chrome${uiVisible || loading ? "" : " hidden"}`}
-      onPointerDown={onRootPointerDown}
-      onPointerMove={onRootPointerMove}
-      onPointerUp={onRootPointerUp}
-    >
-      {/* ── 顶栏：返回 + 标题 + 集数 + 全屏 ── */}
-      <header className="chrome-top" data-chrome onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
-        <button
-          type="button"
-          data-chrome
-          className="chrome-btn"
-          title="返回"
-          aria-label="返回"
-          onClick={() => void invoke("player_embed_leave", { stop: true }).catch(() => {})}
-        >
-          <IcoArrowLeft size={20} strokeWidth={1.9} />
-        </button>
-        <div className="chrome-title" data-chrome title={title}>
-          <span className="ct-main">{title || "正在打开"}</span>
-          {epLabel && <span className="ct-ep">{epLabel}</span>}
-        </div>
-        <div className="chrome-top-right">
+    <div className={`player-chrome${visible || loading ? "" : " pc-hidden"}`}>
+      <div className="pc-layer">
+        <div className="pc-scrim" aria-hidden="true" />
+
+        {/* ── 顶栏：返回 + 片名；右上窗控 ── */}
+        <header className="pc-top">
           <button
             type="button"
-            data-chrome
-            className="chrome-btn"
-            title={st.fullscreen ? "退出全屏" : "全屏"}
-            onClick={() => cmd("mpv_set_ui_fullscreen", { on: !st.fullscreen })}
+            data-chrome-hit
+            className="pc-round"
+            title="返回"
+            aria-label="返回"
+            onClick={() => cmd("player_embed_leave", { stop: true })}
           >
-            {st.fullscreen ? <IcoMin size={20} strokeWidth={1.9} /> : <IcoMax size={20} strokeWidth={1.9} />}
+            <ArrowLeft size={14} />
           </button>
-        </div>
-      </header>
-
-      {/* ── 底栏：进度 + 时间 + 控制 ── */}
-      <footer
-        className="chrome-bottom"
-        data-chrome
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
-      >
-        <div
-          className="chrome-track"
-          data-chrome
-          onPointerDown={onTrackDown}
-          onPointerMove={onTrackMove}
-          onPointerUp={onTrackUp}
-        >
-          <div className="chrome-track-bg" ref={barRef}>
-            <div className="chrome-track-fill" style={{ width: `${pct * 100}%` }} />
-            <div className="chrome-track-knob" style={{ left: `${pct * 100}%` }} />
+          <div className="pc-title-wrap">
+            <span className="pc-title">{title || "正在打开"}</span>
+            {epLabel && <span className="pc-ep">{epLabel}</span>}
           </div>
-        </div>
-
-        <div className="chrome-row">
-          <span className="chrome-time">
-            {fmt(seeking ? seekPreview : pos)}
-            <i>/</i>
-            {fmt(dur)}
-          </span>
-
-          <div className="chrome-ctrl">
-            <button type="button" data-chrome className="chrome-btn" title="上一集" onClick={() => cmd("mpv_prev_episode")}>
-              <IcoPrev size={20} strokeWidth={1.9} />
+          <div className="pc-top-right" data-chrome-hit>
+            <button
+              type="button"
+              className={`pc-round${st.ontop ? " pc-active" : ""}`}
+              title={st.ontop ? "取消置顶" : "置顶"}
+              onClick={() => cmd("mpv_set_ontop", { on: !st.ontop })}
+            >
+              <Pin size={14} />
             </button>
             <button
               type="button"
-              data-chrome
-              className="chrome-btn"
-              title="后退 10 秒"
-              onClick={() => cmd("mpv_seek", { seconds: -10, absolute: false })}
+              className="pc-round"
+              title="最小化"
+              onClick={() => cmd("mpv_window_minimize")}
             >
-              <IcoBack10 size={20} strokeWidth={1.9} />
+              <Minus size={14} />
             </button>
             <button
               type="button"
-              data-chrome
-              className="chrome-btn primary"
-              title={st.paused ? "播放" : "暂停"}
-              onClick={() => cmd("mpv_toggle_pause")}
+              className="pc-round"
+              title="最大化"
+              onClick={() => cmd("mpv_toggle_maximize")}
             >
-              {st.paused ? <IcoPlay size={24} strokeWidth={2} /> : <IcoPause size={24} strokeWidth={2} />}
+              <Square size={12} />
             </button>
             <button
               type="button"
-              data-chrome
-              className="chrome-btn"
-              title="前进 10 秒"
-              onClick={() => cmd("mpv_seek", { seconds: 10, absolute: false })}
+              className="pc-round pc-close"
+              title="关闭"
+              onClick={() => cmd("player_embed_leave", { stop: true })}
             >
-              <IcoFwd10 size={20} strokeWidth={1.9} />
-            </button>
-            <button type="button" data-chrome className="chrome-btn" title="下一集" onClick={() => cmd("mpv_next_episode")}>
-              <IcoNext size={20} strokeWidth={1.9} />
+              <X size={14} />
             </button>
           </div>
+        </header>
 
-          <div className="chrome-right">
-            <button
-              type="button"
-              data-chrome
-              className="chrome-btn text"
-              title="倍速（点一次 +0.25×，到 3× 归 1×）"
-              onClick={() => cmd("mpv_set_rate", { rate: speed >= 3 ? 1 : Math.round((speed + 0.25) * 100) / 100 })}
-            >
-              {Number(speed.toFixed(2))}×
-            </button>
-            <button
-              type="button"
-              data-chrome
-              className="chrome-btn"
-              title="弹幕搜索 / 换源"
-              onClick={() => cmd("mpv_script_message", { name: "uosc_danmaku", args: ["open_search_danmaku_menu"] })}
-            >
-              <IcoDm size={20} strokeWidth={1.9} />
-            </button>
-            <button
-              type="button"
-              data-chrome
-              className="chrome-btn"
-              title="着色器（开/关 模式A+A）"
-              onClick={() => void toggleShader()}
-            >
-              <IcoShader size={20} strokeWidth={1.9} />
-            </button>
-            <div className="chrome-vol">
+        {/* ── 行 1：已播 —— 进度条 —— 剩余 ── */}
+        <div className="pc-progress">
+          <span className="pc-time">{fmt(cur)}</span>
+          <div
+            ref={trackRef}
+            data-chrome-hit
+            className={`pc-track${seeking ? " pc-dragging" : ""}`}
+            onPointerDown={onTrackDown}
+            onPointerMove={onTrackMove}
+            onPointerUp={onTrackUp}
+            onPointerCancel={onTrackUp}
+          >
+            <div className="pc-fill" style={{ width: `${pct * 100}%` }} />
+            <div className="pc-knob" style={{ left: `${pct * 100}%` }} />
+          </div>
+          <span className="pc-time pc-time-right">{fmt(Math.max(0, dur - cur))}</span>
+        </div>
+
+        {/* ── 行 2：三段 ── */}
+        <div className="pc-bottom">
+          <div className="pc-left">
+            <div className="pc-dock" data-chrome-hit>
               <button
                 type="button"
-                data-chrome
-                className="chrome-btn"
-                title={vol > 0 ? "静音" : "取消静音"}
-                onClick={() => cmd("mpv_set_volume", { volume: vol > 0 ? 0 : 100 })}
+                className="pc-btn pc-icon"
+                title="选集"
+                onClick={() => cmd("mpv_script_binding", { binding: "uosc/playlist" })}
               >
-                {vol <= 0 ? (
-                  <IcoVolX size={20} strokeWidth={1.9} />
-                ) : vol < 50 ? (
-                  <IcoVol1 size={20} strokeWidth={1.9} />
-                ) : (
-                  <IcoVol2 size={20} strokeWidth={1.9} />
-                )}
+                <ListVideo size={17} />
               </button>
-              <input
-                data-chrome
-                className="chrome-vol-slider"
-                type="range"
-                min={0}
-                max={100}
-                value={Math.round(vol)}
-                title={`音量 ${Math.round(vol)}`}
-                onChange={(e) => cmd("mpv_set_volume", { volume: Number(e.target.value) })}
-              />
+              <button
+                type="button"
+                className="pc-btn pc-icon"
+                title="字幕"
+                onClick={() => cmd("mpv_script_binding", { binding: "uosc/subtitles" })}
+              >
+                <Subtitles size={17} />
+              </button>
+              <button
+                type="button"
+                className="pc-btn pc-icon"
+                title="音频"
+                onClick={() => cmd("mpv_script_binding", { binding: "uosc/audio" })}
+              >
+                <AudioLines size={17} />
+              </button>
+            </div>
+          </div>
+
+          <div className="pc-center">
+            <div className="pc-dock pc-dock-bare" data-chrome-hit>
+              <button
+                type="button"
+                className="pc-btn pc-text"
+                title="倍速（点一次 +0.25×，到 3× 归 1×）"
+                onClick={() =>
+                  cmd("mpv_set_rate", {
+                    rate: speed >= 3 ? 1 : Math.round((speed + 0.25) * 100) / 100,
+                  })
+                }
+              >
+                {Number(speed.toFixed(2))}×
+              </button>
+              <button
+                type="button"
+                className="pc-btn pc-play"
+                title={st.paused ? "播放" : "暂停"}
+                onClick={() => cmd("mpv_toggle_pause")}
+              >
+                {st.paused ? <Play size={26} /> : <Pause size={26} />}
+              </button>
+              <button
+                type="button"
+                className="pc-btn pc-icon"
+                title="下一集"
+                onClick={() => cmd("mpv_next_episode")}
+              >
+                <SkipForward size={17} />
+              </button>
+            </div>
+          </div>
+
+          <div className="pc-right">
+            <div className="pc-dock" data-chrome-hit>
+              <div className="pc-vol" data-chrome-hit>
+                <button
+                  type="button"
+                  className="pc-btn pc-icon"
+                  title={vol > 0 ? "静音" : "取消静音"}
+                  onClick={() => cmd("mpv_set_volume", { volume: vol > 0 ? 0 : 100 })}
+                >
+                  {volIcon}
+                </button>
+                <input
+                  className="pc-vol-slider"
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={Math.round(vol)}
+                  title={`音量 ${Math.round(vol)}`}
+                  onChange={(e) => cmd("mpv_set_volume", { volume: Number(e.target.value) })}
+                />
+              </div>
+              <button
+                type="button"
+                className="pc-btn pc-icon"
+                title="弹幕"
+                onClick={() =>
+                  cmd("mpv_script_message", {
+                    name: "uosc_danmaku",
+                    args: ["open_search_danmaku_menu"],
+                  })
+                }
+              >
+                <MessageSquare size={17} />
+              </button>
+              <button
+                type="button"
+                className="pc-btn pc-icon"
+                title="片头片尾"
+                onClick={() => cmd("mpv_script_binding", { binding: "uosc/chapters" })}
+              >
+                <ListOrdered size={17} />
+              </button>
+              <button
+                type="button"
+                className="pc-btn pc-icon"
+                title="版本"
+                onClick={() => cmd("mpv_script_binding", { binding: "uosc/video" })}
+              >
+                <Layers size={17} />
+              </button>
+              <button
+                type="button"
+                className="pc-btn pc-icon"
+                title="设置"
+                onClick={() => cmd("mpv_script_binding", { binding: "uosc/menu-blurred" })}
+              >
+                <Settings size={17} />
+              </button>
+              <button
+                type="button"
+                className="pc-btn pc-icon"
+                title={st.fullscreen ? "退出全屏" : "全屏"}
+                onClick={() => cmd("mpv_set_ui_fullscreen", { on: !st.fullscreen })}
+              >
+                <Maximize2 size={17} />
+              </button>
             </div>
           </div>
         </div>
-      </footer>
+      </div>
 
-      {/* 加载态（mpv 出画前；也承担「黑屏等待期不能无反馈」） */}
-      <div className={`chrome-opening${loading ? "" : " gone"}`} aria-hidden={!loading}>
+      {/* 加载态：mpv 出画前（Spinner + 片名），loaded 后淡出 */}
+      <div className={`pc-opening${loading ? "" : " gone"}`} aria-hidden={!loading}>
         <span className="player-spin" />
-        <span className="chrome-opening-title">{title || "正在打开"}</span>
+        <span className="pc-opening-title">{title || "正在打开"}</span>
       </div>
     </div>
   );

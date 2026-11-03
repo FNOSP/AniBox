@@ -42,11 +42,11 @@
 .javset.embed .javset-fields > .javset-sechead { grid-column: 1 / -1; margin: 2px 2px 4px; }
 /* 整行控件 */
 .javset.embed .javset-fields > div:has(textarea) { grid-column: 1 / -1; }
-/* 站点/飞牛库/本地目录行：外层字段自成内栅格，行两列排布；说明卡整行 */
+/* 站点/飞牛库/本地目录行：外层字段自成内栅格，长条一律一行两列；说明卡整行 */
 .javset.embed .javset-fields > div:has(.javset-site) {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 .javset.embed .javset-fields > div:has(.javset-site) > .javset-ro { grid-column: 1 / -1; }
@@ -69,6 +69,7 @@
 }
 @media (max-width: 880px) {
   .javset.embed .javset-fields { grid-template-columns: minmax(0, 1fr); }
+  .javset.embed .javset-fields > div:has(.javset-site) { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ── 顶部横排分节导航（原版是左侧竖排） ── */

@@ -175,20 +175,27 @@
   transition: opacity 250ms cubic-bezier(.25, 1, .25, 1),
     transform 250ms cubic-bezier(.25, 1, .25, 1), visibility 0s;
 }
-/* [lc-1946] 隐藏态只淡出 + 位移，**保留 hit-test**（不再 `visibility:hidden`）：
-   顶栏窗控的固定热区在 auto-hide 后仍上报，探针会把右上角翻成可点；如果这里把
-   layer 设成 visibility:hidden，翻位后这一击会落进「看不见也点不到」的空层，
-   表现仍是「点了没反应」。视觉不可见由 opacity:0 保证。 */
+/* [lc-1949] 隐藏态只淡出 + 位移，但**整层禁点**：覆盖层常驻可点后，auto-hide 的
+   控件若继续接事件，用户点画面会点中「看不见的按钮」。旧探针时代的「保留
+   hit-test」是为固定热区上报服务的（该机制已退役），现在必须把点击还给 mpv
+   （点画面 = 暂停/拖动）。视觉不可见由 opacity:0 保证，移动 3px 鼠标即唤回。 */
 .player-chrome.pc-hidden .pc-layer {
   opacity: 0;
   transform: translateY(10px);
   transition: opacity 200ms ease-in, transform 200ms ease-in;
 }
-/* [lc-1946] 关闭：控件层先立刻淡出（用户可见的第一步），窗口收起在 Rust 侧同时进行 */
+.player-chrome.pc-hidden .pc-layer * {
+  pointer-events: none;
+}
+/* [lc-1946] 关闭：控件层先立刻淡出（用户可见的第一步），窗口收起在 Rust 侧同时进行。
+   退场期间同样禁点（按钮已经不可信）。 */
 .player-chrome.pc-leaving .pc-layer {
   opacity: 0;
   transform: translateY(6px);
   transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+.player-chrome.pc-leaving .pc-layer * {
+  pointer-events: none;
 }
 /* 只压暗底部（Polaris 唯一的一条对比渐变）；顶部不做任何压暗 */
 .pc-scrim {

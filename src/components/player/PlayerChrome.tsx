@@ -1,39 +1,33 @@
-/* [lc-1939] 播放器覆盖层 UI —— 交互模型逐条照抄 Polaris 的 mpv-overlay：
+/* [lc-1939] 播放器覆盖层 UI —— 视觉模型照抄 Polaris 的 mpv-overlay。
  *
- *   · 覆盖层窗 layered + 透明 + NOACTIVATE，与 mpv 窗口 1:1 等大、常驻置顶；
- *   · [lc-1944] 命中机制**就是 Polaris 那一套**：Rust 16ms 探针按光标与
- *     `[data-chrome-hit]` 矩形比 → 只拨 `WS_EX_TRANSPARENT`（Polaris 是 50ms +
- *     eval/elementFromPoint/invoke/ack 四个来回；我们单跳，端到端 ≤16ms）。
- *     已逐条排除「OS 级同步命中」：`WM_NCHITTEST→HTTRANSPARENT` 只对**同线程**窗口
- *     下传（Win32 文档/Wine 实现），mpv 是独立进程收不到；`SetWindowRgn` 会裁掉
- *     底部对比渐变。所以「点半天」的真因不在翻位窗口（实测 ≤16ms），而在 mpv 命令队列
- *     （见下条）。`mpv-overlay.html` 里的白名单、3s 隐藏、单击/双击语义逐条对齐。
- *   · [lc-1943] 可点区由页面在布局/显隐变化时上报一次（`player_chrome_hot_rects`，
- *     窗口内物理像素，`getBoundingClientRect × dpr`）；探针同时负责「光标在动 → 续显」
- *     与「悬在可点区 → 3s 自动隐藏让路」。
- *   · 状态：`mpv-pstate` 事件为主通道 + 500ms invoke 快照兜底（`capabilities/overlay.json`
- *     给了覆盖层 event listen 权限，lc-1943 之前这里被 ACL 拒绝，只能等 250ms 轮询）。
- *   · 控件一律 `pointerdown` 立即执行（`click` 只做键盘/兜底），并做乐观 UI：
- *     点击当帧先翻转本地状态，mpv 回报只做校正。
- *   · [lc-1944] 空白区仲裁照抄 Polaris：落进可点区但不是白名单元素的一击 → 单击
- *     播放/暂停（等系统双击间隔确认）、双击全屏、位移 ≥6px 丢弃；否则这一击会被
- *     WebView 静默吞掉，用户体感就是「点了没反应，再点一下」。
- *   · 3 秒无操作自动隐藏（Polaris hideTimeout=3.0）。
+ * [lc-1949] 交互架构重做（用户定论：旧的「探针 + 拨穿透位」点击延迟不可接受）：
+ *
+ *   · 覆盖层窗 layered + 透明 + NOACTIVATE，与 mpv 窗口 1:1 等大、常驻置顶，
+ *     **常驻可点**：WS_EX_TRANSPARENT 不再被动态切换（已从构造上移除），WebView
+ *     天然收到全部鼠标事件 —— 控件 `pointerdown` 即执行，没有任何等待探针翻转的
+ *     环节；hover / 自动续显 / 面板交互全部由真实 DOM 事件驱动，不再依赖探针通知。
+ *   · **视频区输入转发**：落点不在 `[data-chrome-hit]` 控件上的鼠标事件经
+ *     `mpv_forward_mouse` PostMessage 转给 mpv 锚窗 —— mpv 按真实输入处理：
+ *     单击暂停（fntv_osc 分发）、双击全屏（mpv 自己按 --input-doubleclick-time
+ *     合成 MBTN_LEFT_DBL，**不要**代发 WM_LBUTTONDBLCLK，避免二次触发）、按住
+ *     拖动（--input-builtin-dragging → mpv 内部 ReleaseCapture+HTCAPTION 原生拖窗）、
+ *     滚轮音量（input.conf）。「在不在控件上」由事件 target 决定，Rust 不做几何猜测。
+ *   · 3 秒无操作自动隐藏（Polaris hideTimeout=3.0）；隐藏态整层禁点（CSS），
+ *     点击还给 mpv（点画面 = 暂停/拖动）。
+ *   · 状态：`mpv-pstate` 事件为主通道 + 500ms invoke 快照兜底。
  *
  * 视觉：Polaris 的值 —— 底栏胶囊 rgba(18,18,18,.88) / 圆角 20 / 内距 4 / 按钮 34×34
  * 圆角 17、播放 40×40 圆角 20、图标 17（播放 26）/ 进度轨 7px（悬停 10）/ 时间 12px 700 /
  * 顶栏圆钮 26。全层只有底部 132px 对比渐变，**顶部没有任何遮罩或渐变**。
  *
- * [lc-1942] 菜单改版：此前「选集 / 字幕 / 音频 / 弹幕 / 片头尾 / 版本 / 设置」只发
- * `script-binding uosc/*`，菜单画在 mpv 自己的 OSD 里（覆盖层之下、且内嵌态无法交互）——
- * 用户体感就是「点了没反应」。现在统一改成覆盖层内的磨砂玻璃面板（一个组件 + 多份数据）：
+ * [lc-1942] 菜单：覆盖层内的磨砂玻璃面板（一个组件 + 多份数据）：
  *   · 面板数据全部来自 `player_menu_data`（真实轨道/章节/播放列表/字幕样式/弹幕状态）；
  *   · 设置项全部走 `mpv_set_prop` / `mpv_script_message` / `playlist-play-index`，无空桩；
- *   · 面板打开期间可点区 = 整窗（模态），点空白/Esc/再点同一按钮关闭。
+ *   · 面板打开期间点空白/Esc/再点同一按钮关闭。
  *
- * [lc-1945] 控件弹窗换成用户给的 HTML/CSS 规格（覆盖此前从 Polaris 抄的数值）：
+ * [lc-1945] 控件弹窗规格：
  *   · 白 45% + blur(28px) / 圆角 24 / 白描边 + 内高光 / 底部 8px 三角指针；
- *   · 面板底边 = 触发按钮顶边 - 80px（给进度条那一带留物理空白），跟随按钮居中；
+ *   · 面板底边 = 触发按钮顶边 - 80px，跟随按钮居中；
  *   · 悬停打开（驻留 100ms）+ 移开 300ms 关闭 + 120×110 隐形连接桥；
  *     点击/触摸打开为固定态（移开不关），点空白 / Esc 关闭；
  *   · 布尔项改 48×28 胶囊开关，子页项 标签 + chevron，8 面板 + 10 子页同一套皮。
@@ -423,142 +417,6 @@ export function PlayerChrome() {
     [],
   );
 
-  /* ── [lc-1943] 可点区上报：穿透判定由 Rust 探针独占，页面只负责「哪些矩形可点」──
-   * 只在布局/显隐变化时上报（一次交互最多 1 次 IPC），不再每帧 eval + invoke 往返。
-   *
-   * [lc-1946] 顶栏窗控固定热区：auto-hide 时 `.pc-layer` 会 opacity 0 + 位移 10px，
-   * 此时按 DOM 实测值上报会把顶栏按钮报成「不可点」→ 探针保持全窗穿透 → 光标移到
-   * 右上角也是穿透态，点击直接落到 mpv（用户体感 = 右上角按钮点了没反应）。
-   * 这里单独缓存最后一次**可见时**实测的 `.pc-top-right` 矩形（物理像素），隐藏时用
-   * 缓存值上报；窗口第一次上报之前用常量兜底。缓存只在实测到正尺寸时刷新，不读隐藏态。 */
-  const TOP_CLUSTER_W = 200; // CSS px：4×28 圆钮 + 3×12 间距 + 24 右内距 + 余量（兜底）
-  const TOP_CLUSTER_H = 64;
-  const TOP_CLUSTER_RIGHT = 24;
-  /** 缓存：距窗口右边的内距 / 顶 / 宽 / 高（CSS px）。存相对值，窗口 resize 后仍正确。 */
-  const topHotRef = useRef<{ right: number; top: number; w: number; h: number } | null>(null);
-  const fixedTopHot = useCallback(
-    (dpr: number, measure: boolean): [number, number, number, number] => {
-      /* [lc-1947] 宽 / 高 / 右内距**任何时候**都从 DOM 实测：
-       * auto-hide 只改 opacity + translateY(10px)，宽度和右内距不受影响，所以隐藏态
-       * 实测也有效；`top` 只在控件可见时刷新（隐藏态的 translateY 会把 top 带偏 10px，
-       * 兜底带上下各 16px 外扩仍能盖住，但没必要引入误差）。
-       * 关键：全屏/最大化切换后窗口尺寸变了，热区必须按新宽度重算 —— 旧实现只在
-       * 「可见时」测一次，尺寸变化后仍拿旧值，右上角热区就落在窗口中间。 */
-      const el = document.querySelector(".pc-top-right");
-      if (el) {
-        const r = el.getBoundingClientRect();
-        if (r.width > 0 && r.height > 0) {
-          const prev = topHotRef.current;
-          topHotRef.current = {
-            right: (window.innerWidth || 0) - r.right,
-            top: measure || !prev ? r.top : prev.top,
-            w: r.width,
-            h: r.height,
-          };
-        }
-      }
-      const vw = window.innerWidth || 0;
-      const c = topHotRef.current;
-      const w = c ? c.w : Math.min(TOP_CLUSTER_W, vw);
-      const h = c ? c.h : TOP_CLUSTER_H;
-      const top = c ? c.top : 0;
-      const left = Math.max(0, vw - (c ? c.right : TOP_CLUSTER_RIGHT) - w);
-      return [
-        Math.round(left * dpr),
-        Math.round(top * dpr),
-        Math.round(w * dpr),
-        Math.round(h * dpr),
-      ];
-    },
-    [],
-  );
-
-  const layoutRef = useRef({ showChrome: true, full: false });
-  layoutRef.current = { showChrome: visible || loading, full: !!menu || seeking };
-  const rectRaf = useRef<number | null>(null);
-  const reportRects = useCallback(() => {
-    if (rectRaf.current !== null) window.cancelAnimationFrame(rectRaf.current);
-    rectRaf.current = window.requestAnimationFrame(() => {
-      rectRaf.current = null;
-      const dpr = window.devicePixelRatio || 1;
-      const { showChrome, full } = layoutRef.current;
-      const rects: number[][] = [];
-      // 控件隐藏时不报普通矩形 → Rust 恢复全窗穿透（点击继续交给 mpv）
-      if (showChrome || full) {
-        /* [lc-1945] 一并上报悬停专用区（隐形连接桥）：穿透态下 WebView 收不到
-         * mousemove，只有被探针判为可点的矩形里才有 hover；桥必须算在内，
-         * 否则从按钮移向面板途中会先掉 hover 再重新进入，面板闪退。
-         * 它不带 `data-chrome-hit`，所以点击白名单/空白区仲裁不受影响。 */
-        document.querySelectorAll("[data-chrome-hit],[data-chrome-hover]").forEach((el) => {
-          const r = el.getBoundingClientRect();
-          if (r.width <= 0 || r.height <= 0) return;
-          rects.push([
-            Math.round(r.left * dpr),
-            Math.round(r.top * dpr),
-            Math.round(r.width * dpr),
-            Math.round(r.height * dpr),
-          ]);
-        });
-      }
-      // [lc-1946] 顶栏窗控热区**始终**上报（auto-hide 与否都算可点）：
-      // 只有这样光标移入右上角时探针才翻成「可点」，hover/点击才能到 WebView。
-      rects.push(fixedTopHot(dpr, showChrome || full));
-      void invoke("player_chrome_hot_rects", { rects, full }).catch(() => {});
-    });
-  }, [fixedTopHot]);
-
-  useEffect(() => {
-    reportRects();
-  }, [visible, loading, menu, menuPos, menuClosing, sub, seeking, st.fullscreen, reportRects]);
-
-  useEffect(() => {
-    /* [lc-1947] 窗口几何变化（最大化 / 真全屏 / 还原）后必须重报热区。
-     * 单靠 `resize` 一拍不够：WebView2 的布局在 resize 回调之后还可能再稳定一两帧，
-     * 这里补两次延迟重报；Rust 侧同一时刻已把旧热区作废并改用按新尺寸算的兜底带，
-     * 所以「切换后的第一次点击」不依赖这几次重报也能命中。 */
-    const timers: number[] = [];
-    const onResize = () => {
-      reportRects();
-      timers.push(window.setTimeout(reportRects, 80));
-      timers.push(window.setTimeout(reportRects, 220));
-    };
-    window.addEventListener("resize", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      timers.forEach((t) => window.clearTimeout(t));
-      if (rectRaf.current !== null) window.cancelAnimationFrame(rectRaf.current);
-      // 卸载时清空可点区：别把一个已经没人处理的窗口留在「可点」态
-      void invoke("player_chrome_hot_rects", { rects: [], full: false }).catch(() => {});
-    };
-  }, [reportRects]);
-
-  /* [lc-1947] Rust 探针发现覆盖层尺寸变了（mpv 自己进/退全屏时前端拿不到任何命令回包）
-   * → 立即重报一次，再补两次延迟重报。事件名与 `mpvwin::note_overlay_geometry` 对齐。 */
-  useEffect(() => {
-    let alive = true;
-    let un: (() => void) | undefined;
-    const timers: number[] = [];
-    const rep = () => {
-      if (alive) reportRects();
-    };
-    listen<{ w: number; h: number }>("overlay-geometry", () => {
-      rep();
-      timers.push(window.setTimeout(rep, 60));
-      timers.push(window.setTimeout(rep, 180));
-    })
-      .then((f) => {
-        un = f;
-      })
-      .catch(() => {
-        /* 非 Tauri 环境：只靠 resize / 布局上报 */
-      });
-    return () => {
-      alive = false;
-      timers.forEach((t) => window.clearTimeout(t));
-      un?.();
-    };
-  }, [reportRects]);
-
   /* [lc-1946] 新一次播放（phase=start）重置关闭态：覆盖层窗口跨会话常驻，
    * 上一轮关闭时置上的 `closing` 必须清掉，否则下次起播控件层仍是被淡出的。 */
   useEffect(() => {
@@ -584,42 +442,14 @@ export function PlayerChrome() {
     };
   }, [wake]);
 
-  /* ── [lc-1943] Rust 探针的「光标移动」通知：续显控件 / 记录是否悬在可点区 ── */
-  useEffect(() => {
-    let alive = true;
-    let un: (() => void) | undefined;
-    listen<{ x: number; y: number; hot: boolean; inside: boolean }>("overlay-cursor", (e) => {
-      if (!alive) return;
-      hoverInteractive.current = !!e.payload?.hot;
-      if (e.payload?.inside) wake();
-    })
-      .then((f) => {
-        un = f;
-      })
-      .catch(() => {
-        /* 非 Tauri 环境：控件仍可点，只是不再自动续显（3s 后隐藏） */
-      });
-    return () => {
-      alive = false;
-      un?.();
-    };
-  }, [wake]);
-
-  /* ── [lc-1944] 空白区点击仲裁（照抄 Polaris mpv-overlay 的 passthrough arbiter）──
-   * 画面区点击在穿透态下直接归 mpv；但当光标落在可点区（含 16px 外扩 / 控件内距）
-   * 而命中的不是白名单元素时，这一击会进 WebView 然后什么都不发生 —— 用户体感就是
-   * 「点了没反应，再点一下」。这里按 Polaris 的语义把它翻译成最终动作，绝不静默丢弃。
-   *
-   * Polaris 原值逐个照搬：拖拽阈值 6px、拖后抑制 900ms、单击/双击间隔取
-   * **系统双击间隔**（`GetDoubleClickTime`，不硬编码 500ms）；单击 = 播放/暂停、
-   * 双击 = 全屏。绝不向 mpv 合成 mbtn_left —— 会和 Lua 的单击计时器互相抵消。 */
   const stRef = useRef(st);
   stRef.current = st;
 
   /** [lc-1948] 进入全屏前的最大化态：窗口级退出全屏会按它还原，图标跟着对齐。 */
   const maxBeforeFs = useRef(false);
-  /** [lc-1948] 全屏切换的唯一入口：右上角窗控 / 底栏全屏键 / 双击画面共用同一条
-   * 「显示器矩形」路径（mpv fullscreen 属性 → Rust on_player_fullscreen_changed）。
+  /** [lc-1948] 全屏切换入口：右上角窗控 / 底栏全屏键共用同一条「显示器矩形」路径
+   * （mpv fullscreen 属性 → Rust on_player_fullscreen_changed）。双击画面不经过这里：
+   * 转发给 mpv 后由它原生合成 MBTN_LEFT_DBL → 同一个 fullscreen 属性，路径仍然唯一。
    * 不再有任何 UI 走 SW_MAXIMIZE：最大化只铺工作区（任务栏露着），且 mpv 对最大化
    * 窗口的边框补偿会把窗口矩形挪出屏幕（右/下露缝、顶栏不消失），那不是全屏。 */
   const toggleFullscreen = useCallback(
@@ -636,141 +466,145 @@ export function PlayerChrome() {
     },
     [cmdLat],
   );
+
+  /* ── [lc-1949] 视频区输入转发（覆盖层常驻可点架构的另一半）──
+   * 落点不在控件上的鼠标事件原样转给 mpv（`mpv_forward_mouse` → PostMessage），
+   * mpv 的 win32 后端按真实输入处理：
+   *   · 单击 = fntv_osc 分发（画面空白处暂停）；
+   *   · 双击 = mpv 自己按 --input-doubleclick-time 合成 MBTN_LEFT_DBL（全屏）——
+   *     **不代发 WM_LBUTTONDBLCLK**：PostMessage 不会让系统自动合成，而 mpv 的
+   *     合成器只认普通按钮序列，代发会造成二次触发；
+   *   · 按住拖动 = --input-builtin-dragging（mpv 内部 ReleaseCapture+HTCAPTION
+   *     原生拖窗，DWM 搬运、零跟随延迟）；
+   *   · 滚轮 = input.conf（音量）；右键 = MBTN_RIGHT（input.conf: ignore）。
+   * 分流规则：target 命中 [data-chrome-hit]（或已从 DOM 摘除的节点）→ 覆盖层自己处理；
+   * 菜单打开 / 关面板抑制窗口内 → 不转发（点空白 = 关面板）；其余 → 转发。 */
+  const fwdRef = useRef<{ btn: number } | null>(null);
   useEffect(() => {
-    const DRAG_THRESHOLD = 6;
-    const DRAG_SUPPRESS_MS = 900;
-    let dblMs = 500;
-    let dblReady = false;
-    let armed: { gen: number; at: number } | null = null;
-    let singleTimer: number | null = null;
-    let track: {
-      x: number;
-      y: number;
-      moved: boolean;
-      clickCount: number;
-      suppressed: boolean;
-      doubleDispatched?: boolean;
-    } | null = null;
-    let generation = 0;
-
-    const commitArmed = () => {
-      if (!armed) return;
-      const { gen, at } = armed;
-      armed = null;
-      if (gen !== generation) return;
-      singleTimer = window.setTimeout(() => {
-        singleTimer = null;
-        if (gen !== generation || Date.now() < ptSuppressUntil.current) return;
-        setSt((p) => ({ ...p, paused: !p.paused }));
-        void invoke("mpv_toggle_pause").catch(() => {});
-      }, Math.max(0, dblMs - (Date.now() - at)));
-    };
-
-    void invoke<number>("overlay_double_click_interval_ms")
-      .then((v) => {
-        const n = Number(v);
-        if (Number.isFinite(n) && n > 0 && n <= 5000) dblMs = Math.max(1, Math.round(n));
-      })
-      .catch(() => {})
-      .then(() => {
-        dblReady = true;
-        if (armed) commitArmed();
-      });
-
-    /* 白名单语义与 Rust 上报的 `[data-chrome-hit]` 同一份（Polaris 的
-     * `_isOverlayHoverInteractive` 同款）：点击瞬间已被同步摘下的节点仍算控件。 */
-    const interactive = (t: EventTarget | null) => {
+    const dpr = () => window.devicePixelRatio || 1;
+    const overChrome = (t: EventTarget | null) => {
       const el = t instanceof Element ? t : null;
+      // 点击瞬间已被同步摘下的节点仍算控件（与旧白名单语义一致）
       if (el && !el.isConnected) return true;
       return !!(el && el.closest("[data-chrome-hit]"));
     };
-    const cancelSingle = () => {
-      generation++;
-      if (singleTimer !== null) {
-        window.clearTimeout(singleTimer);
-        singleTimer = null;
+    const mkFlags = (e: MouseEvent) => {
+      // MK_*：0x1 左键 / 0x2 右键 / 0x4 Shift / 0x8 Ctrl / 0x10 中键
+      let f = 0;
+      if (e.buttons & 1) f |= 1;
+      if (e.buttons & 2) f |= 2;
+      if (e.buttons & 4) f |= 16;
+      if (e.shiftKey) f |= 4;
+      if (e.ctrlKey) f |= 8;
+      return f;
+    };
+    const send = (kind: string, e: MouseEvent, delta = 0) => {
+      void invoke("mpv_forward_mouse", {
+        kind,
+        x: Math.round(e.clientX * dpr()),
+        y: Math.round(e.clientY * dpr()),
+        flags: mkFlags(e),
+        delta,
+      }).catch(() => {});
+    };
+    const upKind = (btn: number) => (btn === 0 ? "up" : btn === 1 ? "mup" : "rup");
+
+    const onDown = (e: PointerEvent) => {
+      wake();
+      // 悬停态喂给 3s 自动隐藏的判定：光标停在控件上时不隐藏（旧探针 hot 位语义）
+      hoverInteractive.current = overChrome(e.target);
+      if (overChrome(e.target)) return;
+      // 面板打开（点空白=关面板）与关面板抑制窗口内：这一击不归 mpv
+      if (menuOpenRef.current || Date.now() < ptSuppressUntil.current) return;
+      if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
+      // 上一轮按下没等到抬起（mpv 原生拖窗的 modal move loop 会吞掉释放事件）：
+      // 先补一发 up 清掉 mpv 的按钮态，避免下一次点击被它的双击合成器误判。
+      if (fwdRef.current) send(upKind(fwdRef.current.btn), e);
+      fwdRef.current = { btn: e.button };
+      send(e.button === 0 ? "down" : e.button === 1 ? "mdown" : "rdown", e);
+      // 捕获指针：拖动越过控件 / 抖出窗口也能持续收到 move/up
+      try {
+        (e.target as Element | null)?.setPointerCapture?.(e.pointerId);
+      } catch {
+        /* ignore */
       }
     };
 
-    const onDown = (e: MouseEvent) => {
-      if (e.button !== 0) return;
-      if (interactive(e.target)) {
-        cancelSingle();
-        return;
-      }
-      // 面板打开（含正在关闭的 200ms）与拖拽余波期间的点击不算「点画面」
-      if (menuOpenRef.current || Date.now() < ptSuppressUntil.current) {
-        cancelSingle();
-        track = null;
-        return;
-      }
-      const count = Math.max(1, Number(e.detail) || 1);
-      track = {
-        x: e.clientX,
-        y: e.clientY,
-        moved: false,
-        clickCount: count,
-        suppressed: false,
-      };
-      if (count === 2) {
-        // 第二下按下就是系统语义的 dblclick：先撤掉未提交的单击，再全屏
-        cancelSingle();
-        track.doubleDispatched = true;
-        // [lc-1948] 与右上角窗控 / 底栏全屏键共用同一条全屏路径
-        toggleFullscreen();
-      } else if (count > 2) {
-        cancelSingle();
-        track.suppressed = true;
+    // move 转发按 rAF 合帧：高频 pointermove 只落一次 PostMessage（拖动手感与真实输入一致）
+    let moveRaf = 0;
+    let pendingMove: PointerEvent | null = null;
+    const flushMove = () => {
+      moveRaf = 0;
+      const e = pendingMove;
+      pendingMove = null;
+      if (e && !overChrome(e.target)) send("move", e);
+    };
+    const onMove = (e: PointerEvent) => {
+      // 控件续显由真实 mousemove 驱动（旧「探针 overlay-cursor」通道已退役）
+      wake();
+      hoverInteractive.current = overChrome(e.target);
+      if (overChrome(e.target)) return;
+      pendingMove = e;
+      if (!moveRaf) moveRaf = window.requestAnimationFrame(flushMove);
+    };
+
+    const onUp = (e: PointerEvent) => {
+      const fwd = fwdRef.current;
+      if (!fwd) return;
+      if (e.type === "pointerup" && e.button !== fwd.btn) return;
+      fwdRef.current = null;
+      send(upKind(fwd.btn), e);
+      try {
+        (e.target as Element | null)?.releasePointerCapture?.(e.pointerId);
+      } catch {
+        /* ignore */
       }
     };
 
-    const onMove = (e: MouseEvent) => {
-      if (!track || track.moved) return;
-      if (
-        Math.abs(e.clientX - track.x) >= DRAG_THRESHOLD ||
-        Math.abs(e.clientY - track.y) >= DRAG_THRESHOLD
-      ) {
-        track.moved = true;
-      }
+    // mpv 原生拖窗接管鼠标后，释放事件到不了 WebView：捕获丢失立刻补 up 清状态
+    const onLost = () => {
+      const fwd = fwdRef.current;
+      if (!fwd) return;
+      fwdRef.current = null;
+      void invoke("mpv_forward_mouse", {
+        kind: upKind(fwd.btn),
+        x: 0,
+        y: 0,
+        flags: 0,
+        delta: 0,
+      }).catch(() => {});
     };
 
-    const onUp = (e: MouseEvent) => {
-      if (e.button !== 0) return;
-      const t = track;
-      track = null;
-      if (!t) return;
-      if (interactive(e.target)) {
-        cancelSingle();
-        return;
-      }
-      if (t.moved) {
-        ptSuppressUntil.current = Date.now() + DRAG_SUPPRESS_MS;
-        return;
-      }
-      if (
-        t.suppressed ||
-        t.doubleDispatched ||
-        t.clickCount !== 1 ||
-        Date.now() < ptSuppressUntil.current
-      ) {
-        return;
-      }
-      cancelSingle();
-      armed = { gen: generation, at: Date.now() };
-      // 双击间隔的权威值还在路上：先挂着，等拿到系统值再按「已用时间」扣减
-      if (dblReady) commitArmed();
+    const onWheel = (e: WheelEvent) => {
+      wake();
+      if (overChrome(e.target)) return;
+      if (menuOpenRef.current || Date.now() < ptSuppressUntil.current) return;
+      // 一格 = 120（WHEEL_DELTA）；方向取 deltaY 符号，mpv 只看增量正负
+      send("wheel", e, e.deltaY < 0 ? 120 : -120);
     };
 
-    document.addEventListener("mousedown", onDown, true);
-    document.addEventListener("mousemove", onMove, true);
-    document.addEventListener("mouseup", onUp, true);
+    // 右键菜单在覆盖层里没有任何用途（控件都有自己的面板菜单），一律拦掉
+    const onCtx = (e: MouseEvent) => e.preventDefault();
+
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("pointermove", onMove, true);
+    document.addEventListener("pointerup", onUp, true);
+    document.addEventListener("pointercancel", onUp, true);
+    document.addEventListener("lostpointercapture", onLost, true);
+    document.addEventListener("wheel", onWheel, { capture: true, passive: true });
+    document.addEventListener("contextmenu", onCtx);
     return () => {
-      cancelSingle();
-      document.removeEventListener("mousedown", onDown, true);
-      document.removeEventListener("mousemove", onMove, true);
-      document.removeEventListener("mouseup", onUp, true);
+      if (moveRaf) window.cancelAnimationFrame(moveRaf);
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("pointermove", onMove, true);
+      document.removeEventListener("pointerup", onUp, true);
+      document.removeEventListener("pointercancel", onUp, true);
+      document.removeEventListener("lostpointercapture", onLost, true);
+      document.removeEventListener("wheel", onWheel, true);
+      document.removeEventListener("contextmenu", onCtx);
+      fwdRef.current = null;
     };
-  }, []);
+  }, [wake]);
 
   /* ── 状态：事件为主通道，低频快照兜底 ──
    * [lc-1943] 之前 `listen` 因覆盖层缺少 capability 被 ACL 拒绝（promise reject），

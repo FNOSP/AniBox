@@ -22,6 +22,9 @@ pub const DEFAULT_SKIP_DIRS: &[&str] = &[
 ];
 /// 内置刮削站点（顺序即优先级；id 对齐 jav_library 的引擎名）
 pub const SITE_DEFS: &[(&str, &str, &[&str])] = &[
+    // [lc-1958] JavBus 排最前：标题是中文（繁体），是「原软件标题都是中文」的正主；
+    // r18dev/jav321 等只有英文/日文标题，降级为兜底
+    ("javbus", "JavBus（中文标题）", &["censored", "uncensored"]),
     ("r18dev", "R18.dev（公开 JSON，最稳）", &["censored", "uncensored"]),
     ("fc2", "FC2 官方站（需代理）", &["fc2"]),
     ("jav321", "JAV321（不吃 CF，兜底）", &["censored"]),
@@ -205,9 +208,11 @@ pub fn load() -> JavSettings {
 
 /// 站点列表补齐（新内置站点自动出现在末尾）+ 数值夹紧
 pub fn normalize(v: &mut JavSettings) {
-    for (id, _, _) in SITE_DEFS {
+    // [lc-1958] 配置里缺的站点补到**最前**（按 SITE_DEFS 顺序）——新引擎要立刻生效，
+    // 不能 append 到尾部变成最低优先级（javbus 加进来的意义就是抢在英文源前面）
+    for (id, _, _) in SITE_DEFS.iter().rev() {
         if !v.scrape.sites.iter().any(|s| &s.id == id) {
-            v.scrape.sites.push(SiteCfg { id: id.to_string(), enabled: true, base: String::new() });
+            v.scrape.sites.insert(0, SiteCfg { id: id.to_string(), enabled: true, base: String::new() });
         }
     }
     v.scrape.sites.retain(|s| SITE_DEFS.iter().any(|(id, _, _)| &s.id == id));

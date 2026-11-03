@@ -746,6 +746,7 @@ const MIRROR_BASES: &[&str] = &[
 
 /// 站点 id → 直连上游（镜像不可用且没配密钥时的兜底，需要用户自己的代理）
 const SITE_BASES: &[(&str, &str)] = &[
+    ("javbus", "https://www.javbus.com"),
     ("r18", "https://r18.dev"),
     ("j321", "https://www.jav321.com"),
     ("mgs", "https://www.mgstage.com"),
@@ -871,6 +872,7 @@ fn img_mirror_path(url: &str) -> Option<String> {
     const IMG_HOSTS: &[&str] = &[
         "pics.dmm.co.jp", "p.dmm.co.jp", "c-pics.cdn-jav321.com", "www.mgstage.com",
         "www.heyzo.com", "r18.dev", "adult.contents.fc2.com", "www.jav321.com",
+        "www.javbus.com", "pics.javbus.com", "www.javpic.com", "pics.javbus.info",
     ];
     if !IMG_HOSTS.contains(&host) {
         return None;
@@ -1046,6 +1048,105 @@ fn uniq_keep_order(v: Vec<String>) -> Vec<String> {
         }
     }
     out
+}
+
+// ---------- JavBus：标题中文（繁体）的一手源 —— JAVCloudHub 默认启用它，这就是
+// 「原软件标题都是中文」的正主；r18dev/jav321 只有英文/日文。年龄门 over18，走镜像轨。
+// 解析选择器照抄 JAVCloudHub scraper_javbus：a.bigImage img / .star-name a /
+// span.genre label a / .row.movie .info（發行日期 正则、/studio//series/ 链接）。 ----------
+
+/// 纯解析（可单测）：javbus 详情页 HTML → Meta
+fn parse_javbus_html(html: &str) -> Result<Meta, String> {
+    let doc = scraper::Html::parse_document(html);
+    let first_text = |sel: &str| -> Option<String> {
+        let s = scraper::Selector::parse(sel).ok()?;
+        doc.select(&s).next().map(|el| {
+            el.text().collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ")
+        })
+    };
+    let all_texts = |sel: &str| -> Vec<String> {
+        match scraper::Selector::parse(sel) {
+            Ok(s) => doc
+                .select(&s)
+                .map(|el| el.text().collect::<String>().trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+    let first_href_in = |scope: &str, marker: &str| -> String {
+        let full = format!("{scope} a[href*='{marker}']");
+        let Ok(s) = scraper::Selector::parse(&full) else { return String::new() };
+        doc.select(&s).next().map(|el| el.text().collect::<String>().trim().to_string()).unwrap_or_default()
+    };
+    let raw_title = first_text(".container h3").or_else(|| first_text("h3")).unwrap_or_default();
+    // 年龄门/拦截页与「没收录」都当 not-found，让引擎链落到下一个站点
+    if raw_title.is_empty() || raw_title.contains("404") || raw_title.contains("搜尋") || raw_title.contains("搜索") {
+        return Err("JavBus 没有这个番号（或被年龄门/盾拦下）".into());
+    }
+    let title = raw_title
+        .trim_end_matches(" - JavBus")
+        .trim_end_matches(['-', '_', '·', ' '])
+        .trim()
+        .to_string();
+    if title.is_empty() {
+        return Err("JavBus 返回页解析不出标题".into());
+    }
+    let info: String = all_texts(".row.movie .info p").join(" ");
+    let runtime = regex::Regex::new(r"(\d+)\s*分鐘")
+        .ok()
+        .and_then(|r| r.captures(&info))
+        .and_then(|c| c[1].parse::<u32>().ok())
+        .unwrap_or(0);
+    let cover_url = {
+        let sel = scraper::Selector::parse("a.bigImage img").ok();
+        sel.and_then(|s| doc.select(&s).next())
+            .and_then(|el| el.value().attr("src"))
+            .map(|u| abs_url(u))
+            .unwrap_or_default()
+    };
+    Ok(Meta {
+        title,
+        actors: uniq_keep_order(all_texts(".star-name a")),
+        tags: uniq_keep_order(all_texts("span.genre label a, .genre-item a")),
+        release_date: norm_date(&info),
+        studio: first_href_in(".row.movie .info", "/studio/"),
+        series: first_href_in(".row.movie .info", "/series/"),
+        director: first_href_in(".row.movie .info", "/director/"),
+        runtime,
+        summary: String::new(),
+        cover_url,
+    })
+}
+
+async fn eng_javbus(ctx: &Ctx, code: &str, base_override: &str) -> Result<Meta, String> {
+    let base = if base_override.is_empty() { "https://www.javbus.com" } else { base_override };
+    let resp = send_site(
+        ctx,
+        "javbus",
+        "GET",
+        &format!("/{code}"),
+        None,
+        &[
+            ("Referer", &format!("{base}/")),
+            ("Cookie", "over18=1"),
+            ("Accept-Language", "zh-TW,zh;q=0.9"),
+        ],
+    )
+    .await
+    .map_err(|e| format!("JavBus 请求失败: {e}"))?;
+    let st = resp.status().as_u16();
+    if is_blocked_status(st) {
+        return Err(format!("JavBus 返回了拦截页（HTTP {st}）"));
+    }
+    if st == 404 {
+        return Err(format!("JavBus 上找不到「{code}」"));
+    }
+    if !resp.status().is_success() {
+        return Err(format!("JavBus 返回 HTTP {st}"));
+    }
+    let html = resp.text().await.map_err(|e| format!("JavBus 读取失败: {e}"))?;
+    parse_javbus_html(&html).map_err(|e| e)
 }
 
 // ---------- r18.dev：公开 JSON，最稳的一手（无 Cookie、无年龄门） ----------
@@ -1527,6 +1628,7 @@ fn engine_order_ctx(ctx: &Ctx, category: &str) -> Vec<(String, String)> {
 
 async fn run_engine(ctx: &Ctx, name: &str, code: &str, base: &str) -> Result<Meta, String> {
     match name {
+        "javbus" => eng_javbus(ctx, code, base).await,
         "r18dev" => eng_r18dev(ctx, code, base).await,
         "jav321" => eng_jav321(ctx, code, base).await,
         "mgstage" => eng_mgstage(ctx, code, base).await,
@@ -1888,6 +1990,41 @@ pub async fn jav_library_scrape(app: AppHandle, provider: String, force: Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_javbus_detail_page() {
+        // [lc-1958] 选择器照抄 JAVCloudHub scraper_javbus；fixture 按真实页面结构缩写
+        let html = r#"<!doctype html><html><head><title>SONE-123 真中文標題 - JavBus</title></head><body>
+        <div class="container"><h3>SONE-123 真中文標題</h3></div>
+        <div class="row movie"><div class="info">
+        <p><span class="label">識別碼:</span> SONE-123</p>
+        <p><span class="label">發行日期:</span> 2024-01-09</p>
+        <p><span class="label">長度:</span> 120分鐘</p>
+        <p><span class="label">製作:</span> <a href="https://www.javbus.com/studio/2b1">S1</a></p>
+        <p><span class="label">系列:</span> <a href="https://www.javbus.com/series/aaa">中文系列</a></p>
+        <span class="genre"><label><a href="/genre/g1">中文字幕</a></label><label><a href="/genre/g2">單體作品</a></label></span>
+        </div></div>
+        <a class="bigImage" href="/pics/cover/1_b.jpg"><img src="https://www.javbus.com/pics/cover/1_b.jpg" title="第一張"></a>
+        <div class="star-name"><a href="/star/abc">女優名</a></div>
+        </body></html>"#;
+        let m = parse_javbus_html(html).unwrap();
+        assert_eq!(m.title, "SONE-123 真中文標題");
+        assert_eq!(m.release_date, "2024-01-09");
+        assert_eq!(m.runtime, 120);
+        assert_eq!(m.studio, "S1");
+        assert_eq!(m.series, "中文系列");
+        assert!(m.tags.contains(&"中文字幕".to_string()));
+        assert_eq!(m.actors, vec!["女優名".to_string()]);
+        assert_eq!(m.cover_url, "https://www.javbus.com/pics/cover/1_b.jpg");
+    }
+
+    #[test]
+    fn parse_javbus_rejects_blocked_or_missing() {
+        // 年龄门/拦截页与搜索结果页都不能当详情解析
+        assert!(parse_javbus_html("<html><head><title>搜尋結果 - JavBus</title></head><body></body></html>").is_err());
+        assert!(parse_javbus_html("<html><head><title>404 Page</title></head><body></body></html>").is_err());
+        assert!(parse_javbus_html("<html><head><title>age verify</title></head><body><div class=\"container\"><h3></h3></div></body></html>").is_err());
+    }
 
     #[test]
     fn detect_fc2_variants() {

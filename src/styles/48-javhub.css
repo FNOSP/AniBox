@@ -22,12 +22,13 @@
   overflow: hidden;
 }
 
-/* [lc-1973] 设置项去框扁平化：不再每条套卡片，贴齐概览页的轻量观感 */
-.javset.embed .javset-fields { gap: 14px 20px; }
+/* [lc-1973/1978] 设置项扁平化：去边框卡片，但保留极浅衬底把行绑定成组（防散） */
+.javset.embed .javset-fields { gap: 10px 16px; }
 .javset.embed .javset-item {
   border: none;
-  background: none;
-  padding: 2px 2px;
+  background: var(--hover, rgba(120, 130, 160, 0.06));
+  padding: 8px 10px;
+  border-radius: 10px;
 }
 .javset.embed .javset-ro {
   border: none;
@@ -36,9 +37,10 @@
 }
 .javset.embed .javset-site {
   border: none;
-  background: none;
+  background: var(--hover, rgba(120, 130, 160, 0.06));
   min-height: 36px;
-  padding: 2px 2px;
+  padding: 5px 10px;
+  border-radius: 10px;
   /* [lc-1977] 扁平行内容聚拢：行宽不超过输入控件上限，分类/路径不再漂到远处 */
   max-width: 560px;
 }

@@ -3411,6 +3411,25 @@ async fn mpv_overlay_hover_state(
     }))
 }
 
+/// [lc-1964] 控件带几何热区上报：前端 1s 心跳把 `[data-chrome-hit]` 矩形（CSS 视口
+/// 坐标）+ 视口尺寸交给 Rust。探针每拍直接对「光标落在控件带内」翻可点位，完全不
+/// 依赖 WebView elementFromPoint —— WebView 判定链全挂时控件仍可点（架构保险 D）。
+#[tauri::command]
+fn mpv_overlay_hotzones(
+    window: tauri::WebviewWindow,
+    zones: Vec<[f32; 4]>,
+    viewport_w: f32,
+    viewport_h: f32,
+) -> Result<(), String> {
+    use tauri::Manager;
+    // 只接受覆盖层自己的调用：主窗误调会把热区绑到错误的窗口语境上。
+    if window.label() != "mpv_overlay" {
+        return Err("mpv_overlay_hotzones: only mpv_overlay may call".into());
+    }
+    crate::mpvwin::overlay_set_hotzones(zones, (viewport_w, viewport_h));
+    Ok(())
+}
+
 /// [lc-1940] 起播失败兜底：覆盖层收起、mpv 窗口收起、内嵌态清零、主窗口回来。
 /// 任何一条「藏主窗 + 显示覆盖层/mpv」的路径失败时都必须走到这里，绝不留黑窗。
 pub fn player_overlay_abort(app: &AppHandle) {
@@ -5513,6 +5532,8 @@ pub fn run() {
             // [lc-1960] hover 事务（Polaris 同款）：穿透位拨动 + 原生样式读回 ack
             mpv_overlay_hover,
             mpv_overlay_hover_state,
+            // [lc-1964] 控件带几何热区上报（Rust 探针直翻可点位的保险丝）
+            mpv_overlay_hotzones,
             // [lc-1943] 前端延迟采样落盘（临时诊断）
             lat_trace,
             // [lc-1942] 字幕搜索输入框需要临时摘掉 WS_EX_NOACTIVATE

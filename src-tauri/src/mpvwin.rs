@@ -24,12 +24,40 @@
 //!     精确控制；收编成功后**先隐藏**，首个矩形上报时才定位 + 显示（独立窗口不闪现）。
 //!     仍不做 SetParent / WS_CHILD / 挖洞，也不动 mpv 窗口 ex-style。
 //!
+//! [lc-1964] **根治「全屏后全部按钮失效（点击漏给 mpv 变播放/暂停）」**（实机日志
+//! %TEMP%/anibox.log + anibox-mpv.log 法证定案）：
+//!
+//!   · **真根因 = lc-1952 的 z 序「自愈」方向反了**。Win32 `SetWindowPos` 的
+//!     `hWndInsertAfter` 语义是「被定位窗插到该窗**正下方**」（实证：三窗受控带 +
+//!     GetWindow 探测，SetWindowPos(B, insertAfter=A) 后 next(A)==B）。于是
+//!     `place_overlay_above_anchor(overlay, anchor)` 实际把覆盖层插到锚窗**正下方**；
+//!     33ms 跟随循环每拍复检 `GW_HWNDPREV` 发现「仍未紧贴锚窗上方」就再插一次 ——
+//!     自愈变成了**每 33ms 主动把覆盖层压回 mpv 之下**。全屏一旦触发 mpv VO 的
+//!     SetWindowPos（进全屏 / ontop_mode.lua 暂停联动），覆盖层就被钉死在视频层
+//!     之下直到退出全屏：chrome 整层收不到任何真实命中，全部点击物理落进 mpv
+//!     （实机日志：两次全屏期间 `fntv_osc-click` + `cycle pause/fullscreen`，
+//!      hover 事务 ack 全部 applied=true —— 穿透位拨的是窗下之窗，自然无效）。
+//!     窗口模式之所以正常：z 序自愈只挂在全屏分支里，起播时「锚窗先 TOPMOST、
+//!     覆盖层后 TOPMOST」的自然带序（覆盖层在带顶）一直没被破坏。
+//!   · 修复（对齐 Polaris `apply_screen_saver_level`）：
+//!     ① 全屏期覆盖层用 **NOTOPMOST→TOPMOST 重置法**抬到 TOPMOST 带最顶
+//!        （`overlay_raise_screen_saver_level`；已 TOPMOST 的窗再调 HWND_TOPMOST
+//!        不保证带内重排，先摘带再回带才强制重排）；
+//!     ② `place_overlay_above_anchor` 改为 `InsertAfter=GetWindow(锚窗,GW_HWNDPREV)`
+//!        （锚窗已在带顶时用 HWND_TOP），窗口模式与退出全屏的带内定位用；
+//!     ③ 33ms 跟随循环：全屏违例 → 屏保级抬顶；窗口模式新增同带 z 序断言（此前
+//!        只在全屏分支里有，窗口模式 ontop 拨动后无人兜底）。
+//!   · **架构保险（D）**：Rust 探针侧新增**控件带几何热区**——前端 1s 心跳上报
+//!     `[data-chrome-hit]` 矩形（`mpv_overlay_hotzones`），探针每拍直接对「光标落在
+//!     控件带内」翻可点位，完全不依赖 WebView elementFromPoint；前端从未上报时用
+//!     顶栏/底栏固定带兜底。WebView 判定链全挂时控件仍可点。
+//!
 //! [lc-1952] 实机回归两修：
 //!   · **全屏后控件全点不中**：mpv 的 VO 在全屏切换时 SetWindowPos 自己，把锚窗提到
 //!     覆盖层之上（对已 TOPMOST 的覆盖层再调 HWND_TOPMOST 不保证带内重排，owner 关系
 //!     也不即时兜底）—— 此后真实鼠标命中全部落进 mpv（实机日志：裸 WM_MOUSEMOVE
-//!     500+ 条/秒直达 mpv），覆盖层整层收不到事件。修复 = 进/退全屏与全屏断言里
-//!     `InsertAfter=锚窗` 显式带内定位 + 33ms 跟随循环每拍 `GW_HWNDPREV` 探测自愈。
+//!     500+ 条/秒直达 mpv），覆盖层整层收不到事件。lc-1952 试图用 `InsertAfter=锚窗`
+//!     显式带内定位修复 —— 但方向反了（见 [lc-1964]），lc-1964 推翻重做。
 //!   · **最小化漏出黑色背景**：旧顺序先收播放层再动主窗（主窗若被真实显示过，黑底
 //!     播放页整个露出）+ 旧 `SW_SHOWMINNOACTIVE` 先行对隐藏窗物化恢复态帧。修复 =
 //!     主窗先最小化（此刻播放层还盖着）+ `minimize_show_steps`（先 SW_MINIMIZE 进
@@ -170,6 +198,91 @@ static HOVER_GENERATION: AtomicU64 = AtomicU64::new(0);
 static HOVER_LAST_SEQ: AtomicU64 = AtomicU64::new(0);
 /// 探针最近上报的「光标是否在覆盖层窗口内」（inside），供对账与日志。
 static PROBE_INSIDE: AtomicBool = AtomicBool::new(false);
+/// [lc-1964] 前端最近一次 hover 事务请求的目标态（menu 打开/拖动锁期间前端会主动
+/// 请求恒可交互）。探针热区自动翻位退出时必须尊重它，不能和前端抢穿透位。
+static FRONTEND_HOVER_LAST: AtomicBool = AtomicBool::new(false);
+/// [lc-1964] 探针热区自动翻位是否处于「已翻可点」态（Rust 自己翻的才由 Rust 还原，
+/// 避免覆盖前端主动请求的可交互态）。
+static AUTO_HOVER_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+// ─────────────── [lc-1964] 控件带几何热区（Rust 直翻可点位的保险丝）───────────────
+//
+// 前端 1s 心跳把 `[data-chrome-hit]` 矩形（CSS 视口坐标）+ 视口尺寸上报到
+// `overlay_set_hotzones`；探针每拍把「光标窗口内物理坐标」按 surface/clientWidth
+// 比例换算后直接命中测试，命中即翻掉 WS_EX_TRANSPARENT —— 不发事件、不等前端
+// elementFromPoint。WebView 判定链全挂（JS 死 / 事件丢 / 映射错）时控件仍可点。
+// 前端从未上报（页面加载即死）→ 退回顶栏/底栏固定带；上报过但停更（>3s，即
+// 3 次心跳未达 = JS 挂了，chrome 冻结在最后可见态）→ 同样退回固定带。
+
+/// 控件带矩形（CSS 视口坐标 `[x, y, w, h]`），前端心跳上报。
+static HOTZONES_CSS: Mutex<Vec<[f32; 4]>> = Mutex::new(Vec::new());
+/// 上报时的 CSS 视口尺寸（物理↔CSS 换算基准）。
+static HOTZONES_VIEWPORT: Mutex<(f32, f32)> = Mutex::new((0.0, 0.0));
+/// 最近一次上报时刻；None = 前端从未上报（用固定带兜底）。
+static HOTZONES_AT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+/// 心跳容忍窗：超过它视为前端停更（退回固定带）。3s = chrome 自动隐藏(3s)的量级，
+/// 期间足够容忍 GC/卡顿丢几拍心跳。
+const HOTZONES_FRESH: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// [lc-1964] 前端上报控件带矩形（`mpv_overlay_hotzones` 命令落地）。
+/// `viewport = (w, h)` 为上报时的 CSS 视口尺寸；(0,0) = 视口未知（视为从未上报）。
+pub fn overlay_set_hotzones(zones: Vec<[f32; 4]>, viewport: (f32, f32)) {
+    *HOTZONES_CSS.lock().unwrap_or_else(|e| e.into_inner()) = zones;
+    *HOTZONES_VIEWPORT.lock().unwrap_or_else(|e| e.into_inner()) = viewport;
+    *HOTZONES_AT.lock().unwrap_or_else(|e| e.into_inner()) =
+        if viewport.0 > 0.0 && viewport.1 > 0.0 {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
+}
+
+/// [lc-1964] 纯逻辑：固定兜底带（顶栏 + 底栏）。surface 为窗口内物理像素尺寸。
+/// 顶带 0..14%（右上窗控 + 顶栏），底带 74%..100%（底栏 dock + 音量条）。
+/// 比例而非固定像素：全屏 3840x2160 与窗口 2520x1575 共用一套判据。
+pub fn fallback_band_hit(surface: (i32, i32), px: i32, py: i32) -> bool {
+    let (w, h) = (surface.0.max(1), surface.1.max(1));
+    let top = (h as f64 * 0.14) as i32;
+    let bottom_start = (h as f64 * 0.74) as i32;
+    px >= 0 && px < w && (py >= 0 && py < top || py >= bottom_start && py < h)
+}
+
+/// [lc-1964] 纯逻辑：上报热区命中测试。`zones` 为 CSS 视口矩形，`viewport` 为上报
+/// 时视口尺寸，`surface` 为当前窗口物理尺寸，`(px, py)` 为光标窗口内物理坐标。
+/// 换算 = 物理点 × (viewport / surface) → CSS 点（与前端 probePoint 同一比例，
+/// 方向相反：这里是把物理坐标拉回 CSS 栅格）。
+pub fn hotzone_hit(
+    zones: &[[f32; 4]],
+    viewport: (f32, f32),
+    surface: (i32, i32),
+    px: i32,
+    py: i32,
+) -> bool {
+    if zones.is_empty() || viewport.0 <= 0.0 || viewport.1 <= 0.0 || surface.0 <= 0 || surface.1 <= 0
+    {
+        return false;
+    }
+    let cx = (px as f32) * viewport.0 / surface.0 as f32;
+    let cy = (py as f32) * viewport.1 / surface.1 as f32;
+    zones
+        .iter()
+        .any(|[x, y, w, h]| cx >= *x && cx < x + w && cy >= *y && cy < y + h)
+}
+
+/// [lc-1964] 探针每拍的热区裁决：返回 `(是否命中控件带, 命中来源描述)`。
+/// 前端从未上报或心跳停更 → 固定带兜底；否则用上报矩形（chrome 隐藏时前端上报
+/// 空表 → 恒不命中，点击照旧穿透给 mpv）。
+pub fn hotzones_evaluate(surface: (i32, i32), px: i32, py: i32) -> (bool, &'static str) {
+    let at = *HOTZONES_AT.lock().unwrap_or_else(|e| e.into_inner());
+    let fresh = matches!(at, Some(t) if t.elapsed() < HOTZONES_FRESH);
+    if fresh {
+        let zones = HOTZONES_CSS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let vp = *HOTZONES_VIEWPORT.lock().unwrap_or_else(|e| e.into_inner());
+        (hotzone_hit(&zones, vp, surface, px, py), "reported")
+    } else {
+        (fallback_band_hit(surface, px, py), "fallback")
+    }
+}
 
 // ─────────────── [lc-1949] 视频区鼠标转发（替代探针穿透拨位）───────────────
 //
@@ -399,7 +512,9 @@ pub fn hover_seq_gate(last_seq: u64, request_seq: u64) -> (bool, u64) {
 /// [lc-1960] hover 事务落地：把穿透位拨到 `!hover` 并读回。
 ///
 /// seq 单调守门（[`hover_seq_gate`]）：迟到的旧请求不落地（只 ack 真实态）。
+/// [lc-1964] 同时记录前端最近请求的目标态（探针热区自动翻位退出时要尊重它）。
 pub fn hover_apply(overlay_hwnd: isize, hover: bool, request_seq: u64) -> HoverAck {
+    FRONTEND_HOVER_LAST.store(hover, Ordering::SeqCst);
     let last = HOVER_LAST_SEQ.load(Ordering::SeqCst);
     let (allowed, new_last) = hover_seq_gate(last, request_seq);
     if new_last != last {
@@ -483,6 +598,36 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
                     && pt.x < rc.right
                     && pt.y >= rc.top
                     && pt.y < rc.bottom;
+                // [lc-1964] 控件带热区直翻（架构保险 D）：每拍都判，不依赖前端
+                // elementFromPoint。命中 → 直接翻可点位；离开且是 Rust 自己翻的 →
+                // 还原穿透（前端主动请求的可交互态不被抢，见 FRONTEND_HOVER_LAST）。
+                if inside {
+                    let (zone_hit, zone_src) = hotzones_evaluate(
+                        (rc.right - rc.left, rc.bottom - rc.top),
+                        pt.x - rc.left,
+                        pt.y - rc.top,
+                    );
+                    if zone_hit && overlay_input_passthrough_now(hwnd) {
+                        overlay_apply_input_passthrough(hwnd, false);
+                        AUTO_HOVER_ACTIVE.store(true, Ordering::SeqCst);
+                        crate::libmpv::trace(&format!(
+                            "[lc-1964] 探针热区直翻可点 x={} y={} src={zone_src}（不依赖 elementFromPoint）",
+                            pt.x - rc.left,
+                            pt.y - rc.top
+                        ));
+                    } else if !zone_hit
+                        && AUTO_HOVER_ACTIVE.swap(false, Ordering::SeqCst)
+                        && !FRONTEND_HOVER_LAST.load(Ordering::SeqCst)
+                    {
+                        overlay_apply_input_passthrough(hwnd, true);
+                        crate::libmpv::trace("[lc-1964] 探针热区离开 → 穿透还原");
+                    }
+                } else if AUTO_HOVER_ACTIVE.swap(false, Ordering::SeqCst)
+                    && !FRONTEND_HOVER_LAST.load(Ordering::SeqCst)
+                {
+                    overlay_apply_input_passthrough(hwnd, true);
+                    crate::libmpv::trace("[lc-1964] 光标离开覆盖层 → 热区穿透还原");
+                }
                 let moved = last_point != Some((pt.x, pt.y));
                 let inside_changed = inside != last_inside;
                 if moved {
@@ -602,16 +747,28 @@ fn is_window_topmost(hwnd: isize) -> bool {
 /// [lc-1952] 纯逻辑：覆盖层是否已紧贴在锚窗正上方。
 ///
 /// `prev_of_anchor` = `GetWindow(锚窗, GW_HWNDPREV)`（z 序里压在锚窗上面的那一个）。
-/// 两个窗口都已是 TOPMOST 时，对覆盖层再调 `HWND_TOPMOST` **不保证带内重排**
-/// （这正是「NOTOPMOST→TOPMOST 抖一下」惯用法存在的原因）；mpv 的 VO 在全屏切换
-/// 时会 SetWindowPos 自己（实机日志：锚窗被提到覆盖层之上后，裸 WM_MOUSEMOVE 以
-/// 500+ 条/秒直达 mpv，控件整层失联）。带内相对位置必须用 `InsertAfter=锚窗`
-/// 显式修正，靠 TOPMOST 位和 owner 关系都不稳。
 pub fn overlay_zorder_ok(prev_of_anchor: isize, overlay: isize) -> bool {
     overlay != 0 && prev_of_anchor == overlay
 }
 
-/// [lc-1952] 把覆盖层插到锚窗正上方（不激活、不动几何、不动 TOPMOST 位）。
+/// [lc-1964] 纯逻辑：把覆盖层插到「锚窗正上方」该用的 `hWndInsertAfter` 目标。
+///
+/// Win32 语义（实证定案，见模块头 [lc-1964]）：`SetWindowPos(被定位窗,
+/// hWndInsertAfter)` 把被定位窗插到 hWndInsertAfter **正下方**。所以旧写法
+/// `InsertAfter=锚窗` 实际把覆盖层压到锚窗之下 —— 全屏按钮全失效的真根因。
+/// 正确做法：插到「锚窗当前上面那一个」的正下方 = 紧贴锚窗上方；锚窗已在带顶
+/// （prev == 0）时目标 = HWND_TOP（带顶哨兵，返回 0）。
+///
+/// 单测双向锚定：旧逻辑（目标 = 锚窗本身）对本函数的返回值必然不同。
+pub fn overlay_insert_target(prev_of_anchor: isize) -> isize {
+    prev_of_anchor // prev == 0 时恰好就是 HWND_TOP(0)，两个分支自然合一
+}
+
+/// [lc-1964] 把覆盖层插到锚窗正上方（不激活、不动几何、不动 TOPMOST 位）。
+///
+/// 实现 = `InsertAfter(GetWindow(锚窗, GW_HWNDPREV))`：插到「锚窗上面那一个」的
+/// 下方，正好落在锚窗上方；锚窗已在带顶时 `GW_HWNDPREV` 返回 0 = HWND_TOP 哨兵，
+/// 覆盖层被送到带顶（仍紧贴锚窗上方）。
 /// 返回是否执行了 SetWindowPos（窗口无效 / hwnd 为 0 时 false）。
 fn place_overlay_above_anchor(overlay: isize, anchor: isize) -> bool {
     if overlay == 0
@@ -621,16 +778,37 @@ fn place_overlay_above_anchor(overlay: isize, anchor: isize) -> bool {
     {
         return false;
     }
+    let prev_of_anchor = unsafe { GetWindow(anchor as _, GW_HWNDPREV) } as isize;
+    let target = overlay_insert_target(prev_of_anchor);
     unsafe {
         SetWindowPos(
             overlay as _,
-            anchor as _,
+            target as _,
             0,
             0,
             0,
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
         ) != 0
+    }
+}
+
+/// [lc-1964] 把覆盖层抬到 TOPMOST 带最顶（Polaris `apply_screen_saver_level` 同款）。
+///
+/// 已 TOPMOST 的窗再调 `HWND_TOPMOST` 不保证带内重排；先 `HWND_NOTOPMOST` 摘带再
+/// `HWND_TOPMOST` 回带，系统强制把它插到带顶 —— 全屏期覆盖层因此恒在 mpv 锚窗
+/// （带内任何位置）之上，真实鼠标命中永远先到覆盖层。mpv 的 VO / ontop_mode.lua
+/// 再怎么 SetWindowPos 自己，最坏 33ms 后被本函数抬回来。
+/// 返回是否两次 SetWindowPos 都成功。
+fn overlay_raise_screen_saver_level(hwnd: isize) -> bool {
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return false;
+    }
+    let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+    unsafe {
+        let down = SetWindowPos(hwnd as _, HWND_NOTOPMOST, 0, 0, 0, 0, flags) != 0;
+        let up = SetWindowPos(hwnd as _, HWND_TOPMOST, 0, 0, 0, 0, flags) != 0;
+        down && up
     }
 }
 
@@ -863,7 +1041,7 @@ fn move_window(hwnd: isize, x: i32, y: i32, w: i32, h: i32) {
 /// 全屏几何断言（幂等）：**只修覆盖层**，锚窗几何归 mpv 自己（lc-1960 对齐 Polaris
 /// 不变量：全屏期间 mpv 的 VO 是锚窗几何的唯一写者，我们从外面抢写就是 lc-1947/1948
 /// 「-11,-11 3851x2171 拉锯」的根源）。覆盖层没铺满显示器就重摆；两层都置顶；
-/// 带内把覆盖层插回锚窗正上方。
+/// [lc-1964] 覆盖层抬到 TOPMOST 带最顶（屏保级，恒压锚窗之上）。
 fn ensure_fullscreen_geometry(app: &tauri::AppHandle) {
     if !PLAYER_FULLSCREEN.load(Ordering::SeqCst) {
         return;
@@ -876,8 +1054,9 @@ fn ensure_fullscreen_geometry(app: &tauri::AppHandle) {
     move_window(overlay, mx, my, mw, mh);
     set_window_topmost(mpv, true);
     set_window_topmost(overlay, true);
-    // [lc-1952] 带内显式定位：覆盖层必须压在锚窗正上方（TOPMOST 位不保证带内重排）。
-    place_overlay_above_anchor(overlay, mpv);
+    // [lc-1964] 屏保级抬顶：已 TOPMOST 的覆盖层再调 HWND_TOPMOST 不保证带内重排，
+    // NOTOPMOST→TOPMOST 重置法强制回带顶（旧 InsertAfter=锚窗 方向反了，见模块头）。
+    overlay_raise_screen_saver_level(overlay);
 }
 
 /// [lc-1947] mpv `fullscreen` 属性变化的窗口级处理（由 mpv.rs 的属性观察线程调用）。
@@ -931,10 +1110,11 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
         move_window(overlay, mx, my, mw, mh);
         set_window_topmost(mpv, true);
         set_window_topmost(overlay, true);
-        // [lc-1952] 带内显式定位：把覆盖层插到锚窗正上方。mpv 的 VO 随后处理全屏时
-        // 会 SetWindowPos 自己，把它重新抬到覆盖层之上 —— 那一步由 33ms 跟随循环的
-        // z 序自愈兜住；这里先把进入瞬间的相对位置摆对。
-        place_overlay_above_anchor(overlay, mpv);
+        // [lc-1964] 屏保级抬顶：覆盖层强制到 TOPMOST 带最顶。mpv 的 VO 随后处理全屏
+        // 时会 SetWindowPos 自己（可能把它抬到覆盖层之上）—— 那一步由 33ms 跟随循环
+        // 的屏保级抬顶兜住（最坏 33ms）。旧 `InsertAfter=锚窗` 方向反了（会把覆盖层
+        // 压到锚窗之下，全屏按钮全失效的真根因），见模块头 [lc-1964]。
+        overlay_raise_screen_saver_level(overlay);
         crate::libmpv::trace(&format!(
             "[lc-1947] 进入全屏：显示器矩形 {mw}x{mh}@{mx},{my}（锚窗 + 覆盖层 TOPMOST）"
         ));
@@ -1455,7 +1635,12 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                 // [lc-1949]（原探针职责）全屏期间守住「压过任务栏」：mpv 的 ontop_mode.lua
                 // 会在暂停时把 ontop 置 false（= 对锚窗 SetWindowPos(NOTOPMOST)），视频
                 // 就会掉到任务栏下面。33ms 循环发现 TOPMOST 位丢了立刻复位。
-                if PLAYER_FULLSCREEN.load(Ordering::SeqCst) {
+                // [lc-1964] z 序断言全时段跑（全屏 + 窗口模式）：违例时全屏走屏保级抬顶、
+                // 窗口模式走修正后的带内 InsertAfter。lc-1952 的 InsertAfter=锚窗 方向反了
+                // （实证：SetWindowPos(B, insertAfter=A) 把 B 插到 A **正下方**），自愈变成
+                // 每 33ms 把覆盖层压回 mpv 之下 —— 全屏按钮全失效的真根因。
+                let fullscreen_now = PLAYER_FULLSCREEN.load(Ordering::SeqCst);
+                if fullscreen_now {
                     if !is_window_topmost(mh as _) {
                         set_window_topmost(mh as _, true);
                         crate::libmpv::trace("[lc-1949] 全屏中锚窗丢失 TOPMOST → 复位");
@@ -1463,21 +1648,32 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                     if !is_window_topmost(ov as _) {
                         set_window_topmost(ov as _, true);
                     }
-                    // [lc-1952] z 序自愈：全屏期间覆盖层必须**紧贴锚窗正上方**，否则
-                    // Windows 把真实鼠标命中判给 mpv（实机复现：500+ 条/秒裸
-                    // WM_MOUSEMOVE 直达 mpv，覆盖层整层收不到事件，控件全点不中）。
-                    // 对已 TOPMOST 的窗口调 HWND_TOPMOST 不保证带内重排，TOPMOST 位
-                    // 完好也可能被压在 mpv 之下 —— 每拍用 GW_HWNDPREV 探测，偏离就
-                    // 用 InsertAfter=锚窗 拉回。
+                }
+                {
+                    // 两个窗不同带（ontop 拨动的过渡瞬间）时带内 InsertAfter 无意义，跳过一拍。
+                    let band_consistent =
+                        is_window_topmost(mh as _) == is_window_topmost(ov as _);
                     let prev_of_anchor = unsafe { GetWindow(mh as _, GW_HWNDPREV) } as isize;
-                    let zorder_ok = overlay_zorder_ok(prev_of_anchor, ov);
-                    if !zorder_ok {
-                        if overlay_zorder_was_ok {
-                            crate::libmpv::trace(
-                                "[lc-1952] 全屏覆盖层被压到锚窗之下 → InsertAfter 拉回",
-                            );
+                    let zorder_ok = band_consistent && overlay_zorder_ok(prev_of_anchor, ov);
+                    if !zorder_ok && band_consistent {
+                        if fullscreen_now {
+                            // [lc-1964] Polaris apply_screen_saver_level 同款：NOTOPMOST→TOPMOST
+                            // 重置法把覆盖层强制抬到 TOPMOST 带最顶（对已 TOPMOST 的窗再调
+                            // HWND_TOPMOST 不保证带内重排）。
+                            if overlay_zorder_was_ok {
+                                crate::libmpv::trace(
+                                    "[lc-1964] 全屏覆盖层失守（被压到锚窗之下）→ 屏保级抬顶（NOTOPMOST→TOPMOST）",
+                                );
+                            }
+                            overlay_raise_screen_saver_level(ov);
+                        } else {
+                            if overlay_zorder_was_ok {
+                                crate::libmpv::trace(
+                                    "[lc-1964] 窗口覆盖层失守 → InsertAfter(GW_HWNDPREV) 拉回锚窗正上方",
+                                );
+                            }
+                            place_overlay_above_anchor(ov, mh);
                         }
-                        place_overlay_above_anchor(ov, mh);
                     }
                     overlay_zorder_was_ok = zorder_ok;
                 }
@@ -1717,6 +1913,83 @@ pub fn on_main_moved(x: i32, y: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─────────────── [lc-1964] z 序 InsertAfter 方向 + 控件带热区 ───────────────
+
+    /// [lc-1964] InsertAfter 目标：锚窗已在带顶（GW_HWNDPREV = 0）时目标是 HWND_TOP(0)。
+    /// **双向验证**：lc-1952 旧逻辑的目标恒为锚窗本身 —— 对旧代码本断言必 FAIL
+    /// （旧目标 = 锚窗 hwnd ≠ 0，且旧方向实际把覆盖层插到锚窗**之下**）。
+    #[test]
+    fn insert_target_band_top_is_hwnd_top_not_anchor() {
+        let anchor: isize = 0x777;
+        assert_eq!(
+            overlay_insert_target(0),
+            0,
+            "锚窗在带顶 → 覆盖层插 HWND_TOP（带顶哨兵），绝不许插到锚窗之后（= 之下）"
+        );
+        assert_ne!(overlay_insert_target(0), anchor, "旧逻辑（InsertAfter=锚窗）方向相反，正是全屏按钮全失效的根因");
+    }
+
+    /// [lc-1964] InsertAfter 目标：锚窗上面还有别的窗时，目标 = 那个窗
+    /// （插到它正下方 = 紧贴锚窗正上方）。
+    #[test]
+    fn insert_target_is_prev_of_anchor() {
+        assert_eq!(overlay_insert_target(0xABC), 0xABC);
+        assert_eq!(overlay_insert_target(-1), -1, "负值句柄原样透传（不可能是哨兵语义）");
+    }
+
+    /// [lc-1964] 热区换算：CSS 矩形 × (viewport/surface) 比例命中物理光标点。
+    #[test]
+    fn hotzone_hit_scales_physical_to_css() {
+        // 视口 1280x720 CSS，窗口 3840x2160 物理（3x）；热区 = 底栏 (0, 648, 1280, 72) CSS。
+        let zones = [[0.0, 648.0, 1280.0, 72.0]];
+        // 物理点 (1920, 2100) → CSS (640, 700) → 命中底栏。
+        assert!(hotzone_hit(&zones, (1280.0, 720.0), (3840, 2160), 1920, 2100));
+        // 物理点 (1920, 1080) → CSS (640, 360) → 画面中央，不命中。
+        assert!(!hotzone_hit(&zones, (1280.0, 720.0), (3840, 2160), 1920, 1080));
+        // 空热区（chrome 隐藏时前端上报空表）恒不命中。
+        assert!(!hotzone_hit(&[], (1280.0, 720.0), (3840, 2160), 1920, 2100));
+        // 视口非法（除零保护）恒不命中。
+        assert!(!hotzone_hit(&zones, (0.0, 0.0), (3840, 2160), 1920, 2100));
+    }
+
+    /// [lc-1964] 固定兜底带：顶带 0..14%、底带 74%..100% 命中；画面中央不命中。
+    #[test]
+    fn fallback_band_top_bottom_hit_middle_miss() {
+        let surface = (2520, 1575);
+        assert!(fallback_band_hit(surface, 1260, 100), "顶带内（右上窗控区域）");
+        assert!(fallback_band_hit(surface, 1260, 1500), "底带内（dock 区域）");
+        assert!(!fallback_band_hit(surface, 1260, 800), "画面中央绝不兜底");
+        assert!(!fallback_band_hit(surface, -5, 100), "越界 x 不命中");
+        assert!(!fallback_band_hit(surface, 1260, 1600), "越界 y 不命中");
+    }
+
+    /// [lc-1964] hotzones_evaluate 状态机（共享静态，必须在**单条**测试里按序驱动）：
+    /// ① 从未上报 → 固定兜底带；② fresh 上报 → 上报矩形接管；③ 空表（chrome 隐藏）
+    /// → reported 且恒不命中；④ 视口非法 → 回固定兜底带。
+    #[test]
+    fn hotzones_evaluate_state_machine() {
+        // ① 测试进程初始态 HOTZONES_AT = None → 固定兜底带接管（WebView 全挂保险丝）。
+        let (hit, src) = hotzones_evaluate((2520, 1575), 1260, 100);
+        assert!(hit, "从未上报 → 固定兜底带必须接管（顶带命中）");
+        assert_eq!(src, "fallback");
+        let (mid, _) = hotzones_evaluate((2520, 1575), 1260, 800);
+        assert!(!mid, "固定兜底带不许覆盖画面中央");
+        // ② fresh 上报矩形接管命中判定。
+        overlay_set_hotzones(vec![[0.0, 648.0, 1280.0, 72.0]], (1280.0, 720.0));
+        let (hit, src) = hotzones_evaluate((3840, 2160), 1920, 2100);
+        assert!(hit && src == "reported", "fresh 上报矩形接管命中判定");
+        let (miss, _) = hotzones_evaluate((3840, 2160), 1920, 1080);
+        assert!(!miss, "上报矩形外的物理点不命中");
+        // ③ chrome 隐藏：前端上报空表（视口仍有效）→ 全画面不命中（点击照旧穿透给 mpv）。
+        overlay_set_hotzones(vec![], (1280.0, 720.0));
+        let (empty, src2) = hotzones_evaluate((3840, 2160), 1920, 2100);
+        assert!(!empty && src2 == "reported", "空表 = chrome 隐藏，热区保险丝让位");
+        // ④ 视口 (0,0) = 视为从未上报 → 回固定兜底带。
+        overlay_set_hotzones(vec![], (0.0, 0.0));
+        let (fb, src3) = hotzones_evaluate((2520, 1575), 1260, 100);
+        assert!(fb && src3 == "fallback", "视口非法 → 固定兜底带");
+    }
 
     // ─────────────── [lc-1949] 视频区鼠标转发（替代探针拨位）───────────────
 

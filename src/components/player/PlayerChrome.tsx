@@ -672,6 +672,65 @@ export function PlayerChrome() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* ── [lc-1964] 控件带几何热区上报（Rust 探针直翻可点位的保险丝）──
+   * 1s 心跳把 `[data-chrome-hit]` 矩形（CSS 视口坐标）+ 视口尺寸交给 Rust；
+   * 探针每拍直接对「光标落在控件带内」翻可点位，完全不依赖 elementFromPoint ——
+   * WebView 判定链全挂（JS 死 / 事件丢 / 映射错）时控件仍可点。
+   * chrome 隐藏（容器 opacity:0 + pointer-events:none）→ 有效 pointer-events 过滤
+   * （与 elementFromPoint 同一规则）→ 上报空表 → 点击照旧穿透。
+   * resize / 全屏切换即时补报；卸载时上报空表 + 零视口（Rust 侧回固定带兜底语义）。 */
+  useEffect(() => {
+    let disposed = false;
+    const report = () => {
+      if (disposed) return;
+      const vw = document.documentElement.clientWidth || window.innerWidth;
+      const vh = document.documentElement.clientHeight || window.innerHeight;
+      const zones: Array<[number, number, number, number]> = [];
+      document.querySelectorAll<HTMLElement>("[data-chrome-hit]").forEach((el) => {
+        try {
+          // 有效 pointer-events 判定（与 elementFromPoint 同一规则）：chrome 隐藏 =
+          // 容器 opacity:0 + pointer-events:none，opacity 不继承但 pointer-events
+          // 生效于子树，沿祖先链查 none 即可精确滤掉隐藏态控件。
+          let hidden = false;
+          let anc: HTMLElement | null = el;
+          while (anc) {
+            if (getComputedStyle(anc).pointerEvents === "none") {
+              hidden = true;
+              break;
+            }
+            anc = anc.parentElement;
+          }
+          if (hidden) return;
+          const r = el.getBoundingClientRect();
+          if (r.width < 2 || r.height < 2 || r.bottom <= 0 || r.top >= vh || r.right <= 0 || r.left >= vw) return;
+          const x = Math.max(0, r.left);
+          const y = Math.max(0, r.top);
+          const w = Math.min(r.right, vw) - x;
+          const h = Math.min(r.bottom, vh) - y;
+          if (w > 2 && h > 2) zones.push([x, y, w, h]);
+        } catch {
+          /* 单个节点异常不拖垮整次上报 */
+        }
+      });
+      void invoke("mpv_overlay_hotzones", {
+        zones,
+        viewportW: vw,
+        viewportH: vh,
+      }).catch(() => {
+        /* 命令未就绪（老后端）静默忽略 —— 探针侧还有固定带兜底 */
+      });
+    };
+    report();
+    const iv = window.setInterval(report, 1000);
+    window.addEventListener("resize", report);
+    return () => {
+      disposed = true;
+      window.clearInterval(iv);
+      window.removeEventListener("resize", report);
+      void invoke("mpv_overlay_hotzones", { zones: [], viewportW: 0, viewportH: 0 }).catch(() => {});
+    };
+  }, []);
+
   const stRef = useRef(st);
   stRef.current = st;
 

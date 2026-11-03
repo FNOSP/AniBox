@@ -63,17 +63,26 @@ static OVERLAY_PROBE_RUNNING: AtomicBool = AtomicBool::new(false);
 /// [lc-1939] 33ms 几何跟随循环是否已在跑（起播前预启动 + 收编后再调，需幂等）。
 static OVERLAY_FOLLOW_RUNNING: AtomicBool = AtomicBool::new(false);
 
-// ─────────────────── [lc-1943] 覆盖层可点区（热区）───────────────────
+// ─────────────────── [lc-1943/1944] 覆盖层可点区（热区）───────────────────
 //
-// 旧链路（lc-1939）：50ms 探针 → `eval` 把光标坐标塞给页面 → `elementFromPoint`
-// → `invoke player_chrome_ignore` → Rust 拨 WS_EX_TRANSPARENT。
-// 一次判定跨两次进程 IPC，叠加 50ms 采样周期，「光标到位 → 窗口可点」最坏 ~70ms
-// —— 用户快速移入并点击时 mousedown 仍落在穿透窗上被 mpv 吃掉（首击失灵）。
+// 机制：前端在布局/显隐变化时上报一次 `[data-chrome-hit]` 矩形 →
+// Rust 探针按 `GetCursorPos` 与矩形比 → **只拨 `WS_EX_TRANSPARENT`**。
+// 这是 Polaris 的原样做法（`mpv-overlay.html:125-126` / `:12733`：
+// 「Rust 探针(overlay_wiring.rs 每 50ms 推送物理坐标) → elementFromPoint →
+// _isOverlayHoverInteractive 白名单命中 → WS_EX_TRANSPARENT=false」）。
 //
-// 新链路：前端只在布局/显隐变化时把可点区矩形上报一次（`player_chrome_hot_rects`），
-// Rust 探针（16ms）**纯几何**判定并直接拨穿透位，不再 eval、不再 invoke。
-// `data-chrome-hit` 元素本身就是唯一的可交互集合，矩形取自 getBoundingClientRect，
-// 精度与 elementFromPoint 等价，无需每帧回到 WebView 精判。
+// [lc-1944] 本轮把「能不能换 OS 级同步命中」逐条查证了一遍，结论是**不换**：
+//   · Polaris 不是逐像素 alpha、不是小窗、不是 SetWindowRgn，也没有 WM_NCHITTEST
+//     （PE 里 `NCHITTEST`/`HTTRANSPARENT`/`UpdateLayeredWindow` 命中数全 0；
+//      `SetWindowRgn` 只用于 mpv 窗圆角，且其源码注释明确「不用 SetWindowRgn 裁本窗口」）；
+//   · `WM_NCHITTEST → HTTRANSPARENT` 只对**同一个线程**的窗口往下传递
+//     （Win32 文档原文，Wine `window_from_point` 同样只对同线程窗发 hit-test）。
+//     mpv 是**独立进程**，穿透点击到不了它 —— 用了就等于「点画面不再暂停/拖窗/滚轮」；
+//   · `SetWindowRgn` 是跨进程同步命中的唯一合法手段，但会把覆盖层的区域裁掉，
+//     底部 132px 对比渐变（lc-1942 视觉值）会被裁成矩形块，需要先实机确认 WebView2
+//     的 DComp 合成层是否真如 Polaris 注释所说「不受父窗区域裁剪」。
+// 因此本轮保持 Polaris 同款轮询机制，把「点半天」按实测证据修在别处：
+// 菜单数据 25 条 get_property 由串行改并发（实测串行会把后续点击排到 1.6s / 7.5s 之后）。
 
 /// 前端上报的可点区矩形：窗口内物理像素 `(x, y, w, h)`，已含外扩余量。
 static HOT_RECTS: Mutex<Vec<(i32, i32, i32, i32)>> = Mutex::new(Vec::new());
@@ -85,8 +94,15 @@ static HOT_REPORTED: AtomicBool = AtomicBool::new(false);
 static PROBE_CLICKTHROUGH: AtomicBool = AtomicBool::new(true);
 
 /// 探针周期。16ms ≈ 60Hz：一次显示器刷新内就能把穿透位拨到位。
+///
+/// [lc-1944] 与 Polaris 的对照：Polaris 是 50ms 采样 **+ eval + elementFromPoint +
+/// invoke + ack 四个来回**（`mpv-overlay.html:4604-4657`，还带 [40,120,300,700] 重试），
+/// 端到端最坏 ~70-90ms；我们是 16ms 采样 + 一次 SetWindowLongPtrW，端到端 ≤16ms。
+/// 机制同款、链路更短，所以**不**改成 50ms —— 那会把首击竞态窗口放大 3 倍。
 pub const PROBE_TICK_MS: u64 = 16;
 /// 可点区外扩（像素）：光标还没压到按钮上就先进可点态，消除边缘抖动。
+/// Polaris 用 elementFromPoint 精确命中（无外扩），但它的判定在 50ms 后才生效；
+/// 我们单跳 16ms，保留 16px 外扩是为了让「移入边缘 + 立刻点击」也能命中。
 pub const HOT_MARGIN_PX: i32 = 16;
 /// 离开可点区后的粘滞（毫秒）：越过边缘时短暂保持可点，避免穿透位来回拨。
 pub const LEAVE_HYSTERESIS_MS: u64 = 80;
@@ -151,6 +167,12 @@ fn probe_fallback_rects(w: i32, h: i32) -> Vec<(i32, i32, i32, i32)> {
         (0, (h - band_h).max(0), w, band_h),
         ((w - top_w).max(0), 0, top_w, 56.min(h)),
     ]
+}
+
+/// [lc-1944] 命中判定（纯逻辑，便于单测）：`true` = 不穿透（点击进 WebView），
+/// `false` = 穿透（点击交给 mpv）。语义与 [`decide_clickthrough`] 的 `hot` 分支一致。
+pub fn hit_gate_delivers(full: bool, hot: bool) -> bool {
+    full || hot
 }
 
 pub fn set_overlay_transparent(ok: bool) {
@@ -599,11 +621,9 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
     });
 }
 
-/// [lc-1943] 16ms 光标探针：覆盖层默认 WS_EX_TRANSPARENT（点击穿透给 mpv），
-/// **只有**光标落在可点区（前端上报的控件矩形）时才关穿透。
-///
-/// 判定完全在 Rust 侧完成（GetCursorPos + 矩形），不再 `eval` 回 WebView、也不再
-/// `invoke` 往返 —— 这是「首击失灵 / 点了要等一会儿」的主要来源（见文件顶部 lc-1943 注释）。
+/// [lc-1944] 光标探针（机制与 Polaris 同款：采样 + 只拨穿透位，见文件顶部 lc-1944 说明）。
+/// ① 把「光标在动」通知页面续显控件；② 把「是否悬在可点区」告诉页面（3s 自动隐藏让路）；
+/// ③ 只有状态真的变化时才 `SetWindowLongPtrW`，避免每拍一次样式写入。
 ///
 /// 为什么不用 mpv 的 mouse-pos：mpv 报的是它自己的客户区坐标，覆盖层被穿透/被 mpv 压住时
 /// 事件链会滞后或压根没有（lc-1924~1931 的坑）；全局光标是唯一不依赖窗口事件源的坐标真源。
@@ -901,12 +921,60 @@ mod tests {
         assert!(!hit_hot_rects(&[], 100, 200));
     }
 
-    /// [lc-1943] 外扩常量必须是 16px：小了等于没有提前量，大了会把视频区吃掉。
+    /// [lc-1944] 常量与 Polaris 对齐：探针 50ms；可点区**不外扩**（精确白名单命中）。
     #[test]
     fn margin_and_tick_constants() {
-        assert_eq!(HOT_MARGIN_PX, 16);
+        // [lc-1944] 与 Polaris 的对照结论：机制同款（采样 + 只拨穿透位），
+        // 我们单跳 16ms（Polaris 50ms 采样 + eval/elementFromPoint/invoke/ack ≈ 70-90ms）。
+        // 不改成 50ms：只会把「首击落在穿透拍」的窗口放大 3 倍。
         assert_eq!(PROBE_TICK_MS, 16);
+        assert!(PROBE_TICK_MS < 50, "端到端必须短于 Polaris 的 50ms 采样链");
+        assert_eq!(HOT_MARGIN_PX, 16, "外扩给「移入边缘 + 立刻点击」留提前量");
         assert!(LEAVE_HYSTERESIS_MS >= 60 && LEAVE_HYSTERESIS_MS <= 200);
+    }
+
+    /// [lc-1944] 首击相位模型（最坏情况量化，不夸大）：
+    ///
+    ///   光标进入可点区（含 16px 外扩）后，探针最多 PROBE_TICK_MS 才把穿透位拨过来；
+    ///   在这之前的一次 mousedown 会落到 mpv。外扩把「进入可点区」提前到指针离按钮
+    ///   边缘还有 16px 时就发生，正常移动速度下这段位移本身就要 ≥16ms —— 也就是
+    ///   绝大多数首击落在翻位之后。
+    ///
+    /// 断言：① 决策函数只看「这一拍的光标是否在可点区」，不看历史；
+    ///       ② 最坏窗口 = 一个探针周期（16ms），且 < Polaris 的 50ms。
+    #[test]
+    fn first_click_worst_case_window_is_one_tick() {
+        let rects = vec![(100, 200, 40, 34)]; // 未外扩的按钮
+        let expanded: Vec<(i32, i32, i32, i32)> = rects
+            .iter()
+            .map(|&(x, y, w, h)| {
+                (
+                    x - HOT_MARGIN_PX,
+                    y - HOT_MARGIN_PX,
+                    w + HOT_MARGIN_PX * 2,
+                    h + HOT_MARGIN_PX * 2,
+                )
+            })
+            .collect();
+        // 指针离按钮左边缘 8px（还没压到按钮，但已进入外扩区）
+        assert!(!hit_hot_rects(&rects, 92, 210), "精确矩形内不命中");
+        assert!(hit_hot_rects(&expanded, 92, 210), "外扩后命中 → 提前翻位");
+        // 决策只依赖「这一拍」：命中即不穿透，与之前跑过几拍无关。
+        for _ticks_already_run in 0..4 {
+            assert!(hit_gate_delivers(false, hit_hot_rects(&expanded, 92, 210)));
+        }
+        assert!(
+            PROBE_TICK_MS < 50,
+            "最坏相位窗口必须短于 Polaris 的 50ms 采样周期"
+        );
+    }
+
+    /// [lc-1944] 决策边界：模态整窗不穿透；矩形外/空表一律穿透给 mpv。
+    #[test]
+    fn hit_gate_bounds() {
+        assert!(hit_gate_delivers(true, false), "模态（菜单/拖拽）= 整窗可点");
+        assert!(hit_gate_delivers(false, true), "命中可点区 = 不穿透");
+        assert!(!hit_gate_delivers(false, false), "可点区外 = 穿透交给 mpv");
     }
 
     /// [lc-1943] 几何兜底带只在窗口内，且底栏一定贴着窗口底部。

@@ -3277,7 +3277,10 @@ pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
         // 先 raw 置顶，再手工加 LAYERED/NOACTIVATE/TOOLWINDOW + 穿透 —— 顺序反了会被样式重算抹掉。
         crate::mpvwin::overlay_set_topmost(hwnd);
         crate::mpvwin::overlay_style_noactivate(hwnd);
-        // 默认穿透：画面区的点击/拖窗全部归 mpv（只拨 TRANSPARENT，保留 LAYERED 透明）
+        // 默认穿透：画面区的点击/拖窗/滚轮全部归 mpv（只拨 TRANSPARENT，保留 LAYERED 透明）。
+        // [lc-1944] 已核查过「改成 OS 级同步命中」的方案（WM_NCHITTEST / SetWindowRgn），
+        // 结论见 `mpvwin.rs` 顶部：HTTRANSPARENT 只对同线程窗口生效（Win32 文档 + Wine），
+        // mpv 是独立进程收不到；SetWindowRgn 会裁掉底部对比渐变。Polaris 本身也是这套轮询。
         crate::mpvwin::overlay_set_clickthrough(hwnd, true);
         crate::mpvwin::overlay_show_noactivate(hwnd);
     }
@@ -3508,6 +3511,27 @@ async fn player_chrome_hot_rects(
 #[tauri::command]
 fn lat_trace(msg: String) {
     crate::libmpv::trace(&format!("[lat] {msg}"));
+}
+
+/// [lc-1944] 系统双击间隔（毫秒）—— 照抄 Polaris 的 `overlay-double-click-interval-ms`。
+///
+/// 覆盖层空白区仲裁要用**系统设置的真实值**做单击/双击判定（用户可在
+/// 「控制面板 → 鼠标」里改），不能用 500ms 这类硬编码近似：短了会把双击拆成两次单击
+/// （视频被暂停），长了会让单击明显发钝。
+#[tauri::command]
+fn overlay_double_click_interval_ms() -> u32 {
+    #[cfg(target_os = "windows")]
+    {
+        let ms = unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime() };
+        if (1..=5000).contains(&ms) {
+            return ms;
+        }
+        500
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        500
+    }
 }
 
 /// [lc-1939] 播放器控制层的鼠标穿透开关（Polaris 同款通道）：
@@ -3781,60 +3805,82 @@ async fn player_menu_data(state: State<'_, AppState>) -> Result<Value, String> {
         }));
     };
 
-    let track_list = menu_prop(&m, "track-list").await;
-    let sid = menu_prop(&m, "sid").await;
-    let aid = menu_prop(&m, "aid").await;
-    let vid = menu_prop(&m, "vid").await;
-    let secondary_sid = menu_prop(&m, "secondary-sid").await;
-    let sub_visibility = menu_prop(&m, "sub-visibility").await;
-    let secondary_sub_visibility = menu_prop(&m, "secondary-sub-visibility").await;
-    let speed = menu_prop(&m, "speed").await;
-    let volume = menu_prop(&m, "volume").await;
-    let sub_font_size = menu_prop(&m, "sub-font-size").await;
-    let sub_pos = menu_prop(&m, "sub-pos").await;
-    let sub_border = menu_prop(&m, "sub-border-size").await;
-    let chapters = menu_prop(&m, "chapter-list").await;
-    let playlist = menu_prop(&m, "playlist").await;
-    let playlist_pos = menu_prop(&m, "playlist-pos").await;
-    let media_title = menu_prop(&m, "media-title").await;
-    let video_params = menu_prop(&m, "video-params").await;
-    let video_codec = menu_prop(&m, "video-codec").await;
-    let audio_codec = menu_prop(&m, "audio-codec").await;
-    let container_fps = menu_prop(&m, "container-fps").await;
-    let hwdec = menu_prop(&m, "hwdec-current").await;
-    let file_format = menu_prop(&m, "file-format").await;
-    // 弹幕脚本的开关/延迟（uosc_danmaku 自己发布的 user-data，是唯一权威状态源）
-    let danmaku_on = menu_prop(&m, "user-data/uosc_danmaku/danmaku-switch").await;
-    let danmaku_delay = menu_prop(&m, "user-data/uosc_danmaku/danmaku-delay").await;
-    let danmaku_info = menu_prop(&m, "user-data/anibox/danmaku-info").await;
+    // [lc-1944] **并发**取样。旧实现 25 条 get_property 一条接一条等回包，每项还各带
+    // 600ms 超时 —— mpv 偶发卡顿时最坏 15.6s，而且这段时间里用户点任何控件都排在这串
+    // 请求后面（实测日志：`[lat] ui prop:user-data/uosc_danmaku/danmaku-switch 1642.4ms`、
+    // `[lat] ui fullscreen 7523.9ms`）。Polaris 的菜单同样是同时发多条 `mpv-get-property`
+    // （`Promise.all` 并发），不是串行。
+    //
+    // 改成 JoinSet 并发发、按 request_id 各自回包：总耗时 ≈ 最慢的一条，单项卡住不再
+    // 拖住整张表，也不会把后续点击挤在队列里。
+    const MENU_PROPS: [&str; 25] = [
+        "track-list",
+        "sid",
+        "aid",
+        "vid",
+        "secondary-sid",
+        "sub-visibility",
+        "secondary-sub-visibility",
+        "speed",
+        "volume",
+        "sub-font-size",
+        "sub-pos",
+        "sub-border-size",
+        "chapter-list",
+        "playlist",
+        "playlist-pos",
+        "media-title",
+        "video-params",
+        "video-codec",
+        "audio-codec",
+        "container-fps",
+        "hwdec-current",
+        "file-format",
+        "user-data/uosc_danmaku/danmaku-switch",
+        "user-data/uosc_danmaku/danmaku-delay",
+        "user-data/anibox/danmaku-info",
+    ];
+    let mut set = tokio::task::JoinSet::new();
+    for name in MENU_PROPS {
+        let m = m.clone();
+        set.spawn(async move { (name, menu_prop(&m, name).await) });
+    }
+    let mut data = serde_json::Map::new();
+    while let Some(joined) = set.join_next().await {
+        if let Ok((name, v)) = joined {
+            data.insert(name.to_string(), v);
+        }
+    }
+    // 缺项一律 null（前端渲染空态），与旧实现「超时给 Null」一致。
+    let g = |k: &str| data.get(k).cloned().unwrap_or(Value::Null);
 
     Ok(json!({
         "ready": true,
-        "tracks": track_list,
-        "sid": sid,
-        "aid": aid,
-        "vid": vid,
-        "secondarySid": secondary_sid,
-        "subVisibility": sub_visibility,
-        "secondarySubVisibility": secondary_sub_visibility,
-        "speed": speed,
-        "volume": volume,
-        "subFontSize": sub_font_size,
-        "subPos": sub_pos,
-        "subBorderSize": sub_border,
-        "chapters": chapters,
-        "playlist": playlist,
-        "playlistPos": playlist_pos,
-        "mediaTitle": media_title,
-        "videoParams": video_params,
-        "videoCodec": video_codec,
-        "audioCodec": audio_codec,
-        "fps": container_fps,
-        "hwdec": hwdec,
-        "fileFormat": file_format,
-        "danmakuOn": danmaku_on,
-        "danmakuDelay": danmaku_delay,
-        "danmakuInfo": danmaku_info,
+        "tracks": g("track-list"),
+        "sid": g("sid"),
+        "aid": g("aid"),
+        "vid": g("vid"),
+        "secondarySid": g("secondary-sid"),
+        "subVisibility": g("sub-visibility"),
+        "secondarySubVisibility": g("secondary-sub-visibility"),
+        "speed": g("speed"),
+        "volume": g("volume"),
+        "subFontSize": g("sub-font-size"),
+        "subPos": g("sub-pos"),
+        "subBorderSize": g("sub-border-size"),
+        "chapters": g("chapter-list"),
+        "playlist": g("playlist"),
+        "playlistPos": g("playlist-pos"),
+        "mediaTitle": g("media-title"),
+        "videoParams": g("video-params"),
+        "videoCodec": g("video-codec"),
+        "audioCodec": g("audio-codec"),
+        "fps": g("container-fps"),
+        "hwdec": g("hwdec-current"),
+        "fileFormat": g("file-format"),
+        "danmakuOn": g("user-data/uosc_danmaku/danmaku-switch"),
+        "danmakuDelay": g("user-data/uosc_danmaku/danmaku-delay"),
+        "danmakuInfo": g("user-data/anibox/danmaku-info"),
     }))
 }
 
@@ -5158,6 +5204,8 @@ pub fn run() {
             player_chrome_hot_rects,
             // [lc-1943] 前端延迟采样落盘（临时诊断）
             lat_trace,
+            // [lc-1944] 空白区点击仲裁：系统双击间隔（与 Polaris 同名同语义）
+            overlay_double_click_interval_ms,
             // [lc-1942] 字幕搜索输入框需要临时摘掉 WS_EX_NOACTIVATE
             player_chrome_focusable,
             player_embed_leave,

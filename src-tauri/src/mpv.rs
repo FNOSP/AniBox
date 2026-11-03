@@ -515,9 +515,9 @@ impl MpvSession {
                                     crate::mpvwin::set_owner_follow(false);
                                     crate::mpvwin::pin_to_owner(owner);
                                     crate::mpvwin::spawn_overlay_follow(app2.clone());
-                                    // [lc-1939] Polaris 同款 50ms 全局光标探针：
-                                    // 把窗口内物理坐标推给覆盖层做 elementFromPoint 命中测试，
-                                    // 命中控件才关 WS_EX_TRANSPARENT（否则点击/拖窗全归 mpv）。
+                                    // [lc-1944] 光标探针（Polaris 同款机制）：只负责续显控件 /
+                                    // 悬停态；点击能否落在控件上由探针拨 WS_EX_TRANSPARENT 决定
+                                    // （命中 [data-chrome-hit] 矩形 → 不穿透）。
                                     crate::mpvwin::spawn_overlay_probe(app2.clone());
                                     crate::libmpv::trace(&format!(
                                         "[lc-1913] 内嵌收编完成（spawn 侧）：pid={pid2} owner=mpv_overlay(0x{owner:X})，已满屏钉住"
@@ -1078,23 +1078,33 @@ impl MpvSession {
     ///
     /// [lc-1943] 等待改为异步（oneshot + `tokio::time::timeout`），不再用
     /// `recv_timeout` 同步阻塞 worker 线程 —— 见 `pending` 字段注释。
+    /// [lc-1944] **写管道也移出 async 上下文**：mpv 事件循环被脚本/滤镜/换片占住时
+    /// 命名管道可能暂时不被读，`write_all` 会阻塞；它持着 `tx` 这把 **std** 锁，在
+    /// async fn 里同步阻塞就等于把 tokio worker 钉死。并发取样时多个 worker 一起被钉死，
+    /// Tauri 连 `invoke` 都调度不到 —— 实测一次全屏点击卡 7.5s（日志
+    /// `[lat] ui fullscreen 7523.9ms`，而 Rust→mpv 那几发 `set` 只用了 22ms）。
+    /// 交给 blocking 池后最多占一个池线程，executor 与其它命令完全不受影响。
     /// 每次往返都量一次耗时：`[lat]` 行只在「慢 / 显式开启」时落盘，避免刷日志。
     pub async fn command(&self, cmd: Value) -> Result<Value, String> {
         let rid = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.pending.lock().unwrap().insert(rid, tx);
-        {
-            let mut guard = self.tx.lock().unwrap();
+        let line = json!({ "command": cmd, "request_id": rid }).to_string() + "\n";
+        let pipe = Arc::clone(&self.tx);
+        let wrote = tokio::task::spawn_blocking(move || {
+            let mut guard = pipe.lock().unwrap();
             let Some(f) = guard.as_mut() else {
-                self.pending.lock().unwrap().remove(&rid);
-                return Err("mpv 进程已退出".into());
+                return Err("mpv 进程已退出".to_string());
             };
-            let line = json!({ "command": cmd, "request_id": rid }).to_string() + "\n";
-            if let Err(e) = f.write_all(line.as_bytes()) {
-                self.pending.lock().unwrap().remove(&rid);
-                return Err(format!("写 IPC 失败: {e}"));
-            }
-            let _ = f.flush();
+            f.write_all(line.as_bytes())
+                .and_then(|_| f.flush())
+                .map_err(|e| format!("写 IPC 失败: {e}"))
+        })
+        .await
+        .unwrap_or_else(|e| Err(format!("写 IPC 任务失败: {e}")));
+        if let Err(e) = wrote {
+            self.pending.lock().unwrap().remove(&rid);
+            return Err(e);
         }
         let started = std::time::Instant::now();
         match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {

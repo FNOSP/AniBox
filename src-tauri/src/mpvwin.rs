@@ -79,6 +79,34 @@
 //!     变化才打）；全屏期探针 WindowFromPoint 命中窗口变化时打 hwnd+类名 ——
 //!     下次复现一眼定案「点击落进了哪个窗」。
 //!
+//! [lc-1981] **33ms 拉锯定案 + 根治**（用户复现日志：`[lc-1949] 全屏中锚窗丢失
+//! TOPMOST → 复位` 每 33~40ms 一条贯穿全屏 + 控件全失效）。法证结论：
+//!   · 用户跑的二进制是 **lc-1949 时代产物**（日志标签为证；lc-1974 修复 03:44 才提交，
+//!     `[lc-1974]` 埋点一条都没有）—— 但体感失效是真实的，旧机制本身就是坏的；
+//!   · 拉锯双方：mpv 的 `ontop_mode.lua`（暂停联动把 `ontop` 置 false = 对锚窗
+//!     `SetWindowPos(HWND_NOTOPMOST)`）摘锚窗 TOPMOST ↔ 跟随循环每拍发现「锚窗丢
+//!     TOPMOST」就 `HWND_TOPMOST` 重插复位。重插把锚窗放到 **TOPMOST 带顶（盖到
+//!     覆盖层之上）**，而 lc-1949 时代的全屏分支没有任何 z 序复检 —— 锚窗被我们
+//!     亲手抬到覆盖层之上后稳定反转，覆盖层整层被埋，点击全漏给 mpv。这就是
+//!     「全屏后全部按钮失效、点击变播放/暂停」的机制级定案。
+//! 根治（不再有「谁在 30Hz 打架」的土壤）：
+//!   ① **跟随循环全屏分支只动覆盖层**：删除逐拍「锚窗 TOPMOST 复位」（刷屏日志
+//!     与带顶重插一并消失）；z 序保障改为**相对锚窗断言**（覆盖层必须压在锚窗
+//!     之上，不满位才修：跨带失守走屏保级抬顶、同带不贴位走带内 InsertAfter），
+//!     锚窗在任何路径下都**永不被我们抬起**。
+//!   ② **锚窗置顶交给 mpv 自己**：进全屏一次性下发 `script-message fntv-ontop-fs on`
+//!     → `ontop_mode.lua`（本地脚本）锁定 `ontop=true` 并停用暂停置底联动；退出
+//!     全屏发 `off` 恢复三态联动。任务栏遮挡由 Windows 对前台满屏窗口的自动隐藏
+//!     兜底（实测依据不足，留待实机确认，不再为此引入拉锯）。
+//!   ③ **`effective_topmost` 恒真强制退役**：全屏期用户「取消置顶」意图照实生效
+//!     （置顶按钮不再被全屏态覆写），退出全屏按 PLAYER_ONTOP 恢复（原样保留）。
+//!   ④ **诊断快照 `[lc-1981]`**：全屏期探针每拍算一份自足快照（光标物理坐标、
+//!     WindowFromPoint 命中 hwnd+类名+标题+归类「覆盖层/mpv锚窗/其他」、覆盖层与
+//!     锚窗的实际 z 序关系（GetWindow 链实测）、两层矩形、覆盖层穿透位、全屏/输入
+//!     锁标志），状态变化即打、无变化 2s 心跳；每次 ex-style 写入与 z 序操作
+//!     （topmost 拨位 / 屏保级抬顶 / 带内插顶）都打 before→after + 原因。下次复现
+//!     按行定案，不再猜。
+//!
 //! [lc-1952] 实机回归两修：
 //!   · **全屏后控件全点不中**：mpv 的 VO 在全屏切换时 SetWindowPos 自己，把锚窗提到
 //!     覆盖层之上（对已 TOPMOST 的覆盖层再调 HWND_TOPMOST 不保证带内重排，owner 关系
@@ -139,13 +167,13 @@ use windows_sys::Win32::System::SystemServices::{MK_LBUTTON, MK_MBUTTON, MK_RBUT
 use windows_sys::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetCursorPos, GetWindow, GetWindowLongPtrW, GetWindowRect,
-    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, PostMessageW,
-    SetWindowLongPtrW, SetWindowPos, ShowWindow, WindowFromPoint, GWL_EXSTYLE, GWLP_HWNDPARENT,
-    GW_HWNDPREV, HWND_NOTOPMOST, HWND_TOPMOST, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
-    SW_SHOW, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SWP_NOZORDER, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
-    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+    GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed,
+    PostMessageW, SetWindowLongPtrW, SetWindowPos, ShowWindow, WindowFromPoint, GWL_EXSTYLE,
+    GWLP_HWNDPARENT, GW_HWNDNEXT, GW_HWNDPREV, HWND_NOTOPMOST, HWND_TOPMOST, SW_HIDE, SW_MAXIMIZE,
+    SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
 
 /// 当前已收编的 mpv 顶层窗口（isize，全仓 HWND 约定；None = 未收编 / 已失效清理）。
@@ -442,6 +470,9 @@ pub fn overlay_style_noactivate(hwnd: isize) {
             | (WS_EX_LAYERED as isize);
         if next != ex {
             SetWindowLongPtrW(hwnd as _, GWL_EXSTYLE, next);
+            crate::libmpv::trace(&format!(
+                "[lc-1981] ex-style hwnd=0x{hwnd:X} 0x{ex:X}→0x{next:X} reason=style-base（NOACTIVATE|TOOLWINDOW|LAYERED 一次成型）"
+            ));
         }
     }
 }
@@ -465,6 +496,12 @@ pub fn overlay_set_focusable(hwnd: isize, on: bool) {
         };
         if next != ex {
             SetWindowLongPtrW(hwnd as _, GWL_EXSTYLE, next);
+            crate::libmpv::trace(&format!(
+                "[lc-1981] ex-style hwnd=0x{hwnd:X} NOACTIVATE {}→{} reason={}",
+                i32::from(ex & (WS_EX_NOACTIVATE as isize) != 0),
+                i32::from(next & (WS_EX_NOACTIVATE as isize) != 0),
+                if on { "focusable-on" } else { "focusable-off" }
+            ));
         }
     }
 }
@@ -646,9 +683,10 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
         let mut last_point: Option<(i32, i32)> = None;
         let mut last_inside = false;
         let mut last_heartbeat = std::time::Instant::now() - std::time::Duration::from_secs(2);
-        // [lc-1974] 全屏期 WindowFromPoint 诊断的去重状态：命中窗口变化才打一行
-        //（每拍都打 = 20 行/秒刷爆日志；变化打点恰好把「点击落进哪个窗」的翻转过程留住）。
-        let mut last_probe_hit: Option<(isize, String)> = None;
+        // [lc-1981] 全屏诊断快照去重状态：上一条快照正文 + 上次打点时刻。
+        // 正文变化即打（reason=change）；无变化 2s 心跳（reason=heartbeat）。
+        let mut last_snap_body: Option<String> = None;
+        let mut last_snap_log = std::time::Instant::now() - std::time::Duration::from_secs(2);
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             if !crate::mpvwin::embed_is_active() {
@@ -680,22 +718,63 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
                     && pt.y >= rc.top
                     && pt.y < rc.bottom;
                 // [lc-1974] 全屏输入锁：穿透位已锁定为「恒可点」，探针**停写穿透位**
-                //（热区直翻 / 还原两路都停，锁是唯一权威）。只留 WindowFromPoint
-                // 诊断：光标处命中的窗口变化时打一行 hwnd + 类名 —— 下次复现一眼
-                // 看出点击究竟落进覆盖层还是 mpv。
+                //（热区直翻 / 还原两路都停，锁是唯一权威）。
+                // [lc-1981] 全屏诊断快照：每拍算一份自足状态快照 —— 光标物理坐标、
+                // WindowFromPoint 命中（hwnd + 类名 + 标题 + 归类「光标下是谁」）、
+                // 覆盖层与锚窗的实测 z 序关系（GetWindow 链走，不推断）、两层矩形、
+                // 覆盖层穿透位、全屏 / 输入锁标志。状态变化即打、无变化 2s 心跳。
+                //（取代 [lc-1974] 的命中变化打点：命中已并入快照键，变化必打。）
                 if FULLSCREEN_INPUT_LOCK.load(Ordering::SeqCst) {
                     let hit = WindowFromPoint(pt);
                     let mut buf = [0u16; 64];
                     let n = GetClassNameW(hit, buf.as_mut_ptr(), 64);
                     let class = String::from_utf16_lossy(&buf[..n.max(0).min(64) as usize]);
-                    let key = (hit as isize, class.clone());
-                    if last_probe_hit.as_ref() != Some(&key) {
-                        last_probe_hit = Some(key);
-                        let passthrough_now = overlay_input_passthrough_now(hwnd);
+                    let mut tbuf = [0u16; 128];
+                    let tn = GetWindowTextW(hit, tbuf.as_mut_ptr(), 128);
+                    let title = String::from_utf16_lossy(&tbuf[..tn.max(0).min(128) as usize]);
+                    let anchor = get_hwnd().unwrap_or(0);
+                    let mut m = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                    let mut o = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                    if anchor != 0 {
+                        unsafe { GetWindowRect(anchor as _, &mut m) };
+                    }
+                    unsafe { GetWindowRect(hwnd as _, &mut o) };
+                    let transp = overlay_input_passthrough_now(hwnd);
+                    let fs = PLAYER_FULLSCREEN.load(Ordering::SeqCst);
+                    let lock = FULLSCREEN_INPUT_LOCK.load(Ordering::SeqCst);
+                    let rel = zorder_relation(hwnd, anchor);
+                    let rel_tag = match rel {
+                        ZorderRelation::OverlayAbove(d) => format!("overlay-above(+{d})"),
+                        ZorderRelation::AnchorAbove(d) => format!("ANCHOR-ABOVE(+{d})"),
+                        ZorderRelation::Unknown => "unknown".to_string(),
+                    };
+                    let body = format!(
+                        "cursor=({x},{y}) hit=0x{hit_x:X} class=\"{class}\" title=\"{title}\" hit_is={kind} z={rel_tag} ov_rect=({},{},{},{}) mpv_rect=({},{},{},{}) transp={} fs={} lock={}",
+                        o.left,
+                        o.top,
+                        o.right,
+                        o.bottom,
+                        m.left,
+                        m.top,
+                        m.right,
+                        m.bottom,
+                        i32::from(transp),
+                        i32::from(fs),
+                        i32::from(lock),
+                        x = pt.x,
+                        y = pt.y,
+                        hit_x = hit as usize,
+                        kind = classify_hit(hit as isize, hwnd, anchor),
+                    );
+                    let changed = last_snap_body.as_deref() != Some(body.as_str());
+                    let elapsed = last_snap_log.elapsed().as_millis();
+                    if snapshot_should_log(changed, elapsed, 2000) {
+                        last_snap_body = Some(body.clone());
+                        last_snap_log = std::time::Instant::now();
                         crate::libmpv::trace(&format!(
-                            "[lc-1974] 全屏探针命中 hwnd=0x{:X} class=\"{class}\" 穿透位={}",
-                            hit as usize,
-                            i32::from(passthrough_now)
+                            "[lc-1981] fs-snap reason={} {}",
+                            if changed { "change" } else { "heartbeat" },
+                            body
                         ));
                     }
                 } else if inside {
@@ -819,11 +898,17 @@ pub fn overlay_hide(hwnd: isize) {
 // ───────────────────── [lc-1946] 顶栏窗控（真实窗口，零 mpv IPC） ─────────────────────
 
 /// 单独拨一个窗口的 TOPMOST 位（不动几何 / 不激活）。
-fn set_window_topmost(hwnd: isize, on: bool) {
+///
+/// [lc-1981] 每次 z 序操作都留 before→after + 原因。**注意带顶语义**：对已 TOPMOST
+/// 的窗再调 `HWND_TOPMOST` 会把它重插到 TOPMOST 带顶 —— 若覆盖层也在该带就会瞬间
+/// 被盖住（lc-1949 拉锯的推手之一），调用方必须先 [`is_window_topmost`] 缺位才拨，
+/// 或明确接受带顶重排（全屏进入瞬间等一次性时机）。
+fn set_window_topmost(hwnd: isize, on: bool, reason: &str) {
     if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
         return;
     }
     unsafe {
+        let before = is_window_topmost(hwnd);
         SetWindowPos(
             hwnd as _,
             if on { HWND_TOPMOST } else { HWND_NOTOPMOST },
@@ -833,6 +918,12 @@ fn set_window_topmost(hwnd: isize, on: bool) {
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
         );
+        let after = is_window_topmost(hwnd);
+        crate::libmpv::trace(&format!(
+            "[lc-1981] topmost hwnd=0x{hwnd:X} {}→{} reason={reason}",
+            i32::from(before),
+            i32::from(after)
+        ));
     }
 }
 
@@ -869,8 +960,9 @@ pub fn overlay_insert_target(prev_of_anchor: isize) -> isize {
 /// 实现 = `InsertAfter(GetWindow(锚窗, GW_HWNDPREV))`：插到「锚窗上面那一个」的
 /// 下方，正好落在锚窗上方；锚窗已在带顶时 `GW_HWNDPREV` 返回 0 = HWND_TOP 哨兵，
 /// 覆盖层被送到带顶（仍紧贴锚窗上方）。
+/// [lc-1981] 每次 z 序操作都留 before→after + 原因。
 /// 返回是否执行了 SetWindowPos（窗口无效 / hwnd 为 0 时 false）。
-fn place_overlay_above_anchor(overlay: isize, anchor: isize) -> bool {
+fn place_overlay_above_anchor(overlay: isize, anchor: isize, reason: &str) -> bool {
     if overlay == 0
         || anchor == 0
         || unsafe { IsWindow(overlay as _) } == 0
@@ -881,7 +973,7 @@ fn place_overlay_above_anchor(overlay: isize, anchor: isize) -> bool {
     let prev_of_anchor = unsafe { GetWindow(anchor as _, GW_HWNDPREV) } as isize;
     let target = overlay_insert_target(prev_of_anchor);
     unsafe {
-        SetWindowPos(
+        let ok = SetWindowPos(
             overlay as _,
             target as _,
             0,
@@ -889,7 +981,12 @@ fn place_overlay_above_anchor(overlay: isize, anchor: isize) -> bool {
             0,
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-        ) != 0
+        ) != 0;
+        let now_prev = unsafe { GetWindow(anchor as _, GW_HWNDPREV) } as isize;
+        crate::libmpv::trace(&format!(
+            "[lc-1981] 带内插顶 overlay=0x{overlay:X} insert_after=0x{target:X} → 复核锚窗上方=0x{now_prev:X} ok={ok} reason={reason}"
+        ));
+        ok
     }
 }
 
@@ -899,17 +996,166 @@ fn place_overlay_above_anchor(overlay: isize, anchor: isize) -> bool {
 /// `HWND_TOPMOST` 回带，系统强制把它插到带顶 —— 全屏期覆盖层因此恒在 mpv 锚窗
 /// （带内任何位置）之上，真实鼠标命中永远先到覆盖层。mpv 的 VO / ontop_mode.lua
 /// 再怎么 SetWindowPos 自己，最坏 33ms 后被本函数抬回来。
+/// [lc-1981] 本函数**只作用于覆盖层**，锚窗永远不被抬起；每次调用留 before→after。
 /// 返回是否两次 SetWindowPos 都成功。
-fn overlay_raise_screen_saver_level(hwnd: isize) -> bool {
+fn overlay_raise_screen_saver_level(hwnd: isize, reason: &str) -> bool {
     if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
         return false;
     }
     let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
     unsafe {
+        let before = is_window_topmost(hwnd);
         let down = SetWindowPos(hwnd as _, HWND_NOTOPMOST, 0, 0, 0, 0, flags) != 0;
         let up = SetWindowPos(hwnd as _, HWND_TOPMOST, 0, 0, 0, 0, flags) != 0;
+        let after = is_window_topmost(hwnd);
+        crate::libmpv::trace(&format!(
+            "[lc-1981] 屏保级抬顶 hwnd=0x{hwnd:X} topmost {}→{}（NOTOPMOST→TOPMOST 重插带顶） ok={} reason={reason}",
+            i32::from(before),
+            i32::from(after),
+            i32::from(down && up)
+        ));
         down && up
     }
+}
+
+// ─────────────── [lc-1981] 全屏 z 序断言（相对锚窗）+ 诊断快照纯逻辑 ───────────────
+
+/// [lc-1981] 全屏期「覆盖层必须压在锚窗之上」的一拍裁决（纯逻辑，执行与单测共用）。
+///
+/// 不变量：**覆盖层恒在锚窗上方**。修复动作只作用于覆盖层（屏保级抬顶 / 带内插顶），
+/// 锚窗在任何分支下都**不被触碰** —— 旧「每拍强推锚窗 TOPMOST」逻辑正是把锚窗重插到
+/// TOPMOST 带顶、盖住覆盖层的元凶（见模块头 [lc-1981]）。
+///
+/// 判定矩阵（`prev_of_anchor` = `GetWindow(锚窗, GW_HWNDPREV)`，锚窗正上方那一个）：
+///   · 锚窗 TOPMOST + 覆盖层非 TOPMOST → 覆盖层整体在锚窗之下 → 抬顶（回带 + 带顶）；
+///   · 锚窗非 TOPMOST + 覆盖层 TOPMOST → TOPMOST 带整体在锚窗之上 → **Ok，不动**
+///    （lua 暂停置底 / mpv 掉带都落这里；旧逻辑在这里逐拍强推 = 30Hz 拉锯）；
+///   · 两窗同带（都 TOPMOST 或都非 TOPMOST）→ 覆盖层必须紧贴锚窗正上方，不贴位：
+///     同 TOPMOST 带走屏保级抬顶（mpv 重回带顶后的权威修正，下一拍收敛为 Ok），
+///     同普通带走带内 InsertAfter。
+///
+/// 单测双向锚定：仿真器里跑「旧每拍强推锚窗」对本不变量必 FAIL，本函数 PASS。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FullscreenZorderAction {
+    /// 覆盖层已在锚窗之上（含跨带：锚窗掉出 TOPMOST 带时，TOPMOST 带整体都在其上）。
+    Ok,
+    /// 覆盖层失守 → 屏保级抬顶（NOTOPMOST→TOPMOST，只动覆盖层）。
+    RaiseOverlay,
+    /// 两窗同在普通带且覆盖层不贴位 → 带内 InsertAfter 拉回锚窗正上方。
+    InsertOverlayAboveAnchor,
+}
+
+pub fn fullscreen_zorder_action(
+    anchor_topmost: bool,
+    overlay_topmost: bool,
+    prev_of_anchor: isize,
+    overlay: isize,
+) -> FullscreenZorderAction {
+    if !overlay_topmost {
+        if anchor_topmost {
+            // 锚窗在带、覆盖层不在带 = 覆盖层必在锚窗之下 → 抬顶（回带 + 带顶）
+            return FullscreenZorderAction::RaiseOverlay;
+        }
+        // 两窗同在普通带：贴位校验，不贴则带内拉回
+        return if overlay_zorder_ok(prev_of_anchor, overlay) {
+            FullscreenZorderAction::Ok
+        } else {
+            FullscreenZorderAction::InsertOverlayAboveAnchor
+        };
+    }
+    if !anchor_topmost {
+        // 锚窗掉出 TOPMOST 带（ontop_mode.lua 暂停置底 / mpv VO）：整个 TOPMOST 带
+        // 都在锚窗之上，覆盖层天然满足不变量 —— **不动锚窗也不动覆盖层**。
+        return FullscreenZorderAction::Ok;
+    }
+    if overlay_zorder_ok(prev_of_anchor, overlay) {
+        FullscreenZorderAction::Ok
+    } else {
+        // mpv 重回 TOPMOST 带顶（SetWindowPos(HWND_TOPMOST)）把覆盖层压下 → 抬回带顶
+        FullscreenZorderAction::RaiseOverlay
+    }
+}
+
+/// [lc-1981] 覆盖层与锚窗的实测 z 序关系（GetWindow 链走结果，不推断）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZorderRelation {
+    /// 覆盖层在锚窗上方，u32 = 中间隔的窗口数（0 = 紧贴）。
+    OverlayAbove(u32),
+    /// 锚窗在覆盖层上方，u32 = 中间隔的窗口数（0 = 紧贴）—— 不变量被破坏。
+    AnchorAbove(u32),
+    /// 两窗不在同一条链上（必有一方失效/销毁），不变量无法证明 = 视为失守。
+    Unknown,
+}
+
+impl ZorderRelation {
+    /// 不变量「覆盖层在锚窗之上」是否成立。Unknown 不能证明成立 = 不成立（从严）。
+    pub fn overlay_is_above(&self) -> bool {
+        matches!(self, ZorderRelation::OverlayAbove(_))
+    }
+}
+
+/// [lc-1981] 纯逻辑：由「从覆盖层向下走 d1 步见到锚窗 / 从锚窗向下走 d2 步见到覆盖层」
+/// 的两个实测深度给出关系判定。执行侧负责真实链走（[`zorder_relation`]）。
+pub fn zorder_relation_from_walks(
+    below_overlay: Option<u32>,
+    below_anchor: Option<u32>,
+) -> ZorderRelation {
+    match (below_overlay, below_anchor) {
+        (Some(d), _) => ZorderRelation::OverlayAbove(d),
+        (None, Some(d)) => ZorderRelation::AnchorAbove(d),
+        (None, None) => ZorderRelation::Unknown,
+    }
+}
+
+/// [lc-1981] 实测覆盖层与锚窗的 z 序关系：沿 `GW_HWNDNEXT` 向下走链（≤64 步封顶）。
+/// 链走是权威事实，快照里写的是「走出来的」结果，不是任何缓存的推断。
+fn zorder_relation(overlay: isize, anchor: isize) -> ZorderRelation {
+    if overlay == 0 || anchor == 0 || overlay == anchor {
+        return ZorderRelation::Unknown;
+    }
+    let below_overlay = walk_down_to(overlay, anchor);
+    if below_overlay.is_some() {
+        return zorder_relation_from_walks(below_overlay, None);
+    }
+    let below_anchor = walk_down_to(anchor, overlay);
+    zorder_relation_from_walks(None, below_anchor)
+}
+
+/// 从 `from` 沿 GW_HWNDNEXT 向下走，返回首次遇到 `target` 的步数（0 = 紧邻）。
+fn walk_down_to(from: isize, target: isize) -> Option<u32> {
+    if from == 0 || target == 0 {
+        return None;
+    }
+    unsafe {
+        let mut h = GetWindow(from as _, GW_HWNDNEXT) as isize;
+        let mut d: u32 = 0;
+        while h != 0 && d < 64 {
+            if h == target {
+                return Some(d);
+            }
+            h = GetWindow(h as _, GW_HWNDNEXT) as isize;
+            d += 1;
+        }
+    }
+    None
+}
+
+/// [lc-1981] 纯逻辑：WindowFromPoint 命中窗口归类 —— 快照直接写明光标下是谁。
+pub fn classify_hit(hit: isize, overlay: isize, anchor: isize) -> &'static str {
+    if hit == 0 {
+        "none"
+    } else if hit == overlay {
+        "overlay"
+    } else if hit == anchor {
+        "mpv-anchor"
+    } else {
+        "other"
+    }
+}
+
+/// [lc-1981] 纯逻辑：快照该不该打 —— 状态变化即打；无变化 `heartbeat_ms` 心跳。
+pub fn snapshot_should_log(key_changed: bool, since_last_log_ms: u128, heartbeat_ms: u128) -> bool {
+    key_changed || since_last_log_ms >= heartbeat_ms
 }
 
 /// [lc-1946] 置顶：mpv 锚窗 + 覆盖层成对拨 TOPMOST/NOTOPMOST。
@@ -917,18 +1163,15 @@ fn overlay_raise_screen_saver_level(hwnd: isize) -> bool {
 /// 只拨 mpv 的 `ontop` 属性没用：覆盖层自己一直是 TOPMOST，用户看不到任何变化；
 /// 两个窗口一起拨才是「整个播放器置顶 / 取消置顶」。`overlay_hwnd` 由前端所在窗口
 /// 自己的 hwnd 传入（命令里取），mpv 锚窗从槽里读。
+///
+/// [lc-1981] lc-1947 的「全屏期恒真强制」（effective_topmost）退役：用户在全屏期
+/// 点「取消置顶」照实生效，不再被覆写回 TOPMOST。全屏期锚窗的日常置顶由 mpv 自己
+/// 维护（进全屏一次性 `fntv-ontop-fs on` 抑制 ontop_mode.lua 的暂停置底）；退出
+/// 全屏按 [`PLAYER_ONTOP`] 恢复意图（fullscreen_restore_steps 原样保留）。
 pub fn set_player_ontop(overlay_hwnd: isize, on: bool) {
     PLAYER_ONTOP.store(on, Ordering::SeqCst);
-    // [lc-1947] 全屏期间强制置顶：否则视频层会被任务栏（topmost）压住，看起来「不是真全屏」。
-    // 用户的「置顶」意图照常记录，退出全屏时再按它生效。
-    let apply = effective_topmost(on, PLAYER_FULLSCREEN.load(Ordering::SeqCst));
-    set_window_topmost(get_hwnd().unwrap_or(0), apply);
-    set_window_topmost(overlay_hwnd, apply);
-}
-
-/// [lc-1947] 纯逻辑：窗口实际是否置顶。全屏期间恒为 true（压过任务栏）。
-pub fn effective_topmost(intent: bool, fullscreen: bool) -> bool {
-    intent || fullscreen
+    set_window_topmost(get_hwnd().unwrap_or(0), on, "pin-button");
+    set_window_topmost(overlay_hwnd, on, "pin-button");
 }
 
 pub fn player_ontop() -> bool {
@@ -1095,7 +1338,8 @@ fn overlay_hwnd_of(app: &tauri::AppHandle) -> isize {
 /// 取窗口所在显示器的**完整矩形**（`rcMonitor`，物理像素）。
 ///
 /// 必须用 `rcMonitor` 而不是 `rcWork`：实现要求「铺满显示器（不是工作区）」，
-/// 任务栏那一条也要盖住（置顶由 [`effective_topmost`] 保证）。
+/// 任务栏那一条也要盖住（全屏期锚窗 + 覆盖层 TOPMOST；[lc-1981] 起锚窗置顶由
+/// mpv 一次性接管、跟随循环只保覆盖层在锚窗之上）。
 fn monitor_rect(hwnd: isize) -> Option<(i32, i32, i32, i32)> {
     use windows_sys::Win32::Graphics::Gdi::{
         GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
@@ -1142,7 +1386,8 @@ fn move_window(hwnd: isize, x: i32, y: i32, w: i32, h: i32) {
 
 /// 全屏几何断言（幂等）：**只修覆盖层**，锚窗几何归 mpv 自己（lc-1960 对齐 Polaris
 /// 不变量：全屏期间 mpv 的 VO 是锚窗几何的唯一写者，我们从外面抢写就是 lc-1947/1948
-/// 「-11,-11 3851x2171 拉锯」的根源）。覆盖层没铺满显示器就重摆；两层都置顶；
+/// 「-11,-11 3851x2171 拉锯」的根源）。覆盖层没铺满显示器就重摆；
+/// [lc-1981] 锚窗 TOPMOST 一概不碰（置顶归 mpv + 一次性 `fntv-ontop-fs` 抑制）；
 /// [lc-1964] 覆盖层抬到 TOPMOST 带最顶（屏保级，恒压锚窗之上）。
 fn ensure_fullscreen_geometry(app: &tauri::AppHandle) {
     if !PLAYER_FULLSCREEN.load(Ordering::SeqCst) {
@@ -1154,11 +1399,13 @@ fn ensure_fullscreen_geometry(app: &tauri::AppHandle) {
         return;
     };
     move_window(overlay, mx, my, mw, mh);
-    set_window_topmost(mpv, true);
-    set_window_topmost(overlay, true);
+    if overlay != 0 && !is_window_topmost(overlay as _) {
+        set_window_topmost(overlay, true, "fullscreen-reassert");
+    }
     // [lc-1964] 屏保级抬顶：已 TOPMOST 的覆盖层再调 HWND_TOPMOST 不保证带内重排，
     // NOTOPMOST→TOPMOST 重置法强制回带顶（旧 InsertAfter=锚窗 方向反了，见模块头）。
-    overlay_raise_screen_saver_level(overlay);
+    // mpv 的 VO 若在这 120ms 里把自己抬到带顶，这里同样把它压回覆盖层之下。
+    overlay_raise_screen_saver_level(overlay, "fullscreen-reassert");
 }
 
 /// [lc-1947] mpv `fullscreen` 属性变化的窗口级处理（由 mpv.rs 的属性观察线程调用）。
@@ -1221,13 +1468,22 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
         // 窗口放到显示器矩形（lc-1947 实测 0:0:3840:2160），我们从外面抢写就是随后
         // 与它拉锯（-11,-11 3851x2171）的根源。锚窗几何 = mpv 单一写者（Polaris 同款）。
         move_window(overlay, mx, my, mw, mh);
-        set_window_topmost(mpv, true);
-        set_window_topmost(overlay, true);
+        // [lc-1981] 锚窗置顶只做**缺位补拨**（一次性）：对已 TOPMOST 的锚窗再调
+        // HWND_TOPMOST 会把它重插到带顶、盖到覆盖层之上 —— 旧逐拍强推正是 30Hz 拉锯
+        // 与「覆盖层被埋」的元凶。此后锚窗置顶交给 mpv 自己（下方 fntv-ontop-fs 抑制）。
+        if mpv != 0 && !is_window_topmost(mpv as _) {
+            set_window_topmost(mpv, true, "fullscreen-enter");
+        }
+        set_window_topmost(overlay, true, "fullscreen-enter");
         // [lc-1964] 屏保级抬顶：覆盖层强制到 TOPMOST 带最顶。mpv 的 VO 随后处理全屏
         // 时会 SetWindowPos 自己（可能把它抬到覆盖层之上）—— 那一步由 33ms 跟随循环
-        // 的屏保级抬顶兜住（最坏 33ms）。旧 `InsertAfter=锚窗` 方向反了（会把覆盖层
+        // 的相对锚窗断言兜住（最坏 33ms）。旧 `InsertAfter=锚窗` 方向反了（会把覆盖层
         // 压到锚窗之下，全屏按钮全失效的真根因），见模块头 [lc-1964]。
-        overlay_raise_screen_saver_level(overlay);
+        overlay_raise_screen_saver_level(overlay, "fullscreen-enter");
+        // [lc-1981] 全屏期 ontop 抑制：`ontop_mode.lua` 收到 `fntv-ontop-fs on` 后
+        // 锁定 `ontop=true` 并停用「暂停置底」联动 —— lua 不再摘锚窗 TOPMOST，
+        // 拉锯从源头消失（脚本本地改，不入库）。
+        send_ontop_suppression(app, true);
         crate::libmpv::trace(&format!(
             "[lc-1947] 进入全屏：显示器矩形 {mw}x{mh}@{mx},{my}（锚窗 + 覆盖层 TOPMOST）"
         ));
@@ -1238,6 +1494,8 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
             ensure_fullscreen_geometry(&app2);
         });
     } else {
+        // [lc-1981] 解除 ontop_mode.lua 的全屏抑制，恢复三态置顶联动（暂停置底照常）。
+        send_ontop_suppression(app, false);
         // [lc-1974] 退出全屏：先解锁并恢复窗口模式的穿透默认态（Polaris 语义）。
         // 尊重进行中的 hover（光标正悬在控件上时不把穿透拨回来，交 hover 链管理）；
         // 若全屏期间前端把 hover 请求短路了（FRONTEND_HOVER_LAST 停在 true），这里
@@ -1287,10 +1545,10 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
                     }
                 }
                 FullscreenRestoreStep::Topmost(on) => {
-                    set_window_topmost(mpv, on);
-                    set_window_topmost(overlay, on);
+                    set_window_topmost(mpv, on, "fullscreen-exit");
+                    set_window_topmost(overlay, on, "fullscreen-exit");
                     // [lc-1952] 退出后覆盖层同样要压回锚窗正上方（带内显式定位）
-                    place_overlay_above_anchor(overlay, mpv);
+                    place_overlay_above_anchor(overlay, mpv, "fullscreen-exit");
                 }
             }
         }
@@ -1315,12 +1573,37 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
                 }
             }
             let ontop = PLAYER_ONTOP.load(Ordering::SeqCst);
-            set_window_topmost(mpv, ontop);
-            set_window_topmost(overlay, ontop);
+            set_window_topmost(mpv, ontop, "fullscreen-exit-reassert");
+            set_window_topmost(overlay, ontop, "fullscreen-exit-reassert");
             // [lc-1952] mpv 迟到的还原可能把它自己抬到覆盖层之上：带内显式拉回
-            place_overlay_above_anchor(overlay, mpv);
+            place_overlay_above_anchor(overlay, mpv, "fullscreen-exit-reassert");
         });
     }
+}
+
+/// [lc-1981] 全屏期 `ontop_mode.lua` 暂停置底抑制开关（script-message 广播）。
+///
+/// `on`：脚本锁定 `ontop=true` 并停用 pause/idle 联动（锚窗不再被 lua 摘 TOPMOST，
+/// 30Hz 拉锯从源头消失）；`off`：恢复三态联动。发送不等待回包 —— 窗口级动作
+/// （几何 / z 序）不依赖它完成，200ms 拿不到 mpv 会话锁就放弃。
+fn send_ontop_suppression(app: &tauri::AppHandle, on: bool) {
+    use tauri::Manager;
+    let app = app.clone();
+    let arg = if on { "on" } else { "off" };
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<crate::AppState>();
+        let session = tokio::time::timeout(std::time::Duration::from_millis(200), state.mpv.lock())
+            .await
+            .ok()
+            .and_then(|g| g.clone());
+        if let Some(m) = session {
+            m.command_no_reply(serde_json::json!(["script-message", "fntv-ontop-fs", arg]))
+                .await;
+            crate::libmpv::trace(&format!("[lc-1981] ontop_mode 抑制 {arg} 已下发"));
+        } else {
+            crate::libmpv::trace("[lc-1981] ontop_mode 抑制下发失败（mpv 会话不可用）");
+        }
+    });
 }
 
 /// [lc-1947] 退出播放前若还在全屏：把锚窗还原到进入前的矩形/最大化状态，
@@ -1594,7 +1877,7 @@ fn adopt_hwnd(mpv_hwnd: isize, ui_hwnd: isize) {
     set_hwnd(mpv_hwnd);
     // [lc-1946] 收编后让 mpv 锚窗与覆盖层同处置顶态（顶栏「置顶」的默认值）。
     // 只拨覆盖层的话，取消置顶时视频窗仍会被别的应用盖住。
-    set_window_topmost(mpv_hwnd, PLAYER_ONTOP.load(Ordering::SeqCst));
+    set_window_topmost(mpv_hwnd, PLAYER_ONTOP.load(Ordering::SeqCst), "adopt");
 }
 
 /// 写槽（收编成功后调用；重收编时覆盖旧值）。
@@ -1769,43 +2052,21 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                 if IsWindow(mh as _) == 0 || IsWindow(ov as _) == 0 {
                     continue;
                 }
-                // [lc-1949]（原探针职责）全屏期间守住「压过任务栏」：mpv 的 ontop_mode.lua
-                // 会在暂停时把 ontop 置 false（= 对锚窗 SetWindowPos(NOTOPMOST)），视频
-                // 就会掉到任务栏下面。33ms 循环发现 TOPMOST 位丢了立刻复位。
-                // [lc-1964] z 序断言全时段跑（全屏 + 窗口模式）：违例时全屏走屏保级抬顶、
-                // 窗口模式走修正后的带内 InsertAfter。lc-1952 的 InsertAfter=锚窗 方向反了
-                // （实证：SetWindowPos(B, insertAfter=A) 把 B 插到 A **正下方**），自愈变成
-                // 每 33ms 把覆盖层压回 mpv 之下 —— 全屏按钮全失效的真根因。
+                // [lc-1981] 全屏分支拉锯根治：本分支**只动覆盖层**，锚窗一概不碰。
+                // 旧逻辑（lc-1949/1974）：每拍发现锚窗丢 TOPMOST 就 HWND_TOPMOST 重插
+                // 复位 —— 重插把锚窗放到 TOPMOST 带顶、盖到覆盖层之上；mpv 的
+                // ontop_mode.lua（暂停置底）反复摘带 → 30Hz 拉锯期间覆盖层反复被埋，
+                // 点击全漏给 mpv（用户实测 `[lc-1949] 全屏中锚窗丢失 TOPMOST → 复位`
+                // 每 33ms 一条刷屏 + 控件全失效）。新不变量：锚窗置顶由进全屏的一次性
+                // `fntv-ontop-fs on`（lua 锁 ontop=true）+ mpv 自己维护；这里只断言
+                // 「覆盖层恒在锚窗之上」，不满位才修（见 fullscreen_zorder_action）。
+                // [lc-1964] 窗口模式 z 序断言照旧：违例走修正后的带内 InsertAfter。
+                // lc-1952 的 InsertAfter=锚窗 方向反了（实证：SetWindowPos(B,
+                // insertAfter=A) 把 B 插到 A **正下方**），自愈变成每 33ms 把覆盖层
+                // 压回 mpv 之下 —— 全屏按钮全失效的真根因。
                 let fullscreen_now = PLAYER_FULLSCREEN.load(Ordering::SeqCst);
                 if fullscreen_now {
-                    // [lc-1974] 全屏输入不变量（顺序即正确性）：
-                    // ① 锚窗 TOPMOST（压任务栏，ontop_mode.lua 暂停联动会反复摘，逐拍复位；
-                    //    注意 HWND_TOPMOST 重插会把锚窗放到带顶、盖到覆盖层之上）；
-                    // ② 紧接着无条件复检 z 序并屏保级抬顶 —— 每拍终态恒为「覆盖层压锚窗
-                    //    之上」，旧代码的 band_consistent 门在锚窗刚被抬回带顶的那一拍
-                    //    反而跳过修复，留下「mpv 在上、点击漏给 mpv」的窗口期；
-                    // ③ 穿透位自愈：输入锁下恒为摘除，任何漏网路径在此兜底。
-                    if !is_window_topmost(mh as _) {
-                        set_window_topmost(mh as _, true);
-                        crate::libmpv::trace("[lc-1949] 全屏中锚窗丢失 TOPMOST → 复位");
-                    }
-                    if !is_window_topmost(ov as _) {
-                        set_window_topmost(ov as _, true);
-                    }
-                    let prev_of_anchor = unsafe { GetWindow(mh as _, GW_HWNDPREV) } as isize;
-                    let zorder_ok = overlay_zorder_ok(prev_of_anchor, ov);
-                    if !zorder_ok {
-                        if overlay_zorder_was_ok {
-                            crate::libmpv::trace(
-                                "[lc-1964] 全屏覆盖层失守（被压到锚窗之下）→ 屏保级抬顶（NOTOPMOST→TOPMOST）",
-                            );
-                        }
-                        // [lc-1964] Polaris apply_screen_saver_level 同款：NOTOPMOST→TOPMOST
-                        // 重置法把覆盖层强制抬到 TOPMOST 带最顶（对已 TOPMOST 的窗再调
-                        // HWND_TOPMOST 不保证带内重排）。
-                        overlay_raise_screen_saver_level(ov);
-                    }
-                    overlay_zorder_was_ok = zorder_ok;
+                    // [lc-1974] 穿透位自愈保留：输入锁下恒为摘除，任何漏网路径在此兜底。
                     if overlay_input_passthrough_now(ov as _) {
                         let (applied, ok) =
                             overlay_apply_input_passthrough(ov, false, "fullscreen-follow");
@@ -1815,6 +2076,31 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                             i32::from(ok)
                         ));
                     }
+                    let anchor_top = is_window_topmost(mh as _);
+                    let overlay_top = is_window_topmost(ov as _);
+                    let prev_of_anchor = unsafe { GetWindow(mh as _, GW_HWNDPREV) } as isize;
+                    let action =
+                        fullscreen_zorder_action(anchor_top, overlay_top, prev_of_anchor, ov);
+                    match action {
+                        FullscreenZorderAction::Ok => {}
+                        FullscreenZorderAction::RaiseOverlay => {
+                            if overlay_zorder_was_ok {
+                                crate::libmpv::trace(
+                                    "[lc-1964] 全屏覆盖层失守（不在锚窗上方）→ 屏保级抬顶（NOTOPMOST→TOPMOST，只动覆盖层）",
+                                );
+                            }
+                            overlay_raise_screen_saver_level(ov, "fullscreen-follow");
+                        }
+                        FullscreenZorderAction::InsertOverlayAboveAnchor => {
+                            if overlay_zorder_was_ok {
+                                crate::libmpv::trace(
+                                    "[lc-1964] 全屏覆盖层失守（同带不贴位）→ InsertAfter 拉回锚窗正上方",
+                                );
+                            }
+                            place_overlay_above_anchor(ov, mh, "fullscreen-follow");
+                        }
+                    }
+                    overlay_zorder_was_ok = action == FullscreenZorderAction::Ok;
                 } else {
                     // 两个窗不同带（ontop 拨动的过渡瞬间）时带内 InsertAfter 无意义，跳过一拍。
                     let band_consistent =
@@ -1827,7 +2113,7 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                                 "[lc-1964] 窗口覆盖层失守 → InsertAfter(GW_HWNDPREV) 拉回锚窗正上方",
                             );
                         }
-                        place_overlay_above_anchor(ov, mh);
+                        place_overlay_above_anchor(ov, mh, "window-follow");
                     }
                     overlay_zorder_was_ok = zorder_ok;
                 }
@@ -2249,14 +2535,298 @@ mod tests {
         assert!(player_ontop(), "下一次起播回到置顶");
     }
 
-    /// [lc-1947] 全屏期间恒置顶（压过任务栏）；退出后回到用户「置顶」意图。
+    /// [lc-1981] 全屏期置顶意图照实生效（lc-1947 的 effective_topmost 恒真强制退役）：
+    /// 锚窗置顶的日常维护归 mpv（进全屏一次性 fntv-ontop-fs 抑制），用户「取消置顶」
+    /// 不再被覆写；退出全屏按 PLAYER_ONTOP 恢复（fullscreen_restore_steps 单测覆盖）。
     #[test]
-    fn fullscreen_forces_topmost() {
-        assert!(effective_topmost(false, true), "全屏中即使取消置顶也必须 TOPMOST（任务栏）");
-        assert!(effective_topmost(true, true));
-        assert!(!effective_topmost(false, false), "非全屏时按用户意图");
-        assert!(effective_topmost(true, false));
+    fn fullscreen_no_longer_overrides_pin_intent() {
+        // 旧逻辑：effective_topmost(false, true) == true（意图被全屏覆写）。
+        // 新逻辑：该强制已删除，set_player_ontop 直通意图（状态位断言）。
+        reset_player_ontop();
+        set_player_ontop(0, false); // hwnd=0 只改状态不碰窗口
+        assert!(!player_ontop(), "全屏期取消置顶意图必须原样记录（不再被恒真强制覆写）");
+        reset_player_ontop();
     }
+
+    // ─────────────── [lc-1981] 全屏 z 序断言 + 30Hz 拉锯双向仿真 ───────────────
+
+    /// [lc-1981] 纯逻辑：全屏 z 序裁决矩阵（覆盖层必须压在锚窗之上；锚窗零触碰）。
+    #[test]
+    fn fullscreen_zorder_decision_matrix() {
+        let overlay = 200074isize;
+        // 稳态：两窗都 TOPMOST，覆盖层紧贴锚窗上方 → 不动
+        assert_eq!(
+            fullscreen_zorder_action(true, true, overlay, overlay),
+            FullscreenZorderAction::Ok
+        );
+        // lua 暂停置底：锚窗掉出 TOPMOST 带（覆盖层还在带里）→ **Ok，绝不动锚窗**
+        //（旧逻辑在这里逐拍强推锚窗 TOPMOST = 30Hz 拉锯的另一半）
+        assert_eq!(
+            fullscreen_zorder_action(false, true, 0, overlay),
+            FullscreenZorderAction::Ok
+        );
+        // mpv VO 把锚窗抬回 TOPMOST 带顶（prev=0，覆盖层被压到下面）→ 抬覆盖层
+        assert_eq!(
+            fullscreen_zorder_action(true, true, 0, overlay),
+            FullscreenZorderAction::RaiseOverlay
+        );
+        // 锚窗在带里、覆盖层掉带（用户在全屏点过取消置顶后又出岔子）→ 抬覆盖层回带顶
+        assert_eq!(
+            fullscreen_zorder_action(true, false, 0, overlay),
+            FullscreenZorderAction::RaiseOverlay
+        );
+        // 两窗同在普通带且覆盖层紧贴锚窗上方（全屏期用户取消置顶后的稳态）→ 不动
+        assert_eq!(
+            fullscreen_zorder_action(false, false, overlay, overlay),
+            FullscreenZorderAction::Ok
+        );
+        // 两窗同在普通带且不贴位 → 带内 InsertAfter 拉回
+        assert_eq!(
+            fullscreen_zorder_action(false, false, 0xABC, overlay),
+            FullscreenZorderAction::InsertOverlayAboveAnchor
+        );
+    }
+
+    /// [lc-1981] 最小 z 序仿真器：单条全局链 + 每窗 TOPMOST 旗（Win32 拓扑）。
+    /// index 0 = 最高 z。HWND_TOPMOST → 旗 true + 插到带顶（= 链顶）；
+    /// HWND_NOTOPMOST → 旗 false + 插到普通带顶（= 最上面那个非 TOPMOST 窗之上）；
+    /// SetWindowPos(h, after) → 插到 after 正下方（旗不变）。
+    struct ZorderSim {
+        z: Vec<isize>,
+        top: std::collections::HashMap<isize, bool>,
+    }
+    impl ZorderSim {
+        fn new() -> Self {
+            Self { z: Vec::new(), top: std::collections::HashMap::new() }
+        }
+        fn pos(&self, h: isize) -> usize {
+            self.z.iter().position(|&x| x == h).expect("窗口必须在链上")
+        }
+        fn is_topmost(&self, h: isize) -> bool {
+            *self.top.get(&h).unwrap_or(&false)
+        }
+        fn remove(&mut self, h: isize) -> bool {
+            let was_top = self.is_topmost(h);
+            if let Some(p) = self.z.iter().position(|&x| x == h) {
+                self.z.remove(p);
+            }
+            self.top.remove(&h);
+            was_top
+        }
+        fn insert_at(&mut self, h: isize, idx: usize, topmost: bool) {
+            let idx = idx.min(self.z.len());
+            self.z.insert(idx, h);
+            self.top.insert(h, topmost);
+        }
+        /// HWND_TOPMOST：带顶 = 链顶。
+        fn win32_topmost(&mut self, h: isize) {
+            let was = self.remove(h);
+            let _ = was;
+            self.insert_at(h, 0, true);
+        }
+        /// HWND_NOTOPMOST：普通带顶 = 最上面的非 TOPMOST 窗之前。
+        fn win32_notopmost(&mut self, h: isize) {
+            let was = self.remove(h);
+            let _ = was;
+            let idx = self.z.iter().position(|&x| !self.is_topmost(x)).unwrap_or(self.z.len());
+            self.insert_at(h, idx, false);
+        }
+        /// HWND_TOP：保持旗，插到本带顶（TOPMOST 带顶 = 链顶；普通带顶 = 带顶位置）。
+        fn win32_top(&mut self, h: isize) {
+            let was = self.remove(h);
+            if was {
+                self.insert_at(h, 0, true);
+            } else {
+                let idx = self
+                    .z
+                    .iter()
+                    .position(|&x| !self.is_topmost(x))
+                    .unwrap_or(self.z.len());
+                self.insert_at(h, idx, false);
+            }
+        }
+        /// SetWindowPos(h, after)：插到 after 正下方（旗不变）；after=0 → HWND_TOP。
+        fn win32_insert_after(&mut self, h: isize, after: isize) {
+            if after == 0 {
+                self.win32_top(h);
+                return;
+            }
+            let was = self.remove(h);
+            let p = self.pos(after);
+            self.insert_at(h, p + 1, was);
+        }
+        /// GetWindow(h, GW_HWNDPREV)：链上正上方那个（0 = 已在链顶）。
+        fn prev_of(&self, h: isize) -> isize {
+            let p = self.pos(h);
+            if p == 0 {
+                0
+            } else {
+                self.z[p - 1]
+            }
+        }
+        /// a 是否在 b 之上（全局链序，等价「光标命中优先到 a」）。
+        fn above(&self, a: isize, b: isize) -> bool {
+            a != b && self.pos(a) < self.pos(b)
+        }
+        /// [lc-1981] 新逻辑一拍：相对锚窗断言，只动覆盖层。
+        fn new_follow_tick(&mut self, anchor: isize, overlay: isize) -> FullscreenZorderAction {
+            let action = fullscreen_zorder_action(
+                self.is_topmost(anchor),
+                self.is_topmost(overlay),
+                self.prev_of(anchor),
+                overlay,
+            );
+            match action {
+                FullscreenZorderAction::Ok => {}
+                FullscreenZorderAction::RaiseOverlay => {
+                    // overlay_raise_screen_saver_level：NOTOPMOST→TOPMOST（带顶重插）
+                    self.win32_notopmost(overlay);
+                    self.win32_topmost(overlay);
+                }
+                FullscreenZorderAction::InsertOverlayAboveAnchor => {
+                    let target = self.prev_of(anchor);
+                    self.win32_insert_after(overlay, target);
+                }
+            }
+            action
+        }
+        /// lua 攻击步：ontop_mode.lua 暂停置底（锚窗摘 TOPMOST）。
+        fn lua_strip_anchor(&mut self, anchor: isize) {
+            self.win32_notopmost(anchor);
+        }
+        /// mpv VO 反击步：anchor 以 HWND_TOPMOST 回带顶。
+        fn mpv_retop(&mut self, anchor: isize) {
+            self.win32_topmost(anchor);
+        }
+    }
+
+    /// [lc-1981] **双向验证（本次修复的核心证据）**：同样的持续攻击（lua 每拍摘锚窗
+    /// TOPMOST、mpv 每隔几拍把锚窗抬回带顶）下——
+    ///   · 旧逻辑（lc-1949 时代：每拍「锚窗丢失 TOPMOST → 复位」强推 + 只补覆盖层位，
+    ///     无 z 序复检）→ 锚窗被我们亲手抬到覆盖层之上且稳定反转 ⇒ 「覆盖层恒在锚窗
+    ///     上方」断言 **必 FAIL**（即用户实测的全屏控件全失效）；
+    ///   · 新逻辑（fullscreen_zorder_action）→ 每拍终态恒满足断言；修复动作
+    ///     （RaiseOverlay / Insert）按构造只对覆盖层做 SetWindowPos，锚窗零触碰，
+    ///     lua 摘带那一拍直接 Ok 不动手 —— 拉锯土壤被铲掉。
+    #[test]
+    fn old_anchor_forcing_fails_overlay_above_anchor_new_passes() {
+        let anchor = 0xAA01isize;
+        let overlay = 0xBB02isize;
+        let build = |sim: &mut ZorderSim| {
+            sim.win32_topmost(anchor);
+            sim.win32_topmost(overlay); // 覆盖层在带顶（起播自然带序）
+            assert!(sim.above(overlay, anchor), "初始态：覆盖层压住锚窗");
+        };
+        // 攻击剧本：lua 每拍摘锚窗 TOPMOST；每 3 拍 mpv 以 HWND_TOPMOST 抬回带顶
+        let mut old_sim = ZorderSim::new();
+        build(&mut old_sim);
+        let mut new_sim = ZorderSim::new();
+        build(&mut new_sim);
+        for tick in 0..100u32 {
+            old_sim.lua_strip_anchor(anchor);
+            new_sim.lua_strip_anchor(anchor);
+            if tick % 3 == 2 {
+                old_sim.mpv_retop(anchor);
+                new_sim.mpv_retop(anchor);
+            }
+            // —— 旧逻辑一拍：每拍强推锚窗 TOPMOST（=lc-1949 的「丢失 → 复位」）+
+            //    只在覆盖层丢位时补位（lc-1949 全屏分支没有 z 序复检）
+            if !old_sim.is_topmost(anchor) {
+                old_sim.win32_topmost(anchor); // HWND_TOPMOST 重插 = 带顶 = 盖住覆盖层
+            }
+            if !old_sim.is_topmost(overlay) {
+                old_sim.win32_topmost(overlay);
+            }
+            // —— 新逻辑一拍：相对锚窗断言，只动覆盖层
+            new_sim.new_follow_tick(anchor, overlay);
+            // 终态不变量：覆盖层必须压住锚窗
+            assert!(
+                new_sim.above(overlay, anchor),
+                "第 {tick} 拍：新逻辑必须满足「覆盖层恒在锚窗上方」"
+            );
+        }
+        // 旧逻辑在同剧本下必然反转（这就是用户全屏失效的机制定案）
+        assert!(
+            !old_sim.above(overlay, anchor),
+            "双向验证：旧「每拍强推锚窗 TOPMOST」逻辑对不变量必 FAIL（锚窗被抬到覆盖层之上）"
+        );
+    }
+
+    /// [lc-1981] 新逻辑收敛性：mpv 抬回带顶那一拍判 RaiseOverlay，下一拍即 Ok
+    ///（不逐拍重施、不触锚窗——与旧逻辑的 30Hz 拉锯量化对比）。
+    #[test]
+    fn new_zorder_action_converges_after_single_fix() {
+        let anchor = 0x1101isize;
+        let overlay = 0x2202isize;
+        let mut sim = ZorderSim::new();
+        sim.win32_topmost(anchor);
+        sim.win32_topmost(overlay);
+        // mpv VO 抬锚窗回带顶（覆盖层被压下）
+        sim.mpv_retop(anchor);
+        let a1 = sim.new_follow_tick(anchor, overlay);
+        assert_eq!(a1, FullscreenZorderAction::RaiseOverlay, "失守那一拍必须修");
+        assert!(sim.above(overlay, anchor));
+        let a2 = sim.new_follow_tick(anchor, overlay);
+        assert_eq!(a2, FullscreenZorderAction::Ok, "下一拍必须收敛为 Ok（不再有逐拍重施）");
+        // lua 暂停置底（锚窗掉带）：一拍 Ok，零修复动作
+        sim.lua_strip_anchor(anchor);
+        let a3 = sim.new_follow_tick(anchor, overlay);
+        assert_eq!(a3, FullscreenZorderAction::Ok, "锚窗掉带 = TOPMOST 带整体在其上，绝不搭理");
+        assert!(sim.above(overlay, anchor));
+    }
+
+    /// [lc-1981] 纯逻辑：z 序链走判定（Some=步数 / None=未见）。
+    #[test]
+    fn zorder_relation_from_walks_matrix() {
+        let overlay = 0x311isize;
+        let anchor = 0x422isize;
+        assert_eq!(
+            zorder_relation_from_walks(Some(0), None),
+            ZorderRelation::OverlayAbove(0),
+            "紧贴 = 0 隔"
+        );
+        assert_eq!(
+            zorder_relation_from_walks(Some(3), None),
+            ZorderRelation::OverlayAbove(3)
+        );
+        assert_eq!(
+            zorder_relation_from_walks(None, Some(2)),
+            ZorderRelation::AnchorAbove(2),
+            "锚窗在上 = 不变量被破坏"
+        );
+        assert_eq!(
+            zorder_relation_from_walks(None, None),
+            ZorderRelation::Unknown,
+            "不同链 = 无法证明成立 = 视为失守"
+        );
+        // 不变量判定：OverlayAbove 才算成立
+        assert!(ZorderRelation::OverlayAbove(0).overlay_is_above());
+        assert!(!ZorderRelation::AnchorAbove(0).overlay_is_above());
+        assert!(!ZorderRelation::Unknown.overlay_is_above(), "从严：不能证明 = 不成立");
+        let _ = (overlay, anchor);
+    }
+
+    /// [lc-1981] 纯逻辑：光标命中归类（快照直接写明光标下是谁）。
+    #[test]
+    fn classify_hit_matrix() {
+        let overlay = 0x311isize;
+        let anchor = 0x422isize;
+        assert_eq!(classify_hit(overlay, overlay, anchor), "overlay");
+        assert_eq!(classify_hit(anchor, overlay, anchor), "mpv-anchor");
+        assert_eq!(classify_hit(0x999, overlay, anchor), "other");
+        assert_eq!(classify_hit(0, overlay, anchor), "none");
+    }
+
+    /// [lc-1981] 纯逻辑：快照频率控制 —— 状态变化即打；无变化 2s 心跳；1s 内不打心跳。
+    #[test]
+    fn snapshot_rate_limit() {
+        assert!(snapshot_should_log(true, 0, 2000), "变化立即打");
+        assert!(snapshot_should_log(false, 2500, 2000), "无变化超心跳窗口要打");
+        assert!(!snapshot_should_log(false, 1500, 2000), "无变化未到心跳不打（防刷屏）");
+        assert!(!snapshot_should_log(false, 1999, 2000));
+        assert!(snapshot_should_log(false, 2000, 2000));
+    }
+
 
     /// [lc-1947] 退出全屏的恢复步骤：先清样式 → 回到进入前矩形 → 按需最大化 → 恢复置顶意图。
     #[test]

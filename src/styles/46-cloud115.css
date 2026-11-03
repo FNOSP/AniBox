@@ -761,3 +761,37 @@
   flex-shrink: 0;
   background: var(--hover);
 }
+
+/* ═══════════ [lc-1984] 云盘页动效统一（对齐 JavHub 手感） ═══════════ */
+.c115-view { animation: c115-view-in 0.25s ease-out both; }
+@keyframes c115-view-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+.cloud-page .c115-grid .c115-item { animation: c115-item-in 0.28s ease-out both; }
+.cloud-page .c115-grid .c115-item:nth-child(2) { animation-delay: 0.03s; }
+.cloud-page .c115-grid .c115-item:nth-child(3) { animation-delay: 0.06s; }
+.cloud-page .c115-grid .c115-item:nth-child(4) { animation-delay: 0.09s; }
+.cloud-page .c115-grid .c115-item:nth-child(5) { animation-delay: 0.12s; }
+.cloud-page .c115-grid .c115-item:nth-child(n + 6) { animation-delay: 0.15s; }
+@keyframes c115-item-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+}
+
+.cloud-page .c115-login { animation: c115-view-in 0.25s ease-out both; }
+
+/* 按压反馈：tab/mini 已含 transform 过渡，seg 补齐 */
+.cloud-page .c115-seg { transition: opacity 0.15s ease, background 0.15s ease, transform 0.12s ease; }
+.cloud-page .c115-tab:active,
+.cloud-page .c115-mini:active,
+.cloud-page .c115-seg:active { transform: scale(0.96); }
+.cloud-page .c115-crumb button { transition: background 0.15s ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  .c115-view,
+  .cloud-page .c115-grid .c115-item,
+  .cloud-page .c115-login { animation: none; }
+  .cloud-page .c115-tab:active,
+  .cloud-page .c115-mini:active,
+  .cloud-page .c115-seg:active { transform: none; }
+}

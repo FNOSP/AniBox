@@ -8,6 +8,7 @@
    · 改名：夸克/阿里/115/百度/123（行内编辑，✎ 按钮）。
    · 凭据只落本机（cloud115.json / direct-cloud-auth.json / webdav-accounts.json）。 */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { tmdbImg } from "../../lib/images";
 import { useCloudQrLogin } from "../../hooks/useCloudQrLogin";
@@ -402,11 +403,24 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
   const showServerHls = !isWebdav && SERVER_HLS.has(active);
   const showLocalHls = !showServerHls && ffmpegOk === true && active !== "115";
 
+  /* 返回首页：整页交叉淡入淡出（与 JavHub 同款；系统减动效时直接切） */
+  const handleBack = () => {
+    const d = document as Document & { startViewTransition?: (cb: () => void) => unknown };
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!d.startViewTransition || reduced) {
+      onBack();
+      return;
+    }
+    d.startViewTransition(() => {
+      flushSync(() => onBack());
+    });
+  };
+
   return (
-    <main className="c115">
+    <main className="c115 cloud-page">
       {/* 头部与库/观影记录页同构：page-head + 统一 back 胶囊 */}
       <div className="page-head">
-        <button className="back" onClick={onBack}>‹ 返回</button>
+        <button className="back" onClick={handleBack}>‹ 返回</button>
         <h3 className="c115-title">
           <span className="c115-title-ico">
             <IcoCloudL size={16} strokeWidth={2.2} />
@@ -422,6 +436,8 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
           <span className={`c115-dot${wdActive ? " ok" : ""}`} title={wdActive ? "已连接" : "未连接"} />
         </button>
       </div>
+
+      <div className="c115-view" key={isWebdav ? `wd-${wdActive}` : active}>
 
       {/* 工具行：用户/退出（左）+ 播放档（右） */}
       {logged && (
@@ -690,6 +706,7 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
           )}
         </>
       )}
+      </div>
     </main>
   );
 }

@@ -3134,9 +3134,9 @@ fn merge_script_opts(orig: String, overrides: &[(&str, &str)]) -> String {
 pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     use tauri::Manager;
     if let Some(w) = app.get_webview_window("mpv_overlay") {
-        let _ = w.show();
-        // [lc-1926] 留痕：确认走的是「常驻窗口复用」路径而不是临时建窗
-        crate::libmpv::trace("[lc-1926] mpv_overlay 已存在 → show 复用");
+        // [lc-1927] 覆盖层不再显示：播放器控件改由 mpv 内 osc-cinema（Lua 自绘）承担 ——
+        // 我们的栈里这个常驻隐藏 webview 收不到事件也收不到点击，反复修不如换回进程内方案。
+        crate::libmpv::trace("[lc-1927] mpv_overlay 复用但**保持隐藏**（控件在 mpv 内）");
         return Some(w);
     }
     // [lc-1926] 窗口不存在则现建（正常路径下 setup 已建好，这里只做兜底）

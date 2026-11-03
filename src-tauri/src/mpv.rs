@@ -306,7 +306,7 @@ impl MpvSession {
             "--ytdl=no".to_string(),
             // 允许拖动画面/边缘移动窗口（border=no 时这是唯一的拖动方式）。
             // 之前关掉是为了避免误拖，但用户反馈窗口无法移动，这里恢复默认行为。
-            "--window-dragging=yes".to_string(),
+            "--input-builtin-dragging=no".to_string(),
             format!("--log-file={}", log_path.to_string_lossy()),
         ];
         // [lc-1559] 启动即加载（可选）：命令行直接带 M3U8/URL ⇒ 无 idle 空窗，
@@ -345,9 +345,8 @@ impl MpvSession {
                         .to_string(),
                 );
                 args.push("--script-opts-append=uosc-idle_branding=no".to_string());
-                // [lc-1924] 原生时间轴 + 左下信息胶囊（硬解/码率/网络/弹幕）整块停用
-                args.push("--script-opts-append=uosc-anibox_hide_timeline=yes".to_string());
                 args.push("--script-opts-append=osc_cinema-enabled=yes".to_string());
+                args.push("--script-opts-append=uosc-anibox_hide_timeline=yes".to_string());
                 // [lc-1924] 原生 UI 全面停用：控件与提示都由 App 覆盖层 DOM 承担
                 //（Polaris 同款：其 osc-cinema 自绘底栏被 if false 关掉、改由 mpv-overlay 接管）
                 args.push("--script-opts-append=fntv_format_badge-enabled=no".to_string());

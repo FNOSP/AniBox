@@ -15,9 +15,27 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
+
+/// [lc-1943] mpv 命令往返计时（诊断）：默认只记 ≥15ms 的慢命令，避免刷日志；
+/// 设环境变量 `ANIBOX_LAT_TRACE=1` 则逐条记录（排查「点一下要等多久」时用）。
+///
+/// 只记命令名，不记参数：`set_property` 的值 / `loadfile` 的 URL 都不该进日志。
+fn lat_trace_cmd(cmd: &Value, ms: u64) {
+    static VERBOSE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let verbose = *VERBOSE.get_or_init(|| {
+        matches!(
+            std::env::var("ANIBOX_LAT_TRACE").ok().as_deref(),
+            Some("1")
+        )
+    });
+    if !verbose && ms < 15 {
+        return;
+    }
+    let name = cmd.get(0).and_then(|v| v.as_str()).unwrap_or("?");
+    crate::libmpv::trace(&format!("[lat] mpv cmd={name} rtt={ms}ms"));
+}
 
 /// 观察 id ↔ 属性名（前端 switch 依赖这些 id；6=fullscreen 只用于镜像到 Tauri 窗口）
 // [lc-1914] osc-cinema 集数胶囊数据源（playlist-pos=10 / playlist-count=11 的最新值缓存，
@@ -72,12 +90,15 @@ pub fn pstate_snapshot() -> serde_json::Value {
 }
 
 
-/// [lc-1926] 播放事件发射：**广播 + 定向到 mpv_overlay**。
-/// 实测 `app.emit` 到不了播放器覆盖层窗口（`mpv-load{loaded}` 收不到 → 一直「正在打开」，
-/// `mpv-pstate` 收不到 → 进度/时间永远是 0）。这里对覆盖层再做一次 emit_to 兜底。
+/// [lc-1926] 播放事件发射（广播到所有窗口，含 mpv_overlay）。
+///
+/// [lc-1943] 之前这里做了「广播 + 定向 emit_to」两次发送，起因是「事件到不了覆盖层」。
+/// 真因不在 emit：`mpv_overlay` 窗**没有匹配的 capability**，它的 `core:event:allow-listen`
+/// 被 ACL 拒绝 —— 前端的 `listen()` 直接 reject，只能靠 250ms 轮询兜底（这就是
+/// 「每个控件点完要等好一会儿」的最大一笔）。补上 `capabilities/overlay.json` 后广播即可送达，
+/// 重复发送只会在页面上触发两次 setState，白耗一次 IPC，故退回单次广播。
 pub fn emit_player(app: &tauri::AppHandle, event: &str, payload: serde_json::Value) {
-    let _ = app.emit(event, payload.clone());
-    let _ = app.emit_to("mpv_overlay", event, payload);
+    let _ = app.emit(event, payload);
 }
 
 const OBSERVED: [(u64, &str); 17] = [
@@ -124,8 +145,13 @@ type IpcStream = std::os::unix::net::UnixStream;
 pub struct MpvSession {
     /// IPC 写端（JSON 行）
     tx: Arc<Mutex<Option<IpcStream>>>,
-    /// request_id → 回包等待者
-    pending: Arc<Mutex<HashMap<u64, std_mpsc::Sender<Value>>>>,
+    /// request_id → 回包等待者。
+    ///
+    /// [lc-1943] 从 `std_mpsc` 换成 `tokio::oneshot`：旧实现用 `recv_timeout` **同步阻塞**
+    /// 一个 tokio worker 线程等 mpv 回包（mpv 忙时实测单条 set 可达数秒），
+    /// 多条命令叠在一起会把 executor 线程池占满，表现就是「点了按钮要等一会儿才动」。
+    /// 改成 oneshot + `tokio::time::timeout` 后等待是真正异步的，不占线程。
+    pending: Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Value>>>>,
     next_id: Arc<AtomicU64>,
     pub pid: Arc<Mutex<Option<u32>>>,
     /// [lc-093] 「App 全屏状态 → mpv fullscreen 属性」镜像的期望值。
@@ -555,7 +581,7 @@ impl MpvSession {
         }
 
         let tx = Arc::new(Mutex::new(Some(file)));
-        let pending: Arc<Mutex<HashMap<u64, std_mpsc::Sender<Value>>>> =
+        let pending: Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Value>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let next_id = Arc::new(AtomicU64::new(1));
         let pid_slot = Arc::new(Mutex::new(pid));
@@ -1048,14 +1074,19 @@ impl MpvSession {
         .await;
     }
 
-    /// 发一条命令（JSON 数组）并等回包（5s 超时）
+    /// 发一条命令（JSON 数组）并等回包（5s 超时）。
+    ///
+    /// [lc-1943] 等待改为异步（oneshot + `tokio::time::timeout`），不再用
+    /// `recv_timeout` 同步阻塞 worker 线程 —— 见 `pending` 字段注释。
+    /// 每次往返都量一次耗时：`[lat]` 行只在「慢 / 显式开启」时落盘，避免刷日志。
     pub async fn command(&self, cmd: Value) -> Result<Value, String> {
         let rid = self.next_id.fetch_add(1, Ordering::SeqCst);
-        let (tx, rx) = std_mpsc::channel();
+        let (tx, rx) = tokio::sync::oneshot::channel();
         self.pending.lock().unwrap().insert(rid, tx);
         {
             let mut guard = self.tx.lock().unwrap();
             let Some(f) = guard.as_mut() else {
+                self.pending.lock().unwrap().remove(&rid);
                 return Err("mpv 进程已退出".into());
             };
             let line = json!({ "command": cmd, "request_id": rid }).to_string() + "\n";
@@ -1065,8 +1096,10 @@ impl MpvSession {
             }
             let _ = f.flush();
         }
-        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
-            Ok(v) => {
+        let started = std::time::Instant::now();
+        match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
+            Ok(Ok(v)) => {
+                lat_trace_cmd(&cmd, started.elapsed().as_millis() as u64);
                 let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("success");
                 if err == "success" {
                     Ok(v)
@@ -1074,8 +1107,10 @@ impl MpvSession {
                     Err(err.to_string())
                 }
             }
+            Ok(Err(_)) => Err("mpv 会话已关闭".into()),
             Err(_) => {
                 self.pending.lock().unwrap().remove(&rid);
+                lat_trace_cmd(&cmd, 5000);
                 Err("mpv 响应超时".into())
             }
         }

@@ -58,10 +58,100 @@ static EMBED_RECT: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
 static OVERLAY_TRANSPARENT: AtomicBool = AtomicBool::new(false);
 /// [lc-1939] 覆盖层 UI 是否可用（透明建窗成功）。false = 退回 mpv 进程内 Lua OSC。
 static OVERLAY_UI_READY: AtomicBool = AtomicBool::new(false);
-/// [lc-1939] 50ms 光标探针是否已在跑（防重复 spawn）。
+/// [lc-1943] 光标探针是否已在跑（防重复 spawn）。
 static OVERLAY_PROBE_RUNNING: AtomicBool = AtomicBool::new(false);
 /// [lc-1939] 33ms 几何跟随循环是否已在跑（起播前预启动 + 收编后再调，需幂等）。
 static OVERLAY_FOLLOW_RUNNING: AtomicBool = AtomicBool::new(false);
+
+// ─────────────────── [lc-1943] 覆盖层可点区（热区）───────────────────
+//
+// 旧链路（lc-1939）：50ms 探针 → `eval` 把光标坐标塞给页面 → `elementFromPoint`
+// → `invoke player_chrome_ignore` → Rust 拨 WS_EX_TRANSPARENT。
+// 一次判定跨两次进程 IPC，叠加 50ms 采样周期，「光标到位 → 窗口可点」最坏 ~70ms
+// —— 用户快速移入并点击时 mousedown 仍落在穿透窗上被 mpv 吃掉（首击失灵）。
+//
+// 新链路：前端只在布局/显隐变化时把可点区矩形上报一次（`player_chrome_hot_rects`），
+// Rust 探针（16ms）**纯几何**判定并直接拨穿透位，不再 eval、不再 invoke。
+// `data-chrome-hit` 元素本身就是唯一的可交互集合，矩形取自 getBoundingClientRect，
+// 精度与 elementFromPoint 等价，无需每帧回到 WebView 精判。
+
+/// 前端上报的可点区矩形：窗口内物理像素 `(x, y, w, h)`，已含外扩余量。
+static HOT_RECTS: Mutex<Vec<(i32, i32, i32, i32)>> = Mutex::new(Vec::new());
+/// 模态态（菜单面板打开 / 进度条拖拽）：整窗可点，不看矩形。
+static HOT_FULL: AtomicBool = AtomicBool::new(false);
+/// 是否已收到过前端上报（false = 用几何兜底带，见 `probe_fallback_rects`）。
+static HOT_REPORTED: AtomicBool = AtomicBool::new(false);
+/// 探针当前把窗口置成了「穿透」还是「可点」（只在变化时调 SetWindowLongPtrW）。
+static PROBE_CLICKTHROUGH: AtomicBool = AtomicBool::new(true);
+
+/// 探针周期。16ms ≈ 60Hz：一次显示器刷新内就能把穿透位拨到位。
+pub const PROBE_TICK_MS: u64 = 16;
+/// 可点区外扩（像素）：光标还没压到按钮上就先进可点态，消除边缘抖动。
+pub const HOT_MARGIN_PX: i32 = 16;
+/// 离开可点区后的粘滞（毫秒）：越过边缘时短暂保持可点，避免穿透位来回拨。
+pub const LEAVE_HYSTERESIS_MS: u64 = 80;
+/// 光标移动通知的最小间隔：页面只需要「有移动」来续显控件，不需要每帧坐标。
+const CURSOR_NOTIFY_MS: u64 = 40;
+/// 触发「移动」判定的最小位移（像素）。
+const CURSOR_NOTIFY_PX: i32 = 3;
+
+/// 前端上报可点区（窗口内物理像素矩形 + 模态标记）。
+///
+/// 这里统一外扩 [`HOT_MARGIN_PX`]：光标还没精确压到按钮上就先进可点态，
+/// 用户从画面移向底栏的过程中窗口已经可点，不必等中心点命中。
+pub fn overlay_set_hot_rects(rects: Vec<(i32, i32, i32, i32)>, full: bool) {
+    let expanded = rects
+        .into_iter()
+        .filter(|&(_, _, w, h)| w > 0 && h > 0)
+        .map(|(x, y, w, h)| {
+            (
+                x - HOT_MARGIN_PX,
+                y - HOT_MARGIN_PX,
+                w + HOT_MARGIN_PX * 2,
+                h + HOT_MARGIN_PX * 2,
+            )
+        })
+        .collect();
+    *HOT_RECTS.lock().unwrap_or_else(|e| e.into_inner()) = expanded;
+    HOT_FULL.store(full, Ordering::SeqCst);
+    HOT_REPORTED.store(true, Ordering::SeqCst);
+}
+
+/// 点是否落在任一可点区内。
+fn hit_hot_rects(rects: &[(i32, i32, i32, i32)], x: i32, y: i32) -> bool {
+    rects
+        .iter()
+        .any(|&(rx, ry, rw, rh)| x >= rx && x < rx + rw && y >= ry && y < ry + rh)
+}
+
+/// 穿透决策（纯逻辑，便于单测）：true = 穿透（点击交给 mpv）。
+///
+/// · 光标在窗口外 → 穿透（覆盖层不在光标下，穿透态不影响任何事）；
+/// · 落在可点区 / 模态 → 不穿透；
+/// · 刚离开可点区且在粘滞窗口内 → 继续不穿透（越过边缘的抖动不再来回拨）。
+pub fn decide_clickthrough(inside: bool, hot: bool, ms_since_leave: Option<u64>) -> bool {
+    if !inside {
+        return true;
+    }
+    if hot {
+        return false;
+    }
+    match ms_since_leave {
+        Some(ms) if ms < LEAVE_HYSTERESIS_MS => false,
+        _ => true,
+    }
+}
+
+/// 几何兜底带：前端还没上报时可点区只按窗口尺寸估两段（底栏 + 右上窗控）。
+/// 只覆盖启动瞬间的几百毫秒；首次上报后完全由 `HOT_RECTS` 决定。
+fn probe_fallback_rects(w: i32, h: i32) -> Vec<(i32, i32, i32, i32)> {
+    let band_h = 160.min(h);
+    let top_w = 200.min(w);
+    vec![
+        (0, (h - band_h).max(0), w, band_h),
+        ((w - top_w).max(0), 0, top_w, 56.min(h)),
+    ]
+}
 
 pub fn set_overlay_transparent(ok: bool) {
     OVERLAY_TRANSPARENT.store(ok, Ordering::SeqCst);
@@ -509,22 +599,31 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
     });
 }
 
-/// [lc-1939] 50ms 光标探针（Polaris overlay_wiring.rs 同款）：
-/// 覆盖层默认 WS_EX_TRANSPARENT（点击穿透给 mpv），**只有**光标压在可交互 DOM 上时才关穿透。
-/// 但穿透态下 WebView 收不到 mousemove，所以由 Rust 用全局 GetCursorPos 采样，
-/// 把窗口内物理坐标直接 eval 给前端（`window.__aniboxProbe`）做 elementFromPoint 命中测试。
+/// [lc-1943] 16ms 光标探针：覆盖层默认 WS_EX_TRANSPARENT（点击穿透给 mpv），
+/// **只有**光标落在可点区（前端上报的控件矩形）时才关穿透。
+///
+/// 判定完全在 Rust 侧完成（GetCursorPos + 矩形），不再 `eval` 回 WebView、也不再
+/// `invoke` 往返 —— 这是「首击失灵 / 点了要等一会儿」的主要来源（见文件顶部 lc-1943 注释）。
 ///
 /// 为什么不用 mpv 的 mouse-pos：mpv 报的是它自己的客户区坐标，覆盖层被穿透/被 mpv 压住时
 /// 事件链会滞后或压根没有（lc-1924~1931 的坑）；全局光标是唯一不依赖窗口事件源的坐标真源。
 pub fn spawn_overlay_probe(app: tauri::AppHandle) {
-    use tauri::Manager;
+    use tauri::{Emitter, Manager};
     if OVERLAY_PROBE_RUNNING.swap(true, Ordering::SeqCst) {
         return;
     }
     tauri::async_runtime::spawn(async move {
+        // 探针启动时 `show_player_overlay` 刚把窗口拨成「穿透」，这里同步一次静态位 ——
+        // 否则上一轮播放结束时留下的 false 会让第一次判定误以为「已经是可点态」而跳过 SetWindowLongPtrW。
+        PROBE_CLICKTHROUGH.store(true, Ordering::SeqCst);
         let mut was_inside = false;
+        let mut was_hot = false;
+        let mut left_hot_at: Option<std::time::Instant> = None;
+        let mut last_notify_at = std::time::Instant::now();
+        // None = 还没通知过任何位置（不用 i32::MIN 哨兵：lx - i32::MIN 会整型溢出）
+        let mut last_notify_pt: Option<(i32, i32)> = None;
         while embed_is_active() && overlay_ui_ready() {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(PROBE_TICK_MS)).await;
             if !embed_is_active() {
                 break;
             }
@@ -539,6 +638,8 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
                 }
                 if IsWindowVisible(hwnd as _) == 0 {
                     was_inside = false;
+                    was_hot = false;
+                    left_hot_at = None;
                     continue;
                 }
                 let mut pt = POINT { x: 0, y: 0 };
@@ -549,22 +650,68 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
                 if GetWindowRect(hwnd as _, &mut rc) == 0 {
                     continue;
                 }
-                let inside = pt.x >= rc.left && pt.x < rc.right && pt.y >= rc.top && pt.y < rc.bottom;
-                if inside {
-                    let payload = serde_json::json!({
-                        "inside": true,
-                        "physicalX": pt.x - rc.left,
-                        "physicalY": pt.y - rc.top,
-                        "surfacePhysicalWidth": rc.right - rc.left,
-                        "surfacePhysicalHeight": rc.bottom - rc.top,
-                    });
-                    let _ = ov.eval(&format!(
-                        "window.__aniboxProbe&&window.__aniboxProbe({payload})"
+                let (w, hgt) = (rc.right - rc.left, rc.bottom - rc.top);
+                let (lx, ly) = (pt.x - rc.left, pt.y - rc.top);
+                let inside = lx >= 0 && lx < w && ly >= 0 && ly < hgt;
+
+                // 可点区：模态 → 整窗；否则按上报矩形（未上报时用几何兜底带）。
+                // 外扩 HOT_MARGIN_PX 由前端在上报时施加。
+                let full = HOT_FULL.load(Ordering::SeqCst);
+                let reported = HOT_REPORTED.load(Ordering::SeqCst);
+                let rects: Vec<(i32, i32, i32, i32)> = if reported {
+                    HOT_RECTS.lock().unwrap_or_else(|e| e.into_inner()).clone()
+                } else {
+                    probe_fallback_rects(w, hgt)
+                };
+                let hot = inside && (full || hit_hot_rects(&rects, lx, ly));
+
+                if hot {
+                    left_hot_at = None;
+                } else if was_hot {
+                    left_hot_at = Some(std::time::Instant::now());
+                }
+                let ms_since_leave = left_hot_at.map(|t| t.elapsed().as_millis() as u64);
+                let clickthrough = decide_clickthrough(inside, hot, ms_since_leave);
+
+                // 只在状态真的变化时拨 ex-style（SetWindowLongPtrW 不是免费调用）
+                if clickthrough != PROBE_CLICKTHROUGH.load(Ordering::SeqCst) {
+                    PROBE_CLICKTHROUGH.store(clickthrough, Ordering::SeqCst);
+                    overlay_set_clickthrough(hwnd, clickthrough);
+                    crate::libmpv::trace(&format!(
+                        "[lc-1943] 穿透切换 clickthrough={clickthrough}（inside={inside} hot={hot}）"
                     ));
-                } else if was_inside {
-                    let _ = ov.eval("window.__aniboxProbe&&window.__aniboxProbe({inside:false})");
+                }
+
+                // 光标移动 → 通知页面续显控件（限频、限最小位移）。
+                // 穿透态下 WebView 收不到 mousemove，这是「动鼠标就唤出控件」的唯一信号源。
+                // 定向到覆盖层：`WebviewWindow::emit` 是广播，别把光标流也丢给主窗。
+                let moved = match last_notify_pt {
+                    None => true,
+                    Some((px, py)) => {
+                        (lx - px).abs() > CURSOR_NOTIFY_PX || (ly - py).abs() > CURSOR_NOTIFY_PX
+                    }
+                };
+                if inside
+                    && moved
+                    && last_notify_at.elapsed().as_millis() >= CURSOR_NOTIFY_MS as u128
+                {
+                    last_notify_at = std::time::Instant::now();
+                    last_notify_pt = Some((lx, ly));
+                    let _ = ov.emit_to(
+                        "mpv_overlay",
+                        "overlay-cursor",
+                        serde_json::json!({ "x": lx, "y": ly, "hot": hot, "inside": true }),
+                    );
+                } else if !inside && was_inside {
+                    last_notify_pt = None;
+                    let _ = ov.emit_to(
+                        "mpv_overlay",
+                        "overlay-cursor",
+                        serde_json::json!({ "x": -1, "y": -1, "hot": false, "inside": false }),
+                    );
                 }
                 was_inside = inside;
+                was_hot = hot;
             }
         }
         OVERLAY_PROBE_RUNNING.store(false, Ordering::SeqCst);
@@ -700,5 +847,80 @@ pub fn on_main_moved(x: i32, y: i32) {
     }
     if let Some(h) = get_hwnd() {
         follow_move(h, dx, dy);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// [lc-1943] 穿透决策：光标在窗口外一律穿透。
+    #[test]
+    fn decide_outside_always_clickthrough() {
+        assert!(decide_clickthrough(false, false, None));
+        assert!(decide_clickthrough(false, true, None));
+    }
+
+    /// [lc-1943] 落在可点区 → 立刻不穿透（没有粘滞、没有延迟）。
+    #[test]
+    fn decide_hot_is_immediate() {
+        assert!(!decide_clickthrough(true, true, None));
+        assert!(!decide_clickthrough(true, true, Some(0)));
+    }
+
+    /// [lc-1943] 离开可点区：粘滞窗口内保持可点，超时恢复穿透。
+    #[test]
+    fn decide_leave_hysteresis() {
+        assert!(
+            !decide_clickthrough(true, false, Some(0)),
+            "刚离开可点区（0ms）必须仍可点，避免边缘抖动来回拨"
+        );
+        assert!(
+            !decide_clickthrough(true, false, Some(LEAVE_HYSTERESIS_MS - 1)),
+            "粘滞窗口内仍可点"
+        );
+        assert!(
+            decide_clickthrough(true, false, Some(LEAVE_HYSTERESIS_MS)),
+            "粘滞窗口到期恢复穿透"
+        );
+        assert!(
+            decide_clickthrough(true, false, None),
+            "从未进过可点区 → 直接穿透"
+        );
+    }
+
+    /// [lc-1943] 矩形命中：左下闭右开 + 不含外扩（外扩由上报时施加）。
+    #[test]
+    fn hit_hot_rects_bounds() {
+        let rects = vec![(100, 200, 50, 40)];
+        assert!(hit_hot_rects(&rects, 100, 200));
+        assert!(hit_hot_rects(&rects, 149, 239));
+        assert!(!hit_hot_rects(&rects, 99, 200));
+        assert!(!hit_hot_rects(&rects, 150, 200));
+        assert!(!hit_hot_rects(&rects, 100, 240));
+        assert!(!hit_hot_rects(&[], 100, 200));
+    }
+
+    /// [lc-1943] 外扩常量必须是 16px：小了等于没有提前量，大了会把视频区吃掉。
+    #[test]
+    fn margin_and_tick_constants() {
+        assert_eq!(HOT_MARGIN_PX, 16);
+        assert_eq!(PROBE_TICK_MS, 16);
+        assert!(LEAVE_HYSTERESIS_MS >= 60 && LEAVE_HYSTERESIS_MS <= 200);
+    }
+
+    /// [lc-1943] 几何兜底带只在窗口内，且底栏一定贴着窗口底部。
+    #[test]
+    fn fallback_bands_inside_window() {
+        let (w, h) = (1440, 900);
+        let rects = probe_fallback_rects(w, h);
+        assert_eq!(rects.len(), 2);
+        let (bx, by, bw, bh) = rects[0];
+        assert_eq!((bx, by), (0, h - bh));
+        assert_eq!(bw, w);
+        assert!(by >= 0 && by + bh == h);
+        let (tx, ty, tw, th) = rects[1];
+        assert_eq!((tx, ty), (w - tw, 0));
+        assert!(tx >= 0 && ty + th <= h);
     }
 }

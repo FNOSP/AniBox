@@ -3467,8 +3467,55 @@ async fn player_embed_leave(app: AppHandle, stop: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// [lc-1943] 覆盖层可点区上报：前端在布局/显隐变化时把 `[data-chrome-hit]` 元素矩形
+/// （窗口内**物理像素**）一次发过来，之后穿透判定完全在 Rust 探针里按几何做 ——
+/// 不再每帧 `eval` 回 WebView 做 `elementFromPoint`，也不再每帧 `invoke` 往返。
+///
+/// `full=true` 表示模态（磨砂菜单打开 / 进度条拖拽）：整窗可点，点空白用于关面板。
+/// 只接受 mpv_overlay 自己的调用。
+#[tauri::command]
+async fn player_chrome_hot_rects(
+    window: tauri::Window,
+    rects: Vec<[f64; 4]>,
+    full: bool,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        if window.label() != "mpv_overlay" {
+            return Ok(());
+        }
+        let converted: Vec<(i32, i32, i32, i32)> = rects
+            .into_iter()
+            .map(|r| {
+                (
+                    r[0].round() as i32,
+                    r[1].round() as i32,
+                    r[2].round() as i32,
+                    r[3].round() as i32,
+                )
+            })
+            .collect();
+        crate::mpvwin::overlay_set_hot_rects(converted, full);
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (&window, &rects, &full);
+    Ok(())
+}
+
+/// [lc-1943] 前端延迟采样落盘（临时诊断，`[lat]` 前缀）。前端拿不到进程日志，
+/// 让它把「点击 → invoke 返回」这类单次测量写进 `anibox.log`，便于与 Rust 侧
+/// `[lat] cmd=… rtt=…` 对齐分解。
+#[tauri::command]
+fn lat_trace(msg: String) {
+    crate::libmpv::trace(&format!("[lat] {msg}"));
+}
+
 /// [lc-1939] 播放器控制层的鼠标穿透开关（Polaris 同款通道）：
-/// 默认全窗穿透（鼠标全部落到 mpv），50ms 探针命中控件时由前端调 false。
+/// 默认全窗穿透（鼠标全部落到 mpv）。
+///
+/// [lc-1943] **覆盖层 UI 已不再调用这条命令** —— 穿透位改由 Rust 探针按可点区几何
+/// 独占决定（见 `mpvwin::spawn_overlay_probe`），避免「前端 elementFromPoint」与
+/// 「Rust 矩形判定」两个真源互相覆盖。保留此命令作为手动排障开关。
 /// **直接拨 WS_EX_TRANSPARENT**，不碰 WS_EX_LAYERED（tao 的 set_ignore_cursor_events
 /// 会把两位置成一组，关穿透时连透明一起摘掉 → 黑块盖死视频）。
 /// 只接受 mpv_overlay 窗口自己的调用。
@@ -3515,8 +3562,10 @@ async fn player_chrome_focusable(window: tauri::Window, on: bool) -> Result<(), 
 
 #[tauri::command]
 async fn mpv_toggle_pause(state: State<'_, AppState>) -> Result<(), String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
+    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
+    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         m.command(json!(["cycle", "pause"])).await?;
     }
     Ok(())
@@ -3529,8 +3578,10 @@ async fn mpv_toggle_pause(state: State<'_, AppState>) -> Result<(), String> {
 /// （mpv.conf 里 input-builtin-dragging=no，拖窗由这里唯一提交）。
 #[tauri::command]
 async fn mpv_begin_drag(state: State<'_, AppState>) -> Result<(), String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
+    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
+    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         m.command(serde_json::json!(["begin-vo-dragging"])).await?;
     }
     Ok(())
@@ -3539,8 +3590,10 @@ async fn mpv_begin_drag(state: State<'_, AppState>) -> Result<(), String> {
 /// [lc-1924] 读一个 mpv 属性（覆盖层 UI 用：如 glsl-shaders 判断着色器开关态）
 #[tauri::command]
 async fn mpv_get_prop(state: State<'_, AppState>, name: String) -> Result<serde_json::Value, String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
+    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
+    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         let v = m.command(serde_json::json!(["get_property", name])).await?;
         return Ok(v.get("data").cloned().unwrap_or(serde_json::Value::Null));
     }
@@ -3555,8 +3608,10 @@ async fn mpv_script_message(
     name: String,
     args: Option<Vec<String>>,
 ) -> Result<(), String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
+    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
+    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         let mut cmd = vec![serde_json::json!("script-message-to"), serde_json::json!(name)];
         if let Some(a) = args {
             for x in a {
@@ -3570,8 +3625,10 @@ async fn mpv_script_message(
 
 #[tauri::command]
 async fn mpv_set_ui_fullscreen(state: State<'_, AppState>, on: bool) -> Result<(), String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
+    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
+    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         m.set_ui_fullscreen(on).await?;
     }
     Ok(())
@@ -3579,8 +3636,10 @@ async fn mpv_set_ui_fullscreen(state: State<'_, AppState>, on: bool) -> Result<(
 
 #[tauri::command]
 async fn mpv_seek(state: State<'_, AppState>, seconds: f64, absolute: bool) -> Result<(), String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
+    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
+    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         let mode = if absolute { "absolute" } else { "relative" };
         m.command(json!(["seek", seconds, mode])).await?;
     }
@@ -3601,8 +3660,10 @@ async fn mpv_input(
     button: Option<i64>,
     key: Option<String>,
 ) -> Result<(), String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
+    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
+    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         let cmd = match kind.as_str() {
             "move" => json!(["mouse", x as i64, y as i64]),
             "button" | "wheel" => json!(["mouse", x as i64, y as i64, button.unwrap_or(0)]),
@@ -3620,8 +3681,10 @@ async fn mpv_input(
 
 #[tauri::command]
 async fn mpv_set_volume(state: State<'_, AppState>, volume: f64) -> Result<(), String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
+    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
+    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         m.command(json!(["set_property", "volume", volume])).await?;
     }
     Ok(())
@@ -3630,8 +3693,10 @@ async fn mpv_set_volume(state: State<'_, AppState>, volume: f64) -> Result<(), S
 /// [lc-1939] 覆盖层顶栏窗控：置顶 / 最小化 / 最大化 / 通用 script-binding。
 #[tauri::command]
 async fn mpv_set_ontop(state: State<'_, AppState>, on: bool) -> Result<(), String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
+    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
+    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         m.command(json!(["set_property", "ontop", on])).await?;
     }
     Ok(())
@@ -3639,8 +3704,10 @@ async fn mpv_set_ontop(state: State<'_, AppState>, on: bool) -> Result<(), Strin
 
 #[tauri::command]
 async fn mpv_window_minimize(state: State<'_, AppState>) -> Result<(), String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
+    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
+    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         m.command(json!(["set_property", "window-minimized", true])).await?;
     }
     Ok(())
@@ -3648,8 +3715,10 @@ async fn mpv_window_minimize(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 async fn mpv_toggle_maximize(state: State<'_, AppState>) -> Result<(), String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
+    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
+    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         m.command(json!(["cycle", "window-maximized"])).await?;
     }
     Ok(())
@@ -3657,8 +3726,10 @@ async fn mpv_toggle_maximize(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 async fn mpv_script_binding(state: State<'_, AppState>, binding: String) -> Result<(), String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
+    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
+    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         m.command(json!(["script-binding", binding])).await?;
     }
     Ok(())
@@ -3672,8 +3743,10 @@ async fn player_chrome_state() -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 async fn mpv_set_rate(state: State<'_, AppState>, rate: f64) -> Result<(), String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
+    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
+    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         m.command(json!(["set_property", "speed", rate])).await?;
     }
     Ok(())
@@ -3773,8 +3846,10 @@ async fn mpv_set_prop(
     name: String,
     value: serde_json::Value,
 ) -> Result<(), String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
+    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
+    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         m.command(json!(["set_property", name, value])).await?;
     }
     Ok(())
@@ -3784,8 +3859,10 @@ async fn mpv_set_prop(
 /// 老版本 mpv 没有 `playlist-play-index`，失败时回退 `set playlist-pos`。
 #[tauri::command]
 async fn mpv_playlist_play_index(state: State<'_, AppState>, index: i64) -> Result<(), String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
+    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
+    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         if m.command(json!(["playlist-play-index", index])).await.is_err() {
             m.command(json!(["set_property", "playlist-pos", index])).await?;
         }
@@ -3798,8 +3875,10 @@ async fn mpv_playlist_play_index(state: State<'_, AppState>, index: i64) -> Resu
 /// 单集场景下 mpv 的 playlist-next/prev 会返回 success 但不动作，属预期。
 #[tauri::command]
 async fn mpv_next_episode(state: State<'_, AppState>) -> Result<(), String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
+    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
+    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         m.command(json!(["playlist-next"])).await?;
     }
     Ok(())
@@ -3807,8 +3886,10 @@ async fn mpv_next_episode(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 async fn mpv_prev_episode(state: State<'_, AppState>) -> Result<(), String> {
-    let slot = state.mpv.lock().await;
-    if let Some(m) = slot.as_ref() {
+    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
+    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session.as_ref() {
         m.command(json!(["playlist-prev"])).await?;
     }
     Ok(())
@@ -3818,8 +3899,9 @@ async fn mpv_prev_episode(state: State<'_, AppState>) -> Result<(), String> {
 /// 前端/手柄可用于显示「第 N/M 集」或做边界判断。
 #[tauri::command]
 async fn mpv_playlist_info(state: State<'_, AppState>) -> Result<Value, String> {
-    let slot = state.mpv.lock().await;
-    let Some(m) = slot.as_ref() else {
+    // [lc-1943] 同其它 UI 命令：先取出会话再 await，锁不跨越两次 IPC
+    let session = state.mpv.lock().await.clone();
+    let Some(m) = session.as_ref() else {
         return Ok(json!({ "pos": -1, "count": 0 }));
     };
     let pos = m
@@ -5072,6 +5154,10 @@ pub fn run() {
             player_embed_enter,
             player_embed_rect,
             player_chrome_ignore,
+            // [lc-1943] 覆盖层可点区（热区）上报：穿透判定改在 Rust 探针里做几何计算
+            player_chrome_hot_rects,
+            // [lc-1943] 前端延迟采样落盘（临时诊断）
+            lat_trace,
             // [lc-1942] 字幕搜索输入框需要临时摘掉 WS_EX_NOACTIVATE
             player_chrome_focusable,
             player_embed_leave,

@@ -3657,6 +3657,120 @@ async fn mpv_set_rate(state: State<'_, AppState>, rate: f64) -> Result<(), Strin
     Ok(())
 }
 
+/// [lc-1942] 覆盖层菜单：单个属性读取。菜单一次要取十几项，任一项卡住不能拖住整张表，
+/// 因此每项独立 600ms 超时，失败给 Null（前端渲染空态，不阻塞其它行）。
+async fn menu_prop(m: &crate::mpv::MpvSession, name: &str) -> Value {
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(600),
+        m.command(json!(["get_property", name])),
+    )
+    .await
+    {
+        Ok(Ok(v)) => v.get("data").cloned().unwrap_or(Value::Null),
+        _ => Value::Null,
+    }
+}
+
+/// [lc-1942] 覆盖层通用菜单数据：轨道 / 章节 / 播放列表 / 字幕样式 / 弹幕状态一次取齐。
+/// 这些数据此前只能走 mpv 自己的 uosc 菜单（画在 mpv OSD 里，覆盖层之下且不可交互）；
+/// 现在统一由覆盖层的磨砂面板消费，所以数据源必须在 Rust 侧暴露。
+#[tauri::command]
+async fn player_menu_data(state: State<'_, AppState>) -> Result<Value, String> {
+    let session = state.mpv.lock().await.clone();
+    let Some(m) = session else {
+        return Ok(json!({
+            "ready": false,
+            "tracks": [],
+            "chapters": [],
+            "playlist": [],
+        }));
+    };
+
+    let track_list = menu_prop(&m, "track-list").await;
+    let sid = menu_prop(&m, "sid").await;
+    let aid = menu_prop(&m, "aid").await;
+    let vid = menu_prop(&m, "vid").await;
+    let secondary_sid = menu_prop(&m, "secondary-sid").await;
+    let sub_visibility = menu_prop(&m, "sub-visibility").await;
+    let secondary_sub_visibility = menu_prop(&m, "secondary-sub-visibility").await;
+    let speed = menu_prop(&m, "speed").await;
+    let volume = menu_prop(&m, "volume").await;
+    let sub_font_size = menu_prop(&m, "sub-font-size").await;
+    let sub_pos = menu_prop(&m, "sub-pos").await;
+    let sub_border = menu_prop(&m, "sub-border-size").await;
+    let chapters = menu_prop(&m, "chapter-list").await;
+    let playlist = menu_prop(&m, "playlist").await;
+    let playlist_pos = menu_prop(&m, "playlist-pos").await;
+    let media_title = menu_prop(&m, "media-title").await;
+    let video_params = menu_prop(&m, "video-params").await;
+    let video_codec = menu_prop(&m, "video-codec").await;
+    let audio_codec = menu_prop(&m, "audio-codec").await;
+    let container_fps = menu_prop(&m, "container-fps").await;
+    let hwdec = menu_prop(&m, "hwdec-current").await;
+    let file_format = menu_prop(&m, "file-format").await;
+    // 弹幕脚本的开关/延迟（uosc_danmaku 自己发布的 user-data，是唯一权威状态源）
+    let danmaku_on = menu_prop(&m, "user-data/uosc_danmaku/danmaku-switch").await;
+    let danmaku_delay = menu_prop(&m, "user-data/uosc_danmaku/danmaku-delay").await;
+    let danmaku_info = menu_prop(&m, "user-data/anibox/danmaku-info").await;
+
+    Ok(json!({
+        "ready": true,
+        "tracks": track_list,
+        "sid": sid,
+        "aid": aid,
+        "vid": vid,
+        "secondarySid": secondary_sid,
+        "subVisibility": sub_visibility,
+        "secondarySubVisibility": secondary_sub_visibility,
+        "speed": speed,
+        "volume": volume,
+        "subFontSize": sub_font_size,
+        "subPos": sub_pos,
+        "subBorderSize": sub_border,
+        "chapters": chapters,
+        "playlist": playlist,
+        "playlistPos": playlist_pos,
+        "mediaTitle": media_title,
+        "videoParams": video_params,
+        "videoCodec": video_codec,
+        "audioCodec": audio_codec,
+        "fps": container_fps,
+        "hwdec": hwdec,
+        "fileFormat": file_format,
+        "danmakuOn": danmaku_on,
+        "danmakuDelay": danmaku_delay,
+        "danmakuInfo": danmaku_info,
+    }))
+}
+
+/// [lc-1942] 覆盖层菜单通用写属性（sid/aid/vid/secondary-sid/sub-font-size/sub-pos/
+/// sub-border-size/播放速度等）。值用 JSON 原生类型：mpv 既接受数字也接受 `"no"`/`"auto"`。
+#[tauri::command]
+async fn mpv_set_prop(
+    state: State<'_, AppState>,
+    name: String,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    let slot = state.mpv.lock().await;
+    if let Some(m) = slot.as_ref() {
+        m.command(json!(["set_property", name, value])).await?;
+    }
+    Ok(())
+}
+
+/// [lc-1942] 选集：跳到播放列表第 index 项（0 起）。
+/// 老版本 mpv 没有 `playlist-play-index`，失败时回退 `set playlist-pos`。
+#[tauri::command]
+async fn mpv_playlist_play_index(state: State<'_, AppState>, index: i64) -> Result<(), String> {
+    let slot = state.mpv.lock().await;
+    if let Some(m) = slot.as_ref() {
+        if m.command(json!(["playlist-play-index", index])).await.is_err() {
+            m.command(json!(["set_property", "playlist-pos", index])).await?;
+        }
+    }
+    Ok(())
+}
+
 /// [playlist] 下一集 / 上一集：直接操作 mpv 播放列表（uosc 底栏的「上一集/下一集」按钮
 /// 走的就是 input.conf 里的 `playlist-prev`/`playlist-next`；这两个命令供手柄/页面调用）。
 /// 单集场景下 mpv 的 playlist-next/prev 会返回 success 但不动作，属预期。
@@ -4952,6 +5066,10 @@ pub fn run() {
             mpv_toggle_maximize,
             mpv_script_binding,
             player_chrome_state,
+            // [lc-1942] 覆盖层磨砂菜单：数据快照 + 通用写属性 + 选集跳转
+            player_menu_data,
+            mpv_set_prop,
+            mpv_playlist_play_index,
             // [playlist] 整季播放列表：上下集操作 + 当前位置查询
             mpv_next_episode,
             mpv_prev_episode,

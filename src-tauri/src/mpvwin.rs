@@ -26,11 +26,12 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible,
-    SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_HWNDPARENT, SW_HIDE,
-    SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+    EnumWindows, GetCursorPos, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
+    IsIconic, IsWindow, IsWindowVisible, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE,
+    GWLP_HWNDPARENT, HWND_TOPMOST, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
 };
 
 /// 当前已收编的 mpv 顶层窗口（isize，全仓 HWND 约定；None = 未收编 / 已失效清理）。
@@ -54,9 +55,92 @@ static EMBED_RECT: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
 /// [lc-1924] UI 覆盖层是否成功建成**透明**窗。透明成功 → UI 层 owned by mpv（浮在视频上）；
 /// 透明失败（WebView2 拒绝）→ 退回旧方向（mpv owned by UI），宁可控件不可见也不能用不透明层盖住画面。
 static OVERLAY_TRANSPARENT: AtomicBool = AtomicBool::new(false);
+/// [lc-1939] 覆盖层 UI 是否可用（透明建窗成功）。false = 退回 mpv 进程内 Lua OSC。
+static OVERLAY_UI_READY: AtomicBool = AtomicBool::new(false);
+/// [lc-1939] 50ms 光标探针是否已在跑（防重复 spawn）。
+static OVERLAY_PROBE_RUNNING: AtomicBool = AtomicBool::new(false);
+/// [lc-1939] 33ms 几何跟随循环是否已在跑（起播前预启动 + 收编后再调，需幂等）。
+static OVERLAY_FOLLOW_RUNNING: AtomicBool = AtomicBool::new(false);
 
 pub fn set_overlay_transparent(ok: bool) {
     OVERLAY_TRANSPARENT.store(ok, Ordering::SeqCst);
+    OVERLAY_UI_READY.store(ok, Ordering::SeqCst);
+}
+
+pub fn overlay_ui_ready() -> bool {
+    OVERLAY_UI_READY.load(Ordering::SeqCst)
+}
+
+/// [lc-1939] 覆盖层窗样式：NOACTIVATE（点击不抢焦点）+ TOOLWINDOW（不进任务栏/Alt-Tab）
+/// + **LAYERED**（Polaris MPV Overlay 常驻 WS_EX_LAYERED；WebView2 的逐像素透明靠它合成）。
+pub fn overlay_style_noactivate(hwnd: isize) {
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return;
+    }
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd as _, GWL_EXSTYLE);
+        let next = ex
+            | (WS_EX_NOACTIVATE as isize)
+            | (WS_EX_TOOLWINDOW as isize)
+            | (WS_EX_LAYERED as isize);
+        if next != ex {
+            SetWindowLongPtrW(hwnd as _, GWL_EXSTYLE, next);
+        }
+    }
+}
+
+/// [lc-1939] **只**拨 WS_EX_TRANSPARENT，保留 WS_EX_LAYERED。
+///
+/// 不能用 tauri 的 `set_ignore_cursor_events`：tao 把这两位置成同一组
+/// （`IGNORE_CURSOR_EVENT → WS_EX_TRANSPARENT | WS_EX_LAYERED`），
+/// 关穿透时会连 LAYERED 一起摘掉 → 覆盖层失去逐像素透明、整块黑盖死视频。
+/// 这正是 lc-1924~1931「控件一出现画面就黑/点不动」的真根因；Polaris 的做法是
+/// LAYERED 常驻、只拨 TRANSPARENT（实测 ex 恒含 0x80000）。
+pub fn overlay_set_clickthrough(hwnd: isize, on: bool) {
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return;
+    }
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd as _, GWL_EXSTYLE);
+        let next = if on {
+            ex | (WS_EX_TRANSPARENT as isize)
+        } else {
+            ex & !(WS_EX_TRANSPARENT as isize)
+        };
+        if next != ex {
+            SetWindowLongPtrW(hwnd as _, GWL_EXSTYLE, next);
+        }
+    }
+}
+
+/// [lc-1939] 置顶覆盖层：直接 SetWindowPos(HWND_TOPMOST)，**不走 Tauri 的
+/// set_always_on_top** —— tao 会从 WindowFlags 重算整份 style/exstyle，
+/// 把手工加的 LAYERED/NOACTIVATE/TRANSPARENT 一并抹掉（异步执行，顺序不可控）。
+pub fn overlay_set_topmost(hwnd: isize) {
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return;
+    }
+    unsafe {
+        SetWindowPos(
+            hwnd as _,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+}
+
+/// [lc-1939] 显示覆盖层但**不激活**（Tauri show() 会抢前台，播放器窗不允许）。
+pub fn overlay_show_noactivate(hwnd: isize) {
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return;
+    }
+    unsafe {
+        ShowWindow(hwnd as _, SW_SHOWNOACTIVATE);
+    }
 }
 
 /// [lc-1911] 进内嵌前的 mpv `script-opts` 原串（leave 时还原，独立窗口的 uosc 顶栏要回来）。
@@ -231,6 +315,9 @@ pub fn take_saved_script_opts() -> Option<String> {
 /// mpv 是锚、控制层窗是随动 —— 与 Polaris 的 WorkAreaListener 同思路。
 pub fn spawn_overlay_follow(app: tauri::AppHandle) {
     use tauri::Manager;
+    if OVERLAY_FOLLOW_RUNNING.swap(true, Ordering::SeqCst) {
+        return;
+    }
     tauri::async_runtime::spawn(async move {
         // [lc-1923] 残影修复：覆盖层是**不透明**窗（WebView2 不透明渲染 + 控制层纯黑底），
         // 拖动 mpv（原生拖窗，DWM 直接搬运视频窗）时它最多慢 1~2 帧 —— 那一两帧里
@@ -304,6 +391,69 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                 }
             }
         }
+        OVERLAY_FOLLOW_RUNNING.store(false, Ordering::SeqCst);
+    });
+}
+
+/// [lc-1939] 50ms 光标探针（Polaris overlay_wiring.rs 同款）：
+/// 覆盖层默认 WS_EX_TRANSPARENT（点击穿透给 mpv），**只有**光标压在可交互 DOM 上时才关穿透。
+/// 但穿透态下 WebView 收不到 mousemove，所以由 Rust 用全局 GetCursorPos 采样，
+/// 把窗口内物理坐标直接 eval 给前端（`window.__aniboxProbe`）做 elementFromPoint 命中测试。
+///
+/// 为什么不用 mpv 的 mouse-pos：mpv 报的是它自己的客户区坐标，覆盖层被穿透/被 mpv 压住时
+/// 事件链会滞后或压根没有（lc-1924~1931 的坑）；全局光标是唯一不依赖窗口事件源的坐标真源。
+pub fn spawn_overlay_probe(app: tauri::AppHandle) {
+    use tauri::Manager;
+    if OVERLAY_PROBE_RUNNING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        let mut was_inside = false;
+        while embed_is_active() && overlay_ui_ready() {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            if !embed_is_active() {
+                break;
+            }
+            let Some(ov) = app.get_webview_window("mpv_overlay") else {
+                break;
+            };
+            let Ok(h) = ov.hwnd() else { continue };
+            let hwnd = h.0 as isize;
+            unsafe {
+                if IsWindow(hwnd as _) == 0 {
+                    break;
+                }
+                if IsWindowVisible(hwnd as _) == 0 {
+                    was_inside = false;
+                    continue;
+                }
+                let mut pt = POINT { x: 0, y: 0 };
+                if GetCursorPos(&mut pt) == 0 {
+                    continue;
+                }
+                let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                if GetWindowRect(hwnd as _, &mut rc) == 0 {
+                    continue;
+                }
+                let inside = pt.x >= rc.left && pt.x < rc.right && pt.y >= rc.top && pt.y < rc.bottom;
+                if inside {
+                    let payload = serde_json::json!({
+                        "inside": true,
+                        "physicalX": pt.x - rc.left,
+                        "physicalY": pt.y - rc.top,
+                        "surfacePhysicalWidth": rc.right - rc.left,
+                        "surfacePhysicalHeight": rc.bottom - rc.top,
+                    });
+                    let _ = ov.eval(&format!(
+                        "window.__aniboxProbe&&window.__aniboxProbe({payload})"
+                    ));
+                } else if was_inside {
+                    let _ = ov.eval("window.__aniboxProbe&&window.__aniboxProbe({inside:false})");
+                }
+                was_inside = inside;
+            }
+        }
+        OVERLAY_PROBE_RUNNING.store(false, Ordering::SeqCst);
     });
 }
 

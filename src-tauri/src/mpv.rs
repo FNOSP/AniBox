@@ -60,6 +60,17 @@ fn pstate_update(app: &tauri::AppHandle, key: &str, val: serde_json::Value, forc
     emit_player(app, "mpv-pstate", snap);
 }
 
+/// [lc-1939] 覆盖层 UI 的**拉取式**状态源（Polaris 覆盖层的数据同样来自主进程）。
+/// 进程内事件推送在历史版本里到不了覆盖层（lc-1924~1931），所以前端另有一条 250ms
+/// 轮询兜底；两条通道写的是同一份 PSTATE，谁到算谁的。
+pub fn pstate_snapshot() -> serde_json::Value {
+    let g = PSTATE.lock().unwrap_or_else(|e| e.into_inner());
+    match g.as_ref() {
+        Some(m) => serde_json::Value::Object(m.clone()),
+        None => serde_json::Value::Object(serde_json::Map::new()),
+    }
+}
+
 
 /// [lc-1926] 播放事件发射：**广播 + 定向到 mpv_overlay**。
 /// 实测 `app.emit` 到不了播放器覆盖层窗口（`mpv-load{loaded}` 收不到 → 一直「正在打开」，
@@ -69,7 +80,7 @@ pub fn emit_player(app: &tauri::AppHandle, event: &str, payload: serde_json::Val
     let _ = app.emit_to("mpv_overlay", event, payload);
 }
 
-const OBSERVED: [(u64, &str); 16] = [
+const OBSERVED: [(u64, &str); 17] = [
     (1, "time-pos"),
     (2, "duration"),
     (3, "pause"),
@@ -99,6 +110,8 @@ const OBSERVED: [(u64, &str); 16] = [
     // [lc-1915] 控制层鼠标位置桥：mpv mouse-pos → user-data → 读线程转发 overlay-mouse
     (15, "user-data/anibox-mouse-x"),
     (16, "user-data/anibox-mouse-y"),
+    // [lc-1939] 置顶态：覆盖层顶栏「置顶」按钮的高亮/动作依据
+    (17, "ontop"),
 ];
 
 /// mpv IPC 连接类型：Windows 是命名管道（用 File 打开），
@@ -345,7 +358,9 @@ impl MpvSession {
                         .to_string(),
                 );
                 args.push("--script-opts-append=uosc-idle_branding=no".to_string());
-                args.push("--script-opts-append=fntv_osc-enabled=yes".to_string());
+                // [lc-1939] 控件由 Tauri 覆盖层（PlayerChrome）绘制：Lua OSC 只保留
+                // input.conf 的左键分发（画面区点击→暂停），一个像素都不画。
+                args.push("--script-opts-append=fntv_osc-overlay_controls=yes".to_string());
                 args.push("--script-opts-append=uosc-anibox_hide_timeline=yes".to_string());
                 // [lc-1924] 原生 UI 全面停用：控件与提示都由 App 覆盖层 DOM 承担
                 //（Polaris 同款：其 osc-cinema 自绘底栏被 if false 关掉、改由 mpv-overlay 接管）
@@ -464,6 +479,10 @@ impl MpvSession {
                                     crate::mpvwin::set_owner_follow(false);
                                     crate::mpvwin::pin_to_owner(owner);
                                     crate::mpvwin::spawn_overlay_follow(app2.clone());
+                                    // [lc-1939] Polaris 同款 50ms 全局光标探针：
+                                    // 把窗口内物理坐标推给覆盖层做 elementFromPoint 命中测试，
+                                    // 命中控件才关 WS_EX_TRANSPARENT（否则点击/拖窗全归 mpv）。
+                                    crate::mpvwin::spawn_overlay_probe(app2.clone());
                                     crate::libmpv::trace(&format!(
                                         "[lc-1913] 内嵌收编完成（spawn 侧）：pid={pid2} owner=mpv_overlay(0x{owner:X})，已满屏钉住"
                                     ));
@@ -637,6 +656,9 @@ impl MpvSession {
                             "start-file" => {
                                 *load_started2.lock().unwrap() = Some(std::time::Instant::now());
                                 let t = title_slot.lock().unwrap().clone().unwrap_or_default();
+                                // [lc-1939] 覆盖层轮询快照同步加载态/片名
+                                pstate_update(&app2, "phase", json!("start"), true);
+                                pstate_update(&app2, "title", json!(t.clone()), true);
                                 emit_player(&app2, "mpv-load", json!({ "phase": "start", "title": t }));
                             }
                             "file-loaded" => {
@@ -648,6 +670,8 @@ impl MpvSession {
                                     .unwrap_or(0);
                                 crate::libmpv::trace(&format!("mpv file-loaded（媒体就绪，加载耗时 {took}ms）"));
                                 let t = title_slot.lock().unwrap().clone().unwrap_or_default();
+                                pstate_update(&app2, "phase", json!("loaded"), true);
+                                pstate_update(&app2, "title", json!(t.clone()), true);
                                 emit_player(&app2, "mpv-load", json!({ "phase": "loaded", "title": t }));
                                 // [lc-1841] start 只作用于本次加载（续播 seek 在加载时已消费）：
                                 // file-loaded 即清回 none，整季列表自动切下一集不会被误 seek。
@@ -705,6 +729,7 @@ impl MpvSession {
                                         let _ = f.flush();
                                     }
                                 } else {
+                                    pstate_update(&app2, "phase", json!("ended"), true);
                                     emit_player(&app2, "mpv-load", json!({ "phase": "ended", "reason": reason }));
                                 }
                             }
@@ -754,6 +779,7 @@ impl MpvSession {
                             10 => pstate_update(&app2, "plPos", data, true),
                             11 => pstate_update(&app2, "plCount", data, true),
                             12 => pstate_update(&app2, "percent", data, false),
+                            17 => pstate_update(&app2, "ontop", data, true),
                             _ => {}
                         }
                     }

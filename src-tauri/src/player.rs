@@ -337,6 +337,33 @@ async fn launch_mpv(
     if should_seek(resume_secs, duration_secs) {
         extra.push(format!("--start={}", format_seek(resume_secs)));
     }
+    // [lc-1939] 覆盖层是播放期唯一可见的 UI：**每次起播**都要显示它、藏主窗、启动跟随/探针。
+    // 不能只挂在第一次 spawn 的路径里 —— 复用 mpv 会话（换集/退出后再播）根本不走
+    // MpvSession::launch，否则表现就是「第二次播放没有控件 / 主界面盖着视频」。
+    #[cfg(target_os = "windows")]
+    if cfg.player_open_mode == "app" {
+        if let Some(ov) = crate::show_player_overlay(app) {
+            crate::mpvwin::embed_set_active(true);
+            // 复用会话时 mpv 窗口还在（exit 时被 SW_HIDE），这里按新播放窗矩形重新钉位并唤显；
+            // 新 spawn 时 hwnd 为空，走 --geometry。
+            if let Some(hwnd) = crate::mpvwin::get_hwnd() {
+                if let (Ok(p), Ok(s)) = (ov.outer_position(), ov.outer_size()) {
+                    crate::mpvwin::embed_apply_rect(
+                        hwnd,
+                        p.x,
+                        p.y,
+                        s.width as i32,
+                        s.height as i32,
+                    );
+                }
+            }
+            crate::mpvwin::spawn_overlay_follow(app.clone());
+            crate::mpvwin::spawn_overlay_probe(app.clone());
+            if let Some(m) = app.get_webview_window("main") {
+                let _ = m.hide();
+            }
+        }
+    }
     let mut slot = state.mpv.lock().await;
     let existing = match slot.as_ref() {
         Some(m) if !m.is_dead().await => Some(m.clone()),

@@ -142,3 +142,16 @@ h3 {
   color: var(--text-strong);
   background: var(--hover);
 }
+
+/* [lc-1989] 侧栏开发中标签（JavHub / 云盘接入） */
+.side-devtag {
+  margin-left: auto;
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  opacity: 0.9;
+  flex: none;
+}

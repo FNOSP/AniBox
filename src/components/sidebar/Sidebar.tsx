@@ -124,6 +124,7 @@ export function Sidebar({
           <IcoJavHubL size={15} strokeWidth={1.8} />
         </span>{" "}
         JavHub
+        <span className="side-devtag">开发中</span>
       </div>
       {/* [lc-1779] 115 网盘：扫码登录后浏览/播放网盘媒体（直链或服务端转码） */}
       <div className={`side-item ${activeGuid === "_cloud115" ? "active" : ""}`} onClick={onOpenCloud115}>
@@ -131,6 +132,7 @@ export function Sidebar({
           <IcoCloudL size={15} strokeWidth={1.8} />
         </span>{" "}
         云盘接入
+        <span className="side-devtag">开发中</span>
       </div>
       <div className="side-head">分类</div>
       {SIDEBAR_CATS.map((c) => {

@@ -811,3 +811,6 @@
   .cloud-page .libf-open { transition: none; }
   .cloud-page .libf-open:active { transform: none; }
 }
+
+/* [lc-1986] 容器换标准 .content 骨架（对齐 JavHub），废弃 .c115 自带 980 限宽+独立滚动 */
+.cloud-page .c115-login { width: 100%; max-width: 640px; margin: 0 auto; }

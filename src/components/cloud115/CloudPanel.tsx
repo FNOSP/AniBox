@@ -416,7 +416,7 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
   };
 
   return (
-    <main className="c115 cloud-page">
+    <main className="content cloud-page">
       {/* 头部与库页同构：圆形返回 + 标题 */}
       <div className="page-head">
         <button className="back" title="返回" onClick={handleBack}>‹</button>

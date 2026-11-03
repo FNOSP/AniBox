@@ -1,5 +1,5 @@
 /* [lc-1907d] JavHub 主页面 —— 信息结构对照 JAVCloudHub 的应用侧栏：
-   资料库（媒体库 / 演员库 / 厂商库 / 标签库）· 工作区（概览 / 工作台）· 系统（工具 / 关于）。
+   资料库（媒体库 / 演员库 / 厂商库 / 标签库）· 工作区（概览：统计 + 扫描/刮削工具）· 系统（工具 / 关于）。
    原版左侧竖导航改为**顶部横排胶囊**：默认单图标，选中展开标签名（与设置弹层同一套交互）。
    数据：jav_library_all（网盘扫描分流 + 飞牛媒体库扫描都落在这里）；播放走 cloud_play / play_item。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -8,7 +8,6 @@ import { imgUrl } from "../../lib/images";
 import { JavSettingsModal } from "./JavSettingsModal";
 import { JavDetailDrawer, type JavEntryT } from "./JavDetailDrawer";
 import {
-  Box as IcoWork,
   Building2 as IcoStudio,
   Clapperboard as IcoJavL,
   FolderOpen as IcoFolderL,
@@ -22,7 +21,7 @@ import {
 type JavLibT = { provider: string; label?: string; scannedAtMs: number; count: number; entries: JavEntryT[] };
 type ProviderInfo = { id: string; label: string; logged: boolean; userName: string };
 
-type View = "library" | "actors" | "studios" | "tags" | "overview" | "workbench";
+type View = "library" | "actors" | "studios" | "tags" | "overview";
 
 /* 分节导航（对照 JAVCloudHub 侧栏的三组：资料库 / 工作区 / 系统） */
 const NAV: { group: string; items: { key: View; label: string; icon: typeof IcoGridL }[] }[] = [
@@ -37,10 +36,7 @@ const NAV: { group: string; items: { key: View; label: string; icon: typeof IcoG
   },
   {
     group: "工作区",
-    items: [
-      { key: "overview", label: "概览", icon: IcoDash },
-      { key: "workbench", label: "工作台", icon: IcoWork },
-    ],
+    items: [{ key: "overview", label: "概览", icon: IcoDash }],
   },
 ];
 
@@ -399,11 +395,6 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
           <div className="javset-ro">
             {libs.map((l) => `${l.label || labels[l.provider] || l.provider}：${l.count} 部`).join("，") || "还没有数据"}
           </div>
-        </>
-      )}
-
-      {!loading && view === "workbench" && (
-        <>
           <div className="javset-item boolrow" style={{ cursor: "default" }}>
             <label><span className="bl">扫描飞牛媒体库</span></label>
             <span>

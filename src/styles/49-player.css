@@ -149,280 +149,398 @@
   }
 }
 
-/* ─────────────── [lc-1915] mpv_overlay 控制层（PlayerChrome） ───────────────
-   独立播放窗的控制层：全窗透明 + 默认鼠标全穿透（Rust set_ignore_cursor_events(true)），
-   仅悬停到 [data-chrome] 元素时由命中测试关穿透让按钮可点 —— 点击/滚轮其余区域
-   全部落到 mpv。 */
+/* ═══════ [lc-1939] 播放器覆盖层（Polaris mpv-overlay 视觉值） ═══════
+   控件画在 DOM 里，mpv 只负责播；覆盖层常开 WS_EX_TRANSPARENT（点画面=mpv），
+   50ms 光标探针命中 [data-chrome-hit] 时才关穿透。
+   数值取自 Polaris：dock rgba(18,18,18,.88)/r20/p4/gap4，按钮 34×34/r17，
+   播放 40×40/r20，进度轨 7px（悬停 10）/r5，时间 12px/700，顶栏圆钮 26~28，
+   全层只有底部 132px 对比渐变 —— 顶部没有任何遮罩或渐变。 */
 .player-chrome {
   position: fixed;
   inset: 0;
-  /* [lc-1925] 覆盖层浮在视频之上且要收全部点击（空白区手势见组件内注释），
-     这里必须是 auto —— 之前 none 会让整层穿透，等于所有控件都点不动。 */
-  pointer-events: auto;
-  user-select: none;
-  /* [lc-1924] 覆盖层现在浮在 mpv 视频**之上**（owner 方向翻转 + 透明窗）：
-     这里必须透明，否则整块黑会把画面盖死。视频未出画前的黑由 .chrome-opening 承担。 */
   background: transparent;
+  /* 空白处绝不拦截：elementFromPoint 只认带 data-chrome-hit 的元素 */
+  pointer-events: none;
+  user-select: none;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
+    "Microsoft YaHei", system-ui, sans-serif;
 }
-.player-chrome .chrome-back {
+.pc-layer {
   position: absolute;
-  top: 18px;
-  left: 18px;
-  width: 42px;
-  height: 42px;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 250ms cubic-bezier(.25, 1, .25, 1),
+    transform 250ms cubic-bezier(.25, 1, .25, 1), visibility 0s;
+}
+.player-chrome.pc-hidden .pc-layer {
+  opacity: 0;
+  transform: translateY(10px);
+  visibility: hidden;
+  transition: opacity 200ms ease-in, transform 200ms ease-in, visibility 0s 200ms;
+}
+/* 只压暗底部（Polaris 唯一的一条对比渐变）；顶部不做任何压暗 */
+.pc-scrim {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 132px;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0%,
+    rgba(0, 0, 0, .24) 42%,
+    rgba(0, 0, 0, .58) 100%
+  );
+  pointer-events: none;
+}
+
+/* ── 顶栏：返回 + 片名；右上窗控 ── */
+.pc-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 14px 0 16px;
+  pointer-events: none;
+}
+.pc-top-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: auto;
+}
+.pc-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  pointer-events: none;
+}
+.pc-title {
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -.1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 42vw;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .95), 0 2px 7px rgba(0, 0, 0, .7);
+}
+.pc-ep {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, .16);
+  color: rgba(255, 255, 255, .92);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .8);
+}
+.pc-round {
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border: 0;
   border-radius: 50%;
-  background: rgba(12, 14, 20, 0.55);
-  color: rgba(255, 255, 255, 0.92);
   display: flex;
   align-items: center;
   justify-content: center;
+  background: rgba(0, 0, 0, .45);
+  color: rgba(255, 255, 255, .92);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .25), inset 0 0 0 .5px rgba(255, 255, 255, .08);
   cursor: pointer;
   pointer-events: auto;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  transition: background 0.15s ease, transform 0.12s ease;
+  transition: background 160ms ease, color 160ms ease, transform 120ms ease;
 }
-.player-chrome .chrome-back:hover {
-  background: rgba(12, 14, 20, 0.82);
+.pc-round:hover {
+  background: rgba(0, 0, 0, .6);
+  color: #fff;
 }
-.player-chrome .chrome-back:active {
-  transform: scale(0.94);
+.pc-round:active {
+  transform: scale(.88);
 }
-@media (prefers-reduced-motion: reduce) {
-  .player-chrome .chrome-back {
-    transition: none;
-  }
+.pc-round.pc-close:hover {
+  background: rgba(229, 72, 77, .78);
+}
+.pc-round.pc-active {
+  color: #fff;
+  box-shadow: 0 0 0 .5px rgba(255, 255, 255, .28), 0 1px 2px rgba(0, 0, 0, .25),
+    inset 0 0 0 .5px rgba(255, 255, 255, .18);
+}
+.pc-round svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.8;
 }
 
-/* [lc-1918] 播放窗加载态：mpv 出画前 转圈 + 片名 居中，loaded 后淡出 */
-.chrome-opening {
+/* ── 行 1：已播 —— 进度条 —— 剩余 ── */
+.pc-progress {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 56px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+}
+.pc-time {
+  flex: none;
+  min-width: 48px;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, .94);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 1), 0 2px 7px rgba(0, 0, 0, .92);
+}
+.pc-time-right {
+  text-align: right;
+}
+.pc-track {
+  position: relative;
+  flex: 1;
+  height: 7px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, .32);
+  box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .6);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: height 150ms ease;
+}
+/* 透明命中缓冲：上下各扩 8px（Polaris 同款），细轨也好点中 */
+.pc-track::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -8px;
+  bottom: -8px;
+}
+.pc-track:hover,
+.pc-track.pc-dragging {
+  height: 10px;
+  box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .66);
+}
+.pc-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 5px;
+  background: #fff;
+  box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .18), inset -1px 0 0 rgba(0, 0, 0, .62),
+    inset 0 1px 0 rgba(255, 255, 255, 1);
+  pointer-events: none;
+}
+.pc-knob {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .45), 0 0 0 .5px rgba(0, 0, 0, .14);
+  transform: translate(-50%, -50%) scale(.6);
+  opacity: 0;
+  transition: opacity 160ms ease, transform 220ms cubic-bezier(.2, .9, .25, 1.1);
+  pointer-events: none;
+}
+.pc-track:hover .pc-knob,
+.pc-track.pc-dragging .pc-knob {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+/* ── 行 2：左 / 中 / 右 三段 ── */
+.pc-bottom {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+.pc-left {
+  flex: 0 0 auto;
+}
+.pc-center {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+}
+.pc-right {
+  margin-left: auto;
+  display: flex;
+}
+.pc-dock {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 20px;
+  background: rgba(18, 18, 18, .88);
+  border: .5px solid rgba(255, 255, 255, .08);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .45), inset 0 0 0 .5px rgba(255, 255, 255, .08);
+  pointer-events: auto;
+}
+/* 中央簇不加底衬（Polaris .dock-bare）：播放键本身就是主角 */
+.pc-dock-bare {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  gap: 8px;
+}
+.pc-btn {
+  height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  cursor: pointer;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+  user-select: none;
+  transition: transform 160ms cubic-bezier(.34, 1.5, .64, 1), background 140ms ease;
+}
+.pc-btn:hover {
+  background: rgba(255, 255, 255, .16);
+}
+.pc-btn:active {
+  transform: scale(.9);
+  transition: transform 80ms cubic-bezier(.3, 0, .6, 1);
+}
+.pc-btn:disabled {
+  opacity: .25;
+  cursor: default;
+  pointer-events: none;
+}
+.pc-btn svg {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  stroke-width: 2;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .95)) drop-shadow(0 2px 5px rgba(0, 0, 0, .65));
+}
+.pc-btn.pc-icon {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 17px;
+}
+.pc-btn.pc-play {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 20px;
+}
+/* 播放键始终纯图标，不出现 hover 方块（Polaris #bPlay） */
+.pc-btn.pc-play:hover {
+  background: transparent;
+}
+.pc-btn.pc-play:active {
+  transform: scale(.86);
+  transition-duration: 40ms;
+}
+.pc-btn.pc-play svg {
+  width: 26px;
+  height: 26px;
+}
+.pc-btn.pc-text {
+  font-weight: 700;
+  letter-spacing: -.2px;
+}
+
+/* 音量：悬停展开滑条（Polaris 音量药丸的简化版） */
+.pc-vol {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.pc-vol-slider {
+  width: 0;
+  opacity: 0;
+  pointer-events: none;
+  accent-color: #fff;
+  cursor: pointer;
+  transition: width 180ms cubic-bezier(.25, 1, .25, 1), opacity 150ms ease;
+}
+.pc-vol:hover .pc-vol-slider,
+.pc-vol-slider:focus-visible {
+  width: 84px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ── 加载态：mpv 出画前 转圈 + 片名 ──
+   [lc-1939] 加载期铺纯黑：覆盖层是透明窗，mpv 出画前若不着色会直接透出桌面/底层窗口。
+   这一层只存在于「加载中」，loaded 后 opacity 0，不影响视频观感。 */
+.pc-opening {
   position: absolute;
   inset: 0;
+  z-index: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 12px;
-  opacity: 1;
-  transition: opacity 0.2s ease-in;
+  background: #000;
   pointer-events: none;
+  opacity: 1;
+  transition: opacity 200ms ease-in;
 }
-.chrome-opening.gone {
+.pc-opening.gone {
   opacity: 0;
 }
-.chrome-opening .player-spin {
+.pc-opening .player-spin {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.18);
+  border: 2px solid rgba(255, 255, 255, .18);
   border-top-color: #fff;
-  animation: playerSpin 0.8s linear infinite;
+  animation: playerSpin .8s linear infinite;
 }
-.chrome-opening-title {
+.pc-opening-title {
   max-width: 70%;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.78);
-  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, .78);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .9);
 }
+
 @media (prefers-reduced-motion: reduce) {
-  .chrome-opening {
+  .pc-layer,
+  .pc-round,
+  .pc-btn,
+  .pc-track,
+  .pc-knob,
+  .pc-vol-slider,
+  .pc-opening {
     transition: none;
   }
-  .chrome-opening .player-spin {
+  .pc-opening .player-spin {
     animation: none;
   }
 }
-
-/* ═══════════ [lc-1924] 播放器覆盖层 UI（Polaris 覆盖层同款：顶栏 + 底栏） ═══════════
-   布局口径取 osc-cinema.lua 实测值：顶栏 40、底栏按钮区距底 30、进度条高 8（hover 抬到 10）、
-   控件间距 14、3 秒自动隐藏。视觉走 AniBox 主题 token。 */
-.player-chrome {
-  transition: opacity 0.22s ease-out;
-}
-.player-chrome.hidden .chrome-top,
-.player-chrome.hidden .chrome-bottom {
-  opacity: 0;
-  pointer-events: none;
-}
-.player-chrome .chrome-top,
-.player-chrome .chrome-bottom {
-  transition: opacity 0.22s ease-out, transform 0.22s ease-out;
-}
-
-/* ── 顶栏 ── */
-.chrome-top {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 56px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 16px;
-  pointer-events: auto;
-  background: linear-gradient(180deg, rgba(8, 10, 16, 0.72) 0%, rgba(8, 10, 16, 0) 100%);
-}
-.chrome-top-right { margin-left: auto; display: flex; gap: 8px; }
-
-.chrome-title {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #f2f4f8;
-  font-size: 14px;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
-}
-.chrome-title .ct-main {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-}
-.chrome-title .ct-ep {
-  flex: none;
-  font-size: 12px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.14);
-  font-weight: 500;
-}
-
-/* ── 通用圆形按钮 ── */
-.chrome-btn {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border: 0;
-  border-radius: 50%;
-  background: rgba(16, 19, 28, 0.55);
-  color: #eef1f6;
-  cursor: pointer;
-  pointer-events: auto;
-  transition: background 0.15s, transform 0.12s, color 0.15s;
-  backdrop-filter: blur(6px);
-}
-.chrome-btn:hover { background: rgba(255, 255, 255, 0.2); }
-.chrome-btn:active { transform: scale(0.94); }
-.chrome-btn.primary {
-  width: 52px;
-  height: 52px;
-  background: rgba(255, 255, 255, 0.92);
-  color: #12151d;
-}
-.chrome-btn.primary:hover { background: #fff; }
-.chrome-btn.text {
-  width: auto;
-  height: 40px;
-  padding: 0 12px;
-  font-size: 14px;
-  border-radius: 999px;
-  font-size: 12.5px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-/* ── 底栏 ── */
-.chrome-bottom {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 0 16px 30px;
-  pointer-events: auto;
-  background: linear-gradient(0deg, rgba(8, 10, 16, 0.78) 0%, rgba(8, 10, 16, 0) 100%);
-}
-/* 进度条命中区（Polaris seekbarHitPadding=30 → 上下各 15px 可抓） */
-.chrome-track {
-  padding: 10px 0;
-  cursor: pointer;
-  touch-action: none;
-}
-.chrome-track-bg {
-  position: relative;
-  height: 8px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.22);
-  transition: height 0.15s ease-out;
-}
-.chrome-track:hover .chrome-track-bg { height: 10px; }
-.chrome-track-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  border-radius: 4px;
-  background: #fff;
-}
-.chrome-track-knob {
-  position: absolute;
-  top: 50%;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
-  transform: translate(-50%, -50%) scale(0.85);
-  opacity: 0;
-  transition: opacity 0.15s, transform 0.15s;
-}
-.chrome-track:hover .chrome-track-knob { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-
-.chrome-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-top: 2px;
-}
-.chrome-time {
-  flex: none;
-  min-width: 120px;
-  color: #f2f4f8;
-  font-size: 14px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
-}
-.chrome-time i { font-style: normal; opacity: 0.5; margin: 0 4px; }
-
-.chrome-ctrl {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-}
-.chrome-right {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-/* 音量：滑条只在悬停时展开（Polaris 的 iOS 风音量滑块口径） */
-.chrome-vol { display: flex; align-items: center; gap: 6px; }
-.chrome-vol-slider {
-  width: 0;
-  opacity: 0;
-  transition: width 0.18s ease-out, opacity 0.18s;
-  accent-color: #fff;
-  cursor: pointer;
-}
-.chrome-vol:hover .chrome-vol-slider { width: 92px; opacity: 1; }
-
-@media (prefers-reduced-motion: reduce) {
-  .player-chrome, .player-chrome .chrome-top, .player-chrome .chrome-bottom,
-  .chrome-btn, .chrome-track-bg, .chrome-track-knob, .chrome-vol-slider { transition: none; }
-}
-
-/* [lc-1924] 图标尺寸兜底：lucide 组件的 width/height 会被某些全局 svg 规则的
-   等比缩放带偏（截图里按钮图标小得看不清），这里显式锁定并禁止压缩 */
-.chrome-btn svg { flex: none; width: 20px; height: 20px; }
-.chrome-btn.primary svg { width: 24px; height: 24px; }
-.chrome-btn.text svg { width: 18px; height: 18px; }

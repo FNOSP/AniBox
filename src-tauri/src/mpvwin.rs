@@ -52,6 +52,33 @@
 //!     控件带内」翻可点位，完全不依赖 WebView elementFromPoint；前端从未上报时用
 //!     顶栏/底栏固定带兜底。WebView 判定链全挂时控件仍可点。
 //!
+//! [lc-1974] **全屏废除穿透机制（用户第 N 次实证后的模式级修法）**：lc-1964 的
+//! z 序自愈 + 探针热区直翻上线后用户依旧「全屏全部按钮失效、点击变播放/暂停」。
+//! 实机日志法证（%TEMP%/anibox.log + anibox-mpv.log，全屏 app 31.4s~44.3s 段）：
+//!   · mpv 侧 `cycle pause` 实证点击物理漏入 mpv；
+//!   · hover 事务 ack 全部 ok=true（穿透位读回真值，位确实翻过）—— 问题不在拨位；
+//!   · `全屏中锚窗丢失 TOPMOST → 复位` 每 33ms 一条贯穿整个全屏：mpv 的
+//!     ontop_mode.lua 反复摘锚窗 TOPMOST，跟随循环用 HWND_TOPMOST 重插把它放回
+//!     **带顶（盖到覆盖层之上）**，旧 z 序断言带 band_consistent 门，锚窗刚被抬回
+//!     的那一拍跳过修复 —— 「mpv 在上」的窗口期反复出现，真实点击落进 mpv；
+//!   · `探针热区直翻可点` 全程零触发：chrome 隐藏时前端 1s 心跳上报空表且新鲜，
+//!     `hotzones_evaluate` 恒走 reported+空表 → 恒不命中，保险丝（D）从未参战。
+//! 结论：穿透默认态在全屏下没有一环是可靠的，而全屏**根本不需要拖窗** —— 穿透的
+//! 全部收益为零、全部风险照单全收。结构性修法（正确性优先）：
+//!   ① **全屏输入锁**（`FULLSCREEN_INPUT_LOCK`）：进全屏即锁，穿透位锁定为「恒摘除」；
+//!     `overlay_apply_input_passthrough` 裁决拒绝任何置位请求（ok=true，不触发前端
+//!     重试风暴）；hover=false 请求 ack 按请求值谎报成功，真实状态由锁保证。
+//!   ② **覆盖层整窗可点**：视频区点击由前端按 `data-chrome-hit` 分流，经既有
+//!     `mpv_forward_mouse`（lc-1949 PostMessage 链原样复用）投给 mpv —— 单击暂停/
+//!     双击全屏/滚轮照常是 mpv 原生行为；全屏不需要拖窗，「慢半拍」可接受。
+//!   ③ **跟随循环全屏分支重排**：锚窗 TOPMOST 复位后**同拍**复检 z 序并屏保级抬顶
+//!    （去掉 band_consistent 门，消除「锚窗刚抬回、覆盖层还没抬」的漏点窗口期），
+//!    并每拍自愈穿透位残留。
+//!   ④ **窗口模式不动**：Polaris 穿透 + hover + 探针热区直翻照旧（实测是好的）。
+//!   ⑤ 埋点：每次穿透位实写打 `[lc-1974] 穿透位 0→1 reason=...`（before/after+原因，
+//!     变化才打）；全屏期探针 WindowFromPoint 命中窗口变化时打 hwnd+类名 ——
+//!     下次复现一眼定案「点击落进了哪个窗」。
+//!
 //! [lc-1952] 实机回归两修：
 //!   · **全屏后控件全点不中**：mpv 的 VO 在全屏切换时 SetWindowPos 自己，把锚窗提到
 //!     覆盖层之上（对已 TOPMOST 的覆盖层再调 HWND_TOPMOST 不保证带内重排，owner 关系
@@ -111,13 +138,13 @@ use windows_sys::Win32::System::SystemServices::{MK_LBUTTON, MK_MBUTTON, MK_RBUT
 #[cfg(test)]
 use windows_sys::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetCursorPos, GetWindow, GetWindowLongPtrW, GetWindowRect,
+    EnumWindows, GetClassNameW, GetCursorPos, GetWindow, GetWindowLongPtrW, GetWindowRect,
     GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, PostMessageW,
-    SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE, GWLP_HWNDPARENT, GW_HWNDPREV,
-    HWND_NOTOPMOST, HWND_TOPMOST, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW,
-    SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    SetWindowLongPtrW, SetWindowPos, ShowWindow, WindowFromPoint, GWL_EXSTYLE, GWLP_HWNDPARENT,
+    GW_HWNDPREV, HWND_NOTOPMOST, HWND_TOPMOST, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
+    SW_SHOW, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_NOZORDER, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_LAYERED, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
 
@@ -160,6 +187,16 @@ static EXIT_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
 /// 播放器是否处于真全屏（mpv `fullscreen` 属性的窗口级镜像）。
 static PLAYER_FULLSCREEN: AtomicBool = AtomicBool::new(false);
+/// [lc-1974] 全屏输入锁：全屏期穿透位（WS_EX_TRANSPARENT）**锁定为摘除**。
+///
+/// 用户第 N 次实证（%TEMP%/anibox.log + anibox-mpv.log 法证，见模块头 [lc-1974]）：
+/// 穿透默认态 + hover 链在全屏下任一环抖动（mpv ontop_mode.lua 每拍摘锚窗 TOPMOST
+/// 触发 z 序拉锯、elementFromPoint 映射抖动、心跳空表），点击就漏进 mpv 变播放/暂停。
+/// 全屏**根本不需要拖窗**，穿透机制的全部收益在全屏下为零 —— 结构性修法：
+/// 全屏期把穿透位锁死在「可点」，覆盖层整窗收输入；视频区点击由前端按
+/// `data-chrome-hit` 分流经 `mpv_forward_mouse` 转给 mpv（单击暂停/双击全屏/滚轮
+/// 全是 mpv 原生行为）。窗口模式保持 Polaris 穿透 + hover 不动（实测是好的）。
+static FULLSCREEN_INPUT_LOCK: AtomicBool = AtomicBool::new(false);
 /// 进全屏前的锚窗矩形 `(x, y, w, h)` + 是否最大化（物理像素；None = 没有可用还原态）。
 static FULLSCREEN_SAVED: Mutex<Option<(i32, i32, i32, i32, bool)>> = Mutex::new(None);
 /// 跟随循环在**非全屏**时持续记录的锚窗矩形。mpv 的 `fullscreen` 属性事件可能晚于
@@ -434,33 +471,69 @@ pub fn overlay_set_focusable(hwnd: isize, on: bool) {
 
 // ─────────────── [lc-1960] 穿透位单一写入点 + hover 事务 ───────────────
 
+/// [lc-1974] 纯逻辑：全屏输入锁下某一次「拨穿透」请求的裁决。
+/// 返回 `(是否允许写穿透位, 是否视为成功)`。
+///
+///   · 摘穿透（passthrough=false）恒放行 —— 锁定期也要能把位摘掉（进全屏自愈用）；
+///   · 锁定期置穿透被拒绝（写=false）但**视为成功** —— 锁本身就是权威结果，
+///     调用方（hover 状态机）若按失败处理会进 40/120/300/700ms 重试风暴；
+///   · 非锁定期照旧放行（窗口模式 Polaris 语义，实测是好的，不动）。
+///
+/// 单测双向锚定：旧路径（无锁概念，置穿透恒放行）对「锁定期拒绝」断言必 FAIL。
+pub fn passthrough_request_adjudication(passthrough: bool, lock: bool) -> (bool, bool) {
+    if !passthrough {
+        return (true, true);
+    }
+    if lock {
+        return (false, true);
+    }
+    (true, true)
+}
+
 /// [lc-1960] 覆盖层穿透位的**唯一**写入点：拨/摘 `WS_EX_TRANSPARENT`，然后**读回
 /// 真实 ex-style 位**。返回 `(实际穿透态, 是否达成目标态)`。
+///
+/// [lc-1974] 全屏输入锁：`FULLSCREEN_INPUT_LOCK` 置位期间，任何「置穿透」请求都被
+/// 裁决拒绝（位保持摘除、ok=true）；`reason` 记入位变化埋点，每次实写都留
+/// `[lc-1974]` 日志（before/after 位 + 原因），复现一眼定案。
 ///
 /// 为什么不用 tauri 的 `set_ignore_cursor_events`：tao 把 TRANSPARENT 与 LAYERED
 /// 绑成一组拨动（lc-1924~1931 的黑块真根因），这里全程原生 SetWindowLongPtrW，
 /// NOACTIVATE / TOOLWINDOW / LAYERED 三位保底永远不丢。
-pub fn overlay_apply_input_passthrough(hwnd: isize, passthrough: bool) -> (bool, bool) {
+pub fn overlay_apply_input_passthrough(hwnd: isize, passthrough: bool, reason: &str) -> (bool, bool) {
     if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
         return (true, false);
     }
+    let lock = FULLSCREEN_INPUT_LOCK.load(Ordering::SeqCst);
+    let (write_allowed, ok) = passthrough_request_adjudication(passthrough, lock);
     unsafe {
         let ex = GetWindowLongPtrW(hwnd as _, GWL_EXSTYLE);
+        let before = ex & (WS_EX_TRANSPARENT as isize) != 0;
         let base = ex
             | (WS_EX_NOACTIVATE as isize)
             | (WS_EX_TOOLWINDOW as isize)
             | (WS_EX_LAYERED as isize);
-        let next = if passthrough {
+        let next = if !passthrough {
+            base & !(WS_EX_TRANSPARENT as isize)
+        } else if write_allowed {
             base | (WS_EX_TRANSPARENT as isize)
         } else {
-            base & !(WS_EX_TRANSPARENT as isize)
+            base
         };
         if next != ex {
             SetWindowLongPtrW(hwnd as _, GWL_EXSTYLE, next);
         }
         let now = GetWindowLongPtrW(hwnd as _, GWL_EXSTYLE);
         let applied = now & (WS_EX_TRANSPARENT as isize) != 0;
-        (applied, applied == passthrough)
+        if applied != before {
+            crate::libmpv::trace(&format!(
+                "[lc-1974] 穿透位 {}→{} reason={reason}{}",
+                i32::from(before),
+                i32::from(applied),
+                if lock { "（全屏输入锁）" } else { "" }
+            ));
+        }
+        (applied, ok)
     }
 }
 
@@ -513,6 +586,9 @@ pub fn hover_seq_gate(last_seq: u64, request_seq: u64) -> (bool, u64) {
 ///
 /// seq 单调守门（[`hover_seq_gate`]）：迟到的旧请求不落地（只 ack 真实态）。
 /// [lc-1964] 同时记录前端最近请求的目标态（探针热区自动翻位退出时要尊重它）。
+/// [lc-1974] 全屏输入锁期间，「拨回穿透」（hover=false）的请求被锁拒绝不落地，
+/// 但 ack 按**请求值**谎报成功 —— 否则前端会对一条注定被锁的请求进退避重试风暴；
+/// 真实窗口状态由锁保证恒为「可点」，与 ack 语义（hover 期望已达成）一致。
 pub fn hover_apply(overlay_hwnd: isize, hover: bool, request_seq: u64) -> HoverAck {
     FRONTEND_HOVER_LAST.store(hover, Ordering::SeqCst);
     let last = HOVER_LAST_SEQ.load(Ordering::SeqCst);
@@ -520,10 +596,12 @@ pub fn hover_apply(overlay_hwnd: isize, hover: bool, request_seq: u64) -> HoverA
     if new_last != last {
         HOVER_LAST_SEQ.store(new_last, Ordering::SeqCst);
     }
-    let (actual_pass, ok) = overlay_apply_input_passthrough(overlay_hwnd, !hover);
+    let locked = !hover && FULLSCREEN_INPUT_LOCK.load(Ordering::SeqCst);
+    let (actual_pass, ok) = overlay_apply_input_passthrough(overlay_hwnd, !hover, "hover");
+    let applied_hover = if locked { hover } else { !actual_pass };
     let ack = HoverAck {
         generation: hover_generation(),
-        applied_hover: !actual_pass,
+        applied_hover,
         ok: ok && allowed,
     };
     crate::libmpv::trace(&format!(
@@ -568,6 +646,9 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
         let mut last_point: Option<(i32, i32)> = None;
         let mut last_inside = false;
         let mut last_heartbeat = std::time::Instant::now() - std::time::Duration::from_secs(2);
+        // [lc-1974] 全屏期 WindowFromPoint 诊断的去重状态：命中窗口变化才打一行
+        //（每拍都打 = 20 行/秒刷爆日志；变化打点恰好把「点击落进哪个窗」的翻转过程留住）。
+        let mut last_probe_hit: Option<(isize, String)> = None;
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             if !crate::mpvwin::embed_is_active() {
@@ -598,17 +679,36 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
                     && pt.x < rc.right
                     && pt.y >= rc.top
                     && pt.y < rc.bottom;
-                // [lc-1964] 控件带热区直翻（架构保险 D）：每拍都判，不依赖前端
-                // elementFromPoint。命中 → 直接翻可点位；离开且是 Rust 自己翻的 →
-                // 还原穿透（前端主动请求的可交互态不被抢，见 FRONTEND_HOVER_LAST）。
-                if inside {
+                // [lc-1974] 全屏输入锁：穿透位已锁定为「恒可点」，探针**停写穿透位**
+                //（热区直翻 / 还原两路都停，锁是唯一权威）。只留 WindowFromPoint
+                // 诊断：光标处命中的窗口变化时打一行 hwnd + 类名 —— 下次复现一眼
+                // 看出点击究竟落进覆盖层还是 mpv。
+                if FULLSCREEN_INPUT_LOCK.load(Ordering::SeqCst) {
+                    let hit = WindowFromPoint(pt);
+                    let mut buf = [0u16; 64];
+                    let n = GetClassNameW(hit, buf.as_mut_ptr(), 64);
+                    let class = String::from_utf16_lossy(&buf[..n.max(0).min(64) as usize]);
+                    let key = (hit as isize, class.clone());
+                    if last_probe_hit.as_ref() != Some(&key) {
+                        last_probe_hit = Some(key);
+                        let passthrough_now = overlay_input_passthrough_now(hwnd);
+                        crate::libmpv::trace(&format!(
+                            "[lc-1974] 全屏探针命中 hwnd=0x{:X} class=\"{class}\" 穿透位={}",
+                            hit as usize,
+                            i32::from(passthrough_now)
+                        ));
+                    }
+                } else if inside {
+                    // [lc-1964] 控件带热区直翻（架构保险 D）：每拍都判，不依赖前端
+                    // elementFromPoint。命中 → 直接翻可点位；离开且是 Rust 自己翻的 →
+                    // 还原穿透（前端主动请求的可交互态不被抢，见 FRONTEND_HOVER_LAST）。
                     let (zone_hit, zone_src) = hotzones_evaluate(
                         (rc.right - rc.left, rc.bottom - rc.top),
                         pt.x - rc.left,
                         pt.y - rc.top,
                     );
                     if zone_hit && overlay_input_passthrough_now(hwnd) {
-                        overlay_apply_input_passthrough(hwnd, false);
+                        overlay_apply_input_passthrough(hwnd, false, "probe-zone");
                         AUTO_HOVER_ACTIVE.store(true, Ordering::SeqCst);
                         crate::libmpv::trace(&format!(
                             "[lc-1964] 探针热区直翻可点 x={} y={} src={zone_src}（不依赖 elementFromPoint）",
@@ -619,13 +719,13 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
                         && AUTO_HOVER_ACTIVE.swap(false, Ordering::SeqCst)
                         && !FRONTEND_HOVER_LAST.load(Ordering::SeqCst)
                     {
-                        overlay_apply_input_passthrough(hwnd, true);
+                        overlay_apply_input_passthrough(hwnd, true, "probe-restore");
                         crate::libmpv::trace("[lc-1964] 探针热区离开 → 穿透还原");
                     }
                 } else if AUTO_HOVER_ACTIVE.swap(false, Ordering::SeqCst)
                     && !FRONTEND_HOVER_LAST.load(Ordering::SeqCst)
                 {
-                    overlay_apply_input_passthrough(hwnd, true);
+                    overlay_apply_input_passthrough(hwnd, true, "probe-restore");
                     crate::libmpv::trace("[lc-1964] 光标离开覆盖层 → 热区穿透还原");
                 }
                 let moved = last_point != Some((pt.x, pt.y));
@@ -977,8 +1077,10 @@ pub fn player_fullscreen() -> bool {
 }
 
 /// 新会话开始时清全屏状态（上一次播放若在全屏中退出，标记不能带到下一次）。
+/// [lc-1974] 输入锁同样不能跨会话：残留会把窗口模式的穿透默认态锁死。
 pub fn reset_player_fullscreen() {
     PLAYER_FULLSCREEN.store(false, Ordering::SeqCst);
+    FULLSCREEN_INPUT_LOCK.store(false, Ordering::SeqCst);
     *FULLSCREEN_SAVED.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
@@ -1069,7 +1171,18 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
     }
     let mpv = get_hwnd().unwrap_or(0);
     let overlay = overlay_hwnd_of(app);
+    // [lc-1974] 输入锁最先落位：全屏期穿透位锁定为「恒可点」，此后任何路径
+    // （hover 事务 / 探针 / 会话接线）都不得把 TRANSPARENT 置回 —— 竞口收敛在
+    // overlay_apply_input_passthrough 的裁决里，这里的显式拨位只负责「第一拍就位」。
+    FULLSCREEN_INPUT_LOCK.store(on, Ordering::SeqCst);
     if on {
+        // [lc-1974] 进全屏第一拍就摘穿透：控件从全屏第 0ms 起可点，不等 hover 链。
+        let (applied, ok) = overlay_apply_input_passthrough(overlay, false, "fullscreen-enter");
+        crate::libmpv::trace(&format!(
+            "[lc-1974] 进入全屏：输入锁 ON + 穿透位强制摘除（applied={} ok={}）→ 覆盖层整窗可点，视频区点击由前端 mpv_forward_mouse 转发",
+            i32::from(applied),
+            i32::from(ok)
+        ));
         // ① 保存进入前的还原态。LAST_NORMAL_RECT 由跟随循环/探针在非全屏时持续刷新，
         //    不依赖「属性事件到达这一刻」的窗口矩形（mpv 的 resize 可能已经发生）。
         let mut saved_rect = *LAST_NORMAL_RECT.lock().unwrap_or_else(|e| e.into_inner());
@@ -1125,6 +1238,23 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
             ensure_fullscreen_geometry(&app2);
         });
     } else {
+        // [lc-1974] 退出全屏：先解锁并恢复窗口模式的穿透默认态（Polaris 语义）。
+        // 尊重进行中的 hover（光标正悬在控件上时不把穿透拨回来，交 hover 链管理）；
+        // 若全屏期间前端把 hover 请求短路了（FRONTEND_HOVER_LAST 停在 true），这里
+        // 只晚一个探针事件 —— 前端在下一条 mousemove/probe 边沿会把账对齐。
+        FULLSCREEN_INPUT_LOCK.store(false, Ordering::SeqCst);
+        if !FRONTEND_HOVER_LAST.load(Ordering::SeqCst) {
+            let (applied, ok) = overlay_apply_input_passthrough(overlay, true, "fullscreen-exit");
+            crate::libmpv::trace(&format!(
+                "[lc-1974] 退出全屏：输入锁 OFF + 穿透默认态恢复（applied={} ok={}）",
+                i32::from(applied),
+                i32::from(ok)
+            ));
+        } else {
+            crate::libmpv::trace(
+                "[lc-1974] 退出全屏：输入锁 OFF（光标悬在控件上，穿透位交 hover 链管理）",
+            );
+        }
         // 退出：按保存的矩形 / 最大化状态权威恢复（mpv 自己也会还原，但可能晚 40ms，
         // 且它还原的是「自己记录的」窗口状态，不一定等于我们进入前的矩形）。
         let saved = FULLSCREEN_SAVED
@@ -1199,6 +1329,8 @@ pub fn restore_player_window_from_fullscreen() {
     if !PLAYER_FULLSCREEN.swap(false, Ordering::SeqCst) {
         return;
     }
+    // [lc-1974] 全屏态被退出流程直接终结时输入锁也必须解锁（穿透默认态归还窗口模式）。
+    FULLSCREEN_INPUT_LOCK.store(false, Ordering::SeqCst);
     let mpv = get_hwnd().unwrap_or(0);
     let saved = FULLSCREEN_SAVED
         .lock()
@@ -1526,8 +1658,11 @@ pub fn embed_is_active() -> bool {
 }
 
 /// 置 / 清内嵌激活标记；清除时一并丢弃待补施矩形与隐藏标记（退嵌后不留残态）。
+/// [lc-1974] 会话边界（无论进/出）都清全屏输入锁：锁只允许由
+/// `on_player_fullscreen_changed` 在会话内建立，绝不跨会话残留。
 pub fn embed_set_active(on: bool) {
     EMBED_ACTIVE.store(on, Ordering::SeqCst);
+    FULLSCREEN_INPUT_LOCK.store(false, Ordering::SeqCst);
     if !on {
         *EMBED_RECT.lock().unwrap_or_else(|e| e.into_inner()) = None;
         EMBED_HIDDEN.store(false, Ordering::SeqCst);
@@ -1536,6 +1671,8 @@ pub fn embed_set_active(on: bool) {
         PLAYER_MAXIMIZED.store(false, Ordering::SeqCst);
         // [lc-1947] 全屏标记 / 还原矩形同样不能跨会话
         PLAYER_FULLSCREEN.store(false, Ordering::SeqCst);
+        // [lc-1974] 输入锁与全屏标记同生命周期
+        FULLSCREEN_INPUT_LOCK.store(false, Ordering::SeqCst);
         *FULLSCREEN_SAVED.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *LAST_NORMAL_RECT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
@@ -1641,6 +1778,13 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                 // 每 33ms 把覆盖层压回 mpv 之下 —— 全屏按钮全失效的真根因。
                 let fullscreen_now = PLAYER_FULLSCREEN.load(Ordering::SeqCst);
                 if fullscreen_now {
+                    // [lc-1974] 全屏输入不变量（顺序即正确性）：
+                    // ① 锚窗 TOPMOST（压任务栏，ontop_mode.lua 暂停联动会反复摘，逐拍复位；
+                    //    注意 HWND_TOPMOST 重插会把锚窗放到带顶、盖到覆盖层之上）；
+                    // ② 紧接着无条件复检 z 序并屏保级抬顶 —— 每拍终态恒为「覆盖层压锚窗
+                    //    之上」，旧代码的 band_consistent 门在锚窗刚被抬回带顶的那一拍
+                    //    反而跳过修复，留下「mpv 在上、点击漏给 mpv」的窗口期；
+                    // ③ 穿透位自愈：输入锁下恒为摘除，任何漏网路径在此兜底。
                     if !is_window_topmost(mh as _) {
                         set_window_topmost(mh as _, true);
                         crate::libmpv::trace("[lc-1949] 全屏中锚窗丢失 TOPMOST → 复位");
@@ -1648,32 +1792,42 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                     if !is_window_topmost(ov as _) {
                         set_window_topmost(ov as _, true);
                     }
-                }
-                {
+                    let prev_of_anchor = unsafe { GetWindow(mh as _, GW_HWNDPREV) } as isize;
+                    let zorder_ok = overlay_zorder_ok(prev_of_anchor, ov);
+                    if !zorder_ok {
+                        if overlay_zorder_was_ok {
+                            crate::libmpv::trace(
+                                "[lc-1964] 全屏覆盖层失守（被压到锚窗之下）→ 屏保级抬顶（NOTOPMOST→TOPMOST）",
+                            );
+                        }
+                        // [lc-1964] Polaris apply_screen_saver_level 同款：NOTOPMOST→TOPMOST
+                        // 重置法把覆盖层强制抬到 TOPMOST 带最顶（对已 TOPMOST 的窗再调
+                        // HWND_TOPMOST 不保证带内重排）。
+                        overlay_raise_screen_saver_level(ov);
+                    }
+                    overlay_zorder_was_ok = zorder_ok;
+                    if overlay_input_passthrough_now(ov as _) {
+                        let (applied, ok) =
+                            overlay_apply_input_passthrough(ov, false, "fullscreen-follow");
+                        crate::libmpv::trace(&format!(
+                            "[lc-1974] 全屏穿透位残留 → 自愈摘除（applied={} ok={}）",
+                            i32::from(applied),
+                            i32::from(ok)
+                        ));
+                    }
+                } else {
                     // 两个窗不同带（ontop 拨动的过渡瞬间）时带内 InsertAfter 无意义，跳过一拍。
                     let band_consistent =
                         is_window_topmost(mh as _) == is_window_topmost(ov as _);
                     let prev_of_anchor = unsafe { GetWindow(mh as _, GW_HWNDPREV) } as isize;
                     let zorder_ok = band_consistent && overlay_zorder_ok(prev_of_anchor, ov);
                     if !zorder_ok && band_consistent {
-                        if fullscreen_now {
-                            // [lc-1964] Polaris apply_screen_saver_level 同款：NOTOPMOST→TOPMOST
-                            // 重置法把覆盖层强制抬到 TOPMOST 带最顶（对已 TOPMOST 的窗再调
-                            // HWND_TOPMOST 不保证带内重排）。
-                            if overlay_zorder_was_ok {
-                                crate::libmpv::trace(
-                                    "[lc-1964] 全屏覆盖层失守（被压到锚窗之下）→ 屏保级抬顶（NOTOPMOST→TOPMOST）",
-                                );
-                            }
-                            overlay_raise_screen_saver_level(ov);
-                        } else {
-                            if overlay_zorder_was_ok {
-                                crate::libmpv::trace(
-                                    "[lc-1964] 窗口覆盖层失守 → InsertAfter(GW_HWNDPREV) 拉回锚窗正上方",
-                                );
-                            }
-                            place_overlay_above_anchor(ov, mh);
+                        if overlay_zorder_was_ok {
+                            crate::libmpv::trace(
+                                "[lc-1964] 窗口覆盖层失守 → InsertAfter(GW_HWNDPREV) 拉回锚窗正上方",
+                            );
                         }
+                        place_overlay_above_anchor(ov, mh);
                     }
                     overlay_zorder_was_ok = zorder_ok;
                 }
@@ -2331,5 +2485,39 @@ mod tests {
         let ack = hover_apply(0, true, 7); // hwnd=0：IsWindow 必假
         assert!(!ack.applied_hover, "没有窗口就绝不能谎报已可交互");
         assert!(!ack.ok, "拨位失败 ok 必须为 false（驱动前端重试）");
+    }
+
+    // ─────────────── [lc-1974] 全屏输入锁（穿透机制全屏废除）───────────────
+
+    /// [lc-1974] 锁裁决矩阵：摘穿透恒放行（进全屏自愈依赖它）；锁定期置穿透被拒
+    /// 绝但视为成功（ok=true —— 否则 hover 状态机会为一条注定被锁的请求进
+    /// 40/120/300/700ms 重试风暴）；非锁定期置穿透照旧放行（窗口模式不动）。
+    #[test]
+    fn fullscreen_input_lock_adjudication() {
+        // 锁定期：置穿透被拒（不写），但按成功结算（锁即权威结果）
+        assert_eq!(
+            passthrough_request_adjudication(true, true),
+            (false, true),
+            "全屏锁定期置穿透必须被拒绝且不触发重试"
+        );
+        // 摘穿透恒放行（含锁定期）：进全屏第一拍与跟随循环自愈都靠它
+        assert_eq!(passthrough_request_adjudication(false, true), (true, true));
+        assert_eq!(passthrough_request_adjudication(false, false), (true, true));
+        // 非锁定期：窗口模式 Polaris 语义原样（置穿透放行）
+        assert_eq!(passthrough_request_adjudication(true, false), (true, true));
+    }
+
+    /// [lc-1974] 双向验证：旧路径（lc-1959/1960 穿透默认态，无锁概念）对「置穿透」
+    /// 恒放行 —— 在全屏态它就是「点击漏进 mpv 变播放/暂停」的竞口。对同一输入
+    /// （锁定 + 置穿透），旧裁决写、新裁决拒：断言必须可区分。
+    #[test]
+    fn fullscreen_lock_old_path_would_write() {
+        let old_adjudication = |passthrough: bool| (passthrough, passthrough); // 旧路径：来者皆写
+        let (old_write, _) = old_adjudication(true);
+        assert!(old_write, "旧路径全屏期照写穿透位（Bug 的竞口本身）");
+        let (new_write, new_ok) = passthrough_request_adjudication(true, true);
+        assert!(!new_write, "新路径锁定期拒绝写");
+        assert!(new_ok, "拒绝但按成功结算（无重试风暴）");
+        assert_ne!(old_write, new_write, "新旧裁决必须可区分（回归哨兵）");
     }
 }

@@ -1,5 +1,17 @@
 /* [lc-1939] 播放器覆盖层 UI —— 视觉模型照抄 Polaris 的 mpv-overlay。
  *
+ * [lc-1974] 全屏废除穿透机制（用户第 N 次实证后的模式级修法）：
+ *   · 全屏期 Rust 把穿透位锁死为「恒可点」（FULLSCREEN_INPUT_LOCK，任何路径不得置
+ *     WS_EX_TRANSPARENT），覆盖层整窗收输入 —— 控件点击零等待，不再依赖 hover 链
+ *     在全屏下的存活（mpv ontop_mode.lua 拉锯 z 序 / elementFromPoint 抖动均免疫）。
+ *   · 视频区点击：本文件的 `mpv_forward_mouse` 转发链（lc-1949 原样，穿透态下零
+ *     流量）在全屏态自然接管 —— 落点不在 `[data-chrome-hit]` 上的事件 PostMessage
+ *     给 mpv，单击暂停/双击全屏/滚轮全是 mpv 原生行为；全屏不需要拖窗，「慢半拍」
+ *     可接受，正确性优先。
+ *   · hover 事务在全屏态短路「拨回穿透」请求（发了也会被锁拒绝）；退出全屏边沿
+ *     补一发 hover=false，把窗口模式的穿透默认态立即对齐。
+ *   · 窗口模式不动：Polaris 穿透 + hover 事务（下述 [lc-1960]）照旧。
+ *
  * [lc-1960] 交互架构按 Polaris 法证结论二次重做（穿透默认态 + hover 事务）：
  *
  *   · **穿透默认态**：控件隐藏（绝大多数时间）覆盖层 WS_EX_TRANSPARENT 恒置位
@@ -524,6 +536,14 @@ export function PlayerChrome() {
         retryAttempt = 0;
         clearRetry();
       }
+      // [lc-1974] 全屏态穿透位已被 Rust 输入锁死为「恒可点」：「拨回穿透」的请求
+      // 短路不发 —— 发了也会被锁拒绝，只会制造事务噪音（Rust ack 会按请求值结算，
+      // 这里提前拦掉，账面同样成立）。hover=true（悬进控件）照常发送，维持
+      // FRONTEND_HOVER_LAST 语义，退出全屏时 Rust 据此决定是否恢复穿透默认态。
+      if (!hover && stRef.current.fullscreen) {
+        hoverInteractive.current = false;
+        return;
+      }
       // 纯边沿：目标态未变且已账实相符时不发事务（稳态零管道流量，Polaris 同款）
       if (!force && !changed && hoverInteractive.current === desired && retryTimer === null) return;
       const seq = ++hoverSeq;
@@ -671,6 +691,18 @@ export function PlayerChrome() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /* ── [lc-1974] 全屏输入模式切换的对账 ──
+   * 退出全屏：Rust 已解锁（FULLSCREEN_INPUT_LOCK OFF），但全屏期间「拨回穿透」的
+   * hover 请求全被前端短路了 —— 这里在退出边沿补一发 hover=false，把窗口模式的
+   * 穿透默认态立即对齐（不等下一个鼠标事件；光标静止跨边界也不会留「可点幽灵层」）。
+   * 进入全屏：无需动作，Rust 在 on_player_fullscreen_changed 里锁位 + 摘穿透。 */
+  useEffect(() => {
+    if (!st.fullscreen) {
+      hoverRequestRef.current?.(false, "fullscreen-exit");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [st.fullscreen]);
 
   /* ── [lc-1964] 控件带几何热区上报（Rust 探针直翻可点位的保险丝）──
    * 1s 心跳把 `[data-chrome-hit]` 矩形（CSS 视口坐标）+ 视口尺寸交给 Rust；

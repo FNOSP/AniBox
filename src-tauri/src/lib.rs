@@ -3323,7 +3323,7 @@ pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
         // hover 事务单点管理 —— 起播默认**穿透**（控件隐藏态，Polaris 同款）：
         // 真实鼠标直达 mpv（单击暂停/双击全屏/拖动全原生），WebView 零鼠标事件流。
         crate::mpvwin::overlay_style_noactivate(hwnd);
-        crate::mpvwin::overlay_apply_input_passthrough(hwnd, true);
+        crate::mpvwin::overlay_apply_input_passthrough(hwnd, true, "session-start");
         crate::mpvwin::overlay_show_noactivate(hwnd);
         // [lc-1960] 新会话 = 新代际：前端 hover 状态机据此全量重对账；穿透默认态
         // 同步推给前端（interaction-state），并启动 50ms 光标探针。
@@ -3350,7 +3350,7 @@ pub fn hide_player_overlay(app: &AppHandle) {
     use tauri::Manager;
     if let Some(w) = app.get_webview_window("mpv_overlay") {
         if let Ok(h) = w.hwnd() {
-            crate::mpvwin::overlay_apply_input_passthrough(h.0 as isize, true);
+            crate::mpvwin::overlay_apply_input_passthrough(h.0 as isize, true, "overlay-hide");
             crate::mpvwin::overlay_hide(h.0 as isize);
         }
     }

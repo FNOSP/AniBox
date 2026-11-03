@@ -3319,25 +3319,96 @@ pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
         // [lc-1946] 每次起播重置为「置顶」：mpv 锚窗 + 覆盖层一起拨 TOPMOST
         //（顶栏「置顶」按钮据此切换；取消置顶后下一次起播回到置顶态）。
         crate::mpvwin::set_player_ontop(hwnd, true);
-        // [lc-1949] NOACTIVATE + TOOLWINDOW + LAYERED 一次成型，**没有** WS_EX_TRANSPARENT：
-        // 覆盖层常驻可点，画面区点击由前端分流后 PostMessage 转给 mpv（`mpv_forward_mouse`）。
-        // 旧「探针拨穿透位」机制已退役 —— 控件 pointerdown 即执行，链路里没有等待翻位的环节。
+        // [lc-1949/1960] NOACTIVATE + TOOLWINDOW + LAYERED 基座一次成型；穿透位由
+        // hover 事务单点管理 —— 起播默认**穿透**（控件隐藏态，Polaris 同款）：
+        // 真实鼠标直达 mpv（单击暂停/双击全屏/拖动全原生），WebView 零鼠标事件流。
         crate::mpvwin::overlay_style_noactivate(hwnd);
+        crate::mpvwin::overlay_apply_input_passthrough(hwnd, true);
         crate::mpvwin::overlay_show_noactivate(hwnd);
+        // [lc-1960] 新会话 = 新代际：前端 hover 状态机据此全量重对账；穿透默认态
+        // 同步推给前端（interaction-state），并启动 50ms 光标探针。
+        let generation = crate::mpvwin::hover_bump_generation();
+        let _ = app.emit(
+            "overlay-interaction-state",
+            serde_json::json!({
+                "generation": generation,
+                "desiredHover": false,
+                "appliedHover": false,
+            }),
+        );
+        crate::mpvwin::spawn_overlay_probe(app.clone());
     }
-    crate::libmpv::trace("[lc-1949] mpv_overlay 显示（透明 + 常驻可点 + NOACTIVATE）");
+    crate::libmpv::trace("[lc-1960] mpv_overlay 显示（透明 + 穿透默认态 + NOACTIVATE）");
     Some(w)
 }
 
 /// [lc-1940] 收起覆盖层（播放结束 / 启动兜底）。**不用 Tauri hide()**，理由见
 /// `mpvwin::overlay_hide`：显隐必须和 tao 的 VISIBLE 缓存彻底解耦。
+/// [lc-1960] 收起时穿透位归位（隐藏窗本就收不到输入，置穿透保证下一次显示
+/// 从默认穿透态起步，不会带着上一会的可点态）。
 pub fn hide_player_overlay(app: &AppHandle) {
     use tauri::Manager;
     if let Some(w) = app.get_webview_window("mpv_overlay") {
         if let Ok(h) = w.hwnd() {
+            crate::mpvwin::overlay_apply_input_passthrough(h.0 as isize, true);
             crate::mpvwin::overlay_hide(h.0 as isize);
         }
     }
+}
+
+// ───────────────────── [lc-1960] hover 事务命令（Polaris mpv-overlay-hover 同款）───────────────
+
+/// [lc-1960] 覆盖层 hover 事务：前端在「光标进/出控件白名单」的边沿提交
+/// `{hover, generation, requestSeq}`，Rust 拨 WS_EX_TRANSPARENT 并**读回真实位**作 ack。
+/// ack 字段与 Polaris 逐一同名（generation / requestSeq / appliedHover / success）。
+#[tauri::command]
+async fn mpv_overlay_hover(
+    window: tauri::WebviewWindow,
+    hover: bool,
+    generation: u64,
+    request_seq: u64,
+) -> Result<serde_json::Value, String> {
+    use tauri::Manager;
+    // 只接受覆盖层自己的调用：主窗误调会把穿透位拨到错误窗口上。
+    if window.label() != "mpv_overlay" {
+        return Err("mpv_overlay_hover: only mpv_overlay may call".into());
+    }
+    let Ok(h) = window.hwnd() else {
+        return Err("mpv_overlay_hover: hwnd unavailable".into());
+    };
+    let hwnd = h.0 as isize; // HWND(*mut c_void) 不能跨线程；先降成 isize 再 move 进闭包
+    let ack = tauri::async_runtime::spawn_blocking(move || {
+        crate::mpvwin::hover_apply(hwnd, hover, request_seq)
+    })
+    .await
+    .map_err(|e| format!("hover join: {e}"))?;
+    Ok(serde_json::json!({
+        "success": ack.ok,
+        "generation": ack.generation,
+        "requestSeq": request_seq,
+        "appliedHover": ack.applied_hover,
+        "generationMatches": ack.generation == generation,
+    }))
+}
+
+/// [lc-1960] hover 协议状态快照（覆盖层页面加载/重载后对账用）。
+#[tauri::command]
+async fn mpv_overlay_hover_state(
+    window: tauri::WebviewWindow,
+) -> Result<serde_json::Value, String> {
+    use tauri::Manager;
+    if window.label() != "mpv_overlay" {
+        return Err("mpv_overlay_hover_state: only mpv_overlay may call".into());
+    }
+    let Ok(h) = window.hwnd() else {
+        return Err("mpv_overlay_hover_state: hwnd unavailable".into());
+    };
+    let pass_through = crate::mpvwin::overlay_input_passthrough_now(h.0 as isize);
+    Ok(serde_json::json!({
+        "generation": crate::mpvwin::hover_generation(),
+        "appliedHover": !pass_through,
+        "inside": crate::mpvwin::probe_inside(),
+    }))
 }
 
 /// [lc-1940] 起播失败兜底：覆盖层收起、mpv 窗口收起、内嵌态清零、主窗口回来。
@@ -3609,8 +3680,9 @@ async fn player_embed_leave(app: AppHandle, stop: bool) -> Result<(), String> {
 /// 经此命令 PostMessage 给 mpv 锚窗，mpv 的 win32 后端像处理真实输入一样处理
 /// （单击暂停 / 双击全屏 / 拖动窗口 / 滚轮 seek / 右键全是 mpv 原生行为）。
 ///
-/// 这是「覆盖层常驻可点」架构的另一半：穿透位（WS_EX_TRANSPARENT）已彻底退役，
-/// mpv 的窗口被覆盖层整面盖住、收不到真实命中，唯一能给它输入的就是这条通道。
+/// [lc-1960] 角色变化：穿透默认态下 mpv 由真实鼠标直接喂（input.conf 原生路径），
+/// 本命令只服务「hover 翻位后的可点窗口里」落在空白区的点击（Polaris
+/// overlay-passthrough-click 同位），以及拖动中 pointer capture 的续投。
 /// `kind`：move / down / up / dbl / rdown / rup / mdown / mup / wheel；
 /// `(x, y)` = mpv 客户区**物理像素**（覆盖层与 mpv 同 rect，前端直接给窗口内坐标）；
 /// `flags` = MK_* 位（按钮 + Ctrl/Shift）；`delta` = 滚轮增量（仅 wheel）。
@@ -5435,9 +5507,12 @@ pub fn run() {
             // 非 Windows 命令空转返回 Ok，注册保持全平台一致）
             player_embed_enter,
             player_embed_rect,
-            // [lc-1949] 视频区鼠标转发（覆盖层常驻可点后 mpv 的唯一输入通道）；
-            // 旧的热区上报 / 穿透开关 / 空白区仲裁命令随探针机制一并退役
+            // [lc-1949] 视频区鼠标转发（lc-1960 起：穿透默认态下仅服务 hover 翻位后
+            // 可点窗口里的空白区点击与拖动续投）
             mpv_forward_mouse,
+            // [lc-1960] hover 事务（Polaris 同款）：穿透位拨动 + 原生样式读回 ack
+            mpv_overlay_hover,
+            mpv_overlay_hover_state,
             // [lc-1943] 前端延迟采样落盘（临时诊断）
             lat_trace,
             // [lc-1942] 字幕搜索输入框需要临时摘掉 WS_EX_NOACTIVATE

@@ -52,22 +52,45 @@
 //!   · 「在不在控件上」由前端在事件时决定（`closest("[data-chrome-hit]")`），Rust
 //!     不再做几何猜测；`overlay-cursor` / `overlay-geometry` 两条探针事件随之退役，
 //!     控件续显由 WebView 自身的 mousemove 驱动（覆盖层可点后天然可达）。
+//!
+//! [lc-1960] 输入架构按 Polaris 法证结论**二次重做**（lc-1949 实机两症状：
+//! 「全屏后任意按钮都变成播放暂停」「控件反应慢半拍还经常无反应」）：
+//!
+//!   · **穿透默认态**：覆盖层回到 Polaris 的本相 —— `WS_EX_TRANSPARENT` 在控件隐藏
+//!     （绝大多数时间）**恒置位**，真实鼠标从 OS 层直达 mpv（单击暂停/双击全屏/拖动
+//!     全走 mpv 原生 input.conf），WebView 收不到、也**不需要**转发任何空白区事件。
+//!     lc-1949「常驻可点」把整面鼠标事件流灌进 WebView2 再逐条 invoke 转发，才是
+//!     「慢半拍/无反应」的结构根源；而常驻可点要求覆盖层对 mpv 保持全时 z 序优势，
+//!     全屏切换瞬间任何一次失守，点击就整体漏给 mpv 变成暂停 —— 症状一的根源。
+//!   · **hover 事务协议**（Polaris mpv-overlay-hover 同款）：光标悬在控件上时前端
+//!     `invoke('mpv_overlay_hover', {hover, generation, requestSeq})` → Rust 拨
+//!     WS_EX_TRANSPARENT 并**读回真实 ex-style 位**作 ack（tauri 的
+//!     set_ignore_cursor_events 会把 LAYERED 一起摘掉 lc-1924 的教训，这里全程
+//!     原生 SetWindowLongPtrW）；前端按 generation/requestSeq 对账 + 40/120/300/700ms
+//!     退避重试，穿透态永远不漂移。
+//!   · **Rust 光标探针**（Polaris [overlay_probe] 同款，50ms GetCursorPos）：穿透态下
+//!     WebView 收不到任何鼠标事件，控件续显与 hover 判定由 Rust 推送
+//!     `overlay-force-hover-check`（物理坐标 + surface 尺寸 + inside）与
+//!     `overlay-mouse-activity` 驱动；`inside=false` 是「真离开播放器」的权威信号。
+//!   · 50ms 翻位窗口内的一击不丢：控件在 hover 翻位前收到的点击会漏给 mpv（= 一次
+//!     正常的空白区暂停语义），与 Polaris 行为一致；持续悬停时翻位先行，点击零等待。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
-use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::System::SystemServices::{MK_LBUTTON, MK_MBUTTON, MK_RBUTTON};
 // MK_CONTROL / MK_SHIFT 只在前端传来的 flags 位里出现（8 / 4），单测用它们验证透传
 #[cfg(test)]
 use windows_sys::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, IsIconic,
-    IsWindow, IsWindowVisible, IsZoomed, PostMessageW, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    GWL_EXSTYLE, GWLP_HWNDPARENT, GW_HWNDPREV, HWND_NOTOPMOST, HWND_TOPMOST, SW_HIDE, SW_MAXIMIZE,
-    SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP,
-    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    EnumWindows, GetCursorPos, GetWindow, GetWindowLongPtrW, GetWindowRect,
+    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, PostMessageW,
+    SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE, GWLP_HWNDPARENT, GW_HWNDPREV,
+    HWND_NOTOPMOST, HWND_TOPMOST, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW,
+    SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
 
 /// 当前已收编的 mpv 顶层窗口（isize，全仓 HWND 约定；None = 未收编 / 已失效清理）。
@@ -135,6 +158,18 @@ static OVERLAY_TRANSPARENT: AtomicBool = AtomicBool::new(false);
 static OVERLAY_UI_READY: AtomicBool = AtomicBool::new(false);
 /// [lc-1939] 33ms 几何跟随循环是否已在跑（起播前预启动 + 收编后再调，需幂等）。
 static OVERLAY_FOLLOW_RUNNING: AtomicBool = AtomicBool::new(false);
+/// [lc-1960] 50ms 光标探针是否已在跑（与跟随循环同生命周期，幂等）。
+static OVERLAY_PROBE_RUNNING: AtomicBool = AtomicBool::new(false);
+
+// ─────────────── [lc-1960] hover 事务协议状态（Polaris generation/seq 同款）───────────────
+
+/// hover 协议的代际：每次起播接线（show_player_overlay）递增，旧代际的前端状态机
+/// 全部作废重对账。u64，进程内单调。
+static HOVER_GENERATION: AtomicU64 = AtomicU64::new(0);
+/// 最近一次落地（或已见）的 requestSeq：旧 seq 的迟到请求不落地，只 ack 真实态。
+static HOVER_LAST_SEQ: AtomicU64 = AtomicU64::new(0);
+/// 探针最近上报的「光标是否在覆盖层窗口内」（inside），供对账与日志。
+static PROBE_INSIDE: AtomicBool = AtomicBool::new(false);
 
 // ─────────────── [lc-1949] 视频区鼠标转发（替代探针穿透拨位）───────────────
 //
@@ -238,14 +273,13 @@ pub fn overlay_ui_ready() -> bool {
     OVERLAY_UI_READY.load(Ordering::SeqCst)
 }
 
-/// [lc-1939/1949] 覆盖层窗样式：NOACTIVATE（点击不抢焦点）+ TOOLWINDOW（不进任务栏/
+/// [lc-1939/1949] 覆盖层窗样式基座：NOACTIVATE（点击不抢焦点）+ TOOLWINDOW（不进任务栏/
 /// Alt-Tab）+ **LAYERED**（WebView2 的逐像素透明靠它合成）。
 ///
-/// [lc-1949] 这是覆盖层 ex-style 的**唯一**写入点，且永远不含 `WS_EX_TRANSPARENT`：
-/// 覆盖层常驻可点，视频区点击由前端分流后 PostMessage 转给 mpv（见 [`forward_mouse`]）。
-/// 旧「探针 + 动态拨穿透位」机制全部退役 —— 也不能改用 tauri 的
-/// `set_ignore_cursor_events`（tao 把 TRANSPARENT 与 LAYERED 置成一组，会连透明一起
-/// 摘掉 → 黑块盖死视频，lc-1924~1931 的真根因）。
+/// [lc-1960] 穿透位（WS_EX_TRANSPARENT）不在这里写 —— 它由
+/// [`overlay_apply_input_passthrough`] 单点动态管理（Polaris 穿透默认态）。
+/// 也不能改用 tauri 的 `set_ignore_cursor_events`（tao 把 TRANSPARENT 与 LAYERED
+/// 置成一组，会连透明一起摘掉 → 黑块盖死视频，lc-1924~1931 的真根因）。
 pub fn overlay_style_noactivate(hwnd: isize) {
     if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
         return;
@@ -285,9 +319,212 @@ pub fn overlay_set_focusable(hwnd: isize, on: bool) {
     }
 }
 
-/// [lc-1949] 置顶覆盖层。ex-style 只含 NOACTIVATE + TOOLWINDOW + LAYERED，一次成型
-/// （见 `overlay_style_noactivate`）：`WS_EX_TRANSPARENT` 从此不在任何路径上被设置
-/// 或摘除 —— 旧「探针拨穿透位」整套机制退役，覆盖层常驻可点。
+// ─────────────── [lc-1960] 穿透位单一写入点 + hover 事务 ───────────────
+
+/// [lc-1960] 覆盖层穿透位的**唯一**写入点：拨/摘 `WS_EX_TRANSPARENT`，然后**读回
+/// 真实 ex-style 位**。返回 `(实际穿透态, 是否达成目标态)`。
+///
+/// 为什么不用 tauri 的 `set_ignore_cursor_events`：tao 把 TRANSPARENT 与 LAYERED
+/// 绑成一组拨动（lc-1924~1931 的黑块真根因），这里全程原生 SetWindowLongPtrW，
+/// NOACTIVATE / TOOLWINDOW / LAYERED 三位保底永远不丢。
+pub fn overlay_apply_input_passthrough(hwnd: isize, passthrough: bool) -> (bool, bool) {
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return (true, false);
+    }
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd as _, GWL_EXSTYLE);
+        let base = ex
+            | (WS_EX_NOACTIVATE as isize)
+            | (WS_EX_TOOLWINDOW as isize)
+            | (WS_EX_LAYERED as isize);
+        let next = if passthrough {
+            base | (WS_EX_TRANSPARENT as isize)
+        } else {
+            base & !(WS_EX_TRANSPARENT as isize)
+        };
+        if next != ex {
+            SetWindowLongPtrW(hwnd as _, GWL_EXSTYLE, next);
+        }
+        let now = GetWindowLongPtrW(hwnd as _, GWL_EXSTYLE);
+        let applied = now & (WS_EX_TRANSPARENT as isize) != 0;
+        (applied, applied == passthrough)
+    }
+}
+
+/// hover 事务的 ack（前端对账字段与 Polaris 逐一同名）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HoverAck {
+    /// 服务端当前代际（前端落后则据此重对账）。
+    pub generation: u64,
+    /// 穿透位读回后的真实「可交互」态（true = 控件可收点击）。
+    pub applied_hover: bool,
+    /// 本次请求是否真正落地（seq 落后 / 拨位失败 = false，前端进退避重试）。
+    pub ok: bool,
+}
+
+/// hover 协议当前代际。
+pub fn hover_generation() -> u64 {
+    HOVER_GENERATION.load(Ordering::SeqCst)
+}
+
+/// [lc-1960] 只读：覆盖层当前真实穿透位（对账/快照用，不写窗口）。
+pub fn overlay_input_passthrough_now(hwnd: isize) -> bool {
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return true;
+    }
+    unsafe { GetWindowLongPtrW(hwnd as _, GWL_EXSTYLE) & (WS_EX_TRANSPARENT as isize) != 0 }
+}
+
+/// 新会话起播接线：代际 +1（旧代际前端状态机作废），seq 清零。
+pub fn hover_bump_generation() -> u64 {
+    let g = HOVER_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    HOVER_LAST_SEQ.store(0, Ordering::SeqCst);
+    g
+}
+
+/// [lc-1960] 纯逻辑：hover 请求的 seq 单调门。返回 `(是否放行, 新的已见 seq)`。
+///
+/// `request_seq` 落后于已见 seq = 迟到请求（前端重试与探针事件并发），不放行 ——
+/// 旧决策不得覆盖新决策。0 视为「未带 seq」恒放行（不推进已见水位）。
+pub fn hover_seq_gate(last_seq: u64, request_seq: u64) -> (bool, u64) {
+    if request_seq == 0 {
+        return (true, last_seq);
+    }
+    if request_seq < last_seq {
+        return (false, last_seq);
+    }
+    (true, request_seq)
+}
+
+/// [lc-1960] hover 事务落地：把穿透位拨到 `!hover` 并读回。
+///
+/// seq 单调守门（[`hover_seq_gate`]）：迟到的旧请求不落地（只 ack 真实态）。
+pub fn hover_apply(overlay_hwnd: isize, hover: bool, request_seq: u64) -> HoverAck {
+    let last = HOVER_LAST_SEQ.load(Ordering::SeqCst);
+    let (allowed, new_last) = hover_seq_gate(last, request_seq);
+    if new_last != last {
+        HOVER_LAST_SEQ.store(new_last, Ordering::SeqCst);
+    }
+    let (actual_pass, ok) = overlay_apply_input_passthrough(overlay_hwnd, !hover);
+    let ack = HoverAck {
+        generation: hover_generation(),
+        applied_hover: !actual_pass,
+        ok: ok && allowed,
+    };
+    crate::libmpv::trace(&format!(
+        "[lat][hover] seq={request_seq} gen={} hover={hover} -> applied={} ok={}{}",
+        ack.generation,
+        ack.applied_hover,
+        ack.ok,
+        if allowed { "" } else { " (stale)" }
+    ));
+    ack
+}
+
+/// 探针 inside 最近值（对账/日志用）。
+pub fn probe_inside() -> bool {
+    PROBE_INSIDE.load(Ordering::SeqCst)
+}
+
+fn probe_set_inside(v: bool) {
+    PROBE_INSIDE.store(v, Ordering::SeqCst);
+}
+
+/// [lc-1960] 50ms 光标探针（Polaris [overlay_probe] 同款）：穿透态下 WebView 收不到
+/// 任何鼠标事件，控件续显与 hover 判定全靠 Rust 推送。
+///
+///   · 光标移动或出入覆盖层矩形 → `overlay-force-hover-check`
+///     { physicalX, physicalY, surfacePhysicalWidth, surfacePhysicalHeight, inside }
+///     （前端把物理坐标映射到 CSS 视口后 elementFromPoint 判定是否悬在控件上）；
+///   · 光标在覆盖层内移动 → 每秒一条 `overlay-mouse-activity` 心跳（控件续显兜底，
+///     与 Polaris 的 1s heartbeat 同义）；
+///   · `inside=false` 是「真离开播放器」的权威信号（Polaris 拍板二同款）。
+///
+/// 生命周期与 33ms 跟随循环一致（内嵌会话期间运行，幂等启动）。50ms 采样节拍
+/// 固定不变 —— 探针只负责「把光标事实推给前端」，不做任何决策，决策权在前端
+/// elementFromPoint（DOM 是热区的唯一真源，与 Polaris 一致，杜绝旧 lc-1939 热区
+/// 矩形上报的漂移问题）。
+pub fn spawn_overlay_probe(app: tauri::AppHandle) {
+    use tauri::{Emitter, Manager};
+    if OVERLAY_PROBE_RUNNING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        let mut last_point: Option<(i32, i32)> = None;
+        let mut last_inside = false;
+        let mut last_heartbeat = std::time::Instant::now() - std::time::Duration::from_secs(2);
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            if !crate::mpvwin::embed_is_active() {
+                break;
+            }
+            let Some(win) = app.get_webview_window("mpv_overlay") else {
+                continue;
+            };
+            if !crate::mpvwin::overlay_ui_ready() {
+                continue;
+            }
+            let Ok(h) = win.hwnd() else { continue };
+            let hwnd = h.0 as isize;
+            unsafe {
+                if IsWindow(hwnd as _) == 0 || IsWindowVisible(hwnd as _) == 0 || IsIconic(hwnd as _) != 0
+                {
+                    continue;
+                }
+                let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                if GetWindowRect(hwnd as _, &mut rc) == 0 {
+                    continue;
+                }
+                let mut pt = POINT { x: 0, y: 0 };
+                if GetCursorPos(&mut pt) == 0 {
+                    continue;
+                }
+                let inside = pt.x >= rc.left
+                    && pt.x < rc.right
+                    && pt.y >= rc.top
+                    && pt.y < rc.bottom;
+                let moved = last_point != Some((pt.x, pt.y));
+                let inside_changed = inside != last_inside;
+                if moved {
+                    last_point = Some((pt.x, pt.y));
+                }
+                if inside_changed {
+                    last_inside = inside;
+                    probe_set_inside(inside);
+                }
+                if !moved && !inside_changed {
+                    continue;
+                }
+                let surface_w = rc.right - rc.left;
+                let surface_h = rc.bottom - rc.top;
+                if moved && inside && last_heartbeat.elapsed() >= std::time::Duration::from_secs(1) {
+                    last_heartbeat = std::time::Instant::now();
+                    let _ = app.emit("overlay-mouse-activity", ());
+                }
+                if moved || inside_changed {
+                    // [lc-1960] physicalX/Y = **窗口内**物理坐标（Polaris 同语义：前端按
+                    // surface 尺寸与 CSS clientWidth 比例映射到 elementFromPoint 坐标）。
+                    let _ = app.emit(
+                        "overlay-force-hover-check",
+                        serde_json::json!({
+                            "physicalX": pt.x - rc.left,
+                            "physicalY": pt.y - rc.top,
+                            "surfacePhysicalWidth": surface_w,
+                            "surfacePhysicalHeight": surface_h,
+                            "inside": inside,
+                        }),
+                    );
+                }
+            }
+        }
+        OVERLAY_PROBE_RUNNING.store(false, Ordering::SeqCst);
+        crate::libmpv::trace("[lc-1960] 光标探针退出（内嵌会话结束）");
+    });
+}
+
+/// [lc-1960] 置顶覆盖层。ex-style 基座 = NOACTIVATE + TOOLWINDOW + LAYERED
+/// （`overlay_style_noactivate` 一次成型）；穿透位由
+/// [`overlay_apply_input_passthrough`] 单点管理，本函数不碰它。
 pub fn overlay_set_topmost(hwnd: isize) {
     if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
         return;
@@ -623,7 +860,10 @@ fn move_window(hwnd: isize, x: i32, y: i32, w: i32, h: i32) {
     }
 }
 
-/// 全屏几何断言（幂等）：锚窗没铺满显示器就重新摆，两层都置顶。
+/// 全屏几何断言（幂等）：**只修覆盖层**，锚窗几何归 mpv 自己（lc-1960 对齐 Polaris
+/// 不变量：全屏期间 mpv 的 VO 是锚窗几何的唯一写者，我们从外面抢写就是 lc-1947/1948
+/// 「-11,-11 3851x2171 拉锯」的根源）。覆盖层没铺满显示器就重摆；两层都置顶；
+/// 带内把覆盖层插回锚窗正上方。
 fn ensure_fullscreen_geometry(app: &tauri::AppHandle) {
     if !PLAYER_FULLSCREEN.load(Ordering::SeqCst) {
         return;
@@ -633,26 +873,6 @@ fn ensure_fullscreen_geometry(app: &tauri::AppHandle) {
     let Some((mx, my, mw, mh)) = monitor_rect(if mpv != 0 { mpv } else { overlay }) else {
         return;
     };
-    if mpv != 0 {
-        let mut rc = RECT {
-            left: 0,
-            top: 0,
-            right: 0,
-            bottom: 0,
-        };
-        let ok = unsafe { GetWindowRect(mpv as _, &mut rc) } != 0;
-        if !ok
-            || rc.left != mx
-            || rc.top != my
-            || rc.right - rc.left != mw
-            || rc.bottom - rc.top != mh
-        {
-            move_window(mpv, mx, my, mw, mh);
-            crate::libmpv::trace(&format!(
-                "[lc-1947] 全屏几何断言：锚窗未铺满显示器 → 重新定位 {mw}x{mh}@{mx},{my}"
-            ));
-        }
-    }
     move_window(overlay, mx, my, mw, mh);
     set_window_topmost(mpv, true);
     set_window_topmost(overlay, true);
@@ -705,7 +925,9 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
             crate::libmpv::trace("[lc-1947] 进入全屏失败：取不到显示器矩形");
             return;
         };
-        move_window(mpv, mx, my, mw, mh);
+        // [lc-1960] 不再替 mpv 摆全屏矩形：`fullscreen` 属性下发后 mpv 的 VO 自己把
+        // 窗口放到显示器矩形（lc-1947 实测 0:0:3840:2160），我们从外面抢写就是随后
+        // 与它拉锯（-11,-11 3851x2171）的根源。锚窗几何 = mpv 单一写者（Polaris 同款）。
         move_window(overlay, mx, my, mw, mh);
         set_window_topmost(mpv, true);
         set_window_topmost(overlay, true);
@@ -1166,7 +1388,8 @@ pub fn take_saved_script_opts() -> Option<String> {
 pub enum FollowAction {
     /// 非全屏：维持原行为 —— 把覆盖层抄到锚窗矩形。
     Copy,
-    /// 全屏且两层之一偏离显示器矩形：两层都按显示器矩形复位（x, y, w, h）。
+    /// 全屏且两层之一偏离显示器矩形：**只**把覆盖层复位到显示器矩形；
+    /// 锚窗偏离仅记日志（mpv 的 VO 是锚窗几何唯一写者，lc-1960）。
     Assert(i32, i32, i32, i32),
     /// 全屏且两层已贴合显示器矩形：不动（省一次 syscall）。
     Hold,
@@ -1275,15 +1498,19 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                 ) {
                     FollowAction::Hold => {}
                     FollowAction::Assert(fx, fy, fw, fh) => {
+                        // [lc-1960] 锚窗几何归 mpv 单一写者，跟随循环只修覆盖层：
+                        // 全屏过渡期 mpv 的 VO 会按自己的节奏摆窗口，我们从外面抢写
+                        // 就是与它拉锯（实测 -11,-11 3851x2171 反复来回）的根源。
+                        // 锚窗偏离显示器矩形仅留一条证据日志，不动手。
                         if m.left != fx
                             || m.top != fy
                             || m.right - m.left != fw
                             || m.bottom - m.top != fh
                         {
-                            move_window(mh as _, fx, fy, fw, fh);
-                            crate::libmpv::trace(
-                                "[lc-1948] 全屏跟随：锚窗偏离显示器矩形 → 复位",
-                            );
+                            crate::libmpv::trace(&format!(
+                                "[lc-1960] 全屏跟随：锚窗偏离显示器矩形（mpv 自摆中，不动手）m={}x{}@{},{}",
+                                m.right - m.left, m.bottom - m.top, m.left, m.top
+                            ));
                         }
                         if o.left != fx || o.top != fy || o.right - o.left != fw || o.bottom - o.top != fh
                         {
@@ -1785,5 +2012,51 @@ mod tests {
             vec![MinimizeStep::ShowMinNoActive, MinimizeStep::Minimize],
             "新决策不得退回旧顺序"
         );
+    }
+
+    // ─────────────── [lc-1960] hover 事务协议（Polaris generation/seq 同款）───────────────
+
+    /// [lc-1960] seq 单调门：新请求放行并推进水位；迟到（seq 落后）请求必须被挡住。
+    #[test]
+    fn hover_seq_gate_monotonic() {
+        assert_eq!(hover_seq_gate(0, 5), (true, 5), "首请求放行");
+        assert_eq!(hover_seq_gate(5, 6), (true, 6), "新请求放行");
+        assert_eq!(hover_seq_gate(6, 4), (false, 6), "迟到请求不放行，水位不动");
+        assert_eq!(hover_seq_gate(6, 6), (true, 6), "重试同 seq 放行（ack 丢失重发）");
+        assert_eq!(hover_seq_gate(6, 0), (true, 6), "未带 seq（0）恒放行且不推水位");
+    }
+
+    /// [lc-1960] 双向验证：lc-1949「常驻可点」架构里 hover 请求根本不存在（穿透位
+    /// 永不被拨动），迟到请求无从拦截 —— 同输入 (last=6, seq=4) 在旧架构等价于
+    /// 「直接写样式」，新旧决策必须可区分。
+    #[test]
+    fn hover_gate_old_arch_has_no_stale_guard() {
+        let old_arch_writes = |_last: u64, _seq: u64| true; // 旧架构无 seq 概念，来者皆写
+        assert!(old_arch_writes(6, 4), "旧架构对迟到请求照写（会覆盖新决策）");
+        assert_eq!(hover_seq_gate(6, 4).0, false, "新架构必须拦截迟到请求");
+    }
+
+    /// [lc-1960] 代际推进 + seq 清零：新会话（bump）后旧代际 seq 不得阻塞新请求。
+    #[test]
+    fn hover_generation_bump_resets_seq_watermark() {
+        hover_bump_generation();
+        let g0 = hover_generation();
+        assert_eq!(hover_seq_gate(0, 42), (true, 42));
+        // 新会话 bump：seq 水位清零 —— 旧请求 seq=42 重新放行（旧代际状态已整体作废）
+        let g1 = hover_bump_generation();
+        assert!(g1 > g0, "代际必须单调推进");
+        assert_eq!(hover_seq_gate(0, 42), (true, 42), "bump 后 seq 水位已清零");
+    }
+
+    /// [lc-1960] 无窗口时 hover_apply 的 ack 语义：applied=false + ok=false
+    /// （前端据此进 40/120/300/700ms 退避重试，而不是乐观改账）。
+    /// 注意：generation/seq 是进程级单例，其它测试可能并发推进 —— 这里只断言
+    /// 与「窗口/seq 事实」相关的字段，不断言代际的具体值。
+    #[test]
+    fn hover_apply_without_window_never_claims_applied() {
+        hover_bump_generation();
+        let ack = hover_apply(0, true, 7); // hwnd=0：IsWindow 必假
+        assert!(!ack.applied_hover, "没有窗口就绝不能谎报已可交互");
+        assert!(!ack.ok, "拨位失败 ok 必须为 false（驱动前端重试）");
     }
 }

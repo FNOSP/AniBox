@@ -1,19 +1,21 @@
 /* [lc-1939] 播放器覆盖层 UI —— 视觉模型照抄 Polaris 的 mpv-overlay。
  *
- * [lc-1949] 交互架构重做（用户定论：旧的「探针 + 拨穿透位」点击延迟不可接受）：
+ * [lc-1960] 交互架构按 Polaris 法证结论二次重做（穿透默认态 + hover 事务）：
  *
- *   · 覆盖层窗 layered + 透明 + NOACTIVATE，与 mpv 窗口 1:1 等大、常驻置顶，
- *     **常驻可点**：WS_EX_TRANSPARENT 不再被动态切换（已从构造上移除），WebView
- *     天然收到全部鼠标事件 —— 控件 `pointerdown` 即执行，没有任何等待探针翻转的
- *     环节；hover / 自动续显 / 面板交互全部由真实 DOM 事件驱动，不再依赖探针通知。
- *   · **视频区输入转发**：落点不在 `[data-chrome-hit]` 控件上的鼠标事件经
- *     `mpv_forward_mouse` PostMessage 转给 mpv 锚窗 —— mpv 按真实输入处理：
- *     单击暂停（fntv_osc 分发）、双击全屏（mpv 自己按 --input-doubleclick-time
- *     合成 MBTN_LEFT_DBL，**不要**代发 WM_LBUTTONDBLCLK，避免二次触发）、按住
- *     拖动（--input-builtin-dragging → mpv 内部 ReleaseCapture+HTCAPTION 原生拖窗）、
- *     滚轮音量（input.conf）。「在不在控件上」由事件 target 决定，Rust 不做几何猜测。
- *   · 3 秒无操作自动隐藏（Polaris hideTimeout=3.0）；隐藏态整层禁点（CSS），
- *     点击还给 mpv（点画面 = 暂停/拖动）。
+ *   · **穿透默认态**：控件隐藏（绝大多数时间）覆盖层 WS_EX_TRANSPARENT 恒置位
+ *     （Rust 起播接线 + hover 事务单点管理），真实鼠标直达 mpv —— 单击暂停/
+ *     双击全屏/拖动/滚轮全是 mpv 原生 input.conf 行为，WebView 零鼠标事件流。
+ *     lc-1949 的「常驻可点 + 全量转发」就是「反应慢半拍」与「全屏点击漏给 mpv
+ *     变暂停」的结构根源，已废弃。
+ *   · **hover 事务**：光标悬进 `[data-chrome-hit]` 白名单 → invoke('mpv_overlay_hover',
+ *     {hover, generation, requestSeq}) → Rust 拨位并读回真实 ex-style 作 ack；
+ *     决策 = elementFromPoint（DOM 唯一真源），坐标 = Rust 50ms 光标探针
+ *     （overlay-force-hover-check / overlay-mouse-activity），ack 失配走
+ *     40/120/300/700ms 退避重试（Polaris 同款）。菜单打开期间 hover 恒可交互。
+ *   · **空白区转发保留**：hover 翻位后的可点窗口里，落点不在控件上的事件仍经
+ *     `mpv_forward_mouse` PostMessage 转给 mpv（拖动捕获续投也走这里）；
+ *     穿透态下这些事件根本不进 WebView，转发通道稳态零流量。
+ *   · 3 秒无操作自动隐藏（Polaris hideTimeout=3.0）；隐藏时 hover 事务强制穿透。
  *   · 状态：`mpv-pstate` 事件为主通道 + 500ms invoke 快照兜底。
  *
  * 视觉：Polaris 的值 —— 底栏胶囊 rgba(18,18,18,.88) / 圆角 20 / 内距 4 / 按钮 34×34
@@ -345,6 +347,12 @@ export function PlayerChrome() {
   const hideTimer = useRef<number | null>(null);
   const hoverInteractive = useRef(false);
   const dragLock = useRef(false);
+  /* [lc-1960] hover 事务桥：状态机 effect 把 request 函数挂上来，供自动隐藏 /
+   * 转发路径调用（声明在 effect 之前，避免闭包引用顺序问题）。 */
+  const hoverRequestRef = useRef<((hover: boolean, source: string, force?: boolean) => void) | null>(null);
+  const wakeRef = useRef<() => void>(() => {});
+  /* [lc-1949] 视频区按下转发状态（0=左 1=中 2=右）；hover 状态机也读它做拖动锁 */
+  const fwdRef = useRef<{ btn: number } | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
   const menuOpenRef = useRef(false);
   const menuPanelRef = useRef<HTMLDivElement | null>(null);
@@ -432,8 +440,12 @@ export function PlayerChrome() {
     hideTimer.current = window.setTimeout(() => {
       if (hoverInteractive.current || dragLock.current || menuOpenRef.current) return;
       setVisible(false);
+      // [lc-1960] 控件隐藏 = 穿透归位（Polaris controls-hidden 分支）：隐藏态下
+      // 覆盖层必须交还鼠标，否则「看不见但可点」的幽灵控件再次出现。
+      hoverRequestRef.current?.(false, "controls-hidden");
     }, 3000);
   }, []);
+  wakeRef.current = wake;
 
   useEffect(() => {
     wake();
@@ -441,6 +453,224 @@ export function PlayerChrome() {
       if (hideTimer.current) window.clearTimeout(hideTimer.current);
     };
   }, [wake]);
+
+  /* ── [lc-1960] hover 事务状态机（Polaris mpv-overlay-hover 同款）──
+   * 穿透默认态：控件隐藏期间覆盖层 WS_EX_TRANSPARENT 恒置位（Rust 起播接线已置），
+   * 真实鼠标直达 mpv（单击暂停/双击全屏/拖动全原生），WebView 收不到任何鼠标事件。
+   * 光标悬进 `[data-chrome-hit]` 白名单时，本状态机经 `mpv_overlay_hover` 事务
+   * （generation/seq + Rust 原生样式读回 ack + 40/120/300/700ms 退避重试）把穿透位
+   * 摘掉；离开白名单 / 控件层隐藏时拨回。
+   *
+   * 决策权 = elementFromPoint（DOM 是热区唯一真源，杜绝旧 lc-1939 热区矩形上报漂移）；
+   * 坐标事实 = Rust 50ms 光标探针（穿透态下 WebView 无事件可依，Polaris [overlay_probe]
+   * 同款）：`overlay-force-hover-check`（inside=false = 真离开播放器的权威信号）+
+   * `overlay-mouse-activity` 心跳（控件续显）。
+   *
+   * 与 Polaris 的两处刻意差异：
+   *   · 菜单打开期间 hover 恒可交互 —— 「点空白关面板」那一击必须落在 WebView，
+   *     落给 mpv 就会顺带暂停视频；
+   *   · 按下转发中（fwdRef）/拖动锁（dragLock）不摘 hover —— 拖到一半穿透会切断
+   *     pointer capture（Polaris _overlayAnyDragActive 同义）。 */
+  useEffect(() => {
+    let hoverGen = 0;
+    let hoverSeq = Date.now();
+    let hoverDesired = false;
+    let inFlightSeq = 0;
+    let retryTimer: number | null = null;
+    let retryAttempt = 0;
+    const disposers: Array<() => void> = [];
+
+    const clearRetry = () => {
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+    };
+
+    type HoverAckPayload = {
+      success?: boolean;
+      generation?: number;
+      requestSeq?: number;
+      appliedHover?: boolean;
+      latestRequestSeq?: number;
+      desiredHover?: boolean;
+      state?: HoverAckPayload;
+    };
+
+    const adopt = (payload: unknown, replaceDesired: boolean, replaceApplied: boolean) => {
+      const raw = payload as HoverAckPayload | null;
+      const data = raw && typeof raw === "object" && raw.state ? raw.state : raw;
+      if (!data || typeof data !== "object") return;
+      const generation = Number(data.generation || 0);
+      if (Number.isFinite(generation) && generation > 0 && generation < hoverGen) return;
+      if (Number.isFinite(generation) && generation > hoverGen) {
+        hoverGen = generation;
+        retryAttempt = 0;
+        clearRetry();
+      }
+      const latest = Number(data.latestRequestSeq || 0);
+      if (Number.isSafeInteger(latest) && latest > hoverSeq) hoverSeq = latest;
+      if (replaceDesired && typeof data.desiredHover === "boolean") hoverDesired = data.desiredHover;
+      if (replaceApplied && typeof data.appliedHover === "boolean") {
+        hoverInteractive.current = data.appliedHover;
+      }
+    };
+
+    const request = (hover: boolean, source: string, force = false) => {
+      const desired = !!hover;
+      const changed = desired !== hoverDesired;
+      hoverDesired = desired;
+      if (changed) {
+        retryAttempt = 0;
+        clearRetry();
+      }
+      // 纯边沿：目标态未变且已账实相符时不发事务（稳态零管道流量，Polaris 同款）
+      if (!force && !changed && hoverInteractive.current === desired && retryTimer === null) return;
+      const seq = ++hoverSeq;
+      inFlightSeq = seq;
+      invoke<HoverAckPayload | null>("mpv_overlay_hover", {
+        hover: desired,
+        generation: hoverGen,
+        requestSeq: seq,
+      })
+        .then((ack) => {
+          const stillLatest = seq === inFlightSeq && desired === hoverDesired;
+          const genBefore = hoverGen;
+          adopt(ack, false, stillLatest);
+          if (!stillLatest) {
+            if (hoverGen > genBefore) scheduleRetry(source);
+            return;
+          }
+          if (
+            ack &&
+            ack.success === true &&
+            Number(ack.generation || 0) === hoverGen &&
+            ack.appliedHover === desired
+          ) {
+            retryAttempt = 0;
+            clearRetry();
+            return;
+          }
+          // ack 失配：保留真实 DOM 意图，按服务端代际退避重试
+          scheduleRetry(source);
+        })
+        .catch(() => {
+          if (seq === inFlightSeq && desired === hoverDesired) scheduleRetry(source);
+        });
+    };
+    hoverRequestRef.current = request;
+
+    const scheduleRetry = (source: string) => {
+      const delays = [40, 120, 300, 700];
+      if (retryTimer !== null || retryAttempt >= delays.length) return;
+      const delay = delays[retryAttempt++];
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        request(hoverDesired, `${source}-retry`, true);
+      }, delay);
+    };
+
+    const applyHover = (el: Element | null, source: string) => {
+      const dragActive = !!(fwdRef.current || dragLock.current);
+      const interactive = dragActive
+        ? hoverDesired
+        : menuOpenRef.current ||
+          !!(el && (!el.isConnected || (el.closest && el.closest("[data-chrome-hit]"))));
+      hoverInteractive.current = interactive;
+      request(!!interactive, source);
+    };
+
+    // 探针物理坐标（窗口内）→ CSS 视口坐标（Polaris _overlayProbePoint 同款映射；
+    // 不能假定 DPI/96 = WebView CSS 栅格，显式按 surface 与 clientWidth 比例换算）
+    const probePoint = (d: {
+      physicalX?: number;
+      physicalY?: number;
+      surfacePhysicalWidth?: number;
+      surfacePhysicalHeight?: number;
+    }) => {
+      const px = Number(d.physicalX);
+      const py = Number(d.physicalY);
+      const sw = Number(d.surfacePhysicalWidth);
+      const sh = Number(d.surfacePhysicalHeight);
+      const cw = document.documentElement.clientWidth || window.innerWidth;
+      const ch = document.documentElement.clientHeight || window.innerHeight;
+      if ([px, py, sw, sh, cw, ch].every((v) => Number.isFinite(v) && v > 0)) {
+        return { x: (px * cw) / sw, y: (py * ch) / sh };
+      }
+      return null;
+    };
+
+    let disposed = false;
+    void (async () => {
+      const un = await Promise.all([
+        listen("overlay-interaction-state", (e) => adopt(e.payload, true, true)),
+        listen<{
+          physicalX: number;
+          physicalY: number;
+          surfacePhysicalWidth: number;
+          surfacePhysicalHeight: number;
+          inside: boolean;
+        }>("overlay-force-hover-check", (e) => {
+          const d = e.payload || ({} as typeof e.payload);
+          if (d.inside === false) {
+            // 真离开播放器（全局光标 vs 覆盖层矩形，≤50ms 必达）→ 穿透 + 隐控件
+            request(false, "probe-outside");
+            if (!menuOpenRef.current && !closingRef.current) {
+              if (hideTimer.current) {
+                window.clearTimeout(hideTimer.current);
+                hideTimer.current = null;
+              }
+              setVisible(false);
+            }
+            return;
+          }
+          wakeRef.current();
+          const pt = probePoint(d);
+          if (!pt || pt.x < 0 || pt.y < 0) {
+            request(false, "probe-invalid");
+            return;
+          }
+          applyHover(document.elementFromPoint(pt.x, pt.y), "probe");
+        }),
+        listen("overlay-mouse-activity", () => wakeRef.current()),
+      ]);
+      if (disposed) {
+        for (const f of un) void f();
+        return;
+      }
+      disposers.push(...un);
+      // 页面（重）加载后先与 Rust 对一次账：代际/真实穿透位以服务端为准
+      try {
+        adopt(await invoke("mpv_overlay_hover_state"), true, true);
+      } catch {
+        /* 命令未就绪时忽略，探针事件随后会推 */
+      }
+    })();
+
+    // 可交互窗口内的 mousemove 精化（穿透态下收不到该事件，零开销；Polaris checkHoverState 同位）
+    const onMouseMove = (e: MouseEvent) => {
+      if (fwdRef.current || dragLock.current) return;
+      const el = e.target instanceof Element ? e.target : document.elementFromPoint(e.clientX, e.clientY);
+      applyHover(el, "mousemove");
+    };
+    document.addEventListener("mousemove", onMouseMove, true);
+    disposers.push(() => document.removeEventListener("mousemove", onMouseMove, true));
+
+    return () => {
+      disposed = true;
+      hoverRequestRef.current?.(false, "unmount");
+      hoverRequestRef.current = null;
+      clearRetry();
+      for (const d of disposers) {
+        try {
+          d();
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const stRef = useRef(st);
   stRef.current = st;
@@ -478,8 +708,8 @@ export function PlayerChrome() {
    *     原生拖窗，DWM 搬运、零跟随延迟）；
    *   · 滚轮 = input.conf（音量）；右键 = MBTN_RIGHT（input.conf: ignore）。
    * 分流规则：target 命中 [data-chrome-hit]（或已从 DOM 摘除的节点）→ 覆盖层自己处理；
-   * 菜单打开 / 关面板抑制窗口内 → 不转发（点空白 = 关面板）；其余 → 转发。 */
-  const fwdRef = useRef<{ btn: number } | null>(null);
+   * 菜单打开 / 关面板抑制窗口内 → 不转发（点空白 = 关面板）；其余 → 转发。
+   * [lc-1960] fwdRef 上移到组件 refs 区（hover 状态机读它做拖动锁）。 */
   useEffect(() => {
     const dpr = () => window.devicePixelRatio || 1;
     const overChrome = (t: EventTarget | null) => {

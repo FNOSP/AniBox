@@ -22,7 +22,7 @@
   overflow: hidden;
 }
 
-/* [lc-1973/1979] 设置项扁平化（按用户要求回退衬底），保留行距收紧 */
+/* [lc-1973] 设置项去框扁平化：不再每条套卡片，贴齐概览页的轻量观感 */
 .javset.embed .javset-fields { gap: 14px 20px; }
 .javset.embed .javset-item {
   border: none;
@@ -39,44 +39,17 @@
   background: none;
   min-height: 36px;
   padding: 2px 2px;
-  /* [lc-1977] 扁平行内容聚拢：行宽不超过输入控件上限，分类/路径不再漂到远处 */
-  max-width: 560px;
 }
-/* [lc-1979] 设置行错峰入场（同海报墙手感） */
-.jvh-view .javset-fields > .javset-sechead,
-.jvh-view .javset-fields > div > * { animation: jvh-card-in 0.28s ease-out both; }
-.jvh-view .javset-fields > .javset-sechead,
-.jvh-view .javset-fields > div > :nth-child(2) { animation-delay: 0.03s; }
-.jvh-view .javset-fields > div > :nth-child(3) { animation-delay: 0.06s; }
-.jvh-view .javset-fields > div > :nth-child(4) { animation-delay: 0.09s; }
-.jvh-view .javset-fields > div > :nth-child(5) { animation-delay: 0.12s; }
-.jvh-view .javset-fields > div > :nth-child(n + 6) { animation-delay: 0.15s; }
-.javset.embed .javset-fields > div:has(.javset-site) { max-width: 1140px; }
-.javset.embed .javset-search input { max-width: 560px; }
 .javset.embed .javset-foot { background: none; }
 
-/* [lc-1967/1968/1976] 内嵌设置页：无外框、随页面流全宽，固定双栏等高栅格 */
+/* [lc-1967/1968] 内嵌设置页：限宽居中 + 固定双栏栅格，卡片同排等高，长控件独占整行 */
 .javset.embed {
   width: 100%;
-  max-width: none;
+  max-width: 1100px;
   height: auto;
-  max-height: none;
-  margin: 0 0 20px;
-  border: none;
-  background: none;
-  box-shadow: none;
-  border-radius: 0;
-  overflow: visible;
+  max-height: calc(100vh - 200px);
+  margin: 0 auto 16px;
 }
-.javset.embed .javset-tabs { padding: 4px 0 10px; }
-.javset.embed .javset-search { padding: 0 0 12px; }
-.javset.embed .javset-fields { padding: 0; }
-.javset.embed .javset-foot { padding: 10px 2px 0; margin-top: 6px; }
-/* 输入控件不全宽拉长（双栏每列很宽时收住） */
-.javset.embed .javset-item input[type="text"],
-.javset.embed .javset-item input[type="password"],
-.javset.embed .javset-item input[type="number"],
-.javset.embed .javset-item textarea { max-width: 560px; }
 .javset.embed .javset-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -599,9 +572,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .jvh-view,
-  .jvh-view .jvh-grid .jvh-card,
-  .jvh-view .javset-fields > .javset-sechead,
-  .jvh-view .javset-fields > div > * { animation: none; }
+  .jvh-view .jvh-grid .jvh-card { animation: none; }
   .jvh-card .jvh-poster img,
   .jvh-page .libf-open,
   .jvh-page .javset-btn,

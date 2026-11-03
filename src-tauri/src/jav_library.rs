@@ -1868,6 +1868,7 @@ fn entry_view(e: &JavEntry) -> Value {
         "titleZh": e.title_zh,
         "actors": e.actors,
         "tags": e.tags,
+        "tagsZh": crate::jav_dict::tag_zh_list(&e.tags),
         "releaseDate": e.release_date,
         "studio": e.studio,
         "series": e.series,

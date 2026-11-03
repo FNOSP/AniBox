@@ -19,6 +19,7 @@ export type JavEntryT = {
   titleZh: string;
   actors: string[];
   tags: string[];
+  tagsZh?: string[];
   releaseDate: string;
   studio: string;
   series: string;
@@ -232,13 +233,13 @@ export function JavDetailDrawer({
             </div>
           </div>
 
-          {/* 标签 */}
-          {e.tags.length > 0 && (
+          {/* 标签（tagsZh = 词典翻译后的简中；点击过滤仍传原名，媒体库按原名匹配） */}
+          {(e.tagsZh && e.tagsZh.length > 0 ? e.tagsZh : e.tags).length > 0 && (
             <div className="jvd-card">
               <div className="jvd-k">影片标签</div>
               <div className="jvd-chips2">
-                {e.tags.map((t) => (
-                  <button key={t} className="jvd-chip" onClick={() => filterBy(t)}>{t}</button>
+                {(e.tagsZh && e.tagsZh.length > 0 ? e.tagsZh : e.tags).map((t, i) => (
+                  <button key={`${t}/${i}`} className="jvd-chip" onClick={() => filterBy(t)}>{t}</button>
                 ))}
               </div>
             </div>

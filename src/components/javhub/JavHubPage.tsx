@@ -131,14 +131,19 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
     let pending = 0;
     let failed = 0;
     let pendingZh = 0;
+    const failedSamples: string[] = [];
     for (const l of libs) {
       for (const e of l.entries) {
         size += e.files.reduce((a, f) => a + (f.size || 0), 0);
         if (e.status === 1) {
           scraped += 1;
           if (!e.titleZh?.trim()) pendingZh += 1;
-        } else if (e.status === 2) failed += 1;
-        else pending += 1;
+        } else if (e.status === 2) {
+          failed += 1;
+          if (failedSamples.length < 3) {
+            failedSamples.push(`${e.code}：${(e.lastError || "原因未知").slice(0, 80)}`);
+          }
+        } else pending += 1;
         const cover = e.coverUrl || "";
         for (const a of e.actors) {
           const x = actors.get(a) || { count: 0, covers: [] };
@@ -152,7 +157,9 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
           if (cover && x.covers.length < 4) x.covers.push(cover);
           studios.set(e.studio, x);
         }
-        for (const t of e.tags) {
+        // 标签按词典译名归组（tagsZh 缺失时退回原名）
+        const zhTags = e.tagsZh?.length ? e.tagsZh : e.tags;
+        for (const t of zhTags) {
           const x = tags.get(t) || { count: 0, covers: [] };
           x.count += 1;
           if (cover && x.covers.length < 4) x.covers.push(cover);
@@ -162,7 +169,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
     }
     const sortAgg = (m: Map<string, { count: number; covers: string[] }>) =>
       [...m.entries()].sort((a, b) => b[1].count - a[1].count);
-    return { actors: sortAgg(actors), studios: sortAgg(studios), tags: sortAgg(tags), size, scraped, pending, failed, pendingZh };
+    return { actors: sortAgg(actors), studios: sortAgg(studios), tags: sortAgg(tags), size, scraped, pending, failed, pendingZh, failedSamples };
   }, [libs]);
 
   const scrapeAll = async () => {
@@ -304,7 +311,8 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
     return (
       e.actors.some((a) => a.toLowerCase() === q) ||
       e.studio.toLowerCase() === q ||
-      e.tags.some((t) => t.toLowerCase() === q)
+      e.tags.some((t) => t.toLowerCase() === q) ||
+      (e.tagsZh ?? []).some((t) => t.toLowerCase() === q)
     );
   };
   const scoped = (active === ALL ? libs.flatMap((l) => l.entries.map((e) => ({ e, lp: l.provider }))) : (cur?.entries || []).map((e) => ({ e, lp: active })))
@@ -324,7 +332,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
               </span>
             )}
             {e.status === 0 && <i className="jvh-badge">待刮削</i>}
-            {e.status === 2 && <i className="jvh-badge warn">失败</i>}
+            {e.status === 2 && <i className="jvh-badge warn" title={e.lastError || "原因未知"}>失败</i>}
           </div>
           <p className="jvh-title" title={e.titleZh || e.title || e.code}>
             {e.titleZh || e.title || e.code}
@@ -474,7 +482,9 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
               {agg.failed > 0 && (
                 <div className="jvh-alert warn">
                   <b>{agg.failed} 条刮削失败</b>
-                  <p className="hint">多半是代理没通或番号认错，重试会按站点优先级再问一遍。</p>
+                  {agg.failedSamples.map((s) => (
+                    <p key={s} className="hint">{s}</p>
+                  ))}
                   <button className="javset-btn ghost" disabled={busy} onClick={() => void scrapeAll()}>
                     {busy ? "刮削中…" : "重试失败"}
                   </button>

@@ -3135,8 +3135,11 @@ pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     use tauri::Manager;
     if let Some(w) = app.get_webview_window("mpv_overlay") {
         let _ = w.show();
+        // [lc-1926] 留痕：确认走的是「常驻窗口复用」路径而不是临时建窗
+        crate::libmpv::trace("[lc-1926] mpv_overlay 已存在 → show 复用");
         return Some(w);
     }
+    // [lc-1926] 窗口不存在则现建（正常路径下 setup 已建好，这里只做兜底）
     let main = app.get_webview_window("main")?;
     let pos = main.outer_position().ok()?;
     let size = main.outer_size().ok()?;
@@ -4275,6 +4278,11 @@ pub fn run() {
             cloud::init_app_data(app.handle());
             // [lc-1907] JavHub 定时扫描调度（jav-settings.json 里默认关闭，关闭时零动作）
             jav_settings::spawn_auto_scan(app.handle().clone());
+            // [lc-1926] 播放器覆盖层窗口**随 App 启动预建**（隐藏）：
+            // 之前是「点播放时才在主线程同步建窗」，WebView 加载 + React 挂载 + 事件订阅
+            // 全部挤在起播那几百毫秒里，表现为「控件过很久才出现 / 数据一直不刷新」。
+            // Polaris 的 MPV Overlay 同样是常驻窗口，播放时只是 show/hide。
+            let _ = show_player_overlay(app.handle()).map(|w| { let _ = w.hide(); });
             // [lc-1784] OpenSubtitles 内置共享 Key 落地（供 mpv 侧 sub-assrt.lua 读；空则清理）
             subtitle_sources::sync_builtin_key(app.handle());
             // [update] 载入前端补丁覆盖层指针；release 且存在补丁时切到 fntvweb 协议

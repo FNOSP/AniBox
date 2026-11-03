@@ -52,6 +52,11 @@ fn pstate_update(app: &tauri::AppHandle, key: &str, val: serde_json::Value, forc
     let snap = serde_json::Value::Object(map.clone());
     drop(at);
     drop(g);
+    // [lc-1926] 首次发射留痕（排查「控件数据不刷新」时确认状态流是否真的在跑）
+    static PSTATE_LOGGED: std::sync::Once = std::sync::Once::new();
+    PSTATE_LOGGED.call_once(|| {
+        crate::libmpv::trace(&format!("[lc-1926] mpv-pstate 首帧: {snap}"));
+    });
     let _ = app.emit("mpv-pstate", snap);
 }
 

@@ -273,10 +273,9 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                         || (m.top - o.top).abs() > 2
                         || (m.right - o.right).abs() > 2
                         || (m.bottom - o.bottom).abs() > 2;
-                    if moving && !hidden_for_move {
-                        ShowWindow(ov as _, SW_HIDE);
-                        hidden_for_move = true;
-                    }
+                    // [lc-1925] 覆盖层已是透明窗（无黑底可残影），不再隐藏 ——
+                    // 隐藏会让控件「过一会才出现」，得不偿失。
+                    let _ = moving;
                     stable_since = None;
                     // [lc-1924] z 序交给 owner 关系（owned 恒在 owner 之上），这里只做几何同步
                     SetWindowPos(

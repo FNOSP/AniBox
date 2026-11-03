@@ -3215,7 +3215,9 @@ pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
             crate::mpvwin::set_overlay_transparent(built_transparent);
             let _ = w.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
             let _ = w.set_size(tauri::PhysicalSize::new(size.width, size.height));
-            let _ = w.set_ignore_cursor_events(true);
+            // [lc-1925] 不再全窗穿透：覆盖层浮在视频之上，控件必须能直接收点击。
+            // 空白区的「单击暂停 / 拖动窗口」由前端识别后经 mpv 命令转发（Polaris 同款）。
+            let _ = w.set_ignore_cursor_events(false);
             // [lc-1922] 新建路径漏了 show：窗口 visible(false) 建出后从未显示，
             // mpv 被收编到它的矩形上正常可见，但承载控制层（右上角控件/加载转圈）
             // 的 webview 一直隐形 —— 表现为「视频在播、控件没了」。
@@ -3310,6 +3312,18 @@ async fn mpv_toggle_pause(state: State<'_, AppState>) -> Result<(), String> {
 
 /// [lc-093] App 形态（内嵌小窗 / 全页全屏）→ mpv 的 `fullscreen` 属性镜像。
 /// uosc 用它当底栏双形态判据（小窗只留 播放暂停+上下一集 | 时间 | 全屏；全屏保持原样）。
+/// [lc-1925] 让 mpv 拖动它自己的窗口（原生拖窗，DWM 搬运视频窗，零延迟）。
+/// 覆盖层在空白区识别到「按住左键位移 > 4px」时调用 —— Polaris 的 osc-cinema 同款命令
+/// （mpv.conf 里 input-builtin-dragging=no，拖窗由这里唯一提交）。
+#[tauri::command]
+async fn mpv_begin_drag(state: State<'_, AppState>) -> Result<(), String> {
+    let slot = state.mpv.lock().await;
+    if let Some(m) = slot.as_ref() {
+        m.command(serde_json::json!(["begin-vo-dragging"])).await?;
+    }
+    Ok(())
+}
+
 /// [lc-1924] 读一个 mpv 属性（覆盖层 UI 用：如 glsl-shaders 判断着色器开关态）
 #[tauri::command]
 async fn mpv_get_prop(state: State<'_, AppState>, name: String) -> Result<serde_json::Value, String> {
@@ -4665,6 +4679,7 @@ pub fn run() {
             mpv_toggle_pause,
             mpv_script_message,
             mpv_get_prop,
+            mpv_begin_drag,
             player_source,
             mpv_set_ui_fullscreen,
             mpv_seek,

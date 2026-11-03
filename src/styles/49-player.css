@@ -156,7 +156,9 @@
 .player-chrome {
   position: fixed;
   inset: 0;
-  pointer-events: none;
+  /* [lc-1925] 覆盖层浮在视频之上且要收全部点击（空白区手势见组件内注释），
+     这里必须是 auto —— 之前 none 会让整层穿透，等于所有控件都点不动。 */
+  pointer-events: auto;
   user-select: none;
   /* [lc-1924] 覆盖层现在浮在 mpv 视频**之上**（owner 方向翻转 + 透明窗）：
      这里必须透明，否则整块黑会把画面盖死。视频未出画前的黑由 .chrome-opening 承担。 */

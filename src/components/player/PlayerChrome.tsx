@@ -54,7 +54,6 @@ const fmt = (s?: number) => {
 };
 
 export function PlayerChrome() {
-  const ignoreRef = useRef(true);
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState("");
   const [st, setSt] = useState<PState>({});
@@ -64,12 +63,6 @@ export function PlayerChrome() {
   const hideTimer = useRef<number | null>(null);
   const barRef = useRef<HTMLDivElement | null>(null);
   const hoverRef = useRef(false);
-
-  const setIgnore = useCallback((v: boolean) => {
-    if (ignoreRef.current === v) return;
-    ignoreRef.current = v;
-    void invoke("player_chrome_ignore", { ignore: v }).catch(() => {});
-  }, []);
 
   /* 3 秒无操作自动隐藏（Polaris hideTimeout=3.0）；悬停底栏/拖进度/加载中不隐藏 */
   const wake = useCallback(() => {
@@ -81,27 +74,35 @@ export function PlayerChrome() {
     }, 3000);
   }, []);
 
-  /* 命中测试：Rust 回传 mpv 侧光标位置（物理像素），压到 [data-chrome] 上才可点 */
-  useEffect(() => {
-    let un: (() => void) | undefined;
-    listen<{ x: number; y: number }>("overlay-mouse", (e) => {
-      const { x, y } = e.payload;
-      if (x < 0) {
-        setIgnore(true);
-        wake();
-        return;
-      }
-      const dpr = window.devicePixelRatio || 1;
-      const el = document.elementFromPoint(x / dpr, y / dpr);
-      setIgnore(!(el && el.closest("[data-chrome]")));
-      wake();
-    })
-      .then((f) => {
-        un = f;
-      })
-      .catch(() => {});
-    return () => un?.();
-  }, [setIgnore, wake]);
+  /* [lc-1925] 空白区手势（Polaris 的 osc-cinema 同款语义）：
+     按住左键位移 > 4px → 拖动 mpv 窗口（begin-vo-dragging，DWM 原生搬运）；
+     松开且未位移 → 单击暂停；双击 → 全屏。控件区域 [data-chrome] 不参与。
+     位移死区 4px 与其 dragDeadzone 一致。 */
+  const gesture = useRef<{ x: number; y: number; t: number; moved: boolean } | null>(null);
+  const onRootPointerDown = (e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).closest("[data-chrome]")) return;
+    if (e.button !== 0) return;
+    gesture.current = { x: e.clientX, y: e.clientY, t: Date.now(), moved: false };
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  };
+  const onRootPointerMove = (e: React.PointerEvent) => {
+    const g = gesture.current;
+    if (!g || g.moved) return;
+    if (Math.abs(e.clientX - g.x) > 4 || Math.abs(e.clientY - g.y) > 4) {
+      g.moved = true;
+      cmd("mpv_begin_drag");
+    }
+  };
+  const onRootPointerUp = (e: React.PointerEvent) => {
+    const g = gesture.current;
+    gesture.current = null;
+    if (!g || g.moved) return;
+    if (e.detail >= 2) {
+      cmd("mpv_set_ui_fullscreen", { on: !st.fullscreen });
+      return;
+    }
+    cmd("mpv_toggle_pause");
+  };
 
   /* 状态流 + 加载态 */
   useEffect(() => {
@@ -187,7 +188,12 @@ export function PlayerChrome() {
   }, [st.plCount, st.plPos]);
 
   return (
-    <div className={`player-chrome${uiVisible || loading ? "" : " hidden"}`}>
+    <div
+      className={`player-chrome${uiVisible || loading ? "" : " hidden"}`}
+      onPointerDown={onRootPointerDown}
+      onPointerMove={onRootPointerMove}
+      onPointerUp={onRootPointerUp}
+    >
       {/* ── 顶栏：返回 + 标题 + 集数 + 全屏 ── */}
       <header className="chrome-top" data-chrome onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
         <button

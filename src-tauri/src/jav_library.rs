@@ -1149,6 +1149,30 @@ async fn eng_javbus(ctx: &Ctx, code: &str, base_override: &str) -> Result<Meta, 
     parse_javbus_html(&html).map_err(|e| e)
 }
 
+/// [lc-1966] 标签兜底：jav321 详情页没有ジャンル行（实测 field_b 只命中
+/// 出演者/メーカー/品番/配信開始日/お気に入り），主引擎刮完仍无标签时用
+/// javbus 补（繁体标签 → jav_dict 词典可翻简中）。失败静默返回 None。
+async fn enrich_tags(ctx: &Ctx, code: &str, category: &str) -> Option<Vec<String>> {
+    if category != CATEGORY_CENSORED && category != CATEGORY_UNCENSORED {
+        return None;
+    }
+    let resp = send_site(
+        ctx,
+        "javbus",
+        "GET",
+        &format!("/{code}"),
+        None,
+        &[("Cookie", "over18=1"), ("Referer", "https://www.javbus.com/")],
+    )
+    .await
+    .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let html = resp.text().await.ok()?;
+    parse_javbus_html(&html).ok().map(|m| m.tags).filter(|t| !t.is_empty())
+}
+
 // ---------- r18.dev：公开 JSON，最稳的一手（无 Cookie、无年龄门） ----------
 
 async fn eng_r18dev(ctx: &Ctx, code: &str, base_override: &str) -> Result<Meta, String> {
@@ -1741,7 +1765,8 @@ fn save_cover(_app: &AppHandle, code_key: &str, bytes: &[u8], ext: &str) -> Resu
 
 /// 单条刮削：按分类引擎序依次降级，首个成功者胜出；封面永远落本机。
 async fn scrape_one(ctx: &Ctx, app: &AppHandle, entry: &mut JavEntry, force: bool) -> bool {
-    if entry.status == 1 && !force {
+    // [lc-1966] status=1 但没标签的也算待办（jav321 详情页没有ジャンル行，历史条目普遍缺标签）
+    if entry.status == 1 && !force && !entry.tags.is_empty() {
         return false;
     }
     if entry.files.is_empty() {
@@ -1787,6 +1812,12 @@ async fn scrape_one(ctx: &Ctx, app: &AppHandle, entry: &mut JavEntry, force: boo
                         entry.director = m.director;
                     }
                     entry.cover_url = m.cover_url.clone();
+                    // [lc-1966] 主引擎没给标签 → javbus 详情页兜底富化（繁体标签，词典可翻简中）
+                    if entry.tags.is_empty() {
+                        if let Some(t) = enrich_tags(ctx, &entry.code, &entry.category).await {
+                            entry.tags = t;
+                        }
+                    }
                     // 素人片没有演员档案，身材数字只存在于标题/简介里（纯本地正则，零请求）
                     let (cup, age, height) = extract_physique(&[entry.title.as_str(), entry.summary.as_str()]);
                     if !cup.is_empty() {
@@ -1955,7 +1986,8 @@ pub async fn jav_library_scrape(app: AppHandle, provider: String, force: Option<
     let entries = st.libs[pos].entries.clone();
     let mut updated = entries.clone();
     for (i, e) in entries.iter().enumerate() {
-        if e.status == 1 && !force {
+        // [lc-1966] 已刮削且有标签才跳过；缺标签的参与本轮补齐（补到就不再进循环）
+        if e.status == 1 && !force && !e.tags.is_empty() {
             skipped += 1;
             continue;
         }

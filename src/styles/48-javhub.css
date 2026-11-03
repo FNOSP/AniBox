@@ -22,6 +22,26 @@
   overflow: hidden;
 }
 
+/* [lc-1973] 设置项去框扁平化：不再每条套卡片，贴齐概览页的轻量观感 */
+.javset.embed .javset-fields { gap: 14px 20px; }
+.javset.embed .javset-item {
+  border: none;
+  background: none;
+  padding: 2px 2px;
+}
+.javset.embed .javset-ro {
+  border: none;
+  background: none;
+  padding: 2px 2px;
+}
+.javset.embed .javset-site {
+  border: none;
+  background: none;
+  min-height: 36px;
+  padding: 2px 2px;
+}
+.javset.embed .javset-foot { background: none; }
+
 /* [lc-1967/1968] 内嵌设置页：限宽居中 + 固定双栏栅格，卡片同排等高，长控件独占整行 */
 .javset.embed {
   width: 100%;

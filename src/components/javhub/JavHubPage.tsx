@@ -69,6 +69,8 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
   const [detailProvider, setDetailProvider] = useState("");
   const [fnosBusy, setFnosBusy] = useState(false);
   const [fnosNote, setFnosNote] = useState("");
+  const [translateBusy, setTranslateBusy] = useState(false);
+  const [scanRunBusy, setScanRunBusy] = useState(false);
   const noteTimer = useRef<number | undefined>(undefined);
 
   /* 结果提示自动消失（进度行不残留：完成后 flash，切标签即清） */
@@ -126,11 +128,14 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
     let scraped = 0;
     let pending = 0;
     let failed = 0;
+    let pendingZh = 0;
     for (const l of libs) {
       for (const e of l.entries) {
         size += e.files.reduce((a, f) => a + (f.size || 0), 0);
-        if (e.status === 1) scraped += 1;
-        else if (e.status === 2) failed += 1;
+        if (e.status === 1) {
+          scraped += 1;
+          if (!e.titleZh?.trim()) pendingZh += 1;
+        } else if (e.status === 2) failed += 1;
         else pending += 1;
         const cover = e.coverUrl || "";
         for (const a of e.actors) {
@@ -155,7 +160,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
     }
     const sortAgg = (m: Map<string, { count: number; covers: string[] }>) =>
       [...m.entries()].sort((a, b) => b[1].count - a[1].count);
-    return { actors: sortAgg(actors), studios: sortAgg(studios), tags: sortAgg(tags), size, scraped, pending, failed };
+    return { actors: sortAgg(actors), studios: sortAgg(studios), tags: sortAgg(tags), size, scraped, pending, failed, pendingZh };
   }, [libs]);
 
   const scrapeAll = async () => {
@@ -218,8 +223,56 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
     }
   };
 
-  const play = async (e: JavEntryT) => {
-    const f = e.files[0];
+  /* 相对时间（上次扫描 / 上次汉化） */
+  const sinceTime = (ms: number) => {
+    if (!ms) return "还没跑过";
+    const m = Math.floor((Date.now() - ms) / 60000);
+    if (m < 1) return "刚刚";
+    if (m < 60) return `${m} 分钟前`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h} 小时前`;
+    return `${Math.floor(h / 24)} 天前`;
+  };
+  const maxScan = libs.reduce((a, l) => Math.max(a, l.scannedAtMs), 0);
+
+  /* 批量汉化：全部盘循环（AI Key 配了走精翻，没配自动 Google 免 Key） */
+  const translateAll = async () => {
+    if (translateBusy) return;
+    setTranslateBusy(true);
+    setNote("正在批量汉化…");
+    let ok = 0;
+    let errs = "";
+    for (const l of libs) {
+      try {
+        const r = await invoke<{ translated: number; error?: string }>("jav_ai_translate", { provider: l.provider, force: false });
+        ok += r.translated ?? 0;
+        if (r.error) errs = r.error;
+      } catch (e) {
+        errs = String(e);
+      }
+    }
+    setTranslateBusy(false);
+    await load();
+    flashNote(ok ? `汉化完成：${ok} 条` : errs ? `汉化失败：${errs}` : "没有待汉化的条目", 8000);
+  };
+
+  /* 定时扫描立即跑一轮（扫目录 + 增量刮削 + 自动汉化一条龙） */
+  const runAutoScan = async () => {
+    if (scanRunBusy) return;
+    setScanRunBusy(true);
+    setNote("正在跑一轮定时扫描（扫目录 + 增量刮削）…");
+    try {
+      await invoke("jav_auto_scan_run");
+      flashNote("定时扫描跑完，媒体库已更新");
+      await load();
+    } catch (e) {
+      flashNote(String(e), 10000);
+    } finally {
+      setScanRunBusy(false);
+    }
+  };
+
+  const play = async (e: JavEntryT) => {    const f = e.files[0];
     if (!f) return;
     setErr("");
     try {
@@ -406,11 +459,34 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
             {stat("失败", String(agg.failed))}
             {stat("总大小", fmtSize(agg.size))}
             {stat("来源盘", String(libs.length))}
+            {stat("上次扫描", sinceTime(maxScan))}
           </div>
+          {(agg.failed > 0 || agg.pendingZh > 0) && (
+            <div className="jvh-alerts">
+              {agg.failed > 0 && (
+                <div className="jvh-alert warn">
+                  <b>{agg.failed} 条刮削失败</b>
+                  <p className="hint">多半是代理没通或番号认错，重试会按站点优先级再问一遍。</p>
+                  <button className="javset-btn ghost" disabled={busy} onClick={() => void scrapeAll()}>
+                    {busy ? "刮削中…" : "重试失败"}
+                  </button>
+                </div>
+              )}
+              {agg.pendingZh > 0 && (
+                <div className="jvh-alert">
+                  <b>{agg.pendingZh} 条待汉化</b>
+                  <p className="hint">配了 AI Key 走 AI 精翻，否则自动用 Google 免 Key 翻译（需代理）。</p>
+                  <button className="javset-btn ghost" disabled={translateBusy} onClick={() => void translateAll()}>
+                    {translateBusy ? "汉化中…" : "批量汉化"}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           {libs.length > 0 && (
             <div className="jvh-sources">
               {libs.map((l) => (
-                <span key={l.provider} className="jvh-source">
+                <span key={l.provider} className="jvh-source" title={`${l.count} 部 · ${sinceTime(l.scannedAtMs)}`}>
                   {l.label || labels[l.provider] || l.provider}
                   <b>{l.count}</b>
                 </span>
@@ -439,6 +515,20 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
                 {busy ? "刮削中…" : "刮削全部盘"}
               </button>
               <p className="hint">逐盘增量刮削，已成功的跳过；走镜像轨免梯子。</p>
+            </div>
+            <div className="jvh-tool">
+              <h5>批量汉化</h5>
+              <button className="javset-btn ghost" disabled={translateBusy} onClick={() => void translateAll()}>
+                {translateBusy ? "汉化中…" : "汉化全部盘"}
+              </button>
+              <p className="hint">配了 AI Key 走 AI 精翻；没配自动用 Google 免 Key 翻译（需代理）。</p>
+            </div>
+            <div className="jvh-tool">
+              <h5>定时扫描</h5>
+              <button className="javset-btn ghost" disabled={scanRunBusy} onClick={() => void runAutoScan()}>
+                {scanRunBusy ? "执行中…" : "立即跑一轮"}
+              </button>
+              <p className="hint">扫目录 + 增量刮削 + 自动汉化一条龙；间隔在设置 → 定时扫描里调。</p>
             </div>
           </div>
         </>

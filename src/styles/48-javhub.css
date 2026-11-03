@@ -329,6 +329,30 @@
   gap: 10px;
 }
 
+/* [lc-1961] 概览告警卡（刮削失败 / 待汉化） */
+.jvh-alerts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.jvh-alert {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 15px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--ph-bg);
+  min-width: 0;
+}
+.jvh-alert b { font-size: 13px; color: var(--text-strong); }
+.jvh-alert .hint { margin: 0; }
+.jvh-alert .javset-btn { margin-top: auto; }
+.jvh-alert.warn { border-color: rgba(160, 60, 60, 0.55); }
+.jvh-alert.warn b { color: #e5484d; }
+
 /* [lc-1956] 媒体库标签行行首的「全盘刮削」动作钮：强调色描边，与库胶囊区分 */
 .jvh-scrape-all {
   color: var(--accent);

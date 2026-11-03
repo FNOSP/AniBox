@@ -175,11 +175,20 @@
   transition: opacity 250ms cubic-bezier(.25, 1, .25, 1),
     transform 250ms cubic-bezier(.25, 1, .25, 1), visibility 0s;
 }
+/* [lc-1946] 隐藏态只淡出 + 位移，**保留 hit-test**（不再 `visibility:hidden`）：
+   顶栏窗控的固定热区在 auto-hide 后仍上报，探针会把右上角翻成可点；如果这里把
+   layer 设成 visibility:hidden，翻位后这一击会落进「看不见也点不到」的空层，
+   表现仍是「点了没反应」。视觉不可见由 opacity:0 保证。 */
 .player-chrome.pc-hidden .pc-layer {
   opacity: 0;
   transform: translateY(10px);
-  visibility: hidden;
-  transition: opacity 200ms ease-in, transform 200ms ease-in, visibility 0s 200ms;
+  transition: opacity 200ms ease-in, transform 200ms ease-in;
+}
+/* [lc-1946] 关闭：控件层先立刻淡出（用户可见的第一步），窗口收起在 Rust 侧同时进行 */
+.player-chrome.pc-leaving .pc-layer {
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
 }
 /* 只压暗底部（Polaris 唯一的一条对比渐变）；顶部不做任何压暗 */
 .pc-scrim {
@@ -268,6 +277,12 @@
 }
 .pc-round:active {
   transform: scale(.88);
+}
+/* [lc-1946] 按下当帧反馈：`pointerdown` 里打 160ms 的类（`preventDefault` 下
+   `:active` 不一定生效），顶栏窗控点下去必须先有「按到了」的观感。 */
+.pc-round.pc-pressed {
+  transform: scale(.88);
+  background: rgba(0, 0, 0, .66);
 }
 .pc-round.pc-close:hover {
   background: rgba(229, 72, 77, .78);

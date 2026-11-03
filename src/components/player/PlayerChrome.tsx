@@ -46,6 +46,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Layers,
   ListOrdered,
   ListVideo,
@@ -78,6 +79,8 @@ type PState = {
   plCount?: number;
   fullscreen?: boolean;
   ontop?: boolean;
+  /** [lc-1946] 播放器是否最大化（mpv 锚窗 IsZoomed）；顶栏按钮换图标用 */
+  maximized?: boolean;
   phase?: string;
   title?: string;
 };
@@ -368,6 +371,13 @@ export function PlayerChrome() {
   const tapAt = useRef(0);
   /* [lc-1944] 空白区仲裁的抑制窗口（关闭面板/拖拽后的余波点击不再算作「点画面」） */
   const ptSuppressUntil = useRef(0);
+  /* [lc-1946] 置顶为乐观状态：mpv 忙时属性回包可能迟到数秒，期间不允许 500ms 快照
+   * 用旧值把图标打回去。5s 内以本地点击结果为准。 */
+  const ontopLocalAt = useRef(0);
+  /* [lc-1946] 关闭只跑一次：退出清理最长 2s，用户会连点；重复 invoke 会被 Rust 去重，
+   * 前端也先挡一层，并立刻把控件层淡出给出反馈。 */
+  const closingRef = useRef(false);
+  const [closing, setClosing] = useState(false);
 
   const loading = st.phase !== "loaded" && st.phase !== "ended";
   const title = st.title || "";
@@ -399,7 +409,12 @@ export function PlayerChrome() {
       onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => {
         if (e.button !== 0) return;
         tapAt.current = performance.now();
-        fn(e.currentTarget);
+        // [lc-1946] 按下当帧的可见反馈：`preventDefault` 会让部分场景拿不到 `:active`，
+        // 这里显式打一个 160ms 的按下态类（顶栏窗控「点了没反应」首先是**看不出按下**）。
+        const el = e.currentTarget;
+        el.classList.add("pc-pressed");
+        window.setTimeout(() => el.classList.remove("pc-pressed"), 160);
+        fn(el);
       },
       onClick: (e: React.MouseEvent<HTMLButtonElement>) => {
         if (performance.now() - tapAt.current < 700) return;
@@ -410,7 +425,49 @@ export function PlayerChrome() {
   );
 
   /* ── [lc-1943] 可点区上报：穿透判定由 Rust 探针独占，页面只负责「哪些矩形可点」──
-   * 只在布局/显隐变化时上报（一次交互最多 1 次 IPC），不再每帧 eval + invoke 往返。 */
+   * 只在布局/显隐变化时上报（一次交互最多 1 次 IPC），不再每帧 eval + invoke 往返。
+   *
+   * [lc-1946] 顶栏窗控固定热区：auto-hide 时 `.pc-layer` 会 opacity 0 + 位移 10px，
+   * 此时按 DOM 实测值上报会把顶栏按钮报成「不可点」→ 探针保持全窗穿透 → 光标移到
+   * 右上角也是穿透态，点击直接落到 mpv（用户体感 = 右上角按钮点了没反应）。
+   * 这里单独缓存最后一次**可见时**实测的 `.pc-top-right` 矩形（物理像素），隐藏时用
+   * 缓存值上报；窗口第一次上报之前用常量兜底。缓存只在实测到正尺寸时刷新，不读隐藏态。 */
+  const TOP_CLUSTER_W = 200; // CSS px：4×28 圆钮 + 3×12 间距 + 24 右内距 + 余量（兜底）
+  const TOP_CLUSTER_H = 64;
+  const TOP_CLUSTER_RIGHT = 24;
+  /** 缓存：距窗口右边的内距 / 顶 / 宽 / 高（CSS px）。存相对值，窗口 resize 后仍正确。 */
+  const topHotRef = useRef<{ right: number; top: number; w: number; h: number } | null>(null);
+  const fixedTopHot = useCallback(
+    (dpr: number, measure: boolean): [number, number, number, number] => {
+      // 只在控件**可见**时实测并刷新缓存：隐藏态带 translateY(10px)，测到的不是可用值
+      const el = measure ? document.querySelector(".pc-top-right") : null;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) {
+          topHotRef.current = {
+            right: (window.innerWidth || 0) - r.right,
+            top: r.top,
+            w: r.width,
+            h: r.height,
+          };
+        }
+      }
+      const vw = window.innerWidth || 0;
+      const c = topHotRef.current;
+      const w = c ? c.w : Math.min(TOP_CLUSTER_W, vw);
+      const h = c ? c.h : TOP_CLUSTER_H;
+      const top = c ? c.top : 0;
+      const left = Math.max(0, vw - (c ? c.right : TOP_CLUSTER_RIGHT) - w);
+      return [
+        Math.round(left * dpr),
+        Math.round(top * dpr),
+        Math.round(w * dpr),
+        Math.round(h * dpr),
+      ];
+    },
+    [],
+  );
+
   const layoutRef = useRef({ showChrome: true, full: false });
   layoutRef.current = { showChrome: visible || loading, full: !!menu || seeking };
   const rectRaf = useRef<number | null>(null);
@@ -421,7 +478,7 @@ export function PlayerChrome() {
       const dpr = window.devicePixelRatio || 1;
       const { showChrome, full } = layoutRef.current;
       const rects: number[][] = [];
-      // 控件隐藏时不报任何矩形 → Rust 立刻恢复全窗穿透（点击继续交给 mpv）
+      // 控件隐藏时不报普通矩形 → Rust 恢复全窗穿透（点击继续交给 mpv）
       if (showChrome || full) {
         /* [lc-1945] 一并上报悬停专用区（隐形连接桥）：穿透态下 WebView 收不到
          * mousemove，只有被探针判为可点的矩形里才有 hover；桥必须算在内，
@@ -438,9 +495,12 @@ export function PlayerChrome() {
           ]);
         });
       }
+      // [lc-1946] 顶栏窗控热区**始终**上报（auto-hide 与否都算可点）：
+      // 只有这样光标移入右上角时探针才翻成「可点」，hover/点击才能到 WebView。
+      rects.push(fixedTopHot(dpr, showChrome || full));
       void invoke("player_chrome_hot_rects", { rects, full }).catch(() => {});
     });
-  }, []);
+  }, [fixedTopHot]);
 
   useEffect(() => {
     reportRects();
@@ -456,6 +516,14 @@ export function PlayerChrome() {
       void invoke("player_chrome_hot_rects", { rects: [], full: false }).catch(() => {});
     };
   }, [reportRects]);
+
+  /* [lc-1946] 新一次播放（phase=start）重置关闭态：覆盖层窗口跨会话常驻，
+   * 上一轮关闭时置上的 `closing` 必须清掉，否则下次起播控件层仍是被淡出的。 */
+  useEffect(() => {
+    if (st.phase !== "start") return;
+    closingRef.current = false;
+    setClosing(false);
+  }, [st.phase]);
 
   /* ── 3 秒自动隐藏（面板打开时不隐藏）── */
   const wake = useCallback(() => {
@@ -650,7 +718,10 @@ export function PlayerChrome() {
   useEffect(() => {
     const unP = listen<PState>("mpv-pstate", (e) => {
       lastPstateAt.current = performance.now();
-      setSt((prev) => ({ ...prev, ...e.payload }));
+      // [lc-1946] 置顶是乐观状态：5s 内不让迟到的 mpv 旧值把图标打回去
+      const p = { ...(e.payload || {}) };
+      if (performance.now() - ontopLocalAt.current < 5000) delete p.ontop;
+      setSt((prev) => ({ ...prev, ...p }));
     });
     const unL = listen<{ phase?: string; title?: string }>("mpv-load", (e) => {
       setSt((prev) => ({
@@ -673,7 +744,10 @@ export function PlayerChrome() {
         if (!alive || !s) return;
         // 事件通道 300ms 内有推送 = 它比这份快照新；用旧采样覆盖会把乐观状态打回去
         if (performance.now() - lastPstateAt.current < 300) return;
-        setSt((prev) => ({ ...prev, ...s }));
+        // [lc-1946] 同一条乐观保护：刚点完置顶的 5s 内不采纳快照里的 ontop
+        const next = { ...s };
+        if (performance.now() - ontopLocalAt.current < 5000) delete next.ontop;
+        setSt((prev) => ({ ...prev, ...next }));
       } catch {
         /* 播放器未起时忽略 */
       }
@@ -1688,7 +1762,11 @@ export function PlayerChrome() {
   };
 
   return (
-    <div className={`player-chrome${visible || loading || menu ? "" : " pc-hidden"}`}>
+    <div
+      className={`player-chrome${
+        visible || loading || menu ? "" : " pc-hidden"
+      }${closing ? " pc-leaving" : ""}`}
+    >
       <div className="pc-layer">
         <div className="pc-scrim" aria-hidden="true" />
 
@@ -1705,8 +1783,14 @@ export function PlayerChrome() {
               data-tip={st.ontop ? "取消置顶" : "置顶"}
               {...tap(() => {
                 const next = !st.ontop;
+                // [lc-1946] 乐观 UI + 真实窗口置顶（mpv 锚窗 + 覆盖层，零 mpv IPC 等待）
+                ontopLocalAt.current = performance.now();
                 setSt((p) => ({ ...p, ontop: next }));
-                cmdLat("ontop", "mpv_set_ontop", { on: next });
+                void invoke<boolean>("player_window_ontop", { on: next })
+                  .then((v) => {
+                    if (typeof v === "boolean") setSt((p) => ({ ...p, ontop: v }));
+                  })
+                  .catch(() => {});
               })}
             >
               <Pin size={14} />
@@ -1715,23 +1799,46 @@ export function PlayerChrome() {
               type="button"
               className="pc-round"
               data-tip="最小化"
-              {...tap(() => cmd("mpv_window_minimize"))}
+              {...tap(() => {
+                // [lc-1946] 真最小化：收起覆盖层 + mpv 锚窗，最小化主窗（任务栏可恢复）
+                void invoke("player_window_minimize").catch(() => {});
+              })}
             >
               <Minus size={14} />
             </button>
             <button
               type="button"
-              className="pc-round"
-              data-tip="最大化"
-              {...tap(() => cmd("mpv_toggle_maximize"))}
+              className={`pc-round${st.maximized ? " pc-active" : ""}`}
+              data-tip={st.maximized ? "还原" : "最大化"}
+              {...tap(() => {
+                // [lc-1946] 对 mpv 锚窗做 SW_MAXIMIZE / SW_RESTORE，覆盖层由跟随循环同步
+                void invoke<boolean>("player_window_maximize")
+                  .then((v) => {
+                    if (typeof v === "boolean") setSt((p) => ({ ...p, maximized: v }));
+                  })
+                  .catch(() => {});
+              })}
             >
-              <Square size={12} />
+              {st.maximized ? <Copy size={12} /> : <Square size={12} />}
             </button>
             <button
               type="button"
               className="pc-round pc-close"
               data-tip="关闭"
-              {...tap(() => cmd("player_embed_leave", { stop: true }))}
+              {...tap(() => {
+                // [lc-1946] 先立刻淡出控件层（视觉第一步），Rust 侧也把「收窗」提到
+                // 停止/还原之前；清理转后台。连点在前后端各挡一层。
+                if (closingRef.current) return;
+                closingRef.current = true;
+                setClosing(true);
+                // 2.5s 兜底复位：万一这次退出没走到（例如 mpv 会话异常），
+                // 控件层不能永久停在「已淡出」状态。
+                window.setTimeout(() => {
+                  closingRef.current = false;
+                  setClosing(false);
+                }, 2500);
+                void invoke("player_embed_leave", { stop: true }).catch(() => {});
+              })}
             >
               <X size={14} />
             </button>

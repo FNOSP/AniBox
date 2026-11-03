@@ -3009,6 +3009,11 @@ async fn player_embed_enter(app: AppHandle, state: State<'_, AppState>) -> Resul
             return Ok(());
         };
         crate::mpvwin::embed_set_active(true);
+        // [lc-1946] 新会话：清掉上一轮退出去重 / 最大化标记，顶栏置顶回到默认 true
+        crate::mpvwin::end_exit_flow();
+        crate::mpvwin::clear_minimize_restore();
+        crate::mpvwin::clear_player_maximized();
+        crate::mpvwin::reset_player_ontop();
         // 内嵌态由 Moved 事件的内嵌跟随负责；owner 跟随（lc-1907 实验路径）在内嵌态不参与
         crate::mpvwin::set_owner_follow(false);
         // [lc-1913] 不再隐藏等待矩形：spawn 侧收编已把 mpv 满屏钉在主窗口上（geometry
@@ -3088,6 +3093,11 @@ async fn player_embed_rect(
             return Ok(());
         }
         if !crate::mpvwin::embed_is_active() {
+            return Ok(());
+        }
+        // [lc-1946] 最大化期间矩形的「还原矩形」已由系统保存，不要再按视频区重钉 ——
+        // 否则主窗任何一个 Moved/Resized 都会把最大化状态立刻打回去。
+        if crate::mpvwin::player_maximized() {
             return Ok(());
         }
         let Some(win) = app.get_webview_window("mpv_overlay") else {
@@ -3274,8 +3284,9 @@ pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     }
     if let Ok(h) = w.hwnd() {
         let hwnd = h.0 as isize;
-        // 先 raw 置顶，再手工加 LAYERED/NOACTIVATE/TOOLWINDOW + 穿透 —— 顺序反了会被样式重算抹掉。
-        crate::mpvwin::overlay_set_topmost(hwnd);
+        // [lc-1946] 每次起播重置为「置顶」：mpv 锚窗 + 覆盖层一起拨 TOPMOST
+        //（顶栏「置顶」按钮据此切换；取消置顶后下一次起播回到置顶态）。
+        crate::mpvwin::set_player_ontop(hwnd, true);
         crate::mpvwin::overlay_style_noactivate(hwnd);
         // 默认穿透：画面区的点击/拖窗/滚轮全部归 mpv（只拨 TRANSPARENT，保留 LAYERED 透明）。
         // [lc-1944] 已核查过「改成 OS 级同步命中」的方案（WM_NCHITTEST / SetWindowRgn），
@@ -3400,57 +3411,95 @@ fn spawn_overlay_exit_watchdog(app: AppHandle, mpv_pid: Option<u32>) {
 ///     覆盖层收起后用原始 ShowWindow 唤回主窗；最后交给
 ///     `spawn_overlay_exit_watchdog` 反复断言直到稳定。
 pub async fn embed_exit_flow(app: AppHandle) {
+    // [lc-1946] 去重：关闭按钮在「点了没反应」时会被连点，旧实现每次都叠一条
+    // 600ms + 1.5s 的同步等待链，日志里出现过 3 条串行退出。现在只跑第一条。
+    if !crate::mpvwin::begin_exit_flow() {
+        crate::libmpv::trace("[lc-1946] 退出流程已在跑，忽略重复请求");
+        return;
+    }
     crate::mpvwin::embed_set_active(false);
     crate::mpvwin::set_owner_follow(false);
+
+    /* ── ① 用户可见的第一步：立刻收起覆盖层 + mpv 窗 ──
+     * [lc-1941] 原有顺序是 藏 mpv → 按 PID 收 mpv 窗 → 收覆盖层 → 唤回主窗 → 看门狗；
+     * 现在把**收覆盖层**提到最前（它是用户真正看到的那一层，且不依赖 mpv 会话），
+     * 其余顺序保留。mpv 的 script-opts 还原 / stop 移到后台：实测这两步在 mpv 忙时
+     * 各要吃满 600ms / 1.5s 上限（日志 `[lc-1941] …超时`），此前用户点关闭后要
+     * **空等 2 秒**才看到任何变化 —— 这正是「点了半天没反应」的一部分。
+     * 先隐藏/收起窗口不会破坏 lc-1941 的兜底：mpv `stop` 后 idle VO 可能重新显示窗口，
+     * 下面的看门狗（现在提前启动）会持续按 PID 收起，兜底语义保留。 */
+    // [lc-1940] 必须走原始 ShowWindow，Tauri 的 hide() 对覆盖层是空操作（见 overlay_hide）
+    hide_player_overlay(&app);
+    // 最大化状态先还原，否则下一次起播的矩形钉位会继承最大化几何
+    crate::mpvwin::restore_player_window_if_zoomed();
+    if let Some(h) = crate::mpvwin::get_hwnd() {
+        crate::mpvwin::embed_hide(h);
+    }
+    // 会话只取一次快照（锁是短暂的）；PID 全量收窗在下面
     let session = app.state::<AppState>().mpv.lock().await.clone();
     let mpv_pid = session
         .as_ref()
         .and_then(|m| *m.pid.lock().unwrap_or_else(|e| e.into_inner()));
-    if let Some(m) = session.as_ref() {
-        if let Some(orig) = crate::mpvwin::take_saved_script_opts() {
-            // [lc-1941] 有上限：mpv 无响应（command 自带 5s 超时）也不能拖着主窗不回来
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(600),
-                m.command(json!(["set_property", "script-opts", orig])),
-            )
-            .await
-            {
-                Ok(Ok(_)) => {}
-                Ok(Err(e)) => crate::libmpv::trace(&format!("[lc-1913] 还原 script-opts 失败: {e}")),
-                Err(_) => {
-                    crate::libmpv::trace("[lc-1941] 还原 script-opts 超时（600ms）→ 继续退出")
-                }
-            }
-        }
-        match tokio::time::timeout(std::time::Duration::from_millis(1500), m.stop()).await {
-            Ok(Ok(())) => {}
-            // 不静默吞掉：stop 失败 = 返回后 mpv 继续播，排障要看这条
-            Ok(Err(e)) => crate::libmpv::trace(&format!("[lc-1913] embed 退出 stop 失败: {e}")),
-            Err(_) => {
-                crate::libmpv::trace("[lc-1941] embed 退出 stop 超时（1.5s）→ 继续收起窗口")
-            }
-        }
-    }
-    // mpv 窗口：先藏槽内句柄，再按 PID 全量收起（mpv 可能已经换了一个 idle 窗口）
-    if let Some(h) = crate::mpvwin::get_hwnd() {
-        crate::mpvwin::embed_hide(h);
-    }
     #[cfg(target_os = "windows")]
     if let Some(pid) = mpv_pid {
         if let Some(h) = crate::mpvwin::hide_visible_windows_for_pid(pid) {
             crate::mpvwin::set_hwnd(h);
         }
     }
-    // [lc-1915] 播放器窗收起来，主界面回来（Polaris 同款：主窗播放期间是隐藏的）
-    // [lc-1940] 必须走原始 ShowWindow，Tauri 的 hide() 对覆盖层是空操作（见 overlay_hide）
-    hide_player_overlay(&app);
     // [lc-1941] 先让主窗 React 卸载 PlayerView（回到详情页）再唤回主窗 ——
     // 反过来会先露出播放层那张纯黑舞台一帧
     crate::mpv::emit_player(&app, "mpv-embed-exit", json!({}));
     restore_main_window(&app);
     #[cfg(target_os = "windows")]
     spawn_overlay_exit_watchdog(app.clone(), mpv_pid);
-    crate::libmpv::trace("[lc-1941] embed 退出：覆盖层/mpv 已收起，主窗口已唤回");
+
+    /* ── ② 后台清理：还原 script-opts + stop，各自保留上限，不挡用户 ── */
+    if let Some(m) = session {
+        let app_bg = app.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Some(orig) = crate::mpvwin::take_saved_script_opts() {
+                // [lc-1941] 有上限：mpv 无响应（command 自带 5s 超时）也不能拖着主窗不回来
+                match tokio::time::timeout(
+                    std::time::Duration::from_millis(600),
+                    m.command(json!(["set_property", "script-opts", orig])),
+                )
+                .await
+                {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(e)) => {
+                        crate::libmpv::trace(&format!("[lc-1913] 还原 script-opts 失败: {e}"))
+                    }
+                    Err(_) => {
+                        crate::libmpv::trace("[lc-1941] 还原 script-opts 超时（600ms）→ 继续退出")
+                    }
+                }
+            }
+            match tokio::time::timeout(std::time::Duration::from_millis(1500), m.stop()).await {
+                Ok(Ok(())) => {}
+                // 不静默吞掉：stop 失败 = 返回后 mpv 继续播，排障要看这条
+                Ok(Err(e)) => crate::libmpv::trace(&format!("[lc-1913] embed 退出 stop 失败: {e}")),
+                Err(_) => {
+                    crate::libmpv::trace("[lc-1941] embed 退出 stop 超时（1.5s）→ 继续收起窗口")
+                }
+            }
+            // stop 之后 idle VO 可能重新显示自己的窗口：立刻收一次，
+            // 并**再跑一轮看门狗**（第一轮在 stop 完成前就可能因「稳定」提前返回）。
+            if let Some(h) = crate::mpvwin::get_hwnd() {
+                crate::mpvwin::embed_hide(h);
+            }
+            #[cfg(target_os = "windows")]
+            if let Some(pid) = mpv_pid {
+                crate::mpvwin::hide_visible_windows_for_pid(pid);
+            }
+            #[cfg(target_os = "windows")]
+            spawn_overlay_exit_watchdog(app_bg, mpv_pid);
+            // 清理收尾后再允许下一次退出（新会话 enter 也会清）
+            crate::mpvwin::end_exit_flow();
+        });
+    } else {
+        crate::mpvwin::end_exit_flow();
+    }
+    crate::libmpv::trace("[lc-1941] embed 退出：覆盖层/mpv 已收起，主窗口已唤回（清理转后台）");
 }
 
 /// [lc-1909] 内嵌 leave：清内嵌状态；stop=true 走现有 IPC stop 并再次隐藏 mpv 窗口（实例保留）。
@@ -3748,6 +3797,106 @@ async fn mpv_toggle_maximize(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// [lc-1946] 顶栏窗控改走**真实窗口**（mpv + 覆盖层），不再等 mpv 属性回包。
+///
+/// [lc-1943] 只写 mpv 的 `ontop` / `window-minimized` / `window-maximized` 的实测后果：
+///   · mpv 的 `stop` 在日志里 1.5s 都没回包，`script-opts` 600ms 超时 —— 用户点按钮时
+///     mpv 命令队列可能正忙，`m.command()` 最长等 5s，这一段时间**没有任何视觉变化**，
+///     体感就是「点了半天没反应」；
+///   · 即使命令成功：覆盖层一直是 TOPMOST、mpv 窗被我们按矩形钉死，`ontop` /
+///     `window-maximized` 改了也看不出区别；`window-minimized` 只最小化锚窗，
+///     覆盖层（owned window）跟着消失，但主界面没有回到任务栏入口。
+/// 所以三组动作全部改成「先拨 Win32 窗口、立刻返回」，mpv 属性只做后台同步。
+
+/// 置顶 / 取消置顶：mpv 锚窗 + 覆盖层成对拨 TOPMOST。返回操作后的状态。
+#[tauri::command]
+async fn player_window_ontop(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    on: bool,
+) -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        if window.label() != "mpv_overlay" {
+            return Ok(false);
+        }
+        let overlay = window.hwnd().map(|h| h.0 as isize).unwrap_or(0);
+        crate::mpvwin::set_player_ontop(overlay, on);
+        crate::libmpv::trace(&format!("[lc-1946] 置顶切换 ontop={on}（mpv 锚窗 + 覆盖层）"));
+        // mpv 自身的 ontop 属性只做后台同步（不等待回包）：pstate/观察事件里的 ontop
+        // 与窗口真实状态保持一致，uosc 等脚本读到的也是同一个值。
+        // 50ms 拿不到锁就放弃 —— 视觉动作已经完成，不能被 mpv 忙时的命令队列拖住。
+        let session = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            state.mpv.lock(),
+        )
+        .await
+        .ok()
+        .and_then(|g| g.clone());
+        if let Some(m) = session {
+            tauri::async_runtime::spawn(async move {
+                m.command_no_reply(json!(["set", "ontop", on])).await;
+            });
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (&window, &state, &on);
+    Ok(on)
+}
+
+/// [lc-1946] 最小化：让用户**真的看到**播放窗口收起，并能从任务栏恢复。
+///
+/// 做法：收起覆盖层 + 用 SW_HIDE 收起 mpv 锚窗（音频继续），再最小化**主窗**——
+/// 主窗是本应用的常规任务栏入口（覆盖层 `skip_taskbar(true)`、mpv 是无边框工具型锚窗）。
+/// 点任务栏恢复主窗时，`on_window_event` 里消费 `request_minimize_restore()` 标记，
+/// 把 mpv 按原矩形重新显示、覆盖层再浮回它上面。
+#[tauri::command]
+async fn player_window_minimize(app: AppHandle, window: tauri::Window) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        if window.label() != "mpv_overlay" {
+            return Ok(());
+        }
+        use tauri::Manager;
+        if crate::mpvwin::embed_is_active() {
+            if let Ok(h) = window.hwnd() {
+                crate::mpvwin::overlay_hide(h.0 as isize);
+            }
+            if let Some(mh) = crate::mpvwin::get_hwnd() {
+                crate::mpvwin::embed_hide(mh);
+            }
+            crate::mpvwin::request_minimize_restore();
+            if let Some(m) = app.get_webview_window("main") {
+                let _ = m.minimize();
+            }
+            crate::libmpv::trace("[lc-1946] 最小化：播放层收起 + 主窗最小化（任务栏可恢复）");
+        } else {
+            let _ = window.minimize();
+            crate::libmpv::trace("[lc-1946] 最小化：非内嵌态，直接最小化覆盖层");
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (&app, &window);
+    Ok(())
+}
+
+/// [lc-1946] 最大化 / 还原：对 mpv 锚窗做 `SW_MAXIMIZE` / `SW_RESTORE`。
+/// 覆盖层由 33ms 跟随循环按 mpv 矩形贴位，因此视觉上两层同步变化。
+/// 返回操作后的最大化状态（前端据此换图标）。
+#[tauri::command]
+async fn player_window_maximize(window: tauri::Window) -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        if window.label() != "mpv_overlay" {
+            return Ok(false);
+        }
+        return Ok(crate::mpvwin::toggle_player_maximize());
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = &window;
+    Ok(false)
+}
+
 #[tauri::command]
 async fn mpv_script_binding(state: State<'_, AppState>, binding: String) -> Result<(), String> {
     // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
@@ -3760,9 +3909,15 @@ async fn mpv_script_binding(state: State<'_, AppState>, binding: String) -> Resu
 }
 
 /// [lc-1939] 覆盖层 UI 状态快照（250ms 轮询兜底，进程内事件到不了时仍能渲染）
+/// [lc-1946] `ontop` 以窗口真实置顶位为准：置顶按钮直接拨 TOPMOST，mpv 属性只是后台
+/// 同步；mpv 忙时属性可能迟迟不更新，快照必须返回窗口的实际状态，否则图标会被旧值打回。
 #[tauri::command]
 async fn player_chrome_state() -> Result<serde_json::Value, String> {
-    Ok(crate::mpv::pstate_snapshot())
+    let mut v = crate::mpv::pstate_snapshot();
+    if let Some(obj) = v.as_object_mut() {
+        obj.insert("ontop".into(), json!(crate::mpvwin::player_ontop()));
+    }
+    Ok(v)
 }
 
 #[tauri::command]
@@ -4950,6 +5105,20 @@ pub fn run() {
             // 跟随循环贴向 mpv。此前的「播放窗 Moved/Resized → 反推 mpv」与跟随循环
             // 构成正反馈（外加 overscan 每轮 +16px）→ mpv 无限放大飞出屏幕，已删除。
             let _ = &window;
+            // [lc-1946] 顶栏「最小化」把播放层收起、主窗最小化到任务栏。点任务栏恢复
+            // 主窗时（Focused(true)）把 mpv 按原矩形重新显示、覆盖层浮回去 —— 否则用户
+            // 恢复后只看到主界面，播放器"消失"了。
+            if window.label() == "main"
+                && matches!(event, tauri::WindowEvent::Focused(true))
+                && crate::mpvwin::take_minimize_restore()
+            {
+                use tauri::Manager;
+                if let Some(ov) = window.app_handle().get_webview_window("mpv_overlay") {
+                    if let Ok(h) = ov.hwnd() {
+                        crate::mpvwin::resume_embed_windows(h.0 as isize);
+                    }
+                }
+            }
             // [lc-1435] 关闭按钮三态：exit 放行 / tray 隐藏 / ask 交给前端弹框。
             // 为什么用 on_window_event 而不是前端拦：WebView 里拦不住原生关闭按钮
             // （那是 OS 的窗口消息，不经过 JS），必须在这一层拦。
@@ -5222,6 +5391,10 @@ pub fn run() {
             mpv_set_ontop,
             mpv_window_minimize,
             mpv_toggle_maximize,
+            // [lc-1946] 顶栏窗控：零 mpv IPC 的真实窗口动作（置顶 / 最小化 / 最大化）
+            player_window_ontop,
+            player_window_minimize,
+            player_window_maximize,
             mpv_script_binding,
             player_chrome_state,
             // [lc-1942] 覆盖层磨砂菜单：数据快照 + 通用写属性 + 选集跳转

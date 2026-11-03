@@ -29,16 +29,32 @@ use std::sync::Mutex;
 use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetCursorPos, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
-    IsIconic, IsWindow, IsWindowVisible, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE,
-    GWLP_HWNDPARENT, HWND_TOPMOST, SW_HIDE, SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TRANSPARENT,
+    IsIconic, IsWindow, IsWindowVisible, IsZoomed, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    GWL_EXSTYLE, GWLP_HWNDPARENT, HWND_NOTOPMOST, HWND_TOPMOST, SW_HIDE, SW_MAXIMIZE,
+    SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
 };
 
 /// 当前已收编的 mpv 顶层窗口（isize，全仓 HWND 约定；None = 未收编 / 已失效清理）。
 static MPV_HWND: Mutex<Option<isize>> = Mutex::new(None);
 /// 上一次主窗口物理位置（Moved 求位移差用；None = 首跳，忽略绝对跳变）。
 static LAST_MAIN_POS: Mutex<Option<(i32, i32)>> = Mutex::new(None);
+
+// ───────────────────── [lc-1946] 顶栏窗控的真实窗口状态 ─────────────────────
+//
+// 此前置顶 / 最小化 / 最大化只写 mpv 的 `ontop` / `window-minimized` /
+// `window-maximized` 属性：mpv 是**无边框、被我们按矩形钉死的顶层窗**，这些属性
+// 要么改了看不出变化，要么要等 mpv IPC 回包（用户实测 mpv 忙时 stop 1.5s 都不回，
+// 窗口按钮就完全没有反馈）。这三组状态改为直接拨 Win32 窗口，并且立刻返回。
+
+/// 播放器是否处于置顶（mpv + 覆盖层成对拨 TOPMOST）。起播时重置为 true。
+static PLAYER_ONTOP: AtomicBool = AtomicBool::new(true);
+/// 播放器是否已最大化（以 mpv 锚窗的 IsZoomed 为准；最大化期间忽略矩形重钉）。
+static PLAYER_MAXIMIZED: AtomicBool = AtomicBool::new(false);
+/// 最小化按钮把播放层收起来后需要等主窗恢复再放回来（on_window_event 消费）。
+static PLAYER_MIN_RESTORE: AtomicBool = AtomicBool::new(false);
+/// 退出流程是否已在跑：重复点击/ESC 不再叠第二条 2s 级的清理链。
+static EXIT_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
 // ───────────────────────── [lc-1909] 内嵌模式静态槽 ─────────────────────────
 
@@ -298,6 +314,143 @@ pub fn overlay_hide(hwnd: isize) {
     }
 }
 
+// ───────────────────── [lc-1946] 顶栏窗控（真实窗口，零 mpv IPC） ─────────────────────
+
+/// 单独拨一个窗口的 TOPMOST 位（不动几何 / 不激活）。
+fn set_window_topmost(hwnd: isize, on: bool) {
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return;
+    }
+    unsafe {
+        SetWindowPos(
+            hwnd as _,
+            if on { HWND_TOPMOST } else { HWND_NOTOPMOST },
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+}
+
+/// [lc-1946] 置顶：mpv 锚窗 + 覆盖层成对拨 TOPMOST/NOTOPMOST。
+///
+/// 只拨 mpv 的 `ontop` 属性没用：覆盖层自己一直是 TOPMOST，用户看不到任何变化；
+/// 两个窗口一起拨才是「整个播放器置顶 / 取消置顶」。`overlay_hwnd` 由前端所在窗口
+/// 自己的 hwnd 传入（命令里取），mpv 锚窗从槽里读。
+pub fn set_player_ontop(overlay_hwnd: isize, on: bool) {
+    PLAYER_ONTOP.store(on, Ordering::SeqCst);
+    set_window_topmost(get_hwnd().unwrap_or(0), on);
+    set_window_topmost(overlay_hwnd, on);
+}
+
+pub fn player_ontop() -> bool {
+    PLAYER_ONTOP.load(Ordering::SeqCst)
+}
+
+/// 起播时重置为「置顶态」（`show_player_overlay` 会把覆盖层拨 TOPMOST）。
+pub fn reset_player_ontop() {
+    PLAYER_ONTOP.store(true, Ordering::SeqCst);
+}
+
+/// 已收编的 mpv 锚窗是否处于最大化。
+pub fn player_maximized() -> bool {
+    PLAYER_MAXIMIZED.load(Ordering::SeqCst)
+}
+
+/// 清最大化标记（退嵌 / 重新钉位时调用）。
+pub fn clear_player_maximized() {
+    PLAYER_MAXIMIZED.store(false, Ordering::SeqCst);
+}
+
+/// [lc-1946] 退嵌前若锚窗仍最大化，先 `SW_RESTORE`。
+/// 隐藏一个 maximized 窗口不会清状态（下一次起播会被 SHOWNOACTIVATE 原样放出来），
+/// 所以必须在收窗之前还原。用 `IsZoomed` 直接读窗口，**不**依赖静态标记
+/// （`embed_set_active(false)` 会先把它清零）。
+pub fn restore_player_window_if_zoomed() {
+    if let Some(h) = get_hwnd() {
+        if unsafe { IsWindow(h as _) } != 0 && unsafe { IsZoomed(h as _) } != 0 {
+            unsafe {
+                ShowWindow(h as _, SW_RESTORE);
+            }
+            crate::libmpv::trace("[lc-1946] 退出前还原最大化锚窗");
+        }
+    }
+    PLAYER_MAXIMIZED.store(false, Ordering::SeqCst);
+}
+
+/// [lc-1946] 最大化 / 还原：对 mpv 锚窗做 Win32 `SW_MAXIMIZE` / `SW_RESTORE`。
+///
+/// 覆盖层是 mpv 的 owned window，且 33ms 跟随循环按 mpv 矩形贴位 —— 锚窗一变，
+/// 控制层下一拍就跟过去，所以「最大化同时作用于覆盖层」由现有跟随循环天然保证，
+/// 不需要再对覆盖层单独 ShowWindow（那会和跟随循环抢几何）。
+/// 返回操作后的最大化状态，供前端换图标。
+pub fn toggle_player_maximize() -> bool {
+    let Some(h) = get_hwnd() else {
+        return false;
+    };
+    if unsafe { IsWindow(h as _) } == 0 {
+        return false;
+    }
+    let zoomed = unsafe { IsZoomed(h as _) } != 0;
+    unsafe {
+        ShowWindow(h as _, if zoomed { SW_RESTORE } else { SW_MAXIMIZE });
+    }
+    let next = unsafe { IsZoomed(h as _) } != 0;
+    PLAYER_MAXIMIZED.store(next, Ordering::SeqCst);
+    crate::libmpv::trace(&format!(
+        "[lc-1946] 最大化切换 maximized={next}（mpv hwnd={h}）"
+    ));
+    next
+}
+
+/// [lc-1946] 最小化标记：主窗从任务栏恢复时把它消费掉，重新显示播放层。
+pub fn request_minimize_restore() {
+    PLAYER_MIN_RESTORE.store(true, Ordering::SeqCst);
+}
+
+/// 取走最小化标记（true = 这次主窗恢复要重新显示播放层）。
+pub fn take_minimize_restore() -> bool {
+    PLAYER_MIN_RESTORE.swap(false, Ordering::SeqCst)
+}
+
+pub fn clear_minimize_restore() {
+    PLAYER_MIN_RESTORE.store(false, Ordering::SeqCst);
+}
+
+/// 播放层在最小化时被收起：mpv 锚窗沿用原矩形重新显示，覆盖层回到它上面。
+/// 顺序：先让 mpv 回来（`embed_apply_rect` 会处理 SW_HIDE / iconic 两种被收起状态），
+/// 再显示覆盖层；几何对齐交给 33ms 跟随循环。
+pub fn resume_embed_windows(overlay_hwnd: isize) {
+    if !embed_is_active() {
+        return;
+    }
+    if let Some(h) = get_hwnd() {
+        let mut rc = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        if unsafe { GetWindowRect(h as _, &mut rc) } != 0 {
+            embed_apply_rect(h, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
+        }
+    }
+    overlay_show_noactivate(overlay_hwnd);
+    crate::libmpv::trace("[lc-1946] 主窗恢复 → 播放层重新显示");
+}
+
+/// 退出流程去重：true = 本次调用真正开始跑退出（之前没有在跑）。
+pub fn begin_exit_flow() -> bool {
+    !EXIT_IN_FLIGHT.swap(true, Ordering::SeqCst)
+}
+
+/// 退出流程收尾 / 新会话开始时清标记。
+pub fn end_exit_flow() {
+    EXIT_IN_FLIGHT.store(false, Ordering::SeqCst);
+}
+
 /// [lc-1911] 进内嵌前的 mpv `script-opts` 原串（leave 时还原，独立窗口的 uosc 顶栏要回来）。
 static SAVED_SCRIPT_OPTS: Mutex<Option<String>> = Mutex::new(None);
 
@@ -446,6 +599,9 @@ fn adopt_hwnd(mpv_hwnd: isize, ui_hwnd: isize) {
     // mpv 本来 border=no，边框关不关无感；圆角让它与主窗口观感一致。
     crate::winvisual::set_system_round_corner(mpv_hwnd);
     set_hwnd(mpv_hwnd);
+    // [lc-1946] 收编后让 mpv 锚窗与覆盖层同处置顶态（顶栏「置顶」的默认值）。
+    // 只拨覆盖层的话，取消置顶时视频窗仍会被别的应用盖住。
+    set_window_topmost(mpv_hwnd, PLAYER_ONTOP.load(Ordering::SeqCst));
 }
 
 /// 写槽（收编成功后调用；重收编时覆盖旧值）。
@@ -514,6 +670,9 @@ pub fn embed_set_active(on: bool) {
     if !on {
         *EMBED_RECT.lock().unwrap_or_else(|e| e.into_inner()) = None;
         EMBED_HIDDEN.store(false, Ordering::SeqCst);
+        // [lc-1946] 会话结束：最小化待恢复 / 最大化标记都不该带到下一次播放
+        PLAYER_MIN_RESTORE.store(false, Ordering::SeqCst);
+        PLAYER_MAXIMIZED.store(false, Ordering::SeqCst);
     }
 }
 
@@ -990,5 +1149,37 @@ mod tests {
         let (tx, ty, tw, th) = rects[1];
         assert_eq!((tx, ty), (w - tw, 0));
         assert!(tx >= 0 && ty + th <= h);
+    }
+
+    /// [lc-1946] 退出流程去重：连点关闭 / 关闭后又按 Esc 只跑第一条清理链。
+    #[test]
+    fn exit_flow_dedup() {
+        end_exit_flow();
+        assert!(begin_exit_flow(), "第一次退出应当开始");
+        assert!(!begin_exit_flow(), "退出进行中，重复请求必须被挡住");
+        end_exit_flow();
+        assert!(begin_exit_flow(), "收尾后允许下一次退出");
+        end_exit_flow();
+    }
+
+    /// [lc-1946] 最小化 → 主窗恢复：标记只消费一次。
+    #[test]
+    fn minimize_restore_flag_roundtrip() {
+        clear_minimize_restore();
+        assert!(!take_minimize_restore(), "无标记时不重新显示播放层");
+        request_minimize_restore();
+        assert!(take_minimize_restore(), "恢复主窗时要放回播放层");
+        assert!(!take_minimize_restore(), "只消费一次");
+    }
+
+    /// [lc-1946] 置顶默认值：每次起播回到 true；hwnd=0 时只改状态不碰窗口。
+    #[test]
+    fn ontop_state_defaults_to_true() {
+        reset_player_ontop();
+        assert!(player_ontop(), "起播默认置顶（覆盖层 + mpv 锚窗成对 TOPMOST）");
+        set_player_ontop(0, false);
+        assert!(!player_ontop(), "取消置顶后状态为 false");
+        reset_player_ontop();
+        assert!(player_ontop(), "下一次起播回到置顶");
     }
 }

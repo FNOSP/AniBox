@@ -337,6 +337,20 @@
   font-weight: 600;
 }
 .jvh-scrape-all:disabled { opacity: 0.65; transform: none; cursor: default; }
+
+/* [lc-1957] JavHub 库标签行：行距放宽、动作钮与库胶囊等高 */
+.jvh-tabs { margin: 10px 0 14px; }
+.jvh-tabs .c115-mini { height: 33px; }
+
+/* [lc-1957] 选中态改品牌蓝实底：替代共用的蓝紫渐变（46-cloud115 的 .c115-tab.on 不动） */
+.jvh-tabs .c115-tab.on {
+  border-color: transparent;
+  background: var(--accent);
+  color: #fff;
+  opacity: 1;
+  font-weight: 600;
+  box-shadow: none;
+}
 .jvh-tool {
   display: flex;
   flex-direction: column;

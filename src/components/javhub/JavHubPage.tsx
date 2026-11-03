@@ -23,6 +23,9 @@ type ProviderInfo = { id: string; label: string; logged: boolean; userName: stri
 
 type View = "library" | "actors" | "studios" | "tags" | "overview" | "settings";
 
+/* 媒体库「全部」视图：跨所有来源盘聚合展示（默认选中） */
+const ALL = "__all__";
+
 /* 分节导航（对照 JAVCloudHub 侧栏的三组：资料库 / 工作区 / 系统） */
 const NAV: { group: string; items: { key: View; label: string; icon: typeof IcoGridL }[] }[] = [
   {
@@ -55,7 +58,7 @@ const fmtSize = (n: number) => {
 export function JavHubPage({ onBack }: { onBack: () => void }) {
   const [libs, setLibs] = useState<JavLibT[]>([]);
   const [labels, setLabels] = useState<Record<string, string>>({});
-  const [active, setActive] = useState<string>("");
+  const [active, setActive] = useState<string>(ALL);
   const [view, setView] = useState<View>("library");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -63,6 +66,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
   const [err, setErr] = useState("");
   const [filter, setFilter] = useState(""); // 演员库/厂商库/标签库点卡片 → 媒体库过滤
   const [detail, setDetail] = useState<JavEntryT | null>(null);
+  const [detailProvider, setDetailProvider] = useState("");
   const [fnosBusy, setFnosBusy] = useState(false);
   const [fnosNote, setFnosNote] = useState("");
   const noteTimer = useRef<number | undefined>(undefined);
@@ -82,7 +86,10 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
       const r = await invoke<{ libs: JavLibT[] }>("jav_library_all");
       if (!alive.current) return;
       setLibs(r.libs);
-      setActive((prev) => (prev && r.libs.some((l) => l.provider === prev) ? prev : (r.libs[0]?.provider ?? "")));
+      setActive((prev) => {
+        if (prev === ALL) return prev;
+        return prev && r.libs.some((l) => l.provider === prev) ? prev : (r.libs[0]?.provider ?? ALL);
+      });
     } catch (e) {
       if (alive.current) setErr(String(e));
     } finally {
@@ -237,12 +244,14 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
       e.tags.some((t) => t.toLowerCase() === q)
     );
   };
-  const entries = (cur?.entries || []).filter((e) => e.category !== "unknown").filter(matchFilter);
+  const scoped = (active === ALL ? libs.flatMap((l) => l.entries.map((e) => ({ e, lp: l.provider }))) : (cur?.entries || []).map((e) => ({ e, lp: active })))
+    .filter(({ e }) => e.category !== "unknown")
+    .filter(({ e }) => matchFilter(e));
 
   // 海报墙卡片（与媒体库海报墙同观感：竖版海报 + 标题 + meta）
-  const mediaCards = entries.length
-    ? entries.map((e) => (
-        <div key={e.codeKey} className="jvh-card" onClick={() => setDetail(e)}>
+  const mediaCards = scoped.length
+    ? scoped.map(({ e, lp }) => (
+        <div key={`${lp}/${e.codeKey}`} className="jvh-card" onClick={() => { setDetail(e); setDetailProvider(lp); }}>
           <div className="jvh-poster">
             {e.coverUrl ? (
               <img src={imgUrl(e.coverUrl)} alt="" loading="lazy" />
@@ -346,9 +355,14 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
       {!loading && view === "library" && (
         <>
           {libs.length > 0 && (
-            <div className="c115-tabs">
+            <div className="c115-tabs jvh-tabs">
               <button className="c115-mini jvh-scrape-all" disabled={busy} onClick={() => void scrapeAll()}>
                 {busy ? "刮削中…" : "全盘刮削"}
+              </button>
+              <button type="button" className={`c115-tab${active === ALL ? " on" : ""}`}
+                onClick={() => setActive(ALL)}>
+                全部
+                <span className="c115-dot ok" title={`${total} 部`} />
               </button>
               {libs.map((l) => (
                 <button key={l.provider} type="button" className={`c115-tab${l.provider === active ? " on" : ""}`}
@@ -431,7 +445,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
       {view === "settings" && <JavSettingsPanel onSaved={() => void load()} />}
       {detail && (
         <JavDetailDrawer
-          provider={active}
+          provider={detailProvider || active}
           entry={detail}
           onClose={() => setDetail(null)}
           onPlay={(e) => void play(e)}
@@ -441,9 +455,10 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
           }}
           onUpdated={(ne) => {
             // 单条刮削/翻译后原地同步（列表 + 当前抽屉）
+            const lp = detailProvider || active;
             setLibs((prev) =>
               prev.map((l) =>
-                l.provider === active
+                l.provider === lp
                   ? { ...l, entries: l.entries.map((x) => (x.codeKey === ne.codeKey ? ne : x)) }
                   : l,
               ),

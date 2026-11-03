@@ -583,59 +583,87 @@
     animation: none;
   }
 }
-
 /* ═══════════ [lc-1942] 通用磨砂菜单面板 ═══════════
-   数值来源：Polaris mpv-overlay.html 的 `.popup` / `.popup-card` / `.sub-menu-*`
-   （面板 rgba(245,245,247,.8) + radial 高光 + blur(10px) saturate(160%)、圆角 24、
-   行 padding 9px 2px / 文本 14px 700、✓ 20px #0A84FF、chevron 16px rgba(60,60,67,.6)、
-   分隔线 rgba(60,60,67,.18)、搜索圆钮 30×30、子面板 translateX 滑入 .3s）。
-   按用户全局 UI 规范收敛：
-     · 圆角 24 → 20，内距按 8pt 节奏收紧；
-     · 字号只留 3 档：17（标题）/ 15（行）/ 12（辅助信息），行高 52；
-     · 进入 ease-out 250ms、退出 ease-in 200ms、hover 150ms；
-     · 面板是「悬浮在 mpv 视频之上的透明窗」——CSS backdrop-filter 无法模糊另一 HWND 的
-       视频（Polaris 同款限制），所以底色用 86% 近白实底保证可读，blur 作为增强而非唯一依靠。
-   交互：面板打开期间 Rust 探针不再切回穿透（模态），点空白 / Esc / 再点同一按钮关闭。 */
+ * [lc-1945] 视觉规格以用户给的 HTML/CSS 为准（覆盖此前从 Polaris 抄的数值）：
+ *   · 位置：面板底边 = 触发按钮顶边 - 80px（JS 定位实现 `bottom: calc(100% + 80px)`），
+ *     水平跟随触发按钮居中、宽 300px；窗口不够高翻到按钮下方，指针翻向朝上；
+ *   · 毛玻璃：rgba(255,255,255,.45) + blur(28px)、圆角 24、白描边 .6、
+ *     内高光 0 0 0 1px rgba(255,255,255,.4) inset、投影 0 24px 48px -12px rgba(0,0,0,.25)、
+ *     内距 20、文字 #1c1c1e；
+ *   · 底部三角指针 8px（border-top-color 同面板底色）；
+ *   · 动效：隐藏 opacity 0 / translateY(12px) / scale(.98)，
+ *     过渡 opacity .25s ease、transform .3s cubic-bezier(.2,.9,.4,1.1)、visibility .25s；
+ *   · 字号四档：20/700 标题、16/600 行标签、13 辅助、12 提示。
+ * 覆盖层是透明 WebView：backdrop-filter 模糊不到另一个 HWND 里的视频（Polaris 同款限制），
+ * 45% 白底要自己撑住可读性 —— 需要更强实底时只改 `--pc-menu-surface` 这一个变量，
+ * 三角指针与卡片共用它，不会脱节。 */
 .pc-menu {
+  --pc-menu-surface: rgba(255, 255, 255, 0.45);
+  --pc-arrow-x: 50%;
   position: fixed;
   z-index: 40;
   width: 300px;
   max-width: calc(100vw - 24px);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  pointer-events: auto;
-  animation: pcMenuIn 250ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  /* 位置由 placeMenu 给 left + bottom/top；水平居中靠 translateX(-50%) */
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-50%) translateY(12px) scale(0.98);
   transform-origin: bottom center;
+  transition: opacity 0.25s ease, transform 0.3s cubic-bezier(0.2, 0.9, 0.4, 1.1),
+    visibility 0.25s;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
+    "Microsoft YaHei", system-ui, sans-serif;
 }
-.pc-menu.is-closing {
-  animation: pcMenuOut 200ms ease-in both;
+.pc-menu.is-active {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0) scale(1);
 }
-@keyframes pcMenuIn {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+/* 翻到触发按钮下方：入场方向镜像，指针朝上 */
+.pc-menu.is-below {
+  transform: translateX(-50%) translateY(-12px) scale(0.98);
+  transform-origin: top center;
 }
-@keyframes pcMenuOut {
-  from {
-    opacity: 1;
-    transform: none;
-  }
-  to {
-    opacity: 0;
-    transform: translateY(6px) scale(0.985);
-  }
+.pc-menu.is-below.is-active {
+  transform: translateX(-50%) translateY(0) scale(1);
 }
-.pc-menu-speed {
-  width: 200px;
+
+/* 三角指针：指向触发按钮；水平位置由 `--pc-arrow-x` 给（按钮被夹回窗口内时仍指得准） */
+.pc-menu::before {
+  content: "";
+  position: absolute;
+  left: var(--pc-arrow-x);
+  bottom: -8px;
+  width: 0;
+  height: 0;
+  border: 8px solid transparent;
+  border-top-color: var(--pc-menu-surface);
+  border-bottom: none;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.02));
+  pointer-events: none;
 }
-.pc-menu-audio {
-  width: 320px;
+.pc-menu.is-below::before {
+  top: -8px;
+  bottom: auto;
+  border-top: none;
+  border-bottom: 8px solid var(--pc-menu-surface);
+}
+
+/* 隐形连接桥：宽 120 / 高 110，压在「触发按钮 → 面板」那 80px 空白上。
+ * z-index 0 = 在底栏（.pc-layer z-index 1）之下：重到的位置仍归按钮，
+ * 空白段归它，鼠标从按钮移到面板的全程都有 hover。
+ * 它带 `data-chrome-hover`（进可点区上报，穿透态下 WebView 才收得到 mousemove），
+ * 但不是 `data-chrome-hit`，所以点击白名单 / 空白区仲裁不受影响。 */
+.pc-menu-bridge {
+  position: fixed;
+  z-index: 0;
+  pointer-events: auto;
+  background: transparent;
 }
 
 .pc-menu-card {
@@ -646,94 +674,92 @@
   width: 100%;
   max-height: 100%;
   min-height: 0;
-  padding: 12px 16px;
-  border-radius: 20px;
+  padding: 20px;
+  border-radius: 24px;
   color: #1c1c1e;
-  background:
-    radial-gradient(at 18% 14%, rgba(255, 255, 255, 0.55) 0%, transparent 52%),
-    radial-gradient(at 82% 88%, rgba(255, 255, 255, 0.32) 0%, transparent 58%),
-    rgba(245, 245, 247, 0.86);
-  -webkit-backdrop-filter: blur(18px) saturate(160%);
-  backdrop-filter: blur(18px) saturate(160%);
-  border: 1px solid rgba(255, 255, 255, 0.55);
-  box-shadow:
-    0 10px 30px rgba(0, 0, 0, 0.18),
-    0 2px 8px rgba(0, 0, 0, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  background: var(--pc-menu-surface);
+  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: blur(28px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.25),
+    0 0 0 1px rgba(255, 255, 255, 0.4) inset;
   overflow: hidden;
   isolation: isolate;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
-    "Microsoft YaHei", system-ui, sans-serif;
 }
-/* 兜底：不支持 backdrop-filter / 系统减少透明度 → 退实色近白底（绝不「面板消失」） */
+/* 兜底：不支持 backdrop-filter → 提高白底不透明度（绝不「面板消失/看不清」） */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .pc-menu-card {
-    background: rgba(245, 245, 247, 0.96);
+  .pc-menu {
+    --pc-menu-surface: rgba(255, 255, 255, 0.86);
   }
 }
 @media (prefers-reduced-transparency: reduce) {
+  .pc-menu {
+    --pc-menu-surface: rgba(255, 255, 255, 0.94);
+  }
   .pc-menu-card {
-    background: rgba(245, 245, 247, 0.97);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
 }
 
+/* 头部：左右两端、下留 20px；标题 20/700 + .5px 字距 */
 .pc-menu-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 38px;
-  padding: 2px 4px 8px;
+  margin-bottom: 20px;
 }
 .pc-menu-title {
-  font-size: 17px;
+  font-size: 20px;
   font-weight: 700;
-  letter-spacing: -0.2px;
-  color: #1c1c1e;
+  letter-spacing: 0.5px;
+  line-height: 1.2;
+  color: #111;
 }
 .pc-menu-subtitle {
-  padding: 0 4px 8px;
+  margin-bottom: 12px;
 }
 .pc-menu-count {
   margin-left: auto;
-  padding-right: 2px;
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(60, 60, 67, 0.55);
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(0, 0, 0, 0.45);
   font-variant-numeric: tabular-nums;
 }
-/* 搜索圆钮：Polaris .sub-search-fab（30×30 / top 16 / right 18） */
+/* 搜索圆钮：34×34、白 60% 底、hover 90%、图标 18 / 线宽 2.2 */
 .pc-menu-fab {
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  z-index: 2;
-  width: 30px;
-  height: 30px;
+  flex: none;
+  margin-left: auto;
+  width: 34px;
+  height: 34px;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   border: 0;
   border-radius: 50%;
-  background: rgba(120, 120, 128, 0.16);
-  color: #1c1c1e;
+  background: rgba(255, 255, 255, 0.6);
+  color: #111;
   cursor: pointer;
   transition: background 150ms ease, transform 120ms ease;
 }
 .pc-menu-fab:hover {
-  background: rgba(120, 120, 128, 0.26);
+  background: rgba(255, 255, 255, 0.9);
 }
 .pc-menu-fab:active {
   transform: scale(0.92);
 }
+.pc-menu-fab svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.2;
+}
 
-/* 主/子面板：同宽同高叠放，translateX 滑入（Polaris .sub-panel 同款曲线） */
+/* 主/子面板：同宽叠放，translateX 滑入 */
 .pc-menu-body {
   position: relative;
   flex: 1 1 auto;
-  min-height: 200px;
+  min-height: 0;
   overflow: hidden;
 }
 .pc-menu-page {
@@ -761,50 +787,55 @@
   opacity: 1;
   pointer-events: auto;
 }
+/* 长列表：面板超高时内部滚动，细滚动条不破坏毛玻璃 */
 .pc-menu-scroll {
   height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  scrollbar-color: rgba(120, 120, 128, 0.35) transparent;
+  scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
 }
 .pc-menu-scroll::-webkit-scrollbar {
   width: 3px;
 }
 .pc-menu-scroll::-webkit-scrollbar-thumb {
-  background: rgba(120, 120, 128, 0.35);
+  background: rgba(0, 0, 0, 0.22);
   border-radius: 2px;
 }
 .pc-menu-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 
-/* 行：Polaris .sub-menu-item（padding 9px 2px / radius 8 / hover），行高按参考图放到 52 */
+/* 行：设置行 padding 8 0 / 两端对齐 / hover opacity .6；标签 16/600 #111 */
 .pc-menu-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
-  min-height: 52px;
-  padding: 6px 4px;
+  padding: 8px 0;
   border: 0;
-  border-radius: 10px;
+  border-radius: 8px;
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
   user-select: none;
-  transition: background 150ms ease;
+  transition: opacity 150ms ease;
+}
+/* 开关行：padding 4 0 / 下留 12 */
+.pc-menu-row.is-switch {
+  padding: 4px 0;
+  margin-bottom: 12px;
 }
 .pc-menu-row:hover {
-  background: rgba(0, 0, 0, 0.05);
+  opacity: 0.6;
 }
 .pc-menu-row:active {
-  background: rgba(0, 0, 0, 0.08);
+  opacity: 0.45;
 }
 .pc-menu-row:disabled {
-  opacity: 0.45;
+  opacity: 0.35;
   cursor: default;
 }
 .pc-menu-row-main {
@@ -815,19 +846,19 @@
   min-width: 0;
 }
 .pc-menu-text {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
-  line-height: 1.3;
-  color: #1c1c1e;
+  line-height: 1.35;
+  color: #111;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .pc-menu-meta {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   line-height: 1.3;
-  color: rgba(60, 60, 67, 0.6);
+  color: rgba(0, 0, 0, 0.45);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -844,18 +875,53 @@
   flex: none;
   display: flex;
   align-items: center;
-  color: #8e8e93;
+  justify-content: center;
+  color: #555;
 }
+.pc-menu-chev svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* 48×28 胶囊开关：滑轨 #e5e0eb、圆点 24 白、选中位移 20 */
+.pc-switch {
+  position: relative;
+  flex: none;
+  width: 48px;
+  height: 28px;
+  border-radius: 14px;
+  background: #e5e0eb;
+  transition: background 0.3s ease;
+}
+.pc-switch-knob {
+  position: absolute;
+  left: 2px;
+  bottom: 2px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  transition: transform 0.3s cubic-bezier(0.2, 0.9, 0.4, 1.2);
+}
+.pc-switch.on {
+  background: #0a84ff;
+}
+.pc-switch.on .pc-switch-knob {
+  transform: translateX(20px);
+}
+
+/* 分隔线：1px / rgba(0,0,0,.08) / 上下 12 */
 .pc-menu-sep {
   height: 1px;
-  margin: 4px 4px;
-  background: rgba(60, 60, 67, 0.16);
+  margin: 12px 0;
+  background: rgba(0, 0, 0, 0.08);
 }
 .pc-menu-hint {
-  padding: 8px 4px 6px;
+  padding: 4px 0 8px;
   font-size: 12px;
   line-height: 1.5;
-  color: rgba(60, 60, 67, 0.55);
+  color: rgba(0, 0, 0, 0.45);
 }
 .pc-menu-hint-error {
   color: #d70015;
@@ -864,46 +930,52 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 4px 2px 6px;
+  margin-bottom: 8px;
+  padding: 4px 0;
   border: 0;
   background: none;
-  color: #0a84ff;
+  color: #111;
   font: inherit;
-  font-size: 15px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 600;
   cursor: pointer;
   transition: opacity 150ms ease;
 }
 .pc-menu-back:hover {
-  opacity: 0.7;
+  opacity: 0.6;
+}
+.pc-menu-back svg {
+  width: 18px;
+  height: 18px;
+  color: #555;
 }
 
-/* 搜索字幕：输入 + 搜索键（复用面板行语言，不引入第四档字号） */
+/* 搜索字幕：输入 + 搜索键 */
 .pc-menu-searchbar {
   display: flex;
   gap: 8px;
-  padding: 2px 2px 10px;
+  padding: 0 0 12px;
 }
 .pc-menu-input {
   flex: 1;
   min-width: 0;
   height: 34px;
   padding: 0 10px;
-  border: 1px solid rgba(60, 60, 67, 0.16);
+  border: 1px solid rgba(0, 0, 0, 0.1);
   border-radius: 10px;
-  background: rgba(120, 120, 128, 0.12);
-  color: #1c1c1e;
+  background: rgba(255, 255, 255, 0.6);
+  color: #111;
   font-family: inherit;
-  font-size: 15px;
+  font-size: 16px;
   outline: none;
   transition: border-color 150ms ease, background 150ms ease;
 }
 .pc-menu-input:focus {
   border-color: #0a84ff;
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.9);
 }
 .pc-menu-input::placeholder {
-  color: rgba(60, 60, 67, 0.45);
+  color: rgba(0, 0, 0, 0.35);
 }
 .pc-menu-search-btn {
   flex: none;
@@ -914,7 +986,7 @@
   background: #0a84ff;
   color: #fff;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
   transition: opacity 150ms ease, transform 120ms ease;
@@ -932,7 +1004,7 @@
 
 /* 滑杆 / 步进器 */
 .pc-menu-slider-row {
-  padding: 12px 4px 14px;
+  padding: 8px 0 12px;
 }
 .pc-menu-slider-head {
   display: flex;
@@ -941,9 +1013,9 @@
 }
 .pc-menu-value {
   margin-left: auto;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  color: rgba(60, 60, 67, 0.6);
+  color: rgba(0, 0, 0, 0.45);
   font-variant-numeric: tabular-nums;
 }
 .pc-menu-range {
@@ -952,7 +1024,7 @@
   width: 100%;
   height: 4px;
   border-radius: 2px;
-  background: rgba(120, 120, 128, 0.28);
+  background: rgba(0, 0, 0, 0.12);
   outline: none;
   accent-color: #0a84ff;
 }
@@ -975,15 +1047,15 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(60, 60, 67, 0.16);
-  border-radius: 8px;
-  background: rgba(120, 120, 128, 0.14);
-  color: #1c1c1e;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.55);
+  color: #111;
   cursor: pointer;
   transition: background 150ms ease, transform 120ms ease;
 }
 .pc-menu-step:hover {
-  background: rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.9);
 }
 .pc-menu-step:active {
   transform: scale(0.94);
@@ -994,23 +1066,23 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 11px 4px;
-  border-bottom: 1px solid rgba(60, 60, 67, 0.12);
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
 }
 .pc-menu-info:last-child {
   border-bottom: 0;
 }
 .pc-menu-info-label {
   flex: none;
-  font-size: 12px;
-  color: rgba(60, 60, 67, 0.6);
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.45);
 }
 .pc-menu-info-value {
   margin-left: auto;
   min-width: 0;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  color: #1c1c1e;
+  color: #111;
   text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1024,8 +1096,10 @@
 
 @media (prefers-reduced-motion: reduce) {
   .pc-menu,
-  .pc-menu.is-closing {
-    animation: none;
+  .pc-menu.is-active,
+  .pc-menu.is-below,
+  .pc-menu.is-below.is-active {
+    transition: none;
   }
   .pc-menu-page,
   .pc-menu-page-sub,
@@ -1033,8 +1107,9 @@
   .pc-menu-fab,
   .pc-menu-back,
   .pc-menu-search-btn,
-  .pc-menu-step {
+  .pc-menu-step,
+  .pc-switch,
+  .pc-switch-knob {
     transition: none;
   }
 }
-

@@ -30,6 +30,13 @@
  *   · 面板数据全部来自 `player_menu_data`（真实轨道/章节/播放列表/字幕样式/弹幕状态）；
  *   · 设置项全部走 `mpv_set_prop` / `mpv_script_message` / `playlist-play-index`，无空桩；
  *   · 面板打开期间可点区 = 整窗（模态），点空白/Esc/再点同一按钮关闭。
+ *
+ * [lc-1945] 控件弹窗换成用户给的 HTML/CSS 规格（覆盖此前从 Polaris 抄的数值）：
+ *   · 白 45% + blur(28px) / 圆角 24 / 白描边 + 内高光 / 底部 8px 三角指针；
+ *   · 面板底边 = 触发按钮顶边 - 80px（给进度条那一带留物理空白），跟随按钮居中；
+ *   · 悬停打开（驻留 100ms）+ 移开 300ms 关闭 + 120×110 隐形连接桥；
+ *     点击/触摸打开为固定态（移开不关），点空白 / Esc 关闭；
+ *   · 布尔项改 48×28 胶囊开关，子页项 标签 + chevron，8 面板 + 10 子页同一套皮。
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -846,30 +853,36 @@ export function PlayerChrome() {
     }
   }, []);
 
-  /* ── 打开 / 关闭（同一按钮再点一次、空白处、Esc 都关闭）── */
-  const closeMenu = useCallback(() => {
-    if (!menuOpenRef.current) return;
-    menuOpenRef.current = false;
-    // [lc-1945] 悬停态一并复位：关掉的面板不能带着「固定」或残留计时器回来
-    menuPinned.current = false;
-    hoverTarget.current = null;
-    clearHoverOpen();
-    clearHoverClose();
-    // [lc-1944] 关闭面板的这一击不能再被空白区仲裁当成「点画面」（否则点空白关面板会连按暂停）
-    ptSuppressUntil.current = Date.now() + 400;
-    releaseKeyboard();
-    setMenuClosing(true);
-    setMenuActive(false);
-    if (menuCloseTimer.current) window.clearTimeout(menuCloseTimer.current);
-    // 减少动态偏好：没有退场动画就直接卸载，别让面板多停 300ms
-    const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 300;
-    menuCloseTimer.current = window.setTimeout(() => {
-      setMenu(null);
-      setMenuClosing(false);
-      setSub(null);
-      setMenuPos(null);
-    }, delay);
-  }, [releaseKeyboard, clearHoverOpen, clearHoverClose]);
+  /* ── 打开 / 关闭（同一按钮再点一次、空白处、Esc 都关闭）──
+   * [lc-1945] `clickGuard`：只有「点空白关面板」这条路径需要抑制窗口 ——
+   * pointerdown（外面这一击）先于 mousedown（空白区仲裁）派发，不抑制的话
+   * 同一次点击会被仲裁当成「点画面」再按一次暂停。悬停/Esc/行内动作都不涉及
+   * 画面区点击，别把用户的正常单击一并吞掉。 */
+  const closeMenu = useCallback(
+    (clickGuard = false) => {
+      if (!menuOpenRef.current) return;
+      menuOpenRef.current = false;
+      // [lc-1945] 悬停态一并复位：关掉的面板不能带着「固定」或残留计时器回来
+      menuPinned.current = false;
+      hoverTarget.current = null;
+      clearHoverOpen();
+      clearHoverClose();
+      if (clickGuard) ptSuppressUntil.current = Date.now() + 400;
+      releaseKeyboard();
+      setMenuClosing(true);
+      setMenuActive(false);
+      if (menuCloseTimer.current) window.clearTimeout(menuCloseTimer.current);
+      // 减少动态偏好：没有退场动画就直接卸载，别让面板多停 300ms
+      const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 300;
+      menuCloseTimer.current = window.setTimeout(() => {
+        setMenu(null);
+        setMenuClosing(false);
+        setSub(null);
+        setMenuPos(null);
+      }, delay);
+    },
+    [releaseKeyboard, clearHoverOpen, clearHoverClose],
+  );
 
   /* 离开搜索子面板（返回 / 切菜单 / 关闭）时立刻归还键盘 */
   useEffect(() => {
@@ -983,7 +996,8 @@ export function PlayerChrome() {
       if (!el?.closest(".pc-menu-input")) releaseKeyboard();
       if (menuPanelRef.current?.contains(t)) return;
       if (menuTriggerRef.current?.contains(t)) return;
-      closeMenu();
+      // 这一次 pointerdown 会紧接着触发 mousedown 仲裁：给它上抑制窗口
+      closeMenu(true);
     };
     window.addEventListener("keydown", onKey, true);
     document.addEventListener("pointerdown", onDown, true);
@@ -1326,13 +1340,17 @@ export function PlayerChrome() {
                   setSubNotice("");
                 }}
               >
-                <Search size={15} strokeWidth={2.2} />
+                <Search size={18} strokeWidth={2.2} />
               </button>
             </div>
             <MenuRow
-              text="关闭字幕"
-              checked={!subOn || mdata.sid === "no"}
-              onClick={() => void applyProp("sid", "no")}
+              text="字幕"
+              toggle
+              checked={subOn}
+              onClick={() => {
+                if (subOn) void applyProp("sid", "no");
+                else void applyProp("sid", subTracks[0]?.id ?? "auto");
+              }}
             />
             <Sep />
             <MenuRow
@@ -1358,9 +1376,10 @@ export function PlayerChrome() {
               <span className="pc-menu-count">{audTracks.length} 轨</span>
             </div>
             <MenuRow
-              text="静音音频"
+              text="静音"
+              toggle
               checked={mdata.aid === "no"}
-              onClick={() => void applyProp("aid", "no", true)}
+              onClick={() => void applyProp("aid", mdata.aid === "no" ? "auto" : "no")}
             />
             <Sep />
             <div className="pc-menu-list">
@@ -1529,9 +1548,17 @@ export function PlayerChrome() {
             <div className="pc-menu-title pc-menu-subtitle">副字幕（双语）</div>
             <div className="pc-menu-list">
               <MenuRow
-                text="关闭副字幕"
-                checked={mdata.secondarySid === "no" || mdata.secondarySid == null}
-                onClick={() => void applyProp("secondary-sid", "no")}
+                text="副字幕"
+                toggle
+                checked={mdata.secondarySid !== "no" && mdata.secondarySid != null}
+                onClick={() => {
+                  if (mdata.secondarySid !== "no" && mdata.secondarySid != null) {
+                    void applyProp("secondary-sid", "no");
+                  } else {
+                    void applyProp("secondary-sid", subTracks[0]?.id ?? "auto");
+                    void applyProp("secondary-sub-visibility", true);
+                  }
+                }}
               />
               <Sep />
               {subTracks.length === 0 ? (
@@ -1735,25 +1762,31 @@ export function PlayerChrome() {
             <div className="pc-dock" data-chrome-hit>
               <button
                 type="button"
+                aria-label="选集"
                 className={`pc-btn pc-icon${menu === "episodes" ? " pc-open" : ""}`}
-                data-tip="选集"
                 {...tap((el) => openMenu("episodes", el))}
+                onMouseEnter={hoverEnterMenu("episodes")}
+                onMouseLeave={hoverLeaveMenu("episodes")}
               >
                 <ListVideo size={17} />
               </button>
               <button
                 type="button"
+                aria-label="字幕"
                 className={`pc-btn pc-icon${menu === "subtitles" ? " pc-open" : ""}`}
-                data-tip="字幕"
                 {...tap((el) => openMenu("subtitles", el))}
+                onMouseEnter={hoverEnterMenu("subtitles")}
+                onMouseLeave={hoverLeaveMenu("subtitles")}
               >
                 <Subtitles size={17} />
               </button>
               <button
                 type="button"
+                aria-label="音频"
                 className={`pc-btn pc-icon${menu === "audio" ? " pc-open" : ""}`}
-                data-tip="音频"
                 {...tap((el) => openMenu("audio", el))}
+                onMouseEnter={hoverEnterMenu("audio")}
+                onMouseLeave={hoverLeaveMenu("audio")}
               >
                 <AudioLines size={17} />
               </button>
@@ -1764,9 +1797,11 @@ export function PlayerChrome() {
             <div className="pc-dock pc-dock-bare" data-chrome-hit>
               <button
                 type="button"
+                aria-label="播放速度"
                 className={`pc-btn pc-text${menu === "speed" ? " pc-open" : ""}`}
-                data-tip="播放速度"
                 {...tap((el) => openMenu("speed", el))}
+                onMouseEnter={hoverEnterMenu("speed")}
+                onMouseLeave={hoverLeaveMenu("speed")}
               >
                 {Number(speed.toFixed(2))}×
               </button>
@@ -1820,33 +1855,41 @@ export function PlayerChrome() {
               </div>
               <button
                 type="button"
+                aria-label="弹幕"
                 className={`pc-btn pc-icon${menu === "danmaku" ? " pc-open" : ""}`}
-                data-tip="弹幕"
                 {...tap((el) => openMenu("danmaku", el))}
+                onMouseEnter={hoverEnterMenu("danmaku")}
+                onMouseLeave={hoverLeaveMenu("danmaku")}
               >
                 <MessageSquare size={17} />
               </button>
               <button
                 type="button"
+                aria-label="片头片尾"
                 className={`pc-btn pc-icon${menu === "chapters" ? " pc-open" : ""}`}
-                data-tip="片头片尾"
                 {...tap((el) => openMenu("chapters", el))}
+                onMouseEnter={hoverEnterMenu("chapters")}
+                onMouseLeave={hoverLeaveMenu("chapters")}
               >
                 <ListOrdered size={17} />
               </button>
               <button
                 type="button"
+                aria-label="版本"
                 className={`pc-btn pc-icon${menu === "video" ? " pc-open" : ""}`}
-                data-tip="版本"
                 {...tap((el) => openMenu("video", el))}
+                onMouseEnter={hoverEnterMenu("video")}
+                onMouseLeave={hoverLeaveMenu("video")}
               >
                 <Layers size={17} />
               </button>
               <button
                 type="button"
+                aria-label="设置"
                 className={`pc-btn pc-icon${menu === "settings" ? " pc-open" : ""}`}
-                data-tip="设置"
                 {...tap((el) => openMenu("settings", el))}
+                onMouseEnter={hoverEnterMenu("settings")}
+                onMouseLeave={hoverLeaveMenu("settings")}
               >
                 <Settings size={17} />
               </button>
@@ -1867,17 +1910,50 @@ export function PlayerChrome() {
         </div>
       </div>
 
-      {/* ── [lc-1942] 通用磨砂菜单：一个组件、多份数据 ── */}
+      {/* ── [lc-1945] 隐形连接桥：覆盖「触发按钮 → 面板」那 80px 空白 ──
+       * 悬停态下鼠标要能一路从按钮穿过进度条那一带进到面板，中间不能掉 hover；
+       * 它带 `data-chrome-hover`（进可点区上报，穿透态下 WebView 才有 mousemove）
+       * 但**不是** `data-chrome-hit`，所以点击白名单与空白区仲裁不受影响。 */}
+      {menu && menuPos ? (
+        <div
+          className="pc-menu-bridge"
+          data-chrome-hover
+          aria-hidden="true"
+          style={{
+            left: menuPos.bridgeLeft,
+            top: menuPos.bridgeTop,
+            width: BRIDGE_W,
+            height: BRIDGE_H,
+          }}
+          onMouseEnter={keepMenuOpen}
+          onMouseLeave={scheduleHoverClose}
+        />
+      ) : null}
+
+      {/* ── [lc-1942] 通用磨砂菜单：一个组件、多份数据 ──
+       * [lc-1945] 位置来自 `placeMenu`（跟随触发按钮居中 + 80px 留白），
+       * 显隐来自 `.is-active` 的 CSS 过渡（规格的 opacity/transform/visibility）。 */}
       {menu ? (
         <div
           ref={menuPanelRef}
           data-chrome-hit
-          className={`pc-menu pc-menu-${menu}${menuClosing ? " is-closing" : ""}`}
+          className={`pc-menu pc-menu-${menu}${menuPos?.side === "below" ? " is-below" : ""}${
+            menuActive ? " is-active" : ""
+          }`}
           style={
             menuPos
-              ? { left: menuPos.left, top: menuPos.top, maxHeight: menuPos.maxHeight }
-              : { left: 0, top: 0, visibility: "hidden" }
+              ? {
+                  left: menuPos.left,
+                  ...(menuPos.side === "above"
+                    ? { bottom: menuPos.bottom }
+                    : { top: menuPos.top }),
+                  maxHeight: menuPos.maxHeight,
+                  ["--pc-arrow-x" as string]: `${menuPos.arrowX}px`,
+                }
+              : { left: 0, bottom: 0, visibility: "hidden" }
           }
+          onMouseEnter={keepMenuOpen}
+          onMouseLeave={scheduleHoverClose}
         >
           <div
             className="pc-menu-card"

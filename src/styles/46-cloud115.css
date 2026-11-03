@@ -795,3 +795,19 @@
   .cloud-page .c115-mini:active,
   .cloud-page .c115-seg:active { transform: none; }
 }
+
+/* ═══════════ [lc-1985] 头部/导航/登录卡对齐应用标准 ═══════════ */
+/* 登录卡：去掉渐变顶条与角落光斑，回归标准卡片 */
+.cloud-page .c115-login { border: 1px solid var(--line); background: var(--glass); box-shadow: var(--shadow-card); padding-top: 28px; }
+.cloud-page .c115-login::before,
+.cloud-page .c115-login::after { display: none; }
+/* 导航胶囊已换 libf-open（应用标准），补按压反馈 */
+.cloud-page .libf-open { transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease; }
+.cloud-page .libf-open:active { transform: scale(0.96); }
+/* 旧 tab 样式在本页不再使用 */
+.cloud-page .c115-title-ico { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cloud-page .libf-open { transition: none; }
+  .cloud-page .libf-open:active { transform: none; }
+}

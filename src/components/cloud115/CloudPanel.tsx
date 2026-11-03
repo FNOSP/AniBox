@@ -13,7 +13,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { tmdbImg } from "../../lib/images";
 import { useCloudQrLogin } from "../../hooks/useCloudQrLogin";
 import {
-  Cloud as IcoCloudL,
   FileVideo as IcoVideoL,
   Folder as IcoFolderL,
   LogOut as IcoLogoutL,
@@ -418,20 +417,15 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <main className="c115 cloud-page">
-      {/* 头部与库/观影记录页同构：page-head + 统一 back 胶囊 */}
+      {/* 头部与库页同构：圆形返回 + 标题 */}
       <div className="page-head">
-        <button className="back" onClick={handleBack}>‹ 返回</button>
-        <h3 className="c115-title">
-          <span className="c115-title-ico">
-            <IcoCloudL size={16} strokeWidth={2.2} />
-          </span>
-          云盘接入
-        </h3>
+        <button className="back" title="返回" onClick={handleBack}>‹</button>
+        <h3 className="c115-title">云盘接入</h3>
       </div>
 
-      {/* [lc-1983] 厂商登录入口移除：只保留 WebDAV（NAS / OpenList 等） */}
-      <div className="c115-tabs">
-        <button type="button" className={`c115-tab${isWebdav ? " on" : ""}`} onClick={() => switchProvider("webdav")}>
+      {/* [lc-1985] 导航胶囊对齐应用标准（libf-bar/libf-open） */}
+      <div className="libf-bar">
+        <button type="button" className={`libf-open${wdActive ? " on" : ""}`} onClick={() => switchProvider("webdav")}>
           WebDAV
           <span className={`c115-dot${wdActive ? " ok" : ""}`} title={wdActive ? "已连接" : "未连接"} />
         </button>

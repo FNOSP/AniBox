@@ -150,8 +150,8 @@
 }
 
 /* ═══════ [lc-1939] 播放器覆盖层（Polaris mpv-overlay 视觉值） ═══════
-   控件画在 DOM 里，mpv 只负责播；覆盖层常开 WS_EX_TRANSPARENT（点画面=mpv），
-   50ms 光标探针命中 [data-chrome-hit] 时才关穿透。
+   控件画在 DOM 里，mpv 只负责播。穿透机制与 Polaris 同款：Rust 16ms 光标探针命中
+   [data-chrome-hit] 矩形才拨 WS_EX_TRANSPARENT，画面区点击/拖窗/滚轮全归 mpv。
    数值取自 Polaris：dock rgba(18,18,18,.88)/r20/p4/gap4，按钮 34×34/r17，
    播放 40×40/r20，进度轨 7px（悬停 10）/r5，时间 12px/700，顶栏圆钮 26~28，
    全层只有底部 132px 对比渐变 —— 顶部没有任何遮罩或渐变。 */
@@ -159,7 +159,7 @@
   position: fixed;
   inset: 0;
   background: transparent;
-  /* 空白处绝不拦截：elementFromPoint 只认带 data-chrome-hit 的元素 */
+  /* 空白处绝不拦截：可点区只认带 data-chrome-hit 的元素（OS 闸门 + 前端仲裁同一份） */
   pointer-events: none;
   user-select: none;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",

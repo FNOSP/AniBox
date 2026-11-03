@@ -1,21 +1,24 @@
 /* [lc-1939] 播放器覆盖层 UI —— 交互模型逐条照抄 Polaris 的 mpv-overlay：
  *
- *   · 覆盖层窗 layered + transparent，**默认 WS_EX_TRANSPARENT（点击穿透给 mpv）**；
- *   · [lc-1943] 穿透判定改由 Rust 16ms 探针**纯几何**完成：页面只在布局/显隐变化时
- *     上报一次 `[data-chrome-hit]` 的矩形（`player_chrome_hot_rects`，窗口内物理像素），
- *     Rust 拿 GetCursorPos 与矩形比 → 直接拨 WS_EX_TRANSPARENT，不再 eval/invoke 往返。
- *     旧链路（50ms 探针 → eval 坐标 → elementFromPoint → invoke）最坏 ~70ms，
- *     用户快速移入并点击时 mousedown 仍落在穿透窗上被 mpv 吃掉（首击失灵）。
- *   · 这条链路不依赖 WebView 的 mousemove（穿透态下根本收不到），也不依赖 mpv 的 mouse-pos
- *     （坐标是 mpv 客户区、且事件链会滞后）——lc-1924~1931 收不到点击的根因就此绕开。
- *   · 状态：`mpv-pstate` 事件为主通道 + 低频 invoke 快照兜底。
- *     [lc-1943] 覆盖层此前**没有 matching capability**，`core:event:allow-listen` 被 ACL
- *     拒绝 → `listen()` 一直 reject，事件从来没到过这里，只能等 250ms 轮询。
- *     现在补上 `capabilities/overlay.json`，事件成为主通道；轮询降到 500ms 只做兜底。
+ *   · 覆盖层窗 layered + 透明 + NOACTIVATE，与 mpv 窗口 1:1 等大、常驻置顶；
+ *   · [lc-1944] 命中机制**就是 Polaris 那一套**：Rust 16ms 探针按光标与
+ *     `[data-chrome-hit]` 矩形比 → 只拨 `WS_EX_TRANSPARENT`（Polaris 是 50ms +
+ *     eval/elementFromPoint/invoke/ack 四个来回；我们单跳，端到端 ≤16ms）。
+ *     已逐条排除「OS 级同步命中」：`WM_NCHITTEST→HTTRANSPARENT` 只对**同线程**窗口
+ *     下传（Win32 文档/Wine 实现），mpv 是独立进程收不到；`SetWindowRgn` 会裁掉
+ *     底部对比渐变。所以「点半天」的真因不在翻位窗口（实测 ≤16ms），而在 mpv 命令队列
+ *     （见下条）。`mpv-overlay.html` 里的白名单、3s 隐藏、单击/双击语义逐条对齐。
+ *   · [lc-1943] 可点区由页面在布局/显隐变化时上报一次（`player_chrome_hot_rects`，
+ *     窗口内物理像素，`getBoundingClientRect × dpr`）；探针同时负责「光标在动 → 续显」
+ *     与「悬在可点区 → 3s 自动隐藏让路」。
+ *   · 状态：`mpv-pstate` 事件为主通道 + 500ms invoke 快照兜底（`capabilities/overlay.json`
+ *     给了覆盖层 event listen 权限，lc-1943 之前这里被 ACL 拒绝，只能等 250ms 轮询）。
  *   · 控件一律 `pointerdown` 立即执行（`click` 只做键盘/兜底），并做乐观 UI：
  *     点击当帧先翻转本地状态，mpv 回报只做校正。
- *   · 3 秒无操作自动隐藏（Polaris hideTimeout=3.0）；控件隐藏时上报空可点区，
- *     点击继续落到 mpv。
+ *   · [lc-1944] 空白区仲裁照抄 Polaris：落进可点区但不是白名单元素的一击 → 单击
+ *     播放/暂停（等系统双击间隔确认）、双击全屏、位移 ≥6px 丢弃；否则这一击会被
+ *     WebView 静默吞掉，用户体感就是「点了没反应，再点一下」。
+ *   · 3 秒无操作自动隐藏（Polaris hideTimeout=3.0）。
  *
  * 视觉：Polaris 的值 —— 底栏胶囊 rgba(18,18,18,.88) / 圆角 20 / 内距 4 / 按钮 34×34
  * 圆角 17、播放 40×40 圆角 20、图标 17（播放 26）/ 进度轨 7px（悬停 10）/ 时间 12px 700 /
@@ -219,12 +222,17 @@ const trackMeta = (t: MpvTrack) => {
   return bits.join(" · ");
 };
 
-/* ── 通用行 / 分隔线 / 提示 ── */
+/* ── 通用行 / 分隔线 / 提示 ──
+ * [lc-1945] 行型按用户规格分三类：
+ *   · `toggle`  → 标签 + 48×28 胶囊开关（布尔项，如「显示弹幕」）；
+ *   · `chevron` → 标签 + chevron（进入子页）；
+ *   · `checked` → 标签 + ✓（列表里的单选：字幕轨 / 章节 / 倍速）。 */
 function MenuRow({
   text,
   meta,
   checked,
   chevron,
+  toggle,
   onClick,
   disabled,
 }: {
@@ -232,6 +240,7 @@ function MenuRow({
   meta?: string;
   checked?: boolean;
   chevron?: boolean;
+  toggle?: boolean;
   onClick?: () => void;
   disabled?: boolean;
 }) {
@@ -244,7 +253,9 @@ function MenuRow({
   return (
     <button
       type="button"
-      className="pc-menu-row"
+      role={toggle ? "switch" : undefined}
+      aria-checked={toggle ? !!checked : undefined}
+      className={`pc-menu-row${toggle ? " is-switch" : ""}${chevron ? " is-nav" : ""}`}
       onMouseDown={(e) => e.preventDefault()}
       onPointerDown={(e) => {
         if (e.button !== 0) return;
@@ -261,14 +272,18 @@ function MenuRow({
         <span className="pc-menu-text">{text}</span>
         {meta ? <span className="pc-menu-meta">{meta}</span> : null}
       </span>
-      {checked ? (
+      {toggle ? (
+        <span className={`pc-switch${checked ? " on" : ""}`} aria-hidden="true">
+          <span className="pc-switch-knob" />
+        </span>
+      ) : checked ? (
         <span className="pc-menu-check">
-          <Check size={16} strokeWidth={2.5} />
+          <Check size={18} strokeWidth={2.5} />
         </span>
       ) : null}
       {chevron ? (
         <span className="pc-menu-chev">
-          <ChevronRight size={15} strokeWidth={2.2} />
+          <ChevronRight size={18} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
         </span>
       ) : null}
     </button>
@@ -277,6 +292,30 @@ function MenuRow({
 
 const Sep = () => <div className="pc-menu-sep" aria-hidden="true" />;
 const Hint = ({ text }: { text: string }) => <div className="pc-menu-hint">{text}</div>;
+
+/* ── [lc-1945] 面板几何（用户规格的落点）──
+ *   `bottom: calc(100% + 80px)` 的等价实现：面板底边 = 触发按钮顶边 - 80px，
+ *   这 80px 物理空白正是进度条经过的那一带；水平跟随触发按钮居中（不是窗口居中）。
+ *   窗口不够高时翻到按钮下方（`side: "below"`），指针方向跟着翻。 */
+const MENU_W = 300;
+const MENU_GAP = 80; // 面板与触发按钮之间的物理空白
+const MENU_MARGIN = 12; // 贴窗口边缘的安全边距
+const MENU_ARROW_KEEPOUT = 26; // 三角指针离面板左右圆角的最小距离
+const HOVER_CLOSE_MS = 300; // 移开 300ms 关闭（用户规格）
+const HOVER_OPEN_MS = 100; // 悬停驻留 100ms 才开：穿过底栏时不连开 8 个面板
+const BRIDGE_W = 120; // 隐形连接桥（用户规格）
+const BRIDGE_H = 110;
+
+type MenuPlacement = {
+  left: number;
+  side: "above" | "below";
+  top?: number;
+  bottom?: number;
+  maxHeight: number;
+  arrowX: number;
+  bridgeLeft: number;
+  bridgeTop: number;
+};
 
 export function PlayerChrome() {
   const [st, setSt] = useState<PState>({});
@@ -287,11 +326,13 @@ export function PlayerChrome() {
   /* ── [lc-1942] 磨砂菜单状态 ── */
   const [menu, setMenu] = useState<MenuId | null>(null);
   const [menuClosing, setMenuClosing] = useState(false);
+  /* [lc-1945] 入场/退场由 `.is-active` 类驱动 CSS 过渡（规格的 opacity/transform/visibility）
+   * 而不是 keyframes —— 面板用 `left` + `translateX(-50%)` 定水平位置，keyframes 的
+   * transform 会把它覆盖掉。 */
+  const [menuActive, setMenuActive] = useState(false);
   const [sub, setSub] = useState<SubPage | null>(null);
   const [mdata, setMdata] = useState<MenuData>({});
-  const [menuPos, setMenuPos] = useState<{ left: number; top: number; maxHeight: number } | null>(
-    null,
-  );
+  const [menuPos, setMenuPos] = useState<MenuPlacement | null>(null);
   const [subQuery, setSubQuery] = useState("");
   const [subResults, setSubResults] = useState<SubItem[]>([]);
   const [subBusy, setSubBusy] = useState(false);
@@ -307,11 +348,19 @@ export function PlayerChrome() {
   const menuAnchorRef = useRef<DOMRect | null>(null);
   const menuTriggerRef = useRef<HTMLElement | null>(null);
   const menuCloseTimer = useRef<number | null>(null);
+  /* [lc-1945] 悬停交互：`menuPinned` = 点击打开（固定态，移开不关），
+   * `hoverOpenTimer` / `hoverCloseTimer` = 悬停打开的驻留等待 / 移开后的关闭等待。 */
+  const menuPinned = useRef(false);
+  const hoverOpenTimer = useRef<number | null>(null);
+  const hoverCloseTimer = useRef<number | null>(null);
+  const hoverTarget = useRef<MenuId | null>(null);
   const menuPulling = useRef(false);
   const menuPullAgain = useRef(false);
   const pullTimer = useRef<number | null>(null);
   const keyboardFocusTimer = useRef<number | null>(null);
   const tapAt = useRef(0);
+  /* [lc-1944] 空白区仲裁的抑制窗口（关闭面板/拖拽后的余波点击不再算作「点画面」） */
+  const ptSuppressUntil = useRef(0);
 
   const loading = st.phase !== "loaded" && st.phase !== "ended";
   const title = st.title || "";
@@ -367,7 +416,11 @@ export function PlayerChrome() {
       const rects: number[][] = [];
       // 控件隐藏时不报任何矩形 → Rust 立刻恢复全窗穿透（点击继续交给 mpv）
       if (showChrome || full) {
-        document.querySelectorAll("[data-chrome-hit]").forEach((el) => {
+        /* [lc-1945] 一并上报悬停专用区（隐形连接桥）：穿透态下 WebView 收不到
+         * mousemove，只有被探针判为可点的矩形里才有 hover；桥必须算在内，
+         * 否则从按钮移向面板途中会先掉 hover 再重新进入，面板闪退。
+         * 它不带 `data-chrome-hit`，所以点击白名单/空白区仲裁不受影响。 */
+        document.querySelectorAll("[data-chrome-hit],[data-chrome-hover]").forEach((el) => {
           const r = el.getBoundingClientRect();
           if (r.width <= 0 || r.height <= 0) return;
           rects.push([
@@ -434,6 +487,153 @@ export function PlayerChrome() {
       un?.();
     };
   }, [wake]);
+
+  /* ── [lc-1944] 空白区点击仲裁（照抄 Polaris mpv-overlay 的 passthrough arbiter）──
+   * 画面区点击在穿透态下直接归 mpv；但当光标落在可点区（含 16px 外扩 / 控件内距）
+   * 而命中的不是白名单元素时，这一击会进 WebView 然后什么都不发生 —— 用户体感就是
+   * 「点了没反应，再点一下」。这里按 Polaris 的语义把它翻译成最终动作，绝不静默丢弃。
+   *
+   * Polaris 原值逐个照搬：拖拽阈值 6px、拖后抑制 900ms、单击/双击间隔取
+   * **系统双击间隔**（`GetDoubleClickTime`，不硬编码 500ms）；单击 = 播放/暂停、
+   * 双击 = 全屏。绝不向 mpv 合成 mbtn_left —— 会和 Lua 的单击计时器互相抵消。 */
+  const stRef = useRef(st);
+  stRef.current = st;
+  useEffect(() => {
+    const DRAG_THRESHOLD = 6;
+    const DRAG_SUPPRESS_MS = 900;
+    let dblMs = 500;
+    let dblReady = false;
+    let armed: { gen: number; at: number } | null = null;
+    let singleTimer: number | null = null;
+    let track: {
+      x: number;
+      y: number;
+      moved: boolean;
+      clickCount: number;
+      suppressed: boolean;
+      doubleDispatched?: boolean;
+    } | null = null;
+    let generation = 0;
+
+    const commitArmed = () => {
+      if (!armed) return;
+      const { gen, at } = armed;
+      armed = null;
+      if (gen !== generation) return;
+      singleTimer = window.setTimeout(() => {
+        singleTimer = null;
+        if (gen !== generation || Date.now() < ptSuppressUntil.current) return;
+        setSt((p) => ({ ...p, paused: !p.paused }));
+        void invoke("mpv_toggle_pause").catch(() => {});
+      }, Math.max(0, dblMs - (Date.now() - at)));
+    };
+
+    void invoke<number>("overlay_double_click_interval_ms")
+      .then((v) => {
+        const n = Number(v);
+        if (Number.isFinite(n) && n > 0 && n <= 5000) dblMs = Math.max(1, Math.round(n));
+      })
+      .catch(() => {})
+      .then(() => {
+        dblReady = true;
+        if (armed) commitArmed();
+      });
+
+    /* 白名单语义与 Rust 上报的 `[data-chrome-hit]` 同一份（Polaris 的
+     * `_isOverlayHoverInteractive` 同款）：点击瞬间已被同步摘下的节点仍算控件。 */
+    const interactive = (t: EventTarget | null) => {
+      const el = t instanceof Element ? t : null;
+      if (el && !el.isConnected) return true;
+      return !!(el && el.closest("[data-chrome-hit]"));
+    };
+    const cancelSingle = () => {
+      generation++;
+      if (singleTimer !== null) {
+        window.clearTimeout(singleTimer);
+        singleTimer = null;
+      }
+    };
+
+    const onDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      if (interactive(e.target)) {
+        cancelSingle();
+        return;
+      }
+      // 面板打开（含正在关闭的 200ms）与拖拽余波期间的点击不算「点画面」
+      if (menuOpenRef.current || Date.now() < ptSuppressUntil.current) {
+        cancelSingle();
+        track = null;
+        return;
+      }
+      const count = Math.max(1, Number(e.detail) || 1);
+      track = {
+        x: e.clientX,
+        y: e.clientY,
+        moved: false,
+        clickCount: count,
+        suppressed: false,
+      };
+      if (count === 2) {
+        // 第二下按下就是系统语义的 dblclick：先撤掉未提交的单击，再全屏
+        cancelSingle();
+        track.doubleDispatched = true;
+        const next = !stRef.current.fullscreen;
+        setSt((p) => ({ ...p, fullscreen: next }));
+        void invoke("mpv_set_ui_fullscreen", { on: next }).catch(() => {});
+      } else if (count > 2) {
+        cancelSingle();
+        track.suppressed = true;
+      }
+    };
+
+    const onMove = (e: MouseEvent) => {
+      if (!track || track.moved) return;
+      if (
+        Math.abs(e.clientX - track.x) >= DRAG_THRESHOLD ||
+        Math.abs(e.clientY - track.y) >= DRAG_THRESHOLD
+      ) {
+        track.moved = true;
+      }
+    };
+
+    const onUp = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      const t = track;
+      track = null;
+      if (!t) return;
+      if (interactive(e.target)) {
+        cancelSingle();
+        return;
+      }
+      if (t.moved) {
+        ptSuppressUntil.current = Date.now() + DRAG_SUPPRESS_MS;
+        return;
+      }
+      if (
+        t.suppressed ||
+        t.doubleDispatched ||
+        t.clickCount !== 1 ||
+        Date.now() < ptSuppressUntil.current
+      ) {
+        return;
+      }
+      cancelSingle();
+      armed = { gen: generation, at: Date.now() };
+      // 双击间隔的权威值还在路上：先挂着，等拿到系统值再按「已用时间」扣减
+      if (dblReady) commitArmed();
+    };
+
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("mousemove", onMove, true);
+    document.addEventListener("mouseup", onUp, true);
+    return () => {
+      cancelSingle();
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("mousemove", onMove, true);
+      document.removeEventListener("mouseup", onUp, true);
+    };
+  }, []);
 
   /* ── 状态：事件为主通道，低频快照兜底 ──
    * [lc-1943] 之前 `listen` 因覆盖层缺少 capability 被 ACL 拒绝（promise reject），
@@ -525,24 +725,57 @@ export function PlayerChrome() {
     };
   }, [menu, pullMenu]);
 
-  /* ── 面板定位：贴着触发按钮上方，空间不足翻转，始终在窗口内 ── */
+  /* ── 面板定位 [lc-1945]：用户规格的 `bottom: calc(100% + 80px)` ──
+   *   · 水平：跟随**触发按钮**居中（面板中心 = 按钮中心），贴边时把中心点夹回来，
+   *     三角指针再按实际偏移指回按钮中心 —— 绝不是「固定居中整个窗口」；
+   *   · 垂直：面板底边 = 按钮顶边 - 80px（80px 物理空白留给进度条那一带）；
+   *   · 上方放不下就翻到按钮下方（`bottom: -80px` 的镜像），指针翻向朝上；
+   *   · 高度上限 = 可用空间，绝不超过「窗口高 - 80px 留白 - 12px 安全边距」。 */
   const placeMenu = useCallback(() => {
     const panel = menuPanelRef.current;
-    const a = menuAnchorRef.current;
-    if (!panel || !a) return;
+    const el = menuTriggerRef.current;
+    const a = el?.getBoundingClientRect() ?? menuAnchorRef.current;
+    if (!a) return;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const card = (panel.firstElementChild as HTMLElement | null) ?? panel;
-    const w = card.offsetWidth || 300;
-    const rawH = card.offsetHeight || 320;
-    const maxHeight = Math.max(120, vh - 24);
-    const h = Math.min(rawH, maxHeight);
-    let left = a.left + a.width / 2 - w / 2;
-    left = Math.max(12, Math.min(left, vw - w - 12));
-    let top = a.top - h - 12;
-    if (top < 12) top = a.bottom + 12;
-    top = Math.max(12, Math.min(top, vh - h - 12));
-    setMenuPos({ left: Math.round(left), top: Math.round(top), maxHeight });
+    const card = (panel?.firstElementChild as HTMLElement | null) ?? panel;
+    const w = Math.min(MENU_W, vw - MENU_MARGIN * 2);
+    const half = w / 2;
+    // 自然高度（卡片刻意 overflow:hidden，用 scrollHeight 拿未被裁掉的内容高）
+    const rawH = Math.max(card?.offsetHeight || 0, card?.scrollHeight || 0) || 320;
+    const aboveMax = a.top - MENU_GAP - MENU_MARGIN;
+    const belowMax = vh - a.bottom - MENU_GAP - MENU_MARGIN;
+    const side: "above" | "below" =
+      rawH <= aboveMax
+        ? "above"
+        : rawH <= belowMax
+          ? "below"
+          : aboveMax >= belowMax
+            ? "above"
+            : "below";
+    const maxHeight = Math.max(
+      96,
+      Math.min(side === "above" ? aboveMax : belowMax, vh - MENU_GAP - MENU_MARGIN),
+    );
+    const center = a.left + a.width / 2;
+    const left = Math.round(Math.min(Math.max(center, half + MENU_MARGIN), vw - half - MENU_MARGIN));
+    // 指针在面板内的位置：面板被夹回后仍指向按钮中心
+    const arrowLocal = center - (left - half);
+    const arrowX = Math.round(
+      Math.max(MENU_ARROW_KEEPOUT, Math.min(arrowLocal, w - MENU_ARROW_KEEPOUT)),
+    );
+    setMenuPos({
+      left,
+      side,
+      maxHeight: Math.round(maxHeight),
+      arrowX,
+      // 隐形连接桥：覆盖「按钮顶边 - 80px」到「按钮顶边 + 30px」这一段
+      bridgeLeft: Math.round(center - BRIDGE_W / 2),
+      bridgeTop: Math.round(side === "above" ? a.top - MENU_GAP : a.bottom - (BRIDGE_H - MENU_GAP)),
+      ...(side === "above"
+        ? { bottom: Math.round(vh - (a.top - MENU_GAP)) }
+        : { top: Math.round(a.bottom + MENU_GAP) }),
+    });
   }, []);
 
   useLayoutEffect(() => {
@@ -562,6 +795,17 @@ export function PlayerChrome() {
       window.removeEventListener("resize", onResize);
     };
   }, [menu, sub, placeMenu]);
+
+  /* [lc-1945] 摆好位置后再加 `.is-active`：元素必须以隐藏态先渲染一帧，
+   * opacity/transform/visibility 的过渡才会真的跑起来。 */
+  useLayoutEffect(() => {
+    if (!menu || !menuPos || menuClosing) {
+      setMenuActive(false);
+      return;
+    }
+    const raf = requestAnimationFrame(() => setMenuActive(true));
+    return () => cancelAnimationFrame(raf);
+  }, [menu, menuPos, menuClosing]);
 
   /* ── [lc-1942] 输入框键盘租约：覆盖层常驻 WS_EX_NOACTIVATE（点控件不抢 mpv 焦点），
    * 只有搜索输入框真正需要键盘时才临时摘掉，失焦/关面板装回（Polaris 同款租约）。 ── */
@@ -588,22 +832,44 @@ export function PlayerChrome() {
     void invoke("player_chrome_focusable", { on: false }).catch(() => {});
   }, []);
 
+  /* ── 悬停计时器 ── */
+  const clearHoverOpen = useCallback(() => {
+    if (hoverOpenTimer.current) {
+      window.clearTimeout(hoverOpenTimer.current);
+      hoverOpenTimer.current = null;
+    }
+  }, []);
+  const clearHoverClose = useCallback(() => {
+    if (hoverCloseTimer.current) {
+      window.clearTimeout(hoverCloseTimer.current);
+      hoverCloseTimer.current = null;
+    }
+  }, []);
+
   /* ── 打开 / 关闭（同一按钮再点一次、空白处、Esc 都关闭）── */
   const closeMenu = useCallback(() => {
     if (!menuOpenRef.current) return;
     menuOpenRef.current = false;
+    // [lc-1945] 悬停态一并复位：关掉的面板不能带着「固定」或残留计时器回来
+    menuPinned.current = false;
+    hoverTarget.current = null;
+    clearHoverOpen();
+    clearHoverClose();
+    // [lc-1944] 关闭面板的这一击不能再被空白区仲裁当成「点画面」（否则点空白关面板会连按暂停）
+    ptSuppressUntil.current = Date.now() + 400;
     releaseKeyboard();
     setMenuClosing(true);
+    setMenuActive(false);
     if (menuCloseTimer.current) window.clearTimeout(menuCloseTimer.current);
-    // 减少动态偏好：没有退场动画就直接卸载，别让面板多停 200ms
-    const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 200;
+    // 减少动态偏好：没有退场动画就直接卸载，别让面板多停 300ms
+    const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 300;
     menuCloseTimer.current = window.setTimeout(() => {
       setMenu(null);
       setMenuClosing(false);
       setSub(null);
       setMenuPos(null);
     }, delay);
-  }, [releaseKeyboard]);
+  }, [releaseKeyboard, clearHoverOpen, clearHoverClose]);
 
   /* 离开搜索子面板（返回 / 切菜单 / 关闭）时立刻归还键盘 */
   useEffect(() => {
@@ -611,16 +877,29 @@ export function PlayerChrome() {
     return () => releaseKeyboard();
   }, [sub, releaseKeyboard]);
 
-  const openMenu = (id: MenuId, el: HTMLElement | null) => {
-    if (menu === id && !menuClosing) {
-      closeMenu();
+  /* [lc-1945] `pinned`：点击/触摸/键盘打开 = 固定态（移开不关）；悬停打开 = 临时态 */
+  const openMenu = (id: MenuId, el: HTMLElement | null, pinned = true) => {
+    clearHoverOpen();
+    clearHoverClose();
+    if (menu === id && menuOpenRef.current) {
+      if (!pinned) return;
+      // 悬停打开的面板被点一下 → 固定；已固定的再点 → 关闭（原有 toggle 语义）
+      if (menuPinned.current) {
+        closeMenu();
+        return;
+      }
+      menuPinned.current = true;
+      setMenuActive(true);
       return;
     }
     if (menuCloseTimer.current) window.clearTimeout(menuCloseTimer.current);
+    menuPinned.current = pinned;
+    hoverTarget.current = id;
     menuTriggerRef.current = el;
     menuAnchorRef.current = el ? el.getBoundingClientRect() : null;
     menuOpenRef.current = true;
     setMenuClosing(false);
+    setMenuActive(false);
     setSub(null);
     setSubResults([]);
     setSubErr("");
@@ -632,10 +911,59 @@ export function PlayerChrome() {
     void pullMenu();
   };
 
+  /* ── [lc-1945] 悬停交互 ──
+   * 打开：鼠标进入触发按钮后驻留 `HOVER_OPEN_MS`（100ms）才弹面板 —— 规格只规定了
+   * 「移开 300ms 关闭」，驻留延迟是为了让「沿底栏划过」不至于连开 8 个面板、
+   * 也不会连发 8 轮 `player_menu_data`；移开按钮 / 面板 / 连接桥任一 → 300ms 后关闭。
+   * 关闭：固定态（点击打开）不参与，只有悬停态面板会自己收起来。 */
+  const scheduleHoverClose = () => {
+    clearHoverClose();
+    if (menuPinned.current || !menuOpenRef.current) return;
+    hoverCloseTimer.current = window.setTimeout(() => {
+      hoverCloseTimer.current = null;
+      if (menuPinned.current) return;
+      closeMenu();
+    }, HOVER_CLOSE_MS);
+  };
+
+  const hoverEnterMenu = (id: MenuId) => (e: React.MouseEvent<HTMLElement>) => {
+    clearHoverClose();
+    if (menuOpenRef.current && menu === id) return;
+    clearHoverOpen();
+    hoverTarget.current = id;
+    const el = e.currentTarget;
+    hoverOpenTimer.current = window.setTimeout(() => {
+      hoverOpenTimer.current = null;
+      if (hoverTarget.current !== id || !el.isConnected) return;
+      openMenu(id, el, false);
+    }, HOVER_OPEN_MS);
+  };
+
+  const hoverLeaveMenu = (id: MenuId) => () => {
+    if (hoverTarget.current === id) hoverTarget.current = null;
+    clearHoverOpen();
+    scheduleHoverClose();
+  };
+
+  /** 进入面板 / 隐形连接桥：撤销关闭计时；若面板已在退场则原地救回 */
+  const keepMenuOpen = () => {
+    clearHoverClose();
+    if (menuOpenRef.current || !menu) return;
+    if (menuCloseTimer.current) {
+      window.clearTimeout(menuCloseTimer.current);
+      menuCloseTimer.current = null;
+    }
+    menuOpenRef.current = true;
+    setMenuClosing(false);
+    setMenuActive(true);
+  };
+
   useEffect(() => {
     return () => {
       if (menuCloseTimer.current) window.clearTimeout(menuCloseTimer.current);
       if (keyboardFocusTimer.current) window.clearTimeout(keyboardFocusTimer.current);
+      if (hoverOpenTimer.current) window.clearTimeout(hoverOpenTimer.current);
+      if (hoverCloseTimer.current) window.clearTimeout(hoverCloseTimer.current);
     };
   }, []);
 
@@ -864,7 +1192,7 @@ export function PlayerChrome() {
     <>
       <MenuRow
         text="显示弹幕"
-        meta={mdata.danmakuOn ? "开" : "关"}
+        toggle
         checked={!!mdata.danmakuOn}
         onClick={() => void toggleDanmaku()}
       />

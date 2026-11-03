@@ -90,6 +90,29 @@ pub fn overlay_style_noactivate(hwnd: isize) {
     }
 }
 
+/// [lc-1942] 覆盖层临时可聚焦：磨砂菜单里的文本输入（字幕搜索）需要键盘。
+///
+/// 覆盖层常规态常驻 `WS_EX_NOACTIVATE`（点控件不抢 mpv 焦点，Polaris 同款）；
+/// 只有输入框真正获得焦点期间才摘掉这一位，失焦/关闭面板立刻装回。
+/// 只动 NOACTIVATE，`WS_EX_LAYERED` / `WS_EX_TOOLWINDOW` 保持不变 ——
+/// lc-1939 的逐像素透明与 lc-1940/1941 的显隐路径都不受影响。
+pub fn overlay_set_focusable(hwnd: isize, on: bool) {
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return;
+    }
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd as _, GWL_EXSTYLE);
+        let next = if on {
+            ex & !(WS_EX_NOACTIVATE as isize)
+        } else {
+            ex | (WS_EX_NOACTIVATE as isize)
+        };
+        if next != ex {
+            SetWindowLongPtrW(hwnd as _, GWL_EXSTYLE, next);
+        }
+    }
+}
+
 /// [lc-1939] **只**拨 WS_EX_TRANSPARENT，保留 WS_EX_LAYERED。
 ///
 /// 不能用 tauri 的 `set_ignore_cursor_events`：tao 把这两位置成同一组

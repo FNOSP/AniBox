@@ -3491,6 +3491,28 @@ async fn player_chrome_ignore(
     Ok(())
 }
 
+/// [lc-1942] 覆盖层临时可聚焦开关：仅字幕搜索输入框使用。
+/// 常规态 `WS_EX_NOACTIVATE` 常驻（点控件不抢焦点）；输入期间摘掉，失焦/关面板装回。
+/// 只接受 mpv_overlay 自己的调用；只动 NOACTIVATE，不碰 LAYERED/TRANSPARENT。
+#[tauri::command]
+async fn player_chrome_focusable(window: tauri::Window, on: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        if window.label() != "mpv_overlay" {
+            return Ok(());
+        }
+        if let Ok(h) = window.hwnd() {
+            crate::mpvwin::overlay_set_focusable(h.0 as isize, on);
+            if on {
+                let _ = window.set_focus();
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (&window, &on);
+    Ok(())
+}
+
 #[tauri::command]
 async fn mpv_toggle_pause(state: State<'_, AppState>) -> Result<(), String> {
     let slot = state.mpv.lock().await;
@@ -5050,6 +5072,8 @@ pub fn run() {
             player_embed_enter,
             player_embed_rect,
             player_chrome_ignore,
+            // [lc-1942] 字幕搜索输入框需要临时摘掉 WS_EX_NOACTIVATE
+            player_chrome_focusable,
             player_embed_leave,
             mpv_toggle_pause,
             mpv_script_message,

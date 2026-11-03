@@ -151,26 +151,6 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
     return { actors: sortAgg(actors), studios: sortAgg(studios), tags: sortAgg(tags), size, scraped, pending, failed };
   }, [libs]);
 
-  const scrape = async () => {
-    if (!active || busy) return;
-    setBusy(true);
-    setNote("正在按番号刮削（r18.dev / jav321 / FC2，mgstage 与 heyzo 需要代理）…");
-    setErr("");
-    try {
-      const r = await invoke<{ scraped: number; failed: number; skipped: number }>("jav_library_scrape", {
-        provider: active,
-        force: false,
-      });
-      flashNote(`刮削完成：成功 ${r.scraped}，失败 ${r.failed}`);
-      await load();
-    } catch (ex) {
-      setNote("");
-      setErr(String(ex));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const scrapeAll = async () => {
     if (busy) return;
     setBusy(true);
@@ -367,6 +347,9 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
         <>
           {libs.length > 0 && (
             <div className="c115-tabs">
+              <button className="c115-mini jvh-scrape-all" disabled={busy} onClick={() => void scrapeAll()}>
+                {busy ? "刮削中…" : "全盘刮削"}
+              </button>
               {libs.map((l) => (
                 <button key={l.provider} type="button" className={`c115-tab${l.provider === active ? " on" : ""}`}
                   onClick={() => setActive(l.provider)}>
@@ -374,11 +357,8 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
                   <span className="c115-dot ok" title={`${l.count} 部`} />
                 </button>
               ))}
-              <button className="c115-mini" disabled={busy} style={{ marginLeft: "auto" }} onClick={() => void scrape()}>
-                {busy ? "刮削中…" : "刮削本盘"}
-              </button>
               {filter && (
-                <button className="c115-mini" onClick={() => setFilter("")}>清除筛选：{filter} ×</button>
+                <button className="c115-mini" style={{ marginLeft: "auto" }} onClick={() => setFilter("")}>清除筛选：{filter} ×</button>
               )}
             </div>
           )}

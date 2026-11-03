@@ -328,6 +328,15 @@
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 10px;
 }
+
+/* [lc-1956] 媒体库标签行行首的「全盘刮削」动作钮：强调色描边，与库胶囊区分 */
+.jvh-scrape-all {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft, rgba(10, 132, 255, 0.1));
+  font-weight: 600;
+}
+.jvh-scrape-all:disabled { opacity: 0.65; transform: none; cursor: default; }
 .jvh-tool {
   display: flex;
   flex-direction: column;

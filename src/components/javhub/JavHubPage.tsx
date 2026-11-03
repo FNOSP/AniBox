@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { imgUrl } from "../../lib/images";
-import { JavSettingsModal } from "./JavSettingsModal";
+import { JavSettingsPanel } from "./JavSettingsPanel";
 import { JavDetailDrawer, type JavEntryT } from "./JavDetailDrawer";
 import {
   Building2 as IcoStudio,
@@ -21,7 +21,7 @@ import {
 type JavLibT = { provider: string; label?: string; scannedAtMs: number; count: number; entries: JavEntryT[] };
 type ProviderInfo = { id: string; label: string; logged: boolean; userName: string };
 
-type View = "library" | "actors" | "studios" | "tags" | "overview";
+type View = "library" | "actors" | "studios" | "tags" | "overview" | "settings";
 
 /* 分节导航（对照 JAVCloudHub 侧栏的三组：资料库 / 工作区 / 系统） */
 const NAV: { group: string; items: { key: View; label: string; icon: typeof IcoGridL }[] }[] = [
@@ -62,7 +62,6 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
   const [filter, setFilter] = useState(""); // 演员库/厂商库/标签库点卡片 → 媒体库过滤
-  const [setOpen, setSetOpen] = useState(false);
   const [detail, setDetail] = useState<JavEntryT | null>(null);
   const [fnosBusy, setFnosBusy] = useState(false);
   const [fnosNote, setFnosNote] = useState("");
@@ -333,7 +332,12 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
             </button>
           );
         })}
-        <button type="button" title="设置" className="libf-open" onClick={() => setSetOpen(true)}>
+        <button type="button" title="设置"
+          className={`libf-open${view === "settings" ? " on" : ""}`}
+          onClick={() => {
+            setView("settings");
+            setFilter("");
+          }}>
           <IcoGearL size={13} strokeWidth={2} />
           设置
         </button>
@@ -427,6 +431,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
         </>
       )}
 
+      {view === "settings" && <JavSettingsPanel onSaved={() => void load()} />}
       {detail && (
         <JavDetailDrawer
           provider={active}
@@ -446,14 +451,6 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
                   : l,
               ),
             );
-          }}
-        />
-      )}
-      {setOpen && (
-        <JavSettingsModal
-          onClose={() => setSetOpen(false)}
-          onSaved={() => {
-            void load();
           }}
         />
       )}

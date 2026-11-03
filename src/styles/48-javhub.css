@@ -4,16 +4,7 @@
    视觉走 AniBox 主题 token。
    ═══════════════════════════════════════════════════════════════ */
 
-.javset-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 240;
-  background: rgba(10, 14, 30, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  animation: javset-in 0.22s cubic-bezier(0.32, 0.72, 0, 1);
-}
+/* 遮罩淡入帧（[lc-1951] 起设置弹窗壳已移除，此帧仍被 .jvd-scrim 详情抽屉复用） */
 @keyframes javset-in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -29,6 +20,14 @@
   background: var(--panel);
   box-shadow: var(--shadow-card);
   overflow: hidden;
+}
+
+/* [lc-1951] 内嵌标签页形态：随页面流布局，字段区自身滚动 */
+.javset.embed {
+  width: 100%;
+  height: auto;
+  max-height: calc(100vh - 200px);
+  margin-bottom: 16px;
 }
 
 /* ── 顶部横排分节导航（原版是左侧竖排） ── */
@@ -280,7 +279,6 @@
 .javset-btn.ghost { background: var(--glass-btn-bg); color: var(--text-strong); }
 
 @media (prefers-reduced-motion: reduce) {
-  .javset-scrim { animation: none; }
   .javset-tab, .javset-tab .t { transition: none; }
   .javset-bool .sw, .javset-bool .sw::after { transition: none; }
 }

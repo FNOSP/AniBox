@@ -1,6 +1,7 @@
 /* [lc-1907] JavHub 设置 —— 页面布局对照 JAVCloudHub 设置页（page-settings.js）：
    顶部搜索条 + 分节字段卡（.setitem 同款：粗标签 + 灰色 key 路径 + 控件 + hint）；
    原版左侧竖导航改为顶部横排胶囊。字段文案以 JAVCloudHub 1.9.31 为蓝本改写。
+   [lc-1951] 不再以弹窗打开：作为 JavHub 页的「设置」标签页内嵌渲染（javset.embed）。
    按 AniBox 架构取舍：
    · 扫描规则 / 定时扫描 / 网络与代理 / 刮削站点 / 刮削行为 / 内置 AI / 高级 → 全量落地；
    · 数据源 → 网盘指回「网盘接入」页，飞牛媒体库逐库开关 + 扫描按钮；
@@ -58,7 +59,7 @@ const linkify = (t: string) =>
     /^(https?:|socks5?:|[A-Za-z]:\\)/.test(seg) ? <code key={i}>{seg}</code> : seg,
   );
 
-export function JavSettingsModal({ onClose, onSaved }: { onClose: () => void; onSaved?: () => void }) {
+export function JavSettingsPanel({ onSaved }: { onSaved?: () => void }) {
   const [s, setS] = useState<JavSettings | null>(null);
   const [dirty, setDirty] = useState(false);
   const [sec, setSec] = useState<SecKey>("sources");
@@ -86,11 +87,6 @@ export function JavSettingsModal({ onClose, onSaved }: { onClose: () => void; on
   useEffect(() => {
     void loadFnos();
   }, [loadFnos]);
-  useEffect(() => {
-    const h = (ev: KeyboardEvent) => ev.key === "Escape" && onClose();
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [onClose]);
 
   const addLocalDir = async () => {
     const picked = await openDirDialog({ multiple: false, title: "选择本地视频文件夹" });
@@ -462,9 +458,8 @@ export function JavSettingsModal({ onClose, onSaved }: { onClose: () => void; on
   const secDesc = sec === "sources" ? "网盘与飞牛媒体库" : undefined;
 
   return (
-    <div className="javset-scrim" onClick={onClose}>
-      <div className="javset" onClick={(e) => e.stopPropagation()}>
-        {/* 顶部横排分节导航（原版为左侧竖排） */}
+    <div className="javset embed">
+      {/* 顶部横排分节导航（原版为左侧竖排） */}
         <div className="javset-tabs">
           {SECTIONS.map((x) => {
             const Ico = x.icon;
@@ -504,12 +499,10 @@ export function JavSettingsModal({ onClose, onSaved }: { onClose: () => void; on
         </div>
         <div className="javset-foot">
           <span className="dirty">{note || (dirty ? "有未保存的改动" : "")}</span>
-          <button className="javset-btn ghost" onClick={onClose}>关闭</button>
           <button className="javset-btn" disabled={!s || !dirty || saving} onClick={() => void save()}>
             {saving ? "保存中…" : "保存"}
           </button>
         </div>
-      </div>
     </div>
   );
 }

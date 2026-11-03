@@ -477,6 +477,13 @@ pub fn restore_player_window_if_zoomed() {
 
 /// [lc-1946] 最大化 / 还原：对 mpv 锚窗做 Win32 `SW_MAXIMIZE` / `SW_RESTORE`。
 ///
+/// [lc-1948] 覆盖层右上角按钮已改走「真全屏」路径（mpv `fullscreen` 属性 →
+/// [`on_player_fullscreen_changed`]），**不再调用本函数**：`SW_MAXIMIZE` 只铺
+/// 工作区（任务栏露着），且 mpv 对最大化窗口做边框补偿会把窗口矩形挪出屏幕
+/// （实测 `-11,-11 3840x2160`，右/下各露一条缝）—— 这不是全屏，也不该由全屏
+/// 按钮触发。本命令保留给外部/兼容调用；全屏中仍然拒绝（两种「铺满」叠在一起
+/// 无法正确还原）。
+///
 /// 覆盖层是 mpv 的 owned window，且 33ms 跟随循环按 mpv 矩形贴位 —— 锚窗一变，
 /// 控制层下一拍就跟过去，所以「最大化同时作用于覆盖层」由现有跟随循环天然保证，
 /// 不需要再对覆盖层单独 ShowWindow（那会和跟随循环抢几何）。
@@ -1139,6 +1146,42 @@ pub fn take_saved_script_opts() -> Option<String> {
         .take()
 }
 
+/// [lc-1948] 纯逻辑：跟随循环一拍该做什么（执行与单测共用同一份决策）。
+///
+/// 全屏态必须**挂起**「锚窗→覆盖层」的抄写：mpv 的 VO 在进/退全屏瞬间会先跳回
+/// 它自己记忆的窗口矩形（实测 `-11,-11 3851x2171`，即最大化残留），旧逻辑会把
+/// 这份矩形原样抄给覆盖层 → 两层几何来回拉锯、热区反复作废/重报（全屏后控件
+/// 点不中的温床，lc-1947 的 120ms 一次性断言兜不住后续每一拍）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FollowAction {
+    /// 非全屏：维持原行为 —— 把覆盖层抄到锚窗矩形。
+    Copy,
+    /// 全屏且两层之一偏离显示器矩形：两层都按显示器矩形复位（x, y, w, h）。
+    Assert(i32, i32, i32, i32),
+    /// 全屏且两层已贴合显示器矩形：不动（省一次 syscall）。
+    Hold,
+}
+
+/// [lc-1948] 跟随循环决策。锚窗/覆盖层传 `(left, top, right, bottom)`，
+/// 显示器传 `(x, y, w, h)`（[`monitor_rect`] 的返回形态）。
+pub fn follow_loop_action(
+    fullscreen: bool,
+    anchor: (i32, i32, i32, i32),
+    overlay: (i32, i32, i32, i32),
+    monitor: (i32, i32, i32, i32),
+) -> FollowAction {
+    if !fullscreen {
+        return FollowAction::Copy;
+    }
+    let (mx, my, mw, mh) = monitor;
+    let mon = (mx, my, mx + mw, my + mh);
+    if anchor == mon && overlay == mon {
+        FollowAction::Hold
+    } else {
+        FollowAction::Assert(mx, my, mw, mh)
+    }
+}
+
 /// [lc-1915] 跟随循环（Polaris 同款架构的另一半）：拖动画面 = mpv 自己动（窗口拖拽），
 /// 本循环 33ms 轮询 mpv 矩形，把 `mpv_overlay` 窗口贴到 mpv 矩形上（z 序插在 mpv 正后方）。
 /// mpv 是锚、控制层窗是随动 —— 与 Polaris 的 WorkAreaListener 同思路。
@@ -1181,34 +1224,70 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                 // [lc-1947] 非全屏时持续记录锚窗矩形：进全屏时用它当还原态
                 //（mpv 的 fullscreen 属性事件可能晚于它自己的 resize）。
                 record_normal_rect(m.left, m.top, m.right - m.left, m.bottom - m.top);
-                // 位置/尺寸对齐 + z 序插到 mpv 正后方（InsertAfter=mpv）
-                let same = m.left == o.left
-                    && m.top == o.top
-                    && m.right == o.right
-                    && m.bottom == o.bottom;
-                if !same {
-                    // 位移超过 2px 才算「在动」（避免 DPI 取整抖动导致反复隐藏/显示）
-                    let moving = (m.left - o.left).abs() > 2
-                        || (m.top - o.top).abs() > 2
-                        || (m.right - o.right).abs() > 2
-                        || (m.bottom - o.bottom).abs() > 2;
-                    // [lc-1925] 覆盖层已是透明窗（无黑底可残影），不再隐藏 ——
-                    // 隐藏会让控件「过一会才出现」，得不偿失。
-                    let _ = moving;
-                    stable_since = None;
-                    // [lc-1924] z 序交给 owner 关系（owned 恒在 owner 之上），这里只做几何同步
-                    SetWindowPos(
-                        ov as _,
-                        std::ptr::null_mut(),
-                        m.left,
-                        m.top,
-                        m.right - m.left,
-                        m.bottom - m.top,
-                        SWP_NOACTIVATE | SWP_NOZORDER,
-                    );
-                    // [lc-1947] 尺寸变了（最大化/全屏/还原）→ 作废旧热区，首击即按新几何命中
-                    note_overlay_geometry(&app, m.right - m.left, m.bottom - m.top);
-                    continue;
+                // [lc-1948] 全屏态挂起抄写，改为把两层断言在显示器矩形上（见 FollowAction）。
+                match follow_loop_action(
+                    PLAYER_FULLSCREEN.load(Ordering::SeqCst),
+                    (m.left, m.top, m.right, m.bottom),
+                    (o.left, o.top, o.right, o.bottom),
+                    monitor_rect(mh as _).unwrap_or((m.left, m.top, m.right - m.left, m.bottom - m.top)),
+                ) {
+                    FollowAction::Hold => {}
+                    FollowAction::Assert(fx, fy, fw, fh) => {
+                        if m.left != fx
+                            || m.top != fy
+                            || m.right - m.left != fw
+                            || m.bottom - m.top != fh
+                        {
+                            move_window(mh as _, fx, fy, fw, fh);
+                            crate::libmpv::trace(
+                                "[lc-1948] 全屏跟随：锚窗偏离显示器矩形 → 复位",
+                            );
+                        }
+                        if o.left != fx || o.top != fy || o.right - o.left != fw || o.bottom - o.top != fh
+                        {
+                            SetWindowPos(
+                                ov as _,
+                                std::ptr::null_mut(),
+                                fx,
+                                fy,
+                                fw,
+                                fh,
+                                SWP_NOACTIVATE | SWP_NOZORDER,
+                            );
+                            note_overlay_geometry(&app, fw, fh);
+                        }
+                    }
+                    FollowAction::Copy => {
+                        // 位置/尺寸对齐 + z 序插到 mpv 正后方（InsertAfter=mpv）
+                        let same = m.left == o.left
+                            && m.top == o.top
+                            && m.right == o.right
+                            && m.bottom == o.bottom;
+                        if !same {
+                            // 位移超过 2px 才算「在动」（避免 DPI 取整抖动导致反复隐藏/显示）
+                            let moving = (m.left - o.left).abs() > 2
+                                || (m.top - o.top).abs() > 2
+                                || (m.right - o.right).abs() > 2
+                                || (m.bottom - o.bottom).abs() > 2;
+                            // [lc-1925] 覆盖层已是透明窗（无黑底可残影），不再隐藏 ——
+                            // 隐藏会让控件「过一会才出现」，得不偿失。
+                            let _ = moving;
+                            stable_since = None;
+                            // [lc-1924] z 序交给 owner 关系（owned 恒在 owner 之上），这里只做几何同步
+                            SetWindowPos(
+                                ov as _,
+                                std::ptr::null_mut(),
+                                m.left,
+                                m.top,
+                                m.right - m.left,
+                                m.bottom - m.top,
+                                SWP_NOACTIVATE | SWP_NOZORDER,
+                            );
+                            // [lc-1947] 尺寸变了（最大化/全屏/还原）→ 作废旧热区，首击即按新几何命中
+                            note_overlay_geometry(&app, m.right - m.left, m.bottom - m.top);
+                            continue;
+                        }
+                    }
                 }
                 // 已对齐：若因移动被隐藏，稳定 220ms 后恢复显示（拖完即回显控件）
                 // [lc-1940] 只有 UI 就绪时才允许回显 —— 否则（Lua OSC 兜底 / 非透明）
@@ -1430,6 +1509,12 @@ pub fn embed_apply_rect(hwnd: isize, x: i32, y: i32, w: i32, h: i32) {
         }
         if EMBED_HIDDEN.swap(false, Ordering::SeqCst) || IsIconic(hwnd as _) != 0 {
             ShowWindow(hwnd as _, SW_SHOWNOACTIVATE);
+        }
+        // [lc-1948] 全屏态挂起重钉：几何由显示器矩形独占（跟随循环每拍断言 +
+        // ensure_fullscreen_geometry），任何迟到的视频区矩形都不得把锚窗拽回旧矩形。
+        // 显示/还原 iconic 的处理必须在门之前做完（最小化恢复路径仍依赖它）。
+        if PLAYER_FULLSCREEN.load(Ordering::SeqCst) {
+            return;
         }
         SetWindowPos(hwnd as _, std::ptr::null_mut(), x, y, w, h, SWP_NOACTIVATE | SWP_NOZORDER);
     }
@@ -1715,5 +1800,72 @@ mod tests {
         assert!(th >= 56 && th <= h);
         let (bx, _, bw, _) = rects[0];
         assert_eq!((bx, bw), (0, w), "底栏兜底带横跨新窗口全宽");
+    }
+
+    /// [lc-1948] 跟随循环决策矩阵：非全屏维持抄写；全屏一律断言/保持，绝不抄写。
+    #[test]
+    fn follow_loop_fullscreen_gate() {
+        let mon = (0, 0, 3840, 2160);
+        let anchor_on = (0, 0, 3840, 2160);
+        let overlay_on = (0, 0, 3840, 2160);
+        // 非全屏：即使两层恰好等于显示器矩形，也维持原「抄写」行为
+        assert_eq!(
+            follow_loop_action(false, anchor_on, overlay_on, mon),
+            FollowAction::Copy
+        );
+        // 全屏 + 两层就位：不动
+        assert_eq!(
+            follow_loop_action(true, anchor_on, overlay_on, mon),
+            FollowAction::Hold
+        );
+        // 全屏 + 覆盖层被 mpv 的记忆矩形带偏（实测 3851x2171@-11,-11）→ 复位
+        assert_eq!(
+            follow_loop_action(true, anchor_on, (-11, -11, 3840, 2160), mon),
+            FollowAction::Assert(0, 0, 3840, 2160)
+        );
+        // 全屏 + 锚窗被 mpv 的 VO 拖回它记忆的矩形 → 复位
+        assert_eq!(
+            follow_loop_action(true, (-11, -11, 3851, 2171), anchor_on, mon),
+            FollowAction::Assert(0, 0, 3840, 2160)
+        );
+        // 非全屏 + 锚窗偏离：照旧抄写（跟随语义不变）
+        assert_eq!(
+            follow_loop_action(false, (660, 292, 3180, 1867), (0, 0, 3840, 2160), mon),
+            FollowAction::Copy
+        );
+        // 显示器矩形按 (x,y,w,h) 换算成 (l,t,r,b) 后再比较：多屏负坐标排列也成立
+        assert_eq!(
+            follow_loop_action(true, (-1920, 0, 0, 2160), (-1920, 0, 0, 2160), (-1920, 0, 1920, 2160)),
+            FollowAction::Hold
+        );
+    }
+
+    /// [lc-1948] 双向验证：lc-1947 的旧决策（只要两层矩形不一致就抄写、不看全屏态）
+    /// 对同样的输入会做出什么 —— 它会把 mpv 记忆矩形抄给覆盖层，违反全屏不变量，
+    /// 正是本次要修的行为。此测试固化「旧逻辑 FAIL / 新逻辑 PASS」的分界。
+    #[test]
+    fn follow_loop_old_behavior_fails_fullscreen_invariant() {
+        let mon = (0, 0, 3840, 2160);
+        // 旧逻辑：fullscreen 无关，锚窗≠覆盖层 → 抄写
+        let old_action = |anchor: (i32, i32, i32, i32), overlay: (i32, i32, i32, i32)| {
+            if anchor != overlay {
+                "copy"
+            } else {
+                "noop"
+            }
+        };
+        // 全屏中 mpv VO 把锚窗拖回记忆矩形（-11,-11 3851x2171），覆盖层还在显示器矩形上
+        let anchor = (-11, -11, 3851, 2171);
+        let overlay = (-11, -11, 3840, 2160);
+        assert_eq!(old_action(anchor, overlay), "copy", "旧逻辑会抄写（违反全屏不变量）");
+        assert_ne!(
+            follow_loop_action(true, anchor, overlay, mon),
+            FollowAction::Copy,
+            "新逻辑在全屏态必须拒绝抄写"
+        );
+        assert!(matches!(
+            follow_loop_action(true, anchor, overlay, mon),
+            FollowAction::Assert(..)
+        ));
     }
 }

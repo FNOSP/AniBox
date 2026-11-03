@@ -46,12 +46,12 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  Copy,
   Layers,
   ListOrdered,
   ListVideo,
   Maximize2,
   MessageSquare,
+  Minimize2,
   Minus,
   Pause,
   Pin,
@@ -60,7 +60,6 @@ import {
   Search,
   Settings,
   SkipForward,
-  Square,
   Subtitles,
   Volume1,
   Volume2,
@@ -616,6 +615,27 @@ export function PlayerChrome() {
    * 双击 = 全屏。绝不向 mpv 合成 mbtn_left —— 会和 Lua 的单击计时器互相抵消。 */
   const stRef = useRef(st);
   stRef.current = st;
+
+  /** [lc-1948] 进入全屏前的最大化态：窗口级退出全屏会按它还原，图标跟着对齐。 */
+  const maxBeforeFs = useRef(false);
+  /** [lc-1948] 全屏切换的唯一入口：右上角窗控 / 底栏全屏键 / 双击画面共用同一条
+   * 「显示器矩形」路径（mpv fullscreen 属性 → Rust on_player_fullscreen_changed）。
+   * 不再有任何 UI 走 SW_MAXIMIZE：最大化只铺工作区（任务栏露着），且 mpv 对最大化
+   * 窗口的边框补偿会把窗口矩形挪出屏幕（右/下露缝、顶栏不消失），那不是全屏。 */
+  const toggleFullscreen = useCallback(
+    (on?: boolean) => {
+      const next = typeof on === "boolean" ? on : !stRef.current.fullscreen;
+      if (next === !!stRef.current.fullscreen) return;
+      if (next) maxBeforeFs.current = !!stRef.current.maximized;
+      setSt((p) => ({
+        ...p,
+        fullscreen: next,
+        maximized: next ? false : maxBeforeFs.current,
+      }));
+      cmdLat("fullscreen", "mpv_set_ui_fullscreen", { on: next });
+    },
+    [cmdLat],
+  );
   useEffect(() => {
     const DRAG_THRESHOLD = 6;
     const DRAG_SUPPRESS_MS = 900;
@@ -696,9 +716,8 @@ export function PlayerChrome() {
         // 第二下按下就是系统语义的 dblclick：先撤掉未提交的单击，再全屏
         cancelSingle();
         track.doubleDispatched = true;
-        const next = !stRef.current.fullscreen;
-        setSt((p) => ({ ...p, fullscreen: next }));
-        void invoke("mpv_set_ui_fullscreen", { on: next }).catch(() => {});
+        // [lc-1948] 与右上角窗控 / 底栏全屏键共用同一条全屏路径
+        toggleFullscreen();
       } else if (count > 2) {
         cancelSingle();
         track.suppressed = true;
@@ -1851,18 +1870,18 @@ export function PlayerChrome() {
             </button>
             <button
               type="button"
-              className={`pc-round${st.maximized ? " pc-active" : ""}`}
-              data-tip={st.maximized ? "还原" : "最大化"}
+              className={`pc-round${st.fullscreen ? " pc-active" : ""}`}
+              data-tip={st.fullscreen ? "退出全屏" : "全屏"}
               {...tap(() => {
-                // [lc-1946] 对 mpv 锚窗做 SW_MAXIMIZE / SW_RESTORE，覆盖层由跟随循环同步
-                void invoke<boolean>("player_window_maximize")
-                  .then((v) => {
-                    if (typeof v === "boolean") setSt((p) => ({ ...p, maximized: v }));
-                  })
-                  .catch(() => {});
+                // [lc-1948] 这颗键 = 真全屏：与底栏全屏键 / 双击画面同一条「显示器矩形」
+                // 路径（mpv fullscreen 属性 → on_player_fullscreen_changed）。无边框、
+                // 铺满整个显示器（含任务栏），再点恢复进入前状态。不再 SW_MAXIMIZE ——
+                // 最大化只铺工作区，且 mpv 的最大化边框补偿会把窗口矩形挪出屏幕
+                // （右/下露缝、顶栏还在），用户体感就是「不是真全屏」。
+                toggleFullscreen();
               })}
             >
-              {st.maximized ? <Copy size={12} /> : <Square size={12} />}
+              {st.fullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
             </button>
             <button
               type="button"
@@ -2048,9 +2067,8 @@ export function PlayerChrome() {
                 className="pc-btn pc-icon"
                 data-tip={st.fullscreen ? "退出全屏" : "全屏"}
                 {...tap(() => {
-                  const next = !st.fullscreen;
-                  setSt((p) => ({ ...p, fullscreen: next }));
-                  cmdLat("fullscreen", "mpv_set_ui_fullscreen", { on: next });
+                  // [lc-1948] 统一走 toggleFullscreen（与右上角窗控 / 双击同路径）
+                  toggleFullscreen();
                 })}
               >
                 <Maximize2 size={17} />

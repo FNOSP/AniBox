@@ -239,8 +239,7 @@ export function JavSettingsPanel({ onSaved }: { onSaved?: () => void }) {
     const fnosPart = (
       <>
         <Ro>
-          网盘（含 WebDAV）统一在「网盘接入」页管理，扫描时自动做番号识别。下面是对<b>飞牛媒体库</b>的番号刮削开关：
-          勾选后点「扫描」，库内条目会做番号识别与刮削，刮到的元数据只叠加在本机（不写飞牛），JavHub 页可播放。
+          网盘在「网盘接入」页管理；勾选要刮削的<b>飞牛媒体库</b>，元数据只写本机（不写飞牛）。
         </Ro>
         {(fnosLibs || []).map((l) => (
           <div key={l.guid} className={`javset-site${l.enabled ? "" : " off"}`}>
@@ -262,24 +261,25 @@ export function JavSettingsPanel({ onSaved }: { onSaved?: () => void }) {
           </div>
         ))}
         {fnosLibs && fnosLibs.length === 0 && <Ro>没有读到飞牛媒体库（未登录或 NAS 上还没有建库）。</Ro>}
-        <button className="javset-btn ghost" disabled={fnosBusy || !(fnosLibs || []).some((x) => x.enabled)}
-          onClick={async () => {
-            setFnosBusy(true);
-            setFnosNote("正在扫描启用的媒体库（翻页读取 + 番号识别）…");
-            try {
-              const r = await invoke<{ results: { title?: string; error?: string; items?: number; javDetected?: number }[] }>("jav_fnos_scan");
-              const parts = r.results.map((x) => (x.error ? `${x.title ?? ""} 失败` : `${x.title} ${x.javDetected}/${x.items} 条命中番号`));
-              setFnosNote(`扫完了：${parts.join("，")}（刮削在 JavHub 页点「刮削本盘」或等定时任务）`);
-            } catch (e) {
-              setFnosNote(String(e));
-            } finally {
-              setFnosBusy(false);
-            }
-          }}>
-          {fnosBusy ? "扫描中…" : "扫描启用的媒体库"}
-        </button>
-        {fnosNote && <Ro>{fnosNote}</Ro>}
-        <Ro style={{ fontWeight: 600 }}>本地文件夹</Ro>
+        <div className="jvh-src-actions">
+          <button className="javset-btn ghost" disabled={fnosBusy || !(fnosLibs || []).some((x) => x.enabled)}
+            onClick={async () => {
+              setFnosBusy(true);
+              setFnosNote("正在扫描启用的媒体库（翻页读取 + 番号识别）…");
+              try {
+                const r = await invoke<{ results: { title?: string; error?: string; items?: number; javDetected?: number }[] }>("jav_fnos_scan");
+                const parts = r.results.map((x) => (x.error ? `${x.title ?? ""} 失败` : `${x.title} ${x.javDetected}/${x.items} 条命中番号`));
+                setFnosNote(`扫完了：${parts.join("，")}`);
+              } catch (e) {
+                setFnosNote(String(e));
+              } finally {
+                setFnosBusy(false);
+              }
+            }}>
+            {fnosBusy ? "扫描中…" : "扫描启用的媒体库"}
+          </button>
+        </div>
+        <div className="jvh-subhead">本地文件夹</div>
         {(((s as JavSettingsWithLocal).local?.dirs ?? []) as string[]).map((dir) => (
           <div key={dir} className="javset-site">
             <span className="sr-name" title={dir}>{dir.split(/[\/]/).pop()}</span>
@@ -288,16 +288,16 @@ export function JavSettingsPanel({ onSaved }: { onSaved?: () => void }) {
           </div>
         ))}
         {((s as JavSettingsWithLocal).local?.dirs ?? []).length === 0 && (
-          <Ro>还没有本地文件夹 —— 点下面按钮挑一个视频目录。</Ro>
+          <Ro>还没有本地文件夹 —— 点「添加本地文件夹」挑一个视频目录。</Ro>
         )}
-        <div style={{ display: "flex", gap: 8 }}>
+        <div className="jvh-src-actions">
           <button className="javset-btn ghost" onClick={() => void addLocalDir()}>添加本地文件夹</button>
           <button className="javset-btn ghost" disabled={fnosBusy || !((s as JavSettingsWithLocal).local?.dirs ?? []).length}
             onClick={() => void scanLocal()}>
             {fnosBusy ? "扫描中…" : "扫描本地文件夹"}
           </button>
+          {fnosNote && <span className="hint" style={{ margin: 0 }}>{fnosNote}</span>}
         </div>
-        {fnosNote && <Ro>{fnosNote}</Ro>}
       </>
     );
     return {

@@ -53,6 +53,23 @@
 .javset.embed .javset-site { margin-bottom: 0; min-height: 42px; padding: 7px 12px; align-items: center; }
 .javset.embed .javset-site .sr-name { min-width: 0; flex: 1 1 auto; }
 .javset.embed .javset-site .cat { margin-left: auto; }
+/* [lc-1970] 数据源面板：操作行（扫描/添加按钮 + 结果提示）与子节标题 */
+.javset.embed .jvh-src-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.javset.embed .jvh-src-actions .javset-btn { flex: none; }
+.javset.embed .jvh-src-actions .hint { flex: 1; min-width: 200px; margin: 0; }
+.javset.embed .jvh-subhead {
+  grid-column: 1 / -1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+  margin-top: 2px;
+}
 /* 开关行：开关+标签一行，说明落到下一行，不再窄卡竖排 */
 .javset.embed .javset-item.boolrow { flex-wrap: wrap; row-gap: 6px; }
 .javset.embed .javset-item.boolrow > label { display: flex; align-items: center; gap: 10px; width: 100%; }

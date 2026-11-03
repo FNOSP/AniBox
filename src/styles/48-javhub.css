@@ -39,7 +39,11 @@
   background: none;
   min-height: 36px;
   padding: 2px 2px;
+  /* [lc-1977] 扁平行内容聚拢：行宽不超过输入控件上限，分类/路径不再漂到远处 */
+  max-width: 560px;
 }
+.javset.embed .javset-fields > div:has(.javset-site) { max-width: 1140px; }
+.javset.embed .javset-search input { max-width: 560px; }
 .javset.embed .javset-foot { background: none; }
 
 /* [lc-1967/1968/1976] 内嵌设置页：无外框、随页面流全宽，固定双栏等高栅格 */

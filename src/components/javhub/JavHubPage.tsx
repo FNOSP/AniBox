@@ -346,12 +346,12 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
       ))
     : null;
 
-  /* 聚合卡片（演员 / 厂商 / 标签通用）：点击 → 媒体库按该项过滤 */
+  /* 聚合卡片（演员 / 厂商 / 标签通用）：点击 → 原地过滤展示，不跳回媒体库标签 */
   const aggCards = (list: [string, { count: number; covers: string[] }][], emptyText: string) =>
     list.length ? (
       <div className="jvh-grid">
         {list.map(([name, x]) => (
-          <div key={name} className="jvh-card" onClick={() => { setFilter(name); setView("library"); }}>
+          <div key={name} className="jvh-card" onClick={() => setFilter(name)}>
             <div className="jvh-poster">
               {x.covers[0] ? (
                 <img src={imgUrl(x.covers[0])} alt="" loading="lazy" />
@@ -378,6 +378,24 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
       <b>{v}</b>
       <span>{label}</span>
     </div>
+  );
+
+  /* 原地过滤结果墙（聚合标签页点具体卡片后留在本页展示） */
+  const filterWall = (placeholder: string) => (
+    <>
+      <div className="c115-tabs jvh-tabs">
+        <button className="c115-mini" onClick={() => setFilter("")}>清除筛选：{filter} ×</button>
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>{scoped.length} 部</span>
+      </div>
+      {mediaCards ? (
+        <div className="jvh-grid">{mediaCards}</div>
+      ) : (
+        <div className="c115-empty">
+          <IcoFolderL size={34} strokeWidth={1.4} />
+          <p>{placeholder}</p>
+        </div>
+      )}
+    </>
   );
 
   return (
@@ -462,9 +480,9 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
         </>
       )}
 
-      {!loading && view === "actors" && aggCards(agg.actors, "还没有演员数据 —— 先在媒体库把条目刮削好")}
-      {!loading && view === "studios" && aggCards(agg.studios, "还没有厂商数据 —— 先在媒体库把条目刮削好")}
-      {!loading && view === "tags" && aggCards(agg.tags, "还没有标签数据 —— 先在媒体库把条目刮削好")}
+      {!loading && view === "actors" && (filter ? filterWall(`没有「${filter}」的条目`) : aggCards(agg.actors, "还没有演员数据 —— 先在媒体库把条目刮削好"))}
+      {!loading && view === "studios" && (filter ? filterWall(`没有「${filter}」的条目`) : aggCards(agg.studios, "还没有厂商数据 —— 先在媒体库把条目刮削好"))}
+      {!loading && view === "tags" && (filter ? filterWall(`没有「${filter}」的条目`) : aggCards(agg.tags, "还没有标签数据 —— 先在媒体库把条目刮削好"))}
 
       {!loading && view === "overview" && (
         <>
@@ -562,8 +580,8 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
           onClose={() => setDetail(null)}
           onPlay={(e) => void play(e)}
           onFilter={(name) => {
+            // 就地过滤：留在当前标签页展示，不跳回媒体库
             setFilter(name);
-            setView("library");
           }}
           onUpdated={(ne) => {
             // 单条刮削/翻译后原地同步（列表 + 当前抽屉）

@@ -283,22 +283,70 @@
   .javset-bool .sw, .javset-bool .sw::after { transition: none; }
 }
 
-/* 概览统计卡 */
+/* 概览统计卡（[lc-1953] 等宽网格，不再 flex 换行参差） */
 .jvh-stats {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
   gap: 10px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 .jvh-stat {
-  min-width: 96px;
-  padding: 12px 16px;
+  padding: 10px 14px;
   border-radius: 12px;
   border: 1px solid var(--line);
   background: var(--ph-bg);
+  min-width: 0;
 }
-.jvh-stat b { display: block; font-size: 20px; color: var(--text-strong); }
+.jvh-stat b { display: block; font-size: 19px; color: var(--text-strong); }
 .jvh-stat span { font-size: 12px; color: var(--muted); }
+
+/* 来源盘胶囊行（[lc-1953] 替代整行只读长句） */
+.jvh-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.jvh-source {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--ph-bg);
+  font-size: 12.5px;
+  color: var(--text);
+  max-width: 100%;
+}
+.jvh-source { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jvh-source b { font-size: 12.5px; color: var(--text-strong); }
+
+/* 工作台工具卡（[lc-1953] 三列自适应卡片，替代整宽堆叠行） */
+.jvh-tools {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+}
+.jvh-tool {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 13px 15px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--ph-bg);
+  min-width: 0;
+}
+.jvh-tool h5 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.jvh-tool .hint { margin: 0; line-height: 1.5; }
+.jvh-tool .javset-btn { margin-top: auto; }
 
 @media (prefers-reduced-motion: reduce) {
 }
@@ -306,8 +354,8 @@
 /* ═══════════ JavHub 海报墙（媒体库海报墙同观感） ═══════════ */
 .jvh-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
-  gap: 18px 14px;
+  grid-template-columns: repeat(auto-fill, minmax(152px, 1fr));
+  gap: 16px 12px;
 }
 .jvh-card { cursor: pointer; min-width: 0; }
 .jvh-poster {

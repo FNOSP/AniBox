@@ -396,37 +396,39 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
             {stat("总大小", fmtSize(agg.size))}
             {stat("来源盘", String(libs.length))}
           </div>
-          <div className="javset-ro">
-            {libs.map((l) => `${l.label || labels[l.provider] || l.provider}：${l.count} 部`).join("，") || "还没有数据"}
-          </div>
-          <div className="javset-item boolrow" style={{ cursor: "default" }}>
-            <label><span className="bl">扫描飞牛媒体库</span></label>
-            <span>
+          {libs.length > 0 && (
+            <div className="jvh-sources">
+              {libs.map((l) => (
+                <span key={l.provider} className="jvh-source">
+                  {l.label || labels[l.provider] || l.provider}
+                  <b>{l.count}</b>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="jvh-tools">
+            <div className="jvh-tool">
+              <h5>扫描飞牛媒体库</h5>
               <button className="javset-btn ghost" disabled={fnosBusy} onClick={() => void scanFnos()}>
                 {fnosBusy ? "扫描中…" : "扫描启用的媒体库"}
               </button>
-              <div className="hint">对设置 → 数据源里启用的飞牛媒体库做番号识别（元数据只叠加在本机，不写飞牛）。</div>
-              {fnosNote && <div className="hint">{fnosNote}</div>}
-            </span>
-          </div>
-          <div className="javset-item boolrow" style={{ cursor: "default" }}>
-            <label><span className="bl">扫描本地文件夹</span></label>
-            <span>
+              <p className="hint">番号识别落在媒体库，元数据只叠加在本机，不写飞牛。</p>
+              {fnosNote && <p className="hint">{fnosNote}</p>}
+            </div>
+            <div className="jvh-tool">
+              <h5>扫描本地文件夹</h5>
               <button className="javset-btn ghost" disabled={fnosBusy} onClick={() => void scanLocal()}>
                 {fnosBusy ? "扫描中…" : "扫描本地文件夹"}
               </button>
-              <div className="hint">对设置 → 数据源里添加的本地视频文件夹做番号识别（只读遍历，不改本地文件）。</div>
-              {fnosNote && <div className="hint">{fnosNote}</div>}
-            </span>
-          </div>
-          <div className="javset-item boolrow" style={{ cursor: "default" }}>
-            <label><span className="bl">批量刮削</span></label>
-            <span>
+              <p className="hint">只读遍历设置里添加的本地视频文件夹，不改本地文件。</p>
+            </div>
+            <div className="jvh-tool">
+              <h5>批量刮削</h5>
               <button className="javset-btn ghost" disabled={busy} onClick={() => void scrapeAll()}>
                 {busy ? "刮削中…" : "刮削全部盘"}
               </button>
-              <div className="hint">逐盘跑增量刮削（已成功的跳过）；单盘失败不影响其余盘。走镜像轨免梯子，mgstage / heyzo 需要代理。</div>
-            </span>
+              <p className="hint">逐盘增量刮削，已成功的跳过；走镜像轨免梯子。</p>
+            </div>
           </div>
         </>
       )}

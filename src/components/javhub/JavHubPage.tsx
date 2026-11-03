@@ -65,6 +65,16 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
   const [detail, setDetail] = useState<JavEntryT | null>(null);
   const [fnosBusy, setFnosBusy] = useState(false);
   const [fnosNote, setFnosNote] = useState("");
+  const noteTimer = useRef<number | undefined>(undefined);
+
+  /* 结果提示自动消失（进度行不残留：完成后 flash，切标签即清） */
+  const flashNote = useCallback((msg: string, ms = 6000) => {
+    setNote(msg);
+    window.clearTimeout(noteTimer.current);
+    noteTimer.current = window.setTimeout(() => {
+      if (alive.current) setNote("");
+    }, ms);
+  }, []);
   const alive = useRef(true);
 
   const load = useCallback(async () => {
@@ -93,6 +103,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
       .catch(() => {});
     return () => {
       alive.current = false;
+      window.clearTimeout(noteTimer.current);
     };
   }, [load]);
 
@@ -150,7 +161,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
         provider: active,
         force: false,
       });
-      setNote(`刮削完成：成功 ${r.scraped}，失败 ${r.failed}（失败的可再点一次重试）`);
+      flashNote(`刮削完成：成功 ${r.scraped}，失败 ${r.failed}`);
       await load();
     } catch (ex) {
       setNote("");
@@ -177,7 +188,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
           /* 单盘失败不挡其余盘 */
         }
       }
-      setNote(`全部刮削完成：成功 ${ok}，失败 ${bad}`);
+      flashNote(`全部刮削完成：成功 ${ok}，失败 ${bad}`);
       await load();
     } finally {
       setBusy(false);
@@ -192,9 +203,11 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
       const r = await invoke<{ results: { title?: string; error?: string; items?: number; javDetected?: number }[] }>("jav_fnos_scan");
       const parts = r.results.map((x) => (x.error ? `${x.title ?? ""} 失败` : `${x.title} ${x.javDetected}/${x.items} 条命中番号`));
       setFnosNote(`扫完了：${parts.join("，")}`);
+      setNote("");
       await load();
     } catch (e) {
       setFnosNote(String(e));
+      setNote("");
     } finally {
       setFnosBusy(false);
     }
@@ -207,10 +220,10 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
     try {
       const r = await invoke<{ results: { dir: string; videos: number; javDetected: number }[] }>("jav_local_scan");
       const parts = r.results.map((x) => `${x.dir.split(/[\/]/).pop()} ${x.javDetected}/${x.videos} 条命中番号`);
-      setNote(`扫完了：${parts.join("，")}（刮削在媒体库页点「刮削本盘」）`);
+      flashNote(`扫完了：${parts.join("，")}`);
       await load();
     } catch (e) {
-      setNote(String(e));
+      flashNote(String(e), 10000);
     } finally {
       setFnosBusy(false);
     }
@@ -326,6 +339,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
               onClick={() => {
                 setView(x.key);
                 setFilter("");
+                setNote("");
               }}>
               <Ico size={13} strokeWidth={2} />
               {x.label}
@@ -337,6 +351,7 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
           onClick={() => {
             setView("settings");
             setFilter("");
+            setNote("");
           }}>
           <IcoGearL size={13} strokeWidth={2} />
           设置

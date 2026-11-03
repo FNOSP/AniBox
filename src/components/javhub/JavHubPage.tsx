@@ -380,23 +380,16 @@ export function JavHubPage({ onBack }: { onBack: () => void }) {
     </div>
   );
 
-  /* 原地过滤结果墙（聚合标签页点具体卡片后留在本页展示） */
-  const filterWall = (placeholder: string) => (
-    <>
-      <div className="c115-tabs jvh-tabs">
-        <button className="c115-mini" onClick={() => setFilter("")}>清除筛选：{filter} ×</button>
-        <span style={{ fontSize: 12, color: "var(--muted)" }}>{scoped.length} 部</span>
+  /* 原地过滤结果墙（聚合标签页点具体卡片后留在本页展示；再点顶部当前标签即回聚合墙） */
+  const filterWall = (placeholder: string) =>
+    mediaCards ? (
+      <div className="jvh-grid">{mediaCards}</div>
+    ) : (
+      <div className="c115-empty">
+        <IcoFolderL size={34} strokeWidth={1.4} />
+        <p>{placeholder}</p>
       </div>
-      {mediaCards ? (
-        <div className="jvh-grid">{mediaCards}</div>
-      ) : (
-        <div className="c115-empty">
-          <IcoFolderL size={34} strokeWidth={1.4} />
-          <p>{placeholder}</p>
-        </div>
-      )}
-    </>
-  );
+    );
 
   return (
     <main className="content">

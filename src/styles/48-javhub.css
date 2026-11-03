@@ -30,6 +30,25 @@
   margin-bottom: 16px;
 }
 
+/* [lc-1967] 内嵌设置字段双栏化：字段卡自适应两列，长控件独占整行 */
+.javset.embed .javset-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+.javset.embed .javset-fields > div { min-width: 0; }
+.javset.embed .javset-item,
+.javset.embed .javset-ro { margin-bottom: 0; }
+.javset.embed .javset-fields > div:has(textarea),
+.javset.embed .javset-fields > div:has(.javset-site),
+.javset.embed .javset-fields > div:has(> .javset-ro),
+.javset.embed .javset-fields > div:has(.javset-sechead) {
+  grid-column: 1 / -1;
+}
+/* 半宽卡里的开关行收紧行距，避免两栏高低差过大 */
+.javset.embed .javset-item.boolrow .hint { margin-top: 4px; }
+
 /* ── 顶部横排分节导航（原版是左侧竖排） ── */
 .javset-tabs {
   display: flex;

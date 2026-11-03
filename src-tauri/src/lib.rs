@@ -3014,6 +3014,16 @@ async fn player_embed_enter(app: AppHandle, state: State<'_, AppState>) -> Resul
         crate::mpvwin::clear_minimize_restore();
         crate::mpvwin::clear_player_maximized();
         crate::mpvwin::reset_player_ontop();
+        // [lc-1947] 全屏状态归零后按 mpv 的真实值接管：会话复用时若仍停在全屏
+        //（上一次异常退出），这里让窗口级全屏接上；**不**强写 `fullscreen=no` ——
+        // `fntv_menu.lua` 的「起播自动全屏」正是靠 file-loaded 时把该属性置 yes。
+        crate::mpvwin::reset_player_fullscreen();
+        if let Ok(v) = m.command(json!(["get_property", "fullscreen"])).await {
+            if v.get("data").and_then(|d| d.as_bool()).unwrap_or(false) {
+                crate::mpvwin::on_player_fullscreen_changed(&app, true);
+                crate::libmpv::trace("[lc-1947] 起播时 mpv 仍停在全屏 → 窗口级全屏接管");
+            }
+        }
         // 内嵌态由 Moved 事件的内嵌跟随负责；owner 跟随（lc-1907 实验路径）在内嵌态不参与
         crate::mpvwin::set_owner_follow(false);
         // [lc-1913] 不再隐藏等待矩形：spawn 侧收编已把 mpv 满屏钉在主窗口上（geometry
@@ -3100,6 +3110,10 @@ async fn player_embed_rect(
         if crate::mpvwin::player_maximized() {
             return Ok(());
         }
+        // [lc-1947] 全屏同理：几何由显示器矩形独占，任何迟到的视频区矩形都不能重钉。
+        if crate::mpvwin::player_fullscreen() {
+            return Ok(());
+        }
         let Some(win) = app.get_webview_window("mpv_overlay") else {
             return Ok(());
         };
@@ -3156,10 +3170,14 @@ pub fn ensure_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     use tauri::Manager;
     if let Some(w) = app.get_webview_window("mpv_overlay") {
         // 复用路径：按主窗口当前矩形贴位（owner 几何锚点），显示交给 show_player_overlay。
-        if let Some(main) = app.get_webview_window("main") {
-            if let (Ok(pos), Ok(size)) = (main.outer_position(), main.outer_size()) {
-                let _ = w.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
-                let _ = w.set_size(tauri::PhysicalSize::new(size.width, size.height));
+        // [lc-1947] 全屏中换集不能把覆盖层拉回主窗矩形：几何由显示器矩形独占，
+        // 下一拍跟随循环也会把 mpv 拉回去 → 会闪一下窗口尺寸。
+        if !crate::mpvwin::player_fullscreen() {
+            if let Some(main) = app.get_webview_window("main") {
+                if let (Ok(pos), Ok(size)) = (main.outer_position(), main.outer_size()) {
+                    let _ = w.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
+                    let _ = w.set_size(tauri::PhysicalSize::new(size.width, size.height));
+                }
             }
         }
         if !crate::mpvwin::overlay_ui_ready() {
@@ -3417,6 +3435,9 @@ pub async fn embed_exit_flow(app: AppHandle) {
         crate::libmpv::trace("[lc-1946] 退出流程已在跑，忽略重复请求");
         return;
     }
+    // [lc-1947] 全屏中退出播放：先按保存的矩形/最大化态还原锚窗，否则下一次起播会
+    // 继承一块全屏几何（`embed_set_active(false)` 会清掉还原态，必须放在它前面）。
+    crate::mpvwin::restore_player_window_from_fullscreen();
     crate::mpvwin::embed_set_active(false);
     crate::mpvwin::set_owner_follow(false);
 
@@ -3457,6 +3478,9 @@ pub async fn embed_exit_flow(app: AppHandle) {
     if let Some(m) = session {
         let app_bg = app.clone();
         tauri::async_runtime::spawn(async move {
+            // [lc-1947] 若在全屏中退出：窗口几何已在上面还原，这里把 mpv 的 fullscreen
+            // 属性也归零（否则下一次会话按钮状态会显示成「退出全屏」）。
+            m.command_no_reply(json!(["set", "fullscreen", "no"])).await;
             if let Some(orig) = crate::mpvwin::take_saved_script_opts() {
                 // [lc-1941] 有上限：mpv 无响应（command 自带 5s 超时）也不能拖着主窗不回来
                 match tokio::time::timeout(
@@ -3547,6 +3571,12 @@ async fn player_chrome_hot_rects(
                 )
             })
             .collect();
+        // [lc-1947] 留痕：全屏/最大化切换后应能看到一条「热区上报 n 条 full=…」，
+        // 与 mpvwin 的「覆盖层尺寸 → …热区作废」成对出现，便于确认重算链路真的走到。
+        crate::libmpv::trace(&format!(
+            "[lc-1947] 热区上报 {} 条 full={full}",
+            converted.len()
+        ));
         crate::mpvwin::overlay_set_hot_rects(converted, full);
     }
     #[cfg(not(target_os = "windows"))]
@@ -3826,6 +3856,9 @@ async fn player_window_ontop(
         // mpv 自身的 ontop 属性只做后台同步（不等待回包）：pstate/观察事件里的 ontop
         // 与窗口真实状态保持一致，uosc 等脚本读到的也是同一个值。
         // 50ms 拿不到锁就放弃 —— 视觉动作已经完成，不能被 mpv 忙时的命令队列拖住。
+        // [lc-1947] 全屏期间**不写**这个属性：ontop_mode.lua 会在暂停时把它置 false
+        // （对锚窗 SetWindowPos(NOTOPMOST)），视频会掉到任务栏下面；置顶意图已经记在
+        // PLAYER_ONTOP 里，退出全屏时按它恢复。
         let session = tokio::time::timeout(
             std::time::Duration::from_millis(50),
             state.mpv.lock(),
@@ -3834,9 +3867,13 @@ async fn player_window_ontop(
         .ok()
         .and_then(|g| g.clone());
         if let Some(m) = session {
-            tauri::async_runtime::spawn(async move {
-                m.command_no_reply(json!(["set", "ontop", on])).await;
-            });
+            if crate::mpvwin::player_fullscreen() {
+                crate::libmpv::trace("[lc-1947] 全屏中：只记录置顶意图，不同步 mpv ontop 属性");
+            } else {
+                tauri::async_runtime::spawn(async move {
+                    m.command_no_reply(json!(["set", "ontop", on])).await;
+                });
+            }
         }
     }
     #[cfg(not(target_os = "windows"))]
@@ -3865,11 +3902,26 @@ async fn player_window_minimize(app: AppHandle, window: tauri::Window) -> Result
             if let Some(mh) = crate::mpvwin::get_hwnd() {
                 crate::mpvwin::embed_hide(mh);
             }
-            crate::mpvwin::request_minimize_restore();
+            // [lc-1947] 主窗在播放期被 `m.hide()` 隐藏，对隐藏窗 minimize() 不会产生
+            // 任务栏条目（旧实现就是这样从桌面消失）。改为「先显示为最小化」：
+            // SW_SHOWMINNOACTIVE → 任务栏一定出现 AniBox，点它经 Focused(true) 恢复播放层。
+            // 标记放在最小化**之后**：万一 ShowWindow 同步触发了 Focused(true)，
+            // 也不会在窗口还最小化时就把播放层放出来。
             if let Some(m) = app.get_webview_window("main") {
-                let _ = m.minimize();
+                let state = m
+                    .hwnd()
+                    .ok()
+                    .map(|h| crate::mpvwin::minimize_main_to_taskbar(h.0 as isize));
+                if let Some((visible, iconic)) = state {
+                    crate::libmpv::trace(&format!(
+                        "[lc-1947] 最小化：播放层收起 + 主窗 visible={visible} iconic={iconic}（任务栏入口）"
+                    ));
+                } else {
+                    let _ = m.minimize();
+                    crate::libmpv::trace("[lc-1947] 最小化：取不到主窗 hwnd，退回 Tauri minimize");
+                }
             }
-            crate::libmpv::trace("[lc-1946] 最小化：播放层收起 + 主窗最小化（任务栏可恢复）");
+            crate::mpvwin::request_minimize_restore();
         } else {
             let _ = window.minimize();
             crate::libmpv::trace("[lc-1946] 最小化：非内嵌态，直接最小化覆盖层");
@@ -3916,6 +3968,9 @@ async fn player_chrome_state() -> Result<serde_json::Value, String> {
     let mut v = crate::mpv::pstate_snapshot();
     if let Some(obj) = v.as_object_mut() {
         obj.insert("ontop".into(), json!(crate::mpvwin::player_ontop()));
+        // [lc-1947] 全屏以窗口级状态为准：mpv 属性事件可能被 `fs_expect` 吞掉，
+        // 500ms 快照必须能把这个状态带回前端（按钮图标 / 双击仲裁都用它）。
+        obj.insert("fullscreen".into(), json!(crate::mpvwin::player_fullscreen()));
     }
     Ok(v)
 }

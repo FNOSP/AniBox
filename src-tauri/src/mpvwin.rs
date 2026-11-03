@@ -30,9 +30,10 @@ use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetCursorPos, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
     IsIconic, IsWindow, IsWindowVisible, IsZoomed, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    GWL_EXSTYLE, GWLP_HWNDPARENT, HWND_NOTOPMOST, HWND_TOPMOST, SW_HIDE, SW_MAXIMIZE,
-    SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    GWL_EXSTYLE, GWLP_HWNDPARENT, HWND_NOTOPMOST, HWND_TOPMOST, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE,
+    SW_RESTORE, SW_SHOW, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
 
 /// 当前已收编的 mpv 顶层窗口（isize，全仓 HWND 约定；None = 未收编 / 已失效清理）。
@@ -55,6 +56,33 @@ static PLAYER_MAXIMIZED: AtomicBool = AtomicBool::new(false);
 static PLAYER_MIN_RESTORE: AtomicBool = AtomicBool::new(false);
 /// 退出流程是否已在跑：重复点击/ESC 不再叠第二条 2s 级的清理链。
 static EXIT_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+// ───────────────────── [lc-1947] 真全屏（窗口级状态） ─────────────────────
+//
+// 根因见 lc-1947 记录：底栏全屏按钮走 `mpv_set_ui_fullscreen` → 只写 mpv 的
+// `fullscreen` 属性。mpv 确实会把自己的窗口放到显示器矩形（实测 `0:0:3840:2160`），
+// 但：① 它不会给窗口加 TOPMOST，任务栏（topmost）压在视频上 → 观感「不是真全屏」；
+//     ② 退出由 mpv 自己还原，和我们对锚窗做的 `SW_MAXIMIZE` 状态会打架（实测退出后
+//        窗口落在 `-12:-12:2568:1703`，不是进入前的矩形）；
+//     ③ 覆盖层只是被动跟随，热区矩形（窗口内**绝对**坐标）不会因窗口几何变化而作废 →
+//        全屏后探针仍在用进入前那份矩形，右上角翻不成可点态，点击全部落到 mpv。
+// 这里把全屏提升成覆盖「mpv 锚窗 + 覆盖层」的窗口级状态。**mpv 的 `fullscreen` 属性
+// 仍是唯一开关**（按钮 / 双击画面 / ENTER / ESC 四条路径天然一致），切换时统一做：
+//   · 几何 = 显示器矩形（MonitorFromWindow + rcMonitor，物理像素，含任务栏区域）；
+//   · 两层同处置顶，退出时恢复用户「置顶」意图；
+//   · 保存 / 恢复进入前的锚窗矩形与最大化状态；
+//   · 几何变化后立刻作废热区并通知前端重报（兜底带按新尺寸生效，首击即命中）。
+
+/// 播放器是否处于真全屏（mpv `fullscreen` 属性的窗口级镜像）。
+static PLAYER_FULLSCREEN: AtomicBool = AtomicBool::new(false);
+/// 进全屏前的锚窗矩形 `(x, y, w, h)` + 是否最大化（物理像素；None = 没有可用还原态）。
+static FULLSCREEN_SAVED: Mutex<Option<(i32, i32, i32, i32, bool)>> = Mutex::new(None);
+/// 跟随循环在**非全屏**时持续记录的锚窗矩形。mpv 的 `fullscreen` 属性事件可能晚于
+/// 它自己的 resize，不能靠「事件到达那一刻的 GetWindowRect」当进入前的矩形。
+static LAST_NORMAL_RECT: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
+/// 探针上次见到的覆盖层**尺寸**。只比宽高：热区是窗口内坐标，窗口移动不影响；
+/// 尺寸一变（最大化 / 全屏 / 还原）就必须作废旧矩形。
+static LAST_OVERLAY_SIZE: Mutex<Option<(i32, i32)>> = Mutex::new(None);
 
 // ───────────────────────── [lc-1909] 内嵌模式静态槽 ─────────────────────────
 
@@ -183,6 +211,57 @@ fn probe_fallback_rects(w: i32, h: i32) -> Vec<(i32, i32, i32, i32)> {
         (0, (h - band_h).max(0), w, band_h),
         ((w - top_w).max(0), 0, top_w, 56.min(h)),
     ]
+}
+
+/// [lc-1947] 纯逻辑：覆盖层尺寸变化判定（`None` = 首次观测，不算变化）。
+pub fn overlay_size_changed(prev: Option<(i32, i32)>, w: i32, h: i32) -> bool {
+    match prev {
+        Some((pw, ph)) => pw != w || ph != h,
+        None => false,
+    }
+}
+
+/// [lc-1947] 覆盖层尺寸变化 → 就地作废旧热区 + 请求前端重报。
+///
+/// 为什么必须在这里做：`HOT_RECTS` 存的是**窗口内绝对物理坐标**（见 [`HOT_RECTS`]），
+/// 窗口一旦变大（最大化 / 全屏），旧矩形的右上角就落在屏幕中部；此时若还认为
+/// `HOT_REPORTED=true`，探针会一直按旧矩形判定 → 真正的右上角永远不翻成可点态，
+/// 点击全部穿透给 mpv（用户体感「全屏后右上角控件全部失效」）。
+/// 作废后探针立刻改用按**新尺寸**计算的 [`probe_fallback_rects`]（底栏 + 右上角），
+/// 所以切换后的第一次点击也能命中，不必等前端下一次布局上报。
+fn note_overlay_geometry(app: &tauri::AppHandle, w: i32, h: i32) {
+    use tauri::Emitter;
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let prev = {
+        let mut g = LAST_OVERLAY_SIZE.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = *g;
+        if !overlay_size_changed(prev, w, h) {
+            if prev.is_none() {
+                *g = Some((w, h));
+            }
+            return;
+        }
+        *g = Some((w, h));
+        prev
+    };
+    HOT_REPORTED.store(false, Ordering::SeqCst);
+    crate::libmpv::trace(&format!(
+        "[lc-1947] 覆盖层尺寸 {prev:?} → {w}x{h}：热区作废，先按新尺寸兜底并请求重报"
+    ));
+    let _ = app.emit_to("mpv_overlay", "overlay-geometry", serde_json::json!({ "w": w, "h": h }));
+}
+
+/// [lc-1947] 记录「非全屏」时的锚窗矩形（进全屏时以它为准保存还原态）。
+fn record_normal_rect(x: i32, y: i32, w: i32, h: i32) {
+    if w <= 0 || h <= 0 || PLAYER_FULLSCREEN.load(Ordering::SeqCst) {
+        return;
+    }
+    let mut g = LAST_NORMAL_RECT.lock().unwrap_or_else(|e| e.into_inner());
+    if *g != Some((x, y, w, h)) {
+        *g = Some((x, y, w, h));
+    }
 }
 
 /// [lc-1944] 命中判定（纯逻辑，便于单测）：`true` = 不穿透（点击进 WebView），
@@ -334,6 +413,14 @@ fn set_window_topmost(hwnd: isize, on: bool) {
     }
 }
 
+/// 窗口当前是否带 TOPMOST（读 ex-style 真值，不缓存）。
+fn is_window_topmost(hwnd: isize) -> bool {
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return false;
+    }
+    unsafe { GetWindowLongPtrW(hwnd as _, GWL_EXSTYLE) & (WS_EX_TOPMOST as isize) != 0 }
+}
+
 /// [lc-1946] 置顶：mpv 锚窗 + 覆盖层成对拨 TOPMOST/NOTOPMOST。
 ///
 /// 只拨 mpv 的 `ontop` 属性没用：覆盖层自己一直是 TOPMOST，用户看不到任何变化；
@@ -341,8 +428,16 @@ fn set_window_topmost(hwnd: isize, on: bool) {
 /// 自己的 hwnd 传入（命令里取），mpv 锚窗从槽里读。
 pub fn set_player_ontop(overlay_hwnd: isize, on: bool) {
     PLAYER_ONTOP.store(on, Ordering::SeqCst);
-    set_window_topmost(get_hwnd().unwrap_or(0), on);
-    set_window_topmost(overlay_hwnd, on);
+    // [lc-1947] 全屏期间强制置顶：否则视频层会被任务栏（topmost）压住，看起来「不是真全屏」。
+    // 用户的「置顶」意图照常记录，退出全屏时再按它生效。
+    let apply = effective_topmost(on, PLAYER_FULLSCREEN.load(Ordering::SeqCst));
+    set_window_topmost(get_hwnd().unwrap_or(0), apply);
+    set_window_topmost(overlay_hwnd, apply);
+}
+
+/// [lc-1947] 纯逻辑：窗口实际是否置顶。全屏期间恒为 true（压过任务栏）。
+pub fn effective_topmost(intent: bool, fullscreen: bool) -> bool {
+    intent || fullscreen
 }
 
 pub fn player_ontop() -> bool {
@@ -393,6 +488,11 @@ pub fn toggle_player_maximize() -> bool {
     if unsafe { IsWindow(h as _) } == 0 {
         return false;
     }
+    // [lc-1947] 全屏中不参与最大化：两种「铺满屏幕」的窗口状态叠在一起无法正确还原
+    if PLAYER_FULLSCREEN.load(Ordering::SeqCst) {
+        crate::libmpv::trace("[lc-1947] 全屏中忽略最大化切换");
+        return player_maximized();
+    }
     let zoomed = unsafe { IsZoomed(h as _) } != 0;
     unsafe {
         ShowWindow(h as _, if zoomed { SW_RESTORE } else { SW_MAXIMIZE });
@@ -441,6 +541,324 @@ pub fn resume_embed_windows(overlay_hwnd: isize) {
     crate::libmpv::trace("[lc-1946] 主窗恢复 → 播放层重新显示");
 }
 
+// ───────────────────── [lc-1947] 真全屏：窗口级切换 ─────────────────────
+
+/// [lc-1947] 纯逻辑：退出全屏的恢复步骤（执行与单测共用同一份决策）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FullscreenRestoreStep {
+    /// 先清掉最大化/全屏样式（对 maximized 窗口直接 SetWindowPos 只改还原矩形）
+    Restore,
+    /// 回到进入全屏前的锚窗矩形
+    MoveTo(i32, i32, i32, i32),
+    /// 进入前是最大化 → 重新最大化
+    Maximize,
+    /// 恢复用户「置顶」意图
+    Topmost(bool),
+}
+
+/// [lc-1947] 纯逻辑：退出全屏要按什么顺序恢复。
+/// 最大化必须在 MoveTo **之后**：SW_MAXIMIZE 会让系统覆盖还原矩形，顺序反了就丢矩形。
+pub fn fullscreen_restore_steps(
+    rect: (i32, i32, i32, i32),
+    zoomed: bool,
+    ontop: bool,
+) -> Vec<FullscreenRestoreStep> {
+    let mut steps = vec![
+        FullscreenRestoreStep::Restore,
+        FullscreenRestoreStep::MoveTo(rect.0, rect.1, rect.2, rect.3),
+    ];
+    if zoomed {
+        steps.push(FullscreenRestoreStep::Maximize);
+    }
+    steps.push(FullscreenRestoreStep::Topmost(ontop));
+    steps
+}
+
+pub fn player_fullscreen() -> bool {
+    PLAYER_FULLSCREEN.load(Ordering::SeqCst)
+}
+
+/// 新会话开始时清全屏状态（上一次播放若在全屏中退出，标记不能带到下一次）。
+pub fn reset_player_fullscreen() {
+    PLAYER_FULLSCREEN.store(false, Ordering::SeqCst);
+    *FULLSCREEN_SAVED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    // 注意：**不清** LAST_OVERLAY_SIZE —— 它要与上一次观测到的尺寸比较，
+    // 这样「上一轮结束时尺寸和这一轮不同」也能触发热区作废。
+}
+
+fn overlay_hwnd_of(app: &tauri::AppHandle) -> isize {
+    use tauri::Manager;
+    app.get_webview_window("mpv_overlay")
+        .and_then(|w| w.hwnd().ok())
+        .map(|h| h.0 as isize)
+        .unwrap_or(0)
+}
+
+/// 取窗口所在显示器的**完整矩形**（`rcMonitor`，物理像素）。
+///
+/// 必须用 `rcMonitor` 而不是 `rcWork`：实现要求「铺满显示器（不是工作区）」，
+/// 任务栏那一条也要盖住（置顶由 [`effective_topmost`] 保证）。
+fn monitor_rect(hwnd: isize) -> Option<(i32, i32, i32, i32)> {
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    if hwnd == 0 {
+        return None;
+    }
+    unsafe {
+        let mon = MonitorFromWindow(hwnd as _, MONITOR_DEFAULTTONEAREST);
+        if mon.is_null() {
+            return None;
+        }
+        let mut mi: MONITORINFO = std::mem::zeroed();
+        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(mon, &mut mi) == 0 {
+            return None;
+        }
+        Some((
+            mi.rcMonitor.left,
+            mi.rcMonitor.top,
+            mi.rcMonitor.right - mi.rcMonitor.left,
+            mi.rcMonitor.bottom - mi.rcMonitor.top,
+        ))
+    }
+}
+
+/// 只挪几何（不激活、不改 z 序）；z 序由 [`set_window_topmost`] 单独负责。
+fn move_window(hwnd: isize, x: i32, y: i32, w: i32, h: i32) {
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return;
+    }
+    unsafe {
+        SetWindowPos(
+            hwnd as _,
+            std::ptr::null_mut(),
+            x,
+            y,
+            w,
+            h,
+            SWP_NOACTIVATE | SWP_NOZORDER,
+        );
+    }
+}
+
+/// 全屏几何断言（幂等）：锚窗没铺满显示器就重新摆，两层都置顶。
+fn ensure_fullscreen_geometry(app: &tauri::AppHandle) {
+    if !PLAYER_FULLSCREEN.load(Ordering::SeqCst) {
+        return;
+    }
+    let mpv = get_hwnd().unwrap_or(0);
+    let overlay = overlay_hwnd_of(app);
+    let Some((mx, my, mw, mh)) = monitor_rect(if mpv != 0 { mpv } else { overlay }) else {
+        return;
+    };
+    if mpv != 0 {
+        let mut rc = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        let ok = unsafe { GetWindowRect(mpv as _, &mut rc) } != 0;
+        if !ok
+            || rc.left != mx
+            || rc.top != my
+            || rc.right - rc.left != mw
+            || rc.bottom - rc.top != mh
+        {
+            move_window(mpv, mx, my, mw, mh);
+            crate::libmpv::trace(&format!(
+                "[lc-1947] 全屏几何断言：锚窗未铺满显示器 → 重新定位 {mw}x{mh}@{mx},{my}"
+            ));
+        }
+    }
+    move_window(overlay, mx, my, mw, mh);
+    set_window_topmost(mpv, true);
+    set_window_topmost(overlay, true);
+    note_overlay_geometry(app, mw, mh);
+}
+
+/// [lc-1947] mpv `fullscreen` 属性变化的窗口级处理（由 mpv.rs 的属性观察线程调用）。
+///
+/// 这是全屏状态**唯一**的入口：按钮 / 双击画面 / ENTER / ESC 全都只改 mpv 属性，
+/// 所以四条路径的几何、置顶、还原行为天然一致。
+pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
+    if PLAYER_FULLSCREEN.swap(on, Ordering::SeqCst) == on {
+        return;
+    }
+    let mpv = get_hwnd().unwrap_or(0);
+    let overlay = overlay_hwnd_of(app);
+    if on {
+        // ① 保存进入前的还原态。LAST_NORMAL_RECT 由跟随循环/探针在非全屏时持续刷新，
+        //    不依赖「属性事件到达这一刻」的窗口矩形（mpv 的 resize 可能已经发生）。
+        let mut saved_rect = *LAST_NORMAL_RECT.lock().unwrap_or_else(|e| e.into_inner());
+        if saved_rect.is_none() && overlay != 0 {
+            let mut rc = RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+            if unsafe { GetWindowRect(overlay as _, &mut rc) } != 0 && rc.right > rc.left {
+                saved_rect = Some((rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top));
+            }
+        }
+        let zoomed = mpv != 0 && unsafe { IsZoomed(mpv as _) } != 0;
+        *FULLSCREEN_SAVED.lock().unwrap_or_else(|e| e.into_inner()) =
+            saved_rect.map(|(x, y, w, h)| (x, y, w, h, zoomed));
+        PLAYER_MAXIMIZED.store(false, Ordering::SeqCst);
+        match saved_rect {
+            Some((x, y, w, h)) => crate::libmpv::trace(&format!(
+                "[lc-1947] 进入全屏：保存还原矩形 {w}x{h}@{x},{y} maximized={zoomed}"
+            )),
+            None => crate::libmpv::trace("[lc-1947] 进入全屏：没有可用的还原矩形"),
+        }
+        // ② 从最大化样式里拉出来（maximized 状态下 SetWindowPos 只改还原矩形，视觉不动）
+        if mpv != 0 && zoomed {
+            unsafe {
+                ShowWindow(mpv as _, SW_RESTORE);
+            }
+        }
+        let Some((mx, my, mw, mh)) = monitor_rect(if mpv != 0 { mpv } else { overlay }) else {
+            crate::libmpv::trace("[lc-1947] 进入全屏失败：取不到显示器矩形");
+            return;
+        };
+        move_window(mpv, mx, my, mw, mh);
+        move_window(overlay, mx, my, mw, mh);
+        set_window_topmost(mpv, true);
+        set_window_topmost(overlay, true);
+        note_overlay_geometry(app, mw, mh);
+        crate::libmpv::trace(&format!(
+            "[lc-1947] 进入全屏：显示器矩形 {mw}x{mh}@{mx},{my}（锚窗 + 覆盖层 TOPMOST）"
+        ));
+        // ③ mpv 的 VO 线程可能稍后才处理自己的 fullscreen（实测 ~40ms），再断言一次几何
+        let app2 = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+            ensure_fullscreen_geometry(&app2);
+        });
+    } else {
+        // 退出：按保存的矩形 / 最大化状态权威恢复（mpv 自己也会还原，但可能晚 40ms，
+        // 且它还原的是「自己记录的」窗口状态，不一定等于我们进入前的矩形）。
+        let saved = FULLSCREEN_SAVED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        let Some((x, y, w, h, zoomed)) = saved else {
+            crate::libmpv::trace("[lc-1947] 退出全屏：没有保存的还原矩形（跳过几何恢复）");
+            return;
+        };
+        let ontop = PLAYER_ONTOP.load(Ordering::SeqCst);
+        for step in fullscreen_restore_steps((x, y, w, h), zoomed, ontop) {
+            match step {
+                FullscreenRestoreStep::Restore => {
+                    if mpv != 0 {
+                        unsafe {
+                            ShowWindow(mpv as _, SW_RESTORE);
+                        }
+                    }
+                }
+                FullscreenRestoreStep::MoveTo(x, y, w, h) => {
+                    move_window(mpv, x, y, w, h);
+                    move_window(overlay, x, y, w, h);
+                }
+                FullscreenRestoreStep::Maximize => {
+                    if mpv != 0 {
+                        unsafe {
+                            ShowWindow(mpv as _, SW_MAXIMIZE);
+                        }
+                    }
+                }
+                FullscreenRestoreStep::Topmost(on) => {
+                    set_window_topmost(mpv, on);
+                    set_window_topmost(overlay, on);
+                }
+            }
+        }
+        PLAYER_MAXIMIZED.store(zoomed, Ordering::SeqCst);
+        note_overlay_geometry(app, w, h);
+        crate::libmpv::trace(&format!(
+            "[lc-1947] 退出全屏：恢复 {w}x{h}@{x},{y} maximized={zoomed} ontop={ontop}"
+        ));
+        // mpv 的还原可能在其 VO 线程稍后执行（会把窗口拉回它自己的矩形）：再断言一次
+        let app2 = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(90)).await;
+            if PLAYER_FULLSCREEN.load(Ordering::SeqCst) {
+                return;
+            }
+            let mpv = get_hwnd().unwrap_or(0);
+            let overlay = overlay_hwnd_of(&app2);
+            move_window(mpv, x, y, w, h);
+            move_window(overlay, x, y, w, h);
+            if zoomed && mpv != 0 {
+                unsafe {
+                    ShowWindow(mpv as _, SW_MAXIMIZE);
+                }
+            }
+            let ontop = PLAYER_ONTOP.load(Ordering::SeqCst);
+            set_window_topmost(mpv, ontop);
+            set_window_topmost(overlay, ontop);
+        });
+    }
+}
+
+/// [lc-1947] 退出播放前若还在全屏：把锚窗还原到进入前的矩形/最大化状态，
+/// 之后才能安全地 `SW_HIDE`（否则下一次起播会继承一块全屏几何）。
+pub fn restore_player_window_from_fullscreen() {
+    if !PLAYER_FULLSCREEN.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    let mpv = get_hwnd().unwrap_or(0);
+    let saved = FULLSCREEN_SAVED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take();
+    if mpv != 0 {
+        unsafe {
+            ShowWindow(mpv as _, SW_RESTORE);
+        }
+    }
+    match saved {
+        Some((x, y, w, h, zoomed)) => {
+            move_window(mpv, x, y, w, h);
+            if zoomed && mpv != 0 {
+                unsafe {
+                    ShowWindow(mpv as _, SW_MAXIMIZE);
+                }
+            }
+            PLAYER_MAXIMIZED.store(zoomed, Ordering::SeqCst);
+            crate::libmpv::trace("[lc-1947] 退出前还原全屏几何（锚窗回到进入前矩形/最大化态）");
+        }
+        None => crate::libmpv::trace("[lc-1947] 退出前退出全屏：无保存矩形，只清窗口样式"),
+    }
+}
+
+/// [lc-1947] 最小化到任务栏：**先显示为最小化**，再最小化。
+///
+/// 根因：播放期主窗被 `m.hide()` 隐藏（mpv.rs / player.rs 起播路径），对**隐藏窗口**
+/// 调 `minimize()`（tao → `ShowWindow(SW_MINIMIZE)`）不会产生任务栏条目 ——
+/// 旧实现于是「覆盖层 + mpv 都收起 + 主窗隐藏着被最小化」= 整个程序从桌面消失。
+/// `SW_SHOWMINNOACTIVE` 一步完成「可见 + 最小化 + 不激活」，不会闪一下主界面；
+/// 返回 `(IsWindowVisible, IsIconic)` 供调用方写进日志做证据。
+pub fn minimize_main_to_taskbar(hwnd: isize) -> (bool, bool) {
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return (false, false);
+    }
+    unsafe {
+        if IsWindowVisible(hwnd as _) == 0 {
+            ShowWindow(hwnd as _, SW_SHOWMINNOACTIVE);
+        }
+        if IsIconic(hwnd as _) == 0 {
+            ShowWindow(hwnd as _, SW_MINIMIZE);
+        }
+        (
+            IsWindowVisible(hwnd as _) != 0,
+            IsIconic(hwnd as _) != 0,
+        )
+    }
+}
+
 /// 退出流程去重：true = 本次调用真正开始跑退出（之前没有在跑）。
 pub fn begin_exit_flow() -> bool {
     !EXIT_IN_FLIGHT.swap(true, Ordering::SeqCst)
@@ -481,6 +899,28 @@ pub fn window_force_show(hwnd: isize) {
             } else {
                 ShowWindow(hwnd as _, SW_SHOW);
             }
+        } else if IsIconic(hwnd as _) != 0 {
+            // [lc-1947] `IsWindowVisible` 对最小化窗口同样为真：可见但仍是最小化时
+            // 必须真正 SW_RESTORE（最小化按钮用原始 SW_SHOWMINNOACTIVE 后退出播放，
+            // 这里若什么都不做，主窗会留在任务栏最小化态）。
+            ShowWindow(hwnd as _, SW_RESTORE);
+        }
+    }
+}
+
+/// [lc-1947] 真实隐藏窗口（与 tao 的 VISIBLE 缓存解耦）。
+///
+/// 起播时主窗除了 `m.hide()` 还要补这一发：`player_window_minimize` 用原始
+/// `SW_SHOWMINNOACTIVE` 把主窗「显示为最小化」（为了任务栏入口），tao 的缓存仍是
+/// 隐藏态 —— 用户下次直接换集时 `m.hide()` 的 diff 为空、一句 ShowWindow 都不发，
+/// 主窗会留在任务栏上。与 [`window_force_show`] 配对使用。
+pub fn window_force_hide(hwnd: isize) {
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return;
+    }
+    if unsafe { IsWindowVisible(hwnd as _) } != 0 {
+        unsafe {
+            ShowWindow(hwnd as _, SW_HIDE);
         }
     }
 }
@@ -673,6 +1113,12 @@ pub fn embed_set_active(on: bool) {
         // [lc-1946] 会话结束：最小化待恢复 / 最大化标记都不该带到下一次播放
         PLAYER_MIN_RESTORE.store(false, Ordering::SeqCst);
         PLAYER_MAXIMIZED.store(false, Ordering::SeqCst);
+        // [lc-1947] 全屏标记 / 还原矩形 / 热区观测同样不能跨会话
+        PLAYER_FULLSCREEN.store(false, Ordering::SeqCst);
+        *FULLSCREEN_SAVED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *LAST_NORMAL_RECT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        // LAST_OVERLAY_SIZE 保留：下一轮起播若窗口尺寸不同（例如上一轮全屏退出），
+        // note_overlay_geometry 会据此作废旧热区。
     }
 }
 
@@ -732,6 +1178,9 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                 if GetWindowRect(mh as _, &mut m) == 0 || GetWindowRect(ov as _, &mut o) == 0 {
                     continue;
                 }
+                // [lc-1947] 非全屏时持续记录锚窗矩形：进全屏时用它当还原态
+                //（mpv 的 fullscreen 属性事件可能晚于它自己的 resize）。
+                record_normal_rect(m.left, m.top, m.right - m.left, m.bottom - m.top);
                 // 位置/尺寸对齐 + z 序插到 mpv 正后方（InsertAfter=mpv）
                 let same = m.left == o.left
                     && m.top == o.top
@@ -757,6 +1206,8 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                         m.bottom - m.top,
                         SWP_NOACTIVATE | SWP_NOZORDER,
                     );
+                    // [lc-1947] 尺寸变了（最大化/全屏/还原）→ 作废旧热区，首击即按新几何命中
+                    note_overlay_geometry(&app, m.right - m.left, m.bottom - m.top);
                     continue;
                 }
                 // 已对齐：若因移动被隐藏，稳定 220ms 后恢复显示（拖完即回显控件）
@@ -821,6 +1272,19 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
                     left_hot_at = None;
                     continue;
                 }
+                // [lc-1947] 全屏期间守住「压过任务栏」：mpv 的 ontop_mode.lua 会在暂停时
+                // 把 ontop 置 false（= 对锚窗 SetWindowPos(NOTOPMOST)），视频就会掉到
+                // 任务栏下面。这里发现 TOPMOST 位丢了就立刻复位（用户点暂停也会触发）。
+                if PLAYER_FULLSCREEN.load(Ordering::SeqCst) {
+                    let mpv = get_hwnd().unwrap_or(0);
+                    if mpv != 0 && !is_window_topmost(mpv) {
+                        set_window_topmost(mpv, true);
+                        crate::libmpv::trace("[lc-1947] 全屏中锚窗丢失 TOPMOST → 复位");
+                    }
+                    if !is_window_topmost(hwnd) {
+                        set_window_topmost(hwnd, true);
+                    }
+                }
                 let mut pt = POINT { x: 0, y: 0 };
                 if GetCursorPos(&mut pt) == 0 {
                     continue;
@@ -830,6 +1294,10 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
                     continue;
                 }
                 let (w, hgt) = (rc.right - rc.left, rc.bottom - rc.top);
+                // [lc-1947] 探针是 16ms 级，窗口尺寸一变的下一拍就能发现：
+                // 作废旧热区（先按新尺寸兜底）+ 请求前端重报，不等下一次布局上报。
+                record_normal_rect(rc.left, rc.top, w, hgt);
+                note_overlay_geometry(&app, w, hgt);
                 let (lx, ly) = (pt.x - rc.left, pt.y - rc.top);
                 let inside = lx >= 0 && lx < w && ly >= 0 && ly < hgt;
 
@@ -1181,5 +1649,71 @@ mod tests {
         assert!(!player_ontop(), "取消置顶后状态为 false");
         reset_player_ontop();
         assert!(player_ontop(), "下一次起播回到置顶");
+    }
+
+    /// [lc-1947] 全屏期间恒置顶（压过任务栏）；退出后回到用户「置顶」意图。
+    #[test]
+    fn fullscreen_forces_topmost() {
+        assert!(effective_topmost(false, true), "全屏中即使取消置顶也必须 TOPMOST（任务栏）");
+        assert!(effective_topmost(true, true));
+        assert!(!effective_topmost(false, false), "非全屏时按用户意图");
+        assert!(effective_topmost(true, false));
+    }
+
+    /// [lc-1947] 退出全屏的恢复步骤：先清样式 → 回到进入前矩形 → 按需最大化 → 恢复置顶意图。
+    #[test]
+    fn fullscreen_restore_order() {
+        let steps = fullscreen_restore_steps((660, 292, 2520, 1575), false, true);
+        assert_eq!(
+            steps,
+            vec![
+                FullscreenRestoreStep::Restore,
+                FullscreenRestoreStep::MoveTo(660, 292, 2520, 1575),
+                FullscreenRestoreStep::Topmost(true),
+            ]
+        );
+        let steps = fullscreen_restore_steps((0, 0, 3840, 2160), true, false);
+        assert_eq!(
+            steps,
+            vec![
+                FullscreenRestoreStep::Restore,
+                FullscreenRestoreStep::MoveTo(0, 0, 3840, 2160),
+                FullscreenRestoreStep::Maximize,
+                FullscreenRestoreStep::Topmost(false),
+            ]
+        );
+        // 最大化必须排在 MoveTo 之后：SW_MAXIMIZE 会让系统用工作区几何覆盖还原矩形
+        let mi = steps
+            .iter()
+            .position(|s| matches!(s, FullscreenRestoreStep::Maximize))
+            .unwrap();
+        let mp = steps
+            .iter()
+            .position(|s| matches!(s, FullscreenRestoreStep::MoveTo(..)))
+            .unwrap();
+        assert!(mp < mi, "MoveTo 先于 Maximize");
+    }
+
+    /// [lc-1947] 只有**尺寸**变化才作废热区：窗口移动/拖动不能触发重报风暴
+    ///（热区是窗口内坐标，与窗口位置无关）。
+    #[test]
+    fn hot_rects_invalidated_only_on_size_change() {
+        assert!(!overlay_size_changed(None, 1440, 900), "首次观测不算变化");
+        assert!(!overlay_size_changed(Some((1440, 900)), 1440, 900));
+        assert!(overlay_size_changed(Some((1440, 900)), 3840, 2160), "全屏尺寸变化必须作废");
+        assert!(overlay_size_changed(Some((1440, 900)), 1440, 901));
+    }
+
+    /// [lc-1947] 全屏切换后的兜底带按**新**尺寸算：3840×2160 时右上窗控仍贴窗口右上角，
+    /// 也就是切换后的第一次点击不必等前端重报就能命中。
+    #[test]
+    fn fallback_bands_follow_fullscreen_size() {
+        let (w, h) = (3840, 2160);
+        let rects = probe_fallback_rects(w, h);
+        let (tx, ty, tw, th) = rects[1];
+        assert_eq!((tx + tw, ty), (w, 0), "右上角兜底带贴住新窗口右缘");
+        assert!(th >= 56 && th <= h);
+        let (bx, _, bw, _) = rects[0];
+        assert_eq!((bx, bw), (0, w), "底栏兜底带横跨新窗口全宽");
     }
 }

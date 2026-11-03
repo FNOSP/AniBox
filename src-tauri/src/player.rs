@@ -356,8 +356,11 @@ async fn launch_mpv(
             }
             // 复用会话时 mpv 窗口还在（exit 时被 SW_HIDE），这里按新播放窗矩形重新钉位并唤显；
             // 新 spawn 时 hwnd 为空，走 --geometry。
+            // [lc-1947] 全屏中换集：几何由显示器矩形独占，按播放窗矩形重钉会把全屏打回去。
             if let Some(hwnd) = crate::mpvwin::get_hwnd() {
-                if let (Ok(p), Ok(s)) = (ov.outer_position(), ov.outer_size()) {
+                if crate::mpvwin::player_fullscreen() {
+                    crate::libmpv::trace("[lc-1947] 全屏中换集：跳过按播放窗矩形重钉");
+                } else if let (Ok(p), Ok(s)) = (ov.outer_position(), ov.outer_size()) {
                     crate::mpvwin::embed_apply_rect(
                         hwnd,
                         p.x,
@@ -371,6 +374,10 @@ async fn launch_mpv(
             crate::mpvwin::spawn_overlay_probe(app.clone());
             if let Some(m) = app.get_webview_window("main") {
                 let _ = m.hide();
+                // [lc-1947] 与 mpv.rs 起播路径同一条兜底：原始隐藏，防 tao 缓存脱钩
+                if let Ok(h) = m.hwnd() {
+                    crate::mpvwin::window_force_hide(h.0 as isize);
+                }
             }
         } else {
             crate::libmpv::trace("[lc-1940] 覆盖层不可用 → 主窗口保持显示（独立窗口播放）");

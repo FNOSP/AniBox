@@ -439,14 +439,20 @@ export function PlayerChrome() {
   const topHotRef = useRef<{ right: number; top: number; w: number; h: number } | null>(null);
   const fixedTopHot = useCallback(
     (dpr: number, measure: boolean): [number, number, number, number] => {
-      // 只在控件**可见**时实测并刷新缓存：隐藏态带 translateY(10px)，测到的不是可用值
-      const el = measure ? document.querySelector(".pc-top-right") : null;
+      /* [lc-1947] 宽 / 高 / 右内距**任何时候**都从 DOM 实测：
+       * auto-hide 只改 opacity + translateY(10px)，宽度和右内距不受影响，所以隐藏态
+       * 实测也有效；`top` 只在控件可见时刷新（隐藏态的 translateY 会把 top 带偏 10px，
+       * 兜底带上下各 16px 外扩仍能盖住，但没必要引入误差）。
+       * 关键：全屏/最大化切换后窗口尺寸变了，热区必须按新宽度重算 —— 旧实现只在
+       * 「可见时」测一次，尺寸变化后仍拿旧值，右上角热区就落在窗口中间。 */
+      const el = document.querySelector(".pc-top-right");
       if (el) {
         const r = el.getBoundingClientRect();
         if (r.width > 0 && r.height > 0) {
+          const prev = topHotRef.current;
           topHotRef.current = {
             right: (window.innerWidth || 0) - r.right,
-            top: r.top,
+            top: measure || !prev ? r.top : prev.top,
             w: r.width,
             h: r.height,
           };
@@ -504,16 +510,53 @@ export function PlayerChrome() {
 
   useEffect(() => {
     reportRects();
-  }, [visible, loading, menu, menuPos, menuClosing, sub, seeking, reportRects]);
+  }, [visible, loading, menu, menuPos, menuClosing, sub, seeking, st.fullscreen, reportRects]);
 
   useEffect(() => {
-    const onResize = () => reportRects();
+    /* [lc-1947] 窗口几何变化（最大化 / 真全屏 / 还原）后必须重报热区。
+     * 单靠 `resize` 一拍不够：WebView2 的布局在 resize 回调之后还可能再稳定一两帧，
+     * 这里补两次延迟重报；Rust 侧同一时刻已把旧热区作废并改用按新尺寸算的兜底带，
+     * 所以「切换后的第一次点击」不依赖这几次重报也能命中。 */
+    const timers: number[] = [];
+    const onResize = () => {
+      reportRects();
+      timers.push(window.setTimeout(reportRects, 80));
+      timers.push(window.setTimeout(reportRects, 220));
+    };
     window.addEventListener("resize", onResize);
     return () => {
       window.removeEventListener("resize", onResize);
+      timers.forEach((t) => window.clearTimeout(t));
       if (rectRaf.current !== null) window.cancelAnimationFrame(rectRaf.current);
       // 卸载时清空可点区：别把一个已经没人处理的窗口留在「可点」态
       void invoke("player_chrome_hot_rects", { rects: [], full: false }).catch(() => {});
+    };
+  }, [reportRects]);
+
+  /* [lc-1947] Rust 探针发现覆盖层尺寸变了（mpv 自己进/退全屏时前端拿不到任何命令回包）
+   * → 立即重报一次，再补两次延迟重报。事件名与 `mpvwin::note_overlay_geometry` 对齐。 */
+  useEffect(() => {
+    let alive = true;
+    let un: (() => void) | undefined;
+    const timers: number[] = [];
+    const rep = () => {
+      if (alive) reportRects();
+    };
+    listen<{ w: number; h: number }>("overlay-geometry", () => {
+      rep();
+      timers.push(window.setTimeout(rep, 60));
+      timers.push(window.setTimeout(rep, 180));
+    })
+      .then((f) => {
+        un = f;
+      })
+      .catch(() => {
+        /* 非 Tauri 环境：只靠 resize / 布局上报 */
+      });
+    return () => {
+      alive = false;
+      timers.forEach((t) => window.clearTimeout(t));
+      un?.();
     };
   }, [reportRects]);
 

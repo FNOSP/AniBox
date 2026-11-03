@@ -372,6 +372,11 @@ impl MpvSession {
                 }
                 if let Some(m) = app.get_webview_window("main") {
                     let _ = m.hide();
+                    // [lc-1947] 原始 ShowWindow 补一发：主窗可能被最小化按钮用原始
+                    // SW_SHOWMINNOACTIVE 显示过，tao 缓存与真实状态脱钩时 hide() 是空操作。
+                    if let Ok(h) = m.hwnd() {
+                        crate::mpvwin::window_force_hide(h.0 as isize);
+                    }
                 }
                 if let (Ok(pos), Ok(size)) = (ov.outer_position(), ov.outer_size()) {
                     args.push(format!(
@@ -930,6 +935,10 @@ impl MpvSession {
                         // 嵌入窗（--wid）下 mpv 的 update_fullscreen_state 会 early-return，
                         // 所以改这个属性只是状态标记，不会动窗口几何（已实测：几何不变）。
                         let on = v.get("data").and_then(|d| d.as_bool()).unwrap_or(false);
+                        // [lc-1947] 窗口级真全屏：不管这条 fullscreen 是按钮、双击画面、
+                        // ENTER 还是 ESC（embed-bridge）触发的，都在这里统一处理几何 / 置顶 /
+                        // 还原矩形 / 热区重算 —— 四条路径行为一致。
+                        crate::mpvwin::on_player_fullscreen_changed(&app2, on);
                         let mirrored = {
                             let mut g = fs_expect2.lock().unwrap();
                             let hit = *g == Some(on);

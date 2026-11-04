@@ -8,6 +8,8 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check as IcoCheck, ChevronDown as IcoChevron, Star as IcoStar, X as IcoXL } from "lucide-react";
 import { DisclaimerModal } from "../disclaimer/DisclaimerModal";
+// [lc-2009] 滤镜速查弹窗（折叠块版式，数据在 src/lib/shaderGuide.ts，可随新版 UI 同步搬走）
+import { ShaderGuideModal } from "./ShaderGuideModal";
 import {
   GAMEPAD_DEFAULTS,
   GAMEPAD_KEY_TABLE,
@@ -507,14 +509,17 @@ export function SettingsPanel({
   const [shaderPreset, setShaderPreset] = useState("");
   const [shaderCustom, setShaderCustom] = useState(false);
   const [shaderNote, setShaderNote] = useState("");
+  const [shaderChain, setShaderChain] = useState("");
+  const [guideOpen, setGuideOpen] = useState(false);
   const shaderLoaded = useRef(false);
   useEffect(() => {
     if (shaderLoaded.current) return;
     shaderLoaded.current = true;
-    invoke<{ preset?: string; custom?: boolean }>("shader_settings_get")
+    invoke<{ preset?: string; custom?: boolean; raw?: string }>("shader_settings_get")
       .then((r) => {
         setShaderPreset(r?.preset ?? "");
         setShaderCustom(!!r?.custom);
+        setShaderChain(r?.raw ?? "");
       })
       .catch(() => {});
   }, []);
@@ -1824,8 +1829,17 @@ export function SettingsPanel({
                       <span className="set-k">着色器</span>
                       <div className="set-desc">
                         默认为空（不着色器）。选择后立即保存并同步到播放器；与播放器内
-                        「着色器」菜单（Ctrl+1~6）是同一份配置。
+                        「着色器」菜单是同一份配置。
                         {shaderCustom && " （当前为播放器侧设置的自定义链，选择预设将覆盖）"}
+                        {"　"}
+                        <button
+                          type="button"
+                          className="sg-chip"
+                          onClick={() => setGuideOpen(true)}
+                          title="按片源与性能选滤镜的组合速查表"
+                        >
+                          滤镜速查
+                        </button>
                       </div>
                     </div>
                     <SetSelect
@@ -3039,6 +3053,14 @@ export function SettingsPanel({
       {showDisclaimer && (
         <DisclaimerModal variant="info" onClose={() => setShowDisclaimer(false)} />
       )}
+      {/* [lc-2009] 滤镜速查弹窗：折叠块版式（动漫/真人场景推荐 + 系列速查 + 单开关叠加） */}
+      <ShaderGuideModal
+        open={guideOpen}
+        onClose={() => setGuideOpen(false)}
+        onApply={setShader}
+        chain={shaderChain}
+        onChainChange={setShaderChain}
+      />
     </div>
   );
 }

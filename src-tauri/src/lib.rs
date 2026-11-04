@@ -3436,6 +3436,7 @@ fn shader_preset_table() -> Vec<(&'static str, &'static str, &'static str)> {
         ("fsrcnnx_8", "真人 FSRCNNX：2x8+Krig（均衡·推荐）", "~~/shaders/FSRCNNX_x2_8-0-4-1.glsl;~~/shaders/KrigBilateral.glsl"),
         ("fsrcnnx_16", "真人 FSRCNNX：2x16+SSim+Krig（高质量）", "~~/shaders/FSRCNNX_x2_16-0-4-1.glsl;~~/shaders/SSimSuperRes_RT.glsl;~~/shaders/KrigBilateral.glsl"),
         ("fsrcnnx_56", "真人 FSRCNNX：2x56+SSim+Krig（极致·高配置）", "~~/shaders/FSRCNNX_x2_56_16_4_1.glsl;~~/shaders/SSimSuperRes_RT.glsl;~~/shaders/KrigBilateral.glsl"),
+        ("artcnn_32_ravu4", "artcnn_32_ravu4", "~~/shaders/ArtCNN/ArtCNN_C4F32.glsl;~~/shaders/ravu-lite-ar-r4.hook"),
         ("denoise", "经典：仅降噪", "~~/shaders/Anime4K_Denoise_Bilateral_Mode.glsl"),
         ("artcnn_16", "ArtCNN：/16（中等）", "~~/shaders/ArtCNN/ArtCNN_C4F16.glsl"),
         ("artcnn_16ds", "ArtCNN：/16DS（降噪+锐化）", "~~/shaders/ArtCNN/ArtCNN_C4F16_DS.glsl"),
@@ -3501,6 +3502,64 @@ async fn shader_settings_get(app: AppHandle) -> Result<Value, String> {
         "custom": hit.is_none() && !raw.is_empty(),
         "raw": raw,
     }))
+}
+
+/// [lc-2009] 单开关叠加 toggle：把 sw_* 预设的单文件追加到当前链，已在链中则移除。
+/// 面板「滤镜速查」弹窗的单开关表用（对齐 mpv.config 新版「CHROMA 需手动叠加」用法）。
+#[tauri::command]
+async fn shader_switch_toggle(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    preset: String,
+) -> Result<Value, String> {
+    let frag = shader_preset_table()
+        .into_iter()
+        .find(|(k, _, _)| *k == preset)
+        .map(|(_, _, c)| c.to_string())
+        .ok_or_else(|| format!("未知着色器预设: {preset}"))?;
+    let path = shader_conf_path(&app).ok_or("拿不到 app_data_dir")?;
+    let raw = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| {
+            let mut v: Option<String> = None;
+            for line in text.lines() {
+                if let Some(x) = line.trim().strip_prefix("glsl-shaders=") {
+                    v = Some(x.trim().to_string());
+                }
+            }
+            v
+        })
+        .unwrap_or_default();
+    // 链由本应用写入、统一 `~~/` 写法，原文对比即可（不做 shell 展开）
+    let mut parts: Vec<String> = Vec::new();
+    let mut removed = false;
+    for p in raw.split(';').filter(|s| !s.trim().is_empty()) {
+        if p.trim() == frag {
+            removed = true;
+        } else {
+            parts.push(p.trim().to_string());
+        }
+    }
+    if !removed {
+        parts.push(frag.clone());
+    }
+    let chain = parts.join(";");
+    let body = format!(
+        "# AniBox 着色器持久化（设置面板 / 播放器菜单共用；删除本文件即恢复默认）\\nglsl-shaders={chain}\\n"
+    );
+    if let Some(d) = path.parent() {
+        std::fs::create_dir_all(d).map_err(|e| format!("建目录失败: {e}"))?;
+    }
+    std::fs::write(&path, body).map_err(|e| format!("写着色器配置失败: {e}"))?;
+    let mut applied = false;
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session {
+        applied = m
+            .command(json!(["set", "glsl-shaders", chain]))
+            .await
+            .is_ok();
+    }
+    Ok(json!({ "removed": removed, "applied": applied, "preset": preset, "chain": chain }))
 }
 
 /// 设着色器预设：空串=关闭；写 conf + mpv 在播实时生效。
@@ -4193,6 +4252,7 @@ pub fn run() {
             detect_mpv_local,
             shader_settings_get,
             shader_settings_set,
+            shader_switch_toggle,
             set_picture_preset,
             validate_mpv_local_path,
             detect_potplayer,

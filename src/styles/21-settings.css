@@ -1060,3 +1060,141 @@
   font-size: 12px;
   color: var(--muted);
 }
+
+/* ── [lc-2009] 滤镜速查弹窗（ShaderGuideModal）── */
+.sg-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: sg-in 250ms ease-out;
+}
+@keyframes sg-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.sg-box {
+  width: min(920px, calc(100vw - 48px));
+  height: min(78vh, 720px);
+  background: var(--panel-bg, #1c1d21);
+  border: 1px solid var(--line, #2e3035);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: sg-pop 250ms ease-out;
+}
+@keyframes sg-pop {
+  from { transform: scale(0.96); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+.sg-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line, #2e3035);
+  flex: none;
+}
+.sg-title { font-size: 15px; font-weight: 600; color: var(--text-strong, #fff); }
+.sg-close {
+  border: none;
+  background: transparent;
+  color: var(--text-dim, #9ba0aa);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+.sg-close:hover { background: var(--hover, #ffffff14); color: var(--text-strong, #fff); }
+.sg-body { overflow-y: auto; padding: 12px 18px 18px; }
+.sg-sec, .sg-sub {
+  border: 1px solid var(--line, #2e3035);
+  border-radius: 10px;
+  margin-bottom: 10px;
+  overflow: hidden;
+  background: var(--card-bg, #21222600);
+}
+.sg-sec > summary, .sg-sub > summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--text, #e8eaed);
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.sg-sec > summary::-webkit-details-marker, .sg-sub > summary::-webkit-details-marker { display: none; }
+.sg-sec > summary::before, .sg-sub > summary::before {
+  content: "▸";
+  color: var(--text-dim, #9ba0aa);
+  transition: transform 150ms ease;
+}
+.sg-sec[open] > summary::before, .sg-sub[open] > summary::before { transform: rotate(90deg); }
+.sg-sec > summary:hover, .sg-sub > summary:hover { background: var(--hover, #ffffff0a); }
+.sg-sub { margin: 0 10px 10px; }
+.sg-sec > .sg-sub:first-of-type { margin-top: 0; }
+.sg-sum { font-size: 12px; color: var(--text-dim, #9ba0aa); font-weight: 400; }
+.sg-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.sg-table th {
+  text-align: left;
+  padding: 8px 12px;
+  color: var(--text-dim, #9ba0aa);
+  font-weight: 500;
+  border-bottom: 1px solid var(--line, #2e3035);
+  background: var(--hover, #ffffff08);
+}
+.sg-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line, #232529);
+  color: var(--text, #d5d7dc);
+  vertical-align: top;
+}
+.sg-table tr:last-child td { border-bottom: none; }
+.sg-scene { color: var(--text-strong, #fff); }
+.sg-func { color: var(--text-dim, #9ba0aa); }
+.sg-note { font-size: 12px; color: var(--text-dim, #9ba0aa); margin-top: 2px; }
+.sg-perf { font-weight: 600; white-space: nowrap; }
+.sg-chip {
+  border: 1px solid var(--line, #3a3d44);
+  background: var(--btn-bg, #ffffff0f);
+  color: var(--text, #e8eaed);
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.sg-chip:hover { background: var(--accent-weak, #6c9bff26); border-color: var(--accent, #6c9bff); }
+.sg-chip.on {
+  background: var(--accent-weak, #6c9bff33);
+  border-color: var(--accent, #6c9bff);
+  color: var(--accent-text, #9dbcff);
+}
+.sg-chip:disabled { opacity: 0.5; cursor: default; }
+.sg-tips {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border: 1px dashed var(--line, #2e3035);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sg-tip { font-size: 12px; color: var(--text-dim, #9ba0aa); }
+.sg-status {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--accent-text, #9dbcff);
+  text-align: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sg-overlay, .sg-box { animation: none; }
+}

@@ -16,6 +16,9 @@ import { DetailSkeleton } from "./DetailSkeleton";
 // [lc-1629] 飞牛每集/条目自定义元数据操作弹层（编辑元数据 / 手动匹配 / 刷新 / 解除匹配）
 import { MetaEditModal, type MetaTarget } from "./MetaEditModal";
 import { BGM_PAGE, TAB_LABEL, bgmList, fnosCast, pickGenres } from "./helpers";
+// [GH#8] 播放失败要「看得见」：play-note 在 hero 区易被忽略（mac 用户「点击播放完全没反应」
+// 的反馈即此观感），错误同时走 App 全局 toast。
+import { showAppToast } from "../../lib/metaApply";
 import { OverviewTab } from "./tabs/OverviewTab";
 import { RelatedTab, type TmdbRecommendation } from "./tabs/RelatedTab";
 import { CastTab } from "./tabs/CastTab";
@@ -2112,7 +2115,9 @@ export function DetailView({
       await invoke("play_item", { guid, mediaGuid });
       setPlayNote("已在独立播放器窗口播放（可回到本页继续浏览）");
     } catch (e) {
-      setPlayNote(String(e));
+      const msg = String(e);
+      setPlayNote(msg);
+      showAppToast(`播放失败：${msg}`);
     } finally {
       setPlaying(false);
     }

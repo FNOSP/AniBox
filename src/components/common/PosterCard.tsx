@@ -102,6 +102,14 @@ export function PosterCard({
   const progress =
     item.ts && item.duration && item.duration > 0 ? Math.min(100, (item.ts / item.duration) * 100) : 0;
   const meta = showMeta ? buildCardMeta(item) : null;
+  // [GH#6] 评分统一截到 1 位小数：TMDB 会给全精度浮点（如 7.444400420747814），
+  // 直接渲染成超长数字串（mac 用户截图实锤）。string/number 两种类型都接。
+  const ratingText = (() => {
+    const raw = item.vote_average;
+    if (!raw || raw === "0") return "";
+    const n = typeof raw === "number" ? raw : parseFloat(String(raw));
+    return Number.isFinite(n) && n > 0 ? n.toFixed(1) : "";
+  })();
 
   const [watched, setWatched] = useState(item.watched === 1);
   const [favorited, setFavorited] = useState(item.is_favorite === 1);
@@ -293,8 +301,8 @@ export function PosterCard({
             <span className="play-pill">{isPlayable ? "▶ 播放" : "打开"}</span>
           </div>
         )}
-        {item.vote_average && item.vote_average !== "0" && (
-          <span className="rating"><IcoStarL size={12} strokeWidth={2} className="rating-ico fill" /> {item.vote_average}</span>
+        {ratingText && (
+          <span className="rating"><IcoStarL size={12} strokeWidth={2} className="rating-ico fill" /> {ratingText}</span>
         )}
         {progress > 0 && (
           <div className="progress">

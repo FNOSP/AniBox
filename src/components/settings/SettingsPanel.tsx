@@ -1796,6 +1796,29 @@ export function SettingsPanel({
                       onChange={choosePlayer}
                     />
                   </div>
+                  {/* [lc-2002] 播放器皮肤（仅自带 mpv 生效）：原生 uosc / 液态玻璃 ModernGlass。
+                      两套 OSC 物理互斥，切换在下一次起播生效。 */}
+                  {playerKind === "mpv" && (
+                    <div className="set-row">
+                      <div>
+                        <span className="set-k">播放器皮肤</span>
+                        <div className="set-desc">
+                          液态玻璃是独立的一套控件条（带新的右键菜单与缩略图预览）。
+                          切换在下次播放时生效；两种皮肤共用同一份配置文件。
+                        </div>
+                      </div>
+                      <SetSelect
+                        label="播放器皮肤"
+                        value={settings.playerSkin ?? "uosc"}
+                        disabled={busy}
+                        options={[
+                          { value: "uosc", label: "原生（uosc）" },
+                          { value: "glass", label: "液态玻璃" },
+                        ]}
+                        onChange={(v) => onSettings({ playerSkin: v as "uosc" | "glass" })}
+                      />
+                    </div>
+                  )}
                   {/* [lc-1802] 着色器：默认空（不着色器）；预设与播放器内 Ctrl+1~6 一致，两边互相同步 */}
                   <div className="set-row">
                     <div>

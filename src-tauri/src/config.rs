@@ -265,6 +265,11 @@ pub struct Config {
        老 config.json 无此键 → 默认 "app"（本版默认点播放就走软件内），不需要迁移脚本。 */
     #[serde(default = "default_player_open_mode")]
     pub player_open_mode: String,
+    /// [lc-2002] 播放器皮肤："uosc"（原生，默认）| "glass"（ModernGlass 液态玻璃）。
+    /// 皮肤脚本按需搬进/搬出 portable_config/scripts（mpv 自动加载该目录），
+    /// 切换在下一次起播生效。
+    #[serde(default = "default_player_skin")]
+    pub player_skin: String,
 
     /* ── [lc-1907] mpv 窗口 owner 收编（实验开关）──
        true = mpv 独立窗口挂成主窗口的 owned window（跟随主窗口移动 + DWM 系统圆角）。
@@ -310,6 +315,10 @@ fn default_player_kind() -> String {
 /// [lc-1909] 播放打开方式默认「软件内播放」。
 fn default_player_open_mode() -> String {
     "app".into()
+}
+
+fn default_player_skin() -> String {
+    "uosc".into()
 }
 
 fn default_proxy() -> String {
@@ -403,6 +412,7 @@ impl Default for Config {
             gamepad_repeat_interval: default_gamepad_repeat_interval(),
             ui_opacity: default_ui_opacity(),
             player_open_mode: default_player_open_mode(),
+            player_skin: default_player_skin(),
             mpv_window_owner: false,
         }
     }
@@ -474,6 +484,129 @@ fn find_bundled_dir(app: &tauri::AppHandle, rel: &str) -> Option<std::path::Path
 /// 开发态指向 third_party，安装态指向资源目录）。
 pub fn mpv_portable_config_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     find_bundled_dir(app, "third_party/fntv-mpv/portable_config")
+}
+
+
+/// [lc-2002] 播放器皮肤切换（`uosc` 原生 / `glass` 液态玻璃）。
+///
+/// mpv 自动加载 `portable_config/scripts/` 下所有脚本（含子目录的 main.lua），
+/// 所以两套 OSC 必须**物理互斥**：启用哪套就把它的文件搬进 `scripts/`，另一套搬到
+/// `skins/_stash/`。整个过程只用 copy/rename + 存在性判断，重复调用幂等；切换在下一次
+/// 起播生效（mpv 启动时才读目录）。玻璃皮肤附带的第三方脚本与字体在
+/// `skins/modern-glass/`（LGPL-2.1，见同目录 LICENSE.LGPL）。
+pub fn apply_player_skin(app: &tauri::AppHandle, skin: &str) {
+    let Some(base) = mpv_portable_config_dir(app) else {
+        return;
+    };
+    let glass = skin == "glass";
+    let scripts = base.join("scripts");
+    let opts = base.join("script-opts");
+    let src = base.join("skins").join("modern-glass");
+    let stash = base.join("skins").join("_stash");
+    let _ = std::fs::create_dir_all(&stash);
+    let _ = std::fs::create_dir_all(&scripts);
+    let _ = std::fs::create_dir_all(&opts);
+
+    // uosc 家族：目录要整个搬走（mpv 会加载 scripts/*/main.lua）
+    const UOSC_FAMILY: [&str; 3] = ["uosc", "thumbfast.lua", "uosc-subtitle-lines.lua"];
+    // 玻璃皮肤：脚本 + 右键菜单 + 配置 + 字体
+    const GLASS_SCRIPTS: [&str; 2] = ["modernz.lua", "thumbz.lua"];
+    const GLASS_OPTS: [&str; 4] = ["modernz.conf", "thumbz.conf", "menu_style.conf", "modernz-locale.json"];
+
+    if glass {
+        for name in UOSC_FAMILY {
+            let from = scripts.join(name);
+            if from.exists() {
+                force_remove(&stash.join(name));
+                let _ = std::fs::rename(&from, stash.join(name));
+            }
+        }
+        for name in GLASS_SCRIPTS {
+            let from = src.join("scripts").join(name);
+            if from.exists() {
+                let _ = std::fs::copy(&from, scripts.join(name));
+            }
+        }
+        let menu_src = src.join("scripts").join("menu");
+        if menu_src.is_dir() {
+            let menu_dst = scripts.join("menu");
+            let _ = std::fs::create_dir_all(&menu_dst);
+            if let Ok(rd) = std::fs::read_dir(&menu_src) {
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.is_file() {
+                        let _ = std::fs::copy(&p, menu_dst.join(e.file_name()));
+                    }
+                }
+            }
+        }
+        for name in GLASS_OPTS {
+            let from = src.join("script-opts").join(name);
+            if from.exists() {
+                let _ = std::fs::copy(&from, opts.join(name));
+            }
+        }
+        let fonts = base.join("fonts");
+        let _ = std::fs::create_dir_all(&fonts);
+        if let Ok(rd) = std::fs::read_dir(src.join("fonts")) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_file() {
+                    let _ = std::fs::copy(&p, fonts.join(e.file_name()));
+                }
+            }
+        }
+        set_menu_mouse_binding(&base, "script-message-to menu open");
+        crate::libmpv::trace("[lc-2002] 播放器皮肤 = glass（ModernGlass）已就位");
+    } else {
+        for name in GLASS_SCRIPTS {
+            let _ = std::fs::remove_file(scripts.join(name));
+        }
+        let _ = std::fs::remove_dir_all(scripts.join("menu"));
+        for name in GLASS_OPTS {
+            let _ = std::fs::remove_file(opts.join(name));
+        }
+        for name in UOSC_FAMILY {
+            let from = stash.join(name);
+            if from.exists() {
+                force_remove(&scripts.join(name));
+                let _ = std::fs::rename(&from, scripts.join(name));
+            }
+        }
+        set_menu_mouse_binding(&base, "ignore");
+        crate::libmpv::trace("[lc-2002] 播放器皮肤 = uosc（原生）已就位");
+    }
+}
+
+/// [lc-2002] 删掉目标（目录或文件），只用于我们自己的皮肤脚本搬运，失败静默。
+fn force_remove(p: &std::path::Path) {
+    if p.is_dir() {
+        let _ = std::fs::remove_dir_all(p);
+    } else if p.exists() {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+/// [lc-2002] 右键菜单入口随皮肤切换：uosc 用底栏「更多」，玻璃皮肤用右键调起它的菜单。
+fn set_menu_mouse_binding(base: &std::path::Path, cmd: &str) {
+    let p = base.join("input.conf");
+    let Ok(s) = std::fs::read_to_string(&p) else {
+        return;
+    };
+    if !s.lines().any(|l| l.starts_with("MBTN_RIGHT ")) {
+        return;
+    }
+    let out: Vec<String> = s
+        .lines()
+        .map(|l| {
+            if l.starts_with("MBTN_RIGHT ") {
+                format!("MBTN_RIGHT     {cmd}")
+            } else {
+                l.to_string()
+            }
+        })
+        .collect();
+    let _ = std::fs::write(&p, out.join("\n") + "\n");
 }
 
 fn path_is_file(p: &str) -> bool {

@@ -3173,6 +3173,7 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         "mpvWindowOwner": cfg.mpv_window_owner,
         // [lc-1909] 播放打开方式：app=软件内播放（默认）/ window=独立 mpv 窗口
         "playerOpenMode": cfg.player_open_mode,
+        "playerSkin": cfg.player_skin,
     }))
 }
 
@@ -3351,6 +3352,14 @@ async fn set_settings(
         }
         cfg.player_open_mode = s.to_string();
     }
+    // [lc-2002] 播放器皮肤：uosc（原生，默认）/ glass（ModernGlass 液态玻璃），下一次起播生效。
+    if let Some(v) = arg.get("playerSkin") {
+        let s = v.as_str().unwrap_or("");
+        if !matches!(s, "uosc" | "glass") {
+            return Err(format!("playerSkin 非法：{s}（只允许 uosc/glass）"));
+        }
+        cfg.player_skin = s.to_string();
+    }
     config::save(&app, &cfg).await?;
     *state.config.write().await = cfg.clone();
     // [lc-1561] 弹幕接口副作用：只在所有校验通过、配置成功落盘后再同步
@@ -3392,6 +3401,7 @@ async fn set_settings(
         "mpvWindowOwner": cfg.mpv_window_owner,
         // [lc-1909] 播放打开方式：app=软件内播放（默认）/ window=独立 mpv 窗口
         "playerOpenMode": cfg.player_open_mode,
+        "playerSkin": cfg.player_skin,
     }))
 }
 

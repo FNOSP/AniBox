@@ -226,6 +226,18 @@ impl MpvSession {
         let path = pipe_path(&name);
         crate::libmpv::trace_reset(&format!("launch(mpv.exe) pid={}", std::process::id()));
 
+        // [lc-2002] 播放器皮肤互斥：mpv 只加载 scripts/ 下的 OSC，起播前把选中的那套搬进去。
+        {
+            let skin = app
+                .state::<crate::AppState>()
+                .config
+                .read()
+                .await
+                .clone()
+                .player_skin;
+            crate::config::apply_player_skin(&app, &skin);
+        }
+
         // ── 1) 启动 mpv.exe
         // [lc-1552] 改为 **Rust 直接 spawn**（原为 pwsh Start-Process 中转，白花 ~450ms）：
         //   · 实测：直接 Popen → 6ms 就返回；经 pwsh → 454ms（pwsh 冷启本身约 440ms）。

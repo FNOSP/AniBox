@@ -443,6 +443,18 @@ pub fn pack_mouse_message(
     }
 }
 
+/// [lc-1997] 覆盖层捕获态提交单击/双击语义；transparent 穿透态继续走 OS→mpv 原生输入。
+pub fn system_double_click_interval_ms() -> u32 {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        windows_sys::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        500
+    }
+}
+
 /// [lc-1949] 把覆盖层分流的视频区鼠标事件转发给 mpv 锚窗（同步、不排队、不等待）。
 /// 返回 false = 没有 mpv 窗口 / kind 不识别 / PostMessage 失败；调用方（命令层）
 /// 把 false 静默吞掉即可 —— 转发失败只意味着「这次点击不走 mpv」，不影响 UI。

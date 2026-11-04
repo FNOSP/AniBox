@@ -3717,17 +3717,28 @@ async fn player_embed_leave(app: AppHandle, stop: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// [lc-1949] 视频区鼠标转发：覆盖层收到的、落点**不在控件上**的鼠标事件由前端分流后
-/// 经此命令 PostMessage 给 mpv 锚窗，mpv 的 win32 后端像处理真实输入一样处理
-/// （单击暂停 / 双击全屏 / 拖动窗口 / 滚轮 seek / 右键全是 mpv 原生行为）。
-///
-/// [lc-1960] 角色变化：穿透默认态下 mpv 由真实鼠标直接喂（input.conf 原生路径），
-/// 本命令只服务「hover 翻位后的可点窗口里」落在空白区的点击（Polaris
-/// overlay-passthrough-click 同位），以及拖动中 pointer capture 的续投。
-/// `kind`：move / down / up / dbl / rdown / rup / mdown / mup / wheel；
-/// `(x, y)` = mpv 客户区**物理像素**（覆盖层与 mpv 同 rect，前端直接给窗口内坐标）；
-/// `flags` = MK_* 位（按钮 + Ctrl/Shift）；`delta` = 滚轮增量（仅 wheel）。
-/// 同步命令、直发 PostMessage、不排队不等待 —— 延迟就是一次系统调用。
+/// 覆盖层捕获点击时取消 mpv Lua 里由前一原生 down 建立的待决单击。
+#[tauri::command]
+async fn mpv_cancel_pending_click(state: State<'_, AppState>) -> Result<(), String> {
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session {
+        m.command_no_reply(serde_json::json!(["script-message", "osc-cinema-cancel-pending-click"])).await;
+    }
+    Ok(())
+}
+
+/// 覆盖层捕获的左键空白点击交给 Lua 单击/双击仲裁器，不重放 down/up。
+#[tauri::command]
+async fn mpv_capture_blank_click(state: State<'_, AppState>) -> Result<(), String> {
+    let session = state.mpv.lock().await.clone();
+    if let Some(m) = session {
+        m.command_no_reply(serde_json::json!(["script-message", "osc-cinema-captured-click", "single"])).await;
+    }
+    Ok(())
+}
+
+/// [lc-1949] 视频区鼠标转发：仅控件命中以外、需要显式交给 mpv 的 move/wheel 等事件使用。
+/// 左键单击/双击由覆盖层捕获与 mpv 穿透态分别单一仲裁，不转发原始 down/up，避免双重提交。
 #[tauri::command]
 fn mpv_forward_mouse(
     kind: String,
@@ -5553,6 +5564,8 @@ pub fn run() {
             // [lc-1949] 视频区鼠标转发（lc-1960 起：穿透默认态下仅服务 hover 翻位后
             // 可点窗口里的空白区点击与拖动续投）
             mpv_forward_mouse,
+            mpv_cancel_pending_click,
+            mpv_capture_blank_click,
             // [lc-1960] hover 事务（Polaris 同款）：穿透位拨动 + 原生样式读回 ack
             mpv_overlay_hover,
             mpv_overlay_hover_state,

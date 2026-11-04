@@ -401,6 +401,10 @@ impl MpvSession {
                     // [lc-1939] 控件由 Tauri 覆盖层（PlayerChrome）绘制：Lua OSC 只保留
                     // input.conf 的左键分发（画面区点击→暂停），一个像素都不画。
                     args.push("--script-opts-append=fntv_osc-overlay_controls=yes".to_string());
+                    args.push(format!(
+                        "--script-opts-append=fntv_osc-click_delay={:.3}",
+                        crate::mpvwin::system_double_click_interval_ms() as f64 / 1000.0
+                    ));
                 }
                 args.push("--script-opts-append=uosc-anibox_hide_timeline=yes".to_string());
                 // [lc-1924] 原生 UI 全面停用：控件与提示都由 App 覆盖层 DOM 承担

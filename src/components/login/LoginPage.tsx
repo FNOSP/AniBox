@@ -73,7 +73,17 @@ function relayFnId(value: string): string {
 type ProviderInfo = { id: string; label: string; logged: boolean; userName: string };
 type WebdavAccount = { id: string; name: string; url: string; username: string };
 
-export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: () => void }) {
+/* [lc-1993] `notice`：会话失效被送到登录页时的一次性提示（如「登录已过期，请重新登录」）。
+   与页面自己的 `err` 分开：用户一提交/切换来源就消失，不参与错误状态。 */
+export function LoginPage({
+  onDone,
+  onGuest,
+  notice,
+}: {
+  onDone: () => void;
+  onGuest?: () => void;
+  notice?: string;
+}) {
   const [cfg, setCfg] = useState<Config | null>(null);
   // [lc-1884] 单一输入框：IP / 域名 / FN ID 都填这里，提交时自动判别。
   const [domain, setDomain] = useState("");
@@ -470,7 +480,7 @@ export function LoginPage({ onDone, onGuest }: { onDone: () => void; onGuest?: (
           )}
         </section>
 
-        {err && <div className="err">{err}</div>}
+        {err ? <div className="err">{err}</div> : notice ? <div className="err">{notice}</div> : null}
         <button className="primary" disabled={busy}>
           {busy
             ? fnosMode

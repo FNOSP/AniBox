@@ -224,6 +224,26 @@ fn build_query(query: &[(&str, String)]) -> QuerySpec {
     QuerySpec { url, sign }
 }
 
+/* ───────────── [lc-1993] 会话失效（Auth Expired）统一归类 ─────────────
+ * 飞牛对「token 过期」的回包是 **HTTP 200 + 业务 code=-2 + msg="Auth Expired"**。
+ * 旧实现把它当普通业务错误拼成 `HTTP 200 code=-2: Auth Expired` 原样透传，首页
+ * `loadHome` 的 Promise.all catch 又直接 `setErr`，于是首页顶栏糊出一条内部报文。
+ * 这里在**请求层唯一入口** `call_inner` 归为「会话失效」语义：原始报文只写诊断
+ * 日志（trace 的 ERROR 级落盘），返回给上层的是用户可读提示。 */
+pub(crate) const ERR_AUTH_EXPIRED: &str = "登录已过期，请重新登录";
+
+/// 是否为「会话失效」：飞牛业务码 -2，或 msg 为 Auth Expired（大小写/前后缀容错）。
+fn is_auth_expired(code: i64, msg: &str) -> bool {
+    if code == -2 {
+        return true;
+    }
+    let m = msg.trim().to_ascii_lowercase();
+    m.contains("auth expired")
+        || msg.contains("会话过期")
+        || msg.contains("会话已过期")
+        || msg.contains("登录已过期")
+}
+
 impl FnClient {
     pub async fn call(
         &self,
@@ -448,6 +468,13 @@ impl FnClient {
             .unwrap_or("")
             .to_lowercase();
         let text = resp.text().await.unwrap_or_default();
+        // [lc-1993] 401 = 未授权（会话失效的 HTTP 形态），归一为同一条用户可读提示。
+        if status == 401 {
+            crate::libmpv::trace(&format!(
+                "[lc-1993] 会话失效 HTTP 401: {method} {path} body={text}"
+            ));
+            return Err(ERR_AUTH_EXPIRED.to_string());
+        }
         if ct.contains("text/html") {
             return Err(format!(
                 "HTTP {} 接口返回了网页(HTML)而非 JSON——服务器地址/端口可能填错",
@@ -475,9 +502,46 @@ impl FnClient {
             //   401/404/400 还是飞牛字段校验/任务冲突（如 rescrap 的 `code=-14 Task duplicate`、
             //   `code=-6 Not Found`、`code=-1 Invalid Params`），而不是只剩一句「保存失败」。
             //   业务错误通常仍是 HTTP 200 + code!=0，这里保留原始 msg 原文便于排查。
+            // [lc-1993] 唯一的例外：会话失效不再上抛原始报文（用户看不懂 `code=-2`），
+            //   原文进日志，上层只拿到可读提示，前端据此走重登/跳登录。
+            if is_auth_expired(code, &msg) {
+                crate::libmpv::trace(&format!(
+                    "[lc-1993] 会话失效: HTTP {status} code={code} msg={msg} ({method} {path})"
+                ));
+                return Err(ERR_AUTH_EXPIRED.to_string());
+            }
             return Err(format!("HTTP {} code={}: {}", status, code, msg));
         }
         Ok(v.get("data").cloned().unwrap_or(Value::Null))
         })
+    }
+}
+
+#[cfg(test)]
+mod lc1993_tests {
+    use super::*;
+
+    // [lc-1993] 会话失效归类：双向验证 —— 会话类必须命中，其它业务码必须保持原样上抛。
+    #[test]
+    fn auth_expired_by_code() {
+        assert!(is_auth_expired(-2, "Auth Expired"));
+        assert!(is_auth_expired(-2, ""));
+        assert!(is_auth_expired(-2, "任意文案"));
+    }
+
+    #[test]
+    fn auth_expired_by_message() {
+        assert!(is_auth_expired(-1, "Auth Expired"));
+        assert!(is_auth_expired(0, "auth expired"));
+        assert!(is_auth_expired(-9, "会话已过期，请重新登录"));
+    }
+
+    #[test]
+    fn other_business_errors_are_not_auth_expired() {
+        assert!(!is_auth_expired(-15, "Password Incorrect"));
+        assert!(!is_auth_expired(-6, "Not Found"));
+        assert!(!is_auth_expired(-1, "Invalid Params"));
+        assert!(!is_auth_expired(-14, "Task duplicate"));
+        assert!(!is_auth_expired(0, "ok"));
     }
 }

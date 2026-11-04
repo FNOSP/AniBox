@@ -44,6 +44,15 @@ import { usePlaybackProgress } from "./hooks/usePlaybackProgress";
 import { RefreshContext } from "./hooks/useRefresh";
 import { focusNav } from "./lib/focusNav";
 import { fetchLibPage } from "./lib/api";
+// [lc-1993] 错误归类：会话失效不展示内部报文，网络类翻成人话，其它原样保留
+import {
+  AUTH_EXPIRED_TEXT,
+  classifyError,
+  isAuthExpired,
+  notifyAuthExpired,
+  setAuthExpiredHandler,
+  userFacingError,
+} from "./lib/errors";
 import { pick } from "./lib/format";
 import { bgmImg, pickImgStr, pickLargestImg, tmdbImg } from "./lib/images";
 import { prefersReducedMotion } from "./lib/motion";
@@ -108,6 +117,8 @@ function App() {
   // [lc-1700] 演员页目标（从详情页演职人员点进来）：只存最少字段，资料由 PersonPage 自己拉
   const [personTarget, setPersonTarget] = useState<PersonTarget | null>(null);
   const [err, setErr] = useState("");
+  // [lc-1993] 会话失效后跳登录页时的一次性提示（「登录已过期，请重新登录」）
+  const [loginNotice, setLoginNotice] = useState("");
   // [lc-1607] 首次启动的免责声明同意闸门：localStorage 未置位 → 弹；同意后置位，不再弹。
   const [disclaimerOpen, setDisclaimerOpen] = useState(() => {
     try {
@@ -447,6 +458,26 @@ function App() {
       .catch(() => {});
   }, []);
 
+  /* [lc-1993] 错误出口统一收敛：会话失效 → 不展示原文、触发重登/跳登录；
+     网络类 → 翻成人话；其它 → 原样展示（细节对用户有用，不吞）。
+     埋点记录「错误归类 → 处理动作」，内部 code 只进日志。 */
+  const reportErr = useCallback((raw: unknown, context?: string) => {
+    const kind = classifyError(raw);
+    if (kind === "auth-expired") {
+      setErr("");
+      const fired = notifyAuthExpired();
+      void invoke("lat_trace", {
+        msg: `[lc-1993] 归类=会话失效 动作=${fired ? "触发重登/跳登录" : "并发去重(已处理)"}`,
+      }).catch(() => {});
+      return;
+    }
+    const msg = userFacingError(raw);
+    setErr(context ? `${context}：${msg}` : msg);
+    void invoke("lat_trace", {
+      msg: `[lc-1993] 归类=${kind} 动作=展示${context ? ` 上下文=${context}` : ""} msg=${msg}`,
+    }).catch(() => {});
+  }, []);
+
   // 首页数据完整加载（启动无缓存/手动刷新/登录后）：拉全量并回填
   const loadHome = useCallback(async () => {
     // [lc-1600] 走到这里 = 登录成功（或已有有效会话）：游客标记完成使命，清掉
@@ -585,15 +616,48 @@ function App() {
               return next;
             });
           })
-          .catch((e) => setErr(`加载媒体库「${lib.title}」失败：${String(e)}`));
+          .catch((e) => reportErr(e, `加载媒体库「${lib.title}」失败`));
       });
     } catch (e) {
-      setErr(String(e));
+      reportErr(e);
       setView("home");
     } finally {
       setHomeLoading(false);
     }
-  }, []);
+  }, [reportErr]);
+
+  /* [lc-1993] 会话失效处理链：先静默探活（单接口/网络偶发抖动 → 重拉首页）；
+     确实失效才跳登录页（登录页会按记住的密码再静默重登一次）。
+     并发去重由 `notifyAuthExpired` 保证：同时过期的多个请求只走这一条。 */
+  useEffect(() => {
+    return setAuthExpiredHandler(async () => {
+      try {
+        await invoke("probe_session");
+        void invoke("lat_trace", { msg: "[lc-1993] 动作=探活通过 → 静默重拉首页" }).catch(() => {});
+        setErr("");
+        await loadHome();
+        return;
+      } catch {
+        /* 探活失败 = 会话确实失效 */
+      }
+      if (view === "login") return;
+      void invoke("lat_trace", {
+        msg: "[lc-1993] 动作=跳登录页（登录页会先尝试自动重登）",
+      }).catch(() => {});
+      setErr("");
+      setLoginNotice(AUTH_EXPIRED_TEXT);
+      setView("login");
+    });
+  }, [loadHome, view]);
+
+  /* [lc-1993] 兜底：任何路径把会话失效原文塞进 `err`（如某组件自己的 catch），
+     这里立即清掉并交给统一处理链，保证首页不展示内部报文。 */
+  useEffect(() => {
+    if (err && isAuthExpired(err)) {
+      setErr("");
+      notifyAuthExpired();
+    }
+  }, [err]);
 
   /* ── [lc-1600] 游客首页取数：未登录 → 飞牛接口不可用，改用公开数据源合成 6 条伪 MediaItem ──
      [lc-1604] 两半都来自 TMDB（中文名/中文简介 + 官方横图 backdrop + 官方海报，同一套来源）：
@@ -718,6 +782,7 @@ function App() {
   // 内存里已有数据（引导弹窗折返回登录页又点「先逛逛」）就直接复用，不重拉。
   const enterGuest = useCallback(() => {
     setGuest(true);
+    setLoginNotice("");
     setPage("home");
     setView("home");
     // 启动页设置对游客同样生效：等游客首页数据就绪后再落点（loadGuestHome 会 setPage("home")）
@@ -1157,7 +1222,7 @@ function App() {
                       return next;
                     });
                   })
-                  .catch((e) => setErr(`加载媒体库「${row.lib.title}」失败：${String(e)}`));
+                  .catch((e) => reportErr(e, `加载媒体库「${row.lib.title}」失败`));
               });
             setPage("home");
             setView("home");
@@ -1208,7 +1273,7 @@ function App() {
           .catch(() => setView("login"))
           .finally(() => setBooting(false));
       });
-  }, [loadHome, loadGuestHome, applyLaunchPage]);
+  }, [loadHome, loadGuestHome, applyLaunchPage, reportErr]);
 
   // [lc-123-rev6] 常驻视图的动画类：进入侧挂 anim-*、退场侧额外加 leaving（退场层 position:absolute 叠在上面，
   // pointer-events:none —— 动画中照样能点，不锁交互）。动画类只在这 ~260ms 里存在，结束即摘。
@@ -1231,7 +1296,10 @@ function App() {
   } else if (view === "login") {
     body = (
       <LoginPage
+        // [lc-1993] 会话失效后的一次性提示；登录成功/转游客时清掉，避免下次回登录页还挂着
+        notice={loginNotice}
         onDone={() => {
+          setLoginNotice("");
           // 登录成功后按「启动页」落点（首页/发现页）
           void loadHome().then(applyLaunchPage);
         }}
@@ -1558,7 +1626,9 @@ function App() {
       />
       {/* [lc-1909] 软件内播放层：盖在内容区/侧栏之上、标题栏之下（z-index 见 49-player.css） */}
       {player && <PlayerView title={player.title} onExit={() => setPlayer(null)} />}
-      {err && view !== "login" && <div className="err global-err">{err}</div>}
+      {/* [lc-1993] 会话失效的内部报文永不上首页：即使其它路径把原始串塞进 err，
+          这里也过滤掉，并交给统一处理链（下方兜底 effect）。 */}
+      {err && !isAuthExpired(err) && view !== "login" && <div className="err global-err">{err}</div>}
       {settingsOpen && (
         <SettingsPanel
           onClose={() => setSettingsOpen(false)}

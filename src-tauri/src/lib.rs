@@ -535,6 +535,24 @@ async fn check_session(state: State<'_, AppState>, app: AppHandle) -> Result<Val
     Ok(data)
 }
 
+/// [lc-1993] 运行期会话探针：**不走** `check_session` 的启动策略（auto_login 开关、
+/// 访问码重建都对运行中的会话无意义），只做一次 `/user/info` 鉴权探测。
+/// 首页收到「登录已过期」时先用它分流：
+///   · 通过 → 刚才只是单接口/网络偶发抖动，静默重拉首页即可；
+///   · 失败 → 会话确实失效，跳登录页（登录页仍会按记住的密码静默重登一次）。
+#[tauri::command]
+async fn probe_session(state: State<'_, AppState>) -> Result<(), String> {
+    let cfg = state.config.read().await.clone();
+    if cfg.token.is_empty() || cfg.server.is_empty() {
+        return Err(fnapi::ERR_AUTH_EXPIRED.to_string());
+    }
+    let client = fnapi::new_client();
+    client
+        .call(&cfg.server, "/v/api/v1/user/info", "GET", &cfg.token, None)
+        .await
+        .map(|_| ())
+}
+
 // ───────────────────────── 媒体库 / 条目 ─────────────────────────
 
 #[tauri::command]
@@ -5433,6 +5451,8 @@ pub fn run() {
             login,
             logout,
             check_session,
+            // [lc-1993] 运行期会话探针：区分「偶发抖动」与「真过期」
+            probe_session,
             get_media_libs,
             get_media_sum,
             // [library-cover] 首页媒体库卡片自定义封面（保存/读取/恢复默认）

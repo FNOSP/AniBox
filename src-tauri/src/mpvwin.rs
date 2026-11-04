@@ -497,6 +497,40 @@ fn forward_mouse_inner(kind: &str, x: i32, y: i32, flags: u32, delta: i32) -> bo
     unsafe { PostMessageW(h as _, msg, wparam as usize, lparam) != 0 }
 }
 
+/// [lc-1998] 全屏期摘掉 `WS_EX_LAYERED`（退出全屏装回）。
+///
+/// 实机证据：175% 缩放下全屏，`WindowFromPoint` 只在物理 x≲2159 返回覆盖层，
+/// 再往右一律返回 mpv（2159/1.5≈1440 = 进全屏前的窗口宽度）—— 命中区域被钉在
+/// 「上一次分层表面的大小」上，窗口被 SetWindowPos 拉到显示器矩形后分层表面没有
+/// 跟着重建。分层窗口的命中判定按表面像素算，于是屏幕右侧/右上角按钮永远落空。
+///
+/// 窗口的透明本来由 tao 的 `DwmEnableBlurBehindWindow`（空 region）合成，不依赖
+/// 分层位；分层位只是历史包袱。全屏期摘掉后命中判定回到普通窗口矩形（整窗可点），
+/// 与全屏输入锁「覆盖层整窗可点」的语义一致。
+pub fn overlay_set_layered(hwnd: isize, on: bool) {
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return;
+    }
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd as _, GWL_EXSTYLE);
+        let next = if on {
+            ex | (WS_EX_LAYERED as isize)
+        } else {
+            ex & !(WS_EX_LAYERED as isize)
+        };
+        if next != ex {
+            SetWindowLongPtrW(hwnd as _, GWL_EXSTYLE, next);
+        }
+        let now = GetWindowLongPtrW(hwnd as _, GWL_EXSTYLE);
+        crate::libmpv::trace(&format!(
+            "[lc-1998] ex-style LAYERED {}→{}（目标 {}）",
+            i32::from(ex & (WS_EX_LAYERED as isize) != 0),
+            i32::from(now & (WS_EX_LAYERED as isize) != 0),
+            if on { "on" } else { "off" }
+        ));
+    }
+}
+
 /// [lc-1947] 记录「非全屏」时的锚窗矩形（进全屏时以它为准保存还原态）。
 fn record_normal_rect(x: i32, y: i32, w: i32, h: i32) {
     if w <= 0 || h <= 0 || PLAYER_FULLSCREEN.load(Ordering::SeqCst) {
@@ -612,10 +646,17 @@ pub fn overlay_apply_input_passthrough(hwnd: isize, passthrough: bool, reason: &
     unsafe {
         let ex = GetWindowLongPtrW(hwnd as _, GWL_EXSTYLE);
         let before = ex & (WS_EX_TRANSPARENT as isize) != 0;
-        let base = ex
-            | (WS_EX_NOACTIVATE as isize)
-            | (WS_EX_TOOLWINDOW as isize)
-            | (WS_EX_LAYERED as isize);
+        let base = if lock {
+            // [lc-1998] 全屏输入锁期间不保留分层位：分层窗口的命中判定按表面像素算，
+            // 窗口被拉到显示器矩形后表面不重建，屏幕右侧的控件永远点不中（见
+            // `overlay_set_layered` 的实测数据）。透明由 DWM blur-behind 合成。
+            (ex | (WS_EX_NOACTIVATE as isize) | (WS_EX_TOOLWINDOW as isize))
+                & !(WS_EX_LAYERED as isize)
+        } else {
+            ex | (WS_EX_NOACTIVATE as isize)
+                | (WS_EX_TOOLWINDOW as isize)
+                | (WS_EX_LAYERED as isize)
+        };
         let next = if !passthrough {
             base & !(WS_EX_TRANSPARENT as isize)
         } else if write_allowed {
@@ -1717,6 +1758,9 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
         // 所有权；宿主对全屏几何零干预，仅跟随）。旧序 move → topmost → 屏保级抬顶
         // 4~5 次 SetWindowPos 的中间态帧正是「进全屏闪烁/卡顿」我们侧的来源。
         move_window(overlay, mx, my, mw, mh);
+        // [lc-1998] 全屏期摘分层位：否则命中区域被钉在进全屏前的表面大小上，
+        // 屏幕右侧/右上角控件收不到任何鼠标事件（175% 实测 x>2159 全落空）。
+        overlay_set_layered(overlay, false);
         // [lc-1981] 全屏期 ontop 抑制：`ontop_mode.lua` 收到 `fntv-ontop-fs on` 后
         // 锁定 `ontop=true` 并停用「暂停置底」联动 —— lua 不再摘锚窗 TOPMOST，
         // 拉锯从源头消失（脚本本地改，不入库）。
@@ -1738,6 +1782,9 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
         // 若全屏期间前端把 hover 请求短路了（FRONTEND_HOVER_LAST 停在 true），这里
         // 只晚一个探针事件 —— 前端在下一条 mousemove/probe 边沿会把账对齐。
         FULLSCREEN_INPUT_LOCK.store(false, Ordering::SeqCst);
+        // [lc-1998] 恢复分层位（窗口模式的透明合成依赖它）：必须在解锁之后，
+        // 否则 overlay_apply_input_passthrough 又会按全屏的 base 把它摘掉。
+        overlay_set_layered(overlay, true);
         if !FRONTEND_HOVER_LAST.load(Ordering::SeqCst) {
             let (applied, ok) = overlay_apply_input_passthrough(overlay, true, "fullscreen-exit");
             crate::libmpv::trace(&format!(

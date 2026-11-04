@@ -391,8 +391,9 @@ export function DetailView({
    *  无资源的剧集/动漫详情页挂 WebrsPanel；关闭时维持「未查询到资源/暂无剧集」占位。 */
   webrsOn?: boolean;
   /** [lc-1909] 软件内播放（playerOpenMode="app"）：起播成功后由 App 挂内嵌播放层
-   *  （PlayerView，mpv 窗口钉到视频容器）。未传（"window" 独立窗口模式）→ 完全走既有路径。 */
-  onEmbedPlay?: (title: string) => void;
+   *  （PlayerView，mpv 窗口钉到视频容器）。未传（"window" 独立窗口模式）→ 完全走既有路径。
+   *  [lc-1995] 第二个参数是「重新起播」闭包：播放层给出失败卡时用它重试同一集。 */
+  onEmbedPlay?: (title: string, retry?: () => void) => void;
 }) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
@@ -2057,7 +2058,9 @@ export function DetailView({
     // [lc-1909] 软件内播放：起播成功 → 通知 App 挂内嵌播放层（选集/版本选择器同一条链路）
     if (onEmbedPlay) {
       invoke("play_item", { guid, mediaGuid: mediaGuid || undefined })
-        .then(() => onEmbedPlay(playTitle(guid)))
+        .then(() =>
+          onEmbedPlay(playTitle(guid), () => playWithVersion(guid, mediaGuid)),
+        )
         .catch((e) => setErr(String(e)));
       return;
     }
@@ -2132,7 +2135,9 @@ export function DetailView({
           mediaGuid = undefined;
         }
         await invoke("play_item", { guid, mediaGuid });
-        onEmbedPlay(playTitle(guid));
+        onEmbedPlay(playTitle(guid), () => {
+          void startPlay();
+        });
       } catch (e) {
         setPlayNote(String(e));
       } finally {

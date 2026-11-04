@@ -134,6 +134,65 @@
   letter-spacing: 0.02em;
 }
 
+/* ── [lc-1995] 起播失败提示卡 ──
+   失败时不许可停在纯黑：居中一张暗色卡（12px 字号、圆角与容器同心），一行说明 +
+   「重新播放 / 返回」两个出口。mpv 锚窗在进入失败态时已被收起，这张卡才是用户看到的。 */
+.player-fail {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+}
+.player-fail-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.86);
+  letter-spacing: 0.01em;
+  text-align: center;
+}
+.player-fail-acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.player-fail-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.player-fail-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+.player-fail-btn:active {
+  background: rgba(255, 255, 255, 0.18);
+  transition-duration: 0.12s;
+}
+.player-fail-btn.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: #fff;
+}
+.player-fail-btn.primary:hover {
+  filter: brightness(1.08);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .player-view,
   .player-view.leaving {

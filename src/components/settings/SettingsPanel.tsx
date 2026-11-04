@@ -4,7 +4,6 @@ import { createPortal } from "react-dom";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import { showAppToast } from "../../lib/metaApply";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check as IcoCheck, ChevronDown as IcoChevron, Star as IcoStar, X as IcoXL } from "lucide-react";
@@ -3012,10 +3011,8 @@ function AiEnhanceRow() {
     defaultOn: boolean;
     superresDmlReady: boolean;
     tensorrtReady: boolean;
-    rifeDmlReady: boolean;
     mvtoolsReady: boolean;
     superresEngine: string;
-    qualityTier: string;
     gpu?: string;
   } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -3032,10 +3029,8 @@ function AiEnhanceRow() {
       defaultOn: boolean;
       superresDmlReady: boolean;
       tensorrtReady: boolean;
-      rifeDmlReady: boolean;
       mvtoolsReady: boolean;
       superresEngine: string;
-      qualityTier: string;
       gpu?: string;
     }>("ai_enhance_status")
       .then(setStatus)
@@ -3047,15 +3042,8 @@ function AiEnhanceRow() {
     if (engine === (status?.engine ?? "auto")) return;
     setErr("");
     try {
-      const r = await invoke<{ nvidiaHint?: string }>("ai_enhance_set_engine", {
-        engine,
-        defaultOn: null,
-      });
+      await invoke("ai_enhance_set_engine", { engine, defaultOn: null });
       refresh();
-      // [lc-1857] N 卡引擎：半自动注册指引（剪贴板已就绪 + NVIDIA App 已拉起）
-      if (r?.nvidiaHint) {
-        showAppToast(r.nvidiaHint);
-      }
     } catch (e) {
       setErr(String(e));
     }
@@ -3093,16 +3081,6 @@ function AiEnhanceRow() {
     } finally {
       setBusy(null);
       setPct(-1);
-    }
-  };
-  const pickTier = async (tier: string) => {
-    if (tier === (status?.qualityTier ?? "balanced")) return;
-    setErr("");
-    try {
-      await invoke("ai_enhance_set_tier", { tier });
-      refresh();
-    } catch (e) {
-      setErr(String(e));
     }
   };
   const pickSuperres = async (engine: string) => {
@@ -3152,47 +3130,13 @@ function AiEnhanceRow() {
           </button>
         )}
       </div>
-      {/* [lc-1825] 画质档位联动补帧（LumiPlayer 口径） */}
-      <div className="set-row set-row-col" style={{ paddingLeft: 4 }}>
-        <div className="set-btn-row">
-        <span className="set-k" style={{ flex: "none" }}>运动平滑</span>
-        {(
-          [
-            ["extreme", "极致"],
-            ["balanced", "均衡"],
-            ["smooth", "流畅"],
-          ] as const
-        ).map(([val, label]) => {
-          const cur = status?.qualityTier ?? "balanced";
-          return (
-            <button
-              key={val}
-              type="button"
-              className={`sub-cred-btn${cur === val ? " on" : ""}`}
-              title={
-                val === "smooth"
-                  ? "关闭时间插值——高刷屏播 24fps 时显示重采样会白烧 GPU，性能紧张/笔记本用这档"
-                  : "时间插值平滑（interpolation + display-resample）——消除 24fps 在高刷屏上的抖动；GPU 开销小"
-              }
-              onClick={() => void pickTier(val)}
-            >
-              {label}
-            </button>
-          );
-        })}
-        </div>
-        <span className="set-desc">
-          运动平滑（插帧）= 在帧间补新帧，**动起来更顺滑**，不提高清晰度。
-          极致/均衡 = 开插值平滑；流畅 = 关闭省 GPU。手动选 RIFE/N 卡引擎时以引擎为准。
-        </span>
-      </div>
       {/* [lc-1856] 显卡名动态展示：RIFE/超分硬性要求让用户对号入座 */}
       {status?.gpu ? (
         <div className="set-row" style={{ paddingLeft: 4 }}>
           <span className="set-desc">
             当前显卡：<b style={{ color: "var(--text-strong)" }}>{status.gpu}</b>
-            　·　RIFE 补帧硬性要求：720P 源需 RTX4060/RX6600 级以上；
-            1080P 源实测 RTX5070 都跟不上（1080P 请用 N卡 Smooth Motion）
+            　·　RIFE 补帧仅 720P 及以下源可实时（需 RTX4060/RX6600 级以上；
+            1080P 源实测 RTX5070 都跟不上，会自动降级 MVTools）
           </span>
         </div>
       ) : null}
@@ -3204,41 +3148,35 @@ function AiEnhanceRow() {
             ["builtin", "内置平滑"],
             ["rife", "RIFE AI 2×"],
             ["mvtools", "MVTools 60FPS"],
-            ["nvidia", "N 卡 SM"],
           ] as const
         ).map(([val, label]) => {
           const cur = status?.engine ?? "auto";
           const on = cur === val || (cur === "auto" && val === "builtin");
-          const rifeLocked = val === "rife" && !status?.ready && !status?.rifeDmlReady;
+          const rifeLocked = val === "rife" && !status?.ready;
           const mvtoolsLocked = val === "mvtools" && !status?.mvtoolsReady;
-          const nvidiaDead = val === "nvidia"; // [lc-1860] 实测紫屏冲突，禁用
           return (
             <button
               key={val}
               type="button"
               className={`sub-cred-btn${on ? " on" : ""}`}
-              style={{ opacity: rifeLocked || mvtoolsLocked || nvidiaDead ? 0.4 : 1 }}
+              style={{ opacity: rifeLocked || mvtoolsLocked ? 0.4 : 1 }}
               title={
-                nvidiaDead
-                  ? "实测禁用：内核 Vulkan 呈现上下文与驱动帧生成冲突（画面紫屏/黑屏）——1080P 补帧请改用内置平滑，720P 可用 RIFE"
-                  : rifeLocked
-                    ? "RIFE：AI 在帧间补新帧，效果最好——需先下载 AI 增强组件"
-                    : val === "rife"
-                      ? "RIFE：AI 在帧间补新帧，效果最好（优先 DirectML，其次 ncnn Vulkan）。跟不上实时会自动降级 MVTools 60FPS"
-                      : mvtoolsLocked
-                        ? "MVTools：真实运动补偿补帧，廉价全显卡——需随包 mvtools.dll（待补）"
-                        : val === "mvtools"
-                          ? "MVTools：运动补偿补帧到 2×（24→48/30→60），代价低、全显卡；RIFE 跟不上时的兜底档"
-                          : "内置平滑：MPV 自带时间插值，零开销，效果一般"
+                rifeLocked
+                  ? "RIFE：AI 在帧间补新帧，效果最好——需先下载 AI 增强组件"
+                  : val === "rife"
+                    ? "RIFE：AI 在帧间补新帧，效果最好（ncnn Vulkan，仅 720P 及以下源实时）。跟不上实时会自动降级 MVTools 60FPS"
+                    : mvtoolsLocked
+                      ? "MVTools：真实运动补偿补帧，廉价全显卡——需随包 mvtools.dll（待补）"
+                      : val === "mvtools"
+                        ? "MVTools：运动补偿补帧到 2×（24→48/30→60），代价低、全显卡；RIFE 跟不上时的兜底档"
+                        : "内置平滑：MPV 自带时间插值，零开销（60Hz 屏适用；高刷屏会自动改用音频同步）"
               }
               onClick={() =>
-                nvidiaDead
-                  ? setErr("N 卡 Smooth Motion 实测与内核冲突（紫屏/黑屏），已禁用——请用内置平滑或 RIFE（720P）")
-                  : rifeLocked
-                    ? setErr("RIFE 档需先下载 AI 增强组件")
-                    : mvtoolsLocked
-                      ? setErr("MVTools 档需随包 mvtools.dll（当前缺失，待补）")
-                      : void pickEngine(val)
+                rifeLocked
+                  ? setErr("RIFE 档需先下载 AI 增强组件")
+                  : mvtoolsLocked
+                    ? setErr("MVTools 档需随包 mvtools.dll（当前缺失，待补）")
+                    : void pickEngine(val)
               }
             >
               {label}
@@ -3349,8 +3287,8 @@ function AiEnhanceRow() {
       </div>
 
       <div className="set-desc">
-        RIFE v4.6 光流补帧（24fps→48fps，Vulkan 全显卡）+ AnimeJaNai AI 超分（可选）。
-        补帧：倍速 / HDR / 超 4K 自动回退内置平滑；超分：SDR 且 ≤1920x1200。
+        MVTools 光流补偿补帧（全显卡）+ RIFE AI 补帧（仅 720P 及以下源实时）+ AnimeJaNai AI 超分（可选）。
+        补帧：倍速 / HDR / 超 4K 自动让路；超分：SDR 且 ≤1920x1200（DML 1080P 源可能跟不上实时，自动跳过）。
         引擎切换下次播放生效，播放中用播放器的「插帧」按钮实时切。
       </div>
       {err && <div className="set-warn">{err}</div>}

@@ -3078,7 +3078,9 @@ function AiEnhanceRow() {
     superresDmlReady: boolean;
     tensorrtReady: boolean;
     mvtoolsReady: boolean;
+    svpReady: boolean;
     superresEngine: string;
+    tscale: string;
     gpu?: string;
   } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -3096,7 +3098,9 @@ function AiEnhanceRow() {
       superresDmlReady: boolean;
       tensorrtReady: boolean;
       mvtoolsReady: boolean;
+      svpReady: boolean;
       superresEngine: string;
+      tscale: string;
       gpu?: string;
     }>("ai_enhance_status")
       .then(setStatus)
@@ -3118,6 +3122,17 @@ function AiEnhanceRow() {
     setErr("");
     try {
       await invoke("ai_enhance_set_engine", { engine: status?.engine ?? "auto", defaultOn: !(status?.defaultOn ?? false) });
+      refresh();
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+  // [lc-2012] 内置平滑三档（电影/动漫/丝滑，照抄 mpv.config n 键循环）；仅 builtin 引擎显示
+  const pickTscale = async (t: string) => {
+    if (t === (status?.tscale ?? "sphinx")) return;
+    setErr("");
+    try {
+      await invoke("ai_enhance_set_tscale", { tscale: t });
       refresh();
     } catch (e) {
       setErr(String(e));
@@ -3213,25 +3228,31 @@ function AiEnhanceRow() {
           [
             ["builtin", "内置平滑"],
             ["rife", "RIFE AI 2×"],
-            ["mvtools", "MVTools 60FPS"],
+            ["svp", "SVP 60FPS"],
+            ["mvtools", "MVTools 2×"],
           ] as const
         ).map(([val, label]) => {
           const cur = status?.engine ?? "auto";
           const on = cur === val || (cur === "auto" && val === "builtin");
           const rifeLocked = val === "rife" && !status?.ready;
+          const svpLocked = val === "svp" && !status?.svpReady;
           const mvtoolsLocked = val === "mvtools" && !status?.mvtoolsReady;
           return (
             <button
               key={val}
               type="button"
               className={`sub-cred-btn${on ? " on" : ""}`}
-              style={{ opacity: rifeLocked || mvtoolsLocked ? 0.4 : 1 }}
+              style={{ opacity: rifeLocked || svpLocked || mvtoolsLocked ? 0.4 : 1 }}
               title={
                 rifeLocked
                   ? "RIFE：AI 在帧间补新帧，效果最好——需先下载 AI 增强组件"
                   : val === "rife"
                     ? "RIFE：AI 在帧间补新帧，效果最好（ncnn Vulkan，仅 720P 及以下源实时）。跟不上实时会自动降级 MVTools 60FPS"
-                    : mvtoolsLocked
+                    : svpLocked
+                      ? "SVP：open-svpflow 60FPS，OpenCL GPU 加速——需更新 AI 增强组件到 1.3.0+"
+                      : val === "svp"
+                        ? "SVP：open-svpflow 补到 60FPS（OpenCL GPU 加速，实测 5070 上 1080P 5.8× 实时，性能最好的真实补帧）。跟不上会自动降级 MVTools"
+                        : mvtoolsLocked
                       ? "MVTools：真实运动补偿补帧，廉价全显卡——需先下载 AI 增强组件（含 mvtools.dll）"
                       : val === "mvtools"
                         ? "MVTools：运动补偿补帧到 2×（24→48/30→60），代价低、全显卡；RIFE 跟不上时的兜底档"
@@ -3240,9 +3261,11 @@ function AiEnhanceRow() {
               onClick={() =>
                 rifeLocked
                   ? setErr("RIFE 档需先下载 AI 增强组件")
-                  : mvtoolsLocked
-                    ? setErr("MVTools 档需先下载 AI 增强组件")
-                    : void pickEngine(val)
+                  : svpLocked
+                    ? setErr("SVP 档需更新 AI 增强组件到 1.3.0+")
+                    : mvtoolsLocked
+                      ? setErr("MVTools 档需先下载 AI 增强组件")
+                      : void pickEngine(val)
               }
             >
               {label}
@@ -3258,6 +3281,32 @@ function AiEnhanceRow() {
           {status?.defaultOn ? "播放时自动开 ✓" : "播放时自动开"}
         </button>
         </div>
+        {/* [lc-2012] 内置平滑三档（照抄 mpv.config：电影/动漫/极致丝滑），仅 builtin 引擎显示 */}
+        {(status?.engine ?? "auto") === "builtin" || (status?.engine ?? "auto") === "auto" ? (
+          <div className="set-btn-row" style={{ marginTop: 6 }}>
+            <span className="set-k" style={{ flex: "none" }}>内置平滑档位</span>
+            {(
+              [
+                ["oversample", "电影", "去抖动，零模糊——oversample"],
+                ["sphinx", "动漫", "sphinx + 0.65 模糊度：既丝滑又能收紧二次元线条，不发糊"],
+                ["bicubic", "极致丝滑", "bicubic 默认稍糊，param -0.40 稍锐化，压制过度黏糊感"],
+              ] as const
+            ).map(([val, label, tip]) => {
+              const cur = status?.tscale ?? "sphinx";
+              return (
+                <button
+                  key={val}
+                  type="button"
+                  className={`sub-cred-btn${cur === val ? " on" : ""}`}
+                  title={tip}
+                  onClick={() => void pickTscale(val)}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
         <span className="set-desc">
           插帧 = 动起来更顺滑（不提高清晰度）。引擎切换下次播放生效；
           正在播放时用播放器右键「AI增强 › 插帧 开/关」实时切。

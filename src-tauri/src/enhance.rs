@@ -77,6 +77,14 @@ pub const MVTOOLS_FILES: &[&str] = &[
     "runtime/plugins/mvtools.dll",
 ];
 
+/// [lc-2012] open-svpflow 60fps 档（SVP 开源重写版 Z1xus/open-svpflow，OpenCL GPU 加速）。
+/// 实测 5070：HQ 档 720p 6.68× / 1080p 5.76× 实时——性能最好的真实补帧引擎。
+pub const SVP_FILES: &[&str] = &[
+    "vs/open-svpflow.vpy",
+    "runtime/plugins/svpflow1_vs.dll",
+    "runtime/plugins/svpflow2_vs.dll",
+];
+
 
 /// [lc-1856] 显卡名探测（注册表显示适配器类，过滤虚拟/远程显卡；进程内缓存一次）。
 /// 用于 AI 增强 UI 的「你的显卡：xxx」展示与 RIFE 硬性要求提示（用户普遍不清楚
@@ -117,6 +125,12 @@ pub fn mvtools_ready(app: &AppHandle) -> bool {
     MVTOOLS_FILES.iter().all(|rel| root.join(rel).is_file())
 }
 
+/// [lc-2012] open-svpflow 就绪判定（vpy + svpflow 双 dll）。
+pub fn svp_ready(app: &AppHandle) -> bool {
+    let Some(root) = enhance_root(app) else { return false };
+    SVP_FILES.iter().all(|rel| root.join(rel).is_file())
+}
+
 /// 当前超分档是否为 tensorrt（mpv.rs 注入环境分流用）。
 pub fn superres_engine_is_trt(app: &AppHandle) -> bool {
     read_superres_engine(app) == "tensorrt"
@@ -148,6 +162,7 @@ fn interp_conf_path(app: &AppHandle) -> Option<PathBuf> {
 }
 
 /// 读当前引擎档与默认开关（文件缺失 → 默认 auto/false）。
+/// [lc-2012] 同时读 tscale（内置平滑三档：oversample/sphinx/bicubic，缺失=sphinx）。
 fn read_interp_opts(app: &AppHandle) -> (String, bool) {
     let mut engine = "auto".into();
     let mut default_on = false;
@@ -164,6 +179,23 @@ fn read_interp_opts(app: &AppHandle) -> (String, bool) {
         }
     }
     (engine, default_on)
+}
+
+/// [lc-2012] 读内置平滑 tscale 档（缺失=sphinx 动漫档）。
+fn read_tscale(app: &AppHandle) -> String {
+    if let Some(p) = interp_conf_path(app) {
+        if let Ok(text) = std::fs::read_to_string(&p) {
+            for line in text.lines() {
+                if let Some(v) = line.trim().strip_prefix("tscale=") {
+                    let v = v.trim();
+                    if matches!(v, "oversample" | "sphinx" | "bicubic") {
+                        return v.to_string();
+                    }
+                }
+            }
+        }
+    }
+    "sphinx".into()
 }
 
 /// [lc-1896] 补帧是否"起播即开"。播放器起播时据此决定要不要强制下发 off
@@ -199,8 +231,8 @@ pub async fn ai_enhance_set_engine(
     default_on: Option<bool>,
 ) -> Result<Value, String> {
     let e = engine.trim().to_lowercase();
-    if !matches!(e.as_str(), "auto" | "builtin" | "rife" | "mvtools") {
-        return Err(format!("未知引擎档 {e}（只允许 auto/builtin/rife/mvtools）"));
+    if !matches!(e.as_str(), "auto" | "builtin" | "rife" | "mvtools" | "svp") {
+        return Err(format!("未知引擎档 {e}（只允许 auto/builtin/rife/mvtools/svp）"));
     }
     // [lc-2004] nvidia / rife_dml 档已删除：前者实测与内核 Vulkan 呈现上下文冲突
     // （紫屏/黑屏，永不支持）；后者 ONNX 会话初始化异常（实测死链，ncnn 覆盖同功能）。
@@ -210,6 +242,9 @@ pub async fn ai_enhance_set_engine(
     if e == "mvtools" && !mvtools_ready(&app) {
         return Err("MVTools 补帧资源未就绪（缺 mvtools.vpy / mvtools.dll）".into());
     }
+    if e == "svp" && !svp_ready(&app) {
+        return Err("SVP 补帧资源未就绪（更新 AI 增强组件到 1.3.0+）".into());
+    }
     let Some(dir) = crate::config::mpv_portable_config_dir(&app) else {
         return Err("找不到 mpv 配置目录".into());
     };
@@ -218,13 +253,16 @@ pub async fn ai_enhance_set_engine(
     let (_, cur_default) = read_interp_opts(&app);
     let new_engine = if e == "auto" { "auto" } else { e.as_str() };
     let new_default = default_on.unwrap_or(cur_default);
+    let tscale = read_tscale(&app);
     let body = format!(
         "# AniBox 插帧配置（设置面板「AI 增强」写入，请勿手动编辑）
 # 引擎档：auto(=builtin) / builtin / rife(=AI 2× ncnn，仅 720P 及以下源实时) / mvtools
 # rife = RIFE v4.6 AI 2×（VapourSynth ncnn Vulkan），需 AI 增强组件就绪；跟不上实时自动降级 MVTools。
 # mvtools = MVTools 真实运动补偿补帧（廉价全显卡）。
+# 内置平滑 tscale 档：oversample(电影) / sphinx(动漫) / bicubic(丝滑)——仅 builtin 引擎生效。
 
 engine={new_engine}
+tscale={tscale}
 # 启动播放时即开启插帧（默认关=否）
 default_on={}
 ",
@@ -261,10 +299,48 @@ pub async fn ai_enhance_status(app: AppHandle) -> Result<Value, String> {
         "superresDmlReady": superres_dml_ready(&app),
         "tensorrtReady": tensorrt_ready(&app),
         "mvtoolsReady": mvtools_ready(&app),
+        "svpReady": svp_ready(&app),
         "superresEngine": read_superres_engine(&app),
+        // [lc-2012] 内置平滑 tscale 档（面板三选一回显）
+        "tscale": read_tscale(&app),
         // [lc-1856] 显卡名（RIFE 硬性要求提示用；虚拟显卡已过滤）
         "gpu": detect_gpu_name(),
     }))
+}
+
+/// [lc-2012] 设内置平滑 tscale 档（oversample/sphinx/bicubic）——只改档位不改引擎，
+/// 写 conf + 运行中的会话即时重应用。
+#[tauri::command]
+pub async fn ai_enhance_set_tscale(
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+    tscale: String,
+) -> Result<Value, String> {
+    let t = tscale.trim().to_lowercase();
+    if !matches!(t.as_str(), "oversample" | "sphinx" | "bicubic") {
+        return Err(format!("未知内置平滑档位 {t}（只允许 oversample/sphinx/bicubic）"));
+    }
+    let Some(dir) = crate::config::mpv_portable_config_dir(&app) else {
+        return Err("找不到 mpv 配置目录".into());
+    };
+    let so = dir.join("script-opts");
+    std::fs::create_dir_all(&so).map_err(|err| format!("创建 script-opts 失败: {err}"))?;
+    let (engine, default_on) = read_interp_opts(&app);
+    let body = format!(
+        "# AniBox 插帧配置（设置面板「AI 增强」写入，请勿手动编辑）
+# 引擎档：auto(=builtin) / builtin / rife(=AI 2× ncnn，仅 720P 及以下源实时) / mvtools
+# 内置平滑 tscale 档：oversample(电影) / sphinx(动漫) / bicubic(丝滑)——仅 builtin 引擎生效。
+
+engine={engine}
+tscale={t}
+default_on={}
+",
+        if default_on { "yes" } else { "no" }
+    );
+    std::fs::write(so.join("fntv_interp.conf"), body)
+        .map_err(|err| format!("写入配置失败: {err}"))?;
+    push_to_live_mpv(&state, &["fntv-interp-tscale", t.as_str()]).await;
+    Ok(json!({ "tscale": t }))
 }
 
 /// 读超分引擎档（script-opts/fntv_superres.conf；缺失=off）。

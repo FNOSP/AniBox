@@ -487,104 +487,32 @@ pub fn mpv_portable_config_dir(app: &tauri::AppHandle) -> Option<std::path::Path
 }
 
 
-/// [lc-2002] 播放器皮肤切换（`uosc` 原生 / `glass` 液态玻璃）。
+/// [lc-2002/lc-2003] 播放器皮肤切换（`uosc` 原生 / `glass` 液态玻璃）。
 ///
-/// mpv 自动加载 `portable_config/scripts/` 下所有脚本（含子目录的 main.lua），
-/// 所以两套 OSC 必须**物理互斥**：启用哪套就把它的文件搬进 `scripts/`，另一套搬到
-/// `skins/_stash/`。整个过程只用 copy/rename + 存在性判断，重复调用幂等；切换在下一次
-/// 起播生效（mpv 启动时才读目录）。玻璃皮肤附带的第三方脚本与字体在
-/// `skins/modern-glass/`（LGPL-2.1，见同目录 LICENSE.LGPL）。
+/// **两套 OSC 都随包留在 `portable_config/scripts/`，不搬任何文件** —— 每个脚本开头
+/// 读 `script-opts/anibox_skin.conf` 的 `skin=uosc|glass` 自行早退（见各脚本的
+/// `[lc-2003] 皮肤门控`）。所以切换 = 重写这一份 conf，一次写入完成，既不会
+/// 「搬一半失败导致两套叠加」，也不需要重启应用（下一次起播 mpv 重新加载脚本即生效）。
+///
+/// 早期版本用「把目录搬进 skins/_stash」实现，实测整目录 rename 会被句柄卡成
+/// EPERM 且不报错，于是两套底栏叠在一起 —— 那条路已废弃。
 pub fn apply_player_skin(app: &tauri::AppHandle, skin: &str) {
     let Some(base) = mpv_portable_config_dir(app) else {
         return;
     };
-    let glass = skin == "glass";
-    let scripts = base.join("scripts");
     let opts = base.join("script-opts");
-    let src = base.join("skins").join("modern-glass");
-    let stash = base.join("skins").join("_stash");
-    let _ = std::fs::create_dir_all(&stash);
-    let _ = std::fs::create_dir_all(&scripts);
     let _ = std::fs::create_dir_all(&opts);
-
-    // uosc 家族：目录要整个搬走（mpv 会加载 scripts/*/main.lua）
-    const UOSC_FAMILY: [&str; 3] = ["uosc", "thumbfast.lua", "uosc-subtitle-lines.lua"];
-    // 玻璃皮肤：脚本 + 右键菜单 + 配置 + 字体
-    const GLASS_SCRIPTS: [&str; 2] = ["modernz.lua", "thumbz.lua"];
-    const GLASS_OPTS: [&str; 4] = ["modernz.conf", "thumbz.conf", "menu_style.conf", "modernz-locale.json"];
-
-    if glass {
-        for name in UOSC_FAMILY {
-            let from = scripts.join(name);
-            if from.exists() {
-                force_remove(&stash.join(name));
-                let _ = std::fs::rename(&from, stash.join(name));
-            }
-        }
-        for name in GLASS_SCRIPTS {
-            let from = src.join("scripts").join(name);
-            if from.exists() {
-                let _ = std::fs::copy(&from, scripts.join(name));
-            }
-        }
-        let menu_src = src.join("scripts").join("menu");
-        if menu_src.is_dir() {
-            let menu_dst = scripts.join("menu");
-            let _ = std::fs::create_dir_all(&menu_dst);
-            if let Ok(rd) = std::fs::read_dir(&menu_src) {
-                for e in rd.flatten() {
-                    let p = e.path();
-                    if p.is_file() {
-                        let _ = std::fs::copy(&p, menu_dst.join(e.file_name()));
-                    }
-                }
-            }
-        }
-        for name in GLASS_OPTS {
-            let from = src.join("script-opts").join(name);
-            if from.exists() {
-                let _ = std::fs::copy(&from, opts.join(name));
-            }
-        }
-        let fonts = base.join("fonts");
-        let _ = std::fs::create_dir_all(&fonts);
-        if let Ok(rd) = std::fs::read_dir(src.join("fonts")) {
-            for e in rd.flatten() {
-                let p = e.path();
-                if p.is_file() {
-                    let _ = std::fs::copy(&p, fonts.join(e.file_name()));
-                }
-            }
-        }
-        set_menu_mouse_binding(&base, "script-message-to menu open");
-        crate::libmpv::trace("[lc-2002] 播放器皮肤 = glass（ModernGlass）已就位");
-    } else {
-        for name in GLASS_SCRIPTS {
-            let _ = std::fs::remove_file(scripts.join(name));
-        }
-        let _ = std::fs::remove_dir_all(scripts.join("menu"));
-        for name in GLASS_OPTS {
-            let _ = std::fs::remove_file(opts.join(name));
-        }
-        for name in UOSC_FAMILY {
-            let from = stash.join(name);
-            if from.exists() {
-                force_remove(&scripts.join(name));
-                let _ = std::fs::rename(&from, scripts.join(name));
-            }
-        }
-        set_menu_mouse_binding(&base, "ignore");
-        crate::libmpv::trace("[lc-2002] 播放器皮肤 = uosc（原生）已就位");
-    }
+    let want = if skin == "glass" { "glass" } else { "uosc" };
+    write_skin_conf(&opts, want);
+    // 右键菜单入口随皮肤：uosc 用底栏「更多」，玻璃皮肤用右键调起它的菜单插件。
+    set_menu_mouse_binding(&base, if want == "glass" { "script-message-to menu open" } else { "ignore" });
+    crate::libmpv::trace(&format!("[lc-2003] 播放器皮肤 = {want}（下一次起播生效）"));
 }
 
-/// [lc-2002] 删掉目标（目录或文件），只用于我们自己的皮肤脚本搬运，失败静默。
-fn force_remove(p: &std::path::Path) {
-    if p.is_dir() {
-        let _ = std::fs::remove_dir_all(p);
-    } else if p.exists() {
-        let _ = std::fs::remove_file(p);
-    }
+/// [lc-2003] 写皮肤开关（幂等的单次覆盖写）。抽出来便于单测双向锚定。
+fn write_skin_conf(opts: &std::path::Path, want: &str) {
+    let _ = std::fs::write(opts.join("anibox_skin.conf"), format!("skin={want}
+"));
 }
 
 /// [lc-2002] 右键菜单入口随皮肤切换：uosc 用底栏「更多」，玻璃皮肤用右键调起它的菜单。
@@ -1184,5 +1112,28 @@ mod tests {
     fn access_code_already_encrypted_is_not_double_encrypted() {
         let once = encrypt_access_code("1234");
         assert_eq!(encrypt_access_code(&once), once, "重复加密应保持幂等");
+    }
+
+    /// [lc-2003] 皮肤切换 = 重写一份 conf（两套脚本都留着、各自门控早退）。
+    /// 双向断言：写 glass 后 conf 必须是 skin=glass；写 uosc 后必须翻回来。
+    #[test]
+    fn skin_conf_switch_is_single_write() {
+        let tmp = std::env::temp_dir().join(format!("anibox-skin-{}", std::process::id()));
+        let opts = tmp.join("script-opts");
+        std::fs::create_dir_all(&opts).unwrap();
+        let conf = opts.join("anibox_skin.conf");
+
+        write_skin_conf(&opts, "glass");
+        assert_eq!(std::fs::read_to_string(&conf).unwrap().trim(), "skin=glass");
+
+        // 幂等：重复写同一套不产生重复内容
+        write_skin_conf(&opts, "glass");
+        assert_eq!(std::fs::read_to_string(&conf).unwrap(), "skin=glass
+");
+
+        write_skin_conf(&opts, "uosc");
+        assert_eq!(std::fs::read_to_string(&conf).unwrap().trim(), "skin=uosc");
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

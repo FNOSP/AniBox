@@ -553,8 +553,6 @@ export type AppSettings = {
   /** [lc-1909] 播放打开方式："app" = 软件内播放（内嵌播放页，mpv 窗口钉到视频容器），
    *  "window" = 独立 mpv 窗口（既有路径）。后端白名单校验，非法值报错；默认 "app"。 */
   playerOpenMode?: "app" | "window";
-  /** [lc-2002] 播放器皮肤：uosc（原生，默认）/ glass（ModernGlass 液态玻璃） */
-  playerSkin?: "uosc" | "glass";
   /** [player] PotPlayer 可执行文件路径；空串 = 播放时自动探测常见安装路径 */
   potplayerPath?: string;
   /** [lc-1561] 自建弹幕接口（danmu_api）开关 —— 对齐主仓库同名设置 */

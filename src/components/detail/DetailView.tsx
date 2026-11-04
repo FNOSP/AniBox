@@ -377,6 +377,7 @@ export function DetailView({
   onOpenPerson,
   continueList = [],
   webrsOn = false,
+  onEmbedPlay,
 }: {
   base: MediaItem;
   onBack: () => void;
@@ -389,6 +390,9 @@ export function DetailView({
   /** [lc-1753] 在线资源搜索开关（App 的 settings.webrsPanelEnabled）：开启后才在
    *  无资源的剧集/动漫详情页挂 WebrsPanel；关闭时维持「未查询到资源/暂无剧集」占位。 */
   webrsOn?: boolean;
+  /** [lc-1909] 软件内播放（playerOpenMode="app"）：起播成功后由 App 挂内嵌播放层
+   *  （PlayerView，mpv 窗口钉到视频容器）。未传（"window" 独立窗口模式）→ 完全走既有路径。 */
+  onEmbedPlay?: (title: string) => void;
 }) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
@@ -2039,9 +2043,24 @@ export function DetailView({
     if (versionGuid === guid) setSelectedMediaGuid(mediaGuid);
   };
 
+  /** [lc-1909] 播放层顶栏标题：电影 = 条目名；剧集 = 「剧名 第 N 集」
+   *  （集名由播放器内 uosc 展示，顶栏保持克制，不用分隔符拼长串）。 */
+  const playTitle = (guid: string) => {
+    const ep = episodes.find((e) => e.guid === guid);
+    const num = ep?.episode_number ?? (ep ? episodes.indexOf(ep) + 1 : 0);
+    return isSeries && num > 0 ? `${base.title} 第 ${num} 集` : base.title;
+  };
+
   /** [版本] 用指定版本起播（mediaGuid 为空 → 交给服务端默认版本）。 */
   const playWithVersion = (guid: string, mediaGuid?: string) => {
     setPlayingGuid(guid);
+    // [lc-1909] 软件内播放：起播成功 → 通知 App 挂内嵌播放层（选集/版本选择器同一条链路）
+    if (onEmbedPlay) {
+      invoke("play_item", { guid, mediaGuid: mediaGuid || undefined })
+        .then(() => onEmbedPlay(playTitle(guid)))
+        .catch((e) => setErr(String(e)));
+      return;
+    }
     invoke("play_item", { guid, mediaGuid: mediaGuid || undefined }).catch((e) => setErr(String(e)));
   };
 
@@ -2099,6 +2118,28 @@ export function DetailView({
   const startPlay = async () => {
     const ep = episodes[0];
     const guid = isSeries && ep ? ep.guid : base.guid;
+    // [lc-1909] 软件内播放：起播成功 → 通知 App 挂内嵌播放层（不出独立窗口观感，
+    //  也不出 play-note；失败仍落在详情页提示）。
+    if (onEmbedPlay) {
+      setPlaying(true);
+      setPlayNote("");
+      try {
+        let mediaGuid: string | undefined;
+        try {
+          const r = await fetchMediaVersions(guid);
+          mediaGuid = r.selected || undefined;
+        } catch {
+          mediaGuid = undefined;
+        }
+        await invoke("play_item", { guid, mediaGuid });
+        onEmbedPlay(playTitle(guid));
+      } catch (e) {
+        setPlayNote(String(e));
+      } finally {
+        setPlaying(false);
+      }
+      return;
+    }
     setPlaying(true);
     setPlayNote("正在打开独立播放器…");
     try {

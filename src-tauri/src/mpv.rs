@@ -15,12 +15,92 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
+/// [lc-1943] mpv 命令往返计时（诊断）：默认只记 ≥15ms 的慢命令，避免刷日志；
+/// 设环境变量 `ANIBOX_LAT_TRACE=1` 则逐条记录（排查「点一下要等多久」时用）。
+///
+/// 只记命令名，不记参数：`set_property` 的值 / `loadfile` 的 URL 都不该进日志。
+fn lat_trace_cmd(cmd: &Value, ms: u64) {
+    static VERBOSE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let verbose = *VERBOSE.get_or_init(|| {
+        matches!(
+            std::env::var("ANIBOX_LAT_TRACE").ok().as_deref(),
+            Some("1")
+        )
+    });
+    if !verbose && ms < 15 {
+        return;
+    }
+    let name = cmd.get(0).and_then(|v| v.as_str()).unwrap_or("?");
+    crate::libmpv::trace(&format!("[lat] mpv cmd={name} rtt={ms}ms"));
+}
+
 /// 观察 id ↔ 属性名（前端 switch 依赖这些 id；6=fullscreen 只用于镜像到 Tauri 窗口）
-const OBSERVED: [(u64, &str); 13] = [
+// [lc-1914] osc-cinema 集数胶囊数据源（playlist-pos=10 / playlist-count=11 的最新值缓存，
+// 任一变化即组装 cinema-episode-meta；原子的读多写少足够）
+static EP_POS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static EP_COUNT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// [lc-1999] `time-pos` 事件限流用（毫秒时间戳，10Hz 一档）。
+static LAST_TIME_POS_EMIT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// [lc-1924] 播放状态快照：覆盖层 UI（顶栏/底栏）的数据源。
+/// 与 Polaris 的 mpv-overlay.html 同思路 —— 控件画在 DOM 里，mpv 只负责播，
+/// 属性变化聚合成一份快照推过去，前端据此渲染进度/时间/音量/倍速/暂停态。
+static PSTATE: Mutex<Option<serde_json::Map<String, serde_json::Value>>> = Mutex::new(None);
+static PSTATE_AT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+/// 更新快照并（节流）推给前端。`force=false` 时最快 120ms 一次（time-pos 高频）。
+fn pstate_update(app: &tauri::AppHandle, key: &str, val: serde_json::Value, force: bool) {
+    let mut g = PSTATE.lock().unwrap_or_else(|e| e.into_inner());
+    let map = g.get_or_insert_with(serde_json::Map::new);
+    map.insert(key.to_string(), val);
+    let mut at = PSTATE_AT.lock().unwrap_or_else(|e| e.into_inner());
+    let now = std::time::Instant::now();
+    let due = match *at {
+        Some(t) => force || now.duration_since(t).as_millis() >= 120,
+        None => true,
+    };
+    if !due {
+        return;
+    }
+    *at = Some(now);
+    let snap = serde_json::Value::Object(map.clone());
+    drop(at);
+    drop(g);
+    // [lc-1926] 首次发射留痕（排查「控件数据不刷新」时确认状态流是否真的在跑）
+    static PSTATE_LOGGED: std::sync::Once = std::sync::Once::new();
+    PSTATE_LOGGED.call_once(|| {
+        crate::libmpv::trace(&format!("[lc-1926] mpv-pstate 首帧: {snap}"));
+    });
+    emit_player(app, "mpv-pstate", snap);
+}
+
+/// [lc-1939] 覆盖层 UI 的**拉取式**状态源（Polaris 覆盖层的数据同样来自主进程）。
+/// 进程内事件推送在历史版本里到不了覆盖层（lc-1924~1931），所以前端另有一条 250ms
+/// 轮询兜底；两条通道写的是同一份 PSTATE，谁到算谁的。
+pub fn pstate_snapshot() -> serde_json::Value {
+    let g = PSTATE.lock().unwrap_or_else(|e| e.into_inner());
+    match g.as_ref() {
+        Some(m) => serde_json::Value::Object(m.clone()),
+        None => serde_json::Value::Object(serde_json::Map::new()),
+    }
+}
+
+
+/// [lc-1926] 播放事件发射（广播到所有窗口，含 mpv_overlay）。
+///
+/// [lc-1943] 之前这里做了「广播 + 定向 emit_to」两次发送，起因是「事件到不了覆盖层」。
+/// 真因不在 emit：`mpv_overlay` 窗**没有匹配的 capability**，它的 `core:event:allow-listen`
+/// 被 ACL 拒绝 —— 前端的 `listen()` 直接 reject，只能靠 250ms 轮询兜底（这就是
+/// 「每个控件点完要等好一会儿」的最大一笔）。补上 `capabilities/overlay.json` 后广播即可送达，
+/// 重复发送只会在页面上触发两次 setState，白耗一次 IPC，故退回单次广播。
+pub fn emit_player(app: &tauri::AppHandle, event: &str, payload: serde_json::Value) {
+    let _ = app.emit(event, payload);
+}
+
+const OBSERVED: [(u64, &str); 15] = [
     (1, "time-pos"),
     (2, "duration"),
     (3, "pause"),
@@ -44,6 +124,16 @@ const OBSERVED: [(u64, &str); 13] = [
     // `/api/v1/playvideo/` 前缀会被剥掉 → 解析永远为空（切集进度记到第一集上的根因）。
     // 参照随包 Lua 脚本 `fntv_nas_sub.lua` 也是用 `path` 匹配 `/playvideo/`。
     (13, "path"),
+    // [lc-1913] 软件内播放退出桥：embed-bridge.lua 在 ESC（非全屏）时把此位置 true，
+    // 读线程见到 true 即 emit `mpv-embed-exit` 给前端（false 的复位事件忽略）。
+    (14, "user-data/anibox-embed-esc"),
+    // [lc-1999] 鼠标位置桥已退役：`overlay-mouse` 在前端**没有任何监听**（控制层的悬停/
+    // 穿透早已改由 Rust 光标探针 + 前端 DOM 判定），但 mpv 侧 embed-bridge 仍在按
+    // 「位移 ≥3px」写 user-data/anibox-mouse-x/y —— 实测每几毫秒一条，读线程逐条 emit
+    // 进 WebView，把页面事件循环灌满，表现就是「点控件要等好久才有反应」（同批日志里
+    // `[lat] mpv cmd=set rtt=5000ms`，IPC 回包被这波事件挤到超时）。观察与转发一起删。
+    // [lc-1939] 置顶态：覆盖层顶栏「置顶」按钮的高亮/动作依据
+    (17, "ontop"),
 ];
 
 /// mpv IPC 连接类型：Windows 是命名管道（用 File 打开），
@@ -56,8 +146,13 @@ type IpcStream = std::os::unix::net::UnixStream;
 pub struct MpvSession {
     /// IPC 写端（JSON 行）
     tx: Arc<Mutex<Option<IpcStream>>>,
-    /// request_id → 回包等待者
-    pending: Arc<Mutex<HashMap<u64, std_mpsc::Sender<Value>>>>,
+    /// request_id → 回包等待者。
+    ///
+    /// [lc-1943] 从 `std_mpsc` 换成 `tokio::oneshot`：旧实现用 `recv_timeout` **同步阻塞**
+    /// 一个 tokio worker 线程等 mpv 回包（mpv 忙时实测单条 set 可达数秒），
+    /// 多条命令叠在一起会把 executor 线程池占满，表现就是「点了按钮要等一会儿才动」。
+    /// 改成 oneshot + `tokio::time::timeout` 后等待是真正异步的，不占线程。
+    pending: Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Value>>>>,
     next_id: Arc<AtomicU64>,
     pub pid: Arc<Mutex<Option<u32>>>,
     /// [lc-093] 「App 全屏状态 → mpv fullscreen 属性」镜像的期望值。
@@ -186,7 +281,11 @@ async fn adopt_window_owner(app: AppHandle, pid: u32) {
         if let Some(owner) = owner {
             if crate::mpvwin::find_mpv_hwnd(pid).is_some() {
                 match crate::mpvwin::adopt(pid, owner) {
-                    Ok(_) => {} // adopt 内已 trace pid+hwnd+owner
+                    Ok(_) => {
+                        // [lc-1909] Moved 跟随仅在本路径（mpv_window_owner=true）生效；
+                        // 内嵌模式走 player_embed_* 自己的跟随，退嵌后归 false。
+                        crate::mpvwin::set_owner_follow(true);
+                    }
                     Err(e) => {
                         crate::libmpv::trace(&format!("[lc-1907] 收编失败（不影响播放）: {e}"))
                     }
@@ -226,18 +325,6 @@ impl MpvSession {
         let path = pipe_path(&name);
         crate::libmpv::trace_reset(&format!("launch(mpv.exe) pid={}", std::process::id()));
 
-        // [lc-2002] 播放器皮肤互斥：mpv 只加载 scripts/ 下的 OSC，起播前把选中的那套搬进去。
-        {
-            let skin = app
-                .state::<crate::AppState>()
-                .config
-                .read()
-                .await
-                .clone()
-                .player_skin;
-            crate::config::apply_player_skin(&app, &skin);
-        }
-
         // ── 1) 启动 mpv.exe
         // [lc-1552] 改为 **Rust 直接 spawn**（原为 pwsh Start-Process 中转，白花 ~450ms）：
         //   · 实测：直接 Popen → 6ms 就返回；经 pwsh → 454ms（pwsh 冷启本身约 440ms）。
@@ -259,12 +346,79 @@ impl MpvSession {
             "--ytdl=no".to_string(),
             // 允许拖动画面/边缘移动窗口（border=no 时这是唯一的拖动方式）。
             // 之前关掉是为了避免误拖，但用户反馈窗口无法移动，这里恢复默认行为。
-            "--window-dragging=yes".to_string(),
+            "--input-builtin-dragging=yes".to_string(),
             format!("--log-file={}", log_path.to_string_lossy()),
         ];
         // [lc-1559] 启动即加载（可选）：命令行直接带 M3U8/URL ⇒ 无 idle 空窗，
         // 不依赖 IPC（启动头几秒 IPC 命令会卡，见 lib.rs lc-1559 注释）。
         let mut args = args.to_vec();
+        // [lc-1913] 软件内播放 = 照抄 Polaris 的 spawn 形态：mpv 可见启动、**直接落在
+        // 主窗口矩形上**（--geometry 物理像素），随后的收编循环把它挂成 owner + 满屏钉住。
+        // 之前 lc-1910 的 --window-minimized 方案废弃：前端没走内嵌路径时（首页直连播放）
+        // 没人还原窗口 = 「音频在放、画面全黑」。Polaris 也不最小化。
+        // 顺带抄他们 spawn 参数里的 --no-keepaspect-window（自由拉伸）与 --network-timeout。
+        let mut embed_mode = false;
+        if app.state::<crate::AppState>().config.read().await.player_open_mode == "app" {
+            // [lc-1917] 照抄 Polaris 的时序：**先建播放窗（mpv_overlay），再按它的矩形拉
+            // mpv（--geometry）**。之前先按主窗矩形发 geometry，而 AniBox mpv.conf 的
+            // save-position-on-quit 会在启动时恢复上次保存的窗口位置把 geometry 顶掉
+            // （黑窗浮在旧位置的根因）。播放窗不存在/创建失败 → 放弃内嵌回退独立窗口。
+            if let Some(ov) = crate::ensure_player_overlay(&app) {
+                embed_mode = true;
+                // [lc-1940] 覆盖层只保证「存在」（owner + 几何）；是否显示由 UI 就绪决定。
+                // 未就绪（非透明 / 显式关闭）→ 保持隐藏，控件交回 mpv 进程内 Lua OSC。
+                let overlay_ui = crate::mpvwin::overlay_ui_ready();
+                if overlay_ui {
+                    let _ = crate::show_player_overlay(&app);
+                }
+                if let Some(m) = app.get_webview_window("main") {
+                    let _ = m.hide();
+                    // [lc-1947] 原始 ShowWindow 补一发：主窗可能被最小化按钮用原始
+                    // SW_SHOWMINNOACTIVE 显示过，tao 缓存与真实状态脱钩时 hide() 是空操作。
+                    if let Ok(h) = m.hwnd() {
+                        crate::mpvwin::window_force_hide(h.0 as isize);
+                    }
+                }
+                if let (Ok(pos), Ok(size)) = (ov.outer_position(), ov.outer_size()) {
+                    args.push(format!(
+                        "--geometry={}x{}+{}+{}",
+                        size.width, size.height, pos.x, pos.y
+                    ));
+                }
+                args.push("--no-keepaspect-window".to_string());
+                args.push("--network-timeout=15".to_string());
+                // 窗口几何完全由应用掌控，禁止 mpv 自己记忆/恢复位置
+                args.push("--no-save-position-on-quit".to_string());
+                // uosc 全家桶让位 + idle 品牌标也关（加载期保持纯黑）+ osc-cinema 接管；
+                // 属性此时为空，append 不会覆盖任何 conf。
+                args.push(
+                    "--script-opts-append=uosc-disable_elements=top_bar,timeline,controls,volume,pause_indicator,buffering_indicator,window_border"
+                        .to_string(),
+                );
+                args.push("--script-opts-append=uosc-idle_branding=no".to_string());
+                // [lc-1940] 只有覆盖层 UI 真的显示时才关掉 Lua OSC 绘制；
+                // 兜底路径保持脚本默认（画自己的 OSC），这就是 lc-1938 的形态。
+                if overlay_ui {
+                    // [lc-1939] 控件由 Tauri 覆盖层（PlayerChrome）绘制：Lua OSC 只保留
+                    // input.conf 的左键分发（画面区点击→暂停），一个像素都不画。
+                    args.push("--script-opts-append=fntv_osc-overlay_controls=yes".to_string());
+                    args.push(format!(
+                        "--script-opts-append=fntv_osc-click_delay={:.3}",
+                        crate::mpvwin::system_double_click_interval_ms() as f64 / 1000.0
+                    ));
+                }
+                args.push("--script-opts-append=uosc-anibox_hide_timeline=yes".to_string());
+                // [lc-1924] 原生 UI 全面停用：控件与提示都由 App 覆盖层 DOM 承担
+                //（Polaris 同款：其 osc-cinema 自绘底栏被 if false 关掉、改由 mpv-overlay 接管）
+                args.push("--script-opts-append=fntv_format_badge-enabled=no".to_string());
+                args.push("--script-opts-append=fntv_mediainfo-enabled=no".to_string());
+                args.push(
+                    "--script-opts-append=alist_speed_indicator-show_mounted_drive_speed=no".to_string(),
+                );
+            } else {
+                crate::libmpv::trace("[lc-1917] mpv_overlay 不可用 → 本次播放回退独立窗口模式");
+            }
+        }
         if let Some(t) = force_title {
             if !t.is_empty() {
                 args.push(format!("--force-media-title={t}"));
@@ -291,32 +445,29 @@ impl MpvSession {
         // [lc-1820] AI 增强组件就绪时注入 VapourSynth 运行环境：mpv 的 vapoursynth
         // 滤镜经 VSScript.dll（PATH 定位）加载组件内 Python；PATH 前置 runtime 与
         // vapoursynth 子目录。进程启动前设好，运行时切引擎无需再动环境。
-        // [lc-2004] TRT 扩展包不再用自带 Python3.14 VSScript 体系（mpv 内实测初始化
-        // 崩溃 0xC0000005，且原注入路径 Lib/site-packages/vapoursynth 在 TRT 包内根本
-        // 不存在=0x7e）。现在统一用基础包 VapourSynth R79/Python3.12 运行时承载，
-        // TRT 只贡献 vs-plugins C 插件（vstrt/akarin，API3 跨版本）+ nvinfer/cudart
-        // 运行库——实测 1080P 源 41.1ms/帧（1.01× 实时），比 DML 快约 20%。
+        // [lc-1823] 环境按超分档分流：tensorrt 档注入 TRT 扩展包运行时（Python3.14 体系，
+        // 与基础包 Python3.12 互斥——切档需重启播放器，lua 侧同款提示）；否则基础运行时。
         if let Some(root) = crate::enhance::enhance_root(&app) {
-            if crate::enhance::runtime_ready(&app) {
-                let rt = root.join("runtime");
-                let vs_py = rt.join("Lib").join("site-packages").join("vapoursynth");
+            let base_ok = crate::enhance::runtime_ready(&app);
+            let use_trt = crate::enhance::superres_engine_is_trt(&app)
+                && crate::enhance::tensorrt_ready(&app);
+            if base_ok || use_trt {
+                let (rt, vs_py) = if use_trt {
+                    let trt = root.join("tensorrt").join("runtime");
+                    (trt.clone(), trt.join("Lib").join("site-packages").join("vapoursynth"))
+                } else {
+                    let rt = root.join("runtime");
+                    let vs_py = rt.join("Lib").join("site-packages").join("vapoursynth");
+                    (rt, vs_py)
+                };
                 command.env("VSSCRIPT_PATH", vs_py.join("vsscript.dll"));
                 command.env("PYTHONNOUSERSITE", "1");
                 command.env("PYTHONDONTWRITEBYTECODE", "1");
                 if let Ok(path_var) = std::env::var("PATH") {
-                    let mut extra = format!("{};{}", rt.display(), vs_py.display());
-                    // 超分=TensorRT 档：TRT 的 C 插件与 TRT 运行库追加进 PATH
-                    // （引擎缓存/vpy 模型路径由 superres_trt.vpy 自行按绝对路径取）
-                    if crate::enhance::superres_engine_is_trt(&app)
-                        && crate::enhance::tensorrt_ready(&app)
-                    {
-                        let trt = root.join("tensorrt").join("runtime");
-                        extra.push(';');
-                        extra.push_str(&trt.join("vs-plugins").display().to_string());
-                        extra.push(';');
-                        extra.push_str(&trt.join("vs-plugins").join("vsmlrt-cuda").display().to_string());
-                    }
-                    command.env("PATH", format!("{};{}", extra, path_var));
+                    command.env(
+                        "PATH",
+                        format!("{};{};{}", rt.display(), vs_py.display(), path_var),
+                    );
                 }
             }
         }
@@ -346,6 +497,52 @@ impl MpvSession {
         if let Some(pid) = pid {
             crate::winproc::track(pid);
             crate::winproc::assign_kill_on_close_job(pid);
+            // [lc-1913] 照抄 Polaris：收编不依赖前端 —— spawn 后立即在 Rust 侧找窗口、
+            // 挂 owner、钉到主窗口矩形（geometry 已让首帧就落在正确位置，这里补上
+            // owner 关系 + 圆角 + 布局变化跟随）。前端 embed_enter/rect 仍可用，但不再是
+            // 必要路径（首页直连播放从此不依赖前端挂载内嵌层）。
+            if embed_mode {
+                let app2 = app.clone();
+                let pid2 = pid;
+                tauri::async_runtime::spawn(async move {
+                    // [lc-1917] 播放窗已在 spawn 前建好（geometry 即其矩形），这里只收编：
+                    // 挂 owner（=播放窗）→ 满屏钉位 → 启动跟随循环。
+                    for _ in 0..25u32 {
+                        let owner = app2
+                            .get_webview_window("mpv_overlay")
+                            .and_then(|w| w.hwnd().ok().map(|h| h.0 as isize));
+                        let Some(owner) = owner else {
+                            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                            continue;
+                        };
+                        // 复用会话时槽内 hwnd 仍有效（mpv 窗口已存在）；否则按 PID 枚举
+                        if crate::mpvwin::get_hwnd().is_some()
+                            || crate::mpvwin::find_mpv_hwnd(pid2).is_some()
+                        {
+                            match crate::mpvwin::adopt(pid2, owner) {
+                                Ok(_) => {
+                                    crate::mpvwin::embed_set_active(true);
+                                    crate::mpvwin::set_owner_follow(false);
+                                    crate::mpvwin::pin_to_owner(owner);
+                                    crate::mpvwin::spawn_overlay_follow(app2.clone());
+                                    // [lc-1949] 16ms 光标探针（spawn_overlay_probe）已随
+                                    // 「探针拨穿透位」机制退役：覆盖层常驻可点，视频区点击
+                                    // 由前端分流后经 mpv_forward_mouse PostMessage 转发。
+                                    crate::libmpv::trace(&format!(
+                                        "[lc-1913] 内嵌收编完成（spawn 侧）：pid={pid2} owner=mpv_overlay(0x{owner:X})，已满屏钉住"
+                                    ));
+                                }
+                                Err(e) => crate::libmpv::trace(&format!(
+                                    "[lc-1913] 内嵌收编失败（spawn 侧）: {e}"
+                                )),
+                            }
+                            return;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                    crate::libmpv::trace("[lc-1913] 内嵌收编重试超时（spawn 侧 5s），放弃");
+                });
+            }
         }
 
         // ── 2) 连 IPC（mpv 起得要一会儿，重试 ~20s）
@@ -393,7 +590,7 @@ impl MpvSession {
         }
 
         let tx = Arc::new(Mutex::new(Some(file)));
-        let pending: Arc<Mutex<HashMap<u64, std_mpsc::Sender<Value>>>> =
+        let pending: Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Value>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let next_id = Arc::new(AtomicU64::new(1));
         let pid_slot = Arc::new(Mutex::new(pid));
@@ -503,7 +700,11 @@ impl MpvSession {
                         match ev {
                             "start-file" => {
                                 *load_started2.lock().unwrap() = Some(std::time::Instant::now());
-                                let _ = app2.emit("mpv-load", json!({ "phase": "start" }));
+                                let t = title_slot.lock().unwrap().clone().unwrap_or_default();
+                                // [lc-1939] 覆盖层轮询快照同步加载态/片名
+                                pstate_update(&app2, "phase", json!("start"), true);
+                                pstate_update(&app2, "title", json!(t.clone()), true);
+                                emit_player(&app2, "mpv-load", json!({ "phase": "start", "title": t }));
                             }
                             "file-loaded" => {
                                 let took = load_started2
@@ -513,7 +714,10 @@ impl MpvSession {
                                     .map(|t| t.elapsed().as_millis())
                                     .unwrap_or(0);
                                 crate::libmpv::trace(&format!("mpv file-loaded（媒体就绪，加载耗时 {took}ms）"));
-                                let _ = app2.emit("mpv-load", json!({ "phase": "loaded" }));
+                                let t = title_slot.lock().unwrap().clone().unwrap_or_default();
+                                pstate_update(&app2, "phase", json!("loaded"), true);
+                                pstate_update(&app2, "title", json!(t.clone()), true);
+                                emit_player(&app2, "mpv-load", json!({ "phase": "loaded", "title": t }));
                                 // [lc-1841] start 只作用于本次加载（续播 seek 在加载时已消费）：
                                 // file-loaded 即清回 none，整季列表自动切下一集不会被误 seek。
                                 {
@@ -570,7 +774,8 @@ impl MpvSession {
                                         let _ = f.flush();
                                     }
                                 } else {
-                                    let _ = app2.emit("mpv-load", json!({ "phase": "ended", "reason": reason }));
+                                    pstate_update(&app2, "phase", json!("ended"), true);
+                                    emit_player(&app2, "mpv-load", json!({ "phase": "ended", "reason": reason }));
                                 }
                             }
                             _ => {}
@@ -603,6 +808,26 @@ impl MpvSession {
                     let Some(id) = v.get("id").and_then(|i| i.as_u64()) else {
                         continue;
                     };
+                    // [lc-1924] 先喂状态流（覆盖层 UI 数据源），再做原有业务处理
+                    {
+                        let data = v.get("data").cloned().unwrap_or(serde_json::Value::Null);
+                        match id {
+                            1 => pstate_update(&app2, "pos", data, false),
+                            2 => pstate_update(&app2, "dur", data, true),
+                            3 => pstate_update(&app2, "paused", data, true),
+                            4 => pstate_update(&app2, "speed", data, true),
+                            5 => pstate_update(&app2, "volume", data, true),
+                            6 => pstate_update(&app2, "fullscreen", data, true),
+                            7 => pstate_update(&app2, "buffering", data, true),
+                            8 => pstate_update(&app2, "cachePct", data, true),
+                            9 => pstate_update(&app2, "idle", data, true),
+                            10 => pstate_update(&app2, "plPos", data, true),
+                            11 => pstate_update(&app2, "plCount", data, true),
+                            12 => pstate_update(&app2, "percent", data, false),
+                            17 => pstate_update(&app2, "ontop", data, true),
+                            _ => {}
+                        }
+                    }
                     // [progress] 退出兜底：在 Rust 侧维护最后位置/当前集（见 fnos_progress）。
                     match id {
                         1 => {
@@ -714,6 +939,10 @@ impl MpvSession {
                         // 嵌入窗（--wid）下 mpv 的 update_fullscreen_state 会 early-return，
                         // 所以改这个属性只是状态标记，不会动窗口几何（已实测：几何不变）。
                         let on = v.get("data").and_then(|d| d.as_bool()).unwrap_or(false);
+                        // [lc-1947] 窗口级真全屏：不管这条 fullscreen 是按钮、双击画面、
+                        // ENTER 还是 ESC（embed-bridge）触发的，都在这里统一处理几何 / 置顶 /
+                        // 还原矩形 / 热区重算 —— 四条路径行为一致。
+                        crate::mpvwin::on_player_fullscreen_changed(&app2, on);
                         let mirrored = {
                             let mut g = fs_expect2.lock().unwrap();
                             let hit = *g == Some(on);
@@ -722,15 +951,78 @@ impl MpvSession {
                         };
                         if !mirrored {
                             // 用户从 mpv 侧（按键 / uosc 全屏按钮）改的 → 抛给前端切「内嵌 ↔ 全页 + 窗口全屏」
-                            let _ = app2.emit("mpv-fullscreen", json!({ "on": on }));
+                            emit_player(&app2, "mpv-fullscreen", json!({ "on": on }));
                         }
                         continue;
                     }
+                    if id == 14 {
+                        // [lc-1913] 内嵌退出桥：embed-bridge.lua 在 ESC（非全屏）置位。
+                        // 退出流程 Rust 侧自治（Polaris 同款，前端挂不挂内嵌层都能退）：
+                        // 停播 + 隐藏 mpv 窗口 + 清内嵌态 + 还原 uosc/osc script-opts；
+                        // 再给前端发 mpv-embed-exit 让 PlayerView（若挂载）卸载。
+                        let on = v.get("data").and_then(|d| d.as_bool()).unwrap_or(false);
+                        if on {
+                            let app3 = app2.clone();
+                            tauri::async_runtime::spawn(async move {
+                                crate::embed_exit_flow(app3).await;
+                            });
+                        }
+                        continue;
+                    }
+                    if id == 10 || id == 11 {
+                        // [lc-1914] osc-cinema 集数胶囊（E1/1）数据源：playlist-pos/count 变化
+                        // → script-message cinema-episode-meta（isEpisode="1" 当 count>1，
+                        // total=count，idx=0 基；lua 侧 clamp）。仅内嵌态发，独立窗口不干扰。
+                        let val = v.get("data").and_then(|d| d.as_i64()).unwrap_or(-1) as i32;
+                        if id == 10 {
+                            EP_POS.store(val, Ordering::SeqCst);
+                        } else {
+                            EP_COUNT.store(val, Ordering::SeqCst);
+                        }
+                        if crate::mpvwin::embed_is_active() {
+                            let count = EP_COUNT.load(Ordering::SeqCst);
+                            let pos = EP_POS.load(Ordering::SeqCst);
+                            if count > 0 && pos >= 0 {
+                                let tx_ep = Arc::clone(&tx_subtitle);
+                                let line = json!({
+                                    "command": ["script-message", "cinema-episode-meta",
+                                                if count > 1 { "1" } else { "0" },
+                                                count.to_string(), pos.to_string()]
+                                });
+                                let line = format!("{line}\n");
+                                std::thread::spawn(move || {
+                                    let mut g = tx_ep.lock().unwrap();
+                                    if let Some(f) = g.as_mut() {
+                                        let _ = f.write_all(line.as_bytes());
+                                        let _ = f.flush();
+                                    }
+                                });
+                            }
+                        }
+                        continue;
+                    }
+                    // [lc-1999] 这里原本是 id 15/16（鼠标位置）→ `overlay-mouse` 转发。
+                    // 该事件前端无任何监听，而 embed-bridge 每几毫秒写一次 → 读线程
+                    // 逐条 emit 把 WebView 事件循环灌满，点击因此排队变慢。整段删除。
                     if !OBSERVED.iter().any(|(i, _)| *i == id) {
                         continue;
                     }
                     if first_event.swap(false, Ordering::SeqCst) {
                         crate::libmpv::trace(&format!("IPC 事件流已通（首个属性变化 id={id}）"));
+                    }
+                    // [lc-1999] time-pos 限流 10Hz：mpv 按帧推送（实测 30~60 条/秒），
+                    // 每条都 emit 一次会让覆盖层整棵树按帧重渲染，点击排队变慢。
+                    // 进度条/剩余时间 10Hz 足够；pause/duration/seek 等仍即时。
+                    if id == 1 {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        let last = LAST_TIME_POS_EMIT_MS.load(Ordering::Relaxed);
+                        if now.saturating_sub(last) < 100 {
+                            continue;
+                        }
+                        LAST_TIME_POS_EMIT_MS.store(now, Ordering::Relaxed);
                     }
                     let _ = app2.emit(
                         "mpv-event",
@@ -792,25 +1084,42 @@ impl MpvSession {
         .await;
     }
 
-    /// 发一条命令（JSON 数组）并等回包（5s 超时）
+    /// 发一条命令（JSON 数组）并等回包（5s 超时）。
+    ///
+    /// [lc-1943] 等待改为异步（oneshot + `tokio::time::timeout`），不再用
+    /// `recv_timeout` 同步阻塞 worker 线程 —— 见 `pending` 字段注释。
+    /// [lc-1944] **写管道也移出 async 上下文**：mpv 事件循环被脚本/滤镜/换片占住时
+    /// 命名管道可能暂时不被读，`write_all` 会阻塞；它持着 `tx` 这把 **std** 锁，在
+    /// async fn 里同步阻塞就等于把 tokio worker 钉死。并发取样时多个 worker 一起被钉死，
+    /// Tauri 连 `invoke` 都调度不到 —— 实测一次全屏点击卡 7.5s（日志
+    /// `[lat] ui fullscreen 7523.9ms`，而 Rust→mpv 那几发 `set` 只用了 22ms）。
+    /// 交给 blocking 池后最多占一个池线程，executor 与其它命令完全不受影响。
+    /// 每次往返都量一次耗时：`[lat]` 行只在「慢 / 显式开启」时落盘，避免刷日志。
     pub async fn command(&self, cmd: Value) -> Result<Value, String> {
         let rid = self.next_id.fetch_add(1, Ordering::SeqCst);
-        let (tx, rx) = std_mpsc::channel();
+        let (tx, rx) = tokio::sync::oneshot::channel();
         self.pending.lock().unwrap().insert(rid, tx);
-        {
-            let mut guard = self.tx.lock().unwrap();
+        let line = json!({ "command": cmd, "request_id": rid }).to_string() + "\n";
+        let pipe = Arc::clone(&self.tx);
+        let wrote = tokio::task::spawn_blocking(move || {
+            let mut guard = pipe.lock().unwrap();
             let Some(f) = guard.as_mut() else {
-                return Err("mpv 进程已退出".into());
+                return Err("mpv 进程已退出".to_string());
             };
-            let line = json!({ "command": cmd, "request_id": rid }).to_string() + "\n";
-            if let Err(e) = f.write_all(line.as_bytes()) {
-                self.pending.lock().unwrap().remove(&rid);
-                return Err(format!("写 IPC 失败: {e}"));
-            }
-            let _ = f.flush();
+            f.write_all(line.as_bytes())
+                .and_then(|_| f.flush())
+                .map_err(|e| format!("写 IPC 失败: {e}"))
+        })
+        .await
+        .unwrap_or_else(|e| Err(format!("写 IPC 任务失败: {e}")));
+        if let Err(e) = wrote {
+            self.pending.lock().unwrap().remove(&rid);
+            return Err(e);
         }
-        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
-            Ok(v) => {
+        let started = std::time::Instant::now();
+        match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
+            Ok(Ok(v)) => {
+                lat_trace_cmd(&cmd, started.elapsed().as_millis() as u64);
                 let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("success");
                 if err == "success" {
                     Ok(v)
@@ -818,8 +1127,10 @@ impl MpvSession {
                     Err(err.to_string())
                 }
             }
+            Ok(Err(_)) => Err("mpv 会话已关闭".into()),
             Err(_) => {
                 self.pending.lock().unwrap().remove(&rid);
+                lat_trace_cmd(&cmd, 5000);
                 Err("mpv 响应超时".into())
             }
         }

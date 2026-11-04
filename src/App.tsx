@@ -9,6 +9,8 @@ import { listen } from "@tauri-apps/api/event";
 import { Lock as IcoLock } from "lucide-react";
 import { DetailView } from "./components/detail/DetailView";
 // [lc-1909] 软件内播放（内嵌播放页）：mpv 窗口由 Rust 侧钉到视频容器矩形
+import { PlayerView } from "./components/player/PlayerView";
+import { PlayerChrome } from "./components/player/PlayerChrome";
 // [lc-1654] 海报卡「⋯ → 编辑元数据」复用详情页同一套弹层
 import { MetaEditModal, type MetaTarget } from "./components/detail/MetaEditModal";
 // [lc-1720] 海报卡「⋯ → 刷新元数据」改为手动获取（TMDB/BGM 镜像搜索 + 本地覆盖）
@@ -101,6 +103,9 @@ function App() {
   // [lc-1647] 从首页横排直接点进「未识别文件夹」时的起始层（个人视频/网盘类库根层即文件夹）
   const [libFolder, setLibFolder] = useState<MediaItem | null>(null);
   const [detailItem, setDetailItem] = useState<MediaItem | null>(null);
+  // [lc-1909] 软件内播放层：DetailView 起播成功后挂上（playerOpenMode="app"）；
+  // 返回键（player_embed_leave stop=true 由 PlayerView 自己发）卸载回详情页。
+  const [player, setPlayer] = useState<{ title: string } | null>(null);
   // [lc-1654] 海报卡「⋯ → 编辑元数据」的目标（弹层挂在 App 根部，不塞进卡片）
   const [posterMetaTarget, setPosterMetaTarget] = useState<MetaTarget | null>(null);
   // [lc-1720] 海报卡「⋯ → 刷新元数据」→ 手动获取元数据弹窗
@@ -954,6 +959,12 @@ function App() {
     setPlayMsg("");
     invoke("play_item", { guid: t.guid })
       .then(() => {
+        // [lc-1913] 软件内播放（app 模式默认）：首页直连也挂满屏播放层 —— 不只是 UI，
+        // 更是同步缝隙的黑色底衬：mpv 钉窗滞后一帧时露出的是纯黑而非底层页面。
+        if (settings.playerOpenMode !== "window") {
+          setPlayer({ title: t.title ?? "" });
+          return;
+        }
         setPlayMsg(`已在独立播放器窗口打开${t.title ? `：${t.title}` : ""}`);
         window.setTimeout(() => setPlayMsg(""), 4000);
       })
@@ -961,7 +972,7 @@ function App() {
         setPlayMsg(`播放失败：${String(e)}`);
         window.setTimeout(() => setPlayMsg(""), 6000);
       });
-  }, [guest]);
+  }, [guest, settings.playerOpenMode]);
 
   const openItem = useCallback(
     (item: MediaItem) => {
@@ -1482,6 +1493,10 @@ function App() {
                 base={detailItem}
                 continueList={continueList}
                 webrsOn={!!settings.webrsPanelEnabled}
+                // [lc-1909] playerOpenMode="window"（独立窗口）时不传回调 → 详情页完全走既有路径
+                onEmbedPlay={
+                  settings.playerOpenMode === "window" ? undefined : (title) => setPlayer({ title })
+                }
                 onOpenTmdb={openTmdbRecommendation}
                 onOpenPerson={openPerson}
                 onBack={() => {
@@ -1609,6 +1624,8 @@ function App() {
         onSearchOpenItem={openSearchItem}
         searchDisabled={view === "login" || guest}
       />
+      {/* [lc-1909] 软件内播放层：盖在内容区/侧栏之上、标题栏之下（z-index 见 49-player.css） */}
+      {player && <PlayerView title={player.title} onExit={() => setPlayer(null)} />}
       {/* [lc-1993] 会话失效的内部报文永不上首页：即使其它路径把原始串塞进 err，
           这里也过滤掉，并交给统一处理链（下方兜底 effect）。 */}
       {err && !isAuthExpired(err) && view !== "login" && <div className="err global-err">{err}</div>}
@@ -1837,7 +1854,9 @@ function GuestLoginPrompt({ onClose, onGoLogin }: { onClose: () => void; onGoLog
 
 export default App;
 
-// [lc-2001] 播放器回到 lc-1907 独立 mpv 窗口形态：只有主窗一个根，覆盖层窗口退役。
+// [lc-1915] 双窗根：主窗口渲染完整应用；mpv_overlay（播放器专用窗，Polaris "MPV
+// Overlay" 同角色）只渲染悬浮控制层 —— 视频由 Rust 侧 mpv 窗口压在本窗之上。
 export function Root() {
-  return <App />;
+  const label = getCurrentWindow().label;
+  return label === "mpv_overlay" ? <PlayerChrome /> : <App />;
 }

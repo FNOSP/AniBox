@@ -236,12 +236,17 @@ impl MpvSession {
                 .clone()
                 .player_skin;
             crate::config::apply_player_skin(&app, &skin);
-            // [lc-2008] 玻璃皮肤：uosc 仍要加载（uosc_danmaku 的搜索/源管理菜单走它的
-            // menu API），但全部可视元素禁用 —— modernz 画底栏，uosc 只当菜单服务。
-            if skin == "glass" {
-                args.push("--script-opts-append=uosc-disable_elements=top_bar,timeline,controls,volume,pause_indicator,buffering_indicator,window_border".to_string());
-            }
         }
+        // [lc-2008] 玻璃皮肤：uosc 仍要加载（uosc_danmaku 的搜索/源管理菜单走它的
+        // menu API），但全部可视元素禁用 —— modernz 画底栏，uosc 只当菜单服务。
+        let glass_skin = app
+            .state::<crate::AppState>()
+            .config
+            .read()
+            .await
+            .clone()
+            .player_skin
+            == "glass";
 
         // ── 1) 启动 mpv.exe
         // [lc-1552] 改为 **Rust 直接 spawn**（原为 pwsh Start-Process 中转，白花 ~450ms）：
@@ -266,6 +271,12 @@ impl MpvSession {
             // 之前关掉是为了避免误拖，但用户反馈窗口无法移动，这里恢复默认行为。
             "--window-dragging=yes".to_string(),
             format!("--log-file={}", log_path.to_string_lossy()),
+            // [lc-2008] 玻璃皮肤：uosc 只当菜单服务（全部可视元素禁用）
+            (if glass_skin {
+                "--script-opts-append=uosc-disable_elements=top_bar,timeline,controls,volume,pause_indicator,buffering_indicator,window_border".to_string()
+            } else {
+                String::new()
+            }),
         ];
         // [lc-1559] 启动即加载（可选）：命令行直接带 M3U8/URL ⇒ 无 idle 空窗，
         // 不依赖 IPC（启动头几秒 IPC 命令会卡，见 lib.rs lc-1559 注释）。
@@ -326,7 +337,8 @@ impl MpvSession {
             }
         }
         command
-            .args(&args)
+            // [lc-2008] 玻璃皮肤非选中时上面的占位项为空串，过滤掉再传给 mpv
+            .args(args.iter().filter(|a| !a.is_empty()).collect::<Vec<_>>())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());

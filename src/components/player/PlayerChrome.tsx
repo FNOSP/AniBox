@@ -470,6 +470,13 @@ export function PlayerChrome() {
     };
   }, [wake]);
 
+  /* [lc-1991] 新会话（phase=start）同时唤醒控件层：覆盖层窗口跨会话常驻，
+   * 上一轮若是 mpv 侧退出（例如点到 mpv 自己 OSC 的窗控 → mpv quit），
+   * 控件层的 3s 自动隐藏可能停在 `pc-hidden`；下一次起播必须从可见态开始。 */
+  useEffect(() => {
+    if (st.phase === "start") wake();
+  }, [st.phase, wake]);
+
   /* ── [lc-1988] NVIDIA 覆盖层拦截的一次性提示 ──
    * Rust fs-snap 判定全屏点击被 NVIDIA overlay 截走（根窗进程含 nvidia）时广播本事件。
    * 提示 8s 自散；每次覆盖层页面生命周期只弹一次，不再打扰。 */

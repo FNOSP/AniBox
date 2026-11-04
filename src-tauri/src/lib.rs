@@ -5622,6 +5622,9 @@ pub fn run() {
             }
             if let tauri::RunEvent::Exit = event {
                 libmpv::trace("[lc-1901] RunEvent::Exit 清理开始");
+                // [lc-1991] 退出期标记：mpv 被 IPC quit 收掉后跟随循环不得再触发
+                // embed_exit_flow（退出流程里 show/聚焦主窗会闪一下）。
+                crate::mpvwin::set_app_exiting();
                 // [lc-1747] 销毁 webrs 常驻隐藏窗（嗅探 / 验证单例），别把 WebView2 进程留到退出后
                 webrs_webview::shutdown_webviews(app_handle);
                 libmpv::trace("[lc-1901] webrs 隐藏窗已销毁");

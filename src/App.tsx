@@ -105,8 +105,7 @@ function App() {
   const [detailItem, setDetailItem] = useState<MediaItem | null>(null);
   // [lc-1909] 软件内播放层：DetailView 起播成功后挂上（playerOpenMode="app"）；
   // 返回键（player_embed_leave stop=true 由 PlayerView 自己发）卸载回详情页。
-  // [lc-1995] retry = 同一集的「重新起播」闭包（播放层失败卡用），避免失败后只能返回。
-  const [player, setPlayer] = useState<{ title: string; retry?: () => void } | null>(null);
+  const [player, setPlayer] = useState<{ title: string } | null>(null);
   // [lc-1654] 海报卡「⋯ → 编辑元数据」的目标（弹层挂在 App 根部，不塞进卡片）
   const [posterMetaTarget, setPosterMetaTarget] = useState<MetaTarget | null>(null);
   // [lc-1720] 海报卡「⋯ → 刷新元数据」→ 手动获取元数据弹窗
@@ -963,7 +962,7 @@ function App() {
         // [lc-1913] 软件内播放（app 模式默认）：首页直连也挂满屏播放层 —— 不只是 UI，
         // 更是同步缝隙的黑色底衬：mpv 钉窗滞后一帧时露出的是纯黑而非底层页面。
         if (settings.playerOpenMode !== "window") {
-          setPlayer({ title: t.title ?? "", retry: () => play(t) });
+          setPlayer({ title: t.title ?? "" });
           return;
         }
         setPlayMsg(`已在独立播放器窗口打开${t.title ? `：${t.title}` : ""}`);
@@ -1496,9 +1495,7 @@ function App() {
                 webrsOn={!!settings.webrsPanelEnabled}
                 // [lc-1909] playerOpenMode="window"（独立窗口）时不传回调 → 详情页完全走既有路径
                 onEmbedPlay={
-                  settings.playerOpenMode === "window"
-                    ? undefined
-                    : (title, retry) => setPlayer({ title, retry })
+                  settings.playerOpenMode === "window" ? undefined : (title) => setPlayer({ title })
                 }
                 onOpenTmdb={openTmdbRecommendation}
                 onOpenPerson={openPerson}
@@ -1628,13 +1625,7 @@ function App() {
         searchDisabled={view === "login" || guest}
       />
       {/* [lc-1909] 软件内播放层：盖在内容区/侧栏之上、标题栏之下（z-index 见 49-player.css） */}
-      {player && (
-        <PlayerView
-          title={player.title}
-          onRetry={player.retry}
-          onExit={() => setPlayer(null)}
-        />
-      )}
+      {player && <PlayerView title={player.title} onExit={() => setPlayer(null)} />}
       {/* [lc-1993] 会话失效的内部报文永不上首页：即使其它路径把原始串塞进 err，
           这里也过滤掉，并交给统一处理链（下方兜底 effect）。 */}
       {err && !isAuthExpired(err) && view !== "login" && <div className="err global-err">{err}</div>}

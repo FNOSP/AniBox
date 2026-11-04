@@ -101,7 +101,7 @@ pub fn emit_player(app: &tauri::AppHandle, event: &str, payload: serde_json::Val
     let _ = app.emit(event, payload);
 }
 
-const OBSERVED: [(u64, &str); 18] = [
+const OBSERVED: [(u64, &str); 17] = [
     (1, "time-pos"),
     (2, "duration"),
     (3, "pause"),
@@ -133,10 +133,6 @@ const OBSERVED: [(u64, &str); 18] = [
     (16, "user-data/anibox-mouse-y"),
     // [lc-1939] 置顶态：覆盖层顶栏「置顶」按钮的高亮/动作依据
     (17, "ontop"),
-    // [lc-1995] 首帧埋点：`video-params` 在**第一个视频帧解出并进入 VO** 时从 null
-    // 变成表（vo-configured 不行 —— force-window=immediate 让它启动即 true，永远
-    // 等不到变化）。用来区分「mpv 还没出画」与「已经出画但被盖住」。
-    (18, "video-params"),
 ];
 
 /// mpv IPC 连接类型：Windows 是命名管道（用 File 打开），
@@ -399,21 +395,12 @@ impl MpvSession {
                         .to_string(),
                 );
                 args.push("--script-opts-append=uosc-idle_branding=no".to_string());
-                // [lc-1940] 只有覆盖层 UI 真的显示时才关掉 mpv 侧全部 UI 绘制；
-                // 兜底路径保持脚本默认（fntv_osc 自绘），这就是 lc-1938 的形态 ——
-                // 两条路径各自只有**一套** UI，绝不并存。
+                // [lc-1940] 只有覆盖层 UI 真的显示时才关掉 Lua OSC 绘制；
+                // 兜底路径保持脚本默认（画自己的 OSC），这就是 lc-1938 的形态。
                 if overlay_ui {
-                    // [lc-1994] 架构契约：覆盖层是唯一控件层。
-                    //   · fntv_osc：零绘制 + 零热区（窗口模式与全屏一致），左键语义交给 input.conf；
-                    //   · uosc：整脚本早退（时间轴/控件/鼠标 force 绑定/uosc 菜单全部不存在）；
-                    //   · osd-level=0（mpv.conf）：mpv 连 OSD 文本都不画。
+                    // [lc-1939] 控件由 Tauri 覆盖层（PlayerChrome）绘制：Lua OSC 只保留
+                    // input.conf 的左键分发（画面区点击→暂停），一个像素都不画。
                     args.push("--script-opts-append=fntv_osc-overlay_controls=yes".to_string());
-                    args.push("--script-opts-append=uosc-anibox_disabled=yes".to_string());
-                    // seek 提示浮层（视频上盖字的 OSD）同属 mpv 侧 UI，覆盖层接管时一并停用
-                    args.push("--script-opts-append=seek-feedback-anibox_disabled=yes".to_string());
-                    crate::libmpv::trace(
-                        "[lc-1994] 契约快照(启动参数)：osc=no osd-level=0 osd-bar=no uosc-disabled=yes fntv_osc-overlay_controls=yes → mpv 侧零 UI，左键=pause 双击=fullscreen 滚轮=volume 右键=ignore",
-                    );
                 }
                 args.push("--script-opts-append=uosc-anibox_hide_timeline=yes".to_string());
                 // [lc-1924] 原生 UI 全面停用：控件与提示都由 App 覆盖层 DOM 承担
@@ -490,9 +477,6 @@ impl MpvSession {
         {
             command.creation_flags(0x0800_0000);
         }
-        // [lc-1995] 起播时序基准：spawn 当刻。后续 start-file / file-loaded / 首帧
-        // 都换算成「距 spawn 多少 ms」，超阈值打警告 —— 黑屏时先看这几条。
-        let spawn_at = std::time::Instant::now();
         let child = command
             .spawn()
             .map_err(|e| format!("拉起 mpv 失败: {e}"))?;
@@ -639,9 +623,6 @@ impl MpvSession {
         let tx_subtitle = Arc::clone(&tx);
             std::thread::spawn(move || {
                 let first_event = std::sync::atomic::AtomicBool::new(true);
-                // [lc-1995] 起播各阶段时刻（spawn → start-file → file-loaded → 首帧）
-                let mut start_file_at: Option<std::time::Instant> = None;
-                let mut first_frame_logged = false;
                 let mut pos_req: Option<u64> = None;
                 let mut title_req: Option<u64> = None;
                 let reader = BufReader::new(read_file);
@@ -713,14 +694,6 @@ impl MpvSession {
                     if ev != "property-change" {
                         match ev {
                             "start-file" => {
-                                let now = std::time::Instant::now();
-                                start_file_at = Some(now);
-                                first_frame_logged = false;
-                                let ms = now.duration_since(spawn_at).as_millis();
-                                crate::libmpv::trace(&format!(
-                                    "[lc-1995] 起播时序 spawn→start-file={ms}ms{}",
-                                    if ms > 2000 { "（超 2s 阈值：mpv 启动/脚本加载偏慢）" } else { "" }
-                                ));
                                 *load_started2.lock().unwrap() = Some(std::time::Instant::now());
                                 let t = title_slot.lock().unwrap().clone().unwrap_or_default();
                                 // [lc-1939] 覆盖层轮询快照同步加载态/片名
@@ -736,19 +709,6 @@ impl MpvSession {
                                     .map(|t| t.elapsed().as_millis())
                                     .unwrap_or(0);
                                 crate::libmpv::trace(&format!("mpv file-loaded（媒体就绪，加载耗时 {took}ms）"));
-                                // [lc-1995] start-file → file-loaded（真解码/解封装耗时）；
-                                // 与 spawn 口径分开看：前者是网络/容器，后者含 mpv 启动期。
-                                {
-                                    let now = std::time::Instant::now();
-                                    let from_start = start_file_at
-                                        .map(|t| now.duration_since(t).as_millis())
-                                        .unwrap_or(0);
-                                    let total = now.duration_since(spawn_at).as_millis();
-                                    crate::libmpv::trace(&format!(
-                                        "[lc-1995] 起播时序 start-file→file-loaded={from_start}ms spawn→file-loaded={total}ms{}",
-                                        if total > 2000 { "（超 2s 阈值：距首帧前用户看到的是黑窗）" } else { "" }
-                                    ));
-                                }
                                 let t = title_slot.lock().unwrap().clone().unwrap_or_default();
                                 pstate_update(&app2, "phase", json!("loaded"), true);
                                 pstate_update(&app2, "title", json!(t.clone()), true);
@@ -808,14 +768,6 @@ impl MpvSession {
                                         let _ = f.write_all(line.as_bytes());
                                         let _ = f.flush();
                                     }
-                                } else if reason == "redirect" {
-                                    // [lc-1995] 播放列表文件（M3U）被 mpv 解析完成时，它自身也会
-                                    // 触发 end-file reason=redirect —— 这不是单集结束。旧实现照样
-                                    // 广播 phase:"ended"，前端所有「播完」监听（进度结算 / 详情刷新 /
-                                    // 手柄播放态）会在起播第 3 秒被误触发一次。
-                                    crate::libmpv::trace(
-                                        "[lc-1995] end-file reason=redirect（播放列表解析）→ 不广播「播放结束」",
-                                    );
                                 } else {
                                     pstate_update(&app2, "phase", json!("ended"), true);
                                     emit_player(&app2, "mpv-load", json!({ "phase": "ended", "reason": reason }));
@@ -869,20 +821,6 @@ impl MpvSession {
                             12 => pstate_update(&app2, "percent", data, false),
                             17 => pstate_update(&app2, "ontop", data, true),
                             _ => {}
-                        }
-                    }
-                    // [lc-1995] 首帧（video-params 就绪）：黑屏排障的终点线。
-                    if id == 18 {
-                        let has = v.get("data").map(|d| !d.is_null()).unwrap_or(false);
-                        if has && !first_frame_logged && start_file_at.is_some() {
-                            first_frame_logged = true;
-                            let ms = std::time::Instant::now()
-                                .duration_since(spawn_at)
-                                .as_millis();
-                            crate::libmpv::trace(&format!(
-                                "[lc-1995] 起播时序 spawn→first-frame={ms}ms{}",
-                                if ms > 2000 { "（超 2s 阈值：这段就是用户看到的黑窗）" } else { "" }
-                            ));
                         }
                     }
                     // [progress] 退出兜底：在 Rust 侧维护最后位置/当前集（见 fnos_progress）。

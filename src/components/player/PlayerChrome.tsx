@@ -1,14 +1,5 @@
 /* [lc-1939] 播放器覆盖层 UI —— 视觉模型照抄 Polaris 的 mpv-overlay。
  *
- * [lc-1994] 单 UI 所有权（架构契约）：mpv 只管播放与窗口拖放，**所有**控件/菜单/提示
- * 都在本层 DOM 自绘。配套改动：
- *   · mpv 侧零 UI：uosc 整脚本停用、fntv_osc 窗口/全屏一致零绘制零热区、osd-level=0、
- *     input.conf 左键回归 `cycle pause`（不再按坐标分派控件）；
- *   · 隐藏态控件带：心跳**照常上报隐藏态矩形** → Rust 探针把这一带保持可点 →
- *     落在其中的点击由 onDown 的 `wake:band` 吞掉并唤出控件（绝不转发成 pause）；
- *   · 埋点：每次 pointerdown 打 `[lc-1994] down route=…`（local / fwd / wake:band /
- *     swallow:*），与 Rust `[lc-1994] owner=…` / `[lc-1994] fwd-recv` 逐行对账。
- *
  * [lc-1974] 全屏废除穿透机制（用户第 N 次实证后的模式级修法）：
  *   · 全屏期 Rust 把穿透位锁死为「恒可点」（FULLSCREEN_INPUT_LOCK，任何路径不得置
  *     WS_EX_TRANSPARENT），覆盖层整窗收输入 —— 控件点击零等待，不再依赖 hover 链
@@ -347,30 +338,6 @@ type MenuPlacement = {
   bridgeTop: number;
 };
 
-/* ── [lc-1994] 控件带（含隐藏态）几何 ──
- * 契约：控件隐藏时点「控件区域」必须唤出控件，而**不是**变成暂停/播放。
- * 隐藏态下覆盖层在 OS 层仍可能可点（探针把底部带翻成可点，见 Rust
- * `hotzones_evaluate` + 心跳上报「含隐藏态」的矩形），这一击落在 WebView 里时
- * 由这里按几何吞掉。
- *
- *   · `chromeHidden()`：控件层是否处于 auto-hide（根节点 `.pc-hidden`）；
- *   · `inAnyChromeRect()`：CSS 视口点是否落在任一 `[data-chrome-hit]` 矩形内。
- *     与 `inVisibleChromeRect` 的区别是**不按 pointer-events 过滤隐藏态** ——
- *     隐藏态的 rect 依旧可量（只有 opacity/位移），正是我们要唤醒的那一带。 */
-function chromeHidden(): boolean {
-  return !!document.querySelector(".player-chrome.pc-hidden");
-}
-
-function inAnyChromeRect(x: number, y: number): boolean {
-  const nodes = document.querySelectorAll<HTMLElement>("[data-chrome-hit]");
-  for (let i = 0; i < nodes.length; i++) {
-    const r = nodes[i].getBoundingClientRect();
-    if (r.width <= 0 || r.height <= 0) continue;
-    if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return true;
-  }
-  return false;
-}
-
 export function PlayerChrome() {
   const [st, setSt] = useState<PState>({});
   const [visible, setVisible] = useState(true);
@@ -502,13 +469,6 @@ export function PlayerChrome() {
       if (hideTimer.current) window.clearTimeout(hideTimer.current);
     };
   }, [wake]);
-
-  /* [lc-1991] 新会话（phase=start）同时唤醒控件层：覆盖层窗口跨会话常驻，
-   * 上一轮若是 mpv 侧退出（例如点到 mpv 自己 OSC 的窗控 → mpv quit），
-   * 控件层的 3s 自动隐藏可能停在 `pc-hidden`；下一次起播必须从可见态开始。 */
-  useEffect(() => {
-    if (st.phase === "start") wake();
-  }, [st.phase, wake]);
 
   /* ── [lc-1988] NVIDIA 覆盖层拦截的一次性提示 ──
    * Rust fs-snap 判定全屏点击被 NVIDIA overlay 截走（根窗进程含 nvidia）时广播本事件。
@@ -710,14 +670,6 @@ export function PlayerChrome() {
             request(false, "probe-invalid");
             return;
           }
-          // [lc-1994] 隐藏态控件带：保持「可点」（不拨回穿透），等用户这一击由
-          // onDown 的 `wake:band` 吞掉并唤出控件。否则探针会每拍和 Rust 热区直翻
-          // 互相拉扯（request(false) → 穿透 → 探针翻回可点），点击仍有概率漏成 pause。
-          if (chromeHidden() && inAnyChromeRect(pt.x, pt.y)) {
-            hoverInteractive.current = true;
-            request(true, "probe-band");
-            return;
-          }
           applyHover(document.elementFromPoint(pt.x, pt.y), "probe");
         }),
         listen("overlay-mouse-activity", () => wakeRef.current()),
@@ -738,13 +690,6 @@ export function PlayerChrome() {
     // 可交互窗口内的 mousemove 精化（穿透态下收不到该事件，零开销；Polaris checkHoverState 同位）
     const onMouseMove = (e: MouseEvent) => {
       if (fwdRef.current || dragLock.current) return;
-      // [lc-1994] 隐藏态控件带 = 可交互（与 Rust 探针热区直翻同一判定）：
-      // 不拨回穿透，等用户这一击被 onDown 的 `wake:band` 吞掉并唤出控件。
-      if (chromeHidden() && inAnyChromeRect(e.clientX, e.clientY)) {
-        hoverInteractive.current = true;
-        request(true, "mousemove-band");
-        return;
-      }
       const el = e.target instanceof Element ? e.target : document.elementFromPoint(e.clientX, e.clientY);
       applyHover(el, "mousemove");
     };
@@ -783,10 +728,8 @@ export function PlayerChrome() {
    * 1s 心跳把 `[data-chrome-hit]` 矩形（CSS 视口坐标）+ 视口尺寸交给 Rust；
    * 探针每拍直接对「光标落在控件带内」翻可点位，完全不依赖 elementFromPoint ——
    * WebView 判定链全挂（JS 死 / 事件丢 / 映射错）时控件仍可点。
-   * [lc-1994] **隐藏态也照样上报**（不再按 pointer-events 过滤）：契约要求「控件隐藏
-   * 时点控件区域 → 唤出控件，而不是暂停」。隐藏态若按空表上报，探针就不会把这一带
-   * 翻成可点，点击会直接穿透给 mpv 变成 pause —— 与契约相反。隐藏态矩形仍可量
-   * （只有 opacity/位移），翻成可点后由前端 onDown 的 `wake:band` 分支吞击唤出。
+   * chrome 隐藏（容器 opacity:0 + pointer-events:none）→ 有效 pointer-events 过滤
+   * （与 elementFromPoint 同一规则）→ 上报空表 → 点击照旧穿透。
    * resize / 全屏切换即时补报；卸载时上报空表 + 零视口（Rust 侧回固定带兜底语义）。 */
   useEffect(() => {
     let disposed = false;
@@ -797,7 +740,19 @@ export function PlayerChrome() {
       const zones: Array<[number, number, number, number]> = [];
       document.querySelectorAll<HTMLElement>("[data-chrome-hit]").forEach((el) => {
         try {
-          // [lc-1994] 不按 pointer-events 过滤：隐藏态矩形势必继续上报（见块注释）。
+          // 有效 pointer-events 判定（与 elementFromPoint 同一规则）：chrome 隐藏 =
+          // 容器 opacity:0 + pointer-events:none，opacity 不继承但 pointer-events
+          // 生效于子树，沿祖先链查 none 即可精确滤掉隐藏态控件。
+          let hidden = false;
+          let anc: HTMLElement | null = el;
+          while (anc) {
+            if (getComputedStyle(anc).pointerEvents === "none") {
+              hidden = true;
+              break;
+            }
+            anc = anc.parentElement;
+          }
+          if (hidden) return;
           const r = el.getBoundingClientRect();
           if (r.width < 2 || r.height < 2 || r.bottom <= 0 || r.top >= vh || r.right <= 0 || r.left >= vw) return;
           const x = Math.max(0, r.left);
@@ -874,32 +829,6 @@ export function PlayerChrome() {
       if (el && !el.isConnected) return true;
       return !!(el && el.closest("[data-chrome-hit]"));
     };
-    /* [lc-1990] 几何兜底用：光标 CSS 点是否落在任一「有效可见」控件的矩形内。
-     * 可见判定与热区上报同一套规则（pointer-events 沿祖先链为 none = 隐藏态控件，
-     * 不参与兜底 —— 隐藏控件带内的点击必须照旧转发 mpv，不能被兜底吞掉）。 */
-    const inVisibleChromeRect = (x: number, y: number) => {
-      const nodes = document.querySelectorAll<HTMLElement>("[data-chrome-hit]");
-      for (let i = 0; i < nodes.length; i++) {
-        const el = nodes[i];
-        try {
-          let hidden = false;
-          let anc: HTMLElement | null = el;
-          while (anc) {
-            if (getComputedStyle(anc).pointerEvents === "none") {
-              hidden = true;
-              break;
-            }
-            anc = anc.parentElement;
-          }
-          if (hidden) continue;
-          const r = el.getBoundingClientRect();
-          if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return true;
-        } catch {
-          /* 单个节点异常不拖垮整次判定 */
-        }
-      }
-      return false;
-    };
     const mkFlags = (e: MouseEvent) => {
       // MK_*：0x1 左键 / 0x2 右键 / 0x4 Shift / 0x8 Ctrl / 0x10 中键
       let f = 0;
@@ -931,27 +860,16 @@ export function PlayerChrome() {
       const el = e.target instanceof Element ? e.target : null;
       const ef = document.elementFromPoint(e.clientX, e.clientY);
       void invoke("lat_trace", {
-        msg: `lc-1994 down route=${route} hidden=${chromeHidden() ? 1 : 0} target=${describeNode(
-          el,
-        )} efpt=${describeNode(ef)} btn=${e.button} x=${Math.round(e.clientX)} y=${Math.round(
-          e.clientY,
-        )} dpr=${dpr()}`,
+        msg: `lc-1988 down ${route} target=${describeNode(el)} efpt=${describeNode(
+          ef,
+        )} btn=${e.button} x=${Math.round(e.clientX)} y=${Math.round(e.clientY)} dpr=${dpr()}`,
       }).catch(() => {});
     };
-    /* [lc-1990] CSS → mpv 客户区物理像素：唯一、显式的换算点。dpr() 就是 WebView 的
-     * 真实 CSS↔物理比（实机对账 lc-1990：clientX*dpr 与 Rust fs-snap 光标物理坐标
-     * 逐像素一致，dpr=1.75/3840x2160 与 1.72 全部成立）——分流判定（overChrome /
-     * elementFromPoint / 几何兜底）全程留在 CSS 域，只有转发 mpv 这一步换物理。 */
-    const cssToMpvPhysical = (e: MouseEvent) => ({
-      x: Math.round(e.clientX * dpr()),
-      y: Math.round(e.clientY * dpr()),
-    });
     const send = (kind: string, e: MouseEvent, delta = 0) => {
-      const pt = cssToMpvPhysical(e);
       void invoke("mpv_forward_mouse", {
         kind,
-        x: pt.x,
-        y: pt.y,
+        x: Math.round(e.clientX * dpr()),
+        y: Math.round(e.clientY * dpr()),
         flags: mkFlags(e),
         delta,
       }).catch(() => {});
@@ -963,9 +881,9 @@ export function PlayerChrome() {
       const chrome = overChrome(e.target);
       // 悬停态喂给 3s 自动隐藏的判定：光标停在控件上时不隐藏（旧探针 hot 位语义）
       hoverInteractive.current = chrome;
-      // [lc-1994] 输入归属决策日志：**每次按下**都打一行（local / fwd / wake:band /
-      // swallow:*），与 Rust `[lc-1994] fwd-recv` / 穿透位变化行逐行对账。
-      const loggable = e.button === 0 || e.button === 1 || e.button === 2;
+      // [lc-1988] 分流日志：全屏 + 按键类点击才打（与 Rust `[lc-1988] fwd-recv` 对账）
+      const loggable =
+        stRef.current.fullscreen && (e.button === 0 || e.button === 1 || e.button === 2);
       if (chrome) {
         if (loggable) routeLog("local", e);
         return;
@@ -976,24 +894,6 @@ export function PlayerChrome() {
         return;
       }
       if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
-      // [lc-1994] 隐藏态控件带：点控件区域必须**唤出控件**，不能变成暂停/播放。
-      // 判定用几何（rect 在隐藏态仍可量），不依赖 pointer-events / elementFromPoint ——
-      // 隐藏态下 target 只能是根节点或空白，DOM 命中在这里没有信息量。
-      if (chromeHidden() && inAnyChromeRect(e.clientX, e.clientY)) {
-        if (loggable) routeLog("wake:band", e);
-        hoverInteractive.current = true;
-        wake();
-        return;
-      }
-      // [lc-1990] 几何兜底（纯 CSS 域内判断，坐标不换算）：全屏下若 DOM 分流判「空白」
-      // 但光标落在任一可见控件的 CSS 矩形内 —— DOM 命中与视觉错位（WebView 输入变换 /
-      // 布局抖动类问题的直接特征）—— 这一击按 local 处理不转发（转发必然表现为
-      // 「点啥都暂停」），并把控件带标记为可交互防 3s 自动隐藏。
-      if (stRef.current.fullscreen && inVisibleChromeRect(e.clientX, e.clientY)) {
-        if (loggable) routeLog("swallow:band", e);
-        hoverInteractive.current = true;
-        return;
-      }
       if (loggable) routeLog("fwd", e);
       // 上一轮按下没等到抬起（mpv 原生拖窗的 modal move loop 会吞掉释放事件）：
       // 先补一发 up 清掉 mpv 的按钮态，避免下一次点击被它的双击合成器误判。
@@ -1020,11 +920,8 @@ export function PlayerChrome() {
     const onMove = (e: PointerEvent) => {
       // 控件续显由真实 mousemove 驱动（旧「探针 overlay-cursor」通道已退役）
       wake();
-      // [lc-1994] 隐藏态控件带也算「悬在控件上」：保持可点、不把 move 转给 mpv，
-      // 与探针热区直翻的判定一致（否则 hover 事务每拍拨回穿透，点击会漏成 pause）。
-      const overBand = chromeHidden() && inAnyChromeRect(e.clientX, e.clientY);
-      hoverInteractive.current = overChrome(e.target) || overBand;
-      if (overChrome(e.target) || overBand) return;
+      hoverInteractive.current = overChrome(e.target);
+      if (overChrome(e.target)) return;
       pendingMove = e;
       if (!moveRaf) moveRaf = window.requestAnimationFrame(flushMove);
     };

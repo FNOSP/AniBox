@@ -2545,8 +2545,6 @@ async fn play_item(
     // [lc-1949] **点击「播放」当刻**就收主窗、亮覆盖层（用户指定：主窗任何一帧都不许漏）。
     // 这里之后的所有失败路径都经 `gate_boot_failure` 唤回主窗（player_overlay_abort）。
     let booted = boot_player_overlay_at_click(&app);
-    // [lc-1995] 起播代次：与 launch 返回时的代次比对，识别「起播期间用户已退出」。
-    let boot_epoch = crate::mpvwin::embed_epoch();
 
     // [lc-1551] 顺序重排：**mpv 先起来**，网络准备全部并行。
     //
@@ -2878,20 +2876,6 @@ async fn play_item(
     // abort 只覆盖 spawn/IPC 失败路径，这里兜住其余全部）。
     gate_boot_failure(&app, booted, launch_res)?;
 
-    // [lc-1995] 起播期被取消（用户按 ESC / 点覆盖层的关闭键）：主窗已被唤回、mpv 已被
-    // stop，这里**绝不能再按成功返回** —— 否则前端 `.then(() => setPlayer(...))` 会照常
-    // 挂上播放层，用户看到的就是「黑屏 + 顶栏标题」且没有任何可操作提示（2026-11-04 实机复现：
-    // `[  162891ms] embed 退出` 之后 `[  163089ms] file-loaded`、`[  163128ms] end-file reason=stop`，
-    // 前端仍在 `[  163226ms] embed_enter` 挂了播放层）。
-    #[cfg(target_os = "windows")]
-    if booted && crate::mpvwin::embed_epoch() != boot_epoch {
-        crate::libmpv::trace(&format!(
-            "[lc-1995] 起播期会话已被取消（epoch {boot_epoch}→{}）→ 不挂播放层，返回可恢复错误",
-            crate::mpvwin::embed_epoch()
-        ));
-        return Err("播放已取消".into());
-    }
-
     // [lc-1751] PotPlayer 整季面板追加（对标 Fntv-Plus potplayer.ts populatePlaylistPanel，
     // lc-297）：起播只带点击集；窗口就绪后把其余集以可读名 relay URL 经 `/Current /add`
     // 追加进 PotPlayer 播放列表面板 —— 面板显示整季、本集播完由 PotPlayer 顺序连播。
@@ -3082,58 +3066,49 @@ async fn player_embed_enter(app: AppHandle, state: State<'_, AppState>) -> Resul
         // 播放器消失）。走 uosc 的 disable_elements 通道（handle_options → Manager:disable
         // 会运行时销毁/重建元素），一个键搞定且不碰 top_bar_* 三个独立开关；退出按原串还原。
         // 失败不阻塞（顶栏多显一轮，下次 enter 再试）。
-        // [lc-1994] 覆盖层接管 UI 时**整段跳过**：控件/菜单已全部由覆盖层 DOM 承担，
-        // mpv 侧不允许再被拨任何 UI 开关。旧 PlayerView（主窗内嵌页）仍会调本命令，
-        // 这个分支保证它对覆盖层路径零副作用（uosc 在启动参数里已整脚本停用）。
-        if crate::mpvwin::overlay_ui_ready() {
-            crate::libmpv::trace(
-                "[lc-1994] embed_enter：覆盖层接管 UI → 跳过 uosc/osc-cinema script-opts 拨动",
-            );
+        let orig = m
+            .command(json!(["get_property", "script-opts"]))
+            .await
+            .ok()
+            .and_then(|v| v.get("data").and_then(|d| d.as_str()).map(|s| s.to_string()))
+            .unwrap_or_default();
+        crate::mpvwin::save_script_opts(orig.clone());
+        // [lc-1912] 内嵌观感 = Polaris 影院模式：uosc 全家桶让位（其 conf 同款 disable 集），
+        // osc-cinema.lua 接管底部影院控制条（细 seekbar + 圆形按钮 + 缩略图 + 3s 自动隐藏）。
+        // uosc 脚本本体保留（osc-cinema 借它的 open-menu 弹菜单），只禁元素。
+        const EMBED_UOSC_DISABLED: &[&str] = &[
+            "top_bar",
+            "timeline",
+            "controls",
+            "volume",
+            "pause_indicator",
+            "buffering_indicator",
+            "window_border",
+        ];
+        // 基值从原串读（不硬编码 conf 现值），去掉本轮要禁的元素后追加，避免重复 enter 叠写
+        let base_disable = orig
+            .split(',')
+            .find_map(|s| s.trim().strip_prefix("uosc-disable_elements="))
+            .unwrap_or("")
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty() && !EMBED_UOSC_DISABLED.contains(s))
+            .collect::<Vec<_>>()
+            .join(",");
+        let disable = if base_disable.is_empty() {
+            EMBED_UOSC_DISABLED.join(",")
         } else {
-            let orig = m
-                .command(json!(["get_property", "script-opts"]))
-                .await
-                .ok()
-                .and_then(|v| v.get("data").and_then(|d| d.as_str()).map(|s| s.to_string()))
-                .unwrap_or_default();
-            crate::mpvwin::save_script_opts(orig.clone());
-            // [lc-1912] 内嵌观感 = Polaris 影院模式：uosc 全家桶让位（其 conf 同款 disable 集），
-            // osc-cinema.lua 接管底部影院控制条（细 seekbar + 圆形按钮 + 缩略图 + 3s 自动隐藏）。
-            // uosc 脚本本体保留（osc-cinema 借它的 open-menu 弹菜单），只禁元素。
-            const EMBED_UOSC_DISABLED: &[&str] = &[
-                "top_bar",
-                "timeline",
-                "controls",
-                "volume",
-                "pause_indicator",
-                "buffering_indicator",
-                "window_border",
-            ];
-            // 基值从原串读（不硬编码 conf 现值），去掉本轮要禁的元素后追加，避免重复 enter 叠写
-            let base_disable = orig
-                .split(',')
-                .find_map(|s| s.trim().strip_prefix("uosc-disable_elements="))
-                .unwrap_or("")
-                .split(',')
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty() && !EMBED_UOSC_DISABLED.contains(s))
-                .collect::<Vec<_>>()
-                .join(",");
-            let disable = if base_disable.is_empty() {
-                EMBED_UOSC_DISABLED.join(",")
-            } else {
-                format!("{base_disable},{}", EMBED_UOSC_DISABLED.join(","))
-            };
-            let merged = merge_script_opts(
-                orig,
-                &[
-                    ("uosc-disable_elements", &disable),
-                    ("osc_cinema-enabled", "yes"),
-                ],
-            );
-            if let Err(e) = m.command(json!(["set_property", "script-opts", merged])).await {
-                crate::libmpv::trace(&format!("[lc-1911] 内嵌 uosc script-opts 下发失败: {e}"));
-            }
+            format!("{base_disable},{}", EMBED_UOSC_DISABLED.join(","))
+        };
+        let merged = merge_script_opts(
+            orig,
+            &[
+                ("uosc-disable_elements", &disable),
+                ("osc_cinema-enabled", "yes"),
+            ],
+        );
+        if let Err(e) = m.command(json!(["set_property", "script-opts", merged])).await {
+            crate::libmpv::trace(&format!("[lc-1911] 内嵌 uosc script-opts 下发失败: {e}"));
         }
         tauri::async_runtime::spawn(player_embed_adopt_loop(app, m));
     }
@@ -3485,8 +3460,6 @@ pub fn player_overlay_abort(app: &AppHandle) {
         crate::mpvwin::embed_hide(hwnd);
     }
     crate::mpvwin::embed_set_active(false);
-    // [lc-1992] 起播失败兜底：解除 fntv_osc 全屏锁定（覆盖层已收起，原生 OSC 必须可用）
-    crate::mpvwin::send_osc_fs_lock(app, false);
     crate::mpvwin::set_owner_follow(false);
     restore_main_window(app);
     crate::libmpv::trace("[lc-1940] 起播失败 → 覆盖层/mpv 已收起，主窗口恢复");
@@ -3639,9 +3612,6 @@ pub async fn embed_exit_flow(app: AppHandle) {
     // [lc-1947] 全屏中退出播放：先按保存的矩形/最大化态还原锚窗，否则下一次起播会
     // 继承一块全屏几何（`embed_set_active(false)` 会清掉还原态，必须放在它前面）。
     crate::mpvwin::restore_player_window_from_fullscreen();
-    // [lc-1992] 退出播放：无条件解除 fntv_osc 全屏锁定（会话结束不许残留；Lua 侧随后
-    // 还会因 `fullscreen=no` 自我收敛一次，两条通道互不依赖）。
-    crate::mpvwin::send_osc_fs_lock(&app, false);
     crate::mpvwin::embed_set_active(false);
     crate::mpvwin::set_owner_follow(false);
 
@@ -3682,17 +3652,6 @@ pub async fn embed_exit_flow(app: AppHandle) {
     if let Some(m) = session {
         let app_bg = app.clone();
         tauri::async_runtime::spawn(async move {
-            // [lc-1995] 复检闸门：后台清理跑到这里时，用户可能已经点了下一集（新会话
-            // 把 embed 置回 active）。此时**绝不能**再对同一个常驻 mpv 进程 stop/收窗，
-            // 否则新集会在 Starting playback 后几十毫秒被停掉 → 黑屏无提示。
-            // 看门狗早就有这个判断，这里补上（缺的正是这一步）。
-            if !crate::mpvwin::exit_cleanup_allowed(crate::mpvwin::embed_is_active()) {
-                crate::libmpv::trace(
-                    "[lc-1995] 退出清理中止：新播放会话已激活（跳过 stop/收窗，避免停掉新起播）",
-                );
-                crate::mpvwin::end_exit_flow();
-                return;
-            }
             // [lc-1947] 若在全屏中退出：窗口几何已在上面还原，这里把 mpv 的 fullscreen
             // 属性也归零（否则下一次会话按钮状态会显示成「退出全屏」）。
             m.command_no_reply(json!(["set", "fullscreen", "no"])).await;
@@ -3713,14 +3672,6 @@ pub async fn embed_exit_flow(app: AppHandle) {
                     }
                 }
             }
-            // [lc-1995] 等待期间（≤600ms）新会话可能已经起来：stop 之前再复检一次。
-            if !crate::mpvwin::exit_cleanup_allowed(crate::mpvwin::embed_is_active()) {
-                crate::libmpv::trace(
-                    "[lc-1995] 退出清理中止（stop 前复检）：新播放会话已激活，跳过 stop/收窗",
-                );
-                crate::mpvwin::end_exit_flow();
-                return;
-            }
             match tokio::time::timeout(std::time::Duration::from_millis(1500), m.stop()).await {
                 Ok(Ok(())) => {}
                 // 不静默吞掉：stop 失败 = 返回后 mpv 继续播，排障要看这条
@@ -3728,15 +3679,6 @@ pub async fn embed_exit_flow(app: AppHandle) {
                 Err(_) => {
                     crate::libmpv::trace("[lc-1941] embed 退出 stop 超时（1.5s）→ 继续收起窗口")
                 }
-            }
-            // [lc-1995] stop 之后再复检：stop 期间新会话可能已接管（见上），
-            // 这时按 PID 收窗会直接把新会话的画面收掉。
-            if !crate::mpvwin::exit_cleanup_allowed(crate::mpvwin::embed_is_active()) {
-                crate::libmpv::trace(
-                    "[lc-1995] 退出清理中止（stop 后复检）：新播放会话已激活，跳过收窗",
-                );
-                crate::mpvwin::end_exit_flow();
-                return;
             }
             // stop 之后 idle VO 可能重新显示自己的窗口：立刻收一次，
             // 并**再跑一轮看门狗**（第一轮在 stop 完成前就可能因「稳定」提前返回）。
@@ -3758,34 +3700,9 @@ pub async fn embed_exit_flow(app: AppHandle) {
     crate::libmpv::trace("[lc-1941] embed 退出：覆盖层/mpv 已收起，主窗口已唤回（清理转后台）");
 }
 
-/// [lc-1995] 播放未能开始时**收起 mpv 锚窗但保留内嵌会话**：
-/// 黑屏的直接成因之一是「mpv 窗口还在最上层、里面是 idle 黑底」—— 页面里的提示卡
-/// 会被它盖住，用户什么也看不到。这里只 `SW_HIDE` 锚窗，覆盖层（mpv 的 owned window）
-/// 与播放层都保留，失败提示才可见；下一次 `play_item` 走 `embed_apply_rect` 会把锚窗
-/// 重新显示（`EMBED_HIDDEN` 置位语义，见 lc-1911）。
-#[tauri::command]
-fn player_embed_park() -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(h) = crate::mpvwin::get_hwnd() {
-            crate::mpvwin::embed_hide(h);
-        }
-        crate::libmpv::trace("[lc-1995] 播放异常 → 收起 mpv 锚窗，失败提示卡保持可见");
-    }
-    Ok(())
-}
-
 /// [lc-1909] 内嵌 leave：清内嵌状态；stop=true 走现有 IPC stop 并再次隐藏 mpv 窗口（实例保留）。
-///
-/// [lc-1995] 入口埋点：这条命令此前**没有任何日志**，黑屏复盘时无法确认「是谁退出的」。
-/// `from` 是发起窗口 label（main = 播放层返回键/ESC；mpv_overlay = 覆盖层关闭键）。
 #[tauri::command]
-async fn player_embed_leave(app: AppHandle, window: tauri::Window, stop: bool) -> Result<(), String> {
-    crate::libmpv::trace(&format!(
-        "[lc-1995] player_embed_leave stop={stop} from={}（embed_active={}）",
-        window.label(),
-        crate::mpvwin::embed_is_active()
-    ));
+async fn player_embed_leave(app: AppHandle, stop: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         if stop {
@@ -5633,9 +5550,6 @@ pub fn run() {
             // 非 Windows 命令空转返回 Ok，注册保持全平台一致）
             player_embed_enter,
             player_embed_rect,
-            // [lc-1995] 起播失败兜底：只收起 mpv 锚窗（保留内嵌态），让播放层里的
-            // 「未能开始 / 已停止」提示卡露出来（覆盖层是 mpv 的 owned window，恒在其上）
-            player_embed_park,
             // [lc-1949] 视频区鼠标转发（lc-1960 起：穿透默认态下仅服务 hover 翻位后
             // 可点窗口里的空白区点击与拖动续投）
             mpv_forward_mouse,
@@ -5728,9 +5642,6 @@ pub fn run() {
             }
             if let tauri::RunEvent::Exit = event {
                 libmpv::trace("[lc-1901] RunEvent::Exit 清理开始");
-                // [lc-1991] 退出期标记：mpv 被 IPC quit 收掉后跟随循环不得再触发
-                // embed_exit_flow（退出流程里 show/聚焦主窗会闪一下）。
-                crate::mpvwin::set_app_exiting();
                 // [lc-1747] 销毁 webrs 常驻隐藏窗（嗅探 / 验证单例），别把 WebView2 进程留到退出后
                 webrs_webview::shutdown_webviews(app_handle);
                 libmpv::trace("[lc-1901] webrs 隐藏窗已销毁");

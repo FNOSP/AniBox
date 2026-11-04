@@ -192,52 +192,6 @@
 //!     `overlay-mouse-activity` 驱动；`inside=false` 是「真离开播放器」的权威信号。
 //!   · 50ms 翻位窗口内的一击不丢：控件在 hover 翻位前收到的点击会漏给 mpv（= 一次
 //!     正常的空白区暂停语义），与 Polaris 行为一致；持续悬停时翻位先行，点击零等待。
-//!
-//! [lc-1992] **全屏只保留覆盖层一套控件**（用户定论；承接 lc-1990/1991 的实机日志）：
-//! 全屏覆盖层顶栏 auto-hide 时那带像素没有不透明 WebView 内容，OS 逐像素判定把点击漏给
-//! mpv 原生 OSC（`hit=0xB032C class="mpv"` → `script-binding fntv_osc/fntv-osc-click` →
-//! `Run command: quit`）。两套控件在全屏重叠抢命中就是这一系列 bug 的根源，故：
-//!   · `on_player_fullscreen_changed` 进入全屏发 `script-message fntv-osc-fs-lock on`，
-//!     退出发 `off`；`embed_exit_flow`（退出播放）与 `player_overlay_abort`（起播失败兜底）
-//!     也无条件发 `off`，不许跨会话残留。
-//!   · Lua 侧（本地 `fntv_osc.lua`，third_party 不入库）锁定态 **零绘制 + 零热区**：
-//!     按钮/进度条/控件带全部不再响应；任何坐标按画面空白处理 → `cycle pause`，
-//!     双击全屏仍由 mpv 输入层合成 `MBTN_LEFT_DBL`（input.conf 不变）。
-//!   · **双通道收敛**：消息只是提前量，`fullscreen` 属性是唯一真值 —— Lua 既观察该属性，
-//!     tick 里还按 `fs_lock == fullscreen` 自愈（lc-1991 静默退全屏兜底这类
-//!     「属性值没变但状态拨偏」的边角也不会残锁）。
-//!   · 窗口模式完全不动：lc-1990 的逐元素命中（点哪个按钮执行哪个）与 lc-1991 的
-//!     覆盖层可见性不变量都保留。
-//!   · 埋点：Rust `[lc-1992] fntv_osc 全屏锁定 script-message fntv-osc-fs-lock on|off 已下发`；
-//!     mpv.log `[lc-1992] fntv_osc 全屏锁定 ON/OFF（reason）`。
-//!
-//! [lc-1994] **单 UI 所有权审计（架构契约最终形态）**
-//!
-//! 契约：点播放 → 调出 mpv；mpv 只管播放与窗口拖放；一切设置走覆盖层自绘 UI。
-//! 本批把「mpv 侧还在画/还在判控件」的所有残留清掉，并加可核对埋点：
-//!   · **mpv 侧零 UI（窗口模式也关）**：
-//!       - mpv.conf `osd-level=0`（连 show-text / osd_message / seek 提示都不画）；
-//!       - `osc=no` + `osd-bar=no`（内置 OSC / 进度条永不存在）；
-//!       - uosc 由启动参数 `uosc-anibox_disabled=yes` **整脚本早退**（时间轴/控件/
-//!         鼠标 force 绑定/uosc 菜单全部不存在；独立窗口模式不传该参，行为照旧）；
-//!       - `fntv_osc` 在 overlay_controls=yes 下**窗口与全屏一致**的零绘制 + 零热区
-//!         （旧实现窗口模式虽不画，但 on_click 仍按看不见的按钮坐标执行 = 幽灵热区）。
-//!   · **输入归属唯一**：input.conf 的 MBTN_LEFT 从 `script-binding fntv_osc/fntv-osc-click`
-//!     改回 `cycle pause`；MBTN_LEFT_DBL=fullscreen / Wheel=volume / MBTN_RIGHT=ignore。
-//!     mpv 侧再无「按坐标判定控件」的逻辑。
-//!   · **隐藏态点击唤出控件**：前端心跳**照常上报隐藏态控件矩形**（不再过滤
-//!     pointer-events），Rust 探针据此把控件带保持可点；前端 onDown 对「隐藏 + 落在
-//!     控件矩形内」的一击走 `wake:band`（唤出控件，绝不转发成 pause）。
-//!   · **埋点**：
-//!       - 起播：`[lc-1994] 契约快照(启动参数)`（Rust）+ mpv.log
-//!         `[lc-1994] 契约快照 tag=file-loaded osc=… osd-level=… osd-bar=… uosc_disabled=… fntv_osc.draw=…`
-//!         （Lua 读真实属性值）；
-//!       - 输入归属：前端每次 pointerdown 打 `[lc-1994] down route=local|fwd|wake:band|swallow:*`；
-//!         Rust 打 `[lc-1994] owner=overlay/mpv src=probe-zone/probe-restore` 与
-//!         `[lc-1994] fwd-recv kind=…`（逐行可对账）。
-//!   · **历史包袱处置**：TOPMOST 强推 / 屏保级抬顶 / 带内插顶（lc-1952~1981）已退役，
-//!     仅作为单测锚点保留（`#[allow(dead_code)]` 且运行路径零引用）；真正在跑的最小集 =
-//!     覆盖层跟随锚窗几何（33ms）、全屏输入锁、lc-1991 不变量守卫、lc-1992 OSC 全屏锁。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -278,9 +232,6 @@ static PLAYER_MAXIMIZED: AtomicBool = AtomicBool::new(false);
 static PLAYER_MIN_RESTORE: AtomicBool = AtomicBool::new(false);
 /// 退出流程是否已在跑：重复点击/ESC 不再叠第二条 2s 级的清理链。
 static EXIT_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
-/// [lc-1991] 应用正在退出（RunEvent::Exit 起置位）：此时 mpv 被 IPC quit 收掉，
-/// 跟随循环不得再触发 embed_exit_flow（那会把主窗 show/聚焦出来，退出期闪一下）。
-static APP_EXITING: AtomicBool = AtomicBool::new(false);
 
 // ───────────────────── [lc-1947] 真全屏（窗口级状态） ─────────────────────
 //
@@ -320,8 +271,6 @@ static LAST_NORMAL_RECT: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
 
 /// 内嵌会话激活标记：`player_embed_enter` 置位 / `player_embed_leave` 清除。
 static EMBED_ACTIVE: AtomicBool = AtomicBool::new(false);
-/// [lc-1995] 会话代次（会话结束时自增，见 [`embed_epoch`]）。
-static EMBED_EPOCH: AtomicU64 = AtomicU64::new(0);
 /// mpv 窗口当前是否被内嵌流程隐藏（enter 收编成功后隐藏，首个矩形上报时定位 + 显示）。
 static EMBED_HIDDEN: AtomicBool = AtomicBool::new(false);
 /// Moved 跟随开关：**仅** mpv_window_owner=true 的收编路径（mpv.rs `adopt_window_owner`）
@@ -945,7 +894,7 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
                         overlay_apply_input_passthrough(hwnd, false, "probe-zone");
                         AUTO_HOVER_ACTIVE.store(true, Ordering::SeqCst);
                         crate::libmpv::trace(&format!(
-                            "[lc-1994] owner=overlay src=probe-zone x={} y={} from={zone_src}（点击归覆盖层）",
+                            "[lc-1964] 探针热区直翻可点 x={} y={} src={zone_src}（不依赖 elementFromPoint）",
                             pt.x - rc.left,
                             pt.y - rc.top
                         ));
@@ -954,17 +903,13 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
                         && !FRONTEND_HOVER_LAST.load(Ordering::SeqCst)
                     {
                         overlay_apply_input_passthrough(hwnd, true, "probe-restore");
-                        crate::libmpv::trace(
-                            "[lc-1994] owner=mpv src=probe-restore（点击归 mpv 原生输入）",
-                        );
+                        crate::libmpv::trace("[lc-1964] 探针热区离开 → 穿透还原");
                     }
                 } else if AUTO_HOVER_ACTIVE.swap(false, Ordering::SeqCst)
                     && !FRONTEND_HOVER_LAST.load(Ordering::SeqCst)
                 {
                     overlay_apply_input_passthrough(hwnd, true, "probe-restore");
-                    crate::libmpv::trace(
-                        "[lc-1994] owner=mpv src=probe-outside（点击归 mpv 原生输入）",
-                    );
+                    crate::libmpv::trace("[lc-1964] 光标离开覆盖层 → 热区穿透还原");
                 }
                 let moved = last_point != Some((pt.x, pt.y));
                 let inside_changed = inside != last_inside;
@@ -1005,6 +950,26 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
     });
 }
 
+/// [lc-1960] 置顶覆盖层。ex-style 基座 = NOACTIVATE + TOOLWINDOW + LAYERED
+/// （`overlay_style_noactivate` 一次成型）；穿透位由
+/// [`overlay_apply_input_passthrough`] 单点管理，本函数不碰它。
+pub fn overlay_set_topmost(hwnd: isize) {
+    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
+        return;
+    }
+    unsafe {
+        SetWindowPos(
+            hwnd as _,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+}
+
 /// [lc-1939] 显示覆盖层但**不激活**（Tauri show() 会抢前台，播放器窗不允许）。
 pub fn overlay_show_noactivate(hwnd: isize) {
     if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
@@ -1013,8 +978,6 @@ pub fn overlay_show_noactivate(hwnd: isize) {
     unsafe {
         ShowWindow(hwnd as _, SW_SHOWNOACTIVATE);
     }
-    // [lc-1991] 可见性埋点：覆盖层每次显隐都留一行（矩形/可见性变化全链可回溯）。
-    crate::libmpv::trace(&format!("[lc-1991] overlay 显示 hwnd=0x{hwnd:X}"));
 }
 
 /// [lc-1940] 隐藏覆盖层 —— **必须**用原始 ShowWindow，不能用 `WebviewWindow::hide()`。
@@ -1034,8 +997,6 @@ pub fn overlay_hide(hwnd: isize) {
     unsafe {
         ShowWindow(hwnd as _, SW_HIDE);
     }
-    // [lc-1991] 可见性埋点（同上）：隐藏是「覆盖层不再需要 mpv 画面」的显式声明。
-    crate::libmpv::trace(&format!("[lc-1991] overlay 隐藏 hwnd=0x{hwnd:X}"));
 }
 
 // ───────────────────── [lc-1946] 顶栏窗控（真实窗口，零 mpv IPC） ─────────────────────
@@ -1656,8 +1617,7 @@ fn move_window(hwnd: isize, x: i32, y: i32, w: i32, h: i32) {
 /// 不变量：全屏期间 mpv 的 VO 是锚窗几何的唯一写者，我们从外面抢写就是 lc-1947/1948
 /// 「-11,-11 3851x2171 拉锯」的根源）。覆盖层没铺满显示器就重摆；
 /// [lc-1981] 锚窗 TOPMOST 一概不碰（置顶归 mpv + 一次性 `fntv-ontop-fs` 抑制）；
-/// [lc-1988/lc-1994] **z 序零干预**：层级由「覆盖层是锚窗的 owned window」保证，
-/// 这里不做任何 TOPMOST / 屏保级抬顶 / 带内插顶（那套战术已退役，见模块头）。
+/// [lc-1964] 覆盖层抬到 TOPMOST 带最顶（屏保级，恒压锚窗之上）。
 fn ensure_fullscreen_geometry(app: &tauri::AppHandle) {
     if !PLAYER_FULLSCREEN.load(Ordering::SeqCst) {
         return;
@@ -1749,9 +1709,6 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
         // 锁定 `ontop=true` 并停用「暂停置底」联动 —— lua 不再摘锚窗 TOPMOST，
         // 拉锯从源头消失（脚本本地改，不入库）。
         send_ontop_suppression(app, true);
-        // [lc-1992] 全屏期 mpv 原生 OSC 全面退场：零绘制、零热区，控件只留覆盖层那套。
-        // 退出全屏 / 会话结束时对称发 off（Lua 还会按 fullscreen 属性自我收敛）。
-        send_osc_fs_lock(app, true);
         crate::libmpv::trace(&format!(
             "[lc-1947] 进入全屏：显示器矩形 {mw}x{mh}@{mx},{my}（锚窗 + 覆盖层 TOPMOST）"
         ));
@@ -1764,9 +1721,6 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
     } else {
         // [lc-1981] 解除 ontop_mode.lua 的全屏抑制，恢复三态置顶联动（暂停置底照常）。
         send_ontop_suppression(app, false);
-        // [lc-1992] 退出全屏：解除 fntv_osc 全屏锁定 —— 窗口模式恢复逐元素命中（lc-1990），
-        // 原生 OSC 的 3s 自动隐藏 / 悬停 tooltip 行为回到原状。
-        send_osc_fs_lock(app, false);
         // [lc-1974] 退出全屏：先解锁并恢复窗口模式的穿透默认态（Polaris 语义）。
         // 尊重进行中的 hover（光标正悬在控件上时不把穿透拨回来，交 hover 链管理）；
         // 若全屏期间前端把 hover 请求短路了（FRONTEND_HOVER_LAST 停在 true），这里
@@ -1842,63 +1796,29 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
     }
 }
 
-/// [lc-1992] 通用后台 script-message 下发：不等待回包（窗口/脚本状态不依赖它完成），
-/// 200ms 拿不到 mpv 会话锁就放弃并留痕。
-fn send_script_message_bg(
-    app: &tauri::AppHandle,
-    name: &'static str,
-    arg: &'static str,
-    tag: &'static str,
-) {
+/// [lc-1981] 全屏期 `ontop_mode.lua` 暂停置底抑制开关（script-message 广播）。
+///
+/// `on`：脚本锁定 `ontop=true` 并停用 pause/idle 联动（锚窗不再被 lua 摘 TOPMOST，
+/// 30Hz 拉锯从源头消失）；`off`：恢复三态联动。发送不等待回包 —— 窗口级动作
+/// （几何 / z 序）不依赖它完成，200ms 拿不到 mpv 会话锁就放弃。
+fn send_ontop_suppression(app: &tauri::AppHandle, on: bool) {
     use tauri::Manager;
     let app = app.clone();
+    let arg = if on { "on" } else { "off" };
     tauri::async_runtime::spawn(async move {
         let state = app.state::<crate::AppState>();
         let session = tokio::time::timeout(std::time::Duration::from_millis(200), state.mpv.lock())
             .await
             .ok()
             .and_then(|g| g.clone());
-        match session {
-            Some(m) => {
-                m.command_no_reply(serde_json::json!(["script-message", name, arg]))
-                    .await;
-                crate::libmpv::trace(&format!("{tag} script-message {name} {arg} 已下发"));
-            }
-            None => crate::libmpv::trace(&format!(
-                "{tag} script-message {name} {arg} 下发失败（mpv 会话不可用）"
-            )),
+        if let Some(m) = session {
+            m.command_no_reply(serde_json::json!(["script-message", "fntv-ontop-fs", arg]))
+                .await;
+            crate::libmpv::trace(&format!("[lc-1981] ontop_mode 抑制 {arg} 已下发"));
+        } else {
+            crate::libmpv::trace("[lc-1981] ontop_mode 抑制下发失败（mpv 会话不可用）");
         }
     });
-}
-
-/// [lc-1981] 全屏期 `ontop_mode.lua` 暂停置底抑制开关（script-message 广播）。
-///
-/// `on`：脚本锁定 `ontop=true` 并停用 pause/idle 联动（锚窗不再被 lua 摘 TOPMOST，
-/// 30Hz 拉锯从源头消失）；`off`：恢复三态联动。
-fn send_ontop_suppression(app: &tauri::AppHandle, on: bool) {
-    send_script_message_bg(
-        app,
-        "fntv-ontop-fs",
-        if on { "on" } else { "off" },
-        "[lc-1981] ontop_mode 抑制",
-    );
-}
-
-/// [lc-1992] 全屏期 `fntv_osc.lua` 原生控制条抑制开关（script-message 广播）。
-///
-/// 全屏下覆盖层（PlayerChrome）是控件的唯一主人：`on` 让 Lua OSC 进入「全屏锁定」——
-/// 零绘制、零热区（按钮/进度条/控件带都不再抢命中），但空白区单击仍 `cycle pause`、
-/// 双击仍由 mpv 输入层合成 MBTN_LEFT_DBL → 全屏；`off` 恢复窗口模式逐元素命中。
-///
-/// 注意：Lua 侧以 mpv 的 `fullscreen` 属性为唯一真值做收敛（属性观察 + 消息参数校验），
-/// 所以这里丢消息 / 乱序 / 跨会话残留都不会把状态锁死 —— 消息只负责提前量。
-pub fn send_osc_fs_lock(app: &tauri::AppHandle, on: bool) {
-    send_script_message_bg(
-        app,
-        "fntv-osc-fs-lock",
-        if on { "on" } else { "off" },
-        "[lc-1992] fntv_osc 全屏锁定",
-    );
 }
 
 /// [lc-1947] 退出播放前若还在全屏：把锚窗还原到进入前的矩形/最大化状态，
@@ -1998,21 +1918,6 @@ pub fn begin_exit_flow() -> bool {
 /// 退出流程收尾 / 新会话开始时清标记。
 pub fn end_exit_flow() {
     EXIT_IN_FLIGHT.store(false, Ordering::SeqCst);
-}
-
-/// [lc-1991] 退出流程是否在跑（跟随循环据此暂停不变量裁决 —— 收窗是退出流程自己做的）。
-pub fn exit_flow_active() -> bool {
-    EXIT_IN_FLIGHT.load(Ordering::SeqCst)
-}
-
-/// [lc-1991] 标记应用进入退出流程（lib.rs `RunEvent::Exit` 首行调用）。
-pub fn set_app_exiting() {
-    APP_EXITING.store(true, Ordering::SeqCst);
-}
-
-/// [lc-1991] 应用是否已在退出（退出期不再做「覆盖层不变量」补救，避免闪窗）。
-pub fn app_exiting() -> bool {
-    APP_EXITING.load(Ordering::SeqCst)
 }
 
 /// [lc-1911] 进内嵌前的 mpv `script-opts` 原串（leave 时还原，独立窗口的 uosc 顶栏要回来）。
@@ -2250,27 +2155,6 @@ pub fn embed_is_active() -> bool {
     EMBED_ACTIVE.load(Ordering::SeqCst)
 }
 
-/// [lc-1995] 会话代次：**每次内嵌会话结束**（`embed_set_active(false)`）自增。
-///
-/// 用途：`play_item` 在点击当刻取一次代次，launch 返回后再取一次 —— 不相等说明
-/// 起播期间发生过「退出/取消」（用户在 3s 黑窗里按了 ESC / 关闭键），此刻**必须**
-/// 报错而不是成功返回，否则前端会照常挂上播放层，用户看到的就是黑屏 + 顶栏。
-pub fn embed_epoch() -> u64 {
-    EMBED_EPOCH.load(Ordering::SeqCst)
-}
-
-/// [lc-1995] 退出清理的复检闸门：**旧会话**的后台清理（stop / 按 PID 收窗）只有在
-/// 「没有更新的内嵌会话接管」时才允许执行。
-///
-/// 起因（实机日志）：退出流程把 stop 放进后台任务（先等 set fullscreen / 还原
-/// script-opts，最多 600ms），期间若新会话已把 `EMBED_ACTIVE` 置回 true，
-/// 旧任务的 `stop` 仍会落到**同一个常驻 mpv 进程**上 —— 结果是刚起播的新集在
-/// `Starting playback` 后 44ms 被停掉（`end-file reason=stop`），前端却已按成功
-/// 挂上播放层 → 满屏黑、无提示。看门狗本来就会检查这一点，后台清理任务漏了。
-pub fn exit_cleanup_allowed(new_session_active: bool) -> bool {
-    !new_session_active
-}
-
 /// 置 / 清内嵌激活标记；清除时一并丢弃待补施矩形与隐藏标记（退嵌后不留残态）。
 /// [lc-1974] 会话边界（无论进/出）都清全屏输入锁：锁只允许由
 /// `on_player_fullscreen_changed` 在会话内建立，绝不跨会话残留。
@@ -2278,8 +2162,6 @@ pub fn embed_set_active(on: bool) {
     EMBED_ACTIVE.store(on, Ordering::SeqCst);
     FULLSCREEN_INPUT_LOCK.store(false, Ordering::SeqCst);
     if !on {
-        // [lc-1995] 会话结束 → 代次自增：起播流程据此判断「这次起播已被取消」。
-        EMBED_EPOCH.fetch_add(1, Ordering::SeqCst);
         *EMBED_RECT.lock().unwrap_or_else(|e| e.into_inner()) = None;
         EMBED_HIDDEN.store(false, Ordering::SeqCst);
         // [lc-1946] 会话结束：最小化待恢复 / 最大化标记都不该带到下一次播放
@@ -2348,87 +2230,6 @@ pub fn follow_loop_action(
     }
 }
 
-// ─────────────────── [lc-1991] 覆盖层可见性不变量 ───────────────────
-//
-// 用户实证（2026-11-04）：全屏态点右上角窗控之一后 mpv 画面消失，只剩我们的
-// 覆盖层铺满全屏。日志定案：那一片像素在覆盖层里是透明的（fs-snap `hit=0xB032C
-// class="mpv"`），点击从 OS 层直接落到 mpv 锚窗；mpv 自己的 `fntv_osc` 把那一下
-// 判成了 `close` → `Run command: quit` → `end-file reason=quit`，**覆盖层没有
-// 跟着走**（mpv_rect=(0,0,0,0) 而 ov_rect 仍是整屏），用户看到的就是「空背景 +
-// 自绘控件」。mpv 进程退出/锚窗被隐藏时，owned-window 语义并不保证跨进程的覆盖层
-// 被销毁，所以必须由我们断言。
-//
-// 不变量：**覆盖层可见 ⇒ 其下必须有对应的 mpv 画面，且两者矩形一致。**
-// 违背时不允许多存活一帧：同一拍收起覆盖层，并终结内嵌会话（锚窗消失）或
-// 走可恢复的最小化语义（锚窗被 mpv 侧最小化）。
-
-/// [lc-1991] 不变量断言（执行、日志、单测共用）：覆盖层可见时必须有锚窗且矩形一致。
-pub fn overlay_invariant_holds(
-    overlay_visible: bool,
-    overlay_rect: (i32, i32, i32, i32),
-    anchor_exists: bool,
-    anchor_rect: (i32, i32, i32, i32),
-) -> bool {
-    !overlay_visible || (anchor_exists && overlay_rect == anchor_rect)
-}
-
-/// [lc-1991] 跟随循环每拍的不变量裁决。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OverlayGuardAction {
-    /// 不变量成立（或覆盖层本就不可见）：无需动作。
-    Ok,
-    /// 锚窗已消失（mpv quit / 崩溃 / 被关）→ 收起覆盖层 + 终结内嵌会话。
-    AnchorGone,
-    /// 锚窗被隐藏或最小化（mpv 侧最小化 / idle 收窗）→ 收起覆盖层 + 走最小化恢复链。
-    AnchorHidden,
-}
-
-/// [lc-1991] 纯逻辑：覆盖层可见但锚窗不存在/不可见时，必须立刻收起覆盖层。
-pub fn overlay_guard_action(
-    overlay_visible: bool,
-    anchor_exists: bool,
-    anchor_present: bool,
-) -> OverlayGuardAction {
-    if !overlay_visible {
-        return OverlayGuardAction::Ok;
-    }
-    if !anchor_exists {
-        OverlayGuardAction::AnchorGone
-    } else if !anchor_present {
-        OverlayGuardAction::AnchorHidden
-    } else {
-        OverlayGuardAction::Ok
-    }
-}
-
-/// [lc-1991] 全屏态锚窗是否仍在显示器矩形上。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FullscreenAnchorState {
-    /// 仍在显示器矩形（含 DWM/最大化边界的几像素误差）→ 维持全屏断言。
-    OnMonitor,
-    /// 明显小于显示器矩形 → 疑似 mpv 已退出全屏而 `fullscreen` 属性事件未到/丢失。
-    Windowed,
-}
-
-/// [lc-1991] 纯逻辑：全屏态锚窗几何判定。宽高都 ≥ 显示器 90% 视为仍在全屏。
-///
-/// 90% 的容差是给 mpv 的 `-11,-11 3851x2171`（最大化边框补偿）与 DPI 取整留的；
-/// 正常窗口（2520x1575 / 3840x2160 = 66%）绝不会命中 OnMonitor。
-pub fn fullscreen_anchor_state(
-    anchor: (i32, i32, i32, i32),
-    monitor: (i32, i32, i32, i32),
-) -> FullscreenAnchorState {
-    let aw = anchor.2 - anchor.0;
-    let ah = anchor.3 - anchor.1;
-    let mw = monitor.2;
-    let mh = monitor.3;
-    if aw * 10 >= mw * 9 && ah * 10 >= mh * 9 {
-        FullscreenAnchorState::OnMonitor
-    } else {
-        FullscreenAnchorState::Windowed
-    }
-}
-
 /// [lc-1915] 跟随循环（Polaris 同款架构的另一半）：拖动画面 = mpv 自己动（窗口拖拽），
 /// 本循环 33ms 轮询 mpv 矩形，把 `mpv_overlay` 窗口贴到 mpv 矩形上（z 序插在 mpv 正后方）。
 /// mpv 是锚、控制层窗是随动 —— 与 Polaris 的 WorkAreaListener 同思路。
@@ -2447,84 +2248,21 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
         // 隐藏态没有任何像素可残影，且拖动中本来也点不到返回键。
         let mut hidden_for_move = false;
         let mut stable_since: Option<std::time::Instant> = None;
-        // [lc-1991] 不变量埋点：上一拍双方矩形 + 可见性（变化即打一行，含双方 rect）。
-        let mut last_geo: Option<(i32, i32, i32, i32, i32, i32, i32, i32, u8, u8, u8)> = None;
-        // [lc-1991] 锚窗已消失只打一次（mpv 退出后每拍都会命中同一条分支）。
-        let mut anchor_gone_logged = false;
-        // [lc-1991] 全屏态锚窗连续多少拍明显小于显示器矩形（消抖：进全屏时 VO 有 ~40ms 延迟）。
-        let mut fs_windowed: Option<((i32, i32, i32, i32), u32)> = None;
         while crate::mpvwin::embed_is_active() {
             tokio::time::sleep(std::time::Duration::from_millis(33)).await;
             if !crate::mpvwin::embed_is_active() {
                 break;
             }
-            let Some(ov) = app
-                .get_webview_window("mpv_overlay")
-                .and_then(|w| w.hwnd().ok().map(|h| h.0 as isize))
-            else {
+            let (Some(mh), Some(ov)) = (
+                get_hwnd(),
+                app.get_webview_window("mpv_overlay")
+                    .and_then(|w| w.hwnd().ok().map(|h| h.0 as isize)),
+            ) else {
                 continue;
             };
-            // [lc-1991] 槽位被 clear_hwnd 清空也是「锚窗已消失」的一种（不能直接 continue，
-            // 否则 mpv 退出后覆盖层永远没人收）。
-            let mh = get_hwnd().unwrap_or(0);
             unsafe {
-                if IsWindow(ov as _) == 0 {
+                if IsWindow(mh as _) == 0 || IsWindow(ov as _) == 0 {
                     continue;
-                }
-                let anchor_exists = mh != 0 && IsWindow(mh as _) != 0;
-                let overlay_visible = IsWindowVisible(ov as _) != 0;
-                let anchor_present = anchor_exists
-                    && IsWindowVisible(mh as _) != 0
-                    && IsIconic(mh as _) == 0;
-                // [lc-1991] 不变量裁决：覆盖层可见 ⇒ 其下必须有 mpv 画面。
-                // 会话收尾期（退出流程 / 我们主动最小化 / 应用正在退出）不参与判定。
-                if !EMBED_HIDDEN.load(Ordering::SeqCst)
-                    && !exit_flow_active()
-                    && !app_exiting()
-                {
-                    match overlay_guard_action(overlay_visible, anchor_exists, anchor_present) {
-                        OverlayGuardAction::AnchorGone => {
-                            // 同一拍收起：绝不允许「覆盖层铺满 + mpv 不在」多活一帧。
-                            overlay_hide(ov);
-                            if !anchor_gone_logged {
-                                anchor_gone_logged = true;
-                                crate::libmpv::trace(
-                                    "[lc-1991] 不变量修复：mpv 锚窗已消失但覆盖层仍可见 → 同拍收起 + 终结内嵌会话（embed_exit_flow）",
-                                );
-                            }
-                            let app2 = app.clone();
-                            tauri::async_runtime::spawn(async move {
-                                crate::embed_exit_flow(app2).await;
-                            });
-                            continue;
-                        }
-                        OverlayGuardAction::AnchorHidden => {
-                            // mpv 侧最小化 / 收窗：收起播放层，再把主窗最小化 —— 任务栏恢复时
-                            // resume_embed_windows 会把 mpv + 覆盖层原矩形放回来（音频不断）。
-                            // 先在槽内统一收成「我们主动隐藏」（EMBED_HIDDEN = true），
-                            // 这样恢复路径 embed_apply_rect 一定会把锚窗重新显示出来。
-                            overlay_hide(ov);
-                            embed_hide(mh);
-                            crate::libmpv::trace(
-                                "[lc-1991] 不变量修复：mpv 锚窗被隐藏/最小化 → 覆盖层同拍收起（走可恢复的最小化链）",
-                            );
-                            if let Some(main) = app.get_webview_window("main") {
-                                if let Ok(h) = main.hwnd() {
-                                    let (visible, iconic) =
-                                        minimize_main_to_taskbar(h.0 as isize);
-                                    crate::libmpv::trace(&format!(
-                                        "[lc-1991] 主窗最小化（被 mpv 侧最小化触发）visible={visible} iconic={iconic}"
-                                    ));
-                                }
-                            }
-                            request_minimize_restore();
-                            continue;
-                        }
-                        OverlayGuardAction::Ok => {}
-                    }
-                }
-                if anchor_exists {
-                    anchor_gone_logged = false;
                 }
                 // [lc-1988] z 序**零干预**（Polaris 一手实锤定案）：覆盖层是锚窗的
                 // owned window（lc-1924 接线：GWLP_HWNDPARENT = mpv），「owned 恒在
@@ -2552,82 +2290,9 @@ pub fn spawn_overlay_follow(app: tauri::AppHandle) {
                 if GetWindowRect(mh as _, &mut m) == 0 || GetWindowRect(ov as _, &mut o) == 0 {
                     continue;
                 }
-                // [lc-1991] 几何埋点：覆盖层矩形/可见性或锚窗几何任一变化都打一行
-                // （双方 rect + 可见性 + 全屏/输入锁标志），供下次复现直接定位是
-                // 「覆盖层没跟」还是「mpv 先没了」。
-                let ov_vis = IsWindowVisible(ov as _) != 0;
-                let mv_vis = IsWindowVisible(mh as _) != 0;
-                let mv_iconic = IsIconic(mh as _) != 0;
-                let geo = (
-                    o.left,
-                    o.top,
-                    o.right,
-                    o.bottom,
-                    m.left,
-                    m.top,
-                    m.right,
-                    m.bottom,
-                    u8::from(ov_vis),
-                    u8::from(mv_vis),
-                    u8::from(mv_iconic),
-                );
-                if last_geo != Some(geo) {
-                    last_geo = Some(geo);
-                    crate::libmpv::trace(&format!(
-                        "[lc-1991] geo ov=({},{},{},{}) ov_vis={} mpv=({},{},{},{}) mpv_vis={} mpv_iconic={} fs={} lock={} hidden_by_us={}",
-                        o.left,
-                        o.top,
-                        o.right,
-                        o.bottom,
-                        i32::from(ov_vis),
-                        m.left,
-                        m.top,
-                        m.right,
-                        m.bottom,
-                        i32::from(mv_vis),
-                        i32::from(mv_iconic),
-                        i32::from(fullscreen_now),
-                        i32::from(FULLSCREEN_INPUT_LOCK.load(Ordering::SeqCst)),
-                        i32::from(EMBED_HIDDEN.load(Ordering::SeqCst)),
-                    ));
-                }
                 // [lc-1947] 非全屏时持续记录锚窗矩形：进全屏时用它当还原态
                 //（mpv 的 fullscreen 属性事件可能晚于它自己的 resize）。
                 record_normal_rect(m.left, m.top, m.right - m.left, m.bottom - m.top);
-                // [lc-1991] 静默退全屏兜底：`fullscreen` 属性是我们的唯一开关，但如果
-                // mpv 的 VO 自己把锚窗缩回窗口而属性事件丢了/没来，全屏分支会把覆盖层
-                // 继续钉在显示器矩形上（「mpv 缩回小窗、覆盖层还铺满」的反向违背）。
-                // 连续 8 拍（≈264ms，远大于 VO 的 ~40ms 过渡）明显小于显示器矩形才判定
-                // 为真退全屏，随后走与属性事件同一条 on_player_fullscreen_changed(false)。
-                if fullscreen_now {
-                    let mon = monitor_rect(mh as _)
-                        .unwrap_or((m.left, m.top, m.right - m.left, m.bottom - m.top));
-                    if fullscreen_anchor_state(
-                        (m.left, m.top, m.right, m.bottom),
-                        mon,
-                    ) == FullscreenAnchorState::Windowed
-                    {
-                        let rect = (m.left, m.top, m.right, m.bottom);
-                        let n = match fs_windowed {
-                            Some((r, n)) if r == rect => n + 1,
-                            _ => 1,
-                        };
-                        fs_windowed = Some((rect, n));
-                        if n >= 8 {
-                            fs_windowed = None;
-                            crate::libmpv::trace(&format!(
-                                "[lc-1991] 全屏不变量：锚窗连续 8 拍小于显示器矩形 m=({},{},{},{}) mon={}x{}@{} → 视为 mpv 已退出全屏，覆盖层同拍缩回",
-                                rect.0, rect.1, rect.2, rect.3, mon.2, mon.3, mon.0
-                            ));
-                            on_player_fullscreen_changed(&app, false);
-                            continue;
-                        }
-                    } else {
-                        fs_windowed = None;
-                    }
-                } else {
-                    fs_windowed = None;
-                }
                 // [lc-1948] 全屏态挂起抄写，改为把两层断言在显示器矩形上（见 FollowAction）。
                 match follow_loop_action(
                     PLAYER_FULLSCREEN.load(Ordering::SeqCst),
@@ -2890,90 +2555,10 @@ mod tests {
         assert!(hotzone_hit(&zones, (1280.0, 720.0), (3840, 2160), 1920, 2100));
         // 物理点 (1920, 1080) → CSS (640, 360) → 画面中央，不命中。
         assert!(!hotzone_hit(&zones, (1280.0, 720.0), (3840, 2160), 1920, 1080));
-        // 空热区（前端未挂载 / 没有任何 [data-chrome-hit]）恒不命中。
-        // [lc-1994] 注意：**隐藏态控件不再上报空表** —— 隐藏带必须继续命中，
-        // 否则点击会穿透给 mpv 变成 pause（见下一个测试）。
+        // 空热区（chrome 隐藏时前端上报空表）恒不命中。
         assert!(!hotzone_hit(&[], (1280.0, 720.0), (3840, 2160), 1920, 2100));
         // 视口非法（除零保护）恒不命中。
         assert!(!hotzone_hit(&zones, (0.0, 0.0), (3840, 2160), 1920, 2100));
-    }
-
-    /// [lc-1995] 退出清理闸门双向锚定：新会话已激活时**必须**放弃旧会话的 stop/收窗；
-    /// 没有新会话时才允许清理。旧实现没有这个判断（等价于恒 true）——
-    /// 本测试对旧形态必然 FAIL。
-    #[test]
-    fn exit_cleanup_must_yield_to_new_session() {
-        assert!(
-            !exit_cleanup_allowed(true),
-            "新会话已激活 → 旧会话清理必须放弃（否则 stop 会停掉刚起播的新集）"
-        );
-        assert!(
-            exit_cleanup_allowed(false),
-            "没有新会话 → 旧会话清理照常执行（窗口必须能收掉）"
-        );
-    }
-
-    /// [lc-1994] 契约锚定：控件**隐藏态**的矩形仍在热区表里 → 探针照常把这一带翻成
-    /// 可点（前端 onDown 才能收到这一击并按 `wake:band` 唤出控件，而不是让 mpv pause）。
-    /// 反向锚定：若前端沿用旧形态（隐藏 = 上报空表），同一坐标恒不命中 —— 那份实现
-    /// 对「隐藏态点控件带」这个契约必然 FAIL。
-    #[test]
-    fn hidden_band_zone_must_stay_hittable() {
-        let zones = [[0.0, 648.0, 1280.0, 72.0]]; // 隐藏态底栏（opacity:0，rect 仍可量）
-        assert!(
-            hotzone_hit(&zones, (1280.0, 720.0), (3840, 2160), 1920, 2100),
-            "隐藏态控件带必须命中（探针才会翻可点，点击才能被前端吞掉并唤出控件）"
-        );
-        // 旧形态对照（必须 FAIL）：隐藏 = 空表 → 同一坐标不命中 → 点击漏给 mpv。
-        assert!(
-            !hotzone_hit(&[], (1280.0, 720.0), (3840, 2160), 1920, 2100),
-            "旧形态（隐藏上报空表）对隐藏带必然不命中"
-        );
-    }
-
-    /// [lc-1990] 坐标换算双向验证（全屏态、真实 DPI）：前端转发公式 = CSS×dpr 取整；
-    /// Rust 热区公式 = 物理×(viewport/surface)。两式在全屏几何（3840x2160，
-    /// viewport=surface/dpr）下必须互逆 —— 对照 bug 形态（物理坐标直接当 CSS 用，
-    /// 等价于 dpr 恒 1）在同一输入下必须脱靶，证明显式换算是承重墙。
-    #[test]
-    fn css_to_physical_roundtrip_fullscreen_dpr() {
-        // (dpr, 全屏 surface)：1.75 = 实机（3840x2160@175%），1.72 = 任务口径，1.5 = 窗口。
-        for (dpr, surface) in [
-            (1.75f64, (3840i32, 2160i32)),
-            (1.72, (3840, 2160)),
-            (1.5, (2520, 1575)),
-        ] {
-            let vw = surface.0 as f64 / dpr;
-            let vh = surface.1 as f64 / dpr;
-            // 底栏控件带内一枚 CSS 矩形（中心在 55%, 93% 视口处，任何几何都合法）。
-            let css = (vw * 0.55, vh * 0.93);
-            let zones = [[(css.0 - 60.0) as f32, (css.1 - 30.0) as f32, 120.0f32, 60.0f32]];
-            // 前端公式：CSS → 物理（round(css*dpr)）。
-            let px = (css.0 * dpr).round() as i32;
-            let py = (css.1 * dpr).round() as i32;
-            assert!(px >= 0 && px < surface.0 && py >= 0 && py < surface.1);
-            // Rust 公式把物理点拉回 CSS 栅格 → 必须仍命中同一控件（双向一致）。
-            assert!(
-                hotzone_hit(&zones, (vw as f32, vh as f32), surface, px, py),
-                "dpr={dpr}: CSS({:.1},{:.1}) → 物理({px},{py}) 必须换算回同一控件",
-                css.0,
-                css.1
-            );
-            // 互逆误差只允许来自一次取整（≤ 0.5 物理像素 = 0.5/dpr CSS 像素）。
-            let back_x = px as f64 * vw / surface.0 as f64;
-            let back_y = py as f64 * vh / surface.1 as f64;
-            assert!((back_x - css.0).abs() <= 1.0 / dpr + 1e-9, "dpr={dpr} x 向互逆误差超界");
-            assert!((back_y - css.1).abs() <= 1.0 / dpr + 1e-9, "dpr={dpr} y 向互逆误差超界");
-            // ── 旧逻辑对照（必须 FAIL 的 bug 形态）：物理坐标直接与 CSS 矩形比对
-            //（dpr 恒 1 的隐含假设）—— dpr>1 的全屏下同一控件必然脱靶。
-            let naive_hit = zones.iter().any(|[x, y, w, h]| {
-                (px as f32) >= *x && (px as f32) < x + w && (py as f32) >= *y && (py as f32) < y + h
-            });
-            assert!(
-                !naive_hit,
-                "dpr={dpr}: 物理({px},{py}) 直接比对 CSS 矩形必须脱靶（旧 bug 形态复现）"
-            );
-        }
     }
 
     /// [lc-1964] 固定兜底带：顶带 0..14%、底带 74%..100% 命中；画面中央不命中。
@@ -3626,110 +3211,6 @@ mod tests {
         assert!(matches!(
             follow_loop_action(true, anchor, overlay, mon),
             FollowAction::Assert(..)
-        ));
-    }
-
-    // ───────────── [lc-1991] 覆盖层可见 ⇒ mpv 画面在下面（不变量） ─────────────
-
-    /// [lc-1991] 不变量双向验证：锚窗消失/隐藏而覆盖层仍可见 = 违规；收起覆盖层后恢复成立。
-    #[test]
-    fn overlay_invariant_detects_dead_mpv_double_direction() {
-        let ov_full = (0, 0, 3840, 2160);
-        let dead = (0, 0, 0, 0);
-        // 复现现场：mpv 已 quit（锚窗不存在），覆盖层仍整屏可见
-        assert!(
-            !overlay_invariant_holds(true, ov_full, false, dead),
-            "mpv 不在 + 覆盖层可见 = 必须判违规（用户实证的黑屏态）"
-        );
-        assert_eq!(
-            overlay_guard_action(true, false, false),
-            OverlayGuardAction::AnchorGone,
-            "新裁决必须要求收起覆盖层 + 终结会话"
-        );
-        // 收起之后（覆盖层不可见）同一事实成立：不变量不可能被违反
-        assert!(
-            overlay_invariant_holds(false, ov_full, false, dead),
-            "覆盖层不可见时无 MPV 画面是合法的（回到主界面）"
-        );
-        assert_eq!(
-            overlay_guard_action(false, false, false),
-            OverlayGuardAction::Ok,
-            "覆盖层已收起 → 无需再动手（幂等）"
-        );
-        // 健康态
-        assert!(overlay_invariant_holds(true, ov_full, true, ov_full));
-        assert_eq!(
-            overlay_guard_action(true, true, true),
-            OverlayGuardAction::Ok
-        );
-    }
-
-    /// [lc-1991] mpv 侧最小化（锚窗存在但不可见/被最小化）→ 覆盖层必须收起并走可恢复链。
-    #[test]
-    fn overlay_invariant_detects_hidden_anchor() {
-        let ov = (0, 0, 3840, 2160);
-        assert_eq!(
-            overlay_guard_action(true, true, false),
-            OverlayGuardAction::AnchorHidden,
-            "锚窗被隐藏/最小化 → 覆盖层必须同拍收起（不能留空控件）"
-        );
-        // 双向：锚窗可见时不得误伤（正常播放不允许被拦）
-        assert_eq!(
-            overlay_guard_action(true, true, true),
-            OverlayGuardAction::Ok
-        );
-    }
-
-    /// [lc-1991] 旧跟随逻辑的缺口：`IsWindow(mh)==0 → continue` 会把覆盖层永远留在原地。
-    /// 双向验证：同一现场，旧逻辑判「无事发生」→ 不变量 FAIL；新逻辑判 AnchorGone → 收层后 PASS。
-    #[test]
-    fn follow_loop_old_continue_leaves_overlay_on_dead_mpv() {
-        let ov_full = (0, 0, 3840, 2160);
-        // 旧逻辑分支（lc-1988 跟随循环原文）：任一窗口无效就 continue
-        let old_tick = |anchor_exists: bool, overlay_visible: bool| -> &'static str {
-            if !anchor_exists {
-                "continue" // ← 覆盖层保持可见，什么都不做
-            } else if overlay_visible {
-                "follow"
-            } else {
-                "noop"
-            }
-        };
-        assert_eq!(old_tick(false, true), "continue");
-        // 旧逻辑之后的不变量（锚窗不存在、覆盖层仍可见）必然 FAIL
-        assert!(!overlay_invariant_holds(true, ov_full, false, (0, 0, 0, 0)));
-        // 新逻辑：AnchorGone → 同拍 overlay_hide → 不变量 PASS
-        assert_eq!(
-            overlay_guard_action(true, false, false),
-            OverlayGuardAction::AnchorGone
-        );
-        assert!(overlay_invariant_holds(false, ov_full, false, (0, 0, 0, 0)));
-    }
-
-    /// [lc-1991] 全屏态锚窗几何判定：正常窗口（66%）判 Windowed，全屏/边框补偿判 OnMonitor。
-    #[test]
-    fn fullscreen_anchor_state_matrix() {
-        let mon = (0, 0, 3840, 2160);
-        assert_eq!(
-            fullscreen_anchor_state((0, 0, 3840, 2160), mon),
-            FullscreenAnchorState::OnMonitor
-        );
-        // mpv 最大化边框补偿（实测 -11,-11 3851x2171）
-        assert_eq!(
-            fullscreen_anchor_state((-11, -11, 3851, 2171), mon),
-            FullscreenAnchorState::OnMonitor
-        );
-        // 进入前窗口矩形 2520x1575@660,292 → 已缩回窗口，不是全屏
-        assert_eq!(
-            fullscreen_anchor_state((660, 292, 3180, 1867), mon),
-            FullscreenAnchorState::Windowed
-        );
-        // 反向违背：mpv 缩回小窗、覆盖层仍铺满 → 不变量不成立，必须走「退出全屏镜像」
-        assert!(!overlay_invariant_holds(
-            true,
-            (0, 0, 3840, 2160),
-            true,
-            (660, 292, 3180, 1867)
         ));
     }
 

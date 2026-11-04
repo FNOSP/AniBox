@@ -320,6 +320,8 @@ static LAST_NORMAL_RECT: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
 
 /// 内嵌会话激活标记：`player_embed_enter` 置位 / `player_embed_leave` 清除。
 static EMBED_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// [lc-1995] 会话代次（会话结束时自增，见 [`embed_epoch`]）。
+static EMBED_EPOCH: AtomicU64 = AtomicU64::new(0);
 /// mpv 窗口当前是否被内嵌流程隐藏（enter 收编成功后隐藏，首个矩形上报时定位 + 显示）。
 static EMBED_HIDDEN: AtomicBool = AtomicBool::new(false);
 /// Moved 跟随开关：**仅** mpv_window_owner=true 的收编路径（mpv.rs `adopt_window_owner`）
@@ -2248,6 +2250,27 @@ pub fn embed_is_active() -> bool {
     EMBED_ACTIVE.load(Ordering::SeqCst)
 }
 
+/// [lc-1995] 会话代次：**每次内嵌会话结束**（`embed_set_active(false)`）自增。
+///
+/// 用途：`play_item` 在点击当刻取一次代次，launch 返回后再取一次 —— 不相等说明
+/// 起播期间发生过「退出/取消」（用户在 3s 黑窗里按了 ESC / 关闭键），此刻**必须**
+/// 报错而不是成功返回，否则前端会照常挂上播放层，用户看到的就是黑屏 + 顶栏。
+pub fn embed_epoch() -> u64 {
+    EMBED_EPOCH.load(Ordering::SeqCst)
+}
+
+/// [lc-1995] 退出清理的复检闸门：**旧会话**的后台清理（stop / 按 PID 收窗）只有在
+/// 「没有更新的内嵌会话接管」时才允许执行。
+///
+/// 起因（实机日志）：退出流程把 stop 放进后台任务（先等 set fullscreen / 还原
+/// script-opts，最多 600ms），期间若新会话已把 `EMBED_ACTIVE` 置回 true，
+/// 旧任务的 `stop` 仍会落到**同一个常驻 mpv 进程**上 —— 结果是刚起播的新集在
+/// `Starting playback` 后 44ms 被停掉（`end-file reason=stop`），前端却已按成功
+/// 挂上播放层 → 满屏黑、无提示。看门狗本来就会检查这一点，后台清理任务漏了。
+pub fn exit_cleanup_allowed(new_session_active: bool) -> bool {
+    !new_session_active
+}
+
 /// 置 / 清内嵌激活标记；清除时一并丢弃待补施矩形与隐藏标记（退嵌后不留残态）。
 /// [lc-1974] 会话边界（无论进/出）都清全屏输入锁：锁只允许由
 /// `on_player_fullscreen_changed` 在会话内建立，绝不跨会话残留。
@@ -2255,6 +2278,8 @@ pub fn embed_set_active(on: bool) {
     EMBED_ACTIVE.store(on, Ordering::SeqCst);
     FULLSCREEN_INPUT_LOCK.store(false, Ordering::SeqCst);
     if !on {
+        // [lc-1995] 会话结束 → 代次自增：起播流程据此判断「这次起播已被取消」。
+        EMBED_EPOCH.fetch_add(1, Ordering::SeqCst);
         *EMBED_RECT.lock().unwrap_or_else(|e| e.into_inner()) = None;
         EMBED_HIDDEN.store(false, Ordering::SeqCst);
         // [lc-1946] 会话结束：最小化待恢复 / 最大化标记都不该带到下一次播放
@@ -2871,6 +2896,21 @@ mod tests {
         assert!(!hotzone_hit(&[], (1280.0, 720.0), (3840, 2160), 1920, 2100));
         // 视口非法（除零保护）恒不命中。
         assert!(!hotzone_hit(&zones, (0.0, 0.0), (3840, 2160), 1920, 2100));
+    }
+
+    /// [lc-1995] 退出清理闸门双向锚定：新会话已激活时**必须**放弃旧会话的 stop/收窗；
+    /// 没有新会话时才允许清理。旧实现没有这个判断（等价于恒 true）——
+    /// 本测试对旧形态必然 FAIL。
+    #[test]
+    fn exit_cleanup_must_yield_to_new_session() {
+        assert!(
+            !exit_cleanup_allowed(true),
+            "新会话已激活 → 旧会话清理必须放弃（否则 stop 会停掉刚起播的新集）"
+        );
+        assert!(
+            exit_cleanup_allowed(false),
+            "没有新会话 → 旧会话清理照常执行（窗口必须能收掉）"
+        );
     }
 
     /// [lc-1994] 契约锚定：控件**隐藏态**的矩形仍在热区表里 → 探针照常把这一带翻成

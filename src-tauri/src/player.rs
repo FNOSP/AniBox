@@ -337,54 +337,6 @@ async fn launch_mpv(
     if should_seek(resume_secs, duration_secs) {
         extra.push(format!("--start={}", format_seek(resume_secs)));
     }
-    // [lc-1940] 覆盖层是播放期唯一可见的 UI：**每次起播**都要就位、藏主窗、启动跟随/探针。
-    // 不能只挂在第一次 spawn 的路径里 —— 复用 mpv 会话（换集/退出后再播）根本不走
-    // MpvSession::launch，否则表现就是「第二次播放没有控件 / 主界面盖着视频」。
-    //
-    // 关键：`ensure_player_overlay` 只保证窗存在（owner + 几何），显示由 UI 就绪决定；
-    // UI 未就绪（非透明 / ANIBOX_NO_WEBVIEW_OVERLAY=1）时保持隐藏，控件交回 Lua OSC。
-    // 一旦后续任一步失败 → player_overlay_abort 收起覆盖层并唤回主窗，绝不留黑屏。
-    #[cfg(target_os = "windows")]
-    let mut overlay_booted = false;
-    #[cfg(target_os = "windows")]
-    if cfg.player_open_mode == "app" {
-        if let Some(ov) = crate::ensure_player_overlay(app) {
-            overlay_booted = true;
-            crate::mpvwin::embed_set_active(true);
-            if crate::mpvwin::overlay_ui_ready() {
-                let _ = crate::show_player_overlay(app);
-            }
-            // 复用会话时 mpv 窗口还在（exit 时被 SW_HIDE），这里按新播放窗矩形重新钉位并唤显；
-            // 新 spawn 时 hwnd 为空，走 --geometry。
-            // [lc-1947] 全屏中换集：几何由显示器矩形独占，按播放窗矩形重钉会把全屏打回去。
-            if let Some(hwnd) = crate::mpvwin::get_hwnd() {
-                if crate::mpvwin::player_fullscreen() {
-                    crate::libmpv::trace("[lc-1947] 全屏中换集：跳过按播放窗矩形重钉");
-                } else if let (Ok(p), Ok(s)) = (ov.outer_position(), ov.outer_size()) {
-                    crate::mpvwin::embed_apply_rect(
-                        hwnd,
-                        p.x,
-                        p.y,
-                        s.width as i32,
-                        s.height as i32,
-                    );
-                }
-            }
-            crate::mpvwin::spawn_overlay_follow(app.clone());
-            // [lc-1949] 16ms 光标探针（spawn_overlay_probe）已随「探针拨穿透位」机制退役：
-            // 覆盖层常驻可点，控件续显由 WebView 自身 mousemove 驱动，视频区点击走
-            // `mpv_forward_mouse` PostMessage 转发。
-            if let Some(m) = app.get_webview_window("main") {
-                let _ = m.hide();
-                // [lc-1947] 与 mpv.rs 起播路径同一条兜底：原始隐藏，防 tao 缓存脱钩
-                if let Ok(h) = m.hwnd() {
-                    crate::mpvwin::window_force_hide(h.0 as isize);
-                }
-            }
-        } else {
-            crate::libmpv::trace("[lc-1940] 覆盖层不可用 → 主窗口保持显示（独立窗口播放）");
-        }
-    }
     let mut slot = state.mpv.lock().await;
     let existing = match slot.as_ref() {
         Some(m) if !m.is_dead().await => Some(m.clone()),
@@ -443,26 +395,15 @@ async fn launch_mpv(
             match playlist_start {
                 Some(idx) => {
                     // loadlist 会整体替换播放列表；随后把播放位置定到点击的那一集。
-                    if let Err(e) = m.command(json!(["loadlist", url.to_string(), "replace"])).await {
-                        // [lc-1940] 起播失败：覆盖层/mpv 收起、主窗回来，绝不留黑屏
-                        #[cfg(target_os = "windows")]
-                        if overlay_booted {
-                            crate::player_overlay_abort(app);
-                        }
-                        return Err(e);
-                    }
+                    m.command(json!(["loadlist", url.to_string(), "replace"]))
+                        .await?;
                     let _ = m
                         .command(json!(["set", "playlist-pos", idx]))
                         .await;
                 }
                 None => {
-                    if let Err(e) = m.command(json!(["loadfile", url.to_string(), "replace"])).await {
-                        #[cfg(target_os = "windows")]
-                        if overlay_booted {
-                            crate::player_overlay_abort(app);
-                        }
-                        return Err(e);
-                    }
+                    m.command(json!(["loadfile", url.to_string(), "replace"]))
+                        .await?;
                 }
             }
             let _ = m.command(json!(["set", "pause", "no"])).await;
@@ -471,25 +412,14 @@ async fn launch_mpv(
         None => {
             // 多条目播放列表：命令行仍带起播集标题（容器 Title tag 会顶掉 #EXTINF），
             // 后续每集由 mpv.rs 在 start-file/file-loaded 时按 #EXTINF 逐集写回。
-            let spawned = crate::mpv::MpvSession::launch(
+            crate::mpv::MpvSession::launch(
                 app.clone(),
                 &cfg.mpv_path,
                 Some(url.to_string()),
                 Some(title.to_string()),
                 extra,
             )
-            .await;
-            match spawned {
-                Ok(s) => s,
-                Err(e) => {
-                    // [lc-1940] mpv 起不来：覆盖层收起 + 主窗回来（否则就是「黑屏 mpv」）
-                    #[cfg(target_os = "windows")]
-                    if overlay_booted {
-                        crate::player_overlay_abort(app);
-                    }
-                    return Err(e);
-                }
-            }
+            .await?
         }
     };
     // [lc-1896] 「补帧每次默认关闭」：default_on=no 时静默下发一次 off。

@@ -369,6 +369,7 @@ export function PlayerChrome() {
   const wakeRef = useRef<() => void>(() => {});
   /* [lc-1949] 视频区按下转发状态（0=左 1=中 2=右）；hover 状态机也读它做拖动锁 */
   const fwdRef = useRef<{ btn: number } | null>(null);
+  const blankClickRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
   const menuOpenRef = useRef(false);
   const menuPanelRef = useRef<HTMLDivElement | null>(null);
@@ -808,178 +809,122 @@ export function PlayerChrome() {
     [cmdLat],
   );
 
-  /* ── [lc-1949] 视频区输入转发（覆盖层常驻可点架构的另一半）──
-   * 落点不在控件上的鼠标事件原样转给 mpv（`mpv_forward_mouse` → PostMessage），
-   * mpv 的 win32 后端按真实输入处理：
-   *   · 单击 = fntv_osc 分发（画面空白处暂停）；
-   *   · 双击 = mpv 自己按 --input-doubleclick-time 合成 MBTN_LEFT_DBL（全屏）——
-   *     **不代发 WM_LBUTTONDBLCLK**：PostMessage 不会让系统自动合成，而 mpv 的
-   *     合成器只认普通按钮序列，代发会造成二次触发；
-   *   · 按住拖动 = --input-builtin-dragging（mpv 内部 ReleaseCapture+HTCAPTION
-   *     原生拖窗，DWM 搬运、零跟随延迟）；
-   *   · 滚轮 = input.conf（音量）；右键 = MBTN_RIGHT（input.conf: ignore）。
-   * 分流规则：target 命中 [data-chrome-hit]（或已从 DOM 摘除的节点）→ 覆盖层自己处理；
-   * 菜单打开 / 关面板抑制窗口内 → 不转发（点空白 = 关面板）；其余 → 转发。
-   * [lc-1960] fwdRef 上移到组件 refs 区（hover 状态机读它做拖动锁）。 */
+  /* [lc-1997] 单一点击仲裁：mpv/Lua 唯一提交 pause/fullscreen。
+   * 穿透像素上的 native clicks 由 mpv forced binding 处理；WebView 捕获的空白完整点击
+   * 通过一个 semantic message 进入同一 Lua pending/double-click 状态机。
+   * 不转发左键 down/up，不在前端提交 pause/fullscreen；移动超阈值才交 mpv 原生拖窗。
+   */
   useEffect(() => {
     const dpr = () => window.devicePixelRatio || 1;
+    let dragPointer: number | null = null;
     const overChrome = (t: EventTarget | null) => {
       const el = t instanceof Element ? t : null;
-      // 点击瞬间已被同步摘下的节点仍算控件（与旧白名单语义一致）
-      if (el && !el.isConnected) return true;
-      return !!(el && el.closest("[data-chrome-hit]"));
-    };
-    const mkFlags = (e: MouseEvent) => {
-      // MK_*：0x1 左键 / 0x2 右键 / 0x4 Shift / 0x8 Ctrl / 0x10 中键
-      let f = 0;
-      if (e.buttons & 1) f |= 1;
-      if (e.buttons & 2) f |= 2;
-      if (e.buttons & 4) f |= 16;
-      if (e.shiftKey) f |= 4;
-      if (e.ctrlKey) f |= 8;
-      return f;
-    };
-    /* [lc-1988] 全屏点击分流日志（与 Rust `[lc-1988] fwd-recv` 逐行对账）：
-     *   · local   = target 命中 [data-chrome-hit]，控件自己处理；
-     *   · fwd     = 落在空白区，转给 mpv；
-     *   · swallow = 菜单/抑制窗口吞掉；
-     * target= 实际命中元素、efpt= elementFromPoint(clientX,clientY) 的独立复核 ——
-     * 两者不一致 = WebView2 输入变换与 DOM 命中错位（全屏 resize/DPI 类问题的直接证据）。
-     * 只在全屏 + 按键类 pointerdown 打（move/滚轮/非全屏一律静默，防刷屏）。 */
-    const describeNode = (n: Element | null) => {
-      if (!n) return "null";
-      if (!n.isConnected) return "detached";
-      const hitEl = n.closest("[data-chrome-hit]");
-      const cls =
-        n instanceof HTMLElement && n.className
-          ? String(n.className).split(/\s+/)[0]
-          : n.tagName.toLowerCase();
-      return `${hitEl ? "hit" : "blank"}:${cls}`;
-    };
-    const routeLog = (route: string, e: PointerEvent) => {
-      const el = e.target instanceof Element ? e.target : null;
-      const ef = document.elementFromPoint(e.clientX, e.clientY);
-      void invoke("lat_trace", {
-        msg: `lc-1988 down ${route} target=${describeNode(el)} efpt=${describeNode(
-          ef,
-        )} btn=${e.button} x=${Math.round(e.clientX)} y=${Math.round(e.clientY)} dpr=${dpr()}`,
-      }).catch(() => {});
+      return !!(el && (!el.isConnected || el.closest("[data-chrome-hit]")));
     };
     const send = (kind: string, e: MouseEvent, delta = 0) => {
       void invoke("mpv_forward_mouse", {
         kind,
         x: Math.round(e.clientX * dpr()),
         y: Math.round(e.clientY * dpr()),
-        flags: mkFlags(e),
+        flags: 0,
         delta,
       }).catch(() => {});
     };
-    const upKind = (btn: number) => (btn === 0 ? "up" : btn === 1 ? "mup" : "rup");
-
     const onDown = (e: PointerEvent) => {
       wake();
       const chrome = overChrome(e.target);
-      // 悬停态喂给 3s 自动隐藏的判定：光标停在控件上时不隐藏（旧探针 hot 位语义）
       hoverInteractive.current = chrome;
-      // [lc-1988] 分流日志：全屏 + 按键类点击才打（与 Rust `[lc-1988] fwd-recv` 对账）
-      const loggable =
-        stRef.current.fullscreen && (e.button === 0 || e.button === 1 || e.button === 2);
-      if (chrome) {
-        if (loggable) routeLog("local", e);
+      if (e.button !== 0) {
+        if (!chrome && !menuOpenRef.current && Date.now() >= ptSuppressUntil.current && (e.button === 1 || e.button === 2)) {
+          send(e.button === 1 ? "mdown" : "rdown", e);
+          fwdRef.current = { btn: e.button };
+          try { (e.target as Element | null)?.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
+        }
         return;
       }
-      // 面板打开（点空白=关面板）与关面板抑制窗口内：这一击不归 mpv
-      if (menuOpenRef.current || Date.now() < ptSuppressUntil.current) {
-        if (loggable) routeLog(menuOpenRef.current ? "swallow:menu" : "swallow:suppress", e);
+      if (chrome || menuOpenRef.current || Date.now() < ptSuppressUntil.current) {
+        void invoke("mpv_cancel_pending_click").catch(() => {});
+        blankClickRef.current = null;
         return;
       }
-      if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
-      if (loggable) routeLog("fwd", e);
-      // 上一轮按下没等到抬起（mpv 原生拖窗的 modal move loop 会吞掉释放事件）：
-      // 先补一发 up 清掉 mpv 的按钮态，避免下一次点击被它的双击合成器误判。
-      if (fwdRef.current) send(upKind(fwdRef.current.btn), e);
-      fwdRef.current = { btn: e.button };
-      send(e.button === 0 ? "down" : e.button === 1 ? "mdown" : "rdown", e);
-      // 捕获指针：拖动越过控件 / 抖出窗口也能持续收到 move/up
-      try {
-        (e.target as Element | null)?.setPointerCapture?.(e.pointerId);
-      } catch {
-        /* ignore */
-      }
-    };
-
-    // move 转发按 rAF 合帧：高频 pointermove 只落一次 PostMessage（拖动手感与真实输入一致）
-    let moveRaf = 0;
-    let pendingMove: PointerEvent | null = null;
-    const flushMove = () => {
-      moveRaf = 0;
-      const e = pendingMove;
-      pendingMove = null;
-      if (e && !overChrome(e.target)) send("move", e);
+      blankClickRef.current = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
+      try { (e.target as Element | null)?.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
     };
     const onMove = (e: PointerEvent) => {
-      // 控件续显由真实 mousemove 驱动（旧「探针 overlay-cursor」通道已退役）
       wake();
       hoverInteractive.current = overChrome(e.target);
-      if (overChrome(e.target)) return;
-      pendingMove = e;
-      if (!moveRaf) moveRaf = window.requestAnimationFrame(flushMove);
-    };
-
-    const onUp = (e: PointerEvent) => {
-      const fwd = fwdRef.current;
-      if (!fwd) return;
-      if (e.type === "pointerup" && e.button !== fwd.btn) return;
-      fwdRef.current = null;
-      send(upKind(fwd.btn), e);
-      try {
-        (e.target as Element | null)?.releasePointerCapture?.(e.pointerId);
-      } catch {
-        /* ignore */
+      const pending = blankClickRef.current;
+      if (!pending || pending.pointerId !== e.pointerId) {
+        if (fwdRef.current && fwdRef.current.btn !== 0 && !overChrome(e.target)) send("move", e);
+        return;
+      }
+      if (Math.abs(e.clientX - pending.x) > 4 || Math.abs(e.clientY - pending.y) > 4) {
+        blankClickRef.current = null;
+        void invoke("mpv_cancel_pending_click").catch(() => {});
+        dragPointer = e.pointerId;
+        void invoke("mpv_begin_drag").catch((error) => {
+          void invoke("lat_trace", { msg: `lc-1997 drag-start failed: ${String(error)}` }).catch(() => {});
+        });
       }
     };
-
-    // mpv 原生拖窗接管鼠标后，释放事件到不了 WebView：捕获丢失立刻补 up 清状态
-    const onLost = () => {
+    const onUp = (e: PointerEvent) => {
+      if (e.button === 0) {
+        if (dragPointer === e.pointerId) {
+          dragPointer = null;
+          if (fwdRef.current?.btn === 0) fwdRef.current = null;
+          try { (e.target as Element | null)?.releasePointerCapture?.(e.pointerId); } catch { /* ignore */ }
+          return;
+        }
+        const pending = blankClickRef.current;
+        if (pending?.pointerId === e.pointerId) {
+          blankClickRef.current = null;
+          void invoke("mpv_capture_blank_click").catch(() => {});
+        }
+        try { (e.target as Element | null)?.releasePointerCapture?.(e.pointerId); } catch { /* ignore */ }
+        return;
+      }
       const fwd = fwdRef.current;
-      if (!fwd) return;
+      if (!fwd || fwd.btn !== e.button) return;
       fwdRef.current = null;
-      void invoke("mpv_forward_mouse", {
-        kind: upKind(fwd.btn),
-        x: 0,
-        y: 0,
-        flags: 0,
-        delta: 0,
-      }).catch(() => {});
+      send(e.button === 1 ? "mup" : "rup", e);
+      try { (e.target as Element | null)?.releasePointerCapture?.(e.pointerId); } catch { /* ignore */ }
     };
-
+    const onLost = (e: PointerEvent) => {
+      if (blankClickRef.current?.pointerId === e.pointerId) {
+        blankClickRef.current = null;
+        void invoke("mpv_cancel_pending_click").catch(() => {});
+      }
+      if (dragPointer === e.pointerId) dragPointer = null;
+      if (fwdRef.current && fwdRef.current.btn !== 0) {
+        const kind = fwdRef.current.btn === 1 ? "mup" : "rup";
+        fwdRef.current = null;
+        void invoke("mpv_forward_mouse", { kind, x: 0, y: 0, flags: 0, delta: 0 }).catch(() => {});
+      }
+    };
     const onWheel = (e: WheelEvent) => {
       wake();
-      if (overChrome(e.target)) return;
-      if (menuOpenRef.current || Date.now() < ptSuppressUntil.current) return;
-      // 一格 = 120（WHEEL_DELTA）；方向取 deltaY 符号，mpv 只看增量正负
-      send("wheel", e, e.deltaY < 0 ? 120 : -120);
+      if (!overChrome(e.target) && !menuOpenRef.current && Date.now() >= ptSuppressUntil.current)
+        send("wheel", e, e.deltaY < 0 ? 120 : -120);
     };
-
-    // 右键菜单在覆盖层里没有任何用途（控件都有自己的面板菜单），一律拦掉
-    const onCtx = (e: MouseEvent) => e.preventDefault();
-
+    const onContext = (e: MouseEvent) => {
+      if (overChrome(e.target) || menuOpenRef.current) e.preventDefault();
+    };
     document.addEventListener("pointerdown", onDown, true);
     document.addEventListener("pointermove", onMove, true);
     document.addEventListener("pointerup", onUp, true);
-    document.addEventListener("pointercancel", onUp, true);
+    document.addEventListener("pointercancel", onLost, true);
     document.addEventListener("lostpointercapture", onLost, true);
     document.addEventListener("wheel", onWheel, { capture: true, passive: true });
-    document.addEventListener("contextmenu", onCtx);
+    document.addEventListener("contextmenu", onContext);
     return () => {
-      if (moveRaf) window.cancelAnimationFrame(moveRaf);
+      blankClickRef.current = null;
       document.removeEventListener("pointerdown", onDown, true);
       document.removeEventListener("pointermove", onMove, true);
       document.removeEventListener("pointerup", onUp, true);
-      document.removeEventListener("pointercancel", onUp, true);
+      document.removeEventListener("pointercancel", onLost, true);
       document.removeEventListener("lostpointercapture", onLost, true);
       document.removeEventListener("wheel", onWheel, true);
-      document.removeEventListener("contextmenu", onCtx);
+      document.removeEventListener("contextmenu", onContext);
       fwdRef.current = null;
     };
   }, [wake]);

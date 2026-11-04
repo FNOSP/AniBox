@@ -3066,49 +3066,58 @@ async fn player_embed_enter(app: AppHandle, state: State<'_, AppState>) -> Resul
         // 播放器消失）。走 uosc 的 disable_elements 通道（handle_options → Manager:disable
         // 会运行时销毁/重建元素），一个键搞定且不碰 top_bar_* 三个独立开关；退出按原串还原。
         // 失败不阻塞（顶栏多显一轮，下次 enter 再试）。
-        let orig = m
-            .command(json!(["get_property", "script-opts"]))
-            .await
-            .ok()
-            .and_then(|v| v.get("data").and_then(|d| d.as_str()).map(|s| s.to_string()))
-            .unwrap_or_default();
-        crate::mpvwin::save_script_opts(orig.clone());
-        // [lc-1912] 内嵌观感 = Polaris 影院模式：uosc 全家桶让位（其 conf 同款 disable 集），
-        // osc-cinema.lua 接管底部影院控制条（细 seekbar + 圆形按钮 + 缩略图 + 3s 自动隐藏）。
-        // uosc 脚本本体保留（osc-cinema 借它的 open-menu 弹菜单），只禁元素。
-        const EMBED_UOSC_DISABLED: &[&str] = &[
-            "top_bar",
-            "timeline",
-            "controls",
-            "volume",
-            "pause_indicator",
-            "buffering_indicator",
-            "window_border",
-        ];
-        // 基值从原串读（不硬编码 conf 现值），去掉本轮要禁的元素后追加，避免重复 enter 叠写
-        let base_disable = orig
-            .split(',')
-            .find_map(|s| s.trim().strip_prefix("uosc-disable_elements="))
-            .unwrap_or("")
-            .split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty() && !EMBED_UOSC_DISABLED.contains(s))
-            .collect::<Vec<_>>()
-            .join(",");
-        let disable = if base_disable.is_empty() {
-            EMBED_UOSC_DISABLED.join(",")
+        // [lc-1994] 覆盖层接管 UI 时**整段跳过**：控件/菜单已全部由覆盖层 DOM 承担，
+        // mpv 侧不允许再被拨任何 UI 开关。旧 PlayerView（主窗内嵌页）仍会调本命令，
+        // 这个分支保证它对覆盖层路径零副作用（uosc 在启动参数里已整脚本停用）。
+        if crate::mpvwin::overlay_ui_ready() {
+            crate::libmpv::trace(
+                "[lc-1994] embed_enter：覆盖层接管 UI → 跳过 uosc/osc-cinema script-opts 拨动",
+            );
         } else {
-            format!("{base_disable},{}", EMBED_UOSC_DISABLED.join(","))
-        };
-        let merged = merge_script_opts(
-            orig,
-            &[
-                ("uosc-disable_elements", &disable),
-                ("osc_cinema-enabled", "yes"),
-            ],
-        );
-        if let Err(e) = m.command(json!(["set_property", "script-opts", merged])).await {
-            crate::libmpv::trace(&format!("[lc-1911] 内嵌 uosc script-opts 下发失败: {e}"));
+            let orig = m
+                .command(json!(["get_property", "script-opts"]))
+                .await
+                .ok()
+                .and_then(|v| v.get("data").and_then(|d| d.as_str()).map(|s| s.to_string()))
+                .unwrap_or_default();
+            crate::mpvwin::save_script_opts(orig.clone());
+            // [lc-1912] 内嵌观感 = Polaris 影院模式：uosc 全家桶让位（其 conf 同款 disable 集），
+            // osc-cinema.lua 接管底部影院控制条（细 seekbar + 圆形按钮 + 缩略图 + 3s 自动隐藏）。
+            // uosc 脚本本体保留（osc-cinema 借它的 open-menu 弹菜单），只禁元素。
+            const EMBED_UOSC_DISABLED: &[&str] = &[
+                "top_bar",
+                "timeline",
+                "controls",
+                "volume",
+                "pause_indicator",
+                "buffering_indicator",
+                "window_border",
+            ];
+            // 基值从原串读（不硬编码 conf 现值），去掉本轮要禁的元素后追加，避免重复 enter 叠写
+            let base_disable = orig
+                .split(',')
+                .find_map(|s| s.trim().strip_prefix("uosc-disable_elements="))
+                .unwrap_or("")
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty() && !EMBED_UOSC_DISABLED.contains(s))
+                .collect::<Vec<_>>()
+                .join(",");
+            let disable = if base_disable.is_empty() {
+                EMBED_UOSC_DISABLED.join(",")
+            } else {
+                format!("{base_disable},{}", EMBED_UOSC_DISABLED.join(","))
+            };
+            let merged = merge_script_opts(
+                orig,
+                &[
+                    ("uosc-disable_elements", &disable),
+                    ("osc_cinema-enabled", "yes"),
+                ],
+            );
+            if let Err(e) = m.command(json!(["set_property", "script-opts", merged])).await {
+                crate::libmpv::trace(&format!("[lc-1911] 内嵌 uosc script-opts 下发失败: {e}"));
+            }
         }
         tauri::async_runtime::spawn(player_embed_adopt_loop(app, m));
     }

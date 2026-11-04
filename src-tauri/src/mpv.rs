@@ -395,12 +395,21 @@ impl MpvSession {
                         .to_string(),
                 );
                 args.push("--script-opts-append=uosc-idle_branding=no".to_string());
-                // [lc-1940] 只有覆盖层 UI 真的显示时才关掉 Lua OSC 绘制；
-                // 兜底路径保持脚本默认（画自己的 OSC），这就是 lc-1938 的形态。
+                // [lc-1940] 只有覆盖层 UI 真的显示时才关掉 mpv 侧全部 UI 绘制；
+                // 兜底路径保持脚本默认（fntv_osc 自绘），这就是 lc-1938 的形态 ——
+                // 两条路径各自只有**一套** UI，绝不并存。
                 if overlay_ui {
-                    // [lc-1939] 控件由 Tauri 覆盖层（PlayerChrome）绘制：Lua OSC 只保留
-                    // input.conf 的左键分发（画面区点击→暂停），一个像素都不画。
+                    // [lc-1994] 架构契约：覆盖层是唯一控件层。
+                    //   · fntv_osc：零绘制 + 零热区（窗口模式与全屏一致），左键语义交给 input.conf；
+                    //   · uosc：整脚本早退（时间轴/控件/鼠标 force 绑定/uosc 菜单全部不存在）；
+                    //   · osd-level=0（mpv.conf）：mpv 连 OSD 文本都不画。
                     args.push("--script-opts-append=fntv_osc-overlay_controls=yes".to_string());
+                    args.push("--script-opts-append=uosc-anibox_disabled=yes".to_string());
+                    // seek 提示浮层（视频上盖字的 OSD）同属 mpv 侧 UI，覆盖层接管时一并停用
+                    args.push("--script-opts-append=seek-feedback-anibox_disabled=yes".to_string());
+                    crate::libmpv::trace(
+                        "[lc-1994] 契约快照(启动参数)：osc=no osd-level=0 osd-bar=no uosc-disabled=yes fntv_osc-overlay_controls=yes → mpv 侧零 UI，左键=pause 双击=fullscreen 滚轮=volume 右键=ignore",
+                    );
                 }
                 args.push("--script-opts-append=uosc-anibox_hide_timeline=yes".to_string());
                 // [lc-1924] 原生 UI 全面停用：控件与提示都由 App 覆盖层 DOM 承担

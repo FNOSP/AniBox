@@ -210,6 +210,34 @@
 //!     覆盖层可见性不变量都保留。
 //!   · 埋点：Rust `[lc-1992] fntv_osc 全屏锁定 script-message fntv-osc-fs-lock on|off 已下发`；
 //!     mpv.log `[lc-1992] fntv_osc 全屏锁定 ON/OFF（reason）`。
+//!
+//! [lc-1994] **单 UI 所有权审计（架构契约最终形态）**
+//!
+//! 契约：点播放 → 调出 mpv；mpv 只管播放与窗口拖放；一切设置走覆盖层自绘 UI。
+//! 本批把「mpv 侧还在画/还在判控件」的所有残留清掉，并加可核对埋点：
+//!   · **mpv 侧零 UI（窗口模式也关）**：
+//!       - mpv.conf `osd-level=0`（连 show-text / osd_message / seek 提示都不画）；
+//!       - `osc=no` + `osd-bar=no`（内置 OSC / 进度条永不存在）；
+//!       - uosc 由启动参数 `uosc-anibox_disabled=yes` **整脚本早退**（时间轴/控件/
+//!         鼠标 force 绑定/uosc 菜单全部不存在；独立窗口模式不传该参，行为照旧）；
+//!       - `fntv_osc` 在 overlay_controls=yes 下**窗口与全屏一致**的零绘制 + 零热区
+//!         （旧实现窗口模式虽不画，但 on_click 仍按看不见的按钮坐标执行 = 幽灵热区）。
+//!   · **输入归属唯一**：input.conf 的 MBTN_LEFT 从 `script-binding fntv_osc/fntv-osc-click`
+//!     改回 `cycle pause`；MBTN_LEFT_DBL=fullscreen / Wheel=volume / MBTN_RIGHT=ignore。
+//!     mpv 侧再无「按坐标判定控件」的逻辑。
+//!   · **隐藏态点击唤出控件**：前端心跳**照常上报隐藏态控件矩形**（不再过滤
+//!     pointer-events），Rust 探针据此把控件带保持可点；前端 onDown 对「隐藏 + 落在
+//!     控件矩形内」的一击走 `wake:band`（唤出控件，绝不转发成 pause）。
+//!   · **埋点**：
+//!       - 起播：`[lc-1994] 契约快照(启动参数)`（Rust）+ mpv.log
+//!         `[lc-1994] 契约快照 tag=file-loaded osc=… osd-level=… osd-bar=… uosc_disabled=… fntv_osc.draw=…`
+//!         （Lua 读真实属性值）；
+//!       - 输入归属：前端每次 pointerdown 打 `[lc-1994] down route=local|fwd|wake:band|swallow:*`；
+//!         Rust 打 `[lc-1994] owner=overlay/mpv src=probe-zone/probe-restore` 与
+//!         `[lc-1994] fwd-recv kind=…`（逐行可对账）。
+//!   · **历史包袱处置**：TOPMOST 强推 / 屏保级抬顶 / 带内插顶（lc-1952~1981）已退役，
+//!     仅作为单测锚点保留（`#[allow(dead_code)]` 且运行路径零引用）；真正在跑的最小集 =
+//!     覆盖层跟随锚窗几何（33ms）、全屏输入锁、lc-1991 不变量守卫、lc-1992 OSC 全屏锁。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -915,7 +943,7 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
                         overlay_apply_input_passthrough(hwnd, false, "probe-zone");
                         AUTO_HOVER_ACTIVE.store(true, Ordering::SeqCst);
                         crate::libmpv::trace(&format!(
-                            "[lc-1964] 探针热区直翻可点 x={} y={} src={zone_src}（不依赖 elementFromPoint）",
+                            "[lc-1994] owner=overlay src=probe-zone x={} y={} from={zone_src}（点击归覆盖层）",
                             pt.x - rc.left,
                             pt.y - rc.top
                         ));
@@ -924,13 +952,17 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
                         && !FRONTEND_HOVER_LAST.load(Ordering::SeqCst)
                     {
                         overlay_apply_input_passthrough(hwnd, true, "probe-restore");
-                        crate::libmpv::trace("[lc-1964] 探针热区离开 → 穿透还原");
+                        crate::libmpv::trace(
+                            "[lc-1994] owner=mpv src=probe-restore（点击归 mpv 原生输入）",
+                        );
                     }
                 } else if AUTO_HOVER_ACTIVE.swap(false, Ordering::SeqCst)
                     && !FRONTEND_HOVER_LAST.load(Ordering::SeqCst)
                 {
                     overlay_apply_input_passthrough(hwnd, true, "probe-restore");
-                    crate::libmpv::trace("[lc-1964] 光标离开覆盖层 → 热区穿透还原");
+                    crate::libmpv::trace(
+                        "[lc-1994] owner=mpv src=probe-outside（点击归 mpv 原生输入）",
+                    );
                 }
                 let moved = last_point != Some((pt.x, pt.y));
                 let inside_changed = inside != last_inside;
@@ -969,26 +1001,6 @@ pub fn spawn_overlay_probe(app: tauri::AppHandle) {
         OVERLAY_PROBE_RUNNING.store(false, Ordering::SeqCst);
         crate::libmpv::trace("[lc-1960] 光标探针退出（内嵌会话结束）");
     });
-}
-
-/// [lc-1960] 置顶覆盖层。ex-style 基座 = NOACTIVATE + TOOLWINDOW + LAYERED
-/// （`overlay_style_noactivate` 一次成型）；穿透位由
-/// [`overlay_apply_input_passthrough`] 单点管理，本函数不碰它。
-pub fn overlay_set_topmost(hwnd: isize) {
-    if hwnd == 0 || unsafe { IsWindow(hwnd as _) } == 0 {
-        return;
-    }
-    unsafe {
-        SetWindowPos(
-            hwnd as _,
-            HWND_TOPMOST,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-        );
-    }
 }
 
 /// [lc-1939] 显示覆盖层但**不激活**（Tauri show() 会抢前台，播放器窗不允许）。
@@ -1642,7 +1654,8 @@ fn move_window(hwnd: isize, x: i32, y: i32, w: i32, h: i32) {
 /// 不变量：全屏期间 mpv 的 VO 是锚窗几何的唯一写者，我们从外面抢写就是 lc-1947/1948
 /// 「-11,-11 3851x2171 拉锯」的根源）。覆盖层没铺满显示器就重摆；
 /// [lc-1981] 锚窗 TOPMOST 一概不碰（置顶归 mpv + 一次性 `fntv-ontop-fs` 抑制）；
-/// [lc-1964] 覆盖层抬到 TOPMOST 带最顶（屏保级，恒压锚窗之上）。
+/// [lc-1988/lc-1994] **z 序零干预**：层级由「覆盖层是锚窗的 owned window」保证，
+/// 这里不做任何 TOPMOST / 屏保级抬顶 / 带内插顶（那套战术已退役，见模块头）。
 fn ensure_fullscreen_geometry(app: &tauri::AppHandle) {
     if !PLAYER_FULLSCREEN.load(Ordering::SeqCst) {
         return;
@@ -2852,10 +2865,30 @@ mod tests {
         assert!(hotzone_hit(&zones, (1280.0, 720.0), (3840, 2160), 1920, 2100));
         // 物理点 (1920, 1080) → CSS (640, 360) → 画面中央，不命中。
         assert!(!hotzone_hit(&zones, (1280.0, 720.0), (3840, 2160), 1920, 1080));
-        // 空热区（chrome 隐藏时前端上报空表）恒不命中。
+        // 空热区（前端未挂载 / 没有任何 [data-chrome-hit]）恒不命中。
+        // [lc-1994] 注意：**隐藏态控件不再上报空表** —— 隐藏带必须继续命中，
+        // 否则点击会穿透给 mpv 变成 pause（见下一个测试）。
         assert!(!hotzone_hit(&[], (1280.0, 720.0), (3840, 2160), 1920, 2100));
         // 视口非法（除零保护）恒不命中。
         assert!(!hotzone_hit(&zones, (0.0, 0.0), (3840, 2160), 1920, 2100));
+    }
+
+    /// [lc-1994] 契约锚定：控件**隐藏态**的矩形仍在热区表里 → 探针照常把这一带翻成
+    /// 可点（前端 onDown 才能收到这一击并按 `wake:band` 唤出控件，而不是让 mpv pause）。
+    /// 反向锚定：若前端沿用旧形态（隐藏 = 上报空表），同一坐标恒不命中 —— 那份实现
+    /// 对「隐藏态点控件带」这个契约必然 FAIL。
+    #[test]
+    fn hidden_band_zone_must_stay_hittable() {
+        let zones = [[0.0, 648.0, 1280.0, 72.0]]; // 隐藏态底栏（opacity:0，rect 仍可量）
+        assert!(
+            hotzone_hit(&zones, (1280.0, 720.0), (3840, 2160), 1920, 2100),
+            "隐藏态控件带必须命中（探针才会翻可点，点击才能被前端吞掉并唤出控件）"
+        );
+        // 旧形态对照（必须 FAIL）：隐藏 = 空表 → 同一坐标不命中 → 点击漏给 mpv。
+        assert!(
+            !hotzone_hit(&[], (1280.0, 720.0), (3840, 2160), 1920, 2100),
+            "旧形态（隐藏上报空表）对隐藏带必然不命中"
+        );
     }
 
     /// [lc-1990] 坐标换算双向验证（全屏态、真实 DPI）：前端转发公式 = CSS×dpr 取整；

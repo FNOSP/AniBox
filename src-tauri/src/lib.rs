@@ -2504,6 +2504,12 @@ async fn push_skip_metadata(state: &AppState, payload: Value) {
 /// 随页面滚动/圆角/裁剪，HTML 控件随便盖，没有窗口套窗口、没有挖洞。
 /// 代理吐的是标准 HTTP MP4 且支持 Range（lc-103 修好 guid 之后实测），浏览器可直接播。
 /// 浏览器不支持的容器（MKV 等）由前端 onError 回退到 mpv 路径。
+/// [lc-1943] 前端延迟采样落盘（`[lat]` 前缀）：会话失效探活等前端埋点写进 anibox.log。
+#[tauri::command]
+fn lat_trace(msg: String) {
+    crate::libmpv::trace(&format!("[lat] {msg}"));
+}
+
 #[tauri::command]
 async fn player_source(
     state: State<'_, AppState>,
@@ -2542,10 +2548,6 @@ async fn play_item(
         return Err("未登录".into());
     }
 
-    // [lc-1949] **点击「播放」当刻**就收主窗、亮覆盖层（用户指定：主窗任何一帧都不许漏）。
-    // 这里之后的所有失败路径都经 `gate_boot_failure` 唤回主窗（player_overlay_abort）。
-    let booted = boot_player_overlay_at_click(&app);
-
     // [lc-1551] 顺序重排：**mpv 先起来**，网络准备全部并行。
     //
     // 实测耗时（anibox.log）：launch 开始 → file-loaded 共 3.26s，而 mpv 自报的
@@ -2578,11 +2580,7 @@ async fn play_item(
     // 现在回归主仓库形态：
     //   解析 guid（飞牛 API）→ 写单条目 M3U8（#EXTINF 标题 → media-title → 弹幕链）
     //   → mpv 命令行直接带该 M3U8 ⇒ 窗口出现即开始加载，无 idle 空窗。
-    let res = gate_boot_failure(
-        &app,
-        booted,
-        resolve_play_guid(&app, &state, &mut cfg, &guid, media_guid.as_deref()).await,
-    )?;
+    let res = resolve_play_guid(&app, &state, &mut cfg, &guid, media_guid.as_deref()).await?;
     stage("guid-resolved");
     // [live] 直播直链：不经 Go 代理，也不回传进度（直播没有 media_guid/duration）。
     let is_live = res.live_url.is_some();
@@ -2628,11 +2626,7 @@ async fn play_item(
     let direct_url = if let Some(live) = res.live_url.clone() {
         live
     } else {
-        gate_boot_failure(
-            &app,
-            booted,
-            proxy::ensure(&cfg.proxy_path, &state.proxy_child).await,
-        )?;
+        proxy::ensure(&cfg.proxy_path, &state.proxy_child).await?;
         stage("proxy-ready");
         proxy::play_url(&cfg, &res.play_guid)
     };
@@ -2645,7 +2639,7 @@ async fn play_item(
 
     // 播放列表：剧集 → 拉整季 `episode/list` 构建多条目列表；电影/单集/列表拉取失败 →
     // 回退单条目（行为与修复前一致，确保单集电影不受影响）。
-    let (kind, _player_path) = gate_boot_failure(&app, booted, player::resolve_player(&cfg))?;
+    let (kind, _player_path) = player::resolve_player(&cfg)?;
     let mut entries: Vec<PlaylistEntry> = Vec::new();
     let mut start_index = 0usize;
     // [lc-1841] 起播集续播点：episode/list 的 ts 字段（与详情页进度条同源）；电影/拉取
@@ -2793,13 +2787,13 @@ async fn play_item(
     } else if multi {
         let path = std::env::temp_dir().join("anibox-playlist.m3u");
         let m3u = build_playlist_m3u(&cfg, &entries);
-        gate_boot_failure(&app, booted, std::fs::write(&path, m3u).map_err(|e| format!("写播放列表失败: {e}")))?;
+        std::fs::write(&path, m3u).map_err(|e| format!("写播放列表失败: {e}"))?;
         playlist_start = Some(start_index);
         path.to_string_lossy().to_string()
     } else {
         let m3u8_path = std::env::temp_dir().join("anibox-play.m3u8");
         let m3u8 = format!("#EXTM3U\n#EXTINF:-1,{}\n{}\n", display_title, direct_url);
-        gate_boot_failure(&app, booted, std::fs::write(&m3u8_path, m3u8).map_err(|e| format!("写播放列表失败: {e}")))?;
+        std::fs::write(&m3u8_path, m3u8).map_err(|e| format!("写播放列表失败: {e}"))?;
         m3u8_path.to_string_lossy().to_string()
     };
     stage(if multi { "playlist-prepared" } else { "url-prepared" });
@@ -2872,9 +2866,7 @@ async fn play_item(
         },
     );
     // 记录已落盘，再决定是否向调用方报播放器启动错误。
-    // [lc-1949] 预置已把主窗藏起来：launch 失败必须唤回主窗（launch_mpv 内部的
-    // abort 只覆盖 spawn/IPC 失败路径，这里兜住其余全部）。
-    gate_boot_failure(&app, booted, launch_res)?;
+    launch_res?;
 
     // [lc-1751] PotPlayer 整季面板追加（对标 Fntv-Plus potplayer.ts populatePlaylistPanel，
     // lc-297）：起播只带点击集；窗口就绪后把其余集以可读名 relay URL 经 `/Current /add`
@@ -2968,838 +2960,10 @@ async fn player_stop(app: AppHandle, state: State<'_, AppState>) -> Result<(), S
     Ok(())
 }
 
-// ───────────────────────── [lc-1909] 软件内播放（内嵌模式） ─────────────────────────
-// mpv 独立窗口被精确钉到前端上报的视频区域矩形上，视觉上嵌在主窗口内。
-// IPC 契约（前端仅在 player_open_mode="app" 时调用，后端不做模式门控）：
-//   · player_embed_enter：标记内嵌激活，后台收编 mpv 窗口（挂 owner + DWM 圆角）并
-//     **先行隐藏**——首个矩形上报前独立窗口不得闪现；hwnd 未就绪时限次重试，不阻塞返回。
-//   · player_embed_rect：物理像素、相对前端内容区 (0,0)；换算屏幕坐标后 SetWindowPos
-//     绝对定位（SWP_NOACTIVATE|SWP_NOZORDER），窗口仍隐藏则顺带显示。高频调用，幂等轻量。
-//   · player_embed_leave：清除内嵌状态；stop=true 走现有 IPC stop 并再次隐藏 mpv 窗口
-//     （实例保留），stop=false 仅清状态。
-// 内部实现全部在 mpvwin 模块（静态槽 + poison 兜底）；Moved 事件的内嵌跟随在
-// mpvwin::on_main_moved 内按 EMBED_ACTIVE 生效。
-
-/// enter 的后台收编循环（复用 lc-1907 的 25×200ms 重试模式）：mpv 窗口 / 主窗口 HWND
-/// 未就绪时限次等待；收编成功即隐藏 + 补施已上报矩形。期间退嵌（embed_is_active 转 false）
-/// 或 mpv 进程退出则静默放弃。任何失败只 trace，不报错。
-#[cfg(target_os = "windows")]
-async fn player_embed_adopt_loop(app: AppHandle, m: std::sync::Arc<crate::mpv::MpvSession>) {
-    for _attempt in 0..25u32 {
-        // 退嵌（leave 可能赶在收编完成前）→ 放弃，不再动窗口
-        if !crate::mpvwin::embed_is_active() {
-            return;
-        }
-        // [lc-1913] spawn 侧收编通常已完成（槽内 hwnd 有效 = 已满屏钉住）→ 不重收编，
-        // 否则把已钉好的窗口藏起来等矩形（黑屏闪烁）。
-        if crate::mpvwin::get_hwnd().is_some() {
-            crate::libmpv::trace("[lc-1913] embed_enter：spawn 侧已收编并满屏钉住，跳过重收编");
-            return;
-        }
-        let Some(pid) = *m.pid.lock().unwrap() else {
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            continue;
-        };
-        if !crate::winproc::pid_alive(pid) {
-            crate::libmpv::trace("[lc-1909] embed_enter：mpv 进程已退出，放弃收编");
-            return;
-        }
-        // [lc-1916] owner = mpv_overlay（播放器专用窗，Polaris 同架构），不再是主窗口；
-        // overlay 未就绪时先补建。收编用**可见** adopt（绝不 embed_adopt 隐藏等待），
-        // 收编成功即满屏钉住 + 启动跟随循环。
-        if let Some(owner) = app
-            .get_webview_window("mpv_overlay")
-            .or_else(|| crate::ensure_player_overlay(&app))
-            .and_then(|w| w.hwnd().ok().map(|h| h.0 as isize))
-        {
-            if crate::mpvwin::find_mpv_hwnd(pid).is_some() {
-                match crate::mpvwin::adopt(pid, owner) {
-                    Ok(_) => {
-                        crate::mpvwin::embed_set_active(true);
-                        crate::mpvwin::set_owner_follow(false);
-                        crate::mpvwin::pin_to_owner(owner);
-                        crate::mpvwin::spawn_overlay_follow(app.clone());
-                    }
-                    Err(e) => crate::libmpv::trace(&format!("[lc-1916] 内嵌收编失败: {e}")),
-                }
-                return;
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    }
-    crate::libmpv::trace("[lc-1909] 内嵌收编重试超时（mpv 窗口/播放窗 5s 内未就绪），放弃");
-}
-
-/// [lc-1909] 内嵌 enter：标记激活 + 后台收编并隐藏 mpv 窗口。无 mpv 会话时 trace 后静默返回。
-#[tauri::command]
-async fn player_embed_enter(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        let session = state.mpv.lock().await.clone();
-        let Some(m) = session else {
-            crate::libmpv::trace("[lc-1909] embed_enter：无 mpv 会话，忽略");
-            return Ok(());
-        };
-        crate::mpvwin::embed_set_active(true);
-        // [lc-1946] 新会话：清掉上一轮退出去重 / 最大化标记，顶栏置顶回到默认 true
-        crate::mpvwin::end_exit_flow();
-        crate::mpvwin::clear_minimize_restore();
-        crate::mpvwin::clear_player_maximized();
-        crate::mpvwin::reset_player_ontop();
-        // [lc-1947] 全屏状态归零后按 mpv 的真实值接管：会话复用时若仍停在全屏
-        //（上一次异常退出），这里让窗口级全屏接上；**不**强写 `fullscreen=no` ——
-        // `fntv_menu.lua` 的「起播自动全屏」正是靠 file-loaded 时把该属性置 yes。
-        crate::mpvwin::reset_player_fullscreen();
-        if let Ok(v) = m.command(json!(["get_property", "fullscreen"])).await {
-            if v.get("data").and_then(|d| d.as_bool()).unwrap_or(false) {
-                crate::mpvwin::on_player_fullscreen_changed(&app, true);
-                crate::libmpv::trace("[lc-1947] 起播时 mpv 仍停在全屏 → 窗口级全屏接管");
-            }
-        }
-        // 内嵌态由 Moved 事件的内嵌跟随负责；owner 跟随（lc-1907 实验路径）在内嵌态不参与
-        crate::mpvwin::set_owner_follow(false);
-        // [lc-1913] 不再隐藏等待矩形：spawn 侧收编已把 mpv 满屏钉在主窗口上（geometry
-        // 让首帧就落对位置），这里提前隐藏反而制造黑屏。矩形上报仍接受（PlayerView 若
-        // 挂载会重申矩形，二者一致）。
-        // [lc-1911] 内嵌观感对齐 Polaris：隐藏 uosc 自绘顶栏（标题 / 窗口按钮 / 1·5 徽标）——
-        // 它与网页顶栏重复，还提供一个会**直接退出 mpv 进程**的关闭按钮（内嵌态点它=整个
-        // 播放器消失）。走 uosc 的 disable_elements 通道（handle_options → Manager:disable
-        // 会运行时销毁/重建元素），一个键搞定且不碰 top_bar_* 三个独立开关；退出按原串还原。
-        // 失败不阻塞（顶栏多显一轮，下次 enter 再试）。
-        let orig = m
-            .command(json!(["get_property", "script-opts"]))
-            .await
-            .ok()
-            .and_then(|v| v.get("data").and_then(|d| d.as_str()).map(|s| s.to_string()))
-            .unwrap_or_default();
-        crate::mpvwin::save_script_opts(orig.clone());
-        // [lc-1912] 内嵌观感 = Polaris 影院模式：uosc 全家桶让位（其 conf 同款 disable 集），
-        // osc-cinema.lua 接管底部影院控制条（细 seekbar + 圆形按钮 + 缩略图 + 3s 自动隐藏）。
-        // uosc 脚本本体保留（osc-cinema 借它的 open-menu 弹菜单），只禁元素。
-        const EMBED_UOSC_DISABLED: &[&str] = &[
-            "top_bar",
-            "timeline",
-            "controls",
-            "volume",
-            "pause_indicator",
-            "buffering_indicator",
-            "window_border",
-        ];
-        // 基值从原串读（不硬编码 conf 现值），去掉本轮要禁的元素后追加，避免重复 enter 叠写
-        let base_disable = orig
-            .split(',')
-            .find_map(|s| s.trim().strip_prefix("uosc-disable_elements="))
-            .unwrap_or("")
-            .split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty() && !EMBED_UOSC_DISABLED.contains(s))
-            .collect::<Vec<_>>()
-            .join(",");
-        let disable = if base_disable.is_empty() {
-            EMBED_UOSC_DISABLED.join(",")
-        } else {
-            format!("{base_disable},{}", EMBED_UOSC_DISABLED.join(","))
-        };
-        let merged = merge_script_opts(
-            orig,
-            &[
-                ("uosc-disable_elements", &disable),
-                ("osc_cinema-enabled", "yes"),
-            ],
-        );
-        if let Err(e) = m.command(json!(["set_property", "script-opts", merged])).await {
-            crate::libmpv::trace(&format!("[lc-1911] 内嵌 uosc script-opts 下发失败: {e}"));
-        }
-        tauri::async_runtime::spawn(player_embed_adopt_loop(app, m));
-    }
-    #[cfg(not(target_os = "windows"))]
-    let _ = (&app, &state);
-    Ok(())
-}
-
-/// [lc-1909] 内嵌矩形上报：物理像素、相对前端内容区 (0,0)（decorations:false → 内容区=整窗，
-/// inner_position 即页面 (0,0) 的屏幕物理坐标）。
-/// [lc-1915] 只认 mpv_overlay 窗口的上报 —— 主窗口播放期间隐藏，它的旧上报一律忽略。
-#[tauri::command]
-async fn player_embed_rect(
-    window: tauri::Window,
-    app: AppHandle,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        if window.label() != "mpv_overlay" {
-            return Ok(());
-        }
-        if !crate::mpvwin::embed_is_active() {
-            return Ok(());
-        }
-        // [lc-1946] 最大化期间矩形的「还原矩形」已由系统保存，不要再按视频区重钉 ——
-        // 否则主窗任何一个 Moved/Resized 都会把最大化状态立刻打回去。
-        if crate::mpvwin::player_maximized() {
-            return Ok(());
-        }
-        // [lc-1947] 全屏同理：几何由显示器矩形独占，任何迟到的视频区矩形都不能重钉。
-        if crate::mpvwin::player_fullscreen() {
-            return Ok(());
-        }
-        let Some(win) = app.get_webview_window("mpv_overlay") else {
-            return Ok(());
-        };
-        let Ok(orig) = win.inner_position() else {
-            return Ok(());
-        };
-        let (sx, sy) = (orig.x + x, orig.y + y);
-        // 有 hwnd 直接定位（幂等轻量）；hwnd 未就绪先缓存，收编成功后补施
-        if let Some(h) = crate::mpvwin::get_hwnd() {
-            crate::mpvwin::embed_apply_rect(h, sx, sy, width, height);
-        } else {
-            crate::mpvwin::embed_set_pending_rect(sx, sy, width, height);
-        }
-    }
-    #[cfg(not(target_os = "windows"))]
-    let _ = (&app, &x, &y, &width, &height);
-    Ok(())
-}
-
-/// [lc-1911] 把 `k=v` 覆盖对合并进 script-opts 属性串（逗号分隔的 key=value 列表，
-/// 同 key 后写覆盖；mpv 的 script-opts 值本身不含逗号，按此约定切分）。
-fn merge_script_opts(orig: String, overrides: &[(&str, &str)]) -> String {
-    let mut pairs: Vec<(String, String)> = orig
-        .split(',')
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .filter_map(|s| s.split_once('=').map(|(k, v)| (k.trim().to_string(), v.trim().to_string())))
-        .collect();
-    for (k, v) in overrides {
-        if let Some(p) = pairs.iter_mut().find(|(pk, _)| pk == k) {
-            p.1 = v.to_string();
-        } else {
-            pairs.push((k.to_string(), v.to_string()));
-        }
-    }
-    pairs.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(",")
-}
-
-/// [lc-1940] 覆盖层 UI 显式开关：`ANIBOX_NO_WEBVIEW_OVERLAY=1` 时强制退回 lc-1938 的
-/// mpv 进程内 Lua OSC（覆盖层窗只当 mpv 的隐藏 owner，一个像素都不显示）。默认开启。
-fn overlay_ui_enabled() -> bool {
-    !matches!(
-        std::env::var("ANIBOX_NO_WEBVIEW_OVERLAY").ok().as_deref(),
-        Some("1")
-    )
-}
-
-/// [lc-1940] 覆盖层窗的**创建/复用**入口：只保证窗口存在并贴住主窗口矩形，**绝不显示**。
-///
-/// 用途：启动预建（setup）、mpv 的 owner/几何锚点（含 Lua OSC 兜底路径）。
-/// 能不能当 UI 用只看 `mpvwin::overlay_ui_ready()`，与「窗口是否存在」解耦 ——
-/// 这样即使透明建窗失败，内嵌播放仍能挂在隐藏 owner 上（lc-1938 的形态）。
-pub fn ensure_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
-    use tauri::Manager;
-    if let Some(w) = app.get_webview_window("mpv_overlay") {
-        // 复用路径：按主窗口当前矩形贴位（owner 几何锚点），显示交给 show_player_overlay。
-        // [lc-1947] 全屏中换集不能把覆盖层拉回主窗矩形：几何由显示器矩形独占，
-        // 下一拍跟随循环也会把 mpv 拉回去 → 会闪一下窗口尺寸。
-        if !crate::mpvwin::player_fullscreen() {
-            if let Some(main) = app.get_webview_window("main") {
-                if let (Ok(pos), Ok(size)) = (main.outer_position(), main.outer_size()) {
-                    let _ = w.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
-                    let _ = w.set_size(tauri::PhysicalSize::new(size.width, size.height));
-                }
-            }
-        }
-        if !crate::mpvwin::overlay_ui_ready() {
-            // [lc-1940] UI 不可用（非透明 / 显式关闭）→ 只能是隐藏 owner，绝不允许露出来。
-            if let Ok(h) = w.hwnd() {
-                crate::mpvwin::overlay_hide(h.0 as isize);
-            }
-        }
-        return Some(w);
-    }
-    // [lc-1926] 窗口不存在则现建（正常路径下 setup 已建好，这里只做兜底）
-    let main = app.get_webview_window("main")?;
-    let pos = main.outer_position().ok()?;
-    let size = main.outer_size().ok()?;
-    // [lc-1916] 窗口创建派发到主线程（Tauri 窗口构建跨线程行为不稳），失败必须留痕 ——
-    // 上一版 .ok() 吞错：创建失败但主窗已隐藏 = 「窗口全没了」事故。
-    let app2 = app.clone();
-    let (tx, rx) = std::sync::mpsc::channel::<Result<tauri::WebviewWindow, String>>();
-    let dispatched = app.run_on_main_thread(move || {
-        let built = tauri::WebviewWindowBuilder::new(
-            &app2,
-            "mpv_overlay",
-            tauri::WebviewUrl::App("index.html".into()),
-        )
-        .title("AniBox Player")
-        // [lc-1920] 0x8007139F 的真正根因：wry **每个窗口各自** CreateCoreWebView2Environment，
-        // WebView2 规定同一 user-data 目录下第二次建 Environment 的参数必须与第一次完全一致，
-        // 否则报 ERROR_INVALID_STATE。主窗口（tauri.conf.json）带 additionalBrowserArgs，
-        // 运行时建窗不带 → 参数不同 → 必败。这里逐字节复刻主窗口的参数（两处必须同步改）。
-        .additional_browser_args(
-            "--autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI",
-        )
-        .decorations(false)
-        // [lc-1939] Polaris MPV Overlay 实测 ex 含 WS_EX_LAYERED：覆盖层必须逐像素透明
-        // 才能浮在视频上只显示控件（底衬完全透明，视频从覆盖层下方透出）。
-        .shadow(false)
-        .skip_taskbar(true)
-        // [lc-1924] 透明窗：UI 层要浮在 mpv 视频之上，空白区必须透出画面
-        // （Polaris 的 MPV Overlay 同样是 layered/transparent）。
-        // WebView2 的透明依赖 Environment 参数一致 —— lc-1920 已把 additional_browser_args
-        // 与主窗口对齐；万一仍被拒（0x8007139F），外层会重试并在 mpvwin 里退回旧方向。
-        .transparent(true)
-        .visible(false)
-        // [lc-1921] 播放窗不可用户缩放（Polaris 同款：样式里无 THICKFRAME）——尺寸只由
-        // 跟随循环按 mpv 矩形设定，杜绝双向缩放通路。
-        .resizable(false)
-        .build()
-        .map_err(|e| e.to_string());
-        let _ = tx.send(built);
-    });
-    if dispatched.is_err() {
-        crate::libmpv::trace("[lc-1916] mpv_overlay 创建：主线程派发失败");
-        return None;
-    }
-    let built = rx.recv().ok()?; // 主线程事件循环活着，必然回包
-    // 透明建窗失败 → 去掉 transparent 重试一次（宁可控件不可见，也不能让播放器起不来）
-    // 第一次带 transparent 建；失败则不带重试 → 记录最终是否透明
-    let mut built_transparent = true;
-    let built = match built {
-        Ok(w) => Ok(w),
-        Err(e) if e.contains("0x8007139F") || e.to_lowercase().contains("invalid") => {
-            crate::libmpv::trace(&format!("[lc-1924] 透明建窗失败（{e}），回退不透明重试"));
-            built_transparent = false;
-            let app3 = app.clone();
-            let (tx2, rx2) = std::sync::mpsc::channel::<Result<tauri::WebviewWindow, String>>();
-            let _ = app.run_on_main_thread(move || {
-                let b = tauri::WebviewWindowBuilder::new(&app3, "mpv_overlay", tauri::WebviewUrl::App("index.html".into()))
-                    .title("AniBox Player")
-                    .additional_browser_args("--autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI")
-                    .decorations(false)
-                    .shadow(false)
-                    .skip_taskbar(true)
-                    .visible(false)
-                    .resizable(false)
-                    .build()
-                    .map_err(|e| e.to_string());
-                let _ = tx2.send(b);
-            });
-            rx2.recv().unwrap_or_else(|e| Err(format!("回退建窗失败: {e}")))
-        }
-        Err(e) => Err(e),
-    };
-    match built {
-        Ok(w) => {
-            // [lc-1940] 只有「透明建窗成功 + 未被显式关闭」才允许当 UI 用；
-            // 非透明窗照样保留（当 mpv 的隐藏 owner），但绝不允许显示。
-            let ui_ok = built_transparent && overlay_ui_enabled();
-            crate::mpvwin::set_overlay_transparent(ui_ok);
-            let _ = w.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
-            let _ = w.set_size(tauri::PhysicalSize::new(size.width, size.height));
-            // [lc-1940] 建出来一律保持隐藏：显示只发生在真正起播时（show_player_overlay）。
-            // 且必须用原始 ShowWindow —— Tauri 的 hide() 对「未经它显示过」的窗是空操作
-            //（tao 的 VISIBLE 缓存没变 → apply_diff 直接 return），lc-1939 的黑屏就是这么来的。
-            if let Ok(h) = w.hwnd() {
-                crate::mpvwin::overlay_hide(h.0 as isize);
-            }
-            if ui_ok {
-                crate::libmpv::trace("[lc-1940] mpv_overlay 预建完成（透明，保持隐藏待起播）");
-            } else {
-                crate::libmpv::trace("[lc-1940] 覆盖层不可作 UI（非透明或已禁用）→ 仅作隐藏 owner，播放走 Lua OSC");
-            }
-            Some(w)
-        }
-        Err(e) => {
-            crate::libmpv::trace(&format!("[lc-1916] mpv_overlay 创建失败: {e}"));
-            None
-        }
-    }
-}
-
-/// [lc-1940] 播放期显示覆盖层：UI 可用（透明 + 未禁用）才显示；
-/// 否则保持隐藏并返回 None，调用方退回 mpv 进程内 Lua OSC（lc-1938 路径）。
-/// 绝不允许把「不透明 / 未就绪」的覆盖层显示出来盖死画面。
-pub fn show_player_overlay(app: &AppHandle) -> Option<tauri::WebviewWindow> {
-    let w = ensure_player_overlay(app)?;
-    if !crate::mpvwin::overlay_ui_ready() {
-        if let Ok(h) = w.hwnd() {
-            crate::mpvwin::overlay_hide(h.0 as isize);
-        }
-        crate::libmpv::trace("[lc-1940] 覆盖层 UI 不可用 → 保持隐藏（Lua OSC 兜底）");
-        return None;
-    }
-    if let Ok(h) = w.hwnd() {
-        let hwnd = h.0 as isize;
-        // [lc-1946] 每次起播重置为「置顶」：mpv 锚窗 + 覆盖层一起拨 TOPMOST
-        //（顶栏「置顶」按钮据此切换；取消置顶后下一次起播回到置顶态）。
-        crate::mpvwin::set_player_ontop(hwnd, true);
-        // [lc-1949/1960] NOACTIVATE + TOOLWINDOW + LAYERED 基座一次成型；穿透位由
-        // hover 事务单点管理 —— 起播默认**穿透**（控件隐藏态，Polaris 同款）：
-        // 真实鼠标直达 mpv（单击暂停/双击全屏/拖动全原生），WebView 零鼠标事件流。
-        crate::mpvwin::overlay_style_noactivate(hwnd);
-        // [lc-1988] DWM 过渡动画禁用（一次性，Polaris DWMWA_TRANSITIONS_FORCEDISABLED
-        // 同位）：move/resize/show/hide 不播系统过渡 —— 进/退全屏与跟随挪窗的
-        // 中间态闪烁少一路来源。
-        crate::mpvwin::window_disable_dwm_transitions(hwnd, "session-start");
-        crate::mpvwin::overlay_apply_input_passthrough(hwnd, true, "session-start");
-        crate::mpvwin::overlay_show_noactivate(hwnd);
-        // [lc-1960] 新会话 = 新代际：前端 hover 状态机据此全量重对账；穿透默认态
-        // 同步推给前端（interaction-state），并启动 50ms 光标探针。
-        let generation = crate::mpvwin::hover_bump_generation();
-        let _ = app.emit(
-            "overlay-interaction-state",
-            serde_json::json!({
-                "generation": generation,
-                "desiredHover": false,
-                "appliedHover": false,
-            }),
-        );
-        crate::mpvwin::spawn_overlay_probe(app.clone());
-    }
-    crate::libmpv::trace("[lc-1960] mpv_overlay 显示（透明 + 穿透默认态 + NOACTIVATE）");
-    Some(w)
-}
-
-/// [lc-1940] 收起覆盖层（播放结束 / 启动兜底）。**不用 Tauri hide()**，理由见
-/// `mpvwin::overlay_hide`：显隐必须和 tao 的 VISIBLE 缓存彻底解耦。
-/// [lc-1960] 收起时穿透位归位（隐藏窗本就收不到输入，置穿透保证下一次显示
-/// 从默认穿透态起步，不会带着上一会的可点态）。
-pub fn hide_player_overlay(app: &AppHandle) {
-    use tauri::Manager;
-    if let Some(w) = app.get_webview_window("mpv_overlay") {
-        if let Ok(h) = w.hwnd() {
-            crate::mpvwin::overlay_apply_input_passthrough(h.0 as isize, true, "overlay-hide");
-            crate::mpvwin::overlay_hide(h.0 as isize);
-        }
-    }
-}
-
-// ───────────────────── [lc-1960] hover 事务命令（Polaris mpv-overlay-hover 同款）───────────────
-
-/// [lc-1960] 覆盖层 hover 事务：前端在「光标进/出控件白名单」的边沿提交
-/// `{hover, generation, requestSeq}`，Rust 拨 WS_EX_TRANSPARENT 并**读回真实位**作 ack。
-/// ack 字段与 Polaris 逐一同名（generation / requestSeq / appliedHover / success）。
-#[tauri::command]
-async fn mpv_overlay_hover(
-    window: tauri::WebviewWindow,
-    hover: bool,
-    generation: u64,
-    request_seq: u64,
-) -> Result<serde_json::Value, String> {
-    use tauri::Manager;
-    // 只接受覆盖层自己的调用：主窗误调会把穿透位拨到错误窗口上。
-    if window.label() != "mpv_overlay" {
-        return Err("mpv_overlay_hover: only mpv_overlay may call".into());
-    }
-    let Ok(h) = window.hwnd() else {
-        return Err("mpv_overlay_hover: hwnd unavailable".into());
-    };
-    let hwnd = h.0 as isize; // HWND(*mut c_void) 不能跨线程；先降成 isize 再 move 进闭包
-    let ack = tauri::async_runtime::spawn_blocking(move || {
-        crate::mpvwin::hover_apply(hwnd, hover, request_seq)
-    })
-    .await
-    .map_err(|e| format!("hover join: {e}"))?;
-    Ok(serde_json::json!({
-        "success": ack.ok,
-        "generation": ack.generation,
-        "requestSeq": request_seq,
-        "appliedHover": ack.applied_hover,
-        "generationMatches": ack.generation == generation,
-    }))
-}
-
-/// [lc-1960] hover 协议状态快照（覆盖层页面加载/重载后对账用）。
-#[tauri::command]
-async fn mpv_overlay_hover_state(
-    window: tauri::WebviewWindow,
-) -> Result<serde_json::Value, String> {
-    use tauri::Manager;
-    if window.label() != "mpv_overlay" {
-        return Err("mpv_overlay_hover_state: only mpv_overlay may call".into());
-    }
-    let Ok(h) = window.hwnd() else {
-        return Err("mpv_overlay_hover_state: hwnd unavailable".into());
-    };
-    let pass_through = crate::mpvwin::overlay_input_passthrough_now(h.0 as isize);
-    Ok(serde_json::json!({
-        "generation": crate::mpvwin::hover_generation(),
-        "appliedHover": !pass_through,
-        "inside": crate::mpvwin::probe_inside(),
-    }))
-}
-
-/// [lc-1964] 控件带几何热区上报：前端 1s 心跳把 `[data-chrome-hit]` 矩形（CSS 视口
-/// 坐标）+ 视口尺寸交给 Rust。探针每拍直接对「光标落在控件带内」翻可点位，完全不
-/// 依赖 WebView elementFromPoint —— WebView 判定链全挂时控件仍可点（架构保险 D）。
-#[tauri::command]
-fn mpv_overlay_hotzones(
-    window: tauri::WebviewWindow,
-    zones: Vec<[f32; 4]>,
-    viewport_w: f32,
-    viewport_h: f32,
-) -> Result<(), String> {
-    use tauri::Manager;
-    // 只接受覆盖层自己的调用：主窗误调会把热区绑到错误的窗口语境上。
-    if window.label() != "mpv_overlay" {
-        return Err("mpv_overlay_hotzones: only mpv_overlay may call".into());
-    }
-    crate::mpvwin::overlay_set_hotzones(zones, (viewport_w, viewport_h));
-    Ok(())
-}
-
-/// [lc-1940] 起播失败兜底：覆盖层收起、mpv 窗口收起、内嵌态清零、主窗口回来。
-/// 任何一条「藏主窗 + 显示覆盖层/mpv」的路径失败时都必须走到这里，绝不留黑窗。
-pub fn player_overlay_abort(app: &AppHandle) {
-    hide_player_overlay(app);
-    if let Some(hwnd) = crate::mpvwin::get_hwnd() {
-        crate::mpvwin::embed_hide(hwnd);
-    }
-    crate::mpvwin::embed_set_active(false);
-    crate::mpvwin::set_owner_follow(false);
-    restore_main_window(app);
-    crate::libmpv::trace("[lc-1940] 起播失败 → 覆盖层/mpv 已收起，主窗口恢复");
-}
-
-/// [lc-1949] **点击「播放」当刻**的起播预置：显示覆盖层（控件层的「正在打开」态）+
-/// 立即隐藏主窗口 + 激活内嵌会话。返回是否真正进入内嵌形态（= 主窗已被隐藏）。
-///
-/// 为什么必须在这里做（而不是等 `player::launch_mpv`）：play_item 在 launch 之前还有
-/// guid 解析 / Go 代理预热 / 播放列表准备等网络步骤（实测 49ms～数秒），旧时序把这些
-/// 步骤走完才藏主窗 —— 这段时间里详情页/首页**整帧可见**，正是用户说的
-/// 「原软件界面还是会漏出来」。现在点击 → invoke 到达的第一毫秒就把主窗收掉，
-/// mpv 画面前用户看到的是覆盖层的加载态（与 mpv 同 rect 的透明层）。
-///
-/// 后续 `launch_mpv` / `MpvSession::launch` 里的同类调用全部幂等（ensure/show/hide
-/// 都是「已就位就跳过」语义），保留它们作为换集 / 复用会话路径的兜底。
-pub fn boot_player_overlay_at_click(app: &AppHandle) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        if ensure_player_overlay(app).is_none() {
-            crate::libmpv::trace("[lc-1949] 覆盖层不可用 → 保持主窗口显示（独立窗口播放）");
-            return false;
-        }
-        crate::mpvwin::embed_set_active(true);
-        if crate::mpvwin::overlay_ui_ready() {
-            let _ = show_player_overlay(app);
-        }
-        crate::mpvwin::spawn_overlay_follow(app.clone());
-        // 藏主窗：Tauri hide() 同步 tao 缓存 + 原始 ShowWindow 兜底真实状态
-        //（最小化按钮用过 SW_SHOWMINNOACTIVE 时缓存与真实状态会脱钩，见 lc-1947）。
-        if let Some(m) = app.get_webview_window("main") {
-            let _ = m.hide();
-            if let Ok(h) = m.hwnd() {
-                crate::mpvwin::window_force_hide(h.0 as isize);
-            }
-        }
-        crate::libmpv::trace("[lc-1949] 起播预置完成：主窗已隐藏，覆盖层待命（点击当刻）");
-        true
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = app;
-        false
-    }
-}
-
-/// [lc-1949] 起播预置后的失败闸门：预置把主窗藏起来之后，起播链上任何一步失败
-/// 都必须唤回主窗（否则用户面对的是「点播放 → 界面消失 → 什么也没发生」）。
-fn gate_boot_failure<T>(app: &AppHandle, booted: bool, r: Result<T, String>) -> Result<T, String> {
-    if booted && r.is_err() {
-        player_overlay_abort(app);
-    }
-    r
-}
-
-/// [lc-1941] 主窗口唤回（关闭播放器 / 起播失败兜底共用）。
-///
-/// 顺序：Tauri `show()` 先把 tao 的 VISIBLE 缓存同步为 true（下一次起播的 `hide()` 才能生效），
-/// 再用原始 `ShowWindow` 做**真实可见性**兜底 —— 覆盖层显隐早已绕开 tao
-/// （`mpvwin::overlay_hide`）；若主窗在别的路径也被原始 ShowWindow 动过，tao 缓存就会与真实
-/// 状态脱钩，此时 `show()` 是空操作，只有系统调用能把它拉回来（且不改最大化状态）。
-fn restore_main_window(app: &AppHandle) {
-    use tauri::Manager;
-    let Some(m) = app.get_webview_window("main") else {
-        return;
-    };
-    let _ = m.unminimize();
-    let _ = m.show();
-    #[cfg(target_os = "windows")]
-    if let Ok(h) = m.hwnd() {
-        crate::mpvwin::window_force_show(h.0 as isize);
-    }
-    let _ = m.set_focus();
-    crate::libmpv::trace("[lc-1941] 主窗口唤回（show + 原始 ShowWindow + focus）");
-}
-
-/// [lc-1941] 退出兜底看门狗：stop 之后 mpv 会重新 show 自己的 idle 窗口（见
-/// `mpvwin::hide_visible_windows_for_pid` 注释），单次隐藏必被覆盖。这里按 100ms 周期
-/// 反复断言三件事，直到连续 ~500ms 稳定：
-///   ① 该会话的 mpv 窗口不可见；② 覆盖层不可见；③ 主窗口真实可见（IsWindowVisible）。
-/// 一旦检测到内嵌态重新激活（用户又点了播放）立即退出，绝不干扰新会话；
-/// 整个过程只调窗口 API，不杀进程、不碰其它 mpv 实例。
-#[cfg(target_os = "windows")]
-fn spawn_overlay_exit_watchdog(app: AppHandle, mpv_pid: Option<u32>) {
-    use tauri::Manager;
-    tauri::async_runtime::spawn(async move {
-        let mut stable = 0u32;
-        for _ in 0..14u32 {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            if crate::mpvwin::embed_is_active() {
-                crate::libmpv::trace("[lc-1941] 退出兜底中止：新的播放会话已开始");
-                return;
-            }
-            let mpv_hidden = match mpv_pid {
-                Some(pid) => match crate::mpvwin::hide_visible_windows_for_pid(pid) {
-                    Some(h) => {
-                        // 命中说明 mpv 重新显示了窗口：回写槽，复用会话下次起播仍能钉位
-                        crate::mpvwin::set_hwnd(h);
-                        false
-                    }
-                    None => true,
-                },
-                None => true,
-            };
-            hide_player_overlay(&app);
-            if let Some(m) = app.get_webview_window("main") {
-                let visible = m
-                    .hwnd()
-                    .map(|h| crate::mpvwin::window_is_visible(h.0 as isize))
-                    .unwrap_or(false);
-                if !visible {
-                    restore_main_window(&app);
-                }
-            }
-            if mpv_hidden {
-                stable += 1;
-                if stable >= 5 {
-                    crate::libmpv::trace("[lc-1941] 退出兜底完成：mpv/覆盖层已收起，主窗保持可见");
-                    return;
-                }
-            } else {
-                stable = 0;
-            }
-        }
-        crate::libmpv::trace("[lc-1941] 退出兜底结束（已达最大轮次；窗口已强制收起）");
-    });
-}
-
-/// [lc-1913] 内嵌退出流程（ESC 桥 / player_embed_leave{stop:true} 共用）：
-/// 停播 + 隐藏 mpv 窗口 + 清内嵌态 + 还原 script-opts（uosc 顶栏/影院 OSC 归位），
-/// 隐藏播放器专用窗口、**唤回主窗口**，最后给前端发 `mpv-embed-exit`。
-///
-/// [lc-1941] 关闭黑屏根因与修法：
-///   · 根因：stop 之后 mpv 的 idle VO 会**重新显示自己的窗口**。旧实现只在 stop 后对
-///     槽内句柄 SW_HIDE 一次，随即被 mpv 覆盖 → 满屏纯黑的 mpv idle 窗口留在最上层
-///     （主窗即使 show() 也被它盖住），用户看到「整屏全黑、回不到软件界面」，且后续
-///     点击全被这个黑窗吃掉。实测 `%TEMP%\anibox-mpv.log`：`Run command: stop @62.774`
-///     → `vo/gpu-next/win32 Window size changed to: 660:292:2520:1575 @62.823`。
-///   · 修法：stop/还原 script-opts 都加**等待上限**（mpv 无响应不能把退出拖成死等）；
-///     隐藏 mpv 先藏槽内句柄、再按会话 PID 枚举所有可见顶层窗口逐个 SW_HIDE；
-///     覆盖层收起后用原始 ShowWindow 唤回主窗；最后交给
-///     `spawn_overlay_exit_watchdog` 反复断言直到稳定。
-pub async fn embed_exit_flow(app: AppHandle) {
-    // [lc-1946] 去重：关闭按钮在「点了没反应」时会被连点，旧实现每次都叠一条
-    // 600ms + 1.5s 的同步等待链，日志里出现过 3 条串行退出。现在只跑第一条。
-    if !crate::mpvwin::begin_exit_flow() {
-        crate::libmpv::trace("[lc-1946] 退出流程已在跑，忽略重复请求");
-        return;
-    }
-    // [lc-1947] 全屏中退出播放：先按保存的矩形/最大化态还原锚窗，否则下一次起播会
-    // 继承一块全屏几何（`embed_set_active(false)` 会清掉还原态，必须放在它前面）。
-    crate::mpvwin::restore_player_window_from_fullscreen();
-    crate::mpvwin::embed_set_active(false);
-    crate::mpvwin::set_owner_follow(false);
-
-    /* ── ① 用户可见的第一步：立刻收起覆盖层 + mpv 窗 ──
-     * [lc-1941] 原有顺序是 藏 mpv → 按 PID 收 mpv 窗 → 收覆盖层 → 唤回主窗 → 看门狗；
-     * 现在把**收覆盖层**提到最前（它是用户真正看到的那一层，且不依赖 mpv 会话），
-     * 其余顺序保留。mpv 的 script-opts 还原 / stop 移到后台：实测这两步在 mpv 忙时
-     * 各要吃满 600ms / 1.5s 上限（日志 `[lc-1941] …超时`），此前用户点关闭后要
-     * **空等 2 秒**才看到任何变化 —— 这正是「点了半天没反应」的一部分。
-     * 先隐藏/收起窗口不会破坏 lc-1941 的兜底：mpv `stop` 后 idle VO 可能重新显示窗口，
-     * 下面的看门狗（现在提前启动）会持续按 PID 收起，兜底语义保留。 */
-    // [lc-1940] 必须走原始 ShowWindow，Tauri 的 hide() 对覆盖层是空操作（见 overlay_hide）
-    hide_player_overlay(&app);
-    // 最大化状态先还原，否则下一次起播的矩形钉位会继承最大化几何
-    crate::mpvwin::restore_player_window_if_zoomed();
-    if let Some(h) = crate::mpvwin::get_hwnd() {
-        crate::mpvwin::embed_hide(h);
-    }
-    // 会话只取一次快照（锁是短暂的）；PID 全量收窗在下面
-    let session = app.state::<AppState>().mpv.lock().await.clone();
-    let mpv_pid = session
-        .as_ref()
-        .and_then(|m| *m.pid.lock().unwrap_or_else(|e| e.into_inner()));
-    #[cfg(target_os = "windows")]
-    if let Some(pid) = mpv_pid {
-        if let Some(h) = crate::mpvwin::hide_visible_windows_for_pid(pid) {
-            crate::mpvwin::set_hwnd(h);
-        }
-    }
-    // [lc-1941] 先让主窗 React 卸载 PlayerView（回到详情页）再唤回主窗 ——
-    // 反过来会先露出播放层那张纯黑舞台一帧
-    crate::mpv::emit_player(&app, "mpv-embed-exit", json!({}));
-    restore_main_window(&app);
-    #[cfg(target_os = "windows")]
-    spawn_overlay_exit_watchdog(app.clone(), mpv_pid);
-
-    /* ── ② 后台清理：还原 script-opts + stop，各自保留上限，不挡用户 ── */
-    if let Some(m) = session {
-        let app_bg = app.clone();
-        tauri::async_runtime::spawn(async move {
-            // [lc-1947] 若在全屏中退出：窗口几何已在上面还原，这里把 mpv 的 fullscreen
-            // 属性也归零（否则下一次会话按钮状态会显示成「退出全屏」）。
-            m.command_no_reply(json!(["set", "fullscreen", "no"])).await;
-            if let Some(orig) = crate::mpvwin::take_saved_script_opts() {
-                // [lc-1941] 有上限：mpv 无响应（command 自带 5s 超时）也不能拖着主窗不回来
-                match tokio::time::timeout(
-                    std::time::Duration::from_millis(600),
-                    m.command(json!(["set_property", "script-opts", orig])),
-                )
-                .await
-                {
-                    Ok(Ok(_)) => {}
-                    Ok(Err(e)) => {
-                        crate::libmpv::trace(&format!("[lc-1913] 还原 script-opts 失败: {e}"))
-                    }
-                    Err(_) => {
-                        crate::libmpv::trace("[lc-1941] 还原 script-opts 超时（600ms）→ 继续退出")
-                    }
-                }
-            }
-            match tokio::time::timeout(std::time::Duration::from_millis(1500), m.stop()).await {
-                Ok(Ok(())) => {}
-                // 不静默吞掉：stop 失败 = 返回后 mpv 继续播，排障要看这条
-                Ok(Err(e)) => crate::libmpv::trace(&format!("[lc-1913] embed 退出 stop 失败: {e}")),
-                Err(_) => {
-                    crate::libmpv::trace("[lc-1941] embed 退出 stop 超时（1.5s）→ 继续收起窗口")
-                }
-            }
-            // stop 之后 idle VO 可能重新显示自己的窗口：立刻收一次，
-            // 并**再跑一轮看门狗**（第一轮在 stop 完成前就可能因「稳定」提前返回）。
-            if let Some(h) = crate::mpvwin::get_hwnd() {
-                crate::mpvwin::embed_hide(h);
-            }
-            #[cfg(target_os = "windows")]
-            if let Some(pid) = mpv_pid {
-                crate::mpvwin::hide_visible_windows_for_pid(pid);
-            }
-            #[cfg(target_os = "windows")]
-            spawn_overlay_exit_watchdog(app_bg, mpv_pid);
-            // 清理收尾后再允许下一次退出（新会话 enter 也会清）
-            crate::mpvwin::end_exit_flow();
-        });
-    } else {
-        crate::mpvwin::end_exit_flow();
-    }
-    crate::libmpv::trace("[lc-1941] embed 退出：覆盖层/mpv 已收起，主窗口已唤回（清理转后台）");
-}
-
-/// [lc-1909] 内嵌 leave：清内嵌状态；stop=true 走现有 IPC stop 并再次隐藏 mpv 窗口（实例保留）。
-#[tauri::command]
-async fn player_embed_leave(app: AppHandle, stop: bool) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        if stop {
-            crate::embed_exit_flow(app).await;
-        } else {
-            crate::mpvwin::embed_set_active(false);
-            crate::mpvwin::set_owner_follow(false);
-        }
-    }
-    #[cfg(not(target_os = "windows"))]
-    let _ = (&app, &stop);
-    Ok(())
-}
-
-/// 覆盖层捕获点击时取消 mpv Lua 里由前一原生 down 建立的待决单击。
-#[tauri::command]
-async fn mpv_cancel_pending_click(state: State<'_, AppState>) -> Result<(), String> {
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session {
-        m.command_no_reply(serde_json::json!(["script-message", "osc-cinema-cancel-pending-click"])).await;
-    }
-    Ok(())
-}
-
-/// 覆盖层捕获的左键空白点击交给 Lua 单击/双击仲裁器，不重放 down/up。
-#[tauri::command]
-async fn mpv_capture_blank_click(state: State<'_, AppState>) -> Result<(), String> {
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session {
-        m.command_no_reply(serde_json::json!(["script-message", "osc-cinema-captured-click", "single"])).await;
-    }
-    Ok(())
-}
-
-/// [lc-1949] 视频区鼠标转发：仅控件命中以外、需要显式交给 mpv 的 move/wheel 等事件使用。
-/// 左键单击/双击由覆盖层捕获与 mpv 穿透态分别单一仲裁，不转发原始 down/up，避免双重提交。
-#[tauri::command]
-fn mpv_forward_mouse(
-    kind: String,
-    x: i32,
-    y: i32,
-    flags: Option<u32>,
-    delta: Option<i32>,
-) -> Result<bool, String> {
-    #[cfg(target_os = "windows")]
-    {
-        Ok(crate::mpvwin::forward_mouse(
-            &kind,
-            x,
-            y,
-            flags.unwrap_or(0),
-            delta.unwrap_or(0),
-        ))
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = (kind, x, y, flags, delta);
-        Ok(false)
-    }
-}
-
-/// [lc-1943] 前端延迟采样落盘（临时诊断，`[lat]` 前缀）。前端拿不到进程日志，
-/// 让它把「点击 → invoke 返回」这类单次测量写进 `anibox.log`，便于与 Rust 侧
-/// `[lat] cmd=… rtt=…` 对齐分解。
-#[tauri::command]
-fn lat_trace(msg: String) {
-    crate::libmpv::trace(&format!("[lat] {msg}"));
-}
-
-/// [lc-1942] 覆盖层临时可聚焦开关：仅字幕搜索输入框使用。
-/// 常规态 `WS_EX_NOACTIVATE` 常驻（点控件不抢焦点）；输入期间摘掉，失焦/关面板装回。
-/// 只接受 mpv_overlay 自己的调用；只动 NOACTIVATE，不碰 LAYERED/TRANSPARENT。
-#[tauri::command]
-async fn player_chrome_focusable(window: tauri::Window, on: bool) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        if window.label() != "mpv_overlay" {
-            return Ok(());
-        }
-        if let Ok(h) = window.hwnd() {
-            crate::mpvwin::overlay_set_focusable(h.0 as isize, on);
-            if on {
-                let _ = window.set_focus();
-            }
-        }
-    }
-    #[cfg(not(target_os = "windows"))]
-    let _ = (&window, &on);
-    Ok(())
-}
-
 #[tauri::command]
 async fn mpv_toggle_pause(state: State<'_, AppState>) -> Result<(), String> {
-    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
-    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session.as_ref() {
+    let slot = state.mpv.lock().await;
+    if let Some(m) = slot.as_ref() {
         m.command(json!(["cycle", "pause"])).await?;
     }
     Ok(())
@@ -3807,62 +2971,10 @@ async fn mpv_toggle_pause(state: State<'_, AppState>) -> Result<(), String> {
 
 /// [lc-093] App 形态（内嵌小窗 / 全页全屏）→ mpv 的 `fullscreen` 属性镜像。
 /// uosc 用它当底栏双形态判据（小窗只留 播放暂停+上下一集 | 时间 | 全屏；全屏保持原样）。
-/// [lc-1925] 让 mpv 拖动它自己的窗口（原生拖窗，DWM 搬运视频窗，零延迟）。
-/// 覆盖层在空白区识别到「按住左键位移 > 4px」时调用 —— Polaris 的 osc-cinema 同款命令
-/// （mpv.conf 里 input-builtin-dragging=no，拖窗由这里唯一提交）。
-#[tauri::command]
-async fn mpv_begin_drag(state: State<'_, AppState>) -> Result<(), String> {
-    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
-    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session.as_ref() {
-        m.command(serde_json::json!(["begin-vo-dragging"])).await?;
-    }
-    Ok(())
-}
-
-/// [lc-1924] 读一个 mpv 属性（覆盖层 UI 用：如 glsl-shaders 判断着色器开关态）
-#[tauri::command]
-async fn mpv_get_prop(state: State<'_, AppState>, name: String) -> Result<serde_json::Value, String> {
-    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
-    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session.as_ref() {
-        let v = m.command(serde_json::json!(["get_property", name])).await?;
-        return Ok(v.get("data").cloned().unwrap_or(serde_json::Value::Null));
-    }
-    Ok(serde_json::Value::Null)
-}
-
-/// [lc-1924] 通用 script-message 通道：覆盖层 UI 的弹幕菜单 / 着色器切换等按钮
-/// 需要按名字戳 mpv 脚本（uosc 菜单、uosc_danmaku），不在 Rust 里逐个包语义。
-#[tauri::command]
-async fn mpv_script_message(
-    state: State<'_, AppState>,
-    name: String,
-    args: Option<Vec<String>>,
-) -> Result<(), String> {
-    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
-    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session.as_ref() {
-        let mut cmd = vec![serde_json::json!("script-message-to"), serde_json::json!(name)];
-        if let Some(a) = args {
-            for x in a {
-                cmd.push(serde_json::json!(x));
-            }
-        }
-        m.command(serde_json::Value::Array(cmd)).await?;
-    }
-    Ok(())
-}
-
 #[tauri::command]
 async fn mpv_set_ui_fullscreen(state: State<'_, AppState>, on: bool) -> Result<(), String> {
-    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
-    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session.as_ref() {
+    let slot = state.mpv.lock().await;
+    if let Some(m) = slot.as_ref() {
         m.set_ui_fullscreen(on).await?;
     }
     Ok(())
@@ -3870,10 +2982,8 @@ async fn mpv_set_ui_fullscreen(state: State<'_, AppState>, on: bool) -> Result<(
 
 #[tauri::command]
 async fn mpv_seek(state: State<'_, AppState>, seconds: f64, absolute: bool) -> Result<(), String> {
-    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
-    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session.as_ref() {
+    let slot = state.mpv.lock().await;
+    if let Some(m) = slot.as_ref() {
         let mode = if absolute { "absolute" } else { "relative" };
         m.command(json!(["seek", seconds, mode])).await?;
     }
@@ -3894,10 +3004,8 @@ async fn mpv_input(
     button: Option<i64>,
     key: Option<String>,
 ) -> Result<(), String> {
-    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
-    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session.as_ref() {
+    let slot = state.mpv.lock().await;
+    if let Some(m) = slot.as_ref() {
         let cmd = match kind.as_str() {
             "move" => json!(["mouse", x as i64, y as i64]),
             "button" | "wheel" => json!(["mouse", x as i64, y as i64, button.unwrap_or(0)]),
@@ -3915,379 +3023,18 @@ async fn mpv_input(
 
 #[tauri::command]
 async fn mpv_set_volume(state: State<'_, AppState>, volume: f64) -> Result<(), String> {
-    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
-    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session.as_ref() {
+    let slot = state.mpv.lock().await;
+    if let Some(m) = slot.as_ref() {
         m.command(json!(["set_property", "volume", volume])).await?;
     }
     Ok(())
 }
 
-/// [lc-1939] 覆盖层顶栏窗控：置顶 / 最小化 / 最大化 / 通用 script-binding。
-#[tauri::command]
-async fn mpv_set_ontop(state: State<'_, AppState>, on: bool) -> Result<(), String> {
-    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
-    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session.as_ref() {
-        m.command(json!(["set_property", "ontop", on])).await?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-async fn mpv_window_minimize(state: State<'_, AppState>) -> Result<(), String> {
-    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
-    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session.as_ref() {
-        m.command(json!(["set_property", "window-minimized", true])).await?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-async fn mpv_toggle_maximize(state: State<'_, AppState>) -> Result<(), String> {
-    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
-    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session.as_ref() {
-        m.command(json!(["cycle", "window-maximized"])).await?;
-    }
-    Ok(())
-}
-
-/// [lc-1946] 顶栏窗控改走**真实窗口**（mpv + 覆盖层），不再等 mpv 属性回包。
-///
-/// [lc-1943] 只写 mpv 的 `ontop` / `window-minimized` / `window-maximized` 的实测后果：
-///   · mpv 的 `stop` 在日志里 1.5s 都没回包，`script-opts` 600ms 超时 —— 用户点按钮时
-///     mpv 命令队列可能正忙，`m.command()` 最长等 5s，这一段时间**没有任何视觉变化**，
-///     体感就是「点了半天没反应」；
-///   · 即使命令成功：覆盖层一直是 TOPMOST、mpv 窗被我们按矩形钉死，`ontop` /
-///     `window-maximized` 改了也看不出区别；`window-minimized` 只最小化锚窗，
-///     覆盖层（owned window）跟着消失，但主界面没有回到任务栏入口。
-/// 所以三组动作全部改成「先拨 Win32 窗口、立刻返回」，mpv 属性只做后台同步。
-
-/// 置顶 / 取消置顶：mpv 锚窗 + 覆盖层成对拨 TOPMOST。返回操作后的状态。
-#[tauri::command]
-async fn player_window_ontop(
-    window: tauri::Window,
-    state: State<'_, AppState>,
-    on: bool,
-) -> Result<bool, String> {
-    #[cfg(target_os = "windows")]
-    {
-        if window.label() != "mpv_overlay" {
-            return Ok(false);
-        }
-        let overlay = window.hwnd().map(|h| h.0 as isize).unwrap_or(0);
-        crate::mpvwin::set_player_ontop(overlay, on);
-        crate::libmpv::trace(&format!("[lc-1946] 置顶切换 ontop={on}（mpv 锚窗 + 覆盖层）"));
-        // mpv 自身的 ontop 属性只做后台同步（不等待回包）：pstate/观察事件里的 ontop
-        // 与窗口真实状态保持一致，uosc 等脚本读到的也是同一个值。
-        // 50ms 拿不到锁就放弃 —— 视觉动作已经完成，不能被 mpv 忙时的命令队列拖住。
-        // [lc-1947] 全屏期间**不写**这个属性：ontop_mode.lua 会在暂停时把它置 false
-        // （对锚窗 SetWindowPos(NOTOPMOST)），视频会掉到任务栏下面；置顶意图已经记在
-        // PLAYER_ONTOP 里，退出全屏时按它恢复。
-        let session = tokio::time::timeout(
-            std::time::Duration::from_millis(50),
-            state.mpv.lock(),
-        )
-        .await
-        .ok()
-        .and_then(|g| g.clone());
-        if let Some(m) = session {
-            if crate::mpvwin::player_fullscreen() {
-                crate::libmpv::trace("[lc-1947] 全屏中：只记录置顶意图，不同步 mpv ontop 属性");
-            } else {
-                tauri::async_runtime::spawn(async move {
-                    m.command_no_reply(json!(["set", "ontop", on])).await;
-                });
-            }
-        }
-    }
-    #[cfg(not(target_os = "windows"))]
-    let _ = (&window, &state, &on);
-    Ok(on)
-}
-
-/// [lc-1946] 最小化：让用户**真的看到**播放窗口收起，并能从任务栏恢复。
-///
-/// 做法：收起覆盖层 + 用 SW_HIDE 收起 mpv 锚窗（音频继续），再最小化**主窗**——
-/// 主窗是本应用的常规任务栏入口（覆盖层 `skip_taskbar(true)`、mpv 是无边框工具型锚窗）。
-/// 点任务栏恢复主窗时，`on_window_event` 里消费 `request_minimize_restore()` 标记，
-/// 把 mpv 按原矩形重新显示、覆盖层再浮回它上面。
-#[tauri::command]
-async fn player_window_minimize(app: AppHandle, window: tauri::Window) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        if window.label() != "mpv_overlay" {
-            return Ok(());
-        }
-        use tauri::Manager;
-        if crate::mpvwin::embed_is_active() {
-            // [lc-1952] 顺序：**先把主窗最小化，再收播放层**。此刻覆盖层 + mpv 还盖在
-            // 屏幕上，主窗的最小化动画/任何中间帧都被遮住，黑色播放页没有任何机会
-            // 露出来。旧顺序（先收覆盖层、藏 mpv，最后才动主窗）在主窗被真实显示过
-            // 的时候（点任务栏恢复过播放层，主窗停在可见态）会把黑色播放页整个漏给
-            // 用户 —— 「最小化后漏出黑色背景残留」的根因之一。
-            // minimize_main_to_taskbar 内部也改为「先进最小化态（隐藏窗保持隐藏、
-            // 不物化恢复态帧），再 SW_SHOWMINNOACTIVE 补任务栏条目」——双保险。
-            if let Some(m) = app.get_webview_window("main") {
-                let state = m
-                    .hwnd()
-                    .ok()
-                    .map(|h| crate::mpvwin::minimize_main_to_taskbar(h.0 as isize));
-                if let Some((visible, iconic)) = state {
-                    crate::libmpv::trace(&format!(
-                        "[lc-1952] 最小化：主窗先行（被播放层遮住）+ 播放层收起 visible={visible} iconic={iconic}"
-                    ));
-                } else {
-                    let _ = m.minimize();
-                    crate::libmpv::trace("[lc-1947] 最小化：取不到主窗 hwnd，退回 Tauri minimize");
-                }
-            }
-            if let Ok(h) = window.hwnd() {
-                crate::mpvwin::overlay_hide(h.0 as isize);
-            }
-            if let Some(mh) = crate::mpvwin::get_hwnd() {
-                crate::mpvwin::embed_hide(mh);
-            }
-            // 标记放在收尾：万一 ShowWindow 同步触发了 Focused(true)，
-            // 也不会在窗口还最小化时就把播放层放出来。
-            crate::mpvwin::request_minimize_restore();
-            // [lc-2000] 恢复看门狗：不依赖 tao 的 Focused 事件（最小化期间焦点可能
-            // 从未离开主窗，恢复时就不会再来一次 Focused(true)，标记会永远挂着）。
-            // 每 150ms 看一眼：主窗真的离开最小化态 → 放回播放层并消费标记。
-            let app2 = app.clone();
-            tauri::async_runtime::spawn(async move {
-                for _ in 0..4000 {
-                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-                    if !crate::mpvwin::minimize_restore_pending() {
-                        return;
-                    }
-                    if !crate::mpvwin::embed_is_active() {
-                        crate::mpvwin::clear_minimize_restore();
-                        return;
-                    }
-                    let Some(m) = app2.get_webview_window("main") else {
-                        return;
-                    };
-                    let Ok(h) = m.hwnd() else { continue };
-                    if !crate::mpvwin::main_restore_ready(h.0 as isize) {
-                        continue;
-                    }
-                    if let Some(ov) = app2.get_webview_window("mpv_overlay") {
-                        if let Ok(oh) = ov.hwnd() {
-                            crate::mpvwin::resume_embed_windows(oh.0 as isize);
-                        }
-                    }
-                    crate::mpvwin::take_minimize_restore();
-                    crate::libmpv::trace("[lc-2000] 主窗已恢复（看门狗）→ 播放层重新显示");
-                    return;
-                }
-            });
-        } else {
-            let _ = window.minimize();
-            crate::libmpv::trace("[lc-1946] 最小化：非内嵌态，直接最小化覆盖层");
-        }
-    }
-    #[cfg(not(target_os = "windows"))]
-    let _ = (&app, &window);
-    Ok(())
-}
-
-/// [lc-1946] 最大化 / 还原：对 mpv 锚窗做 `SW_MAXIMIZE` / `SW_RESTORE`。
-/// 覆盖层由 33ms 跟随循环按 mpv 矩形贴位，因此视觉上两层同步变化。
-/// 返回操作后的最大化状态（前端据此换图标）。
-#[tauri::command]
-async fn player_window_maximize(window: tauri::Window) -> Result<bool, String> {
-    #[cfg(target_os = "windows")]
-    {
-        if window.label() != "mpv_overlay" {
-            return Ok(false);
-        }
-        return Ok(crate::mpvwin::toggle_player_maximize());
-    }
-    #[cfg(not(target_os = "windows"))]
-    let _ = &window;
-    Ok(false)
-}
-
-#[tauri::command]
-async fn mpv_script_binding(state: State<'_, AppState>, binding: String) -> Result<(), String> {
-    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
-    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session.as_ref() {
-        m.command(json!(["script-binding", binding])).await?;
-    }
-    Ok(())
-}
-
-/// [lc-1939] 覆盖层 UI 状态快照（250ms 轮询兜底，进程内事件到不了时仍能渲染）
-/// [lc-1946] `ontop` 以窗口真实置顶位为准：置顶按钮直接拨 TOPMOST，mpv 属性只是后台
-/// 同步；mpv 忙时属性可能迟迟不更新，快照必须返回窗口的实际状态，否则图标会被旧值打回。
-#[tauri::command]
-async fn player_chrome_state() -> Result<serde_json::Value, String> {
-    let mut v = crate::mpv::pstate_snapshot();
-    if let Some(obj) = v.as_object_mut() {
-        obj.insert("ontop".into(), json!(crate::mpvwin::player_ontop()));
-        // [lc-1947] 全屏以窗口级状态为准：mpv 属性事件可能被 `fs_expect` 吞掉，
-        // 500ms 快照必须能把这个状态带回前端（按钮图标 / 双击仲裁都用它）。
-        obj.insert("fullscreen".into(), json!(crate::mpvwin::player_fullscreen()));
-    }
-    Ok(v)
-}
-
 #[tauri::command]
 async fn mpv_set_rate(state: State<'_, AppState>, rate: f64) -> Result<(), String> {
-    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
-    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session.as_ref() {
+    let slot = state.mpv.lock().await;
+    if let Some(m) = slot.as_ref() {
         m.command(json!(["set_property", "speed", rate])).await?;
-    }
-    Ok(())
-}
-
-/// [lc-1942] 覆盖层菜单：单个属性读取。菜单一次要取十几项，任一项卡住不能拖住整张表，
-/// 因此每项独立 600ms 超时，失败给 Null（前端渲染空态，不阻塞其它行）。
-async fn menu_prop(m: &crate::mpv::MpvSession, name: &str) -> Value {
-    match tokio::time::timeout(
-        std::time::Duration::from_millis(600),
-        m.command(json!(["get_property", name])),
-    )
-    .await
-    {
-        Ok(Ok(v)) => v.get("data").cloned().unwrap_or(Value::Null),
-        _ => Value::Null,
-    }
-}
-
-/// [lc-1942] 覆盖层通用菜单数据：轨道 / 章节 / 播放列表 / 字幕样式 / 弹幕状态一次取齐。
-/// 这些数据此前只能走 mpv 自己的 uosc 菜单（画在 mpv OSD 里，覆盖层之下且不可交互）；
-/// 现在统一由覆盖层的磨砂面板消费，所以数据源必须在 Rust 侧暴露。
-#[tauri::command]
-async fn player_menu_data(state: State<'_, AppState>) -> Result<Value, String> {
-    let session = state.mpv.lock().await.clone();
-    let Some(m) = session else {
-        return Ok(json!({
-            "ready": false,
-            "tracks": [],
-            "chapters": [],
-            "playlist": [],
-        }));
-    };
-
-    // [lc-1944] **并发**取样。旧实现 25 条 get_property 一条接一条等回包，每项还各带
-    // 600ms 超时 —— mpv 偶发卡顿时最坏 15.6s，而且这段时间里用户点任何控件都排在这串
-    // 请求后面（实测日志：`[lat] ui prop:user-data/uosc_danmaku/danmaku-switch 1642.4ms`、
-    // `[lat] ui fullscreen 7523.9ms`）。Polaris 的菜单同样是同时发多条 `mpv-get-property`
-    // （`Promise.all` 并发），不是串行。
-    //
-    // 改成 JoinSet 并发发、按 request_id 各自回包：总耗时 ≈ 最慢的一条，单项卡住不再
-    // 拖住整张表，也不会把后续点击挤在队列里。
-    const MENU_PROPS: [&str; 25] = [
-        "track-list",
-        "sid",
-        "aid",
-        "vid",
-        "secondary-sid",
-        "sub-visibility",
-        "secondary-sub-visibility",
-        "speed",
-        "volume",
-        "sub-font-size",
-        "sub-pos",
-        "sub-border-size",
-        "chapter-list",
-        "playlist",
-        "playlist-pos",
-        "media-title",
-        "video-params",
-        "video-codec",
-        "audio-codec",
-        "container-fps",
-        "hwdec-current",
-        "file-format",
-        "user-data/uosc_danmaku/danmaku-switch",
-        "user-data/uosc_danmaku/danmaku-delay",
-        "user-data/anibox/danmaku-info",
-    ];
-    let mut set = tokio::task::JoinSet::new();
-    for name in MENU_PROPS {
-        let m = m.clone();
-        set.spawn(async move { (name, menu_prop(&m, name).await) });
-    }
-    let mut data = serde_json::Map::new();
-    while let Some(joined) = set.join_next().await {
-        if let Ok((name, v)) = joined {
-            data.insert(name.to_string(), v);
-        }
-    }
-    // 缺项一律 null（前端渲染空态），与旧实现「超时给 Null」一致。
-    let g = |k: &str| data.get(k).cloned().unwrap_or(Value::Null);
-
-    Ok(json!({
-        "ready": true,
-        "tracks": g("track-list"),
-        "sid": g("sid"),
-        "aid": g("aid"),
-        "vid": g("vid"),
-        "secondarySid": g("secondary-sid"),
-        "subVisibility": g("sub-visibility"),
-        "secondarySubVisibility": g("secondary-sub-visibility"),
-        "speed": g("speed"),
-        "volume": g("volume"),
-        "subFontSize": g("sub-font-size"),
-        "subPos": g("sub-pos"),
-        "subBorderSize": g("sub-border-size"),
-        "chapters": g("chapter-list"),
-        "playlist": g("playlist"),
-        "playlistPos": g("playlist-pos"),
-        "mediaTitle": g("media-title"),
-        "videoParams": g("video-params"),
-        "videoCodec": g("video-codec"),
-        "audioCodec": g("audio-codec"),
-        "fps": g("container-fps"),
-        "hwdec": g("hwdec-current"),
-        "fileFormat": g("file-format"),
-        "danmakuOn": g("user-data/uosc_danmaku/danmaku-switch"),
-        "danmakuDelay": g("user-data/uosc_danmaku/danmaku-delay"),
-        "danmakuInfo": g("user-data/anibox/danmaku-info"),
-    }))
-}
-
-/// [lc-1942] 覆盖层菜单通用写属性（sid/aid/vid/secondary-sid/sub-font-size/sub-pos/
-/// sub-border-size/播放速度等）。值用 JSON 原生类型：mpv 既接受数字也接受 `"no"`/`"auto"`。
-#[tauri::command]
-async fn mpv_set_prop(
-    state: State<'_, AppState>,
-    name: String,
-    value: serde_json::Value,
-) -> Result<(), String> {
-    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
-    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session.as_ref() {
-        m.command(json!(["set_property", name, value])).await?;
-    }
-    Ok(())
-}
-
-/// [lc-1942] 选集：跳到播放列表第 index 项（0 起）。
-/// 老版本 mpv 没有 `playlist-play-index`，失败时回退 `set playlist-pos`。
-#[tauri::command]
-async fn mpv_playlist_play_index(state: State<'_, AppState>, index: i64) -> Result<(), String> {
-    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
-    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session.as_ref() {
-        if m.command(json!(["playlist-play-index", index])).await.is_err() {
-            m.command(json!(["set_property", "playlist-pos", index])).await?;
-        }
     }
     Ok(())
 }
@@ -4297,10 +3044,8 @@ async fn mpv_playlist_play_index(state: State<'_, AppState>, index: i64) -> Resu
 /// 单集场景下 mpv 的 playlist-next/prev 会返回 success 但不动作，属预期。
 #[tauri::command]
 async fn mpv_next_episode(state: State<'_, AppState>) -> Result<(), String> {
-    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
-    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session.as_ref() {
+    let slot = state.mpv.lock().await;
+    if let Some(m) = slot.as_ref() {
         m.command(json!(["playlist-next"])).await?;
     }
     Ok(())
@@ -4308,10 +3053,8 @@ async fn mpv_next_episode(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 async fn mpv_prev_episode(state: State<'_, AppState>) -> Result<(), String> {
-    // [lc-1943] 先取出会话再 await：那把唯一的 mpv 锁不跨越整趟 IPC ——
-    // 否则一次慢命令（seek / 菜单读取）会把后面所有控件点击串行排在它后面。
-    let session = state.mpv.lock().await.clone();
-    if let Some(m) = session.as_ref() {
+    let slot = state.mpv.lock().await;
+    if let Some(m) = slot.as_ref() {
         m.command(json!(["playlist-prev"])).await?;
     }
     Ok(())
@@ -4321,9 +3064,8 @@ async fn mpv_prev_episode(state: State<'_, AppState>) -> Result<(), String> {
 /// 前端/手柄可用于显示「第 N/M 集」或做边界判断。
 #[tauri::command]
 async fn mpv_playlist_info(state: State<'_, AppState>) -> Result<Value, String> {
-    // [lc-1943] 同其它 UI 命令：先取出会话再 await，锁不跨越两次 IPC
-    let session = state.mpv.lock().await.clone();
-    let Some(m) = session.as_ref() else {
+    let slot = state.mpv.lock().await;
+    let Some(m) = slot.as_ref() else {
         return Ok(json!({ "pos": -1, "count": 0 }));
     };
     let pos = m
@@ -5148,34 +3890,7 @@ pub fn run() {
             cloud::init_app_data(app.handle());
             // [lc-1907] JavHub 定时扫描调度（jav-settings.json 里默认关闭，关闭时零动作）
             jav_settings::spawn_auto_scan(app.handle().clone());
-            // [lc-1926] 播放器覆盖层窗口**随 App 启动预建**（隐藏）：
-            // 之前是「点播放时才在主线程同步建窗」，WebView 加载 + React 挂载 + 事件订阅
-            // 全部挤在起播那几百毫秒里，表现为「控件过很久才出现 / 数据一直不刷新」。
-            // Polaris 的 MPV Overlay 同样是常驻窗口，播放时只是 show/hide。
-            // [lc-1940] 覆盖层**只建不显示**：启动期任何情况下都不允许出现黑窗。
-            // lc-1939 在这里用的是会当场显示的路径，黑屏就是这么来的。
-            let _ = ensure_player_overlay(app.handle());
-            // [lc-1940] 启动看门狗：**非播放状态绝不允许覆盖层可见**。
-            // 上面的预建只建不显示，这里是最后一道保险 —— 万一将来又有人给覆盖层接上
-            // 会显示它的路径，启动后 2s/6s/15s 各查一次：没有 mpv 会话就强制收起。
-            // 有会话（用户已点播放）则不碰，避免把正在加载的控件层藏掉。
-            {
-                use tauri::Manager;
-                let h5 = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    for delay in [2000u64, 6000, 15000] {
-                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-                        let has_session = {
-                            let st = h5.state::<AppState>();
-                            let slot = st.mpv.lock().await;
-                            slot.is_some()
-                        };
-                        if !has_session {
-                            hide_player_overlay(&h5);
-                        }
-                    }
-                });
-            }
+            // [lc-2001] 覆盖层已退役（播放器改回 lc-1907 独立 mpv 窗口），不再预建窗口/看门狗。
             // [lc-1784] OpenSubtitles 内置共享 Key 落地（供 mpv 侧 sub-assrt.lua 读；空则清理）
             subtitle_sources::sync_builtin_key(app.handle());
             // [update] 载入前端补丁覆盖层指针；release 且存在补丁时切到 fntvweb 协议
@@ -5318,39 +4033,9 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // [lc-1907/1909] 主窗口 Moved → mpvwin::on_main_moved 按位移差平移 mpv 窗口。
-            // 生效范围在 mpvwin 内部判：内嵌激活（EMBED_ACTIVE）→ 内嵌零延迟跟随；
-            // 否则仅 mpv_window_owner=true 的收编路径（OWNER_FOLLOW）跟随；独立窗口模式不动。
-            // 同步上下文：mpvwin 槽读取内部有 poison 兜底（lock().unwrap_or_else(into_inner)）。
-            // [lc-1921] 同步严格单向：mpv 是唯一锚（拖画面动 mpv），mpv_overlay 只被
-            // 跟随循环贴向 mpv。此前的「播放窗 Moved/Resized → 反推 mpv」与跟随循环
-            // 构成正反馈（外加 overscan 每轮 +16px）→ mpv 无限放大飞出屏幕，已删除。
+            // [lc-2001] 播放器回到 lc-1907 独立 mpv 窗口形态：主窗不再跟随/收编 mpv，
+            // 覆盖层整套退役，窗口事件与播放无联动。
             let _ = &window;
-            // [lc-1946] 顶栏「最小化」把播放层收起、主窗最小化到任务栏。点任务栏恢复
-            // 主窗时（Focused(true)）把 mpv 按原矩形重新显示、覆盖层浮回去 —— 否则用户
-            // 恢复后只看到主界面，播放器"消失"了。
-            if window.label() == "main"
-                && matches!(event, tauri::WindowEvent::Focused(true))
-                && crate::mpvwin::minimize_restore_pending()
-            {
-                use tauri::Manager;
-                // [lc-2000] 只在主窗**真的回到桌面**时消费标记：最小化流程里收起播放层
-                // 会让焦点落回主窗，但那一刻它还是 iconic。旧代码不看这个就 take，
-                // 标记被提前用掉 → 用户点任务栏恢复时没人再放播放层，主窗把 PlayerView
-                // （白顶栏 + 纯黑舞台）露出来。
-                let h = window.hwnd().map(|h| h.0 as isize).unwrap_or(0);
-                if crate::mpvwin::main_restore_ready(h) && crate::mpvwin::take_minimize_restore() {
-                    if let Some(ov) = window.app_handle().get_webview_window("mpv_overlay") {
-                        if let Ok(oh) = ov.hwnd() {
-                            crate::mpvwin::resume_embed_windows(oh.0 as isize);
-                        }
-                    }
-                } else {
-                    crate::libmpv::trace(
-                        "[lc-2000] 主窗 Focused(true) 但仍在最小化态 → 保留恢复标记，等真正恢复",
-                    );
-                }
-            }
             // [lc-1435] 关闭按钮三态：exit 放行 / tray 隐藏 / ask 交给前端弹框。
             // 为什么用 on_window_event 而不是前端拦：WebView 里拦不住原生关闭按钮
             // （那是 OS 的窗口消息，不经过 JS），必须在这一层拦。
@@ -5601,46 +4286,22 @@ pub fn run() {
             player_stop,
             // [lc-1909] 软件内播放（内嵌模式）：enter / 矩形钉位 / leave（Windows 专属实现，
             // 非 Windows 命令空转返回 Ok，注册保持全平台一致）
-            player_embed_enter,
-            player_embed_rect,
             // [lc-1949] 视频区鼠标转发（lc-1960 起：穿透默认态下仅服务 hover 翻位后
             // 可点窗口里的空白区点击与拖动续投）
-            mpv_forward_mouse,
-            mpv_cancel_pending_click,
-            mpv_capture_blank_click,
             // [lc-1960] hover 事务（Polaris 同款）：穿透位拨动 + 原生样式读回 ack
-            mpv_overlay_hover,
-            mpv_overlay_hover_state,
             // [lc-1964] 控件带几何热区上报（Rust 探针直翻可点位的保险丝）
-            mpv_overlay_hotzones,
             // [lc-1943] 前端延迟采样落盘（临时诊断）
-            lat_trace,
             // [lc-1942] 字幕搜索输入框需要临时摘掉 WS_EX_NOACTIVATE
-            player_chrome_focusable,
-            player_embed_leave,
             mpv_toggle_pause,
-            mpv_script_message,
-            mpv_get_prop,
-            mpv_begin_drag,
             player_source,
+            lat_trace,
             mpv_set_ui_fullscreen,
             mpv_seek,
             mpv_set_volume,
             mpv_set_rate,
             // [lc-1939] 覆盖层（PlayerChrome）专用：窗控 + uosc 菜单 + 状态快照
-            mpv_set_ontop,
-            mpv_window_minimize,
-            mpv_toggle_maximize,
             // [lc-1946] 顶栏窗控：零 mpv IPC 的真实窗口动作（置顶 / 最小化 / 最大化）
-            player_window_ontop,
-            player_window_minimize,
-            player_window_maximize,
-            mpv_script_binding,
-            player_chrome_state,
             // [lc-1942] 覆盖层磨砂菜单：数据快照 + 通用写属性 + 选集跳转
-            player_menu_data,
-            mpv_set_prop,
-            mpv_playlist_play_index,
             // [playlist] 整季播放列表：上下集操作 + 当前位置查询
             mpv_next_episode,
             mpv_prev_episode,

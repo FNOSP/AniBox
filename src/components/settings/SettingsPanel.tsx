@@ -1796,25 +1796,6 @@ export function SettingsPanel({
                       onChange={choosePlayer}
                     />
                   </div>
-                  {/* [lc-1909] 播放方式：app = 软件内播放（内嵌播放页，mpv 窗口钉到视频容器），
-                      window = 独立 mpv 窗口（既有路径）。mpvWindowOwner 为内部开关，不在 UI 露出。 */}
-                  <div className="set-row">
-                    <div>
-                      <span className="set-k">播放方式</span>
-                    </div>
-                    <SetSelect
-                      label="播放方式"
-                      value={settings.playerOpenMode ?? "app"}
-                      disabled={busy}
-                      options={[
-                        { value: "app", label: "软件内播放" },
-                        { value: "window", label: "独立窗口" },
-                      ]}
-                      onChange={(v) =>
-                        onSettings({ playerOpenMode: v as AppSettings["playerOpenMode"] })
-                      }
-                    />
-                  </div>
                   {/* [lc-1802] 着色器：默认空（不着色器）；预设与播放器内 Ctrl+1~6 一致，两边互相同步 */}
                   <div className="set-row">
                     <div>

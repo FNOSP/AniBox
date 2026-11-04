@@ -291,29 +291,32 @@ impl MpvSession {
         // [lc-1820] AI 增强组件就绪时注入 VapourSynth 运行环境：mpv 的 vapoursynth
         // 滤镜经 VSScript.dll（PATH 定位）加载组件内 Python；PATH 前置 runtime 与
         // vapoursynth 子目录。进程启动前设好，运行时切引擎无需再动环境。
-        // [lc-1823] 环境按超分档分流：tensorrt 档注入 TRT 扩展包运行时（Python3.14 体系，
-        // 与基础包 Python3.12 互斥——切档需重启播放器，lua 侧同款提示）；否则基础运行时。
+        // [lc-2004] TRT 扩展包不再用自带 Python3.14 VSScript 体系（mpv 内实测初始化
+        // 崩溃 0xC0000005，且原注入路径 Lib/site-packages/vapoursynth 在 TRT 包内根本
+        // 不存在=0x7e）。现在统一用基础包 VapourSynth R79/Python3.12 运行时承载，
+        // TRT 只贡献 vs-plugins C 插件（vstrt/akarin，API3 跨版本）+ nvinfer/cudart
+        // 运行库——实测 1080P 源 41.1ms/帧（1.01× 实时），比 DML 快约 20%。
         if let Some(root) = crate::enhance::enhance_root(&app) {
-            let base_ok = crate::enhance::runtime_ready(&app);
-            let use_trt = crate::enhance::superres_engine_is_trt(&app)
-                && crate::enhance::tensorrt_ready(&app);
-            if base_ok || use_trt {
-                let (rt, vs_py) = if use_trt {
-                    let trt = root.join("tensorrt").join("runtime");
-                    (trt.clone(), trt.join("Lib").join("site-packages").join("vapoursynth"))
-                } else {
-                    let rt = root.join("runtime");
-                    let vs_py = rt.join("Lib").join("site-packages").join("vapoursynth");
-                    (rt, vs_py)
-                };
+            if crate::enhance::runtime_ready(&app) {
+                let rt = root.join("runtime");
+                let vs_py = rt.join("Lib").join("site-packages").join("vapoursynth");
                 command.env("VSSCRIPT_PATH", vs_py.join("vsscript.dll"));
                 command.env("PYTHONNOUSERSITE", "1");
                 command.env("PYTHONDONTWRITEBYTECODE", "1");
                 if let Ok(path_var) = std::env::var("PATH") {
-                    command.env(
-                        "PATH",
-                        format!("{};{};{}", rt.display(), vs_py.display(), path_var),
-                    );
+                    let mut extra = format!("{};{}", rt.display(), vs_py.display());
+                    // 超分=TensorRT 档：TRT 的 C 插件与 TRT 运行库追加进 PATH
+                    // （引擎缓存/vpy 模型路径由 superres_trt.vpy 自行按绝对路径取）
+                    if crate::enhance::superres_engine_is_trt(&app)
+                        && crate::enhance::tensorrt_ready(&app)
+                    {
+                        let trt = root.join("tensorrt").join("runtime");
+                        extra.push(';');
+                        extra.push_str(&trt.join("vs-plugins").display().to_string());
+                        extra.push(';');
+                        extra.push_str(&trt.join("vs-plugins").join("vsmlrt-cuda").display().to_string());
+                    }
+                    command.env("PATH", format!("{};{}", extra, path_var));
                 }
             }
         }

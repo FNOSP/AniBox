@@ -40,9 +40,8 @@ mod fnapi;
 mod fnos_progress;
 // [lc-1851] FN ID（飞牛 ID / FN Connect）远程登录：OAuth 窗口 + 伪导航信号（旧项目移植）
 mod fnid;
-// [lc-1857] N 卡 Smooth Motion 一键注册（NVAPI DRS FFI，免开 NVIDIA App）
-#[cfg(target_os = "windows")]
-mod nvidia_sm;
+// [lc-2004] nvidia_sm（N 卡 Smooth Motion NVAPI DRS 注册）已删除：SM 档实测与内核
+// Vulkan 呈现上下文冲突（紫屏/黑屏）永不支持，模块无任何调用点。
 // [gamepad] 全局手柄：原生 gilrs 后台轮询（mpv/PotPlayer 前台时同样可用）
 mod gamepad;
 // [lc-1615] 本地播放历史（观影记录页数据源之一）：history.json 落盘 + 与飞牛 play/list 合并
@@ -4278,7 +4277,6 @@ pub fn run() {
             enhance::ai_enhance_status,
             enhance::ai_enhance_set_engine,
             enhance::ai_enhance_set_superres,
-            enhance::ai_enhance_set_tier,
             enhance::ai_enhance_download,
             enhance::ai_enhance_delete,
             webdav::webdav_accounts,

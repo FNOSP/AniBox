@@ -69,18 +69,6 @@ pub const TENSORRT_FILES: &[&str] = &[
     "runtime/vs-plugins/vsmlrt-cuda/nvinfer_10.dll",
 ];
 
-/// RIFE DirectML（ONNX Runtime）补帧就绪文件：复用超分链路的 vsort + onnxruntime +
-/// DirectML，另需 vs/rife_dml.vpy 与 rife_v4.6.onnx（vsort 从 runtime/plugins/models/
-/// rife_v2/ 解析，见 rife_dml.vpy）。与 ncnn RIFE 是两条独立后端。
-pub const RIFE_DML_FILES: &[&str] = &[
-    "vs/rife_dml.vpy",
-    "runtime/plugins/vsort.dll",
-    "runtime/plugins/vsort/onnxruntime.dll",
-    "runtime/plugins/vsort/DirectML.dll",
-    "runtime/Lib/site-packages/vsmlrt.py",
-    "runtime/plugins/models/rife_v2/rife_v4.6.onnx",
-];
-
 /// MVTools 真实运动补偿补帧就绪文件：RIFE 跟不上实时时的降级目标（廉价、全显卡）。
 /// `mvtools.dll` 为小体积 VS 插件（约 1–2MB），随基础增强包一并分发，落于基础组件根的
 /// `runtime/plugins/`（与 rife 插件同目录）；`vs/mvtools.vpy` 同包。二者齐备才算就绪。
@@ -118,75 +106,9 @@ fn detect_gpu_name() -> String {
     }).clone()
 }
 
-/// [lc-1857] N 卡 SM 半自动注册：驱动不暴露 Smooth Motion 的按名设置查询（NVAPI 实测
-/// GetSettingIdFromName 返回 NULL），全自动此路不通。退而求其次把手动步骤压到最少：
-/// mpv.exe 完整路径复制到剪贴板 + 直接拉起 NVIDIA App（找到 exe 才拉）。
-/// 返回给用户的下一步指引文本。
-fn nvidia_sm_prepare(mpv_path: &str) -> String {
-    #[cfg(target_os = "windows")]
-    use std::os::windows::process::CommandExt;
-    // [lc-1859] 空路径直出提示（此前误用 default_mpv()=空串：arboard 写空不报错，
-    // 提示「已复制」但剪贴板是空的——用户实测「没有复制到剪贴板」即此）
-    if mpv_path.trim().is_empty() {
-        return "未能确定 mpv.exe 路径（未登录或未配置），请先完成登录后重试".into();
-    }
-    let mpv = mpv_path.to_string();
-    let clip_note = match arboard::Clipboard::new().and_then(|mut c| c.set_text(mpv.clone())) {
-        Ok(_) => "mpv.exe 完整路径已复制到剪贴板；".to_string(),
-        Err(e) => format!("（剪贴板写入失败 {e}，请手动浏览 mpv.exe）"),
-    };
-    let candidates = [
-        std::env::var("LOCALAPPDATA").ok().map(|d| {
-            std::path::PathBuf::from(&d)
-                .join("NVIDIA Corporation")
-                .join("NVIDIA App")
-                .join("NVIDIA App.exe")
-        }),
-        // 实测安装布局（本机 11.0.9）：主程序在 CEF 子目录，不在根目录
-        Some(
-            ["C:", "Program Files", "NVIDIA Corporation", "NVIDIA App", "CEF", "NVIDIA App.exe"]
-                .iter()
-                .collect::<std::path::PathBuf>(),
-        ),
-        Some(
-            ["C:", "Program Files", "NVIDIA Corporation", "NVIDIA App", "NVIDIA App.exe"]
-                .iter()
-                .collect::<std::path::PathBuf>(),
-        ),
-    ];
-    let mut launched = false;
-    for c in candidates.into_iter().flatten() {
-        if c.is_file() {
-            #[cfg(target_os = "windows")]
-            {
-                #[allow(unused_mut)]
-                let mut cmd = std::process::Command::new(&c);
-                cmd.creation_flags(0x0800_0000);
-                let _ = cmd.spawn();
-            }
-            launched = true;
-            break;
-        }
-    }
-    let app_note = if launched {
-        "NVIDIA App 已打开；"
-    } else {
-        "未能自动打开 NVIDIA App（请手动打开）；"
-    };
-    format!(
-        "{clip_note}{app_note}在「图形 → 程序设置」添加程序时直接粘贴路径，开启 Smooth Motion 后重启播放器生效"
-    )
-}
-
 pub fn superres_dml_ready(app: &AppHandle) -> bool {
     let Some(root) = enhance_root(app) else { return false };
     SUPERRES_DML_FILES.iter().all(|rel| root.join(rel).is_file())
-}
-
-/// RIFE DirectML（ONNX Runtime，vsort 驱动）补帧就绪判定。
-pub fn rife_dml_ready(app: &AppHandle) -> bool {
-    let Some(root) = enhance_root(app) else { return false };
-    RIFE_DML_FILES.iter().all(|rel| root.join(rel).is_file())
 }
 
 /// MVTools 真实补帧就绪判定（mvtools.vpy + 基础增强包内的 mvtools.dll）。
@@ -277,50 +199,32 @@ pub async fn ai_enhance_set_engine(
     default_on: Option<bool>,
 ) -> Result<Value, String> {
     let e = engine.trim().to_lowercase();
-    if !matches!(
-        e.as_str(),
-        "auto" | "builtin" | "rife" | "rife_dml" | "mvtools" | "nvidia"
-    ) {
-        return Err(format!(
-            "未知引擎档 {e}（只允许 auto/builtin/rife/rife_dml/mvtools/nvidia）"
-        ));
+    if !matches!(e.as_str(), "auto" | "builtin" | "rife" | "mvtools") {
+        return Err(format!("未知引擎档 {e}（只允许 auto/builtin/rife/mvtools）"));
     }
-    // "rife" = AI 2× 综合档（lua 侧优先 DirectML，其次 ncnn Vulkan）；"rife_dml" 仅 DirectML。
-    if e == "rife" && !runtime_ready(&app) && !rife_dml_ready(&app) {
+    // [lc-2004] nvidia / rife_dml 档已删除：前者实测与内核 Vulkan 呈现上下文冲突
+    // （紫屏/黑屏，永不支持）；后者 ONNX 会话初始化异常（实测死链，ncnn 覆盖同功能）。
+    if e == "rife" && !runtime_ready(&app) {
         return Err("AI 增强组件未就绪，无法选择 RIFE 档（先下载组件）".into());
-    }
-    if e == "rife_dml" && !rife_dml_ready(&app) {
-        return Err("RIFE DirectML 资源未就绪（缺 rife_dml.vpy / vsort 或 rife_v4.6.onnx）".into());
     }
     if e == "mvtools" && !mvtools_ready(&app) {
         return Err("MVTools 补帧资源未就绪（缺 mvtools.vpy / mvtools.dll）".into());
-    }
-    // [lc-1860] N 卡 SM 档实测禁用：gpu-context=winvk（Vulkan 呈现，SM 前置条件）+
-    // 驱动 Smooth Motion = 画面紫屏/黑屏（yaozhi 内核 Vulkan 上下文与驱动帧生成冲突，
-    // 用户实测）。应用层无解，直接拒绝并把现场恢复。
-    if e == "nvidia" {
-        return Err(
-            "N 卡 Smooth Motion 实测与内核 Vulkan 呈现上下文冲突（画面紫屏/黑屏，已恢复现场），暂不可用——请改用 RIFE（720P 源）或内置平滑".into(),
-        );
     }
     let Some(dir) = crate::config::mpv_portable_config_dir(&app) else {
         return Err("找不到 mpv 配置目录".into());
     };
     let so = dir.join("script-opts");
     std::fs::create_dir_all(&so).map_err(|err| format!("创建 script-opts 失败: {err}"))?;
-    let (cur_engine, cur_default) = read_interp_opts(&app);
+    let (_, cur_default) = read_interp_opts(&app);
     let new_engine = if e == "auto" { "auto" } else { e.as_str() };
     let new_default = default_on.unwrap_or(cur_default);
-    let tier = read_quality_tier(&app);
     let body = format!(
         "# AniBox 插帧配置（设置面板「AI 增强」写入，请勿手动编辑）
-# 引擎档：auto(=builtin) / builtin / rife(=AI 2×，优先 DirectML 其次 ncnn) / rife_dml / mvtools / nvidia
-# rife = RIFE v4.6 AI 2×（VapourSynth，DirectML/ncnn），需 AI 增强组件就绪。
-# mvtools = MVTools 真实运动补偿补帧（RIFE 跟不上时的廉价降级档）。
-# 运动平滑基线：extreme/balanced=时间插值平滑；smooth=关闭省 GPU
+# 引擎档：auto(=builtin) / builtin / rife(=AI 2× ncnn，仅 720P 及以下源实时) / mvtools
+# rife = RIFE v4.6 AI 2×（VapourSynth ncnn Vulkan），需 AI 增强组件就绪；跟不上实时自动降级 MVTools。
+# mvtools = MVTools 真实运动补偿补帧（廉价全显卡）。
 
 engine={new_engine}
-quality_tier={tier}
 # 启动播放时即开启插帧（默认关=否）
 default_on={}
 ",
@@ -328,34 +232,10 @@ default_on={}
     );
     std::fs::write(so.join("fntv_interp.conf"), body)
         .map_err(|err| format!("写入配置失败（安装目录可能只读）: {err}"))?;
-    // [lc-1855] N 卡 Smooth Motion 需要 Vulkan 呈现上下文（gpu-context=winvk，启动项）：
-    // 写入随包 portable_config/mpv-interp-nvidia.conf（被 mpv-user.conf include）。
-    // 此前该文件只有"应用会自动重写"的注释、无任何代码写它——N 卡档是张空头支票。
-    // 选其它引擎时恢复空桩（撤掉 winvk，避免 Vulkan 上下文残留影响非 N 卡场景）。
-    let nvidia_conf = dir.join("mpv-interp-nvidia.conf");
-    let nvidia_body = if new_engine == "nvidia" {
-        "# AniBox · N 卡 Smooth Motion（RTX50 驱动级）
-# 由「设置 > AI 增强」选择 N 卡引擎时写入；重启播放器后生效。
-# 还需在 NVIDIA App「图形/程序设置」把本播放器 mpv.exe 加入并开启 Smooth Motion。
-gpu-context=winvk
-".to_string()
-    } else {
-        "# AniBox · N 卡 Smooth Motion（RTX50 驱动级）
-# 仅当「插帧引擎=N 卡」时由应用写入；请勿手动编辑。
-".to_string()
-    };
-    let _ = std::fs::write(&nvidia_conf, nvidia_body);
-    let _ = cur_engine;
     if new_default && new_engine != "auto" {
         push_to_live_mpv(&state, &["fntv-interp-engine", new_engine]).await;
     }
-    let mut resp = json!({ "engine": new_engine, "defaultOn": new_default });
-    // [lc-1857] N 卡引擎选中 → 半自动注册准备（剪贴板 + 拉起 NVIDIA App），指引随响应回面板
-    if new_engine == "nvidia" {
-        let mpv_path = state.config.read().await.mpv_path.clone();
-        resp["nvidiaHint"] = json!(nvidia_sm_prepare(&mpv_path));
-    }
-    Ok(resp)
+    Ok(json!({ "engine": new_engine, "defaultOn": new_default }))
 }
 
 /// 状态查询（面板展示 + fntv_interp 侧同源自检）。
@@ -380,10 +260,8 @@ pub async fn ai_enhance_status(app: AppHandle) -> Result<Value, String> {
         "defaultOn": default_on,
         "superresDmlReady": superres_dml_ready(&app),
         "tensorrtReady": tensorrt_ready(&app),
-        "rifeDmlReady": rife_dml_ready(&app),
         "mvtoolsReady": mvtools_ready(&app),
         "superresEngine": read_superres_engine(&app),
-        "qualityTier": read_quality_tier(&app),
         // [lc-1856] 显卡名（RIFE 硬性要求提示用；虚拟显卡已过滤）
         "gpu": detect_gpu_name(),
     }))
@@ -402,59 +280,6 @@ fn read_superres_engine(app: &AppHandle) -> String {
         }
     }
     "off".into()
-}
-
-/// 读画质档位（script-opts/fntv_interp.conf；缺失=balanced）。
-fn read_quality_tier(app: &AppHandle) -> String {
-    if let Some(p) = interp_conf_path(app) {
-        if let Ok(text) = std::fs::read_to_string(&p) {
-            for line in text.lines() {
-                if let Some(v) = line.trim().strip_prefix("quality_tier=") {
-                    let v = v.trim();
-                    if matches!(v, "extreme" | "balanced" | "smooth") {
-                        return v.to_string();
-                    }
-                }
-            }
-        }
-    }
-    "balanced".into()
-}
-
-/// [lc-1825] 设置画质档位（极致/均衡=时间插值平滑；流畅=关闭省 GPU）——
-/// 只改基线，手动插帧引擎/按钮优先（lua 同款语义）。
-#[tauri::command]
-pub async fn ai_enhance_set_tier(
-    state: tauri::State<'_, AppState>,
-    app: AppHandle,
-    tier: String,
-) -> Result<Value, String> {
-    let t = tier.trim().to_lowercase();
-    if !matches!(t.as_str(), "extreme" | "balanced" | "smooth") {
-        return Err(format!("未知运动平滑档位 {t}（只允许 extreme/balanced/smooth）"));
-    }
-    let Some(dir) = crate::config::mpv_portable_config_dir(&app) else {
-        return Err("找不到 mpv 配置目录".into());
-    };
-    let so = dir.join("script-opts");
-    std::fs::create_dir_all(&so).map_err(|err| format!("创建 script-opts 失败: {err}"))?;
-    let (engine, default_on) = read_interp_opts(&app);
-    let body = format!(
-        "# AniBox 插帧配置（设置面板「AI 增强」写入，请勿手动编辑）
-# 引擎档：auto(=builtin) / builtin / rife(=AI 2×，优先 DirectML 其次 ncnn) / rife_dml / mvtools / nvidia
-# 运动平滑基线：extreme/balanced=时间插值平滑；smooth=关闭省 GPU
-
-engine={engine}
-quality_tier={t}
-default_on={}
-",
-        if default_on { "yes" } else { "no" }
-    );
-    std::fs::write(so.join("fntv_interp.conf"), body)
-        .map_err(|err| format!("写入配置失败: {err}"))?;
-    // [lc-1833] 档位是纯基线（不改变插帧开关状态），安全地推给运行中的会话即时生效
-    push_to_live_mpv(&state, &["fntv-interp-tier", t.as_str()]).await;
-    Ok(json!({ "qualityTier": t }))
 }
 
 /// [lc-1823] 设置超分引擎档：off / dml / tensorrt（写 script-opts/fntv_superres.conf，

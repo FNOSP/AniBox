@@ -1540,6 +1540,26 @@ pub fn take_minimize_restore() -> bool {
     PLAYER_MIN_RESTORE.swap(false, Ordering::SeqCst)
 }
 
+/// [lc-2000] 只读：有没有待消费的最小化恢复标记（不消费）。
+pub fn minimize_restore_pending() -> bool {
+    PLAYER_MIN_RESTORE.load(Ordering::SeqCst)
+}
+
+/// [lc-2000] 主窗是否「真的回到桌面上了」：可见 + 非最小化。
+///
+/// 最小化流程里隐藏播放层会让焦点落到主窗，Tauri 随即报一次 `Focused(true)` ——
+/// 那一刻主窗还是 iconic。旧代码不看这个就 `take_minimize_restore()`，标记被提前
+/// 消费，等用户真的点任务栏恢复时已经没人接：主窗把 PlayerView（白顶栏 + 纯黑舞台）
+/// 露出来、播放层不回来。恢复判定必须等窗口真正离开最小化态。
+pub fn main_restore_ready(hwnd: isize) -> bool {
+    hwnd != 0
+        && unsafe {
+            IsWindow(hwnd as _) != 0
+                && IsWindowVisible(hwnd as _) != 0
+                && IsIconic(hwnd as _) == 0
+        }
+}
+
 pub fn clear_minimize_restore() {
     PLAYER_MIN_RESTORE.store(false, Ordering::SeqCst);
 }

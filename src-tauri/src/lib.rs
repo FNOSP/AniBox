@@ -4057,6 +4057,37 @@ async fn player_window_minimize(app: AppHandle, window: tauri::Window) -> Result
             // 标记放在收尾：万一 ShowWindow 同步触发了 Focused(true)，
             // 也不会在窗口还最小化时就把播放层放出来。
             crate::mpvwin::request_minimize_restore();
+            // [lc-2000] 恢复看门狗：不依赖 tao 的 Focused 事件（最小化期间焦点可能
+            // 从未离开主窗，恢复时就不会再来一次 Focused(true)，标记会永远挂着）。
+            // 每 150ms 看一眼：主窗真的离开最小化态 → 放回播放层并消费标记。
+            let app2 = app.clone();
+            tauri::async_runtime::spawn(async move {
+                for _ in 0..4000 {
+                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                    if !crate::mpvwin::minimize_restore_pending() {
+                        return;
+                    }
+                    if !crate::mpvwin::embed_is_active() {
+                        crate::mpvwin::clear_minimize_restore();
+                        return;
+                    }
+                    let Some(m) = app2.get_webview_window("main") else {
+                        return;
+                    };
+                    let Ok(h) = m.hwnd() else { continue };
+                    if !crate::mpvwin::main_restore_ready(h.0 as isize) {
+                        continue;
+                    }
+                    if let Some(ov) = app2.get_webview_window("mpv_overlay") {
+                        if let Ok(oh) = ov.hwnd() {
+                            crate::mpvwin::resume_embed_windows(oh.0 as isize);
+                        }
+                    }
+                    crate::mpvwin::take_minimize_restore();
+                    crate::libmpv::trace("[lc-2000] 主窗已恢复（看门狗）→ 播放层重新显示");
+                    return;
+                }
+            });
         } else {
             let _ = window.minimize();
             crate::libmpv::trace("[lc-1946] 最小化：非内嵌态，直接最小化覆盖层");
@@ -5300,13 +5331,24 @@ pub fn run() {
             // 恢复后只看到主界面，播放器"消失"了。
             if window.label() == "main"
                 && matches!(event, tauri::WindowEvent::Focused(true))
-                && crate::mpvwin::take_minimize_restore()
+                && crate::mpvwin::minimize_restore_pending()
             {
                 use tauri::Manager;
-                if let Some(ov) = window.app_handle().get_webview_window("mpv_overlay") {
-                    if let Ok(h) = ov.hwnd() {
-                        crate::mpvwin::resume_embed_windows(h.0 as isize);
+                // [lc-2000] 只在主窗**真的回到桌面**时消费标记：最小化流程里收起播放层
+                // 会让焦点落回主窗，但那一刻它还是 iconic。旧代码不看这个就 take，
+                // 标记被提前用掉 → 用户点任务栏恢复时没人再放播放层，主窗把 PlayerView
+                // （白顶栏 + 纯黑舞台）露出来。
+                let h = window.hwnd().map(|h| h.0 as isize).unwrap_or(0);
+                if crate::mpvwin::main_restore_ready(h) && crate::mpvwin::take_minimize_restore() {
+                    if let Some(ov) = window.app_handle().get_webview_window("mpv_overlay") {
+                        if let Ok(oh) = ov.hwnd() {
+                            crate::mpvwin::resume_embed_windows(oh.0 as isize);
+                        }
                     }
+                } else {
+                    crate::libmpv::trace(
+                        "[lc-2000] 主窗 Focused(true) 但仍在最小化态 → 保留恢复标记，等真正恢复",
+                    );
                 }
             }
             // [lc-1435] 关闭按钮三态：exit 放行 / tray 隐藏 / ask 交给前端弹框。

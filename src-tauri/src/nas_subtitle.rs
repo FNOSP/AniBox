@@ -98,10 +98,16 @@ pub struct SubStream {
     pub external: bool,
 }
 
-/// 解析 stream/list 的 `data.subtitle_streams`（snake_case/camelCase 字段名都认）。
+/// 解析 stream/list 的字幕流（snake_case/camelCase 字段名都认）。
+/// [lc-2006] 兼容两种响应形态：包装 `{code:0,data:{subtitle_streams:[…]}}` 与裸
+/// `{audio_streams:[…],subtitle_streams:[…]}`（外部用户 4.1.0 日志实锤：该端点
+/// 成功时顶层直接是流字段，无 code/data 包装）。
 pub fn parse_streams(v: &Value) -> Vec<SubStream> {
-    let Some(arr) = v.get("data").and_then(|d| d.get("subtitle_streams")).and_then(|s| s.as_array())
-    else {
+    let streams = v
+        .get("data")
+        .and_then(|d| d.get("subtitle_streams"))
+        .or_else(|| v.get("subtitle_streams"));
+    let Some(arr) = streams.and_then(|s| s.as_array()) else {
         return Vec::new();
     };
     let str_of = |o: &Value, keys: &[&str]| -> String {
@@ -390,20 +396,27 @@ async fn fetch_streams_with_token(ctx: &NasCtx, token: &str) -> Result<Vec<SubSt
             None,
         )
         .await?;
-    if v.get("code").and_then(|c| c.as_i64()) != Some(0) {
-        // 兼容 `success` 形态（主仓库 ApiResponse）：code!=0 或 success=false 都算失败
-        if v.get("success").and_then(|s| s.as_bool()) == Some(false) {
-            return Err(v
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("stream/list 返回失败")
-                .to_string());
-        }
+    // [lc-2006] 成功判据：该端点成功响应存在两种形态——包装 `{code:0,data:{…}}` 与
+    // **裸 `{audio_streams:[…],…}`（顶层无 code）**。原 `code != Some(0) 即失败` 把裸
+    // 形态全判死（None != Some(0)）→ NAS 字幕明明有数据却三连败永远挂不上（外部
+    // 用户 4.1.0 日志实锤：响应原文就是正常流字段）。规则改为：有 code 按 code==0 判；
+    // 无 code 且 success!=false 一律视为成功。
+    let head = || {
         let body = serde_json::to_string(&v).unwrap_or_default();
-        let head: String = body.chars().take(300).collect();
-        return Err(format!("stream/list 返回非 0（响应原文: {head}）"));
+        let h: String = body.chars().take(300).collect();
+        h
+    };
+    let code = v.get("code").and_then(|c| c.as_i64());
+    match (code, v.get("success").and_then(|s| s.as_bool())) {
+        (Some(0), _) => Ok(parse_streams(&v)),
+        (Some(c), _) => Err(format!("stream/list 返回 code={c}（响应原文: {}）", head())),
+        (None, Some(false)) => Err(v
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("stream/list 返回失败")
+            .to_string()),
+        (None, _) => Ok(parse_streams(&v)),
     }
-    Ok(parse_streams(&v))
 }
 
 /// GET `/v/api/v1/subtitle/dl/{guid}` 下载字幕二进制到本地缓存（已存在即复用）。
@@ -712,6 +725,25 @@ mod tests {
         assert!(s[0].external && s[0].is_default == 1);
         assert!(s[1].external && s[1].format == "ass");
         assert!(!s[2].external);
+    }
+
+    /// [lc-2006] 裸形态（外部用户 4.1.0 日志实锤）：顶层直接是流字段，无 code/data 包装。
+    #[test]
+    fn parse_streams_reads_naked_response() {
+        let v = json!({
+            "audio_streams": [ { "guid": "x", "codec_name": "aac", "codec_type": "audio" } ],
+            "video_streams": [ { "guid": "y", "codec_type": "video" } ],
+            "subtitle_streams": [
+                { "guid": "s1", "title": "chs", "language": "zh", "is_default": 1, "extra_file": 1 },
+            ],
+        });
+        let s = parse_streams(&v);
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].guid, "s1");
+        assert!(s[0].external && s[0].is_default == 1);
+        // 空字幕流也不至于报错
+        let empty = json!({ "audio_streams": [ { "guid": "x" } ] });
+        assert!(parse_streams(&empty).is_empty());
     }
 
     #[test]

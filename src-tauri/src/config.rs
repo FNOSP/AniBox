@@ -505,7 +505,6 @@ pub fn apply_player_skin(app: &tauri::AppHandle, skin: &str) {
     let want = if skin == "glass" { "glass" } else { "uosc" };
     write_skin_conf(&opts, want);
     // 右键菜单入口随皮肤：uosc 用底栏「更多」，玻璃皮肤用右键调起它的菜单插件。
-    set_menu_mouse_binding(&base, if want == "glass" { "script-message-to menu show" } else { "ignore" });
     crate::libmpv::trace(&format!("[lc-2003] 播放器皮肤 = {want}（下一次起播生效）"));
 }
 
@@ -515,27 +514,6 @@ fn write_skin_conf(opts: &std::path::Path, want: &str) {
 "));
 }
 
-/// [lc-2002] 右键菜单入口随皮肤切换：uosc 用底栏「更多」，玻璃皮肤用右键调起它的菜单。
-fn set_menu_mouse_binding(base: &std::path::Path, cmd: &str) {
-    let p = base.join("input.conf");
-    let Ok(s) = std::fs::read_to_string(&p) else {
-        return;
-    };
-    if !s.lines().any(|l| l.starts_with("MBTN_RIGHT ")) {
-        return;
-    }
-    let out: Vec<String> = s
-        .lines()
-        .map(|l| {
-            if l.starts_with("MBTN_RIGHT ") {
-                format!("MBTN_RIGHT     {cmd}")
-            } else {
-                l.to_string()
-            }
-        })
-        .collect();
-    let _ = std::fs::write(&p, out.join("\n") + "\n");
-}
 
 fn path_is_file(p: &str) -> bool {
     !p.trim().is_empty() && std::path::Path::new(p).is_file()

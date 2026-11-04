@@ -11,7 +11,6 @@ const SRC = path.join(process.env.APPDATA, "com.anibox.app", "ai-enhance");
 const OUT_DIR = path.resolve("release", "ai-enhance");
 const REQUIRED = [
   "vs/rife.vpy",
-  "vs/rife_dml.vpy",
   "vs/mvtools.vpy",
   "vs/superres.vpy",
   "vs/superres_trt.vpy",
@@ -26,10 +25,12 @@ const REQUIRED = [
   //   （API3，R79 兼容），SHA-256 530a2f003901a7c0…（与 vsrepo 官方清单一致）。
   // 注意：v25+ 官方 release 不含 Windows 二进制，故 Windows x64 以 v24 为准。
   "runtime/plugins/mvtools.dll",
+  // vsort + onnxruntime + DirectML 仅供 AI 超分 DML 档（AnimeJaNai）；
+  // [lc-2004] RIFE DirectML 后端已删（实测 ONNX 会话初始化异常），rife_dml.vpy 与
+  // runtime/plugins/models/rife_v2/ 不再入包。
   "runtime/plugins/vsort.dll",
   "runtime/plugins/vsort/onnxruntime.dll",
   "runtime/plugins/vsort/DirectML.dll",
-  "runtime/plugins/models/rife_v2/rife_v4.6.onnx",
   "runtime/Lib/site-packages/vsmlrt.py",
   "runtime/models/rife-v4.6/flownet.bin",
   "runtime/models/rife-v4.6/flownet.param",
@@ -48,6 +49,17 @@ for (const rel of REQUIRED) {
 }
 const local = JSON.parse(fs.readFileSync(path.join(SRC, "manifest.json"), "utf8"));
 const version = process.argv[2] || local.version || "1.0.0";
+
+// [lc-2004] packs（TRT 大包等扩展包）不随基础包重打——从线上 manifest 原样保留，
+// 防止重发基础包时把 packs.tensorrt 抹掉（TRT 下载入口会报「清单缺 packs.tensorrt」）。
+let packs;
+try {
+  const res = await fetch("https://ai.690075.xyz/manifest.json");
+  const remote = await res.json();
+  if (remote.packs && typeof remote.packs === "object") packs = remote.packs;
+} catch {
+  console.warn("（拉不到线上 manifest，packs 段将缺失——如需 TRT 大包入口请手工合并）");
+}
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 const zip = path.join(OUT_DIR, `anibox-ai-enhance-${version}.zip`);
@@ -69,6 +81,7 @@ const manifest = {
   minAppVersion: "4.1.0",
   notes: "RIFE v4.6 ncnn Vulkan + VapourSynth R79 runtime (all-GPU), from mpv-Yaozhi 1.0.6-2 rife-ncnn-vulkan",
 };
+if (packs) manifest.packs = packs;
 fs.writeFileSync(path.join(OUT_DIR, "manifest.json"), JSON.stringify(manifest, null, 2));
 console.log(`zip:   ${zip}`);
 console.log(`size:  ${(buf.length / 1048576).toFixed(1)} MB`);

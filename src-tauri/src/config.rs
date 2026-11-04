@@ -505,7 +505,7 @@ pub fn apply_player_skin(app: &tauri::AppHandle, skin: &str) {
     let want = if skin == "glass" { "glass" } else { "uosc" };
     write_skin_conf(&opts, want);
     // 右键菜单入口随皮肤：uosc 用底栏「更多」，玻璃皮肤用右键调起它的菜单插件。
-    set_menu_mouse_binding(&base, if want == "glass" { "script-message-to menu open" } else { "ignore" });
+    set_menu_mouse_binding(&base, if want == "glass" { "script-message-to menu show" } else { "ignore" });
     crate::libmpv::trace(&format!("[lc-2003] 播放器皮肤 = {want}（下一次起播生效）"));
 }
 

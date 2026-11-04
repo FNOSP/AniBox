@@ -185,9 +185,9 @@ function SetSelect({
     const r = el.getBoundingClientRect();
     const gap = 6;
     const edge = 8;
-    // 弹层至少与触发器同宽；右对齐触发器的右缘，但不出视口
+    // 弹层至少与触发器同宽；着色器等长 label 需要 360px 下限，右对齐触发器右缘，不出视口
     const width = Math.min(
-      Math.max(r.width, 168),
+      Math.max(r.width, 360),
       Math.max(120, window.innerWidth - edge * 2),
     );
     const left = Math.min(

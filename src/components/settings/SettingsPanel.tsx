@@ -1848,13 +1848,6 @@ export function SettingsPanel({
                       disabled={busy}
                       options={[
                         { value: "", label: shaderCustom ? "自定义（见说明）" : "默认（不着色器）" },
-                        { value: "a1", label: "经典：模式A（1080p 动画）" },
-                        { value: "a2", label: "经典：模式B（720p 动画）" },
-                        { value: "a3", label: "经典：模式A+A（高质量）" },
-                        { value: "a4", label: "经典：模式B+B（高质量）" },
-                        { value: "light", label: "经典：轻量模式（低配）" },
-                        { value: "denoise", label: "经典：仅降噪" },
-                        { value: "live", label: "经典：模式真人（FSRCNNX 锐化）" },
                         { value: "aq_hq_a", label: "动漫 A4K HQ：Mode A（线条重建+放大）" },
                         { value: "aq_hq_b", label: "动漫 A4K HQ：Mode B（柔和重建+放大）" },
                         { value: "aq_hq_c", label: "动漫 A4K HQ：Mode C（降噪放大·噪点多）" },

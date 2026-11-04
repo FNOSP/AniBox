@@ -3413,12 +3413,6 @@ async fn set_settings(
 /// (key, 显示名, 链) —— 链字符串与 fntv_shader.lua PRESETS 逐字符一致。
 fn shader_preset_table() -> Vec<(&'static str, &'static str, &'static str)> {
     vec![
-        ("a1", "经典：模式A（1080p 动画）", "~~/shaders/Anime4K_Clamp_Highlights.glsl;~~/shaders/Anime4K_Restore_CNN_M.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl;~~/shaders/Anime4K_AutoDownscalePre_x2.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl"),
-        ("a2", "经典：模式B（720p 动画）", "~~/shaders/Anime4K_Clamp_Highlights.glsl;~~/shaders/Anime4K_Restore_CNN_Soft_M.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl;~~/shaders/Anime4K_AutoDownscalePre_x2.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl"),
-        ("a3", "经典：模式A+A（高质量）", "~~/shaders/Anime4K_Clamp_Highlights.glsl;~~/shaders/Anime4K_Restore_CNN_L.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl;~~/shaders/Anime4K_AutoDownscalePre_x2.glsl;~~/shaders/Anime4K_Restore_CNN_L.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl"),
-        ("a4", "经典：模式B+B（高质量）", "~~/shaders/Anime4K_Clamp_Highlights.glsl;~~/shaders/Anime4K_Restore_CNN_Soft_L.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl;~~/shaders/Anime4K_AutoDownscalePre_x2.glsl;~~/shaders/Anime4K_Restore_CNN_Soft_L.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl"),
-        ("light", "经典：轻量模式（低配）", "~~/shaders/Anime4K_Restore_CNN_S.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_S.glsl;~~/shaders/Anime4K_AutoDownscalePre_x2.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_S.glsl"),
-        ("live", "经典：模式真人（FSRCNNX 锐化）", "~~/shaders/FSRCNNX_x2_8-0-4-1.glsl;~~/shaders/SSimDownscaler.glsl"),
         ("aq_hq_a", "动漫 A4K HQ：Mode A（线条重建+放大）", "~~/shaders/Anime4K_Clamp_Highlights.glsl;~~/shaders/Anime4K_Restore_CNN_VL.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_VL.glsl;~~/shaders/Anime4K_AutoDownscalePre_x2.glsl;~~/shaders/Anime4K_AutoDownscalePre_x4.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl"),
         ("aq_hq_b", "动漫 A4K HQ：Mode B（柔和重建+放大）", "~~/shaders/Anime4K_Clamp_Highlights.glsl;~~/shaders/Anime4K_Restore_CNN_Soft_VL.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_VL.glsl;~~/shaders/Anime4K_AutoDownscalePre_x2.glsl;~~/shaders/Anime4K_AutoDownscalePre_x4.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl"),
         ("aq_hq_c", "动漫 A4K HQ：Mode C（降噪放大·噪点多）", "~~/shaders/Anime4K_Clamp_Highlights.glsl;~~/shaders/Anime4K_Upscale_Denoise_CNN_x2_VL.glsl;~~/shaders/Anime4K_AutoDownscalePre_x2.glsl;~~/shaders/Anime4K_AutoDownscalePre_x4.glsl;~~/shaders/Anime4K_Upscale_CNN_x2_M.glsl"),
@@ -3437,7 +3431,6 @@ fn shader_preset_table() -> Vec<(&'static str, &'static str, &'static str)> {
         ("fsrcnnx_16", "真人 FSRCNNX：2x16+SSim+Krig（高质量）", "~~/shaders/FSRCNNX_x2_16-0-4-1.glsl;~~/shaders/SSimSuperRes_RT.glsl;~~/shaders/KrigBilateral.glsl"),
         ("fsrcnnx_56", "真人 FSRCNNX：2x56+SSim+Krig（极致·高配置）", "~~/shaders/FSRCNNX_x2_56_16_4_1.glsl;~~/shaders/SSimSuperRes_RT.glsl;~~/shaders/KrigBilateral.glsl"),
         ("artcnn_32_ravu4", "artcnn_32_ravu4", "~~/shaders/ArtCNN/ArtCNN_C4F32.glsl;~~/shaders/ravu-lite-ar-r4.hook"),
-        ("denoise", "经典：仅降噪", "~~/shaders/Anime4K_Denoise_Bilateral_Mode.glsl"),
         ("artcnn_16", "ArtCNN：/16（中等）", "~~/shaders/ArtCNN/ArtCNN_C4F16.glsl"),
         ("artcnn_16ds", "ArtCNN：/16DS（降噪+锐化）", "~~/shaders/ArtCNN/ArtCNN_C4F16_DS.glsl"),
         ("artcnn_16dn", "ArtCNN：/16DN（强降噪）", "~~/shaders/ArtCNN/ArtCNN_C4F16_DN.glsl"),

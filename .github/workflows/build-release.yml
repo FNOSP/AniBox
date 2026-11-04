@@ -220,6 +220,21 @@ jobs:
       - name: 构建 Tauri bundle
         run: npx tauri build --bundles ${{ matrix.bundles }}
 
+      # [GH#7] 未配置 Developer ID 凭据时，对 .app 做 ad-hoc 签名：完全无签名的 .app
+      # 过 Gatekeeper 会直接报「已损坏，无法打开」；ad-hoc 签名后报错降级为「无法验证
+      # 开发者」（可右键打开 / `xattr -cr` 绕过）。配置了正式凭据时跳过（tauri 已签名）。
+      - name: macOS ad-hoc 签名（无正式凭据时）
+        if: runner.os == 'macOS' && steps.macsign.outputs.enabled != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for app in src-tauri/target/release/bundle/macos/*.app; do
+            codesign --force --deep --sign - "$app"
+            codesign --verify --deep "$app"
+            echo "ad-hoc 签名完成: $app"
+          done
+
       - name: 整理产物
         id: collect
         shell: bash

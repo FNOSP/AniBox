@@ -44,6 +44,16 @@
 
 > <img src="https://api.iconify.design/mdi/monitor.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> **网页版入口 —— [AniBox fpk · 飞牛影视网页端增强](fpk/README.md)**：在 fnOS 应用中心装一次 fpk，电视 / 平板 / 手机 / 电脑打开浏览器就是增强版影视网页，影视应用零改动、卸载即还原。实机截图、功能清单与安装步骤见 **[fpk/README.md](fpk/README.md)**。
 
+> <img src="https://api.iconify.design/mdi/apple.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> **macOS 用户须知**（Windows 无此二条）：
+>
+> - **安装包按芯片选择**：Apple Silicon（M 系列 / Mac Studio）用 `_aarch64.dmg`，Intel 芯片用 `_x64.dmg`——装错架构会提示「与芯片架构不兼容」。
+> - **首次打开提示「已损坏，无法打开」**：安装包未做 Apple Developer ID 签名与公证，Gatekeeper 会拦截。终端执行以下任一条后再打开即可：
+>   ```bash
+>   sudo xattr -rd com.apple.quarantine /Applications/AniBox.app
+>   ```
+>   或在「系统设置 → 隐私与安全性」里对 AniBox 点「仍要打开」。
+> - **macOS 播放依赖系统 mpv**：安装包不含 mpv，请先执行 `brew install mpv`（Homebrew：[brew.sh](https://brew.sh)），或已在「设置 → 播放器」手动指定 mpv 路径；未安装时点播放会提示「未找到 mpv」。
+
 ## <img src="https://api.iconify.design/mdi/image-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 界面截图
 
 <div align="center">

@@ -316,7 +316,11 @@ pub async fn ai_enhance_set_superres(
 /// 下载并安装：远端 manifest → zip 流式下载（进度事件）→ sha256 校验 →
 /// 解压（pwsh Expand-Archive，CREATE_NO_WINDOW 零前台）→ 原子替换。
 #[tauri::command]
-pub async fn ai_enhance_download(app: AppHandle, pack: Option<String>) -> Result<Value, String> {
+pub async fn ai_enhance_download(
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+    pack: Option<String>,
+) -> Result<Value, String> {
     let pack = pack.unwrap_or_else(|| "base".into());
     let is_trt = pack == "tensorrt";
     let emit = |downloaded: u64, total: u64| {
@@ -325,6 +329,16 @@ pub async fn ai_enhance_download(app: AppHandle, pack: Option<String>) -> Result
             json!({ "downloaded": downloaded, "total": total }),
         );
     };
+    // [lc-2005] 占用预检：落位阶段要 rename 整个 ai-enhance 目录，mpv 进程只要加载过
+    // 组件 DLL 就会 EPERM——外部用户反馈「下载不了」的高频根因即此（正在播放中点
+    // 「重新下载」，45MB 下完才报「文件被占用」）。提前拦，别浪费流量。
+    if let Some(s) = state.mpv.lock().await.clone() {
+        if !s.is_dead().await {
+            return Err(
+                "检测到播放器正在运行——请先关闭正在播放的视频（或退出播放器），再下载/更新组件".into(),
+            );
+        }
+    }
     // 1) 远端 manifest
     let client = reqwest::Client::builder()
         // CF 边缘会拦无 UA 的请求（实测 Python 裸 UA 403）——客户端固定 UA
@@ -338,7 +352,9 @@ pub async fn ai_enhance_download(app: AppHandle, pack: Option<String>) -> Result
         .get(AI_ENHANCE_MANIFEST_URL)
         .send()
         .await
-        .map_err(|e| format!("拉取组件清单失败（R2 服务未部署或网络不可达）: {e}"))?
+        .map_err(|e| {
+            format!("网络连接失败：拉不到组件清单（{e}）。请检查网络后重试；若持续失败，可在浏览器打开 https://ai.690075.xyz/manifest.json 对照")
+        })?
         .json()
         .await
         .map_err(|e| format!("组件清单解析失败: {e}"))?;
@@ -415,6 +431,7 @@ pub async fn ai_enhance_download(app: AppHandle, pack: Option<String>) -> Result
         .unwrap_or_default();
     let mut file = std::fs::File::create(&tmp_zip).map_err(|e| format!("临时文件创建失败: {e}"))?;
     let mut hasher = Sha256::new();
+    let mut want_sha = String::new(); // 单 zip 分支赋值；分卷分支逐卷独立校验
     if !parts.is_empty() {
         let grand: u64 = parts.iter().map(|p| p.2).sum();
         let mut done: u64 = 0;
@@ -465,7 +482,7 @@ pub async fn ai_enhance_download(app: AppHandle, pack: Option<String>) -> Result
             .and_then(|v| v.as_str())
             .ok_or("清单缺 zipUrl")?
             .to_string();
-        let want_sha = entry
+        want_sha = entry
             .get("zipSha256")
             .and_then(|v| v.as_str())
             .unwrap_or("")
@@ -499,12 +516,17 @@ pub async fn ai_enhance_download(app: AppHandle, pack: Option<String>) -> Result
             }
         }
         // 校验统一在收尾处（hasher.finalize 消费性）
-        let _ = &want_sha;
     }
 
     drop(file);
     let done_total: u64 = std::fs::metadata(&tmp_zip).map(|m| m.len()).unwrap_or(0);
     let got_sha = format!("{:x}", hasher.finalize());
+    // [lc-2005] 单 zip 分支此前不做 zipSha256 比对（损坏包直到解压才报「解压失败」，
+    // 误导成磁盘/空间问题）——收尾统一校验。
+    if !want_sha.is_empty() && got_sha != want_sha {
+        let _ = std::fs::remove_file(&tmp_zip);
+        return Err("组件包校验失败（SHA-256 不匹配，下载可能损坏）——请重试下载".into());
+    }
 
     // 3) 解压到临时目录（零前台：pwsh CREATE_NO_WINDOW）
     let tmp_dir = std::env::temp_dir().join(format!("anibox-ai-enhance-unzip-{}", std::process::id()));

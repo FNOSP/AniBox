@@ -721,6 +721,14 @@ export function PlayerChrome() {
   useEffect(() => {
     if (!st.fullscreen) {
       hoverRequestRef.current?.(false, "fullscreen-exit");
+    } else {
+      // [lc-1998] 全屏进入时的视口快照：与 Rust 侧 fs-snap 的 ov_rect 对账，
+      // 用于定位「高 DPI 显示器上控件点不中」是坐标换算还是 OS 命中判定的问题。
+      void invoke("lat_trace", {
+        msg: `[lc-1998] fs-enter dpr=${(window.devicePixelRatio || 1).toFixed(2)} inner=${
+          window.innerWidth
+        }x${window.innerHeight} screen=${window.screen.width}x${window.screen.height}`,
+      }).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [st.fullscreen]);
@@ -834,6 +842,21 @@ export function PlayerChrome() {
       wake();
       const chrome = overChrome(e.target);
       hoverInteractive.current = chrome;
+      // [lc-1998] 全屏下每次按下打一行：命中元素 / elementFromPoint / 视口 / DPR。
+      // 有这行 = WebView 收到了这次点击；只有 fs-snap 没有这行 = OS 层把它给了 mpv。
+      if (stRef.current.fullscreen && e.button === 0) {
+        const el = e.target instanceof Element ? e.target : null;
+        const ef = document.elementFromPoint(e.clientX, e.clientY);
+        const d = (n: Element | null) =>
+          n ? `${n.tagName.toLowerCase()}${n.closest("[data-chrome-hit]") ? "+hit" : ""}` : "null";
+        void invoke("lat_trace", {
+          msg: `[lc-1998] down css=${Math.round(e.clientX)},${Math.round(
+            e.clientY,
+          )} dpr=${(window.devicePixelRatio || 1).toFixed(2)} inner=${
+            window.innerWidth
+          }x${window.innerHeight} target=${d(el)} efpt=${d(ef)}`,
+        }).catch(() => {});
+      }
       if (e.button !== 0) {
         if (!chrome && !menuOpenRef.current && Date.now() >= ptSuppressUntil.current && (e.button === 1 || e.button === 2)) {
           send(e.button === 1 ? "mdown" : "rdown", e);
@@ -858,7 +881,7 @@ export function PlayerChrome() {
         if (fwdRef.current && fwdRef.current.btn !== 0 && !overChrome(e.target)) send("move", e);
         return;
       }
-      if (Math.abs(e.clientX - pending.x) > 4 || Math.abs(e.clientY - pending.y) > 4) {
+      if (Math.abs(e.clientX - pending.x) > 8 || Math.abs(e.clientY - pending.y) > 8) {
         blankClickRef.current = null;
         void invoke("mpv_cancel_pending_click").catch(() => {});
         dragPointer = e.pointerId;
@@ -1984,7 +2007,7 @@ export function PlayerChrome() {
     <div
       className={`player-chrome${
         visible || loading || menu ? "" : " pc-hidden"
-      }${closing ? " pc-leaving" : ""}`}
+      }${closing ? " pc-leaving" : ""}${st.fullscreen ? " pc-fs" : ""}`}
     >
       <div className="pc-layer">
         <div className="pc-scrim" aria-hidden="true" />

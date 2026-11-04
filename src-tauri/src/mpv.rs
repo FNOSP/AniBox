@@ -42,9 +42,8 @@ fn lat_trace_cmd(cmd: &Value, ms: u64) {
 // 任一变化即组装 cinema-episode-meta；原子的读多写少足够）
 static EP_POS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static EP_COUNT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-// [lc-1915] 控制层鼠标位置桥（embed-bridge.lua 转发 mpv mouse-pos；x=-1 = 光标已离开视频）
-static MOUSE_X: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
-static MOUSE_Y: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+/// [lc-1999] `time-pos` 事件限流用（毫秒时间戳，10Hz 一档）。
+static LAST_TIME_POS_EMIT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// [lc-1924] 播放状态快照：覆盖层 UI（顶栏/底栏）的数据源。
 /// 与 Polaris 的 mpv-overlay.html 同思路 —— 控件画在 DOM 里，mpv 只负责播，
@@ -101,7 +100,7 @@ pub fn emit_player(app: &tauri::AppHandle, event: &str, payload: serde_json::Val
     let _ = app.emit(event, payload);
 }
 
-const OBSERVED: [(u64, &str); 17] = [
+const OBSERVED: [(u64, &str); 15] = [
     (1, "time-pos"),
     (2, "duration"),
     (3, "pause"),
@@ -128,9 +127,11 @@ const OBSERVED: [(u64, &str); 17] = [
     // [lc-1913] 软件内播放退出桥：embed-bridge.lua 在 ESC（非全屏）时把此位置 true，
     // 读线程见到 true 即 emit `mpv-embed-exit` 给前端（false 的复位事件忽略）。
     (14, "user-data/anibox-embed-esc"),
-    // [lc-1915] 控制层鼠标位置桥：mpv mouse-pos → user-data → 读线程转发 overlay-mouse
-    (15, "user-data/anibox-mouse-x"),
-    (16, "user-data/anibox-mouse-y"),
+    // [lc-1999] 鼠标位置桥已退役：`overlay-mouse` 在前端**没有任何监听**（控制层的悬停/
+    // 穿透早已改由 Rust 光标探针 + 前端 DOM 判定），但 mpv 侧 embed-bridge 仍在按
+    // 「位移 ≥3px」写 user-data/anibox-mouse-x/y —— 实测每几毫秒一条，读线程逐条 emit
+    // 进 WebView，把页面事件循环灌满，表现就是「点控件要等好久才有反应」（同批日志里
+    // `[lat] mpv cmd=set rtt=5000ms`，IPC 回包被这波事件挤到超时）。观察与转发一起删。
     // [lc-1939] 置顶态：覆盖层顶栏「置顶」按钮的高亮/动作依据
     (17, "ontop"),
 ];
@@ -1000,31 +1001,28 @@ impl MpvSession {
                         }
                         continue;
                     }
-                    if id == 15 || id == 16 {
-                        // [lc-1915] 控制层鼠标位置：转发给 mpv_overlay 的控制层做穿透开关。
-                        // x=-1 = 光标已离开视频区 → 控制层立即恢复全穿透。
-                        let val = v.get("data").and_then(|d| d.as_f64()).unwrap_or(-1.0) as i32;
-                        if id == 15 {
-                            MOUSE_X.store(val, Ordering::SeqCst);
-                        } else {
-                            MOUSE_Y.store(val, Ordering::SeqCst);
-                        }
-                        if crate::mpvwin::embed_is_active() {
-                            let _ = app2.emit(
-                                "overlay-mouse",
-                                json!({
-                                    "x": MOUSE_X.load(Ordering::SeqCst),
-                                    "y": MOUSE_Y.load(Ordering::SeqCst),
-                                }),
-                            );
-                        }
-                        continue;
-                    }
+                    // [lc-1999] 这里原本是 id 15/16（鼠标位置）→ `overlay-mouse` 转发。
+                    // 该事件前端无任何监听，而 embed-bridge 每几毫秒写一次 → 读线程
+                    // 逐条 emit 把 WebView 事件循环灌满，点击因此排队变慢。整段删除。
                     if !OBSERVED.iter().any(|(i, _)| *i == id) {
                         continue;
                     }
                     if first_event.swap(false, Ordering::SeqCst) {
                         crate::libmpv::trace(&format!("IPC 事件流已通（首个属性变化 id={id}）"));
+                    }
+                    // [lc-1999] time-pos 限流 10Hz：mpv 按帧推送（实测 30~60 条/秒），
+                    // 每条都 emit 一次会让覆盖层整棵树按帧重渲染，点击排队变慢。
+                    // 进度条/剩余时间 10Hz 足够；pause/duration/seek 等仍即时。
+                    if id == 1 {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        let last = LAST_TIME_POS_EMIT_MS.load(Ordering::Relaxed);
+                        if now.saturating_sub(last) < 100 {
+                            continue;
+                        }
+                        LAST_TIME_POS_EMIT_MS.store(now, Ordering::Relaxed);
                     }
                     let _ = app2.emit(
                         "mpv-event",

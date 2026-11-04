@@ -330,13 +330,38 @@ pub async fn ai_enhance_download(
         );
     };
     // [lc-2005] 占用预检：落位阶段要 rename 整个 ai-enhance 目录，mpv 进程只要加载过
-    // 组件 DLL 就会 EPERM——外部用户反馈「下载不了」的高频根因即此（正在播放中点
-    // 「重新下载」，45MB 下完才报「文件被占用」）。提前拦，别浪费流量。
+    // 组件 DLL 就会 EPERM。**4.1.0 起 mpv 以 --idle=yes --keep-open=yes 常驻**（外部
+    // 用户日志实锤）：用户关掉视频后进程仍挂着、且提示「关闭播放器」无法执行——
+    // 只有空闲挂起（idle-active=yes）或播完停在尾帧（eof-reached=yes）时自动退出
+    // 常驻会话再下载；真在播/暂停中才拒绝（避免误杀观看）。
     if let Some(s) = state.mpv.lock().await.clone() {
         if !s.is_dead().await {
-            return Err(
-                "检测到播放器正在运行——请先关闭正在播放的视频（或退出播放器），再下载/更新组件".into(),
-            );
+            let get_prop =
+                |name: &'static str| s.command(json!({ "command": ["get_property", name] }));
+            let idle = get_prop("idle-active")
+                .await
+                .ok()
+                .and_then(|v| v.get("data").and_then(|d| d.as_bool()))
+                .unwrap_or(false);
+            let eof = get_prop("eof-reached")
+                .await
+                .ok()
+                .and_then(|v| v.get("data").and_then(|d| d.as_bool()))
+                .unwrap_or(false);
+            if idle || eof {
+                s.shutdown().await;
+                for _ in 0..40 {
+                    if s.is_dead().await {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                *state.mpv.lock().await = None;
+            } else {
+                return Err(
+                    "检测到播放器正在播放视频——请先停止播放，再下载/更新组件".into(),
+                );
+            }
         }
     }
     // 1) 远端 manifest

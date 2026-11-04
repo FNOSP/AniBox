@@ -3442,6 +3442,8 @@ pub fn player_overlay_abort(app: &AppHandle) {
         crate::mpvwin::embed_hide(hwnd);
     }
     crate::mpvwin::embed_set_active(false);
+    // [lc-1992] 起播失败兜底：解除 fntv_osc 全屏锁定（覆盖层已收起，原生 OSC 必须可用）
+    crate::mpvwin::send_osc_fs_lock(app, false);
     crate::mpvwin::set_owner_follow(false);
     restore_main_window(app);
     crate::libmpv::trace("[lc-1940] 起播失败 → 覆盖层/mpv 已收起，主窗口恢复");
@@ -3594,6 +3596,9 @@ pub async fn embed_exit_flow(app: AppHandle) {
     // [lc-1947] 全屏中退出播放：先按保存的矩形/最大化态还原锚窗，否则下一次起播会
     // 继承一块全屏几何（`embed_set_active(false)` 会清掉还原态，必须放在它前面）。
     crate::mpvwin::restore_player_window_from_fullscreen();
+    // [lc-1992] 退出播放：无条件解除 fntv_osc 全屏锁定（会话结束不许残留；Lua 侧随后
+    // 还会因 `fullscreen=no` 自我收敛一次，两条通道互不依赖）。
+    crate::mpvwin::send_osc_fs_lock(&app, false);
     crate::mpvwin::embed_set_active(false);
     crate::mpvwin::set_owner_follow(false);
 

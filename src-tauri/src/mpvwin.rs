@@ -192,6 +192,24 @@
 //!     `overlay-mouse-activity` 驱动；`inside=false` 是「真离开播放器」的权威信号。
 //!   · 50ms 翻位窗口内的一击不丢：控件在 hover 翻位前收到的点击会漏给 mpv（= 一次
 //!     正常的空白区暂停语义），与 Polaris 行为一致；持续悬停时翻位先行，点击零等待。
+//!
+//! [lc-1992] **全屏只保留覆盖层一套控件**（用户定论；承接 lc-1990/1991 的实机日志）：
+//! 全屏覆盖层顶栏 auto-hide 时那带像素没有不透明 WebView 内容，OS 逐像素判定把点击漏给
+//! mpv 原生 OSC（`hit=0xB032C class="mpv"` → `script-binding fntv_osc/fntv-osc-click` →
+//! `Run command: quit`）。两套控件在全屏重叠抢命中就是这一系列 bug 的根源，故：
+//!   · `on_player_fullscreen_changed` 进入全屏发 `script-message fntv-osc-fs-lock on`，
+//!     退出发 `off`；`embed_exit_flow`（退出播放）与 `player_overlay_abort`（起播失败兜底）
+//!     也无条件发 `off`，不许跨会话残留。
+//!   · Lua 侧（本地 `fntv_osc.lua`，third_party 不入库）锁定态 **零绘制 + 零热区**：
+//!     按钮/进度条/控件带全部不再响应；任何坐标按画面空白处理 → `cycle pause`，
+//!     双击全屏仍由 mpv 输入层合成 `MBTN_LEFT_DBL`（input.conf 不变）。
+//!   · **双通道收敛**：消息只是提前量，`fullscreen` 属性是唯一真值 —— Lua 既观察该属性，
+//!     tick 里还按 `fs_lock == fullscreen` 自愈（lc-1991 静默退全屏兜底这类
+//!     「属性值没变但状态拨偏」的边角也不会残锁）。
+//!   · 窗口模式完全不动：lc-1990 的逐元素命中（点哪个按钮执行哪个）与 lc-1991 的
+//!     覆盖层可见性不变量都保留。
+//!   · 埋点：Rust `[lc-1992] fntv_osc 全屏锁定 script-message fntv-osc-fs-lock on|off 已下发`；
+//!     mpv.log `[lc-1992] fntv_osc 全屏锁定 ON/OFF（reason）`。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -1716,6 +1734,9 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
         // 锁定 `ontop=true` 并停用「暂停置底」联动 —— lua 不再摘锚窗 TOPMOST，
         // 拉锯从源头消失（脚本本地改，不入库）。
         send_ontop_suppression(app, true);
+        // [lc-1992] 全屏期 mpv 原生 OSC 全面退场：零绘制、零热区，控件只留覆盖层那套。
+        // 退出全屏 / 会话结束时对称发 off（Lua 还会按 fullscreen 属性自我收敛）。
+        send_osc_fs_lock(app, true);
         crate::libmpv::trace(&format!(
             "[lc-1947] 进入全屏：显示器矩形 {mw}x{mh}@{mx},{my}（锚窗 + 覆盖层 TOPMOST）"
         ));
@@ -1728,6 +1749,9 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
     } else {
         // [lc-1981] 解除 ontop_mode.lua 的全屏抑制，恢复三态置顶联动（暂停置底照常）。
         send_ontop_suppression(app, false);
+        // [lc-1992] 退出全屏：解除 fntv_osc 全屏锁定 —— 窗口模式恢复逐元素命中（lc-1990），
+        // 原生 OSC 的 3s 自动隐藏 / 悬停 tooltip 行为回到原状。
+        send_osc_fs_lock(app, false);
         // [lc-1974] 退出全屏：先解锁并恢复窗口模式的穿透默认态（Polaris 语义）。
         // 尊重进行中的 hover（光标正悬在控件上时不把穿透拨回来，交 hover 链管理）；
         // 若全屏期间前端把 hover 请求短路了（FRONTEND_HOVER_LAST 停在 true），这里
@@ -1803,29 +1827,63 @@ pub fn on_player_fullscreen_changed(app: &tauri::AppHandle, on: bool) {
     }
 }
 
-/// [lc-1981] 全屏期 `ontop_mode.lua` 暂停置底抑制开关（script-message 广播）。
-///
-/// `on`：脚本锁定 `ontop=true` 并停用 pause/idle 联动（锚窗不再被 lua 摘 TOPMOST，
-/// 30Hz 拉锯从源头消失）；`off`：恢复三态联动。发送不等待回包 —— 窗口级动作
-/// （几何 / z 序）不依赖它完成，200ms 拿不到 mpv 会话锁就放弃。
-fn send_ontop_suppression(app: &tauri::AppHandle, on: bool) {
+/// [lc-1992] 通用后台 script-message 下发：不等待回包（窗口/脚本状态不依赖它完成），
+/// 200ms 拿不到 mpv 会话锁就放弃并留痕。
+fn send_script_message_bg(
+    app: &tauri::AppHandle,
+    name: &'static str,
+    arg: &'static str,
+    tag: &'static str,
+) {
     use tauri::Manager;
     let app = app.clone();
-    let arg = if on { "on" } else { "off" };
     tauri::async_runtime::spawn(async move {
         let state = app.state::<crate::AppState>();
         let session = tokio::time::timeout(std::time::Duration::from_millis(200), state.mpv.lock())
             .await
             .ok()
             .and_then(|g| g.clone());
-        if let Some(m) = session {
-            m.command_no_reply(serde_json::json!(["script-message", "fntv-ontop-fs", arg]))
-                .await;
-            crate::libmpv::trace(&format!("[lc-1981] ontop_mode 抑制 {arg} 已下发"));
-        } else {
-            crate::libmpv::trace("[lc-1981] ontop_mode 抑制下发失败（mpv 会话不可用）");
+        match session {
+            Some(m) => {
+                m.command_no_reply(serde_json::json!(["script-message", name, arg]))
+                    .await;
+                crate::libmpv::trace(&format!("{tag} script-message {name} {arg} 已下发"));
+            }
+            None => crate::libmpv::trace(&format!(
+                "{tag} script-message {name} {arg} 下发失败（mpv 会话不可用）"
+            )),
         }
     });
+}
+
+/// [lc-1981] 全屏期 `ontop_mode.lua` 暂停置底抑制开关（script-message 广播）。
+///
+/// `on`：脚本锁定 `ontop=true` 并停用 pause/idle 联动（锚窗不再被 lua 摘 TOPMOST，
+/// 30Hz 拉锯从源头消失）；`off`：恢复三态联动。
+fn send_ontop_suppression(app: &tauri::AppHandle, on: bool) {
+    send_script_message_bg(
+        app,
+        "fntv-ontop-fs",
+        if on { "on" } else { "off" },
+        "[lc-1981] ontop_mode 抑制",
+    );
+}
+
+/// [lc-1992] 全屏期 `fntv_osc.lua` 原生控制条抑制开关（script-message 广播）。
+///
+/// 全屏下覆盖层（PlayerChrome）是控件的唯一主人：`on` 让 Lua OSC 进入「全屏锁定」——
+/// 零绘制、零热区（按钮/进度条/控件带都不再抢命中），但空白区单击仍 `cycle pause`、
+/// 双击仍由 mpv 输入层合成 MBTN_LEFT_DBL → 全屏；`off` 恢复窗口模式逐元素命中。
+///
+/// 注意：Lua 侧以 mpv 的 `fullscreen` 属性为唯一真值做收敛（属性观察 + 消息参数校验），
+/// 所以这里丢消息 / 乱序 / 跨会话残留都不会把状态锁死 —— 消息只负责提前量。
+pub fn send_osc_fs_lock(app: &tauri::AppHandle, on: bool) {
+    send_script_message_bg(
+        app,
+        "fntv-osc-fs-lock",
+        if on { "on" } else { "off" },
+        "[lc-1992] fntv_osc 全屏锁定",
+    );
 }
 
 /// [lc-1947] 退出播放前若还在全屏：把锚窗还原到进入前的矩形/最大化状态，

@@ -236,6 +236,11 @@ impl MpvSession {
                 .clone()
                 .player_skin;
             crate::config::apply_player_skin(&app, &skin);
+            // [lc-2008] 玻璃皮肤：uosc 仍要加载（uosc_danmaku 的搜索/源管理菜单走它的
+            // menu API），但全部可视元素禁用 —— modernz 画底栏，uosc 只当菜单服务。
+            if skin == "glass" {
+                args.push("--script-opts-append=uosc-disable_elements=top_bar,timeline,controls,volume,pause_indicator,buffering_indicator,window_border".to_string());
+            }
         }
 
         // ── 1) 启动 mpv.exe

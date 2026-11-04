@@ -2017,7 +2017,7 @@ export function SettingsPanel({
                 </>
               )}
 
-              {/* ── AI 增强（独立 tab）：组件/画质档位/AI超分/TRT/插帧引擎 ── */}
+              {/* ── AI 增强（独立 tab）：组件/AI超分/TRT/插帧引擎 ── */}
               {tab === "enhance" && (
                 <AiEnhanceRow />
               )}
@@ -2996,11 +2996,12 @@ export function SettingsPanel({
 /* ────────────────────────── 根组件 ────────────────────────── */
 
 
-/* ── [lc-1820] AI 增强（可选组件）：RIFE AI 2× 补帧 ──────────────────────
-   运行时（Python+VapourSynth+ncnn Vulkan+RIFE v4.6，约 50MB）不进安装包，
-   软件内下载到 %APPDATA%/com.anibox.app/ai-enhance（卸载不残留安装目录）。
-   就绪后：播放器「插帧」按钮 / 右键菜单选 RIFE 档（engine=rife），
-   全显卡通用（Vulkan）；倍速/HDR/超4K 片源自动回退内置平滑（安全契约）。 */
+/* ── [lc-1820] AI 增强（可选组件）：补帧与超分运行时 ──────────────────────
+   运行时（Python+VapourSynth R79+ncnn RIFE v4.6+MVTools+AnimeJaNai 超分，约 46MB）
+   不进安装包，软件内下载到 %APPDATA%/com.anibox.app/ai-enhance（卸载不残留安装目录）。
+   就绪后：插帧引擎 RIFE（仅 720P 及以下源实时）与 MVTools（全显卡）、AI 超分 DML/
+   TensorRT 档可用；倍速/HDR/超4K 片源自动让路（安全契约）。
+   [lc-2004] nvidia/rife_dml 引擎档与 quality_tier 运动平滑基线已删除。 */
 function AiEnhanceRow() {
   const [status, setStatus] = useState<{
     installed: boolean;
@@ -3110,7 +3111,7 @@ function AiEnhanceRow() {
   return (
     <div className="set-row set-row-col" style={{ gap: 8 }}>
       <div className="set-row" style={{ flex: 1, gap: 10 }}>
-        <span className="set-k">AI 增强 · RIFE AI 2× 补帧</span>
+        <span className="set-k">AI 增强 · 补帧与超分组件</span>
         <span className="set-desc" style={{ flex: 1 }}>
           {status === null
             ? "检测中…"
@@ -3118,7 +3119,7 @@ function AiEnhanceRow() {
               ? `已就绪（${status.version}${status.installedAt ? " · " + status.installedAt : ""}）`
               : status.installed
                 ? `已安装 ${status.version}，但组件文件不完整——重新下载可修复`
-                : "未安装 · 运行时约 50MB，下载到用户目录（不占安装盘）"}
+                : "未安装 · 运行时约 46MB，下载到用户目录（不占安装盘）"}
         </span>
         {status?.ready ? (
           <button type="button" className="sub-cred-btn" onClick={() => void remove()} disabled={!!busy}>
@@ -3166,7 +3167,7 @@ function AiEnhanceRow() {
                   : val === "rife"
                     ? "RIFE：AI 在帧间补新帧，效果最好（ncnn Vulkan，仅 720P 及以下源实时）。跟不上实时会自动降级 MVTools 60FPS"
                     : mvtoolsLocked
-                      ? "MVTools：真实运动补偿补帧，廉价全显卡——需随包 mvtools.dll（待补）"
+                      ? "MVTools：真实运动补偿补帧，廉价全显卡——需先下载 AI 增强组件（含 mvtools.dll）"
                       : val === "mvtools"
                         ? "MVTools：运动补偿补帧到 2×（24→48/30→60），代价低、全显卡；RIFE 跟不上时的兜底档"
                         : "内置平滑：MPV 自带时间插值，零开销（60Hz 屏适用；高刷屏会自动改用音频同步）"
@@ -3175,7 +3176,7 @@ function AiEnhanceRow() {
                 rifeLocked
                   ? setErr("RIFE 档需先下载 AI 增强组件")
                   : mvtoolsLocked
-                    ? setErr("MVTools 档需随包 mvtools.dll（当前缺失，待补）")
+                    ? setErr("MVTools 档需先下载 AI 增强组件")
                     : void pickEngine(val)
               }
             >

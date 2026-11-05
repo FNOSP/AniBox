@@ -3239,6 +3239,155 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
       } catch { /* ignore */ }
     })();
 
+    // ===== [lc-2033] 访问安全卡（端口直连模式的访问密码门禁，见后端 internal/security）=====
+    const secSecurity = section('访问安全');
+    const secBodySecurity = secSecurity.body;
+    secBodySecurity.style.cssText = 'padding:14px 16px;flex:1 1 auto;display:flex;flex-direction:column;';
+
+    const secDesc = document.createElement('div');
+    secDesc.style.cssText = 'font-size:11px;color:var(--fnos-ui-sub);line-height:1.5;margin-bottom:8px;';
+    secDesc.textContent = t('给增强服务加一道访问密码：开启后任何设备首次打开增强页都要输密码，验证通过后该浏览器 30 天内免输。改密码会使所有已验证设备重新输一次。');
+    secBodySecurity.appendChild(secDesc);
+
+    // 开关行（整行可点）
+    const secToggleRow = document.createElement('label');
+    secToggleRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 6px;cursor:pointer;border-radius:6px;margin-bottom:8px;';
+    const secToggleSpan = document.createElement('span');
+    secToggleSpan.textContent = t('开启访问密码');
+    secToggleSpan.style.cssText = 'color:var(--fnos-ui-text);font-weight:500;';
+    const swSecurity = document.createElement('input');
+    swSecurity.type = 'checkbox';
+    swSecurity.style.cssText = 'width:38px;height:21px;cursor:pointer;accent-color:var(--fnos-ui-accent);';
+    secToggleRow.appendChild(secToggleSpan); secToggleRow.appendChild(swSecurity);
+    secBodySecurity.appendChild(secToggleRow);
+
+    // 密码输入（掩码态同弹弹play凭证：已保存显示星号且只读，聚焦清空进入编辑）
+    const secPwInput = document.createElement('input');
+    secPwInput.type = 'password';
+    secPwInput.placeholder = t('访问密码（至少 4 位）');
+    secPwInput.style.cssText = 'width:100%;height:32px;font-size:11px;color:var(--fnos-ui-text);'
+      + 'background:var(--fnos-ui-input-bg);border:1px solid var(--fnos-ui-border);border-radius:7px;'
+      + 'padding:6px 8px;box-sizing:border-box;margin-bottom:8px;';
+    secPwInput.addEventListener('focus', () => { if (secPwInput.readOnly) { secPwInput.readOnly = false; secPwInput.value = ''; } });
+    secBodySecurity.appendChild(secPwInput);
+
+    const secBtnRow = document.createElement('div');
+    secBtnRow.style.cssText = 'display:flex;gap:6px;';
+    const secSaveBtn = mkBtn('保存密码', true);
+    const secClearBtn = mkBtn('清除密码', true);
+    secBtnRow.appendChild(secSaveBtn); secBtnRow.appendChild(secClearBtn);
+    secBodySecurity.appendChild(secBtnRow);
+
+    const secStatusLine = document.createElement('div');
+    secStatusLine.style.cssText = 'font-size:10.5px;color:var(--fnos-ui-sub);line-height:1.5;margin-top:8px;min-height:14px;';
+    secBodySecurity.appendChild(secStatusLine);
+
+    const secHint = document.createElement('div');
+    secHint.style.cssText = 'font-size:10.5px;color:var(--fnos-ui-sec);line-height:1.5;margin-top:6px;';
+    secHint.textContent = t('密码加密保存在 NAS 配置目录，设置接口不下发明文。忘记密码：SSH 删除配置目录 config.json 里的 securityPassword 字段后重启应用，门禁即解除。');
+    secBodySecurity.appendChild(secHint);
+
+    // 状态回查以后端为准（securityPassword 只回 securityPasswordSet 布尔，不回明文）
+    const secSetState = (enabled: boolean, pwSet: boolean): void => {
+      if (enabled && pwSet) {
+        secStatusLine.textContent = t('已开启 —— 未验证的设备会先看到密码页，验证通过后 30 天免输。');
+        secStatusLine.style.color = 'var(--fnos-ui-ok)';
+      } else if (enabled && !pwSet) {
+        secStatusLine.textContent = t('已开启但未设密码，门禁暂不生效，请先保存密码。');
+        secStatusLine.style.color = 'var(--fnos-ui-warn)';
+      } else if (!enabled && pwSet) {
+        secStatusLine.textContent = t('未开启 —— 密码已保存，打开上方开关即生效。');
+        secStatusLine.style.color = 'var(--fnos-ui-sub)';
+      } else {
+        secStatusLine.textContent = t('未开启 —— 局域网内可直接访问增强页与管理接口。');
+        secStatusLine.style.color = 'var(--fnos-ui-sub)';
+      }
+      secSaveBtn.textContent = '保存密码';
+      secClearBtn.textContent = '清除密码';
+    };
+    const refreshSecurityStatus = (): void => {
+      ipcRenderer.invoke('settings:get').then((c: any) => {
+        swSecurity.checked = !!c.securityEnabled;
+        if (c.securityPasswordSet && secPwInput.readOnly === false && !secPwInput.value) {
+          // 首屏回填掩码（输入框未被用户编辑时）
+          secPwInput.value = '********';
+          secPwInput.readOnly = true;
+        }
+        secSetState(!!c.securityEnabled, !!c.securityPasswordSet);
+      }).catch(() => { /* 状态查询失败不阻断面板 */ });
+    };
+    refreshSecurityStatus();
+
+    // 验证当前设备：开启/保存后立刻拿会话 Cookie，避免保存完一刷新就被锁进密码页
+    const authSelf = (password: string): Promise<boolean> => {
+      return fetch('/app/fntvplus/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ password }),
+      }).then((r) => r.ok).catch(() => false);
+    };
+
+    swSecurity.addEventListener('change', () => {
+      swSecurity.disabled = true;
+      ipcRenderer.invoke('settings:set-security-enabled', swSecurity.checked)
+        .then(() => refreshSecurityStatus())
+        .catch(() => { /* 状态行由回查兜底 */ })
+        .finally(() => { swSecurity.disabled = false; });
+    });
+
+    secSaveBtn.addEventListener('click', (e: Event) => {
+      e.stopPropagation();
+      if (secPwInput.readOnly || !secPwInput.value) {
+        secStatusLine.textContent = t('请先输入新密码（已保存的密码以星号显示，点击输入框可修改）。');
+        secStatusLine.style.color = 'var(--fnos-ui-warn)';
+        return;
+      }
+      const v = secPwInput.value;
+      if (v.length < 4) {
+        secStatusLine.textContent = t('密码至少 4 位。');
+        secStatusLine.style.color = 'var(--fnos-ui-warn)';
+        return;
+      }
+      secSaveBtn.disabled = true; secSaveBtn.textContent = t('保存中…');
+      ipcRenderer.invoke('settings:set-security-password', v)
+        .then(() => {
+          secPwInput.value = '********';
+          secPwInput.readOnly = true;
+          // 开关已开 → 本设备立即换取会话，避免被自己的门禁拦住
+          const finish = (authed: boolean): void => {
+            refreshSecurityStatus();
+            secStatusLine.textContent = t(authed ? '密码已保存，本设备已验证。' : '密码已保存。本设备下次访问需输入一次新密码。');
+            secStatusLine.style.color = 'var(--fnos-ui-ok)';
+          };
+          ipcRenderer.invoke('settings:get-security-enabled').then((on: any) => {
+            if (on === true || on === '1') return authSelf(v).then(finish);
+            finish(false);
+          }).catch(() => finish(false));
+        })
+        .catch((err: any) => {
+          secStatusLine.textContent = t('保存失败') + ': ' + (err && err.message ? err.message : err);
+          secStatusLine.style.color = 'var(--fnos-ui-warn)';
+        })
+        .finally(() => { secSaveBtn.disabled = false; });
+    });
+
+    secClearBtn.addEventListener('click', (e: Event) => {
+      e.stopPropagation();
+      secClearBtn.disabled = true; secClearBtn.textContent = t('清除中…');
+      ipcRenderer.invoke('settings:set-security-password', '')
+        .then(() => {
+          secPwInput.value = '';
+          secPwInput.readOnly = false;
+          refreshSecurityStatus();
+        })
+        .catch((err: any) => {
+          secStatusLine.textContent = t('清除失败') + ': ' + (err && err.message ? err.message : err);
+          secStatusLine.style.color = 'var(--fnos-ui-warn)';
+        })
+        .finally(() => { secClearBtn.disabled = false; });
+    });
+
     // ===== [v1.11.0] 页面背景卡（不再锁死深浅模式的实心白/黑）=====
     // 三种自定义模式（纯色/渐变/图片）在深浅两种主题下同样生效；实现见 embyWall/pageBg.ts。
     const secPageBg = section('页面背景');
@@ -3455,7 +3604,7 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
       { id: 'appearance', label: '通用', els: [secAppearance.el, secPageBg.el, secDaily.el, secUX.el, secSkip.el] },
       // [lc-1102] 三张「弹幕源」卡并列（内置降级源 → 弹弹play → 自建优选源），最后才是屏蔽/样式
       { id: 'danmaku', label: '弹幕', els: [secBili.el, secDandan.el, secDmApi.el, secDanmaku.el] },
-      { id: 'account', label: '账号与网络', els: [secBangumi.el, secTmdb.el, secDouban.el, secTrakt.el, secCustomProxy.el] },
+      { id: 'account', label: '账号与网络', els: [secBangumi.el, secTmdb.el, secDouban.el, secTrakt.el, secCustomProxy.el, secSecurity.el] },
       // [v1.10.2] 自定义刮削源→Jav 刮削七卡从「账号与网络」拆出独立成类；开发中的「自定义刮削服务」置顶占位
       { id: 'scraper', label: '自定义刮削', els: [secScraperSvc.el, secScraper.el, secFanart.el, secTvmaze.el, secOmdb.el, secMal.el, secJav.el] },
       { id: 'diag', label: '诊断与日志', els: [secDiag.el, secDebug.el] },

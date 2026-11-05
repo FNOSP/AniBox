@@ -81,11 +81,45 @@ fn basic_auth(user: &str, pass: &str) -> String {
 }
 
 /// 拼完整 URL：目录型服务器（根地址以 / 结尾或 path 以 / 开头）容错拼接。
+///
+/// [lc-2016] 两个实测必现坑（单测 openlist_real_response_shape /
+/// href_absolute_url_not_double_prefixed 覆盖）：
+/// ① **href 与 base 的路径前缀重复**：OpenList/alist 根地址是 `http://host:5244/dav`，
+///    PROPFIND 返回的 href 又是 `/dav/动漫/…` —— 直接拼成 `/dav/dav/…` 必 404。
+///    这是接 OpenList 最常见的翻车点（面板给的预设地址正好是带 /dav 的形态）。
+/// ② **href 是绝对 URL**：反向代理后面的服务端会返回全 URL，拼成 `base/https://…`。
+/// 规则：href 自带 scheme 直接用；否则把 href 路径与 base 路径的**最长公共前缀**去掉后
+/// 再拼（同时容忍 base 带/不带 /dav、href 带/不带 /dav 四种组合）。
 fn join_url(base: &str, path: &str) -> String {
+    let href = path.trim();
+    // ② 绝对 URL：原样返回
+    if href.to_ascii_lowercase().starts_with("http://")
+        || href.to_ascii_lowercase().starts_with("https://")
+    {
+        return href.to_string();
+    }
     let b = base.trim_end_matches('/');
-    let p = if path.starts_with('/') { path.to_string() } else { format!("/{path}") };
-    // path 可能已 URL 编码（PROPFIND 返回的 href 是编码过的）——保持原样拼
-    format!("{b}{p}")
+    let p = if href.starts_with('/') { href.to_string() } else { format!("/{href}") };
+    // ① 去掉 base 路径与 href 路径的公共前缀（按路径段比较，避免 /dav 与 /davx 误配）
+    let base_path = b
+        .split_once("://")
+        .and_then(|(_, rest)| rest.split_once('/').map(|(_, p)| p))
+        .unwrap_or("");
+    let base_segs: Vec<&str> = base_path.split('/').filter(|s| !s.is_empty()).collect();
+    let href_segs: Vec<&str> = p.split('/').filter(|s| !s.is_empty()).collect();
+    let mut common = 0;
+    while common < base_segs.len()
+        && common < href_segs.len()
+        && base_segs[common] == href_segs[common]
+    {
+        common += 1;
+    }
+    // 全等（href 就是 base 本身）时不要重复拼
+    let rest: Vec<&str> = href_segs[common..].to_vec();
+    if rest.is_empty() {
+        return b.to_string();
+    }
+    format!("{b}/{}", rest.join("/"))
 }
 
 // ───────────────────────── 账号管理 ─────────────────────────
@@ -456,6 +490,62 @@ fn parent_url(url: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// [lc-2016] OpenList(alist) 真实响应形态：带命名空间前缀、目录型 href、含中文编码。
+    /// 根地址 http://host:5244/dav，PROPFIND 返回 href=/dav/... —— 拼 URL 时 base 已含
+    /// /dav，拼成 /dav/dav 会 404（这是接 OpenList 最常见的翻车点）。
+    #[test]
+    fn openlist_real_response_shape() {
+        let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+<D:response>
+  <D:href>/dav/%E5%8A%A8%E6%BC%AB/</D:href>
+  <D:propstat><D:prop>
+    <D:displayname>动漫</D:displayname>
+    <D:resourcetype><D:collection/></D:resourcetype>
+  </D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+</D:response>
+<D:response>
+  <D:href>/dav/%E5%8A%A8%E6%BC%AB/%E8%BF%9B%E5%87%BB%E7%9A%84%E5%B7%A8%E4%BA%BA.S01E01.mkv</D:href>
+  <D:propstat><D:prop>
+    <D:displayname>进击的巨人.S01E01.mkv</D:displayname>
+    <D:resourcetype/>
+    <D:getcontentlength>1409286144</D:getcontentlength>
+  </D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+</D:response>
+</D:multistatus>"#;
+        let blocks = split_responses(xml);
+        assert_eq!(blocks.len(), 2, "应切出 2 个 response 块");
+
+        let dir = parse_propfind_entry(&blocks[0], "http://127.0.0.1:5244/dav").unwrap();
+        assert_eq!(dir["name"], "动漫");
+        assert_eq!(dir["isDir"], true);
+        assert_eq!(dir["path"], "/dav/动漫/");
+
+        let file = parse_propfind_entry(&blocks[1], "http://127.0.0.1:5244/dav").unwrap();
+        assert_eq!(file["name"], "进击的巨人.S01E01.mkv");
+        assert_eq!(file["kind"], "video");
+        assert_eq!(file["size"], 1409286144u64);
+        // 关键：base 已含 /dav，href 也含 /dav —— 不应拼成 /dav/dav
+        let url = file["fileId"].as_str().unwrap();
+        assert!(
+            !url.contains("/dav/dav"),
+            "href 与 base 的路径前缀重复拼接（会 404）：{url}"
+        );
+    }
+
+    /// [lc-2016] href 为绝对 URL（部分服务端/反向代理会返回全 URL）时不能重复拼 base。
+    #[test]
+    fn href_absolute_url_not_double_prefixed() {
+        let xml = r#"<D:multistatus xmlns:D="DAV:"><D:response>
+<D:href>https://drive.example.com/dav/a.mp4</D:href>
+<D:propstat><D:prop><D:displayname>a.mp4</D:displayname><D:resourcetype/></D:prop></D:propstat>
+</D:response></D:multistatus>"#;
+        let block = &split_responses(xml)[0];
+        let it = parse_propfind_entry(block, "https://drive.example.com/dav").unwrap();
+        let url = it["fileId"].as_str().unwrap();
+        assert_eq!(url, "https://drive.example.com/dav/a.mp4", "绝对 href 被重复拼接：{url}");
+    }
+
     #[test]
     fn xml_extract_basic() {
         let xml = r#"<?xml version="1.0"?><D:multistatus xmlns:D="DAV:"><D:response><D:href>/dav/%E5%89%A7/a.mkv</D:href><D:propstat><D:prop><D:displayname>a.mkv</D:displayname><D:resourcetype/><D:getcontentlength>123</D:getcontentlength></D:prop></D:propstat></D:response><D:response><D:href>/dav/dir/</D:href><D:propstat><D:prop><D:displayname>dir</D:displayname><D:resourcetype><D:collection/></D:resourcetype></D:prop></D:propstat></D:response></D:multistatus>"#;
@@ -501,5 +591,16 @@ mod tests {
     fn join_url_variants() {
         assert_eq!(join_url("https://a.com/dav", "/x/y.mkv"), "https://a.com/dav/x/y.mkv");
         assert_eq!(join_url("https://a.com/dav/", "x/y.mkv"), "https://a.com/dav/x/y.mkv");
+        // [lc-2016] 四种 base/href 前缀组合都不得重复拼接
+        assert_eq!(join_url("http://h:5244/dav", "/dav/a.mkv"), "http://h:5244/dav/a.mkv");
+        assert_eq!(join_url("http://h:5244/dav", "/a.mkv"), "http://h:5244/dav/a.mkv");
+        assert_eq!(join_url("http://h:5244", "/dav/a.mkv"), "http://h:5244/dav/a.mkv");
+        assert_eq!(join_url("http://h:5244", "/a.mkv"), "http://h:5244/a.mkv");
+        // 全等 href（根目录自身）不重复
+        assert_eq!(join_url("http://h:5244/dav", "/dav/"), "http://h:5244/dav");
+        // 段前缀相同但不是同一段（/dav 与 /davx）不能误吞
+        assert_eq!(join_url("http://h/dav", "/davx/a.mkv"), "http://h/dav/davx/a.mkv");
+        // 绝对 URL href 原样返回
+        assert_eq!(join_url("http://h/dav", "https://x.com/y.mkv"), "https://x.com/y.mkv");
     }
 }

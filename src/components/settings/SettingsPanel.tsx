@@ -538,23 +538,8 @@ export function SettingsPanel({
       setShaderNote(String(e));
     }
   };
-  /* [lc-1870] 画面预设：与播放器右键菜单同一套 lua 编排（picture-preset）。
-     mpv 侧无属性可查当前预设，故仅回显本次会话内选择，不做跨会话回显。 */
-  const [picturePreset, setPicturePreset] = useState<"" | "anime" | "drama" | "off">("");
-  const [pictureNote, setPictureNote] = useState("");
-  const setPicture = async (preset: "anime" | "drama" | "off") => {
-    setPicturePreset(preset);
-    try {
-      const r = await invoke<{ applied: boolean }>("set_picture_preset", { preset });
-      const label =
-        preset === "anime" ? "动漫" : preset === "drama" ? "真人剧集" : "关闭";
-      setPictureNote(
-        `已切换画面预设：${label}` + (r?.applied ? "，本次播放已生效" : "（当前未在播放，起播后请重新选择）"),
-      );
-    } catch (e) {
-      setPictureNote(String(e));
-    }
-  };
+  // [lc-2014] 设置页「画面预设」入口已移除（state/setPicture 一并删除）；
+  // 快捷编排仍在播放器右键菜单「画面预设」（picture-preset → fntv_menu.lua）。
   useEffect(() => {
     setMpvLocalPath(settings.mpvPath ?? "");
   }, [settings.mpvPath]);
@@ -1903,36 +1888,9 @@ export function SettingsPanel({
                     />
                   </div>
                   {shaderNote && <span className="set-note">{shaderNote}</span>}
-                  {/* [lc-1870] 画面预设：与播放器右键菜单「画面预设」同一套 lua 编排，
-                      一键切换 着色器 + 超分 + MVTools 补帧；沿用 .set-row-col/.set-btn-row 紧凑布局 */}
-                  <div className="set-row set-row-col" style={{ paddingLeft: 4 }}>
-                    <div className="set-btn-row">
-                      <span className="set-k" style={{ flex: "none" }}>画面预设</span>
-                      {(
-                        [
-                          ["anime", "动漫", "Anime4K A+A + MVTools 补帧"],
-                          ["drama", "真人剧集", "FSRCNNX 锐化 + MVTools 补帧"],
-                          ["off", "关闭", "关闭着色器/超分/补帧（省电）"],
-                        ] as const
-                      ).map(([val, label, title]) => (
-                        <button
-                          key={val}
-                          type="button"
-                          className={`sub-cred-btn${picturePreset === val ? " on" : ""}`}
-                          title={title}
-                          onClick={() => void setPicture(val)}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                    <span className="set-desc">
-                      一键切换画质编排，与播放器右键「画面预设」同一套逻辑（着色器 + 超分 + 补帧）。
-                      动漫 = Anime4K A+A + MVTools 补帧；真人剧集 = FSRCNNX 锐化 + MVTools 补帧；
-                      关闭 = 全关省电。播放中即时生效。
-                    </span>
-                    {pictureNote && <span className="set-note">{pictureNote}</span>}
-                  </div>
+                  {/* [lc-2014] 设置页「画面预设」区块已移除：滑块式编排与着色器/超分/
+                      补帧各行的独立选择重复，且不跨会话回显容易误导。播放器右键菜单
+                      「画面预设」仍保留（那里才是快捷编排的正确入口）。 */}
                   {playerKind === "potplayer" && (
                     <>
                       <div className="set-row set-row-col">

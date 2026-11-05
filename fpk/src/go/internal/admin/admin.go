@@ -22,9 +22,9 @@ import (
 
 // Info 是状态/日志 API 所需的运行时信息（由 cmd 装配层注入）。
 type Info struct {
-	Version   string    // 应用版本（与 manifest version 保持一致）
-	VarDir    string    // TRIM_PKGVAR，运行时目录（fntvplus.log 所在）
-	Upstream  string    // 回环上游地址（如 http://127.0.0.1:5666）
+	Version   string // 应用版本（与 manifest version 保持一致）
+	VarDir    string // TRIM_PKGVAR，运行时目录（fntvplus.log 所在）
+	Upstream  string // 回环上游地址（如 http://127.0.0.1:5666）
 	Injector  *inject.Injector
 	StartTime time.Time // 进程启动时刻：日志 API 只显示该时刻之后的行（当前版本会话）
 }
@@ -313,6 +313,21 @@ const adminHTML = `<!doctype html>
   </div>
 
   <div class="card">
+    <b style="font-size:14px">访问安全</b>
+    <label style="margin-top:8px">
+      <input type="checkbox" id="secen">
+      <span>开启访问密码</span>
+      <span class="status" id="secstatus"></span>
+    </label>
+    <div class="row" style="margin-top:8px">
+      <input id="secpw" type="password" style="flex:1;min-width:200px;padding:4px 8px;border-radius:6px;border:1px solid #8886;background:transparent;color:inherit" placeholder="访问密码（至少 4 位）">
+      <button id="secps">保存密码</button>
+      <button id="secc">清除密码</button>
+    </div>
+    <div class="hint">开启后所有设备首次访问都要输密码，验证通过 30 天内免输；改密码会让已验证设备重新输。密码加密保存在 NAS 配置目录，接口不下发明文。忘记密码：SSH 删除 config.json 的 securityPassword 字段后重启应用。</div>
+  </div>
+
+  <div class="card">
     <b style="font-size:14px">运行状态</b> <span style="font-size:12px;color:#888">每 5 秒自动刷新</span>
     <table style="margin-top:8px">
       <tr><td class="k">影视上游</td><td><span id="up">-</span></td></tr>
@@ -360,6 +375,76 @@ const adminHTML = `<!doctype html>
         });
         $('#status').textContent = '已保存';
       } catch (err) { $('#status').textContent = '保存失败'; }
+    });
+
+    let secPwDirty = false;
+    function secState(enabled, pwSet) {
+      if (enabled && pwSet) return '已开启 —— 未验证设备会先看到密码页';
+      if (enabled && !pwSet) return '已开启但未设密码，门禁暂不生效';
+      if (!enabled && pwSet) return '未开启 —— 密码已保存，打开开关即生效';
+      return '未开启';
+    }
+    async function loadSecurity() {
+      try {
+        const c = await (await fetch(API + '/settings')).json();
+        $('#secen').checked = !!c.securityEnabled;
+        if (c.securityPasswordSet && !secPwDirty) { $('#secpw').value = '********'; $('#secpw').readOnly = true; }
+        $('#secstatus').textContent = secState(!!c.securityEnabled, !!c.securityPasswordSet);
+      } catch (e) { $('#secstatus').textContent = '读取失败'; }
+    }
+    $('#secpw').addEventListener('focus', () => {
+      if ($('#secpw').readOnly) { $('#secpw').readOnly = false; $('#secpw').value = ''; }
+    });
+    $('#secpw').addEventListener('input', () => { secPwDirty = true; });
+    $('#secen').addEventListener('change', async (e) => {
+      $('#secstatus').textContent = '保存中…';
+      try {
+        await fetch(API + '/settings', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ securityEnabled: e.target.checked })
+        });
+      } catch (err) { $('#secstatus').textContent = '保存失败'; }
+      loadSecurity();
+    });
+    $('#secps').addEventListener('click', async () => {
+      const btn = $('#secps');
+      const v = $('#secpw').value;
+      if ($('#secpw').readOnly || !v) { $('#secstatus').textContent = '请先输入新密码'; return; }
+      if (v.length < 4) { $('#secstatus').textContent = '密码至少 4 位'; return; }
+      btn.textContent = '保存中…';
+      try {
+        await fetch(API + '/settings', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ securityPassword: v })
+        });
+        $('#secpw').value = '********'; $('#secpw').readOnly = true; secPwDirty = false;
+        // 开关已开 → 本设备立即换取会话，避免被自己的门禁拦住
+        try {
+          const c = await (await fetch(API + '/settings')).json();
+          if (c.securityEnabled) {
+            await fetch(API + '/auth', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ password: v })
+            });
+          }
+        } catch (e2) { /* 会话换取失败只影响本设备下次访问 */ }
+        $('#secstatus').textContent = '已保存';
+      } catch (err) { $('#secstatus').textContent = '保存失败'; }
+      loadSecurity();
+      setTimeout(() => { btn.textContent = '保存密码'; }, 1500);
+    });
+    $('#secc').addEventListener('click', async () => {
+      const btn = $('#secc');
+      btn.textContent = '清除中…';
+      try {
+        await fetch(API + '/settings', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ securityPassword: '' })
+        });
+        $('#secpw').value = ''; $('#secpw').readOnly = false; secPwDirty = false;
+      } catch (err) { $('#secstatus').textContent = '清除失败'; }
+      loadSecurity();
+      setTimeout(() => { btn.textContent = '清除密码'; }, 1500);
     });
 
     async function loadStatus() {
@@ -428,7 +513,7 @@ const adminHTML = `<!doctype html>
     $('#refresh').addEventListener('click', () => { loadStatus(); loadLogs(); });
     $('#lines').addEventListener('change', loadLogs);
 
-    loadSettings(); loadStatus(); loadLogs();
+    loadSettings(); loadSecurity(); loadStatus(); loadLogs();
     setInterval(loadStatus, 5000);
     setInterval(() => { if ($('#auto').checked) loadLogs(); }, 5000);
   </script>

@@ -31,6 +31,7 @@ import (
 	"fntvplus/internal/bridge"
 	"fntvplus/internal/config"
 	"fntvplus/internal/inject"
+	"fntvplus/internal/security"
 	"fntvplus/internal/stats"
 )
 
@@ -39,28 +40,30 @@ type Deps struct {
 	Upstream *url.URL // 回环上游（影视网页服务），如 http://127.0.0.1:5666
 	Config   *config.Config
 	Injector *inject.Injector
-	Stats    *stats.Stats // 匿名使用统计（nil = 不挂统计路由）
-	VarDir   string       // TRIM_PKGVAR（日志所在目录，供管理页日志查看）
-	Version  string       // 应用版本（展示用）
+	Stats    *stats.Stats   // 匿名使用统计（nil = 不挂统计路由）
+	Gate     *security.Gate // 访问密码门禁（nil = 不启用，端口直连默认开放）
+	VarDir   string         // TRIM_PKGVAR（日志所在目录，供管理页日志查看）
+	Version  string         // 应用版本（展示用）
 }
 
 // Server 持有全部路由。
 type Server struct {
-	mux *http.ServeMux
+	root http.Handler // 门禁（可选）+ mux
 }
 
 // NewServer 组装路由与处理器。
 func NewServer(d Deps) *Server {
-	s := &Server{mux: http.NewServeMux()}
+	s := &Server{}
+	mux := http.NewServeMux()
 
 	// 1) payload 端点：返回嵌入的前端脚本（带哈希版本，长缓存）。
-	s.mux.Handle("/app/fntvplus/__payload__/", d.Injector.Handler())
+	mux.Handle("/app/fntvplus/__payload__/", d.Injector.Handler())
 	// 1b) 反馈弹窗二维码（桌面版由主进程读本地文件，网页端由后端内嵌直出）。
-	s.mux.Handle("/app/fntvplus/qrcode.png", inject.QRHandler())
+	mux.Handle("/app/fntvplus/qrcode.png", inject.QRHandler())
 	// 1c) 服务桥：账号同步/外部 API 的后端网络层（fnOS 签名桥/白名单代理/Trakt/TMDB/Bangumi/豆瓣）。
 	//     这些接口由增强页面调用；端口直连模式下与页面同源，不再单独做身份校验。
 	br := bridge.New(d.Config, d.Upstream.String())
-	s.mux.Handle("/app/fntvplus/api/bridge/", br.MuxHandler())
+	mux.Handle("/app/fntvplus/api/bridge/", br.MuxHandler())
 
 	// 2) 管理页 + 设置/状态/日志 API（管理页 GET 只读；设置/日志可写入）。
 	info := admin.Info{
@@ -72,52 +75,60 @@ func NewServer(d Deps) *Server {
 	}
 	// 管理页（含裸 /admin 调试入口）与全部管理 API：端口直连模式下不做额外鉴权，
 	// 与增强页面同端口直达（此前经统一网关时的身份校验已随网关接入一并移除）。
-	s.mux.Handle("/admin", admin.Page(d.Config))
-	s.mux.Handle("/admin/", admin.Page(d.Config))
-	s.mux.Handle("/app/fntvplus/admin", admin.Page(d.Config))
-	s.mux.Handle("/app/fntvplus/admin/", admin.Page(d.Config))
-	s.mux.Handle("/app/fntvplus/api/settings", admin.SettingsAPI(d.Config))
-	s.mux.Handle("/app/fntvplus/api/status", admin.StatusAPI(d.Config, info))
-	s.mux.Handle("/app/fntvplus/api/logs", admin.LogsAPI(info))
+	mux.Handle("/admin", admin.Page(d.Config))
+	mux.Handle("/admin/", admin.Page(d.Config))
+	mux.Handle("/app/fntvplus/admin", admin.Page(d.Config))
+	mux.Handle("/app/fntvplus/admin/", admin.Page(d.Config))
+	mux.Handle("/app/fntvplus/api/settings", admin.SettingsAPI(d.Config))
+	mux.Handle("/app/fntvplus/api/status", admin.StatusAPI(d.Config, info))
+	mux.Handle("/app/fntvplus/api/logs", admin.LogsAPI(info))
 	// 前端日志回传：只收文本，写入 var 目录的诊断日志文件。
-	s.mux.Handle("/app/fntvplus/api/client-log", admin.ClientLogAPI(info))
+	mux.Handle("/app/fntvplus/api/client-log", admin.ClientLogAPI(info))
 
 	// 2b) 匿名使用统计（设置面板「关于」页）：读状态 / 开关 / 立即上报 / 重置匿名 ID。
 	if d.Stats != nil {
 		// [lc-1250] Bug 反馈/日志一键上传（反馈弹窗）：用户显式触发，转发统计服务端。
-		s.mux.Handle("/app/fntvplus/api/feedback", d.Stats.FeedbackHandler(info.VarDir, info.StartTime))
-		s.mux.Handle("/app/fntvplus/api/stats", d.Stats.InfoHandler())
-		s.mux.Handle("/app/fntvplus/api/stats/enabled", d.Stats.EnabledHandler())
-		s.mux.Handle("/app/fntvplus/api/stats/ping", d.Stats.PingHandler())
-		s.mux.Handle("/app/fntvplus/api/stats/reset", d.Stats.ResetHandler())
+		mux.Handle("/app/fntvplus/api/feedback", d.Stats.FeedbackHandler(info.VarDir, info.StartTime))
+		mux.Handle("/app/fntvplus/api/stats", d.Stats.InfoHandler())
+		mux.Handle("/app/fntvplus/api/stats/enabled", d.Stats.EnabledHandler())
+		mux.Handle("/app/fntvplus/api/stats/ping", d.Stats.PingHandler())
+		mux.Handle("/app/fntvplus/api/stats/reset", d.Stats.ResetHandler())
 	}
 
 	// 3) 白名单代理（M3 落地，M1 先占位返回 501，避免误开代理面）。
-	s.mux.HandleFunc("/app/fntvplus/api/proxy", proxyAPIStub)
+	mux.HandleFunc("/app/fntvplus/api/proxy", proxyAPIStub)
 
 	// 4) 影视反代：优先 /app/fntvplus/v/**（桌面入口走这里），
 	//    同时兼容裸 /v/**（SPA 内若用绝对路径 /v/... 也能命中，提升健壮性）。
-	s.mux.HandleFunc("/app/fntvplus/v/", makeProxy(d, "/app/fntvplus"))
-	s.mux.HandleFunc("/v/", makeProxy(d, ""))
+	mux.HandleFunc("/app/fntvplus/v/", makeProxy(d, "/app/fntvplus"))
+	mux.HandleFunc("/v/", makeProxy(d, ""))
 	// 4b) [访问码] 网关前缀下的其余路径（/login、/access-code 等 fnOS 原生页）也一并反代：
 	//     访问码/登录跳转链会被 gatewayLocation 拉回本命名空间（见下），没有这条兜底路由，
 	//     拉回的路径会落进 "/" 兜底反代（前缀不剥离）而 404，登录链断裂。
-	s.mux.HandleFunc("/app/fntvplus/", makeProxy(d, "/app/fntvplus"))
+	mux.HandleFunc("/app/fntvplus/", makeProxy(d, "/app/fntvplus"))
 
 	// 5) 兜底：/app/fntvplus 根 → 重定向到 /v/；
 	//    其余全部路径（/libs、/static 等 SPA 资源，影视网页的静态资源不一定都在 /v/ 下）
 	//    一律反代给上游——端口服务模式下浏览器直连本端口，本服务就是影视网页的完整镜像。
-	s.mux.HandleFunc("/app/fntvplus", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/app/fntvplus", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/app/fntvplus/v/", http.StatusFound)
 	})
-	s.mux.HandleFunc("/", makeProxy(d, ""))
+	mux.HandleFunc("/", makeProxy(d, ""))
+
+	// 6) 访问密码门禁（可选）：包裹整棵路由树——开启后除验证接口
+	//    /app/fntvplus/api/auth 外，所有请求都要求持有效会话（见 internal/security）。
+	s.root = mux
+	if d.Gate != nil {
+		mux.Handle(security.AuthPath, d.Gate.API())
+		s.root = d.Gate.Wrap(mux)
+	}
 
 	return s
 }
 
 // ServeHTTP 实现 http.Handler。
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.mux.ServeHTTP(w, r)
+	s.root.ServeHTTP(w, r)
 }
 
 // makeProxy 返回一个反代处理器：

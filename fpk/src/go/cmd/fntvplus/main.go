@@ -30,6 +30,7 @@ import (
 	"fntvplus/internal/config"
 	"fntvplus/internal/inject"
 	"fntvplus/internal/proxy"
+	"fntvplus/internal/security"
 	"fntvplus/internal/stats"
 )
 
@@ -83,11 +84,16 @@ func main() {
 	stat := stats.New(cfg, appVersion)
 	stat.Start()
 
+	// [lc-2033] 访问密码门禁（设置面板「账号与网络」开启）：端口直连无 NAS 登录门禁，
+	// 需要时可用密码把整站锁起来；未开启时 Gate 存在但直接放行。
+	gate := security.New(cfg, *varDir)
+
 	srv := proxy.NewServer(proxy.Deps{
 		Upstream: upstream,
 		Config:   cfg,
 		Injector: inj,
 		Stats:    stat,
+		Gate:     gate,
 		VarDir:   *varDir,
 		Version:  appVersion,
 	})
@@ -96,6 +102,9 @@ func main() {
 	// http://<NAS地址>:<端口>/v/ 打开增强页面；管理页 /admin/ 与全部 API 同端口直达。
 	addr := ":" + *port
 	log.Printf("[fntvplus] v%s listening on %s (etc=%s var=%s dest=%s)", appVersion, addr, *etcDir, *varDir, *destDir)
+	if gate.Enabled() {
+		log.Printf("[fntvplus] 访问密码门禁已开启（未验证请求将看到密码页）")
+	}
 	if err := http.ListenAndServe(addr, srv); err != nil {
 		log.Fatalf("listen %s: %v", addr, err)
 	}

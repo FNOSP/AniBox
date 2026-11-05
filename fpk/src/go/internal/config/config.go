@@ -52,6 +52,7 @@ var knownKeys = map[string]bool{
 var secretAtRest = map[string]bool{
 	"dandanplayAppId":     true,
 	"dandanplayAppSecret": true,
+	"securityPassword":    true,
 }
 
 // redactedKeys 经设置 API 下发时必须遮蔽的键。
@@ -66,6 +67,7 @@ var secretAtRest = map[string]bool{
 var redactedKeys = map[string]bool{
 	"dandanplayAppSecret": true,
 	"statsAnonId":         true,
+	"securityPassword":    true,
 }
 
 // decryptSetting 密文则解密；明文（历史遗留值）原样返回。

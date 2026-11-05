@@ -8,6 +8,7 @@
 BIN="$TRIM_APPDEST/server/fntvplus"
 PIDFILE="$TRIM_PKGVAR/fntvplus.pid"
 LOG="$TRIM_PKGVAR/fntvplus.log"
+# 旧版（统一网关形态）遗留的 socket 文件：stop 时顺手清掉，升级后不留死文件。
 SOCK="$TRIM_APPDEST/fntvplus.sock"
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') [main] $*" >> "$LOG"; }
@@ -55,7 +56,6 @@ start() {
 
   nohup "$BIN" \
     --port "$SVC_PORT" \
-    --socket "fntvplus.sock" \
     --version "${TRIM_APPVER:-}" \
     $UPSTREAM_ARG \
     --etc "$TRIM_PKGETC" \

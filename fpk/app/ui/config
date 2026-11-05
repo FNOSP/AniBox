@@ -4,11 +4,9 @@
       "title": "AniBox",
       "icon": "images/fntv_v10_{0}.png",
       "type": "url",
-      "protocol": "",
-      "port": "",
-      "gatewayPrefix": "/app/fntvplus",
-      "gatewaySocket": "fntvplus.sock",
-      "url": "/app/fntvplus/v/",
+      "protocol": "http",
+      "port": "22350",
+      "url": "/v/",
       "allUsers": true,
       "control": { "accessPerm": "editable" }
     }

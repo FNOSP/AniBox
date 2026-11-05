@@ -37,7 +37,6 @@ import (
 	"time"
 
 	"fntvplus/internal/config"
-	"fntvplus/internal/gateway"
 	"fntvplus/internal/mirror"
 )
 
@@ -162,13 +161,6 @@ func (b *Bridge) MuxHandler() http.Handler {
 	mux := http.NewServeMux()
 	b.Mount(mux)
 	return mux
-}
-
-// Authed 给 handler 套上统一网关身份校验：fnOS 网关转发请求时注入 X-Trim-Userid/
-// X-Trim-Username 头（网关已先校验 NAS 登录态）。缺身份头的请求一律 401——
-// 防止回环端口的直连访问绕过登录调用 bridge（伪造头需先攻破网关所在的本机）。
-func (b *Bridge) Authed(next http.Handler) http.Handler {
-	return gateway.RequireGatewayUser(next)
 }
 
 /* ========== 通用工具 ========== */

@@ -30,7 +30,6 @@ import (
 	"fntvplus/internal/admin"
 	"fntvplus/internal/bridge"
 	"fntvplus/internal/config"
-	"fntvplus/internal/gateway"
 	"fntvplus/internal/inject"
 	"fntvplus/internal/stats"
 )
@@ -45,7 +44,7 @@ type Deps struct {
 	Version  string       // 应用版本（展示用）
 }
 
-// Server 持有全部路由与鉴权中间件。
+// Server 持有全部路由。
 type Server struct {
 	mux *http.ServeMux
 }
@@ -59,11 +58,11 @@ func NewServer(d Deps) *Server {
 	// 1b) 反馈弹窗二维码（桌面版由主进程读本地文件，网页端由后端内嵌直出）。
 	s.mux.Handle("/app/fntvplus/qrcode.png", inject.QRHandler())
 	// 1c) 服务桥：账号同步/外部 API 的后端网络层（fnOS 签名桥/白名单代理/Trakt/TMDB/Bangumi/豆瓣）。
-	//     这些接口由增强页面（已过网关登录态）调用，同样要求网关身份。
+	//     这些接口由增强页面调用；端口直连模式下与页面同源，不再单独做身份校验。
 	br := bridge.New(d.Config, d.Upstream.String())
-	s.mux.Handle("/app/fntvplus/api/bridge/", br.Authed(br.MuxHandler()))
+	s.mux.Handle("/app/fntvplus/api/bridge/", br.MuxHandler())
 
-	// 2) 管理页 + 设置/状态/日志 API（管理页 GET 只读；设置/日志写入要求网关登录身份）。
+	// 2) 管理页 + 设置/状态/日志 API（管理页 GET 只读；设置/日志可写入）。
 	info := admin.Info{
 		Version:   d.Version,
 		VarDir:    d.VarDir,
@@ -71,27 +70,26 @@ func NewServer(d Deps) *Server {
 		Injector:  d.Injector,
 		StartTime: time.Now(), // 日志 API 只显示本次启动之后的行
 	}
-	// 管理页（含裸 /admin 调试入口）与全部管理 API：一律要求统一网关身份，
-	// 无身份直连（含 127.0.0.1 回环）返回 401——不留免鉴权管理面。
-	s.mux.Handle("/admin", gateway.RequireGatewayUser(admin.Page(d.Config)))
-	s.mux.Handle("/admin/", gateway.RequireGatewayUser(admin.Page(d.Config)))
-	s.mux.Handle("/app/fntvplus/admin", gateway.RequireGatewayUser(admin.Page(d.Config)))
-	s.mux.Handle("/app/fntvplus/admin/", gateway.RequireGatewayUser(admin.Page(d.Config)))
-	s.mux.Handle("/app/fntvplus/api/settings", gateway.RequireGatewayUser(admin.SettingsAPI(d.Config)))
-	s.mux.Handle("/app/fntvplus/api/status", gateway.RequireGatewayUser(admin.StatusAPI(d.Config, info)))
-	s.mux.Handle("/app/fntvplus/api/logs", gateway.RequireGatewayUser(admin.LogsAPI(info)))
-	// 前端日志回传：虽只收文本，但写文件接口统一要求网关身份（增强页面经网关访问天然带头）。
-	s.mux.Handle("/app/fntvplus/api/client-log", gateway.RequireGatewayUser(admin.ClientLogAPI(info)))
+	// 管理页（含裸 /admin 调试入口）与全部管理 API：端口直连模式下不做额外鉴权，
+	// 与增强页面同端口直达（此前经统一网关时的身份校验已随网关接入一并移除）。
+	s.mux.Handle("/admin", admin.Page(d.Config))
+	s.mux.Handle("/admin/", admin.Page(d.Config))
+	s.mux.Handle("/app/fntvplus/admin", admin.Page(d.Config))
+	s.mux.Handle("/app/fntvplus/admin/", admin.Page(d.Config))
+	s.mux.Handle("/app/fntvplus/api/settings", admin.SettingsAPI(d.Config))
+	s.mux.Handle("/app/fntvplus/api/status", admin.StatusAPI(d.Config, info))
+	s.mux.Handle("/app/fntvplus/api/logs", admin.LogsAPI(info))
+	// 前端日志回传：只收文本，写入 var 目录的诊断日志文件。
+	s.mux.Handle("/app/fntvplus/api/client-log", admin.ClientLogAPI(info))
 
 	// 2b) 匿名使用统计（设置面板「关于」页）：读状态 / 开关 / 立即上报 / 重置匿名 ID。
-	//     与其它管理 API 同待遇——要求网关身份，无身份直连一律 401。
 	if d.Stats != nil {
 		// [lc-1250] Bug 反馈/日志一键上传（反馈弹窗）：用户显式触发，转发统计服务端。
-		s.mux.Handle("/app/fntvplus/api/feedback", gateway.RequireGatewayUser(d.Stats.FeedbackHandler(info.VarDir, info.StartTime)))
-		s.mux.Handle("/app/fntvplus/api/stats", gateway.RequireGatewayUser(d.Stats.InfoHandler()))
-		s.mux.Handle("/app/fntvplus/api/stats/enabled", gateway.RequireGatewayUser(d.Stats.EnabledHandler()))
-		s.mux.Handle("/app/fntvplus/api/stats/ping", gateway.RequireGatewayUser(d.Stats.PingHandler()))
-		s.mux.Handle("/app/fntvplus/api/stats/reset", gateway.RequireGatewayUser(d.Stats.ResetHandler()))
+		s.mux.Handle("/app/fntvplus/api/feedback", d.Stats.FeedbackHandler(info.VarDir, info.StartTime))
+		s.mux.Handle("/app/fntvplus/api/stats", d.Stats.InfoHandler())
+		s.mux.Handle("/app/fntvplus/api/stats/enabled", d.Stats.EnabledHandler())
+		s.mux.Handle("/app/fntvplus/api/stats/ping", d.Stats.PingHandler())
+		s.mux.Handle("/app/fntvplus/api/stats/reset", d.Stats.ResetHandler())
 	}
 
 	// 3) 白名单代理（M3 落地，M1 先占位返回 501，避免误开代理面）。

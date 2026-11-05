@@ -538,8 +538,8 @@ export function SettingsPanel({
       setShaderNote(String(e));
     }
   };
-  // [lc-2014] 设置页「画面预设」入口已移除（state/setPicture 一并删除）；
-  // 快捷编排仍在播放器右键菜单「画面预设」（picture-preset → fntv_menu.lua）。
+  // [lc-2014/2015] 画面预设入口已在设置页与播放器菜单两处全部移除；
+  // 着色器/超分/补帧各走自己的入口（面板下拉 / 播放器菜单 AI增强）。
   useEffect(() => {
     setMpvLocalPath(settings.mpvPath ?? "");
   }, [settings.mpvPath]);

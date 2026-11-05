@@ -3591,30 +3591,9 @@ async fn shader_settings_set(
     Ok(json!({ "applied": applied, "preset": preset }))
 }
 
-/// [lc-1870] 画面预设：把设置面板的三选一（anime/drama/off）转发给播放器侧
-/// `fntv_menu.lua` 的 `picture-preset` 端点——与播放器右键菜单**同一套编排**
-/// （anime=Anime4K A+A + MVTools 补帧；drama=FSRCNNX 锐化 + MVTools 补帧；off=全关）。
-/// 仅对运行中的会话即时生效；空闲（无播放器）时返回 applied=false，由用户起播后再选。
-#[tauri::command]
-async fn set_picture_preset(
-    state: State<'_, AppState>,
-    preset: String,
-) -> Result<Value, String> {
-    let p = preset.trim().to_lowercase();
-    if !matches!(p.as_str(), "anime" | "drama" | "off") {
-        return Err(format!("未知画面预设 {p}（只允许 anime/drama/off）"));
-    }
-    let session = state.mpv.lock().await.clone();
-    let Some(m) = session else {
-        return Ok(json!({ "applied": false, "preset": p }));
-    };
-    if m.is_dead().await {
-        return Ok(json!({ "applied": false, "preset": p }));
-    }
-    m.command_no_reply(json!(["script-message", "picture-preset", p]))
-        .await;
-    Ok(json!({ "applied": true, "preset": p }))
-}
+// [lc-2015] set_picture_preset 已删除：设置页与播放器菜单两处「画面预设」入口均已移除，
+// 着色器/超分/补帧各走自己的入口（fntv_shader preset / fntv-superres-set /
+// fntv-interp-engine），无需一键编排层。
 
 #[tauri::command]
 async fn detect_mpv_local() -> Result<Value, String> {
@@ -4248,7 +4227,6 @@ pub fn run() {
             shader_switch_toggle,
             enhance::ai_enhance_set_tscale,
             enhance::ai_enhance_check_update,
-            set_picture_preset,
             validate_mpv_local_path,
             detect_potplayer,
             validate_potplayer_path,

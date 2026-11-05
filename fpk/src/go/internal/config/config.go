@@ -109,19 +109,27 @@ func (c *Config) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON 平铺解析：已知键入字段，其余进 Extra。
+// 缺席的键不覆盖当前值（Load 以 Default() 起底后叠加文件）：手写的精简 config.json
+// （如只有 upstream 一项）不应把 enhancement_enabled 静默归零、整体失去增强。
 func (c *Config) UnmarshalJSON(data []byte) error {
 	type known struct {
-		EnhancementEnabled bool   `json:"enhancement_enabled"`
-		Upstream           string `json:"upstream"`
-		InjectCSS          bool   `json:"inject_css"`
+		EnhancementEnabled *bool   `json:"enhancement_enabled"`
+		Upstream           *string `json:"upstream"`
+		InjectCSS          *bool   `json:"inject_css"`
 	}
 	var k known
 	if err := json.Unmarshal(data, &k); err != nil {
 		return err
 	}
-	c.EnhancementEnabled = k.EnhancementEnabled
-	c.Upstream = k.Upstream
-	c.InjectCSS = k.InjectCSS
+	if k.EnhancementEnabled != nil {
+		c.EnhancementEnabled = *k.EnhancementEnabled
+	}
+	if k.Upstream != nil {
+		c.Upstream = *k.Upstream
+	}
+	if k.InjectCSS != nil {
+		c.InjectCSS = *k.InjectCSS
+	}
 	c.Extra = map[string]any{}
 	var m map[string]any
 	if err := json.Unmarshal(data, &m); err != nil {

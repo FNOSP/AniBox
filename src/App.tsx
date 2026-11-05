@@ -1229,34 +1229,31 @@ function App() {
         //   发现页 BGM 面板、追番同步）一起挡在门外，正是用户感知的「飞牛退出 BGM 也没了」。
         //   曾配置过飞牛（config.server 非空）→ 进游客态：App 照常可用，发现页/BGM 面板直接可达；
         //   首页/媒体库这类飞牛依赖区仍按游客态处理（播放/详情引导登录），不误伤。
-        //   两个例外仍回登录页：① 全新安装（无 server，否则新用户找不到飞牛登录入口）；
-        //   ② 配了「自动登录」（记住的密码 + auto_login）—— 让登录页照旧静默重登，别把这个既有功能弄没了。
-        //   [lc-autologin] ③ 关了「自动登录」但磁盘上还留着上次的 token（auto_login=false 且 token 非空）
+        //   [lc-1623→lc-2042] 游客态是**默认落点**（含全新安装：首屏直接海报轮播，
+        //   登录入口在设置面板「账号 → 登录飞牛」）；登录页只在它「有事做」时才出：
+        //   ① 配了「自动登录」（记住的密码 + auto_login）—— 让登录页照旧静默重登；
+        //   ② [访问码] 配了访问码 —— 必须回登录页重输，否则没有重建入口；
+        //   ③ [lc-autologin] 关了「自动登录」但磁盘上还留着上次的 token（auto_login=false 且 token 非空）
         //   —— 此时后端 check_session 会直接拒绝恢复会话，前端**必须停在登录页重新输账号密码**，
         //   不能落到游客态（否则用户想重登却回不到登录页）。这是「关自动登录后重启仍自动登录」的收口。
-        //   重新登录飞牛的常规入口在设置面板「账号 → 登录飞牛」。
-        //   [lc-1889] 网盘优先：已接入任一**网盘 / WebDAV** 来源时，飞牛会话失效不再挡门 ——
-        //   直接进游客态首页（网盘内容在「网盘接入」可达，飞牛从设置→账号重登）。
-        //   注意只看 clouds/webdav，不看 st.fnos：走到这里说明飞牛 token 已失效，不能算数。
-        Promise.all([
-          invoke<Config>("get_config").catch(() => null),
-          invoke<{ fnos: boolean; clouds: string[]; webdav: boolean; any: boolean }>("cloud_sources_status").catch(() => null),
-        ])
-          .then(([c, st]) => {
+        //   [lc-1889] 网盘优先：已接入任一**网盘 / WebDAV** 时会话失效同样不挡门（游客态已覆盖）。
+        invoke<Config>("get_config").catch(() => null)
+          .then((c) => {
             const autoArmed = !!(c?.auto_login && c?.password && c?.username && c?.server);
             // [访问码] 配了访问码 → 会话/网关重建失败必须回登录页重输，
             // 否则没有重建入口，后续 API 会被门禁持续拦成门户 HTML。
             const needsAccessCode = !!c?.access_code;
             // [lc-autologin] 有残留 token 但没开自动登录 → 必须回登录页（不回游客态）。
             const staleToken = !c?.auto_login && !!c?.token;
-            const hasCloudSource = !!st && (st.clouds.length > 0 || st.webdav);
-            if ((c?.server && !autoArmed && !needsAccessCode && !staleToken) || hasCloudSource) {
+            // [lc-2042] 登录页只在「有事做」时才出（见上方注释）；其余一律游客态进首页
+            if (autoArmed || needsAccessCode || staleToken) {
+              setView("login");
+            } else {
               setGuest(true);
+              try { localStorage.setItem("anibox-guest", "1"); } catch { /* ignore */ }
               setPage("home");
               setView("home");
               void loadGuestHome().then(applyLaunchPage);
-            } else {
-              setView("login");
             }
           })
           .catch(() => setView("login"))

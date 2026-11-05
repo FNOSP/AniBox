@@ -1,9 +1,10 @@
-/* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
+/* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。
+   [lc-2042] 登录页精简：去掉「网盘账号」扫码卡（网盘接入统一走应用内「云盘接入」页），
+   只留 飞牛 NAS / WebDAV 两张卡。 */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { RefreshCw as IcoRefreshL, Trash2 as IcoTrashL } from "lucide-react";
+import { Trash2 as IcoTrashL } from "lucide-react";
 import { Config } from "../../types";
-import { useCloudQrLogin } from "../../hooks/useCloudQrLogin";
 
 /* [lc-17xx] 登录页背景：public/login/ 下的横图随机轮换。
    · 首帧随机选一张，之后每 20s 交叉淡入淡出切换；
@@ -67,10 +68,9 @@ function relayFnId(value: string): string {
 }
 
 /* [lc-1889] 网盘优先：登录页从「登录飞牛」改为「选择内容来源」——
-   网盘扫码 / 飞牛 NAS / WebDAV 三张来源卡任意组合，都不接也能先进首页。
-   各来源的落盘沿用既有存储（config.json / direct-cloud-auth.json /
-   cloud115.json / webdav-accounts.json），登录页只做编排不造新存储。 */
-type ProviderInfo = { id: string; label: string; logged: boolean; userName: string };
+   飞牛 NAS / WebDAV 两张来源卡任意组合，都不接也能先进首页。
+   各来源的落盘沿用既有存储（config.json / webdav-accounts.json），
+   登录页只做编排不造新存储。[lc-2042] 网盘扫码卡已移除。 */
 type WebdavAccount = { id: string; name: string; url: string; username: string };
 
 /* [lc-1993] `notice`：会话失效被送到登录页时的一次性提示（如「登录已过期，请重新登录」）。
@@ -102,23 +102,14 @@ export function LoginPage({
   const autoTried = useRef(false);
 
   // ── 来源卡折叠态 ──
-  const [openCard, setOpenCard] = useState<"cloud" | "fnos" | "webdav" | null>("cloud");
+  const [openCard, setOpenCard] = useState<"fnos" | "webdav" | null>("fnos");
 
-  // ── 网盘来源（扫码） ──
-  const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [activeProv, setActiveProv] = useState("");
   const alive = useRef(true);
 
   // ── WebDAV 来源 ──
   const [wdAccounts, setWdAccounts] = useState<WebdavAccount[]>([]);
   const [wdForm, setWdForm] = useState<{ name: string; url: string; user: string; pass: string } | null>(null);
   const [wdErr, setWdErr] = useState("");
-
-  const refreshProviders = useCallback(async (): Promise<ProviderInfo[]> => {
-    const r = await invoke<ProviderInfo[]>("cloud_providers");
-    if (alive.current) setProviders(r);
-    return r;
-  }, []);
 
   const loadWdAccounts = useCallback(async () => {
     try {
@@ -129,28 +120,6 @@ export function LoginPage({
       return [];
     }
   }, []);
-
-  // [lc-1889] 内嵌扫码：与 CloudPanel 共用 useCloudQrLogin（串行轮询 + 到点自动换码），
-  // 成功后只刷新登录态，不进入文件浏览（浏览仍在「云盘接入」页）。
-  const qrLogin = useCloudQrLogin(() => {
-    void refreshProviders();
-  });
-  /** 重新取码前清掉页面级报错（旧报错和新二维码同屏会误导） */
-  const startQr = useCallback(
-    (provider: string) => {
-      setErr("");
-      void qrLogin.start(provider);
-    },
-    [qrLogin.start],
-  );
-
-  const pickProv = (id: string) => {
-    if (id === activeProv) return;
-    qrLogin.stop();
-    setActiveProv(id);
-    const p = providers.find((x) => x.id === id);
-    if (!p?.logged) void startQr(id);
-  };
 
   const addWdAccount = async () => {
     if (!wdForm) return;
@@ -182,18 +151,10 @@ export function LoginPage({
       setAutoLogin(c.auto_login && !!c.password);
       setMpvPath(c.mpv_path);
       setProxyPath(c.proxy_path);
-      // 有飞牛配置时默认展开 NAS 卡，否则默认展示网盘卡
-      if (c.server) setOpenCard("fnos");
-    });
-    refreshProviders().then((list) => {
-      if (!alive.current || !list.length) return;
-      setActiveProv(list[0].id);
-      if (!list[0].logged) void startQr(list[0].id);
     });
     void loadWdAccounts();
     return () => {
       alive.current = false;
-      qrLogin.stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -202,7 +163,6 @@ export function LoginPage({
   const fnidVal = isFnId(domain.trim()) ? domain.trim() : relayFnId(domain);
   const fnosMode = !!domain.trim(); // 用户打算接飞牛
   const fnosReady = fnosMode && (!!fnidVal || (!!username && !!password));
-  const loggedClouds = providers.filter((p) => p.logged);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -272,8 +232,6 @@ export function LoginPage({
       });
   }, [cfg, onDone]);
 
-  const curProv = providers.find((p) => p.id === activeProv);
-
   return (
     <div className="login-wrap">
       <LoginBackdrop />
@@ -291,65 +249,6 @@ export function LoginPage({
       <form className="login-card" onSubmit={submit}>
         <h2>选择内容来源</h2>
         <p className="login-src-sub">按需组合接入；一个都不接也可以先进去看看</p>
-
-        {/* ── 来源卡：网盘账号 ── */}
-        <section className={`login-src${openCard === "cloud" ? " open" : ""}`}>
-          <button
-            type="button"
-            className="login-src-head"
-            aria-expanded={openCard === "cloud"}
-            onClick={() => setOpenCard(openCard === "cloud" ? null : "cloud")}
-          >
-            网盘账号
-            {loggedClouds.length > 0 && <span className="login-src-badge">{loggedClouds.length}</span>}
-            <span className="login-src-chev" aria-hidden="true" />
-          </button>
-          {openCard === "cloud" && (
-            <div className="login-src-body">
-              <div className="login-src-chips" role="tablist">
-                {providers.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={p.id === activeProv}
-                    className={`login-chip${p.id === activeProv ? " on" : ""}`}
-                    onClick={() => pickProv(p.id)}
-                  >
-                    {p.label}
-                    <span className={`login-chip-dot${p.logged ? " ok" : ""}`} title={p.logged ? "已登录" : "未登录"} />
-                  </button>
-                ))}
-              </div>
-              {curProv?.logged ? (
-                <p className="login-src-ok">已登录{curProv.userName ? `：${curProv.userName}` : ""}</p>
-              ) : qrLogin.image ? (
-                <div className="login-qrrow">
-                  <img className="login-qr" src={qrLogin.image} alt="登录二维码" />
-                  <div className="login-qrcol">
-                    <p className={`login-qrmsg${qrLogin.phase === "error" ? " err" : ""}`}>
-                      {qrLogin.message}
-                      {qrLogin.phase !== "success" && qrLogin.secondsLeft > 0 ? ` · ${qrLogin.secondsLeft}s 后自动刷新` : ""}
-                    </p>
-                    <button
-                      type="button"
-                      className="login-minibtn"
-                      onClick={() => void startQr(activeProv)}
-                      disabled={qrLogin.phase === "loading"}
-                    >
-                      <IcoRefreshL size={12} strokeWidth={2} /> 刷新二维码
-                    </button>
-                    <p className="login-dim">凭据只保存在本机，不会上传到任何服务器。</p>
-                  </div>
-                </div>
-              ) : (
-                <p className={`login-dim${qrLogin.phase === "error" ? " err" : ""}`}>
-                  {qrLogin.message || "正在获取二维码…"}
-                </p>
-              )}
-            </div>
-          )}
-        </section>
 
         {/* ── 来源卡：飞牛 NAS ── */}
         <section className={`login-src${openCard === "fnos" ? " open" : ""}`}>

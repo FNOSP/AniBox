@@ -4247,6 +4247,7 @@ pub fn run() {
             shader_settings_set,
             shader_switch_toggle,
             enhance::ai_enhance_set_tscale,
+            enhance::ai_enhance_check_update,
             set_picture_preset,
             validate_mpv_local_path,
             detect_potplayer,

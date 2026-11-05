@@ -308,6 +308,77 @@ pub async fn ai_enhance_status(app: AppHandle) -> Result<Value, String> {
     }))
 }
 
+/// [lc-2013] 检查组件版本更新：拉远端 manifest 与本地版本比对。
+/// 用户装了 1.1.0 而远端已 1.3.0 时，面板此前只显示「已就绪」——旧版缺 SVP 等新能力
+/// 且旧版有缺陷也毫无提示。独立命令（8s 超时、失败静默返回 error），面板打开时与
+/// status 并发调用，不拖慢首屏。
+#[tauri::command]
+pub async fn ai_enhance_check_update(app: AppHandle) -> Result<Value, String> {
+    let local = local_manifest(&app)
+        .and_then(|m| m.get("version").and_then(|v| v.as_str()).map(str::to_string))
+        .unwrap_or_default();
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("Mozilla/5.0 AniBox/", env!("CARGO_PKG_VERSION")))
+        .danger_accept_invalid_certs(true)
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|e| format!("构建客户端失败: {e}"))?;
+    let resp = match client.get(AI_ENHANCE_MANIFEST_URL).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(json!({ "local": local, "remote": "", "hasUpdate": false, "error": format!("{e}") }))
+        }
+    };
+    let manifest: Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => {
+            return Ok(json!({ "local": local, "remote": "", "hasUpdate": false, "error": format!("{e}") }))
+        }
+    };
+    let remote_ver = manifest
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    Ok(json!({
+        "local": local,
+        "remote": remote_ver,
+        "hasUpdate": version_lt(&local, &remote_ver),
+        "notes": manifest.get("notes").and_then(|v| v.as_str()).unwrap_or(""),
+        // 旧版组件缺 SVP 文件：比"版本号不同"更可行动（用户能判断要不要更新）
+        "missingSvp": !svp_ready(&app),
+    }))
+}
+
+/// 语义化版本比较（a<b 为真）；支持 "1.2.0" / "10.8" / "1.0.0-xxx"。
+fn version_lt(a: &str, b: &str) -> bool {
+    if a.trim().is_empty() || b.trim().is_empty() {
+        return false; // 任一侧未知不判定为「有更新」，避免误报
+    }
+    let parse = |s: &str| -> Vec<u64> {
+        s.split(|c: char| c == '.' || c == '-')
+            .take(3)
+            .map(|p| {
+                p.chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect::<String>()
+                    .parse::<u64>()
+                    .unwrap_or(0)
+            })
+            .collect()
+    };
+    let (va, vb) = (parse(a), parse(b));
+    for i in 0..3 {
+        let x = va.get(i).copied().unwrap_or(0);
+        let y = vb.get(i).copied().unwrap_or(0);
+        if x != y {
+            return x < y;
+        }
+    }
+    false
+}
+
 /// [lc-2012] 设内置平滑 tscale 档（oversample/sphinx/bicubic）——只改档位不改引擎，
 /// 写 conf + 运行中的会话即时重应用。
 #[tauri::command]

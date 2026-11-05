@@ -3086,6 +3086,14 @@ function AiEnhanceRow() {
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
   const [pct, setPct] = useState(-1);
+  // [lc-2013] 组件版本更新检测（远端 manifest 比对；旧版缺 SVP 等新能力要有提示）
+  const [upd, setUpd] = useState<{
+    local: string;
+    remote: string;
+    hasUpdate: boolean;
+    notes?: string;
+    missingSvp?: boolean;
+  } | null>(null);
 
   const refresh = useCallback(() => {
     invoke<{
@@ -3105,6 +3113,12 @@ function AiEnhanceRow() {
     }>("ai_enhance_status")
       .then(setStatus)
       .catch(() => setStatus(null));
+    // 独立并发（8s 超时、失败静默），不拖慢面板首屏
+    invoke<{ local: string; remote: string; hasUpdate: boolean; notes?: string; missingSvp?: boolean }>(
+      "ai_enhance_check_update",
+    )
+      .then(setUpd)
+      .catch(() => setUpd(null));
   }, []);
 
   // [lc-1822] 引擎档写入（下次播放生效；当前会话用播放器插帧按钮切）
@@ -3199,18 +3213,42 @@ function AiEnhanceRow() {
               ? `已就绪（${status.version}${status.installedAt ? " · " + status.installedAt : ""}）`
               : status.installed
                 ? `已安装 ${status.version}，但组件文件不完整——重新下载可修复`
-                : "未安装 · 运行时约 46MB，下载到用户目录（不占安装盘）"}
+                : "未安装 · 运行时约 47MB，下载到用户目录（不占安装盘）"}
         </span>
         {status?.ready ? (
           <button type="button" className="sub-cred-btn" onClick={() => void remove()} disabled={!!busy}>
             删除组件
           </button>
         ) : (
-          <button type="button" className="sub-cred-btn on" onClick={() => void download()} disabled={!!busy}>
-            {busy === "base" ? "下载中…" : status?.installed ? "重新下载" : "下载并启用"}
+          <button
+            type="button"
+            className="sub-cred-btn on"
+            onClick={() => void download()}
+            disabled={!!busy}
+          >
+            {busy === "base"
+              ? "下载中…"
+              : upd?.hasUpdate
+                ? `更新到 ${upd.remote}`
+                : status?.installed
+                  ? "重新下载"
+                  : "下载并启用"}
           </button>
         )}
       </div>
+      {/* [lc-2013] 组件有更新 / 旧版缺新能力：明确提示（旧版有缺陷也不再无声无息） */}
+      {upd?.hasUpdate ? (
+        <div className="set-warn" style={{ paddingLeft: 4 }}>
+          组件有新版本 {upd.local || "?"} → <b>{upd.remote}</b>：修复缺陷并新增能力
+          （1.3.0 起含 SVP 60FPS 补帧，实测 1080P 5.8× 实时，明显强于 RIFE 与 MVTools）。
+          点右上「更新到 {upd.remote}」即可，约 47MB。
+        </div>
+      ) : upd?.missingSvp && status?.ready ? (
+        <div className="set-warn" style={{ paddingLeft: 4 }}>
+          当前组件缺少 SVP 补帧文件（1.3.0 新增，实测最强真实补帧）——建议更新组件获得
+          SVP 60FPS 档。
+        </div>
+      ) : null}
       {/* [lc-1856] 显卡名动态展示：RIFE/超分硬性要求让用户对号入座 */}
       {status?.gpu ? (
         <div className="set-row" style={{ paddingLeft: 4 }}>

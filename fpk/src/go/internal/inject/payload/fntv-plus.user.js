@@ -20059,7 +20059,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         ipcRenderer.once("version-info", (_e, info) => {
           if (!info || !info.version) return;
           const ver = String(info.version).replace(/-web$/, "");
-          const bt = "2026-11-06 11:08" ? " (2026-11-06 11:08)" : "";
+          const bt = "2026-11-06 11:15" ? " (2026-11-06 11:15)" : "";
           aboutVer.textContent = "\u7248\u672C\uFF1Av" + ver + bt;
         });
       } catch (_) {

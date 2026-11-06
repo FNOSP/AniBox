@@ -279,6 +279,13 @@ pub struct Config {
     /// 切换在下一次起播生效。
     #[serde(default = "default_player_skin")]
     pub player_skin: String,
+    /// [lc-2057] 调起播放器后自动隐藏主窗口，播放器关闭时再显示回来。
+    /// 默认 false（保持原行为：主窗一直在）。
+    ///
+    /// 播放器关闭的判定：mpv 进程退出（进程消失）或 PotPlayer 窗口关闭，
+    /// **不是**单集播完（eof 换下一集 / 整季连播都算还在播放）。
+    #[serde(default)]
+    pub hide_main_on_play: bool,
 
     /* ── [lc-1907] mpv 窗口 owner 收编（实验开关）──
        true = mpv 独立窗口挂成主窗口的 owned window（跟随主窗口移动 + DWM 系统圆角）。
@@ -425,6 +432,7 @@ impl Default for Config {
             ui_opacity: default_ui_opacity(),
             player_open_mode: default_player_open_mode(),
             player_skin: default_player_skin(),
+            hide_main_on_play: false,
             mpv_window_owner: false,
         }
     }

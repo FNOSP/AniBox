@@ -19,6 +19,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   danmuEngine: "node",
   // [lc-1909] 播放打开方式：默认软件内播放（与 Rust 侧 player_open_mode 默认同口径）
   playerOpenMode: "window",
+  // [lc-2057] 播放时自动隐藏主窗：默认关闭（保持原行为）
+  hideMainOnPlay: false,
   // [lc-2048] 默认液态玻璃（与 Rust 侧 default_player_skin 同口径）
   playerSkin: "glass",
   // 界面不透明度（百分比）：默认 85，范围 60–100（Rust 侧 set_settings 同口径 clamp）

@@ -1774,6 +1774,24 @@ export function SettingsPanel({
                     </div>
                     {subNote && <span className="set-note">{subNote}</span>}
                   </div>
+                  {/* [lc-2057] 播放时自动隐藏主窗：调起播放器后把软件窗口收起来，
+                      播放器关闭时再显示回来。从托盘点一下也能随时叫出来。 */}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">播放时隐藏主窗口</span>
+                      <div className="set-desc">
+                        调起播放器后自动隐藏软件窗口，关闭播放器再显示回来。
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${settings.hideMainOnPlay ? " on" : ""}`}
+                      aria-pressed={!!settings.hideMainOnPlay}
+                      aria-label="播放时隐藏主窗口"
+                      disabled={busy}
+                      onClick={() => onSettings({ hideMainOnPlay: !settings.hideMainOnPlay })}
+                    />
+                  </div>
                   <div className="set-row">
                     <div>
                       <span className="set-k">播放器选择</span>

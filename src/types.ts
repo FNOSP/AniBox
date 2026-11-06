@@ -553,6 +553,8 @@ export type AppSettings = {
   /** [lc-1909] 播放打开方式："app" = 软件内播放（内嵌播放页，mpv 窗口钉到视频容器），
    *  "window" = 独立 mpv 窗口（既有路径）。后端白名单校验，非法值报错；默认 "app"。 */
   playerOpenMode?: "app" | "window";
+  /** [lc-2057] 调起播放器后自动隐藏主窗口，播放器关闭后再显示。默认关闭。 */
+  hideMainOnPlay?: boolean;
   /** [lc-2002] 播放器皮肤：uosc（原生，默认）/ glass（ModernGlass 液态玻璃） */
   playerSkin?: "uosc" | "glass";
   /** [player] PotPlayer 可执行文件路径；空串 = 播放时自动探测常见安装路径 */

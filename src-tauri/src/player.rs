@@ -254,6 +254,58 @@ pub async fn stop_all(app: &AppHandle, state: &AppState, emit_end: bool) {
         let _ = m.stop().await;
     }
     stop_potplayer(app, state, emit_end).await;
+    // [lc-2057] 用户主动停止播放也算「播放器关闭」→ 把被自动隐藏的主窗收回来，
+    // 否则窗口会一直藏着、只有托盘能叫出来。
+    restore_main_window(app);
+}
+
+// ───────────────────── [lc-2057] 播放时自动隐藏主窗口（仅自带 mpv）─────────────────────
+
+/// [lc-2057] 隐藏主窗口（整个软件窗口收起来，任务栏/托盘可再叫出来）。
+fn hide_main_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        if let Err(e) = w.hide() {
+            crate::libmpv::trace(&format!("[lc-2057] 隐藏主窗失败（不影响播放）: {e}"));
+        } else {
+            crate::libmpv::trace("[lc-2057] 已隐藏主窗，等播放器关闭后恢复");
+        }
+    }
+}
+
+/// [lc-2057] 把主窗显示回来。已经可见时不动（用户可能自己从托盘点出来了）。
+fn restore_main_window(app: &AppHandle) {
+    let Some(w) = app.get_webview_window("main") else {
+        return;
+    };
+    if w.is_visible().unwrap_or(false) {
+        return;
+    }
+    let _ = w.show();
+    let _ = w.unminimize();
+    crate::libmpv::trace("[lc-2057] 播放器已关闭 → 恢复主窗显示");
+}
+
+/// [lc-2057] 等 mpv 进程退出后恢复主窗（仅自带 mpv 这一支；PotPlayer 不参与）。
+///
+/// 为什么盯进程而不是 `mpv-load` 的 `phase=ended`：那个事件在**单集播完**（eof）时
+/// 也会发，整季连播/切下一集都会误触发，主窗会在一集之间闪出来。mpv 是常驻会话
+/// （`--idle=yes --keep-open=yes`），用户按 ✕ 才是真退出。
+fn spawn_exit_watcher(app: AppHandle, pid: Option<u32>) {
+    tauri::async_runtime::spawn(async move {
+        let Some(pid) = pid else { return };
+        // 起播失败会立刻退出：先等 1.5s，别在错误提示刚出现时把主窗闪回来。
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        loop {
+            if crate::winproc::session_ending() {
+                return; // 关机/注销：交给系统，别再动窗口
+            }
+            if !pid_alive(pid) {
+                restore_main_window(&app);
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        }
+    });
 }
 
 // ───────────────────────── 统一启动入口 ─────────────────────────
@@ -288,8 +340,23 @@ pub async fn launch(
         "[player] launch kind={kind} path={path} url={url} resume={resume_secs} dur={duration_secs} playlist_start={playlist_start:?} direct={direct}"
     ));
     match kind.as_str() {
-        "mpv" => launch_mpv(app, state, cfg, url, title, resume_secs, duration_secs, headers, playlist_start).await,
+        "mpv" => {
+            let r = launch_mpv(app, state, cfg, url, title, resume_secs, duration_secs, headers, playlist_start).await;
+            // [lc-2057] 起播成功后才隐藏主窗（失败要让用户看见错误），并盯进程退出恢复。
+            if r.is_ok() && cfg.hide_main_on_play {
+                hide_main_window(app);
+                let pid = state
+                    .mpv
+                    .lock()
+                    .await
+                    .as_ref()
+                    .and_then(|m| *m.pid.lock().unwrap());
+                spawn_exit_watcher(app.clone(), pid);
+            }
+            r
+        }
         "potplayer" => {
+            // [lc-2057] PotPlayer 不参与「隐藏主窗」：只做自带 mpv 这一支（用户明确要求）。
             launch_potplayer(
                 app,
                 state,

@@ -3175,6 +3175,8 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         // [lc-1909] 播放打开方式：app=软件内播放（默认）/ window=独立 mpv 窗口
         "playerOpenMode": cfg.player_open_mode,
         "playerSkin": cfg.player_skin,
+        // [lc-2057] 播放时自动隐藏主窗（播放器关闭后再显示）
+        "hideMainOnPlay": cfg.hide_main_on_play,
     }))
 }
 
@@ -3368,6 +3370,10 @@ async fn set_settings(
         }
         cfg.player_skin = s.to_string();
     }
+    // [lc-2057] 播放时自动隐藏主窗（下一次播放生效；正在播放的这次不改）。
+    if let Some(v) = arg.get("hideMainOnPlay") {
+        cfg.hide_main_on_play = v.as_bool().ok_or("hideMainOnPlay 必须是布尔值")?;
+    }
     config::save(&app, &cfg).await?;
     *state.config.write().await = cfg.clone();
     // [lc-1561] 弹幕接口副作用：只在所有校验通过、配置成功落盘后再同步
@@ -3410,6 +3416,8 @@ async fn set_settings(
         // [lc-1909] 播放打开方式：app=软件内播放（默认）/ window=独立 mpv 窗口
         "playerOpenMode": cfg.player_open_mode,
         "playerSkin": cfg.player_skin,
+        // [lc-2057] 播放时自动隐藏主窗（播放器关闭后再显示）
+        "hideMainOnPlay": cfg.hide_main_on_play,
     }))
 }
 

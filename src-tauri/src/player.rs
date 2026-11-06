@@ -272,7 +272,10 @@ fn hide_main_window(app: &AppHandle) {
     }
 }
 
-/// [lc-2057] 把主窗显示回来。已经可见时不动（用户可能自己从托盘点出来了）。
+/// [lc-2058] 显示后**临时置顶**再取消：隐藏期间用户切到了别的窗口（浏览器/聊天软件），
+/// 只 `show()` 的话主窗虽然被激活，但会被那个前台窗口重新盖住 —— 表现就是用户说的
+/// 「静默在后台」，还得自己去任务栏找。临时置顶能保证它一定出现在最前面；
+/// 1.2s 后摘掉是必须的 —— 常驻置顶会一直压在别人窗口上，用户明确不要。
 fn restore_main_window(app: &AppHandle) {
     let Some(w) = app.get_webview_window("main") else {
         return;
@@ -282,7 +285,17 @@ fn restore_main_window(app: &AppHandle) {
     }
     let _ = w.show();
     let _ = w.unminimize();
-    crate::libmpv::trace("[lc-2057] 播放器已关闭 → 恢复主窗显示");
+    let _ = w.set_focus();
+    if let Err(e) = w.set_always_on_top(true) {
+        crate::libmpv::trace(&format!("[lc-2058] 临时置顶失败（不影响显示）: {e}"));
+    } else {
+        let w2 = w.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+            let _ = w2.set_always_on_top(false);
+        });
+    }
+    crate::libmpv::trace("[lc-2057] 播放器已关闭 → 恢复主窗显示（临时置顶 1.2s）");
 }
 
 /// [lc-2057] 等 mpv 进程退出后恢复主窗（仅自带 mpv 这一支；PotPlayer 不参与）。

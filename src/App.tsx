@@ -773,10 +773,13 @@ function App() {
     });
   }, []);
 
-  // [lc-1600] 从登录页进入游客模式（标记已由 LoginPage 写入）：切态 + 切首页；
-  // 内存里已有数据（引导弹窗折返回登录页又点「先逛逛」）就直接复用，不重拉。
+  // [lc-1600] 从登录页进入游客模式：切态 + 切首页；
+  // 内存里已有数据（引导弹窗折返回登录页又点「游客模式」）就直接复用，不重拉。
+  // [lc-2045] 游客标记在这里写（lc-2042 删掉 LoginPage 的写入后没人写了，
+  // 否则每次重启都要重新走 check_session 才发现没登录）。
   const enterGuest = useCallback(() => {
     setGuest(true);
+    try { localStorage.setItem("anibox-guest", "1"); } catch { /* ignore */ }
     setLoginNotice("");
     setPage("home");
     setView("home");

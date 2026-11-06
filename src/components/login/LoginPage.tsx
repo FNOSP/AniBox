@@ -1,9 +1,8 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。
    [lc-2042] 登录页精简：去掉「网盘账号」扫码卡（网盘接入统一走应用内「云盘接入」页），
-   只留 飞牛 NAS / WebDAV 两张卡。 */
-import { useCallback, useEffect, useRef, useState } from "react";
+   只留 飞牛 NAS 一张卡（网盘与 WebDAV 均走应用内「云盘接入」页）。 */
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Trash2 as IcoTrashL } from "lucide-react";
 import { Config } from "../../types";
 
 /* [lc-17xx] 登录页背景：public/login/ 下的横图随机轮换。
@@ -68,10 +67,9 @@ function relayFnId(value: string): string {
 }
 
 /* [lc-1889] 网盘优先：登录页从「登录飞牛」改为「选择内容来源」——
-   飞牛 NAS / WebDAV 两张来源卡任意组合，都不接也能先进首页。
-   各来源的落盘沿用既有存储（config.json / webdav-accounts.json），
+   登录页只保留飞牛 NAS 一张来源卡，不接也能先进首页。
+   落盘沿用既有存储（config.json），
    登录页只做编排不造新存储。[lc-2042] 网盘扫码卡已移除。 */
-type WebdavAccount = { id: string; name: string; url: string; username: string };
 
 /* [lc-1993] `notice`：会话失效被送到登录页时的一次性提示（如「登录已过期，请重新登录」）。
    与页面自己的 `err` 分开：用户一提交/切换来源就消失，不参与错误状态。 */
@@ -102,41 +100,9 @@ export function LoginPage({
   const autoTried = useRef(false);
 
   // ── 来源卡折叠态 ──
-  const [openCard, setOpenCard] = useState<"fnos" | "webdav" | null>("fnos");
+  const [openCard, setOpenCard] = useState<"fnos" | null>("fnos");
 
   const alive = useRef(true);
-
-  // ── WebDAV 来源 ──
-  const [wdAccounts, setWdAccounts] = useState<WebdavAccount[]>([]);
-  const [wdForm, setWdForm] = useState<{ name: string; url: string; user: string; pass: string } | null>(null);
-  const [wdErr, setWdErr] = useState("");
-
-  const loadWdAccounts = useCallback(async () => {
-    try {
-      const r = await invoke<WebdavAccount[]>("webdav_accounts");
-      if (alive.current) setWdAccounts(r);
-      return r;
-    } catch {
-      return [];
-    }
-  }, []);
-
-  const addWdAccount = async () => {
-    if (!wdForm) return;
-    setWdErr("");
-    try {
-      await invoke("webdav_account_add", { name: wdForm.name, url: wdForm.url, username: wdForm.user, password: wdForm.pass });
-      setWdForm(null);
-      void loadWdAccounts();
-    } catch (ex) {
-      setWdErr(String(ex));
-    }
-  };
-
-  const delWdAccount = async (id: string) => {
-    await invoke("webdav_account_del", { id }).catch(() => {});
-    void loadWdAccounts();
-  };
 
   useEffect(() => {
     alive.current = true;
@@ -152,7 +118,6 @@ export function LoginPage({
       setMpvPath(c.mpv_path);
       setProxyPath(c.proxy_path);
     });
-    void loadWdAccounts();
     return () => {
       alive.current = false;
     };
@@ -166,7 +131,7 @@ export function LoginPage({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    // 没填飞牛 → 「开始使用」：直接进首页（游客态 + 已接入的网盘/WebDAV 照常可用）
+    // 没填飞牛 → 「开始使用」：直接进首页（游客态 + 已接入的网盘照常可用）
     if (!fnosMode) {
       if (onGuest) onGuest();
       else onDone();
@@ -240,7 +205,7 @@ export function LoginPage({
         <h1>AniBox</h1>
         <p>把你的影视库，变成桌面上的私人影院</p>
         <ul className="login-feats">
-          <li>夸克 / 百度 / 阿里 / 123 / 115 扫码即接，WebDAV 通吃 NAS 与 Alist</li>
+          <li>夸克 / 百度 / 阿里 / 123 / 115 扫码即接，WebDAV 与 Alist 通吃</li>
           <li>飞牛影视原生支持：媒体库、追剧进度与播放状态双向同步</li>
           <li>mpv 与 PotPlayer 播放，字幕、着色器与插帧原生可用</li>
           <li>聚合 TMDB / Bangumi / AniList 等丰富影视数据</li>
@@ -328,76 +293,27 @@ export function LoginPage({
           )}
         </section>
 
-        {/* ── 来源卡：WebDAV ── */}
-        <section className={`login-src${openCard === "webdav" ? " open" : ""}`}>
-          <button
-            type="button"
-            className="login-src-head"
-            aria-expanded={openCard === "webdav"}
-            onClick={() => setOpenCard(openCard === "webdav" ? null : "webdav")}
-          >
-            WebDAV
-            {wdAccounts.length > 0 && <span className="login-src-badge">{wdAccounts.length}</span>}
-            <span className="login-src-chev" aria-hidden="true" />
-          </button>
-          {openCard === "webdav" && (
-            <div className="login-src-body">
-              {wdAccounts.map((a) => (
-                <div key={a.id} className="login-wdrow">
-                  <span className="login-wdmeta">
-                    <b>{a.name}</b>
-                    <span>{a.url}</span>
-                  </span>
-                  <button type="button" className="login-minibtn" title="删除账号" onClick={() => void delWdAccount(a.id)}>
-                    <IcoTrashL size={12} strokeWidth={2} />
-                  </button>
-                </div>
-              ))}
-              {wdForm ? (
-                <div className="login-wdform">
-                  <input placeholder="名称（如：家里 NAS）" value={wdForm.name} onChange={(e) => setWdForm({ ...wdForm, name: e.target.value })} />
-                  <input placeholder="地址 https://dav.example.com/dav" value={wdForm.url} onChange={(e) => setWdForm({ ...wdForm, url: e.target.value })} />
-                  <input placeholder="账号" value={wdForm.user} onChange={(e) => setWdForm({ ...wdForm, user: e.target.value })} />
-                  <input placeholder="密码" type="password" value={wdForm.pass} onChange={(e) => setWdForm({ ...wdForm, pass: e.target.value })} />
-                  <div className="login-wdbtns">
-                    <button type="button" className="login-minibtn" onClick={() => void addWdAccount()}>
-                      验证并保存
-                    </button>
-                    <button type="button" className="login-minibtn" onClick={() => setWdForm(null)}>
-                      取消
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button type="button" className="login-minibtn" onClick={() => setWdForm({ name: "", url: "", user: "", pass: "" })}>
-                  添加 WebDAV 账号
-                </button>
-              )}
-              {wdErr && <p className="login-err-dim">{wdErr}</p>}
-              <p className="login-dim">支持 NAS / Alist / 坚果云等任意 WebDAV 服务；密码本机加密存储。</p>
-            </div>
-          )}
-        </section>
-
         {err ? <div className="err">{err}</div> : notice ? <div className="err">{notice}</div> : null}
-        <button className="primary" disabled={busy}>
-          {busy
-            ? fnosMode
-              ? fnidVal
-                ? "打开授权窗口…"
-                : "登录中…"
-              : "进入中…"
-            : fnosMode
-              ? fnidVal
-                ? "打开飞牛授权窗口"
-                : "登 录"
-              : "开始使用"}
-        </button>
-        {!fnosMode && (
-          <p className="login-dim" style={{ textAlign: "center", marginTop: -6 }}>
-            未接飞牛时以游客模式进入，已接入的网盘 / WebDAV 在「云盘接入」里浏览。
-          </p>
-        )}
+        <div className="login-btnrow">
+          <button className="primary" disabled={busy}>
+            {busy
+              ? fnosMode
+                ? fnidVal
+                  ? "打开授权窗口…"
+                  : "登录中…"
+                : "进入中…"
+              : fnosMode
+                ? fnidVal
+                  ? "打开飞牛授权窗口"
+                  : "登 录"
+                : "开始使用"}
+          </button>
+          {/* [lc-2045] 游客入口独立成键：填了服务器地址时主按钮是「登录」，
+              原先「先不登录」只在地址留空时才出现，用户找不到 */}
+          <button type="button" className="ghost" disabled={busy} onClick={() => (onGuest ? onGuest() : onDone())}>
+            游客模式
+          </button>
+        </div>
       </form>
     </div>
   );

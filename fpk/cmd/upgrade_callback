@@ -1,3 +1,11 @@
 #!/bin/bash
 # 升级后置钩子：新二进制就位后由 appcenter 自动重启服务；config.json 向后兼容，无需迁移。
+#
+# 覆盖安装向导（wizard/upgrade）收集的端口走与安装相同的落盘逻辑：
+# 以现有 wizard.env 为底、只覆盖向导确实传了的项，并同步 ui/config 的 port，
+# 否则桌面图标会指回旧端口。为避免两份逻辑漂移，这里直接复用 install_callback。
+SELF_DIR="$(dirname "$0")"
+if [ -f "$SELF_DIR/install_callback" ]; then
+  exec bash "$SELF_DIR/install_callback"
+fi
 exit 0

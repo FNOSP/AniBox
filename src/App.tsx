@@ -265,7 +265,20 @@ function App() {
     return () => un?.();
   }, []);
 
-  // 首页加载中（首次/手动刷新）：无数据时渲染骨架屏；已有数据时静默刷新不闪骨架
+  /* [lc-2059] 退出过渡：真正 app.exit 之前先让外壳淡出 160ms。
+     窗口级透明度不可用（Tauri/tao 在 Windows 上没有 set_opacity），所以做在页面层：
+     .app-shell 加 .app-exit → opacity 0 + 轻微缩小，播完再调 resolve_close。
+     prefers-reduced-motion 时跳过等待（CSS 里动画本身也被关掉）。 */
+  const [appExiting, setAppExiting] = useState(false);
+  const exitWithFade = useCallback(() => {
+    const done = () => invoke("resolve_close", { action: "exit" }).catch(() => {});
+    if (prefersReducedMotion()) {
+      done();
+      return;
+    }
+    setAppExiting(true);
+    window.setTimeout(done, 160);
+  }, []);
   const [homeLoading, setHomeLoading] = useState(false);
   /* ── [lc-1640] 顶栏 ⟳ =「按当前页强制刷新该页数据」──
      tick：每点一次自增；discover/lib/history/detail 各自的视图监听它触发自己的 force 刷新
@@ -1522,7 +1535,7 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${appExiting ? " app-exit" : ""}`}>
       {/* [lc-118] 播放反馈浮标：轮播/首页没有 err 区域，播放失败必须有可见反馈 */}
       {playMsg && (
         <div
@@ -1721,7 +1734,8 @@ function App() {
                 onClick={() => {
                   setCloseAsk(false);
                   if (rememberClose) patchSettings({ exitMode: "exit" });
-                  invoke("resolve_close", { action: "exit" }).catch(() => {});
+                  // [lc-2059] 先播退场再真正退出
+                  exitWithFade();
                 }}
               >
                 退出程序
@@ -1770,7 +1784,7 @@ function App() {
             }
             setDisclaimerOpen(false);
           }}
-          onExit={() => invoke("resolve_close", { action: "exit" }).catch(() => {})}
+          onExit={() => exitWithFade()}
           onClose={() => setDisclaimerOpen(false)}
         />
       )}

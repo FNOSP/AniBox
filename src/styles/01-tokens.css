@@ -129,7 +129,10 @@ body,
      第一行是**不支持 color-mix 时的回退**（旧 WebView2）；支持时由下方 @supports
      用设置项里的 --ui-surface-alpha 实时覆盖。 */
   background: linear-gradient(160deg, rgba(243, 246, 251, 0.94), rgba(246, 248, 252, 0.9) 55%);
-  animation: pageIn 0.28s ease;
+  /* [lc-2059] 进场与退场（.app-exit 的 pageOut）成对：淡入 + 轻微放大，250ms ease-out。
+     原来只有 0.28s ease（缓动在首尾都慢，观感"发木"），这里统一成 ease-out，
+     退场用 ease-in 且更快 —— 符合「进入 ease-out 250ms / 退出 ease-in 200ms」的基调。 */
+  animation: appIn 0.25s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 html.dark .app-shell {
   background: linear-gradient(160deg, rgba(18, 20, 29, 0.94), rgba(13, 15, 22, 0.92) 55%);
@@ -223,6 +226,43 @@ html.dark .app-shell {
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+/* [lc-2059] 退出退场：与 appIn 对偶，略快（退出不该让人等）。
+   窗口级透明度在 Windows 上不可用（tao 没有 set_opacity），所以做在外壳页面层：
+   160ms 淡出 + 极轻微缩小，播完前端才真正调 resolve_close → app.exit。 */
+@keyframes appIn {
+  from {
+    opacity: 0;
+    transform: scale(1.008);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes appOut {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.994);
+  }
+}
+.app-shell.app-exit {
+  animation: appOut 0.16s cubic-bezier(0.4, 0, 1, 1) both;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-shell {
+    animation: none;
+  }
+  .app-shell.app-exit {
+    animation: none;
+    opacity: 0;
   }
 }
 

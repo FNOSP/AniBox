@@ -20047,7 +20047,7 @@ html.fntv-boot-hide #root{visibility:hidden}
       secBodyAbout.appendChild(aboutAuthor);
       const aboutDesc = document.createElement("div");
       aboutDesc.style.cssText = "font-size:13px;line-height:1.9;color:var(--fnos-ui-text);opacity:.82;max-width:440px;";
-      aboutDesc.textContent = t("NAS \u88C5\u4E00\u6B21\uFF0C\u7535\u89C6\u3001\u5E73\u677F\u3001\u624B\u673A\u3001\u7535\u8111\u6D4F\u89C8\u5668\u6253\u5F00\u98DE\u725B\u5F71\u89C6\u5373\u662F\u589E\u5F3A\u7248\uFF1A\u6C89\u6D78\u5F0F\u7F8E\u5316\uFF08\u6D77\u62A5\u5899\u3001\u56DB\u578B\u8F6E\u64AD\u3001\u8BE6\u60C5\u9875\u67D4\u5149\u73BB\u7483\u3001Logo \u81EA\u5B9A\u4E49\uFF09\u3001\u5F39\u5E55\uFF08B\u7AD9 / \u81EA\u5EFA\u6E90 / \u5F39\u5F39play \u515C\u5E95\uFF09\u3001\u8C46\u74E3 / Bangumi / Trakt \u540C\u6B65\u3001\u8DF3\u8FC7\u7247\u5934\u4E0E\u8DE8\u8BBE\u5907\u64AD\u653E\u8BB0\u5FC6\u3001TMDB \u4FE1\u606F\u5361\u4E0E\u6BCF\u65E5\u653E\u9001\u3001\u89C2\u5F71\u8BB0\u5F55\u4E0E\u5E74\u5EA6\u62A5\u544A\u3001\u81EA\u5B9A\u4E49\u522E\u524A\u6E90\u56DE\u586B\u3002\u7ECF\u98DE\u725B\u7EDF\u4E00\u7F51\u5173\u6CE8\u5165\uFF0C\u4E0D\u6539\u52A8\u7CFB\u7EDF\u4E0E\u5F71\u89C6\u5E94\u7528\u4EFB\u4F55\u6587\u4EF6\uFF0C\u5378\u8F7D\u5373\u8FD8\u539F\u3002");
+      aboutDesc.textContent = t("NAS \u88C5\u4E00\u6B21\uFF0C\u7535\u89C6\u3001\u5E73\u677F\u3001\u624B\u673A\u3001\u7535\u8111\u6D4F\u89C8\u5668\u6253\u5F00\u98DE\u725B\u5F71\u89C6\u5373\u662F\u589E\u5F3A\u7248\uFF1A\u6C89\u6D78\u5F0F\u7F8E\u5316\uFF08\u6D77\u62A5\u5899\u3001\u56DB\u578B\u8F6E\u64AD\u3001\u8BE6\u60C5\u9875\u67D4\u5149\u73BB\u7483\u3001Logo \u81EA\u5B9A\u4E49\uFF09\u3001\u5F39\u5E55\uFF08B\u7AD9 / \u81EA\u5EFA\u6E90 / \u5F39\u5F39play \u515C\u5E95\uFF09\u3001\u8C46\u74E3 / Bangumi / Trakt \u540C\u6B65\u3001\u8DF3\u8FC7\u7247\u5934\u4E0E\u8DE8\u8BBE\u5907\u64AD\u653E\u8BB0\u5FC6\u3001TMDB \u4FE1\u606F\u5361\u4E0E\u6BCF\u65E5\u653E\u9001\u3001\u89C2\u5F71\u8BB0\u5F55\u4E0E\u5E74\u5EA6\u62A5\u544A\u3001\u81EA\u5B9A\u4E49\u522E\u524A\u6E90\u56DE\u586B\u3002\u6CE8\u5165\u670D\u52A1\u4E0D\u6539\u52A8\u7CFB\u7EDF\u4E0E\u5F71\u89C6\u5E94\u7528\u4EFB\u4F55\u6587\u4EF6\uFF0C\u5378\u8F7D\u5373\u8FD8\u539F\u3002");
       secBodyAbout.appendChild(aboutDesc);
       const aboutVer = document.createElement("div");
       aboutVer.id = "fnos-about-version";
@@ -20059,7 +20059,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         ipcRenderer.once("version-info", (_e, info) => {
           if (!info || !info.version) return;
           const ver = String(info.version).replace(/-web$/, "");
-          const bt = "2026-10-22 16:20" ? " (2026-10-22 16:20)" : "";
+          const bt = "2026-11-06 10:25" ? " (2026-11-06 10:25)" : "";
           aboutVer.textContent = "\u7248\u672C\uFF1Av" + ver + bt;
         });
       } catch (_) {
@@ -20796,6 +20796,142 @@ html.fntv-boot-hide #root{visibility:hidden}
         } catch {
         }
       })();
+      const secSecurity = section("\u8BBF\u95EE\u5B89\u5168");
+      const secBodySecurity = secSecurity.body;
+      secBodySecurity.style.cssText = "padding:14px 16px;flex:1 1 auto;display:flex;flex-direction:column;";
+      const secDesc = document.createElement("div");
+      secDesc.style.cssText = "font-size:11px;color:var(--fnos-ui-sub);line-height:1.5;margin-bottom:8px;";
+      secDesc.textContent = t("\u7ED9\u589E\u5F3A\u670D\u52A1\u52A0\u4E00\u9053\u8BBF\u95EE\u5BC6\u7801\uFF1A\u5F00\u542F\u540E\u4EFB\u4F55\u8BBE\u5907\u9996\u6B21\u6253\u5F00\u589E\u5F3A\u9875\u90FD\u8981\u8F93\u5BC6\u7801\uFF0C\u9A8C\u8BC1\u901A\u8FC7\u540E\u8BE5\u6D4F\u89C8\u5668 30 \u5929\u5185\u514D\u8F93\u3002\u6539\u5BC6\u7801\u4F1A\u4F7F\u6240\u6709\u5DF2\u9A8C\u8BC1\u8BBE\u5907\u91CD\u65B0\u8F93\u4E00\u6B21\u3002");
+      secBodySecurity.appendChild(secDesc);
+      const secToggleRow = document.createElement("label");
+      secToggleRow.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:8px 6px;cursor:pointer;border-radius:6px;margin-bottom:8px;";
+      const secToggleSpan = document.createElement("span");
+      secToggleSpan.textContent = t("\u5F00\u542F\u8BBF\u95EE\u5BC6\u7801");
+      secToggleSpan.style.cssText = "color:var(--fnos-ui-text);font-weight:500;";
+      const swSecurity = document.createElement("input");
+      swSecurity.type = "checkbox";
+      swSecurity.style.cssText = "width:38px;height:21px;cursor:pointer;accent-color:var(--fnos-ui-accent);";
+      secToggleRow.appendChild(secToggleSpan);
+      secToggleRow.appendChild(swSecurity);
+      secBodySecurity.appendChild(secToggleRow);
+      const secPwInput = document.createElement("input");
+      secPwInput.type = "password";
+      secPwInput.placeholder = t("\u8BBF\u95EE\u5BC6\u7801\uFF08\u81F3\u5C11 4 \u4F4D\uFF09");
+      secPwInput.style.cssText = "width:100%;height:32px;font-size:11px;color:var(--fnos-ui-text);background:var(--fnos-ui-input-bg);border:1px solid var(--fnos-ui-border);border-radius:7px;padding:6px 8px;box-sizing:border-box;margin-bottom:8px;";
+      secPwInput.addEventListener("focus", () => {
+        if (secPwInput.readOnly) {
+          secPwInput.readOnly = false;
+          secPwInput.value = "";
+        }
+      });
+      secBodySecurity.appendChild(secPwInput);
+      const secBtnRow = document.createElement("div");
+      secBtnRow.style.cssText = "display:flex;gap:6px;";
+      const secSaveBtn = mkBtn2("\u4FDD\u5B58\u5BC6\u7801", true);
+      const secClearBtn = mkBtn2("\u6E05\u9664\u5BC6\u7801", true);
+      secBtnRow.appendChild(secSaveBtn);
+      secBtnRow.appendChild(secClearBtn);
+      secBodySecurity.appendChild(secBtnRow);
+      const secStatusLine = document.createElement("div");
+      secStatusLine.style.cssText = "font-size:10.5px;color:var(--fnos-ui-sub);line-height:1.5;margin-top:8px;min-height:14px;";
+      secBodySecurity.appendChild(secStatusLine);
+      const secHint = document.createElement("div");
+      secHint.style.cssText = "font-size:10.5px;color:var(--fnos-ui-sec);line-height:1.5;margin-top:6px;";
+      secHint.textContent = t("\u5BC6\u7801\u52A0\u5BC6\u4FDD\u5B58\u5728 NAS \u914D\u7F6E\u76EE\u5F55\uFF0C\u8BBE\u7F6E\u63A5\u53E3\u4E0D\u4E0B\u53D1\u660E\u6587\u3002\u5FD8\u8BB0\u5BC6\u7801\uFF1ASSH \u5220\u9664\u914D\u7F6E\u76EE\u5F55 config.json \u91CC\u7684 securityPassword \u5B57\u6BB5\u540E\u91CD\u542F\u5E94\u7528\uFF0C\u95E8\u7981\u5373\u89E3\u9664\u3002");
+      secBodySecurity.appendChild(secHint);
+      const secSetState = (enabled3, pwSet) => {
+        if (enabled3 && pwSet) {
+          secStatusLine.textContent = t("\u5DF2\u5F00\u542F \u2014\u2014 \u672A\u9A8C\u8BC1\u7684\u8BBE\u5907\u4F1A\u5148\u770B\u5230\u5BC6\u7801\u9875\uFF0C\u9A8C\u8BC1\u901A\u8FC7\u540E 30 \u5929\u514D\u8F93\u3002");
+          secStatusLine.style.color = "var(--fnos-ui-ok)";
+        } else if (enabled3 && !pwSet) {
+          secStatusLine.textContent = t("\u5DF2\u5F00\u542F\u4F46\u672A\u8BBE\u5BC6\u7801\uFF0C\u95E8\u7981\u6682\u4E0D\u751F\u6548\uFF0C\u8BF7\u5148\u4FDD\u5B58\u5BC6\u7801\u3002");
+          secStatusLine.style.color = "var(--fnos-ui-warn)";
+        } else if (!enabled3 && pwSet) {
+          secStatusLine.textContent = t("\u672A\u5F00\u542F \u2014\u2014 \u5BC6\u7801\u5DF2\u4FDD\u5B58\uFF0C\u6253\u5F00\u4E0A\u65B9\u5F00\u5173\u5373\u751F\u6548\u3002");
+          secStatusLine.style.color = "var(--fnos-ui-sub)";
+        } else {
+          secStatusLine.textContent = t("\u672A\u5F00\u542F \u2014\u2014 \u5C40\u57DF\u7F51\u5185\u53EF\u76F4\u63A5\u8BBF\u95EE\u589E\u5F3A\u9875\u4E0E\u7BA1\u7406\u63A5\u53E3\u3002");
+          secStatusLine.style.color = "var(--fnos-ui-sub)";
+        }
+        secSaveBtn.textContent = "\u4FDD\u5B58\u5BC6\u7801";
+        secClearBtn.textContent = "\u6E05\u9664\u5BC6\u7801";
+      };
+      const refreshSecurityStatus = () => {
+        ipcRenderer.invoke("settings:get").then((c) => {
+          swSecurity.checked = !!c.securityEnabled;
+          if (c.securityPasswordSet && secPwInput.readOnly === false && !secPwInput.value) {
+            secPwInput.value = "********";
+            secPwInput.readOnly = true;
+          }
+          secSetState(!!c.securityEnabled, !!c.securityPasswordSet);
+        }).catch(() => {
+        });
+      };
+      refreshSecurityStatus();
+      const authSelf = (password) => {
+        return fetch("/app/fntvplus/api/auth", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ password })
+        }).then((r) => r.ok).catch(() => false);
+      };
+      swSecurity.addEventListener("change", () => {
+        swSecurity.disabled = true;
+        ipcRenderer.invoke("settings:set-security-enabled", swSecurity.checked).then(() => refreshSecurityStatus()).catch(() => {
+        }).finally(() => {
+          swSecurity.disabled = false;
+        });
+      });
+      secSaveBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (secPwInput.readOnly || !secPwInput.value) {
+          secStatusLine.textContent = t("\u8BF7\u5148\u8F93\u5165\u65B0\u5BC6\u7801\uFF08\u5DF2\u4FDD\u5B58\u7684\u5BC6\u7801\u4EE5\u661F\u53F7\u663E\u793A\uFF0C\u70B9\u51FB\u8F93\u5165\u6846\u53EF\u4FEE\u6539\uFF09\u3002");
+          secStatusLine.style.color = "var(--fnos-ui-warn)";
+          return;
+        }
+        const v = secPwInput.value;
+        if (v.length < 4) {
+          secStatusLine.textContent = t("\u5BC6\u7801\u81F3\u5C11 4 \u4F4D\u3002");
+          secStatusLine.style.color = "var(--fnos-ui-warn)";
+          return;
+        }
+        secSaveBtn.disabled = true;
+        secSaveBtn.textContent = t("\u4FDD\u5B58\u4E2D\u2026");
+        ipcRenderer.invoke("settings:set-security-password", v).then(() => {
+          secPwInput.value = "********";
+          secPwInput.readOnly = true;
+          const finish = (authed) => {
+            refreshSecurityStatus();
+            secStatusLine.textContent = t(authed ? "\u5BC6\u7801\u5DF2\u4FDD\u5B58\uFF0C\u672C\u8BBE\u5907\u5DF2\u9A8C\u8BC1\u3002" : "\u5BC6\u7801\u5DF2\u4FDD\u5B58\u3002\u672C\u8BBE\u5907\u4E0B\u6B21\u8BBF\u95EE\u9700\u8F93\u5165\u4E00\u6B21\u65B0\u5BC6\u7801\u3002");
+            secStatusLine.style.color = "var(--fnos-ui-ok)";
+          };
+          ipcRenderer.invoke("settings:get-security-enabled").then((on) => {
+            if (on === true || on === "1") return authSelf(v).then(finish);
+            finish(false);
+          }).catch(() => finish(false));
+        }).catch((err) => {
+          secStatusLine.textContent = t("\u4FDD\u5B58\u5931\u8D25") + ": " + (err && err.message ? err.message : err);
+          secStatusLine.style.color = "var(--fnos-ui-warn)";
+        }).finally(() => {
+          secSaveBtn.disabled = false;
+        });
+      });
+      secClearBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        secClearBtn.disabled = true;
+        secClearBtn.textContent = t("\u6E05\u9664\u4E2D\u2026");
+        ipcRenderer.invoke("settings:set-security-password", "").then(() => {
+          secPwInput.value = "";
+          secPwInput.readOnly = false;
+          refreshSecurityStatus();
+        }).catch((err) => {
+          secStatusLine.textContent = t("\u6E05\u9664\u5931\u8D25") + ": " + (err && err.message ? err.message : err);
+          secStatusLine.style.color = "var(--fnos-ui-warn)";
+        }).finally(() => {
+          secClearBtn.disabled = false;
+        });
+      });
       const secPageBg = section("\u9875\u9762\u80CC\u666F");
       const secBodyPageBg = secPageBg.body;
       secBodyPageBg.style.cssText = "padding:8px 12px 12px;flex:1 1 auto;display:flex;flex-direction:column;";
@@ -21045,7 +21181,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         { id: "appearance", label: "\u901A\u7528", els: [secAppearance.el, secPageBg.el, secDaily.el, secUX.el, secSkip.el] },
         // [lc-1102] 三张「弹幕源」卡并列（内置降级源 → 弹弹play → 自建优选源），最后才是屏蔽/样式
         { id: "danmaku", label: "\u5F39\u5E55", els: [secBili.el, secDandan.el, secDmApi.el, secDanmaku.el] },
-        { id: "account", label: "\u8D26\u53F7\u4E0E\u7F51\u7EDC", els: [secBangumi.el, secTmdb.el, secDouban.el, secTrakt.el, secCustomProxy.el] },
+        { id: "account", label: "\u8D26\u53F7\u4E0E\u7F51\u7EDC", els: [secBangumi.el, secTmdb.el, secDouban.el, secTrakt.el, secCustomProxy.el, secSecurity.el] },
         // [v1.10.2] 自定义刮削源→Jav 刮削七卡从「账号与网络」拆出独立成类；开发中的「自定义刮削服务」置顶占位
         { id: "scraper", label: "\u81EA\u5B9A\u4E49\u522E\u524A", els: [secScraperSvc.el, secScraper.el, secFanart.el, secTvmaze.el, secOmdb.el, secMal.el, secJav.el] },
         { id: "diag", label: "\u8BCA\u65AD\u4E0E\u65E5\u5FD7", els: [secDiag.el, secDebug.el] },

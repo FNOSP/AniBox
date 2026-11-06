@@ -6,6 +6,8 @@
       "type": "url",
       "protocol": "http",
       "port": "22350",
+      "gatewayPrefix": "/app/fntvplus",
+      "gatewaySocket": "fntvplus.sock",
       "url": "/v/",
       "allUsers": true,
       "control": { "accessPerm": "editable" }

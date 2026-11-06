@@ -107,13 +107,27 @@ func NewServer(d Deps) *Server {
 	//     拉回的路径会落进 "/" 兜底反代（前缀不剥离）而 404，登录链断裂。
 	mux.HandleFunc("/app/fntvplus/", makeProxy(d, "/app/fntvplus"))
 
-	// 5) 兜底：/app/fntvplus 根 → 重定向到 /v/；
-	//    其余全部路径（/libs、/static 等 SPA 资源，影视网页的静态资源不一定都在 /v/ 下）
-	//    一律反代给上游——端口服务模式下浏览器直连本端口，本服务就是影视网页的完整镜像。
+	// 5) 兜底：
+	//    - /app/fntvplus 根 → /app/fntvplus/v/（网关入口）；
+	//    - **裸根 "/" → /v/**（端口直连入口）。这一步不能省：上游在 "/" 上返回的是
+	//      **fnOS 系统首页**（不是影视页），原样反代会把 NAS 首页搬过来 —— 用户输入
+	//      http://NAS:端口/ 看到的是 NAS 首页而不是增强影视页（lc-2053 报障）。
+	//      网关模式下浏览器从不访问裸根，所以这个坑此前一直没暴露。
+	//    - 其余全部路径（/assets、/static 等 SPA 资源，影视网页静态资源不一定都在 /v/ 下）
+	//      一律反代给上游——端口服务模式下本服务就是影视网页的完整镜像。
 	mux.HandleFunc("/app/fntvplus", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/app/fntvplus/v/", http.StatusFound)
 	})
-	mux.HandleFunc("/", makeProxy(d, ""))
+	// 兜底反代只构造一次：makeProxy 内部会建 Transport，放进 handler 里逐请求重建会
+	// 泄漏连接池（每个请求新开一批连接）。
+	fallbackProxy := makeProxy(d, "")
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			http.Redirect(w, r, "/v/", http.StatusFound)
+			return
+		}
+		fallbackProxy(w, r)
+	})
 
 	// 6) 访问密码门禁（可选）：包裹整棵路由树——开启后除验证接口
 	//    /app/fntvplus/api/auth 外，所有请求都要求持有效会话（见 internal/security）。

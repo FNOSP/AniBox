@@ -572,14 +572,19 @@ pub async fn ai_enhance_download(
         let mut stream = resp.bytes_stream();
         let mut seg: u64 = 0;
         let mut last_emit = 0u64;
+        let mut last_tick = std::time::Instant::now();
         while let Some(chunk) = stream.next().await {
             let bytes = chunk.map_err(|e| format!("下载中断: {e}"))?;
             hasher.update(&bytes);
             file.write_all(&bytes).map_err(|e| format!("写临时文件失败: {e}"))?;
             seg += bytes.len() as u64;
-            if seg - last_emit >= 1024 * 1024 {
+            // [lc-2065] 上报频率：每 64KB 或每 250ms 一次（原来固定 1MB）。
+            // 原来 1MB 一报，在 R2 回源 ~120KB/s 的真实速度下就是 **8 秒才动一格**，
+            // 用户看到进度条一直停在 0%，以为下载卡死。改小间隔后进度是连续爬的。
+            if seg - last_emit >= 64 * 1024 || last_tick.elapsed().as_millis() >= 250 {
                 progress(downloaded_before + seg, total_hint);
                 last_emit = seg;
+                last_tick = std::time::Instant::now();
             }
         }
         progress(downloaded_before + seg, total_hint);

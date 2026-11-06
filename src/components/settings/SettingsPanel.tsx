@@ -3098,7 +3098,12 @@ function AiEnhanceRow() {
   } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
+  /** [lc-2065] 下载进度：保留一位小数（整数百分比在 120KB/s 下几秒才动一格，看着像卡死）。
+   *  speed 是最近一次采样算出的 B/s（-1 = 还没采样出来），用于显示速度与剩余时间。 */
   const [pct, setPct] = useState(-1);
+  const [dlSpeed, setDlSpeed] = useState(-1);
+  /** 剩余秒数（-1 = 还没算出来）。由「剩余字节 ÷ 当前速度」得出。 */
+  const [dlRemain, setDlRemain] = useState(-1);
   // [lc-2013] 组件版本更新检测（远端 manifest 比对；旧版缺 SVP 等新能力要有提示）
   const [upd, setUpd] = useState<{
     local: string;
@@ -3168,9 +3173,28 @@ function AiEnhanceRow() {
 
   useEffect(() => {
     refresh();
+    // [lc-2065] 进度改为一位小数 + 速度采样：R2 回源常常只有 100~200KB/s，
+    // 整数百分比要好几秒才动一格，用户会以为下载卡住（实测反馈「停在 0%」）。
+    let lastBytes = -1;
+    let lastAt = 0;
     const un = listen<{ downloaded: number; total: number }>("ai-enhance-progress", (e) => {
       const { downloaded, total } = e.payload;
-      setPct(total > 0 ? Math.floor((downloaded / total) * 100) : 0);
+      setPct(total > 0 ? Math.min(100, (downloaded / total) * 100) : 0);
+      const now = Date.now();
+      if (lastBytes >= 0 && now - lastAt >= 400) {
+        const bps = ((downloaded - lastBytes) * 1000) / (now - lastAt);
+        if (bps > 0) {
+          setDlSpeed(bps);
+          // 剩余秒数：剩余字节 ÷ 当前速度（total 已知时才算，否则 -1）
+          if (total > downloaded) setDlRemain((total - downloaded) / bps);
+          else setDlRemain(-1);
+        }
+        lastBytes = downloaded;
+        lastAt = now;
+      } else if (lastBytes < 0) {
+        lastBytes = downloaded;
+        lastAt = now;
+      }
     });
     return () => {
       un.then((f) => f());
@@ -3181,6 +3205,8 @@ function AiEnhanceRow() {
     setErr("");
     setBusy(pack ?? "base");
     setPct(0);
+    setDlSpeed(-1);
+    setDlRemain(-1);
     try {
       await invoke("ai_enhance_download", { pack: pack ?? null });
       refresh();
@@ -3189,6 +3215,8 @@ function AiEnhanceRow() {
     } finally {
       setBusy(null);
       setPct(-1);
+      setDlSpeed(-1);
+      setDlRemain(-1);
     }
   };
   const pickSuperres = async (engine: string) => {
@@ -3384,8 +3412,26 @@ function AiEnhanceRow() {
               }}
             />
           </div>
-          <span className="set-desc" style={{ flex: "none", minWidth: 64, textAlign: "right" }}>
-            {pct}%
+          <span className="set-desc" style={{ flex: "none", minWidth: 176, textAlign: "right" }}>
+            {/* [lc-2065] 一位小数 + 速度 + 剩余时间：R2 回源常只有 100~200KB/s，
+                不显示这些，用户只会看到进度几秒不动、以为卡死 */}
+            {pct < 100 ? pct.toFixed(1) : "100"}%
+            {dlSpeed > 0 && pct < 100 && (
+              <>
+                {" · "}
+                {dlSpeed >= 1024 * 1024
+                  ? `${(dlSpeed / 1024 / 1024).toFixed(1)} MB/s`
+                  : `${Math.round(dlSpeed / 1024)} KB/s`}
+                {dlRemain > 0 && (
+                  <>
+                    {" · 剩 "}
+                    {dlRemain >= 60
+                      ? `${Math.ceil(dlRemain / 60)} 分钟`
+                      : `${Math.ceil(dlRemain)} 秒`}
+                  </>
+                )}
+              </>
+            )}
           </span>
         </div>
       )}

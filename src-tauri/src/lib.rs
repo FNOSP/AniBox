@@ -3151,6 +3151,8 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         // [lc-1788] 弹弹play 自定义凭证（回填仅判有无，值不回显到明文日志之外的面板外）
         "danmuDdAppIdSet": !cfg.danmu_dd_app_id.trim().is_empty(),
         "danmuDdSecretSet": !cfg.danmu_dd_app_secret.trim().is_empty(),
+        // [lc-2056] 兜底阈值（0 = 不启用，主源完全没有弹幕才兜底）
+        "danmuDdFallbackBelow": cfg.danmu_dd_fallback_below,
         // [lc-1789] 字幕源自定义密钥（仅回显 Set 状态，值不回填）
         "subAssrtTokenSet": !cfg.sub_assrt_token.trim().is_empty(),
         "subOsubKeySet": !cfg.sub_osub_key.trim().is_empty(),
@@ -3255,6 +3257,13 @@ async fn set_settings(
     }
     if let Some(v) = arg.get("danmuDdSecret") {
         cfg.danmu_dd_app_secret = v.as_str().ok_or("danmuDdSecret 必须是字符串")?.trim().to_string();
+    }
+    // [lc-2056] 兜底阈值：主源弹幕少于该条数时继续走弹弹play（0 = 不启用 = 原流程）。
+    // 改了就重写配置桥，Lua 下一集起播即生效（不用重启播放器）。
+    if let Some(v) = arg.get("danmuDdFallbackBelow") {
+        let n = v.as_i64().ok_or("danmuDdFallbackBelow 必须是整数")?;
+        cfg.danmu_dd_fallback_below = n.max(0);
+        danmu_changed = true;
     }
     // [lc-1789] 字幕源自定义密钥（空串=清除恢复内置）
     if let Some(v) = arg.get("subAssrtToken") {

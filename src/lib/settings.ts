@@ -13,6 +13,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webrsPanelEnabled: false,
   danmuApiBases: [],
   danmuApiBase: "",
+  // [lc-2056] 兜底阈值默认 0 = 不启用：主源完全没有弹幕时才走弹弹play（原流程）
+  danmuDdFallbackBelow: 0,
   // 弹幕引擎默认 node = 与接入前行为完全一致（Rust 侧 `danmu_engine` 默认同为 "node"）
   danmuEngine: "node",
   // [lc-1909] 播放打开方式：默认软件内播放（与 Rust 侧 player_open_mode 默认同口径）

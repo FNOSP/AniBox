@@ -367,6 +367,9 @@ pub fn write_danmu_config(cfg: &crate::config::Config) -> Result<(), String> {
         // Lua 侧据此无法区分「用户填的」和「内置兜底」。MPV 起播的自动判定需要这个原始事实：
         // 未配置自建源 + 未登录 B站 → 直接走弹弹play（见 apis/dandanplay.lua:dd_auto_preferred）。
         "userConfigured": cfg.danmu_api_enabled && !crate::danmaku::user_bases(cfg).is_empty(),
+        // [lc-2056] 兜底阈值：Lua 侧 dd_fallback_below() 读它。
+        // 0 = 不启用（只有主源完全没有弹幕才兜底，与改造前行为等价）。
+        "ddFallbackBelow": cfg.danmu_dd_fallback_below.max(0),
         "base": base,
         "bases": bases,
         // 飞牛地址/令牌：系列记忆键解析（play-meta 缺失时的兜底）与自建源无关，仅供桩里的

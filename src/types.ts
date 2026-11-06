@@ -567,6 +567,9 @@ export type AppSettings = {
   /** [lc-1788] 弹弹play 自定义凭证（留空=内置共享；填写优先于内置）。回显仅 Set 布尔，值不回填 */
   danmuDdAppIdSet?: boolean;
   danmuDdSecretSet?: boolean;
+  /** [lc-2056] 兜底阈值：主源（自建源/B站）弹幕少于该条数时继续走弹弹play 取弹幕库。
+   *  0 = 不启用（默认，只有主源完全没有弹幕时才兜底，即原流程）。 */
+  danmuDdFallbackBelow?: number;
   /** [lc-1788] 写入口（设置面板「保存凭证」提交；回显走上面的 *Set 布尔） */
   danmuDdAppId?: string;
   danmuDdSecret?: string;

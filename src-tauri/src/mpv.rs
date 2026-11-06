@@ -204,46 +204,65 @@ async fn adopt_window_owner(app: AppHandle, pid: u32) {
     crate::libmpv::trace("[lc-1907] 收编重试超时（mpv 窗口/主窗口 5s 内未就绪），放弃（旧行为）");
 }
 
-/// [lc-2051] mpv 启动窗口固定 **1920x1280**（用户指定，取代 lc-2018/2020 的
-/// 「主窗宽 × 0.75 按 16:9 取」）。
+/// [lc-2053] mpv 启动窗口 = **和主窗差不多大，且严格 16:9**。
+///
+/// 演变：lc-2018/2020 用「主窗 × 0.75 按 16:9」→ 本机只有 1620x911（偏小）；
+/// lc-2051 改成固定 1920x1280（3:2）→ 用户反馈「有上下黑边」（16:9 片源按宽铺满
+/// 1920 后只有 1080 高，上下各留 100px）。所以这里取**主窗物理宽度**作为窗口宽度、
+/// 高度按 16:9 反推 —— 主窗多宽窗口就多宽（本机 2160 → 2160x1215），
+/// 16:9 片源正好铺满，不再有黑边。
 ///
 /// mpv 的 `--geometry` 在 Windows 上按**物理像素**解释（150% 缩放实测：
 /// geometry=1620x911 → `osd-dimensions` 就是 1620x911，`display-hidpi-scale=1.5`）。
-/// 所以这里写的是物理像素：本机屏幕 2560x1440，1920x1280 正好留出四周边距。
 fn startup_geometry(app: &AppHandle) -> Option<String> {
-    // 显示器工作区（物理像素）：仅在屏幕装不下目标尺寸时用于等比缩小。
-    let area = app
-        .get_webview_window("main")
-        .and_then(|w| w.current_monitor().ok().flatten())
+    let win = app.get_webview_window("main")?;
+    let size = win.inner_size().ok()?;
+    if size.width < 200 || size.height < 200 {
+        return None; // 窗口还没布局好，别算出一个荒谬的尺寸
+    }
+    // 显示器工作区（物理像素）：仅在窗口比屏幕还大时用于收边。
+    let area = win
+        .current_monitor()
+        .ok()
+        .flatten()
         .map(|m| (m.work_area().size.width, m.work_area().size.height));
 
-    let (w, h) = fit_geometry(MPV_WIN_W, MPV_WIN_H, area);
+    let (w, h) = window_size_for(size.width, area);
     crate::libmpv::trace(&format!(
-        "[lc-2051] mpv 启动窗口 = {w}x{h}（目标 {MPV_WIN_W}x{MPV_WIN_H}，工作区 {area:?}）"
+        "[lc-2053] mpv 启动窗口 = {w}x{h}（主窗 {}x{}，工作区 {area:?}）",
+        size.width, size.height
     ));
     Some(format!("--geometry={w}x{h}"))
 }
 
-/// mpv 启动窗口的目标尺寸（物理像素）。
-const MPV_WIN_W: u32 = 1920;
-const MPV_WIN_H: u32 = 1280;
+/// [lc-2053] 由主窗物理宽度推 mpv 窗口尺寸：宽度对齐主窗，高度按 16:9 反推。
+///
+/// 两条收边规则（只在大屏副屏/高缩放小屏才会触发）：
+///   1. 宽度不超过工作区宽的 94%（留一点边，别顶满屏幕）；
+///   2. 高度不超过工作区高的 94%，超出则按高度反推宽度（保持 16:9）。
+/// 纯函数，便于单测。
+fn window_size_for(app_w: u32, area: Option<(u32, u32)>) -> (u32, u32) {
+    const ASPECT: f64 = 16.0 / 9.0;
+    const AREA_USE: f64 = 0.94;
+    const MIN_W: u32 = 320;
 
-/// [lc-2051] 目标尺寸与显示器工作区求交：装得下就用目标值，装不下就**等比**缩到
-/// 刚好塞进工作区（否则窗口会有一截跑到屏幕外，且高度是用户指定的 2:3 偏方比例，
-/// 不能单独压一边把画面比例搞坏）。纯函数，便于单测。
-fn fit_geometry(target_w: u32, target_h: u32, area: Option<(u32, u32)>) -> (u32, u32) {
+    let mut w = app_w.max(MIN_W) as f64;
+    let mut h = w / ASPECT;
     if let Some((aw, ah)) = area {
         if aw > 0 && ah > 0 {
-            let s = (aw as f64 / target_w as f64).min(ah as f64 / target_h as f64);
-            if s < 1.0 {
-                return (
-                    ((target_w as f64 * s).floor() as u32).max(1),
-                    ((target_h as f64 * s).floor() as u32).max(1),
-                );
+            let max_w = aw as f64 * AREA_USE;
+            let max_h = ah as f64 * AREA_USE;
+            if w > max_w {
+                w = max_w;
+                h = w / ASPECT;
+            }
+            if h > max_h {
+                h = max_h;
+                w = h * ASPECT;
             }
         }
     }
-    (target_w, target_h)
+    ((w.round() as u32).max(1), (h.round() as u32).max(1))
 }
 
 impl MpvSession {
@@ -323,8 +342,8 @@ impl MpvSession {
         // [lc-1559] 启动即加载（可选）：命令行直接带 M3U8/URL ⇒ 无 idle 空窗，
         // 不依赖 IPC（启动头几秒 IPC 命令会卡，见 lib.rs lc-1559 注释）。
         let mut args = args.to_vec();
-        // [lc-2051] 启动窗口固定 1920x1280（物理像素）：mpv 的 --geometry 在 Windows 上
-        // 按物理像素解释，写死值即可精确控制；屏幕装不下时由 startup_geometry 等比缩小。
+        // [lc-2053] 启动窗口 = 主窗物理宽度 × 16:9 反推高度：和软件差不多大，
+        // 且 16:9 片源正好铺满不留上下黑边。装不进工作区时 window_size_for 收边。
         if let Some(geo) = startup_geometry(&app) {
             args.push(geo);
         }
@@ -1040,27 +1059,41 @@ mod tests {
         assert!(http_header_args(Some("  "), Some("")).is_empty());
     }
 
-    /// [lc-2051] 启动窗口 = 固定 1920x1280，屏幕装得下时不缩放。
-    /// 本机实测工作区 2560x1440（物理像素）→ 原样返回目标值。
+    /// [lc-2053] 启动窗口 = 主窗物理宽度、高按 16:9：和软件差不多大且无上下黑边。
+    /// 本机主窗 2160x1350（150% 下 1440x900）→ 2160x1215（严格 16:9）。
     #[test]
-    fn geometry_keeps_target_when_screen_fits() {
-        assert_eq!(fit_geometry(1920, 1280, Some((2560, 1440))), (1920, 1280));
-        assert_eq!(fit_geometry(1920, 1280, Some((1920, 1280))), (1920, 1280));
-        // 取不到显示器信息也按目标值下发（不能算不出尺寸）
-        assert_eq!(fit_geometry(1920, 1280, None), (1920, 1280));
-        assert_eq!(fit_geometry(1920, 1280, Some((0, 0))), (1920, 1280));
+    fn window_size_matches_app_width_in_16_9() {
+        let (w, h) = window_size_for(2160, Some((2560, 1440)));
+        assert_eq!(w, 2160);
+        assert_eq!(h, 1215);
+        // 16:9 片源铺满宽度后，上下多余像素必须为 0（这是用户主诉的黑边）
+        let content_h = w as f64 * 9.0 / 16.0;
+        assert!((content_h - h as f64).abs() < 1.5, "上下黑边不为零：{w}x{h}");
     }
 
-    /// [lc-2051] 屏幕装不下时等比缩小（保持 1920:1280 = 3:2；不能单独压一边）。
+    /// [lc-2053] 窗口比屏幕还大 / 高超工作区时收边，且收边后仍是 16:9。
     #[test]
-    fn geometry_scales_down_proportionally() {
-        // 1080p 屏（工作区 1920x1040）：高度吃紧 → 宽 1560 / 高 1040（严格 3:2）
-        assert_eq!(fit_geometry(1920, 1280, Some((1920, 1040))), (1560, 1040));
-        // 1366x768 笔记本：等比 0.6 → 1152x768
-        assert_eq!(fit_geometry(1920, 1280, Some((1366, 768))), (1152, 768));
-        // 缩小后比例必须仍接近 3:2（floor 造成的误差 < 2px）
-        let (w, h) = fit_geometry(1920, 1280, Some((1366, 768)));
+    fn window_size_clamps_to_work_area_keeping_16_9() {
+        // 主窗比屏幕宽（外接小屏）：宽度收到工作区 94%
+        let (w, h) = window_size_for(3000, Some((1920, 1080)));
+        assert_eq!(w, (1920.0 * 0.94f64).round() as u32);
         let ratio = w as f64 / h as f64;
-        assert!((ratio - 1.5).abs() < 0.01, "比例跑偏：{w}x{h} = {ratio}");
+        assert!((ratio - 16.0 / 9.0).abs() < 0.02, "比例跑偏：{w}x{h}");
+        // 高度吃紧（超宽屏主窗）：1400 宽按 16:9 得 787，工作区高 600*0.94=564 → 反推宽度
+        let (w2, h2) = window_size_for(1400, Some((1200, 600)));
+        assert_eq!(h2, (600.0 * 0.94f64).round() as u32);
+        let ratio2 = w2 as f64 / h2 as f64;
+        assert!((ratio2 - 16.0 / 9.0).abs() < 0.02, "比例跑偏：{w2}x{h2}");
+    }
+
+    /// [lc-2053] 取不到显示器信息 / 工作区为 0 时，直接按主窗宽度走（不能算不出尺寸）。
+    #[test]
+    fn window_size_works_without_monitor_info() {
+        assert_eq!(window_size_for(2160, None), (2160, 1215));
+        assert_eq!(window_size_for(2160, Some((0, 0))), (2160, 1215));
+        // 主窗布局未完成（极小值）时给一个下限宽度，不产生荒谬尺寸
+        let (w, h) = window_size_for(10, None);
+        assert_eq!(w, 320);
+        assert_eq!(h, 180);
     }
 }

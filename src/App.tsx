@@ -32,6 +32,7 @@ import { DisclaimerModal } from "./components/disclaimer/DisclaimerModal";
 import { DISCLAIMER_ACK_KEY } from "./components/disclaimer/DisclaimerText";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
 import { UpdatePrompt } from "./components/update/UpdatePrompt";
+import ChangelogPrompt from "./components/update/ChangelogPrompt";
 import { NavCapsule } from "./components/shell/NavCapsule";
 import { TitleBar } from "./components/shell/TitleBar";
 import { Sidebar } from "./components/sidebar/Sidebar";
@@ -1795,6 +1796,9 @@ function App() {
           onClose={() => setUpdatePrompt(null)}
         />
       )}
+      {/* [lc-2064] 版本更新说明：每个版本只弹一次（不依赖联网，热补丁/安装包都覆盖）。
+          挂在最末 = 层级高于其它浮层；自身 portal 到 body。 */}
+      <ChangelogPrompt />
     </div>
   );
 }

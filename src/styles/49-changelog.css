@@ -1,0 +1,175 @@
+/* ═══════════════ [lc-2064] 版本更新说明弹窗（ChangelogPrompt） ═══════════════
+   外壳复用 .ddet-mask / .ddet / .ddet-close（与设置面板、UpdatePrompt 同款）；
+   这里只定义卡片排版。颜色全部走 01-tokens 变量 —— 深浅主题自动成立。
+   字号只用三档：标题 17 / 正文 13 / 提示 12，最小 12px。 */
+
+.clg-modal {
+  width: min(520px, 92vw);
+  max-height: min(82vh, 680px);
+  display: flex;
+  flex-direction: column;
+  padding: 26px 26px 20px;
+  animation: clgIn 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* 顶部 2px accent 细线（靠 .ddet 的 overflow:hidden 收边） */
+.clg-modal::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent-grad);
+  z-index: 1;
+}
+@keyframes clgIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* 退场：与页面退场同一套（ease-in 更快），160ms 后组件卸载 */
+.ddet-mask.clg-closing {
+  animation: clgMaskOut 0.16s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+.ddet-mask.clg-closing .clg-modal {
+  animation: clgOut 0.16s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+@keyframes clgMaskOut {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes clgOut {
+  to {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+
+/* ── 头部：版本徽标 + 标题 ── */
+.clg-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding-right: 24px; /* 给右上角关闭键留位 */
+}
+.clg-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  /* 12px 小字必须够对比：accent 本身偏浅，铺一层 accent 底 + 深色字
+     （浅色主题用深蓝字、深色主题用浅蓝字，跟主题反转） */
+  color: #fff;
+  background: linear-gradient(135deg, #6c9bff 0%, #8f6cff 100%);
+}
+.clg-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--fg-1);
+}
+
+/* ── 要点列表 ── */
+.clg-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  /* 内容多时只滚动列表本身，标题与底部按钮固定 */
+  min-height: 0;
+}
+.clg-list li {
+  position: relative;
+  padding-left: 16px;
+  font-size: 13px;
+  line-height: 1.62;
+  color: var(--fg-2);
+}
+.clg-list li::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0.62em;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.7;
+}
+
+/* ── 测试功能提醒：比 tip 更显眼，引导反馈 ──
+   浅琥珀底 + 左侧实心竖线，和 tip（蓝色批注线）区分开：一个「注意」，一个「测试中」。 */
+.clg-beta {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 16px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg-2);
+  background: color-mix(in srgb, #f0a63c 12%, transparent);
+  border-left: 3px solid #f0a63c;
+}
+.clg-beta svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: #d1871f;
+}
+/* 老 WebView2（<111）没有 color-mix → 退回中性底 */
+@supports not (background: color-mix(in srgb, red 10%, transparent)) {
+  .clg-beta {
+    background: var(--bg-3);
+  }
+}
+
+/* ── 提示条：需要用户注意的操作 ──
+   刻意**不用白底圆角**（那看起来像输入框）：左侧一道 accent 竖线 + 极淡底，
+   读起来是「旁边的批注」而不是「可编辑的控件」。 */
+.clg-tip {
+  margin-top: 18px;
+  padding: 2px 0 2px 12px;
+  border-radius: 0;
+  border-left: 3px solid var(--accent);
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--fg-2);
+  background: transparent;
+}
+
+/* ── 底部 ── */
+.clg-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+.clg-ok {
+  min-width: 92px;
+  height: 34px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clg-modal,
+  .ddet-mask.clg-closing,
+  .ddet-mask.clg-closing .clg-modal {
+    animation: none;
+  }
+}

@@ -59,3 +59,5 @@
 @import "./47-libfilters.css";
 @import "./48-javhub.css";
 /* [lc-1909] 软件内播放（内嵌播放页） */
+/* [lc-2064] 版本更新说明弹窗（每版本只弹一次） */
+@import "./49-changelog.css";

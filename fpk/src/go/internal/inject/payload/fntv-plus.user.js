@@ -20059,7 +20059,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         ipcRenderer.once("version-info", (_e, info) => {
           if (!info || !info.version) return;
           const ver = String(info.version).replace(/-web$/, "");
-          const bt = "2026-11-06 10:52" ? " (2026-11-06 10:52)" : "";
+          const bt = "2026-11-06 11:08" ? " (2026-11-06 11:08)" : "";
           aboutVer.textContent = "\u7248\u672C\uFF1Av" + ver + bt;
         });
       } catch (_) {
@@ -20796,7 +20796,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         } catch {
         }
       })();
-      const secSecurity = section("\u8BBF\u95EE\u5B89\u5168");
+      const secSecurity = section("\u5B89\u5168\u7801\uFF08\u8BBF\u95EE\u5BC6\u7801\uFF09");
       const secBodySecurity = secSecurity.body;
       secBodySecurity.style.cssText = "padding:14px 16px;flex:1 1 auto;display:flex;flex-direction:column;";
       const secDesc = document.createElement("div");
@@ -21178,10 +21178,10 @@ html.fntv-boot-hide #root{visibility:hidden}
       syncGrad();
       const cats = [
         // [v0.61.0] 「播放」分类删除：跳过片头片尾并入「通用」（原「外观」更名）；分类由 6 → 5
-        { id: "appearance", label: "\u901A\u7528", els: [secAppearance.el, secPageBg.el, secDaily.el, secUX.el, secSkip.el] },
+        { id: "appearance", label: "\u901A\u7528", els: [secAppearance.el, secSecurity.el, secPageBg.el, secDaily.el, secUX.el, secSkip.el] },
         // [lc-1102] 三张「弹幕源」卡并列（内置降级源 → 弹弹play → 自建优选源），最后才是屏蔽/样式
         { id: "danmaku", label: "\u5F39\u5E55", els: [secBili.el, secDandan.el, secDmApi.el, secDanmaku.el] },
-        { id: "account", label: "\u8D26\u53F7\u4E0E\u7F51\u7EDC", els: [secBangumi.el, secTmdb.el, secDouban.el, secTrakt.el, secCustomProxy.el, secSecurity.el] },
+        { id: "account", label: "\u8D26\u53F7\u4E0E\u7F51\u7EDC", els: [secBangumi.el, secTmdb.el, secDouban.el, secTrakt.el, secCustomProxy.el] },
         // [v1.10.2] 自定义刮削源→Jav 刮削七卡从「账号与网络」拆出独立成类；开发中的「自定义刮削服务」置顶占位
         { id: "scraper", label: "\u81EA\u5B9A\u4E49\u522E\u524A", els: [secScraperSvc.el, secScraper.el, secFanart.el, secTvmaze.el, secOmdb.el, secMal.el, secJav.el] },
         { id: "diag", label: "\u8BCA\u65AD\u4E0E\u65E5\u5FD7", els: [secDiag.el, secDebug.el] },

@@ -137,9 +137,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func makeProxy(d Deps, strip string) http.HandlerFunc {
 	transport := &http.Transport{
 		DisableCompression: true, // 上游不压缩，注入更稳
-		DisableKeepAlives:  true, // 不复用回环连接，规避嵌套服务间的 keep-alive 死锁
-		MaxIdleConns:       100,
-		IdleConnTimeout:    90 * time.Second,
+		// [lc-2051] 端口直连后上游是同机影视服务，允许复用连接。此前 DisableKeepAlives
+		// 是为了规避「嵌套服务 keep-alive 死锁」，但每次新建连接受 SPA 并发请求冲击时
+		// 更容易撞上连接窗口，实测日志里成片 "context canceled"。
+		DisableKeepAlives:   false,
+		MaxIdleConns:        200,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
 		// 直连回环，不使用系统 HTTP 代理：
 		Proxy: nil,
 	}
@@ -163,16 +167,28 @@ func makeProxy(d Deps, strip string) http.HandlerFunc {
 		outReq.URL = &target
 		// [访问码] Host 头策略：fnOS 的访问码门禁把解锁 Cookie（os-access-code）绑定到
 		// Web 主机校验——实测同一 Cookie，Host=NAS地址 时放行、Host=127.0.0.1:端口 时
-		// 重新拦截。上游是回环地址时若沿用旧 host:端口 形态的 Host，每个被代理请求都会
-		// 被上游重新门禁，用户表现为「输完访问码后无限重新弹门禁页」。因此回环上游保留
-		// 浏览器原始 Host（连接目标仍是回环 upstream，仅改 Host 头）；自定义远程上游
-		// 维持旧行为不动。
+		// 重新拦截。因此回环上游沿用浏览器原始 Host（连接目标仍是回环 upstream，仅改 Host）。
+		//
+		// [lc-2051] 端口直连必须**剥掉端口**：网关模式下浏览器地址形如
+		// https://<域名>/app/fntvplus/v/，Host 不带端口；端口直连是 http://NAS:22350/v/，
+		// Host 带 :22350。上游影视服务按主机名校验会话与访问码，带端口的 Host 与它自己
+		// 记录的主机名不匹配 → 鉴权/会话校验失败，SPA 停在「加载中…」。
+		// 故：保留主机名、去掉端口。
 		if isLoopbackHost(upstream.Host) {
-			outReq.Host = r.Host
+			outReq.Host = stripPort(r.Host)
 		} else {
 			outReq.Host = upstream.Host
 		}
 		outReq.RequestURI = "" // 必须清空，否则 RoundTrip 报错
+
+		// [lc-2051] WebSocket 透传：SPA 会连 /websocket?type=main（日志里实测到）。
+		// 之前把 Upgrade/Connection 当逐跳头一律删掉，握手必然失败 → 前端某些视图
+		// 一直转圈。这里对升级请求走原始 TCP 隧道。
+		if isWebSocketUpgrade(r) {
+			proxyWebSocket(w, r, &target, outReq.Host)
+			return
+		}
+
 		outReq.Header.Del("Accept-Encoding")
 		outReq.Header.Del("Connection")
 		// 去掉逐跳头，避免透传到上游。
@@ -353,6 +369,114 @@ func isVPath(p string) bool {
 	return p == "/v" || strings.HasPrefix(p, "/v/")
 }
 
+// sameHostname 判断两个 host[:port] 是否同一主机（忽略端口差异，做小写归一）。
+func sameHostname(a, b string) bool {
+	ha, _, ea := net.SplitHostPort(a)
+	if ea != nil {
+		ha = a
+	}
+	hb, _, eb := net.SplitHostPort(b)
+	if eb != nil {
+		hb = b
+	}
+	ha = strings.Trim(strings.ToLower(ha), "[]")
+	hb = strings.Trim(strings.ToLower(hb), "[]")
+	return ha != "" && ha == hb
+}
+
+// stripPort 去掉 Host 里的端口，只保留主机名（带 IPv6 方括号）。
+// 端口直连时 Host 是 "NAS:22350"，而上游影视服务记录的主机名不带端口，
+// 原样透传会让它的会话/访问码校验对不上（lc-2051）。
+func stripPort(hostPort string) string {
+	if host, _, err := net.SplitHostPort(hostPort); err == nil {
+		// IPv6 重新加回方括号，保持 Host 头合法形态
+		if strings.Contains(host, ":") {
+			return "[" + host + "]"
+		}
+		return host
+	}
+	return hostPort // 本来就没端口（或形态特殊），原样返回
+}
+
+// isWebSocketUpgrade 判断请求是不是 WebSocket 升级握手。
+func isWebSocketUpgrade(r *http.Request) bool {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return false
+	}
+	for _, v := range r.Header.Values("Connection") {
+		for _, tok := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(tok), "upgrade") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// proxyWebSocket 把 WebSocket 握手与后续双向流量原样转给上游。
+//
+// 影视 SPA 会连 /websocket?type=main（实测日志里有），这条通道断了前端部分视图
+// 会一直「加载中」。net/http 的 RoundTrip 不支持 101 升级，必须自己接管连接：
+// 向上游发一次带升级头的请求，拿到 101 后 Hijack 浏览器侧连接，双向 io.Copy。
+func proxyWebSocket(w http.ResponseWriter, r *http.Request, target *url.URL, hostHeader string) {
+	// 上游是回环 HTTP；WS 握手仍走 http:// + Upgrade 头（不是 ws:// scheme）。
+	upConn, err := net.DialTimeout("tcp", target.Host, 10*time.Second)
+	if err != nil {
+		log.Printf("[fntv-proxy] ws dial upstream %s: %v", target.Host, err)
+		http.Error(w, "upstream unavailable", http.StatusBadGateway)
+		return
+	}
+	defer upConn.Close()
+
+	// 把浏览器这条请求按原样（除 Host 与 URL 目标）写给上游。
+	outReq := r.Clone(r.Context())
+	outReq.URL = target
+	outReq.Host = hostHeader
+	outReq.RequestURI = ""
+	// 升级请求必须保留 Connection/Upgrade，不能当逐跳头删掉。
+	if err := outReq.Write(upConn); err != nil {
+		log.Printf("[fntv-proxy] ws write handshake: %v", err)
+		http.Error(w, "upstream write failed", http.StatusBadGateway)
+		return
+	}
+
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "hijack unsupported", http.StatusInternalServerError)
+		return
+	}
+	clientConn, clientBuf, err := hj.Hijack()
+	if err != nil {
+		log.Printf("[fntv-proxy] ws hijack: %v", err)
+		return
+	}
+	defer clientConn.Close()
+
+	// 上游回的 101（或错误响应）原样转发给浏览器。
+	errc := make(chan error, 2)
+	go func() {
+		// 上游 → 浏览器
+		_, e := io.Copy(clientConn, upConn)
+		errc <- e
+	}()
+	go func() {
+		// 浏览器 → 上游（clientBuf 里可能已有读缓冲的字节，先刷出去）
+		if n := clientBuf.Reader.Buffered(); n > 0 {
+			buf := make([]byte, n)
+			if _, e := clientBuf.Reader.Read(buf); e == nil {
+				if _, e2 := upConn.Write(buf); e2 != nil {
+					errc <- e2
+					return
+				}
+			}
+		}
+		_, e := io.Copy(upConn, clientConn)
+		errc <- e
+	}()
+	<-errc
+	log.Printf("[fntv-proxy] ws closed: %s", target.String())
+}
+
 // isLoopbackHost 判断 upstream.Host（host:port）是否指向本机回环地址。
 // 用于 Host 头策略：回环上游保留浏览器原始 Host（访问码 Cookie 绑定 Web 主机校验）。
 func isLoopbackHost(hostPort string) bool {
@@ -439,7 +563,9 @@ func gatewayLocation(loc, prefix, upstreamHost, requestHost string) string {
 	if u.Path == prefix || strings.HasPrefix(u.Path, prefix+"/") {
 		return loc // 已带网关前缀
 	}
-	if u.Host != "" && u.Host != upstreamHost && u.Host != requestHost {
+	// [lc-2051] 同源比较按**主机名**而非 host:port：上游发回的绝对地址带它自己的端口，
+	// 而我们现在透传给上游的 Host 已剥掉端口，逐字比较会把同源误判成跨主机、改写失效。
+	if u.Host != "" && !sameHostname(u.Host, upstreamHost) && !sameHostname(u.Host, requestHost) {
 		return loc // 跨主机目标不动
 	}
 	out := prefix + u.Path

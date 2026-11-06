@@ -3240,7 +3240,7 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     })();
 
     // ===== [lc-2033] 访问安全卡（端口直连模式的访问密码门禁，见后端 internal/security）=====
-    const secSecurity = section('访问安全');
+    const secSecurity = section('安全码（访问密码）');
     const secBodySecurity = secSecurity.body;
     secBodySecurity.style.cssText = 'padding:14px 16px;flex:1 1 auto;display:flex;flex-direction:column;';
 
@@ -3601,10 +3601,10 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     //   诊断与日志=调试开关+组件日志+实时日志 · 关于
     const cats: Cat[] = [
       // [v0.61.0] 「播放」分类删除：跳过片头片尾并入「通用」（原「外观」更名）；分类由 6 → 5
-      { id: 'appearance', label: '通用', els: [secAppearance.el, secPageBg.el, secDaily.el, secUX.el, secSkip.el] },
+      { id: 'appearance', label: '通用', els: [secAppearance.el, secSecurity.el, secPageBg.el, secDaily.el, secUX.el, secSkip.el] },
       // [lc-1102] 三张「弹幕源」卡并列（内置降级源 → 弹弹play → 自建优选源），最后才是屏蔽/样式
       { id: 'danmaku', label: '弹幕', els: [secBili.el, secDandan.el, secDmApi.el, secDanmaku.el] },
-      { id: 'account', label: '账号与网络', els: [secBangumi.el, secTmdb.el, secDouban.el, secTrakt.el, secCustomProxy.el, secSecurity.el] },
+      { id: 'account', label: '账号与网络', els: [secBangumi.el, secTmdb.el, secDouban.el, secTrakt.el, secCustomProxy.el] },
       // [v1.10.2] 自定义刮削源→Jav 刮削七卡从「账号与网络」拆出独立成类；开发中的「自定义刮削服务」置顶占位
       { id: 'scraper', label: '自定义刮削', els: [secScraperSvc.el, secScraper.el, secFanart.el, secTvmaze.el, secOmdb.el, secMal.el, secJav.el] },
       { id: 'diag', label: '诊断与日志', els: [secDiag.el, secDebug.el] },

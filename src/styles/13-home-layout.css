@@ -8,6 +8,13 @@
      （`.content` 本身有 26px 横向 padding，但首页用的是 .home-full 且此处归零过。） */
   padding: 0 var(--home-pad) 50px;
 }
+/* [lc-2047] 裸首页（游客态 / 一个库都没接）：页面只有满屏 hero，没有任何下方横排。
+   去掉 50px 尾部内边距并锁死纵向滚动 —— 否则 hero（100vh）加内边距会多出一截
+   可滚动的空白（用户反馈：未登录时首页还能往下滚，底部一片空）。 */
+.home-full.home-bare {
+  padding-bottom: 0;
+  overflow-y: hidden;
+}
 .hero-zone {
   position: relative;
 }

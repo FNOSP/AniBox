@@ -65,6 +65,11 @@ export function HomeView({
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const coverTargetLib = useRef<string | null>(null);
   const shownLibs = libs.filter((l) => !hiddenLibs.includes(l.guid));
+  // [lc-2047] 只有全屏 hero 的「裸首页」（游客态 / 一个库都没接）：没有下方任何横排时
+  // 不该再留尾部空白、也不该能滚动 —— hero 本身就是 100vh，多出的 padding 会撑出
+  // 一截可滚动的空白（用户反馈：未登录时首页还能滚，底部一片空）。
+  const bareHome =
+    libs.length === 0 && continueList.length === 0 && !libRows.some((r) => r.items.length > 0);
   // [lc-1439] 启动页 = 继续观看：等「继续观看」区块渲染出来后把它滚到视口顶部。
   //   用 ref + scrollIntoView 而不是算像素：hero 是 100vh，偏移量随窗口高度变，
   //   算像素就得维护"hero 高度 + 媒体库条高度"这套常量（改版式必忘）。
@@ -189,7 +194,7 @@ export function HomeView({
   };
 
   return (
-    <main className="content home-full" ref={homeRef}>
+    <main className={`content home-full${bareHome ? " home-bare" : ""}`} ref={homeRef}>
       {/* 全屏 hero 轮播 + 底部媒体库条（Emby 布局） */}
       <div className="hero-zone">
         <CarouselView
@@ -200,74 +205,78 @@ export function HomeView({
           onDetail={onOpenItem}
           onTone={onHeroTone}
         />
-        <div className="lib-strip">
-          {shownLibs.map((lib) => {
-            // [library-cover] 优先级：自定义封面 → 最新条目横图 → 库自带横图 → 库海报。
-            const cover =
-              customCovers[lib.guid] ||
-              defaultCovers[lib.guid] ||
-              pickLargestImg(lib.backdrops) ||
-              (lib.posters && lib.posters[0]) ||
-              "";
-            return (
-              <div key={lib.guid} className="lib-strip-card" onClick={() => onOpenLib(lib)}>
-                <div className="lsc-bg">
-                  {cover ? (
-                    <img src={imgUrl(cover)} loading="lazy" alt={lib.title} />
-                  ) : (
-                    <div className="poster-empty"><IcoClapL size={22} strokeWidth={1.8} /></div>
-                  )}
-                </div>
-                <div className="lsc-shade" />
-                <div className="lsc-title">{lib.title}</div>
-                <div className="lsc-cat">{lib.category}</div>
-                <button
-                  type="button"
-                  className="lsc-cover"
-                  title={coverBusy === lib.guid ? "上传中…" : "更换封面"}
-                  disabled={coverBusy === lib.guid}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    pickCover(lib.guid);
-                  }}
-                >
-                  <IcoImagePlusL size={13} strokeWidth={1.8} />
-                </button>
-                {customCovers[lib.guid] && (
+        {/* [lc-2047] 一个库都没有（游客态）时整条不渲染：否则会浮着一个孤零零的
+            「管理」胶囊压在 hero 上；有库但全被隐藏时仍然渲染（要靠它把库勾回来）。 */}
+        {libs.length > 0 && (
+          <div className="lib-strip">
+            {shownLibs.map((lib) => {
+              // [library-cover] 优先级：自定义封面 → 最新条目横图 → 库自带横图 → 库海报。
+              const cover =
+                customCovers[lib.guid] ||
+                defaultCovers[lib.guid] ||
+                pickLargestImg(lib.backdrops) ||
+                (lib.posters && lib.posters[0]) ||
+                "";
+              return (
+                <div key={lib.guid} className="lib-strip-card" onClick={() => onOpenLib(lib)}>
+                  <div className="lsc-bg">
+                    {cover ? (
+                      <img src={imgUrl(cover)} loading="lazy" alt={lib.title} />
+                    ) : (
+                      <div className="poster-empty"><IcoClapL size={22} strokeWidth={1.8} /></div>
+                    )}
+                  </div>
+                  <div className="lsc-shade" />
+                  <div className="lsc-title">{lib.title}</div>
+                  <div className="lsc-cat">{lib.category}</div>
                   <button
                     type="button"
-                    className="lsc-cover lsc-cover-reset"
-                    title="恢复默认封面"
+                    className="lsc-cover"
+                    title={coverBusy === lib.guid ? "上传中…" : "更换封面"}
+                    disabled={coverBusy === lib.guid}
                     onClick={(e) => {
                       e.stopPropagation();
-                      void restoreDefaultCover(lib.guid);
+                      pickCover(lib.guid);
                     }}
                   >
-                    <IcoRotateL size={13} strokeWidth={1.8} />
+                    <IcoImagePlusL size={13} strokeWidth={1.8} />
                   </button>
-                )}
-                <button
-                  type="button"
-                  className="lsc-hide"
-                  title="首页不展示该库"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleHiddenLib(lib.guid);
-                  }}
-                >
-                  <IcoXL size={13} strokeWidth={1.8} />
-                </button>
-              </div>
-            );
-          })}
-          <div
-            className={`lsc-manage ${shownLibs.length === 0 ? "always" : ""}`}
-            title="管理首页媒体库展示"
-            onClick={() => setManageOpen((v) => !v)}
-          >
-            <IcoGearL size={15} strokeWidth={1.8} /> 管理
+                  {customCovers[lib.guid] && (
+                    <button
+                      type="button"
+                      className="lsc-cover lsc-cover-reset"
+                      title="恢复默认封面"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void restoreDefaultCover(lib.guid);
+                      }}
+                    >
+                      <IcoRotateL size={13} strokeWidth={1.8} />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="lsc-hide"
+                    title="首页不展示该库"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleHiddenLib(lib.guid);
+                    }}
+                  >
+                    <IcoXL size={13} strokeWidth={1.8} />
+                  </button>
+                </div>
+              );
+            })}
+            <div
+              className={`lsc-manage ${shownLibs.length === 0 ? "always" : ""}`}
+              title="管理首页媒体库展示"
+              onClick={() => setManageOpen((v) => !v)}
+            >
+              <IcoGearL size={15} strokeWidth={1.8} /> 管理
+            </div>
           </div>
-        </div>
+        )}
         {/* [library-cover] 隐藏的文件选择器：卡片上的「更换封面」按钮触发 */}
         <input
           ref={coverInputRef}

@@ -265,7 +265,7 @@ pub struct Config {
        老 config.json 无此键 → 默认 "app"（本版默认点播放就走软件内），不需要迁移脚本。 */
     #[serde(default = "default_player_open_mode")]
     pub player_open_mode: String,
-    /// [lc-2002] 播放器皮肤："uosc"（原生，默认）| "glass"（ModernGlass 液态玻璃）。
+    /// [lc-2002] 播放器皮肤："glass"（ModernGlass 液态玻璃，默认）| "uosc"（原生）。
     /// 皮肤脚本按需搬进/搬出 portable_config/scripts（mpv 自动加载该目录），
     /// 切换在下一次起播生效。
     #[serde(default = "default_player_skin")]
@@ -318,7 +318,9 @@ fn default_player_open_mode() -> String {
 }
 
 fn default_player_skin() -> String {
-    "uosc".into()
+    // [lc-2048] 默认液态玻璃：它已是当前主用皮肤（独立 mpv 窗口 + 玻璃底栏），
+    // 新装用户不该先看到旧的原生 uosc 底栏。老配置里的显式值不受影响。
+    "glass".into()
 }
 
 fn default_proxy() -> String {

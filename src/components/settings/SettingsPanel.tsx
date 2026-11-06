@@ -1798,11 +1798,11 @@ export function SettingsPanel({
                       </div>
                       <SetSelect
                         label="播放器皮肤"
-                        value={settings.playerSkin ?? "uosc"}
+                        value={settings.playerSkin ?? "glass"}
                         disabled={busy}
                         options={[
-                          { value: "uosc", label: "原生（uosc）" },
                           { value: "glass", label: "液态玻璃" },
+                          { value: "uosc", label: "原生（uosc）" },
                         ]}
                         onChange={(v) => onSettings({ playerSkin: v as "uosc" | "glass" })}
                       />

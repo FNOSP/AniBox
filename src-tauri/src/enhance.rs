@@ -92,13 +92,17 @@ pub const SVP_FILES: &[&str] = &[
 fn detect_gpu_name() -> String {
     static GPU: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     GPU.get_or_init(|| {
+        // pwsh 查询显卡；CREATE_NO_WINDOW 仅 Windows（linux/macos 无此方法，lc-2053 CI）
+        #[allow(unused_mut)]
+        let mut cmd = std::process::Command::new("pwsh");
+        cmd.args(["-NoProfile", "-Command",
+            "(Get-ItemProperty 'HKLM:/SYSTEM/CurrentControlSet/Control/Class/{4d36e968-e325-11ce-bfc1-08002be10318}/0*' -ErrorAction SilentlyContinue | Where-Object DriverDesc | Select-Object -ExpandProperty DriverDesc) -join ' | '"]);
         #[cfg(target_os = "windows")]
-        use std::os::windows::process::CommandExt;
-        let out = std::process::Command::new("pwsh")
-            .args(["-NoProfile", "-Command",
-                "(Get-ItemProperty 'HKLM:/SYSTEM/CurrentControlSet/Control/Class/{4d36e968-e325-11ce-bfc1-08002be10318}/0*' -ErrorAction SilentlyContinue | Where-Object DriverDesc | Select-Object -ExpandProperty DriverDesc) -join ' | '"])
-            .creation_flags(0x0800_0000)
-            .output();
+        {
+            use std::os::windows::process::CommandExt as _;
+            cmd.creation_flags(0x0800_0000);
+        }
+        let out = cmd.output();
         let Ok(o) = out else { return String::new() };
         let text = String::from_utf8_lossy(&o.stdout).trim().to_string();
         // 过滤虚拟/远程显示适配器，取第一块真卡
@@ -705,10 +709,12 @@ pub async fn ai_enhance_download(
         return Err("组件包校验失败（SHA-256 不匹配，下载可能损坏）——请重试下载".into());
     }
 
-    // 3) 解压到临时目录（零前台：pwsh CREATE_NO_WINDOW）
+    // 3) 解压到临时目录（零前台：pwsh CREATE_NO_WINDOW；该标志仅 Windows）
     let tmp_dir = std::env::temp_dir().join(format!("anibox-ai-enhance-unzip-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp_dir);
-    let unzip_status = tokio::process::Command::new("pwsh")
+    #[allow(unused_mut)]
+    let mut unzip_cmd = tokio::process::Command::new("pwsh");
+    unzip_cmd
         .arg("-NoProfile")
         .arg("-ExecutionPolicy")
         .arg("Bypass")
@@ -720,8 +726,13 @@ pub async fn ai_enhance_download(
         ))
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .creation_flags(0x0800_0000)
+        .stderr(std::process::Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        // tokio::process::Command 的 creation_flags 是 Windows 固有方法（linux/macos 编译不过）
+        unzip_cmd.creation_flags(0x0800_0000);
+    }
+    let unzip_status = unzip_cmd
         .status()
         .await
         .map_err(|e| format!("启动解压失败: {e}"))?;

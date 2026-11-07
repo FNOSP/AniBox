@@ -33,12 +33,12 @@ use tokio::io::AsyncWriteExt;
 
 use crate::libmpv::trace;
 
-/// 默认更新清单（Gitee 公开 raw，随发版 push 到 release 分支）—— 三源里的第二源。
+/// 默认更新清单（Gitee 公开 raw，随发版 push 到 main 分支）—— 三源里的第二源。
 pub const DEFAULT_MANIFEST_URL: &str =
-    "https://gitee.com/YDMY007/fntv-plus/raw/release/resource/wiki/update-check.json";
-/// 原生 GitHub 清单（AniBox 仓库 release 分支，路径与仓库现状一致：`resource/wiki/update-check.json`）—— 第三源。
+    "https://gitee.com/YDMY007/fntv-plus/raw/main/resource/wiki/update-check.json";
+/// 原生 GitHub 清单（AniBox 仓库 main 分支——清单随仓库默认分支维护：`resource/wiki/update-check.json`）—— 第三源。
 pub const NATIVE_MANIFEST_URL: &str =
-    "https://raw.githubusercontent.com/FNOSP/AniBox/release/resource/wiki/update-check.json";
+    "https://raw.githubusercontent.com/FNOSP/AniBox/main/resource/wiki/update-check.json";
 /// 自建 GitHub 镜像：主址 + workers.dev 兜底。
 pub const DEFAULT_MIRRORS: [&str; 2] = [
     "https://gh.690075.xyz",

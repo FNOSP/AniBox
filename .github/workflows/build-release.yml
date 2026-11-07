@@ -37,7 +37,11 @@ jobs:
             os: ubuntu-22.04
             bundles: deb,rpm,appimage
           - name: macos-arm64
-            os: macos-14
+            # [lc-2072] macos-14 arm64 runner 已被 GitHub 退役（annotation:
+            # "The configuration 'macos-14-arm64-us-default' is not supported"，
+            # v4.1.0 时 10-24 还能用）——排队即自动取消、无 runner 无 steps。
+            # 换 macos-15（Apple Silicon）；x64 继续走 macos-15-intel。
+            os: macos-15
             bundles: dmg
           - name: macos-x64
             os: macos-15-intel

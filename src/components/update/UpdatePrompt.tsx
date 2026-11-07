@@ -15,8 +15,10 @@ import { asText, formatSpeed, versionLabel } from "../../lib/update";
 const STAR_URL = "https://github.com/FNOSP/AniBox";
 
 /** [lc-1776] 极简 markdown → HTML（更新日志渲染；不引入依赖）：
- *  支持标题/加粗/行内代码/无序列表/引用/水平线/链接/表格；其余按段落文本。
- *  先整体转义，再做行内替换，杜绝日志内容注入 HTML。 */
+ *  支持标题/加粗/斜体/行内代码/有序与无序列表/引用（多行合并）/水平线/链接/表格；其余按段落文本。
+ *  先整体转义，再做行内替换，杜绝日志内容注入 HTML。
+ *  [lc-2073] 增强：连续 blockquote 行合并为一个引用块；有序列表；
+ *  跳过首个 `# ` 文档级标题（与弹窗头部的「发现新版本」重复）。 */
 function escHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -24,38 +26,75 @@ function inlineMd(s: string): string {
   return escHtml(s)
     .replace(/`([^`]+)`/g, '<code class="upx-md-code">$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    // 斜体：*x* 与 _x_（在加粗之后处理，避免吃掉成对 **）；前后须为行首/空白/标点，防误伤 a*b*c
+    .replace(/(^|[\s（(【「,，。；;：:])\*([^*\s][^*]*)\*(?=$|[\s）)】」,，。；;：:.!?？])/g, "$1<em>$2</em>")
+    .replace(/(^|[\s（(【「,，。；;：:])_([^_\s][^_]*)_(?=$|[\s）)】」,，。；;：:.!?？])/g, "$1<em>$2</em>")
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 }
 function mdToHtml(md: string): string {
   const lines = md.replace(/\r/g, "").split("\n");
   const out: string[] = [];
-  let inList = false;
+  let inList: "" | "ul" | "ol" = "";
   let tableRows: string[][] = [];
-  const flushList = () => { if (inList) { out.push("</ul>"); inList = false; } };
+  let quoteBuf: string[] = [];
+  let skippedDocTitle = false;
+  const flushList = () => {
+    if (inList === "ul") out.push("</ul>");
+    else if (inList === "ol") out.push("</ol>");
+    inList = "";
+  };
+  const flushQuote = () => {
+    if (!quoteBuf.length) return;
+    out.push(`<blockquote class="upx-md-quote">${quoteBuf.map(inlineMd).join("<br />")}</blockquote>`);
+    quoteBuf = [];
+  };
   const flushTable = () => {
     if (!tableRows.length) return;
     const rows = tableRows.filter((r) => !r.every((c) => /^-{2,}$/.test(c.trim().replace(/\|/g, "")) || c.trim() === ""));
     if (rows.length) {
       const th = rows[0].map((c) => `<th>${inlineMd(c.trim())}</th>`).join("");
       const trs = rows.slice(1).map((r) => `<tr>${r.map((c) => `<td>${inlineMd(c.trim())}</td>`).join("")}</tr>`).join("");
-      out.push(`<table class="upx-md-table"><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`);
+      out.push(`<div class="upx-md-twrap"><table class="upx-md-table"><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table></div>`);
     }
     tableRows = [];
   };
   for (const line of lines) {
     const t = line.trim();
-    if (/^\|.*\|$/.test(t)) { flushList(); tableRows.push(t.slice(1, -1).split("|")); continue; }
+    if (/^\|.*\|$/.test(t)) { flushList(); flushQuote(); tableRows.push(t.slice(1, -1).split("|")); continue; }
     flushTable();
-    if (!t) { flushList(); continue; }
+    if (!t) { flushList(); flushQuote(); continue; }
     const h = /^(#{1,4})\s+(.*)$/.exec(t);
-    if (h) { flushList(); const lv = Math.min(h[1].length + 1, 5); out.push(`<h${lv} class="upx-md-h">${inlineMd(h[2])}</h${lv}>`); continue; }
-    if (/^(---+|\*\*\*+)$/.test(t)) { flushList(); out.push('<hr class="upx-md-hr" />'); continue; }
-    if (t.startsWith("> ")) { flushList(); out.push(`<blockquote class="upx-md-quote">${inlineMd(t.slice(2))}</blockquote>`); continue; }
-    if (/^[-*+]\s+/.test(t)) { if (!inList) { out.push('<ul class="upx-md-ul">'); inList = true; } out.push(`<li>${inlineMd(t.replace(/^[-*+]\s+/, ""))}</li>`); continue; }
+    if (h) {
+      flushList(); flushQuote();
+      // [lc-2073] 文档级 h1（「# AniBox 更新日志」）与弹窗头部标题重复 → 跳过首个
+      if (h[1].length === 1 && !skippedDocTitle) { skippedDocTitle = true; continue; }
+      const lv = Math.min(h[1].length + 1, 5);
+      out.push(`<h${lv} class="upx-md-h upx-md-h${lv}">${inlineMd(h[2])}</h${lv}>`);
+      continue;
+    }
+    if (/^(---+|\*\*\*+)$/.test(t)) { flushList(); flushQuote(); out.push('<hr class="upx-md-hr" />'); continue; }
+    if (t.startsWith(">")) {
+      flushList();
+      // [lc-2073] 连续引用行合并为一个 blockquote（多段说明不再碎成一串小块）
+      quoteBuf.push(t.replace(/^>\s?/, ""));
+      continue;
+    }
+    flushQuote();
+    const ol = /^(\d{1,2})[.)]\s+(.*)$/.exec(t);
+    if (ol) {
+      if (inList !== "ol") { flushList(); out.push('<ol class="upx-md-ol">'); inList = "ol"; }
+      out.push(`<li>${inlineMd(ol[2])}</li>`);
+      continue;
+    }
+    if (/^[-*+]\s+/.test(t)) {
+      if (inList !== "ul") { flushList(); out.push('<ul class="upx-md-ul">'); inList = "ul"; }
+      out.push(`<li>${inlineMd(t.replace(/^[-*+]\s+/, ""))}</li>`);
+      continue;
+    }
     flushList();
     out.push(`<p class="upx-md-p">${inlineMd(t)}</p>`);
   }
-  flushList(); flushTable();
+  flushList(); flushQuote(); flushTable();
   return out.join("\n");
 }
 

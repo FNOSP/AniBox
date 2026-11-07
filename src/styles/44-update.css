@@ -129,16 +129,27 @@ html.dark .upx-chip.hot {
   padding: 14px 22px;
   overscroll-behavior: contain;
 }
-.upx-md :where(h2, h3, h4, h5) { margin: 12px 0 6px; font-size: 14px; font-weight: 700; color: var(--text-strong); }
+/* [lc-2073] 标题分级：## → h3（分节大标题）、### → h4（小节）、其余 h5 —— 此前全一个
+   字号，长 changelog 观感与原文无异 */
+.upx-md :where(h3) { margin: 14px 0 6px; font-size: 14px; font-weight: 700; color: var(--text-strong); }
+.upx-md :where(h4) { margin: 10px 0 5px; font-size: 12.5px; font-weight: 700; color: var(--text-strong); }
+.upx-md :where(h5) { margin: 8px 0 4px; font-size: 12px; font-weight: 600; color: var(--text-strong); }
+.upx-md :where(h3, h4, h5):first-child { margin-top: 0; }
 .upx-md .upx-md-p { margin: 4px 0; }
-.upx-md .upx-md-ul { margin: 4px 0 4px 18px; padding: 0; }
-.upx-md .upx-md-ul li { margin: 2px 0; }
-.upx-md .upx-md-quote { margin: 6px 0; padding: 4px 10px; border-left: 3px solid var(--accent); color: var(--muted); }
+.upx-md .upx-md-ul, .upx-md .upx-md-ol { margin: 4px 0 4px 18px; padding: 0; }
+.upx-md .upx-md-ul li, .upx-md .upx-md-ol li { margin: 2px 0; }
+.upx-md em { font-style: italic; color: var(--muted); }
+.upx-md .upx-md-quote { margin: 6px 0; padding: 6px 10px; border-left: 3px solid var(--accent); background: var(--hover); border-radius: 0 8px 8px 0; color: var(--muted); }
+.upx-md .upx-md-quote p { margin: 2px 0; }
 .upx-md .upx-md-code { background: var(--hover); border-radius: 4px; padding: 0 4px; font-family: Consolas, monospace; font-size: 11px; }
 .upx-md .upx-md-hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
-.upx-md .upx-md-table { border-collapse: collapse; margin: 8px 0; font-size: 12px; }
-.upx-md .upx-md-table th, .upx-md .upx-md-table td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; }
-.upx-md .upx-md-table th { background: var(--hover); font-weight: 600; }
+/* 表格宽于弹窗时横向滚动（4.x notes 的「支持平台」表格列多），不撑破容器 */
+.upx-md .upx-md-twrap { overflow-x: auto; margin: 8px 0; }
+.upx-md .upx-md-table { border-collapse: collapse; margin: 0; font-size: 12px; min-width: 100%; }
+.upx-md .upx-md-table th, .upx-md .upx-md-table td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
+.upx-md .upx-md-table th { background: var(--hover); font-weight: 600; white-space: nowrap; }
+.upx-md .upx-md-table td { word-break: break-word; }
+.upx-md .upx-md-table tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--hover) 45%, transparent); }
 .upx-md a { color: var(--accent); }
 
 .upx-notes {

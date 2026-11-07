@@ -14,7 +14,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: build-release-${{ github.event.inputs.tag }}
+  # [lc-2072] group 按 run_id 唯一：原先按 tag 分组，同 tag 的多个 run/重跑之间会
+  # 互相顶掉**排队中**的 job（cancel-in-progress: false 只保护 in-progress，不保护
+  # queued——同组里出现更新的排队项时，旧的排队项被自动取消）。实测 v4.2.0 的
+  # macos-arm64 连续四次在分配 runner 前被取消（steps 为空、无 runner），即此机制。
+  # dispatch 本就是人工单发，按 run_id 分组既能防重名冲突又永不自撞。
+  group: build-release-${{ github.run_id }}
   cancel-in-progress: false
 
 env:

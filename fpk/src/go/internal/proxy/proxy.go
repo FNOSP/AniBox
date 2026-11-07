@@ -233,8 +233,12 @@ func makeProxy(d Deps, strip string) http.HandlerFunc {
 		// 就会跳出 /app/fntvplus → 落到原生页面、增强失效（强制刷新触发路径漂移的来源之一）。
 		// [访问码] 访问码/登录链（上游 302 → /login?redirect=/v/ 等）同样会跳出命名空间，
 		// 登录完成后按 redirect 参数落在裸 /v/（用户报障「输完访问码登录后变成原始网页」）。
-		// 因此同源目标全部拉回命名空间并同步改写回跳参数；仅网关前缀请求需要改写，
-		// 端口直连模式（strip == ""）同端口自洽，无需处理。
+		// 因此同源目标全部拉回命名空间并同步改写回跳参数。
+		//
+		// [lc-2055] 端口直连模式**并非**「同端口自洽，无需处理」：上游一旦发绝对地址
+		// （http://<上游host>:<上游port>/v/，历史版本实测发过），浏览器照单全收就会跳出
+		// 本端口 → 落到无增强的原生影视页，用户表现为「登录完跳出去了/还是原始网页」。
+		// 故同源目标一律拉回**相对路径**，把浏览器留在本端口。
 		if strip != "" {
 			switch resp.StatusCode {
 			case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
@@ -245,6 +249,20 @@ func makeProxy(d Deps, strip string) http.HandlerFunc {
 					}
 				}
 			}
+		} else {
+			switch resp.StatusCode {
+			case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+				if loc := resp.Header.Get("Location"); loc != "" {
+					if rewritten := directLocation(loc, upstream.Host, r.Host); rewritten != loc {
+						resp.Header.Set("Location", rewritten)
+						log.Printf("[fntv-proxy] rewrite redirect (direct): %s -> %s", loc, rewritten)
+					}
+				}
+			}
+			// [lc-2055] Cookie 放宽：上游若按 https 习惯下发 Secure / 带 Domain 的 Cookie，
+			// 浏览器在 http 的 IP:端口 源上**不存也不发** → 登录后仍无会话、反复要求登录。
+			// 剥掉 Secure 与 Domain（落成 host-only），保证「登录一次后浏览器记住」。
+			relaxSetCookieForDirect(resp.Header)
 		}
 
 		ct := resp.Header.Get("Content-Type")
@@ -381,6 +399,57 @@ func singleJoiningSlash(a, b string) string {
 // isVPath 是否影视页命名空间路径（/v 或 /v/*）。
 func isVPath(p string) bool {
 	return p == "/v" || strings.HasPrefix(p, "/v/")
+}
+
+// directLocation 端口直连模式的重定向改写：同源（上游主机 / 请求主机）的绝对地址
+// 拉回相对路径，把浏览器留在本端口；跨主机目标（外部 OAuth 等）原样返回。
+// 已是相对路径的 Location 不动（u.Host == ""）。
+func directLocation(loc, upstreamHost, requestHost string) string {
+	u, err := url.Parse(loc)
+	if err != nil || u.Host == "" {
+		return loc
+	}
+	if !sameHostname(u.Host, upstreamHost) && !sameHostname(u.Host, requestHost) {
+		return loc // 跨主机目标不动
+	}
+	out := u.Path
+	if out == "" {
+		out = "/"
+	}
+	if u.RawQuery != "" {
+		out += "?" + u.RawQuery
+	}
+	if u.Fragment != "" {
+		out += "#" + u.Fragment
+	}
+	return out
+}
+
+// relaxSetCookieForDirect 端口直连模式下放宽上游 Cookie 属性（就地修改 header）：
+//   - 剥 Secure：上游可能按 https 习惯下发 Secure Cookie，而端口直连是 http 源，
+//     浏览器对 http 源不存也不发 Secure Cookie → 用户登录后仍无会话、反复要求登录；
+//   - 剥 Domain：落成 host-only，确保 Cookie 严格落在用户当前访问的主机上
+//     （Domain 指向别的域时浏览器会直接拒收）。
+func relaxSetCookieForDirect(h http.Header) {
+	vals := h.Values("Set-Cookie")
+	for i, raw := range vals {
+		sc, err := http.ParseSetCookie(raw)
+		if err != nil || sc == nil {
+			continue
+		}
+		changed := false
+		if sc.Secure {
+			sc.Secure = false
+			changed = true
+		}
+		if sc.Domain != "" {
+			sc.Domain = ""
+			changed = true
+		}
+		if changed {
+			vals[i] = sc.String()
+		}
+	}
 }
 
 // sameHostname 判断两个 host[:port] 是否同一主机（忽略端口差异，做小写归一）。

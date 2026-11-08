@@ -354,7 +354,11 @@ pub async fn launch(
     ));
     match kind.as_str() {
         "mpv" => {
-            let r = launch_mpv(app, state, cfg, url, title, resume_secs, duration_secs, headers, playlist_start).await;
+            let r = launch_mpv(
+                app, state, cfg, url, title, resume_secs, duration_secs, headers, playlist_start,
+                direct,
+            )
+            .await;
             // [lc-2057] 起播成功后才隐藏主窗（失败要让用户看见错误），并盯进程退出恢复。
             if r.is_ok() && cfg.hide_main_on_play {
                 hide_main_window(app);
@@ -399,6 +403,7 @@ async fn launch_mpv(
     duration_secs: f64,
     headers: Option<&HttpHeaders>,
     playlist_start: Option<usize>,
+    direct: bool,
 ) -> Result<(), String> {
     let mut extra = match headers {
         Some(h) if h.needs_relay() => {
@@ -410,6 +415,16 @@ async fn launch_mpv(
     // 与「先启动再 IPC jump」不同，起播零 IPC 依赖（启动期 IPC 会卡数秒，见 lib.rs lc-1559）。
     if let Some(idx) = playlist_start {
         extra.push(format!("--playlist-start={idx}"));
+    }
+    // [lc-2093] 直播/直链网络流抗卡顿缓存：mpv 对直播流默认只预读 **1 秒**
+    // （demuxer-readahead-secs 默认 1），网络一抖就「播一两秒 → 停下缓冲一会」。
+    // 预读提到 15 秒 + lavf 层断线自动重连；点播/本地文件同样无害（点播多缓冲只会
+    // 更稳，内存仍由 demuxer-max-bytes 默认 150MiB 封顶；本地文件这两个选项无感知）。
+    if direct {
+        extra.push("--demuxer-readahead-secs=15".into());
+        extra.push(
+            "--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5".into(),
+        );
     }
     // [lc-1841] 续播点兜底：mpv 的 watch-later 在 Windows 强杀退出时会丢（见
     // mpv.rs shutdown 注释），显式 --start 用服务端进度保底起播；mpv.rs 会在首个
@@ -462,6 +477,21 @@ async fn launch_mpv(
                 // 库内播放：清掉上一部在线源可能残留的头（fire-and-forget，不拖起播）。
                 m.command_no_reply(json!(["set", "referrer", ""])).await;
                 m.command_no_reply(json!(["set", "http-header-fields", ""]))
+                    .await;
+            }
+            // [lc-2093] 复用会话播直播/直链：把缓存参数补写进会话（命令行参数只在首启
+            // 生效；先看点播后看直播的场景就靠这里补齐）。readahead 是运行时可设项；
+            // stream-lavf-o 个别版本不可运行时设置时静默失败（readahead 才是主旋钮）。
+            if direct {
+                let _ = m
+                    .command(json!(["set", "demuxer-readahead-secs", 15]))
+                    .await;
+                let _ = m
+                    .command(json!([
+                        "set",
+                        "stream-lavf-o",
+                        "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5"
+                    ]))
                     .await;
             }
             // [lc-1841] 复用会话的续播点：loadfile 前把 start 写成进度（加载时消费），

@@ -1130,6 +1130,30 @@ html.dark .dlib-pane {
   color: #fff;
 }
 
+/* 频道搜索（同短剧栏 .dj-search 的玻璃胶囊；推到 chips 行行尾，频道全在本地、输入即过滤） */
+.dip-search {
+  flex: 0 0 180px;
+  height: 30px;
+  margin-left: auto;
+  padding: 0 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  color: var(--text-strong);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.16s;
+}
+
+.dip-search:focus {
+  border-color: var(--accent);
+}
+
+.dip-search::placeholder {
+  color: var(--muted);
+}
+
 /* 过期缓存 / 起播失败的内联提示（橙色同 .dlib-ov-v.orange 口径） */
 .dip-hint {
   font-size: 12px;

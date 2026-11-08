@@ -80,6 +80,11 @@ fn parse_m3u(text: &str) -> Vec<Value> {
                 let g = ext_attr(attrs, "group-title");
                 if g.is_empty() { "其他".to_string() } else { g }
             };
+            // 上游把「更新时间」元数据也伪装成一个分组（内含一条无关 mp4）—— 不是频道，滤掉
+            if group == "更新时间" {
+                cur = None;
+                continue;
+            }
             cur = Some((name, logo, group));
             continue;
         }
@@ -196,10 +201,11 @@ mod tests {
             "#EXTINF:-1 tvg-name=\"CCTV1\" tvg-logo=\"http://l/cctv1-b.png\" group-title=\"央视频道\", CCTV1\nhttp://a/2.m3u8\n",
             "#EXTINF:-1 tvg-name=\"BTV\" group-title=\"卫视频道\", 北京卫视\nhttp://b/1.m3u8\n",
             "#EXTINF:-1 tvg-name=\"X\", 无台标台\nhttp://c/1.m3u8\n",
+            "#EXTINF:-1 tvg-name=\"2026-11-08 18:26\" tvg-id=\"更新时间\" group-title=\"更新时间\", 2026-11-08 18:26\nhttp://junk/x.mp4\n",
             "#EXTVLCOPT:http-user-agent=ok\n",
         );
         let groups = parse_m3u(m3u);
-        assert_eq!(groups.len(), 3); // 央视 / 卫视 / 其他（无 group-title 兜底）
+        assert_eq!(groups.len(), 3); // 央视 / 卫视 / 其他（无 group-title 兜底；「更新时间」垃圾组已滤）
         assert_eq!(groups[0]["name"], "央视频道");
         let chs = groups[0]["channels"].as_array().unwrap();
         assert_eq!(chs.len(), 1, "同组同名只留第一条");

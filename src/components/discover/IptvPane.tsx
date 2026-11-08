@@ -49,6 +49,7 @@ export function IptvPane({ active }: { active: boolean }) {
   const [err, setErr] = useState("");
   const [nonce, setNonce] = useState(0);
   const [group, setGroup] = useState(""); // 当前分组（"" = 全部）
+  const [term, setTerm] = useState(""); // 频道名过滤（本地即时过滤；Esc 清空）
   const [playing, setPlaying] = useState(""); // 正在起播的频道名（点击反馈 + 防重复点击）
   const [playErr, setPlayErr] = useState(""); // 起播失败：内联提示，**不**顶掉已加载的频道列表
 
@@ -77,8 +78,10 @@ export function IptvPane({ active }: { active: boolean }) {
 
   const rows = useMemo(() => {
     const pick = group ? groups.filter((g) => g.name === group) : groups;
-    return pick.flatMap((g) => g.channels);
-  }, [groups, group]);
+    const all = pick.flatMap((g) => g.channels);
+    const t = term.trim().toLowerCase();
+    return t ? all.filter((c) => c.name.toLowerCase().includes(t)) : all;
+  }, [groups, group, term]);
 
   async function play(ch: IptvChan) {
     if (playing) return;
@@ -123,12 +126,29 @@ export function IptvPane({ active }: { active: boolean }) {
             {g.name}
           </button>
         ))}
+        {/* 频道搜索（同短剧栏的玻璃胶囊输入框；频道全在本地 → 输入即过滤，Esc 清空） */}
+        <input
+          className="dip-search"
+          placeholder="搜索频道"
+          value={term}
+          onChange={(e) => setTerm(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setTerm("");
+          }}
+        />
       </div>
       {/* 内联提示（过期缓存 / 起播失败）：一行带过，不抢内容区 */}
       {stale && <div className="dip-hint">直播源暂时拉不到最新，显示的是缓存数据</div>}
       {playErr && <div className="dip-hint">{playErr}</div>}
-      <div className="dip-grid">
-        {rows.map((ch, i) => (
+      {rows.length === 0 ? (
+        <DState
+          err=""
+          emptyText={term.trim() ? `未找到与「${term.trim()}」相关的频道` : "该分组暂无频道"}
+          onRetry={() => {}}
+        />
+      ) : (
+        <div className="dip-grid">
+          {rows.map((ch, i) => (
           <button
             key={`${i}-${ch.url}`}
             type="button"
@@ -144,8 +164,9 @@ export function IptvPane({ active }: { active: boolean }) {
             </span>
             <span className="dip-name">{ch.name}</span>
           </button>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
       {/* 底行：GPL-3.0 来源注明（vbskycn/iptv 要求引用注明来源）+ 数据更新时间 */}
       <div className="dip-src">
         <span>直播源数据 vbskycn/iptv（GPL-3.0）</span>

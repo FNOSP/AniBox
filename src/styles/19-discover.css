@@ -1104,19 +1104,13 @@ html.dark .dlib-pane {
   gap: 10px;
 }
 
-/* 分组 chips：吸顶（434 个频道滚下去分组不丢）——负边距吃掉 .dscroll 的 20px 内边距全宽铺，
-   玻璃底与栏头胶囊同一套材质 */
+/* 分组 chips：普通一行（与短剧 .dj-chips 同做法）。
+   lc-2087b：曾做「吸顶 + 全宽玻璃底」，但半透明矩形压在滚过的卡片上像一块遮罩（用户要求去掉）
+   —— 撤掉吸顶与背景，chips 自身就是玻璃胶囊，无需容器底色。 */
 .dip-chips {
-  position: sticky;
-  top: 0;
-  z-index: 2;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin: 0 -20px 4px;
-  padding: 10px 20px 8px;
-  background: var(--bg-2);
-  backdrop-filter: blur(14px);
 }
 
 .dip-chip {

@@ -117,3 +117,20 @@ export function pickLargestImg(v: unknown): string | undefined {
 
 /** 库内容加载：库根=ancestor 查询（Episode 由服务端白名单滤掉）；文件夹钻取=parent 查询。
  *  形状依据见 lib.rs get_items 注释（实测：库根传 parent_guid=库guid 返回 0 条，勿兜底）。 */
+
+/** [lc-2081] 短剧封面：任意站源的 http(s) 封面走 fntvimg `/__dj/*` 代理（base64url 全
+ *  URL 进路径段）。三重必要：① 封面域名随站源数十个，代理统一落盘缓存；② 红果封面是
+ *  `.heic`（WebView2 不支持解码），代理侧转 JPEG（heic.rs）；③ 免 Referer 防盗链差异。
+ *  非外链（空/协议相对/本地协议）原样返回，与 imgUrl 的幂等口径一致。 */
+export function djImg(u?: string | null): string {
+  const s = String(u ?? "").trim();
+  if (!/^https?:\/\//i.test(s)) return s;
+  const bytes = new TextEncoder().encode(s);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  const b64 = btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const base = navigator.userAgent.includes("Windows")
+    ? "http://fntvimg.localhost"
+    : "fntvimg://localhost";
+  return `${base}/__dj/${b64}`;
+}

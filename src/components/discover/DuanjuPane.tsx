@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { DState } from "./shared";
+import { djImg } from "../../lib/images";
 import { X as IcoXL } from "lucide-react";
 
 type DuanjuDrama = {
@@ -265,7 +266,7 @@ export function DuanjuPane() {
               <button key={d.id} type="button" className="dj-card" onClick={() => openDetail(d)}>
                 <span className="dj-poster">
                   {d.cover ? (
-                    <img src={d.cover} alt="" loading="lazy" draggable={false} />
+                    <img src={djImg(d.cover)} alt="" loading="lazy" draggable={false} />
                   ) : (
                     <span className="dj-ph" aria-hidden="true" />
                   )}
@@ -316,7 +317,7 @@ export function DuanjuPane() {
                   </button>
                   <div className="dj-dhead">
                     {detail.drama?.cover && (
-                      <img className="dj-dposter" src={detail.drama.cover} alt="" draggable={false} />
+                      <img className="dj-dposter" src={djImg(detail.drama.cover)} alt="" draggable={false} />
                     )}
                     <div className="dj-dinfo">
                       <div className="dj-dtitle">{detail.drama?.title}</div>

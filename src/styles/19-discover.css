@@ -3050,8 +3050,8 @@ button.arc-card:hover .arc-cv {
   display: grid;
   place-items: center;
   padding: 16px;
-  background: color-mix(in srgb, var(--bg) 62%, transparent);
-  backdrop-filter: blur(6px);
+  background: rgba(10, 14, 30, 0.45);
+  backdrop-filter: blur(2px);
 }
 
 .dj-detail {
@@ -3064,7 +3064,8 @@ button.arc-card:hover .arc-cv {
   padding: 18px;
   border: 1px solid var(--glass-border);
   border-radius: 14px;
-  background: var(--glass-bg);
+  background: var(--panel);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
   overflow: hidden;
   overflow-y: auto;
 }

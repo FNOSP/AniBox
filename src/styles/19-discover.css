@@ -1235,8 +1235,9 @@ html.dark .dip-hint {
 }
 
 /* 收藏星标：裸星无底，投影保证在深浅台标上都可见；点它只切换收藏（stopPropagation），
-   不触发起播。实心 = .rating-ico.fill（项目既有）。lc-2094：挪到左上角；
-   收藏态用暖橙 #f76b15（与 IPTV 源渐变同族的 Radix orange 9，深浅主题都够亮）。 */
+   不触发起播。实心 = .rating-ico.fill（项目既有）。lc-2094：挪到左上角。
+   lc-2095（用户澄清）：收藏实心仍是金黄 --gold 不动；改的是**未收藏的描边色** ——
+   白→暖橙 #f76b15（与金黄同族、浅色台标上清晰、暗示可点收藏）。 */
 .dip-fav {
   position: absolute;
   top: 6px;
@@ -1249,7 +1250,7 @@ html.dark .dip-hint {
   padding: 0;
   border: none;
   background: none;
-  color: rgba(255, 255, 255, 0.92);
+  color: #f76b15;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
   cursor: pointer;
   transition: color 0.16s, transform 0.16s;
@@ -1260,7 +1261,7 @@ html.dark .dip-hint {
 }
 
 .dip-fav.on {
-  color: #f76b15;
+  color: var(--gold);
 }
 
 .dip-name {

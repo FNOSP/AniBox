@@ -55,6 +55,8 @@ mod libmpv;
 mod libcover;
 // [lc-1701] 演员页「入库状态」：作品批量与飞牛媒体库比对（强标识 + 归一化标题/年份）
 mod libmatch;
+// [lc-2081] HEIC 封面解码（短剧车道，libde265 随包 DLL）
+mod heic;
 mod imgproto;
 mod migrate;
 // [lc-1720] 手动获取元数据：本地按剧 guid 覆盖飞牛返回（不写飞牛）

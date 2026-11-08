@@ -103,6 +103,23 @@ fn resolve_target(path: &str) -> Result<Target, (u16, String)> {
     if path.is_empty() || path == "/" {
         return Err((400, "missing path".into()));
     }
+    if let Some(rest) = path.strip_prefix("/__dj/") {
+        // [lc-2081] 短剧封面：任意 http(s) 图片 URL（base64url 编码进路径段）。
+        // 封面域名随站源数十个且多为 heic（红果），统一走本代理：免混合内容拦截 +
+        // 落盘缓存 + HEIC→JPEG 转码（heic.rs）。
+        use base64::Engine as _;
+        let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(rest)
+            .map_err(|_| (400, "bad dj cover encoding".to_string()))?;
+        let url = String::from_utf8(decoded).map_err(|_| (400, "bad dj cover url".to_string()))?;
+        if !(url.starts_with("https://") || url.starts_with("http://")) {
+            return Err((400, "bad dj cover scheme".into()));
+        }
+        return Ok(Target::Public {
+            key: format!("img:dj:{rest}"),
+            url,
+        });
+    }
     if let Some(rest) = path.strip_prefix("/__tmdb/") {
         if !safe_rel(rest) {
             return Err((400, "bad tmdb path".into()));
@@ -166,14 +183,36 @@ fn cached_response(ct: &str, bytes: Vec<u8>) -> Response<Vec<u8>> {
 }
 
 /// 免鉴权图片上游（TMDB 镜像 / Bangumi）：内存 → 磁盘 → 网络，成功即落盘。
-async fn proxy_public(key: &str, url: &str) -> Response<Vec<u8>> {
+async fn proxy_public(app: AppHandle, key: &str, url: &str) -> Response<Vec<u8>> {
     if let Some((ct, bytes)) = disk_cache::get(key) {
         return cached_response(&ct, bytes);
     }
-    let (ct, bytes) = match fetch_public_image(url).await {
+    let (mut ct, mut bytes) = match fetch_public_image(url).await {
         Ok(v) => v,
         Err((status, msg)) => return plain(status, &msg),
     };
+    // [lc-2081] HEIC 封面转码：红果等站源的封面是 image/heic（WebView2 不支持解码）。
+    // 解码失败（libde265 缺失等）原样透传——前端按裂图占位，绝不 500。
+    if ct.contains("heic") || crate::heic::is_heic(&bytes) {
+        match tokio::task::spawn_blocking({
+            let bytes = bytes.clone();
+            move || crate::heic::heic_to_jpeg(&app, &bytes)
+        })
+        .await
+        {
+            Ok(Some(jpeg)) if !jpeg.is_empty() => {
+                crate::libmpv::trace(&format!(
+                    "[img] HEIC→JPEG {} 字节 → {} 字节（{key}）",
+                    bytes.len(),
+                    jpeg.len()
+                ));
+                ct = "image/jpeg".to_string();
+                bytes = jpeg;
+            }
+            Ok(Some(_)) | Err(_) => {}
+            _ => {}
+        }
+    }
     disk_cache::put(key, &ct, &bytes);
     crate::libmpv::trace(&format!("[img] MISS {key} → {} 字节（已落盘）", bytes.len()));
     Response::builder()
@@ -231,7 +270,7 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
     let (key, nas_path) = match target {
         Target::Public { key, url } => {
             // 免鉴权上游：不需要登录/配置，命中缓存直接返回（绝不重复请求）
-            return proxy_public(&key, &url).await;
+            return proxy_public(app, &key, &url).await;
         }
         Target::Local(name) => {
             // [library-cover] 本机封面副本：直接读盘返回（无需登录/网络）。

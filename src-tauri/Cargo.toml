@@ -37,6 +37,8 @@ urlencoding = "2"
 sha1 = "0.10"
 sha2 = "0.10"
 base64 = "0.22"
+# [lc-2081] 短剧封面 HEIC→JPEG 转码的编码端（解码走随包 libde265 DLL，见 heic.rs）
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # [访问码加密] config.json 的 access_code 落盘为 AES-256-GCM 密文（enc:v1:<base64>）。
 # 只新增 aes-gcm 一个 crate（aes/ghash/aead 均为轻量纯 Rust 实现），不引入重型依赖。
 aes-gcm = "0.10"

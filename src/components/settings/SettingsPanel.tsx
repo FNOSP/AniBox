@@ -1835,6 +1835,30 @@ export function SettingsPanel({
                       />
                     </div>
                   )}
+                  {/* [lc-2075] 玻璃模糊：个别显卡/驱动上该 shader 的输出中间 pass 会把画面整体染偏
+                      （用户反馈「画面发蓝」，原生皮肤无此现象）。关掉后玻璃面板失去磨砂质感，
+                      渲染路径与原生皮肤完全一致。 */}
+                  {playerKind === "mpv" && (settings.playerSkin ?? "glass") === "glass" && (
+                    <div className="set-row">
+                      <div>
+                        <span className="set-k">玻璃模糊</span>
+                        <div className="set-desc">
+                          玻璃面板后面的画面磨砂效果。若播放画面整体偏色（如发蓝），
+                          关闭后即可恢复。
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className={`set-sw${settings.playerGlassBlur ?? true ? " on" : ""}`}
+                        aria-pressed={settings.playerGlassBlur ?? true}
+                        aria-label="玻璃模糊"
+                        disabled={busy}
+                        onClick={() =>
+                          onSettings({ playerGlassBlur: !(settings.playerGlassBlur ?? true) })
+                        }
+                      />
+                    </div>
+                  )}
                   {/* [lc-1802] 着色器：默认空（不着色器）；预设与播放器内 Ctrl+1~6 一致，两边互相同步 */}
                   <div className="set-row">
                     <div>

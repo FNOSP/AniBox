@@ -23,6 +23,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hideMainOnPlay: false,
   // [lc-2048] 默认液态玻璃（与 Rust 侧 default_player_skin 同口径）
   playerSkin: "glass",
+  // [lc-2075] 玻璃模糊默认开（与 Rust 侧 player_glass_blur 同口径）
+  playerGlassBlur: true,
   // 界面不透明度（百分比）：默认 85，范围 60–100（Rust 侧 set_settings 同口径 clamp）
   uiOpacity: 85,
 };

@@ -557,6 +557,9 @@ export type AppSettings = {
   hideMainOnPlay?: boolean;
   /** [lc-2002] 播放器皮肤：uosc（原生，默认）/ glass（ModernGlass 液态玻璃） */
   playerSkin?: "uosc" | "glass";
+  /** [lc-2075] 玻璃模糊：玻璃面板后面视频的磨砂模糊（glass_blur）。个别显卡/驱动上
+   *  该 shader 的输出中间 pass 会整体偏色（画面发蓝），关掉即恢复与原生皮肤相同的渲染路径。 */
+  playerGlassBlur?: boolean;
   /** [player] PotPlayer 可执行文件路径；空串 = 播放时自动探测常见安装路径 */
   potplayerPath?: string;
   /** [lc-1561] 自建弹幕接口（danmu_api）开关 —— 对齐主仓库同名设置 */

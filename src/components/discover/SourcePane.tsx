@@ -689,7 +689,10 @@ export function SourcePane({
             ))}
             {/* 源徽标后的浅字说明（用户要求）：IPTV/短剧是测试功能 + 版权风险规避
                 （第三方公开渠道、本应用不存储）+ 预留下线余地 */}
-            <span className="dlib-note">
+            <span
+              className="dlib-note"
+              title="IPTV 与短剧为测试功能，内容来自第三方公开渠道，本应用不存储任何节目，可能随时下线"
+            >
               IPTV 与短剧为测试功能，内容来自第三方公开渠道，本应用不存储任何节目，可能随时下线
             </span>
           </div>

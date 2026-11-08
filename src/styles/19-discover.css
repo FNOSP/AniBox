@@ -996,7 +996,9 @@ html.dark .dlib-pane {
   display: flex;
   align-items: center;
   gap: 9px;
-  flex-wrap: wrap;
+  /* 徽标 + 免责说明**永远同一行**（lc-2086）：nowrap —— 徽标不缩，说明文字不够宽时
+     省略号截断（hover 有完整全文），绝不把说明挤到第二行 */
+  flex-wrap: nowrap;
 }
 
 .dlib-row2 {

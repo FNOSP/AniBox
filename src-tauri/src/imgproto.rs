@@ -407,7 +407,27 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
 
 #[cfg(test)]
 mod tests {
-    use super::{bgm_img_url, fetch_public_image, public_client, BGM_IMG_BASE, BGM_MIRROR_BASE, TMDB_IMG_BASE};
+    use super::{bgm_img_url, fetch_public_image, public_client, resolve_target, BGM_IMG_BASE, BGM_MIRROR_BASE, TMDB_IMG_BASE};
+
+    /// [lc-2091] /__dj/ 路由：base64url 还原 + 仅放行 http(s)。
+    #[test]
+    fn dj_route_roundtrip_and_scheme_gate() {
+        use base64::Engine as _;
+        let url = "https://p3-reading-sign.fqnovelpic.com/novel-pic/abc~tplv-x:400:0.heic?x-signature=Ba%2B2";
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(url.as_bytes());
+        let path = format!("/__dj/{b64}");
+        match resolve_target(&path) {
+            Ok(super::Target::Public { key, url: got }) => {
+                assert_eq!(got, url);
+                assert!(key.starts_with("img:dj:"));
+            }
+            _ => panic!("__dj 应解析为 Public"),
+        }
+        // 非 http(s) 一律拒绝
+        let evil = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"file:///c:/windows/win.ini");
+        assert!(resolve_target(&format!("/__dj/{evil}")).is_err(), "file:// 必须拒绝");
+        assert!(resolve_target("/__dj/!!!not-base64!!!").is_err(), "非法编码必须拒绝");
+    }
 
     /// 真机冒烟（**默认忽略**）：
     ///   FNTV_TMDB_SECRET=<值> FNTV_BGM_SECRET=<值> cargo test --lib imgproto::tests::live_public_image_upstreams_work -- --ignored --nocapture

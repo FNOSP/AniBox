@@ -6,6 +6,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Tv as IcoTv } from "lucide-react";
 import { DState } from "./shared";
 
 type IptvChan = { name: string; logo: string; url: string };
@@ -18,6 +19,26 @@ function timeLabel(ts: number | undefined): string {
   if (!ts) return "";
   const d = new Date(ts);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/** 台标：只显示图（透明 PNG，底下不垫字 —— 垫字会透出来）；缺图/挂图退化为居中 Tv 图标
+    占位（真实数据 434 条全带 tvg-logo，占位是罕见路径；首字方案已废 —— 单字太丑）。
+    referrerPolicy=no-referrer：部分台标站挡热链 referer，去掉能救回一批。 */
+function DipLogo({ logo }: { logo: string }) {
+  const [dead, setDead] = useState(!logo);
+  return dead ? (
+    <IcoTv className="dip-phico" size={26} strokeWidth={1.6} aria-hidden="true" />
+  ) : (
+    <img
+      src={logo}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      draggable={false}
+      onError={() => setDead(true)}
+    />
+  );
 }
 
 export function IptvPane({ active }: { active: boolean }) {
@@ -119,16 +140,7 @@ export function IptvPane({ active }: { active: boolean }) {
             style={{ animationDelay: `${Math.min(i, 15) * 0.02}s` }}
           >
             <span className="dip-logo">
-              <b aria-hidden="true">{ch.name.slice(0, 1)}</b>
-              {ch.logo ? (
-                <img
-                  src={ch.logo}
-                  alt=""
-                  loading="lazy"
-                  draggable={false}
-                  onError={(e) => e.currentTarget.remove()}
-                />
-              ) : null}
+              <DipLogo logo={ch.logo} />
             </span>
             <span className="dip-name">{ch.name}</span>
           </button>

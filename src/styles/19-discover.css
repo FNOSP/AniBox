@@ -1181,16 +1181,16 @@ html.dark .dip-hint {
 
 .dip-logo {
   position: relative;
+  display: grid;
+  place-items: center;
   width: 100%;
   aspect-ratio: 16 / 9;
   background: var(--ph-bg);
   overflow: hidden;
 }
 
-/* 首字母兜底垫在台标下：图挂了 onError remove，垫字自然露出 */
-.dip-logo b {
-  font-size: 17px;
-  font-weight: 800;
+/* 台标挂图/缺图的占位：居中 Tv 图标（首字方案已废 —— 单字太丑） */
+.dip-phico {
   color: var(--muted);
 }
 

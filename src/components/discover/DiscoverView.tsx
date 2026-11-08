@@ -1,6 +1,7 @@
-/* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
+/* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。
+   [lc-2076] 左栏改用 SourcePane（源切换：TMDB / IPTV / 短剧），TmdbPane 更名而来。 */
 import { BgmPane } from "./BgmPane";
-import { TmdbPane } from "./TmdbPane";
+import { SourcePane } from "./SourcePane";
 import { BgmCalendarItem, MediaItem, TmdbDiscoverItem } from "../../types";
 
 
@@ -20,7 +21,7 @@ export function DiscoverView({
 }) {
   return (
     <div className="discover">
-      <TmdbPane active={active} onOpenDetail={onOpenDetail} />
+      <SourcePane active={active} onOpenDetail={onOpenDetail} />
       <BgmPane active={active} onOpen={onOpenBgm} onOpenLib={onOpenLib} />
     </div>
   );

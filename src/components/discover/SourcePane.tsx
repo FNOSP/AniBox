@@ -1,17 +1,22 @@
-/* [lc-1577] 发现页左栏 TMDB 面板 —— 按用户设计稿（`媒体库_动画版.html`）整体重做。
-   结构（lc-2074：概览统计从栏头第一行挪到第三行、视图切换右侧）：
-     ① 顶行：TMDB 品牌胶囊 + 概览标题（当季新剧（周三）等）+ 搜索框
-     ② 次行：主标签（节目/电影）+ 子标签（当季/热门/即将播出）
-     ③ 第三行：排序（按时间/按评分）+ 视图切换（时间线/网格/紧凑列表）+ 概览统计（共 N 部作品 / 平均分 / 最高分 / 更新于）
-     ④ 内容区三视图（时间线按月分组、按评分时=排行榜 / 海报网格 / 紧凑列表）
-   数据全部真实接 TMDB：`tmdb_discover`（当季/热门/即将播出）+ `tmdb_search`（搜索框）。
+/* [lc-1577] 发现页左栏 —— 按用户设计稿（`媒体库_动画版.html`）整体重做。
+   [lc-2076] 升级为**源切换面板**（文件随之更名 TmdbPane → SourcePane）：顶行三枚源徽标
+   （TMDB / IPTV / 短剧）切换左栏内容源；徽标后的概览标题（当季新剧（周三）等）**删除**
+   （当前列表是什么由源徽标 + 概览统计说明）。
+   结构（lc-2074：概览统计在第三行、视图切换右侧）：
+     ① 顶行：源徽标（TMDB / IPTV / 短剧）—— 点击切换源
+     ② 次行（仅 TMDB）：主标签（节目/电影）+ 子标签（当季/热门/即将播出）+ 搜索框
+     ③ 第三行（仅 TMDB）：排序（按时间/按评分）+ 视图切换（时间线/网格/紧凑列表）+ 概览统计（共 N 部作品 / 平均分 / 最高分 / 更新于）
+     ④ 内容区：TMDB 三视图（时间线按月分组、按评分时=排行榜 / 海报网格 / 紧凑列表）；
+        IPTV / 短剧 = **占位页**（NOT IMPLEMENTED —— 数据源后续接入，见 SourceStub）。
+   TMDB 数据全部真实接 TMDB：`tmdb_discover`（当季/热门/即将播出）+ `tmdb_search`（搜索框）。
    设计稿里的假数据一律不要；颜色一律走主题变量（**不照抄设计稿的白色底/浅灰渐变**，那会破深色主题）。
    类名一律 `dlib-` 前缀（根容器 `dlib`）—— 本项目踩过 `.dmore` 撞名的坑（用户看到莫名的大椭圆）。 */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   CalendarDays as IcoCalendarL,
+  Clapperboard as IcoClapperL,
   Clock as IcoClockL,
   Film as IcoFilmL,
   Flame as IcoFlameL,
@@ -54,13 +59,26 @@ const WEEKDAYS_CN = ["周日", "周一", "周二", "周三", "周四", "周五",
 const SUB_LABEL: Record<SubTab, string> = { season: "当季", popular: "热门", upcoming: "即将播出" };
 const SUB_TONE: Record<SubTab, string> = { season: "airing", popular: "hot", upcoming: "soon" };
 
-/** 子标签 → 概览标题（照设计稿：当季新剧/当季新片、热门剧集/热门电影、即将开播/即将上映） */
-const SUB_TITLE: Record<MediaKind, Record<SubTab, string>> = {
-  tv: { season: "当季新剧", popular: "热门剧集", upcoming: "即将开播" },
-  movie: { season: "当季新片", popular: "热门电影", upcoming: "即将上映" },
+/** ── [lc-2076] 左栏内容源（顶行三枚徽标切换；IPTV / 短剧为占位，数据源后续接入） ── */
+type Source = "tmdb" | "iptv" | "duanju";
+const SRC_META: Record<Source, { label: string; tone: string }> = {
+  tmdb: { label: "TMDB", tone: "tmdb" },
+  iptv: { label: "IPTV", tone: "iptv" },
+  duanju: { label: "短剧", tone: "duanju" },
 };
-/** 概览标题的括号说明（「当季」那格按**当天星期几**现算，见 JSX；与设计稿一致） */
-const SUB_PAREN: Record<SubTab, string> = { season: "", popular: "（全时段）", upcoming: "（待播）" };
+
+/** 占位页（NOT IMPLEMENTED）：IPTV / 短剧数据源尚未接入 —— 只摆源图标 + 一句话，
+   不放假数据、不放假交互；真源接入后整个 Stub 换成真面板。 */
+function SourceStub({ ico, label }: { ico: ReactNode; label: string }) {
+  return (
+    <div className="dlib-stub">
+      <span className="dlib-stub-ico" aria-hidden="true">
+        {ico}
+      </span>
+      <div className="dlib-stub-t">{label}即将接入</div>
+    </div>
+  );
+}
 
 /** 「更新于」：形如「周三 下午 9:12」（本机时区、12 小时制；中文上午/下午，非设计稿的 AM/PM） */
 function nowLabel(ts: number): string {
@@ -230,8 +248,9 @@ function DlibSkeleton({ view }: { view: ViewMode }) {
   );
 }
 
-/** 左栏：TMDB。`active` = 首次激活闸门（懒加载）。导出签名与 props 名保持不变（DiscoverView 依赖）。 */
-export function TmdbPane({
+/** 左栏（源切换：TMDB / IPTV / 短剧）。`active` = 首次激活闸门（懒加载）。
+    导出名由 TmdbPane 改为 SourcePane（lc-2076，DiscoverView 同步更新）。 */
+export function SourcePane({
   active,
   onOpenDetail,
 }: {
@@ -239,6 +258,7 @@ export function TmdbPane({
   /** [lc-1444] 点条目 → 直接进主详情页（复用 DetailView；父级合成 MediaItem） */
   onOpenDetail: (it: TmdbDiscoverItem, mediaType: "tv" | "movie") => void;
 }) {
+  const [src, setSrc] = useState<Source>("tmdb"); // 当前内容源（顶行徽标）
   const [mediaType, setMediaType] = useState<MediaKind>("tv");
   const [subTab, setSubTab] = useState<SubTab>("season");
   const [view, setView] = useState<ViewMode>("timeline");
@@ -657,27 +677,31 @@ export function TmdbPane({
   return (
     <section className="dpane">
       <div className="dlib-pane">
-        {/* ① 顶行：品牌胶囊 + 概览标题（概览统计已挪到第三行，见 dlib-row3） */}
+        {/* ① 顶行：源徽标（TMDB / IPTV / 短剧）—— 点击切换左栏内容源（lc-2076） */}
         <header className="dpane-hd dlib-hd">
           <div className="dlib-row1">
-            <span className="dlib-brand">
-              <IcoFilmL size={13} strokeWidth={2.4} />
-              TMDB
-            </span>
-            {/* 概览标题（设计稿的 ov-tag）：当季新剧（周三）/ 热门剧集（全时段）/ 即将开播（待播）；
-                搜索态改显示「搜索结果（N 条）」—— 它就是"当前这份列表是什么"的唯一说明 */}
-            <span className="dlib-ovtag">
-              {searching ? "搜索结果" : SUB_TITLE[mediaType][subTab]}
-              <span className="dlib-paren">
-                {searching
-                  ? `（${sItems.length} 条）`
-                  : subTab === "season"
-                    ? `（${WEEKDAYS_CN[new Date().getDay()]}）`
-                    : SUB_PAREN[subTab]}
-              </span>
-            </span>
+            {(Object.keys(SRC_META) as Source[]).map((s) => (
+              <button
+                key={s}
+                type="button"
+                className={`dlib-src dsrc-${SRC_META[s].tone}${src === s ? " on" : ""}`}
+                onClick={() => setSrc(s)}
+              >
+                {s === "tmdb" ? (
+                  <IcoFilmL size={13} strokeWidth={2.4} />
+                ) : s === "iptv" ? (
+                  <IcoTvL size={13} strokeWidth={2.4} />
+                ) : (
+                  <IcoClapperL size={13} strokeWidth={2.4} />
+                )}
+                {SRC_META[s].label}
+              </button>
+            ))}
           </div>
 
+          {/* ②③ 次行/第三行仅 TMDB 源显示（标签/搜索/排序/概览统计都是 TMDB 自己的东西） */}
+          {src === "tmdb" && (
+            <>
           {/* ② 次行：主/子标签 + 搜索框（用户给的排法：搜索紧挨标签、同占一行） */}
           <div className="dlib-row2">
             <div className="dlib-tabs">
@@ -782,10 +806,18 @@ export function TmdbPane({
               </span>
             </div>
           </div>
+            </>
+          )}
         </header>
 
-        {/* ④ 内容区（独立滚动；头部固定） */}
+        {/* ④ 内容区（独立滚动；头部固定）：IPTV / 短剧 = 占位页（lc-2076），TMDB 走三视图 */}
         <div className="dscroll dlib-scroll">
+          {src === "iptv" ? (
+            <SourceStub ico={<IcoTvL size={40} strokeWidth={1.4} />} label="IPTV" />
+          ) : src === "duanju" ? (
+            <SourceStub ico={<IcoClapperL size={40} strokeWidth={1.4} />} label="短剧" />
+          ) : (
+            <>
           {loadingNow ? (
             <DlibSkeleton view={view} />
           ) : errNow ? (
@@ -814,6 +846,8 @@ export function TmdbPane({
             </div>
           )}
           {!searching && subTab === "upcoming" && moreErr && <div className="dup-hint">加载失败：{moreErr}</div>}
+            </>
+          )}
         </div>
       </div>
     </section>

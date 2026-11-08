@@ -1013,36 +1013,74 @@ html.dark .dlib-pane {
   flex-wrap: wrap;
 }
 
-/* TMDB 品牌胶囊（官方青绿渐变 —— 品牌色，深浅主题下都成立） */
-.dlib-brand {
+/* ── 源徽标（TMDB / IPTV / 短剧；lc-2076）—— 点击切换左栏内容源 ──
+   未选中：玻璃胶囊弱化；选中：各源品牌渐变（TMDB=官方青绿；IPTV=红橙，直播感；
+   短剧=紫，Radix purple→violet）。品牌色按 UI 规范保留。 */
+.dlib-src {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   padding: 4px 10px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #01b4e4, #90cea1);
-  color: #fff;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--muted);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.6px;
+  font-family: inherit;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: color 0.16s, border-color 0.16s;
+}
+
+.dlib-src > svg {
   flex-shrink: 0;
 }
 
-/* 概览标题（照设计稿：当季新剧（周三）—— 大号加粗 + 弱化括号说明） */
-.dlib-ovtag {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 2px;
-  font-size: 14px;
-  font-weight: 800;
+.dlib-src:hover {
   color: var(--text-strong);
-  white-space: nowrap;
-  flex-shrink: 0;
 }
-.dlib-paren {
-  font-size: 12px;
-  font-weight: 500;
+
+.dlib-src.on {
+  border-color: transparent;
+  color: #fff;
+}
+
+.dlib-src.on.dsrc-tmdb {
+  background: linear-gradient(135deg, #01b4e4, #90cea1);
+}
+
+.dlib-src.on.dsrc-iptv {
+  background: linear-gradient(135deg, #e5484d, #f76b15);
+}
+
+.dlib-src.on.dsrc-duanju {
+  background: linear-gradient(135deg, #8e4ec6, #6e56cf);
+}
+
+/* 占位页（IPTV / 短剧；NOT IMPLEMENTED —— 数据源后续接入，届时整个 Stub 换真面板） */
+.dlib-stub {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 72px 16px;
   color: var(--muted);
+}
+
+.dlib-stub-ico {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: var(--hover);
+  color: var(--text-2);
+}
+
+.dlib-stub-t {
+  font-size: 12.5px;
 }
 
 /* 概览（共 N 部作品 / 平均分 / 最高分 / 更新于）—— lc-2074 起排在第三行视图切换右侧 */

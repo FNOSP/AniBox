@@ -914,7 +914,8 @@ html.dark .ditem-tag.ep {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dsk {
+  .dsk,
+  .dip-card {
     animation: none;
   }
 }
@@ -1081,6 +1082,153 @@ html.dark .dlib-pane {
 
 .dlib-stub-t {
   font-size: 12.5px;
+}
+
+/* ── IPTV 栏（lc-2077/lc-2079 样式优化；数据源 vbskycn/iptv，见 IptvPane.tsx / iptv.rs）── */
+.dip {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* 分组 chips：吸顶（434 个频道滚下去分组不丢）——负边距吃掉 .dscroll 的 20px 内边距全宽铺，
+   玻璃底与栏头胶囊同一套材质 */
+.dip-chips {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 -20px 4px;
+  padding: 10px 20px 8px;
+  background: var(--bg-2);
+  backdrop-filter: blur(14px);
+}
+
+.dip-chip {
+  padding: 4px 11px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.16s, color 0.16s, border-color 0.16s;
+}
+
+.dip-chip:hover {
+  color: var(--text-strong);
+}
+
+.dip-chip.on {
+  border-color: transparent;
+  background: var(--accent);
+  color: #fff;
+}
+
+/* 过期缓存 / 起播失败的内联提示（橙色同 .dlib-ov-v.orange 口径） */
+.dip-hint {
+  font-size: 12px;
+  color: #a97b12;
+}
+
+html.dark .dip-hint {
+  color: #ffd479;
+}
+
+/* 频道格子：与 TMDB 海报网格（dlib-gcard）同一套卡片语言 —— 台标满铺卡顶、悬停上浮 */
+.dip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 10px;
+}
+
+.dip-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-2);
+  overflow: hidden;
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+  animation: dlibGridIn 0.45s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+}
+
+.dip-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-card);
+  border-color: var(--line-strong);
+}
+
+/* 按压反馈：快速回落（高频交互 120–180ms 口径） */
+.dip-card:active {
+  transform: translateY(-1px) scale(0.98);
+  transition-duration: 0.12s;
+}
+
+.dip-card:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.dip-logo {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--ph-bg);
+  overflow: hidden;
+}
+
+/* 首字母兜底垫在台标下：图挂了 onError remove，垫字自然露出 */
+.dip-logo b {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.dip-logo img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 10px;
+}
+
+.dip-name {
+  padding: 7px 9px 8px;
+  font-size: 12px;
+  color: var(--text-2);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 底行：GPL-3.0 来源注明（vbskycn/iptv 要求）+ 数据更新时间（直播源新鲜度有意义） */
+.dip-src {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 2px 2px 0;
+}
+
+/* 键盘可达：对焦环与卡片语言一致 */
+.dip-chip:focus-visible,
+.dip-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* 概览（共 N 部作品 / 平均分 / 最高分 / 更新于）—— lc-2074 起排在第三行视图切换右侧 */
@@ -2644,3 +2792,363 @@ button.arc-card:hover .arc-cv {
   white-space: nowrap;
 }
 
+
+/* ── 短剧栏（lc-2078；数据源 guoapp「红果鉴」Go 核心，见 DuanjuPane.tsx / duanju.rs）── */
+.dj {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+}
+
+/* 站源行：一级胶囊（同 dip-chip 视觉，稍大） */
+.dj-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* 分类 + 搜索行 */
+.dj-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.dj-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dj-chip {
+  padding: 4px 11px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.16s, color 0.16s, border-color 0.16s;
+}
+
+.dj-chip.sm {
+  padding: 3px 9px;
+  font-size: 12px;
+}
+
+.dj-chip:hover {
+  color: var(--text-strong);
+}
+
+.dj-chip.on {
+  border-color: transparent;
+  background: var(--accent);
+  color: #fff;
+}
+
+/* 搜索框（同发现页既有 input 视觉口径） */
+.dj-search {
+  flex: 0 0 180px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  color: var(--text-strong);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.16s;
+}
+
+.dj-search:focus {
+  border-color: var(--accent);
+}
+
+.dj-search::placeholder {
+  color: var(--muted);
+}
+
+/* 竖版海报网格（2:3；minmax 与 jvh-grid 同档） */
+.dj-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 10px;
+}
+
+.dj-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dj-poster {
+  position: relative;
+  display: block;
+  aspect-ratio: 2 / 3;
+  border-radius: 10px;
+  background: var(--hover);
+  overflow: hidden;
+}
+
+.dj-poster img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.18s ease-out;
+}
+
+.dj-card:hover .dj-poster img {
+  transform: scale(1.04);
+}
+
+/* 缺图占位块（纯色，不放假图） */
+.dj-ph {
+  position: absolute;
+  inset: 0;
+  background: var(--hover);
+}
+
+.dj-vip {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(201, 145, 0, 0.88);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.dj-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dj-meta {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 加载更多 */
+.dj-more {
+  display: grid;
+  place-items: center;
+  padding: 4px 0 2px;
+}
+
+.dj-morebtn {
+  padding: 6px 18px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.16s, color 0.16s;
+}
+
+.dj-morebtn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text-strong);
+}
+
+.dj-morebtn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+/* 详情浮层（面板内覆盖；同 24-javhub 抽屉的遮罩口径） */
+.dj-mask {
+  position: absolute;
+  inset: -12px;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.dj-detail {
+  position: relative;
+  width: min(560px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  background: var(--glass-bg);
+  overflow: hidden;
+  overflow-y: auto;
+}
+
+.dj-detail-tip {
+  padding: 20px 0;
+  font-size: 13px;
+  color: var(--text-2);
+  text-align: center;
+}
+
+.dj-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: color 0.16s, border-color 0.16s;
+}
+
+.dj-close:hover {
+  color: var(--text-strong);
+  border-color: var(--accent);
+}
+
+/* 详情头部：竖版海报 + 信息列 */
+.dj-dhead {
+  display: flex;
+  gap: 14px;
+  padding-right: 28px;
+}
+
+.dj-dposter {
+  flex: 0 0 112px;
+  width: 112px;
+  aspect-ratio: 2 / 3;
+  border-radius: 10px;
+  background: var(--hover);
+  object-fit: cover;
+}
+
+.dj-dinfo {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dj-dtitle {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-strong);
+  line-height: 1.3;
+}
+
+.dj-dmeta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.dj-dtags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.dj-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.dj-ddesc {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 选集分组 chips */
+.dj-epgroups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* 选集格子 */
+.dj-eps {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 6px;
+}
+
+.dj-ep {
+  padding: 7px 0;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  background: var(--glass-bg);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: border-color 0.16s, color 0.16s;
+}
+
+.dj-ep:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text-strong);
+}
+
+.dj-ep:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+/* 起播失败 / 来源注明 */
+.dj-hint {
+  font-size: 12px;
+  color: #a97b12;
+}
+
+html.dark .dj-hint {
+  color: #ffd479;
+}
+
+.dj-src {
+  font-size: 11px;
+  color: var(--muted);
+}

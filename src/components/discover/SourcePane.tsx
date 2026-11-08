@@ -7,12 +7,13 @@
      ② 次行（仅 TMDB）：主标签（节目/电影）+ 子标签（当季/热门/即将播出）+ 搜索框
      ③ 第三行（仅 TMDB）：排序（按时间/按评分）+ 视图切换（时间线/网格/紧凑列表）+ 概览统计（共 N 部作品 / 平均分 / 最高分 / 更新于）
      ④ 内容区：TMDB 三视图（时间线按月分组、按评分时=排行榜 / 海报网格 / 紧凑列表）；
-        IPTV / 短剧 = **占位页**（NOT IMPLEMENTED —— 数据源后续接入，见 SourceStub）。
+        IPTV = 真实面板（[lc-2077] vbskycn/iptv 现成直播源，见 IptvPane.tsx）；
+        短剧 = 真实面板（[lc-2078] guoapp Go 核心 FFI 接入，见 DuanjuPane.tsx / duanju.rs）。
    TMDB 数据全部真实接 TMDB：`tmdb_discover`（当季/热门/即将播出）+ `tmdb_search`（搜索框）。
    设计稿里的假数据一律不要；颜色一律走主题变量（**不照抄设计稿的白色底/浅灰渐变**，那会破深色主题）。
    类名一律 `dlib-` 前缀（根容器 `dlib`）—— 本项目踩过 `.dmore` 撞名的坑（用户看到莫名的大椭圆）。 */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   CalendarDays as IcoCalendarL,
@@ -29,6 +30,8 @@ import {
   X as IcoXL,
 } from "lucide-react";
 import { DState, Dsk, UP_MAX_PAGE } from "./shared";
+import { IptvPane } from "./IptvPane";
+import { DuanjuPane } from "./DuanjuPane";
 import { tmdbImg } from "../../lib/images";
 import { useRefresh } from "../../hooks/useRefresh";
 import { TmdbDiscoverItem } from "../../types";
@@ -66,19 +69,6 @@ const SRC_META: Record<Source, { label: string; tone: string }> = {
   iptv: { label: "IPTV", tone: "iptv" },
   duanju: { label: "短剧", tone: "duanju" },
 };
-
-/** 占位页（NOT IMPLEMENTED）：IPTV / 短剧数据源尚未接入 —— 只摆源图标 + 一句话，
-   不放假数据、不放假交互；真源接入后整个 Stub 换成真面板。 */
-function SourceStub({ ico, label }: { ico: ReactNode; label: string }) {
-  return (
-    <div className="dlib-stub">
-      <span className="dlib-stub-ico" aria-hidden="true">
-        {ico}
-      </span>
-      <div className="dlib-stub-t">{label}即将接入</div>
-    </div>
-  );
-}
 
 /** 「更新于」：形如「周三 下午 9:12」（本机时区、12 小时制；中文上午/下午，非设计稿的 AM/PM） */
 function nowLabel(ts: number): string {
@@ -810,12 +800,14 @@ export function SourcePane({
           )}
         </header>
 
-        {/* ④ 内容区（独立滚动；头部固定）：IPTV / 短剧 = 占位页（lc-2076），TMDB 走三视图 */}
+        {/* ④ 内容区（独立滚动；头部固定）：IPTV / 短剧 = 真面板，TMDB 走三视图 */}
         <div className="dscroll dlib-scroll">
           {src === "iptv" ? (
-            <SourceStub ico={<IcoTvL size={40} strokeWidth={1.4} />} label="IPTV" />
+            /* [lc-2077] IPTV 已转真面板：vbskycn/iptv 现成直播源（见 IptvPane.tsx / iptv.rs） */
+            <IptvPane active={active} />
           ) : src === "duanju" ? (
-            <SourceStub ico={<IcoClapperL size={40} strokeWidth={1.4} />} label="短剧" />
+            /* [lc-2078] 短剧已转真面板：guoapp Go 核心 FFI 接入（见 DuanjuPane.tsx / duanju.rs） */
+            <DuanjuPane />
           ) : (
             <>
           {loadingNow ? (

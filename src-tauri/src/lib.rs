@@ -3183,6 +3183,8 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         "playerGlassBlur": cfg.player_glass_blur,
         // [lc-2057] 播放时自动隐藏主窗（播放器关闭后再显示）
         "hideMainOnPlay": cfg.hide_main_on_play,
+        // [lc-2090] 更新提醒关闭（true = 完全停止检测更新；关闭动作前端有二次确认）
+        "updateRemindOff": cfg.update_remind_off,
     }))
 }
 
@@ -3384,6 +3386,10 @@ async fn set_settings(
     if let Some(v) = arg.get("hideMainOnPlay") {
         cfg.hide_main_on_play = v.as_bool().ok_or("hideMainOnPlay 必须是布尔值")?;
     }
+    // [lc-2090] 更新提醒关闭（前端关闭动作自带二次确认；后端只存布尔）。
+    if let Some(v) = arg.get("updateRemindOff") {
+        cfg.update_remind_off = v.as_bool().ok_or("updateRemindOff 必须是布尔值")?;
+    }
     config::save(&app, &cfg).await?;
     *state.config.write().await = cfg.clone();
     // [lc-1561] 弹幕接口副作用：只在所有校验通过、配置成功落盘后再同步
@@ -3430,6 +3436,8 @@ async fn set_settings(
         "playerGlassBlur": cfg.player_glass_blur,
         // [lc-2057] 播放时自动隐藏主窗（播放器关闭后再显示）
         "hideMainOnPlay": cfg.hide_main_on_play,
+        // [lc-2090] 更新提醒关闭
+        "updateRemindOff": cfg.update_remind_off,
     }))
 }
 

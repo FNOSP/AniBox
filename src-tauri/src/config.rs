@@ -294,6 +294,12 @@ pub struct Config {
     #[serde(default)]
     pub hide_main_on_play: bool,
 
+    /// [lc-2090] 更新提醒关闭（设置面板「通用」）：true = **完全停止检测更新**（启动自动
+    /// 检查、12h 定时复查、设置面板手动「检查更新」全部停用）。关闭动作需二次确认
+    /// （提示旧版本的问题不予处理）；重新打开开关即恢复检测。
+    #[serde(default)]
+    pub update_remind_off: bool,
+
     /* ── [lc-1907] mpv 窗口 owner 收编（实验开关）──
        true = mpv 独立窗口挂成主窗口的 owned window（跟随主窗口移动 + DWM 系统圆角）。
        **默认 false**：独立窗口模式保持 lc-1906 之前的原生形态（不挂 owner、不跟随），
@@ -441,6 +447,7 @@ impl Default for Config {
             player_skin: default_player_skin(),
             player_glass_blur: default_true(),
             hide_main_on_play: false,
+            update_remind_off: false,
             mpv_window_owner: false,
         }
     }

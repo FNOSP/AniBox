@@ -508,10 +508,22 @@ fn find_bundled_dir(app: &tauri::AppHandle, rel: &str) -> Option<std::path::Path
         .find(|p| p.is_dir())
 }
 
+/// 文件版 `find_bundled`（third_party 下的单个二进制）。
+fn find_bundled_file(app: &tauri::AppHandle, rel: &str) -> Option<std::path::PathBuf> {
+    bundled_candidates(app, rel)
+        .into_iter()
+        .find(|p| p.is_file())
+}
+
 /// [lc-1822] 随包 mpv 的 portable_config 目录（设置面板写 script-opts 用；
 /// 开发态指向 third_party，安装态指向资源目录）。
 pub fn mpv_portable_config_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     find_bundled_dir(app, "third_party/fntv-mpv/portable_config")
+}
+
+/// [lc-2078] 随包短剧核心（guoapp duanju_core.dll；开发态 third_party，安装态资源目录）。
+pub fn duanju_core_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    find_bundled_file(app, "third_party/duanju/duanju_core.dll")
 }
 
 

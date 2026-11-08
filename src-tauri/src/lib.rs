@@ -16,6 +16,8 @@ mod cloud_library;
 mod jav_library;
 mod jav_dict;
 mod jav_settings;
+// [lc-2078] 短剧车道（guoapp「红果鉴」Go 核心 duanju_core FFI 接入）
+mod duanju;
 // [lc-1811] WebDAV 媒体源（多账号 + PROPFIND 浏览 + Basic Auth 播放 + 随片字幕）
 mod webdav;
 // [lc-1820] AI 增强可选组件（RIFE Vulkan 运行时：软件内下载/状态/删除）
@@ -46,6 +48,8 @@ mod fnid;
 mod gamepad;
 // [lc-1615] 本地播放历史（观影记录页数据源之一）：history.json 落盘 + 与飞牛 play/list 合并
 mod history;
+// [lc-2077] 发现页 IPTV 栏：直接复用 vbskycn/iptv 现成直播源（GPL-3.0，取+解析+播）
+mod iptv;
 mod libmpv;
 // [library-cover] 首页媒体库卡片自定义封面：app_data_dir 落盘 + /__cover 协议读取
 mod libcover;
@@ -4189,6 +4193,9 @@ pub fn run() {
             tmdb::tmdb_discover,
             // [lc-1577] 发现页左栏「媒体库」搜索框（真实 TMDB 搜索）
             tmdb::tmdb_search,
+            // [lc-2077] 发现页 IPTV 栏：vbskycn/iptv 现成直播源（取列表 + 播放，见 iptv.rs 头注）
+            iptv::iptv_channels_get,
+            iptv::iptv_play,
             // [lc-1582] AniList 官方 API：当日放送表（补 BGM 缺的「几点更新」→ 右栏行的「第 N 话 · HH:MM」）
             anilist::anilist_day_schedule,
             // [lc-1589] AniList：往季番表（「总表查询」弹窗：选年份+季度看该季列表）
@@ -4370,6 +4377,14 @@ pub fn run() {
             jav_settings::jav_auto_scan_run,
             jav_library::jav_entry_rate,
             jav_library::jav_entry_scrape,
+            // [lc-2078] 短剧车道（guoapp 核心 FFI）
+            duanju::duanju_init,
+            duanju::duanju_categories,
+            duanju::duanju_catalog,
+            duanju::duanju_detail,
+            duanju::duanju_resolve,
+            duanju::duanju_release,
+            duanju::duanju_play,
             jav_library::jav_fnos_libs,
             jav_library::jav_fnos_set_lib,
             jav_library::jav_fnos_scan,

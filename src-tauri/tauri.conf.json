@@ -42,6 +42,7 @@
     "resources": {
       "resources/danmu-api/": "danmu-api/",
       "bundle-resources/third_party/fntv-mpv/": "third_party/fntv-mpv/",
+      "bundle-resources/third_party/duanju/": "third_party/duanju/",
       "bundle-resources/third_party/proxy/": "third_party/proxy/"
     },
     "icon": [

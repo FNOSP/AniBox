@@ -3175,6 +3175,8 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         // [lc-1909] 播放打开方式：app=软件内播放（默认）/ window=独立 mpv 窗口
         "playerOpenMode": cfg.player_open_mode,
         "playerSkin": cfg.player_skin,
+        // [lc-2075] 玻璃模糊开关（发蓝机器的自救：关掉后不挂载玻璃 shader）
+        "playerGlassBlur": cfg.player_glass_blur,
         // [lc-2057] 播放时自动隐藏主窗（播放器关闭后再显示）
         "hideMainOnPlay": cfg.hide_main_on_play,
     }))
@@ -3370,6 +3372,10 @@ async fn set_settings(
         }
         cfg.player_skin = s.to_string();
     }
+    // [lc-2075] 玻璃模糊开关：默认 true；个别显卡/驱动上玻璃 shader 呈现偏色时可关
+    if let Some(v) = arg.get("playerGlassBlur") {
+        cfg.player_glass_blur = v.as_bool().ok_or("playerGlassBlur 必须是布尔值")?;
+    }
     // [lc-2057] 播放时自动隐藏主窗（下一次播放生效；正在播放的这次不改）。
     if let Some(v) = arg.get("hideMainOnPlay") {
         cfg.hide_main_on_play = v.as_bool().ok_or("hideMainOnPlay 必须是布尔值")?;
@@ -3416,6 +3422,8 @@ async fn set_settings(
         // [lc-1909] 播放打开方式：app=软件内播放（默认）/ window=独立 mpv 窗口
         "playerOpenMode": cfg.player_open_mode,
         "playerSkin": cfg.player_skin,
+        // [lc-2075] 玻璃模糊开关
+        "playerGlassBlur": cfg.player_glass_blur,
         // [lc-2057] 播放时自动隐藏主窗（播放器关闭后再显示）
         "hideMainOnPlay": cfg.hide_main_on_play,
     }))

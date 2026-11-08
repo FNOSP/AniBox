@@ -300,14 +300,12 @@ impl MpvSession {
         }
         // [lc-2008] 玻璃皮肤：uosc 仍要加载（uosc_danmaku 的搜索/源管理菜单走它的
         // menu API），但全部可视元素禁用 —— modernz 画底栏，uosc 只当菜单服务。
-        let glass_skin = app
-            .state::<crate::AppState>()
-            .config
-            .read()
-            .await
-            .clone()
-            .player_skin
-            == "glass";
+        let cfg_now = app.state::<crate::AppState>().config.read().await.clone();
+        let glass_skin = cfg_now.player_skin == "glass";
+        // [lc-2075] 玻璃模糊逃生开关：玻璃 shader 挂在 OUTPUT 上会引入全尺寸中间
+        // pass，个别显卡/驱动呈现偏色（外部用户「画面发蓝」，uosc 皮肤不挂此
+        // shader、无此现象，本机亦无法复现）。关掉即不挂载，渲染路径与 uosc 一致。
+        let glass_blur = cfg_now.player_glass_blur;
 
         // ── 1) 启动 mpv.exe
         // [lc-1552] 改为 **Rust 直接 spawn**（原为 pwsh Start-Process 中转，白花 ~450ms）：
@@ -346,6 +344,10 @@ impl MpvSession {
         // 且 16:9 片源正好铺满不留上下黑边。装不进工作区时 window_size_for 收边。
         if let Some(geo) = startup_geometry(&app) {
             args.push(geo);
+        }
+        // [lc-2075] 玻璃模糊关：modernz 不再挂载玻璃 shader（发蓝机器的自救开关）
+        if glass_skin && !glass_blur {
+            args.push("--script-opts-append=modernz-glass_blur=no".to_string());
         }
         if let Some(t) = force_title {
             if !t.is_empty() {

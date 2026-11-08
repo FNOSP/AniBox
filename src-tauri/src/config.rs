@@ -279,6 +279,13 @@ pub struct Config {
     /// 切换在下一次起播生效。
     #[serde(default = "default_player_skin")]
     pub player_skin: String,
+    /// [lc-2075] 玻璃模糊（modernz glass_blur）开关，默认 true（玻璃质感的一部分）。
+    /// 该 shader 挂在 mpv 的 OUTPUT 上，会给渲染管线加一个全尺寸中间 pass；
+    /// 个别显卡/驱动上这条呈现路径会整体偏色（外部用户反馈「画面发蓝」，
+    /// 原生 uosc 皮肤不挂此 shader、无此现象，本机也无法复现）。关掉后
+    /// modernz 不再挂载玻璃 shader，渲染路径与 uosc 皮肤完全一致。
+    #[serde(default = "default_true")]
+    pub player_glass_blur: bool,
     /// [lc-2057] 调起播放器后自动隐藏主窗口，播放器关闭时再显示回来。
     /// 默认 false（保持原行为：主窗一直在）。
     ///
@@ -432,6 +439,7 @@ impl Default for Config {
             ui_opacity: default_ui_opacity(),
             player_open_mode: default_player_open_mode(),
             player_skin: default_player_skin(),
+            player_glass_blur: default_true(),
             hide_main_on_play: false,
             mpv_window_owner: false,
         }

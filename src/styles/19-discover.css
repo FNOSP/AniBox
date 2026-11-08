@@ -1060,6 +1060,17 @@ html.dark .dlib-pane {
   background: linear-gradient(135deg, #8e4ec6, #6e56cf);
 }
 
+/* 源徽标后的浅字说明（测试功能 + 版权风险规避）：小号弱化、整块不拆行（窄栏随 row1 换行） */
+.dlib-note {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* 占位页（IPTV / 短剧；NOT IMPLEMENTED —— 数据源后续接入，届时整个 Stub 换真面板） */
 .dlib-stub {
   display: flex;

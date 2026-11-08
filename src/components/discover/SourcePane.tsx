@@ -687,6 +687,11 @@ export function SourcePane({
                 {SRC_META[s].label}
               </button>
             ))}
+            {/* 源徽标后的浅字说明（用户要求）：IPTV/短剧是测试功能 + 版权风险规避
+                （第三方公开渠道、本应用不存储）+ 预留下线余地 */}
+            <span className="dlib-note">
+              IPTV 与短剧为测试功能，内容来自第三方公开渠道，本应用不存储任何节目，可能随时下线
+            </span>
           </div>
 
           {/* ②③ 次行/第三行仅 TMDB 源显示（标签/搜索/排序/概览统计都是 TMDB 自己的东西） */}

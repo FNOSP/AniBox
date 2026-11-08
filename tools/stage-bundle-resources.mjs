@@ -166,6 +166,17 @@ function collect() {
     }
   }
 
+  // 2.5) [lc-2078] 短剧核心（guoapp duanju_core.dll；Windows amd64 随包，
+  //      Linux/macOS 上游核心待供给——见 tools/fetch-duanju-core.py）。
+  const duanjuDir = path.join(ROOT, 'third_party', 'duanju');
+  if (fs.existsSync(duanjuDir)) {
+    for (const ent of fs.readdirSync(duanjuDir, { withFileTypes: true })) {
+      if (ent.isFile() && /\.(dll|so|dylib)$/i.test(ent.name)) {
+        items.push({ abs: path.join(duanjuDir, ent.name), rel: `third_party/duanju/${ent.name}` });
+      }
+    }
+  }
+
   // 3) Go 代理（potctl.exe 仅 Windows，已在 src-tauri/resources 里，单独映射）。
   items.push({ abs: SRC_PROXY, rel: `third_party/proxy/${PROXY_NAME}` });
 

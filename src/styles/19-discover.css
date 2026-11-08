@@ -1234,7 +1234,7 @@ html.dark .dip-hint {
   padding: 10px;
 }
 
-/* 收藏星标：压在台标右上角的角标（固定深底 —— 图面上不受主题影响，同 .dlib-badge 口径）；
+/* 收藏星标：裸星无底（用户要求去掉黑色圆底），用投影保证在深浅台标上都可见；
    点它只切换收藏（stopPropagation），不触发起播。实心 = .rating-ico.fill（项目既有）。 */
 .dip-fav {
   position: absolute;
@@ -1247,16 +1247,15 @@ html.dark .dip-hint {
   height: 22px;
   padding: 0;
   border: none;
-  border-radius: 50%;
-  background: rgba(15, 18, 28, 0.55);
-  color: rgba(255, 255, 255, 0.82);
+  background: none;
+  color: rgba(255, 255, 255, 0.92);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
   cursor: pointer;
-  transition: background 0.16s, color 0.16s, transform 0.16s;
+  transition: color 0.16s, transform 0.16s;
 }
 
 .dip-fav:hover {
-  background: rgba(15, 18, 28, 0.75);
-  transform: scale(1.1);
+  transform: scale(1.12);
 }
 
 .dip-fav.on {

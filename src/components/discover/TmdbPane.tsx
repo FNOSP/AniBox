@@ -1,8 +1,9 @@
 /* [lc-1577] 发现页左栏 TMDB 面板 —— 按用户设计稿（`媒体库_动画版.html`）整体重做。
-   结构照设计稿三段：
-     ① 顶行：TMDB 品牌胶囊 + 概览（共 N 部作品 / 平均分 / 最高分 / 更新于）+ 搜索框
-     ② 次行：主标签（节目/电影）+ 子标签（当季/热门/即将播出）+ 视图切换（时间线/网格/紧凑列表）+ 排序（按时间/按评分）
-     ③ 内容区三视图（时间线按月分组、按评分时=排行榜 / 海报网格 / 紧凑列表）
+   结构（lc-2074：概览统计从栏头第一行挪到第三行、视图切换右侧）：
+     ① 顶行：TMDB 品牌胶囊 + 概览标题（当季新剧（周三）等）+ 搜索框
+     ② 次行：主标签（节目/电影）+ 子标签（当季/热门/即将播出）
+     ③ 第三行：排序（按时间/按评分）+ 视图切换（时间线/网格/紧凑列表）+ 概览统计（共 N 部作品 / 平均分 / 最高分 / 更新于）
+     ④ 内容区三视图（时间线按月分组、按评分时=排行榜 / 海报网格 / 紧凑列表）
    数据全部真实接 TMDB：`tmdb_discover`（当季/热门/即将播出）+ `tmdb_search`（搜索框）。
    设计稿里的假数据一律不要；颜色一律走主题变量（**不照抄设计稿的白色底/浅灰渐变**，那会破深色主题）。
    类名一律 `dlib-` 前缀（根容器 `dlib`）—— 本项目踩过 `.dmore` 撞名的坑（用户看到莫名的大椭圆）。 */
@@ -656,7 +657,7 @@ export function TmdbPane({
   return (
     <section className="dpane">
       <div className="dlib-pane">
-        {/* ① 顶行：品牌胶囊 + 概览标题 + 概览统计（窄栏下 flex-wrap 换行堆叠，绝不横向溢出） */}
+        {/* ① 顶行：品牌胶囊 + 概览标题（概览统计已挪到第三行，见 dlib-row3） */}
         <header className="dpane-hd dlib-hd">
           <div className="dlib-row1">
             <span className="dlib-brand">
@@ -675,25 +676,6 @@ export function TmdbPane({
                     : SUB_PAREN[subTab]}
               </span>
             </span>
-            <div className="dlib-ov">
-              <span className="dlib-ov-i">
-                <span className="dlib-ov-k">共</span>
-                <b className="dlib-ov-v accent">{list.length}</b>
-                <span className="dlib-ov-k">部作品</span>
-              </span>
-              <span className="dlib-ov-i">
-                <span className="dlib-ov-k">平均分</span>
-                <b className="dlib-ov-v orange">{avg.toFixed(1)}</b>
-              </span>
-              <span className="dlib-ov-i">
-                <span className="dlib-ov-k">最高分</span>
-                <b className="dlib-ov-v green">{max.toFixed(1)}</b>
-              </span>
-              <span className="dlib-ov-i">
-                <span className="dlib-ov-k">更新于</span>
-                <b className="dlib-ov-v">{nowLabel(now)}</b>
-              </span>
-            </div>
           </div>
 
           {/* ② 次行：主/子标签 + 搜索框（用户给的排法：搜索紧挨标签、同占一行） */}
@@ -752,7 +734,8 @@ export function TmdbPane({
             </form>
           </div>
 
-          {/* ③ 第三行：排序 + 视图切换（用户给的排法：排序在前、视图在后，另起一行） */}
+          {/* ③ 第三行：排序 + 视图切换 + 概览统计（lc-2074：统计从栏头第一行挪来此处、占视图切换右侧余宽；
+              半宽栏放不下时整块换到下一行） */}
           <div className="dlib-row3">
             <div className="dlib-switch dlib-sort">
               <button className={`dlib-sbtn${sort === "time" ? " on" : ""}`} onClick={() => setSort("time")}>
@@ -778,6 +761,25 @@ export function TmdbPane({
               <button className={`dlib-vbtn${view === "list" ? " on" : ""}`} title="紧凑列表" onClick={() => setView("list")}>
                 <IcoRowsL size={16} strokeWidth={2} />
               </button>
+            </div>
+            <div className="dlib-ov">
+              <span className="dlib-ov-i">
+                <span className="dlib-ov-k">共</span>
+                <b className="dlib-ov-v accent">{list.length}</b>
+                <span className="dlib-ov-k">部作品</span>
+              </span>
+              <span className="dlib-ov-i">
+                <span className="dlib-ov-k">平均分</span>
+                <b className="dlib-ov-v orange">{avg.toFixed(1)}</b>
+              </span>
+              <span className="dlib-ov-i">
+                <span className="dlib-ov-k">最高分</span>
+                <b className="dlib-ov-v green">{max.toFixed(1)}</b>
+              </span>
+              <span className="dlib-ov-i">
+                <span className="dlib-ov-k">更新于</span>
+                <b className="dlib-ov-v">{nowLabel(now)}</b>
+              </span>
             </div>
           </div>
         </header>

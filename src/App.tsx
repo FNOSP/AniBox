@@ -365,6 +365,19 @@ function App() {
      后的复查也不会再弹同版本；出了更新的版本号才再弹）。 */
   useEffect(() => {
     if (booting || view === "login" || disclaimerOpen) return;
+    // [lc-2090] 用户关闭更新提醒：**立即停掉一切**（未触发的 5s 定时器、12h 复查 interval
+    // 一并清掉），本 effect 直接退出；重新打开开关时 deps 变化会重新走下面的调度。
+    if (settings.updateRemindOff === true) {
+      if (autoUpdateTimer.current !== null) {
+        window.clearTimeout(autoUpdateTimer.current);
+        autoUpdateTimer.current = null;
+      }
+      if (autoUpdateInterval.current !== null) {
+        window.clearInterval(autoUpdateInterval.current);
+        autoUpdateInterval.current = null;
+      }
+      return;
+    }
     if (autoUpdateDone.current || autoUpdateTimer.current !== null) return;
     const runCheck = () =>
       invoke<unknown>("update_check")
@@ -391,7 +404,7 @@ function App() {
         autoUpdateInterval.current = null;
       }
     };
-  }, [booting, view, disclaimerOpen]);
+  }, [booting, view, disclaimerOpen, settings.updateRemindOff]);
 
   // 卸载时清掉还没触发的定时器（组件卸载 = 应用关闭，正常不会发生）
   useEffect(

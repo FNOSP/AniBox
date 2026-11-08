@@ -1503,6 +1503,33 @@ export function SettingsPanel({
                       onClick={toggleAutostart}
                     />
                   </div>
+                  {/* [lc-2090] 更新提醒开关：关闭 = 完全停止检测更新，需二次确认（旧版本问题不予处理） */}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">更新提醒</span>
+                      <div className="set-desc">新版本发布时弹窗提醒（启动自动检查加定时复查）</div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${!settings.updateRemindOff ? " on" : ""}`}
+                      disabled={busy}
+                      aria-pressed={!settings.updateRemindOff}
+                      aria-label="更新提醒"
+                      onClick={() => {
+                        if (settings.updateRemindOff) {
+                          onSettings({ updateRemindOff: false });
+                          return;
+                        }
+                        if (
+                          window.confirm(
+                            "关闭后将完全停止检测更新：不再弹出新版本提醒，旧版本的问题将不予处理。确定关闭更新提醒？",
+                          )
+                        ) {
+                          onSettings({ updateRemindOff: true });
+                        }
+                      }}
+                    />
+                  </div>
                   <div className="set-row">
                     <div>
                       <span className="set-k">关闭按钮</span>
@@ -2789,12 +2816,16 @@ export function SettingsPanel({
                   <div className="set-row">
                     <div>
                       <span className="set-k">检查更新</span>
-                      <div className="set-desc">热补丁无需重装；全量更新后台下载，完成后提示安装</div>
+                      <div className="set-desc">
+                        {settings.updateRemindOff
+                          ? "更新提醒已关闭（通用页可重新打开），手动检查一并停用"
+                          : "热补丁无需重装；全量更新后台下载，完成后提示安装"}
+                      </div>
                     </div>
                     <button
                       type="button"
                       className="set-btn"
-                      disabled={updBusy}
+                      disabled={updBusy || settings.updateRemindOff === true}
                       onClick={checkUpdate}
                     >
                       {updChecking ? "检查中…" : "检查更新"}

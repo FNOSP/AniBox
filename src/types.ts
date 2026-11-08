@@ -564,6 +564,9 @@ export type AppSettings = {
   potplayerPath?: string;
   /** [lc-1561] 自建弹幕接口（danmu_api）开关 —— 对齐主仓库同名设置 */
   danmuApiEnabled: boolean;
+  /** [lc-2090] 更新提醒关闭：true = 完全停止检测更新（启动自动检查 / 12h 复查 / 手动
+   *  检查更新全部停用）。关闭动作有二次确认（旧版本问题不予处理）；默认 false。 */
+  updateRemindOff?: boolean;
   /** [lc-1753] 在线资源搜索开关（默认关闭）：开启后无资源的剧集/动漫详情页显示在线
    *  资源搜索面板；内容全部来自用户自行添加的第三方源，本软件不存储、不分发资源。 */
   webrsPanelEnabled?: boolean;

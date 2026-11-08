@@ -385,6 +385,8 @@ export function SettingsPanel({
   const [user, setUser] = useState("");
   const [server, setServer] = useState("");
   const [confirmLogout, setConfirmLogout] = useState(false);
+  // [lc-2091] 关闭更新提醒的二次确认浮层（玻璃 .close-ask，替代原生 window.confirm）
+  const [confirmUpdateOff, setConfirmUpdateOff] = useState(false);
   // [lc-1607] 设置 → 关于 → 免责声明：打开只读态弹窗（只有「关闭」）
   const [showDisclaimer, setShowDisclaimer] = useState(false);
   // 关闭动画：先挂 class 让遮罩淡出 + 卡片缩下沉，动画走完再真正卸载
@@ -1520,13 +1522,8 @@ export function SettingsPanel({
                           onSettings({ updateRemindOff: false });
                           return;
                         }
-                        if (
-                          window.confirm(
-                            "关闭后将完全停止检测更新：不再弹出新版本提醒，旧版本的问题将不予处理。确定关闭更新提醒？",
-                          )
-                        ) {
-                          onSettings({ updateRemindOff: true });
-                        }
+                        // 关闭走玻璃二次确认浮层（confirmUpdateOff），不再用原生 window.confirm
+                        setConfirmUpdateOff(true);
                       }}
                     />
                   </div>
@@ -3122,6 +3119,31 @@ export function SettingsPanel({
         chain={shaderChain}
         onChainChange={setShaderChain}
       />
+      {/* [lc-2091] 关闭更新提醒的二次确认（玻璃浮层，复用 .close-ask 同套样式 —— 原生
+          window.confirm 是系统白框，与整体视觉不符）。确定才真正写配置。 */}
+      {confirmUpdateOff && (
+        <div className="close-ask" onClick={() => setConfirmUpdateOff(false)}>
+          <div className="close-ask-box" onClick={(e) => e.stopPropagation()}>
+            <h3>关闭更新提醒</h3>
+            <p>关闭后将完全停止检测更新：不再弹出新版本提醒，旧版本的问题将不予处理。</p>
+            <div className="close-ask-acts">
+              <button type="button" className="set-btn" onClick={() => setConfirmUpdateOff(false)}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="set-btn danger"
+                onClick={() => {
+                  setConfirmUpdateOff(false);
+                  onSettings({ updateRemindOff: true });
+                }}
+              >
+                关闭更新提醒
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

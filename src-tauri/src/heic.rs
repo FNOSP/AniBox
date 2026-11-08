@@ -349,13 +349,32 @@ fn de265_lib_in(dir: &std::path::Path) -> Option<&'static De265> {
     DE265
         .get_or_init(|| {
             #[cfg(target_os = "windows")]
-            unsafe {
-                use windows_sys::Win32::System::LibraryLoader::SetDllDirectoryW;
-                let wide: Vec<u16> = dir.as_os_str().to_string_lossy().encode_utf16().chain([0]).collect();
-                SetDllDirectoryW(wide.as_ptr());
+            {
+                // [lc-2091] 依赖链预加载：libde265 依赖 libgcc/libwinpthread（同目录）。
+                // 进程里任何代码调用过 SetDefaultDllDirectories 后，SetDllDirectory 与
+                // legacy 搜索失效，依赖解析只认 application dir + System32 —— third_party
+                // 不在其中 ⇒ libde265 加载失败（单测进程无此调用所以测不出）。改为先把
+                // 两个依赖按**全路径**显式装载进进程，再加载 libde265，搜索策略无关。
+                use windows_sys::Win32::System::LibraryLoader::{LoadLibraryExW, LOAD_WITH_ALTERED_SEARCH_PATH};
+                for dep in ["libgcc_s_seh-1.dll", "libwinpthread-1.dll"] {
+                    let p = dir.join(dep);
+                    let wide: Vec<u16> = p.as_os_str().to_string_lossy().encode_utf16().chain([0]).collect();
+                    let h = unsafe { LoadLibraryExW(wide.as_ptr(), std::ptr::null_mut(), LOAD_WITH_ALTERED_SEARCH_PATH) };
+                    if h.is_null() {
+                        crate::libmpv::trace(&format!("[heic] 预加载 {} 失败（跳过转码）", dep));
+                        return None;
+                    }
+                }
             }
             let path = dir.join("libde265-0.dll");
-            let lib = unsafe { libloading::Library::new(&path) }.ok()?;
+            let lib = unsafe { libloading::Library::new(&path) };
+            let lib = match lib {
+                Ok(l) => l,
+                Err(e) => {
+                    crate::libmpv::trace(&format!("[heic] 加载 libde265 失败（{}）: {}", path.display(), e));
+                    return None;
+                }
+            };
             Some(De265 {
                 new_decoder: *unsafe { lib.get(b"de265_new_decoder\0") }.ok()?,
                 free_decoder: *unsafe { lib.get(b"de265_free_decoder\0") }.ok()?,

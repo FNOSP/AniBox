@@ -115,8 +115,10 @@ fn resolve_target(path: &str) -> Result<Target, (u16, String)> {
         if !(url.starts_with("https://") || url.starts_with("http://")) {
             return Err((400, "bad dj cover scheme".into()));
         }
+        // 键带版本（v2）：lc-2091 首版曾把 heic 原字节 / octet-stream 误缓存，换键让
+        // 旧坏条目自然过期（30 天 TTL），不必扫盘清理。
         return Ok(Target::Public {
-            key: format!("img:dj:{rest}"),
+            key: format!("img:dj:v2:{rest}"),
             url,
         });
     }
@@ -156,6 +158,29 @@ fn resolve_target(path: &str) -> Result<Target, (u16, String)> {
     Ok(Target::Nas(path.to_string()))
 }
 
+/// [lc-2091] 图片魔数嗅探：图床回 octet-stream 时矫正 Content-Type。
+fn sniff_image_ct(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() < 12 {
+        return None;
+    }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("image/jpeg");
+    }
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some("image/png");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some("image/gif");
+    }
+    if &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    if &bytes[4..8] == b"ftyp" {
+        return None; // heic 由转码分支处理
+    }
+    None
+}
+
 fn plain(status: u16, msg: &str) -> Response<Vec<u8>> {
     Response::builder()
         .status(status)
@@ -189,8 +214,20 @@ async fn proxy_public(app: AppHandle, key: &str, url: &str) -> Response<Vec<u8>>
     }
     let (mut ct, mut bytes) = match fetch_public_image(url).await {
         Ok(v) => v,
-        Err((status, msg)) => return plain(status, &msg),
+        Err((status, msg)) => {
+            crate::libmpv::trace(&format!("[img] dj 拉取失败 {key}: HTTP {status} {msg}"));
+            return plain(status, &msg);
+        }
     };
+    // [lc-2091] Content-Type 矫正：部分图床（剧果 lkkwip.cn 等）回 application/octet-stream，
+    // WebView 的 <img> 对非 image/* 一律拒绝渲染（用户看到「裂图但日志全是成功」的根因）。
+    // 按魔数嗅探矫正；嗅不出图魔数的不动（可能真是二进制）。
+    if !ct.starts_with("image/") {
+        if let Some(real) = sniff_image_ct(&bytes) {
+            crate::libmpv::trace(&format!("[img] ct 矫正 {ct} → {real}（{key}）"));
+            ct = real.to_string();
+        }
+    }
     // [lc-2081] HEIC 封面转码：红果等站源的封面是 image/heic（WebView2 不支持解码）。
     // 解码失败（libde265 缺失等）原样透传——前端按裂图占位，绝不 500。
     if ct.contains("heic") || crate::heic::is_heic(&bytes) {
@@ -209,8 +246,9 @@ async fn proxy_public(app: AppHandle, key: &str, url: &str) -> Response<Vec<u8>>
                 ct = "image/jpeg".to_string();
                 bytes = jpeg;
             }
-            Ok(Some(_)) | Err(_) => {}
-            _ => {}
+            _ => {
+                crate::libmpv::trace(&format!("[img] HEIC 转码失败/不可用，透传原格式 {}（{key}）", ct));
+            }
         }
     }
     disk_cache::put(key, &ct, &bytes);
@@ -419,7 +457,7 @@ mod tests {
         match resolve_target(&path) {
             Ok(super::Target::Public { key, url: got }) => {
                 assert_eq!(got, url);
-                assert!(key.starts_with("img:dj:"));
+                assert!(key.starts_with("img:dj:v2:"));
             }
             _ => panic!("__dj 应解析为 Public"),
         }

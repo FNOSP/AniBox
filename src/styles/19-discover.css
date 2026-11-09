@@ -3094,14 +3094,20 @@ button.arc-card:hover .arc-cv {
   text-align: center;
 }
 
+/* [lc-2098] 关闭按钮图标错位修复：全局 `button { padding: 8px 15px }` 会把 28px 见方的
+   圆形按钮内容区挤成负宽（宽 28 - padding 30 = 内容溢出），grid 居中的 SVG 被推到右下方。
+   显式 padding:0 + box-sizing:border-box + flex 居中，三件套缺一不可。 */
 .dj-close {
   position: absolute;
   top: 12px;
   right: 12px;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 28px;
   height: 28px;
+  padding: 0;
+  box-sizing: border-box;
   border: 1px solid var(--glass-border);
   border-radius: 999px;
   background: var(--glass-bg);

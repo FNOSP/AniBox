@@ -3045,21 +3045,31 @@ button.arc-card:hover .arc-cv {
 }
 
 /* 详情浮层（面板内覆盖；同 24-javhub 抽屉的遮罩口径） */
+/* [lc-2091] fixed（不是 absolute）：详情浮层经 Portal 挂 body，遮罩以视口为参照。
+   原 absolute + inset:-12px 相对 .dj 网格容器（高数千像素）→ 面板被居中到滚动内容中段，
+   用户停在列表顶部时只见黑遮罩、面板在视口外（用户报「什么都不显示就一层黑色遮罩」）。 */
 .dj-mask {
-  position: absolute;
-  inset: -12px;
-  z-index: 20;
+  position: fixed;
+  inset: 0;
+  z-index: 260;
   display: grid;
   place-items: center;
-  padding: 16px;
+  padding: 24px;
   background: rgba(10, 14, 30, 0.45);
   backdrop-filter: blur(2px);
+  animation: dj-mask-in 0.16s ease-out;
+}
+
+@keyframes dj-mask-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .dj-detail {
   position: relative;
   width: min(560px, 100%);
-  max-height: 100%;
+  max-height: calc(100vh - 48px);
+  animation: dj-panel-in 0.22s cubic-bezier(0.32, 0.72, 0, 1);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -3070,6 +3080,11 @@ button.arc-card:hover .arc-cv {
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
   overflow: hidden;
   overflow-y: auto;
+}
+
+@keyframes dj-panel-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
 }
 
 .dj-detail-tip {

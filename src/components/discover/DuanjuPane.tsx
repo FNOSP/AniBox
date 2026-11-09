@@ -5,6 +5,7 @@
    NOT IMPLEMENTED：推荐/榜单 Tab、弹幕、追剧、下载、多清晰度切换、Linux/macOS 核心。 */
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { DState } from "./shared";
 import { djImg } from "../../lib/images";
@@ -291,8 +292,11 @@ export function DuanjuPane() {
         </>
       )}
 
-      {/* 详情浮层（面板内覆盖，不占独立路由） */}
-      {(dBusy || detail || dErr) && (
+      {/* 详情浮层：**Portal 挂 body**（[lc-2091] 修「点开只有黑遮罩」——原先 absolute
+          相对 .dj 网格容器定位，容器高数千像素，place-items:center 把面板居中到滚动内容
+          中段，用户停在列表顶部时面板落在视口外，只剩铺满的遮罩）。fixed + Portal 后
+          遮罩与面板都以视口为参照，与滚动位置无关。 */}
+      {(dBusy || detail || dErr) && createPortal(
         <div className="dj-mask" onClick={() => !dBusy && setDetail(null)}>
           <div className="dj-detail" onClick={(e) => e.stopPropagation()}>
             {dBusy ? (
@@ -384,7 +388,8 @@ export function DuanjuPane() {
               )
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

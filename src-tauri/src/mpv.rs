@@ -68,6 +68,9 @@ pub struct MpvSession {
     /// [lc-2101] 竖屏片源标志（短剧）：file-loaded 后按视频真实比例精确设窗口。
     /// 会话常驻，复用会话切换横竖屏时由 `set_vertical` 更新（不用重启 mpv）。
     vertical: Arc<std::sync::atomic::AtomicBool>,
+    /// [lc-2108] 期望的窗口标题：file-loaded 时 mpv 会把 `title` 重置成文件名
+    /// （单条 loadfile = URL 末段 hash），事件循环用这个值重设。
+    title_hint: Arc<Mutex<Option<String>>>,
 }
 
 unsafe impl Send for MpvSession {}
@@ -454,6 +457,11 @@ impl MpvSession {
             .store(vertical, std::sync::atomic::Ordering::Release);
     }
 
+    /// [lc-2108] 记录期望窗口标题（file-loaded 兜底重设用）。
+    pub fn set_title_hint(&self, title: &str) {
+        *self.title_hint.lock().unwrap_or_else(|e| e.into_inner()) = Some(title.to_string());
+    }
+
     /// [lc-2105] 当前是否为竖屏片源会话。
     pub async fn vertical_pixels(&self) -> bool {
         self.vertical.load(std::sync::atomic::Ordering::Acquire)
@@ -482,6 +490,7 @@ impl MpvSession {
         let path = pipe_path(&name);
         // [lc-2101] 竖屏标志：存进会话，每次 loadfile 前可更新（复用会话也能换横竖屏）
         let vertical_flag = Arc::new(std::sync::atomic::AtomicBool::new(vertical));
+        let title_hint: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         crate::libmpv::trace_reset(&format!("launch(mpv.exe) pid={}", std::process::id()));
 
         // [lc-2002] 播放器皮肤互斥：mpv 只加载 scripts/ 下的 OSC，起播前把选中的那套搬进去。
@@ -687,6 +696,7 @@ impl MpvSession {
             pid: pid_slot.clone(),
             fs_expect: fs_expect.clone(),
             vertical: vertical_flag.clone(),
+            title_hint: title_hint.clone(),
         });
 
         // ── 3) 读线程：事件 → tauri emit；回包 → 唤醒等待者
@@ -702,6 +712,7 @@ impl MpvSession {
             let fs_expect2 = fs_expect.clone();
         // [lc-2101] 竖屏标志：会话常驻，每次 loadfile 前由 set_vertical 更新
         let vertical2 = vertical_flag.clone();
+        let title_hint2 = title_hint.clone();
         // [lc-101] start-file → file-loaded 的耗时（"拉取半天"到底花在哪一步，有数可查）
         let load_started2: Arc<Mutex<Option<std::time::Instant>>> = Arc::new(Mutex::new(None));
         // [title] 逐集标题回填状态机（整季 M3U 专用，见下方 start-file/file-loaded 分支）：
@@ -816,6 +827,9 @@ impl MpvSession {
                                 }
                                 // [nas-subtitle] 同步标题槽：字幕自动挂载按此做剧集防错配匹配。
                                 *title_slot2.lock().unwrap() = Some(t.to_string());
+                                // [lc-2108] 同步期望标题（file-loaded 兜底与后续换集都用它）
+                                *title_hint2.lock().unwrap_or_else(|e| e.into_inner()) =
+                                    Some(t.to_string());
                             }
                             continue;
                         }
@@ -846,6 +860,27 @@ impl MpvSession {
                                     .unwrap_or(0);
                                 crate::libmpv::trace(&format!("mpv file-loaded（媒体就绪，加载耗时 {took}ms）"));
                                 let _ = app2.emit("mpv-load", json!({ "phase": "loaded" }));
+                                // [lc-2108] 窗口标题兜底重设：mpv 在 file-loaded 时会把
+                                // `title` 属性重置回文件名（单条 loadfile 时即 URL 末段 hash）。
+                                // loadfile 前设一次、这里再设一次，才能保证标题栏不闪成数字。
+                                {
+                                    let cur = title_hint2
+                                        .lock()
+                                        .unwrap_or_else(|e| e.into_inner())
+                                        .clone();
+                                    if let Some(t) = cur.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                                        let line = json!({
+                                            "command": ["set", "title", t],
+                                        })
+                                        .to_string()
+                                            + "
+";
+                                        if let Some(f) = tx.lock().unwrap().as_mut() {
+                                            let _ = f.write_all(line.as_bytes());
+                                            let _ = f.flush();
+                                        }
+                                    }
+                                }
                                 // [lc-2101] 竖屏：按真实视频比例精确设窗口（零黑边）
                                 if vertical2.load(std::sync::atomic::Ordering::Acquire) {
                                     let rid2 = next_id2.fetch_add(1, Ordering::SeqCst);

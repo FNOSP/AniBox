@@ -499,6 +499,8 @@ async fn launch_mpv(
             let _ = m
                 .command(json!(["set", "force-media-title", title]))
                 .await;
+            // [lc-2108] 同步写标题栈：mpv.rs 的 file-loaded 兜底用它重设窗口 title
+            m.set_title_hint(title);
             // [lc-2106] 窗口标题（mpv 的 `title` 属性）单独设：短剧单条 loadfile 时
             // 窗口标题会退化成 URL 末段的 hash（`39e097...mp4`）——用户直接看到「一串数字」。
             // media-title / force-media-title 都只影响 OSD 与脚本读到的标题，窗口标题栏

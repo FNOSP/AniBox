@@ -245,7 +245,7 @@
   transition: border-color 0.15s ease;
 }
 .drel-card:hover .drel-cv {
-  border-color: rgba(108, 155, 255, 0.45);
+  border-color: rgb(var(--accent-rgb) / 0.45);
 }
 .drel-cv img {
   width: 100%;
@@ -373,8 +373,8 @@
 /* 连载中 = 蓝色系（在动）；已完结 = 中性灰（静止）—— 颜色即语义 */
 .dv2e-state.airing {
   color: var(--accent);
-  border-color: rgba(108, 155, 255, 0.45);
-  background: rgba(108, 155, 255, 0.1);
+  border-color: rgb(var(--accent-rgb) / 0.45);
+  background: rgb(var(--accent-rgb) / 0.1);
 }
 .dv2e-state.done {
   color: var(--muted);
@@ -413,7 +413,7 @@
 }
 .dv2e-play-btn:hover {
   background: var(--hover-strong);
-  border-color: rgba(108, 155, 255, 0.45);
+  border-color: rgb(var(--accent-rgb) / 0.45);
   color: var(--text-strong);
 }
 .dv2e-play-btn:active {
@@ -472,8 +472,8 @@
 /* 选中态：accent 淡底 + 内描边，深浅主题下都清晰（不依赖面板底色） */
 .ep-mode-btn.active {
   color: var(--text-strong);
-  background: rgba(108, 155, 255, 0.16);
-  box-shadow: inset 0 0 0 1px rgba(108, 155, 255, 0.5);
+  background: rgb(var(--accent-rgb) / 0.16);
+  box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / 0.5);
 }
 /* 网格 / 列表视图切换：与集数样式同一套「安静胶囊」语言，图标按钮 */
 .dv2e-view {
@@ -508,14 +508,14 @@
 }
 .dv2e-view-btn.active {
   color: var(--text-strong);
-  background: rgba(108, 155, 255, 0.16);
-  box-shadow: inset 0 0 0 1px rgba(108, 155, 255, 0.5);
+  background: rgb(var(--accent-rgb) / 0.16);
+  box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / 0.5);
 }
 /* 键盘焦点：与 hover 区分开，避免只在深色下靠颜色变化 */
 .ep-mode-btn:focus-visible,
 .dv2e-view-btn:focus-visible,
 .dv2e-play-btn:focus-visible {
-  outline: 2px solid rgba(108, 155, 255, 0.55);
+  outline: 2px solid rgb(var(--accent-rgb) / 0.55);
   outline-offset: 1px;
 }
 
@@ -657,10 +657,10 @@
   outline-offset: 2px;
 }
 .dv2e-cell.playing {
-  background: var(--accent-grad);
-  border-color: transparent;
-  color: #fff;
-  box-shadow: 0 4px 14px rgba(108, 155, 255, 0.35);
+  background: rgb(var(--accent-rgb) / 0.12);
+  border-color: rgb(var(--accent-rgb) / 0.28);
+  color: var(--accent);
+  box-shadow: 0 4px 14px rgb(var(--shadow-rgb) / 0.21);
 }
 .dv2e-cell.seen:not(.playing) {
   background: var(--hover);
@@ -870,7 +870,7 @@
 }
 .dv2e-seen.now {
   color: var(--accent);
-  border-color: rgba(108, 155, 255, 0.4);
+  border-color: rgb(var(--accent-rgb) / 0.4);
 }
 .dv2e-desc {
   margin: 5px 0 0;
@@ -985,7 +985,7 @@
 .dv2-rail-season {
   font-size: 13.5px;
   font-weight: 600;
-  color: var(--accent, #6c9bff);
+  color: var(--accent);
   margin-left: 2px;
 }
 
@@ -1389,7 +1389,7 @@
   margin-top: 6px;
 }
 .mp-notice {
-  color: var(--accent, #6aa9ff);
+  color: var(--accent);
 }
 .mp-grid {
   display: grid;
@@ -1413,8 +1413,8 @@
   background: var(--hover-strong);
 }
 .mp-card.is-on {
-  border-color: var(--accent, #6aa9ff);
-  box-shadow: 0 0 0 1px var(--accent, #6aa9ff) inset;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
 }
 .mp-poster {
   position: relative;
@@ -1549,16 +1549,16 @@
   white-space: nowrap;
 }
 .dv2e-version:hover {
-  border-color: var(--accent, #4ea1ff);
+  border-color: var(--accent);
   color: var(--text-1);
 }
 .dv2e-version.active {
-  border-color: var(--accent, #4ea1ff);
-  background: color-mix(in srgb, var(--accent, #4ea1ff) 18%, transparent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--text-1);
 }
 .dv2e-version:focus-visible {
-  outline: 2px solid var(--accent, #4ea1ff);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 

@@ -3484,7 +3484,7 @@ function AiEnhanceRow() {
                 width: `${pct}%`,
                 height: "100%",
                 borderRadius: 999,
-                background: "var(--accent-grad, #6c9bff)",
+                background: "var(--accent-solid)",
                 transition: "width 0.2s ease",
               }}
             />

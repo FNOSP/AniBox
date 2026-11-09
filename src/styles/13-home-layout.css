@@ -53,8 +53,8 @@
 }
 .lib-strip-card:hover {
   transform: translateY(-3px);
-  border-color: rgba(108, 155, 255, 0.55);
-  box-shadow: var(--shadow-card), 0 0 22px rgba(108, 155, 255, 0.14);
+  border-color: rgb(var(--accent-rgb) / 0.55);
+  box-shadow: var(--shadow-card), 0 0 22px rgb(var(--shadow-rgb) / 0.08);
 }
 .lsc-bg {
   position: absolute;
@@ -155,7 +155,7 @@
   opacity: 1;
 }
 .lsc-cover:hover {
-  background: rgba(108, 155, 255, 0.55);
+  background: rgb(var(--accent-rgb) / 0.55);
   border-color: rgba(160, 190, 255, 0.6);
   color: #fff;
 }

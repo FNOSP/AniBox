@@ -67,9 +67,9 @@
   justify-content: center;
   border-radius: 15px;
   color: var(--accent);
-  background: rgba(108, 155, 255, 0.14);
+  background: rgb(var(--accent-rgb) / 0.12);
   border: 1px solid var(--line-strong);
-  box-shadow: 0 6px 18px rgba(108, 155, 255, 0.18);
+  box-shadow: 0 6px 18px rgb(var(--shadow-rgb) / 0.11);
   animation: gstBadgePop 0.34s 0.06s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 @keyframes gstBadgePop {
@@ -122,12 +122,12 @@
   border: none;
   background: var(--accent-grad);
   color: #fff;
-  box-shadow: 0 6px 18px rgba(108, 155, 255, 0.32);
+  box-shadow: 0 6px 18px rgb(var(--shadow-rgb) / 0.19);
 }
 .gst-btn.primary:hover {
   filter: brightness(1.08);
   transform: translateY(-1px);
-  box-shadow: 0 9px 22px rgba(108, 155, 255, 0.42);
+  box-shadow: 0 9px 22px rgb(var(--shadow-rgb) / 0.25);
 }
 /* [lc-1603] 关闭：遮罩淡出 + 卡片微缩下沉。由 GuestLoginPrompt 在关闭时挂上 `.gst-mask-closing`，
    等动画走完（170ms）再真正卸载 —— 类名要**同时命中 .ddet-mask**（不然会被它自己的

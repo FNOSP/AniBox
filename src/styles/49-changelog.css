@@ -70,10 +70,9 @@
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.01em;
-  /* 12px 小字必须够对比：accent 本身偏浅，铺一层 accent 底 + 深色字
-     （浅色主题用深蓝字、深色主题用浅蓝字，跟主题反转） */
-  color: #fff;
-  background: linear-gradient(135deg, #6c9bff 0%, #8f6cff 100%);
+  /* [lc-2110] 12px 小字必须够对比：铺 accent-solid 平涂 + 白字（深色 4.99:1 / 浅色 5.79:1）。 */
+  color: var(--accent-on);
+  background: var(--accent-solid);
 }
 .clg-title {
   margin: 0;

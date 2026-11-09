@@ -24,7 +24,7 @@
 }
 .type-chip {
   color: var(--accent);
-  border-color: rgba(108, 155, 255, 0.4);
+  border-color: rgb(var(--accent-rgb) / 0.4);
 }
 .ep-row.playing .ep-row-title {
   color: var(--accent);

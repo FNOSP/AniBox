@@ -65,12 +65,12 @@
   border: none;
   background: var(--accent-grad);
   color: #fff;
-  box-shadow: 0 6px 18px rgba(108, 155, 255, 0.32);
+  box-shadow: 0 6px 18px rgb(var(--shadow-rgb) / 0.19);
 }
 .dsc-btn.primary:hover {
   filter: brightness(1.08);
   transform: translateY(-1px);
-  box-shadow: 0 9px 22px rgba(108, 155, 255, 0.42);
+  box-shadow: 0 9px 22px rgb(var(--shadow-rgb) / 0.25);
 }
 
 /* ── 关闭：遮罩淡出 + 卡片微缩下沉。类名要**同时命中 .ddet-mask**

@@ -651,7 +651,7 @@
   border: none;
   font-family: inherit;
 }
-.jvd-chip.cat { background: rgba(108, 155, 255, 0.16); color: var(--accent); font-weight: 600; }
+.jvd-chip.cat { background: rgb(var(--accent-rgb) / 0.16); color: var(--accent); font-weight: 600; }
 .jvd-chip.err { background: rgba(208, 92, 92, 0.16); color: #c95050; }
 .jvd-chip.ok { background: rgba(80, 160, 100, 0.16); color: #3e9257; }
 .jvd-chip.link { cursor: pointer; }

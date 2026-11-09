@@ -40,7 +40,7 @@
 }
 .hist-sync:hover {
   background: var(--hover-strong);
-  border-color: rgba(108, 155, 255, 0.45);
+  border-color: rgb(var(--accent-rgb) / 0.45);
 }
 .hist-sync:disabled {
   opacity: 0.6;
@@ -91,9 +91,9 @@
   color: var(--text-strong);
 }
 .hist-pill.active {
-  background: var(--accent-grad);
-  border-color: transparent;
-  color: #fff;
+  background: rgb(var(--accent-rgb) / 0.12);
+  border-color: rgb(var(--accent-rgb) / 0.28);
+  color: var(--accent);
   font-weight: 600;
 }
 
@@ -130,7 +130,7 @@
 .hist-vbtn.on {
   background: var(--accent-grad);
   color: #fff;
-  box-shadow: 0 3px 10px rgba(108, 155, 255, 0.3);
+  box-shadow: 0 3px 10px rgb(var(--shadow-rgb) / 0.18);
   animation: histPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
@@ -254,7 +254,7 @@
 .hist-heat {
   position: relative;
   /* 浅色档位（GitHub light） */
-  --hist-hm-0: rgba(30, 50, 110, 0.07);
+  --hist-hm-0: rgba(60, 42, 30, 0.07);
   --hist-hm-1: #9be9a8;
   --hist-hm-2: #40c463;
   --hist-hm-3: #30a14e;
@@ -609,7 +609,7 @@ html.dark .hist-lbadge.webrs {
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
-  box-shadow: 0 4px 12px rgba(108, 155, 255, 0.25);
+  box-shadow: 0 4px 12px rgb(var(--shadow-rgb) / 0.15);
 }
 .hist-gpill > svg {
   flex-shrink: 0;
@@ -659,7 +659,7 @@ html.dark .hist-lbadge.webrs {
 }
 .hist-card:hover {
   transform: translateY(-4px);
-  border-color: rgba(108, 155, 255, 0.55);
+  border-color: rgb(var(--accent-rgb) / 0.55);
   box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45);
 }
 .hist-art {
@@ -958,7 +958,7 @@ html:not(.dark) .hist-detail-scrim {
   gap: 3px;
 }
 .hist-rating.mine {
-  border-color: rgba(108, 155, 255, 0.4);
+  border-color: rgb(var(--accent-rgb) / 0.4);
 }
 .hist-rating-label {
   font-size: 12px;
@@ -1153,9 +1153,9 @@ html:not(.dark) .hist-detail-scrim {
   border-radius: 20px;
   position: relative;
   overflow: hidden;
-  background: linear-gradient(165deg, rgba(250, 251, 254, 0.97), rgba(240, 243, 250, 0.99));
-  color: #262c44;
-  box-shadow: 0 24px 80px rgba(20, 26, 60, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+  background: linear-gradient(165deg, rgba(251, 248, 244, 0.97), rgba(242, 236, 229, 0.99));
+  color: #2c2119;
+  box-shadow: 0 24px 80px rgba(24, 16, 10, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.6);
 }
 .wr-loading {
   position: absolute;
@@ -1163,7 +1163,7 @@ html:not(.dark) .hist-detail-scrim {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #5a6480;
+  color: #6b5a4c;
   font-size: 14px;
 }
 
@@ -1187,7 +1187,7 @@ html:not(.dark) .hist-detail-scrim {
   padding: 56px 46px 30px;
 }
 .wr-pg-cover {
-  background: linear-gradient(165deg, rgba(109, 127, 242, 0.1), rgba(138, 99, 232, 0.06));
+  background: linear-gradient(165deg, rgb(var(--accent-rgb) / 0.1), rgb(var(--accent-rgb) / 0.06));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1203,7 +1203,7 @@ html:not(.dark) .hist-detail-scrim {
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 4px;
-  color: #8a93ad;
+  color: #8c7b6d;
 }
 .wr-grad {
   background: var(--accent-grad);
@@ -1219,14 +1219,14 @@ html:not(.dark) .hist-detail-scrim {
 }
 .wr-sub {
   font-size: 12px;
-  color: #5a6480;
+  color: #6b5a4c;
   margin-bottom: 8px;
 }
 .wr-accent {
-  color: #4a5fd0;
+  color: #a8390e;
 }
 .wr-muted-blk {
-  color: #5a6480;
+  color: #6b5a4c;
   line-height: 1.9;
   margin-top: 10px;
 }
@@ -1235,7 +1235,7 @@ html:not(.dark) .hist-detail-scrim {
 .wr-cover-lead {
   font-size: 15px;
   font-weight: 700;
-  color: #5a6480;
+  color: #6b5a4c;
 }
 .wr-cover-big {
   display: flex;
@@ -1278,7 +1278,7 @@ html:not(.dark) .hist-detail-scrim {
 .wr-cover-row span,
 .wr-sum-row span {
   font-size: 11px;
-  color: #5a6480;
+  color: #6b5a4c;
 }
 .wr-sum-h {
   font-size: 26px;
@@ -1287,9 +1287,9 @@ html:not(.dark) .hist-detail-scrim {
 }
 .wr-note {
   font-size: 11px;
-  color: #4a5fd0;
-  background: rgba(109, 127, 242, 0.1);
-  border: 1px solid rgba(109, 127, 242, 0.28);
+  color: #a8390e;
+  background: rgb(var(--accent-rgb) / 0.1);
+  border: 1px solid rgb(var(--accent-rgb) / 0.28);
   border-radius: 8px;
   padding: 5px 12px;
   margin-top: 10px;
@@ -1301,7 +1301,7 @@ html:not(.dark) .hist-detail-scrim {
   position: absolute;
   bottom: 20px;
   font-size: 10.5px;
-  color: #8a93ad;
+  color: #8c7b6d;
 }
 
 /* 月度条形 */
@@ -1325,12 +1325,12 @@ html:not(.dark) .hist-detail-scrim {
   color: transparent;
 }
 .wr-bpeak.on {
-  color: #4a5fd0;
+  color: #a8390e;
 }
 .wr-bar {
   width: 60%;
   border-radius: 7px;
-  background: linear-gradient(180deg, rgba(109, 127, 242, 0.55), rgba(109, 127, 242, 0.25));
+  background: linear-gradient(180deg, rgb(var(--accent-rgb) / 0.55), rgb(var(--accent-rgb) / 0.25));
   transition: height 0.4s ease;
 }
 .wr-bar.hot {
@@ -1338,7 +1338,7 @@ html:not(.dark) .hist-detail-scrim {
 }
 .wr-blab {
   font-size: 10px;
-  color: #5a6480;
+  color: #6b5a4c;
 }
 
 /* 时刻分布 */
@@ -1358,7 +1358,7 @@ html:not(.dark) .hist-detail-scrim {
 .wr-hbar {
   width: 70%;
   border-radius: 4px 4px 0 0;
-  background: rgba(109, 127, 242, 0.35);
+  background: rgb(var(--accent-rgb) / 0.35);
   transition: height 0.4s ease;
 }
 .wr-hbar.night {
@@ -1366,7 +1366,7 @@ html:not(.dark) .hist-detail-scrim {
 }
 .wr-hlab {
   font-size: 8.5px;
-  color: #5a6480;
+  color: #6b5a4c;
   height: 12px;
 }
 
@@ -1404,14 +1404,14 @@ html:not(.dark) .hist-detail-scrim {
 }
 .wr-topmeta {
   font-size: 11px;
-  color: #5a6480;
+  color: #6b5a4c;
   flex-shrink: 0;
 }
 .wr-topbar {
   margin-top: 5px;
   height: 7px;
   border-radius: 99px;
-  background: rgba(109, 127, 242, 0.14);
+  background: rgb(var(--accent-rgb) / 0.14);
 }
 .wr-topfill {
   height: 100%;

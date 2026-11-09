@@ -254,7 +254,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 1px 4px rgba(31, 41, 90, 0.12);
+  box-shadow: 0 1px 4px rgba(60, 42, 30, 0.12);
   transition: transform 0.14s, box-shadow 0.14s;
 }
 .bgmac-wcover img {
@@ -265,7 +265,7 @@
 }
 .bgmac-wcover:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 10px rgba(31, 41, 90, 0.2);
+  box-shadow: 0 4px 10px rgba(58, 42, 30, 0.2);
 }
 html.dark .bgmac-wcover {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
@@ -284,14 +284,14 @@ html.dark .bgmac-wcover:hover {
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(108, 155, 255, 0.28);
+  box-shadow: 0 4px 14px rgb(var(--shadow-rgb) / 0.17);
   transition: filter 0.15s, transform 0.12s, box-shadow 0.15s;
 }
 .bgmac-cta:hover:not(:disabled) {
   filter: brightness(1.08);
   /* [lc-1590] 悬停上浮 + 影子加深（过渡里已有 transform/box-shadow） */
   transform: translateY(-1px);
-  box-shadow: 0 7px 18px rgba(108, 155, 255, 0.36);
+  box-shadow: 0 7px 18px rgb(var(--shadow-rgb) / 0.22);
 }
 .bgmac-cta:active:not(:disabled) {
   transform: scale(0.98);
@@ -322,7 +322,7 @@ html.dark .bgmac-wcover:hover {
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(108, 155, 255, 0.25);
+  box-shadow: 0 2px 8px rgb(var(--shadow-rgb) / 0.15);
   transition: filter 0.15s, transform 0.12s;
 }
 .bgmac-act:hover:not(:disabled) {
@@ -565,12 +565,12 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 .bgmac-remember:hover input[type="checkbox"]:not(:disabled) {
-  border-color: var(--accent, #6c9bff);
+  border-color: var(--accent);
 }
 .bgmac-remember input[type="checkbox"]:checked {
-  background: var(--accent, #6c9bff);
-  border-color: var(--accent, #6c9bff);
-  box-shadow: 0 1px 4px color-mix(in srgb, var(--accent, #6c9bff) 26%, transparent);
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 26%, transparent);
 }
 .bgmac-remember input[type="checkbox"]:checked::after {
   content: "";
@@ -584,7 +584,7 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
   transform: rotate(45deg);
 }
 .bgmac-remember input[type="checkbox"]:focus-visible {
-  outline: 2px solid var(--accent, #6c9bff);
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 .bgmac-remember input[type="checkbox"]:disabled {

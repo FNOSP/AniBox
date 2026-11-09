@@ -65,7 +65,7 @@
 }
 
 .libf-chip.on {
-  color: var(--accent, #8ab4f8);
+  color: var(--accent);
   font-weight: 500;
   opacity: 1;
 }
@@ -114,7 +114,7 @@ button.libf-toggle[style],
   bottom: 6px;
   border: 0;
   background: none;
-  color: var(--accent, #8ab4f8);
+  color: var(--accent);
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
@@ -138,7 +138,7 @@ button.libf-toggle[style],
 }
 
 .libf-open:hover {
-  border-color: var(--accent, #8ab4f8);
+  border-color: var(--accent);
 }
 
 /* [lc-1805c] 工具行：筛选切换 + 服务端排序 + 重置 */
@@ -157,8 +157,8 @@ button.libf-toggle[style],
 }
 
 .libf-open.on {
-  border-color: var(--accent, #8ab4f8);
-  color: var(--accent, #8ab4f8);
+  border-color: var(--accent);
+  color: var(--accent);
   font-weight: 600;
 }
 
@@ -219,6 +219,6 @@ button.libf-toggle[style],
 }
 
 .libf-dd-item.on {
-  color: var(--accent, #8ab4f8);
+  color: var(--accent);
   font-weight: 600;
 }

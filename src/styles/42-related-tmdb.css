@@ -27,7 +27,7 @@
   transform: translateY(-3px);
 }
 .drel-tmdb-card:focus-visible {
-  outline: 2px solid rgba(108, 155, 255, 0.7);
+  outline: 2px solid rgb(var(--accent-rgb) / 0.7);
   outline-offset: 2px;
   border-radius: 10px;
 }
@@ -43,7 +43,7 @@
   transition: border-color 0.15s ease;
 }
 .drel-tmdb-card:hover .drel-tmdb-cv {
-  border-color: rgba(108, 155, 255, 0.55);
+  border-color: rgb(var(--accent-rgb) / 0.55);
 }
 .drel-tmdb-cv img {
   width: 100%;

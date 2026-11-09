@@ -57,7 +57,7 @@
 }
 .dv2-solo-play:hover {
   background: var(--hover-strong);
-  border-color: rgba(108, 155, 255, 0.45);
+  border-color: rgb(var(--accent-rgb) / 0.45);
   color: var(--text-strong);
 }
 .dv2-solo-play:active {

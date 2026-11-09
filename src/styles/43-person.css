@@ -82,14 +82,14 @@
   padding: 2px 9px;
   border-radius: 999px;
   color: var(--accent);
-  background: rgba(108, 155, 255, 0.14);
-  border: 1px solid rgba(108, 155, 255, 0.35);
+  background: rgb(var(--accent-rgb) / 0.12);
+  border: 1px solid rgb(var(--accent-rgb) / 0.35);
 }
 
 .pp-src.bgm {
   color: var(--accent-2);
-  background: rgba(143, 108, 255, 0.14);
-  border-color: rgba(143, 108, 255, 0.35);
+  background: rgb(var(--accent-rgb) / 0.12);
+  border-color: rgb(var(--accent-rgb) / 0.35);
 }
 
 .pp-orig {
@@ -204,9 +204,9 @@
 }
 
 .pp-tab.on {
-  background: var(--accent-grad);
-  color: #fff;
-  box-shadow: 0 4px 14px rgba(108, 155, 255, 0.3);
+  background: rgb(var(--accent-rgb) / 0.12);
+  color: var(--accent);
+  box-shadow: 0 4px 14px rgb(var(--shadow-rgb) / 0.18);
 }
 
 .pp-tab-n {
@@ -266,7 +266,7 @@
 }
 
 .pw-card.clickable:focus-visible {
-  outline: 2px solid rgba(108, 155, 255, 0.7);
+  outline: 2px solid rgb(var(--accent-rgb) / 0.7);
   outline-offset: 3px;
 }
 
@@ -281,8 +281,8 @@
 }
 
 .pw-card.clickable:hover .pw-cv {
-  border-color: rgba(108, 155, 255, 0.55);
-  box-shadow: 0 10px 26px rgba(31, 41, 90, 0.18);
+  border-color: rgb(var(--accent-rgb) / 0.55);
+  box-shadow: 0 10px 26px rgba(58, 42, 30, 0.18);
 }
 
 .pw-cv img {
@@ -504,7 +504,7 @@
 }
 
 .bgmc-item.clickable:focus-visible {
-  outline: 2px solid rgba(108, 155, 255, 0.7);
+  outline: 2px solid rgb(var(--accent-rgb) / 0.7);
   outline-offset: -2px;
   border-radius: 8px;
 }

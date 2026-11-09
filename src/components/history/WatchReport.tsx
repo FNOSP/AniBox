@@ -538,16 +538,16 @@ function exportReportImage(r: YearReport): void {
   const ctx = cv.getContext("2d");
   if (!ctx) return;
   const bg = ctx.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, "#fafbfe");
-  bg.addColorStop(1, "#eef1fa");
+  bg.addColorStop(0, "#fbf8f4");
+  bg.addColorStop(1, "#f2ece5");
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
-  const ink = "#2f3550";
-  const sub = "#5a6480";
+  const ink = "#2c2119";
+  const sub = "#6b5a4c";
   const accent = (x: number, y: number, w: number, h: number) => {
     const g = ctx.createLinearGradient(x, y, x + w, y + h);
-    g.addColorStop(0, "#6d7ff2");
-    g.addColorStop(1, "#8a63e8");
+    g.addColorStop(0, "#c2501a");
+    g.addColorStop(1, "#c2501a");
     ctx.fillStyle = g;
     ctx.fillRect(x, y, w, h);
   };
@@ -558,7 +558,7 @@ function exportReportImage(r: YearReport): void {
     ctx.fillText(t, x, y);
   };
 
-  text(`ANIBOX · ${r.year} 年度观影报告`, W / 2, 70, 13, "800", "#8a93ad", "center");
+  text(`ANIBOX · ${r.year} 年度观影报告`, W / 2, 70, 13, "800", "#8c7b6d", "center");
   text("这一年，你在 AniBox 看了", W / 2, 118, 15, "700", sub, "center");
   accent(W / 2 - 92, 138, 184, 62);
   text(fmtHours(r.totalMs), W / 2, 182, 52, "900", "#ffffff", "center");
@@ -579,7 +579,7 @@ function exportReportImage(r: YearReport): void {
   text("月度节奏", 46, y0, 20, "900", ink);
   const maxMonth = Math.max(...r.monthMs, 1);
   const peak = r.monthMs.indexOf(Math.max(...r.monthMs));
-  if (r.totalMs > 0) text("最猛的一个月：" + (peak + 1) + " 月", W - 46, y0, 13, "700", "#4a5fd0", "right");
+  if (r.totalMs > 0) text("最猛的一个月：" + (peak + 1) + " 月", W - 46, y0, 13, "700", "#a8390e", "right");
   const bw = 34;
   const gap = (W - 92 - bw * 12) / 11;
   for (let i = 0; i < 12; i++) {
@@ -587,7 +587,7 @@ function exportReportImage(r: YearReport): void {
     const x = 46 + i * (bw + gap);
     if (i === peak) accent(x, y0 + 30 + 130 - h, bw, h);
     else {
-      ctx.fillStyle = "rgba(109,127,242,.30)";
+      ctx.fillStyle = "rgba(194,80,26,.28)";
       ctx.fillRect(x, y0 + 30 + 130 - h, bw, h);
     }
     text(i + 1 + "月", x + bw / 2, y0 + 30 + 148, 10, "600", sub, "center");
@@ -607,7 +607,7 @@ function exportReportImage(r: YearReport): void {
   for (let h = 0; h < 24; h++) {
     const hh = Math.max(3, Math.round((r.hourMs[h] / maxHour) * 90));
     const x = 46 + h * (hw + 4);
-    ctx.fillStyle = h < 5 ? "#6d7ff2" : "rgba(109,127,242,.35)";
+    ctx.fillStyle = h < 5 ? "#c2501a" : "rgba(194,80,26,.32)";
     ctx.fillRect(x, y0 + 24 + 90 - hh, hw, hh);
     if (h % 6 === 0) text(String(h).padStart(2, "0"), x + hw / 2, y0 + 24 + 108, 9, "600", sub, "center");
   }
@@ -621,7 +621,7 @@ function exportReportImage(r: YearReport): void {
     text(MEDALS[i], 46, yy + 16, 17, "700", ink);
     text(t.name.slice(0, 22), 78, yy + 14, 14, "700", ink);
     text(`${fmtHours(t.ms)} 小时${t.finished || t.prog >= 1 ? " · 已看完" : ""}`, W - 46, yy + 14, 11, "600", sub, "right");
-    ctx.fillStyle = "rgba(109,127,242,.14)";
+    ctx.fillStyle = "rgba(194,80,26,.14)";
     ctx.fillRect(78, yy + 22, W - 78 - 46, 7);
     accent(78, yy + 22, Math.max(6, Math.round((t.ms / maxTop) * (W - 78 - 46))), 7);
   });
@@ -641,7 +641,7 @@ function exportReportImage(r: YearReport): void {
     text(v, x, y0 + 108, 26, "900", ink, "center");
     text(l, x, y0 + 130, 11, "600", sub, "center");
   });
-  text("AniBox 生成 · 数据来自本机播放记录", W / 2, H - 30, 10.5, "600", "#8a93ad", "center");
+  text("AniBox 生成 · 数据来自本机播放记录", W / 2, H - 30, 10.5, "600", "#8c7b6d", "center");
 
   const a = document.createElement("a");
   a.href = cv.toDataURL("image/png");

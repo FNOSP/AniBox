@@ -46,7 +46,7 @@
   padding: 0 0 2px;
   border: 1px solid rgba(255, 255, 255, 0.55);
   border-radius: 50%;
-  background: rgba(16, 20, 30, 0.55);
+  background: rgba(18, 14, 11, 0.55);
   color: #fff;
   font-size: 17px;
   line-height: 1;
@@ -76,7 +76,7 @@
   }
 }
 .continue-play:hover {
-  background: rgba(108, 155, 255, 0.85);
+  background: rgb(var(--accent-rgb) / 0.85);
   transform: translate(-50%, -50%) scale(1.06);
 }
 .continue-play:active {

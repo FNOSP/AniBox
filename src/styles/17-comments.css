@@ -158,7 +158,7 @@
 
 .bgmc-retry:hover {
   background: var(--hover-strong);
-  border-color: rgba(108, 155, 255, 0.45);
+  border-color: rgb(var(--accent-rgb) / 0.45);
 }
 
 .bgmc-retry:active {

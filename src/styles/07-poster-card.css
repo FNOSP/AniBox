@@ -49,9 +49,9 @@
 
 .card:hover .poster-box {
   transform: translateY(-4px);
-  border-color: rgba(108, 155, 255, 0.55);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(108, 155, 255, 0.18),
-    0 0 24px rgba(108, 155, 255, 0.12);
+  border-color: rgb(var(--accent-rgb) / 0.55);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5), 0 0 0 1px rgb(var(--shadow-rgb) / 0.11),
+    0 0 24px rgb(var(--shadow-rgb) / 0.2);
 }
 .poster-box img {
   width: 100%;
@@ -92,7 +92,7 @@
   border-radius: 999px;
   font-size: 13px;
   font-weight: 700;
-  box-shadow: 0 6px 18px rgba(108, 155, 255, 0.4);
+  box-shadow: 0 6px 18px rgb(var(--shadow-rgb) / 0.24);
   transform: translateY(6px);
   transition: transform 0.18s;
 }
@@ -150,7 +150,7 @@
 .progress > div {
   height: 100%;
   background: var(--accent-grad);
-  box-shadow: 0 0 8px rgba(108, 155, 255, 0.7);
+  box-shadow: 0 0 8px rgb(var(--shadow-rgb) / 0.42);
 }
 .card-title {
   margin-top: 9px;
@@ -242,12 +242,12 @@
   justify-content: center;
   color: #fff;
   background: var(--accent-grad);
-  box-shadow: 0 8px 24px rgba(108, 155, 255, 0.45);
+  box-shadow: 0 8px 24px rgb(var(--shadow-rgb) / 0.27);
   transition: transform 0.16s ease, box-shadow 0.16s ease;
 }
 .pa-play:hover {
   transform: translate(-50%, -50%) scale(1.06);
-  box-shadow: 0 10px 30px rgba(108, 155, 255, 0.6);
+  box-shadow: 0 10px 30px rgb(var(--shadow-rgb) / 0.36);
 }
 .pa-play .fill {
   fill: currentColor;

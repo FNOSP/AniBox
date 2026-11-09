@@ -197,7 +197,9 @@ export function TitleBar({
           aria-label="AniBox"
         >
           <defs>
-            {/* 动漫感多色相渐变（青 → 蓝紫 → 紫 → 粉） */}
+            {/* [lc-1703] 动漫感多色相渐变（青 → 蓝紫 → 紫 → 粉）。
+                [lc-2110] 全站去蓝紫时用户明确要求**顶栏字标保持原样**：
+                它只是品牌标识，不是界面控件，不参与配色收敛。 */}
             <linearGradient id="aniboxLogoInk" x1="0" y1="0" x2="1" y2="0">
               <stop offset="0" stopColor="#5EC8E8" />
               <stop offset="0.33" stopColor="#7B8FE8" />

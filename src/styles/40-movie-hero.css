@@ -405,8 +405,8 @@ html.dark .mv-glass {
   border-color: var(--mv-fg);
 }
 .mv-head .mv-version.active {
-  border-color: var(--accent, #4ea1ff);
-  background: color-mix(in srgb, var(--accent, #4ea1ff) 26%, transparent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
   color: var(--mv-fg);
 }
 .mv-head .mv-note {
@@ -523,6 +523,6 @@ html.dark .mv-glass {
   border-color: rgba(255, 255, 255, 0.5);
 }
 .mv-version.active {
-  border-color: var(--accent, #4ea1ff);
-  background: color-mix(in srgb, var(--accent, #4ea1ff) 30%, transparent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
 }

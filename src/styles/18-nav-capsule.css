@@ -25,10 +25,12 @@
   gap: 0; /* 等宽两槽：指示器宽度 = 50%，靠 translateX(0|100%) 搬家 */
   padding: 3px;
   border-radius: 999px;
-  /* 半透明玻璃：浅色页面 / 深色海报上都能看清白字 */
-  background: rgba(20, 28, 44, 0.42);
-  border: 1px solid rgba(255, 255, 255, 0.26);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  /* [lc-2110] 半透明中性玻璃：原来这层是深蓝底 + 蓝紫滑动水滴，浮在海报上像贴了块
+     彩色塑料。现在底色去掉色相（只留明暗与描边），指示器改用 accent 的低饱和填充
+     —— 在海报上仍认得清，但不再抢画面。 */
+  background: rgba(24, 20, 17, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(10px) saturate(1.15);
   -webkit-backdrop-filter: blur(10px) saturate(1.15);
   -webkit-app-region: no-drag; /* ← 保险丝：胶囊永远不参与窗口拖拽 */
@@ -59,8 +61,12 @@
   width: 100%;
   height: 100%;
   border-radius: 999px;
-  background: var(--accent-grad); /* 选中态仍是现有 --accent-grad */
-  box-shadow: 0 4px 14px rgba(108, 155, 255, 0.42);
+  /* [lc-2110] 指示器从「accent 实心水滴」改成**中性白玻璃片**。
+     为什么不是 accent：这个胶囊是浮在轮播海报上的，海报本身已经是满屏彩色大图，
+     再压一块高饱和色块只会加剧"彩色塑料"观感 —— 中性高光片才是玻璃语言里的选中。
+     白片自带 0.9 不透明度，配合下面的深色字，在任何海报上都读得出来。 */
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 2px 8px rgb(var(--shadow-rgb) / 0.28);
 }
 
 .nav-cap[data-side="home"] .nav-cap-ind i {
@@ -132,10 +138,11 @@
   color: #fff;
 }
 
-/* 高亮交给滑动指示器：选中按钮自己不再画底（否则和指示器叠成两层） */
+/* 高亮交给滑动指示器：选中按钮自己不再画底（否则和指示器叠成两层）。
+   [lc-2110] 指示器现在是**白底**，选中图标的文字色必须翻成深色才看得见。 */
 .nav-cap-l.on {
   background: transparent;
-  color: #fff;
+  color: #241a12;
   box-shadow: none;
   text-shadow: none;
 }

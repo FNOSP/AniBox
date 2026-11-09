@@ -27,10 +27,10 @@
     rgba(255, 255, 255, 0.68) 45%,
     rgba(255, 255, 255, 0) 100%
   );
-  /* 浅色底上原来的 #6c9bff→#8f6cff 渐变只有 ~2.7:1，标题看不清；
-     改用同色相压深一档的渐变（≈4.4:1 / 5.3:1），卖点小圆点同步用深蓝。 */
-  --login-hero-title-grad: linear-gradient(135deg, #4a74d9 0%, #7450e0 100%);
-  --login-hero-dot: #4a74d9;
+  /* [lc-2110] 标题原先是蓝→紫双色相渐变；现在统一成 token 的单色（浅色主题的
+     --accent 已是对页底 5.45:1 的深陶土，直接可用），卖点小圆点同色。 */
+  --login-hero-title-grad: linear-gradient(var(--accent), var(--accent));
+  --login-hero-dot: var(--accent);
   --login-hero-text-shadow: none;
 }
 
@@ -48,8 +48,8 @@ html.dark .login-wrap {
     rgba(0, 0, 0, 0.46) 45%,
     rgba(0, 0, 0, 0) 100%
   );
-  --login-hero-title-grad: var(--accent-grad);
-  --login-hero-dot: var(--accent-grad);
+  --login-hero-title-grad: linear-gradient(var(--accent), var(--accent));
+  --login-hero-dot: var(--accent);
   /* 渐变边缘淡出处仍可能压到亮部，给文字一点暗色投影兜底 */
   --login-hero-text-shadow: 0 1px 4px rgba(0, 0, 0, 0.62);
 }
@@ -159,7 +159,7 @@ html.dark .login-wrap {
   height: 340px;
   top: -120px;
   left: -80px;
-  background: radial-gradient(circle, rgba(108, 155, 255, 0.22), transparent 65%);
+  background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.22), transparent 65%);
   filter: blur(10px);
   pointer-events: none;
 }
@@ -238,7 +238,7 @@ html.dark .login-wrap {
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 8px 22px rgba(108, 155, 255, 0.35);
+  box-shadow: 0 8px 22px rgb(var(--shadow-rgb) / 0.21);
   transition: filter 0.15s, transform 0.15s;
 }
 .login-card .primary:hover {

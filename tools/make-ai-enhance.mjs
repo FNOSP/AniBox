@@ -25,6 +25,11 @@ const REQUIRED = [
   //   （API3，R79 兼容），SHA-256 530a2f003901a7c0…（与 vsrepo 官方清单一致）。
   // 注意：v25+ 官方 release 不含 Windows 二进制，故 Windows x64 以 v24 为准。
   "runtime/plugins/mvtools.dll",
+  // [lc-2012] open-svpflow（SVP 开源重写版 Z1xus/open-svpflow，OpenCL GPU 加速）——
+  // 实测 5070 HQ 档 720p 6.68× / 1080p 5.76× 实时，性能最好的真实补帧引擎。
+  "runtime/plugins/svpflow1_vs.dll",
+  "runtime/plugins/svpflow2_vs.dll",
+  "vs/open-svpflow.vpy",
   // vsort + onnxruntime + DirectML 仅供 AI 超分 DML 档（AnimeJaNai）；
   // [lc-2004] RIFE DirectML 后端已删（实测 ONNX 会话初始化异常），rife_dml.vpy 与
   // runtime/plugins/models/rife_v2/ 不再入包。

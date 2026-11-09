@@ -187,6 +187,74 @@
   animation: dPanel 0.24s var(--ease) both;
 }
 
+/* ══════════════ [lc-2119] 标签页内容**自己滚**，不再整屏滚 ══════════════
+   改前：整个 `main.detail-full`（.content）是唯一滚动容器 ⇒ 在「角色」「评论」这些
+   长页里往下滚时，封面、评分、标签条会一起被卷出视口，标题条也离开视野；而右栏
+   选集列表早就是自己滚的 —— 左右两栏的滚动语义不一致，观感很怪。
+   改后：把滚动视口下移到 `.dv2-body`（标签页内容区块），上方 dv2-top / 标签条保持
+   固定，右栏仍自己滚。两栏真正「各自滚各自的」，与文件头的版式声明一致。
+
+   高度链（必须一环比一环成立，否则内容会把容器撑高、滚不动）：
+     .content(detail-full)  height:100% + min-height:0
+       → .dv2              flex:1 + min-height:0（grid 行内可收缩）
+         → .dv2-left       min-height:0
+           → .dv2-body     flex:1 + min-height:0 + overflow-y:auto  ← 滚动视口
+
+   ⚠ 电影模式（.dv2-movie）不适用：它上方的头图是满幅首屏，整页滚动才是对的。
+   ⚠ 窄窗（≤900px）不适用：右栏已变成静态堆叠（.dv2-right position:static），
+     此时整页滚动是唯一合理的形态。 */
+.dv2:not(.dv2-movie) {
+  /* grid 行内让左列能收缩到容器高度以内 */
+  min-height: 0;
+}
+@media (min-width: 901px) {
+  .detail-full:not(.mv-detail) {
+    overflow: hidden;   /* 交给 .dv2-body 滚 */
+  }
+  .detail-full:not(.mv-detail) .dv2 {
+    flex: 1 1 auto;
+    min-height: 0;
+    /* 单行轨道取「可用高度」：默认行高按内容计算，左列会被内容撑高、高度链断掉。
+       ⚠ .dv2 有 align-items:start，grid 项不会自动拉伸 ⇒ 左列还必须 align-self:stretch。 */
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .detail-full:not(.mv-detail) .dv2-left {
+    min-height: 0;
+    align-self: stretch;   /* 抵消 .dv2 的 align-items:start */
+    height: 100%;
+    overflow: hidden;      /* 滚动权交给 .dv2-body */
+  }
+  /* 左列里除 .dv2-body 以外的块（封面信息卡、标签条）都是**固定高度**：
+     默认 flex-shrink:1 会在内容多时把它们压扁（标签条被压成一条缝是典型症状）。 */
+  .detail-full:not(.mv-detail) .dv2-left > *:not(.dv2-body) {
+    flex: 0 0 auto;
+  }
+  .detail-full:not(.mv-detail) .dv2-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    /* 滚动条不压内容；负 margin 抵消内边距，视觉上仍与上方标签条左右对齐 */
+    padding-right: var(--sp-2);
+    margin-right: calc(-1 * var(--sp-2));
+    scrollbar-gutter: stable;
+    /* [lc-2119] 底部气口必须写在这里（滚动内容的内部），不能靠 .dv2 的
+       padding-bottom:40px —— 那个现在落在滚动视口**外面**，滚到底时内容会贴死窗口底边。 */
+    padding-bottom: var(--sp-6);
+  }
+  /* 滚动条做细，与右栏选集列表同一套观感 */
+  .detail-full:not(.mv-detail) .dv2-body::-webkit-scrollbar {
+    width: 8px;
+  }
+  .detail-full:not(.mv-detail) .dv2-body::-webkit-scrollbar-thumb {
+    background: var(--hover-strong);
+    border-radius: var(--r-full);
+  }
+  .detail-full:not(.mv-detail) .dv2-body::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
 /* ── 关联条目：**横向分栏**（用户定稿版式）────────────────────────────────
    一列 = 一个 relation（续集 / 书籍 / 游戏 / 原声集 / 片头曲 / 片尾曲 / 衍生 …），
    列内竖向排卡片（封面 + 标题），列间一条竖分隔线；整条横向可翻页（复用 ScrollRow 箭头）。

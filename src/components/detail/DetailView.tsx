@@ -570,7 +570,12 @@ export function DetailView({
 
   // [lc-1513] 标签页切换淡入（详情/评论/吐槽/关联/角色/更多）：class 加一下即触发
   const [tabAnim, setTabAnim] = useState(false);
+  // [lc-2119] 标签内容区自己的滚动视口引用：切页要把它滚回顶部
+  //   （改前是整个 main 在滚，切页时浏览器不会自动复位；现在滚动容器下沉了，
+  //    若不复位，切到「角色」会停在上一个标签页的滚动位置，看起来像内容缺了一截）。
+  const bodyRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    bodyRef.current?.scrollTo({ top: 0 });
     if (prefersReducedMotion()) return;
     setTabAnim(true);
     const t = window.setTimeout(() => setTabAnim(false), 260);
@@ -2158,7 +2163,7 @@ export function DetailView({
 
 
   return (
-    <main className={`content detail-full${isMovie ? " mv-detail" : ""}`} onScroll={onDetailScroll}>
+    <main className={`content detail-full${isMovie ? " mv-detail" : ""}`}>
       {/* [lc-1401] 详情页按**用户定稿版式**重排（两栏）：
             左列：竖版封面 → 标签页 → 该页内容（[lc-1567] 标签/简介从首屏移入「详情」页）
             右列：集数据（本机集数 × Bangumi 集号对齐）的**整条竖向列表**
@@ -2345,8 +2350,12 @@ export function DetailView({
             </button>
           </nav>
 
-          {/* 标签页内容 */}
-          <div className={`dbody dv2-body${tabAnim ? " view-in" : ""}`}>
+          {/* 标签页内容
+              [lc-2119] 这个容器**自己是滚动视口**（见 22-detail-v2.css 的 .dv2-body）：
+              滚动发生在标签页内容区块内，上方的封面/评分/标签条保持可见，不再整屏滚走。
+              触底翻页（评论/吐槽）的监听也从 main 移到这里 —— 滚动事件只在与滚动容器
+              相同的元素上触发，挂在 main 上收不到。 */}
+          <div ref={bodyRef} className={`dbody dv2-body${tabAnim ? " view-in" : ""}`} onScroll={onDetailScroll}>
         {activeTab === "overview" && (
           <OverviewTab
             bgmTags={bgmTags}

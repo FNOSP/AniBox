@@ -361,6 +361,21 @@ export function DuanjuPane() {
           >
             全部
           </button>
+          {/* [lc-2113] 排序胶囊并入分类行（紧跟「全部」，不另起一行）：
+              用户要求排序与分类同一行，省一行纵向空间。分隔用小竖线而非新行。 */}
+          <span className="dj-divider" aria-hidden="true" />
+          {SORTS.map((s) => (
+            <button
+              key={`sort-${s.id}`}
+              type="button"
+              className={`dj-chip sm dj-sortchip${sort === s.id ? " on" : ""}`}
+              onClick={() => setSort(s.id)}
+              title={`按${s.label}排序`}
+            >
+              {s.label}
+            </button>
+          ))}
+          <span className="dj-divider" aria-hidden="true" />
           {cats.map((c) => (
             <button
               key={c.id}
@@ -382,25 +397,6 @@ export function DuanjuPane() {
           }}
         />
       </div>
-
-      {/* [lc-2112] 排序（纯前端，针对已加载数据；上游 catalog 无排序参数） */}
-      {!favOpen && (
-        <div className="dj-row dj-sortrow">
-          <span className="dj-sortk">排序</span>
-          <div className="dj-chips">
-            {SORTS.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                className={`dj-chip sm${sort === s.id ? " on" : ""}`}
-                onClick={() => setSort(s.id)}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
 
       {favOpen ? (
         /* [lc-2099] 收藏视图：本地即时渲染，不走目录请求 */

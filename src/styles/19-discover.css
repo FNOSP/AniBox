@@ -3339,15 +3339,22 @@ html.dark .dj-hint {
   color: var(--muted);
 }
 
-/* ── [lc-2112] 短剧排序条（纯前端排序）── */
-.dj-sortrow {
-  gap: 8px;
-  align-items: center;
+/* ── [lc-2113] 排序胶囊（并入分类行，紧跟「全部」；不再单独占一行）── */
+/* 分类与排序之间的细分隔线：1px 竖条，高度对齐胶囊文字区 */
+.dj-divider {
+  flex: 0 0 1px;
+  align-self: center;
+  width: 1px;
+  height: 14px;
+  background: var(--line);
+  opacity: 0.7;
+  margin: 0 2px;
 }
 
-.dj-sortk {
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
+/* 排序胶囊与分类胶囊同视觉，但选中态用**描边 + 主色文字**区分（避免两组胶囊抢同一种
+   实心蓝，用户分不清哪个是分类、哪个是排序） */
+.dj-sortchip.on {
+  border-color: var(--accent);
+  background: transparent;
+  color: var(--accent);
 }

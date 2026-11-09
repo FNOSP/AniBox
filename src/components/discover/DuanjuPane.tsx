@@ -59,6 +59,53 @@ const SOURCES: { id: string; label: string }[] = [
 ];
 const EP_GROUP = 30; // 选集分组（与上游详情页同口径）
 
+/** ── [lc-2112] 排序（纯前端）：上游 catalog 无排序参数，只对**已加载**的数据排序。
+    score/heat/views 是字符串数字（后端原样透传），解析失败按 0 处理并排到末尾。 ── */
+type SortMode = "default" | "score" | "heat" | "views" | "episodes";
+const SORTS: { id: SortMode; label: string }[] = [
+  { id: "default", label: "默认" },
+  { id: "score", label: "评分" },
+  { id: "heat", label: "热度" },
+  { id: "views", label: "播放量" },
+  { id: "episodes", label: "集数" },
+];
+
+/** [lc-2112] 数值紧凑显示：≥1 万显示「x.x万」，避免 36796836 这种长数字撑破卡片。 */
+function compactNum(v: unknown): string {
+  const n = numOf(v);
+  if (n >= 1e8) return `${(n / 1e8).toFixed(1)}亿`;
+  if (n >= 1e4) return `${(n / 1e4).toFixed(1)}万`;
+  return n > 0 ? String(n) : "";
+}
+
+function numOf(v: unknown): number {
+  const n = Number(String(v ?? "").replace(/[^\d.]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function sortItems(list: DuanjuDrama[], mode: SortMode): DuanjuDrama[] {
+  if (mode === "default") return list;
+  const key = (d: DuanjuDrama): number => {
+    switch (mode) {
+      case "score":
+        return numOf(d.score);
+      case "heat":
+        return numOf(d.heat);
+      case "views":
+        return numOf(d.views);
+      case "episodes":
+        return numOf(d.episodes);
+      default:
+        return 0;
+    }
+  };
+  // 稳定排序：同值保持上游原序（现代 V8 的 sort 已稳定，这里显式 index 兜底）
+  return list
+    .map((d, i) => ({ d, i, k: key(d) }))
+    .sort((a, b) => (b.k - a.k) || (a.i - b.i))
+    .map((x) => x.d);
+}
+
 /** ── [lc-2099] 短剧收藏（本地持久化）：详情页右上角星标收藏，左栏「收藏」标签置顶。
     存整份 drama 摘要（id/title/cover/源/集数等）——收藏列表要能直接渲染卡片并再次
     打开详情，光存 id 得重新拉取；与 IPTV 收藏同一套 localStorage 惯例。 ── */
@@ -97,6 +144,7 @@ export function DuanjuPane() {
   // [lc-2099] 收藏：favOpen = 左栏「收藏」标签激活（与站源 chips 并列置顶）
   const [favs, setFavs] = useState<FavDrama[]>(readFavs);
   const [favOpen, setFavOpen] = useState(false);
+  const [sort, setSort] = useState<SortMode>("default"); // [lc-2112] 排序（纯前端）
   const [cats, setCats] = useState<{ id: string; name: string }[]>([]);
   const [cat, setCat] = useState("");
   const [query, setQuery] = useState("");
@@ -258,6 +306,10 @@ export function DuanjuPane() {
     });
   }
 
+  // [lc-2112] 目录/收藏列表按当前排序模式派生（只对已加载数据排序）
+  const shownItems = useMemo(() => sortItems(items, sort), [items, sort]);
+  const shownFavs = useMemo(() => sortItems(favs as DuanjuDrama[], sort), [favs, sort]) as FavDrama[];
+
   const chapters = detail?.chapters || [];
   const epGroups = useMemo(() => {
     const out: DuanjuChapter[][] = [];
@@ -331,6 +383,25 @@ export function DuanjuPane() {
         />
       </div>
 
+      {/* [lc-2112] 排序（纯前端，针对已加载数据；上游 catalog 无排序参数） */}
+      {!favOpen && (
+        <div className="dj-row dj-sortrow">
+          <span className="dj-sortk">排序</span>
+          <div className="dj-chips">
+            {SORTS.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className={`dj-chip sm${sort === s.id ? " on" : ""}`}
+                onClick={() => setSort(s.id)}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {favOpen ? (
         /* [lc-2099] 收藏视图：本地即时渲染，不走目录请求 */
         favs.length === 0 ? (
@@ -340,7 +411,7 @@ export function DuanjuPane() {
           </div>
         ) : (
           <div className="dj-grid">
-            {favs.map((d) => (
+            {shownFavs.map((d) => (
               <button key={d.id} type="button" className="dj-card" onClick={() => openDetail(d)}>
                 <span className="dj-poster">
                   {d.cover ? (
@@ -393,7 +464,7 @@ export function DuanjuPane() {
       ) : (
         <>
           <div className="dj-grid">
-            {items.map((d) => (
+            {shownItems.map((d) => (
               <button key={d.id} type="button" className="dj-card" onClick={() => openDetail(d)}>
                 <span className="dj-poster">
                   {d.cover ? (
@@ -428,9 +499,20 @@ export function DuanjuPane() {
                 </span>
                 <span className="dj-title">{d.title}</span>
                 <span className="dj-meta">
-                  {[d.episodes ? `${d.episodes}集` : "", d.score ? `${d.score}分` : "", d.heat || d.views || ""]
-                    .filter(Boolean)
-                    .join(" · ")}
+                  {(() => {
+                    // [lc-2112] 按当前排序模式把对应数值放最前，便于直接看出排序依据
+                    const ep = d.episodes ? `${d.episodes}集` : "";
+                    const sc = d.score ? `${d.score}分` : "";
+                    const ht = compactNum(d.heat) ? `热度${compactNum(d.heat)}` : "";
+                    const vw = compactNum(d.views) ? `播放${compactNum(d.views)}` : "";
+                    const order =
+                      sort === "score" ? [sc, ht, vw, ep]
+                      : sort === "heat" ? [ht, sc, vw, ep]
+                      : sort === "views" ? [vw, sc, ht, ep]
+                      : sort === "episodes" ? [ep, sc, ht, vw]
+                      : [ep, sc, ht || vw];
+                    return order.filter(Boolean).slice(0, 2).join(" · ");
+                  })()}
                 </span>
               </button>
             ))}

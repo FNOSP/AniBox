@@ -3338,3 +3338,16 @@ html.dark .dj-hint {
   font-size: 12px;
   color: var(--muted);
 }
+
+/* ── [lc-2112] 短剧排序条（纯前端排序）── */
+.dj-sortrow {
+  gap: 8px;
+  align-items: center;
+}
+
+.dj-sortk {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}

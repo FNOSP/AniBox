@@ -38,6 +38,10 @@ pub struct HttpHeaders {
     pub user_agent: Option<String>,
     /// 预留：规则源自定义头（PotPlayer 模式经 relay 透传）。
     pub extra: Vec<(String, String)>,
+    /// [lc-2100] 额外的 **mpv 命令行选项**（不是 HTTP 头）。首个用途：短剧 CENC 流的
+    /// `--demuxer-lavf-o=decryption_key=...`（红果 HEVC 加密，不给 key mpv 解出乱码 NAL）。
+    /// 只在新建会话时随命令行下发；复用会话时经 IPC 逐项 set（见 launch_mpv 两处分支）。
+    pub mpv_opts: Vec<String>,
 }
 
 impl HttpHeaders {
@@ -50,12 +54,18 @@ impl HttpHeaders {
             referer: norm(referer),
             user_agent: norm(user_agent),
             extra: Vec::new(),
+            mpv_opts: Vec::new(),
         }
     }
 
     /// 是否含有任何需要 relay 代转的头。
     pub fn needs_relay(&self) -> bool {
         self.referer.is_some() || self.user_agent.is_some() || !self.extra.is_empty()
+    }
+
+    /// [lc-2100] 是否带 mpv 选项（需要走 mpv 启动参数/IPC set，与 HTTP 头无关）。
+    pub fn has_mpv_opts(&self) -> bool {
+        !self.mpv_opts.is_empty()
     }
 }
 
@@ -411,6 +421,10 @@ async fn launch_mpv(
         }
         _ => Vec::new(),
     };
+    // [lc-2100] mpv 选项（如 CENC 的 demuxer-lavf-o=decryption_key=...）：命令行追加。
+    if let Some(h) = headers {
+        extra.extend(h.mpv_opts.iter().cloned());
+    }
     // [playlist] 多条目播放列表：命令行 `--playlist-start=<idx>` 指定起播集，
     // 与「先启动再 IPC jump」不同，起播零 IPC 依赖（启动期 IPC 会卡数秒，见 lib.rs lc-1559）。
     if let Some(idx) = playlist_start {
@@ -493,6 +507,24 @@ async fn launch_mpv(
                         "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5"
                     ]))
                     .await;
+            }
+            // [lc-2100] 复用会话：mpv_opts 逐项 set（`--key=value` → set key value）。
+            // demuxer-lavf-o 是**打开流时读取**的选项，loadfile 前设好即可生效；
+            // 旧值残留会污染后续普通视频，故先清空再写本次的值。
+            if let Some(h) = headers {
+                if h.has_mpv_opts() {
+                    let _ = m.command(json!(["set", "demuxer-lavf-o", ""])).await;
+                    for opt in &h.mpv_opts {
+                        let body = opt.trim_start_matches("--");
+                        if let Some((k, v)) = body.split_once('=') {
+                            let _ = m.command(json!(["set", k, v])).await;
+                        }
+                    }
+                } else {
+                    // 本次不是加密流：清掉上一部残留的 decryption_key 等 lavf 选项
+                    let _ = m.command_no_reply(json!(["set", "demuxer-lavf-o", ""]))
+                        .await;
+                }
             }
             // [lc-1841] 复用会话的续播点：loadfile 前把 start 写成进度（加载时消费），
             // file-loaded 后由 mpv.rs 事件循环清回 none；本地 watch-later 若存在，

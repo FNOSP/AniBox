@@ -332,6 +332,21 @@ pub async fn duanju_play(
         }
         http_headers.extra.push((k, v));
     }
+    // [lc-2100] CENC 解密：红果 HEVC 流是加密的，核心返回 `decryptionKey` 时必须交给
+    // mpv 的 lavf demuxer（`decryption_key=<hex>`，并放开 crypto 协议白名单），否则
+    // mpv 解出乱码 NAL（"Invalid NAL unit size"）→ 黑屏、进度直接到末尾。
+    // Dart 客户端同口径（playback_session.dart 的 demuxer-lavf-o）。
+    if let Some(key) = plan
+        .get("decryptionKey")
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+    {
+        http_headers.mpv_opts.push(format!(
+            "--demuxer-lavf-o=decryption_key={key},protocol_whitelist=[http,https,tcp,tls,crypto,data,file]"
+        ));
+        crate::libmpv::trace(&format!("[duanju] CENC 解密密钥已下发（{} 位 hex）", key.len()));
+    }
     crate::player::launch(
         &app,
         &state,

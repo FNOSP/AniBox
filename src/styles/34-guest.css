@@ -6,13 +6,13 @@
 /* ── 登录页：先逛逛 —— 刻意弱于 .primary 渐变主按钮（透明底 + 弱描边 + 次要文字色） ── */
 .gst-enter {
   margin-top: 10px;
-  padding: 11px 12px;
-  border-radius: 10px;
+  padding: var(--sp-3) var(--sp-3);
+  border-radius: var(--r-md);
   border: 1px solid var(--line-strong);
   background: transparent;
   color: var(--muted);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   cursor: pointer;
   transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
 }
@@ -30,12 +30,12 @@
    [lc-1603] 居中构图：图标徽章 → 标题 → 副标题 → 居中双按钮；顶部一条 accent 渐变细线。 */
 .gst-modal {
   width: min(420px, 92vw);
-  padding: 30px 28px 22px;
+  padding: var(--sp-6) var(--sp-5) var(--sp-5);
   text-align: center;
   /* 背景做出层次（比 .ddet 的单色更有纵深），深浅主题都成立 */
   background: linear-gradient(180deg, var(--bg-2), var(--bg-3));
   /* [lc-1603] 进场：卡片微放大 + 上浮 */
-  animation: gstModalIn 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: gstModalIn 0.22s var(--ease-enter);
 }
 /* 顶部 3px accent 渐变细线（靠 .ddet 的 overflow:hidden 收边） */
 .gst-modal::before {
@@ -65,12 +65,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 15px;
+  border-radius: var(--r-lg);
   color: var(--text-strong);
   background: var(--sel-bg);
   border: 1px solid var(--line-strong);
   box-shadow: 0 6px 18px rgb(var(--shadow-rgb) / 0.11);
-  animation: gstBadgePop 0.34s 0.06s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation: gstBadgePop 0.34s 0.06s var(--ease-spring) both;
 }
 @keyframes gstBadgePop {
   from {
@@ -84,29 +84,29 @@
 }
 .gst-hd {
   margin: 0;
-  font-size: 16.5px;
+  font-size: var(--fs-subtitle);
   font-weight: 700;
   color: var(--text-strong);
   line-height: 1.45;
 }
 .gst-sub {
   margin: 8px 0 0;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   color: var(--muted);
   line-height: 1.6;
 }
 .gst-acts {
   display: flex;
   justify-content: center;
-  gap: 10px;
+  gap: var(--sp-3);
   margin-top: 22px;
 }
 .gst-btn {
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
-  border-radius: 9px;
-  padding: 9px 18px;
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
   min-width: 96px;
   cursor: pointer;
   border: 1px solid var(--line-strong);
@@ -136,7 +136,7 @@
   animation: gstMaskOut 0.17s ease forwards;
 }
 .ddet-mask.gst-mask-closing .gst-modal {
-  animation: gstModalOut 0.17s cubic-bezier(0.4, 0, 1, 1) forwards;
+  animation: gstModalOut 0.17s var(--ease-exit) forwards;
 }
 @keyframes gstMaskOut {
   to {

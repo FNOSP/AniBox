@@ -39,7 +39,7 @@
   color: rgba(255, 255, 255, 0.78);
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
   font-family: inherit;
-  font-size: 52px;
+  font-size: var(--fs-hero);
   font-weight: 400;
   line-height: 1;
   cursor: pointer;
@@ -104,6 +104,6 @@
 }
 /* 放大后标题字号顺手提一点（原来 13px 是配 148px 小卡的） */
 .hscroll .continue-card .card-title {
-  font-size: 13.5px;
+  font-size: var(--fs-ctl);
 }
 

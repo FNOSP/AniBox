@@ -484,7 +484,7 @@ export function JavSettingsPanel({ onSaved }: { onSaved?: () => void }) {
           {s && query && matched.map(({ sec: sl, f }) => (
             <div key={sl + f.key}>
               {f.el}
-              <div style={{ fontSize: 11, color: "var(--muted)", margin: "-4px 2px 10px" }}>{sl}</div>
+              <div style={{ fontSize: "var(--fs-cap)", color: "var(--muted)", margin: "-4px 2px 10px" }}>{sl}</div>
             </div>
           ))}
           {s && all && !query && (

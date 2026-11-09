@@ -4,7 +4,7 @@
   flex: 0 0 auto;
 }
 .drel-tmdb-row {
-  gap: 14px;
+  gap: var(--sp-4);
   padding-bottom: 6px;
 }
 
@@ -29,14 +29,14 @@
 .drel-tmdb-card:focus-visible {
   outline: 2px solid rgb(var(--accent-rgb) / 0.7);
   outline-offset: 2px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
 }
 
 /* 横版图（优先 backdrop，缺则 poster） */
 .drel-tmdb-cv {
   position: relative;
   aspect-ratio: 16 / 9;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: hidden;
   background: var(--ph-bg);
   border: 1px solid var(--line);
@@ -57,9 +57,9 @@
   position: absolute;
   top: 8px;
   right: 8px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  font-size: 11px;
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-full);
+  font-size: var(--fs-cap);
   font-weight: 700;
   line-height: 1.4;
   color: #fff;
@@ -71,7 +71,7 @@
 /* 图下标题 */
 .drel-tmdb-nm {
   margin-top: 8px;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   line-height: 1.4;
   color: var(--text-2);
   display: -webkit-box;

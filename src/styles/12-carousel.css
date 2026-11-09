@@ -18,7 +18,7 @@
   height: 100%;
   /* [lc-1630] 原为 1.5s：切页观感"卡顿"，且过渡期间再点「下一个」会被 go() 吞掉。
      缩短到 0.45s + 更顺的 ease-out，跨接复位更利落、也不再有明显拖尾。 */
-  transition: transform 0.45s cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition: transform 0.45s var(--ease-enter);
 }
 /* [lc-117] 首尾跨接（第一张←→最后一张）的那一帧关掉过渡，否则会横扫整条轨道 */
 .mist-body.no-anim {
@@ -85,7 +85,7 @@
 }
 .mist-info > * {
   pointer-events: auto;
-  transition: all 2.5s cubic-bezier(0, 1.41, 0.36, 0.93) 0.4s;
+  transition: all 2.5s var(--ease-spring) 0.4s;
   transform: translateY(150%);
   opacity: 0;
 }
@@ -147,14 +147,14 @@
 .mist-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-3);
   margin-top: 25px; /* 与下方到媒体库条的隔离带(163-138=25px)等距 */
 }
 .mist-play,
 .mist-more {
   cursor: pointer;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   font-weight: bold;
   letter-spacing: 2px;
   font-family: inherit;

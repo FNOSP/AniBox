@@ -8,7 +8,7 @@
   max-height: min(84vh, 720px);
   background: linear-gradient(180deg, var(--bg-2), var(--bg-3));
   /* [lc-1607] 进场：卡片微放大 + 上浮（照 gstModalIn） */
-  animation: dscModalIn 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: dscModalIn 0.22s var(--ease-enter);
 }
 
 @keyframes dscModalIn {
@@ -24,13 +24,13 @@
 
 /* ── 正文：保留原文换行（pre-wrap），可滚动 ── */
 .dsc-body {
-  padding: 16px 22px 20px;
+  padding: var(--sp-4) var(--sp-5) var(--sp-5);
 }
 
 .dsc-text {
   margin: 0;
   white-space: pre-wrap;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   line-height: 1.85;
   color: var(--text);
 }
@@ -39,17 +39,17 @@
 .dsc-acts {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
-  padding: 14px 22px;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
   border-top: 1px solid var(--line);
 }
 
 .dsc-btn {
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
-  border-radius: 9px;
-  padding: 9px 18px;
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
   min-width: 96px;
   cursor: pointer;
   border: 1px solid var(--line-strong);
@@ -79,7 +79,7 @@
   animation: dscMaskOut 0.17s ease forwards;
 }
 .ddet-mask.dsc-mask-closing .dsc-modal {
-  animation: dscModalOut 0.17s cubic-bezier(0.4, 0, 1, 1) forwards;
+  animation: dscModalOut 0.17s var(--ease-exit) forwards;
 }
 @keyframes dscMaskOut {
   to {

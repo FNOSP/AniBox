@@ -8,26 +8,26 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 62px 26px 46px;
+  padding: var(--sp-8) var(--sp-5) var(--sp-7);
 }
 .section-head {
   display: flex;
   align-items: baseline;
-  gap: 12px;
+  gap: var(--sp-3);
   margin: 26px 0 16px;
 }
 .season-tabs {
   display: flex;
-  gap: 6px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 .season-tab {
-  padding: 5px 14px;
-  border-radius: 999px;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-full);
   border: 1px solid var(--line);
   background: transparent;
   color: var(--text-2);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-family: inherit;
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
@@ -47,35 +47,35 @@
 .page-head {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--sp-4);
   margin-bottom: 20px;
 }
 .page-head h3 {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--fs-title);
   font-weight: 700;
   letter-spacing: 0.3px;
 }
 .back {
   height: 34px;
   min-width: 34px;
-  border-radius: 999px;
-  font-size: 13px;
+  border-radius: var(--r-full);
+  font-size: var(--fs-ctl);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0 12px;
   white-space: nowrap;
-  gap: 2px;
+  gap: var(--sp-0);
 }
 h3 {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--fs-subtitle);
   font-weight: 700;
 }
 .muted {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 400;
 }
 .overview {
@@ -105,22 +105,22 @@ h3 {
   padding: 16px 0 6px;
   text-align: center;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   letter-spacing: 0.5px;
 }
 .lib-more-err {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: var(--sp-3);
   padding: 16px 0 6px;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
 }
 .lib-more-err .back {
   height: 28px;
   min-width: 28px;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   padding: 0 10px;
 }
 .lib-more-sentinel {
@@ -130,11 +130,11 @@ h3 {
   margin-left: 10px;
   height: 26px;
   padding: 0 12px;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   border: 1px solid var(--line);
   background: transparent;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-family: inherit;
   cursor: pointer;
 }
@@ -146,10 +146,10 @@ h3 {
 /* [lc-1989] 侧栏开发中标签（JavHub / 云盘接入） */
 .side-devtag {
   margin-left: auto;
-  font-size: 10.5px;
+  font-size: var(--fs-cap);
   line-height: 1;
-  padding: 3px 6px;
-  border-radius: 999px;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-full);
   border: 1px solid var(--line);
   color: var(--muted);
   opacity: 0.9;

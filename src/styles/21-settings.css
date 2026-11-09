@@ -6,32 +6,32 @@
 .tmdb-regions {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--sp-1);
   min-width: 0;
   flex: 1;
 }
 .tmdb-rrow {
   display: flex;
-  gap: 10px;
+  gap: var(--sp-3);
   align-items: baseline;
   min-width: 0;
 }
 .tmdb-rk {
   flex: 0 0 auto;
   min-width: 62px;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   color: var(--text-strong);
 }
 .tmdb-rrow .tmdb-inline {
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   line-height: 1.7;
 }
 .tmdb-dim {
   color: var(--muted);
 }
 .tmdb-empty {
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   color: var(--muted);
   padding: 2px 0;
 }
@@ -55,7 +55,7 @@
 /* ── 段落标题右侧的来源标注（TMDB / Bangumi / 飞牛） ── */
 .dsec-t .dsec-src {
   margin-left: 8px;
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   color: var(--muted);
   letter-spacing: 0.2px;
@@ -74,7 +74,7 @@
   animation: gstMaskOut 0.17s ease forwards;
 }
 .ddet-mask.set-mask-closing .set-card {
-  animation: gstModalOut 0.17s cubic-bezier(0.4, 0, 1, 1) forwards;
+  animation: gstModalOut 0.17s var(--ease-exit) forwards;
 }
 @media (prefers-reduced-motion: reduce) {
   .ddet-mask.set-mask-closing,
@@ -91,10 +91,10 @@
 .set-tabs {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--sp-0);
   flex: 0 0 auto;
   width: 146px;
-  padding: 12px 10px;
+  padding: var(--sp-3) var(--sp-3);
   border-right: 1px solid var(--line);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -104,15 +104,15 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   flex: 0 0 auto;
-  padding: 8px 12px;
+  padding: var(--sp-2) var(--sp-3);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-2);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   line-height: 1.25;
   text-align: left;
@@ -145,11 +145,11 @@
   top: 7px;
   bottom: 7px;
   width: 3px;
-  border-radius: 3px;
+  border-radius: var(--r-xs);
   background: var(--accent);
   transform: scaleY(0);
   transform-origin: center;
-  transition: transform 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition: transform 0.22s var(--ease-enter);
 }
 .set-tab.on::before {
   transform: scaleY(1);
@@ -159,15 +159,15 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--sp-0);
 }
 /* 标签页内容：切换标签时 key 变化触发重挂载 → 入场动画重播。
    淡入 + 轻微上移 6px，时长 0.22s，与项目 .view-in 同一条缓动。 */
 .set-tabpane {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  animation: setPaneIn 0.22s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  gap: var(--sp-0);
+  animation: setPaneIn 0.22s var(--ease-enter) both;
 }
 @keyframes setPaneIn {
   from {
@@ -184,10 +184,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: var(--sp-4);
   padding: 9px 0;
   border-bottom: 1px solid var(--line);
-  font-size: 13.5px;
+  font-size: var(--fs-ctl);
 }
 .set-row:last-of-type {
   border-bottom: none;
@@ -204,12 +204,12 @@
 }
 .set-select {
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   color: var(--text-strong);
   background: var(--input-bg);
   border: 1px solid var(--line-strong);
-  border-radius: 9px;
-  padding: 6px 10px;
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-3);
   cursor: pointer;
 }
 .set-select option {
@@ -225,17 +225,17 @@
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--sp-2);
   min-width: 132px;
   max-width: 190px;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   line-height: 1.2;
   color: var(--text-strong);
   background: var(--input-bg);
   border: 1px solid var(--line-strong);
-  border-radius: 9px;
-  padding: 6px 10px;
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-3);
   cursor: pointer;
   text-align: left;
   transition: background-color 0.16s ease, border-color 0.16s ease;
@@ -278,8 +278,8 @@
   position: fixed;
   z-index: 120;
   box-sizing: border-box;
-  padding: 5px;
-  border-radius: 11px;
+  padding: var(--sp-2);
+  border-radius: var(--r-md);
   background: var(--option-bg);
   border: 1px solid var(--line-strong);
   box-shadow: var(--shadow-card);
@@ -295,10 +295,10 @@
 .set-dd-opt {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 9px;
-  border-radius: 7px;
-  font-size: 13px;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-ctl);
   line-height: 1.25;
   color: var(--text-2);
   cursor: pointer;
@@ -325,13 +325,13 @@
 }
 .set-btn {
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   color: var(--text-strong);
   background: var(--hover);
   border: 1px solid var(--line-strong);
-  border-radius: 9px;
-  padding: 7px 14px;
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-4);
   cursor: pointer;
   transition: background-color 0.16s ease, transform 0.16s ease;
 }
@@ -345,7 +345,7 @@
 }
 .set-hint {
   margin-top: 6px;
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   line-height: 1.6;
   color: var(--muted);
   word-break: break-all;
@@ -353,8 +353,8 @@
 .set-attrib {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 11.5px;
+  gap: var(--sp-1);
+  font-size: var(--fs-cap);
   line-height: 1.5;
   color: var(--muted);
 }
@@ -367,11 +367,11 @@
 }
 .set-note {
   margin-top: 10px;
-  padding: 8px 10px;
-  border-radius: 9px;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
   background: var(--hover);
   color: var(--text-2);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
 }
 /* ── [lc-1437] 设置面板：开关控件 + 分组小标题 + 危险按钮 ──
    开关是自绘的（不用原生 checkbox）：项目里所有控件都是自绘风格，
@@ -381,7 +381,7 @@
   width: 40px;
   height: 22px;
   flex-shrink: 0;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   border: 1px solid var(--line-strong);
   background: var(--hover);
   cursor: pointer;
@@ -397,7 +397,7 @@
   height: 16px;
   border-radius: 50%;
   background: var(--text-2);
-  transition: transform 0.18s cubic-bezier(0.32, 0.72, 0, 1), background-color 0.18s ease;
+  transition: transform 0.18s var(--ease-enter), background-color 0.18s ease;
 }
 .set-sw.on {
   background: color-mix(in srgb, var(--accent) 26%, transparent);
@@ -412,7 +412,7 @@
   cursor: default;
 }
 .set-desc {
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   line-height: 1.5;
   color: var(--muted);
   margin-top: 2px;
@@ -429,12 +429,12 @@
 .set-confirm {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
   justify-content: flex-end;
 }
 .set-confirm-q {
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   color: var(--text-2);
   margin-right: auto;
 }
@@ -456,17 +456,17 @@
 }
 .close-ask-box {
   width: min(360px, 88vw);
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   background: var(--glass-bg);
   backdrop-filter: blur(20px) saturate(1.2);
   -webkit-backdrop-filter: blur(20px) saturate(1.2);
   border: 1px solid var(--glass-border);
   box-shadow: var(--shadow-card);
-  padding: 18px 18px 14px;
+  padding: var(--sp-4) var(--sp-4) var(--sp-4);
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  animation: closeAskPop 0.22s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  gap: var(--sp-3);
+  animation: closeAskPop 0.22s var(--ease-enter) both;
 }
 @keyframes closeAskPop {
   from { opacity: 0; transform: scale(0.94) translateY(8px); }
@@ -476,8 +476,8 @@
 .close-ask-remember {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
+  gap: var(--sp-2);
+  font-size: var(--fs-ctl);
   color: var(--text-2);
   cursor: pointer;
   user-select: none;
@@ -491,18 +491,18 @@
 }
 .close-ask-box h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-body);
   color: var(--text-strong);
 }
 .close-ask-box p {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   line-height: 1.6;
   color: var(--text-2);
 }
 .close-ask-acts {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
   justify-content: flex-end;
   flex-wrap: wrap;
 }
@@ -539,7 +539,7 @@
 .set-row-col {
   flex-direction: column;
   align-items: stretch;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 /* [lc-1861] 引擎/档位按钮组：允许换行 + 等尺寸，避免新增按钮把整行横向挤爆、
    进而把右侧 .set-desc 压成极窄竖条导致整块纵向拉长。描述文字另起一行占满宽度。 */
@@ -547,7 +547,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 /* 组内按钮取消 .sub-cred-btn 的 margin-left:auto（那是为右对齐单按钮设计的），
    并统一最小宽度，使多按钮视觉等尺寸、换行整齐。 */
@@ -561,24 +561,24 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 12px;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
   margin-top: 4px;
   background: var(--input-bg);
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: var(--r-md);
 }
 .set-qr-img {
   display: block;
   width: 200px;
   height: 200px;
-  padding: 6px;
+  padding: var(--sp-2);
   box-sizing: border-box;
   background: #fff;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
 }
 .set-qr-tip {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   line-height: 1.5;
   color: var(--muted);
   text-align: center;
@@ -593,19 +593,19 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 .set-ta {
   width: 100%;
   box-sizing: border-box;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   line-height: 1.5;
   color: var(--text-strong);
   background: var(--input-bg);
   border: 1px solid var(--line-strong);
-  border-radius: 9px;
-  padding: 7px 10px;
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-3);
   resize: vertical;
 }
 .set-ta::placeholder {
@@ -622,13 +622,13 @@
   width: 100%;
   box-sizing: border-box;
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   line-height: 1.4;
   color: var(--text-strong);
   background: var(--input-bg);
   border: 1px solid var(--line-strong);
-  border-radius: 9px;
-  padding: 7px 10px;
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-3);
   transition: background-color 0.16s ease, border-color 0.16s ease;
 }
 .set-input::placeholder {
@@ -645,7 +645,7 @@
 .set-pot-status {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   line-height: 1.4;
   color: var(--muted);
   word-break: break-all;
@@ -661,22 +661,22 @@
 }
 .set-warn {
   margin: 2px 0 6px;
-  padding: 8px 10px;
-  border-radius: 9px;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
   border: 1px solid color-mix(in srgb, #d29922 45%, transparent);
   background: color-mix(in srgb, #d29922 12%, transparent);
   color: var(--text-2);
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   line-height: 1.6;
 }
 .set-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 .set-note {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   word-break: break-all;
   flex: 1;
@@ -690,12 +690,12 @@
   color: #fff;
   background: var(--accent);
   /* 完整复位 .set-btn 的尺寸：避免与 10-login.css 的通用 .primary
-     （margin-top:16px / padding:12px / font-size:14px / box-shadow）串味，
+     （margin-top:16px / padding:12px / font-size: var(--fs-body) / box-shadow）串味，
      导致扫码登录等主按钮被顶偏、比同行按钮高。 */
   border: 1px solid transparent;
-  border-radius: 9px;
-  padding: 7px 14px;
-  font-size: 13px;
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--fs-ctl);
   font-weight: 600;
   margin: 0;
   box-shadow: none;
@@ -704,14 +704,14 @@
   background: color-mix(in srgb, var(--accent) 82%, #000);
 }
 .set-upd {
-  gap: 8px;
+  gap: var(--sp-2);
 }
 .set-upd-status {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   color: var(--text-strong);
 }
 .set-upd-dot {
@@ -734,18 +734,18 @@
   font-weight: 600;
 }
 .set-upd-date {
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 .set-upd-notes-wrap {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 .set-upd-notes-toggle {
-  padding: 5px 10px;
-  font-size: 12px;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-cap);
 }
 .set-upd-notes {
   margin: 0;
@@ -753,13 +753,13 @@
   box-sizing: border-box;
   max-height: 220px;
   overflow: auto;
-  padding: 8px 10px;
-  border-radius: 9px;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
   border: 1px solid var(--line);
   background: var(--hover);
   color: var(--text-2);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
@@ -767,13 +767,13 @@
 .set-upd-progress {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--sp-2);
   width: 100%;
 }
 .set-upd-bar {
   position: relative;
   height: 8px;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--hover);
   border: 1px solid var(--line);
   overflow: hidden;
@@ -781,15 +781,15 @@
 .set-upd-bar > i {
   display: block;
   height: 100%;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--accent);
   transition: width 0.18s ease;
 }
 .set-upd-progress-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 11.5px;
+  gap: var(--sp-2);
+  font-size: var(--fs-cap);
   color: var(--muted);
   min-width: 0;
 }
@@ -804,16 +804,16 @@
   white-space: nowrap;
 }
 .set-upd-ok {
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   color: #3fb950;
   font-weight: 600;
 }
 .set-upd-err {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: #e5484d;
   word-break: break-word;
 }
@@ -824,7 +824,7 @@
 .set-pad-status {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   min-width: 0;
   max-width: 62%;
   justify-content: flex-end;
@@ -849,7 +849,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--text-2);
 }
 .set-pad-slider {
@@ -862,7 +862,7 @@
 .set-range-wrap {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-3);
   flex: 0 0 auto;
 }
 .set-range {
@@ -878,7 +878,7 @@
 .set-range-val {
   min-width: 48px;
   text-align: right;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
 }
@@ -887,30 +887,30 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px 14px;
   margin: 8px 0 6px;
-  padding: 10px 12px;
+  padding: var(--sp-3) var(--sp-3);
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--r-md);
   background: var(--hover);
 }
 .set-pad-key {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--fs-cap);
 }
 .set-pad-btn {
   flex: 0 0 auto;
   min-width: 42px;
-  padding: 2px 7px;
+  padding: var(--sp-0) var(--sp-2);
   text-align: center;
-  font-size: 11px;
+  font-size: var(--fs-cap);
   font-weight: 700;
   letter-spacing: 0.3px;
   color: var(--text-strong);
   background: var(--option-bg);
   border: 1px solid var(--line-strong);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
 }
 .set-pad-act {
   min-width: 0;
@@ -929,8 +929,8 @@
     flex-direction: row;
     align-items: center;
     width: auto;
-    padding: 8px 10px;
-    gap: 4px;
+    padding: var(--sp-2) var(--sp-3);
+    gap: var(--sp-1);
     border-right: none;
     border-bottom: 1px solid var(--line);
     overflow-x: auto;
@@ -941,8 +941,8 @@
     display: none;
   }
   .set-tab {
-    padding: 6px 12px;
-    border-radius: 999px;
+    padding: var(--sp-2) var(--sp-3);
+    border-radius: var(--r-full);
   }
   .set-tab::before {
     left: 10px;
@@ -957,7 +957,7 @@
     transform: scaleX(1);
   }
   .set-body {
-    padding: 14px 14px 18px;
+    padding: var(--sp-4) var(--sp-4) var(--sp-4);
   }
 }
 @media (max-width: 480px) {
@@ -994,22 +994,22 @@
 }
 .set-diag {
   margin-top: 10px;
-  padding: 10px 12px;
+  padding: var(--sp-3) var(--sp-3);
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--hover);
 }
 .set-diag-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 .set-diag-head .set-k {
   margin-right: auto;
 }
 .set-diag-src {
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 .set-diag-list {
@@ -1018,19 +1018,19 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 .set-diag-item {
   display: grid;
   grid-template-columns: 18px auto auto 1fr;
-  gap: 6px;
+  gap: var(--sp-2);
   align-items: baseline;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   line-height: 1.5;
   color: var(--text-2);
 }
 .set-diag-ico {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   line-height: 1.5;
 }
 .set-diag-label {
@@ -1039,7 +1039,7 @@
   white-space: nowrap;
 }
 .set-diag-time {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   white-space: nowrap;
 }
@@ -1055,13 +1055,13 @@
 }
 .set-diag-err {
   margin-top: 8px;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: #e5484d;
   word-break: break-word;
 }
 .set-diag-run {
   margin-top: 8px;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 
@@ -1086,7 +1086,7 @@
   height: min(78vh, 720px);
   background: var(--panel);
   border: 1px solid var(--line-strong);
-  border-radius: 16px;
+  border-radius: var(--r-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1100,39 +1100,39 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 18px;
+  padding: var(--sp-4) var(--sp-4);
   border-bottom: 1px solid var(--line);
   flex: none;
 }
-.sg-title { font-size: 15px; font-weight: 600; color: var(--text-strong); }
+.sg-title { font-size: var(--fs-body); font-weight: 600; color: var(--text-strong); }
 .sg-close {
   border: none;
   background: transparent;
   color: var(--muted);
-  font-size: 14px;
+  font-size: var(--fs-body);
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 8px;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
 }
 .sg-close:hover { background: var(--hover, #ffffff14); color: var(--text-strong); }
-.sg-body { overflow-y: auto; padding: 12px 18px 18px; }
+.sg-body { overflow-y: auto; padding: var(--sp-3) var(--sp-4) var(--sp-4); }
 .sg-sec, .sg-sub {
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   margin-bottom: 10px;
   overflow: hidden;
   background: transparent;
 }
 .sg-sec > summary, .sg-sub > summary {
   cursor: pointer;
-  padding: 10px 14px;
-  font-size: 13px;
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-ctl);
   color: var(--text);
   user-select: none;
   list-style: none;
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
 }
 .sg-sec > summary::-webkit-details-marker, .sg-sub > summary::-webkit-details-marker { display: none; }
@@ -1145,18 +1145,18 @@
 .sg-sec > summary:hover, .sg-sub > summary:hover { background: var(--hover); }
 .sg-sub { margin: 0 10px 10px; }
 .sg-sec > .sg-sub:first-of-type { margin-top: 0; }
-.sg-sum { font-size: 12px; color: var(--muted); font-weight: 400; }
-.sg-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.sg-sum { font-size: var(--fs-cap); color: var(--muted); font-weight: 400; }
+.sg-table { width: 100%; border-collapse: collapse; font-size: var(--fs-cap); }
 .sg-table th {
   text-align: left;
-  padding: 8px 12px;
+  padding: var(--sp-2) var(--sp-3);
   color: var(--muted);
   font-weight: 500;
   border-bottom: 1px solid var(--line);
   background: var(--ph-bg);
 }
 .sg-table td {
-  padding: 8px 12px;
+  padding: var(--sp-2) var(--sp-3);
   border-bottom: 1px solid var(--line);
   color: var(--text);
   vertical-align: top;
@@ -1164,15 +1164,15 @@
 .sg-table tr:last-child td { border-bottom: none; }
 .sg-scene { color: var(--text-strong); }
 .sg-func { color: var(--muted); }
-.sg-note { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.sg-note { font-size: var(--fs-cap); color: var(--muted); margin-top: 2px; }
 .sg-perf { font-weight: 600; white-space: nowrap; }
 .sg-chip {
   border: 1px solid var(--line-strong);
   background: var(--input-bg);
   color: var(--text);
-  font-size: 12px;
-  padding: 3px 10px;
-  border-radius: 999px;
+  font-size: var(--fs-cap);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-full);
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease;
 }
@@ -1185,17 +1185,17 @@
 .sg-chip:disabled { opacity: 0.5; cursor: default; }
 .sg-tips {
   margin-top: 12px;
-  padding: 10px 14px;
+  padding: var(--sp-3) var(--sp-4);
   border: 1px dashed var(--line-strong);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--sp-1);
 }
-.sg-tip { font-size: 12px; color: var(--muted); }
+.sg-tip { font-size: var(--fs-cap); color: var(--muted); }
 .sg-status {
   margin-top: 10px;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--accent);
   text-align: center;
 }

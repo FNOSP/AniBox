@@ -8,7 +8,7 @@
   align-items: center;
   justify-content: center;
   gap: 70px;
-  padding: 40px;
+  padding: var(--sp-6);
   overflow: hidden;
   /* 背景遮罩：不再使用白色/浅色薄纱（否则会白蒙蒙一层）。
      仅保留极淡的暗色渐变，轻微压住高光，保证背景图上的文字可读。 */
@@ -103,13 +103,13 @@ html.dark .login-wrap {
   position: absolute;
   z-index: -1;
   inset: -34px -72px -34px -44px;
-  border-radius: 28px;
+  border-radius: var(--r-lg);
   background: var(--login-hero-veil);
   filter: blur(20px);
   pointer-events: none;
 }
 .login-hero h1 {
-  font-size: 56px;
+  font-size: var(--fs-hero);
   font-weight: 800;
   letter-spacing: 2px;
   margin: 0;
@@ -132,13 +132,13 @@ html.dark .login-wrap {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: var(--sp-3);
 }
 .login-feats li {
   position: relative;
   padding-left: 20px;
   color: var(--text-2);
-  font-size: 13.5px;
+  font-size: var(--fs-ctl);
   line-height: 1.6;
   letter-spacing: 0.2px;
   text-shadow: var(--login-hero-text-shadow);
@@ -167,34 +167,34 @@ html.dark .login-wrap {
   width: 380px;
   background: var(--bg-2);
   border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 28px 30px;
+  border-radius: var(--r-lg);
+  padding: var(--sp-5) var(--sp-6);
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: var(--sp-2);
   box-shadow: var(--shadow-card);
   backdrop-filter: blur(14px);
 }
 .login-card h2 {
   margin: 0 0 4px;
-  font-size: 19px;
+  font-size: var(--fs-title);
 }
 .login-card label {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   margin-top: 8px;
 }
 .login-opts {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: var(--sp-5);
   margin-top: 10px;
 }
 .login-check {
   display: flex;
   align-items: center;
-  gap: 7px;
-  font-size: 12.5px;
+  gap: var(--sp-2);
+  font-size: var(--fs-ctl);
   color: var(--text-2);
   cursor: pointer;
   user-select: none;
@@ -221,7 +221,7 @@ html.dark .login-wrap {
   cursor: pointer;
   text-align: left;
   padding: 8px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-cap);
 }
 .linklike:hover {
   text-decoration: underline;
@@ -233,9 +233,9 @@ html.dark .login-wrap {
   background: var(--accent-grad);
   border: none;
   color: #fff;
-  padding: 12px;
-  border-radius: 10px;
-  font-size: 14px;
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
+  font-size: var(--fs-body);
   font-weight: 700;
   cursor: pointer;
   box-shadow: 0 8px 22px rgb(var(--shadow-rgb) / 0.21);
@@ -253,7 +253,7 @@ html.dark .login-wrap {
 /* [lc-2045] 主按钮 + 游客模式并排：主按钮占满剩余宽度，游客按钮定宽不抢焦点 */
 .login-btnrow {
   display: flex;
-  gap: 10px;
+  gap: var(--sp-3);
   margin-top: 16px;
 }
 .login-btnrow .primary {
@@ -262,9 +262,9 @@ html.dark .login-wrap {
 }
 .login-card .ghost {
   flex: 0 0 auto;
-  padding: 12px 18px;
-  border-radius: 10px;
-  font-size: 14px;
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
+  font-size: var(--fs-body);
   font-weight: 600;
   cursor: pointer;
   color: var(--text-2);
@@ -286,12 +286,12 @@ html.dark .login-wrap {
 /* ─────────────── [lc-1889] 来源卡：网盘 / 飞牛 NAS / WebDAV ─────────────── */
 .login-src-sub {
   margin: -2px 0 6px;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 .login-src {
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   overflow: hidden;
   background: color-mix(in srgb, var(--bg-1) 55%, transparent);
 }
@@ -299,12 +299,12 @@ html.dark .login-wrap {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 11px 14px;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
   background: none;
   border: none;
   color: var(--text-strong);
-  font-size: 13.5px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   cursor: pointer;
   text-align: left;
@@ -314,12 +314,12 @@ html.dark .login-wrap {
   background: var(--hover);
 }
 .login-src-badge {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
-  border-radius: 999px;
-  padding: 2px 9px;
+  border-radius: var(--r-full);
+  padding: var(--sp-0) var(--sp-3);
 }
 .login-src-chev {
   margin-left: auto;
@@ -341,8 +341,8 @@ html.dark .login-wrap {
 .login-src-body {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 2px 14px 13px;
+  gap: var(--sp-2);
+  padding: var(--sp-0) var(--sp-4) var(--sp-4);
 }
 /* 提示异常：用危险色区分普通提示 */
 .login-dim.err {
@@ -351,14 +351,14 @@ html.dark .login-wrap {
 .login-minibtn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--sp-2);
   align-self: flex-start;
-  padding: 5px 10px;
-  border-radius: 8px;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
   border: 1px solid var(--line);
   background: none;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   cursor: pointer;
   transition: background-color 120ms ease, color 120ms ease;
 }
@@ -367,11 +367,11 @@ html.dark .login-wrap {
   color: var(--text-strong);
 }
 .login-dim {
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 .login-err-dim {
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   color: var(--danger, #e5484d);
   margin: 0;
 }

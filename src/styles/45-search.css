@@ -9,16 +9,16 @@
   display: inline-flex;
   align-items: center;
   flex: none;
-  gap: 6px;
+  gap: var(--sp-2);
   height: 26px;
   padding: 0 10px;
   margin-right: 8px;
   align-self: center;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   border: 1px solid color-mix(in srgb, var(--tb-fg) 20%, transparent);
   background: color-mix(in srgb, var(--tb-fg) 6%, transparent);
   color: var(--tb-fg);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   line-height: 1;
   cursor: pointer;
@@ -35,11 +35,11 @@
 }
 .tb-search-kbd {
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   opacity: 0.62;
-  padding: 1px 4px;
-  border-radius: 4px;
+  padding: var(--sp-0) var(--sp-1);
+  border-radius: var(--r-xs);
   border: 1px solid color-mix(in srgb, var(--tb-fg) 22%, transparent);
 }
 .tb-search-label {
@@ -54,7 +54,7 @@
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  padding: 54px 16px 16px;
+  padding: var(--sp-7) var(--sp-4) var(--sp-4);
   background: rgba(6, 8, 14, 0.32);
   animation: search-fade 0.16s ease-out;
 }
@@ -73,14 +73,14 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-radius: 16px;
+  border-radius: var(--r-lg);
   border: 1px solid var(--line-strong);
   background: color-mix(in srgb, var(--bg-3) 88%, transparent);
   box-shadow: var(--shadow-card), 0 24px 60px rgba(0, 0, 0, 0.24);
   backdrop-filter: blur(24px) saturate(1.2);
   -webkit-backdrop-filter: blur(24px) saturate(1.2);
   color: var(--text);
-  animation: search-pop 0.18s cubic-bezier(0.2, 0.9, 0.3, 1);
+  animation: search-pop 0.18s var(--ease);
 }
 html.dark .search-panel {
   background: color-mix(in srgb, var(--bg-3) 92%, transparent);
@@ -105,8 +105,8 @@ html.dark .search-panel {
   display: flex;
   align-items: center;
   flex: none; /* 固定高度行：面板高度受限时不参与收缩 */
-  gap: 10px;
-  padding: 14px 16px;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-4);
   border-bottom: 1px solid var(--line);
 }
 .search-bar-ico {
@@ -120,7 +120,7 @@ html.dark .search-panel {
   outline: none;
   background: transparent;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: var(--fs-body);
   font-family: inherit;
   line-height: 1.4;
 }
@@ -136,7 +136,7 @@ html.dark .search-panel {
   height: 24px;
   padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -151,11 +151,11 @@ html.dark .search-panel {
 .search-esc {
   flex: none;
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   color: var(--muted);
-  padding: 2px 6px;
-  border-radius: 5px;
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-xs);
   border: 1px solid var(--line);
 }
 
@@ -169,9 +169,9 @@ html.dark .search-panel {
   display: flex;
   align-items: center;
   flex: none; /* 禁止在面板高度受限时被压扁 */
-  gap: 4px;
+  gap: var(--sp-1);
   min-height: 42px; /* 显式下限，覆盖 overflow 导致的自动最小尺寸 0 */
-  padding: 8px 12px;
+  padding: var(--sp-2) var(--sp-3);
   border-bottom: 1px solid var(--line);
   overflow-x: auto; /* 空间不足时横向滚动，而不是压缩裁切 */
   overflow-y: hidden;
@@ -186,12 +186,12 @@ html.dark .search-panel {
   align-items: center;
   justify-content: center;
   min-height: 26px; /* 胶囊高度稳定，文字垂直居中，不被压扁 */
-  padding: 5px 12px;
+  padding: var(--sp-2) var(--sp-3);
   border: none;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: transparent;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   line-height: 1.2;
   white-space: nowrap; /* 标签不换行 */
@@ -217,25 +217,25 @@ html.dark .search-panel {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 6px;
+  padding: var(--sp-2);
 }
 .search-body::-webkit-scrollbar {
   width: 8px;
 }
 .search-body::-webkit-scrollbar-thumb {
   background: var(--line-strong);
-  border-radius: 999px;
+  border-radius: var(--r-full);
 }
 
 .search-state {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--sp-3);
   min-height: 160px;
-  padding: 24px 16px;
+  padding: var(--sp-5) var(--sp-4);
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   text-align: center;
 }
 .search-state.err {
@@ -248,12 +248,12 @@ html.dark .search-panel {
   line-height: 1.5;
 }
 .search-retry {
-  padding: 5px 14px;
-  border-radius: 8px;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-sm);
   border: 1px solid var(--line-strong);
   background: var(--hover);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   cursor: pointer;
 }
 .search-retry:hover {
@@ -277,17 +277,17 @@ html.dark .search-panel {
 .search-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--sp-0);
 }
 
 .search-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-3);
   width: 100%;
-  padding: 8px 10px;
+  padding: var(--sp-2) var(--sp-3);
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -315,7 +315,7 @@ html.dark .search-panel {
   flex: none;
   width: 42px;
   height: 60px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -335,10 +335,10 @@ html.dark .search-panel {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--sp-2);
 }
 .search-title {
-  font-size: 13.5px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   color: var(--text-strong);
   white-space: nowrap;
@@ -346,7 +346,7 @@ html.dark .search-panel {
   text-overflow: ellipsis;
 }
 .search-meta {
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -354,11 +354,11 @@ html.dark .search-panel {
 }
 .search-badge {
   flex: none;
-  font-size: 10.5px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   color: var(--muted);
-  padding: 2px 7px;
-  border-radius: 999px;
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-full);
   border: 1px solid var(--line);
   background: var(--ph-bg);
 }

@@ -39,7 +39,7 @@
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   padding-left: 10px;
 }
 /* [lc-1703] 品牌 logo 独立图层：定位与原来的 .tb-center 一致（窗口水平居中），
@@ -53,14 +53,14 @@
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-2);
   z-index: 51; /* 高于 .titlebar(50)：正常混合，盖在反色层之上 */
   pointer-events: none;
 }
 /* [lc-123-rev] 顶栏中部的品牌小字：**弱化**（小字号 + 弱色 + 字距），
    顶栏只留「页名（左）/ 品牌（中）/ 窗口按钮（右）」，主体感交给内容区的胶囊。 */
 .tb-brand {
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   letter-spacing: 0.07em;
   color: var(--muted);
@@ -86,7 +86,7 @@
   border: 0;
 }
 .tb-page {
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   color: var(--tb-fg);
   padding-left: 6px;
@@ -99,13 +99,13 @@
    · 只有 hover/active 才出现半透明底（延续顶栏"可读性不靠底色"的约定）。 */
 .tb-crumb.tb-crumb-btn {
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   line-height: 1.2;
   color: var(--tb-fg);
-  padding: 3px 6px;
+  padding: var(--sp-1) var(--sp-2);
   margin-left: -4px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   /* 兜底：若将来顶栏改回 CSS app-region 方案，按钮也不会被当成拖拽区 */
   -webkit-app-region: no-drag;
@@ -128,8 +128,8 @@
   border: none;
   background: transparent;
   color: var(--tb-fg);
-  font-size: 14px;
-  border-radius: 8px;
+  font-size: var(--fs-body);
+  border-radius: var(--r-sm);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -180,10 +180,10 @@
   border: none;
   background: transparent;
   color: var(--tb-fg);
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
-  padding: 6px 10px;
-  border-radius: 8px;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
   cursor: pointer;
 }
 .tb-link:hover {
@@ -201,7 +201,7 @@
   border: none;
   background: transparent;
   color: var(--tb-fg);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   cursor: pointer;
   /* [fix] 最小化/最大化改用 Lucide SVG：与关闭键一致地水平垂直居中（原文本字形靠 text-align 居中） */
   display: flex;

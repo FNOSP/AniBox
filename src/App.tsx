@@ -1563,7 +1563,7 @@ function App() {
             zIndex: 9999,
             background: "rgba(20,22,28,.92)",
             color: "#fff",
-            fontSize: 13,
+            fontSize: "var(--fs-ctl)",
             boxShadow: "0 8px 28px rgba(0,0,0,.45)",
             pointerEvents: "none",
           }}

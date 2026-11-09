@@ -25,10 +25,10 @@ html.dark {
 }
 .fbx-close {
   z-index: 3;
-  transition: background-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition: background-color 0.18s var(--ease),
+    color 0.18s var(--ease),
+    box-shadow 0.18s var(--ease),
+    transform 0.18s var(--ease);
 }
 .fbx-close:active {
   transform: scale(0.92);
@@ -40,8 +40,8 @@ html.dark {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 16px 22px 12px;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5) var(--sp-3);
   min-width: 0;
 }
 .fbx-brand-ico {
@@ -50,7 +50,7 @@ html.dark {
   height: 38px;
   display: grid;
   place-items: center;
-  border-radius: 11px;
+  border-radius: var(--r-md);
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 13%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
@@ -61,14 +61,14 @@ html.dark {
 }
 .fbx-title {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--fs-subtitle);
   font-weight: 700;
   line-height: 1.3;
   color: var(--text-strong);
 }
 .fbx-subtitle {
   margin: 2px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -80,27 +80,27 @@ html.dark {
   flex: 0 0 auto;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: var(--sp-2);
   padding: 0 22px 12px;
 }
 .fbx-nav-btn {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-3);
   min-width: 0;
-  padding: 10px 12px;
+  padding: var(--sp-3) var(--sp-3);
   font-family: inherit;
   text-align: left;
   color: var(--text-2);
   background: var(--hover);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   cursor: pointer;
-  transition: background-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    border-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition: background-color 0.18s var(--ease),
+    border-color 0.18s var(--ease),
+    color 0.18s var(--ease),
+    box-shadow 0.18s var(--ease),
+    transform 0.18s var(--ease);
 }
 .fbx-nav-btn:hover {
   background: var(--hover-strong);
@@ -127,16 +127,16 @@ html.dark {
 .fbx-nav-txt {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--sp-0);
   min-width: 0;
 }
 .fbx-nav-txt b {
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 700;
   line-height: 1.3;
 }
 .fbx-nav-txt small {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -162,23 +162,23 @@ html.dark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--sp-2);
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   color: var(--text-strong);
   background: var(--hover);
   border: 1px solid var(--line-strong);
-  border-radius: 9px;
-  padding: 7px 13px;
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-4);
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    border-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    filter 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition: background-color 0.18s var(--ease),
+    border-color 0.18s var(--ease),
+    color 0.18s var(--ease),
+    box-shadow 0.18s var(--ease),
+    transform 0.18s var(--ease),
+    filter 0.18s var(--ease);
 }
 .fbx-btn:hover:not(:disabled) {
   background: var(--hover-strong);
@@ -203,7 +203,7 @@ html.dark {
   filter: brightness(1.07);
 }
 .fbx-btn.subtle {
-  padding: 6px 10px;
+  padding: var(--sp-2) var(--sp-3);
   background: transparent;
   border-color: var(--line);
   color: var(--text-2);
@@ -250,12 +250,12 @@ a.fbx-btn {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--sp-2);
   margin: 0; /* 覆盖全局 .err 的 margin-bottom，避免在弹性布局里多出空隙 */
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   line-height: 1.5;
-  padding: 8px 11px;
-  border-radius: 9px;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
   border: 1px solid transparent;
   background: var(--hover);
   color: var(--text-2);
@@ -270,18 +270,18 @@ a.fbx-btn {
 .fbx-linkbtn {
   flex: 0 0 auto;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   color: inherit;
   background: none;
   border: none;
-  border-radius: 6px;
-  padding: 2px 4px;
+  border-radius: var(--r-sm);
+  padding: var(--sp-0) var(--sp-1);
   cursor: pointer;
   text-decoration: underline;
-  transition: opacity 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition: opacity 0.18s var(--ease),
+    box-shadow 0.18s var(--ease),
+    transform 0.18s var(--ease);
 }
 .fbx-linkbtn:hover {
   opacity: 0.78;
@@ -294,9 +294,9 @@ a.fbx-btn {
 /* 小标签 */
 .fbx-chip {
   flex: 0 0 auto;
-  font-size: 11.5px;
-  padding: 2px 8px;
-  border-radius: 999px;
+  font-size: var(--fs-cap);
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-full);
   border: 1px solid var(--line);
   background: var(--hover);
   color: var(--muted);
@@ -320,7 +320,7 @@ a.fbx-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: var(--sp-2);
   box-sizing: border-box;
   /* 只占内容宽度，任何父级 flex/block 下都不会被拉成整条 */
   width: fit-content;
@@ -328,12 +328,12 @@ a.fbx-btn {
   height: 22px;
   min-width: 54px;
   padding: 0 9px;
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   line-height: 1;
   letter-spacing: 0.2px;
   font-variant-numeric: tabular-nums;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   border: 1px solid var(--line);
   background: var(--hover);
   color: var(--text-2);
@@ -406,8 +406,8 @@ a.fbx-btn {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 26px 18px;
+  gap: var(--sp-2);
+  padding: var(--sp-5) var(--sp-4);
   text-align: center;
   color: var(--muted);
 }
@@ -416,21 +416,21 @@ a.fbx-btn {
   height: 44px;
   display: grid;
   place-items: center;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   background: var(--hover);
   border: 1px solid var(--line);
   color: var(--muted);
 }
 .fbx-state-title {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   color: var(--text-2);
 }
 .fbx-state-txt {
   margin: 0;
   max-width: 330px;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   line-height: 1.65;
   color: var(--muted);
 }
@@ -444,39 +444,39 @@ a.fbx-btn {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-3);
 }
 .fbx-subbar {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
 }
 .fbx-tabs {
   display: inline-flex;
-  gap: 4px;
-  padding: 3px;
-  border-radius: 10px;
+  gap: var(--sp-1);
+  padding: var(--sp-1);
+  border-radius: var(--r-md);
   background: var(--hover);
   border: 1px solid var(--line);
 }
 .fbx-tab {
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   color: var(--muted);
   background: transparent;
   border: none;
-  border-radius: 7px;
-  padding: 6px 12px;
+  border-radius: var(--r-sm);
+  padding: var(--sp-2) var(--sp-3);
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition: background-color 0.18s var(--ease),
+    color 0.18s var(--ease),
+    box-shadow 0.18s var(--ease),
+    transform 0.18s var(--ease);
 }
 .fbx-tab:hover {
   color: var(--text-2);
@@ -493,7 +493,7 @@ a.fbx-btn {
 }
 .fbx-subbar-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
   justify-content: flex-end;
 }
@@ -505,29 +505,29 @@ a.fbx-btn {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 1px 3px 2px 1px;
+  gap: var(--sp-2);
+  padding: var(--sp-0) var(--sp-1) var(--sp-0) var(--sp-0);
 }
 .fbx-row {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-3);
   width: 100%;
   min-width: 0;
   /* 状态徽章在 meta 行内联，右侧只留给未读标记 */
-  padding: 12px 14px;
+  padding: var(--sp-3) var(--sp-4);
   text-align: left;
   font-family: inherit;
   color: var(--text);
   background: var(--hover);
   border: 1px solid var(--line);
-  border-radius: 11px;
+  border-radius: var(--r-md);
   cursor: pointer;
-  transition: background-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    border-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition: background-color 0.18s var(--ease),
+    border-color 0.18s var(--ease),
+    box-shadow 0.18s var(--ease),
+    transform 0.18s var(--ease);
 }
 .fbx-row:hover {
   background: var(--hover-strong);
@@ -561,12 +561,12 @@ a.fbx-btn {
 .fbx-row-main {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--sp-1);
   flex: 1;
   min-width: 0;
 }
 .fbx-row-title {
-  font-size: 13.5px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   color: var(--text-strong);
   overflow: hidden;
@@ -578,9 +578,9 @@ a.fbx-btn {
   display: flex !important;
   flex-direction: row !important;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   min-width: 0;
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 /* 时间文本自己负责省略，徽章永远与它同一行 */
@@ -595,7 +595,7 @@ a.fbx-btn {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 4px;
+  gap: var(--sp-1);
 }
 /* meta 行内联的状态胶囊：跟在「最后回复 …」后面 */
 .fbx-row-meta .fbx-badge {
@@ -605,7 +605,7 @@ a.fbx-btn {
   min-width: 0;
   padding: 0 7px;
   margin-left: 6px;
-  font-size: 11px;
+  font-size: var(--fs-cap);
   vertical-align: middle;
 }
 
@@ -614,12 +614,12 @@ a.fbx-btn {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-1);
   box-sizing: border-box;
   height: 19px;
   padding: 0 8px;
-  border-radius: 999px;
-  font-size: 10.5px;
+  border-radius: var(--r-full);
+  font-size: var(--fs-cap);
   font-weight: 600;
   line-height: 1;
   white-space: nowrap;
@@ -642,37 +642,37 @@ a.fbx-btn {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-3);
 }
 .fbx-form-scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 1px 3px 2px 1px;
+  padding: var(--sp-0) var(--sp-1) var(--sp-0) var(--sp-0);
 }
 .fbx-pane {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
   min-width: 0;
-  padding: 14px 15px;
+  padding: var(--sp-4) var(--sp-4);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   background: var(--hover);
 }
 .fbx-pane-hd {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
 }
 .fbx-pane-h {
   margin: 0;
   display: flex;
   align-items: center;
-  gap: 7px;
-  font-size: 13.5px;
+  gap: var(--sp-2);
+  font-size: var(--fs-ctl);
   font-weight: 700;
   color: var(--text-strong);
 }
@@ -683,13 +683,13 @@ a.fbx-btn {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 10px;
-  font-size: 12.5px;
+  gap: var(--sp-3);
+  font-size: var(--fs-ctl);
   font-weight: 600;
   color: var(--text-2);
 }
 .fbx-req {
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   font-weight: 400;
   color: var(--muted);
 }
@@ -699,12 +699,12 @@ a.fbx-btn {
   min-width: 0;
   box-sizing: border-box;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   color: var(--text-strong);
   background: var(--input-bg);
   border: 1px solid var(--line-strong);
-  border-radius: 9px;
-  padding: 8px 10px;
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-3);
 }
 .fbx-ta {
   line-height: 1.6;
@@ -721,24 +721,24 @@ a.fbx-btn {
 .fbx-count {
   align-self: flex-end;
   margin-top: -4px;
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 .fbx-toggle-row {
   display: flex;
   align-items: flex-start;
-  gap: 9px;
+  gap: var(--sp-3);
   margin-top: 4px;
-  padding: 9px 10px;
+  padding: var(--sp-3) var(--sp-3);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--input-bg);
   cursor: pointer;
   user-select: none;
-  transition: background-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    border-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition: background-color 0.18s var(--ease),
+    border-color 0.18s var(--ease),
+    box-shadow 0.18s var(--ease),
+    transform 0.18s var(--ease);
 }
 .fbx-toggle-row:hover {
   border-color: var(--line-strong);
@@ -757,28 +757,28 @@ a.fbx-btn {
   background: transparent;
   accent-color: var(--accent);
   cursor: pointer;
-  transition: box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition: box-shadow 0.18s var(--ease);
 }
 .fbx-toggle-txt {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--sp-0);
   min-width: 0;
 }
 .fbx-toggle-txt b {
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   color: var(--text-2);
 }
 .fbx-toggle-txt small {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 .fbx-check {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
+  gap: var(--sp-2);
+  font-size: var(--fs-ctl);
   color: var(--text-2);
   cursor: pointer;
   user-select: none;
@@ -793,7 +793,7 @@ a.fbx-btn {
   background: transparent;
   accent-color: var(--accent);
   cursor: pointer;
-  transition: box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition: box-shadow 0.18s var(--ease);
 }
 .fbx-check input[type="checkbox"]:disabled {
   cursor: default;
@@ -805,7 +805,7 @@ a.fbx-btn {
 }
 .fbx-hint {
   margin: 0;
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   line-height: 1.6;
   color: var(--muted);
   overflow-wrap: anywhere;
@@ -815,7 +815,7 @@ a.fbx-btn {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--sp-2);
   padding-top: 10px;
   border-top: 1px solid var(--line);
 }
@@ -829,7 +829,7 @@ a.fbx-btn {
   min-height: 34px;
   padding: 0 16px;
   line-height: 1;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
 }
 
 /* ── 工单会话（反馈详情层） ── */
@@ -838,21 +838,21 @@ a.fbx-btn {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: var(--sp-3);
 }
 .fbx-thread-hd {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
-  row-gap: 6px;
+  row-gap: var(--sp-2);
   padding-bottom: 2px;
 }
 .fbx-tidwrap {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-1);
   flex: 1;
   min-width: 0;
   justify-content: flex-end;
@@ -861,21 +861,21 @@ a.fbx-btn {
   min-width: 0;
   max-width: 100%;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   background: var(--hover);
   border: 1px solid transparent;
-  border-radius: 6px;
-  padding: 3px 6px;
+  border-radius: var(--r-sm);
+  padding: var(--sp-1) var(--sp-2);
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    border-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    background-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1),
-    transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition: color 0.18s var(--ease),
+    border-color 0.18s var(--ease),
+    background-color 0.18s var(--ease),
+    box-shadow 0.18s var(--ease),
+    transform 0.18s var(--ease);
 }
 .fbx-tid:hover {
   color: var(--text-2);
@@ -887,7 +887,7 @@ a.fbx-btn {
 }
 .fbx-copy {
   flex: 0 0 auto;
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--accent);
 }
 .fbx-msgs {
@@ -896,15 +896,15 @@ a.fbx-btn {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 2px 3px 4px 1px;
+  gap: var(--sp-3);
+  padding: var(--sp-0) var(--sp-1) var(--sp-1) var(--sp-0);
 }
 /* 消息层次：头像（我/官）→ 角色 + 时间 → 正文气泡。
    头像固定 26px，正文占满剩余宽度；用户消息整行右对齐（头像在右）。 */
 .fbx-msg {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--sp-2);
   max-width: 86%;
   min-width: 0;
 }
@@ -922,7 +922,7 @@ a.fbx-btn {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  font-size: 11px;
+  font-size: var(--fs-cap);
   font-weight: 700;
   line-height: 1;
   user-select: none;
@@ -940,7 +940,7 @@ a.fbx-btn {
 .fbx-msg-body {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--sp-1);
   min-width: 0;
 }
 .fbx-msg.user .fbx-msg-body {
@@ -949,9 +949,9 @@ a.fbx-btn {
 .fbx-msg-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   min-width: 0;
-  font-size: 10.5px;
+  font-size: var(--fs-cap);
   line-height: 1.3;
   color: var(--muted);
 }
@@ -963,16 +963,16 @@ a.fbx-btn {
   color: var(--text-2);
 }
 .fbx-msg-time {
-  font-size: 10.5px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .fbx-msg-txt {
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   line-height: 1.65;
-  padding: 9px 12px;
-  border-radius: 12px;
+  padding: var(--sp-3) var(--sp-3);
+  border-radius: var(--r-md);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -992,9 +992,9 @@ a.fbx-btn {
 }
 .fbx-thread-empty {
   margin: auto;
-  padding: 18px 10px;
+  padding: var(--sp-4) var(--sp-3);
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   line-height: 1.6;
   color: var(--muted);
 }
@@ -1004,10 +1004,10 @@ a.fbx-btn {
   flex: 0 0 auto;
   display: flex;
   align-items: stretch;
-  gap: 10px;
+  gap: var(--sp-3);
   padding: 10px 0 0;
   border-top: 1px solid var(--line);
-  transition: border-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition: border-color 0.18s var(--ease);
 }
 .fbx-reply:focus-within {
   border-top-color: color-mix(in srgb, var(--accent) 42%, var(--line));
@@ -1017,7 +1017,7 @@ a.fbx-btn {
   min-width: 0;
   min-height: 46px;
   max-height: 132px;
-  padding: 11px 12px;
+  padding: var(--sp-3) var(--sp-3);
   line-height: 1.55;
   resize: none;
 }
@@ -1028,9 +1028,9 @@ a.fbx-btn {
   min-width: 92px;
   min-height: 46px;
   padding: 0 18px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   line-height: 1;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
 }
 
 /* ═════════ 日志与诊断分区 ═════════ */
@@ -1039,14 +1039,14 @@ a.fbx-btn {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-3);
 }
 .fbx-diag-toolbar {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
 }
 .fbx-diag-heading {
@@ -1057,7 +1057,7 @@ a.fbx-btn {
 }
 .fbx-diag-actions {
   display: flex;
-  gap: 7px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
   justify-content: flex-end;
 }
@@ -1065,22 +1065,22 @@ a.fbx-btn {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 1px 3px 2px 1px;
+  padding: var(--sp-0) var(--sp-1) var(--sp-0) var(--sp-0);
 }
 .fbx-diag-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
-  gap: 10px;
+  gap: var(--sp-3);
   align-items: start;
 }
 .fbx-sec {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--sp-0);
   min-width: 0;
-  padding: 13px 14px;
+  padding: var(--sp-4) var(--sp-4);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   background: var(--hover);
 }
 .fbx-span2 {
@@ -1094,7 +1094,7 @@ a.fbx-btn {
 .fbx-stats-side {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   flex: 0 0 auto;
 }
 .fbx-stats-body {
@@ -1112,7 +1112,7 @@ a.fbx-btn {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
   margin-bottom: 7px;
 }
@@ -1120,8 +1120,8 @@ a.fbx-btn {
   margin: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: var(--sp-2);
+  font-size: var(--fs-ctl);
   font-weight: 700;
   color: var(--text-strong);
 }
@@ -1131,10 +1131,10 @@ a.fbx-btn {
 .fbx-kv {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--sp-3);
   min-width: 0;
   padding: 3px 0;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--text-2);
 }
 .fbx-kv > span:first-child {
@@ -1147,14 +1147,14 @@ a.fbx-btn {
 }
 .fbx-kv code {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--text);
   word-break: break-all;
   overflow-wrap: anywhere;
 }
 .fbx-btnrow {
   display: flex;
-  gap: 6px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
   margin-top: 8px;
 }
@@ -1182,29 +1182,29 @@ a.fbx-btn {
   padding: 0 16px;
   margin: 0;
   line-height: 1;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
 }
 .fbx-modgrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
   gap: 7px 12px;
   margin: 9px 0 4px;
-  padding: 9px 10px;
+  padding: var(--sp-3) var(--sp-3);
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--r-md);
   background: var(--input-bg);
 }
 .fbx-pre {
   margin: 9px 0 0;
-  padding: 10px 11px;
+  padding: var(--sp-3) var(--sp-3);
   max-height: 260px;
   overflow: auto;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--r-md);
   background: var(--input-bg);
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 11px;
+  font-size: var(--fs-cap);
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-all;
@@ -1226,7 +1226,7 @@ a.fbx-btn {
 .fbx-diag::-webkit-scrollbar-thumb,
 .fbx-pre::-webkit-scrollbar-thumb {
   background: var(--line-strong);
-  border-radius: 9px;
+  border-radius: var(--r-md);
 }
 
 /* ── 入场动画（淡入上浮，克制不抢戏） ──
@@ -1246,11 +1246,11 @@ a.fbx-btn {
 .fbx-fb,
 .fbx-thread,
 .fbx-diag-wrap {
-  animation: fbxFadeUp 0.22s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+  animation: fbxFadeUp 0.22s var(--ease) both;
 }
 .fbx-sec,
 .fbx-row {
-  animation: fbxFadeUp 0.2s cubic-bezier(0.25, 0.8, 0.25, 1) backwards;
+  animation: fbxFadeUp 0.2s var(--ease) backwards;
 }
 /* 错峰：仅前 8 项依次延后 22ms，避免长列表整体拖慢 */
 .fbx-row:nth-child(1),
@@ -1291,11 +1291,11 @@ a.fbx-btn {
    onClose 真正卸载（与 TSX 的 CLOSE_ANIM_MS 对齐）。选择器同时命中 .ddet-mask，
    才能盖掉它自带的 `animation: pageIn`。 */
 .ddet-mask.fbx-closing {
-  animation: fbxMaskOut 0.22s cubic-bezier(0.25, 0.8, 0.25, 1) forwards;
+  animation: fbxMaskOut 0.22s var(--ease) forwards;
   pointer-events: none;
 }
 .ddet-mask.fbx-closing .fbx-card {
-  animation: fbxCardOut 0.22s cubic-bezier(0.25, 0.8, 0.25, 1) forwards;
+  animation: fbxCardOut 0.22s var(--ease) forwards;
 }
 @keyframes fbxMaskOut {
   to {
@@ -1331,18 +1331,18 @@ a.fbx-btn {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   pointer-events: none;
 }
 .app-toast {
   max-width: min(520px, 86vw);
-  padding: 10px 16px;
-  border-radius: 12px;
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
   border: 1px solid var(--line);
   background: var(--hover);
   color: var(--text-strong);
   box-shadow: var(--shadow-card);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   line-height: 1.5;
   text-align: center;
   white-space: normal;
@@ -1366,7 +1366,7 @@ a.fbx-btn {
     max-height: calc(100vh - 84px); /* 扣掉 .ddet-mask 的上下内边距，窄窗口也不溢出 */
   }
   .fbx-hd {
-    padding: 14px 16px 10px;
+    padding: var(--sp-4) var(--sp-4) var(--sp-3);
   }
   .fbx-nav {
     padding: 0 16px 10px;
@@ -1375,7 +1375,7 @@ a.fbx-btn {
     padding: 0 16px 14px;
   }
   .fbx-nav-btn {
-    padding: 9px 10px;
+    padding: var(--sp-3) var(--sp-3);
   }
   .fbx-nav-txt small {
     display: none;
@@ -1393,15 +1393,15 @@ a.fbx-btn {
   /* 列表行：标题/时间占主列，状态与未读标记在右侧换行堆叠，避免挤出横向滚动 */
   .fbx-row {
     align-items: flex-start;
-    gap: 10px;
-    padding: 11px 12px;
+    gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-3);
   }
   .fbx-row-side {
     flex-direction: row;
     align-items: center;
     justify-content: flex-end;
     flex-wrap: wrap;
-    gap: 4px;
+    gap: var(--sp-1);
     max-width: 48%;
   }
   .fbx-row-meta {
@@ -1419,7 +1419,7 @@ a.fbx-btn {
   .fbx-msg-ava {
     width: 24px;
     height: 24px;
-    font-size: 10.5px;
+    font-size: var(--fs-cap);
   }
   /* 会话头：工单号独占一行，避免和状态/未读标记互相挤压 */
   .fbx-thread-hd .fbx-tidwrap {
@@ -1429,7 +1429,7 @@ a.fbx-btn {
   /* 回复区：窄窗改为上下两段，按钮占满宽度（仍然保持同样的间距与圆角） */
   .fbx-reply {
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--sp-2);
   }
   .fbx-reply-ta {
     flex-basis: 100%;

@@ -2,7 +2,7 @@
 
 .hscroll {
   display: flex;
-  gap: 16px;
+  gap: var(--sp-4);
   overflow-x: auto;
   padding-bottom: 10px;
   /* [lc-1431] 横向归零。原来用「负边距 -26 + 同值 padding 26」自造通栏
@@ -28,7 +28,7 @@
 }
 .hscroll.srow-center .srow-track {
   display: flex;
-  gap: 16px;
+  gap: var(--sp-4);
   width: max-content;
   margin-inline: auto;
 }
@@ -48,7 +48,7 @@
   border-radius: 50%;
   background: rgba(10, 10, 12, 0.55);
   color: #fff;
-  font-size: 17px;
+  font-size: var(--fs-subtitle);
   line-height: 1;
   display: inline-flex;
   align-items: center;

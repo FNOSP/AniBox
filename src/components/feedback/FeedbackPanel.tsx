@@ -808,7 +808,7 @@ export function FeedbackPanel({
                         padding: "0 16px",
                         margin: 0,
                         lineHeight: 1,
-                        fontSize: 13,
+                        fontSize: "var(--fs-ctl)",
                       }}
                       onClick={() => setFbTab("tickets")}
                       disabled={submitting}
@@ -829,7 +829,7 @@ export function FeedbackPanel({
                         padding: "0 16px",
                         margin: 0,
                         lineHeight: 1,
-                        fontSize: 13,
+                        fontSize: "var(--fs-ctl)",
                       }}
                       onClick={() => void submit()}
                       disabled={!canSubmit}

@@ -3,7 +3,7 @@
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
-  gap: 18px;
+  gap: var(--sp-4);
 }
 .card {
   cursor: pointer;
@@ -12,7 +12,7 @@
 .poster-box {
   position: relative;
   aspect-ratio: 2 / 3;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   overflow: hidden;
   background: var(--ph-bg);
   border: 1px solid var(--line);
@@ -69,7 +69,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 34px;
+  font-size: var(--fs-hero);
   opacity: 0.35;
 }
 .card-hover {
@@ -88,9 +88,9 @@
 .play-pill {
   background: var(--accent-grad);
   color: #fff;
-  padding: 8px 18px;
-  border-radius: 999px;
-  font-size: 13px;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-full);
+  font-size: var(--fs-ctl);
   font-weight: 700;
   box-shadow: 0 6px 18px rgb(var(--shadow-rgb) / 0.24);
   transform: translateY(6px);
@@ -104,9 +104,9 @@
   top: 7px;
   left: 7px;
   background: rgba(10, 12, 18, 0.78);
-  padding: 3px 8px;
-  border-radius: 7px;
-  font-size: 11px;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-cap);
   color: var(--gold);
   font-weight: 600;
   backdrop-filter: blur(6px);
@@ -116,9 +116,9 @@
   top: 7px;
   right: 7px;
   background: rgba(10, 12, 18, 0.78);
-  padding: 3px 8px;
-  border-radius: 7px;
-  font-size: 11px;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-cap);
   color: rgba(233, 235, 244, 0.9);
   backdrop-filter: blur(6px);
 }
@@ -134,7 +134,7 @@
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   color: rgba(255, 255, 255, 0.94);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -154,7 +154,7 @@
 }
 .card-title {
   margin-top: 9px;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   line-height: 1.35;
   display: -webkit-box;
@@ -164,7 +164,7 @@
 }
 .card-sub {
   margin-top: 2px;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -177,11 +177,11 @@
   margin-top: 3px;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--sp-0);
   min-width: 0;
 }
 .card-meta-line {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   line-height: 1.35;
   color: var(--muted);
   white-space: nowrap;
@@ -189,7 +189,7 @@
   text-overflow: ellipsis;
 }
 .card-meta-cont {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   line-height: 1.35;
   color: var(--accent);
   white-space: nowrap;
@@ -261,7 +261,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--sp-3);
 }
 .pa-btn {
   width: 34px;
@@ -324,8 +324,8 @@
   right: 0;
   bottom: 42px;
   min-width: 132px;
-  padding: 6px;
-  border-radius: 10px;
+  padding: var(--sp-2);
+  border-radius: var(--r-md);
   /* 跟随主题：浅色主题白底深字、深色主题深底浅字，避免深底配深字看不清 */
   background: var(--bg-3);
   color: var(--text-strong);
@@ -342,10 +342,10 @@
   border: 0;
   background: transparent;
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   text-align: left;
-  padding: 8px 10px;
-  border-radius: 7px;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
   cursor: pointer;
   white-space: nowrap;
 }

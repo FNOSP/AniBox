@@ -8,8 +8,8 @@
   max-height: min(82vh, 680px);
   display: flex;
   flex-direction: column;
-  padding: 26px 26px 20px;
-  animation: clgIn 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  padding: var(--sp-5) var(--sp-5) var(--sp-5);
+  animation: clgIn 0.22s var(--ease-enter);
 }
 /* 顶部 2px accent 细线（靠 .ddet 的 overflow:hidden 收边） */
 .clg-modal::before {
@@ -34,10 +34,10 @@
 }
 /* 退场：与页面退场同一套（ease-in 更快），160ms 后组件卸载 */
 .ddet-mask.clg-closing {
-  animation: clgMaskOut 0.16s cubic-bezier(0.4, 0, 1, 1) forwards;
+  animation: clgMaskOut 0.16s var(--ease-exit) forwards;
 }
 .ddet-mask.clg-closing .clg-modal {
-  animation: clgOut 0.16s cubic-bezier(0.4, 0, 1, 1) forwards;
+  animation: clgOut 0.16s var(--ease-exit) forwards;
 }
 @keyframes clgMaskOut {
   to {
@@ -55,19 +55,19 @@
 .clg-head {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-3);
   margin-bottom: 18px;
   padding-right: 24px; /* 给右上角关闭键留位 */
 }
 .clg-badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   align-self: flex-start;
   height: 24px;
   padding: 0 10px;
-  border-radius: 999px;
-  font-size: 12px;
+  border-radius: var(--r-full);
+  font-size: var(--fs-cap);
   font-weight: 700;
   letter-spacing: 0.01em;
   /* [lc-2110] 12px 小字必须够对比：铺 accent-solid 平涂 + 白字（深色 4.99:1 / 浅色 5.79:1）。 */
@@ -76,7 +76,7 @@
 }
 .clg-title {
   margin: 0;
-  font-size: 17px;
+  font-size: var(--fs-subtitle);
   font-weight: 700;
   line-height: 1.35;
   color: var(--fg-1);
@@ -89,7 +89,7 @@
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-3);
   overflow-y: auto;
   /* 内容多时只滚动列表本身，标题与底部按钮固定 */
   min-height: 0;
@@ -97,7 +97,7 @@
 .clg-list li {
   position: relative;
   padding-left: 16px;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   line-height: 1.62;
   color: var(--fg-2);
 }
@@ -118,11 +118,11 @@
 .clg-beta {
   display: flex;
   align-items: flex-start;
-  gap: 7px;
+  gap: var(--sp-2);
   margin-top: 16px;
-  padding: 9px 12px;
-  border-radius: 8px;
-  font-size: 12px;
+  padding: var(--sp-3) var(--sp-3);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-cap);
   line-height: 1.6;
   color: var(--fg-2);
   background: color-mix(in srgb, #f0a63c 12%, transparent);
@@ -148,7 +148,7 @@
   padding: 2px 0 2px 12px;
   border-radius: 0;
   border-left: 3px solid var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   line-height: 1.65;
   color: var(--fg-2);
   background: transparent;

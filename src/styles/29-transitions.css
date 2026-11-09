@@ -10,10 +10,10 @@
   to   { opacity: 0; transform: translateX(-14px); }
 }
 .view-in {
-  animation: viewIn 0.22s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  animation: viewIn 0.22s var(--ease-enter) both;
 }
 .view-out {
-  animation: viewOut 0.18s cubic-bezier(0.4, 0, 1, 1) both;
+  animation: viewOut 0.18s var(--ease-exit) both;
 }
 /* [lc-1649] 退场的 view-pane 必须**脱离文档流**。
    详情/库/记录页退场的那 ~200ms 里，目标页（home/discover）同时也已经是 .active，

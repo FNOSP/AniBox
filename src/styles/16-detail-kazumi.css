@@ -13,13 +13,13 @@
   position: relative;
   z-index: 1;
   display: flex;
-  gap: 16px;
-  padding: 16px;
+  gap: var(--sp-4);
+  padding: var(--sp-4);
   border-radius: var(--radius); /* 14 */
   background: var(--bg-2);
   border: 1px solid var(--line);
   box-shadow: var(--shadow-card);
-  animation: dIn 0.42s cubic-bezier(0.2, 0, 0, 1) 0.04s both;
+  animation: dIn 0.42s var(--ease) 0.04s both;
 }
 @keyframes dIn {
   from {
@@ -35,7 +35,7 @@
   width: 148px;
   min-width: 148px;
   aspect-ratio: 2 / 3; /* Kazumi 海报 AspectRatio 0.65 ≈ 2/3 */
-  border-radius: 12px;
+  border-radius: var(--r-md);
   overflow: hidden;
   background: var(--ph-bg);
   align-self: flex-start;
@@ -51,11 +51,11 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-3);
 }
 .dcard-title {
   margin: 0;
-  font-size: 24px;
+  font-size: var(--fs-page);
   font-weight: 800;
   color: var(--text-strong);
   letter-spacing: 0.3px;
@@ -67,21 +67,21 @@
 .dcard-score {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 .dscore-num {
-  font-size: 30px;
+  font-size: var(--fs-hero);
   font-weight: 800;
   color: var(--accent);
   line-height: 1;
 }
 .dscore-outof {
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   color: var(--muted);
 }
 .dscore-votes {
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   color: var(--muted);
 }
 /* 5 星：底层灰星 + 顶层金星按 inline width 裁切（主仓库 starsHtml 同款，纯 CSS 无 SVG）。
@@ -89,7 +89,7 @@
 .dstars {
   position: relative;
   display: inline-block;
-  font-size: 15px;
+  font-size: var(--fs-body);
   letter-spacing: 2px;
   line-height: 1;
 }
@@ -103,7 +103,7 @@
   overflow: hidden;
   white-space: nowrap;
   color: var(--gold);
-  animation: dStars 0.6s cubic-bezier(0.2, 0, 0, 1) 0.25s both;
+  animation: dStars 0.6s var(--ease) 0.25s both;
 }
 @keyframes dStars {
   from {
@@ -116,7 +116,7 @@
 .dcard-act {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-3);
   margin-top: auto;
   flex-wrap: wrap;
 }
@@ -125,9 +125,9 @@
   background: var(--accent-grad);
   color: #fff;
   font-weight: 700;
-  font-size: 13.5px;
-  padding: 9px 22px;
-  border-radius: 999px;
+  font-size: var(--fs-ctl);
+  padding: var(--sp-3) var(--sp-5);
+  border-radius: var(--r-full);
   cursor: pointer;
   box-shadow: 0 6px 18px rgb(var(--shadow-rgb) / 0.21);
   transition: transform 0.15s, box-shadow 0.15s;
@@ -153,7 +153,7 @@
   z-index: 30;
   display: flex;
   justify-content: center; /* 对齐 Kazumi tabAlignment: TabAlignment.center */
-  gap: 4px;
+  gap: var(--sp-1);
   margin: 0 -26px; /* 通栏玻璃条 */
   padding: 4px 0 0;
   background: var(--bg-1);
@@ -166,8 +166,8 @@
   background: none;
   border: none;
   border-radius: 0;
-  padding: 11px 18px 13px;
-  font-size: 14px;
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+  font-size: var(--fs-body);
   font-weight: 700;
   color: var(--muted);
   cursor: pointer;
@@ -192,11 +192,11 @@
   right: 12px;
   bottom: 0;
   height: 3px;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--accent-grad);
   transform: scaleX(0);
   transform-origin: center;
-  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1);
+  transition: transform 0.2s var(--ease);
 }
 .dseg-btn.active::after {
   transform: scaleX(1);
@@ -208,7 +208,7 @@
   padding: 18px 0 40px;
 }
 .dbody > * {
-  animation: dPanel 0.24s cubic-bezier(0.2, 0, 0, 1) both;
+  animation: dPanel 0.24s var(--ease) both;
 }
 @keyframes dPanel {
   from {
@@ -229,7 +229,7 @@
   /* [lc-1416] 用户要求：演职人员页内容**包进一个卡片容器**（原本各节是裸的、整页没有边界感）。
      这里给统一的卡片底 + 内边距 + 圆角，与别的模块（.tmdb-sec）视觉语言一致；
      节与节之间改用分隔线区分，而不是靠大间距（见下方 .dmore .dsec）。 */
-  padding: 6px 16px 16px;
+  padding: var(--sp-2) var(--sp-4) var(--sp-4);
   border-radius: var(--radius);
   background: var(--bg-2);
   border: 1px solid var(--line);
@@ -258,7 +258,7 @@
 }
 .dsec-t {
   margin: 0 0 10px;
-  font-size: 16px;
+  font-size: var(--fs-body);
   font-weight: 700;
   color: var(--text-strong);
 }
@@ -266,7 +266,7 @@
   position: relative;
   margin: 0;
   color: var(--text-2);
-  font-size: 13.5px;
+  font-size: var(--fs-ctl);
   line-height: 1.85;
   white-space: pre-wrap;
 }
@@ -276,13 +276,13 @@
 
 .dtag-wrap {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 .dtag {
-  font-size: 12.5px;
-  padding: 5px 12px;
-  border-radius: 999px;
+  font-size: var(--fs-ctl);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-full);
   background: var(--hover);
   border: 1px solid var(--line);
   color: var(--text-2);
@@ -297,7 +297,7 @@
 
 .dbody .ep-list {
   padding: 0; /* 覆盖基类 .ep-list 的 0 26px（面板自带 .dbody 内边距） */
-  gap: 16px; /* 覆盖基类 30px：Kazumi 列表节奏更密 */
+  gap: var(--sp-4); /* 覆盖基类 30px：Kazumi 列表节奏更密 */
 }
 .dbody .ep-thumb {
   width: 168px; /* 覆盖基类 300px（旧右栏是 150px，这里取中间值） */
@@ -307,9 +307,9 @@
   position: absolute;
   top: 8px;
   right: 8px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 10.5px;
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-full);
+  font-size: var(--fs-cap);
   line-height: 16px;
   backdrop-filter: blur(6px);
 }
@@ -337,7 +337,7 @@
     gap: 14px 22px;
   }
   .dbody .ep-row {
-    gap: 16px;
+    gap: var(--sp-4);
   }
 }
 @media (max-width: 720px) {
@@ -349,7 +349,7 @@
     width: 120px;
   }
   .dcard-title {
-    font-size: 20px;
+    font-size: var(--fs-title);
   }
 }
 

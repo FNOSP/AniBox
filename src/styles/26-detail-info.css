@@ -9,7 +9,7 @@
   border: none;
   border-radius: 0;
   background: transparent;
-  padding: 16px 18px;
+  padding: var(--sp-4) var(--sp-4);
 }
 .dpanel > .tmdb-sec + .tmdb-sec {
   border-top: 1px solid var(--line);   /* 浅横线分隔（与项目其它分隔线同一色阶） */
@@ -38,7 +38,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: var(--sp-2);
   width: 100%;
   height: 38px;
   margin-bottom: 8px;
@@ -46,7 +46,7 @@
   border-radius: var(--radius);
   background: var(--hover);
   color: var(--text);
-  font-size: 13.5px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
@@ -76,13 +76,13 @@
   width: 124px;
   min-width: 124px;
   height: 70px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   flex-shrink: 0;
 }
 .dsk-sec-t {
   width: 64px;
   height: 16px;
   margin-bottom: 12px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
 }
 

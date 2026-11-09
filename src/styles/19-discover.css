@@ -20,17 +20,17 @@
 .dpane-hd {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-3);
   /* [lc-123-rev2] 顶部 56px（原 16px）= 40px 让位 + 浮层胶囊（≈40px 高，绝对定位在 top 52px）
      的避让 —— 胶囊浮在内容区顶部且横向居中，正好压在两栏栏头的中间（标题/筛选 chips），
      不避让会盖住文字与按钮。首页没有这个问题（胶囊浮在满幅 hero 的图面上）。 */
-  padding: 56px 20px 12px;
+  padding: var(--sp-7) var(--sp-5) var(--sp-3);
   flex-wrap: wrap;
 }
 
 .dpane-hd h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--fs-subtitle);
   font-weight: 700;
   color: var(--text-strong);
   letter-spacing: 0.2px;
@@ -39,7 +39,7 @@
 /* [lc-123-rev] 栏头计数（替代原来的 .dsrc 数据源徽标 ——
    用户明确不要界面上出现「TMDB · /3/discover/...」「Bangumi · /calendar」这类端点标注） */
 .dn {
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   color: var(--muted);
   white-space: nowrap;
 }
@@ -50,13 +50,13 @@
 
 .dchips {
   display: flex;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 .dchip {
-  padding: 4px 12px;
-  border-radius: 999px;
-  font-size: 12.5px;
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-full);
+  font-size: var(--fs-ctl);
   font-family: inherit;
   color: var(--muted);
   border: 1px solid var(--line);
@@ -82,13 +82,13 @@
   height: 26px;
   padding: 0; /* [lc-1402] 同 .tb-icon：固定 px 宽的图标钮必须复位全局 button 的 15px 左右 padding */
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted);
-  font-size: 14px;
+  font-size: var(--fs-body);
   cursor: pointer;
   /* [lc-1590] 动效：悬停转 180°、忙时（disabled）持续旋转 */
-  transition: background 0.2s, color 0.2s, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: background 0.2s, color 0.2s, transform 0.3s var(--ease);
 }
 
 .dicon:hover {
@@ -125,18 +125,18 @@
 
 .dscroll::-webkit-scrollbar-thumb {
   background: var(--line-strong);
-  border-radius: 9px;
+  border-radius: var(--r-md);
 }
 
 .dcap {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   margin: 0 0 10px;
 }
 
 .dsub-h {
   margin: 18px 0 10px;
-  font-size: 15px;
+  font-size: var(--fs-body);
   font-weight: 700;
   color: var(--text-strong);
 }
@@ -144,7 +144,7 @@
 /* 小节标题后面的补充说明（「按热度排序」这类，弱化处理） */
 .dsub-h span {
   margin-left: 8px;
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-weight: 400;
   color: var(--muted);
 }
@@ -158,11 +158,11 @@
 /* 主推分栏 */
 .dfeat {
   display: flex;
-  gap: 20px;
+  gap: var(--sp-5);
   background: var(--bg-2);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 20px;
+  border-radius: var(--r-md);
+  padding: var(--sp-5);
 }
 
 .dfeat-poster {
@@ -170,7 +170,7 @@
   width: 140px;
   height: 210px;
   flex-shrink: 0;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   overflow: hidden;
   background: var(--ph-bg);
   box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25);
@@ -197,11 +197,11 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 10px;
+  gap: var(--sp-3);
 }
 
 .dfeat-title {
-  font-size: 24px;
+  font-size: var(--fs-page);
   font-weight: 700;
   line-height: 1.2;
   color: var(--text-strong);
@@ -216,8 +216,8 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
-  font-size: 13.5px;
+  gap: var(--sp-3);
+  font-size: var(--fs-ctl);
   color: var(--muted);
 }
 
@@ -225,27 +225,27 @@
 .dfeat-score {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  border-radius: 999px;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-full);
   border: 1px solid var(--line-strong);
   background: var(--bg-1);
   color: var(--gold);
   font-weight: 700;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
 }
 
 .dfeat-kind {
-  padding: 2px 8px;
-  border-radius: 6px;
-  font-size: 11.5px;
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-cap);
   background: rgb(var(--accent-rgb) / 0.16);
   color: var(--accent);
 }
 
 .dfeat-desc {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   line-height: 1.6;
   color: var(--muted);
   display: -webkit-box;
@@ -257,12 +257,12 @@
 .dfeat-btn {
   align-self: flex-start;
   margin-top: 4px;
-  padding: 8px 20px;
+  padding: var(--sp-2) var(--sp-5);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--accent-grad);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
@@ -282,13 +282,13 @@
 .dpcgrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 16px;
+  gap: var(--sp-4);
 }
 
 /* 海报卡（设计稿 .tmdb-card）：2:3 原比例，不再裁 16:9。
    [lc-1444] 整卡可点（进入主详情页） */
 .dpc {
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: hidden;
   background: var(--bg-2);
   border: 1px solid transparent;
@@ -334,21 +334,21 @@
   right: 8px;
   top: 8px;
   z-index: 2;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 700;
-  padding: 3px 6px;
-  border-radius: 6px;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
   background: rgba(10, 12, 18, 0.85);
   backdrop-filter: blur(4px);
   color: var(--gold);
 }
 
 .dpc-bd {
-  padding: 10px 12px 12px;
+  padding: var(--sp-3) var(--sp-3) var(--sp-3);
 }
 
 .dpc-t {
-  font-size: 13.5px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   color: var(--text-strong);
   white-space: nowrap;
@@ -361,8 +361,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  font-size: 12px;
+  gap: var(--sp-2);
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 
@@ -377,9 +377,9 @@
 .dup {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 11px;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
 }
 
 .dup:hover {
@@ -394,22 +394,22 @@
   align-items: center;
   padding: 3px 0 4px;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--r-md);
   background: var(--hover);
-  font-size: 10.5px;
+  font-size: var(--fs-cap);
   line-height: 1.15;
   color: var(--muted);
 }
 
 .dup-d b {
-  font-size: 15px;
+  font-size: var(--fs-body);
   color: var(--text-strong);
 }
 
 .dup-t {
   flex: 1;
   min-width: 0;
-  font-size: 13.5px;
+  font-size: var(--fs-ctl);
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -419,18 +419,18 @@
 /* [lc-1416] 「加载更多」居中胶囊按钮 —— 改名 .dmore → **.dmore-btn**。
    为什么必须改名：原来它与「演职人员」页的**容器** `<div class="dpanel dmore">` 撞名，
    而 `.dmore` 这条单独选择器（不加标签限定）**同样命中那个 div** —— 于是这个 block 级、
-   撑满宽度的容器套上了胶囊样式（border-radius: 999px 让上下变半圆、中间还是矩形）
+   撑满宽度的容器套上了胶囊样式（border-radius: var(--r-full) 让上下变半圆、中间还是矩形）
    + :hover 高亮。用户看到的"背景有个大椭圆、鼠标放上去还高亮"就是这个，
    不是任何几何绘制，是**类名冲突**。容器那侧（.dmore / .dmore .dsec）语义正确、保持不动。 */
 .dmore-btn {
   display: block;
   margin: 12px auto 0;
-  padding: 7px 24px;
-  border-radius: 999px;
+  padding: var(--sp-2) var(--sp-5);
+  border-radius: var(--r-full);
   border: 1px solid var(--line-strong);
   background: var(--hover);
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-family: inherit;
   cursor: pointer;
 }
@@ -449,7 +449,7 @@
 .dup-hint {
   margin-top: 10px;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 
@@ -457,7 +457,7 @@
 
 .dweeks {
   display: flex;
-  gap: 6px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
   padding: 0 20px 12px;
 }
@@ -471,19 +471,19 @@
   gap: 4px 10px;
   flex-wrap: wrap;
   margin: 0 16px 10px;
-  padding: 9px 12px;
-  border-radius: 12px;
+  padding: var(--sp-3) var(--sp-3);
+  border-radius: var(--r-md);
   border: 1px solid var(--line);
   background: linear-gradient(120deg, rgb(var(--accent-rgb) / 0.16), rgb(var(--accent-rgb) / 0.04));
 }
 .dtoday b {
-  font-size: 14px;
+  font-size: var(--fs-body);
   color: var(--text-strong);
   white-space: nowrap;
 }
 .dtoday span {
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   color: var(--muted);
 }
 
@@ -496,13 +496,13 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: var(--sp-0);
   /* 七枚等宽铺满整行；min-width 54px 保留作窄栏下限（窄栏下整体换行，不挤爆） */
   flex: 1;
   min-width: 54px;
   /* 顶部多留 10px：「今天」圆点居中悬在星期文字上方，不压字；底部 3px 给进度条 */
-  padding: 10px 6px 9px;
-  border-radius: 11px;
+  padding: var(--sp-3) var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
   border: 1px solid var(--line);
   background: var(--bg-2);
   color: var(--text-2);
@@ -510,7 +510,7 @@
   cursor: pointer;
   /* 保留 overflow 默认值：顶部居中的「今天」圆点靠近上缘，避免任何裁切 */
   transition: background 0.18s, color 0.18s, border-color 0.18s, box-shadow 0.18s,
-    transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
+    transform 0.18s var(--ease);
 }
 
 .dweek:hover {
@@ -522,7 +522,7 @@
 }
 
 .dweek-d {
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   line-height: 1.25;
   white-space: nowrap;
@@ -530,7 +530,7 @@
 
 /* 部数：11.5px、弱化色，**不用斜体**（原先的 <i> 默认斜体正是"脏"的一部分） */
 .dweek-n {
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   font-style: normal;
   line-height: 1.2;
   color: var(--muted);
@@ -544,7 +544,7 @@
   left: 6px;
   bottom: 3px;
   height: 3px;
-  border-radius: 2px;
+  border-radius: var(--r-xs);
   background: var(--accent-grad);
   pointer-events: none;
   transition: width 0.3s ease, background 0.18s;
@@ -555,7 +555,7 @@
   color: var(--text-strong);
   border-color: var(--line-strong);
     /* 选中时弹一下（弹性曲线，像左栏标签那样） */
-  animation: dweekPop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: dweekPop 0.35s var(--ease-spring);
 }
 @keyframes dweekPop {
   0% {
@@ -627,7 +627,7 @@
 .dgrp {
   margin: 10px 0 4px;
   padding: 0 2px;
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   color: var(--muted);
 }
@@ -643,13 +643,13 @@
 .ditem {
   position: relative;
   display: flex;
-  gap: 12px;
+  gap: var(--sp-3);
   align-items: center;
-  padding: 9px 10px 9px 14px;
-  border-radius: 12px;
+  padding: var(--sp-3) var(--sp-3) var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
   border: 1px solid transparent;
   cursor: pointer;
-  transition: background 0.16s, border-color 0.16s, transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1),
+  transition: background 0.16s, border-color 0.16s, transform 0.2s var(--ease),
     box-shadow 0.2s;
 }
 
@@ -657,7 +657,7 @@
    ⚠ fill-mode 用 `backwards` 而不是 `both`：`both` 会在动画结束后**钉住** transform，
    把悬停的 translateX(3px) 顶掉（动画的填充值优先于普通声明）。 */
 .dlist > * {
-  animation: ditemIn 0.34s cubic-bezier(0.25, 0.8, 0.25, 1) backwards;
+  animation: ditemIn 0.34s var(--ease) backwards;
 }
 .dlist > :nth-child(1) {
   animation-delay: 0.01s;
@@ -713,7 +713,7 @@
   top: 10px;
   bottom: 10px;
   width: 3px;
-  border-radius: 3px;
+  border-radius: var(--r-xs);
   background: var(--accent);
   opacity: 0.5;
 }
@@ -737,7 +737,7 @@
   width: 46px;
   height: 62px;
   min-width: 46px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   overflow: hidden;
   background: var(--ph-bg);
   display: grid;
@@ -753,7 +753,7 @@
 
 .dcv.empty {
   color: var(--muted);
-  font-size: 18px;
+  font-size: var(--fs-subtitle);
 }
 
 /* 封面左上角：该天列表内的序号（1 起；分组重排后仍是原序） */
@@ -762,9 +762,9 @@
   left: 0;
   top: 0;
   z-index: 2;
-  font-size: 10.5px;
+  font-size: var(--fs-cap);
   font-weight: 700;
-  padding: 1px 6px;
+  padding: var(--sp-0) var(--sp-2);
   border-bottom-right-radius: 8px;
   background: rgba(10, 17, 29, 0.72);
   color: var(--gold);
@@ -776,7 +776,7 @@
 }
 
 .dt1 {
-  font-size: 14px;
+  font-size: var(--fs-body);
   color: var(--text-strong);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -786,19 +786,19 @@
 .dt2 {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
   margin-top: 4px;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 
 /* 评分色阶标签：≥8 绿 / 7–8 黄 / <7 灰（score 为 null 时不渲染） */
 .dsc {
   font-weight: 700;
-  font-size: 12px;
-  padding: 1px 7px;
-  border-radius: 6px;
+  font-size: var(--fs-cap);
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-sm);
 }
 
 .dsc.hi {
@@ -826,9 +826,9 @@ html.dark .dsc.mid {
 
 /* 「已在库」标（索引不完整时也会用：只给命中项打标，不分组、不标"不在库"） */
 .dlib {
-  font-size: 11px;
-  padding: 1px 7px;
-  border-radius: 6px;
+  font-size: var(--fs-cap);
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-sm);
   background: rgba(61, 220, 151, 0.16);
   color: #1f9d63;
 }
@@ -841,9 +841,9 @@ html.dark .dlib {
    "类型/关键词"胶囊的既有类名（详情页那套有 hover 描边、语义是可选标签），复用会把两处样式绑在一起。 */
 .ditem-tag {
   display: inline-block;
-  font-size: 11px;
-  padding: 1px 7px;
-  border-radius: 6px;
+  font-size: var(--fs-cap);
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-sm);
   background: rgba(221, 90, 90, 0.16);
   color: #c94040;
 }
@@ -882,7 +882,7 @@ html.dark .ditem-tag.ep {
   width: 46px;
   height: 62px;
   min-width: 46px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
 }
 
 /* 「即将播出」骨架行的日期徽章占位（与 .dup-d 同尺寸） */
@@ -890,12 +890,12 @@ html.dark .ditem-tag.ep {
   width: 46px;
   height: 34px;
   min-width: 46px;
-  border-radius: 9px;
+  border-radius: var(--r-md);
 }
 
 .dsk-line {
   height: 11px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   margin: 6px 9px;
 }
 
@@ -923,9 +923,9 @@ html.dark .ditem-tag.ep {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 26px 14px;
-  font-size: 13px;
+  gap: var(--sp-3);
+  padding: var(--sp-5) var(--sp-4);
+  font-size: var(--fs-ctl);
   color: var(--muted);
   text-align: center;
 }
@@ -937,12 +937,12 @@ html.dark .ditem-tag.ep {
 }
 
 .dretry {
-  padding: 6px 16px;
-  border-radius: 9px;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-md);
   border: 1px solid var(--line-strong);
   background: var(--hover);
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-family: inherit;
   cursor: pointer;
 }
@@ -970,12 +970,12 @@ html.dark .ditem-tag.ep {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  font-size: 14px;
+  font-size: var(--fs-body);
   padding: 0;
   border-radius: 0;
   background: transparent;
   color: var(--text);
-  animation: dlibPageIn 0.5s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+  animation: dlibPageIn 0.5s var(--ease) both;
 }
 
 html.dark .dlib-pane {
@@ -988,13 +988,13 @@ html.dark .dlib-pane {
   align-items: stretch;
   flex-wrap: nowrap;
   flex-shrink: 0;
-  gap: 9px;
+  gap: var(--sp-3);
 }
 
 .dlib-row1 {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--sp-3);
   /* 徽标 + 免责说明**永远同一行**（lc-2086）：nowrap —— 徽标不缩，说明文字不够宽时
      省略号截断（hover 有完整全文），绝不把说明挤到第二行 */
   flex-wrap: nowrap;
@@ -1003,7 +1003,7 @@ html.dark .dlib-pane {
 .dlib-row2 {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 
@@ -1011,7 +1011,7 @@ html.dark .dlib-pane {
 .dlib-row3 {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 
@@ -1021,13 +1021,13 @@ html.dark .dlib-pane {
 .dlib-src {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
-  border-radius: 8px;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-sm);
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-cap);
   font-weight: 800;
   letter-spacing: 0.6px;
   font-family: inherit;
@@ -1063,7 +1063,7 @@ html.dark .dlib-pane {
 
 /* 源徽标后的浅字说明（测试功能 + 版权风险规避）：小号弱化、整块不拆行（窄栏随 row1 换行） */
 .dlib-note {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   white-space: nowrap;
   flex-shrink: 1;
@@ -1077,8 +1077,8 @@ html.dark .dlib-pane {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 72px 16px;
+  gap: var(--sp-3);
+  padding: var(--sp-8) var(--sp-4);
   color: var(--muted);
 }
 
@@ -1087,20 +1087,20 @@ html.dark .dlib-pane {
   place-items: center;
   width: 56px;
   height: 56px;
-  border-radius: 16px;
+  border-radius: var(--r-lg);
   background: var(--hover);
   color: var(--text-2);
 }
 
 .dlib-stub-t {
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
 }
 
 /* ── IPTV 栏（lc-2077/lc-2079 样式优化；数据源 vbskycn/iptv，见 IptvPane.tsx / iptv.rs）── */
 .dip {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-3);
 }
 
 /* 分组 chips：普通一行（与短剧 .dj-chips 同做法）。
@@ -1109,16 +1109,16 @@ html.dark .dlib-pane {
 .dip-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 .dip-chip {
-  padding: 4px 11px;
+  padding: var(--sp-1) var(--sp-3);
   border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--glass-bg);
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   font-family: inherit;
   white-space: nowrap;
@@ -1143,10 +1143,10 @@ html.dark .dlib-pane {
   margin-left: auto;
   padding: 0 12px;
   border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--glass-bg);
   color: var(--text-strong);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-family: inherit;
   outline: none;
   transition: border-color 0.16s;
@@ -1162,7 +1162,7 @@ html.dark .dlib-pane {
 
 /* 过期缓存 / 起播失败的内联提示（橙色同 .dlib-ov-v.orange 口径） */
 .dip-hint {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: #a97b12;
 }
 
@@ -1174,7 +1174,7 @@ html.dark .dip-hint {
 .dip-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
-  gap: 10px;
+  gap: var(--sp-3);
 }
 
 .dip-card {
@@ -1183,13 +1183,13 @@ html.dark .dip-hint {
   min-width: 0;
   padding: 0;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--bg-2);
   overflow: hidden;
   font-family: inherit;
   cursor: pointer;
   transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
-  animation: dlibGridIn 0.45s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+  animation: dlibGridIn 0.45s var(--ease) both;
 }
 
 .dip-card:hover {
@@ -1230,7 +1230,7 @@ html.dark .dip-hint {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  padding: 10px;
+  padding: var(--sp-3);
 }
 
 /* 收藏星标：裸星无底，投影保证在深浅台标上都可见；点它只切换收藏（stopPropagation），
@@ -1264,8 +1264,8 @@ html.dark .dip-hint {
 }
 
 .dip-name {
-  padding: 7px 9px 8px;
-  font-size: 12px;
+  padding: var(--sp-2) var(--sp-3) var(--sp-2);
+  font-size: var(--fs-cap);
   color: var(--text-2);
   text-align: left;
   white-space: nowrap;
@@ -1278,8 +1278,8 @@ html.dark .dip-hint {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
-  font-size: 12px;
+  gap: var(--sp-3);
+  font-size: var(--fs-cap);
   color: var(--muted);
   padding: 2px 2px 0;
 }
@@ -1301,42 +1301,42 @@ html.dark .dip-hint {
   align-items: center;
   gap: 4px 10px;
   flex-wrap: wrap;
-  font-size: 12px;
+  font-size: var(--fs-cap);
 }
 
 .dlib-ov-i {
   display: inline-flex;
   align-items: baseline;
-  gap: 4px;
+  gap: var(--sp-1);
   white-space: nowrap;
   flex-shrink: 0;
 }
 
 .dlib-ov-k {
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   font-weight: 500;
 }
 
 .dlib-ov-v {
-  font-size: 13.5px;
+  font-size: var(--fs-ctl);
   font-weight: 800;
   color: var(--text-strong);
   letter-spacing: -0.2px;
 }
 
 .dlib-ov-v.accent {
-  font-size: 15px;
+  font-size: var(--fs-body);
   color: var(--accent);
 }
 
 .dlib-ov-v.orange {
-  font-size: 15px;
+  font-size: var(--fs-body);
   color: #a97b12;
 }
 
 .dlib-ov-v.green {
-  font-size: 15px;
+  font-size: var(--fs-body);
   color: #1f9d63;
 }
 
@@ -1357,9 +1357,9 @@ html.dark .dlib-ov-v.green {
   height: 32px;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-2);
   padding: 0 11px;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   backdrop-filter: blur(14px);
@@ -1378,7 +1378,7 @@ html.dark .dlib-ov-v.green {
 
 /* 聚焦时图标转一圈（设计稿的 searchSpin） */
 .dlib-search:focus-within .dlib-search-ico {
-  animation: dlibSearchSpin 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
+  animation: dlibSearchSpin 0.5s var(--ease);
 }
 
 .dlib-search-in {
@@ -1388,7 +1388,7 @@ html.dark .dlib-ov-v.green {
   background: transparent;
   outline: none;
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-family: inherit;
 }
 
@@ -1425,10 +1425,10 @@ html.dark .dlib-ov-v.green {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-1);
   flex-wrap: nowrap;
-  padding: 4px;
-  border-radius: 999px;
+  padding: var(--sp-1);
+  border-radius: var(--r-full);
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   backdrop-filter: blur(14px);
@@ -1441,7 +1441,7 @@ html.dark .dlib-ov-v.green {
   align-items: center;
   /* 按钮按内容宽排（不拉伸、不换行）—— 换行由 .dlib-row2 整块决定 */
   flex-wrap: nowrap;
-  gap: 4px;
+  gap: var(--sp-1);
 }
 
 .dlib-tdiv {
@@ -1458,13 +1458,13 @@ html.dark .dlib-ov-v.green {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 6px 11px;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
   border: none;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: transparent;
   color: var(--text-2);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-weight: 700;
   font-family: inherit;
   white-space: nowrap;
@@ -1490,7 +1490,7 @@ html.dark .dlib-ov-v.green {
 .dlib-tab.on {
   background: var(--sel-bg);
   color: var(--text-strong);
-    animation: dlibTabPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    animation: dlibTabPop 0.4s var(--ease-spring);
 }
 
 /* 视图切换 / 排序切换（两个独立玻璃胶囊） */
@@ -1498,9 +1498,9 @@ html.dark .dlib-ov-v.green {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 4px;
-  border-radius: 999px;
+  gap: var(--sp-1);
+  padding: var(--sp-1);
+  border-radius: var(--r-full);
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   backdrop-filter: blur(14px);
@@ -1528,25 +1528,25 @@ html.dark .dlib-ov-v.green {
 .dlib-vbtn.on {
   background: var(--sel-bg);
   color: var(--text-strong);
-    animation: dlibPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    animation: dlibPop 0.4s var(--ease-spring);
 }
 
 /* 排序胶囊：文字按钮自带 6px 纵向内边距，比视图圆钮（28px）高一点 ——
    容器内边距从 4px 收到 3px，让两个胶囊与标签栏视觉等高。 */
 .dlib-sort {
-  padding: 3px 4px;
+  padding: var(--sp-1) var(--sp-1);
 }
 
 .dlib-sbtn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 6px 12px;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
   border: none;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: transparent;
   color: var(--text-2);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-weight: 700;
   font-family: inherit;
   white-space: nowrap;
@@ -1562,7 +1562,7 @@ html.dark .dlib-ov-v.green {
 .dlib-sbtn.on {
   background: var(--sel-bg);
   color: var(--text-strong);
-    animation: dlibPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    animation: dlibPop 0.4s var(--ease-spring);
 }
 
 /* 滚动容器沿用 .dscroll（已 overflow-x: hidden ⇒ 横向绝不溢出），这里只补一点内边距细节。
@@ -1579,7 +1579,7 @@ html.dark .dlib-ov-v.green {
 .dlib-tl {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: var(--sp-5);
 }
 
 .dlib-grp {
@@ -1589,13 +1589,13 @@ html.dark .dlib-ov-v.green {
 
 /* 组头依次入场（内容切换时重挂载 ⇒ 重播） */
 .dlib-tl > .dlib-grp {
-  animation: dlibEnter 0.5s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+  animation: dlibEnter 0.5s var(--ease) both;
 }
 
 .dlib-ghd {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
   margin-bottom: 11px;
   padding-bottom: 9px;
@@ -1605,12 +1605,12 @@ html.dark .dlib-ov-v.green {
 .dlib-gpill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  border-radius: 999px;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-full);
   background: var(--accent-grad);
   color: #fff;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 700;
   white-space: nowrap;
   box-shadow: 0 4px 12px rgb(var(--shadow-rgb) / 0.15);
@@ -1621,7 +1621,7 @@ html.dark .dlib-ov-v.green {
 }
 
 .dlib-gcnt {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   white-space: nowrap;
 }
@@ -1630,7 +1630,7 @@ html.dark .dlib-ov-v.green {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: var(--sp-3);
 }
 
 /* 时间轴竖线：左 50px = 日期列(40) + 圆点列(22) 的中心 */
@@ -1656,7 +1656,7 @@ html.dark .dlib-ov-v.green {
   grid-template-columns: 40px 22px minmax(0, 1fr);
   align-items: stretch;
   min-width: 0;
-  animation: dlibRowIn 0.42s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+  animation: dlibRowIn 0.42s var(--ease) both;
 }
 
 .dlib-date {
@@ -1668,7 +1668,7 @@ html.dark .dlib-ov-v.green {
 }
 
 .dlib-day {
-  font-size: 18px;
+  font-size: var(--fs-subtitle);
   font-weight: 800;
   line-height: 1;
   color: var(--text-strong);
@@ -1676,7 +1676,7 @@ html.dark .dlib-ov-v.green {
 
 .dlib-wd {
   margin-top: 2px;
-  font-size: 10px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   color: var(--muted);
 }
@@ -1687,7 +1687,7 @@ html.dark .dlib-ov-v.green {
   align-items: center;
   justify-content: center;
   padding-right: 3px;
-  font-size: 16px;
+  font-size: var(--fs-body);
   font-weight: 900;
   font-style: italic;
   color: var(--muted);
@@ -1762,10 +1762,10 @@ html.dark .dlib-rank.r3 {
 .dlib-card {
   display: grid;
   grid-template-columns: 70px minmax(0, 1fr) auto;
-  gap: 12px;
+  gap: var(--sp-3);
   min-width: 0;
-  padding: 10px 12px 10px 10px;
-  border-radius: 12px;
+  padding: var(--sp-3) var(--sp-3) var(--sp-3) var(--sp-3);
+  border-radius: var(--r-md);
   background: var(--bg-2);
   border: 1px solid var(--line);
   cursor: pointer;
@@ -1782,7 +1782,7 @@ html.dark .dlib-rank.r3 {
 .dlib-poster,
 .dlib-lposter {
   position: relative;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   overflow: hidden;
   background: var(--ph-bg);
 }
@@ -1795,7 +1795,7 @@ html.dark .dlib-rank.r3 {
 .dlib-lposter {
   width: 46px;
   height: 69px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
 }
 
 .dlib-poster img,
@@ -1830,13 +1830,13 @@ html.dark .dlib-rank.r3 {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 5px;
+  gap: var(--sp-2);
 }
 
 .dlib-chead {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
   min-width: 0;
 }
@@ -1844,7 +1844,7 @@ html.dark .dlib-rank.r3 {
 .dlib-ctitle {
   min-width: 0;
   flex: 0 1 auto;
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 700;
   color: var(--text-strong);
   white-space: nowrap;
@@ -1857,7 +1857,7 @@ html.dark .dlib-rank.r3 {
 }
 
 .dlib-csub {
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   color: var(--text-2);
   white-space: nowrap;
   overflow: hidden;
@@ -1866,15 +1866,15 @@ html.dark .dlib-rank.r3 {
 
 .dlib-genres {
   display: flex;
-  gap: 4px;
+  gap: var(--sp-1);
   flex-wrap: wrap;
   min-width: 0;
 }
 
 .dlib-genre {
-  font-size: 10px;
-  padding: 2px 7px;
-  border-radius: 5px;
+  font-size: var(--fs-cap);
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-xs);
   background: var(--sel-bg);
   color: var(--text-strong);
   font-weight: 600;
@@ -1882,7 +1882,7 @@ html.dark .dlib-rank.r3 {
 }
 
 .dlib-cov {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   line-height: 1.5;
   color: var(--muted);
   padding-left: 7px;
@@ -1900,19 +1900,19 @@ html.dark .dlib-rank.r3 {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: var(--sp-1);
   padding-left: 11px;
   border-left: 1px solid var(--line);
 }
 
 .dlib-scorenum {
-  font-size: 21px;
+  font-size: var(--fs-title);
   font-weight: 900;
   line-height: 1;
 }
 
 .dlib-scorelab {
-  font-size: 10px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   color: var(--muted);
   text-align: center;
@@ -1954,10 +1954,10 @@ html.dark .dlib-lscore.lo {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 6px;
-  font-size: 10px;
+  gap: var(--sp-1);
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-cap);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -1997,20 +1997,20 @@ html.dark .dlib-badge-soon {
 .dlib-gv {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
-  gap: 14px;
+  gap: var(--sp-4);
 }
 
 .dlib-gcard {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: hidden;
   background: var(--bg-2);
   border: 1px solid var(--line);
   cursor: pointer;
   transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
-  animation: dlibGridIn 0.45s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+  animation: dlibGridIn 0.45s var(--ease) both;
 }
 
 .dlib-gcard:hover {
@@ -2057,12 +2057,12 @@ html.dark .dlib-badge-soon {
   z-index: 2;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 2px 7px;
-  border-radius: 6px;
+  gap: var(--sp-0);
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-sm);
   background: rgba(10, 12, 18, 0.78);
   backdrop-filter: blur(6px);
-  font-size: 11px;
+  font-size: var(--fs-cap);
   font-weight: 800;
 }
 
@@ -2080,14 +2080,14 @@ html.dark .dlib-badge-soon {
 
 .dlib-ginfo {
   min-width: 0;
-  padding: 9px 10px 11px;
+  padding: var(--sp-3) var(--sp-3) var(--sp-3);
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--sp-2);
 }
 
 .dlib-gtitle {
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-weight: 700;
   color: var(--text-strong);
   white-space: nowrap;
@@ -2100,7 +2100,7 @@ html.dark .dlib-badge-soon {
 }
 
 .dlib-gmeta {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -2111,24 +2111,24 @@ html.dark .dlib-badge-soon {
 .dlib-lv {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .dlib-lrow {
   position: relative;
   display: grid;
   grid-template-columns: 46px minmax(0, 1fr) auto;
-  gap: 11px;
+  gap: var(--sp-3);
   align-items: center;
   min-width: 0;
-  padding: 8px 12px 8px 8px;
-  border-radius: 10px;
+  padding: var(--sp-2) var(--sp-3) var(--sp-2) var(--sp-2);
+  border-radius: var(--r-md);
   background: var(--bg-2);
   border: 1px solid var(--line);
   overflow: hidden;
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-  animation: dlibListIn 0.38s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+  animation: dlibListIn 0.38s var(--ease) both;
 }
 
 /* 悬停时左侧亮起一条主色竖条（设计稿 list-card::before） */
@@ -2141,7 +2141,7 @@ html.dark .dlib-badge-soon {
   width: 3px;
   background: var(--accent);
   transform: scaleY(0);
-  transition: transform 0.28s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition: transform 0.28s var(--ease);
 }
 
 .dlib-lrow:hover {
@@ -2158,13 +2158,13 @@ html.dark .dlib-badge-soon {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--sp-1);
 }
 
 .dlib-lhead {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
   min-width: 0;
 }
@@ -2172,7 +2172,7 @@ html.dark .dlib-badge-soon {
 .dlib-ltitle {
   min-width: 0;
   flex: 0 1 auto;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 700;
   color: var(--text-strong);
   white-space: nowrap;
@@ -2185,7 +2185,7 @@ html.dark .dlib-badge-soon {
 }
 
 .dlib-lsub {
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   color: var(--text-2);
   white-space: nowrap;
   overflow: hidden;
@@ -2194,7 +2194,7 @@ html.dark .dlib-badge-soon {
 
 .dlib-lmeta {
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -2205,7 +2205,7 @@ html.dark .dlib-badge-soon {
   flex-shrink: 0;
   min-width: 44px;
   text-align: center;
-  font-size: 17px;
+  font-size: var(--fs-subtitle);
   font-weight: 900;
   color: var(--muted);
 }
@@ -2214,7 +2214,7 @@ html.dark .dlib-badge-soon {
 .dlib-sktl {
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: var(--sp-3);
 }
 
 .dlib-skrow {
@@ -2247,10 +2247,10 @@ html.dark .dlib-badge-soon {
 .dlib-skcard {
   display: grid;
   grid-template-columns: 70px minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--sp-3);
   min-width: 0;
-  padding: 10px;
-  border-radius: 12px;
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
   background: var(--bg-2);
   border: 1px solid var(--line);
 }
@@ -2266,13 +2266,13 @@ html.dark .dlib-badge-soon {
 .dlib-skp {
   width: 70px;
   height: 105px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
 }
 
 .dlib-sklp {
   width: 46px;
   height: 69px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
 }
 
 .dlib-sklines {
@@ -2289,12 +2289,12 @@ html.dark .dlib-badge-soon {
 .dlib-skgrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
-  gap: 14px;
+  gap: var(--sp-4);
 }
 
 .dlib-skg {
   min-width: 0;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: hidden;
   background: var(--bg-2);
   border: 1px solid var(--line);
@@ -2312,17 +2312,17 @@ html.dark .dlib-badge-soon {
 .dlib-sklist {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .dlib-skl {
   display: grid;
   grid-template-columns: 46px minmax(0, 1fr);
-  gap: 11px;
+  gap: var(--sp-3);
   align-items: center;
   min-width: 0;
-  padding: 8px;
-  border-radius: 10px;
+  padding: var(--sp-2);
+  border-radius: var(--r-md);
   background: var(--bg-2);
   border: 1px solid var(--line);
 }
@@ -2469,18 +2469,18 @@ html.dark .dlib-badge-soon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: var(--sp-2);
   padding: 0 12px;
   border: 1px solid var(--glass-border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--glass-bg);
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 700;
   font-family: inherit;
   white-space: nowrap;
   cursor: pointer;
-  transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1),
+  transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.2s var(--ease),
     box-shadow 0.2s;
 }
 .darc-btn:hover {
@@ -2504,7 +2504,7 @@ html.dark .dlib-badge-soon {
   box-shadow: var(--shadow-card);
   overflow: hidden;
   /* [lc-1592] 进场：卡片微放大 + 上浮 */
-  animation: arcModalIn 0.2s cubic-bezier(0.2, 0.8, 0.25, 1);
+  animation: arcModalIn 0.2s var(--ease);
 }
 @keyframes arcModalIn {
   from {
@@ -2523,7 +2523,7 @@ html.dark .dlib-badge-soon {
   animation: arcMaskOut 0.17s ease forwards;
 }
 .ddet-mask.arc-mask-closing .arc-modal {
-  animation: arcModalOut 0.17s cubic-bezier(0.4, 0, 1, 1) forwards;
+  animation: arcModalOut 0.17s var(--ease-exit) forwards;
 }
 @keyframes arcMaskOut {
   to {
@@ -2539,14 +2539,14 @@ html.dark .dlib-badge-soon {
 .arc-hd {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 13px 16px;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-4);
   border-bottom: 1px solid var(--line);
   color: var(--accent);
 }
 .arc-hd h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-body);
   font-weight: 800;
   color: var(--text-strong);
 }
@@ -2559,9 +2559,9 @@ html.dark .dlib-badge-soon {
   z-index: 5; /* 高于 .arc-yback（年份面板的透明遮罩），选择行始终可点 */
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
-  padding: 10px 16px;
+  padding: var(--sp-3) var(--sp-4);
   border-bottom: 1px solid var(--line);
 }
 /* 年份面板打开时铺满卡片的透明遮罩：点空白处收起（z-index 低于 .arc-sel） */
@@ -2578,14 +2578,14 @@ html.dark .dlib-badge-soon {
 .arc-ybtn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   height: 30px;
   padding: 0 10px;
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--option-bg, var(--bg-3));
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
@@ -2597,7 +2597,7 @@ html.dark .dlib-badge-soon {
   border-color: var(--accent);
 }
 .arc-ychev {
-  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.25s var(--ease);
 }
 .arc-ybtn.on .arc-ychev {
   transform: rotate(180deg);
@@ -2610,12 +2610,12 @@ html.dark .dlib-badge-soon {
   width: 236px;
   max-height: 232px;
   overflow-y: auto;
-  padding: 8px;
+  padding: var(--sp-2);
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
+  gap: var(--sp-2);
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--bg-3);
   box-shadow: var(--shadow-card);
   animation: arcPanelIn 0.16s ease;
@@ -2634,10 +2634,10 @@ html.dark .dlib-badge-soon {
   height: 30px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-2);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
@@ -2653,17 +2653,17 @@ html.dark .dlib-badge-soon {
 }
 .arc-seasons {
   display: flex;
-  gap: 4px;
+  gap: var(--sp-1);
   flex-wrap: wrap;
 }
 .arc-sbtn {
   height: 30px;
   padding: 0 12px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: transparent;
   color: var(--text-2);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
@@ -2680,14 +2680,14 @@ html.dark .dlib-badge-soon {
 }
 .arc-cnt {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 .arc-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 14px 16px 18px;
+  padding: var(--sp-4) var(--sp-4) var(--sp-4);
 }
 .arc-grid {
   display: grid;
@@ -2708,8 +2708,8 @@ html.dark .dlib-badge-soon {
   background: transparent;
   font-family: inherit;
   text-align: left;
-  border-radius: 8px;
-  animation: arcCardIn 0.34s cubic-bezier(0.25, 0.8, 0.25, 1) backwards;
+  border-radius: var(--r-sm);
+  animation: arcCardIn 0.34s var(--ease) backwards;
 }
 @keyframes arcCardIn {
   from {
@@ -2725,7 +2725,7 @@ html.dark .dlib-badge-soon {
    不该带指针/hover 上浮（否则加载态看着像能点） */
 button.arc-card {
   cursor: pointer;
-  transition: transform 0.22s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition: transform 0.22s var(--ease);
 }
 button.arc-card:hover {
   transform: translateY(-3px);
@@ -2740,12 +2740,12 @@ button.arc-card:focus-visible {
 .arc-cv {
   position: relative;
   aspect-ratio: 2 / 3;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   overflow: hidden;
   background: var(--ph-bg);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
   /* [lc-1605] 封面跟着卡片一起动（上浮 + 阴影加深） */
-  transition: transform 0.22s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 0.22s ease;
+  transition: transform 0.22s var(--ease), box-shadow 0.22s ease;
 }
 button.arc-card:hover .arc-cv {
   transform: translateY(-1px);
@@ -2816,22 +2816,22 @@ button.arc-card:hover .arc-cv {
   display: grid;
   place-items: center;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-cap);
 }
 .arc-score {
   position: absolute;
   right: 6px;
   bottom: 6px;
-  padding: 1px 6px;
-  border-radius: 6px;
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-sm);
   background: rgba(0, 0, 0, 0.72);
   color: var(--gold, #ffd479);
-  font-size: 11px;
+  font-size: var(--fs-cap);
   font-weight: 800;
 }
 .arc-t {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 700;
   color: var(--text-strong);
   overflow: hidden;
@@ -2842,8 +2842,8 @@ button.arc-card:hover .arc-cv {
   margin-top: 2px;
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 10.5px;
+  gap: var(--sp-1);
+  font-size: var(--fs-cap);
   color: var(--muted);
   overflow: hidden;
   white-space: nowrap;
@@ -2854,7 +2854,7 @@ button.arc-card:hover .arc-cv {
 .dj {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-3);
   position: relative;
 }
 
@@ -2862,7 +2862,7 @@ button.arc-card:hover .arc-cv {
 .dj-sources {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 /* 分类 + 搜索行 */
@@ -2870,24 +2870,24 @@ button.arc-card:hover .arc-cv {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .dj-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--sp-2);
   flex: 1 1 auto;
   min-width: 0;
 }
 
 .dj-chip {
-  padding: 4px 11px;
+  padding: var(--sp-1) var(--sp-3);
   border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--glass-bg);
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   font-family: inherit;
   white-space: nowrap;
@@ -2896,8 +2896,8 @@ button.arc-card:hover .arc-cv {
 }
 
 .dj-chip.sm {
-  padding: 3px 9px;
-  font-size: 12px;
+  padding: var(--sp-1) var(--sp-3);
+  font-size: var(--fs-cap);
 }
 
 .dj-chip:hover {
@@ -2916,10 +2916,10 @@ button.arc-card:hover .arc-cv {
   height: 30px;
   padding: 0 12px;
   border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--glass-bg);
   color: var(--text-strong);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-family: inherit;
   outline: none;
   transition: border-color 0.16s;
@@ -2937,13 +2937,13 @@ button.arc-card:hover .arc-cv {
 .dj-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
-  gap: 10px;
+  gap: var(--sp-3);
 }
 
 .dj-card {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--sp-2);
   padding: 0;
   border: none;
   background: none;
@@ -2956,7 +2956,7 @@ button.arc-card:hover .arc-cv {
   position: relative;
   display: block;
   aspect-ratio: 2 / 3;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--hover);
   overflow: hidden;
 }
@@ -2985,16 +2985,16 @@ button.arc-card:hover .arc-cv {
   position: absolute;
   top: 6px;
   right: 6px;
-  padding: 2px 7px;
-  border-radius: 999px;
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-full);
   background: rgba(201, 145, 0, 0.88);
   color: #fff;
-  font-size: 11px;
+  font-size: var(--fs-cap);
   font-weight: 700;
 }
 
 .dj-title {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   color: var(--text-strong);
   white-space: nowrap;
@@ -3003,7 +3003,7 @@ button.arc-card:hover .arc-cv {
 }
 
 .dj-meta {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -3018,12 +3018,12 @@ button.arc-card:hover .arc-cv {
 }
 
 .dj-morebtn {
-  padding: 6px 18px;
+  padding: var(--sp-2) var(--sp-4);
   border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--glass-bg);
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
@@ -3050,7 +3050,7 @@ button.arc-card:hover .arc-cv {
   z-index: 260;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: var(--sp-5);
   background: rgba(10, 14, 30, 0.45);
   backdrop-filter: blur(2px);
   animation: dj-mask-in 0.16s ease-out;
@@ -3065,13 +3065,13 @@ button.arc-card:hover .arc-cv {
   position: relative;
   width: min(560px, 100%);
   max-height: calc(100vh - 48px);
-  animation: dj-panel-in 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+  animation: dj-panel-in 0.22s var(--ease-enter);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 18px;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
   border: 1px solid var(--glass-border);
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   background: var(--panel);
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
   overflow: hidden;
@@ -3085,12 +3085,12 @@ button.arc-card:hover .arc-cv {
 
 .dj-detail-tip {
   padding: 20px 0;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   color: var(--text-2);
   text-align: center;
 }
 
-/* [lc-2098] 关闭按钮图标错位修复：全局 `button { padding: 8px 15px }` 会把 28px 见方的
+/* [lc-2098] 关闭按钮图标错位修复：全局 `button { padding: var(--sp-2) var(--sp-4) }` 会把 28px 见方的
    圆形按钮内容区挤成负宽（宽 28 - padding 30 = 内容溢出），grid 居中的 SVG 被推到右下方。
    显式 padding:0 + box-sizing:border-box + flex 居中，三件套缺一不可。 */
 .dj-close {
@@ -3105,7 +3105,7 @@ button.arc-card:hover .arc-cv {
   padding: 0;
   box-sizing: border-box;
   border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--glass-bg);
   color: var(--text-2);
   cursor: pointer;
@@ -3120,7 +3120,7 @@ button.arc-card:hover .arc-cv {
 /* 详情头部：竖版海报 + 信息列 */
 .dj-dhead {
   display: flex;
-  gap: 14px;
+  gap: var(--sp-4);
   padding-right: 28px;
 }
 
@@ -3128,7 +3128,7 @@ button.arc-card:hover .arc-cv {
   flex: 0 0 112px;
   width: 112px;
   aspect-ratio: 2 / 3;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--hover);
   object-fit: cover;
 }
@@ -3137,38 +3137,38 @@ button.arc-card:hover .arc-cv {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 .dj-dtitle {
-  font-size: 15px;
+  font-size: var(--fs-body);
   font-weight: 700;
   color: var(--text-strong);
   line-height: 1.3;
 }
 
 .dj-dmeta {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 
 .dj-dtags {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: var(--sp-2);
 }
 
 .dj-tag {
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-full);
   background: var(--hover);
   color: var(--text-2);
-  font-size: 11px;
+  font-size: var(--fs-cap);
   font-weight: 600;
 }
 
 .dj-ddesc {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   line-height: 1.55;
   color: var(--text-2);
   display: -webkit-box;
@@ -3181,23 +3181,23 @@ button.arc-card:hover .arc-cv {
 .dj-epgroups {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 /* 选集格子 */
 .dj-eps {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 .dj-ep {
   padding: 7px 0;
   border: 1px solid var(--glass-border);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--glass-bg);
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   font-family: inherit;
   white-space: nowrap;
@@ -3219,7 +3219,7 @@ button.arc-card:hover .arc-cv {
 
 /* 起播失败 / 来源注明 */
 .dj-hint {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: #a97b12;
 }
 
@@ -3228,7 +3228,7 @@ html.dark .dj-hint {
 }
 
 .dj-src {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 
@@ -3238,18 +3238,18 @@ html.dark .dj-hint {
 .dj-favtab {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--sp-2);
 }
 
 .dj-favcount {
   min-width: 15px;
   padding: 0 4px;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--hover-strong);
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-cap);
   font-weight: 700;
-  line-height: 15px;
+  line-height: 17px;
   text-align: center;
 }
 
@@ -3272,7 +3272,7 @@ html.dark .dj-hint {
   padding: 0;
   box-sizing: border-box;
   border: none;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: rgba(12, 16, 28, 0.42);
   color: #fff;
   cursor: pointer;
@@ -3315,7 +3315,7 @@ html.dark .dj-hint {
   padding: 0;
   box-sizing: border-box;
   border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--glass-bg);
   color: var(--text-2);
   cursor: pointer;
@@ -3335,7 +3335,7 @@ html.dark .dj-hint {
 /* 收藏空态副提示 */
 .dlib-stub-hint {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 

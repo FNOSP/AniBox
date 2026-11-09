@@ -7,13 +7,13 @@
   margin-top: auto;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 4px 10px;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-1) var(--sp-3);
 }
 /* [lc-1886] 用户行可点击：跳设置「账号」页 */
 .side-userrow-btn {
   cursor: pointer;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   transition: background-color 140ms ease;
 }
 .side-userrow-btn:hover {
@@ -33,7 +33,7 @@
   bottom: 2px;
   flex-shrink: 0;
   box-sizing: border-box;
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   display: flex;
   flex-direction: column;
   background: var(--glass-bg);
@@ -42,14 +42,14 @@
   border: 1px solid var(--glass-border);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
   color: var(--glass-text);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   user-select: none;
   overflow: hidden;
 }
 /* [lc-1665] 展开/收起：内容淡入上浮；高度补间由 Sidebar.tsx 用 WAAPI 完成，
    两者叠加形成「面板长大/收拢 + 内容换气」的过渡，不再是硬切。 */
 .sa-pane {
-  animation: saPaneIn 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: saPaneIn 0.34s var(--ease-enter);
 }
 .sa-full {
   display: flex;
@@ -75,10 +75,10 @@
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   cursor: pointer;
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   color: var(--glass-text-2);
   transition: background-color 0.16s ease;
@@ -100,12 +100,12 @@
   box-sizing: border-box;
   width: calc(100% - 28px);
   margin: 0 14px;
-  padding: 10px 12px;
-  border-radius: 12px;
+  padding: var(--sp-3) var(--sp-3);
+  border-radius: var(--r-md);
   cursor: pointer;
   background: var(--glass-btn-bg);
   color: var(--glass-text);
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   font-family: inherit;
   border: 1px solid var(--glass-border);
@@ -128,7 +128,7 @@
   padding-top: 8px;
   border-top: 1px solid var(--glass-line);
   text-align: center;
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   letter-spacing: 0.3px;
   color: var(--glass-text-dim);
   user-select: none;
@@ -138,9 +138,9 @@
   margin: -6px 12px 10px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--sp-1);
   text-align: center;
-  font-size: 10px;
+  font-size: var(--fs-cap);
   line-height: 1.45;
   color: var(--glass-text-dim);
   user-select: none;
@@ -153,11 +153,11 @@
   color: var(--glass-text);
 }
 .sa-icons {
-  padding: 8px 10px;
+  padding: var(--sp-2) var(--sp-3);
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-1);
   flex-wrap: wrap;
 }
 .sa-ico {
@@ -165,11 +165,11 @@
   box-sizing: border-box;
   width: 38px;
   height: 36px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   cursor: pointer;
   background: var(--glass-btn-bg);
   color: var(--glass-text);
-  font-size: 15px;
+  font-size: var(--fs-body);
   font-family: inherit;
   padding: 0;
   border: 1px solid var(--glass-border);
@@ -188,7 +188,7 @@
 .sa-expand {
   background: transparent;
   color: var(--glass-text-dim);
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   border: 1px dashed var(--glass-border);
   box-shadow: none;
   transition: background-color 0.16s ease, color 0.16s ease;
@@ -208,17 +208,17 @@
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: #e5484d;
   color: #fff;
-  font-size: 10px;
+  font-size: var(--fs-cap);
   font-weight: 700;
   line-height: 16px;
   text-align: center;
   font-variant-numeric: tabular-nums;
   box-shadow: 0 0 0 2px var(--glass-bg);
   pointer-events: none;
-  animation: saBadgeIn 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: saBadgeIn 0.2s var(--ease-enter);
 }
 .sa-btn .sa-badge {
   top: 50%;
@@ -259,15 +259,15 @@
   bottom: 20px;
   transform: translateX(-50%);
   z-index: 60;
-  padding: 9px 16px;
-  border-radius: 12px;
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
   background: var(--toast-bg);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--glass-border);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
   color: var(--glass-text);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   white-space: nowrap;
   pointer-events: none;
   animation: toast-in 0.18s ease;

@@ -24,24 +24,24 @@
   -webkit-backdrop-filter: blur(22px) saturate(1.35);
   border-right: 1px solid var(--line);
   box-shadow: 8px 0 32px rgba(0, 0, 0, 0.14);
-  padding: 52px 10px 12px;
+  padding: var(--sp-7) var(--sp-3) var(--sp-3);
   overflow-y: auto;
   overflow-x: hidden;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--sp-1);
   /* [lc-1429] 动画换一套更优雅的（用户："侧栏动画换一个，这个不够优雅"）。
      上一版的问题：`scale(0.97)` 让侧栏内容**轻微变形**（文字被缩放会糊一瞬），
-     过冲缓动 `cubic-bezier(.22,1.18,.36,1)` 在覆盖式侧栏上又显得"弹"。
+     过冲缓动 `var(--ease-spring)` 在覆盖式侧栏上又显得"弹"。
      这一版：
        · **只做位移**（不再缩放）→ 文字始终清晰，是"滑出"而不是"弹出来"；
-       · 缓动 `cubic-bezier(0.32, 0.72, 0, 1)` —— 起步快、收尾长
+       · 缓动 `var(--ease-enter)` —— 起步快、收尾长
          （Material 的 emphasized-decelerate 手感），停下时**平稳落位**、无回弹；
        · 时长 0.42s：224px 的位移用这点时间才显得从容；
        · 收起后用 `visibility: hidden`（延迟到动画结束）撤出可访问性树。 */
   transition:
-    transform 0.42s cubic-bezier(0.32, 0.72, 0, 1),
-    box-shadow 0.42s cubic-bezier(0.32, 0.72, 0, 1),
+    transform 0.42s var(--ease-enter),
+    box-shadow 0.42s var(--ease-enter),
     visibility 0s linear 0s;
   will-change: transform;
 }
@@ -67,8 +67,8 @@ html.dark .sidebar {
   /* 动画期间保持可见，结束后才撤出渲染/可访问性树 */
   visibility: hidden;
   transition:
-    transform 0.42s cubic-bezier(0.32, 0.72, 0, 1),
-    box-shadow 0.42s cubic-bezier(0.32, 0.72, 0, 1),
+    transform 0.42s var(--ease-enter),
+    box-shadow 0.42s var(--ease-enter),
     visibility 0s linear 0.42s;
 }
 /* 无毛玻璃支持时（极旧 WebView）：退回接近实心的主题底色，至少保证可读 */
@@ -98,10 +98,10 @@ html.dark .sidebar {
   width: 32px;
   height: 32px;
   min-width: 32px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: #fff;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -113,7 +113,7 @@ html.dark .sidebar {
   min-width: 0;
 }
 .side-user-name {
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 700;
   color: var(--text-strong);
   white-space: nowrap;
@@ -121,27 +121,27 @@ html.dark .sidebar {
   text-overflow: ellipsis;
 }
 .side-user-server {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .side-head {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
-  padding: 10px 12px 8px;
+  padding: var(--sp-3) var(--sp-3) var(--sp-2);
   letter-spacing: 2px;
 }
 .side-item {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 10px 13px;
-  border-radius: 10px;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
   cursor: pointer;
   color: var(--text);
-  font-size: 13.5px;
+  font-size: var(--fs-ctl);
   transition: background 0.15s, color 0.15s;
 }
 .side-item:hover {

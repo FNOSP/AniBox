@@ -11,14 +11,14 @@
 .page-head .hist-title {
   display: flex;
   align-items: center;
-  gap: 12px;
-  font-size: 24px;
+  gap: var(--sp-3);
+  font-size: var(--fs-page);
 }
 .page-head .hist-title::before {
   content: "";
   width: 10px;
   height: 10px;
-  border-radius: 3px;
+  border-radius: var(--r-xs);
   background: var(--accent-grad);
   flex-shrink: 0;
 }
@@ -26,13 +26,13 @@
   margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 6px 15px;
-  border-radius: 999px;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-full);
   border: 1px solid var(--line-strong);
   background: var(--hover);
   color: var(--text-strong);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
@@ -54,12 +54,12 @@
 }
 .hist-retry {
   margin-left: 10px;
-  padding: 3px 12px;
-  border-radius: 999px;
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-full);
   border: 1px solid var(--line-strong);
   background: transparent;
   color: inherit;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-family: inherit;
   cursor: pointer;
 }
@@ -68,17 +68,17 @@
 .hist-pills {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
   margin: 0 0 16px;
 }
 .hist-pill {
-  padding: 7px 15px;
-  border-radius: 22px;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-lg);
   border: 1px solid transparent;
   background: var(--hover);
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-family: inherit;
   cursor: pointer;
   white-space: nowrap;
@@ -102,9 +102,9 @@
 .hist-views {
   margin-left: auto;
   display: inline-flex;
-  gap: 2px;
-  padding: 4px;
-  border-radius: 999px;
+  gap: var(--sp-0);
+  padding: var(--sp-1);
+  border-radius: var(--r-full);
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   backdrop-filter: blur(14px);
@@ -131,18 +131,18 @@
   background: var(--accent-grad);
   color: #fff;
   box-shadow: 0 3px 10px rgb(var(--shadow-rgb) / 0.18);
-  animation: histPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: histPop 0.4s var(--ease-spring);
 }
 
 /* ── 飞牛不可用提示条 ── */
 .hist-warn {
   margin: 0 0 14px;
-  padding: 9px 14px;
-  border-radius: 12px;
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
   border: 1px solid var(--line);
   background: var(--hover);
   color: var(--text-2);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   line-height: 1.6;
 }
 
@@ -150,7 +150,7 @@
 .hist-chart-split {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: var(--sp-4);
   align-items: stretch;
   margin-bottom: 8px;
 }
@@ -164,20 +164,20 @@
   min-width: 0;
   background: var(--bg-2);
   border: 1px solid var(--line);
-  border-radius: 18px;
-  padding: 20px 22px;
+  border-radius: var(--r-lg);
+  padding: var(--sp-5) var(--sp-5);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--sp-4);
 }
 .hist-stats-title {
-  font-size: 17px;
+  font-size: var(--fs-subtitle);
   font-weight: 700;
   color: var(--text-strong);
   letter-spacing: 0.3px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-3);
 }
 .hist-stats-title::before {
   content: "";
@@ -188,7 +188,7 @@
   flex-shrink: 0;
 }
 .hist-stats-sub {
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   color: var(--text-2);
   line-height: 1.7;
   word-break: break-word;
@@ -206,7 +206,7 @@
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
-  gap: 5px;
+  gap: var(--sp-2);
   position: relative;
   padding-left: 12px;
   min-width: 0;
@@ -218,31 +218,31 @@
   top: 3px;
   bottom: 3px;
   width: 3px;
-  border-radius: 2px;
+  border-radius: var(--r-xs);
   background: var(--accent);
   opacity: 0.5;
 }
 .hist-stat-row .n {
   display: flex;
   align-items: baseline;
-  gap: 2px;
+  gap: var(--sp-0);
   line-height: 1;
 }
 .hist-stat-row b {
-  font-size: 26px;
+  font-size: var(--fs-page);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.3px;
   color: var(--text-strong);
 }
 .hist-stat-row i {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-style: normal;
   font-weight: 600;
   color: var(--muted);
 }
 .hist-stat-row span {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--text-2);
   white-space: nowrap;
   overflow: hidden;
@@ -274,16 +274,16 @@ html.dark .hist-heat {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 14px;
+  gap: var(--sp-4);
   flex-wrap: wrap;
 }
 .hist-heat-title {
-  font-size: 17px;
+  font-size: var(--fs-subtitle);
   font-weight: 700;
   color: var(--text-strong);
 }
 .hist-heat-range {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   margin-top: 4px;
   font-variant-numeric: tabular-nums;
@@ -291,8 +291,8 @@ html.dark .hist-heat {
 .hist-heat-legend {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 11px;
+  gap: var(--sp-1);
+  font-size: var(--fs-cap);
   color: var(--muted);
   flex: none;
   margin-top: 4px;
@@ -302,7 +302,7 @@ html.dark .hist-heat {
 }
 .hist-heat-body {
   display: flex;
-  gap: 10px;
+  gap: var(--sp-3);
   align-items: flex-start;
   min-height: 132px;
   position: relative;
@@ -310,8 +310,8 @@ html.dark .hist-heat {
 .hist-heat-days {
   display: grid;
   grid-template-rows: repeat(7, 12px);
-  gap: 4px;
-  font-size: 10px;
+  gap: var(--sp-1);
+  font-size: var(--fs-cap);
   color: var(--muted);
   flex: none;
   margin-top: 22px;
@@ -348,24 +348,24 @@ html.dark .hist-heat {
 .hist-heat-months span {
   position: absolute;
   top: 0;
-  font-size: 10px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   white-space: nowrap;
   padding-right: 8px;
 }
 .hist-heat-cols {
   display: flex;
-  gap: 4px;
+  gap: var(--sp-1);
 }
 .hist-heat-week {
   display: grid;
   grid-template-rows: repeat(7, 12px);
-  gap: 4px;
+  gap: var(--sp-1);
 }
 .hist-hcell {
   width: 12px;
   height: 12px;
-  border-radius: 3px;
+  border-radius: var(--r-xs);
   background: var(--hist-hm-0);
   box-shadow: inset 0 0 0 1px var(--hist-hcell-border);
   cursor: pointer;
@@ -394,9 +394,9 @@ html.dark .hist-heat {
   transform: translate(-50%, -100%);
   background: var(--toast-bg);
   border: 1px solid var(--line);
-  padding: 6px 11px;
-  border-radius: 10px;
-  font-size: 12px;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  font-size: var(--fs-cap);
   color: var(--text-strong);
   pointer-events: none;
   white-space: nowrap;
@@ -418,17 +418,17 @@ html.dark .hist-heat {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
   margin-bottom: 14px;
 }
 .hist-section-title {
-  font-size: 17px;
+  font-size: var(--fs-subtitle);
   font-weight: 700;
   color: var(--text-strong);
 }
 .hist-section-hint {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 /* 视图容器：换 key 重挂载时条目依次入场，容器本身不需要样式 */
@@ -441,11 +441,11 @@ html.dark .hist-heat {
   align-items: center;
   justify-content: center;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   text-align: center;
   background: var(--hover);
   border: 1px dashed var(--line-strong);
-  border-radius: 14px;
+  border-radius: var(--r-lg);
 }
 
 /* ① 海报网格（默认）：一屏尽量多放（minmax 取 118~132 区间下限附近，横排更多） */
@@ -460,23 +460,23 @@ html.dark .hist-heat {
 .hist-lv {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 .hist-lrow {
   position: relative;
   display: grid;
   grid-template-columns: 46px minmax(0, 1fr) auto;
-  gap: 11px;
+  gap: var(--sp-3);
   align-items: center;
   min-width: 0;
-  padding: 8px 12px 8px 8px;
-  border-radius: 10px;
+  padding: var(--sp-2) var(--sp-3) var(--sp-2) var(--sp-2);
+  border-radius: var(--r-md);
   background: var(--bg-2);
   border: 1px solid var(--line);
   overflow: hidden;
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-  animation: histRowIn 0.38s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+  animation: histRowIn 0.38s var(--ease) both;
 }
 /* 悬停时左侧亮起一条主色竖条（与发现页 .dlib-lrow::before 同款） */
 .hist-lrow::before {
@@ -488,7 +488,7 @@ html.dark .hist-heat {
   width: 3px;
   background: var(--accent);
   transform: scaleY(0);
-  transition: transform 0.28s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition: transform 0.28s var(--ease);
 }
 .hist-lrow:hover {
   transform: translateX(4px);
@@ -502,7 +502,7 @@ html.dark .hist-heat {
   position: relative;
   width: 46px;
   height: 69px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   overflow: hidden;
   background: var(--ph-bg);
   background-size: cover;
@@ -512,19 +512,19 @@ html.dark .hist-heat {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--sp-1);
 }
 .hist-lhead {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
   min-width: 0;
 }
 .hist-ltitle {
   min-width: 0;
   flex: 0 1 auto;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 700;
   color: var(--text-strong);
   white-space: nowrap;
@@ -536,10 +536,10 @@ html.dark .hist-heat {
 }
 .hist-lbadge {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-cap);
   font-weight: 600;
-  padding: 2px 7px;
-  border-radius: 6px;
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-sm);
   background: var(--hover);
   color: var(--text-2);
 }
@@ -551,7 +551,7 @@ html.dark .hist-lbadge.webrs {
   color: #7fd0ff;
 }
 .hist-lsub {
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   color: var(--text-2);
   white-space: nowrap;
   overflow: hidden;
@@ -563,17 +563,17 @@ html.dark .hist-lbadge.webrs {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 3px;
+  gap: var(--sp-1);
 }
 .hist-lright .hist-stars {
   margin-bottom: 0;
 }
 .hist-lnone {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 .hist-ltime {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   white-space: nowrap;
 }
@@ -582,17 +582,17 @@ html.dark .hist-lbadge.webrs {
 .hist-tl {
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: var(--sp-5);
 }
 .hist-grp {
   display: flex;
   flex-direction: column;
-  animation: histEnter 0.5s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+  animation: histEnter 0.5s var(--ease) both;
 }
 .hist-ghd {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
   margin-bottom: 11px;
   padding-bottom: 9px;
@@ -601,12 +601,12 @@ html.dark .hist-lbadge.webrs {
 .hist-gpill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  border-radius: 999px;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-full);
   background: var(--accent-grad);
   color: #fff;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 700;
   white-space: nowrap;
   box-shadow: 0 4px 12px rgb(var(--shadow-rgb) / 0.15);
@@ -615,14 +615,14 @@ html.dark .hist-lbadge.webrs {
   flex-shrink: 0;
 }
 .hist-gcnt {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   white-space: nowrap;
 }
 .hist-rows {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 /* ── [lc-1620] 入场动画（keyframes 名 hist 前缀，避免与既有动画撞名） ── */
@@ -649,13 +649,13 @@ html.dark .hist-lbadge.webrs {
   position: relative;
   width: 100%;
   aspect-ratio: 2 / 3;
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   overflow: hidden;
   cursor: pointer;
   background: var(--ph-bg);
   border: 1px solid var(--line);
-  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.22s, border-color 0.22s;
-  animation: histGridIn 0.45s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+  transition: transform 0.22s var(--ease), box-shadow 0.22s, border-color 0.22s;
+  animation: histGridIn 0.45s var(--ease) both;
 }
 .hist-card:hover {
   transform: translateY(-4px);
@@ -680,7 +680,7 @@ html.dark .hist-lbadge.webrs {
   bottom: 10px;
 }
 .hist-name {
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 600;
   line-height: 1.25;
   color: #fff;
@@ -689,7 +689,7 @@ html.dark .hist-lbadge.webrs {
   text-overflow: ellipsis;
 }
 .hist-sub {
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   color: rgba(255, 255, 255, 0.75);
   margin-top: 3px;
   white-space: nowrap;
@@ -702,22 +702,22 @@ html.dark .hist-lbadge.webrs {
   right: 12px;
   bottom: 0;
   height: 4px;
-  border-radius: 2px;
+  border-radius: var(--r-xs);
   background: rgba(255, 255, 255, 0.22);
 }
 .hist-pfill {
   height: 100%;
-  border-radius: 2px;
+  border-radius: var(--r-xs);
   background: var(--accent);
 }
 .hist-badge {
   position: absolute;
   top: 10px;
   left: 10px;
-  font-size: 10.5px;
+  font-size: var(--fs-cap);
   font-weight: 600;
-  padding: 3px 8px;
-  border-radius: 8px;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
   background: rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
@@ -733,7 +733,7 @@ html.dark .hist-lbadge.webrs {
 /* ── 骨架屏（照抄原项目 .wh-skel shimmer） ── */
 .hist-skel-stats {
   height: 148px;
-  border-radius: 18px;
+  border-radius: var(--r-lg);
   background: var(--ph-bg);
   position: relative;
   overflow: hidden;
@@ -743,7 +743,7 @@ html.dark .hist-lbadge.webrs {
   position: relative;
   width: 100%;
   aspect-ratio: 2 / 3;
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   overflow: hidden;
   background: var(--ph-bg);
 }
@@ -767,20 +767,20 @@ html.dark .hist-lbadge.webrs {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--sp-2);
   color: var(--muted);
   background: var(--hover);
   border: 1px dashed var(--line-strong);
-  border-radius: 16px;
+  border-radius: var(--r-lg);
   margin-top: 6px;
 }
 .hist-empty-t {
-  font-size: 15px;
+  font-size: var(--fs-body);
   font-weight: 600;
   color: var(--text-2);
 }
 .hist-empty-s {
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
 }
 
 /* ── 页面内轻提示（在线源条目点击等） ── */
@@ -793,9 +793,9 @@ html.dark .hist-lbadge.webrs {
   max-width: 72vw;
   background: var(--toast-bg);
   border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 11px 20px;
-  font-size: 13px;
+  border-radius: var(--r-lg);
+  padding: var(--sp-3) var(--sp-5);
+  font-size: var(--fs-ctl);
   color: var(--text-strong);
   box-shadow: var(--shadow-card);
   pointer-events: none;
@@ -809,7 +809,7 @@ html.dark .hist-lbadge.webrs {
 /* ── 卡片星星（[lc-1616] 我的评分；照抄原项目 .wh-card .stars） ── */
 .hist-stars {
   display: inline-flex;
-  gap: 2px;
+  gap: var(--sp-0);
   margin-bottom: 5px;
 }
 .hist-stars svg {
@@ -829,7 +829,7 @@ html.dark .hist-lbadge.webrs {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: var(--sp-5);
   background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
@@ -849,7 +849,7 @@ html.dark .hist-lbadge.webrs {
   overflow: hidden;
   background: var(--bg-2);
   border: 1px solid var(--line);
-  border-radius: 22px;
+  border-radius: var(--r-lg);
   box-shadow: 0 40px 100px rgba(0, 0, 0, 0.55);
 }
 @media (max-width: 760px) {
@@ -884,7 +884,7 @@ html:not(.dark) .hist-detail-scrim {
 }
 .hist-detail-body {
   position: relative;
-  padding: 26px 30px;
+  padding: var(--sp-5) var(--sp-6);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -902,7 +902,7 @@ html:not(.dark) .hist-detail-scrim {
   border-radius: 50%;
   background: var(--hover);
   color: var(--text-2);
-  font-size: 15px;
+  font-size: var(--fs-body);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
@@ -911,7 +911,7 @@ html:not(.dark) .hist-detail-scrim {
   color: var(--text-strong);
 }
 .hist-detail-name {
-  font-size: 24px;
+  font-size: var(--fs-page);
   font-weight: 700;
   line-height: 1.25;
   color: var(--text-strong);
@@ -922,19 +922,19 @@ html:not(.dark) .hist-detail-scrim {
   flex-wrap: wrap;
   gap: 6px 14px;
   margin-top: 8px;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   color: var(--text-2);
 }
 .hist-detail-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
+  gap: var(--sp-2);
   margin-top: 12px;
 }
 .hist-detail-chip {
-  font-size: 12px;
-  padding: 4px 11px;
-  border-radius: 14px;
+  font-size: var(--fs-cap);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-lg);
   background: var(--hover);
   color: var(--text-2);
 }
@@ -942,7 +942,7 @@ html:not(.dark) .hist-detail-scrim {
 /* 三栏评分：TMDB / Bangumi / 我的（互不覆盖） */
 .hist-ratings {
   display: flex;
-  gap: 12px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
   margin-top: 16px;
 }
@@ -951,22 +951,22 @@ html:not(.dark) .hist-detail-scrim {
   min-width: 110px;
   background: var(--hover);
   border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 12px 14px;
+  border-radius: var(--r-lg);
+  padding: var(--sp-3) var(--sp-4);
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--sp-1);
 }
 .hist-rating.mine {
   border-color: rgb(var(--accent-rgb) / 0.4);
 }
 .hist-rating-label {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   letter-spacing: 0.5px;
 }
 .hist-rating-score {
-  font-size: 23px;
+  font-size: var(--fs-page);
   font-weight: 700;
   line-height: 1.2;
   color: #ffcc00;
@@ -976,12 +976,12 @@ html:not(.dark) .hist-detail-scrim {
   color: var(--accent);
 }
 .hist-rating-count {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 .hist-detail-overview {
   margin-top: 14px;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   line-height: 1.7;
   color: var(--text-2);
 }
@@ -991,13 +991,13 @@ html:not(.dark) .hist-detail-scrim {
   margin: 18px 0;
 }
 .hist-detail-label {
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   color: var(--muted);
   margin-bottom: 10px;
 }
 .hist-rate {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 .hist-rate-star {
   background: none;
@@ -1025,10 +1025,10 @@ html:not(.dark) .hist-detail-scrim {
   resize: vertical;
   background: var(--hover);
   border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 12px 14px;
+  border-radius: var(--r-lg);
+  padding: var(--sp-3) var(--sp-4);
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-family: inherit;
   outline: none;
 }
@@ -1038,23 +1038,23 @@ html:not(.dark) .hist-detail-scrim {
 .hist-sync-bgm {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-2);
   margin-top: 10px;
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   color: var(--text-2);
   cursor: pointer;
   user-select: none;
 }
 .hist-detail-actions {
   display: flex;
-  gap: 10px;
+  gap: var(--sp-3);
   margin-top: 14px;
 }
 .hist-btn {
   border: none;
-  padding: 11px 20px;
-  border-radius: 13px;
-  font-size: 14px;
+  padding: var(--sp-3) var(--sp-5);
+  border-radius: var(--r-lg);
+  font-size: var(--fs-body);
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
@@ -1082,8 +1082,8 @@ html:not(.dark) .hist-detail-scrim {
 .hist-sess {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
-  font-size: 13px;
+  gap: var(--sp-3);
+  font-size: var(--fs-ctl);
   color: var(--text-2);
   padding: 6px 0;
   border-bottom: 1px solid var(--line);
@@ -1101,15 +1101,15 @@ html:not(.dark) .hist-detail-scrim {
 .hist-report-btn {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-2);
   margin-left: auto;
   margin-right: 10px;
-  padding: 6px 15px;
-  border-radius: 999px;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-full);
   border: none;
   background: var(--accent-grad);
   color: #fff;
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
@@ -1133,7 +1133,7 @@ html:not(.dark) .hist-detail-scrim {
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--sp-4);
   background: rgba(12, 14, 22, 0.86);
   animation: wrFade 0.2s ease;
 }
@@ -1150,7 +1150,7 @@ html:not(.dark) .hist-detail-scrim {
 .wr-stage {
   width: min(760px, 92vw);
   height: min(520px, 80vh);
-  border-radius: 20px;
+  border-radius: var(--r-lg);
   position: relative;
   overflow: hidden;
   background: linear-gradient(165deg, rgba(251, 251, 253, 0.97), rgba(240, 240, 242, 0.99));
@@ -1164,7 +1164,7 @@ html:not(.dark) .hist-detail-scrim {
   align-items: center;
   justify-content: center;
   color: rgba(60, 60, 67, 0.72);
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 /* 单页容器 */
@@ -1184,7 +1184,7 @@ html:not(.dark) .hist-detail-scrim {
   }
 }
 .wr-pg-pad {
-  padding: 56px 46px 30px;
+  padding: var(--sp-7) var(--sp-7) var(--sp-6);
 }
 .wr-pg-cover {
   background: linear-gradient(165deg, rgb(var(--accent-rgb) / 0.1), rgb(var(--accent-rgb) / 0.06));
@@ -1192,7 +1192,7 @@ html:not(.dark) .hist-detail-scrim {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: var(--sp-4);
 }
 .wr-kicker {
   position: absolute;
@@ -1200,7 +1200,7 @@ html:not(.dark) .hist-detail-scrim {
   left: 0;
   right: 0;
   text-align: center;
-  font-size: 11px;
+  font-size: var(--fs-cap);
   font-weight: 800;
   letter-spacing: 4px;
   color: rgba(60, 60, 67, 0.6);
@@ -1212,13 +1212,13 @@ html:not(.dark) .hist-detail-scrim {
   color: transparent;
 }
 .wr-h1 {
-  font-size: 24px;
+  font-size: var(--fs-page);
   font-weight: 900;
   color: rgba(29, 29, 31, 0.92);
   margin: 14px 0 6px;
 }
 .wr-sub {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   color: rgba(60, 60, 67, 0.72);
   margin-bottom: 8px;
 }
@@ -1233,17 +1233,17 @@ html:not(.dark) .hist-detail-scrim {
 
 /* 封面页 */
 .wr-cover-lead {
-  font-size: 15px;
+  font-size: var(--fs-body);
   font-weight: 700;
   color: rgba(60, 60, 67, 0.72);
 }
 .wr-cover-big {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 .wr-num {
-  font-size: 74px;
+  font-size: var(--fs-hero);
   font-weight: 900;
   background: var(--accent-grad);
   -webkit-background-clip: text;
@@ -1251,14 +1251,14 @@ html:not(.dark) .hist-detail-scrim {
   color: transparent;
 }
 .wr-unit {
-  font-size: 20px;
+  font-size: var(--fs-title);
   font-weight: 800;
   color: rgba(29, 29, 31, 0.92);
 }
 .wr-cover-row,
 .wr-sum-row {
   display: flex;
-  gap: 30px;
+  gap: var(--sp-6);
   margin-top: 6px;
 }
 .wr-cover-row > div,
@@ -1268,30 +1268,30 @@ html:not(.dark) .hist-detail-scrim {
 .wr-cover-row b,
 .wr-sum-row b {
   display: block;
-  font-size: 24px;
+  font-size: var(--fs-page);
   font-weight: 900;
   color: rgba(29, 29, 31, 0.92);
 }
 .wr-sum-row b {
-  font-size: 30px;
+  font-size: var(--fs-hero);
 }
 .wr-cover-row span,
 .wr-sum-row span {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: rgba(60, 60, 67, 0.72);
 }
 .wr-sum-h {
-  font-size: 26px;
+  font-size: var(--fs-page);
   font-weight: 900;
   color: rgba(29, 29, 31, 0.92);
 }
 .wr-note {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: #0066cc;
   background: rgb(var(--accent-rgb) / 0.1);
   border: 1px solid rgb(var(--accent-rgb) / 0.28);
-  border-radius: 8px;
-  padding: 5px 12px;
+  border-radius: var(--r-sm);
+  padding: var(--sp-2) var(--sp-3);
   margin-top: 10px;
   max-width: 600px;
   line-height: 1.6;
@@ -1300,7 +1300,7 @@ html:not(.dark) .hist-detail-scrim {
 .wr-foot {
   position: absolute;
   bottom: 20px;
-  font-size: 10.5px;
+  font-size: var(--fs-cap);
   color: rgba(60, 60, 67, 0.6);
 }
 
@@ -1308,7 +1308,7 @@ html:not(.dark) .hist-detail-scrim {
 .wr-bars {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: var(--sp-2);
   height: 220px;
   margin-top: 26px;
 }
@@ -1316,11 +1316,11 @@ html:not(.dark) .hist-detail-scrim {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   flex: 1;
 }
 .wr-bpeak {
-  font-size: 9px;
+  font-size: var(--fs-cap);
   font-weight: 700;
   color: transparent;
 }
@@ -1329,7 +1329,7 @@ html:not(.dark) .hist-detail-scrim {
 }
 .wr-bar {
   width: 60%;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   background: linear-gradient(180deg, rgb(var(--accent-rgb) / 0.55), rgb(var(--accent-rgb) / 0.25));
   transition: height 0.4s ease;
 }
@@ -1337,7 +1337,7 @@ html:not(.dark) .hist-detail-scrim {
   background: var(--accent-grad);
 }
 .wr-blab {
-  font-size: 10px;
+  font-size: var(--fs-cap);
   color: rgba(60, 60, 67, 0.72);
 }
 
@@ -1352,12 +1352,12 @@ html:not(.dark) .hist-detail-scrim {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
+  gap: var(--sp-1);
   flex: 1;
 }
 .wr-hbar {
   width: 70%;
-  border-radius: 4px 4px 0 0;
+  border-radius: var(--r-xs) 4px 0 0;
   background: rgb(var(--accent-rgb) / 0.35);
   transition: height 0.4s ease;
 }
@@ -1365,9 +1365,12 @@ html:not(.dark) .hist-detail-scrim {
   background: var(--accent-grad);
 }
 .wr-hlab {
-  font-size: 8.5px;
+  font-size: var(--fs-cap);
   color: rgba(60, 60, 67, 0.72);
-  height: 12px;
+  /* [lc-2116] 原来是固定 height:12px —— 字号统一抬到 12px 后正好等于字高，
+     会裁掉下行。改成 min-height + 行高，随字号自然撑开。 */
+  min-height: 16px;
+  line-height: 1.35;
 }
 
 /* TOP5 */
@@ -1377,11 +1380,11 @@ html:not(.dark) .hist-detail-scrim {
 .wr-top {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-3);
   margin: 12px 0;
 }
 .wr-medal {
-  font-size: 17px;
+  font-size: var(--fs-subtitle);
   width: 26px;
 }
 .wr-topbody {
@@ -1392,10 +1395,10 @@ html:not(.dark) .hist-detail-scrim {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--sp-3);
 }
 .wr-topname {
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 700;
   color: rgba(29, 29, 31, 0.92);
   white-space: nowrap;
@@ -1403,19 +1406,19 @@ html:not(.dark) .hist-detail-scrim {
   text-overflow: ellipsis;
 }
 .wr-topmeta {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: rgba(60, 60, 67, 0.72);
   flex-shrink: 0;
 }
 .wr-topbar {
   margin-top: 5px;
   height: 7px;
-  border-radius: 99px;
+  border-radius: var(--r-full);
   background: rgb(var(--accent-rgb) / 0.14);
 }
 .wr-topfill {
   height: 100%;
-  border-radius: 99px;
+  border-radius: var(--r-full);
   background: var(--accent-grad);
 }
 
@@ -1423,16 +1426,16 @@ html:not(.dark) .hist-detail-scrim {
 .wr-ctrl {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--sp-4);
 }
 .wr-year {
   margin-right: 6px;
-  padding: 6px 10px;
-  border-radius: 9px;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
   border: none;
   background: rgba(48, 52, 74, 0.92);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 700;
   outline: none;
   cursor: pointer;
@@ -1448,18 +1451,18 @@ html:not(.dark) .hist-detail-scrim {
   cursor: pointer;
   background: rgba(48, 52, 74, 0.92);
   color: #fff;
-  font-size: 16px;
+  font-size: var(--fs-body);
   font-weight: 700;
 }
 .wr-dots {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
   align-items: center;
 }
 .wr-dots i {
   width: 8px;
   height: 8px;
-  border-radius: 99px;
+  border-radius: var(--r-full);
   display: block;
   background: rgba(255, 255, 255, 0.35);
   transition: all 0.2s;
@@ -1469,22 +1472,22 @@ html:not(.dark) .hist-detail-scrim {
   background: #fff;
 }
 .wr-close {
-  padding: 8px 16px;
-  border-radius: 10px;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-md);
   border: 1px solid rgba(255, 255, 255, 0.3);
   cursor: pointer;
   background: rgba(48, 52, 74, 0.92);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
 }
 .wr-export {
   margin-top: 2px;
-  padding: 8px 18px;
+  padding: var(--sp-2) var(--sp-4);
   border: none;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-weight: 700;
   color: #fff;
   background: var(--accent-grad);

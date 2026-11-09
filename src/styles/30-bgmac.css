@@ -4,9 +4,9 @@
 .bgmac {
   position: relative;
   margin: 0 16px 10px;
-  padding: 14px 16px 12px;
+  padding: var(--sp-4) var(--sp-4) var(--sp-3);
   border: 1px solid var(--line);
-  border-radius: 20px;
+  border-radius: var(--r-lg);
   background: var(--glass-btn-bg);
   /* [lc-1520] 上排「bangumi面板 | 同步状态」两块。
      [lc-1522] 上排两列一人一半；[lc-1527] 右列微放宽（1fr 1.12fr）给"饼+图例"横排让位。
@@ -35,7 +35,7 @@
   display: grid;
   place-items: center;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--glass-bg);
   color: var(--muted);
   cursor: pointer;
@@ -46,7 +46,7 @@
   color: var(--text-strong);
 }
 .bgmac-fold svg {
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.3s var(--ease);
 }
 .bgmac.fold .bgmac-fold svg {
   transform: rotate(180deg);
@@ -60,7 +60,7 @@
   grid-template-rows: 1fr;
   gap: 10px 14px;
   align-items: start;
-  transition: grid-template-rows 0.32s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease;
+  transition: grid-template-rows 0.32s var(--ease), opacity 0.22s ease;
 }
 .bgmac-grid > * {
   min-height: 0;
@@ -86,8 +86,8 @@
   transform: translateY(-4px);
   overflow: hidden;
   pointer-events: none;
-  transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease,
-    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: max-height 0.3s var(--ease), opacity 0.2s ease,
+    transform 0.3s var(--ease);
 }
 .bgmac.fold {
   padding-right: 44px; /* 给右上角折叠按钮让位 */
@@ -105,9 +105,9 @@
 .bgmac-bar-user {
   display: inline-flex;
   align-items: center;
-  gap: 8px; /* 品牌字 ↔ 状态组：留白别太挤 */
+  gap: var(--sp-2); /* 品牌字 ↔ 状态组：留白别太挤 */
   flex-shrink: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -118,7 +118,7 @@
 .bgmac-bar-state {
   display: inline-flex;
   align-items: center;
-  gap: 7px; /* 圆点 ↔ 状态字：同上 */
+  gap: var(--sp-2); /* 圆点 ↔ 状态字：同上 */
 }
 .bgmac-bar-user.on .bgmac-bar-state {
   color: #37a75f;
@@ -142,7 +142,7 @@
   inset: 0;
   border-radius: 50%;
   border: 1px solid currentColor;
-  animation: bgmacRipple 2s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+  animation: bgmacRipple 2s var(--ease) infinite;
 }
 .bgmac-dot::after {
   animation-delay: 1s;
@@ -162,7 +162,7 @@
 }
 .bgmac-bar-stat {
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   color: var(--muted);
 }
 
@@ -185,7 +185,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-3);
   /* [lc-1533] 内容撑满整格（用户截图反馈：面板下半留白一大块）：
      文字组贴顶（与右侧「同步状态」标题同一水平线），按钮组沉底 ——
      与用户设计稿的竖向结构一致（内容在上、按钮在下），下半不再空一块。 */
@@ -195,28 +195,28 @@
 .bgmac-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--sp-0);
   min-width: 0;
 }
 .bgmac-kicker {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   color: #2e7d4f;
   letter-spacing: 0.02em;
 }
 .bgmac-title {
-  font-size: 21px;
+  font-size: var(--fs-title);
   font-weight: 800;
   color: var(--text-strong);
   line-height: 1.25;
 }
 .bgmac-desc {
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   color: var(--text-2);
   line-height: 1.55;
 }
 .bgmac-types {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   margin-top: 2px;
 }
@@ -224,11 +224,11 @@
 .bgmac-watch {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-2);
   min-width: 0;
 }
 .bgmac-watch-hd {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
 }
 .bgmac-watch-hd b {
@@ -237,7 +237,7 @@
 }
 .bgmac-watch-row {
   display: flex;
-  gap: 6px;
+  gap: var(--sp-2);
   min-width: 0;
 }
 .bgmac-wcover {
@@ -246,7 +246,7 @@
   flex: 0 0 auto;
   padding: 0;
   border: none;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   overflow: hidden;
   background: var(--ph-bg);
   color: var(--muted);
@@ -278,10 +278,10 @@ html.dark .bgmac-wcover:hover {
   width: 100%;
   height: 38px;
   border: none;
-  border-radius: 19px;
+  border-radius: var(--r-lg);
   background: var(--accent-grad);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 700;
   cursor: pointer;
   box-shadow: 0 4px 14px rgb(var(--shadow-rgb) / 0.17);
@@ -307,7 +307,7 @@ html.dark .bgmac-wcover:hover {
 .bgmac-acts {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
 }
 /* [lc-1519] 已连接态：同步改紧凑小按钮（巨按钮 CTA 只留给「连接」主流程） */
@@ -316,10 +316,10 @@ html.dark .bgmac-wcover:hover {
   height: 30px;
   padding: 0 16px;
   border: none;
-  border-radius: 15px;
+  border-radius: var(--r-lg);
   background: var(--accent-grad);
   color: #fff;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 700;
   cursor: pointer;
   box-shadow: 0 2px 8px rgb(var(--shadow-rgb) / 0.15);
@@ -337,7 +337,7 @@ html.dark .bgmac-wcover:hover {
 }
 /* 行内成功提示：小字不抢视觉（不再整卡宽灰条） */
 .bgmac-inline-note {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -349,9 +349,9 @@ html.dark .bgmac-wcover:hover {
   border: none;
   background: none;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   cursor: pointer;
-  padding: 4px 2px;
+  padding: var(--sp-1) var(--sp-0);
 }
 .bgmac-link:hover {
   color: var(--err-text);
@@ -359,7 +359,7 @@ html.dark .bgmac-wcover:hover {
 /* ── 绑定表单 ── */
 .bgmac-bind {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 .bgmac-bind input {
   flex: 1 1 auto;
@@ -367,11 +367,11 @@ html.dark .bgmac-wcover:hover {
   height: 38px;
   box-sizing: border-box;
   border: 1px solid var(--line-strong);
-  border-radius: 19px;
+  border-radius: var(--r-lg);
   background: var(--input-bg);
   color: var(--text-strong);
   padding: 0 14px;
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   outline: none;
 }
 .bgmac-bind input:focus {
@@ -382,13 +382,13 @@ html.dark .bgmac-wcover:hover {
 .bgmac-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-1);
   height: 20px;
   padding: 0 9px;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--ph-bg);
   color: var(--text-2);
-  font-size: 11px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   max-width: 150px;
   vertical-align: middle;
@@ -408,7 +408,7 @@ html.dark .bgmac-wcover:hover {
 .bgmac-title-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   min-width: 0;
 }
 .bgmac-title-row .bgmac-title {
@@ -421,14 +421,14 @@ html.dark .bgmac-wcover:hover {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--sp-2);
   padding: 0 4px 0 14px;
   border-left: 1px solid var(--line);
   min-width: 0;
 }
 /* 块标题（同步状态 / 当季追番状态） */
 .bgmac-block-t {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   font-weight: 700;
   color: var(--text-2);
   letter-spacing: 0.03em;
@@ -444,18 +444,18 @@ html.dark .bgmac-wcover:hover {
   height: auto;
 }
 .bgmac-chart-title {
-  font-size: 12px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   fill: var(--text-2);
   letter-spacing: 0.5px;
 }
 .bgmac-chart-num {
-  font-size: 19px;
+  font-size: var(--fs-title);
   font-weight: 700;
   fill: var(--text-strong);
 }
 .bgmac-chart-sub {
-  font-size: 8px;
+  font-size: var(--fs-cap);
   fill: var(--muted);
   letter-spacing: 1.5px;
 }
@@ -478,7 +478,7 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
   fill: rgba(255, 255, 255, 0.1);
 }
 .bgmac-chart-label {
-  font-size: 10.5px;
+  font-size: var(--fs-cap);
   fill: var(--text-2);
   transition: fill 0.2s;
 }
@@ -487,7 +487,7 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
   font-weight: 600;
 }
 .bgmac-chart-value {
-  font-size: 11px;
+  font-size: var(--fs-cap);
   font-weight: 600;
   fill: var(--text-strong);
 }
@@ -504,11 +504,11 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-1);
   color: var(--muted);
-  font-size: 10.5px;
+  font-size: var(--fs-cap);
   text-align: center;
-  padding: 6px 4px;
+  padding: var(--sp-2) var(--sp-1);
   line-height: 1.4;
 }
 /* ── 提示 / 错误 ── */
@@ -516,9 +516,9 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
 .bgmac-note,
 .bgmac-tip {
   grid-area: main;
-  font-size: 11.5px;
-  border-radius: 9px;
-  padding: 6px 10px;
+  font-size: var(--fs-cap);
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-3);
   word-break: break-all;
 }
 .bgmac-err {
@@ -529,7 +529,7 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
 .bgmac-note {
   color: var(--text-2);
   background: var(--hover);
-  border-radius: 9px;
+  border-radius: var(--r-md);
 }
 .bgmac-tip {
   color: var(--muted);
@@ -539,8 +539,8 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
 .bgmac-remember {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
+  gap: var(--sp-2);
+  font-size: var(--fs-cap);
   color: var(--muted);
   cursor: pointer;
   user-select: none;
@@ -558,7 +558,7 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
   flex: 0 0 auto;
   margin: 0;
   border: 1px solid var(--line-strong);
-  border-radius: 4px;
+  border-radius: var(--r-xs);
   background: var(--input-bg);
   cursor: pointer;
   position: relative;
@@ -600,14 +600,14 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
 .bgmac-warn {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   color: #9a6b1f;
   background: rgba(233, 162, 60, 0.12);
   border: 1px solid rgba(233, 162, 60, 0.28);
-  border-radius: 9px;
-  padding: 5px 10px;
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-3);
 }
 html.dark .bgmac-warn {
   color: #f0bd6b;
@@ -622,10 +622,10 @@ html.dark .bgmac-warn {
   height: 22px;
   padding: 0 10px;
   border: 1px solid rgba(233, 162, 60, 0.5);
-  border-radius: 11px;
+  border-radius: var(--r-md);
   background: transparent;
   color: inherit;
-  font-size: 11px;
+  font-size: var(--fs-cap);
   font-weight: 700;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;

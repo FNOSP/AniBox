@@ -5,22 +5,22 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 54px 26px 16px; /* 顶部 = 悬浮标题栏40px + 14px 间距 */
-  gap: 14px;
+  padding: var(--sp-7) var(--sp-5) var(--sp-4); /* 顶部 = 悬浮标题栏40px + 14px 间距 */
+  gap: var(--sp-4);
 }
 .meta-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
 }
 .meta {
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   color: var(--text-2);
   background: var(--hover);
   border: 1px solid var(--line);
-  padding: 4px 10px;
-  border-radius: 999px;
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-full);
 }
 .type-chip {
   color: var(--accent);
@@ -34,12 +34,12 @@
 .ep-list {
   display: flex;
   flex-direction: column;
-  gap: 30px;
+  gap: var(--sp-6);
   padding: 0 26px;
 }
 .ep-row {
   display: flex;
-  gap: 24px;
+  gap: var(--sp-5);
   min-width: 0;
   cursor: pointer;
 }
@@ -48,7 +48,7 @@
   width: 300px;
   min-width: 300px;
   aspect-ratio: 16 / 9;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   overflow: hidden;
   background: var(--ph-bg);
 }
@@ -72,7 +72,7 @@
   background: rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(6px);
   color: #fff;
-  font-size: 11px;
+  font-size: var(--fs-cap);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -84,7 +84,7 @@
   padding-top: 2px;
 }
 .ep-row-title {
-  font-size: 15.5px;
+  font-size: var(--fs-body);
   font-weight: 700;
   color: var(--text-strong);
   white-space: nowrap;
@@ -98,10 +98,10 @@
   display: inline-block;
   margin-left: 8px;
   padding: 0 6px;
-  border-radius: 5px;
+  border-radius: var(--r-xs);
   border: 1px solid var(--line-strong);
   color: var(--muted);
-  font-size: 10.5px;
+  font-size: var(--fs-cap);
   line-height: 16px;
   vertical-align: 2px;
   letter-spacing: 0.5px;
@@ -110,7 +110,7 @@
 .ep-overview {
   margin: 8px 0 0;
   color: var(--text-2);
-  font-size: 13.5px;
+  font-size: var(--fs-ctl);
   line-height: 1.7;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -120,6 +120,6 @@
 .ep-duration {
   margin-top: 10px;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
 }
 

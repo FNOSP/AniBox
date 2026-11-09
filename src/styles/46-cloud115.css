@@ -13,8 +13,8 @@
   margin: 0 auto; /* 整面板水平居中 */
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 26px 30px 44px;
+  gap: var(--sp-4);
+  padding: var(--sp-5) var(--sp-6) var(--sp-7);
   animation: c115-fade-up 0.28s ease-out;
 }
 
@@ -27,16 +27,16 @@
 .c115-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
 }
 
 .c115-title {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-3);
   margin: 0;
-  font-size: 20px;
+  font-size: var(--fs-title);
   font-weight: 700;
   letter-spacing: 0.3px;
 }
@@ -48,17 +48,17 @@
   justify-content: center;
   width: 30px;
   height: 30px;
-  border-radius: 9px;
+  border-radius: var(--r-md);
   background: var(--accent-grad);
   color: #fff;
   box-shadow: 0 4px 12px rgb(var(--shadow-rgb) / 0.21);
 }
 
 .c115-user {
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   color: var(--ink-dim, var(--ink));
-  padding: 4px 11px;
-  border-radius: 999px;
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-full);
   background: var(--glass-btn-bg, rgba(120, 120, 128, 0.12));
   border: 1px solid var(--line);
 }
@@ -66,15 +66,15 @@
 .c115-mini {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   box-sizing: border-box;
   height: 30px;
   padding: 0 13px;
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--glass);
   color: var(--ink);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   cursor: pointer;
   transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease;
 }
@@ -93,10 +93,10 @@
 /* ── 播放档分段：玻璃轨道 + 渐变选中块 ── */
 .c115-mode {
   display: inline-flex;
-  gap: 2px;
-  padding: 3px;
+  gap: var(--sp-0);
+  padding: var(--sp-1);
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--glass);
   margin-left: auto;
   margin-right: 2px;
@@ -107,10 +107,10 @@
   height: 26px;
   padding: 0 13px;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: transparent;
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   opacity: 0.65;
   cursor: pointer;
   transition: opacity 0.15s ease, background 0.15s ease;
@@ -130,11 +130,11 @@
 
 .c115-err {
   margin: 0;
-  padding: 10px 13px;
+  padding: var(--sp-3) var(--sp-4);
   border: 1px solid rgba(255, 92, 92, 0.4);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   background: rgba(255, 92, 92, 0.08);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   color: #ff7b7b;
   word-break: break-all;
   animation: c115-fade-up 0.2s ease-out;
@@ -142,7 +142,7 @@
 
 .c115-dim {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-cap);
   opacity: 0.6;
   text-align: center;
   max-width: 440px;
@@ -154,8 +154,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
-  padding: 34px 20px 26px;
+  gap: var(--sp-4);
+  padding: var(--sp-6) var(--sp-5) var(--sp-5);
   border: 1px solid var(--line);
   border-radius: var(--radius, 14px);
   background: var(--glass);
@@ -187,8 +187,8 @@
 
 .c115-qrwrap {
   position: relative;
-  padding: 10px;
-  border-radius: 14px;
+  padding: var(--sp-3);
+  border-radius: var(--r-lg);
   background: #fff;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
@@ -197,7 +197,7 @@
   display: block;
   width: 200px;
   height: 200px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: #fff;
 }
 
@@ -208,7 +208,7 @@
   right: 8px;
   top: 8px;
   height: 3px;
-  border-radius: 3px;
+  border-radius: var(--r-xs);
   background: var(--accent-grad);
   box-shadow: 0 0 12px rgb(var(--shadow-rgb) / 0.48);
   animation: c115-scan 2.6s ease-in-out infinite;
@@ -229,7 +229,7 @@
 
 .c115-qrmsg {
   margin: 0;
-  font-size: 13.5px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
 }
 
@@ -243,8 +243,8 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 2px;
-  font-size: 12.5px;
+  gap: var(--sp-0);
+  font-size: var(--fs-ctl);
   padding: 2px 0;
 }
 
@@ -252,10 +252,10 @@
   border: 0;
   background: none;
   color: var(--ink);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   cursor: pointer;
-  padding: 4px 9px;
-  border-radius: 999px;
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-full);
   transition: background 0.15s ease;
 }
 
@@ -282,16 +282,16 @@
 .c115-grid {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: var(--sp-2);
 }
 
 .c115-item {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 8px 12px;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   background: var(--glass);
   transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
 }
@@ -317,7 +317,7 @@
   justify-content: center;
   width: 30px;
   height: 30px;
-  border-radius: 9px;
+  border-radius: var(--r-md);
   background: var(--glass-btn-bg, rgba(0, 0, 0, 0.06));
   color: var(--ink);
   flex: none;
@@ -350,12 +350,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
 }
 
 .c115-size {
   flex: none;
-  font-size: 11px;
+  font-size: var(--fs-cap);
   opacity: 0.5;
   font-variant-numeric: tabular-nums;
 }
@@ -401,10 +401,10 @@
   height: 32px;
   padding: 0 20px;
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--glass);
   color: var(--ink);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   cursor: pointer;
   transition: border-color 0.15s ease, transform 0.15s ease;
 }
@@ -419,7 +419,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-3);
   padding: 46px 0 30px;
 }
 
@@ -429,7 +429,7 @@
 
 .c115-empty p {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   opacity: 0.6;
 }
 
@@ -437,10 +437,10 @@
 .c115-loading {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   justify-content: center;
   padding: 18px 0;
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   opacity: 0.7;
 }
 
@@ -467,25 +467,25 @@
 .sp-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-2);
   margin-top: 8px;
 }
 
 .sp-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--glass);
 }
 
 .sp-badge {
   flex: none;
-  padding: 2px 8px;
-  border-radius: 6px;
-  font-size: 11px;
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-cap);
   font-weight: 600;
 }
 
@@ -510,7 +510,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
 }
 
 .sp-hint {
@@ -519,7 +519,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--fs-cap);
   opacity: 0.55;
 }
 
@@ -531,10 +531,10 @@
   margin-left: auto;
   padding: 0 14px;
   border: 1px dashed var(--line-strong);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   opacity: 0.55;
   cursor: pointer;
   white-space: nowrap;
@@ -555,22 +555,22 @@
 .c115-tabs {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 
 .c115-tab {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-2);
   box-sizing: border-box;
   height: 33px;
   padding: 0 15px;
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--glass);
   color: var(--ink);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   opacity: 0.62;
   cursor: pointer;
   white-space: nowrap;
@@ -612,14 +612,14 @@
 .c115-wdlist {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
   width: min(480px, 100%);
 }
 
 .c115-wdrow {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .c115-wdpick {
@@ -627,11 +627,11 @@
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-3);
   box-sizing: border-box;
-  padding: 9px 12px;
+  padding: var(--sp-3) var(--sp-3);
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--glass);
   color: var(--ink);
   cursor: pointer;
@@ -643,12 +643,12 @@
 }
 
 .c115-wdname {
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
 }
 
 .c115-wdurl {
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   opacity: 0.55;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -662,7 +662,7 @@
 .c115-wdform {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
   width: min(480px, 100%);
 }
 
@@ -671,10 +671,10 @@
   height: 32px;
   padding: 0 12px;
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--glass);
   color: var(--ink);
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   outline: none;
 }
 
@@ -684,7 +684,7 @@
 
 .c115-wdform-btns {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .c115-rename {
@@ -694,10 +694,10 @@
   height: 24px;
   padding: 0 8px;
   border: 1px solid var(--accent, var(--ink));
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: var(--glass);
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--fs-cap);
   outline: none;
 }
 
@@ -713,7 +713,7 @@
 /* ══════════════════════ [lc-1812] WebDAV 表单/账号行精修 ══════════════════════ */
 
 .c115-wdpick {
-  border-radius: 12px;
+  border-radius: var(--r-md);
   transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
 }
 
@@ -725,14 +725,14 @@
 }
 
 .c115-wdform {
-  padding: 16px;
+  padding: var(--sp-4);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   background: var(--glass);
 }
 
 .c115-wdform input {
-  border-radius: 10px;
+  border-radius: var(--r-md);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -757,7 +757,7 @@
   width: 42px;
   height: 60px;
   object-fit: cover;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   flex-shrink: 0;
   background: var(--hover);
 }
@@ -816,6 +816,6 @@
 .cloud-page .c115-login { width: 100%; max-width: 640px; margin: 0 auto; }
 
 /* [lc-1987] WebDAV 空态排版：主文案 + 短说明两行，长句不再硬换行 */
-.cloud-page .c115-login-title { margin: 0; font-size: 15px; font-weight: 600; color: var(--text-strong); }
+.cloud-page .c115-login-title { margin: 0; font-size: var(--fs-body); font-weight: 600; color: var(--text-strong); }
 .cloud-page .c115-login .hint { margin: 0; }
 .cloud-page .c115-login .c115-dim { margin: 0; }

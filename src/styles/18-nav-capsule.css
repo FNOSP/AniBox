@@ -23,8 +23,8 @@
   position: relative; /* [lc-123-rev6] 滑动指示器的定位基座 */
   display: flex;
   gap: 0; /* 等宽两槽：指示器宽度 = 50%，靠 translateX(0|100%) 搬家 */
-  padding: 3px;
-  border-radius: 999px;
+  padding: var(--sp-1);
+  border-radius: var(--r-full);
   /* [lc-2111] 苹果分段控件（UISegmentedControl / macOS picker）的做法：
      深半透明中性底 + 内部白色滑块。底色无彩，滑动片是白色 90% 不透明。
      微光靠 inset 顶部高光 + 大范围低 alpha 外阴影（苹果不用彩色发光）。 */
@@ -38,7 +38,7 @@
 }
 
 /* [lc-123-rev6] 「水滴」滑动指示器：绝对定位在等宽槽位上，translateX(0|100%) 在两槽间搬家。
-   缓动 cubic-bezier(.34,1.56,.64,1) 是**带过冲**的曲线（黏滞回弹手感）；
+   缓动 var(--ease-spring) 是**带过冲**的曲线（黏滞回弹手感）；
    切换瞬间内部 i 的 scaleX(.92)→1（140ms）＝"水滴"味（两个不同 animation-name 保证每次都重放）。 */
 .nav-cap-ind {
   position: absolute;
@@ -48,7 +48,7 @@
   width: calc((100% - 6px) / 2);
   pointer-events: none;
   transform: translateX(0);
-  transition: transform 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 0.42s var(--ease-spring);
   will-change: transform;
 }
 
@@ -60,7 +60,7 @@
   display: block;
   width: 100%;
   height: 100%;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   /* [lc-2111] 白色滑块 = 苹果分段控件的选中片：白色 92% + 柔和投影，
      压深色字。浮在任何海报上都清晰，且完全不引入色相。 */
   background: rgba(255, 255, 255, 0.92);
@@ -103,10 +103,10 @@
   height: 30px;
   padding: 0;
   border: none;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: transparent;
   color: rgba(255, 255, 255, 0.85);
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
@@ -163,7 +163,7 @@
 
 /* 左上角的"当前页"字样（首页/发现）——顶栏左侧现在只剩它（+侧栏/刷新/主题按钮） */
 .tb-crumb {
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   font-weight: 600;
   color: var(--text);
   padding-left: 2px;

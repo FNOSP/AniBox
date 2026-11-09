@@ -11,7 +11,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 60px 24px 24px;
+  padding: var(--sp-8) var(--sp-5) var(--sp-5);
   animation: pageIn 0.18s ease;
 }
 
@@ -36,10 +36,10 @@
   height: 30px;
   padding: 0; /* [lc-1402] 同 .tb-icon：30px 盒被全局 button 的 15px 左右 padding 吃光，✕ 会缩成点 */
   border: none;
-  border-radius: 9px;
+  border-radius: var(--r-md);
   background: transparent;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   cursor: pointer;
   z-index: 2;
 }
@@ -51,8 +51,8 @@
 
 .ddet-hd {
   display: flex;
-  gap: 16px;
-  padding: 18px 20px 14px;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-5) var(--sp-4);
   border-bottom: 1px solid var(--line);
 }
 
@@ -60,7 +60,7 @@
   width: 110px;
   height: 150px;
   min-width: 110px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: hidden;
   background: var(--ph-bg);
   display: grid;
@@ -76,7 +76,7 @@
 }
 
 .ddet-cv.empty {
-  font-size: 26px;
+  font-size: var(--fs-page);
   color: var(--muted);
 }
 
@@ -85,34 +85,34 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-2);
   padding-right: 30px;
 }
 
 .ddet-hdm h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--fs-title);
   font-weight: 700;
   color: var(--text-strong);
   line-height: 1.3;
 }
 
 .ddet-orig {
-  font-size: 12.5px;
+  font-size: var(--fs-ctl);
   color: var(--muted);
 }
 
 .ddet-meta {
   display: flex;
-  gap: 6px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
   margin-top: 2px;
 }
 
 .ddet-chip {
-  font-size: 12px;
-  padding: 2px 9px;
-  border-radius: 999px;
+  font-size: var(--fs-cap);
+  padding: var(--sp-0) var(--sp-3);
+  border-radius: var(--r-full);
   border: 1px solid var(--line);
   background: var(--hover);
   color: var(--text-2);
@@ -126,7 +126,7 @@
 
 .ddet-chip.score i {
   font-style: normal;
-  font-size: 11px;
+  font-size: var(--fs-cap);
   opacity: 0.8;
 }
 
@@ -138,7 +138,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px 20px 22px;
+  padding: var(--sp-4) var(--sp-5) var(--sp-5);
 }
 
 .ddet-body::-webkit-scrollbar {
@@ -147,12 +147,12 @@
 
 .ddet-body::-webkit-scrollbar-thumb {
   background: var(--line-strong);
-  border-radius: 9px;
+  border-radius: var(--r-md);
 }
 
 .ddet-h3 {
   margin: 16px 0 10px;
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 700;
   color: var(--text-strong);
 }
@@ -163,7 +163,7 @@
 
 .ddet-sum {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-ctl);
   line-height: 1.75;
   color: var(--text);
   white-space: pre-wrap;
@@ -179,10 +179,10 @@
 .dep-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 8px;
-  border-radius: 9px;
-  font-size: 13px;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-2);
+  border-radius: var(--r-md);
+  font-size: var(--fs-ctl);
 }
 
 .dep-row:nth-child(odd) {
@@ -192,12 +192,12 @@
 .dep-no {
   min-width: 34px;
   text-align: center;
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   font-weight: 700;
   color: var(--text-strong);
   background: var(--sel-bg);
-  border-radius: 6px;
-  padding: 2px 6px;
+  border-radius: var(--r-sm);
+  padding: var(--sp-0) var(--sp-2);
 }
 
 .dep-name {
@@ -210,7 +210,7 @@
 }
 
 .dep-date {
-  font-size: 11.5px;
+  font-size: var(--fs-cap);
   color: var(--muted);
   white-space: nowrap;
 }

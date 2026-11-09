@@ -4,10 +4,10 @@ input,
 select {
   background: var(--input-bg);
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--r-md);
   color: var(--text);
-  padding: 10px 13px;
-  font-size: 13px;
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-ctl);
   outline: none;
   transition: border-color 0.15s;
 }
@@ -32,10 +32,10 @@ select option {
 button {
   background: var(--hover);
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--r-md);
   color: var(--text);
-  padding: 8px 15px;
-  font-size: 13px;
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--fs-ctl);
   cursor: pointer;
   transition: background 0.15s, transform 0.15s;
 }
@@ -49,9 +49,9 @@ button:active {
   background: var(--err-bg);
   border: 1px solid var(--err-border);
   color: var(--err-text);
-  border-radius: 10px;
-  padding: 11px 15px;
-  font-size: 13px;
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-ctl);
   margin-bottom: 12px;
   line-height: 1.55;
 }

@@ -267,6 +267,55 @@ fn vertical_window_cmd(app: AppHandle, vw: i64, vh: i64) -> Option<String> {
     )
 }
 
+/// [lc-2105] 竖屏**粗估**几何（9:16）：loadfile 之前先把窗口切成瘦高形状，
+/// 避免复用会话时窗口还停在上一部横屏片的尺寸（起播瞬间两侧大黑边）。
+/// 精确值由解码就绪后按 video-params 真实比例校正（duanju_play → apply_vertical_geometry）。
+pub fn vertical_estimate_geometry(app: &AppHandle, vertical: bool) -> Option<String> {
+    if !vertical {
+        return None;
+    }
+    let win = app.get_webview_window("main")?;
+    let size = win.inner_size().ok()?;
+    if size.height < 200 {
+        return None;
+    }
+    let area = win
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|m| (m.work_area().size.width, m.work_area().size.height));
+    const ASPECT: f64 = 9.0 / 16.0;
+    let mut h = size.height.max(480) as f64;
+    if let Some((aw, ah)) = area {
+        if ah > 0 {
+            let ah = ah as f64;
+            h = h.max(ah * 0.90).min(ah * 0.94);
+        }
+        let mut w = h * ASPECT;
+        if aw > 0 {
+            let max_w = aw as f64 * 0.94;
+            if w > max_w {
+                w = max_w;
+                h = w / ASPECT;
+            }
+        }
+        let (w, h) = ((w.round() as u32).max(1), (h.round() as u32).max(1));
+        // 居中：一次取出监视器位置/尺寸（避免临时值的借用逃逸）
+        if let Some((px, py, sw, sh)) = win.current_monitor().ok().flatten().map(|m| {
+            let p = m.position();
+            let s = m.size();
+            (p.x, p.y, s.width as i32, s.height as i32)
+        }) {
+            let x = px + ((sw - w as i32) / 2).max(0);
+            let y = py + ((sh - h as i32) / 2).max(0);
+            return Some(format!("{w}x{h}+{x}+{y}"));
+        }
+        return Some(format!("{w}x{h}"));
+    }
+    let w = (h * ASPECT).round() as u32;
+    Some(format!("{}x{}", w.max(1), h.round() as u32))
+}
+
 fn startup_geometry(app: &AppHandle, vertical: bool) -> Option<String> {
     let win = app.get_webview_window("main")?;
     let size = win.inner_size().ok()?;
@@ -363,6 +412,11 @@ impl MpvSession {
     pub fn set_vertical(&self, vertical: bool) {
         self.vertical
             .store(vertical, std::sync::atomic::Ordering::Release);
+    }
+
+    /// [lc-2105] 当前是否为竖屏片源会话。
+    pub async fn vertical_pixels(&self) -> bool {
+        self.vertical.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// 拉起独立 mpv 进程并连上 IPC（幂等：实例常驻，播放/停止只切播放状态）

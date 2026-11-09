@@ -526,9 +526,18 @@ async fn launch_mpv(
                     ]))
                     .await;
             }
-            // [lc-2101] 复用会话：先同步竖屏标志（下一次 file-loaded 按真实比例调窗口）
+            // [lc-2105] 竖屏片源：**loadfile 之前**就把窗口切成竖屏粗估尺寸。
+            // 否则复用会话时窗口仍是上一部横屏片的 2160x1215，竖屏视频起播瞬间两侧
+            // 大片黑边（用户实测「刚起播是横屏大黑边，过一会才正常」——那一段就是
+            // 等 video-params 就绪再调窗的空窗期）。这里先用 9:16 粗估，精确值仍由
+            // duanju_play 在解码就绪后按真实比例校正。
             if let Some(h) = headers {
                 m.set_vertical(h.vertical);
+                if h.vertical {
+                    if let Some(geo) = crate::mpv::vertical_estimate_geometry(app, m.vertical_pixels().await) {
+                        let _ = m.command_no_reply(json!(["set", "geometry", geo])).await;
+                    }
+                }
             }
             // [lc-2103] 双 UI 的修法已**移到 uosc/main.lua 的皮肤门控**（glass 时
             // Manager:disable('glass', ...) 禁掉全部可视元素，只留菜单 API）。

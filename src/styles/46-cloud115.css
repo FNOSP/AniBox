@@ -210,7 +210,7 @@
   height: 3px;
   border-radius: var(--r-xs);
   background: var(--accent-grad);
-  box-shadow: 0 0 12px rgb(var(--shadow-rgb) / 0.48);
+  box-shadow: 0 0 8px rgb(var(--shadow-rgb) / 0.18);
   animation: c115-scan 2.6s ease-in-out infinite;
   pointer-events: none;
 }

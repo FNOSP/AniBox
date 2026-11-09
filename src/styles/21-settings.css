@@ -838,7 +838,7 @@
 }
 .set-pad-dot.on {
   background: #3fb950;
-  box-shadow: 0 0 6px color-mix(in srgb, #3fb950 60%, transparent);
+  box-shadow: 0 0 6px rgba(63, 185, 80, 0.5);
 }
 .set-pad-dot.off {
   background: #d29922;

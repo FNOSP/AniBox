@@ -150,7 +150,7 @@
 .progress > div {
   height: 100%;
   background: var(--accent-grad);
-  box-shadow: 0 0 8px rgb(var(--shadow-rgb) / 0.42);
+  /* [lc-2118] 原有一圈 0 0 8px 的装饰发光：进度条靠颜色区分已够，光只是噪声。 */
 }
 .card-title {
   margin-top: 9px;

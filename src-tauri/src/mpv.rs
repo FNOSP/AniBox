@@ -267,6 +267,46 @@ fn vertical_window_cmd(app: AppHandle, vw: i64, vh: i64) -> Option<String> {
     )
 }
 
+/// [lc-2106] 判定「文件名式标题」：单条 loadfile 时 mpv 的 playlist title 会退化成
+/// URL 末段（哈希.mp4 / 纯数字串），这类值当标题显示就是「一串数字」，必须丢弃、
+/// 保留调用方设的 force-media-title。
+fn looks_like_hash_name(s: &str) -> bool {
+    let stem = s
+        .rsplit_once('.')
+        .map(|(a, _)| a)
+        .unwrap_or(s)
+        .trim();
+    if stem.is_empty() {
+        return true;
+    }
+    // 纯数字（如 1234567890）
+    if stem.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    // 长十六进制 / uuid 样式的无分隔长串（≥16 字符且全是 0-9a-f）
+    let lower = stem.to_ascii_lowercase();
+    if lower.len() >= 16 && lower.chars().all(|c| c.is_ascii_hexdigit()) {
+        return true;
+    }
+    // 无空格且 ≥20 字符的字母数字串（短剧流 URL 的 hash 段）
+    if lower.len() >= 20 && lower.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return true;
+    }
+    // uuid 形态：8-4-4-4-12 的十六进制分组
+    let groups: Vec<&str> = lower.split('-').collect();
+    if groups.len() == 5 {
+        let want = [8usize, 4, 4, 4, 12];
+        if groups
+            .iter()
+            .zip(want)
+            .all(|(g, n)| g.len() == n && g.chars().all(|c| c.is_ascii_hexdigit()))
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// [lc-2105] 竖屏**粗估**几何（9:16）：loadfile 之前先把窗口切成瘦高形状，
 /// 避免复用会话时窗口还停在上一部横屏片的尺寸（起播瞬间两侧大黑边）。
 /// 精确值由解码就绪后按 video-params 真实比例校正（duanju_play → apply_vertical_geometry）。
@@ -756,7 +796,13 @@ impl MpvSession {
                                 .get("data")
                                 .and_then(|d| d.as_str())
                                 .map(str::trim)
-                                .filter(|s| !s.is_empty());
+                                .filter(|s| !s.is_empty())
+                                // [lc-2106] 单条 loadfile 的 playlist title 回退成 URL 文件名
+                                // （短剧是本地流 `…/9137b473cc869d0047cbea45.mp4` → 标题变成
+                                // 一串 hash）。这类不是真标题：① 看似 hex/uuid 的长串
+                                // ② 无扩展名的纯 hash ③ 纯数字。命中就不回填，保留调用方
+                                // 已设好的 force-media-title。
+                                .filter(|s| !looks_like_hash_name(s));
                             if let Some(t) = title {
                                 // 容器自带的 Title tag 会顶掉 #EXTINF，只有 force-media-title 优先级更高。
                                 let line = json!({
@@ -1238,6 +1284,31 @@ impl MpvSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [lc-2106] 「一串数字」标题判定：单条 loadfile 时 mpv 会把 URL 末段当标题
+    /// （短剧本地流 `…/9137b473cc869d0047cbea45.mp4`）。这类必须丢弃，保留真实标题。
+    #[test]
+    fn hash_like_titles_are_rejected() {
+        // 应丢弃（URL 末段 / 纯数字）
+        for bad in [
+            "9137b473cc869d0047cbea45.mp4",
+            "39e097037c20f2f78165a62d.mp4",
+            "9137b473cc869d0047cbea45",
+            "1234567890123",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ] {
+            assert!(looks_like_hash_name(bad), "应判定为文件名式标题: {bad}");
+        }
+        // 必须保留（真实剧集标题）
+        for good in [
+            "一口老井通三代我在九零年代带下岗女工翻身 第1集",
+            "第1集",
+            "50块钱的寿宴",
+            "S01E03",
+        ] {
+            assert!(!looks_like_hash_name(good), "不应误伤真实标题: {good}");
+        }
+    }
 
     /// [lc-1748] http-header-fields 的 obs-fold 硬约束：字段分隔符必须是 `,` 而非 `, `。
     /// 实测（本机 mpv + 本地 HTTP 探针）：`, ` 分隔时 ffmpeg 把带前导空格的第二个字段

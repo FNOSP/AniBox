@@ -477,6 +477,13 @@ async fn launch_mpv(
             let _ = m
                 .command(json!(["set", "force-media-title", title]))
                 .await;
+            // [lc-2106] 窗口标题（mpv 的 `title` 属性）单独设：短剧单条 loadfile 时
+            // 窗口标题会退化成 URL 末段的 hash（`39e097...mp4`）——用户直接看到「一串数字」。
+            // media-title / force-media-title 都只影响 OSD 与脚本读到的标题，窗口标题栏
+            // 由 `title` 属性决定（默认回退到文件名）。
+            let _ = m
+                .command_no_reply(json!(["set", "title", title]))
+                .await;
             // [lc-1772] 在线源换片：先清弹幕脚本的会话内匹配缓存（弹弹play 干净标题等
             // 残留会把上一部片的弹幕搜给本片），必须在 loadfile 之前广播才赶在
             // file-loaded 自动流程之前生效。库内播放（headers=None）不广播：

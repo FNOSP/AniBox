@@ -65,6 +65,9 @@ pub struct MpvSession {
     /// 用「比对值」而非「布尔标记」：镜像值与当前值相同时 mpv 不发事件，残留的
     /// 布尔标记会把之后一次真实的用户操作误吞。
     fs_expect: Arc<Mutex<Option<bool>>>,
+    /// [lc-2101] 竖屏片源标志（短剧）：file-loaded 后按视频真实比例精确设窗口。
+    /// 会话常驻，复用会话切换横竖屏时由 `set_vertical` 更新（不用重启 mpv）。
+    vertical: Arc<std::sync::atomic::AtomicBool>,
 }
 
 unsafe impl Send for MpvSession {}
@@ -214,7 +217,57 @@ async fn adopt_window_owner(app: AppHandle, pid: u32) {
 ///
 /// mpv 的 `--geometry` 在 Windows 上按**物理像素**解释（150% 缩放实测：
 /// geometry=1620x911 → `osd-dimensions` 就是 1620x911，`display-hidpi-scale=1.5`）。
-fn startup_geometry(app: &AppHandle) -> Option<String> {
+/// [lc-2101] 竖屏精确调窗：按视频真实宽高比算窗口尺寸并下发 `set geometry`。
+///
+/// **为什么不用 --autofit / --geometry 命令行**：mpv 会话是常驻复用的，命令行参数只在
+/// 进程首次启动时生效；第二次起播走 IPC loadfile，旧几何残留（实测横屏 2160x1215 卡在
+/// 竖屏片上，两侧黑边）。所以竖屏必须在 file-loaded 后用 IPC 设置。
+///
+/// 尺寸口径：高度对齐主窗高度（不超过工作区 94%），宽度 = 高度 × 视频宽高比 —— 窗口
+/// 与视频同比例、mpv 内部零留白，**任何比例的竖屏源都不会有黑边**。
+/// 返回要写入 IPC 的一行 JSON；拿不到主窗/尺寸异常时返回 None（保持原窗口）。
+fn vertical_window_cmd(app: AppHandle, vw: i64, vh: i64) -> Option<String> {
+    if vw <= 0 || vh <= 0 || vw > 8192 || vh > 8192 {
+        return None;
+    }
+    let win = app.get_webview_window("main")?;
+    let size = win.inner_size().ok()?;
+    let area = win
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|m| (m.work_area().size.width, m.work_area().size.height));
+    let h = vertical_height_for(size.height, area) as f64;
+    let aspect = vw as f64 / vh as f64;
+    let mut w = h * aspect;
+    let mut hh = h;
+    if let Some((aw, ah)) = area {
+        if aw > 0 && ah > 0 {
+            let max_w = aw as f64 * 0.94;
+            let max_h = ah as f64 * 0.94;
+            if w > max_w {
+                w = max_w;
+                hh = w / aspect;
+            }
+            if hh > max_h {
+                hh = max_h;
+                w = hh * aspect;
+            }
+        }
+    }
+    let (w, hh) = ((w.round() as u32).max(1), (hh.round() as u32).max(1));
+    crate::libmpv::trace(&format!(
+        "[lc-2101] 竖屏窗口按真实比例设为 {w}x{hh}（视频 {vw}x{vh}，比例 {aspect:.4}）"
+    ));
+    // geometry 是运行时属性：`WxH` 会把窗口设成该尺寸并按视频留边，配合
+    // keepaspect-window=yes + 同比例尺寸 → 零黑边。
+    Some(
+        json!({ "command": ["set", "geometry", format!("{w}x{hh}")] }).to_string() + "
+",
+    )
+}
+
+fn startup_geometry(app: &AppHandle, vertical: bool) -> Option<String> {
     let win = app.get_webview_window("main")?;
     let size = win.inner_size().ok()?;
     if size.width < 200 || size.height < 200 {
@@ -227,12 +280,52 @@ fn startup_geometry(app: &AppHandle) -> Option<String> {
         .flatten()
         .map(|m| (m.work_area().size.width, m.work_area().size.height));
 
+    if vertical {
+        // [lc-2101] 竖屏（短剧）：启动先用高度的**粗估**开窗（此时还不知道真实视频比例），
+        // 真正的"零黑边"由 file-loaded 后的 set_vertical_window 按 video-params 精确设。
+        // 为什么不用 --autofit：它是**启动期选项**，而 mpv 会话是常驻复用的——第二次起播
+        // 走 IPC loadfile，命令行参数不重新生效，autofit 不会应用（实测 --geometry 残留
+        // 横屏 2160x1215）。所以竖屏必须走"加载后 IPC 设窗口"这条路。
+        let h = vertical_height_for(size.height, area);
+        let w = (h as f64 * 9.0 / 16.0).round() as u32;
+        crate::libmpv::trace(&format!(
+            "[lc-2101] mpv 启动窗口 = {w}x{h}（竖屏粗估，加载后按实际比例精确调整；主窗 {}x{}）",
+            size.width, size.height
+        ));
+        return Some(format!("--geometry={w}x{h}"));
+    }
+
     let (w, h) = window_size_for(size.width, area);
     crate::libmpv::trace(&format!(
-        "[lc-2053] mpv 启动窗口 = {w}x{h}（主窗 {}x{}，工作区 {area:?}）",
+        "[lc-2101] mpv 启动窗口 = {w}x{h}（横屏；主窗 {}x{}，工作区 {area:?}）",
         size.width, size.height
     ));
     Some(format!("--geometry={w}x{h}"))
+}
+
+/// [lc-2101] 竖屏（短剧）窗口高度：对齐主窗高度，但不超过工作区的 94%。
+/// 宽度不在这里算 —— 由 mpv 的 --autofit 按视频真实宽高比推导（零黑边）。
+/// 纯函数，便于单测。
+fn vertical_height_for(app_h: u32, area: Option<(u32, u32)>) -> u32 {
+    const AREA_USE: f64 = 0.94;
+    const MIN_H: u32 = 480;
+    let mut h = app_h.max(MIN_H) as f64;
+    if let Some((aw, ah)) = area {
+        if aw > 0 && ah > 0 {
+            let max_h = ah as f64 * AREA_USE;
+            if h > max_h {
+                h = max_h;
+            }
+            // 宽度也要装得下：竖屏窗口宽 = 高 × 视频比例，最宽的竖屏按 3:4 估上界，
+            // 超过工作区宽 94% 时按宽度反推高度，避免窗口横向出屏。
+            let widest = h * (3.0 / 4.0);
+            let max_w = aw as f64 * AREA_USE;
+            if widest > max_w {
+                h = max_w / (3.0 / 4.0);
+            }
+        }
+    }
+    (h.round() as u32).max(MIN_H)
 }
 
 /// [lc-2053] 由主窗物理宽度推 mpv 窗口尺寸：宽度对齐主窗，高度按 16:9 反推。
@@ -266,6 +359,12 @@ fn window_size_for(app_w: u32, area: Option<(u32, u32)>) -> (u32, u32) {
 }
 
 impl MpvSession {
+    /// [lc-2101] 设置竖屏标志（复用会话时切换横竖屏；下一次 file-loaded 生效）。
+    pub fn set_vertical(&self, vertical: bool) {
+        self.vertical
+            .store(vertical, std::sync::atomic::Ordering::Release);
+    }
+
     /// 拉起独立 mpv 进程并连上 IPC（幂等：实例常驻，播放/停止只切播放状态）
     ///
     /// `initial_url`：启动即加载的播放列表/直链（None = idle 启动，等 loadfile）。
@@ -282,9 +381,13 @@ impl MpvSession {
         initial_url: Option<String>,
         force_title: Option<String>,
         extra_args: Vec<String>,
+        // [lc-2101] 竖屏（短剧）：窗口按 --autofit 高度自适应，宽度跟随视频真实比例（零黑边）
+        vertical: bool,
     ) -> Result<Arc<MpvSession>, String> {
         let name = format!("anibox-mpv-{}", std::process::id());
         let path = pipe_path(&name);
+        // [lc-2101] 竖屏标志：存进会话，每次 loadfile 前可更新（复用会话也能换横竖屏）
+        let vertical_flag = Arc::new(std::sync::atomic::AtomicBool::new(vertical));
         crate::libmpv::trace_reset(&format!("launch(mpv.exe) pid={}", std::process::id()));
 
         // [lc-2002] 播放器皮肤互斥：mpv 只加载 scripts/ 下的 OSC，起播前把选中的那套搬进去。
@@ -342,7 +445,7 @@ impl MpvSession {
         let mut args = args.to_vec();
         // [lc-2053] 启动窗口 = 主窗物理宽度 × 16:9 反推高度：和软件差不多大，
         // 且 16:9 片源正好铺满不留上下黑边。装不进工作区时 window_size_for 收边。
-        if let Some(geo) = startup_geometry(&app) {
+        if let Some(geo) = startup_geometry(&app, vertical) {
             args.push(geo);
         }
         // [lc-2075] 玻璃模糊关：modernz 不再挂载玻璃 shader（发蓝机器的自救开关）
@@ -489,6 +592,7 @@ impl MpvSession {
             next_id: next_id.clone(),
             pid: pid_slot.clone(),
             fs_expect: fs_expect.clone(),
+            vertical: vertical_flag.clone(),
         });
 
         // ── 3) 读线程：事件 → tauri emit；回包 → 唤醒等待者
@@ -502,6 +606,8 @@ impl MpvSession {
             let app2 = app.clone();
             let pending2 = pending.clone();
             let fs_expect2 = fs_expect.clone();
+        // [lc-2101] 竖屏标志：会话常驻，每次 loadfile 前由 set_vertical 更新
+        let vertical2 = vertical_flag.clone();
         // [lc-101] start-file → file-loaded 的耗时（"拉取半天"到底花在哪一步，有数可查）
         let load_started2: Arc<Mutex<Option<std::time::Instant>>> = Arc::new(Mutex::new(None));
         // [title] 逐集标题回填状态机（整季 M3U 专用，见下方 start-file/file-loaded 分支）：
@@ -518,6 +624,11 @@ impl MpvSession {
                 let first_event = std::sync::atomic::AtomicBool::new(true);
                 let mut pos_req: Option<u64> = None;
                 let mut title_req: Option<u64> = None;
+                // [lc-2101] 竖屏调窗状态机：file-loaded → 读 video-params → 精确设几何。
+                let mut vwh_req: Option<u64> = None;
+                let mut vwh_stage = 0u8; // 0=空闲 1=等 video-params/w 2=等 video-params/h
+                let mut vwh_w: i64 = 0;
+                let mut vwh_h: i64 = 0;
                 let reader = BufReader::new(read_file);
                 for line in reader.lines() {
                     let Ok(line) = line else { break };
@@ -528,6 +639,42 @@ impl MpvSession {
                         continue;
                     };
                     if let Some(rid) = v.get("request_id").and_then(|r| r.as_u64()) {
+                        // [lc-2101] 竖屏调窗：先取 w 再取 h，两者齐了按真实比例设窗口。
+                        if vwh_req == Some(rid) {
+                            vwh_req = None;
+                            let val = v.get("data").and_then(|d| d.as_i64()).unwrap_or(0);
+                            if val > 0 {
+                                if vwh_stage == 1 {
+                                    vwh_w = val;
+                                    vwh_stage = 2;
+                                    let rid2 = next_id2.fetch_add(1, Ordering::SeqCst);
+                                    vwh_req = Some(rid2);
+                                    let line = json!({
+                                        "command": ["get_property", "video-params/h"],
+                                        "request_id": rid2,
+                                    })
+                                    .to_string()
+                                        + "
+";
+                                    if let Some(f) = tx.lock().unwrap().as_mut() {
+                                        let _ = f.write_all(line.as_bytes());
+                                        let _ = f.flush();
+                                    }
+                                } else if vwh_stage == 2 {
+                                    vwh_h = val;
+                                    vwh_stage = 0;
+                                    if let Some(line) = vertical_window_cmd(app2.clone(), vwh_w, vwh_h) {
+                                        if let Some(f) = tx.lock().unwrap().as_mut() {
+                                            let _ = f.write_all(line.as_bytes());
+                                            let _ = f.flush();
+                                        }
+                                    }
+                                }
+                            } else {
+                                vwh_stage = 0;
+                            }
+                            continue;
+                        }
                         // [title] 逐集标题回填：pos 回包 → 取该条 #EXTINF 标题；标题回包 → 写回。
                         if pos_req == Some(rid) {
                             pos_req = None;
@@ -599,6 +746,23 @@ impl MpvSession {
                                     .unwrap_or(0);
                                 crate::libmpv::trace(&format!("mpv file-loaded（媒体就绪，加载耗时 {took}ms）"));
                                 let _ = app2.emit("mpv-load", json!({ "phase": "loaded" }));
+                                // [lc-2101] 竖屏：按真实视频比例精确设窗口（零黑边）
+                                if vertical2.load(std::sync::atomic::Ordering::Acquire) {
+                                    let rid2 = next_id2.fetch_add(1, Ordering::SeqCst);
+                                    vwh_req = Some(rid2);
+                                    vwh_stage = 1;
+                                    let line = json!({
+                                        "command": ["get_property", "video-params/w"],
+                                        "request_id": rid2,
+                                    })
+                                    .to_string()
+                                        + "
+";
+                                    if let Some(f) = tx.lock().unwrap().as_mut() {
+                                        let _ = f.write_all(line.as_bytes());
+                                        let _ = f.flush();
+                                    }
+                                }
                                 // [lc-1841] start 只作用于本次加载（续播 seek 在加载时已消费）：
                                 // file-loaded 即清回 none，整季列表自动切下一集不会被误 seek。
                                 {

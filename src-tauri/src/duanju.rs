@@ -323,9 +323,10 @@ pub async fn duanju_play(
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| "短剧".to_string());
-    let http_headers = crate::player::HttpHeaders::new(referer, ua);
+    let mut http_headers = crate::player::HttpHeaders::new(referer, ua);
+    // [lc-2101] 短剧 = 竖屏片源：播放器窗口按视频真实比例自适应（零黑边）
+    http_headers.vertical = true;
     // extra 逐条塞进 HttpHeaders（referer/ua 已单列）
-    let mut http_headers = http_headers;
     for (k, v) in extra {
         if k.eq_ignore_ascii_case("referer") || k.eq_ignore_ascii_case("user-agent") {
             continue;

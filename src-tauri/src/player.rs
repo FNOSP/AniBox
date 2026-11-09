@@ -42,6 +42,9 @@ pub struct HttpHeaders {
     /// `--demuxer-lavf-o=decryption_key=...`（红果 HEVC 加密，不给 key mpv 解出乱码 NAL）。
     /// 只在新建会话时随命令行下发；复用会话时经 IPC 逐项 set（见 launch_mpv 两处分支）。
     pub mpv_opts: Vec<String>,
+    /// [lc-2101] 竖屏片源（短剧）：启动窗口走 `--autofit=高`，宽度跟随视频真实比例，
+    /// 避免固定 16:9 窗口给竖屏留下左右黑边。
+    pub vertical: bool,
 }
 
 impl HttpHeaders {
@@ -55,6 +58,7 @@ impl HttpHeaders {
             user_agent: norm(user_agent),
             extra: Vec::new(),
             mpv_opts: Vec::new(),
+            vertical: false,
         }
     }
 
@@ -432,8 +436,11 @@ async fn launch_mpv(
     }
     // [lc-2093] 直播/直链网络流抗卡顿缓存：mpv 对直播流默认只预读 **1 秒**
     // （demuxer-readahead-secs 默认 1），网络一抖就「播一两秒 → 停下缓冲一会」。
-    // 预读提到 15 秒 + lavf 层断线自动重连；点播/本地文件同样无害（点播多缓冲只会
-    // 更稳，内存仍由 demuxer-max-bytes 默认 150MiB 封顶；本地文件这两个选项无感知）。
+    //
+    // [lc-2096] 上一条把重连参数放错层（`--stream-lavf-o` 只作用于 http:// 流对象，
+    // HLS 分片下载走 demuxer 层的 lavf 选项）—— 这里补 `--demuxer-lavf-o`，
+    // 并显式给够缓存窗口：直播 playlist 常只有 3-5 段（~25 秒），`demuxer-max-bytes`
+    // 才是真正的深度上限（默认 150MiB 在 4K 源下只够几秒，反而先撞上限）。
     if direct {
         extra.push("--demuxer-readahead-secs=15".into());
         extra.push("--demuxer-max-bytes=256MiB".into());
@@ -519,6 +526,33 @@ async fn launch_mpv(
                     ]))
                     .await;
             }
+            // [lc-2101] 复用会话：先同步竖屏标志（下一次 file-loaded 按真实比例调窗口）
+            if let Some(h) = headers {
+                m.set_vertical(h.vertical);
+            }
+            // [lc-2101] 双 UI 叠加修复：`--script-opts-append=uosc-disable_elements=...`
+            // 是**启动期选项**，复用会话时不会重新应用；而 uosc 的 controls/timeline 一旦
+            // 建过就一直在（玻璃皮肤的 modernz 底栏与它叠在一起）。uosc 支持运行时消息
+            // `disable-elements <client> <ids>`（Manager:disable → destroy 已建元素），
+            // 每次 loadfile 前按当前皮肤重发一次，两套 UI 就不会同时出现。
+            {
+                let glass = state.config.read().await.player_skin == "glass";
+                if glass {
+                    let _ = m
+                        .command_no_reply(json!([
+                            "script-message",
+                            "disable-elements",
+                            "anibox",
+                            "top_bar,timeline,controls,volume,pause_indicator,buffering_indicator,window_border"
+                        ]))
+                        .await;
+                } else {
+                    // 切回原生皮肤：收掉本次会话加的禁用（空表 = 全部恢复）
+                    let _ = m
+                        .command_no_reply(json!(["script-message", "disable-elements", "anibox", ""]))
+                        .await;
+                }
+            }
             // [lc-2100] 复用会话：mpv_opts 逐项 set（`--key=value` → set key value）。
             // demuxer-lavf-o 是**打开流时读取**的选项，loadfile 前设好即可生效；
             // 旧值残留会污染后续普通视频，故先清空再写本次的值。
@@ -571,6 +605,7 @@ async fn launch_mpv(
                 Some(url.to_string()),
                 Some(title.to_string()),
                 extra,
+                headers.map(|h| h.vertical).unwrap_or(false),
             )
             .await?
         }

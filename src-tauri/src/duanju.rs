@@ -28,6 +28,24 @@ fn core_slot() -> &'static Mutex<Option<libloading::Library>> {
 
 static READY: AtomicBool = AtomicBool::new(false);
 
+/// [lc-2097] 请求序号：上游 nativeBeginPlayback 要求节流阀 `sequence` **严格递增**
+/// （`sequence <= engine.playbackSequence` 直接返回 context.Canceled）。Dart 客户端用
+/// `++_playbackSequence`，本模块同理——每类会进节流阀的 action 各自递增。
+/// 键=action 名。
+static SEQUENCES: OnceLock<Mutex<std::collections::HashMap<&'static str, i64>>> = OnceLock::new();
+
+fn sequences_slot() -> &'static Mutex<std::collections::HashMap<&'static str, i64>> {
+    SEQUENCES.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+/// 取下一个序号（严格递增）。
+fn next_sequence(action: &'static str) -> i64 {
+    let mut slot = sequences_slot().lock().unwrap_or_else(|e| e.into_inner());
+    let cur = slot.entry(action).or_insert(0);
+    *cur += 1;
+    *cur
+}
+
 /// 上一次播放会话（resolve 会开本地流会话；下一次 resolve 前释放旧的，防泄漏）。
 static LAST_SESSION: OnceLock<Mutex<String>> = OnceLock::new();
 
@@ -154,7 +172,11 @@ async fn release_last_session() {
     if old.is_empty() {
         return;
     }
-    let _ = call_async(next_call_body("release", json!({ "playbackSession": old }))).await;
+    let mut body = next_call_body("release", json!({ "playbackSession": old }));
+    if let Some(o) = body.as_object_mut() {
+        o.insert("sequence".into(), json!(next_sequence("playback")));
+    }
+    let _ = call_async(body).await;
 }
 
 fn remember_session(plan: &Value) {
@@ -224,7 +246,8 @@ pub async fn duanju_resolve(
 ) -> Result<Value, String> {
     ensure_ready(&app).await?;
     release_last_session().await;
-    let plan = call_async(next_call_body(
+    // [lc-2097] sequence 必须**严格递增**（上游节流阀：seq <= 上次 → 立即 context.Canceled）
+    let mut body = next_call_body(
         "resolve",
         json!({
             "drama": drama,
@@ -233,8 +256,11 @@ pub async fn duanju_resolve(
             "quality": quality.unwrap_or(0),
             "force": false,
         }),
-    ))
-    .await?;
+    );
+    if let Some(o) = body.as_object_mut() {
+        o.insert("sequence".into(), json!(next_sequence("playback")));
+    }
+    let plan = call_async(body).await?;
     remember_session(&plan);
     Ok(plan)
 }
@@ -249,7 +275,11 @@ pub async fn duanju_release(_app: tauri::AppHandle, session: String) -> Result<(
     if session.is_empty() {
         return Ok(());
     }
-    call_async(next_call_body("release", json!({ "playbackSession": session }))).await?;
+    let mut body = next_call_body("release", json!({ "playbackSession": session }));
+    if let Some(o) = body.as_object_mut() {
+        o.insert("sequence".into(), json!(next_sequence("playback")));
+    }
+    call_async(body).await?;
     Ok(())
 }
 

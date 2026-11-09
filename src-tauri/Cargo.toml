@@ -45,6 +45,8 @@ aes-gcm = "0.10"
 # [upgrade-3.9] 旧 Electron 版访问码/密码是 AES-256-CBC(hex)，迁移时需解密后重加密为 GCM。
 # `aes` 本就是 aes-gcm 的传递依赖（Cargo.lock 已有 0.8.4），这里只是把它提升为直接依赖。
 aes = "0.8"
+# [lc-2109] 剧果等站源封面是 AES-128-CBC / XOR 混淆的二进制，解码需 CBC 模式包装
+cbc = { version = "0.1", features = ["alloc"] }
 # [lc-1500] 在线资源（Kazumi 规则源）：HTML 解析 + URL 拼接 + 直链正则
 scraper = "0.23"
 ego-tree = "0.10"

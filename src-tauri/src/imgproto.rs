@@ -115,10 +115,11 @@ fn resolve_target(path: &str) -> Result<Target, (u16, String)> {
         if !(url.starts_with("https://") || url.starts_with("http://")) {
             return Err((400, "bad dj cover scheme".into()));
         }
-        // 键带版本（v2）：lc-2091 首版曾把 heic 原字节 / octet-stream 误缓存，换键让
-        // 旧坏条目自然过期（30 天 TTL），不必扫盘清理。
+        // 键带版本：lc-2091 首版把 heic 原字节 / octet-stream 误缓存（v2 已换过一次），
+        // lc-2109 修好混淆封面（剧果 XOR/AES）后再升 v3 —— 否则旧的乱码图仍被命中。
+        // 旧条目 30 天 TTL 自然过期，不必扫盘清理。
         return Ok(Target::Public {
-            key: format!("img:dj:v2:{rest}"),
+            key: format!("img:dj:v3:{rest}"),
             url,
         });
     }
@@ -181,6 +182,51 @@ fn sniff_image_ct(bytes: &[u8]) -> Option<&'static str> {
     None
 }
 
+/// [lc-2109] 剧果等站源的封面是**混淆过的二进制**（量测熵 7.91/8，CDN 带 Referer 反而
+/// 403、无 Referer 回迷惑数据），WebView 当 octet-stream 拒渲染 ⇒ 整片裂图。
+/// 逻辑照抄 guoapp `nativeDecodeCover`：
+///   ① 已是图片 → 原样返回；
+///   ② `Salted__` 前缀（OpenSSL 加盐）先剥 16 字节，再 AES-128-CBC（key/iv 见下）解、
+///      去 PKCS#7 padding，解出图片格式则采用；
+///   ③ 回退 **XOR**：密钥 `2019ysapp7527` 循环异或**前 100 字节**（实测剧果即命中此路）。
+/// 解不出图片时原样返回（调用方按裂图占位，绝不 500）。
+fn decode_obfuscated_image(data: &[u8]) -> Option<Vec<u8>> {
+    if sniff_image_ct(data).is_some() || crate::heic::is_heic(data) {
+        return None; // 本来就是图片
+    }
+    // ② AES-128-CBC
+    let enc = if data.starts_with(b"Salted__") && data.len() > 16 {
+        &data[16..]
+    } else {
+        data
+    };
+    if !enc.is_empty() && enc.len() <= 20 << 20 {
+        use aes::cipher::{BlockDecryptMut, KeyIvInit};
+        type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
+        let mut buf = enc.to_vec();
+        let pad = (16 - buf.len() % 16) % 16;
+        buf.extend(std::iter::repeat(0u8).take(pad));
+        if let Ok(plain) = Aes128CbcDec::new(b"f5d965df75336270".into(), b"97b60394abc2fbe1".into())
+            .decrypt_padded_mut::<aes::cipher::block_padding::Pkcs7>(&mut buf)
+        {
+            let plain = plain.to_vec();
+            if sniff_image_ct(&plain).is_some() || crate::heic::is_heic(&plain) {
+                return Some(plain);
+            }
+        }
+    }
+    // ③ XOR（只作用于前 100 字节，其余原样）
+    const XOR_KEY: &[u8] = b"2019ysapp7527";
+    let mut plain = data.to_vec();
+    for i in 0..plain.len().min(100) {
+        plain[i] ^= XOR_KEY[i % XOR_KEY.len()];
+    }
+    if sniff_image_ct(&plain).is_some() || crate::heic::is_heic(&plain) {
+        return Some(plain);
+    }
+    None
+}
+
 fn plain(status: u16, msg: &str) -> Response<Vec<u8>> {
     Response::builder()
         .status(status)
@@ -219,6 +265,21 @@ async fn proxy_public(app: AppHandle, key: &str, url: &str) -> Response<Vec<u8>>
             return plain(status, &msg);
         }
     };
+    // [lc-2109] 混淆封面解码：剧果等站源的图是 XOR/AES 混淆过的二进制（熵 7.91/8）。
+    // 必须在 ct 矫正之前跑 —— 解完才知道真实格式。
+    if let Some(real) = decode_obfuscated_image(&bytes) {
+        let real_ct = sniff_image_ct(&real)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "image/jpeg".to_string());
+        crate::libmpv::trace(&format!(
+            "[img] 混淆封面已解码 {} 字节 → {} 字节（{}，{key}）",
+            bytes.len(),
+            real.len(),
+            real_ct
+        ));
+        ct = real_ct;
+        bytes = real;
+    }
     // [lc-2091] Content-Type 矫正：部分图床（剧果 lkkwip.cn 等）回 application/octet-stream，
     // WebView 的 <img> 对非 image/* 一律拒绝渲染（用户看到「裂图但日志全是成功」的根因）。
     // 按魔数嗅探矫正；嗅不出图魔数的不动（可能真是二进制）。
@@ -447,6 +508,24 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
 mod tests {
     use super::{bgm_img_url, fetch_public_image, public_client, resolve_target, BGM_IMG_BASE, BGM_MIRROR_BASE, TMDB_IMG_BASE};
 
+    /// [lc-2109] 混淆封面解码：XOR 路径（剧果实测）与「已经是图片则不解」两条。
+    #[test]
+    fn obfuscated_cover_decode() {
+        // ① 已是 JPEG → 不处理（返回 None，调用方原样透传）
+        let jpeg = [0xFFu8, 0xD8, 0xFF, 0xE0, 0, 0x10, b'J', b'F'];
+        assert!(super::decode_obfuscated_image(&jpeg).is_none());
+
+        // ② 真实剧果样本：XOR 混淆的 JPEG（tests/artifacts 下，缺失则跳过）
+        let sample = std::path::Path::new("../../tests/artifacts/jinguo_cover_enc.bin");
+        if sample.is_file() {
+            let enc = std::fs::read(sample).unwrap();
+            let out = super::decode_obfuscated_image(&enc)
+                .expect("XOR 混淆的剧果封面应能解出图片");
+            assert_eq!(&out[..3], &[0xFF, 0xD8, 0xFF], "应解出 JPEG 魔数");
+            assert!(out.len() > 1000, "解出的图过小: {}", out.len());
+        }
+    }
+
     /// [lc-2091] /__dj/ 路由：base64url 还原 + 仅放行 http(s)。
     #[test]
     fn dj_route_roundtrip_and_scheme_gate() {
@@ -457,7 +536,7 @@ mod tests {
         match resolve_target(&path) {
             Ok(super::Target::Public { key, url: got }) => {
                 assert_eq!(got, url);
-                assert!(key.starts_with("img:dj:v2:"));
+                assert!(key.starts_with("img:dj:v3:"));
             }
             _ => panic!("__dj 应解析为 Public"),
         }

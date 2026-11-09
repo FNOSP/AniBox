@@ -9,6 +9,7 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { DState } from "./shared";
 import { djImg } from "../../lib/images";
+import { AdultGateModal, ADULT_SOURCES, adultAckDone, markAdultAck } from "./AdultGateModal";
 import { Star as IcoStar, X as IcoXL } from "lucide-react";
 
 type DuanjuDrama = {
@@ -145,6 +146,8 @@ export function DuanjuPane() {
   const [favs, setFavs] = useState<FavDrama[]>(readFavs);
   const [favOpen, setFavOpen] = useState(false);
   const [sort, setSort] = useState<SortMode>("default"); // [lc-2112] 排序（纯前端）
+  // [lc-2115] 成人内容闸门：pendingAdult = 等着确认的目标站源（null = 不弹）
+  const [pendingAdult, setPendingAdult] = useState<string | null>(null);
   const [cats, setCats] = useState<{ id: string; name: string }[]>([]);
   const [cat, setCat] = useState("");
   const [query, setQuery] = useState("");
@@ -340,6 +343,12 @@ export function DuanjuPane() {
             type="button"
             className={`dj-chip${!favOpen && source === s.id ? " on" : ""}`}
             onClick={() => {
+              // [lc-2115] 红果之后的站源含成人内容：首次切换弹完整条款确认，
+              // 同意后写 localStorage 不再打扰（红果自身不拦）。
+              if (ADULT_SOURCES.has(s.id) && !adultAckDone()) {
+                setPendingAdult(s.id);
+                return;
+              }
               setFavOpen(false);
               setSource(s.id);
               setTerm("");
@@ -637,6 +646,22 @@ export function DuanjuPane() {
           </div>
         </div>,
         document.body,
+      )}
+
+      {/* [lc-2115] 成人内容闸门：确认后写入 localStorage 并切到该站源 */}
+      {pendingAdult && (
+        <AdultGateModal
+          onAgree={() => {
+            const target = pendingAdult;
+            markAdultAck();
+            setPendingAdult(null);
+            setFavOpen(false);
+            setSource(target);
+            setTerm("");
+            setQuery("");
+          }}
+          onBack={() => setPendingAdult(null)}
+        />
       )}
     </div>
   );

@@ -425,9 +425,24 @@ async fn launch_mpv(
         }
         _ => Vec::new(),
     };
-    // [lc-2100] mpv 选项（如 CENC 的 demuxer-lavf-o=decryption_key=...）：命令行追加。
+    // [lc-2107] CENC 解密选项**先收集、不直接下发**：`--demuxer-lavf-o` 是同名选项，
+    // 后出现的会整条覆盖前面的。下方 direct 分支也会写 `--demuxer-lavf-o=reconnect=...`，
+    // 直接把 decryption_key 拼接在那条里（否则红果加密流丢 key → 有声音没画面）。
+    // 实测症状：日志里 demuxer-lavf-o 只剩 reconnect=1,...，`Invalid NAL unit size` 归零
+    // 但视频纯黑（数据是加密的，只是 NAL 头刚好没被识别成非法）。
+    let mut cenc_opts = String::new();
     if let Some(h) = headers {
-        extra.extend(h.mpv_opts.iter().cloned());
+        for opt in &h.mpv_opts {
+            // 只抽取 demuxer-lavf-o 的值，其余选项照旧追加
+            if let Some(val) = opt.strip_prefix("--demuxer-lavf-o=") {
+                if !cenc_opts.is_empty() {
+                    cenc_opts.push(',');
+                }
+                cenc_opts.push_str(val);
+            } else {
+                extra.push(opt.clone());
+            }
+        }
     }
     // [playlist] 多条目播放列表：命令行 `--playlist-start=<idx>` 指定起播集，
     // 与「先启动再 IPC jump」不同，起播零 IPC 依赖（启动期 IPC 会卡数秒，见 lib.rs lc-1559）。
@@ -446,12 +461,19 @@ async fn launch_mpv(
         extra.push("--demuxer-max-bytes=256MiB".into());
         extra.push("--demuxer-max-back-bytes=64MiB".into());
         // HLS/HTTP 分片的断线重连（demuxer 层才管分片；stream 层管整条流）
-        extra.push(
-            "--demuxer-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5".into(),
-        );
-        extra.push(
-            "--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5".into(),
-        );
+        // [lc-2107] 与 CENC 选项**合并成一条**：同名 --demuxer-lavf-o 后者覆盖前者。
+        let reconnect = "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5";
+        extra.push(format!(
+            "--demuxer-lavf-o={}{}{}",
+            reconnect,
+            if cenc_opts.is_empty() { "" } else { "," },
+            cenc_opts
+        ));
+        extra.push(format!("--stream-lavf-o={reconnect}"));
+    }
+    // direct=false 但带 CENC 的流（短剧本地流走这条）：单独下发
+    if !direct && !cenc_opts.is_empty() {
+        extra.push(format!("--demuxer-lavf-o={cenc_opts}"));
     }
     // [lc-1841] 续播点兜底：mpv 的 watch-later 在 Windows 强杀退出时会丢（见
     // mpv.rs shutdown 注释），显式 --start 用服务端进度保底起播；mpv.rs 会在首个
@@ -555,16 +577,37 @@ async fn launch_mpv(
             // 旧值残留会污染后续普通视频，故先清空再写本次的值。
             if let Some(h) = headers {
                 if h.has_mpv_opts() {
-                    let _ = m.command(json!(["set", "demuxer-lavf-o", ""])).await;
+                    // [lc-2107] 合并写：demuxer-lavf-o 是同名选项，多次 set 后者覆盖前者。
+                    // 把 CENC 的 decryption_key 与 short-land 直连所用的 reconnect 拼成一条，
+                    // 避免「设完密钥又被重连参数覆盖」（红果有声音没画面正是这个）。
+                    let mut lavf = String::new();
                     for opt in &h.mpv_opts {
                         let body = opt.trim_start_matches("--");
-                        if let Some((k, v)) = body.split_once('=') {
+                        if let Some(v) = body.strip_prefix("demuxer-lavf-o=") {
+                            if !lavf.is_empty() {
+                                lavf.push(',');
+                            }
+                            lavf.push_str(v);
+                        } else if let Some((k, v)) = body.split_once('=') {
                             let _ = m.command(json!(["set", k, v])).await;
                         }
                     }
+                    if direct {
+                        let reconnect = "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5";
+                        if !lavf.is_empty() {
+                            lavf.push(',');
+                        }
+                        lavf.push_str(reconnect);
+                    }
+                    let _ = m.command(json!(["set", "demuxer-lavf-o", lavf])).await;
                 } else {
-                    // 本次不是加密流：清掉上一部残留的 decryption_key 等 lavf 选项
-                    let _ = m.command_no_reply(json!(["set", "demuxer-lavf-o", ""]))
+                    // 本次不是加密流：清掉上一部残留的 decryption_key；直连流补回重连参数
+                    let lavf = if direct {
+                        "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5".to_string()
+                    } else {
+                        String::new()
+                    };
+                    let _ = m.command_no_reply(json!(["set", "demuxer-lavf-o", lavf]))
                         .await;
                 }
             }

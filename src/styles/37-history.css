@@ -91,9 +91,9 @@
   color: var(--text-strong);
 }
 .hist-pill.active {
-  background: rgb(var(--accent-rgb) / 0.12);
-  border-color: rgb(var(--accent-rgb) / 0.28);
-  color: var(--accent);
+  background: var(--sel-bg);
+  border-color: var(--line-strong);
+  color: var(--text-strong);
   font-weight: 600;
 }
 
@@ -254,7 +254,7 @@
 .hist-heat {
   position: relative;
   /* 浅色档位（GitHub light） */
-  --hist-hm-0: rgba(60, 42, 30, 0.07);
+  --hist-hm-0: rgba(120, 120, 128, 0.12);
   --hist-hm-1: #9be9a8;
   --hist-hm-2: #40c463;
   --hist-hm-3: #30a14e;
@@ -1153,9 +1153,9 @@ html:not(.dark) .hist-detail-scrim {
   border-radius: 20px;
   position: relative;
   overflow: hidden;
-  background: linear-gradient(165deg, rgba(251, 248, 244, 0.97), rgba(242, 236, 229, 0.99));
-  color: #2c2119;
-  box-shadow: 0 24px 80px rgba(24, 16, 10, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+  background: linear-gradient(165deg, rgba(251, 251, 253, 0.97), rgba(240, 240, 242, 0.99));
+  color: rgba(29, 29, 31, 0.9);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(255, 255, 255, 0.6);
 }
 .wr-loading {
   position: absolute;
@@ -1163,7 +1163,7 @@ html:not(.dark) .hist-detail-scrim {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #6b5a4c;
+  color: rgba(60, 60, 67, 0.72);
   font-size: 14px;
 }
 
@@ -1203,7 +1203,7 @@ html:not(.dark) .hist-detail-scrim {
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 4px;
-  color: #8c7b6d;
+  color: rgba(60, 60, 67, 0.6);
 }
 .wr-grad {
   background: var(--accent-grad);
@@ -1214,19 +1214,19 @@ html:not(.dark) .hist-detail-scrim {
 .wr-h1 {
   font-size: 24px;
   font-weight: 900;
-  color: #262c44;
+  color: rgba(29, 29, 31, 0.92);
   margin: 14px 0 6px;
 }
 .wr-sub {
   font-size: 12px;
-  color: #6b5a4c;
+  color: rgba(60, 60, 67, 0.72);
   margin-bottom: 8px;
 }
 .wr-accent {
-  color: #a8390e;
+  color: #0066cc;
 }
 .wr-muted-blk {
-  color: #6b5a4c;
+  color: rgba(60, 60, 67, 0.72);
   line-height: 1.9;
   margin-top: 10px;
 }
@@ -1235,7 +1235,7 @@ html:not(.dark) .hist-detail-scrim {
 .wr-cover-lead {
   font-size: 15px;
   font-weight: 700;
-  color: #6b5a4c;
+  color: rgba(60, 60, 67, 0.72);
 }
 .wr-cover-big {
   display: flex;
@@ -1253,7 +1253,7 @@ html:not(.dark) .hist-detail-scrim {
 .wr-unit {
   font-size: 20px;
   font-weight: 800;
-  color: #262c44;
+  color: rgba(29, 29, 31, 0.92);
 }
 .wr-cover-row,
 .wr-sum-row {
@@ -1270,7 +1270,7 @@ html:not(.dark) .hist-detail-scrim {
   display: block;
   font-size: 24px;
   font-weight: 900;
-  color: #262c44;
+  color: rgba(29, 29, 31, 0.92);
 }
 .wr-sum-row b {
   font-size: 30px;
@@ -1278,16 +1278,16 @@ html:not(.dark) .hist-detail-scrim {
 .wr-cover-row span,
 .wr-sum-row span {
   font-size: 11px;
-  color: #6b5a4c;
+  color: rgba(60, 60, 67, 0.72);
 }
 .wr-sum-h {
   font-size: 26px;
   font-weight: 900;
-  color: #262c44;
+  color: rgba(29, 29, 31, 0.92);
 }
 .wr-note {
   font-size: 11px;
-  color: #a8390e;
+  color: #0066cc;
   background: rgb(var(--accent-rgb) / 0.1);
   border: 1px solid rgb(var(--accent-rgb) / 0.28);
   border-radius: 8px;
@@ -1301,7 +1301,7 @@ html:not(.dark) .hist-detail-scrim {
   position: absolute;
   bottom: 20px;
   font-size: 10.5px;
-  color: #8c7b6d;
+  color: rgba(60, 60, 67, 0.6);
 }
 
 /* 月度条形 */
@@ -1325,7 +1325,7 @@ html:not(.dark) .hist-detail-scrim {
   color: transparent;
 }
 .wr-bpeak.on {
-  color: #a8390e;
+  color: #0066cc;
 }
 .wr-bar {
   width: 60%;
@@ -1338,7 +1338,7 @@ html:not(.dark) .hist-detail-scrim {
 }
 .wr-blab {
   font-size: 10px;
-  color: #6b5a4c;
+  color: rgba(60, 60, 67, 0.72);
 }
 
 /* 时刻分布 */
@@ -1366,7 +1366,7 @@ html:not(.dark) .hist-detail-scrim {
 }
 .wr-hlab {
   font-size: 8.5px;
-  color: #6b5a4c;
+  color: rgba(60, 60, 67, 0.72);
   height: 12px;
 }
 
@@ -1397,14 +1397,14 @@ html:not(.dark) .hist-detail-scrim {
 .wr-topname {
   font-size: 14px;
   font-weight: 700;
-  color: #262c44;
+  color: rgba(29, 29, 31, 0.92);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .wr-topmeta {
   font-size: 11px;
-  color: #6b5a4c;
+  color: rgba(60, 60, 67, 0.72);
   flex-shrink: 0;
 }
 .wr-topbar {
@@ -1438,7 +1438,7 @@ html:not(.dark) .hist-detail-scrim {
   cursor: pointer;
 }
 .wr-year option {
-  color: #262c44;
+  color: rgba(29, 29, 31, 0.92);
 }
 .wr-nav {
   width: 40px;

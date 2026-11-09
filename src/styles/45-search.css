@@ -206,8 +206,8 @@ html.dark .search-panel {
   transform: none;
 }
 .search-tab.on {
-  background: rgb(var(--accent-rgb) / 0.12);
-  color: var(--accent);
+  background: var(--sel-bg);
+  color: var(--text-strong);
   }
 
 /* ── 结果区 ── */

@@ -1,74 +1,80 @@
 /* ═══════════════════════════════════════════════════════════════
-   AniBox —— 复刻主仓库 embyWall 美化后的视觉语言
-   深色玻璃 · 大圆角 · 柔和阴影 · hover 上浮光晕 · Netflix 风 hero
+   AniBox —— 深色玻璃 · 大圆角 · 柔和阴影 · Netflix 风 hero
    body 透明由 DWM acrylic 系统背景材质透出
 
-   [lc-2110] 配色改为「朱砂」：暖中性面 + 单一陶土色强调。
-   动因是原实现里**同一个蓝紫双色相渐变**被当成万能高亮（侧栏选中、顶部胶囊、
-   筛选 chip、设置页签、播放按钮、选集格共 53 处），再配 45 处彩色投影光晕 ——
-   饱和渐变 + 发光是「廉价科技感」的标准配方，也是整屏 AI 味的来源。
-   这一版的原则（对齐 Apple HIG「单一 tint + 语义色」）：
-     · 只有一个强调色相（陶土/朱砂），不再有第二色相渐变；
-     · `--accent` 是**文字/描边/图标**用的色（深底上要亮、浅底上要暗，故分主题）；
-     · `--accent-solid` 是**实心填充**用的色（要压住白字的 4.5:1 对比，故比 accent 更深）；
-     · `--accent-grad` **保留变量名但不再是渐变** —— 存量 53 处 `background: var(--accent-grad)`
-       因此全部降级为平涂，不用逐处改；
-     · 选中态优先「淡底 + 描边」，整屏实心色块只留给唯一主操作（主按钮/播放键）。
+   [lc-2111] 配色改为「苹果系统色」：中性灰阶 + 单一系统蓝 + 柔和微光。
+   演进：lc-2110 先去掉蓝紫双色相渐变（53 处渐变 + 45 处彩色光晕 = 廉价科技感），
+   但换成陶土暖色后用户反馈「看得不舒服」—— 暖色面板与冷调海报墙冷暖冲突。
+   这一版回到苹果 HIG 的做法：
+     · 中性色用**无彩灰**（不偏暖也不偏冷），让海报本身承担所有色相；
+     · 强调色只用系统蓝一个：`--accent`（文字/描边/图标）与 `--accent-solid`
+       （实心填充，压白字）分开取值 —— 深色主题下这两个需求在数学上无法用同一个
+       蓝色同时满足 4.5:1，必须拆开；
+     · **选中态改用中性灰底**（macOS 侧栏/分段控件的做法），不靠彩色填充 ——
+       对比度天然 13:1 以上，也不跟海报抢色；
+     · 背景用多层极淡径向微光（非彩色、非渐变条）营造柔和层次，靠留白与层级
+       而不是靠色块来组织界面；
+     · `--accent-grad` 保留变量名、值是平涂 —— 存量 53 处引用一次性降级。
    ═══════════════════════════════════════════════════════════════ */
 
 :root {
-  font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   font-size: 14px;
   color: var(--text);
-  /* ── 浅色（默认主题）：暖纸底 + 压深的陶土色文字 ── */
-  --bg-0: rgba(250, 248, 244, 0.4);
-  --bg-1: rgba(247, 244, 239, 0.55);
-  --bg-2: rgba(243, 239, 233, 0.72);
-  --bg-3: rgba(253, 252, 250, 0.9);
-  --line: rgba(60, 45, 35, 0.1);
-  --line-strong: rgba(60, 45, 35, 0.18);
-  /* 浅色底上的陶土色：对 #faf8f4 页底 5.45:1、白字压在上面 5.79:1，都过 AA。 */
-  --accent: #b8390e;
-  --accent-solid: #b8390e;
+  /* ── 浅色（默认）：苹果浅灰面 + 系统蓝，无彩中性 ── */
+  --bg-0: rgba(245, 245, 247, 0.4);
+  --bg-1: rgba(242, 242, 245, 0.55);
+  --bg-2: rgba(238, 238, 241, 0.72);
+  --bg-3: rgba(255, 255, 255, 0.9);
+  --line: rgba(0, 0, 0, 0.08);
+  --line-strong: rgba(0, 0, 0, 0.14);
+  /* 系统蓝（文字/描边）：苹果 #0066cc，对白卡 5.57:1、对页底 5.11:1。 */
+  --accent: #0066cc;
+  /* 实心填充：苹果按钮蓝 #0071e3，白字压其上 4.70:1。 */
+  --accent-solid: #0071e3;
   --accent-on: #ffffff;
   /* rgb 通道三元组：给 `rgb(var(--accent-rgb) / 0.45)` 派生淡底/描边用。
      用通道变量而不是 color-mix()，是因为本项目最低支持 WebView2 109，而
      color-mix 要 ≥111 —— 在 109/110 上会整条声明失效（淡底/描边直接消失）。 */
-  --accent-rgb: 184 57 14;
-  --accent-2: #b8683a;
-  /* 中性投影色通道：彩色投影统一换成它，只留阴影的体积感、不留色偏。 */
-  --shadow-rgb: 58 42 30;
-  /* 变量名沿用历史的 --accent-grad，值已经是**平涂**（见文件头说明）。 */
+  --accent-rgb: 0 102 204;
+  --accent-2: #5ac8fa;
+  /* 中性投影色通道：所有阴影走纯黑低 alpha，不带色偏。 */
+  --shadow-rgb: 0 0 0;
+  /* 变量名沿用历史的 --accent-grad，值是**平涂**（见文件头说明）。 */
   --accent-grad: var(--accent-solid);
+  /* 选中态中性底（macOS 侧栏语义）：不用彩色，对比度 13:1+ */
+  --sel-bg: rgba(0, 0, 0, 0.06);
+  --sel-bg-strong: rgba(0, 0, 0, 0.1);
   --gold: #ffd479;
-  --shadow-card: 0 10px 30px rgba(60, 42, 30, 0.12);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
   --radius: 10px;
-  --text-strong: rgba(36, 28, 22, 0.94);
-  --text: rgba(36, 28, 22, 0.82);
-  --text-2: rgba(36, 28, 22, 0.72);
-  --muted: rgba(82, 70, 60, 0.62);
-  --hover: rgba(60, 42, 30, 0.06);
-  --hover-strong: rgba(60, 42, 30, 0.11);
-  --input-bg: rgba(60, 42, 30, 0.07);
-  --ph-bg: rgba(60, 42, 30, 0.05);
-  --skel-base: rgba(60, 42, 30, 0.06);
-  --skel-shine: rgba(60, 42, 30, 0.13);
+  /* 苹果语义文字层级：label / secondaryLabel / tertiaryLabel */
+  --text-strong: rgba(29, 29, 31, 0.96);
+  --text: rgba(29, 29, 31, 0.86);
+  --text-2: rgba(60, 60, 67, 0.72);
+  --muted: rgba(60, 60, 67, 0.6);
+  --hover: rgba(0, 0, 0, 0.04);
+  --hover-strong: rgba(0, 0, 0, 0.08);
+  --input-bg: rgba(120, 120, 128, 0.12);
+  --ph-bg: rgba(120, 120, 128, 0.08);
+  --skel-base: rgba(120, 120, 128, 0.1);
+  --skel-shine: rgba(120, 120, 128, 0.18);
   --option-bg: #ffffff;
   /* 实底面板色：性能模式（.perf，关闭磨砂后）与关闭询问弹窗使用。
      必须是**不透明**颜色 —— 半透明面板在没有 backdrop-filter 时会直接透出桌面。 */
-  --panel: #fbf9f6;
-  --glass-bg: rgba(255, 253, 250, 0.56);
-  --glass-border: rgba(60, 42, 30, 0.16);
-  --glass-btn-bg: rgba(60, 42, 30, 0.06);
-  --glass-btn-hover: rgba(60, 42, 30, 0.11);
-  --glass-line: rgba(60, 42, 30, 0.13);
-  --glass-text: #2a2119;
-  --glass-text-2: rgba(42, 33, 25, 0.78);
-  --glass-text-dim: rgba(42, 33, 25, 0.55);
-  --toast-bg: rgba(253, 252, 250, 0.94);
-  --err-bg: rgba(229, 72, 77, 0.1);
-  --err-border: rgba(214, 69, 74, 0.45);
-  --err-text: #a5292f;
+  --panel: #ffffff;
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(0, 0, 0, 0.1);
+  --glass-btn-bg: rgba(120, 120, 128, 0.12);
+  --glass-btn-hover: rgba(120, 120, 128, 0.2);
+  --glass-line: rgba(0, 0, 0, 0.08);
+  --glass-text: #1d1d1f;
+  --glass-text-2: rgba(60, 60, 67, 0.78);
+  --glass-text-dim: rgba(60, 60, 67, 0.6);
+  --toast-bg: rgba(255, 255, 255, 0.94);
+  --err-bg: rgba(255, 59, 48, 0.1);
+  --err-border: rgba(255, 59, 48, 0.42);
+  --err-text: #c4261c;
   /* [lc-1426] 首页**统一内容左边距**（用户反馈：轮播文字与下方媒体库条/区块没对齐）。
      成因是三套基准各写各的：
        · 轮播文字 .mist-info  = `padding: 0 4% 163px`（4% 相对**轮播容器** .mist-item 宽）
@@ -89,49 +95,53 @@
 }
 
 html.dark {
-  /* ── 深色 ── */
-  --bg-0: rgba(15, 12, 10, 0.3);
-  --bg-1: rgba(20, 16, 14, 0.52);
-  --bg-2: rgba(26, 21, 18, 0.66);
-  --bg-3: rgba(32, 27, 23, 0.85);
+  /* ── 深色：苹果深灰面（#1c1c1e 系）+ 系统蓝 ── */
+  --bg-0: rgba(28, 28, 30, 0.3);
+  --bg-1: rgba(28, 28, 30, 0.52);
+  --bg-2: rgba(44, 44, 46, 0.66);
+  --bg-3: rgba(44, 44, 46, 0.85);
   --line: rgba(255, 255, 255, 0.08);
   --line-strong: rgba(255, 255, 255, 0.14);
-  --shadow-card: 0 10px 30px rgba(0, 0, 0, 0.42);
-  /* 深底上的陶土色：文字/图标用 bright（对 #14100e 5.66:1）；
-     实心填充用 solid —— bright 压白字只有 3.34:1 不够，solid 提到 4.99:1。 */
-  --accent: #e2683c;
-  --accent-solid: #bf4a15;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3), 0 10px 30px rgba(0, 0, 0, 0.36);
+  /* 深底上的系统蓝：文字/图标用 #0a84ff（对 #1c1c1e 4.66:1）；
+     实心填充不能用它 —— 它压白字只有 3.65:1 不够，改用 #0a6bd0（5.22:1）。
+     这就是苹果在深色下也用两档蓝的原因。 */
+  --accent: #0a84ff;
+  --accent-solid: #0a6bd0;
   --accent-on: #ffffff;
-  --accent-rgb: 226 104 60;
-  --accent-2: #d98a5f;
-  /* 中性投影色通道（深色：纯黑，避免在暖暗底上泛出棕调）。 */
+  --accent-rgb: 10 132 255;
+  --accent-2: #64d2ff;
+  /* 中性投影色通道（深色：纯黑）。 */
   --shadow-rgb: 0 0 0;
   --accent-grad: var(--accent-solid);
-  --text-strong: rgba(243, 237, 231, 0.94);
-  --text: rgba(243, 237, 231, 0.82);
-  --text-2: rgba(243, 237, 231, 0.7);
-  --muted: rgba(243, 237, 231, 0.5);
-  --hover: rgba(255, 255, 255, 0.07);
-  --hover-strong: rgba(255, 255, 255, 0.15);
-  --input-bg: rgba(255, 255, 255, 0.07);
-  --ph-bg: rgba(255, 255, 255, 0.045);
-  --skel-base: rgba(255, 255, 255, 0.05);
-  --skel-shine: rgba(255, 255, 255, 0.11);
-  --option-bg: #201b17;
+  /* 选中态中性底：深色下用白色低 alpha（#333334 附近），同样不靠彩色 */
+  --sel-bg: rgba(255, 255, 255, 0.1);
+  --sel-bg-strong: rgba(255, 255, 255, 0.16);
+  --text-strong: rgba(245, 245, 247, 0.96);
+  --text: rgba(245, 245, 247, 0.86);
+  --text-2: rgba(235, 235, 245, 0.7);
+  --muted: rgba(235, 235, 245, 0.52);
+  --hover: rgba(255, 255, 255, 0.06);
+  --hover-strong: rgba(255, 255, 255, 0.12);
+  --input-bg: rgba(118, 118, 128, 0.24);
+  --ph-bg: rgba(118, 118, 128, 0.16);
+  --skel-base: rgba(118, 118, 128, 0.2);
+  --skel-shine: rgba(118, 118, 128, 0.32);
+  --option-bg: #2c2c2e;
   /* 实底面板色（深色）：性能模式与关闭询问弹窗使用，见 :root 注释 */
-  --panel: #1a1512;
-  --glass-bg: rgba(32, 27, 23, 0.38);
-  --glass-border: rgba(255, 255, 255, 0.28);
+  --panel: #1c1c1e;
+  --glass-bg: rgba(44, 44, 46, 0.42);
+  --glass-border: rgba(255, 255, 255, 0.16);
   --glass-btn-bg: rgba(255, 255, 255, 0.1);
   --glass-btn-hover: rgba(255, 255, 255, 0.16);
   --glass-line: rgba(255, 255, 255, 0.15);
   --glass-text: #fff;
   --glass-text-2: rgba(255, 255, 255, 0.78);
   --glass-text-dim: rgba(255, 255, 255, 0.55);
-  --toast-bg: rgba(32, 27, 23, 0.85);
-  --err-bg: rgba(229, 72, 77, 0.15);
-  --err-border: rgba(229, 72, 77, 0.42);
-  --err-text: #ffb4b6;
+  --toast-bg: rgba(44, 44, 46, 0.88);
+  --err-bg: rgba(255, 69, 58, 0.15);
+  --err-border: rgba(255, 69, 58, 0.42);
+  --err-text: #ff6961;
 }
 
 * {
@@ -156,37 +166,37 @@ body,
   border: none;
   border-radius: 10px; /* 窗口形状由 DWM 系统圆角裁定(抗锯齿)；CSS 弧略大使其处于系统弧内侧 */
   overflow: hidden;
-  /* 接近不透明：--bg-0/--bg-1 本身只有 40%~55% 不透明度，叠加后整窗几乎全透，
-     桌面壁纸会清楚透进来。这里提高外壳底色不透明度，只保留轻微玻璃感。
-     第一行是**不支持 color-mix 时的回退**（旧 WebView2）；支持时由下方 @supports
-     用设置项里的 --ui-surface-alpha 实时覆盖。 */
-  background: linear-gradient(160deg, rgba(247, 244, 239, 0.94), rgba(250, 248, 244, 0.9) 55%);
+  /* [lc-2111] 背景 = 苹果式「柔和微光」：不再是单一 160deg 渐变带，而是
+     一层中性基色 + 两团极淡的白色径向微光（左上主光、右下补光）。
+     这样整屏有柔和的明暗层次，但没有色相 —— 色相全部留给海报本身。
+     第一行是**不支持 color-mix 时的回退**（旧 WebView2）；支持时由下方
+     @supports 用设置项里的 --ui-surface-alpha 实时覆盖。 */
+  background: rgb(245 245 247 / 0.94);
   /* [lc-2059] 进场与退场（.app-exit 的 pageOut）成对：淡入 + 轻微放大，250ms ease-out。
      原来只有 0.28s ease（缓动在首尾都慢，观感"发木"），这里统一成 ease-out，
      退场用 ease-in 且更快 —— 符合「进入 ease-out 250ms / 退出 ease-in 200ms」的基调。 */
   animation: appIn 0.25s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 html.dark .app-shell {
-  background: linear-gradient(160deg, rgba(20, 16, 14, 0.94), rgba(15, 12, 10, 0.92) 55%);
+  background: rgb(28 28 30 / 0.94);
 }
-/* [ui-opacity] 外壳底色跟随「界面透明度」：浅色基色 #f7f4ef/#faf8f4，深色 #14100e/#0f0c0a。
+/* [ui-opacity] 外壳底色跟随「界面透明度」，并且叠加两团柔和微光：
+   浅色用白色微光（提亮中心）、深色用白色极低 alpha（模拟屏幕泛光）。
    用 `rgb(R G B / alpha)`（CSS Color 4，WebView2 109 起即支持）而不是 `color-mix()`：
    color-mix 需要 WebView2 ≥ 111，而本应用声明的最低 WebView2 是 109 —— 在 109/110 上
-   `@supports (color-mix)` 为假，会落到上面**固定 alpha** 的兜底值，表现就是「调了没反应」。
+   `@supports (color-mix)` 为假，会落到上面**固定 alpha** 的兜底值（调了没反应）。
    这里无条件消费 App 写入的 --ui-surface-alpha，任何受支持的 WebView 都会跟随设置。 */
 .app-shell {
-  background: linear-gradient(
-    160deg,
-    rgb(247 244 239 / var(--ui-surface-alpha, 85%)),
-    rgb(250 248 244 / var(--ui-surface-alpha, 85%)) 55%
-  );
+  background:
+    radial-gradient(1100px 620px at 18% -12%, rgba(255, 255, 255, 0.9), transparent 68%),
+    radial-gradient(880px 520px at 96% 108%, rgba(255, 255, 255, 0.55), transparent 70%),
+    rgb(245 245 247 / var(--ui-surface-alpha, 85%));
 }
 html.dark .app-shell {
-  background: linear-gradient(
-    160deg,
-    rgb(20 16 14 / var(--ui-surface-alpha, 85%)),
-    rgb(15 12 10 / var(--ui-surface-alpha, 85%)) 55%
-  );
+  background:
+    radial-gradient(1100px 620px at 18% -12%, rgba(255, 255, 255, 0.055), transparent 68%),
+    radial-gradient(880px 520px at 96% 108%, rgba(255, 255, 255, 0.03), transparent 70%),
+    rgb(28 28 30 / var(--ui-surface-alpha, 85%));
 }
 
 /* [lc-094] 无边框窗口的边缘缩放热区（6px 边 / 12px 角）。

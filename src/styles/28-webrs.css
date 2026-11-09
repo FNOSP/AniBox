@@ -217,9 +217,9 @@
   cursor: pointer;
 }
 .webrs-roads button.on {
-  background: rgb(var(--accent-rgb) / 0.12);
-  border-color: rgb(var(--accent-rgb) / 0.28);
-  color: var(--accent);
+  background: var(--sel-bg);
+  border-color: var(--line-strong);
+  color: var(--text-strong);
 }
 .webrs-eps {
   display: grid;

@@ -657,9 +657,9 @@
   outline-offset: 2px;
 }
 .dv2e-cell.playing {
-  background: rgb(var(--accent-rgb) / 0.12);
-  border-color: rgb(var(--accent-rgb) / 0.28);
-  color: var(--accent);
+  background: var(--sel-bg);
+  border-color: var(--line-strong);
+  color: var(--text-strong);
   box-shadow: 0 4px 14px rgb(var(--shadow-rgb) / 0.21);
 }
 .dv2e-cell.seen:not(.playing) {

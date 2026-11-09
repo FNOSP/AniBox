@@ -71,9 +71,9 @@
 }
 
 .dchip.on {
-  color: var(--accent);
-  background: rgb(var(--accent-rgb) / 0.12);
-  border-color: rgb(var(--accent-rgb) / 0.28);
+  color: var(--text-strong);
+  background: var(--sel-bg);
+  border-color: var(--line-strong);
 }
 
 /* 右栏表头的单独刷新按钮 */
@@ -518,7 +518,7 @@
   color: var(--text-strong);
   /* 轻微上浮 + 柔影；不加描边变化，避免"跳动" */
   transform: translateY(-1px);
-  box-shadow: 0 5px 14px rgba(60, 42, 30, 0.1);
+  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.08);
 }
 
 .dweek-d {
@@ -551,9 +551,9 @@
 }
 
 .dweek.on {
-  background: rgb(var(--accent-rgb) / 0.12);
-  color: var(--accent);
-  border-color: rgb(var(--accent-rgb) / 0.28);
+  background: var(--sel-bg);
+  color: var(--text-strong);
+  border-color: var(--line-strong);
     /* 选中时弹一下（弹性曲线，像左栏标签那样） */
   animation: dweekPop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
@@ -725,7 +725,7 @@
   outline: none;
   /* [lc-1590] 悬停轻微右移 + 柔影；左侧强调竖条同步提亮 */
   transform: translateX(3px);
-  box-shadow: 0 6px 16px rgba(60, 42, 30, 0.08);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
 }
 .ditem:hover::before,
 .ditem:focus-visible::before {
@@ -1488,8 +1488,8 @@ html.dark .dlib-ov-v.green {
 }
 
 .dlib-tab.on {
-  background: rgb(var(--accent-rgb) / 0.12);
-  color: var(--accent);
+  background: var(--sel-bg);
+  color: var(--text-strong);
     animation: dlibTabPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
@@ -1526,8 +1526,8 @@ html.dark .dlib-ov-v.green {
 }
 
 .dlib-vbtn.on {
-  background: rgb(var(--accent-rgb) / 0.12);
-  color: var(--accent);
+  background: var(--sel-bg);
+  color: var(--text-strong);
     animation: dlibPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
@@ -1560,8 +1560,8 @@ html.dark .dlib-ov-v.green {
 }
 
 .dlib-sbtn.on {
-  background: rgb(var(--accent-rgb) / 0.12);
-  color: var(--accent);
+  background: var(--sel-bg);
+  color: var(--text-strong);
     animation: dlibPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
@@ -1875,8 +1875,8 @@ html.dark .dlib-rank.r3 {
   font-size: 10px;
   padding: 2px 7px;
   border-radius: 5px;
-  background: rgb(var(--accent-rgb) / 0.12);
-  color: var(--accent);
+  background: var(--sel-bg);
+  color: var(--text-strong);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -2488,7 +2488,7 @@ html.dark .dlib-badge-soon {
   color: var(--text-strong);
   border-color: var(--line-strong);
   transform: translateY(-1px);
-  box-shadow: 0 5px 14px rgba(60, 42, 30, 0.1);
+  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.08);
 }
 
 /* 弹窗卡片（遮罩 = 既有的 .ddet-mask；关闭键复用 .ddet-close） */
@@ -2648,8 +2648,8 @@ html.dark .dlib-badge-soon {
   color: var(--text-strong);
 }
 .arc-yitem.on {
-  background: rgb(var(--accent-rgb) / 0.12);
-  color: var(--accent);
+  background: var(--sel-bg);
+  color: var(--text-strong);
 }
 .arc-seasons {
   display: flex;
@@ -2674,9 +2674,9 @@ html.dark .dlib-badge-soon {
   color: var(--text-strong);
 }
 .arc-sbtn.on {
-  background: rgb(var(--accent-rgb) / 0.12);
-  color: var(--accent);
-  border-color: rgb(var(--accent-rgb) / 0.28);
+  background: var(--sel-bg);
+  color: var(--text-strong);
+  border-color: var(--line-strong);
 }
 .arc-cnt {
   margin-left: auto;
@@ -2749,7 +2749,7 @@ button.arc-card:focus-visible {
 }
 button.arc-card:hover .arc-cv {
   transform: translateY(-1px);
-  box-shadow: 0 10px 22px rgba(58, 42, 30, 0.22);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
 }
 /* [lc-1605] 少动效：新加的淡入/上浮一并关掉。**必须放在定义之后** ——
    同特异性下后者胜，放前面（文件上部那个通用块）会被这里的 animation/transition 盖掉。 */
@@ -2788,7 +2788,7 @@ button.arc-card:hover .arc-cv {
   background: linear-gradient(
     100deg,
     var(--ph-bg) 30%,
-    var(--hover, rgba(60, 42, 30, 0.06)) 50%,
+    var(--hover, rgba(120, 120, 128, 0.12)) 50%,
     var(--ph-bg) 70%
   );
   background-size: 200% 100%;

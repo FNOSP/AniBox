@@ -125,11 +125,15 @@
   color: var(--text-strong);
 }
 .set-tab.on {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  /* [lc-2111] 苹果侧栏页签：文字用 **label 色**（不是 tint 蓝），选中感由
+     中性底 + 左缘蓝色指示条（下方 ::before）共同表达。
+     蓝字压在灰底上深色主题只有 3.46:1，达不到 AA —— 苹果同样不给页签文字染色。 */
+  color: var(--text-strong);
+  background: var(--sel-bg);
+  font-weight: 600;
 }
 .set-tab:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline: 2px solid rgb(var(--accent-rgb) / 0.55);
   outline-offset: 1px;
 }
 /* 选中指示条：竖向布局是左缘竖条，横向布局在 @media 里改为底边横条。

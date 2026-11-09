@@ -66,8 +66,8 @@
   align-items: center;
   justify-content: center;
   border-radius: 15px;
-  color: var(--accent);
-  background: rgb(var(--accent-rgb) / 0.12);
+  color: var(--text-strong);
+  background: var(--sel-bg);
   border: 1px solid var(--line-strong);
   box-shadow: 0 6px 18px rgb(var(--shadow-rgb) / 0.11);
   animation: gstBadgePop 0.34s 0.06s cubic-bezier(0.34, 1.56, 0.64, 1) both;

@@ -362,5 +362,121 @@ pub async fn duanju_play(
         true,
     )
     .await?;
+    // [lc-2104] 竖屏调窗改为**主动执行**（不依赖 file-loaded 事件回调）：
+    // 事件方案有两个坑——① 会话复用时事件可能已消费过；② 调窗分支依赖会话内的原子
+    // 标志，旧会话（升级前启动）标志不存在。这里在 launch 返回后轮询 video-params，
+    // 就绪即按「锁高、宽自适应」设窗口几何，任何会话状态都成立。
+    if let Some(sess) = {
+        let slot = state.mpv.lock().await;
+        slot.as_ref().cloned()
+    } {
+        if let Some((vw, vh)) = wait_video_size(&sess).await {
+            apply_vertical_geometry(&app, &sess, vw, vh).await;
+        }
+    }
     Ok(json!({ "url": url, "session": plan.get("session").cloned().unwrap_or(json!("")) }))
+}
+
+/// [lc-2104] 轮询 `video-params/w|h`（起播后解码器就绪才有值；最多等 ~6s）。
+async fn wait_video_size(sess: &crate::mpv::MpvSession) -> Option<(i64, i64)> {
+    for _ in 0..30 {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let w = sess
+            .command(json!(["get_property", "video-params/w"]))
+            .await
+            .ok()
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let h = sess
+            .command(json!(["get_property", "video-params/h"]))
+            .await
+            .ok()
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        if w > 0 && h > 0 {
+            return Some((w, h));
+        }
+    }
+    None
+}
+
+/// [lc-2104] 竖屏「锁高、宽自适应」：窗口高度 = 主窗高度（不超过工作区 94%），
+/// 宽度 = 高度 × 视频真实比例 ⇒ 窗口与视频同比例、mpv 内部零留白（无黑边）。
+async fn apply_vertical_geometry(
+    app: &tauri::AppHandle,
+    sess: &crate::mpv::MpvSession,
+    vw: i64,
+    vh: i64,
+) {
+    use tauri::Manager;
+    if vw <= 0 || vh <= 0 {
+        return;
+    }
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    let Ok(size) = win.inner_size() else { return };
+    let area = win
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|m| (m.work_area().size.width, m.work_area().size.height));
+    // 锁高：取「主窗高度」与「工作区 90%」的**较大者**，再受工作区 94% 封顶。
+    // 用户反馈「视频显示太小」——原先纯用主窗高度，而主窗常被用户缩到较小尺寸
+    // （实测本机主窗 1215 物理像素，而工作区 1440 → 竖屏片只占屏幕一半高）。
+    // 竖屏片本就该占满屏幕高度；同时不越出工作区（底部任务栏/标题栏留白）。
+    let mut h = size.height.max(480) as f64;
+    if let Some((_, ah)) = area {
+        if ah > 0 {
+            let ah = ah as f64;
+            h = h.max(ah * 0.90).min(ah * 0.94);
+        }
+    }
+    let aspect = vw as f64 / vh as f64;
+    let mut w = h * aspect;
+    if let Some((aw, ah)) = area {
+        if aw > 0 {
+            // 宽度也不能出屏：超过工作区宽 94% 时按宽度反推（仍保持视频比例）
+            let max_w = aw as f64 * 0.94;
+            if w > max_w {
+                w = max_w;
+                h = w / aspect;
+            }
+        }
+        if ah > 0 {
+            let max_h = ah as f64 * 0.94;
+            if h > max_h {
+                h = max_h;
+                w = h * aspect;
+            }
+        }
+    }
+    let (w, h) = (w.round() as u32, h.round() as u32);
+    if w == 0 || h == 0 {
+        return;
+    }
+    // 居中：主窗当前所在显示器的中心点，减去新窗口一半尺寸（mpv geometry 的 +X+Y
+    // 是**绝对屏幕坐标**）。拿不到显示器信息时退回纯尺寸（mpv 会保持原位）。
+    let centered = win
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|m| {
+            let pos = m.position();
+            let sz = m.size();
+            let x = pos.x + ((sz.width as i32 - w as i32) / 2).max(0);
+            let y = pos.y + ((sz.height as i32 - h as i32) / 2).max(0);
+            format!("{w}x{h}+{x}+{y}")
+        })
+        .unwrap_or_else(|| format!("{w}x{h}"));
+    crate::libmpv::trace(&format!(
+        "[lc-2104] 竖屏锁高调窗：{centered}（视频 {vw}x{vh}，比例 {aspect:.4}）"
+    ));
+    let _ = sess
+        .command(json!(["set", "geometry", centered]))
+        .await;
+    // keepaspect-window 保证窗口与视频同比例时零留白（mpv 默认就是 yes，此处显式兜底）
+    let _ = sess
+        .command(json!(["set", "keepaspect-window", "yes"]))
+        .await;
 }

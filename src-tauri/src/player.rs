@@ -530,29 +530,10 @@ async fn launch_mpv(
             if let Some(h) = headers {
                 m.set_vertical(h.vertical);
             }
-            // [lc-2101] 双 UI 叠加修复：`--script-opts-append=uosc-disable_elements=...`
-            // 是**启动期选项**，复用会话时不会重新应用；而 uosc 的 controls/timeline 一旦
-            // 建过就一直在（玻璃皮肤的 modernz 底栏与它叠在一起）。uosc 支持运行时消息
-            // `disable-elements <client> <ids>`（Manager:disable → destroy 已建元素），
-            // 每次 loadfile 前按当前皮肤重发一次，两套 UI 就不会同时出现。
-            {
-                let glass = state.config.read().await.player_skin == "glass";
-                if glass {
-                    let _ = m
-                        .command_no_reply(json!([
-                            "script-message",
-                            "disable-elements",
-                            "anibox",
-                            "top_bar,timeline,controls,volume,pause_indicator,buffering_indicator,window_border"
-                        ]))
-                        .await;
-                } else {
-                    // 切回原生皮肤：收掉本次会话加的禁用（空表 = 全部恢复）
-                    let _ = m
-                        .command_no_reply(json!(["script-message", "disable-elements", "anibox", ""]))
-                        .await;
-                }
-            }
+            // [lc-2103] 双 UI 的修法已**移到 uosc/main.lua 的皮肤门控**（glass 时
+            // Manager:disable('glass', ...) 禁掉全部可视元素，只留菜单 API）。
+            // 这里原先发的运行时 `disable-elements` 消息无效：uosc 的 manage 只在初始化
+            // 与 options 变更时 commit，且 --script-opts-append 的值会被 uosc.conf 同名键覆盖。
             // [lc-2100] 复用会话：mpv_opts 逐项 set（`--key=value` → set key value）。
             // demuxer-lavf-o 是**打开流时读取**的选项，loadfile 前设好即可生效；
             // 旧值残留会污染后续普通视频，故先清空再写本次的值。

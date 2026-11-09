@@ -9,7 +9,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { Star as IcoStar, Tv as IcoTv } from "lucide-react";
 import { DState } from "./shared";
 
-type IptvChan = { name: string; logo: string; url: string };
+/** urls = 该频道的全部线路（[lc-2096] 同频道多条线路合并；url = 首条，兼容旧缓存） */
+type IptvChan = { name: string; logo: string; url: string; urls?: string[] };
 type IptvGroup = { name: string; channels: IptvChan[] };
 /** stale=true = 全部数据源拉取失败，回吐的是过期缓存（旧数据比报错强，但要如实说明） */
 type IptvResp = { updated?: number; groups?: IptvGroup[]; stale?: boolean };
@@ -91,14 +92,16 @@ export function IptvPane({ active }: { active: boolean }) {
     };
   }, [active, nonce]);
 
-  const favUrls = useMemo(() => new Set(favs.map((f) => f.url)), [favs]);
+  // [lc-2096] 收藏按**频道名**判等（原来按 url）：上游 6 小时就换一次线路地址，
+  // 按 url 存会让收藏下次开机全部「失效」（星星灭了、收藏页空了）。
+  const favNames = useMemo(() => new Set(favs.map((f) => f.name)), [favs]);
 
   /** 收藏/取消（点星标，不触发起播）；localStorage 同步写，失败静默（下次会话丢这次勾选）。 */
   function toggleFav(ch: IptvChan) {
     setFavs((prev) => {
-      const next = prev.some((f) => f.url === ch.url)
-        ? prev.filter((f) => f.url !== ch.url)
-        : [...prev, { name: ch.name, logo: ch.logo, url: ch.url }];
+      const next = prev.some((f) => f.name === ch.name)
+        ? prev.filter((f) => f.name !== ch.name)
+        : [...prev, { name: ch.name, logo: ch.logo, url: ch.url, urls: ch.urls ?? [ch.url] }];
       try {
         localStorage.setItem(FAV_KEY, JSON.stringify(next));
       } catch {
@@ -109,10 +112,21 @@ export function IptvPane({ active }: { active: boolean }) {
   }
 
   const rows = useMemo(() => {
-    const all =
-      group === "__fav" ? favs : (group ? groups.filter((g) => g.name === group) : groups).flatMap((g) => g.channels);
+    if (group !== "__fav") {
+      const all = (group ? groups.filter((g) => g.name === group) : groups).flatMap((g) => g.channels);
+      const t = term.trim().toLowerCase();
+      return t ? all.filter((c) => c.name.toLowerCase().includes(t)) : all;
+    }
+    // 收藏视图：把当前频道表的**最新线路**并进收藏项（上游换线后收藏照样能播、
+    // 也照样有多条备线）；表里已没有该频道时退回收藏里记的旧地址。
+    const live = new Map<string, IptvChan>();
+    for (const g of groups) for (const c of g.channels) live.set(c.name, c);
+    const merged = favs.map((f) => {
+      const now = live.get(f.name);
+      return now ? { ...f, logo: f.logo || now.logo, url: now.url, urls: now.urls } : f;
+    });
     const t = term.trim().toLowerCase();
-    return t ? all.filter((c) => c.name.toLowerCase().includes(t)) : all;
+    return t ? merged.filter((c) => c.name.toLowerCase().includes(t)) : merged;
   }, [groups, group, term, favs]);
 
   async function play(ch: IptvChan) {
@@ -120,7 +134,8 @@ export function IptvPane({ active }: { active: boolean }) {
     setPlayErr("");
     setPlaying(ch.name);
     try {
-      await invoke("iptv_play", { title: ch.name, url: ch.url });
+      // [lc-2096] 带全部线路：后端并行探活后挑第一条真能播的（同频道合并的多条备线）
+      await invoke("iptv_play", { title: ch.name, url: ch.url, urls: ch.urls ?? [ch.url] });
     } catch (e) {
       setPlayErr(String(e));
     } finally {
@@ -210,14 +225,14 @@ export function IptvPane({ active }: { active: boolean }) {
                   点它不触发起播（stopPropagation），卡片本体点击仍是直接播放 */}
               <span
                 role="button"
-                title={favUrls.has(ch.url) ? "取消收藏" : "收藏"}
-                className={`dip-fav${favUrls.has(ch.url) ? " on" : ""}`}
+                title={favNames.has(ch.name) ? "取消收藏" : "收藏"}
+                className={`dip-fav${favNames.has(ch.name) ? " on" : ""}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   toggleFav(ch);
                 }}
               >
-                <IcoStar size={13} strokeWidth={2} className={`rating-ico${favUrls.has(ch.url) ? " fill" : ""}`} />
+                <IcoStar size={13} strokeWidth={2} className={`rating-ico${favNames.has(ch.name) ? " fill" : ""}`} />
               </span>
             </span>
             <span className="dip-name">{ch.name}</span>

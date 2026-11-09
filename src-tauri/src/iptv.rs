@@ -25,8 +25,9 @@ const IPTV_SOURCES: &[&str] = &[
 ];
 /// 缓存 TTL：6 小时（上游每 6 小时更新一次，拉太勤没有意义）。
 const IPTV_TTL_SECS: u64 = 6 * 3600;
-/// 缓存键（iptv4 = IPv4 源；IPv6 源上游自己都承认大部分已失效，不采）。
-const IPTV_CACHE_KEY: &str = "iptv:m3u:iptv4";
+/// 缓存键（iptv4 = IPv4 源；IPv6 源实测已彻底失效（只剩「更新时间」一条），不采）。
+/// [lc-2096] v2：频道结构升级为 `urls` 多线路数组，旧缓存没有该字段 → 键升版强制重取。
+const IPTV_CACHE_KEY: &str = "iptv:m3u:iptv4:v2";
 
 fn client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -54,8 +55,11 @@ fn ext_attr(attrs: &str, key: &str) -> String {
 /// 解析 m3u 文本 → 分组频道列表（保持出现顺序）。
 /// 同组同名只留第一条：上游已是「每频道择优」，后面的重复多为备用线路（换台都用不上）。
 fn parse_m3u(text: &str) -> Vec<Value> {
+    // [lc-2096] 同一频道**收集全部线路**（`urls` 数组），不再只留第一条 ——
+    // 实测上游大量首条线路已死（CCTV8 43KB/s、CCTV5 切片 404），必须有多条可回退。
     let mut groups: Vec<(String, Vec<Value>)> = Vec::new();
-    let mut seen: HashMap<(String, String), ()> = HashMap::new();
+    // (group, name) → (group_idx, chan_idx)
+    let mut at: HashMap<(String, String), (usize, usize)> = HashMap::new();
     // cur = 上一条 #EXTINF 解析出的（频道名, 台标, 分组），等下一行非注释行给 URL。
     let mut cur: Option<(String, String, String)> = None;
     for line in text.lines() {
@@ -85,6 +89,12 @@ fn parse_m3u(text: &str) -> Vec<Value> {
                 cur = None;
                 continue;
             }
+            // [lc-2096] 「支持作者」是作者的打赏广告位（tvg-id=izbds，URL 指向百度网盘的
+            // 宣传 mp4），不是电视频道 —— 无论落在哪个分组都剔除。
+            if name.contains("支持作者") || ext_attr(attrs, "tvg-id") == "izbds" {
+                cur = None;
+                continue;
+            }
             cur = Some((name, logo, group));
             continue;
         }
@@ -97,15 +107,29 @@ fn parse_m3u(text: &str) -> Vec<Value> {
                 continue;
             }
             let key = (group.clone(), name.clone());
-            if seen.contains_key(&key) {
+            if let Some(&(gi, ci)) = at.get(&key) {
+                // 同频道再来一条 = 备用线路：追加进 urls（去重），并补首个非空台标
+                let ch = &mut groups[gi].1[ci];
+                if let Some(arr) = ch.get_mut("urls").and_then(|v| v.as_array_mut()) {
+                    if !arr.iter().any(|x| x.as_str() == Some(line)) {
+                        arr.push(json!(line));
+                    }
+                }
+                if ch.get("logo").and_then(|v| v.as_str()).unwrap_or("").is_empty() && !logo.is_empty() {
+                    ch["logo"] = json!(logo);
+                }
                 continue;
             }
-            seen.insert(key, ());
-            let entry = json!({ "name": name, "logo": logo, "url": line });
-            match groups.iter_mut().find(|(g, _)| *g == group) {
-                Some((_, rows)) => rows.push(entry),
-                None => groups.push((group, vec![entry])),
-            }
+            let entry = json!({ "name": name, "logo": logo, "url": line, "urls": [line] });
+            let gi = match groups.iter().position(|(g, _)| *g == group) {
+                Some(i) => i,
+                None => {
+                    groups.push((group.clone(), Vec::new()));
+                    groups.len() - 1
+                }
+            };
+            groups[gi].1.push(entry);
+            at.insert(key, (gi, groups[gi].1.len() - 1));
         }
     }
     groups
@@ -170,19 +194,104 @@ pub async fn iptv_channels_get() -> Result<Value, String> {
     Err(format!("直播源拉取失败：{last_err}"))
 }
 
-/// 播放 IPTV 频道：直链原样交播放器（direct=true 跳过 Go 代理/relay，与飞牛直播同口径）。
-/// 不落进度、不记观影历史（直播无进度概念，history 只服务点播）。
+/// 单条线路探活：拉 HLS manifest（最多 8 秒）+ 抓第一个分片 64KB 测速。
+/// 返回 true = 这条线路现在能播（manifest 2xx 且首个分片有数据）。
+///
+/// [lc-2096] 为什么要探：实测上游线路烂得很不均匀 —— 同一次抓取里 CCTV13 有
+/// 12.7MB/s，CCTV8 只有 43KB/s（不够 1Mbps 直播），CCTV5 分片直接 404。
+/// 不探就直接甩给 mpv，用户看到的就是「播两三秒停住」。
+async fn probe_line(url: &str) -> bool {
+    let c = client();
+    let resp = match c.get(url).timeout(std::time::Duration::from_secs(8)).send().await {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+    if !resp.status().is_success() {
+        return false;
+    }
+    let text = match resp.text().await {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    if !text.contains("#EXT") {
+        // 非 HLS（直接是 ts/flv/mp4 流）：能连上就算可用
+        return true;
+    }
+    // HLS：按 base 拼第一个分片，抓 64KB 看有没有真实数据吞吐。
+    let base = match url.rfind('/') {
+        Some(i) => &url[..=i],
+        None => return false,
+    };
+    let seg = text
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('#'));
+    let Some(seg) = seg else { return false };
+    let full = if seg.starts_with("http") {
+        seg.to_string()
+    } else {
+        format!("{base}{seg}")
+    };
+    match c
+        .get(&full)
+        .timeout(std::time::Duration::from_secs(8))
+        .header("Range", "bytes=0-65535")
+        .send()
+        .await
+    {
+        Ok(r) => r.status().is_success(),
+        Err(_) => false,
+    }
+}
+
+/// 播放 IPTV 频道：从候选线路里挑**第一条真正能播**的交给播放器。
+/// 直链原样交 `player::launch`（direct=true 跳过 Go 代理，与飞牛直播同口径）；
+/// 不落进度、不记观影历史（直播无进度概念）。
+///
+/// [lc-2096] `urls` = 该频道的全部线路（前端从 `/urls` 数组传）。单条时行为与旧版一致；
+/// 多条时并行探活、优先用第一条通的 —— 探活本身 8 秒超时封顶，不会拖死点击。
 #[tauri::command]
 pub async fn iptv_play(
     state: tauri::State<'_, crate::AppState>,
     app: tauri::AppHandle,
     title: String,
     url: String,
+    urls: Option<Vec<String>>,
 ) -> Result<(), String> {
     let cfg = state.config.read().await.clone();
     crate::fnos_progress::begin("", "");
+    // 候选线路：urls 非空则用它（含点中的那条），否则只有 url。
+    let mut cands: Vec<String> = urls.unwrap_or_default();
+    if !cands.iter().any(|u| u == &url) {
+        cands.insert(0, url.clone());
+    }
+    cands.retain(|u| !u.trim().is_empty());
+    if cands.is_empty() {
+        return Err("频道地址为空".into());
+    }
+    // 并行探活（第一条通的优先；全不通时退回用户点的那条，让 mpv 自己再试一次）
+    let mut picked = cands[0].clone();
+    if cands.len() > 1 {
+        let mut set = tokio::task::JoinSet::new();
+        for (i, u) in cands.iter().take(4).enumerate() {
+            let u = u.clone();
+            set.spawn(async move { (i, probe_line(&u).await) });
+        }
+        let mut ok: Vec<usize> = Vec::new();
+        while let Some(r) = set.join_next().await {
+            if let Ok((i, true)) = r {
+                ok.push(i);
+            }
+        }
+        if let Some(&i) = ok.iter().min() {
+            picked = cands[i].clone();
+            crate::libmpv::trace(&format!("[iptv] 探活选中线路 #{i}: {}", cands[i]));
+        } else {
+            crate::libmpv::trace("[iptv] 全部线路探活失败，回退首条交 mpv 再试");
+        }
+    }
     crate::player::launch(
-        &app, &state, &cfg, &url, title.trim(), 0.0, 0.0, None, &[], None, true,
+        &app, &state, &cfg, &picked, title.trim(), 0.0, 0.0, None, &[], None, true,
     )
     .await
 }
@@ -208,8 +317,12 @@ mod tests {
         assert_eq!(groups.len(), 3); // 央视 / 卫视 / 其他（无 group-title 兜底；「更新时间」垃圾组已滤）
         assert_eq!(groups[0]["name"], "央视频道");
         let chs = groups[0]["channels"].as_array().unwrap();
-        assert_eq!(chs.len(), 1, "同组同名只留第一条");
+        assert_eq!(chs.len(), 1, "同组同名合并为一个频道");
         assert_eq!(chs[0]["url"], "http://a/1.m3u8");
+        // [lc-2096] 同频道第二条 EXTINF = 备用线路，收进 urls
+        let urls = chs[0]["urls"].as_array().unwrap();
+        assert_eq!(urls.len(), 2);
+        assert_eq!(urls[1], "http://a/2.m3u8");
         assert_eq!(chs[0]["logo"], "http://l/cctv1.png");
         assert_eq!(groups[1]["name"], "卫视频道");
         assert_eq!(groups[1]["channels"][0]["name"], "北京卫视");

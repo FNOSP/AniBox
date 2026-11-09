@@ -436,6 +436,12 @@ async fn launch_mpv(
     // 更稳，内存仍由 demuxer-max-bytes 默认 150MiB 封顶；本地文件这两个选项无感知）。
     if direct {
         extra.push("--demuxer-readahead-secs=15".into());
+        extra.push("--demuxer-max-bytes=256MiB".into());
+        extra.push("--demuxer-max-back-bytes=64MiB".into());
+        // HLS/HTTP 分片的断线重连（demuxer 层才管分片；stream 层管整条流）
+        extra.push(
+            "--demuxer-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5".into(),
+        );
         extra.push(
             "--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5".into(),
         );
@@ -494,11 +500,16 @@ async fn launch_mpv(
                     .await;
             }
             // [lc-2093] 复用会话播直播/直链：把缓存参数补写进会话（命令行参数只在首启
-            // 生效；先看点播后看直播的场景就靠这里补齐）。readahead 是运行时可设项；
-            // stream-lavf-o 个别版本不可运行时设置时静默失败（readahead 才是主旋钮）。
+            // 生效；先看点播后看直播的场景就靠这里补齐）。
+            // [lc-2096] **不碰 demuxer-lavf-o** —— 那个键被 lc-2100 的加密流
+            // （decryption_key）独占，写重连会互相覆盖。直播只用 readahead + 内存上限，
+            // 重连交给下面 stream-lavf-o（整条流层，不与 demuxer 选项冲突）。
             if direct {
                 let _ = m
                     .command(json!(["set", "demuxer-readahead-secs", 15]))
+                    .await;
+                let _ = m
+                    .command(json!(["set", "demuxer-max-bytes", "256MiB"]))
                     .await;
                 let _ = m
                     .command(json!([

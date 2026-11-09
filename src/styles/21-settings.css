@@ -533,6 +533,17 @@
 .perf .lsc-pop {
   background: var(--panel) !important;
 }
+/* [lc-2120] 关闭询问弹窗的实底兜底：.close-ask-box 用 --glass-bg（半透明玻璃），
+   而 .perf 会把 backdrop-filter 全部关掉 —— 半透明底在没有模糊时会直接透出桌面/底层
+   界面，观感变成"弹窗只有 60% 不透明"。同一原因也影响 .close-ask 遮罩的层次。
+   这里给它补上实底（与 .set-card 同一档 --panel），保证无模糊时仍然是一块完整的卡。 */
+.perf .close-ask {
+  /* 遮罩加深一档：没有模糊时靠不透明度拉开层次 */
+  background: rgba(0, 0, 0, 0.45) !important;
+}
+.perf .close-ask-box {
+  background: var(--panel) !important;
+}
 
 /* ── [lc-1561] 自建弹幕接口（danmu_api）：多地址输入 + 连通测试 ──
    纵向布局的行（正文换行排），与 .set-row 的「左右两端」区分开。 */

@@ -19,7 +19,7 @@
      半透明度刻意压低，模糊才看得出来；底色仍走主题变量，深浅主题都自然。 */
   /* 动态模糊玻璃：半透明底色 + backdrop-filter。透明度取 0.82，
      既保留毛玻璃质感，又不会让背后内容清楚透出来。 */
-  background: rgba(244, 247, 252, 0.82);
+  background: rgba(245, 245, 247, 0.82);
   backdrop-filter: blur(22px) saturate(1.35);
   -webkit-backdrop-filter: blur(22px) saturate(1.35);
   border-right: 1px solid var(--line);
@@ -48,16 +48,16 @@
 /* 收起态：整体左移出屏 + 淡出 + 轻微缩小（不是"挤没"，是"抽走"） */
 /* 深色主题：同样半透明 + 模糊，透明度略高于浅色主题以保证可读 */
 html.dark .sidebar {
-  background: rgba(23, 26, 36, 0.82);
+  background: rgba(28, 28, 30, 0.82);
 }
 /* [ui-opacity] 侧栏玻璃跟随「界面透明度」：比外壳略实 4%（--ui-sidebar-alpha），
    模糊与描边不变。用 `rgb(R G B / alpha)`（WebView2 109 起即支持）而不是 color-mix()：
    color-mix 需要 WebView2 ≥ 111，在 109/110 上会落到上面固定 alpha 的兜底值（调了没反应）。 */
 .sidebar {
-  background: rgb(244 247 252 / var(--ui-sidebar-alpha, 89%));
+  background: rgb(245 245 247 / var(--ui-sidebar-alpha, 89%));
 }
 html.dark .sidebar {
-  background: rgb(23 26 36 / var(--ui-sidebar-alpha, 89%));
+  background: rgb(28 28 30 / var(--ui-sidebar-alpha, 89%));
 }
 /* 收起态：平滑滑出屏（不缩放、不淡出 —— 淡出会让"滑走"失去实体感） */
 .sidebar.collapsed {
@@ -74,11 +74,21 @@ html.dark .sidebar {
 /* 无毛玻璃支持时（极旧 WebView）：退回接近实心的主题底色，至少保证可读 */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .sidebar {
-    background: #f4f7fc;
+    background: #f5f5f7;
   }
   html.dark .sidebar {
-    background: #171a24;
+    background: #1c1c1e;
   }
+}
+/* [lc-2120] 性能模式（html.perf）下的兜底 —— 这是「dev 正常、打包版侧栏几乎全透」的真因。
+   .perf 会 `backdrop-filter: none !important` 关掉所有模糊，但侧栏底色仍只有 89%
+   不透明度：**没有模糊时，89% 的半透明就是真的在透桌面**，观感变成"侧栏只有六成不透明"。
+   @supports 那条兜底挡不住这种情形 —— 它检测的是浏览器**支不支持** backdrop-filter，
+   而这里是被我们自己关掉的，仍算"支持"。
+   ⇒ 进入性能模式时把侧栏补成实底（与 .set-card 等浮层同一档 --panel）。
+   与 `.perf .close-ask-box` 是同一类修复（见 21-settings.css）。 */
+.perf .sidebar {
+  background: var(--panel);
 }
 @media (prefers-reduced-motion: reduce) {
   /* 少动效：不做位移动画，直接切换（visibility 仍即时生效） */

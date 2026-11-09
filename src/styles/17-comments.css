@@ -112,7 +112,7 @@
 
 /* 列表尾部提示（翻页中 / 到底） */
 .bgmc-more {
-  padding: 14px 0 2px;
+  padding: var(--sp-4) 0 var(--sp-1);
   text-align: center;
   font-size: var(--fs-ctl);
   color: var(--muted);
@@ -121,7 +121,7 @@
 /* ── 失败重试 / 空态 ── */
 
 .bgmc-state {
-  padding: 28px 0;
+  padding: var(--sp-6) 0;
   text-align: center;
   display: flex;
   flex-direction: column;

@@ -472,7 +472,7 @@
   flex-direction: column;
   align-items: center;
   gap: var(--sp-2);
-  padding: 56px 0;
+  padding: var(--sp-7) 0;
   text-align: center;
 }
 

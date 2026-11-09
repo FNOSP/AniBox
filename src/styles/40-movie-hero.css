@@ -504,7 +504,7 @@ html.dark .mv-glass {
 }
 .mv-version {
   height: 32px;
-  padding: 0 14px;
+  padding: 0 var(--sp-4);
   border-radius: var(--r-full);
   border: 1px solid rgba(255, 255, 255, 0.22);
   background: rgba(255, 255, 255, 0.08);

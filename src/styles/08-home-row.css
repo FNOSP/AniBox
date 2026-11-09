@@ -43,7 +43,7 @@
   transform: translate(-50%, -50%);
   width: 46px;
   height: 46px;
-  padding: 0 0 2px;
+  padding: 0 0 var(--sp-0);
   border: 1px solid rgba(255, 255, 255, 0.55);
   border-radius: 50%;
   background: rgba(10, 10, 12, 0.55);

@@ -64,7 +64,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 12px;
+  padding: 0 var(--sp-3);
   white-space: nowrap;
   gap: var(--sp-0);
 }
@@ -85,7 +85,7 @@ h3 {
 }
 .empty {
   color: var(--muted);
-  padding: 60px 0;
+  padding: var(--sp-7) 0;
   text-align: center;
   letter-spacing: 1px;
 }
@@ -102,7 +102,7 @@ h3 {
 /* [lc-1727] 媒体库「滚动加载更多」的状态行。
    之前库页只取第一页（60 条）且没有触底加载，>60 条的库看不到后面的内容。 */
 .lib-more-busy {
-  padding: 16px 0 6px;
+  padding: var(--sp-4) 0 var(--sp-2);
   text-align: center;
   color: var(--muted);
   font-size: var(--fs-ctl);
@@ -113,7 +113,7 @@ h3 {
   align-items: center;
   justify-content: center;
   gap: var(--sp-3);
-  padding: 16px 0 6px;
+  padding: var(--sp-4) 0 var(--sp-2);
   color: var(--muted);
   font-size: var(--fs-ctl);
 }
@@ -121,7 +121,7 @@ h3 {
   height: 28px;
   min-width: 28px;
   font-size: var(--fs-cap);
-  padding: 0 10px;
+  padding: 0 var(--sp-3);
 }
 .lib-more-sentinel {
   height: 1px;
@@ -129,7 +129,7 @@ h3 {
 .lib-retry {
   margin-left: 10px;
   height: 26px;
-  padding: 0 12px;
+  padding: 0 var(--sp-3);
   border-radius: var(--r-full);
   border: 1px solid var(--line);
   background: transparent;

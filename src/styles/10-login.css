@@ -220,7 +220,7 @@ html.dark .login-wrap {
   color: var(--accent);
   cursor: pointer;
   text-align: left;
-  padding: 8px 0 0;
+  padding: var(--sp-2) 0 0;
   font-size: var(--fs-cap);
 }
 .linklike:hover {

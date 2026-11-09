@@ -152,7 +152,7 @@ html.dark .drw, html.dark .drw-drop {
 /* [lc-1572] 下拉浮层：portal 到 body + position:fixed —— 避开 .content 内的层叠/合成怪癖
    （lc-1504 同款坑：浮层与玻璃/滚动层在 WebView2 会画错顺序，曾表现为被标签条半透明穿透）。
    top/left 由组件按按钮 rect 现算（内联 style）。 */
-.drw-drop { position: fixed; width: 126px; background: var(--drw-drop-bg); border-radius: var(--r-md); box-shadow: 0 12px 32px var(--drw-drop-shadow); padding: 6px 0; z-index: 100; opacity: 0; pointer-events: none; transform: translateY(-15px) scale(0.95); transform-origin: top center; transition: opacity 0.35s var(--ease-spring), transform 0.35s var(--ease-spring); overflow: hidden; }
+.drw-drop { position: fixed; width: 126px; background: var(--drw-drop-bg); border-radius: var(--r-md); box-shadow: 0 12px 32px var(--drw-drop-shadow); padding: var(--sp-2) 0; z-index: 100; opacity: 0; pointer-events: none; transform: translateY(-15px) scale(0.95); transform-origin: top center; transition: opacity 0.35s var(--ease-spring), transform 0.35s var(--ease-spring); overflow: hidden; }
 .drw-drop.open { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); }
 .drw-drop li { list-style: none; display: flex; align-items: center; justify-content: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); font-size: var(--fs-ctl); color: var(--drw-text-1); cursor: pointer; transition: all 0.2s ease; border-left: 3px solid transparent; opacity: 0; transform: translateY(-8px); }
 .drw-drop li svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.2s ease; }

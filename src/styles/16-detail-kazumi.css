@@ -155,7 +155,7 @@
   justify-content: center; /* 对齐 Kazumi tabAlignment: TabAlignment.center */
   gap: var(--sp-1);
   margin: 0 -26px; /* 通栏玻璃条 */
-  padding: 4px 0 0;
+  padding: var(--sp-1) 0 0;
   background: var(--bg-1);
   backdrop-filter: blur(14px) saturate(1.1);
   border-bottom: 1px solid var(--line);
@@ -205,7 +205,7 @@
 /* ── (3) 面板容器 ── */
 
 .dbody {
-  padding: 18px 0 40px;
+  padding: var(--sp-4) 0 var(--sp-7);
 }
 .dbody > * {
   animation: dPanel 0.24s var(--ease) both;
@@ -236,7 +236,7 @@
 }
 /* 卡片内的分节：用底部分隔线区分，不再靠间距 */
 .dmore .dsec {
-  padding: 14px 0;
+  padding: var(--sp-4) 0;
   margin-bottom: 0;
   border-bottom: 1px solid var(--line);
 }

@@ -103,6 +103,24 @@
   --ease-enter: cubic-bezier(0.22, 0.61, 0.36, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
   --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+
+  /* ── [lc-2117] 按钮：从 37 组视觉签名收敛到 5 种语义 ────────────────
+     审计发现 54 条按钮规则其实只有 5 种意图，但每个模块各写了一遍
+     （padding / 圆角 / 底色各自微调 1-2px）。这里定义语义级尺寸，
+     各模块只引用，不再自带一套数字。
+     尺寸：sm=24 高 / md=30 / lg=36（对应点击热区 32/38/44 物理 px）。 */
+  --btn-h-sm: 24px;
+  --btn-h-md: 30px;
+  --btn-h-lg: 36px;
+  --btn-px-sm: var(--sp-2);
+  --btn-px-md: var(--sp-3);
+  --btn-px-lg: var(--sp-4);
+  /* 四种语义的底色（primary 用 --accent-solid，danger 用 err 系） */
+  --btn-bg: var(--hover);           /* secondary：静态同色系加深 */
+  --btn-bg-hover: var(--hover-strong);
+  --btn-bg-ghost: transparent;      /* ghost：只有 hover 才显底 */
+  --btn-border: var(--line);
+  --btn-border-strong: var(--line-strong);
   --gold: #ffd479;
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
   --radius: 10px;

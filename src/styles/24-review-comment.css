@@ -9,7 +9,7 @@
 .dvrev-item {
   display: flex;
   gap: var(--sp-4);
-  padding: 16px 0;
+  padding: var(--sp-4) 0;
   border-bottom: 1px solid var(--line);
   align-items: flex-start;
 }

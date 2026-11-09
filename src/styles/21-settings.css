@@ -33,7 +33,7 @@
 .tmdb-empty {
   font-size: var(--fs-ctl);
   color: var(--muted);
-  padding: 2px 0;
+  padding: var(--sp-1) 0;
 }
 
 /* ── 剧照原图查看：点任意剧照 → original 尺寸（同一套落盘缓存） ── */
@@ -185,7 +185,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-4);
-  padding: 9px 0;
+  padding: var(--sp-3) 0;
   border-bottom: 1px solid var(--line);
   font-size: var(--fs-ctl);
 }

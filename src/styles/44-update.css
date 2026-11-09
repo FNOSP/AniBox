@@ -141,7 +141,7 @@ html.dark .upx-chip.hot {
 .upx-md em { font-style: italic; color: var(--muted); }
 .upx-md .upx-md-quote { margin: 6px 0; padding: var(--sp-2) var(--sp-3); border-left: 3px solid var(--accent); background: var(--hover); border-radius: 0 8px 8px 0; color: var(--muted); }
 .upx-md .upx-md-quote p { margin: 2px 0; }
-.upx-md .upx-md-code { background: var(--hover); border-radius: var(--r-xs); padding: 0 4px; font-family: Consolas, monospace; font-size: var(--fs-cap); }
+.upx-md .upx-md-code { background: var(--hover); border-radius: var(--r-xs); padding: 0 var(--sp-1); font-family: Consolas, monospace; font-size: var(--fs-cap); }
 .upx-md .upx-md-hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
 /* 表格宽于弹窗时横向滚动（4.x notes 的「支持平台」表格列多），不撑破容器 */
 .upx-md .upx-md-twrap { overflow-x: auto; margin: 8px 0; }

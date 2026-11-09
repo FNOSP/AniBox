@@ -80,7 +80,7 @@
   min-width: 0;
   /* 纵向留白给涟漪扩散环：横栏为了折叠动画必须 overflow:hidden（裁剪边界=padding box），
      没有这段 padding 的话扩散到圆点外的环会被切掉。 */
-  padding: 7px 0;
+  padding: var(--sp-2) 0;
   max-height: 0;
   opacity: 0;
   transform: translateY(-4px);
@@ -302,7 +302,7 @@ html.dark .bgmac-wcover:hover {
 }
 .bgmac-cta.sm {
   width: auto;
-  padding: 0 16px;
+  padding: 0 var(--sp-4);
 }
 .bgmac-acts {
   display: flex;
@@ -314,7 +314,7 @@ html.dark .bgmac-wcover:hover {
 .bgmac-act {
   flex: 0 0 auto;
   height: 30px;
-  padding: 0 16px;
+  padding: 0 var(--sp-4);
   border: none;
   border-radius: var(--r-lg);
   background: var(--accent-grad);
@@ -370,7 +370,7 @@ html.dark .bgmac-wcover:hover {
   border-radius: var(--r-lg);
   background: var(--input-bg);
   color: var(--text-strong);
-  padding: 0 14px;
+  padding: 0 var(--sp-4);
   font-size: var(--fs-ctl);
   outline: none;
 }
@@ -384,7 +384,7 @@ html.dark .bgmac-wcover:hover {
   align-items: center;
   gap: var(--sp-1);
   height: 20px;
-  padding: 0 9px;
+  padding: 0 var(--sp-3);
   border-radius: var(--r-full);
   background: var(--ph-bg);
   color: var(--text-2);
@@ -422,7 +422,7 @@ html.dark .bgmac-wcover:hover {
   align-items: center;
   justify-content: center;
   gap: var(--sp-2);
-  padding: 0 4px 0 14px;
+  padding: 0 var(--sp-1) 0 var(--sp-4);
   border-left: 1px solid var(--line);
   min-width: 0;
 }
@@ -620,7 +620,7 @@ html.dark .bgmac-warn {
 .bgmac-retry {
   flex: 0 0 auto;
   height: 22px;
-  padding: 0 10px;
+  padding: 0 var(--sp-3);
   border: 1px solid rgba(233, 162, 60, 0.5);
   border-radius: var(--r-md);
   background: transparent;

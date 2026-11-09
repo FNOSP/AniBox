@@ -37,7 +37,7 @@
 .webrs-bar input {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 0 12px;
+  padding: 0 var(--sp-3);
   line-height: 30px;
   background: var(--input-bg);
   color: var(--text-strong);
@@ -51,7 +51,7 @@
 .webrs-bar select {
   flex: 0 0 auto;
   max-width: 96px;
-  padding: 0 6px;
+  padding: 0 var(--sp-2);
   background: var(--option-bg);
   color: var(--text-strong);
   cursor: pointer;
@@ -63,7 +63,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 14px;
+  padding: 0 var(--sp-4);
   background: var(--glass-btn-bg);
   color: var(--text-strong);
   line-height: 1;
@@ -126,7 +126,7 @@
 .webrs-note {
   font-size: var(--fs-cap);
   color: var(--text-2);
-  padding: 0 2px;
+  padding: 0 var(--sp-1);
   word-break: break-all;
 }
 /* [lc-1747] 错误行带操作（人机验证失败 + 「打开网页手动验证」兜底） */
@@ -339,7 +339,7 @@
 .webrs-g-tip {
   font-size: var(--fs-cap);
   color: var(--muted);
-  padding: 0 12px 10px;
+  padding: 0 var(--sp-3) var(--sp-3);
   line-height: 1.5;
 }
 .webrs-g-items {
@@ -406,7 +406,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 0 16px 14px;
+  padding: 0 var(--sp-4) var(--sp-4);
   overflow-y: auto;
 }
 /* 全局把滚动条藏干净了（* { scrollbar-width:none }），但 WebView2 的 Fluent
@@ -769,7 +769,7 @@
   border-radius: var(--r-sm);
   background: var(--input-bg);
   color: var(--text-strong);
-  padding: 0 12px;
+  padding: 0 var(--sp-3);
   font-size: var(--fs-ctl);
   letter-spacing: 2px;
   outline: none;
@@ -793,7 +793,7 @@
   color: #fff;
   font-size: var(--fs-ctl);
   font-weight: 600;
-  padding: 0 16px;
+  padding: 0 var(--sp-4);
   cursor: pointer;
 }
 .webrs-captcha-acts .webrs-go:disabled {
@@ -808,7 +808,7 @@
   background: var(--glass-btn-bg);
   color: var(--text-strong);
   font-size: var(--fs-ctl);
-  padding: 0 14px;
+  padding: 0 var(--sp-4);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }

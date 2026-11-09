@@ -73,7 +73,7 @@
 .libf-sort {
   box-sizing: border-box;
   height: 26px;
-  padding: 0 8px;
+  padding: 0 var(--sp-2);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
   background: transparent;
@@ -127,7 +127,7 @@ button.libf-toggle[style],
   box-sizing: border-box;
   height: 28px;
   margin: 8px 0 0;
-  padding: 0 14px;
+  padding: 0 var(--sp-4);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-lg);
   background: var(--glass);

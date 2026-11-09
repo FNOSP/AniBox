@@ -116,7 +116,7 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 20px 24px;
+  padding: 0 var(--sp-5) var(--sp-5);
 }
 
 .dscroll::-webkit-scrollbar {
@@ -392,7 +392,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 3px 0 4px;
+  padding: var(--sp-1) 0 var(--sp-1);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--hover);
@@ -459,7 +459,7 @@
   display: flex;
   gap: var(--sp-2);
   flex-wrap: wrap;
-  padding: 0 20px 12px;
+  padding: 0 var(--sp-5) var(--sp-3);
 }
 
 /* [lc-1583] 「今日状态条」**独立容器**（原先嵌在 Bangumi 追番卡里当底部通栏）—— 汇总的是
@@ -626,7 +626,7 @@
 /* [lc-123-rev] 分组标题（在库 / 不在库；带数量）。只在"索引完整"时出现（见 useLibIndex） */
 .dgrp {
   margin: 10px 0 4px;
-  padding: 0 2px;
+  padding: 0 var(--sp-1);
   font-size: var(--fs-ctl);
   font-weight: 600;
   color: var(--muted);
@@ -1141,7 +1141,7 @@ html.dark .dlib-pane {
   flex: 0 0 180px;
   height: 30px;
   margin-left: auto;
-  padding: 0 12px;
+  padding: 0 var(--sp-3);
   border: 1px solid var(--glass-border);
   border-radius: var(--r-full);
   background: var(--glass-bg);
@@ -1281,7 +1281,7 @@ html.dark .dip-hint {
   gap: var(--sp-3);
   font-size: var(--fs-cap);
   color: var(--muted);
-  padding: 2px 2px 0;
+  padding: var(--sp-0) var(--sp-0) 0;
 }
 
 /* 键盘可达：对焦环与卡片语言一致 */
@@ -1358,7 +1358,7 @@ html.dark .dlib-ov-v.green {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: 0 11px;
+  padding: 0 var(--sp-3);
   border-radius: var(--r-full);
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
@@ -1569,7 +1569,7 @@ html.dark .dlib-ov-v.green {
    注：`.dlib-content` 是「内容切换时换 key 重挂载」的边界容器，本身不需要任何样式 ——
    入场动画挂在具体条目上（见下面 .dlib-row / .dlib-gcard / .dlib-lrow），换 key 即重播。 */
 .dscroll.dlib-scroll {
-  padding: 0 20px 28px;
+  padding: 0 var(--sp-5) var(--sp-6);
 }
 
 /* 搜索结果**没有独立的结果条**：搜索态由栏头概览标题显示「搜索结果（N 条）」（唯一说明处），
@@ -2470,7 +2470,7 @@ html.dark .dlib-badge-soon {
   align-items: center;
   justify-content: center;
   gap: var(--sp-2);
-  padding: 0 12px;
+  padding: 0 var(--sp-3);
   border: 1px solid var(--glass-border);
   border-radius: var(--r-md);
   background: var(--glass-bg);
@@ -2580,7 +2580,7 @@ html.dark .dlib-badge-soon {
   align-items: center;
   gap: var(--sp-2);
   height: 30px;
-  padding: 0 10px;
+  padding: 0 var(--sp-3);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
   background: var(--option-bg, var(--bg-3));
@@ -2658,7 +2658,7 @@ html.dark .dlib-badge-soon {
 }
 .arc-sbtn {
   height: 30px;
-  padding: 0 12px;
+  padding: 0 var(--sp-3);
   border: 1px solid var(--line);
   border-radius: var(--r-full);
   background: transparent;
@@ -2914,7 +2914,7 @@ button.arc-card:hover .arc-cv {
 .dj-search {
   flex: 0 0 180px;
   height: 30px;
-  padding: 0 12px;
+  padding: 0 var(--sp-3);
   border: 1px solid var(--glass-border);
   border-radius: var(--r-full);
   background: var(--glass-bg);
@@ -3014,7 +3014,7 @@ button.arc-card:hover .arc-cv {
 .dj-more {
   display: grid;
   place-items: center;
-  padding: 4px 0 2px;
+  padding: var(--sp-1) 0 var(--sp-1);
 }
 
 .dj-morebtn {
@@ -3084,7 +3084,7 @@ button.arc-card:hover .arc-cv {
 }
 
 .dj-detail-tip {
-  padding: 20px 0;
+  padding: var(--sp-5) 0;
   font-size: var(--fs-ctl);
   color: var(--text-2);
   text-align: center;
@@ -3192,7 +3192,7 @@ button.arc-card:hover .arc-cv {
 }
 
 .dj-ep {
-  padding: 7px 0;
+  padding: var(--sp-2) 0;
   border: 1px solid var(--glass-border);
   border-radius: var(--r-sm);
   background: var(--glass-bg);
@@ -3243,7 +3243,7 @@ html.dark .dj-hint {
 
 .dj-favcount {
   min-width: 15px;
-  padding: 0 4px;
+  padding: 0 var(--sp-1);
   border-radius: var(--r-full);
   background: var(--hover-strong);
   color: var(--muted);

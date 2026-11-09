@@ -148,7 +148,7 @@
 .javset-tab:hover { background: var(--hover); color: var(--text-strong); }
 .javset-tab.on {
   width: auto;
-  padding: 0 14px;
+  padding: 0 var(--sp-4);
   gap: var(--sp-2);
   background: var(--hover-strong);
   border-color: transparent;
@@ -764,7 +764,7 @@
   color: var(--muted);
   font-size: var(--fs-body);
   cursor: pointer;
-  padding: 0 1px;
+  padding: 0 var(--sp-1);
   opacity: 0.55;
 }
 .jvd-star.on { color: var(--gold, #ffd479); opacity: 1; }
@@ -773,7 +773,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-3);
-  padding: 5px 0;
+  padding: var(--sp-2) 0;
   font-size: var(--fs-ctl);
   color: var(--text-strong);
 }

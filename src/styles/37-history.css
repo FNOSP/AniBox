@@ -1085,7 +1085,7 @@ html:not(.dark) .hist-detail-scrim {
   gap: var(--sp-3);
   font-size: var(--fs-ctl);
   color: var(--text-2);
-  padding: 6px 0;
+  padding: var(--sp-2) 0;
   border-bottom: 1px solid var(--line);
 }
 .hist-sess .pos {

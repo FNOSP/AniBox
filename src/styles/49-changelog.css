@@ -65,7 +65,7 @@
   gap: var(--sp-2);
   align-self: flex-start;
   height: 24px;
-  padding: 0 10px;
+  padding: 0 var(--sp-3);
   border-radius: var(--r-full);
   font-size: var(--fs-cap);
   font-weight: 700;
@@ -145,7 +145,7 @@
    读起来是「旁边的批注」而不是「可编辑的控件」。 */
 .clg-tip {
   margin-top: 18px;
-  padding: 2px 0 2px 12px;
+  padding: var(--sp-1) 0 var(--sp-1) var(--sp-3);
   border-radius: 0;
   border-left: 3px solid var(--accent);
   font-size: var(--fs-cap);

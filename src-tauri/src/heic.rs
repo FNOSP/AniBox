@@ -342,36 +342,71 @@ struct De265 {
 unsafe impl Send for De265 {}
 unsafe impl Sync for De265 {}
 
-static DE265: OnceLock<Option<De265>> = OnceLock::new();
+/// [lc-2091] 用 Mutex<Option<Option<De265>>> 而不是 OnceLock<Option<De265>>：
+/// 加载失败**不缓存**（外层 None = 未尝试/上次失败），下次调用重试 —— 否则一旦首次
+/// 失败（例如升级前包里缺 DLL），用户补齐后必须重启应用才恢复。
+static DE265: std::sync::Mutex<Option<std::sync::Arc<De265>>> = std::sync::Mutex::new(None);
 
 /// 加载 libde265（third_party/duanju/ 下；SetDllDirectory 让 libgcc/winpthread 依赖可达）。
-fn de265_lib_in(dir: &std::path::Path) -> Option<&'static De265> {
-    DE265
-        .get_or_init(|| {
+fn de265_lib_in(dir: &std::path::Path) -> Option<std::sync::Arc<De265>> {
+    {
+        let slot = DE265.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(lib) = slot.as_ref() {
+            return Some(lib.clone());
+        }
+    }
+    let built = (|| {
             #[cfg(target_os = "windows")]
             {
-                // [lc-2091] 依赖链预加载：libde265 依赖 libgcc/libwinpthread（同目录）。
-                // 进程里任何代码调用过 SetDefaultDllDirectories 后，SetDllDirectory 与
-                // legacy 搜索失效，依赖解析只认 application dir + System32 —— third_party
-                // 不在其中 ⇒ libde265 加载失败（单测进程无此调用所以测不出）。改为先把
-                // 两个依赖按**全路径**显式装载进进程，再加载 libde265，搜索策略无关。
+                // [lc-2091] 依赖链预加载（**这是整个转码能用的关键**）：
+                // libde265 的 PE 导入表实为 4 项 —— libgcc_s_seh-1 / libwinpthread-1 /
+                // **libstdc++-6** / KERNEL32+msvcrt。主进程里别的代码调过
+                // SetDefaultDllDirectories(DEFAULT_DIRS) 后，DLL 依赖解析只认 application
+                // dir + System32：third_party 不在其中 ⇒ libde265 及其依赖全部解析失败
+                // （实测 err=126 模块找不到；单测进程没设策略所以测不出，曾误判为 flags 问题）。
+                // 对策=把三个依赖按全路径显式装载进进程，之后 libde265 的导入直接命中已加载
+                // 模块，与搜索策略无关。**新增依赖时必须同步补进这个列表**。
                 use windows_sys::Win32::System::LibraryLoader::{LoadLibraryExW, LOAD_WITH_ALTERED_SEARCH_PATH};
-                for dep in ["libgcc_s_seh-1.dll", "libwinpthread-1.dll"] {
+                for dep in ["libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll"] {
                     let p = dir.join(dep);
+                    if !p.is_file() {
+                        crate::libmpv::trace(&format!("[heic] 缺少依赖 {}（跳过转码）", p.display()));
+                        return None;
+                    }
                     let wide: Vec<u16> = p.as_os_str().to_string_lossy().encode_utf16().chain([0]).collect();
                     let h = unsafe { LoadLibraryExW(wide.as_ptr(), std::ptr::null_mut(), LOAD_WITH_ALTERED_SEARCH_PATH) };
                     if h.is_null() {
-                        crate::libmpv::trace(&format!("[heic] 预加载 {} 失败（跳过转码）", dep));
+                        let code = std::io::Error::last_os_error();
+                        crate::libmpv::trace(&format!("[heic] 预加载 {dep} 失败: {code}（跳过转码）"));
                         return None;
                     }
                 }
             }
             let path = dir.join("libde265-0.dll");
-            let lib = unsafe { libloading::Library::new(&path) };
-            let lib = match lib {
+            // [lc-2091] 这里**不用 libloading::Library::new**：它在进程设置了
+            // DEFAULT_DIRS 搜索策略时改用 LOAD_LIBRARY_SEARCH_DEFAULT_DIRS |
+            // LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR 组合 flags，实测本进程内返回
+            // ERROR_INVALID_PARAMETER（"LoadLibraryExW failed"）。直接用
+            // LoadLibraryExW + 单一 LOAD_WITH_ALTERED_SEARCH_PATH（依赖已预加载，
+            // 该 flag 保证先查 DLL 自身目录），任何搜索策略下都可用。
+            #[cfg(target_os = "windows")]
+            let lib = unsafe {
+                use windows_sys::Win32::System::LibraryLoader::{LoadLibraryExW, LOAD_WITH_ALTERED_SEARCH_PATH};
+                let wide: Vec<u16> = path.as_os_str().to_string_lossy().encode_utf16().chain([0]).collect();
+                let h = LoadLibraryExW(wide.as_ptr(), std::ptr::null_mut(), LOAD_WITH_ALTERED_SEARCH_PATH);
+                if h.is_null() {
+                    let code = std::io::Error::last_os_error();
+                    crate::libmpv::trace(&format!("[heic] LoadLibraryExW 失败（{}）: {code}", path.display()));
+                    return None;
+                }
+                let os_lib = libloading::os::windows::Library::from_raw(h as isize);
+                libloading::Library::from(os_lib)
+            };
+            #[cfg(not(target_os = "windows"))]
+            let lib = match unsafe { libloading::Library::new(&path) } {
                 Ok(l) => l,
                 Err(e) => {
-                    crate::libmpv::trace(&format!("[heic] 加载 libde265 失败（{}）: {}", path.display(), e));
+                    crate::libmpv::trace(&format!("[heic] 加载 libde265 失败（{}）: {e}", path.display()));
                     return None;
                 }
             };
@@ -388,8 +423,13 @@ fn de265_lib_in(dir: &std::path::Path) -> Option<&'static De265> {
                 get_error_text: *unsafe { lib.get(b"de265_get_error_text\0") }.ok()?,
                 _lib: lib,
             })
-        })
-        .as_ref()
+    })();
+    let mut slot = DE265.lock().unwrap_or_else(|e| e.into_inner());
+    if built.is_none() {
+        return None; // 失败不写槽：下次调用重试
+    }
+    *slot = built.map(std::sync::Arc::new);
+    slot.clone()
 }
 
 /// HEIC → JPEG（RGB）。任何一步失败返回 None（调用方降级为原样透传）。
@@ -490,6 +530,16 @@ mod tests {
 
     #[test]
     fn decodes_real_sample_when_present() {
+        // [lc-2091] **必须仿真 dev 主进程**：真实 app 进程里有代码调用过
+        // SetDefaultDllDirectories(DEFAULT_DIRS)，DLL 依赖只从 application dir +
+        // System32 解析 —— third_party 不在其中，会让 libde265 的依赖（尤其
+        // libstdc++-6.dll）解析失败。不设这个策略的测试进程会误报「一切正常」，
+        // 这正是之前「单测绿、真机裂」的根因。本测试先设策略再加载，双向锁死回归。
+        #[cfg(target_os = "windows")]
+        unsafe {
+            use windows_sys::Win32::System::LibraryLoader::SetDefaultDllDirectories;
+            SetDefaultDllDirectories(0x0000_1000); // LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
+        }
         // 样本来自开发期探针（gitignored tests/artifacts），缺失时跳过
         let sample = std::path::Path::new("../../tests/artifacts/color_probe/cover.heic");
         if !sample.is_file() {

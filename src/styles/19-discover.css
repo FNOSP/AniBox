@@ -3235,3 +3235,110 @@ html.dark .dj-hint {
   font-size: 11px;
   color: var(--muted);
 }
+
+/* ── [lc-2099] 短剧收藏：左栏收藏标签 / 卡片星标 / 详情页星标 ── */
+
+/* 「收藏」标签（置顶）：与站源 chips 同视觉，星标 + 计数 */
+.dj-favtab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.dj-favcount {
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--hover-strong);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+}
+
+.dj-favtab.on .dj-favcount {
+  background: rgba(255, 255, 255, 0.28);
+  color: #fff;
+}
+
+/* 卡片右上角星标（不占卡片点击；固定尺寸钮必须复位全局 button padding） */
+.dj-star {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  box-sizing: border-box;
+  border: none;
+  border-radius: 999px;
+  background: rgba(12, 16, 28, 0.42);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.9);
+  transition: opacity 0.16s ease-out, transform 0.16s ease-out, color 0.16s;
+}
+
+/* 悬停卡片才显出星标（避免糊满屏幕）；已收藏 / 键盘聚焦时常显 */
+.dj-card:hover .dj-star,
+.dj-star:focus-visible,
+.dj-star.on {
+  opacity: 1;
+  transform: none;
+}
+
+.dj-star.on {
+  color: #ffc53d;
+}
+
+.dj-star:hover {
+  transform: scale(1.1);
+}
+
+/* 收藏视图里始终可见（已收藏状态） */
+.dj-star.on:hover {
+  transform: scale(1.1);
+}
+
+/* 详情页右上角收藏星标（关闭按钮左侧） */
+.dj-dfav {
+  position: absolute;
+  top: 12px;
+  right: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: color 0.16s, border-color 0.16s;
+}
+
+.dj-dfav:hover {
+  color: var(--text-strong);
+  border-color: var(--accent);
+}
+
+.dj-dfav.on {
+  color: #ffc53d;
+  border-color: rgba(255, 197, 61, 0.55);
+}
+
+/* 收藏空态副提示 */
+.dlib-stub-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}

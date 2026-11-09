@@ -9,7 +9,7 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { DState } from "./shared";
 import { djImg } from "../../lib/images";
-import { X as IcoXL } from "lucide-react";
+import { Star as IcoStar, X as IcoXL } from "lucide-react";
 
 type DuanjuDrama = {
   id: string;
@@ -59,8 +59,44 @@ const SOURCES: { id: string; label: string }[] = [
 ];
 const EP_GROUP = 30; // 选集分组（与上游详情页同口径）
 
+/** ── [lc-2099] 短剧收藏（本地持久化）：详情页右上角星标收藏，左栏「收藏」标签置顶。
+    存整份 drama 摘要（id/title/cover/源/集数等）——收藏列表要能直接渲染卡片并再次
+    打开详情，光存 id 得重新拉取；与 IPTV 收藏同一套 localStorage 惯例。 ── */
+const FAV_KEY = "anibox.duanju.favs";
+
+type FavDrama = {
+  id: string;
+  title: string;
+  cover?: string;
+  source?: string;
+  episodes?: number;
+  category?: string;
+  vip?: boolean | null;
+  score?: string;
+  heat?: string;
+  views?: string;
+  releaseStatus?: string;
+  tags?: string[];
+};
+
+function loadFavs(): FavDrama[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(FAV_KEY) || "[]");
+    return Array.isArray(v) ? v.filter((x) => x && typeof x.id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function readFavs(): FavDrama[] {
+  return loadFavs();
+}
+
 export function DuanjuPane() {
   const [source, setSource] = useState("hongguo");
+  // [lc-2099] 收藏：favOpen = 左栏「收藏」标签激活（与站源 chips 并列置顶）
+  const [favs, setFavs] = useState<FavDrama[]>(readFavs);
+  const [favOpen, setFavOpen] = useState(false);
   const [cats, setCats] = useState<{ id: string; name: string }[]>([]);
   const [cat, setCat] = useState("");
   const [query, setQuery] = useState("");
@@ -189,6 +225,39 @@ export function DuanjuPane() {
     }
   }
 
+  const favIds = useMemo(() => new Set(favs.map((f) => f.id)), [favs]);
+
+  /** 收藏/取消（详情页星标）；localStorage 同步写，失败静默（下次会话丢这次勾选）。 */
+  function toggleFav(d: DuanjuDrama | FavDrama) {
+    setFavs((prev) => {
+      const next = prev.some((f) => f.id === d.id)
+        ? prev.filter((f) => f.id !== d.id)
+        : [
+            {
+              id: d.id,
+              title: d.title,
+              cover: (d as DuanjuDrama).cover,
+              source: (d as DuanjuDrama).source,
+              episodes: (d as DuanjuDrama).episodes,
+              category: (d as DuanjuDrama).category,
+              vip: (d as DuanjuDrama).vip,
+              score: (d as DuanjuDrama).score,
+              heat: (d as DuanjuDrama).heat,
+              views: (d as DuanjuDrama).views,
+              releaseStatus: (d as DuanjuDrama).releaseStatus,
+              tags: (d as DuanjuDrama).tags,
+            },
+            ...prev,
+          ];
+      try {
+        localStorage.setItem(FAV_KEY, JSON.stringify(next));
+      } catch {
+        /* 存储满/被禁：不影响本次会话内的收藏态 */
+      }
+      return next;
+    });
+  }
+
   const chapters = detail?.chapters || [];
   const epGroups = useMemo(() => {
     const out: DuanjuChapter[][] = [];
@@ -198,14 +267,28 @@ export function DuanjuPane() {
 
   return (
     <div className="dj">
-      {/* 站源行 */}
+      {/* 站源行：[lc-2099] 「收藏」置顶，其次各站源 */}
       <div className="dj-sources">
+        <button
+          type="button"
+          className={`dj-chip dj-favtab${favOpen ? " on" : ""}`}
+          onClick={() => {
+            setFavOpen(true);
+            setTerm("");
+            setQuery("");
+          }}
+        >
+          <IcoStar size={12} strokeWidth={2} className="rating-ico" />
+          收藏
+          {favs.length > 0 && <span className="dj-favcount">{favs.length}</span>}
+        </button>
         {SOURCES.map((s) => (
           <button
             key={s.id}
             type="button"
-            className={`dj-chip${source === s.id ? " on" : ""}`}
+            className={`dj-chip${!favOpen && source === s.id ? " on" : ""}`}
             onClick={() => {
+              setFavOpen(false);
               setSource(s.id);
               setTerm("");
               setQuery("");
@@ -248,7 +331,54 @@ export function DuanjuPane() {
         />
       </div>
 
-      {busy ? (
+      {favOpen ? (
+        /* [lc-2099] 收藏视图：本地即时渲染，不走目录请求 */
+        favs.length === 0 ? (
+          <div className="dlib-stub">
+            <div className="dlib-stub-t">还没有收藏的短剧</div>
+            <div className="dlib-stub-hint">在任意短剧详情页点右上角星标即可收藏</div>
+          </div>
+        ) : (
+          <div className="dj-grid">
+            {favs.map((d) => (
+              <button key={d.id} type="button" className="dj-card" onClick={() => openDetail(d)}>
+                <span className="dj-poster">
+                  {d.cover ? (
+                    <img src={djImg(d.cover)} alt="" loading="lazy" draggable={false} />
+                  ) : (
+                    <span className="dj-ph" aria-hidden="true" />
+                  )}
+                  <span
+                    className="dj-star on"
+                    role="button"
+                    tabIndex={0}
+                    aria-label="取消收藏"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleFav(d);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        toggleFav(d);
+                      }
+                    }}
+                  >
+                    <IcoStar size={13} strokeWidth={2} className="rating-ico fill" />
+                  </span>
+                </span>
+                <span className="dj-title">{d.title}</span>
+                <span className="dj-meta">
+                  {[d.episodes ? `${d.episodes}集` : "", d.score ? `${d.score}分` : ""]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+              </button>
+            ))}
+          </div>
+        )
+      ) : busy ? (
         <div className="dlib-stub">
           <div className="dlib-stub-t">加载中…</div>
         </div>
@@ -272,6 +402,29 @@ export function DuanjuPane() {
                     <span className="dj-ph" aria-hidden="true" />
                   )}
                   {d.vip === true && <span className="dj-vip">VIP</span>}
+                  <span
+                    className={`dj-star${favIds.has(d.id) ? " on" : ""}`}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={favIds.has(d.id) ? "取消收藏" : "收藏"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleFav(d);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        toggleFav(d);
+                      }
+                    }}
+                  >
+                    <IcoStar
+                      size={13}
+                      strokeWidth={2}
+                      className={`rating-ico${favIds.has(d.id) ? " fill" : ""}`}
+                    />
+                  </span>
                 </span>
                 <span className="dj-title">{d.title}</span>
                 <span className="dj-meta">
@@ -319,6 +472,22 @@ export function DuanjuPane() {
                   >
                     <IcoXL size={16} strokeWidth={1.8} />
                   </button>
+                  {/* [lc-2099] 收藏星标：详情页右上角（关闭按钮左侧） */}
+                  {detail.drama && (
+                    <button
+                      type="button"
+                      className={`dj-dfav${favIds.has(detail.drama.id) ? " on" : ""}`}
+                      aria-label={favIds.has(detail.drama.id) ? "取消收藏" : "收藏"}
+                      aria-pressed={favIds.has(detail.drama.id)}
+                      onClick={() => detail.drama && toggleFav(detail.drama)}
+                    >
+                      <IcoStar
+                        size={15}
+                        strokeWidth={1.9}
+                        className={`rating-ico${favIds.has(detail.drama.id) ? " fill" : ""}`}
+                      />
+                    </button>
+                  )}
                   <div className="dj-dhead">
                     {detail.drama?.cover && (
                       <img className="dj-dposter" src={djImg(detail.drama.cover)} alt="" draggable={false} />

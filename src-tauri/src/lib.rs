@@ -340,6 +340,29 @@ async fn test_danmu_api(app: AppHandle, url: String) -> Result<String, String> {
 
 // ───────────────────────── 登录 / 会话 ─────────────────────────
 
+/// [lc-2121] 登录失败冷却（按 `server|username` 记最近一次 -15 的时刻）。
+/// 目的只有一个：**阻止客户端把账号试到封禁**。飞牛对连续密码错误会临时封禁账号，
+/// 封禁期间即使密码正确也一律 -15 —— 用户看到的就是「更新后怎么都登不进去」。
+///
+/// 键 = `server|username`，值 = (失败时刻, 失败时用的密码指纹)。**指纹参与判定**：
+/// 用户改了密码立刻放行（那正是我们要引导的动作），只有「同一份凭据连点」才被挡。
+static LOGIN_FAIL_AT: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, u64)>>,
+> = std::sync::OnceLock::new();
+fn login_fail_map(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, u64)>> {
+    LOGIN_FAIL_AT.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+/// 密码指纹：只需判断「是不是同一份凭据」，不用于安全用途。
+fn pw_fingerprint(pw: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    pw.hash(&mut h);
+    h.finish()
+}
+/// 冷却时长：30 秒足够让用户核对一次密码，又不至于像「2 分钟」那样劝退。
+const LOGIN_COOLDOWN_SECS: u64 = 30;
+
 /// 把 `fnapi::call_inner` 透出的原始业务错误串（`HTTP 200 code=-15: Password Incorrect` 之类）
 /// 翻译成用户能看懂的登录提示。飞牛错误码见 fnOS 影视接口：
 ///   -15 PasswordIncorrect / -6 账号不存在 / -1 参数非法 / 5000 invalid sign。
@@ -347,11 +370,21 @@ async fn test_danmu_api(app: AppHandle, url: String) -> Result<String, String> {
 fn friendly_login_error(raw: &str) -> String {
     let has = |c: &str| raw.contains(c);
     if has("code=-15") {
-        // 飞牛登录失败节流：短时间内多次 -15 会把账号临时封禁（manager/user/list 里
-        // is_banned=true / banned_until），封禁期间即使密码正确也一律返回 -15 ——
-        // 这正是「网页端能登、客户端一直密码错」的常见成因。这里提示等待而不是反复重试，
-        // 否则会一直撞在封禁窗口里。
-        return "密码错误，或账号因多次登录失败被临时锁定。请确认密码；若确认无误，请等待约 2 分钟后再试，期间请勿反复重试。".to_string();
+        // 飞牛对 -15 只有一句 `Password Incorrect`，**它本身不区分「密码错」和「被节流锁定」**
+        // （锁定态体现在 manager/user/list 的 is_banned/banned_until，我们并没有查询它）。
+        //
+        // [lc-2121] 旧文案是「密码错误，或账号因多次登录失败被临时锁定……请等待约 2 分钟后再试」，
+        // 它把两种完全不同的原因混在一句里，且隐含「等一下就好」——实测最坏后果是：
+        // 用户密码确实错了 → 被引导反复试 → 触发/延长飞牛按账号的失败节流 → 连正确的密码
+        // 也开始报 -15（"更新后无法登录" 的多例都是这条链）。所以这里改为：
+        //   · 明确首选动作是**核对密码**（多数情况就是密码问题，尤其刚改过 NAS 密码）；
+        //   · 明确「不要连续重试」，并给出确定性的等待时长；
+        //   · 附上原始错误码，便于用户反馈时定位。
+        return format!(
+            "登录被拒绝（{}）。请先核对密码是否正确（NAS 网页端改过密码时要填新密码）。\
+如果密码确认无误，可能是短时间内失败次数过多触发了飞牛账号节流：请停止尝试，等待约 10 分钟后再试一次，不要连续点击登录。",
+            raw
+        );
     }
     if has("code=-6") {
         return "账号不存在或未找到，请检查用户名。".to_string();
@@ -416,6 +449,28 @@ async fn login(
         return Err("请提供完整的登录信息。".into());
     }
 
+    // [lc-2121] 本地失败节流闸门：飞牛对同一账号的连续密码错误会**临时封禁**
+    // （封禁期间即使密码正确也一律 -15），一旦撞上就是「更新后一直登不进去」的体验。
+    // 因此把「连续失败」管在客户端这一侧：**同一份凭据**在 -15 之后 30 秒内不再放行，
+    // 逼用户停下来核对密码，而不是点在同一个封禁窗口里反复重试。
+    // 密码一改就立刻放行（这正是我们要引导的动作）；不同账号互不影响；成功即清零。
+    {
+        let key = format!("{}|{}", server.trim(), username.trim());
+        let fp = pw_fingerprint(&password);
+        let mut map = login_fail_map().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((t, last_fp)) = map.get(&key).copied() {
+            let waited = t.elapsed().as_secs();
+            // 只有「同一份密码还没到冷却结束」才拦；改过密码 = 放行
+            if waited < LOGIN_COOLDOWN_SECS && last_fp == fp {
+                return Err(format!(
+                    "刚才用同一份密码登录失败过，请先核对密码再试。为避免触发飞牛账号临时封禁，若密码确认无误请等待 {} 秒后再试一次（不要连续点击）。",
+                    LOGIN_COOLDOWN_SECS - waited
+                ));
+            }
+            map.remove(&key);
+        }
+    }
+
     let raw = server.trim().to_string();
     // [端口探测] 对齐旧项目 auth.ts：裸填私有 IP 且未带端口时，试 fnOS 常见端口。
     let mut server = match fnapi::detect_fn_os_port(&raw).await {
@@ -450,10 +505,29 @@ async fn login(
 
     let client = fnapi::new_client();
     let data = match request_login_token(&client, &server, &username, &password).await {
-        Ok(d) => d,
+        Ok(d) => {
+            // 成功：清掉失败记录
+            let key = format!("{}|{}", server.trim(), username.trim());
+            login_fail_map()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&key);
+            d
+        }
         // 业务错误码（-15 密码错/临时锁定 / -6 账号不存在 / 门禁 HTML 等）统一翻成用户可读提示，
         // 不再把 `HTTP 200 code=-15: Password Incorrect` 这种原始串直接抛给前端。
-        Err(e) => return Err(friendly_login_error(&e)),
+        Err(e) => {
+            // [lc-2121] **只对 -15 计冷却**：那是密码相关（含飞牛节流）的码，最怕反复重试；
+            // -6/-1/5000/网络类不涉及账号节流，不该拖住用户。
+            if e.contains("code=-15") {
+                let key = format!("{}|{}", server.trim(), username.trim());
+                login_fail_map()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(key, (std::time::Instant::now(), pw_fingerprint(&password)));
+            }
+            return Err(friendly_login_error(&e));
+        }
     };
     let token = data
         .get("token")
@@ -4550,6 +4624,27 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    /// [lc-2121] 登录失败文案：-15 必须说清「先核对密码 + 不要连点」，并附原文错误码；
+    /// 不能再出现旧版那种把「密码错」与「被锁」混在一句里的模糊说法。
+    #[test]
+    fn friendly_login_error_minus15_advice() {
+        let raw = "HTTP 200 code=-15: Password Incorrect";
+        let msg = super::friendly_login_error(raw);
+        assert!(msg.contains("核对密码"), "必须引导核对密码：{msg}");
+        assert!(msg.contains("不要连续点击"), "必须明确禁止连点：{msg}");
+        assert!(msg.contains("code=-15"), "必须保留原始错误码便于排查：{msg}");
+        // 其他码保持各自语义，不被 -15 分支吞掉
+        assert!(super::friendly_login_error("code=-6: Not Found").contains("账号不存在"));
+    }
+
+    /// [lc-2121] 密码指纹只用于判断「是不是同一份凭据」：同密码同值、异密码异值。
+    #[test]
+    fn pw_fingerprint_distinguishes_passwords() {
+        assert_eq!(super::pw_fingerprint("abc123"), super::pw_fingerprint("abc123"));
+        assert_ne!(super::pw_fingerprint("abc123"), super::pw_fingerprint("abc124"));
+        assert_ne!(super::pw_fingerprint(""), super::pw_fingerprint("a"));
+    }
+
     /// [lc-1727] 媒体库分页终止条件（纯函数）：60 一页 + 滚动加载更多的判停口径。
     /// 背景：v4.0.0 里库列表只请求了第 1 页（60 条）就再也不翻页，
     /// 超过 60 条的库从第 61 条起永远看不到 —— 这条测试锁住「什么时候该继续翻」。

@@ -3034,6 +3034,10 @@ async fn play_item(
 
 #[tauri::command]
 async fn player_stop(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    // [lc-2123] 停止播放即清空短剧连播队列：否则用户关掉短剧后去看飞牛/云盘，
+    // mpv 的 time-pos 观察回调仍会拿旧短剧的（剧, 集）把**别人的进度写进短剧历史**
+    // （current_playing 会一直返回最后那部短剧）。必须在 stop 后立刻清。
+    duanju::clear_auto_next();
     // mpv：回 idle（实例保留）；PotPlayer：无 IPC，直接结束进程并补 ended 事件。
     player::stop_all(&app, &state, true).await;
     Ok(())
@@ -4469,6 +4473,11 @@ pub fn run() {
             duanju::duanju_resolve,
             duanju::duanju_release,
             duanju::duanju_play,
+            duanju::duanju_history,
+            duanju::duanju_history_one,
+            duanju::duanju_history_remove,
+            duanju::duanju_history_clear,
+            duanju::duanju_history_update,
             jav_library::jav_fnos_libs,
             jav_library::jav_fnos_set_lib,
             jav_library::jav_fnos_scan,

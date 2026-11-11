@@ -58,6 +58,11 @@ struct AutoNext {
 
 static AUTO_NEXT: OnceLock<Mutex<Option<AutoNext>>> = OnceLock::new();
 
+/// [lc-2123] 「短剧会话活跃」标记：time-pos 观察回调只在它为 true 时写短剧历史。
+/// 比只依赖 AutoNext 更严格 —— AutoNext 可能在用户停止后残留，而这个标记由
+/// play_impl 显式置位、由 clear_auto_next（停止/其他车道起播）清除。
+static DJ_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn auto_next_slot() -> &'static Mutex<Option<AutoNext>> {
     AUTO_NEXT.get_or_init(|| Mutex::new(None))
 }
@@ -423,6 +428,12 @@ async fn play_impl(
             None
         };
     }
+    // [lc-2123] 标记短剧会话活跃（time-pos 观察回调据此写历史）
+    DJ_ACTIVE.store(true, std::sync::atomic::Ordering::Release);
+    // [lc-2123] 起播即记一条观看记录（独立存储，不走软件主历史）。
+    // pos 从这里开始为 0，实际进度由前端在播放中/退出时回写（duanju_play 返回后前端
+    // 拿不到 mpv 的 time-pos，所以「继续观看」的精度由前端定时回写保证）。
+    record_history(app, &drama, index, 0.0, 0.0);
     Ok(json!({ "url": url, "session": plan.get("session").cloned().unwrap_or(json!("")) }))
 }
 
@@ -474,8 +485,19 @@ pub async fn auto_play_next(
     r.map(|_| true)
 }
 
+/// [lc-2123] 取当前短剧会话的（剧摘要, 集索引）——mpv 的 time-pos 观察回调用它写进度。
+/// 非短剧播放时返回 None。**只读**，不改队列。
+pub fn current_playing() -> Option<(Value, i64)> {
+    if !DJ_ACTIVE.load(std::sync::atomic::Ordering::Acquire) {
+        return None;
+    }
+    let slot = auto_next_slot().lock().unwrap_or_else(|e| e.into_inner());
+    slot.as_ref().map(|q| (q.drama.clone(), q.index))
+}
+
 /// [lc-2116] 清空连播队列（用户切换到别的车道 / 手动停止时用）。
 pub fn clear_auto_next() {
+    DJ_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
     *auto_next_slot().lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
@@ -571,4 +593,134 @@ async fn apply_vertical_geometry(
     let _ = sess
         .command(serde_json::json!(["set", "keepaspect-window", "yes"]))
         .await;
+}
+
+// ───────────────────── [lc-2123] 短剧独立观看记录 ─────────────────────
+//
+// 需求：观看记录要体现在**短剧详情页**里，且**独立存储、不走软件主观看记录**
+// （主记录是飞牛历史 `history.rs`，短剧不属于飞牛资源，混进去会污染主列表）。
+//
+// 存储：`<app_data>/duanju-history.json`，键 = drama.id（含站源前缀，天然唯一）。
+// 结构：{ [dramaId]: { drama: 摘要, index: 集索引(0 基), pos: 秒, dur: 秒, at: 毫秒时间戳 } }
+// 只保留最近 MAX 条（按 at 倒序裁剪），避免无限膨胀 —— 短剧站源的剧 ID 会变。
+
+const HISTORY_MAX: usize = 200;
+
+fn history_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    Some(app.path().app_data_dir().ok()?.join("duanju-history.json"))
+}
+
+fn read_history(app: &tauri::AppHandle) -> serde_json::Map<String, Value> {
+    history_path(app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default()
+}
+
+fn write_history(app: &tauri::AppHandle, map: &serde_json::Map<String, Value>) {
+    let Some(path) = history_path(app) else { return };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // 按 at 倒序裁到上限，再落盘（写入失败静默：进度记录不值得打断播放）
+    let mut entries: Vec<(&String, &Value)> = map.iter().collect();
+    entries.sort_by_key(|(_, v)| -v.get("at").and_then(|x| x.as_i64()).unwrap_or(0));
+    let mut out = serde_json::Map::new();
+    for (k, v) in entries.into_iter().take(HISTORY_MAX) {
+        out.insert(k.clone(), v.clone());
+    }
+    if let Ok(text) = serde_json::to_string(&Value::Object(out)) {
+        let _ = std::fs::write(path, text);
+    }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// 记录一条观看进度（起播/切集/退出时调用）。`drama` 只存展示所需摘要，避免文件过大。
+pub fn record_history(
+    app: &tauri::AppHandle,
+    drama: &Value,
+    index: i64,
+    pos_secs: f64,
+    dur_secs: f64,
+) {
+    let Some(id) = drama.get("id").and_then(|x| x.as_str()).filter(|s| !s.is_empty()) else {
+        return;
+    };
+    let mut map = read_history(app);
+    let summary = json!({
+        "id": id,
+        "title": drama.get("title").cloned().unwrap_or(json!("")),
+        "cover": drama.get("cover").cloned().unwrap_or(json!("")),
+        "source": drama.get("source").cloned().unwrap_or(json!("")),
+        "episodes": drama.get("episodes").cloned().unwrap_or(json!(0)),
+        "score": drama.get("score").cloned().unwrap_or(json!("")),
+        "releaseStatus": drama.get("releaseStatus").cloned().unwrap_or(json!("")),
+    });
+    map.insert(
+        id.to_string(),
+        json!({
+            "drama": summary,
+            "index": index,
+            "pos": pos_secs.max(0.0),
+            "dur": dur_secs.max(0.0),
+            "at": now_ms(),
+        }),
+    );
+    write_history(app, &map);
+}
+
+/// [lc-2123] 读取观看记录（按最近观看倒序）。前端详情页/列表直接用。
+#[tauri::command]
+pub async fn duanju_history(app: tauri::AppHandle) -> Result<Value, String> {
+    let map = read_history(&app);
+    let mut list: Vec<Value> = map.into_values().collect();
+    list.sort_by_key(|v| -v.get("at").and_then(|x| x.as_i64()).unwrap_or(0));
+    Ok(Value::Array(list))
+}
+
+/// [lc-2123] 读单部剧的进度（详情页「继续观看」用）。未看过返回 null。
+#[tauri::command]
+pub async fn duanju_history_one(app: tauri::AppHandle, id: String) -> Result<Value, String> {
+    let map = read_history(&app);
+    Ok(map.get(&id).cloned().unwrap_or(Value::Null))
+}
+
+/// [lc-2123] 删除一条记录（用户手动清除）。
+#[tauri::command]
+pub async fn duanju_history_remove(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    let mut map = read_history(&app);
+    if map.remove(&id).is_some() {
+        write_history(&app, &map);
+    }
+    Ok(())
+}
+
+/// [lc-2123] 清空全部短剧观看记录。
+#[tauri::command]
+pub async fn duanju_history_clear(app: tauri::AppHandle) -> Result<(), String> {
+    let empty = serde_json::Map::new();
+    write_history(&app, &empty);
+    Ok(())
+}
+
+/// [lc-2123] 回写播放进度（前端在播放中/关闭 mpv 前调用）。
+/// drama 只需含 id/title/cover 等摘要字段；index 是 0 基集索引。
+#[tauri::command]
+pub async fn duanju_history_update(
+    app: tauri::AppHandle,
+    drama: Value,
+    index: i64,
+    pos: f64,
+    dur: f64,
+) -> Result<(), String> {
+    record_history(&app, &drama, index, pos, dur);
+    Ok(())
 }

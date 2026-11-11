@@ -49,6 +49,16 @@ type CatalogResp = {
 };
 type DetailResp = { drama?: DuanjuDrama; chapters?: DuanjuChapter[]; warning?: string };
 
+/** [lc-2123] 短剧独立观看记录（存 app_data/duanju-history.json，与软件主记录完全分开）。
+ *  index = 0 基集索引；pos/dur = 秒；at = 毫秒时间戳（用于排序）。 */
+type DjHistory = {
+  drama: { id: string; title: string; cover?: string; source?: string; episodes?: number };
+  index: number;
+  pos: number;
+  dur: number;
+  at: number;
+};
+
 /** 站源（id 与上游 Go sourceXxx 常量一致；顺序即展示顺序） */
 const SOURCES: { id: string; label: string }[] = [
   { id: "hongguo", label: "红果" },
@@ -77,6 +87,13 @@ function compactNum(v: unknown): string {
   if (n >= 1e8) return `${(n / 1e8).toFixed(1)}亿`;
   if (n >= 1e4) return `${(n / 1e4).toFixed(1)}万`;
   return n > 0 ? String(n) : "";
+}
+
+/** [lc-2123] 秒 → mm:ss（观看进度展示用） */
+function fmtTime(secs: number): string {
+  const s = Math.max(0, Math.floor(secs));
+  const m = Math.floor(s / 60);
+  return `${m}:${String(s % 60).padStart(2, "0")}`;
 }
 
 function numOf(v: unknown): number {
@@ -166,6 +183,8 @@ export function DuanjuPane() {
   const [dErr, setDErr] = useState("");
   const [epGroup, setEpGroup] = useState(0);
   const [playingIdx, setPlayingIdx] = useState(-1);
+  // [lc-2123] 当前打开剧的观看进度（详情页展示 + 「继续观看」定位）
+  const [hist, setHist] = useState<DjHistory | null>(null);
   const [playErr, setPlayErr] = useState("");
 
   // 分类（随站源重取）
@@ -250,6 +269,10 @@ export function DuanjuPane() {
     try {
       const resp = await invoke<DetailResp>("duanju_detail", { drama: d });
       setDetail({ drama: resp?.drama || d, chapters: resp?.chapters || [] });
+      // [lc-2123] 读该剧的观看进度（独立存储，未看过返回 null）
+      invoke<DjHistory | null>("duanju_history_one", { id: d.id })
+        .then((h) => setHist(h))
+        .catch(() => setHist(null));
     } catch (e) {
       setDErr(String(e));
     } finally {
@@ -271,12 +294,40 @@ export function DuanjuPane() {
         // [lc-2116] 传全部分集：后端据此在播完后自动接下一集（短剧一集只有 1~3 分钟）
         chapters,
       });
+      // [lc-2123] 起播成功：本地状态立即反映「上次看到第 N 集」，并重置回写计时
+      setHist((prev) => ({
+        drama: {
+          id: detail.drama!.id,
+          title: detail.drama!.title,
+          cover: detail.drama!.cover,
+          source: detail.drama!.source,
+          episodes: detail.drama!.episodes,
+        },
+        index: idx,
+        pos: 0,
+        dur: prev?.dur || 0,
+        at: Date.now(),
+      }));
     } catch (e) {
       setPlayErr(String(e));
     } finally {
       setPlayingIdx(-1);
     }
   }
+
+  // [lc-2123] 观看进度**由 Rust 侧直接从 mpv 的 time-pos 落盘**（准确，无需前端估算）。
+  // 这里只做「定期把后端记录读回来刷新 UI」：详情浮层开着时每 5s 拉一次该剧进度，
+  // 这样集数高亮/「上次看到第 N 集」会跟着实际播放走（含连播自动切集）。
+  useEffect(() => {
+    const id0 = detail?.drama?.id;
+    if (!id0) return;
+    const id = window.setInterval(() => {
+      invoke<DjHistory | null>("duanju_history_one", { id: id0 })
+        .then((h) => h && setHist(h))
+        .catch(() => {});
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [detail?.drama?.id]);
 
   const favIds = useMemo(() => new Set(favs.map((f) => f.id)), [favs]);
 
@@ -605,6 +656,29 @@ export function DuanjuPane() {
                           ))}
                         </div>
                       )}
+                      {/* [lc-2123] 观看记录：独立存储（duanju-history.json），不走软件主历史 */}
+                      {hist && hist.drama.id === detail.drama?.id && (
+                        <div className="dj-dhist">
+                          <span className="dj-dhist-t">
+                            上次看到 第{hist.index + 1}集
+                            {hist.pos > 0 && ` · ${fmtTime(hist.pos)}`}
+                          </span>
+                          <button
+                            type="button"
+                            className="dj-dhist-go"
+                            disabled={playingIdx >= 0}
+                            onClick={() => {
+                              const ch = chapters[hist.index];
+                              if (ch) {
+                                setEpGroup(Math.floor(hist.index / EP_GROUP));
+                                play(hist.index, ch, detail.drama?.title || "");
+                              }
+                            }}
+                          >
+                            继续观看
+                          </button>
+                        </div>
+                      )}
                       {detail.drama?.description && (
                         <div className="dj-ddesc">{detail.drama.description}</div>
                       )}
@@ -627,13 +701,17 @@ export function DuanjuPane() {
                   <div className="dj-eps">
                     {(epGroups[epGroup] || []).map((ch, i) => {
                       const idx = epGroup * EP_GROUP + i;
+                      // [lc-2123] 看到过（idx < 上次看到）→ 变浅；当前集 → 高亮描边
+                      const watched = !!hist && hist.drama.id === detail.drama?.id && idx < hist.index;
+                      const current = !!hist && hist.drama.id === detail.drama?.id && idx === hist.index;
                       return (
                         <button
                           key={ch.id || idx}
                           type="button"
-                          className="dj-ep"
+                          className={`dj-ep${watched ? " watched" : ""}${current ? " current" : ""}`}
                           disabled={playingIdx >= 0}
                           onClick={() => play(idx, ch, detail.drama?.title || "")}
+                          title={current ? "上次看到这里" : undefined}
                         >
                           {playingIdx === idx ? "起播中…" : ch.title || `第${idx + 1}集`}
                         </button>

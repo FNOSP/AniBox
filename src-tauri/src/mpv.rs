@@ -727,6 +727,8 @@ impl MpvSession {
         let tx_subtitle = Arc::clone(&tx);
             std::thread::spawn(move || {
                 let first_event = std::sync::atomic::AtomicBool::new(true);
+            // [lc-2123] 短剧历史落盘节流：上一次写入的 time-pos（秒）
+            let duanju_hist_tick = std::sync::atomic::AtomicU64::new(u64::MAX);
                 let mut pos_req: Option<u64> = None;
                 let mut title_req: Option<u64> = None;
                 // [lc-2101] 竖屏调窗状态机：file-loaded → 读 video-params → 精确设几何。
@@ -1014,6 +1016,27 @@ impl MpvSession {
                         1 => {
                             if let Some(d) = v.get("data").and_then(|x| x.as_f64()) {
                                 crate::fnos_progress::tick(&app2, d, 0.0);
+                                // [lc-2123] 短剧独立观看记录：直接用真实的 time-pos，
+                                // 不用前端估算。节流到 ≥5s 增量才落盘（time-pos 默认
+                                // 每 ~250ms 一次，不节流会把磁盘写爆）。
+                                if let Some((drama, index)) = crate::duanju::current_playing() {
+                                    let key = drama
+                                        .get("id")
+                                        .and_then(|x| x.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    if !key.is_empty() {
+                                        // 用 f64 位模式存（AtomicU64），首次哨兵 u64::MAX = 视为「从未写」
+                                        let last = f64::from_bits(duanju_hist_tick.load(Ordering::Relaxed));
+                                        let first = duanju_hist_tick.load(Ordering::Relaxed) == u64::MAX;
+                                        if first || (d - last).abs() >= 5.0 {
+                                            duanju_hist_tick.store(d.to_bits(), Ordering::Relaxed);
+                                            crate::duanju::record_history(
+                                                &app2, &drama, index, d, 0.0,
+                                            );
+                                        }
+                                    }
+                                }
                             }
                         }
                         2 => {

@@ -419,6 +419,11 @@ async fn launch_mpv(
     playlist_start: Option<usize>,
     direct: bool,
 ) -> Result<(), String> {
+    // [lc-2116] 说明：连播队列的清空**不在这里**做。原因是短剧连播本身也走 launch，
+    // 在这里清会把连播链打断（每集播完队列都空掉）。真正的清空点是：
+    //   · duanju_play 命令入口（用户手动点集/切剧，非连播）—— play_impl 的
+    //     `chapters.is_some()` 分支会覆盖队列；
+    //   · 其他车道播放时队列本就为 None（duanju_play 未置位）。
     let mut extra = match headers {
         Some(h) if h.needs_relay() => {
             crate::mpv::http_header_args(h.referer.as_deref(), h.user_agent.as_deref())

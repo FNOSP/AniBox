@@ -268,6 +268,8 @@ export function DuanjuPane() {
         index: idx,
         quality: null,
         title: `${detail.drama.title || name} ${chapter.title || `第${idx + 1}集`}`,
+        // [lc-2116] 传全部分集：后端据此在播完后自动接下一集（短剧一集只有 1~3 分钟）
+        chapters,
       });
     } catch (e) {
       setPlayErr(String(e));

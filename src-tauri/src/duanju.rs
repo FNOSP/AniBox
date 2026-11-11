@@ -46,6 +46,22 @@ fn next_sequence(action: &'static str) -> i64 {
     *cur
 }
 
+/// [lc-2116] 连播队列：记录「本剧 + 全部分集 + 当前播放索引」。
+/// end-file(eof) 时据此自动解析并播放下一集 —— 短剧一集只有 1~3 分钟，用户不该每集手动点。
+/// 只在 duanju_play 成功起播后写入；其他车道（飞牛/IPTV/云盘）播放时不置位，
+/// 因此不会误续播。
+struct AutoNext {
+    drama: Value,
+    chapters: Vec<Value>,
+    index: i64,
+}
+
+static AUTO_NEXT: OnceLock<Mutex<Option<AutoNext>>> = OnceLock::new();
+
+fn auto_next_slot() -> &'static Mutex<Option<AutoNext>> {
+    AUTO_NEXT.get_or_init(|| Mutex::new(None))
+}
+
 /// 上一次播放会话（resolve 会开本地流会话；下一次 resolve 前释放旧的，防泄漏）。
 static LAST_SESSION: OnceLock<Mutex<String>> = OnceLock::new();
 
@@ -293,8 +309,25 @@ pub async fn duanju_play(
     index: i64,
     quality: Option<i64>,
     title: Option<String>,
+    // [lc-2116] 全部分集（前端详情页已有）：写入连播队列，播完自动接下一集。
+    // 缺省为空 = 不连播（只有一集或调用方未提供）。
+    chapters: Option<Vec<Value>>,
 ) -> Result<Value, String> {
-    let plan = duanju_resolve(app.clone(), drama, chapter, index, quality).await?;
+    play_impl(&app, &state, drama, chapter, index, quality, title, chapters).await
+}
+
+/// [lc-2116] 播放主体（与命令分离，供连播复用；不再依赖 tauri::State 类型）。
+async fn play_impl(
+    app: &tauri::AppHandle,
+    state: &crate::AppState,
+    drama: Value,
+    chapter: Value,
+    index: i64,
+    quality: Option<i64>,
+    title: Option<String>,
+    chapters: Option<Vec<Value>>,
+) -> Result<Value, String> {
+    let plan = duanju_resolve(app.clone(), drama.clone(), chapter, index, quality).await?;
     let url = plan
         .get("url")
         .and_then(|x| x.as_str())
@@ -349,8 +382,8 @@ pub async fn duanju_play(
         crate::libmpv::trace(&format!("[duanju] CENC 解密密钥已下发（{} 位 hex）", key.len()));
     }
     crate::player::launch(
-        &app,
-        &state,
+        app,
+        state,
         &cfg,
         &url,
         &display,
@@ -371,10 +404,79 @@ pub async fn duanju_play(
         slot.as_ref().cloned()
     } {
         if let Some((vw, vh)) = wait_video_size(&sess).await {
-            apply_vertical_geometry(&app, &sess, vw, vh).await;
+            apply_vertical_geometry(app, &sess, vw, vh).await;
         }
     }
+    // [lc-2116] 记录连播队列。**语义关键**：
+    //   · Some(list) = 用户手动点播（前端总会传全部分集）→ 重建队列；
+    //   · None       = 连播内部调用（auto_play_next 自己已经推进了 index）→ **不动队列**，
+    //                  否则会把 index 重置回当前值、或把队列清空导致只连播一集。
+    if let Some(list) = chapters {
+        let mut slot = auto_next_slot().lock().unwrap_or_else(|e| e.into_inner());
+        *slot = if list.len() > 1 {
+            Some(AutoNext {
+                drama: drama.clone(),
+                chapters: list,
+                index,
+            })
+        } else {
+            None
+        };
+    }
     Ok(json!({ "url": url, "session": plan.get("session").cloned().unwrap_or(json!("")) }))
+}
+
+/// [lc-2116] 播完自动接下一集（mpv end-file reason=eof 时由 mpv.rs 调用）。
+///
+/// 设计要点：
+/// · **按需解析**：只在切到那一集时才 resolve —— 短剧动辄 70 集，全部预解析等于 70 次
+///   网络往返，且核心的本地流会话是单例，预解析会互相顶掉；
+/// · 静态槽 `Option<AutoNext>` 只在 duanju_play 成功起播后置位，其他车道播放时为空 ⇒
+///   不会误续播；
+/// · 末集：清空队列并返回 Ok(false)，不循环不重播；
+/// · 解析/起播失败：清空队列（不无限重试，避免坏源反复拉流）。
+pub async fn auto_play_next(
+    app: &tauri::AppHandle,
+    state: &crate::AppState,
+) -> Result<bool, String> {
+    let Some((drama, chapter, index)) = ({
+        let mut slot = auto_next_slot().lock().unwrap_or_else(|e| e.into_inner());
+        match slot.as_mut() {
+            Some(q) if q.index + 1 < q.chapters.len() as i64 => {
+                q.index += 1;
+                Some((q.drama.clone(), q.chapters[q.index as usize].clone(), q.index))
+            }
+            Some(_) => {
+                *slot = None; // 已到末集：播完即停
+                None
+            }
+            None => None,
+        }
+    }) else {
+        return Ok(false);
+    };
+
+    let title = chapter
+        .get("title")
+        .and_then(|x| x.as_str())
+        .map(str::to_string)
+        .or_else(|| {
+            drama
+                .get("title")
+                .and_then(|x| x.as_str())
+                .map(|t| format!("{t} 第{}集", index + 1))
+        });
+    // 注意：连播时不再重写队列（chapters 传 None），否则会把 index 重置
+    let r = play_impl(app, state, drama, chapter, index, None, title, None).await;
+    if r.is_err() {
+        *auto_next_slot().lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+    r.map(|_| true)
+}
+
+/// [lc-2116] 清空连播队列（用户切换到别的车道 / 手动停止时用）。
+pub fn clear_auto_next() {
+    *auto_next_slot().lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// [lc-2104] 轮询 `video-params/w|h`（起播后解码器就绪才有值；最多等 ~6s）。
@@ -382,13 +484,13 @@ async fn wait_video_size(sess: &crate::mpv::MpvSession) -> Option<(i64, i64)> {
     for _ in 0..30 {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         let w = sess
-            .command(json!(["get_property", "video-params/w"]))
+            .command(serde_json::json!(["get_property", "video-params/w"]))
             .await
             .ok()
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
         let h = sess
-            .command(json!(["get_property", "video-params/h"]))
+            .command(serde_json::json!(["get_property", "video-params/h"]))
             .await
             .ok()
             .and_then(|v| v.as_i64())
@@ -400,7 +502,7 @@ async fn wait_video_size(sess: &crate::mpv::MpvSession) -> Option<(i64, i64)> {
     None
 }
 
-/// [lc-2104] 竖屏「锁高、宽自适应」：窗口高度 = 主窗高度（不超过工作区 94%），
+/// [lc-2104] 竖屏「锁高、宽自适应」：窗口高度 = max(主窗高, 工作区 90%) 且受 94% 封顶，
 /// 宽度 = 高度 × 视频真实比例 ⇒ 窗口与视频同比例、mpv 内部零留白（无黑边）。
 async fn apply_vertical_geometry(
     app: &tauri::AppHandle,
@@ -421,10 +523,6 @@ async fn apply_vertical_geometry(
         .ok()
         .flatten()
         .map(|m| (m.work_area().size.width, m.work_area().size.height));
-    // 锁高：取「主窗高度」与「工作区 90%」的**较大者**，再受工作区 94% 封顶。
-    // 用户反馈「视频显示太小」——原先纯用主窗高度，而主窗常被用户缩到较小尺寸
-    // （实测本机主窗 1215 物理像素，而工作区 1440 → 竖屏片只占屏幕一半高）。
-    // 竖屏片本就该占满屏幕高度；同时不越出工作区（底部任务栏/标题栏留白）。
     let mut h = size.height.max(480) as f64;
     if let Some((_, ah)) = area {
         if ah > 0 {
@@ -436,7 +534,6 @@ async fn apply_vertical_geometry(
     let mut w = h * aspect;
     if let Some((aw, ah)) = area {
         if aw > 0 {
-            // 宽度也不能出屏：超过工作区宽 94% 时按宽度反推（仍保持视频比例）
             let max_w = aw as f64 * 0.94;
             if w > max_w {
                 w = max_w;
@@ -455,28 +552,23 @@ async fn apply_vertical_geometry(
     if w == 0 || h == 0 {
         return;
     }
-    // 居中：主窗当前所在显示器的中心点，减去新窗口一半尺寸（mpv geometry 的 +X+Y
-    // 是**绝对屏幕坐标**）。拿不到显示器信息时退回纯尺寸（mpv 会保持原位）。
     let centered = win
         .current_monitor()
         .ok()
         .flatten()
         .map(|m| {
-            let pos = m.position();
-            let sz = m.size();
-            let x = pos.x + ((sz.width as i32 - w as i32) / 2).max(0);
-            let y = pos.y + ((sz.height as i32 - h as i32) / 2).max(0);
+            let p = m.position();
+            let s = m.size();
+            let x = p.x + ((s.width as i32 - w as i32) / 2).max(0);
+            let y = p.y + ((s.height as i32 - h as i32) / 2).max(0);
             format!("{w}x{h}+{x}+{y}")
         })
         .unwrap_or_else(|| format!("{w}x{h}"));
     crate::libmpv::trace(&format!(
         "[lc-2104] 竖屏锁高调窗：{centered}（视频 {vw}x{vh}，比例 {aspect:.4}）"
     ));
+    let _ = sess.command(serde_json::json!(["set", "geometry", centered])).await;
     let _ = sess
-        .command(json!(["set", "geometry", centered]))
-        .await;
-    // keepaspect-window 保证窗口与视频同比例时零留白（mpv 默认就是 yes，此处显式兜底）
-    let _ = sess
-        .command(json!(["set", "keepaspect-window", "yes"]))
+        .command(serde_json::json!(["set", "keepaspect-window", "yes"]))
         .await;
 }

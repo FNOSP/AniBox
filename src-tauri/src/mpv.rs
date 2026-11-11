@@ -955,6 +955,28 @@ impl MpvSession {
                                     }
                                 } else {
                                     let _ = app2.emit("mpv-load", json!({ "phase": "ended", "reason": reason }));
+                                    // [lc-2116] 短剧连播：正常播完（eof）且连播队列非空时，
+                                    // 自动 resolve 并起播下一集。队列只在 duanju_play 成功
+                                    // 起播后置位，其他车道为空 ⇒ 不会误触发。
+                                    // 这里用 block_on（本线程是 IPC 读线程，阻塞不影响 UI）：
+                                    // tauri::State 不是 Send，spawn 会编译不过。
+                                    if reason == "eof" {
+                                        use tauri::Manager;
+                                        let state = app2.state::<crate::AppState>();
+                                        match tauri::async_runtime::block_on(
+                                            crate::duanju::auto_play_next(&app2, &state),
+                                        ) {
+                                            Ok(true) => {
+                                                crate::libmpv::trace("[duanju] 已自动播放下一集");
+                                            }
+                                            Ok(false) => { /* 末集或非短剧：不续播 */ }
+                                            Err(e) => {
+                                                crate::libmpv::trace(&format!(
+                                                    "[duanju] 自动连播失败（已停止连播）: {e}"
+                                                ));
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             _ => {}

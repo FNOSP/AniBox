@@ -14,7 +14,9 @@
   grid-template-columns: minmax(0, 1fr) minmax(300px, 420px); /* 左主内容 + 右选集列 */
   gap: var(--sp-5);
   align-items: start;
-  padding-bottom: 40px; /* 底部留白：放大图/弹层不贴边 */
+  /* [lc-2123] 去掉 padding-bottom:40px —— lc-2119 把滚动视口下移到 .dv2-body、
+     main 设为 overflow:hidden 后，这 40px 完全落在滚动视口**外面**，纯白占高度。
+     底部气口统一由滚动内容自己给（.dv2-body / .dv2e-list 各自的 padding-bottom）。 */
 }
 .dv2-left {
   min-width: 0; /* 关键：grid 子项默认 min-width:auto，长文本会把列撑破 */
@@ -229,6 +231,31 @@
   .detail-full:not(.mv-detail) .dv2-left > *:not(.dv2-body) {
     flex: 0 0 auto;
   }
+  /* [lc-2122] 右栏对齐左列的高度链：lc-2119 把滚动视口从 main 下移到 .dv2-body、
+     并把 main 设为 overflow:hidden，右栏却仍是 `position:sticky + max-height:calc(100vh-70px)`。
+     两个后果：
+       ① main 已是 overflow:hidden，sticky 的最近滚动祖先变成 .dv2-body（右栏不是它的后代）
+          ⇒ sticky 失去意义，右栏被拉伸到 grid 行高（= 容器高）却仍按 100vh-70px 取 max-height，
+          与左列可视高度不一致 → 底部那排选集被视口/容器切掉（用户截图第 6 集只露一半）；
+       ② 100vh-70px 是「假设顶部 chrome 70px」的魔数，而现在的滚动语义已经不再依赖视口。
+     改为与左列完全对称：右栏撑满 grid 行高、由内部 .dv2e-list 自己滚。 */
+  .detail-full:not(.mv-detail) .dv2-right {
+    position: static;      /* 不再需要 sticky：两栏现在同高，各自内部滚 */
+    align-self: stretch;
+    height: 100%;
+    min-height: 0;
+    max-height: none;      /* 撤掉 100vh-70px 魔数 */
+    overflow: hidden;      /* 滚动权交给 .dv2e-list */
+  }
+  /* 头部（.dv2e-hd）固定不收缩，列表吃满剩余高度并自己滚 */
+  .detail-full:not(.mv-detail) .dv2-right > .dv2e-hd {
+    flex: 0 0 auto;
+  }
+  .detail-full:not(.mv-detail) .dv2-right > .dv2e-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
   .detail-full:not(.mv-detail) .dv2-body {
     flex: 1 1 auto;
     min-height: 0;
@@ -238,9 +265,10 @@
     padding-right: var(--sp-2);
     margin-right: calc(-1 * var(--sp-2));
     scrollbar-gutter: stable;
-    /* [lc-2119] 底部气口必须写在这里（滚动内容的内部），不能靠 .dv2 的
-       padding-bottom:40px —— 那个现在落在滚动视口**外面**，滚到底时内容会贴死窗口底边。 */
-    padding-bottom: var(--sp-6);
+    /* [lc-2119] 底部气口必须写在这里（滚动内容的内部），不能靠 .dv2 的 padding-bottom。
+       [lc-2123] 32→16：连同 .detail-full 自身的 16px 底边距，滚到底共 32px，
+       原来 48px 是"明明还能再看到内容"的一截空白（用户反馈）。 */
+    padding-bottom: var(--sp-4);
   }
   /* 滚动条做细，与右栏选集列表同一套观感 */
   .detail-full:not(.mv-detail) .dv2-body::-webkit-scrollbar {
@@ -498,13 +526,25 @@
   color: var(--muted);
 }
 /* ── 集数显示样式 + 视图切换（网格 / 列表） ──
-   属于控件行，靠 margin-left:auto 靠右；窄到放不下时在 .dv2e-hd-pills 内换行。 */
+   属于控件行，靠 margin-left:auto 靠右；窄到放不下时在 .dv2e-hd-pills 内换行。
+   [lc-2122] 内边距必须让选中态胶囊与容器边框之间留出 1px 以上的空气：
+   容器 30px 高、1px 边框、--sp-0=2px ⇒ 可用内高 24px，而按钮 h=24px 会顶满，
+   选中底色（accent 淡底 + 内描边）被容器圆角/边框裁掉一块（用户截图里
+   「第N集」「列表」按钮像缺角）。改法：容器内边距保持 2px；内部按钮降到
+   calc(内含) 的自适应高度（--dv2e-ctl-h 减两侧），不再写死 24px。 */
 .dv2e-tools {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
   flex: 0 0 auto;
   min-width: 0;
+}
+/* 分段控件通用内高：容器高 - 上下内边距 - 上下边框，**再留 2px 空气**（上下各 1px）。
+   [lc-2122] 不留这 2px 时按钮正好顶满可用内高，选中态的圆角底色会与容器圆角/边框
+   贴死并被裁掉一角（用户截图里「第N集」「列表」按钮像缺角）。 */
+.dv2e-tools,
+.dv2e-hd-pills {
+  --dv2e-seg-inner-h: calc(var(--dv2e-ctl-h) - var(--sp-0) * 2 - 2px - 2px);
 }
 .ep-mode {
   display: inline-flex;
@@ -519,7 +559,7 @@
   box-sizing: border-box;
 }
 .ep-mode-btn {
-  height: 24px;
+  height: var(--dv2e-seg-inner-h, 24px);
   padding: 0 var(--btn-px-sm);
   border: none;
   border-radius: var(--r-full);
@@ -561,7 +601,8 @@
   align-items: center;
   justify-content: center;
   width: 28px;
-  height: 24px;
+  /* [lc-2122] 同 .ep-mode-btn：不写死 24px，按容器内高自适应，选中底色不再被裁 */
+  height: var(--dv2e-seg-inner-h, 24px);
   padding: 0;
   border: none;
   border-radius: var(--r-full);
@@ -669,11 +710,15 @@
   flex: 0 1 auto;
   max-height: none;
   overflow-y: auto;
+  /* [lc-2123] 列表视图也要底部气口（原来只有网格视图有）：滚到底最后一集不贴死容器底边框。
+     与网格视图同一档 16px（原网格 max(24px, safe-area) 偏大，用户反馈底部留白过多）。 */
+  padding-bottom: var(--sp-4);
   /* [lc-1419] 只画左右下三边（上边由头部承担）—— 两块拼成一张卡片，交界处不再有双线 */
   border: 1px solid var(--line);
   border-top: none;
   border-radius: 0 0 var(--radius) var(--radius);
   background: var(--bg-2);
+  box-sizing: border-box;
 }
 .dv2e-list::-webkit-scrollbar {
   width: 8px;
@@ -687,9 +732,9 @@
    方块 1:1、集号居中；当前集 accent 渐变反白；已看弱化 + 左上勾标；
    有进度时底部 3px 细条。 */
 .dv2e-list-grid {
-  /* [fix-ep-bottom] 底部留出安全内边距：滚到底时最后一排不再贴着滚动容器的下边框/视口底边，
-     并顺带避开右下角可能悬浮的控件。左右上仍为 12px 保持网格与列表行一致。 */
-  padding: 12px 12px max(24px, env(safe-area-inset-bottom, 0px));
+  /* [fix-ep-bottom] 底部留出安全内边距：滚到底时最后一排不再贴着滚动容器的下边框/视口底边。
+     [lc-2123] 24→16px 与列表视图统一，底部留白不再偏大（用户反馈）。 */
+  padding: 12px 12px max(var(--sp-4), env(safe-area-inset-bottom, 0px));
 }
 .dv2e-grid {
   display: grid;

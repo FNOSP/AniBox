@@ -384,13 +384,21 @@
   gap: var(--sp-2);             /* 控件行 ↔ 文本行 */
   min-width: 0;
 }
-/* 上面一行：只放胶囊 / 按钮类控件，保持一行；窄窗由媒体查询允许换行 */
+/* 上面一行：只放胶囊 / 按钮类控件。
+   [lc-2128] **必须允许换行**：右栏最宽只有 420px（grid 上限），而这一行四个控件
+   实测宽 137+42+94+67 + 3 个 gap(8) = 364px，加上头部左右内边距 32px 共需 396px ——
+   420px 刚好、400px 起就溢出了 10px。原来 `flex-wrap: nowrap` + `space-between`
+   会把溢出量全部挤到右侧 ⇒ 最后一个控件被推出容器右边界（用户看到的「右边直接贴边」/
+   「左边留空、右边贴边」）。旧版在 900px 媒体查询里才允许换行，但那是**整窗宽度**，
+   与右栏实际可用宽度无关，永远命中不了 —— 这里直接改成 wrap。
+   justify 也从中去掉 space-between：换行后如果还有残留空隙，space-between 会把它
+   塞进行内制造更大错位；改回默认 flex-start，控件自然右靠由 .dv2e-tools 的
+   margin-left:auto 负责（放得下时仍靠右，放不下时换行且不溢出）。 */
 .dv2e-hd-pills {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  flex-wrap: nowrap;
-  justify-content: space-between;
+  flex-wrap: wrap;
   min-width: 0;
 }
 /* 头部里的「已入库」标签：不参与收缩、不换行，字号/字重与右侧元信息同档 */
@@ -517,18 +525,16 @@
   color: var(--muted);
 }
 /* ── 集数显示样式 + 视图切换（网格 / 列表） ──
-   属于控件行，靠 margin-left:auto 靠右；窄到放不下时在 .dv2e-hd-pills 内换行。
-   [lc-2122] 内边距必须让选中态胶囊与容器边框之间留出 1px 以上的空气：
-   容器 30px 高、1px 边框、--sp-0=2px ⇒ 可用内高 24px，而按钮 h=24px 会顶满，
-   选中底色（accent 淡底 + 内描边）被容器圆角/边框裁掉一块（用户截图里
-   「第N集」「列表」按钮像缺角）。改法：容器内边距保持 2px；内部按钮降到
-   calc(内含) 的自适应高度（--dv2e-ctl-h 减两侧），不再写死 24px。 */
+   属于控件行，靠 margin-left:auto 靠右；窄到放不下时由 .dv2e-hd-pills 换行（lc-2128）。
+   [lc-2122] 分段控件内边距四向对称：容器 30px 高 − 上下各 3px − 边框 2px = 22px 按钮高。 */
 .dv2e-tools {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
   flex: 0 0 auto;
   min-width: 0;
+  /* [lc-2128] 放得下时整组右靠（原来靠父级 space-between，换行后会制造错位） */
+  margin-left: auto;
 }
 /* 分段控件内高变量：容器高 - 上下内边距(3px×2) - 上下边框(1px×2) = 22px。
    [lc-2126] 内边距**四个方向统一 3px**：原来左右是 var(--sp-0)=2px、上下因按钮居中

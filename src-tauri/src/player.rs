@@ -565,6 +565,15 @@ async fn launch_mpv(
                     ]))
                     .await;
             }
+            // [lc-2125] 复用会话时**重新注册全部属性观察**。
+            // 根因：`observe_property` 只在 MpvSession::launch 新建会话时跑一次；mpv 是
+            // 常驻进程，升级后复用旧会话（旧代码没有 id=14 eof-reached）⇒ 连播永远不触发。
+            // observe_property 对同一 id 是幂等的（mpv 会替换旧的 watcher），重发无副作用。
+            for (oid, prop) in crate::mpv::observed_properties() {
+                let _ = m
+                    .command_no_reply(json!(["observe_property", oid, prop]))
+                    .await;
+            }
             // [lc-2105] 竖屏片源：**loadfile 之前**就把窗口切成竖屏粗估尺寸。
             // 否则复用会话时窗口仍是上一部横屏片的 2160x1215，竖屏视频起播瞬间两侧
             // 大片黑边（用户实测「刚起播是横屏大黑边，过一会才正常」——那一段就是

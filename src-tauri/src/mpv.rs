@@ -50,6 +50,11 @@ const OBSERVED: [(u64, &str); 14] = [
     (14, "eof-reached"),
 ];
 
+/// [lc-2125] 对外暴露观察表：复用会话时要重注册（mpv 常驻，升级后旧会话缺新属性）。
+pub fn observed_properties() -> &'static [(u64, &'static str)] {
+    &OBSERVED
+}
+
 /// mpv IPC 连接类型：Windows 是命名管道（用 File 打开），
 /// Linux/macOS 是 Unix domain socket（必须用 UnixStream 连接，open() 打不开 socket 文件）。
 #[cfg(target_os = "windows")]
@@ -1124,6 +1129,16 @@ impl MpvSession {
                         // 触发短剧连播。注意 eof-reached 会随切集回落 false，所以只处理 true。
                         14 => {
                             let reached = v.get("data").and_then(|x| x.as_bool()).unwrap_or(false);
+                            // [lc-2125] 诊断日志：连播链路每一环都要可观测（此前静默，
+                            // 「没连播」完全无从判断是没触发还是队列空）。
+                            crate::libmpv::trace(&format!(
+                                "[duanju] eof-reached={reached} 当前会话={}",
+                                crate::duanju::current_playing().map(|(d, i)| format!(
+                                    "{}(第{}集)",
+                                    d.get("title").and_then(|x| x.as_str()).unwrap_or("?"),
+                                    i + 1
+                                )).unwrap_or_else(|| "无（非短剧）".into())
+                            ));
                             if reached {
                                 use tauri::Manager;
                                 let state = app2.state::<crate::AppState>();
@@ -1195,10 +1210,17 @@ impl MpvSession {
         }
 
         // ── 4) 观察属性（id 与前端 switch 对齐）
+        // [lc-2125] 逐条 trace：连播排障需要确认 id=14(eof-reached) 真的注册上了。
         for (id, prop) in OBSERVED {
-            let _ = session
+            let r = session
                 .command(json!(["observe_property", id, prop]))
                 .await;
+            if r.is_err() || prop == "eof-reached" {
+                crate::libmpv::trace(&format!(
+                    "observe_property id={id} prop={prop} -> {}",
+                    if r.is_ok() { "ok" } else { "FAIL" }
+                ));
+            }
         }
 
         Ok(session)

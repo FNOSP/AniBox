@@ -385,21 +385,27 @@
   min-width: 0;
 }
 /* 上面一行：只放胶囊 / 按钮类控件。
-   [lc-2128] **必须允许换行**：右栏最宽只有 420px（grid 上限），而这一行四个控件
-   实测宽 137+42+94+67 + 3 个 gap(8) = 364px，加上头部左右内边距 32px 共需 396px ——
-   420px 刚好、400px 起就溢出了 10px。原来 `flex-wrap: nowrap` + `space-between`
-   会把溢出量全部挤到右侧 ⇒ 最后一个控件被推出容器右边界（用户看到的「右边直接贴边」/
-   「左边留空、右边贴边」）。旧版在 900px 媒体查询里才允许换行，但那是**整窗宽度**，
-   与右栏实际可用宽度无关，永远命中不了 —— 这里直接改成 wrap。
-   justify 也从中去掉 space-between：换行后如果还有残留空隙，space-between 会把它
-   塞进行内制造更大错位；改回默认 flex-start，控件自然右靠由 .dv2e-tools 的
-   margin-left:auto 负责（放得下时仍靠右，放不下时换行且不溢出）。 */
+   [lc-2128] 原来 `flex-wrap: nowrap` + `space-between`，右栏可用宽度只有 300-420px，
+   放不下时会把溢出量全挤到右侧 ⇒ 末个控件被推出容器边界（「右边直接贴边/被裁」）。
+   [lc-2129] 用户要求**一行放得下**（不接受换行）⇒ 保留 aliasing wrap 作为极端兜底，
+   同时把这一行内的控件**横向收紧**（详见下面 .dv2e-row-compact 变量）：
+   实测收紧前 158.6+62+176 + 3×8(gap) = 420.6px > 388px 内宽；
+   收紧后 146+56+160 + 3×6(gap) = 380px ≤ 388px，420px 右栏一行放得下。
+   justify 仍是默认 flex-start，右靠由 .dv2e-tools 的 margin-left:auto 负责。 */
 .dv2e-hd-pills {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
   flex-wrap: wrap;
   min-width: 0;
+  /* [lc-2129] 控件行内部的横向尺寸变量（只作用于本行，不动全局按钮 token） */
+  --dvr-gap: 5px;         /* 控件之间 */
+  --dvr-play-pad: 9px;    /* 播放胶囊左右内边距（原 --btn-px-md=12） */
+  --dvr-state-pad: 7px;   /* 状态胶囊左右内边距（原 --sp-3=12） */
+  --dvr-seg-pad-x: 5px;   /* 分段按钮左右内边距（原 --btn-px-sm=8） */
+  --dvr-view-btn-w: 26px; /* 视图按钮宽度（原 28） */
+  --dvr-pill-gap: 5px;    /* 播放胶囊内：图标 ↔ 文字 ↔ 进度 */
+  --dvr-tools-gap: 4px;   /* 两个分段控件之间 */
+  gap: var(--dvr-gap);
 }
 /* 头部里的「已入库」标签：不参与收缩、不换行，字号/字重与右侧元信息同档 */
 .dv2e-hd-h {
@@ -456,8 +462,12 @@
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
+  /* [lc-2129] 承担「工具组右靠」：放得下时把右侧工具组推到行尾；auto margin 不参与
+     flex 换行判定，不会像挂在工具组上的 auto margin 那样逼出换行。 */
+  margin-right: auto;
   height: var(--dv2e-ctl-h, 30px);
-  padding: 0 var(--sp-3);
+  /* [lc-2129] 左右 12→9px（本行内收身） */
+  padding: 0 var(--dvr-state-pad, var(--sp-3));
   font-size: var(--fs-cap);
   font-weight: 700;
   line-height: 1;
@@ -489,9 +499,10 @@
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: var(--dvr-pill-gap, var(--sp-2));
   height: var(--dv2e-ctl-h);
-  padding: 0 var(--btn-px-md);
+  /* [lc-2129] 左右 12→10px：为「整行一行放得下」收身 */
+  padding: 0 var(--dvr-play-pad, var(--btn-px-md));
   border: 1px solid var(--line-strong);
   border-radius: var(--r-full);
   background: var(--hover);
@@ -530,11 +541,14 @@
 .dv2e-tools {
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-2);
+  /* [lc-2129] 与控件行间距一致（8→6px） */
+  /* [lc-2129] 两个分段控件之间更紧（与块间距区分开，视觉上它们是一组） */
+  gap: var(--dvr-tools-gap, 4px);
   flex: 0 0 auto;
   min-width: 0;
   /* [lc-2128] 放得下时整组右靠（原来靠父级 space-between，换行后会制造错位） */
-  margin-left: auto;
+  /* [lc-2129] 去 auto margin：flex-wrap 下 auto margin 会独占剩余空间、逼出换行；
+     右靠改由 .dv2e-state 的 margin-right:auto 承担 */
 }
 /* 分段控件内高变量：容器高 - 上下内边距(3px×2) - 上下边框(1px×2) = 22px。
    [lc-2126] 内边距**四个方向统一 3px**：原来左右是 var(--sp-0)=2px、上下因按钮居中
@@ -562,7 +576,8 @@
 }
 .ep-mode-btn {
   height: var(--dv2e-seg-inner-h, 24px);
-  padding: 0 var(--btn-px-sm);
+  /* [lc-2129] 左右 8→6px（本行内收身） */
+  padding: 0 var(--dvr-seg-pad-x, var(--btn-px-sm));
   border: none;
   border-radius: var(--r-full);
   background: transparent;
@@ -572,6 +587,8 @@
   font-weight: 600;
   line-height: 1;
   white-space: nowrap;
+  /* [lc-2129] 中文/数字混排收紧字距，为一行放得下省宽 */
+  letter-spacing: -0.01em;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
@@ -603,7 +620,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
+  /* [lc-2129] 28→26px（本行内收身） */
+  width: var(--dvr-view-btn-w, 28px);
   /* [lc-2122] 同 .ep-mode-btn：不写死 24px，按容器内高自适应，选中底色不再被裁 */
   height: var(--dv2e-seg-inner-h, 24px);
   padding: 0;

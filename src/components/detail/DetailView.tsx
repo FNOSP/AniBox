@@ -503,10 +503,6 @@ export function DetailView({
   const [tab, setTab] = useState("overview");
   // [lc-1759→1761] Switch 独立按钮（不占标签页）：切换右列「本地选集 ↔ 在线资源搜索」
   const [onlineMode, setOnlineMode] = useState(false);
-  // [lc-1423] 重新引入简介展开态：true = 弹窗打开（看完整简介）。
-  //   注意语义与 lc-1410 之前不同 —— 那时是"就地铺开"（会撑高容器、拉长海报），
-  //   现在是"**弹出弹窗**看全文"，容器高度不受影响。
-  const [introFull, setIntroFull] = useState(false);
   // [lc-1783] 下载字幕弹窗开关（默认词 = 详情页标题）
   const [subPickerOpen, setSubPickerOpen] = useState(false);
   // [lc-119] 吐槽（Bangumi 评论）：懒加载 —— 用户切到该分段时才匹配+拉评论（避免拖慢首屏）
@@ -1707,17 +1703,8 @@ export function DetailView({
   const tabIds: string[] = hasBgmId
     ? ["overview", "reviews", "comments", "related", "more", "extra"]
     : ["overview", "related", "more", "extra"];
-  // [lc-1423] 简介是否需要"展开"：与之前同一套字数近似（>96 字≈4~5 行）
-  const longIntro = overview.length > 96;
-  // Esc 关简介弹窗（与项目其它弹层同一套键盘约定）
-  useEffect(() => {
-    if (!introFull) return;
-    const h = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setIntroFull(false);
-    };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [introFull]);
+  // [lc-2127] 简介改为默认完全展示：原 longIntro / introFull / Esc 监听
+  // 与「展开」弹窗一并删除（见 OverviewTab 同处注释）。
   const activeTab = tabIds.includes(tab) ? tab : "overview";
   // [lc-1405] 标签框数据源：**Bangumi tags[] 优先，TMDB genres 兜底**（用户要求"直接取 bgm 或 tmdb 的"）。
   //   ⚠ 不再用飞牛 item 的 tags —— 那是刮削元信息字典（含"话数"这类），不是题材标签，
@@ -2360,9 +2347,6 @@ export function DetailView({
           <OverviewTab
             bgmTags={bgmTags}
             overview={overview}
-            longIntro={longIntro}
-            introFull={introFull}
-            onExpand={() => setIntroFull(true)}
             setZoom={setZoom}
             tmdb={tmdb}
             tmdbDone={tmdbDone}
@@ -2998,30 +2982,6 @@ export function DetailView({
               </div>
             </div>
           </div>,
-          document.body,
-        )}
-
-      {/* [lc-1423] 简介弹窗：完整正文（容器固定高度 + 截断后，全文在这里看）。
-          Esc / 点背景关闭；正文可滚动（长简介比一屏更长）。 */}
-      {introFull &&
-        createPortal(
-          <div className="ddet-mask" onClick={() => setIntroFull(false)}>
-          <div className="sum-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="sum-modal-h">
-              <h3>简介</h3>
-              <button
-                className="ddet-close sum-modal-x"
-                title="关闭（Esc）"
-                onClick={() => setIntroFull(false)}
-              >
-                <IcoXL size={15} strokeWidth={1.8} />
-              </button>
-            </div>
-            <div className="sum-modal-b">
-              <p className="dfold">{overview}</p>
-            </div>
-          </div>
-        </div>,
           document.body,
         )}
 

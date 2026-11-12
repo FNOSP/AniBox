@@ -7,9 +7,6 @@ import { BgmTag } from "../../../types";
 type Props = {
   bgmTags: BgmTag[];
   overview: string;
-  longIntro: boolean;
-  introFull: boolean;
-  onExpand: () => void;
   setZoom: (u: string) => void;
   tmdb: Record<string, unknown> | null;
   tmdbDone: boolean;
@@ -19,9 +16,6 @@ type Props = {
 export function OverviewTab({
   bgmTags,
   overview,
-  longIntro,
-  introFull,
-  onExpand,
   setZoom,
   tmdb,
   tmdbDone,
@@ -44,17 +38,15 @@ export function OverviewTab({
             </div>
           </div>
         )}
-        {/* [lc-1567] 简介：原「首屏简介框」原样移入（截断 + 「展开」弹窗，行为未动） */}
+        {/* [lc-2127] 简介**默认完全展示**，不再截断/不再有「展开」按钮（用户要求去掉收起）。
+            长简介直接把这一节撑开即可 —— 标签页内容区（.dv2-body）本来就是滚动视口，
+            内容变高只是多滚一点，不会顶坏版式。故 longIntro / introFull / onExpand 三个
+            props 与「展开」弹窗一并移除（DetailView 侧同步清理）。 */}
         {overview && (
           <div className="tmdb-sec">
             <div className="tmdb-sec-t">简介</div>
             <div className="dv2-isum">
-              <p className={`dfold${longIntro && !introFull ? " clip" : ""}`}>{overview}</p>
-              {longIntro && (
-                <button className="dv2-expand" onClick={onExpand}>
-                  展开
-                </button>
-              )}
+              <p className="dfold">{overview}</p>
             </div>
           </div>
         )}

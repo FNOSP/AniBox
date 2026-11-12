@@ -539,20 +539,25 @@
   flex: 0 0 auto;
   min-width: 0;
 }
-/* 分段控件通用内高：容器高 - 上下内边距 - 上下边框，**再留 2px 空气**（上下各 1px）。
-   [lc-2122] 不留这 2px 时按钮正好顶满可用内高，选中态的圆角底色会与容器圆角/边框
-   贴死并被裁掉一角（用户截图里「第N集」「列表」按钮像缺角）。 */
+/* 分段控件内高变量：容器高 - 上下内边距(3px×2) - 上下边框(1px×2) = 22px。
+   [lc-2126] 内边距**四个方向统一 3px**：原来左右是 var(--sp-0)=2px、上下因按钮居中
+   额外多出 1px 剩余空间（实测 2px vs 3px），选中态底色左右贴边、上下有空气，
+   用户看起来就是「左边留空、右边贴边」（尤其分段控件首/末按钮的选中胶囊）。
+   统一 3px 后四个方向到边框都是 4px（含 1px 边框），光学对称。 */
 .dv2e-tools,
 .dv2e-hd-pills {
-  --dv2e-seg-inner-h: calc(var(--dv2e-ctl-h) - var(--sp-0) * 2 - 2px - 2px);
+  --dv2e-seg-inner-h: calc(var(--dv2e-ctl-h) - 3px * 2 - 2px);
+  --dv2e-seg-pad: 3px;
 }
 .ep-mode {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
   height: var(--dv2e-ctl-h);
-  padding: var(--sp-0);
-  gap: var(--sp-0);
+  padding: var(--dv2e-seg-pad, 3px);
+  /* [lc-2126] 段间距与内边距取同值（原来 var(--sp-0)=2px，比内边距还小，
+     选中胶囊之间的缝隙比到边框的距离更窄，看着不匀） */
+  gap: var(--dv2e-seg-pad, 3px);
   border: 1px solid var(--line);
   border-radius: var(--r-full);
   background: var(--hover);
@@ -583,14 +588,15 @@
   background: rgb(var(--accent-rgb) / 0.16);
   box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / 0.5);
 }
-/* 网格 / 列表视图切换：与集数样式同一套「安静胶囊」语言，图标按钮 */
+/* 网格 / 列表视图切换：与集数样式同一套「安静胶囊」语言，图标按钮
+   （[lc-2126] 内边距与 .ep-mode 同源，四向 3px 对称） */
 .dv2e-view {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  gap: var(--sp-0);
+  gap: var(--dv2e-seg-pad, 3px);
   height: var(--dv2e-ctl-h);
-  padding: var(--sp-0);
+  padding: var(--dv2e-seg-pad, 3px);
   border: 1px solid var(--line);
   border-radius: var(--r-full);
   background: var(--hover);

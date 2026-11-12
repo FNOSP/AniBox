@@ -386,6 +386,11 @@ async fn play_impl(
         ));
         crate::libmpv::trace(&format!("[duanju] CENC 解密密钥已下发（{} 位 hex）", key.len()));
     }
+    // [lc-2128] 短剧不需要 ±10 秒跳转键（一集 1~3 分钟，跳 10 秒没意义；用户要求去掉）。
+    // 做法：改 modernz.conf 的 jump_buttons，modernz 的 read_options 回调会
+    // request_tick() 重绘（实测它能响应配置文件变更），因此**无需重启 mpv**。
+    // 非短剧起播时会由 restore_modernz_defaults() 恢复。
+    set_modernz_jump_buttons(app, false);
     crate::player::launch(
         app,
         state,
@@ -493,6 +498,78 @@ pub fn current_playing() -> Option<(Value, i64)> {
     }
     let slot = auto_next_slot().lock().unwrap_or_else(|e| e.into_inner());
     slot.as_ref().map(|q| (q.drama.clone(), q.index))
+}
+
+/// [lc-2128] 设置 modernz 底栏的 ±10 秒跳转键显隐（短剧关、其它开）。
+///
+/// 直接改 `script-opts/modernz.conf` 的单行值：modernz 的 `opt.read_options` 会监听
+/// 配置文件变化并在回调里 `request_tick()` 重绘，所以运行中的 mpv 也会即时生效
+/// （无需重启会话）。文件里没有该键就追加一行。
+fn set_modernz_jump_buttons(app: &tauri::AppHandle, on: bool) {
+    const NL: char = '\u{0a}';
+    let Some(base) = crate::config::mpv_portable_config_dir(app) else {
+        return;
+    };
+    let path = base.join("script-opts").join("modernz.conf");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return; // 配置文件不存在（非自带 mpv）：不处理
+    };
+    let want = format!("jump_buttons={}", if on { "yes" } else { "no" });
+    let mut out = String::with_capacity(text.len() + 32);
+    let mut replaced = false;
+    for line in text.lines() {
+        if line.trim_start().starts_with("jump_buttons=") {
+            out.push_str(&want);
+            out.push(NL);
+            replaced = true;
+        } else {
+            out.push_str(line);
+            out.push(NL);
+        }
+    }
+    if !replaced {
+        out.push_str(&want);
+        out.push(NL);
+    }
+    if out != text {
+        let _ = std::fs::write(&path, out);
+        crate::libmpv::trace(&format!("[duanju] modernz {want}"));
+    }
+}
+
+/// [lc-2127] 队列里是否还有下一集（mpv 读线程判断要不要发 `duanju-eof` 事件）。
+pub fn has_next() -> bool {
+    if !DJ_ACTIVE.load(std::sync::atomic::Ordering::Acquire) {
+        return false;
+    }
+    let slot = auto_next_slot().lock().unwrap_or_else(|e| e.into_inner());
+    slot.as_ref()
+        .map(|q| q.index + 1 < q.chapters.len() as i64)
+        .unwrap_or(false)
+}
+
+/// [lc-2127] 前端收到 `duanju-eof` 事件后调用：在**命令线程**里起播下一集。
+///
+/// 为什么绕一圈让前端发起：mpv 的 `eof-reached` 回调跑在 IPC **读线程**，在那里面
+/// 调任何"发 IPC 命令并等回包"的逻辑都会**死锁**（回包得由同一线程读取）——
+/// 实测表现为第 2 集 launch 打出后 file-loaded 永不到来，画面停在最后一帧不动。
+#[tauri::command]
+pub async fn duanju_auto_next(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<bool, String> {
+    match auto_play_next(&app, &state).await {
+        Ok(v) => {
+            if v {
+                crate::libmpv::trace("[duanju] 已自动播放下一集");
+            }
+            Ok(v)
+        }
+        Err(e) => {
+            crate::libmpv::trace(&format!("[duanju] 自动连播失败（已停止连播）: {e}"));
+            Err(e)
+        }
+    }
 }
 
 /// [lc-2116] 清空连播队列（用户切换到别的车道 / 手动停止时用）。
@@ -723,4 +800,9 @@ pub async fn duanju_history_update(
 ) -> Result<(), String> {
     record_history(&app, &drama, index, pos, dur);
     Ok(())
+}
+
+/// [lc-2128] 恢复 modernz 的 ±10 秒跳转键（非短剧起播时调用）。
+pub fn restore_modernz_jump_buttons(app: &tauri::AppHandle) {
+    set_modernz_jump_buttons(app, true);
 }

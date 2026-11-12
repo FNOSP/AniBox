@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { DState } from "./shared";
 import { djImg } from "../../lib/images";
 import { AdultGateModal, ADULT_SOURCES, adultAckDone, markAdultAck } from "./AdultGateModal";
@@ -258,6 +259,30 @@ export function DuanjuPane() {
       setMoreBusy(false);
     }
   }
+
+  // [lc-2127] 连播事件：mpv 的 eof-reached 回调**不能**在 IPC 读线程里起播（会自己等
+  // 自己的回包 = 死锁，实测第 2 集永远加载不出来）。后端只 emit 事件，这里在普通命令
+  // 线程里调 duanju_auto_next 起播下一集。
+  useEffect(() => {
+    let alive = true;
+    const un = listen("duanju-eof", () => {
+      if (!alive) return;
+      invoke<boolean>("duanju_auto_next")
+        .then((played) => {
+          if (played && alive) {
+            // 连播推进后同步 UI 的集数高亮（后端已在队列里推进 index）
+            setHist((prev) => (prev ? { ...prev, index: prev.index + 1 } : prev));
+          }
+        })
+        .catch(() => {
+          /* 失败后端已记日志并停止连播，不打扰用户 */
+        });
+    });
+    return () => {
+      alive = false;
+      un.then((f) => f()).catch(() => {});
+    };
+  }, []);
 
   async function openDetail(d: DuanjuDrama) {
     setDetail(null);

@@ -426,6 +426,8 @@ async fn launch_mpv(
     // 写进短剧历史」。
     if !headers.map(|h| h.vertical).unwrap_or(false) {
         crate::duanju::clear_auto_next();
+        // [lc-2128] 非短剧起播：恢复 modernz 的 ±10 秒跳转键（短剧播放时会关掉）
+        crate::duanju::restore_modernz_jump_buttons(app);
     }
     let mut extra = match headers {
         Some(h) if h.needs_relay() => {

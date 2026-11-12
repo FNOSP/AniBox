@@ -1125,35 +1125,30 @@ impl MpvSession {
                                 }
                             }
                         }
-                        // [lc-2124] 播放到结尾（keep-open=yes 下唯一可用的信号）：
-                        // 触发短剧连播。注意 eof-reached 会随切集回落 false，所以只处理 true。
+                        // [lc-2127] 播放到结尾（keep-open=yes 下唯一可用的信号）。
+                        // **绝对不能在读线程里 block_on 起播流程**：auto_play_next 要发 IPC
+                        // 命令等回包，而回包必须由本线程读取 —— 自己等自己 = 死锁
+                        // （实测：第 2 集 launch 打出后 file-loaded 永不到来，用户看到
+                        // 「播完停在最后一帧」）。这里只 emit 事件，由前端调命令起播
+                        // （普通命令线程，不占用读线程）。
                         14 => {
                             let reached = v.get("data").and_then(|x| x.as_bool()).unwrap_or(false);
-                            // [lc-2125] 诊断日志：连播链路每一环都要可观测（此前静默，
-                            // 「没连播」完全无从判断是没触发还是队列空）。
-                            crate::libmpv::trace(&format!(
-                                "[duanju] eof-reached={reached} 当前会话={}",
-                                crate::duanju::current_playing().map(|(d, i)| format!(
-                                    "{}(第{}集)",
-                                    d.get("title").and_then(|x| x.as_str()).unwrap_or("?"),
-                                    i + 1
-                                )).unwrap_or_else(|| "无（非短剧）".into())
-                            ));
                             if reached {
-                                use tauri::Manager;
-                                let state = app2.state::<crate::AppState>();
-                                match tauri::async_runtime::block_on(
-                                    crate::duanju::auto_play_next(&app2, &state),
-                                ) {
-                                    Ok(true) => {
-                                        crate::libmpv::trace("[duanju] 已自动播放下一集");
-                                    }
-                                    Ok(false) => { /* 末集或非短剧：不续播 */ }
-                                    Err(e) => {
-                                        crate::libmpv::trace(&format!(
-                                            "[duanju] 自动连播失败（已停止连播）: {e}"
-                                        ));
-                                    }
+                                let cur = crate::duanju::current_playing();
+                                let has_next = crate::duanju::has_next();
+                                crate::libmpv::trace(&format!(
+                                    "[duanju] eof-reached=true 当前会话={} 有下一集={has_next}",
+                                    cur.as_ref()
+                                        .map(|(d, i)| format!(
+                                            "{}(第{}集)",
+                                            d.get("title").and_then(|x| x.as_str()).unwrap_or("?"),
+                                            i + 1
+                                        ))
+                                        .unwrap_or_else(|| "无（非短剧）".into())
+                                ));
+                                if has_next {
+                                    // 前端收到后调 duanju_auto_next 起播（不阻塞本线程）
+                                    let _ = app2.emit("duanju-eof", json!({}));
                                 }
                             }
                         }

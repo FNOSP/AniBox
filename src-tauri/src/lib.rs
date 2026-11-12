@@ -4478,6 +4478,7 @@ pub fn run() {
             duanju::duanju_history_remove,
             duanju::duanju_history_clear,
             duanju::duanju_history_update,
+            duanju::duanju_auto_next,
             jav_library::jav_fnos_libs,
             jav_library::jav_fnos_set_lib,
             jav_library::jav_fnos_scan,

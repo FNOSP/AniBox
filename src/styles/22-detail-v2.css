@@ -387,18 +387,19 @@
 /* 上面一行：只放胶囊 / 按钮类控件。
    [lc-2128] 原来 `flex-wrap: nowrap` + `space-between`，右栏可用宽度只有 300-420px，
    放不下时会把溢出量全挤到右侧 ⇒ 末个控件被推出容器边界（「右边直接贴边/被裁」）。
-   [lc-2129] 用户要求**一行放得下**（不接受换行）⇒ 保留 aliasing wrap 作为极端兜底，
-   同时把这一行内的控件**横向收紧**（详见下面 .dv2e-row-compact 变量）：
-   实测收紧前 158.6+62+176 + 3×8(gap) = 420.6px > 388px 内宽；
-   收紧后 146+56+160 + 3×6(gap) = 380px ≤ 388px，420px 右栏一行放得下。
-   justify 仍是默认 flex-start，右靠由 .dv2e-tools 的 margin-left:auto 负责。 */
+   [lc-2129] 用户要求**一行放得下**：把这一行的控件横向收紧（见下面 --dvr-* 变量）。
+   [lc-2130] 用户再要求「每个控件之间距离相等，中间别留大空」⇒ 控件间距一律由本行
+   `gap` 决定，**任何子项都不带 auto margin**（上一版挂在 .dv2e-state 上的
+   margin-right:auto 会把剩余空间全吃在中间，形成大空档）。
+   对齐方式：**左对齐、余量留右侧**（不设 justify-content）。左对齐与下方
+   文本行左对齐不受影响，因为控件组本来就靠右）；换行时每行也各自右对齐，仍等距。 */
 .dv2e-hd-pills {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   min-width: 0;
   /* [lc-2129] 控件行内部的横向尺寸变量（只作用于本行，不动全局按钮 token） */
-  --dvr-gap: 5px;         /* 控件之间 */
+  --dvr-gap: 5px;         /* 控件之间（等距的唯一来源） */
   --dvr-play-pad: 9px;    /* 播放胶囊左右内边距（原 --btn-px-md=12） */
   --dvr-state-pad: 7px;   /* 状态胶囊左右内边距（原 --sp-3=12） */
   --dvr-seg-pad-x: 5px;   /* 分段按钮左右内边距（原 --btn-px-sm=8） */
@@ -462,9 +463,10 @@
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  /* [lc-2129] 承担「工具组右靠」：放得下时把右侧工具组推到行尾；auto margin 不参与
-     flex 换行判定，不会像挂在工具组上的 auto margin 那样逼出换行。 */
-  margin-right: auto;
+  /* [lc-2130] **不加 auto margin**：上一版挂 margin-right:auto 做右靠，结果剩余空间全被
+     吃在「连载中 ↔ 集数控件」之间，中间出现一个大空档（用户截图）。
+     现在四个控件一律由父级 gap 等距排列，行尾余量自然留在最右（右靠交给
+     .dv2e-hd-pills 的 justify-content，见下）。 */
   height: var(--dv2e-ctl-h, 30px);
   /* [lc-2129] 左右 12→9px（本行内收身） */
   padding: 0 var(--dvr-state-pad, var(--sp-3));

@@ -402,6 +402,13 @@
   /* 剩余空间等分到「首前后 / 各控件之间 / 末后」全部间隙 —— 用户要的「平均分配」 */
   justify-content: space-evenly;
   min-width: 0;
+  /* [lc-2132] **负边距吃掉头部的左右内边距**：space-evenly 只在内容盒内分配，
+     而 .dv2e-hd 还有左右各 --sp-4(16px) 的 padding —— 从卡片边框算起，边缘间隙是
+     16+9=25px，中间才 9px，正是用户看到的「左右两边太宽」。
+     抵消后分布跨过那层内边距（首/末控件可贴近卡片边框），从边框起算的
+     四段间隙全部相等。 */
+  margin-left: calc(-1 * var(--sp-4));
+  margin-right: calc(-1 * var(--sp-4));
   /* [lc-2129] 控件行内部的横向尺寸变量（只作用于本行，不动全局按钮 token） */
   --dvr-gap: 0px;         /* [lc-2131] 间距交给 space-evenly，不用固定 gap */
   --dvr-play-pad: 9px;    /* 播放胶囊左右内边距（原 --btn-px-md=12） */

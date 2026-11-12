@@ -552,16 +552,13 @@
    属于控件行，靠 margin-left:auto 靠右；窄到放不下时由 .dv2e-hd-pills 换行（lc-2128）。
    [lc-2122] 分段控件内边距四向对称：容器 30px 高 − 上下各 3px − 边框 2px = 22px 按钮高。 */
 .dv2e-tools {
-  display: inline-flex;
-  align-items: center;
-  /* [lc-2129] 与控件行间距一致（8→6px） */
-  /* [lc-2129] 两个分段控件之间更紧（与块间距区分开，视觉上它们是一组） */
-  gap: var(--dvr-tools-gap, 4px);
-  flex: 0 0 auto;
-  min-width: 0;
-  /* [lc-2128] 放得下时整组右靠（原来靠父级 space-between，换行后会制造错位） */
-  /* [lc-2129] 去 auto margin：flex-wrap 下 auto margin 会独占剩余空间、逼出换行；
-     右靠改由 .dv2e-state 的 margin-right:auto 承担 */
+  /* [lc-2133] `display: contents` —— **拆掉这层包装盒**：原来 inline-flex + 内部 4px gap
+     让「集数样式」和「视图切换」被父级 space-evenly 当成**一个整体**参与分配，
+     于是它们之间只有 4px，而其它间隙是 ~16px（用户：「后面两个按钮之间的间距不对」）。
+     改为 contents 后两个子控件各自成为 .dv2e-hd-pills 的直接 flex 项，
+     与其余控件一起被 space-evenly 平均分配；
+     ⚠ 副作用：本元素不再生成盒子，原在这里的 gap / margin 全部失效（本就该失效）。 */
+  display: contents;
 }
 /* 分段控件内高变量：容器高 - 上下内边距(3px×2) - 上下边框(1px×2) = 22px。
    [lc-2126] 内边距**四个方向统一 3px**：原来左右是 var(--sp-0)=2px、上下因按钮居中

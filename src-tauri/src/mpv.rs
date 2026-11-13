@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// 观察 id ↔ 属性名（前端 switch 依赖这些 id；6=fullscreen 只用于镜像到 Tauri 窗口）
-const OBSERVED: [(u64, &str); 15] = [
+const OBSERVED: [(u64, &str); 14] = [
     (1, "time-pos"),
     (2, "duration"),
     (3, "pause"),
@@ -48,9 +48,6 @@ const OBSERVED: [(u64, &str); 15] = [
     // 只是停在最后一帧），只把 `eof-reached` 置 true。短剧连播必须挂这里 —— 之前挂在
     // end-file 上，实测端到端 0 次触发（用户「播完就不动」的根因）。
     (14, "eof-reached"),
-    // [lc-2131] 兜底「下一集」按钮的点击信号（Lua 写递增计数器，这里变化即触发）。
-    // 用属性而不是 script-message：后者走脚本内部路由，IPC 客户端收不到。
-    (15, "user-data/anibox/next-request"),
 ];
 
 /// [lc-2125] 对外暴露观察表：复用会话时要重注册（mpv 常驻，升级后旧会话缺新属性）。
@@ -743,8 +740,6 @@ impl MpvSession {
             let duanju_hist_tick = std::sync::atomic::AtomicU64::new(u64::MAX);
             // [lc-2132] eof-reached 的上一次值（边沿触发用）
             let eof_prev = std::sync::atomic::AtomicBool::new(false);
-            // [lc-2132] Lua 按钮请求的上一次 seq（只认递增）
-            let next_req_prev = std::sync::atomic::AtomicI64::new(0);
                 let mut pos_req: Option<u64> = None;
                 let mut title_req: Option<u64> = None;
                 // [lc-2101] 竖屏调窗状态机：file-loaded → 读 video-params → 精确设几何。
@@ -1158,27 +1153,12 @@ impl MpvSession {
                                         ))
                                         .unwrap_or_else(|| "无（非短剧）".into())
                                 ));
-                                // [lc-2130] 正常行为 = **播完自动切下一集**（用户明确要求）。
-                                // 左下角「下一集」按钮只是**兜底**：Lua 侧会等 1.2s，
-                                // 若这期间没有 start-file（= 自动连播没接上），才显示按钮
-                                // 让用户手点。两条路径最终都走 duanju-eof → 前端命令起播。
+                                // [lc-2140] **播完自动切下一集**（用户明确要求）。
+                                // 自绘的「下一集」按钮已删除 —— 用户改为直接用控制栏中间的
+                                // 播放按钮（他实测该按钮在播完时能接着播）。
                                 if has_next {
                                     let _ = app2.emit("duanju-eof", json!({}));
                                 }
-                            }
-                        }
-                        // [lc-2131] 兜底按钮点击（Lua 写递增计数器）→ 与自动连播同一出口
-                        15 => {
-                            // [lc-2132] **只认真正的递增**：mpv 对同一值可能重复回调
-                            // （实测 Lua 每次只 +1，Rust 侧却收到 20 次 seq=1），
-                            // 逐次触发 = 反复推进集数 = 画面乱跳。这里记住上次 seq，只认变大。
-                            let seq = v.get("data").and_then(|x| x.as_i64()).unwrap_or(0);
-                            let prev = next_req_prev.swap(seq, Ordering::AcqRel);
-                            if seq > prev {
-                                crate::libmpv::trace(&format!(
-                                    "[duanju] 收到 Lua 的「下一集」请求（seq={seq}）"
-                                ));
-                                let _ = app2.emit("duanju-eof", json!({}));
                             }
                         }
                         _ => {}

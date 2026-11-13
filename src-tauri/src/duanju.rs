@@ -453,34 +453,6 @@ async fn play_impl(
             None
         };
     }
-    // [lc-2129] 告诉随包 Lua（fntv_next_ep.lua）「本集播完后还有没有下一集」：
-    // 写 user-data/anibox/next-episode = 下一集标题（有）或空串（末集/非短剧）。
-    // **从队列读**（chapters 在上面已 move 进队列）：队列里 index 与 chapters 齐全。
-    {
-        let (has_next, label) = {
-            let slot = auto_next_slot().lock().unwrap_or_else(|e| e.into_inner());
-            match slot.as_ref() {
-                Some(q) if q.index + 1 < q.chapters.len() as i64 => {
-                    let t = q.chapters[(q.index + 1) as usize]
-                        .get("title")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    (true, t)
-                }
-                _ => (false, String::new()),
-            }
-        };
-        let _ = has_next;
-        if let Some(sess) = {
-            let slot = state.mpv.lock().await;
-            slot.as_ref().cloned()
-        } {
-            let _ = sess
-                .command_no_reply(json!(["set", "user-data/anibox/next-episode", label]))
-                .await;
-        }
-    }
     // [lc-2123] 标记短剧会话活跃（time-pos 观察回调据此写历史）
     DJ_ACTIVE.store(true, std::sync::atomic::Ordering::Release);
     // [lc-2123] 起播即记一条观看记录（独立存储，不走软件主历史）。

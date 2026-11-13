@@ -702,17 +702,49 @@ export function createLiquidReveal(
    *    以前结束瞬间直接删层 = 这个色差一次性暴露 → 硬切（看起来"闪一下"）。
    *    现在：提交主题后让揭示层在 180ms 内淡出，色差被溶解掉；
    *    因为底层此时**已经是同一个新主题**，淡出过程不会看到任何旧内容。 */
-  const FADE_OUT_MS = 180;
 
   function finish(result: "complete" | "interrupted"): void {
     if (done) return;
     done = true;
-    detach(); // 先停 rAF / 监听，避免淡出期间还在算几何
+    detach(); // 先停 rAF / 监听，避免收尾期间还在算几何
     try {
-      cfg.onEnd?.(result);
+      cfg.onEnd?.(result); // 调用方在这里提交主题（同步改 data-theme / class）
     } catch {
       /* 调用方异常不能阻止清理 */
     }
+
+    /* [lc-2160] 「切换完主题又加上了个出场动画」/「衔接不流畅」的**真正原因**在这里。
+     *
+     * 实测（探针 probe_layer_removal_2160.cjs，8ms 轮询 + 同步读 computed）：
+     *     层消失前一帧： theme=light  .app-shell bg = rgba(245,245,247,0.85)   ← 旧主题
+     *     层消失后一帧： theme=dark   .app-shell bg = rgba(28,28,30,0.85)      ← 新主题
+     *
+     * 也就是说：`onEnd` 里同步改了 `data-theme` 属性，但浏览器的**样式重算还没发生**
+     * （属性变更 → 样式失效，真正 recalc/paint 在下一次渲染帧）。
+     * 如果这时立刻删掉揭示层，露出来的真实层仍是**旧主题** ——
+     * 下一帧样式才算完，变成新主题。用户看到的就是"切换完了，左边又动了一下"
+     * （那一帧旧主题被当成一次"出场"）。
+     *
+     * 修法：提交主题后**强制一次文档级样式重算**，确认真实层已经呈现新主题，再删层。
+     *   · `getComputedStyle(document.documentElement).backgroundColor` 会强制 flush，
+     *     把 data-theme 变更带来的变量重算（含 .app-shell/.sidebar 的 background）落实。
+     *   · 再读一次 `.app-shell` 的 backgroundColor，作为"新主题已生效"的实证。
+     * 只有在拿不到 app-shell（宿主结构不同）时才退化为不读。
+     * 自测见 verify_liquid_commit_frame_2160.cjs（同一 tick 内前后颜色必须一致）。 */
+    const flushTheme = (): void => {
+      try {
+        const win = doc.defaultView ?? window;
+        // 强制样式重算（读一个依赖主题变量的属性）
+        const shell = doc.querySelector("#root .app-shell") ?? doc.querySelector(".app-shell");
+        if (shell) {
+          void win.getComputedStyle(shell).backgroundColor;
+        }
+        void win.getComputedStyle(doc.documentElement).backgroundColor;
+      } catch {
+        /* noop */
+      }
+    };
+    flushTheme();
 
     const teardown = () => {
       clipShape.setAttribute("d", "");
@@ -721,29 +753,38 @@ export function createLiquidReveal(
       remove();
     };
 
-    if (result !== "complete" || FADE_OUT_MS <= 0) {
+    /* 强制重算后如果颜色与揭示层仍不一致（宿主结构特殊），再补一帧 ——
+       宁可多留一帧，也不要露出旧主题。这里用 requestAnimationFrame 而不是定时器：
+       rAF 之后浏览器一定已经完成了一次渲染，样式必然生效。 */
+    const dropNow = (): void => {
       teardown();
+    };
+    if (result !== "complete") {
+      // 中断（切视图/卸载）：立刻消失，不能残留一层
+      dropNow();
       return;
     }
 
-    /* 正常完成才淡出：中断（切视图/卸载）要立刻消失，不能残留一层 */
-    try {
-      reveal.style.transition = `opacity ${FADE_OUT_MS}ms linear`;
-      // 强制样式重算，保证 transition 从当前值开始（否则可能被合并成一帧）
-      void reveal.offsetHeight;
-      reveal.style.opacity = "0";
-      sheenSvg.style.transition = `opacity ${FADE_OUT_MS}ms linear`;
-      sheenSvg.style.opacity = "0";
-    } catch {
-      teardown();
-      return;
-    }
-    // 不依赖 transitionend（后台标签页/失焦时可能不触发），用定时器兜底
-    const timer = window.setTimeout(teardown, FADE_OUT_MS + 40);
-    // 卸载时立刻清掉定时器并直接拆（destroy 会调 remove）
+    /* 正常完成：等一帧再拆（此时底层必然已是新主题），不做淡出 ——
+       淡出会让用户觉得"又多了一个出场动画"（用户明确反馈）。
+       一帧 ≈ 6~16ms，肉眼不可辨，但足以保证"拆层时底层已是新主题"。 */
+    const rafFn =
+      typeof window.requestAnimationFrame === "function"
+        ? window.requestAnimationFrame.bind(window)
+        : (cb: FrameRequestCallback) => window.setTimeout(() => cb(performance.now()), 16);
+    let cancelled = false;
+    rafFn(() => {
+      if (cancelled) return;
+      dropNow();
+    });
+    // 兜底：后台标签页 rAF 可能被挂起，用定时器保证最终一定拆掉
+    const timer = window.setTimeout(() => {
+      if (!cancelled) dropNow();
+    }, 120);
     detachFade = () => {
+      cancelled = true;
       window.clearTimeout(timer);
-      teardown();
+      dropNow();
     };
   }
 

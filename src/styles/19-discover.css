@@ -474,7 +474,7 @@
   padding: var(--sp-3) var(--sp-3);
   border-radius: var(--r-md);
   border: 1px solid var(--line);
-  background: linear-gradient(120deg, rgb(var(--accent-rgb) / 0.16), rgb(var(--accent-rgb) / 0.04));
+  background: var(--accent-wash); /* [lc-2149] 与圆点/胶囊同源，改浓度只改 token */
 }
 .dtoday b {
   font-size: var(--fs-body);
@@ -1623,7 +1623,7 @@ html.dark .dlib-ov-v.green {
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r-full);
   /* 与 .dtoday 完全一致：同一条 120deg 渐变 + 同一档 accent 浓度 */
-  background: linear-gradient(120deg, rgb(var(--accent-rgb) / 0.16), rgb(var(--accent-rgb) / 0.04));
+  background: var(--accent-wash); /* [lc-2149] 与圆点/胶囊同源，改浓度只改 token */
   color: var(--text-strong);
   border: 1px solid var(--line);
   font-size: var(--fs-cap);
@@ -1745,34 +1745,46 @@ html.dark .dlib-rank.r3 {
   justify-content: center;
 }
 
+/* [lc-2149] 时间线圆点：从「深蓝描边环」改成与右栏同族的淡蓝。
+   改前是 `border: 3px solid var(--accent)`（实心强调蓝）+ 一圈 18% 蓝光晕 ——
+   在 11px 的小圆点上，3px 描边几乎占满，整颗点就是一块深蓝，比卡片还抢眼。
+   用户要求「换成和右边列表头的浅蓝色」。
+   改法：不用描边，直接让圆点本身是**淡蓝实心**（与 --accent-wash 同浓度
+   0.16 ~ 0.04 的中间值），外圈保留一圈更淡的 halo —— 淡而不失定位感。
+   注意：渐变在 11px 圆点上看不出方向，所以这里用同族的实心色而非渐变。 */
 .dlib-dot {
   width: 11px;
   height: 11px;
   border-radius: 50%;
-  background: var(--bg-3);
-  border: 3px solid var(--accent);
-  box-shadow: 0 0 0 4px rgb(var(--accent-rgb) / 0.18);
-  transition: transform var(--dur-page) ease, box-shadow var(--dur-page) ease;
+  background: rgb(var(--accent-rgb) / 0.28);
+  border: none;
+  box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.1);
+  transition: transform var(--dur-page) ease, box-shadow var(--dur-page) ease, background-color var(--dur-page) ease;
 }
 
 .dlib-row:hover .dlib-dot {
   transform: scale(1.25);
-  box-shadow: 0 0 0 6px rgb(var(--accent-rgb) / 0.16);
+  background: rgb(var(--accent-rgb) / 0.42);
+  box-shadow: 0 0 0 5px rgb(var(--accent-rgb) / 0.12);
 }
 
+/* [lc-2149] 名次圆点（rm1/rm2/rm3）：圆点已改为"无描边 + 实心淡色"，
+   原来的 `border-color` 写法会全部失效（元素没有边框）。改为设 background，
+   且原来那三组色（金/银灰/铜）与 lc-2146「名次不用三色相」的取舍冲突 ——
+   统一走中性灰阶：第一名最实、第三名最淡，靠**深浅**表达名次而非色相。 */
 .dlib-row.rm1 .dlib-dot {
-  border-color: rgb(var(--gold-rgb, var(--accent-rgb)) / 0.2);
-  box-shadow: 0 0 0 4px rgba(217, 154, 16, 0.18);
+  background: rgb(var(--accent-rgb) / 0.42);
+  box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.12);
 }
 
 .dlib-row.rm2 .dlib-dot {
-  border-color: #7c8899;
-  box-shadow: 0 0 0 4px rgba(124, 136, 153, 0.18);
+  background: rgb(var(--accent-rgb) / 0.3);
+  box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.09);
 }
 
 .dlib-row.rm3 .dlib-dot {
-  border-color: rgb(var(--warn-rgb, var(--accent-rgb)) / 0.2);
-  box-shadow: 0 0 0 4px rgba(180, 101, 58, 0.18);
+  background: rgb(var(--accent-rgb) / 0.22);
+  box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.07);
 }
 
 /* 时间线首行的圆点持续脉冲（设计稿 dotPulse） */

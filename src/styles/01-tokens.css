@@ -230,6 +230,14 @@
   --danger-solid: #c4261c;
   --danger-rgb: 255 59 48;
   --gold-rgb: 240 166 60;
+
+  /* ── [lc-2149] 「淡蓝信息底」：全站唯一的一处二次强调面 ────────────
+     来源：发现页右栏「今日状态条」(.dtoday) 的淡蓝渐变 —— 用户看到后要求
+     左栏的时间线圆点也用它（「换成和右边列表头的浅蓝色」）。
+     抽成变量是因为这类"淡蓝面"已经在多处出现（分组头胶囊、圆点、
+     状态条），各写一遍 16%/4% 迟早跑偏。改浓度只改这一处。
+     只用于**非交互的信息面**：可点元素仍用 --accent / --accent-solid。 */
+  --accent-wash: linear-gradient(120deg, rgb(var(--accent-rgb) / 0.16), rgb(var(--accent-rgb) / 0.04));
   /* [lc-1426] 首页**统一内容左边距**（用户反馈：轮播文字与下方媒体库条/区块没对齐）。
      成因是三套基准各写各的：
        · 轮播文字 .mist-info  = `padding: 0 4% 163px`（4% 相对**轮播容器** .mist-item 宽）
@@ -266,6 +274,11 @@ html.dark {
   --accent-on: #ffffff;
   --accent-rgb: 10 132 255;
   --accent-2: #64d2ff;
+  /* [lc-2149] 深色主题必须**重新声明** --accent-wash。
+     原因：`linear-gradient(...)` 是**计算值**，里面的 var() 在定义处就展开成
+     具体颜色，不会因为主题切换重新求值 —— 只在 :root 写一次的话，深色主题下
+     圆点/胶囊/状态条会一直用浅色主题那个蓝（实测确认）。 */
+  --accent-wash: linear-gradient(120deg, rgb(var(--accent-rgb) / 0.16), rgb(var(--accent-rgb) / 0.04));
   /* 中性投影色通道（深色：纯黑）。 */
   --shadow-rgb: 0 0 0;
   --accent-grad: var(--accent-solid);

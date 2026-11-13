@@ -3888,6 +3888,19 @@ async fn resolve_close(app: AppHandle, action: String) -> Result<(), String> {
 
 // ───────────────────────── 入口 ─────────────────────────
 
+/// [lc-2150] 唤出主窗口：托盘左键 / 托盘「显示主窗口」/ 重复启动的第二实例，三处共用。
+///
+/// 为什么单独抽出来：`show()` 单独用不够 —— 窗口可能处于**最小化**（`show` 不会还原）
+/// 或被播放器隐藏（lc-2057 隐藏主窗），还可能压在别的窗口下面。三步齐全才叫"叫出来了"。
+fn show_main_window(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
 /// [lc-1435] 系统托盘：左键点击显示主窗口；右键菜单「显示主窗口 / 退出」。
 /// 为什么要托盘：设置面板的「关闭按钮 → 最小化到托盘」需要一个能回来的入口，
 /// 没有托盘的话隐藏窗口 = 应用"消失"（只能去任务管理器杀进程）。
@@ -3895,6 +3908,7 @@ async fn resolve_close(app: AppHandle, action: String) -> Result<(), String> {
 fn install_tray(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::menu::{Menu, MenuItem};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    // default_window_icon 是 Manager trait 的方法（show_main_window 里另有一处局部 use）
     use tauri::Manager;
 
     let show_i = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
@@ -3906,13 +3920,7 @@ fn install_tray(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>
         // 左键单击不弹菜单（Windows 习惯：左键=显示窗口，右键=菜单）
         .show_menu_on_left_click(false)
         .on_menu_event(|app, ev| match ev.id().as_ref() {
-            "show" => {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.unminimize();
-                    let _ = w.set_focus();
-                }
-            }
+            "show" => show_main_window(app),
             "quit" => {
                 libmpv::trace("[lc-1435] 托盘菜单 → 退出");
                 app.exit(0);
@@ -3926,12 +3934,7 @@ fn install_tray(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>
                 ..
             } = ev
             {
-                let app = tray.app_handle();
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.unminimize();
-                    let _ = w.set_focus();
-                }
+                show_main_window(tray.app_handle());
             }
         });
     // 图标：用应用自身图标（tauri.conf.json 的 bundle icon）；取不到就不带图标建托盘
@@ -4061,6 +4064,17 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        // [lc-2150] 单实例**必须是第一个插件**：插件按注册顺序初始化，而重复启动的那个
+        // 实例是在插件的 `setup` 里当场 `process::exit(0)` 的 —— 排在它前面的插件/逻辑
+        // 会先跑一遍（抢端口、抢 WebView profile），排在后面才真正"还没轮到就退出了"。
+        //
+        // 重复启动时的行为：**唤起已运行的主窗**（show + unminimize + set_focus），
+        // 然后把第二个进程立刻结束。不走「新窗口 / 新标签页」形态 —— 本应用的界面状态
+        // 全在 WebView 内存里，无法从一个空进程接管，唤起才是用户预期。
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            libmpv::trace("[lc-2150] 检测到重复启动 → 唤起已运行的主窗，本进程退出");
+            show_main_window(app);
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())

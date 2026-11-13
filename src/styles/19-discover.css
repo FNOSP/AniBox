@@ -1016,8 +1016,14 @@ html.dark .dlib-pane {
 }
 
 /* ── 源徽标（TMDB / IPTV / 短剧；lc-2076）—— 点击切换左栏内容源 ──
-   未选中：玻璃胶囊弱化；选中：各源品牌渐变（TMDB=官方青绿；IPTV=红橙，直播感；
-   短剧=紫，Radix purple→violet）。品牌色按 UI 规范保留。 */
+   [lc-2148] 修两个问题：
+   ① **看不见**：lc-2146 的配色收敛把三源的品牌渐变换成了淡底
+      （accent-bg / good-bg / danger-bg 这些 **16% 透明度的浅底**），
+      但 `color: #fff` 白字没跟着改 ⇒ 淡底 + 白字 = 白底白字，TMDB 直接看不见。
+   ② **三个各一个色**：选中态原本一家一个渐变（青绿 / 红橙 / 紫），
+      用户明确不要。三个标签是**同一种控件**（互斥切换），
+      选中态必须统一 —— 选中 = 实心 accent + 反白，未选中 = 玻璃弱化。
+      这与全站「一个控件一种外观」一致，颜色只表达"选中/未选中"这一件事。 */
 .dlib-src {
   display: inline-flex;
   align-items: center;
@@ -1033,7 +1039,7 @@ html.dark .dlib-pane {
   font-family: inherit;
   flex-shrink: 0;
   cursor: pointer;
-  transition: color var(--dur-tap), border-color var(--dur-tap);
+  transition: color var(--dur-tap), border-color var(--dur-tap), background-color var(--dur-tap);
 }
 
 .dlib-src > svg {
@@ -1042,23 +1048,22 @@ html.dark .dlib-pane {
 
 .dlib-src:hover {
   color: var(--text-strong);
+  background: var(--hover-strong);
 }
 
+/* [lc-2148] 选中态统一：实心 accent + 反白。
+   三个标签是同一种控件（互斥切换），差别只该是"选中/未选中"两态；
+   一家一个渐变的写法（青绿 / 红橙 / 紫）会让用户以为三种源的性质不同。
+   反白字压实心 accent 上对比度 4.7:1（--accent-solid 与 --accent-on 的既定配对）。 */
 .dlib-src.on {
   border-color: transparent;
-  color: #fff;
+  background: var(--accent-solid);
+  color: var(--accent-on);
 }
 
-.dlib-src.on.dsrc-tmdb {
-  background: linear-gradient(135deg, var(--accent-bg), var(--good-bg));
-}
-
-.dlib-src.on.dsrc-iptv {
-  background: linear-gradient(135deg, var(--danger-bg), var(--warn-bg));
-}
-
-.dlib-src.on.dsrc-duanju {
-  background: linear-gradient(135deg, var(--text-2), var(--text-2));
+.dlib-src.on:hover {
+  background: var(--accent-solid);
+  filter: brightness(1.06);
 }
 
 /* 源徽标后的浅字说明（测试功能 + 版权风险规避）：小号弱化、整块不拆行（窄栏随 row1 换行） */
@@ -1602,21 +1607,24 @@ html.dark .dlib-ov-v.green {
   border-bottom: 1px dashed var(--line);
 }
 
-/* [lc-2147] 分组头胶囊：**不再用实心强调蓝**。
-   改前是 `background: var(--accent-grad)`（实心蓝）+ 白字 + 蓝色投影，
-   而它装的内容是「2024 年 7 月」「评分排行榜」这种**分组标签**——
-   每屏出现好几次的实心蓝块，是全页最抢眼的东西，用户反馈「太显眼了」。
-   分组头是结构导航，不是操作按钮：改成中性底 + 中性文字，
-   只保留极轻的描边把它与列表内容区隔开；强调色留给真正可点的元素。
-   图标与文字同色，不再反白。 */
+/* [lc-2147] 分组头胶囊：**与右栏「今日状态条」(.dtoday) 同一套淡蓝**。
+   演变：原本是 `--accent-grad` 实心蓝 + 白字 + 蓝色投影 —— 每屏出现好几次的
+   实心蓝块，用户反馈「太显眼了」；我先改成中性灰，用户又要求
+   「和右边日期显示的浅蓝色同步一下」——右栏那块浅蓝就是 .dtoday 的
+   淡蓝渐变底。所以这里直接用**同一条渐变**（accent 16% → 4%），
+   让左栏日期与右栏日期在视觉上属于同一个体系：都是"淡蓝信息块"，
+   而不是一边实心蓝、一边死灰。
+   文字用 --text-strong 而非白字：淡蓝底上白字看不清（对比度不足），
+   深色主题下这套 accent 叠色同样成立。 */
 .dlib-gpill {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r-full);
-  background: var(--sel-bg);
-  color: var(--text-2);
+  /* 与 .dtoday 完全一致：同一条 120deg 渐变 + 同一档 accent 浓度 */
+  background: linear-gradient(120deg, rgb(var(--accent-rgb) / 0.16), rgb(var(--accent-rgb) / 0.04));
+  color: var(--text-strong);
   border: 1px solid var(--line);
   font-size: var(--fs-cap);
   font-weight: 600;
@@ -1674,11 +1682,18 @@ html.dark .dlib-ov-v.green {
   padding-right: 6px;
 }
 
+/* [lc-2147] 左栏日号与右栏星期胶囊对齐：
+   右栏 .dweek-d 是 `--fs-ctl / 600 / --text-2`，左栏原来是
+   `--fs-subtitle(17) / 800 / --text-strong` —— 又大又黑又粗，
+   在一列列表里比卡片标题还抢眼。用户要求「和右边日期显示的浅蓝色同步」，
+   除了底色（见上方 .dlib-gpill），字号字重也一并对齐：
+   日号保留比星期大一档（它才是行首主信息），但字重从 800 降到 700、
+   颜色改 --text-2，与右栏同一层级。 */
 .dlib-day {
   font-size: var(--fs-subtitle);
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1;
-  color: var(--text-strong);
+  color: var(--text-2);
 }
 
 .dlib-wd {

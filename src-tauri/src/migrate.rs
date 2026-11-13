@@ -114,7 +114,7 @@ fn move_dir(root: &Path, label: &str) -> Option<String> {
     if new.exists() && has_core_data(&new) {
         return None;
     }
-    // [lc-2150] **迁移标记优先于「核心数据探测」**：上面那条 `has_core_data` 只认
+    // [lc-2152] **迁移标记优先于「核心数据探测」**：上面那条 `has_core_data` 只认
     // config.json / history.json / watch_days.json，而 **LOCALAPPDATA 侧从来没有这三种文件**
     // （那里只有 WebView2 的 EBWebView profile）—— 于是每次启动都判「没迁过」，
     // 把 300MB / 1776 个文件重新抄一遍，migration.json 里同名条目一路堆到几十条。
@@ -260,7 +260,7 @@ fn write_marker_entry(new_dir: &Path, entry: Value) {
         root["sources"] = json!([]);
     }
     if let Some(arr) = root.get_mut("sources").and_then(Value::as_array_mut) {
-        // [lc-2150] 同类同源的条目**替换而不是追加**：历史版本反复迁移时把同一条
+        // [lc-2152] 同类同源的条目**替换而不是追加**：历史版本反复迁移时把同一条
         // （kind=tauri2、同一个旧路径）追加了几十遍，migration.json 涨到 75KB。
         // 标记的语义是「这个来源迁过没有」，同键只需要一条。
         let same = |e: &Value| {
@@ -1220,7 +1220,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// [lc-2150] **回归**：LOCALAPPDATA 侧的新目录只有 WebView2 的 EBWebView，
+    /// [lc-2152] **回归**：LOCALAPPDATA 侧的新目录只有 WebView2 的 EBWebView，
     /// 永远不会有 config.json / history.json / watch_days.json —— 老逻辑用
     /// `has_core_data` 判幂等，等于每次启动都判「没迁过」→ 重抄 300MB / 1776 个文件，
     /// migration.json 里同一条目堆到几十条。标记才是幂等的正确凭据。
@@ -1263,7 +1263,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// [lc-2150] 标记里同一条（kind + path 相同）只保留一条：历史版本因为上面那个
+    /// [lc-2152] 标记里同一条（kind + path 相同）只保留一条：历史版本因为上面那个
     /// 重复迁移 bug，把 tauri2 条目追加了几十遍，migration.json 涨到 75KB。
     #[test]
     fn marker_entry_is_replaced_not_appended_for_same_source() {

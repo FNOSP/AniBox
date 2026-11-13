@@ -421,6 +421,70 @@ export function createLiquidReveal(
         alignPhase(a);
         continue;
       }
+
+      /* [lc-2159] 有限动画分两种情况，**不能一律 finish()**：
+       *
+       *   ① 源元素上这条动画已经播完（或压根没在播）
+       *      → 克隆体也应该在终态；用 finish() 落到终态最稳（保留 both/forwards 填充）。
+       *
+       *   ② 源元素上这条动画**正在播**（典型：刚切到发现页就马上切主题，
+       *      `.dlib-pane` 的 dlibPageIn 才播到一半）
+       *      → 若把克隆体 finish() 到终态，液体边缘两侧就对不上了。
+       *      实测：真实 top=653.5 / opacity=0.649，克隆 top=660 / opacity=1.0
+       *      —— 相差 6.5px 位移 + 35% 透明度，用户看到的就是"左块抖一下"。
+       *      正确做法：把克隆体**冻结在源元素当前的同一相位**（currentTime 对齐 + pause）。
+       *      这样液体经过的地方和它两侧的旧界面是同一时刻的画面，不会有错位。
+       *      等动画自然播完后，真实层进入终态，而克隆体停在那一帧 —— 因为整块区域
+       *      已经要被液体覆盖/或者已经覆盖，不会再暴露差异。 */
+      const srcAnim = findSourceAnimation(a);
+      if (srcAnim && srcAnim.playState === "running") {
+        /* [lc-2159] 源上这条入场动画**还在播**（典型：刚进发现页就立刻切主题）。
+         *
+         * 试过三种做法，只有第三种能真正消除"抖一下"：
+         *   ① 克隆体 finish() 到终态  → 实测 dy=6.5px + 透明度差 0.35，两侧对不上
+         *   ② 克隆体跟随源继续播      → dy 收敛到 4px，但读源/写克隆之间隔一帧，
+         *                              永远残留 3~5px 的相位差，仍能看出抖
+         *   ③ **两边一起跳到终态**（本实现）→ 位置/透明度完全相同，dy=0
+         *
+         * ③ 之所以可以：这条动画是**页面入场**（opacity 0→1 + translateY 10→0），
+         *  用户看到的是"这一块内容刚出现"。切主题时把它直接推到位，视觉上是
+         *  "入场被主题切换打断、直接呈现最终状态"，比让它在液体底下继续滑更合理 ——
+         *  而且真实层与揭示层同时跳，两边完全一致，绝不会有相对位移。
+         *  注意必须**两边都跳**：只跳克隆体，真实层还在滑 → 反而更明显。 */
+        try {
+          srcAnim.finish();
+        } catch {
+          /* 不能 finish 的（无限动画）已在上面 continue 掉 */
+        }
+        /* 关键：对**克隆体**这条动画用 cancel() 而不是 finish()+pause()。
+           原因：克隆体是刚插入的新节点，它的动画时钟起点与源不同；
+           finish()+pause() 在这类节点上偶发不落到终态（实测早期仍有 5.5px 位移）。
+           cancel() 会移除该动画的填充效果，元素回到**无动画的基础样式** ——
+           而这些入场 keyframes 的 to 帧就是基础样式（`opacity: 1; transform: none`），
+           所以 cancel 的结果与终态完全一致，且不依赖动画时钟。
+           （源那边仍用 finish()，因为它需要在真实层上保留 both 填充。） */
+        try {
+          a.cancel();
+        } catch {
+          try {
+            a.finish();
+            a.pause();
+          } catch {
+            /* noop */
+          }
+        }
+        /* 两边 finish() 之后，真实层的样式要等到下一次样式重算才落定 ——
+           而克隆体的几何是在**同一任务内**读的，会拿到"源还在半路"的位置（实测残留 2.8px）。
+           强制读一次源的几何属性，把它的布局/样式在本次任务里推到位，
+           这样克隆体与源在同一时刻取几何，dy 才能归零。 */
+        try {
+          void (sourceEl() as HTMLElement).offsetHeight;
+        } catch {
+          /* noop */
+        }
+        continue;
+      }
+
       try {
         // 带 delay 且尚未开始（idle）的入场动画：先 play 再 finish，否则 finish 可能不生效
         if (a.playState === "idle") a.play();
@@ -438,6 +502,22 @@ export function createLiquidReveal(
     /* 兜底：finish() 在部分动画上不会立刻把样式落到终态（需要一次样式重算）。
        这里主动读一个几何属性强制同步，避免"冻结了但第一帧还是半透明"。 */
     void host.offsetHeight;
+  }
+
+  /** 在**源树**里找到与给定克隆动画对应的那条动画（按 animationName 匹配）。
+   *  [lc-2159] 用于判断"源元素上这条动画还在不在播"，以及对齐相位。 */
+  function findSourceAnimation(a: Animation): Animation | undefined {
+    const name = (a as Animation & { animationName?: string }).animationName;
+    if (!name) return undefined;
+    try {
+      const src = sourceEl();
+      const list = src.getAnimations({ subtree: true });
+      // 同名动画可能有多条（不同元素的同类入场），挑第一条同名的即可：
+      // 同一次切换里同类入场动画的 startTime 基本一致，相位差在 1 帧内。
+      return list.find((x) => (x as Animation & { animationName?: string }).animationName === name);
+    } catch {
+      return undefined;
+    }
   }
 
   /** 把揭示层的不透明底对齐到**新主题的真实实底**（[lc-2157]）。

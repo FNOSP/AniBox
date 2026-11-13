@@ -24,9 +24,22 @@
 }
 
 /* [lc-123-rev6] 首页 ↔ 发现 的页面切换动画：进入/离开**各一套**（去发现往左、回首页往右）。
-   动画类只在切换那 ~260ms 里由 JS 挂上（animationend 或 400ms 兜底摘掉），不长期挂 transition。
+   动画类只在切换那一小段里由 JS 挂上（animationend 或兜底定时器摘掉），不长期挂 transition。
    退场侧 .leaving：position:absolute 叠在进入侧之上 —— 不改列布局、**不加 overflow 裁剪**
-   （hero 满幅照旧），且 pointer-events:none：动画期间照样能点，不锁交互。 */
+   （hero 满幅照旧），且 pointer-events:none：动画期间照样能点，不锁交互。
+
+   [lc-2145] 修「切换有延迟」。真正的原因不是时长，而是**渐显太慢**：
+   实测（tests/analyze_page_switch_latency_2145.cjs）进入侧 opacity 用 ease-out 跑满
+   285ms —— 到 50% 要 98ms、到 80% 要 177ms。点击后前 0.1 秒新页几乎看不清，
+   旧页又在同时淡出，观感就是"点了没反应"。onNav 本身纯同步（无 await/invoke/循环），
+   所以延迟全部来自这段渐显，与渲染阻塞无关。
+
+   修法沿用轮播文案那套「先显形、再落位」：opacity 在 25% 处就到 1（约 71ms），
+   位移继续跑完全程 285ms。内容 70ms 内完全可读，剩下 214ms 只做落位 ——
+   既消掉延迟感，也不牺牲位移的从容。
+   另补 will-change：首页有几十个 backdrop-filter 徽标（评分/集数角标/已看标记），
+   整页 opacity 变化会让它们逐帧重采样背景。给动画中的 pane 提合成层后，
+   backdrop-filter 的采样基准变成 pane 自身，不再随页面帧帧重算。 */
 .view-pane.leaving {
   position: absolute;
   inset: 0;
@@ -35,17 +48,21 @@
   visibility: visible;
   pointer-events: none;
 }
+.view-pane.anim-to-discover,
+.view-pane.anim-to-home {
+  will-change: opacity, transform;
+}
 .view-pane.anim-to-discover {
   animation: paneInFromRight var(--dur-page) ease-out both;
 }
 .view-pane.leaving.anim-to-discover {
-  animation: paneOutLeft var(--dur-move) ease-out both;
+  animation: paneOutLeft var(--dur-page) ease-out both;
 }
 .view-pane.anim-to-home {
   animation: paneInFromLeft var(--dur-page) ease-out both;
 }
 .view-pane.leaving.anim-to-home {
-  animation: paneOutRight var(--dur-move) ease-out both;
+  animation: paneOutRight var(--dur-page) ease-out both;
 }
 @keyframes paneOutLeft {
   from {
@@ -57,10 +74,14 @@
     transform: translateX(-22px);
   }
 }
+/* 进入：opacity 在 25% 处已到 1（内容先清晰），位移继续走完全程（落位） */
 @keyframes paneInFromRight {
   from {
     opacity: 0;
     transform: translateX(22px);
+  }
+  25% {
+    opacity: 1;
   }
   to {
     opacity: 1;
@@ -81,6 +102,9 @@
   from {
     opacity: 0;
     transform: translateX(-22px);
+  }
+  25% {
+    opacity: 1;
   }
   to {
     opacity: 1;

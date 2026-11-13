@@ -10,12 +10,12 @@
    .dlib-ov-v.orange/.green 那组值（浅 #a97b12/#1f9d63、深 #ffd479/#3ddc97），保持全局一致。 */
 
 :root {
-  --fbx-orange: #a97b12;
-  --fbx-green: #1f9d63;
+  --fbx-orange: var(--warn);
+  --fbx-green: var(--good);
 }
 html.dark {
-  --fbx-orange: #ffd479;
-  --fbx-green: #3ddc97;
+  --fbx-orange: var(--gold);
+  --fbx-green: var(--good);
 }
 
 /* ── 面板外壳 ── */

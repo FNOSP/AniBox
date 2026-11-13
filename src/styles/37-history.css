@@ -250,25 +250,28 @@
   max-width: 100%;
 }
 
-/* ── 热力图（GitHub 贡献图；绿色档位沿用原项目 --wh-hm-*） ── */
+/* ── 热力图（GitHub 贡献图式） ──
+   [lc-2146] 保留绿色量级：热力图是**数据可视化**，档位表达"看得多/少"，
+   属于 AGENTS.md 允许保留的数据可视化色。但把原项目那套 GitHub 绿（浅色
+   #9be9a8/#40c463/#30a14e/#216e39 与深色 #0e4429/#006d32/#26a641/#39d353，
+   共 8 个孤立值）收进全站 good 色相的单色阶 —— 现在与 --good 同源，
+   深浅主题都只由透明度推档，不再另起色相。 */
 .hist-heat {
   position: relative;
-  /* 浅色档位（GitHub light） */
   --hist-hm-0: rgba(120, 120, 128, 0.12);
-  --hist-hm-1: #9be9a8;
-  --hist-hm-2: #40c463;
-  --hist-hm-3: #30a14e;
-  --hist-hm-4: #216e39;
-  --hist-hcell-border: rgba(27, 31, 35, 0.12);
+  --hist-hm-1: rgba(52, 199, 89, 0.24);
+  --hist-hm-2: rgba(52, 199, 89, 0.46);
+  --hist-hm-3: rgba(52, 199, 89, 0.7);
+  --hist-hm-4: rgba(36, 138, 78, 0.95);
+  --hist-hcell-border: var(--line);
 }
 html.dark .hist-heat {
-  /* 深色档位（GitHub dark） */
   --hist-hm-0: rgba(255, 255, 255, 0.07);
-  --hist-hm-1: #0e4429;
-  --hist-hm-2: #006d32;
-  --hist-hm-3: #26a641;
-  --hist-hm-4: #39d353;
-  --hist-hcell-border: rgba(255, 255, 255, 0.14);
+  --hist-hm-1: rgba(48, 209, 88, 0.26);
+  --hist-hm-2: rgba(48, 209, 88, 0.5);
+  --hist-hm-3: rgba(48, 209, 88, 0.74);
+  --hist-hm-4: rgba(48, 209, 88, 1);
+  --hist-hcell-border: var(--line);
 }
 .hist-heat-head {
   display: flex;
@@ -543,12 +546,11 @@ html.dark .hist-heat {
   background: var(--hover);
   color: var(--text-2);
 }
+/* [lc-2146] WebRS 来源徽标：原为自造蓝（#3b9bff / #7fd0ff），与 --accent 撞语义
+   又不完全一致；统一走 accent 淡底 */
 .hist-lbadge.webrs {
-  background: rgba(10, 132, 255, 0.16);
-  color: #3b9bff;
-}
-html.dark .hist-lbadge.webrs {
-  color: #7fd0ff;
+  background: rgb(var(--accent-rgb) / 0.14);
+  color: var(--accent);
 }
 .hist-lsub {
   font-size: var(--fs-cap);
@@ -724,10 +726,11 @@ html.dark .hist-lbadge.webrs {
   color: #fff;
   border: 1px solid rgba(255, 255, 255, 0.15);
 }
+/* [lc-2146] 同上：压在海报上的 WebRS 徽标 */
 .hist-badge.webrs {
-  background: rgba(10, 132, 255, 0.28);
-  border-color: rgba(10, 132, 255, 0.6);
-  color: #7fd0ff;
+  background: rgb(var(--accent-rgb) / 0.3);
+  border-color: rgb(var(--accent-rgb) / 0.6);
+  color: var(--accent);
 }
 
 /* ── 骨架屏（照抄原项目 .wh-skel shimmer） ── */
@@ -815,7 +818,8 @@ html.dark .hist-lbadge.webrs {
 .hist-stars svg {
   width: var(--hist-star, 13px);
   height: var(--hist-star, 13px);
-  fill: #ffd60a;
+  /* [lc-2146] 原 #ffd60a，与详情页评分星的 #f0a63c / #f5c518 各写一个金；统一到 --gold */
+  fill: var(--gold);
 }
 .hist-stars svg.off {
   fill: rgba(255, 255, 255, 0.3);
@@ -969,7 +973,8 @@ html:not(.dark) .hist-detail-scrim {
   font-size: var(--fs-page);
   font-weight: 700;
   line-height: 1.2;
-  color: #ffcc00;
+  /* [lc-2146] 原 #ffcc00，第三种金；统一到 --gold */
+  color: var(--gold);
   font-variant-numeric: tabular-nums;
 }
 .hist-rating-score.mine-score {
@@ -1223,7 +1228,7 @@ html:not(.dark) .hist-detail-scrim {
   margin-bottom: 8px;
 }
 .wr-accent {
-  color: #0066cc;
+  color: var(--accent);
 }
 .wr-muted-blk {
   color: rgba(60, 60, 67, 0.72);
@@ -1287,7 +1292,7 @@ html:not(.dark) .hist-detail-scrim {
 }
 .wr-note {
   font-size: var(--fs-cap);
-  color: #0066cc;
+  color: var(--accent);
   background: rgb(var(--accent-rgb) / 0.1);
   border: 1px solid rgb(var(--accent-rgb) / 0.28);
   border-radius: var(--r-sm);
@@ -1325,7 +1330,7 @@ html:not(.dark) .hist-detail-scrim {
   color: transparent;
 }
 .wr-bpeak.on {
-  color: #0066cc;
+  color: var(--accent);
 }
 .wr-bar {
   width: 60%;

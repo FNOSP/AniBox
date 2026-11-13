@@ -121,10 +121,10 @@
   gap: var(--sp-2); /* 圆点 ↔ 状态字：同上 */
 }
 .bgmac-bar-user.on .bgmac-bar-state {
-  color: #37a75f;
+  color: var(--good);
 }
 .bgmac-bar-user.off .bgmac-bar-state {
-  color: #ed5b52;
+  color: var(--danger);
 }
 /* 圆点 + 两圈错开的涟漪（内圈往外扩散、渐隐） */
 .bgmac-dot {
@@ -201,7 +201,7 @@
 .bgmac-kicker {
   font-size: var(--fs-cap);
   font-weight: 600;
-  color: #2e7d4f;
+  color: var(--good);
   letter-spacing: 0.02em;
 }
 .bgmac-title {
@@ -395,7 +395,7 @@ html.dark .bgmac-wcover:hover {
   flex: 0 0 auto;
 }
 .bgmac-badge svg {
-  color: #2e7d4f;
+  color: var(--good);
   flex: 0 0 auto;
 }
 .bgmac-badge-name {
@@ -603,14 +603,14 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
   gap: var(--sp-2);
   flex-wrap: wrap;
   font-size: var(--fs-cap);
-  color: #9a6b1f;
+  color: var(--warn);
   background: rgba(233, 162, 60, 0.12);
   border: 1px solid rgba(233, 162, 60, 0.28);
   border-radius: var(--r-md);
   padding: var(--sp-2) var(--sp-3);
 }
 html.dark .bgmac-warn {
-  color: #f0bd6b;
+  color: var(--gold);
   background: rgba(233, 162, 60, 0.16);
   border-color: rgba(233, 162, 60, 0.34);
 }
@@ -640,6 +640,6 @@ html.dark .bgmac-warn {
 
 /* 深色主题：小标题品牌绿提亮（徽章已统一浅灰胶囊，不在此列） */
 html.dark .bgmac-kicker {
-  color: #7ed4a5;
+  color: var(--good);
 }
 

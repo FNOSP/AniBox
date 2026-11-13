@@ -209,7 +209,7 @@
   height: 16px;
   padding: 0 var(--sp-1);
   border-radius: var(--r-full);
-  background: #e5484d;
+  background: var(--danger-bg);
   color: #fff;
   font-size: var(--fs-cap);
   font-weight: 700;

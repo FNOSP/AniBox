@@ -320,7 +320,7 @@
   background: var(--ph-bg);
 }
 .webrs-g-badge.ok {
-  color: #2e7d32;
+  color: var(--good);
   background: rgba(46, 125, 50, 0.12);
 }
 .webrs-g-badge.empty {
@@ -675,7 +675,7 @@
   animation: webrsPulse 1s ease-in-out infinite;
 }
 .webrs-mgr-test.ok {
-  color: #2e7d32;
+  color: var(--good);
   background: rgba(46, 125, 50, 0.12);
 }
 .webrs-mgr-test.error {
@@ -707,14 +707,14 @@
    来源返回挑战页时：搜索栏下方给状态，type1 弹窗收验证码，type2/3 自动完成。 */
 .webrs-captcha-ok {
   font-size: var(--fs-cap);
-  color: #2e7d32;
+  color: var(--good);
   background: rgba(46, 125, 50, 0.12);
   border: 1px solid rgba(46, 125, 50, 0.28);
   border-radius: var(--r-sm);
   padding: var(--sp-2) var(--sp-3);
 }
 .webrs-g-badge.captcha {
-  color: #b26a00;
+  color: var(--warn);
   background: rgba(178, 106, 0, 0.14);
 }
 .webrs-g-verify {
@@ -884,7 +884,7 @@
   word-break: break-all;
 }
 .webrs-cat-msg.ok {
-  color: #2e7d32;
+  color: var(--good);
   background: rgba(46, 125, 50, 0.12);
   border-color: rgba(46, 125, 50, 0.28);
 }
@@ -949,11 +949,11 @@
   background: var(--ph-bg);
 }
 .webrs-cat-state.update {
-  color: #b26a00;
+  color: var(--warn);
   background: rgba(178, 106, 0, 0.14);
 }
 .webrs-cat-state.installed {
-  color: #2e7d32;
+  color: var(--good);
   background: rgba(46, 125, 50, 0.12);
 }
 .webrs-cat-act {

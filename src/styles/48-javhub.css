@@ -430,7 +430,7 @@
 .jvh-alert .hint { margin: 0; }
 .jvh-alert .javset-btn { margin-top: auto; }
 .jvh-alert.warn { border-color: rgba(160, 60, 60, 0.55); }
-.jvh-alert.warn b { color: #e5484d; }
+.jvh-alert.warn b { color: var(--danger); }
 
 /* [lc-1956] 媒体库标签行行首的「全盘刮削」动作钮：强调色描边，与库胶囊区分 */
 .jvh-scrape-all {
@@ -652,8 +652,8 @@
   font-family: inherit;
 }
 .jvd-chip.cat { background: rgb(var(--accent-rgb) / 0.16); color: var(--accent); font-weight: 600; }
-.jvd-chip.err { background: rgba(208, 92, 92, 0.16); color: #c95050; }
-.jvd-chip.ok { background: rgba(80, 160, 100, 0.16); color: #3e9257; }
+.jvd-chip.err { background: rgba(208, 92, 92, 0.16); color: var(--danger); }
+.jvd-chip.ok { background: rgba(80, 160, 100, 0.16); color: var(--good); }
 .jvd-chip.link { cursor: pointer; }
 .jvd-chip.link:hover { background: var(--hover-strong); }
 .jvd-dim { font-size: var(--fs-cap); color: var(--muted); }
@@ -704,7 +704,7 @@
   border-radius: var(--r-md);
   background: rgba(208, 92, 92, 0.12);
   border: 1px solid rgba(208, 92, 92, 0.3);
-  color: #c95050;
+  color: var(--danger);
   font-size: var(--fs-ctl);
   line-height: 1.5;
   word-break: break-all;

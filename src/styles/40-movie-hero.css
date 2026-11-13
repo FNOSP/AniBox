@@ -176,7 +176,8 @@
 }
 .mv-rating svg {
   flex: none;
-  color: #f5c518;
+  /* [lc-2146] 原为 IMDb 黄 #f5c518（全站第二种金）；统一到 --gold */
+  color: var(--gold);
   fill: currentColor;
 }
 .mv-votes {
@@ -234,9 +235,12 @@
   background: rgba(255, 255, 255, 0.22);
   border-color: rgba(255, 255, 255, 0.38);
 }
+/* [lc-2146] 收藏态：原为粉色 #ff8fa3（自成一种色相，且与 danger 红只差一点，
+   容易被读成"危险/取消"）。改为金色 —— 与评分星同族，是"已标记/已收藏"的
+   惯用暖色，也和 --danger 拉开距离。 */
 .mv-btn-ghost.on {
-  color: #ff8fa3;
-  border-color: rgba(255, 143, 163, 0.5);
+  color: var(--gold);
+  border-color: color-mix(in srgb, var(--gold) 50%, transparent);
 }
 .mv-btn-ghost svg {
   width: 17px;
@@ -387,10 +391,10 @@ html.dark .mv-glass {
   background: color-mix(in srgb, var(--mv-fg) 22%, transparent);
   border-color: color-mix(in srgb, var(--mv-fg) 42%, transparent);
 }
-/* 「已收藏」保留品牌粉/红 */
+/* 「已收藏」：金色（[lc-2146] 取舍见上方 .mv-btn-ghost.on 注释） */
 .mv-head .mv-btn-ghost.on {
-  color: #ff8fa3;
-  border-color: rgba(255, 143, 163, 0.5);
+  color: var(--gold);
+  border-color: color-mix(in srgb, var(--gold) 50%, transparent);
 }
 /* 版本胶囊：无底色，仅描边（颜色随反色）；选中项保留品牌蓝高亮 */
 .mv-head .mv-version {

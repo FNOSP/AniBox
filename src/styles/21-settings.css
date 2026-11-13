@@ -419,7 +419,7 @@
 }
 /* 危险动作（退出登录）：红色描边，与普通按钮区分 */
 .set-btn.danger {
-  color: #e5484d;
+  color: var(--danger);
   border-color: rgba(229, 72, 77, 0.45);
 }
 .set-btn.danger:hover:not(:disabled) {
@@ -598,7 +598,7 @@
   color: var(--accent);
 }
 .set-qr-tip.err {
-  color: #e5484d;
+  color: var(--danger);
 }
 .set-qr-actions {
   display: flex;
@@ -662,10 +662,10 @@
   word-break: break-all;
 }
 .set-pot-status.ok {
-  color: #3fb950;
+  color: var(--good);
 }
 .set-pot-status.err {
-  color: #e5484d;
+  color: var(--danger);
 }
 .set-pot-status.dim {
   color: var(--muted);
@@ -674,8 +674,8 @@
   margin: 2px 0 6px;
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r-md);
-  border: 1px solid color-mix(in srgb, #d29922 45%, transparent);
-  background: color-mix(in srgb, #d29922 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gold) 45%, transparent);
+  background: color-mix(in srgb, var(--gold) 12%, transparent);
   color: var(--text-2);
   font-size: var(--fs-cap);
   line-height: 1.6;
@@ -733,13 +733,13 @@
   background: var(--muted);
 }
 .set-upd-dot.ok {
-  background: #3fb950;
+  background: var(--good-bg);
 }
 .set-upd-dot.warn {
-  background: #d29922;
+  background: var(--gold);
 }
 .set-upd-dot.err {
-  background: #e5484d;
+  background: var(--danger-bg);
 }
 .set-upd-status-text {
   font-weight: 600;
@@ -816,7 +816,7 @@
 }
 .set-upd-ok {
   font-size: var(--fs-ctl);
-  color: #3fb950;
+  color: var(--good);
   font-weight: 600;
 }
 .set-upd-err {
@@ -825,7 +825,7 @@
   gap: var(--sp-2);
   flex-wrap: wrap;
   font-size: var(--fs-cap);
-  color: #e5484d;
+  color: var(--danger);
   word-break: break-word;
 }
 
@@ -848,11 +848,11 @@
   background: var(--muted);
 }
 .set-pad-dot.on {
-  background: #3fb950;
+  background: rgb(var(--good-rgb, var(--accent-rgb)) / 0.2);
   box-shadow: 0 0 6px rgba(63, 185, 80, 0.5);
 }
 .set-pad-dot.off {
-  background: #d29922;
+  background: var(--gold);
 }
 .set-pad-name {
   min-width: 0;
@@ -1059,15 +1059,15 @@
   word-break: break-word;
 }
 .set-diag-item.warn .set-diag-label {
-  color: #d99a2b;
+  color: var(--gold);
 }
 .set-diag-item.fail .set-diag-label {
-  color: #e5484d;
+  color: var(--danger);
 }
 .set-diag-err {
   margin-top: 8px;
   font-size: var(--fs-cap);
-  color: #e5484d;
+  color: var(--danger);
   word-break: break-word;
 }
 .set-diag-run {

@@ -86,8 +86,8 @@
 }
 
 .c115-mini.danger:hover {
-  border-color: #e5484d;
-  color: #e5484d;
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 /* ── 播放档分段：玻璃轨道 + 渐变选中块 ── */
@@ -135,7 +135,7 @@
   border-radius: var(--r-md);
   background: rgba(255, 92, 92, 0.08);
   font-size: var(--fs-ctl);
-  color: #ff7b7b;
+  color: var(--danger);
   word-break: break-all;
   animation: c115-fade-up var(--dur-move) ease-out;
 }
@@ -235,7 +235,7 @@
 
 /* 扫码失败/异常（如二维码连续过期、轮询被上游拒绝）：与普通提示区分开 */
 .c115-qrmsg.err {
-  color: #ff7b7b;
+  color: var(--danger);
 }
 
 /* ── 面包屑：当前项胶囊高亮 ── */
@@ -325,7 +325,7 @@
 
 .c115-ico.dir {
   background: rgba(255, 193, 69, 0.16);
-  color: #ffb020;
+  color: var(--gold);
 }
 
 .c115-ico.video {
@@ -336,12 +336,12 @@
 
 .c115-ico.audio {
   background: rgb(var(--accent-rgb) / 0.16);
-  color: #a88bff;
+  color: var(--text-2);
 }
 
 .c115-ico.sub {
   background: rgba(94, 200, 148, 0.16);
-  color: #5ec894;
+  color: var(--good);
 }
 
 .c115-name {
@@ -491,17 +491,17 @@
 
 .sp-xunlei {
   background: rgba(56, 152, 255, 0.18);
-  color: #6db2ff;
+  color: var(--accent);
 }
 
 .sp-assrt {
   background: rgba(255, 176, 66, 0.16);
-  color: #ffb042;
+  color: var(--gold);
 }
 
 .sp-osub {
   background: rgba(94, 200, 148, 0.16);
-  color: #5ec894;
+  color: var(--good);
 }
 
 .sp-name {
@@ -601,8 +601,8 @@
 }
 
 .c115-dot.ok {
-  background: #4ade80;
-  border-color: #4ade80;
+  background: var(--good-bg);
+  border-color: rgb(var(--good-rgb, var(--accent-rgb)) / 0.2);
   opacity: 1;
   box-shadow: 0 0 6px rgba(74, 222, 128, 0.7);
 }
@@ -656,7 +656,7 @@
 }
 
 .c115-mini.danger {
-  color: #e5484d;
+  color: var(--danger);
 }
 
 .c115-wdform {

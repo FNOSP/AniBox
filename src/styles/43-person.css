@@ -385,7 +385,7 @@
 }
 
 .pw-score {
-  color: #e0a030;
+  color: var(--gold);
   font-weight: 700;
 }
 

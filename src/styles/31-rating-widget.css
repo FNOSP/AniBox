@@ -7,66 +7,74 @@
    尺寸整体收紧一档（原稿是 820px 独立卡片，这里要塞进海报右侧）。
    ══════════════════════════════════════════════════════════════════════════════ */
 
+/* [lc-2146] 配色整体收敛到全站语义体系（改前这里自成一套：57 个 --drw-* 颜色变量，
+   浅深主题各写一遍孤立的十六进制值）。
+   关键改动：
+     · 追番状态原来 6 条各配一种**实心色**（未追灰 / 在看绿 / 想看蓝 / 搁置橙 /
+       看过紫 / 抛弃红），一屏里六种色相 —— 而且"看过=紫"与全站基调冲突。
+       改为**统一中性底 + 语义色文字**：状态差别由文字色与字重表达，底色一律中性，
+       按钮不再像六颗糖果。
+       映射：在看→good / 想看→accent / 搁置→warn / 看过→中性（已归档，不该抢眼）/
+             抛弃→danger / 未追→中性弱化
+     · 星级保留金色：那是**评分语义**，全站唯一的暖色数据用途（AGENTS.md 允许保留）。
+     · 柱状图原来独用一套蓝（#bee3f8/#4299e1/#2b6cb0）⇒ 改 --accent 单色阶。 */
 .drw, .drw-drop {
-  --drw-border: #e8ecef;
-  --drw-text-1: #2d3748;
-  --drw-text-2: #8c97a3;
-  --drw-green-dark: #276749;
-  --drw-green-light: #48bb78;
-  --drw-star-1: #f6e05e;
-  --drw-star-2: #f5a623;
-  --drw-star-stroke: #ecc94b;
-  --drw-star-empty: #cbd5e0;
-  --drw-star-shadow: rgba(245, 166, 35, 0.4);
-  --drw-dot-start: #3182ce;
-  --drw-dot-rating: #276749;
-  --drw-dot-rank: #48bb78;
-  --drw-drop-bg: #f4f7eb;
-  --drw-drop-hover: rgba(92, 147, 51, 0.1);
-  --drw-drop-item: #e6ebd8;
-  --drw-drop-shadow: rgba(0, 0, 0, 0.12);
-  --drw-chart-1: #bee3f8;
-  --drw-chart-2: #4299e1;
-  --drw-chart-hover: #2b6cb0;
-  --drw-chart-glow: rgba(66, 153, 225, 0.35);
-  --drw-chart-text: #2b6cb0;
-  --drw-btn-sync-bg: #5c9333; --drw-btn-sync-fg: #ffffff; --drw-btn-sync-sh: rgba(92, 147, 51, 0.3);
-  --drw-btn-0-bg: #718096; --drw-btn-0-fg: #ffffff; --drw-btn-0-sh: rgba(113, 128, 150, 0.3);
-  --drw-btn-3-bg: #5c9333; --drw-btn-3-fg: #ffffff; --drw-btn-3-sh: rgba(92, 147, 51, 0.3);
-  --drw-btn-1-bg: #3182ce; --drw-btn-1-fg: #ffffff; --drw-btn-1-sh: rgba(49, 130, 206, 0.3);
-  --drw-btn-4-bg: #dd6b20; --drw-btn-4-fg: #ffffff; --drw-btn-4-sh: rgba(221, 107, 32, 0.3);
-  --drw-btn-2-bg: #805ad5; --drw-btn-2-fg: #ffffff; --drw-btn-2-sh: rgba(128, 90, 213, 0.3);
-  --drw-btn-5-bg: #e53e3e; --drw-btn-5-fg: #ffffff; --drw-btn-5-sh: rgba(229, 62, 62, 0.3);
+  --drw-border: var(--line-strong);
+  --drw-text-1: var(--text-strong);
+  --drw-text-2: var(--muted);
+  --drw-green-dark: var(--good);
+  --drw-green-light: var(--good);
+  /* 星级：金色是评分专用暖色，保留；浅深主题各取一档 */
+  --drw-star-1: var(--gold);
+  --drw-star-2: var(--gold);
+  --drw-star-stroke: var(--gold);
+  --drw-star-empty: rgba(120, 120, 128, 0.28);
+  --drw-star-shadow: rgba(240, 166, 60, 0.35);
+  --drw-dot-start: var(--accent);
+  --drw-dot-rating: var(--good);
+  --drw-dot-rank: var(--good);
+  --drw-drop-bg: var(--bg-3);
+  --drw-drop-hover: var(--hover-strong);
+  --drw-drop-item: var(--sel-bg);
+  --drw-drop-shadow: rgba(0, 0, 0, 0.16);
+  /* 柱状图：强调色单色阶（量级用透明度表达，不引入新色相） */
+  --drw-chart-1: rgba(0, 113, 227, 0.18);
+  --drw-chart-2: rgba(0, 113, 227, 0.62);
+  --drw-chart-hover: var(--accent-solid);
+  --drw-chart-glow: rgba(0, 113, 227, 0.3);
+  --drw-chart-text: var(--accent);
+  /* 状态按钮：底色中性/淡底，前景承载语义 */
+  --drw-btn-sync-bg: var(--sel-bg-strong); --drw-btn-sync-fg: var(--good); --drw-btn-sync-sh: transparent;
+  --drw-btn-0-bg: var(--sel-bg-strong); --drw-btn-0-fg: var(--muted); --drw-btn-0-sh: transparent;
+  --drw-btn-3-bg: var(--good-bg); --drw-btn-3-fg: var(--good); --drw-btn-3-sh: transparent;
+  --drw-btn-1-bg: var(--sel-bg-strong); --drw-btn-1-fg: var(--accent); --drw-btn-1-sh: transparent;
+  --drw-btn-4-bg: var(--warn-bg); --drw-btn-4-fg: var(--warn); --drw-btn-4-sh: transparent;
+  --drw-btn-2-bg: var(--sel-bg-strong); --drw-btn-2-fg: var(--text-2); --drw-btn-2-sh: transparent;
+  --drw-btn-5-bg: var(--danger-bg); --drw-btn-5-fg: var(--danger); --drw-btn-5-sh: transparent;
 }
 html.dark .drw, html.dark .drw-drop {
-  --drw-border: #2d3748;
-  --drw-text-1: #f7fafc;
-  --drw-text-2: #a0aec0;
-  --drw-green-dark: #68d391;
-  --drw-green-light: #9ae6b4;
-  --drw-star-2: #dd6b20;
-  --drw-star-stroke: #f5a623;
-  --drw-star-empty: #4a5568;
-  --drw-star-shadow: rgba(221, 107, 32, 0.5);
-  --drw-dot-start: #63b3ed;
-  --drw-dot-rating: #68d391;
-  --drw-dot-rank: #9ae6b4;
-  --drw-drop-bg: #2d3748;
-  --drw-drop-hover: rgba(104, 211, 145, 0.15);
-  --drw-drop-item: #3a4a5e;
-  --drw-drop-shadow: rgba(0, 0, 0, 0.4);
-  --drw-chart-1: #2a4365;
-  --drw-chart-2: #3182ce;
-  --drw-chart-hover: #63b3ed;
-  --drw-chart-glow: rgba(99, 179, 237, 0.5);
-  --drw-chart-text: #63b3ed;
-  --drw-btn-sync-bg: #276749; --drw-btn-sync-fg: #68d391; --drw-btn-sync-sh: rgba(0, 0, 0, 0.3);
-  --drw-btn-0-bg: #2d3748; --drw-btn-0-fg: #a0aec0; --drw-btn-0-sh: rgba(0, 0, 0, 0.3);
-  --drw-btn-3-bg: #22543d; --drw-btn-3-fg: #68d391; --drw-btn-3-sh: rgba(0, 0, 0, 0.3);
-  --drw-btn-1-bg: #2a4365; --drw-btn-1-fg: #63b3ed; --drw-btn-1-sh: rgba(0, 0, 0, 0.3);
-  --drw-btn-4-bg: #7b341e; --drw-btn-4-fg: #f6ad55; --drw-btn-4-sh: rgba(0, 0, 0, 0.3);
-  --drw-btn-2-bg: #44337a; --drw-btn-2-fg: #d6bcfa; --drw-btn-2-sh: rgba(0, 0, 0, 0.3);
-  --drw-btn-5-bg: #742a2a; --drw-btn-5-fg: #fc8181; --drw-btn-5-sh: rgba(0, 0, 0, 0.3);
+  --drw-border: var(--line-strong);
+  --drw-text-1: var(--text-strong);
+  --drw-text-2: var(--muted);
+  --drw-green-dark: var(--good);
+  --drw-green-light: var(--good);
+  --drw-star-1: var(--gold);
+  --drw-star-2: var(--gold);
+  --drw-star-stroke: var(--gold);
+  --drw-star-empty: rgba(120, 120, 128, 0.36);
+  --drw-star-shadow: rgba(245, 166, 35, 0.45);
+  --drw-dot-start: var(--accent);
+  --drw-dot-rating: var(--good);
+  --drw-dot-rank: var(--good);
+  --drw-drop-bg: var(--bg-2);
+  --drw-drop-hover: var(--hover-strong);
+  --drw-drop-item: var(--sel-bg);
+  --drw-drop-shadow: rgba(0, 0, 0, 0.45);
+  --drw-chart-1: rgba(10, 132, 255, 0.22);
+  --drw-chart-2: rgba(10, 132, 255, 0.68);
+  --drw-chart-hover: var(--accent-solid);
+  --drw-chart-glow: rgba(10, 132, 255, 0.4);
+  --drw-chart-text: var(--accent);
 }
 
 /* 局部 reset（原稿的 * 全局重置收进 .drw 作用域；.drw-drop 是 portal 出去的浮层，单独盖） */
@@ -83,9 +91,10 @@ html.dark .drw, html.dark .drw-drop {
 .drw .info-group { margin-bottom: 12px; }
 .drw .label { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-cap); color: var(--drw-text-2); font-weight: 500; letter-spacing: 0.4px; margin-bottom: 4px; }
 .drw .label::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--drw-dot, var(--drw-text-2)); box-shadow: 0 0 0 3px var(--drw-dot-halo, transparent); }
-.drw .label-start { --drw-dot: var(--drw-dot-start); --drw-dot-halo: rgba(49, 130, 206, 0.15); }
-.drw .label-rating { --drw-dot: var(--drw-dot-rating); --drw-dot-halo: rgba(39, 103, 73, 0.15); }
-.drw .label-rank { --drw-dot: var(--drw-dot-rank); --drw-dot-halo: rgba(72, 187, 120, 0.15); }
+/* [lc-2146] 光晕统一走语义通道变量（原为三组自造 rgba） */
+.drw .label-start { --drw-dot: var(--drw-dot-start); --drw-dot-halo: rgb(var(--accent-rgb) / 0.15); }
+.drw .label-rating { --drw-dot: var(--drw-dot-rating); --drw-dot-halo: rgb(var(--good-rgb) / 0.15); }
+.drw .label-rank { --drw-dot: var(--drw-dot-rank); --drw-dot-halo: rgb(var(--good-rgb) / 0.15); }
 .drw .value { font-size: var(--fs-subtitle); font-weight: 700; color: var(--drw-text-1); line-height: 1.2; }
 .drw .value.rank { color: var(--drw-green-light); }
 
@@ -134,7 +143,23 @@ html.dark .drw, html.dark .drw-drop {
 /* 收藏按钮 + 下拉 */
 .drw .watch-component { position: relative; display: inline-block; margin-top: 4px; }
 .drw .watch-btn { display: flex; align-items: center; justify-content: center; background: var(--drw-btn-sync-bg); color: var(--drw-btn-sync-fg); border: none; border-radius: var(--r-lg); padding: var(--sp-2) var(--sp-4); font-size: var(--fs-ctl); font-weight: 600; cursor: pointer; min-width: 124px; box-shadow: 0 4px 12px var(--drw-btn-sync-sh), inset 0 1px 0 rgba(255, 255, 255, 0.2); transition: all var(--dur-page) var(--ease); -webkit-tap-highlight-color: transparent; overflow: hidden; }
-.drw .watch-btn[data-status="未追"] { background: var(--drw-btn-0-bg); color: var(--drw-btn-0-fg); box-shadow: 0 4px 12px var(--drw-btn-0-sh), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+/* [lc-2146] 状态按钮：底色改中性/语义淡底后，原来的「有色阴影 + 白色内高光」
+   是实心色块时代的遗物 —— 淡底上再加一道白内描边会显得脏。统一为无色阴影 + 细描边。 */
+.drw .watch-btn[data-status="未追"],
+.drw .watch-btn[data-status="在看"],
+.drw .watch-btn[data-status="想看"],
+.drw .watch-btn[data-status="搁置"],
+.drw .watch-btn[data-status="看过"],
+.drw .watch-btn[data-status="抛弃"] {
+  border: 1px solid var(--line-strong);
+  box-shadow: none;
+}
+.drw .watch-btn[data-status="未追"] { background: var(--drw-btn-0-bg); color: var(--drw-btn-0-fg); }
+.drw .watch-btn[data-status="在看"] { background: var(--drw-btn-3-bg); color: var(--drw-btn-3-fg); border-color: var(--good-border); }
+.drw .watch-btn[data-status="想看"] { background: var(--drw-btn-1-bg); color: var(--drw-btn-1-fg); }
+.drw .watch-btn[data-status="搁置"] { background: var(--drw-btn-4-bg); color: var(--drw-btn-4-fg); border-color: var(--warn-border); }
+.drw .watch-btn[data-status="看过"] { background: var(--drw-btn-2-bg); color: var(--drw-btn-2-fg); }
+.drw .watch-btn[data-status="抛弃"] { background: var(--drw-btn-5-bg); color: var(--drw-btn-5-fg); border-color: var(--danger-border); }
 .drw .watch-btn[data-status="在看"] { background: var(--drw-btn-3-bg); color: var(--drw-btn-3-fg); box-shadow: 0 4px 12px var(--drw-btn-3-sh), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
 .drw .watch-btn[data-status="想看"] { background: var(--drw-btn-1-bg); color: var(--drw-btn-1-fg); box-shadow: 0 4px 12px var(--drw-btn-1-sh), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
 .drw .watch-btn[data-status="搁置"] { background: var(--drw-btn-4-bg); color: var(--drw-btn-4-fg); box-shadow: 0 4px 12px var(--drw-btn-4-sh), inset 0 1px 0 rgba(255, 255, 255, 0.1); }

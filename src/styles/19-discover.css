@@ -802,12 +802,12 @@
 }
 
 .dsc.hi {
-  color: #1f9d63;
+  color: var(--good);
   background: rgba(61, 220, 151, 0.16);
 }
 
 .dsc.mid {
-  color: #a97b12;
+  color: var(--warn);
   background: rgba(232, 180, 66, 0.18);
 }
 
@@ -817,11 +817,11 @@
 }
 
 html.dark .dsc.hi {
-  color: #3ddc97;
+  color: var(--good);
 }
 
 html.dark .dsc.mid {
-  color: #ffd479;
+  color: var(--gold);
 }
 
 /* 「已在库」标（索引不完整时也会用：只给命中项打标，不分组、不标"不在库"） */
@@ -830,11 +830,11 @@ html.dark .dsc.mid {
   padding: var(--sp-0) var(--sp-2);
   border-radius: var(--r-sm);
   background: rgba(61, 220, 151, 0.16);
-  color: #1f9d63;
+  color: var(--good);
 }
 
 html.dark .dlib {
-  color: #3ddc97;
+  color: var(--good);
 }
 
 /* 「今日更新」角标（红色；仅当选中天=今天）。**刻意不叫 .dtag** —— 那是详情页
@@ -845,7 +845,7 @@ html.dark .dlib {
   padding: var(--sp-0) var(--sp-2);
   border-radius: var(--r-sm);
   background: rgba(221, 90, 90, 0.16);
-  color: #c94040;
+  color: var(--danger);
 }
 
 html.dark .ditem-tag {
@@ -856,11 +856,11 @@ html.dark .ditem-tag {
 /* [lc-1581] 「第 N 话」角标（中性蓝，与红色「今日更新」区分）—— 分集端点里 airdate=所选那天 的那一话 */
 .ditem-tag.ep {
   background: rgba(74, 135, 240, 0.14);
-  color: #3f6fd0;
+  color: var(--accent);
 }
 html.dark .ditem-tag.ep {
   background: rgba(74, 135, 240, 0.22);
-  color: #9dbcf7;
+  color: var(--accent);
 }
 
 /* ── 骨架 / 失败 / 空态（两栏共用；微光语言对齐 .poster-skeleton） ── */
@@ -1050,15 +1050,15 @@ html.dark .dlib-pane {
 }
 
 .dlib-src.on.dsrc-tmdb {
-  background: linear-gradient(135deg, #01b4e4, #90cea1);
+  background: linear-gradient(135deg, var(--accent-bg), var(--good-bg));
 }
 
 .dlib-src.on.dsrc-iptv {
-  background: linear-gradient(135deg, #e5484d, #f76b15);
+  background: linear-gradient(135deg, var(--danger-bg), var(--warn-bg));
 }
 
 .dlib-src.on.dsrc-duanju {
-  background: linear-gradient(135deg, #8e4ec6, #6e56cf);
+  background: linear-gradient(135deg, var(--text-2), var(--text-2));
 }
 
 /* 源徽标后的浅字说明（测试功能 + 版权风险规避）：小号弱化、整块不拆行（窄栏随 row1 换行） */
@@ -1163,11 +1163,11 @@ html.dark .dlib-pane {
 /* 过期缓存 / 起播失败的内联提示（橙色同 .dlib-ov-v.orange 口径） */
 .dip-hint {
   font-size: var(--fs-cap);
-  color: #a97b12;
+  color: var(--warn);
 }
 
 html.dark .dip-hint {
-  color: #ffd479;
+  color: var(--gold);
 }
 
 /* 频道格子：与 TMDB 海报网格（dlib-gcard）同一套卡片语言 —— 台标满铺卡顶、悬停上浮 */
@@ -1249,7 +1249,7 @@ html.dark .dip-hint {
   padding: 0;
   border: none;
   background: none;
-  color: #f76b15;
+  color: var(--warn);
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
   cursor: pointer;
   transition: color var(--dur-tap), transform var(--dur-tap);
@@ -1332,20 +1332,20 @@ html.dark .dip-hint {
 
 .dlib-ov-v.orange {
   font-size: var(--fs-body);
-  color: #a97b12;
+  color: var(--warn);
 }
 
 .dlib-ov-v.green {
   font-size: var(--fs-body);
-  color: #1f9d63;
+  color: var(--good);
 }
 
 html.dark .dlib-ov-v.orange {
-  color: #ffd479;
+  color: var(--gold);
 }
 
 html.dark .dlib-ov-v.green {
-  color: #3ddc97;
+  color: var(--good);
 }
 
 /* 搜索框（玻璃胶囊；窄栏下整体换行，宽度自适应） */
@@ -1694,7 +1694,7 @@ html.dark .dlib-ov-v.green {
 }
 
 .dlib-rank.r1 {
-  color: #d99a10;
+  color: var(--text-2);
 }
 
 .dlib-rank.r2 {
@@ -1702,11 +1702,11 @@ html.dark .dlib-ov-v.green {
 }
 
 .dlib-rank.r3 {
-  color: #b4653a;
+  color: var(--text-2);
 }
 
 html.dark .dlib-rank.r1 {
-  color: #ffd479;
+  color: var(--text-2);
 }
 
 html.dark .dlib-rank.r2 {
@@ -1714,7 +1714,7 @@ html.dark .dlib-rank.r2 {
 }
 
 html.dark .dlib-rank.r3 {
-  color: #e8a06a;
+  color: var(--text-2);
 }
 
 .dlib-dotcol {
@@ -1739,7 +1739,7 @@ html.dark .dlib-rank.r3 {
 }
 
 .dlib-row.rm1 .dlib-dot {
-  border-color: #d99a10;
+  border-color: rgb(var(--gold-rgb, var(--accent-rgb)) / 0.2);
   box-shadow: 0 0 0 4px rgba(217, 154, 16, 0.18);
 }
 
@@ -1749,7 +1749,7 @@ html.dark .dlib-rank.r3 {
 }
 
 .dlib-row.rm3 .dlib-dot {
-  border-color: #b4653a;
+  border-color: rgb(var(--warn-rgb, var(--accent-rgb)) / 0.2);
   box-shadow: 0 0 0 4px rgba(180, 101, 58, 0.18);
 }
 
@@ -1921,27 +1921,27 @@ html.dark .dlib-rank.r3 {
 /* 评分色阶（与既有 .dsc 同一套口径：≥8 绿 / 6–8 黄 / <6 红） */
 .dlib-scorenum.hi,
 .dlib-lscore.hi {
-  color: #1f9d63;
+  color: var(--good);
 }
 
 .dlib-scorenum.mid,
 .dlib-lscore.mid {
-  color: #a97b12;
+  color: var(--warn);
 }
 
 .dlib-scorenum.lo,
 .dlib-lscore.lo {
-  color: #c94040;
+  color: var(--danger);
 }
 
 html.dark .dlib-scorenum.hi,
 html.dark .dlib-lscore.hi {
-  color: #3ddc97;
+  color: var(--good);
 }
 
 html.dark .dlib-scorenum.mid,
 html.dark .dlib-lscore.mid {
-  color: #ffd479;
+  color: var(--gold);
 }
 
 html.dark .dlib-scorenum.lo,
@@ -1972,7 +1972,7 @@ html.dark .dlib-lscore.lo {
 
 .dlib-badge-airing {
   background: rgba(61, 220, 151, 0.16);
-  color: #1f9d63;
+  color: var(--good);
 }
 
 .dlib-badge-hot {
@@ -1982,15 +1982,15 @@ html.dark .dlib-lscore.lo {
 
 .dlib-badge-soon {
   background: rgba(232, 180, 66, 0.18);
-  color: #a97b12;
+  color: var(--warn);
 }
 
 html.dark .dlib-badge-airing {
-  color: #3ddc97;
+  color: var(--good);
 }
 
 html.dark .dlib-badge-soon {
-  color: #ffd479;
+  color: var(--gold);
 }
 
 /* ── 网格视图：2:3 竖版海报卡（左上徽章 + 右下评分 + 标题/元信息/题材） ── */
@@ -2035,15 +2035,15 @@ html.dark .dlib-badge-soon {
   z-index: 2;
   background: rgba(10, 12, 18, 0.72);
   backdrop-filter: blur(6px);
-  color: #3ddc97;
+  color: var(--good);
 }
 
 .dlib-gposter > .dlib-badge-hot {
-  color: #8fb4ff;
+  color: var(--accent);
 }
 
 .dlib-gposter > .dlib-badge-soon {
-  color: #ffd479;
+  color: var(--gold);
 }
 
 .dlib-gcard:hover .dlib-gposter > .dlib-badge {
@@ -2067,11 +2067,11 @@ html.dark .dlib-badge-soon {
 }
 
 .dlib-gscore.hi {
-  color: #3ddc97;
+  color: var(--good);
 }
 
 .dlib-gscore.mid {
-  color: #ffd479;
+  color: var(--gold);
 }
 
 .dlib-gscore.lo {
@@ -3220,11 +3220,11 @@ button.arc-card:hover .arc-cv {
 /* 起播失败 / 来源注明 */
 .dj-hint {
   font-size: var(--fs-cap);
-  color: #a97b12;
+  color: var(--warn);
 }
 
 html.dark .dj-hint {
-  color: #ffd479;
+  color: var(--gold);
 }
 
 .dj-src {
@@ -3290,7 +3290,7 @@ html.dark .dj-hint {
 }
 
 .dj-star.on {
-  color: #ffc53d;
+  color: var(--gold);
 }
 
 .dj-star:hover {
@@ -3328,7 +3328,7 @@ html.dark .dj-hint {
 }
 
 .dj-dfav.on {
-  color: #ffc53d;
+  color: var(--gold);
   border-color: rgba(255, 197, 61, 0.55);
 }
 

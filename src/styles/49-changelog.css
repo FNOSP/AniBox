@@ -125,13 +125,13 @@
   font-size: var(--fs-cap);
   line-height: 1.6;
   color: var(--fg-2);
-  background: color-mix(in srgb, #f0a63c 12%, transparent);
-  border-left: 3px solid #f0a63c;
+  background: color-mix(in srgb, var(--gold) 12%, transparent);
+  border-left: 3px solid var(--gold);
 }
 .clg-beta svg {
   flex: 0 0 auto;
   margin-top: 1px;
-  color: #d1871f;
+  color: var(--gold);
 }
 /* 老 WebView2（<111）没有 color-mix → 退回中性底 */
 @supports not (background: color-mix(in srgb, red 10%, transparent)) {

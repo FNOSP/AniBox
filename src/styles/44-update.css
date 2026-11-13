@@ -110,12 +110,12 @@
   font-weight: 600;
 }
 .upx-chip.hot {
-  border-color: color-mix(in srgb, #d29922 45%, transparent);
-  background: color-mix(in srgb, #d29922 12%, transparent);
-  color: #b9821b;
+  border-color: color-mix(in srgb, var(--gold) 45%, transparent);
+  background: color-mix(in srgb, var(--gold) 12%, transparent);
+  color: var(--gold);
 }
 html.dark .upx-chip.hot {
-  color: #e3b341;
+  color: var(--gold);
 }
 
 /* ── 正文：更新说明（纯文本、可滚动、限高）+ 进度/提示 ── */
@@ -224,7 +224,7 @@ html.dark .upx-chip.hot {
   word-break: break-word;
 }
 .upx-hint.ok {
-  color: #3fb950;
+  color: var(--good);
 }
 .upx-err {
   display: flex;
@@ -233,7 +233,7 @@ html.dark .upx-chip.hot {
   flex-wrap: wrap;
   font-size: var(--fs-cap);
   line-height: 1.5;
-  color: #e5484d;
+  color: var(--danger);
   word-break: break-word;
 }
 

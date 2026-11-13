@@ -1454,7 +1454,7 @@
   color: #fff;
 }
 .meta-btn.danger {
-  color: #e5787a;
+  color: var(--danger);
   border-color: rgba(229, 120, 122, 0.4);
 }
 .meta-btn.sm {
@@ -1506,7 +1506,7 @@
 .meta-err {
   margin: 0;
   font-size: var(--fs-cap);
-  color: #e5787a;
+  color: var(--danger);
 }
 .meta-foot {
   display: flex;
@@ -1519,7 +1519,7 @@
   background: var(--hover);
 }
 .meta-foot.err {
-  color: #e5787a;
+  color: var(--danger);
 }
 
 

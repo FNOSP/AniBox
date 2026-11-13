@@ -181,7 +181,7 @@
   opacity: 0.8;
 }
 .dvtc-like.on {
-  color: #e0525f;
+  color: var(--danger);
   opacity: 1;
   font-weight: 700;
 }

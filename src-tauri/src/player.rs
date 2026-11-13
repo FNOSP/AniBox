@@ -424,11 +424,13 @@ async fn launch_mpv(
     // **不能无条件清**：短剧连播/切集也走 launch，无条件清会把连播链打断。
     // 目的：防止「短剧播完 → 改看飞牛/IPTV → time-pos 观察回调把别人的进度
     // 写进短剧历史」。
+    let t_enter = std::time::Instant::now();
     if !headers.map(|h| h.vertical).unwrap_or(false) {
         crate::duanju::clear_auto_next();
         // [lc-2128] 非短剧起播：恢复 modernz 的 ±10 秒跳转键（短剧播放时会关掉）
         crate::duanju::restore_modernz_jump_buttons(app);
     }
+    crate::libmpv::trace(&format!("[launch/step] 入口 {:.0}ms", t_enter.elapsed().as_millis()));
     let mut extra = match headers {
         Some(h) if h.needs_relay() => {
             crate::mpv::http_header_args(h.referer.as_deref(), h.user_agent.as_deref())
@@ -500,6 +502,10 @@ async fn launch_mpv(
         }
         None => None,
     };
+    // [lc-2137] **取到 session 后立刻释放 AppState.mpv 锁**：原实现整个复用分支都持锁，
+    // 连播时后台的竖屏调窗任务（state.mpv.lock）与下一次 play 都会阻塞在这把锁上，
+    // 表现为 launch 花 15s 返回（实际 IPC 都是即时的）。锁只需保护「取/建会话」这一步。
+    drop(slot);
     let s = match existing {
         Some(m) => {
             // 复用会话：mpv 已过启动期，IPC 不卡。标题先于 loadfile。
@@ -507,7 +513,7 @@ async fn launch_mpv(
             // 留空会让首集退化成容器标题（只剩剧名）。后续每一集由 mpv.rs 的
             // start-file/file-loaded 把该条 #EXTINF 标题逐集写回 force-media-title。
             let _ = m
-                .command(json!(["set", "force-media-title", title]))
+                .command_no_reply(json!(["set", "force-media-title", title]))
                 .await;
             // [lc-2108] 同步写标题栈：mpv.rs 的 file-loaded 兜底用它重设窗口 title
             m.set_title_hint(title);
@@ -531,14 +537,14 @@ async fn launch_mpv(
                     crate::mpv::normalize_http_headers(h.referer.as_deref(), h.user_agent.as_deref());
                 // referrer 无论有没有都写（没有就清空），避免上一部在线源的头残留。
                 let _ = m
-                    .command(json!(["set", "referrer", r.unwrap_or_default()]))
+                    .command_no_reply(json!(["set", "referrer", r.unwrap_or_default()]))
                     .await;
                 if let Some(u) = u {
-                    let _ = m.command(json!(["set", "user-agent", u])).await;
+                    let _ = m.command_no_reply(json!(["set", "user-agent", u])).await;
                 }
                 if let Some(hf) = hf {
                     let _ = m
-                        .command(json!(["set", "http-header-fields", hf]))
+                        .command_no_reply(json!(["set", "http-header-fields", hf]))
                         .await;
                 }
             } else {
@@ -645,10 +651,10 @@ async fn launch_mpv(
             match playlist_start {
                 Some(idx) => {
                     // loadlist 会整体替换播放列表；随后把播放位置定到点击的那一集。
-                    m.command(json!(["loadlist", url.to_string(), "replace"]))
-                        .await?;
+                    m.command_no_reply(json!(["loadlist", url.to_string(), "replace"]))
+                        .await;
                     let _ = m
-                        .command(json!(["set", "playlist-pos", idx]))
+                        .command_no_reply(json!(["set", "playlist-pos", idx]))
                         .await;
                 }
                 None => {
@@ -661,6 +667,7 @@ async fn launch_mpv(
                 }
             }
             let _ = m.command_no_reply(json!(["set", "pause", "no"])).await;
+            crate::libmpv::trace(&format!("[launch/step] 复用分支完成 {:.0}ms", t_enter.elapsed().as_millis()));
             m
         }
         None => {
@@ -686,7 +693,9 @@ async fn launch_mpv(
         s.command_no_reply(json!(["script-message", "fntv-interp-off"]))
             .await;
     }
-    *slot = Some(s);
+    // [lc-2137] 写回会话时**重新短暂加锁**（不在整个分支里持有）。
+    // 复用分支下 s 就是原会话，写回是幂等的；新建分支在这里落库。
+    *state.mpv.lock().await = Some(s);
     Ok(())
 }
 

@@ -397,6 +397,7 @@ async fn play_impl(
     // 短剧改为：播完在左下角显示「下一集」大按钮（见 fntv_next_ep.lua），不再自动切集。
     set_modernz_jump_buttons(app, true);
     let t0 = std::time::Instant::now();
+    crate::libmpv::trace("[duanju] → player::launch 开始");
     crate::player::launch(
         app,
         state,

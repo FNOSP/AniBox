@@ -1,0 +1,82 @@
+/* [liquid-theme] 液体主题切换的 CSS（随模块自带，调用方只需 import 本文件）。
+ *
+ * 全部使用 :where() 包住子选择器 → 特异性降到 0，宿主项目能用任意规则覆盖，
+ * 不会与既有样式打架（"清晰的主题样式作用域"）。
+ */
+
+/* ── 舞台：固定铺满视口，自身不参与布局，不吃事件 ── */
+.lt-stage {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+  pointer-events: none;
+  /* 隔离图层：揭示层内的重绘不影响底层真实界面 */
+  contain: layout style paint;
+}
+
+.lt-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+/* ── 新主题揭示层 ── */
+.lt-reveal {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  /* 液体轮廓之外完全不可见（clip-path 由 JS 每帧写入） */
+  will-change: clip-path;
+}
+
+.lt-backing {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* 不透明：液体边缘内侧的第一层实色，防止透出旧主题 */
+}
+
+/* 快照宿主：与真实界面同尺寸、同坐标系 */
+.lt-host {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  /* 克隆体内部的 fixed 元素：保持相对视口定位（与真实界面一致） */
+  transform: none;
+}
+
+/* 克隆体内的 sticky/fixed 需要与真实层一致：fixed 元素的包含块若是 .lt-host
+   就会相对宿主定位 —— 而宿主本身就铺满视口且从 (0,0) 起，等价于视口。
+   滚动容器内部的 sticky 由 DOM 结构 + 同步后的 scrollTop 自然对齐。 */
+
+/* ── 湿边高光：一条 1.5px 描边，与液体轮廓同形 ── */
+.lt-sheen {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+/* ── 指针拦截层（动画期间避免点到过期内容） ── */
+.lt-block {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  cursor: default;
+  background: transparent;
+}
+
+/* 性能模式 / 减少动效：整层不渲染（JS 侧也不会创建） */
+html.perf .lt-stage {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lt-stage {
+    display: none;
+  }
+}

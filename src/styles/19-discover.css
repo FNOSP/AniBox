@@ -1602,18 +1602,25 @@ html.dark .dlib-ov-v.green {
   border-bottom: 1px dashed var(--line);
 }
 
+/* [lc-2147] 分组头胶囊：**不再用实心强调蓝**。
+   改前是 `background: var(--accent-grad)`（实心蓝）+ 白字 + 蓝色投影，
+   而它装的内容是「2024 年 7 月」「评分排行榜」这种**分组标签**——
+   每屏出现好几次的实心蓝块，是全页最抢眼的东西，用户反馈「太显眼了」。
+   分组头是结构导航，不是操作按钮：改成中性底 + 中性文字，
+   只保留极轻的描边把它与列表内容区隔开；强调色留给真正可点的元素。
+   图标与文字同色，不再反白。 */
 .dlib-gpill {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r-full);
-  background: var(--accent-grad);
-  color: #fff;
+  background: var(--sel-bg);
+  color: var(--text-2);
+  border: 1px solid var(--line);
   font-size: var(--fs-cap);
-  font-weight: 700;
+  font-weight: 600;
   white-space: nowrap;
-  box-shadow: 0 4px 12px rgb(var(--shadow-rgb) / 0.15);
 }
 
 .dlib-gpill > svg {

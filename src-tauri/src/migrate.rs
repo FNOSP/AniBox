@@ -114,6 +114,14 @@ fn move_dir(root: &Path, label: &str) -> Option<String> {
     if new.exists() && has_core_data(&new) {
         return None;
     }
+    // [lc-2150] **迁移标记优先于「核心数据探测」**：上面那条 `has_core_data` 只认
+    // config.json / history.json / watch_days.json，而 **LOCALAPPDATA 侧从来没有这三种文件**
+    // （那里只有 WebView2 的 EBWebView profile）—— 于是每次启动都判「没迁过」，
+    // 把 300MB / 1776 个文件重新抄一遍，migration.json 里同名条目一路堆到几十条。
+    // 标记是所有迁移路径结束时必写的成功凭据，用它判幂等才是准确的。
+    if new.exists() && marker_has_kind(&new, "tauri2") {
+        return None;
+    }
     // 旧目录不存在 ⇒ 全新用户，没什么可搬
     if !old.exists() {
         return None;
@@ -252,7 +260,16 @@ fn write_marker_entry(new_dir: &Path, entry: Value) {
         root["sources"] = json!([]);
     }
     if let Some(arr) = root.get_mut("sources").and_then(Value::as_array_mut) {
-        arr.push(entry);
+        // [lc-2150] 同类同源的条目**替换而不是追加**：历史版本反复迁移时把同一条
+        // （kind=tauri2、同一个旧路径）追加了几十遍，migration.json 涨到 75KB。
+        // 标记的语义是「这个来源迁过没有」，同键只需要一条。
+        let same = |e: &Value| {
+            e.get("kind") == entry.get("kind") && e.get("path") == entry.get("path")
+        };
+        match arr.iter().position(same) {
+            Some(i) => arr[i] = entry,
+            None => arr.push(entry),
+        }
     }
     root["schema"] = json!(1);
     root["completed_at_unix"] = json!(now_unix());
@@ -1201,6 +1218,85 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// [lc-2150] **回归**：LOCALAPPDATA 侧的新目录只有 WebView2 的 EBWebView，
+    /// 永远不会有 config.json / history.json / watch_days.json —— 老逻辑用
+    /// `has_core_data` 判幂等，等于每次启动都判「没迁过」→ 重抄 300MB / 1776 个文件，
+    /// migration.json 里同一条目堆到几十条。标记才是幂等的正确凭据。
+    ///
+    /// 双向对照：先断言「有标记 → 不迁」，再**删掉标记**断言「没标记 → 照旧要迁」
+    /// （否则"永远返回 None"这种空实现也能通过测试）。
+    #[test]
+    fn localappdata_like_dir_with_marker_is_not_remigrated() {
+        let base = temp_base("localappdata");
+
+        // 旧目录：Tauri2 的 LOCALAPPDATA（只有 EBWebView profile，没有 config.json）
+        let old = base.join(OLD_ID);
+        std::fs::create_dir_all(old.join("EBWebView/Default")).unwrap();
+        std::fs::write(old.join("EBWebView/Default/Cookies"), b"cookie-db").unwrap();
+        std::fs::write(old.join("EBWebView/Default/Preferences"), b"{}").unwrap();
+
+        // 第一次启动：迁过去（并写标记）
+        let first = move_dir(&base, "LOCALAPPDATA");
+        assert!(first.is_some(), "旧目录在、新目录不在时必须迁移一次");
+        let new = base.join(NEW_ID);
+        assert!(
+            new.join(MARKER_FILE).is_file(),
+            "迁移结束必须落标记（后面靠它判幂等）"
+        );
+        assert!(!has_core_data(&new), "LOCALAPPDATA 侧本来就**没有**核心数据文件");
+
+        // 反向：标记在位 → 第二次启动必须直接跳过（这就是本次修复的核心断言）
+        assert!(
+            move_dir(&base, "LOCALAPPDATA").is_none(),
+            "有 tauri2 标记时不得重复迁移（否则每次启动重抄整份 profile）"
+        );
+
+        // 删除标记后必须**恢复**迁移行为 —— 证明上面的 None 不是"永远 None"的空实现
+        std::fs::remove_file(new.join(MARKER_FILE)).unwrap();
+        assert!(
+            move_dir(&base, "LOCALAPPDATA").is_some(),
+            "标记缺失时仍应允许迁移（安装器预建目录的合并分支不能被这条修复打死）"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// [lc-2150] 标记里同一条（kind + path 相同）只保留一条：历史版本因为上面那个
+    /// 重复迁移 bug，把 tauri2 条目追加了几十遍，migration.json 涨到 75KB。
+    #[test]
+    fn marker_entry_is_replaced_not_appended_for_same_source() {
+        let dir = temp_base("marker-dedupe").join(NEW_ID);
+        std::fs::create_dir_all(&dir).unwrap();
+        let entry = |n: u64| {
+            json!({
+                "kind": "tauri2",
+                "path": "C:\\old",
+                "result": "ok",
+                "copied_files": n,
+            })
+        };
+        write_marker_entry(&dir, entry(1776));
+        write_marker_entry(&dir, entry(1776));
+        write_marker_entry(&dir, entry(1776));
+
+        let v: Value =
+            serde_json::from_slice(&std::fs::read(dir.join(MARKER_FILE)).unwrap()).unwrap();
+        let arr = v["sources"].as_array().unwrap();
+        assert_eq!(arr.len(), 1, "同 kind + 同 path 的标记必须只有一条");
+        assert_eq!(arr[0]["copied_files"], json!(1776), "保留的是最后一条");
+
+        // 不同来源（例如 electron）仍要各自独立记录
+        write_marker_entry(
+            &dir,
+            json!({ "kind": "electron", "path": "C:\\old", "result": "ok" }),
+        );
+        let v: Value =
+            serde_json::from_slice(&std::fs::read(dir.join(MARKER_FILE)).unwrap()).unwrap();
+        assert_eq!(v["sources"].as_array().unwrap().len(), 2, "不同 kind 不得互相覆盖");
+
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap());
     }
 
     /// 安装器可能提前建好新目录并只放一个 bili_cookie.txt：

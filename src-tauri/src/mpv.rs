@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// 观察 id ↔ 属性名（前端 switch 依赖这些 id；6=fullscreen 只用于镜像到 Tauri 窗口）
-const OBSERVED: [(u64, &str); 14] = [
+const OBSERVED: [(u64, &str); 15] = [
     (1, "time-pos"),
     (2, "duration"),
     (3, "pause"),
@@ -48,6 +48,9 @@ const OBSERVED: [(u64, &str); 14] = [
     // 只是停在最后一帧），只把 `eof-reached` 置 true。短剧连播必须挂这里 —— 之前挂在
     // end-file 上，实测端到端 0 次触发（用户「播完就不动」的根因）。
     (14, "eof-reached"),
+    // [lc-2131] 兜底「下一集」按钮的点击信号（Lua 写递增计数器，这里变化即触发）。
+    // 用属性而不是 script-message：后者走脚本内部路由，IPC 客户端收不到。
+    (15, "user-data/anibox/next-request"),
 ];
 
 /// [lc-2125] 对外暴露观察表：复用会话时要重注册（mpv 常驻，升级后旧会话缺新属性）。
@@ -858,22 +861,6 @@ impl MpvSession {
                     // 页面永远停在"正在拉起 mpv…"，用户只看到无限转圈。
                     if ev != "property-change" {
                         match ev {
-                            // [lc-2129] 随包 Lua 按钮 → Rust：`fntv_next_ep.lua` 的「下一集」
-                            // 按钮点击后发 script-message anibox-play-next；这里同样**只 emit
-                            // 事件**（读线程不能阻塞，见 lc-2127 的死锁教训），由前端调
-                            // duanju_auto_next 起播。
-                            "script-message" => {
-                                let args: Vec<&str> = v
-                                    .get("args")
-                                    .and_then(|a| a.as_array())
-                                    .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
-                                    .unwrap_or_default();
-                                if args.first() == Some(&"anibox-play-next") {
-                                    crate::libmpv::trace("[duanju] 收到 Lua 的「下一集」请求");
-                                    let _ = app2.emit("duanju-eof", json!({}));
-                                }
-                                continue;
-                            }
                             "start-file" => {
                                 *load_started2.lock().unwrap() = Some(std::time::Instant::now());
                                 let _ = app2.emit("mpv-load", json!({ "phase": "start" }));
@@ -1169,6 +1156,16 @@ impl MpvSession {
                                 if has_next {
                                     let _ = app2.emit("duanju-eof", json!({}));
                                 }
+                            }
+                        }
+                        // [lc-2131] 兜底按钮点击（Lua 写递增计数器）→ 与自动连播同一出口
+                        15 => {
+                            let seq = v.get("data").and_then(|x| x.as_i64()).unwrap_or(0);
+                            if seq > 0 {
+                                crate::libmpv::trace(&format!(
+                                    "[duanju] 收到 Lua 的「下一集」请求（seq={seq}）"
+                                ));
+                                let _ = app2.emit("duanju-eof", json!({}));
                             }
                         }
                         _ => {}

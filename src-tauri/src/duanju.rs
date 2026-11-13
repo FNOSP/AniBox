@@ -389,6 +389,7 @@ async fn play_impl(
     // [lc-2129] 用户要求**还原底栏中间按钮**（上一轮关掉 ±10 秒键导致布局错位）。
     // 短剧改为：播完在左下角显示「下一集」大按钮（见 fntv_next_ep.lua），不再自动切集。
     set_modernz_jump_buttons(app, true);
+    let t0 = std::time::Instant::now();
     crate::player::launch(
         app,
         state,
@@ -402,7 +403,13 @@ async fn play_impl(
         None,
         true,
     )
-    .await?;
+    .await;
+    // [lc-2131] 诊断：launch 是连播链路里最可疑的阻塞点（复用会话时要发一串等回包的
+    // IPC 命令；mpv 处于 eof/keep-open 状态时命令队列可能很慢，实测隔了 45s 才返回）。
+    crate::libmpv::trace(&format!(
+        "[duanju] launch 返回 ok（总耗时 {:?}）",
+        t0.elapsed()
+    ));
     // [lc-2104] 竖屏调窗改为**主动执行**（不依赖 file-loaded 事件回调）：
     // 事件方案有两个坑——① 会话复用时事件可能已消费过；② 调窗分支依赖会话内的原子
     // 标志，旧会话（升级前启动）标志不存在。这里在 launch 返回后轮询 video-params，

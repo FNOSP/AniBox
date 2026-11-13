@@ -650,11 +650,15 @@ async fn launch_mpv(
                         .await;
                 }
                 None => {
-                    m.command(json!(["loadfile", url.to_string(), "replace"]))
-                        .await?;
+                    // [lc-2131] loadfile 必须 **fire-and-forget**：`.command().await` 会等
+                    // mpv 回包，而 mpv 在 eof+keep-open 状态下（连播正是从这一刻触发）命令
+                    // 队列极慢 —— 实测等 45s 才返回，用户看到「标题变了但画面不动」。
+                    // 成败由事件侧兜底（file-loaded / end-file error），与 lc-1558 同设计。
+                    m.command_no_reply(json!(["loadfile", url.to_string(), "replace"]))
+                        .await;
                 }
             }
-            let _ = m.command(json!(["set", "pause", "no"])).await;
+            let _ = m.command_no_reply(json!(["set", "pause", "no"])).await;
             m
         }
         None => {

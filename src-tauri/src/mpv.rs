@@ -741,6 +741,10 @@ impl MpvSession {
                 let first_event = std::sync::atomic::AtomicBool::new(true);
             // [lc-2123] 短剧历史落盘节流：上一次写入的 time-pos（秒）
             let duanju_hist_tick = std::sync::atomic::AtomicU64::new(u64::MAX);
+            // [lc-2132] eof-reached 的上一次值（边沿触发用）
+            let eof_prev = std::sync::atomic::AtomicBool::new(false);
+            // [lc-2132] Lua 按钮请求的上一次 seq（只认递增）
+            let next_req_prev = std::sync::atomic::AtomicI64::new(0);
                 let mut pos_req: Option<u64> = None;
                 let mut title_req: Option<u64> = None;
                 // [lc-2101] 竖屏调窗状态机：file-loaded → 读 video-params → 精确设几何。
@@ -1136,7 +1140,12 @@ impl MpvSession {
                         // （普通命令线程，不占用读线程）。
                         14 => {
                             let reached = v.get("data").and_then(|x| x.as_bool()).unwrap_or(false);
-                            if reached {
+                            // [lc-2132] **边沿触发**：只在 false→true 那一次发连播请求。
+                            // eof-reached 会在 loadfile 完成到新文件开始播放之间反复刷新仍为
+                            // true，逐次触发会疯狂推进集数（实测刷屏几十次「已自动播放下一集」、
+                            // 画面直接乱跳）。用 prev 记录上一次的值，只认跳变。
+                            let was = eof_prev.swap(reached, Ordering::AcqRel);
+                            if reached && !was {
                                 let cur = crate::duanju::current_playing();
                                 let has_next = crate::duanju::has_next();
                                 crate::libmpv::trace(&format!(
@@ -1160,8 +1169,12 @@ impl MpvSession {
                         }
                         // [lc-2131] 兜底按钮点击（Lua 写递增计数器）→ 与自动连播同一出口
                         15 => {
+                            // [lc-2132] **只认真正的递增**：mpv 对同一值可能重复回调
+                            // （实测 Lua 每次只 +1，Rust 侧却收到 20 次 seq=1），
+                            // 逐次触发 = 反复推进集数 = 画面乱跳。这里记住上次 seq，只认变大。
                             let seq = v.get("data").and_then(|x| x.as_i64()).unwrap_or(0);
-                            if seq > 0 {
+                            let prev = next_req_prev.swap(seq, Ordering::AcqRel);
+                            if seq > prev {
                                 crate::libmpv::trace(&format!(
                                     "[duanju] 收到 Lua 的「下一集」请求（seq={seq}）"
                                 ));

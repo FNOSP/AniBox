@@ -554,13 +554,13 @@ async fn launch_mpv(
             // 重连交给下面 stream-lavf-o（整条流层，不与 demuxer 选项冲突）。
             if direct {
                 let _ = m
-                    .command(json!(["set", "demuxer-readahead-secs", 15]))
+                    .command_no_reply(json!(["set", "demuxer-readahead-secs", 15]))
                     .await;
                 let _ = m
-                    .command(json!(["set", "demuxer-max-bytes", "256MiB"]))
+                    .command_no_reply(json!(["set", "demuxer-max-bytes", "256MiB"]))
                     .await;
                 let _ = m
-                    .command(json!([
+                    .command_no_reply(json!([
                         "set",
                         "stream-lavf-o",
                         "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5"
@@ -610,7 +610,7 @@ async fn launch_mpv(
                             }
                             lavf.push_str(v);
                         } else if let Some((k, v)) = body.split_once('=') {
-                            let _ = m.command(json!(["set", k, v])).await;
+                            let _ = m.command_no_reply(json!(["set", k, v])).await;
                         }
                     }
                     if direct {
@@ -620,7 +620,9 @@ async fn launch_mpv(
                         }
                         lavf.push_str(reconnect);
                     }
-                    let _ = m.command(json!(["set", "demuxer-lavf-o", lavf])).await;
+                    let _ = m
+                        .command_no_reply(json!(["set", "demuxer-lavf-o", lavf]))
+                        .await;
                 } else {
                     // 本次不是加密流：清掉上一部残留的 decryption_key；直连流补回重连参数
                     let lavf = if direct {
@@ -637,7 +639,7 @@ async fn launch_mpv(
             // 其恢复发生在加载时、会覆盖这里的值（两处进度本就同源近似）。
             if should_seek(resume_secs, duration_secs) {
                 let _ = m
-                    .command(json!(["set", "start", format_seek(resume_secs)]))
+                    .command_no_reply(json!(["set", "start", format_seek(resume_secs)]))
                     .await;
             }
             match playlist_start {

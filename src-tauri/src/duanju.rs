@@ -63,6 +63,13 @@ static AUTO_NEXT: OnceLock<Mutex<Option<AutoNext>>> = OnceLock::new();
 /// play_impl 显式置位、由 clear_auto_next（停止/其他车道起播）清除。
 static DJ_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// [lc-2132] 连播重入锁：同一时刻只允许**一个**连播流程在飞。
+///
+/// 不加会无限循环：`eof-reached` 在 loadfile 完成后到下一集真正开始播放之前**仍为 true**
+/// （mpv 只在开始播放新文件后才把它复位），期间属性可能多次刷新 → 每次都触发
+/// `auto_play_next` → 疯狂推进集数（实测刷屏几十次「已自动播放下一集」，画面乱跳）。
+static AUTO_NEXT_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn auto_next_slot() -> &'static Mutex<Option<AutoNext>> {
     AUTO_NEXT.get_or_init(|| Mutex::new(None))
 }
@@ -414,13 +421,20 @@ async fn play_impl(
     // 事件方案有两个坑——① 会话复用时事件可能已消费过；② 调窗分支依赖会话内的原子
     // 标志，旧会话（升级前启动）标志不存在。这里在 launch 返回后轮询 video-params，
     // 就绪即按「锁高、宽自适应」设窗口几何，任何会话状态都成立。
+    // [lc-2132] 竖屏调窗**放到后台任务**，不阻塞 play_impl 返回。
+    // 原先 `wait_video_size` 最多轮询 6s（每条 get_property 都要等回包），连播时这段时间
+    // 会叠加在 auto_play_next 里 → 前端迟迟收不到「已起播」，用户以为没反应。
+    // 调窗是纯视觉优化，晚几秒无感；失败也不影响播放。
     if let Some(sess) = {
         let slot = state.mpv.lock().await;
         slot.as_ref().cloned()
     } {
-        if let Some((vw, vh)) = wait_video_size(&sess).await {
-            apply_vertical_geometry(app, &sess, vw, vh).await;
-        }
+        let app2 = app.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Some((vw, vh)) = wait_video_size(&sess).await {
+                apply_vertical_geometry(&app2, &sess, vw, vh).await;
+            }
+        });
     }
     // [lc-2116] 记录连播队列。**语义关键**：
     //   · Some(list) = 用户手动点播（前端总会传全部分集）→ 重建队列；
@@ -488,6 +502,29 @@ pub async fn auto_play_next(
     app: &tauri::AppHandle,
     state: &crate::AppState,
 ) -> Result<bool, String> {
+    // [lc-2132] 重入保护：拿不到锁说明上一集的连播还在进行中，直接忽略这次触发。
+    // compare_exchange 保证原子性（不能用 load+store，两个线程会同时通过）。
+    if std::sync::atomic::AtomicBool::compare_exchange(
+        &AUTO_NEXT_BUSY,
+        false,
+        true,
+        std::sync::atomic::Ordering::AcqRel,
+        std::sync::atomic::Ordering::Acquire,
+    )
+    .is_err()
+    {
+        crate::libmpv::trace("[duanju] 连播进行中，忽略重复触发");
+        return Ok(false);
+    }
+    // 释放由 _guard 兜底（任何 return 路径都会解锁）
+    struct Guard;
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            AUTO_NEXT_BUSY.store(false, std::sync::atomic::Ordering::Release);
+        }
+    }
+    let _guard = Guard;
+
     let Some((drama, chapter, index)) = ({
         let mut slot = auto_next_slot().lock().unwrap_or_else(|e| e.into_inner());
         match slot.as_mut() {

@@ -2,11 +2,12 @@
    外壳复用仓库弹层（.ddet-mask 遮罩 + .ddet 卡片，同 SettingsPanel / 游客引导弹窗用法），
    portal 到 body —— 不被 .app-shell 的圆角/溢出与视图转场动画上下文裁剪。
    开合动画照 lc-1603（GuestLoginPrompt）：条件挂载没有退场动画，关闭时先挂 `.dsc-mask-closing`
-   让遮罩淡出 + 卡片缩下沉，动画走完（170ms）再真卸载。 */
+   让遮罩淡出 + 卡片缩下沉，动画走完（--dur-tap）再真卸载。 */
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { X as IcoXL } from "lucide-react";
 import { DISCLAIMER_TEXT, DISCLAIMER_TITLE } from "./DisclaimerText";
+import { DUR } from "../../lib/motion";
 
 export function DisclaimerModal({
   variant,
@@ -30,7 +31,7 @@ export function DisclaimerModal({
   const run = (fn: () => void) => {
     if (closing) return;
     setClosing(true);
-    window.setTimeout(fn, 170);
+    window.setTimeout(fn, DUR.tap);
   };
 
   // info 态：Esc 关闭。first 态是同意闸门，不响应 Esc —— 必须显式选择「同意 / 退出」。

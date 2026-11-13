@@ -12,6 +12,7 @@
    · 关闭动画照 lc-1603 口径：先挂 `dsc-mask-closing`（170ms）再真卸载。 */
 import { useState } from "react";
 import { createPortal } from "react-dom";
+import { DUR } from "../../lib/motion";
 
 /** 已确认成人的 localStorage 键（置位后不再弹） */
 export const ADULT_ACK_KEY = "anibox-adult-ack-v1";
@@ -71,11 +72,11 @@ export function AdultGateModal({
 }) {
   const [closing, setClosing] = useState(false);
 
-  // 关闭动画：先挂 closing 类，170ms 后执行真正的动作（对齐 dsc 系列 CSS）
+  // 关闭动画：先挂 closing 类，动画走完（--dur-tap）再执行真正的动作（对齐 dsc 系列 CSS）
   const run = (fn: () => void) => {
     if (closing) return;
     setClosing(true);
-    window.setTimeout(fn, 170);
+    window.setTimeout(fn, DUR.tap);
   };
 
   return createPortal(

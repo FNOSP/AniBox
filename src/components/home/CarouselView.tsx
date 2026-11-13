@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { sampleChromeTone } from "../../lib/chrome";
 import { imgUrl } from "../../lib/images";
+import { DUR } from "../../lib/motion";
 import { ChromeTone, MediaItem, PlayTarget } from "../../types";
 
 
@@ -91,7 +92,7 @@ export function CarouselView({
 
   // [lc-1630] 克隆位兜底复位：正常由 onTransEnd 的 transitionend 复位；但过渡被打断、
   //   或 transition 被禁用（如 prefers-reduced-motion）时该事件不会触发，轨道会卡在克隆位。
-  //   这里加一个比过渡（0.45s）稍长的定时器双保险；两者幂等，谁先到都一样。
+  //   这里加一个比过渡（--dur-hero = 460ms）稍长的定时器双保险；两者幂等，谁先到都一样。
   useEffect(() => {
     if (n < 2) return;
     if (pos !== 0 && pos !== n + 1) return;
@@ -99,7 +100,7 @@ export function CarouselView({
       setNoAnim(true);
       setPos(pos === n + 1 ? 1 : n);
       requestAnimationFrame(() => requestAnimationFrame(() => setNoAnim(false)));
-    }, 600);
+    }, DUR.hero + 140);
     return () => clearTimeout(t);
   }, [pos, n]);
 

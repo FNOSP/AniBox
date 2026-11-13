@@ -69,7 +69,7 @@ html.dark .sidebar {
   transition:
     transform var(--dur-page) var(--ease-enter),
     box-shadow var(--dur-page) var(--ease-enter),
-    visibility 0s linear 230ms;
+    visibility 0s linear 285ms;
 }
 /* 无毛玻璃支持时（极旧 WebView）：退回接近实心的主题底色，至少保证可读 */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {

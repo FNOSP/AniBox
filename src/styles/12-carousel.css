@@ -17,9 +17,10 @@
   display: flex;
   height: 100%;
   /* [lc-1630] 原为 1.5s：切页观感"卡顿"，且过渡期间再点「下一个」会被 go() 吞掉。
-     缩短到 --dur-page + 更顺的 ease-out，跨接复位更利落、也不再有明显拖尾。
-     [lc-2135] 再并入全站时长阶梯（230ms），与其它大位移同一速度。 */
-  transition: transform var(--dur-page) var(--ease-enter);
+     缩短到 0.45s + 更顺的 ease-out，跨接复位更利落、也不再有明显拖尾。
+     [lc-2135] 首页全屏轮播单独用 --dur-hero：整屏海报横向位移是"电影感"运动，
+     与页面切换同速（230ms）会显得急躁、像被推走，用户实测反馈「太快了」。 */
+  transition: transform var(--dur-hero) var(--ease-enter);
 }
 /* [lc-117] 首尾跨接（第一张←→最后一张）的那一帧关掉过渡，否则会横扫整条轨道 */
 .mist-body.no-anim {
@@ -84,9 +85,13 @@
   box-sizing: border-box;
   pointer-events: none;
 }
+/* [lc-2135] 文案分层入场：走 --dur-hero（与海报横移同一节奏），错峰 0/80/160/240。
+   原本是 all 2.5s + 0.4/0.6/0.8/1s 延迟（最后一行 3.5s 才落位，慢到像卡住）；
+   第一版统一调快时压到 230ms 且延迟全并成 240ms（四行几乎同起，成了"抢"）；
+   这一版回到 hero 档并保留 80ms 递增错峰。 */
 .mist-info > * {
   pointer-events: auto;
-  transition: all var(--dur-page) var(--ease-spring) 240ms;
+  transition: all var(--dur-hero) var(--ease-spring);
   transform: translateY(150%);
   opacity: 0;
 }
@@ -95,10 +100,10 @@
   opacity: 1;
 }
 .mist-info > div:nth-child(2) {
-  transition-delay: 240ms;
+  transition-delay: 80ms;
 }
 .mist-info > div:nth-child(3) {
-  transition-delay: 240ms;
+  transition-delay: 160ms;
 }
 .mist-info > div:nth-child(4) {
   transition-delay: 240ms;

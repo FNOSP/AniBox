@@ -130,7 +130,7 @@
   box-shadow: 0 9px 22px rgb(var(--shadow-rgb) / 0.25);
 }
 /* [lc-1603] 关闭：遮罩淡出 + 卡片微缩下沉。由 GuestLoginPrompt 在关闭时挂上 `.gst-mask-closing`，
-   等动画走完（170ms）再真正卸载 —— 类名要**同时命中 .ddet-mask**（不然会被它自己的
+   等动画走完（--dur-tap）再真正卸载 —— 类名要**同时命中 .ddet-mask**（不然会被它自己的
    `animation: pageIn` 按文件顺序盖掉）。 */
 .ddet-mask.gst-mask-closing {
   animation: gstMaskOut var(--dur-tap) ease forwards;

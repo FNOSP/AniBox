@@ -219,6 +219,7 @@ export function createLiquidReveal(
 
   const backing = doc.createElement("div");
   backing.className = "lt-backing";
+  // 先用调用方给的值，挂载后再用宿主上**新主题作用域**算出的真实实底覆盖（见 syncBackingColor）
   backing.style.background = cfg.backingColor;
 
   const host = doc.createElement("div");
@@ -269,6 +270,8 @@ export function createLiquidReveal(
   let frame: LiquidFrameSnapshot | null = null;
   /** [lc-2155] 是否已把 clip-path 切成 none（完全盖满后省掉每帧整屏栅格化） */
   let sealedApplied = false;
+  /** [lc-2157] 完成后的淡出任务（卸载时要立刻执行，不能留一层在屏上） */
+  let detachFade: (() => void) | null = null;
   let scrollSnaps: { el: Element; top: number; left: number }[] = [];
   let detachResize: (() => void) | null = null;
   let detachScroll: (() => void) | null = null;
@@ -384,6 +387,7 @@ export function createLiquidReveal(
     scrollSnaps = captureScroll(src);
     syncScroll();
     syncViewport();
+    syncBackingColor();
     freezeAnimations();
   }
 
@@ -434,6 +438,33 @@ export function createLiquidReveal(
     /* 兜底：finish() 在部分动画上不会立刻把样式落到终态（需要一次样式重算）。
        这里主动读一个几何属性强制同步，避免"冻结了但第一帧还是半透明"。 */
     void host.offsetHeight;
+  }
+
+  /** 把揭示层的不透明底对齐到**新主题的真实实底**（[lc-2157]）。
+   *
+   *  为什么必须读 token 而不是用硬编码色：
+   *    真实界面是 `.app-shell { background: rgb(28 28 30 / 85%) }` 叠在 DWM 亚克力/桌面上；
+   *    揭示层底下是 `.lt-backing`。若 backing 用一个跟真实基色不同的值（例如 #060609 vs #1c1c1e），
+   *    那么透过 85% 半透明的卡片/侧栏/文字底混出来的颜色就不相等 ——
+   *    切换瞬间这个色差一次性暴露，看起来就是"闪一下"。
+   *  做法：宿主已经带好新主题作用域，直接读它上面解析出的 `--panel` / `--bg-3`
+   *    （AniBox 里两者都是该主题的**不透明**实底）。读不到就保留调用方给的值。
+   *  注意：必须 `getComputedStyle(host)` —— 在 host 上取才带新主题的变量值。 */
+  function syncBackingColor(): void {
+    try {
+      const cs = (doc.defaultView ?? window).getComputedStyle(host);
+      const panel = cs.getPropertyValue("--panel").trim();
+      const surface = cs.getPropertyValue("--bg-3").trim();
+      // 优先 --panel（明确的不透明实底），其次 --bg-3，最后回退调用方传入值
+      const picked = panel || surface;
+      if (picked) {
+        backing.style.background = picked;
+        return;
+      }
+    } catch {
+      /* noop */
+    }
+    backing.style.background = cfg.backingColor;
   }
 
   /** 已知的无限循环动画名（见各 styles/*.css 的 `infinite`） */
@@ -576,20 +607,64 @@ export function createLiquidReveal(
     detach();
     if (root.parentNode) root.parentNode.removeChild(root);
     scrollSnaps = [];
+    detachFade = null;
   }
 
-  /** 收尾：**先**回调（调用方在此同步提交主题，此刻液体仍满屏盖着 → 零闪帧），再拆 DOM */
+  /** 收尾：**先**回调（调用方在此同步提交主题，此刻液体仍满屏盖着 → 零闪帧），
+   *  再让揭示层淡出后拆除。
+   *
+   *  [lc-2157] 为什么不能直接 remove()：
+   *    用户反馈「液体满了他要闪一下才能切换深浅」。实测平面采样差值为 0，
+   *    说明"闪"不在平坦底色，而在**半透明面**：
+   *      · 揭示层底下是 `.lt-backing`（我给的不透明实色）
+   *      · 真实界面底下是 DWM 亚克力/桌面
+   *    两者透过 85% 的 `.app-shell` / `--bg-*` / 卡片混出来的颜色并不完全相等。
+   *    以前结束瞬间直接删层 = 这个色差一次性暴露 → 硬切（看起来"闪一下"）。
+   *    现在：提交主题后让揭示层在 180ms 内淡出，色差被溶解掉；
+   *    因为底层此时**已经是同一个新主题**，淡出过程不会看到任何旧内容。 */
+  const FADE_OUT_MS = 180;
+
   function finish(result: "complete" | "interrupted"): void {
     if (done) return;
     done = true;
+    detach(); // 先停 rAF / 监听，避免淡出期间还在算几何
     try {
       cfg.onEnd?.(result);
-    } finally {
+    } catch {
+      /* 调用方异常不能阻止清理 */
+    }
+
+    const teardown = () => {
       clipShape.setAttribute("d", "");
       sheenPath.setAttribute("d", "");
       haloPath.setAttribute("d", "");
       remove();
+    };
+
+    if (result !== "complete" || FADE_OUT_MS <= 0) {
+      teardown();
+      return;
     }
+
+    /* 正常完成才淡出：中断（切视图/卸载）要立刻消失，不能残留一层 */
+    try {
+      reveal.style.transition = `opacity ${FADE_OUT_MS}ms linear`;
+      // 强制样式重算，保证 transition 从当前值开始（否则可能被合并成一帧）
+      void reveal.offsetHeight;
+      reveal.style.opacity = "0";
+      sheenSvg.style.transition = `opacity ${FADE_OUT_MS}ms linear`;
+      sheenSvg.style.opacity = "0";
+    } catch {
+      teardown();
+      return;
+    }
+    // 不依赖 transitionend（后台标签页/失焦时可能不触发），用定时器兜底
+    const timer = window.setTimeout(teardown, FADE_OUT_MS + 40);
+    // 卸载时立刻清掉定时器并直接拆（destroy 会调 remove）
+    detachFade = () => {
+      window.clearTimeout(timer);
+      teardown();
+    };
   }
 
   function tick(ts: number): void {
@@ -674,6 +749,11 @@ export function createLiquidReveal(
     },
     destroy(): void {
       done = true;
+      // 正在淡出的层要立刻拆（卸载场景不能等 180ms）
+      if (detachFade) {
+        detachFade();
+        return;
+      }
       remove();
     },
   };

@@ -386,11 +386,9 @@ async fn play_impl(
         ));
         crate::libmpv::trace(&format!("[duanju] CENC 解密密钥已下发（{} 位 hex）", key.len()));
     }
-    // [lc-2128] 短剧不需要 ±10 秒跳转键（一集 1~3 分钟，跳 10 秒没意义；用户要求去掉）。
-    // 做法：改 modernz.conf 的 jump_buttons，modernz 的 read_options 回调会
-    // request_tick() 重绘（实测它能响应配置文件变更），因此**无需重启 mpv**。
-    // 非短剧起播时会由 restore_modernz_defaults() 恢复。
-    set_modernz_jump_buttons(app, false);
+    // [lc-2129] 用户要求**还原底栏中间按钮**（上一轮关掉 ±10 秒键导致布局错位）。
+    // 短剧改为：播完在左下角显示「下一集」大按钮（见 fntv_next_ep.lua），不再自动切集。
+    set_modernz_jump_buttons(app, true);
     crate::player::launch(
         app,
         state,
@@ -432,6 +430,34 @@ async fn play_impl(
         } else {
             None
         };
+    }
+    // [lc-2129] 告诉随包 Lua（fntv_next_ep.lua）「本集播完后还有没有下一集」：
+    // 写 user-data/anibox/next-episode = 下一集标题（有）或空串（末集/非短剧）。
+    // **从队列读**（chapters 在上面已 move 进队列）：队列里 index 与 chapters 齐全。
+    {
+        let (has_next, label) = {
+            let slot = auto_next_slot().lock().unwrap_or_else(|e| e.into_inner());
+            match slot.as_ref() {
+                Some(q) if q.index + 1 < q.chapters.len() as i64 => {
+                    let t = q.chapters[(q.index + 1) as usize]
+                        .get("title")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    (true, t)
+                }
+                _ => (false, String::new()),
+            }
+        };
+        let _ = has_next;
+        if let Some(sess) = {
+            let slot = state.mpv.lock().await;
+            slot.as_ref().cloned()
+        } {
+            let _ = sess
+                .command_no_reply(json!(["set", "user-data/anibox/next-episode", label]))
+                .await;
+        }
     }
     // [lc-2123] 标记短剧会话活跃（time-pos 观察回调据此写历史）
     DJ_ACTIVE.store(true, std::sync::atomic::Ordering::Release);

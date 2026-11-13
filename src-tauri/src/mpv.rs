@@ -858,6 +858,22 @@ impl MpvSession {
                     // 页面永远停在"正在拉起 mpv…"，用户只看到无限转圈。
                     if ev != "property-change" {
                         match ev {
+                            // [lc-2129] 随包 Lua 按钮 → Rust：`fntv_next_ep.lua` 的「下一集」
+                            // 按钮点击后发 script-message anibox-play-next；这里同样**只 emit
+                            // 事件**（读线程不能阻塞，见 lc-2127 的死锁教训），由前端调
+                            // duanju_auto_next 起播。
+                            "script-message" => {
+                                let args: Vec<&str> = v
+                                    .get("args")
+                                    .and_then(|a| a.as_array())
+                                    .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
+                                    .unwrap_or_default();
+                                if args.first() == Some(&"anibox-play-next") {
+                                    crate::libmpv::trace("[duanju] 收到 Lua 的「下一集」请求");
+                                    let _ = app2.emit("duanju-eof", json!({}));
+                                }
+                                continue;
+                            }
                             "start-file" => {
                                 *load_started2.lock().unwrap() = Some(std::time::Instant::now());
                                 let _ = app2.emit("mpv-load", json!({ "phase": "start" }));
@@ -1146,8 +1162,11 @@ impl MpvSession {
                                         ))
                                         .unwrap_or_else(|| "无（非短剧）".into())
                                 ));
+                                // [lc-2130] 正常行为 = **播完自动切下一集**（用户明确要求）。
+                                // 左下角「下一集」按钮只是**兜底**：Lua 侧会等 1.2s，
+                                // 若这期间没有 start-file（= 自动连播没接上），才显示按钮
+                                // 让用户手点。两条路径最终都走 duanju-eof → 前端命令起播。
                                 if has_next {
-                                    // 前端收到后调 duanju_auto_next 起播（不阻塞本线程）
                                     let _ = app2.emit("duanju-eof", json!({}));
                                 }
                             }

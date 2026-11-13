@@ -306,7 +306,7 @@
   -webkit-backdrop-filter: blur(14px) saturate(1.35);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
 }
-html.dark .mv-glass {
+[data-theme="dark"] .mv-glass:not([data-theme="dark"] [data-theme="light"] *) {
   --mv-info-bg: rgb(0 0 0 / 0.45);
   --mv-info-border: rgb(255 255 255 / 0.14);
   --mv-info-fg: #eef1f6;

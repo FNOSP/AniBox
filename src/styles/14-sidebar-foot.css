@@ -1,9 +1,9 @@
 /* ─────────────── 侧栏底部：用户行 + 快捷操作卡 ───────────────
    逐行复刻主仓库 src/preload/plugins/embyWall.ts injectSettingsUI()
-   （lc-1121 折叠体 / lc-1126 图标行 / lc-365 版本行），变量取 html.dark 档：
+   （lc-1121 折叠体 / lc-1126 图标行 / lc-365 版本行），变量取 [data-theme="dark"] 档：
    --fnos-sidebar-btn-bg = rgba(30,34,52,.38)。按钮底色用白浮层以保证
    在本应用纯色侧栏底上的同款层级观感（原版按钮与卡同变量、靠毛玻璃差显形）。 */
-.side-userrow {
+.side-userrow:not([data-theme="dark"] [data-theme="light"] *) {
   margin-top: auto;
   display: flex;
   align-items: center;

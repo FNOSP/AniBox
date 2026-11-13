@@ -47,7 +47,7 @@
 }
 /* 收起态：整体左移出屏 + 淡出 + 轻微缩小（不是"挤没"，是"抽走"） */
 /* 深色主题：同样半透明 + 模糊，透明度略高于浅色主题以保证可读 */
-html.dark .sidebar {
+[data-theme="dark"] .sidebar:not([data-theme="dark"] [data-theme="light"] *) {
   background: rgba(28, 28, 30, 0.82);
 }
 /* [ui-opacity] 侧栏玻璃跟随「界面透明度」：比外壳略实 4%（--ui-sidebar-alpha），
@@ -56,7 +56,7 @@ html.dark .sidebar {
 .sidebar {
   background: rgb(245 245 247 / var(--ui-sidebar-alpha, 89%));
 }
-html.dark .sidebar {
+[data-theme="dark"] .sidebar:not([data-theme="dark"] [data-theme="light"] *) {
   background: rgb(28 28 30 / var(--ui-sidebar-alpha, 89%));
 }
 /* 收起态：平滑滑出屏（不缩放、不淡出 —— 淡出会让"滑走"失去实体感） */
@@ -76,7 +76,7 @@ html.dark .sidebar {
   .sidebar {
     background: #f5f5f7;
   }
-  html.dark .sidebar {
+  [data-theme="dark"] .sidebar:not([data-theme="dark"] [data-theme="light"] *) {
     background: #1c1c1e;
   }
 }

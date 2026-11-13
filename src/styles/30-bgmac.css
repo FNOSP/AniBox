@@ -267,10 +267,10 @@
   transform: translateY(-2px);
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.16);
 }
-html.dark .bgmac-wcover {
+[data-theme="dark"] .bgmac-wcover:not([data-theme="dark"] [data-theme="light"] *) {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
-html.dark .bgmac-wcover:hover {
+[data-theme="dark"] .bgmac-wcover:hover:not([data-theme="dark"] [data-theme="light"] *) {
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.55);
 }
 /* ── 大按钮（连接 / 立即同步）── */
@@ -474,7 +474,7 @@ html.dark .bgmac-wcover:hover {
 .bgmac-chart-row.hl .bgmac-row-bg {
   fill: rgba(255, 255, 255, 0.78);
 }
-html.dark .bgmac-chart-row.hl .bgmac-row-bg {
+[data-theme="dark"] .bgmac-chart-row.hl .bgmac-row-bg:not([data-theme="dark"] [data-theme="light"] *) {
   fill: rgba(255, 255, 255, 0.1);
 }
 .bgmac-chart-label {
@@ -609,7 +609,7 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
   border-radius: var(--r-md);
   padding: var(--sp-2) var(--sp-3);
 }
-html.dark .bgmac-warn {
+[data-theme="dark"] .bgmac-warn:not([data-theme="dark"] [data-theme="light"] *) {
   color: var(--gold);
   background: rgba(233, 162, 60, 0.16);
   border-color: rgba(233, 162, 60, 0.34);
@@ -639,7 +639,7 @@ html.dark .bgmac-warn {
 }
 
 /* 深色主题：小标题品牌绿提亮（徽章已统一浅灰胶囊，不在此列） */
-html.dark .bgmac-kicker {
+[data-theme="dark"] .bgmac-kicker:not([data-theme="dark"] [data-theme="light"] *) {
   color: var(--good);
 }
 

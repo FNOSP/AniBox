@@ -82,7 +82,7 @@
   color: var(--text);
   animation: search-pop var(--dur-move) var(--ease);
 }
-html.dark .search-panel {
+[data-theme="dark"] .search-panel:not([data-theme="dark"] [data-theme="light"] *) {
   background: color-mix(in srgb, var(--bg-3) 92%, transparent);
 }
 @keyframes search-pop {

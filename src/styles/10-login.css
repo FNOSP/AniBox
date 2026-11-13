@@ -35,7 +35,7 @@
 }
 
 /* 深色主题：同一张图改用稍重的暗色渐变，文字保持高对比 */
-html.dark .login-wrap {
+[data-theme="dark"] .login-wrap:not([data-theme="dark"] [data-theme="light"] *) {
   --login-veil: linear-gradient(
     180deg,
     rgba(9, 11, 18, 0.62) 0%,

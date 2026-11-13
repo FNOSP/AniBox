@@ -114,7 +114,7 @@
   background: color-mix(in srgb, var(--gold) 12%, transparent);
   color: var(--gold);
 }
-html.dark .upx-chip.hot {
+[data-theme="dark"] .upx-chip.hot:not([data-theme="dark"] [data-theme="light"] *) {
   color: var(--gold);
 }
 

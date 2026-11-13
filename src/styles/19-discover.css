@@ -816,11 +816,11 @@
   background: var(--hover-strong);
 }
 
-html.dark .dsc.hi {
+[data-theme="dark"] .dsc.hi:not([data-theme="dark"] [data-theme="light"] *) {
   color: var(--good);
 }
 
-html.dark .dsc.mid {
+[data-theme="dark"] .dsc.mid:not([data-theme="dark"] [data-theme="light"] *) {
   color: var(--gold);
 }
 
@@ -833,7 +833,7 @@ html.dark .dsc.mid {
   color: var(--good);
 }
 
-html.dark .dlib {
+[data-theme="dark"] .dlib:not([data-theme="dark"] [data-theme="light"] *) {
   color: var(--good);
 }
 
@@ -848,7 +848,7 @@ html.dark .dlib {
   color: var(--danger);
 }
 
-html.dark .ditem-tag {
+[data-theme="dark"] .ditem-tag:not([data-theme="dark"] [data-theme="light"] *) {
   background: rgba(221, 90, 90, 0.2);
   color: #ff9a9a;
 }
@@ -858,7 +858,7 @@ html.dark .ditem-tag {
   background: rgba(74, 135, 240, 0.14);
   color: var(--accent);
 }
-html.dark .ditem-tag.ep {
+[data-theme="dark"] .ditem-tag.ep:not([data-theme="dark"] [data-theme="light"] *) {
   background: rgba(74, 135, 240, 0.22);
   color: var(--accent);
 }
@@ -962,10 +962,10 @@ html.dark .ditem-tag.ep {
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 /* 根类名用 `dlib-pane`（**刻意不叫 `dlib`**）：仓库里已有一条 `.dlib`（BgmCalRow 的「已在库」徽章：
-   11px 字号 + 绿底 + 绿字 + 1px 7px 内边距 + 圆角，`html.dark .dlib` 还会改色）——同名会互相串味
+   11px 字号 + 绿底 + 绿字 + 1px 7px 内边距 + 圆角，`[data-theme="dark"] .dlib` 还会改色）——同名会互相串味
    （本项目踩过 `.dmore` 撞名的坑：详情页容器套上胶囊样式，用户看到莫名的大椭圆）。改叫 `dlib-pane`
    后两边彻底无关，不需要任何元素限定或属性复位。 */
-.dlib-pane {
+.dlib-pane:not([data-theme="dark"] [data-theme="light"] *) {
   flex: 1;
   min-height: 0;
   display: flex;
@@ -978,7 +978,7 @@ html.dark .ditem-tag.ep {
   animation: dlibPageIn var(--dur-page) var(--ease) both;
 }
 
-html.dark .dlib-pane {
+[data-theme="dark"] .dlib-pane:not([data-theme="dark"] [data-theme="light"] *) {
   color: var(--text);
 }
 
@@ -1171,7 +1171,7 @@ html.dark .dlib-pane {
   color: var(--warn);
 }
 
-html.dark .dip-hint {
+[data-theme="dark"] .dip-hint:not([data-theme="dark"] [data-theme="light"] *) {
   color: var(--gold);
 }
 
@@ -1345,11 +1345,11 @@ html.dark .dip-hint {
   color: var(--good);
 }
 
-html.dark .dlib-ov-v.orange {
+[data-theme="dark"] .dlib-ov-v.orange:not([data-theme="dark"] [data-theme="light"] *) {
   color: var(--gold);
 }
 
-html.dark .dlib-ov-v.green {
+[data-theme="dark"] .dlib-ov-v.green:not([data-theme="dark"] [data-theme="light"] *) {
   color: var(--good);
 }
 
@@ -1727,15 +1727,15 @@ html.dark .dlib-ov-v.green {
   color: var(--text-2);
 }
 
-html.dark .dlib-rank.r1 {
+[data-theme="dark"] .dlib-rank.r1:not([data-theme="dark"] [data-theme="light"] *) {
   color: var(--text-2);
 }
 
-html.dark .dlib-rank.r2 {
+[data-theme="dark"] .dlib-rank.r2:not([data-theme="dark"] [data-theme="light"] *) {
   color: #c3ccda;
 }
 
-html.dark .dlib-rank.r3 {
+[data-theme="dark"] .dlib-rank.r3:not([data-theme="dark"] [data-theme="light"] *) {
   color: var(--text-2);
 }
 
@@ -1968,18 +1968,15 @@ html.dark .dlib-rank.r3 {
   color: var(--danger);
 }
 
-html.dark .dlib-scorenum.hi,
-html.dark .dlib-lscore.hi {
+[data-theme="dark"] .dlib-scorenum.hi:not([data-theme="dark"] [data-theme="light"] *), [data-theme="dark"] .dlib-lscore.hi:not([data-theme="dark"] [data-theme="light"] *) {
   color: var(--good);
 }
 
-html.dark .dlib-scorenum.mid,
-html.dark .dlib-lscore.mid {
+[data-theme="dark"] .dlib-scorenum.mid:not([data-theme="dark"] [data-theme="light"] *), [data-theme="dark"] .dlib-lscore.mid:not([data-theme="dark"] [data-theme="light"] *) {
   color: var(--gold);
 }
 
-html.dark .dlib-scorenum.lo,
-html.dark .dlib-lscore.lo {
+[data-theme="dark"] .dlib-scorenum.lo:not([data-theme="dark"] [data-theme="light"] *), [data-theme="dark"] .dlib-lscore.lo:not([data-theme="dark"] [data-theme="light"] *) {
   color: #ff9a9a;
 }
 
@@ -2019,11 +2016,11 @@ html.dark .dlib-lscore.lo {
   color: var(--warn);
 }
 
-html.dark .dlib-badge-airing {
+[data-theme="dark"] .dlib-badge-airing:not([data-theme="dark"] [data-theme="light"] *) {
   color: var(--good);
 }
 
-html.dark .dlib-badge-soon {
+[data-theme="dark"] .dlib-badge-soon:not([data-theme="dark"] [data-theme="light"] *) {
   color: var(--gold);
 }
 
@@ -3257,7 +3254,7 @@ button.arc-card:hover .arc-cv {
   color: var(--warn);
 }
 
-html.dark .dj-hint {
+[data-theme="dark"] .dj-hint:not([data-theme="dark"] [data-theme="light"] *) {
   color: var(--gold);
 }
 

@@ -17,7 +17,8 @@
      · `--accent-grad` 保留变量名、值是平涂 —— 存量 53 处引用一次性降级。
    ═══════════════════════════════════════════════════════════════ */
 
-:root {
+:root,
+[data-theme="light"] {
   font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   font-size: 14px;
   color: var(--text);
@@ -257,7 +258,7 @@
   --ui-sidebar-alpha: 89%;
 }
 
-html.dark {
+[data-theme="dark"] {
   /* ── 深色：苹果深灰面（#1c1c1e 系）+ 系统蓝 ── */
   --bg-0: rgba(28, 28, 30, 0.3);
   --bg-1: rgba(28, 28, 30, 0.52);
@@ -367,7 +368,7 @@ body,
      退场用 ease-in 且更快 —— 符合「进入 ease-out 250ms / 退出 ease-in 200ms」的基调。 */
   animation: appIn var(--dur-page) cubic-bezier(0.22, 0.61, 0.36, 1);
 }
-html.dark .app-shell {
+[data-theme="dark"] .app-shell:not([data-theme="dark"] [data-theme="light"] *) {
   background: rgb(28 28 30 / 0.94);
 }
 /* [ui-opacity] 外壳底色跟随「界面透明度」，并且叠加两团柔和微光：
@@ -382,7 +383,7 @@ html.dark .app-shell {
     radial-gradient(880px 520px at 96% 108%, rgba(255, 255, 255, 0.55), transparent 70%),
     rgb(245 245 247 / var(--ui-surface-alpha, 85%));
 }
-html.dark .app-shell {
+[data-theme="dark"] .app-shell:not([data-theme="dark"] [data-theme="light"] *) {
   background:
     radial-gradient(1100px 620px at 18% -12%, rgba(255, 255, 255, 0.055), transparent 68%),
     radial-gradient(880px 520px at 96% 108%, rgba(255, 255, 255, 0.03), transparent 70%),

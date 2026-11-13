@@ -265,7 +265,7 @@
   --hist-hm-4: rgba(36, 138, 78, 0.95);
   --hist-hcell-border: var(--line);
 }
-html.dark .hist-heat {
+[data-theme="dark"] .hist-heat:not([data-theme="dark"] [data-theme="light"] *) {
   --hist-hm-0: rgba(255, 255, 255, 0.07);
   --hist-hm-1: rgba(48, 209, 88, 0.26);
   --hist-hm-2: rgba(48, 209, 88, 0.5);
@@ -883,7 +883,7 @@ html.dark .hist-heat {
   background: linear-gradient(to top, rgba(16, 16, 21, 0.9) 0%, rgba(0, 0, 0, 0) 55%);
   pointer-events: none;
 }
-html:not(.dark) .hist-detail-scrim {
+[data-theme="light"] .hist-detail-scrim:not([data-theme="light"] [data-theme="dark"] *) {
   background: transparent; /* 浅色模式去掉海报底部辉光（对齐原项目 lc-1013） */
 }
 .hist-detail-body {

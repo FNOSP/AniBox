@@ -3,7 +3,7 @@
    收藏状态同步（下拉）/ 评分透视柱状图。挂在海报右侧空位（.dv2-topinfo）。
    数据 BGM 优先、TMDB 兜底（见 DetailView 的传参）。
    ⚠ 全选择器挂 .drw 前缀（原稿的 .label/.bar/.star 等是通用名，防撞车）；
-   深色跟随应用主题 html.dark（原稿的 prefers-color-scheme 换成它，与全站一致）；
+   深色跟随应用主题 [data-theme="dark"]（原稿的 prefers-color-scheme 换成它，与全站一致）；
    尺寸整体收紧一档（原稿是 820px 独立卡片，这里要塞进海报右侧）。
    ══════════════════════════════════════════════════════════════════════════════ */
 
@@ -52,7 +52,7 @@
   --drw-btn-2-bg: var(--sel-bg-strong); --drw-btn-2-fg: var(--text-2); --drw-btn-2-sh: transparent;
   --drw-btn-5-bg: var(--danger-bg); --drw-btn-5-fg: var(--danger); --drw-btn-5-sh: transparent;
 }
-html.dark .drw, html.dark .drw-drop {
+[data-theme="dark"] .drw:not([data-theme="dark"] [data-theme="light"] *), [data-theme="dark"] .drw-drop:not([data-theme="dark"] [data-theme="light"] *) {
   --drw-border: var(--line-strong);
   --drw-text-1: var(--text-strong);
   --drw-text-2: var(--muted);

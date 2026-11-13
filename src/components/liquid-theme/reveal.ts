@@ -384,6 +384,120 @@ export function createLiquidReveal(
     scrollSnaps = captureScroll(src);
     syncScroll();
     syncViewport();
+    freezeAnimations();
+  }
+
+  /** 把克隆体里**所有正在运行的 CSS 动画直接跳到终态并停住**。
+   *
+   *  [lc-2156] 这是「整体控件和按钮会闪一下才切换」的真因：
+   *    node.cloneNode 出来的副本会被浏览器当成**刚插入的新元素**，于是把
+   *    `animation` 声明**从头重播一遍**。实测克隆体的 `.app-shell` 上：
+   *      animationName = "appIn"，opacity = 0.808，transform = scale(1.00154)
+   *    —— 也就是液体揭开的区域里，那套界面正在"淡入"，观感就是控件先半透明、
+   *    再闪一下才变成新主题。同理 `.view-pane.view-in`（viewIn，透明 + 位移）、
+   *    卡片入场、骨架屏 shimmer、spin 都会重播。
+   *
+   *  为什么不能简单写 `animation: none`：
+   *    appIn / viewIn / setPaneIn 等都用 `both` 或 `forwards` 填充，直接去掉动画会
+   *    让这些"终态填充值"一起消失（回到无动画的基础样式），反而更闪。
+   *  正确做法：拿到每个 animation 对象，`finish()` 让它立刻落到终态，
+   *    再 `pause()` 冻住（无限动画如 spin / shimmer 的 finish() 会抛错，忽略即可，
+   *    它们暂停在当前位置不影响静态观感）。 */
+  function freezeAnimations(): void {
+    const anims = host.getAnimations({ subtree: true });
+    for (const a of anims) {
+      /* 无限动画（骨架 shimmer / spin / 脉冲）必须**继续跑**，而且要和真实界面同相位 ——
+         否则克隆体里的骨架和底下的骨架错开，揭开的瞬间会看到"骨架跳了一下"。
+         做法：把它的 currentTime 对齐到源元素的对应动画（源也在跑，用同一个时间基准）。
+         这类动画不能 finish()（会抛 InvalidStateError）。 */
+      const infinite =
+        (a.effect as KeyframeEffect | null)?.getTiming?.().iterations === Infinity ||
+        a.playState === "running" && isInfiniteName(a);
+      if (infinite) {
+        alignPhase(a);
+        continue;
+      }
+      try {
+        // 带 delay 且尚未开始（idle）的入场动画：先 play 再 finish，否则 finish 可能不生效
+        if (a.playState === "idle") a.play();
+        a.finish();
+      } catch {
+        /* 其它不能 finish 的情况：至少冻在当前帧 */
+      }
+      try {
+        a.pause();
+      } catch {
+        /* noop */
+      }
+    }
+    freezeSvgAnimations();
+    /* 兜底：finish() 在部分动画上不会立刻把样式落到终态（需要一次样式重算）。
+       这里主动读一个几何属性强制同步，避免"冻结了但第一帧还是半透明"。 */
+    void host.offsetHeight;
+  }
+
+  /** 已知的无限循环动画名（见各 styles/*.css 的 `infinite`） */
+  const INFINITE_NAMES = new Set([
+    "shimmer",
+    "posterShimmer",
+    "dskShimmer",
+    "arcShimmer",
+    "bgmcShimmer",
+    "tb-spin",
+    "diconSpin",
+    "dweekDot",
+    "dlibDotPulse",
+    "webrsPulse",
+  ]);
+
+  function isInfiniteName(a: Animation): boolean {
+    const n = (a as Animation & { animationName?: string }).animationName;
+    return !!n && INFINITE_NAMES.has(n);
+  }
+
+  /** 把克隆体的无限动画相位对齐到源元素（避免揭开时骨架/转圈跳动） */
+  function alignPhase(a: Animation): void {
+    const n = (a as Animation & { animationName?: string }).animationName;
+    if (!n) return;
+    const src = sourceEl();
+    let srcAnim: Animation | undefined;
+    try {
+      srcAnim = src.getAnimations({ subtree: true }).find((x) => {
+        const xn = (x as Animation & { animationName?: string }).animationName;
+        return xn === n && x.playState === "running";
+      });
+    } catch {
+      /* noop */
+    }
+    try {
+      if (srcAnim && typeof srcAnim.currentTime === "number") {
+        a.currentTime = srcAnim.currentTime;
+      }
+    } catch {
+      /* noop */
+    }
+  }
+
+  /** SVG 内的 SMIL（<animate>/<animateTransform>）也要停：SMIL 不受 getAnimations 管。
+   *  AniBox 目前没有 SMIL（已 grep），但模块要可复用，顺手处理掉。 */
+  function freezeSvgAnimations(): void {
+    try {
+      const smils = host.querySelectorAll("animate, animateTransform, animateMotion, set");
+      for (const s of Array.from(smils)) {
+        const el = s as SVGAnimationElement & { endElement?: () => void };
+        // 用 setTimeout 结束整条时间线：SMIL 没有 pause，但可以先 end 再冻结
+        if (typeof el.endElement === "function") {
+          // 跳到文档末尾时间点（让 fill 生效）后再冻结
+          try {
+            el.endElement();
+          } catch {
+            /* noop */
+          }
+        }
+      }
+    } catch {
+      /* noop */
+    }
   }
 
   /* ── 每帧：只写必要的几个属性（clip 的 d、湿边的 d / opacity）── */
@@ -529,6 +643,7 @@ export function createLiquidReveal(
         scrollSnaps = captureScroll(src);
         syncScroll();
         syncViewport();
+        freezeAnimations();
         const p = t0 ? (performance.now() - t0) / (cfg.duration || 1) : 0;
         applyFrame(p);
       };

@@ -11,6 +11,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { Download as IcoDownload, Sparkles as IcoSparkles, Star as IcoStar, X as IcoXL } from "lucide-react";
 import type { UpdateCheckResult, UpdateDownloadResult, UpdateProgress } from "../../types";
 import { asText, formatSpeed, versionLabel } from "../../lib/update";
+import { DUR } from "../../lib/motion";
 
 const STAR_URL = "https://github.com/FNOSP/AniBox";
 
@@ -133,7 +134,7 @@ export function UpdatePrompt({
   const requestClose = useCallback(() => {
     if (closing || busy === "installing") return;
     setClosing(true);
-    window.setTimeout(onClose, 170); // 与 CSS 动画时长对齐
+    window.setTimeout(onClose, DUR.tap); // 与 .upx-mask-closing 的动画时长对齐
   }, [closing, busy, onClose]);
 
   useEffect(() => {

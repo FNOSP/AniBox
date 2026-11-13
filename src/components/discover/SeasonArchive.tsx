@@ -15,6 +15,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { CalendarDays as IcoCalL, ChevronDown as IcoChevD, X as IcoXL } from "lucide-react";
 import { BgmCalendarItem } from "../../types";
 import { bgmImg } from "../../lib/images";
+import { DUR } from "../../lib/motion";
 import { Dsk } from "./shared";
 
 /** [lc-1605] bgm_season 归一化后的条目（Rust 侧字段，见 bgm.rs normalize_season） */
@@ -138,14 +139,14 @@ export function SeasonArchive({
   // [lc-1592] 关闭动画：先挂 `.arc-mask-closing` 让遮罩淡出 + 卡片缩下沉，**动画走完再真卸载**
   const [closing, setClosing] = useState(false);
   // [lc-1605] after：退场动画走完后要接着做的事（点卡片跳详情时用）。
-  // 与 CSS 动画时长（170ms）对齐；先关弹窗、再执行 after（跳详情自带 view-in，接力不硬切）。
+  // 与 CSS 动画时长（--dur-tap）对齐；先关弹窗、再执行 after（跳详情自带 view-in，接力不硬切）。
   const requestClose = (after?: () => void) => {
     if (closing) return;
     setClosing(true);
     window.setTimeout(() => {
       onClose();
       after?.();
-    }, 170);
+    }, DUR.tap);
   };
 
   // [lc-1605] 点卡片：复用退场动画，动画走完再跳详情（避免「弹窗瞬没 + 详情硬切」）

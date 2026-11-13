@@ -33,6 +33,7 @@ import {
   X as IcoXL,
 } from "lucide-react";
 import { fmtSize } from "../../lib/format";
+import { DUR } from "../../lib/motion";
 import type { FbListItem, FbUnreadInfo } from "../../lib/feedbackUnread";
 
 /** feedback_thread 的 ticket 段（服务端冻结字段） */
@@ -156,8 +157,8 @@ function MsgBubble({ role, ts, text }: { role: string; ts: number; text: string 
   );
 }
 
-/** 关闭退场动画时长（与 33-feedback.css 的 fbxMaskOut / fbxCardOut 对齐） */
-const CLOSE_ANIM_MS = 220;
+/** 关闭退场动画时长（与 33-feedback.css 的 fbxMaskOut / fbxCardOut 对齐，同 --dur-tap） */
+const CLOSE_ANIM_MS = DUR.tap;
 
 /** 系统是否要求减弱动效：为 true 时直接卸载，不播退场动画、按钮也不做位移 */
 function prefersReducedMotion(): boolean {

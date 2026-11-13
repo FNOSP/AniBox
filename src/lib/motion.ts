@@ -4,6 +4,18 @@ export function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
+/** [lc-2135] 与 01-tokens.css 的 --dur-* 一一对应的 JS 侧时长（ms）。
+ *  弹层「先播退场动画、再真正卸载」的那类定时器必须用这里的值 —— 否则 CSS 调快了，
+ *  JS 还在原地多等一截，观感就是"点了关闭没反应"。改档位时两处一起改。 */
+export const DUR = {
+  /** 高频交互 / 弹层关闭 */
+  tap: 130,
+  /** 常规运动 / 页窗退场 */
+  move: 170,
+  /** 大位移 / 整页转场 */
+  page: 230,
+} as const;
+
 /** [lc-123-rev2] 「首页 | 发现」胶囊：**从顶栏挪到内容区顶部的浮层**（.navbar = absolute，
  *  不占布局高度，直接浮在首页海报上；见 App.css）。顶栏恢复干净：左边只留当前页名
  *  （+侧栏/刷新/主题按钮），中间弱化品牌小字，右边窗口按钮。

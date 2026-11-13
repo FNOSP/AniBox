@@ -36,7 +36,7 @@ import { fmtDur, pick } from "../../lib/format";
 // [lc-1832] 单集手动「已看」：飞牛接口降级时标记落 watched.json，这里拉本地覆盖集合
 import { loadWatchedOverrides, setWatchedOverride } from "../../lib/watched";
 import { bgmImg, imgUrl, pickLargestImg, tmdbImg } from "../../lib/images";
-import { prefersReducedMotion } from "../../lib/motion";
+import { DUR, prefersReducedMotion } from "../../lib/motion";
 import { useRefresh } from "../../hooks/useRefresh";
 import { BgmCharacter, BgmComment, BgmEpisodeRow, BgmMatch, BgmPerson, BgmRelated, BgmReview, BgmTag, Episode, MediaItem, MediaVersion, PersonTarget, PlayItem, Season, TmdbCreditPerson, TmdbCredits } from "../../types";
 
@@ -574,7 +574,7 @@ export function DetailView({
     bodyRef.current?.scrollTo({ top: 0 });
     if (prefersReducedMotion()) return;
     setTabAnim(true);
-    const t = window.setTimeout(() => setTabAnim(false), 260);
+    const t = window.setTimeout(() => setTabAnim(false), DUR.page + 40); // 动画类是 .view-in（--dur-page），留一点余量
     return () => window.clearTimeout(t);
   }, [tab]);
 

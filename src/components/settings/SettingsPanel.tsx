@@ -19,6 +19,7 @@ import {
   type GamepadStatusPayload,
 } from "../../hooks/useGamepad";
 import { fmtSize } from "../../lib/format";
+import { DUR } from "../../lib/motion";
 import {
   AppInfo,
   AppSettings,
@@ -394,7 +395,7 @@ export function SettingsPanel({
   const requestClose = useCallback(() => {
     if (closing) return;
     setClosing(true);
-    window.setTimeout(onClose, 170); // 与 CSS 动画时长对齐
+    window.setTimeout(onClose, DUR.tap); // 与 .set-mask-closing 的动画时长对齐
   }, [closing, onClose]);
   const [autostart, setAutostart] = useState(
     () => localStorage.getItem("fntv-autostart") === "1",

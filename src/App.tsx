@@ -54,7 +54,7 @@ import {
 } from "./lib/errors";
 import { pick } from "./lib/format";
 import { bgmImg, pickImgStr, pickLargestImg, tmdbImg } from "./lib/images";
-import { prefersReducedMotion } from "./lib/motion";
+import { DUR, prefersReducedMotion } from "./lib/motion";
 import { DEFAULT_SETTINGS } from "./lib/settings";
 import { computeUiAlpha } from "./lib/uiOpacity";
 import { normalizeCheck } from "./lib/update";
@@ -266,7 +266,9 @@ function App() {
     return () => un?.();
   }, []);
 
-  /* [lc-2059] 退出过渡：真正 app.exit 之前先让外壳淡出 160ms。
+  /* [lc-2059] 退出过渡：真正 app.exit 之前先让外壳淡出。
+     [lc-2135] 等待时长与 CSS 的 appOut（120ms）对齐 —— 原写 160ms，动画早就结束，
+     窗口还多挂 40ms 才关，这也是"关得拖沓"的一部分。
      窗口级透明度不可用（Tauri/tao 在 Windows 上没有 set_opacity），所以做在页面层：
      .app-shell 加 .app-exit → opacity 0 + 轻微缩小，播完再调 resolve_close。
      prefers-reduced-motion 时跳过等待（CSS 里动画本身也被关掉）。 */
@@ -278,7 +280,7 @@ function App() {
       return;
     }
     setAppExiting(true);
-    window.setTimeout(done, 160);
+    window.setTimeout(done, DUR.tap); // 与 .app-exit 的 appOut 对齐
   }, []);
   const [homeLoading, setHomeLoading] = useState(false);
   /* ── [lc-1640] 顶栏 ⟳ =「按当前页强制刷新该页数据」──
@@ -834,7 +836,7 @@ function App() {
   // 顶栏胶囊：首页走 goHome（有数据不重拉），发现走 goDiscover
   // [lc-123-rev6] 页面切换动效（首页 ↔ 发现）：两条视图都是常驻挂载，切换时给**进入/离开各一套**
   // 动画类（出去的 opacity→0 + 反方向位移，进来的反之）；进入侧 animationend 摘掉动画类
-  // （另配 400ms 安全兜底：reduced-motion 下没有动画事件，不能留退场层盖在上面）。
+  // （另配兜底定时器：reduced-motion 下没有动画事件，不能留退场层盖在上面）。
   const [paneAnim, setPaneAnim] = useState<{
     dir: "to-discover" | "to-home";
     leaving: "home" | "discover";
@@ -864,7 +866,7 @@ function App() {
         } else {
           setPaneAnim({ dir: p === "discover" ? "to-discover" : "to-home", leaving: page });
           if (animTimer.current) window.clearTimeout(animTimer.current);
-          animTimer.current = window.setTimeout(() => setPaneAnim(null), 400);
+          animTimer.current = window.setTimeout(() => setPaneAnim(null), DUR.page + 120);
         }
       }
       if (p === "discover") goDiscover();
@@ -926,7 +928,7 @@ function App() {
   );
   // [lc-1406] 遮罩移除的**双保险**：
   //   ① 正常路径：animationend（动画结束）
-  //   ② 兜底：定时器（动画时长 420ms → 700ms 后无条件清掉）
+  //   ② 兜底：定时器（动画 --dur-page + 余量后无条件清掉）
   //   为什么必须有 ②：animationend 并非总能到达 —— 窗口失焦/最小化/后台时 Chromium 会节流甚至
   //   暂停动画，事件可能永不触发；此遮罩是 z-index:80 的**固定全屏层**，一旦残留就永久盖着页面
   //   （用户反馈的"演职人员背景有个大圆还在"就是它的形状：clip-path 圆停在中途，边缘是一段大圆弧）。
@@ -934,7 +936,7 @@ function App() {
   const onVeilEnd = useCallback(() => setVeil(null), []);
   useEffect(() => {
     if (!veil) return;
-    const t = window.setTimeout(() => setVeil(null), 700);
+    const t = window.setTimeout(() => setVeil(null), DUR.page + 240);
     return () => window.clearTimeout(t);
   }, [veil]);
 
@@ -1827,13 +1829,13 @@ function GuestLoginPrompt({ onClose, onGoLogin }: { onClose: () => void; onGoLog
   const requestClose = () => {
     if (closing) return;
     setClosing(true);
-    window.setTimeout(onClose, 170); // 与 CSS 动画时长对齐
+    window.setTimeout(onClose, DUR.tap); // 与 .gst-mask-closing 的动画时长对齐
   };
   // [lc-1603]「去登录」也先播退场动画再走
   const goLogin = () => {
     if (closing) return;
     setClosing(true);
-    window.setTimeout(onGoLogin, 170);
+    window.setTimeout(onGoLogin, DUR.tap);
   };
   useEffect(() => {
     const h = (e: KeyboardEvent) => {

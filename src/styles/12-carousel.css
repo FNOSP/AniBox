@@ -29,10 +29,18 @@
 .mist-body.no-anim {
   transition: none;
 }
-/* [lc-1630] 尊重系统"减弱动态效果"：关掉横向滑动；克隆位复位交给兜底定时器，仍不会卡住 */
+/* [lc-1630] 尊重系统"减弱动态效果"：关掉横向滑动；克隆位复位交给兜底定时器，仍不会卡住。
+   [lc-2144] 原来只关了海报滑动，文字那 520ms 上浮照旧 —— 开了"减弱动态效果"的用户
+   仍然被动画糊脸。这里把文案的过渡一并关掉（只保留 opacity 的瞬时切换，
+   信息该出现还是出现，只是不做位移）。 */
 @media (prefers-reduced-motion: reduce) {
   .mist-body {
     transition: none;
+  }
+  .mist-info > *,
+  .mist-item:not(.active) .mist-info > * {
+    transition: none;
+    transform: none;
   }
 }
 .mist-item {
@@ -97,19 +105,50 @@
    还差最后 6% 的减速尾巴，文字正好接上 —— 既读得出"先后"，中间也不留空档。
    用 calc 从 --dur-hero 推导，海报时长将来调整时文字自动跟上，不会脱节。
    基准之上再叠 110ms 递增错峰，四行依次浮起（不是四行同起）。
-   单行 520ms + 缓入缓出（--ease-hero 同族），位移收尾不硬停。
+
+   [lc-2144] 三处再优化（都是实测可感知的问题）：
+   ① **透明度与位移分开计时**。原来 `transition: all` 让两者同步 520ms，
+      文字要"飘"完全程才够清楚，读起来发虚。改为：
+      透明度 --dur-hero-fade(300) 先到（文字先"显形"），
+      位移 --dur-hero-txt(520) 后收（再"落位"）。
+      这是排版动画的常见做法：先给可读性，再给运动感。
+   ② **位移量按元素层级递减**，不再全用 translateY(150%)。
+      大字号标题的 150% 是四五十像素，像从很深的地方升上来；
+      小字号的 meta 用 150% 才十几像素，反而显得没动。
+      改为统一用固定像素（位移与字号解耦，视觉节奏才一致）：
+      meta 14px / 标题 22px / 简介 18px / 按钮 12px。
+   ③ **补上 prefers-reduced-motion**：原来只关掉了海报滑动，
+      文字仍在做 520ms 上浮 —— 开了"减弱动态效果"的用户照样被动画糊脸。
    历史：原本是 all 2.5s + 0.4/0.6/0.8/1s 延迟（最后一行 3.5s 才落位，像卡住）；
    第一版统一调快时压到 230ms 且延迟全并成 240ms（四行几乎同起，成了"抢"）。 */
 .mist-info > * {
   pointer-events: auto;
-  transition: all var(--dur-hero-txt) var(--ease-hero);
+  /* 显形快、落位慢：opacity 300ms，transform 520ms（同一条声明里分开写，
+     避免 `all` 把 text-shadow 等属性也拖进过渡 —— 那会让文字首帧发灰闪一下） */
+  transition:
+    opacity var(--dur-hero-fade) var(--ease-hero),
+    transform var(--dur-hero-txt) var(--ease-hero);
   transition-delay: 0ms; /* 首次加载：海报没动，文字不用等 */
-  transform: translateY(150%);
+  transform: translateY(var(--txt-rise, 18px));
   opacity: 0;
 }
 .mist-item.active .mist-info > * {
   transform: translateY(0);
   opacity: 1;
+}
+/* 各类元素的位移量：固定像素，不随字号缩放（大字标题不再"从深处升起"） */
+.mist-info > .mist-meta {
+  --txt-rise: 14px;
+}
+.mist-info > h1,
+.mist-info > .mist-logo {
+  --txt-rise: 22px;
+}
+.mist-info > div:not(.mist-actions) {
+  --txt-rise: 18px;
+}
+.mist-info > .mist-actions {
+  --txt-rise: 12px;
 }
 /* 切换之后：先等海报就位，再按 110ms 逐行浮起 */
 .mist-item.settled .mist-info > * {
@@ -128,6 +167,7 @@
    海报滑走 650ms，若旧文案还等 611ms 才动、再按 520ms 退场，它会在海报走完
    之后还挂在画面上，与下一张图的文字同时可见 —— 观感是"重影"而不是"运镜"。
    所以非激活项改为无延迟、更快、ease-in 收尾（AGENTS.md：退出比进场快）。
+   离场不区分显形/落位：一起快速淡出+下沉即可（退出不需要"读得到"）。
    特异性：`.mist-item:not(.active)` (0,3,0) > `.mist-item.settled` (0,2,0)，
    且四条 nth-child 规则都带 .settled，同样压在它下面。 */
 .mist-item:not(.active) .mist-info > * {

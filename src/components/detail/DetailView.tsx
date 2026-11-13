@@ -587,6 +587,24 @@ export function DetailView({
   const noFnOS = /^discover-/.test(base.guid);
   const dataReady = !!data || noFnOS;
 
+  /* [lc-2153] 右栏**此刻是否在显示在线资源面板**。头部（.dv2e-hd）只在本地选集
+     视角下有意义，所以它的显示条件必须与本变量一致 —— 上一版（lc-2150）只判断
+     `onlineMode`，结果从发现页点进来的条目（noFnOS，自动挂面板、onlineMode=false）
+     头部照样显示，用户实测复现。
+     这里把右栏那三分支的"是否挂面板"条件合成唯一真源，头部与内容区共用；
+     以后新增分支只改这一处，不会再出现两处判据漂移。
+     对应右栏的三个渲染点：
+       ① onlineMode && webrsOn                      → 面板
+       ② !isSeries && noFnOS && webrsOn             → 面板（发现页电影）
+       ③ isSeries && episodes.length===0 && noFnOS && webrsOn && !epsLoading → 面板
+     （③ 里 epsLoading 时右栏是"加载中…"占位，此时头部仍该显示本地集数，
+       所以不把它算进"显示面板"。） */
+  const showingWebrs =
+    webrsOn &&
+    (onlineMode ||
+      (noFnOS && !isSeries) ||
+      (noFnOS && isSeries && !epsLoading && episodes.length === 0));
+
   /* [lc-1728] 当前选中季 = 所有按季数据的**唯一来源**。
      · multiSeason：是否多季（单季条目沿用原有链路，不做额外按季处理）；
      · seasonGuid / seasonNo：当前季的 guid / 季号；
@@ -2460,12 +2478,18 @@ export function DetailView({
               现在分两层：第一层是两行信息（上行胶囊/按钮、下行纯文本，各自 flex-wrap），
               第二层是独立的选季轨道 —— 季多时横向滚动 + 左右箭头，窄窗自动换成原生下拉，永不裁切。
 
-              [lc-2150] 切到在线源（onlineMode）时整块不渲染。
+              [lc-2150/2151] 右栏在显示在线资源面板时整块不渲染。
               这里的每一样东西都只对**本地选集**有意义：连载中/已完结状态、集数样式
               （1 2 3 / 第N集）、网格/列表切换、已入库 N/M 集、版本选择、选季轨道。
               在线源的内容由右栏的 WebrsPanel 自己管理（线路 / 集号 / 搜索），
-              头部留着就是一组点了没反应的摆设 —— 用户明确要求「这块可以不需要了」。 */}
-          {!onlineMode && (
+              头部留着就是一组点了没反应的摆设 —— 用户明确要求「这块可以不需要了」。
+
+              ⚠ 判据是 `showingWebrs`（右栏是否真的在挂面板），**不是** `onlineMode`。
+              上一版（lc-2150）只判断 onlineMode，于是从发现页点进来的条目
+              （noFnOS → 自动挂面板，但 onlineMode 始终为 false）头部照旧显示，
+              用户实测复现：「我从发现页左边点进去的，怎么还是显示」。
+              两者在库内条目上恰好等价，在发现页条目上完全不同 —— 这就是漏掉的原因。 */}
+          {!showingWebrs && (
           <div className="dv2e-hd">
             <div className="dv2e-hd-top">
               {/* [头部两行重排] 上面一行只放胶囊 / 按钮类控件：
@@ -2655,11 +2679,11 @@ export function DetailView({
           )}
           <div
             ref={epListRef}
-            /* [lc-2150] onlineMode 下头部被隐藏，本块成为右栏最上方的元素 ——
+            /* [lc-2150/2151] 头部被隐藏时（showingWebrs），本块成为右栏最上方的元素 ——
                `.dv2e-list` 只画左右下三边（上边本该由头部承担），
                所以加 `dv2e-list-solo` 把顶部边框与上圆角补回来，否则卡片是"敞口"的。 */
             className={`dv2e-list${isSeries && epView === "grid" ? " dv2e-list-grid" : ""}${
-              onlineMode ? " dv2e-list-solo" : ""
+              showingWebrs ? " dv2e-list-solo" : ""
             }`}
             /* [选集定位] 用户一旦手动滚动/触摸/点击，就放弃尚未执行的自动定位。 */
             onWheel={() => {

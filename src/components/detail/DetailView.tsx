@@ -2458,7 +2458,14 @@ export function DetailView({
               「更新至」挤到右边界外，横向滚动条在 44px 高的头部里几乎看不见，于是
               "后面几季点不了"、"更新至被截断"）。
               现在分两层：第一层是两行信息（上行胶囊/按钮、下行纯文本，各自 flex-wrap），
-              第二层是独立的选季轨道 —— 季多时横向滚动 + 左右箭头，窄窗自动换成原生下拉，永不裁切。 */}
+              第二层是独立的选季轨道 —— 季多时横向滚动 + 左右箭头，窄窗自动换成原生下拉，永不裁切。
+
+              [lc-2150] 切到在线源（onlineMode）时整块不渲染。
+              这里的每一样东西都只对**本地选集**有意义：连载中/已完结状态、集数样式
+              （1 2 3 / 第N集）、网格/列表切换、已入库 N/M 集、版本选择、选季轨道。
+              在线源的内容由右栏的 WebrsPanel 自己管理（线路 / 集号 / 搜索），
+              头部留着就是一组点了没反应的摆设 —— 用户明确要求「这块可以不需要了」。 */}
+          {!onlineMode && (
           <div className="dv2e-hd">
             <div className="dv2e-hd-top">
               {/* [头部两行重排] 上面一行只放胶囊 / 按钮类控件：
@@ -2645,9 +2652,15 @@ export function DetailView({
               </div>
             )}
           </div>
+          )}
           <div
             ref={epListRef}
-            className={`dv2e-list${isSeries && epView === "grid" ? " dv2e-list-grid" : ""}`}
+            /* [lc-2150] onlineMode 下头部被隐藏，本块成为右栏最上方的元素 ——
+               `.dv2e-list` 只画左右下三边（上边本该由头部承担），
+               所以加 `dv2e-list-solo` 把顶部边框与上圆角补回来，否则卡片是"敞口"的。 */
+            className={`dv2e-list${isSeries && epView === "grid" ? " dv2e-list-grid" : ""}${
+              onlineMode ? " dv2e-list-solo" : ""
+            }`}
             /* [选集定位] 用户一旦手动滚动/触摸/点击，就放弃尚未执行的自动定位。 */
             onWheel={() => {
               autoLocateRef.current.userTouched = true;

@@ -751,6 +751,17 @@
   background: var(--bg-2);
   box-sizing: border-box;
 }
+/* [lc-2150] 切在线源时头部（.dv2e-hd）整块不渲染，本块变成右栏最上方元素 ——
+   把此前由头部承担的顶边与上圆角补回来，否则卡片顶部是"敞口"的，
+   与下方选区卡片对不齐。同时清掉 .webrs 为"贴着头部"写的分隔线/上边距。 */
+.dv2e-list.dv2e-list-solo {
+  border-top: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.dv2e-list.dv2e-list-solo .webrs {
+  margin-top: 0;
+  border-top: none;
+}
 .dv2e-list::-webkit-scrollbar {
   width: 8px;
 }

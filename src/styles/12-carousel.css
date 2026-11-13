@@ -18,9 +18,12 @@
   height: 100%;
   /* [lc-1630] 原为 1.5s：切页观感"卡顿"，且过渡期间再点「下一个」会被 go() 吞掉。
      缩短到 0.45s + 更顺的 ease-out，跨接复位更利落、也不再有明显拖尾。
-     [lc-2135] 首页全屏轮播单独用 --dur-hero：整屏海报横向位移是"电影感"运动，
-     与页面切换同速（230ms）会显得急躁、像被推走，用户实测反馈「太快了」。 */
-  transition: transform var(--dur-hero) var(--ease-enter);
+     [lc-2136] 首页全屏轮播走独立的慢档（--dur-hero 650ms + --ease-hero）：
+     整屏海报横移是"运镜"级别的位移，用户两次反馈"太快了""要偏慢那种优雅的"。
+     450~460ms 对整屏画面来说仍偏利落，650ms 才让视线跟得上、又不至于滞重。
+     缓动用 --ease-hero（起步柔和、收尾长减速），与全站的 ease-enter 不同：
+     后者前段有弹射感，整屏尺寸下会显得"甩"。 */
+  transition: transform var(--dur-hero) var(--ease-hero);
 }
 /* [lc-117] 首尾跨接（第一张←→最后一张）的那一帧关掉过渡，否则会横扫整条轨道 */
 .mist-body.no-anim {
@@ -85,13 +88,16 @@
   box-sizing: border-box;
   pointer-events: none;
 }
-/* [lc-2135] 文案分层入场：走 --dur-hero（与海报横移同一节奏），错峰 0/80/160/240。
+/* [lc-2136] 文案分层入场：--dur-hero-txt（520ms）+ 0/110/220/330 错峰。
    原本是 all 2.5s + 0.4/0.6/0.8/1s 延迟（最后一行 3.5s 才落位，慢到像卡住）；
    第一版统一调快时压到 230ms 且延迟全并成 240ms（四行几乎同起，成了"抢"）；
-   这一版回到 hero 档并保留 80ms 递增错峰。 */
+   第二版 460ms + 80ms 递增仍偏"利落"。这一版按用户要的"偏慢的优雅"定：
+   单行 520ms 缓入缓出，四行以 110ms 依次浮起，最后一行在 850ms 落位 ——
+   比"翻页"慢，但远不到原来 3.5s 的"卡住"程度。缓动用 --ease-hero 同族，
+   位移收尾不硬停。 */
 .mist-info > * {
   pointer-events: auto;
-  transition: all var(--dur-hero) var(--ease-spring);
+  transition: all var(--dur-hero-txt) var(--ease-hero);
   transform: translateY(150%);
   opacity: 0;
 }
@@ -100,13 +106,22 @@
   opacity: 1;
 }
 .mist-info > div:nth-child(2) {
-  transition-delay: 80ms;
+  transition-delay: 110ms;
 }
 .mist-info > div:nth-child(3) {
-  transition-delay: 160ms;
+  transition-delay: 220ms;
 }
 .mist-info > div:nth-child(4) {
-  transition-delay: 240ms;
+  transition-delay: 330ms;
+}
+/* [lc-2136] 离场文案要**快走**，不能沿用上面那套"慢起 + 330ms 错峰"。
+   海报滑走 650ms，若旧文案也按 520ms + 最晚 330ms 退场，它会一直挂在画面上
+   跟着滑出去 —— 两张图的文字同时可见，观感是"重影"而不是"运镜"。
+   所以非激活项改为无延迟、更快、ease-in 收尾（AGENTS.md：退出比进入快）。
+   特异性 (0,3,0) 高于 .mist-info > div:nth-child(n) 的 (0,2,0)，能压过它们的延迟。 */
+.mist-item:not(.active) .mist-info > * {
+  transition: all var(--dur-move) var(--ease-exit);
+  transition-delay: 0ms;
 }
 .mist-meta {
   font-size: clamp(0.7rem, 0.4rem + 0.6vw, 1rem);

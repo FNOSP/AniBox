@@ -92,7 +92,9 @@ export function CarouselView({
 
   // [lc-1630] 克隆位兜底复位：正常由 onTransEnd 的 transitionend 复位；但过渡被打断、
   //   或 transition 被禁用（如 prefers-reduced-motion）时该事件不会触发，轨道会卡在克隆位。
-  //   这里加一个比过渡（--dur-hero = 460ms）稍长的定时器双保险；两者幂等，谁先到都一样。
+  //   这里加一个比过渡（--dur-hero = 650ms）稍长的定时器双保险；两者幂等，谁先到都一样。
+  //   ⚠ 这个值必须始终**大于** CSS 的海报过渡时长：短了会在动画中途无动画瞬移回真实位，
+  //     画面上是"滑到一半突然跳一下"。所以用 DUR.hero 推导，不写死数字。
   useEffect(() => {
     if (n < 2) return;
     if (pos !== 0 && pos !== n + 1) return;

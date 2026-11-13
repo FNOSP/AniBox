@@ -27,6 +27,12 @@ export function CarouselView({
   //   跨接时先滑到克隆位（动画连续），transitionend 后再无动画瞬移回真实位。
   const [pos, setPos] = useState(1);
   const [armed, setArmed] = useState(false);
+  // [lc-2138] 是否已经发生过切换。用于区分两种进场语义：
+  //   · 首次加载：海报本来就在原位、没有任何横移 ⇒ 文字应立即出现，不能干等
+  //     「海报就位」（根本没有滑动，等 611ms 只会看到一片空白）
+  //   · 切换：海报要滑 650ms ⇒ 文字等它到位再浮起（用户明确要求"不要一起动"）
+  // 只在真正切页时置真，首次渲染与数据刷新都不算。
+  const [hasSlid, setHasSlid] = useState(false);
   // [lc-116] 鼠标靠近哪一侧："" | "prev" | "next"（用来淡入对应箭头）
   const [near, setNear] = useState<"" | "prev" | "next">("");
   // [lc-117] 首尾跨接的那一帧临时关掉 .mist-body 的 1.5s 横向过渡
@@ -59,6 +65,7 @@ export function CarouselView({
       if (n < 2) return;
       if (pos === n + 1 || pos === 0) {
         const real = pos === n + 1 ? 1 : n;
+        setHasSlid(true); // [lc-2138] 真在切页 ⇒ 文案要等海报就位
         setNoAnim(true);
         setPos(real);
         // 双 rAF：先让"关过渡 + 瞬移回真实位"真正渲染一帧，再开过渡走这一步，
@@ -73,6 +80,7 @@ export function CarouselView({
       }
       const target = pos + delta;
       if (target < 0 || target > n + 1) return;
+      setHasSlid(true); // [lc-2138] 同上
       setPos(target);
     },
     [pos, n]
@@ -179,7 +187,12 @@ export function CarouselView({
             .filter(Boolean)
             .join(" · ");
           return (
-            <div key={`${it.guid}#${i}`} className={`mist-item ${i === pos && armed ? "active" : ""}`}>
+            <div
+              key={`${it.guid}#${i}`}
+              // [lc-2138] `settled` = 已经切换过。CSS 用它把文案的起始延迟从 0
+              // 切到「等海报就位」：首次加载没有横移，文字必须立刻出现。
+              className={`mist-item ${i === pos && armed ? "active" : ""}${hasSlid ? " settled" : ""}`}
+            >
               {bd ? (
                 <img
                   className="mist-cover"

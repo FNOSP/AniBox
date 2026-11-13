@@ -57,7 +57,7 @@
   height: 100%;
   object-fit: cover;
   display: block;
-  transition: transform 0.25s ease;
+  transition: transform var(--dur-page) ease;
 }
 .ep-row:hover .ep-thumb img {
   transform: scale(1.04);

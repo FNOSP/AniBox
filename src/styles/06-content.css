@@ -30,7 +30,7 @@
   font-size: var(--fs-ctl);
   font-family: inherit;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition: background var(--dur-tap), color var(--dur-tap), border-color var(--dur-tap);
 }
 .season-tab:hover {
   color: var(--text-strong);

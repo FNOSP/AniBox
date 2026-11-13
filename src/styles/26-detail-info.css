@@ -50,7 +50,7 @@
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: background var(--dur-tap) ease, border-color var(--dur-tap) ease, color var(--dur-tap) ease;
 }
 .dv2-solo-play svg {
   color: var(--accent);

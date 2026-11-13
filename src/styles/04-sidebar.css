@@ -37,12 +37,12 @@
        · **只做位移**（不再缩放）→ 文字始终清晰，是"滑出"而不是"弹出来"；
        · 缓动 `var(--ease-enter)` —— 起步快、收尾长
          （Material 的 emphasized-decelerate 手感），停下时**平稳落位**、无回弹；
-       · 时长 0.42s：224px 的位移用这点时间才显得从容；
+       · 时长 --dur-page（230ms）：224px 的位移用这点时间才显得从容；
        · 收起后用 `visibility: hidden`（延迟到动画结束）撤出可访问性树。 */
   transition:
-    transform 0.42s var(--ease-enter),
-    box-shadow 0.42s var(--ease-enter),
-    visibility 0s linear 0s;
+    transform var(--dur-page) var(--ease-enter),
+    box-shadow var(--dur-page) var(--ease-enter),
+    visibility 0s linear 0ms;
   will-change: transform;
 }
 /* 收起态：整体左移出屏 + 淡出 + 轻微缩小（不是"挤没"，是"抽走"） */
@@ -67,9 +67,9 @@ html.dark .sidebar {
   /* 动画期间保持可见，结束后才撤出渲染/可访问性树 */
   visibility: hidden;
   transition:
-    transform 0.42s var(--ease-enter),
-    box-shadow 0.42s var(--ease-enter),
-    visibility 0s linear 0.42s;
+    transform var(--dur-page) var(--ease-enter),
+    box-shadow var(--dur-page) var(--ease-enter),
+    visibility 0s linear 230ms;
 }
 /* 无毛玻璃支持时（极旧 WebView）：退回接近实心的主题底色，至少保证可读 */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
@@ -152,7 +152,7 @@ html.dark .sidebar {
   cursor: pointer;
   color: var(--text);
   font-size: var(--fs-ctl);
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--dur-tap), color var(--dur-tap);
 }
 .side-item:hover {
   background: var(--hover);

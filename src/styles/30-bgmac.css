@@ -39,14 +39,14 @@
   background: var(--glass-bg);
   color: var(--muted);
   cursor: pointer;
-  transition: background 0.2s, color 0.2s;
+  transition: background var(--dur-move), color var(--dur-move);
 }
 .bgmac-fold:hover {
   background: var(--hover-strong);
   color: var(--text-strong);
 }
 .bgmac-fold svg {
-  transition: transform 0.3s var(--ease);
+  transition: transform var(--dur-page) var(--ease);
 }
 .bgmac.fold .bgmac-fold svg {
   transform: rotate(180deg);
@@ -60,7 +60,7 @@
   grid-template-rows: 1fr;
   gap: 10px 14px;
   align-items: start;
-  transition: grid-template-rows 0.32s var(--ease), opacity 0.22s ease;
+  transition: grid-template-rows var(--dur-page) var(--ease), opacity var(--dur-page) ease;
 }
 .bgmac-grid > * {
   min-height: 0;
@@ -86,8 +86,8 @@
   transform: translateY(-4px);
   overflow: hidden;
   pointer-events: none;
-  transition: max-height 0.3s var(--ease), opacity 0.2s ease,
-    transform 0.3s var(--ease);
+  transition: max-height var(--dur-page) var(--ease), opacity var(--dur-move) ease,
+    transform var(--dur-page) var(--ease);
 }
 .bgmac.fold {
   padding-right: 44px; /* 给右上角折叠按钮让位 */
@@ -145,7 +145,7 @@
   animation: bgmacRipple 2s var(--ease) infinite;
 }
 .bgmac-dot::after {
-  animation-delay: 1s;
+  animation-delay: 240ms;
 }
 @keyframes bgmacRipple {
   0% {
@@ -255,7 +255,7 @@
   align-items: center;
   justify-content: center;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
-  transition: transform 0.14s, box-shadow 0.14s;
+  transition: transform var(--dur-tap), box-shadow var(--dur-tap);
 }
 .bgmac-wcover img {
   width: 100%;
@@ -285,7 +285,7 @@ html.dark .bgmac-wcover:hover {
   font-weight: 700;
   cursor: pointer;
   box-shadow: 0 4px 14px rgb(var(--shadow-rgb) / 0.17);
-  transition: filter 0.15s, transform 0.12s, box-shadow 0.15s;
+  transition: filter var(--dur-tap), transform var(--dur-tap), box-shadow var(--dur-tap);
 }
 .bgmac-cta:hover:not(:disabled) {
   filter: brightness(1.08);
@@ -323,7 +323,7 @@ html.dark .bgmac-wcover:hover {
   font-weight: 700;
   cursor: pointer;
   box-shadow: 0 2px 8px rgb(var(--shadow-rgb) / 0.15);
-  transition: filter 0.15s, transform 0.12s;
+  transition: filter var(--dur-tap), transform var(--dur-tap);
 }
 .bgmac-act:hover:not(:disabled) {
   filter: brightness(1.08);
@@ -461,12 +461,12 @@ html.dark .bgmac-wcover:hover {
 }
 .bgmac-sector {
   cursor: pointer;
-  transition: opacity 0.22s ease;
+  transition: opacity var(--dur-page) ease;
 }
 /* 图例行 */
 .bgmac-row-bg {
   fill: transparent;
-  transition: fill 0.22s ease;
+  transition: fill var(--dur-page) ease;
 }
 .bgmac-chart-row {
   cursor: pointer;
@@ -480,7 +480,7 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
 .bgmac-chart-label {
   font-size: var(--fs-cap);
   fill: var(--text-2);
-  transition: fill 0.2s;
+  transition: fill var(--dur-move);
 }
 .bgmac-chart-row.hl .bgmac-chart-label {
   fill: var(--text-strong);
@@ -562,7 +562,7 @@ html.dark .bgmac-chart-row.hl .bgmac-row-bg {
   background: var(--input-bg);
   cursor: pointer;
   position: relative;
-  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: background var(--dur-tap), border-color var(--dur-tap), box-shadow var(--dur-tap);
 }
 .bgmac-remember:hover input[type="checkbox"]:not(:disabled) {
   border-color: var(--accent);
@@ -628,7 +628,7 @@ html.dark .bgmac-warn {
   font-size: var(--fs-cap);
   font-weight: 700;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background var(--dur-tap), border-color var(--dur-tap);
 }
 .bgmac-retry:hover:not(:disabled) {
   background: rgba(233, 162, 60, 0.18);

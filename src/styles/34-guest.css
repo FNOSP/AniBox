@@ -14,7 +14,7 @@
   font-family: inherit;
   font-size: var(--fs-ctl);
   cursor: pointer;
-  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+  transition: color var(--dur-tap) ease, border-color var(--dur-tap) ease, background-color var(--dur-tap) ease;
 }
 .gst-enter:hover {
   color: var(--text-strong);
@@ -35,7 +35,7 @@
   /* 背景做出层次（比 .ddet 的单色更有纵深），深浅主题都成立 */
   background: linear-gradient(180deg, var(--bg-2), var(--bg-3));
   /* [lc-1603] 进场：卡片微放大 + 上浮 */
-  animation: gstModalIn 0.22s var(--ease-enter);
+  animation: gstModalIn var(--dur-move) var(--ease-enter);
 }
 /* 顶部 3px accent 渐变细线（靠 .ddet 的 overflow:hidden 收边） */
 .gst-modal::before {
@@ -70,7 +70,7 @@
   background: var(--sel-bg);
   border: 1px solid var(--line-strong);
   box-shadow: 0 6px 18px rgb(var(--shadow-rgb) / 0.11);
-  animation: gstBadgePop 0.34s 0.06s var(--ease-spring) both;
+  animation: gstBadgePop var(--dur-page) 60ms var(--ease-spring) both;
 }
 @keyframes gstBadgePop {
   from {
@@ -112,7 +112,7 @@
   border: 1px solid var(--line-strong);
   background: var(--hover);
   color: var(--text-strong);
-  transition: filter 0.15s ease, background-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  transition: filter var(--dur-tap) ease, background-color var(--dur-tap) ease, transform var(--dur-tap) ease, box-shadow var(--dur-tap) ease;
 }
 .gst-btn.ghost:hover {
   background: var(--hover-strong);
@@ -133,10 +133,10 @@
    等动画走完（170ms）再真正卸载 —— 类名要**同时命中 .ddet-mask**（不然会被它自己的
    `animation: pageIn` 按文件顺序盖掉）。 */
 .ddet-mask.gst-mask-closing {
-  animation: gstMaskOut 0.17s ease forwards;
+  animation: gstMaskOut var(--dur-tap) ease forwards;
 }
 .ddet-mask.gst-mask-closing .gst-modal {
-  animation: gstModalOut 0.17s var(--ease-exit) forwards;
+  animation: gstModalOut var(--dur-tap) var(--ease-exit) forwards;
 }
 @keyframes gstMaskOut {
   to {

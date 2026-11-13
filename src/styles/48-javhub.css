@@ -135,7 +135,7 @@
   color: var(--text);
   cursor: pointer;
   overflow: hidden;
-  transition: width 0.22s var(--ease-enter), background 0.15s, color 0.15s, padding 0.22s var(--ease-enter);
+  transition: width var(--dur-page) var(--ease-enter), background var(--dur-tap), color var(--dur-tap), padding var(--dur-page) var(--ease-enter);
 }
 .javset-tab .t {
   max-width: 0;
@@ -143,7 +143,7 @@
   overflow: hidden;
   white-space: nowrap;
   font-size: var(--fs-ctl);
-  transition: max-width 0.22s var(--ease-enter), opacity 0.15s, margin 0.22s var(--ease-enter);
+  transition: max-width var(--dur-page) var(--ease-enter), opacity var(--dur-tap), margin var(--dur-page) var(--ease-enter);
 }
 .javset-tab:hover { background: var(--hover); color: var(--text-strong); }
 .javset-tab.on {
@@ -253,7 +253,7 @@
   background: var(--input-bg);
   border: 1px solid var(--line-strong);
   position: relative;
-  transition: background 0.18s;
+  transition: background var(--dur-move);
   margin-top: 1px;
 }
 .javset-bool .sw::after {
@@ -266,7 +266,7 @@
   border-radius: 50%;
   background: var(--option-bg);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
-  transition: transform 0.18s var(--ease-enter);
+  transition: transform var(--dur-move) var(--ease-enter);
 }
 .javset-bool.on .sw { background: var(--accent); border-color: var(--accent); }
 .javset-bool.on .sw::after { transform: translateX(14px); }
@@ -491,7 +491,7 @@
   overflow: hidden;
   background: var(--ph-bg);
   border: 1px solid var(--line);
-  transition: transform 0.18s var(--ease-enter), box-shadow 0.18s;
+  transition: transform var(--dur-move) var(--ease-enter), box-shadow var(--dur-move);
 }
 .jvh-card:hover .jvh-poster {
   transform: translateY(-3px);
@@ -535,39 +535,39 @@
 }
 
 /* ═══════════ [lc-1975] 动效：视图切换入场 / 卡片错峰 / 封面缩放 / 按钮按压 ═══════════ */
-.jvh-view { animation: jvh-view-in 0.25s ease-out both; }
+.jvh-view { animation: jvh-view-in var(--dur-page) ease-out both; }
 @keyframes jvh-view-in {
   from { opacity: 0; transform: translateY(6px); }
 }
 
-.jvh-view .jvh-grid .jvh-card { animation: jvh-card-in 0.28s ease-out both; }
-.jvh-view .jvh-grid .jvh-card:nth-child(2) { animation-delay: 0.03s; }
-.jvh-view .jvh-grid .jvh-card:nth-child(3) { animation-delay: 0.06s; }
-.jvh-view .jvh-grid .jvh-card:nth-child(4) { animation-delay: 0.09s; }
-.jvh-view .jvh-grid .jvh-card:nth-child(5) { animation-delay: 0.12s; }
-.jvh-view .jvh-grid .jvh-card:nth-child(6) { animation-delay: 0.15s; }
-.jvh-view .jvh-grid .jvh-card:nth-child(n + 7) { animation-delay: 0.18s; }
+.jvh-view .jvh-grid .jvh-card { animation: jvh-card-in var(--dur-page) ease-out both; }
+.jvh-view .jvh-grid .jvh-card:nth-child(2) { animation-delay: 40ms; }
+.jvh-view .jvh-grid .jvh-card:nth-child(3) { animation-delay: 60ms; }
+.jvh-view .jvh-grid .jvh-card:nth-child(4) { animation-delay: 100ms; }
+.jvh-view .jvh-grid .jvh-card:nth-child(5) { animation-delay: 120ms; }
+.jvh-view .jvh-grid .jvh-card:nth-child(6) { animation-delay: 160ms; }
+.jvh-view .jvh-grid .jvh-card:nth-child(n + 7) { animation-delay: 180ms; }
 @keyframes jvh-card-in {
   from { opacity: 0; transform: translateY(8px) scale(0.98); }
 }
 
 /* 封面悬停微缩放（贴齐概览卡片的轻盈手感） */
-.jvh-card .jvh-poster img { transition: transform 0.2s ease-out; }
+.jvh-card .jvh-poster img { transition: transform var(--dur-move) ease-out; }
 .jvh-card:hover .jvh-poster img { transform: scale(1.05); }
 
 /* 按钮按压反馈：c115-tab/mini 的 transition 已含 transform，直接加 active */
 .jvh-page .c115-tab:active,
 .jvh-page .c115-mini:active { transform: scale(0.96); }
 .jvh-page .libf-open {
-  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: transform var(--dur-tap) ease, background var(--dur-tap) ease, border-color var(--dur-tap) ease, color var(--dur-tap) ease;
 }
 .jvh-page .libf-open:active { transform: scale(0.96); }
-.jvh-page .javset-btn { transition: transform 0.12s ease, background 0.15s ease, opacity 0.15s ease; }
+.jvh-page .javset-btn { transition: transform var(--dur-tap) ease, background var(--dur-tap) ease, opacity var(--dur-tap) ease; }
 .jvh-page .javset-btn:active { transform: scale(0.96); }
 
 /* 信息卡悬停轻抬（概览统计/工具卡） */
 .jvh-page .jvh-stat,
-.jvh-page .jvh-tool { transition: transform 0.18s ease-out, box-shadow 0.18s ease-out; }
+.jvh-page .jvh-tool { transition: transform var(--dur-move) ease-out, box-shadow var(--dur-move) ease-out; }
 .jvh-page .jvh-tool:hover { transform: translateY(-2px); box-shadow: var(--shadow-card); }
 
 @media (prefers-reduced-motion: reduce) {
@@ -591,7 +591,7 @@
   z-index: 230;
   background: rgba(10, 14, 30, 0.4);
   backdrop-filter: blur(2px);
-  animation: javset-in 0.2s ease-out;
+  animation: javset-in var(--dur-move) ease-out;
 }
 .jvd {
   position: absolute;
@@ -603,7 +603,7 @@
   border-left: 1px solid var(--glass-border);
   box-shadow: -18px 0 44px rgba(0, 0, 0, 0.22);
   overflow-y: auto;
-  animation: jvd-in 0.26s var(--ease-enter);
+  animation: jvd-in var(--dur-page) var(--ease-enter);
 }
 @keyframes jvd-in {
   from { transform: translateX(40px); opacity: 0; }
@@ -680,7 +680,7 @@
   font-size: var(--fs-body);
   font-weight: 700;
   cursor: pointer;
-  transition: filter 0.15s;
+  transition: filter var(--dur-tap);
 }
 .jvd-play:hover:not(:disabled) { filter: brightness(1.08); }
 .jvd-play:disabled { opacity: 0.5; cursor: default; }
@@ -782,11 +782,11 @@
 
 /* ═══════════ [lc-1982] 设置分节切换 + 返回首页过渡 ═══════════ */
 /* 设置面板分节切换：字段容器按 sec 重挂，播入场动画 */
-.javset.embed .javset-fields { animation: jvh-view-in 0.25s ease-out both; }
+.javset.embed .javset-fields { animation: jvh-view-in var(--dur-page) ease-out both; }
 
 /* 返回首页：整页交叉淡出/淡入（仅 JavHub 返回按钮触发 View Transition） */
-::view-transition-old(root) { animation: jvh-vt-out 0.2s ease-in both; }
-::view-transition-new(root) { animation: jvh-vt-in 0.25s ease-out both; }
+::view-transition-old(root) { animation: jvh-vt-out var(--dur-move) ease-in both; }
+::view-transition-new(root) { animation: jvh-vt-in var(--dur-page) ease-out both; }
 @keyframes jvh-vt-out { to { opacity: 0; } }
 @keyframes jvh-vt-in { from { opacity: 0; transform: translateY(6px); } }
 

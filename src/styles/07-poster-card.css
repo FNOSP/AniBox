@@ -7,7 +7,7 @@
 }
 .card {
   cursor: pointer;
-  animation: pageIn 0.25s ease both;
+  animation: pageIn var(--dur-page) ease both;
 }
 .poster-box {
   position: relative;
@@ -16,7 +16,7 @@
   overflow: hidden;
   background: var(--ph-bg);
   border: 1px solid var(--line);
-  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  transition: transform var(--dur-move) ease, box-shadow var(--dur-move) ease, border-color var(--dur-move) ease;
 }
 /* [lc-114] 图片骨架屏：**只作为底层占位，图片盖在上面**。
    之前用 `opacity:0 → .is-loaded{opacity:1}` 的写法有竞态：图片若在 React 挂上 onLoad
@@ -58,7 +58,7 @@
   height: 100%;
   object-fit: cover;
   display: block;
-  transition: transform 0.3s ease;
+  transition: transform var(--dur-page) ease;
 }
 .card:hover .poster-box img {
   transform: scale(1.05);
@@ -80,7 +80,7 @@
   justify-content: center;
   background: linear-gradient(180deg, rgba(10, 12, 18, 0.1), rgba(10, 12, 18, 0.62));
   opacity: 0;
-  transition: opacity 0.18s;
+  transition: opacity var(--dur-move);
 }
 .card:hover .card-hover {
   opacity: 1;
@@ -94,7 +94,7 @@
   font-weight: 700;
   box-shadow: 0 6px 18px rgb(var(--shadow-rgb) / 0.24);
   transform: translateY(6px);
-  transition: transform 0.18s;
+  transition: transform var(--dur-move);
 }
 .card:hover .play-pill {
   transform: none;
@@ -221,7 +221,7 @@
   inset: 0;
   z-index: 3;
   opacity: 0;
-  transition: opacity 0.18s;
+  transition: opacity var(--dur-move);
   background: linear-gradient(180deg, rgba(10, 12, 18, 0.08), rgba(10, 12, 18, 0.62));
 }
 .card:hover .poster-actions {
@@ -243,7 +243,7 @@
   color: #fff;
   background: var(--accent-grad);
   box-shadow: 0 8px 24px rgb(var(--shadow-rgb) / 0.27);
-  transition: transform 0.16s ease, box-shadow 0.16s ease;
+  transition: transform var(--dur-tap) ease, box-shadow var(--dur-tap) ease;
 }
 .pa-play:hover {
   transform: translate(-50%, -50%) scale(1.06);
@@ -277,7 +277,7 @@
   background: rgba(10, 12, 18, 0.35);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  transition: background 0.15s, color 0.15s, transform 0.15s;
+  transition: background var(--dur-tap), color var(--dur-tap), transform var(--dur-tap);
 }
 .pa-btn:hover {
   background: rgba(255, 255, 255, 0.22);

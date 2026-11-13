@@ -195,8 +195,8 @@
   color: var(--text-2);
   font-size: var(--fs-ctl);
   cursor: pointer;
-  transition: background 0.18s var(--ease-enter),
-    color 0.18s var(--ease-enter);
+  transition: background var(--dur-move) var(--ease-enter),
+    color var(--dur-move) var(--ease-enter);
 }
 
 .pp-tab:hover {
@@ -240,9 +240,9 @@
   position: relative;
   min-width: 0;
   border-radius: var(--radius);
-  animation: pwIn 0.38s var(--ease-enter) both;
-  animation-delay: calc(var(--pw-i, 0) * 32ms);
-  transition: transform 0.22s var(--ease-enter);
+  animation: pwIn var(--dur-page) var(--ease-enter) both;
+  animation-delay: calc(var(--pw-i, 0) * 40ms);
+  transition: transform var(--dur-page) var(--ease-enter);
 }
 
 /* 无论能否打开都保留 hover 反馈（不能跳转的条目也不该"死气沉沉"） */
@@ -277,7 +277,7 @@
   overflow: hidden;
   background: var(--ph-bg);
   border: 1px solid var(--line);
-  transition: border-color 0.18s ease, box-shadow 0.22s var(--ease-enter);
+  transition: border-color var(--dur-move) ease, box-shadow var(--dur-page) var(--ease-enter);
 }
 
 .pw-card.clickable:hover .pw-cv {
@@ -290,7 +290,7 @@
   height: 100%;
   object-fit: cover;
   display: block;
-  transition: transform 0.35s var(--ease-enter);
+  transition: transform var(--dur-page) var(--ease-enter);
 }
 
 .pw-card:hover .pw-cv img {
@@ -496,7 +496,7 @@
 /* ── 详情页里可点击的人物行（hover / focus 反馈） ── */
 .bgmc-item.clickable {
   cursor: pointer;
-  transition: background 0.16s ease;
+  transition: background var(--dur-tap) ease;
 }
 
 .bgmc-item.clickable:hover {
@@ -514,7 +514,7 @@
   margin: -6px;
   padding: var(--sp-2);
   border-radius: var(--r-md);
-  transition: background 0.18s ease;
+  transition: background var(--dur-move) ease;
 }
 
 .mv-cast-item.clickable:hover {

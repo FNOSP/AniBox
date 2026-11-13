@@ -49,7 +49,7 @@
   overflow: hidden;
   cursor: pointer;
   border: 1px solid var(--line-strong);
-  transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
+  transition: transform var(--dur-move), box-shadow var(--dur-move), border-color var(--dur-move);
 }
 .lib-strip-card:hover {
   transform: translateY(-3px);
@@ -119,7 +119,7 @@
   justify-content: center;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+  transition: opacity var(--dur-tap) ease, background-color var(--dur-tap) ease, border-color var(--dur-tap) ease;
 }
 .lib-strip-card:hover .lsc-hide {
   opacity: 1;
@@ -149,7 +149,7 @@
   justify-content: center;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+  transition: opacity var(--dur-tap) ease, background-color var(--dur-tap) ease, border-color var(--dur-tap) ease;
 }
 .lib-strip-card:hover .lsc-cover {
   opacity: 1;
@@ -182,7 +182,7 @@
   cursor: pointer;
   user-select: none;
   opacity: 0; /* 悬停媒体库条才显示；全部库隐藏时加 .always 常显防找不到入口 */
-  transition: opacity 0.15s ease, color 0.15s, background-color 0.15s, border-color 0.15s;
+  transition: opacity var(--dur-tap) ease, color var(--dur-tap), background-color var(--dur-tap), border-color var(--dur-tap);
 }
 .lib-strip:hover .lsc-manage,
 .lsc-manage.always {

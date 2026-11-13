@@ -6,7 +6,7 @@
   width: min(560px, 94vw);
   max-height: min(84vh, 720px);
   background: linear-gradient(180deg, var(--bg-2), var(--bg-3));
-  animation: upxModalIn 0.22s var(--ease-enter);
+  animation: upxModalIn var(--dur-move) var(--ease-enter);
 }
 /* 顶部 3px accent 渐变细线（靠 .ddet 的 overflow:hidden 收边） */
 .upx-modal::before {
@@ -32,10 +32,10 @@
 
 /* 关闭动画：遮罩淡出 + 卡片微缩下沉（与 GuestLoginPrompt / SettingsPanel 同一套节奏） */
 .ddet-mask.upx-mask-closing {
-  animation: upxMaskOut 0.17s ease forwards;
+  animation: upxMaskOut var(--dur-tap) ease forwards;
 }
 .ddet-mask.upx-mask-closing .upx-modal {
-  animation: upxModalOut 0.17s var(--ease-exit) forwards;
+  animation: upxModalOut var(--dur-tap) var(--ease-exit) forwards;
 }
 @keyframes upxMaskOut {
   to {
@@ -186,7 +186,7 @@ html.dark .upx-chip.hot {
   height: 100%;
   border-radius: var(--r-full);
   background: var(--accent);
-  transition: width 0.18s ease;
+  transition: width var(--dur-move) ease;
 }
 .upx-progress-meta {
   display: flex;

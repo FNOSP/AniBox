@@ -153,7 +153,7 @@
   padding: var(--sp-2) var(--sp-5);
   border-radius: var(--r-full);
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+  transition: border-color var(--dur-tap), background var(--dur-tap);
 }
 
 .bgmc-retry:hover {

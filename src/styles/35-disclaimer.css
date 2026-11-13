@@ -8,7 +8,7 @@
   max-height: min(84vh, 720px);
   background: linear-gradient(180deg, var(--bg-2), var(--bg-3));
   /* [lc-1607] 进场：卡片微放大 + 上浮（照 gstModalIn） */
-  animation: dscModalIn 0.22s var(--ease-enter);
+  animation: dscModalIn var(--dur-move) var(--ease-enter);
 }
 
 @keyframes dscModalIn {
@@ -55,7 +55,7 @@
   border: 1px solid var(--line-strong);
   background: var(--hover);
   color: var(--text-strong);
-  transition: filter 0.15s ease, background-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  transition: filter var(--dur-tap) ease, background-color var(--dur-tap) ease, transform var(--dur-tap) ease, box-shadow var(--dur-tap) ease;
 }
 .dsc-btn.ghost:hover {
   background: var(--hover-strong);
@@ -76,10 +76,10 @@
 /* ── 关闭：遮罩淡出 + 卡片微缩下沉。类名要**同时命中 .ddet-mask**
    （不然会被它自己的 `animation: pageIn` 按文件顺序盖掉）。 ── */
 .ddet-mask.dsc-mask-closing {
-  animation: dscMaskOut 0.17s ease forwards;
+  animation: dscMaskOut var(--dur-move) ease forwards;
 }
 .ddet-mask.dsc-mask-closing .dsc-modal {
-  animation: dscModalOut 0.17s var(--ease-exit) forwards;
+  animation: dscModalOut var(--dur-move) var(--ease-exit) forwards;
 }
 @keyframes dscMaskOut {
   to {

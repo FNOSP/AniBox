@@ -48,7 +48,7 @@
   width: calc((100% - 6px) / 2);
   pointer-events: none;
   transform: translateX(0);
-  transition: transform 0.42s var(--ease-spring);
+  transition: transform var(--dur-page) var(--ease-spring);
   will-change: transform;
 }
 
@@ -68,11 +68,11 @@
 }
 
 .nav-cap[data-side="home"] .nav-cap-ind i {
-  animation: navBlobHome 0.14s ease-out;
+  animation: navBlobHome var(--dur-tap) ease-out;
 }
 
 .nav-cap[data-side="discover"] .nav-cap-ind i {
-  animation: navBlobDiscover 0.14s ease-out;
+  animation: navBlobDiscover var(--dur-tap) ease-out;
 }
 
 @keyframes navBlobHome {
@@ -111,7 +111,7 @@
   font-family: inherit;
   cursor: pointer;
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
-  transition: color 0.16s;
+  transition: color var(--dur-tap);
 }
 
 .nav-ico {
@@ -120,7 +120,7 @@
 
 /* 切到新槽时图标轻微缩放（1 → .92 → 1）：只给"刚选中"的那个按钮挂，天然按切换重放 */
 .nav-cap-l.on .nav-ico {
-  animation: navIconPop 0.14s ease-out;
+  animation: navIconPop var(--dur-tap) ease-out;
 }
 
 @keyframes navIconPop {

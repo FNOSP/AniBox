@@ -25,14 +25,14 @@ html.dark {
 }
 .fbx-close {
   z-index: 3;
-  transition: background-color 0.18s var(--ease),
-    color 0.18s var(--ease),
-    box-shadow 0.18s var(--ease),
-    transform 0.18s var(--ease);
+  transition: background-color var(--dur-move) var(--ease),
+    color var(--dur-move) var(--ease),
+    box-shadow var(--dur-move) var(--ease),
+    transform var(--dur-move) var(--ease);
 }
 .fbx-close:active {
   transform: scale(0.92);
-  transition-duration: 0.08s;
+  transition-duration: var(--dur-tap);
 }
 
 /* ── 顶部标题区 ── */
@@ -96,11 +96,11 @@ html.dark {
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   cursor: pointer;
-  transition: background-color 0.18s var(--ease),
-    border-color 0.18s var(--ease),
-    color 0.18s var(--ease),
-    box-shadow 0.18s var(--ease),
-    transform 0.18s var(--ease);
+  transition: background-color var(--dur-move) var(--ease),
+    border-color var(--dur-move) var(--ease),
+    color var(--dur-move) var(--ease),
+    box-shadow var(--dur-move) var(--ease),
+    transform var(--dur-move) var(--ease);
 }
 .fbx-nav-btn:hover {
   background: var(--hover-strong);
@@ -109,7 +109,7 @@ html.dark {
 }
 .fbx-nav-btn:active {
   transform: translateY(0) scale(0.985);
-  transition-duration: 0.08s;
+  transition-duration: var(--dur-tap);
 }
 .fbx-nav-btn.is-active {
   color: var(--text-strong);
@@ -173,12 +173,12 @@ html.dark {
   padding: var(--sp-2) var(--sp-4);
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color 0.18s var(--ease),
-    border-color 0.18s var(--ease),
-    color 0.18s var(--ease),
-    box-shadow 0.18s var(--ease),
-    transform 0.18s var(--ease),
-    filter 0.18s var(--ease);
+  transition: background-color var(--dur-move) var(--ease),
+    border-color var(--dur-move) var(--ease),
+    color var(--dur-move) var(--ease),
+    box-shadow var(--dur-move) var(--ease),
+    transform var(--dur-move) var(--ease),
+    filter var(--dur-move) var(--ease);
 }
 .fbx-btn:hover:not(:disabled) {
   background: var(--hover-strong);
@@ -187,7 +187,7 @@ html.dark {
 .fbx-btn:active:not(:disabled) {
   /* 按压回弹：轻微内收 + 下压，松手由 transition 平滑回位 */
   transform: translateY(0) scale(0.97);
-  transition-duration: 0.08s;
+  transition-duration: var(--dur-tap);
 }
 .fbx-btn:disabled {
   opacity: 0.45;
@@ -279,16 +279,16 @@ a.fbx-btn {
   padding: var(--sp-0) var(--sp-1);
   cursor: pointer;
   text-decoration: underline;
-  transition: opacity 0.18s var(--ease),
-    box-shadow 0.18s var(--ease),
-    transform 0.18s var(--ease);
+  transition: opacity var(--dur-move) var(--ease),
+    box-shadow var(--dur-move) var(--ease),
+    transform var(--dur-move) var(--ease);
 }
 .fbx-linkbtn:hover {
   opacity: 0.78;
 }
 .fbx-linkbtn:active {
   transform: scale(0.97);
-  transition-duration: 0.08s;
+  transition-duration: var(--dur-tap);
 }
 
 /* 小标签 */
@@ -473,10 +473,10 @@ a.fbx-btn {
   padding: var(--sp-2) var(--sp-3);
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color 0.18s var(--ease),
-    color 0.18s var(--ease),
-    box-shadow 0.18s var(--ease),
-    transform 0.18s var(--ease);
+  transition: background-color var(--dur-move) var(--ease),
+    color var(--dur-move) var(--ease),
+    box-shadow var(--dur-move) var(--ease),
+    transform var(--dur-move) var(--ease);
 }
 .fbx-tab:hover {
   color: var(--text-2);
@@ -484,7 +484,7 @@ a.fbx-btn {
 }
 .fbx-tab:active {
   transform: scale(0.98);
-  transition-duration: 0.08s;
+  transition-duration: var(--dur-tap);
 }
 .fbx-tab.is-active {
   color: var(--text-strong);
@@ -524,10 +524,10 @@ a.fbx-btn {
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   cursor: pointer;
-  transition: background-color 0.18s var(--ease),
-    border-color 0.18s var(--ease),
-    box-shadow 0.18s var(--ease),
-    transform 0.18s var(--ease);
+  transition: background-color var(--dur-move) var(--ease),
+    border-color var(--dur-move) var(--ease),
+    box-shadow var(--dur-move) var(--ease),
+    transform var(--dur-move) var(--ease);
 }
 .fbx-row:hover {
   background: var(--hover-strong);
@@ -556,7 +556,7 @@ a.fbx-btn {
 }
 .fbx-row:active {
   transform: translateX(1px) scale(0.995);
-  transition-duration: 0.08s;
+  transition-duration: var(--dur-tap);
 }
 .fbx-row-main {
   display: flex;
@@ -735,17 +735,17 @@ a.fbx-btn {
   background: var(--input-bg);
   cursor: pointer;
   user-select: none;
-  transition: background-color 0.18s var(--ease),
-    border-color 0.18s var(--ease),
-    box-shadow 0.18s var(--ease),
-    transform 0.18s var(--ease);
+  transition: background-color var(--dur-move) var(--ease),
+    border-color var(--dur-move) var(--ease),
+    box-shadow var(--dur-move) var(--ease),
+    transform var(--dur-move) var(--ease);
 }
 .fbx-toggle-row:hover {
   border-color: var(--line-strong);
 }
 .fbx-toggle-row:active {
   transform: scale(0.995);
-  transition-duration: 0.08s;
+  transition-duration: var(--dur-tap);
 }
 .fbx-toggle-row input[type="checkbox"] {
   flex: 0 0 auto;
@@ -757,7 +757,7 @@ a.fbx-btn {
   background: transparent;
   accent-color: var(--accent);
   cursor: pointer;
-  transition: box-shadow 0.18s var(--ease);
+  transition: box-shadow var(--dur-move) var(--ease);
 }
 .fbx-toggle-txt {
   display: flex;
@@ -793,7 +793,7 @@ a.fbx-btn {
   background: transparent;
   accent-color: var(--accent);
   cursor: pointer;
-  transition: box-shadow 0.18s var(--ease);
+  transition: box-shadow var(--dur-move) var(--ease);
 }
 .fbx-check input[type="checkbox"]:disabled {
   cursor: default;
@@ -871,11 +871,11 @@ a.fbx-btn {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: color 0.18s var(--ease),
-    border-color 0.18s var(--ease),
-    background-color 0.18s var(--ease),
-    box-shadow 0.18s var(--ease),
-    transform 0.18s var(--ease);
+  transition: color var(--dur-move) var(--ease),
+    border-color var(--dur-move) var(--ease),
+    background-color var(--dur-move) var(--ease),
+    box-shadow var(--dur-move) var(--ease),
+    transform var(--dur-move) var(--ease);
 }
 .fbx-tid:hover {
   color: var(--text-2);
@@ -883,7 +883,7 @@ a.fbx-btn {
 }
 .fbx-tid:active {
   transform: scale(0.98);
-  transition-duration: 0.08s;
+  transition-duration: var(--dur-tap);
 }
 .fbx-copy {
   flex: 0 0 auto;
@@ -1007,7 +1007,7 @@ a.fbx-btn {
   gap: var(--sp-3);
   padding: var(--sp-3) 0 0;
   border-top: 1px solid var(--line);
-  transition: border-color 0.18s var(--ease);
+  transition: border-color var(--dur-move) var(--ease);
 }
 .fbx-reply:focus-within {
   border-top-color: color-mix(in srgb, var(--accent) 42%, var(--line));
@@ -1246,11 +1246,11 @@ a.fbx-btn {
 .fbx-fb,
 .fbx-thread,
 .fbx-diag-wrap {
-  animation: fbxFadeUp 0.22s var(--ease) both;
+  animation: fbxFadeUp var(--dur-move) var(--ease) both;
 }
 .fbx-sec,
 .fbx-row {
-  animation: fbxFadeUp 0.2s var(--ease) backwards;
+  animation: fbxFadeUp var(--dur-move) var(--ease) backwards;
 }
 /* 错峰：仅前 8 项依次延后 22ms，避免长列表整体拖慢 */
 .fbx-row:nth-child(1),
@@ -1259,31 +1259,31 @@ a.fbx-btn {
 }
 .fbx-row:nth-child(2),
 .fbx-sec:nth-child(2) {
-  animation-delay: 22ms;
+  animation-delay: 20ms;
 }
 .fbx-row:nth-child(3),
 .fbx-sec:nth-child(3) {
-  animation-delay: 44ms;
+  animation-delay: 40ms;
 }
 .fbx-row:nth-child(4),
 .fbx-sec:nth-child(4) {
-  animation-delay: 66ms;
+  animation-delay: 60ms;
 }
 .fbx-row:nth-child(5),
 .fbx-sec:nth-child(5) {
-  animation-delay: 88ms;
+  animation-delay: 80ms;
 }
 .fbx-row:nth-child(6),
 .fbx-sec:nth-child(6) {
-  animation-delay: 110ms;
+  animation-delay: 120ms;
 }
 .fbx-row:nth-child(7),
 .fbx-sec:nth-child(7) {
-  animation-delay: 132ms;
+  animation-delay: 140ms;
 }
 .fbx-row:nth-child(n + 8),
 .fbx-sec:nth-child(n + 8) {
-  animation-delay: 154ms;
+  animation-delay: 160ms;
 }
 
 /* ── 关闭退场：遮罩淡出 + 卡片轻微缩放/下移 ──
@@ -1291,11 +1291,11 @@ a.fbx-btn {
    onClose 真正卸载（与 TSX 的 CLOSE_ANIM_MS 对齐）。选择器同时命中 .ddet-mask，
    才能盖掉它自带的 `animation: pageIn`。 */
 .ddet-mask.fbx-closing {
-  animation: fbxMaskOut 0.22s var(--ease) forwards;
+  animation: fbxMaskOut var(--dur-tap) var(--ease) forwards;
   pointer-events: none;
 }
 .ddet-mask.fbx-closing .fbx-card {
-  animation: fbxCardOut 0.22s var(--ease) forwards;
+  animation: fbxCardOut var(--dur-tap) var(--ease) forwards;
 }
 @keyframes fbxMaskOut {
   to {
@@ -1346,7 +1346,7 @@ a.fbx-btn {
   line-height: 1.5;
   text-align: center;
   white-space: normal;
-  animation: app-toast-in 0.18s ease;
+  animation: app-toast-in var(--dur-move) ease;
 }
 @keyframes app-toast-in {
   from {

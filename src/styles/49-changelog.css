@@ -9,7 +9,7 @@
   display: flex;
   flex-direction: column;
   padding: var(--sp-5) var(--sp-5) var(--sp-5);
-  animation: clgIn 0.22s var(--ease-enter);
+  animation: clgIn var(--dur-move) var(--ease-enter);
 }
 /* 顶部 2px accent 细线（靠 .ddet 的 overflow:hidden 收边） */
 .clg-modal::before {
@@ -34,10 +34,10 @@
 }
 /* 退场：与页面退场同一套（ease-in 更快），160ms 后组件卸载 */
 .ddet-mask.clg-closing {
-  animation: clgMaskOut 0.16s var(--ease-exit) forwards;
+  animation: clgMaskOut var(--dur-tap) var(--ease-exit) forwards;
 }
 .ddet-mask.clg-closing .clg-modal {
-  animation: clgOut 0.16s var(--ease-exit) forwards;
+  animation: clgOut var(--dur-tap) var(--ease-exit) forwards;
 }
 @keyframes clgMaskOut {
   to {

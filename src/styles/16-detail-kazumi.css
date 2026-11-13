@@ -19,7 +19,7 @@
   background: var(--bg-2);
   border: 1px solid var(--line);
   box-shadow: var(--shadow-card);
-  animation: dIn 0.42s var(--ease) 0.04s both;
+  animation: dIn var(--dur-page) var(--ease) 40ms both;
 }
 @keyframes dIn {
   from {
@@ -103,7 +103,7 @@
   overflow: hidden;
   white-space: nowrap;
   color: var(--gold);
-  animation: dStars 0.6s var(--ease) 0.25s both;
+  animation: dStars var(--dur-page) var(--ease) 240ms both;
 }
 @keyframes dStars {
   from {
@@ -130,7 +130,7 @@
   border-radius: var(--r-full);
   cursor: pointer;
   box-shadow: 0 6px 18px rgb(var(--shadow-rgb) / 0.21);
-  transition: transform 0.15s, box-shadow 0.15s;
+  transition: transform var(--dur-tap), box-shadow var(--dur-tap);
 }
 .dplay:hover {
   transform: translateY(-1px);
@@ -171,7 +171,7 @@
   font-weight: 700;
   color: var(--muted);
   cursor: pointer;
-  transition: color 0.18s ease;
+  transition: color var(--dur-move) ease;
 }
 /* 必须显式兜住：全局 button:hover 是 (0,0,1,1)，特异性高于 .dseg-btn (0,0,1,0)（同 lc-117 .mist-nav 那坑） */
 .dseg-btn:hover {
@@ -196,7 +196,7 @@
   background: var(--accent-grad);
   transform: scaleX(0);
   transform-origin: center;
-  transition: transform 0.2s var(--ease);
+  transition: transform var(--dur-move) var(--ease);
 }
 .dseg-btn.active::after {
   transform: scaleX(1);
@@ -208,7 +208,7 @@
   padding: var(--sp-4) 0 var(--sp-7);
 }
 .dbody > * {
-  animation: dPanel 0.24s var(--ease) both;
+  animation: dPanel var(--dur-page) var(--ease) both;
 }
 @keyframes dPanel {
   from {
@@ -286,7 +286,7 @@
   background: var(--hover);
   border: 1px solid var(--line);
   color: var(--text-2);
-  transition: border-color 0.15s, color 0.15s;
+  transition: border-color var(--dur-tap), color var(--dur-tap);
 }
 .dtag:hover {
   border-color: rgb(var(--accent-rgb) / 0.45);

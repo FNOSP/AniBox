@@ -12,7 +12,7 @@
   align-items: center;
   justify-content: center;
   padding: var(--sp-8) var(--sp-5) var(--sp-5);
-  animation: pageIn 0.18s ease;
+  animation: pageIn var(--dur-move) ease;
 }
 
 .ddet {

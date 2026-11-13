@@ -11,7 +11,7 @@
   align-items: center;
   justify-content: center;
   padding: var(--sp-7) var(--sp-8);
-  animation: pageIn 0.18s ease;
+  animation: pageIn var(--dur-move) ease;
 }
 
 .slb-img {
@@ -21,7 +21,7 @@
   border-radius: var(--r-sm);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
   cursor: default;
-  animation: slbFade 0.25s ease;
+  animation: slbFade var(--dur-page) ease;
 }
 
 @keyframes slbFade {
@@ -50,7 +50,7 @@
   font-size: var(--fs-hero);
   line-height: 1;
   cursor: pointer;
-  transition: background 0.2s, transform 0.2s;
+  transition: background var(--dur-move), transform var(--dur-move);
 }
 .slb-nav:hover {
   background: rgba(255, 255, 255, 0.18);
@@ -79,7 +79,7 @@
   font-size: var(--fs-page);
   line-height: 1;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background var(--dur-move);
 }
 .slb-close:hover {
   background: rgba(255, 255, 255, 0.22);

@@ -98,7 +98,7 @@
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   cursor: pointer;
-  transition: background 0.2s, border-color 0.2s;
+  transition: background var(--dur-move), border-color var(--dur-move);
   padding: var(--sp-2) var(--sp-4);
   border-radius: var(--r-lg);
   font-size: var(--fs-body);
@@ -204,7 +204,7 @@
   font-weight: 700;
   cursor: pointer;
   box-shadow: 0 12px 34px rgba(255, 255, 255, 0.18);
-  transition: transform 0.25s var(--ease-spring), box-shadow 0.25s;
+  transition: transform var(--dur-page) var(--ease-spring), box-shadow var(--dur-page);
 }
 .mv-btn-primary:hover:not(:disabled) {
   transform: translateY(-2px) scale(1.02);
@@ -228,7 +228,7 @@
   cursor: pointer;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  transition: background 0.2s, border-color 0.2s;
+  transition: background var(--dur-move), border-color var(--dur-move);
 }
 .mv-btn-ghost:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.22);
@@ -268,7 +268,7 @@
   cursor: pointer;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  transition: background 0.2s, border-color 0.2s;
+  transition: background var(--dur-move), border-color var(--dur-move);
 }
 .mv-btn-square:hover {
   background: rgba(255, 255, 255, 0.22);
@@ -512,7 +512,7 @@ html.dark .mv-glass {
   font-size: var(--fs-ctl);
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background var(--dur-tap) ease, border-color var(--dur-tap) ease;
   /* [版本文案] 文件名兜底标签可能很长：限宽 + 省略号，完整名称见 title。 */
   max-width: 220px;
   overflow: hidden;

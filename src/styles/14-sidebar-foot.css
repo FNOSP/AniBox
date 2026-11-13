@@ -14,7 +14,7 @@
 .side-userrow-btn {
   cursor: pointer;
   border-radius: var(--r-md);
-  transition: background-color 140ms ease;
+  transition: background-color var(--dur-tap) ease;
 }
 .side-userrow-btn:hover {
   background: var(--hover);
@@ -49,7 +49,7 @@
 /* [lc-1665] 展开/收起：内容淡入上浮；高度补间由 Sidebar.tsx 用 WAAPI 完成，
    两者叠加形成「面板长大/收拢 + 内容换气」的过渡，不再是硬切。 */
 .sa-pane {
-  animation: saPaneIn 0.34s var(--ease-enter);
+  animation: saPaneIn var(--dur-move) var(--ease-enter);
 }
 .sa-full {
   display: flex;
@@ -81,7 +81,7 @@
   font-size: var(--fs-cap);
   font-weight: 600;
   color: var(--glass-text-2);
-  transition: background-color 0.16s ease;
+  transition: background-color var(--dur-tap) ease;
 }
 .sa-head:hover {
   background: var(--glass-btn-bg);
@@ -111,7 +111,7 @@
   border: 1px solid var(--glass-border);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
   text-align: center;
-  transition: background-color 0.16s ease, transform 0.16s ease;
+  transition: background-color var(--dur-tap) ease, transform var(--dur-tap) ease;
 }
 .sa-head + .sa-btn {
   margin-top: 2px;
@@ -179,7 +179,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background-color 0.16s ease, transform 0.16s ease;
+  transition: background-color var(--dur-tap) ease, transform var(--dur-tap) ease;
 }
 .sa-ico:hover {
   background: var(--glass-btn-hover);
@@ -191,7 +191,7 @@
   font-size: var(--fs-ctl);
   border: 1px dashed var(--glass-border);
   box-shadow: none;
-  transition: background-color 0.16s ease, color 0.16s ease;
+  transition: background-color var(--dur-tap) ease, color var(--dur-tap) ease;
 }
 .sa-expand:hover {
   background: var(--glass-btn-bg);
@@ -218,7 +218,7 @@
   font-variant-numeric: tabular-nums;
   box-shadow: 0 0 0 2px var(--glass-bg);
   pointer-events: none;
-  animation: saBadgeIn 0.2s var(--ease-enter);
+  animation: saBadgeIn var(--dur-move) var(--ease-enter);
 }
 .sa-btn .sa-badge {
   top: 50%;
@@ -270,7 +270,7 @@
   font-size: var(--fs-ctl);
   white-space: nowrap;
   pointer-events: none;
-  animation: toast-in 0.18s ease;
+  animation: toast-in var(--dur-move) ease;
 }
 @keyframes toast-in {
   from {

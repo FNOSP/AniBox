@@ -42,7 +42,7 @@
   background: var(--input-bg);
   color: var(--text-strong);
   outline: none;
-  transition: border-color 0.15s, background 0.15s;
+  transition: border-color var(--dur-tap), background var(--dur-tap);
 }
 .webrs-bar input:focus {
   border-color: var(--accent);
@@ -68,7 +68,7 @@
   color: var(--text-strong);
   line-height: 1;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition: background var(--dur-tap), color var(--dur-tap), border-color var(--dur-tap);
 }
 .webrs-bar .webrs-go {
   color: var(--accent);
@@ -147,7 +147,7 @@
   font-size: var(--fs-cap);
   padding: var(--sp-1) var(--sp-3);
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background var(--dur-tap), border-color var(--dur-tap);
 }
 .webrs-manual:hover:not(:disabled) {
   background: var(--hover-strong);
@@ -174,7 +174,7 @@
   padding: var(--sp-3) var(--sp-3);
   font-size: var(--fs-ctl);
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background var(--dur-tap), border-color var(--dur-tap);
 }
 .webrs-list button:hover {
   background: var(--hover-strong);
@@ -240,7 +240,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background var(--dur-tap), border-color var(--dur-tap);
 }
 .webrs-eps button:hover:not(:disabled) {
   background: var(--hover-strong);
@@ -497,7 +497,7 @@
   padding: var(--sp-2) var(--sp-3);
   font-size: var(--fs-cap);
   cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+  transition: border-color var(--dur-tap), box-shadow var(--dur-tap), transform var(--dur-tap);
 }
 .webrs-recent-chip:hover {
   border-color: var(--accent);
@@ -598,7 +598,7 @@
   border-radius: var(--r-md);
   background: var(--glass-btn-bg);
   padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-3);
-  transition: background 0.12s, border-color 0.12s;
+  transition: background var(--dur-tap), border-color var(--dur-tap);
 }
 .webrs-mgr-row:hover {
   background: var(--hover);
@@ -727,7 +727,7 @@
   font-size: var(--fs-cap);
   padding: var(--sp-1) var(--sp-3);
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background var(--dur-tap), border-color var(--dur-tap);
 }
 .webrs-g-verify:hover {
   background: var(--hover-strong);
@@ -736,7 +736,7 @@
 .webrs-captcha-modal {
   width: min(400px, 92vw);
   background: var(--option-bg);
-  animation: webrsCapIn 0.18s ease-out;
+  animation: webrsCapIn var(--dur-move) ease-out;
 }
 .webrs-captcha-body {
   display: flex;
@@ -773,7 +773,7 @@
   font-size: var(--fs-ctl);
   letter-spacing: 2px;
   outline: none;
-  transition: border-color 0.15s, background 0.15s;
+  transition: border-color var(--dur-tap), background var(--dur-tap);
 }
 .webrs-captcha-input:focus {
   border-color: var(--accent);
@@ -810,7 +810,7 @@
   font-size: var(--fs-ctl);
   padding: 0 var(--sp-4);
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background var(--dur-tap), border-color var(--dur-tap);
 }
 .webrs-captcha-cancel:hover {
   background: var(--hover-strong);
@@ -859,7 +859,7 @@
   font-size: var(--fs-cap);
   padding: var(--sp-2) var(--sp-3);
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  transition: background var(--dur-tap), border-color var(--dur-tap), color var(--dur-tap);
 }
 .webrs-cat-hd button:hover:not(:disabled) {
   background: var(--hover-strong);
@@ -965,7 +965,7 @@
   font-size: var(--fs-cap);
   padding: var(--sp-1) var(--sp-3);
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  transition: background var(--dur-tap), border-color var(--dur-tap), color var(--dur-tap);
 }
 .webrs-cat-act.on {
   color: var(--accent);

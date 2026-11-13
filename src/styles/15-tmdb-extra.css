@@ -151,7 +151,7 @@
   cursor: pointer;
   opacity: 0;
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
-  transition: opacity 0.22s ease, color 0.2s ease, text-shadow 0.2s ease, transform 0.12s ease;
+  transition: opacity var(--dur-page) ease, color var(--dur-move) ease, text-shadow var(--dur-move) ease, transform var(--dur-tap) ease;
 }
 .mist-nav-prev { left: 12px; }
 .mist-nav-next { right: 12px; }

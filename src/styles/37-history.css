@@ -36,7 +36,7 @@
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background var(--dur-tap), border-color var(--dur-tap);
 }
 .hist-sync:hover {
   background: var(--hover-strong);
@@ -82,7 +82,7 @@
   font-family: inherit;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition: background var(--dur-tap), color var(--dur-tap), border-color var(--dur-tap);
 }
 /* [lc-1770] 数据源开关（在线源/个人视频）：off 态整体弱化表示"这类数据被隐藏" */
 .hist-toggle.off { opacity: .45; filter: saturate(.4); }
@@ -121,7 +121,7 @@
   background: transparent;
   color: var(--text-2);
   cursor: pointer;
-  transition: background 0.2s, color 0.2s;
+  transition: background var(--dur-move), color var(--dur-move);
 }
 .hist-vbtn:hover {
   background: var(--hover);
@@ -131,7 +131,7 @@
   background: var(--accent-grad);
   color: #fff;
   box-shadow: 0 3px 10px rgb(var(--shadow-rgb) / 0.18);
-  animation: histPop 0.4s var(--ease-spring);
+  animation: histPop var(--dur-page) var(--ease-spring);
 }
 
 /* ── 飞牛不可用提示条 ── */
@@ -370,7 +370,7 @@ html.dark .hist-heat {
   box-shadow: inset 0 0 0 1px var(--hist-hcell-border);
   cursor: pointer;
   flex-shrink: 0;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: transform var(--dur-tap) ease, box-shadow var(--dur-tap) ease;
 }
 .hist-hcell.l1 { background: var(--hist-hm-1); }
 .hist-hcell.l2 { background: var(--hist-hm-2); }
@@ -403,7 +403,7 @@ html.dark .hist-heat {
   z-index: 20;
   box-shadow: var(--shadow-card);
   opacity: 0;
-  transition: opacity 0.12s;
+  transition: opacity var(--dur-tap);
 }
 .hist-heat-tip.show {
   opacity: 1;
@@ -475,8 +475,8 @@ html.dark .hist-heat {
   border: 1px solid var(--line);
   overflow: hidden;
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-  animation: histRowIn 0.38s var(--ease) both;
+  transition: transform var(--dur-move) ease, box-shadow var(--dur-move) ease, border-color var(--dur-move) ease;
+  animation: histRowIn var(--dur-page) var(--ease) both;
 }
 /* 悬停时左侧亮起一条主色竖条（与发现页 .dlib-lrow::before 同款） */
 .hist-lrow::before {
@@ -488,7 +488,7 @@ html.dark .hist-heat {
   width: 3px;
   background: var(--accent);
   transform: scaleY(0);
-  transition: transform 0.28s var(--ease);
+  transition: transform var(--dur-page) var(--ease);
 }
 .hist-lrow:hover {
   transform: translateX(4px);
@@ -587,7 +587,7 @@ html.dark .hist-lbadge.webrs {
 .hist-grp {
   display: flex;
   flex-direction: column;
-  animation: histEnter 0.5s var(--ease) both;
+  animation: histEnter var(--dur-page) var(--ease) both;
 }
 .hist-ghd {
   display: flex;
@@ -654,8 +654,8 @@ html.dark .hist-lbadge.webrs {
   cursor: pointer;
   background: var(--ph-bg);
   border: 1px solid var(--line);
-  transition: transform 0.22s var(--ease), box-shadow 0.22s, border-color 0.22s;
-  animation: histGridIn 0.45s var(--ease) both;
+  transition: transform var(--dur-page) var(--ease), box-shadow var(--dur-page), border-color var(--dur-page);
+  animation: histGridIn var(--dur-page) var(--ease) both;
 }
 .hist-card:hover {
   transform: translateY(-4px);
@@ -799,7 +799,7 @@ html.dark .hist-lbadge.webrs {
   color: var(--text-strong);
   box-shadow: var(--shadow-card);
   pointer-events: none;
-  animation: histToastIn 0.25s ease both;
+  animation: histToastIn var(--dur-page) ease both;
 }
 @keyframes histToastIn {
   from { opacity: 0; transform: translateX(-50%) translateY(12px); }
@@ -833,7 +833,7 @@ html.dark .hist-lbadge.webrs {
   background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  animation: histOverlayIn 0.16s ease both;
+  animation: histOverlayIn var(--dur-tap) ease both;
 }
 @keyframes histOverlayIn {
   from { opacity: 0; }
@@ -904,7 +904,7 @@ html:not(.dark) .hist-detail-scrim {
   color: var(--text-2);
   font-size: var(--fs-body);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--dur-tap), color var(--dur-tap);
 }
 .hist-detail-close:hover {
   background: var(--hover-strong);
@@ -1010,7 +1010,7 @@ html:not(.dark) .hist-detail-scrim {
   width: 32px;
   height: 32px;
   fill: rgba(255, 255, 255, 0.22);
-  transition: transform 0.12s ease, fill 0.12s ease;
+  transition: transform var(--dur-tap) ease, fill var(--dur-tap) ease;
 }
 .hist-rate-star.on svg {
   fill: url(#hist-gold);
@@ -1058,7 +1058,7 @@ html:not(.dark) .hist-detail-scrim {
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  transition: filter 0.15s, background 0.15s;
+  transition: filter var(--dur-tap), background var(--dur-tap);
 }
 .hist-btn.primary {
   background: var(--accent);
@@ -1113,7 +1113,7 @@ html:not(.dark) .hist-detail-scrim {
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
-  transition: transform 0.15s ease, filter 0.15s ease;
+  transition: transform var(--dur-tap) ease, filter var(--dur-tap) ease;
 }
 .hist-report-btn:hover {
   transform: translateY(-1px);
@@ -1135,7 +1135,7 @@ html:not(.dark) .hist-detail-scrim {
   flex-direction: column;
   gap: var(--sp-4);
   background: rgba(12, 14, 22, 0.86);
-  animation: wrFade 0.2s ease;
+  animation: wrFade var(--dur-move) ease;
 }
 @keyframes wrFade {
   from {
@@ -1171,7 +1171,7 @@ html:not(.dark) .hist-detail-scrim {
 .wr-pg {
   position: absolute;
   inset: 0;
-  animation: wrPageIn 0.28s ease;
+  animation: wrPageIn var(--dur-page) ease;
 }
 @keyframes wrPageIn {
   from {
@@ -1331,7 +1331,7 @@ html:not(.dark) .hist-detail-scrim {
   width: 60%;
   border-radius: var(--r-sm);
   background: linear-gradient(180deg, rgb(var(--accent-rgb) / 0.55), rgb(var(--accent-rgb) / 0.25));
-  transition: height 0.4s ease;
+  transition: height var(--dur-page) ease;
 }
 .wr-bar.hot {
   background: var(--accent-grad);
@@ -1359,7 +1359,7 @@ html:not(.dark) .hist-detail-scrim {
   width: 70%;
   border-radius: var(--r-xs) 4px 0 0;
   background: rgb(var(--accent-rgb) / 0.35);
-  transition: height 0.4s ease;
+  transition: height var(--dur-page) ease;
 }
 .wr-hbar.night {
   background: var(--accent-grad);
@@ -1465,7 +1465,7 @@ html:not(.dark) .hist-detail-scrim {
   border-radius: var(--r-full);
   display: block;
   background: rgba(255, 255, 255, 0.35);
-  transition: all 0.2s;
+  transition: all var(--dur-move);
 }
 .wr-dots i.on {
   width: 22px;

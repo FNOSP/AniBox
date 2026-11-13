@@ -239,7 +239,7 @@ html.dark .login-wrap {
   font-weight: 700;
   cursor: pointer;
   box-shadow: 0 8px 22px rgb(var(--shadow-rgb) / 0.21);
-  transition: filter 0.15s, transform 0.15s;
+  transition: filter var(--dur-tap), transform var(--dur-tap);
 }
 .login-card .primary:hover {
   filter: brightness(1.08);
@@ -270,7 +270,7 @@ html.dark .login-wrap {
   color: var(--text-2);
   background: transparent;
   border: 1px solid var(--line-strong);
-  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+  transition: background-color var(--dur-tap) ease, color var(--dur-tap) ease, border-color var(--dur-tap) ease;
 }
 .login-card .ghost:hover:not(:disabled) {
   background: var(--hover);
@@ -308,7 +308,7 @@ html.dark .login-wrap {
   font-weight: 600;
   cursor: pointer;
   text-align: left;
-  transition: background-color 140ms ease;
+  transition: background-color var(--dur-tap) ease;
 }
 .login-src-head:hover {
   background: var(--hover);
@@ -329,7 +329,7 @@ html.dark .login-wrap {
   border-right: 1.6px solid var(--muted);
   border-bottom: 1.6px solid var(--muted);
   transform: rotate(45deg) translateY(-2px);
-  transition: transform 160ms ease;
+  transition: transform var(--dur-tap) ease;
   flex-shrink: 0;
 }
 .login-src-badge + .login-src-chev {
@@ -360,7 +360,7 @@ html.dark .login-wrap {
   color: var(--text-2);
   font-size: var(--fs-cap);
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease;
+  transition: background-color var(--dur-tap) ease, color var(--dur-tap) ease;
 }
 .login-minibtn:hover {
   background: var(--hover);

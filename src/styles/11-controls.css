@@ -9,7 +9,7 @@ select {
   padding: var(--sp-3) var(--sp-4);
   font-size: var(--fs-ctl);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--dur-tap);
 }
 input:focus,
 select:focus {
@@ -37,7 +37,7 @@ button {
   padding: var(--sp-2) var(--sp-4);
   font-size: var(--fs-ctl);
   cursor: pointer;
-  transition: background 0.15s, transform 0.15s;
+  transition: background var(--dur-tap), transform var(--dur-tap);
 }
 button:hover {
   background: var(--hover-strong);

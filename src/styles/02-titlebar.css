@@ -109,7 +109,7 @@
   cursor: pointer;
   /* 兜底：若将来顶栏改回 CSS app-region 方案，按钮也不会被当成拖拽区 */
   -webkit-app-region: no-drag;
-  transition: background-color 0.15s ease;
+  transition: background-color var(--dur-tap) ease;
 }
 .tb-crumb.tb-crumb-btn:hover {
   background: var(--tb-hover-bg);

@@ -36,16 +36,16 @@
   pointer-events: none;
 }
 .view-pane.anim-to-discover {
-  animation: paneInFromRight 0.26s ease-out both;
+  animation: paneInFromRight var(--dur-page) ease-out both;
 }
 .view-pane.leaving.anim-to-discover {
-  animation: paneOutLeft 0.26s ease-out both;
+  animation: paneOutLeft var(--dur-move) ease-out both;
 }
 .view-pane.anim-to-home {
-  animation: paneInFromLeft 0.26s ease-out both;
+  animation: paneInFromLeft var(--dur-page) ease-out both;
 }
 .view-pane.leaving.anim-to-home {
-  animation: paneOutRight 0.26s ease-out both;
+  animation: paneOutRight var(--dur-move) ease-out both;
 }
 @keyframes paneOutLeft {
   from {
@@ -104,7 +104,7 @@
      变量在挂载后读取 —— 此时主题已切换，读到的就是新主题的值。 */
   background: linear-gradient(160deg, var(--bg-0), var(--bg-1) 55%);
   clip-path: circle(0px at var(--tx) var(--ty));
-  animation: themeVeilGrow 0.42s ease-in-out forwards;
+  animation: themeVeilGrow var(--dur-page) ease-in-out forwards;
 }
 @keyframes themeVeilGrow {
   from {

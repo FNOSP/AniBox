@@ -94,7 +94,7 @@
   font-size: var(--fs-ctl);
   font-weight: 700;
   cursor: pointer;
-  transition: background 0.16s ease, transform 0.16s ease;
+  transition: background var(--dur-tap) ease, transform var(--dur-tap) ease;
 }
 .dv2-play:hover {
   background: rgba(10, 14, 24, 0.78);
@@ -177,7 +177,7 @@
   padding: 0;            /* 覆盖基类 18px 0 40px：新版式里左列用 gap 控节奏 */
 }
 .dv2-body > * {
-  animation: dPanel 0.24s var(--ease) both;
+  animation: dPanel var(--dur-page) var(--ease) both;
 }
 
 /* ══════════════ [lc-2119] 标签页内容**自己滚**，不再整屏滚 ══════════════
@@ -329,7 +329,7 @@
   overflow: hidden;
   background: var(--ph-bg);
   border: 1px solid var(--line);
-  transition: border-color 0.15s ease;
+  transition: border-color var(--dur-tap) ease;
 }
 .drel-card:hover .drel-cv {
   border-color: rgb(var(--accent-rgb) / 0.45);
@@ -525,7 +525,7 @@
   line-height: 1;
   font-family: inherit;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: background var(--dur-tap) ease, border-color var(--dur-tap) ease, color var(--dur-tap) ease;
 }
 .dv2e-play-btn svg {
   color: var(--accent);
@@ -600,7 +600,7 @@
   /* [lc-2129] 中文/数字混排收紧字距，为一行放得下省宽 */
   letter-spacing: -0.01em;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  transition: background var(--dur-tap) ease, color var(--dur-tap) ease, box-shadow var(--dur-tap) ease;
 }
 .ep-mode-btn:hover {
   color: var(--text-strong);
@@ -640,7 +640,7 @@
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  transition: background var(--dur-tap) ease, color var(--dur-tap) ease, box-shadow var(--dur-tap) ease;
 }
 .dv2e-view-btn:hover {
   color: var(--text-strong);
@@ -790,7 +790,7 @@
   cursor: pointer;
   user-select: none;
   overflow: hidden;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: background var(--dur-tap) ease, border-color var(--dur-tap) ease, color var(--dur-tap) ease;
 }
 .dv2e-cell:hover {
   background: var(--hover-strong);
@@ -843,7 +843,7 @@
   color: var(--muted);
   cursor: pointer;
   opacity: 0.85;
-  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+  transition: opacity var(--dur-tap) ease, background var(--dur-tap) ease, color var(--dur-tap) ease;
 }
 .dv2e-cell-mark:not(.on) {
   opacity: 0;
@@ -903,7 +903,7 @@
   line-height: 1;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+  transition: opacity var(--dur-tap) ease, background var(--dur-tap) ease, color var(--dur-tap) ease;
 }
 .dv2e-cell:hover .dv2e-cell-meta,
 .dv2e-cell:focus-within .dv2e-cell-meta {
@@ -935,7 +935,7 @@
   padding: var(--sp-3) var(--sp-3);
   border-bottom: 1px solid var(--line);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--dur-tap);
 }
 .dv2e-row:last-child {
   border-bottom: none;
@@ -1188,7 +1188,7 @@
   background: rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(6px);
   opacity: 0.85;
-  transition: opacity 0.15s ease, background 0.15s ease;
+  transition: opacity var(--dur-tap) ease, background var(--dur-tap) ease;
   flex: 0 0 auto;
 }
 .dv2e-row:hover .dv2e-play,
@@ -1237,7 +1237,7 @@
   backdrop-filter: blur(6px);
   cursor: pointer;
   opacity: 0.8;
-  transition: opacity 0.15s ease, background 0.15s ease;
+  transition: opacity var(--dur-tap) ease, background var(--dur-tap) ease;
   z-index: 2;
 }
 .dv2e-row:hover .dv2e-meta-btn {
@@ -1265,7 +1265,7 @@
   backdrop-filter: blur(6px);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+  transition: opacity var(--dur-tap) ease, background var(--dur-tap) ease, color var(--dur-tap) ease;
   z-index: 2;
 }
 .dv2e-row:hover .dv2e-watched-btn,
@@ -1297,7 +1297,7 @@
   font-size: var(--fs-body);
   line-height: 1;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background var(--dur-tap) ease, color var(--dur-tap) ease;
 }
 .dv2-meta-btn:hover {
   background: var(--hover-strong);
@@ -1314,7 +1314,7 @@
   align-items: center;
   justify-content: center;
   padding: var(--sp-8) var(--sp-5) var(--sp-5);
-  animation: pageIn 0.18s ease;
+  animation: pageIn var(--dur-move) ease;
 }
 .meta-modal {
   position: relative;
@@ -1551,7 +1551,7 @@
   background: var(--bg-2, var(--hover));
   color: inherit;
   cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  transition: border-color var(--dur-tap) ease, background var(--dur-tap) ease, transform var(--dur-tap) ease;
 }
 .mp-card:hover {
   background: var(--hover-strong);
@@ -1685,7 +1685,7 @@
   font-size: var(--fs-cap);
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: background var(--dur-tap) ease, border-color var(--dur-tap) ease, color var(--dur-tap) ease;
   /* [版本文案] 文件名兜底标签可能很长：限宽 + 省略号，完整名称见 title。 */
   max-width: 220px;
   overflow: hidden;

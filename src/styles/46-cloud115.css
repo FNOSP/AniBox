@@ -15,7 +15,7 @@
   flex-direction: column;
   gap: var(--sp-4);
   padding: var(--sp-5) var(--sp-6) var(--sp-7);
-  animation: c115-fade-up 0.28s ease-out;
+  animation: c115-fade-up var(--dur-page) ease-out;
 }
 
 @keyframes c115-fade-up {
@@ -76,7 +76,7 @@
   color: var(--ink);
   font-size: var(--fs-ctl);
   cursor: pointer;
-  transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease;
+  transition: border-color var(--dur-tap) ease, transform var(--dur-tap) ease, background var(--dur-tap) ease;
 }
 
 .c115-mini:hover {
@@ -113,7 +113,7 @@
   font-size: var(--fs-cap);
   opacity: 0.65;
   cursor: pointer;
-  transition: opacity 0.15s ease, background 0.15s ease;
+  transition: opacity var(--dur-tap) ease, background var(--dur-tap) ease;
 }
 
 .c115-seg:hover {
@@ -137,7 +137,7 @@
   font-size: var(--fs-ctl);
   color: #ff7b7b;
   word-break: break-all;
-  animation: c115-fade-up 0.2s ease-out;
+  animation: c115-fade-up var(--dur-move) ease-out;
 }
 
 .c115-dim {
@@ -161,7 +161,7 @@
   background: var(--glass);
   box-shadow: var(--shadow-card);
   overflow: hidden;
-  animation: c115-fade-up 0.3s ease-out;
+  animation: c115-fade-up var(--dur-page) ease-out;
 }
 
 .c115-login::before {
@@ -256,7 +256,7 @@
   cursor: pointer;
   padding: var(--sp-1) var(--sp-3);
   border-radius: var(--r-full);
-  transition: background 0.15s ease;
+  transition: background var(--dur-tap) ease;
 }
 
 .c115-crumb button:hover {
@@ -293,7 +293,7 @@
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--glass);
-  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  transition: border-color var(--dur-tap) ease, background var(--dur-tap) ease, transform var(--dur-tap) ease;
 }
 
 .c115-item.dir {
@@ -374,7 +374,7 @@
   flex: none;
   opacity: 0.45;
   transform: scale(0.92);
-  transition: opacity 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  transition: opacity var(--dur-tap) ease, transform var(--dur-tap) ease, box-shadow var(--dur-tap) ease;
 }
 
 .c115-item:hover .c115-play {
@@ -406,7 +406,7 @@
   color: var(--ink);
   font-size: var(--fs-ctl);
   cursor: pointer;
-  transition: border-color 0.15s ease, transform 0.15s ease;
+  transition: border-color var(--dur-tap) ease, transform var(--dur-tap) ease;
 }
 
 .c115-more:hover {
@@ -574,7 +574,7 @@
   opacity: 0.62;
   cursor: pointer;
   white-space: nowrap;
-  transition: opacity 0.15s ease, transform 0.15s ease, border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+  transition: opacity var(--dur-tap) ease, transform var(--dur-tap) ease, border-color var(--dur-tap) ease, background var(--dur-tap) ease, color var(--dur-tap) ease;
 }
 
 .c115-tab:hover {
@@ -714,7 +714,7 @@
 
 .c115-wdpick {
   border-radius: var(--r-md);
-  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  transition: border-color var(--dur-tap) ease, background var(--dur-tap) ease, transform var(--dur-tap) ease;
 }
 
 .c115-wdpick:hover {
@@ -733,7 +733,7 @@
 
 .c115-wdform input {
   border-radius: var(--r-md);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color var(--dur-tap) ease, box-shadow var(--dur-tap) ease;
 }
 
 .c115-wdform input:focus {
@@ -763,29 +763,29 @@
 }
 
 /* ═══════════ [lc-1984] 云盘页动效统一（对齐 JavHub 手感） ═══════════ */
-.c115-view { animation: c115-view-in 0.25s ease-out both; }
+.c115-view { animation: c115-view-in var(--dur-page) ease-out both; }
 @keyframes c115-view-in {
   from { opacity: 0; transform: translateY(6px); }
 }
 
-.cloud-page .c115-grid .c115-item { animation: c115-item-in 0.28s ease-out both; }
-.cloud-page .c115-grid .c115-item:nth-child(2) { animation-delay: 0.03s; }
-.cloud-page .c115-grid .c115-item:nth-child(3) { animation-delay: 0.06s; }
-.cloud-page .c115-grid .c115-item:nth-child(4) { animation-delay: 0.09s; }
-.cloud-page .c115-grid .c115-item:nth-child(5) { animation-delay: 0.12s; }
-.cloud-page .c115-grid .c115-item:nth-child(n + 6) { animation-delay: 0.15s; }
+.cloud-page .c115-grid .c115-item { animation: c115-item-in var(--dur-page) ease-out both; }
+.cloud-page .c115-grid .c115-item:nth-child(2) { animation-delay: 40ms; }
+.cloud-page .c115-grid .c115-item:nth-child(3) { animation-delay: 60ms; }
+.cloud-page .c115-grid .c115-item:nth-child(4) { animation-delay: 100ms; }
+.cloud-page .c115-grid .c115-item:nth-child(5) { animation-delay: 120ms; }
+.cloud-page .c115-grid .c115-item:nth-child(n + 6) { animation-delay: 160ms; }
 @keyframes c115-item-in {
   from { opacity: 0; transform: translateY(8px) scale(0.98); }
 }
 
-.cloud-page .c115-login { animation: c115-view-in 0.25s ease-out both; }
+.cloud-page .c115-login { animation: c115-view-in var(--dur-page) ease-out both; }
 
 /* 按压反馈：tab/mini 已含 transform 过渡，seg 补齐 */
-.cloud-page .c115-seg { transition: opacity 0.15s ease, background 0.15s ease, transform 0.12s ease; }
+.cloud-page .c115-seg { transition: opacity var(--dur-tap) ease, background var(--dur-tap) ease, transform var(--dur-tap) ease; }
 .cloud-page .c115-tab:active,
 .cloud-page .c115-mini:active,
 .cloud-page .c115-seg:active { transform: scale(0.96); }
-.cloud-page .c115-crumb button { transition: background 0.15s ease; }
+.cloud-page .c115-crumb button { transition: background var(--dur-tap) ease; }
 
 @media (prefers-reduced-motion: reduce) {
   .c115-view,
@@ -802,7 +802,7 @@
 .cloud-page .c115-login::before,
 .cloud-page .c115-login::after { display: none; }
 /* 导航胶囊已换 libf-open（应用标准），补按压反馈 */
-.cloud-page .libf-open { transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease; }
+.cloud-page .libf-open { transition: transform var(--dur-tap) ease, background var(--dur-tap) ease, border-color var(--dur-tap) ease, color var(--dur-tap) ease; }
 .cloud-page .libf-open:active { transform: scale(0.96); }
 /* 旧 tab 样式在本页不再使用 */
 .cloud-page .c115-title-ico { display: none; }

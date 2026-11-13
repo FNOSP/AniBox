@@ -23,7 +23,7 @@
   line-height: 1;
   cursor: pointer;
   -webkit-app-region: no-drag;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background var(--dur-tap) ease, border-color var(--dur-tap) ease;
 }
 .tb-search:hover {
   background: var(--tb-hover-bg);
@@ -56,7 +56,7 @@
   align-items: flex-start;
   padding: var(--sp-7) var(--sp-4) var(--sp-4);
   background: rgba(6, 8, 14, 0.32);
-  animation: search-fade 0.16s ease-out;
+  animation: search-fade var(--dur-tap) ease-out;
 }
 @keyframes search-fade {
   from {
@@ -80,7 +80,7 @@
   backdrop-filter: blur(24px) saturate(1.2);
   -webkit-backdrop-filter: blur(24px) saturate(1.2);
   color: var(--text);
-  animation: search-pop 0.18s var(--ease);
+  animation: search-pop var(--dur-move) var(--ease);
 }
 html.dark .search-panel {
   background: color-mix(in srgb, var(--bg-3) 92%, transparent);
@@ -196,7 +196,7 @@ html.dark .search-panel {
   line-height: 1.2;
   white-space: nowrap; /* 标签不换行 */
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background var(--dur-tap) ease, color var(--dur-tap) ease;
 }
 .search-tab:hover {
   background: var(--hover);
@@ -292,7 +292,7 @@ html.dark .search-panel {
   color: var(--text);
   text-align: left;
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition: background var(--dur-tap) ease, border-color var(--dur-tap) ease;
 }
 .search-row:hover,
 .search-row.on {

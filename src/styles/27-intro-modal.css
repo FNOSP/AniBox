@@ -61,7 +61,7 @@
   background: transparent;
   cursor: default;
   /* [lc-1429] 遮罩本身透明，但给一个极轻的淡入做层次（比侧栏快，先到后停） */
-  animation: scrimIn 0.28s ease both;
+  animation: scrimIn var(--dur-page) ease both;
 }
 @keyframes scrimIn {
   from { opacity: 0; }

@@ -20,7 +20,7 @@
   color: inherit;
   font: inherit;
   cursor: pointer;
-  transition: transform 0.18s ease;
+  transition: transform var(--dur-move) ease;
 }
 /* 悬停轻微上浮（用户要求"有反馈"）；不影响布局（用 transform） */
 .drel-tmdb-card:hover {
@@ -40,7 +40,7 @@
   overflow: hidden;
   background: var(--ph-bg);
   border: 1px solid var(--line);
-  transition: border-color 0.15s ease;
+  transition: border-color var(--dur-tap) ease;
 }
 .drel-tmdb-card:hover .drel-tmdb-cv {
   border-color: rgb(var(--accent-rgb) / 0.55);

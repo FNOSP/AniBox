@@ -45,7 +45,7 @@
   cursor: pointer;
   opacity: 0;
   pointer-events: none; /* 默认不可点：避免"看不见却点得到"的误触 */
-  transition: opacity 0.22s ease, color 0.2s ease, text-shadow 0.2s ease, transform 0.12s ease;
+  transition: opacity var(--dur-page) ease, color var(--dur-move) ease, text-shadow var(--dur-move) ease, transform var(--dur-tap) ease;
 }
 /* ⚠ 必须显式兜住 hover/active：全局 button:hover 会铺一层底色、:active 有 scale(.97)，
    特异性高于单类选择器（同 lc-1402 的 padding 坑），不复位就会又冒出个方块底色。 */

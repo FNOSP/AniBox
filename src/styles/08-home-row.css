@@ -57,7 +57,7 @@
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
-  transition: background 0.18s ease, transform 0.18s ease, opacity 0.18s ease;
+  transition: background var(--dur-move) ease, transform var(--dur-move) ease, opacity var(--dur-move) ease;
   z-index: 3;
   /* 默认隐藏，悬停卡片时出现 */
   opacity: 0;

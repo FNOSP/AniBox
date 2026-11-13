@@ -62,7 +62,7 @@
   border: 1px solid var(--line);
   background: var(--hover);
   cursor: pointer;
-  transition: 0.16s;
+  transition: var(--dur-tap);
 }
 
 .dchip:hover {
@@ -88,7 +88,7 @@
   font-size: var(--fs-body);
   cursor: pointer;
   /* [lc-1590] 动效：悬停转 180°、忙时（disabled）持续旋转 */
-  transition: background 0.2s, color 0.2s, transform 0.3s var(--ease);
+  transition: background var(--dur-move), color var(--dur-move), transform var(--dur-page) var(--ease);
 }
 
 .dicon:hover {
@@ -266,7 +266,7 @@
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  transition: filter 0.2s, opacity 0.2s;
+  transition: filter var(--dur-move), opacity var(--dur-move);
 }
 
 .dfeat-btn:hover {
@@ -293,7 +293,7 @@
   background: var(--bg-2);
   border: 1px solid transparent;
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+  transition: transform var(--dur-move), box-shadow var(--dur-move), border-color var(--dur-move);
 }
 
 .dpc:hover {
@@ -509,8 +509,8 @@
   font-family: inherit;
   cursor: pointer;
   /* 保留 overflow 默认值：顶部居中的「今天」圆点靠近上缘，避免任何裁切 */
-  transition: background 0.18s, color 0.18s, border-color 0.18s, box-shadow 0.18s,
-    transform 0.18s var(--ease);
+  transition: background var(--dur-move), color var(--dur-move), border-color var(--dur-move), box-shadow var(--dur-move),
+    transform var(--dur-move) var(--ease);
 }
 
 .dweek:hover {
@@ -547,7 +547,7 @@
   border-radius: var(--r-xs);
   background: var(--accent-grad);
   pointer-events: none;
-  transition: width 0.3s ease, background 0.18s;
+  transition: width var(--dur-page) ease, background var(--dur-move);
 }
 
 .dweek.on {
@@ -555,7 +555,7 @@
   color: var(--text-strong);
   border-color: var(--line-strong);
     /* 选中时弹一下（弹性曲线，像左栏标签那样） */
-  animation: dweekPop 0.35s var(--ease-spring);
+  animation: dweekPop var(--dur-page) var(--ease-spring);
 }
 @keyframes dweekPop {
   0% {
@@ -649,51 +649,51 @@
   border-radius: var(--r-md);
   border: 1px solid transparent;
   cursor: pointer;
-  transition: background 0.16s, border-color 0.16s, transform 0.2s var(--ease),
-    box-shadow 0.2s;
+  transition: background var(--dur-tap), border-color var(--dur-tap), transform var(--dur-move) var(--ease),
+    box-shadow var(--dur-move);
 }
 
 /* [lc-1590] 列表入场：切天/首次渲染时逐条淡入上浮（前 12 条按序递增延迟，更靠后的一起入）。
    ⚠ fill-mode 用 `backwards` 而不是 `both`：`both` 会在动画结束后**钉住** transform，
    把悬停的 translateX(3px) 顶掉（动画的填充值优先于普通声明）。 */
 .dlist > * {
-  animation: ditemIn 0.34s var(--ease) backwards;
+  animation: ditemIn var(--dur-page) var(--ease) backwards;
 }
 .dlist > :nth-child(1) {
-  animation-delay: 0.01s;
+  animation-delay: 20ms;
 }
 .dlist > :nth-child(2) {
-  animation-delay: 0.03s;
+  animation-delay: 40ms;
 }
 .dlist > :nth-child(3) {
-  animation-delay: 0.05s;
+  animation-delay: 60ms;
 }
 .dlist > :nth-child(4) {
-  animation-delay: 0.07s;
+  animation-delay: 80ms;
 }
 .dlist > :nth-child(5) {
-  animation-delay: 0.09s;
+  animation-delay: 100ms;
 }
 .dlist > :nth-child(6) {
-  animation-delay: 0.11s;
+  animation-delay: 120ms;
 }
 .dlist > :nth-child(7) {
-  animation-delay: 0.13s;
+  animation-delay: 140ms;
 }
 .dlist > :nth-child(8) {
-  animation-delay: 0.15s;
+  animation-delay: 160ms;
 }
 .dlist > :nth-child(9) {
-  animation-delay: 0.17s;
+  animation-delay: 180ms;
 }
 .dlist > :nth-child(10) {
-  animation-delay: 0.19s;
+  animation-delay: 200ms;
 }
 .dlist > :nth-child(11) {
-  animation-delay: 0.21s;
+  animation-delay: 220ms;
 }
 .dlist > :nth-child(12) {
-  animation-delay: 0.23s;
+  animation-delay: 240ms;
 }
 @keyframes ditemIn {
   0% {
@@ -975,7 +975,7 @@ html.dark .ditem-tag.ep {
   border-radius: 0;
   background: transparent;
   color: var(--text);
-  animation: dlibPageIn 0.5s var(--ease) both;
+  animation: dlibPageIn var(--dur-page) var(--ease) both;
 }
 
 html.dark .dlib-pane {
@@ -1033,7 +1033,7 @@ html.dark .dlib-pane {
   font-family: inherit;
   flex-shrink: 0;
   cursor: pointer;
-  transition: color 0.16s, border-color 0.16s;
+  transition: color var(--dur-tap), border-color var(--dur-tap);
 }
 
 .dlib-src > svg {
@@ -1123,7 +1123,7 @@ html.dark .dlib-pane {
   font-family: inherit;
   white-space: nowrap;
   cursor: pointer;
-  transition: background 0.16s, color 0.16s, border-color 0.16s;
+  transition: background var(--dur-tap), color var(--dur-tap), border-color var(--dur-tap);
 }
 
 .dip-chip:hover {
@@ -1149,7 +1149,7 @@ html.dark .dlib-pane {
   font-size: var(--fs-cap);
   font-family: inherit;
   outline: none;
-  transition: border-color 0.16s;
+  transition: border-color var(--dur-tap);
 }
 
 .dip-search:focus {
@@ -1188,8 +1188,8 @@ html.dark .dip-hint {
   overflow: hidden;
   font-family: inherit;
   cursor: pointer;
-  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
-  animation: dlibGridIn 0.45s var(--ease) both;
+  transition: transform var(--dur-page) ease, box-shadow var(--dur-page) ease, border-color var(--dur-page) ease;
+  animation: dlibGridIn var(--dur-page) var(--ease) both;
 }
 
 .dip-card:hover {
@@ -1201,7 +1201,7 @@ html.dark .dip-hint {
 /* 按压反馈：快速回落（高频交互 120–180ms 口径） */
 .dip-card:active {
   transform: translateY(-1px) scale(0.98);
-  transition-duration: 0.12s;
+  transition-duration: var(--dur-tap);
 }
 
 .dip-card:disabled {
@@ -1252,7 +1252,7 @@ html.dark .dip-hint {
   color: #f76b15;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
   cursor: pointer;
-  transition: color 0.16s, transform 0.16s;
+  transition: color var(--dur-tap), transform var(--dur-tap);
 }
 
 .dip-fav:hover {
@@ -1363,7 +1363,7 @@ html.dark .dlib-ov-v.green {
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   backdrop-filter: blur(14px);
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color var(--dur-move), box-shadow var(--dur-move);
 }
 
 .dlib-search:focus-within {
@@ -1378,7 +1378,7 @@ html.dark .dlib-ov-v.green {
 
 /* 聚焦时图标转一圈（设计稿的 searchSpin） */
 .dlib-search:focus-within .dlib-search-ico {
-  animation: dlibSearchSpin 0.5s var(--ease);
+  animation: dlibSearchSpin var(--dur-page) var(--ease);
 }
 
 .dlib-search-in {
@@ -1408,7 +1408,7 @@ html.dark .dlib-ov-v.green {
   background: var(--hover);
   color: var(--muted);
   cursor: pointer;
-  transition: background 0.16s, color 0.16s;
+  transition: background var(--dur-tap), color var(--dur-tap);
 }
 
 .dlib-search-x:hover {
@@ -1470,7 +1470,7 @@ html.dark .dlib-ov-v.green {
   white-space: nowrap;
   overflow: hidden;
   cursor: pointer;
-  transition: background 0.2s, color 0.2s;
+  transition: background var(--dur-move), color var(--dur-move);
 }
 
 .dlib-tab > span {
@@ -1490,7 +1490,7 @@ html.dark .dlib-ov-v.green {
 .dlib-tab.on {
   background: var(--sel-bg);
   color: var(--text-strong);
-    animation: dlibTabPop 0.4s var(--ease-spring);
+    animation: dlibTabPop var(--dur-page) var(--ease-spring);
 }
 
 /* 视图切换 / 排序切换（两个独立玻璃胶囊） */
@@ -1517,7 +1517,7 @@ html.dark .dlib-ov-v.green {
   background: transparent;
   color: var(--text-2);
   cursor: pointer;
-  transition: background 0.2s, color 0.2s;
+  transition: background var(--dur-move), color var(--dur-move);
 }
 
 .dlib-vbtn:hover {
@@ -1528,7 +1528,7 @@ html.dark .dlib-ov-v.green {
 .dlib-vbtn.on {
   background: var(--sel-bg);
   color: var(--text-strong);
-    animation: dlibPop 0.4s var(--ease-spring);
+    animation: dlibPop var(--dur-page) var(--ease-spring);
 }
 
 /* 排序胶囊：文字按钮自带 6px 纵向内边距，比视图圆钮（28px）高一点 ——
@@ -1551,7 +1551,7 @@ html.dark .dlib-ov-v.green {
   font-family: inherit;
   white-space: nowrap;
   cursor: pointer;
-  transition: background 0.2s, color 0.2s;
+  transition: background var(--dur-move), color var(--dur-move);
 }
 
 .dlib-sbtn:hover {
@@ -1562,7 +1562,7 @@ html.dark .dlib-ov-v.green {
 .dlib-sbtn.on {
   background: var(--sel-bg);
   color: var(--text-strong);
-    animation: dlibPop 0.4s var(--ease-spring);
+    animation: dlibPop var(--dur-page) var(--ease-spring);
 }
 
 /* 滚动容器沿用 .dscroll（已 overflow-x: hidden ⇒ 横向绝不溢出），这里只补一点内边距细节。
@@ -1589,7 +1589,7 @@ html.dark .dlib-ov-v.green {
 
 /* 组头依次入场（内容切换时重挂载 ⇒ 重播） */
 .dlib-tl > .dlib-grp {
-  animation: dlibEnter 0.5s var(--ease) both;
+  animation: dlibEnter var(--dur-page) var(--ease) both;
 }
 
 .dlib-ghd {
@@ -1656,7 +1656,7 @@ html.dark .dlib-ov-v.green {
   grid-template-columns: 40px 22px minmax(0, 1fr);
   align-items: stretch;
   min-width: 0;
-  animation: dlibRowIn 0.42s var(--ease) both;
+  animation: dlibRowIn var(--dur-page) var(--ease) both;
 }
 
 .dlib-date {
@@ -1730,7 +1730,7 @@ html.dark .dlib-rank.r3 {
   background: var(--bg-3);
   border: 3px solid var(--accent);
   box-shadow: 0 0 0 4px rgb(var(--accent-rgb) / 0.18);
-  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  transition: transform var(--dur-page) ease, box-shadow var(--dur-page) ease;
 }
 
 .dlib-row:hover .dlib-dot {
@@ -1769,7 +1769,7 @@ html.dark .dlib-rank.r3 {
   background: var(--bg-2);
   border: 1px solid var(--line);
   cursor: pointer;
-  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+  transition: transform var(--dur-page) ease, box-shadow var(--dur-page) ease, border-color var(--dur-page) ease;
 }
 
 .dlib-card:hover {
@@ -1807,7 +1807,7 @@ html.dark .dlib-rank.r3 {
   height: 100%;
   object-fit: cover;
   display: block;
-  transition: transform 0.4s ease;
+  transition: transform var(--dur-page) ease;
 }
 
 .dlib-card:hover .dlib-poster img,
@@ -2009,8 +2009,8 @@ html.dark .dlib-badge-soon {
   background: var(--bg-2);
   border: 1px solid var(--line);
   cursor: pointer;
-  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
-  animation: dlibGridIn 0.45s var(--ease) both;
+  transition: transform var(--dur-page) ease, box-shadow var(--dur-page) ease, border-color var(--dur-page) ease;
+  animation: dlibGridIn var(--dur-page) var(--ease) both;
 }
 
 .dlib-gcard:hover {
@@ -2127,8 +2127,8 @@ html.dark .dlib-badge-soon {
   border: 1px solid var(--line);
   overflow: hidden;
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-  animation: dlibListIn 0.38s var(--ease) both;
+  transition: transform var(--dur-move) ease, box-shadow var(--dur-move) ease, border-color var(--dur-move) ease;
+  animation: dlibListIn var(--dur-page) var(--ease) both;
 }
 
 /* 悬停时左侧亮起一条主色竖条（设计稿 list-card::before） */
@@ -2141,7 +2141,7 @@ html.dark .dlib-badge-soon {
   width: 3px;
   background: var(--accent);
   transform: scaleY(0);
-  transition: transform 0.28s var(--ease);
+  transition: transform var(--dur-page) var(--ease);
 }
 
 .dlib-lrow:hover {
@@ -2480,8 +2480,8 @@ html.dark .dlib-badge-soon {
   font-family: inherit;
   white-space: nowrap;
   cursor: pointer;
-  transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.2s var(--ease),
-    box-shadow 0.2s;
+  transition: background var(--dur-move), color var(--dur-move), border-color var(--dur-move), transform var(--dur-move) var(--ease),
+    box-shadow var(--dur-move);
 }
 .darc-btn:hover {
   background: var(--hover-strong);
@@ -2504,7 +2504,7 @@ html.dark .dlib-badge-soon {
   box-shadow: var(--shadow-card);
   overflow: hidden;
   /* [lc-1592] 进场：卡片微放大 + 上浮 */
-  animation: arcModalIn 0.2s var(--ease);
+  animation: arcModalIn var(--dur-move) var(--ease);
 }
 @keyframes arcModalIn {
   from {
@@ -2517,13 +2517,13 @@ html.dark .dlib-badge-soon {
   }
 }
 /* [lc-1592] 关闭：遮罩淡出 + 卡片微缩下沉。由 SeasonArchive 在关闭时挂上 `.arc-mask-closing`，
-   等动画走完（170ms）再真正卸载 —— 所以类名要**同时命中 .ddet-mask**（不然会被它自己的
+   等动画走完（--dur-tap）再真正卸载 —— 所以类名要**同时命中 .ddet-mask**（不然会被它自己的
    `animation: pageIn` 按文件顺序盖掉）。 */
 .ddet-mask.arc-mask-closing {
-  animation: arcMaskOut 0.17s ease forwards;
+  animation: arcMaskOut var(--dur-tap) ease forwards;
 }
 .ddet-mask.arc-mask-closing .arc-modal {
-  animation: arcModalOut 0.17s var(--ease-exit) forwards;
+  animation: arcModalOut var(--dur-tap) var(--ease-exit) forwards;
 }
 @keyframes arcMaskOut {
   to {
@@ -2589,7 +2589,7 @@ html.dark .dlib-badge-soon {
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
-  transition: background 0.2s, border-color 0.2s;
+  transition: background var(--dur-move), border-color var(--dur-move);
 }
 .arc-ybtn:hover,
 .arc-ybtn.on {
@@ -2597,7 +2597,7 @@ html.dark .dlib-badge-soon {
   border-color: var(--accent);
 }
 .arc-ychev {
-  transition: transform 0.25s var(--ease);
+  transition: transform var(--dur-page) var(--ease);
 }
 .arc-ybtn.on .arc-ychev {
   transform: rotate(180deg);
@@ -2618,7 +2618,7 @@ html.dark .dlib-badge-soon {
   border-radius: var(--r-md);
   background: var(--bg-3);
   box-shadow: var(--shadow-card);
-  animation: arcPanelIn 0.16s ease;
+  animation: arcPanelIn var(--dur-tap) ease;
 }
 @keyframes arcPanelIn {
   from {
@@ -2641,7 +2641,7 @@ html.dark .dlib-badge-soon {
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--dur-tap), color var(--dur-tap);
 }
 .arc-yitem:hover {
   background: var(--hover);
@@ -2667,7 +2667,7 @@ html.dark .dlib-badge-soon {
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
-  transition: background 0.2s, color 0.2s;
+  transition: background var(--dur-move), color var(--dur-move);
 }
 .arc-sbtn:hover {
   background: var(--hover);
@@ -2709,7 +2709,7 @@ html.dark .dlib-badge-soon {
   font-family: inherit;
   text-align: left;
   border-radius: var(--r-sm);
-  animation: arcCardIn 0.34s var(--ease) backwards;
+  animation: arcCardIn var(--dur-page) var(--ease) backwards;
 }
 @keyframes arcCardIn {
   from {
@@ -2725,7 +2725,7 @@ html.dark .dlib-badge-soon {
    不该带指针/hover 上浮（否则加载态看着像能点） */
 button.arc-card {
   cursor: pointer;
-  transition: transform 0.22s var(--ease);
+  transition: transform var(--dur-page) var(--ease);
 }
 button.arc-card:hover {
   transform: translateY(-3px);
@@ -2745,7 +2745,7 @@ button.arc-card:focus-visible {
   background: var(--ph-bg);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
   /* [lc-1605] 封面跟着卡片一起动（上浮 + 阴影加深） */
-  transition: transform 0.22s var(--ease), box-shadow 0.22s ease;
+  transition: transform var(--dur-page) var(--ease), box-shadow var(--dur-page) ease;
 }
 button.arc-card:hover .arc-cv {
   transform: translateY(-1px);
@@ -2772,7 +2772,7 @@ button.arc-card:hover .arc-cv {
   object-fit: cover;
   display: block;
   /* [lc-1625] 图片就绪时淡入，避免"占位块 → 图"硬切 */
-  animation: arcImgIn 0.3s ease;
+  animation: arcImgIn var(--dur-page) ease;
 }
 @keyframes arcImgIn {
   from {
@@ -2892,7 +2892,7 @@ button.arc-card:hover .arc-cv {
   font-family: inherit;
   white-space: nowrap;
   cursor: pointer;
-  transition: background 0.16s, color 0.16s, border-color 0.16s;
+  transition: background var(--dur-tap), color var(--dur-tap), border-color var(--dur-tap);
 }
 
 .dj-chip.sm {
@@ -2922,7 +2922,7 @@ button.arc-card:hover .arc-cv {
   font-size: var(--fs-cap);
   font-family: inherit;
   outline: none;
-  transition: border-color 0.16s;
+  transition: border-color var(--dur-tap);
 }
 
 .dj-search:focus {
@@ -2967,7 +2967,7 @@ button.arc-card:hover .arc-cv {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform 0.18s ease-out;
+  transition: transform var(--dur-move) ease-out;
 }
 
 .dj-card:hover .dj-poster img {
@@ -3027,7 +3027,7 @@ button.arc-card:hover .arc-cv {
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  transition: border-color 0.16s, color 0.16s;
+  transition: border-color var(--dur-tap), color var(--dur-tap);
 }
 
 .dj-morebtn:hover:not(:disabled) {
@@ -3053,7 +3053,7 @@ button.arc-card:hover .arc-cv {
   padding: var(--sp-5);
   background: rgba(10, 14, 30, 0.45);
   backdrop-filter: blur(2px);
-  animation: dj-mask-in 0.16s ease-out;
+  animation: dj-mask-in var(--dur-tap) ease-out;
 }
 
 @keyframes dj-mask-in {
@@ -3065,7 +3065,7 @@ button.arc-card:hover .arc-cv {
   position: relative;
   width: min(560px, 100%);
   max-height: calc(100vh - 48px);
-  animation: dj-panel-in 0.22s var(--ease-enter);
+  animation: dj-panel-in var(--dur-page) var(--ease-enter);
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
@@ -3109,7 +3109,7 @@ button.arc-card:hover .arc-cv {
   background: var(--glass-bg);
   color: var(--text-2);
   cursor: pointer;
-  transition: color 0.16s, border-color 0.16s;
+  transition: color var(--dur-tap), border-color var(--dur-tap);
 }
 
 .dj-close:hover {
@@ -3204,7 +3204,7 @@ button.arc-card:hover .arc-cv {
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
-  transition: border-color 0.16s, color 0.16s;
+  transition: border-color var(--dur-tap), color var(--dur-tap);
 }
 
 .dj-ep:hover:not(:disabled) {
@@ -3278,7 +3278,7 @@ html.dark .dj-hint {
   cursor: pointer;
   opacity: 0;
   transform: scale(0.9);
-  transition: opacity 0.16s ease-out, transform 0.16s ease-out, color 0.16s;
+  transition: opacity var(--dur-tap) ease-out, transform var(--dur-tap) ease-out, color var(--dur-tap);
 }
 
 /* 悬停卡片才显出星标（避免糊满屏幕）；已收藏 / 键盘聚焦时常显 */
@@ -3319,7 +3319,7 @@ html.dark .dj-hint {
   background: var(--glass-bg);
   color: var(--text-2);
   cursor: pointer;
-  transition: color 0.16s, border-color 0.16s;
+  transition: color var(--dur-tap), border-color var(--dur-tap);
 }
 
 .dj-dfav:hover {
@@ -3386,7 +3386,7 @@ html.dark .dj-hint {
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  transition: opacity 0.16s;
+  transition: opacity var(--dur-tap);
 }
 
 .dj-dhist-go:hover:not(:disabled) {

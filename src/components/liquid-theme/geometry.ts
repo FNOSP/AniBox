@@ -11,7 +11,7 @@
  *   C 液柱悬空 → 水体 + 液柱各自独立子路径（nonzero 并集），中间不连
  */
 
-import { STAGE_BOUNDS, clamp01, easeInOutCubic, gaussian, lerp, smoothstep, span } from "./timeline.ts";
+import { STAGE_BOUNDS, clamp01, easeInOutSine, gaussian, lerp, smoothstep, span } from "./timeline.ts";
 import type { LiquidStage } from "./types.ts";
 
 export type LiquidGeoInput = {
@@ -38,6 +38,10 @@ export type LiquidShape = {
   coverage: number;
   /** 0..1 水流量（驱动连续流水声与高光浓度） */
   flow: number;
+  /** 湿边（水线高光）不透明度 0..1：水面贴近顶边时收到 0，避免白光扫过顶部 */
+  sheenAlpha: number;
+  /** 是否已经完全盖满（true 时调用方可以把 clip-path 切成 none 停止逐帧栅格化） */
+  sealed: boolean;
 };
 
 /** path 数值：一位小数足够（亚像素无差），字符串更短 → 每帧写入更快 */
@@ -77,17 +81,44 @@ function surfaceBase(t: number, h: number): number {
   // 又不会提前把液柱吞掉（1.06 时整段 pour 完全看不到水，观感像液柱掉进虚空）。
   const bottom = h * 1.005;
   const accumulate = smoothstep(STAGE_BOUNDS.pour, STAGE_BOUNDS.pool, t) * h * 0.20;
-  const rise = easeInOutCubic(span(t, STAGE_BOUNDS.pool, 1)) * (h * 1.24);
+  /* [lc-2155] 上涨行程从 1.24h 收到 0.87h + 缓动改 easeInOutSine。
+     原来 1.24h 远超"盖满"所需的 0.805h，盖满落在缓动曲线的 65% 处 ——
+     正好压上 easeInOutCubic 的 3× 峰速，实测 0.70→0.85（157ms）盖完 81% 屏幕，
+     观感就是"前 80% 慢慢磨、到 80 多突然冲上去"（用户反馈）。
+     现在行程与所需距离对齐、峰速 1.57×，盖满落在 t≈0.92，上涨段速度均匀；
+     最后 8% 是水面已盖满后的收束。 */
+  /* 行程 0.82h 是实测调出来的：水面起于 0.805h 下方（1.005h 起点 − 0.20h 积水），
+     正好在缓动曲线尾部（t≈0.97）才走到顶边 —— 最后 3% 留给 sealed 收束，
+     不再出现"84% 就盖满、之后十来帧空转"的空档（截图实测）。 */
+  const rise = easeInOutSine(span(t, STAGE_BOUNDS.pool, 1)) * (h * 0.82);
   return bottom - accumulate - rise;
 }
 
-/** 水体振幅：撞击瞬间最大，上涨期保持起伏，收尾衰减（不是硬停） */
-function amplitudeAt(t: number, h: number): number {
+/** 水体振幅：撞击瞬间最大；接近视口顶边时**必须压平到 0**。
+ *
+ *  [lc-2155] 这是「90% 左右页面元素闪一下」的真因：
+ *    水面基准越过顶边（surface ≈ 0）时波浪仍有 ±29px 振幅 ——
+ *    于是**波峰先越过顶边、波谷还差几十像素**，顶边残留一撮撮锯齿状旧主题竖条，
+ *    且它们随波相位左右移动，看起来就是顶部元素在闪。
+ *    把振幅随 surface 趋近 0 压平后，整条水线一次越过顶边，切得干净。 */
+function amplitudeAt(t: number, h: number, surface: number): number {
   const boom = gaussian(span(t, STAGE_BOUNDS.pour, STAGE_BOUNDS.impact + 0.06), 0.16);
   const flowing = smoothstep(STAGE_BOUNDS.impact, STAGE_BOUNDS.pool, t);
   const fade = 1 - 0.5 * smoothstep(0.9, 1, t);
   const base = Math.min(30, Math.max(9, h * 0.024));
-  return base * (0.3 + flowing * 0.8 + boom * 0.9) * fade;
+  /* 压平窗口从 **0.45h** 开始（原来 0.20h 太晚 —— 实测水面到 y=145（顶部 18%）时
+     振幅还有 142px，顶边残留一大片锯齿，正是用户说的"90 左右闪一下"）。
+     0.45h 起随水位线性收到 0，上升段前半仍保留明显波浪，后半平滑压平。 */
+  const flatten = smoothstep(0, h * 0.45, surface);
+  return base * (0.3 + flowing * 0.8 + boom * 0.9) * fade * flatten;
+}
+
+/** 湿边（水线高光）可见度：水面接近顶部时收掉。
+ *  7px 白色柔光扫过顶部会像"闪一下白光"，所以让它比振幅更早淡出：
+ *  实测水面在 y=145（顶部 18%）时 sheenAlpha 还是 1.00，顶部确实会闪；
+ *  改成在 0.06h→0.40h 之间淡完，进入顶部 40% 时已经完全不可见。 */
+function sheenAlphaAt(h: number, surface: number): number {
+  return smoothstep(h * 0.06, h * 0.4, surface);
 }
 
 /** 液面 y：多正弦叠加 + 撞击点局部涟漪（涟漪是水面几何本身，不是额外画的圈） */
@@ -182,8 +213,14 @@ const DROP_G = 2600; // px/s²，视觉重力（不是物理真值）
 export function buildLiquidShape(input: LiquidGeoInput): LiquidShape {
   const { w, h, t, ox, oy, or, seed } = input;
   const surface = surfaceBase(t, h);
-  const amp = amplitudeAt(t, h);
+  // 振幅需要 surface（越接近顶边越压平，见 amplitudeAt 注释）
+  const amp = amplitudeAt(t, h, surface);
   const coverage = clamp01((h - surface) / Math.max(1, h));
+  const sheenAlpha = sheenAlphaAt(h, surface);
+  /* 完全盖满：水面已越过顶边且振幅压到 0（此时水线是一条直线、已经出屏），
+     可以把 clip 直接切成 none —— 少一次每帧的整屏 clip-path 栅格化，
+     也彻底消除"顶部残留锯齿"的可能。 */
+  const sealed = surface + amp * 1.2 <= 0;
 
   // 水量 = 上升速度 + 撞击瞬时能量（供连续流水声与高光浓度使用）
   // 注意 t=0 必须为 0：动画尚未开始就报 0.62 的水量，音效会在第一帧就误起流水。
@@ -325,5 +362,14 @@ export function buildLiquidShape(input: LiquidGeoInput): LiquidShape {
     }
   }
 
-  return { clip, sheen, surfaceY: surface, coverage, flow };
+  return {
+    clip,
+    // sealed 之后水线已出屏，清空 sheen 省一次整屏描边
+    sheen: sealed ? "" : sheen,
+    surfaceY: surface,
+    coverage,
+    flow,
+    sheenAlpha,
+    sealed,
+  };
 }

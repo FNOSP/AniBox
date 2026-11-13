@@ -267,6 +267,8 @@ export function createLiquidReveal(
   let t0 = 0;
   let lastStage: LiquidStage = "idle";
   let frame: LiquidFrameSnapshot | null = null;
+  /** [lc-2155] 是否已把 clip-path 切成 none（完全盖满后省掉每帧整屏栅格化） */
+  let sealedApplied = false;
   let scrollSnaps: { el: Element; top: number; left: number }[] = [];
   let detachResize: (() => void) | null = null;
   let detachScroll: (() => void) | null = null;
@@ -384,7 +386,7 @@ export function createLiquidReveal(
     syncViewport();
   }
 
-  /* ── 每帧：只写两个 path 的 d ── */
+  /* ── 每帧：只写必要的几个属性（clip 的 d、湿边的 d / opacity）── */
   function applyFrame(progress: number): void {
     const p = clamp01(progress);
     const { w, h } = viewport();
@@ -399,9 +401,35 @@ export function createLiquidReveal(
       or: origin.radius,
       seed: 20261113,
     });
-    clipShape.setAttribute("d", shape.clip);
-    sheenPath.setAttribute("d", shape.sheen);
-    haloPath.setAttribute("d", shape.sheen);
+
+    /* [lc-2155] 两个"90% 闪一下"的修复：
+       ① 湿边跟随水位淡出（sheenAlpha）：7px 白色柔光扫过顶部会像闪一下白光。
+       ② 完全盖满后把 clip-path 切成 none：水面已越过顶边、振幅已压平，
+          clip 再算下去只是一条出屏的直线 —— 切成 none 既省掉每帧整屏栅格化，
+          也彻底消除"顶部残留锯齿/旧主题竖条"的可能。
+          注意必须**先**判断 sealed 才能跳过 d 写入，否则会先画一帧残形。 */
+    if (shape.sealed) {
+      if (!sealedApplied) {
+        sealedApplied = true;
+        reveal.style.clipPath = "none";
+        (reveal.style as CSSStyleDeclaration & { webkitClipPath?: string }).webkitClipPath = "none";
+        sheenSvg.style.opacity = "0";
+      }
+    } else {
+      if (sealedApplied) {
+        // 重复点击/中断后重新开一轮时恢复（正常情况下 sealed 只发生在最后一帧）
+        sealedApplied = false;
+        reveal.style.clipPath = `url(#${cfg.clipId})`;
+        (reveal.style as CSSStyleDeclaration & { webkitClipPath?: string }).webkitClipPath = `url(#${cfg.clipId})`;
+        sheenSvg.style.opacity = "1";
+      }
+      clipShape.setAttribute("d", shape.clip);
+      sheenPath.setAttribute("d", shape.sheen);
+      haloPath.setAttribute("d", shape.sheen);
+      // 湿边不透明度：水面贴到顶边时收到 0（避免白光扫过顶部）
+      haloPath.setAttribute("opacity", (0.55 * shape.sheenAlpha).toFixed(3));
+      sheenPath.setAttribute("opacity", shape.sheenAlpha.toFixed(3));
+    }
 
     frame = {
       progress: p,

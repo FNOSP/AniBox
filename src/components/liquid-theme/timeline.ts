@@ -64,6 +64,14 @@ export function easeInOutCubic(t: number): number {
   return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
 }
 
+/** 上涨段专用缓动：峰值速度只有 1.57×（cubic 是 3×）。
+ *  原来用 cubic，峰值落在 t≈0.78 那一截 —— 观感就是"到 80 多突然冲上去"（用户实测反馈）。
+ *  sine 的加速度分布更均匀，中段匀速推进、收尾自然减速。 */
+export function easeInOutSine(t: number): number {
+  const x = clamp01(t);
+  return -(Math.cos(Math.PI * x) - 1) / 2;
+}
+
 /** 高斯包（涟漪、局部起伏用） */
 export function gaussian(d: number, sigma: number): number {
   const s = Math.abs(sigma) < 1e-6 ? 1e-6 : sigma;

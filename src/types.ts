@@ -607,4 +607,9 @@ export type AppSettings = {
   gamepadDirectionThreshold?: number;
   gamepadRepeatDelay?: number;
   gamepadRepeatInterval?: number;
+  /** [liquid-theme] 主题切换音效开关（默认关闭）。与音量一起存 localStorage
+   *  （纯前端偏好，不入 Rust config：它不影响后端任何行为）。 */
+  themeSound?: boolean;
+  /** [liquid-theme] 主题切换音效音量 0..1，默认 0.45 */
+  themeSoundVolume?: number;
 };

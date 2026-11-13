@@ -1,11 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { Root } from "./App";
+import { applyThemeToDocument, readStoredTheme } from "./lib/theme";
 
-// 主题在首帧渲染前落到 html 上（默认浅色），避免启动闪深色
-if (localStorage.getItem("fntv-theme") === "dark") {
-  document.documentElement.classList.add("dark");
-}
+// [liquid-theme] 首屏主题在 React 挂载前落到 <html data-theme>，避免刷新时闪现错误主题。
+// 这里**同步**读 localStorage：晚一帧就会看到浅色一闪。
+applyThemeToDocument(readStoredTheme());
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

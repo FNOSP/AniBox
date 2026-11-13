@@ -1,5 +1,6 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
 import { AppSettings } from "../types";
+import { DEFAULT_LIQUID_AUDIO_PREFS, loadLiquidAudioPrefs, saveLiquidAudioPrefs } from "../components/liquid-theme/prefs";
 
 export const DEFAULT_SETTINGS: AppSettings = {
   exitMode: "ask",
@@ -27,5 +28,24 @@ export const DEFAULT_SETTINGS: AppSettings = {
   playerGlassBlur: true,
   // 界面不透明度（百分比）：默认 85，范围 60–100（Rust 侧 set_settings 同口径 clamp）
   uiOpacity: 85,
+  // [liquid-theme] 主题切换音效默认关闭（需求明确要求）；音量 45%
+  themeSound: DEFAULT_LIQUID_AUDIO_PREFS.enabled,
+  themeSoundVolume: DEFAULT_LIQUID_AUDIO_PREFS.volume,
 };
+
+/* [liquid-theme] 主题音效是**纯前端**偏好：Rust 的 set_settings 白名单里没有这两键，
+   走 IPC 会被回滚成旧值。所以单独存 localStorage（模块 prefs.ts），
+   并在 App 启动时用它覆盖镜像里的默认值。 */
+export function readThemeSoundPrefs(): { themeSound: boolean; themeSoundVolume: number } {
+  const p = loadLiquidAudioPrefs();
+  return { themeSound: p.enabled, themeSoundVolume: p.volume };
+}
+
+export function writeThemeSoundPrefs(patch: { themeSound?: boolean; themeSoundVolume?: number }): void {
+  const cur = loadLiquidAudioPrefs();
+  saveLiquidAudioPrefs({
+    enabled: patch.themeSound ?? cur.enabled,
+    volume: patch.themeSoundVolume ?? cur.volume,
+  });
+}
 /** 平均亮度阈值（0..255）：> 阈值 = 亮底 → 深色 chrome */

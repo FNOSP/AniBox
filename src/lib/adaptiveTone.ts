@@ -48,7 +48,8 @@ export function relLuma(r: number, g: number, b: number): number {
 }
 
 export function isDarkTheme(): boolean {
-  return document.documentElement.classList.contains("dark");
+  // [liquid-theme] 主题作用域从 html.dark class 改为 data-theme 属性（见 lib/theme.ts）
+  return document.documentElement.getAttribute("data-theme") === "dark";
 }
 
 /** 主题兜底：浅色主题背景亮 → "light"（前景纯黑）；深色主题背景暗 → "dark"（前景纯白）。 */

@@ -32,6 +32,8 @@ import {
   Webview2Status,
 } from "../../types";
 import { formatSpeed, normalizeCheck } from "../../lib/update";
+// [liquid-theme] 音效试听：只在用户点按钮时创建 AudioContext（Autoplay 政策要求手势内解锁）
+import { auditionLiquidStage, createLiquidAudio, type LiquidAudio } from "../liquid-theme/audio";
 
 /* [更新与维护] 「关于」区的占位文案。
    TODO: 等后端 `app_info()` 正式接入并返回稳定字段后，可删掉这两个常量，
@@ -399,6 +401,26 @@ export function SettingsPanel({
   }, [closing, onClose]);
   const [autostart, setAutostart] = useState(
     () => localStorage.getItem("fntv-autostart") === "1",
+  );
+
+  /* [liquid-theme] 主题切换音效试听：实例**懒创建**（首次点试听时，处于用户手势内），
+     用完保留复用，卸载时 dispose。音量跟随当前设置实时同步。 */
+  const auditionRef = useRef<LiquidAudio | null>(null);
+  const audition = (stage: "pour" | "impact" | "rise" | "settle", direction: "darken" | "lighten") => {
+    if (!auditionRef.current) {
+      auditionRef.current = createLiquidAudio({ volume: settings.themeSoundVolume ?? 0.45 });
+    }
+    const a = auditionRef.current;
+    a.setVolume(settings.themeSoundVolume ?? 0.45);
+    a.setMuted(false);
+    auditionLiquidStage(a, stage, direction);
+  };
+  useEffect(
+    () => () => {
+      auditionRef.current?.dispose();
+      auditionRef.current = null;
+    },
+    [],
   );
 
   /* ── 标签分类 ──
@@ -2143,6 +2165,64 @@ export function SettingsPanel({
                       aria-label="轮播透明标题"
                       onClick={() => onSettings({ carouselLogo: !settings.carouselLogo })}
                     />
+                  </div>
+
+                  {/* ── [liquid-theme] 主题切换音效 ──
+                      默认关闭；音量与开关存 localStorage（纯前端偏好）。
+                      四个试听按钮对应液体动画的四个真实阶段，方便用户先听再决定。 */}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">主题切换音效</span>
+                      <div className="set-desc">
+                        深浅切换时配合液体动画的水声（本地合成，不联网）。浅色转深色偏低沉，深色转浅色偏清亮。
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${settings.themeSound ? " on" : ""}`}
+                      aria-pressed={!!settings.themeSound}
+                      aria-label="主题切换音效"
+                      onClick={() => onSettings({ themeSound: !settings.themeSound })}
+                    />
+                  </div>
+                  <div className={`set-row set-slider-row${settings.themeSound ? "" : " set-row-dim"}`}>
+                    <div>
+                      <span className="set-k">音效音量</span>
+                      <div className="set-desc">仅影响主题切换音效</div>
+                    </div>
+                    <div className="set-range-wrap">
+                      <input
+                        type="range"
+                        className="set-range"
+                        min={0}
+                        max={100}
+                        step={5}
+                        value={Math.round((settings.themeSoundVolume ?? 0.45) * 100)}
+                        disabled={!settings.themeSound}
+                        aria-label="主题切换音效音量"
+                        onChange={(e) => onSettings({ themeSoundVolume: Number(e.target.value) / 100 })}
+                      />
+                      <span className="set-range-val">
+                        {Math.round((settings.themeSoundVolume ?? 0.45) * 100)}%
+                      </span>
+                    </div>
+                  </div>
+                  <div className="set-row set-row-col">
+                    <span className="set-k">试听</span>
+                    <div className="set-actions">
+                      <button type="button" className="set-btn" onClick={() => audition("pour", "darken")}>
+                        流出
+                      </button>
+                      <button type="button" className="set-btn" onClick={() => audition("impact", "darken")}>
+                        落底
+                      </button>
+                      <button type="button" className="set-btn" onClick={() => audition("rise", "lighten")}>
+                        上涨
+                      </button>
+                      <button type="button" className="set-btn" onClick={() => audition("settle", "lighten")}>
+                        完成
+                      </button>
+                    </div>
                   </div>
 
                 </>

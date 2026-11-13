@@ -55,7 +55,10 @@ import {
 import { pick } from "./lib/format";
 import { bgmImg, pickImgStr, pickLargestImg, tmdbImg } from "./lib/images";
 import { DUR, prefersReducedMotion } from "./lib/motion";
-import { DEFAULT_SETTINGS } from "./lib/settings";
+import { DEFAULT_SETTINGS, readThemeSoundPrefs, writeThemeSoundPrefs } from "./lib/settings";
+import { applyThemeToDocument, readStoredTheme, THEME_STORAGE_KEY } from "./lib/theme";
+// [liquid-theme] 液体主题切换：揭示层内是新主题作用域的视觉快照，液体经过处即换主题
+import { useLiquidThemeReveal } from "./components/liquid-theme";
 import { computeUiAlpha } from "./lib/uiOpacity";
 import { normalizeCheck } from "./lib/update";
 import { AppSettings, BgmCalendarItem, ChromeTone, Config, Lib, MediaItem, PersonTarget, PersonWork, PlayItem, PlayTarget, TmdbDiscoverItem, UpdateCheckResult } from "./types";
@@ -151,13 +154,17 @@ function App() {
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
   }, [sidebarOpen]);
-  // 深浅主题：默认浅色；html.dark 类由本状态驱动，首帧前 main.tsx 已按存储值预置防闪烁
-  const [theme, setTheme] = useState<"light" | "dark">(() =>
-    localStorage.getItem("fntv-theme") === "dark" ? "dark" : "light",
-  );
+  // 深浅主题：默认浅色。作用域写在 <html data-theme>（[liquid-theme] 把原来的
+  // html.dark class 换成了属性，这样同一屏能同时挂两套主题：底层旧 + 液体揭示层新）。
+  // 首帧前 main.tsx 已按存储值预置，避免刷新闪错主题。
+  const [theme, setTheme] = useState<"light" | "dark">(readStoredTheme);
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
-    localStorage.setItem("fntv-theme", theme);
+    applyThemeToDocument(theme);
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      /* 隐私模式：忽略 */
+    }
     // SWCA 模糊染色随主题切换（浅色近白/深色近黑）
     invoke("set_acrylic_tint", { light: theme === "light" }).catch(() => {});
   }, [theme]);
@@ -181,6 +188,8 @@ function App() {
       ...cached,
       // 老缓存里可能是 "continue"：统一归一，避免选择器显示空值
       launchPage: normalizeLaunchPage(cached.launchPage),
+      // [liquid-theme] 主题音效偏好单独存 localStorage（Rust 白名单没有这两键）
+      ...readThemeSoundPrefs(),
     };
   });
   // applyLaunchPage 在异步加载回调里读取最新值（不能闭包捕获旧 settings）
@@ -228,10 +237,21 @@ function App() {
   /** 改设置：**先本地生效**（开关点下去立刻有反应），再落盘；落盘失败则重拉真实配置覆盖回来。 */
   const patchSettings = useCallback(async (patch: Partial<AppSettings>) => {
     setSettings((prev) => ({ ...prev, ...patch }));
+    // [liquid-theme] 主题音效偏好是纯前端项：写 localStorage，不进 Rust 白名单
+    // （否则 set_settings 会把它丢掉，回来再覆盖成旧值 = 开关点了没反应）
+    if (patch.themeSound !== undefined || patch.themeSoundVolume !== undefined) {
+      writeThemeSoundPrefs(patch);
+      const rest = { ...patch };
+      delete rest.themeSound;
+      delete rest.themeSoundVolume;
+      if (!Object.keys(rest).length) return;
+      patch = rest;
+    }
     try {
       const saved = await invoke<AppSettings>("set_settings", { arg: patch });
       const next = { ...saved, launchPage: normalizeLaunchPage(saved.launchPage) };
-      setSettings((prev) => ({ ...prev, ...next }));
+      // 后端不返回音效两键 → 保留当前值，别被 next 冲掉
+      setSettings((prev) => ({ ...prev, ...next, themeSound: prev.themeSound, themeSoundVolume: prev.themeSoundVolume }));
       try {
         localStorage.setItem("fntv-settings", JSON.stringify(next));
       } catch {
@@ -241,7 +261,7 @@ function App() {
       // 回滚：不能让界面停在一个"没写进配置"的值上。重拉最稳
       // （逐个键反推"改之前"容易出错，且 Rust 侧可能只拒了其中一个键）
       invoke<AppSettings>("get_settings")
-        .then((s) => s && setSettings((prev) => ({ ...prev, ...s })))
+        .then((s) => s && setSettings((prev) => ({ ...prev, ...s, themeSound: prev.themeSound, themeSoundVolume: prev.themeSoundVolume })))
         .catch(() => {});
     }
   }, []);
@@ -904,45 +924,35 @@ function App() {
     },
   });
 
-  // [lc-123-rev7] 深浅模式切换：**「外部扩散」= 镂空反向扩散**（用户否掉 v6 的实色圆吞屏：
-  // 「从按钮处往外扩散」：主题**立即切换**（DOM/类名马上换），随后铺一层**新主题的底色**
-  // （CSS 变量按层次铺，见 App.css .theme-veil），clip-path: circle() 从**按钮处 0 长到全屏** ——
-  // 圆内是新主题底色、圆外是尚未被盖住的旧界面，圆边向外推进 = 新主题从按钮荡开盖满屏。
-  // 印象层**不放截图**（WebView2 无页面截图通道），也不用纯 #fff/#000。
-  const [veil, setVeil] = useState<{ x: number; y: number } | null>(null);
+  /* [liquid-theme] 深浅切换：液体从按钮下方流出、落底飞溅、积聚成波浪液面、上涨盖满视口。
+     实现说明（与旧 .theme-veil 的关键差别）：
+       · 旧版只能铺一层**新主题纯底色**（圆内是色块，卡片/文字不变）—— 因为主题是全局 class。
+       · 现在主题挂在 data-theme 属性上，所以揭示层里放的是**新主题作用域下的视觉快照**：
+         液体经过哪里，那里的背景/卡片/文字/边框/图表就已经是新主题了。
+       · 每帧只改 <path d> 与一条描边，不 setState（动画期间组件树零重渲染）。
+       · 完成时先同步提交主题再拆层，同任务内完成 → 不闪帧。
+     音效：默认关闭，开关与音量在设置面板「外观」；由动画的真实阶段与 flow 驱动。 */
+  const liquid = useLiquidThemeReveal({
+    theme,
+    onChange: setTheme,
+    applyDomTheme: applyThemeToDocument,
+    // 性能模式 / 系统减少动效 → 直接切（不铺全屏重绘层）
+    instant: settings.perfMode || prefersReducedMotion(),
+    audioEnabled: settings.themeSound,
+    audioVolume: settings.themeSoundVolume,
+  });
   const toggleTheme = useCallback(
     (e: React.MouseEvent<HTMLButtonElement>) => {
-      const next = theme === "dark" ? "light" : "dark";
-      // [lc-1437] 性能模式/少动效偏好：跳过扩散遮罩（那是一次全屏重绘，正是性能模式要省的）
-      if (prefersReducedMotion() || settings.perfMode) {
-        setVeil(null);
-        setTheme(next);
-        return;
-      }
-      const r = e.currentTarget.getBoundingClientRect();
-      // 主题先切（新主题立刻生效），遮罩再铺**新主题底色**从按钮处长出
-      setTheme(next);
-      setVeil({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+      liquid.toggle(e);
     },
-    [theme, settings.perfMode],
+    [liquid],
   );
-  // [lc-1406] 遮罩移除的**双保险**：
-  //   ① 正常路径：animationend（动画结束）
-  //   ② 兜底：定时器（动画 --dur-page + 余量后无条件清掉）
-  //   为什么必须有 ②：animationend 并非总能到达 —— 窗口失焦/最小化/后台时 Chromium 会节流甚至
-  //   暂停动画，事件可能永不触发；此遮罩是 z-index:80 的**固定全屏层**，一旦残留就永久盖着页面
-  //   （用户反馈的"演职人员背景有个大圆还在"就是它的形状：clip-path 圆停在中途，边缘是一段大圆弧）。
-  //   定时器以 veil 的 x/y 为依赖：每次切换都会重置，所以它只兜"这一次动画没结束"，不会误杀下一次。
-  const onVeilEnd = useCallback(() => setVeil(null), []);
-  useEffect(() => {
-    if (!veil) return;
-    const t = window.setTimeout(() => setVeil(null), DUR.page + 240);
-    return () => window.clearTimeout(t);
-  }, [veil]);
 
-  // [lc-1406] 切换视图/页面时清掉遮罩：遮罩属于"主题切换这一瞬间"的视觉，不该跨视图存活。
+  // [liquid-theme] 切视图/页面时中断液体（它属于"切换主题这一瞬间"，不该跨视图残留）
   useEffect(() => {
-    setVeil(null);
+    liquid.cancel();
+    // 只依赖 view/page：liquid.cancel 是稳定引用，故意不进依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, page]);
 
   // 首页数据落盘（30 分钟 TTL）：重启/会话恢复时零请求直出；数据落定 1.5s 后快照
@@ -1598,23 +1608,8 @@ function App() {
           }}
         />
       ))}
-      {/* [lc-123-rev7] 深浅切换的**镂空反向扩散**：旧主题印象层（CSS 变量底色，无截图通道）
-          用 clip-path: circle() 从 150% 收缩到 0 —— 圆内是旧界面、圆外已是新界面，"透明的外部扩散"。
-          原点来自按钮 rect（--tx/--ty）；z-index 80 > 顶栏 50；pointer-events:none；
-          animationend 后从 DOM 移除。 */}
-      {veil && (
-        <div
-          className="theme-veil"
-          style={
-            {
-              "--tx": `${veil.x}px`,
-              "--ty": `${veil.y}px`,
-            } as React.CSSProperties
-          }
-          onAnimationEnd={onVeilEnd}
-          aria-hidden="true"
-        />
-      )}
+      {/* [liquid-theme] 液体揭示层由 useLiquidThemeReveal 直接挂到 body（不经 React），
+          这里不再需要旧版 .theme-veil 的圆形遮罩节点。 */}
       <TitleBar
         title="AniBox"
         nav={view !== "login"}

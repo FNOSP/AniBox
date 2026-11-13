@@ -86,6 +86,12 @@ function fail(msg) {
 function ensureDirs() {
   fs.mkdirSync(path.join(OUT, 'third_party', 'fntv-mpv'), { recursive: true });
   fs.mkdirSync(path.join(OUT, 'third_party', 'proxy'), { recursive: true });
+  /* [lc-2163] duanju 也要建骨架：tauri.conf.json 的 bundle.resources 里**无条件**声明了
+     `bundle-resources/third_party/duanju/`，但短剧核心（guoapp duanju_core.dll）只有 Windows
+     amd64 有，Linux/macOS 上游未提供。此前这里漏建目录 → CI 上 Tauri 直接报
+     `resource path 'bundle-resources/third_party/duanju' doesn't exist` 并让三个平台全部构建失败。
+     空目录是合法的（Tauri 允许空资源目录），Windows 侧有文件时照常拷进去。 */
+  fs.mkdirSync(path.join(OUT, 'third_party', 'duanju'), { recursive: true });
 }
 
 function walk(dir, relBase, out) {
@@ -210,6 +216,12 @@ function main() {
   }
 
   fs.rmSync(OUT, { recursive: true, force: true });
+  /* [lc-2163] 清空后重建骨架目录（含 third_party/duanju）。
+     只靠逐文件 mkdirSync(dirname) 是建不出**空目录**的：
+     Linux/macOS 上短剧核心不存在 → 没有任何文件落在 duanju/ 下 → 目录缺失
+     → Tauri 报 `resource path 'bundle-resources/third_party/duanju' doesn't exist`
+     → 三个平台的 CI 全部构建失败。 */
+  ensureDirs();
   let bytes = 0;
   for (const it of items) {
     const dst = path.join(OUT, it.rel);

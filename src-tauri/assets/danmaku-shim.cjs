@@ -57,8 +57,9 @@ function loadMod() {
  *
  * 业务逻辑一字未改：客户端那边是多地址故障转移、只认精确匹配（主名归一化 + 季号一致）、
  * 未标季条目用分集标题核验、系列级匹配记忆、fnOS 原标题备用搜索词；编排器那边是
- * 自建源 → 内置 B站 → 弹弹play 的优先级链、低于聚合阈值时叠加合并、逐源 traces、
+ * 自建源命中也叠加内置 B站（[lc-2166] 三源全拉，threshold 门控保留）、逐源 traces、
  * 候选三源合并与序号重排。全是主仓库实测磨出来的细节，重写必然丢。
+ * 弹弹play（第三源）不经此链路，由 MPV Lua 侧 dd_flush_pending_comment(force) 恒拉。
  *
  * 配置由 Rust 侧写 %TEMP%/anibox-danmu-config.json + anibox-play-meta.json
  * （见 danmu-api-deps.cjs；每次读取都重读盘 ⇒ 设置面板改完立即生效）。

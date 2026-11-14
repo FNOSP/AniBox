@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /**
  * [lc-1561] 弹幕源编排器 —— **由主仓库 biliRunner.ts 原样转译**（tsc CommonJS 产物），
- * 业务逻辑一字未改：自建源 → 内置 B站 → 弹弹play 的优先级链、低于聚合阈值时叠加合并、
  * 逐源 traces、候选三源合并与序号重排、伪 id 直取分支 —— 全部保留。
+ * [lc-2166] 获取语义改为「三源全拉」：自建源命中也照常叠加内置 B站（threshold 门控保留，
+ * 设 0 = 关闭合并）；弹弹play 不经此链路，由 MPV Lua 侧 dd_flush_pending_comment(force) 恒拉。
  *
  * 两处环境替换（见下方注释）：
  *   ① electron → ./danmu-api-deps.cjs 桩（脚本目录由 shim 传入）
- *   ② dandanplay → 「由 MPV 弹幕脚本兜底」替身：该模块内嵌**第三方服务凭证密文常量**，
- *      按本仓库入库规则（凭据不入库）不移植；MPV 链路的弹弹play 兜底本就由 Lua 侧
- *      apis/dandanplay.lua 承担（内置凭证降级：暂缓 /comment → 其他源都失败才发），
- *      用户可见结果一致（实测日志：「自动补源：B站弹幕下载失败」→ Lua 立即 flush /comment）。
+ *   ② dandanplay → 「由 MPV 弹幕脚本承担」替身：该模块内嵌**第三方服务凭证密文常量**，
+ *      按本仓库入库规则（凭据不入库）不移植；MPV 链路的弹弹play 由 Lua 侧
+ *      apis/dandanplay.lua 承担（暂缓 /comment → 三源全拉恒叠加 / 其他源全败才兜底）。
  */
 'use strict';
 "use strict";
@@ -197,12 +197,13 @@ async function runBiliDanmaku(title, ep, out, threshold, season, timeoutMs = 600
     }
     const pre = await danmuApi.autoFetch(String(title || ''), Number(ep) || 0, out, Number(season) || 0, epTitle, seriesKey, altTitle);
     if (pre) {
-        // [lc-1288] 自建源命中但条数低于聚合阈值 → 不再短路，继续跑内置 B站 并按条目合并。
-        // 旧逻辑「命中即用」让 renren 这类只有个位数弹幕的条目直接终结整条链路，
-        // B站 上两万条弹幕的官方正片永远轮不到（用户实测：自建源仅 1 条也直接用）。
+        // [lc-2166] 三源全拉：自建源命中也照常跑内置 B站 并按条目合并——「不管前面是否有」。
+        // lc-1288 只在「低于聚合阈值」时合并（threshold 门控保留：设 0 = 关闭合并）；
+        // 现在去掉条数判断，命中多少条都叠加，跨源重复由条目级去重（writeMergedDanmakuXml）
+        // 与 MPV 侧 COMMENTS 精确去重（lc-1642）兜底。弹弹play（第三源）由 MPV Lua 侧
+        // dd_flush_pending_comment(force) 恒拉，不在此链路内。
         const th = Number(threshold) || 0;
-        const selfCount = Number(pre.danmaku_count) || 0;
-        if (th > 0 && selfCount < th && pre.ok) {
+        if (th > 0 && pre.ok) {
             const selfLines = readDanmakuLines(out);
             if (selfLines.length > 0) {
                 // B站 写临时文件：失败时自建源 XML（out）原样保留，成功时合并回写 out
@@ -215,12 +216,12 @@ async function runBiliDanmaku(title, ep, out, threshold, season, timeoutMs = 600
                         fs.unlinkSync(tmpOut);
                     }
                     catch (_) { /* 清理失败无害，下次覆盖 */ }
-                    log.info(`[biliRunner] 自建源 ${selfLines.length} 条低于阈值(${th}) → 已叠加内置B站 ${biliLines.length} 条，合并去重后 ${mergedCount} 条`);
+                    log.info(`[biliRunner] 三源全拉：自建源 ${selfLines.length} 条 → 已叠加内置B站 ${biliLines.length} 条，合并去重后 ${mergedCount} 条`);
                     traces.push({
                         id: 'danmu_api', attempted: true, used: true,
                         detail: pre.matched_title
-                            ? `命中《${pre.matched_title}》（精确匹配，${selfLines.length} 条低于阈值，已叠加内置B站）`
-                            : `精确匹配命中（${selfLines.length} 条低于阈值，已叠加内置B站）`,
+                            ? `命中《${pre.matched_title}》（精确匹配，${selfLines.length} 条，已叠加内置B站）`
+                            : `精确匹配命中（${selfLines.length} 条，已叠加内置B站）`,
                         count: selfLines.length,
                     });
                     traces.push({
@@ -230,7 +231,7 @@ async function runBiliDanmaku(title, ep, out, threshold, season, timeoutMs = 600
                     });
                     traces.push({
                         id: 'dandanplay', attempted: false, used: false,
-                        skippedReason: '前两源已合并命中，未启用（兜底源按需使用）',
+                        skippedReason: '弹弹play 由 MPV 弹幕脚本三源全拉（恒叠加），不经此链路',
                     });
                     return {
                         ...biliRes,
@@ -242,7 +243,7 @@ async function runBiliDanmaku(title, ep, out, threshold, season, timeoutMs = 600
                     };
                 }
                 // B站 链路失败：保留自建源弹幕（out 未被触碰），如实标注失败根因
-                log.warn('[biliRunner] 自建源低于阈值但内置B站叠加失败，仅用自建源: ' + ((biliRes && biliRes.error) || '未知'));
+                log.warn('[biliRunner] 自建源命中但内置B站叠加失败，仅用自建源: ' + ((biliRes && biliRes.error) || '未知'));
                 traces.push({
                     id: 'danmu_api', attempted: true, used: true,
                     detail: pre.matched_title ? `命中《${pre.matched_title}》（精确匹配）` : '精确匹配命中',
@@ -260,14 +261,14 @@ async function runBiliDanmaku(title, ep, out, threshold, season, timeoutMs = 600
             detail: pre.matched_title ? `命中《${pre.matched_title}》（精确匹配）` : '精确匹配命中',
             count: pre.danmaku_count,
         });
-        // 自建源命中 → 内置 B站 本轮未参与，如实标注（不是失败，是没轮到）
+        // 合并被关（threshold=0）或自建源 XML 读空 → 内置 B站 本轮未参与，如实标注
         traces.push({
             id: 'bilibili', attempted: false, used: false,
-            skippedReason: '自建源已命中，无需兜底',
+            skippedReason: th > 0 ? '自建源命中但 XML 读空，无内容可叠加' : '聚合已关闭（threshold=0），未叠加内置B站',
         });
         traces.push({
             id: 'dandanplay', attempted: false, used: false,
-            skippedReason: '自建源已命中，未启用（兜底源按需使用）',
+            skippedReason: '弹弹play 由 MPV 弹幕脚本三源全拉（恒叠加），不经此链路',
         });
         return { ...pre, sources: traces };
     }

@@ -173,15 +173,9 @@ pub struct Config {
     pub danmu_dd_app_id: String,
     #[serde(default)]
     pub danmu_dd_app_secret: String,
-    /// [lc-2056] 兜底阈值：主源（自建源 / B站）拿到的弹幕**少于**这个条数时，
-    /// 继续走弹弹play 兜底取弹幕库并叠加。**0 = 不启用**（默认，等价于「无弹幕才兜底」）。
-    ///
-    /// 为什么可调：原来的门槛是写死在 lua 里的 50 条（extra.lua:689），用户无法调整。
-    /// B站 常出现「命中了但只有零星几十条」（错集/冷门搬运/限流截断），此时按老逻辑
-    /// 算「已成功」，弹弹play 被取消 → 用户看到的就是「经常不会自动获取」。
-    /// 调到 1500 之类的量级后，低于它就是「不够看」，兜底会真的补上。
-    #[serde(default)]
-    pub danmu_dd_fallback_below: i64,
+    // [lc-2056] danmu_dd_fallback_below（兜底阈值）已随 [lc-2166]「三源全拉」退役删除：
+    // 弹弹play 恒拉叠加，不再有「主源少于 N 条才兜底」的判定。旧 config.json 里残留的
+    // 该键无 deny_unknown_fields，serde 反序列化时静默忽略。
     /// [lc-1789] 字幕源自定义密钥（设置面板「自定义密钥」区）：留空=内置共享；
     /// 填写则**优先于内置**（effective 链第一层）。只存本机 config.json。
     #[serde(default)]
@@ -421,7 +415,6 @@ impl Default for Config {
             danmu_api_bases: Vec::new(),
             danmu_dd_app_id: String::new(),
             danmu_dd_app_secret: String::new(),
-            danmu_dd_fallback_below: 0,
             sub_assrt_token: String::new(),
             sub_osub_key: String::new(),
             acg_user: String::new(),

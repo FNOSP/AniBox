@@ -2,7 +2,8 @@
 //!
 //! Rust 引擎开启时监听 127.0.0.1:22347（Lua 硬编码端口），路由：
 //!   GET /health                        → {ok:true,engine:"rust",...}
-//!   GET /danmaku?...                   → 自建源三跳；未命中/低于阈值反代内部 Node 端口
+//!   GET /danmaku?...                   → 自建源三跳；命中/未命中都反代内部 Node 端口
+//!                                        （[lc-2166] 三源全拉：命中也合并内置 B站，threshold=0 显式关闭）
 //!   GET /danmaku-candidates?...        → 自建源候选置顶 + 反代 Node 候选并重排 index
 //!   其余（含 /danmaku-pages、/danmaku-by-bvid、/danmaku-cookie-status、NAS 字幕）→ 原样反代
 
@@ -314,14 +315,16 @@ async fn handle_danmaku(target: &str, upstream: u16) -> (u16, String, Vec<u8>) {
 
     match outcome {
         Some(o) if o.ok => {
-            // 自建源命中但低于聚合阈值 → 交给内部 Node 走「自建源 + 内置B站」合并语义
-            if threshold > 0 && o.danmaku_count < threshold {
+            // [lc-2166] 三源全拉：自建源命中也交给内部 Node 走「自建源 + 内置B站」合并语义
+            //（不再按条数短路；threshold=0 仍可显式关闭合并）。Node 侧条目级合并去重，
+            // 重复请求自建源一次（本地服务，代价可忽略）；失败保留自建源结果。
+            if threshold > 0 {
                 let (st, ct, b) = proxy(upstream, "GET", target, &[], &[]).await;
                 if (200..300).contains(&st) {
                     return (st, ct, b);
                 }
                 crate::libmpv::trace(
-                    "[danmaku] 低于阈值反代 Node 失败，保留自建源结果",
+                    "[danmaku] 自建源命中但反代 Node 合并B站失败，保留自建源结果",
                 );
             }
             json_body(200, &result_json(&o))

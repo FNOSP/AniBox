@@ -990,8 +990,7 @@ export function SettingsPanel({
   const [ddNewUrl, setDdNewUrl] = useState("");
   const [ddCredId, setDdCredId] = useState("");
   const [ddCredSecret, setDdCredSecret] = useState("");
-  /* [lc-2056] 兜底阈值输入框（字符串态，失焦时归一化并提交） */
-  const [ddFallbackBelow, setDdFallbackBelow] = useState("0");
+  // [lc-2166] ddFallbackBelow（兜底阈值）已随「三源全拉」退役删除
   /* [lc-1789] 字幕源添加区 + 自定义密钥输入（值不回填，仅 Set 状态回显） */
   const [subKeyId, setSubKeyId] = useState("");
   const [subKeyOsub, setSubKeyOsub] = useState("");
@@ -1063,12 +1062,7 @@ export function SettingsPanel({
       .catch((e) => setDdNote(String(e)));
   }, []);
 
-  /* [lc-2056] 兜底阈值回填：settings 从后端拉到后同步进输入框（用户正在输入时不覆盖）。 */
-  const ddFallbackTouched = useRef(false);
-  useEffect(() => {
-    if (ddFallbackTouched.current) return;
-    setDdFallbackBelow(String(settings.danmuDdFallbackBelow ?? 0));
-  }, [settings.danmuDdFallbackBelow]);
+  // [lc-2166] 兜底阈值回填 effect 已随「三源全拉」退役删除
 
   /* [lc-1781] 字幕源（subtitle-sources.json）：kind ∈ xunlei/assrt/opensubtitles。
      mpv 侧 sub-assrt.lua 同读这份文件扇出搜索；迅雷无需 token。 */
@@ -2515,34 +2509,7 @@ export function SettingsPanel({
                         保存凭证
                       </button>
                     </div>
-                    {/* [lc-2056] 兜底阈值：主源弹幕少于 N 条时继续走弹弹play（0=不启用=原流程）。 */}
-                    <div className="set-row">
-                      <div>
-                        <span className="set-k">兜底阈值</span>
-                        <div className="set-desc">
-                          自建接口与 B 站拿到的弹幕少于该条数时，继续取弹弹play 弹幕库并叠加。
-                          填 0 = 不启用，只有两边都拿不到弹幕时才兜底。改完下一集生效。
-                        </div>
-                      </div>
-                      <input
-                        className="set-input"
-                        style={{ flex: "0 0 90px", textAlign: "right" }}
-                        inputMode="numeric"
-                        placeholder="0"
-                        value={ddFallbackBelow}
-                        onChange={(e) => {
-                          ddFallbackTouched.current = true;
-                          setDdFallbackBelow(e.target.value.replace(/[^\d]/g, ""));
-                        }}
-                        onBlur={() => {
-                          const n = Math.max(0, parseInt(ddFallbackBelow || "0", 10) || 0);
-                          setDdFallbackBelow(String(n));
-                          if (n !== (settings.danmuDdFallbackBelow ?? 0)) {
-                            onSettings({ danmuDdFallbackBelow: n });
-                          }
-                        }}
-                      />
-                    </div>
+                    {/* [lc-2166] 兜底阈值行已随「三源全拉」退役删除：三个弹幕源恒拉叠加，不再有阈值判定 */}
                   </div>
                   <div className="set-row set-row-col">
                     <span className="set-k">服务地址</span>

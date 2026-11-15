@@ -9614,9 +9614,14 @@ html.fnos-perf.dark{
     if (!_libIndex || !_libIndex.length) return null;
     const cands = [titleCn, titleOrig].map(normalizeTitle).filter((x) => x && x.length >= 2);
     if (!cands.length) return null;
-    for (const c of cands) for (const it of _libIndex) if (normalizeTitle(it.title) === c) return it.href;
     for (const c of cands) for (const it of _libIndex) {
       const t2 = normalizeTitle(it.title);
+      if (!t2 || t2.length < 2) continue;
+      if (t2 === c) return it.href;
+    }
+    for (const c of cands) for (const it of _libIndex) {
+      const t2 = normalizeTitle(it.title);
+      if (!t2 || t2.length < 2) continue;
       if (t2.includes(c) || c.includes(t2)) return it.href;
     }
     return null;
@@ -20059,7 +20064,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         ipcRenderer.once("version-info", (_e, info) => {
           if (!info || !info.version) return;
           const ver = String(info.version).replace(/-web$/, "");
-          const bt = "2026-11-07 15:20" ? " (2026-11-07 15:20)" : "";
+          const bt = "2026-11-15 21:23" ? " (2026-11-15 21:23)" : "";
           aboutVer.textContent = "\u7248\u672C\uFF1Av" + ver + bt;
         });
       } catch (_) {

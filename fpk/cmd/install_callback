@@ -7,7 +7,9 @@ mkdir -p "$TRIM_PKGVAR" "$TRIM_PKGETC"
 touch "$TRIM_PKGVAR/.installed"
 
 # Windows fnpack 打包的权限位全 0666，必须补可执行位，否则 cmd/main 的 nohup 会 Permission denied。
-chmod +x "$TRIM_APPDEST/server/fntvplus" 2>/dev/null || true
+# [lc-2172] 双架构合一包带两个二进制（fntvplus + fntvplus-arm64），都补上；
+# 单架构包不存在另一个文件，chmod 报错被 || true 吞掉，无害。
+chmod +x "$TRIM_APPDEST/server/fntvplus" "$TRIM_APPDEST/server/fntvplus-arm64" 2>/dev/null || true
 
 # 若发布包附带可覆盖用的 payload，则放到 var 目录（后端目前以内置嵌入为准，此处为扩展预留）。
 # 注：app/ 目录内容解包后直接落在 TRIM_APPDEST 根，故 app/server/payload/... → $TRIM_APPDEST/server/payload/...

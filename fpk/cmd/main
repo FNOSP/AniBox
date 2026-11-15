@@ -5,7 +5,19 @@
 # 注意：Windows 上 fnpack 打包的文件权限位全是 0666（无可执行位），
 # 所以 start 前必须 chmod +x 二进制，否则 nohup 直接 Permission denied。
 
+# [lc-2172] 双架构合一包（manifest platform=all）：按内核架构选二进制。
+#   x86_64 → server/fntvplus（amd64）；aarch64/arm64 → server/fntvplus-arm64。
+#   单架构旧包（platform=x86/arm）只带对应的一个二进制：架构匹配失败时回退
+#   默认路径，两代包都能启动。stop/status 不依赖 BIN，无需分支。
+ARCH="$(uname -m 2>/dev/null || echo unknown)"
 BIN="$TRIM_APPDEST/server/fntvplus"
+case "$ARCH" in
+  aarch64|arm64)
+    if [ -f "$TRIM_APPDEST/server/fntvplus-arm64" ]; then
+      BIN="$TRIM_APPDEST/server/fntvplus-arm64"
+    fi
+    ;;
+esac
 PIDFILE="$TRIM_PKGVAR/fntvplus.pid"
 LOG="$TRIM_PKGVAR/fntvplus.log"
 # 飞牛网关 Unix socket：桌面图标/应用中心经 /app/fntvplus/* 转发到这里（网关已校验 NAS 登录态）。
@@ -17,7 +29,7 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') [main] $*" >> "$LOG"; }
 start() {
   mkdir -p "$TRIM_PKGVAR" "$TRIM_PKGETC" 2>>"$LOG"
   log "==== start requested ===="
-  log "BIN=$BIN"
+  log "uname -m=$ARCH BIN=$BIN"
   log "TRIM_SERVICE_PORT=$TRIM_SERVICE_PORT TRIM_PKGETC=$TRIM_PKGETC TRIM_PKGVAR=$TRIM_PKGVAR TRIM_APPDEST=$TRIM_APPDEST"
   # [lc-167] 版本号来源：fnOS 注入的 TRIM_APPVER（取自 manifest version）优先透传给后端；
   #   未注入时后端自行按 manifest 文件多路兜底（旧实现只读 $TRIM_APPDEST/manifest 恒失败→界面显示 vdev）。

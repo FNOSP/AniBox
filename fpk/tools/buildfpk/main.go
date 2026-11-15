@@ -4,13 +4,16 @@
 // GUI：双击 fpk/打包.bat（PowerShell WinForms 界面，调本引擎并实时显示输出）。
 //
 // 用法：
-//	build-fpk.exe build   [--arch amd64|arm64] [--out <目录>]                开发测试版（版号自动 = fpk 提交数/痕迹）
-//	build-fpk.exe release --name <显示名> --version x.y.z [--arch amd64|arm64] [--out <目录>]   正式发布版（飞牛商店口径）
+//	build-fpk.exe build   [--arch amd64|arm64|all] [--out <目录>]                开发测试版（版号自动 = fpk 提交数/痕迹）
+//	build-fpk.exe release --name <显示名> --version x.y.z [--arch amd64|arm64|all] [--out <目录>]   正式发布版（飞牛商店口径）
 //
 // 架构：默认 amd64（manifest platform=x86）；--arch arm64 交叉编译 linux/arm64 并把 manifest platform 写成
 //       arm，产物加 -arm64 后缀（fnOS 商店 platform 三选一：x86 / arm / all，见 lc-1387）。
-//       包内只有 app/server/fntvplus 一个原生二进制，所以 ARM 包 = 同路径放 arm64 二进制 + platform=arm；
+//       单架构包内只有 app/server/fntvplus 一个原生二进制，所以 ARM 包 = 同路径放 arm64 二进制 + platform=arm；
 //       单次构建结束时会把该路径还原为 amd64（保持工作区默认形态）。
+//       [lc-2172] --arch all 双架构合一包：platform=all，包内同时放 fntvplus(amd64) +
+//       fntvplus-arm64 两个二进制，cmd/main 按 uname -m 选择（x86_64→fntvplus，
+//       aarch64→fntvplus-arm64）；产物名与 amd64 相同（AniBox-<版号>.fpk，无后缀）。
 // 流程：重建 payload(esbuild) → 交叉编译后端(linux/<arch>) → fnpack 打包
 //       → 产物移动到 --out 目录（默认 <仓库根>/release）。
 // 任何一步缺工具（node/go/fnpack）都会降级或给出明确提示；退出码 0=成功 1=失败。
@@ -33,21 +36,25 @@ var root string
 // productName 用户可见的产物名前缀（内部技术标识仍为 fntvplus，勿改）。
 const productName = "AniBox"
 
-// —— 架构支持（lc-1387）——
+// —— 架构支持（lc-1387；[lc-2172] 新增 all 双架构合一包）——
 const (
 	archAMD64 = "amd64"
 	archARM64 = "arm64"
+	archAll   = "all"
 )
 
 // normalizeArch 归一化 --arch 取值（兼容 aarch64/x86_64/arm 等写法）。
+// [lc-2172] 新增 all：双架构合一包（x86_64 + aarch64 两个二进制同包，启动脚本按 uname -m 选）。
 func normalizeArch(a string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(a)) {
-	case "", "amd64", "x86_64", "x64", "x86":
+	switch a {
+	case "", "amd64", "x86_64", "x86":
 		return archAMD64, nil
 	case "arm64", "aarch64", "arm":
 		return archARM64, nil
+	case "all", "both", "双架构", "合并":
+		return archAll, nil
 	}
-	return "", fmt.Errorf("未知架构 %q（仅支持 amd64 / arm64）", a)
+	return "", fmt.Errorf("未知架构 %q（仅支持 amd64 / arm64 / all）", a)
 }
 
 // archSuffix 产物文件名后缀（amd64 不加，保持命名 AniBox-<版号>.fpk 不变）。
@@ -58,10 +65,13 @@ func archSuffix(arch string) string {
 	return ""
 }
 
-// platformForArch fnOS manifest 的 platform 取值：amd64→x86、arm64→arm。
+// platformForArch fnOS manifest 的 platform 取值：amd64→x86、arm64→arm、all→all（fnOS 三选一）。
 func platformForArch(arch string) string {
-	if arch == archARM64 {
+	switch arch {
+	case archARM64:
 		return "arm"
+	case archAll:
+		return "all"
 	}
 	return "x86"
 }
@@ -70,7 +80,7 @@ func main() {
 	// 参数解析（手工，保持零依赖）：
 	//   build                          开发测试版
 	//   release --name X --version x.y.z   正式发布版
-	//   --arch amd64|arm64             目标架构（默认 amd64）
+	//   --arch amd64|arm64|all         目标架构（默认 amd64；all=双架构合一包）
 	//   --out <dir>                    产物输出目录（默认 <仓库根>/release）
 	mode := "build"
 	outDir := ""
@@ -140,7 +150,12 @@ func run(mode, relName, relVer, outDir, arch string) error {
 	fmt.Println("==============================================")
 	fmt.Printf("项目根: %s\n", root)
 	fmt.Printf("输出目录: %s\n", outDir)
-	fmt.Printf("目标平台: %s（linux/%s，manifest platform=%s）\n\n", arch, arch, platformForArch(arch))
+	// [lc-2172] arch=all 的展示口径：双架构合一（linux/amd64 + linux/arm64）
+	archDisp := arch
+	if arch == archAll {
+		archDisp = "amd64+arm64"
+	}
+	fmt.Printf("目标平台: %s（linux/%s，manifest platform=%s）\n\n", archDisp, archDisp, platformForArch(arch))
 
 	// [lc-1387] 打包前把 manifest 的 platform 写成目标架构，打包完成后还原：
 	//   fnOS 商店 platform 三选一（x86 / arm / all），包内二进制必须与之一致。
@@ -167,7 +182,9 @@ func run(mode, relName, relVer, outDir, arch string) error {
 
 	// [lc-1387] 包内只有 app/server/fntvplus 一个原生二进制：arm64 构建后把该路径还原为 amd64，
 	// 避免工作区里留着一个 ARM 二进制（下次构建本来也会重编，但状态一致更不易误判）。
-	if arch != archAMD64 {
+	// [lc-2172] arch=all 不还原：fntvplus（amd64）+ fntvplus-arm64 双二进制就是合一包的
+	// 预期工作区状态，两个路径都保留。
+	if arch != archAMD64 && arch != archAll {
 		bin := filepath.Join(root, "app", "server", "fntvplus")
 		if goBin, _ := exec.LookPath("go"); goBin != "" {
 			if err := buildBackend(bin, archAMD64); err != nil {
@@ -242,19 +259,33 @@ func runRelease(relName, relVer, arch string) (string, error) {
 }
 
 // buildPackage 完整打包链路：payload → 后端(<arch>) → fnpack → 本地命名（dev/rel）。
+// [lc-2172] arch=all：amd64 与 arm64 两个二进制都编译进 app/server/（fntvplus + fntvplus-arm64），
+// manifest platform=all，启动脚本 cmd/main 按内核架构（uname -m）选择。
 func buildPackage(kind, arch string) (string, error) {
 	syncPayload()
 	// fnpack 会把 app/ 整个打进去：若残留 build-fpk.sh 时代留下的 fntvplus-arm64，
 	// 每个包都会白胖 ~10MB 且与 manifest platform 语义打架，这里明确提示。
-	if stale := filepath.Join(root, "app", "server", "fntvplus-arm64"); func() bool {
-		_, err := os.Stat(stale)
-		return err == nil
-	}() {
-		fmt.Printf("[warn] 检测到 %s（旧 build-fpk.sh 产物）：会被一并打进 .fpk，建议删除；ARM 包请用 --arch arm64\n", stale)
+	// （[lc-2172] arch=all 时 fntvplus-arm64 是有意产物，不告警。）
+	if arch != archAll {
+		if stale := filepath.Join(root, "app", "server", "fntvplus-arm64"); func() bool {
+			_, err := os.Stat(stale)
+			return err == nil
+		}() {
+			fmt.Printf("[warn] 检测到 %s（旧 build-fpk.sh 产物）：会被一并打进 .fpk，建议删除；ARM 包请用 --arch arm64，双架构合一包请用 --arch all\n", stale)
+		}
 	}
-	bin := filepath.Join(root, "app", "server", "fntvplus")
-	if err := buildBackend(bin, arch); err != nil {
-		return "", err
+	if arch == archAll {
+		if err := buildBackend(filepath.Join(root, "app", "server", "fntvplus"), archAMD64); err != nil {
+			return "", err
+		}
+		if err := buildBackend(filepath.Join(root, "app", "server", "fntvplus-arm64"), archARM64); err != nil {
+			return "", err
+		}
+	} else {
+		bin := filepath.Join(root, "app", "server", "fntvplus")
+		if err := buildBackend(bin, arch); err != nil {
+			return "", err
+		}
 	}
 	fpk, err := pack(arch)
 	if err != nil {
@@ -356,7 +387,8 @@ func buildBackend(bin, arch string) error {
 	if _, err := os.Stat(bin); err != nil {
 		return fmt.Errorf("编译产物最终缺失: %s", bin)
 	}
-	fmt.Printf("       app/server/fntvplus 编译完成 (linux/%s)\n", arch)
+	rel, _ := filepath.Rel(root, bin)
+	fmt.Printf("       %s 编译完成 (linux/%s)\n", rel, arch)
 	return nil
 }
 
@@ -516,8 +548,15 @@ func pack(arch string) (string, error) {
 // cleanOldDevPackages 清理 root 与输出目录里的旧测试包（新命名 AniBox-<序号>[-arm64].fpk、
 // 历史 Fntv-Plus-<序号>[-arm64].fpk 及 Fntv-Plus-v<序号>.fpk）；发布包 AniBox-x.y.z.fpk 带点，
 // 正则天然不匹配、不会误删。
-// 只清同架构的包（-arm64 与 amd64 互不干扰）。outDir 可为空（不扫）。
+// 只清同架构的包（-arm64 与 amd64 互不干扰）；[lc-2172] arch=all 两族一起清（合一包同时
+// 取代两架构旧测试包）。outDir 可为空（不扫）。
 func cleanOldDevPackages(keep, arch string) {
+	// [lc-2172] 双架构合一包：amd64 与 arm64 两族旧测试包都清
+	if arch == archAll {
+		cleanOldDevPackages(keep, archAMD64)
+		cleanOldDevPackages(keep, archARM64)
+		return
+	}
 	// 兼容历史命名（Fntv-Plus-v123.fpk / Fntv-Plus-123.fpk）与新命名（AniBox-123.fpk / AniBox-123-arm64.fpk）；
 	// 纯数字形态不会与发布包冲突（发布包是 x.y.z 带点）。
 	pat := `^(?:AniBox|Fntv-Plus)-(?:v)?\d+\.fpk$`

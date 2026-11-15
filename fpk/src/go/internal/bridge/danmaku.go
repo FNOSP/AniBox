@@ -1053,31 +1053,42 @@ func (b *Bridge) danmuServeCacheOnly(w http.ResponseWriter, title string, ep, se
 	items, kept []map[string]any, meta map[string]any) {
 	key, label := danmuCacheSource(meta)
 	logf("[danmaku] 缓存命中（零上游请求）: %d 条 → 过滤后 %d 条 source=%s", len(items), len(kept), label)
-	srcs := []danmuSourceDetail{
-		{Key: "danmu_api", Label: danmuSourceLabel, Enabled: b.danmuIsActive(), Note: "未参与本次播放（命中缓存）"},
-		{Key: "dandanplay", Label: ddpSourceLabel, Enabled: b.ddpEnabled(),
-			Credential: ddpCredentialLabel(b), Note: "未参与本次播放（命中缓存）"},
-		{Key: "bilibili", Label: "B站", Enabled: true,
-			Credential: loginLabel(strings.TrimSpace(getSetting(b.cfg, "bili_cookie")) != ""),
-			Note:       "未参与本次播放（命中缓存）"},
-	}
-	for i := range srcs {
-		if srcs[i].Key == key {
-			srcs[i].Enabled = true
-			srcs[i].Note = "命中本地缓存"
-			srcs[i].MatchedTitle = jsStr(meta["matchedTitle"])
-			if v, ok := meta["episodeId"].(float64); ok && v > 0 {
-				srcs[i].EpisodeID = int64(v)
-			}
-			if b := jsStr(meta["bvid"]); b != "" {
-				srcs[i].Bvid = b
-			}
-			if v, ok := meta["cid"].(float64); ok && v > 0 {
-				srcs[i].Cid = int64(v)
+	// [lc-2166 同步] 新版缓存（danmuServeResult 起）自带完整 sources 明细——合并源缓存
+	// 的 meta.source 形如「自建源+B站+弹弹play」，按单一来源重建会把合计条数张冠李戴
+	// （全记到 B站 头上），故直接沿用；旧缓存没有该字段才走原有重建路径。
+	if srcsAny, ok := meta["sources"].([]any); !ok || len(srcsAny) == 0 {
+		srcs := []danmuSourceDetail{
+			{Key: "danmu_api", Label: danmuSourceLabel, Enabled: b.danmuIsActive(), Note: "未参与本次播放（命中缓存）"},
+			{Key: "dandanplay", Label: ddpSourceLabel, Enabled: b.ddpEnabled(),
+				Credential: ddpCredentialLabel(b), Note: "未参与本次播放（命中缓存）"},
+			{Key: "bilibili", Label: "B站", Enabled: true,
+				Credential: loginLabel(strings.TrimSpace(getSetting(b.cfg, "bili_cookie")) != ""),
+				Note:       "未参与本次播放（命中缓存）"},
+		}
+		for i := range srcs {
+			if srcs[i].Key == key {
+				srcs[i].Enabled = true
+				srcs[i].Note = "命中本地缓存"
+				srcs[i].MatchedTitle = jsStr(meta["matchedTitle"])
+				if v, ok := meta["episodeId"].(float64); ok && v > 0 {
+					srcs[i].EpisodeID = int64(v)
+				}
+				if b := jsStr(meta["bvid"]); b != "" {
+					srcs[i].Bvid = b
+				}
+				if v, ok := meta["cid"].(float64); ok && v > 0 {
+					srcs[i].Cid = int64(v)
+				}
 			}
 		}
+		meta["sources"] = danmuSortSources(danmuMarkUsed(srcs, key, len(items), len(kept)))
 	}
-	meta["sources"] = danmuSortSources(danmuMarkUsed(srcs, key, len(items), len(kept)))
+	// 响应 source：合并源缓存用 meta.source 原文（「自建源+B站+弹弹play」）；
+	// 旧缓存保持 danmuCacheSource 的归一化（B站 链路写入的 bangumi/video 归到「B站」）。
+	outSrc := jsStr(meta["source"])
+	if outSrc == "" || outSrc == "bangumi" || outSrc == "video" {
+		outSrc = label
+	}
 	meta["fromCache"] = true
 	maxScreen := int64(0)
 	if ms, err := strconv.ParseInt(strings.TrimSpace(getSetting(b.cfg, "biliDanmakuMaxScreen")), 10, 64); err == nil && ms >= 0 {
@@ -1085,30 +1096,13 @@ func (b *Bridge) danmuServeCacheOnly(w http.ResponseWriter, title string, ep, se
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "title": title, "ep": ep, "isMovie": isMovie,
-		"count": len(kept), "items": kept, "source": label,
+		"count": len(kept), "items": kept, "source": outSrc,
 		"meta": meta, "maxScreen": maxScreen, "fromCache": true,
 	})
 }
 
-// danmuPreferred 优选源裁决状态：未被 B站 顶替时保留「条数最多」的那个优选源结果。
-// [v1.11.0] 优选源从单一 danmu_api 扩为 danmu_api → 弹弹play 链：逐个尝试，
-// 低于下限则往下试（后面的源可能更全），B站仍作为最后补源。
-type danmuPreferred struct {
-	key   string
-	label string
-	items []map[string]any
-	kept  []map[string]any
-}
-
-// consider 记录候选：条数多者胜出（同级保留先到者，尊重源优先级）。
-func (p *danmuPreferred) consider(key, label string, items, kept []map[string]any) {
-	if p == nil || len(kept) == 0 {
-		return
-	}
-	if len(kept) > len(p.kept) {
-		p.key, p.label, p.items, p.kept = key, label, items, kept
-	}
-}
+// [lc-2166 同步] 旧「优选源裁决」（danmuPreferred：条数最多者胜出）已随三源全拉退役：
+// 命中结果全部合并返回，不再挑选单一来源。
 
 // biliResolveResult B站 解析结果（供 danmakuPrepare 按新链序编排）。
 type biliResolveResult struct {
@@ -1271,18 +1265,22 @@ func (b *Bridge) danmakuPrepare(w http.ResponseWriter, r *http.Request) {
 		logf("[danmaku] 缓存仅 %d 条 < 下限 %d → 尝试上游补源", len(cachedKept), b.danmuMinCount())
 	}
 
-	// 弹幕源链（按优先级依次尝试）：自建源 danmu_api → B站 → 弹弹play（兜底）。
+	// 弹幕源链 [lc-2166 同步] 三源全拉：自建源 danmu_api → B站 → 弹弹play 恒拉叠加。
 	//
-	// [v1.11.1] 弹弹play 降为兜底源：其开放 API 有配额限制（用户额度不多），
-	// 而 B站 链路免费且是本站弹幕主力。改为「只在前面都没拿到足量弹幕时才消耗弹弹play 额度」：
-	//   ① 自建源命中且达标 → 直接用（不碰 B站/弹弹play）
-	//   ② B站 命中且达标 → 直接用（不碰弹弹play）—— 绝大多数播放走这条
-	//   ③ 前面都失败/条数不足 → 才请求弹弹play 兜底
-	// 命中且过滤后条数达标即返回；低于下限（danmuMinCount，默认 100）则继续试下一个源。
+	// [v1.11.1] 旧链是「命中且达标就短路」：① 自建源 ② B站 ③ 弹弹play（配额保护下的
+	// 兜底）。桌面端 lc-2166 已按用户需求改为三源全拉叠加，这里同步：
+	//   · 三个启用的源全部跑完，命中结果合并成一个弹幕集返回（不再「命中即返回」）；
+	//   · 下限 danmuMinCount 不再决定「换不换源」，只保留两个用途：缓存复用闸门
+	//     （≥ 下限零上游请求）与薄弹幕集的探测 TTL；
+	//   · 跨源重复弹幕按用户决定不去重（与桌面端口径一致）。
+	// 配额影响被缓存抵消：合并结果 ≥ 下限 → 落盘缓存，后续播放同一集零上游请求；
+	// 只有薄弹幕集才按探测 TTL 重跑链路。弹弹play 实测条数也远高于默认源
+	// （withRelated=true 整合第三方，见 dandanplay.go）。
 	// [v0.81.0] 各源尝试结论带进最终错误信息（供弹窗「备注」展示，排障可见）。
 	// [v1.11.0] 三源明细全部收集进 sources（网页端「来源详情」按源分列，未参与的源也占位说明）。
 	var reasons []string
-	var pref danmuPreferred
+	var mergedItems, mergedKept []map[string]any
+	var hitLabels []string
 	sources := []danmuSourceDetail{
 
 		{Key: "bilibili", Label: "B站",
@@ -1294,29 +1292,28 @@ func (b *Bridge) danmakuPrepare(w http.ResponseWriter, r *http.Request) {
 		items, reason, detail := b.danmuAutoFetch(title, req.Ep, req.Season)
 		if len(items) > 0 {
 			kept := b.biliFilterDanmaku(items)
-			if minCnt := b.danmuMinCount(); minCnt <= 0 || len(kept) >= int(minCnt) {
-				detail.Note = ""
-				b.danmuServeResult(w, title, req.Ep, req.Season, req.IsMovie, "danmu_api", danmuSourceLabel,
-					items, kept, "", upsertSource(sources, detail))
-				return
-			}
-			pref.consider("danmu_api", danmuSourceLabel, items, kept)
-			logf("[danmaku] 自建源仅 %d 条 < 下限 %d → 尝试下一个源: title=%q", len(kept), b.danmuMinCount(), title)
-			reasons = append(reasons, fmt.Sprintf("自建源 %d 条", len(kept)))
-			detail.Note = fmt.Sprintf("命中 %d 条，低于下限 %d，未采用", len(kept), b.danmuMinCount())
+			detail.Note = ""
+			sources = upsertSource(sources, detail)
+			sources = danmuMarkUsed(sources, "danmu_api", len(items), len(kept))
+			mergedItems = append(mergedItems, items...)
+			mergedKept = append(mergedKept, kept...)
+			hitLabels = append(hitLabels, "自建源")
+			logf("[danmaku] 自建源命中 %d 条（三源全拉合并）: title=%q", len(kept), title)
 		} else if reason != "" {
 			// [lc-1341] 失败路径此前完全无日志：一旦自建源没命中，日志里只有 B站 的结果，
 			// 看不出「自建源试过但为什么没中」。真机排障就卡在这里。
-			logf("[danmaku] 自建源未命中（%s）→ 继续下一个源: title=%q ep=%d season=%d",
+			logf("[danmaku] 自建源未命中（%s）→ 三源全拉继续: title=%q ep=%d season=%d",
 				reason, title, req.Ep, req.Season)
 			reasons = append(reasons, "自建源("+reason+")")
+			sources = append(sources, detail)
+		} else {
+			sources = append(sources, detail)
 		}
-		sources = append(sources, detail)
 	} else {
 		// 未启用也要占位：用户在来源详情里能看到「这个源存在但没开」
 		sources = append(sources, danmuSourceDetail{Key: "danmu_api", Label: danmuSourceLabel, Note: "未启用"})
 	}
-	// ② B站（免费链路，优先于弹弹play）
+	// ② B站（免费链路，恒拉合并）
 	var biliRes *biliResolveResult
 	if biliSearch {
 		biliRes = b.biliResolve(title, req.Ep, req.Season)
@@ -1329,76 +1326,72 @@ func (b *Bridge) danmakuPrepare(w http.ResponseWriter, r *http.Request) {
 			})
 			reasons = append(reasons, "B站(搜索无匹配条目)")
 		case len(biliRes.kept) > 0:
-			if minCnt := b.danmuMinCount(); minCnt <= 0 || len(biliRes.kept) >= int(minCnt) {
-				b.danmuServeResult(w, title, req.Ep, req.Season, req.IsMovie, "bilibili", "B站",
-					biliRes.items, biliRes.kept, "", upsertSource(sources, biliRes.detail))
-				return
-			}
-			// 条数不足：记入候选并继续往弹弹play 兜底探一次（可能更全）
-			pref.consider("bilibili", "B站", biliRes.items, biliRes.kept)
-			biliRes.detail.Note = fmt.Sprintf("命中 %d 条，低于下限 %d", len(biliRes.kept), b.danmuMinCount())
 			sources = upsertSource(sources, biliRes.detail)
-			reasons = append(reasons, fmt.Sprintf("B站 %d 条", len(biliRes.kept)))
-			logf("[danmaku] B站仅 %d 条 < 下限 %d → 尝试弹弹play 兜底: title=%q",
-				len(biliRes.kept), b.danmuMinCount(), title)
+			sources = danmuMarkUsed(sources, "bilibili", len(biliRes.items), len(biliRes.kept))
+			mergedItems = append(mergedItems, biliRes.items...)
+			mergedKept = append(mergedKept, biliRes.kept...)
+			hitLabels = append(hitLabels, "B站")
+			logf("[danmaku] B站命中 %d 条（三源全拉合并）: title=%q", len(biliRes.kept), title)
 		default:
-			// 命中条目但该集无弹幕 / 无匹配：继续往弹弹play 兜底
+			// 命中条目但该集无弹幕 / 无匹配：三源全拉继续
 			sources = upsertSource(sources, biliRes.detail)
 			if biliRes.reason != "" {
 				reasons = append(reasons, "B站("+biliRes.reason+")")
 			}
-			logf("[danmaku] B站未拿到弹幕（%s）→ 尝试弹弹play 兜底: title=%q", biliRes.reason, title)
+			logf("[danmaku] B站未拿到弹幕（%s）→ 三源全拉继续: title=%q", biliRes.reason, title)
 		}
 	}
 
-	// ③ 弹弹play 开放 API（兜底源：有配额限制，仅当前序源都没拿到足量弹幕时才请求）
+	// ③ 弹弹play 开放 API [lc-2166 同步]（恒拉叠加，不再是配额保护下的兜底；
+	// 额度消耗由「合并结果落盘缓存 + 薄弹幕集探测 TTL」兜底控制，withRelated=true 见 dandanplay.go）
 	if b.ddpEnabled() {
 		items, matched, _, reason, detail := b.ddpAutoFetch(title, req.Ep, req.Season)
 		if len(items) > 0 {
 			kept := b.biliFilterDanmaku(items)
-			if minCnt := b.danmuMinCount(); minCnt <= 0 || len(kept) >= int(minCnt) {
-				logf("[danmaku] 弹弹play 命中: title=%q matched=%q count=%d", title, matched, len(kept))
-				detail.Note = ""
-				b.danmuServeResult(w, title, req.Ep, req.Season, req.IsMovie, "dandanplay", ddpSourceLabel,
-					items, kept, "", upsertSource(sources, detail))
-				return
+			logf("[danmaku] 弹弹play 命中: title=%q matched=%q count=%d", title, matched, len(kept))
+			detail.Note = ""
+			sources = upsertSource(sources, detail)
+			sources = danmuMarkUsed(sources, "dandanplay", len(items), len(kept))
+			mergedItems = append(mergedItems, items...)
+			mergedKept = append(mergedKept, kept...)
+			hitLabels = append(hitLabels, ddpSourceLabel)
+		} else {
+			if reason != "" {
+				reasons = append(reasons, "弹弹play("+reason+")")
 			}
-			pref.consider("dandanplay", ddpSourceLabel, items, kept)
-			logf("[danmaku] 弹弹play 仅 %d 条 < 下限 %d（兜底未更优）: title=%q", len(kept), b.danmuMinCount(), title)
-			reasons = append(reasons, fmt.Sprintf("弹弹play %d 条", len(kept)))
-			detail.Note = fmt.Sprintf("命中 %d 条，低于下限 %d，未采用", len(kept), b.danmuMinCount())
-		} else if reason != "" {
-			reasons = append(reasons, "弹弹play("+reason+")")
+			sources = append(sources, detail)
 		}
-		sources = append(sources, detail)
 	} else {
 		sources = append(sources, danmuSourceDetail{Key: "dandanplay", Label: ddpSourceLabel, Note: "已关闭"})
 	}
-	// 兜底裁决：走到这里说明前序源都没拿到「达标」的弹幕。
-	// 三种情况：① 无缓存且三源皆空；② 有候选但都低于下限；③ 缓存条数低于下限。
-	// 统一规则：谁条数最多用谁（pref 已按条数择优），并在备注里写清为何换源。
-	prefNote := strings.Join(reasons, "、")
 
-	// 缓存存在且不比候选差 → 沿用缓存（避免白跑一趟上游还变差）
-	if cachedItems, cachedKept, cachedMeta := b.danmuReadCache(cachePath); cachedItems != nil && len(pref.kept) > 0 {
-		if len(cachedKept) >= len(pref.kept) {
-			b.danmuServeCacheOnly(w, title, req.Ep, req.Season, req.IsMovie, cachedItems, cachedKept, cachedMeta)
-			return
-		}
-		logf("[danmaku] 缓存 %d 条 < 候选 %d 条 → 采用候选", len(cachedKept), len(pref.kept))
-	}
-
-	if len(pref.kept) > 0 {
-		note := fmt.Sprintf("%s，保留条数最多的%s（%d 条）", prefNote, pref.label, len(pref.kept))
-		b.danmuServeResult(w, title, req.Ep, req.Season, req.IsMovie, pref.key, pref.label,
-			pref.items, pref.kept, note, sources)
+	// [lc-2166 同步] 合并 Serve：任一源命中 → 全部命中条目按时间排序后一起返回。
+	// 三源全拉下合并结果必然 ≥ 任一单源，不再有「缓存 vs 候选」的裁决；
+	// 跨源重复弹幕按用户决定不去重（与桌面端口径一致）。
+	if len(mergedKept) > 0 {
+		sort.SliceStable(mergedKept, func(i, j int) bool {
+			return jsNum(mergedKept[i]["time"]) < jsNum(mergedKept[j]["time"])
+		})
+		sort.SliceStable(mergedItems, func(i, j int) bool {
+			return jsNum(mergedItems[i]["time"]) < jsNum(mergedItems[j]["time"])
+		})
+		// srcKey 传空：各源的 used 标记与条数已在上面的 danmuMarkUsed 逐源写好，
+		// 这里不再让 danmuServeResult 按单一来源覆盖标记。
+		b.danmuServeResult(w, title, req.Ep, req.Season, req.IsMovie, "",
+			strings.Join(hitLabels, "+"), mergedItems, mergedKept, "", sources)
 		return
 	}
 
-	// 三源皆空：给出可操作的失败原因
+	// 三源皆空：先回薄缓存（有总比没有好；旧实现直接报错，薄缓存被浪费），
+	// 再给出可操作的失败原因
+	if cachedItems, cachedKept, cachedMeta := b.danmuReadCache(cachePath); cachedItems != nil {
+		logf("[danmaku] 三源均未命中 → 回退薄缓存 %d 条", len(cachedKept))
+		b.danmuServeCacheOnly(w, title, req.Ep, req.Season, req.IsMovie, cachedItems, cachedKept, cachedMeta)
+		return
+	}
 	errMsg := "未找到匹配的弹幕"
-	if prefNote != "" {
-		errMsg = prefNote + "；" + errMsg
+	if note := strings.Join(reasons, "、"); note != "" {
+		errMsg = note + "；" + errMsg
 	}
 	if !biliSearch {
 		errMsg += "；B站弹幕搜索已在播放器内关闭"

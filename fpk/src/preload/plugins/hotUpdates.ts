@@ -775,9 +775,18 @@ function matchLibrary(titleCn: string, titleOrig: string): string | null {
   if (!_libIndex || !_libIndex.length) return null;
   const cands = [titleCn, titleOrig].map(normalizeTitle).filter((x) => x && x.length >= 2);
   if (!cands.length) return null;
-  for (const c of cands) for (const it of _libIndex) if (normalizeTitle(it.title) === c) return it.href;
   for (const c of cands) for (const it of _libIndex) {
     const t = normalizeTitle(it.title);
+    // [lc-2171] 空/单字归一化标题不得参与匹配（见下方包含环的注释）
+    if (!t || t.length < 2) continue;
+    if (t === c) return it.href;
+  }
+  for (const c of cands) for (const it of _libIndex) {
+    const t = normalizeTitle(it.title);
+    // [lc-2171] 防「全部已入库」全局误标：库标题被 normalizeTitle 剥空后（如
+    // 「Season 2」「2024」「第一季」→ 空串），c.includes('') 恒为 true——库索引里
+    // 只要有一条这样的标题，所有卡片都会误判命中。归一化后不足 2 字的一律跳过。
+    if (!t || t.length < 2) continue;
     if (t.includes(c) || c.includes(t)) return it.href;
   }
   return null;

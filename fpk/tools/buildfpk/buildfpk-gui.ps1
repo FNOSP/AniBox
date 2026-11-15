@@ -33,7 +33,7 @@ $gbMode.Location    = New-Object System.Drawing.Point(16, 12)
 $gbMode.Size        = New-Object System.Drawing.Size(710, 128)
 
 $rbDev             = New-Object System.Windows.Forms.RadioButton
-$rbDev.Text        = '测试包（版号不动，仅追加 -N 序号；包名 AniBox-NNN.fpk）'
+$rbDev.Text        = '测试包（版号自动 x.y.z-N；包名 AniBox-x.y.z-N.fpk）'
 $rbDev.Location    = New-Object System.Drawing.Point(14, 24)
 $rbDev.Size        = New-Object System.Drawing.Size(680, 20)
 $rbDev.Checked     = $true

@@ -204,6 +204,9 @@ func run(mode, relName, relVer, outDir, arch string) error {
 			_ = os.Remove(final)
 		}
 	}
+	// [lc-2173] 移入输出目录后再清一轮旧测试包：pack() 阶段的清理发生在产物落盘到
+	// outDir **之前**，输出目录里的历史旧包（如上一轮 AniBox-31.fpk）扫不到。
+	cleanOldDevPackages(dst, arch)
 	st, err := os.Stat(dst)
 	sizeMB := "0"
 	if err == nil {
@@ -291,17 +294,7 @@ func buildPackage(kind, arch string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// [命名统一] 带序号包命名: AniBox-<序号>[-arm64].fpk（不再用大小写 v/V 区分开发/发布）。
-	// 版号 x.y.z-<seq> → 取 "-" 后数字。
-	if ver := manifestVersion(); strings.Contains(ver, "-") {
-		if n, err := strconv.Atoi(strings.TrimPrefix(ver, strings.SplitN(ver, "-", 2)[0]+"-")); err == nil {
-			named := filepath.Join(root, productName+"-"+strconv.Itoa(n)+archSuffix(arch)+".fpk")
-			if err := os.Rename(fpk, named); err == nil {
-				cleanOldDevPackages(named, arch)
-				return named, nil
-			}
-		}
-	}
+	// [lc-2173] 产物命名在 pack() 内完成：AniBox-<完整版本号>[-arm64].fpk，这里直接返回。
 	return fpk, nil
 }
 
@@ -533,13 +526,13 @@ func pack(arch string) (string, error) {
 		return "", fmt.Errorf("fnpack 未产出有效的 fntvplus.fpk（请检查上方报错）")
 	}
 	if ver := manifestVersion(); strings.Contains(ver, "-") {
-		if n, err := strconv.Atoi(strings.TrimPrefix(ver, strings.SplitN(ver, "-", 2)[0]+"-")); err == nil {
-			// [命名统一] 测试包 = AniBox-<序号>[-arm64].fpk（仅序号，无 v 前缀）
-			named := filepath.Join(root, productName+"-"+strconv.Itoa(n)+archSuffix(arch)+".fpk")
-			if err := os.Rename(out, named); err == nil {
-				cleanOldDevPackages(named, arch)
-				return named, nil
-			}
+		// [lc-2173] 测试包 = AniBox-<完整版本号>[-arm64].fpk（用户指定：名称用版本号，
+		// 不再截取序号；version = x.y.z-N → AniBox-x.y.z-N.fpk）。发布包在 runRelease
+		// 按 AniBox-x.y.z.fpk 命名，两支都是「AniBox-版本号」口径。
+		named := filepath.Join(root, productName+"-"+ver+archSuffix(arch)+".fpk")
+		if err := os.Rename(out, named); err == nil {
+			cleanOldDevPackages(named, arch)
+			return named, nil
 		}
 	}
 	return out, nil
@@ -557,13 +550,25 @@ func cleanOldDevPackages(keep, arch string) {
 		cleanOldDevPackages(keep, archARM64)
 		return
 	}
-	// 兼容历史命名（Fntv-Plus-v123.fpk / Fntv-Plus-123.fpk）与新命名（AniBox-123.fpk / AniBox-123-arm64.fpk）；
-	// 纯数字形态不会与发布包冲突（发布包是 x.y.z 带点）。
-	pat := `^(?:AniBox|Fntv-Plus)-(?:v)?\d+\.fpk$`
-	if arch == archARM64 {
-		pat = `^(?:AniBox|Fntv-Plus)-(?:v)?\d+-arm64\.fpk$`
+	// 兼容三代命名：① Fntv-Plus-v123.fpk / Fntv-Plus-123.fpk；② AniBox-123.fpk /
+	// AniBox-123-arm64.fpk（纯序号）；③ [lc-2173] AniBox-1.4.0-123.fpk（完整版本号+序号，
+	// 可选 -arm64）。发布包 AniBox-x.y.z.fpk（无 -N 尾巴）两族正则都不匹配、绝不误删。
+	amd64Pats := []string{
+		`^(?:AniBox|Fntv-Plus)-(?:v)?\d+\.fpk$`,
+		`^(?:AniBox|Fntv-Plus)-\d+\.\d+\.\d+-\d+\.fpk$`,
 	}
-	re := regexp.MustCompile(pat)
+	arm64Pats := []string{
+		`^(?:AniBox|Fntv-Plus)-(?:v)?\d+-arm64\.fpk$`,
+		`^(?:AniBox|Fntv-Plus)-\d+\.\d+\.\d+-\d+-arm64\.fpk$`,
+	}
+	pats := amd64Pats
+	if arch == archARM64 {
+		pats = arm64Pats
+	}
+	res := make([]*regexp.Regexp, 0, len(pats))
+	for _, p := range pats {
+		res = append(res, regexp.MustCompile(p))
+	}
 	removed, checked := 0, 0
 	for _, dir := range []string{root, filepath.Dir(keep)} {
 		entries, err := os.ReadDir(dir)
@@ -576,7 +581,14 @@ func cleanOldDevPackages(keep, arch string) {
 				(!strings.HasPrefix(name, productName+"-") && !strings.HasPrefix(name, "Fntv-Plus-")) {
 				continue
 			}
-			if !re.MatchString(name) {
+			matched := false
+			for _, re := range res {
+				if re.MatchString(name) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
 				continue
 			}
 			p := filepath.Join(dir, name)
@@ -641,9 +653,10 @@ func devCommitVersion() string {
 // maxHistorySeq 扫根目录与输出目录里的 AniBox-<数字>[-arm64].fpk（兼容历史 Fntv-Plus-*），
 // 返回最大 N（包挪进 release/ 后痕迹依然可追；序号与架构无关，两个架构共用一套序列）。
 func maxHistorySeq() (int, bool) {
-	// 兼容历史 Fntv-Plus-v123.fpk、Fntv-Plus-123.fpk 与新命名 AniBox-123.fpk / AniBox-123-arm64.fpk
-	// （发布包带点，不匹配）
-	re := regexp.MustCompile(`^(?:AniBox|Fntv-Plus)-(?:v)?(\d+)(?:-arm64)?\.fpk$`)
+	// 兼容三代命名：Fntv-Plus-v123.fpk、Fntv-Plus-123.fpk、AniBox-123.fpk /
+	// AniBox-123-arm64.fpk，以及 [lc-2173] 版本号形态 AniBox-1.4.0-123.fpk（可选 -arm64）。
+	// 取尾部「-<数字>」为序号；发布包 AniBox-x.y.z.fpk 无序号尾巴，不匹配。
+	re := regexp.MustCompile(`^(?:AniBox|Fntv-Plus)-(?:v)?(?:\d+\.\d+\.\d+-)?(\d+)(?:-arm64)?\.fpk$`)
 	max, ok := 0, false
 	for _, dir := range []string{root, defaultOutDir()} {
 		entries, err := os.ReadDir(dir)

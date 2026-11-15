@@ -793,6 +793,9 @@ func (b *Bridge) danmuServeResult(w http.ResponseWriter, title string, ep, seaso
 		"searchTitle": title, "matchedTitle": title, "source": srcLabel,
 		"ep": ep, "isMovie": isMovie, "season": season, "count": len(kept),
 		"sources": danmuSortSources(sources),
+		// [lc-2175] 合并缓存标记：三源全拉的 prepare 产物。旧单源缓存缺该标记，
+		// 缓存前置闸门据此跑一次链路把缺的源并进来（迁移后不再重复）。
+		"merged": true,
 		// checkedAt：本次已跑完整链路（含全部优选源）的时刻。缓存条数低于下限时，
 		// danmakuPrepare 靠它判断 TTL 内是否需要重跑上游（避免反复探测）。
 		"checkedAt": float64(time.Now().Unix()),
@@ -938,6 +941,60 @@ func danmuMarkUsed(list []danmuSourceDetail, key string, raw, count int) []danmu
 		}
 	}
 	return list
+}
+
+// danmuSourcesFromMeta 从缓存/响应 meta 的 sources 数组还原逐源明细行
+// （JSON 反序列化形态 → 结构体；[lc-2175] 手动选定叠加时沿用缓存明细）。
+func danmuSourcesFromMeta(meta map[string]any) []danmuSourceDetail {
+	arr, _ := meta["sources"].([]any)
+	out := make([]danmuSourceDetail, 0, len(arr))
+	for _, it := range arr {
+		m, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		d := danmuSourceDetail{
+			Key:          jsStr(m["key"]),
+			Label:        jsStr(m["label"]),
+			MatchedTitle: jsStr(m["matchedTitle"]),
+			EpisodeTitle: jsStr(m["episodeTitle"]),
+			Note:         jsStr(m["note"]),
+			Credential:   jsStr(m["credential"]),
+			Base:         jsStr(m["base"]),
+		}
+		d.Enabled, _ = m["enabled"].(bool)
+		d.Used, _ = m["used"].(bool)
+		d.RawCount = int(jsNum(m["rawCount"]))
+		d.Count = int(jsNum(m["count"]))
+		d.Blocked = int(jsNum(m["blocked"]))
+		if v := jsNum(m["episodeId"]); v > 0 {
+			d.EpisodeID = int64(v)
+		}
+		if s := jsStr(m["bvid"]); s != "" {
+			d.Bvid = s
+		}
+		if v := jsNum(m["cid"]); v > 0 {
+			d.Cid = int64(v)
+		}
+		if v, ok := m["sim"].(float64); ok && v > 0 {
+			d.Sim = v
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+// danmuShortLabelOf 源 key 的短标签（合并来源名用：自建源+B站+弹弹play）。
+func danmuShortLabelOf(key, fallback string) string {
+	switch key {
+	case "danmu_api":
+		return "自建源"
+	case "bilibili":
+		return "B站"
+	case "dandanplay":
+		return "弹弹play"
+	}
+	return fallback
 }
 
 // danmuProbeTTL 「补源探测」的最小间隔。
@@ -1248,21 +1305,30 @@ func (b *Bridge) danmakuPrepare(w http.ResponseWriter, r *http.Request) {
 	// 官方规约明确要求「缓存 API 返回的数据，以减少对服务器的请求次数」；旧实现把缓存判断
 	// 放在优选源链之后，导致每次播放同一集都重新搜索+拉取上游（实测二次 prepare 上游弹幕 +1），
 	// 缓存等于没生效。缓存存的是未过滤原始条目，故屏蔽设置改动仍即时生效。
+	// [lc-2175] 合并缓存标记（meta.merged，三源全拉的 prepare/pick 都写）：缺标记的旧缓存
+	// 是「单源时代」的产物（只含一个源的弹幕）——启用多源时值得跑一次链路把缺的源并进来
+	// （合并迁移，一次性）；迁移失败则落 checkedAt，探测 TTL 内不再反复打上游。
 	cachePath := b.danmuCachePath(title, req.Season, req.Ep)
 	if cachedItems, cachedKept, cachedMeta := b.danmuReadCache(cachePath); cachedItems != nil {
-		if minCnt := b.danmuMinCount(); minCnt <= 0 || len(cachedKept) >= int(minCnt) {
+		minCnt := b.danmuMinCount()
+		enough := minCnt <= 0 || len(cachedKept) >= int(minCnt)
+		_, mergedCache := cachedMeta["merged"].(bool)
+		extrasPending := (b.danmuIsActive() || b.ddpEnabled()) && !mergedCache
+		probedRecently := danmuCacheCheckedRecently(cachedMeta)
+		// 直接用缓存的两类：① 达标且无需迁移（新合并缓存 / 其余源都已停用）；
+		// ② 近期探测过上游（薄缓存补源或迁移刚失败过，TTL 内不反复打上游）。
+		if (enough && !extrasPending) || probedRecently {
+			if enough && !extrasPending {
+				logf("[danmaku] 缓存命中（零上游请求）: %d 条", len(cachedKept))
+			} else {
+				logf("[danmaku] 缓存 %d 条（近期已探测过上游，%s 内）→ 直接用缓存",
+					len(cachedKept), danmuProbeTTL)
+			}
 			b.danmuServeCacheOnly(w, title, req.Ep, req.Season, req.IsMovie, cachedItems, cachedKept, cachedMeta)
 			return
 		}
-		// 薄弹幕集（低于下限）：只在探测 TTL 过后才重跑链路找更全的源，
-		// 否则直接用缓存 —— 避免反复播放同一集时反复打上游弹幕接口。
-		if minCnt := b.danmuMinCount(); minCnt > 0 && danmuCacheCheckedRecently(cachedMeta) {
-			logf("[danmaku] 缓存 %d 条低于下限但近期已探测过上游（%s 内）→ 直接用缓存",
-				len(cachedKept), danmuProbeTTL)
-			b.danmuServeCacheOnly(w, title, req.Ep, req.Season, req.IsMovie, cachedItems, cachedKept, cachedMeta)
-			return
-		}
-		logf("[danmaku] 缓存仅 %d 条 < 下限 %d → 尝试上游补源", len(cachedKept), b.danmuMinCount())
+		logf("[danmaku] 缓存 %d 条 → 跑链路补源/合并迁移（旧单源缓存或低于下限 %d）",
+			len(cachedKept), minCnt)
 	}
 
 	// 弹幕源链 [lc-2166 同步] 三源全拉：自建源 danmu_api → B站 → 弹弹play 恒拉叠加。
@@ -1548,35 +1614,60 @@ func (b *Bridge) danmakuPick(w http.ResponseWriter, r *http.Request) {
 		sum := md5.Sum([]byte(title + "|" + strconv.FormatInt(req.Season, 10) + "|" + strconv.FormatInt(req.Ep, 10)))
 		cachePath = filepath.Join(dir, "dm_"+hex.EncodeToString(sum[:10])+".json")
 	}
-	// [v1.11.0] 手动选定：三源都占位（与 prepare 同形），仅选定的那个标 used 并带明细。
-	// 只回一个源会让「来源详情」在手动选定后丢掉另外两源的状态，展示与自动命中不一致。
-	danmuOn := b.danmuIsActive()
-	ddpOn := b.ddpEnabled()
-	danmuNote, ddpNote := "未启用", "已关闭"
-	danmuBase := ""
-	if danmuOn {
-		danmuNote = "未参与本次手动选定"
-		danmuBase = danmuMaskBase(b.danmuBase())
+	// [lc-2175] 手动选定 = 叠加（三源全拉口径）：把当前已加载（缓存）的弹幕与选定源合并
+	// 返回并落盘——「手动取弹弹play」不再把 B站 等已加载源顶掉。选定源已在当前弹幕集
+	// （缓存里已 used）时不重复叠加，原样返回（换集请先「清除弹幕」重跑自动匹配）。
+	var mergedItems, mergedKept []map[string]any
+	var all []danmuSourceDetail
+	srcLabel := source
+	if cachedItems, cachedKept, cachedMeta := b.danmuReadCache(cachePath); cachedItems != nil {
+		all = danmuSourcesFromMeta(cachedMeta)
+		already := false
+		for _, d := range all {
+			if d.Key == detail.Key && d.Used {
+				already = true
+				break
+			}
+		}
+		if already {
+			mergedItems, mergedKept = cachedItems, cachedKept
+			srcLabel = jsStr(cachedMeta["source"])
+			detail.Note = "手动选定（该源已在当前弹幕集，未重复叠加）"
+			all = upsertSource(all, detail)
+		} else {
+			mergedItems = append(append([]map[string]any{}, cachedItems...), items...)
+			mergedKept = append(append([]map[string]any{}, cachedKept...), kept...)
+			sort.SliceStable(mergedItems, func(i, j int) bool {
+				return jsNum(mergedItems[i]["time"]) < jsNum(mergedItems[j]["time"])
+			})
+			sort.SliceStable(mergedKept, func(i, j int) bool {
+				return jsNum(mergedKept[i]["time"]) < jsNum(mergedKept[j]["time"])
+			})
+			all = upsertSource(all, detail)
+			all = danmuMarkUsed(all, detail.Key, len(items), len(kept))
+			labels := []string{}
+			for _, d := range all {
+				if d.Used {
+					labels = append(labels, danmuShortLabelOf(d.Key, d.Label))
+				}
+			}
+			if len(labels) > 0 {
+				srcLabel = strings.Join(labels, "+")
+			}
+		}
+	} else {
+		mergedItems, mergedKept = items, kept
+		all = upsertSource(all, detail)
+		all = danmuMarkUsed(all, detail.Key, len(items), len(kept))
 	}
-	if ddpOn {
-		ddpNote = "未参与本次手动选定"
-	}
-	all := []danmuSourceDetail{
-		{Key: "danmu_api", Label: danmuSourceLabel, Enabled: danmuOn,
-			Base: danmuBase, Note: danmuNote},
-		{Key: "dandanplay", Label: ddpSourceLabel, Enabled: ddpOn,
-			Credential: ddpCredentialLabel(b), Note: ddpNote},
-		{Key: "bilibili", Label: "B站", Enabled: true,
-			Credential: loginLabel(strings.TrimSpace(getSetting(b.cfg, "bili_cookie")) != "")},
-	}
-	all = upsertSource(all, detail)
 	meta := map[string]any{
-		"searchTitle": title, "matchedTitle": title, "source": source,
-		"ep": req.Ep, "isMovie": req.IsMovie, "season": req.Season, "count": len(kept),
-		"sources": danmuSortSources(danmuMarkUsed(all, detail.Key, len(items), len(kept))),
+		"searchTitle": title, "matchedTitle": title, "source": srcLabel,
+		"ep": req.Ep, "isMovie": req.IsMovie, "season": req.Season, "count": len(mergedKept),
+		"sources": danmuSortSources(all),
+		"merged":  true,
 	}
 	if cachePath != "" {
-		if data, err := json.Marshal(map[string]any{"items": items, "meta": meta}); err == nil {
+		if data, err := json.Marshal(map[string]any{"items": mergedItems, "meta": meta}); err == nil {
 			tmp := cachePath + ".tmp"
 			if os.WriteFile(tmp, data, 0o644) == nil {
 				_ = os.Rename(tmp, cachePath)
@@ -1589,7 +1680,7 @@ func (b *Bridge) danmakuPick(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "title": title, "ep": req.Ep, "isMovie": req.IsMovie,
-		"count": len(kept), "items": kept, "source": source,
+		"count": len(mergedKept), "items": mergedKept, "source": srcLabel,
 		"meta": meta, "maxScreen": maxScreen,
 	})
 }

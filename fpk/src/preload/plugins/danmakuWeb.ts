@@ -2570,13 +2570,13 @@ function renderDetailRows(): void {
     const tip = document.createElement('div');
     // 底部说明必须跟着实际来源走：优选源命中时写「数据来源：B站」是错信息（用户正是看着这句报的匹配 bug）。
     // srcName 在本函数开头已按来源解析（见字段分流处）。
-    // [v1.11.1] 源链改为 自建源 → B站 → 弹弹play（兜底），说明需讲清各自的条件。
+    // [lc-2176] 三源全拉（lc-2170）后不再是「兜底链」，tips 只说明各源身份与叠加口径。
     if (/^自建源/.test(srcName)) {
-        tip.textContent = '数据来源：自建弹幕接口 danmu_api（只认精确匹配；弹幕低于下限时继续找 B站/弹弹play 补源）';
+        tip.textContent = '数据来源：自建弹幕接口 danmu_api（只认精确匹配，与 B站/弹弹play 三源叠加）';
     } else if (srcName === '弹弹play') {
-        tip.textContent = '数据来源：弹弹play 官方开放 API（兜底源：自建源与 B站 都没拿到足量弹幕时才请求，以节省额度；含多平台整合弹幕）';
+        tip.textContent = '数据来源：弹弹play 官方开放 API（与自建源/B站 三源叠加；弹幕库已整合多平台弹幕）';
     } else {
-        tip.textContent = '数据来源：B站弹幕（与自建源同为免费链路，优先于弹弹play 兜底源）';
+        tip.textContent = '数据来源：B站弹幕（与自建源/弹弹play 三源叠加）';
     }
     Object.assign(tip.style, {
         paddingTop: '10px', borderTop: '1px solid rgba(255,255,255,.06)',

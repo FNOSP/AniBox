@@ -1894,7 +1894,7 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     ddRow.onmouseenter = () => { ddRow.style.background = 'var(--fnos-ui-row-hover)'; };
     ddRow.onmouseleave = () => { ddRow.style.background = 'transparent'; };
     const ddRowLabel = document.createElement('span');
-    ddRowLabel.textContent = t('启用弹弹play 弹幕源（兜底）');
+    ddRowLabel.textContent = t('启用弹弹play 弹幕源');
     ddRowLabel.style.cssText = 'color:var(--fnos-ui-text);font-weight:500;';
     const swDandan = document.createElement('input');
     swDandan.type = 'checkbox';
@@ -1914,7 +1914,7 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
 
     const ddHint = document.createElement('div');
     ddHint.style.cssText = 'font-size:10.5px;color:var(--fnos-ui-sec);padding:0 6px 6px;line-height:1.5;';
-    ddHint.textContent = t('弹弹play 为兜底源：仅当自建源与 B站 都没拿到足量弹幕时才请求，以节省开放 API 额度。本应用已内置一套正式凭证，默认即可使用（无需填写）；若你有自己的弹弹play 应用，可填入专属 AppId 与 Secret 覆盖内置凭证，两项都填才生效，清除后回落内置。凭证加密保存在 NAS 配置目录，不会明文暴露。保存后立即生效。');
+    ddHint.textContent = t('弹弹play 与自建源、B站 三源叠加：每次获取弹幕都会同时取弹弹play 弹幕库（已整合多平台弹幕）并合并显示。本应用已内置一套正式凭证，默认即可使用（无需填写）；若你有自己的弹弹play 应用，可填入专属 AppId 与 Secret 覆盖内置凭证，两项都填才生效，清除后回落内置。凭证加密保存在 NAS 配置目录，不会明文暴露。保存后立即生效。');
     ddFoldBody.appendChild(ddHint);
 
     // 掩码输入（交互同 Bangumi token：已保存显示星号，聚焦自动清空进入编辑）
@@ -1949,19 +1949,19 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     ddFoldBody.appendChild(ddStatus);
 
     // 首屏状态行 = 本卡唯一的常显信息：保存/清除/开关/回填时都要同步，否则会停在旧状态误导用户。
-    // [v1.11.1] 弹弹play 已降为兜底源（开放 API 有配额），状态行需讲清「什么时候才会用到它」。
+    // [lc-2176] 弹弹play 已随三源全拉升为恒拉叠加源（不再是兜底），状态行口径同步。
     const ddSetState = (credential: string): void => {
       if (!swDandan.checked) {
-        ddStateLine.textContent = t('已关闭，弹弹play 不参与兜底（B站/自建源照常）。');
+        ddStateLine.textContent = t('已关闭，弹弹play 不参与三源叠加（自建源/B站 照常）。');
         ddStateLine.style.color = 'var(--fnos-ui-warn)';
         return;
       }
-      const how = t('仅当自建源与 B站 都没拿到足量弹幕时才使用，节省额度');
+      const how = t('与自建源、B站 三源叠加');
       if (credential === 'custom') {
-        ddStateLine.textContent = t('已启用（兜底）· 使用你填写的自定义凭证 · ') + how;
+        ddStateLine.textContent = t('已启用 · 使用你填写的自定义凭证 · ') + how;
         ddStateLine.style.color = 'var(--fnos-ui-sub)';
       } else if (credential === 'builtin') {
-        ddStateLine.textContent = t('已启用（兜底）· 使用应用内置凭证 · ') + how;
+        ddStateLine.textContent = t('已启用 · 使用应用内置凭证 · ') + how;
         ddStateLine.style.color = 'var(--fnos-ui-ok)';
       } else {
         ddStateLine.textContent = t('未启用 —— 无可用凭证，请填写自定义凭证后保存。');
@@ -2077,12 +2077,12 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     dmApiStatus.style.cssText = 'font-size:10.5px;color:var(--fnos-ui-sub);padding:0 6px 4px;line-height:1.5;min-height:14px;white-space:pre-line;';
     dmApiBody.appendChild(dmApiStatus);
 
-    // [v1.11.1] 弹幕下限（原「自建源弹幕下限」）：源链改为 自建源→B站→弹弹play 后，
-    // 这个阈值统一决定「多少条算够用、不必再往下探更全的源」，不再只作用于自建源。
+    // [lc-2176] 弹幕下限（三源全拉后语义 = 缓存复用门槛）：合并结果达到该条数，
+    // 同一集直接复用本地缓存（零上游请求）；低于则到点重跑源链补源，不再决定「换不换源」。
     const dmMinRow = document.createElement('div');
     dmMinRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 6px;gap:10px;';
     const dmMinLabel = document.createElement('span');
-    dmMinLabel.textContent = t('弹幕少于该条数时继续找下一个源（0=不启用）');
+    dmMinLabel.textContent = t('弹幕缓存复用下限：达到该条数同一集直接用本地缓存（0=不启用）');
     dmMinLabel.style.cssText = 'color:var(--fnos-ui-text);font-weight:500;font-size:12.5px;flex:1;line-height:1.4;';
     const dmMinInput = document.createElement('input');
     dmMinInput.type = 'number';
@@ -2466,7 +2466,7 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
 
     const aboutDesc = document.createElement('div');
     aboutDesc.style.cssText = 'font-size:13px;line-height:1.9;color:var(--fnos-ui-text);opacity:.82;max-width:440px;';
-    aboutDesc.textContent = t('NAS 装一次，电视、平板、手机、电脑浏览器打开飞牛影视即是增强版：沉浸式美化（海报墙、四型轮播、详情页柔光玻璃、Logo 自定义）、弹幕（B站 / 自建源 / 弹弹play 兜底）、豆瓣 / Bangumi / Trakt 同步、跳过片头与跨设备播放记忆、TMDB 信息卡与每日放送、观影记录与年度报告、自定义刮削源回填。注入服务不改动系统与影视应用任何文件，卸载即还原。');
+    aboutDesc.textContent = t('NAS 装一次，电视、平板、手机、电脑浏览器打开飞牛影视即是增强版：沉浸式美化（海报墙、四型轮播、详情页柔光玻璃、Logo 自定义）、弹幕（自建源 / B站 / 弹弹play 三源叠加）、豆瓣 / Bangumi / Trakt 同步、跳过片头与跨设备播放记忆、TMDB 信息卡与每日放送、观影记录与年度报告、自定义刮削源回填。注入服务不改动系统与影视应用任何文件，卸载即还原。');
     secBodyAbout.appendChild(aboutDesc);
 
     const aboutVer = document.createElement('div');

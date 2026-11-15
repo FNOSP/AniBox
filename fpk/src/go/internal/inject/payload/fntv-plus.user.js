@@ -1791,7 +1791,7 @@ try{if(typeof window!=='undefined'){if(typeof window.require==='undefined'){wind
     "Trakt \u540C\u6B65": "Trakt sync",
     "\u5F39\u5F39play": "dandanplay",
     "\u81EA\u5EFA\u5F39\u5E55\u63A5\u53E3\uFF08danmu_api\uFF09": "Self-hosted danmaku API (danmu_api)",
-    "\u5F39\u5E55\u5C11\u4E8E\u8BE5\u6761\u6570\u65F6\u7EE7\u7EED\u627E\u4E0B\u4E00\u4E2A\u6E90\uFF080=\u4E0D\u542F\u7528\uFF09": "Keep looking at the next source when danmaku is below this count (0=off)",
+    "\u5F39\u5E55\u7F13\u5B58\u590D\u7528\u4E0B\u9650\uFF1A\u8FBE\u5230\u8BE5\u6761\u6570\u540C\u4E00\u96C6\u76F4\u63A5\u7528\u672C\u5730\u7F13\u5B58\uFF080=\u4E0D\u542F\u7528\uFF09": "Cache-reuse floor: an episode whose merged danmaku reaches this count is served directly from local cache (0=off)",
     "\u641C\u7D22\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u6216\u5237\u65B0\u9875\u9762": "Search request timed out \u2014 try again shortly or reload the page",
     "\u5F39\u5E55\u5C4F\u853D\u4E0E\u6837\u5F0F": "Danmaku blocking & style",
     "\u63D2\u5E27\uFF08AI \u8865\u5E27\uFF09": "Frame interpolation (AI)",
@@ -2000,13 +2000,13 @@ try{if(typeof window!=='undefined'){if(typeof window.require==='undefined'){wind
     "\u5C4F\u853D\u7C7B\u578B\u3001\u5C4F\u853D\u8BCD\u3001\u5F39\u5E55\u6587\u4EF6\u5939": "Block types, keywords & danmaku folder",
     "\u5C4F\u853D\u7C7B\u578B\u4E0E\u5C4F\u853D\u8BCD\u4E8E\u4E0B\u4E00\u6B21 B\u7AD9 \u5F39\u5E55\u52A0\u8F7D\u65F6\u751F\u6548\u3002": "Block types and keywords take effect on the next Bilibili danmaku load.",
     // [v1.11.0] 弹弹play 卡片（内置凭证开箱即用 + 可选自定义凭证覆盖）
-    // [v1.11.1] 弹弹play 降为兜底源（开放 API 有配额）
-    "\u542F\u7528\u5F39\u5F39play \u5F39\u5E55\u6E90\uFF08\u515C\u5E95\uFF09": "Use dandanplay as a fallback source",
-    "\u4EC5\u5F53\u81EA\u5EFA\u6E90\u4E0E B\u7AD9 \u90FD\u6CA1\u62FF\u5230\u8DB3\u91CF\u5F39\u5E55\u65F6\u624D\u4F7F\u7528\uFF0C\u8282\u7701\u989D\u5EA6": "Used only when the self-hosted source and Bilibili both fall short \u2014 saves API quota",
-    "\u5F39\u5F39play \u4E3A\u515C\u5E95\u6E90\uFF1A\u4EC5\u5F53\u81EA\u5EFA\u6E90\u4E0E B\u7AD9 \u90FD\u6CA1\u62FF\u5230\u8DB3\u91CF\u5F39\u5E55\u65F6\u624D\u8BF7\u6C42\uFF0C\u4EE5\u8282\u7701\u5F00\u653E API \u989D\u5EA6\u3002\u672C\u5E94\u7528\u5DF2\u5185\u7F6E\u4E00\u5957\u6B63\u5F0F\u51ED\u8BC1\uFF0C\u9ED8\u8BA4\u5373\u53EF\u4F7F\u7528\uFF08\u65E0\u9700\u586B\u5199\uFF09\uFF1B\u82E5\u4F60\u6709\u81EA\u5DF1\u7684\u5F39\u5F39play \u5E94\u7528\uFF0C\u53EF\u586B\u5165\u4E13\u5C5E AppId \u4E0E Secret \u8986\u76D6\u5185\u7F6E\u51ED\u8BC1\uFF0C\u4E24\u9879\u90FD\u586B\u624D\u751F\u6548\uFF0C\u6E05\u9664\u540E\u56DE\u843D\u5185\u7F6E\u3002\u51ED\u8BC1\u52A0\u5BC6\u4FDD\u5B58\u5728 NAS \u914D\u7F6E\u76EE\u5F55\uFF0C\u4E0D\u4F1A\u660E\u6587\u66B4\u9732\u3002\u4FDD\u5B58\u540E\u7ACB\u5373\u751F\u6548\u3002": "dandanplay is a fallback source: it is queried only when the self-hosted source and Bilibili both fail to return enough danmaku, which saves open-API quota. A licensed credential is built in and works out of the box (nothing to fill in). If you have your own dandanplay app, enter its AppId & Secret to override it; both are required, and clearing them falls back to the built-in credential. Credentials are stored encrypted in the NAS config directory \u2014 never in plaintext. Takes effect immediately.",
-    "\u5DF2\u5173\u95ED\uFF0C\u5F39\u5F39play \u4E0D\u53C2\u4E0E\u515C\u5E95\uFF08B\u7AD9/\u81EA\u5EFA\u6E90\u7167\u5E38\uFF09\u3002": "Disabled \u2014 dandanplay will not act as a fallback (Bilibili / self-hosted sources unaffected).",
-    "\u5DF2\u542F\u7528\uFF08\u515C\u5E95\uFF09\xB7 \u4F7F\u7528\u4F60\u586B\u5199\u7684\u81EA\u5B9A\u4E49\u51ED\u8BC1 \xB7 ": "Fallback enabled \xB7 using your custom credentials \xB7 ",
-    "\u5DF2\u542F\u7528\uFF08\u515C\u5E95\uFF09\xB7 \u4F7F\u7528\u5E94\u7528\u5185\u7F6E\u51ED\u8BC1 \xB7 ": "Fallback enabled \xB7 using the built-in credential \xB7 ",
+    // [lc-2176] 弹弹play 随三源全拉升为恒拉叠加源（不再是兜底），文案口径同步
+    "\u542F\u7528\u5F39\u5F39play \u5F39\u5E55\u6E90": "Enable the dandanplay source",
+    "\u4E0E\u81EA\u5EFA\u6E90\u3001B\u7AD9 \u4E09\u6E90\u53E0\u52A0": "Stacks with the self-hosted source and Bilibili",
+    "\u5F39\u5F39play \u4E0E\u81EA\u5EFA\u6E90\u3001B\u7AD9 \u4E09\u6E90\u53E0\u52A0\uFF1A\u6BCF\u6B21\u83B7\u53D6\u5F39\u5E55\u90FD\u4F1A\u540C\u65F6\u53D6\u5F39\u5F39play \u5F39\u5E55\u5E93\uFF08\u5DF2\u6574\u5408\u591A\u5E73\u53F0\u5F39\u5E55\uFF09\u5E76\u5408\u5E76\u663E\u793A\u3002\u672C\u5E94\u7528\u5DF2\u5185\u7F6E\u4E00\u5957\u6B63\u5F0F\u51ED\u8BC1\uFF0C\u9ED8\u8BA4\u5373\u53EF\u4F7F\u7528\uFF08\u65E0\u9700\u586B\u5199\uFF09\uFF1B\u82E5\u4F60\u6709\u81EA\u5DF1\u7684\u5F39\u5F39play \u5E94\u7528\uFF0C\u53EF\u586B\u5165\u4E13\u5C5E AppId \u4E0E Secret \u8986\u76D6\u5185\u7F6E\u51ED\u8BC1\uFF0C\u4E24\u9879\u90FD\u586B\u624D\u751F\u6548\uFF0C\u6E05\u9664\u540E\u56DE\u843D\u5185\u7F6E\u3002\u51ED\u8BC1\u52A0\u5BC6\u4FDD\u5B58\u5728 NAS \u914D\u7F6E\u76EE\u5F55\uFF0C\u4E0D\u4F1A\u660E\u6587\u66B4\u9732\u3002\u4FDD\u5B58\u540E\u7ACB\u5373\u751F\u6548\u3002": "dandanplay stacks with the self-hosted source and Bilibili: every danmaku fetch also pulls the dandanplay library (multi-platform danmaku integrated) and merges the results. A licensed credential is built in and works out of the box (nothing to fill in). If you have your own dandanplay app, enter its AppId & Secret to override it; both are required, and clearing them falls back to the built-in credential. Credentials are stored encrypted in the NAS config directory \u2014 never in plaintext. Takes effect immediately.",
+    "\u5DF2\u5173\u95ED\uFF0C\u5F39\u5F39play \u4E0D\u53C2\u4E0E\u4E09\u6E90\u53E0\u52A0\uFF08\u81EA\u5EFA\u6E90/B\u7AD9 \u7167\u5E38\uFF09\u3002": "Disabled \u2014 dandanplay is excluded from the three-source stacking (Bilibili / self-hosted sources unaffected).",
+    "\u5DF2\u542F\u7528 \xB7 \u4F7F\u7528\u4F60\u586B\u5199\u7684\u81EA\u5B9A\u4E49\u51ED\u8BC1 \xB7 ": "Enabled \xB7 using your custom credentials \xB7 ",
+    "\u5DF2\u542F\u7528 \xB7 \u4F7F\u7528\u5E94\u7528\u5185\u7F6E\u51ED\u8BC1 \xB7 ": "Enabled \xB7 using the built-in credential \xB7 ",
     "\u672A\u542F\u7528 \u2014\u2014 \u65E0\u53EF\u7528\u51ED\u8BC1\uFF0C\u8BF7\u586B\u5199\u81EA\u5B9A\u4E49\u51ED\u8BC1\u540E\u4FDD\u5B58\u3002": "Not available \u2014 no usable credential. Please fill in your own AppId & Secret and save.",
     "AppId \u4E0E Secret \u4E24\u9879\u90FD\u5FC5\u586B\uFF08\u6E05\u9664\u8BF7\u7528\u300C\u6E05\u9664\u51ED\u8BC1\u300D\uFF09\u3002": 'Both AppId and Secret are required (use "Clear credentials" to remove).',
     "\u5DF2\u4FDD\u5B58\uFF08\u5BC6\u6587\u843D\u76D8\uFF09\uFF0C\u7ACB\u5373\u751F\u6548\u3002": "Saved (encrypted at rest); takes effect immediately.",
@@ -7698,11 +7698,11 @@ html.fnos-touch-narrow .fntv-dm-list.active{
     }
     const tip = document.createElement("div");
     if (/^自建源/.test(srcName)) {
-      tip.textContent = "\u6570\u636E\u6765\u6E90\uFF1A\u81EA\u5EFA\u5F39\u5E55\u63A5\u53E3 danmu_api\uFF08\u53EA\u8BA4\u7CBE\u786E\u5339\u914D\uFF1B\u5F39\u5E55\u4F4E\u4E8E\u4E0B\u9650\u65F6\u7EE7\u7EED\u627E B\u7AD9/\u5F39\u5F39play \u8865\u6E90\uFF09";
+      tip.textContent = "\u6570\u636E\u6765\u6E90\uFF1A\u81EA\u5EFA\u5F39\u5E55\u63A5\u53E3 danmu_api\uFF08\u53EA\u8BA4\u7CBE\u786E\u5339\u914D\uFF0C\u4E0E B\u7AD9/\u5F39\u5F39play \u4E09\u6E90\u53E0\u52A0\uFF09";
     } else if (srcName === "\u5F39\u5F39play") {
-      tip.textContent = "\u6570\u636E\u6765\u6E90\uFF1A\u5F39\u5F39play \u5B98\u65B9\u5F00\u653E API\uFF08\u515C\u5E95\u6E90\uFF1A\u81EA\u5EFA\u6E90\u4E0E B\u7AD9 \u90FD\u6CA1\u62FF\u5230\u8DB3\u91CF\u5F39\u5E55\u65F6\u624D\u8BF7\u6C42\uFF0C\u4EE5\u8282\u7701\u989D\u5EA6\uFF1B\u542B\u591A\u5E73\u53F0\u6574\u5408\u5F39\u5E55\uFF09";
+      tip.textContent = "\u6570\u636E\u6765\u6E90\uFF1A\u5F39\u5F39play \u5B98\u65B9\u5F00\u653E API\uFF08\u4E0E\u81EA\u5EFA\u6E90/B\u7AD9 \u4E09\u6E90\u53E0\u52A0\uFF1B\u5F39\u5E55\u5E93\u5DF2\u6574\u5408\u591A\u5E73\u53F0\u5F39\u5E55\uFF09";
     } else {
-      tip.textContent = "\u6570\u636E\u6765\u6E90\uFF1AB\u7AD9\u5F39\u5E55\uFF08\u4E0E\u81EA\u5EFA\u6E90\u540C\u4E3A\u514D\u8D39\u94FE\u8DEF\uFF0C\u4F18\u5148\u4E8E\u5F39\u5F39play \u515C\u5E95\u6E90\uFF09";
+      tip.textContent = "\u6570\u636E\u6765\u6E90\uFF1AB\u7AD9\u5F39\u5E55\uFF08\u4E0E\u81EA\u5EFA\u6E90/\u5F39\u5F39play \u4E09\u6E90\u53E0\u52A0\uFF09";
     }
     Object.assign(tip.style, {
       paddingTop: "10px",
@@ -19506,7 +19506,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         ddRow.style.background = "transparent";
       };
       const ddRowLabel = document.createElement("span");
-      ddRowLabel.textContent = t("\u542F\u7528\u5F39\u5F39play \u5F39\u5E55\u6E90\uFF08\u515C\u5E95\uFF09");
+      ddRowLabel.textContent = t("\u542F\u7528\u5F39\u5F39play \u5F39\u5E55\u6E90");
       ddRowLabel.style.cssText = "color:var(--fnos-ui-text);font-weight:500;";
       const swDandan = document.createElement("input");
       swDandan.type = "checkbox";
@@ -19526,7 +19526,7 @@ html.fntv-boot-hide #root{visibility:hidden}
       const ddFoldBody = ddFold.body;
       const ddHint = document.createElement("div");
       ddHint.style.cssText = "font-size:10.5px;color:var(--fnos-ui-sec);padding:0 6px 6px;line-height:1.5;";
-      ddHint.textContent = t("\u5F39\u5F39play \u4E3A\u515C\u5E95\u6E90\uFF1A\u4EC5\u5F53\u81EA\u5EFA\u6E90\u4E0E B\u7AD9 \u90FD\u6CA1\u62FF\u5230\u8DB3\u91CF\u5F39\u5E55\u65F6\u624D\u8BF7\u6C42\uFF0C\u4EE5\u8282\u7701\u5F00\u653E API \u989D\u5EA6\u3002\u672C\u5E94\u7528\u5DF2\u5185\u7F6E\u4E00\u5957\u6B63\u5F0F\u51ED\u8BC1\uFF0C\u9ED8\u8BA4\u5373\u53EF\u4F7F\u7528\uFF08\u65E0\u9700\u586B\u5199\uFF09\uFF1B\u82E5\u4F60\u6709\u81EA\u5DF1\u7684\u5F39\u5F39play \u5E94\u7528\uFF0C\u53EF\u586B\u5165\u4E13\u5C5E AppId \u4E0E Secret \u8986\u76D6\u5185\u7F6E\u51ED\u8BC1\uFF0C\u4E24\u9879\u90FD\u586B\u624D\u751F\u6548\uFF0C\u6E05\u9664\u540E\u56DE\u843D\u5185\u7F6E\u3002\u51ED\u8BC1\u52A0\u5BC6\u4FDD\u5B58\u5728 NAS \u914D\u7F6E\u76EE\u5F55\uFF0C\u4E0D\u4F1A\u660E\u6587\u66B4\u9732\u3002\u4FDD\u5B58\u540E\u7ACB\u5373\u751F\u6548\u3002");
+      ddHint.textContent = t("\u5F39\u5F39play \u4E0E\u81EA\u5EFA\u6E90\u3001B\u7AD9 \u4E09\u6E90\u53E0\u52A0\uFF1A\u6BCF\u6B21\u83B7\u53D6\u5F39\u5E55\u90FD\u4F1A\u540C\u65F6\u53D6\u5F39\u5F39play \u5F39\u5E55\u5E93\uFF08\u5DF2\u6574\u5408\u591A\u5E73\u53F0\u5F39\u5E55\uFF09\u5E76\u5408\u5E76\u663E\u793A\u3002\u672C\u5E94\u7528\u5DF2\u5185\u7F6E\u4E00\u5957\u6B63\u5F0F\u51ED\u8BC1\uFF0C\u9ED8\u8BA4\u5373\u53EF\u4F7F\u7528\uFF08\u65E0\u9700\u586B\u5199\uFF09\uFF1B\u82E5\u4F60\u6709\u81EA\u5DF1\u7684\u5F39\u5F39play \u5E94\u7528\uFF0C\u53EF\u586B\u5165\u4E13\u5C5E AppId \u4E0E Secret \u8986\u76D6\u5185\u7F6E\u51ED\u8BC1\uFF0C\u4E24\u9879\u90FD\u586B\u624D\u751F\u6548\uFF0C\u6E05\u9664\u540E\u56DE\u843D\u5185\u7F6E\u3002\u51ED\u8BC1\u52A0\u5BC6\u4FDD\u5B58\u5728 NAS \u914D\u7F6E\u76EE\u5F55\uFF0C\u4E0D\u4F1A\u660E\u6587\u66B4\u9732\u3002\u4FDD\u5B58\u540E\u7ACB\u5373\u751F\u6548\u3002");
       ddFoldBody.appendChild(ddHint);
       const maskDd = (t2) => "*".repeat(Math.max(0, t2.length));
       let ddRealId = "";
@@ -19562,16 +19562,16 @@ html.fntv-boot-hide #root{visibility:hidden}
       ddFoldBody.appendChild(ddStatus);
       const ddSetState = (credential) => {
         if (!swDandan.checked) {
-          ddStateLine.textContent = t("\u5DF2\u5173\u95ED\uFF0C\u5F39\u5F39play \u4E0D\u53C2\u4E0E\u515C\u5E95\uFF08B\u7AD9/\u81EA\u5EFA\u6E90\u7167\u5E38\uFF09\u3002");
+          ddStateLine.textContent = t("\u5DF2\u5173\u95ED\uFF0C\u5F39\u5F39play \u4E0D\u53C2\u4E0E\u4E09\u6E90\u53E0\u52A0\uFF08\u81EA\u5EFA\u6E90/B\u7AD9 \u7167\u5E38\uFF09\u3002");
           ddStateLine.style.color = "var(--fnos-ui-warn)";
           return;
         }
-        const how = t("\u4EC5\u5F53\u81EA\u5EFA\u6E90\u4E0E B\u7AD9 \u90FD\u6CA1\u62FF\u5230\u8DB3\u91CF\u5F39\u5E55\u65F6\u624D\u4F7F\u7528\uFF0C\u8282\u7701\u989D\u5EA6");
+        const how = t("\u4E0E\u81EA\u5EFA\u6E90\u3001B\u7AD9 \u4E09\u6E90\u53E0\u52A0");
         if (credential === "custom") {
-          ddStateLine.textContent = t("\u5DF2\u542F\u7528\uFF08\u515C\u5E95\uFF09\xB7 \u4F7F\u7528\u4F60\u586B\u5199\u7684\u81EA\u5B9A\u4E49\u51ED\u8BC1 \xB7 ") + how;
+          ddStateLine.textContent = t("\u5DF2\u542F\u7528 \xB7 \u4F7F\u7528\u4F60\u586B\u5199\u7684\u81EA\u5B9A\u4E49\u51ED\u8BC1 \xB7 ") + how;
           ddStateLine.style.color = "var(--fnos-ui-sub)";
         } else if (credential === "builtin") {
-          ddStateLine.textContent = t("\u5DF2\u542F\u7528\uFF08\u515C\u5E95\uFF09\xB7 \u4F7F\u7528\u5E94\u7528\u5185\u7F6E\u51ED\u8BC1 \xB7 ") + how;
+          ddStateLine.textContent = t("\u5DF2\u542F\u7528 \xB7 \u4F7F\u7528\u5E94\u7528\u5185\u7F6E\u51ED\u8BC1 \xB7 ") + how;
           ddStateLine.style.color = "var(--fnos-ui-ok)";
         } else {
           ddStateLine.textContent = t("\u672A\u542F\u7528 \u2014\u2014 \u65E0\u53EF\u7528\u51ED\u8BC1\uFF0C\u8BF7\u586B\u5199\u81EA\u5B9A\u4E49\u51ED\u8BC1\u540E\u4FDD\u5B58\u3002");
@@ -19688,7 +19688,7 @@ html.fntv-boot-hide #root{visibility:hidden}
       const dmMinRow = document.createElement("div");
       dmMinRow.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:8px 6px;gap:10px;";
       const dmMinLabel = document.createElement("span");
-      dmMinLabel.textContent = t("\u5F39\u5E55\u5C11\u4E8E\u8BE5\u6761\u6570\u65F6\u7EE7\u7EED\u627E\u4E0B\u4E00\u4E2A\u6E90\uFF080=\u4E0D\u542F\u7528\uFF09");
+      dmMinLabel.textContent = t("\u5F39\u5E55\u7F13\u5B58\u590D\u7528\u4E0B\u9650\uFF1A\u8FBE\u5230\u8BE5\u6761\u6570\u540C\u4E00\u96C6\u76F4\u63A5\u7528\u672C\u5730\u7F13\u5B58\uFF080=\u4E0D\u542F\u7528\uFF09");
       dmMinLabel.style.cssText = "color:var(--fnos-ui-text);font-weight:500;font-size:12.5px;flex:1;line-height:1.4;";
       const dmMinInput = document.createElement("input");
       dmMinInput.type = "number";
@@ -20052,7 +20052,7 @@ html.fntv-boot-hide #root{visibility:hidden}
       secBodyAbout.appendChild(aboutAuthor);
       const aboutDesc = document.createElement("div");
       aboutDesc.style.cssText = "font-size:13px;line-height:1.9;color:var(--fnos-ui-text);opacity:.82;max-width:440px;";
-      aboutDesc.textContent = t("NAS \u88C5\u4E00\u6B21\uFF0C\u7535\u89C6\u3001\u5E73\u677F\u3001\u624B\u673A\u3001\u7535\u8111\u6D4F\u89C8\u5668\u6253\u5F00\u98DE\u725B\u5F71\u89C6\u5373\u662F\u589E\u5F3A\u7248\uFF1A\u6C89\u6D78\u5F0F\u7F8E\u5316\uFF08\u6D77\u62A5\u5899\u3001\u56DB\u578B\u8F6E\u64AD\u3001\u8BE6\u60C5\u9875\u67D4\u5149\u73BB\u7483\u3001Logo \u81EA\u5B9A\u4E49\uFF09\u3001\u5F39\u5E55\uFF08B\u7AD9 / \u81EA\u5EFA\u6E90 / \u5F39\u5F39play \u515C\u5E95\uFF09\u3001\u8C46\u74E3 / Bangumi / Trakt \u540C\u6B65\u3001\u8DF3\u8FC7\u7247\u5934\u4E0E\u8DE8\u8BBE\u5907\u64AD\u653E\u8BB0\u5FC6\u3001TMDB \u4FE1\u606F\u5361\u4E0E\u6BCF\u65E5\u653E\u9001\u3001\u89C2\u5F71\u8BB0\u5F55\u4E0E\u5E74\u5EA6\u62A5\u544A\u3001\u81EA\u5B9A\u4E49\u522E\u524A\u6E90\u56DE\u586B\u3002\u6CE8\u5165\u670D\u52A1\u4E0D\u6539\u52A8\u7CFB\u7EDF\u4E0E\u5F71\u89C6\u5E94\u7528\u4EFB\u4F55\u6587\u4EF6\uFF0C\u5378\u8F7D\u5373\u8FD8\u539F\u3002");
+      aboutDesc.textContent = t("NAS \u88C5\u4E00\u6B21\uFF0C\u7535\u89C6\u3001\u5E73\u677F\u3001\u624B\u673A\u3001\u7535\u8111\u6D4F\u89C8\u5668\u6253\u5F00\u98DE\u725B\u5F71\u89C6\u5373\u662F\u589E\u5F3A\u7248\uFF1A\u6C89\u6D78\u5F0F\u7F8E\u5316\uFF08\u6D77\u62A5\u5899\u3001\u56DB\u578B\u8F6E\u64AD\u3001\u8BE6\u60C5\u9875\u67D4\u5149\u73BB\u7483\u3001Logo \u81EA\u5B9A\u4E49\uFF09\u3001\u5F39\u5E55\uFF08\u81EA\u5EFA\u6E90 / B\u7AD9 / \u5F39\u5F39play \u4E09\u6E90\u53E0\u52A0\uFF09\u3001\u8C46\u74E3 / Bangumi / Trakt \u540C\u6B65\u3001\u8DF3\u8FC7\u7247\u5934\u4E0E\u8DE8\u8BBE\u5907\u64AD\u653E\u8BB0\u5FC6\u3001TMDB \u4FE1\u606F\u5361\u4E0E\u6BCF\u65E5\u653E\u9001\u3001\u89C2\u5F71\u8BB0\u5F55\u4E0E\u5E74\u5EA6\u62A5\u544A\u3001\u81EA\u5B9A\u4E49\u522E\u524A\u6E90\u56DE\u586B\u3002\u6CE8\u5165\u670D\u52A1\u4E0D\u6539\u52A8\u7CFB\u7EDF\u4E0E\u5F71\u89C6\u5E94\u7528\u4EFB\u4F55\u6587\u4EF6\uFF0C\u5378\u8F7D\u5373\u8FD8\u539F\u3002");
       secBodyAbout.appendChild(aboutDesc);
       const aboutVer = document.createElement("div");
       aboutVer.id = "fnos-about-version";
@@ -20064,7 +20064,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         ipcRenderer.once("version-info", (_e, info) => {
           if (!info || !info.version) return;
           const ver = String(info.version).replace(/-web$/, "");
-          const bt = "2026-11-15 21:23" ? " (2026-11-15 21:23)" : "";
+          const bt = "2026-11-15 22:08" ? " (2026-11-15 22:08)" : "";
           aboutVer.textContent = "\u7248\u672C\uFF1Av" + ver + bt;
         });
       } catch (_) {

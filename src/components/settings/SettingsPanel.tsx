@@ -2377,7 +2377,7 @@ export function SettingsPanel({
                   <div className="set-row set-row-col">
                     <span className="set-k">弹弹play 兼容源</span>
                     <div className="set-desc">
-                      自建弹幕接口与 B 站都未命中时的兜底弹幕库（弹弹play API 兼容端点）。
+                      弹弹play 弹幕库来源（弹弹play API 兼容端点），与自建弹幕接口、B 站三源叠加。
                       自上而下为优先级，请求失败自动切下一个；自定义源需兼容 dandanplay 开放 API。
                       修改后需重启播放器（mpv）生效。列表存本机 danmaku-api-sources.json。
                     </div>

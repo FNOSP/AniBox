@@ -1853,15 +1853,17 @@ export function SettingsPanel({
                       onChange={choosePlayer}
                     />
                   </div>
-                  {/* [lc-2002] 播放器皮肤（仅自带 mpv 生效）：原生 uosc / 液态玻璃 ModernGlass。
-                      两套 OSC 物理互斥，切换在下一次起播生效。 */}
+                  {/* [lc-2002/lc-2178] 播放器皮肤（仅自带 mpv 生效）：原生 uosc /
+                      液态玻璃 ModernGlass / 透明悬浮（同款去玻璃底板）。
+                      几套 OSC 物理互斥，切换在下一次起播生效。 */}
                   {playerKind === "mpv" && (
                     <div className="set-row">
                       <div>
                         <span className="set-k">播放器皮肤</span>
                         <div className="set-desc">
-                          液态玻璃是独立的一套控件条（带新的右键菜单与缩略图预览）。
-                          切换在下次播放时生效；两种皮肤共用同一份配置文件。
+                          液态玻璃是独立的一套控件条（带新的右键菜单与缩略图预览）；
+                          透明悬浮与它同款，只去掉玻璃底板和模糊。
+                          切换在下次播放时生效。
                         </div>
                       </div>
                       <SetSelect
@@ -1870,9 +1872,10 @@ export function SettingsPanel({
                         disabled={busy}
                         options={[
                           { value: "glass", label: "液态玻璃" },
+                          { value: "clear", label: "透明悬浮" },
                           { value: "uosc", label: "原生（uosc）" },
                         ]}
-                        onChange={(v) => onSettings({ playerSkin: v as "uosc" | "glass" })}
+                        onChange={(v) => onSettings({ playerSkin: v as "uosc" | "glass" | "clear" })}
                       />
                     </div>
                   )}

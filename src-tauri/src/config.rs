@@ -268,7 +268,8 @@ pub struct Config {
        老 config.json 无此键 → 默认 "app"（本版默认点播放就走软件内），不需要迁移脚本。 */
     #[serde(default = "default_player_open_mode")]
     pub player_open_mode: String,
-    /// [lc-2002] 播放器皮肤："glass"（ModernGlass 液态玻璃，默认）| "uosc"（原生）。
+    /// [lc-2002] 播放器皮肤："glass"（ModernGlass 液态玻璃，默认）/ "clear"（透明悬浮）/
+    /// "uosc"（原生）。clear 与 glass 逐项同款，只去掉玻璃底板、描边、投影与模糊 shader。
     /// 皮肤脚本按需搬进/搬出 portable_config/scripts（mpv 自动加载该目录），
     /// 切换在下一次起播生效。
     #[serde(default = "default_player_skin")]
@@ -527,10 +528,11 @@ pub fn duanju_core_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 }
 
 
-/// [lc-2002/lc-2003] 播放器皮肤切换（`uosc` 原生 / `glass` 液态玻璃）。
+/// [lc-2002/lc-2003/lc-2178] 播放器皮肤切换（`uosc` 原生 / `glass` 液态玻璃 /
+/// `clear` 透明悬浮）。
 ///
-/// **两套 OSC 都随包留在 `portable_config/scripts/`，不搬任何文件** —— 每个脚本开头
-/// 读 `script-opts/anibox_skin.conf` 的 `skin=uosc|glass` 自行早退（见各脚本的
+/// **三套 OSC 都随包留在 `portable_config/scripts/`，不搬任何文件** —— 每个脚本开头
+/// 读 `script-opts/anibox_skin.conf` 的 `skin=uosc|glass|clear` 自行早退（见各脚本的
 /// `[lc-2003] 皮肤门控`）。所以切换 = 重写这一份 conf，一次写入完成，既不会
 /// 「搬一半失败导致两套叠加」，也不需要重启应用（下一次起播 mpv 重新加载脚本即生效）。
 ///
@@ -542,10 +544,19 @@ pub fn apply_player_skin(app: &tauri::AppHandle, skin: &str) {
     };
     let opts = base.join("script-opts");
     let _ = std::fs::create_dir_all(&opts);
-    let want = if skin == "glass" { "glass" } else { "uosc" };
+    let want = skin_conf_value(skin);
     write_skin_conf(&opts, want);
-    // 右键菜单入口随皮肤：uosc 用底栏「更多」，玻璃皮肤用右键调起它的菜单插件。
+    // 右键菜单入口随皮肤：uosc 用底栏「更多」，玻璃/透明皮肤用右键调起它的菜单插件。
     crate::libmpv::trace(&format!("[lc-2003] 播放器皮肤 = {want}（下一次起播生效）"));
+}
+
+/// [lc-2178] 皮肤值归一：只认 `clear` / `glass`，其余（含 `uosc` 与非法值）一律回落 uosc。
+fn skin_conf_value(skin: &str) -> &'static str {
+    match skin {
+        "glass" => "glass",
+        "clear" => "clear",
+        _ => "uosc",
+    }
 }
 
 /// [lc-2003] 写皮肤开关（幂等的单次覆盖写）。抽出来便于单测双向锚定。
@@ -1132,8 +1143,8 @@ mod tests {
         assert_eq!(encrypt_access_code(&once), once, "重复加密应保持幂等");
     }
 
-    /// [lc-2003] 皮肤切换 = 重写一份 conf（两套脚本都留着、各自门控早退）。
-    /// 双向断言：写 glass 后 conf 必须是 skin=glass；写 uosc 后必须翻回来。
+    /// [lc-2003] 皮肤切换 = 重写一份 conf（脚本都留着、各自门控早退）。
+    /// 双向断言：写 glass / clear 后 conf 必须对应；写 uosc 后必须翻回来。
     #[test]
     fn skin_conf_switch_is_single_write() {
         let tmp = std::env::temp_dir().join(format!("anibox-skin-{}", std::process::id()));
@@ -1149,9 +1160,22 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&conf).unwrap(), "skin=glass
 ");
 
+        // [lc-2178] 透明悬浮也是独立皮肤值，不能被归一成 uosc
+        write_skin_conf(&opts, "clear");
+        assert_eq!(std::fs::read_to_string(&conf).unwrap().trim(), "skin=clear");
+
         write_skin_conf(&opts, "uosc");
         assert_eq!(std::fs::read_to_string(&conf).unwrap().trim(), "skin=uosc");
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// [lc-2178] 皮肤值归一：clear 保留，其余非法值回落 uosc。
+    #[test]
+    fn skin_conf_value_keeps_clear() {
+        assert_eq!(skin_conf_value("glass"), "glass");
+        assert_eq!(skin_conf_value("clear"), "clear");
+        assert_eq!(skin_conf_value("uosc"), "uosc");
+        assert_eq!(skin_conf_value("bogus"), "uosc");
     }
 }

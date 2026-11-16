@@ -513,10 +513,11 @@ impl MpvSession {
                 .player_skin;
             crate::config::apply_player_skin(&app, &skin);
         }
-        // [lc-2008] 玻璃皮肤：uosc 仍要加载（uosc_danmaku 的搜索/源管理菜单走它的
-        // menu API），但全部可视元素禁用 —— modernz 画底栏，uosc 只当菜单服务。
+        // [lc-2008/lc-2178] ModernGlass 家族（glass / clear）：uosc 仍要加载
+        // （uosc_danmaku 的搜索/源管理菜单走它的 menu API），但全部可视元素禁用 ——
+        // modernz 画底栏，uosc 只当菜单服务。clear 只是去掉了玻璃底板。
         let cfg_now = app.state::<crate::AppState>().config.read().await.clone();
-        let glass_skin = cfg_now.player_skin == "glass";
+        let modernz_skin = matches!(cfg_now.player_skin.as_str(), "glass" | "clear");
         // [lc-2075] 玻璃模糊逃生开关：玻璃 shader 挂在 OUTPUT 上会引入全尺寸中间
         // pass，个别显卡/驱动呈现偏色（外部用户「画面发蓝」，uosc 皮肤不挂此
         // shader、无此现象，本机亦无法复现）。关掉即不挂载，渲染路径与 uosc 一致。
@@ -545,8 +546,8 @@ impl MpvSession {
             // 之前关掉是为了避免误拖，但用户反馈窗口无法移动，这里恢复默认行为。
             "--window-dragging=yes".to_string(),
             format!("--log-file={}", log_path.to_string_lossy()),
-            // [lc-2008] 玻璃皮肤：uosc 只当菜单服务（全部可视元素禁用）
-            (if glass_skin {
+            // [lc-2008/lc-2178] 玻璃/透明皮肤：uosc 只当菜单服务（全部可视元素禁用）
+            (if modernz_skin {
                 "--script-opts-append=uosc-disable_elements=top_bar,timeline,controls,volume,pause_indicator,buffering_indicator,window_border".to_string()
             } else {
                 String::new()
@@ -560,8 +561,9 @@ impl MpvSession {
         if let Some(geo) = startup_geometry(&app, vertical) {
             args.push(geo);
         }
-        // [lc-2075] 玻璃模糊关：modernz 不再挂载玻璃 shader（发蓝机器的自救开关）
-        if glass_skin && !glass_blur {
+        // [lc-2075] 玻璃模糊关：modernz 不再挂载玻璃 shader（发蓝机器的自救开关；
+        // clear 本身不装 shader，这里一并传 no 保持一致口径）
+        if modernz_skin && !glass_blur {
             args.push("--script-opts-append=modernz-glass_blur=no".to_string());
         }
         if let Some(t) = force_title {

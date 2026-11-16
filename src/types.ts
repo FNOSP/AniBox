@@ -555,8 +555,9 @@ export type AppSettings = {
   playerOpenMode?: "app" | "window";
   /** [lc-2057] 调起播放器后自动隐藏主窗口，播放器关闭后再显示。默认关闭。 */
   hideMainOnPlay?: boolean;
-  /** [lc-2002] 播放器皮肤：uosc（原生，默认）/ glass（ModernGlass 液态玻璃） */
-  playerSkin?: "uosc" | "glass";
+  /** [lc-2002/lc-2178] 播放器皮肤：uosc（原生）/ glass（ModernGlass 液态玻璃）/
+   *  clear（透明悬浮：同款布局交互，去玻璃底板与模糊） */
+  playerSkin?: "uosc" | "glass" | "clear";
   /** [lc-2075] 玻璃模糊：玻璃面板后面视频的磨砂模糊（glass_blur）。个别显卡/驱动上
    *  该 shader 的输出中间 pass 会整体偏色（画面发蓝），关掉即恢复与原生皮肤相同的渲染路径。 */
   playerGlassBlur?: boolean;

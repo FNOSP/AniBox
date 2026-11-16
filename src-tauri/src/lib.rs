@@ -3444,11 +3444,12 @@ async fn set_settings(
         }
         cfg.player_open_mode = s.to_string();
     }
-    // [lc-2002] 播放器皮肤：uosc（原生，默认）/ glass（ModernGlass 液态玻璃），下一次起播生效。
+    // [lc-2002/lc-2178] 播放器皮肤：uosc（原生）/ glass（ModernGlass 液态玻璃）/
+    // clear（透明悬浮，同款去玻璃底板），下一次起播生效。
     if let Some(v) = arg.get("playerSkin") {
         let s = v.as_str().unwrap_or("");
-        if !matches!(s, "uosc" | "glass") {
-            return Err(format!("playerSkin 非法：{s}（只允许 uosc/glass）"));
+        if !matches!(s, "uosc" | "glass" | "clear") {
+            return Err(format!("playerSkin 非法：{s}（只允许 uosc/glass/clear）"));
         }
         cfg.player_skin = s.to_string();
     }

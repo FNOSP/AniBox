@@ -28,6 +28,10 @@ fn core_slot() -> &'static Mutex<Option<libloading::Library>> {
 
 static READY: AtomicBool = AtomicBool::new(false);
 
+/// [lc-2180] initialize 响应里的站源能力清单（guoapp v2 架构：站源 = JS 模块，
+/// 可用集合随随包模块而定，不再是核心写死）。前端据此动态渲染站源 chips。
+static SOURCES: OnceLock<Value> = OnceLock::new();
+
 /// [lc-2097] 请求序号：上游 nativeBeginPlayback 要求节流阀 `sequence` **严格递增**
 /// （`sequence <= engine.playbackSequence` 直接返回 context.Canceled）。Dart 客户端用
 /// `++_playbackSequence`，本模块同理——每类会进节流阀的 action 各自递增。
@@ -169,17 +173,110 @@ async fn ensure_ready(app: &tauri::AppHandle) -> Result<(), String> {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| data_dir.clone())
         .join("duanju-downloads");
+    // [lc-2180] guoapp v2 核心的 initialize 需要独立缓存目录（封面/剧库/榜单缓存，
+    // 上游 Dart 侧传 getApplicationCacheDirectory）。
+    let cache_dir = data_dir
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| data_dir.clone())
+        .join("duanju-core-cache");
     let _ = std::fs::create_dir_all(&data_dir);
     let _ = std::fs::create_dir_all(&dl_dir);
+    let _ = std::fs::create_dir_all(&cache_dir);
+    // [lc-2180] v2 核心只从数据目录 modules/ 加载 JS 站源，先按版本部署随包模块。
+    deploy_modules(app, &data_dir);
     ensure_loaded(app)?;
     let body = json!({
         "action": "initialize",
         "directory": data_dir.to_string_lossy(),
+        "cache": cache_dir.to_string_lossy(),
         "downloads": dl_dir.to_string_lossy(),
     });
-    call_async(body).await?;
+    let resp = call_async(body).await?;
+    // 记下站源清单（id/name/available/adult/…）。call_async 已解包 envelope（成功时
+    // 返回 data 本体），sources 就在顶层；初始化失败时不置 READY，下次再试。
+    if let Some(sources) = resp.get("sources").cloned() {
+        let _ = SOURCES.set(sources);
+    }
     READY.store(true, std::sync::atomic::Ordering::Release);
     Ok(())
+}
+
+/// [lc-2180] 把随包站源模块（third_party/duanju/modules/<id>/…）部署进核心数据目录
+/// `modules/<id>/`。guoapp v2 核心只从数据目录的 modules/ 加载 JS 站源；随包目录是
+/// 只读资源，因此按 manifest 版本择优复制：
+///   · 数据目录没有该模块 → 复制随包版；
+///   · 随包版本更高 → 整目录替换（红果取流接口适配随模块版本走，必须跟新）；
+///   · 数据目录版本相同/更高 → 不动（不降级）。
+fn deploy_modules(app: &tauri::AppHandle, data_dir: &std::path::Path) {
+    let Some(src_root) = crate::config::duanju_modules_dir(app) else {
+        return;
+    };
+    let dst_root = data_dir.join("modules");
+    let Ok(entries) = std::fs::read_dir(&src_root) else {
+        return;
+    };
+    for ent in entries.flatten() {
+        let path = ent.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let id = ent.file_name().to_string_lossy().into_owned();
+        let bundled = read_module_version(&path);
+        let installed = read_module_version(&dst_root.join(&id));
+        if version_le(&bundled, &installed) {
+            continue;
+        }
+        let dst = dst_root.join(&id);
+        let _ = std::fs::remove_dir_all(&dst);
+        copy_tree(&path, &dst);
+        crate::libmpv::trace(&format!(
+            "[duanju] 站源模块 {id} 部署 {} -> {}",
+            bundled, installed
+        ));
+    }
+}
+
+/// 读模块 manifest 的 version 字段（缺文件/非法 JSON 返回空串 = 视为最低版本）。
+fn read_module_version(dir: &std::path::Path) -> String {
+    std::fs::read_to_string(dir.join("manifest.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .and_then(|m| m.get("version").and_then(|v| v.as_str()).map(str::to_owned))
+        .unwrap_or_default()
+}
+
+/// 版本比较（guoapp 模块版本形如 1.0.2；不可解析的段按 0，空串即 0.0.0）。
+fn version_le(a: &str, b: &str) -> bool {
+    parse_ver(a) <= parse_ver(b)
+}
+
+fn parse_ver(v: &str) -> (u64, u64, u64) {
+    let mut out = [0u64; 3];
+    for (i, seg) in v.split('.').take(3).enumerate() {
+        out[i] = seg.trim().parse().unwrap_or(0);
+    }
+    (out[0], out[1], out[2])
+}
+
+/// 递归复制目录（模块现只有 manifest.json + main.js，写通用以便上游日后加文件）。
+fn copy_tree(src: &std::path::Path, dst: &std::path::Path) {
+    if !src.is_dir() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(dst);
+    let Ok(entries) = std::fs::read_dir(src) else {
+        return;
+    };
+    for ent in entries.flatten() {
+        let from = ent.path();
+        let to = dst.join(ent.file_name());
+        if from.is_dir() {
+            copy_tree(&from, &to);
+        } else if let Err(e) = std::fs::copy(&from, &to) {
+            crate::libmpv::trace(&format!("[duanju] 模块文件 {} 复制失败: {e}", from.display()));
+        }
+    }
 }
 
 fn next_call_body(action: &str, mut extra: Value) -> Value {
@@ -216,14 +313,20 @@ fn remember_session(plan: &Value) {
 
 // ───────────────────────── Tauri 命令 ─────────────────────────
 
-/// 核心信息（前端短剧页挂载时调）：初始化核心并回版本/站源可用性。
+/// 核心信息（前端短剧页挂载时调）：初始化核心并回版本/站源能力。
+/// [lc-2180] sources = initialize 响应的站源清单（id/name/available/adult/…），
+/// 前端据此渲染站源 chips（guoapp v2 起站源集合随随包模块变化，不能写死）。
 #[tauri::command]
 pub async fn duanju_init(app: tauri::AppHandle) -> Result<Value, String> {
     ensure_ready(&app).await?;
     let info = call_async(json!({ "action": "checkUpdate", "version": "" }))
         .await
         .unwrap_or(Value::Null);
-    Ok(json!({ "ready": true, "info": info }))
+    Ok(json!({
+        "ready": true,
+        "info": info,
+        "sources": SOURCES.get().cloned().unwrap_or(Value::Null),
+    }))
 }
 
 /// 站源分类列表。
@@ -873,4 +976,22 @@ pub async fn duanju_history_update(
 /// [lc-2128] 恢复 modernz 的 ±10 秒跳转键（非短剧起播时调用）。
 pub fn restore_modernz_jump_buttons(app: &tauri::AppHandle) {
     set_modernz_jump_buttons(app, true);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_compare() {
+        // 随包模块升级判定：只有随包版本**更高**才替换数据目录里的旧模块。
+        assert!(version_le("1.0.1", "1.0.2")); // 旧随包不覆盖已装新模块
+        assert!(!version_le("1.0.2", "1.0.1")); // 新随包覆盖旧模块
+        assert!(version_le("1.0.2", "1.0.2")); // 同版本不重复部署
+        assert!(!version_le("1.1.0", "1.0.9")); // 逐段比较不是字符串比较
+        assert!(!version_le("2.0.0", "1.9.9"));
+        assert!(!version_le("1.0.2", "")); // 数据目录缺 manifest = 最低版本，随包必部署
+        assert!(version_le("", "0.0.1"));
+        assert!(!version_le("1.0.10", "1.0.9")); // 数值比较，不是字典序
+    }
 }

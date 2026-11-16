@@ -174,12 +174,20 @@ function collect() {
 
   // 2.5) [lc-2078] 短剧核心（guoapp duanju_core.dll；Windows amd64 随包，
   //      Linux/macOS 上游核心待供给——见 tools/fetch-duanju-core.py）。
+  //      [lc-2180] v2 架构站源 = JS 模块（third_party/duanju/modules/<id>/…），
+  //      随核心一并随包，运行时按版本部署到数据目录 modules/。
   const duanjuDir = path.join(ROOT, 'third_party', 'duanju');
   if (fs.existsSync(duanjuDir)) {
     for (const ent of fs.readdirSync(duanjuDir, { withFileTypes: true })) {
       if (ent.isFile() && /\.(dll|so|dylib)$/i.test(ent.name)) {
         items.push({ abs: path.join(duanjuDir, ent.name), rel: `third_party/duanju/${ent.name}` });
       }
+    }
+    const duanjuModules = path.join(duanjuDir, 'modules');
+    if (fs.existsSync(duanjuModules)) {
+      const nested = [];
+      walk(duanjuModules, 'third_party/duanju/modules', nested);
+      items.push(...nested);
     }
   }
 

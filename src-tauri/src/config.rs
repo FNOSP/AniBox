@@ -527,6 +527,14 @@ pub fn duanju_core_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     find_bundled_file(app, "third_party/duanju/duanju_core.dll")
 }
 
+/// [lc-2180] 随包短剧站源模块目录（guoapp v2 架构：站源为 JS 模块，宿主核心从
+/// 数据目录 `modules/<id>/{manifest.json,main.js}` 加载。随包文件由
+/// tools/fetch-duanju-core.py 拉到 third_party/duanju/modules/，staging 随包分发；
+/// 运行时由 duanju::deploy_modules 按版本部署到数据目录）。
+pub fn duanju_modules_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    find_bundled_dir(app, "third_party/duanju/modules")
+}
+
 
 /// [lc-2002/lc-2003/lc-2178] 播放器皮肤切换（`uosc` 原生 / `glass` 液态玻璃 /
 /// `clear` 透明悬浮）。

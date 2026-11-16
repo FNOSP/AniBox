@@ -1,6 +1,7 @@
 /* [lc-2115] 18 禁站源年龄确认弹窗（短剧页）。
-   红果之后的站源（剧果/禁果短剧/野果/黑桃/黄豆）含成人内容，**首次切到这些站源**时弹一次
-   完整条款确认；同意后写入 localStorage，之后不再打扰（同一浏览器永久有效）。
+   含成人内容的站源（[lc-2180] 起按核心回传 sources 的 adult 声明判定，红果为
+   公开内容不拦）**首次切换**时弹一次完整条款确认；同意后写入 localStorage，
+   之后不再打扰（同一浏览器永久有效）。
 
    设计口径：
    · 复用 lc-1607 免责声明那套弹窗外壳（`.ddet-mask` 遮罩 + `.ddet` 卡片 + `.dsc-*` 按钮），
@@ -16,9 +17,6 @@ import { DUR } from "../../lib/motion";
 
 /** 已确认成人的 localStorage 键（置位后不再弹） */
 export const ADULT_ACK_KEY = "anibox-adult-ack-v1";
-
-/** 需要年龄确认的站源（红果之后的全部站源；红果自身为公开短剧内容，不拦） */
-export const ADULT_SOURCES = new Set(["jinguo", "jinguoduanju", "yeguo", "heitao", "huangdou"]);
 
 export function adultAckDone(): boolean {
   try {

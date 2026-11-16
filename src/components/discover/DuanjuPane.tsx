@@ -1,6 +1,7 @@
 /* [lc-2078] 发现页短剧栏（占位转真）—— 数据来自 guoapp「红果鉴」Go 核心（duanju_core.dll，
    GPL-3.0 与本仓库同许可；Rust 侧 FFI 桥见 src-tauri/src/duanju.rs）。
-   UI：站源 chips（红果/剧果/禁果短剧/野果/黑桃/黄豆）+ 分类 chips + 搜索 + 竖版海报网格；
+   UI：站源 chips（[lc-2180] 起动态渲染：guoapp v2 架构站源 = 随包 JS 模块，
+   可用集合与 adult 声明由核心回传）+ 分类 chips + 搜索 + 竖版海报网格；
    点卡片 → 详情浮层（简介 + 选集 30/组）→ 点集 duanju_play（核心本地流直链 → mpv）。
    NOT IMPLEMENTED：推荐/榜单 Tab、弹幕、追剧、下载、多清晰度切换、Linux/macOS 核心。 */
 
@@ -10,7 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { DState } from "./shared";
 import { djImg } from "../../lib/images";
-import { AdultGateModal, ADULT_SOURCES, adultAckDone, markAdultAck } from "./AdultGateModal";
+import { AdultGateModal, adultAckDone, markAdultAck } from "./AdultGateModal";
 import { Star as IcoStar, X as IcoXL } from "lucide-react";
 
 type DuanjuDrama = {
@@ -60,14 +61,26 @@ type DjHistory = {
   at: number;
 };
 
-/** 站源（id 与上游 Go sourceXxx 常量一致；顺序即展示顺序） */
-const SOURCES: { id: string; label: string }[] = [
-  { id: "hongguo", label: "红果" },
-  { id: "jinguo", label: "剧果" },
-  { id: "jinguoduanju", label: "禁果短剧" },
-  { id: "yeguo", label: "野果" },
-  { id: "heitao", label: "黑桃" },
-  { id: "huangdou", label: "黄豆" },
+/** [lc-2180] 站源能力（duanju_init 回传的 sources 列表）。
+ *  guoapp v2 架构起站源 = JS 模块（随包部署到数据目录），可用集合随包变化，
+ *  不再写死；adult 为上游模块 manifest 的声明，驱动 18 禁确认闸门。 */
+type DjSource = {
+  id: string;
+  name: string;
+  available?: boolean;
+  adult?: boolean;
+  [k: string]: unknown;
+};
+
+/** 兜底站源表：duanju_init 没回 sources 时用（老核心 / 核心缺失），id 与顺序照旧；
+ *  adult 与旧 ADULT_SOURCES 口径一致（红果为公开短剧内容不拦）。 */
+const FALLBACK_SOURCES: DjSource[] = [
+  { id: "hongguo", name: "红果", adult: false },
+  { id: "jinguo", name: "剧果", adult: true },
+  { id: "jinguoduanju", name: "禁果短剧", adult: true },
+  { id: "yeguo", name: "野果", adult: true },
+  { id: "heitao", name: "黑桃", adult: true },
+  { id: "huangdou", name: "黄豆", adult: true },
 ];
 const EP_GROUP = 30; // 选集分组（与上游详情页同口径）
 
@@ -160,6 +173,8 @@ function readFavs(): FavDrama[] {
 
 export function DuanjuPane() {
   const [source, setSource] = useState("hongguo");
+  // [lc-2180] 站源集合以核心回传为准；老核心/核心缺失时用兜底表
+  const [sources, setSources] = useState<DjSource[]>(FALLBACK_SOURCES);
   // [lc-2099] 收藏：favOpen = 左栏「收藏」标签激活（与站源 chips 并列置顶）
   const [favs, setFavs] = useState<FavDrama[]>(readFavs);
   const [favOpen, setFavOpen] = useState(false);
@@ -187,6 +202,26 @@ export function DuanjuPane() {
   // [lc-2123] 当前打开剧的观看进度（详情页展示 + 「继续观看」定位）
   const [hist, setHist] = useState<DjHistory | null>(null);
   const [playErr, setPlayErr] = useState("");
+
+  // [lc-2180] 站源能力清单（顺带预热核心）：guoapp v2 起站源 = 随包 JS 模块，
+  // 可用集合与 adult 声明以核心回传为准；失败保留兜底表。
+  useEffect(() => {
+    let alive = true;
+    invoke<{ sources?: DjSource[] | null }>("duanju_init")
+      .then((d) => {
+        if (!alive) return;
+        const list = Array.isArray(d?.sources)
+          ? d.sources!.filter((s) => s && typeof s.id === "string" && typeof s.name === "string")
+          : null;
+        if (list && list.length) setSources(list);
+      })
+      .catch(() => {
+        /* 核心缺失：保留兜底表，chips 可见、调用报「短剧核心缺失」 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // 分类（随站源重取）
   useEffect(() => {
@@ -415,27 +450,29 @@ export function DuanjuPane() {
           收藏
           {favs.length > 0 && <span className="dj-favcount">{favs.length}</span>}
         </button>
-        {SOURCES.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            className={`dj-chip${!favOpen && source === s.id ? " on" : ""}`}
-            onClick={() => {
-              // [lc-2115] 红果之后的站源含成人内容：首次切换弹完整条款确认，
-              // 同意后写 localStorage 不再打扰（红果自身不拦）。
-              if (ADULT_SOURCES.has(s.id) && !adultAckDone()) {
-                setPendingAdult(s.id);
-                return;
-              }
-              setFavOpen(false);
-              setSource(s.id);
-              setTerm("");
-              setQuery("");
-            }}
-          >
-            {s.label}
-          </button>
-        ))}
+        {sources
+          .filter((s) => s.available !== false)
+          .map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className={`dj-chip${!favOpen && source === s.id ? " on" : ""}`}
+              onClick={() => {
+                // [lc-2115/lc-2180] 成人站源按核心回传的 adult 声明判定：首次切换弹
+                // 完整条款确认，同意后写 localStorage 不再打扰。
+                if (s.adult && !adultAckDone()) {
+                  setPendingAdult(s.id);
+                  return;
+                }
+                setFavOpen(false);
+                setSource(s.id);
+                setTerm("");
+                setQuery("");
+              }}
+            >
+              {s.name}
+            </button>
+          ))}
       </div>
 
       {/* 分类 + 搜索 */}

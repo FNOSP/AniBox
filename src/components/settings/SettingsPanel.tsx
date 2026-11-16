@@ -1853,16 +1853,16 @@ export function SettingsPanel({
                       onChange={choosePlayer}
                     />
                   </div>
-                  {/* [lc-2002/lc-2178] 播放器皮肤（仅自带 mpv 生效）：原生 uosc /
-                      液态玻璃 ModernGlass / 透明悬浮（同款去玻璃底板）。
-                      几套 OSC 物理互斥，切换在下一次起播生效。 */}
+                  {/* [lc-2002/lc-2182] 播放器皮肤（仅自带 mpv 生效）：原生 uosc /
+                      液态玻璃 ModernGlass / 透明悬浮（只去掉控制条的玻璃底板，
+                      菜单等弹窗玻璃不变）。几套 OSC 物理互斥，切换在下一次起播生效。 */}
                   {playerKind === "mpv" && (
                     <div className="set-row">
                       <div>
                         <span className="set-k">播放器皮肤</span>
                         <div className="set-desc">
                           液态玻璃是独立的一套控件条（带新的右键菜单与缩略图预览）；
-                          透明悬浮与它同款，只去掉玻璃底板和模糊。
+                          透明悬浮与它同款，只去掉控制条的玻璃底板，菜单等弹窗不变。
                           切换在下次播放时生效。
                         </div>
                       </div>
@@ -1879,10 +1879,10 @@ export function SettingsPanel({
                       />
                     </div>
                   )}
-                  {/* [lc-2075] 玻璃模糊：个别显卡/驱动上该 shader 的输出中间 pass 会把画面整体染偏
+                  {/* [lc-2075/lc-2182] 玻璃模糊：个别显卡/驱动上该 shader 的输出中间 pass 会把画面整体染偏
                       （用户反馈「画面发蓝」，原生皮肤无此现象）。关掉后玻璃面板失去磨砂质感，
-                      渲染路径与原生皮肤完全一致。 */}
-                  {playerKind === "mpv" && (settings.playerSkin ?? "glass") === "glass" && (
+                      渲染路径与原生皮肤完全一致。透明悬浮的弹窗菜单仍是玻璃，同样受此开关控制。 */}
+                  {playerKind === "mpv" && ["glass", "clear"].includes(settings.playerSkin ?? "glass") && (
                     <div className="set-row">
                       <div>
                         <span className="set-k">玻璃模糊</span>

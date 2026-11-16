@@ -414,6 +414,63 @@ pub async fn duanju_release(_app: tauri::AppHandle, session: String) -> Result<(
     Ok(())
 }
 
+// ───────────────────────── 青空（sorani）站源账号 ─────────────────────────
+// [lc-2181] 青空模块播放必须登录（accessToken），上游在「设置 › 站源 › 站源账号」里
+// 走 账号密码 → 滑块拼图验证（AJ-Captcha）→ login 的流程，会话持久化在核心数据目录。
+// op 协议照抄上游 Dart 仓库层（core_bridge.dart 的 soraniAccount 系列）：
+//   {"action":"soraniAccount"}                              → {loggedIn, name}
+//   {"action":"soraniAccount","command":"captcha"}          → {id, backgroundImage,
+//                                                 templateImage(dataURI), 宽高×2}
+//   {"action":"soraniAccount","command":"login","account":
+//      {identifier, password, captchaId, track:{bgImageWidth,bgImageHeight,
+//       templateImageWidth,templateImageHeight,startTime,stopTime,trackList}}} → 同 status
+//   {"action":"soraniAccount","command":"logout"}           → 同 status
+// 账号 op 不进播放节流阀，无需 sequence。
+
+/// 账号状态（loggedIn/name）。
+#[tauri::command]
+pub async fn duanju_account_status(app: tauri::AppHandle) -> Result<Value, String> {
+    ensure_ready(&app).await?;
+    call_async(json!({ "action": "soraniAccount" })).await
+}
+
+/// 滑块验证码（背景图 + 拼图块，data URI 可直接给 <img>）。
+#[tauri::command]
+pub async fn duanju_captcha(app: tauri::AppHandle) -> Result<Value, String> {
+    ensure_ready(&app).await?;
+    call_async(json!({ "action": "soraniAccount", "command": "captcha" })).await
+}
+
+/// 登录（identifier=用户名或邮箱；track=滑块轨迹，形状照抄上游 SoraniCaptchaTrack）。
+#[tauri::command]
+pub async fn duanju_login(
+    app: tauri::AppHandle,
+    identifier: String,
+    password: String,
+    captcha_id: String,
+    track: Value,
+) -> Result<Value, String> {
+    ensure_ready(&app).await?;
+    call_async(json!({
+        "action": "soraniAccount",
+        "command": "login",
+        "account": {
+            "identifier": identifier,
+            "password": password,
+            "captchaId": captcha_id,
+            "track": track,
+        },
+    }))
+    .await
+}
+
+/// 退出登录。
+#[tauri::command]
+pub async fn duanju_logout(app: tauri::AppHandle) -> Result<Value, String> {
+    ensure_ready(&app).await?;
+    call_async(json!({ "action": "soraniAccount", "command": "logout" })).await
+}
+
 /// 播放：resolve → player::launch（本地流 URL + Referer/UA 头）。
 #[tauri::command]
 pub async fn duanju_play(

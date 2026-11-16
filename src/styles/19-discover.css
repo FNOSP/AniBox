@@ -3439,3 +3439,108 @@ button.arc-card:hover .arc-cv {
   color: var(--accent);
   font-weight: 700;
 }
+
+/* ── [lc-2181] 青空登录弹窗（复用 ddet/dsc 外壳，此处只管表单与滑块验证码） ── */
+.sor-login {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 340px;
+}
+.sor-input {
+  font-family: inherit;
+  font-size: var(--fs-ctl);
+  color: var(--text-strong);
+  background: var(--hover);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
+  outline: none;
+  transition: border-color var(--dur-tap) ease, background-color var(--dur-tap) ease;
+}
+.sor-input:focus {
+  border-color: var(--accent);
+  background: var(--panel);
+}
+.sor-error {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #d5393e;
+}
+.sor-cap-tip {
+  font-size: var(--fs-ctl);
+  color: var(--text);
+}
+.sor-cap-img {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  flex: none;
+}
+.sor-cap-img img:first-child {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+.sor-cap-img img:last-child {
+  position: absolute;
+  top: 0;
+  object-fit: fill;
+  filter: drop-shadow(0 1px 4px rgb(0 0 0 / 0.35));
+}
+.sor-cap-busy {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 0.4);
+}
+.sor-cap-loading {
+  height: 120px;
+  display: grid;
+  place-items: center;
+  font-size: var(--fs-ctl);
+  color: var(--text);
+}
+.sor-slider {
+  position: relative;
+  height: 44px;
+  border-radius: 22px;
+  background: var(--hover);
+  overflow: hidden;
+  flex: none;
+}
+.sor-slider-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 22px;
+  background: rgb(var(--accent-rgb) / 0.18);
+  transition: none;
+}
+.sor-slider-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 22px;
+  background: var(--accent);
+  color: #fff;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.sor-slider-handle:active {
+  cursor: grabbing;
+}
+.sor-acct {
+  margin-left: auto;
+}
+/* 已登录账号 chip：描边主色（同排序胶囊选中态），区别于实心蓝的「选中站源」 */
+.sor-acct.on {
+  border-color: var(--accent);
+  background: transparent;
+  color: var(--accent);
+}

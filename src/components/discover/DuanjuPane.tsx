@@ -5,13 +5,14 @@
    点卡片 → 详情浮层（简介 + 选集 30/组）→ 点集 duanju_play（核心本地流直链 → mpv）。
    NOT IMPLEMENTED：推荐/榜单 Tab、弹幕、追剧、下载、多清晰度切换、Linux/macOS 核心。 */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { DState } from "./shared";
 import { djImg } from "../../lib/images";
 import { AdultGateModal, adultAckDone, markAdultAck } from "./AdultGateModal";
+import { SoraniLoginModal } from "./SoraniLoginModal";
 import { Star as IcoStar, X as IcoXL } from "lucide-react";
 
 type DuanjuDrama = {
@@ -175,6 +176,11 @@ export function DuanjuPane() {
   const [source, setSource] = useState("hongguo");
   // [lc-2180] 站源集合以核心回传为准；老核心/核心缺失时用兜底表
   const [sources, setSources] = useState<DjSource[]>(FALLBACK_SOURCES);
+  // [lc-2181] 青空账号：登录弹窗开关 + 已登录账号名（空 = 未登录）
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [acct, setAcct] = useState("");
+  // 播放因「需要登录」失败时记下待重试的播放参数，登录成功后自动重试
+  const lastPlay = useRef<{ idx: number; chapter: DuanjuChapter; name: string } | null>(null);
   // [lc-2099] 收藏：favOpen = 左栏「收藏」标签激活（与站源 chips 并列置顶）
   const [favs, setFavs] = useState<FavDrama[]>(readFavs);
   const [favOpen, setFavOpen] = useState(false);
@@ -222,6 +228,27 @@ export function DuanjuPane() {
       alive = false;
     };
   }, []);
+
+  // [lc-2181] 青空账号状态（会话在核心数据目录持久化，重启后仍有效）
+  useEffect(() => {
+    let alive = true;
+    invoke<{ loggedIn?: boolean; name?: string }>("duanju_account_status")
+      .then((r) => {
+        if (alive) setAcct(r?.loggedIn && r.name ? r.name : "");
+      })
+      .catch(() => {
+        /* 核心缺失时静默（chip 显示未登录态） */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  function refreshAcct() {
+    invoke<{ loggedIn?: boolean; name?: string }>("duanju_account_status")
+      .then((r) => setAcct(r?.loggedIn && r.name ? r.name : ""))
+      .catch(() => setAcct(""));
+  }
 
   // 分类（随站源重取）
   useEffect(() => {
@@ -344,6 +371,7 @@ export function DuanjuPane() {
     if (playingIdx >= 0 || !detail?.drama) return;
     setPlayErr("");
     setPlayingIdx(idx);
+    lastPlay.current = { idx, chapter, name };
     try {
       await invoke("duanju_play", {
         drama: detail.drama,
@@ -373,6 +401,14 @@ export function DuanjuPane() {
     } finally {
       setPlayingIdx(-1);
     }
+  }
+
+  // [lc-2181] 播放失败提示含「登录」（青空：需要登录/登录已失效）→ 提供登录入口，
+  // 登录成功后自动重试上一次播放。
+  const needLogin = /登录/.test(playErr);
+  function retryLastPlay() {
+    const lp = lastPlay.current;
+    if (lp && detail?.drama) play(lp.idx, lp.chapter, lp.name);
   }
 
   // [lc-2123] 观看进度**由 Rust 侧直接从 mpv 的 time-pos 落盘**（准确，无需前端估算）。
@@ -473,6 +509,25 @@ export function DuanjuPane() {
               {s.name}
             </button>
           ))}
+        {/* [lc-2181] 青空需登录才能播放：选中该站源时行尾给账号入口（登录/账号名·退出） */}
+        {source === "sorani" && (
+          <button
+            type="button"
+            className={`dj-chip sor-acct${acct ? " on" : ""}`}
+            title={acct ? `已登录 ${acct}，点击退出` : "青空播放需登录，点击登录"}
+            onClick={() => {
+              if (!acct) {
+                setLoginOpen(true);
+                return;
+              }
+              invoke<{ loggedIn?: boolean }>("duanju_logout")
+                .then(() => setAcct(""))
+                .catch(() => refreshAcct());
+            }}
+          >
+            {acct || "登录"}
+          </button>
+        )}
       </div>
 
       {/* 分类 + 搜索 */}
@@ -781,6 +836,13 @@ export function DuanjuPane() {
                     })}
                   </div>
                   {playErr && <div className="dj-hint">{playErr}</div>}
+                  {needLogin && (
+                    <div className="dj-hint">
+                      <button type="button" className="dj-chip sm" onClick={() => setLoginOpen(true)}>
+                        登录青空
+                      </button>
+                    </div>
+                  )}
                   <div className="dj-src">站源数据 guoapp（红果鉴，GPL-3.0）</div>
                 </>
               )
@@ -803,6 +865,18 @@ export function DuanjuPane() {
             setQuery("");
           }}
           onBack={() => setPendingAdult(null)}
+        />
+      )}
+
+      {/* [lc-2181] 青空登录：成功后刷新账号态；若播放因未登录失败，自动重试上一集 */}
+      {loginOpen && (
+        <SoraniLoginModal
+          onDone={(name) => {
+            setLoginOpen(false);
+            setAcct(name);
+            retryLastPlay();
+          }}
+          onClose={() => setLoginOpen(false)}
         />
       )}
     </div>

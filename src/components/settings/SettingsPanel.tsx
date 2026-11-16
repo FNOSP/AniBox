@@ -1853,16 +1853,16 @@ export function SettingsPanel({
                       onChange={choosePlayer}
                     />
                   </div>
-                  {/* [lc-2002/lc-2182] 播放器皮肤（仅自带 mpv 生效）：原生 uosc /
-                      液态玻璃 ModernGlass / 透明悬浮（只去掉控制条的玻璃底板，
-                      菜单等弹窗玻璃不变）。几套 OSC 物理互斥，切换在下一次起播生效。 */}
+                  {/* [lc-2002/lc-2184] 播放器皮肤（仅自带 mpv 生效）：原生 uosc /
+                      液态玻璃 ModernGlass / 透明悬浮（控制条无底板，弹窗改浅灰实底）。
+                      几套 OSC 物理互斥，切换在下一次起播生效。 */}
                   {playerKind === "mpv" && (
                     <div className="set-row">
                       <div>
                         <span className="set-k">播放器皮肤</span>
                         <div className="set-desc">
                           液态玻璃是独立的一套控件条（带新的右键菜单与缩略图预览）；
-                          透明悬浮与它同款，只去掉控制条的玻璃底板，菜单等弹窗不变。
+                          透明悬浮的控制条无底板，弹窗改浅灰实底、文字仍为白色。
                           切换在下次播放时生效。
                         </div>
                       </div>

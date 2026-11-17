@@ -1,8 +1,9 @@
-/* [lc-2077] 发现页 IPTV 栏（占位转真）—— 数据直接用开源聚合项目 vbskycn/iptv 的现成 m3u
-   （GPL-3.0，服务端每 6 小时更新；Rust 侧取/解析/缓存/回退见 src-tauri/src/iptv.rs）。
-   UI：分组 chips（全部/央视/卫视/电影/…）+ 频道格子（台标 + 台名）；点频道 → iptv_play
+/* [lc-2190] 发现页 IPTV 栏 —— 数据来自自托管聚合项目 akiralereal/iptv（GPL-3.0）的 M3U
+   （默认指向本机 NAS 部署；设置面板「通用 → 发现页直播源」可自定义，Rust 侧取/解析/缓存/
+   探活见 src-tauri/src/iptv.rs）。
+   UI：分组 chips（全部/央视/卫视/…）+ 频道格子（台标 + 台名）；点频道 → iptv_play
    直链起播（mpv 直连，不经 Go 代理，与飞牛直播同口径）。
-   NOT IMPLEMENTED：EPG 节目单 / 自定义订阅地址 / 频道搜索 —— 后续接入。 */
+   NOT IMPLEMENTED：EPG 节目单 / 回看（catchup）—— 后续接入。 */
 
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -12,8 +13,9 @@ import { DState } from "./shared";
 /** urls = 该频道的全部线路（[lc-2096] 同频道多条线路合并；url = 首条，兼容旧缓存） */
 type IptvChan = { name: string; logo: string; url: string; urls?: string[] };
 type IptvGroup = { name: string; channels: IptvChan[] };
-/** stale=true = 全部数据源拉取失败，回吐的是过期缓存（旧数据比报错强，但要如实说明） */
-type IptvResp = { updated?: number; groups?: IptvGroup[]; stale?: boolean };
+/** stale=true = 全部数据源拉取失败，回吐的是过期缓存（旧数据比报错强，但要如实说明）；
+    custom=true = 用的是设置面板里自定义的源（非内置默认） */
+type IptvResp = { updated?: number; groups?: IptvGroup[]; stale?: boolean; custom?: boolean };
 
 /** ── 频道收藏（本地持久化）：点击卡片即起播，收藏走卡片右上角的星标（不占点击）。
     键 = 频道 url（同源多频道极少见，重复 url 视为同一频道）。存 localStorage ——
@@ -59,6 +61,7 @@ function DipLogo({ logo }: { logo: string }) {
 export function IptvPane({ active }: { active: boolean }) {
   const [groups, setGroups] = useState<IptvGroup[]>([]);
   const [stale, setStale] = useState(false);
+  const [custom, setCustom] = useState(false);
   const [updated, setUpdated] = useState(0);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -79,6 +82,7 @@ export function IptvPane({ active }: { active: boolean }) {
         if (!alive) return;
         setGroups(Array.isArray(d?.groups) ? d.groups : []);
         setStale(d?.stale === true);
+        setCustom(d?.custom === true);
         setUpdated(typeof d?.updated === "number" ? d.updated : 0);
       })
       .catch((e) => {
@@ -91,6 +95,14 @@ export function IptvPane({ active }: { active: boolean }) {
       alive = false;
     };
   }, [active, nonce]);
+
+  // [lc-2190] 设置面板改了直播源 → 广播事件让本栏重新拉取（设置是浮层，`active` 不变，
+  // 否则关掉设置后这里还停在旧源频道表）。
+  useEffect(() => {
+    const bump = () => setNonce((n) => n + 1);
+    window.addEventListener("anibox:iptv-changed", bump);
+    return () => window.removeEventListener("anibox:iptv-changed", bump);
+  }, []);
 
   // [lc-2096] 收藏按**频道名**判等（原来按 url）：上游 6 小时就换一次线路地址，
   // 按 url 存会让收藏下次开机全部「失效」（星星灭了、收藏页空了）。
@@ -159,27 +171,29 @@ export function IptvPane({ active }: { active: boolean }) {
 
   return (
     <div className="dip">
-      <div className="dip-chips">
-        <button type="button" className={`dip-chip${group === "" ? " on" : ""}`} onClick={() => setGroup("")}>
-          全部
-        </button>
-        <button
-          type="button"
-          className={`dip-chip${group === "__fav" ? " on" : ""}`}
-          onClick={() => setGroup(group === "__fav" ? "" : "__fav")}
-        >
-          收藏
-        </button>
-        {groups.map((g) => (
-          <button
-            key={g.name}
-            type="button"
-            className={`dip-chip${group === g.name ? " on" : ""}`}
-            onClick={() => setGroup(group === g.name ? "" : g.name)}
-          >
-            {g.name}
+      <div className="dip-bar">
+        <div className="dip-chips">
+          <button type="button" className={`dip-chip${group === "" ? " on" : ""}`} onClick={() => setGroup("")}>
+            全部
           </button>
-        ))}
+          <button
+            type="button"
+            className={`dip-chip${group === "__fav" ? " on" : ""}`}
+            onClick={() => setGroup(group === "__fav" ? "" : "__fav")}
+          >
+            收藏
+          </button>
+          {groups.map((g) => (
+            <button
+              key={g.name}
+              type="button"
+              className={`dip-chip${group === g.name ? " on" : ""}`}
+              onClick={() => setGroup(group === g.name ? "" : g.name)}
+            >
+              {g.name}
+            </button>
+          ))}
+        </div>
         {/* 频道搜索（同短剧栏的玻璃胶囊输入框；频道全在本地 → 输入即过滤，Esc 清空） */}
         <input
           className="dip-search"
@@ -240,9 +254,9 @@ export function IptvPane({ active }: { active: boolean }) {
           ))}
         </div>
       )}
-      {/* 底行：GPL-3.0 来源注明（vbskycn/iptv 要求引用注明来源）+ 数据更新时间 */}
+      {/* 底行：来源注明（akiralereal/iptv，GPL-3.0）+ 数据更新时间（直播源新鲜度有意义） */}
       <div className="dip-src">
-        <span>直播源数据 vbskycn/iptv（GPL-3.0）</span>
+        <span>{custom ? "自定义" : ""}直播源 iPTV（akiralereal/iptv，GPL-3.0）</span>
         {updated > 0 && <span>更新于 {timeLabel(updated)}</span>}
       </div>
     </div>

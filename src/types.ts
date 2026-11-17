@@ -568,6 +568,11 @@ export type AppSettings = {
   /** [lc-2090] 更新提醒关闭：true = 完全停止检测更新（启动自动检查 / 12h 复查 / 手动
    *  检查更新全部停用）。关闭动作有二次确认（旧版本问题不予处理）；默认 false。 */
   updateRemindOff?: boolean;
+  /** [lc-2190] 发现页 IPTV 直播源（自托管 iPTV）：每行一条、最多 4 条；
+   *  空数组 = 使用内置默认（iptvDefaultSource）。 */
+  iptvSources?: string[];
+  /** [lc-2190] 内置默认直播源地址（后端回显，仅供设置面板占位提示） */
+  iptvDefaultSource?: string;
   /** [lc-1753] 在线资源搜索开关（默认关闭）：开启后无资源的剧集/动漫详情页显示在线
    *  资源搜索面板；内容全部来自用户自行添加的第三方源，本软件不存储、不分发资源。 */
   webrsPanelEnabled?: boolean;

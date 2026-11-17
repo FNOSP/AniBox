@@ -14,6 +14,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webrsPanelEnabled: false,
   danmuApiBases: [],
   danmuApiBase: "",
+  // [lc-2190] 发现页 IPTV 直播源默认留空 = 用内置默认地址（自托管 iPTV 部署）
+  iptvSources: [],
   // [lc-2166] danmuDdFallbackBelow（兜底阈值）已随「三源全拉」退役删除
   // 弹幕引擎默认 node = 与接入前行为完全一致（Rust 侧 `danmu_engine` 默认同为 "node"）
   danmuEngine: "node",

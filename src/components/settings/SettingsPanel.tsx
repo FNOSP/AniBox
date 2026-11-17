@@ -378,7 +378,7 @@ export function SettingsPanel({
   loggedIn?: boolean;
   /** 设置项（App 持有：轮播 Logo / 性能模式都要在面板外生效） */
   settings: AppSettings;
-  onSettings: (patch: Partial<AppSettings>) => void;
+  onSettings: (patch: Partial<AppSettings>) => void | Promise<void>;
 }) {
   type Stats = { bytes: number; files: number; limitMb: number; dir: string };
   const [stats, setStats] = useState<Stats | null>(null);
@@ -1115,6 +1115,41 @@ export function SettingsPanel({
     });
   };
 
+  /* [lc-2190] 发现页 IPTV 直播源（自托管 iPTV）：多行地址 + 连通测试。
+     留空 = 内置默认；保存由 Rust 侧归一化（补协议 / 补 /interface.m3u / /txt 换 m3u）后落盘，
+     后端缓存键按源集合哈希，回到发现页即取新源。 */
+  const [iptvText, setIptvText] = useState(() => (settings.iptvSources || []).join("\n"));
+  const [iptvNote, setIptvNote] = useState("");
+  const [iptvTesting, setIptvTesting] = useState(false);
+
+  const parseIptvLines = () =>
+    iptvText
+      .split(/[\n;；]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 4);
+
+  const saveIptv = async () => {
+    const list = parseIptvLines();
+    // 等配置真正落盘后再通知发现页重拉（否则后端可能读到的还是旧源，命中旧缓存）
+    await onSettings({ iptvSources: list });
+    setIptvNote(list.length ? `已保存 ${list.length} 条` : "已恢复内置默认源");
+    // 通知发现页 IPTV 栏重拉（浮层不改变 active，否则会停在旧源的频道表）
+    window.dispatchEvent(new Event("anibox:iptv-changed"));
+  };
+
+  const testIptv = async () => {
+    setIptvTesting(true);
+    setIptvNote("");
+    try {
+      setIptvNote(await invoke<string>("iptv_sources_test", { sources: parseIptvLines() }));
+    } catch (e) {
+      setIptvNote(String(e));
+    } finally {
+      setIptvTesting(false);
+    }
+  };
+
   const testDanmu = async () => {
     setDmTesting(true);
     setDmNote("");
@@ -1560,6 +1595,35 @@ export function SettingsPanel({
                       ]}
                       onChange={(v) => onSettings({ exitMode: v as AppSettings["exitMode"] })}
                     />
+                  </div>
+                  {/* [lc-2190] 发现页直播源：自托管 iPTV（akiralereal/iptv）M3U 地址 */}
+                  <div className="set-row set-row-col">
+                    <span className="set-k">发现页直播源</span>
+                    <textarea
+                      className="set-ta"
+                      rows={2}
+                      placeholder={`留空使用内置默认：${settings.iptvDefaultSource || "部署根地址或 M3U 地址"}`}
+                      value={iptvText}
+                      disabled={busy}
+                      onChange={(e) => setIptvText(e.target.value)}
+                    />
+                    <div className="set-actions">
+                      <button
+                        className="set-btn"
+                        disabled={iptvTesting}
+                        onClick={() => void testIptv()}
+                      >
+                        {iptvTesting ? "测试中…" : "测试连接"}
+                      </button>
+                      <button className="set-btn" disabled={busy} onClick={() => void saveIptv()}>
+                        保存
+                      </button>
+                      <span className="set-note">{iptvNote}</span>
+                    </div>
+                    <div className="set-desc">
+                      每行一条，最多 4 条。可填部署根地址（自动补 /interface.m3u）或完整 M3U 地址
+                      （支持 ?relay=1/2、?profile=xxx 与密码路径）；留空使用内置源。
+                    </div>
                   </div>
                   {note && <div className="set-note">{note}</div>}
 

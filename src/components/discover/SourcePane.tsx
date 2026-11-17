@@ -7,7 +7,7 @@
      ② 次行（仅 TMDB）：主标签（节目/电影）+ 子标签（当季/热门/即将播出）+ 搜索框
      ③ 第三行（仅 TMDB）：排序（按时间/按评分）+ 视图切换（时间线/网格/紧凑列表）+ 概览统计（共 N 部作品 / 平均分 / 最高分 / 更新于）
      ④ 内容区：TMDB 三视图（时间线按月分组、按评分时=排行榜 / 海报网格 / 紧凑列表）；
-        IPTV = 真实面板（[lc-2077] vbskycn/iptv 现成直播源，见 IptvPane.tsx）；
+        IPTV = 真实面板（[lc-2190] 自托管 iPTV（akiralereal/iptv）聚合播放列表，见 IptvPane.tsx）；
         短剧 = 真实面板（[lc-2078] guoapp Go 核心 FFI 接入，见 DuanjuPane.tsx / duanju.rs）。
    TMDB 数据全部真实接 TMDB：`tmdb_discover`（当季/热门/即将播出）+ `tmdb_search`（搜索框）。
    设计稿里的假数据一律不要；颜色一律走主题变量（**不照抄设计稿的白色底/浅灰渐变**，那会破深色主题）。
@@ -811,7 +811,7 @@ export function SourcePane({
         {/* ④ 内容区（独立滚动；头部固定）：IPTV / 短剧 = 真面板，TMDB 走三视图 */}
         <div className="dscroll dlib-scroll">
           {src === "iptv" ? (
-            /* [lc-2077] IPTV 已转真面板：vbskycn/iptv 现成直播源（见 IptvPane.tsx / iptv.rs） */
+            /* [lc-2190] IPTV 已转真面板：自托管 iPTV（akiralereal/iptv）聚合播放列表（见 IptvPane.tsx / iptv.rs） */
             <IptvPane active={active} />
           ) : src === "duanju" ? (
             /* [lc-2078] 短剧已转真面板：guoapp Go 核心 FFI 接入（见 DuanjuPane.tsx / duanju.rs） */

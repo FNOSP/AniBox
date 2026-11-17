@@ -1641,7 +1641,7 @@ function App() {
           onClose={() => setSettingsOpen(false)}
           initialTab={settingsTab}
           settings={settings}
-          onSettings={(patch) => void patchSettings(patch)}
+          onSettings={(patch) => patchSettings(patch)}
           // [lc-1623] 飞牛未登录（游客态）时设置面板给「登录飞牛」入口 —— 退出/失效后进的是
           //   游客态而非登录页，这里是回到飞牛登录的唯一常规入口（BGM 与它无关，不受影响）。
           loggedIn={!guest}

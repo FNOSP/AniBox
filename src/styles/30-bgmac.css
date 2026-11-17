@@ -3,7 +3,9 @@
    （不跟随主题 accent）。grid 双列：左 main / 右 stats。 */
 .bgmac {
   position: relative;
-  margin: 0 16px 10px;
+  /* [lc-2202] 顶边补 4px 与左栏胶囊对齐：右栏栏头首行是标题（行高 22），左栏首行是源徽标（26），
+     卡片原本比左栏「标签 / 搜索胶囊」高 4px（实测 card.top 122 vs tabs.top 126）→ 折叠胶囊上下沿齐平。 */
+  margin: 4px 16px 10px;
   padding: var(--sp-4) var(--sp-4) var(--sp-3);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);

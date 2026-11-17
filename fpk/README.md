@@ -7,7 +7,7 @@
 [![Node](https://img.shields.io/badge/Node.js-%E2%89%A518-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
 [![Platform](https://img.shields.io/badge/fnOS-x86__64-3d7fe0)](https://www.fnnas.com)
 [![Desktop Client](https://img.shields.io/badge/%E6%A1%8C%E9%9D%A2%E7%89%88-AniBox-8a6fd6)](https://github.com/FNOSP/AniBox)
-[![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
 为飞牛影视（fnOS 影视应用）打造的**增强微应用**——一个 fpk 包装进 fnOS，安装后从桌面点开即是增强版影视网页，电视 / 平板 / 手机 / 电脑全设备生效，无需在每台设备上装任何东西，影视应用文件零改动。
 
@@ -179,10 +179,10 @@
 
 ## License
 
-本项目沿用 **GNU General Public License v3.0（GPL-3.0）**，与同仓库桌面客户端
-[AniBox](https://github.com/FNOSP/AniBox) 保持一致 —— fpk 版的网页端注入、
-界面增强与后端桥接代码大量复用/改造自该 GPL-3.0 项目，故必须沿用同一许可证并保留
-原作者版权与致谢（Copyright (C) 2025 QiaoKes）。
+本项目采用 **GNU Affero General Public License v3.0（AGPL-3.0）**，与同仓库桌面客户端
+[AniBox](https://github.com/FNOSP/AniBox) 保持一致。fpk 版的网页端注入、界面增强与后端桥接
+代码大量复用/改造自 GPL-3.0 上游项目（Copyright (C) 2025 QiaoKes）；GPL-3.0 可并入
+AGPL-3.0，合并后的作品按 AGPL-3.0 分发，并保留原作者版权与致谢。
 
 - 完整许可与项目声明见 [LICENSE](LICENSE)
-- GPL-3.0 官方全文：https://www.gnu.org/licenses/gpl-3.0.html
+- AGPL-3.0 官方全文：https://www.gnu.org/licenses/agpl-3.0.html

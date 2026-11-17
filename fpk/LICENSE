@@ -87,22 +87,27 @@ AniBox（fpk 网页增强版）项目声明与许可
 【许可协议 / License】
 ================================================================
 本应用为 AniBox 项目的一部分。项目受 QiaoKes/fntv-electron 启发，
-沿用 GNU General Public License v3.0（GPL-3.0）许可证，并保留其版权
-与致谢；本项目在早期版本基础上经历了大量重构与自研扩展。
+采用 GNU Affero General Public License v3.0（AGPL-3.0）许可证，并
+保留上游 GPL-3.0 版权与致谢（GPL-3.0 可并入 AGPL-3.0）；本项目在
+早期版本基础上经历了大量重构与自研扩展。
 
 Copyright (C) 2026 YDMY007
 Copyright (C) 2025 QiaoKes（原项目作者，GPL-3.0）
 
-本程序是自由软件：您可以依据自由软件基金会发布的 GNU 通用公共许可证
-第 3 版（或您选择的任何更新版本）条款，重新发布和/或修改本程序。
+本程序是自由软件：您可以依据自由软件基金会发布的 GNU Affero 通用
+公共许可证第 3 版（或您选择的任何更新版本）条款，重新发布和/或修改
+本程序。
 
 本程序基于「有用」的目的分发，但**不提供任何担保**，甚至不提供适销
-性或特定用途适用性的默示担保。详细信息请参阅 GNU 通用公共许可证。
+性或特定用途适用性的默示担保。详细信息请参阅 GNU Affero 通用公共许可证。
 
-您应已随本程序收到一份 GNU 通用公共许可证副本。GPL-3.0 全文见项目
-仓库根目录 LICENSE 文件与 https://www.gnu.org/licenses/gpl-3.0.html。
+您应已随本程序收到一份 GNU Affero 通用公共许可证副本。AGPL-3.0 全文见
+项目仓库根目录 LICENSE 文件与 https://www.gnu.org/licenses/agpl-3.0.html。
 若未收到，请致函 Free Software Foundation, Inc., 51 Franklin Street,
 Fifth Floor, Boston, MA 02110-1301 USA。
+
+本应用通过飞牛统一网关向网络用户提供服务；依据 AGPL-3.0 第 13 条，
+服务使用者有权获取对应源代码（源码公开于项目仓库）。
 
 因使用本程序所产生的任何后果（包括但不限于数据丢失、媒体库元数据
 被修改、第三方账号状态变化）由使用者自行承担。

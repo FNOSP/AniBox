@@ -10,7 +10,7 @@
 [![网页版](https://img.shields.io/badge/%E7%BD%91%E9%A1%B5%E7%89%88-AniBox%20fpk-8a6fd6)](fpk/README.md)
 [![Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FFNOSP%2FAniBox%2Fbadge-data%2Fdownloads.json&query=%24.total&label=%E4%B8%8B%E8%BD%BD&suffix=%E6%AC%A1&color=2ea44f&logo=github&logoColor=white)](https://github.com/FNOSP/AniBox/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)](https://github.com/FNOSP/AniBox/releases)
-[![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/FNOSP/AniBox?style=flat&logo=github&logoColor=white)](https://github.com/FNOSP/AniBox/stargazers)
 [![Forks](https://img.shields.io/github/forks/FNOSP/AniBox?style=flat&logo=github&logoColor=white)](https://github.com/FNOSP/AniBox/forks)
 [![Issues](https://img.shields.io/github/issues/FNOSP/AniBox?logo=github)](https://github.com/FNOSP/AniBox/issues)
@@ -36,7 +36,7 @@
 > - **账号与隐私风险**：需登录你自己的飞牛影视 / NAS 账号，登录态与本机配置保存在本地；请仅在可信设备与网络环境使用，后果自负。
 > - **本地播放与代理**：播放依赖你自己提供的 `mpv.exe` 或本机 PotPlayer，并通过本地 Go 代理中转 NAS 流媒体；请确保所播放内容符合所在地法律法规与版权规定。
 > - **更新来源安全**：自动更新与热补丁仅从本项目官方渠道获取；请勿安装来源不明的补丁包，避免运行被篡改的代码。
-> - **按「原样」提供、无担保**：基于 GPL-3.0 开源，**不提供任何明示或暗示担保**；因使用本项目产生的任何后果由使用者自行承担。
+> - **按「原样」提供、无担保**：基于 AGPL-3.0 开源，**不提供任何明示或暗示担保**；因使用本项目产生的任何后果由使用者自行承担。
 
 > **把飞牛影视，变成你桌面上的私人影院。** AniBox 是一个**为飞牛影视（fnOS / 飞牛私有云）定制的第三方 Windows 桌面客户端**：它不把网页塞进浏览器，而是用 **React 自绘界面**直接调用飞牛影视 API，以**独立 `mpv.exe` 进程**承担播放；再用 Bangumi / TMDB / AniList 元数据聚合、本地弹幕 shim、原生全局手柄、磁盘缓存与双通道更新，把「看片」这件事做成一套完整、可长期维护的桌面体验。
 
@@ -118,7 +118,7 @@
 > - **仓库目录名**：本仓库目录为 `AniBox`，**软件产品名统一为 AniBox**；本文档中的「AniBox」均指本仓库构建的桌面客户端。
 > - **技术路线**：区别于「网页注入」式方案，AniBox 采用 **Tauri 2 + Rust + React + TypeScript** 自绘界面，直连飞牛影视 API，并以独立 mpv 进程播放。
 > - **独立发展**：本项目独立维护、独立发布，不代表任何上游或官方立场。
-> - **许可证**：本项目采用 **GPL-3.0**，完整条款见 [LICENSE](LICENSE)。
+> - **许可证**：本项目采用 **AGPL-3.0**，完整条款见 [LICENSE](LICENSE)。
 
 > **<img src="https://api.iconify.design/mdi/alert.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 免责声明**：本项目为第三方客户端，与飞牛影视官方无关。本项目仅为个人学习、交流等非商业用途的开源项目，不代表任何官方立场。使用前请确保遵守相关服务条款与版权规定，因使用本项目产生的任何后果由使用者自行承担。
 
@@ -403,7 +403,7 @@ AniBox/                            # 仓库目录名（产品名 AniBox）
 ├── package.json                   # 前端依赖与脚本
 ├── vite.config.ts                 # Vite 配置（端口 1420）
 ├── tsconfig*.json                 # TypeScript 配置
-└── LICENSE                        # GNU GPL-3.0
+└── LICENSE                        # GNU AGPL-3.0
 ```
 
 > 说明：`mpv.exe`、`proxy.exe` 与 `portable_config` **不在本仓库内**（`third_party/` 按仓库规则不入库）。
@@ -648,10 +648,11 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 
 > 本节是发布与二次分发前必须保留的内容。若你修改并分发 AniBox，请同时保留本节与 `LICENSE`。
 
-### 开源许可证（GPL-3.0）
+### 开源许可证（AGPL-3.0）
 
-- AniBox 基于 **GNU General Public License v3.0（GPL-3.0）** 开源，完整条款见仓库根目录 [`LICENSE`](LICENSE)。
-- 你可以运行、研究、修改和再分发本软件；**衍生分发必须以 GPL-3.0 开放对应源代码**，并保留原始版权与许可声明。
+- AniBox 基于 **GNU Affero General Public License v3.0（AGPL-3.0）** 开源，完整条款见仓库根目录 [`LICENSE`](LICENSE)。
+- 你可以运行、研究、修改和再分发本软件；**衍生分发必须以 AGPL-3.0 开放对应源代码**，并保留原始版权与许可声明。
+- **通过网络提供服务时同样适用**：若你修改本软件并让它对网络用户提供服务（例如部署网页版 / NAS 版），必须向这些用户提供对应源代码（AGPL-3.0 第 13 条）。
 - 本软件按「现状」提供，**不提供任何明示或默示担保**。
 
 ### TMDB
@@ -775,11 +776,11 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 
 ## <img src="https://api.iconify.design/mdi/file-document-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 许可证
 
-本项目采用 [GPL-3.0 许可证](LICENSE)。
+本项目采用 [AGPL-3.0 许可证](LICENSE)。
 
 - **本仓库署名**：AniBox（为飞牛影视定制的第三方 Windows 桌面客户端，含自绘 React 界面、独立 mpv 播放、Bangumi / TMDB / AniList 元数据聚合、弹幕、原生手柄、磁盘缓存与双通道更新等）
 - 本软件按「现状」提供，不提供任何明示或默示担保。
 
 <p align="center">
-  <sub>AniBox · 基于 GPL-3.0 开源 · 仅供个人学习与自用</sub>
+  <sub>AniBox · 基于 AGPL-3.0 开源 · 仅供个人学习与自用</sub>
 </p>

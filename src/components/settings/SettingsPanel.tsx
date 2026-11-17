@@ -1602,7 +1602,11 @@ export function SettingsPanel({
                     <textarea
                       className="set-ta"
                       rows={2}
-                      placeholder={`留空使用内置默认：${settings.iptvDefaultSource || "部署根地址或 M3U 地址"}`}
+                      placeholder={
+                        settings.iptvDefaultSources?.length
+                          ? `留空使用内置公共聚合源（${settings.iptvDefaultSources.length} 个）；也可填自己的部署地址`
+                          : "留空使用内置公共聚合源；也可填自己的部署地址"
+                      }
                       value={iptvText}
                       disabled={busy}
                       onChange={(e) => setIptvText(e.target.value)}
@@ -1622,7 +1626,7 @@ export function SettingsPanel({
                     </div>
                     <div className="set-desc">
                       每行一条，最多 4 条。可填部署根地址（自动补 /interface.m3u）或完整 M3U 地址
-                      （支持 ?relay=1/2、?profile=xxx 与密码路径）；留空使用内置源。
+                      （支持 ?relay=1/2、?profile=xxx 与密码路径）；留空使用内置公共聚合源。
                     </div>
                   </div>
                   {note && <div className="set-note">{note}</div>}

@@ -1,6 +1,6 @@
-/* [lc-2190] 发现页 IPTV 栏 —— 数据来自自托管聚合项目 akiralereal/iptv（GPL-3.0）的 M3U
-   （默认指向本机 NAS 部署；设置面板「通用 → 发现页直播源」可自定义，Rust 侧取/解析/缓存/
-   探活见 src-tauri/src/iptv.rs）。
+/* [lc-2190/lc-2191] 发现页 IPTV 栏 —— 数据来自 M3U 直播源：默认内置公共聚合源，也可在
+   设置面板「通用 → 发现页直播源」填自托管 iPTV（akiralereal/iptv）等任意 M3U 地址
+   （Rust 侧取/解析/缓存/探活见 src-tauri/src/iptv.rs）。
    UI：分组 chips（全部/央视/卫视/…）+ 频道格子（台标 + 台名）；点频道 → iptv_play
    直链起播（mpv 直连，不经 Go 代理，与飞牛直播同口径）。
    NOT IMPLEMENTED：EPG 节目单 / 回看（catchup）—— 后续接入。 */
@@ -254,9 +254,13 @@ export function IptvPane({ active }: { active: boolean }) {
           ))}
         </div>
       )}
-      {/* 底行：来源注明（akiralereal/iptv，GPL-3.0）+ 数据更新时间（直播源新鲜度有意义） */}
+      {/* 底行：来源注明 + 数据更新时间（直播源新鲜度有意义） */}
       <div className="dip-src">
-        <span>{custom ? "自定义" : ""}直播源 iPTV（akiralereal/iptv，GPL-3.0）</span>
+        <span>
+          {custom
+            ? "自定义直播源"
+            : "内置公共直播源（vbskycn / suxuang / iptv-org）"}
+        </span>
         {updated > 0 && <span>更新于 {timeLabel(updated)}</span>}
       </div>
     </div>

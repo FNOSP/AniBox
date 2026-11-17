@@ -810,8 +810,8 @@ export function SourcePane({
                 <span className="dlib-ov-k">最高分</span>
                 <b className="dlib-ov-v green">{max.toFixed(1)}</b>
               </span>
+              {/* [lc-2216] 去掉「更新于」三个字（宽度不够，胶囊要保一行），时间值直接跟在后面 */}
               <span className="dlib-ov-i">
-                <span className="dlib-ov-k">更新于</span>
                 <b className="dlib-ov-v">{nowLabel(now)}</b>
               </span>
             </div>

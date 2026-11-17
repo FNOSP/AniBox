@@ -400,6 +400,8 @@ export function SourcePane({
   }
 
   // ── 搜索 ──
+  // [lc-2200] 搜索框本体 ref：胶囊任意位置（放大镜 / 留白）点击都聚焦到输入框
+  const searchInRef = useRef<HTMLInputElement | null>(null);
   const searchSeqRef = useRef(0); // 竞态护栏：只认最后一次搜索的响应
   const doSearch = useCallback((q: string, mt: MediaKind) => {
     const term = q.trim();
@@ -731,6 +733,15 @@ export function SourcePane({
             </div>
             <form
               className="dlib-search"
+              // [lc-2200] 点胶囊任意位置（放大镜、留白）都聚焦输入框；X 清除键除外
+              onMouseDown={(e) => {
+                const t = e.target as HTMLElement;
+                if (t.closest(".dlib-search-x")) return;
+                if (t !== searchInRef.current) {
+                  e.preventDefault();
+                  searchInRef.current?.focus();
+                }
+              }}
               onSubmit={(e) => {
                 e.preventDefault();
                 doSearch(query, mediaType);
@@ -739,6 +750,7 @@ export function SourcePane({
               <IcoSearchL size={15} strokeWidth={2} className="dlib-search-ico" />
               <input
                 className="dlib-search-in"
+                ref={searchInRef}
                 value={query}
                 placeholder="搜索电影、剧集…"
                 onChange={(e) => {

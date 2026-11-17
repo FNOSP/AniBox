@@ -344,9 +344,20 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
             <ul className="dlist">
               {lib.state === "ok" ? (
                 <>
-                  {inRows.length > 0 && <li className="dgrp">已在飞牛库 · {inRows.length}</li>}
+                  {inRows.length > 0 && (
+                    <li className="dgrp">
+                      {/* [lc-2213] 分组头照左栏「2026 年 11 月」那条做：淡蓝胶囊 + 数量 + 下方虚线 */}
+                      <span className="dlib-gpill">已在飞牛库</span>
+                      <span className="dgrp-n">{inRows.length} 部</span>
+                    </li>
+                  )}
                   {inRows.map(renderRow)}
-                  {outRows.length > 0 && <li className="dgrp">不在库 · {outRows.length}</li>}
+                  {outRows.length > 0 && (
+                    <li className="dgrp">
+                      <span className="dlib-gpill">不在库</span>
+                      <span className="dgrp-n">{outRows.length} 部</span>
+                    </li>
+                  )}
                   {outRows.map(renderRow)}
                 </>
               ) : (

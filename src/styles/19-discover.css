@@ -1375,7 +1375,9 @@
   flex: 1 1 180px;
   min-width: 150px;
   max-width: 320px;
-  height: 32px;
+  /* [lc-2200] 与左侧标签胶囊同高（用户要求「要和前面的一样大」）：
+     标签胶囊 = 外层内边距 4×2 + 按钮内边距 8×2 + 13px 文本行高(~17) + 边框 2 = 43px。 */
+  height: 43px;
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -1384,6 +1386,8 @@
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   backdrop-filter: blur(14px);
+  /* 整条胶囊都是输入区（点放大镜/留白也能聚焦，见 SourcePane 的 onMouseDown） */
+  cursor: text;
   transition: border-color var(--dur-move), box-shadow var(--dur-move);
 }
 
@@ -1397,20 +1401,35 @@
   color: var(--muted);
 }
 
-/* 聚焦时图标转一圈（设计稿的 searchSpin） */
+/* [lc-2200] 聚焦时放大镜「回正落定」一下。
+   原来用 dlibSearchSpin 做 360° 全旋 + 0.9→1.1 缩放，15px 图标上是闪一下的观感
+   （用户反馈「动画有问题」）；改成小幅回正，动作短而稳。 */
 .dlib-search:focus-within .dlib-search-ico {
-  animation: dlibSearchSpin var(--dur-page) var(--ease);
+  animation: dlibSearchSpin var(--dur-move) var(--ease-enter);
 }
 
 .dlib-search-in {
   flex: 1;
   min-width: 0;
+  /* [lc-2200] 覆盖全局 input 样式：全局 padding 12/16 把输入框撑成 41px，比 43px 胶囊
+     还高的同时上下溢出 → 清掉内边距/圆角，让它只负责文字与光标 */
+  height: 100%;
+  padding: 0;
   border: none;
+  border-radius: 0;
   background: transparent;
+  box-shadow: none;
   outline: none;
   color: var(--text);
   font-size: var(--fs-ctl);
   font-family: inherit;
+}
+
+/* [lc-2200] 全局 input:focus 会给内层输入框再画一圈 3px 蓝环（圆角 10、位置比胶囊还大），
+   叠在胶囊里就是截图里那个多余的框 —— 焦点态统一交给外层 .dlib-search:focus-within */
+.dlib-search-in:focus {
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .dlib-search-in::placeholder {
@@ -2454,15 +2473,13 @@
   }
 }
 
+/* [lc-2200] 放大镜聚焦动效：小幅回正（原 360° 全旋 + 缩放会闪） */
 @keyframes dlibSearchSpin {
-  0% {
-    transform: rotate(0deg) scale(0.9);
+  from {
+    transform: rotate(-60deg);
   }
-  50% {
-    transform: rotate(180deg) scale(1.1);
-  }
-  100% {
-    transform: rotate(360deg) scale(1);
+  to {
+    transform: rotate(0deg);
   }
 }
 

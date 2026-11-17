@@ -1230,7 +1230,7 @@ pub async fn bgm_calendar(
             match get_json_cond("/calendar", etag.as_deref()).await? {
                 crate::tmdb::MirrorGet::NotModified => Ok(crate::disk_cache::Cond::NotModified),
                 crate::tmdb::MirrorGet::Fresh(raw, et) => {
-                    let days = normalize_calendar(&raw);
+                    let mut days = normalize_calendar(&raw);
                     if days.iter().all(|d| d.get("count").and_then(|c| c.as_u64()).unwrap_or(0) == 0) {
                         // 空表当作失败：上游改结构时宁可报错（上一份可用缓存留着），
                         // 也不给前端一个"7 天全空"的假象
@@ -1239,6 +1239,10 @@ pub async fn bgm_calendar(
                             truncate(&raw.to_string(), 160)
                         ));
                     }
+                    // [lc-2219] 少数条目（多为刚建条目的新番/冷门番）在 /calendar 里没有任何 images，
+                    // 列表只能显示占位图；但详情用的 /v0/subjects/{id} 有封面 —— 这里按需补齐。
+                    // 只补空封面（通常个位数），并发 6，失败静默留空；补到的值随日历缓存一起落盘。
+                    backfill_calendar_covers(&mut days).await;
                     let total: u64 = days
                         .iter()
                         .map(|g| g.get("count").and_then(|c| c.as_u64()).unwrap_or(0))
@@ -1287,6 +1291,70 @@ pub async fn bgm_calendar(
         m.insert("changed".to_string(), json!(changed));
     }
     Ok(out)
+}
+
+/// [lc-2219] 从 subject 详情里挑封面：与 `normalize_calendar` 同一套回退顺序（medium → common…）。
+fn pick_subject_cover(v: &Value) -> Option<String> {
+    ["medium", "common", "large", "grid", "small"]
+        .iter()
+        .find_map(|k| {
+            v.pointer(&format!("/images/{k}"))
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty())
+        })
+        .map(|s| s.to_string())
+}
+
+/// [lc-2219] 给日历里空封面的条目补图（详见调用处注释）。
+/// 并发上限 6（避免一次刷新打上游一串请求）；单条失败就留空，不阻断整表。
+async fn backfill_calendar_covers(days: &mut [Value]) {
+    let mut todo: Vec<(usize, usize, i64)> = Vec::new();
+    for (di, d) in days.iter().enumerate() {
+        let Some(items) = d.get("items").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for (ii, it) in items.iter().enumerate() {
+            let empty = it
+                .get("cover")
+                .and_then(|v| v.as_str())
+                .map(|s| s.is_empty())
+                .unwrap_or(true);
+            if let (true, Some(id)) = (empty, it.get("id").and_then(|v| v.as_i64())) {
+                todo.push((di, ii, id));
+            }
+        }
+    }
+    if todo.is_empty() {
+        return;
+    }
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(6));
+    let mut set = tokio::task::JoinSet::new();
+    for (di, ii, id) in todo {
+        let sem = sem.clone();
+        set.spawn(async move {
+            let _permit = sem.acquire().await.ok()?;
+            let v = get_json(&format!("/v0/subjects/{id}")).await.ok()?;
+            let cover = pick_subject_cover(&v)?;
+            Some((di, ii, cover))
+        });
+    }
+    let mut filled = 0usize;
+    while let Some(res) = set.join_next().await {
+        let Ok(Some((di, ii, cover))) = res else {
+            continue;
+        };
+        if let Some(it) = days
+            .get_mut(di)
+            .and_then(|d| d.get_mut("items"))
+            .and_then(|a| a.get_mut(ii))
+        {
+            it["cover"] = json!(cover);
+            filled += 1;
+        }
+    }
+    if filled > 0 {
+        crate::libmpv::trace(&format!("[bgm] calendar 封面补齐 {filled} 条（/calendar 缺 images）"));
+    }
 }
 
 /// /calendar 归一化：7 组原样保留 `weekday`（en/cn/ja/id），items 只留渲染字段。
@@ -1440,6 +1508,41 @@ mod tests {
         );
         let e = decode_2xx_body("ep", b"<html>x</html>").unwrap_err();
         assert!(e.contains("不是合法 JSON"), "应报 JSON 解码失败：{e}");
+    }
+
+    /// [lc-2219] subject 封面回退（不触网）：medium → common → large → grid → small，
+    /// 空串按"没有"处理（/calendar 缺 images 时才走这条，避免列表显示占位图）。
+    #[test]
+    fn pick_subject_cover_fallbacks() {
+        let j = |v: serde_json::Value| v;
+        assert_eq!(
+            super::pick_subject_cover(&j(serde_json::json!({
+                "images": { "medium": "http://lain.bgm.tv/pic/cover/m/a.jpg",
+                            "common": "http://lain.bgm.tv/pic/cover/c/a.jpg" }
+            }))),
+            Some("http://lain.bgm.tv/pic/cover/m/a.jpg".to_string())
+        );
+        // medium 空串 → 回退 common
+        assert_eq!(
+            super::pick_subject_cover(&j(serde_json::json!({
+                "images": { "medium": "", "common": "http://lain.bgm.tv/pic/cover/c/b.jpg" }
+            }))),
+            Some("http://lain.bgm.tv/pic/cover/c/b.jpg".to_string())
+        );
+        // 只有 large
+        assert_eq!(
+            super::pick_subject_cover(&j(serde_json::json!({
+                "images": { "large": "https://lain.bgm.tv/pic/cover/l/c.jpg" }
+            }))),
+            Some("https://lain.bgm.tv/pic/cover/l/c.jpg".to_string())
+        );
+        // 完全没有 images / images 为 null / 全是空串 → None（列表显示占位图）
+        assert_eq!(super::pick_subject_cover(&j(serde_json::json!({}))), None);
+        assert_eq!(super::pick_subject_cover(&j(serde_json::json!({ "images": null }))), None);
+        assert_eq!(
+            super::pick_subject_cover(&j(serde_json::json!({ "images": { "small": "" } }))),
+            None
+        );
     }
 
     /// subject.type → mediaType 映射（不触网）：2=anime / 6=real / 其余 other。

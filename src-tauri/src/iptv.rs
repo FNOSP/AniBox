@@ -4,8 +4,10 @@
 //! 模块（央视/卫视/咪咕/地方台/体育/B站/抖音/斗鱼/虎牙…）、订阅源与自定义直链聚合成一份 M3U
 //! （实测 1100+ 频道、68 个分组，`#EXTINF` 自带 tvg-logo 台标与 EPG 地址）。我们只做
 //! 「取 + 解析 + 播」：
-//!   · 地址：设置面板「通用 → 发现页直播源」自定义（每行一条、最多 4 条，可填部署根地址或
-//!     完整 M3U 地址）；留空使用内置公共聚合源（`DEFAULT_SOURCES`，**不含任何个人服务器地址**）。
+//!   · 地址：内置默认 = **CF 托管的公共源快照**（`DEFAULT_SOURCES`，由 `iptv-mirror`
+//!     发布器定时拉取公开聚合源并推送，App 只拉这一个文件、本地解析）；设置面板
+//!     「通用 → 发现页直播源」可自定义（每行一条、最多 4 条，可填部署根地址或完整 M3U 地址，
+//!     **只存本机 config，不入库**）。
 //!     上游支持标准版 302 直连、`?relay=1` 兼容版、`?relay=2` 全代理与 `?profile=xxx` 多档。
 //!   · 缓存：disk_cache JSON 层，TTL 6h；**缓存键按源集合哈希**（改源不会读到别的源旧数据），
 //!     全部失败时回吐同一源集合的过期缓存（旧数据比报错强）。
@@ -21,20 +23,13 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-/// [lc-2191] 内置默认播放列表：公开聚合源（**不含任何个人服务器地址**，避免把部署方
-/// 的内网/隧道地址随代码公开）。
-/// 单源线路质量参差（实测同一份数据里 12.7MB/s 与 43KB/s 并存、大量分片 404），所以默认
-/// 全拉合并、播放时探活择优；用户可在设置里换成自己的自托管 iPTV 部署（只存本机 config）。
-pub const DEFAULT_SOURCES: &[&str] = &[
-    // 主源：vbskycn（每 6h 更新，频道少但央视/卫视线路实测最好）
-    "https://live.zbds.top/tv/iptv4.m3u",
-    // vbskycn 备用镜像（主域名偶发被运营商污染）
-    "https://gh-proxy.com/raw.githubusercontent.com/vbskycn/iptv/refs/heads/master/tv/iptv4.m3u",
-    // 次源：suxuang/myIPTV（1273 频道，含咪咕/移动 IPTV 线路；单条质量差但能补备线）
-    "https://raw.githubusercontent.com/suxuang/myIPTV/main/ipv4.m3u",
-    // 补充：iptv-org 中国区（156 条，以境外/地方台为主，补冷门台）
-    "https://iptv-org.github.io/iptv/countries/cn.m3u",
-];
+/// [lc-2192] 内置默认播放列表：**CF 托管**的公共源快照（`https://iptv.690075.xyz/interface.m3u`）。
+///
+/// 由常开机器（NAS/Docker）上的 `iptv-mirror` 发布器定时拉取公开聚合源（vbskycn / suxuange /
+/// iptv-org）并 POST 到 Cloudflare Worker（KV 存储），App 只拉这一个文件、本地解析。
+/// **不含任何个人服务器地址**：发布器默认只取公开源；自托管 iPTV 的地址只存用户本机 config。
+/// 发布器与 Worker 属部署脚手架，不入库（`iptv-mirror/` 已 gitignore）。
+pub const DEFAULT_SOURCES: &[&str] = &["https://iptv.690075.xyz/interface.m3u"];
 /// 自定义源上限（与弹幕接口同一口径：多源只做故障转移/并线，不做无限堆积）。
 const MAX_SOURCES: usize = 4;
 /// 缓存 TTL：6 小时（上游默认更新间隔）。

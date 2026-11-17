@@ -19,6 +19,12 @@ import {
   type GamepadStatusPayload,
 } from "../../hooks/useGamepad";
 import { fmtSize } from "../../lib/format";
+// [lc-2217] 短剧 18+ 站源开关（默认关，开启需手动输入确认语）
+import {
+  ADULT_SOURCES_PHRASE,
+  adultSourcesEnabled,
+  setAdultSourcesEnabled,
+} from "../../lib/adultSources";
 import { DUR } from "../../lib/motion";
 import {
   AppInfo,
@@ -390,6 +396,18 @@ export function SettingsPanel({
   const [confirmLogout, setConfirmLogout] = useState(false);
   // [lc-2091] 关闭更新提醒的二次确认浮层（玻璃 .close-ask，替代原生 window.confirm）
   const [confirmUpdateOff, setConfirmUpdateOff] = useState(false);
+  // [lc-2217] 短剧 18+ 站源：默认关；开启要过二次确认浮层并手动输入确认语
+  const [adultOn, setAdultOn] = useState(adultSourcesEnabled);
+  const [adultAsk, setAdultAsk] = useState(false);
+  const [adultText, setAdultText] = useState("");
+  const adultOk = adultText.trim() === ADULT_SOURCES_PHRASE;
+  const enableAdult = () => {
+    if (!adultOk) return;
+    setAdultSourcesEnabled(true);
+    setAdultOn(true);
+    setAdultAsk(false);
+    setAdultText("");
+  };
   // [lc-1607] 设置 → 关于 → 免责声明：打开只读态弹窗（只有「关闭」）
   const [showDisclaimer, setShowDisclaimer] = useState(false);
   // 关闭动画：先挂 class 让遮罩淡出 + 卡片缩下沉，动画走完再真正卸载
@@ -1576,6 +1594,32 @@ export function SettingsPanel({
                       /interface.m3u）或完整 M3U 地址（支持 ?relay=1/2、?profile=xxx 与密码路径）；
                       留空使用内置公共聚合源。
                     </div>
+                  </div>
+                  {/* [lc-2217] 短剧 18+ 站源：默认只显示红果；开启需二次确认 + 手动输入确认语 */}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">短剧 18+ 站源</span>
+                      <div className="set-desc">
+                        默认只显示红果（公开短剧内容）。开启后才会出现剧果、野果、黑桃等成人站源，
+                        仅限年满 18 周岁用户；开启时需手动输入确认语。
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${adultOn ? " on" : ""}`}
+                      aria-pressed={adultOn}
+                      aria-label="短剧 18+ 站源"
+                      title="仅限年满 18 周岁用户；开启后出现成人站源"
+                      onClick={() => {
+                        if (adultOn) {
+                          setAdultSourcesEnabled(false);
+                          setAdultOn(false);
+                          return;
+                        }
+                        setAdultText("");
+                        setAdultAsk(true);
+                      }}
+                    />
                   </div>
                   <div className="set-row">
                     <div>
@@ -3239,6 +3283,37 @@ export function SettingsPanel({
         chain={shaderChain}
         onChainChange={setShaderChain}
       />
+      {/* [lc-2217] 短剧 18+ 站源：二次确认浮层 + 手动输入确认语（输入一字不差才允许开启） */}
+      {adultAsk && (
+        <div className="close-ask" onClick={() => setAdultAsk(false)}>
+          <div className="close-ask-box" onClick={(e) => e.stopPropagation()}>
+            <h3>开启短剧 18+ 站源</h3>
+            <p>
+              开启后站源列表会出现含成人内容的站点，仅限年满 18 周岁的用户访问，且需遵守你所在
+              地区的法律法规。请在下方输入 <b>{ADULT_SOURCES_PHRASE}</b> 以确认。
+            </p>
+            <input
+              className="close-ask-in"
+              value={adultText}
+              autoFocus
+              placeholder={ADULT_SOURCES_PHRASE}
+              aria-label={`输入 ${ADULT_SOURCES_PHRASE} 以开启`}
+              onChange={(e) => setAdultText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") enableAdult();
+              }}
+            />
+            <div className="close-ask-acts">
+              <button type="button" className="set-btn" onClick={() => setAdultAsk(false)}>
+                取消
+              </button>
+              <button type="button" className="set-btn danger" disabled={!adultOk} onClick={enableAdult}>
+                确认开启
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* [lc-2091] 关闭更新提醒的二次确认（玻璃浮层，复用 .close-ask 同套样式 —— 原生
           window.confirm 是系统白框，与整体视觉不符）。确定才真正写配置。 */}
       {confirmUpdateOff && (

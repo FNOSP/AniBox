@@ -11,7 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { DState } from "./shared";
 import { djImg } from "../../lib/images";
-import { AdultGateModal, adultAckDone, markAdultAck } from "./AdultGateModal";
+import { adultSourcesEnabled, isAdultSource, onAdultSourcesChange } from "../../lib/adultSources";
 import { SoraniLoginModal } from "./SoraniLoginModal";
 import { Star as IcoStar, X as IcoXL } from "lucide-react";
 
@@ -229,8 +229,21 @@ export function DuanjuPane() {
   const [favs, setFavs] = useState<FavDrama[]>(readFavs);
   const [favOpen, setFavOpen] = useState(false);
   const [sort, setSort] = useState<SortMode>("default"); // [lc-2112] 排序（纯前端）
-  // [lc-2115] 成人内容闸门：pendingAdult = 等着确认的目标站源（null = 不弹）
-  const [pendingAdult, setPendingAdult] = useState<string | null>(null);
+  // [lc-2217] 18+ 站源解锁态（默认关）：没解锁时 chips 里只留红果。
+  // 解锁入口在 设置 → 通用 → 短剧 18+ 站源（需手动输入确认语），这里只订阅状态。
+  const [adultOn, setAdultOn] = useState(adultSourcesEnabled);
+  useEffect(() => onAdultSourcesChange(() => setAdultOn(adultSourcesEnabled())), []);
+  // 锁上时若当前正停在 18+ 站源（比如刚在设置里关掉）→ 退回红果
+  useEffect(() => {
+    if (!adultOn && isAdultSource(source)) setSource("hongguo");
+  }, [adultOn, source]);
+  // 解锁瞬间补探一次新冒出来的 18+ 站源（锁着时按规矩没探过）
+  useEffect(() => {
+    if (!adultOn) return;
+    const list = (sources || []).filter((x) => x.available !== false);
+    if (list.length) void probeSources(list);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adultOn]);
   const [cats, setCats] = useState<{ id: string; name: string }[]>([]);
   const [cat, setCat] = useState("");
   const [query, setQuery] = useState("");
@@ -259,7 +272,11 @@ export function DuanjuPane() {
     const h = { ...readHealth() };
     const now = Date.now();
     const todo = list.filter(
-      (s) => s.available !== false && !(h[s.id] && now - h[s.id].at < HEALTH_TTL),
+      (s) =>
+        // [lc-2217] 未解锁时不去探测 18+ 站点（默认态只碰红果）
+        (adultSourcesEnabled() || !isAdultSource(s.id)) &&
+        s.available !== false &&
+        !(h[s.id] && now - h[s.id].at < HEALTH_TTL),
     );
     if (!todo.length) {
       setHealth(h);
@@ -505,8 +522,16 @@ export function DuanjuPane() {
 
   // [lc-2189] chips 只列可用站源；失败过的剔除并留「重试」入口
   const srcList = sources || [];
-  const visibleSources = srcList.filter((s) => s.available !== false && !isHidden(health, s.id));
-  const hiddenCount = srcList.filter((s) => s.available !== false && isHidden(health, s.id)).length;
+  const visibleSources = srcList.filter(
+    (s) =>
+      s.available !== false &&
+      // [lc-2217] 没解锁时 18+ 站源整条不出现（不是禁用，是不列出来）
+      (adultOn || !isAdultSource(s.id)) &&
+      !isHidden(health, s.id),
+  );
+  const hiddenCount = srcList.filter(
+    (s) => s.available !== false && (adultOn || !isAdultSource(s.id)) && isHidden(health, s.id),
+  ).length;
   function retryHiddenSources() {
     const h = { ...health };
     for (const s of srcList) if ((h[s.id]?.fail || 0) > 0) delete h[s.id];
@@ -602,12 +627,7 @@ export function DuanjuPane() {
               type="button"
               className={`dj-chip${!favOpen && source === s.id ? " on" : ""}`}
               onClick={() => {
-                // [lc-2115/lc-2180] 成人站源按核心回传的 adult 声明判定：首次切换弹
-                // 完整条款确认，同意后写 localStorage 不再打扰。
-                if (s.adult && !adultAckDone()) {
-                  setPendingAdult(s.id);
-                  return;
-                }
+                // [lc-2217] 18+ 站源只有在设置页手动解锁后才会出现在这里，切换不再二次弹窗
                 setFavOpen(false);
                 setSource(s.id);
                 setTerm("");
@@ -969,22 +989,6 @@ export function DuanjuPane() {
           </div>
         </div>,
         document.body,
-      )}
-
-      {/* [lc-2115] 成人内容闸门：确认后写入 localStorage 并切到该站源 */}
-      {pendingAdult && (
-        <AdultGateModal
-          onAgree={() => {
-            const target = pendingAdult;
-            markAdultAck();
-            setPendingAdult(null);
-            setFavOpen(false);
-            setSource(target);
-            setTerm("");
-            setQuery("");
-          }}
-          onBack={() => setPendingAdult(null)}
-        />
       )}
 
       {/* [lc-2181] 青空登录：成功后刷新账号态；若播放因未登录失败，自动重试上一集 */}

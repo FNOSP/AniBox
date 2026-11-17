@@ -259,7 +259,7 @@ export function IptvPane({ active }: { active: boolean }) {
         <span>
           {custom
             ? "自定义直播源"
-            : "内置公共直播源（vbskycn / suxuang / iptv-org）"}
+            : "内置公共直播源（CF 托管 / vbskycn 等）"}
         </span>
         {updated > 0 && <span>更新于 {timeLabel(updated)}</span>}
       </div>

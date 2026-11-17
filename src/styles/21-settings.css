@@ -154,6 +154,16 @@
 .set-tab.on::before {
   transform: scaleY(1);
 }
+/* [lc-2218] 标签图标：静息 80% 不透明，选中与 hover 时满不透明 */
+.set-tab-ico {
+  flex-shrink: 0;
+  opacity: 0.8;
+  transition: opacity var(--dur-move) ease;
+}
+.set-tab:hover .set-tab-ico,
+.set-tab.on .set-tab-ico {
+  opacity: 1;
+}
 .set-body {
   flex: 1 1 auto;
   min-width: 0;
@@ -192,8 +202,25 @@
 .set-row:last-of-type {
   border-bottom: none;
 }
+/* [lc-2218] 分组末行不画分割线：让「分组」读起来是一块，而不是一长串平铺的条目 */
+.set-row:has(+ .set-sec) {
+  border-bottom: none;
+}
+/* [lc-2218] 标签页内的分组小标题（12px muted，靠留白与字重分层，不额外加底色） */
+.set-sec {
+  padding: var(--sp-5) 0 var(--sp-1);
+  font-size: var(--fs-cap);
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+}
+.set-sec:first-child {
+  padding-top: var(--sp-1);
+}
 .set-k {
-  color: var(--text-2);
+  /* [lc-2218] 标题提到 text-strong + 600：原来 text-2 与下方说明（muted）几乎同色，层次读不出来 */
+  color: var(--text-strong);
+  font-weight: 600;
   flex-shrink: 0;
 }
 .set-v {

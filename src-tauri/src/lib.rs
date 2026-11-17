@@ -48,7 +48,7 @@ mod fnid;
 mod gamepad;
 // [lc-1615] 本地播放历史（观影记录页数据源之一）：history.json 落盘 + 与飞牛 play/list 合并
 mod history;
-// [lc-2077] 发现页 IPTV 栏：直接复用 vbskycn/iptv 现成直播源（GPL-3.0，取+解析+播）
+// [lc-2190] 发现页 IPTV 栏：自托管 iPTV（akiralereal/iptv）播放列表（取+解析+播，地址可配置）
 mod iptv;
 mod libmpv;
 // [library-cover] 首页媒体库卡片自定义封面：app_data_dir 落盘 + /__cover 协议读取
@@ -3264,6 +3264,9 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         "hideMainOnPlay": cfg.hide_main_on_play,
         // [lc-2090] 更新提醒关闭（true = 完全停止检测更新；关闭动作前端有二次确认）
         "updateRemindOff": cfg.update_remind_off,
+        // [lc-2190] 发现页 IPTV 直播源（空 = 内置默认；iptvDefaultSource 仅供占位提示）
+        "iptvSources": cfg.iptv_sources,
+        "iptvDefaultSource": iptv::DEFAULT_SOURCE,
     }))
 }
 
@@ -3465,6 +3468,16 @@ async fn set_settings(
     if let Some(v) = arg.get("updateRemindOff") {
         cfg.update_remind_off = v.as_bool().ok_or("updateRemindOff 必须是布尔值")?;
     }
+    // [lc-2190] 发现页 IPTV 直播源：逐行归一化（补 http:// / 补 /interface.m3u / /txt 换 m3u）、
+    // 去重、最多 4 条；空数组 = 恢复内置默认。非法地址直接报错（不静默存坏值）。
+    if let Some(v) = arg.get("iptvSources") {
+        let arr = v.as_array().ok_or("iptvSources 必须是数组")?;
+        let raw: Vec<String> = arr
+            .iter()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect();
+        cfg.iptv_sources = iptv::normalize_sources(&raw)?;
+    }
     config::save(&app, &cfg).await?;
     *state.config.write().await = cfg.clone();
     // [lc-1561] 弹幕接口副作用：只在所有校验通过、配置成功落盘后再同步
@@ -3513,6 +3526,9 @@ async fn set_settings(
         "hideMainOnPlay": cfg.hide_main_on_play,
         // [lc-2090] 更新提醒关闭
         "updateRemindOff": cfg.update_remind_off,
+        // [lc-2190] 发现页 IPTV 直播源
+        "iptvSources": cfg.iptv_sources,
+        "iptvDefaultSource": iptv::DEFAULT_SOURCE,
     }))
 }
 
@@ -4290,9 +4306,10 @@ pub fn run() {
             tmdb::tmdb_discover,
             // [lc-1577] 发现页左栏「媒体库」搜索框（真实 TMDB 搜索）
             tmdb::tmdb_search,
-            // [lc-2077] 发现页 IPTV 栏：vbskycn/iptv 现成直播源（取列表 + 播放，见 iptv.rs 头注）
+            // [lc-2190] 发现页 IPTV 栏：自托管 iPTV（akiralereal/iptv）播放列表（取列表 + 播放 + 源测试）
             iptv::iptv_channels_get,
             iptv::iptv_play,
+            iptv::iptv_sources_test,
             // [lc-1582] AniList 官方 API：当日放送表（补 BGM 缺的「几点更新」→ 右栏行的「第 N 话 · HH:MM」）
             anilist::anilist_day_schedule,
             // [lc-1589] AniList：往季番表（「总表查询」弹窗：选年份+季度看该季列表）

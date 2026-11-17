@@ -295,6 +295,13 @@ pub struct Config {
     #[serde(default)]
     pub update_remind_off: bool,
 
+    /// [lc-2190] 发现页 IPTV 直播源（自托管 iPTV 部署，见 `iptv.rs`）：每项可为部署根地址
+    /// （`http://192.168.1.10:1905`，自动补 `/interface.m3u`）或完整 M3U 地址
+    /// （支持 `?relay=1/2`、`?profile=xxx`、密码路径）。空 = 使用内置默认
+    /// （`iptv::DEFAULT_SOURCE`）。设置面板「通用 → 发现页直播源」读写，最多 4 条。
+    #[serde(default)]
+    pub iptv_sources: Vec<String>,
+
     /* ── [lc-1907] mpv 窗口 owner 收编（实验开关）──
        true = mpv 独立窗口挂成主窗口的 owned window（跟随主窗口移动 + DWM 系统圆角）。
        **默认 false**：独立窗口模式保持 lc-1906 之前的原生形态（不挂 owner、不跟随），
@@ -442,6 +449,7 @@ impl Default for Config {
             player_glass_blur: default_true(),
             hide_main_on_play: false,
             update_remind_off: false,
+            iptv_sources: Vec::new(),
             mpv_window_owner: false,
         }
     }
@@ -1036,6 +1044,18 @@ mod tests {
         // 显式值可被解析
         let c2: Config = serde_json::from_str(r#"{"ui_opacity":75}"#).unwrap();
         assert_eq!(c2.ui_opacity, 75);
+    }
+
+    #[test]
+    fn iptv_sources_default_to_empty() {
+        // [lc-2190] 老 config.json 没有 iptv_sources → 空 = 用内置默认源（不需要迁移）
+        let c: Config = serde_json::from_str("{}").unwrap();
+        assert!(c.iptv_sources.is_empty());
+        let c2: Config = serde_json::from_str(
+            r#"{"iptv_sources":["http://h:1905/interface.m3u","http://h2/txt"]}"#,
+        )
+        .unwrap();
+        assert_eq!(c2.iptv_sources.len(), 2);
     }
 
     #[test]

@@ -6,7 +6,18 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Check as IcoCheck, ChevronDown as IcoChevron, Star as IcoStar, X as IcoXL } from "lucide-react";
+import {
+  Check as IcoCheck,
+  ChevronDown as IcoChevron,
+  Star as IcoStar,
+  X as IcoXL,
+  Settings2 as IcoSettings,
+  Play as IcoPlay,
+  Database as IcoDb,
+  MessageSquare as IcoMsg,
+  User as IcoUser,
+  Info as IcoInfo,
+} from "lucide-react";
 import { DisclaimerModal } from "../disclaimer/DisclaimerModal";
 // [lc-2009] 滤镜速查弹窗（折叠块版式，数据在 src/lib/shaderGuide.ts，可随新版 UI 同步搬走）
 import { ShaderGuideModal } from "./ShaderGuideModal";
@@ -69,15 +80,15 @@ let lastDownload: UpdateDownloadResult | null = null;
 
 /** 设置面板的标签分类。顺序即展示顺序；新增分类时同时补上对应面板内容，
  *  避免设置项「无处可去」或重复渲染。 */
+/* [lc-2218] 设置分类重排为 6 个：同类合并（外观 → 通用/播放、AI 增强 → 播放与画质、
+   存储与诊断 → 关于与维护），串门的项归位（IPTV/短剧/在线资源/字幕 → 内容源、手柄 → 通用）。 */
 const SET_TABS = [
-  { key: "general", label: "通用" },
-  { key: "player", label: "播放器" },
-  { key: "enhance", label: "AI 增强" },
-  { key: "appearance", label: "外观" },
-  { key: "danmu", label: "弹幕" },
-  { key: "account", label: "账号" },
-  { key: "maintenance", label: "存储与诊断" },
-  { key: "about", label: "更新与关于" },
+  { key: "general", label: "通用", icon: IcoSettings },
+  { key: "playback", label: "播放与画质", icon: IcoPlay },
+  { key: "sources", label: "内容源", icon: IcoDb },
+  { key: "danmu", label: "弹幕", icon: IcoMsg },
+  { key: "account", label: "账号", icon: IcoUser },
+  { key: "about", label: "关于与维护", icon: IcoInfo },
 ] as const;
 type SetTabKey = (typeof SET_TABS)[number]["key"];
 
@@ -1516,21 +1527,25 @@ export function SettingsPanel({
             aria-label="设置分类"
             onKeyDown={onTabKeyDown}
           >
-            {SET_TABS.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                role="tab"
-                id={`set-tab-${t.key}`}
-                aria-selected={tab === t.key}
-                aria-controls={tab === t.key ? `set-panel-${t.key}` : undefined}
-                tabIndex={tab === t.key ? 0 : -1}
-                className={`set-tab${tab === t.key ? " on" : ""}`}
-                onClick={() => setTab(t.key)}
-              >
-                {t.label}
-              </button>
-            ))}
+            {SET_TABS.map((t) => {
+              const TabIcon = t.icon;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  role="tab"
+                  id={`set-tab-${t.key}`}
+                  aria-selected={tab === t.key}
+                  aria-controls={tab === t.key ? `set-panel-${t.key}` : undefined}
+                  tabIndex={tab === t.key ? 0 : -1}
+                  className={`set-tab${tab === t.key ? " on" : ""}`}
+                  onClick={() => setTab(t.key)}
+                >
+                  <TabIcon size={15} strokeWidth={1.9} className="set-tab-ico" />
+                  {t.label}
+                </button>
+              );
+            })}
           </div>
           <div
             ref={paneRef}
@@ -1545,6 +1560,7 @@ export function SettingsPanel({
               {/* ── 通用 ── */}
               {tab === "general" && (
                 <>
+                  <div className="set-sec">启动与窗口</div>
                   <div className="set-row">
                     <div>
                       <span className="set-k">启动页</span>
@@ -1561,6 +1577,474 @@ export function SettingsPanel({
                       onChange={(v) => onSettings({ launchPage: v as AppSettings["launchPage"] })}
                     />
                   </div>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">开机自启</span>
+                      <div className="set-desc">登录系统后自动启动本程序</div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${autostart ? " on" : ""}`}
+                      disabled={busy}
+                      aria-pressed={autostart}
+                      aria-label="开机自启"
+                      onClick={toggleAutostart}
+                    />
+                  </div>
+                  {/* [lc-2090] 更新提醒开关：关闭 = 完全停止检测更新，需二次确认（旧版本问题不予处理） */}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">更新提醒</span>
+                      <div className="set-desc">新版本发布时弹窗提醒（启动自动检查加定时复查）</div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${!settings.updateRemindOff ? " on" : ""}`}
+                      disabled={busy}
+                      aria-pressed={!settings.updateRemindOff}
+                      aria-label="更新提醒"
+                      onClick={() => {
+                        if (settings.updateRemindOff) {
+                          onSettings({ updateRemindOff: false });
+                          return;
+                        }
+                        // 关闭走玻璃二次确认浮层（confirmUpdateOff），不再用原生 window.confirm
+                        setConfirmUpdateOff(true);
+                      }}
+                    />
+                  </div>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">关闭按钮</span>
+                      <div className="set-desc">点窗口右上角关闭时的行为</div>
+                    </div>
+                    <SetSelect
+                      label="关闭按钮行为"
+                      value={settings.exitMode}
+                      disabled={busy}
+                      options={[
+                        { value: "ask", label: "每次询问" },
+                        { value: "tray", label: "最小化到托盘" },
+                        { value: "exit", label: "直接退出" },
+                      ]}
+                      onChange={(v) => onSettings({ exitMode: v as AppSettings["exitMode"] })}
+                    />
+                  </div>
+                  {/* [lc-2057] 播放时自动隐藏主窗：调起播放器后把软件窗口收起来，
+                      播放器关闭时再显示回来。从托盘点一下也能随时叫出来。 */}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">播放时隐藏主窗口</span>
+                      <div className="set-desc">
+                        调起播放器后自动隐藏软件窗口，关闭播放器再显示回来。
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${settings.hideMainOnPlay ? " on" : ""}`}
+                      aria-pressed={!!settings.hideMainOnPlay}
+                      aria-label="播放时隐藏主窗口"
+                      disabled={busy}
+                      onClick={() => onSettings({ hideMainOnPlay: !settings.hideMainOnPlay })}
+                    />
+                  </div>
+                  {note && <div className="set-note">{note}</div>}
+
+                </>
+              )}
+
+              {/* ── 播放器 ── */}
+              {tab === "playback" && (
+                <>
+                  <div className="set-sec">播放器</div>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">播放器选择</span>
+                      <div className="set-desc">
+                        默认随包自带 mpv；也可改用本机安装的 mpv（自动检测常见安装路径）或 PotPlayer。
+                        本机 mpv 出现兼容问题时请自行处理，应用不对其做适配修复。
+                      </div>
+                    </div>
+                    <SetSelect
+                      label="播放器选择"
+                      value={playerKind}
+                      disabled={busy}
+                      options={[
+                        { value: "mpv", label: "自带 mpv（推荐）" },
+                        { value: "mpv-local", label: "本机 mpv（兼容自负）" },
+                        { value: "potplayer", label: "本机 PotPlayer" },
+                      ]}
+                      onChange={choosePlayer}
+                    />
+                  </div>
+                  {/* [lc-2002/lc-2186] 播放器皮肤（仅自带 mpv 生效）：原生 uosc /
+                      液态玻璃 ModernGlass / 透明悬浮（控制条无底板，弹窗改浅色半透纱底）。
+                      几套 OSC 物理互斥，切换在下一次起播生效。 */}
+                  {playerKind === "mpv" && (
+                    <div className="set-row">
+                      <div>
+                        <span className="set-k">播放器皮肤</span>
+                        <div className="set-desc">
+                          液态玻璃是独立的一套控件条（带新的右键菜单与缩略图预览）；
+                          透明悬浮的控制条无底板，弹窗改浅色半透纱底、文字仍为白色。
+                          切换在下次播放时生效。
+                        </div>
+                      </div>
+                      <SetSelect
+                        label="播放器皮肤"
+                        value={settings.playerSkin ?? "glass"}
+                        disabled={busy}
+                        options={[
+                          { value: "glass", label: "液态玻璃" },
+                          { value: "clear", label: "透明悬浮" },
+                          { value: "uosc", label: "原生（uosc）" },
+                        ]}
+                        onChange={(v) => onSettings({ playerSkin: v as "uosc" | "glass" | "clear" })}
+                      />
+                    </div>
+                  )}
+                  {/* [lc-2075/lc-2182] 玻璃模糊：个别显卡/驱动上该 shader 的输出中间 pass 会把画面整体染偏
+                      （用户反馈「画面发蓝」，原生皮肤无此现象）。关掉后玻璃面板失去磨砂质感，
+                      渲染路径与原生皮肤完全一致。透明悬浮的弹窗菜单仍是玻璃，同样受此开关控制。 */}
+                  <div className="set-sec">画面</div>
+                  {playerKind === "mpv" && ["glass", "clear"].includes(settings.playerSkin ?? "glass") && (
+                    <div className="set-row">
+                      <div>
+                        <span className="set-k">玻璃模糊</span>
+                        <div className="set-desc">
+                          玻璃面板后面的画面磨砂效果。若播放画面整体偏色（如发蓝），
+                          关闭后即可恢复。
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className={`set-sw${settings.playerGlassBlur ?? true ? " on" : ""}`}
+                        aria-pressed={settings.playerGlassBlur ?? true}
+                        aria-label="玻璃模糊"
+                        disabled={busy}
+                        onClick={() =>
+                          onSettings({ playerGlassBlur: !(settings.playerGlassBlur ?? true) })
+                        }
+                      />
+                    </div>
+                  )}
+                  {/* [lc-1802] 着色器：默认空（不着色器）；预设与播放器内 Ctrl+1~6 一致，两边互相同步 */}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">着色器</span>
+                      <div className="set-desc">
+                        默认为空（不着色器）。选择后立即保存并同步到播放器；与播放器内
+                        「着色器」菜单是同一份配置。
+                        {shaderCustom && " （当前为播放器侧设置的自定义链，选择预设将覆盖）"}
+                        {"　"}
+                        <button
+                          type="button"
+                          className="sg-chip"
+                          onClick={() => setGuideOpen(true)}
+                          title="按片源与性能选滤镜的组合速查表"
+                        >
+                          滤镜速查
+                        </button>
+                      </div>
+                    </div>
+                    <SetSelect
+                      label="着色器"
+                      value={shaderPreset}
+                      disabled={busy}
+                      options={[
+                        { value: "", label: shaderCustom ? "自定义（见说明）" : "默认（不着色器）" },
+                        { value: "aq_hq_a", label: "动漫 A4K HQ：Mode A（线条重建+放大）" },
+                        { value: "aq_hq_b", label: "动漫 A4K HQ：Mode B（柔和重建+放大）" },
+                        { value: "aq_hq_c", label: "动漫 A4K HQ：Mode C（降噪放大·噪点多）" },
+                        { value: "aq_hq_aa", label: "动漫 A4K HQ：Mode A+A（二次重建·极追求线条）" },
+                        { value: "aq_hq_bb", label: "动漫 A4K HQ：Mode B+B（二次柔和重建）" },
+                        { value: "aq_hq_ca", label: "动漫 A4K HQ：Mode C+A（降噪+重建）" },
+                        { value: "aq_ft_a", label: "动漫 A4K Fast：Mode A（轻量线条重建+放大）" },
+                        { value: "aq_ft_b", label: "动漫 A4K Fast：Mode B（轻量柔和重建）" },
+                        { value: "aq_ft_c", label: "动漫 A4K Fast：Mode C（降噪放大）" },
+                        { value: "aq_ft_aa", label: "动漫 A4K Fast：Mode A+A（二次轻量重建）" },
+                        { value: "aq_ft_bb", label: "动漫 A4K Fast：Mode B+B（二次轻量柔和重建）" },
+                        { value: "aq_ft_ca", label: "动漫 A4K Fast：Mode C+A（降噪+轻量重建）" },
+                        { value: "aq_dtdd", label: "动漫 A4K：A4K-DTDD（去噪·去模糊·细化·加深）" },
+                        { value: "fsrcnnx_2", label: "真人 FSRCNNX：2x2+Krig（轻量·弱显卡）" },
+                        { value: "fsrcnnx_8", label: "真人 FSRCNNX：2x8+Krig（均衡·推荐）" },
+                        { value: "fsrcnnx_16", label: "真人 FSRCNNX：2x16+SSim+Krig（高质量）" },
+                        { value: "fsrcnnx_56", label: "真人 FSRCNNX：2x56+SSim+Krig（极致·高配置）" },
+                        { value: "artcnn_16", label: "ArtCNN：/16（中等）" },
+                        { value: "artcnn_16ds", label: "ArtCNN：/16DS（降噪+锐化）" },
+                        { value: "artcnn_16dn", label: "ArtCNN：/16DN（强降噪）" },
+                        { value: "artcnn_32", label: "ArtCNN：/32（高质量）" },
+                        { value: "artcnn_32ds", label: "ArtCNN：/32DS（降噪+锐化）" },
+                        { value: "artcnn_32dn", label: "ArtCNN：/32DN（强降噪）" },
+                        { value: "artcnn_48", label: "ArtCNN：/48（极高质量·高配置）" },
+                        { value: "artcnn_48ds", label: "ArtCNN：/48DS（极高质量+降噪）" },
+                        { value: "artcnn_48ds_cmp", label: "ArtCNN：/48DS_CMP（+压缩伪影修复）" },
+                        { value: "cunny_faster", label: "动漫 CuNNy：faster（极轻量）" },
+                        { value: "cunny_fast", label: "动漫 CuNNy：fast（轻量）" },
+                        { value: "cunny_2x12", label: "动漫 CuNNy：2x12（入门）" },
+                        { value: "cunny_3x12", label: "动漫 CuNNy：3x12（低端）" },
+                        { value: "cunny_4x12", label: "动漫 CuNNy：4x12（中低端）" },
+                        { value: "cunny_4x16", label: "动漫 CuNNy：4x16（均衡）" },
+                        { value: "cunny_4x24", label: "动漫 CuNNy：4x24（中高端）" },
+                        { value: "cunny_4x32", label: "动漫 CuNNy：4x32（高端）" },
+                        { value: "cunny_8x32", label: "动漫 CuNNy：8x32（极致·极高开销）" },
+                        { value: "sw_nnedi3_x4", label: "单开关：LUMA NNEDI3/x4" },
+                        { value: "sw_nnedi3_x6", label: "单开关：LUMA NNEDI3/x6" },
+                        { value: "sw_fsrcnnx_16", label: "单开关：LUMA FSRCNNX/2x16" },
+                        { value: "sw_ravu_r2", label: "单开关：LUMA RAVU-ZOOM-R2" },
+                        { value: "sw_ravu_r3", label: "单开关：LUMA RAVU-ZOOM-R3" },
+                        { value: "sw_ravu_r4", label: "单开关：LUMA RAVU-LITE-R4" },
+                        { value: "sw_ssim_sr", label: "单开关：SSimSuperRes（放大后修正）" },
+                        { value: "sw_ssim_ds", label: "单开关：SSimDownscaler（高→低下采样）" },
+                        { value: "sw_cfl", label: "单开关：CHROMA CFL（色度放大）" },
+                        { value: "sw_krig", label: "单开关：CHROMA Krig（色度放大）" },
+                        { value: "sw_fsr_easu", label: "单开关：AMD FSR_EASU（放大）" },
+                        { value: "sw_fsr_rgb", label: "单开关：AMD FSR_RGB（放大）" },
+                        { value: "sw_aq_restore", label: "单开关：Anime4K 重建" },
+                        { value: "sw_aq_gan", label: "单开关：Anime4K 放大（GAN）" },
+                        { value: "sw_sharpen", label: "单开关：自适应锐化" },
+                      ]}
+                      onChange={(v) => void setShader(v)}
+                    />
+                  </div>
+                  {shaderNote && <span className="set-note">{shaderNote}</span>}
+                  {/* [lc-2014] 设置页「画面预设」区块已移除：滑块式编排与着色器/超分/
+                      补帧各行的独立选择重复，且不跨会话回显容易误导。播放器右键菜单
+                      「画面预设」仍保留（那里才是快捷编排的正确入口）。 */}
+                  {playerKind === "potplayer" && (
+                    <>
+                  <div className="set-sec">外部播放器路径</div>
+                      <div className="set-row set-row-col">
+                        <span className="set-k">PotPlayer 路径</span>
+                        <input
+                          className="set-input"
+                          type="text"
+                          spellCheck={false}
+                          placeholder="留空将自动探测常见安装路径，或填写 PotPlayerMini64.exe 的完整路径"
+                          value={potPath}
+                          disabled={busy || potBusy}
+                          onChange={(e) => setPotPath(e.target.value)}
+                          onBlur={() => {
+                            if (potPath.trim() !== (settings.potplayerPath ?? "")) {
+                              void validatePot(true);
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void validatePot(true);
+                            }
+                          }}
+                        />
+                        <div className="set-actions">
+                          <button
+                            type="button"
+                            className="set-btn"
+                            disabled={busy || potBusy}
+                            onClick={async () => {
+                              const p = await browseExe();
+                              if (!p) return;
+                              setPotPath(p);
+                              await validatePot(true, p);
+                            }}
+                          >
+                            浏览…
+                          </button>
+                          <button
+                            type="button"
+                            className="set-btn"
+                            disabled={busy || potBusy}
+                            onClick={detectPot}
+                          >
+                            自动探测
+                          </button>
+                          <button
+                            type="button"
+                            className="set-btn"
+                            disabled={busy || potBusy}
+                            onClick={() => validatePot(false)}
+                          >
+                            校验
+                          </button>
+                          {potStatus && (
+                            <span className={`set-pot-status ${potStatus.tone}`}>
+                              {potStatus.text}
+                            </span>
+                          )}
+                        </div>
+                        <div className="set-desc">
+                          路径为空时，将在起播时自动探测常见安装路径；填写后需指向已存在的 .exe。
+                        </div>
+                      </div>
+                      <div className="set-warn">
+                        PotPlayer 模式不支持内置弹幕、uosc 底栏与精确暂停/跳转/倍速控制；
+                        需要 Referer/UA 的 HLS 源会提示切回 mpv。
+                      </div>
+                </>
+              )}
+                  {playerKind === "mpv-local" && (
+                    <>
+                  <div className="set-sec">外部播放器路径</div>
+                      <div className="set-row set-row-col">
+                        <span className="set-k">本机 mpv 路径</span>
+                        <input
+                          className="set-input"
+                          type="text"
+                          spellCheck={false}
+                          placeholder="留空将自动探测常见安装路径，或填写 mpv.exe 的完整路径"
+                          value={mpvLocalPath}
+                          disabled={busy || mpvBusy}
+                          onChange={(e) => setMpvLocalPath(e.target.value)}
+                          onBlur={() => {
+                            if (mpvLocalPath.trim() !== (settings.mpvPath ?? "")) void validateMpvLocal();
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void validateMpvLocal();
+                            }
+                          }}
+                        />
+                        <div className="set-actions">
+                          <button
+                            type="button"
+                            className="set-btn"
+                            disabled={busy || mpvBusy}
+                            onClick={async () => {
+                              const p = await browseExe();
+                              if (!p) return;
+                              setMpvLocalPath(p);
+                              await validateMpvLocal();
+                            }}
+                          >
+                            浏览…
+                          </button>
+                          <button
+                            type="button"
+                            className="set-btn"
+                            disabled={busy || mpvBusy}
+                            onClick={detectMpvLocal}
+                          >
+                            自动探测
+                          </button>
+                          <button
+                            type="button"
+                            className="set-btn"
+                            disabled={busy || mpvBusy}
+                            onClick={() => void validateMpvLocal()}
+                          >
+                            校验
+                          </button>
+                          {mpvStatus && (
+                            <span className={`set-pot-status ${mpvStatus.tone}`}>{mpvStatus.text}</span>
+                          )}
+                        </div>
+                        <div className="set-desc">
+                          路径为空时，将在起播时自动探测常见安装路径（Program Files / winget / PATH）；填写后需指向已存在的 mpv.exe。
+                        </div>
+                      </div>
+                      <div className="set-warn">
+                        本机 mpv 不包含应用自带播放器的配套能力（uosc 底栏、内置弹幕、字幕搜索/挂载、
+                        快进快捷键等脚本均不加载）；出现兼容问题请自行处理，应用不做适配修复。
+                      </div>
+                    </>
+                  )}
+
+
+                </>
+              )}
+
+              {/* ── AI 增强（[lc-2218] 并入「播放与画质」）：组件 / AI 超分 / TRT / 插帧引擎 ── */}
+              {tab === "playback" && (
+                <>
+                  <div className="set-sec">AI 补帧与超分</div>
+                  <AiEnhanceRow />
+                </>
+              )}
+
+              {/* ── 界面与音效（[lc-2218] 原「外观」并入「通用」） ── */}
+              {tab === "general" && (
+                <>
+                  <div className="set-sec">界面</div>
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">轮播透明标题</span>
+                      <div className="set-desc">首页轮播用影片透明 Logo 代替文字标题（无 Logo 时自动用文字）</div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${settings.carouselLogo ? " on" : ""}`}
+                      aria-pressed={settings.carouselLogo}
+                      aria-label="轮播透明标题"
+                      onClick={() => onSettings({ carouselLogo: !settings.carouselLogo })}
+                    />
+                  </div>
+
+                  {/* ── [liquid-theme] 主题切换音效 ──
+                      默认关闭；音量与开关存 localStorage（纯前端偏好）。
+                      四个试听按钮对应液体动画的四个真实阶段，方便用户先听再决定。 */}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">主题切换音效</span>
+                      <div className="set-desc">
+                        深浅切换时配合液体动画的水声（本地合成，不联网）。浅色转深色偏低沉，深色转浅色偏清亮。
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${settings.themeSound ? " on" : ""}`}
+                      aria-pressed={!!settings.themeSound}
+                      aria-label="主题切换音效"
+                      onClick={() => onSettings({ themeSound: !settings.themeSound })}
+                    />
+                  </div>
+                  <div className={`set-row set-slider-row${settings.themeSound ? "" : " set-row-dim"}`}>
+                    <div>
+                      <span className="set-k">音效音量</span>
+                      <div className="set-desc">仅影响主题切换音效</div>
+                    </div>
+                    <div className="set-range-wrap">
+                      <input
+                        type="range"
+                        className="set-range"
+                        min={0}
+                        max={100}
+                        step={5}
+                        value={Math.round((settings.themeSoundVolume ?? 0.45) * 100)}
+                        disabled={!settings.themeSound}
+                        aria-label="主题切换音效音量"
+                        onChange={(e) => onSettings({ themeSoundVolume: Number(e.target.value) / 100 })}
+                      />
+                      <span className="set-range-val">
+                        {Math.round((settings.themeSoundVolume ?? 0.45) * 100)}%
+                      </span>
+                    </div>
+                  </div>
+                  <div className="set-row set-row-col">
+                    <span className="set-k">试听</span>
+                    <div className="set-actions">
+                      <button type="button" className="set-btn" onClick={() => audition("pour", "darken")}>
+                        流出
+                      </button>
+                      <button type="button" className="set-btn" onClick={() => audition("impact", "darken")}>
+                        落底
+                      </button>
+                      <button type="button" className="set-btn" onClick={() => audition("rise", "lighten")}>
+                        上涨
+                      </button>
+                      <button type="button" className="set-btn" onClick={() => audition("settle", "lighten")}>
+                        完成
+                      </button>
+                    </div>
+                  </div>
+
+                </>
+              )}
+
+              {/* ── 内容源（[lc-2218] 归位：发现页数据源 + 在线资源 + 字幕源） ── */}
+              {tab === "sources" && (
+                <>
+                  <div className="set-sec">发现页数据源</div>
                   {/* [lc-2194] IPTV 直播源：放在「通用」页顶部，用户直接可见（原来在最底部被漏看） */}
                   <div className="set-row set-row-col">
                     <span className="set-k">IPTV 直播源</span>
@@ -1621,67 +2105,7 @@ export function SettingsPanel({
                       }}
                     />
                   </div>
-                  <div className="set-row">
-                    <div>
-                      <span className="set-k">开机自启</span>
-                      <div className="set-desc">登录系统后自动启动本程序</div>
-                    </div>
-                    <button
-                      type="button"
-                      className={`set-sw${autostart ? " on" : ""}`}
-                      disabled={busy}
-                      aria-pressed={autostart}
-                      aria-label="开机自启"
-                      onClick={toggleAutostart}
-                    />
-                  </div>
-                  {/* [lc-2090] 更新提醒开关：关闭 = 完全停止检测更新，需二次确认（旧版本问题不予处理） */}
-                  <div className="set-row">
-                    <div>
-                      <span className="set-k">更新提醒</span>
-                      <div className="set-desc">新版本发布时弹窗提醒（启动自动检查加定时复查）</div>
-                    </div>
-                    <button
-                      type="button"
-                      className={`set-sw${!settings.updateRemindOff ? " on" : ""}`}
-                      disabled={busy}
-                      aria-pressed={!settings.updateRemindOff}
-                      aria-label="更新提醒"
-                      onClick={() => {
-                        if (settings.updateRemindOff) {
-                          onSettings({ updateRemindOff: false });
-                          return;
-                        }
-                        // 关闭走玻璃二次确认浮层（confirmUpdateOff），不再用原生 window.confirm
-                        setConfirmUpdateOff(true);
-                      }}
-                    />
-                  </div>
-                  <div className="set-row">
-                    <div>
-                      <span className="set-k">关闭按钮</span>
-                      <div className="set-desc">点窗口右上角关闭时的行为</div>
-                    </div>
-                    <SetSelect
-                      label="关闭按钮行为"
-                      value={settings.exitMode}
-                      disabled={busy}
-                      options={[
-                        { value: "ask", label: "每次询问" },
-                        { value: "tray", label: "最小化到托盘" },
-                        { value: "exit", label: "直接退出" },
-                      ]}
-                      onChange={(v) => onSettings({ exitMode: v as AppSettings["exitMode"] })}
-                    />
-                  </div>
-                  {note && <div className="set-note">{note}</div>}
-
-                </>
-              )}
-
-              {/* ── 播放器 ── */}
-              {tab === "player" && (
-                <>
+                  <div className="set-sec">在线资源与字幕</div>
                   {/* [lc-1753] 在线资源搜索：默认关闭；声明「不存储不分发」后手动开启 */}
                   <div className="set-row">
                     <div>
@@ -1928,328 +2352,13 @@ export function SettingsPanel({
                     </div>
                     {subNote && <span className="set-note">{subNote}</span>}
                   </div>
-                  {/* [lc-2057] 播放时自动隐藏主窗：调起播放器后把软件窗口收起来，
-                      播放器关闭时再显示回来。从托盘点一下也能随时叫出来。 */}
-                  <div className="set-row">
-                    <div>
-                      <span className="set-k">播放时隐藏主窗口</span>
-                      <div className="set-desc">
-                        调起播放器后自动隐藏软件窗口，关闭播放器再显示回来。
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className={`set-sw${settings.hideMainOnPlay ? " on" : ""}`}
-                      aria-pressed={!!settings.hideMainOnPlay}
-                      aria-label="播放时隐藏主窗口"
-                      disabled={busy}
-                      onClick={() => onSettings({ hideMainOnPlay: !settings.hideMainOnPlay })}
-                    />
-                  </div>
-                  <div className="set-row">
-                    <div>
-                      <span className="set-k">播放器选择</span>
-                      <div className="set-desc">
-                        默认随包自带 mpv；也可改用本机安装的 mpv（自动检测常见安装路径）或 PotPlayer。
-                        本机 mpv 出现兼容问题时请自行处理，应用不对其做适配修复。
-                      </div>
-                    </div>
-                    <SetSelect
-                      label="播放器选择"
-                      value={playerKind}
-                      disabled={busy}
-                      options={[
-                        { value: "mpv", label: "自带 mpv（推荐）" },
-                        { value: "mpv-local", label: "本机 mpv（兼容自负）" },
-                        { value: "potplayer", label: "本机 PotPlayer" },
-                      ]}
-                      onChange={choosePlayer}
-                    />
-                  </div>
-                  {/* [lc-2002/lc-2186] 播放器皮肤（仅自带 mpv 生效）：原生 uosc /
-                      液态玻璃 ModernGlass / 透明悬浮（控制条无底板，弹窗改浅色半透纱底）。
-                      几套 OSC 物理互斥，切换在下一次起播生效。 */}
-                  {playerKind === "mpv" && (
-                    <div className="set-row">
-                      <div>
-                        <span className="set-k">播放器皮肤</span>
-                        <div className="set-desc">
-                          液态玻璃是独立的一套控件条（带新的右键菜单与缩略图预览）；
-                          透明悬浮的控制条无底板，弹窗改浅色半透纱底、文字仍为白色。
-                          切换在下次播放时生效。
-                        </div>
-                      </div>
-                      <SetSelect
-                        label="播放器皮肤"
-                        value={settings.playerSkin ?? "glass"}
-                        disabled={busy}
-                        options={[
-                          { value: "glass", label: "液态玻璃" },
-                          { value: "clear", label: "透明悬浮" },
-                          { value: "uosc", label: "原生（uosc）" },
-                        ]}
-                        onChange={(v) => onSettings({ playerSkin: v as "uosc" | "glass" | "clear" })}
-                      />
-                    </div>
-                  )}
-                  {/* [lc-2075/lc-2182] 玻璃模糊：个别显卡/驱动上该 shader 的输出中间 pass 会把画面整体染偏
-                      （用户反馈「画面发蓝」，原生皮肤无此现象）。关掉后玻璃面板失去磨砂质感，
-                      渲染路径与原生皮肤完全一致。透明悬浮的弹窗菜单仍是玻璃，同样受此开关控制。 */}
-                  {playerKind === "mpv" && ["glass", "clear"].includes(settings.playerSkin ?? "glass") && (
-                    <div className="set-row">
-                      <div>
-                        <span className="set-k">玻璃模糊</span>
-                        <div className="set-desc">
-                          玻璃面板后面的画面磨砂效果。若播放画面整体偏色（如发蓝），
-                          关闭后即可恢复。
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        className={`set-sw${settings.playerGlassBlur ?? true ? " on" : ""}`}
-                        aria-pressed={settings.playerGlassBlur ?? true}
-                        aria-label="玻璃模糊"
-                        disabled={busy}
-                        onClick={() =>
-                          onSettings({ playerGlassBlur: !(settings.playerGlassBlur ?? true) })
-                        }
-                      />
-                    </div>
-                  )}
-                  {/* [lc-1802] 着色器：默认空（不着色器）；预设与播放器内 Ctrl+1~6 一致，两边互相同步 */}
-                  <div className="set-row">
-                    <div>
-                      <span className="set-k">着色器</span>
-                      <div className="set-desc">
-                        默认为空（不着色器）。选择后立即保存并同步到播放器；与播放器内
-                        「着色器」菜单是同一份配置。
-                        {shaderCustom && " （当前为播放器侧设置的自定义链，选择预设将覆盖）"}
-                        {"　"}
-                        <button
-                          type="button"
-                          className="sg-chip"
-                          onClick={() => setGuideOpen(true)}
-                          title="按片源与性能选滤镜的组合速查表"
-                        >
-                          滤镜速查
-                        </button>
-                      </div>
-                    </div>
-                    <SetSelect
-                      label="着色器"
-                      value={shaderPreset}
-                      disabled={busy}
-                      options={[
-                        { value: "", label: shaderCustom ? "自定义（见说明）" : "默认（不着色器）" },
-                        { value: "aq_hq_a", label: "动漫 A4K HQ：Mode A（线条重建+放大）" },
-                        { value: "aq_hq_b", label: "动漫 A4K HQ：Mode B（柔和重建+放大）" },
-                        { value: "aq_hq_c", label: "动漫 A4K HQ：Mode C（降噪放大·噪点多）" },
-                        { value: "aq_hq_aa", label: "动漫 A4K HQ：Mode A+A（二次重建·极追求线条）" },
-                        { value: "aq_hq_bb", label: "动漫 A4K HQ：Mode B+B（二次柔和重建）" },
-                        { value: "aq_hq_ca", label: "动漫 A4K HQ：Mode C+A（降噪+重建）" },
-                        { value: "aq_ft_a", label: "动漫 A4K Fast：Mode A（轻量线条重建+放大）" },
-                        { value: "aq_ft_b", label: "动漫 A4K Fast：Mode B（轻量柔和重建）" },
-                        { value: "aq_ft_c", label: "动漫 A4K Fast：Mode C（降噪放大）" },
-                        { value: "aq_ft_aa", label: "动漫 A4K Fast：Mode A+A（二次轻量重建）" },
-                        { value: "aq_ft_bb", label: "动漫 A4K Fast：Mode B+B（二次轻量柔和重建）" },
-                        { value: "aq_ft_ca", label: "动漫 A4K Fast：Mode C+A（降噪+轻量重建）" },
-                        { value: "aq_dtdd", label: "动漫 A4K：A4K-DTDD（去噪·去模糊·细化·加深）" },
-                        { value: "fsrcnnx_2", label: "真人 FSRCNNX：2x2+Krig（轻量·弱显卡）" },
-                        { value: "fsrcnnx_8", label: "真人 FSRCNNX：2x8+Krig（均衡·推荐）" },
-                        { value: "fsrcnnx_16", label: "真人 FSRCNNX：2x16+SSim+Krig（高质量）" },
-                        { value: "fsrcnnx_56", label: "真人 FSRCNNX：2x56+SSim+Krig（极致·高配置）" },
-                        { value: "artcnn_16", label: "ArtCNN：/16（中等）" },
-                        { value: "artcnn_16ds", label: "ArtCNN：/16DS（降噪+锐化）" },
-                        { value: "artcnn_16dn", label: "ArtCNN：/16DN（强降噪）" },
-                        { value: "artcnn_32", label: "ArtCNN：/32（高质量）" },
-                        { value: "artcnn_32ds", label: "ArtCNN：/32DS（降噪+锐化）" },
-                        { value: "artcnn_32dn", label: "ArtCNN：/32DN（强降噪）" },
-                        { value: "artcnn_48", label: "ArtCNN：/48（极高质量·高配置）" },
-                        { value: "artcnn_48ds", label: "ArtCNN：/48DS（极高质量+降噪）" },
-                        { value: "artcnn_48ds_cmp", label: "ArtCNN：/48DS_CMP（+压缩伪影修复）" },
-                        { value: "cunny_faster", label: "动漫 CuNNy：faster（极轻量）" },
-                        { value: "cunny_fast", label: "动漫 CuNNy：fast（轻量）" },
-                        { value: "cunny_2x12", label: "动漫 CuNNy：2x12（入门）" },
-                        { value: "cunny_3x12", label: "动漫 CuNNy：3x12（低端）" },
-                        { value: "cunny_4x12", label: "动漫 CuNNy：4x12（中低端）" },
-                        { value: "cunny_4x16", label: "动漫 CuNNy：4x16（均衡）" },
-                        { value: "cunny_4x24", label: "动漫 CuNNy：4x24（中高端）" },
-                        { value: "cunny_4x32", label: "动漫 CuNNy：4x32（高端）" },
-                        { value: "cunny_8x32", label: "动漫 CuNNy：8x32（极致·极高开销）" },
-                        { value: "sw_nnedi3_x4", label: "单开关：LUMA NNEDI3/x4" },
-                        { value: "sw_nnedi3_x6", label: "单开关：LUMA NNEDI3/x6" },
-                        { value: "sw_fsrcnnx_16", label: "单开关：LUMA FSRCNNX/2x16" },
-                        { value: "sw_ravu_r2", label: "单开关：LUMA RAVU-ZOOM-R2" },
-                        { value: "sw_ravu_r3", label: "单开关：LUMA RAVU-ZOOM-R3" },
-                        { value: "sw_ravu_r4", label: "单开关：LUMA RAVU-LITE-R4" },
-                        { value: "sw_ssim_sr", label: "单开关：SSimSuperRes（放大后修正）" },
-                        { value: "sw_ssim_ds", label: "单开关：SSimDownscaler（高→低下采样）" },
-                        { value: "sw_cfl", label: "单开关：CHROMA CFL（色度放大）" },
-                        { value: "sw_krig", label: "单开关：CHROMA Krig（色度放大）" },
-                        { value: "sw_fsr_easu", label: "单开关：AMD FSR_EASU（放大）" },
-                        { value: "sw_fsr_rgb", label: "单开关：AMD FSR_RGB（放大）" },
-                        { value: "sw_aq_restore", label: "单开关：Anime4K 重建" },
-                        { value: "sw_aq_gan", label: "单开关：Anime4K 放大（GAN）" },
-                        { value: "sw_sharpen", label: "单开关：自适应锐化" },
-                      ]}
-                      onChange={(v) => void setShader(v)}
-                    />
-                  </div>
-                  {shaderNote && <span className="set-note">{shaderNote}</span>}
-                  {/* [lc-2014] 设置页「画面预设」区块已移除：滑块式编排与着色器/超分/
-                      补帧各行的独立选择重复，且不跨会话回显容易误导。播放器右键菜单
-                      「画面预设」仍保留（那里才是快捷编排的正确入口）。 */}
-                  {playerKind === "potplayer" && (
-                    <>
-                      <div className="set-row set-row-col">
-                        <span className="set-k">PotPlayer 路径</span>
-                        <input
-                          className="set-input"
-                          type="text"
-                          spellCheck={false}
-                          placeholder="留空将自动探测常见安装路径，或填写 PotPlayerMini64.exe 的完整路径"
-                          value={potPath}
-                          disabled={busy || potBusy}
-                          onChange={(e) => setPotPath(e.target.value)}
-                          onBlur={() => {
-                            if (potPath.trim() !== (settings.potplayerPath ?? "")) {
-                              void validatePot(true);
-                            }
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              void validatePot(true);
-                            }
-                          }}
-                        />
-                        <div className="set-actions">
-                          <button
-                            type="button"
-                            className="set-btn"
-                            disabled={busy || potBusy}
-                            onClick={async () => {
-                              const p = await browseExe();
-                              if (!p) return;
-                              setPotPath(p);
-                              await validatePot(true, p);
-                            }}
-                          >
-                            浏览…
-                          </button>
-                          <button
-                            type="button"
-                            className="set-btn"
-                            disabled={busy || potBusy}
-                            onClick={detectPot}
-                          >
-                            自动探测
-                          </button>
-                          <button
-                            type="button"
-                            className="set-btn"
-                            disabled={busy || potBusy}
-                            onClick={() => validatePot(false)}
-                          >
-                            校验
-                          </button>
-                          {potStatus && (
-                            <span className={`set-pot-status ${potStatus.tone}`}>
-                              {potStatus.text}
-                            </span>
-                          )}
-                        </div>
-                        <div className="set-desc">
-                          路径为空时，将在起播时自动探测常见安装路径；填写后需指向已存在的 .exe。
-                        </div>
-                      </div>
-                      <div className="set-warn">
-                        PotPlayer 模式不支持内置弹幕、uosc 底栏与精确暂停/跳转/倍速控制；
-                        需要 Referer/UA 的 HLS 源会提示切回 mpv。
-                      </div>
-                </>
-              )}
-                  {playerKind === "mpv-local" && (
-                    <>
-                      <div className="set-row set-row-col">
-                        <span className="set-k">本机 mpv 路径</span>
-                        <input
-                          className="set-input"
-                          type="text"
-                          spellCheck={false}
-                          placeholder="留空将自动探测常见安装路径，或填写 mpv.exe 的完整路径"
-                          value={mpvLocalPath}
-                          disabled={busy || mpvBusy}
-                          onChange={(e) => setMpvLocalPath(e.target.value)}
-                          onBlur={() => {
-                            if (mpvLocalPath.trim() !== (settings.mpvPath ?? "")) void validateMpvLocal();
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              void validateMpvLocal();
-                            }
-                          }}
-                        />
-                        <div className="set-actions">
-                          <button
-                            type="button"
-                            className="set-btn"
-                            disabled={busy || mpvBusy}
-                            onClick={async () => {
-                              const p = await browseExe();
-                              if (!p) return;
-                              setMpvLocalPath(p);
-                              await validateMpvLocal();
-                            }}
-                          >
-                            浏览…
-                          </button>
-                          <button
-                            type="button"
-                            className="set-btn"
-                            disabled={busy || mpvBusy}
-                            onClick={detectMpvLocal}
-                          >
-                            自动探测
-                          </button>
-                          <button
-                            type="button"
-                            className="set-btn"
-                            disabled={busy || mpvBusy}
-                            onClick={() => void validateMpvLocal()}
-                          >
-                            校验
-                          </button>
-                          {mpvStatus && (
-                            <span className={`set-pot-status ${mpvStatus.tone}`}>{mpvStatus.text}</span>
-                          )}
-                        </div>
-                        <div className="set-desc">
-                          路径为空时，将在起播时自动探测常见安装路径（Program Files / winget / PATH）；填写后需指向已存在的 mpv.exe。
-                        </div>
-                      </div>
-                      <div className="set-warn">
-                        本机 mpv 不包含应用自带播放器的配套能力（uosc 底栏、内置弹幕、字幕搜索/挂载、
-                        快进快捷键等脚本均不加载）；出现兼容问题请自行处理，应用不做适配修复。
-                      </div>
-                    </>
-                  )}
-
-
                 </>
               )}
 
-              {/* ── AI 增强（独立 tab）：组件/AI超分/TRT/插帧引擎 ── */}
-              {tab === "enhance" && (
-                <AiEnhanceRow />
-              )}
-
-              {/* ── 手柄 → 存储与诊断 tab ── */}
-
-              {/* ── 外观 ── */}
-              {tab === "appearance" && (
+              {/* [lc-2218] 性能（从「外观」并入播放与画质） */}
+              {tab === "playback" && (
                 <>
+                  <div className="set-sec">性能</div>
                   <div className="set-row">
                     <div>
                       <span className="set-k">性能模式</span>
@@ -2263,78 +2372,6 @@ export function SettingsPanel({
                       onClick={() => onSettings({ perfMode: !settings.perfMode })}
                     />
                   </div>
-                  <div className="set-row">
-                    <div>
-                      <span className="set-k">轮播透明标题</span>
-                      <div className="set-desc">首页轮播用影片透明 Logo 代替文字标题（无 Logo 时自动用文字）</div>
-                    </div>
-                    <button
-                      type="button"
-                      className={`set-sw${settings.carouselLogo ? " on" : ""}`}
-                      aria-pressed={settings.carouselLogo}
-                      aria-label="轮播透明标题"
-                      onClick={() => onSettings({ carouselLogo: !settings.carouselLogo })}
-                    />
-                  </div>
-
-                  {/* ── [liquid-theme] 主题切换音效 ──
-                      默认关闭；音量与开关存 localStorage（纯前端偏好）。
-                      四个试听按钮对应液体动画的四个真实阶段，方便用户先听再决定。 */}
-                  <div className="set-row">
-                    <div>
-                      <span className="set-k">主题切换音效</span>
-                      <div className="set-desc">
-                        深浅切换时配合液体动画的水声（本地合成，不联网）。浅色转深色偏低沉，深色转浅色偏清亮。
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className={`set-sw${settings.themeSound ? " on" : ""}`}
-                      aria-pressed={!!settings.themeSound}
-                      aria-label="主题切换音效"
-                      onClick={() => onSettings({ themeSound: !settings.themeSound })}
-                    />
-                  </div>
-                  <div className={`set-row set-slider-row${settings.themeSound ? "" : " set-row-dim"}`}>
-                    <div>
-                      <span className="set-k">音效音量</span>
-                      <div className="set-desc">仅影响主题切换音效</div>
-                    </div>
-                    <div className="set-range-wrap">
-                      <input
-                        type="range"
-                        className="set-range"
-                        min={0}
-                        max={100}
-                        step={5}
-                        value={Math.round((settings.themeSoundVolume ?? 0.45) * 100)}
-                        disabled={!settings.themeSound}
-                        aria-label="主题切换音效音量"
-                        onChange={(e) => onSettings({ themeSoundVolume: Number(e.target.value) / 100 })}
-                      />
-                      <span className="set-range-val">
-                        {Math.round((settings.themeSoundVolume ?? 0.45) * 100)}%
-                      </span>
-                    </div>
-                  </div>
-                  <div className="set-row set-row-col">
-                    <span className="set-k">试听</span>
-                    <div className="set-actions">
-                      <button type="button" className="set-btn" onClick={() => audition("pour", "darken")}>
-                        流出
-                      </button>
-                      <button type="button" className="set-btn" onClick={() => audition("impact", "darken")}>
-                        落底
-                      </button>
-                      <button type="button" className="set-btn" onClick={() => audition("rise", "lighten")}>
-                        上涨
-                      </button>
-                      <button type="button" className="set-btn" onClick={() => audition("settle", "lighten")}>
-                        完成
-                      </button>
-                    </div>
-                  </div>
-
                 </>
               )}
 
@@ -2342,6 +2379,7 @@ export function SettingsPanel({
               {tab === "danmu" && (
                 <>
                   {/* ── B 站账号 ── */}
+                  <div className="set-sec">B 站弹幕</div>
                   <div className="set-row">
                     <span className="set-k">B 站账号</span>
                     <span className="set-v">
@@ -2438,6 +2476,7 @@ export function SettingsPanel({
                   </div>
 
                   {/* ── Node 环境 / 一键自建源 ── */}
+                  <div className="set-sec">接口与引擎</div>
                   <div className="set-row">
                     <div>
                       <span className="set-k">Node.js 环境</span>
@@ -2796,8 +2835,9 @@ export function SettingsPanel({
               )}
 
               {/* ── 缓存 ── */}
-              {tab === "maintenance" && (
+              {tab === "general" && (
                 <>
+                  <div className="set-sec">手柄</div>
                   <div className="set-row">
                     <div>
                       <span className="set-k">手柄操作</span>
@@ -2898,8 +2938,9 @@ export function SettingsPanel({
                 </>
               )}
 
-              {tab === "maintenance" && (
+              {tab === "about" && (
                 <>
+                  <div className="set-sec">存储与诊断</div>
                   <div className="set-row">
                     <span className="set-k">占用上限</span>
                     <select
@@ -2942,7 +2983,7 @@ export function SettingsPanel({
               )}
 
               {/* ── 诊断 ── */}
-              {tab === "maintenance" && (
+              {tab === "about" && (
                 <>
                   <div className="set-row">
                     <span className="set-k">打开目录</span>
@@ -2970,6 +3011,7 @@ export function SettingsPanel({
               {/* ── 更新与维护 ── */}
               {tab === "about" && (
                 <>
+                  <div className="set-sec">版本与更新</div>
                   <div className="set-row">
                     <span className="set-k">当前版本</span>
                     <span className="set-v">v{ver}</span>
@@ -3141,6 +3183,7 @@ export function SettingsPanel({
               {/* ── 关于 ── */}
               {tab === "about" && (
                 <>
+                  <div className="set-sec">关于</div>
                   <div className="set-row set-row-col">
                     <span className="set-k">软件说明</span>
                     <div className="set-desc">{softwareDesc}</div>

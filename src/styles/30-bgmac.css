@@ -9,8 +9,9 @@
      → 下方星期胶囊与左栏「第二个胶囊行」齐平。
      [lc-2209] 左右内缩 16 → 24（`--sp-5`）：右栏栏头、列表（.dscroll）和整个左栏都是 24，
      只有卡片自己是 16 → 这一列比左栏宽 16px、两侧留白不对称。统一 24 后两栏内容左右留白一致。
-     [lc-2210] 右侧再让出 `--bgm-mirror`(62px，左栏日期轨宽)：两栏内容等宽（612）、关于中线镜像对称。 */
-  margin: 4px calc(var(--sp-5) + var(--bgm-mirror, 0px)) var(--sp-3) var(--sp-5);
+     [lc-2211] 左侧 24 由 `.bgm-pane .bgmac { margin-left: var(--sp-3) }`（19-discover.css）压到 12，
+     使两栏中缝 = 12 + 12 = 24，与页面左右外边距一致。 */
+  margin: 4px var(--sp-5) var(--sp-3) var(--sp-5);
   padding: var(--sp-4) var(--sp-4) var(--sp-3);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);

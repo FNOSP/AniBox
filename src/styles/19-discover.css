@@ -455,34 +455,39 @@
 
 /* ── 右栏：星期胶囊（分段控件：7 段等宽 + 滑动指示器） ── */
 
-/* [lc-2210] 右栏镜像留白：左栏时间轴有 62px 日期轨（40 日号 + 22 圆点列），
-   卡片列因此只有 612px；右栏在**右侧**留出同样 62px，两栏内容块等宽、关于页面中线对称
-   （左：24 | 62 轨 | 612 卡片 | 24 ／ 右：24 | 612 内容 | 62 | 24）。
-   窄栏时 62 会吃掉右栏宽度 —— 由 @media 在窄窗下收回（见文件末尾那条）。 */
-.bgm-pane {
-  --bgm-mirror: 62px;
+/* [lc-2211] 两栏之间的缝 = 页面左右外边距（24）：两栏靠中线那一侧各收一半（12 + 12 = 24）。
+   原来每栏内侧都是 24，中缝 48 = 外侧的两倍，看起来两栏被硬推开。
+   外边保持不变：左栏左 24、右栏右 24。 */
+.dlib-pane .dpane-hd {
+  padding-right: var(--sp-3);
 }
-/* 窄窗（右栏放不下两栏等宽）时收回这 62px，别让右栏被压得太窄 */
-@media (max-width: 1180px) {
-  .bgm-pane {
-    --bgm-mirror: 0px;
-  }
+.dlib-pane .dscroll.dlib-scroll {
+  /* 特异性要与后面的 `.dscroll.dlib-scroll { padding: 0 var(--sp-5) var(--sp-6) }` 打平以上 */
+  padding-right: var(--sp-3);
+}
+.bgm-pane .dpane-hd {
+  padding-left: var(--sp-3);
+}
+.bgm-pane .bgmac {
+  margin-left: var(--sp-3);
+}
+.bgm-pane .dweeks {
+  padding-left: var(--sp-3);
+}
+.bgm-pane .dscroll {
+  padding-left: var(--sp-3);
+  padding-right: var(--sp-5);
 }
 
 /* [lc-2207] 版式：**一条胶囊**装下 7 天分组 + 往季表（用户要求「同一层胶囊里」）；
-   左右内缩 = 上面 Bangumi 长胶囊的 margin（[lc-2209] 16 → 24，[lc-2210] 右侧加镜像留白）
-   → 整条与上方卡片同宽、与栏头/列表内缩一致；永不换行（窄栏靠分段收缩 + 部数省略号降级）。 */
+   左右内缩与上面 Bangumi 长胶囊的 margin 同源 → 整条与卡片/栏头/列表同宽；
+   永不换行（窄栏靠分段收缩 + 部数省略号降级）。 */
 .dweeks {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   flex-wrap: nowrap;
-  padding: 0 calc(var(--sp-5) + var(--bgm-mirror, 0px)) var(--sp-3) var(--sp-5);
-}
-
-/* [lc-2210] 右栏列表同样让出 62px 镜像留白，条目宽度 = 左栏卡片列 */
-.bgm-pane .dscroll {
-  padding-right: calc(var(--sp-5) + var(--bgm-mirror, 0px));
+  padding: 0 var(--sp-5) var(--sp-3);
 }
 
 /* [lc-2199] 原「今日状态条」(.dtoday 浅蓝块) 已按用户要求整块移除 —— 汇总句并入栏头

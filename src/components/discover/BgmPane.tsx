@@ -131,8 +131,9 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
   const day = days.find((g) => g.id === wd) ?? null;
   const dayItems = day?.items ?? [];
   // 星期胶囊的迷你占比条：以当周最大值（至少 1）为 100%
-  const maxCount = Math.max(1, ...days.map((g) => g.count || 0));
   const weekTotal = days.reduce((n, g) => n + (g.count || 0), 0);
+  // [lc-2203] 选中日在胶囊里的槽位：滑动指示器按槽位 translateX 搬家
+  const wdIdx = Math.max(0, WEEKDAYS.findIndex((w) => w.id === wd));
   // 当天汇总：部数 + 8.0+ 数量 + [lc-1580] 已追订阅更新数（原「热度最高」已按用户要求替换）
   const hiCount = dayItems.filter((x) => typeof x.score === "number" && (x.score ?? 0) >= 8).length;
   // [lc-1581] 「已追订阅」口径 = 本地追番表里 在看(3) / 想看(1) 的条目（排除 看过/搁置/放弃）。
@@ -266,33 +267,38 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
       </header>
       {/* [lc-1516] Bangumi 账号面板：紧跟栏头（避开顶部 56px 的胶囊让位区） */}
       <BgmAccountCard onOpen={openBgm} />
+      {/* [lc-2203] 星期行改成**胶囊分段控件**（7 段等宽 + 滑动指示器，动效照顶栏「首页|发现」胶囊）；
+          「往季番表」独立成一个胶囊（与左栏「标签胶囊 + 搜索胶囊」的并列关系一致）。 */}
       <div className="dweeks">
-        {WEEKDAYS.map((w) => {
-          const g = days.find((x) => x.id === w.id);
-          // [lc-1662] 占比 = 该天部数 / 当周最大值（0 部不画进度条；最低 6% 保证可见）
-          const pct = g && g.count > 0 ? Math.max(6, Math.round((g.count / maxCount) * 100)) : 0;
-          return (
-            <button
-              key={w.id}
-              className={`dweek${wd === w.id ? " on" : ""}${todayId === w.id ? " today" : ""}`}
-              onClick={() => setWd(w.id)}
-              title={g ? `${w.cn}共 ${g.count} 部` : w.cn}
-            >
-              {/* [lc-1662] 底部迷你进度条（替代原「整块高度填充 + 水位线」，
-                  不再横贯文字；宽度按当周占比，左右各留 6px 内缩） */}
-              <span className="dweek-d">{w.cn}</span>
-              <span className="dweek-n">{g ? `${g.count} 部` : "…"}</span>
-              {pct > 0 && (
-                <span
-                  className="dweek-bar"
-                  style={{ width: `calc((100% - 12px) * ${pct / 100})` }}
-                  aria-hidden="true"
-                />
-              )}
-            </button>
-          );
-        })}
-        {/* [lc-1589] 星期七格右侧的「往季番表」：打开弹窗（选年份 + 季度） */}
+        <div className="dseg">
+          <span
+            className="dseg-ind"
+            aria-hidden="true"
+            style={{ transform: `translateX(${wdIdx * 100}%)` }}
+          >
+            {/* key 换新 → 每次切换重放「水滴」挤压动画；外层负责 translateX 搬家 */}
+            <i key={wdIdx} />
+          </span>
+          {WEEKDAYS.map((w) => {
+            const g = days.find((x) => x.id === w.id);
+            const on = wd === w.id;
+            const today = todayId === w.id;
+            return (
+              <button
+                key={w.id}
+                className={`dseg-btn${on ? " on" : ""}${today ? " today" : ""}`}
+                onClick={() => setWd(w.id)}
+                title={g ? `${w.cn}共 ${g.count} 部` : w.cn}
+                aria-pressed={on}
+              >
+                {today && <span className="dseg-dot" aria-hidden="true" />}
+                <span className="dseg-d">{w.cn}</span>
+                <span className="dseg-n">{g ? `${g.count} 部` : "…"}</span>
+              </button>
+            );
+          })}
+        </div>
+        {/* [lc-1589] 「往季番表」：打开弹窗（选年份 + 季度） */}
         <button className="darc-btn" onClick={() => setArcOpen(true)} title="查往季番表（选年份 + 季度）">
           <IcoCalL size={14} strokeWidth={2} />
           往季番表

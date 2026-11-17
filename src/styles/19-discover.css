@@ -21,9 +21,9 @@
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  /* [lc-123-rev2] 顶部 56px（原 16px）= 40px 让位 + 浮层胶囊（≈40px 高，绝对定位在 top 52px）
-     的避让 —— 胶囊浮在内容区顶部且横向居中，正好压在两栏栏头的中间（标题/筛选 chips），
-     不避让会盖住文字与按钮。首页没有这个问题（胶囊浮在满幅 hero 的图面上）。 */
+  /* [lc-123-rev2] 顶部 48px（原 16px）= 40px 顶栏让位 + 浮层胶囊的避让
+     （胶囊 [lc-2212] 起 top 44px、高 40px → 底边 84px，正好在第一行 88px 之上）。
+     首页没有这个问题（胶囊浮在满幅 hero 的图面上）。 */
   padding: var(--sp-7) var(--sp-5) var(--sp-3);
   flex-wrap: wrap;
 }

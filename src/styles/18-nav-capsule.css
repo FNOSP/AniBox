@@ -12,7 +12,10 @@
 
 .navbar {
   position: absolute;
-  top: 52px; /* = .titlebar 高度 40px + 12px 间隙 */
+  /* [lc-2212] 上抬 8px（52 → 44 = 顶栏 40 + 4px 间隙）：原来胶囊底边 92px 会压住
+     左右栏栏头第一行（内容从 88px 起），「新番更新」标题被切上半截；
+     44 + 40(胶囊高) = 84 < 88，刚好让开。 */
+  top: 44px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 40;

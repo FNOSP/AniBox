@@ -589,6 +589,14 @@ impl MpvSession {
         if let Ok(exe) = std::env::current_exe() {
             command.env("ANIBOX_EXE", exe);
         }
+        // [lc-2195] 随包 CA 证书：mpv 的 ffmpeg/OpenSSL 在 Windows 找不到系统根证书，
+        // 所有 HTTPS 源（IPTV relay/直链、在线影视）会 TLS 校验失败 → 黑屏。
+        // 只给 mpv 子进程注入 SSL_CERT_FILE（随包 Mozilla CA），不关闭 TLS 校验。
+        if let Some(ca) = crate::config::ca_bundle_path(&app) {
+            command.env("SSL_CERT_FILE", ca);
+        } else {
+            crate::libmpv::trace("[lc-2195] 未找到随包 CA 证书（ca-bundle.crt），HTTPS 源可能 TLS 校验失败");
+        }
         // [lc-1820] AI 增强组件就绪时注入 VapourSynth 运行环境：mpv 的 vapoursynth
         // 滤镜经 VSScript.dll（PATH 定位）加载组件内 Python；PATH 前置 runtime 与
         // vapoursynth 子目录。进程启动前设好，运行时切引擎无需再动环境。

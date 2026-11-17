@@ -60,3 +60,11 @@
   （mpv `force-media-title` / 整季 `#EXTINF` / PotPlayer 标题）从繁体归一化为简体，运行时无网络请求。
 - 转换表来源：MediaWiki `ZhConversion.php`（GPL-2.0-or-later）。
 
+
+## Mozilla CA 证书包（ca-bundle.crt）
+
+- 文件：`src-tauri/resources/ca-bundle.crt`（随包分发，约 224KB）
+- 来源：Mozilla CA 证书库（取自 Git for Windows 的 OpenSSL `ca-bundle.crt`）
+- 许可证：MPL-2.0（证书数据本身为公开信息）
+- 用途：给 mpv 子进程注入 `SSL_CERT_FILE`，修复 Windows 上 mpv/OpenSSL 找不到系统根证书导致
+  HTTPS 直播源 TLS 校验失败、播放器黑屏的问题。**不关闭 TLS 校验。**

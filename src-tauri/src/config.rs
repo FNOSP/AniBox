@@ -531,6 +531,35 @@ pub fn mpv_portable_config_dir(app: &tauri::AppHandle) -> Option<std::path::Path
     find_bundled_dir(app, "third_party/fntv-mpv/portable_config")
 }
 
+/// [lc-2195] mpv 的 CA 证书包（Mozilla CA bundle，随包 `resources/ca-bundle.crt`）。
+///
+/// 背景：随包 mpv 的 ffmpeg/OpenSSL 在 Windows 上找不到系统根证书，所有 HTTPS 源
+/// （IPTV 的 relay/直链条目、在线影视）都会 `tls: error:0A000086 certificate verify failed`
+/// → 表现为播放器黑屏。给 mpv 子进程注入 `SSL_CERT_FILE` 即可，**不关闭 TLS 校验**。
+///
+/// 解析顺序：资源目录根（安装态）→ 资源目录 `resources/` → `src-tauri/resources/`（开发态）。
+pub fn ca_bundle_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    if let Ok(dir) = app.path().resource_dir() {
+        for p in [
+            dir.join("ca-bundle.crt"),
+            dir.join("resources").join("ca-bundle.crt"),
+        ] {
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    let dev = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("resources")
+        .join("ca-bundle.crt");
+    if dev.is_file() {
+        Some(dev)
+    } else {
+        None
+    }
+}
+
 /// [lc-2078] 随包短剧核心（guoapp duanju_core.dll；开发态 third_party，安装态资源目录）。
 pub fn duanju_core_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     find_bundled_file(app, "third_party/duanju/duanju_core.dll")

@@ -1381,13 +1381,22 @@
 /* 概览（共 N 部作品 / 平均分 / 最高分 / 更新于）—— lc-2074 起排在第三行视图切换右侧 */
 .dlib-ov {
   /* 统计四件套（共 N 部作品 / 平均分 / 最高分 / 更新于）：吃掉视图切换右侧的余宽；
-     半宽栏里放不下就**整块**换到下一行（340px 的 flex-basis 正好在半宽栏触发换行） */
+     半宽栏里放不下就**整块**换到下一行（340px 的 flex-basis 正好在半宽栏触发换行）
+     [lc-2215] 按用户要求也装进胶囊：与 .dlib-switch 同一套玻璃底 + 细边 + 全圆角，
+     右缘天生贴到栏内容右缘（= 上面搜索胶囊的右缘），宽度不会超出。 */
   flex: 1 1 340px;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 4px 10px;
+  gap: 4px 12px;
   flex-wrap: wrap;
+  /* 高度对齐同排的排序胶囊 / 上方搜索胶囊（都是 43px）；内容放不下时靠 min-height 自然变高 */
+  min-height: 43px;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-full);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(14px);
   font-size: var(--fs-cap);
 }
 
@@ -1605,6 +1614,8 @@
   display: flex;
   align-items: center;
   gap: var(--sp-1);
+  /* [lc-2215] 与同排的排序胶囊 / 统计胶囊同高 43（视图胶囊原本只有 38，并排时矮一截） */
+  min-height: 43px;
   padding: var(--sp-1);
   border-radius: var(--r-full);
   background: var(--glass-bg);

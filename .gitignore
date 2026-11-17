@@ -52,6 +52,7 @@ vite.config.d.ts
 /tmdb-mirror/
 /jav-mirror/
 /stats-server/
+/iptv-mirror/
 /RELEASE.md
 /release.cmd
 .release-dryrun.cmd

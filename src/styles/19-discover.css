@@ -1101,23 +1101,56 @@
   font-size: var(--fs-ctl);
 }
 
-/* ── IPTV 栏（lc-2077/lc-2079 样式优化；数据源 vbskycn/iptv，见 IptvPane.tsx / iptv.rs）── */
+/* ── IPTV 栏（lc-2077/lc-2079 样式优化；数据源自托管 iPTV（lc-2190），见 IptvPane.tsx / iptv.rs）── */
 .dip {
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
 }
 
-/* 分组 chips：普通一行（与短剧 .dj-chips 同做法）。
+/* 分组 chips：普通一行（与短剧栏 .dj-chips 同做法）。
    lc-2087b：曾做「吸顶 + 全宽玻璃底」，但半透明矩形压在滚过的卡片上像一块遮罩（用户要求去掉）
-   —— 撤掉吸顶与背景，chips 自身就是玻璃胶囊，无需容器底色。 */
-.dip-chips {
+   —— 撤掉吸顶与背景，chips 自身就是玻璃胶囊，无需容器底色。
+   [lc-2190] 自托管 iPTV 有 60+ 分组：全 wrap 会吃掉半屏，改为**单行横向滚动**；
+   搜索框固定在行尾（不参与滚动，始终可见）。 */
+.dip-bar {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: var(--sp-2);
+  min-width: 0;
+}
+
+.dip-chips {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: var(--sp-2);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  /* 上下留空气：横向滚动条与 focus-visible 对焦环都不能被 overflow 裁掉 */
+  padding: 4px 2px 6px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.dip-chips::-webkit-scrollbar {
+  height: 6px;
+}
+
+.dip-chips::-webkit-scrollbar-thumb {
+  border-radius: var(--r-full);
+  background: var(--line-strong);
+}
+
+.dip-chips::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .dip-chip {
+  flex: 0 0 auto; /* 横向滚动容器里不许被压窄 */
   padding: var(--sp-1) var(--sp-3);
   border: 1px solid var(--glass-border);
   border-radius: var(--r-full);
@@ -1141,11 +1174,10 @@
   color: #fff;
 }
 
-/* 频道搜索（同短剧栏 .dj-search 的玻璃胶囊；推到 chips 行行尾，频道全在本地、输入即过滤） */
+/* 频道搜索（同短剧栏 .dj-search 的玻璃胶囊；固定在 chips 行尾，频道全在本地、输入即过滤） */
 .dip-search {
-  flex: 0 0 180px;
+  flex: 0 0 176px;
   height: 30px;
-  margin-left: auto;
   padding: 0 var(--sp-3);
   border: 1px solid var(--glass-border);
   border-radius: var(--r-full);
@@ -1278,7 +1310,7 @@
   text-overflow: ellipsis;
 }
 
-/* 底行：GPL-3.0 来源注明（vbskycn/iptv 要求）+ 数据更新时间（直播源新鲜度有意义） */
+/* 底行：来源注明（akiralereal/iptv，GPL-3.0）+ 数据更新时间（直播源新鲜度有意义） */
 .dip-src {
   display: flex;
   align-items: baseline;

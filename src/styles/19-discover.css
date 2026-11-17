@@ -1389,8 +1389,10 @@
   display: flex;
   align-items: center;
   gap: 4px 12px;
-  flex-wrap: wrap;
-  /* 高度对齐同排的排序胶囊 / 上方搜索胶囊（都是 43px）；内容放不下时靠 min-height 自然变高 */
+  /* [lc-2216] 胶囊里永远一行（不再折行）；实在放不下时由外层 .dlib-row3 的 wrap 把整块换行 */
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  /* 高度对齐同排的排序胶囊 / 上方搜索胶囊（都是 43px） */
   min-height: 43px;
   padding: var(--sp-2) var(--sp-4);
   border-radius: var(--r-full);

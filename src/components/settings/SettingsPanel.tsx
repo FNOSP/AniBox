@@ -1543,6 +1543,40 @@ export function SettingsPanel({
                       onChange={(v) => onSettings({ launchPage: v as AppSettings["launchPage"] })}
                     />
                   </div>
+                  {/* [lc-2194] IPTV 直播源：放在「通用」页顶部，用户直接可见（原来在最底部被漏看） */}
+                  <div className="set-row set-row-col">
+                    <span className="set-k">IPTV 直播源</span>
+                    <textarea
+                      className="set-ta"
+                      rows={2}
+                      placeholder={
+                        settings.iptvDefaultSources?.length
+                          ? `留空使用内置公共聚合源（${settings.iptvDefaultSources.length} 个）；也可填自己的部署地址`
+                          : "留空使用内置公共聚合源；也可填自己的部署地址"
+                      }
+                      value={iptvText}
+                      disabled={busy}
+                      onChange={(e) => setIptvText(e.target.value)}
+                    />
+                    <div className="set-actions">
+                      <button
+                        className="set-btn"
+                        disabled={iptvTesting}
+                        onClick={() => void testIptv()}
+                      >
+                        {iptvTesting ? "测试中…" : "测试连接"}
+                      </button>
+                      <button className="set-btn" disabled={busy} onClick={() => void saveIptv()}>
+                        保存
+                      </button>
+                      <span className="set-note">{iptvNote}</span>
+                    </div>
+                    <div className="set-desc">
+                      发现页 IPTV 栏的数据源。每行一条、最多 4 条；可填部署根地址（自动补
+                      /interface.m3u）或完整 M3U 地址（支持 ?relay=1/2、?profile=xxx 与密码路径）；
+                      留空使用内置公共聚合源。
+                    </div>
+                  </div>
                   <div className="set-row">
                     <div>
                       <span className="set-k">开机自启</span>
@@ -1595,39 +1629,6 @@ export function SettingsPanel({
                       ]}
                       onChange={(v) => onSettings({ exitMode: v as AppSettings["exitMode"] })}
                     />
-                  </div>
-                  {/* [lc-2190] 发现页直播源：自托管 iPTV（akiralereal/iptv）M3U 地址 */}
-                  <div className="set-row set-row-col">
-                    <span className="set-k">发现页直播源</span>
-                    <textarea
-                      className="set-ta"
-                      rows={2}
-                      placeholder={
-                        settings.iptvDefaultSources?.length
-                          ? `留空使用内置公共聚合源（${settings.iptvDefaultSources.length} 个）；也可填自己的部署地址`
-                          : "留空使用内置公共聚合源；也可填自己的部署地址"
-                      }
-                      value={iptvText}
-                      disabled={busy}
-                      onChange={(e) => setIptvText(e.target.value)}
-                    />
-                    <div className="set-actions">
-                      <button
-                        className="set-btn"
-                        disabled={iptvTesting}
-                        onClick={() => void testIptv()}
-                      >
-                        {iptvTesting ? "测试中…" : "测试连接"}
-                      </button>
-                      <button className="set-btn" disabled={busy} onClick={() => void saveIptv()}>
-                        保存
-                      </button>
-                      <span className="set-note">{iptvNote}</span>
-                    </div>
-                    <div className="set-desc">
-                      每行一条，最多 4 条。可填部署根地址（自动补 /interface.m3u）或完整 M3U 地址
-                      （支持 ?relay=1/2、?profile=xxx 与密码路径）；留空使用内置公共聚合源。
-                    </div>
                   </div>
                   {note && <div className="set-note">{note}</div>}
 

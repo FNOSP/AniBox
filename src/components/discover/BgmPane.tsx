@@ -24,7 +24,7 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
   const [airMap, setAirMap] = useState<Record<string, { ep: number; at: number }>>({});
   // [lc-1589] 「总表查询」弹窗（往季番表，数据走 AniList）
   const [arcOpen, setArcOpen] = useState(false);
-  // 手动 ⟳ / 失败重试的语义不同（见下）：⟳ = force（**仍带条件头**）；失败重试 = force + noEtag（全量）
+  // 强制刷新（顶栏 ⟳）/ 失败重试的语义不同：顶栏刷新 = force（**仍带条件头**）；失败重试 = force + noEtag（全量）
   const forceRef = useRef(false);
   const hardRef = useRef(false);
   /* [lc-1640] 顶栏 ⟳ 走的就是本栏自己的 ⟳ 语义（force 跳过本地 TTL、仍带条件头）：
@@ -252,39 +252,20 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
       <header className="dpane-hd">
         <h2>新番更新</h2>
         <span className="dn">{weekTotal > 0 ? `${weekTotal} 部 / 周` : ""}</span>
-        <span className="dsp" />
-        <button
-          className="dicon"
-          title="刷新新番列表"
-          disabled={busy}
-          onClick={() => {
-            forceRef.current = true;
-            setNonce((n) => n + 1);
-            setLibNonce((n) => n + 1); // [lc-1862] 手动刷新同时重拉库索引
-          }}
-        >
-          ⟳
-        </button>
-      </header>
-      {/* [lc-1516] Bangumi 账号面板：紧跟栏头（避开顶部 56px 的胶囊让位区）
-          [lc-1538] 底部通栏改「今日状态条」：当前选中日的汇总由这里算好传进去
-          （原先那条 .ddaybar 已从列表上方移入卡片，列表不再重复显示） */}
-      <BgmAccountCard onOpen={openBgm} />
-      {/* [lc-1583] 「今日状态条」**独立成容器**（原先嵌在追番卡里当底部通栏）—— 用户要求：
-          它汇总的是**当前选中日**，属于日历区，不该塞在账号卡内部。 */}
-      {dayItems.length > 0 && (
-        <div className="dtoday">
-          <b>
-            {wdCn}
-            {wd === todayId ? "（今天）" : ""}
-          </b>
-          <span>
-            {wd === todayId ? `今日 ${dayItems.length} 部新番更新` : `${dayItems.length} 部更新`}
+        {/* [lc-2199] 原「今日状态条」整块去掉，这句汇总直接并入栏头（一行显示）；
+            非今天时句首带上星期，保证「N 部新番更新」有归属 */}
+        {dayItems.length > 0 && (
+          <span className="dsum">
+            {wd === todayId ? "今日" : wdCn} {dayItems.length} 部新番更新
             {hiCount > 0 ? ` · ${hiCount} 部评分 8.0+` : ""}
             {subUpdated > 0 ? ` · 已追订阅 ${subUpdated} 部更新` : " · 已追订阅暂无更新"}
           </span>
-        </div>
-      )}
+        )}
+        <span className="dsp" />
+        {/* [lc-2199] 栏头手动刷新按钮已按用户要求移除（顶栏刷新键仍可强制刷新本栏） */}
+      </header>
+      {/* [lc-1516] Bangumi 账号面板：紧跟栏头（避开顶部 56px 的胶囊让位区） */}
+      <BgmAccountCard onOpen={openBgm} />
       <div className="dweeks">
         {WEEKDAYS.map((w) => {
           const g = days.find((x) => x.id === w.id);

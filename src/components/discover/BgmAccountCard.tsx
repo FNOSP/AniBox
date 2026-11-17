@@ -1,5 +1,6 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronUp as IcoChevU, Film as IcoFilmL } from "lucide-react";
 import { bgmImg } from "../../lib/images";
@@ -72,6 +73,48 @@ export function BgmAccountCard({
       /* ignore */
     }
   }, [collapsed]);
+  // [lc-2198] 折叠态宽度贴内容（不再铺满整栏）：横条的自然宽度只能量出来 ——
+  // 临时脱开布局按 max-content 量一次再还原（同一帧内完成，不会看见）。
+  // 卡片宽度 = 这个值（--bgmac-bar-w）+ CSS 里的左右 chrome，见 30-bgmac.css。
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const [barW, setBarW] = useState(0);
+  const barWRef = useRef(0);
+  const measureBar = useCallback(() => {
+    const el = barRef.current;
+    if (!el) return;
+    const prevCss = el.style.cssText;
+    el.style.cssText =
+      "position:absolute;left:-10000px;top:0;width:max-content;max-height:none;opacity:1;transform:none;pointer-events:none;";
+    const w = Math.ceil(el.getBoundingClientRect().width);
+    el.style.cssText = prevCss;
+    if (w > 0) {
+      barWRef.current = w;
+      setBarW((old) => (old === w ? old : w));
+    }
+  }, []);
+  // 横条文案随登录态 / 统计数变化，量到的宽度要跟着更新
+  useLayoutEffect(() => {
+    measureBar();
+  }, [measureBar, acct.bound, stats]);
+  // 发现页 pane 是常驻挂载 + 非 active 时 display:none（见 03-shell.css 的 .view-pane），
+  // 首帧量不到宽度（= 0）。横条第一次真正拿到布局盒时补量一次（量到后不再重入，避免观察循环）。
+  useEffect(() => {
+    const el = barRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (!barWRef.current) measureBar();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measureBar]);
+  // 字体真正就位后宽度可能变（首帧量到的可能是回退字体）
+  useEffect(() => {
+    let alive = true;
+    document.fonts?.ready.then(() => alive && measureBar());
+    return () => {
+      alive = false;
+    };
+  }, [measureBar]);
   const [token, setToken] = useState("");
   // [lc-1630] 绑定表单里的「记住此账号」：默认勾选
   const [rememberNew, setRememberNew] = useState(true);
@@ -286,7 +329,10 @@ export function BgmAccountCard({
   };
 
   return (
-    <div className={`bgmac${acct.bound ? " on" : ""}${collapsed ? " fold" : ""}`}>
+    <div
+      className={`bgmac${acct.bound ? " on" : ""}${collapsed ? " fold" : ""}`}
+      style={barW > 0 ? ({ "--bgmac-bar-w": `${barW}px` } as CSSProperties) : undefined}
+    >
       {/* [lc-1584] 右上角折叠按钮：折叠后整卡收成一条横栏（BGM 登录态 + 总追番信息）。
           展开/折叠两态都保留它，随时能切回来（箭头靠 CSS 旋转 180°，动画更顺）。 */}
       <button
@@ -299,7 +345,7 @@ export function BgmAccountCard({
         <IcoChevU size={16} strokeWidth={2} />
       </button>
       {/* 折叠态横栏（展开时由 CSS 收成 0 高）：登录态 + 总追番；点它也能展开 */}
-      <div className="bgmac-bar" onClick={() => setCollapsed(false)} title="点击展开">
+      <div className="bgmac-bar" ref={barRef} onClick={() => setCollapsed(false)} title="点击展开">
         <span className={`bgmac-bar-user${acct.bound ? " on" : " off"}`}>
           <i className="bgmac-bar-brand">Bangumi</i>
           {/* 圆点在**状态字前面**，带「内圈→外圈」涟漪波动（见 30-bgmac.css 的 .bgmac-dot） */}

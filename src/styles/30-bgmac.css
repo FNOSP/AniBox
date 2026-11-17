@@ -14,6 +14,10 @@
   /* [lc-1584] 外层改 flex 列：折叠动画发生在「内容块 ↔ 横栏」之间 */
   display: flex;
   flex-direction: column;
+  /* [lc-2198] 显式宽度（等价于原来的 stretch：栏宽 − 左右各 16px margin），
+     折叠态改为贴内容时才能对 width 做过渡；只给 padding 过渡会让折叠条抖一下。 */
+  width: calc(100% - 32px);
+  transition: width var(--dur-page) var(--ease), padding var(--dur-page) var(--ease);
 }
 
 /* ── [lc-1584] 右上角折叠按钮 + 折叠态横栏（带展开/折叠动画）──
@@ -90,15 +94,32 @@
     transform var(--dur-page) var(--ease);
 }
 .bgmac.fold {
-  padding-right: 44px; /* 给右上角折叠按钮让位 */
+  /* [lc-2198] 折叠态宽度贴内容：横条自然宽度（--bgmac-bar-w，组件实测）+ 左右 chrome。
+     chrome = 左内边距 16 + 右侧按钮区 50（按钮 26 + 内缩 12 + 与文字间隔 12）+ 边框 2
+     宽度过渡先等内容收起（延迟 100ms），避免折叠途中把左列文字挤变形。 */
+  width: calc(var(--bgmac-bar-w, 0px) + 68px);
+  max-width: calc(100% - 32px);
+  align-self: flex-start;
+  /* 上下对称：按钮垂直居中在 padding box 的中线，正好压住横条中心 */
+  padding: var(--sp-2) 50px var(--sp-2) var(--sp-4);
+  transition-delay: 100ms;
 }
 .bgmac.fold .bgmac-bar {
   max-height: 90px;
   opacity: 1;
   transform: none;
   pointer-events: auto;
-  margin-top: 2px;
+  /* [lc-2198] 折叠态上下留白对称（原先 margin-top:2px 会把横条压偏 1px，按钮再怎么居中都不够齐） */
+  margin-top: 0;
   cursor: pointer;
+}
+/* [lc-2198] 折叠态折叠按钮：垂直居中到横条中心（原来写死 top:10px，横条 ~35px 高时按钮偏上约 8px），
+   右侧内缩 12 落在 .bgmac.fold 预留的 50px 按钮区里（26 + 间隔 12 + 内缩 12）。
+   图标旋转在 svg 上，与这里的位移互不干扰。 */
+.bgmac.fold .bgmac-fold {
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
 }
 /* 登录态：**只显示状态、不显示具体账号 id**（用户要求）—— `Bangumi ● 已登录`（绿）/ `Bangumi ● 未登录`（红）；
    圆点在**状态字前面**，带「内圈 → 外圈」的涟漪波动（雷达式脉冲，两圈错开）。 */

@@ -462,26 +462,10 @@
   padding: 0 var(--sp-5) var(--sp-3);
 }
 
-/* [lc-1583] 「今日状态条」**独立容器**（原先嵌在 Bangumi 追番卡里当底部通栏）—— 汇总的是
-   "当前选中日"，属日历区。外观沿用原通栏（淡蓝渐变 + 细边），但按栏内其它块一样留出左右内边距；
-   窄栏下允许换行（不截断文字）。 */
-.dtoday {
-  display: flex;
-  align-items: center;
-  gap: 4px 10px;
-  flex-wrap: wrap;
-  margin: 0 16px 10px;
-  padding: var(--sp-3) var(--sp-3);
-  border-radius: var(--r-md);
-  border: 1px solid var(--line);
-  background: var(--accent-wash); /* [lc-2149] 与圆点/胶囊同源，改浓度只改 token */
-}
-.dtoday b {
-  font-size: var(--fs-body);
-  color: var(--text-strong);
-  white-space: nowrap;
-}
-.dtoday span {
+/* [lc-2199] 原「今日状态条」(.dtoday 浅蓝块) 已按用户要求整块移除 —— 汇总句并入栏头
+   「新番更新 · 99 部 / 周」那一行（.dsum），右栏少一行。窄栏下整句换行到下一行
+   （.dpane-hd 是 flex-wrap），不截断文字。 */
+.dsum {
   min-width: 0;
   font-size: var(--fs-ctl);
   color: var(--muted);
@@ -637,7 +621,7 @@
 }
 
 /* [lc-1538] 原「当天汇总条」.ddaybar 从列表上方移走（列表不再重复显示当日汇总）；
-   [lc-1583] 它现在是**独立容器 `.dtoday`**（见上方 .dweeks 前面那条），不再嵌在追番卡里。 */
+   [lc-1583] 曾独立成 `.dtoday` 浅蓝容器；[lc-2199] 已整块移除，汇总句并入栏头 `.dsum`。 */
 
 /* 行：左侧强调竖条（::before）+ 封面（左上角该天序号）+ 标题/标签 */
 .ditem {
@@ -1639,12 +1623,12 @@
   border-bottom: 1px dashed var(--line);
 }
 
-/* [lc-2147] 分组头胶囊：**与右栏「今日状态条」(.dtoday) 同一套淡蓝**。
+/* [lc-2147] 分组头胶囊：与右栏那块浅蓝（原「今日状态条」，lc-2199 已移除）同一套淡蓝。
    演变：原本是 `--accent-grad` 实心蓝 + 白字 + 蓝色投影 —— 每屏出现好几次的
    实心蓝块，用户反馈「太显眼了」；我先改成中性灰，用户又要求
-   「和右边日期显示的浅蓝色同步一下」——右栏那块浅蓝就是 .dtoday 的
-   淡蓝渐变底。所以这里直接用**同一条渐变**（accent 16% → 4%），
-   让左栏日期与右栏日期在视觉上属于同一个体系：都是"淡蓝信息块"，
+   「和右边日期显示的浅蓝色同步一下」——右栏那块浅蓝用的就是
+   `--accent-wash`（accent 16% → 4%）。所以这里直接用**同一条渐变**，
+   让左栏日期与信息块在视觉上属于同一个体系：都是"淡蓝信息块"，
    而不是一边实心蓝、一边死灰。
    文字用 --text-strong 而非白字：淡蓝底上白字看不清（对比度不足），
    深色主题下这套 accent 叠色同样成立。 */

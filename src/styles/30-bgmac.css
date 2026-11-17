@@ -10,7 +10,8 @@
   background: var(--glass-btn-bg);
   /* [lc-1520] 上排「bangumi面板 | 同步状态」两块。
      [lc-1522] 上排两列一人一半；[lc-1527] 右列微放宽（1fr 1.12fr）给"饼+图例"横排让位。
-     [lc-1583] 底部那条「今日状态条」已**移出卡片、独立成容器**（见 19-discover.css 的 .dtoday）。 */
+     [lc-1583] 底部那条「今日状态条」曾移出卡片独立成容器；[lc-2199] 该块已移除，
+     汇总句并入右栏栏头（19-discover.css 的 .dsum）。 */
   /* [lc-1584] 外层改 flex 列：折叠动画发生在「内容块 ↔ 横栏」之间 */
   display: flex;
   flex-direction: column;

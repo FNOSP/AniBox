@@ -9,7 +9,7 @@
 - 许可证：**GNU Affero General Public License v3.0（AGPL-3.0）**
 - 许可证全文：`src-tauri/resources/danmu-api/LICENSE`
 - 源码位置：`src-tauri/resources/danmu-api/`
-- 版本：上游 `Globals.VERSION = 1.21.6`（vendor 快照）
+- 版本：上游 `Globals.VERSION = 1.21.10`（快照 commit `619612b`，2026-11-14）
 - 使用方式：作为「内置自建弹幕源」随应用本地运行，仅监听 `127.0.0.1:22352`，不提供任何公共服务。
 
 ### 本仓库对上游源码所做的最小修改

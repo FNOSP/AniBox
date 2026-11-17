@@ -105,6 +105,8 @@ on
 src-tauri/resources/danmu-api/node_modules/
 src-tauri/resources/danmu-api/config/.env
 src-tauri/resources/danmu-api/.cache/
+# 例外：.env.example 是随包默认配置（无真实凭据），必须入库（否则内置实例缺 SOURCE_ORDER 等默认项）
+!src-tauri/resources/danmu-api/config/.env.example
 # 迁移后的本地密钥目录：整个 secrets/ 与所有 *.local 一律不入库
 # 例外：secrets/fn-authx.local.example 是占位示例（无真实值），可入库
 /secrets/

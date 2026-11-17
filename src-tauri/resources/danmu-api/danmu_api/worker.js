@@ -8,7 +8,7 @@ import AIClient from './utils/ai-util.js';
 import { getBangumi, getComment, getCommentByUrl, getSegmentComment, matchAnime, searchAnime, searchEpisodes } from "./apis/dandan-api.js";
 import { handleFavoriteAdd, handleFavoriteList, handleFavoriteRefresh, handleFavoriteRemove, handleFavoriteSchedule } from "./apis/favorite-api.js";
 import { getFongmiDanmaku } from "./apis/clients/fongmi-api.js";
-import { handleConfig, handleUI, handleLogs, handleClearLogs, handleDeploy, handleClearCache, handleReqRecords, handleCacheAnimes } from "./apis/system-api.js";
+import { handleConfig, handleUI, handleLogs, handleClearLogs, handleDeploy, handleClearCache, handleReqRecords, handleCacheAnimes, handleRemoteMappingRefresh, handleRemoteAutoMatchMappingRefresh } from "./apis/system-api.js";
 import { handleForwardTrace } from "./apis/forward-trace-api.js";
 import { handleSetEnv, handleAddEnv, handleDelEnv, handleAiVerify, handleDandanplayVerify } from "./apis/env-api.js";
 import { handleLocalDanmuUpload, handleLocalDanmuList, handleLocalDanmuGet, handleLocalDanmuDelete, handleLocalDanmuUpdate } from "./apis/local-danmu-api.js";
@@ -21,15 +21,53 @@ import {
     handleQRCheck,
     handleCookieSave
 } from "./utils/cookie-util.js";
+import { ensureRemoteTitleMapping } from './utils/remote-title-mapping-util.js';
 
 let globals;
+
+const FONGMI_DANMAKU_PATHS = new Set([
+  "/danmaku",
+  "/api/v2/fongmi/danmaku"
+]);
+
+const TITLE_MAPPING_PATHS = new Set([
+  "/api/v2/match",
+  "/api/v2/favorite/add",
+  "/api/favorite/add",
+  "/api/v2/favorite/refresh",
+  "/api/favorite/refresh",
+  "/api/v2/favorite/remove",
+  "/api/favorite/remove",
+]);
+
+function isFongmiDanmakuRequest(path, method, url) {
+  if (method !== "GET" && method !== "POST") return false;
+  if (path === "/") {
+    return method === "POST" || (method === "GET" && url.searchParams.has("name"));
+  }
+  return FONGMI_DANMAKU_PATHS.has(path);
+}
+
+// 系统管理接口：必须显式携带 ADMIN_TOKEN，默认 TOKEN=87654321 的免 token 兼容不适用于这些路径
+const ADMIN_ONLY_PATH_PATTERNS = [
+  /^\/api\/env\/(?:set|add|del)\/?$/,
+  /^\/api\/deploy\/?$/,
+  /^\/api\/cache\/(?:clear|animes)\/?$/,
+  /^\/api\/logs\/clear\/?$/,
+  /^\/api\/cookie\/(?:status|save|verify|qr\/generate|qr\/check)\/?$/,
+  /^\/api\/ai\/verify\/?$/,
+  /^\/api\/nipaplay\/verify\/?$/,
+  /^\/api\/title-mapping\/refresh\/?$/,
+  /^\/api\/auto-match-mapping\/refresh\/?$/,
+];
 
 async function handleRequest(req, env, deployPlatform, clientIp) {
   // 加载全局变量和环境变量配置
   globals = Globals.init(env);
 
   const url = new URL(req.url);
-  let path = url.pathname;
+  let path = url.pathname.replace(/\/{2,}/g, "/");
+  if (path.length > 1) path = path.replace(/\/+$/, "");
   const method = req.method;
 
   globals.deployPlatform = deployPlatform;
@@ -136,8 +174,8 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     '/api/v2/segmentcomment'
   ];
 
-  // 只有当path包含指定接口关键字时才添加到请求记录数组
-  if (targetPaths.some(targetPath => path.includes(targetPath))) {
+  // 识别 FongMi 根地址或指定业务接口，记录请求历史和今日请求数。
+  if (isFongmiDanmakuRequest(tokenlessPath, method, url) || targetPaths.some(targetPath => path.includes(targetPath))) {
     // 更新今日请求计数
     // 从 reqRecords 最后一个元素获取上一个请求的时间
     const lastRecord = globals.reqRecords.length > 0 ? globals.reqRecords[globals.reqRecords.length - 1] : null;
@@ -205,7 +243,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   }
 
   // GET /
-  if (path === "/" && method === "GET") {
+  if (path === "/" && method === "GET" && !isFongmiDanmakuRequest(path, method, url)) {
     return handleUI();
   }
 
@@ -263,6 +301,18 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     }
   }
 
+  // 系统管理接口鉴权：只看请求实际携带的 token（explicitToken），避免默认 token 兼容垫片被用来自我授权
+  if (ADMIN_ONLY_PATH_PATTERNS.some((pattern) => pattern.test(path))) {
+    const isAdminRequest = Boolean(globals.adminToken) && explicitToken === globals.adminToken;
+    if (!isAdminRequest) {
+      const errorMessage = globals.adminToken
+        ? "Unauthorized: 系统管理接口需要 ADMIN_TOKEN"
+        : "Unauthorized: 系统管理接口需要先设置 ADMIN_TOKEN";
+      log("warn", `[system] [server] Admin-only endpoint denied: ${path} - ${errorMessage}`);
+      return jsonResponse({ errorCode: 401, success: false, errorMessage }, 401);
+    }
+  }
+
   // 兼容部分客户端将自定义弹幕短地址再次拼接官方完整路径的情况
   // 例如: /danmaku/api/v2/fongmi/danmaku?name=...&episode=...
   if (path.endsWith("/danmaku/api/v2/fongmi/danmaku")) {
@@ -306,7 +356,9 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     && !path.startsWith('/api/cookie') && !path.startsWith('/api/config')
     && !path.startsWith('/api/favorite')
     && !path.startsWith('/api/ai') && !path.startsWith('/api/nipaplay')
-    && !path.startsWith('/api/debug') && !path.startsWith('/api/local-danmu')) {
+    && !path.startsWith('/api/debug') && !path.startsWith('/api/title-mapping')
+    && !path.startsWith('/api/auto-match-mapping')
+    && !path.startsWith('/api/local-danmu')) {
       log("info", `[system] [path check] Starting path normalization for: "${path}"`);
       const pathBeforeCleanup = path; // 保存清理前的路径检查是否修改
 
@@ -332,7 +384,9 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
         && !path.startsWith('/api/cookie') && !path.startsWith('/api/config')
         && !path.startsWith('/api/favorite')
         && !path.startsWith('/api/ai') && !path.startsWith('/api/nipaplay')
-        && !path.startsWith('/api/debug') && !path.startsWith('/api/local-danmu')) {
+        && !path.startsWith('/api/debug') && !path.startsWith('/api/title-mapping')
+        && !path.startsWith('/api/auto-match-mapping')
+        && !path.startsWith('/api/local-danmu')) {
           if (path.startsWith('/v2/') || path === '/v2') {
               log("info", `[system] [path check] Path is missing /api prefix. Adding /api...`);
               path = '/api' + path;
@@ -354,9 +408,13 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   }
 
   // GET /
-  if (path === "/" && method === "GET") {
+  if (path === "/" && method === "GET" && !isFongmiDanmakuRequest(path, method, url)) {
     return handleUI();
   }
+
+  const needsTitleMapping = isFongmiDanmakuRequest(path, method, url)
+    || TITLE_MAPPING_PATHS.has(path);
+  if (needsTitleMapping) await ensureRemoteTitleMapping();
 
   // GET /api/v2/search/anime
   if (path === "/api/v2/search/anime" && method === "GET") {
@@ -368,13 +426,8 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     return searchEpisodes(url);
   }
 
-  // GET|POST /api/v2/fongmi/danmaku
-  if (path === "/api/v2/fongmi/danmaku" && (method === "GET" || method === "POST")) {
-    return getFongmiDanmaku(url, req);
-  }
-
-  // GET|POST /danmaku
-  if (path === "/danmaku" && (method === "GET" || method === "POST")) {
+  // GET|POST /、/danmaku 或 /api/v2/fongmi/danmaku
+  if (isFongmiDanmakuRequest(path, method, url)) {
     return getFongmiDanmaku(url, req);
   }
 
@@ -563,6 +616,16 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   // GET /api/logs
   if (path === "/api/logs" && method === "GET") {
     return handleLogs();
+  }
+
+  // POST /api/title-mapping/refresh - 管理员手动刷新远程映射表
+  if (path === "/api/title-mapping/refresh" && method === "POST") {
+    return handleRemoteMappingRefresh();
+  }
+
+  // POST /api/auto-match-mapping/refresh - 管理员手动刷新远程季集映射表
+  if (path === "/api/auto-match-mapping/refresh" && method === "POST") {
+    return handleRemoteAutoMatchMappingRefresh();
   }
 
   if (path === '/api/debug/forward-trace') {

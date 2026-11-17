@@ -16,6 +16,8 @@ import { judgeRedisValid, initializePersistentCaches } from './utils/redis-util.
 import { persistFavorites, refreshFavoriteByKeyword } from './apis/favorite-api.js';
 import { startFavoriteScheduler, stopFavoriteScheduler } from './utils/favorite-schedule-util.js';
 import { formatHostForUrl, listenOnAllInterfaces } from './utils/server-listen-util.js';
+import { ensureRemoteTitleMapping } from './utils/remote-title-mapping-util.js';
+import { ensureRemoteAutoMatchMapping } from './utils/auto-match-mapping-url-util.js';
 
 // 读取 Node HTTP 请求体的原始字节，避免多字节字符和上传文件在分块读取时被破坏。
 async function readRequestBody(req) {
@@ -239,6 +241,9 @@ async function setupEnvWatcher() {
 
           console.log('[server] Environment variables reloaded successfully');
           console.log('[server] Updated keys:', Array.from(newEnvKeys).join(', '));
+
+          globals.reInit();
+          void ensureRemoteAutoMatchMapping();
 
           // 配置变更后同步 Bangumi Data 生命周期：开启则立即确保缓存就绪（缺失则下载），
           // 关闭则释放缓存；先按真实配置同步内存开关，避免重载未刷新 globals 时状态滞后
@@ -530,8 +535,8 @@ async function startServer() {
   });
   console.log(`Server running on http://${formatHostForUrl(mainBinding.address)}:${mainBinding.port}`);
   if (detectNodeDeployPlatform() === 'node') {
-    initializeFavoriteScheduler(mainPort).catch(error => {
-      console.error('[server] Favorite scheduler initialization failed:', error.message);
+    initializeNodeServices(mainPort).catch(error => {
+      console.error('[server] Node background services initialization failed:', error.message);
     });
   }
 
@@ -547,6 +552,13 @@ async function startServer() {
 
   // 异步初始化 Bangumi Data 缓存
   setTimeout(() => initBangumiData('node', true).catch(console.error), 1000);
+}
+
+async function initializeNodeServices(mainPort) {
+  Globals.deployPlatform = 'node';
+  await ensureRemoteTitleMapping();
+  await ensureRemoteAutoMatchMapping();
+  await initializeFavoriteScheduler(mainPort);
 }
 
 async function initializeFavoriteScheduler(mainPort) {

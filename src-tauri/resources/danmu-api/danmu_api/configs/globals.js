@@ -1,5 +1,11 @@
 import { Envs } from './envs.js';
 
+const TRAILING_RELEASE_YEAR_PATTERN = /(?:\s*[（(]\s*(?:19|20)\d{2}\s*[)）]|\s*[\[［]\s*(?:19|20)\d{2}\s*[\]］]|\s*【\s*(?:19|20)\d{2}\s*】)\s*$/;
+
+function stripTrailingReleaseYear(value) {
+  return String(value || '').replace(TRAILING_RELEASE_YEAR_PATTERN, '').trim();
+}
+
 /**
  * 全局变量管理模块
  * 集中管理项目中的静态常量和运行时共享变量
@@ -13,7 +19,7 @@ export const Globals = {
   accessedEnvVars: {},
 
   // 静态常量
-  VERSION: '1.21.6',
+  VERSION: '1.21.10',
   MAX_LOGS: 1000, // 日志存储，最多保存 1000 行
   MAX_RECORDS: 100, // 请求记录最大数量
 
@@ -43,6 +49,7 @@ export const Globals = {
   searchCache: new Map(), // 搜索结果缓存，存储格式：{ keyword: { results, timestamp } }
   commentCache: new Map(), // 弹幕缓存，存储格式：{ videoUrl: { comments, timestamp } }
   favoriteCache: new Map(), // 收藏剧集永久缓存，存储格式：{ keyword: { results, details, timestamp } }，无 TTL、无数量上限
+  remoteTitleMappingTable: new Map(), // 远端剧名映射，查询时由本机映射优先兜底
   deployPlatform: '', // 部署平台配置
   currentToken: '', // 标识当前可用token
 
@@ -149,6 +156,21 @@ export const Globals = {
     }
 
     return targetUrl;
+  },
+
+  resolveTitleMapping(title) {
+    const key = String(title ?? '');
+    const localMappings = this.envs?.titleMappingTable;
+    const keys = [key];
+    const withoutYear = stripTrailingReleaseYear(key);
+    if (withoutYear && withoutYear !== key) keys.push(withoutYear);
+
+    // 精确键优先；仅当精确键未命中时才忽略尾部年份重试。
+    for (const candidate of keys) {
+      if (localMappings?.has(candidate)) return localMappings.get(candidate);
+      if (this.remoteTitleMappingTable?.has(candidate)) return this.remoteTitleMappingTable.get(candidate);
+    }
+    return null;
   },
 
   /**

@@ -14,7 +14,7 @@ function normalizeRuleTitle(value) {
     .toLowerCase();
 }
 
-function parseEpisodeSide(value, { allowPlatform = false } = {}) {
+function parseEpisodeSide(value, { allowPlatform = false, allowSeasonZero = false } = {}) {
   let text = String(value || '').trim();
   let platform = '';
 
@@ -33,7 +33,8 @@ function parseEpisodeSide(value, { allowPlatform = false } = {}) {
   const season = Number(match[2]);
   const startEpisode = Number(match[3]);
   const endEpisode = match[4] === undefined ? null : Number(match[4]);
-  if (!title || season < 1 || startEpisode < 1 || (endEpisode !== null && endEpisode < startEpisode)) return null;
+  const minSeason = allowSeasonZero ? 0 : 1;
+  if (!title || season < minSeason || startEpisode < 1 || (endEpisode !== null && endEpisode < startEpisode)) return null;
 
   return { title, season, startEpisode, endEpisode, platform };
 }
@@ -74,7 +75,8 @@ export function parseAutoMatchMappingRules(value, allowedPlatforms = []) {
       continue;
     }
 
-    const source = parseEpisodeSide(text.slice(0, arrowIndex));
+    // Source S00 is used by players for specials; targets must still be normal seasons.
+    const source = parseEpisodeSide(text.slice(0, arrowIndex), { allowSeasonZero: true });
     const targetSide = parseEpisodeSide(text.slice(arrowIndex + 2), { allowPlatform: true });
     if (!source || !targetSide) {
       warnings.push(`规则 ${index + 1} 的季集格式无效: ${text}`);
@@ -140,6 +142,8 @@ export function resolveAutoMatchMapping(rules, { title, season, episode }) {
   // episode is the most specific transition point. Keep declaration order
   // only as the tie-breaker for rules with the same specificity.
   matches.sort((left, right) => {
+    const originOrder = Number(right.originPriority || 0) - Number(left.originPriority || 0);
+    if (originOrder !== 0) return originOrder;
     const boundedOrder = Number(right.bounded) - Number(left.bounded);
     if (boundedOrder !== 0) return boundedOrder;
     if (!left.bounded && left.sourceStartEpisode !== right.sourceStartEpisode) {
@@ -154,6 +158,21 @@ export function resolveAutoMatchMapping(rules, { title, season, episode }) {
     ...rule,
     targetEpisode: rule.targetStartEpisode + episodeNumber - rule.sourceStartEpisode
   };
+}
+
+/** 合并本机与远程规则；同一输入同时命中时始终优先本机规则。 */
+export function mergeAutoMatchMappingRules(localRules, remoteRules) {
+  const local = (Array.isArray(localRules) ? localRules : []).map(rule => ({
+    ...rule,
+    origin: 'local',
+    originPriority: 2
+  }));
+  const remote = (Array.isArray(remoteRules) ? remoteRules : []).map(rule => ({
+    ...rule,
+    origin: 'remote',
+    originPriority: 1
+  }));
+  return [...local, ...remote];
 }
 
 function normalizeMediaType(value) {

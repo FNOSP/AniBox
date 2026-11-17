@@ -5,7 +5,7 @@ import { httpGet, httpPost } from "../utils/http-util.js";
 import { convertToAsciiSum } from "../utils/codec-util.js";
 import { generateValidStartDate } from "../utils/time-util.js";
 import { addAnime, removeEarliestAnime } from "../utils/cache-util.js";
-import { printFirst200Chars, titleMatches, getExplicitSeasonNumber, extractSeasonNumberFromAnimeTitle } from "../utils/common-util.js";
+import { printFirst200Chars, titleMatches, getExplicitSeasonNumber, extractSeasonNumberFromAnimeTitle, normalizeTitleForMatch } from "../utils/common-util.js";
 import { SegmentListResponse } from '../models/dandan-model.js';
 
 // =====================
@@ -34,6 +34,26 @@ export default class TencentSource extends BaseSource {
   titleOrAliasMatches(anime, queryTitle, querySeason = null) {
     if (titleMatches(anime.title, queryTitle, querySeason)) return true;
     return Array.isArray(anime.aliases) && anime.aliases.some(alias => titleMatches(alias, queryTitle, querySeason));
+  }
+
+  // 搜索结果中用于补充同题材作品的分区：相关影视、与 X 相关、与关键词同名
+  isRelatedBoxTitle(boxTitle, keyword) {
+    const title = normalizeTitleForMatch(String(boxTitle || "").replace(/<[^>]+>/g, ""));
+    if (!title) return false;
+    const query = normalizeTitleForMatch(keyword);
+    return title.includes(normalizeTitleForMatch("相关影视"))
+      || /^与.*相关$/.test(title)
+      || (query.length > 0 && title === query);
+  }
+
+  // 分区内标题包含关键词的条目才作为候选，避免带入同系列无关条目
+  filterRelatedItems(box, keyword) {
+    const query = normalizeTitleForMatch(keyword);
+    if (!query) return [];
+    const items = Array.isArray(box?.itemList) ? box.itemList : [];
+    return items.filter(item =>
+      normalizeTitleForMatch(String(item?.videoInfo?.title || "").replace(/<[^>]+>/g, "")).includes(query)
+    );
   }
 
   /**
@@ -209,27 +229,29 @@ export default class TencentSource extends BaseSource {
         itemList = data.data.normalList.itemList;
       }
 
-      // 追加「相关影视」box 中 title 包含 keyword 的 itemList
-      if (data.data && data.data.areaBoxList) {
+      // 追加相关分区(相关影视 / 与 X 相关 / 与关键词同名)中标题包含关键词的作品，按 cid 去重
+      if (data.data && Array.isArray(data.data.areaBoxList)) {
+        const seenIds = new Set(itemList.map(item => item?.doc?.id).filter(Boolean));
         for (const box of data.data.areaBoxList) {
-          if (
-            box.itemList &&
-            box.boxTitle &&
-            Array.isArray(box.boxTitle.boxTitles) &&
-            box.boxTitle.boxTitles.includes("相关影视")
-          ) {
-            const relatedItems = box.itemList.filter(item =>
-              item.videoInfo &&
-              item.videoInfo.title &&
-              item.videoInfo.title.includes(keyword)
-            );
-            if (relatedItems.length > 0) {
-              log("info", `[tencent] 追加「相关影视」box 中匹配 "${keyword}" 的 ${relatedItems.length} 个项目`);
-              itemList = [...itemList, ...relatedItems];
-            } else {
-              log("info", `[tencent] 「相关影视」box 中无匹配 "${keyword}" 的项目`);
-            }
-            break;
+          const boxTitles = Array.isArray(box?.boxTitle?.boxTitles) ? box.boxTitle.boxTitles : [];
+          const boxTitle = boxTitles
+            .map(title => String(title).replace(/<[^>]+>/g, "").trim())
+            .find(title => this.isRelatedBoxTitle(title, keyword));
+          if (!boxTitle) continue;
+          const matchedItems = this.filterRelatedItems(box, keyword);
+          const relatedItems = matchedItems.filter(item => {
+            const id = item?.doc?.id;
+            if (!id || seenIds.has(id)) return false;
+            seenIds.add(id);
+            return true;
+          });
+          if (relatedItems.length > 0) {
+            log("info", `[tencent] 追加「${boxTitle}」分区中匹配 "${keyword}" 的 ${relatedItems.length} 个项目`);
+            itemList = [...itemList, ...relatedItems];
+          } else if (matchedItems.length > 0) {
+            log("info", `[tencent] 「${boxTitle}」分区中匹配 "${keyword}" 的项目均已存在于搜索结果`);
+          } else {
+            log("info", `[tencent] 「${boxTitle}」分区中无匹配 "${keyword}" 的项目`);
           }
         }
       }
@@ -758,43 +780,39 @@ export default class TencentSource extends BaseSource {
     const segmentList = segmentResult.segmentList;
     log("info", `[tencent] 弹幕分段数量: ${segmentList.length}`);
 
-    // 创建请求Promise数组
-    const promises = [];
-    for (const segment of segmentList) {
-      promises.push(
-        httpGet(segment.url, {
+    // 分批请求弹幕分片，防止长视频一次性 fan-out 数百个上游请求
+    const concurrency = Math.max(1, Number(globals.tencentConcurrency) || 100);
+    let contents = [];
+    let fulfilledCount = 0;
+    for (let batchStart = 0; batchStart < segmentList.length; batchStart += concurrency) {
+      const batch = segmentList.slice(batchStart, batchStart + concurrency);
+      const batchPromises = batch.map(async (segment) => {
+        const response = await httpGet(segment.url, {
           headers: {
             "Content-Type": "application/json",
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
           },
           retries: 1,
-        })
-      );
-    }
-
-    // 解析弹幕数据
-    let contents = [];
-    try {
-      const results = await Promise.allSettled(promises);
-      const datas = results
-        .filter(result => result.status === "fulfilled")
-        .map(result => {
-          // 检查result是否包含响应数据
-          if (result.value && result.value.data) {
-            return result.value.data;
-          }
-          return null;
-        })
-        .filter(data => data !== null); // 过滤掉null值
-
-      datas.forEach(data => {
-        data = typeof data === "string" ? JSON.parse(data) : data;
-        contents.push(...data.barrage_list);
+        });
+        if (!response || !response.data) return [];
+        const data = typeof response.data === "string" ? JSON.parse(response.data) : response.data;
+        return Array.isArray(data?.barrage_list) ? data.barrage_list : [];
       });
-    } catch (error) {
-      log("error", "[tencent] 解析弹幕数据失败:", error);
-      return [];
+      const batchResults = await Promise.allSettled(batchPromises);
+
+      for (let batchIndex = 0; batchIndex < batch.length; batchIndex++) {
+        const result = batchResults[batchIndex];
+        const segment = batch[batchIndex];
+        const segmentIndex = batchStart + batchIndex + 1;
+        if (result.status === "fulfilled") {
+          fulfilledCount++;
+          contents.push(...result.value);
+        } else {
+          log("warn", `[tencent] 第 ${segmentIndex} 个分片请求失败: ${result.reason?.message || result.reason}（${segment.segment_start}-${segment.segment_end}s）`);
+        }
+      }
     }
+    log("info", `[tencent] 分段下载完成: ${fulfilledCount}/${segmentList.length}` + (fulfilledCount < segmentList.length ? `，失败 ${segmentList.length - fulfilledCount} 段` : ""));
 
     printFirst200Chars(contents);
 

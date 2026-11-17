@@ -33,7 +33,7 @@ pub const BUILTIN_PROXY_PORT: u16 = 22353;
 /// 内置实例固定 TOKEN。上游按「路径第一段」校验，客户端 base 直接带上即可。
 pub const BUILTIN_TOKEN: &str = "anibox-local";
 /// 运行树版本标记：上游版本变化或本模块调整时需要更新，触发重新复制。
-const VENDOR_VERSION: &str = "danmu-api-1.21.6-anibox1";
+const VENDOR_VERSION: &str = "danmu-api-1.21.10-anibox1";
 
 const SERVER_ENTRY: &str = "danmu_api/server.js";
 const LAUNCHER: &str = "anibox-launch.cjs";

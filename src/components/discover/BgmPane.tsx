@@ -269,11 +269,6 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
       <BgmAccountCard onOpen={openBgm} />
       {/* [lc-2203] 星期行改成**胶囊分段控件**（7 段等宽 + 滑动指示器，动效照顶栏「首页|发现」胶囊）。 */}
       <div className="dweeks">
-        {/* [lc-2205] 「往季表」单独一排、右对齐（用户给的版式）；星期胶囊整排占满 */}
-        <button className="darc-btn" onClick={() => setArcOpen(true)} title="查往季表（选年份 + 季度）">
-          <IcoCalL size={14} strokeWidth={2} />
-          往季表
-        </button>
         <div className="dseg">
           <span
             className="dseg-ind"
@@ -302,6 +297,12 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
             );
           })}
         </div>
+        {/* [lc-2206] 「往季表」与星期胶囊**并排**（各自独立胶囊，中间留 8px）；
+            两个胶囊合起来正好与上方长胶囊同宽 */}
+        <button className="darc-btn" onClick={() => setArcOpen(true)} title="查往季表（选年份 + 季度）">
+          <IcoCalL size={14} strokeWidth={2} />
+          往季表
+        </button>
       </div>
       <div className="dscroll">
         {busy && !days.length ? (

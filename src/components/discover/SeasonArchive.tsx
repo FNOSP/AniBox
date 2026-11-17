@@ -240,7 +240,7 @@ export function SeasonArchive({
         {yearOpen && <div className="arc-yback" onClick={() => setYearOpen(false)} />}
         <div className="arc-hd">
           <IcoCalL size={16} strokeWidth={2} />
-          <h3>往季番表</h3>
+          <h3>往季表</h3>
           <button className="ddet-close arc-x" onClick={() => requestClose()} title="关闭">
             <IcoXL size={15} strokeWidth={2.2} />
           </button>

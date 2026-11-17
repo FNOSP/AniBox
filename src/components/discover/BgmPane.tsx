@@ -299,9 +299,9 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
           })}
         </div>
         {/* [lc-1589] 「往季番表」：打开弹窗（选年份 + 季度） */}
-        <button className="darc-btn" onClick={() => setArcOpen(true)} title="查往季番表（选年份 + 季度）">
+        <button className="darc-btn" onClick={() => setArcOpen(true)} title="查往季表（选年份 + 季度）">
           <IcoCalL size={14} strokeWidth={2} />
-          往季番表
+          往季表
         </button>
       </div>
       <div className="dscroll">

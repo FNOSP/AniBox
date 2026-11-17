@@ -3544,3 +3544,15 @@ button.arc-card:hover .arc-cv {
   background: transparent;
   color: var(--accent);
 }
+/* [lc-2189] 站源健康：加载失败的站点从 chips 剔除；骨架/重试入口 */
+.dj-chip:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.dj-chip.dj-src-retry {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-2);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

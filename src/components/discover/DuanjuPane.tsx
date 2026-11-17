@@ -83,6 +83,47 @@ const FALLBACK_SOURCES: DjSource[] = [
   { id: "heitao", name: "黑桃", adult: true },
   { id: "huangdou", name: "黄豆", adult: true },
 ];
+
+/** ── [lc-2189] 站源健康：目录加载失败的站点从 chips 剔除（后台探测，localStorage 持久化）。
+ *   · 切标签闪旧表：sources 清单也缓存，首帧直接用上次结果（无缓存才显示骨架）；
+ *   · 探测：每源无筛选目录首页拉一次，成功清零、失败计数 +1（多源并行，30 分钟 TTL，
+ *     期间切标签不再重探）；
+ *   · 剔除的源留「重试」入口（站点恢复后可手动拉回）。 ── */
+type SrcHealth = Record<string, { fail: number; at: number }>;
+const SRC_CACHE_KEY = "anibox-dj-sources-v1";
+const SRC_HEALTH_KEY = "anibox-dj-src-health-v1";
+const HEALTH_TTL = 30 * 60 * 1000;
+
+function readSrcCache(): DjSource[] | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(SRC_CACHE_KEY) || "null");
+    return Array.isArray(v) && v.length ? (v as DjSource[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function readHealth(): SrcHealth {
+  try {
+    const v = JSON.parse(localStorage.getItem(SRC_HEALTH_KEY) || "{}");
+    return v && typeof v === "object" ? (v as SrcHealth) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeHealth(h: SrcHealth) {
+  try {
+    localStorage.setItem(SRC_HEALTH_KEY, JSON.stringify(h));
+  } catch {
+    /* 隐私模式：本次会话内仍生效（state 驱动），只是不持久化 */
+  }
+}
+
+/** 站源是否已判定不可用（探测或实际加载失败过） */
+function isHidden(h: SrcHealth, id: string): boolean {
+  return (h[id]?.fail || 0) > 0;
+}
 const EP_GROUP = 30; // 选集分组（与上游详情页同口径）
 
 /** ── [lc-2112] 排序（纯前端）：上游 catalog 无排序参数，只对**已加载**的数据排序。
@@ -174,8 +215,11 @@ function readFavs(): FavDrama[] {
 
 export function DuanjuPane() {
   const [source, setSource] = useState("hongguo");
-  // [lc-2180] 站源集合以核心回传为准；老核心/核心缺失时用兜底表
-  const [sources, setSources] = useState<DjSource[]>(FALLBACK_SOURCES);
+  // [lc-2180] 站源集合以核心回传为准；[lc-2189] 首帧用上次成功的缓存（null = 还没拿到过，
+  // 显示骨架），核心缺失时才退兜底表 —— 避免「切到短剧标签先闪旧站源表」。
+  const [sources, setSources] = useState<DjSource[] | null>(readSrcCache);
+  // [lc-2189] 站源健康（失败站点从 chips 剔除；state 驱动渲染，localStorage 持久化）
+  const [health, setHealth] = useState<SrcHealth>(readHealth);
   // [lc-2181] 青空账号：登录弹窗开关 + 已登录账号名（空 = 未登录）
   const [loginOpen, setLoginOpen] = useState(false);
   const [acct, setAcct] = useState("");
@@ -209,8 +253,35 @@ export function DuanjuPane() {
   const [hist, setHist] = useState<DjHistory | null>(null);
   const [playErr, setPlayErr] = useState("");
 
+  // [lc-2189] 后台探测站源可用性：无筛选目录首页拉一次；成功清零、失败 +1（多源并行，
+  // TTL 内不重复探测）。失败源由 chips 剔除（见 render 的 visibleSources）。
+  async function probeSources(list: DjSource[]) {
+    const h = { ...readHealth() };
+    const now = Date.now();
+    const todo = list.filter(
+      (s) => s.available !== false && !(h[s.id] && now - h[s.id].at < HEALTH_TTL),
+    );
+    if (!todo.length) {
+      setHealth(h);
+      return;
+    }
+    await Promise.all(
+      todo.map(async (s) => {
+        try {
+          await invoke("duanju_catalog", { source: s.id, category: "", page: 1, query: "" });
+          h[s.id] = { fail: 0, at: Date.now() };
+        } catch {
+          h[s.id] = { fail: (h[s.id]?.fail || 0) + 1, at: Date.now() };
+        }
+      }),
+    );
+    writeHealth(h);
+    setHealth({ ...h });
+  }
+
   // [lc-2180] 站源能力清单（顺带预热核心）：guoapp v2 起站源 = 随包 JS 模块，
-  // 可用集合与 adult 声明以核心回传为准；失败保留兜底表。
+  // 可用集合与 adult 声明以核心回传为准。
+  // [lc-2189] 成功后写缓存（下次切标签首帧就是完整列表，不再闪旧表）+ 后台健康探测。
   useEffect(() => {
     let alive = true;
     invoke<{ sources?: DjSource[] | null }>("duanju_init")
@@ -219,14 +290,26 @@ export function DuanjuPane() {
         const list = Array.isArray(d?.sources)
           ? d.sources!.filter((s) => s && typeof s.id === "string" && typeof s.name === "string")
           : null;
-        if (list && list.length) setSources(list);
+        if (list && list.length) {
+          setSources(list);
+          try {
+            localStorage.setItem(SRC_CACHE_KEY, JSON.stringify(list));
+          } catch {
+            /* 隐私模式：仅本次会话生效 */
+          }
+          probeSources(list);
+        } else if (!readSrcCache()) {
+          setSources(FALLBACK_SOURCES); // 老核心无 sources 字段
+        }
       })
       .catch(() => {
-        /* 核心缺失：保留兜底表，chips 可见、调用报「短剧核心缺失」 */
+        // 核心缺失：无缓存时退兜底表（chips 可见，调用报「短剧核心缺失」）
+        if (!readSrcCache()) setSources(FALLBACK_SOURCES);
       });
     return () => {
       alive = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // [lc-2181] 青空账号状态（会话在核心数据目录持久化，重启后仍有效）
@@ -289,7 +372,16 @@ export function DuanjuPane() {
         setPage(d?.page || 1);
       })
       .catch((e) => {
-        if (alive) setErr(String(e));
+        if (!alive) return;
+        setErr(String(e));
+        // [lc-2189] 无筛选的首页目录失败 = 站源不可用 → 记失败并从 chips 剔除
+        //（搜索失败/分类失败不剔除：可能只是该词/该分类没内容）
+        if (!term && !cat) {
+          const h = readHealth();
+          h[source] = { fail: (h[source]?.fail || 0) + 1, at: Date.now() };
+          writeHealth(h);
+          setHealth({ ...h });
+        }
       })
       .finally(() => {
         if (alive) setBusy(false);
@@ -411,6 +503,18 @@ export function DuanjuPane() {
     if (lp && detail?.drama) play(lp.idx, lp.chapter, lp.name);
   }
 
+  // [lc-2189] chips 只列可用站源；失败过的剔除并留「重试」入口
+  const srcList = sources || [];
+  const visibleSources = srcList.filter((s) => s.available !== false && !isHidden(health, s.id));
+  const hiddenCount = srcList.filter((s) => s.available !== false && isHidden(health, s.id)).length;
+  function retryHiddenSources() {
+    const h = { ...health };
+    for (const s of srcList) if ((h[s.id]?.fail || 0) > 0) delete h[s.id];
+    writeHealth(h);
+    setHealth(h);
+    probeSources(srcList.filter((s) => s.available !== false));
+  }
+
   // [lc-2123] 观看进度**由 Rust 侧直接从 mpv 的 time-pos 落盘**（准确，无需前端估算）。
   // 这里只做「定期把后端记录读回来刷新 UI」：详情浮层开着时每 5s 拉一次该剧进度，
   // 这样集数高亮/「上次看到第 N 集」会跟着实际播放走（含连播自动切集）。
@@ -486,9 +590,13 @@ export function DuanjuPane() {
           收藏
           {favs.length > 0 && <span className="dj-favcount">{favs.length}</span>}
         </button>
-        {sources
-          .filter((s) => s.available !== false)
-          .map((s) => (
+        {/* [lc-2189] 首次运行还没有站源清单：骨架占位（不闪旧表） */}
+        {sources === null && (
+          <button type="button" className="dj-chip" disabled>
+            加载站源…
+          </button>
+        )}
+        {visibleSources.map((s) => (
             <button
               key={s.id}
               type="button"
@@ -509,6 +617,17 @@ export function DuanjuPane() {
               {s.name}
             </button>
           ))}
+        {/* [lc-2189] 被剔除的站源留重试入口（站点恢复后可拉回；仍在 TTL 内的成功源不重探） */}
+        {hiddenCount > 0 && (
+          <button
+            type="button"
+            className="dj-chip dj-src-retry"
+            title="重新检测加载失败的站源"
+            onClick={retryHiddenSources}
+          >
+            重试 {hiddenCount}
+          </button>
+        )}
         {/* [lc-2181] 青空需登录才能播放：选中该站源时行尾给账号入口（登录/账号名·退出） */}
         {source === "sorani" && (
           <button

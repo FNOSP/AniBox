@@ -108,13 +108,27 @@ pub fn normalize_sources(list: &[String]) -> Result<Vec<String>, String> {
 }
 
 /// 当前生效的源集合：配置为空 → 内置默认；否则用归一化后的自定义列表
-/// （老 config / 手工编辑的裸地址在这里兜底归一化，不因一条坏地址整体失效）。
+/// （老 config / 手工编辑的裸地址在这里兜底归一化；**单条坏地址只跳过它**，不连坐整个列表）。
 pub fn resolve_sources(cfg: &crate::config::Config) -> Vec<String> {
-    let list = normalize_sources(&cfg.iptv_sources).unwrap_or_default();
-    if list.is_empty() {
+    let mut out: Vec<String> = Vec::new();
+    for raw in &cfg.iptv_sources {
+        for line in raw.lines() {
+            let t = line.trim();
+            if t.is_empty() {
+                continue;
+            }
+            if let Ok(n) = normalize_source(t) {
+                if !out.iter().any(|x| x == &n) {
+                    out.push(n);
+                }
+            }
+        }
+    }
+    out.truncate(MAX_SOURCES);
+    if out.is_empty() {
         vec![DEFAULT_SOURCE.to_string()]
     } else {
-        list
+        out
     }
 }
 
@@ -786,6 +800,21 @@ mod tests {
         assert_eq!(cache_key(&a), cache_key(&a2));
         assert_ne!(cache_key(&a), cache_key(&b));
         assert!(cache_key(&a).starts_with(IPTV_CACHE_PREFIX));
+    }
+
+    /// [lc-2190] 生效源集合：空配置 → 内置默认；单条坏地址只跳过它，其余照常生效。
+    #[test]
+    fn resolve_sources_falls_back_and_skips_bad_entries() {
+        let mut cfg = crate::config::Config::default();
+        assert_eq!(resolve_sources(&cfg), vec![DEFAULT_SOURCE.to_string()]);
+        cfg.iptv_sources = vec![
+            "ftp://bad/x".to_string(),
+            "192.168.1.10:1905".to_string(),
+        ];
+        assert_eq!(
+            resolve_sources(&cfg),
+            vec!["http://192.168.1.10:1905/interface.m3u".to_string()]
+        );
     }
 
     /// [lc-2190] 真实部署联调（需本机可访问 `DEFAULT_SOURCE`；默认跳过，手动运行）：

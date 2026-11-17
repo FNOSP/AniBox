@@ -186,24 +186,24 @@ jobs:
 
       - name: 准备 portable_config（非 Windows 也需便携配置）
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p third_party/fntv-mpv
-          URL=$(curl -fsSL -H "Authorization: token $GH_TOKEN" \
-            https://api.github.com/repos/QiaoKes/fntv-mpv-config/releases/latest \
-            | sed -n 's/.*"browser_download_url": "\(https[^"]*\.zip\)".*/\1/p' | head -1)
-          if [ -z "$URL" ]; then
-            echo "::error::未找到 fntv-mpv-config 的 zip 下载地址"; exit 1
-          fi
+          # 自托管运行时配置包（R2，构建期只读；与第三方账号无依赖）
+          URL="https://pub-58a5ff28f0f848d2ad2f2fa8b7a4d20a.r2.dev/fntv-mpv-config.zip"
           TMPD=$(mktemp -d)
-          curl -fL -H "Authorization: token $GH_TOKEN" -o "$TMPD/c.zip" "$URL"
+          curl -fL --retry 3 --retry-delay 2 -o "$TMPD/c.zip" "$URL"
           unzip -oq "$TMPD/c.zip" -d "$TMPD/x"
           shopt -s dotglob
           items=("$TMPD"/x/*)
           if [ ${#items[@]} -eq 1 ] && [ -d "${items[0]}" ]; then
-            mv "${items[0]}"/* third_party/fntv-mpv/ 2>/dev/null || true
+            if [ -d "${items[0]}/portable_config" ]; then
+              # 包里是「wrapper 目录 + portable_config」
+              mv "${items[0]}"/* third_party/fntv-mpv/ 2>/dev/null || true
+            else
+              # 包里直接就是 portable_config
+              mv "${items[0]}" third_party/fntv-mpv/portable_config
+            fi
           else
             mv "$TMPD"/x/* third_party/fntv-mpv/ 2>/dev/null || true
           fi

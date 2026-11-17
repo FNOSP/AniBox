@@ -269,12 +269,12 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
       <BgmAccountCard onOpen={openBgm} />
       {/* [lc-2203] 星期行改成**胶囊分段控件**（7 段等宽 + 滑动指示器，动效照顶栏「首页|发现」胶囊）。 */}
       <div className="dweeks">
-        <div className="dseg">
-          {/* [lc-2207] 7 段 + 指示器装在内层 .dseg-group 里（指示器槽宽按这一组算），
+        <div className="dwseg">
+          {/* [lc-2207] 7 段 + 指示器装在内层 .dwseg-group 里（指示器槽宽按这一组算），
               往季表是**同一条胶囊里的第 8 段**，与左栏「标签 | 竖分隔 | 搜索」同一套结构 */}
-          <div className="dseg-group">
+          <div className="dwseg-group">
             <span
-              className="dseg-ind"
+              className="dwseg-ind"
               aria-hidden="true"
               style={{ transform: `translateX(${wdIdx * 100}%)` }}
             >
@@ -288,19 +288,19 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
               return (
                 <button
                   key={w.id}
-                  className={`dseg-btn${on ? " on" : ""}${today ? " today" : ""}`}
+                  className={`dwseg-btn${on ? " on" : ""}${today ? " today" : ""}`}
                   onClick={() => setWd(w.id)}
                   title={g ? `${w.cn}共 ${g.count} 部` : w.cn}
                   aria-pressed={on}
                 >
-                  {today && <span className="dseg-dot" aria-hidden="true" />}
-                  <span className="dseg-d">{w.cn}</span>
-                  <span className="dseg-n">{g ? `${g.count} 部` : "…"}</span>
+                  {today && <span className="dwseg-dot" aria-hidden="true" />}
+                  <span className="dwseg-d">{w.cn}</span>
+                  <span className="dwseg-n">{g ? `${g.count} 部` : "…"}</span>
                 </button>
               );
             })}
           </div>
-          <span className="dseg-div" aria-hidden="true" />
+          <span className="dwseg-div" aria-hidden="true" />
           <button className="darc-btn" onClick={() => setArcOpen(true)} title="查往季表（选年份 + 季度）">
             <IcoCalL size={14} strokeWidth={2} />
             往季表

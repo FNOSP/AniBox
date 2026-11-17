@@ -1,5 +1,5 @@
 /* [lc-2078] 发现页短剧栏（占位转真）—— 数据来自 guoapp「红果鉴」Go 核心（duanju_core.dll，
-   GPL-3.0 与本仓库同许可；Rust 侧 FFI 桥见 src-tauri/src/duanju.rs）。
+   上游 GPL-3.0，与本项目 AGPL-3.0 兼容；Rust 侧 FFI 桥见 src-tauri/src/duanju.rs）。
    UI：站源 chips（[lc-2180] 起动态渲染：guoapp v2 架构站源 = 随包 JS 模块，
    可用集合与 adult 声明由核心回传）+ 分类 chips + 搜索 + 竖版海报网格；
    点卡片 → 详情浮层（简介 + 选集 30/组）→ 点集 duanju_play（核心本地流直链 → mpv）。

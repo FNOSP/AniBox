@@ -3208,12 +3208,12 @@ export function SettingsPanel({
                   </div>
                   <div className="set-row">
                     <div>
-                      <span className="set-k">开源许可（GPL-3.0）</span>
-                      <div className="set-desc">本项目基于 GNU GPL-3.0 许可证开源发布（见仓库根目录 LICENSE）</div>
+                      <span className="set-k">开源许可（AGPL-3.0）</span>
+                      <div className="set-desc">本项目基于 GNU AGPL-3.0 许可证开源发布（见仓库根目录 LICENSE）</div>
                     </div>
                     <a
                       className="set-btn"
-                      href="https://www.gnu.org/licenses/gpl-3.0.html"
+                      href="https://www.gnu.org/licenses/agpl-3.0.html"
                       target="_blank"
                       rel="noreferrer"
                       style={{ textDecoration: "none" }}

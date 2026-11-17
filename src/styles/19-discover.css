@@ -660,12 +660,24 @@
 }
 
 /* [lc-123-rev] 分组标题（在库 / 不在库；带数量）。只在"索引完整"时出现（见 useLibIndex） */
+/* [lc-2213] 分组头与左栏 `.dlib-ghd` 同一套：淡蓝胶囊（复用 .dlib-gpill）+ 数量 + 下方虚线；
+   原来是「已在飞牛库 · 4」一行灰字，和左栏分组头完全不像。 */
 .dgrp {
-  margin: 10px 0 4px;
-  padding: 0 var(--sp-1);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin: 10px 0 var(--sp-3);
+  padding: 0 0 9px;
+  border-bottom: 1px dashed var(--line);
   font-size: var(--fs-ctl);
   font-weight: 600;
   color: var(--muted);
+}
+
+.dgrp-n {
+  font-size: var(--fs-cap);
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .dgrp:first-child {

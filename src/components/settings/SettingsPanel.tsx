@@ -1692,11 +1692,11 @@ export function SettingsPanel({
                       </div>
                       <SetSelect
                         label="播放器皮肤"
-                        value={settings.playerSkin ?? "glass"}
+                        value={settings.playerSkin ?? "clear"}
                         disabled={busy}
                         options={[
+                          { value: "clear", label: "透明悬浮（默认）" },
                           { value: "glass", label: "液态玻璃" },
-                          { value: "clear", label: "透明悬浮" },
                           { value: "uosc", label: "原生（uosc）" },
                         ]}
                         onChange={(v) => onSettings({ playerSkin: v as "uosc" | "glass" | "clear" })}
@@ -1707,7 +1707,7 @@ export function SettingsPanel({
                       （用户反馈「画面发蓝」，原生皮肤无此现象）。关掉后玻璃面板失去磨砂质感，
                       渲染路径与原生皮肤完全一致。透明悬浮的弹窗菜单仍是玻璃，同样受此开关控制。 */}
                   <div className="set-sec">画面</div>
-                  {playerKind === "mpv" && ["glass", "clear"].includes(settings.playerSkin ?? "glass") && (
+                  {playerKind === "mpv" && ["glass", "clear"].includes(settings.playerSkin ?? "clear") && (
                     <div className="set-row">
                       <div>
                         <span className="set-k">玻璃模糊</span>

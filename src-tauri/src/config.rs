@@ -268,7 +268,7 @@ pub struct Config {
        老 config.json 无此键 → 默认 "app"（本版默认点播放就走软件内），不需要迁移脚本。 */
     #[serde(default = "default_player_open_mode")]
     pub player_open_mode: String,
-    /// [lc-2002] 播放器皮肤："glass"（ModernGlass 液态玻璃，默认）/ "clear"（透明悬浮）/
+    /// [lc-2002] 播放器皮肤："clear"（透明悬浮，默认）/ "glass"（ModernGlass 液态玻璃）/
     /// "uosc"（原生）。clear 与 glass 逐项同款，只去掉玻璃底板、描边、投影与模糊 shader。
     /// 皮肤脚本按需搬进/搬出 portable_config/scripts（mpv 自动加载该目录），
     /// 切换在下一次起播生效。
@@ -350,9 +350,9 @@ fn default_player_open_mode() -> String {
 }
 
 fn default_player_skin() -> String {
-    // [lc-2048] 默认液态玻璃：它已是当前主用皮肤（独立 mpv 窗口 + 玻璃底栏），
-    // 新装用户不该先看到旧的原生 uosc 底栏。老配置里的显式值不受影响。
-    "glass".into()
+    // [lc-2220] 默认「透明悬浮」（clear）：控制条无底板、弹窗浅色半透纱底，
+    // 是目前最克制的一套（lc-2048 时期默认液态玻璃）。老配置里的显式值不受影响。
+    "clear".into()
 }
 
 fn default_proxy() -> String {
@@ -1226,6 +1226,12 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&conf).unwrap().trim(), "skin=uosc");
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// [lc-2220] 默认皮肤 = 透明悬浮（clear）。
+    #[test]
+    fn default_player_skin_is_clear() {
+        assert_eq!(default_player_skin(), "clear");
     }
 
     /// [lc-2178] 皮肤值归一：clear 保留，其余非法值回落 uosc。

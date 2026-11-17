@@ -455,9 +455,9 @@
 
 /* ── 右栏：星期胶囊（分段控件：7 段等宽 + 滑动指示器） ── */
 
-/* [lc-2206] 版式（用户文本稿）：**星期胶囊 + 往季表胶囊并排一行**，中间 8px 间隙；
-   左内缩 16 / 右内缩 16 = 上面 Bangumi 长胶囊的 margin → 两个胶囊合起来与上方卡片同宽、
-   左右边缘齐平；永不换行（窄栏靠分段收缩 + 部数省略号降级）。 */
+/* [lc-2207] 版式：**一条胶囊**装下 7 天分组 + 往季表（用户要求「同一层胶囊里」）；
+   左右内缩 16 = 上面 Bangumi 长胶囊的 margin → 整条与上方卡片同宽、边缘齐平；
+   永不换行（窄栏靠分段收缩 + 部数省略号降级）。 */
 .dweeks {
   display: flex;
   align-items: center;
@@ -481,6 +481,8 @@
      · 外层 .dseg-ind 按槽位 translateX 搬家（--ease-spring 带过冲）
      · 内层 i 每次切换重放 scaleX 挤压（React 用 key 换新触发重放）
    原来那套两行文字 + 底部迷你进度条随卡片形态一并去掉（分段控件里放不下也不该放）。 */
+/* [lc-2207] 胶囊内部：7 天分组（占满剩余宽度，指示器以它为基准）+ 竖分隔 + 往季表（第 8 段）。
+   这结构与左栏「标签组 | .dlib-tdiv | 搜索」完全一致。 */
 .dseg {
   position: relative;
   flex: 1 1 auto;
@@ -488,6 +490,7 @@
   height: 43px;
   display: flex;
   align-items: center;
+  gap: var(--sp-1);
   padding: var(--sp-1);
   border-radius: var(--r-full);
   background: var(--glass-bg);
@@ -495,13 +498,32 @@
   backdrop-filter: blur(14px);
 }
 
-/* 滑动指示器：与 .nav-cap-ind 同款几何 —— 左右内缩 = 胶囊内边距，宽度 = 单槽宽 */
+/* 7 天分组：指示器的定位基座（宽度 = 7 槽，往季表不参与） */
+.dseg-group {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+
+/* 竖分隔：与左栏 .dlib-tdiv 同款（往季表与星期分组之间的分界） */
+.dseg-div {
+  flex-shrink: 0;
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--line);
+}
+
+/* 滑动指示器：与 .nav-cap-ind 同款几何 —— 在 7 天分组内，宽度 = 单槽宽 */
 .dseg-ind {
   position: absolute;
-  left: var(--sp-1);
-  top: var(--sp-1);
-  bottom: var(--sp-1);
-  width: calc((100% - var(--sp-1) * 2) / 7);
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: calc(100% / 7);
   pointer-events: none;
   transition: transform var(--dur-page) var(--ease-spring);
   will-change: transform;
@@ -2538,31 +2560,30 @@
    —— 换掉原 AniList（标题只有日语原生）。卡片改为可点击跳详情 + 进场/hover 动效。 */
 
 /* 星期行里的查询按钮：不加 flex:1 ⇒ 不抢格子的伸缩，七格自然被压缩 */
-/* [lc-2203] 「往季番表」独立成一个胶囊（用户要求）：与左栏搜索胶囊同一套外观，
-   与星期分段胶囊同高 43px、同一行并排；hover 只变字色/底色（不再上浮，保持与左栏胶囊一致）。 */
+/* [lc-2207] 「往季表」= **同一条星期胶囊里的第 8 段**（用户要求「同一层胶囊里」）：
+   不再自带胶囊外壳（无边框/无玻璃底），高度随胶囊内容行，hover 只上浮一档灰。 */
 .darc-btn {
   flex: 0 0 auto;
-  height: 43px;
+  height: 100%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--sp-2);
-  padding: 0 var(--sp-4);
-  border: 1px solid var(--glass-border);
+  padding: 0 var(--sp-3);
+  border: none;
   border-radius: var(--r-full);
-  background: var(--glass-bg);
+  background: transparent;
   color: var(--text-2);
   font-size: var(--fs-ctl);
   font-weight: 700;
   font-family: inherit;
   white-space: nowrap;
   cursor: pointer;
-  transition: background var(--dur-move), color var(--dur-move), border-color var(--dur-move);
+  transition: background var(--dur-move), color var(--dur-move);
 }
 .darc-btn:hover {
-  background: var(--hover-strong);
+  background: var(--hover);
   color: var(--text-strong);
-  border-color: var(--line-strong);
 }
 
 /* 弹窗卡片（遮罩 = 既有的 .ddet-mask；关闭键复用 .ddet-close） */

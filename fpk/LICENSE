@@ -86,13 +86,10 @@ AniBox（fpk 网页增强版）项目声明与许可
 ================================================================
 【许可协议 / License】
 ================================================================
-本应用为 AniBox 项目的一部分。项目受 QiaoKes/fntv-electron 启发，
-采用 GNU Affero General Public License v3.0（AGPL-3.0）许可证，并
-保留上游 GPL-3.0 版权与致谢（GPL-3.0 可并入 AGPL-3.0）；本项目在
-早期版本基础上经历了大量重构与自研扩展。
+本应用为 AniBox 项目的一部分，由 AniBox 项目独立开发与维护。
+采用 GNU Affero General Public License v3.0（AGPL-3.0）许可证。
 
 Copyright (C) 2026 YDMY007
-Copyright (C) 2025 QiaoKes（原项目作者，GPL-3.0）
 
 本程序是自由软件：您可以依据自由软件基金会发布的 GNU Affero 通用
 公共许可证第 3 版（或您选择的任何更新版本）条款，重新发布和/或修改

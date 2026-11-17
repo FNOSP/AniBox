@@ -181,8 +181,7 @@
 
 本项目采用 **GNU Affero General Public License v3.0（AGPL-3.0）**，与同仓库桌面客户端
 [AniBox](https://github.com/FNOSP/AniBox) 保持一致。fpk 版的网页端注入、界面增强与后端桥接
-代码大量复用/改造自 GPL-3.0 上游项目（Copyright (C) 2025 QiaoKes）；GPL-3.0 可并入
-AGPL-3.0，合并后的作品按 AGPL-3.0 分发，并保留原作者版权与致谢。
+代码均为本项目自研，并按 AGPL-3.0 分发。
 
 - 完整许可与项目声明见 [LICENSE](LICENSE)
 - AGPL-3.0 官方全文：https://www.gnu.org/licenses/agpl-3.0.html

@@ -455,15 +455,13 @@
 
 /* ── 右栏：星期胶囊（分段控件：7 段等宽 + 滑动指示器） ── */
 
-/* [lc-2204] 一行到底（用户要求「全部一横展示」）：胶囊 + 往季表胶囊永不换行，
-   窄栏靠各段收缩 + 部数省略号降级，不折到第二行。
-   左右内缩 16px = 上面 Bangumi 胶囊的 margin（用户要求「这一排和上面长胶囊位置一致」），
-   两个胶囊合起来正好与上方卡片同宽。 */
+/* [lc-2205] 版式按用户给的框：**往季表单独一排（右对齐）**，星期胶囊整排占满下一行；
+   两排左右内缩 16px = 上面 Bangumi 长胶囊的 margin，与上方卡片同宽、边缘齐平。 */
 .dweeks {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: var(--sp-2);
-  flex-wrap: nowrap;
   padding: 0 16px var(--sp-3);
 }
 
@@ -2543,6 +2541,7 @@
    与星期分段胶囊同高 43px、同一行并排；hover 只变字色/底色（不再上浮，保持与左栏胶囊一致）。 */
 .darc-btn {
   flex: 0 0 auto;
+  align-self: flex-end; /* [lc-2205] 自己一排，靠右 → 与上方长胶囊右缘齐平 */
   height: 43px;
   display: inline-flex;
   align-items: center;

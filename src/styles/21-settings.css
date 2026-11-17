@@ -472,6 +472,29 @@
   from { opacity: 0; transform: scale(0.94) translateY(8px); }
   to   { opacity: 1; transform: none; }
 }
+/* [lc-2217] 关闭询问浮层里的输入框（短剧 18+ 站源确认语）：显式覆盖全局 input 样式，
+   否则会被全局的 12/16 内边距撑高 */
+.close-ask-in {
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--input-bg);
+  color: var(--text-strong);
+  font-family: inherit;
+  font-size: var(--fs-ctl);
+  outline: none;
+  transition: border-color var(--dur-tap), box-shadow var(--dur-tap);
+}
+.close-ask-in::placeholder {
+  color: var(--muted);
+}
+.close-ask-in:focus {
+  border-color: rgb(var(--accent-rgb) / 0.65);
+  box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.22);
+}
+
 /* 记忆选项：整行可点（label 包 input） */
 .close-ask-remember {
   display: flex;

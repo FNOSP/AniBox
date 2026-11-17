@@ -453,12 +453,15 @@
   color: var(--muted);
 }
 
-/* ── 右栏：星期胶囊（7 个，底色按占比填充成迷你柱状图） ── */
+/* ── 右栏：星期胶囊（分段控件：7 段等宽 + 滑动指示器） ── */
 
+/* [lc-2203] 一行到底（用户要求「全部一横展示」）：胶囊 + 往季番表胶囊永不换行，
+   窄栏靠各段收缩 + 部数省略号降级，不折到第二行。 */
 .dweeks {
   display: flex;
+  align-items: center;
   gap: var(--sp-2);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   padding: 0 var(--sp-5) var(--sp-3);
 }
 
@@ -471,132 +474,134 @@
   color: var(--muted);
 }
 
-/* [lc-1662] 重设计：不再用「整块高度填充 + 顶缘水位线」（那条线正好横贯文字，视觉很脏）。
-   新形态 = 两行文字（星期 / 部数）+ 底部 3px 迷你进度条：
-   文字永远在进度条上方，两者不重叠；占比靠底部条长读，不靠整块色块。 */
-.dweek {
+/* [lc-2203] 星期行改成**胶囊分段控件**（用户要求「改成胶囊切换，对齐左边」）：
+   外观与左栏「标签 / 搜索胶囊」同一套 token（glass 底 + glass 描边 + 全圆角 + 43px 高），
+   选中指示器沿用顶栏「首页 | 发现」胶囊的「水滴」动效：
+     · 外层 .dseg-ind 按槽位 translateX 搬家（--ease-spring 带过冲）
+     · 内层 i 每次切换重放 scaleX 挤压（React 用 key 换新触发重放）
+   原来那套两行文字 + 底部迷你进度条随卡片形态一并去掉（分段控件里放不下也不该放）。 */
+.dseg {
   position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 43px;
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  padding: var(--sp-1);
+  border-radius: var(--r-full);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(14px);
+}
+
+/* 滑动指示器：与 .nav-cap-ind 同款几何 —— 左右内缩 = 胶囊内边距，宽度 = 单槽宽 */
+.dseg-ind {
+  position: absolute;
+  left: var(--sp-1);
+  top: var(--sp-1);
+  bottom: var(--sp-1);
+  width: calc((100% - var(--sp-1) * 2) / 7);
+  pointer-events: none;
+  transition: transform var(--dur-page) var(--ease-spring);
+  will-change: transform;
+}
+
+.dseg-ind i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--r-full);
+  /* 与左栏标签选中 chip 同一档灰度（不引入色相） */
+  background: var(--sel-bg);
+  animation: dsegBlob var(--dur-tap) ease-out;
+}
+
+/* 「水滴」挤压：切换瞬间横向回弹一下（顶栏胶囊用的同一手法） */
+@keyframes dsegBlob {
+  from {
+    transform: scaleX(0.92);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* 单段：7 段等宽，单行 —— 星期名 + 部数，超出用省略号 */
+.dseg-btn {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--sp-0);
-  /* 七枚等宽铺满整行；min-width 54px 保留作窄栏下限（窄栏下整体换行，不挤爆） */
-  flex: 1;
-  min-width: 54px;
-  /* 顶部多留 10px：「今天」圆点居中悬在星期文字上方，不压字；底部 3px 给进度条 */
-  padding: var(--sp-3) var(--sp-2) var(--sp-3);
-  border-radius: var(--r-md);
-  border: 1px solid var(--line);
-  background: var(--bg-2);
+  gap: var(--sp-1);
+  /* 横向内边距压到 4px：7 段挤在一条 43px 胶囊里，把宽度让给「周一 + 14 部」，
+     半宽栏（约 610px 栏宽）以上就不会截断 */
+  padding: 0 var(--sp-1);
+  border: none;
+  border-radius: var(--r-full);
+  background: transparent;
   color: var(--text-2);
   font-family: inherit;
-  cursor: pointer;
-  /* 保留 overflow 默认值：顶部居中的「今天」圆点靠近上缘，避免任何裁切 */
-  transition: background var(--dur-move), color var(--dur-move), border-color var(--dur-move), box-shadow var(--dur-move),
-    transform var(--dur-move) var(--ease);
-}
-
-.dweek:hover {
-  background: var(--hover-strong);
-  color: var(--text-strong);
-  /* 轻微上浮 + 柔影；不加描边变化，避免"跳动" */
-  transform: translateY(-1px);
-  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.08);
-}
-
-.dweek-d {
   font-size: var(--fs-ctl);
   font-weight: 600;
-  line-height: 1.25;
   white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  transition: color var(--dur-move);
 }
 
-/* 部数：11.5px、弱化色，**不用斜体**（原先的 <i> 默认斜体正是"脏"的一部分） */
-.dweek-n {
-  font-size: var(--fs-cap);
-  font-style: normal;
-  line-height: 1.2;
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-/* 底部迷你进度条：绝对定位在胶囊底部内侧，左右各内缩 6px、高 3px、圆角 2px。
-   宽度由 JS 按占比内联给（calc 基于 100% - 12px），0 部时压根不渲染。 */
-.dweek-bar {
-  position: absolute;
-  left: 6px;
-  bottom: 3px;
-  height: 3px;
-  border-radius: var(--r-xs);
-  background: var(--accent-grad);
-  pointer-events: none;
-  transition: width var(--dur-page) ease, background var(--dur-move);
-}
-
-.dweek.on {
-  background: var(--sel-bg);
+.dseg-btn:hover {
   color: var(--text-strong);
-  border-color: var(--line-strong);
-    /* 选中时弹一下（弹性曲线，像左栏标签那样） */
-  animation: dweekPop var(--dur-page) var(--ease-spring);
-}
-@keyframes dweekPop {
-  0% {
-    transform: scale(0.94);
-  }
-  60% {
-    transform: scale(1.05);
-  }
-  100% {
-    transform: scale(1);
-  }
 }
 
-.dweek.on .dweek-d {
+.dseg-btn.on {
+  color: var(--text-strong);
   font-weight: 700;
 }
 
-/* 选中态：文字反白，部数用半透明白（不用 muted，深底上会糊） */
-.dweek.on .dweek-n {
-  color: rgba(255, 255, 255, 0.85);
+.dseg-d {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* 选中态下进度条改半透明白，避免同色（accent 底上 accent）看不清 */
-.dweek.on .dweek-bar {
-  background: rgba(255, 255, 255, 0.75);
+/* 部数：小一号、弱化色（窄栏先挤这里，不挤星期名） */
+.dseg-n {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--fs-cap);
+  font-weight: 500;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* 今天：星期文字正上方居中的小圆点（与选中态互不冲突，可同时出现） */
-.dweek.today::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  left: 50%;
-  z-index: 2;
+.dseg-btn.on .dseg-n {
+  color: var(--text-2);
+}
+
+/* 今天：星期名前的呼吸小圆点（原「悬在文字上方」的点在单行胶囊里没位置） */
+.dseg-dot {
+  flex-shrink: 0;
   width: 5px;
   height: 5px;
   border-radius: 50%;
   background: var(--accent);
-  transform: translateX(-50%);
-  /* 今天点轻微呼吸（存在感，不喧宾）；keyframes 里必须重复 translateX，否则会覆盖掉居中偏移 */
-  animation: dweekDot 2.4s ease-in-out infinite;
+  animation: dsegDot 2.4s ease-in-out infinite;
 }
-@keyframes dweekDot {
+@keyframes dsegDot {
   0%,
   100% {
     opacity: 0.55;
-    transform: translateX(-50%) scale(1);
+    transform: scale(1);
   }
   50% {
     opacity: 1;
-    transform: translateX(-50%) scale(1.35);
+    transform: scale(1.35);
   }
-}
-
-/* 选中且今日：圆点改白色（accent 底上看不见原色） */
-.dweek.on.today::after {
-  background: #fff;
 }
 
 /* ── 右栏：当日更新列表 ── */
@@ -1718,7 +1723,7 @@
 }
 
 /* [lc-2147] 左栏日号与右栏星期胶囊对齐：
-   右栏 .dweek-d 是 `--fs-ctl / 600 / --text-2`，左栏原来是
+   右栏 .dseg-d 是 `--fs-ctl / 600 / --text-2`，左栏原来是
    `--fs-subtitle(17) / 800 / --text-strong` —— 又大又黑又粗，
    在一列列表里比卡片标题还抢眼。用户要求「和右边日期显示的浅蓝色同步」，
    除了底色（见上方 .dlib-gpill），字号字重也一并对齐：
@@ -2506,8 +2511,8 @@
   .dlib-search:focus-within .dlib-search-ico,
   .dlib-rows > .dlib-row:first-of-type .dlib-dot,
   .dicon:disabled,
-  .dweek.on,
-  .dweek.today::after,
+  .dseg-ind i,
+  .dseg-dot,
   .dlist > *,
   .arc-modal,
   .arc-card,
@@ -2520,6 +2525,10 @@
   .arc-cv {
     transition: none;
   }
+  /* [lc-2203] 星期分段控件的：指示器不再滑动 */
+  .dseg-ind {
+    transition: none;
+  }
 }
 
 /* ══════════════ [lc-1589] 星期行「总表查询」按钮 + 往季番表弹窗 ══════════════
@@ -2528,31 +2537,31 @@
    —— 换掉原 AniList（标题只有日语原生）。卡片改为可点击跳详情 + 进场/hover 动效。 */
 
 /* 星期行里的查询按钮：不加 flex:1 ⇒ 不抢格子的伸缩，七格自然被压缩 */
+/* [lc-2203] 「往季番表」独立成一个胶囊（用户要求）：与左栏搜索胶囊同一套外观，
+   与星期分段胶囊同高 43px、同一行并排；hover 只变字色/底色（不再上浮，保持与左栏胶囊一致）。 */
 .darc-btn {
   flex: 0 0 auto;
+  height: 43px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--sp-2);
-  padding: 0 var(--sp-3);
+  padding: 0 var(--sp-4);
   border: 1px solid var(--glass-border);
-  border-radius: var(--r-md);
+  border-radius: var(--r-full);
   background: var(--glass-bg);
   color: var(--text-2);
-  font-size: var(--fs-cap);
+  font-size: var(--fs-ctl);
   font-weight: 700;
   font-family: inherit;
   white-space: nowrap;
   cursor: pointer;
-  transition: background var(--dur-move), color var(--dur-move), border-color var(--dur-move), transform var(--dur-move) var(--ease),
-    box-shadow var(--dur-move);
+  transition: background var(--dur-move), color var(--dur-move), border-color var(--dur-move);
 }
 .darc-btn:hover {
   background: var(--hover-strong);
   color: var(--text-strong);
   border-color: var(--line-strong);
-  transform: translateY(-1px);
-  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.08);
 }
 
 /* 弹窗卡片（遮罩 = 既有的 .ddet-mask；关闭键复用 .ddet-close） */

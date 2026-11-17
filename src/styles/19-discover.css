@@ -666,7 +666,9 @@
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  margin: 10px 0 var(--sp-3);
+  /* [lc-2214] 与左栏 `.dlib-ghd` 的纵向节奏逐项对齐：margin-bottom 11（原 12）、
+     首项 margin-top 0（原 2）→ 两边虚线落在同一条水平线上 */
+  margin: 10px 0 11px;
   padding: 0 0 9px;
   border-bottom: 1px dashed var(--line);
   font-size: var(--fs-ctl);
@@ -681,7 +683,7 @@
 }
 
 .dgrp:first-child {
-  margin-top: 2px;
+  margin-top: 0;
 }
 
 /* [lc-1538] 原「当天汇总条」.ddaybar 从列表上方移走（列表不再重复显示当日汇总）；

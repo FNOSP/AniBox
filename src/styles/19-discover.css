@@ -478,12 +478,12 @@
 /* [lc-2203] 星期行改成**胶囊分段控件**（用户要求「改成胶囊切换，对齐左边」）：
    外观与左栏「标签 / 搜索胶囊」同一套 token（glass 底 + glass 描边 + 全圆角 + 43px 高），
    选中指示器沿用顶栏「首页 | 发现」胶囊的「水滴」动效：
-     · 外层 .dseg-ind 按槽位 translateX 搬家（--ease-spring 带过冲）
+     · 外层 .dwseg-ind 按槽位 translateX 搬家（--ease-spring 带过冲）
      · 内层 i 每次切换重放 scaleX 挤压（React 用 key 换新触发重放）
    原来那套两行文字 + 底部迷你进度条随卡片形态一并去掉（分段控件里放不下也不该放）。 */
 /* [lc-2207] 胶囊内部：7 天分组（占满剩余宽度，指示器以它为基准）+ 竖分隔 + 往季表（第 8 段）。
    这结构与左栏「标签组 | .dlib-tdiv | 搜索」完全一致。 */
-.dseg {
+.dwseg {
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
@@ -499,7 +499,7 @@
 }
 
 /* 7 天分组：指示器的定位基座（宽度 = 7 槽，往季表不参与） */
-.dseg-group {
+.dwseg-group {
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
@@ -509,7 +509,7 @@
 }
 
 /* 竖分隔：与左栏 .dlib-tdiv 同款（往季表与星期分组之间的分界） */
-.dseg-div {
+.dwseg-div {
   flex-shrink: 0;
   width: 1px;
   height: 18px;
@@ -518,7 +518,7 @@
 }
 
 /* 滑动指示器：与 .nav-cap-ind 同款几何 —— 在 7 天分组内，宽度 = 单槽宽 */
-.dseg-ind {
+.dwseg-ind {
   position: absolute;
   left: 0;
   top: 0;
@@ -529,18 +529,18 @@
   will-change: transform;
 }
 
-.dseg-ind i {
+.dwseg-ind i {
   display: block;
   width: 100%;
   height: 100%;
   border-radius: var(--r-full);
   /* 与左栏标签选中 chip 同一档灰度（不引入色相） */
   background: var(--sel-bg);
-  animation: dsegBlob var(--dur-tap) ease-out;
+  animation: dwsegBlob var(--dur-tap) ease-out;
 }
 
 /* 「水滴」挤压：切换瞬间横向回弹一下（顶栏胶囊用的同一手法） */
-@keyframes dsegBlob {
+@keyframes dwsegBlob {
   from {
     transform: scaleX(0.92);
   }
@@ -550,7 +550,7 @@
 }
 
 /* 单段：7 段等宽，单行 —— 星期名 + 部数，超出用省略号 */
-.dseg-btn {
+.dwseg-btn {
   position: relative;
   z-index: 1;
   flex: 1 1 0;
@@ -576,23 +576,23 @@
   transition: color var(--dur-move);
 }
 
-.dseg-btn:hover {
+.dwseg-btn:hover {
   color: var(--text-strong);
 }
 
-.dseg-btn.on {
+.dwseg-btn.on {
   color: var(--text-strong);
   font-weight: 700;
 }
 
-.dseg-d {
+.dwseg-d {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 /* 部数：小一号、弱化色（窄栏先挤这里，不挤星期名） */
-.dseg-n {
+.dwseg-n {
   flex: 0 1 auto;
   min-width: 0;
   font-size: var(--fs-cap);
@@ -602,20 +602,20 @@
   text-overflow: ellipsis;
 }
 
-.dseg-btn.on .dseg-n {
+.dwseg-btn.on .dwseg-n {
   color: var(--text-2);
 }
 
 /* 今天：星期名前的呼吸小圆点（原「悬在文字上方」的点在单行胶囊里没位置） */
-.dseg-dot {
+.dwseg-dot {
   flex-shrink: 0;
   width: 5px;
   height: 5px;
   border-radius: 50%;
   background: var(--accent);
-  animation: dsegDot 2.4s ease-in-out infinite;
+  animation: dwsegDot 2.4s ease-in-out infinite;
 }
-@keyframes dsegDot {
+@keyframes dwsegDot {
   0%,
   100% {
     opacity: 0.55;
@@ -1746,7 +1746,7 @@
 }
 
 /* [lc-2147] 左栏日号与右栏星期胶囊对齐：
-   右栏 .dseg-d 是 `--fs-ctl / 600 / --text-2`，左栏原来是
+   右栏 .dwseg-d 是 `--fs-ctl / 600 / --text-2`，左栏原来是
    `--fs-subtitle(17) / 800 / --text-strong` —— 又大又黑又粗，
    在一列列表里比卡片标题还抢眼。用户要求「和右边日期显示的浅蓝色同步」，
    除了底色（见上方 .dlib-gpill），字号字重也一并对齐：
@@ -2534,8 +2534,8 @@
   .dlib-search:focus-within .dlib-search-ico,
   .dlib-rows > .dlib-row:first-of-type .dlib-dot,
   .dicon:disabled,
-  .dseg-ind i,
-  .dseg-dot,
+  .dwseg-ind i,
+  .dwseg-dot,
   .dlist > *,
   .arc-modal,
   .arc-card,
@@ -2549,7 +2549,7 @@
     transition: none;
   }
   /* [lc-2203] 星期分段控件的：指示器不再滑动 */
-  .dseg-ind {
+  .dwseg-ind {
     transition: none;
   }
 }

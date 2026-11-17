@@ -249,7 +249,7 @@ export function BgmPane({ active, onOpen, onOpenLib }: { active: boolean; onOpen
   );
 
   return (
-    <section className="dpane">
+    <section className="dpane bgm-pane">
       <header className="dpane-hd">
         <h2>新番更新</h2>
         <span className="dn">{weekTotal > 0 ? `${weekTotal} 部 / 周` : ""}</span>

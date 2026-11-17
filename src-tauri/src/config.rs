@@ -295,10 +295,11 @@ pub struct Config {
     #[serde(default)]
     pub update_remind_off: bool,
 
-    /// [lc-2190] 发现页 IPTV 直播源（自托管 iPTV 部署，见 `iptv.rs`）：每项可为部署根地址
+    /// [lc-2190/lc-2191] 发现页 IPTV 直播源（自托管 iPTV 部署）：每项可为部署根地址
     /// （`http://192.168.1.10:1905`，自动补 `/interface.m3u`）或完整 M3U 地址
-    /// （支持 `?relay=1/2`、`?profile=xxx`、密码路径）。空 = 使用内置默认
-    /// （`iptv::DEFAULT_SOURCE`）。设置面板「通用 → 发现页直播源」读写，最多 4 条。
+    /// （支持 `?relay=1/2`、`?profile=xxx`、密码路径）。空 = 使用内置**公共聚合源**
+    /// （`iptv::DEFAULT_SOURCES`，不含任何个人服务器地址）。设置面板
+    /// 「通用 → 发现页直播源」读写，最多 4 条。
     #[serde(default)]
     pub iptv_sources: Vec<String>,
 

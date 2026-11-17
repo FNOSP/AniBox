@@ -3264,9 +3264,9 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         "hideMainOnPlay": cfg.hide_main_on_play,
         // [lc-2090] 更新提醒关闭（true = 完全停止检测更新；关闭动作前端有二次确认）
         "updateRemindOff": cfg.update_remind_off,
-        // [lc-2190] 发现页 IPTV 直播源（空 = 内置默认；iptvDefaultSource 仅供占位提示）
+        // [lc-2190] 发现页 IPTV 直播源（空 = 内置公共聚合源；iptvDefaultSources 仅供占位提示）
         "iptvSources": cfg.iptv_sources,
-        "iptvDefaultSource": iptv::DEFAULT_SOURCE,
+        "iptvDefaultSources": iptv::default_sources(),
     }))
 }
 
@@ -3528,7 +3528,7 @@ async fn set_settings(
         "updateRemindOff": cfg.update_remind_off,
         // [lc-2190] 发现页 IPTV 直播源
         "iptvSources": cfg.iptv_sources,
-        "iptvDefaultSource": iptv::DEFAULT_SOURCE,
+        "iptvDefaultSources": iptv::default_sources(),
     }))
 }
 

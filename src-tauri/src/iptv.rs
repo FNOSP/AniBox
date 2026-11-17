@@ -5,7 +5,7 @@
 //! （实测 1100+ 频道、68 个分组，`#EXTINF` 自带 tvg-logo 台标与 EPG 地址）。我们只做
 //! 「取 + 解析 + 播」：
 //!   · 地址：设置面板「通用 → 发现页直播源」自定义（每行一条、最多 4 条，可填部署根地址或
-//!     完整 M3U 地址）；留空使用 `DEFAULT_SOURCE`（本机 NAS 上的正式部署）。
+//!     完整 M3U 地址）；留空使用内置公共聚合源（`DEFAULT_SOURCES`，**不含任何个人服务器地址**）。
 //!     上游支持标准版 302 直连、`?relay=1` 兼容版、`?relay=2` 全代理与 `?profile=xxx` 多档。
 //!   · 缓存：disk_cache JSON 层，TTL 6h；**缓存键按源集合哈希**（改源不会读到别的源旧数据），
 //!     全部失败时回吐同一源集合的过期缓存（旧数据比报错强）。
@@ -21,9 +21,20 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-/// [lc-2190] 内置默认播放列表地址：本机 NAS 上的 akiralereal/iptv 正式部署。
-/// 设置面板留空时用它；用户填自定义源后以自定义列表为准（本常量不参与合并）。
-pub const DEFAULT_SOURCE: &str = "http://100.66.1.2:1905/interface.m3u";
+/// [lc-2191] 内置默认播放列表：公开聚合源（**不含任何个人服务器地址**，避免把部署方
+/// 的内网/隧道地址随代码公开）。
+/// 单源线路质量参差（实测同一份数据里 12.7MB/s 与 43KB/s 并存、大量分片 404），所以默认
+/// 全拉合并、播放时探活择优；用户可在设置里换成自己的自托管 iPTV 部署（只存本机 config）。
+pub const DEFAULT_SOURCES: &[&str] = &[
+    // 主源：vbskycn（每 6h 更新，频道少但央视/卫视线路实测最好）
+    "https://live.zbds.top/tv/iptv4.m3u",
+    // vbskycn 备用镜像（主域名偶发被运营商污染）
+    "https://gh-proxy.com/raw.githubusercontent.com/vbskycn/iptv/refs/heads/master/tv/iptv4.m3u",
+    // 次源：suxuang/myIPTV（1273 频道，含咪咕/移动 IPTV 线路；单条质量差但能补备线）
+    "https://raw.githubusercontent.com/suxuang/myIPTV/main/ipv4.m3u",
+    // 补充：iptv-org 中国区（156 条，以境外/地方台为主，补冷门台）
+    "https://iptv-org.github.io/iptv/countries/cn.m3u",
+];
 /// 自定义源上限（与弹幕接口同一口径：多源只做故障转移/并线，不做无限堆积）。
 const MAX_SOURCES: usize = 4;
 /// 缓存 TTL：6 小时（上游默认更新间隔）。
@@ -107,9 +118,16 @@ pub fn normalize_sources(list: &[String]) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
-/// 当前生效的源集合：配置为空 → 内置默认；否则用归一化后的自定义列表
-/// （老 config / 手工编辑的裸地址在这里兜底归一化；**单条坏地址只跳过它**，不连坐整个列表）。
-pub fn resolve_sources(cfg: &crate::config::Config) -> Vec<String> {
+/// 内置默认源列表（给设置面板回显/占位用；`DEFAULT_SOURCES` 的 owned 形式）。
+pub fn default_sources() -> Vec<String> {
+    DEFAULT_SOURCES.iter().map(|s| s.to_string()).collect()
+}
+
+/// 当前生效的源集合 → `(sources, custom)`：
+///   · 配置为空 → 内置公共聚合源（custom=false）；
+///   · 否则用归一化后的自定义列表（custom=true）。老 config / 手工编辑的裸地址在这里
+///     兜底归一化；**单条坏地址只跳过它**，不连坐整个列表。
+pub fn resolve_sources(cfg: &crate::config::Config) -> (Vec<String>, bool) {
     let mut out: Vec<String> = Vec::new();
     for raw in &cfg.iptv_sources {
         for line in raw.lines() {
@@ -126,9 +144,9 @@ pub fn resolve_sources(cfg: &crate::config::Config) -> Vec<String> {
     }
     out.truncate(MAX_SOURCES);
     if out.is_empty() {
-        vec![DEFAULT_SOURCE.to_string()]
+        (default_sources(), false)
     } else {
-        out
+        (out, true)
     }
 }
 
@@ -351,14 +369,12 @@ fn merge_groups(mut acc: Vec<Value>, incoming: Vec<Value>) -> Vec<Value> {
 /// 播放时 `iptv_play` 探活择优；任一源成功即返回（不因某个源挂掉就整体失败）。
 #[tauri::command]
 pub async fn iptv_channels_get(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
-    // [lc-2190] 源集合来自配置（设置面板可自定义；空 = 内置默认）
-    let sources = {
+    // [lc-2190] 源集合来自配置（设置面板可自定义；空 = 内置公共聚合源）
+    let (sources, custom) = {
         let cfg = state.config.read().await;
         resolve_sources(&cfg)
     };
     let key = cache_key(&sources);
-    // 是否在使用内置默认源（前端底行注明「自定义源」用）
-    let custom = !(sources.len() == 1 && sources[0] == DEFAULT_SOURCE);
     if let Some(v) = crate::disk_cache::json_get(&key, IPTV_TTL_SECS) {
         return Ok(v);
     }
@@ -440,7 +456,7 @@ pub async fn iptv_channels_get(state: tauri::State<'_, crate::AppState>) -> Resu
 pub async fn iptv_sources_test(sources: Vec<String>) -> Result<String, String> {
     let mut list = normalize_sources(&sources)?;
     if list.is_empty() {
-        list = vec![DEFAULT_SOURCE.to_string()];
+        list = default_sources();
     }
     let mut set = tokio::task::JoinSet::new();
     for (i, src) in list.iter().enumerate() {
@@ -802,31 +818,43 @@ mod tests {
         assert!(cache_key(&a).starts_with(IPTV_CACHE_PREFIX));
     }
 
-    /// [lc-2190] 生效源集合：空配置 → 内置默认；单条坏地址只跳过它，其余照常生效。
+    /// [lc-2190/lc-2191] 生效源集合：空配置 → 内置公共聚合源；单条坏地址只跳过它，
+    /// 其余照常生效（并标记为自定义源）。
     #[test]
     fn resolve_sources_falls_back_and_skips_bad_entries() {
         let mut cfg = crate::config::Config::default();
-        assert_eq!(resolve_sources(&cfg), vec![DEFAULT_SOURCE.to_string()]);
+        let (def, custom) = resolve_sources(&cfg);
+        assert_eq!(def, default_sources());
+        assert!(!custom, "空配置 = 内置源");
         cfg.iptv_sources = vec![
             "ftp://bad/x".to_string(),
             "192.168.1.10:1905".to_string(),
         ];
-        assert_eq!(
-            resolve_sources(&cfg),
-            vec!["http://192.168.1.10:1905/interface.m3u".to_string()]
-        );
+        let (list, custom) = resolve_sources(&cfg);
+        assert_eq!(list, vec!["http://192.168.1.10:1905/interface.m3u".to_string()]);
+        assert!(custom);
     }
 
-    /// [lc-2190] 真实部署联调（需本机可访问 `DEFAULT_SOURCE`；默认跳过，手动运行）：
-    /// 拉取 + 解析应得 800+ 频道、40+ 分组，公告组被滤掉，且 302 网关线路探活可用。
-    /// 运行：`cargo test --lib real_default_source -- --ignored --nocapture`
+    /// [lc-2190] 真实部署联调（设 `ANIBOX_IPTV_TEST_SOURCE` 指向 M3U 地址；默认跳过，手动运行）：
+    /// 拉取 + 解析非空，且线路探活可用（验证 302 网关的最终地址解析）。
+    /// 运行：`ANIBOX_IPTV_TEST_SOURCE=http://…/interface.m3u cargo test --lib real_source -- --ignored --nocapture`
     #[test]
-    #[ignore = "需要本机可访问内置默认 iPTV 部署（NAS）"]
-    fn real_default_source_parses() {
+    #[ignore = "需要 ANIBOX_IPTV_TEST_SOURCE 指向可访问的 M3U"]
+    fn real_source_parses() {
+        let Ok(src) = std::env::var("ANIBOX_IPTV_TEST_SOURCE") else {
+            println!("[lc-2190] 未设置 ANIBOX_IPTV_TEST_SOURCE，跳过");
+            return;
+        };
+        let src = match normalize_source(&src) {
+            Ok(s) => s,
+            Err(e) => {
+                println!("[lc-2190] 测试地址无效：{e}");
+                return;
+            }
+        };
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            assert_eq!(normalize_source(DEFAULT_SOURCE).unwrap(), DEFAULT_SOURCE);
-            let groups = fetch_one(DEFAULT_SOURCE).await.expect("默认源应拉取成功");
+            let groups = fetch_one(&src).await.expect("真实源应拉取成功");
             let total: usize = groups
                 .iter()
                 .map(|g| {
@@ -836,17 +864,10 @@ mod tests {
                         .unwrap_or(0)
                 })
                 .sum();
-            println!(
-                "[lc-2190] 默认源：{} 分组 / {total} 频道",
-                groups.len()
-            );
-            assert!(total > 800, "频道数过少：{total}");
-            assert!(groups.len() > 40, "分组数过少：{}", groups.len());
-            assert!(
-                !groups.iter().any(|g| g.get("name").and_then(|v| v.as_str()) == Some("公告")),
-                "公告组必须被滤掉"
-            );
-            // 302 网关线路探活（用清单里第一条非公告频道地址）。
+            println!("[lc-2190] {src}：{} 分组 / {total} 频道", groups.len());
+            assert!(total > 100, "频道数过少：{total}");
+            assert!(groups.len() > 3, "分组数过少：{}", groups.len());
+            // 302 网关线路探活（用清单里第一条频道地址）。
             let first = groups
                 .iter()
                 .filter_map(|g| g.get("channels").and_then(|v| v.as_array()))

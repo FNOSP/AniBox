@@ -530,7 +530,8 @@ async fn play_impl(
     title: Option<String>,
     chapters: Option<Vec<Value>>,
 ) -> Result<Value, String> {
-    let plan = duanju_resolve(app.clone(), drama.clone(), chapter, index, quality).await?;
+    // [lc-2238] chapter 后面拉弹幕还要用（取 episodeId/source），不能 move 进 resolve
+    let plan = duanju_resolve(app.clone(), drama.clone(), chapter.clone(), index, quality).await?;
     let url = plan
         .get("url")
         .and_then(|x| x.as_str())
@@ -587,6 +588,33 @@ async fn play_impl(
     // [lc-2129] 用户要求**还原底栏中间按钮**（上一轮关掉 ±10 秒键导致布局错位）。
     // 短剧改为：播完在左下角显示「下一集」大按钮（见 fntv_next_ep.lua），不再自动切集。
     set_modernz_jump_buttons(app, true);
+    // [lc-2238] 弹幕：resolve 已建好播放会话 → 按本集 episodeId 拉弹幕并生成 ASS。
+    // 走缓存优先（同集重看/连播回头都不重复请求）；**拉取失败不影响播放**，只记日志。
+    // 必须在本集 launch **之前**完成，才能随命令行一起起播。
+    //
+    // 轨道口径：短剧是核心本地流（`127.0.0.1`），没有 NAS/外挂字幕通道，主字幕轨是空的，
+    // 所以弹幕直接走主轨。**不能动 secondary-sid** ——随包 uosc_danmaku 脚本事后自己
+    // sub-add 并管理副字幕轨，我们再设一次会与它抢位、出现双份弹幕。
+    //
+    // 耗时：实测首拉 2.1s / 8 页 / 531 条（缓存命中 0ms）。为不让起播被慢站源拖住，
+    // 整体加 8s 上限 —— 超时就先起播、弹幕下次再看（缓存会保留已拉到的部分）。
+    let danmaku_path = match tokio::time::timeout(
+        std::time::Duration::from_secs(8),
+        prepare_danmaku(app, &plan, &chapter),
+    )
+    .await
+    {
+        Ok(p) => p,
+        Err(_) => {
+            crate::libmpv::trace("[duanju] 弹幕拉取超时（8s），本集先不挂弹幕");
+            None
+        }
+    };
+    if let Some(ass_path) = &danmaku_path {
+        let p = ass_path.to_string_lossy().into_owned();
+        http_headers.mpv_opts.push(format!("--sub-files={p}"));
+        crate::libmpv::trace(&format!("[duanju] 弹幕已挂载：{p}"));
+    }
     let t0 = std::time::Instant::now();
     crate::libmpv::trace("[duanju] → player::launch 开始");
     crate::player::launch(
@@ -643,8 +671,7 @@ async fn play_impl(
         } else {
             None
         };
-    }
-    // [lc-2142] 告诉随包 Lua 有没有下一集：写 next-episode = 下一集标题 / 空串。
+    }    // [lc-2142] 告诉随包 Lua 有没有下一集：写 next-episode = 下一集标题 / 空串。
     // `fntv_next_hint.lua` 据此在**播完时**于控制栏中间播放键上方浮出提示，
     // 告诉用户「点这个按钮看下一集」——不新增任何按钮，只做指向性提示。
     {
@@ -675,7 +702,12 @@ async fn play_impl(
     // pos 从这里开始为 0，实际进度由前端在播放中/退出时回写（duanju_play 返回后前端
     // 拿不到 mpv 的 time-pos，所以「继续观看」的精度由前端定时回写保证）。
     record_history(app, &drama, index, 0.0, 0.0);
-    Ok(json!({ "url": url, "session": plan.get("session").cloned().unwrap_or(json!("")) }))
+    Ok(json!({
+        "url": url,
+        "session": plan.get("session").cloned().unwrap_or(json!("")),
+        // [lc-2238] 弹幕是否已挂载（前端据此提示「本集暂无弹幕」）
+        "danmaku": danmaku_path.is_some(),
+    }))
 }
 
 /// [lc-2116] 播完自动接下一集（mpv end-file reason=eof 时由 mpv.rs 调用）。
@@ -731,22 +763,155 @@ pub async fn auto_play_next(
         return Ok(false);
     };
 
-    let title = chapter
+    // [lc-2238] 标题必须**剧名 + 集名**（用户报「标题名称变成集数了」）。
+    // 原实现优先用 chapter.title（=「第2集」），剧名只在 chapter.title 缺失时才出现 →
+    // 自动连播后窗口标题/OSD 只剩集数。改为剧名在前、集名在后，缺剧名才退回集名。
+    let drama_title = drama
         .get("title")
         .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|t| !t.is_empty());
+    let chapter_title = chapter
+        .get("title")
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
         .map(str::to_string)
-        .or_else(|| {
-            drama
-                .get("title")
-                .and_then(|x| x.as_str())
-                .map(|t| format!("{t} 第{}集", index + 1))
-        });
+        .unwrap_or_else(|| format!("第{}集", index + 1));
+    let title = Some(match drama_title {
+        Some(dt) => format!("{dt} {chapter_title}"),
+        None => chapter_title,
+    });
     // 注意：连播时不再重写队列（chapters 传 None），否则会把 index 重置
     let r = play_impl(app, state, drama, chapter, index, None, title, None).await;
     if r.is_err() {
         *auto_next_slot().lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
     r.map(|_| true)
+}
+
+// ───────────────────────── [lc-2238] 弹幕 ─────────────────────────
+
+/// 拉本集弹幕并写成 ASS，返回可交给 mpv 的路径；无弹幕/不支持/失败都返回 None。
+///
+/// 会话来源：`plan.session`（resolve 刚建立）。核心把弹幕绑定在这个播放会话上，
+/// 所以**必须在 resolve 之后、release 之前**调用。
+async fn prepare_danmaku(
+    app: &tauri::AppHandle,
+    plan: &Value,
+    chapter: &Value,
+) -> Option<std::path::PathBuf> {
+    let session = plan.get("session").and_then(|x| x.as_str())?.to_string();
+    let episode_id = chapter.get("id").and_then(|x| x.as_str())?.to_string();
+    let source = chapter
+        .get("source")
+        .and_then(|x| x.as_str())
+        .map(str::to_string)
+        .or_else(|| episode_id.split(':').next().map(str::to_string))
+        .unwrap_or_else(|| "unknown".into());
+    let cache_root = app
+        .path()
+        .app_data_dir()
+        .ok()?
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("duanju-core-cache");
+    let path = crate::duanju_danmaku::cache_path(&cache_root, &source, &episode_id);
+    // 1) 缓存命中直接用（同集重看不再请求；AS S 里已含全量弹幕）
+    if crate::duanju_danmaku::read_cache(&path).is_some() {
+        return Some(path);
+    }
+    // 2) 分页拉取。实测语义（探针确认，勿凭直觉改）：
+    //    · 每页**最多返回 90 条**（大窗口也是一样），`nextMs` = 下一页起点，
+    //      不是窗口边界 —— 传 `startMs=0,durationMs=600000` 只回前 90 条、nextMs=30000；
+    //    · `total` 是**整季**总数（6884），不能拿来当单集终止条件；
+    //    · 短剧单集实际只有 2~3 分钟，弹幕时间戳最大值约 180s。
+    //    终止条件：nextMs 不再前进 / 连续两页没有新条目（越过本集内容）/ 到达硬上限。
+    let mut items: Vec<crate::duanju_danmaku::DanmakuItem> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut start: i64 = 0;
+    let mut total: i64 = 0;
+    let mut pages = 0usize;
+    let mut dry = 0usize; // 连续没有新条目的页数
+    let mut max_t: i64 = 0; // 已见弹幕的最大时间戳（用于判断越过本集）
+    loop {
+        if pages >= 40 || dry >= 2 {
+            break;
+        }
+        pages += 1;
+        let seq = next_sequence("danmaku");
+        let body = json!({
+            "action": "danmaku",
+            "playbackSession": session,
+            "session": session,
+            "sequence": seq,
+            "startMs": start,
+            "durationMs": start + 30_000,
+        });
+        let page = match call_async(body).await {
+            Ok(v) => v,
+            Err(e) => {
+                crate::libmpv::trace(&format!("[duanju] 弹幕拉取停止（第 {pages} 页）：{e}"));
+                break;
+            }
+        };
+        let (got, next, tot) = crate::duanju_danmaku::parse_page(&page);
+        if tot > 0 {
+            total = tot;
+        }
+        let before = items.len();
+        for it in got {
+            max_t = max_t.max(it.time_ms);
+            // 去重键：时间+文本（分页边界条目可能重复）
+            let key = (it.time_ms, it.text.clone());
+            if seen.insert(key) {
+                items.push(it);
+            }
+        }
+        dry = if items.len() == before { dry + 1 } else { 0 };
+        match next {
+            Some(n) if n > start => start = n,
+            _ => break,
+        }
+    }
+    if items.is_empty() {
+        crate::libmpv::trace(&format!(
+            "[duanju] 本集无弹幕（{episode_id}，全季 total={total}，查了 {pages} 页）"
+        ));
+        return None;
+    }
+    items.sort_by_key(|x| x.time_ms);
+    crate::libmpv::trace(&format!(
+        "[duanju] 弹幕就绪：{episode_id} {} 条（全季 total={total}，{pages} 页，末条 {}s）",
+        items.len(),
+        max_t / 1000
+    ));
+    // 分辨率只影响滚动轨道布局，1080x1920 是竖屏短剧的通用基准，mpv 会自适应缩放
+    let ass = crate::duanju_danmaku::build_ass(&items, 1080, 1920);
+    if let Err(e) = crate::duanju_danmaku::write_cache(&path, &ass) {
+        crate::libmpv::trace(&format!("[duanju] 弹幕缓存写入失败（不影响播放）：{e}"));
+    }
+    crate::libmpv::trace(&format!(
+        "[duanju] 弹幕就绪：{episode_id} 共 {} 条（total={total}，{pages} 页）",
+        items.len()
+    ));
+    Some(path)
+}
+
+/// 手动拉取弹幕（前端/调试用）：只返回统计，ASS 路径由 prepare_danmaku 负责。
+#[tauri::command]
+pub async fn duanju_danmaku_info(
+    app: tauri::AppHandle,
+    plan: Value,
+    chapter: Value,
+) -> Result<Value, String> {
+    ensure_ready(&app).await?;
+    let p = prepare_danmaku(&app, &plan, &chapter).await;
+    Ok(json!({
+        "hasDanmaku": p.is_some(),
+        "assPath": p.map(|x| x.to_string_lossy().into_owned()),
+    }))
 }
 
 /// [lc-2123] 取当前短剧会话的（剧摘要, 集索引）——mpv 的 time-pos 观察回调用它写进度。

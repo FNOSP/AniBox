@@ -23,6 +23,8 @@ mod jav_dict;
 mod jav_settings;
 // [lc-2078] 短剧车道（guoapp「红果鉴」Go 核心 duanju_core FFI 接入）
 mod duanju;
+// [lc-2238] 短剧弹幕（核心 danmaku op → ASS 字幕文件，随集缓存）
+mod duanju_danmaku;
 // [lc-1811] WebDAV 媒体源（多账号 + PROPFIND 浏览 + Basic Auth 播放 + 随片字幕）
 mod webdav;
 // [lc-1820] AI 增强可选组件（RIFE Vulkan 运行时：软件内下载/状态/删除）
@@ -4503,6 +4505,7 @@ pub fn run() {
             duanju::duanju_categories,
             duanju::duanju_catalog,
             duanju::duanju_cached,
+            duanju::duanju_danmaku_info,
             duanju::duanju_detail,
             duanju::duanju_resolve,
             duanju::duanju_release,

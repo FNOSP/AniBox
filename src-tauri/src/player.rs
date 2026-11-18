@@ -609,6 +609,8 @@ async fn launch_mpv(
             // [lc-2100] 复用会话：mpv_opts 逐项 set（`--key=value` → set key value）。
             // demuxer-lavf-o 是**打开流时读取**的选项，loadfile 前设好即可生效；
             // 旧值残留会污染后续普通视频，故先清空再写本次的值。
+            // [lc-2238] 启动期选项在复用会话里要延迟到 loadfile 之后处理（见 sub-add）
+            let mut pending_subs: Vec<String> = Vec::new();
             if let Some(h) = headers {
                 if h.has_mpv_opts() {
                     // [lc-2107] 合并写：demuxer-lavf-o 是同名选项，多次 set 后者覆盖前者。
@@ -622,6 +624,12 @@ async fn launch_mpv(
                                 lavf.push(',');
                             }
                             lavf.push_str(v);
+                        } else if let Some(v) = body.strip_prefix("sub-files=") {
+                            // [lc-2238] `sub-files` 是**启动期**选项，复用会话时 set 无效。
+                            // 运行时对应操作是 `sub-add`（每次 loadfile 后字幕列表会清空，
+                            // 但同一会话连续换集时要在 loadfile **之后**再加，见下方 loadfile 分支）。
+                            // 这里先记到会话待办，由 loadfile 之后的统一处理挂载。
+                            pending_subs.push(v.to_string());
                         } else if let Some((k, v)) = body.split_once('=') {
                             let _ = m.command_no_reply(json!(["set", k, v])).await;
                         }
@@ -674,6 +682,14 @@ async fn launch_mpv(
                 }
             }
             let _ = m.command_no_reply(json!(["set", "pause", "no"])).await;
+            // [lc-2238] 复用会话的外挂字幕（短剧弹幕 ASS）：`sub-files` 是启动期选项，
+            // 运行时只能 `sub-add`。必须在 loadfile **之后**调用才会关联到新文件
+            // （命令是 fire-and-forget，mpv 按收到顺序处理 → 排在 loadfile 后面即生效）。
+            for sub in &pending_subs {
+                let _ = m
+                    .command_no_reply(json!(["sub-add", sub.clone(), "select"]))
+                    .await;
+            }
             crate::libmpv::trace(&format!("[launch/step] 复用分支完成 {:.0}ms", t_enter.elapsed().as_millis()));
             m
         }

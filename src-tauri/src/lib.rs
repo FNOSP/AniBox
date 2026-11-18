@@ -10,6 +10,11 @@ mod bgm_account;
 mod cloud115;
 // [lc-1810] 多云盘资源库：夸克/百度/阿里/123/115 统一接入（LumiPlayer direct_cloud 口径）
 mod cloud;
+// [lc-2230] 厂商子系统按盘拆文件（cloud.rs 已过千行，新逻辑不再往里堆）：
+//   cloud_123     —— 123 云盘的 K/V 签名 + 下载元数据缓存
+//   cloud_guangya —— 光鸭（OAuth 设备码登录 + 列表 + 取链 + token 续期）
+mod cloud_123;
+mod cloud_guangya;
 // [lc-1811] 云盘直链本地续签代理 + ffmpeg HLS 本地转码（播放中途换链）
 mod cloud_proxy;
 mod cloud_library;

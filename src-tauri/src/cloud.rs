@@ -1,15 +1,17 @@
-//! [lc-1810] 多云盘资源库 —— 5 家网盘统一接入（LumiPlayer 2.2.1 `direct_cloud.rs` 逆向口径）。
+//! [lc-1810] 多云盘资源库 —— 网盘统一接入（LumiPlayer 2.2.1 `direct_cloud.rs` 逆向口径，
+//! 端点经 `nianzhibai/91`（MIT）与本机实测核对）。
 //!
-//! 端点证据来源：lumiplayer-tauri.exe 字符串池（导出于 `tests/lumi-ascii-2M.txt`），
-//! 每个端点都能在字符串池里找到原文。各厂商一览：
+//! 厂商子系统已按盘拆文件：`cloud_123`（K/V 签名 + 元数据缓存）、
+//! `cloud_guangya`（设备码登录 + 列表 + 取链 + token 续期）。本文件保留调度面。
 //!
 //! | 厂商    | 登录 | 凭据 | 列目录 | 直链 |
 //! |---------|------|------|--------|------|
 //! | 115     | （复用 cloud115 模块，扫码→UID/CID/SEID） | cookie | aps.115.com/natsort/files.php | webapi files/download + 115.com/api/video/m3u8 转码 |
-//! | 夸克    | uop.quark.cn cas/ajax getTokenForQrcodeLogin → getServiceTicketByQrcodeToken → su.quark.cn 换 Cookie | cookie | drive-pc.quark.cn/1/clouddrive/file/sort (pr=ucpro&fr=pc) | file/v2/play（video_list m3u8）/ file/download (fids, 302) |
+//! | 夸克    | uop.quark.cn cas/ajax getTokenForQrcodeLogin → getServiceTicketByQrcodeToken → su.quark.cn 换 Cookie | cookie | drive-pc.quark.cn/1/clouddrive/file/sort | **POST** file/v2/play（`trans_status=success`+`file_format=m3u8`）/ **POST** file/download `{fids}` |
 //! | 百度    | passport getqrcode → channel/unicast 长轮询 → v3/login/main/qrbdusslogin 落 BDUSS/STOKEN | cookie | pan.baidu.com/api/list (dir=路径, app_id=250528) | rest/2.0/xpan/multimedia method=filemetas → dlink |
 //! | 阿里    | passport.aliyundrive.com newlogin/qrcode/generate.do → query.do (bizExt base64) → api.aliyundrive.com/token/refresh | token | openapi.alipan.com/adrive/v1.0/openFile/list | openFile/getDownloadUrl → cdn_url |
-//! | 123     | user.123pan.cn/api/user/qr-code/generate → qr-code/result | cookie | api.123278.com/b/api/file/list/new | file/download_info → yun.123pan.cn/Origin 跳转链 |
+//! | 123     | user.123pan.cn/api/user/qr-code/generate → qr-code/result | **Bearer token** | **POST** file/list/new（K/V 签名） | **POST** file/download_info（六项元数据 + 签名）→ 跳转链 |
+//! | 光鸭    | OAuth 设备码 account.guangyapan.com/v1/auth/device/code → /v1/auth/token | access+refresh token | api.guangyapan.com/userres/v1/file/get_file_list | nd.bizuserres.s/v1/get_res_download_url → signedURL |
 //!
 //! 统一口径（对齐 LumiPlayer）：
 //! - 凭据只落本机 `app_data_dir/direct-cloud-auth.json`（沿用 LumiPlayer 同名文件），绝不上传；
@@ -66,7 +68,7 @@ fn load_auth() -> serde_json::Map<String, Value> {
         .unwrap_or_default()
 }
 
-fn save_provider_auth(provider: &str, cred: Value) -> Result<(), String> {
+pub(crate) fn save_provider_auth(provider: &str, cred: Value) -> Result<(), String> {
     let p = auth_path().ok_or("app_data_dir 未初始化")?;
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
@@ -88,7 +90,7 @@ fn drop_provider_auth(provider: &str) {
     }
 }
 
-fn require_cred(provider: &str, keys: &[&str]) -> Result<Value, String> {
+pub(crate) fn require_cred(provider: &str, keys: &[&str]) -> Result<Value, String> {
     let all = load_auth();
     let Some(c) = all.get(provider).cloned() else {
         return Err(format!("未登录（请先扫码）"));
@@ -104,7 +106,8 @@ fn require_cred(provider: &str, keys: &[&str]) -> Result<Value, String> {
 
 // ───────────────────────── HTTP ─────────────────────────
 
-fn client() -> &'static reqwest::Client {
+/// 通用 HTTP client（光鸭等模块复用；UA 是桌面 Chrome）。
+pub(crate) fn client() -> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
@@ -293,8 +296,110 @@ fn cookie_str(set_cookies: &[String], wanted: Option<&[&str]>) -> String {
     out.join("; ")
 }
 
-/// 文本链接 → SVG 二维码 data URI（与 bili_qr 同款渲染）。
-fn qr_svg_data_uri(text: &str) -> Result<String, String> {
+/// 夸克 Cookie 轮换（实测：任意响应都可能轮换 `__puus` / `__pus`）。
+/// 只替换这两个键的值，其余原样保留；不做合并就继续用旧串 → 播一会儿就 401。
+pub(crate) fn merge_quark_cookies(current: &str, rotated: &[(String, String)]) -> Option<String> {
+    if rotated.is_empty() {
+        return None;
+    }
+    let mut parts: Vec<(String, String)> = current
+        .split(';')
+        .filter_map(|p| {
+            let p = p.trim();
+            let (k, v) = p.split_once('=')?;
+            Some((k.trim().to_string(), v.trim().to_string()))
+        })
+        .collect();
+    let mut changed = false;
+    for (name, value) in rotated {
+        if value.is_empty() {
+            continue;
+        }
+        match parts.iter_mut().find(|(k, _)| k == name) {
+            Some(slot) => {
+                if &slot.1 != value {
+                    slot.1 = value.clone();
+                    changed = true;
+                }
+            }
+            None => {
+                parts.push((name.clone(), value.clone()));
+                changed = true;
+            }
+        }
+    }
+    if !changed {
+        return None;
+    }
+    Some(
+        parts
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("; "),
+    )
+}
+
+/// 夸克业务 POST：POST + JSON（GET 一律 405），顺带处理 Cookie 轮换并写回凭据仓。
+async fn quark_post(path: &str, body: Value, cookies: &str) -> Result<Value, String> {
+    let url = format!("https://drive-pc.quark.cn/1/clouddrive{path}?pr=ucpro&fr=pc");
+    let resp = client()
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Cookie", cookies)
+        .header("Referer", "https://pan.quark.cn/")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("夸克请求失败: {e}"))?;
+    let status = resp.status();
+    let rotated: Vec<(String, String)> = resp
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|h| h.to_str().ok())
+        .filter_map(|raw| {
+            let pair = raw.split(';').next()?.trim();
+            let (k, v) = pair.split_once('=')?;
+            let k = k.trim();
+            if ["__puus", "__pus", "__kp", "__ktd"].contains(&k) {
+                Some((k.to_string(), v.trim().to_string()))
+            } else {
+                None
+            }
+        })
+        .collect();
+    if let Some(next) = merge_quark_cookies(cookies, &rotated) {
+        persist_quark_cookies(&next);
+    }
+    let text = resp.text().await.map_err(|e| format!("夸克响应读取失败: {e}"))?;
+    if !status.is_success() {
+        return Err(format!(
+            "夸克 HTTP {}（登录态可能失效）: {}",
+            status.as_u16(),
+            text.chars().take(160).collect::<String>()
+        ));
+    }
+    serde_json::from_str(&text).map_err(|_| {
+        format!("夸克返回非 JSON：{}", text.chars().take(120).collect::<String>())
+    })
+}
+
+/// 轮换后的 Cookie 写回凭据仓（保留 userName / 其它字段）。
+pub(crate) fn persist_quark_cookies(cookies: &str) {
+    let all = load_auth();
+    let mut cred = all.get("quark").cloned().unwrap_or_else(|| json!({}));
+    if let Some(obj) = cred.as_object_mut() {
+        obj.insert("cookies".to_string(), json!(cookies));
+        obj.insert("saved_at_ms".to_string(), json!(now_ms()));
+    }
+    if let Err(e) = save_provider_auth("quark", cred) {
+        crate::libmpv::trace(&format!("[quark] Cookie 轮换写盘失败: {e}"));
+    }
+}
+
+/// 文本链接 → SVG 二维码 data URI（与 bili_qr 同款渲染；光鸭模块复用）。
+pub(crate) fn qr_svg_data_uri(text: &str) -> Result<String, String> {
     use qrcode::render::svg;
     let code = qrcode::QrCode::new(text.as_bytes()).map_err(|e| format!("生成二维码失败: {e}"))?;
     let s = code
@@ -314,6 +419,42 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// 光鸭等子模块需要的当前时间（避免每个模块各写一份）。
+pub(crate) fn now_ms_pub() -> u64 {
+    now_ms()
+}
+
+// ───────────────────────── 光鸭设备码状态串 ─────────────────────────
+
+/// 光鸭登录状态串：device_code + 设备指纹 + 过期时间。
+/// 设备 id 必须跟着 state 走 —— 确认 token 时上游按指纹绑定，换了指纹换不出 token。
+#[derive(serde::Serialize, serde::Deserialize)]
+struct GuangyaState {
+    device_code: String,
+    device_id: String,
+    exp_ms: u64,
+}
+
+pub(crate) fn pack_guangya_state(device_code: &str, device_id: &str, ttl_ms: u64) -> String {
+    let st = GuangyaState {
+        device_code: device_code.to_string(),
+        device_id: device_id.to_string(),
+        exp_ms: now_ms() + ttl_ms,
+    };
+    STANDARD.encode(serde_json::to_string(&st).unwrap_or_default().as_bytes())
+}
+
+/// 解出 (device_code, device_id, 是否已过期)。光鸭的码只有 120s，
+/// 过期本身就是正常轮询结果（status=3），不作为 Err 抛出。
+pub(crate) fn unpack_guangya_state(s: &str) -> Result<(String, String, bool), String> {
+    let raw = STANDARD
+        .decode(s.trim())
+        .map_err(|_| "光鸭登录状态无效，请刷新二维码".to_string())?;
+    let st: GuangyaState =
+        serde_json::from_slice(&raw).map_err(|_| "光鸭登录状态无效，请刷新二维码".to_string())?;
+    Ok((st.device_code, st.device_id, now_ms() > st.exp_ms))
+}
+
 // ───────────────────────── 厂商清单 / 状态 ─────────────────────────
 
 pub const PROVIDERS: &[(&str, &str)] = &[
@@ -322,6 +463,8 @@ pub const PROVIDERS: &[(&str, &str)] = &[
     ("baidu", "百度网盘"),
     ("aliyun", "阿里云盘"),
     ("123", "123 云盘"),
+    // [lc-2230] 光鸭：设备码登录（官方 web client_id），端点经 91（MIT）与实测核对
+    ("guangyapan", "光鸭网盘"),
 ];
 
 #[tauri::command]
@@ -429,6 +572,11 @@ impl QrState {
 
 #[tauri::command]
 pub async fn cloud_qr_start(provider: String) -> Result<Value, String> {
+    // [lc-2230] 光鸭是 OAuth 设备码（不是二维码图片接口），单独走一套；
+    // 对外返回形状保持一致，前端不需要分支。
+    if provider == "guangyapan" {
+        return crate::cloud_guangya::qr_start().await;
+    }
     let (data, qrcode, hint) = match provider.as_str() {
         // 夸克：getTokenForQrcodeLogin → data.members.token（实测 2026-10：
         // {status:2000000, data:{members:{token}}}，status 2000000 = OK）
@@ -541,6 +689,9 @@ pub async fn cloud_qr_poll(_app: AppHandle, provider: String, state: String) -> 
     if provider == "115" {
         // 115 走自家模块，前端按旧三元组直调 cloud115_qr_poll；这里只为统一入口兜底
         return Ok(json!({ "status": 0, "ok": false }));
+    }
+    if provider == "guangyapan" {
+        return crate::cloud_guangya::qr_poll(&state).await;
     }
     let st = match QrState::unpack(&state) {
         Ok(st) => st,
@@ -992,42 +1143,53 @@ pub async fn cloud_list(
                 .collect();
             Ok(json!({ "items": out, "nextCursor": next_cursor }))
         }
-        // 123：file/list/new（cursor = next）
+        // 123：POST file/list/new（cursor = next）—— [lc-2230] 认证是 Bearer token + K/V 签名，
+        // 不是 Cookie；列目录时顺手把每条文件的下载元数据灌进缓存，取链就不用再翻目录。
         "123" => {
-            let cred = require_cred("123", &["cookies"])?;
-            let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
             let parent = if fid.is_empty() { "0" } else { fid.as_str() };
-            let mut url = format!(
-                "https://api.123278.com/b/api/file/list/new?limit=100&parentFileId={}&orderBy=file_name&orderDirection=asc&trashed=0",
-                urlencoding::encode(parent)
-            );
-            if !cursor.is_empty() {
-                url.push_str(&format!("&next={}", urlencoding::encode(&cursor)));
-            }
-            let mut hdrs: Vec<(String, String)> = headers_123()
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect();
-            hdrs.push(("Cookie".into(), cookies.to_string()));
-            hdrs.push(("Referer".into(), "https://yun.123pan.cn/".into()));
-            let v = get_json(&url, &hdrs).await?;
-            if v.get("code").and_then(|x| x.as_i64()).unwrap_or(0) != 0 && v.get("data").is_none() {
-                return Err(format!("123 列目录被拒: {v}"));
-            }
+            let page: u32 = if cursor.is_empty() { 1 } else { cursor.parse().unwrap_or(1) };
+            let v = crate::cloud_123::p123_post_signed(
+                "/file/list/new",
+                json!({
+                    "driveId": 0,
+                    "limit": 100,
+                    "next": "0",
+                    "orderBy": "file_id",
+                    "orderDirection": "desc",
+                    "parentFileId": parent,
+                    "trashed": false,
+                    "SearchData": "",
+                    "Page": page,
+                    "OnlyLookAbnormalFile": 0,
+                    "event": "homeListFile",
+                    "operateType": 4,
+                    "inDirectSpace": false,
+                }),
+            )
+            .await?;
+            crate::cloud_123::cache_from_list_response(&v);
             let list = v
-                .pointer("/data/fileList")
-                .or_else(|| v.pointer("/data/InfoList"))
+                .pointer("/data/InfoList")
+                .or_else(|| v.pointer("/data/fileList"))
                 .or_else(|| v.pointer("/data/list"))
                 .and_then(|x| x.as_array())
                 .cloned()
                 .unwrap_or_default();
-            let next = g_str(&v, &["/data/next", "/data/Next"], &["next", "Next"]);
+            let total = v.pointer("/data/Total").and_then(|x| x.as_u64()).unwrap_or(0);
+            let next = g_str(&v, &["/data/Next", "/data/next"], &["Next", "next"]);
+            let next_cursor = if next.is_empty() || next == "-1" {
+                String::new()
+            } else if total > 0 && (page as u64) * 100 >= total {
+                String::new()
+            } else {
+                (page + 1).to_string()
+            };
             let out: Vec<Value> = list
                 .iter()
                 .map(|it| {
                     let is_dir = g_u64(it, &["Type", "type", "fileType"]) == 1
                         || g_str(it, &["/type"], &["type"]) == "folder";
-                    let name = g_str(it, &["/Filename", "/filename", "/fileName", "/name"], &[]);
+                    let name = g_str(it, &["/FileName", "/Filename", "/filename", "/fileName", "/name"], &[]);
                     let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
                     let kind = if is_dir {
                         "dir"
@@ -1048,8 +1210,10 @@ pub async fn cloud_list(
                     })
                 })
                 .collect();
-            Ok(json!({ "items": out, "nextCursor": next }))
+            Ok(json!({ "items": out, "nextCursor": next_cursor }))
         }
+        // 光鸭：设备码登录 + 业务 API（token 续期在 cloud_guangya 内部）
+        "guangyapan" => crate::cloud_guangya::list(&fid, &cursor).await,
         _ => Err(format!("不支持的网盘: {provider}")),
     }
 }
@@ -1194,8 +1358,12 @@ pub(crate) async fn resolve_play(
         // [lc-1828] 直链模式加 Range 探活（bytes=0-0）：编码不兼容/限速的直链 CDN 可能
         // 返回异常——探测失败自动回退 m3u8（服务端转码永远兼容）。
         "115" => {
+            // [lc-2230] 统一入口传进来的是 **fid**（列目录的 fileId），而 115 取链只认
+            // **pickcode**（字段 pc）。旧代码直接拿 fid 当 pickcode 打，必然失败
+            // （只有极老的「115 tab 直接传 pickcode」路径能通）。这里统一查一次。
             let jar = crate::cloud115::load_jar().ok_or("未登录 115（请先扫码）")?;
-            let u = crate::cloud115::resolve_play_url(&jar, file_id, prefer_hls).await?;
+            let pickcode = crate::cloud115::pickcode_for(&jar, file_id).await?;
+            let u = crate::cloud115::resolve_play_url(&jar, &pickcode, prefer_hls).await?;
             if prefer_hls {
                 return Ok((u, true, "https://115.com/".into(), crate::cloud115::UA_115.to_string()));
             }
@@ -1212,55 +1380,83 @@ pub(crate) async fn resolve_play(
                 Ok((u, false, "https://115.com/".into(), crate::cloud115::UA_115.to_string()))
             } else {
                 crate::libmpv::trace("[cloud] 115 直链探活失败，自动回退服务端转码 m3u8");
-                let m3u8 = crate::cloud115::resolve_play_url(&jar, file_id, true).await?;
+                let m3u8 = crate::cloud115::resolve_play_url(&jar, &pickcode, true).await?;
                 Ok((m3u8, true, "https://115.com/".into(), crate::cloud115::UA_115.to_string()))
             }
         }
-        // 夸克：prefer_hls → v2/play（video_list m3u8）；直链 → file/download（302）
+        // 夸克：prefer_hls → v2/play（video_list）；直链 → file/download
+        // [lc-2230] 两个接口都是 **POST + JSON body**（实测 GET 一律 405 Method Not Allowed）；
+        // 转码地址判定按 `trans_status=="success" && file_format=="m3u8"`，
+        // 不能看 URL 里有没有 ".m3u8"（真实地址是 `video-play-*.drive.quark.cn/video?sign=...`）。
         "quark" => {
             let cred = require_cred("quark", &["cookies"])?;
-            let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
+            let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("").to_string();
             if prefer_hls {
-                let hdrs = vec![
-                    ("Cookie".to_string(), cookies.to_string()),
-                    ("Referer".into(), "https://pan.quark.cn/".into()),
-                ];
-                let url = format!(
-                    "https://drive-pc.quark.cn/1/clouddrive/file/v2/play?pr=ucpro&fr=pc&fids={}&resolutions=normal%2Chigh%2Csuper%2C2k%2C4k&supports=fmp4_av%2Cm3u8%2Cdolby_vision",
-                    urlencoding::encode(file_id)
-                );
-                let v = get_json(&url, &hdrs).await?;
+                let v = quark_post(
+                    "/file/v2/play",
+                    json!({
+                        "fid": file_id,
+                        "resolutions": "normal,low,high,super,2k,4k",
+                        "supports": "fmp4,m3u8",
+                    }),
+                    &cookies,
+                )
+                .await?;
                 let mut best = String::new();
                 if let Some(list) = v.pointer("/data/video_list").and_then(|x| x.as_array()) {
                     for it in list {
+                        let status = it.get("trans_status").and_then(|x| x.as_str()).unwrap_or("");
+                        let format = it
+                            .pointer("/video_info/file_format")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("");
                         let u = g_str(it, &["/video_info/url", "/url"], &["url"]);
-                        if u.contains(".m3u8") {
+                        if status == "success" && format == "m3u8" && !u.is_empty() {
                             best = u;
                         }
                     }
                 }
-                if !best.is_empty() {
-                    return Ok((best, true, "https://pan.quark.cn/".into(), UA_CHROME.into()));
+                if best.is_empty() {
+                    // 转码中/不可预览：把上游的转码状态原样带出来，别让用户以为是会员问题
+                    let states: Vec<String> = v
+                        .pointer("/data/video_list")
+                        .and_then(|x| x.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|it| it.get("trans_status").and_then(|x| x.as_str()))
+                                .map(|s| s.to_string())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let hint = if states.iter().any(|s| s == "transcoding" || s == "waiting" || s == "pending") {
+                        "夸克正在转码，稍后再试（或先用「直链」档）"
+                    } else {
+                        "夸克未返回可播的转码 HLS（该文件可能不支持在线预览）"
+                    };
+                    return Err(hint.to_string());
                 }
-                return Err("夸克未返回转码 HLS（可能非会员或文件不可预览）".into());
+                // [lc-2230] 夸克转码 HLS **必须带账号 Cookie**，缺了上游回 412。
+                // mpv 拿不到我们的 Cookie 会话，所以把它作为额外头下发。
+                return Ok((
+                    best,
+                    true,
+                    "https://pan.quark.cn/".into(),
+                    UA_CHROME.into(),
+                ));
             }
-            // 直链：file/download 302
-            let resp = client_noredir()
-                .get(format!(
-                    "https://drive-pc.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc&fids={}",
-                    urlencoding::encode(file_id)
-                ))
-                .header("Cookie", cookies)
-                .header("Referer", "https://pan.quark.cn/")
-                .send()
-                .await
-                .map_err(|e| format!("夸克直链请求失败: {e}"))?;
-            if let Some(loc) = resp.headers().get(reqwest::header::LOCATION).and_then(|l| l.to_str().ok()) {
-                if loc.starts_with("http") {
-                    return Ok((loc.to_string(), false, "https://pan.quark.cn/".into(), UA_CHROME.into()));
-                }
+            // 直链：POST /file/download {fids:[id]} → data[0].download_url（不是 302）
+            let v = quark_post("/file/download", json!({ "fids": [file_id] }), &cookies).await?;
+            let url = v
+                .pointer("/data/0/download_url")
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            if url.is_empty() {
+                return Err(format!(
+                    "夸克未返回可播地址（可能非会员或文件不可预览）: {}",
+                    v.get("message").and_then(|x| x.as_str()).unwrap_or("")
+                ));
             }
-            Err("夸克未返回可播地址（会员限制或文件不可预览）".into())
+            Ok((url.to_string(), false, "https://pan.quark.cn/".into(), UA_CHROME.into()))
         }
         // 百度：xpan/multimedia filemetas → dlink（mpv 侧需带同款 UA + Referer）
         "baidu" => {
@@ -1341,40 +1537,39 @@ pub(crate) async fn resolve_play(
             }
             Ok((url, false, "https://www.alipan.com/".into(), UA_CHROME.into()))
         }
-        // 123：file/download_info → DownloadUrl → yun.123pan.cn/Origin 跳转链（跟到最终直链）
+        // 123：POST file/download_info（GET 404）+ 文件元数据六项 + K/V 签名
         "123" => {
-            let cred = require_cred("123", &["cookies"])?;
-            let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
-            let mut hdrs: Vec<(String, String)> = headers_123()
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect();
-            hdrs.push(("Cookie".into(), cookies.to_string()));
-            hdrs.push(("Referer".into(), "https://yun.123pan.cn/".into()));
-            let v = get_json(
-                &format!(
-                    "https://api.123278.com/b/api/file/download_info?fileId={}&os=web",
-                    urlencoding::encode(file_id)
-                ),
-                &hdrs,
-            )
-            .await?;
-            let dl = g_str(
-                &v,
-                &["/data/FileDownloadUrl", "/data/DownloadUrl", "/FileDownloadUrl"],
-                &["FileDownloadUrl", "DownloadUrl"],
+            let cred = require_cred("123", &["access_token"])?;
+            let token = cred.get("access_token").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let meta = crate::cloud_123::p123_metadata(file_id).await?;
+            let body = json!({
+                "driveId": 0,
+                "etag": meta.etag,
+                "fileId": meta.numeric_id,
+                "fileName": meta.name,
+                "s3keyFlag": meta.s3key_flag,
+                "size": meta.size,
+                "type": 0,
+            });
+            let dl = crate::cloud_123::p123_post_signed("/file/download_info", body).await?;
+            let raw = g_str(
+                &dl,
+                &["/data/DownloadUrl", "/data/downloadUrl", "/data/DownloadURL"],
+                &[],
             );
-            if dl.is_empty() {
-                return Err(format!("123 未返回下载地址: {v}"));
+            if raw.is_empty() {
+                return Err(format!("123 未返回下载地址: {dl}"));
             }
-            // 跳转链跟到底（LumiPlayer「media handoff」）：Range bytes=0-0 探活 + Location 链
-            let mut cur = dl;
+            // 跳转链跟到底（Range bytes=0-0 探活 + Location 链）；params 里可能套一层 base64
+            let first = crate::cloud_123::p123_unwrap_params(&raw);
+            let mut cur = first;
             let mut final_url = cur.clone();
             for _ in 0..8 {
                 let resp = client_noredir()
                     .get(&cur)
                     .header("Range", "bytes=0-0")
-                    .header("Referer", "https://yun.123pan.cn/")
+                    .header("Referer", "https://www.123pan.com/")
+                    .header("User-Agent", crate::cloud_123::p123_ua())
                     .send()
                     .await
                     .map_err(|e| format!("123 直链跳转失败: {e}"))?;
@@ -1388,13 +1583,16 @@ pub(crate) async fn resolve_play(
                 final_url = cur;
                 break;
             }
-            Ok((final_url, false, "https://yun.123pan.cn/".into(), UA_CHROME.into()))
+            Ok((final_url, false, "https://www.123pan.com/".into(), crate::cloud_123::p123_ua().to_string()))
+        }
+        // 光鸭：签名直链（signedURL 优先），链接不带账号头，可直接播
+        "guangyapan" => {
+            let u = crate::cloud_guangya::resolve_play(file_id).await?;
+            Ok((u, false, String::new(), UA_CHROME.into()))
         }
         _ => Err(format!("不支持的网盘: {provider}")),
     }
 }
-
-/// 续签代理入口（cloud_proxy::renew 调）：只要新直链，不要 HLS。
 pub(crate) async fn resolve_play_for_renew(
     provider: &str,
     file_id: &str,
@@ -1427,7 +1625,19 @@ pub async fn cloud_play(
         // 服务端转码：CDN 直连（m3u8 分段长效，无需续签代理）
         "server" => {
             let (u, _, referer, ua) = resolve_play(&provider, file_id.trim(), true).await?;
-            (u, Some(crate::player::HttpHeaders::new(Some(referer), Some(ua))))
+            let mut h = crate::player::HttpHeaders::new(Some(referer), Some(ua));
+            // [lc-2230] 夸克转码 HLS 除签名外还要求账号 Cookie（缺了上游 412）。
+            // mpv 直接向上游取清单/分片，只能把 Cookie 作为 http-header-fields 下发；
+            // 其它家不需要账号头，别把凭据到处撒。
+            if provider == "quark" {
+                if let Ok(cred) = require_cred("quark", &["cookies"]) {
+                    let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
+                    if !cookies.is_empty() {
+                        h.extra.push(("Cookie".to_string(), cookies.to_string()));
+                    }
+                }
+            }
+            (u, Some(h))
         }
         // 本地 ffmpeg remux HLS：注册会话（代理持有直链+续签）→ m3u8 端点给 mpv
         "local" => {
@@ -1553,32 +1763,25 @@ pub async fn cloud_rename(provider: String, file_id: String, new_name: String) -
             }
             Ok(())
         }
-        // 123：b/api/file/rename {fileId, fileName}
+        // 123：b/api/file/rename {fileId, fileName}（[lc-2230] Bearer + K/V 签名，非 Cookie）
         "123" => {
-            let cred = require_cred("123", &["cookies"])?;
-            let cookies = cred.get("cookies").and_then(|x| x.as_str()).unwrap_or("");
-            let mut hdrs: Vec<(String, String)> = headers_123()
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect();
-            hdrs.push(("Cookie".into(), cookies.to_string()));
-            hdrs.push(("Referer".into(), "https://yun.123pan.cn/".into()));
-            let fid = file_id.parse::<i64>().unwrap_or_else(|_| {
-                // 非纯数字 id（防御）：透传字符串会导致上游 4xx，直接报参数错
-                0
-            });
+            let fid = file_id.parse::<i64>().unwrap_or(0);
             if fid == 0 {
                 return Err("123 文件 id 非法".into());
             }
-            let v = post_json(
-                "https://api.123278.com/b/api/file/rename",
+            let v = crate::cloud_123::p123_post_signed(
+                "/file/rename",
                 json!({ "fileId": fid, "fileName": new_name }),
-                &hdrs,
             )
             .await?;
-            if v.get("code").and_then(|x| x.as_i64()).unwrap_or(-1) != 0 {
+            if v.get("code").and_then(|x| x.as_i64()).unwrap_or(0) != 0 {
                 return Err(format!("123 改名被拒: {v}"));
             }
+            Ok(())
+        }
+        // 光鸭：/nd.bizuserres.s/v1/file/rename（91 同口径）
+        "guangyapan" => {
+            crate::cloud_guangya::rename(file_id.as_str(), new_name.as_str()).await?;
             Ok(())
         }
         _ => Err(format!("{provider} 暂不支持改名")),

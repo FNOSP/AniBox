@@ -368,6 +368,8 @@ pub async fn cloud115_list(
         }
     }
     let has_more = (offset as u64 + LIST_LIMIT as u64) < count;
+    // [lc-2230] 顺手缓存 fid→pickcode，取链时不用再查 get_info
+    remember_pickcodes(&items);
     Ok(json!({
         "cid": cid,
         "count": count,
@@ -378,6 +380,80 @@ pub async fn cloud115_list(
 }
 
 // ───────────────────────── 播放 ─────────────────────────
+
+/// [lc-2230] fid → pickcode 查表（带进程内缓存）。
+///
+/// 统一入口 `cloud_list` 返回的 `fileId` 是 **fid**，而 115 的取链接口
+/// （`webapi/files/download`、`115.com/api/video/m3u8`）只认 **pickcode**（列表里的 `pc`）。
+/// 旧代码把 fid 直接塞进 `pickcode=`，取链必然失败 —— 只有「从列表直接拿 pc 传给
+/// `cloud115_play`」的老路径能通。这里按 91 的 `lookupPickCode` 口径补上查表：
+/// `webapi.115.com/files/get_info?file_id=` → `data[0].pc`。
+///
+/// 输入本身像 pickcode（115 的 pc 是 10~30 位 base36 风格串，与纯数字 fid 不同）
+/// 时直接透传，兼容老调用方。
+pub(crate) async fn pickcode_for(jar: &CookieJar, file_id: &str) -> Result<String, String> {
+    let id = file_id.trim();
+    if id.is_empty() {
+        return Err("115 文件 id 为空".into());
+    }
+    if let Some(pc) = pickcode_cache().lock().ok().and_then(|g| g.get(id).cloned()) {
+        return Ok(pc);
+    }
+    let t = ts();
+    let url = format!("https://webapi.115.com/files/get_info?file_id={id}&_={t}");
+    let v = get_json_with_cookie(&url, jar).await?;
+    let items = v
+        .get("data")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default();
+    // get_info 单条时 data 可能是对象而不是数组
+    let first = items
+        .first()
+        .cloned()
+        .or_else(|| v.get("data").filter(|d| d.is_object()).cloned());
+    let Some(item) = first else {
+        return Err(format!("115 查 {id} 的 pickcode 失败：文件不存在或无权限"));
+    };
+    let pc = item
+        .get("pc")
+        .and_then(|x| x.as_str())
+        .or_else(|| item.get("pick_code").and_then(|x| x.as_str()))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if pc.is_empty() {
+        return Err(format!("115 文件 {id} 未返回 pickcode（可能是目录或已删除）"));
+    }
+    if let Ok(mut g) = pickcode_cache().lock() {
+        if g.len() > 4096 {
+            g.clear();
+        }
+        g.insert(id.to_string(), pc.clone());
+    }
+    Ok(pc)
+}
+
+fn pickcode_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    static C: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+        std::sync::OnceLock::new();
+    C.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// 列目录时顺手把 fid→pickcode 关系灌进缓存：取链时零额外请求。
+fn remember_pickcodes(items: &[Value]) {
+    let Ok(mut g) = pickcode_cache().lock() else { return };
+    for it in items {
+        let fid = it.get("fileId").and_then(|x| x.as_str()).unwrap_or("");
+        let pc = it.get("pickcode").and_then(|x| x.as_str()).unwrap_or("");
+        if !fid.is_empty() && !pc.is_empty() {
+            if g.len() > 4096 {
+                g.clear();
+            }
+            g.insert(fid.to_string(), pc.to_string());
+        }
+    }
+}
 
 /// 取可播地址。hls=false → 直链（webapi files/download，JSON url 或 302 Location）；
 /// hls=true → 115 服务端转码 HLS（115.com/api/video/m3u8，返回 …m3u8?definition=…）。

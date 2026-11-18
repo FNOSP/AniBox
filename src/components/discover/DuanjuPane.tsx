@@ -227,6 +227,10 @@ export function DuanjuPane() {
   const [acct, setAcct] = useState("");
   // 播放因「需要登录」失败时记下待重试的播放参数，登录成功后自动重试
   const lastPlay = useRef<{ idx: number; chapter: DuanjuChapter; name: string } | null>(null);
+  // [lc-2237] 用户交互（开详情/起播）标记：健康探测在此期间让路，不抢核心读名额
+  const userBusyRef = useRef(false);
+  // [lc-2237] 详情加载失败时 detail 为 null，重试需要记住上次要打开的那部剧
+  const lastDetailRef = useRef<DuanjuDrama | null>(null);
   // [lc-2099] 收藏：favOpen = 左栏「收藏」标签激活（与站源 chips 并列置顶）
   const [favs, setFavs] = useState<FavDrama[]>(readFavs);
   const [favOpen, setFavOpen] = useState(false);
@@ -274,6 +278,8 @@ export function DuanjuPane() {
   // `readCount >= 16` 直接拒绝），慢源要占满 26~60s 超时。此前 13 源全并发 →
   // 名额被死源占死，用户正在看的目录请求排队/被拒 = 界面一直「加载中」。
   // 现在：当前站源最先探、最多 3 个在飞，慢源最多拖住自己。
+  // [lc-2237] 但探测仍会和用户的详情/播放抢核心读名额（实测红果 detail 0.3s → 5.1s），
+  // 所以探测降为**单并发**并在等待时让路给用户操作。
   async function probeSources(list: DjSource[]) {
     const h = { ...readHealth() };
     const now = Date.now();
@@ -294,6 +300,9 @@ export function DuanjuPane() {
     const queue = [...todo];
     const worker = async () => {
       for (;;) {
+        // [lc-2237] 用户正在开详情/起播 → 探测让路（等它结束再继续），
+        // 避免慢源与用户的请求抢核心读名额。
+        while (userBusyRef.current) await new Promise((r) => window.setTimeout(r, 400));
         const s = queue.shift();
         if (!s) return;
         try {
@@ -307,7 +316,9 @@ export function DuanjuPane() {
         setHealth({ ...h });
       }
     };
-    await Promise.all(Array.from({ length: Math.min(3, todo.length) }, worker));
+    // 单并发：用户点开详情/播放时最多被一个慢源影响（而不是 3 个），
+    // 配合下面的 userBusy 门控在交互期间直接暂停探测。
+    await Promise.all(Array.from({ length: Math.min(1, todo.length) }, worker));
   }
 
   // [lc-2180] 站源能力清单（顺带预热核心）：guoapp v2 起站源 = 随包 JS 模块，
@@ -545,18 +556,37 @@ export function DuanjuPane() {
 
   async function openDetail(d: DuanjuDrama) {
     setDetail(null);
-    setDBusy(true);
     setDErr("");
     setEpGroup(0);
     setPlayErr("");
     setPlayingIdx(-1);
-    // [lc-2234] 详情同样可能卡住（核心读名额被占满/站点超时）→ 20s 兜底，避免永远转圈
+    lastDetailRef.current = d;
+    // [lc-2237] 收藏里可能留着**已下架/已失效站源**的旧条目（上游 v2 把黄豆、禁果、
+    // 黄果旧版撤了；野果/黄果视频/MissAV 等也常年超时）。对这些源调 detail 会一直挂着
+    // 到上游 26~60s 超时，界面就是转圈到 20s 兜底才报错 —— 直接秒失败并说清楚。
+    const src = String(d.source || (d.id.includes(":") ? d.id.split(":")[0] : ""));
+    const list0 = sources || [];
+    const known = list0.find((s) => s.id === src);
+    const srcLabel = known?.name || src;
+    if (src && (!known || known.available === false)) {
+      setDErr(`该剧来自已不可用的站源（${srcLabel}），无法打开详情`);
+      return;
+    }
+    // 已判定加载失败（健康探测剔除）的站源同样直接拦，不再等 26s 网络超时
+    if (src && isHidden(health, src)) {
+      setDErr(`站源「${srcLabel}」当前不可用，请点站源行的「重试」后再试`);
+      return;
+    }
+    setDBusy(true);
+    userBusyRef.current = true;
+    // [lc-2234] 详情同样可能卡住（核心读名额被占满/站点超时）→ 兜底，避免永远转圈。
+    // [lc-2237] 收紧到 12s：核心侧死源要 26~60s 才超时，让用户干等 20s 没有意义；
+    // 12s 没回就先报错，用户可点「重试」（后台请求可能仍在跑，重试会拿新结果）。
     const tid = window.setTimeout(() => {
-      setDBusy((b) => {
-        if (b) setDErr("详情加载超时，请稍后重试");
-        return false;
-      });
-    }, 20000);
+      setDErr("详情加载超时，请点「重试」或换个站源");
+      setDBusy(false);
+      userBusyRef.current = false;
+    }, 12000);
     try {
       const resp = await invoke<DetailResp>("duanju_detail", { drama: d });
       setDetail({ drama: resp?.drama || d, chapters: resp?.chapters || [] });
@@ -569,6 +599,7 @@ export function DuanjuPane() {
     } finally {
       window.clearTimeout(tid);
       setDBusy(false);
+      userBusyRef.current = false;
     }
   }
 
@@ -576,6 +607,7 @@ export function DuanjuPane() {
     if (playingIdx >= 0 || !detail?.drama) return;
     setPlayErr("");
     setPlayingIdx(idx);
+    userBusyRef.current = true;
     lastPlay.current = { idx, chapter, name };
     try {
       await invoke("duanju_play", {
@@ -605,6 +637,7 @@ export function DuanjuPane() {
       setPlayErr(String(e));
     } finally {
       setPlayingIdx(-1);
+      userBusyRef.current = false;
     }
   }
 
@@ -955,6 +988,17 @@ export function DuanjuPane() {
             ) : dErr ? (
               <>
                 <div className="dj-detail-tip">{dErr}</div>
+                {/* [lc-2237] 超时/失败后可直接重试（原先进来只能关掉再点一次） */}
+                <button
+                  type="button"
+                  className="dj-morebtn"
+                  onClick={() => {
+                    const target = detail?.drama || lastDetailRef.current;
+                    if (target) openDetail(target);
+                  }}
+                >
+                  重试
+                </button>
                 <button type="button" className="dj-morebtn" onClick={() => setDetail(null)}>
                   关闭
                 </button>

@@ -122,6 +122,19 @@ pub fn normalize_http_headers(
     referrer: Option<&str>,
     ua: Option<&str>,
 ) -> (Option<String>, Option<String>, Option<String>) {
+    normalize_http_headers_extra(referrer, ua, &[])
+}
+
+/// [lc-2230] 带额外头版本：某些源（夸克转码 HLS）在播放请求上**必须**带账号 Cookie，
+/// 而 Cookie 不能进 URL。这类头只能随 `http-header-fields` 下发。
+///
+/// 与 Referer 同一套过滤规则：值里含逗号的头一律丢弃（会被 mpv 的 string-list 撕碎，
+/// 变成畸形头反而害了整个请求）；`User-Agent` / `Referer` 由专用参数承载，即便误传也跳过。
+pub fn normalize_http_headers_extra(
+    referrer: Option<&str>,
+    ua: Option<&str>,
+    extra: &[(String, String)],
+) -> (Option<String>, Option<String>, Option<String>) {
     let r = referrer
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -132,12 +145,32 @@ pub fn normalize_http_headers(
         .map(str::to_string);
     // [lc-1506][lc-1748] http-header-fields：ffmpeg(hls) 的分段请求走它
     // （mpv 的 `referrer` 属性只覆盖部分加载路径，缺了它分段会被源站 403）。
-    // 只装「值里没有逗号」的 Referer（见上方两条硬约束），分隔符用 `,`。
+    // 只装「值里没有逗号」的头（见上方两条硬约束），分隔符用 `,`。
     let mut hf: Vec<String> = Vec::new();
     if let Some(r) = &r {
         if !r.contains(',') {
             hf.push(format!("Referer: {r}"));
         }
+    }
+    for (k, v) in extra {
+        let key = k.trim();
+        let val = v.trim();
+        if key.is_empty() || val.is_empty() || val.contains(',') {
+            continue;
+        }
+        // 这两个有专用参数，重复塞进 header-fields 只会打架
+        if key.eq_ignore_ascii_case("user-agent") || key.eq_ignore_ascii_case("referer") {
+            continue;
+        }
+        if hf.iter().any(|h| {
+            h.split(':')
+                .next()
+                .map(|n| n.trim().eq_ignore_ascii_case(key))
+                .unwrap_or(false)
+        }) {
+            continue;
+        }
+        hf.push(format!("{key}: {val}"));
     }
     let hf = if hf.is_empty() { None } else { Some(hf.join(",")) };
     (r, u, hf)
@@ -153,7 +186,16 @@ pub fn normalize_http_headers(
 /// 源站拒流 ⇒ **窗口起来但播不动、且没有任何报错**。改走启动参数后，
 /// mpv 一启动就带着头去加载直链，全程零启动期 IPC。
 pub fn http_header_args(referrer: Option<&str>, ua: Option<&str>) -> Vec<String> {
-    let (r, u, hf) = normalize_http_headers(referrer, ua);
+    http_header_args_extra(referrer, ua, &[])
+}
+
+/// [lc-2230] 带额外头的命令行参数版本（见 `normalize_http_headers_extra`）。
+pub fn http_header_args_extra(
+    referrer: Option<&str>,
+    ua: Option<&str>,
+    extra: &[(String, String)],
+) -> Vec<String> {
+    let (r, u, hf) = normalize_http_headers_extra(referrer, ua, extra);
     let mut a: Vec<String> = Vec::new();
     if let Some(r) = r {
         a.push(format!("--referrer={r}"));
@@ -1472,6 +1514,55 @@ mod tests {
     fn empty_headers_produce_no_args() {
         assert!(http_header_args(None, None).is_empty());
         assert!(http_header_args(Some("  "), Some("")).is_empty());
+    }
+
+    /// [lc-2230] 额外头（夸克 HLS 的 Cookie）进 header-fields：两条硬约束同样适用——
+    /// 值含逗号丢弃、UA/Referer 不重复。Cookie 串本身没有逗号，正常通过。
+    #[test]
+    fn extra_headers_ride_header_fields() {
+        let cookie = "__pus=abc; __puus=def";
+        let args = http_header_args_extra(
+            Some("https://pan.quark.cn/"),
+            Some("Mozilla/5.0 (Windows NT 10.0) Chrome/139"),
+            &[("Cookie".to_string(), cookie.to_string())],
+        );
+        let hf = args.iter().find(|a| a.starts_with("--http-header-fields=")).unwrap();
+        assert_eq!(
+            hf,
+            &format!("--http-header-fields=Referer: https://pan.quark.cn/,Cookie: {cookie}")
+        );
+        // UA 仍走专用参数，不能被塞进 header-fields
+        assert!(!hf.contains("Mozilla"));
+    }
+
+    #[test]
+    fn extra_headers_filter_dangerous_values() {
+        // 值含逗号 → 丢弃（会被 mpv 的 string-list 撕碎）
+        let (_, _, hf) = normalize_http_headers_extra(
+            None,
+            None,
+            &[("X-Bad".to_string(), "a,b".to_string())],
+        );
+        assert!(hf.is_none());
+        // UA / Referer 有专用参数，即便误传也不重复
+        let (_, _, hf) = normalize_http_headers_extra(
+            Some("https://r.test/"),
+            None,
+            &[
+                ("User-Agent".to_string(), "UA".to_string()),
+                ("Referer".to_string(), "https://dup.test/".to_string()),
+                ("Cookie".to_string(), "k=v".to_string()),
+            ],
+        );
+        let hf = hf.unwrap();
+        assert_eq!(hf, "Referer: https://r.test/,Cookie: k=v");
+        // 空值 / 空名不产生条目
+        let (_, _, hf) = normalize_http_headers_extra(
+            None,
+            None,
+            &[("Cookie".to_string(), "  ".to_string()), ("".to_string(), "v".to_string())],
+        );
+        assert!(hf.is_none());
     }
 
     /// [lc-2053] 启动窗口 = 主窗物理宽度、高按 16:9：和软件差不多大且无上下黑边。

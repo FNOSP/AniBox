@@ -432,9 +432,11 @@ async fn launch_mpv(
     }
     crate::libmpv::trace(&format!("[launch/step] 入口 {:.0}ms", t_enter.elapsed().as_millis()));
     let mut extra = match headers {
-        Some(h) if h.needs_relay() => {
-            crate::mpv::http_header_args(h.referer.as_deref(), h.user_agent.as_deref())
-        }
+        Some(h) if h.needs_relay() => crate::mpv::http_header_args_extra(
+            h.referer.as_deref(),
+            h.user_agent.as_deref(),
+            &h.extra,
+        ),
         _ => Vec::new(),
     };
     // [lc-2107] CENC 解密选项**先收集、不直接下发**：`--demuxer-lavf-o` 是同名选项，
@@ -533,8 +535,11 @@ async fn launch_mpv(
                     .await;
             }
             if let Some(h) = headers {
-                let (r, u, hf) =
-                    crate::mpv::normalize_http_headers(h.referer.as_deref(), h.user_agent.as_deref());
+                let (r, u, hf) = crate::mpv::normalize_http_headers_extra(
+                    h.referer.as_deref(),
+                    h.user_agent.as_deref(),
+                    &h.extra,
+                );
                 // referrer 无论有没有都写（没有就清空），避免上一部在线源的头残留。
                 let _ = m
                     .command_no_reply(json!(["set", "referrer", r.unwrap_or_default()]))

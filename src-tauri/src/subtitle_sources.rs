@@ -5,12 +5,15 @@
 //!   · opensubtitles.com（用户自己的 Api-Key；v1 REST：/api/v1/subtitles）
 //!   · 迅雷（sub.xmp.sandai.net:8000/subxlx.json，**按文件哈希精确匹配**，
 //!     无需账号；仅在播放本地文件时可用——URL 流没法算哈希）
+//!   · 光鸭匿名（[lc-2230] api.guangyapan.com/misc/v1/get_subtitles，无需账号，
+//!     按 gcid + 番号名匹配；主补番号类片源）
 //! 消费方是 mpv 侧 `sub-assrt.lua`（多源扇出搜索/下载，uosc 菜单呈现）；
 //! 本模块只管列表 CRUD + 哈希助手（`--subtitle-hash` CLI 子命令复用本模块函数）。
 //!
 //! 哈希算法（pub 供 main.rs CLI 与未来 UI 复用）：
-//!   · gcid（迅雷 xhash）：文件按 n=max(size/0x8000,1) 等长分段（段长 size/n 向下取整，
-//!     尾部余量不计），各段 SHA1 摘要顺次拼接后再整体 SHA1，40 hex。
+//!   · gcid（迅雷/光鸭/PikPak 同算法）：块大小 0x40000 起翻倍，直到 size/block<=512
+//!     或到 0x200000 上限；每块 SHA1 摘要顺次拼接后再整体 SHA1，40 hex。
+//!     [lc-2230] 旧注释写的「n=max(size/0x8000,1) 等分」是错误算法，已修正并重算向量。
 //!   · opensub hash：MD5(前 64KB + 后 64KB + size 小端 8 字节)，32 hex（官方 moviehash 算法）。
 
 use serde::{Deserialize, Serialize};
@@ -103,11 +106,19 @@ fn defaults() -> Vec<SubtitleSource> {
             use_builtin: true,
             enabled: true,
         },
+        // [lc-2230] 光鸭匿名源：无需账号，按番号/gcid 匹配（JavHub 那条线命中率高）
+        SubtitleSource {
+            kind: "guangya".into(),
+            name: "光鸭（匿名）".into(),
+            token: String::new(),
+            use_builtin: false,
+            enabled: true,
+        },
     ]
 }
 
 fn valid_kind(k: &str) -> bool {
-    k == "assrt" || k == "opensubtitles" || k == "xunlei" || k == "acgrip" || k == "subhd"
+    k == "assrt" || k == "opensubtitles" || k == "xunlei" || k == "acgrip" || k == "subhd" || k == "guangya"
 }
 
 /// 读列表（缺失/损坏 → 内置默认；坏项丢弃，面板一保存即修复）。
@@ -129,9 +140,17 @@ pub async fn subtitle_sources_get(app: AppHandle) -> Result<Value, String> {
         Err(_) => defaults(),
     };
     // [lc-1786] 旧 JSON 迁移：补 osub 默认条目并立即落盘（用户之后删除即显式不用）
-    let need_migrate = p.is_file() && !list.iter().any(|s| s.kind == "opensubtitles");
+    // [lc-2230] 同样补光鸭匿名源（新增源；老用户 JSON 里没有，不补就永远看不到）
+    let need_migrate = p.is_file()
+        && (!list.iter().any(|s| s.kind == "opensubtitles")
+            || !list.iter().any(|s| s.kind == "guangya"));
     if !list.iter().any(|s| s.kind == "opensubtitles") {
         if let Some(d) = defaults().into_iter().find(|s| s.kind == "opensubtitles") {
+            list.push(d);
+        }
+    }
+    if !list.iter().any(|s| s.kind == "guangya") {
+        if let Some(d) = defaults().into_iter().find(|s| s.kind == "guangya") {
             list.push(d);
         }
     }
@@ -175,24 +194,43 @@ pub async fn subtitle_sources_set(app: AppHandle, sources: Vec<SubtitleSource>) 
 
 // ───────────────────────── 哈希 ─────────────────────────
 
-/// 迅雷 gcid：分段 SHA1。读取大文件用 8MB 缓冲逐段流式处理，不整读内存。
+/// 迅雷/光鸭通用的 gcid：**分块 SHA1 再 SHA1**。
+///
+/// [lc-2230] 旧实现按 `n = max(size/0x8000, 1)` 等分，与官方口径不一致（同一文件
+/// 算出的哈希与 OpenList / 91 / PikPak 完全不同），凡是按 gcid 精确匹配的源都会落空。
+/// 正确算法（OpenList `pkg/utils/hash/gcid.go`，91 与 PikPak 同源）：
+///   · 块大小从 256 KiB（0x40000）起翻倍，直到 `size / blockSize <= 512` 或到 2 MiB 上限；
+///   · 每块算 SHA1，把 20 字节摘要按顺序拼起来；
+///   · 对拼接结果再算一次 SHA1，即 gcid。
+///
+/// 按块流式读取，大文件不整读内存。
 pub fn gcid_hash(path: &std::path::Path) -> Result<String, String> {
-    use std::io::{Read, Seek, SeekFrom};
+    use std::io::Read;
     let mut f = std::fs::File::open(path).map_err(|e| format!("打开文件失败: {e}"))?;
     let size = f.metadata().map_err(|e| format!("读文件大小失败: {e}"))?.len();
     if size == 0 {
         return Err("空文件无法计算哈希".into());
     }
-    let n = std::cmp::max(size / 0x8000, 1);
-    let seg = size / n; // 向下取整；尾部余量不计（与测试向量同口径）
-    let mut acc: Vec<u8> = Vec::with_capacity((n as usize) * 20);
-    let mut buf = vec![0u8; seg as usize];
-    for _ in 0..n {
-        f.read_exact(&mut buf).map_err(|e| format!("读段失败: {e}"))?;
-        acc.extend_from_slice(&Sha1::digest(&buf));
+    let block = gcid_block_size(size);
+    let mut outer = Sha1::new();
+    let mut buf = vec![0u8; block as usize];
+    let mut left = size;
+    while left > 0 {
+        let want = std::cmp::min(block, left) as usize;
+        f.read_exact(&mut buf[..want]).map_err(|e| format!("读段失败: {e}"))?;
+        outer.update(Sha1::digest(&buf[..want]));
+        left -= want as u64;
     }
-    let _ = f.seek(SeekFrom::Start(0));
-    Ok(hex(&Sha1::digest(&acc)))
+    Ok(hex(&outer.finalize()))
+}
+
+/// gcid 分块大小：0x40000 起翻倍，直到 `size/block <= 512` 或到 0x200000 上限。
+pub(crate) fn gcid_block_size(size: u64) -> u64 {
+    let mut block: u64 = 0x40000;
+    while size > 0 && (size as f64) / (block as f64) > 0x200 as f64 && block < 0x200000 {
+        block <<= 1;
+    }
+    block
 }
 
 /// OpenSubtitles moviehash：MD5(前 64KB + 后 64KB + size LE u64)。
@@ -229,6 +267,8 @@ mod tests {
     use super::*;
 
     /// 向量由独立 Python 实现生成（双向验证：算法抄错必然对不上）。
+    /// [lc-2230] gcid 期望值已按 OpenList 官方口径（0x40000 起翻倍分块）重算：
+    /// 旧向量是按 `size/0x8000` 等分算的，那个算法本身是错的。
     #[test]
     fn hash_vectors_match_python() {
         let dir = std::env::temp_dir().join("anibox-subhash-test");
@@ -241,9 +281,9 @@ mod tests {
         let mut d3 = b"AB".iter().copied().cycle().take(100_000).collect::<Vec<u8>>();
         d3.extend_from_slice(b"TAILMARKER".iter().copied().cycle().take(10_000).collect::<Vec<u8>>().as_slice());
         for (name, data, gcid_exp, os_exp) in [
-            ("d1", &d1, "deb94dafa574d8f941daca091a5b30f7ac04909c", "2dec773d80ba2d5ad3adc01f465bd7c9"),
+            ("d1", &d1, "f266c80b0e4656107cadc4b07d00932faa35ce93", "2dec773d80ba2d5ad3adc01f465bd7c9"),
             ("d2", &d2, "edbc60282ca9f4685fa81d3df457bcf4fa2d26d7", "4782ed638aab3d5035f59e987b8f52a2"),
-            ("d3", &d3, "6000abbccf7ea1e2fec75cadb169ceb6a361de6c", "06bca296b05556e259f88de9e5f6b5ca"),
+            ("d3", &d3, "14649ea2c92b9a3626cecff7a5b25a62f88cb059", "06bca296b05556e259f88de9e5f6b5ca"),
         ] {
             let p = dir.join(format!("{name}.bin"));
             std::fs::write(&p, data).unwrap();
@@ -251,6 +291,22 @@ mod tests {
             assert_eq!(opensub_hash(&p).unwrap(), os_exp, "{name} oshash");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// gcid 分块大小必须是 0x40000 起翻倍到 0x200000 上限（OpenList 口径）。
+    /// 这条守的是「分段算法」本身：等分实现（旧代码）在这里直接失败。
+    #[test]
+    fn gcid_block_size_follows_official_rule() {
+        assert_eq!(gcid_block_size(0), 0x40000);
+        assert_eq!(gcid_block_size(1), 0x40000);
+        // 恰好 512 块以内 → 仍是 256 KiB
+        assert_eq!(gcid_block_size(0x40000 * 512), 0x40000);
+        // 超过 512 块 → 翻倍
+        assert_eq!(gcid_block_size(0x40000 * 513), 0x80000);
+        assert_eq!(gcid_block_size(0x80000 * 513), 0x100000);
+        assert_eq!(gcid_block_size(0x100000 * 513), 0x200000);
+        // 再大也不超过 2 MiB
+        assert_eq!(gcid_block_size(0x200000 * 100_000), 0x200000);
     }
 
     #[test]
@@ -273,6 +329,9 @@ mod tests {
         assert!(valid_kind("opensubtitles"));
         assert!(valid_kind("xunlei"));
         assert!(valid_kind("subhd"));
+        // [lc-2230] 光鸭匿名源
+        assert!(valid_kind("guangya"));
+        assert!(!valid_kind("unknown-source"));
     }
 }
 
@@ -446,8 +505,104 @@ pub async fn osub_search_items_key(q: &str, key: &str) -> Vec<Value> {
     out
 }
 
-/// 应用内字幕搜索：并行扇出 迅雷(名称) + assrt + OpenSubtitles(若配 key) + ACG + SubHD。
-/// 返回 {items:[{kind,id,title,hint}]}；单源失败不拖垮整体（跳过即可）。
+/// 光鸭匿名字幕（[lc-2230]）：`POST https://api.guangyapan.com/misc/v1/get_subtitles`
+/// 不需要账号 / token / 任何身份头（91 `subtitles/guangyapan.go` 明写匿名客户端）。
+///
+/// 请求体 `{gcid, name, duration}`；`gcid` 是 40 位十六进制内容哈希，`name` 是文件名轮换候选。
+/// 实测（2026-11-18）：`name` 传番号（如 `SSIS-001`）能直接出结果；传中文剧名不出结果
+/// —— 所以这一源主要补 JavHub 那条线，动漫走迅雷/assrt 更靠谱。
+///
+/// 时长容差与 91 同口径（2%，夹在 30~120 秒之间）：同一部片不同压制版时长差几秒仍然收，
+/// 差出几分钟的（不同剪辑）直接丢。
+async fn guangya_subtitle_items(q: &str, content_hash: Option<&str>, duration: Option<i64>) -> Vec<Value> {
+    let q = q.trim();
+    if q.is_empty() {
+        return Vec::new();
+    }
+    // gcid：有内容哈希就用它；没有就用查询词的 SHA1 顶上去（上游只当 key 用，
+    // 但同一查询词必须稳定，否则同一部片每次搜索结果不一致）
+    let gcid = match content_hash.map(|h| h.trim().to_ascii_uppercase()) {
+        Some(h) if h.len() == 40 && h.chars().all(|c| c.is_ascii_hexdigit()) => h,
+        _ => {
+            // 顶部已 `use sha1::{Digest as Sha1Digest, Sha1}`（trait 以别名引入同样生效）
+            hex(&Sha1::digest(q.as_bytes())).to_ascii_uppercase()
+        }
+    };
+    let body = json!({
+        "gcid": gcid,
+        "name": q,
+        "duration": duration.unwrap_or(0).max(0),
+    });
+    let resp = match http_client()
+        .post("https://api.guangyapan.com/misc/v1/get_subtitles")
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+        // 匿名请求：绝不带 Cookie/Authorization/设备头（带上反而可能被当成非法客户端）
+        .json(&body)
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            crate::libmpv::trace(&format!("[subtitle] 光鸭源请求失败: {e}"));
+            return Vec::new();
+        }
+    };
+    let v: Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => {
+            crate::libmpv::trace(&format!("[subtitle] 光鸭源响应解析失败: {e}"));
+            return Vec::new();
+        }
+    };
+    if v.get("code").and_then(|x| x.as_i64()).unwrap_or(-1) != 0 {
+        let msg = v.get("msg").and_then(|x| x.as_str()).unwrap_or("");
+        crate::libmpv::trace(&format!("[subtitle] 光鸭源返回 code!=0: {msg}"));
+        return Vec::new();
+    }
+    let Some(list) = v.pointer("/data/list").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for it in list.iter().take(10) {
+        let url = it.get("url").and_then(|x| x.as_str()).unwrap_or("");
+        if url.is_empty() {
+            continue;
+        }
+        let ext = it.get("ext").and_then(|x| x.as_str()).unwrap_or("").to_ascii_lowercase();
+        if !matches!(ext.as_str(), "ass" | "srt" | "ssa" | "vtt") {
+            continue;
+        }
+        // 时长过滤：上游单位是毫秒（实测 14368000），> 24h 的按毫秒折算
+        let raw_dur = it.get("duration").and_then(|x| x.as_i64()).unwrap_or(0);
+        if let Some(want) = duration.filter(|d| *d > 0) {
+            let sub_secs = if raw_dur > 24 * 60 * 60 { raw_dur / 1000 } else { raw_dur };
+            if sub_secs > 0 {
+                let tol = ((want as f64) * 0.02) as i64;
+                let tol = tol.clamp(30, 120);
+                if (sub_secs - want).abs() > tol {
+                    continue;
+                }
+            }
+        }
+        let name = it.get("name").and_then(|x| x.as_str()).unwrap_or("字幕");
+        let lang = it
+            .get("languages")
+            .and_then(|x| x.as_array())
+            .and_then(|a| a.first())
+            .and_then(|x| x.as_str())
+            .unwrap_or("");
+        let hint = if lang.is_empty() {
+            "光鸭·匿名".to_string()
+        } else {
+            format!("光鸭·{lang}")
+        };
+        out.push(source_item("guangya", url, name, &hint));
+    }
+    out
+}
+
 #[tauri::command]
 pub async fn subtitle_search(
     state: tauri::State<'_, crate::AppState>,
@@ -472,6 +627,7 @@ pub async fn subtitle_search(
     let want_xunlei = list.iter().any(|s| s.kind == "xunlei" && s.enabled);
     let want_assrt = list.iter().any(|s| s.kind == "assrt" && s.enabled);
     let want_osub = list.iter().any(|s| s.kind == "opensubtitles" && s.enabled);
+    let want_guangya = list.iter().any(|s| s.kind == "guangya" && s.enabled);
 
     let xunlei_fut = async {
         if !want_xunlei {
@@ -526,12 +682,22 @@ pub async fn subtitle_search(
         }
     };
 
-    let (a, b, c, d, e) = tokio::join!(xunlei_fut, assrt_fut, osub_fut, acg_fut, subhd_fut);
+    // [lc-2230] 光鸭匿名：无需账号。查询词本身就是候选名（番号命中率最高），
+    // 内容哈希/时长这里拿不到（搜索面板只传 query），交给上游做纯名称匹配。
+    let guangya_fut = async {
+        if !want_guangya {
+            return Vec::new();
+        }
+        guangya_subtitle_items(&q, None, None).await
+    };
+
+    let (a, b, c, d, e, f) = tokio::join!(xunlei_fut, assrt_fut, osub_fut, acg_fut, subhd_fut, guangya_fut);
     let mut items = a;
     items.extend(b);
     items.extend(c);
     items.extend(d);
     items.extend(e);
+    items.extend(f);
     Ok(json!({ "query": q, "items": items }))
 }
 
@@ -550,6 +716,12 @@ pub async fn subtitle_download(
 
     let (url, fallback_name) = match kind.as_str() {
         "xunlei" => (id.clone(), filename.clone().unwrap_or_else(|| "字幕.srt".into())),
+        // [lc-2230] 光鸭匿名源：id 就是字幕直链（api.guangyapan.com 返回的 url 字段，
+        // 指向 subtitle.v.geilijiasu.com，无需任何鉴权头）
+        "guangya" => (
+            id.clone(),
+            filename.clone().unwrap_or_else(|| "光鸭字幕.srt".into()),
+        ),
         "assrt" => {
             let custom = state.config.read().await.sub_assrt_token.trim().to_string();
             let list = read_list().await;
@@ -1196,6 +1368,9 @@ pub async fn cli_search(query: &str) -> Result<Vec<Value>, String> {
             items.extend(v);
         }
     }
+    if want("guangya") {
+        items.extend(guangya_subtitle_items(&q, None, None).await);
+    }
     Ok(items)
 }
 
@@ -1207,6 +1382,8 @@ pub async fn cli_download(kind: &str, id: &str, name: &str) -> Result<(String, S
 
     let (url, fallback_name, bytes): (Option<String>, String, Option<Vec<u8>>) = match kind {
         "xunlei" => (Some(id.to_string()), name.to_string(), None),
+        // [lc-2230] 光鸭匿名源：id 即字幕直链，无鉴权
+        "guangya" => (Some(id.to_string()), name.to_string(), None),
         "assrt" => {
             let list = read_list().await;
             let token = effective_assrt_token(&list, Some(&creds.assrt_token));

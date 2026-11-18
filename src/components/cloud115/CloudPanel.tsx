@@ -56,9 +56,10 @@ type LibGroup = { key: string; title: string; year: number; meta?: CloudMeta; fi
 type Crumb = { fid: string; name: string };
 type WebdavAccount = { id: string; name: string; url: string; username: string };
 
-/** [lc-1811] 播放档能力矩阵（server=服务端转码；local=本地 ffmpeg） */
+/** [lc-1811] 播放档能力矩阵（server=服务端转码；local=本地 ffmpeg）
+    [lc-2230] 光鸭无服务端转码（只有签名直链），走直链/本地转码档 */
 const SERVER_HLS = new Set(["115", "quark", "aliyun"]);
-const RENAMEABLE = new Set(["115", "quark", "aliyun", "baidu", "123"]);
+const RENAMEABLE = new Set(["115", "quark", "aliyun", "baidu", "123", "guangyapan"]);
 
 const fmtSize = (n: number) => {
   if (!n) return "";
@@ -190,8 +191,20 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
 
   useEffect(() => {
     alive.current = true;
-    // [lc-1983] 原生网盘登录入口移除：只加载 WebDAV 账号与 ffmpeg 探测，不再自动拉起扫码
-    refreshProviders().catch((e) => alive.current && setErr(String(e)));
+    // [lc-1983] 只加载 WebDAV 账号与 ffmpeg 探测，不自动拉起扫码
+    // [lc-2230] 原生网盘入口恢复后：已登录的网盘优先于 WebDAV 直接展示，
+    // 否则用户每次进来都要手动点一枚胶囊（WebDAV 默认态保留给没登录任何盘的情况）。
+    refreshProviders()
+      .then((list) => {
+        if (!alive.current) return;
+        const firstLogged = list.find((p) => p.logged);
+        if (!firstLogged) return;
+        // 不走 switchProvider：它的闭包里 providers 还是空数组（首帧），
+        // 会把已登录的盘判成未登录又拉起扫码。这里直接落状态 + 拉目录。
+        setActive(firstLogged.id);
+        void loadList("", "", true, firstLogged.id);
+      })
+      .catch((e) => alive.current && setErr(String(e)));
     loadWdAccounts();
     invoke<{ available: boolean }>("cloud_ffmpeg_available")
       .then((r) => alive.current && setFfmpegOk(r.available))
@@ -423,12 +436,26 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
         <h3 className="c115-title">云盘接入</h3>
       </div>
 
-      {/* [lc-1985] 导航胶囊对齐应用标准（libf-bar/libf-open） */}
+      {/* [lc-1985] 导航胶囊对齐应用标准（libf-bar/libf-open）
+          [lc-2230] 恢复原生网盘入口：lc-1983 曾整体移除，但网盘能力一直在（且刚修好取链），
+          只剩 WebDAV 会让用户点不到。每个盘一枚胶囊，圆点表示登录态。 */}
       <div className="libf-bar">
-        <button type="button" className={`libf-open${wdActive ? " on" : ""}`} onClick={() => switchProvider("webdav")}>
+        <button type="button" className={`libf-open${wdActive && isWebdav ? " on" : ""}`} onClick={() => switchProvider("webdav")}>
           WebDAV
           <span className={`c115-dot${wdActive ? " ok" : ""}`} title={wdActive ? "已连接" : "未连接"} />
         </button>
+        {providers.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            className={`libf-open${!isWebdav && active === p.id ? " on" : ""}`}
+            onClick={() => switchProvider(p.id)}
+            title={p.logged ? `已登录${p.userName ? `：${p.userName}` : ""}` : "未登录，点击扫码"}
+          >
+            {p.label}
+            <span className={`c115-dot${p.logged ? " ok" : ""}`} title={p.logged ? "已登录" : "未登录"} />
+          </button>
+        ))}
       </div>
 
       <div className="c115-view" key={isWebdav ? `wd-${wdActive}` : active}>

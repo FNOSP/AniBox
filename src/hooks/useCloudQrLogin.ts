@@ -69,6 +69,8 @@ export function useCloudQrLogin(onSuccess: (provider: string) => void | Promise<
   /** 代际号：每次 start/stop 自增，旧循环看到号变了立刻退出（不用手动清 timer） */
   const genRef = useRef(0);
   const deadlineRef = useRef(0);
+  /** [lc-2230] 宽限窗（按 TTL 缩放；短 TTL 源为 0） */
+  const graceMsRef = useRef(QR_GRACE_MS);
   const hintRef = useRef("");
   const autorefreshRef = useRef(0);
   const aliveRef = useRef(true);
@@ -113,6 +115,11 @@ export function useCloudQrLogin(onSuccess: (provider: string) => void | Promise<
 
       // 与后端 QrState 的 TTL 同源；后端没给就退回 5 分钟
       deadlineRef.current = resp.expiresAtMs ?? Date.now() + DEFAULT_TTL_MS;
+      // [lc-2230] 宽限窗按 TTL 缩放：光鸭是 OAuth 设备码，上游只给 120s，
+      // 再留 90s 宽限就是在一直问一个已作废的 device_code（上游只会回 expired）。
+      // 短 TTL 的源（<=3min）不留宽限，到点直接换码。
+      const ttlMs = Math.max(0, deadlineRef.current - Date.now());
+      graceMsRef.current = ttlMs <= 3 * 60 * 1000 ? 0 : QR_GRACE_MS;
       hintRef.current = prov === "115"
         ? "打开 115 生活 App（或 115 App）扫一扫登录"
         : resp.hint || "打开对应网盘 App 扫一扫登录";
@@ -132,7 +139,7 @@ export function useCloudQrLogin(onSuccess: (provider: string) => void | Promise<
       //   · 上游各家真实有效期不一（阿里实测 15 分钟），本地 5 分钟只是保守估计；
       //   · 用户常常在最后几秒才点确认，到点就换码会把「已确认的码」直接刷掉 → 「手机点了没反应」；
       //   · 真过期时上游会回 status=3（expired），下面照样立刻换码，不会白等。
-      const hardDeadline = deadlineRef.current + QR_GRACE_MS;
+      const hardDeadline = deadlineRef.current + graceMsRef.current;
       let graceNoted = false;
       // 串行轮询：上一轮返回后再等 2s，绝不叠请求
       while (aliveRef.current && gen === genRef.current) {
@@ -152,7 +159,8 @@ export function useCloudQrLogin(onSuccess: (provider: string) => void | Promise<
         }
         const left = deadlineRef.current - now;
         const wait = left > 0 ? Math.min(POLL_INTERVAL_MS, left) : POLL_INTERVAL_MS;
-        if (left <= 0 && !graceNoted) {
+        // 没有宽限窗的源（短 TTL 设备码）到点直接换码，别报「正在确认」再问一个作废的码
+        if (left <= 0 && !graceNoted && graceMsRef.current > 0) {
           graceNoted = true;
           setMessage("二维码已到展示时限，正在确认登录结果…");
         }

@@ -9,7 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Captions as IcoCaptionsL, Download as IcoDlL, Search as IcoSearchL, X as IcoXL } from "lucide-react";
 
 type SubItem = {
-  kind: "xunlei" | "assrt" | "osub";
+  kind: "xunlei" | "assrt" | "osub" | "acgrip" | "subhd" | "guangya" | string;
   id: string;
   title: string;
   hint: string;
@@ -21,6 +21,10 @@ const KIND_LABEL: Record<string, string> = {
   xunlei: "迅雷",
   assrt: "assrt",
   osub: "OpenSubs",
+  acgrip: "ACG",
+  subhd: "SubHD",
+  // [lc-2230] 光鸭匿名源（按番号匹配，JavHub 那条线命中率高）
+  guangya: "光鸭",
 };
 
 export function SubtitlePickerModal({
@@ -131,8 +135,7 @@ export function SubtitlePickerModal({
             </button>
           </div>
           <p className="meta-dim">
-            来源：迅雷（手雷官方接口）+ assrt.net + OpenSubtitles（配置见 设置→播放器→字幕源）。
-            下载到本机缓存；正在播放时自动挂载为字幕轨。
+            {["迅雷", "assrt", "OpenSubtitles", "光鸭（番号）"].join(" + ")}
           </p>
 
           {err && <p className="meta-err">{err}</p>}

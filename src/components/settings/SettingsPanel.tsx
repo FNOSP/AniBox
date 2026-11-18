@@ -1032,6 +1032,8 @@ export function SettingsPanel({
       { kind: "opensubtitles", name: "OpenSubtitles", token: "", useBuiltin: true, enabled: true },
       { kind: "acgrip", name: "ACG 论坛", token: "", useBuiltin: false, enabled: true },
       { kind: "subhd", name: "SubHD", token: "", useBuiltin: false, enabled: true },
+      // [lc-2230] 光鸭匿名源（无需账号，按番号匹配）
+      { kind: "guangya", name: "光鸭（匿名）", token: "", useBuiltin: false, enabled: true },
     ];
     const cur = new Map(subSources.map((x) => [x.kind, x]));
     const next = FIXED.map((f) => {
@@ -2349,6 +2351,18 @@ export function SettingsPanel({
                           </button>
                         </div>
                       )}
+                    </div>
+                    {/* [lc-2230] 光鸭匿名源：无需账号，只有启停 */}
+                    <div className="set-row" style={{ gap: 10 }}>
+                      <button
+                        type="button"
+                        className={`set-sw${subEnabled("guangya") ? " on" : ""}`}
+                        aria-pressed={subEnabled("guangya")}
+                        aria-label="光鸭字幕源启停"
+                        onClick={() => toggleSub("guangya")}
+                      />
+                      <span className="sp-badge sp-guangya" style={{ flex: "0 0 96px", textAlign: "center" }}>光鸭</span>
+                      <span className="set-desc" style={{ flex: 1 }}>匿名接口 · 按番号匹配</span>
                     </div>
                     {subNote && <span className="set-note">{subNote}</span>}
                   </div>

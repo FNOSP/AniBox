@@ -504,6 +504,12 @@
   color: var(--good);
 }
 
+/* [lc-2230] 光鸭匿名字幕源（按番号匹配） */
+.sp-guangya {
+  background: rgba(178, 132, 255, 0.18);
+  color: #b284ff;
+}
+
 .sp-name {
   flex: 1;
   min-width: 0;

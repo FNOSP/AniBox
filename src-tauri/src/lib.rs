@@ -4502,6 +4502,7 @@ pub fn run() {
             duanju::duanju_init,
             duanju::duanju_categories,
             duanju::duanju_catalog,
+            duanju::duanju_cached,
             duanju::duanju_detail,
             duanju::duanju_resolve,
             duanju::duanju_release,

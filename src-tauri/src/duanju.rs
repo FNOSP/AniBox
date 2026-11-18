@@ -158,8 +158,19 @@ fn ensure_loaded(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// [lc-2234] initialize 串行锁：短剧页挂载时会**并发**打十几个命令（sources 清单、
+/// 健康探测、账号状态…），它们同时看到 READY=false 就各自跑一遍 initialize +
+/// deploy_modules —— 每次 initialize 都要扫一遍数据目录，并发起来拖慢首屏，
+/// 表现就是「一直显示加载中」。用异步锁保证只跑一次，其余等结果。
+static INIT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// initialize（幂等）。成功后置 READY，之后的调用不再重复 initialize。
 async fn ensure_ready(app: &tauri::AppHandle) -> Result<(), String> {
+    if READY.load(std::sync::atomic::Ordering::Acquire) {
+        return Ok(());
+    }
+    // 抢到锁后再查一次 READY（等锁期间别人可能已经初始化完）
+    let _guard = INIT_LOCK.lock().await;
     if READY.load(std::sync::atomic::Ordering::Acquire) {
         return Ok(());
     }
@@ -337,6 +348,7 @@ pub async fn duanju_categories(app: tauri::AppHandle, source: String) -> Result<
 }
 
 /// 目录/搜索。query 非空 = 搜索；category 空 = 全部。
+/// [lc-2234] force=true 跳过核心缓存强制重拉（用户在界面上点「刷新」时用）。
 #[tauri::command]
 pub async fn duanju_catalog(
     app: tauri::AppHandle,
@@ -344,6 +356,7 @@ pub async fn duanju_catalog(
     category: Option<String>,
     page: i64,
     query: Option<String>,
+    force: Option<bool>,
 ) -> Result<Value, String> {
     ensure_ready(&app).await?;
     call_async(next_call_body(
@@ -353,8 +366,26 @@ pub async fn duanju_catalog(
             "category": category.unwrap_or_default(),
             "page": page.clamp(1, 999),
             "query": query.unwrap_or_default(),
-            "force": false,
+            "force": force.unwrap_or(false),
         }),
+    ))
+    .await
+}
+
+/// [lc-2234] 只读核心的本地目录缓存（`cached` op，**纯内存/磁盘，不打网络**）。
+/// 前端用「先显示缓存 → 后台再刷新」消除每次进短剧页的等待：
+///   · Fresh=true  → 缓存 <15 分钟，直接用，无需刷新；
+///   · Fresh=false → 有旧数据但已过期，先渲染出来，再后台 catalog 刷新。
+#[tauri::command]
+pub async fn duanju_cached(
+    app: tauri::AppHandle,
+    source: String,
+    category: Option<String>,
+) -> Result<Value, String> {
+    ensure_ready(&app).await?;
+    call_async(next_call_body(
+        "cached",
+        json!({ "source": source, "category": category.unwrap_or_default() }),
     ))
     .await
 }

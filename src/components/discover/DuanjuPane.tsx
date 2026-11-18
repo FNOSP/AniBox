@@ -49,6 +49,8 @@ type CatalogResp = {
   page?: number;
   warning?: string;
   localSearch?: boolean;
+  /** [lc-2234] 仅 `duanju_cached` 返回：缓存是否在 15 分钟有效期内 */
+  fresh?: boolean;
 };
 type DetailResp = { drama?: DuanjuDrama; chapters?: DuanjuChapter[]; warning?: string };
 
@@ -266,34 +268,46 @@ export function DuanjuPane() {
   const [hist, setHist] = useState<DjHistory | null>(null);
   const [playErr, setPlayErr] = useState("");
 
-  // [lc-2189] 后台探测站源可用性：无筛选目录首页拉一次；成功清零、失败 +1（多源并行，
-  // TTL 内不重复探测）。失败源由 chips 剔除（见 render 的 visibleSources）。
+  // [lc-2189] 后台探测站源可用性：无筛选目录首页拉一次；成功清零、失败 +1（TTL 内不重探）。
+  // 失败源由 chips 剔除（见 render 的 visibleSources）。
+  // [lc-2234] **必须限并发**：核心的读请求名额只有 16 个（app_requests.go beginRead
+  // `readCount >= 16` 直接拒绝），慢源要占满 26~60s 超时。此前 13 源全并发 →
+  // 名额被死源占死，用户正在看的目录请求排队/被拒 = 界面一直「加载中」。
+  // 现在：当前站源最先探、最多 3 个在飞，慢源最多拖住自己。
   async function probeSources(list: DjSource[]) {
     const h = { ...readHealth() };
     const now = Date.now();
-    const todo = list.filter(
-      (s) =>
-        // [lc-2217] 未解锁时不去探测 18+ 站点（默认态只碰红果）
-        (adultSourcesEnabled() || !isAdultSource(s.id)) &&
-        s.available !== false &&
-        !(h[s.id] && now - h[s.id].at < HEALTH_TTL),
-    );
+    const todo = list
+      .filter(
+        (s) =>
+          // [lc-2217] 未解锁时不去探测 18+ 站点（默认态只碰红果）
+          (adultSourcesEnabled() || !isAdultSource(s.id)) &&
+          s.available !== false &&
+          !(h[s.id] && now - h[s.id].at < HEALTH_TTL),
+      )
+      // 正在看的站源优先
+      .sort((a, b) => Number(b.id === source) - Number(a.id === source));
     if (!todo.length) {
       setHealth(h);
       return;
     }
-    await Promise.all(
-      todo.map(async (s) => {
+    const queue = [...todo];
+    const worker = async () => {
+      for (;;) {
+        const s = queue.shift();
+        if (!s) return;
         try {
           await invoke("duanju_catalog", { source: s.id, category: "", page: 1, query: "" });
           h[s.id] = { fail: 0, at: Date.now() };
         } catch {
           h[s.id] = { fail: (h[s.id]?.fail || 0) + 1, at: Date.now() };
         }
-      }),
-    );
-    writeHealth(h);
-    setHealth({ ...h });
+        // 每完成一个就落盘并刷新 chips（死的源尽早消失，不用等全部探完）
+        writeHealth(h);
+        setHealth({ ...h });
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, todo.length) }, worker));
   }
 
   // [lc-2180] 站源能力清单（顺带预热核心）：guoapp v2 起站源 = 随包 JS 模块，
@@ -366,45 +380,111 @@ export function DuanjuPane() {
       alive = false;
     };
   }, [source]);
-
   // 目录第一页（站源/分类/搜索词变化即重取）
   useEffect(() => {
     if (!source) return;
     let alive = true;
-    setBusy(true);
     setErr("");
     setItems([]);
     setPage(1);
     setHasMore(false);
-    invoke<CatalogResp>("duanju_catalog", {
-      source,
-      category: cat,
-      page: 1,
-      query: term,
-    })
-      .then((d) => {
+    // [lc-2234] 缓存优先（cached-first）：核心把目录按「站源|分类」落盘缓存（15 分钟）。
+    // 从前每次进短剧页都走 catalog 全量重拉（红果实测 6.4s，用户看到的就是「加载中」）；
+    // 现在先用 `cached` 这个**纯本地、不打网络**的 op 秒出内容：
+    //   · 有数据 → 立刻渲染；Fresh=false（过期）再后台刷新，不阻塞、不闪白；
+    //   · 没数据 → 才显示加载中并等网络的 catalog。
+    const netTimeout = () => {
+      if (!alive) return 0;
+      return window.setTimeout(() => {
         if (!alive) return;
-        setItems(Array.isArray(d?.items) ? d.items : []);
-        setHasMore(d?.hasMore === true);
-        setPage(d?.page || 1);
-      })
-      .catch((e) => {
-        if (!alive) return;
-        setErr(String(e));
-        // [lc-2189] 无筛选的首页目录失败 = 站源不可用 → 记失败并从 chips 剔除
-        //（搜索失败/分类失败不剔除：可能只是该词/该分类没内容）
-        if (!term && !cat) {
-          const h = readHealth();
-          h[source] = { fail: (h[source]?.fail || 0) + 1, at: Date.now() };
-          writeHealth(h);
-          setHealth({ ...h });
-        }
-      })
-      .finally(() => {
-        if (alive) setBusy(false);
-      });
+        setErr("目录加载超时，该站源可能暂时不可用");
+        setBusy(false);
+      }, 20000);
+    };
+    // 网络失败的统一处理（初载与后台刷新共用；[lc-2189] 无筛选首页失败 = 站源不可用）
+    const onNetError = (e: unknown) => {
+      if (!alive) return;
+      setErr(String(e));
+      if (!term && !cat) {
+        const h = readHealth();
+        h[source] = { fail: (h[source]?.fail || 0) + 1, at: Date.now() };
+        writeHealth(h);
+        setHealth({ ...h });
+      }
+    };
+    // 搜索/翻页/强制刷新（nonce 自增 = 用户点重试）不读缓存，直接走网络
+    const forceNet = !!term || nonce > 0;
+    let tid = 0;
+    if (forceNet) {
+      setBusy(true);
+      tid = netTimeout();
+      invoke<CatalogResp>("duanju_catalog", { source, category: cat, page: 1, query: term })
+        .then((d) => {
+          if (!alive) return;
+          setItems(Array.isArray(d?.items) ? d.items : []);
+          setHasMore(d?.hasMore === true);
+          setPage(d?.page || 1);
+        })
+        .catch(onNetError)
+        .finally(() => {
+          window.clearTimeout(tid);
+          if (alive) setBusy(false);
+        });
+    } else {
+      invoke<CatalogResp>("duanju_cached", { source, category: cat })
+        .then((c) => {
+          if (!alive) return;
+          const hit = Array.isArray(c?.items) && c.items.length > 0;
+          if (hit) {
+            // 命中缓存：先渲染（秒开），busy 保持 false 不显示加载中
+            setItems(c.items!);
+            setHasMore(c.hasMore === true);
+            setPage(c.page || 1);
+            if (c.fresh === true) return; // 15 分钟内新鲜：不刷新
+          } else {
+            setBusy(true);
+          }
+          // 过期或未命中 → 后台刷新（不显示加载中遮罩；失败只在无缓存时提示）
+          tid = netTimeout();
+          invoke<CatalogResp>("duanju_catalog", { source, category: cat, page: 1, query: "" })
+            .then((d) => {
+              if (!alive) return;
+              setItems(Array.isArray(d?.items) ? d.items : []);
+              setHasMore(d?.hasMore === true);
+              setPage(d?.page || 1);
+              setErr("");
+            })
+            .catch((e) => {
+              if (hit) return; // 有兜底数据时刷新失败不打扰
+              onNetError(e);
+            })
+            .finally(() => {
+              window.clearTimeout(tid);
+              if (alive) setBusy(false);
+            });
+        })
+        .catch(() => {
+          // cached op 不可用（老核心）：退化为直接走网络
+          if (!alive) return;
+          setBusy(true);
+          tid = netTimeout();
+          invoke<CatalogResp>("duanju_catalog", { source, category: cat, page: 1, query: "" })
+            .then((d) => {
+              if (!alive) return;
+              setItems(Array.isArray(d?.items) ? d.items : []);
+              setHasMore(d?.hasMore === true);
+              setPage(d?.page || 1);
+            })
+            .catch(onNetError)
+            .finally(() => {
+              window.clearTimeout(tid);
+              if (alive) setBusy(false);
+            });
+        });
+    }
     return () => {
       alive = false;
+      window.clearTimeout(tid);
     };
   }, [source, cat, term, nonce]);
 
@@ -462,6 +542,13 @@ export function DuanjuPane() {
     setEpGroup(0);
     setPlayErr("");
     setPlayingIdx(-1);
+    // [lc-2234] 详情同样可能卡住（核心读名额被占满/站点超时）→ 20s 兜底，避免永远转圈
+    const tid = window.setTimeout(() => {
+      setDBusy((b) => {
+        if (b) setDErr("详情加载超时，请稍后重试");
+        return false;
+      });
+    }, 20000);
     try {
       const resp = await invoke<DetailResp>("duanju_detail", { drama: d });
       setDetail({ drama: resp?.drama || d, chapters: resp?.chapters || [] });
@@ -472,6 +559,7 @@ export function DuanjuPane() {
     } catch (e) {
       setDErr(String(e));
     } finally {
+      window.clearTimeout(tid);
       setDBusy(false);
     }
   }

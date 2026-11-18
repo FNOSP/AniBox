@@ -23,8 +23,9 @@ MODULE_INDEX_URLS = [
     "https://cdn.jsdelivr.net/gh/guoapp-modules/index@main/index.json",
 ]
 MODULE_FILE_URLS = [
-    "https://raw.githubusercontent.com/{repo}/{tag}/{name}",
+    # jsDelivr 放前面：raw.githubusercontent 在国内/代理下常常连不上（实测 http=000）
     "https://cdn.jsdelivr.net/gh/{repo}@{tag}/{name}",
+    "https://raw.githubusercontent.com/{repo}/{tag}/{name}",
 ]
 
 
@@ -101,6 +102,11 @@ def fetch_modules() -> None:
             print(f"[fetch-duanju] 跳过无效条目 {mid}")
             continue
         mdir = os.path.join(OUT_DIR, "modules", mid)
+        # [lc-2234] 本地已是最新（manifest 版本 >= 索引版本且文件哈希全对）→ 跳过下载。
+        # 上游模块更新很频繁但多数与红果取流无关，每次重建都全量重拉 14 个模块很慢。
+        if module_up_to_date(mdir, m.get("version") or "", hashes):
+            print(f"[fetch-duanju] 模块 {mid} v{m.get('version')} 已是最新，跳过")
+            continue
         os.makedirs(mdir, exist_ok=True)
         ok = True
         for name in ("manifest.json", "main.js"):
@@ -115,6 +121,36 @@ def fetch_modules() -> None:
                 f.write(data)
         if ok:
             print(f"[fetch-duanju] 模块 {mid} v{m.get('version')} <- {repo}@{tag}")
+
+
+def parse_version(v: str) -> tuple:
+    out = []
+    for seg in v.split(".")[:3]:
+        try:
+            out.append(int(seg))
+        except ValueError:
+            out.append(0)
+    return tuple(out + [0] * (3 - len(out)))
+
+
+def module_up_to_date(mdir: str, version: str, hashes: dict) -> bool:
+    """本地模块是否已是最新：版本不低于索引，且每个索引文件都存在并哈希一致。"""
+    mpath = os.path.join(mdir, "manifest.json")
+    if not os.path.isfile(mpath):
+        return False
+    try:
+        local = json.load(open(mpath, encoding="utf-8"))
+    except Exception:
+        return False
+    if parse_version(str(local.get("version") or "")) < parse_version(version):
+        return False
+    for name, expect in hashes.items():
+        fpath = os.path.join(mdir, name)
+        if not os.path.isfile(fpath):
+            return False
+        if hashlib.sha256(open(fpath, "rb").read()).hexdigest() != expect:
+            return False
+    return True
 
 
 def main():

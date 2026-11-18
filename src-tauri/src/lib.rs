@@ -4481,6 +4481,8 @@ pub fn run() {
             cloud::cloud_qr_start,
             cloud::cloud_qr_poll,
             cloud::cloud_logout,
+            // [lc-2232] Cookie 手工登录（百度扫码在本机实测被上游回通用 310005，改走可验证路径）
+            cloud::cloud_login_cookie,
             cloud::cloud_list,
             cloud::cloud_play,
             cloud_library::cloud_library_all,

@@ -73,6 +73,73 @@ const fmtSize = (n: number) => {
   return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
 };
 
+/** [lc-2232] 百度 Cookie 手工登录（扫码链路上游固定回 310005，改走可验证路径）。
+    做法：贴完整 Cookie → 后端调 xpan/nas?method=uinfo 验一次 → 通过才落盘。 */
+function CookieLogin({ onSaved }: { onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  const submit = async () => {
+    if (busy || !text.trim()) return;
+    setBusy(true);
+    setErr("");
+    setMsg("");
+    try {
+      const r = await invoke<{ ok: boolean; userName: string }>("cloud_login_cookie", {
+        provider: "baidu",
+        cookies: text,
+      });
+      setMsg(`登录成功：${r.userName}`);
+      setText("");
+      setOpen(false);
+      onSaved();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <button className="c115-mini" onClick={() => setOpen(true)} title="扫码失败时可用浏览器 Cookie 登录">
+          改用 Cookie 登录
+        </button>
+        {msg && <span className="c115-dim">{msg}</span>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="c115-wdform" style={{ width: "100%" }}>
+      <p className="hint" style={{ margin: 0 }}>
+        打开 pan.baidu.com 并登录，按 F12 → Network → 任选一个请求 → 复制请求头里完整的 Cookie 值
+      </p>
+      <textarea
+        className="set-input"
+        style={{ minHeight: 76, resize: "vertical", fontFamily: "monospace", fontSize: 12 }}
+        placeholder="BDUSS=xxxx; STOKEN=yyyy; ..."
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        spellCheck={false}
+      />
+      <div className="c115-wdform-btns">
+        <button className="c115-mini" disabled={busy || !text.trim()} onClick={() => void submit()}>
+          {busy ? "校验中…" : "校验并保存"}
+        </button>
+        <button className="c115-mini" onClick={() => { setOpen(false); setErr(""); }}>
+          取消
+        </button>
+      </div>
+      {err && <p className="c115-err">{err}</p>}
+    </div>
+  );
+}
+
 export function CloudPanel({ onBack }: { onBack: () => void }) {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [active, setActive] = useState("webdav"); // [lc-1983] 原生网盘登录入口移除，固定走 WebDAV
@@ -595,6 +662,12 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
           <button className="c115-mini" onClick={() => void startQr(active)} disabled={qrLogin.phase === "loading"}>
             <IcoRefreshL size={13} strokeWidth={2} /> 刷新二维码
           </button>
+          {/* [lc-2232] 百度扫码在上游侧固定回通用失败码 310005（空 v/假 v/真 v 同码），
+              无法据此定位；成熟工具（BaiduPCS-Go/Py）都只做 Cookie 导入。这里给可验证的路径：
+              贴 Cookie → 后端调 uinfo 验一次 → 通过才落盘。 */}
+          {active === "baidu" && (
+            <CookieLogin onSaved={() => void refreshProviders()} />
+          )}
           <p className="c115-dim">
             登录凭据只保存在本机（{active === "115" ? "cloud115.json" : "direct-cloud-auth.json"}），不会上传到任何服务器。
           </p>

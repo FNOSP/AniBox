@@ -626,6 +626,70 @@ pub async fn cloud_logout(app: AppHandle, provider: String) -> Result<(), String
     Ok(())
 }
 
+/// [lc-2232] Cookie 手工登录（百度扫码链路的兜底，也是所有第三方百度工具的通用做法）。
+///
+/// 背景：百度扫码的 `qrbdusslogin` 对任何 v 都回 `310005`（实测空 v / 假 v / 真 v 同一个码），
+/// 该码是通用失败码，无法据此定位协议差异；而 BaiduPCS-Go / BaiduPCS-Py 等成熟实现
+/// **都只支持 Cookie 导入**。所以这里提供可验证的路径：用户从浏览器复制完整 Cookie 贴进来，
+/// 我们调 `xpan/nas?method=uinfo` 验一次，通过才落盘。
+///
+/// Cookie 必须含 `BDUSS`；`STOKEN` 只有分享/秒传用得上，缺失不致命。
+#[tauri::command]
+pub async fn cloud_login_cookie(provider: String, cookies: String) -> Result<Value, String> {
+    let raw = cookies.trim().to_string();
+    if raw.is_empty() {
+        return Err("Cookie 不能为空".into());
+    }
+    // 容错：用户常把整个 `Cookie: xxx` 头（带前缀）或 cURL 片段粘进来
+    let cleaned = raw
+        .strip_prefix("Cookie:")
+        .or_else(|| raw.strip_prefix("cookie:"))
+        .unwrap_or(&raw)
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_string();
+
+    match provider.as_str() {
+        "baidu" => {
+            if !cleaned.contains("BDUSS=") {
+                return Err("百度 Cookie 里没有 BDUSS=，请从 pan.baidu.com 的请求头完整复制".into());
+            }
+            // 验一次：uinfo 是最轻的鉴权接口，errno=0 才算真登录
+            let v = get_json(
+                "https://pan.baidu.com/rest/2.0/xpan/nas?method=uinfo&app_id=250528",
+                &[
+                    ("Cookie".into(), cleaned.clone()),
+                    ("Referer".into(), "https://pan.baidu.com/disk/main".into()),
+                ],
+            )
+            .await?;
+            let errno = v.get("errno").and_then(|x| x.as_i64()).unwrap_or(-1);
+            if errno != 0 {
+                let msg = v.get("errmsg").and_then(|x| x.as_str()).unwrap_or("");
+                return Err(format!(
+                    "百度 Cookie 校验失败（errno={errno} {msg}）。请确认已登录 pan.baidu.com 且复制的是完整 Cookie 头"
+                ));
+            }
+            let name = v
+                .get("baidu_name")
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty())
+                .or_else(|| v.get("netdisk_name").and_then(|x| x.as_str()))
+                .unwrap_or("百度网盘")
+                .to_string();
+            save_provider_auth(
+                "baidu",
+                json!({ "cookies": cleaned, "user_name": name, "saved_at_ms": now_ms() }),
+            )?;
+            crate::libmpv::trace("[lc-2232] baidu Cookie 登录成功");
+            Ok(json!({ "ok": true, "userName": name }))
+        }
+        // 其它家保留扩展位：夸克/115 已能扫码，阿里也能扫码，不需要手工路径
+        other => Err(format!("{other} 暂不支持 Cookie 手工登录（已有扫码登录）")),
+    }
+}
+
 // ───────────────────────── 扫码登录（各厂商） ─────────────────────────
 
 /// 扫码状态串（厂商上下文 + 过期时间），qr_start 生成、qr_poll 透传。
@@ -795,6 +859,18 @@ pub async fn cloud_qr_start(provider: String) -> Result<Value, String> {
             if url.is_empty() || t.is_empty() {
                 return Err(format!("阿里云盘二维码获取失败: {v}"));
             }
+            // [lc-2232] 诊断：阿里「刚出码就过期」的历史排查里，日志缺了最关键的一环 ——
+            // 取码到底成没成功、t/ck 有没有拿到。这里记长度与指纹（不落原值）：
+            //   · t 是**数字**（如 1795009644916），长度 13；拿到 0 长度说明字段层级变了；
+            //   · ck 是 32 位 hex。
+            crate::libmpv::trace(&format!(
+                "[lc-2232] aliyun qr_start: t={}位 ck={}位 codeContent={} status={} resultCode={}",
+                t.len(),
+                ck.len(),
+                if url.contains("qrcodeCheck") { "qrcodeCheck" } else { "其它" },
+                v.pointer("/content/status").and_then(|x| x.as_i64()).map(|x| x.to_string()).unwrap_or("-".into()),
+                v.pointer("/content/data/resultCode").and_then(|x| x.as_i64()).map(|x| x.to_string()).unwrap_or("-".into()),
+            ));
             (
                 json!({ "t": t, "ck": ck }),
                 qr_svg_data_uri(&url)?,
@@ -1105,17 +1181,43 @@ async fn poll_provider(
             // [lc-1902] **必须 POST + 表单体**（t/ck 放 body）。实测把 t/ck 拼在 query 上走 GET，
             // 上游一律秒回 `{"qrCodeStatus":"EXPIRED","status":-1}` —— 这就是用户看到的
             // 「二维码刚出来就过期」：不是有效期短，而是查询姿势不对。
+            // [lc-2232] **真凶**：`appName/fromSite/appEntrance` 必须出现在 **POST body** 里。
+            // 只用 query 传（旧做法）上游一律秒回 `qrCodeStatus=EXPIRED` —— 用户看到的就是
+            // 「二维码刚出来就过期」。实测五组对照（2026-11-18）：
+            //   GET+query            → EXPIRED
+            //   POST 表单（仅 t/ck）  → EXPIRED
+            //   POST 表单 + 带 cookie → EXPIRED
+            //   POST 表单 + appName 等进 body → **NEW** ✅
             let (v, _) = post_form(
-                "https://passport.aliyundrive.com/newlogin/qrcode/query.do?appName=aliyun_drive&fromSite=52&appEntrance=request",
-                &[("t".into(), t), ("ck".into(), ck)],
+                "https://passport.aliyundrive.com/newlogin/qrcode/query.do",
+                &[
+                    ("t".into(), t),
+                    ("ck".into(), ck),
+                    ("appName".into(), "aliyun_drive".into()),
+                    ("fromSite".into(), "52".into()),
+                    ("appEntrance".into(), "request".into()),
+                ],
                 &[("Referer".into(), "https://www.alipan.com/".into())],
             )
             .await?;
             let status = g_str(&v, &["/content/data/qrCodeStatus"], &["qrCodeStatus"]);
+            // [lc-2232] 诊断：以前这一支只在 status!=0 时打一行「status=3」，看不出上游到底回了什么。
+            // 现在把原始判定依据打出来（不含凭据）：状态、status/-1 码、ck 是否轮换。
+            // 注意：`hasError`/content.status 是上游给出的失败依据，排查「刚出码就过期」时必须看。
+            if status != "NEW" {
+                crate::libmpv::trace(&format!(
+                    "[lc-2232] aliyun poll: qrCodeStatus={status} content.status={} hasError={} processFinished={}",
+                    v.pointer("/content/status").and_then(|x| x.as_i64()).map(|x| x.to_string()).unwrap_or("-".into()),
+                    v.get("hasError").and_then(|x| x.as_bool()).map(|x| x.to_string()).unwrap_or("-".into()),
+                    v.pointer("/content/data/processFinished").and_then(|x| x.as_bool()).map(|x| x.to_string()).unwrap_or("-".into()),
+                ));
+            }
             match status.as_str() {
                 "CONFIRMED" => {}
                 "SCANED" => return Ok((1, None, None)),
-                // 上游确实说过期：按 status=3 交给前端自动换码（不是错误）
+                // 上游确实说过期：按 status=3 交给前端自动换码（不是错误）。
+                // [lc-2232] 若这里频繁出现而用户还没扫，多半是 t/ck 与生成时不是一对
+                // （见 start 分支的 trace：t 若为空/被当成字符串会直接换码失败）。
                 "EXPIRED" => return Ok((QR_EXPIRED, None, None)),
                 _ => return Ok((0, None, None)),
             }
@@ -2157,6 +2259,33 @@ mod tests {
             jar: None,
         };
         assert!(QrState::unpack(&expired.pack()).is_err());
+    }
+
+    /// [lc-2232] Cookie 粘贴容错：用户常把整个 `Cookie: xxx` 头或带引号的串粘进来。
+    /// 这条守的是「贴对了却说没 BDUSS」的体验问题。
+    #[test]
+    fn cookie_paste_normalization() {
+        let norm = |raw: &str| -> String {
+            raw.trim()
+                .strip_prefix("Cookie:")
+                .or_else(|| raw.strip_prefix("cookie:"))
+                .unwrap_or(raw.trim())
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .to_string()
+        };
+        // 裸 Cookie 值原样保留
+        assert_eq!(norm("BDUSS=abc; STOKEN=def"), "BDUSS=abc; STOKEN=def");
+        // 带 `Cookie:` 前缀（从请求头整行复制）
+        assert_eq!(norm("Cookie: BDUSS=abc; STOKEN=def"), "BDUSS=abc; STOKEN=def");
+        // 小写前缀
+        assert_eq!(norm("cookie:BDUSS=abc"), "BDUSS=abc");
+        // 外层引号（cURL / DevTools Copy as cURL 常见）
+        assert_eq!(norm("\"BDUSS=abc\""), "BDUSS=abc");
+        assert_eq!(norm("'BDUSS=abc'"), "BDUSS=abc");
+        // 前后空白
+        assert_eq!(norm("  BDUSS=abc  "), "BDUSS=abc");
     }
 
     #[test]

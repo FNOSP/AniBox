@@ -13,11 +13,155 @@
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
+
+/// [lc-2233] mpv IPC 读线程是否「管道里有数据才读」。
+///
+/// **这是短剧不自动连播的根因修法。** mpv 的 IPC 句柄是 Windows **同步句柄**
+/// （`std::fs::File`），内核会串行化同一句柄上的 I/O：读线程若长期挂在阻塞 `ReadFile`
+/// 上（等下一个事件），任何 `WriteFile` 都要排在这条挂起的读之后。
+///   · 播放中：`time-pos` 每 ~250ms 一个事件，等于不断给写开门 ⇒「命令能用但慢」；
+///   · 播完停帧（`--keep-open=yes`）：事件流静止 ⇒ 写**永久卡住**，直到用户碰一下
+///     窗口产生事件，积压的命令才一次性涌进 mpv。
+/// 这就是用户报的「播完不自动切集，点一下控制栏中间按钮才开始播下一集」：
+/// `[launch/step] 复用分支完成 4438ms/8612ms` 正是写管道被卡住的时长，mpv 日志里那批
+/// `set/loadfile` 命令也恰好在他点击的同一毫秒才出现。
+///
+/// 双向对照已验证（`tests/spikes/lc2233_sync_pipe_stall.rs`）：
+/// 挂起阻塞读 → 写 3s 超时未返回；Peek 门控读 → 写 5.6µs 返回。
+const IPC_PEEK_GATE: bool = true;
+
+/// [lc-2233] Peek 门控轮询间隔（毫秒）。只在「管道为空」时才 sleep：
+/// mpv 有事件时会被立刻读走（延迟 ≈ 0），空闲时最多多等这么久。
+/// 取 8ms —— 比 `time-pos`（~250ms）密得多，用户感知不到；CPU 成本可忽略
+/// （一次 PeekNamedPipe 是纯内核调用，不做数据拷贝）。
+const IPC_PEEK_IDLE_MS: u64 = 8;
+
+/// [lc-2233] 在同步管道句柄上等「有数据可读」，并返回可读字节数。
+///
+/// 返回 `None` = 管道已断开（mpv 退出）；`Some(0)` = 暂时没数据（调用方稍后再问）。
+/// Windows 走 `PeekNamedPipe`（不动数据、不产生挂起 I/O）；其它平台恒返回
+/// `Some(1)`，让读线程退回阻塞读（Unix socket 无此串行化问题）。
+#[cfg(target_os = "windows")]
+fn peek_available(file: &std::fs::File) -> Option<usize> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::Pipes::PeekNamedPipe;
+    let mut avail: u32 = 0;
+    let ok = unsafe {
+        PeekNamedPipe(
+            file.as_raw_handle() as _,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            &mut avail,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        None // 管道断开 / 句柄失效 = mpv 已退出
+    } else {
+        Some(avail as usize)
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn peek_available(_file: &std::fs::File) -> Option<usize> {
+    Some(1) // 非 Windows：没有句柄串行化问题，直接阻塞读
+}
+
+/// [lc-2233] 从**读线程内部**往 IPC 写一行命令。
+///
+/// 读线程自己要写管道（标题回填、竖屏调窗、倍速同步、错误提示）。若这里阻塞，
+/// 读线程就停止读取 → mpv 的回包堆积 → 写更堵，自锁。理论上有 `IPC_PEEK_GATE`
+/// 之后不会再堵，但读线程是整条 IPC 的命脉，这里再加一道保险：
+/// **写失败/阻塞都不抛错、不影响读循环**，最多丢一条非关键命令。
+/// （`write_all` 走的是同步句柄，本次调用本身可能阻塞，所以先尽快释放锁；
+/// 真正的阻塞风险由门控读消除，这里只保证「出错不炸读线程」。）
+fn write_from_reader(tx: &Arc<Mutex<Option<IpcStream>>>, line: &str) {
+    let mut guard = match tx.lock() {
+        Ok(g) => g,
+        Err(e) => e.into_inner(), // 中毒也不放弃：写错一行远好过掐死读线程
+    };
+    if let Some(f) = guard.as_mut() {
+        let _ = f.write_all(line.as_bytes());
+        let _ = f.flush();
+    }
+}
+
+/// [lc-2233] Peek 门控的逐行读取器（`for line in gated` / `gated.next()`）。
+///
+/// 与 `BufReader::lines()` 的区别：每次读之前先问「管道里有没有字节」，
+/// 没有就 sleep 几毫秒再问 —— **绝不把 `read` 挂在一个异步才有数据的位置上**。
+/// 这是修掉「同步管道句柄上挂起读阻塞同句柄写」的关键（见 `IPC_PEEK_GATE`）。
+///
+/// 退出条件：`PeekNamedPipe` 报管道断开（mpv 退出）或读到 0 字节 → 迭代结束。
+struct GatedLines {
+    file: std::fs::File,
+    buf: Vec<u8>,
+    /// 已从管道读入但还没凑成完整行的原始字节（跨次拼接）。
+    carry: Vec<u8>,
+}
+
+impl GatedLines {
+    fn new(file: std::fs::File) -> Self {
+        GatedLines {
+            file,
+            buf: vec![0u8; 64 * 1024],
+            carry: Vec::new(),
+        }
+    }
+
+    /// 从 `carry` 里切出一行（含 `\n` 的内容去掉换行符返回）。
+    fn take_line(&mut self) -> Option<String> {
+        let nl = self.carry.iter().position(|b| *b == b'\n')?;
+        let mut line: Vec<u8> = self.carry.drain(..=nl).collect();
+        if line.last() == Some(&b'\n') {
+            line.pop();
+        }
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+        Some(String::from_utf8_lossy(&line).into_owned())
+    }
+}
+
+impl Iterator for GatedLines {
+    type Item = std::io::Result<String>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use std::io::Read;
+        loop {
+            if let Some(line) = self.take_line() {
+                return Some(Ok(line));
+            }
+            // 门控：管道里没数据就不发 read（避免留下挂起的读把同句柄的写锁死）
+            match peek_available(&self.file) {
+                None => return None, // 管道断开 = mpv 退出
+                Some(0) => {
+                    if IPC_PEEK_GATE {
+                        std::thread::sleep(std::time::Duration::from_millis(IPC_PEEK_IDLE_MS));
+                        continue;
+                    }
+                }
+                Some(_) => {}
+            }
+            match self.file.read(&mut self.buf) {
+                Ok(0) => return None, // EOF
+                Ok(n) => {
+                    self.carry.extend_from_slice(&self.buf[..n]);
+                    // 一次读进来可能包含多行：先切一行返回，剩下的留在 carry。
+                    continue;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Some(Err(e)),
+            }
+        }
+    }
+}
 
 /// 观察 id ↔ 属性名（前端 switch 依赖这些 id；6=fullscreen 只用于镜像到 Tauri 窗口）
 const OBSERVED: [(u64, &str); 14] = [
@@ -799,8 +943,11 @@ impl MpvSession {
                 let mut vwh_stage = 0u8; // 0=空闲 1=等 video-params/w 2=等 video-params/h
                 let mut vwh_w: i64 = 0;
                 let mut vwh_h: i64 = 0;
-                let reader = BufReader::new(read_file);
-                for line in reader.lines() {
+                // [lc-2233] 读线程改 **Peek 门控**：管道里有数据才发 `read_line`，
+                // 任何时候都不在句柄上留挂起的读 → 同句柄的写不再被串行化阻塞
+                // （详见 `IPC_PEEK_GATE` 注释与 tests/spikes/lc2233_sync_pipe_stall.rs）。
+                let reader = GatedLines::new(read_file);
+                for line in reader {
                     let Ok(line) = line else { break };
                     if line.trim().is_empty() {
                         continue;
@@ -826,18 +973,12 @@ impl MpvSession {
                                     .to_string()
                                         + "
 ";
-                                    if let Some(f) = tx.lock().unwrap().as_mut() {
-                                        let _ = f.write_all(line.as_bytes());
-                                        let _ = f.flush();
-                                    }
+                                    write_from_reader(&tx, &line);
                                 } else if vwh_stage == 2 {
                                     vwh_h = val;
                                     vwh_stage = 0;
                                     if let Some(line) = vertical_window_cmd(app2.clone(), vwh_w, vwh_h) {
-                                        if let Some(f) = tx.lock().unwrap().as_mut() {
-                                            let _ = f.write_all(line.as_bytes());
-                                            let _ = f.flush();
-                                        }
+                                        write_from_reader(&tx, &line);
                                     }
                                 }
                             } else {
@@ -858,10 +999,7 @@ impl MpvSession {
                                     })
                                     .to_string()
                                         + "\n";
-                                    if let Some(f) = tx.lock().unwrap().as_mut() {
-                                        let _ = f.write_all(line.as_bytes());
-                                        let _ = f.flush();
-                                    }
+                                    write_from_reader(&tx, &line);
                                 }
                             }
                             continue;
@@ -886,10 +1024,7 @@ impl MpvSession {
                                 })
                                 .to_string()
                                     + "\n";
-                                if let Some(f) = tx.lock().unwrap().as_mut() {
-                                    let _ = f.write_all(line.as_bytes());
-                                    let _ = f.flush();
-                                }
+                                write_from_reader(&tx, &line);
                                 // [nas-subtitle] 同步标题槽：字幕自动挂载按此做剧集防错配匹配。
                                 *title_slot2.lock().unwrap() = Some(t.to_string());
                                 // [lc-2108] 同步期望标题（file-loaded 兜底与后续换集都用它）
@@ -940,10 +1075,7 @@ impl MpvSession {
                                         .to_string()
                                             + "
 ";
-                                        if let Some(f) = tx.lock().unwrap().as_mut() {
-                                            let _ = f.write_all(line.as_bytes());
-                                            let _ = f.flush();
-                                        }
+                                        write_from_reader(&tx, &line);
                                     }
                                 }
                                 // [lc-2101] 竖屏：按真实视频比例精确设窗口（零黑边）
@@ -958,10 +1090,7 @@ impl MpvSession {
                                     .to_string()
                                         + "
 ";
-                                    if let Some(f) = tx.lock().unwrap().as_mut() {
-                                        let _ = f.write_all(line.as_bytes());
-                                        let _ = f.flush();
-                                    }
+                                    write_from_reader(&tx, &line);
                                 }
                                 // [lc-1841] start 只作用于本次加载（续播 seek 在加载时已消费）：
                                 // file-loaded 即清回 none，整季列表自动切下一集不会被误 seek。
@@ -972,10 +1101,7 @@ impl MpvSession {
                                     .to_string()
                                         + "
 ";
-                                    if let Some(f) = tx.lock().unwrap().as_mut() {
-                                        let _ = f.write_all(line.as_bytes());
-                                        let _ = f.flush();
-                                    }
+                                    write_from_reader(&tx, &line);
                                 }
                             }
                             "end-file" => {
@@ -1018,6 +1144,7 @@ impl MpvSession {
                                         let _ = f.write_all(line.as_bytes());
                                         let _ = f.flush();
                                     }
+                                    drop(g); // [lc-2233] 尽快释放写锁，别拖住后续读循环
                                 } else {
                                     let _ = app2.emit("mpv-load", json!({ "phase": "ended", "reason": reason }));
                                     // [lc-2124] 连播触发**不在这里**：`--keep-open=yes` 时播完
@@ -1046,10 +1173,7 @@ impl MpvSession {
                             })
                             .to_string()
                                 + "\n";
-                            if let Some(f) = tx.lock().unwrap().as_mut() {
-                                let _ = f.write_all(line.as_bytes());
-                                let _ = f.flush();
-                            }
+                            write_from_reader(&tx, &line);
                         }
                         continue;
                     }
@@ -1118,10 +1242,7 @@ impl MpvSession {
                                 })
                                 .to_string()
                                     + "\n";
-                                if let Some(f) = tx.lock().unwrap().as_mut() {
-                                    let _ = f.write_all(line.as_bytes());
-                                    let _ = f.flush();
-                                }
+                                write_from_reader(&tx, &line);
                             }
 
                             // [nas-subtitle] NAS 外挂字幕自动挂载：path 变化（起播 / 整季自动切集）
@@ -1312,17 +1433,25 @@ impl MpvSession {
         let rid = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = std_mpsc::channel();
         self.pending.lock().unwrap().insert(rid, tx);
-        {
-            let mut guard = self.tx.lock().unwrap();
+        // [lc-2233] 写管道挪到 blocking 线程（与 command_no_reply 同口径）：
+        // 同步句柄的写虽已由门控读消除长期阻塞，但任何一次写短暂等待都不该
+        // 占住 async executor 线程。
+        let line = json!({ "command": cmd, "request_id": rid }).to_string() + "\n";
+        let wtx = Arc::clone(&self.tx);
+        let wrote: Result<(), String> = tokio::task::spawn_blocking(move || {
+            let mut guard = wtx.lock().unwrap();
             let Some(f) = guard.as_mut() else {
-                return Err("mpv 进程已退出".into());
+                return Err("mpv 进程已退出".to_string());
             };
-            let line = json!({ "command": cmd, "request_id": rid }).to_string() + "\n";
-            if let Err(e) = f.write_all(line.as_bytes()) {
-                self.pending.lock().unwrap().remove(&rid);
-                return Err(format!("写 IPC 失败: {e}"));
-            }
-            let _ = f.flush();
+            f.write_all(line.as_bytes())
+                .and_then(|_| f.flush())
+                .map_err(|e| format!("写 IPC 失败: {e}"))
+        })
+        .await
+        .unwrap_or_else(|e| Err(format!("写 IPC 任务失败: {e}")));
+        if let Err(e) = wrote {
+            self.pending.lock().unwrap().remove(&rid);
+            return Err(e);
         }
         match rx.recv_timeout(std::time::Duration::from_secs(5)) {
             Ok(v) => {

@@ -67,7 +67,10 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 #   Win32_System_Threading：OpenProcess / GetExitCodeProcess / TerminateProcess（替代 tasklist·taskkill）
 #   Win32_System_JobObjects：KILL_ON_JOB_CLOSE 句柄守卫（应用无论怎么退出都不留 mpv 孤儿）
 #   Win32_System_Diagnostics_ToolHelp：按映像名枚举进程（替代 taskkill /IM）
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Registry", "Win32_Security", "Win32_System_SystemInformation", "Win32_System_Time", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp"] }
+# [lc-2233] 追加 Win32_Storage_FileSystem + Win32_System_Pipes（仍是同一 crate）：
+#   PeekNamedPipe 门控读 mpv IPC —— 同步管道句柄上挂起的 ReadFile 会阻塞同句柄的
+#   WriteFile，播完停帧（事件流静止）时我们下发的命令会一直卡到用户碰一下窗口。
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Registry", "Win32_Security", "Win32_System_SystemInformation", "Win32_System_Time", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Pipes", "Win32_Storage_FileSystem"] }
 # [title] 展示标题繁 → 简（仅 mpv/#EXTINF/PotPlayer 标题，不碰匹配元数据）。
 # zhconv：纯 Rust、编译期内嵌 MediaWiki/OpenCC 转换表，运行时零网络；许可证
 # GPL-2.0-or-later 可并入本项目 AGPL-3.0（"or later"）。

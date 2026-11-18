@@ -565,7 +565,9 @@ async fn launch_mpv(
             // 重连交给下面 stream-lavf-o（整条流层，不与 demuxer 选项冲突）。
             if direct {
                 let _ = m
-                    .command_no_reply(json!(["set", "demuxer-readahead-secs", 15]))
+                    // [lc-2233] 值必须是**字符串** "15"：传 JSON 数字 15 会被 mpv 以
+                    // `invalid parameter` 拒绝（探针实测），复用会话的直播预读就静默失效。
+                    .command_no_reply(json!(["set", "demuxer-readahead-secs", "15"]))
                     .await;
                 let _ = m
                     .command_no_reply(json!(["set", "demuxer-max-bytes", "256MiB"]))

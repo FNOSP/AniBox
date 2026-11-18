@@ -1,5 +1,57 @@
 @echo off
 cd /d "%~dp0"
+
+REM ---- [lc-2223] startup mode: hide this console, or keep it -----------------------
+REM   1 = hide the console window once the build/launch starts (background run)
+REM   2 = keep the console window visible (previous behavior)
+REM The pick is remembered in .devmode.local (gitignored) and becomes the 3-second
+REM timeout default on the NEXT run, so it only has to be typed once.
+REM   dev.cmd 1 / dev.cmd 2   force a mode for this run without changing the memory
+REM   set FNTV_DEV_DRYRUN=1   stop right after the mode decision (no taskkill, no build)
+set "DEVMODE_FILE=%~dp0.devmode.local"
+set "DEVMODE="
+if "%~1"=="1" set "DEVMODE=1"
+if "%~1"=="2" set "DEVMODE=2"
+if defined DEVMODE goto devmode_done
+
+REM Remembered default, sanitized: anything but 1/2 falls back to 2 (visible).
+set "DEVMODE_LAST=2"
+if exist "%DEVMODE_FILE%" set /p "DEVMODE_LAST="<"%DEVMODE_FILE%"
+if not "%DEVMODE_LAST%"=="1" if not "%DEVMODE_LAST%"=="2" set "DEVMODE_LAST=2"
+
+echo.
+echo [dev] Startup mode:
+echo         1 = hide this console window and run in the background
+echo         2 = keep this console window (default)
+echo.
+REM /t 3 /d <last>: times out to the remembered mode, so Enter is never required.
+REM On EOF (scripted run) choice returns the default immediately instead of hanging.
+"%SystemRoot%\System32\choice.exe" /c 12 /n /t 3 /d %DEVMODE_LAST% /m "Pick 1 or 2 (auto %DEVMODE_LAST% in 3s): "
+set "DEVMODE=%errorlevel%"
+if not "%DEVMODE%"=="1" if not "%DEVMODE%"=="2" set "DEVMODE=%DEVMODE_LAST%"
+>"%DEVMODE_FILE%" echo %DEVMODE%
+echo.
+
+:devmode_done
+if not defined DEVMODE set "DEVMODE=2"
+REM OwnConsole: only hide when this console exists solely for the launcher (cmd /c or /k,
+REM i.e. double-click or a shortcut). Typed into an existing terminal, the same window also
+REM hosts your shell -- hiding it would hide your terminal, so we decline instead.
+REM NOTE: CMDCMDLINE is a dynamic pseudo-variable; substring replacement on it does not
+REM       work inline inside an if comparison (silently reports "same"). Copy it into a
+REM       plain variable first -- verified on this machine.
+set "DEV_OWN_CONSOLE=0"
+set "DEV_CMD_LINE=%CMDCMDLINE%"
+if not "%DEV_CMD_LINE:/c =%"=="%DEV_CMD_LINE%" set "DEV_OWN_CONSOLE=1"
+if not "%DEV_CMD_LINE:/k =%"=="%DEV_CMD_LINE%" set "DEV_OWN_CONSOLE=1"
+if not "%DEV_CMD_LINE:/C =%"=="%DEV_CMD_LINE%" set "DEV_OWN_CONSOLE=1"
+if not "%DEV_CMD_LINE:/K =%"=="%DEV_CMD_LINE%" set "DEV_OWN_CONSOLE=1"
+if "%DEVMODE%"=="1" if "%DEV_OWN_CONSOLE%"=="1" echo [dev] mode 1: the console hides at startup. To bring it back:
+if "%DEVMODE%"=="1" if "%DEV_OWN_CONSOLE%"=="1" echo [dev]   pwsh -NoProfile -ExecutionPolicy Bypass -File tools\dev-console.ps1 -Action show
+if "%DEVMODE%"=="2" echo [dev] mode 2: the console stays visible.
+if "%DEVMODE%"=="1" if "%DEV_OWN_CONSOLE%"=="0" echo [dev] mode 1 picked, but this window stays visible: dev.cmd was started from an existing terminal, and hiding it would take your shell with it.
+if defined FNTV_DEV_DRYRUN goto devmode_dryrun
+
 REM One-click dev launcher, mirrors Fntv-Plus dev.cmd.
 REM Kill stale Tauri dev instance (frees vite port / IPC pipes)
 taskkill /f /im anibox.exe >nul 2>&1
@@ -129,6 +181,18 @@ echo       mpv log   : %%TEMP%%\anibox-mpv.log
 echo       Go proxy  : %%TEMP%%\proxy.log  (only when started by hand)
 echo       -> on exit this window prints the tail of both logs.
 echo.
+REM ---- [lc-2223] hide the console for mode 1 ---------------------------------------
+REM Done here (not at the top) on purpose: every check above prints to this window, and a
+REM hidden window would swallow the error. Any failure from now on re-shows the window
+REM before printing, so a broken build is never invisible.
+if "%DEVMODE%"=="1" if "%DEV_OWN_CONSOLE%"=="0" set "DEVMODE=2"
+if "%DEVMODE%"=="1" (
+  pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\dev-console.ps1" -Action hide -OwnConsole 1
+  if errorlevel 1 (
+    echo [dev] WARN: could not hide this console -- continuing with it visible.
+    set "DEVMODE=2"
+  )
+)
 REM ---- [lc-1547] run under a Job Object + app-exit watcher (see tools\dev-run.ps1) ----
 REM (A) Job Object (kill-on-close): closing THIS window kills the whole tree. Windows does
 REM     not kill descendants on a console window close, so vite + cargo + anibox.exe would
@@ -148,9 +212,12 @@ echo.
 echo [dev] tauri dev exited with code %DEVRUN_EXIT%.
 
 REM [lc-1547] Clean app-close path (exit 0) => just close this window; no log dump, no pause.
-REM Anything else (build error, crash, non-zero) => print the log tails and hold the window
-REM open so the error stays readable.
+REM Anything else (build error, crash, non-zero) => bring the window back (it may be hidden
+REM in mode 1), print the log tails and hold it open so the error stays readable.
 if "%DEVRUN_EXIT%"=="0" goto devdone
+
+REM Non-zero: the window may be hidden (mode 1) -- bring it back before dumping logs.
+if "%DEVMODE%"=="1" pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\dev-console.ps1" -Action show
 
 echo.
 echo ======================== last 60 lines: anibox.log ========================
@@ -165,3 +232,7 @@ pause
 
 :devdone
 exit /b %DEVRUN_EXIT%
+
+:devmode_dryrun
+echo [dev] FNTV_DEV_DRYRUN=1 -- stopping after the mode decision (no taskkill, no build).
+exit /b 0

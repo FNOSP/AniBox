@@ -139,6 +139,7 @@ src-tauri/resources/danmu-api/.cache/
 # stage-bundle-resources.mjs 保留入库）
 /tools/dev-run.ps1
 /tools/dev-diag.ps1
+/tools/dev-console.ps1
 /tools/ensure-webview2.ps1
 /tools/fetch-webview2-offline.ps1
 # 产物：fpk 安装包与用户脚本（构建生成，不入库）

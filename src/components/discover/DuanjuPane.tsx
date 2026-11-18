@@ -369,9 +369,17 @@ export function DuanjuPane() {
     let alive = true;
     setCats([]);
     setCat("");
-    invoke<{ id: string; name: string }[]>("duanju_categories", { source })
+    // [lc-2236] 核心的 categories op 返回的是 **对象** `{items: [...]}`（见
+    // app_runtime.go: `return map[string]any{"items": items}`），不是数组。
+    // 此前用 `Array.isArray(d)` 判断 → 永远为假 → 分类栏只剩硬编码的「全部」。
+    invoke<{ items?: { id: string; name: string }[] } | { id: string; name: string }[]>(
+      "duanju_categories",
+      { source },
+    )
       .then((d) => {
-        if (alive && Array.isArray(d)) setCats(d);
+        if (!alive) return;
+        const list = Array.isArray(d) ? d : d?.items;
+        if (Array.isArray(list)) setCats(list);
       })
       .catch(() => {
         /* 分类拉取失败不阻塞目录（上游会回「全部」） */
@@ -860,7 +868,13 @@ export function DuanjuPane() {
       ) : items.length === 0 ? (
         <DState
           err=""
-          emptyText={term ? `未找到与「${term}」相关的短剧` : "暂无内容"}
+          emptyText={
+            term
+              ? `未找到与「${term}」相关的短剧`
+              : cat
+                ? "该分类下暂无内容"
+                : "暂无内容"
+          }
           onRetry={() => setNonce((n) => n + 1)}
         />
       ) : (

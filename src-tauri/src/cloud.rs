@@ -296,6 +296,100 @@ fn cookie_str(set_cookies: &[String], wanted: Option<&[&str]>) -> String {
     out.join("; ")
 }
 
+// ───────────────────────── 扫码会话 Cookie（简易 jar） ─────────────────────────
+
+/// [lc-2231] 扫码链路必须把上游下发的会话 Cookie 带着走。
+///
+/// 两个真实的失败案例（2026-11-18 用户实测）：
+/// - **夸克**：`getTokenForQrcodeLogin` 下发 `_UP_*` 会话 Cookie，后面的
+///   `getServiceTicketByQrcodeToken` 与 `pan.quark.cn/account/info` 都要它。
+///   不带 → 拿不到 service_ticket / 换不出 `__pus`；
+/// - **百度**：`getqrcode` 下发 `BAIDUID`，`qrbdusslogin` 缺它就把 `v` 判成
+///   310005「验证信息已过期」——表现正是「手机点了确认，桌面报错换不到 BDUSS」。
+///
+/// reqwest 的 `cookies` feature 没开（也不想为一个扫码流程引入 jar 依赖），
+/// 这里就用手写的最小实现：只存 name=value，按上游返回顺序覆盖同名项。
+/// 会话 Cookie 全部随 `QrState` 一起编码下发，**不进日志、不落盘**。
+#[derive(Default, Clone)]
+pub(crate) struct CookieJar(pub(crate) Vec<(String, String)>);
+
+impl CookieJar {
+    fn absorb(&mut self, set_cookies: &[String]) {
+        for raw in set_cookies {
+            let pair = raw.split(';').next().unwrap_or("").trim();
+            let Some((name, value)) = pair.split_once('=') else { continue };
+            let name = name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            match self.0.iter_mut().find(|(k, _)| k == name) {
+                Some(slot) => slot.1 = value.trim().to_string(),
+                None => self.0.push((name.to_string(), value.trim().to_string())),
+            }
+        }
+    }
+
+    /// 只要这些名字（顺序按 `wanted`），用于挑出品凭据。
+    fn pick(&self, wanted: &[&str]) -> Vec<(String, String)> {
+        wanted
+            .iter()
+            .filter_map(|w| {
+                self.0
+                    .iter()
+                    .find(|(k, v)| k == w && !v.is_empty())
+                    .map(|(k, v)| (k.clone(), v.clone()))
+            })
+            .collect()
+    }
+
+    fn header(&self) -> String {
+        self.0
+            .iter()
+            .filter(|(_, v)| !v.is_empty())
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.iter().all(|(_, v)| v.is_empty())
+    }
+
+    fn to_json(&self) -> Value {
+        Value::Array(
+            self.0
+                .iter()
+                .map(|(k, v)| json!({ "name": k, "value": v }))
+                .collect(),
+        )
+    }
+
+    fn from_json(v: &Value) -> Self {
+        let mut jar = CookieJar::default();
+        if let Some(arr) = v.as_array() {
+            for it in arr {
+                let name = it.get("name").and_then(|x| x.as_str()).unwrap_or("");
+                let value = it.get("value").and_then(|x| x.as_str()).unwrap_or("");
+                if !name.is_empty() {
+                    jar.0.push((name.to_string(), value.to_string()));
+                }
+            }
+        }
+        jar
+    }
+}
+
+/// 收一条响应的 Set-Cookie 进 jar。
+fn absorb_set_cookie(jar: &mut CookieJar, resp: &reqwest::Response) {
+    let setc: Vec<String> = resp
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|h| h.to_str().ok().map(|s| s.to_string()))
+        .collect();
+    jar.absorb(&setc);
+}
+
 /// 夸克 Cookie 轮换（实测：任意响应都可能轮换 `__puus` / `__pus`）。
 /// 只替换这两个键的值，其余原样保留；不做合并就继续用旧串 → 播一会儿就 401。
 pub(crate) fn merge_quark_cookies(current: &str, rotated: &[(String, String)]) -> Option<String> {
@@ -540,6 +634,11 @@ struct QrState {
     provider: String,
     data: Value,
     exp_ms: u64,
+    /// [lc-2231] 扫码期间上游下发的会话 Cookie（夸克 `_UP_*`、百度 `BAIDUID`…）。
+    /// 必须跟着状态串在 start → poll 之间传递：它们只活在这几十秒里，
+    /// 丢掉就会「手机点了确认，桌面报错换不到凭据」。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    jar: Option<Value>,
 }
 
 /// 二维码有效期：与上游各家（115/夸克/百度/阿里/123）的 5 分钟一致。
@@ -577,20 +676,47 @@ pub async fn cloud_qr_start(provider: String) -> Result<Value, String> {
     if provider == "guangyapan" {
         return crate::cloud_guangya::qr_start().await;
     }
+    let mut jar = CookieJar::default();
     let (data, qrcode, hint) = match provider.as_str() {
-        // 夸克：getTokenForQrcodeLogin → data.members.token（实测 2026-10：
+        // 夸克：getTokenForQrcodeLogin → data.members.token（实测 2026-11：
         // {status:2000000, data:{members:{token}}}，status 2000000 = OK）
+        // [lc-2231] 这一步必须 **收下 `_UP_*` 会话 Cookie**：后面的 service_ticket
+        // 查询与账号换取都要它，不带就是「扫了没反应」。
         "quark" => {
             let rid: String = (0..16).map(|_| (b'a' + rand::random::<u8>() % 26) as char).collect();
-            let v = get_json(
-                &format!("https://uop.quark.cn/cas/ajax/getTokenForQrcodeLogin?client_id=532&v=1.2&request_id={rid}"),
-                &[("Referer".into(), "https://pan.quark.cn/".into())],
-            )
-            .await?;
+            let url = format!(
+                "https://uop.quark.cn/cas/ajax/getTokenForQrcodeLogin?client_id=532&v=1.2&request_id={rid}"
+            );
+            let resp = client()
+                .get(&url)
+                .header("Accept", "application/json, text/plain, */*")
+                .header("Origin", "https://pan.quark.cn")
+                .header("Referer", "https://pan.quark.cn/")
+                .send()
+                .await
+                .map_err(|e| format!("夸克二维码请求失败: {e}"))?;
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(format!("夸克二维码上游 HTTP {}", status.as_u16()));
+            }
+            let setc: Vec<String> = resp
+                .headers()
+                .get_all(reqwest::header::SET_COOKIE)
+                .iter()
+                .filter_map(|h| h.to_str().ok().map(|s| s.to_string()))
+                .collect();
+            jar.absorb(&setc);
+            let text = resp.text().await.map_err(|e| format!("夸克响应读取失败: {e}"))?;
+            let v = jsonp_or_json(&text)?;
             let token = g_str(&v, &["/data/members/token"], &["token"]);
             if token.is_empty() {
                 return Err(format!("夸克二维码 token 获取失败: {v}"));
             }
+            crate::libmpv::trace(&format!(
+                "[lc-2231] quark qr_start: 会话 Cookie {} 条, token {} 字符",
+                jar.0.len(),
+                token.len()
+            ));
             let su = format!(
                 "https://su.quark.cn/4_eMHBJ?token={token}&client_id=532&ssb=weblogin&uc_param_str=&uc_biz_str=S%3Acustom%7COPT%3ASAREA%400%7COPT%3AIMMERSIVE%401%7COPT%3ABACK_BTN_STYLE%400"
             );
@@ -601,17 +727,46 @@ pub async fn cloud_qr_start(provider: String) -> Result<Value, String> {
             )
         }
         // 百度：getqrcode → imgurl（passport 直接出的二维码图）+ sign（channel_id）
+        // [lc-2231] `BAIDUID` 会话 Cookie 必须收下：qrbdusslogin 缺它就把 v 判成
+        // 310005「验证信息已过期」——用户看到的正是「手机点了确认，桌面报错」。
         "baidu" => {
-            let v = get_json(
-                "https://passport.baidu.com/v2/api/getqrcode?lp=pc&qrloginfromapi=1&v3=1&tpl=netdisk",
-                &[("Referer".into(), "https://pan.baidu.com/".into())],
-            )
-            .await?;
+            let resp = client()
+                .get("https://passport.baidu.com/v2/api/getqrcode?lp=pc&qrloginfromapi=1&v3=1&tpl=netdisk")
+                .header("Referer", "https://pan.baidu.com/")
+                .send()
+                .await
+                .map_err(|e| format!("百度二维码请求失败: {e}"))?;
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(format!("百度二维码上游 HTTP {}", status.as_u16()));
+            }
+            let setc: Vec<String> = resp
+                .headers()
+                .get_all(reqwest::header::SET_COOKIE)
+                .iter()
+                .filter_map(|h| h.to_str().ok().map(|s| s.to_string()))
+                .collect();
+            // 只留 BAIDUID 系列：PASSID/UBI 是每次请求都新发的，留着反而撑大状态串
+            for raw in &setc {
+                let pair = raw.split(';').next().unwrap_or("").trim();
+                if let Some((name, _)) = pair.split_once('=') {
+                    if name.trim() == "BAIDUID" || name.trim() == "BAIDUID_BFESS" {
+                        jar.absorb(std::slice::from_ref(raw));
+                    }
+                }
+            }
+            let text = resp.text().await.map_err(|e| format!("百度响应读取失败: {e}"))?;
+            let v = jsonp_or_json(&text)?;
             let sign = g_str(&v, &["/sign"], &["sign"]);
             let imgurl = g_str(&v, &["/imgurl"], &["imgurl"]);
             if sign.is_empty() {
                 return Err(format!("百度二维码获取失败: {v}"));
             }
+            crate::libmpv::trace(&format!(
+                "[lc-2231] baidu qr_start: 会话 Cookie {} 条（{}）",
+                jar.0.len(),
+                jar.0.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(",")
+            ));
             let qr = if imgurl.starts_with("http") {
                 imgurl
             } else if imgurl.starts_with("passport.") {
@@ -672,7 +827,13 @@ pub async fn cloud_qr_start(provider: String) -> Result<Value, String> {
         }
         _ => return Err(format!("不支持的网盘: {provider}")),
     };
-    let st = QrState { provider: provider.clone(), data, exp_ms: now_ms() + QR_TTL_MS };
+    let st = QrState {
+        provider: provider.clone(),
+        data,
+        exp_ms: now_ms() + QR_TTL_MS,
+        // [lc-2231] 会话 Cookie 随状态串走；空 jar 不写（状态串更短）
+        jar: if jar.is_empty() { None } else { Some(jar.to_json()) },
+    };
     Ok(json!({
         "qrcode": qrcode,
         "state": st.pack(),
@@ -705,7 +866,8 @@ pub async fn cloud_qr_poll(_app: AppHandle, provider: String, state: String) -> 
     if st.provider != provider {
         return Err("扫码状态与厂商不匹配，请刷新二维码".into());
     }
-    let (status, user_name, cred) = poll_provider(&provider, &st.data).await?;
+    let jar = st.jar.as_ref().map(CookieJar::from_json).unwrap_or_default();
+    let (status, user_name, cred) = poll_provider(&provider, &st.data, &jar).await?;
     // [lc-1903] 只打「有变化」的状态（status=0 待扫码每 2s 一拍，不刷屏）；不打凭据本身
     if status != 0 {
         crate::libmpv::trace(&format!("[lc-1903] qr_poll provider={provider} status={status}"));
@@ -727,59 +889,102 @@ pub async fn cloud_qr_poll(_app: AppHandle, provider: String, state: String) -> 
 async fn poll_provider(
     provider: &str,
     d: &Value,
+    jar: &CookieJar,
 ) -> Result<(i64, Option<String>, Option<Value>), String> {
     match provider {
-        // 夸克：getServiceTicketByQrcodeToken → 确认后 data.ticket（实测未扫时
-        // {status:50004001,"Query result is empty"}，无 data）
+        // 夸克：getServiceTicketByQrcodeToken → 确认后 `data.members.service_ticket`
+        // （注意字段层级：**不是** `data.ticket`；未扫时 {status:50004001,"Query result is empty"}）
+        // [lc-2231] 整条链都要带 start 阶段拿到的 `_UP_*` 会话 Cookie，否则上游不认票。
         "quark" => {
             let token = g_str(d, &["/token"], &["token"]);
-            let v = get_json(
-                &format!(
-                    "https://uop.quark.cn/cas/ajax/getServiceTicketByQrcodeToken?client_id=532&v=1.2&token={token}"
-                ),
-                &[("Referer".into(), "https://pan.quark.cn/".into())],
-            )
-            .await?;
-            let ticket = g_str(&v, &["/data/ticket"], &["ticket"]);
-            if ticket.is_empty() {
-                // 已扫待确认 vs 待扫码：响应无稳定区分（state 字段实测不存在），一律待扫码
-                return Ok((0, None, None));
-            }
-            // su.quark.cn 换 Cookie（302 链上挂 __pus/__puus 等，全部收下）
-            let su = format!(
-                "https://su.quark.cn/4_eMHBJ?token={ticket}&client_id=532&ssb=weblogin&uc_param_str=&uc_biz_str=S%3Acustom%7COPT%3ASAREA%400%7COPT%3AIMMERSIVE%401%7COPT%3ABACK_BTN_STYLE%400"
+            let rid: String = (0..16).map(|_| (b'a' + rand::random::<u8>() % 26) as char).collect();
+            let url = format!(
+                "https://uop.quark.cn/cas/ajax/getServiceTicketByQrcodeToken?client_id=532&v=1.2&token={}&request_id={rid}",
+                urlencoding::encode(&token)
             );
-            let resp = client_noredir()
-                .get(&su)
+            let resp = client()
+                .get(&url)
+                .header("Accept", "application/json, text/plain, */*")
+                .header("Origin", "https://pan.quark.cn")
                 .header("Referer", "https://pan.quark.cn/")
+                .header("Cookie", jar.header())
                 .send()
                 .await
-                .map_err(|e| format!("夸克 Cookie 兑换失败: {e}"))?;
-            let mut setc: Vec<String> = resp
-                .headers()
-                .get_all(reqwest::header::SET_COOKIE)
-                .iter()
-                .filter_map(|h| h.to_str().ok().map(|s| s.to_string()))
-                .collect();
-            // 跟一跳 302（su → pan.quark.cn 落 Cookie 的链路）
-            if let Some(loc) = resp.headers().get(reqwest::header::LOCATION).and_then(|l| l.to_str().ok()) {
-                if loc.starts_with("http") {
-                    if let Ok(r2) = client_noredir().get(loc).header("Referer", "https://pan.quark.cn/").send().await {
-                        setc.extend(
-                            r2.headers()
-                                .get_all(reqwest::header::SET_COOKIE)
-                                .iter()
-                                .filter_map(|h| h.to_str().ok().map(|s| s.to_string())),
-                        );
-                    }
+                .map_err(|e| format!("夸克轮询失败: {e}"))?;
+            let text = resp.text().await.map_err(|e| format!("夸克响应读取失败: {e}"))?;
+            let v = jsonp_or_json(&text)?;
+            let status_code = v.get("status").and_then(|x| x.as_i64()).unwrap_or(-1);
+            // 2000000 = 已确认；50004001 = 等待扫码/确认；50004002 = 过期
+            if status_code == 50004002 {
+                return Ok((QR_EXPIRED, None, None));
+            }
+            let ticket = g_str(&v, &["/data/members/service_ticket", "/data/ticket"], &["service_ticket", "ticket"]);
+            if ticket.is_empty() {
+                // [lc-2231] status=2000000 = 用户已确认，此时没有票就是异常：
+                // 静默回「待扫码」会让界面一直转圈（旧实现就是这样，用户永远等不到结果）。
+                if status_code == 2000000 {
+                    crate::libmpv::trace(&format!(
+                        "[lc-2231] quark 已确认(status=2000000)但取不到 service_ticket：{}",
+                        text.chars().take(200).collect::<String>()
+                    ));
+                    return Err("夸克已确认登录，但上游未返回 service_ticket，请刷新二维码重试".into());
                 }
+                return Ok((0, None, None));
             }
-            let cookies = cookie_str(&setc, None);
-            if cookies.is_empty() {
-                return Err("夸克扫码确认但未拿到 Cookie".into());
+            // 换凭据：pan.quark.cn/account/info?st=<service_ticket>（会话 Cookie 必须带上，
+            // 上游才把 `__pus`/`__puus` 写进 Set-Cookie）
+            let info_url = format!(
+                "https://pan.quark.cn/account/info?st={}",
+                urlencoding::encode(&ticket)
+            );
+            let info = client()
+                .get(&info_url)
+                .header("Accept", "application/json, text/plain, */*")
+                .header("Referer", "https://pan.quark.cn/")
+                .header("Cookie", jar.header())
+                .send()
+                .await
+                .map_err(|e| format!("夸克账号换取失败: {e}"))?;
+            let mut full_jar = jar.clone();
+            absorb_set_cookie(&mut full_jar, &info);
+            let info_text = info.text().await.map_err(|e| format!("夸克账号响应读取失败: {e}"))?;
+            let info_v = jsonp_or_json(&info_text)?;
+            if info_v.get("success").and_then(|x| x.as_bool()) != Some(true) {
+                let msg = info_v.get("msg").and_then(|x| x.as_str()).unwrap_or("");
+                let code = info_v.get("code").and_then(|x| x.as_str()).unwrap_or("");
+                crate::libmpv::trace(&format!(
+                    "[lc-2231] quark 账号换取被拒 code={code} msg={msg}（会话 Cookie {} 条）",
+                    full_jar.0.len()
+                ));
+                return Err(format!("夸克账号换取失败（{code} {msg}），请重新扫码"));
             }
-            let cred = json!({ "cookies": cookies, "user_name": "夸克网盘", "saved_at_ms": now_ms() });
-            Ok((2, Some("夸克网盘".into()), Some(cred)))
+            // 品凭据 = `__pus` / `__puus`（其余 `_UP_*` 是登录过程用的，播业务用不到）
+            let cred_pairs = full_jar.pick(&["__pus", "__puus", "__kp", "__ktd"]);
+            if cred_pairs.is_empty() {
+                let names: Vec<&str> = full_jar.0.iter().map(|(k, _)| k.as_str()).collect();
+                crate::libmpv::trace(&format!(
+                    "[lc-2231] quark 换取成功但缺 __pus/__puus（现有 {}）",
+                    names.join(",")
+                ));
+                return Err("夸克账号换取成功，但未下发网盘凭据（__pus），请重新扫码".into());
+            }
+            let cookies = cred_pairs
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            crate::libmpv::trace(&format!(
+                "[lc-2231] quark 凭据已取得（{}）",
+                cred_pairs.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(",")
+            ));
+            let uname = info_v
+                .pointer("/data/nickname")
+                .and_then(|x| x.as_str())
+                .or_else(|| info_v.pointer("/data/user_name").and_then(|x| x.as_str()))
+                .unwrap_or("夸克网盘")
+                .to_string();
+            let cred = json!({ "cookies": cookies, "user_name": uname, "saved_at_ms": now_ms() });
+            Ok((2, Some(uname), Some(cred)))
         }
         // 百度：channel/unicast 长轮询（JSONP）→ 确认后 qrbdusslogin 落 BDUSS/STOKEN
         "baidu" => {
@@ -794,7 +999,12 @@ async fn poll_provider(
             // ③ 超时 = 这段时间没人扫码（正常空轮询），按「待扫码」继续下一轮，不能当错误中断。
             let v = match get_json_timeout(
                 &url,
-                &[("Referer".into(), "https://pan.baidu.com/".into())],
+                &[
+                    ("Referer".into(), "https://pan.baidu.com/".into()),
+                    // [lc-2231] 会话 Cookie 必须带上：unicast 与 qrbdusslogin 都靠它
+                    // 把「这次扫码」和 getqrcode 那次请求关联起来。
+                    ("Cookie".into(), jar.header()),
+                ],
                 Duration::from_secs(40),
             )
             .await
@@ -839,6 +1049,11 @@ async fn poll_provider(
             let resp = client_noredir()
                 .get(&login_url)
                 .header("Referer", "https://pan.baidu.com/")
+                // [lc-2231] 真凶：**缺这个 Cookie 就被上游判 310005「验证信息已过期」**，
+                // 哪怕 v 完全正确。实测对照（同一个假 v）：不带 BAIDUID → 5 条 Set-Cookie +
+                // errInfo.no=310005；带 BAIDUID → 3 条，仍是 310005（因为票本身假的）。
+                // 结论：BAIDUID 是必要条件，缺了必然失败；带上之后才轮到 v 是否有效。
+                .header("Cookie", jar.header())
                 .send()
                 .await
                 .map_err(|e| format!("百度 Cookie 兑换失败: {e}"))?;
@@ -853,14 +1068,33 @@ async fn poll_provider(
                 Some(&["BDUSS", "bduss_bfess", "STOKEN", "PTOKEN", "PANSCPANWEB", "panweb"]),
             );
             if !cookies.contains("BDUSS=") {
+                // [lc-2231] 把上游的拒绝理由打出来：以前只说「Set-Cookie N 条」，
+                // 排查时完全看不出是票过期（310005）还是别的。响应体不是合法 JSON
+                // （百度在 JSON 里塞了单引号键 + 尾逗号），所以这里只做子串提取。
+                let body = resp.text().await.unwrap_or_default();
+                let hint = if body.contains("310005") {
+                    "310005 验证信息已过期（v 已被用过或超出时效）"
+                } else if body.contains("310004") {
+                    "310004 二维码已失效"
+                } else if body.contains("3100") {
+                    "上游判定验证信息无效"
+                } else if body.is_empty() {
+                    "响应体为空"
+                } else {
+                    "响应体里没有 BDUSS"
+                };
                 crate::libmpv::trace(&format!(
-                    "[lc-1903] baidu qrbdusslogin 未拿到 BDUSS（HTTP {}，Set-Cookie {} 条）",
-                    resp.status().as_u16(),
-                    setc.len()
+                    "[lc-2231] baidu qrbdusslogin 失败：{hint}（Set-Cookie {} 条: {}，会话 Cookie {} 条）",
+                    setc.len(),
+                    setc.iter()
+                        .filter_map(|c| c.split('=').next())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                    jar.0.len()
                 ));
-                return Err("百度扫码已确认，但换取登录凭据失败（BDUSS 未下发），请重新扫码".into());
+                return Err(format!("百度扫码已确认，但换取登录凭据失败（{hint}），请重新扫码"));
             }
-            crate::libmpv::trace("[lc-1903] baidu qrbdusslogin 成功，BDUSS 已写入");
+            crate::libmpv::trace("[lc-2231] baidu qrbdusslogin 成功，BDUSS 已写入");
             let cred = json!({ "cookies": cookies, "user_name": "百度网盘", "saved_at_ms": now_ms() });
             Ok((2, Some("百度网盘".into()), Some(cred)))
         }
@@ -1824,6 +2058,55 @@ mod tests {
         assert_eq!(v.get("a").and_then(|x| x.as_i64()), Some(2));
     }
 
+    /// [lc-2231] 扫码会话 Cookie jar：同名覆盖、按名挑选、JSON 往返。
+    /// 这条守的是「扫了没反应」的根因：会话 Cookie 必须能在 start→poll 之间传下去。
+    #[test]
+    fn qr_cookie_jar_roundtrip() {
+        let mut jar = CookieJar::default();
+        jar.absorb(&[
+            "_UP_28A_52_=532; Path=/".to_string(),
+            "_UP_D_=pc; Path=/; HttpOnly".to_string(),
+            "BAIDUID=abc:FG=1; Expires=Wed, 01 Jan 2031 00:00:00 GMT".to_string(),
+        ]);
+        assert_eq!(jar.0.len(), 3);
+        assert_eq!(jar.header(), "_UP_28A_52_=532; _UP_D_=pc; BAIDUID=abc:FG=1");
+
+        // 同名必须覆盖（上游会轮换值），不能长出重复键
+        jar.absorb(&["BAIDUID=rotated:FG=1; Path=/".to_string()]);
+        assert_eq!(jar.0.len(), 3);
+        assert_eq!(jar.header().matches("BAIDUID=").count(), 1);
+        assert!(jar.header().contains("BAIDUID=rotated:FG=1"));
+
+        // 只挑品凭据
+        let picked = jar.pick(&["__pus", "__puus", "BAIDUID"]);
+        assert_eq!(picked.len(), 1);
+        assert_eq!(picked[0].0, "BAIDUID");
+
+        // 空 jar 判定（状态串不该为它多塞一个空数组）
+        assert!(CookieJar::default().is_empty());
+
+        // JSON 往返：浏览器/悬空状态都靠它
+        let back = CookieJar::from_json(&jar.to_json());
+        assert_eq!(back.header(), jar.header());
+    }
+
+    /// 夸克的 service_ticket 在 `data.members.service_ticket`（不是 `data.ticket`）。
+    /// 旧实现读错层级 → 手机确认了也永远当「待扫码」。
+    #[test]
+    fn quark_service_ticket_field_level() {
+        let confirmed = json!({
+            "status": 2000000,
+            "data": { "members": { "service_ticket": "st-abc+/=" } }
+        });
+        assert_eq!(
+            g_str(&confirmed, &["/data/members/service_ticket", "/data/ticket"], &["service_ticket", "ticket"]),
+            "st-abc+/="
+        );
+        // 未扫码：无 data，取值必须为空（据此回 status=0）
+        let waiting = json!({ "status": 50004001, "message": "Query result is empty" });
+        assert!(g_str(&waiting, &["/data/members/service_ticket"], &["service_ticket"]).is_empty());
+    }
+
     #[test]
     fn baidu_channel_v_parsing() {
         // 已确认：channel_v 是「JSON 字符串」，v 里可能带 + / =（必须 URL 编码后再用）
@@ -1844,12 +2127,35 @@ mod tests {
 
     #[test]
     fn qr_state_roundtrip() {
-        let st = QrState { provider: "quark".into(), data: json!({ "token": "t1" }), exp_ms: now_ms() + 1000 };
+        let mut jar = CookieJar::default();
+        jar.absorb(&["BAIDUID=abc:FG=1".to_string()]);
+        let st = QrState {
+            provider: "quark".into(),
+            data: json!({ "token": "t1" }),
+            exp_ms: now_ms() + 1000,
+            jar: Some(jar.to_json()),
+        };
         let packed = st.pack();
         let back = QrState::unpack(&packed).unwrap();
         assert_eq!(back.provider, "quark");
         assert_eq!(back.data.get("token").and_then(|x| x.as_str()), Some("t1"));
-        let expired = QrState { provider: "quark".into(), data: json!({}), exp_ms: 1 };
+        // [lc-2231] 会话 Cookie 必须穿过状态串（否则 poll 侧拿不到，扫了等于没扫）
+        let back_jar = CookieJar::from_json(back.jar.as_ref().unwrap());
+        assert_eq!(back_jar.header(), "BAIDUID=abc:FG=1");
+        // 无 jar 的老/空状态串仍要能解（向后兼容）
+        let no_jar = QrState {
+            provider: "quark".into(),
+            data: json!({}),
+            exp_ms: now_ms() + 1000,
+            jar: None,
+        };
+        assert!(QrState::unpack(&no_jar.pack()).unwrap().jar.is_none());
+        let expired = QrState {
+            provider: "quark".into(),
+            data: json!({}),
+            exp_ms: 1,
+            jar: None,
+        };
         assert!(QrState::unpack(&expired.pack()).is_err());
     }
 

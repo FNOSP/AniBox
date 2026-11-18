@@ -46,8 +46,8 @@ if not "%DEV_CMD_LINE:/c =%"=="%DEV_CMD_LINE%" set "DEV_OWN_CONSOLE=1"
 if not "%DEV_CMD_LINE:/k =%"=="%DEV_CMD_LINE%" set "DEV_OWN_CONSOLE=1"
 if not "%DEV_CMD_LINE:/C =%"=="%DEV_CMD_LINE%" set "DEV_OWN_CONSOLE=1"
 if not "%DEV_CMD_LINE:/K =%"=="%DEV_CMD_LINE%" set "DEV_OWN_CONSOLE=1"
-if "%DEVMODE%"=="1" if "%DEV_OWN_CONSOLE%"=="1" echo [dev] mode 1: the console hides at startup. To bring it back:
-if "%DEVMODE%"=="1" if "%DEV_OWN_CONSOLE%"=="1" echo [dev]   pwsh -NoProfile -ExecutionPolicy Bypass -File tools\dev-console.ps1 -Action show
+if "%DEVMODE%"=="1" if "%DEV_OWN_CONSOLE%"=="1" echo [dev] mode 1: this window hides once the app window is up (build output stays visible until then).
+if "%DEVMODE%"=="1" if "%DEV_OWN_CONSOLE%"=="1" echo [dev]   bring it back with: pwsh -NoProfile -ExecutionPolicy Bypass -File tools\dev-console.ps1 -Action show
 if "%DEVMODE%"=="2" echo [dev] mode 2: the console stays visible.
 if "%DEVMODE%"=="1" if "%DEV_OWN_CONSOLE%"=="0" echo [dev] mode 1 picked, but this window stays visible: dev.cmd was started from an existing terminal, and hiding it would take your shell with it.
 if defined FNTV_DEV_DRYRUN goto devmode_dryrun
@@ -181,18 +181,15 @@ echo       mpv log   : %%TEMP%%\anibox-mpv.log
 echo       Go proxy  : %%TEMP%%\proxy.log  (only when started by hand)
 echo       -> on exit this window prints the tail of both logs.
 echo.
-REM ---- [lc-2223] hide the console for mode 1 ---------------------------------------
-REM Done here (not at the top) on purpose: every check above prints to this window, and a
-REM hidden window would swallow the error. Any failure from now on re-shows the window
-REM before printing, so a broken build is never invisible.
+REM ---- [lc-2223] mode 1: hide the console, but only AFTER the app is up --------------
+REM The first version hid the window right here, before the build. That was wrong: the
+REM window vanished and the next 5-15 min of cargo/vite output had nowhere to go, which
+REM reads exactly like "pressed 1 and nothing happened". Now dev-run.ps1 hides the window
+REM the moment it detects the app process, so the whole build stays visible and only the
+REM running session goes to the background.
 if "%DEVMODE%"=="1" if "%DEV_OWN_CONSOLE%"=="0" set "DEVMODE=2"
-if "%DEVMODE%"=="1" (
-  pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\dev-console.ps1" -Action hide -OwnConsole 1
-  if errorlevel 1 (
-    echo [dev] WARN: could not hide this console -- continuing with it visible.
-    set "DEVMODE=2"
-  )
-)
+set "DEV_HIDE_ARG="
+if "%DEVMODE%"=="1" set "DEV_HIDE_ARG=-HideConsoleOnAppStart"
 REM ---- [lc-1547] run under a Job Object + app-exit watcher (see tools\dev-run.ps1) ----
 REM (A) Job Object (kill-on-close): closing THIS window kills the whole tree. Windows does
 REM     not kill descendants on a console window close, so vite + cargo + anibox.exe would
@@ -200,7 +197,7 @@ REM     otherwise survive.
 REM (B) App-exit watcher: when the APP WINDOW is closed, dev-run.ps1 tears the chain down
 REM     and returns 0, so this script can fall through and close itself -- no manual close.
 REM (pwsh here, not powershell: this repo's PowerShell is always 7.x.)
-pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\dev-run.ps1" -Command "npm run tauri dev"
+pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\dev-run.ps1" -Command "npm run tauri dev" %DEV_HIDE_ARG%
 set DEVRUN_EXIT=%errorlevel%
 REM Fallback sweep: if the Job Object could not be created (e.g. this cmd is itself
 REM already inside a job), the tree may still be alive -- kill the known dev children.

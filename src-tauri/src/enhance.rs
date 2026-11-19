@@ -86,36 +86,15 @@ pub const SVP_FILES: &[&str] = &[
 ];
 
 
-/// [lc-1856] 显卡名探测（注册表显示适配器类，过滤虚拟/远程显卡；进程内缓存一次）。
-/// 用于 AI 增强 UI 的「你的显卡：xxx」展示与 RIFE 硬性要求提示（用户普遍不清楚
-/// 自己的卡带不带得动——5070 实测 1080P RIFE 都跟不上）。
+/// [lc-1856] 显卡名探测；用于 AI 增强 UI 的「你的显卡：xxx」展示与 RIFE 硬性要求提示
+/// （用户普遍不清楚自己的卡带不带得动——5070 实测 1080P RIFE 都跟不上）。
+///
+/// [lc-2244] 实现从「外调 pwsh 查注册表」换成进程内 Win32 `EnumDisplayDevicesW`
+/// （见 gpu_info 模块）：pwsh 不是 Windows 自带组件，干净机器上探测静默失败、
+/// 面板那行提示整块消失，且没有任何报错可循。
 fn detect_gpu_name() -> String {
     static GPU: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    GPU.get_or_init(|| {
-        // pwsh 查询显卡；CREATE_NO_WINDOW 仅 Windows（linux/macos 无此方法，lc-2053 CI）
-        #[allow(unused_mut)]
-        let mut cmd = std::process::Command::new("pwsh");
-        cmd.args(["-NoProfile", "-Command",
-            "(Get-ItemProperty 'HKLM:/SYSTEM/CurrentControlSet/Control/Class/{4d36e968-e325-11ce-bfc1-08002be10318}/0*' -ErrorAction SilentlyContinue | Where-Object DriverDesc | Select-Object -ExpandProperty DriverDesc) -join ' | '"]);
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt as _;
-            cmd.creation_flags(0x0800_0000);
-        }
-        let out = cmd.output();
-        let Ok(o) = out else { return String::new() };
-        let text = String::from_utf8_lossy(&o.stdout).trim().to_string();
-        // 过滤虚拟/远程显示适配器，取第一块真卡
-        text.split(" | ")
-            .map(str::trim)
-            .filter(|n| !n.is_empty())
-            .find(|n| {
-                let low = n.to_lowercase();
-                !low.contains("virtual") && !low.contains("remote") && !low.contains("basic")
-            })
-            .unwrap_or("")
-            .to_string()
-    }).clone()
+    GPU.get_or_init(crate::gpu_info::gpu_name).clone()
 }
 
 pub fn superres_dml_ready(app: &AppHandle) -> bool {
@@ -465,7 +444,7 @@ pub async fn ai_enhance_set_superres(
 }
 
 /// 下载并安装：远端 manifest → zip 流式下载（进度事件）→ sha256 校验 →
-/// 解压（pwsh Expand-Archive，CREATE_NO_WINDOW 零前台）→ 原子替换。
+/// 解压（[lc-2244] 进程内纯 Rust，不依赖 pwsh/Expand-Archive）→ 原子替换。
 #[tauri::command]
 pub async fn ai_enhance_download(
     state: tauri::State<'_, AppState>,
@@ -709,37 +688,30 @@ pub async fn ai_enhance_download(
         return Err("组件包校验失败（SHA-256 不匹配，下载可能损坏）——请重试下载".into());
     }
 
-    // 3) 解压到临时目录（零前台：pwsh CREATE_NO_WINDOW；该标志仅 Windows）
+    // 3) 解压到临时目录（[lc-2244] 进程内纯 Rust：原先外调 pwsh Expand-Archive，
+    //    而 pwsh 是 PowerShell 7、Windows 不自带，干净机器上必然
+    //    「启动解压失败: program not found」——下载 100% 失败）。
     let tmp_dir = std::env::temp_dir().join(format!("anibox-ai-enhance-unzip-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp_dir);
-    #[allow(unused_mut)]
-    let mut unzip_cmd = tokio::process::Command::new("pwsh");
-    unzip_cmd
-        .arg("-NoProfile")
-        .arg("-ExecutionPolicy")
-        .arg("Bypass")
-        .arg("-Command")
-        .arg(format!(
-            "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
-            tmp_zip.display(),
-            tmp_dir.display()
-        ))
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    #[cfg(target_os = "windows")]
-    {
-        // tokio::process::Command 的 creation_flags 是 Windows 固有方法（linux/macos 编译不过）
-        unzip_cmd.creation_flags(0x0800_0000);
-    }
-    let unzip_status = unzip_cmd
-        .status()
-        .await
-        .map_err(|e| format!("启动解压失败: {e}"))?;
+    // 解压是同步阻塞 IO（几十 MB、上千条目）：放 spawn_blocking，别占 async 线程
+    let unzip = {
+        let zip_path = tmp_zip.clone();
+        let dest = tmp_dir.clone();
+        tokio::task::spawn_blocking(move || crate::zip_extract::extract_to(&zip_path, &dest))
+            .await
+            .map_err(|e| format!("解压任务异常: {e}"))?
+    };
     let _ = std::fs::remove_file(&tmp_zip);
-    if !unzip_status.success() {
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-        return Err("组件包解压失败（zip 损坏或磁盘空间不足）".into());
+    match unzip {
+        Ok(0) => {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Err("组件包是空的（zip 内没有任何文件）——请重试下载".into());
+        }
+        Ok(_) => {}
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Err(format!("组件包解压失败：{e}"));
+        }
     }
     // zip 内可能是包一层目录（ai-enhance/…）或平铺：取「含 manifest.json 或 runtime/」的目录
     let src_root = if tmp_dir.join("runtime").is_dir() {

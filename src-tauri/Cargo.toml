@@ -86,6 +86,19 @@ zhconv = { version = "0.4", default-features = false, features = ["mediawiki-han
 gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
 nvapi-sys = "0.1.3"
 libloading = "0.9.0"
+# [lc-2244] AI 增强组件解压改为**进程内**（原先外调 `pwsh Expand-Archive`）。
+# pwsh 是 PowerShell 7，Windows 不自带（系统只带 5.1 的 powershell.exe）——干净机器上
+# `Command::new("pwsh")` 直接 ENOENT，用户看到的就是「启动解压失败: program not found」。
+# 改用 zip crate 后解压不依赖任何外部进程。
+#   · 必须用聚合 feature `deflate`，不能只开 `deflate-flate2`：后者的定义只有
+#     `_deflate-any`，**不会激活 zip 自己的 flate2 可选依赖**（在自己 crate 里直接
+#     声明 flate2 也无效——Cargo 的可选依赖只能由所属 crate 的 feature 打开），
+#     结果 zip 编译报 "cannot find module flate2"。`deflate` = `flate2/rust_backend`
+#     （纯 Rust miniz_oxide，无 C 依赖、跨平台一致）+ `deflate-flate2`。
+#   · 副作用：它还会带上 `zopfli`（压缩器）。我们只解压、从不写 zip，这部分是死代码，
+#     release 下被 LTO 消掉；比另一条路 `deflate-zlib` 干净得多——那条会引入
+#     libz-sys（C 代码，Windows/mac/Linux 三平台都要能编过）。
+zip = { version = "2.6.1", default-features = false, features = ["deflate"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

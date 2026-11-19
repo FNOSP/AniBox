@@ -29,6 +29,12 @@ mod duanju_danmaku;
 mod webdav;
 // [lc-1820] AI 增强可选组件（RIFE Vulkan 运行时：软件内下载/状态/删除）
 mod enhance;
+// [lc-2244] 组件包进程内解压：原先外调 pwsh Expand-Archive，而 pwsh 不是 Windows
+// 自带组件 —— 干净机器上报「启动解压失败: program not found」，下载必然失败。
+mod zip_extract;
+// [lc-2244] 显卡名探测：原先同样外调 pwsh（查注册表显示适配器），改走 Win32
+// EnumDisplayDevicesW，去掉最后一个运行期 pwsh 依赖。
+mod gpu_info;
 // [bili-account] B 站账号（Cookie 读写/体检）+ Node 检测 + 一键自建弹幕源
 mod bili_account;
 // [bili-qr] B 站二维码扫码登录（generate/poll，Cookie 落盘复用 bili_account）

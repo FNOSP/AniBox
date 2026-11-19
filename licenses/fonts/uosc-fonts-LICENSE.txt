@@ -1,0 +1,7 @@
+uosc_icons.otf / uosc_textures.ttf
+来源：uosc (https://github.com/tomasklaen/uosc)
+
+uosc 以 GNU Lesser General Public License v2.1 (LGPL-2.1) 发布，
+其图标与纹理字体随 uosc 一同授权。完整许可副本见：
+  scripts/uosc/LICENSE.LGPL
+全文：https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html

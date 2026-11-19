@@ -60,6 +60,8 @@ const SOFTWARE_DESC =
   "AniBox 是一款基于 Tauri + React 的影视与番剧聚合播放器：支持飞牛影视库、Bangumi 追番、" +
   "TMDB 元数据与自建弹幕源。";
 const PROJECT_URL = "https://github.com/FNOSP/AniBox";
+/** [lc-2196] 随包第三方组件声明（mpv / 脚本 / 着色器 / 字体等）的仓库地址。 */
+const THIRD_PARTY_NOTICES_URL = `${PROJECT_URL}/blob/main/THIRD_PARTY_NOTICES.md`;
 
 /** 用系统默认浏览器打开外链。
  *  Tauri/WebView2 会丢弃 target="_blank" 的新窗口请求，所以必须走 opener 插件；
@@ -3321,6 +3323,32 @@ export function SettingsPanel({
                     >
                       许可证全文
                     </a>
+                  </div>
+                  {/* [lc-2196] 随包第三方组件归属：mpv 及其脚本/着色器/字体、短剧核心等
+                      各自遵循其自身许可（GPL/LGPL/MPL/OFL/Apache-2.0），必须可查。 */}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">第三方组件声明</span>
+                      <div className="set-desc">随包分发的 mpv、播放器脚本、字体等组件的来源与许可</div>
+                    </div>
+                    <div className="set-actions">
+                      <button
+                        type="button"
+                        className="set-btn"
+                        onClick={() => openExternal(THIRD_PARTY_NOTICES_URL)}
+                        title="在浏览器中查看 THIRD_PARTY_NOTICES.md"
+                      >
+                        查看
+                      </button>
+                      <button
+                        type="button"
+                        className="set-btn"
+                        onClick={() => openPath("app")}
+                        title="安装目录内随包附带 LICENSE 与 THIRD_PARTY_NOTICES.md"
+                      >
+                        安装目录
+                      </button>
+                    </div>
                   </div>
                 </>
               )}

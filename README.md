@@ -283,7 +283,7 @@
 | 手柄 | Rust **gilrs** 原生监听，事件推送到前端 |
 | 缓存 | 内存 → 磁盘 → 网络三级缓存，磁盘 LRU 淘汰 |
 
-> **mpv 说明**：本项目使用**第三方预编译的 mpv 版本**（**非本项目构建 / 编译**），具体来自 [Yaozhil/mpv-Yaozhi](https://github.com/Yaozhil/mpv-Yaozhi) 项目；版权归 **mpv 项目及其构建者**所有，遵循其 **GPL / LGPL** 许可；本项目**不声称拥有 mpv 代码**，也不随包分发 mpv 二进制。
+> **mpv 说明**：本项目使用**第三方预编译的 mpv 版本**（**非本项目构建 / 编译**），具体来自 [Yaozhil/mpv-Yaozhi](https://github.com/Yaozhil/mpv-Yaozhi) 项目；版权归 **mpv 项目及其构建者**所有，遵循其 **GPL / LGPL** 许可；本项目**不声称拥有 mpv 代码**。Windows 安装包内**随包附带**该预编译 `mpv.exe` 及其 `portable_config`（脚本 / 着色器 / 字体）；分发与源码获取信息见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。本仓库（源码）本身不含 mpv 二进制。
 
 ### 运行时拓扑
 
@@ -312,8 +312,8 @@
 - **控制与事件**：`--input-ipc-server=\\.\pipe\anibox-mpv-<pid>`，前端接收 `mpv-event { event: "property-change", id, data }`。
 - **会话复用**：同一 mpv 进程内 `loadfile replace` 切换剧集，避免反复启动。
 - **请求头**：播放请求可通过 `referrer` / `user-agent` / `http-header-fields` 传入；库内播放会清空残留头。
-- **便携配置**：uosc、input.conf、脚本、着色器来自 `mpv.exe` 同目录的 `portable_config`，由用户自行提供（本仓库不分发 mpv 二进制）。
-- **第三方预编译**：所用 `mpv.exe` 为**第三方预编译版本**（非本项目构建 / 编译），来自 [Yaozhil/mpv-Yaozhi](https://github.com/Yaozhil/mpv-Yaozhi) 项目（本地运行时目录 `third_party/fntv-mpv` 即基于该项目，该目录不入库、不随仓库分发），版权归 mpv 项目及构建者所有，遵循其 GPL/LGPL 许可。
+- **便携配置**：uosc、input.conf、脚本、着色器来自 `mpv.exe` 同目录的 `portable_config`；Windows 安装包内随包附带该目录（源码仓库不含）。
+- **第三方预编译**：所用 `mpv.exe` 为**第三方预编译版本**（非本项目构建 / 编译），来自 [Yaozhil/mpv-Yaozhi](https://github.com/Yaozhil/mpv-Yaozhi) 项目（本地运行时目录 `third_party/fntv-mpv` 即基于该项目，该目录不入库；构建时经 staging 复制进安装包），版权归 mpv 项目及构建者所有，遵循其 GPL/LGPL 许可。
 
 ### 自建镜像与降级
 
@@ -403,6 +403,8 @@ AniBox/                            # 仓库目录名（产品名 AniBox）
 ├── package.json                   # 前端依赖与脚本
 ├── vite.config.ts                 # Vite 配置（端口 1420）
 ├── tsconfig*.json                 # TypeScript 配置
+├── THIRD_PARTY_NOTICES.md         # 随包第三方组件声明（mpv / 脚本 / 字体 / 短剧核心…）
+├── licenses/                      # 随包第三方许可副本（OFL / Apache-2.0）
 └── LICENSE                        # GNU AGPL-3.0
 ```
 
@@ -654,6 +656,7 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 - 你可以运行、研究、修改和再分发本软件；**衍生分发必须以 AGPL-3.0 开放对应源代码**，并保留原始版权与许可声明。
 - **通过网络提供服务时同样适用**：若你修改本软件并让它对网络用户提供服务（例如部署网页版 / NAS 版），必须向这些用户提供对应源代码（AGPL-3.0 第 13 条）。
 - 本软件按「现状」提供，**不提供任何明示或默示担保**。
+- **随包分发的第三方组件**（mpv 及其脚本 / 着色器 / 字体、guoapp 短剧核心、danmu_api 等）各自遵循其自身许可，归属与源码获取途径见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。二次分发安装包时必须一并保留该文件与各组件自带的许可副本。
 
 ### TMDB
 
@@ -684,8 +687,8 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 
 ### mpv / uosc / 字体 / 图标
 
-- **mpv** 是独立第三方播放器。AniBox 使用**第三方预编译的 mpv 版本**（**非本项目构建 / 编译**），来自 [Yaozhil/mpv-Yaozhi](https://github.com/Yaozhil/mpv-Yaozhi) 项目，其**版权归 mpv 项目及对应构建者所有**，遵循其 **GPL / LGPL** 许可；本项目**不声称拥有 mpv 代码**，也不随包分发其二进制。
-- **uosc** 与弹幕脚本遵循其各自仓库许可；本仓库不分发其二进制。
+- **mpv** 是独立第三方播放器。AniBox 使用**第三方预编译的 mpv 版本**（**非本项目构建 / 编译**），来自 [Yaozhil/mpv-Yaozhi](https://github.com/Yaozhil/mpv-Yaozhi) 项目，其**版权归 mpv 项目及对应构建者所有**，遵循其 **GPL / LGPL** 许可；本项目**不声称拥有 mpv 代码**。Windows 安装包随包附带该 `mpv.exe`（详见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)），源码仓库本身不含其二进制。
+- **uosc**、**modernz**、**uosc_danmaku** 等播放器脚本遵循其各自仓库许可（LGPL-2.1 / 各自声明），随 Windows 安装包的 `portable_config` 一并分发，源码见各自上游仓库。
 - **PotPlayer** 为第三方专有软件，本项目**不随包分发**，仅调用用户本机安装的版本。
 - 内置字体使用 **SIL Open Font License** 的开源字体（如 Baloo 2）或系统字体；**不内嵌任何商业字体**。
 - 图标使用 [Lucide](https://lucide.dev)（**ISC 许可**）。

@@ -82,6 +82,12 @@ function fail(msg) {
   process.exit(1);
 }
 
+/** [lc-2196] 必须随安装包分发的许可文件（相对仓库根）。 */
+const LICENSE_FILES = ['LICENSE', 'THIRD_PARTY_NOTICES.md'];
+
+/** [lc-2196] 随包第三方许可副本目录（仓库内权威副本，不依赖本地 third_party/）。 */
+const LICENSES_DIR = 'licenses';
+
 /** Tauri 的 resources 目录模式在空目录上是合法的；先建好骨架，dev / 新 clone 也能编译。 */
 function ensureDirs() {
   fs.mkdirSync(path.join(OUT, 'third_party', 'fntv-mpv'), { recursive: true });
@@ -92,6 +98,19 @@ function ensureDirs() {
      `resource path 'bundle-resources/third_party/duanju' doesn't exist` 并让三个平台全部构建失败。
      空目录是合法的（Tauri 允许空资源目录），Windows 侧有文件时照常拷进去。 */
   fs.mkdirSync(path.join(OUT, 'third_party', 'duanju'), { recursive: true });
+  /* [lc-2196] 许可文件也要 staging：tauri.conf.json 的 bundle.resources 声明了
+     `bundle-resources/LICENSE` 与 `bundle-resources/THIRD_PARTY_NOTICES.md`。
+     AGPL-3.0 §4/§6 要求分发目标码时随附许可证副本；此前安装目录里没有任何
+     声明文件，用户装上后在 `<安装目录>/` 找不到归属与许可信息。 */
+  for (const f of LICENSE_FILES) {
+    fs.copyFileSync(path.join(ROOT, f), path.join(OUT, f));
+  }
+  /* 第三方许可副本整目录复制（fonts/ 下的 OFL / Apache-2.0 等）。 */
+  const licSrc = path.join(ROOT, LICENSES_DIR);
+  if (fs.existsSync(licSrc)) {
+    fs.rmSync(path.join(OUT, LICENSES_DIR), { recursive: true, force: true });
+    fs.cpSync(licSrc, path.join(OUT, LICENSES_DIR), { recursive: true });
+  }
 }
 
 function walk(dir, relBase, out) {
@@ -203,6 +222,13 @@ function signature(items) {
   for (const it of items) {
     const st = fs.statSync(it.abs);
     h.update(`${it.rel}\0${st.size}\0${st.mtimeMs}\n`);
+  }
+  /* [lc-2196] 许可文件不在 items 里（由 ensureDirs 固定复制），但同样要纳入签名：
+     否则改了 LICENSE / THIRD_PARTY_NOTICES.md 后 stamp 不变，staging 直接跳过，
+     安装包里会带着过期的许可证副本。 */
+  for (const f of LICENSE_FILES) {
+    const st = fs.statSync(path.join(ROOT, f));
+    h.update(`${f}\0${st.size}\0${st.mtimeMs}\n`);
   }
   return h.digest('hex');
 }

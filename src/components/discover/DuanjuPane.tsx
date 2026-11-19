@@ -215,6 +215,12 @@ function readFavs(): FavDrama[] {
   return loadFavs();
 }
 
+/** [lc-2240] 每页条数：用户要求「每个分类每次加载 50 个，再往下拉继续加载」。
+ *  核心的 pageSize 默认 30（Config.PageSize），这里靠**前端截断首屏**实现 50 条/屏：
+ *  首屏只渲染前 50 条，滚动到底追加下一批（追加时直接再取 50 条）。
+ *  这样「一次性加载完」变成按需追加，减少首屏 DOM 与图片请求。 */
+const PAGE_SIZE = 50;
+
 export function DuanjuPane() {
   const [source, setSource] = useState("hongguo");
   // [lc-2180] 站源集合以核心回传为准；[lc-2189] 首帧用上次成功的缓存（null = 还没拿到过，
@@ -259,6 +265,10 @@ export function DuanjuPane() {
   const [hasMore, setHasMore] = useState(false);
   const [busy, setBusy] = useState(false);
   const [moreBusy, setMoreBusy] = useState(false);
+  // [lc-2240] 当前渲染条数（每次 +50）；切站源/分类/搜索时归零重来
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  // [lc-2240] 触底加载哨兵：滚到这个元素就追加下一批
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
   const [err, setErr] = useState("");
   const [nonce, setNonce] = useState(0);
 
@@ -407,6 +417,7 @@ export function DuanjuPane() {
     setItems([]);
     setPage(1);
     setHasMore(false);
+    setVisibleCount(PAGE_SIZE); // [lc-2240] 换站源/分类/搜索 → 回到第一屏 50 条
     // [lc-2234] 缓存优先（cached-first）：核心把目录按「站源|分类」落盘缓存（15 分钟）。
     // 从前每次进短剧页都走 catalog 全量重拉（红果实测 6.4s，用户看到的就是「加载中」）；
     // 现在先用 `cached` 这个**纯本地、不打网络**的 op 秒出内容：
@@ -514,27 +525,75 @@ export function DuanjuPane() {
   }, [source, cat, term, nonce]);
 
   async function loadMore() {
-    if (moreBusy || !hasMore) return;
+    if (moreBusy) return;
+    // [lc-2240] 先看内存里还有没有没渲染的条目（「全部」的 cached 一次给整表，
+    // 标签分类每页只有 11~12 条）。够 50 条就直接放出来，不用打网络。
+    if (items.length > visibleCount) {
+      setVisibleCount((n) => n + PAGE_SIZE);
+      return;
+    }
+    if (!hasMore) return;
     setMoreBusy(true);
     try {
-      const next = page + 1;
-      const d = await invoke<CatalogResp>("duanju_catalog", {
-        source,
-        category: cat,
-        page: next,
-        query: term,
-      });
-      const fresh = Array.isArray(d?.items) ? d.items : [];
+      // 核心 pageSize=30、标签分类每页仅 11~12 条 → 循环取到够 50 条或到底
+      const merged: DuanjuDrama[] = [];
       const seen = new Set(items.map((x) => x.id));
-      setItems((prev) => [...prev, ...fresh.filter((x) => !seen.has(x.id))]);
-      setHasMore(d?.hasMore === true);
-      setPage(d?.page || next);
+      let next: number = page + 1;
+      let more: boolean = hasMore;
+      for (let round = 0; round < 6 && merged.length < PAGE_SIZE && more; round++) {
+        const d = await invoke<CatalogResp>("duanju_catalog", {
+          source,
+          category: cat,
+          page: next,
+          query: term,
+        });
+        const fresh = Array.isArray(d?.items) ? d.items : [];
+        for (const x of fresh) {
+          if (!seen.has(x.id)) {
+            seen.add(x.id);
+            merged.push(x);
+          }
+        }
+        more = d?.hasMore === true;
+        const got = d?.page || next;
+        if (got <= next && fresh.length === 0) break; // 上游没前进：防死循环
+        next = got + 1;
+      }
+      if (merged.length) {
+        setItems((prev) => [...prev, ...merged]);
+        setVisibleCount((n) => n + PAGE_SIZE);
+      }
+      setHasMore(more);
+      setPage(next - 1);
     } catch (e) {
       setErr(String(e));
     } finally {
       setMoreBusy(false);
     }
   }
+
+  // [lc-2240] 触底自动加载。`.content` 是滚动容器（06-content.css 的 overflow-y:auto），
+  // 用哨兵 + IntersectionObserver 而不是 onScroll：列表恰好撑不满一屏时不会有滚动事件，
+  // 哨兵进入视口能自动续取，直到填满或到底（与 lc-1727 的媒体库同一套做法）。
+  useEffect(() => {
+    if (favOpen || busy) return;
+    // [lc-2240] 数据已全部呈现且没有下一页 → 不必再观察（否则哨兵一直触发空 loadMore）
+    const exhausted = items.length <= visibleCount && !hasMore;
+    if (exhausted) return;
+    const target = sentinelRef.current;
+    if (!target || typeof IntersectionObserver === "undefined") return;
+    const root = target.closest(".content") as HTMLElement | null;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((en) => en.isIntersecting)) void loadMore();
+      },
+      // 提前 800px 触发：滚到底之前就把下一批接上，避免「到底停一下」
+      { root, rootMargin: "800px 0px" },
+    );
+    io.observe(target);
+    return () => io.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [favOpen, busy, items.length, visibleCount, moreBusy, hasMore, source, cat, term]);
 
   // [lc-2127] 连播事件：mpv 的 eof-reached 回调**不能**在 IPC 读线程里起播（会自己等
   // 自己的回包 = 死锁，实测第 2 集永远加载不出来）。后端只 emit 事件，这里在普通命令
@@ -723,7 +782,11 @@ export function DuanjuPane() {
   }
 
   // [lc-2112] 目录/收藏列表按当前排序模式派生（只对已加载数据排序）
-  const shownItems = useMemo(() => sortItems(items, sort), [items, sort]);
+  const allShown = useMemo(() => sortItems(items, sort), [items, sort]);
+  // [lc-2240] 每次只渲染前 visibleCount 条（初始 50），滚到底部再加 50。
+  // 数据可能一次性就在内存里（「全部」的 cached 返回整表），但 DOM/图片按需生成，
+  // 首屏不会铺几千张海报。
+  const shownItems = useMemo(() => allShown.slice(0, visibleCount), [allShown, visibleCount]);
   const shownFavs = useMemo(() => sortItems(favs as DuanjuDrama[], sort), [favs, sort]) as FavDrama[];
 
   const chapters = detail?.chapters || [];
@@ -973,12 +1036,13 @@ export function DuanjuPane() {
               </button>
             ))}
           </div>
-          {hasMore && (
-            <div className="dj-more">
-              <button type="button" className="dj-morebtn" disabled={moreBusy} onClick={loadMore}>
-                {moreBusy ? "加载中…" : "加载更多"}
-              </button>
-            </div>
+          {/* [lc-2240] 触底哨兵：滚到这里自动接下一批（50 条）。
+              环形 loading 只在真正打网络时出现；内存里还有余量时瞬间放出来不闪。 */}
+          <div ref={sentinelRef} className="dj-sentinel" aria-hidden="true">
+            {moreBusy && <span className="dj-more-hint">加载中…</span>}
+          </div>
+          {items.length > 0 && items.length <= visibleCount && !hasMore && (
+            <div className="dj-more-hint">已经到底了</div>
           )}
         </>
       )}

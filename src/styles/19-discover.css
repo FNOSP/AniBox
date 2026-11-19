@@ -3671,3 +3671,16 @@ button.arc-card:hover .arc-cv {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+
+/* [lc-2240] 触底加载哨兵（滚到这里自动接下一批 50 条） */
+.dj-sentinel {
+  height: 1px;
+  margin-top: var(--sp-2);
+}
+.dj-more-hint {
+  display: block;
+  text-align: center;
+  padding: var(--sp-3) 0;
+  font-size: var(--fs-cap);
+  color: var(--text-2);
+}

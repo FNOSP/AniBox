@@ -266,6 +266,9 @@ func runRelease(relName, relVer, arch string) (string, error) {
 // manifest platform=all，启动脚本 cmd/main 按内核架构（uname -m）选择。
 func buildPackage(kind, arch string) (string, error) {
 	syncPayload()
+	if err := stageLicenses(); err != nil {
+		return "", err
+	}
 	// fnpack 会把 app/ 整个打进去：若残留 build-fpk.sh 时代留下的 fntvplus-arm64，
 	// 每个包都会白胖 ~10MB 且与 manifest platform 语义打架，这里明确提示。
 	// （[lc-2172] arch=all 时 fntvplus-arm64 是有意产物，不告警。）
@@ -296,6 +299,25 @@ func buildPackage(kind, arch string) (string, error) {
 	}
 	// [lc-2173] 产物命名在 pack() 内完成：AniBox-<完整版本号>[-arm64].fpk，这里直接返回。
 	return fpk, nil
+}
+
+// [lc-2196] stageLicenses 把 AGPL-3.0 许可副本一起打进 fpk。
+//
+// 为什么必须做：AGPL-3.0 §4/§6 要求分发目标码时随附许可证副本；此前 fpk 包内
+// 只有 app/server/fntvplus + app/ui/，用户装完在 NAS 上找不到任何许可文件，
+// 仓库里的 fpk/LICENSE 根本到不了使用者手里。fnpack 会把 app/ 目录内容直接
+// 解包到 $TRIM_APPDEST，所以写进 app/LICENSE 即可随包分发、卸载时一并删除。
+func stageLicenses() error {
+	src := filepath.Join(root, "LICENSE")
+	if _, err := os.Stat(src); err != nil {
+		return fmt.Errorf("缺少 %s：AGPL-3.0 要求分发时随附许可证副本，请先补齐", src)
+	}
+	dst := filepath.Join(root, "app", "LICENSE")
+	if err := copyFile(src, dst); err != nil {
+		return fmt.Errorf("复制 LICENSE 进 app/ 失败: %w", err)
+	}
+	fmt.Println("[lic] 已随包附带 LICENSE（AGPL-3.0 全文）-> app/LICENSE")
+	return nil
 }
 
 // syncPayload 若 node 可用则重建 dist/fntv-plus.user.js 并同步到 Go embed 目录；

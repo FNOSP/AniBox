@@ -8,6 +8,9 @@ server/
 src/server/
 app/server/
 
+# [lc-2196] 打包时从 fpk/LICENSE 复制进 app/ 的许可副本（构建产物，不入库）
+app/LICENSE
+
 # 一键打包工具产物（打包器源码在 tools/buildfpk/ 随库管理；fnpack.exe 为官方工具本地副本）
 build-fpk.exe
 tools/*

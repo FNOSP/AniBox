@@ -615,9 +615,30 @@ async fn play_impl(
         http_headers.mpv_opts.push(format!("--sub-files={p}"));
         crate::libmpv::trace(&format!("[duanju] 弹幕已挂载：{p}"));
     }
+    // [lc-2241] 倍速持久化：短剧必须自己算剧级键 ——
+    // `fnos_progress::current_speed_key()` 只在飞牛播放链路（lib.rs::play_item）里被设置，
+    // 短剧走的是核心本地流（`http://127.0.0.1:端口/…`），`parse_item_guid` 解析不出 guid，
+    // 于是 speed_key 恒为空串 → `playback_speed::speed_for` 直接返回 None →
+    // 每次起播都被 mpv.rs 套成 1.0（用户报「每次重置成 1 倍速」）。
+    // 这里按「剧」登记：同一部剧的所有集共用一个键，切集/连播沿用，换剧各用各的。
+    // 必须在 launch 之前设，mpv.rs 收到 path 事件时才会立即按它查记录并 set speed。
+    {
+        let series = drama
+            .get("id")
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|id| format!("series:{id}"));
+        if let Some(key) = series {
+            let item = chapter
+                .get("id")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default();
+            crate::fnos_progress::begin_with_speed_key("", item, &key);
+        }
+    }
     let t0 = std::time::Instant::now();
-    crate::libmpv::trace("[duanju] → player::launch 开始");
-    crate::player::launch(
+    crate::libmpv::trace("[duanju] → player::launch 开始");    crate::player::launch(
         app,
         state,
         &cfg,

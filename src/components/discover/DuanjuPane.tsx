@@ -431,8 +431,13 @@ export function DuanjuPane() {
         setHealth({ ...h });
       }
     };
-    // 搜索/翻页/强制刷新（nonce 自增 = 用户点重试）不读缓存，直接走网络
-    const forceNet = !!term || nonce > 0;
+    // [lc-2239] 缓存优先只对「全部」有意义：核心的目录缓存按「站源」存整表
+    // （catalogs.json 里的 key 就是站源名，没有分类后缀），带分类/标签筛选时
+    // `cached` 恒返回空。此前切任何标签都先打一次 cached（空）再打 catalog，
+    // 既多一次往返，又在 catalog 慢时把界面停在空态。现在：
+    //   · 搜索 / 分类筛选 / 重试 → 直接走网络；
+    //   · 仅「全部」→ cached-first。
+    const forceNet = !!term || !!cat || nonce > 0;
     let tid = 0;
     if (forceNet) {
       setBusy(true);
@@ -483,7 +488,8 @@ export function DuanjuPane() {
             });
         })
         .catch(() => {
-          // cached op 不可用（老核心）：退化为直接走网络
+          // cached op 不可用（老核心，或 Rust 侧还没更新到含 duanju_cached 的版本）：
+          // 退化为直接走网络。**这里必须用非空 query**：走 search 语义不读缓存。
           if (!alive) return;
           setBusy(true);
           tid = netTimeout();
@@ -899,14 +905,15 @@ export function DuanjuPane() {
       ) : err ? (
         <DState err={err} emptyText="" onRetry={() => setNonce((n) => n + 1)} />
       ) : items.length === 0 ? (
+        // [lc-2239] 空态带上站源/分类，便于区分「这个分类真的没内容」和「请求没回来」
         <DState
           err=""
           emptyText={
             term
               ? `未找到与「${term}」相关的短剧`
               : cat
-                ? "该分类下暂无内容"
-                : "暂无内容"
+                ? `「${cats.find((c) => c.id === cat)?.name || cat}」分类暂无内容`
+                : `${sources?.find((s) => s.id === source)?.name || source} 暂无内容`
           }
           onRetry={() => setNonce((n) => n + 1)}
         />

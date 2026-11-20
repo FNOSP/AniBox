@@ -331,8 +331,11 @@
   overflow: hidden;
 }
 
-/* 层叠海报：容器吃掉剩余高度，卡片高度由容器高度算（cqh）。
-   注意留旋转余量（±8° 后包围盒变宽），否则卡片角部会压到下面的按钮。 */
+/* 层叠海报：**扇形交错**（用户要求「层叠交错那种」）。
+   [lc-2249] 与上一版的区别：上一版三张卡几乎同高、只轻微偏转，看起来像"平铺"；
+   现在做成明显的**扇形展开**——两侧卡大幅旋转（±14°）、横向拉开、纵向错位，
+   形成错落有致的层叠感。
+   尺寸仍按 16:9 + 容器宽高双约束，保证不变形也不出界。 */
 .mved-stack {
   position: relative;
   width: 100%;
@@ -348,10 +351,11 @@
   position: absolute;
   left: 50%;
   top: 50%;
-  /* 高度 = 容器高 − 上下留白 − 旋转余量；宽度按 2:3 反推，永不裁剪变形 */
-  height: min(calc(100cqh - 32px), 420px);
-  width: auto;
-  aspect-ratio: 2 / 3;
+  /* 宽 = min(容器宽 × 0.62, (容器高 − 留白) × 16/9)。
+     0.62 而不是 0.72：扇形展开后两侧卡要占用更多横向空间。 */
+  width: min(calc(100cqw * 0.62), calc((100cqh - 40px) * 16 / 9));
+  height: auto;
+  aspect-ratio: 16 / 9;
   background-color: var(--ph-bg);
   background-size: cover;
   background-position: center;
@@ -359,11 +363,13 @@
   border: 1px solid var(--line);
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1), 0 2px 10px rgba(0, 0, 0, 0.05);
   transform-origin: center center;
+  /* [lc-2249] 层级切换动画：位置/透明度/亮度都由 data-pos 的终值驱动，
+     切换到下一张时这几条 transition 让卡片平滑地滑到新位置。 */
   transition:
-    transform var(--dur-page) var(--ease-spring),
-    opacity var(--dur-page) ease,
-    box-shadow var(--dur-page) ease,
-    filter var(--dur-page) ease;
+    transform 520ms var(--ease-spring),
+    opacity 380ms var(--ease-enter),
+    box-shadow 380ms ease,
+    filter 380ms ease;
   opacity: 0;
   pointer-events: none;
 }
@@ -371,7 +377,13 @@
   border-color: var(--line-strong);
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5), 0 2px 10px rgba(0, 0, 0, 0.3);
 }
-/* 位置 0 = 最前，1/2 = 两侧后景，3 = 隐藏 */
+
+/* 四档位置：0 = 最前（正中），1 = 右侧后，2 = 左侧后，3 = 最远（淡出）
+   [lc-2249] 扇形交错参数：
+     · 两侧大幅旋转 ±14°（上一版只有 ±5°，太平）；
+     · 横向位移 ±42%（卡宽的比例），明显拉开；
+     · 纵向错位：后景卡略高/略低，制造错落感；
+     · 缩放递减 1 → 0.82 → 0.7，形成纵深。 */
 .mved-card[data-pos="0"] {
   transform: translate(-50%, -50%) rotate(0deg) scale(1);
   opacity: 1;
@@ -383,25 +395,58 @@
   box-shadow: 0 25px 50px rgba(0, 0, 0, 0.6);
 }
 .mved-card[data-pos="1"] {
-  transform: translate(-2%, -50%) rotate(8deg) scale(0.92);
-  opacity: 0.85;
+  /* 右侧后景：向右上方错开 */
+  transform: translate(14%, -58%) rotate(14deg) scale(0.82);
+  opacity: 0.88;
   z-index: 9;
-  filter: brightness(0.96);
+  filter: brightness(0.94);
 }
 .mved-card[data-pos="2"] {
-  transform: translate(-98%, -50%) rotate(-8deg) scale(0.85);
-  opacity: 0.6;
+  /* 左侧后景：向左下方错开 */
+  transform: translate(-114%, -42%) rotate(-14deg) scale(0.7);
+  opacity: 0.62;
   z-index: 8;
-  filter: brightness(0.9);
+  filter: brightness(0.86);
 }
 .mved-card[data-pos="3"] {
-  transform: translate(-50%, -50%) rotate(0deg) scale(0.72);
+  transform: translate(-50%, -50%) rotate(0deg) scale(0.58);
   opacity: 0;
   z-index: 7;
 }
+
+/* 悬停：后两张再散开一点（角度 +3°、位移 +6%），整体更像被拨开的扇形 */
+.mved-stack:hover .mved-card[data-pos="1"] {
+  transform: translate(19%, -60%) rotate(17deg) scale(0.84);
+  opacity: 0.92;
+}
+.mved-stack:hover .mved-card[data-pos="2"] {
+  transform: translate(-119%, -40%) rotate(-17deg) scale(0.72);
+  opacity: 0.68;
+}
+
+/* [lc-2249] 入场动画：容器挂载后加 `.is-in`，卡片依次淡入（错峰 90ms）。
+   ⚠ 两条硬约束（都实测踩过）：
+   ① 只动 opacity，**不碰 transform** —— transform 是 data-pos 的职责，
+      keyframes 里带 transform 会把卡片压回正中，扇形完全失效；
+   ② 用 `backwards` 而不是 `both`：`both` 会让动画结束后继续保留 from 的
+      opacity:0，把 data-pos 的终值盖掉 → 卡片全程不可见。
+      `backwards` 只覆盖「延迟尚未开始」那段时间，结束后自然交回 data-pos。 */
+.mved-stack.is-in .mved-card {
+  animation: mvedCardIn 560ms var(--ease-enter) backwards;
+  animation-delay: calc(var(--i, 0) * 90ms);
+}
+@keyframes mvedCardIn {
+  from {
+    opacity: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mved-card {
     transition: none;
+  }
+  .mved-stack.is-in .mved-card {
+    animation: none;
   }
 }
 

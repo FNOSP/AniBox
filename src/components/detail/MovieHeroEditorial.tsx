@@ -187,14 +187,26 @@ export function MovieHeroEditorial({
 
   /* ── 层叠海报：backdrop / 海报 / 剧照 一起去重后叠放 ──
      经典版用同一批图做背景轮播，这里改成卡片层叠（位置 0/1/2，其余隐藏）。 */
+  /* ── 层叠海报：卡片是 **16:9 横版**（[lc-2248] 用户要求），
+     所以优先用横图：背板 → 剧照（都是 16:9/2.35:1 原生横图），
+     竖版海报（2:3）排最后兜底 —— 它被 cover 裁进 16:9 会损失大半画面，
+     只在完全没有横图时才用它，避免空白。 */
   const stillUrls = stills.map((p) => (p.startsWith("http") ? p : tmdbImg(p, "original"))).filter(Boolean);
   const posterUrl = poster ? imgUrl(poster) : "";
-  const slides = Array.from(new Set([posterUrl, backdrop, ...stillUrls].filter(Boolean)));
+  const slides = Array.from(new Set([backdrop, ...stillUrls, posterUrl].filter(Boolean)));
   const slideKey = slides.join("|");
   const [slideIdx, setSlideIdx] = useState(0);
   const [hovered, setHovered] = useState(false);
   const autoRef = useRef<number | null>(null);
   const reduce = prefersReducedMotion();
+  /* [lc-2249] 入场动画开关：挂载后下一帧才置真，
+     这样 `.is-in` 是从"无 → 有"的**状态变化**，动画必然触发（同一帧加上不会播）。 */
+  const [fanIn, setFanIn] = useState(false);
+  useEffect(() => {
+    if (reduce) return;
+    const id = requestAnimationFrame(() => setFanIn(true));
+    return () => cancelAnimationFrame(id);
+  }, [reduce]);
 
   useEffect(() => setSlideIdx(0), [slideKey]);
 
@@ -298,7 +310,7 @@ export function MovieHeroEditorial({
           {/* ══ 右栏：海报 / 操作 / 版本 / 主创 / 配音 ══ */}
           <div className="mved-media">
             <div
-              className="mved-stack"
+              className={`mved-stack${fanIn ? " is-in" : ""}`}
               role="group"
               aria-label="海报轮播"
               onMouseEnter={() => setHovered(true)}
@@ -316,7 +328,8 @@ export function MovieHeroEditorial({
                     key={url}
                     className="mved-card"
                     data-pos={String(pos > 2 ? 3 : pos)}
-                    style={{ backgroundImage: `url("${url}")` }}
+                    /* [lc-2249] --i 给入场动画做错峰延迟（0/1/2 → 0/90/180ms） */
+                    style={{ backgroundImage: `url("${url}")`, ["--i" as string]: String(pos) }}
                   />
                 );
               })}

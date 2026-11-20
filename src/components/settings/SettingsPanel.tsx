@@ -1970,6 +1970,27 @@ export function SettingsPanel({
               {tab === "general" && (
                 <>
                   <div className="set-sec">界面</div>
+                  {/* [lc-2247] 电影详情页版式：目前只对电影生效（剧集详情页继续用原版式）。 */}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">电影详情页版式</span>
+                      <div className="set-desc">
+                        经典：满幅头图铺满首屏。杂志：左标题右海报双栏，标题为艺术字。
+                      </div>
+                    </div>
+                    <SetSelect
+                      label="电影详情页版式"
+                      value={settings.movieDetailStyle ?? "classic"}
+                      disabled={busy}
+                      options={[
+                        { value: "classic", label: "经典（满幅头图）" },
+                        { value: "editorial", label: "杂志（双栏）" },
+                      ]}
+                      onChange={(v) =>
+                        onSettings({ movieDetailStyle: v as AppSettings["movieDetailStyle"] })
+                      }
+                    />
+                  </div>
                   <div className="set-row">
                     <div>
                       <span className="set-k">轮播透明标题</span>

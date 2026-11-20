@@ -6,6 +6,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   exitMode: "ask",
   perfMode: false,
   carouselLogo: true,
+  // [lc-2247] 电影详情页版式默认 classic（与 Rust 侧 default_movie_detail_style 同口径）
+  movieDetailStyle: "classic",
   launchPage: "home",
   autoLogin: false,
   // [lc-1561] 自建弹幕接口默认开启：地址留空即用随包内置源（本地 danmu_api）

@@ -132,6 +132,10 @@ pub struct Config {
     /// 首页轮播是否用影片透明 Logo 代替文字标题（飞牛条目自带 logo，见 lc-570）
     #[serde(default = "default_true")]
     pub carousel_logo: bool,
+    /// [lc-2247] 电影详情页版式："classic"（满幅头图旧版，默认）| "editorial"（双栏杂志风新版）。
+    /// 目前只对**电影**生效，剧集详情页不受影响。纯前端开关，存这里以便重启保持。
+    #[serde(default = "default_movie_detail_style")]
+    pub movie_detail_style: String,
     /// 启动页："home"（首页，默认）| "discover"（发现页）
     /// 历史取值 "continue" 已移除；老 config 读到后由前端归一为 home。
     #[serde(default = "default_launch_page")]
@@ -323,6 +327,11 @@ fn default_launch_page() -> String {
     "home".into()
 }
 
+/// [lc-2247] 电影详情页版式默认值：classic = 满幅头图旧版，保持升级前后观感一致。
+fn default_movie_detail_style() -> String {
+    "classic".into()
+}
+
 fn default_true() -> bool {
     true
 }
@@ -414,6 +423,7 @@ impl Default for Config {
             exit_mode: default_exit_mode(),
             perf_mode: false,
             carousel_logo: true,
+            movie_detail_style: default_movie_detail_style(),
             launch_page: default_launch_page(),
             bgm_token: String::new(),
             bgm_remember: true,

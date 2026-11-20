@@ -546,6 +546,9 @@ export type AppSettings = {
   exitMode: "exit" | "tray" | "ask";
   perfMode: boolean;
   carouselLogo: boolean;
+  /** [lc-2247] 电影详情页版式："classic"（满幅头图旧版，默认）| "editorial"（双栏杂志风）。
+   *  只对电影生效，剧集详情页不受影响。 */
+  movieDetailStyle?: "classic" | "editorial";
   launchPage: "home" | "discover";
   autoLogin: boolean;
   /** [player] 播放器选择（默认 mpv = 随包自带）。后端始终返回，旧缓存可能缺省。 */

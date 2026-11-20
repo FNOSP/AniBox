@@ -1341,6 +1341,55 @@ pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
     //   images.posters 面积最大 → 主图 poster_path → 空串（前端回退 Bangumi 封面 / 飞牛）。
     let hero_poster = pick_hero_path(&d, "posters", "poster_path");
 
+    // [lc-2247] 作品标题 logo（电影详情页「杂志风」版式用）：从 images.logos 里挑**两张**——
+    //   · 中文优先（观众看得懂），同语种取面积最大；
+    //   · 另外保留一张英文/其它语言的，供「中文版是白字、当前是浅色主题」时兜底。
+    //   实测该片的 zh logo 是白色字（430×71），直接放浅底上等于隐形，所以两种都要给前端。
+    //   排序口径：中文优先 → 面积大优先 → vote_average 高优先。
+    let (title_logo, title_logo_alt) = {
+        let mut ranked: Vec<(bool, i64, f64, String)> = Vec::new();
+        if let Some(arr) = d.pointer("/images/logos").and_then(|v| v.as_array()) {
+            for l in arr {
+                let p = l.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+                if p.is_empty() {
+                    continue;
+                }
+                let is_zh = l.get("iso_639_1").and_then(|v| v.as_str()) == Some("zh");
+                let w = l.get("width").and_then(|v| v.as_i64()).unwrap_or(0);
+                let h = l.get("height").and_then(|v| v.as_i64()).unwrap_or(0);
+                let vote = l.get("vote_average").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                ranked.push((is_zh, w * h, vote, p.to_string()));
+            }
+        }
+        // 中文在前 → 面积降序 → 票数降序
+        ranked.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then(b.1.cmp(&a.1))
+                .then(b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal))
+        });
+        let primary = ranked.first().map(|x| x.3.clone()).unwrap_or_default();
+        // 备选：挑**语种与 primary 不同**的第一张（中文版是白字时，切英文那张兜底）。
+        let primary_is_zh = ranked.first().map(|x| x.0).unwrap_or(false);
+        let alt = ranked
+            .iter()
+            .find(|x| x.0 != primary_is_zh)
+            .map(|x| x.3.clone())
+            .unwrap_or_default();
+        (primary, alt)
+    };
+
+    // [lc-2247] 地区 / 语言（纯展示）：origin_country 取首个国家代码，original_language 原样给。
+    let origin_country = d
+        .pointer("/origin_country/0")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let original_language = d
+        .get("original_language")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
     // [lc-1655] 4K 剧照（电影详情页全屏轮播用）：只留 `width >= 3840` 的原图，**不排除 hero 主图**
     //   （只剩 1 张 4K 时轮播也有内容），按面积降序（大图在前）取前 6 张，只输出 file_path。
     //   与上面的 `backdrops` 字段互不影响（那是有序列表，剧集页等其它消费者仍在用）。
@@ -1493,6 +1542,13 @@ pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
         "heroPoster": hero_poster,
         // [lc-1655] 4K 剧照（电影全屏轮播用）：`width >= 3840` 且按面积降序，最多 6 条 file_path。
         "stills4k": stills4k,
+        // [lc-2247] 作品标题 logo（file_path）：primary = 中文优先那张；
+        //   titleLogoAlt = 另一语种那张（中文版常是白字，浅色主题下用 alt 兜底）。
+        "titleLogo": title_logo,
+        "titleLogoAlt": title_logo_alt,
+        // [lc-2247] 地区与语言（原始代码，如 "JP" / "ja"），前端映射成中文展示。
+        "originCountry": origin_country,
+        "originalLanguage": original_language,
         "keywords": keywords,
         "aliases": aliases,
         // 预告片（include_video_language=zh-CN,en,ja,null 才拿得到）

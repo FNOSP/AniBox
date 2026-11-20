@@ -3252,6 +3252,7 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         "exitMode": cfg.exit_mode,
         "perfMode": cfg.perf_mode,
         "carouselLogo": cfg.carousel_logo,
+        "movieDetailStyle": cfg.movie_detail_style,
         "launchPage": cfg.launch_page,
         "autoLogin": cfg.auto_login,
         // [player] 播放器选择（默认自带 mpv；potplayer 路径空 = 自动探测）
@@ -3323,6 +3324,15 @@ async fn set_settings(
     }
     if let Some(v) = arg.get("carouselLogo") {
         cfg.carousel_logo = v.as_bool().ok_or("carouselLogo 必须是布尔值")?;
+    }
+    // [lc-2247] 电影详情页版式：classic（默认，满幅头图）| editorial（双栏杂志风）。
+    // 非法值直接报错，不静默回落 —— 与其它设置项的校验口径一致。
+    if let Some(v) = arg.get("movieDetailStyle") {
+        let s = v.as_str().unwrap_or("");
+        if !matches!(s, "classic" | "editorial") {
+            return Err(format!("movieDetailStyle 非法：{s}（只允许 classic/editorial）"));
+        }
+        cfg.movie_detail_style = s.to_string();
     }
     if let Some(v) = arg.get("launchPage") {
         let s = v.as_str().unwrap_or("");
@@ -3530,6 +3540,7 @@ async fn set_settings(
         "exitMode": cfg.exit_mode,
         "perfMode": cfg.perf_mode,
         "carouselLogo": cfg.carousel_logo,
+        "movieDetailStyle": cfg.movie_detail_style,
         "launchPage": cfg.launch_page,
         "autoLogin": cfg.auto_login,
         "playerKind": cfg.player_kind,

@@ -1,0 +1,630 @@
+/* ══════════════════════════════════════════════════════════════════════════════
+   [lc-2247] 电影详情页「杂志风」版式（editorial）—— 配合 MovieHeroEditorial.tsx
+   由设置项 movieDetailStyle = "editorial" 启用；默认 classic（40-movie-hero.css）。
+
+   与经典版的差异：
+     · 没有满幅头图，改成「左文右图」双栏；
+     · 标题是艺术字（渐变填充 + 细描边 + 极淡投影）；
+     · 标签页容器（.dv2-movie）不再需要额外上边距，因为下方还有详情区。
+   配色全部走 01-tokens.css 的变量，与全站一致。
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* 电影模式下 .detail-full 需要滚动，且不留内边距交给内容自己控制 */
+.detail-full.mved-detail {
+  gap: 0;
+  padding: 0;
+  overflow-y: auto;
+}
+
+.mved {
+  flex: none;
+  padding: calc(40px + var(--sp-6)) clamp(var(--sp-5), 5vw, var(--sp-8)) var(--sp-7);
+}
+
+.mved-inner {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* ── 返回键 ── */
+.mved-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: fit-content;
+  margin-bottom: var(--sp-6);
+  padding: var(--sp-1) var(--sp-3) var(--sp-1) 0;
+  background: none;
+  border: none;
+  font-size: var(--fs-ctl);
+  font-weight: 600;
+  color: var(--text-2);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: color var(--dur-tap);
+}
+.mved-back:hover {
+  color: var(--accent);
+  background: none;
+}
+
+/* ── 头部双栏 ──
+   高度策略（踩过多次的坑，别再改回固定 height）：
+     左栏三块内容高度不定（标题可能两行、简介可能很长），任何写死的总高都会
+     在某个块里留白或把内容挤出去。所以只在 .mved-header 设 min-height
+     （保证右栏海报有空间），余量由简介承担（见 .mved-block-desc）。 */
+.mved-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+  gap: clamp(var(--sp-6), 5vw, var(--sp-8));
+  align-items: stretch;
+  min-height: clamp(560px, 60vh, 680px);
+  margin-bottom: var(--sp-7);
+}
+
+.mved-left {
+  position: relative;
+  z-index: 2;
+  min-width: 0;
+  min-height: 0;
+  /* 标题 / 数据按内容取高，简介吃剩余 */
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  align-content: start;
+  gap: var(--sp-5);
+}
+
+.mved-block {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── ① 标题区 ── */
+.mved-block-title {
+  justify-content: center;
+}
+
+.mved-kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  font-size: var(--fs-ctl);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  margin-bottom: var(--sp-4);
+}
+.mved-kicker::before {
+  content: "";
+  width: 32px;
+  height: 1px;
+  background: currentColor;
+  flex: none;
+}
+
+/* 艺术字大标题：渐变填充 + 细描边 + 极淡投影。
+   · background-clip: text 让渐变只留在字里；
+   · -webkit-text-stroke 撑住浅色背景上的字缘；
+   · drop-shadow 用 --shadow-rgb 同族的低 alpha，避免彩色光晕。 */
+.mved-title {
+  margin: 0;
+  font-size: clamp(44px, 6.6vw, 84px);
+  font-weight: 900;
+  line-height: 0.96;
+  letter-spacing: -0.03em;
+  background-image: linear-gradient(100deg, var(--text-strong) 0%, var(--text-strong) 38%, var(--accent) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: 0.4px color-mix(in srgb, var(--text-strong) 22%, transparent);
+  filter: drop-shadow(0 2px 10px rgb(var(--shadow-rgb) / 0.1));
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.mved-subtitle {
+  margin-top: var(--sp-3);
+  font-size: var(--fs-subtitle);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* ── ② 数据区：左数据 + 右作品 logo ── */
+.mved-block-data {
+  flex-direction: row;
+  align-items: stretch;
+  gap: var(--sp-4);
+  padding-top: var(--sp-3);
+  padding-bottom: var(--sp-2);
+  border-top: 1px solid var(--line);
+}
+
+.mved-data-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+/* 数据格：4 列等分，格间竖线（与右侧版本条同一套「表格感」） */
+.mved-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: baseline;
+}
+.mved-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-0);
+  min-width: 0;
+  padding-left: var(--sp-3);
+  border-left: 1px solid var(--line);
+}
+.mved-stat:first-child {
+  padding-left: 0;
+  border-left: none;
+}
+.mved-stat-v {
+  font-size: var(--fs-title);
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mved-stat-v.is-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.mved-stat-v.is-rating svg {
+  color: var(--gold);
+  fill: currentColor;
+  flex: none;
+}
+.mved-stat-unit {
+  font-size: var(--fs-cap);
+  font-weight: 600;
+  color: var(--muted);
+}
+.mved-stat-k {
+  font-size: var(--fs-cap);
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 补充小字（上映日期 / 题材） */
+.mved-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-cap);
+  color: var(--muted);
+}
+
+/* 标签：胶囊 + 内容宽度 + 自动换行。
+   ⚠ 不要用 flex:1 等分 —— 标签数量不固定（2~12 个都有），
+   等分只对固定 4 个成立，其它数量会拉成巨型方块或挤成细条。 */
+.mved-itags {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: center;
+  gap: var(--sp-1) var(--sp-2);
+  min-height: 0;
+  max-height: 120px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.mved-itags::-webkit-scrollbar {
+  display: none;
+}
+.mved-tag {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-full);
+  border: 1px solid var(--line);
+  background: var(--hover);
+  font-size: var(--fs-ctl);
+  line-height: 1.5;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color var(--dur-tap), color var(--dur-tap), background var(--dur-tap);
+}
+.mved-tag:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--accent);
+}
+
+/* 作品 logo（TMDB images.logos）：后端给两张 —— primary（中文优先）与 alt（另一语种）。
+   实测该片中文版是**白色字**（430×71），直接放浅底上会隐形，所以按主题切换：
+     · 浅色主题 → .mved-logo-light（alt，通常是英文深色版）
+     · 深色主题 → .mved-logo-dark（primary，中文白版）
+   ⚠ 不要用 em 定尺寸：img 不继承标题字号，会按父元素 14px 算成一个小点。 */
+.mved-data-logo {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: clamp(120px, 16vw, 190px);
+  min-height: 0;
+}
+.mved-data-logo img {
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+  object-fit: contain;
+  opacity: 0.9;
+}
+/* 默认（浅色主题）：只显示 light 那张 */
+.mved-logo-light { display: block; }
+.mved-logo-dark { display: none; }
+/* 深色主题：切到 dark 那张 */
+[data-theme="dark"] .mved-logo-light { display: none; }
+[data-theme="dark"] .mved-logo-dark { display: block; }
+
+/* 兜底：只有一张 logo 时，深色主题下把 light 反色显示。
+   ⚠ 必须用显式类 `.mved-data-logo--single`，不能用 `:has()` ——
+   `:has()` 在旧 WebView 上会被**整条规则丢弃**（本项目 lc-1404 已吃过这个亏）。 */
+[data-theme="dark"] .mved-data-logo--single .mved-logo-light {
+  display: block;
+  filter: invert(1) brightness(1.6);
+}
+
+/* ── ③ 简介：吃掉头部剩余高度，超长内部滚动 ── */
+.mved-block-desc {
+  justify-content: flex-start;
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--line);
+}
+.mved-lead {
+  margin: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  font-size: var(--fs-ctl);
+  line-height: 1.8;
+  color: var(--text-2);
+  text-align: justify;
+  /* 中文排版：首行缩进两个字符（用 text-indent 而不是空格，
+     否则 justify 会把空格拉成不等宽，复制时也会带上） */
+  text-indent: 2em;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  scrollbar-width: none;
+  /* 底部渐隐，暗示还有下文 */
+  -webkit-mask-image: linear-gradient(to bottom, #000 88%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 88%, transparent 100%);
+}
+.mved-lead::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── 右栏 ── */
+.mved-media {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  width: 100%;
+  min-width: 0;
+  align-self: stretch;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 层叠海报：容器吃掉剩余高度，卡片高度由容器高度算（cqh）。
+   注意留旋转余量（±8° 后包围盒变宽），否则卡片角部会压到下面的按钮。 */
+.mved-stack {
+  position: relative;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 210px;
+  perspective: 1400px;
+  cursor: pointer;
+  padding: var(--sp-2) 0;
+  container-type: size;
+}
+
+.mved-card {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  /* 高度 = 容器高 − 上下留白 − 旋转余量；宽度按 2:3 反推，永不裁剪变形 */
+  height: min(calc(100cqh - 32px), 420px);
+  width: auto;
+  aspect-ratio: 2 / 3;
+  background-color: var(--ph-bg);
+  background-size: cover;
+  background-position: center;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1), 0 2px 10px rgba(0, 0, 0, 0.05);
+  transform-origin: center center;
+  transition:
+    transform var(--dur-page) var(--ease-spring),
+    opacity var(--dur-page) ease,
+    box-shadow var(--dur-page) ease,
+    filter var(--dur-page) ease;
+  opacity: 0;
+  pointer-events: none;
+}
+[data-theme="dark"] .mved-card {
+  border-color: var(--line-strong);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5), 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+/* 位置 0 = 最前，1/2 = 两侧后景，3 = 隐藏 */
+.mved-card[data-pos="0"] {
+  transform: translate(-50%, -50%) rotate(0deg) scale(1);
+  opacity: 1;
+  z-index: 10;
+  pointer-events: auto;
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.22);
+}
+[data-theme="dark"] .mved-card[data-pos="0"] {
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.6);
+}
+.mved-card[data-pos="1"] {
+  transform: translate(-2%, -50%) rotate(8deg) scale(0.92);
+  opacity: 0.85;
+  z-index: 9;
+  filter: brightness(0.96);
+}
+.mved-card[data-pos="2"] {
+  transform: translate(-98%, -50%) rotate(-8deg) scale(0.85);
+  opacity: 0.6;
+  z-index: 8;
+  filter: brightness(0.9);
+}
+.mved-card[data-pos="3"] {
+  transform: translate(-50%, -50%) rotate(0deg) scale(0.72);
+  opacity: 0;
+  z-index: 7;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mved-card {
+    transition: none;
+  }
+}
+
+/* ── 操作按钮 ── */
+.mved-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.mved-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  flex: 1 1 auto;
+  min-height: 44px;
+  padding: 0 var(--sp-5);
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--accent-solid);
+  color: var(--accent-on);
+  font-size: var(--fs-ctl);
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--dur-tap), transform var(--dur-tap);
+}
+.mved-btn-primary:hover:not(:disabled) {
+  background: var(--accent);
+}
+.mved-btn-primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.mved-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  flex: 1 1 auto;
+  min-height: 44px;
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-strong);
+  background: none;
+  color: var(--text);
+  font-size: var(--fs-ctl);
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--dur-tap), color var(--dur-tap), background var(--dur-tap);
+}
+.mved-btn-ghost:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+/* 已收藏：金色（与评分星同族 = "已标记"） */
+.mved-btn-ghost.on {
+  color: var(--gold);
+  border-color: color-mix(in srgb, var(--gold) 55%, transparent);
+}
+.mved-btn-ghost svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+.mved-btn-ghost:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.mved-btn-square {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-strong);
+  background: none;
+  color: var(--text);
+  font-size: var(--fs-title);
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color var(--dur-tap), color var(--dur-tap), background var(--dur-tap);
+}
+.mved-btn-square:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.mved-note {
+  font-size: var(--fs-cap);
+  color: var(--muted);
+}
+
+/* ── 版本条：上下细线夹住、等分、竖线分隔 ── */
+.mved-versions {
+  display: flex;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.mved-version {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--sp-3) var(--sp-2);
+  text-align: center;
+  background: none;
+  border: none;
+  border-right: 1px solid var(--line);
+  font-size: var(--fs-cap);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color var(--dur-tap), background var(--dur-tap);
+}
+.mved-version:last-child {
+  border-right: none;
+}
+.mved-version:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.mved-version.active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* ── 配音阵容：4 等分 ── */
+.mved-cast-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: center;
+  gap: var(--sp-3);
+  margin-top: auto;
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--line);
+  flex: 0 0 auto;
+  min-height: 76px;
+}
+.mved-cast {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  overflow: hidden;
+}
+.mved-cast.clickable {
+  cursor: pointer;
+}
+.mved-cast.clickable:hover .mved-cast-name {
+  color: var(--accent);
+}
+.mved-cast-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background-color: var(--ph-bg);
+  background-size: cover;
+  background-position: center top;
+  border: 1px solid var(--line);
+  flex: none;
+}
+.mved-cast-meta {
+  min-width: 0;
+}
+.mved-cast-name {
+  font-size: var(--fs-ctl);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color var(--dur-tap);
+}
+.mved-cast-role {
+  font-size: var(--fs-cap);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── 下方详情区（标签页）在杂志风下的间距 ── */
+.dv2.dv2-movie.mved-tabs {
+  display: block;
+  padding: var(--sp-5) clamp(var(--sp-5), 5vw, var(--sp-8)) var(--sp-6);
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* ── 响应式 ── */
+@media (max-width: 1000px) {
+  .mved-header {
+    grid-template-columns: 1fr;
+    gap: var(--sp-6);
+    min-height: 0;
+  }
+  /* 窄屏：海报区提到文字上面 */
+  .mved-media {
+    order: -1;
+  }
+  .mved-stack {
+    min-height: 300px;
+  }
+  .mved-left {
+    grid-template-rows: auto auto auto;
+  }
+  .mved-lead {
+    overflow: visible;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .mved-cast-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-height: 0;
+  }
+}

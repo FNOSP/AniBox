@@ -28,6 +28,7 @@ import { ExtraTab } from "./tabs/ExtraTab";
 import { RatingWidget } from "./RatingWidget";
 // [lc-1652] 电影详情页「沉浸式」版式（用户样板）
 import { MovieHero } from "./MovieHero";
+import { MovieHeroEditorial } from "./MovieHeroEditorial";
 // [lc-1747] 在线播放恢复挂载（lc-1627 曾因功能搁置而注释，配套 Rust 加固已就位）。
 import { WebrsPanel } from "../webrs/WebrsPanel";
 // [lc-1783] 应用内下载字幕弹窗（迅雷/assrt/OpenSubtitles 扇出，下载自动挂载）
@@ -405,6 +406,7 @@ export function DetailView({
   onOpenPerson,
   continueList = [],
   webrsOn = false,
+  movieDetailStyle = "classic",
 }: {
   base: MediaItem;
   onBack: () => void;
@@ -417,6 +419,10 @@ export function DetailView({
   /** [lc-1753] 在线资源搜索开关（App 的 settings.webrsPanelEnabled）：开启后才在
    *  无资源的剧集/动漫详情页挂 WebrsPanel；关闭时维持「未查询到资源/暂无剧集」占位。 */
   webrsOn?: boolean;
+  /** [lc-2247] 电影详情页版式（App 的 settings.movieDetailStyle）：
+   *  "classic" = 满幅头图旧版（默认）| "editorial" = 双栏杂志风新版。
+   *  **只影响电影**，剧集详情页不受影响。 */
+  movieDetailStyle?: "classic" | "editorial";
 }) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
@@ -2193,7 +2199,11 @@ export function DetailView({
 
 
   return (
-    <main className={`content detail-full${isMovie ? " mv-detail" : ""}`}>
+    <main
+      className={`content detail-full${
+        isMovie ? (movieDetailStyle === "editorial" ? " mved-detail" : " mv-detail") : ""
+      }`}
+    >
       {/* [lc-1401] 详情页按**用户定稿版式**重排（两栏）：
             左列：竖版封面 → 标签页 → 该页内容（[lc-1567] 标签/简介从首屏移入「详情」页）
             右列：集数据（本机集数 × Bangumi 集号对齐）的**整条竖向列表**
@@ -2253,8 +2263,71 @@ export function DetailView({
           ⚠ 只包住"两栏主体"—— 返回键与标题（rail）是从 base 直接来的，不需要等网络。 */}
       {!dataReady && !err && <DetailSkeleton />}
 
-      {/* [lc-1652] 电影：沉浸式头图 + 简介/演职员 + 剧照（用户样板） */}
-      {dataReady && isMovie && (
+      {/* [lc-1652] 电影：沉浸式头图 + 简介/演职员 + 剧照（用户样板）
+          [lc-2247] 按设置项 movieDetailStyle 在两种版式间切换：
+            classic   = 满幅头图（默认，lc-1652 那套）
+            editorial = 双栏杂志风（大标题 + 层叠海报）
+          **只对电影生效**，剧集详情页下面那条分支不受影响。 */}
+      {dataReady && isMovie && movieDetailStyle === "editorial" && (
+        <MovieHeroEditorial
+          title={title}
+          originalTitle={originalTitle}
+          backdrop={movieBackdrop}
+          poster={poster}
+          rating={ratingScore}
+          votes={ratingTotal}
+          year={String(pick(tmdb ?? {}, ["year"]) ?? "").trim()}
+          runtimeMin={runtimeMin}
+          genres={genres}
+          overview={overview}
+          cast={cast}
+          stills={movieStills}
+          tmdb={tmdb}
+          releaseDate={
+            String(pick(tmdb ?? {}, ["airDate"]) ?? "").trim() || String(base.release_date ?? "").trim()
+          }
+          /* [lc-2247] 地区/语言由组件自己从 tmdb.originCountry / originalLanguage 取并映射中文，
+             不在这里重复拼串（避免两处口径不一致）。 */
+          resumeAt={!!resumeAt}
+          playing={playing}
+          onPlay={startPlay}
+          onBack={onBack}
+          onMeta={() => setMetaTarget({ guid: base.guid, title: title || base.title, type: "Movie", seriesGuid: base.guid })}
+          onOpenPerson={
+            onOpenPerson
+              ? (c) =>
+                  onOpenPerson({
+                    source: "tmdb",
+                    id: Number(c.id ?? 0),
+                    name: String(c.name ?? ""),
+                    profile: c.profile ? String(c.profile) : undefined,
+                  })
+              : undefined
+          }
+          favItem={{
+            guid: base.guid,
+            title,
+            tvTitle: "",
+            poster: String(poster ?? ""),
+            type: String(pick(data ?? {}, ["type"]) ?? base.type ?? ""),
+            seasonNumber: 0,
+            episodeNumber: 0,
+          }}
+          versions={
+            versionGuid === base.guid
+              ? mediaVersions.map((v, i) => ({
+                  mediaGuid: v.media_guid,
+                  label: versionLabels(mediaVersions)[i],
+                  meta: versionMeta(v),
+                }))
+              : undefined
+          }
+          selectedVersion={versionGuid === base.guid ? selectedMediaGuid : undefined}
+          onVersionChange={(mg) => selectVersion(base.guid, mg)}
+        />
+      )}
+
+      {dataReady && isMovie && movieDetailStyle !== "editorial" && (
         <MovieHero
           title={title}
           originalTitle={originalTitle}
@@ -2310,7 +2383,7 @@ export function DetailView({
 
       {/* ══ 两栏主体（用户版式）══ */}
       {dataReady && (
-      <div className={`dv2${isMovie ? " dv2-movie" : ""}`}>
+      <div className={`dv2${isMovie ? " dv2-movie" : ""}${isMovie && movieDetailStyle === "editorial" ? " mved-tabs" : ""}`}>
         {/* ── 左列：封面 / 标签框 / 简介框 / 标签页 / 内容 ── */}
         <div className="dv2-left">
           {/* 竖版封面 + 标题（海报来自本机条目，无则用 Bangumi 的） */}

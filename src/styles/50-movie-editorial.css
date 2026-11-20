@@ -340,9 +340,11 @@
    rotateX 后仰 + 逐层缩小），prev/next 是切换瞬间的左右滑出态。
    容器 16:9（fpk: aspect-ratio 16/9 + max-height，此处宽度由右栏定、高度按比例），
    overflow:visible 让牌堆上缘露出容器顶（fpk 原注释「让 prev/next 在左右后方露出堆叠感」）。
-   有意偏离（2 处，均为既定约定）：
+   有意偏离（3 处，均为既定约定 / 用户指令）：
      ① bg 的 ::before 黑渐变原值 .92（fpk 给卡内文字垫底）——文字在卡外，减淡到 .22；
-     ② 卡底色 #1e1b17（fpk 深色兜底）→ var(--ph-bg)。 */
+     ② 卡底色 #1e1b17（fpk 深色兜底）→ var(--ph-bg)；
+     ③ 容器 box-shadow（fpk 原值 0 26px 60px -12px）按用户要求去掉 —— 浅色页面上一圈大暗影像「后面衬了块阴影」。
+   ───────────────────────────────────────────────────────────────────── */
 .mved-stack {
   position: relative;
   width: 100%;
@@ -351,8 +353,6 @@
   perspective: 1600px;
   perspective-origin: 50% 40%;
   cursor: pointer;
-  /* fpk 容器阴影原值 */
-  box-shadow: 0 26px 60px -12px rgba(0, 0, 0, 0.55);
   border-radius: 24px;
   /* fpk: overflow visible —— 牌堆上缘露出容器顶 */
   overflow: visible;

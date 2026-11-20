@@ -220,7 +220,8 @@ export function MovieHeroEditorial({
   useEffect(() => {
     if (slides.length <= 1 || reduce) return;
     if (hovered) return;
-    const t = window.setInterval(() => setSlideIdx((i) => (i + 1) % slides.length), 4000);
+    /* fpk style3 AUTO_DELAY = 4500（照抄） */
+    const t = window.setInterval(() => setSlideIdx((i) => (i + 1) % slides.length), 4500);
     autoRef.current = t;
     return () => window.clearInterval(t);
   }, [slides.length, slideKey, hovered, reduce]);
@@ -331,33 +332,31 @@ export function MovieHeroEditorial({
                 if (slides.length > 1) setSlideIdx((i) => (i + 1) % slides.length);
               }}
             >
-              {/* fpk style4：3D 舞台层（preserve-3d，让卡片的 rotateY 吃到容器透视） */}
-              <div className="mved-track">
-                {slides.map((url, i) => {
-                  /* [lc-2249] 状态分配**照抄 fpk updatePositions()**：
-                     diff 0 → active；diff 1 → next（右）；diff n-1 → prev（左）；
-                     diff > 1 && diff < n/2 → far-right；其余 → far-left。 */
-                  const n = slides.length;
-                  const diff = (i - slideIdx + n) % n;
-                  let state = "far-left";
-                  if (diff === 0) state = "active";
-                  else if (diff === 1) state = "next";
-                  else if (diff === n - 1) state = "prev";
-                  else if (diff > 1 && diff < n / 2) state = "far-right";
-                  return (
-                    <div
-                      key={url}
-                      className="mved-card"
-                      data-state={state}
-                      /* [lc-2249] --i 给入场动画做错峰延迟 */
-                      style={{ ["--i" as string]: String(i) }}
-                    >
-                      {/* fpk 结构：卡内一层 bg 承载图片 —— Ken Burns 缩放作用在它身上 */}
-                      <div className="mved-card-bg" style={{ backgroundImage: `url("${url}")` }} />
-                    </div>
-                  );
-                })}
-              </div>
+              {/* [lc-2253] fpk style3：卡直接挂进 stack（无 track 层），状态分配照抄
+                  styles.ts updatePositions() —— diff 0=active / 1=next / n-1=prev /
+                  2=behind1 / 3=behind2 / 其余=deep。 */}
+              {slides.map((url, i) => {
+                const n = slides.length;
+                const diff = (i - slideIdx + n) % n;
+                let state = "deep";
+                if (diff === 0) state = "active";
+                else if (diff === n - 1) state = "prev";
+                else if (diff === 1) state = "next";
+                else if (diff === 2) state = "behind1";
+                else if (diff === 3) state = "behind2";
+                return (
+                  <div
+                    key={url}
+                    className="mved-card"
+                    data-state={state}
+                    /* [lc-2249] --i 给入场动画做错峰延迟 */
+                    style={{ ["--i" as string]: String(diff) }}
+                  >
+                    {/* fpk 结构：卡内一层 bg 承载图片 —— Ken Burns 缩放作用在它身上 */}
+                    <div className="mved-card-bg" style={{ backgroundImage: `url("${url}")` }} />
+                  </div>
+                );
+              })}
             </div>
 
             <div className="mved-actions">

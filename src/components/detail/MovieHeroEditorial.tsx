@@ -53,6 +53,8 @@ type Props = {
   selectedVersion?: string;
   onVersionChange?: (mediaGuid: string) => void;
   favItem: Record<string, unknown> | null;
+  /** [lc-2255] 主创名单（DetailView 的 crew，jobLabel 后端已译成中文）：数据区下方的主创块用。 */
+  crew?: TmdbCreditPerson[];
   /** [lc-2252] 标签条（.dseg.dv2-seg 那条）与标签体（.dbody 面板容器）：
    *  由 DetailView 传入并渲染在左栏「数据区之下、简介位」——
    *  点击标签切换下方内容（经典版同款交互）。不传则退化为纯简介段落。 */
@@ -115,8 +117,7 @@ function regionText(country?: string, language?: string): string {
   return [cn, ln].filter(Boolean).join(" · ");
 }
 
-/** 数据格的构造：缺项的条目自动跳过（不占位、不留空 label）。 */
-function buildStats(
+/** 数据格的构造：缺项的条目自动跳过（不占位、不留空 label）。 */function buildStats(
   rating: number | null,
   votes: number,
   runtimeMin: number,
@@ -131,6 +132,33 @@ function buildStats(
   if (year) out.push({ value: year, label: "上映年份" });
   const region = (regionLabel ?? "").split(" · ")[0]?.trim();
   if (region) out.push({ value: region, label: regionLabel ?? "" });
+  return out;
+}
+
+/** 主创信息块的构造（[lc-2255]）：按后端 jobLabel（已译中文）/ 原始 job 双口径匹配，
+ *  每行最多 2 人；四行都没数据时返回空数组（整块不渲染，不留空框）。 */
+function buildFacts(crew?: TmdbCreditPerson[]): { label: string; value: string }[] {
+  if (!crew?.length) return [];
+  const pickNames = (labels: string[]): string =>
+    crew
+      .filter(
+        (c) => labels.includes(String(c.jobLabel ?? "")) || labels.includes(String(c.job ?? "")),
+      )
+      .map((c) => String(c.name ?? "").trim())
+      .filter(Boolean)
+      .slice(0, 2)
+      .join(" · ");
+  const rows: [string, string[]][] = [
+    ["导演", ["导演", "Director"]],
+    ["编剧", ["编剧", "Screenplay", "Writer"]],
+    ["音乐", ["音乐", "Original Music Composer", "Music"]],
+    ["角色设计", ["角色设计", "Character Designer"]],
+  ];
+  const out: { label: string; value: string }[] = [];
+  for (const [label, keys] of rows) {
+    const v = pickNames(keys);
+    if (v) out.push({ label, value: v });
+  }
   return out;
 }
 
@@ -159,6 +187,7 @@ export function MovieHeroEditorial({
   selectedVersion,
   onVersionChange,
   favItem,
+  crew,
   tabsNav,
   tabsBody,
 }: Props) {  const favGuid = String((favItem?.guid as string) ?? "").trim();
@@ -235,6 +264,7 @@ export function MovieHeroEditorial({
     String(tmdb?.originalLanguage ?? ""),
   );
   const stats = buildStats(rating, votes, runtimeMin, year, regionLabel);
+  const facts = buildFacts(crew);
 
   // 作品 logo：两张（浅色主题用 light、深色主题用 dark），见 pickLogos 注释
   const logos = pickLogos(tmdb);
@@ -394,6 +424,19 @@ export function MovieHeroEditorial({
                   >
                     {v.label}
                   </button>
+                ))}
+              </div>
+            )}
+
+            {/* [lc-2255] 主创信息（导演/编剧/音乐/角色设计）：填充右栏中部空位。
+                crew 没有匹配职务时整块不渲染，不留空框。 */}
+            {facts.length > 0 && (
+              <div className="mved-facts">
+                {facts.map((f) => (
+                  <div className="mved-fact-row" key={f.label}>
+                    <span className="mved-fact-k">{f.label}</span>
+                    <span className="mved-fact-v">{f.value}</span>
+                  </div>
                 ))}
               </div>
             )}

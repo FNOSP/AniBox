@@ -2501,6 +2501,8 @@ export function DetailView({
           /* [lc-2252] 标签条/标签体渲染在左栏简介位（经典版同款交互） */
           tabsNav={tabsNavEl}
           tabsBody={editorialTabsBody}
+          /* [lc-2255] 主创信息块的数据源 */
+          crew={crew}
         />
       )}
 

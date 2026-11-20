@@ -331,15 +331,11 @@
   overflow: hidden;
 }
 
-/* 层叠海报：**照抄 fpk 轮播 style="4"**（用户指定参考实现）。
-   来源：fpk/src/preload/plugins/embyWall/carousel/styles.ts 的
-   `[data-fntv-carousel-style="4"]` 段落（transform/opacity/filter/transition
-   全部逐项照抄，含透视、preserve-3d、Ken Burns 缩放）。
-   状态分配逻辑照抄同文件 updatePositions()：
-     diff 0 → active；diff 1 → next（右侧）；diff n-1 → prev（左侧）；
-     diff > 1 && diff < n/2 → far-right；其余 → far-left。
-   唯一有意偏离：fpk 卡内含文字信息层，其 ::before 黑色渐变是给卡内文字垫底的，
-   本版式文字在卡外，渐变保留但减淡到与浅色页面协调（fpk 原值见注释）。 */
+/* 层叠海报：**左右交叠**（用户要求「左右交叠、不要明显截断」）。
+   沿用 fpk style="4" 的 3D 侧翻语言（rotateY + perspective + preserve-3d），
+   但侧卡位移从 ±72% 收到 ±20%、侧翻角 30°→14° —— 侧卡完整留在容器内，
+   被中间卡压住一半，形成"叠在后面"的层次，而不是被边缘裁断。
+   （fpk 原版侧卡在 ±72% 处被容器裁剪只露肩部；此处按用户要求改为全露。） */
 .mved-stack {
   position: relative;
   width: 100%;
@@ -348,12 +344,10 @@
   /* fpk: perspective:1700px */
   perspective: 1700px;
   cursor: pointer;
-  /* fpk 容器 overflow:hidden：侧卡在左右边缘被裁掉，只露出"肩部"（用户截图同款） */
-  overflow: hidden;
-  border-radius: var(--r-lg);
+  /* ⚠ 不设 overflow:hidden —— 侧卡必须完整可见（截断是用户明确否掉的点） */
 }
 
-/* fpk: .fntv-s4-track —— 3D 舞台；preserve-3d 让卡片的 rotateY吃到容器的透视 */
+/* fpk: .fntv-s4-track —— 3D 舞台层；preserve-3d 让卡片的 rotateY 吃到容器透视 */
 .mved-track {
   position: absolute;
   inset: 0;
@@ -364,12 +358,13 @@
 }
 
 .mved-card {
-  /* fpk: left:7%;top:4%;width:86%;height:92%（容器 16:9，卡略缩留出侧卡空间） */
+  /* 中卡 68%×84%（fpk 原值 86%×92% 是给全宽轮播的；右栏窄容器下按「两侧各露 ~76px」
+     反推得出，几何自检见提交说明）。侧卡靠 scale+translateX 与中卡交叠。 */
   position: absolute;
-  left: 7%;
-  top: 4%;
-  width: 86%;
-  height: 92%;
+  left: 16%;
+  top: 8%;
+  width: 68%;
+  height: 84%;
   border-radius: 22px; /* fpk 原值 22px */
   overflow: hidden;
   background: var(--ph-bg);
@@ -383,8 +378,7 @@
     visibility 0.7s;
   opacity: 0;
   visibility: hidden;
-  /* fpk 基态（未获得状态的卡）：从右下微微翘起待命 */
-  transform: scale(0.82) translateX(42px) rotateY(10deg);
+  transform: scale(0.82) translateX(0) rotateY(0deg);
   will-change: transform, opacity, filter;
   pointer-events: none;
 }
@@ -406,7 +400,8 @@
   background: linear-gradient(to top, rgba(0, 0, 0, 0.22) 0%, rgba(0, 0, 0, 0.08) 26%, transparent 52%);
 }
 
-/* 状态五连（fpk 原值逐项照抄） */
+/* 状态（fpk 的 3D 语言，位移/角度按「完整可见的交叠」调整）：
+   中间卡 z-index 10 压在最上；侧卡 z-index 5 缩小后塞进它身后。 */
 .mved-card[data-state="active"] {
   opacity: 1;
   visibility: visible;
@@ -420,27 +415,27 @@
   transform: scale(1); /* Ken Burns 归位 */
 }
 .mved-card[data-state="prev"] {
-  /* fpk: 左侧卡，rotateY 30° 翻进去 */
-  opacity: 0.5;
+  /* 左卡：完整可见，右半被中间卡压住（露出约 76px） */
+  opacity: 0.9;
   visibility: visible;
-  transform: scale(0.8) translateX(-72%) rotateY(30deg);
+  transform: scale(0.92) translateX(-28%) rotateY(14deg);
   z-index: 5;
-  filter: blur(1.5px) brightness(0.82);
+  filter: brightness(0.88);
 }
 .mved-card[data-state="next"] {
-  /* fpk: 右侧卡，rotateY -30° */
-  opacity: 0.5;
+  /* 右卡：与左卡镜像 */
+  opacity: 0.9;
   visibility: visible;
-  transform: scale(0.8) translateX(72%) rotateY(-30deg);
+  transform: scale(0.92) translateX(28%) rotateY(-14deg);
   z-index: 5;
-  filter: blur(1.5px) brightness(0.82);
+  filter: brightness(0.88);
 }
 .mved-card[data-state="far-left"],
 .mved-card[data-state="far-right"] {
-  /* fpk: 更远的卡直接淡出隐藏 */
+  /* 更远的卡：缩小 + 淡出（仍完整可见地消失，不靠裁切） */
   opacity: 0;
   visibility: hidden;
-  transform: scale(0.55) translateX(135%) rotateY(38deg);
+  transform: scale(0.7) translateX(0) rotateY(0deg);
   z-index: 1;
 }
 

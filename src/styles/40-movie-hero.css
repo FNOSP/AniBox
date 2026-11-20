@@ -288,14 +288,19 @@
    不再依赖头图亮度自动反色 —— 浅色海报上自动反色常常判不准，白字/浅底糊在一起。
    现在：浅色主题恒为半透明白底 + 深色文字；深色主题为半透明黑底 + 浅色文字。
    与侧栏/面板的玻璃语言一致（--mv-info-* 变量集中定义，便于统一调整）。
-   注：模糊刻意保持克制（14px），避免 [lc-1667] 反馈过的「身后剧照被整片糊掉」。 */
-.mv-glass {
+   注：模糊刻意保持克制（14px），避免 [lc-1667] 反馈过的「身后剧照被整片糊掉」。
+   [lc-2245] `--mv-info-*` 一组变量抽到 .mv-glass, .mv-version 共用：版本卡与简介卡
+   同一套玻璃语言，但磨砂底**只落在每张版本卡自身**，外层 .mv-versions 保持透明。 */
+.mv-glass,
+.mv-version {
   /* 浅色主题（默认） */
   --mv-info-bg: rgb(255 255 255 / 0.55);
   --mv-info-border: rgb(11 13 18 / 0.12);
   --mv-info-fg: #1a1d24;
   --mv-info-fg-2: rgba(26, 29, 36, 0.74);
   --mv-info-divider: rgb(11 13 18 / 0.14);
+}
+.mv-glass {
   background: var(--mv-info-bg);
   border: 1px solid var(--mv-info-border);
   border-radius: var(--r-lg);
@@ -306,12 +311,15 @@
   -webkit-backdrop-filter: blur(14px) saturate(1.35);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
 }
-[data-theme="dark"] .mv-glass:not([data-theme="dark"] [data-theme="light"] *) {
+[data-theme="dark"] .mv-glass:not([data-theme="dark"] [data-theme="light"] *),
+[data-theme="dark"] .mv-version:not([data-theme="dark"] [data-theme="light"] *) {
   --mv-info-bg: rgb(0 0 0 / 0.45);
   --mv-info-border: rgb(255 255 255 / 0.14);
   --mv-info-fg: #eef1f6;
   --mv-info-fg-2: rgba(230, 233, 240, 0.78);
   --mv-info-divider: rgb(255 255 255 / 0.16);
+}
+[data-theme="dark"] .mv-glass:not([data-theme="dark"] [data-theme="light"] *) {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
 }
 
@@ -396,23 +404,10 @@
   color: var(--gold);
   border-color: color-mix(in srgb, var(--gold) 50%, transparent);
 }
-/* 版本胶囊：无底色，仅描边（颜色随反色）；选中项保留品牌蓝高亮 */
-.mv-head .mv-version {
-  background: transparent;
-  border-color: color-mix(in srgb, var(--mv-fg) 32%, transparent);
-  color: var(--mv-fg);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  text-shadow: var(--mv-shadow);
-}
-.mv-head .mv-version:hover {
-  border-color: var(--mv-fg);
-}
-.mv-head .mv-version.active {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 26%, transparent);
-  color: var(--mv-fg);
-}
+/* [lc-2245] 版本选择的配色改由下方 .mv-version 自己给（磨砂底 + 金色选中），
+   这里删掉原来的「随反色描边 + 品牌蓝选中」覆写 ——
+   那是 (0,0,2,0) 特异性，留着会把新的卡片样式整块盖掉。
+   .mv-note 仍走自适应反色。 */
 .mv-head .mv-note {
   color: var(--mv-fg-dim);
   text-shadow: var(--mv-shadow);
@@ -496,37 +491,99 @@
   opacity: 1;
 }
 
-/* ══════════ [版本] 电影多版本盒子（与剧集详情页同一套语义） ══════════ */
+/* ══════════ [版本] 电影多版本盒子（与剧集详情页同一套语义） ══════════
+   [lc-2245] 改成「信息卡式」：每张卡两行（名称 + 元信息），磨砂底落在卡片自身。
+   规范对齐：字号只用阶梯（--fs-ctl / --fs-cap，不低于 12px）、间距只用 --sp-*、
+   圆角用 --r-md、时长用 --dur-move；金色作为选中语义色，浅底改用深一档保证 4.5:1。
+   [lc-2246] **等高**：卡片高度必须由「行数」决定，不能由内容有无所致 ——
+   原来 meta 缺失的卡片退成单行，和两行卡片并排时高度参差（用户截图报了这点）。
+   现在用 `align-items: stretch`（flex 行默认值）让同排卡片拉伸等高，
+   并给名称行固定行高 + 元信息行固定行高，单行卡片用 `min-height` 兜到两行的高度。 */
 .mv-versions {
   display: flex;
   flex-wrap: wrap;
+  /* 同排卡片等高：stretch 让每张卡吃满行高，最高那张决定整排 */
+  align-items: stretch;
   gap: var(--sp-2);
-  /* [lc-1740] 上移并收紧下边距：版本行与下方 .mv-glass 之间靠 .mv-head 的 padding-bottom
-     (24px) + `.mv-head + .mv-glass` 的 16px 形成清晰间隙，不再与浅底面板边框相切。 */
-  margin-top: 10px;
+  margin-top: var(--sp-4);
   margin-bottom: 0;
+  /* 选中语义色：浅色主题用深一档金（对白底 4.68:1），深色主题覆盖为 --gold */
+  --ver-accent: #9a6a12;
+}
+[data-theme="dark"] .mv-versions:not([data-theme="dark"] [data-theme="light"] *) {
+  --ver-accent: var(--gold);
 }
 .mv-version {
-  height: 32px;
-  padding: 0 var(--sp-4);
-  border-radius: var(--r-full);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.08);
-  color: inherit;
-  font-size: var(--fs-ctl);
-  font-weight: 600;
+  /* 磨砂底（--mv-info-* 见文件上方 .mv-glass, .mv-version 的共用规则）：
+     背景画在带圆角的元素本身上，backdrop-filter 的模糊区域天然被轮廓裁住，
+     不会外溢到卡片之外。 */
+  background: var(--mv-info-bg);
+  backdrop-filter: blur(14px) saturate(1.35);
+  -webkit-backdrop-filter: blur(14px) saturate(1.35);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  /* 两行都从顶端排，卡片拉伸变高时内容不会被拉开成上下分离 */
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: var(--sp-0);
+  min-width: 96px;
+  padding: var(--sp-2) var(--sp-3);
+  text-align: left;
+  border: 1px solid var(--mv-info-border);
+  border-radius: var(--r-md);
+  color: var(--mv-info-fg-2);
+  transition: border-color var(--dur-move), background var(--dur-move), color var(--dur-move);
   cursor: pointer;
-  transition: background var(--dur-tap) ease, border-color var(--dur-tap) ease;
   /* [版本文案] 文件名兜底标签可能很长：限宽 + 省略号，完整名称见 title。 */
   max-width: 220px;
+}
+.mv-version:hover {
+  border-color: color-mix(in srgb, var(--ver-accent) 45%, transparent);
+  color: var(--mv-info-fg);
+}
+/* 选中：磨砂底仍在，只在上层叠一层淡金 —— 纯色填充会把玻璃质感整块盖掉。 */
+.mv-version.active {
+  border-color: var(--ver-accent);
+  background:
+    linear-gradient(
+      color-mix(in srgb, var(--ver-accent) 12%, transparent),
+      color-mix(in srgb, var(--ver-accent) 12%, transparent)
+    ),
+    var(--mv-info-bg);
+  color: var(--ver-accent);
+}
+.mv-version .ver-name {
+  font-size: var(--fs-ctl);
+  /* 固定行高：同名卡片（有一行/两行之差）高度才一致 */
+  line-height: 20px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  /* 长文件名限宽省略（按钮本身限宽 220px） */
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mv-version:hover {
-  border-color: rgba(255, 255, 255, 0.5);
+/* [lc-2246] 单行卡片（没有 meta）不需要额外的占位元素：
+   同排等高由上面的 `align-items: stretch` 直接保证 —— 已用真实 CSS 双向对照验证
+   （去掉 stretch 时高度才会参差）。所以这里不再生成 ::after 占位。 */
+.mv-version .ver-meta {
+  font-size: var(--fs-cap);
+  /* 与上面那个占位行同高（16px），两行卡片总高对齐 */
+  line-height: 16px;
+  color: var(--mv-info-fg-2);
+  letter-spacing: 0.02em;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.mv-version.active {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 30%, transparent);
+.mv-version.active .ver-meta {
+  color: color-mix(in srgb, var(--ver-accent) 78%, transparent);
+}
+@media (max-width: 600px) {
+  .mv-version {
+    min-width: 84px;
+  }
 }

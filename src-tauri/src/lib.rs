@@ -1871,7 +1871,10 @@ async fn get_media_versions(state: State<'_, AppState>, guid: String) -> Result<
     // [版本文案] 上游 `video_streams[].title` 实测恒为空、云端/STRM 条目分辨率与色域也空，
     // 唯一可区分信息在同响应的 `files[]`：`files[].guid === video_streams[].media_guid`。
     // 这里只取 `file_name`（绝不带 `path`，避免把 NAS 目录暴露给前端）。
-    let file_names: std::collections::HashMap<String, String> = data
+    // [lc-2246] 同时取文件体积 `file_size`：详情页版本卡要显示「大小」这一项关键信息。
+    // 上游字段名不确定（`file_size` / `size` / `bytes` 都见过），这里按顺序探测，
+    // 数字与字符串两种形态都认。
+    let file_meta: std::collections::HashMap<String, (String, i64)> = data
         .get("files")
         .and_then(|v| v.as_array())
         .map(|files| {
@@ -1879,12 +1882,21 @@ async fn get_media_versions(state: State<'_, AppState>, guid: String) -> Result<
                 .iter()
                 .filter_map(|f| {
                     let g = str_of(f, "guid");
-                    let name = str_of(f, "file_name");
-                    if g.is_empty() || name.is_empty() {
-                        None
-                    } else {
-                        Some((g, name))
+                    if g.is_empty() {
+                        return None;
                     }
+                    let name = str_of(f, "file_name");
+                    let size = ["file_size", "size", "bytes", "fsize", "fileSize"]
+                        .iter()
+                        .find_map(|k| {
+                            f.get(*k).and_then(|v| {
+                                v.as_i64().or_else(|| {
+                                    v.as_str().and_then(|s| s.trim().parse::<i64>().ok())
+                                })
+                            })
+                        })
+                        .unwrap_or(0);
+                    Some((g, (name, size)))
                 })
                 .collect()
         })
@@ -1893,9 +1905,15 @@ async fn get_media_versions(state: State<'_, AppState>, guid: String) -> Result<
         .iter()
         .map(|s| {
             let media_guid = str_of(s, "media_guid");
+            let (file_name, file_size) = file_meta
+                .get(&media_guid)
+                .cloned()
+                .unwrap_or_else(|| (String::new(), 0));
             json!({
                 "media_guid": media_guid,
-                "file_name": file_names.get(&media_guid).cloned().unwrap_or_default(),
+                "file_name": file_name,
+                // [lc-2246] 体积（字节；0 = 上游没给）。前端按 GB/MB 格式化展示。
+                "file_size": file_size,
                 "title": str_of(s, "title"),
                 "resolution_type": str_of(s, "resolution_type"),
                 "color_range_type": str_of(s, "color_range_type"),

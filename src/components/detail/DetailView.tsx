@@ -157,6 +157,31 @@ function versionLabels(versions: MediaVersion[]): string[] {
   return withFile.map((b, i) => ((count2.get(b) ?? 0) > 1 ? `${b} · ${i + 1}` : b));
 }
 
+/** [lc-2245] 电影版本卡的元信息行：**大小 · 编码 · 位深**（缺的项自动跳过）。
+ *  [lc-2246] 用户要求「要显示关键信息」，而体积是最关键的一条 ——
+ *  优先用后端给的 `file_size`（真实字节数）；没有时退回 `bps × duration` 估算；
+ *  再没有就不显示体积，绝不编一个数字出来。
+ *  [lc-2246] 分辨率/色域已由 versionLabel 放在第一行，这里不重复。 */
+function versionMeta(v: MediaVersion): string {
+  const codec = String(v.codec_name ?? "").trim();
+  const depth = Number(v.bit_depth ?? 0);
+
+  // 体积：真实字节数优先，其次码率×时长估算
+  const rawSize = Number(v.file_size ?? 0);
+  const bps = Number(v.bps ?? 0);
+  const dur = Number(v.duration ?? 0);
+  const bytes = rawSize > 0 ? rawSize : bps > 0 && dur > 0 ? (bps * dur) / 8 : 0;
+  const size =
+    bytes >= 1024 ** 3
+      ? `${(bytes / 1024 ** 3).toFixed(1)} GB`
+      : bytes >= 1024 ** 2
+        ? `${Math.round(bytes / 1024 ** 2)} MB`
+        : "";
+
+  // 大小放最前：三个版本并排时，用户最先要比的就是"这个多大"
+  return [size, codec, depth > 0 ? `${depth}bit` : ""].filter(Boolean).join(" · ");
+}
+
 /** 默认版本优先级：本地记忆 → play/info（服务端上次播放）→ 第一条。 */
 function chooseMediaVersion(guid: string, versions: MediaVersion[], serverSelected?: string): string {
   const remembered = readMediaVersion(guid);
@@ -2273,6 +2298,8 @@ export function DetailView({
               ? mediaVersions.map((v, i) => ({
                   mediaGuid: v.media_guid,
                   label: versionLabels(mediaVersions)[i],
+                  // [lc-2245] 卡片第二行：编码/位深/体积（有才显示，没有就单行）
+                  meta: versionMeta(v),
                 }))
               : undefined
           }

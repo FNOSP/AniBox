@@ -173,6 +173,8 @@ export type MediaVersion = {
   is_bluray?: boolean;
   /** 占位视频流（STRM 等，ext1 == -1） */
   is_not_exist?: boolean;
+  /** [lc-2246] 文件体积（字节；0 = 上游没给）。版本卡显示「大小」用。 */
+  file_size?: number;
 };
 
 

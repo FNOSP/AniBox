@@ -48,8 +48,9 @@ type Props = {
   onMeta?: () => void;
   /** [lc-1700] 点演职员 → 打开演员页（TMDB id > 0 才可点） */
   onOpenPerson?: (c: TmdbCreditPerson) => void;
-  /** [版本] 同一电影的多版本（多文件）盒子；长度 > 1 才显示（照抄 FlyNarwhal） */
-  versions?: { mediaGuid: string; label: string }[];
+  /** [版本] 同一电影的多版本（多文件）盒子；长度 > 1 才显示（照抄 FlyNarwhal）
+   *  [lc-2245] label 拆成两行：name（分辨率/标题）+ meta（编码/位深/体积）。 */
+  versions?: { mediaGuid: string; label: string; meta?: string }[];
   selectedVersion?: string;
   onVersionChange?: (mediaGuid: string) => void;
   favItem: Record<string, unknown> | null;
@@ -245,7 +246,9 @@ export function MovieHero({
                 </button>
               )}
             </div>
-            {/* [版本] 同一电影多版本：与剧集详情页同一套版本盒子（仅 > 1 显示）。 */}
+            {/* [版本] 同一电影多版本：与剧集详情页同一套版本盒子（仅 > 1 显示）。
+                [lc-2245] 改为两行信息卡：上行名称、下行元信息（编码/位深/体积）。
+                磨砂底落在每张卡片自身（见 40-movie-hero.css 的 .mv-version）。 */}
             {versions && versions.length > 1 && (
               <div className="mv-versions" role="group" aria-label="选择版本">
                 {versions.map((v) => (
@@ -257,7 +260,8 @@ export function MovieHero({
                     aria-pressed={v.mediaGuid === selectedVersion}
                     onClick={() => onVersionChange?.(v.mediaGuid)}
                   >
-                    {v.label}
+                    <span className="ver-name">{v.label}</span>
+                    {v.meta && <span className="ver-meta">{v.meta}</span>}
                   </button>
                 ))}
               </div>

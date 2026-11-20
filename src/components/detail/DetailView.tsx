@@ -2197,6 +2197,180 @@ export function DetailView({
     };
   }, [dataReady, noFnOS, versionTargetGuid, fetchMediaVersions]);
 
+  /* [lc-2252] 标签条 + 标签页内容抽成变量：经典版渲染在底部 .dv2 里；
+     杂志风（editorial）渲染在左栏简介位 —— 两处共用同一批面板与状态，
+     切换版式不会丢数据、也不额外发请求。 */
+  const tabsNavEl = (
+    <nav className="dseg dv2-seg" role="tablist">
+      {tabIds.map((id) => (
+        <button
+          key={id}
+          role="tab"
+          aria-selected={activeTab === id}
+          className={`dseg-btn${activeTab === id ? " active" : ""}`}
+          onClick={() => setTab(id)}
+        >
+          {TAB_LABEL[id]}
+        </button>
+      ))}
+      {/* [lc-1761] Switch 是独立开关按钮（不切标签页）：选中字体变色，右列切在线搜索 */}
+      <button
+        role="button"
+        aria-pressed={onlineMode}
+        className={`dseg-btn dv2-switch${onlineMode ? " switch-on" : ""}`}
+        title="切换右列：本地选集 ↔ 在线资源搜索"
+        onClick={() => setOnlineMode((v) => !v)}
+      >
+        Switch
+      </button>
+    </nav>
+  );
+  const tabsBodyEl = (
+    <div ref={bodyRef} className={`dbody dv2-body${tabAnim ? " view-in" : ""}`} onScroll={onDetailScroll}>
+      {activeTab === "overview" && (
+        <OverviewTab
+          bgmTags={bgmTags}
+          overview={overview}
+          setZoom={setZoom}
+          tmdb={tmdb}
+          tmdbDone={tmdbDone}
+          /* [lc-1655] 电影页不再渲染剧照块（剧照改全屏轮播）；剧集页保持原行为 */
+          showStills={!isMovie}
+        />
+      )}
+      {activeTab === "related" && (
+        <RelatedTab
+          related={related}
+          relatedGroups={relatedGroups}
+          relatedBusy={relatedBusy}
+          relatedErr={relatedErr}
+          retryRelated={retryRelated}
+          tmdbRecs={tmdbRecs}
+          tmdbDone={tmdbDone}
+          mediaType={isSeries ? "tv" : "movie"}
+          onOpenTmdb={onOpenTmdb}
+        />
+      )}
+      {activeTab === "more" && (
+        <CastTab
+          cast={cast}
+          castFrom={castFrom}
+          showCast={showCast}
+          chars={chars}
+          credits={credits}
+          creditsBusy={creditsBusy}
+          creditsCast={creditsCast}
+          creditsErr={creditsErr}
+          crew={crew}
+          fbCast={fbCast}
+          moreBusy={moreBusy}
+          moreErr={moreErr}
+          moreProbed={moreProbed}
+          persons={persons}
+          retryCredits={retryCredits}
+          retryMore={retryMore}
+          onOpenPerson={onOpenPerson}
+        />
+      )}
+      {activeTab === "extra" && <ExtraTab tmdb={tmdb} tmdbDone={tmdbDone} />}
+      {activeTab === "reviews" && (
+        <ReviewsTab
+          loadMoreReviews={loadMoreReviews}
+          retryReviews={retryReviews}
+          reviews={reviews}
+          reviewsBusy={reviewsBusy}
+          reviewsDone={reviewsDone}
+          reviewsErr={reviewsErr}
+          reviewsMoreBusy={reviewsMoreBusy}
+        />
+      )}
+      {activeTab === "comments" && (
+        <CommentsTab
+          comments={comments}
+          commentsBusy={commentsBusy}
+          commentsDone={commentsDone}
+          commentsErr={commentsErr}
+          commentsMoreBusy={commentsMoreBusy}
+          retryComments={retryComments}
+        />
+      )}
+    </div>
+  );
+  /* 杂志风左栏的标签体：overview = 纯简介（标签已在数据格、剧照在层叠海报，不重复）；
+     其余面板与经典版完全一致。bodyRef 复用 —— 两个分支互斥挂载，ref 不会冲突。 */
+  const editorialTabsBody = (
+    <div
+      ref={bodyRef}
+      className={`dbody dv2-body mved-tabbody${tabAnim ? " view-in" : ""}`}
+      onScroll={onDetailScroll}
+    >
+      {activeTab === "overview" && (
+        <div className="dpanel">
+          {overview ? (
+            <p className="mved-lead">{overview}</p>
+          ) : (
+            <div className="empty">暂无简介</div>
+          )}
+        </div>
+      )}
+      {activeTab === "related" && (
+        <RelatedTab
+          related={related}
+          relatedGroups={relatedGroups}
+          relatedBusy={relatedBusy}
+          relatedErr={relatedErr}
+          retryRelated={retryRelated}
+          tmdbRecs={tmdbRecs}
+          tmdbDone={tmdbDone}
+          mediaType={isSeries ? "tv" : "movie"}
+          onOpenTmdb={onOpenTmdb}
+        />
+      )}
+      {activeTab === "more" && (
+        <CastTab
+          cast={cast}
+          castFrom={castFrom}
+          showCast={showCast}
+          chars={chars}
+          credits={credits}
+          creditsBusy={creditsBusy}
+          creditsCast={creditsCast}
+          creditsErr={creditsErr}
+          crew={crew}
+          fbCast={fbCast}
+          moreBusy={moreBusy}
+          moreErr={moreErr}
+          moreProbed={moreProbed}
+          persons={persons}
+          retryCredits={retryCredits}
+          retryMore={retryMore}
+          onOpenPerson={onOpenPerson}
+        />
+      )}
+      {activeTab === "extra" && <ExtraTab tmdb={tmdb} tmdbDone={tmdbDone} />}
+      {activeTab === "reviews" && (
+        <ReviewsTab
+          loadMoreReviews={loadMoreReviews}
+          retryReviews={retryReviews}
+          reviews={reviews}
+          reviewsBusy={reviewsBusy}
+          reviewsDone={reviewsDone}
+          reviewsErr={reviewsErr}
+          reviewsMoreBusy={reviewsMoreBusy}
+        />
+      )}
+      {activeTab === "comments" && (
+        <CommentsTab
+          comments={comments}
+          commentsBusy={commentsBusy}
+          commentsDone={commentsDone}
+          commentsErr={commentsErr}
+          commentsMoreBusy={commentsMoreBusy}
+          retryComments={retryComments}
+        />
+      )}
+    </div>
+  );
 
   return (
     <main
@@ -2324,6 +2498,9 @@ export function DetailView({
           }
           selectedVersion={versionGuid === base.guid ? selectedMediaGuid : undefined}
           onVersionChange={(mg) => selectVersion(base.guid, mg)}
+          /* [lc-2252] 标签条/标签体渲染在左栏简介位（经典版同款交互） */
+          tabsNav={tabsNavEl}
+          tabsBody={editorialTabsBody}
         />
       )}
 
@@ -2381,9 +2558,11 @@ export function DetailView({
         />
       )}
 
-      {/* ══ 两栏主体（用户版式）══ */}
-      {dataReady && (
-      <div className={`dv2${isMovie ? " dv2-movie" : ""}${isMovie && movieDetailStyle === "editorial" ? " mved-tabs" : ""}`}>
+      {/* ══ 两栏主体（用户版式）══
+          [lc-2252] 杂志风（editorial）电影**不渲染本区**——标签条/标签体已挪到左栏简介位
+          （MovieHeroEditorial 的 tabsNav/tabsBody）；剧集与经典版电影照旧。 */}
+      {dataReady && !(isMovie && movieDetailStyle === "editorial") && (
+      <div className={`dv2${isMovie ? " dv2-movie" : ""}`}>
         {/* ── 左列：封面 / 标签框 / 简介框 / 标签页 / 内容 ── */}
         <div className="dv2-left">
           {/* 竖版封面 + 标题（海报来自本机条目，无则用 Bangumi 的） */}
@@ -2430,128 +2609,12 @@ export function DetailView({
             </div>
           </div>
 
-          {/* 四标签页（固定一条，不随数据增删） */}
-          <nav className="dseg dv2-seg" role="tablist">
-            {tabIds.map((id) => (
-              <button
-                key={id}
-                role="tab"
-                aria-selected={activeTab === id}
-                className={`dseg-btn${activeTab === id ? " active" : ""}`}
-                onClick={() => setTab(id)}
-              >
-                {TAB_LABEL[id]}
-              </button>
-            ))}
-            {/* [lc-1761] Switch 是独立开关按钮（不切标签页）：选中字体变色，右列切在线搜索 */}
-            <button
-              role="button"
-              aria-pressed={onlineMode}
-              className={`dseg-btn dv2-switch${onlineMode ? " switch-on" : ""}`}
-              title="切换右列：本地选集 ↔ 在线资源搜索"
-              onClick={() => setOnlineMode((v) => !v)}
-            >
-              Switch
-            </button>
-          </nav>
+          {/* [lc-2252] 标签条/标签体抽成变量（见 return 前的 tabsNavEl / tabsBodyEl）：
+              经典版渲染在这里；杂志风渲染在左栏简介位（MovieHeroEditorial 的 tabsNav/tabsBody）。 */}
+          {tabsNavEl}
 
-          {/* 标签页内容
-              [lc-2119] 这个容器**自己是滚动视口**（见 22-detail-v2.css 的 .dv2-body）：
-              滚动发生在标签页内容区块内，上方的封面/评分/标签条保持可见，不再整屏滚走。
-              触底翻页（评论/吐槽）的监听也从 main 移到这里 —— 滚动事件只在与滚动容器
-              相同的元素上触发，挂在 main 上收不到。 */}
-          <div ref={bodyRef} className={`dbody dv2-body${tabAnim ? " view-in" : ""}`} onScroll={onDetailScroll}>
-        {activeTab === "overview" && (
-          <OverviewTab
-            bgmTags={bgmTags}
-            overview={overview}
-            setZoom={setZoom}
-            tmdb={tmdb}
-            tmdbDone={tmdbDone}
-            /* [lc-1655] 电影页不再渲染剧照块（剧照改全屏轮播）；剧集页保持原行为 */
-            showStills={!isMovie}
-          />
-        )}
-
-        {/* [lc-1401] 关联条目（Bangumi /subjects/{id}/subjects）：**按 relation 分组**渲染
-            （上游没有分组，只有每条的 relation 词）。组序 = 上游首次出现顺序（热度序）。 */}
-        {activeTab === "related" && (
-          <RelatedTab
-            related={related}
-            relatedGroups={relatedGroups}
-            relatedBusy={relatedBusy}
-            relatedErr={relatedErr}
-            retryRelated={retryRelated}
-            tmdbRecs={tmdbRecs}
-            tmdbDone={tmdbDone}
-            mediaType={isSeries ? "tv" : "movie"}
-            onOpenTmdb={onOpenTmdb}
-          />
-        )}
-
-        {/* 演职人员：**TMDB 主源**（tmdb_credits 落盘缓存）→ Bangumi 角色/制作人员 → 飞牛演员字段兜底。
-            [lc-1404] 本页**不含** TmdbExtra（分级/在线观看/相似/别名那些属于「剧照剧集详情信息」）——
-            用户反馈"演职人员下面又接了一个 tmdb 数据卡"，就是它原来挂在这里造成的重复。 */}
-        {activeTab === "more" && (
-          <CastTab
-            cast={cast}
-            castFrom={castFrom}
-            showCast={showCast}
-            chars={chars}
-            credits={credits}
-            creditsBusy={creditsBusy}
-            creditsCast={creditsCast}
-            creditsErr={creditsErr}
-            crew={crew}
-            fbCast={fbCast}
-            moreBusy={moreBusy}
-            moreErr={moreErr}
-            moreProbed={moreProbed}
-            persons={persons}
-            retryCredits={retryCredits}
-            retryMore={retryMore}
-            onOpenPerson={onOpenPerson}
-          />
-
-        )}
-
-        {/* [lc-1565] 「更多」页：原「详情」页底部的 更多 块（别名/关键词/热度/编号/链接）独立成页 */}
-        {activeTab === "extra" && <ExtraTab tmdb={tmdb} tmdbDone={tmdbDone} />}
-
-        {/* [lc-1412] 评论（长影评，用户设计稿版式）：
-              封面 + 标题（链接色）+ 摘要（3 行截断）+ 作者 · 日期 · N 回复。
-              数据源 /p1/.../reviews；封面在 entry.icon —— **多数是 no_photo.png 占位图**，
-              所以碰到 no_photo 就退成图标（否则整列都是灰方块，很难看）。 */}
-        {activeTab === "reviews" && (
-          <ReviewsTab
-            loadMoreReviews={loadMoreReviews}
-            retryReviews={retryReviews}
-            reviews={reviews}
-            reviewsBusy={reviewsBusy}
-            reviewsDone={reviewsDone}
-            reviewsErr={reviewsErr}
-            reviewsMoreBusy={reviewsMoreBusy}
-          />
-        )}
-
-        {/* [lc-119] 吐槽（Bangumi 短评，走自建镜像）：骨架屏 / 失败重试 / 空态 / 滚到底翻页
-            [lc-1412] 版式按用户设计稿改成**气泡流**（原为头像+昵称+正文的列表行）：
-            每条是一张带边框的气泡卡，右上角心形（reactions 有数据时点亮并显示人数），
-            昵称/星级/时间一行在气泡上方。
-            ⚠ **做不出嵌套回复**：Bangumi 的 /comments 不提供回复链（50 条样本无 parent 字段，
-              parent_id 参数无效、三个候选回复端点全 404），所以这里只有平铺的评论流。 */}
-        {activeTab === "comments" && (
-          <CommentsTab
-            comments={comments}
-            commentsBusy={commentsBusy}
-            commentsDone={commentsDone}
-            commentsErr={commentsErr}
-            commentsMoreBusy={commentsMoreBusy}
-            retryComments={retryComments}
-          />
-
-        )}
-          </div>
+          {/* [lc-2252] 标签体见 tabsBodyEl（return 前） */}
+          {tabsBodyEl}
         </div>
 
         {/* ── 右列：集数据（整条竖向列表）──

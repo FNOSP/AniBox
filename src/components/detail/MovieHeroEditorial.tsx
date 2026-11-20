@@ -14,7 +14,7 @@
  *         ③ 简介（吃掉剩余高度，超长内部滚动）
  *   右栏  层叠海报轮播 + 播放/收藏/元数据 + 版本条 + 主创 + 配音
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Star as IcoStarL } from "lucide-react";
 import { imgUrl, tmdbImg } from "../../lib/images";
@@ -53,6 +53,11 @@ type Props = {
   selectedVersion?: string;
   onVersionChange?: (mediaGuid: string) => void;
   favItem: Record<string, unknown> | null;
+  /** [lc-2252] 标签条（.dseg.dv2-seg 那条）与标签体（.dbody 面板容器）：
+   *  由 DetailView 传入并渲染在左栏「数据区之下、简介位」——
+   *  点击标签切换下方内容（经典版同款交互）。不传则退化为纯简介段落。 */
+  tabsNav?: ReactNode;
+  tabsBody?: ReactNode;
 };
 
 /** 从 tmdb 详情里取作品标题 logo（后端 [lc-2247] 已按「中文优先 + 面积最大」挑好）。
@@ -154,8 +159,9 @@ export function MovieHeroEditorial({
   selectedVersion,
   onVersionChange,
   favItem,
-}: Props) {
-  const favGuid = String((favItem?.guid as string) ?? "").trim();
+  tabsNav,
+  tabsBody,
+}: Props) {  const favGuid = String((favItem?.guid as string) ?? "").trim();
   const [fav, setFav] = useState(false);
   const [favBusy, setFavBusy] = useState(false);
   const [note, setNote] = useState("");
@@ -300,11 +306,15 @@ export function MovieHeroEditorial({
               )}
             </div>
 
-            {overview && (
-              <div className="mved-block mved-block-desc">
-                <p className="mved-lead">{overview}</p>
-              </div>
+            {/* [lc-2252] 标签条 + 标签体：挪到简介位（用户要求「挪到简介上面，
+                改成之前那种便签切换」）。详情面板 = 纯简介；关联/角色/更多/评论/吐槽
+                面板由 DetailView 通过 tabsNav/tabsBody 传入，交互与经典版一致。 */}
+            {tabsNav && (
+              <div className="mved-block mved-block-tabs">{tabsNav}</div>
             )}
+            <div className={`mved-block mved-block-desc${tabsBody ? " has-tabs" : ""}`}>
+              {tabsBody ?? (overview ? <p className="mved-lead">{overview}</p> : null)}
+            </div>
           </div>
 
           {/* ══ 右栏：海报 / 操作 / 版本 / 主创 / 配音 ══ */}

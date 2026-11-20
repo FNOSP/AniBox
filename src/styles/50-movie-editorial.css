@@ -67,11 +67,14 @@
   z-index: 2;
   min-width: 0;
   min-height: 0;
-  /* 标题 / 数据按内容取高，简介吃剩余 */
+  /* 标题 / 数据 / 标签条按内容取高；标签体（简介位）吃剩余。
+     [lc-2252] 标签条挪到简介上方、简介位变成经典版同款的标签切换区
+     （详情面板 = 纯简介；关联/角色/更多/评论/吐槽面板由 DetailView 传入）。
+     余量给「会自己填满的标签体」——给固定内容的块只会变成空白（踩过三次）。 */
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   align-content: start;
-  gap: var(--sp-5);
+  gap: var(--sp-4);
 }
 
 .mved-block {
@@ -290,16 +293,21 @@
   filter: invert(1) brightness(1.6);
 }
 
-/* ── ③ 简介：吃掉头部剩余高度，超长内部滚动 ── */
-.mved-block-desc {
+/* ── ③ 标签体区（[lc-2252] 简介位 = 经典版同款的标签切换区）──
+   有标签时：整个块是滚动面板容器（.mved-tabbody 在内部撑满）；
+   无标签时（兜底）：退化为纯简介段落。 */
+.mved-block-desc.has-tabs {
+  border-top: none;
+  padding-top: 0;
+}
+.mved-block-desc:not(.has-tabs) {
   justify-content: flex-start;
   padding-top: var(--sp-4);
   border-top: 1px solid var(--line);
 }
+/* 简介正文：在滚动面板里自然铺开（面板负责滚动，段不再自己滚/渐隐） */
 .mved-lead {
   margin: 0;
-  flex: 1 1 auto;
-  min-height: 0;
   font-size: var(--fs-ctl);
   line-height: 1.8;
   color: var(--text-2);
@@ -307,16 +315,7 @@
   /* 中文排版：首行缩进两个字符（用 text-indent 而不是空格，
      否则 justify 会把空格拉成不等宽，复制时也会带上） */
   text-indent: 2em;
-  overflow-y: auto;
-  overflow-x: hidden;
   overflow-wrap: anywhere;
-  scrollbar-width: none;
-  /* 底部渐隐，暗示还有下文 */
-  -webkit-mask-image: linear-gradient(to bottom, #000 88%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 88%, transparent 100%);
-}
-.mved-lead::-webkit-scrollbar {
-  display: none;
 }
 
 /* ── 右栏 ── */
@@ -663,12 +662,24 @@
   text-overflow: ellipsis;
 }
 
-/* ── 下方详情区（标签页）在杂志风下的间距 ── */
-.dv2.dv2-movie.mved-tabs {
-  display: block;
-  padding: var(--sp-5) clamp(var(--sp-5), 5vw, var(--sp-8)) var(--sp-6);
-  max-width: 1400px;
-  margin: 0 auto;
+/* ── [lc-2252] 标签条 + 标签体：挪到左栏简介位 ──
+   标签条复用经典版 .dseg.dv2-seg 的卡片样式（分段胶囊 + active 下划线），
+   这里只补杂志风下的容器间距；标签体是经典版同款的滚动面板容器。 */
+.mved-block-tabs {
+  border-top: 1px solid var(--line);
+  padding-top: var(--sp-3);
+}
+/* 标签体：吃掉左栏剩余高度，面板自己滚（经典版 .dv2-body 同款交互） */
+.mved-tabbody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  padding-bottom: var(--sp-2);
+}
+.mved-tabbody::-webkit-scrollbar {
+  display: none;
 }
 
 /* ── 响应式 ── */
@@ -686,12 +697,7 @@
     min-height: 300px;
   }
   .mved-left {
-    grid-template-rows: auto auto auto;
-  }
-  .mved-lead {
-    overflow: visible;
-    -webkit-mask-image: none;
-    mask-image: none;
+    grid-template-rows: auto auto auto minmax(0, 1fr);
   }
   .mved-cast-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));

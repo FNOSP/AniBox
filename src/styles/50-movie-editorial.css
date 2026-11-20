@@ -331,106 +331,124 @@
   overflow: hidden;
 }
 
-/* 层叠海报：**扇形交错**（用户要求「层叠交错那种」）。
-   [lc-2249] 与上一版的区别：上一版三张卡几乎同高、只轻微偏转，看起来像"平铺"；
-   现在做成明显的**扇形展开**——两侧卡大幅旋转（±14°）、横向拉开、纵向错位，
-   形成错落有致的层叠感。
-   尺寸仍按 16:9 + 容器宽高双约束，保证不变形也不出界。 */
+/* 层叠海报：**照抄 fpk 轮播 style="4"**（用户指定参考实现）。
+   来源：fpk/src/preload/plugins/embyWall/carousel/styles.ts 的
+   `[data-fntv-carousel-style="4"]` 段落（transform/opacity/filter/transition
+   全部逐项照抄，含透视、preserve-3d、Ken Burns 缩放）。
+   状态分配逻辑照抄同文件 updatePositions()：
+     diff 0 → active；diff 1 → next（右侧）；diff n-1 → prev（左侧）；
+     diff > 1 && diff < n/2 → far-right；其余 → far-left。
+   唯一有意偏离：fpk 卡内含文字信息层，其 ::before 黑色渐变是给卡内文字垫底的，
+   本版式文字在卡外，渐变保留但减淡到与浅色页面协调（fpk 原值见注释）。 */
 .mved-stack {
   position: relative;
   width: 100%;
   flex: 1 1 auto;
   min-height: 210px;
-  perspective: 1400px;
+  /* fpk: perspective:1700px */
+  perspective: 1700px;
   cursor: pointer;
-  padding: var(--sp-2) 0;
-  container-type: size;
+  /* fpk 容器 overflow:hidden：侧卡在左右边缘被裁掉，只露出"肩部"（用户截图同款） */
+  overflow: hidden;
+  border-radius: var(--r-lg);
+}
+
+/* fpk: .fntv-s4-track —— 3D 舞台；preserve-3d 让卡片的 rotateY吃到容器的透视 */
+.mved-track {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform-style: preserve-3d;
 }
 
 .mved-card {
+  /* fpk: left:7%;top:4%;width:86%;height:92%（容器 16:9，卡略缩留出侧卡空间） */
   position: absolute;
-  left: 50%;
-  top: 50%;
-  /* 宽 = min(容器宽 × 0.62, (容器高 − 留白) × 16/9)。
-     0.62 而不是 0.72：扇形展开后两侧卡要占用更多横向空间。 */
-  width: min(calc(100cqw * 0.62), calc((100cqh - 40px) * 16 / 9));
-  height: auto;
-  aspect-ratio: 16 / 9;
-  background-color: var(--ph-bg);
-  background-size: cover;
-  background-position: center;
-  border-radius: var(--r-md);
-  border: 1px solid var(--line);
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1), 0 2px 10px rgba(0, 0, 0, 0.05);
-  transform-origin: center center;
-  /* [lc-2249] 层级切换动画：位置/透明度/亮度都由 data-pos 的终值驱动，
-     切换到下一张时这几条 transition 让卡片平滑地滑到新位置。 */
+  left: 7%;
+  top: 4%;
+  width: 86%;
+  height: 92%;
+  border-radius: 22px; /* fpk 原值 22px */
+  overflow: hidden;
+  background: var(--ph-bg);
+  cursor: pointer;
+  /* fpk 原值：transition 五连，含 visibility（淡出后再真正隐藏） */
   transition:
-    transform 520ms var(--ease-spring),
-    opacity 380ms var(--ease-enter),
-    box-shadow 380ms ease,
-    filter 380ms ease;
+    transform 0.85s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.7s cubic-bezier(0.4, 0, 0.2, 1),
+    filter 0.7s ease,
+    box-shadow 0.7s ease,
+    visibility 0.7s;
   opacity: 0;
+  visibility: hidden;
+  /* fpk 基态（未获得状态的卡）：从右下微微翘起待命 */
+  transform: scale(0.82) translateX(42px) rotateY(10deg);
+  will-change: transform, opacity, filter;
   pointer-events: none;
 }
-[data-theme="dark"] .mved-card {
-  border-color: var(--line-strong);
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5), 0 2px 10px rgba(0, 0, 0, 0.3);
+
+/* 卡内背景层：Ken Burns 缓推（fpk .fntv-s4-bg：scale 1.08 → 1，3.6s） */
+.mved-card-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  transform: scale(1.08);
+  transition: transform 3.6s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+/* fpk ::before 渐变原值 rgba(0,0,0,.42)→transparent；本版式文字在卡外，减淡到 .22 */
+.mved-card-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.22) 0%, rgba(0, 0, 0, 0.08) 26%, transparent 52%);
 }
 
-/* 四档位置：0 = 最前（正中），1 = 右侧后，2 = 左侧后，3 = 最远（淡出）
-   [lc-2249] 扇形交错参数：
-     · 两侧大幅旋转 ±14°（上一版只有 ±5°，太平）；
-     · 横向位移 ±42%（卡宽的比例），明显拉开；
-     · 纵向错位：后景卡略高/略低，制造错落感；
-     · 缩放递减 1 → 0.82 → 0.7，形成纵深。 */
-.mved-card[data-pos="0"] {
-  transform: translate(-50%, -50%) rotate(0deg) scale(1);
+/* 状态五连（fpk 原值逐项照抄） */
+.mved-card[data-state="active"] {
   opacity: 1;
+  visibility: visible;
+  transform: scale(1) translateX(0) rotateY(0deg);
   z-index: 10;
+  filter: brightness(1);
+  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.28); /* fpk 原值 */
   pointer-events: auto;
-  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.22);
 }
-[data-theme="dark"] .mved-card[data-pos="0"] {
-  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.6);
+.mved-card[data-state="active"] .mved-card-bg {
+  transform: scale(1); /* Ken Burns 归位 */
 }
-.mved-card[data-pos="1"] {
-  /* 右侧后景：向右上方错开 */
-  transform: translate(14%, -58%) rotate(14deg) scale(0.82);
-  opacity: 0.88;
-  z-index: 9;
-  filter: brightness(0.94);
+.mved-card[data-state="prev"] {
+  /* fpk: 左侧卡，rotateY 30° 翻进去 */
+  opacity: 0.5;
+  visibility: visible;
+  transform: scale(0.8) translateX(-72%) rotateY(30deg);
+  z-index: 5;
+  filter: blur(1.5px) brightness(0.82);
 }
-.mved-card[data-pos="2"] {
-  /* 左侧后景：向左下方错开 */
-  transform: translate(-114%, -42%) rotate(-14deg) scale(0.7);
-  opacity: 0.62;
-  z-index: 8;
-  filter: brightness(0.86);
+.mved-card[data-state="next"] {
+  /* fpk: 右侧卡，rotateY -30° */
+  opacity: 0.5;
+  visibility: visible;
+  transform: scale(0.8) translateX(72%) rotateY(-30deg);
+  z-index: 5;
+  filter: blur(1.5px) brightness(0.82);
 }
-.mved-card[data-pos="3"] {
-  transform: translate(-50%, -50%) rotate(0deg) scale(0.58);
+.mved-card[data-state="far-left"],
+.mved-card[data-state="far-right"] {
+  /* fpk: 更远的卡直接淡出隐藏 */
   opacity: 0;
-  z-index: 7;
-}
-
-/* 悬停：后两张再散开一点（角度 +3°、位移 +6%），整体更像被拨开的扇形 */
-.mved-stack:hover .mved-card[data-pos="1"] {
-  transform: translate(19%, -60%) rotate(17deg) scale(0.84);
-  opacity: 0.92;
-}
-.mved-stack:hover .mved-card[data-pos="2"] {
-  transform: translate(-119%, -40%) rotate(-17deg) scale(0.72);
-  opacity: 0.68;
+  visibility: hidden;
+  transform: scale(0.55) translateX(135%) rotateY(38deg);
+  z-index: 1;
 }
 
 /* [lc-2249] 入场动画：容器挂载后加 `.is-in`，卡片依次淡入（错峰 90ms）。
-   ⚠ 两条硬约束（都实测踩过）：
-   ① 只动 opacity，**不碰 transform** —— transform 是 data-pos 的职责，
-      keyframes 里带 transform 会把卡片压回正中，扇形完全失效；
-   ② 用 `backwards` 而不是 `both`：`both` 会让动画结束后继续保留 from 的
-      opacity:0，把 data-pos 的终值盖掉 → 卡片全程不可见。
-      `backwards` 只覆盖「延迟尚未开始」那段时间，结束后自然交回 data-pos。 */
+   ⚠ 只动 opacity，**不碰 transform** —— transform 是 data-state 的职责，
+   keyframes 里带 transform 会把卡片压回正中、3D 层叠完全失效。
+   用 `backwards` 而非 `both`：`both` 会在动画结束后继续保留 from 的 opacity:0，
+   把 data-state 的终值盖掉 → 卡片全程不可见。 */
 .mved-stack.is-in .mved-card {
   animation: mvedCardIn 560ms var(--ease-enter) backwards;
   animation-delay: calc(var(--i, 0) * 90ms);
@@ -442,7 +460,19 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* fpk reduced-motion：只保留 opacity 过渡，transform 全部归零 */
   .mved-card {
+    transition: opacity 0.2s ease;
+  }
+  .mved-card[data-state="active"],
+  .mved-card[data-state="prev"],
+  .mved-card[data-state="next"],
+  .mved-card[data-state="far-left"],
+  .mved-card[data-state="far-right"] {
+    transform: none;
+  }
+  .mved-card-bg {
+    transform: none !important;
     transition: none;
   }
   .mved-stack.is-in .mved-card {

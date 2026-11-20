@@ -317,22 +317,37 @@ export function MovieHeroEditorial({
               onMouseLeave={() => setHovered(false)}
               onClick={(e) => {
                 const el = (e.target as HTMLElement).closest<HTMLElement>(".mved-card");
-                if (el?.dataset.pos === "0") return; // 点最前那张不切换
+                if (el?.dataset.state === "active") return; // 点最前那张不切换
                 if (slides.length > 1) setSlideIdx((i) => (i + 1) % slides.length);
               }}
             >
-              {slides.map((url, i) => {
-                const pos = (i - slideIdx + slides.length) % slides.length;
-                return (
-                  <div
-                    key={url}
-                    className="mved-card"
-                    data-pos={String(pos > 2 ? 3 : pos)}
-                    /* [lc-2249] --i 给入场动画做错峰延迟（0/1/2 → 0/90/180ms） */
-                    style={{ backgroundImage: `url("${url}")`, ["--i" as string]: String(pos) }}
-                  />
-                );
-              })}
+              {/* fpk style4：3D 舞台层（preserve-3d，让卡片的 rotateY 吃到容器透视） */}
+              <div className="mved-track">
+                {slides.map((url, i) => {
+                  /* [lc-2249] 状态分配**照抄 fpk updatePositions()**：
+                     diff 0 → active；diff 1 → next（右）；diff n-1 → prev（左）；
+                     diff > 1 && diff < n/2 → far-right；其余 → far-left。 */
+                  const n = slides.length;
+                  const diff = (i - slideIdx + n) % n;
+                  let state = "far-left";
+                  if (diff === 0) state = "active";
+                  else if (diff === 1) state = "next";
+                  else if (diff === n - 1) state = "prev";
+                  else if (diff > 1 && diff < n / 2) state = "far-right";
+                  return (
+                    <div
+                      key={url}
+                      className="mved-card"
+                      data-state={state}
+                      /* [lc-2249] --i 给入场动画做错峰延迟 */
+                      style={{ ["--i" as string]: String(i) }}
+                    >
+                      {/* fpk 结构：卡内一层 bg 承载图片 —— Ken Burns 缩放作用在它身上 */}
+                      <div className="mved-card-bg" style={{ backgroundImage: `url("${url}")` }} />
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="mved-actions">

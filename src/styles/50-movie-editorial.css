@@ -327,9 +327,7 @@
   min-width: 0;
   align-self: stretch;
   min-height: 0;
-  /* [lc-2253] overflow 必须可见：style3 的牌堆（behind1/2/deep）要从容器顶露出，
-     被裁掉就只剩一张孤卡。右栏其余块高度固定，不会横向溢出。 */
-  overflow: visible;
+  overflow: hidden;
 }
 
 /* 层叠海报：**照抄 fpk 首页轮播 style="3"**（用户指定「图片切换样式直接套用
@@ -354,8 +352,11 @@
   perspective-origin: 50% 40%;
   cursor: pointer;
   border-radius: 24px;
-  /* fpk: overflow visible —— 牌堆上缘露出容器顶 */
-  overflow: visible;
+  /* [lc-2256] overflow:hidden（fpk 原值 visible）：牌堆卡 inset:0 + translateY(-48/-82/-110px)
+     会从容器顶露出 33~81px，在右栏里像"后面的海报跑出来了"（用户截图报的就是这个）。
+     裁掉后：静置只看到激活卡；切换动画照常 —— 旧卡上滑到顶被裁、新卡从底部升入。
+     代价是 fpk 那种"牌堆露顶"的静置观感没了，这是用户明确要的效果取舍。 */
+  overflow: hidden;
 }
 
 /* fpk: .fntv-s3-card —— 所有卡 inset:0 填满容器，靠 transform 区分层级 */

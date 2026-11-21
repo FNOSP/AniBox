@@ -19,9 +19,13 @@
 .mved {
   flex: none;
   /* [lc-2260] 顶部留白给「返回键」让位：返回键绝对定位在 top:48px / left:24px
-     （以剧集详情页 .dv2-rail .back 为准），标题区从其下方开始。 */
+     （以剧集详情页 .dv2-rail .back 为准），标题区从其下方开始。
+     [lc-2277] 底部 48→16px：页尾大空白（用户红框）= header margin-bottom 48
+     + .mved padding-bottom 48 + .content padding-bottom 32 三处叠加（128px）；
+     header 是 editorial 页唯一内容块，margin 纯浪费（见 .mved-header），
+     padding 收到 16px —— 加上全局 32px，页尾共 48px 的正常呼吸位。 */
   position: relative;
-  padding: calc(48px + var(--sp-7)) clamp(var(--sp-5), 5vw, var(--sp-8)) var(--sp-7);
+  padding: calc(48px + var(--sp-7)) clamp(var(--sp-5), 5vw, var(--sp-8)) var(--sp-4);
 }
 
 .mved-inner {
@@ -63,7 +67,9 @@
   gap: clamp(var(--sp-6), 5vw, var(--sp-8));
   align-items: stretch;
   min-height: clamp(560px, 60vh, 680px);
-  margin-bottom: var(--sp-7);
+  /* [lc-2277] margin-bottom 48→0：header 之后没有其他内容块，
+     这 48px 纯属页尾空白（叠加 .mved padding-bottom 后被用户红框点名）。 */
+  margin-bottom: 0;
 }
 
 .mved-left {

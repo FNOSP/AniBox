@@ -830,6 +830,7 @@
   color: var(--accent);
 }
 .mved-cast-avatar {
+  position: relative;
   width: 56px;
   height: 56px;
   border-radius: 50%;
@@ -842,12 +843,28 @@
   flex: none;
   overflow: hidden;
 }
-/* [lc-2287] 头像 img：face 版加载失败 onError 回退 w185（见 MovieHeroEditorial） */
+/* [lc-2287] 头像 img：face 版加载失败 onError 回退 w185（见 MovieHeroEditorial）。
+   [lc-2288] 绝对定位盖在姓氏文字层上：两级回退都失败隐藏 img，姓氏字露出。 */
 .mved-cast-avatar img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+}
+.mved-cast-initial {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  user-select: none;
 }
 .mved-cast-meta {
   min-width: 0;

@@ -627,6 +627,9 @@ export function MovieHeroEditorial({
                     ? tmdbImg(profile, "w180_and_h180_face")
                     : profile; /* 完整 URL（飞牛兜底头像）直接当 face 源 */
                   const fullAv = profile.startsWith("/") ? tmdbImg(profile, "w185") : profile;
+                  /* [lc-2288] 无图占位显示姓氏首字（中文取首字、拉丁取首字母大写）：
+                     img 两级回退都失败隐藏后，这层文字自然露出。 */
+                  const initial = (String(c.name || "").trim().slice(0, 1) || "?").toUpperCase();
                   const clickable = !!onOpenPerson && Number(c.id ?? 0) > 0;
                   const role = c.character ? `饰 ${c.character}` : c.jobLabel || c.job || "";
                   return (
@@ -651,6 +654,9 @@ export function MovieHeroEditorial({
                         className="mved-cast-avatar"
                         style={!faceAv && fullAv ? { backgroundImage: `url("${fullAv}")` } : undefined}
                       >
+                        <span className="mved-cast-initial" aria-hidden="true">
+                          {initial}
+                        </span>
                         {faceAv ? (
                           <img
                             src={faceAv}

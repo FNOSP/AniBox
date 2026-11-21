@@ -125,14 +125,20 @@
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   line-height: 1.5;
   /* [lc-2275] 长路径换行显示（用户：「可以换行的，下面还能显示一行」）：
-     最多两行，更多时悬停 title 看全文；路径无空格，需要 break-all 才能任意字符处断行。 */
+     最多两行，更多时悬停 title 看全文。
+     [lc-2276] 断行规则按段完整（用户：「应该以/每段完整」）：路径按 `/` 拆成
+     .mved-path-seg（inline-block，段整体不可拆），换行只发生在段间；
+     单段超行宽时 anywhere 兜底段内断（否则溢出）。 */
   white-space: normal;
-  word-break: break-all;
+  overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
   min-width: 0;
+}
+.mved-path-seg {
+  display: inline-block;
 }
 
 .mved-block {

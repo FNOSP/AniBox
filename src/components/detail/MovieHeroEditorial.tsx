@@ -462,11 +462,23 @@ export function MovieHeroEditorial({
                   )}
 
                   {/* [lc-2273] 文件位置：当前选中版本的完整路径（红框位置展示）。
-                      上游没给路径时整行不渲染；长路径单行省略，悬停看全文。 */}
+                      上游没给路径时整行不渲染；[lc-2275] 换行显示最多两行；
+                      [lc-2276] 按 `/` 拆成 inline-block 段渲染 —— 段整体不可拆，
+                      换行只发生在段间，段内永远完整（零宽空格/keep-all 都压不住
+                      「字母→CJK」边界的隐式断点，夹具实测 1080p.|潮 仍断）。 */}
                   {filePath && (
                     <div className="mved-file-path" title={filePath}>
                       <span className="mved-file-path-k">文件位置</span>
-                      <span className="mved-file-path-v">{filePath}</span>
+                      <span className="mved-file-path-v">
+                        {filePath
+                          .split("/")
+                          .filter((seg) => seg !== "")
+                          .map((seg, i) => (
+                            <span className="mved-path-seg" key={i}>
+                              /{seg}
+                            </span>
+                          ))}
+                      </span>
                     </div>
                   )}
                 </div>

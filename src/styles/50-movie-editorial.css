@@ -18,10 +18,10 @@
 
 .mved {
   flex: none;
-  /* [lc-2258] 顶部留白给「返回键」让位：返回键绝对定位在 top:52px / left:20px
-     （与经典版 .mv-topbar/.mv-back 完全对齐），标题区从其下方开始。 */
+  /* [lc-2260] 顶部留白给「返回键」让位：返回键绝对定位在 top:48px / left:24px
+     （以剧集详情页 .dv2-rail .back 为准），标题区从其下方开始。 */
   position: relative;
-  padding: calc(52px + var(--sp-7)) clamp(var(--sp-5), 5vw, var(--sp-8)) var(--sp-7);
+  padding: calc(48px + var(--sp-7)) clamp(var(--sp-5), 5vw, var(--sp-8)) var(--sp-7);
 }
 
 .mved-inner {
@@ -29,11 +29,11 @@
   margin: 0 auto;
 }
 
-/* ── 返回键：位置对齐经典版（.mv-topbar top:52px / left:20px）── */
+/* ── 返回键：位置以剧集详情页 .dv2-rail .back 为准（y=48 / x=24，[lc-2260]）── */
 .mved-back {
   position: absolute;
-  top: 52px;
-  left: 20px;
+  top: 48px;
+  left: 24px;
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);

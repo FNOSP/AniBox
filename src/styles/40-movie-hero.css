@@ -81,11 +81,12 @@
 
 .mv-topbar {
   position: absolute;
-  /* [lc-1662] 头图已铺到窗口顶端：返回键落在 40px 悬浮标题栏下方 12px 处，
-     不与其抢位置、不压住顶栏图标。 */
-  top: 52px;
-  left: 20px;
-  right: 20px;
+  /* [lc-2260] 返回键位置以剧集详情页 .dv2-rail .back 为准（y=48 / x=24，即
+     detail-full 的 padding-top sp-7 / padding-left sp-5）—— 电影与剧集详情页
+     的左上角返回键坐标完全一致。原值 top:52px/left:20px 作废。 */
+  top: 48px;
+  left: 24px;
+  right: 24px;
   display: flex;
   align-items: center;
   gap: var(--sp-3);

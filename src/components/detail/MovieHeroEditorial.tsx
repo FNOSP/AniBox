@@ -618,16 +618,15 @@ export function MovieHeroEditorial({
             {topCast.length > 0 && (
               <div className="mved-cast-row" role="list" aria-label="主要配音">
                 {topCast.map((c, i) => {
-                  /* [lc-2285] 头像用 TMDB 方形人脸裁剪尺寸 w180_and_h180_face：
-                     实测 200（TMDB 网页自用同款），弃用的只是 2:3 的
-                     w185_and_h278_face（400 "Image size not supported"，直连实证）。
-                     1:1 裁剪版脸居中，圆形容器 cover 无裁剪 —— 比原图猜位置准得多。
-                     [lc-2282] 时期的「全白」即误用了已弃用的 2:3 face 尺寸。 */
-                  const av = c.profile
-                    ? c.profile.startsWith("/")
-                      ? tmdbImg(c.profile, "w180_and_h180_face")
-                      : imgUrl(c.profile)
-                    : "";
+                  /* [lc-2285→2287] 头像两级：TMDB 方形人脸裁剪 w180_and_h180_face
+                     （实测 200、TMDB 网页自用；弃用的只是 2:3 的 w185_and_h278_face），
+                     加载失败回退 w185 原图缩放（个别图没有 face 生成版），再失败露占位底。
+                     profile 可能是完整代理 URL（飞牛头像兜底，lc-2287）—— 以 "/" 开头才走 TMDB。 */
+                  const profile = c.profile || "";
+                  const faceAv = profile.startsWith("/")
+                    ? tmdbImg(profile, "w180_and_h180_face")
+                    : profile; /* 完整 URL（飞牛兜底头像）直接当 face 源 */
+                  const fullAv = profile.startsWith("/") ? tmdbImg(profile, "w185") : profile;
                   const clickable = !!onOpenPerson && Number(c.id ?? 0) > 0;
                   const role = c.character ? `饰 ${c.character}` : c.jobLabel || c.job || "";
                   return (
@@ -648,7 +647,27 @@ export function MovieHeroEditorial({
                           : undefined
                       }
                     >
-                      <div className="mved-cast-avatar" style={av ? { backgroundImage: `url("${av}")` } : undefined} />
+                      <div
+                        className="mved-cast-avatar"
+                        style={!faceAv && fullAv ? { backgroundImage: `url("${fullAv}")` } : undefined}
+                      >
+                        {faceAv ? (
+                          <img
+                            src={faceAv}
+                            alt=""
+                            loading="lazy"
+                            onError={(e) => {
+                              const el = e.currentTarget;
+                              if (!el.dataset.fb) {
+                                el.dataset.fb = "1";
+                                el.src = fullAv;
+                              } else {
+                                el.style.display = "none"; /* 两个尺寸都失败 → 露占位底色 */
+                              }
+                            }}
+                          />
+                        ) : null}
+                      </div>
                       <div className="mved-cast-meta">
                         <div className="mved-cast-name">{c.name}</div>
                         {role && <div className="mved-cast-role">{role}</div>}

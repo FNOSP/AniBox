@@ -1757,6 +1757,17 @@ export function DetailView({
       ? "details"
       : "none";
   const fbCast = fnosCast(data);
+  // [lc-2287] TMDB profile 空的演员用**飞牛演员表同名头像**兜底：
+  //   TMDB 条目图会被整理/移除（王晓慧实测：credits force 回源后 profile 变空、person 页也无图），
+  //   飞牛媒体库刮削的头像还在 —— 按名字对齐补上。合并后 profile 混两种形态
+  //   （TMDB path "/xx.jpg" / 完整代理 URL），消费端按是否以 "/" 开头区分。
+  const fbAvatar = new Map(fbCast.filter((f) => f.avatar).map((f) => [f.name, f.avatar]));
+  const castResolved = cast.map((c) => {
+    const own = String(c.profile ?? "");
+    if (own) return c;
+    const fb = fbAvatar.get(String(c.name ?? ""));
+    return fb ? { ...c, profile: imgUrl(fb) } : c;
+  });
   // [lc-1401] 分段栏（用户定稿版式：顺序固定）
   //   详情 / 评论 / 吐槽 / 关联 / 角色 / 更多 —— 全部**恒在**：
   //   版式要求标签条是固定的一条（不是按"有没有数据"增删），所以不再自适应增删项；
@@ -2275,7 +2286,7 @@ export function DetailView({
       )}
       {activeTab === "more" && (
         <CastTab
-          cast={cast}
+          cast={castResolved}
           castFrom={castFrom}
           showCast={showCast}
           chars={chars}
@@ -2369,7 +2380,7 @@ export function DetailView({
       )}
       {activeTab === "more" && (
         <CastTab
-          cast={cast}
+          cast={castResolved}
           castFrom={castFrom}
           showCast={showCast}
           chars={chars}
@@ -2495,7 +2506,7 @@ export function DetailView({
           runtimeMin={runtimeMin}
           genres={genres}
           overview={overview}
-          cast={cast}
+          cast={castResolved}
           stills={movieStills}
           tmdb={tmdb}
           releaseDate={
@@ -2567,7 +2578,7 @@ export function DetailView({
           runtimeMin={runtimeMin}
           genres={genres}
           overview={overview}
-          cast={cast}
+          cast={castResolved}
           stills={movieStills}
           resumeAt={!!resumeAt}
           playing={playing}

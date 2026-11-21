@@ -840,6 +840,14 @@
   background-position: center;
   border: 1px solid var(--line);
   flex: none;
+  overflow: hidden;
+}
+/* [lc-2287] 头像 img：face 版加载失败 onError 回退 w185（见 MovieHeroEditorial） */
+.mved-cast-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 .mved-cast-meta {
   min-width: 0;

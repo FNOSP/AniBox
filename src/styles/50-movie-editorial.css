@@ -797,7 +797,9 @@
 /* ── 配音阵容：4 等分 ── */
 .mved-cast-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* [lc-2280] 一行三个（用户：「位置拉宽，名称都显示不全了，一行三个」）：
+     4 列每格 ~150px 长名必截断；3 列每格 ~200px，9 人整排 3×3。 */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: center;
   /* [lc-2257] 行距拉开：8 人两排，行间距用行 gap
      [lc-2279] 放大：头像 44→56px、名字 13→15px、行距 12→16px（tokens 无 16 档用硬值）——

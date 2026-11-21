@@ -377,9 +377,10 @@ export function MovieHeroEditorial({
     return () => window.clearInterval(t);
   }, [slides.length, slideKey, hovered, reduce]);
 
-  /* [lc-2257] 演员阵容扩到 8 人（两排 4 列）—— 单排 4 人填不满右栏（用户反馈）。
+  /* [lc-2257] 演员阵容扩到 8 人 —— 单排 4 人填不满右栏（用户反馈）。
+     [lc-2280] 改 3 列整排：一行三个（用户），9 人 = 3×3 满排不空位。
      cast 是完整演员表（TMDB credits），多取不亏；没有头像的也在列（占位底色）。 */
-  const topCast = cast.filter((c) => c?.name).slice(0, 8);
+  const topCast = cast.filter((c) => c?.name).slice(0, 9);
 
   /* ── 数据格：评分 / 片长 / 年份 / 地区（缺项自动跳过） ──
      地区与语言从 tmdb 的原始代码取，组件内映射中文（后端 [lc-2247] 新增字段）。 */

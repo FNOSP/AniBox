@@ -799,8 +799,10 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: center;
-  /* [lc-2257] 行距拉开：8 人两排，行间距用行 gap */
-  gap: var(--sp-3) var(--sp-3);
+  /* [lc-2257] 行距拉开：8 人两排，行间距用行 gap
+     [lc-2279] 放大：头像 44→56px、名字 13→15px、行距 12→16px（tokens 无 16 档用硬值）——
+     右栏追平左栏放大后的长度，吃掉演员块下方空白 */
+  gap: 16px var(--sp-3);
   /* [lc-2255] 原来 margin-top:auto 把演员行钉在栏底、空档全留在它上方
      （用户截图「右栏大面积空白」的另一半成因）。改成固定间距，
      余量交给 .mved-stack 之上的空间由头部 min-height 决定，整体更均匀。 */
@@ -823,8 +825,8 @@
   color: var(--accent);
 }
 .mved-cast-avatar {
-  width: 44px;
-  height: 44px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   background-color: var(--ph-bg);
   background-size: cover;
@@ -836,7 +838,7 @@
   min-width: 0;
 }
 .mved-cast-name {
-  font-size: var(--fs-ctl);
+  font-size: var(--fs-body);
   font-weight: 600;
   color: var(--text);
   white-space: nowrap;

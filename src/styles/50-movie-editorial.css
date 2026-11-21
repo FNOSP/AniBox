@@ -123,9 +123,15 @@
   font-size: var(--fs-cap);
   color: var(--text);
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-  white-space: nowrap;
+  line-height: 1.5;
+  /* [lc-2275] 长路径换行显示（用户：「可以换行的，下面还能显示一行」）：
+     最多两行，更多时悬停 title 看全文；路径无空格，需要 break-all 才能任意字符处断行。 */
+  white-space: normal;
+  word-break: break-all;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
   min-width: 0;
 }
 

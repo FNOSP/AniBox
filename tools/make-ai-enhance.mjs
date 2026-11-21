@@ -84,7 +84,8 @@ const manifest = {
   zipSha256: sha,
   sizeBytes: buf.length,
   minAppVersion: "4.1.0",
-  notes: "RIFE v4.6 ncnn Vulkan + VapourSynth R79 runtime (all-GPU), from mpv-Yaozhi 1.0.6-2 rife-ncnn-vulkan",
+  // [lc-2262] notes 随版本更新（面板「有更新」提示会展示这一行）。
+  notes: "RIFE/MVTools/SVP 补帧 + AI 超分运行时（全 GPU）；1.3.1：SVP 补帧按显示器刷新率自适应取档（160Hz 屏补到 160，不再固定 60）+ MPV-lite 调参 + 4K 降采样分析",
 };
 if (packs) manifest.packs = packs;
 fs.writeFileSync(path.join(OUT_DIR, "manifest.json"), JSON.stringify(manifest, null, 2));

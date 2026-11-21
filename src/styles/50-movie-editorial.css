@@ -267,7 +267,7 @@
   color: var(--muted);
 }
 .mved-stat-k {
-  font-size: var(--fs-cap);
+  font-size: var(--fs-ctl);
   color: var(--muted);
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -281,7 +281,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-2);
-  font-size: var(--fs-cap);
+  font-size: var(--fs-ctl);
   color: var(--muted);
 }
 
@@ -374,7 +374,10 @@
 /* 简介正文：在滚动面板里自然铺开（面板负责滚动，段不再自己滚/渐隐） */
 .mved-lead {
   margin: 0;
-  font-size: var(--fs-ctl);
+  /* [lc-2278] 详情页阅读文本放大（用户：「底部还是空空的，可以适当放大字号」）：
+     简介 13→15px，面板标题/别名 13→14px，辅助信息 12→13px —— 左栏内容变长，
+     顺带吃掉右栏更长带来的底部空白。 */
+  font-size: 15px;
   line-height: 1.8;
   color: var(--text-2);
   text-align: justify;
@@ -389,7 +392,7 @@
   margin-top: var(--sp-4);
 }
 .mved-ov-t {
-  font-size: var(--fs-ctl);
+  font-size: var(--fs-body);
   font-weight: 700;
   color: var(--text-strong);
   margin-bottom: var(--sp-2);
@@ -400,7 +403,7 @@
   gap: var(--sp-2);
 }
 .mved-alias {
-  font-size: var(--fs-ctl);
+  font-size: var(--fs-body);
   color: var(--text-2);
   line-height: 1.7;
   overflow-wrap: anywhere;
@@ -779,7 +782,7 @@
   grid-template-columns: 56px minmax(0, 1fr);
   gap: var(--sp-3);
   align-items: baseline;
-  font-size: var(--fs-cap);
+  font-size: var(--fs-ctl);
   line-height: 1.6;
 }
 .mved-fact-k {
@@ -842,7 +845,7 @@
   transition: color var(--dur-tap);
 }
 .mved-cast-role {
-  font-size: var(--fs-cap);
+  font-size: var(--fs-ctl);
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;

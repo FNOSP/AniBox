@@ -3634,6 +3634,7 @@ fn shader_preset_table() -> Vec<(&'static str, &'static str, &'static str)> {
         ("sw_aq_restore", "单开关：Anime4K 重建", "~~/shaders/Anime4K_Restore_CNN_M.glsl"),
         ("sw_aq_gan", "单开关：Anime4K 放大（GAN）", "~~/shaders/Anime4K_Upscale_GAN_x2_M.glsl"),
         ("sw_sharpen", "单开关：自适应锐化", "~~/shaders/adaptive_sharpen_RT.glsl"),
+        ("sw_fakehdr", "单开关：伪HDR（SDR 提亮观感）", "~~/shaders/fake_hdr.glsl"),
     ]
 }
 

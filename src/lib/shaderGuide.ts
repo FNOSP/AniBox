@@ -145,6 +145,7 @@ export const SWITCH_GROUP: GuideGroup = {
     { scene: "Anime4K: 重建", chips: [{ key: "sw_aq_restore", label: "叠加" }], func: "Anime4K_Restore_CNN_M（线条重建）", perf: "中" },
     { scene: "Anime4K: 放大", chips: [{ key: "sw_aq_gan", label: "叠加" }], func: "Anime4K_Upscale_GAN_x2_M（GAN 放大）", perf: "高" },
     { scene: "OUTPUT: 自适应锐化_RT", chips: [{ key: "sw_sharpen", label: "叠加" }], func: "adaptive_sharpen_RT（自适应锐化）", perf: "低" },
+    { scene: "OUTPUT: 伪HDR", chips: [{ key: "sw_fakehdr", label: "叠加" }], func: "fake_hdr（igv faux-HDR：SDR 伪高动态提亮观感）", perf: "低" },
   ],
 };
 

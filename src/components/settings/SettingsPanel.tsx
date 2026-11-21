@@ -1807,6 +1807,7 @@ export function SettingsPanel({
                         { value: "sw_aq_restore", label: "单开关：Anime4K 重建" },
                         { value: "sw_aq_gan", label: "单开关：Anime4K 放大（GAN）" },
                         { value: "sw_sharpen", label: "单开关：自适应锐化" },
+                        { value: "sw_fakehdr", label: "单开关：伪HDR（SDR 提亮观感）" },
                       ]}
                       onChange={(v) => void setShader(v)}
                     />

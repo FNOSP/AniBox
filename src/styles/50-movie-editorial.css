@@ -812,11 +812,18 @@
   gap: var(--sp-2);
 }
 .mved-block-tabs .dseg-btn {
-  padding: var(--sp-2) var(--sp-4);
+  /* [lc-2271] 与右栏按钮同规格（用户：「左边按钮小了，大小高度都要对齐」）：
+     min-height 44px / 字号 fs-ctl / 居中 —— 同 .mved-btn-primary 尺度。 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 var(--sp-4);
   background: var(--hover);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   color: var(--muted);
+  font-size: var(--fs-ctl);
   transition: border-color var(--dur-tap), background var(--dur-tap), color var(--dur-tap);
 }
 .mved-block-tabs .dseg-btn:hover {

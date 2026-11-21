@@ -297,7 +297,9 @@ export function MovieHeroEditorial({
      海报和左栏自身重算；≤1000px 单列布局（海报提到文字上方）时跳过。
      [lc-2268] 内容自然高超过目标（长标题/logo 图撑高）时 minHeight 拉不动，
      标签条会被顶下去——改为压缩 wrapper 内部 gap 吸收差值（下限 4px）；
-     gap 只压不回弹，否则 RO 触发链上会振荡。 */
+     gap 只压不回弹，否则 RO 触发链上会振荡。
+     [lc-2270] 对齐目标扣除衬线 inset（border-top + padding-top）。
+     [lc-2271] 吸收链两级化：wrapper gap（下限4px）→ 衬线间距（下限4px）。 */
   const leftTopRef = useRef<HTMLDivElement | null>(null);
   const stackRef = useRef<HTMLDivElement | null>(null);
   const actionsRef = useRef<HTMLDivElement | null>(null);
@@ -314,23 +316,37 @@ export function MovieHeroEditorial({
       if (getComputedStyle(header).gridTemplateColumns.split(" ").length < 2) {
         top.style.minHeight = "";
         top.style.gap = "";
+        if (tabs) tabs.style.paddingTop = "";
         return;
       }
       const rowGap = parseFloat(getComputedStyle(left).rowGap) || 0;
-      /* [lc-2270] 标签条恢复衬线（border-top + padding-top）：对齐目标扣除这段
-         inset，分段条顶仍与按钮行顶对齐，衬线悬在按钮顶上方作数据区分隔。 */
-      let inset = 0;
-      if (tabs) {
-        const tabsCs = getComputedStyle(tabs);
-        inset = parseFloat(tabsCs.borderTopWidth) + parseFloat(tabsCs.paddingTop);
-      }
-      const target = actions.getBoundingClientRect().top - top.getBoundingClientRect().top - rowGap - inset;
-      /* 临时清 minHeight 测内容自然高；超出目标的部分用内部 gap 抵掉 */
+      /* [lc-2271] 吸收链两级：wrapper 内 gap（下限 4px）→ 衬线间距 padding-top
+         （下限 4px）。tab 卡加高后内容超量更大，一级不够时压二级；
+         超量超过两级上限时放弃对齐保排版。每轮先重置再测量，RO 收敛。 */
+      if (tabs) tabs.style.paddingTop = "";
+      const tabsCs = getComputedStyle(tabs!);
+      const padTop = parseFloat(tabsCs.paddingTop) || 0;
+      const inset = parseFloat(tabsCs.borderTopWidth) + padTop;
+      const base = actions.getBoundingClientRect().top - top.getBoundingClientRect().top - rowGap;
+      let target = base - inset;
       top.style.minHeight = "";
-      const natural = top.getBoundingClientRect().height;
-      if (natural > target) {
+      let natural = top.getBoundingClientRect().height;
+      let over = natural - target;
+      if (over > 0) {
         const innerGap = parseFloat(getComputedStyle(top).rowGap) || 0;
-        top.style.gap = `${Math.max(4, Math.round(innerGap - (natural - target)))}px`;
+        const x = Math.min(over, innerGap - 4);
+        if (x > 0) {
+          top.style.gap = `${Math.round(innerGap - x)}px`;
+          natural -= x;
+          over -= x;
+        }
+      }
+      if (over > 0 && tabs && padTop > 4) {
+        const y = Math.min(over, padTop - 4);
+        if (y > 0) {
+          tabs.style.paddingTop = `${Math.round(padTop - y)}px`;
+          target = base - (parseFloat(tabsCs.borderTopWidth) + padTop - y);
+        }
       }
       top.style.minHeight = `${Math.max(0, Math.round(target))}px`;
     };
@@ -344,6 +360,7 @@ export function MovieHeroEditorial({
       window.removeEventListener("resize", align);
       top.style.minHeight = "";
       top.style.gap = "";
+      if (tabs) tabs.style.paddingTop = "";
     };
   }, []);
 

@@ -618,9 +618,12 @@ export function MovieHeroEditorial({
             {topCast.length > 0 && (
               <div className="mved-cast-row" role="list" aria-label="主要配音">
                 {topCast.map((c, i) => {
+                  /* [lc-2281] 头像裁剪修复（用户截图：郑鹏生只剩头顶）：竖版原图
+                     cover+top 会把脸裁掉 —— 换 TMDB 官方人脸裁剪尺寸
+                     w185_and_h278_face（上游按人脸检测把脸放中间），显示再 center 30% 取脸区。 */
                   const av = c.profile
                     ? c.profile.startsWith("/")
-                      ? tmdbImg(c.profile, "w185")
+                      ? tmdbImg(c.profile, "w185_and_h278_face")
                       : imgUrl(c.profile)
                     : "";
                   const clickable = !!onOpenPerson && Number(c.id ?? 0) > 0;

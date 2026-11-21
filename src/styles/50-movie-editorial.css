@@ -832,7 +832,9 @@
   border-radius: 50%;
   background-color: var(--ph-bg);
   background-size: cover;
-  background-position: center top;
+  /* [lc-2281] 人脸裁剪源（face 版 2:3）里脸居中，center 30% 微偏上保发际线留量；
+     旧 center top 配原始竖版半身像会把脸裁没（用户截图实证）。 */
+  background-position: center 30%;
   border: 1px solid var(--line);
   flex: none;
 }

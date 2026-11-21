@@ -154,9 +154,13 @@
   overflow: hidden;
 }
 
-/* ── ① 标题区 ── */
+/* ── ① 标题区 ──
+   [lc-2291] overflow visible：草书字形大幅出格（上挑下撇超出 line box），
+   块通用规则 overflow:hidden 会把出格部分裁掉（用户：「字体禁止被裁剪遮挡」）；
+   标题块内全是文本流，放开无副作用。 */
 .mved-block-title {
   justify-content: center;
+  overflow: visible;
 }
 
 /* [lc-2267] 原 .mved-kicker「— 2026 · 电影」已删：年份与数据格「上映年份」重复，
@@ -172,12 +176,11 @@
   font-weight: 900;
   /* [lc-2289] 0.96 -> 1.08：行高小于字号时 CJK 字形底部超出 line box，
      被块的 overflow:hidden 切掉（用户截图「大标题字最底部被裁剪」）；
-     拉丁字没事，中文必裁。多行标题行距略增可接受。 */
-  line-height: 1.08;
-  /* [lc-2290] 艺术字体栈（用户：「大标题字换成艺术字体」，不是换 logo 图）：
-     华文行楷（Office 装机常见）→ 楷体/隶书（Windows 自带）→ serif 兜底。
-     无这些字体的机器退化为默认字体，不破版；渐变填充/描边照常生效。 */
-  font-family: "华文行楷", "STXingkai", "楷体", "KaiTi", "隶书", "LiSu", serif;
+     [lc-2291] 1.08 -> 1.18：草书字形上下出格比楷体大得多，行盒再放宽。 */
+  line-height: 1.18;
+  /* [lc-2291] 草书字体栈（用户：「换成草书」）：方正舒体 = Windows 自带的行草体（FZSTK.TTF），
+     比华文行楷更草；回退华文行楷 → 楷体 → serif。无字体机器退化默认字体不破版。 */
+  font-family: "方正舒体", "FZShuTi", "华文行楷", "STXingkai", "楷体", "KaiTi", serif;
   letter-spacing: -0.03em;
   background-image: linear-gradient(100deg, var(--text-strong) 0%, var(--text-strong) 38%, var(--accent) 100%);
   -webkit-background-clip: text;

@@ -442,7 +442,7 @@ export function WatchHistoryView({
   const loading = data === null && !err;
 
   return (
-    <main className="content hist-full">
+    <main className="content lib-root hist-full">
       <div className="page-head hist-head">
         <button className="back" onClick={onBack} title="返回首页">
           ‹

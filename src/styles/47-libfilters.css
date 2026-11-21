@@ -3,7 +3,9 @@
    每行 = 84px 次要色标签列 + 文字 chips（无边框无底色，选中=强调色+500 字重）。
 
    [lc-2261] 库根页（全部/分类）的返回键与详情页对齐：.content 默认 padding-top
-   sp-8(64px)，详情页是 sp-7(48px) —— 这 16px 差就是「媒体库返回键下沉」的来源。 */
+   sp-8(64px)，详情页是 sp-7(48px) —— 这 16px 差就是「媒体库返回键下沉」的来源。
+   [lc-2262] 同一套 `.page-head` 返回键的页面全部对齐：观影记录（hist-full）、
+   多云盘资源库（cloud-page）、JavHub（jvh-page）均加 lib-root。 */
 
 .content.lib-root {
   padding-top: var(--sp-7);

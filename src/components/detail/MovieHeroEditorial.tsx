@@ -618,11 +618,13 @@ export function MovieHeroEditorial({
             {topCast.length > 0 && (
               <div className="mved-cast-row" role="list" aria-label="主要配音">
                 {topCast.map((c, i) => {
-                  /* [lc-2281→2282] 头像裁剪修复（用户截图：郑鹏生只剩头顶）：
-                     原想换 TMDB 人脸裁剪尺寸 w185_and_h278_face，但实测列表页头像全白
-                     （person 页 w185 正常 → face 尺寸在镜像链路上拉不到，原因未查实），
-                     回退 w185；裁剪缓解改由显示位承担（CSS center 30%，窗口 10%~77%
-                     覆盖大多数半身像脸区）。 */
+                  /* [lc-2281→2283] 头像裁剪修复（用户截图：郑鹏生只剩头顶）：
+                     w185_and_h278_face（TMDB 人脸裁剪尺寸）已不可用 —— 实测直连
+                     image.tmdb.org 对该尺寸返回 400 "Image size not supported"
+                     （同 path 的 h632/original 均 200；镜像如实透传这个 400，
+                     与镜像链路无关，LC-2282 的「全白」即此）。TMDB 服务端已弃用
+                     face 裁剪，无「做好的」头像可用；回退 w185，裁剪缓解由显示位
+                     承担（CSS center 30%，窗口 10%~77% 覆盖大多数半身像脸区）。 */
                   const av = c.profile
                     ? c.profile.startsWith("/")
                       ? tmdbImg(c.profile, "w185")

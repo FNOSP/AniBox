@@ -832,9 +832,10 @@
   border-radius: 50%;
   background-color: var(--ph-bg);
   background-size: cover;
-  /* [lc-2281→2282] 显示位 center 30%：原图 2:3 cover 进 1:1 圆显示 10%~77% 区间
-     （center top 只显示 0~66%，郑鹏生那张脸在中下部被裁没——用户截图实证）；
-     face 裁剪尺寸方案因镜像链路拉不到已回退（见 MovieHeroEditorial 注释）。 */
+  /* [lc-2281→2283] 显示位 center 30%：原图 2:3 cover 进 1:1 圆显示 10%~77% 区间
+     （center top 只显示 0~66%，郑鹏生那张脸在中下部被裁没——用户截图实证）。
+     face 裁剪尺寸 w185_and_h278_face 已被 TMDB 上游弃用（直连实测 400
+     "Image size not supported"，见 MovieHeroEditorial 注释），回退 w185。 */
   background-position: center 30%;
   border: 1px solid var(--line);
   flex: none;

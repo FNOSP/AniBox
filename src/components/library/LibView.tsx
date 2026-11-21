@@ -403,7 +403,9 @@ export function LibView({
   };
 
   return (
-    <main className="content" ref={contentRef} onScroll={onScroll}>
+    /* [lc-2261] lib-root：顶部 padding 从 sp-8(64px) 收到 sp-7(48px) ——
+       返回键与详情页（.detail-full padding-top sp-7）的返回键同高对齐。 */
+    <main className="content lib-root" ref={contentRef} onScroll={onScroll}>
       <div className="page-head">
         <button className="back" onClick={levels.length > 1 ? pop : onBackHome}>
           ‹

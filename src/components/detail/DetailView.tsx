@@ -2525,6 +2525,8 @@ export function DetailView({
           tabsBody={editorialTabsBody}
           /* [lc-2255] 主创信息块的数据源 */
           crew={crew}
+          /* [lc-2258] kicker 第二段从条目类型动态取（之前硬编码「动画长片」） */
+          typeLabel={base.type === "Movie" ? "电影" : "剧集"}
         />
       )}
 

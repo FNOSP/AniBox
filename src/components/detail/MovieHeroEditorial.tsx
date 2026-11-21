@@ -55,6 +55,9 @@ type Props = {
   favItem: Record<string, unknown> | null;
   /** [lc-2255] 主创名单（DetailView 的 crew，jobLabel 后端已译成中文）：数据区下方的主创块用。 */
   crew?: TmdbCreditPerson[];
+  /** [lc-2258] kicker 第二段（条目类型，如「电影」）：DetailView 从 base.type 动态传入，
+   *  不在组件里写死 —— 之前硬编码的「动画长片」只对动画电影成立。 */
+  typeLabel?: string;
   /** [lc-2252] 标签条（.dseg.dv2-seg 那条）与标签体（.dbody 面板容器）：
    *  由 DetailView 传入并渲染在左栏「数据区之下、简介位」——
    *  点击标签切换下方内容（经典版同款交互）。不传则退化为纯简介段落。 */
@@ -198,9 +201,11 @@ export function MovieHeroEditorial({
   onVersionChange,
   favItem,
   crew,
+  typeLabel,
   tabsNav,
   tabsBody,
-}: Props) {  const favGuid = String((favItem?.guid as string) ?? "").trim();
+}: Props) {
+  const favGuid = String((favItem?.guid as string) ?? "").trim();
   const [fav, setFav] = useState(false);
   const [favBusy, setFavBusy] = useState(false);
   const [note, setNote] = useState("");
@@ -297,7 +302,7 @@ export function MovieHeroEditorial({
           <div className="mved-left">
             <div className="mved-block mved-block-title">
               <div className="mved-kicker">
-                {[year, "动画长片"].filter(Boolean).join(" · ")}
+                {[year, typeLabel].filter(Boolean).join(" · ")}
               </div>
               <h1 className="mved-title">{title || "（无标题）"}</h1>
               {originalTitle && originalTitle !== title && (

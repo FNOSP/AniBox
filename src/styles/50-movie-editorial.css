@@ -18,7 +18,10 @@
 
 .mved {
   flex: none;
-  padding: calc(40px + var(--sp-6)) clamp(var(--sp-5), 5vw, var(--sp-8)) var(--sp-7);
+  /* [lc-2258] 顶部留白给「返回键」让位：返回键绝对定位在 top:52px / left:20px
+     （与经典版 .mv-topbar/.mv-back 完全对齐），标题区从其下方开始。 */
+  position: relative;
+  padding: calc(52px + var(--sp-7)) clamp(var(--sp-5), 5vw, var(--sp-8)) var(--sp-7);
 }
 
 .mved-inner {
@@ -26,14 +29,15 @@
   margin: 0 auto;
 }
 
-/* ── 返回键 ── */
+/* ── 返回键：位置对齐经典版（.mv-topbar top:52px / left:20px）── */
 .mved-back {
+  position: absolute;
+  top: 52px;
+  left: 20px;
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
-  width: fit-content;
-  margin-bottom: var(--sp-6);
-  padding: var(--sp-1) var(--sp-3) var(--sp-1) 0;
+  padding: var(--sp-1) var(--sp-3);
   background: none;
   border: none;
   font-size: var(--fs-ctl);
@@ -41,11 +45,11 @@
   color: var(--text-2);
   border-radius: var(--r-sm);
   cursor: pointer;
-  transition: color var(--dur-tap);
+  transition: color var(--dur-tap), background var(--dur-tap);
 }
 .mved-back:hover {
   color: var(--accent);
-  background: none;
+  background: var(--hover);
 }
 
 /* ── 头部双栏 ──

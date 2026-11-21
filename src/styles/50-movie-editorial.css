@@ -90,6 +90,18 @@
   min-height: 0;
 }
 
+/* [lc-2272] 数据区填满拉伸高度（用户：「容器内的内容排版优化，尽量填满」）：
+   wrapper 被对齐 JS 拉伸后，多余空间原来堆在数据块尾部（下半空白一大片）；
+   改为标题块/数据块等分剩余高度，块内内容垂直居中 —— 空白均匀分布，观感填满。
+   超高条目（内容高于目标）时无剩余空间，块按内容取高，无副作用。 */
+.mved-left-top .mved-block-title,
+.mved-left-top .mved-block-data {
+  flex: 1 1 auto;
+}
+.mved-data-main {
+  justify-content: center;
+}
+
 .mved-block {
   min-height: 0;
   display: flex;

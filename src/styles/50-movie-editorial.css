@@ -794,13 +794,16 @@
 
 /* ── [lc-2252] 标签条 + 标签体：挪到左栏简介位 ──
    标签体是经典版同款的滚动面板容器（.mved-tabbody）。
-   [lc-2268] 标签条容器不再带 border-top / padding-top：分段条顶边必须
-   贴齐 .mved-block-tabs 盒顶（= 右栏按钮行顶边，JS 对齐的基准点），
-   多出的 13px 会把分段条压进盒内、视觉上对不上按钮行；分隔交给上方块间留白。
    [lc-2269] 标签条样式与右栏版本卡对齐（用户：「左边的长条样式对齐右边的」）：
-   去掉经典版「一整条白底描边容器 + 灰底/下划线分段」的样式，
    每个 tab 变成独立卡片 —— 淡底 + 1px 边框 + 圆角 var(--r-md)，
-   选中 = accent 边框 + accent 文字（与 .mved-version.active 同语言）。 */
+   选中 = accent 边框 + accent 文字（与 .mved-version.active 同语言）。
+   [lc-2270] 恢复容器 border-top + padding-top（用户：「上方的衬线不要丢了」）——
+   这条细线是数据区与标签条的分隔；分段条顶 = 盒顶 + 13px，JS 对齐
+   （align()）已按此 inset 扣除，分段条顶仍与右栏按钮行顶对齐。 */
+.mved-block-tabs {
+  border-top: 1px solid var(--line);
+  padding-top: var(--sp-3);
+}
 .mved-block-tabs .dv2-seg {
   background: none;
   border: none;

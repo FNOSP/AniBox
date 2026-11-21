@@ -301,10 +301,12 @@ export function MovieHeroEditorial({
   const leftTopRef = useRef<HTMLDivElement | null>(null);
   const stackRef = useRef<HTMLDivElement | null>(null);
   const actionsRef = useRef<HTMLDivElement | null>(null);
+  const tabsRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const top = leftTopRef.current;
     const stack = stackRef.current;
     const actions = actionsRef.current;
+    const tabs = tabsRef.current;
     if (!top || !stack || !actions) return;
     const left = top.parentElement as HTMLElement;
     const header = left.parentElement as HTMLElement;
@@ -315,7 +317,14 @@ export function MovieHeroEditorial({
         return;
       }
       const rowGap = parseFloat(getComputedStyle(left).rowGap) || 0;
-      const target = actions.getBoundingClientRect().top - top.getBoundingClientRect().top - rowGap;
+      /* [lc-2270] 标签条恢复衬线（border-top + padding-top）：对齐目标扣除这段
+         inset，分段条顶仍与按钮行顶对齐，衬线悬在按钮顶上方作数据区分隔。 */
+      let inset = 0;
+      if (tabs) {
+        const tabsCs = getComputedStyle(tabs);
+        inset = parseFloat(tabsCs.borderTopWidth) + parseFloat(tabsCs.paddingTop);
+      }
+      const target = actions.getBoundingClientRect().top - top.getBoundingClientRect().top - rowGap - inset;
       /* 临时清 minHeight 测内容自然高；超出目标的部分用内部 gap 抵掉 */
       top.style.minHeight = "";
       const natural = top.getBoundingClientRect().height;
@@ -447,7 +456,7 @@ export function MovieHeroEditorial({
                 改成之前那种便签切换」）。详情面板 = 纯简介；关联/角色/更多/评论/吐槽
                 面板由 DetailView 通过 tabsNav/tabsBody 传入，交互与经典版一致。 */}
             {tabsNav && (
-              <div className="mved-block mved-block-tabs">{tabsNav}</div>
+              <div className="mved-block mved-block-tabs" ref={tabsRef}>{tabsNav}</div>
             )}
             <div className={`mved-block mved-block-desc${tabsBody ? " has-tabs" : ""}`}>
               {tabsBody ?? (overview ? <p className="mved-lead">{overview}</p> : null)}

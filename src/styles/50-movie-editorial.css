@@ -634,16 +634,26 @@
   color: var(--muted);
 }
 
-/* ── 版本条：上下细线夹住、等分、竖线分隔 ── */
+/* ── 版本条：上下细线夹住、竖线分隔 ──
+   [lc-2264] 常驻占位：没有版本也渲染一行（TSX 里给「默认版本」占位胶囊）。
+   版本多时整条横向滚动：不换行 + overflow-x，滚条隐藏（上下细线就是边界），
+   滚轮横滚由 MovieHeroEditorial 挂的原生 wheel 监听完成。
+   胶囊 flex:1 0 auto —— 少的时候等分撑满（同旧观感），多/长的时候不压缩、
+   撑出横向滚动，不再省略号截断。 */
 .mved-versions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
+  scrollbar-width: none;
+}
+.mved-versions::-webkit-scrollbar {
+  display: none;
 }
 .mved-version {
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: 1 0 auto;
   padding: var(--sp-3) var(--sp-2);
   text-align: center;
   background: none;
@@ -655,14 +665,12 @@
   color: var(--muted);
   cursor: pointer;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   transition: color var(--dur-tap), background var(--dur-tap);
 }
 .mved-version:last-child {
   border-right: none;
 }
-.mved-version:hover {
+.mved-version:not(:disabled):hover {
   color: var(--text);
   background: var(--hover);
 }

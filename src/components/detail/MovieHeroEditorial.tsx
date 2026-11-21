@@ -260,6 +260,37 @@ export function MovieHeroEditorial({
 
   useEffect(() => setSlideIdx(0), [slideKey]);
 
+  /* ── [lc-2264] 版本条交互 ──
+     · 滚轮横滚：悬停在版本条上时，纵向滚轮直接转为横向滚动。
+       只在条真正溢出时接管（preventDefault），没溢出时页面照常滚；
+       触控板的横向手势（deltaX 为主）交给浏览器原生处理。
+       必须挂原生非 passive 监听 —— React 的 onWheel 是 passive，preventDefault 无效。
+     · 活动版本自动滚进可视区：版本多时切换/载入后把选中项滚到条中间
+       （只改版本条自身 scrollLeft，不牵动页面）。 */
+  const versionsRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = versionsRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth) return;
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      e.preventDefault();
+      el.scrollLeft += e.deltaY;
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+  useEffect(() => {
+    const bar = versionsRef.current;
+    const active = bar?.querySelector<HTMLButtonElement>(".mved-version.active");
+    if (!bar || !active) return;
+    const rel = active.getBoundingClientRect().left - bar.getBoundingClientRect().left;
+    const target = bar.scrollLeft + rel - (bar.clientWidth - active.offsetWidth) / 2;
+    bar.scrollLeft = Math.max(0, Math.min(target, bar.scrollWidth - bar.clientWidth));
+    /* 依赖 versions?.length：列表条数变化（载入/换条目）后重新定位；
+       数组每次渲染都是新引用，不能直接当依赖，否则会打断用户手动滚动。 */
+  }, [selectedVersion, versions?.length]);
+
   // 自动轮换：4s 一张；悬停暂停；尊重「减弱动态效果」
   useEffect(() => {
     if (slides.length <= 1 || reduce) return;
@@ -435,9 +466,21 @@ export function MovieHeroEditorial({
             </div>
             {note && <div className="mved-note">{note}</div>}
 
-            {versions && versions.length > 1 && (
-              <div className="mved-versions" role="group" aria-label="选择版本">
-                {versions.map((v) => (
+            {/* ── 版本条：常驻占位（[lc-2264] 没有版本也渲染一行，给下方主创/配音留位）。
+                没取到版本 / 确实没有多版本时显示「默认版本」占位（不可点）；
+                版本多时整条横向滚动，滚轮悬停在条上直接横滚（上方 wheel 监听）。 ── */}
+            <div className="mved-versions" role="group" aria-label="选择版本" ref={versionsRef}>
+              {!versions || versions.length === 0 ? (
+                <button
+                  type="button"
+                  className="mved-version"
+                  disabled
+                  title="当前条目没有多版本，将直接播放默认版本"
+                >
+                  默认版本
+                </button>
+              ) : (
+                versions.map((v) => (
                   <button
                     key={v.mediaGuid}
                     type="button"
@@ -448,9 +491,9 @@ export function MovieHeroEditorial({
                   >
                     {v.label}
                   </button>
-                ))}
-              </div>
-            )}
+                ))
+              )}
+            </div>
 
             {/* [lc-2255] 主创信息（导演/编剧/音乐/角色设计）：填充右栏中部空位。
                 crew 没有匹配职务时整块不渲染，不留空框。 */}

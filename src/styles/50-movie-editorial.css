@@ -143,6 +143,17 @@
   overflow-wrap: anywhere;
 }
 
+/* [lc-2259] 宣传语（TMDB tagline）：原名下方、强调色斜体 —— 编辑感的一句话点缀。
+   很多条目没有 tagline，空时整行不渲染。 */
+.mved-tagline {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-ctl);
+  font-style: italic;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--accent) 72%, transparent);
+  overflow-wrap: anywhere;
+}
+
 /* ── ② 数据区：左数据 + 右作品 logo ── */
 .mved-block-data {
   flex-direction: row;

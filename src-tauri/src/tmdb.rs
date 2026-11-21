@@ -1521,6 +1521,8 @@ pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
         "title": title_v,
         "originalTitle": original,
         "overview": s("overview"),
+        // [lc-2259] 宣传语（电影常有、剧集多为空）：杂志风详情页标题区展示用。
+        "tagline": s("tagline"),
         "year": year_of(&air),
         "airDate": air,
         "status": s("status"),

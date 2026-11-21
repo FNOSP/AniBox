@@ -282,6 +282,8 @@ export function MovieHeroEditorial({
   );
   const stats = buildStats(rating, votes, runtimeMin, year, regionLabel);
   const facts = buildFacts(crew);
+  /* [lc-2259] 宣传语（TMDB tagline，中英随条目语言）：空时整行不渲染 */
+  const tagline = String(tmdb?.tagline ?? "").trim();
   /* [lc-2257] 状态（Released → 已上映 等）：数据区补充小字用 */
   const statusLabel = STATUS_CN[String(tmdb?.status ?? "")] ?? "";
 
@@ -308,6 +310,8 @@ export function MovieHeroEditorial({
               {originalTitle && originalTitle !== title && (
                 <div className="mved-subtitle">{originalTitle}</div>
               )}
+              {/* [lc-2259] 宣传语（TMDB tagline）：常为空 —— 空时整行不渲染 */}
+              {tagline && <div className="mved-tagline">{tagline}</div>}
             </div>
 
             <div className="mved-block mved-block-data">

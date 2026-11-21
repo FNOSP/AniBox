@@ -291,6 +291,41 @@ export function MovieHeroEditorial({
        数组每次渲染都是新引用，不能直接当依赖，否则会打断用户手动滚动。 */
   }, [selectedVersion, versions?.length]);
 
+  /* ── [lc-2267] 左右对齐：左栏标签条顶边 = 右栏按钮行顶边 ──
+     做法：把左栏标题+数据区（.mved-left-top）拉伸到按钮行顶边的高度——
+     按钮行紧跟海报（海报 16:9 随宽度变），所以用 ResizeObserver 盯着
+     海报和左栏自身重算；≤1000px 单列布局（海报提到文字上方）时跳过。 */
+  const leftTopRef = useRef<HTMLDivElement | null>(null);
+  const stackRef = useRef<HTMLDivElement | null>(null);
+  const actionsRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const top = leftTopRef.current;
+    const stack = stackRef.current;
+    const actions = actionsRef.current;
+    if (!top || !stack || !actions) return;
+    const left = top.parentElement as HTMLElement;
+    const header = left.parentElement as HTMLElement;
+    const align = () => {
+      if (getComputedStyle(header).gridTemplateColumns.split(" ").length < 2) {
+        top.style.minHeight = "";
+        return;
+      }
+      const rowGap = parseFloat(getComputedStyle(left).rowGap) || 0;
+      const target = actions.getBoundingClientRect().top - top.getBoundingClientRect().top - rowGap;
+      top.style.minHeight = `${Math.max(0, Math.round(target))}px`;
+    };
+    align();
+    const ro = new ResizeObserver(align);
+    ro.observe(stack);
+    ro.observe(top);
+    window.addEventListener("resize", align);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", align);
+      top.style.minHeight = "";
+    };
+  }, []);
+
   // 自动轮换：4s 一张；悬停暂停；尊重「减弱动态效果」
   useEffect(() => {
     if (slides.length <= 1 || reduce) return;
@@ -331,65 +366,69 @@ export function MovieHeroEditorial({
         </button>
 
         <header className="mved-header">
-          {/* ══ 左栏：标题 / 数据 / 简介 ══ */}
+          {/* ══ 左栏：标题 / 数据 / 简介 ══
+              [lc-2267] 标题+数据两块包进 .mved-left-top：JS 把它拉伸到与右栏
+              海报区同高，标签条顶边随即与右栏按钮行顶边对齐（用户要求）。 */}
           <div className="mved-left">
-            <div className="mved-block mved-block-title">
-              <div className="mved-kicker">
-                {[year, typeLabel].filter(Boolean).join(" · ")}
+            <div className="mved-left-top" ref={leftTopRef}>
+              <div className="mved-block mved-block-title">
+                <h1 className="mved-title">{title || "（无标题）"}</h1>
+                {originalTitle && originalTitle !== title && (
+                  <div className="mved-subtitle">{originalTitle}</div>
+                )}
+                {/* [lc-2259] 宣传语（TMDB tagline）：常为空 —— 空时整行不渲染 */}
+                {tagline && <div className="mved-tagline">{tagline}</div>}
               </div>
-              <h1 className="mved-title">{title || "（无标题）"}</h1>
-              {originalTitle && originalTitle !== title && (
-                <div className="mved-subtitle">{originalTitle}</div>
-              )}
-              {/* [lc-2259] 宣传语（TMDB tagline）：常为空 —— 空时整行不渲染 */}
-              {tagline && <div className="mved-tagline">{tagline}</div>}
-            </div>
 
-            <div className="mved-block mved-block-data">
-              <div className="mved-data-main">
-                {stats.length > 0 && (
-                  <div className="mved-stats">
-                    {stats.map((s, i) => (
-                      <div className="mved-stat" key={`${s.label}-${i}`}>
-                        <span className={`mved-stat-v${s.rating ? " is-rating" : ""}`}>
-                          {s.rating && <IcoStarL size={14} strokeWidth={0} aria-hidden="true" />}
-                          {s.value}
-                          {s.unit && <span className="mved-stat-unit">{s.unit}</span>}
+              <div className="mved-block mved-block-data">
+                <div className="mved-data-main">
+                  {stats.length > 0 && (
+                    <div className="mved-stats">
+                      {stats.map((s, i) => (
+                        <div className="mved-stat" key={`${s.label}-${i}`}>
+                          <span className={`mved-stat-v${s.rating ? " is-rating" : ""}`}>
+                            {s.rating && <IcoStarL size={14} strokeWidth={0} aria-hidden="true" />}
+                            {s.value}
+                            {s.unit && <span className="mved-stat-unit">{s.unit}</span>}
+                          </span>
+                          <span className="mved-stat-k">{s.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* [lc-2267] 条目类型（电影/剧集）挪进补充行最前：原 kicker「2026 · 电影」
+                      删除——年份与上方数据格重复，类型是唯一有信息量的部分。 */}
+                  {(typeLabel || releaseDate || genres.length > 0) && (
+                    <div className="mved-meta-row">
+                      {typeLabel && <span>{typeLabel}</span>}
+                      {releaseDate && <span>{String(releaseDate).slice(0, 10)} 上映</span>}
+                      {statusLabel && <span>{statusLabel}</span>}
+                      {genres.slice(0, 3).map((g) => (
+                        <span key={g}>{g}</span>
+                      ))}
+                    </div>
+                  )}
+
+                  {genres.length > 0 && (
+                    <div className="mved-itags" role="list" aria-label="标签">
+                      {genres.slice(0, 12).map((g, i) => (
+                        <span className="mved-tag" role="listitem" key={`${g}-${i}`}>
+                          {g}
                         </span>
-                        <span className="mved-stat-k">{s.label}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                      ))}
+                    </div>
+                  )}
+                </div>
 
-                {(releaseDate || genres.length > 0) && (
-                  <div className="mved-meta-row">
-                    {releaseDate && <span>{String(releaseDate).slice(0, 10)} 上映</span>}
-                    {statusLabel && <span>{statusLabel}</span>}
-                    {genres.slice(0, 3).map((g) => (
-                      <span key={g}>{g}</span>
-                    ))}
-                  </div>
-                )}
-
-                {genres.length > 0 && (
-                  <div className="mved-itags" role="list" aria-label="标签">
-                    {genres.slice(0, 12).map((g, i) => (
-                      <span className="mved-tag" role="listitem" key={`${g}-${i}`}>
-                        {g}
-                      </span>
-                    ))}
+                {/* 作品 logo：两张按主题切换（见 pickLogos），都没有则整块不渲染 */}
+                {(logoLight || logoDark) && (
+                  <div className={`mved-data-logo${logoLight && logoDark ? "" : " mved-data-logo--single"}`}>
+                    {logoLight && <img className="mved-logo-light" src={logoLight} alt="" aria-hidden="true" />}
+                    {logoDark && <img className="mved-logo-dark" src={logoDark} alt="" aria-hidden="true" />}
                   </div>
                 )}
               </div>
-
-              {/* 作品 logo：两张按主题切换（见 pickLogos），都没有则整块不渲染 */}
-              {(logoLight || logoDark) && (
-                <div className={`mved-data-logo${logoLight && logoDark ? "" : " mved-data-logo--single"}`}>
-                  {logoLight && <img className="mved-logo-light" src={logoLight} alt="" aria-hidden="true" />}
-                  {logoDark && <img className="mved-logo-dark" src={logoDark} alt="" aria-hidden="true" />}
-                </div>
-              )}
             </div>
 
             {/* [lc-2252] 标签条 + 标签体：挪到简介位（用户要求「挪到简介上面，
@@ -407,6 +446,7 @@ export function MovieHeroEditorial({
           <div className="mved-media">
             <div
               className={`mved-stack${fanIn ? " is-in" : ""}`}
+              ref={stackRef}
               role="group"
               aria-label="海报轮播"
               onMouseEnter={() => setHovered(true)}
@@ -444,7 +484,7 @@ export function MovieHeroEditorial({
               })}
             </div>
 
-            <div className="mved-actions">
+            <div className="mved-actions" ref={actionsRef}>
               <button className="mved-btn-primary" onClick={onPlay} disabled={playing}>
                 ▶ {playing ? "打开中…" : resumeAt ? "继续播放" : "立即播放"}
               </button>

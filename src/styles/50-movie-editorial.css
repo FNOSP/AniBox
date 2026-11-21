@@ -71,14 +71,23 @@
   z-index: 2;
   min-width: 0;
   min-height: 0;
-  /* 标题 / 数据 / 标签条按内容取高；标签体（简介位）吃剩余。
-     [lc-2252] 标签条挪到简介上方、简介位变成经典版同款的标签切换区
-     （详情面板 = 纯简介；关联/角色/更多/评论/吐槽面板由 DetailView 传入）。
-     余量给「会自己填满的标签体」——给固定内容的块只会变成空白（踩过三次）。 */
+  /* 标题+数据 / 标签条 / 标签体（简介位）三行。
+     [lc-2252] 标签条挪到简介上方、简介位变成经典版同款的标签切换区。
+     余量给「会自己填满的标签体」——给固定内容的块只会变成空白（踩过三次）。
+     [lc-2267] 标题+数据包进 .mved-left-top：JS 拉伸它使标签条顶边与右栏
+     按钮行顶边对齐（海报 16:9 随宽变，纯 CSS 算不出等高）。 */
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   align-content: start;
   gap: var(--sp-4);
+}
+/* [lc-2267] 标题+数据区：被 JS 拉伸到海报高度（minHeight 由 ResizeObserver 写入），
+   内部块保持按内容取高，多余空间落在数据块与标签条之间。 */
+.mved-left-top {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-height: 0;
 }
 
 .mved-block {
@@ -93,23 +102,8 @@
   justify-content: center;
 }
 
-.mved-kicker {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  font-size: var(--fs-ctl);
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  color: var(--accent);
-  margin-bottom: var(--sp-4);
-}
-.mved-kicker::before {
-  content: "";
-  width: 32px;
-  height: 1px;
-  background: currentColor;
-  flex: none;
-}
+/* [lc-2267] 原 .mved-kicker「— 2026 · 电影」已删：年份与数据格「上映年份」重复，
+   类型挪进数据格补充行（.mved-meta-row 最前）。标题从左栏顶部直接开始。 */
 
 /* 艺术字大标题：渐变填充 + 细描边 + 极淡投影。
    · background-clip: text 让渐变只留在字里；
@@ -833,7 +827,7 @@
     min-height: 300px;
   }
   .mved-left {
-    grid-template-rows: auto auto auto minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
   }
   .mved-cast-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));

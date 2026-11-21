@@ -793,11 +793,42 @@
 }
 
 /* ── [lc-2252] 标签条 + 标签体：挪到左栏简介位 ──
-   标签条复用经典版 .dseg.dv2-seg 的卡片样式（分段胶囊 + active 下划线），
-   这里只补杂志风下的容器间距；标签体是经典版同款的滚动面板容器。
+   标签体是经典版同款的滚动面板容器（.mved-tabbody）。
    [lc-2268] 标签条容器不再带 border-top / padding-top：分段条顶边必须
    贴齐 .mved-block-tabs 盒顶（= 右栏按钮行顶边，JS 对齐的基准点），
-   多出的 13px 会把分段条压进盒内、视觉上对不上按钮行；分隔交给上方块间留白。 */
+   多出的 13px 会把分段条压进盒内、视觉上对不上按钮行；分隔交给上方块间留白。
+   [lc-2269] 标签条样式与右栏版本卡对齐（用户：「左边的长条样式对齐右边的」）：
+   去掉经典版「一整条白底描边容器 + 灰底/下划线分段」的样式，
+   每个 tab 变成独立卡片 —— 淡底 + 1px 边框 + 圆角 var(--r-md)，
+   选中 = accent 边框 + accent 文字（与 .mved-version.active 同语言）。 */
+.mved-block-tabs .dv2-seg {
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  gap: var(--sp-2);
+}
+.mved-block-tabs .dseg-btn {
+  padding: var(--sp-2) var(--sp-4);
+  background: var(--hover);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  color: var(--muted);
+  transition: border-color var(--dur-tap), background var(--dur-tap), color var(--dur-tap);
+}
+.mved-block-tabs .dseg-btn:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.mved-block-tabs .dseg-btn.active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* 卡片式选中态不需要下划线（基类 ::after 是 active 时 scaleX(1) 的胶囊线） */
+.mved-block-tabs .dseg-btn.active::after {
+  display: none;
+}
 /* 标签体：吃掉左栏剩余高度，面板自己滚（经典版 .dv2-body 同款交互） */
 .mved-tabbody {
   flex: 1 1 auto;

@@ -1279,10 +1279,12 @@ pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
     };
     let title = arg.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let year = arg.get("year").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    // [lc-2286] force：顶栏 ⟳ 传入时跳过落盘缓存强制回源（演员头像修复后需要刷新数据面）
+    let force = arg.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
 
     // 1) 定位条目：**trim_id/tmdbId/imdbId 精确锚优先**，锚不到才标题搜索（带相似度门槛）
     let Resolved { id, matched_by } = resolve_tmdb_id(&arg, mt, &title, &year).await?;
-    crate::libmpv::trace(&format!("[tmdb] show_details mt={mt} title=「{title}」 → {id} ({matched_by})"));
+    crate::libmpv::trace(&format!("[tmdb] show_details mt={mt} title=「{title}」 → {id} ({matched_by}) force={force}"));
 
     // 2) 详情 + append_to_response（对齐主仓库字段清单；语言/图片/视频参数全在 detail_path 里显式带）
     let append = if mt == "tv" {
@@ -1293,7 +1295,12 @@ pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
     // [lc-1417] **落盘缓存 120 天**：键按 mt + tmdb id，同一部剧任何入口进来都命中同一份。
     //   缓存的是**上游原始响应**（不是归一化结果）—— 归一化逻辑改了不必等缓存过期。
     let detail_key = format!("json:show:{mt}:{id}");
-    let d = if let Some(v) = disk_cache::json_get(&detail_key, SHOW_TTL_SECS) {
+    let d = if force {
+        crate::libmpv::trace(&format!("[tmdb] show_details force=true 跳过缓存 {detail_key}"));
+        let fresh = get_json(&detail_path(mt, id, append)).await?;
+        disk_cache::json_put(&detail_key, &fresh);
+        fresh
+    } else if let Some(v) = disk_cache::json_get(&detail_key, SHOW_TTL_SECS) {
         crate::libmpv::trace(&format!("[tmdb] show_details 命中缓存 {detail_key}"));
         v
     } else {
@@ -1605,6 +1612,8 @@ pub async fn tmdb_credits(arg: Value) -> Result<Value, String> {
         None
     };
 
+    // [lc-2286] force：顶栏 ⟳ 传入时跳过两级缓存强制回源（演员头像等 TMDB 数据面刷新用）
+    let force = arg.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
     // ① 条目级缓存（guid → 结果）：命中就完全不发请求，连"定位"都省了。
     //   季级请求的 guid 由前端传「季 guid」，且再拼上 `:s{n}` 双保险，避免与剧级缓存串味。
     let guid_key = cache_key.as_ref().map(|k| match season {
@@ -1612,9 +1621,11 @@ pub async fn tmdb_credits(arg: Value) -> Result<Value, String> {
         None => format!("json:credits:guid:{k}"),
     });
     if let Some(k) = &guid_key {
-        if let Some(v) = disk_cache::json_get(k, CREDITS_TTL_SECS) {
-            crate::libmpv::trace(&format!("[tmdb] credits 缓存命中（guid {k}）"));
-            return Ok(v);
+        if !force {
+            if let Some(v) = disk_cache::json_get(k, CREDITS_TTL_SECS) {
+                crate::libmpv::trace(&format!("[tmdb] credits 缓存命中（guid {k}）"));
+                return Ok(v);
+            }
         }
     }
 
@@ -1626,18 +1637,53 @@ pub async fn tmdb_credits(arg: Value) -> Result<Value, String> {
     };
 
     // ③ 条目共享缓存（tmdb id → 演员表）：同一部剧的季/集条目共用
-    let payload = if let Some(mut v) = disk_cache::json_get(&data_key, CREDITS_TTL_SECS) {
-        crate::libmpv::trace(&format!("[tmdb] credits 命中 id 缓存 {data_key}"));
-        // 缓存体里的 matchedBy 是"当时怎么定位到的"；本次定位方式可能不同（guid 已变/trim 新增）
-        if let Some(o) = v.as_object_mut() {
-            o.insert("matchedBy".into(), json!(matched_by));
-            o.insert("cached".into(), json!(true));
+    let payload = if !force {
+        if let Some(mut v) = disk_cache::json_get(&data_key, CREDITS_TTL_SECS) {
+            crate::libmpv::trace(&format!("[tmdb] credits 命中 id 缓存 {data_key}"));
+            // 缓存体里的 matchedBy 是"当时怎么定位到的"；本次定位方式可能不同（guid 已变/trim 新增）
+            if let Some(o) = v.as_object_mut() {
+                o.insert("matchedBy".into(), json!(matched_by));
+                o.insert("cached".into(), json!(true));
+            }
+            v
+        } else {
+            match season {
+                Some(n) => {
+                    // 季级：只取 cast（本季登场演员）；crew 留空 → 前端回落剧级 showCrew。
+                    let d = get_json(&season_credits_path(id, n)).await?;
+                    let (cast, _crew) = normalize_credits(&d);
+                    let v = json!({
+                        "tmdbId": id,
+                        "mediaType": mt,
+                        "seasonNumber": n,
+                        "matchedBy": matched_by,
+                        "cached": false,
+                        "cast": cast,
+                        "crew": [],
+                    });
+                    disk_cache::json_put(&data_key, &v);
+                    v
+                }
+                None => {
+                    let d = get_json(&credits_path(mt, id)).await?;
+                    let (cast, crew) = normalize_credits(&d);
+                    let v = json!({
+                        "tmdbId": id,
+                        "mediaType": mt,
+                        "matchedBy": matched_by,
+                        "cached": false,
+                        "cast": cast,
+                        "crew": crew,
+                    });
+                    disk_cache::json_put(&data_key, &v);
+                    v
+                }
+            }
         }
-        v
     } else {
+        // [lc-2286] force：强制回源（仍写回两级缓存，后续非 force 命中新数据）
         match season {
             Some(n) => {
-                // 季级：只取 cast（本季登场演员）；crew 留空 → 前端回落剧级 showCrew。
                 let d = get_json(&season_credits_path(id, n)).await?;
                 let (cast, _crew) = normalize_credits(&d);
                 let v = json!({
@@ -1650,6 +1696,9 @@ pub async fn tmdb_credits(arg: Value) -> Result<Value, String> {
                     "crew": [],
                 });
                 disk_cache::json_put(&data_key, &v);
+                if let Some(k) = &guid_key {
+                    disk_cache::json_put(k, &v);
+                }
                 v
             }
             None => {
@@ -1664,6 +1713,9 @@ pub async fn tmdb_credits(arg: Value) -> Result<Value, String> {
                     "crew": crew,
                 });
                 disk_cache::json_put(&data_key, &v);
+                if let Some(k) = &guid_key {
+                    disk_cache::json_put(k, &v);
+                }
                 v
             }
         }

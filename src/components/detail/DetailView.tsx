@@ -580,6 +580,11 @@ export function DetailView({
   const [creditsBusy, setCreditsBusy] = useState(false);
   const [creditsNonce, setCreditsNonce] = useState(0);
   const creditsLoadedRef = useRef(false);
+  /* [lc-2286] 顶栏 ⟳ 的 TMDB 数据面 force 通道：演员/主创（credits）与详情（show details）
+     都有落盘缓存，命中连请求都不发 —— 头像这类数据面修复后，刷新按钮必须能强制回源。 */
+  const creditsForceRef = useRef(false);
+  const tmdbForceRef = useRef(false);
+  const [tmdbTick, setTmdbTick] = useState(0);
   // [lc-128] 剧照点击放大（original 尺寸：走同一套三级缓存，拉了即落盘）
   const [zoom, setZoom] = useState("");
   // [lc-1401] 关联条目（Bangumi /subjects/{id}/subjects）：与「更多」同套懒加载骨架
@@ -805,6 +810,12 @@ export function DetailView({
     forceEpsRef.current = true;
     syncBgmRef.current = true;
     setProgTick((n) => n + 1);
+    /* [lc-2286] TMDB 数据面强制回源：credits 懒加载门控重开 + force 传给 Rust 跳过落盘缓存 */
+    creditsLoadedRef.current = false;
+    creditsForceRef.current = true;
+    tmdbForceRef.current = true;
+    setCreditsNonce((n) => n + 1);
+    setTmdbTick((n) => n + 1);
   }, []);
 
   /* ── [lc-1640] 顶栏 ⟳：复用 refreshAll（带 force 重取条目详情/季/集，跳过 120 天/10 分钟缓存）──
@@ -1060,11 +1071,15 @@ export function DetailView({
     // [lc-1444] 发现页条目例外：条目自带 tmdb_id，直接精确定位，不等（也没有）飞牛详情。
     if (!dataReady || !tmdbTitle) return;
     let alive = true;
+    // [lc-2286] 顶栏 ⟳ 强制回源（一次性标志：effect 因 tmdbTick 重跑时取走并复位）
+    const forceDetails = tmdbForceRef.current;
+    tmdbForceRef.current = false;
     const fetchDetails = (title: string, year: string) =>
       invoke<Record<string, unknown>>("tmdb_show_details", {
         arg: {
           title,
           year,
+          force: forceDetails || undefined,
           mediaType: base.type === "Movie" ? "movie" : "tv",
           trimId: tmdbAnchor.trimId || undefined,
           tmdbId: noFnOS
@@ -1112,6 +1127,7 @@ export function DetailView({
     tmdbAnchor.trimId,
     tmdbAnchor.tmdbId,
     tmdbAnchor.imdbId,
+    tmdbTick, /* [lc-2286] 顶栏 ⟳ 重跑本 effect（force 已在开头取走） */
   ]);
 
   // [lc-119] 切换条目（本组件不随 base 重挂载）时清空 Bangumi 状态，避免把上一部的吐槽/匹配带过来
@@ -1410,6 +1426,8 @@ export function DetailView({
             title,
             year: String(base.release_date || "").slice(0, 4),
             mediaType: base.type === "Movie" ? "movie" : "tv",
+            // [lc-2286] 顶栏 ⟳ 强制回源（一次性标志，发出即复位）
+            force: creditsForceRef.current,
             trimId: tmdbAnchor.trimId || undefined,
             tmdbId: noFnOS
               ? base.tmdb_id
@@ -1426,6 +1444,7 @@ export function DetailView({
         if (!alive) return;
         setCredits(r);
         creditsLoadedRef.current = true;
+        creditsForceRef.current = false;
       } catch (e) {
         if (alive) setCreditsErr(String(e));
       } finally {

@@ -794,11 +794,10 @@
 
 /* ── [lc-2252] 标签条 + 标签体：挪到左栏简介位 ──
    标签条复用经典版 .dseg.dv2-seg 的卡片样式（分段胶囊 + active 下划线），
-   这里只补杂志风下的容器间距；标签体是经典版同款的滚动面板容器。 */
-.mved-block-tabs {
-  border-top: 1px solid var(--line);
-  padding-top: var(--sp-3);
-}
+   这里只补杂志风下的容器间距；标签体是经典版同款的滚动面板容器。
+   [lc-2268] 标签条容器不再带 border-top / padding-top：分段条顶边必须
+   贴齐 .mved-block-tabs 盒顶（= 右栏按钮行顶边，JS 对齐的基准点），
+   多出的 13px 会把分段条压进盒内、视觉上对不上按钮行；分隔交给上方块间留白。 */
 /* 标签体：吃掉左栏剩余高度，面板自己滚（经典版 .dv2-body 同款交互） */
 .mved-tabbody {
   flex: 1 1 auto;

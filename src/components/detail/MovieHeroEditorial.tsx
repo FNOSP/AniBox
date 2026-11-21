@@ -291,10 +291,13 @@ export function MovieHeroEditorial({
        数组每次渲染都是新引用，不能直接当依赖，否则会打断用户手动滚动。 */
   }, [selectedVersion, versions?.length]);
 
-  /* ── [lc-2267] 左右对齐：左栏标签条顶边 = 右栏按钮行顶边 ──
+  /* ── [lc-2267/2268] 左右对齐：左栏标签条顶边 = 右栏按钮行顶边 ──
      做法：把左栏标题+数据区（.mved-left-top）拉伸到按钮行顶边的高度——
      按钮行紧跟海报（海报 16:9 随宽度变），所以用 ResizeObserver 盯着
-     海报和左栏自身重算；≤1000px 单列布局（海报提到文字上方）时跳过。 */
+     海报和左栏自身重算；≤1000px 单列布局（海报提到文字上方）时跳过。
+     [lc-2268] 内容自然高超过目标（长标题/logo 图撑高）时 minHeight 拉不动，
+     标签条会被顶下去——改为压缩 wrapper 内部 gap 吸收差值（下限 4px）；
+     gap 只压不回弹，否则 RO 触发链上会振荡。 */
   const leftTopRef = useRef<HTMLDivElement | null>(null);
   const stackRef = useRef<HTMLDivElement | null>(null);
   const actionsRef = useRef<HTMLDivElement | null>(null);
@@ -308,10 +311,18 @@ export function MovieHeroEditorial({
     const align = () => {
       if (getComputedStyle(header).gridTemplateColumns.split(" ").length < 2) {
         top.style.minHeight = "";
+        top.style.gap = "";
         return;
       }
       const rowGap = parseFloat(getComputedStyle(left).rowGap) || 0;
       const target = actions.getBoundingClientRect().top - top.getBoundingClientRect().top - rowGap;
+      /* 临时清 minHeight 测内容自然高；超出目标的部分用内部 gap 抵掉 */
+      top.style.minHeight = "";
+      const natural = top.getBoundingClientRect().height;
+      if (natural > target) {
+        const innerGap = parseFloat(getComputedStyle(top).rowGap) || 0;
+        top.style.gap = `${Math.max(4, Math.round(innerGap - (natural - target)))}px`;
+      }
       top.style.minHeight = `${Math.max(0, Math.round(target))}px`;
     };
     align();
@@ -323,6 +334,7 @@ export function MovieHeroEditorial({
       ro.disconnect();
       window.removeEventListener("resize", align);
       top.style.minHeight = "";
+      top.style.gap = "";
     };
   }, []);
 

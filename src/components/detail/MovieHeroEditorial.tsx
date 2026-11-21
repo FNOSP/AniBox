@@ -618,12 +618,14 @@ export function MovieHeroEditorial({
             {topCast.length > 0 && (
               <div className="mved-cast-row" role="list" aria-label="主要配音">
                 {topCast.map((c, i) => {
-                  /* [lc-2281] 头像裁剪修复（用户截图：郑鹏生只剩头顶）：竖版原图
-                     cover+top 会把脸裁掉 —— 换 TMDB 官方人脸裁剪尺寸
-                     w185_and_h278_face（上游按人脸检测把脸放中间），显示再 center 30% 取脸区。 */
+                  /* [lc-2281→2282] 头像裁剪修复（用户截图：郑鹏生只剩头顶）：
+                     原想换 TMDB 人脸裁剪尺寸 w185_and_h278_face，但实测列表页头像全白
+                     （person 页 w185 正常 → face 尺寸在镜像链路上拉不到，原因未查实），
+                     回退 w185；裁剪缓解改由显示位承担（CSS center 30%，窗口 10%~77%
+                     覆盖大多数半身像脸区）。 */
                   const av = c.profile
                     ? c.profile.startsWith("/")
-                      ? tmdbImg(c.profile, "w185_and_h278_face")
+                      ? tmdbImg(c.profile, "w185")
                       : imgUrl(c.profile)
                     : "";
                   const clickable = !!onOpenPerson && Number(c.id ?? 0) > 0;

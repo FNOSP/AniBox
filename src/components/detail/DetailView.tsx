@@ -2520,6 +2520,12 @@ export function DetailView({
           }
           selectedVersion={versionGuid === base.guid ? selectedMediaGuid : undefined}
           onVersionChange={(mg) => selectVersion(base.guid, mg)}
+          /* [lc-2273] 文件位置行：当前选中版本的完整路径（上游没给 = 不渲染） */
+          filePath={
+            versionGuid === base.guid
+              ? mediaVersions.find((v) => v.media_guid === selectedMediaGuid)?.file_path || ""
+              : ""
+          }
           /* [lc-2252] 标签条/标签体渲染在左栏简介位（经典版同款交互） */
           tabsNav={tabsNavEl}
           tabsBody={editorialTabsBody}

@@ -102,6 +102,33 @@
   justify-content: center;
 }
 
+/* ── [lc-2273] 文件位置行：当前选中版本的完整路径 ──
+   风格同主创块（.mved-fact-row）：标签定宽 + 值占满；长路径单行省略，悬停 title 看全文。 */
+.mved-file-path {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: var(--sp-3);
+  align-items: baseline;
+  max-width: 100%;
+  min-width: 0;
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--line);
+  margin-top: var(--sp-2);
+}
+.mved-file-path-k {
+  font-size: var(--fs-cap);
+  color: var(--muted);
+}
+.mved-file-path-v {
+  font-size: var(--fs-cap);
+  color: var(--text);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
 .mved-block {
   min-height: 0;
   display: flex;

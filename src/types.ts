@@ -175,6 +175,8 @@ export type MediaVersion = {
   is_not_exist?: boolean;
   /** [lc-2246] 文件体积（字节；0 = 上游没给）。版本卡显示「大小」用。 */
   file_size?: number;
+  /** [lc-2273] 文件完整路径（上游没给就是空串）。editorial 详情页「文件位置」行用。 */
+  file_path?: string;
 };
 
 

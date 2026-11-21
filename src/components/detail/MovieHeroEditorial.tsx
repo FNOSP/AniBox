@@ -52,6 +52,8 @@ type Props = {
   versions?: { mediaGuid: string; label: string; meta?: string }[];
   selectedVersion?: string;
   onVersionChange?: (mediaGuid: string) => void;
+  /** [lc-2273] 当前选中版本的文件完整路径（数据区「文件位置」行）；空 = 不渲染该行。 */
+  filePath?: string;
   favItem: Record<string, unknown> | null;
   /** [lc-2255] 主创名单（DetailView 的 crew，jobLabel 后端已译成中文）：数据区下方的主创块用。 */
   crew?: TmdbCreditPerson[];
@@ -199,6 +201,7 @@ export function MovieHeroEditorial({
   versions,
   selectedVersion,
   onVersionChange,
+  filePath,
   favItem,
   crew,
   typeLabel,
@@ -455,6 +458,15 @@ export function MovieHeroEditorial({
                           {g}
                         </span>
                       ))}
+                    </div>
+                  )}
+
+                  {/* [lc-2273] 文件位置：当前选中版本的完整路径（红框位置展示）。
+                      上游没给路径时整行不渲染；长路径单行省略，悬停看全文。 */}
+                  {filePath && (
+                    <div className="mved-file-path" title={filePath}>
+                      <span className="mved-file-path-k">文件位置</span>
+                      <span className="mved-file-path-v">{filePath}</span>
                     </div>
                   )}
                 </div>

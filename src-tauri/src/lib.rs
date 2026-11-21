@@ -1870,11 +1870,12 @@ async fn get_media_versions(state: State<'_, AppState>, guid: String) -> Result<
     };
     // [版本文案] 上游 `video_streams[].title` 实测恒为空、云端/STRM 条目分辨率与色域也空，
     // 唯一可区分信息在同响应的 `files[]`：`files[].guid === video_streams[].media_guid`。
-    // 这里只取 `file_name`（绝不带 `path`，避免把 NAS 目录暴露给前端）。
     // [lc-2246] 同时取文件体积 `file_size`：详情页版本卡要显示「大小」这一项关键信息。
     // 上游字段名不确定（`file_size` / `size` / `bytes` 都见过），这里按顺序探测，
     // 数字与字符串两种形态都认。
-    let file_meta: std::collections::HashMap<String, (String, i64)> = data
+    // [lc-2273] 同时取文件完整路径 `file_path`（editorial 详情页「文件位置」行展示）：
+    // 上游字段名同样不确定，按序探测；取不到就是空串，前端整行不渲染。
+    let file_meta: std::collections::HashMap<String, (String, i64, String)> = data
         .get("files")
         .and_then(|v| v.as_array())
         .map(|files| {
@@ -1896,7 +1897,16 @@ async fn get_media_versions(state: State<'_, AppState>, guid: String) -> Result<
                             })
                         })
                         .unwrap_or(0);
-                    Some((g, (name, size)))
+                    let path = ["path", "file_path", "filepath", "full_path", "dir_path", "dir"]
+                        .iter()
+                        .find_map(|k| {
+                            f.get(*k)
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                        })
+                        .unwrap_or_default();
+                    Some((g, (name, size, path)))
                 })
                 .collect()
         })
@@ -1905,15 +1915,17 @@ async fn get_media_versions(state: State<'_, AppState>, guid: String) -> Result<
         .iter()
         .map(|s| {
             let media_guid = str_of(s, "media_guid");
-            let (file_name, file_size) = file_meta
+            let (file_name, file_size, file_path) = file_meta
                 .get(&media_guid)
                 .cloned()
-                .unwrap_or_else(|| (String::new(), 0));
+                .unwrap_or_else(|| (String::new(), 0, String::new()));
             json!({
                 "media_guid": media_guid,
                 "file_name": file_name,
                 // [lc-2246] 体积（字节；0 = 上游没给）。前端按 GB/MB 格式化展示。
                 "file_size": file_size,
+                // [lc-2273] 完整路径（上游没给就是空串，前端整行不渲染）。
+                "file_path": file_path,
                 "title": str_of(s, "title"),
                 "resolution_type": str_of(s, "resolution_type"),
                 "color_range_type": str_of(s, "color_range_type"),

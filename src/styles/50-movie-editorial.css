@@ -318,6 +318,28 @@
   overflow-wrap: anywhere;
 }
 
+/* ── [lc-2257] overview 面板的补充节（关键词 / 别名）── 填充左栏简介下方空位 */
+.mved-ov-sec {
+  margin-top: var(--sp-4);
+}
+.mved-ov-t {
+  font-size: var(--fs-ctl);
+  font-weight: 700;
+  color: var(--text-strong);
+  margin-bottom: var(--sp-2);
+}
+.mved-ov-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.mved-alias {
+  font-size: var(--fs-ctl);
+  color: var(--text-2);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
 /* ── 右栏 ── */
 .mved-media {
   display: flex;
@@ -668,7 +690,8 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: center;
-  gap: var(--sp-3);
+  /* [lc-2257] 行距拉开：8 人两排，行间距用行 gap */
+  gap: var(--sp-3) var(--sp-3);
   /* [lc-2255] 原来 margin-top:auto 把演员行钉在栏底、空档全留在它上方
      （用户截图「右栏大面积空白」的另一半成因）。改成固定间距，
      余量交给 .mved-stack 之上的空间由头部 min-height 决定，整体更均匀。 */
@@ -676,7 +699,6 @@
   padding-top: var(--sp-3);
   border-top: 1px solid var(--line);
   flex: 0 0 auto;
-  min-height: 76px;
 }
 .mved-cast {
   display: flex;

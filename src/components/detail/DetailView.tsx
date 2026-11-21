@@ -2200,6 +2200,9 @@ export function DetailView({
   /* [lc-2252] 标签条 + 标签页内容抽成变量：经典版渲染在底部 .dv2 里；
      杂志风（editorial）渲染在左栏简介位 —— 两处共用同一批面板与状态，
      切换版式不会丢数据、也不额外发请求。 */
+  /* [lc-2257] 杂志风左栏 overview 的补充数据：关键词 / 别名（TMDB 现成字段） */
+  const editorialKeywords = Array.isArray(tmdb?.keywords) ? (tmdb.keywords as string[]) : [];
+  const editorialAliases = Array.isArray(tmdb?.aliases) ? (tmdb.aliases as string[]) : [];
   const tabsNavEl = (
     <nav className="dseg dv2-seg" role="tablist">
       {tabIds.map((id) => (
@@ -2305,11 +2308,30 @@ export function DetailView({
       onScroll={onDetailScroll}
     >
       {activeTab === "overview" && (
-        <div className="dpanel">
+        <div className="dpanel mved-overview">
           {overview ? (
             <p className="mved-lead">{overview}</p>
           ) : (
             <div className="empty">暂无简介</div>
+          )}
+          {/* [lc-2257] 关键词 + 别名：TMDB payload 现成字段，填充左栏简介下方空位 */}
+          {editorialKeywords.length > 0 && (
+            <div className="mved-ov-sec">
+              <div className="mved-ov-t">关键词</div>
+              <div className="mved-ov-tags">
+                {editorialKeywords.slice(0, 10).map((k) => (
+                  <span className="mved-tag" key={k}>
+                    {k}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {editorialAliases.length > 0 && (
+            <div className="mved-ov-sec">
+              <div className="mved-ov-t">别名</div>
+              <div className="mved-alias">{editorialAliases.join(" / ")}</div>
+            </div>
           )}
         </div>
       )}

@@ -476,7 +476,10 @@
 /* 卡内背景层：Ken Burns（fpk .fntv-s3-bg：scale 1.08 → 1，2.2s） */
 .mved-card-bg {
   position: absolute;
-  inset: 0;
+  /* [lc-2284] inset 外扩 2px：剧照不是精确 16:9 时 cover 的取整误差会在卡顶
+     露出 1px 占位灰底（白底剧照上一条贯穿的灰线——用户两次截图报的就是它）；
+     外扩后被卡 overflow:hidden 裁掉，Ken Burns 缩放照常作用。 */
+  inset: -2px;
   background-size: cover;
   background-position: center;
   transform: scale(1.08);

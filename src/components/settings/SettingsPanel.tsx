@@ -3660,13 +3660,13 @@ function AiEnhanceRow() {
       {upd?.hasUpdate ? (
         <div className="set-warn" style={{ paddingLeft: 4 }}>
           组件有新版本 {upd.local || "?"} → <b>{upd.remote}</b>：修复缺陷并新增能力
-          （1.3.0 起含 SVP 60FPS 补帧，实测 1080P 5.8× 实时，明显强于 RIFE 与 MVTools）。
+          （1.3.1 起 SVP 补帧按显示器刷新率自适应取档——160Hz 屏补到 160，不再固定 60FPS）。
           点右上「更新到 {upd.remote}」即可，约 47MB。
         </div>
       ) : upd?.missingSvp && status?.ready ? (
         <div className="set-warn" style={{ paddingLeft: 4 }}>
-          当前组件缺少 SVP 补帧文件（1.3.0 新增，实测最强真实补帧）——建议更新组件获得
-          SVP 60FPS 档。
+          当前组件缺少 SVP 补帧文件（实测最强真实补帧）——建议更新组件获得
+          SVP 补帧档（按显示器刷新率自适应）。
         </div>
       ) : null}
       {/* [lc-1856] 显卡名动态展示：RIFE/超分硬性要求让用户对号入座 */}
@@ -3686,7 +3686,7 @@ function AiEnhanceRow() {
           [
             ["builtin", "内置平滑"],
             ["rife", "RIFE AI 2×"],
-            ["svp", "SVP 60FPS"],
+            ["svp", "SVP 补帧"],
             ["mvtools", "MVTools 2×"],
           ] as const
         ).map(([val, label]) => {
@@ -3707,9 +3707,9 @@ function AiEnhanceRow() {
                   : val === "rife"
                     ? "RIFE：AI 在帧间补新帧，效果最好（ncnn Vulkan，仅 720P 及以下源实时）。跟不上实时会自动降级 MVTools 60FPS"
                     : svpLocked
-                      ? "SVP：open-svpflow 60FPS，OpenCL GPU 加速——需更新 AI 增强组件到 1.3.0+"
+                      ? "SVP：open-svpflow 按显示器刷新率自适应补帧，OpenCL GPU 加速——需更新 AI 增强组件到 1.3.1+"
                       : val === "svp"
-                        ? "SVP：open-svpflow 补到 60FPS（OpenCL GPU 加速，实测 5070 上 1080P 5.8× 实时，性能最好的真实补帧）。跟不上会自动降级 MVTools"
+                        ? "SVP：open-svpflow 按显示器刷新率补帧（160Hz 屏补到 160，OpenCL GPU 加速，实测 5070 上 1080P 5.8× 实时，性能最好的真实补帧）。跟不上会自动降级 MVTools"
                         : mvtoolsLocked
                       ? "MVTools：真实运动补偿补帧，廉价全显卡——需先下载 AI 增强组件（含 mvtools.dll）"
                       : val === "mvtools"
@@ -3720,7 +3720,7 @@ function AiEnhanceRow() {
                 rifeLocked
                   ? setErr("RIFE 档需先下载 AI 增强组件")
                   : svpLocked
-                    ? setErr("SVP 档需更新 AI 增强组件到 1.3.0+")
+                    ? setErr("SVP 档需更新 AI 增强组件到 1.3.1+")
                     : mvtoolsLocked
                       ? setErr("MVTools 档需先下载 AI 增强组件")
                       : void pickEngine(val)

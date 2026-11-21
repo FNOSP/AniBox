@@ -77,7 +77,8 @@ pub const MVTOOLS_FILES: &[&str] = &[
     "runtime/plugins/mvtools.dll",
 ];
 
-/// [lc-2012] open-svpflow 60fps 档（SVP 开源重写版 Z1xus/open-svpflow，OpenCL GPU 加速）。
+/// [lc-2012] open-svpflow 档（SVP 开源重写版 Z1xus/open-svpflow，OpenCL GPU 加速；
+/// [lc-2265] vpy 已升级为按 display_fps 自适应取档，组件 1.3.1 起）。
 /// 实测 5070：HQ 档 720p 6.68× / 1080p 5.76× 实时——性能最好的真实补帧引擎。
 pub const SVP_FILES: &[&str] = &[
     "vs/open-svpflow.vpy",
@@ -226,7 +227,7 @@ pub async fn ai_enhance_set_engine(
         return Err("MVTools 补帧资源未就绪（缺 mvtools.vpy / mvtools.dll）".into());
     }
     if e == "svp" && !svp_ready(&app) {
-        return Err("SVP 补帧资源未就绪（更新 AI 增强组件到 1.3.0+）".into());
+        return Err("SVP 补帧资源未就绪（更新 AI 增强组件到 1.3.1+，自适应取档）".into());
     }
     let Some(dir) = crate::config::mpv_portable_config_dir(&app) else {
         return Err("找不到 mpv 配置目录".into());

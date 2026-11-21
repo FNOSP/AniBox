@@ -414,7 +414,21 @@ export function MovieHeroEditorial({
           <div className="mved-left">
             <div className="mved-left-top" ref={leftTopRef}>
               <div className="mved-block mved-block-title">
-                <h1 className="mved-title">{title || "（无标题）"}</h1>
+                {/* [lc-2289] 标题区用 TMDB 作品标题 logo（艺术字图，用户：「换成艺术字」）：
+                    中文优先/按主题切换的取图逻辑与原数据区右侧一致 —— logo 从数据区挪上来，
+                    数据区右侧不再重复放。无 logo 的条目退回文字大标题。 */}
+                {logoLight || logoDark ? (
+                  <div
+                    className={`mved-title-logo${logoLight && logoDark ? "" : " mved-title-logo--single"}`}
+                    role="img"
+                    aria-label={title}
+                  >
+                    {logoLight && <img className="mved-logo-light" src={logoLight} alt="" aria-hidden="true" />}
+                    {logoDark && <img className="mved-logo-dark" src={logoDark} alt="" aria-hidden="true" />}
+                  </div>
+                ) : (
+                  <h1 className="mved-title">{title || "（无标题）"}</h1>
+                )}
                 {originalTitle && originalTitle !== title && (
                   <div className="mved-subtitle">{originalTitle}</div>
                 )}
@@ -484,13 +498,6 @@ export function MovieHeroEditorial({
                   )}
                 </div>
 
-                {/* 作品 logo：两张按主题切换（见 pickLogos），都没有则整块不渲染 */}
-                {(logoLight || logoDark) && (
-                  <div className={`mved-data-logo${logoLight && logoDark ? "" : " mved-data-logo--single"}`}>
-                    {logoLight && <img className="mved-logo-light" src={logoLight} alt="" aria-hidden="true" />}
-                    {logoDark && <img className="mved-logo-dark" src={logoDark} alt="" aria-hidden="true" />}
-                  </div>
-                )}
               </div>
             </div>
 

@@ -170,7 +170,10 @@
   margin: 0;
   font-size: clamp(44px, 6.6vw, 84px);
   font-weight: 900;
-  line-height: 0.96;
+  /* [lc-2289] 0.96 -> 1.08：行高小于字号时 CJK 字形底部超出 Line box，
+     被块的 overflow:hidden 切掉（用户截图「大标题字最底部被裁剪」）；
+     拉丁字没事，中文必裁。多行标题行距略增可接受。 */
+  line-height: 1.08;
   letter-spacing: -0.03em;
   background-image: linear-gradient(100deg, var(--text-strong) 0%, var(--text-strong) 38%, var(--accent) 100%);
   -webkit-background-clip: text;
@@ -329,13 +332,20 @@
      · 浅色主题 → .mved-logo-light（alt，通常是英文深色版）
      · 深色主题 → .mved-logo-dark（primary，中文白版）
    ⚠ 不要用 em 定尺寸：img 不继承标题字号，会按父元素 14px 算成一个小点。 */
-.mved-data-logo {
-  flex: 0 0 auto;
+/* [lc-2289] 标题区艺术字（TMDB title logo，从数据区右侧挪上来）：
+   横长条书法/logo 图按高度约束自适应，左对齐与文字标题同轴。 */
+.mved-title-logo {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  width: clamp(120px, 16vw, 190px);
+  max-width: 100%;
   min-height: 0;
+}
+.mved-title-logo img {
+  max-width: 100%;
+  max-height: clamp(72px, 10vw, 150px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
 }
 .mved-data-logo img {
   width: 100%;
@@ -352,9 +362,9 @@
 [data-theme="dark"] .mved-logo-dark { display: block; }
 
 /* 兜底：只有一张 logo 时，深色主题下把 light 反色显示。
-   ⚠ 必须用显式类 `.mved-data-logo--single`，不能用 `:has()` ——
+   ⚠ 必须用显式类 `.mved-title-logo--single`，不能用 `:has()` ——
    `:has()` 在旧 WebView 上会被**整条规则丢弃**（本项目 lc-1404 已吃过这个亏）。 */
-[data-theme="dark"] .mved-data-logo--single .mved-logo-light {
+[data-theme="dark"] .mved-title-logo--single .mved-logo-light {
   display: block;
   filter: invert(1) brightness(1.6);
 }

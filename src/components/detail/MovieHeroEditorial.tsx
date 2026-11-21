@@ -477,7 +477,7 @@ export function MovieHeroEditorial({
                   disabled
                   title="当前条目没有多版本，将直接播放默认版本"
                 >
-                  默认版本
+                  <span className="ver-name">默认版本</span>
                 </button>
               ) : (
                 versions.map((v) => (
@@ -489,7 +489,10 @@ export function MovieHeroEditorial({
                     aria-pressed={v.mediaGuid === selectedVersion}
                     onClick={() => onVersionChange?.(v.mediaGuid)}
                   >
-                    {v.label}
+                    {/* [lc-2265] 两行信息卡（照抄经典版 mv-version 结构）：
+                        上行名称、下行元信息（体积·编码·位深，DetailView 已传 meta）。 */}
+                    <span className="ver-name">{v.label}</span>
+                    {v.meta && <span className="ver-meta">{v.meta}</span>}
                   </button>
                 ))
               )}

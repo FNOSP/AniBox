@@ -634,49 +634,81 @@
   color: var(--muted);
 }
 
-/* ── 版本条：上下细线夹住、竖线分隔 ──
-   [lc-2264] 常驻占位：没有版本也渲染一行（TSX 里给「默认版本」占位胶囊）。
-   版本多时整条横向滚动：不换行 + overflow-x，滚条隐藏（上下细线就是边界），
+/* ── 版本条：独立信息卡横排（[lc-2265] 样式重做，照抄经典版 mv-version 的
+   两行信息卡语言；此前「上下细线夹住 + 竖线分隔 + 等分拉伸」的表格风被否）──
+   [lc-2264] 常驻占位：没有版本也渲染一行（TSX 里给「默认版本」占位卡）。
+   版本多时整条横向滚动：不换行 + overflow-x，滚动条隐藏；
    滚轮横滚由 MovieHeroEditorial 挂的原生 wheel 监听完成。
-   胶囊 flex:1 0 auto —— 少的时候等分撑满（同旧观感），多/长的时候不压缩、
-   撑出横向滚动，不再省略号截断。 */
+   卡片 flex: 0 0 auto —— 宽度随内容，不再等分拉伸（短文本卡不再大片留白）。 */
 .mved-versions {
   display: flex;
   flex-wrap: nowrap;
+  /* 同排卡片等高：stretch 让每张卡吃满行高（单行/两行卡混排时高度一致） */
+  align-items: stretch;
+  gap: var(--sp-2);
   overflow-x: auto;
   overscroll-behavior-x: contain;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
   scrollbar-width: none;
 }
 .mved-versions::-webkit-scrollbar {
   display: none;
 }
 .mved-version {
-  flex: 1 0 auto;
-  padding: var(--sp-3) var(--sp-2);
-  text-align: center;
-  background: none;
-  border: none;
-  border-right: 1px solid var(--line);
-  font-size: var(--fs-cap);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  color: var(--muted);
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  /* 两行都从顶端排，卡片拉伸变高时内容不会被拉开成上下分离 */
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 96px;
+  /* [版本文案] 文件名兜底标签可能很长：限宽 + 省略号，完整名称见 title */
+  max-width: 240px;
+  padding: var(--sp-2) var(--sp-3);
+  text-align: left;
+  background: var(--hover);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
   cursor: pointer;
-  white-space: nowrap;
-  transition: color var(--dur-tap), background var(--dur-tap);
-}
-.mved-version:last-child {
-  border-right: none;
+  transition: border-color var(--dur-tap), background var(--dur-tap), color var(--dur-tap);
 }
 .mved-version:not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   color: var(--text);
-  background: var(--hover);
 }
 .mved-version.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.mved-version:disabled {
+  cursor: default;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--line) 35%, transparent);
+}
+.mved-version .ver-name {
+  font-size: var(--fs-ctl);
+  /* 固定行高：单行卡（没有 meta）与两行卡同排时高度才一致 */
+  line-height: 20px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mved-version .ver-meta {
+  font-size: var(--fs-cap);
+  line-height: 16px;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mved-version.active .ver-meta {
+  color: color-mix(in srgb, var(--accent) 78%, transparent);
 }
 
 /* ── [lc-2255] 主创信息（导演/编剧/音乐/角色设计）──

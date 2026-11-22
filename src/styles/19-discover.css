@@ -3834,3 +3834,17 @@ button.arc-card:hover .arc-cv {
   background: var(--accent-solid);
   color: #fff;
 }
+
+/* ── [lc-2300] 详情浮层清晰度选择 ──
+   仅当核心回传多于一档时渲染；胶囊样式复用 .dj-chip sm，只加一行标签与间距。 */
+.dj-quality {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.dj-quality-k {
+  font-size: var(--fs-cap);
+  color: var(--muted);
+}

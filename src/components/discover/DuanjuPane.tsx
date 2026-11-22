@@ -315,6 +315,14 @@ export function DuanjuPane() {
   const [rankBusy, setRankBusy] = useState(false);
   const [rankErr, setRankErr] = useState("");
 
+  /* [lc-2300] 清晰度：`qualities` 是核心回传的可选档位（降序，如 [1080,720,540]）；
+   * 单档或空 = 该片源没有多清晰度，选择器不出现。
+   * `quality` 是**用户选定**的档位（0 = 未选，跟随上游默认最高）；
+   * `curQuality` 是**实际在播**的档位（未选时由后端回传填补，用于显示"原画"）。 */
+  const [qualities, setQualities] = useState<number[]>([]);
+  const [quality, setQuality] = useState(0);
+  const [curQuality, setCurQuality] = useState(0);
+
   // [lc-2189] 后台探测站源可用性：无筛选目录首页拉一次；成功清零、失败 +1（TTL 内不重探）。
   // 失败源由 chips 剔除（见 render 的 visibleSources）。
   // [lc-2234] **必须限并发**：核心的读请求名额只有 16 个（app_requests.go beginRead
@@ -828,15 +836,24 @@ export function DuanjuPane() {
     userBusyRef.current = true;
     lastPlay.current = { idx, chapter, name };
     try {
-      await invoke("duanju_play", {
+      const r = await invoke<{ quality?: number; qualities?: number[] }>("duanju_play", {
         drama: detail.drama,
         chapter,
         index: idx,
-        quality: null,
+        // [lc-2300] 用户选过就按选的来；null = 不筛选，上游按 Quality 降序取
+        // 第一条 = 最高档（探针实测 quality=0 实得 1080p，即"默认原画最高"已是现状）。
+        quality: quality > 0 ? quality : null,
         title: `${detail.drama.title || name} ${chapter.title || `第${idx + 1}集`}`,
         // [lc-2116] 传全部分集：后端据此在播完后自动接下一集（短剧一集只有 1~3 分钟）
         chapters,
       });
+      // [lc-2300] 记录可选档位（降序）。单档/空 = 该片源没有多清晰度，菜单不出现。
+      const qs = (r?.qualities || []).filter((x) => typeof x === "number" && x > 0);
+      setQualities(qs);
+      // 用户没选过时，把实际播出的档位显示出来（后端可能因片源只给一档而变化）
+      if (!(quality > 0) && typeof r?.quality === "number" && r.quality > 0) {
+        setCurQuality(r.quality);
+      }
       // [lc-2123] 起播成功：本地状态立即反映「上次看到第 N 集」，并重置回写计时
       setHist((prev) => ({
         drama: {
@@ -865,6 +882,20 @@ export function DuanjuPane() {
   function retryLastPlay() {
     const lp = lastPlay.current;
     if (lp && detail?.drama) play(lp.idx, lp.chapter, lp.name);
+  }
+
+  /** [lc-2300] 切清晰度：记住选择后重播当前集。
+   *  还没播过就只记下选择，等用户点集时生效。
+   *  quality=0 = 「原画」（不筛选，上游按 Quality 降序给最高档）。
+   *  重播会换线路 → 必须重新 loadfile，进度归零是预期行为（同一集从头）。
+   *  注意：不要在这里 setPlayingIdx(-1) 绕守卫 —— 那就等于允许并发起播；
+   *  改为等 playingIdx 落回 -1 后由 play() 自身完成。 */
+  function switchQuality(q: number) {
+    if (playingIdx >= 0) return; // 正在起播：忽略（按钮也 disabled）
+    setQuality(q);
+    const lp = lastPlay.current;
+    if (!lp) return; // 还没播过：只记选择
+    void play(lp.idx, lp.chapter, lp.name);
   }
 
   // [lc-2189] chips 只列可用站源；失败过的剔除并留「重试」入口
@@ -1429,6 +1460,37 @@ export function DuanjuPane() {
                       )}
                     </div>
                   </div>
+                  {/* [lc-2300] 清晰度选择：仅当核心回传**多于一档**时出现。
+                      默认「原画」= 不筛选，上游按 Quality 降序取最高档 ——
+                      探针实测 quality=0 实得 1080p，所以默认本来就是最高画质；
+                      这里提供的是"能降档"的能力（弱网/省流场景）。
+                      切换会重播当前集（换线路必须重新 loadfile）。 */}
+                  {qualities.length > 1 && (
+                    <div className="dj-quality">
+                      <span className="dj-quality-k">清晰度</span>
+                      <button
+                        type="button"
+                        className={`dj-chip sm${quality === 0 ? " on" : ""}`}
+                        disabled={playingIdx >= 0}
+                        onClick={() => void switchQuality(0)}
+                        title="不筛选，使用片源最高画质"
+                      >
+                        原画
+                        {quality === 0 && curQuality > 0 ? `（${curQuality}p）` : ""}
+                      </button>
+                      {qualities.map((q) => (
+                        <button
+                          key={q}
+                          type="button"
+                          className={`dj-chip sm${quality === q ? " on" : ""}`}
+                          disabled={playingIdx >= 0}
+                          onClick={() => void switchQuality(q)}
+                        >
+                          {q}p
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {epGroups.length > 1 && (
                     <div className="dj-epgroups">
                       {epGroups.map((_, gi) => (

@@ -60,6 +60,10 @@ struct AutoNext {
     drama: Value,
     chapters: Vec<Value>,
     index: i64,
+    /// [lc-2300] 本剧选定的清晰度（0 = 不筛选，即上游默认最高档）。
+    /// 连播切下一集时必须沿用 —— 此前连播固定传 None(0)，用户降档后
+    /// 下一集会跳回 1080p，观感像「设置没生效」。
+    quality: i64,
 }
 
 static AUTO_NEXT: OnceLock<Mutex<Option<AutoNext>>> = OnceLock::new();
@@ -787,6 +791,7 @@ async fn play_impl(
                 drama: drama.clone(),
                 chapters: list,
                 index,
+                quality: quality.unwrap_or(0),
             })
         } else {
             None
@@ -830,6 +835,10 @@ async fn play_impl(
         // 需要现场拉取的走后台任务，拉到后 sub-add，本字段此时为 false 属正常。
         "danmaku": cached_danmaku.is_some(),
         "danmakuPending": cached_danmaku.is_none(),
+        // [lc-2300] 清晰度回传：实得档位 + 可选档位（降序）。
+        // 前端据此渲染清晰度菜单；qualities 为空/单档时菜单不出现。
+        "quality": plan.get("quality").cloned().unwrap_or(json!(0)),
+        "qualities": plan.get("qualities").cloned().unwrap_or(json!([])),
     }))
 }
 
@@ -869,12 +878,19 @@ pub async fn auto_play_next(
     }
     let _guard = Guard;
 
-    let Some((drama, chapter, index)) = ({
+    let Some((drama, chapter, index, quality)) = ({
         let mut slot = auto_next_slot().lock().unwrap_or_else(|e| e.into_inner());
         match slot.as_mut() {
             Some(q) if q.index + 1 < q.chapters.len() as i64 => {
                 q.index += 1;
-                Some((q.drama.clone(), q.chapters[q.index as usize].clone(), q.index))
+                // [lc-2300] 连同本剧选定的清晰度一起取出：用户降档后
+                // 下一集必须保持同档，否则每集都跳回 1080p。
+                Some((
+                    q.drama.clone(),
+                    q.chapters[q.index as usize].clone(),
+                    q.index,
+                    q.quality,
+                ))
             }
             Some(_) => {
                 *slot = None; // 已到末集：播完即停
@@ -906,7 +922,18 @@ pub async fn auto_play_next(
         None => chapter_title,
     });
     // 注意：连播时不再重写队列（chapters 传 None），否则会把 index 重置
-    let r = play_impl(app, state, drama, chapter, index, None, title, None).await;
+    // [lc-2300] quality 沿用本剧选定的档位（0 = 默认最高）
+    let r = play_impl(
+        app,
+        state,
+        drama,
+        chapter,
+        index,
+        if quality > 0 { Some(quality) } else { None },
+        title,
+        None,
+    )
+    .await;
     if r.is_err() {
         *auto_next_slot().lock().unwrap_or_else(|e| e.into_inner()) = None;
     }

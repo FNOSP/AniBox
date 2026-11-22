@@ -602,31 +602,32 @@ async fn play_impl(
     // 短剧改为：播完在左下角显示「下一集」大按钮（见 fntv_next_ep.lua），不再自动切集。
     set_modernz_jump_buttons(app, true);
     // [lc-2238] 弹幕：resolve 已建好播放会话 → 按本集 episodeId 拉弹幕并生成 ASS。
-    // 走缓存优先（同集重看/连播回头都不重复请求）；**拉取失败不影响播放**，只记日志。
-    // 必须在本集 launch **之前**完成，才能随命令行一起起播。
     //
-    // 轨道口径：短剧是核心本地流（`127.0.0.1`），没有 NAS/外挂字幕通道，主字幕轨是空的，
-    // 所以弹幕直接走主轨。**不能动 secondary-sid** ——随包 uosc_danmaku 脚本事后自己
-    // sub-add 并管理副字幕轨，我们再设一次会与它抢位、出现双份弹幕。
+    // [lc-2296] **不阻塞起播**（用户报「自动切下一集要等四五秒」）。日志证据：
+    //   eof-reached → resolve 266ms → 弹幕等 8s（撞满上限）→ launch 5ms。
+    //   切集本身只要 5ms，8 秒全白等在这。
+    // 之前唯一的理由是「弹幕要随命令行一起起播」——但 player.rs 的复用会话分支
+    // 本来就支持 loadfile 之后 `sub-add`（pending_subs，见 player.rs:688）。
+    // 所以改成：**先返回缓存命中的（如果有），没有就先起播**，真正的拉取与挂载
+    // 交给后台任务，拉到再 sub-add。用户看到的是：秒切集，弹幕稍后自己出现。
     //
-    // 耗时：实测首拉 2.1s / 8 页 / 531 条（缓存命中 0ms）。为不让起播被慢站源拖住，
-    // 整体加 8s 上限 —— 超时就先起播、弹幕下次再看（缓存会保留已拉到的部分）。
-    let danmaku_path = match tokio::time::timeout(
-        std::time::Duration::from_secs(8),
-        prepare_danmaku(app, &plan, &chapter),
-    )
-    .await
-    {
-        Ok(p) => p,
-        Err(_) => {
-            crate::libmpv::trace("[duanju] 弹幕拉取超时（8s），本集先不挂弹幕");
-            None
+    // 轨道口径不变：短剧是核心本地流，主字幕轨为空，弹幕走主轨；
+    // **不能动 secondary-sid**（随包 uosc_danmaku 自己 sub-add 副轨，再设会双份）。
+    let cached_danmaku = {
+        // 只读缓存，绝不发网络 —— 缓存命中率决定「切过去就有弹幕」还是「稍后出现」。
+        let (root, sid) = (danmaku_cache_root(app), danmaku_episode_key(&chapter));
+        match sid {
+            Some((source, ep_id)) => {
+                let p = crate::duanju_danmaku::cache_path(&root, &source, &ep_id);
+                crate::duanju_danmaku::read_cache(&p).is_some().then_some(p)
+            }
+            None => None,
         }
     };
-    if let Some(ass_path) = &danmaku_path {
+    if let Some(ass_path) = &cached_danmaku {
         let p = ass_path.to_string_lossy().into_owned();
         http_headers.mpv_opts.push(format!("--sub-files={p}"));
-        crate::libmpv::trace(&format!("[duanju] 弹幕已挂载：{p}"));
+        crate::libmpv::trace(&format!("[duanju] 弹幕缓存命中，随起播挂载：{p}"));
     }
     // [lc-2241] 倍速持久化：短剧必须自己算剧级键 ——
     // `fnos_progress::current_speed_key()` 只在飞牛播放链路（lib.rs::play_item）里被设置，
@@ -690,6 +691,52 @@ async fn play_impl(
             }
         });
     }
+    // [lc-2296] 弹幕**后台补挂**：起播已完成，这里才去拉（最多 8s 预算）。
+    // 拉到了就 sub-add 到当前会话；拉不到/超时只记日志，用户已经在看画面了。
+    // 缓存命中的情况前面已随起播挂上，这里不再重复拉。
+    if cached_danmaku.is_none() {
+        let app2 = app.clone();
+        let plan2 = plan.clone();
+        let chapter2 = chapter.clone();
+        let chapter_id = chapter.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        tauri::async_runtime::spawn(async move {
+            let fetched = tokio::time::timeout(
+                std::time::Duration::from_secs(8),
+                prepare_danmaku(&app2, &plan2, &chapter2),
+            )
+            .await;
+            let path = match fetched {
+                Ok(Some(p)) => p,
+                Ok(None) => {
+                    crate::libmpv::trace("[duanju] 后台弹幕：本集无弹幕");
+                    return;
+                }
+                Err(_) => {
+                    crate::libmpv::trace("[duanju] 后台弹幕拉取超时（8s），本集不挂");
+                    return;
+                }
+            };
+            // 会话仍是**这一集**才挂（用户可能已切到别的集/别的剧，或已停止）
+            if !is_playing_chapter(&chapter_id) {
+                crate::libmpv::trace("[duanju] 后台弹幕：已切换会话，跳过挂载");
+                return;
+            }
+            let sess = {
+                let st = app2.state::<crate::AppState>();
+                let slot = st.mpv.lock().await;
+                slot.as_ref().cloned()
+            };
+            if let Some(sess) = sess {
+                let p = path.to_string_lossy().into_owned();
+                let _ = sess
+                    .command_no_reply(json!(["sub-add", p.clone(), "select"]))
+                    .await;
+                crate::libmpv::trace(&format!(
+                    "[duanju] 后台弹幕已挂载（{chapter_id}）：{p}"
+                ));
+            }
+        });
+    }
     // [lc-2116] 记录连播队列。**语义关键**：
     //   · Some(list) = 用户手动点播（前端总会传全部分集）→ 重建队列；
     //   · None       = 连播内部调用（auto_play_next 自己已经推进了 index）→ **不动队列**，
@@ -740,7 +787,10 @@ async fn play_impl(
         "url": url,
         "session": plan.get("session").cloned().unwrap_or(json!("")),
         // [lc-2238] 弹幕是否已挂载（前端据此提示「本集暂无弹幕」）
-        "danmaku": danmaku_path.is_some(),
+        // [lc-2296] 现在报告的是「**起播时**是否已有弹幕」：只有缓存命中的会立刻挂上；
+        // 需要现场拉取的走后台任务，拉到后 sub-add，本字段此时为 false 属正常。
+        "danmaku": cached_danmaku.is_some(),
+        "danmakuPending": cached_danmaku.is_none(),
     }))
 }
 
@@ -826,6 +876,29 @@ pub async fn auto_play_next(
 
 // ───────────────────────── [lc-2238] 弹幕 ─────────────────────────
 
+/// [lc-2296] 弹幕缓存根目录（与核心缓存同级：app_data/duanju-core-cache）。
+/// 抽出来给「起播前查缓存」和「后台拉取写缓存」共用一份口径。
+fn danmaku_cache_root(app: &tauri::AppHandle) -> std::path::PathBuf {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .and_then(|p| p.parent().map(|x| x.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("duanju-core-cache")
+}
+
+/// [lc-2296] 从章节取（站源, 集 ID）—— 弹幕缓存键。取不到就返回 None（本集无弹幕）。
+fn danmaku_episode_key(chapter: &Value) -> Option<(String, String)> {
+    let episode_id = chapter.get("id").and_then(|x| x.as_str())?.to_string();
+    let source = chapter
+        .get("source")
+        .and_then(|x| x.as_str())
+        .map(str::to_string)
+        .or_else(|| episode_id.split(':').next().map(str::to_string))
+        .unwrap_or_else(|| "unknown".into());
+    Some((source, episode_id))
+}
+
 /// 拉本集弹幕并写成 ASS，返回可交给 mpv 的路径；无弹幕/不支持/失败都返回 None。
 ///
 /// 会话来源：`plan.session`（resolve 刚建立）。核心把弹幕绑定在这个播放会话上，
@@ -836,21 +909,8 @@ async fn prepare_danmaku(
     chapter: &Value,
 ) -> Option<std::path::PathBuf> {
     let session = plan.get("session").and_then(|x| x.as_str())?.to_string();
-    let episode_id = chapter.get("id").and_then(|x| x.as_str())?.to_string();
-    let source = chapter
-        .get("source")
-        .and_then(|x| x.as_str())
-        .map(str::to_string)
-        .or_else(|| episode_id.split(':').next().map(str::to_string))
-        .unwrap_or_else(|| "unknown".into());
-    let cache_root = app
-        .path()
-        .app_data_dir()
-        .ok()?
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("duanju-core-cache");
+    let (source, episode_id) = danmaku_episode_key(chapter)?;
+    let cache_root = danmaku_cache_root(app);
     let path = crate::duanju_danmaku::cache_path(&cache_root, &source, &episode_id);
     // 1) 缓存命中直接用（同集重看不再请求；AS S 里已含全量弹幕）
     if crate::duanju_danmaku::read_cache(&path).is_some() {
@@ -862,6 +922,10 @@ async fn prepare_danmaku(
     //    · `total` 是**整季**总数（6884），不能拿来当单集终止条件；
     //    · 短剧单集实际只有 2~3 分钟，弹幕时间戳最大值约 180s。
     //    终止条件：nextMs 不再前进 / 连续两页没有新条目（越过本集内容）/ 到达硬上限。
+    //
+    // [lc-2296] 硬上限定为 **12 页（6 分钟内容）**，原先是 40 页（20 分钟）。
+    // 实测每页 ~0.25s → 40 页 ≈ 8s，正好撞满 8s 预算，**每集都白等满 8 秒**才起播；
+    // 而短剧单集只有 2~3 分钟，6 页就该结束。12 页留一倍余量，最长 3s。
     let mut items: Vec<crate::duanju_danmaku::DanmakuItem> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut start: i64 = 0;
@@ -870,7 +934,8 @@ async fn prepare_danmaku(
     let mut dry = 0usize; // 连续没有新条目的页数
     let mut max_t: i64 = 0; // 已见弹幕的最大时间戳（用于判断越过本集）
     loop {
-        if pages >= 40 || dry >= 2 {
+        // [lc-2296] 12 页 = 6 分钟内容（原 40 页 = 20 分钟，实测每集都在白等满 8s）
+        if pages >= 12 || dry >= 2 {
             break;
         }
         pages += 1;
@@ -956,6 +1021,21 @@ pub fn current_playing() -> Option<(Value, i64)> {
     }
     let slot = auto_next_slot().lock().unwrap_or_else(|e| e.into_inner());
     slot.as_ref().map(|q| (q.drama.clone(), q.index))
+}
+
+/// [lc-2296] 当前播放的是不是**这一集**（按章节 id 精确比对）。
+/// 后台弹幕任务回来时用它把关：用户可能已经切到别的集、别的剧或干脆停了。
+/// 不能用剧名/剧 id 判断 —— 同一部剧连播时剧 id 不变，但集已经换了。
+fn is_playing_chapter(episode_id: &str) -> bool {
+    if episode_id.is_empty() || !DJ_ACTIVE.load(std::sync::atomic::Ordering::Acquire) {
+        return false;
+    }
+    let slot = auto_next_slot().lock().unwrap_or_else(|e| e.into_inner());
+    slot.as_ref()
+        .and_then(|q| q.chapters.get(q.index as usize))
+        .and_then(|ch| ch.get("id").and_then(|x| x.as_str()))
+        .map(|id| id == episode_id)
+        .unwrap_or(false)
 }
 
 /// [lc-2128] 设置 modernz 底栏的 ±10 秒跳转键显隐（短剧关、其它开）。

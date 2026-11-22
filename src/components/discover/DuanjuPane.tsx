@@ -659,7 +659,26 @@ export function DuanjuPane() {
     };
   }, []);
 
+  /* [lc-2295] 详情请求代次：每次「打开详情」+1，「关闭」也 +1。
+   * 夹在中间的旧请求回来时代次对不上就**直接丢弃** —— 否则用户在超时提示上点了「关闭」，
+   * 那个仍在跑的请求晚一步返回，会把浮层重新 setDetail 打开（表现还是「关不掉」）。 */
+  const detailEpoch = useRef(0);
+
+  /* [lc-2295] 关闭详情浮层：**必须三个状态一起清**。
+   * 渲染条件是 `(dBusy || detail || dErr)`，此前「关闭」和点遮罩只做 setDetail(null) ——
+   * dErr 还留着，浮层条件照样成立，于是「点关闭没反应、关不掉」（用户报障）。
+   * 统一收口到一个函数，避免以后再加状态时又漏。 */
+  function closeDetail() {
+    detailEpoch.current += 1; // 作废在飞的请求
+    setDetail(null);
+    setDErr("");
+    setDBusy(false);
+    lastDetailRef.current = null;
+    userBusyRef.current = false;
+  }
+
   async function openDetail(d: DuanjuDrama) {
+    const epoch = ++detailEpoch.current;
     setDetail(null);
     setDErr("");
     setEpGroup(0);
@@ -688,23 +707,28 @@ export function DuanjuPane() {
     // [lc-2237] 收紧到 12s：核心侧死源要 26~60s 才超时，让用户干等 20s 没有意义；
     // 12s 没回就先报错，用户可点「重试」（后台请求可能仍在跑，重试会拿新结果）。
     const tid = window.setTimeout(() => {
+      if (epoch !== detailEpoch.current) return; // 已被关闭/换片：不要再动状态
       setDErr("详情加载超时，请点「重试」或换个站源");
       setDBusy(false);
       userBusyRef.current = false;
     }, 12000);
     try {
       const resp = await invoke<DetailResp>("duanju_detail", { drama: d });
+      if (epoch !== detailEpoch.current) return; // 用户已关闭：丢弃这次回包，别把浮层重新打开
       setDetail({ drama: resp?.drama || d, chapters: resp?.chapters || [] });
       // [lc-2123] 读该剧的观看进度（独立存储，未看过返回 null）
       invoke<DjHistory | null>("duanju_history_one", { id: d.id })
         .then((h) => setHist(h))
         .catch(() => setHist(null));
     } catch (e) {
+      if (epoch !== detailEpoch.current) return; // 已关闭：错误也不必显示
       setDErr(String(e));
     } finally {
       window.clearTimeout(tid);
-      setDBusy(false);
-      userBusyRef.current = false;
+      if (epoch === detailEpoch.current) {
+        setDBusy(false);
+        userBusyRef.current = false;
+      }
     }
   }
 
@@ -1095,7 +1119,7 @@ export function DuanjuPane() {
           中段，用户停在列表顶部时面板落在视口外，只剩铺满的遮罩）。fixed + Portal 后
           遮罩与面板都以视口为参照，与滚动位置无关。 */}
       {(dBusy || detail || dErr) && createPortal(
-        <div className="dj-mask" onClick={() => !dBusy && setDetail(null)}>
+        <div className="dj-mask" onClick={() => !dBusy && closeDetail()}>
           <div className="dj-detail" onClick={(e) => e.stopPropagation()}>
             {dBusy ? (
               /* [lc-2294] 详情同样给骨架（海报位 + 文案行 + 选集格子），不再是干巴巴一行字 */
@@ -1132,7 +1156,7 @@ export function DuanjuPane() {
                 >
                   重试
                 </button>
-                <button type="button" className="dj-morebtn" onClick={() => setDetail(null)}>
+                <button type="button" className="dj-morebtn" onClick={closeDetail}>
                   关闭
                 </button>
               </>
@@ -1143,7 +1167,7 @@ export function DuanjuPane() {
                     type="button"
                     className="dj-close"
                     aria-label="关闭详情"
-                    onClick={() => setDetail(null)}
+                    onClick={closeDetail}
                   >
                     <IcoXL size={16} strokeWidth={1.8} />
                   </button>

@@ -20,9 +20,11 @@ use std::sync::{Mutex, OnceLock};
 use tauri::Manager;
 
 /// 进程内常驻的 DLL 句柄（不卸载；libloading 的 Library 在 Windows 上 Send+Sync）。
-static CORE: OnceLock<Mutex<Option<libloading::Library>>> = OnceLock::new();
+/// [lc-2295] 用 Arc 持有：调用方**取出引用后立刻放锁**，FFI 调用本身不持锁 ——
+/// 详见 `with_core` 的注释（此前正是这里把红果的详情请求串行到了超时）。
+static CORE: OnceLock<Mutex<Option<std::sync::Arc<libloading::Library>>>> = OnceLock::new();
 
-fn core_slot() -> &'static Mutex<Option<libloading::Library>> {
+fn core_slot() -> &'static Mutex<Option<std::sync::Arc<libloading::Library>>> {
     CORE.get_or_init(|| Mutex::new(None))
 }
 
@@ -85,14 +87,25 @@ fn last_session_slot() -> &'static Mutex<String> {
     LAST_SESSION.get_or_init(|| Mutex::new(String::new()))
 }
 
-/// 借出静态槽里的 DLL 引用执行一次调用。槽锁只保护「取句柄」，不串行化
-/// FFI 调用本身（Go 核心内部自带并发安全与取消）。
+/// 借出 DLL 引用执行一次调用。
+///
+/// [lc-2295] **槽锁只保护「取句柄」，FFI 调用本身绝不持锁**。
+/// 这里曾经写成 `let guard = …lock(); f(lib)` —— guard 活到函数结束，等于把**全部**
+/// 核心调用串行化在一把全局锁上。短剧页一挂载就会并发打十几个命令（站源健康探测、
+/// 分类、目录、详情…），而探测里死源要 26~60s 才超时：详情请求排在后面，
+/// 12s 前端兜底一到就报「详情加载超时」。实测同一部红果剧直连核心 `detail` 只要
+/// 0.22~0.40s（连测 5 部全部成功），慢的从来不是核心。
+/// 现在先把 `Arc<Library>` 克隆出来再放锁，Go 核心内部自带并发安全与按 session 取消。
 fn with_core<T>(f: impl FnOnce(&libloading::Library) -> Result<T, String>) -> Result<T, String> {
-    let guard = core_slot().lock().unwrap_or_else(|e| e.into_inner());
-    let lib = guard
-        .as_ref()
-        .ok_or_else(|| "短剧核心尚未初始化".to_string())?;
-    f(lib)
+    let lib = {
+        let guard = core_slot().lock().unwrap_or_else(|e| e.into_inner());
+        guard
+            .as_ref()
+            .ok_or_else(|| "短剧核心尚未初始化".to_string())?
+            .clone()
+        // guard 在此处 drop：FFI 调用在锁外进行
+    };
+    f(&lib)
 }
 
 /// 调用核心并解析 envelope `{ok, error|data}`；ok=false 时 Err(error)。
@@ -153,7 +166,7 @@ fn ensure_loaded(app: &tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("加载短剧核心失败（{}）: {e}", path.display()))?;
     let mut guard = core_slot().lock().unwrap_or_else(|e| e.into_inner());
     if guard.is_none() {
-        *guard = Some(lib);
+        *guard = Some(std::sync::Arc::new(lib));
     }
     Ok(())
 }

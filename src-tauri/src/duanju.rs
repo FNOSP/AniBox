@@ -385,6 +385,45 @@ pub async fn duanju_catalog(
     .await
 }
 
+/// [lc-2299] 榜单清单（`rankingBoards` op，**纯本地**，不打网络）。
+///
+/// 上游按编译期 `nativeSourceAvailable` 过滤：当前随包核心只放开了红果的 4 个榜
+/// （总热播 / 真人剧 / 漫剧 / AI 剧），黄豆与黄果的榜在未启用站源里、不会返回。
+/// 前端据此动态渲染榜单 tab，不写死 id。
+#[tauri::command]
+pub async fn duanju_ranking_boards(app: tauri::AppHandle) -> Result<Value, String> {
+    ensure_ready(&app).await?;
+    call_async(next_call_body("rankingBoards", json!({}))).await
+}
+
+/// [lc-2299] 榜单内容（`rankings` op）：某榜某页。
+///
+/// 响应形状（上游 `app_rankings.go:60` 实测）：
+/// `{ boardId, page, items:[{rank, drama, metric}], hasMore, totalPages,
+///    updatedText, fetchedAt, stale, warning }`
+/// 其中 `items[].drama` 与 catalog 项同形状，**可直接喂给 duanju_detail 打开详情**
+/// （探针实测：榜单第 1 条 → detail 0.37s / 210 集）。
+///
+/// 核心自带 24h 落盘缓存（`rankings.json`）；`force=true` 才跳过缓存重拉。
+#[tauri::command]
+pub async fn duanju_rankings(
+    app: tauri::AppHandle,
+    board: String,
+    page: Option<i64>,
+    force: Option<bool>,
+) -> Result<Value, String> {
+    ensure_ready(&app).await?;
+    call_async(next_call_body(
+        "rankings",
+        json!({
+            "board": board,
+            "page": page.unwrap_or(1).clamp(1, 500),
+            "force": force.unwrap_or(false),
+        }),
+    ))
+    .await
+}
+
 /// [lc-2234] 只读核心的本地目录缓存（`cached` op，**纯内存/磁盘，不打网络**）。
 /// 前端用「先显示缓存 → 后台再刷新」消除每次进短剧页的等待：
 ///   · Fresh=true  → 缓存 <15 分钟，直接用，无需刷新；

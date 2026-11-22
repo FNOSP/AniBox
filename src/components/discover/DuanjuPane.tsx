@@ -14,7 +14,7 @@ import { djImg } from "../../lib/images";
 import { adultSourcesEnabled, isAdultSource, onAdultSourcesChange } from "../../lib/adultSources";
 import { SoraniLoginModal } from "./SoraniLoginModal";
 import { DuanjuLoading } from "./DuanjuLoading";
-import { Star as IcoStar, X as IcoXL } from "lucide-react";
+import { Star as IcoStar, X as IcoXL, TrendingUp as IcoRank } from "lucide-react";
 
 type DuanjuDrama = {
   id: string;
@@ -54,6 +54,13 @@ type CatalogResp = {
   fresh?: boolean;
 };
 type DetailResp = { drama?: DuanjuDrama; chapters?: DuanjuChapter[]; warning?: string };
+
+/** [lc-2299] 榜单定义（核心 `rankingBoards` 回传）。不写死：可用榜随随包核心的
+ *  编译期开关变化。 */
+type DjBoard = { id: string; name: string; source?: string; description?: string };
+/** [lc-2299] 榜单条目：rank 名次 + drama（与 catalog 项同形状，可直接 openDetail）
+ *  + metric 展示用热度文案（如「10695万热度」）。 */
+type DjRankItem = { rank: number; drama: DuanjuDrama; metric?: string };
 
 /** [lc-2123] 短剧独立观看记录（存 app_data/duanju-history.json，与软件主记录完全分开）。
  *  index = 0 基集索引；pos/dur = 秒；at = 毫秒时间戳（用于排序）。 */
@@ -295,6 +302,19 @@ export function DuanjuPane() {
   const [hist, setHist] = useState<DjHistory | null>(null);
   const [playErr, setPlayErr] = useState("");
 
+  /* [lc-2299] 榜单（核心 `rankings` / `rankingBoards` op）。
+   * 上游按编译期开关过滤可用榜 —— 当前随包核心只放开红果的 4 个
+   * （总热播 / 真人剧 / 漫剧 / AI 剧），所以清单**动态取**、前端不写死 id。
+   * boards === null = 还没拿到（不显示榜单入口）；[] = 核心明确没有可用榜（同样不显示）。 */
+  const [rankBoards, setRankBoards] = useState<DjBoard[] | null>(null);
+  const [rankBoard, setRankBoard] = useState(""); // 空 = 不在榜单视图
+  const [rankItems, setRankItems] = useState<DjRankItem[]>([]);
+  const [rankPage, setRankPage] = useState(1);
+  const [rankHasMore, setRankHasMore] = useState(false);
+  const [rankUpdated, setRankUpdated] = useState("");
+  const [rankBusy, setRankBusy] = useState(false);
+  const [rankErr, setRankErr] = useState("");
+
   // [lc-2189] 后台探测站源可用性：无筛选目录首页拉一次；成功清零、失败 +1（TTL 内不重探）。
   // 失败源由 chips 剔除（见 render 的 visibleSources）。
   // [lc-2234] **必须限并发**：核心的读请求名额只有 16 个（app_requests.go beginRead
@@ -422,6 +442,75 @@ export function DuanjuPane() {
       alive = false;
     };
   }, [source]);
+
+  /* [lc-2299] 榜单清单：随站源清单一起就绪（纯本地 op，0ms 级）。
+   * 拿不到（老核心没这个 op）就静默 —— 榜单入口不出现即可，不该打扰用户。 */
+  useEffect(() => {
+    let alive = true;
+    invoke<{ items?: DjBoard[] }>("duanju_ranking_boards")
+      .then((d) => {
+        if (!alive) return;
+        // 上游只回当前随包核心放开的榜（红果 4 个）；空数组 = 没有可用榜
+        const list = Array.isArray(d?.items) ? d.items : [];
+        setRankBoards(list.filter((b) => b && typeof b.id === "string"));
+      })
+      .catch(() => {
+        if (alive) setRankBoards([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /* [lc-2299] 打开某榜 / 翻下一批。`more` = 追加（触底），否则重置为第一页。
+   * 榜单条目自带完整 drama，可直接 openDetail —— 不需要再按 id 回查目录。 */
+  async function loadRanking(id: string, more = false) {
+    const nextPage = more ? rankPage + 1 : 1;
+    setRankBusy(true);
+    if (!more) {
+      setRankErr("");
+      setRankItems([]);
+      setRankUpdated("");
+    }
+    try {
+      const d = await invoke<{
+        items?: DjRankItem[];
+        page?: number;
+        hasMore?: boolean;
+        updatedText?: string;
+        warning?: string;
+      }>("duanju_rankings", { board: id, page: nextPage, force: false });
+      const fresh = Array.isArray(d?.items) ? d.items : [];
+      setRankItems((prev) => {
+        if (!more) return fresh;
+        // 翻页去重：榜单页之间偶尔会重叠（热度并列）
+        const seen = new Set(prev.map((x) => x.drama?.id));
+        return [...prev, ...fresh.filter((x) => !seen.has(x.drama?.id))];
+      });
+      setRankPage(d?.page || nextPage);
+      setRankHasMore(d?.hasMore === true);
+      if (d?.updatedText) setRankUpdated(d.updatedText);
+    } catch (e) {
+      setRankErr(String(e));
+    } finally {
+      setRankBusy(false);
+    }
+  }
+
+  /** 切到某榜（一级入口，与站源/收藏并列）；再点同一个榜 = 返回目录。 */
+  function openBoard(id: string) {
+    if (rankBoard === id) {
+      setRankBoard("");
+      return;
+    }
+    setRankBoard(id);
+    setFavOpen(false);
+    setTerm("");
+    setQuery("");
+    setRankPage(1);
+    void loadRanking(id);
+  }
+
   // [lc-2294] 靴子进度自走：里程碑之间缓慢逼近 88（数据没到不冲 100），
   // 让慢站源的等待读起来是「在动」而不是「卡住」。
   useEffect(() => {
@@ -862,12 +951,14 @@ export function DuanjuPane() {
 
   return (
     <div className="dj">
-      {/* 站源行：[lc-2099] 「收藏」置顶，其次各站源 */}
+      {/* 站源行：[lc-2099] 「收藏」置顶，其次各站源
+          [lc-2299] 榜单入口紧随其后（核心只放开红果 4 个榜；清单为空则不出现） */}
       <div className="dj-sources">
         <button
           type="button"
           className={`dj-chip dj-favtab${favOpen ? " on" : ""}`}
           onClick={() => {
+            setRankBoard(""); // 收藏与榜单互斥
             setFavOpen(true);
             setTerm("");
             setQuery("");
@@ -877,6 +968,21 @@ export function DuanjuPane() {
           收藏
           {favs.length > 0 && <span className="dj-favcount">{favs.length}</span>}
         </button>
+        {/* [lc-2299] 榜单：核心 rankingBoards 回传的才显示（当前 = 红果 4 个榜）。
+            与「收藏」同属一级入口，排在站源前面 —— 榜单是首页级发现入口，
+            不是某个站源的附属筛选。 */}
+        {(rankBoards || []).map((b) => (
+          <button
+            key={b.id}
+            type="button"
+            className={`dj-chip dj-boardtab${rankBoard === b.id ? " on" : ""}`}
+            title={b.description || b.name}
+            onClick={() => openBoard(b.id)}
+          >
+            <IcoRank size={12} strokeWidth={2} className="rating-ico" />
+            {b.name}
+          </button>
+        ))}
         {/* [lc-2189] 首次运行还没有站源清单：骨架占位（不闪旧表） */}
         {sources === null && (
           <button type="button" className="dj-chip" disabled>
@@ -887,10 +993,11 @@ export function DuanjuPane() {
             <button
               key={s.id}
               type="button"
-              className={`dj-chip${!favOpen && source === s.id ? " on" : ""}`}
+              className={`dj-chip${!rankBoard && !favOpen && source === s.id ? " on" : ""}`}
               onClick={() => {
                 // [lc-2217] 18+ 站源只有在设置页手动解锁后才会出现在这里，切换不再二次弹窗
                 setFavOpen(false);
+                setRankBoard(""); // 榜单与目录视图互斥
                 setSource(s.id);
                 setTerm("");
                 setQuery("");
@@ -978,7 +1085,86 @@ export function DuanjuPane() {
         />
       </div>
 
-      {favOpen ? (
+      {rankBoard ? (
+        /* [lc-2299] 榜单视图：名次 + 热度 + 与目录一致的卡片。
+           条目自带的 drama 可直接 openDetail（探针实测 0.37s / 210 集）。 */
+        rankErr ? (
+          <DState err={rankErr} emptyText="" onRetry={() => void loadRanking(rankBoard)} />
+        ) : rankBusy && rankItems.length === 0 ? (
+          <DuanjuLoading progress={55} label="正在加载榜单…" />
+        ) : rankItems.length === 0 ? (
+          <DState
+            err=""
+            emptyText="该榜单暂无内容"
+            onRetry={() => void loadRanking(rankBoard)}
+          />
+        ) : (
+          <>
+            {rankUpdated && <div className="dj-rank-updated">{rankUpdated}</div>}
+            <div className="dj-grid">
+              {rankItems.map((it) => {
+                const d = it.drama;
+                return (
+                  <button key={d.id} type="button" className="dj-card" onClick={() => openDetail(d)}>
+                    <span className="dj-poster">
+                      {d.cover ? (
+                        <img src={djImg(d.cover)} alt="" loading="lazy" draggable={false} />
+                      ) : (
+                        <span className="dj-ph" aria-hidden="true" />
+                      )}
+                      <span className={`dj-rank dj-rank-${it.rank <= 3 ? it.rank : "n"}`}>
+                        {it.rank}
+                      </span>
+                      {d.vip === true && <span className="dj-vip">VIP</span>}
+                      <span
+                        className={`dj-star${favIds.has(d.id) ? " on" : ""}`}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={favIds.has(d.id) ? "取消收藏" : "收藏"}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFav(d);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            toggleFav(d);
+                          }
+                        }}
+                      >
+                        <IcoStar
+                          size={13}
+                          strokeWidth={2}
+                          className={`rating-ico${favIds.has(d.id) ? " fill" : ""}`}
+                        />
+                      </span>
+                    </span>
+                    <span className="dj-title">{d.title}</span>
+                    <span className="dj-meta">
+                      {[d.episodes ? `${d.episodes}集` : "", it.metric || ""]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {rankHasMore && (
+              <div className="dj-more-hint">
+                <button
+                  type="button"
+                  className="dj-morebtn"
+                  disabled={rankBusy}
+                  onClick={() => void loadRanking(rankBoard, true)}
+                >
+                  {rankBusy ? "加载中…" : "加载更多"}
+                </button>
+              </div>
+            )}
+          </>
+        )
+      ) : favOpen ? (
         /* [lc-2099] 收藏视图：本地即时渲染，不走目录请求 */
         favs.length === 0 ? (
           <div className="dlib-stub">

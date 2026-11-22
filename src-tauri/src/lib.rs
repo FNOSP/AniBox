@@ -4556,6 +4556,9 @@ pub fn run() {
             duanju::duanju_categories,
             duanju::duanju_catalog,
             duanju::duanju_cached,
+            // [lc-2299] 榜单：清单（纯本地）+ 某榜某页
+            duanju::duanju_ranking_boards,
+            duanju::duanju_rankings,
             duanju::duanju_danmaku_info,
             duanju::duanju_detail,
             duanju::duanju_resolve,

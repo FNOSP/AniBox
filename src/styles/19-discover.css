@@ -3790,3 +3790,47 @@ button.arc-card:hover .arc-cv {
   height: 30px;
   border-radius: var(--r-sm);
 }
+
+/* ── [lc-2299] 短剧榜单 ──
+   入口 chip 与「收藏」并列（站点行内），内容区复用 .dj-grid / .dj-card，
+   只加名次角标与"更新时间"说明行。 */
+.dj-chip.dj-boardtab {
+  /* 与收藏同构，不加新配色；榜单靠图标区分 */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.dj-rank-updated {
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-cap);
+  color: var(--muted);
+}
+
+/* 名次角标：前三名给强调色，其余用中性底 —— 只在榜单视图出现，
+   目录/收藏视图没有这个元素，互不影响。 */
+.dj-rank {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--sp-1);
+  border-radius: var(--r-sm);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: var(--fs-cap);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.dj-rank-1,
+.dj-rank-2,
+.dj-rank-3 {
+  background: var(--accent-solid);
+  color: #fff;
+}

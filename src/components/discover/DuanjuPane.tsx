@@ -756,6 +756,29 @@ export function DuanjuPane() {
     };
   }, []);
 
+  /* [lc-2301] 事件监听的 latest-ref 包装。
+   * 事件订阅只注册一次（空依赖），而 switchQuality 要读**当前**的 playingIdx /
+   * detail —— 直接闭包会永远捕获首帧的值，导致切档点了没反应。 */
+  const switchQualityRef = useRef<(q: number) => void>(() => {});
+
+  /* [lc-2301] mpv 底栏的清晰度菜单点了某档 → Rust emit 事件 → 这里重播当前集。
+   * 为什么绕一圈：mpv 是独立进程，Lua 只知道档位数字，不持有 drama/chapters；
+   * 真正能重播的只有前端（它才有完整上下文）。Rust 把 Lua 写的
+   * `user-data/anibox/quality-request` 转成事件，避免 Lua 直接调命令。
+   * 请求一次就重播一次：Rust 侧读完立刻清空该属性，不会重复触发。 */
+  useEffect(() => {
+    let alive = true;
+    const un = listen<{ quality?: number }>("duanju-quality-request", (e) => {
+      if (!alive) return;
+      const q = typeof e.payload?.quality === "number" ? e.payload.quality : 0;
+      switchQualityRef.current(q);
+    });
+    return () => {
+      alive = false;
+      un.then((f) => f()).catch(() => {});
+    };
+  }, []);
+
   /* [lc-2295] 详情请求代次：每次「打开详情」+1，「关闭」也 +1。
    * 夹在中间的旧请求回来时代次对不上就**直接丢弃** —— 否则用户在超时提示上点了「关闭」，
    * 那个仍在跑的请求晚一步返回，会把浮层重新 setDetail 打开（表现还是「关不掉」）。 */
@@ -897,6 +920,8 @@ export function DuanjuPane() {
     if (!lp) return; // 还没播过：只记选择
     void play(lp.idx, lp.chapter, lp.name);
   }
+  // [lc-2301] 同步 latest-ref（事件回调走它，才能读到当前的 playingIdx/detail）
+  switchQualityRef.current = switchQuality;
 
   // [lc-2189] chips 只列可用站源；失败过的剔除并留「重试」入口
   const srcList = sources || [];

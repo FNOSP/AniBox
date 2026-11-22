@@ -164,7 +164,7 @@ impl Iterator for GatedLines {
 }
 
 /// 观察 id ↔ 属性名（前端 switch 依赖这些 id；6=fullscreen 只用于镜像到 Tauri 窗口）
-const OBSERVED: [(u64, &str); 14] = [
+const OBSERVED: [(u64, &str); 15] = [
     (1, "time-pos"),
     (2, "duration"),
     (3, "pause"),
@@ -192,7 +192,14 @@ const OBSERVED: [(u64, &str); 14] = [
     // 只是停在最后一帧），只把 `eof-reached` 置 true。短剧连播必须挂这里 —— 之前挂在
     // end-file 上，实测端到端 0 次触发（用户「播完就不动」的根因）。
     (14, "eof-reached"),
+    // [lc-2301] 短剧清晰度切换请求（modernz 底栏菜单写入，Rust 转成事件给前端重播）。
+    // 独立 id：不并进上面的 match 分支，读一次就清空（见下面的处理块）。
+    (15, "user-data/anibox/quality-request"),
 ];
+
+/// [lc-2301] 「短剧清晰度切换请求」的观察 id（与 OBSERVED 里的条目对应）。
+/// 单独抽成常量：处理块在 match 之外（读一次就清空，避免属性回抛重复触发）。
+const QUALITY_REQUEST_ID: u64 = 15;
 
 /// [lc-2125] 对外暴露观察表：复用会话时要重注册（mpv 常驻，升级后旧会话缺新属性）。
 pub fn observed_properties() -> &'static [(u64, &'static str)] {
@@ -1335,6 +1342,28 @@ impl MpvSession {
                             }
                         }
                         _ => {}
+                    }
+                    // [lc-2301] 短剧清晰度切换请求：modernz 底栏的清晰度菜单点某档时，
+                    // 会把目标档位写进 `user-data/anibox/quality-request`（0 = 原画）。
+                    // 这里只做转发 —— 重播需要前端的 drama/chapters（它才持有完整上下文），
+                    // 所以 emit 事件让前端调 duanju_play（quality 由 duanju_play 写入队列）。
+                    // 读完立刻清空，避免下一次观察把同一个请求重复触发（属性回抛）。
+                    if id == QUALITY_REQUEST_ID {
+                        if let Some(raw) = v.get("data").and_then(|x| x.as_str()) {
+                            let s = raw.trim().trim_matches('"');
+                            if let Ok(q) = s.parse::<i64>() {
+                                let _ = app2.emit("duanju-quality-request", json!({ "quality": q }));
+                                crate::libmpv::trace(&format!(
+                                    "[duanju] 收到清晰度切换请求 quality={q}，已转给前端重播"
+                                ));
+                            }
+                            let line = json!({
+                                "command": ["set_property", "user-data/anibox/quality-request", ""],
+                            })
+                            .to_string()
+                                + "\n";
+                            write_from_reader(&tx, &line);
+                        }
                     }
                     if id == 6 {
                         // [lc-093] fullscreen 现在承载两件事：① App 形态（内嵌/全页）的镜像；

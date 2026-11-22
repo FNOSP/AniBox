@@ -427,6 +427,8 @@ async fn launch_mpv(
     let t_enter = std::time::Instant::now();
     if !headers.map(|h| h.vertical).unwrap_or(false) {
         crate::duanju::clear_auto_next();
+        // [lc-2301] 非短剧起播：清掉 mpv 侧的清晰度键（否则底栏残留短剧的清晰度按钮）
+        crate::duanju::clear_quality_keys(app).await;
         // [lc-2128] 非短剧起播：恢复 modernz 的 ±10 秒跳转键（短剧播放时会关掉）
         crate::duanju::restore_modernz_jump_buttons(app);
     }

@@ -819,6 +819,33 @@ async fn play_impl(
             let _ = sess
                 .command_no_reply(json!(["set", "user-data/anibox/next-episode", label]))
                 .await;
+            // [lc-2301] 把清晰度档位推给 mpv 侧（modernz 底栏按钮 + 菜单读这几个键）。
+            // 格式：
+            //   anibox/qualities  = "1080,720,540,480,360"（降序；空串 = 无可选档位）
+            //   anibox/quality    = 当前档位（0 = 原画/不筛选）
+            // 用字符串而不是 JSON：mpv 的 user-data 是字符串属性，Lua 侧 split 即可。
+            let qs = plan
+                .get("qualities")
+                .and_then(|x| x.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_i64())
+                        .filter(|v| *v > 0)
+                        .map(|v| v.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
+            let _ = sess
+                .command_no_reply(json!(["set", "user-data/anibox/qualities", qs]))
+                .await;
+            let _ = sess
+                .command_no_reply(json!([
+                    "set",
+                    "user-data/anibox/quality",
+                    quality.unwrap_or(0).to_string()
+                ]))
+                .await;
         }
     }
     // [lc-2123] 标记短剧会话活跃（time-pos 观察回调据此写历史）
@@ -1177,9 +1204,31 @@ pub async fn duanju_auto_next(
 }
 
 /// [lc-2116] 清空连播队列（用户切换到别的车道 / 手动停止时用）。
+/// [lc-2301] 同步部分只清内存状态；推给 mpv 的清晰度键由调用方用
+/// `clear_quality_keys(app).await` 异步清（这里没有 AppHandle 就拿不到会话）。
 pub fn clear_auto_next() {
     DJ_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
     *auto_next_slot().lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// [lc-2301] 清掉推给 mpv 的清晰度键（`anibox/qualities` / `anibox/quality`）。
+///
+/// 必须清：否则用户从短剧切到飞牛/IPTV/云盘播放时，modernz 底栏会残留一颗
+/// 「清晰度」按钮，点开的档位对当前片源毫无意义（甚至误导用户以为能切）。
+pub async fn clear_quality_keys(app: &tauri::AppHandle) {
+    let sess = {
+        let st = app.state::<crate::AppState>();
+        let slot = st.mpv.lock().await;
+        slot.as_ref().cloned()
+    };
+    if let Some(sess) = sess {
+        let _ = sess
+            .command_no_reply(json!(["set", "user-data/anibox/qualities", ""]))
+            .await;
+        let _ = sess
+            .command_no_reply(json!(["set", "user-data/anibox/quality", "0"]))
+            .await;
+    }
 }
 
 /// [lc-2104] 轮询 `video-params/w|h`（起播后解码器就绪才有值；最多等 ~6s）。

@@ -548,7 +548,7 @@ export type AppSettings = {
   exitMode: "exit" | "tray" | "ask";
   perfMode: boolean;
   carouselLogo: boolean;
-  /** [lc-2247] 电影详情页版式："classic"（满幅头图旧版，默认）| "editorial"（双栏杂志风）。
+  /** [lc-2247/lc-2293] 电影详情页版式："editorial"（双栏杂志风，默认）| "classic"（满幅头图旧版）。
    *  只对电影生效，剧集详情页不受影响。 */
   movieDetailStyle?: "classic" | "editorial";
   launchPage: "home" | "discover";

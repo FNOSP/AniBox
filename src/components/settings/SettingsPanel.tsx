@@ -1976,16 +1976,16 @@ export function SettingsPanel({
                     <div>
                       <span className="set-k">电影详情页版式</span>
                       <div className="set-desc">
-                        经典：满幅头图铺满首屏。杂志：左标题右海报双栏，标题为艺术字。
+                        杂志：左标题右海报双栏，标题为艺术字。经典：满幅头图铺满首屏。
                       </div>
                     </div>
                     <SetSelect
                       label="电影详情页版式"
-                      value={settings.movieDetailStyle ?? "classic"}
+                      value={settings.movieDetailStyle ?? "editorial"}
                       disabled={busy}
                       options={[
+                        { value: "editorial", label: "杂志（双栏，默认）" },
                         { value: "classic", label: "经典（满幅头图）" },
-                        { value: "editorial", label: "杂志（双栏）" },
                       ]}
                       onChange={(v) =>
                         onSettings({ movieDetailStyle: v as AppSettings["movieDetailStyle"] })

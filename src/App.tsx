@@ -1521,7 +1521,7 @@ function App() {
                 base={detailItem}
                 continueList={continueList}
                 webrsOn={!!settings.webrsPanelEnabled}
-                movieDetailStyle={settings.movieDetailStyle ?? "classic"}
+                movieDetailStyle={settings.movieDetailStyle ?? "editorial"}
                 onOpenTmdb={openTmdbRecommendation}
                 onOpenPerson={openPerson}
                 onBack={() => {

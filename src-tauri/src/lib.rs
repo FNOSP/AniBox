@@ -239,6 +239,9 @@ async fn save_config(app: AppHandle, state: State<'_, AppState>, config: Config)
         config.exit_mode = cur.exit_mode.clone();
         config.perf_mode = cur.perf_mode;
         config.carousel_logo = cur.carousel_logo;
+        // [lc-2293] 电影详情页版式同样只由 set_settings 修改（lc-2247 加入时漏了这条，
+        // 登录页旧快照回写会把用户手选的 classic 冲回默认值）
+        config.movie_detail_style = cur.movie_detail_style.clone();
         config.launch_page = cur.launch_page.clone();
         config.player_kind = cur.player_kind.clone();
         config.potplayer_path = cur.potplayer_path.clone();

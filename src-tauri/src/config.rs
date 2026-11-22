@@ -132,7 +132,7 @@ pub struct Config {
     /// 首页轮播是否用影片透明 Logo 代替文字标题（飞牛条目自带 logo，见 lc-570）
     #[serde(default = "default_true")]
     pub carousel_logo: bool,
-    /// [lc-2247] 电影详情页版式："classic"（满幅头图旧版，默认）| "editorial"（双栏杂志风新版）。
+    /// [lc-2247] 电影详情页版式："editorial"（双栏杂志风，默认，lc-2293 起）| "classic"（满幅头图旧版）。
     /// 目前只对**电影**生效，剧集详情页不受影响。纯前端开关，存这里以便重启保持。
     #[serde(default = "default_movie_detail_style")]
     pub movie_detail_style: String,
@@ -327,9 +327,11 @@ fn default_launch_page() -> String {
     "home".into()
 }
 
-/// [lc-2247] 电影详情页版式默认值：classic = 满幅头图旧版，保持升级前后观感一致。
+/// [lc-2247] 电影详情页版式默认值。
+/// [lc-2293] 默认改为 editorial（双栏杂志风）：它是目前的正式版式（经典版仅作保留选项）。
+/// 老 config.json 里显式存了 classic 的不受影响，与 lc-2220 改默认皮肤同口径。
 fn default_movie_detail_style() -> String {
-    "classic".into()
+    "editorial".into()
 }
 
 fn default_true() -> bool {
@@ -1242,6 +1244,12 @@ mod tests {
     #[test]
     fn default_player_skin_is_clear() {
         assert_eq!(default_player_skin(), "clear");
+    }
+
+    /// [lc-2293] 默认电影详情页版式 = 杂志风（editorial）。
+    #[test]
+    fn default_movie_detail_style_is_editorial() {
+        assert_eq!(default_movie_detail_style(), "editorial");
     }
 
     /// [lc-2178] 皮肤值归一：clear 保留，其余非法值回落 uosc。

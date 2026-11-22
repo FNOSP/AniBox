@@ -406,7 +406,7 @@ export function DetailView({
   onOpenPerson,
   continueList = [],
   webrsOn = false,
-  movieDetailStyle = "classic",
+  movieDetailStyle = "editorial",
 }: {
   base: MediaItem;
   onBack: () => void;
@@ -419,8 +419,8 @@ export function DetailView({
   /** [lc-1753] 在线资源搜索开关（App 的 settings.webrsPanelEnabled）：开启后才在
    *  无资源的剧集/动漫详情页挂 WebrsPanel；关闭时维持「未查询到资源/暂无剧集」占位。 */
   webrsOn?: boolean;
-  /** [lc-2247] 电影详情页版式（App 的 settings.movieDetailStyle）：
-   *  "classic" = 满幅头图旧版（默认）| "editorial" = 双栏杂志风新版。
+  /** [lc-2247/lc-2293] 电影详情页版式（App 的 settings.movieDetailStyle）：
+   *  "editorial" = 双栏杂志风（默认）| "classic" = 满幅头图旧版。
    *  **只影响电影**，剧集详情页不受影响。 */
   movieDetailStyle?: "classic" | "editorial";
 }) {
@@ -2491,8 +2491,8 @@ export function DetailView({
 
       {/* [lc-1652] 电影：沉浸式头图 + 简介/演职员 + 剧照（用户样板）
           [lc-2247] 按设置项 movieDetailStyle 在两种版式间切换：
-            classic   = 满幅头图（默认，lc-1652 那套）
-            editorial = 双栏杂志风（大标题 + 层叠海报）
+            editorial = 双栏杂志风（默认，大标题 + 层叠海报）
+            classic   = 满幅头图（lc-1652 那套）
           **只对电影生效**，剧集详情页下面那条分支不受影响。 */}
       {dataReady && isMovie && movieDetailStyle === "editorial" && (
         <MovieHeroEditorial

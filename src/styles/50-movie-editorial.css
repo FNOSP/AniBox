@@ -1,6 +1,6 @@
 /* ══════════════════════════════════════════════════════════════════════════════
    [lc-2247] 电影详情页「杂志风」版式（editorial）—— 配合 MovieHeroEditorial.tsx
-   由设置项 movieDetailStyle = "editorial" 启用；默认 classic（40-movie-hero.css）。
+   由设置项 movieDetailStyle = "editorial" 启用（lc-2293 起为默认；经典版在 40-movie-hero.css）。
 
    与经典版的差异：
      · 没有满幅头图，改成「左文右图」双栏；

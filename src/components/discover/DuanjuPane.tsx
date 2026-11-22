@@ -9,10 +9,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { DState } from "./shared";
+import { DState, Dsk } from "./shared";
 import { djImg } from "../../lib/images";
 import { adultSourcesEnabled, isAdultSource, onAdultSourcesChange } from "../../lib/adultSources";
 import { SoraniLoginModal } from "./SoraniLoginModal";
+import { DuanjuLoading } from "./DuanjuLoading";
 import { Star as IcoStar, X as IcoXL } from "lucide-react";
 
 type DuanjuDrama = {
@@ -265,6 +266,18 @@ export function DuanjuPane() {
   const [hasMore, setHasMore] = useState(false);
   const [busy, setBusy] = useState(false);
   const [moreBusy, setMoreBusy] = useState(false);
+  /* [lc-2294] 首屏靴子阶段：目录数据还没落定之前**一律显示加载态**（进度条 + 网格骨架）。
+   * 起因：lc-2235 缓存优先把「请求开始就置 busy」去掉了 —— cached/catalog 回包之前
+   * busy=false 且 items=[] 会直接落进「暂无内容」空态，用户看到的就是「短剧页全空了」。
+   * pct 只按真实里程碑推进（连接核心 15 → 读本地缓存 40 → 打网络 60），
+   * 之后缓慢逼近上限 88，**不冲到 100**（数据没到就不该显示完成）。 */
+  const [boot, setBoot] = useState<{ on: boolean; pct: number; label: string }>({
+    on: true,
+    pct: 15,
+    label: "正在连接短剧核心…",
+  });
+  const bootTo = (pct: number, label: string) => setBoot({ on: true, pct, label });
+  const bootDone = () => setBoot((b) => (b.on ? { ...b, on: false } : b));
   // [lc-2240] 当前渲染条数（每次 +50）；切站源/分类/搜索时归零重来
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   // [lc-2240] 触底加载哨兵：滚到这个元素就追加下一批
@@ -409,6 +422,16 @@ export function DuanjuPane() {
       alive = false;
     };
   }, [source]);
+  // [lc-2294] 靴子进度自走：里程碑之间缓慢逼近 88（数据没到不冲 100），
+  // 让慢站源的等待读起来是「在动」而不是「卡住」。
+  useEffect(() => {
+    if (!boot.on) return;
+    const id = window.setInterval(() => {
+      setBoot((b) => (b.on && b.pct < 88 ? { ...b, pct: Math.min(88, b.pct + 1) } : b));
+    }, 700);
+    return () => window.clearInterval(id);
+  }, [boot.on]);
+
   // 目录第一页（站源/分类/搜索词变化即重取）
   useEffect(() => {
     if (!source) return;
@@ -418,6 +441,8 @@ export function DuanjuPane() {
     setPage(1);
     setHasMore(false);
     setVisibleCount(PAGE_SIZE); // [lc-2240] 换站源/分类/搜索 → 回到第一屏 50 条
+    // [lc-2294] 每次重取都回到加载态：数据没落定之前不许出现「暂无内容」
+    bootTo(30, "正在读取目录…");
     // [lc-2234] 缓存优先（cached-first）：核心把目录按「站源|分类」落盘缓存（15 分钟）。
     // 从前每次进短剧页都走 catalog 全量重拉（红果实测 6.4s，用户看到的就是「加载中」）；
     // 现在先用 `cached` 这个**纯本地、不打网络**的 op 秒出内容：
@@ -429,6 +454,7 @@ export function DuanjuPane() {
         if (!alive) return;
         setErr("目录加载超时，该站源可能暂时不可用");
         setBusy(false);
+        bootDone(); // [lc-2294] 超时也必须收加载态，否则错误被骨架盖住、用户看不到原因
       }, 20000);
     };
     // 网络失败的统一处理（初载与后台刷新共用；[lc-2189] 无筛选首页失败 = 站源不可用）
@@ -452,6 +478,7 @@ export function DuanjuPane() {
     let tid = 0;
     if (forceNet) {
       setBusy(true);
+      bootTo(60, term ? "正在搜索…" : "正在从站源加载…");
       tid = netTimeout();
       invoke<CatalogResp>("duanju_catalog", { source, category: cat, page: 1, query: term })
         .then((d) => {
@@ -459,8 +486,12 @@ export function DuanjuPane() {
           setItems(Array.isArray(d?.items) ? d.items : []);
           setHasMore(d?.hasMore === true);
           setPage(d?.page || 1);
+          bootDone(); // [lc-2294] 数据落定才收加载态（含空结果 → 交给空态渲染）
         })
-        .catch(onNetError)
+        .catch((e) => {
+          onNetError(e);
+          bootDone(); // 失败也要收：否则错误被加载态盖住，用户永远看不到原因
+        })
         .finally(() => {
           window.clearTimeout(tid);
           if (alive) setBusy(false);
@@ -475,9 +506,11 @@ export function DuanjuPane() {
             setItems(c.items!);
             setHasMore(c.hasMore === true);
             setPage(c.page || 1);
+            bootDone(); // [lc-2294] 缓存已上屏 = 有内容可看，立刻收加载态
             if (c.fresh === true) return; // 15 分钟内新鲜：不刷新
           } else {
             setBusy(true);
+            bootTo(60, "正在从站源加载…");
           }
           // 过期或未命中 → 后台刷新（不显示加载中遮罩；失败只在无缓存时提示）
           tid = netTimeout();
@@ -488,8 +521,10 @@ export function DuanjuPane() {
               setHasMore(d?.hasMore === true);
               setPage(d?.page || 1);
               setErr("");
+              bootDone();
             })
             .catch((e) => {
+              bootDone();
               if (hit) return; // 有兜底数据时刷新失败不打扰
               onNetError(e);
             })
@@ -503,6 +538,7 @@ export function DuanjuPane() {
           // 退化为直接走网络。**这里必须用非空 query**：走 search 语义不读缓存。
           if (!alive) return;
           setBusy(true);
+          bootTo(60, "正在从站源加载…");
           tid = netTimeout();
           invoke<CatalogResp>("duanju_catalog", { source, category: cat, page: 1, query: "" })
             .then((d) => {
@@ -510,8 +546,12 @@ export function DuanjuPane() {
               setItems(Array.isArray(d?.items) ? d.items : []);
               setHasMore(d?.hasMore === true);
               setPage(d?.page || 1);
+              bootDone();
             })
-            .catch(onNetError)
+            .catch((e) => {
+              onNetError(e);
+              bootDone();
+            })
             .finally(() => {
               window.clearTimeout(tid);
               if (alive) setBusy(false);
@@ -961,6 +1001,9 @@ export function DuanjuPane() {
             ))}
           </div>
         )
+      ) : boot.on ? (
+        /* [lc-2294] 数据尚未落定 → 进度条 + 网格骨架（此前这里会落到「暂无内容」空态） */
+        <DuanjuLoading progress={boot.pct} label={boot.label} />
       ) : busy ? (
         <div className="dlib-stub">
           <div className="dlib-stub-t">加载中…</div>
@@ -1055,7 +1098,26 @@ export function DuanjuPane() {
         <div className="dj-mask" onClick={() => !dBusy && setDetail(null)}>
           <div className="dj-detail" onClick={(e) => e.stopPropagation()}>
             {dBusy ? (
-              <div className="dj-detail-tip">加载中…</div>
+              /* [lc-2294] 详情同样给骨架（海报位 + 文案行 + 选集格子），不再是干巴巴一行字 */
+              <div className="dj-dsk" aria-busy="true">
+                <div className="dj-dsk-head">
+                  <div className="dj-dsk-poster">
+                    <Dsk cls="dsk-poster" />
+                  </div>
+                  <div className="dj-dsk-lines">
+                    <Dsk cls="dsk-line" />
+                    <Dsk cls="dsk-line short" />
+                    <Dsk cls="dsk-line" />
+                    <Dsk cls="dsk-line short" />
+                  </div>
+                </div>
+                <div className="dj-dsk-eps">
+                  {Array.from({ length: 8 }, (_, i) => (
+                    <Dsk key={i} cls="dj-dsk-ep" />
+                  ))}
+                </div>
+                <div className="dj-detail-tip">加载剧集…</div>
+              </div>
             ) : dErr ? (
               <>
                 <div className="dj-detail-tip">{dErr}</div>

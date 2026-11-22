@@ -3684,3 +3684,109 @@ button.arc-card:hover .arc-cv {
   font-size: var(--fs-cap);
   color: var(--text-2);
 }
+
+/* ── [lc-2294] 短剧栏首屏加载态（进度条 + 网格骨架）──
+   进度条宽度由 DuanjuPane 的 boot 阶段驱动（连接核心 → 读缓存 → 打网络），
+   骨架卡片形状对齐 .dj-card：2:3 海报 + 两行文字，数据到了不跳动。 */
+.dj-loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.dj-loadbar {
+  height: 3px;
+  border-radius: var(--r-full);
+  background: var(--ph-bg);
+  overflow: hidden;
+}
+
+.dj-loadbar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width var(--dur-move) ease-out;
+}
+
+.dj-loading-t {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-size: var(--fs-cap);
+  color: var(--text-2);
+}
+
+.dj-loading-pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.dj-loading-hint {
+  font-size: var(--fs-cap);
+  color: var(--muted);
+}
+
+.dj-skcard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.dj-skposter {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--r-md);
+  background: var(--hover);
+  overflow: hidden;
+}
+
+.dj-skcard > .dsk-line {
+  margin: 0;
+}
+
+/* [lc-2294] 详情浮层骨架：形状对齐 .dj-dhead（112px 竖版海报 + 信息列）与 .dj-eps 格子 */
+.dj-dsk {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.dj-dsk-head {
+  display: flex;
+  gap: var(--sp-4);
+  padding-right: 28px;
+}
+
+.dj-dsk-poster {
+  position: relative;
+  flex: 0 0 112px;
+  width: 112px;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--hover);
+}
+
+.dj-dsk-lines {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.dj-dsk-lines > .dsk-line {
+  margin: 5px 0;
+}
+
+.dj-dsk-eps {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: var(--sp-2);
+}
+
+.dj-dsk-ep {
+  height: 30px;
+  border-radius: var(--r-sm);
+}

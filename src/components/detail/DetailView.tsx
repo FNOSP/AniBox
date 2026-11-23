@@ -23,6 +23,8 @@ import { RelatedTab, type TmdbRecommendation } from "./tabs/RelatedTab";
 import { CastTab } from "./tabs/CastTab";
 import { ReviewsTab } from "./tabs/ReviewsTab";
 import { CommentsTab } from "./tabs/CommentsTab";
+// [lc-2332] 公共评论（自建服务，可发可删；与 Bangumi 的只读评论/吐槽是两回事）
+import { CommunityTab } from "./tabs/CommunityTab";
 import { ExtraTab } from "./tabs/ExtraTab";
 import { RatingWidget } from "./RatingWidget";
 import { PlayGlyph, PlayingGlyph } from "../common/PlayGlyph";
@@ -1779,9 +1781,14 @@ export function DetailView({
   //     0 / undefined / null 一律视为无效。其余四个标签（详情/关联/角色/更多）顺序与行为不变。
   const hasBgmId =
     Number(bgm?.subject_id ?? 0) > 0 || Number(base.bgm_id ?? 0) > 0;
+  // [lc-2332] 「讨论」页（自建公共评论）只需要 TMDB 编号 —— 是唯一跨服务器稳定的作品标识。
+  // 所以它不看 hasBgmId，只看有没有 tmdbId；没有就整页提示不可用而不是藏掉入口
+  // （藏掉的话用户会以为「这软件没有讨论功能」）。
+  const hasTmdb = Number(tmdbAnchor.tmdbId) > 0;
+  const communityTabIds = hasTmdb ? ["community"] : [];
   const tabIds: string[] = hasBgmId
-    ? ["overview", "reviews", "comments", "related", "more", "extra"]
-    : ["overview", "related", "more", "extra"];
+    ? ["overview", "reviews", "comments", "related", "more", "extra", ...communityTabIds]
+    : ["overview", "related", "more", "extra", ...communityTabIds];
   // [lc-2127] 简介改为默认完全展示：原 longIntro / introFull / Esc 监听
   // 与「展开」弹窗一并删除（见 OverviewTab 同处注释）。
   const activeTab = tabIds.includes(tab) ? tab : "overview";
@@ -2327,6 +2334,13 @@ export function DetailView({
           retryComments={retryComments}
         />
       )}
+      {activeTab === "community" && (
+        <CommunityTab
+          mediaType={isMovie ? "movie" : "tv"}
+          tmdbId={hasTmdb ? Number(tmdbAnchor.tmdbId) : null}
+          title={base.title || ""}
+        />
+      )}
     </div>
   );
   /* 杂志风左栏的标签体：overview = 纯简介（标签已在数据格、剧照在层叠海报，不重复）；
@@ -2419,6 +2433,13 @@ export function DetailView({
           commentsErr={commentsErr}
           commentsMoreBusy={commentsMoreBusy}
           retryComments={retryComments}
+        />
+      )}
+      {activeTab === "community" && (
+        <CommunityTab
+          mediaType={isMovie ? "movie" : "tv"}
+          tmdbId={hasTmdb ? Number(tmdbAnchor.tmdbId) : null}
+          title={base.title || ""}
         />
       )}
     </div>

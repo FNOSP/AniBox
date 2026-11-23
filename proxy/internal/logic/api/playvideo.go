@@ -13,6 +13,7 @@ import (
 	"proxy/pkg/logger"
 	"proxy/pkg/utils"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -619,7 +620,136 @@ func HlsProxyHandler(c *gin.Context) {
 		"Cookie":        q.Cookie + "; mode=relay",
 	}
 	logger.Debugf("[hls] 转发分片 %s", briefURL(target))
+
+	// [lc-2319] **分片 410 是"还没产出"，不是"不存在"** —— 必须等一等再重试。
+	//
+	// 血训：飞牛的转码 play_list 会把**整片所有分片**都提前列出来（实测 710 个），
+	// 但转码器其实按播放进度**顺序产出**。mpv 的 demuxer 会顺着 playlist 一路往后
+	// 预读，读到还没产出的段就拿到 `410 Gone`；ffmpeg 对同一段失败几次就
+	// `Failed to open segment` + 跳过，一路跳到列表末尾 → `EOF reached` →
+	// 播放器停在 `Enter buffering (100% -> 0%)` 再也不动
+	// （这就是用户看到的「切完档直接卡住」）。
+	//
+	// 实测：同一会话里第 700 段（远未来）第一次请求 410，等几秒再请求就 200。
+	// 所以把 410/404 当**暂时性**状态处理：退避重试，真拿不到才把错误回给播放器。
+	if serveHlsSegmentWithRetry(c, target, headers, q.SkipVerify == 1) {
+		return
+	}
 	utils.DynamicProxy(c, target, headers, q.SkipVerify == 1)
+}
+
+// serveHlsSegmentWithRetry [lc-2319] 转发分片；410/404 视为「转码器还没产出」退避重试。
+//
+// **一次请求内处理完**：成功就直接把上游正文流式写给播放器（不再让 DynamicProxy
+// 重发一遍 —— 那会让每个分片都打两次上游，得不偿失）。
+// 返回 true 表示响应已由本函数写完。
+func serveHlsSegmentWithRetry(c *gin.Context, target string, headers map[string]string, skipVerify bool) bool {
+	client := upstreamSegmentClient(skipVerify)
+
+	send := func() (*http.Response, error) {
+		req, err := http.NewRequestWithContext(c.Request.Context(), "GET", target, nil)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		if rg := c.Request.Header.Get("Range"); rg != "" {
+			req.Header.Set("Range", rg)
+		}
+		return client.Do(req)
+	}
+
+	const maxTries = 6
+	var lastCode int
+	for attempt := 1; attempt <= maxTries; attempt++ {
+		resp, err := send()
+		if err != nil {
+			if c.Request.Context().Err() != nil {
+				return true // 播放器已断开，没必要再写
+			}
+			if attempt == maxTries {
+				return false // 一直连不上：交回原逻辑出正确的错误
+			}
+			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+			continue
+		}
+
+		switch resp.StatusCode {
+		case http.StatusOK, http.StatusPartialContent:
+			if attempt > 1 {
+				logger.Infof("[hls] 分片等待后已产出（第 %d 次）: %s", attempt, briefURL(target))
+			}
+			defer resp.Body.Close()
+			for k, vs := range resp.Header {
+				if isHopByHop(k) {
+					continue
+				}
+				for _, v := range vs {
+					c.Writer.Header().Add(k, v)
+				}
+			}
+			c.Writer.WriteHeader(resp.StatusCode)
+			_, _ = io.Copy(c.Writer, resp.Body)
+			return true
+
+		case http.StatusGone, http.StatusNotFound:
+			lastCode = resp.StatusCode
+			_ = resp.Body.Close()
+			if attempt == maxTries {
+				logger.Errorf("[hls] 分片重试 %d 次仍 %d（转码未产出，放弃）: %s",
+					maxTries, lastCode, briefURL(target))
+				c.JSON(lastCode, gin.H{"error": "segment not ready"})
+				return true
+			}
+			// 退避：0.5s → 1.0s → 1.5s …（总等待 ~10.5s 上限）
+			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+
+		default:
+			// 403/500 等非暂时性错误：交回 DynamicProxy（它的错误处理更完整）
+			_ = resp.Body.Close()
+			return false
+		}
+	}
+	return false
+}
+
+// upstreamSegmentClient HLS 分片专用客户端（连接池复用 + 不做自动 gzip）。
+var (
+	segClients   = map[bool]*http.Client{}
+	segClientsMu sync.Mutex
+)
+
+func upstreamSegmentClient(skipVerify bool) *http.Client {
+	segClientsMu.Lock()
+	defer segClientsMu.Unlock()
+	if c, ok := segClients[skipVerify]; ok {
+		return c
+	}
+	c := &http.Client{
+		// 分片最大也就几 MB，给 60s 足够；不设整体 Timeout 会让卡住的分片永久占住连接
+		Timeout: 60 * time.Second,
+		Transport: &http.Transport{
+			DisableCompression: true,
+			ForceAttemptHTTP2:  false,
+			TLSClientConfig:    &tls.Config{InsecureSkipVerify: skipVerify},
+			MaxIdleConns:       32,
+			MaxIdleConnsPerHost: 16,
+			IdleConnTimeout:    90 * time.Second,
+		},
+	}
+	segClients[skipVerify] = c
+	return c
+}
+
+// isHopByHop 代理不该转发的逐跳头。
+func isHopByHop(key string) bool {
+	switch strings.ToLower(key) {
+	case "connection", "proxy-connection", "keep-alive", "proxy-authenticate",
+		"proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade":
+		return true
+	}
+	return false
 }
 
 // rewriteHlsToProxy [lc-2312] 把 m3u8 里每个 URI 改写成经代理的地址。

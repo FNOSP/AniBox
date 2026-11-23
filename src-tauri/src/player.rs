@@ -839,6 +839,25 @@ pub struct QualityTier {
     pub height: i64,
 }
 
+/// [lc-2307] 当前转码会话的 playLink（空 = 当前是直链播放）。
+/// 原地换档（media.resetQuality）必须带上它，否则服务端不知道换哪个会话。
+/// 与 quality_cache 分开存：后者是「这片的档位表」，这个是「我正挂在哪个会话上」。
+pub fn current_transcode_link() -> String {
+    static LINK: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+    LINK.get_or_init(|| std::sync::Mutex::new(String::new()))
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default()
+}
+
+/// 记录/清空当前转码会话链接（空串 = 回到直链）。
+pub fn set_current_transcode_link(link: &str) {
+    static LINK: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+    if let Ok(mut g) = LINK.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
+        *g = link.to_string();
+    }
+}
+
 fn quality_cache() -> &'static std::sync::Mutex<std::collections::HashMap<i64, QualityTier>> {
     static CACHE: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<i64, QualityTier>>,
@@ -888,7 +907,7 @@ pub async fn switch_quality(
     item_guid: &str,
     height: i64,
     start_secs: f64,
-) -> Result<String, String> {
+) -> Result<(String, bool), String> { // (url_or_link, need_reload)
     // 一次性取出「该档位」与「最高档」—— Mutex 非重入，嵌套拿锁会死锁。
     let (tier, max_height) = {
         let guard = quality_cache().lock().unwrap_or_else(|e| e.into_inner());
@@ -903,7 +922,11 @@ pub async fn switch_quality(
 
     if is_original {
         crate::libmpv::trace("[quality] 切到原画 → 回原始文件直读（不转码）");
-        return Ok(crate::proxy::play_url(cfg, item_guid));
+        // [lc-2307] 回直链：旧转码会话作废（服务端会自行回收）
+        // 从转码回直链必须换流（m3u8 → range），所以要 reload
+        let was_transcoding = !current_transcode_link().is_empty();
+        set_current_transcode_link("");
+        return Ok((crate::proxy::play_url(cfg, item_guid), was_transcoding));
     }
 
     let Some(tier) = tier else {
@@ -927,7 +950,7 @@ pub async fn switch_quality(
         "subtitleGuid": meta.subtitle_guid,
         "startSeconds": start_secs as i64,
         "forcedSdr": 0,
-        "oldPlayLink": "",
+        "oldPlayLink": current_transcode_link(),
     });
     let client = reqwest::Client::new();
     let resp = client
@@ -951,10 +974,21 @@ pub async fn switch_quality(
                 v.get("error").and_then(|x| x.as_str()).unwrap_or("未知错误")
             )
         })?;
-    crate::libmpv::trace(&format!("[quality] 已建 {} 转码会话：{link}", tier.resolution));
+    let in_place = v.get("inPlace").and_then(|x| x.as_bool()).unwrap_or(false);
+    // [lc-2307] 记下会话链接：下次换档要带它去 media.resetQuality。
+    // 原地换档时 link 仍是同一地址，重建时是新地址 —— 两者都直接覆盖。
+    set_current_transcode_link(link);
+    crate::libmpv::trace(&format!(
+        "[quality] {} {} 转码会话：{link}",
+        if in_place { "原地换档到" } else { "已建" },
+        tier.resolution
+    ));
     let _ = state; // 目前用不到，保留参数便于后续加锁控制
     let _ = app;
-    Ok(link.to_string())
+    // [lc-2307] 原地换档：同一个 m3u8，服务端已换参数，**不必重新 loadfile**
+    // （飞鲸 `_switchQualityWithSessionFlow` 的 resetQuality 分支就不重开流）。
+    // 只有新建会话（直链→转码）才需要 reload。
+    Ok((link.to_string(), !in_place))
 }
 
 #[allow(clippy::too_many_arguments)]

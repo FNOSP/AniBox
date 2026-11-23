@@ -1352,15 +1352,19 @@ impl MpvSession {
                         if let Some(raw) = v.get("data").and_then(|x| x.as_str()) {
                             let s = raw.trim().trim_matches('"');
                             if let Ok(q) = s.parse::<i64>() {
-                                // [lc-2305] 切清晰度 = 建转码会话 + 重新 loadfile，
-                                // 会发多条 IPC 命令等回包。**绝不能在本读线程里做**
-                                // （自己等自己 = 死锁，lc-2127 的教训）。
-                                // 所以这里只 emit，由前端调 apply_quality_switch 命令
-                                // 在普通命令线程里执行。
-                                let _ = app2.emit("anibox-quality-switch", json!({ "height": q }));
-                                crate::libmpv::trace(&format!(
-                                    "[quality] 收到切换请求 height={q}，已转给前端执行"
-                                ));
+                                // [lc-2307] 只 emit，由前端调 apply_quality_switch 执行。
+                                // 为什么不在本读线程直接做：建转码会话要发多条 IPC 等回包，
+                                // 读线程自己等自己 = 死锁（lc-2127 的教训）。
+                                // 为什么不在读线程 spawn：player::launch 的 future 不是 Send
+                                // （内部持有非 Send 句柄），编译期就过不去。
+                                match app2.emit("anibox-quality-switch", json!({ "height": q })) {
+                                    Ok(_) => crate::libmpv::trace(&format!(
+                                        "[quality] emit 成功 height={q}，等前端调命令"
+                                    )),
+                                    Err(e) => crate::libmpv::trace(&format!(
+                                        "[quality] emit 失败（前端可能收不到）：{e}"
+                                    )),
+                                }
                             }
                             let line = json!({
                                 "command": ["set_property", "user-data/anibox/quality-request", ""],

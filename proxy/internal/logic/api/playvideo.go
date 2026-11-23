@@ -384,12 +384,26 @@ func TranscodePlayHandler(c *gin.Context) {
 
 	fnApi := fnapi.NewApiService(body.Domain, body.Token, body.SkipVerify == 1, body.Cookie)
 
-	// ① 先释放旧转码会话（照抄飞鲸：quit 后再 play，避免服务端同时跑两个会话）
+	// ① [lc-2307] 主路径：**原地换档**（照抄 FlyNarwhal player_screen.dart:4738）。
+	// 飞鲸切换清晰度首选 media/p 的 req=media.resetQuality —— 服务端在**同一个
+	// 转码会话**里换编码参数，返回 updateM3u8/hlsTime，客户端继续播原 m3u8，
+	// **不需要** quit + play/play 重建（那条路只在「直链 → 转码」首建时用）。
+	// 只有没有旧会话（OldPlayLink 为空）时才走下面的 play/play 新建。
 	if body.OldPlayLink != "" {
-		if _, err := fnApi.MediaP(fnapi.MediaPRequestData{PlayLink: body.OldPlayLink}); err != nil {
-			// 释放失败不致命（会话可能已自然结束）——只记日志继续
-			logger.Warnf("[lc-2305] 释放旧转码会话失败（继续）：%v", err)
+		reqID := fmt.Sprintf("anibox-%d", time.Now().UnixNano())
+		resp, err := fnApi.ResetQuality(body.OldPlayLink, body.Resolution,
+			body.Bitrate, body.StartSeconds, reqID)
+		if err == nil && resp != nil && resp.Success {
+			logger.Infof("[lc-2307] 原地换档成功: %s @ %dkbps（复用会话 %s）",
+				body.Resolution, body.Bitrate/1000, briefURL(body.OldPlayLink))
+			c.JSON(200, gin.H{
+				"playLink": body.OldPlayLink, // 仍是同一个 m3u8 地址
+				"inPlace":  true,
+			})
+			return
 		}
+		// 原地换档失败 → 退化为重建会话（下面走 play/play）
+		logger.Warnf("[lc-2307] 原地换档失败，回退到重建会话: err=%v", err)
 	}
 
 	// ② 目标编码器归一：只允许 h264 / hevc。传源码编码（如 av1）会被服务端

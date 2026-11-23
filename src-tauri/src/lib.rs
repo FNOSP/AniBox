@@ -3099,10 +3099,21 @@ async fn apply_quality_switch(
     height: i64,
 ) -> Result<(), String> {
     let cfg = state.config.read().await.clone();
+    // [lc-2307] 诊断：确认命令真的被调用、以及 meta 查得怎样
+    libmpv::trace(&format!("[quality] apply_quality_switch 被调用 height={height}"));
     // 当前正在播的条目 guid（切换后要重新打开同一条）
-    let item_guid = fnos_progress::current_meta()
-        .map(|m| m.item_guid)
-        .ok_or_else(|| "当前没有可切换的播放会话".to_string())?;
+    let item_guid = match fnos_progress::current_meta() {
+        Some(m) => {
+            libmpv::trace(&format!(
+                "[quality] current_meta 命中 item_guid={} media_guid={} video_guid={}",
+                m.item_guid, m.media_guid, m.video_guid));
+            m.item_guid
+        }
+        None => {
+            libmpv::trace("[quality] current_meta 返回 None → 无法切换");
+            return Err("当前没有可切换的播放会话".into());
+        }
+    };
 
     // 记住当前位置：切档要重新 loadfile，不能把进度丢掉。
     // 直接从 mpv 读（tracker 里的 pos 是异步回传的，可能滞后几百毫秒）。
@@ -3131,30 +3142,30 @@ async fn apply_quality_switch(
         }
     };
 
-    let url = player::switch_quality(&app, &state, &cfg, &item_guid, height, pos).await?;
+    let (url, need_reload) =
+        player::switch_quality(&app, &state, &cfg, &item_guid, height, pos).await?;
 
-    // 重新交给播放器（loadfile）。resume 用当前位置，体验上等同于"无缝换档"。
-    let title = state
-        .config
-        .read()
-        .await
-        .token
-        .clone(); // 占位，标题保持由 mpv 现有 media-title 不变
-    let _ = title;
-    player::launch(
-        &app,
-        &state,
-        &cfg,
-        &url,
-        "", // 空标题 = 保留 mpv 当前的 media-title（不覆盖）
-        pos,
-        dur,
-        None,
-        &[],
-        None,
-        false,
-    )
-    .await?;
+    if need_reload {
+        // 换流（直链 ↔ 转码）：必须重新 loadfile，resume 用当前位置。
+        player::launch(
+            &app,
+            &state,
+            &cfg,
+            &url,
+            "", // 空标题 = 保留 mpv 当前的 media-title（不覆盖）
+            pos,
+            dur,
+            None,
+            &[],
+            None,
+            false,
+        )
+        .await?;
+    } else {
+        // [lc-2307] 原地换档（media.resetQuality）：同一个 m3u8，服务端已换参数。
+        // 飞鲸也是只更新状态、不重开流 —— reload 反而会打断播放并丢缓冲。
+        libmpv::trace("[quality] 原地换档完成（不重开流）");
+    }
 
     // 切完把当前档位写回（底栏图标/tooltip 跟着变）
     let sess = {

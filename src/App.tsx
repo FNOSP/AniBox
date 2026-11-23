@@ -484,26 +484,37 @@ function App() {
     const un2 = listen<{ phase?: string }>("mpv-load", (e) => {
       if (e.payload?.phase === "ended") schedule();
     });
-    // [lc-2305] 普通剧集切清晰度：mpv 底栏菜单点了某档 → Rust emit 事件 →
-    // 这里调命令真正执行（建转码会话 + 重新 loadfile）。
-    // 为什么绕一圈：建转码会话要发多条 IPC 命令等回包，**不能**在 mpv 的
-    // IPC 读线程里做（自己等自己 = 死锁，lc-2127 的教训）。
-    const un3 = listen<{ height?: number }>("anibox-quality-switch", (e) => {
-      const h = typeof e.payload?.height === "number" ? e.payload.height : 0;
-      // 失败时**不静默**：写进日志即可（界面提示用 mpv OSD 更贴切，但那要
-      // 再发一次 IPC；切换失败通常伴随 NAS 侧报错，日志里已带 detail）。
-      invoke("apply_quality_switch", { height: h }).catch((err) => {
-        console.error("[quality] 切换清晰度失败:", err);
-      });
-    });
     return () => {
       disposed = true;
       window.clearTimeout(timer);
       un1.then((f) => f()).catch(() => {});
       un2.then((f) => f()).catch(() => {});
-      un3.then((f) => f()).catch(() => {});
     };
   }, [guest]);
+
+  /* [lc-2307] 普通剧集切清晰度：mpv 底栏菜单点了某档 → Rust emit →
+   * 这里调命令执行（建转码会话 / 原地换档）。
+   *
+   * **独立成一个 effect 且不依赖 guest**：之前挂在"继续观看刷新"那个
+   * `if (guest) return` 的 effect 里，游客态/未登录恢复期间监听器根本不注册；
+   * 而清晰度是播放器功能，与登录态无关。
+   * 注册失败要在 console 留痕，否则用户点菜单没反应时无从排查。 */
+  useEffect(() => {
+    let alive = true;
+    const un = listen<{ height?: number }>("anibox-quality-switch", (e) => {
+      if (!alive) return;
+      const h = typeof e.payload?.height === "number" ? e.payload.height : 0;
+      console.info("[quality] 收到切换请求 height=" + h);
+      invoke("apply_quality_switch", { height: h }).catch((err) => {
+        console.error("[quality] 切换清晰度失败:", err);
+      });
+    });
+    un.catch((e) => console.error("[quality] 监听注册失败:", e));
+    return () => {
+      alive = false;
+      un.then((f) => f()).catch(() => {});
+    };
+  }, []);
 
   useEffect(() => {
     // 用户名 / 服务器地址：侧栏底部卡片展示用

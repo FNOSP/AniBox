@@ -371,3 +371,30 @@ func (s *ApiService) MediaP(data MediaPRequestData) (*ApiResponse[any], error) {
 	return Request[any](s.client, s.baseURL, "/v/api/v1/media/p",
 		MethodPOST, s.token, data, nil, 10, 1, s.cookie)
 }
+
+// [lc-2307] 原地切换转码清晰度（照抄 FlyNarwhal 的 media.resetQuality）。
+//
+// 飞鲸的切换主路径**不是** quit + play/play 重建，而是这个：
+//   POST /v/api/v1/media/p
+//   { req: "media.resetQuality", reqid: "...", playLink: <旧会话>,
+//     quality: { resolution, bitrate }, startTimestamp: <秒>, clearCache: true }
+// 服务端在**同一个转码会话里**换编码参数，返回 updateM3u8/hlsTime，
+// 客户端只需继续播原 m3u8（不必重新 play/play）。
+//
+// 参见 FlyNarwhal player_screen.dart:4738 `resetQuality(...)`。
+func (s *ApiService) ResetQuality(playLink, resolution string, bitrate int,
+	startTimestamp int, reqID string) (*ApiResponse[any], error) {
+	body := map[string]any{
+		"req":       "media.resetQuality",
+		"reqid":     reqID,
+		"playLink":  playLink,
+		"clearCache": true,
+		"quality": map[string]any{
+			"resolution": resolution,
+			"bitrate":    bitrate,
+		},
+		"startTimestamp": startTimestamp,
+	}
+	return Request[any](s.client, s.baseURL, "/v/api/v1/media/p",
+		MethodPOST, s.token, body, nil, 30, 1, s.cookie)
+}

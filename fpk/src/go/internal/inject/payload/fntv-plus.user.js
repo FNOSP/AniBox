@@ -20064,7 +20064,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         ipcRenderer.once("version-info", (_e, info) => {
           if (!info || !info.version) return;
           const ver = String(info.version).replace(/-web$/, "");
-          const bt = "2026-11-15 22:08" ? " (2026-11-15 22:08)" : "";
+          const bt = "2026-11-23 20:54" ? " (2026-11-23 20:54)" : "";
           aboutVer.textContent = "\u7248\u672C\uFF1Av" + ver + bt;
         });
       } catch (_) {
@@ -24808,7 +24808,7 @@ html.fntv-boot-hide #root{visibility:hidden}
   // src/preload/plugins/playMemory.ts
   var LS_RATE = "fntv-play-rate";
   var LS_VOL = "fntv-play-volume";
-  var LS_MUTE = "fntv-play-mute";
+  var LS_MUTE_LEGACY = "fntv-play-mute";
   var GUARD_MS = 3e3;
   var num = (key, fallback) => {
     try {
@@ -24818,6 +24818,12 @@ html.fntv-boot-hide #root{visibility:hidden}
       return fallback;
     }
   };
+  function purgeLegacyMuteKey() {
+    try {
+      localStorage.removeItem(LS_MUTE_LEGACY);
+    } catch {
+    }
+  }
   function attach(v) {
     if (v.dataset.fntvPlayMem === "1") return;
     v.dataset.fntvPlayMem = "1";
@@ -24834,42 +24840,26 @@ html.fntv-boot-hide #root{visibility:hidden}
       }
     });
     v.addEventListener("volumechange", () => {
+      if (v.muted) return;
       const savedVol = num(LS_VOL, -1);
-      const savedMute = (() => {
-        try {
-          return localStorage.getItem(LS_MUTE) === "1";
-        } catch {
-          return false;
-        }
-      })();
       if (Date.now() < suppressUntil) {
         const volOff = savedVol >= 0 && Math.abs(v.volume - savedVol) > 0.01;
-        const muteOff = v.muted !== savedMute;
-        if (volOff || muteOff) {
-          if (savedVol >= 0) v.volume = savedVol;
-          v.muted = savedMute;
+        if (volOff) {
+          v.volume = savedVol;
           return;
         }
       }
       try {
         localStorage.setItem(LS_VOL, String(v.volume));
-        localStorage.setItem(LS_MUTE, v.muted ? "1" : "0");
       } catch {
       }
     });
     const restore = () => {
       const savedRate = num(LS_RATE, 0);
       const savedVol = num(LS_VOL, -1);
-      const savedMute = (() => {
-        try {
-          return localStorage.getItem(LS_MUTE) === "1";
-        } catch {
-          return false;
-        }
-      })();
+      purgeLegacyMuteKey();
       if (savedRate > 0 && Math.abs(v.playbackRate - savedRate) > 0.01) v.playbackRate = savedRate;
       if (savedVol >= 0) v.volume = savedVol;
-      v.muted = savedMute;
       suppressUntil = Date.now() + GUARD_MS;
       let n = 0;
       const reassert = window.setInterval(() => {
@@ -24888,6 +24878,7 @@ html.fntv-boot-hide #root{visibility:hidden}
     window.setTimeout(restore, 600);
   }
   registerHook("onReady" /* OnReady */, () => {
+    purgeLegacyMuteKey();
     window.setInterval(() => {
       try {
         const v = document.querySelector("video");

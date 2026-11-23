@@ -341,9 +341,28 @@ func QualitiesHandler(c *gin.Context) {
 	// 飞鲸 createPlayRequest 写的是 `mediaGuid: fileStream.guid`
 	// （player_session_coordinator.dart:793）。传错会得到
 	// 「System busy, please retry later」。
+	// [lc-2309] 一并回传 videoGuid / audioGuid：飞鲸的 play/play 必传这两个
+	// （createPlayRequest 从 videoStream.guid / 选中音轨拿），传空很可能就是
+	// "System busy" 的另一半原因。audio 取 is_default=1 的那条，没有就取第一条。
+	audioGuid := ""
+	for _, a := range streamResp.Data.AudioStreams {
+		if a.IsDefault == 1 {
+			audioGuid = a.GUID
+			break
+		}
+	}
+	if audioGuid == "" && len(streamResp.Data.AudioStreams) > 0 {
+		audioGuid = streamResp.Data.AudioStreams[0].GUID
+	}
 	c.JSON(200, gin.H{
 		"mediaGuid": mediaGuid,
 		"fileGuid":  streamResp.Data.FileStream.GUID,
+		"videoGuid": streamResp.Data.VideoStream.GUID,
+		// [lc-2309] 源编码：调用方据此按飞鲸规则选 video_encoder
+		//（hevc/av1/vp8/vp9 → hevc，其余 → h264；forced h264 优先）
+		"codecName": streamResp.Data.VideoStream.CodecName,
+		"profile":   streamResp.Data.VideoStream.Profile,
+		"audioGuid": audioGuid,
 		"width":     streamResp.Data.VideoStream.Width,
 		"height":    streamResp.Data.VideoStream.Height,
 		"qualities": items,

@@ -815,6 +815,23 @@ pub fn spawn_push_qualities(app: &AppHandle, cfg: &crate::config::Config, item_g
                     crate::libmpv::trace(&format!("[quality] 记下 fileGuid={fg}"));
                 }
             }
+            // [lc-2309] 一并记下 video/audio guid（play/play 必传，空值会 System busy）
+            if let Some(vg) = body.get("videoGuid").and_then(|x| x.as_str()) {
+                if !vg.is_empty() {
+                    set_current_video_guid(vg);
+                }
+            }
+            if let Some(ag) = body.get("audioGuid").and_then(|x| x.as_str()) {
+                if !ag.is_empty() {
+                    set_current_audio_guid(ag);
+                }
+            }
+            // [lc-2309] 源编码：按飞鲸规则选 video_encoder
+            if let Some(cn) = body.get("codecName").and_then(|x| x.as_str()) {
+                if !cn.is_empty() {
+                    set_current_codec(cn);
+                }
+            }
             let _ = sess
                 .command_no_reply(json!(["set", "user-data/anibox/qualities", csv]))
                 .await;
@@ -882,6 +899,30 @@ pub fn set_current_file_guid(guid: &str) {
         *g = guid.to_string();
     }
 }
+
+/// [lc-2309] 当前条目的 video/audio guid（`play/play` 必传）。
+/// 从代理 `/api/v1/qualities` 取，比 PlayMeta 里的更可靠（后者在
+/// 某些路径下是空串，实测空值会让飞牛回 "System busy"）。
+macro_rules! guid_slot {
+    ($get:ident, $set:ident) => {
+        pub fn $get() -> String {
+            static G: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+            G.get_or_init(|| std::sync::Mutex::new(String::new()))
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default()
+        }
+        pub fn $set(guid: &str) {
+            static G: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+            if let Ok(mut g) = G.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
+                *g = guid.to_string();
+            }
+        }
+    };
+}
+guid_slot!(current_video_guid, set_current_video_guid);
+guid_slot!(current_codec, set_current_codec);
+guid_slot!(current_audio_guid, set_current_audio_guid);
 
 fn quality_cache() -> &'static std::sync::Mutex<std::collections::HashMap<i64, QualityTier>> {
     static CACHE: std::sync::OnceLock<
@@ -964,16 +1005,36 @@ pub async fn switch_quality(
 
     // 释放旧转码会话（若有）+ 建新会话，都在代理侧完成
     let url = crate::proxy::transcode_url(cfg);
+    // [lc-2309] video/audio guid 优先用 qualities 接口带回的（PlayMeta 可能是空）
+    let vg = {
+        let v = current_video_guid();
+        if v.is_empty() { meta.video_guid.clone() } else { v }
+    };
+    let ag = {
+        let a = current_audio_guid();
+        if a.is_empty() { meta.audio_guid.clone() } else { a }
+    };
+    // [lc-2309] 照抄飞鲸 createPlayRequest 的编码器规则：
+    //   hevc/av1/vp8/vp9 → 转 hevc；其余 → h264。
+    //   传源编码本身（如 av1）会被服务端以 ParameterError 8192 拒。
+    let enc = {
+        let c = current_codec().to_lowercase();
+        if matches!(c.as_str(), "hevc" | "av1" | "vp8" | "vp9") {
+            "hevc"
+        } else {
+            "h264"
+        }
+    };
     let body = json!({
         "itemGuid": item_guid,
         "mediaGuid": meta.media_guid,
         // [lc-2307] play/play 真正要的是 FileStream.guid
         "fileGuid": current_file_guid(),
-        "videoGuid": meta.video_guid,
-        "videoEncoder": "h264",     // 只允许 h264/hevc；h264 兼容性最好
+        "videoGuid": vg,
+"videoEncoder": enc,
         "resolution": tier.resolution,
         "bitrate": tier.bitrate,
-        "audioGuid": meta.audio_guid,
+        "audioGuid": ag,
         "subtitleGuid": meta.subtitle_guid,
         "startSeconds": start_secs as i64,
         "forcedSdr": 0,

@@ -14,9 +14,9 @@ import {
   Film as IcoFilmL,
   Heart as IcoHeartL,
   MoreHorizontal as IcoMoreL,
-  Play as IcoPlayL,
   Star as IcoStarL,
 } from "lucide-react";
+import { PlayGlyph } from "./PlayGlyph";
 import { imgUrl } from "../../lib/images";
 import { loadWatchedOverrides, setWatchedOverride } from "../../lib/watched";
 import { MediaItem } from "../../types";
@@ -250,8 +250,13 @@ export function PosterCard({
         {isRealMedia ? (
           /* [lc-1654] 飞牛同款四按钮覆盖层：点击一律 stopPropagation，不触发卡片 onOpen */
           <div className="poster-actions">
-            <button className="pa-play" onClick={onPlay} title="播放" aria-label="播放">
-              <IcoPlayL size={26} strokeWidth={1.6} className="fill" />
+            <button
+              className="pa-play pl-circle pl-md"
+              onClick={onPlay}
+              title="播放"
+              aria-label="播放"
+            >
+              <PlayGlyph size={20} />
             </button>
             <div className="pa-row">
               <button
@@ -298,7 +303,16 @@ export function PosterCard({
           </div>
         ) : (
           <div className="card-hover">
-            <span className="play-pill">{isPlayable ? "▶ 播放" : "打开"}</span>
+            <span className="play-pill pl-pill">
+              {isPlayable ? (
+                <>
+                  <PlayGlyph size={13} />
+                  播放
+                </>
+              ) : (
+                "打开"
+              )}
+            </span>
           </div>
         )}
         {ratingText && (

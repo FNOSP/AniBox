@@ -85,14 +85,8 @@
 .card:hover .card-hover {
   opacity: 1;
 }
+/* [lc-2321] 材质/排版交给 .pl-pill（玻璃底 + 主色三角）；这里只留入场动效。 */
 .play-pill {
-  background: var(--accent-grad);
-  color: #fff;
-  padding: var(--sp-2) var(--sp-4);
-  border-radius: var(--r-full);
-  font-size: var(--fs-ctl);
-  font-weight: 700;
-  box-shadow: 0 6px 18px rgb(var(--shadow-rgb) / 0.24);
   transform: translateY(6px);
   transition: transform var(--dur-move);
 }
@@ -227,31 +221,18 @@
 .card:hover .poster-actions {
   opacity: 1;
 }
+/* [lc-2321] 外观交给 51-play-controls.css 的 .pl-circle（玻璃底 + 主色三角）；
+   这里只保留定位。原来 62px 实心蓝盘在整面海报墙上过响，且 `margin-left:2px`
+   是给描边三角打的重心补丁 —— 换成 PlayGlyph 后不需要了。 */
 .pa-play {
   position: absolute;
   left: 50%;
   top: 50%;
+  /* 悬停放大要带位移，否则 translate 会被 scale 覆盖掉 */
   transform: translate(-50%, -50%);
-  width: 62px;
-  height: 62px;
-  border-radius: 50%;
-  border: 0;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  background: var(--accent-grad);
-  box-shadow: 0 8px 24px rgb(var(--shadow-rgb) / 0.27);
-  transition: transform var(--dur-tap) ease, box-shadow var(--dur-tap) ease;
 }
 .pa-play:hover {
-  transform: translate(-50%, -50%) scale(1.06);
-  box-shadow: 0 10px 30px rgb(var(--shadow-rgb) / 0.36);
-}
-.pa-play .fill {
-  fill: currentColor;
-  margin-left: 2px; /* 视觉上让三角形居中 */
+  transform: translate(-50%, -50%) scale(1.05);
 }
 .pa-row {
   position: absolute;

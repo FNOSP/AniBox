@@ -3361,132 +3361,6 @@ try{if(typeof window!=='undefined'){if(typeof window.require==='undefined'){wind
     applyLogoToDom();
   });
 
-  // src/preload/plugins/danmakuHeat.ts
-  var HEAT_ID = "fntv-danmaku-heat";
-  var LS_KEY4 = "fntv_danmaku_enabled";
-  var ITEMS_EVENT = "fntv:danmaku-items";
-  var heatCanvas = null;
-  var heatCtx = null;
-  var density = [];
-  var pendingTimes = null;
-  function aggregate(times, duration) {
-    const bins = Math.max(30, Math.min(240, Math.round(duration / 2)));
-    const arr = new Array(bins).fill(0);
-    for (const t2 of times) {
-      const idx = Math.min(bins - 1, Math.max(0, Math.floor(t2 / duration * bins)));
-      arr[idx]++;
-    }
-    return arr;
-  }
-  function videoDuration() {
-    const v = document.querySelector("video");
-    const d = v ? v.duration : 0;
-    return d && isFinite(d) && d > 0 ? d : 0;
-  }
-  function drawHeat() {
-    if (!heatCtx || !heatCanvas) return;
-    const w = heatCanvas.width;
-    const h = heatCanvas.height;
-    heatCtx.clearRect(0, 0, w, h);
-    if (!density.length) return;
-    const max = Math.max(...density, 1);
-    const binW = w / density.length;
-    for (let i = 0; i < density.length; i++) {
-      if (density[i] === 0) continue;
-      const ratio = density[i] / max;
-      const alpha = 0.12 + ratio * 0.72;
-      heatCtx.fillStyle = `rgba(109, 127, 242, ${alpha.toFixed(2)})`;
-      heatCtx.fillRect(i * binW, h * (1 - ratio * 0.85), Math.max(1, binW - 0.5), h * ratio * 0.85);
-    }
-  }
-  function ensureHeatCanvas() {
-    if (heatCanvas || !document.body) return;
-    const c = document.createElement("canvas");
-    c.id = HEAT_ID;
-    c.style.cssText = "position:fixed;z-index:6;pointer-events:none;display:none;";
-    document.body.appendChild(c);
-    heatCanvas = c;
-    heatCtx = c.getContext("2d");
-  }
-  function positionHeatBar() {
-    if (!heatCanvas) return;
-    const bar2 = document.querySelector('[class*="xgplayer-progress"], [class*="xg-progress"]');
-    if (!bar2 || !bar2.offsetHeight || !bar2.offsetWidth) {
-      heatCanvas.style.display = "none";
-      return;
-    }
-    const r = bar2.getBoundingClientRect();
-    heatCanvas.style.display = "block";
-    heatCanvas.style.left = r.left + "px";
-    heatCanvas.style.top = r.top - 12 + "px";
-    heatCanvas.style.width = r.width + "px";
-    heatCanvas.style.height = "8px";
-    heatCanvas.width = Math.round(r.width);
-    heatCanvas.height = 8;
-  }
-  function updateHeat() {
-    ensureHeatCanvas();
-    if (!heatCanvas) return;
-    let danmakuOn = true;
-    try {
-      danmakuOn = localStorage.getItem(LS_KEY4) !== "0";
-    } catch {
-    }
-    if (!danmakuOn) {
-      heatCanvas.style.display = "none";
-      return;
-    }
-    if (pendingTimes) {
-      const dur = videoDuration();
-      if (dur > 0) {
-        density = aggregate(pendingTimes, dur);
-        pendingTimes = null;
-      }
-    }
-    if (!density.length) {
-      heatCanvas.style.display = "none";
-      return;
-    }
-    positionHeatBar();
-    drawHeat();
-  }
-  function ingest(times) {
-    if (!Array.isArray(times) || !times.length) return;
-    const dur = videoDuration();
-    if (dur > 0) {
-      density = aggregate(times, dur);
-      pendingTimes = null;
-    } else {
-      pendingTimes = times;
-    }
-    try {
-      updateHeat();
-    } catch {
-    }
-  }
-  window.addEventListener(ITEMS_EVENT, (e) => {
-    var _a;
-    try {
-      ingest((_a = e.detail) == null ? void 0 : _a.times);
-    } catch {
-    }
-  });
-  registerHook("onReady" /* OnReady */, () => {
-    ensureHeatCanvas();
-    window.setInterval(() => {
-      try {
-        updateHeat();
-      } catch {
-      }
-    }, 2e3);
-    registerHook("onDomChange" /* OnDomChange */, () => {
-      try {
-        updateHeat();
-      } catch {
-      }
-    });
-  });
-
   // src/preload/plugins/danmakuWeb.ts
   init_electron();
   init_logger();
@@ -5630,7 +5504,7 @@ html.fnos-touch-narrow body.fnos-beautify ${COL_NUM} > :nth-child(3) > div.relat
   var log8 = logger_default;
   var loadedGuids = /* @__PURE__ */ new Set();
   var GUID_RE2 = /\/v\/(?:movie|tv|video)(?:\/(?:season|episode))?\/([a-f0-9]{32})/i;
-  var LS_KEY5 = "fntv_danmaku_enabled";
+  var LS_KEY4 = "fntv_danmaku_enabled";
   var LS_STYLE_KEY = "fntv_danmaku_style";
   var LS_BILI_KEY = "fntv_danmaku_bili_search";
   var PLAYER_HEADER_STYLE_ID = "fntv-player-header-style";
@@ -6784,7 +6658,7 @@ html.fnos-touch-narrow .fntv-dm-list.active{
     if (enabled2 === v) return;
     enabled2 = v;
     try {
-      localStorage.setItem(LS_KEY5, enabled2 ? "1" : "0");
+      localStorage.setItem(LS_KEY4, enabled2 ? "1" : "0");
     } catch {
     }
     if (canvas) canvas.style.display = enabled2 ? "block" : "none";
@@ -6927,7 +6801,7 @@ html.fnos-touch-narrow .fntv-dm-list.active{
     const onPlayInfo = (guid) => {
       if (!guid) return;
       try {
-        if (localStorage.getItem(LS_KEY5) === "0") return;
+        if (localStorage.getItem(LS_KEY4) === "0") return;
       } catch {
       }
       if (guid === currentGuid && (inflight || items.length)) return;
@@ -7931,7 +7805,7 @@ html.fnos-touch-narrow .fntv-dm-list.active{
     bindHeaderAutoHide();
     bindVideoFullscreenFix();
     try {
-      const saved = localStorage.getItem(LS_KEY5);
+      const saved = localStorage.getItem(LS_KEY4);
       enabled2 = saved !== "0";
     } catch {
     }
@@ -20064,7 +19938,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         ipcRenderer.once("version-info", (_e, info) => {
           if (!info || !info.version) return;
           const ver = String(info.version).replace(/-web$/, "");
-          const bt = "2026-11-23 20:54" ? " (2026-11-23 20:54)" : "";
+          const bt = "2026-11-23 21:32" ? " (2026-11-23 21:32)" : "";
           aboutVer.textContent = "\u7248\u672C\uFF1Av" + ver + bt;
         });
       } catch (_) {
@@ -25164,7 +25038,7 @@ html.fntv-boot-hide #root{visibility:hidden}
   function getVideo() {
     return document.querySelector("video");
   }
-  function videoDuration2() {
+  function videoDuration() {
     const v = getVideo();
     return v && isFinite(v.duration) && v.duration > 0 ? v.duration : 0;
   }
@@ -25748,7 +25622,7 @@ button.fntv-mk-btn.fntv-mk-ghost:hover{background-color:rgba(255,255,255,.13)}
     if (!panelEl) return;
     const eff = await refreshEffective(guid);
     if (guid !== currentGuid2) return;
-    const total = videoDuration2();
+    const total = videoDuration();
     const pre = { introStart: 0, introEnd: 0, outroStart: 0, outroEnd: 0 };
     if (eff && eff.manual) {
       pre.introStart = eff.manual.introStart || 0;
@@ -25808,7 +25682,7 @@ button.fntv-mk-btn.fntv-mk-ghost:hover{background-color:rgba(255,255,255,.13)}
         introEnd: v.introEnd,
         outroStart: v.outroStart,
         outroEnd: v.outroEnd,
-        totalDuration: videoDuration2()
+        totalDuration: videoDuration()
       });
       if (!r || !r.saved) {
         toast(r && r.message || "\u4FDD\u5B58\u5931\u8D25");

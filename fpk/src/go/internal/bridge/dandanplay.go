@@ -268,28 +268,82 @@ func ddpCachePut(m *sync.Map, key string, val []map[string]any) {
 
 // ddpSearchAnimes 条目搜索：/api/v2/search/episodes?anime=<关键词>
 // 返回 animes（含各自 episodes 列表，只含部分集）。命中进程内缓存则不打上游。
+//
+// [lc-2324] **关键词候选回退**：飞牛给的条目名常是「主名，副标题」的完整长名
+// （如「转生后的大圣女，极力隐瞒圣女的身份」），而弹弹play 搜索对**长串几乎零命中**
+// （实测：整串 0 条；只搜主名「转生后的大圣女」→ 1 条命中）。桌面端不踩这个坑，
+// 是因为它搜的关键词来自 **文件名**解析出的干净主名（parse_title → format_filename），
+// 从来不是条目长标题 —— 这就是「桌面正常、网页端提示搜索无结果」的真实差异。
+// 这里按主名优先逐档回退，与自建源 danmuKeywordCandidates 同思路（lc-1101 血训）；
+// 命中判断仍用**原始标题**（见 ddpAutoFetch），不会被更宽松的搜索词带偏。
 func (b *Bridge) ddpSearchAnimes(title string) []map[string]any {
 	key := strings.ToLower(strings.TrimSpace(title))
 	if v, ok := ddpCacheGet(&ddpSearchCache, key); ok {
 		logf("[dandanplay] 搜索缓存命中 title=%q（免上游请求）", title)
 		return v
 	}
-	q := url.Values{}
-	q.Set("anime", strings.TrimSpace(title))
-	code, j, err := b.ddpCall("/api/v2/search/episodes", q)
-	if err != nil {
-		logf("[dandanplay] 搜索失败 title=%q code=%d: %v", title, code, err)
-		return nil
+	var out []map[string]any
+	for _, kw := range ddpKeywordCandidates(title) {
+		q := url.Values{}
+		q.Set("anime", kw)
+		code, j, err := b.ddpCall("/api/v2/search/episodes", q)
+		if err != nil {
+			logf("[dandanplay] 搜索失败 kw=%q code=%d: %v", kw, code, err)
+			continue
+		}
+		if j == nil {
+			continue
+		}
+		if succ, ok := j["success"].(bool); ok && !succ {
+			// 服务端明确拒绝（凭证/限流）：换关键词也没用，直接停
+			logf("[dandanplay] 搜索 success=false kw=%q msg=%s", kw, jsStr(j["errorMessage"]))
+			break
+		}
+		got := toMapSlice(jArr(j["animes"]))
+		// 始终记录「上游已成功响应」的结果（空数组也是非 nil 空切片）：
+		// ddpSearchAnimes 的既有契约是「success 且无结果」返回空切片而非 nil，
+		// 面板据此区分「搜索无结果」与「请求失败」，别把这条语义改掉。
+		out = got
+		if len(got) > 0 {
+			if kw != strings.TrimSpace(title) {
+				logf("[dandanplay] 长标题无命中，主名回退命中 title=%q kw=%q animes=%d", title, kw, len(got))
+			}
+			break
+		}
 	}
-	if j == nil {
-		return nil
-	}
-	if succ, ok := j["success"].(bool); ok && !succ {
-		logf("[dandanplay] 搜索 success=false title=%q msg=%s", title, jsStr(j["errorMessage"]))
-		return nil
-	}
-	out := toMapSlice(jArr(j["animes"]))
 	ddpCachePut(&ddpSearchCache, key, out)
+	return out
+}
+
+// ddpKeywordCandidates 弹弹play 搜索词候选：整串优先，无命中再退到「主名」。
+//
+// 主名 = 第一个副标题分隔符之前的部分。分隔符覆盖中英标点与实际条目名里的常见写法
+// （逗号/顿号/冒号/破折号/间隔号），并且**先剥掉括号内的季集备注**再切，
+// 避免「某某（第二季），副标题」这种把季号切丢。
+//
+// 只在前一档确定无结果时才用下一档，且候选最多 2 个 —— 搜索是精确子串式的，
+// 过短的关键词会搜回一堆不相关条目，反而污染候选排序。
+func ddpKeywordCandidates(title string) []string {
+	raw := strings.TrimSpace(title)
+	if raw == "" {
+		return nil
+	}
+	out := []string{raw}
+	body := reSeasonMark.ReplaceAllString(raw, " ") // 季号不参与切分，交给 ddpTier 判定
+	segs := strings.FieldsFunc(body, func(r rune) bool {
+		switch r {
+		case ',', '，', '、', ':', '：', ';', '；', '-', '–', '—', '·', '・':
+			return true
+		}
+		return false
+	})
+	if len(segs) > 0 {
+		head := strings.TrimSpace(segs[0])
+		// 太短的主名（如「转生」）会把不相关条目搜回来，宁可不用
+		if len([]rune(head)) >= 4 && head != raw {
+			out = append(out, head)
+		}
+	}
 	return out
 }
 

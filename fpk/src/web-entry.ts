@@ -15,7 +15,6 @@ import './preload/plugins/autoplayNext';
 // 让落在其外壳 padding 区的点击穿透到播放遮罩（用户报「老是点击到下面的三个控件按钮」）
 import './preload/plugins/cardTapZone';
 import './preload/plugins/customLogo';
-import './preload/plugins/danmakuHeat';
 import './preload/plugins/danmakuWeb';
 import './preload/plugins/embyWall';
 // gamepad / gamepadFocus 不挂载（[v0.43.0]）：播放控制依赖 IPC media:control（主进程控 mpv），

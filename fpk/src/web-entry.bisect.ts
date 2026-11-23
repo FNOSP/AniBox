@@ -6,7 +6,6 @@ import './preload/plugins/a11y';
 import './preload/plugins/animeLib';
 import './preload/plugins/autoplayNext';
 import './preload/plugins/customLogo';
-import './preload/plugins/danmakuHeat';
 import './preload/plugins/danmakuWeb';
 import './preload/plugins/embyWall';
 import './preload/plugins/gamepad';

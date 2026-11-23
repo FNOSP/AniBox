@@ -985,6 +985,15 @@ pub async fn switch_quality(
     // 原画判定（与 FlyNarwhal supportsDirectLink 同口径）：
     //   height = 0（菜单里的"原画"）或该档就是最高档 → 走原始文件直读。
     let is_original = height <= 0 || tier.as_ref().map(|t| t.height >= max_height).unwrap_or(true);
+    // [lc-2310] 诊断：把判定依据打出来（排查"点了都走原画"）
+    {
+        let guard = quality_cache().lock().unwrap_or_else(|e| e.into_inner());
+        let keys: Vec<i64> = { let mut k: Vec<i64> = guard.keys().copied().collect(); k.sort(); k };
+        crate::libmpv::trace(&format!(
+            "[quality] switch_quality height={height} tier_hit={} max={max_height} is_original={is_original} cache_keys={keys:?}",
+            tier.as_ref().map(|t| t.height.to_string()).unwrap_or_else(|| "MISS".into())
+        ));
+    }
 
     if is_original {
         crate::libmpv::trace("[quality] 切到原画 → 回原始文件直读（不转码）");

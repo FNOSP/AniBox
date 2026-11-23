@@ -3177,9 +3177,13 @@ async fn apply_quality_switch(
             .command_no_reply(json!(["set", "user-data/anibox/quality", height.to_string()]))
             .await;
     }
+    // [lc-2310] 日志必须反映**实际走的路径**，不能按 height 瞎猜 ——
+    // 上一版这里写 height<=0 判"原画直读"，导致用户点 540 也打印
+    // 「已切到 540p（HLS 转码）」，而真正执行的是原画分支，排查时被这条
+    // 假日志带偏了一整轮。
     libmpv::trace(&format!(
-        "[quality] 已切到 {height}p（{}）",
-        if height <= 0 { "原画直读" } else { "HLS 转码" }
+        "[quality] 切换流程结束 height={height} reload={need_reload}（{}）",
+        if need_reload { "已重新起播" } else { "原地生效" }
     ));
     Ok(())
 }

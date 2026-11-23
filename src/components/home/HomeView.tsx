@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Clapperboard as IcoClapL, Film as IcoFilmL, ImagePlus as IcoImagePlusL, RotateCcw as IcoRotateL, Settings as IcoGearL, X as IcoXL } from "lucide-react";
 import { PosterCard } from "../common/PosterCard";
+import { PlayGlyph } from "../common/PlayGlyph";
 import { ScrollRow } from "../common/ScrollRow";
 import { CarouselView } from "./CarouselView";
 import { pick } from "../../lib/format";
@@ -382,7 +383,7 @@ export function HomeView({
                     {/* 中间播放按钮：只负责直接续播，阻止冒泡避免触发卡片进详情 */}
                     <button
                       type="button"
-                      className="continue-play"
+                      className="continue-play pl-circle pl-sm"
                       title="直接播放"
                       aria-label="直接播放"
                       onClick={(e) => {
@@ -390,10 +391,13 @@ export function HomeView({
                         onPlay({ guid, title: rawTitle || mainTitle, tvTitle });
                       }}
                     >
-                      ▶
+                      <PlayGlyph size={16} />
                     </button>
                     <div className="card-hover">
-                      <span className="play-pill">▶ 续播</span>
+                      <span className="play-pill pl-pill">
+                        <PlayGlyph size={13} />
+                        续播
+                      </span>
                     </div>
                     {progress > 0 && (
                       <div className="progress">

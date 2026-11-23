@@ -4,6 +4,7 @@ import { sampleChromeTone } from "../../lib/chrome";
 import { imgUrl } from "../../lib/images";
 import { DUR } from "../../lib/motion";
 import { ChromeTone, MediaItem, PlayTarget } from "../../types";
+import { PlayGlyph } from "../common/PlayGlyph";
 
 
 export function CarouselView({
@@ -233,7 +234,7 @@ export function CarouselView({
                     className="mist-play"
                     onClick={() => onPlay({ guid: it.guid, title: it.title })}
                   >
-                    ▶ 开始播放
+                    <PlayGlyph size={15} /> 开始播放
                   </button>
                   <button className="mist-more" onClick={() => onDetail(it)}>
                     MORE

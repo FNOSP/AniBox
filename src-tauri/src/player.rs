@@ -498,6 +498,18 @@ async fn launch_mpv(
     if !direct && !cenc_opts.is_empty() {
         extra.push(format!("--demuxer-lavf-o={cenc_opts}"));
     }
+    // [lc-2319] 转码流**不要**改缓存参数。
+    //
+    // 实测教训：我一开始按 FlyNarwhal 的「非直链 120s/256MB」口径给转码流限预读，
+    // 结果 59.9 秒起开始刷 `410 Gone` / `Failed to open segment`，63.8 秒到达
+    // `EOF reached` —— 因为 mpv 只预读 120s 时，demuxer 会不断重新拉取播放列表并
+    // 索要**尚未产出**的分片；飞牛转码是按需顺序产出，超前要就 410。
+    //
+    // 对照实测（同一条 720p 会话，各跑 90 秒，storyboard 关闭）：
+    //   · mpv.conf 默认 400s  → 410=0、EOF=0、buffering=0，全程正常
+    //   · 120s/256MB          → 410=208、EOF 提前触发
+    // 所以这里刻意什么都不做，保持 mpv.conf 的全局口径。真正的元凶是 thumbz 的
+    // storyboard（见 thumbz.lua 的 is_transcode_stream 禁用说明）。
     // [lc-1841] 续播点兜底：mpv 的 watch-later 在 Windows 强杀退出时会丢（见
     // mpv.rs shutdown 注释），显式 --start 用服务端进度保底起播；mpv.rs 会在首个
     // file-loaded 后把 start 清回 none，整季列表切下一集不会被误 seek。
@@ -589,6 +601,10 @@ async fn launch_mpv(
                     ]))
                     .await;
             }
+            // [lc-2319] 转码流**刻意不改**缓存参数（理由见命令行分支的长注释：
+            // 限预读会导致 410/提前 EOF）。这里只在「从转码流切回原画」时不做任何
+            // 恢复动作 —— 因为从未改过，全局口径一直有效。
+            // 真正的修复在 thumbz.lua：转码流上彻底禁用缩略图预渲染。
             // [lc-2125] 复用会话时**重新注册全部属性观察**。
             // 根因：`observe_property` 只在 MpvSession::launch 新建会话时跑一次；mpv 是
             // 常驻进程，升级后复用旧会话（旧代码没有 id=14 eof-reached）⇒ 连播永远不触发。

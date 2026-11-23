@@ -1348,22 +1348,50 @@ impl MpvSession {
                     // 这里只做转发 —— 重播需要前端的 drama/chapters（它才持有完整上下文），
                     // 所以 emit 事件让前端调 duanju_play（quality 由 duanju_play 写入队列）。
                     // 读完立刻清空，避免下一次观察把同一个请求重复触发（属性回抛）。
+                    // [lc-2314] **去重**：连续点击时清空操作与下一次写入会交错，
+                    // 实测同一个 height 会被连发两次（日志 `emit 成功 height=0` ×2，
+                    // 间隔 1ms）→ 前端执行两遍切换，画面闪一下又跳回。
+                    // 这里记「上次处理的值+时刻」，1.5s 内同值只处理一次。
                     if id == QUALITY_REQUEST_ID {
                         if let Some(raw) = v.get("data").and_then(|x| x.as_str()) {
                             let s = raw.trim().trim_matches('"');
                             if let Ok(q) = s.parse::<i64>() {
-                                // [lc-2307] 只 emit，由前端调 apply_quality_switch 执行。
-                                // 为什么不在本读线程直接做：建转码会话要发多条 IPC 等回包，
-                                // 读线程自己等自己 = 死锁（lc-2127 的教训）。
-                                // 为什么不在读线程 spawn：player::launch 的 future 不是 Send
-                                // （内部持有非 Send 句柄），编译期就过不去。
-                                match app2.emit("anibox-quality-switch", json!({ "height": q })) {
-                                    Ok(_) => crate::libmpv::trace(&format!(
-                                        "[quality] emit 成功 height={q}，等前端调命令"
-                                    )),
-                                    Err(e) => crate::libmpv::trace(&format!(
-                                        "[quality] emit 失败（前端可能收不到）：{e}"
-                                    )),
+                                use std::sync::atomic::{AtomicI64, Ordering};
+                                static LAST_Q: AtomicI64 = AtomicI64::new(i64::MIN);
+                                static LAST_T: std::sync::OnceLock<std::sync::Mutex<std::time::Instant>> =
+                                    std::sync::OnceLock::new();
+                                let now = std::time::Instant::now();
+                                let tslot = LAST_T.get_or_init(|| {
+                                    std::sync::Mutex::new(now - std::time::Duration::from_secs(10))
+                                });
+                                let dup = {
+                                    let mut t = tslot.lock().unwrap_or_else(|e| e.into_inner());
+                                    let same = LAST_Q.load(Ordering::Relaxed) == q
+                                        && now.duration_since(*t) < std::time::Duration::from_millis(1500);
+                                    if !same {
+                                        LAST_Q.store(q, Ordering::Relaxed);
+                                        *t = now;
+                                    }
+                                    same
+                                };
+                                if dup {
+                                    crate::libmpv::trace(&format!(
+                                        "[quality] 忽略重复请求 height={q}（1.5s 内同值）"
+                                    ));
+                                } else {
+                                    // [lc-2307] 只 emit，由前端调 apply_quality_switch 执行。
+                                    // 为什么不在本读线程直接做：建转码会话要发多条 IPC 等回包，
+                                    // 读线程自己等自己 = 死锁（lc-2127 的教训）。
+                                    // 为什么不在读线程 spawn：player::launch 的 future 不是 Send
+                                    // （内部持有非 Send 句柄），编译期就过不去。
+                                    match app2.emit("anibox-quality-switch", json!({ "height": q })) {
+                                        Ok(_) => crate::libmpv::trace(&format!(
+                                            "[quality] emit 成功 height={q}，等前端调命令"
+                                        )),
+                                        Err(e) => crate::libmpv::trace(&format!(
+                                            "[quality] emit 失败（前端可能收不到）：{e}"
+                                        )),
+                                    }
                                 }
                             }
                             let line = json!({

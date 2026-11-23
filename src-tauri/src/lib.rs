@@ -3156,7 +3156,15 @@ async fn apply_quality_switch(
                     .command(json!(["get_property", "media-title"]))
                     .await
                     .ok()
-                    .and_then(|v| v.as_str().map(str::to_string))
+                    // [lc-2314] command() 回的是整个响应对象
+                    // {"data":"标题","error":"success","request_id":N}，
+                    // 直接 as_str() 永远是 None → 标题被写成空串 → mpv 用 URL 当标题。
+                    // 必须取 .data。
+                    .and_then(|v| {
+                        v.get("data")
+                            .and_then(|d| d.as_str())
+                            .map(str::to_string)
+                    })
                     .unwrap_or_default(),
                 None => String::new(),
             }

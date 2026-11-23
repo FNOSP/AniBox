@@ -17,10 +17,12 @@
    改成引用它们：
 
      ① `.pl-circle` —— 图上叠的圆形播放键（海报/剧照/继续看）
-        深色玻璃底 + **白色三角**。为什么三角不取主色：主色压在半透明深底上
-        对比度随底图浮动，亮海报上会糊；白色对任何底图都是最高对比，这也是
-        Apple / Netflix / YouTube 一致的做法。主色只在**悬停**时出场（底变实心），
-        那时白三角压主色是 5.2:1，仍然合格。
+        **浅玻璃底 + 近黑三角**（Apple 浅色玻璃控件语言）。
+        为什么不用深色/主色底：深底在海报墙上是一块突兀的暗斑，主色底又跟
+        海报配色打架。浅玻璃只提亮一点点、保留底图的色与亮度，视觉上是
+        「压在海报上的一块磨砂片」而不是「贴上去的蓝点」。
+        三角取近黑而不是白：浅底上白三角必然糊掉；白玻璃 0.55 alpha 叠在
+        任意底图上，近黑三角的对比度都在 12:1 以上（亮图 21:1、暗图 ≈12:1）。
      ② `.pl-solid` —— 页面里的主行动按钮（详情页「播放」/ 网盘 / JavHub）
         实心 `--accent-solid` + 圆角，与全站其它主按钮同一套几何。
 
@@ -36,25 +38,27 @@
   border-radius: 50%;
   padding: 0;
   cursor: pointer;
-  /* 玻璃底：对比度足够、又不遮住底图。深色图与浅色图都读得清（实测见 lc-2321 记录）。 */
-  background: rgba(12, 14, 20, 0.44);
-  color: #fff;
-  backdrop-filter: blur(12px) saturate(1.2);
-  -webkit-backdrop-filter: blur(12px) saturate(1.2);
-  /* 一道极细内描边：在明亮海报上把圆盘边缘勾出来（否则白色天空区域会糊成一片）。 */
+  /* 浅玻璃：白 58% + blur 16 + 轻微提饱和，是播放器玻璃皮肤同一套配方。
+     为什么不是 0.45：那在白背景上像灰片、在深色海报上又太薄会透成脏灰；
+     0.58 在深/中/浅三种底图上都稳定读作「白玻璃」。悬停加到 0.86 变实。 */
+  background: rgba(255, 255, 255, 0.58);
+  color: #10141c;
+  backdrop-filter: blur(16px) saturate(1.6);
+  -webkit-backdrop-filter: blur(16px) saturate(1.6);
+  /* 外圈亮边 + 极淡投影：浅玻璃在亮海报上需要一个边界，否则会「化开」。 */
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.22),
-    0 6px 18px rgb(var(--shadow-rgb) / 0.26);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55),
+    0 4px 14px rgb(var(--shadow-rgb) / 0.18);
   transition:
     background var(--dur-tap) ease,
     box-shadow var(--dur-tap) ease,
     transform var(--dur-tap) ease;
 }
 .pl-circle:hover {
-  background: var(--accent-solid);
+  background: rgba(255, 255, 255, 0.86);
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.3),
-    0 8px 22px rgb(var(--shadow-rgb) / 0.34);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.7),
+    0 6px 18px rgb(var(--shadow-rgb) / 0.24);
 }
 .pl-circle:active {
   transform: scale(0.94);
@@ -129,24 +133,25 @@
 }
 
 /* ── ③ 悬停出现的文字胶囊（海报卡）────────────────────────────────
-   原来是实心蓝胶囊，用字符 `▶ 播放`。改成玻璃底 + 主色三角：与 `.pl-circle`
-   同一套材质，只是形状是胶囊（因为带文字）。 */
+   原来是实心蓝胶囊 + 字符 `▶ 播放`。改成与 `.pl-circle` 同一套**浅玻璃**，
+   只是形状是胶囊（因为带文字）：白 68%（比圆钮略实，保证 13px 小字清晰）+
+   近黑文字。 */
 .pl-pill {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-1);
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r-full);
-  background: rgba(12, 14, 20, 0.5);
-  backdrop-filter: blur(12px) saturate(1.2);
-  -webkit-backdrop-filter: blur(12px) saturate(1.2);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
-  color: #fff;
+  background: rgba(255, 255, 255, 0.68);
+  backdrop-filter: blur(16px) saturate(1.6);
+  -webkit-backdrop-filter: blur(16px) saturate(1.6);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+  color: #10141c;
   font-size: var(--fs-ctl);
   font-weight: 600;
   line-height: 1;
   white-space: nowrap;
 }
 .pl-pill svg {
-  color: #fff;
+  color: #10141c;
 }

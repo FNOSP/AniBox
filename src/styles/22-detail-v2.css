@@ -1201,7 +1201,10 @@
   opacity: 1;
 }
 .dv2e-row.playing .dv2e-play {
+  /* 播放中：底转实心主色。近黑三角压主色只有 2.3:1 会糊 → 该状态把三角转白
+     （白压 #0a6bd0 是 5.2:1，合格）。这是浅玻璃底唯一需要反色的状态。 */
   background: var(--accent-solid);
+  color: #fff;
 }
 /* 选集行改为横向「图 + 文字」布局后，序号徽标不再需要 */
 .dv2e-list .dv2e-no {

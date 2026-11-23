@@ -173,7 +173,19 @@ function collect() {
     }
   }
 
-  // 2) 自有 mpv 脚本（tools/mpv-scripts → portable_config/scripts）：
+  // 2) 上游 mpv 脚本的构建期补丁（third_party 不入库，CI 每次拉新包覆盖，
+  //    所以修复必须在这里重新打一次，不能只改本地文件）。
+  for (const tool of ['patch-fntv-mpv.mjs', 'patch-uosc-gate.mjs', 'patch-modernz-contrast.mjs']) {
+    const p = path.join(ROOT, 'tools', tool);
+    if (!fs.existsSync(p)) continue;
+    try {
+      execFileSync(process.execPath, [p], { stdio: 'inherit' });
+    } catch (e) {
+      fail(`${tool} 打补丁失败：${e.message}`);
+    }
+  }
+
+  // 3) 自有 mpv 脚本（tools/mpv-scripts → portable_config/scripts）：
   //    先同步再收集，保证本地/CI 拿到的都是仓库里那一份（third_party 不入库，
   //    R2 配置包里没有这些文件）。
   try {
@@ -184,7 +196,7 @@ function collect() {
     /* 源目录不存在等异常不该拦住打包：install 脚本自己会安静跳过 */
   }
 
-  // 3) portable_config：白名单根文件 + 白名单子目录。
+  // 4) portable_config：白名单根文件 + 白名单子目录。
   if (!fs.existsSync(PC)) {
     fail(`缺少 ${PC}（portable_config 是各平台都需要的便携配置）`);
   }

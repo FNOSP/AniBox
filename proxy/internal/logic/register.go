@@ -24,6 +24,9 @@ func RunApiServer(addr string) error {
 	// [lc-2305] 转码播放：按选定清晰度建 HLS 转码会话（照抄 FlyNarwhal play/play）。
 	// 原画档不走这里（继续 playvideo 直读），避免无谓触发 NAS 转码。
 	r.POST("/api/v1/transcode", api.TranscodePlayHandler)
+	// [lc-2312] 飞牛 HLS 转码流代理：preset.m3u8 与其分片都要带凭据转发，
+	// 否则 mpv 直连 NAS 会被拒（实测 TCP 通但拿不到内容）。
+	r.GET("/api/v1/hls/*upstream", api.HlsProxyHandler)
 	r.GET("/api/v1/skipinfo/:itemGuid", api.GetSkipInfoHandler)
 	r.POST("/api/v1/skipinfo", api.SetSkipInfoHandler)
 	r.GET("/api/v1/danmaku/:file", api.ServeDanmakuHandler)

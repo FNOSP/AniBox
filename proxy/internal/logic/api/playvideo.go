@@ -2,9 +2,13 @@ package api
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
+	"regexp"
 	"proxy/pkg/fnapi"
 	"proxy/pkg/logger"
 	"proxy/pkg/utils"
@@ -469,12 +473,176 @@ func TranscodePlayHandler(c *gin.Context) {
 		return
 	}
 
-	// ③ play_link 是相对路径，这里补成绝对地址回给客户端
-	link := resp.Data.PlayLink
-	if strings.HasPrefix(link, "/") {
-		link = strings.TrimRight(body.Domain, "/") + link
+	// ③ [lc-2312] **不能把裸 NAS 地址交给 mpv**：preset.m3u8 要求 Authx+Cookie，
+	// 直连必被拒（实测 TCP 通但 end-file 无内容）。统一包成代理地址：
+	//   /api/v1/hls/v/media/<id>/preset.m3u8?token=...&domain=...&cookie=...
+	// 这样 mpv 只连 127.0.0.1，凭据由代理注入。
+	raw := resp.Data.PlayLink
+	if strings.HasPrefix(raw, "/") {
+		raw = strings.TrimSuffix(raw, "/")
+	} else {
+		// 绝对地址：剥掉 domain 前缀，只留相对路径给 hls 路由
+		raw = strings.TrimPrefix(raw, strings.TrimRight(body.Domain, "/"))
 	}
+	// 代理自身地址：从请求 Host 推导（避免硬编码端口）
+	selfBase := "http://" + c.Request.Host
+	link := fmt.Sprintf("%s/api/v1/hls%s?token=%s&skipVerify=%d&domain=%s&cookie=%s",
+		selfBase,
+		strings.TrimRight(raw, "/"),
+		url.QueryEscape(body.Token),
+		body.SkipVerify,
+		url.QueryEscape(strings.TrimRight(body.Domain, "/")),
+		url.QueryEscape(body.Cookie),
+	)
 	logger.Infof("[lc-2305] 转码会话已建: %s @ %dkbps (%s) start=%ds",
 		body.Resolution, body.Bitrate/1000, enc, body.StartSeconds)
 	c.JSON(200, gin.H{"playLink": link})
 }
+
+// HlsProxyHandler [lc-2312] 转发飞牛 HLS 转码流（preset.m3u8 及其分片）。
+//
+// 为什么必须经过代理：转码会话返回的 play_link 是**飞牛原始地址**
+// （`http://<nas>:17777/v/media/<id>/preset.m3u8`），该路径要求 Authx 签名 +
+// Cookie；mpv 直接访问会被拒（实测：TCP 连上但拿不到内容 → end-file）。
+// 而普通直链走的是 `/api/v1/playvideo/<guid>`，由代理带凭据转发，所以一直正常。
+//
+// 路由形态：GET /api/v1/hls/*upstream
+//   upstream = 飞牛侧相对路径（如 `v/media/<id>/preset.m3u8`）
+//   查询参数里带 token/domain/cookie/skipVerify（与 playvideo 同一套）
+func HlsProxyHandler(c *gin.Context) {
+	upstream := c.Param("upstream")
+	if upstream == "" {
+		c.JSON(400, gin.H{"error": "missing upstream path"})
+		return
+	}
+	var q struct {
+		Token      string `form:"token"`
+		Domain     string `form:"domain"`
+		Cookie     string `form:"cookie"`
+		SkipVerify int32  `form:"skipVerify"`
+	}
+	if err := c.ShouldBindQuery(&q); err != nil || q.Domain == "" {
+		c.JSON(400, gin.H{"error": "missing required parameters"})
+		return
+	}
+
+	// 拼回飞牛原始 URL（保留分片/子播放列表的查询串）
+	target := strings.TrimRight(q.Domain, "/") + "/" + strings.TrimLeft(upstream, "/")
+	if raw := c.Request.URL.RawQuery; raw != "" {
+		// 把代理自己的参数剔掉，剩下的（分片签名等）原样带上
+		kept := make([]string, 0, 4)
+		for _, kv := range strings.Split(raw, "&") {
+			k := kv
+			if i := strings.IndexByte(kv, '='); i >= 0 {
+				k = kv[:i]
+			}
+			switch k {
+			case "token", "domain", "cookie", "skipVerify":
+				continue
+			}
+			kept = append(kept, kv)
+		}
+		if len(kept) > 0 {
+			target += "?" + strings.Join(kept, "&")
+		}
+	}
+
+	// [lc-2312] m3u8 必须**自己拉+重写**，不能用 DynamicProxy：
+	// 它会把分片重写成「飞牛绝对地址」，mpv 直连分片一样会被拒
+	// （分片同样要求 Authx/Cookie）。这里把所有 URI 重写成**再代理**的形式：
+	//   /api/v1/hls/v/media/<id>/seg-1.ts?token=...&domain=...&cookie=...
+	isPlaylist := strings.HasSuffix(strings.ToLower(strings.SplitN(upstream, "?", 2)[0]), ".m3u8")
+	if isPlaylist {
+		req, err := http.NewRequest("GET", target, nil)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "bad upstream url"})
+			return
+		}
+		req.Header.Set("Authorization", q.Token)
+		req.Header.Set("Cookie", q.Cookie+"; mode=relay")
+		client := &http.Client{
+			Timeout: 20 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: q.SkipVerify == 1},
+			},
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			logger.Errorf("[hls] 拉取播放列表失败: %v", err)
+			c.JSON(502, gin.H{"error": "upstream unreachable", "detail": err.Error()})
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		if resp.StatusCode != 200 {
+			logger.Errorf("[hls] 上游返回 %d", resp.StatusCode)
+			c.Data(resp.StatusCode, "text/plain", body)
+			return
+		}
+
+		// 代理自身的 hls 前缀（重写 base 用它，而不是飞牛地址）
+		selfBase := "http://" + c.Request.Host + "/api/v1/hls/"
+		qp := fmt.Sprintf("token=%s&skipVerify=%d&domain=%s&cookie=%s",
+			url.QueryEscape(q.Token), q.SkipVerify,
+			url.QueryEscape(strings.TrimRight(q.Domain, "/")),
+			url.QueryEscape(q.Cookie))
+		// 把上游 m3u8 里的相对/绝对 URI 全部改写成「代理 + 相对上游路径 + 凭据」
+		u, _ := url.Parse(target)
+		rewritten := rewriteHlsToProxy(string(body), u, selfBase, qp)
+		c.Header("Content-Type", "application/vnd.apple.mpegurl")
+		c.Header("Cache-Control", "no-store")
+		c.String(200, "%s", rewritten)
+		return
+	}
+
+	// 分片（.ts/.m4s 等）：直接带凭据转发字节流
+	headers := map[string]string{
+		"Authorization": q.Token,
+		"Cookie":        q.Cookie + "; mode=relay",
+	}
+	logger.Debugf("[hls] 转发分片 %s", briefURL(target))
+	utils.DynamicProxy(c, target, headers, q.SkipVerify == 1)
+}
+
+// rewriteHlsToProxy [lc-2312] 把 m3u8 里每个 URI 改写成经代理的地址。
+//
+// 规则：先把 URI 解析成**飞牛的绝对地址**（相对路径按 m3u8 所在目录拼接），
+// 再把 scheme+host 换成代理，路径改成 `/api/v1/hls/<相对路径>`，带上凭据查询串。
+// 这样 m3u8 与全部分片都只连 127.0.0.1，鉴权由代理注入。
+func rewriteHlsToProxy(content string, base *url.URL, selfBase, qp string) string {
+	if base == nil {
+		return content
+	}
+	toProxy := func(raw string) string {
+		u, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil || u.String() == "" {
+			return raw
+		}
+		abs := base.ResolveReference(u)
+		// 只保留 path（去掉飞牛的 query，分片签名由我们重新带）
+		p := abs.Path
+		return selfBase + strings.TrimLeft(p, "/") + "?" + qp
+	}
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		t := strings.TrimSpace(line)
+		if t == "" {
+			continue
+		}
+		if strings.HasPrefix(t, "#") {
+			// EXT-X-KEY / EXT-X-MAP 里的 URI="..."
+			if strings.Contains(t, `URI="`) {
+				lines[i] = reHlsURI.ReplaceAllStringFunc(t, func(m string) string {
+					inner := m[len(`URI="`):]
+					inner = strings.TrimSuffix(inner, `"`)
+					return `URI="` + toProxy(inner) + `"`
+				})
+			}
+			continue
+		}
+		lines[i] = toProxy(t)
+	}
+	return strings.Join(lines, "\n")
+}
+
+var reHlsURI = regexp.MustCompile(`URI="[^"]*"`)

@@ -3146,13 +3146,28 @@ async fn apply_quality_switch(
         player::switch_quality(&app, &state, &cfg, &item_guid, height, pos).await?;
 
     if need_reload {
+        // [lc-2313] 切档要**沿用当前标题**：传空串会把 force-media-title 设成
+        // ""，mpv 随即退回用 URL 当标题 → 标题变成一长串
+        // 「100.66.1.2:17777&cookie=Trim-MC-token=...」（实测就是这个乱码）。
+        let cur_title = {
+            let slot = state.mpv.lock().await;
+            match slot.as_ref() {
+                Some(sess) => sess
+                    .command(json!(["get_property", "media-title"]))
+                    .await
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_string))
+                    .unwrap_or_default(),
+                None => String::new(),
+            }
+        };
         // 换流（直链 ↔ 转码）：必须重新 loadfile，resume 用当前位置。
         player::launch(
             &app,
             &state,
             &cfg,
             &url,
-            "", // 空标题 = 保留 mpv 当前的 media-title（不覆盖）
+            &cur_title,
             pos,
             dur,
             None,

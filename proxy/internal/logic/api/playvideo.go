@@ -343,3 +343,92 @@ func QualitiesHandler(c *gin.Context) {
 		"qualities": items,
 	})
 }
+
+// TranscodePlayHandler [lc-2305] 请求指定清晰度的**转码播放地址**。
+//
+// 照抄 FlyNarwhal 的 switchURL 流程（player_screen.dart:3901 / 3967）：
+//   1. 先 quit 旧的转码会话（可选，由调用方传 oldPlayLink）；
+//   2. 带新的 resolution/bitrate 调 play/play；
+//   3. 返回 play_link，由客户端重新 loadfile。
+//
+// **只有选非原画档才应调用**：原画档继续走 /api/v1/playvideo（原始文件直读），
+// 这样不触发 NAS 转码。这是飞鲸的 supportsDirectLink 口径：
+//   quality.resolution == qualities[0].resolution && quality.bitrate == qualities[0].bitrate
+// 相等才算原画 → 直链；否则必须转码。
+func TranscodePlayHandler(c *gin.Context) {
+	var body struct {
+		Domain       string `json:"domain"`
+		Token        string `json:"token"`
+		Cookie       string `json:"cookie"`
+		SkipVerify   int32  `json:"skipVerify"`
+		ItemGuid     string `json:"itemGuid"`
+		MediaGuid    string `json:"mediaGuid"`
+		VideoGuid    string `json:"videoGuid"`
+		VideoEncoder string `json:"videoEncoder"`
+		Resolution   string `json:"resolution"`
+		Bitrate      int    `json:"bitrate"`
+		AudioGuid    string `json:"audioGuid"`
+		SubtitleGuid string `json:"subtitleGuid"`
+		StartSeconds int    `json:"startSeconds"`
+		ForcedSDR    int    `json:"forcedSdr"`
+		OldPlayLink  string `json:"oldPlayLink"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid parameters"})
+		return
+	}
+	if body.Domain == "" || body.Token == "" {
+		c.JSON(400, gin.H{"error": "missing required parameters"})
+		return
+	}
+
+	fnApi := fnapi.NewApiService(body.Domain, body.Token, body.SkipVerify == 1, body.Cookie)
+
+	// ① 先释放旧转码会话（照抄飞鲸：quit 后再 play，避免服务端同时跑两个会话）
+	if body.OldPlayLink != "" {
+		if _, err := fnApi.MediaP(fnapi.MediaPRequestData{PlayLink: body.OldPlayLink}); err != nil {
+			// 释放失败不致命（会话可能已自然结束）——只记日志继续
+			logger.Warnf("[lc-2305] 释放旧转码会话失败（继续）：%v", err)
+		}
+	}
+
+	// ② 目标编码器归一：只允许 h264 / hevc。传源码编码（如 av1）会被服务端
+	//    以 ParameterError 8192 拒绝（FlyNarwhal createPlayRequest 的注释说明）。
+	enc := strings.ToLower(strings.TrimSpace(body.VideoEncoder))
+	if enc != "h264" && enc != "hevc" {
+		enc = "h264"
+	}
+
+	req := fnapi.PlayPlayRequestData{
+		MediaGUID:      body.MediaGuid,
+		VideoGUID:      body.VideoGuid,
+		VideoEncoder:   enc,
+		Resolution:     body.Resolution,
+		Bitrate:        body.Bitrate,
+		StartTimestamp: body.StartSeconds,
+		AudioEncoder:   "aac",
+		AudioGUID:      body.AudioGuid,
+		SubtitleGUID:   body.SubtitleGuid,
+		Channels:       2,
+		ForcedSDR:      body.ForcedSDR,
+	}
+	resp, err := fnApi.PlayPlay(req)
+	if err != nil || resp == nil || !resp.Success || resp.Data.PlayLink == "" {
+		msg := ""
+		if resp != nil {
+			msg = resp.Message
+		}
+		logger.Errorf("[lc-2305] play/play 失败: err=%v msg=%s", err, msg)
+		c.JSON(500, gin.H{"error": "Failed to create transcode session", "detail": msg})
+		return
+	}
+
+	// ③ play_link 是相对路径，这里补成绝对地址回给客户端
+	link := resp.Data.PlayLink
+	if strings.HasPrefix(link, "/") {
+		link = strings.TrimRight(body.Domain, "/") + link
+	}
+	logger.Infof("[lc-2305] 转码会话已建: %s @ %dkbps (%s) start=%ds",
+		body.Resolution, body.Bitrate/1000, enc, body.StartSeconds)
+	c.JSON(200, gin.H{"playLink": link})
+}

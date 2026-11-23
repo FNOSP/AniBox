@@ -50,6 +50,25 @@ pub fn remember(meta: PlayMeta) {
     }
 }
 
+/// [lc-2305] 取当前播放的元信息（含 video_guid / audio_guid / subtitle_guid）。
+/// 切清晰度时要把这些原样传给 `play/play`。不存在返回 None。
+///
+/// guid 口径：优先用 Tracker 里**正在播的那一集**（mpv path 变化时更新，
+/// 整季切集也跟着走），退而求其次才用起播时记下的那一条。
+pub fn current_meta() -> Option<PlayMeta> {
+    let item_guid = tracker()
+        .lock()
+        .ok()
+        .map(|t| t.item_guid.clone())
+        .filter(|s| !s.is_empty());
+    let key = item_guid?;
+    if let Some(hit) = cache().lock().ok().and_then(|g| g.get(&key).cloned()) {
+        return Some(hit);
+    }
+    // Tracker 还没更新（刚起播）→ 退回缓存里任意一条（起播时 remember 过的那条）
+    cache().lock().ok().and_then(|g| g.values().next().cloned())
+}
+
 /// 取服务器 host（旧项目 `play_link` = `new URL(getVideoUrl(media_guid)).hostname`，
 /// 注意 `hostname` **不含端口**，这里保持一致）。
 fn host_of(server: &str) -> String {

@@ -354,3 +354,20 @@ func IsStreamInflight(mediaGUID, account string) bool {
 	_, ok := flights[key]
 	return ok
 }
+
+// [lc-2305] 请求转码播放链接（照抄 FlyNarwhal 的 playVideo）。
+//
+// 返回 `play_link`（相对路径 `/v/media/<ID>/preset.m3u8`），这是 HLS 转码流。
+// 选「原画」档时不要走这里——原画应继续用 `/media/range/<mediaGUID>` 直读
+// （见 FlyNarwhal supportsDirectLink：只有 quality == qualities[0] 才允许直链）。
+func (s *ApiService) PlayPlay(data PlayPlayRequestData) (*ApiResponse[PlayPlayResponseData], error) {
+	return Request[PlayPlayResponseData](s.client, s.baseURL, "/v/api/v1/play/play",
+		MethodPOST, s.token, data, nil, 30, 1, s.cookie)
+}
+
+// [lc-2305] 释放/控制转码会话（照抄 FlyNarwhal 的 media/p）。
+// 切清晰度时先释放旧会话再建新的，避免服务端同时跑两个转码任务。
+func (s *ApiService) MediaP(data MediaPRequestData) (*ApiResponse[any], error) {
+	return Request[any](s.client, s.baseURL, "/v/api/v1/media/p",
+		MethodPOST, s.token, data, nil, 10, 1, s.cookie)
+}

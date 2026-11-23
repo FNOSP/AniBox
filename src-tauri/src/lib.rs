@@ -3085,6 +3085,94 @@ async fn play_item(
 // 一个额外窗口 + 一个额外页面 + 一条懒创建路径，还曾经自己冒出来（lc-090 的 bug）。
 // 底栏统一由 mpv 原生 uosc 提供；需要的话从 git 历史里取回（lc-099 之前的版本）。
 
+/// [lc-2305] 切换清晰度（照抄 FlyNarwhal 的 switchURL 流程）。
+///
+/// 由前端收到 `anibox-quality-switch` 事件后调用 —— 必须走普通命令线程，
+/// 不能在上面的 mpv IPC 读线程里做（要发多条 IPC 命令等回包，自己等自己会死锁）。
+///
+/// `height = 0` 或等于最高档 → 回原始文件直读（不触发转码）；
+/// 其它档 → 建 HLS 转码会话，拿到 play_link 后 loadfile。
+#[tauri::command]
+async fn apply_quality_switch(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    height: i64,
+) -> Result<(), String> {
+    let cfg = state.config.read().await.clone();
+    // 当前正在播的条目 guid（切换后要重新打开同一条）
+    let item_guid = fnos_progress::current_meta()
+        .map(|m| m.item_guid)
+        .ok_or_else(|| "当前没有可切换的播放会话".to_string())?;
+
+    // 记住当前位置：切档要重新 loadfile，不能把进度丢掉。
+    // 直接从 mpv 读（tracker 里的 pos 是异步回传的，可能滞后几百毫秒）。
+    let (pos, dur) = {
+        let sess = {
+            let slot = state.mpv.lock().await;
+            slot.as_ref().cloned()
+        };
+        match sess {
+            Some(s) => {
+                let pos = s
+                    .command(json!(["get_property", "time-pos"]))
+                    .await
+                    .ok()
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                let dur = s
+                    .command(json!(["get_property", "duration"]))
+                    .await
+                    .ok()
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                (pos, dur)
+            }
+            None => (0.0, 0.0),
+        }
+    };
+
+    let url = player::switch_quality(&app, &state, &cfg, &item_guid, height, pos).await?;
+
+    // 重新交给播放器（loadfile）。resume 用当前位置，体验上等同于"无缝换档"。
+    let title = state
+        .config
+        .read()
+        .await
+        .token
+        .clone(); // 占位，标题保持由 mpv 现有 media-title 不变
+    let _ = title;
+    player::launch(
+        &app,
+        &state,
+        &cfg,
+        &url,
+        "", // 空标题 = 保留 mpv 当前的 media-title（不覆盖）
+        pos,
+        dur,
+        None,
+        &[],
+        None,
+        false,
+    )
+    .await?;
+
+    // 切完把当前档位写回（底栏图标/tooltip 跟着变）
+    let sess = {
+        let slot = state.mpv.lock().await;
+        slot.as_ref().cloned()
+    };
+    if let Some(sess) = sess {
+        let _ = sess
+            .command_no_reply(json!(["set", "user-data/anibox/quality", height.to_string()]))
+            .await;
+    }
+    libmpv::trace(&format!(
+        "[quality] 已切到 {height}p（{}）",
+        if height <= 0 { "原画直读" } else { "HLS 转码" }
+    ));
+    Ok(())
+}
+
 #[tauri::command]
 async fn player_stop(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     // [lc-2123] 停止播放即清空短剧连播队列：否则用户关掉短剧后去看飞牛/云盘，
@@ -4610,6 +4698,8 @@ pub fn run() {
             subtitle_sources::subtitle_download,
             open_browser_window,
             player_stop,
+            // [lc-2305] 切清晰度（前端收到 anibox-quality-switch 事件后调）
+            apply_quality_switch,
             // [lc-1909] 软件内播放（内嵌模式）：enter / 矩形钉位 / leave（Windows 专属实现，
             // 非 Windows 命令空转返回 Ok，注册保持全平台一致）
             // [lc-1949] 视频区鼠标转发（lc-1960 起：穿透默认态下仅服务 hover 翻位后

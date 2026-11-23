@@ -21,6 +21,9 @@ func RunApiServer(addr string) error {
 	// [lc-2304] 清晰度清单：该条目可选的清晰度档位（飞牛 qualities 元数据）。
 	// 应用起播前查一次，多档才把档位推给 mpv 底栏按钮。
 	r.GET("/api/v1/qualities/:itemGuid", api.QualitiesHandler)
+	// [lc-2305] 转码播放：按选定清晰度建 HLS 转码会话（照抄 FlyNarwhal play/play）。
+	// 原画档不走这里（继续 playvideo 直读），避免无谓触发 NAS 转码。
+	r.POST("/api/v1/transcode", api.TranscodePlayHandler)
 	r.GET("/api/v1/skipinfo/:itemGuid", api.GetSkipInfoHandler)
 	r.POST("/api/v1/skipinfo", api.SetSkipInfoHandler)
 	r.GET("/api/v1/danmaku/:file", api.ServeDanmakuHandler)

@@ -758,23 +758,31 @@ pub fn spawn_push_qualities(app: &AppHandle, cfg: &crate::config::Config, item_g
             .and_then(|x| x.as_array())
             .cloned()
             .unwrap_or_default();
-        // 从 "1080p" / "1920x1080" 这类字符串里抽数字档位
-        let mut heights: Vec<i64> = list
+
+        // [lc-2305] 保存**完整档位明细**（照抄 FlyNarwhal：切换时要把
+        // resolution + bitrate 原样回给 play/play，只留高度数字不够）。
+        let mut tiers: Vec<QualityTier> = list
             .iter()
-            .filter_map(|q| q.get("resolution").and_then(|x| x.as_str()))
-            .filter_map(|s| {
-                // 优先 "1080p" 形态；退回 "1920x1080" 取高度
-                let t = s.trim().trim_end_matches('p');
-                if let Ok(n) = t.parse::<i64>() {
-                    return Some(n);
+            .filter_map(|q| {
+                let res = q.get("resolution").and_then(|x| x.as_str())?.trim().to_string();
+                if res.is_empty() {
+                    return None;
                 }
-                s.split_once('x')
-                    .and_then(|(_, h)| h.trim().parse::<i64>().ok())
+                Some(QualityTier {
+                    resolution: res.clone(),
+                    bitrate: q.get("bitrate").and_then(|x| x.as_i64()).unwrap_or(0),
+                    height: parse_quality_height(&res).unwrap_or(0),
+                })
             })
-            .filter(|n| *n > 0)
+            .filter(|t| t.height > 0)
             .collect();
-        heights.sort_unstable_by(|a, b| b.cmp(a));
-        heights.dedup();
+        // 按高度降序（= 与飞牛 qualities[0] 是原画的口径一致：第一个即原画）
+        tiers.sort_by(|a, b| b.height.cmp(&a.height).then(b.bitrate.cmp(&a.bitrate)));
+        tiers.dedup_by(|a, b| a.height == b.height && a.bitrate == b.bitrate);
+
+        // 存下来供 duanju_quality_request 用（切换时按档位重建转码会话）
+        *quality_cache().lock().unwrap_or_else(|e| e.into_inner()) =
+            tiers.iter().map(|t| (t.height, t.clone())).collect();
 
         let sess = {
             let st = app2.state::<crate::AppState>();
@@ -782,15 +790,20 @@ pub fn spawn_push_qualities(app: &AppHandle, cfg: &crate::config::Config, item_g
             slot.as_ref().cloned()
         };
         let Some(sess) = sess else { return };
-        if heights.len() > 1 {
-            let csv = heights
+        if tiers.len() > 1 {
+            let csv = tiers
                 .iter()
-                .map(|n| n.to_string())
+                .map(|t| t.height.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
             crate::libmpv::trace(&format!(
-                "[quality] 飞牛给出 {} 档：{csv}（推给底栏）",
-                heights.len()
+                "[quality] 飞牛给出 {} 档：{}（推给底栏）",
+                tiers.len(),
+                tiers
+                    .iter()
+                    .map(|t| format!("{}@{}k", t.resolution, t.bitrate / 1000))
+                    .collect::<Vec<_>>()
+                    .join(" / ")
             ));
             let _ = sess
                 .command_no_reply(json!(["set", "user-data/anibox/qualities", csv]))
@@ -801,13 +814,145 @@ pub fn spawn_push_qualities(app: &AppHandle, cfg: &crate::config::Config, item_g
         } else {
             crate::libmpv::trace(&format!(
                 "[quality] 单档/无档（{}）→ 不显示按钮",
-                heights.first().map(|n| n.to_string()).unwrap_or_else(|| "空".into())
+                tiers
+                    .first()
+                    .map(|t| t.resolution.clone())
+                    .unwrap_or_else(|| "空".into())
             ));
             let _ = sess
                 .command_no_reply(json!(["set", "user-data/anibox/qualities", ""]))
                 .await;
         }
     });
+}
+
+/// [lc-2305] 一个清晰度档位（照抄 FlyNarwhal 的 QualityResponse 精简版）。
+#[derive(Clone, Debug)]
+pub struct QualityTier {
+    /// 飞牛原样字符串（"1080p" / "4K" / "1920x1080"），切换时回传给 play/play
+    pub resolution: String,
+    /// 单位 bps
+    pub bitrate: i64,
+    /// 从 resolution 解析出的高度（用于排序与底栏显示）
+    pub height: i64,
+}
+
+fn quality_cache() -> &'static std::sync::Mutex<std::collections::HashMap<i64, QualityTier>> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<i64, QualityTier>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// 解析清晰度高度：`1080p` / `1080` / `1920x1080` / `4K`。
+/// 返回 None 表示无法识别（该档位会被丢弃，不参与切换）。
+fn parse_quality_height(s: &str) -> Option<i64> {
+    let t = s.trim();
+    // 常见别名
+    match t.to_ascii_lowercase().as_str() {
+        "4k" | "uhd" => return Some(2160),
+        "2k" => return Some(1440),
+        "8k" => return Some(4320),
+        _ => {}
+    }
+    // "1080p" / "1080P" / "1080"
+    let bare = t.trim_end_matches(['p', 'P']);
+    if let Ok(n) = bare.parse::<i64>() {
+        return (n > 0).then_some(n);
+    }
+    // "1920x1080"
+    if let Some((_, h)) = t.split_once(['x', 'X']) {
+        if let Ok(n) = h.trim().parse::<i64>() {
+            return (n > 0).then_some(n);
+        }
+    }
+    None
+}
+
+/// [lc-2305] 切换清晰度（照抄 FlyNarwhal 的 switchURL 流程）。
+///
+/// 规则（与飞鲸 supportsDirectLink 完全一致）：
+///   · `height == 0` 或 `height == 最原始档` → **原画**，走原始文件直读
+///     （重新 loadfile `/api/v1/playvideo/<guid>`，不触发 NAS 转码）；
+///   · 其它档 → 向代理请求转码会话，拿到 `play_link`（HLS）后 loadfile。
+///
+/// 为什么原画要特殊处理：飞鲸的注释写得很清楚 —— 直链只对原画可用，
+/// 选其它档必须转码；反过来，用户从 720p 切回原画时也应该回到直链，
+/// 否则会一直挂着一个转码会话白烧 CPU。
+pub async fn switch_quality(
+    app: &AppHandle,
+    state: &crate::AppState,
+    cfg: &crate::config::Config,
+    item_guid: &str,
+    height: i64,
+    start_secs: f64,
+) -> Result<String, String> {
+    // 一次性取出「该档位」与「最高档」—— Mutex 非重入，嵌套拿锁会死锁。
+    let (tier, max_height) = {
+        let guard = quality_cache().lock().unwrap_or_else(|e| e.into_inner());
+        let tier = guard.get(&height).cloned();
+        let max = guard.values().map(|x| x.height).max().unwrap_or(0);
+        (tier, max)
+    };
+
+    // 原画判定（与 FlyNarwhal supportsDirectLink 同口径）：
+    //   height = 0（菜单里的"原画"）或该档就是最高档 → 走原始文件直读。
+    let is_original = height <= 0 || tier.as_ref().map(|t| t.height >= max_height).unwrap_or(true);
+
+    if is_original {
+        crate::libmpv::trace("[quality] 切到原画 → 回原始文件直读（不转码）");
+        return Ok(crate::proxy::play_url(cfg, item_guid));
+    }
+
+    let Some(tier) = tier else {
+        return Err(format!("没有 {height}p 这个档位"));
+    };
+
+    // 当前播放元信息（video_guid / audio_guid / subtitle_guid 都要传给 play/play）
+    let meta = crate::fnos_progress::current_meta()
+        .ok_or_else(|| "缺少当前播放信息，无法切换清晰度".to_string())?;
+
+    // 释放旧转码会话（若有）+ 建新会话，都在代理侧完成
+    let url = crate::proxy::transcode_url(cfg);
+    let body = json!({
+        "itemGuid": item_guid,
+        "mediaGuid": meta.media_guid,
+        "videoGuid": meta.video_guid,
+        "videoEncoder": "h264",     // 只允许 h264/hevc；h264 兼容性最好
+        "resolution": tier.resolution,
+        "bitrate": tier.bitrate,
+        "audioGuid": meta.audio_guid,
+        "subtitleGuid": meta.subtitle_guid,
+        "startSeconds": start_secs as i64,
+        "forcedSdr": 0,
+        "oldPlayLink": "",
+    });
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("请求转码会话失败：{e}"))?;
+    let v: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析转码响应失败：{e}"))?;
+    let link = v
+        .get("playLink")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "代理未返回转码地址：{}",
+                v.get("error").and_then(|x| x.as_str()).unwrap_or("未知错误")
+            )
+        })?;
+    crate::libmpv::trace(&format!("[quality] 已建 {} 转码会话：{link}", tier.resolution));
+    let _ = state; // 目前用不到，保留参数便于后续加锁控制
+    let _ = app;
+    Ok(link.to_string())
 }
 
 #[allow(clippy::too_many_arguments)]

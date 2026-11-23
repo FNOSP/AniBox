@@ -158,3 +158,9 @@ pub fn qualities_url(cfg: &crate::config::Config, item_guid: &str) -> String {
 
 #[allow(dead_code)]
 fn _unused(_v: &Value) {}
+
+/// [lc-2305] 转码会话创建地址（POST）。代理侧会带着 token/cookie/domain
+/// 去调飞牛 `play/play`，返回 HLS 的 `play_link`。
+pub fn transcode_url(_cfg: &crate::config::Config) -> String {
+    format!("http://127.0.0.1:{PROXY_PORT}/api/v1/transcode")
+}

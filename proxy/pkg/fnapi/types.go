@@ -382,3 +382,42 @@ type SetSkipInfoReq struct {
 	SkipStart  int    `json:"skip_opening"`
 	SkipEnd    int    `json:"skip_ending"`
 }
+
+// [lc-2305] 转码播放请求（照抄 FlyNarwhal 的 PlayPlayRequest）。
+//
+// 飞牛 `/v/api/v1/play/play` 返回 `play_link`（形如 `/v/media/<ID>/preset.m3u8`），
+// 这是**真正的转码流**；而 `/media/range/<mediaGUID>` 是原始文件直读。
+// 所以「切清晰度」= 用不同 resolution/bitrate 重新 play/play，而不是换 range 参数。
+//
+// 字段与飞牛 web 端一致（FlyNarwhal lib/data/models/player_models.dart:701）：
+//   · video_encoder 只能是 h264 或 hevc —— 传源编码（如 av1）会被服务端
+//     以 ParameterError 8192 拒绝；
+//   · resolution 形如 "1080p"；bitrate 单位 bps；
+//   · startTimestamp 单位**秒**（不是毫秒）；
+//   · channels 固定 2（立体声），audio_encoder 固定 aac。
+type PlayPlayRequestData struct {
+	MediaGUID      string `json:"media_guid"`
+	VideoGUID      string `json:"video_guid"`
+	VideoEncoder   string `json:"video_encoder"`
+	Resolution     string `json:"resolution"`
+	Bitrate        int    `json:"bitrate"`
+	StartTimestamp int    `json:"startTimestamp"`
+	AudioEncoder   string `json:"audio_encoder"`
+	AudioGUID      string `json:"audio_guid"`
+	SubtitleGUID   string `json:"subtitle_guid"`
+	Channels       int    `json:"channels"`
+	ForcedSDR      int    `json:"forced_sdr"`
+}
+
+// PlayPlayResponseData 转码播放响应：play_link 可能是相对路径
+// （如 `/v/media/xxx/preset.m3u8`），调用方负责拼上 baseURL。
+type PlayPlayResponseData struct {
+	PlayLink string `json:"play_link"`
+}
+
+// [lc-2305] 转码会话控制请求（照抄 FlyNarwhal 的 MediaPRequest，仅取本工程用到的字段）。
+// `/v/api/v1/media/p` 用于释放/查询转码会话；切清晰度前先释放旧会话，
+// 避免服务端同时跑两个转码任务（白烧 NAS CPU）。
+type MediaPRequestData struct {
+	PlayLink string `json:"playLink"`
+}

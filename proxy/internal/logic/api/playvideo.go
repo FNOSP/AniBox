@@ -520,8 +520,23 @@ func HlsProxyHandler(c *gin.Context) {
 		Domain     string `form:"domain"`
 		Cookie     string `form:"cookie"`
 		SkipVerify int32  `form:"skipVerify"`
+		Sid        string `form:"sid"` // [lc-2315] 会话码：有它就不必带长凭据
 	}
-	if err := c.ShouldBindQuery(&q); err != nil || q.Domain == "" {
+	if err := c.ShouldBindQuery(&q); err != nil {
+		c.JSON(400, gin.H{"error": "missing required parameters"})
+		return
+	}
+	// [lc-2315] 分片请求只带 sid；m3u8 首请求带完整凭据
+	if q.Sid != "" {
+		if cred, ok := getHlsSession(q.Sid); ok {
+			q.Token, q.Domain, q.Cookie, q.SkipVerify =
+				cred.token, cred.domain, cred.cookie, cred.skipVerify
+		} else {
+			c.JSON(410, gin.H{"error": "hls session expired"})
+			return
+		}
+	}
+	if q.Domain == "" {
 		c.JSON(400, gin.H{"error": "missing required parameters"})
 		return
 	}
@@ -582,10 +597,13 @@ func HlsProxyHandler(c *gin.Context) {
 
 		// 代理自身的 hls 前缀（重写 base 用它，而不是飞牛地址）
 		selfBase := "http://" + c.Request.Host + "/api/v1/hls/"
-		qp := fmt.Sprintf("token=%s&skipVerify=%d&domain=%s&cookie=%s",
-			url.QueryEscape(q.Token), q.SkipVerify,
-			url.QueryEscape(strings.TrimRight(q.Domain, "/")),
-			url.QueryEscape(q.Cookie))
+		// [lc-2315] 分片 URL 只带**会话码**，不再拼长凭据串：
+		// URL 从 ~400 字节降到 ~80 字节，HLS 分片拉取与 yt-dlp 探测都快得多。
+		sid := newHlsSession(hlsCred{
+			token: q.Token, domain: strings.TrimRight(q.Domain, "/"),
+			cookie: q.Cookie, skipVerify: q.SkipVerify,
+		})
+		qp := "sid=" + sid
 		// 把上游 m3u8 里的相对/绝对 URI 全部改写成「代理 + 相对上游路径 + 凭据」
 		u, _ := url.Parse(target)
 		rewritten := rewriteHlsToProxy(string(body), u, selfBase, qp)

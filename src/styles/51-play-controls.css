@@ -1,0 +1,152 @@
+/* ═══════════════════════════════════════════════════════════════
+   [lc-2321] 播放控件统一样式
+
+   改前全站有 8 套「播放入口」，互不相干：
+     · 海报卡 `.pa-play`：62px 实心蓝圆盘（`--accent-grad` 平涂）+ 26px 填充三角
+       —— 海报墙上最响的东西，跟海报本身的配色打架，是用户指的那一个「太丑」。
+     · 首页继续看 `.continue-play`：46px 黑底 + 白描边 + 字符 `▶`，只在悬停出现。
+     · 海报悬停胶囊 `.play-pill`：实心蓝胶囊里塞字符 `▶ 播放`。
+     · 详情剧集行 `.dv2e-play`：24px 黑底圆 + 字符 `▶`。
+     · 网盘/在线源 `.c115-play`：29px 实心蓝圆 + 12px 填充图标。
+     · JavHub `.jvd-play`：实心蓝长方按钮。
+     · 电影页 `.mv-btn-primary` / `.mved-btn-primary`：白底/蓝底长方按钮。
+     · 在线源结果行：裸字符 `▶`。
+
+   问题不是「哪种好看」，而是**没有统一意志**：同一个动作在不同页面有不同的
+   尺寸、颜色、圆角、出现方式和图标画法。这里给出两条可复用的语言，其余全部
+   改成引用它们：
+
+     ① `.pl-circle` —— 图上叠的圆形播放键（海报/剧照/继续看）
+        深色玻璃底 + **白色三角**。为什么三角不取主色：主色压在半透明深底上
+        对比度随底图浮动，亮海报上会糊；白色对任何底图都是最高对比，这也是
+        Apple / Netflix / YouTube 一致的做法。主色只在**悬停**时出场（底变实心），
+        那时白三角压主色是 5.2:1，仍然合格。
+     ② `.pl-solid` —— 页面里的主行动按钮（详情页「播放」/ 网盘 / JavHub）
+        实心 `--accent-solid` + 圆角，与全站其它主按钮同一套几何。
+
+   两者都用 `<PlayGlyph>` 画三角（不用字符、不用描边图标填充）。
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── ① 图上圆形播放键 ─────────────────────────────────────────── */
+.pl-circle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  /* 玻璃底：对比度足够、又不遮住底图。深色图与浅色图都读得清（实测见 lc-2321 记录）。 */
+  background: rgba(12, 14, 20, 0.44);
+  color: #fff;
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  /* 一道极细内描边：在明亮海报上把圆盘边缘勾出来（否则白色天空区域会糊成一片）。 */
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.22),
+    0 6px 18px rgb(var(--shadow-rgb) / 0.26);
+  transition:
+    background var(--dur-tap) ease,
+    box-shadow var(--dur-tap) ease,
+    transform var(--dur-tap) ease;
+}
+.pl-circle:hover {
+  background: var(--accent-solid);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.3),
+    0 8px 22px rgb(var(--shadow-rgb) / 0.34);
+}
+.pl-circle:active {
+  transform: scale(0.94);
+}
+.pl-circle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* 键盘焦点：全站统一用主色环，不靠浏览器默认。 */
+.pl-circle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 尺寸档：只有三档，不再让各页面各写一个直径。 */
+.pl-circle.pl-md {
+  width: 54px;
+  height: 54px;
+}
+.pl-circle.pl-sm {
+  width: 38px;
+  height: 38px;
+}
+.pl-circle.pl-xs {
+  width: 26px;
+  height: 26px;
+}
+
+/* ── ② 页面主行动播放按钮 ─────────────────────────────────────── */
+.pl-solid {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--accent-solid);
+  color: var(--accent-on);
+  font-family: inherit;
+  font-size: var(--fs-ctl);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur-tap) ease, transform var(--dur-tap) ease;
+}
+.pl-solid:hover:not(:disabled) {
+  background: var(--accent);
+}
+.pl-solid:active:not(:disabled) {
+  transform: scale(0.985);
+}
+.pl-solid:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.pl-solid:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* 高度档：和面板/详情页现有按钮同高，避免混排时高低不齐。 */
+.pl-solid.pl-h-lg {
+  min-height: 44px;
+  padding: 0 var(--sp-5);
+}
+.pl-solid.pl-h-md {
+  height: 38px;
+  padding: 0 var(--sp-4);
+}
+.pl-solid.pl-h-sm {
+  height: 30px;
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-cap);
+}
+
+/* ── ③ 悬停出现的文字胶囊（海报卡）────────────────────────────────
+   原来是实心蓝胶囊，用字符 `▶ 播放`。改成玻璃底 + 主色三角：与 `.pl-circle`
+   同一套材质，只是形状是胶囊（因为带文字）。 */
+.pl-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-full);
+  background: rgba(12, 14, 20, 0.5);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-size: var(--fs-ctl);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+.pl-pill svg {
+  color: #fff;
+}

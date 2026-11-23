@@ -64,3 +64,6 @@
 
 /* [lc-2247] 电影详情页「杂志风」版式（设置项 movieDetailStyle = editorial 时启用） */
 @import "./50-movie-editorial.css";
+
+/* [lc-2321] 播放控件统一样式（必须最后导入：它统一覆盖各页面的播放按钮） */
+@import "./51-play-controls.css";

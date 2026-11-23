@@ -3124,18 +3124,27 @@ async fn apply_quality_switch(
         };
         match sess {
             Some(s) => {
+                // [lc-2319] `command()` 回的是**整个响应对象**
+                // `{"data":<值>,"error":"success","request_id":N}`，直接 `as_f64()`
+                // 永远拿到 None → pos/dur 恒为 0 → 切档重新 loadfile 时
+                // `resume=0 dur=0`（实测日志正是这个），用户看到「切完画质从头播」。
+                // 必须取 `.data`（lc-2314 修 media-title 时踩过同一个坑）。
+                let get_num = |v: Value| -> f64 {
+                    v.get("data").and_then(|d| d.as_f64()).unwrap_or(0.0)
+                };
                 let pos = s
                     .command(json!(["get_property", "time-pos"]))
                     .await
-                    .ok()
-                    .and_then(|v| v.as_f64())
+                    .map(get_num)
                     .unwrap_or(0.0);
                 let dur = s
                     .command(json!(["get_property", "duration"]))
                     .await
-                    .ok()
-                    .and_then(|v| v.as_f64())
+                    .map(get_num)
                     .unwrap_or(0.0);
+                crate::libmpv::trace(&format!(
+                    "[quality] 记住当前位置 pos={pos:.1}s dur={dur:.1}s（切档后 resume）"
+                ));
                 (pos, dur)
             }
             None => (0.0, 0.0),

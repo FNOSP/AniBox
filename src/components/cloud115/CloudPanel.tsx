@@ -730,7 +730,7 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
                 )}
                 {!e.isDir && e.kind !== "other" && e.kind !== "sub" && (
                   <button
-                    className="c115-play pl-circle pl-xs"
+                    className="c115-play pl-circle pl-xs on-surface"
                     title={mode === "server" ? "服务端转码播放" : mode === "local" ? "本地 ffmpeg 转码播放" : "直链播放（过期自动续链）"}
                     onClick={(ev) => {
                       ev.stopPropagation();
@@ -785,7 +785,7 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
                   {g.files[0]?.kind === "episode" ? `S${g.files[0].season || 1} · ${g.files.length} 集` : "电影"}
                 </span>
                 <button
-                  className="c115-play pl-circle pl-xs"
+                  className="c115-play pl-circle pl-xs on-surface"
                   title="播放（直链自动续签）"
                   onClick={(ev) => {
                     ev.stopPropagation();

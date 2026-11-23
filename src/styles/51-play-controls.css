@@ -17,12 +17,13 @@
    改成引用它们：
 
      ① `.pl-circle` —— 图上叠的圆形播放键（海报/剧照/继续看）
-        **浅玻璃底 + 近黑三角**（Apple 浅色玻璃控件语言）。
-        为什么不用深色/主色底：深底在海报墙上是一块突兀的暗斑，主色底又跟
-        海报配色打架。浅玻璃只提亮一点点、保留底图的色与亮度，视觉上是
-        「压在海报上的一块磨砂片」而不是「贴上去的蓝点」。
-        三角取近黑而不是白：浅底上白三角必然糊掉；白玻璃 0.55 alpha 叠在
-        任意底图上，近黑三角的对比度都在 12:1 以上（亮图 21:1、暗图 ≈12:1）。
+        **默认无底：只有一枚白色三角**（压一道柔和投影保证亮海报上仍可见）；
+        鼠标移上去才浮出**浅玻璃底**，同时三角转近黑。
+        为什么不常驻底色：海报墙上几十个卡片，如果每个都挂一块白玻璃，整面墙
+        会浮起一层灰白噪点、把海报本身的颜色压掉。静止时只留三角，画面干净；
+        需要点时它才出现 —— 这也是 hover 才显形的原生播放器惯例。
+        反色是必需的：白三角压在白玻璃上会消失，所以 hover 时三角转 `#10141c`
+        （白 72% 底上 13:1，合格）。
      ② `.pl-solid` —— 页面里的主行动按钮（详情页「播放」/ 网盘 / JavHub）
         实心 `--accent-solid` + 圆角，与全站其它主按钮同一套几何。
 
@@ -38,24 +39,31 @@
   border-radius: 50%;
   padding: 0;
   cursor: pointer;
-  /* 浅玻璃：白 58% + blur 16 + 轻微提饱和，是播放器玻璃皮肤同一套配方。
-     为什么不是 0.45：那在白背景上像灰片、在深色海报上又太薄会透成脏灰；
-     0.58 在深/中/浅三种底图上都稳定读作「白玻璃」。悬停加到 0.86 变实。 */
-  background: rgba(255, 255, 255, 0.58);
-  color: #10141c;
+  /* 默认：**无底**，只有白三角。用 rgba(…,0) 而不是 transparent 起步 ——
+     transparent 是 rgba(0,0,0,0)，过渡到白色会经过一段灰，视觉上像闪了一下。
+     drop-shadow 而不是 box-shadow：它跟形状走，只给三角投一道影，
+     亮海报（白天空/雪景）上白三角不会整个消失。
+     backdrop-filter 常驻不摘：它从 none 切到 blur 无法过渡，会「啪」地跳一下；
+     背景透明时 blur 本来也看不出效果，留着只保证 hover 不抖。 */
+  background: rgba(255, 255, 255, 0);
+  color: #fff;
+  filter: drop-shadow(0 1px 4px rgb(0 0 0 / 0.42));
   backdrop-filter: blur(16px) saturate(1.6);
   -webkit-backdrop-filter: blur(16px) saturate(1.6);
-  /* 外圈亮边 + 极淡投影：浅玻璃在亮海报上需要一个边界，否则会「化开」。 */
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.55),
-    0 4px 14px rgb(var(--shadow-rgb) / 0.18);
+  box-shadow: none;
   transition:
     background var(--dur-tap) ease,
     box-shadow var(--dur-tap) ease,
+    filter var(--dur-tap) ease,
     transform var(--dur-tap) ease;
 }
-.pl-circle:hover {
-  background: rgba(255, 255, 255, 0.86);
+/* hover / 键盘聚焦：浮出浅玻璃底并反色。
+   外圈亮边让浅玻璃在亮海报上有个边界，否则会「化开」。 */
+.pl-circle:hover,
+.pl-circle:focus-visible {
+  background: rgba(255, 255, 255, 0.72);
+  color: #10141c;
+  filter: none;
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.7),
     0 6px 18px rgb(var(--shadow-rgb) / 0.24);
@@ -71,6 +79,22 @@
 .pl-circle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* 变体：压在**面板底色**上而不是图像上（网盘文件行、设置列表…）。
+   白色三角在浅色面板/白卡上完全看不见，所以这类场景常驻浅玻璃底 + 近黑三角，
+   不再等 hover。图像上的按钮不要加这个类。 */
+.pl-circle.on-surface {
+  background: rgba(255, 255, 255, 0.72);
+  color: #10141c;
+  filter: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+}
+.pl-circle.on-surface:hover {
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.85),
+    0 4px 12px rgb(var(--shadow-rgb) / 0.18);
 }
 
 /* 尺寸档：只有三档，不再让各页面各写一个直径。 */

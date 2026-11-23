@@ -44,6 +44,16 @@
   /* 让 poster-actions / continue-play 的悬停显形在演示里常显 */
   .poster-actions { opacity: 1 !important; }
   .continue-play { opacity: 1 !important; pointer-events: auto !important; }
+  /* 演示「hover 后」的样子：把 .pl-circle 的 hover 规则复制成一个静态类。
+     页面里不能真的模拟 hover，所以必须显式写一份（与源码保持同步）。 */
+  .demo-hover {
+    background: rgba(255, 255, 255, 0.72) !important;
+    color: #10141c !important;
+    filter: none !important;
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.7),
+      0 6px 18px rgba(0, 0, 0, 0.24) !important;
+  }
 
   .spec { font-size: 12px; color: rgba(235,235,245,.8); margin-top: 8px; line-height: 1.6; }
   .spec b { color: #fff; font-weight: 600; }
@@ -57,7 +67,7 @@
   <div class="sub">同一个「播放」动作，改前 8 套互不相干的样式；改后两条语言 + 一个三角。</div>
 
   <section>
-    <h2>① 图上圆形播放键 <code>.pl-circle</code></h2>
+    <h2>① 图上圆形播放键 <code>.pl-circle</code> · 默认无底，hover 才浮底</h2>
     <div class="row">
       <div>
         <div class="fake-poster">
@@ -69,7 +79,20 @@
             </button>
           </div>
         </div>
-        <div class="spec"><b>海报卡 pl-md</b><br>54px · 浅玻璃底 · 近黑三角</div>
+        <div class="spec"><b>海报卡 pl-md · 默认</b><br>54px · 无底 · 白三角</div>
+      </div>
+
+      <div>
+        <div class="fake-poster">
+          <div class="poster-actions">
+            <button class="pa-play pl-circle pl-md demo-hover" aria-label="播放（悬停态）">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M9.9 4.5c-1.2-.7-2.7.2-2.7 1.6v11.8c0 1.4 1.5 2.3 2.7 1.6l9.9-5.9c1.2-.7 1.2-2.5 0-3.2z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="spec"><b>海报卡 pl-md · 悬停</b><br>浮出浅玻璃底 + 三角转近黑</div>
       </div>
 
       <div>
@@ -80,7 +103,7 @@
             </svg>
           </button>
         </div>
-        <div class="spec"><b>继续看 pl-sm</b><br>38px · 悬停显形</div>
+        <div class="spec"><b>继续看 pl-sm</b><br>38px · 卡片悬停显形（显形时一并浮底）</div>
       </div>
 
       <div>
@@ -91,7 +114,7 @@
             </svg>
           </span>
         </div>
-        <div class="spec"><b>选集角标 pl-xs</b><br>26px · 播放中变主色</div>
+        <div class="spec"><b>选集角标 pl-xs</b><br>26px · 行悬停浮底；播放中转实心主色并反白</div>
       </div>
     </div>
   </section>

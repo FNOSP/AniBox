@@ -57,6 +57,15 @@
   opacity: 1;
   pointer-events: auto;
 }
+/* [lc-2322] 与选集角标同理：卡片悬停就代表「要点了」，此时圆钮自己还没 hover，
+   必须由父级把 .pl-circle 的 hover 态提前给上（同一套值，改一边要改两边）。 */
+.continue-card:hover .continue-play,
+.continue-card:focus-within .continue-play {
+  background: rgba(255, 255, 255, 0.72);
+  color: #10141c;
+  filter: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+}
 /* 触屏设备没有 hover：始终显示 */
 @media (hover: none) {
   .continue-play {

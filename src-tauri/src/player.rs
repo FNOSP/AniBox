@@ -842,9 +842,30 @@ pub fn spawn_push_qualities(app: &AppHandle, cfg: &crate::config::Config, item_g
             let _ = sess
                 .command_no_reply(json!(["set", "user-data/anibox/qualities", csv]))
                 .await;
-            let _ = sess
-                .command_no_reply(json!(["set", "user-data/anibox/quality", "0"]))
-                .await;
+            // [lc-2316] **不要无条件写 quality=0**：切档成功后重新起播会再触发
+            // 本函数，无条件写 0 会把用户刚选的档位冲掉 —— 表现为「切换成功，
+            // 但菜单里的勾又跳回原画（最高）」（实测日志：切 540 成功 8 秒后
+            // `Set property: user-data/anibox/quality=0`）。
+            // 只在当前值确实无效（空/负数/不在档位表里）时才重置为 0。
+            let cur_str = sess
+                .command(json!(["get_property", "user-data/anibox/quality"]))
+                .await
+                .ok()
+                .and_then(|v| v.get("data").and_then(|d| d.as_str()).map(str::to_string))
+                .unwrap_or_default();
+            let cur: i64 = cur_str
+                .trim()
+                .trim_matches('"')
+                .parse()
+                .unwrap_or(0);
+            let valid = cur == 0 || tiers.iter().any(|t| t.height == cur);
+            if !valid {
+                let _ = sess
+                    .command_no_reply(json!(["set", "user-data/anibox/quality", "0"]))
+                    .await;
+            } else {
+                crate::libmpv::trace(&format!("[quality] 保留当前档位 quality={cur}"));
+            }
         } else {
             crate::libmpv::trace(&format!(
                 "[quality] 单档/无档（{}）→ 不显示按钮",

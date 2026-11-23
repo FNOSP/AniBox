@@ -1035,6 +1035,12 @@ pub async fn switch_quality(
         }
     };
     let body = json!({
+        // [lc-2311] 代理的 TranscodePlayHandler 第一件事就校验这三个字段，
+        // 缺了直接 400 "missing required parameters"。之前漏传 → 请求必然失败。
+        "domain": cfg.server.trim_end_matches('/'),
+        "token": cfg.token,
+        "cookie": format!("Trim-MC-token={}", cfg.token),
+        "skipVerify": 1,
         "itemGuid": item_guid,
         "mediaGuid": meta.media_guid,
         // [lc-2307] play/play 真正要的是 FileStream.guid
@@ -1049,14 +1055,25 @@ pub async fn switch_quality(
         "forcedSdr": 0,
         "oldPlayLink": current_transcode_link(),
     });
+    // [lc-2311] 发请求前先打点：上一版请求卡满 30s 却没有任何日志，
+    // 完全看不出是"发不出去"还是"飞牛不回"。现在两段都有记录，
+    // 且超时缩到 12s —— 让用户干等半分钟必然以为没反应。
+    crate::libmpv::trace(&format!(
+        "[quality] → 请求转码会话: {} @ {}{}（domain={}）",
+        tier.resolution,
+        tier.bitrate / 1000,
+        "kbps",
+        cfg.server
+    ));
     let client = reqwest::Client::new();
     let resp = client
         .post(&url)
         .json(&body)
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(12))
         .send()
         .await
-        .map_err(|e| format!("请求转码会话失败：{e}"))?;
+        .map_err(|e| format!("请求转码会话失败（12s 超时或连接失败）：{e}"))?;
+    crate::libmpv::trace(&format!("[quality] ← 转码会话响应 HTTP {}", resp.status()));
     let v: serde_json::Value = resp
         .json()
         .await

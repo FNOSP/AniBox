@@ -360,21 +360,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* [lc-2321] 外观交给 .pl-circle.pl-xs（玻璃底 + 主色三角）。
+   原来是 29px 实心蓝圆 + 12px 描边图标填充，和海报卡的 62px 蓝盘、
+   剧集行的 24px 黑圆并存 —— 三处同一个动作三种样子。
+   这里只保留「未悬停时淡出、悬停变实」这条状态差。 */
 .c115-play {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 29px;
-  height: 29px;
-  border: 0;
-  border-radius: 50%;
-  background: var(--accent-grad);
-  color: #fff;
-  cursor: pointer;
   flex: none;
   opacity: 0.45;
   transform: scale(0.92);
-  transition: opacity var(--dur-tap) ease, transform var(--dur-tap) ease, box-shadow var(--dur-tap) ease;
 }
 
 .c115-item:hover .c115-play {
@@ -382,17 +375,15 @@
   transform: scale(1);
 }
 
-.c115-play:hover {
-  box-shadow: 0 0 0 4px rgb(var(--accent-rgb) / 0.2);
-}
-
 .c115-play.ghost {
+  border-radius: 50%;
   background: var(--glass-btn-bg, rgba(0, 0, 0, 0.08));
   color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 
 .c115-play.ghost:hover {
-  box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.08);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
 }
 
 .c115-more {

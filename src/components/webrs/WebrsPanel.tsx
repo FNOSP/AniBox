@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { createPortal } from "react-dom";
 import { useDelayedUnmount } from "../../hooks/useDelayedUnmount";
+import { PlayGlyph } from "../common/PlayGlyph";
 
 export type WebrsSearchItem = { name: string; url: string };
 
@@ -1060,7 +1061,7 @@ export function WebrsPanel({
                       <button key={it.url} onClick={() => openChapters(g.name, it)} title={it.url}>
                         <span className="webrs-g-ep">{it.name}</span>
                         <span className="webrs-g-play" aria-hidden>
-                          ▶
+                          <PlayGlyph size={12} />
                         </span>
                       </button>
                     ))}

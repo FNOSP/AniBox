@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { imgUrl } from "../../lib/images";
 import { Clipboard as IcoCopy, Languages as IcoLang, RefreshCw as IcoRefreshL, X as IcoX } from "lucide-react";
+import { PlayGlyph } from "../common/PlayGlyph";
 
 type JavFileT = { provider: string; fileId: string; name: string; size: number; part: number };
 export type JavEntryT = {
@@ -193,8 +194,13 @@ export function JavDetailDrawer({
           {title !== e.code && <p className="jvd-title">{title}</p>}
 
           {/* 播放大按钮 */}
-          <button className="jvd-play" disabled={e.files.length === 0} onClick={() => onPlay(e)}>
-            ▶ 立即播放 {totalSize > 0 ? fmtSize(totalSize) : ""}
+          <button
+            className="jvd-play pl-solid pl-h-lg"
+            disabled={e.files.length === 0}
+            onClick={() => onPlay(e)}
+          >
+            <PlayGlyph size={15} />
+            立即播放 {totalSize > 0 ? fmtSize(totalSize) : ""}
           </button>
           {e.files.length > 1 && (
             <div className="jvd-parts">

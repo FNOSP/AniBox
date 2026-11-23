@@ -17,11 +17,11 @@ import {
   Folder as IcoFolderL,
   LogOut as IcoLogoutL,
   Pencil as IcoRenameL,
-  Play as IcoPlayL,
   Plus as IcoPlusL,
   RefreshCw as IcoRefreshL,
   Trash2 as IcoTrashL,
 } from "lucide-react";
+import { PlayGlyph } from "../common/PlayGlyph";
 
 type ProviderInfo = { id: string; label: string; logged: boolean; userName: string };
 
@@ -730,14 +730,14 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
                 )}
                 {!e.isDir && e.kind !== "other" && e.kind !== "sub" && (
                   <button
-                    className="c115-play"
+                    className="c115-play pl-circle pl-xs"
                     title={mode === "server" ? "服务端转码播放" : mode === "local" ? "本地 ffmpeg 转码播放" : "直链播放（过期自动续链）"}
                     onClick={(ev) => {
                       ev.stopPropagation();
                       void play(e);
                     }}
                   >
-                    <IcoPlayL size={13} strokeWidth={2.2} />
+                    <PlayGlyph size={11} />
                   </button>
                 )}
               </div>
@@ -785,14 +785,14 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
                   {g.files[0]?.kind === "episode" ? `S${g.files[0].season || 1} · ${g.files.length} 集` : "电影"}
                 </span>
                 <button
-                  className="c115-play"
+                  className="c115-play pl-circle pl-xs"
                   title="播放（直链自动续签）"
                   onClick={(ev) => {
                     ev.stopPropagation();
                     if (g.files[0]) void playLib(g.files[0]);
                   }}
                 >
-                  <IcoPlayL size={13} strokeWidth={2.2} />
+                  <PlayGlyph size={11} />
                 </button>
               </div>
             ))}

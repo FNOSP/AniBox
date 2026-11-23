@@ -671,18 +671,12 @@
 .jvd-icobtn:hover { background: var(--hover); color: var(--text-strong); }
 .jvd-icobtn:disabled { opacity: 0.45; }
 .jvd-title { margin: -4px 0 0; font-size: var(--fs-body); color: var(--text); line-height: 1.45; }
+/* [lc-2321] 外观交给 .pl-solid.pl-h-lg（实心主色 + 圆角，全站主按钮同一套几何）。
+   原来单独用 `background: var(--accent)`（文字用的那个蓝）+ `filter: brightness()`
+   悬停 —— 与别处按钮的 hover 语义不一致。这里只留「占满抽屉宽度」。 */
 .jvd-play {
-  padding: var(--sp-3) var(--sp-4);
-  border-radius: var(--r-md);
-  border: none;
-  background: var(--accent);
-  color: #fff;
-  font-size: var(--fs-body);
-  font-weight: 700;
-  cursor: pointer;
-  transition: filter var(--dur-tap);
+  width: 100%;
 }
-.jvd-play:hover:not(:disabled) { filter: brightness(1.08); }
 .jvd-play:disabled { opacity: 0.5; cursor: default; }
 .jvd-parts { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: -4px; }
 .jvd-part {

@@ -370,10 +370,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* [lc-2321] 三角改用 <PlayGlyph>（单一路径），这里只留布局与配色。 */
 .webrs-g-play {
   flex: 0 0 auto;
+  display: inline-flex;
   color: var(--accent);
-  font-size: var(--fs-cap);
 }
 .webrs-g-items button:hover {
   border-color: var(--accent);

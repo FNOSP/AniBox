@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>播放控件统一 · 前后对照</title>
+
+<link rel="stylesheet" href="/src/styles/index.css">
+<style>
+  /* 演示页在 index.css 之后注入，确保不被 body{background:transparent} 盖掉。
+     用户硬要求：不裁剪；这里用真实 index.css 的完整级联。
+     为了让对照可读，只给页面加背景，不改任何控件样式。 */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px;
+    background: #0f1013;
+    color: rgba(245,245,247,.96);
+    font-family: "Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; font-weight: 600; color: rgba(245,245,247,.96); }
+  .sub { font-size: 13px; color: rgba(235,235,245,.78); margin-bottom: 28px; }
+  h2 { font-size: 13px; font-weight: 600; color: rgba(235,235,245,.9); margin: 0 0 12px;
+       text-transform: uppercase; letter-spacing: .06em; }
+  section { margin-bottom: 36px; }
+  .row { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
+
+  /* 演示容器（只是给控件一个背景海报，不是控件样式） */
+  .fake-poster {
+    position: relative; width: 200px; height: 300px; border-radius: 12px; overflow: hidden;
+    background: linear-gradient(155deg, #3a4a6b 0%, #1d2430 45%, #4a3a52 100%);
+  }
+  .fake-poster::after {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(circle at 30% 25%, rgba(255,255,255,.22), transparent 55%);
+  }
+  .fake-wide {
+    position: relative; width: 280px; height: 175px; border-radius: 12px; overflow: hidden;
+    background: linear-gradient(155deg, #4a5a3a 0%, #1d2430 55%, #2a3a52 100%);
+  }
+  .thumb {
+    position: relative; width: 200px; height: 112px; border-radius: 8px; overflow: hidden;
+    background: linear-gradient(155deg, #523a4a 0%, #1d2430 60%, #3a524a 100%);
+  }
+  /* 让 poster-actions / continue-play 的悬停显形在演示里常显 */
+  .poster-actions { opacity: 1 !important; }
+  .continue-play { opacity: 1 !important; pointer-events: auto !important; }
+
+  .spec { font-size: 12px; color: rgba(235,235,245,.8); margin-top: 8px; line-height: 1.6; }
+  .spec b { color: #fff; font-weight: 600; }
+
+  .panel { display: flex; flex-direction: column; gap: 10px; }
+  .panel-box { width: 340px; }
+</style>
+</head>
+<body>
+  <h1>播放控件统一 · 对照</h1>
+  <div class="sub">同一个「播放」动作，改前 8 套互不相干的样式；改后两条语言 + 一个三角。</div>
+
+  <section>
+    <h2>① 图上圆形播放键 <code>.pl-circle</code></h2>
+    <div class="row">
+      <div>
+        <div class="fake-poster">
+          <div class="poster-actions">
+            <button class="pa-play pl-circle pl-md" aria-label="播放">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M9.9 4.5c-1.2-.7-2.7.2-2.7 1.6v11.8c0 1.4 1.5 2.3 2.7 1.6l9.9-5.9c1.2-.7 1.2-2.5 0-3.2z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="spec"><b>海报卡 pl-md</b><br>54px · 深色玻璃底 · 白三角</div>
+      </div>
+
+      <div>
+        <div class="fake-wide">
+          <button class="continue-play pl-circle pl-sm" aria-label="直接播放">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M9.9 4.5c-1.2-.7-2.7.2-2.7 1.6v11.8c0 1.4 1.5 2.3 2.7 1.6l9.9-5.9c1.2-.7 1.2-2.5 0-3.2z"/>
+            </svg>
+          </button>
+        </div>
+        <div class="spec"><b>继续看 pl-sm</b><br>38px · 悬停显形</div>
+      </div>
+
+      <div>
+        <div class="thumb" style="display:flex;align-items:center;justify-content:center">
+          <span class="dv2e-play pl-circle pl-xs">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M9.9 4.5c-1.2-.7-2.7.2-2.7 1.6v11.8c0 1.4 1.5 2.3 2.7 1.6l9.9-5.9c1.2-.7 1.2-2.5 0-3.2z"/>
+            </svg>
+          </span>
+        </div>
+        <div class="spec"><b>选集角标 pl-xs</b><br>26px · 播放中变主色</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>② 页面主行动 <code>.pl-solid</code></h2>
+    <div class="row">
+      <div class="panel-box panel">
+        <button class="dv2-solo-play pl-solid pl-h-md">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M9.9 4.5c-1.2-.7-2.7.2-2.7 1.6v11.8c0 1.4 1.5 2.3 2.7 1.6l9.9-5.9c1.2-.7 1.2-2.5 0-3.2z"/>
+          </svg>
+          <span>播放</span>
+        </button>
+        <div class="spec"><b>详情页右栏 pl-h-md</b> · 38px 高，与邻排控件同高</div>
+      </div>
+
+      <div class="panel-box panel">
+        <button class="jvd-play pl-solid pl-h-lg">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M9.9 4.5c-1.2-.7-2.7.2-2.7 1.6v11.8c0 1.4 1.5 2.3 2.7 1.6l9.9-5.9c1.2-.7 1.2-2.5 0-3.2z"/>
+          </svg>
+          立即播放 1.2 GB
+        </button>
+        <div class="spec"><b>JavHub 抽屉 pl-h-lg</b> · 44px 高，占满宽度</div>
+      </div>
+
+      <div class="panel" style="width:260px">
+        <button class="mved-btn-primary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M9.9 4.5c-1.2-.7-2.7.2-2.7 1.6v11.8c0 1.4 1.5 2.3 2.7 1.6l9.9-5.9c1.2-.7 1.2-2.5 0-3.2z"/>
+          </svg>
+          立即播放
+        </button>
+        <div class="spec"><b>杂志版式主按钮</b> · 电影详情页</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>③ 悬停胶囊 <code>.pl-pill</code> 与播放中状态</h2>
+    <div class="row">
+      <div class="panel" style="width:260px">
+        <div class="fake-wide" style="display:flex;align-items:center;justify-content:center">
+          <span class="play-pill pl-pill" style="transform:none">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M9.9 4.5c-1.2-.7-2.7.2-2.7 1.6v11.8c0 1.4 1.5 2.3 2.7 1.6l9.9-5.9c1.2-.7 1.2-2.5 0-3.2z"/>
+            </svg>
+            播放
+          </span>
+        </div>
+        <div class="spec"><b>海报卡悬停胶囊</b> · 玻璃底 + 白三角（原为实心蓝 + 字符 ▶）</div>
+      </div>
+
+      <div class="panel" style="width:260px">
+        <div class="thumb" style="display:flex;align-items:center;justify-content:center;gap:12px">
+          <span class="dv2e-play pl-circle pl-xs">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M9.9 4.5c-1.2-.7-2.7.2-2.7 1.6v11.8c0 1.4 1.5 2.3 2.7 1.6l9.9-5.9c1.2-.7 1.2-2.5 0-3.2z"/>
+            </svg>
+          </span>
+          <span class="dv2e-play pl-circle pl-xs" style="background:var(--accent-solid);opacity:1">
+            <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.8"/>
+              <circle cx="12" cy="12" r="3.4" fill="currentColor"/>
+            </svg>
+          </span>
+        </div>
+        <div class="spec"><b>播放中</b> · 圆点标记取代字符 ◉，底色转实心主色（白三角/白圆点）</div>
+      </div>
+
+      <div class="panel" style="width:260px">
+        <div class="c115-item" style="display:flex;gap:10px;align-items:center;padding:8px 12px;border-radius:10px;background:rgba(255,255,255,.06)">
+          <span style="flex:1;font-size:13px">S01E03.mkv</span>
+          <button class="c115-play pl-circle pl-xs" style="opacity:1;transform:none" title="播放">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M9.9 4.5c-1.2-.7-2.7.2-2.7 1.6v11.8c0 1.4 1.5 2.3 2.7 1.6l9.9-5.9c1.2-.7 1.2-2.5 0-3.2z"/>
+            </svg>
+          </button>
+        </div>
+        <div class="spec"><b>网盘文件行</b> · 26px，悬停前 0.92 缩放淡出</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>三角本体 <code>&lt;PlayGlyph&gt;</code></h2>
+    <div class="row" style="align-items:center;gap:20px">
+      <span style="display:inline-flex;align-items:center;gap:8px;font-size:13px">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.9 4.5c-1.2-.7-2.7.2-2.7 1.6v11.8c0 1.4 1.5 2.3 2.7 1.6l9.9-5.9c1.2-.7 1.2-2.5 0-3.2z"/></svg>11
+      </span>
+      <span style="display:inline-flex;align-items:center;gap:8px;font-size:13px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.9 4.5c-1.2-.7-2.7.2-2.7 1.6v11.8c0 1.4 1.5 2.3 2.7 1.6l9.9-5.9c1.2-.7 1.2-2.5 0-3.2z"/></svg>14
+      </span>
+      <span style="display:inline-flex;align-items:center;gap:8px;font-size:13px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.9 4.5c-1.2-.7-2.7.2-2.7 1.6v11.8c0 1.4 1.5 2.3 2.7 1.6l9.9-5.9c1.2-.7 1.2-2.5 0-3.2z"/></svg>16
+      </span>
+      <span style="display:inline-flex;align-items:center;gap:8px;font-size:13px">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.9 4.5c-1.2-.7-2.7.2-2.7 1.6v11.8c0 1.4 1.5 2.3 2.7 1.6l9.9-5.9c1.2-.7 1.2-2.5 0-3.2z"/></svg>20
+      </span>
+      <span class="spec" style="margin:0 0 0 12px">单一路径 + 圆角。重心已右移，<b>不需要再写 margin-left 补丁</b>。</span>
+    </div>
+  </section>
+</body>
+</html>

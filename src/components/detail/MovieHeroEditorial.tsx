@@ -17,6 +17,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Star as IcoStarL } from "lucide-react";
+import { PlayGlyph } from "../common/PlayGlyph";
 import { imgUrl, tmdbImg } from "../../lib/images";
 import { prefersReducedMotion } from "../../lib/motion";
 import { TmdbCreditPerson } from "../../types";
@@ -549,7 +550,8 @@ export function MovieHeroEditorial({
 
             <div className="mved-actions" ref={actionsRef}>
               <button className="mved-btn-primary" onClick={onPlay} disabled={playing}>
-                ▶ {playing ? "打开中…" : resumeAt ? "继续播放" : "立即播放"}
+                <PlayGlyph size={16} />
+                {playing ? "打开中…" : resumeAt ? "继续播放" : "立即播放"}
               </button>
               <button
                 className={`mved-btn-ghost${fav ? " on" : ""}`}

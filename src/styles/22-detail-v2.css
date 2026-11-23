@@ -1186,29 +1186,22 @@
   top: auto;
   right: auto;
 }
-/* 剧照上的播放角标：默认半透明，hover/播放中才明显（与首页海报卡同一套语言） */
+/* 剧照上的播放角标：[lc-2321] 外观交给 .pl-circle.pl-xs（玻璃底 + 主色三角）。
+   这里只保留「默认略淡、悬停/播放中变实」这条状态差 —— 与首页海报卡同一套语义。
+   原来是黑底圆 + 字符 ▶，播放中换成实心蓝（`--accent-grad`）；字符在不同字体下
+   角度不一，是「一行里三个播放符号长得都不太一样」的来源。 */
 .dv2e-play {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--fs-cap);
-  color: #fff;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(6px);
-  opacity: 0.85;
-  transition: opacity var(--dur-tap) ease, background var(--dur-tap) ease;
+  opacity: 0.82;
   flex: 0 0 auto;
+  transition: opacity var(--dur-tap) ease, background var(--dur-tap) ease,
+    box-shadow var(--dur-tap) ease, transform var(--dur-tap) ease;
 }
 .dv2e-row:hover .dv2e-play,
 .dv2e-row.playing .dv2e-play {
   opacity: 1;
-  background: rgba(0, 0, 0, 0.68);
 }
 .dv2e-row.playing .dv2e-play {
-  background: var(--accent-grad);
+  background: var(--accent-solid);
 }
 /* 选集行改为横向「图 + 文字」布局后，序号徽标不再需要 */
 .dv2e-list .dv2e-no {

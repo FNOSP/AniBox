@@ -9,7 +9,6 @@ import {
   Film as IcoFilmL,
   LayoutGrid as IcoGridL,
   LayoutList as IcoListL,
-  Play as IcoPlayL,
   X as IcoXL,
 } from "lucide-react";
 import { DetailSkeleton } from "./DetailSkeleton";
@@ -26,6 +25,7 @@ import { ReviewsTab } from "./tabs/ReviewsTab";
 import { CommentsTab } from "./tabs/CommentsTab";
 import { ExtraTab } from "./tabs/ExtraTab";
 import { RatingWidget } from "./RatingWidget";
+import { PlayGlyph, PlayingGlyph } from "../common/PlayGlyph";
 // [lc-1652] 电影详情页「沉浸式」版式（用户样板）
 import { MovieHero } from "./MovieHero";
 import { MovieHeroEditorial } from "./MovieHeroEditorial";
@@ -2689,11 +2689,11 @@ export function DetailView({
               [lc-1444] 发现页条目没有飞牛 guid，播不了 —— 不显示播放入口。 */}
           {!isSeries && !noFnOS && (
             <button
-              className="dv2-solo-play"
+              className="dv2-solo-play pl-solid pl-h-md"
               disabled={playing}
               onClick={playing ? undefined : startPlay}
             >
-              <IcoPlayL size={16} strokeWidth={2.4} />
+              <PlayGlyph size={15} />
               <span>{playing ? "打开中…" : resumeAt ? "继续播放" : "播放"}</span>
             </button>
           )}
@@ -2743,7 +2743,7 @@ export function DetailView({
                       : `继续看 第 ${resumeTarget.episode_number ?? 1} 集`
                   }
                 >
-                  <IcoPlayL size={14} strokeWidth={2.4} />
+                  <PlayGlyph size={14} />
                   <span>
                     {playing
                       ? "打开中…"
@@ -3137,7 +3137,9 @@ export function DetailView({
                       {/* 左下角操作区：播放按钮 + 「已看」徽标同一行、垂直居中。
                           徽标从右上角移到这里，紧跟播放按钮右侧。 */}
                       <div className="dv2e-actions">
-                        <span className="dv2e-play">{playing ? "◉" : "▶"}</span>
+                        <span className="dv2e-play pl-circle pl-xs">
+                          {playing ? <PlayingGlyph size={13} /> : <PlayGlyph size={11} />}
+                        </span>
                         {seen && <span className="ep-mark seen"><IcoCheckL size={11} strokeWidth={2.2} /> 已看</span>}
                         {!seen && progress > 0 && <span className="ep-mark now">看到 {Math.round(progress)}%</span>}
                       </div>

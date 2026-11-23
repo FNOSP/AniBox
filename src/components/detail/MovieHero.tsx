@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Star as IcoStarL } from "lucide-react";
+import { PlayGlyph } from "../common/PlayGlyph";
 import { imgUrl, tmdbImg } from "../../lib/images";
 import { prefersReducedMotion } from "../../lib/motion";
 import { useAdaptiveTone } from "../../lib/adaptiveTone";
@@ -223,7 +224,8 @@ export function MovieHero({
 
             <div className="mv-actions">
               <button className="mv-btn-primary" onClick={onPlay} disabled={playing}>
-                ▶ {playing ? "打开中…" : resumeAt ? "继续播放" : "立即播放"}
+                <PlayGlyph size={16} />
+                {playing ? "打开中…" : resumeAt ? "继续播放" : "立即播放"}
               </button>
               <button className={`mv-btn-ghost${fav ? " on" : ""}`} onClick={toggleFav} disabled={!favGuid || favBusy}>
                 <svg viewBox="0 0 24 24" fill={fav ? "currentColor" : "none"} stroke="currentColor" strokeWidth={fav ? 0 : 1.8}>

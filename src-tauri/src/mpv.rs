@@ -759,6 +759,16 @@ impl MpvSession {
         if modernz_skin && !glass_blur {
             args.push("--script-opts-append=modernz-glass_blur=no".to_string());
         }
+        // [lc-2320] 系统 HDR 状态传给 fntv_rtx.lua。
+        // 为什么不在 Lua 里读：mpv 的 video-target-params/gamma 在 SDR 片源上恒为 srgb
+        // ——即便系统 HDR 开着也不会变成 pq（它描述的是「这次输出用什么」，而 mpv 在
+        // 没有 HDR 片源时不会把 swapchain 切到 PQ）。所以 RTX Video HDR 的开启条件
+        // 只能在启动时由 Rust 问一次 Windows（DisplayConfig），经 script-opts 传进去。
+        // 值变化（用户中途开 HDR）不会即时反映——重开一次播放即可，代价可接受。
+        args.push(format!(
+            "--script-opts-append=fntv_rtx-system_hdr={}",
+            if crate::rtx::system_hdr_enabled() { "yes" } else { "no" }
+        ));
         if let Some(t) = force_title {
             if !t.is_empty() {
                 args.push(format!("--force-media-title={t}"));

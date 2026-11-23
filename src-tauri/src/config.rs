@@ -285,6 +285,14 @@ pub struct Config {
     /// modernz 不再挂载玻璃 shader，渲染路径与 uosc 皮肤完全一致。
     #[serde(default = "default_true")]
     pub player_glass_blur: bool,
+    /// [lc-2320] NVIDIA RTX 视频增强：超分辨率（VSR）与 SDR→HDR，由显卡驱动在
+    /// mpv 的 d3d11vpp 滤镜里完成（无需额外组件）。默认关（对非 RTX 机器无意义）。
+    /// 真正落链的是 scripts/fntv_rtx.lua —— 这里只是它 script-opts 的镜像。
+    #[serde(default)]
+    pub rtx_vsr: bool,
+    /// [lc-2320] RTX Video HDR（SDR 片源转 HDR；需系统 HDR 已开）。默认关。
+    #[serde(default)]
+    pub rtx_hdr: bool,
     /// [lc-2057] 调起播放器后自动隐藏主窗口，播放器关闭时再显示回来。
     /// 默认 false（保持原行为：主窗一直在）。
     ///
@@ -460,6 +468,8 @@ impl Default for Config {
             player_open_mode: default_player_open_mode(),
             player_skin: default_player_skin(),
             player_glass_blur: default_true(),
+            rtx_vsr: false,
+            rtx_hdr: false,
             hide_main_on_play: false,
             update_remind_off: false,
             iptv_sources: Vec::new(),

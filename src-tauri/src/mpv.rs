@@ -1352,9 +1352,12 @@ impl MpvSession {
                         if let Some(raw) = v.get("data").and_then(|x| x.as_str()) {
                             let s = raw.trim().trim_matches('"');
                             if let Ok(q) = s.parse::<i64>() {
+                                // [lc-2304] 事件名保持 duanju- 前缀（前端已监听）：
+                                // 目前只有短剧前端会响应它；普通剧集暂只显示档位不做重开流
+                                // （飞牛本地播放是原始文件直读，换档不改变实际码流）。
                                 let _ = app2.emit("duanju-quality-request", json!({ "quality": q }));
                                 crate::libmpv::trace(&format!(
-                                    "[duanju] 收到清晰度切换请求 quality={q}，已转给前端重播"
+                                    "[quality] 收到清晰度切换请求 quality={q}"
                                 ));
                             }
                             let line = json!({

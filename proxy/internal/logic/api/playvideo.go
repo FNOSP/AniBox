@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"proxy/pkg/fnapi"
 	"proxy/pkg/logger"
@@ -172,6 +173,33 @@ func PlayVideoHandler(c *gin.Context) {
 		return
 	}
 
+	// [lc-2304] 诊断打点：飞牛返回的 Qualities 到底有几档、每档什么参数。
+	// 结论用途：判断「普通剧集清晰度切换」是否可行 ——
+	//   · Qualities 只给一档 → 该片源单版本，切换无意义；
+	//   · 多档 → 可尝试按 level 取不同转码流。
+	// 只在**首次解析**（非缓存命中）时打，避免拖动/续传把日志刷满。
+	if freshResolve {
+		if qs := streamResp.Data.Qualities; len(qs) > 0 {
+			parts := make([]string, 0, len(qs))
+			for _, q := range qs {
+				parts = append(parts, fmt.Sprintf("%s/%dkbps/prog=%v/m3u8=%v",
+					q.Resolution, q.Bitrate, q.Progressive, q.IsM3U8))
+			}
+			logger.Infof("[lc-2304] 飞牛 qualities(%d 档): %s | 媒体 %dx%d",
+				len(qs), strings.Join(parts, " ; "),
+				streamResp.Data.VideoStream.Width, streamResp.Data.VideoStream.Height)
+		} else {
+			logger.Infof("[lc-2304] 飞牛 qualities: 空（该片源单版本）")
+		}
+		if dl := streamResp.Data.DirectLinkQualities; len(dl) > 0 {
+			parts := make([]string, 0, len(dl))
+			for _, q := range dl {
+				parts = append(parts, fmt.Sprintf("%s/%dkbps", q.Resolution, q.Bitrate))
+			}
+			logger.Infof("[lc-2304] 直链档位(%d): %s", len(dl), strings.Join(parts, " ; "))
+		}
+	}
+
 	var (
 		targetUrl    = fnApi.GetVideoURL(targetMediaGuid)
 		proxyType    = TransparentProxy
@@ -242,4 +270,76 @@ func PlayVideoHandler(c *gin.Context) {
 		// 透明代理 (本地 NAS 或 115/阿里等直链)
 		utils.DynamicProxy(c, targetUrl, extraHeaders, skipVerify)
 	}
+}
+
+// QualitiesHandler [lc-2304] 返回该条目可选的清晰度档位。
+//
+// 用途：应用在起播前查一次，判断「这部剧有没有多档清晰度」——
+// 有则把档位推给 mpv 底栏的清晰度按钮；只有一档就不显示按钮（不做假档位）。
+//
+// 数据来源：飞牛 `stream/list` 的元数据里带 `qualities[]`
+// （resolution / bitrate / progressive / is_m3u8），不是额外请求。
+//
+// 注意：飞牛**本地播放走 `/media/range/<mediaGUID>`（原始文件直读）**，
+// qualities 只描述该片源的可能档位。真正按档位取流需要走转码通道，
+// 本接口只负责如实回传元数据，不承诺"切换能改变实际码流"。
+func QualitiesHandler(c *gin.Context) {
+	var params PlayVideoParams
+	if err := c.ShouldBindUri(&params); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid parameters"})
+		return
+	}
+	if err := c.ShouldBindQuery(&params); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid parameters"})
+		return
+	}
+	if params.Domain == "" || params.Token == "" || params.ItemGuid == "" {
+		c.JSON(400, gin.H{"error": "missing required parameters"})
+		return
+	}
+
+	fnApi := fnapi.NewApiService(params.Domain, params.Token, params.SkipVerify == 1, params.Cookie)
+	resp, err := fetchPlayInfo(fnApi, params.ItemGuid)
+	if err != nil || resp == nil || !resp.Success || len(resp.Data.VideoStreams) == 0 {
+		logger.Errorf("qualities: 获取播放信息失败: %v", err)
+		c.JSON(500, gin.H{"error": "Failed to get play info"})
+		return
+	}
+
+	// 按 SourceIndex 选版本（与 playvideo 同口径），再取该媒体的 qualities
+	videoStreams := resp.Data.VideoStreams
+	mediaGuid := videoStreams[0].MediaGUID
+	if params.SourceIndex > 0 && int(params.SourceIndex) < len(videoStreams) {
+		mediaGuid = videoStreams[params.SourceIndex].MediaGUID
+	}
+
+	streamResp, err := fetchStream(fnApi, mediaGuid, params.Account)
+	if err != nil || streamResp == nil || !streamResp.Success {
+		logger.Errorf("qualities: 获取流信息失败: %v", err)
+		c.JSON(500, gin.H{"error": "Failed to get stream"})
+		return
+	}
+
+	type item struct {
+		Resolution  string `json:"resolution"`
+		Bitrate     int    `json:"bitrate"`
+		Progressive bool   `json:"progressive"`
+		IsM3U8      bool   `json:"isM3U8"`
+	}
+	items := make([]item, 0, len(streamResp.Data.Qualities))
+	for _, q := range streamResp.Data.Qualities {
+		items = append(items, item{
+			Resolution:  q.Resolution,
+			Bitrate:     q.Bitrate,
+			Progressive: q.Progressive,
+			IsM3U8:      q.IsM3U8,
+		})
+	}
+	// 同时把片源本身的宽高带上：应用据此判断"这一档是不是等于源分辨率"
+	c.JSON(200, gin.H{
+		"mediaGuid": mediaGuid,
+		"width":     streamResp.Data.VideoStream.Width,
+		"height":    streamResp.Data.VideoStream.Height,
+		"qualities": items,
+	})
 }

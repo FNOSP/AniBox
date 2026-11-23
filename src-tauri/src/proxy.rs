@@ -134,5 +134,27 @@ pub fn play_url(cfg: &crate::config::Config, item_guid: &str) -> String {
     )
 }
 
+/// [lc-2304] 清晰度清单地址（与 `play_url` 同一套参数，路径换成 qualities）。
+/// 应用起播后查一次：多档才把档位推给 mpv 底栏按钮，单档不显示（不做假档位）。
+pub fn qualities_url(cfg: &crate::config::Config, item_guid: &str) -> String {
+    let domain = js_escape(cfg.server.trim_end_matches('/'));
+    let cookie_raw = format!("Trim-MC-token={}", cfg.token);
+    let cookie_param = if cookie_raw.trim().is_empty() {
+        String::new()
+    } else {
+        format!("&cookie={}", urlencoding::encode(&cookie_raw))
+    };
+    format!(
+        "http://127.0.0.1:{}/api/v1/qualities/{}?token={}&skipVerify=1&account={}&domain={}&useNasLocal={}&sourceIndex=0{}",
+        PROXY_PORT,
+        item_guid,
+        cfg.token,
+        cfg.username,
+        domain,
+        if cfg.nas_proxy_enabled { 1 } else { 0 },
+        cookie_param
+    )
+}
+
 #[allow(dead_code)]
 fn _unused(_v: &Value) {}

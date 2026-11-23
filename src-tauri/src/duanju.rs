@@ -819,32 +819,17 @@ async fn play_impl(
             let _ = sess
                 .command_no_reply(json!(["set", "user-data/anibox/next-episode", label]))
                 .await;
-            // [lc-2301] 把清晰度档位推给 mpv 侧（modernz 底栏按钮 + 菜单读这几个键）。
-            // 格式：
-            //   anibox/qualities  = "1080,720,540,480,360"（降序；空串 = 无可选档位）
-            //   anibox/quality    = 当前档位（0 = 原画/不筛选）
-            // 用字符串而不是 JSON：mpv 的 user-data 是字符串属性，Lua 侧 split 即可。
-            let qs = plan
-                .get("qualities")
-                .and_then(|x| x.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_i64())
-                        .filter(|v| *v > 0)
-                        .map(|v| v.to_string())
-                        .collect::<Vec<_>>()
-                        .join(",")
-                })
-                .unwrap_or_default();
+            // [lc-2304] **不再推送清晰度档位**（用户要求：「短剧默认取原画的啊
+            // 不需要这个配置」）。短剧核心的 resolve 不筛选时本来就给最高档
+            // （探针实测 quality=0 实得 1080p 即最高），没有降档的实际诉求，
+            // 底栏那颗按钮对短剧是纯噪音。
+            // 这里只**清空**可能残留的旧值：上一次普通剧集播放留下的档位串
+            // 若不清掉，会在短剧会话里让按钮诡异地冒出来。
             let _ = sess
-                .command_no_reply(json!(["set", "user-data/anibox/qualities", qs]))
+                .command_no_reply(json!(["set", "user-data/anibox/qualities", ""]))
                 .await;
             let _ = sess
-                .command_no_reply(json!([
-                    "set",
-                    "user-data/anibox/quality",
-                    quality.unwrap_or(0).to_string()
-                ]))
+                .command_no_reply(json!(["set", "user-data/anibox/quality", "0"]))
                 .await;
         }
     }

@@ -2955,6 +2955,13 @@ async fn play_item(
     .await;
     stage("player-launched");
 
+    // [lc-2304] 起播后异步查一次清晰度档位：多档才在 mpv 底栏显示切换按钮。
+    // 放这里（launch 已返回）而不是起播前，避免多打一次网络往返拖慢起播；
+    // 直播没有 quality 概念，跳过。
+    if !is_live {
+        player::spawn_push_qualities(&app, &cfg, &res.play_guid);
+    }
+
     // [lc-1615] 落一笔本机播放历史（观影记录页数据源）：走到这里 = 已解析出可播地址并
     // 交给播放器（URL 已在启动参数里，mpv 一启动即开始加载）。
     // [lc-1710] 先记录、后传播播放器错误：mpv 的 IPC 连接超时（mpv.rs）或 PotPlayer

@@ -315,13 +315,9 @@ export function DuanjuPane() {
   const [rankBusy, setRankBusy] = useState(false);
   const [rankErr, setRankErr] = useState("");
 
-  /* [lc-2300] 清晰度：`qualities` 是核心回传的可选档位（降序，如 [1080,720,540]）；
-   * 单档或空 = 该片源没有多清晰度，选择器不出现。
-   * `quality` 是**用户选定**的档位（0 = 未选，跟随上游默认最高）；
-   * `curQuality` 是**实际在播**的档位（未选时由后端回传填补，用于显示"原画"）。 */
-  const [qualities, setQualities] = useState<number[]>([]);
-  const [quality, setQuality] = useState(0);
-  const [curQuality, setCurQuality] = useState(0);
+  /* [lc-2304] 短剧清晰度状态已全部移除（用户：「短剧默认取原画的啊不需要这个配置」）。
+   * 短剧 core resolve 不筛选即给最高档，没有降档诉求；普通剧集的多档位在 mpv 底栏。
+   * 下面的 `play()` 仍显式传 quality: null = 不筛选 = 上游给最高档。 */
 
   // [lc-2189] 后台探测站源可用性：无筛选目录首页拉一次；成功清零、失败 +1（TTL 内不重探）。
   // 失败源由 chips 剔除（见 render 的 visibleSources）。
@@ -756,28 +752,13 @@ export function DuanjuPane() {
     };
   }, []);
 
-  /* [lc-2301] 事件监听的 latest-ref 包装。
-   * 事件订阅只注册一次（空依赖），而 switchQuality 要读**当前**的 playingIdx /
-   * detail —— 直接闭包会永远捕获首帧的值，导致切档点了没反应。 */
-  const switchQualityRef = useRef<(q: number) => void>(() => {});
-
-  /* [lc-2301] mpv 底栏的清晰度菜单点了某档 → Rust emit 事件 → 这里重播当前集。
-   * 为什么绕一圈：mpv 是独立进程，Lua 只知道档位数字，不持有 drama/chapters；
-   * 真正能重播的只有前端（它才有完整上下文）。Rust 把 Lua 写的
-   * `user-data/anibox/quality-request` 转成事件，避免 Lua 直接调命令。
-   * 请求一次就重播一次：Rust 侧读完立刻清空该属性，不会重复触发。 */
-  useEffect(() => {
-    let alive = true;
-    const un = listen<{ quality?: number }>("duanju-quality-request", (e) => {
-      if (!alive) return;
-      const q = typeof e.payload?.quality === "number" ? e.payload.quality : 0;
-      switchQualityRef.current(q);
-    });
-    return () => {
-      alive = false;
-      un.then((f) => f()).catch(() => {});
-    };
-  }, []);
+  /* [lc-2304] 短剧**不再响应清晰度切换**（用户要求：「短剧默认取原画的啊
+   * 不需要这个配置」）。底栏那颗按钮现在只服务普通剧集，短剧侧连档位都不推送，
+   * 所以这里不再监听 `duanju-quality-request` —— 留着反而会用普通剧集的档位
+   * 去重播当前短剧，是错的。
+   *
+   * 详情浮层里的那排清晰度胶囊也一并下线（见下面 qualities.length > 1 的判定，
+   * Rust 不再给短剧推 qualities，条件自然为假，UI 不再出现）。 */
 
   /* [lc-2295] 详情请求代次：每次「打开详情」+1，「关闭」也 +1。
    * 夹在中间的旧请求回来时代次对不上就**直接丢弃** —— 否则用户在超时提示上点了「关闭」，
@@ -859,24 +840,17 @@ export function DuanjuPane() {
     userBusyRef.current = true;
     lastPlay.current = { idx, chapter, name };
     try {
-      const r = await invoke<{ quality?: number; qualities?: number[] }>("duanju_play", {
+      await invoke("duanju_play", {
         drama: detail.drama,
         chapter,
         index: idx,
-        // [lc-2300] 用户选过就按选的来；null = 不筛选，上游按 Quality 降序取
-        // 第一条 = 最高档（探针实测 quality=0 实得 1080p，即"默认原画最高"已是现状）。
-        quality: quality > 0 ? quality : null,
+        // [lc-2304] 短剧固定不筛选：核心按 Quality 降序取第一条 = 最高档
+        // （探针实测 quality=0 实得 1080p，即"默认原画最高"就是现状）。
+        quality: null,
         title: `${detail.drama.title || name} ${chapter.title || `第${idx + 1}集`}`,
         // [lc-2116] 传全部分集：后端据此在播完后自动接下一集（短剧一集只有 1~3 分钟）
         chapters,
       });
-      // [lc-2300] 记录可选档位（降序）。单档/空 = 该片源没有多清晰度，菜单不出现。
-      const qs = (r?.qualities || []).filter((x) => typeof x === "number" && x > 0);
-      setQualities(qs);
-      // 用户没选过时，把实际播出的档位显示出来（后端可能因片源只给一档而变化）
-      if (!(quality > 0) && typeof r?.quality === "number" && r.quality > 0) {
-        setCurQuality(r.quality);
-      }
       // [lc-2123] 起播成功：本地状态立即反映「上次看到第 N 集」，并重置回写计时
       setHist((prev) => ({
         drama: {
@@ -907,21 +881,6 @@ export function DuanjuPane() {
     if (lp && detail?.drama) play(lp.idx, lp.chapter, lp.name);
   }
 
-  /** [lc-2300] 切清晰度：记住选择后重播当前集。
-   *  还没播过就只记下选择，等用户点集时生效。
-   *  quality=0 = 「原画」（不筛选，上游按 Quality 降序给最高档）。
-   *  重播会换线路 → 必须重新 loadfile，进度归零是预期行为（同一集从头）。
-   *  注意：不要在这里 setPlayingIdx(-1) 绕守卫 —— 那就等于允许并发起播；
-   *  改为等 playingIdx 落回 -1 后由 play() 自身完成。 */
-  function switchQuality(q: number) {
-    if (playingIdx >= 0) return; // 正在起播：忽略（按钮也 disabled）
-    setQuality(q);
-    const lp = lastPlay.current;
-    if (!lp) return; // 还没播过：只记选择
-    void play(lp.idx, lp.chapter, lp.name);
-  }
-  // [lc-2301] 同步 latest-ref（事件回调走它，才能读到当前的 playingIdx/detail）
-  switchQualityRef.current = switchQuality;
 
   // [lc-2189] chips 只列可用站源；失败过的剔除并留「重试」入口
   const srcList = sources || [];
@@ -1485,37 +1444,10 @@ export function DuanjuPane() {
                       )}
                     </div>
                   </div>
-                  {/* [lc-2300] 清晰度选择：仅当核心回传**多于一档**时出现。
-                      默认「原画」= 不筛选，上游按 Quality 降序取最高档 ——
-                      探针实测 quality=0 实得 1080p，所以默认本来就是最高画质；
-                      这里提供的是"能降档"的能力（弱网/省流场景）。
-                      切换会重播当前集（换线路必须重新 loadfile）。 */}
-                  {qualities.length > 1 && (
-                    <div className="dj-quality">
-                      <span className="dj-quality-k">清晰度</span>
-                      <button
-                        type="button"
-                        className={`dj-chip sm${quality === 0 ? " on" : ""}`}
-                        disabled={playingIdx >= 0}
-                        onClick={() => void switchQuality(0)}
-                        title="不筛选，使用片源最高画质"
-                      >
-                        原画
-                        {quality === 0 && curQuality > 0 ? `（${curQuality}p）` : ""}
-                      </button>
-                      {qualities.map((q) => (
-                        <button
-                          key={q}
-                          type="button"
-                          className={`dj-chip sm${quality === q ? " on" : ""}`}
-                          disabled={playingIdx >= 0}
-                          onClick={() => void switchQuality(q)}
-                        >
-                          {q}p
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  {/* [lc-2304] 清晰度胶囊已下线（用户：「短剧默认取原画的啊不需要这个配置」）。
+                      短剧核心 resolve 不筛选时本就给最高档（探针实测 quality=0 实得 1080p），
+                      没有降档诉求；Rust 侧也不再给短剧推 qualities。
+                      普通剧集的多档位在 mpv 底栏（modernz）里切换。 */}
                   {epGroups.length > 1 && (
                     <div className="dj-epgroups">
                       {epGroups.map((_, gi) => (

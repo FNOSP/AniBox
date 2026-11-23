@@ -724,6 +724,92 @@ async fn launch_mpv(
     Ok(())
 }
 
+/// [lc-2304] 起播后查询「这条目有几档清晰度」，多档才推给 mpv 底栏按钮。
+///
+/// 为什么放后台异步：代理要打一次飞牛 `stream/list`（有缓存，通常几十毫秒），
+/// 但起播路径对延迟敏感，不该让它等。查到后写 `user-data/anibox/qualities`，
+/// modernz 的观察器会 request_init 重建底栏 → 按钮出现。
+///
+/// **单档/空档一律写空串**（按钮不出现）：按用户要求不做假档位。
+pub fn spawn_push_qualities(app: &AppHandle, cfg: &crate::config::Config, item_guid: &str) {
+    if item_guid.is_empty() {
+        return;
+    }
+    let url = crate::proxy::qualities_url(cfg, item_guid);
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let client = reqwest::Client::new();
+        let resp = match client.get(&url).timeout(std::time::Duration::from_secs(8)).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                crate::libmpv::trace(&format!("[quality] 查询清晰度失败（忽略）：{e}"));
+                return;
+            }
+        };
+        let body: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                crate::libmpv::trace(&format!("[quality] 解析清晰度响应失败：{e}"));
+                return;
+            }
+        };
+        let list = body
+            .get("qualities")
+            .and_then(|x| x.as_array())
+            .cloned()
+            .unwrap_or_default();
+        // 从 "1080p" / "1920x1080" 这类字符串里抽数字档位
+        let mut heights: Vec<i64> = list
+            .iter()
+            .filter_map(|q| q.get("resolution").and_then(|x| x.as_str()))
+            .filter_map(|s| {
+                // 优先 "1080p" 形态；退回 "1920x1080" 取高度
+                let t = s.trim().trim_end_matches('p');
+                if let Ok(n) = t.parse::<i64>() {
+                    return Some(n);
+                }
+                s.split_once('x')
+                    .and_then(|(_, h)| h.trim().parse::<i64>().ok())
+            })
+            .filter(|n| *n > 0)
+            .collect();
+        heights.sort_unstable_by(|a, b| b.cmp(a));
+        heights.dedup();
+
+        let sess = {
+            let st = app2.state::<crate::AppState>();
+            let slot = st.mpv.lock().await;
+            slot.as_ref().cloned()
+        };
+        let Some(sess) = sess else { return };
+        if heights.len() > 1 {
+            let csv = heights
+                .iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            crate::libmpv::trace(&format!(
+                "[quality] 飞牛给出 {} 档：{csv}（推给底栏）",
+                heights.len()
+            ));
+            let _ = sess
+                .command_no_reply(json!(["set", "user-data/anibox/qualities", csv]))
+                .await;
+            let _ = sess
+                .command_no_reply(json!(["set", "user-data/anibox/quality", "0"]))
+                .await;
+        } else {
+            crate::libmpv::trace(&format!(
+                "[quality] 单档/无档（{}）→ 不显示按钮",
+                heights.first().map(|n| n.to_string()).unwrap_or_else(|| "空".into())
+            ));
+            let _ = sess
+                .command_no_reply(json!(["set", "user-data/anibox/qualities", ""]))
+                .await;
+        }
+    });
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn launch_potplayer(
     app: &AppHandle,

@@ -18,6 +18,9 @@ func RunApiServer(addr string) error {
 	r := gin.Default()
 
 	r.GET("/api/v1/playvideo/:itemGuid", api.PlayVideoHandler)
+	// [lc-2304] 清晰度清单：该条目可选的清晰度档位（飞牛 qualities 元数据）。
+	// 应用起播前查一次，多档才把档位推给 mpv 底栏按钮。
+	r.GET("/api/v1/qualities/:itemGuid", api.QualitiesHandler)
 	r.GET("/api/v1/skipinfo/:itemGuid", api.GetSkipInfoHandler)
 	r.POST("/api/v1/skipinfo", api.SetSkipInfoHandler)
 	r.GET("/api/v1/danmaku/:file", api.ServeDanmakuHandler)

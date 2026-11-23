@@ -895,9 +895,20 @@ pub struct QualityTier {
 /// [lc-2307] 当前转码会话的 playLink（空 = 当前是直链播放）。
 /// 原地换档（media.resetQuality）必须带上它，否则服务端不知道换哪个会话。
 /// 与 quality_cache 分开存：后者是「这片的档位表」，这个是「我正挂在哪个会话上」。
+/// [lc-2318] **必须是模块级唯一 static**：早先 getter/setter 各自在函数体内声明
+/// `static LINK`，那是**两个独立的静态变量** —— 写进 A、读的是 B，永远读到空串。
+/// 后果很严重且很隐蔽：
+///   · 切回原画时 `was_transcoding` 判定为 false → 不换流 → 画面仍是 540p 转码流；
+///   · 切档时 `oldPlayLink` 恒为空 → 不走 media.resetQuality，每次重建会话。
+static TRANSCODE_LINK: std::sync::OnceLock<std::sync::Mutex<String>> =
+    std::sync::OnceLock::new();
+
+fn transcode_link_slot() -> &'static std::sync::Mutex<String> {
+    TRANSCODE_LINK.get_or_init(|| std::sync::Mutex::new(String::new()))
+}
+
 pub fn current_transcode_link() -> String {
-    static LINK: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
-    LINK.get_or_init(|| std::sync::Mutex::new(String::new()))
+    transcode_link_slot()
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default()
@@ -905,52 +916,66 @@ pub fn current_transcode_link() -> String {
 
 /// 记录/清空当前转码会话链接（空串 = 回到直链）。
 pub fn set_current_transcode_link(link: &str) {
-    static LINK: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
-    if let Ok(mut g) = LINK.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
+    if let Ok(mut g) = transcode_link_slot().lock() {
         *g = link.to_string();
     }
 }
 
 /// [lc-2307] 当前条目的 FileStream.guid（`play/play` 的 media_guid 用它）。
 /// 从代理 `/api/v1/qualities` 的 `fileGuid` 字段取，与 VideoStream.MediaGUID 不同。
+// [lc-2318] 同 lc-2318 的教训：getter/setter **不能各自声明 static**（两个独立变量）。
+// 这个槽尤其关键 —— 它是 play/play 的 media_guid 来源，一直是空 → 服务端
+// 找不到文件流 → 泛化成 "System busy"。
 pub fn current_file_guid() -> String {
-    static G: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
-    G.get_or_init(|| std::sync::Mutex::new(String::new()))
+    FILE_GUID_SLOT
+        .get_or_init(|| std::sync::Mutex::new(String::new()))
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default()
 }
 
 pub fn set_current_file_guid(guid: &str) {
-    static G: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
-    if let Ok(mut g) = G.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
+    if let Ok(mut g) = FILE_GUID_SLOT
+        .get_or_init(|| std::sync::Mutex::new(String::new()))
+        .lock()
+    {
         *g = guid.to_string();
     }
 }
 
+static FILE_GUID_SLOT: std::sync::OnceLock<std::sync::Mutex<String>> =
+    std::sync::OnceLock::new();
+
 /// [lc-2309] 当前条目的 video/audio guid（`play/play` 必传）。
 /// 从代理 `/api/v1/qualities` 取，比 PlayMeta 里的更可靠（后者在
 /// 某些路径下是空串，实测空值会让飞牛回 "System busy"）。
+// [lc-2318] 每个槽必须有**模块级唯一** static。早先 getter/setter 各自在函数体内
+// 声明 `static G`，那是两个独立变量 —— 写进 A、读的是 B，永远读到空串。
+// 宏里用 concat_idents 不可用（stable 无此宏），改为展开成「模块级 static + 两个访问函数」：
+//   guid_slot!(槽名, current_fn, set_fn)
 macro_rules! guid_slot {
-    ($get:ident, $set:ident) => {
-        pub fn $get() -> String {
-            static G: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
-            G.get_or_init(|| std::sync::Mutex::new(String::new()))
-                .lock()
-                .map(|g| g.clone())
-                .unwrap_or_default()
+    ($slot:ident, $slotfn:ident, $get:ident, $set:ident) => {
+        static $slot: std::sync::OnceLock<std::sync::Mutex<String>> =
+            std::sync::OnceLock::new();
+
+        fn $slotfn() -> &'static std::sync::Mutex<String> {
+            $slot.get_or_init(|| std::sync::Mutex::new(String::new()))
         }
+
+        pub fn $get() -> String {
+            $slotfn().lock().map(|g| g.clone()).unwrap_or_default()
+        }
+
         pub fn $set(guid: &str) {
-            static G: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
-            if let Ok(mut g) = G.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
+            if let Ok(mut g) = $slotfn().lock() {
                 *g = guid.to_string();
             }
         }
     };
 }
-guid_slot!(current_video_guid, set_current_video_guid);
-guid_slot!(current_codec, set_current_codec);
-guid_slot!(current_audio_guid, set_current_audio_guid);
+guid_slot!(VIDEO_GUID, video_guid_slot, current_video_guid, set_current_video_guid);
+guid_slot!(CODEC_NAME, codec_slot, current_codec, set_current_codec);
+guid_slot!(AUDIO_GUID, audio_guid_slot, current_audio_guid, set_current_audio_guid);
 
 fn quality_cache() -> &'static std::sync::Mutex<std::collections::HashMap<i64, QualityTier>> {
     static CACHE: std::sync::OnceLock<

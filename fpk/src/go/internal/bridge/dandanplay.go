@@ -484,7 +484,113 @@ func ddpTier(query string, querySeason int64, candTitle string) int {
 		}
 		return 1
 	}
+	// [lc-2327] 模糊档（最后一档，仅在前三档全不中时启用，不改变任何既有判定的优先级）：
+	// 主名存在异体写法时（「转生**后**的大圣女」vs「转生**了**的大圣女」，7 字只差 1 字），
+	// 相等与前缀都不成立 → 旧逻辑直接 -1 拒掉，搜索明明命中了却显示「未采用」。
+	// 桌面端不踩这个坑：uosc_danmaku 用 jaro_winkler 做模糊匹配、阈值 0.7
+	// （modules/utils.lua:158 + apis/dandanplay.lua:900），本档对齐同一阈值与算法。
+	if ddpJaroWinkler(qName, cName) >= ddpFuzzyThreshold {
+		if higher {
+			return 4
+		}
+		return 3
+	}
 	return -1
+}
+
+// ddpFuzzyThreshold 模糊档阈值，与桌面端 uosc_danmaku 持平（score >= 0.7 才采纳）。
+const ddpFuzzyThreshold = 0.7
+
+// ddpJaroWinkler 符文级 Jaro-Winkler 相似度（0..1）。
+//
+// 照抄桌面端 modules/utils.lua:158 的语义：先算 Jaro，再按**最长公共前缀**（上限 4）
+// 加 Winkler 加成 p=0.1。用 []rune 而非字节，否则中文标题会被按字节切碎、分数毫无意义。
+func ddpJaroWinkler(a, b string) float64 {
+	r1, r2 := []rune(a), []rune(b)
+	if len(r1) == 0 && len(r2) == 0 {
+		return 0
+	}
+	if a == b {
+		return 1
+	}
+	d := ddpJaro(r1, r2)
+	// 公共前缀（上限 4 个字符）
+	l := 0
+	for l < 4 && l < len(r1) && l < len(r2) && r1[l] == r2[l] {
+		l++
+	}
+	return d + float64(l)*0.1*(1-d)
+}
+
+// ddpJaro Jaro 相似度（符文级）。匹配窗口 = max(len)/2 - 1。
+func ddpJaro(r1, r2 []rune) float64 {
+	if len(r1) == 0 || len(r2) == 0 {
+		return 0
+	}
+	window := max(len(r1), len(r2))/2 - 1
+	if window < 0 {
+		window = 0
+	}
+	m1 := make([]bool, len(r1))
+	m2 := make([]bool, len(r2))
+	matches := 0
+	for i := 0; i < len(r1); i++ {
+		lo := max(0, i-window)
+		hi := min(len(r2)-1, i+window)
+		for j := lo; j <= hi; j++ {
+			if m2[j] || r1[i] != r2[j] {
+				continue
+			}
+			m1[i], m2[j] = true, true
+			matches++
+			break
+		}
+	}
+	if matches == 0 {
+		return 0
+	}
+	// 错位对数 = 两个匹配序列里顺序不同的字符数 / 2
+	transpositions := 0
+	k := 0
+	for i := 0; i < len(r1); i++ {
+		if !m1[i] {
+			continue
+		}
+		for !m2[k] {
+			k++
+		}
+		if r1[i] != r2[k] {
+			transpositions++
+		}
+		k++
+	}
+	m := float64(matches)
+	return (m/float64(len(r1)) + m/float64(len(r2)) + (m-float64(transpositions)/2)/m) / 3
+}
+
+// ddpInt 把 JSON 里的「数字或数字字符串」统一取成整数，取不到返回 0。
+//
+// 弹弹play 各端点的数字字段形态不一致：search/episodes 的 episodeNumber 是 JSON 数字，
+// bangumi/{id} 的分集里是字符串 "3"。既有的 jsNum 只认 float64、jsStr 只认 string，
+// 单独用任何一个都会在另一类响应上静默失效（[lc-2327] 踩过）。
+func ddpInt(v any) int64 {
+	switch t := v.(type) {
+	case float64:
+		return int64(t)
+	case int:
+		return int64(t)
+	case int64:
+		return t
+	case json.Number:
+		if n, err := t.Int64(); err == nil {
+			return n
+		}
+	case string:
+		if n, err := strconv.ParseInt(strings.TrimSpace(t), 10, 64); err == nil {
+			return n
+		}
+	}
+	return 0
 }
 
 // ddpPickEpisode 在分集列表里定位第 ep 集。ep<=0（电影/未指定）取首集。
@@ -504,12 +610,15 @@ func ddpPickEpisode(eps []map[string]any, ep int64) map[string]any {
 			}
 		}
 	}
-	// ② episodeNumber（bangumi 端点回字符串型数字）
+	// ② episodeNumber（search/episodes 回 JSON 数字，bangumi 端点回字符串型数字 —— 两种都要认）
+	//
+	// [lc-2327] 血训：此前这里用 jsStr 读取，而 jsStr 只接受 string 类型，遇到 JSON 数字
+	// 一律返回 ""，于是这一步对 search/episodes 的响应**永远失效**，只能靠 ③ 列表序号兜底。
+	// 一旦该条目返回的分集是部分集（弹弹play 常见：只回 1~2 条），序号兜底就会错位或越界，
+	// 表现为「搜索命中了、条目也匹配了，但就是拿不到弹幕」。
 	for _, e := range eps {
-		if s := jsStr(e["episodeNumber"]); s != "" {
-			if n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64); err == nil && n == ep {
-				return e
-			}
+		if n := ddpInt(e["episodeNumber"]); n > 0 && n == ep {
+			return e
 		}
 	}
 	// ③ 列表序号兜底（标题无集数信息时，dandanplay 返回顺序即集数顺序）

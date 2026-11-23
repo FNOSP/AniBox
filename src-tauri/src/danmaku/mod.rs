@@ -14,6 +14,8 @@ pub mod diagnose;
 pub mod matching;
 pub mod memory;
 pub mod server;
+// [lc-2330] 弹幕共享映射（inbox.690075.xyz）：一季选对一次，同组设备自动命中
+pub mod shared_map;
 pub mod types;
 pub mod xml;
 

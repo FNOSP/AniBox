@@ -3883,6 +3883,110 @@ function AiEnhanceRow() {
         引擎切换下次播放生效，播放中用播放器的「插帧」按钮实时切。
       </div>
       {err && <div className="set-warn">{err}</div>}
+      {/* [lc-2320] RTX 视频增强：显卡驱动直接做，不需要下载组件 */}
+      <RtxVideoRow />
+    </div>
+  );
+}
+
+/* ── [lc-2320] NVIDIA RTX 视频增强：超分辨率（VSR）/ SDR→HDR ──────────────
+   与上面那套「AI 增强组件」是两条独立链路：
+     · 上面的 RIFE/MVTools/AnimeJaNai 跑在 VapourSynth 里，需要下载组件；
+     · 这里由显卡驱动在 mpv 的 d3d11vpp 滤镜里完成，零下载、零额外依赖。
+   两者可以同时开（RTX 滤镜永远排在链尾，由 Lua 侧保证）。 */
+function RtxVideoRow() {
+  type RtxStatus = {
+    vsr: boolean;
+    hdr: boolean;
+    gpuOk: boolean;
+    gpuNote: string;
+    systemHdr: boolean;
+    supported: boolean;
+  };
+  const [status, setStatus] = useState<RtxStatus | null>(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const refresh = () => {
+    invoke<RtxStatus>("rtx_video_status")
+      .then(setStatus)
+      .catch((e) => setErr(String(e)));
+  };
+  useEffect(refresh, []);
+
+  const pick = async (vsr: boolean, hdr: boolean) => {
+    setErr("");
+    setBusy(true);
+    try {
+      await invoke("rtx_video_set", { vsr, hdr });
+      refresh();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const gpuOk = status?.gpuOk ?? false;
+  const hdrUsable = gpuOk && (status?.systemHdr ?? false);
+
+  const switchBtn = (on: boolean, enabled: boolean, title: string, onClick: () => void) => (
+    <button
+      type="button"
+      className={`set-sw${on ? " on" : ""}`}
+      aria-pressed={on}
+      disabled={busy || !enabled}
+      style={{ opacity: enabled ? 1 : 0.4 }}
+      title={title}
+      onClick={onClick}
+    />
+  );
+
+  return (
+    <div className="set-row set-row-col" style={{ paddingLeft: 4, gap: 8 }}>
+      <div className="set-btn-row" style={{ alignItems: "baseline" }}>
+        <span className="set-k" style={{ flex: "none" }}>RTX 视频增强</span>
+        <span className="set-desc" style={{ flex: 1 }}>
+          由显卡驱动直接处理，不用下载组件（RTX 20 系及以上）
+        </span>
+      </div>
+
+      <div className="set-btn-row" style={{ gap: 8 }}>
+        {switchBtn(
+          status?.vsr ?? false,
+          gpuOk,
+          gpuOk
+            ? "由显卡把画面放大到屏幕分辨率（最多 4 倍）；源不比屏幕小时不生效"
+            : status?.gpuNote || "需要 NVIDIA RTX 显卡",
+          () => void pick(!status?.vsr, status?.hdr ?? false)
+        )}
+        <span className="set-desc" style={{ flex: 1 }}>
+          超分辨率：把低清画面重画到屏幕分辨率
+        </span>
+      </div>
+
+      <div className="set-btn-row" style={{ gap: 8 }}>
+        {switchBtn(
+          status?.hdr ?? false,
+          hdrUsable,
+          !gpuOk
+            ? status?.gpuNote || "需要 NVIDIA RTX 显卡"
+            : !status?.systemHdr
+              ? "先在 Windows「设置 → 系统 → 显示 → HDR」打开 HDR"
+              : "把 SDR 片源转换成 HDR 输出；HDR 片源不受影响",
+          () => void pick(status?.vsr ?? false, !status?.hdr)
+        )}
+        <span className="set-desc" style={{ flex: 1 }}>
+          HDR 转换：SDR 片源转成 HDR 输出，需要屏幕已开着 HDR
+        </span>
+      </div>
+
+      <div className="set-desc">
+        还要在 NVIDIA App 的「系统 → 视频 → RTX 视频增强」里打开超分辨率 / HDR，否则画面不会有变化。
+        正在播放时切换立即生效，可以和上面的 AI 超分、补帧同时开。
+      </div>
+      {status && !status.gpuOk && <div className="set-desc">{status.gpuNote}</div>}
+      {err && <div className="set-warn">{err}</div>}
     </div>
   );
 }

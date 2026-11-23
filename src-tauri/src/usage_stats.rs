@@ -142,6 +142,13 @@ fn machine_raw_id() -> String {
     String::new()
 }
 
+/// [lc-2332] 对外暴露机器原始标识：公共评论的设备码需要同一来源的稳定标识。
+/// 与 `derive_anon_id` 分开暴露而**不要**直接复用匿名 ID —— 评论设备码与统计匿名 ID
+/// 必须用不同盐派生（否则两个服务一对照就能把「谁在评论」和「谁在用」关联起来）。
+pub(crate) fn machine_raw_id_pub() -> String {
+    machine_raw_id()
+}
+
 /// 取匿名 ID：机器派生优先；拿不到机器标识时沿用旧值或随机生成。缺失时落盘。
 async fn ensure_anon_id(app: &AppHandle, cur: &str) -> String {
     if is_machine_id(cur) {

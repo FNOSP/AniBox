@@ -30,6 +30,8 @@ mod webdav;
 // [lc-1820] AI 增强可选组件（RIFE Vulkan 运行时：软件内下载/状态/删除）
 mod enhance;
 mod rtx;
+// [lc-2332] 公共评论（作品级）：服务端 inbox.690075.xyz，协议见 docs/community-comments-api.md
+mod community;
 // [lc-2244] 组件包进程内解压：原先外调 pwsh Expand-Archive，而 pwsh 不是 Windows
 // 自带组件 —— 干净机器上报「启动解压失败: program not found」，下载必然失败。
 mod zip_extract;
@@ -4735,6 +4737,12 @@ pub fn run() {
             enhance::ai_enhance_delete,
             rtx::rtx_video_status,
             rtx::rtx_video_set,
+            community::community_status,
+            community::community_list,
+            community::community_post,
+            community::community_delete,
+            community::community_mine,
+            community::community_set_nick,
             webdav::webdav_accounts,
             webdav::webdav_account_add,
             webdav::webdav_account_del,

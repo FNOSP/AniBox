@@ -336,8 +336,14 @@ func QualitiesHandler(c *gin.Context) {
 		})
 	}
 	// 同时把片源本身的宽高带上：应用据此判断"这一档是不是等于源分辨率"
+	// [lc-2307] **fileGuid 是关键**：`play/play` 的 media_guid 要的是
+	// `FileStream.guid`（fv_ 开头），不是 VideoStream.MediaGUID。
+	// 飞鲸 createPlayRequest 写的是 `mediaGuid: fileStream.guid`
+	// （player_session_coordinator.dart:793）。传错会得到
+	// 「System busy, please retry later」。
 	c.JSON(200, gin.H{
 		"mediaGuid": mediaGuid,
+		"fileGuid":  streamResp.Data.FileStream.GUID,
 		"width":     streamResp.Data.VideoStream.Width,
 		"height":    streamResp.Data.VideoStream.Height,
 		"qualities": items,
@@ -363,6 +369,7 @@ func TranscodePlayHandler(c *gin.Context) {
 		SkipVerify   int32  `json:"skipVerify"`
 		ItemGuid     string `json:"itemGuid"`
 		MediaGuid    string `json:"mediaGuid"`
+		FileGuid     string `json:"fileGuid"` // [lc-2307] FileStream.guid —— play/play 真正要的
 		VideoGuid    string `json:"videoGuid"`
 		VideoEncoder string `json:"videoEncoder"`
 		Resolution   string `json:"resolution"`
@@ -413,8 +420,14 @@ func TranscodePlayHandler(c *gin.Context) {
 		enc = "h264"
 	}
 
+	// [lc-2307] media_guid 必须是 FileStream.guid（飞鲸同口径）。
+	// 没拿到 fileGuid 时才退回 mediaGuid（老调用方兼容）。
+	playMediaGuid := body.FileGuid
+	if playMediaGuid == "" {
+		playMediaGuid = body.MediaGuid
+	}
 	req := fnapi.PlayPlayRequestData{
-		MediaGUID:      body.MediaGuid,
+		MediaGUID:      playMediaGuid,
 		VideoGUID:      body.VideoGuid,
 		VideoEncoder:   enc,
 		Resolution:     body.Resolution,

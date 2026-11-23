@@ -807,6 +807,14 @@ pub fn spawn_push_qualities(app: &AppHandle, cfg: &crate::config::Config, item_g
                     .collect::<Vec<_>>()
                     .join(" / ")
             ));
+            // [lc-2307] 记下 fileGuid —— play/play 的 media_guid 要的是
+            // FileStream.guid（飞鲸 createPlayRequest 同口径），不是 VideoStream.MediaGUID。
+            if let Some(fg) = body.get("fileGuid").and_then(|x| x.as_str()) {
+                if !fg.is_empty() {
+                    set_current_file_guid(fg);
+                    crate::libmpv::trace(&format!("[quality] 记下 fileGuid={fg}"));
+                }
+            }
             let _ = sess
                 .command_no_reply(json!(["set", "user-data/anibox/qualities", csv]))
                 .await;
@@ -855,6 +863,23 @@ pub fn set_current_transcode_link(link: &str) {
     static LINK: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
     if let Ok(mut g) = LINK.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
         *g = link.to_string();
+    }
+}
+
+/// [lc-2307] 当前条目的 FileStream.guid（`play/play` 的 media_guid 用它）。
+/// 从代理 `/api/v1/qualities` 的 `fileGuid` 字段取，与 VideoStream.MediaGUID 不同。
+pub fn current_file_guid() -> String {
+    static G: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+    G.get_or_init(|| std::sync::Mutex::new(String::new()))
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default()
+}
+
+pub fn set_current_file_guid(guid: &str) {
+    static G: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+    if let Ok(mut g) = G.get_or_init(|| std::sync::Mutex::new(String::new())).lock() {
+        *g = guid.to_string();
     }
 }
 
@@ -942,6 +967,8 @@ pub async fn switch_quality(
     let body = json!({
         "itemGuid": item_guid,
         "mediaGuid": meta.media_guid,
+        // [lc-2307] play/play 真正要的是 FileStream.guid
+        "fileGuid": current_file_guid(),
         "videoGuid": meta.video_guid,
         "videoEncoder": "h264",     // 只允许 h264/hevc；h264 兼容性最好
         "resolution": tier.resolution,

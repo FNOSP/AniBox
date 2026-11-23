@@ -778,7 +778,9 @@ pub fn spawn_push_qualities(app: &AppHandle, cfg: &crate::config::Config, item_g
             .collect();
         // 按高度降序（= 与飞牛 qualities[0] 是原画的口径一致：第一个即原画）
         tiers.sort_by(|a, b| b.height.cmp(&a.height).then(b.bitrate.cmp(&a.bitrate)));
-        tiers.dedup_by(|a, b| a.height == b.height && a.bitrate == b.bitrate);
+        // 按**高度**去重：同高度不同码率（实测有 360@500k / 360@400k / 360@200k
+        // 三档）对底栏是三个一模一样的「360p」，没有区分意义 —— 保留码率最高的那个。
+        tiers.dedup_by(|a, b| a.height == b.height);
 
         // 存下来供 duanju_quality_request 用（切换时按档位重建转码会话）
         *quality_cache().lock().unwrap_or_else(|e| e.into_inner()) =

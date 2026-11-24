@@ -275,8 +275,18 @@ impl ApiRequest {
 /// 打包成一个 JSON 数组随二进制分发；文件内容 = KazumiRules 仓库原文。
 const BUILTIN_RULES_JSON: &str = include_str!("builtin_rules.json");
 
-/// [lc-1756] 内置采集源（苹果CMS V10 标准接口，2026-10-24 实测可用；站点失效时
-/// 删掉即可，不随启动补种 —— 采集站的存活周期比番剧站短得多，补种会反复复活死源）。
+/// [lc-1756/lc-2337] 内置采集源（苹果CMS V10 标准接口）。
+///
+/// [lc-2337] 来源与筛活口径：本地拆解一批公开 TVBox 配置（`qist/tvbox`、`gaotianliuyun/gao`
+/// 的 13 个根配置），抽出全部明文 `api.php/provide/vod` 候选（45 条），再逐条实测：
+///   ① 三个关键词（庆余年 / 流浪地球 / 三体）搜索都要返回非空 list；
+///   ② `ac=detail&ids=` 详情要返回可解析的 `vod_play_url`；
+///   ③ 首集能解析出线路；④ 剔除成人站。
+/// 最终 4 条全链路可用。工具留在 `tests/vbox_harvest_2337.cjs`（采集）、
+/// `tests/vbox_final_2337.cjs`（筛活），下次换源照跑一遍即可。
+///
+/// 播种策略见 `seed_maccms`：只补缺失的同名源，**不覆盖**本地已有文件
+/// （用户删掉的死源不会复活，用户改过的配置不会被冲掉）。
 const BUILTIN_MACCMS_JSON: &str = include_str!("builtin_maccms.json");
 
 pub fn rules_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
@@ -343,35 +353,28 @@ async fn seed_rules(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// [lc-1756] 采集源一次性播种：目录不存在或为空时写入全部内置源；此后不再补种
-/// （采集站存活周期短，删掉的死源不该复活；要恢复内置源删空目录即可）。
+/// [lc-1756/lc-2337] 采集源播种：**目录为空**时写入全部内置源；否则只补**缺失**的内置源。
+///
+/// [lc-2337] 原实现是「目录里有任意文件就完全不种」，导致升级后新增/换名的内置源
+/// 对老用户永远不生效（本地已有旧文件 → 整段跳过）。改成逐条补种：
+///   · 同名文件已存在 → 不动（尊重用户的删除与改动，删掉的死源不会复活）；
+///   · 不存在 → 补上（新版本新增的内置源立即生效）。
 async fn seed_maccms(app: &AppHandle) -> Result<(), String> {
     let dir = maccms_dir(app)?;
-    if !tokio::fs::try_exists(&dir).await.unwrap_or(false) {
-        tokio::fs::create_dir_all(&dir)
-            .await
-            .map_err(|e| format!("创建采集源目录失败: {e}"))?;
-    }
-    let mut has_any = false;
-    let mut rd = match tokio::fs::read_dir(&dir).await {
-        Ok(rd) => rd,
-        Err(e) => return Err(format!("读采集源目录失败: {e}")),
-    };
-    while let Ok(Some(ent)) = rd.next_entry().await {
-        if ent.path().extension().and_then(|e| e.to_str()) == Some("json") {
-            has_any = true;
-            break;
-        }
-    }
-    if has_any {
-        return Ok(());
-    }
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| format!("创建采集源目录失败: {e}"))?;
     for v in serde_json::from_str::<Vec<Value>>(BUILTIN_MACCMS_JSON).unwrap_or_default() {
-        let Some(name) = v.get("name").and_then(|n| n.as_str()) else { continue };
+        let Some(name) = v.get("name").and_then(|n| n.as_str()) else {
+            continue;
+        };
         if name.is_empty() {
             continue;
         }
         let p = dir.join(format!("{name}.json"));
+        if tokio::fs::try_exists(&p).await.unwrap_or(false) {
+            continue; // 已在本地：不覆盖用户改动，也不复活用户删掉的源
+        }
         let body = serde_json::to_string_pretty(&v).unwrap_or_default();
         let _ = tokio::fs::write(&p, body).await;
     }

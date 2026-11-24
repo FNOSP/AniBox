@@ -1,37 +1,32 @@
 [
   {
-    "name": "量子资源",
-    "version": "1.0.0",
-    "baseURL": "https://cj.lziapi.com",
-    "searchMode": "api",
-    "searchApiConfig": {
-      "request": { "method": "GET", "url": "https://cj.lziapi.com/api.php/provide/vod", "query": { "ac": "videolist", "wd": "@keyword" } },
-      "listPath": "$.list[*]",
-      "namePath": "$.vod_name",
-      "sourcePath": "$.vod_id"
-    },
-    "chapterMode": "api",
-    "chapterApiConfig": {
-      "request": { "method": "GET", "url": "https://cj.lziapi.com/api.php/provide/vod", "query": { "ac": "detail", "ids": "@source" } },
-      "format": "delimited",
-      "roadNamesPath": "$.list[*].vod_play_from",
-      "roadEpisodesPath": "$.list[*].vod_play_url"
-    }
-  },
-  {
     "name": "非凡资源",
     "version": "1.0.0",
     "baseURL": "https://ffzy5.tv",
     "searchMode": "api",
     "searchApiConfig": {
-      "request": { "method": "GET", "url": "https://ffzy5.tv/api.php/provide/vod", "query": { "ac": "videolist", "wd": "@keyword" } },
+      "request": {
+        "method": "GET",
+        "url": "https://ffzy5.tv/api.php/provide/vod",
+        "query": {
+          "ac": "videolist",
+          "wd": "@keyword"
+        }
+      },
       "listPath": "$.list[*]",
       "namePath": "$.vod_name",
       "sourcePath": "$.vod_id"
     },
     "chapterMode": "api",
     "chapterApiConfig": {
-      "request": { "method": "GET", "url": "https://ffzy5.tv/api.php/provide/vod", "query": { "ac": "detail", "ids": "@source" } },
+      "request": {
+        "method": "GET",
+        "url": "https://ffzy5.tv/api.php/provide/vod",
+        "query": {
+          "ac": "detail",
+          "ids": "@source"
+        }
+      },
       "format": "delimited",
       "roadNamesPath": "$.list[*].vod_play_from",
       "roadEpisodesPath": "$.list[*].vod_play_url"
@@ -43,14 +38,28 @@
     "baseURL": "https://360zy.com",
     "searchMode": "api",
     "searchApiConfig": {
-      "request": { "method": "GET", "url": "https://360zy.com/api.php/provide/vod", "query": { "ac": "videolist", "wd": "@keyword" } },
+      "request": {
+        "method": "GET",
+        "url": "https://360zy.com/api.php/provide/vod",
+        "query": {
+          "ac": "videolist",
+          "wd": "@keyword"
+        }
+      },
       "listPath": "$.list[*]",
       "namePath": "$.vod_name",
       "sourcePath": "$.vod_id"
     },
     "chapterMode": "api",
     "chapterApiConfig": {
-      "request": { "method": "GET", "url": "https://360zy.com/api.php/provide/vod", "query": { "ac": "detail", "ids": "@source" } },
+      "request": {
+        "method": "GET",
+        "url": "https://360zy.com/api.php/provide/vod",
+        "query": {
+          "ac": "detail",
+          "ids": "@source"
+        }
+      },
       "format": "delimited",
       "roadNamesPath": "$.list[*].vod_play_from",
       "roadEpisodesPath": "$.list[*].vod_play_url"
@@ -62,33 +71,61 @@
     "baseURL": "https://api.apibdzy.com",
     "searchMode": "api",
     "searchApiConfig": {
-      "request": { "method": "GET", "url": "https://api.apibdzy.com/api.php/provide/vod", "query": { "ac": "videolist", "wd": "@keyword" } },
+      "request": {
+        "method": "GET",
+        "url": "https://api.apibdzy.com/api.php/provide/vod",
+        "query": {
+          "ac": "videolist",
+          "wd": "@keyword"
+        }
+      },
       "listPath": "$.list[*]",
       "namePath": "$.vod_name",
       "sourcePath": "$.vod_id"
     },
     "chapterMode": "api",
     "chapterApiConfig": {
-      "request": { "method": "GET", "url": "https://api.apibdzy.com/api.php/provide/vod", "query": { "ac": "detail", "ids": "@source" } },
+      "request": {
+        "method": "GET",
+        "url": "https://api.apibdzy.com/api.php/provide/vod",
+        "query": {
+          "ac": "detail",
+          "ids": "@source"
+        }
+      },
       "format": "delimited",
       "roadNamesPath": "$.list[*].vod_play_from",
       "roadEpisodesPath": "$.list[*].vod_play_url"
     }
   },
   {
-    "name": "魔爪资源",
+    "name": "建安资源",
     "version": "1.0.0",
-    "baseURL": "https://mozhuazy.com",
+    "baseURL": "http://154.219.117.232:9981",
     "searchMode": "api",
     "searchApiConfig": {
-      "request": { "method": "GET", "url": "https://mozhuazy.com/api.php/provide/vod", "query": { "ac": "videolist", "wd": "@keyword" } },
+      "request": {
+        "method": "GET",
+        "url": "http://154.219.117.232:9981/jacloudapi.php/provide/vod",
+        "query": {
+          "ac": "videolist",
+          "wd": "@keyword"
+        }
+      },
       "listPath": "$.list[*]",
       "namePath": "$.vod_name",
       "sourcePath": "$.vod_id"
     },
     "chapterMode": "api",
     "chapterApiConfig": {
-      "request": { "method": "GET", "url": "https://mozhuazy.com/api.php/provide/vod", "query": { "ac": "detail", "ids": "@source" } },
+      "request": {
+        "method": "GET",
+        "url": "http://154.219.117.232:9981/jacloudapi.php/provide/vod",
+        "query": {
+          "ac": "detail",
+          "ids": "@source"
+        }
+      },
       "format": "delimited",
       "roadNamesPath": "$.list[*].vod_play_from",
       "roadEpisodesPath": "$.list[*].vod_play_url"

@@ -4776,6 +4776,7 @@ pub fn run() {
             // [lc-2354] 画廊：外网图库分页拉取 + 本地图片列举（显示走 fntvimg 的 /__gallery/）
             gallery::gallery_online,
             gallery::gallery_local,
+            gallery::gallery_tags,
             subtitle_sources::subtitle_sources_get,
             subtitle_sources::subtitle_sources_set,
             subtitle_sources::subtitle_search,

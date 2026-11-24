@@ -1,58 +1,293 @@
-/* [lc-2354] 画廊页样式。
-   瀑布流用「CSS 多列容器 → 手分列」的混合：列由 JS 按累积高度分配（等比、不裁剪），
-   这里只负责列宽/间距/卡片形态。颜色一律走主题变量（不写死底色，深色主题自动跟随）。
-   字号只用 3 种：--fs-cap（说明）、--fs-ctl（正文）、以及 score 小徽标用 11px。 */
+/* [lc-2355] 画廊页样式 —— 版式按 AniCh 1.5.27 截图逐项量出。
+ *
+ * 实测依据（截图 2014x1394 @2x → 逻辑 1007x697）：
+ *   · 顶栏灰底 rgb(232,233,234)，高约 28 逻辑 px，内含「搜索图片」框
+ *   · 页签行白底，四个页签 + 选中项主题色下划线
+ *   · 图片墙 5 列：卡片 384/2=192px、列间距 14/2=7px、左留白 18/2=9px
+ *   · 卡片圆角 7，底部黑色渐变（black@150 → transparent）压标题
+ *   · 右上角角标：黑色@120、圆角 15、内边距 10x2、字号 12
+ *
+ * 颜色一律走主题变量（不照抄截图的浅色底，那会破深色主题）。 */
 
 .gal-page {
-  /* 让内容区自己滚动（与 jvh-page / 媒体库页一致），页头不跟着滚 */
   display: flex;
   flex-direction: column;
   min-height: 0;
+  height: 100%;
 }
 
-/* ── 顶部搜索行（图库=标签搜索 / 本地=目录输入）── */
-.gal-search {
-  position: relative;
+/* ── 顶栏（搜索图片）── */
+.gal-topbar {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3) 0;
+  gap: 8px;
+  padding: 6px 9px;
+  /* 截图顶栏是浅灰底，深色主题下走 --bg-1 自动变深灰 */
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
 }
 
-.gal-search-ico {
+.gal-topbar-inner {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.gal-topbar-ico {
   position: absolute;
-  left: calc(var(--sp-3) + var(--sp-2));
+  left: 10px;
   color: var(--muted);
   pointer-events: none;
 }
 
-.gal-search-in {
-  flex: 1;
-  padding-left: 30px; /* 给左侧图标让位（光学对齐：图标 14px + 8px 间距 + 8px 内边） */
+.gal-topbar-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 26px;
+  padding: 0 30px 0 32px;
+  font-family: inherit;
+  font-size: var(--fs-ctl);
+  color: var(--text-strong);
+  background: var(--bg-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  transition: border-color 140ms ease-out;
 }
 
-.gal-search-clear {
+.gal-topbar-input::placeholder {
+  color: var(--muted);
+}
+
+.gal-topbar-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.gal-topbar-clear {
+  position: absolute;
+  right: 6px;
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: 50%;
   background: none;
   color: var(--muted);
   cursor: pointer;
 }
 
-.gal-search-clear:hover {
+.gal-topbar-clear:hover {
   color: var(--text-2);
 }
 
-.gal-search-btn {
+/* 返回键（截图里没有，但我们的页面是从侧栏进来的子页，需要退出入口） */
+.gal-back {
   flex: 0 0 auto;
-  padding: 0 var(--sp-3);
-  height: 28px;
-  border: 1px solid var(--line-strong);
+  width: 26px;
+  height: 26px;
+  border: 0;
   border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-2);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 140ms ease-out;
+}
+
+.gal-back:hover {
+  background: var(--bg-2);
+}
+
+/* ── 页签行 ── */
+.gal-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 9px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  flex: 0 0 auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.gal-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.gal-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 34px;
+  padding: 0 12px;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--fs-ctl);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 140ms ease-out;
+}
+
+.gal-tab:hover {
+  color: var(--text-strong);
+}
+
+/* 选中态：加粗 + 主题色 + 底部 2px 下划线（截图里就是这样） */
+.gal-tab.on {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.gal-tab.on::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+.gal-tabs-sep {
+  width: 1px;
+  height: 14px;
+  margin: 0 6px;
+  background: var(--line-strong);
+  flex: 0 0 auto;
+}
+
+/* 已应用的 tag 过滤提示 */
+.gal-filter-chip {
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgb(var(--accent-rgb) / 0.12);
+  color: var(--accent);
+  font-size: var(--fs-cap);
+  white-space: nowrap;
+}
+
+/* ── 内容区（自己滚动，页头不跟着滚）── */
+.gal-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 7px 9px 16px;
+}
+
+/* ── 瀑布流：列由 JS 按累积高度分配 ── */
+.gal-grid {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.gal-col {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* 卡片：圆角 7（截图实测），无边框，图片填满 */
+.gal-card {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: var(--bg-2);
+  border-radius: 7px;
+  overflow: hidden;
+  cursor: pointer;
+  /* 图片加载前的最小占位，避免布局大幅跳动 */
+  min-height: 60px;
+}
+
+.gal-card img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: cover;
+  transition: opacity 160ms ease-out;
+}
+
+.gal-card:hover img {
+  opacity: 0.9;
+}
+
+.gal-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 底部渐变 + 标题（对齐截图的 black@150 → transparent 遮罩） */
+.gal-card-foot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 26px 8px 7px;
+  background: linear-gradient(to top, rgb(0 0 0 / 0.59), transparent);
+  pointer-events: none;
+}
+
+.gal-card-title {
+  display: block;
+  color: #fff;
+  font-size: var(--fs-cap);
+  line-height: 1.3;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 右上角角标组（截图：black@120 + 圆角 15 + 10x2 内边距 + 12px） */
+.gal-card-badges {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: flex;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.gal-badge {
+  padding: 1px 7px;
+  border-radius: 15px;
+  background: rgb(0 0 0 / 0.47);
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  backdrop-filter: blur(4px);
+}
+
+/* ── 标签分区 ── */
+.gal-taglist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gal-tagchip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
   background: none;
   color: var(--text-strong);
   font-family: inherit;
@@ -61,86 +296,41 @@
   transition: border-color 140ms ease-out, color 140ms ease-out;
 }
 
-.gal-search-btn:hover {
+.gal-tagchip:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
 
-/* ── 瀑布流 ── */
-.gal-grid {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px;
-  overflow-y: auto;
-  min-height: 0;
-  flex: 1;
-}
-
-.gal-col {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-.gal-card {
-  position: relative;
-  display: block;
-  padding: 0;
-  border: 0;
-  /* --bg-2 是项目真实的背景层变量（浅色=浅灰 / 深色=深灰，随主题切换）。
-     不要写 var(--surface-2) —— 那个名字不存在，会让卡片底色变透明、深色主题下与页面糊在一起。 */
-  background: var(--bg-2);
-  border-radius: var(--r-md);
+.gal-tagchip-name {
+  max-width: 220px;
   overflow: hidden;
-  cursor: pointer;
-  /* 图片加载后撑开高度：给个最小占位避免布局跳得太厉害 */
-  min-height: 60px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.gal-card img {
-  display: block;
-  width: 100%;
-  height: auto;
-  /* 不裁剪：用户明确要求「图片不裁剪」，等比显示 */
-  object-fit: contain;
-  transition: opacity 160ms ease-out;
+.gal-tagchip-count {
+  color: var(--muted);
+  font-size: var(--fs-cap);
 }
 
-.gal-card:hover img {
-  opacity: 0.88;
+/* ── 本地分区 ── */
+.gal-local-bar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
 }
 
-.gal-card:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.gal-local-bar .set-input {
+  flex: 1;
+  height: 28px;
 }
 
-.gal-score {
-  position: absolute;
-  left: 6px;
-  bottom: 6px;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 5px;
-  border-radius: 999px;
-  /* 浮在图片上的小徽标：半透明深底 + 白字，深浅主题都可读（与 poster 卡片徽标同思路） */
-  background: rgb(0 0 0 / 0.55);
-  color: #fff;
-  font-size: 11px;
-  line-height: 16px;
-  backdrop-filter: blur(4px);
-}
-
-/* ── 状态行 / 分页 ── */
+/* ── 状态行 ── */
 .gal-more,
 .gal-empty,
 .gal-err,
 .gal-dirs {
-  padding: var(--sp-3);
+  padding: 12px 9px;
   text-align: center;
   font-size: var(--fs-cap);
   color: var(--muted);
@@ -152,14 +342,14 @@
 
 .gal-dirs {
   text-align: left;
-  padding: var(--sp-2) var(--sp-3) 0;
+  padding: 0 0 6px;
   word-break: break-all;
 }
 
 .gal-more-btn {
-  align-self: center;
-  margin: 0 0 var(--sp-4);
-  padding: 0 var(--sp-4);
+  display: block;
+  margin: 10px auto;
+  padding: 0 16px;
   height: 30px;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
@@ -185,18 +375,17 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--sp-2);
+  gap: 8px;
   padding: 40px;
   background: rgb(0 0 0 / 0.82);
   backdrop-filter: blur(6px);
-  /* 进入 ease-out 250ms（项目动画规范） */
   animation: gal-lb-in 250ms ease-out both;
 }
 
 .gal-lightbox img {
   max-width: 100%;
   max-height: calc(100% - 48px);
-  /* 不裁剪、保持完整比例 */
+  /* 预览必须完整显示（不裁剪），与卡片缩略图的 cover 策略不同 */
   object-fit: contain;
   border-radius: var(--r-md);
   box-shadow: 0 12px 48px rgb(0 0 0 / 0.5);
@@ -235,15 +424,16 @@
   to { opacity: 1; }
 }
 
-/* 减少动效偏好：关掉浮层淡入 */
 @media (prefers-reduced-motion: reduce) {
   .gal-lightbox {
     animation: none;
   }
   .gal-card img,
   .gal-card,
-  .gal-search-btn,
-  .gal-more-btn {
+  .gal-tab,
+  .gal-tagchip,
+  .gal-more-btn,
+  .gal-back {
     transition: none;
   }
 }

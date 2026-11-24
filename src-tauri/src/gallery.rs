@@ -16,9 +16,24 @@
 //!
 //! ## 两个 tab 的数据来源
 //!
-//! 1. **图库**（外网）：safebooru API 直连。默认按热度（`sort:score`）拉，支持 tag 过滤。
+//! 1. **图库**（外网）：safebooru API 直连，分**四个分区**（对齐 AniCh 1.5.27 的
+//!    「标签 / 综合 / 插画 / COSPLAY」页签）：
+//!      · 标签    = tag 联想列表（`autocomplete.php?q=`）+ 点 tag 看该 tag 的图
+//!      · 综合    = 全站高分（`rating:general sort:score`）
+//!      · 插画    = `illustration rating:general`
+//!      · COSPLAY = `cosplay rating:general`
 //! 2. **本地**：扫本机图片缓存目录（`app_data_dir/cache/img`，即 fntvimg 落盘的那批）
 //!    + 用户可指定的额外目录。**只读，绝不改名/移动/删除**。
+//!
+//! ## 与原版的本质差异（如实记录，不假装一样）
+//!
+//! AniCh 卡片有「**9P**」角标 = 一次上传 9 张图的**图集**，还有中文标题。
+//! safebooru 是**单图库**：每张图独立、没有图集概念、标题只有英文 tag 串。
+//! 所以我们的卡片：
+//!   · 右上角 `AI` 角标 —— safebooru 有 `ai-generated` tag 可判
+//!   · 第二个角标给**分辨率**（如 `2057×2765`），这是该源真实能提供的信息
+//!   · 底部渐变压一层 **tag 串**（原作那里是中文标题）
+//! 不硬造「9P」—— 没有的数据不能编。
 //!
 //! ## 为什么本地 tab 要有独立命令而不是复用 fntvimg
 //!
@@ -71,6 +86,10 @@ fn map_post(p: &Value) -> Option<Value> {
     };
     let w = p.get("width").and_then(|v| v.as_i64()).unwrap_or(0);
     let h = p.get("height").and_then(|v| v.as_i64()).unwrap_or(0);
+    let tags = p.get("tags").and_then(|v| v.as_str()).unwrap_or("");
+    // AI 图判定：safebooru 用 `ai-generated` tag 标注。做子串判（tag 分隔是空格，
+    // 用 contains 会误命中 `ai-generated_edit` 之类的变体 —— 那也算 AI，可接受）。
+    let ai = tags.contains("ai-generated") || tags.contains("ai_generated");
     Some(json!({
         "id": id,
         // 瀑布流按宽高比排版；0 表示未知（前端退化为固定比例）
@@ -78,36 +97,59 @@ fn map_post(p: &Value) -> Option<Value> {
         "h": h,
         "thumb": thumb,
         "full": full,
-        "tags": p.get("tags").and_then(|v| v.as_str()).unwrap_or(""),
+        "tags": tags,
         "score": p.get("score").and_then(|v| v.as_i64()).unwrap_or(0),
+        "ai": ai,
     }))
+}
+
+/// [lc-2355] 图库分区 → 对应 safebooru 查询 tag。
+///
+/// 对齐 AniCh 1.5.27 的四个页签（标签/综合/插画/COSPLAY）。「标签」不是图流分区，
+/// 它走 `gallery_tags`（联想列表）+ 选中后按 `tags=该标签` 拉图，所以这里只列三个图流。
+///
+/// 取值原则：**只写实测能拉到内容的 tag**（空结果会让用户以为坏了）。
+fn section_tags(section: &str) -> &'static str {
+    match section {
+        // 插画：safebooru 的 illustration tag（实测有内容）
+        "illust" => "illustration",
+        // COSPLAY：真实 cosplay 照片（safebooru 有大量真人 cosplay 上传）
+        "cosplay" => "cosplay",
+        // 综合 = 全站（不加 tag）
+        _ => "",
+    }
 }
 
 /// 拉一页外网图库。
 ///
 /// `page` 从 0 开始（safebooru 的 `pid` 语义就是 0 基）。
-/// `tags` 为空时用内置的安全 tag 组合；用户传入的 tag 会**追加**在安全 tag 之后
-/// （不是替换）—— 防止用户无意中把 `rating:general` 去掉。
+/// `section` 为分区（`""`/`all` = 综合、`illust` = 插画、`cosplay` = COSPLAY）。
+/// `tags` 为用户额外输入的 tag，**追加**在分区 tag 之后（不是替换）。
 #[tauri::command]
 pub async fn gallery_online(
     page: Option<u32>,
     tags: Option<String>,
+    section: Option<String>,
 ) -> Result<Value, String> {
     let pid = page.unwrap_or(0);
     let user_tags = tags.unwrap_or_default();
     let user_tags = user_tags.trim();
+    let sec = section.unwrap_or_default();
+    let sec_tag = section_tags(sec.trim());
 
     // 安全兜底 + 排序。
     //
     // [lc-2354 实测坑] 排序语法是 **`sort:score`** 不是 `order:score` ——
     // safebooru 对不认识的 meta-tag 不报错，而是**静默返回空 body**（HTTP 200 + 0 字节）。
     // 写成 `order:score` 会让接口「看起来正常但一张图都没有」，极难排查。
-    let mut tag_q = String::from("rating:general sort:score");
-    if !user_tags.is_empty() {
-        // 标签里出现空白就按 AND 拼；safebooru 用空格分隔多 tag
-        tag_q.push(' ');
-        tag_q.push_str(user_tags);
+    let mut parts: Vec<&str> = vec!["rating:general", "sort:score"];
+    if !sec_tag.is_empty() {
+        parts.push(sec_tag);
     }
+    if !user_tags.is_empty() {
+        parts.push(user_tags);
+    }
+    let tag_q = parts.join(" ");
 
     let url = format!(
         "https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1&limit={}&pid={}&tags={}",
@@ -266,6 +308,83 @@ pub async fn gallery_local(
         "truncated": truncated,
         "max": LOCAL_MAX,
     }))
+}
+
+/// [lc-2355] tag 联想（「标签」分区 + 搜索框下拉）。
+///
+/// safebooru 的 `autocomplete.php?q=<前缀>` 返回：
+/// ```json
+/// [{"label":"cosplay (99372)","value":"cosplay"}, ...]
+/// ```
+/// 我们只取 `value`（真 tag 名）与 `label` 里的计数，拼成前端直接可用的结构。
+///
+/// 为什么不用 `dapi&s=tag&q=index`：那个返回 **XML**（要额外解析），
+/// 且不支持前缀过滤（只能全量分页）。autocomplete 更贴合「输入即联想」。
+#[tauri::command]
+pub async fn gallery_tags(q: Option<String>) -> Result<Value, String> {
+    let prefix = q.unwrap_or_default();
+    let prefix = prefix.trim();
+    if prefix.is_empty() {
+        // 空输入时给一批常用 tag 当「热门标签」入口（实测这些都有大量内容）
+        return Ok(json!({
+            "items": [
+                {"tag": "cosplay", "count": -1},
+                {"tag": "illustration", "count": -1},
+                {"tag": "landscape", "count": -1},
+                {"tag": "swimsuit", "count": -1},
+                {"tag": "kimono", "count": -1},
+                {"tag": "uniform", "count": -1},
+                {"tag": "1girl", "count": -1},
+                {"tag": "ai-generated", "count": -1}
+            ],
+            "fromAutocomplete": false,
+        }));
+    }
+
+    let url = format!(
+        "https://safebooru.org/autocomplete.php?q={}",
+        urlencode(prefix)
+    );
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(12))
+        .user_agent("AniBox/1.0 (gallery)")
+        .build()
+        .map_err(|e| format!("HTTP 客户端构建失败: {e}"))?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("tag 联想请求失败: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("tag 联想 HTTP {}", resp.status()));
+    }
+    let text = resp.text().await.map_err(|e| format!("读取响应失败: {e}"))?;
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(json!({ "items": [], "fromAutocomplete": true }));
+    }
+    let arr: Vec<Value> = serde_json::from_str(text).map_err(|e| {
+        format!("tag 联想响应非 JSON（可能站点维护或限流）: {e}")
+    })?;
+
+    let mut items: Vec<Value> = Vec::new();
+    for it in arr {
+        let value = it.get("value").and_then(|v| v.as_str()).unwrap_or("");
+        if value.is_empty() {
+            continue;
+        }
+        // label 形如 "cosplay (99372)" —— 从右括号前抠出计数
+        let label = it.get("label").and_then(|v| v.as_str()).unwrap_or("");
+        let count = label
+            .rsplit_once('(')
+            .and_then(|(_, tail)| tail.trim_end_matches(')').trim().parse::<i64>().ok())
+            .unwrap_or(-1);
+        items.push(json!({ "tag": value, "count": count }));
+        if items.len() >= 30 {
+            break;
+        }
+    }
+    Ok(json!({ "items": items, "fromAutocomplete": true }))
 }
 
 /// 读本地图片原始字节（供 fntvimg 的 `/__local/` 分支调用）。

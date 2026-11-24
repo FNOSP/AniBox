@@ -5,6 +5,8 @@ import { listen } from "@tauri-apps/api/event";
 import { createPortal } from "react-dom";
 import { useDelayedUnmount } from "../../hooks/useDelayedUnmount";
 import { PlayGlyph } from "../common/PlayGlyph";
+// [lc-2336] TVBox 配置导入（单链接）——独立组件，避免继续往本文件堆新功能
+import { TvboxImport } from "./TvboxImport";
 
 export type WebrsSearchItem = { name: string; url: string };
 
@@ -154,6 +156,8 @@ export function WebrsPanel({
   const [macReferer, setMacReferer] = useState("");
   const [macBusy, setMacBusy] = useState(false);
   const [macErr, setMacErr] = useState("");
+  // [lc-2336] TVBox 配置导入（单链接）：只控制展开态，抓取/解析/落库全在 Rust
+  const [tvboxOpen, setTvboxOpen] = useState(false);
   // [lc-1503] 一键测试源：对全部源各发一次真实搜索，行内显示 ✓ n / 无结果 / ✗
   const [tests, setTests] = useState<Record<string, { status: string; count: number; error: string }>>({});
   const [testing, setTesting] = useState(false);
@@ -1119,7 +1123,26 @@ export function WebrsPanel({
                     {macOpen ? "收起" : "＋ 采集源"}
                   </button>
                 )}
+                {/* [lc-2336] TVBox 配置导入（单链接）：抓取+解析在 Rust（tvbox.rs），
+                    这里只做入口。放进源管理区是因为产出就是采集源（同目录落库）。 */}
+                {kind !== "kazumi" && (
+                  <button
+                    className="webrs-mgr-addbtn"
+                    onClick={() => setTvboxOpen((v) => !v)}
+                    title="从 TVBox 配置链接里提取可用的采集源与直播源"
+                  >
+                    {tvboxOpen ? "收起" : "⇩ TVBox 导入"}
+                  </button>
+                )}
               </div>
+            {tvboxOpen && (
+              <TvboxImport
+                onImported={async () => {
+                  await refreshRules();
+                  setSrcHint("TVBox 导入完成，记得到列表里勾选新采集源");
+                }}
+              />
+            )}
             {macOpen && (
               <div className="webrs-mac-form">
                 <div className="webrs-mac-hint">

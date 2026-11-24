@@ -537,8 +537,7 @@
   flex-direction: column;
   gap: var(--sp-2);
   margin-top: 10px;
-}
-.webrs-mac-hint {
+}.webrs-mac-hint {
   font-size: var(--fs-cap);
   color: var(--muted);
   line-height: 1.6;
@@ -555,6 +554,75 @@
 }
 .webrs-mac-input:focus {
   border-color: var(--accent);
+}
+
+/* ── [lc-2336] TVBox 配置导入（单链接）：一行输入 + 结果分组 ──
+   结果区只用三级信息：概览 → 分组标题 → 条目；条目名与地址一行放不下时地址截断（保留可 hover 看全）。 */
+.webrs-tvbox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: 10px;
+}
+.webrs-tvbox-row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+}
+.webrs-tvbox-row .webrs-go {
+  flex: 0 0 auto;
+}
+.webrs-tvbox-res {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.webrs-tvbox-sum {
+  font-size: var(--fs-cap);
+  color: var(--muted);
+  line-height: 1.6;
+}
+.webrs-tvbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.webrs-tvbox-title {
+  font-size: var(--fs-cap);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.webrs-tvbox-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-cap);
+  min-width: 0;
+}
+.webrs-tvbox-name {
+  flex: 0 0 auto;
+  color: var(--text-strong);
+}
+.webrs-tvbox-tag {
+  flex: 0 0 auto;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-full);
+  padding: var(--sp-0) var(--sp-2);
+  color: var(--muted);
+}
+.webrs-tvbox-url {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.webrs-tvbox-skip {
+  font-size: var(--fs-cap);
+  color: var(--muted);
+  line-height: 1.6;
 }
 
 /* ── [lc-1502] 源管理设置面板（⚙ 勾选启用）；搜索栏控件规格见上方统一规则 ── */

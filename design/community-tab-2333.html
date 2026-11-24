@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>讨论页 · BGM 只读 + 本站发言</title>
+<link rel="stylesheet" href="/src/styles/index.css">
+<style>
+  /* 演示页样式（在 index.css 之后注入，确保不被 body 的背景覆盖） */
+  body {
+    margin: 0;
+    padding: 32px;
+    background: linear-gradient(160deg, #1c1c1e, #141416);
+    color: rgba(245,245,247,.86);
+    font-family: "Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 6px; font-weight: 600; color: #fff; }
+  .sub { font-size: 13px; color: rgba(235,235,245,.78); margin-bottom: 24px; }
+  .stage { max-width: 720px; }
+  .note { font-size: 12px; color: rgba(235,235,245,.6); margin-top: 10px; line-height: 1.7; }
+  .note b { color: rgba(245,245,247,.9); }
+</style>
+</head>
+<body>
+  <h1>详情页「讨论」</h1>
+  <div class="sub">上方 Bangumi 吐槽只读展示（BGM 官方 API 无发评论接口）；下方本站讨论可发可删。</div>
+
+  <div class="stage">
+    <div class="dpanel cmpanel">
+
+      <!-- 段一：Bangumi 吐槽（只读） -->
+      <section class="cmsec">
+        <h3 class="cmsec-t">Bangumi 吐槽 <span class="cmsec-hint">来自 Bangumi，只读</span></h3>
+        <div class="dvtc-list">
+          <div class="dvtc-item">
+            <div class="dvtc-ava" style="background:#4a5568"></div>
+            <div class="dvtc-body">
+              <div class="dvtc-head">
+                <span class="dvtc-nick">某位 BGM 用户</span>
+                <span class="dvtc-time">3 天前</span>
+              </div>
+              <div class="dvtc-bubble">
+                <p class="dvtc-text">前半段的节奏确实慢了点，但第六集之后完全值回票价。</p>
+                <span class="dvtc-like on" aria-hidden="true">♥ 12</span>
+              </div>
+            </div>
+          </div>
+          <div class="dvtc-item">
+            <div class="dvtc-ava" style="background:#6b4a55"></div>
+            <div class="dvtc-body">
+              <div class="dvtc-head">
+                <span class="dvtc-nick">另一位</span>
+                <span class="dvtc-time">1 周前</span>
+              </div>
+              <div class="dvtc-bubble">
+                <p class="dvtc-text">作画稳定，音乐是加分项。</p>
+                <span class="dvtc-like" aria-hidden="true">♡</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <button type="button" class="cmmore">加载更多吐槽</button>
+      </section>
+
+      <!-- 段二：本站讨论（可发） -->
+      <section class="cmsec">
+        <h3 class="cmsec-t">本站讨论 <span class="cmsec-hint">所有用 AniBox 的人都能看到</span></h3>
+
+        <div class="cmnickrow">
+          <span class="cmnicklabel">昵称</span>
+          <span class="cmnickvalue">观众-3f2a</span>
+          <button type="button" class="cmlink">修改</button>
+          <span class="cmnickhint">改名只影响之后的评论</span>
+        </div>
+
+        <div class="cmcount">2 条评论</div>
+
+        <div class="cmlist">
+          <div class="cmitem">
+            <div class="cmava" style="background:hsl(210 42% 42%)"></div>
+            <div class="cmbody">
+              <div class="cmhead">
+                <span class="cmnick">观众-3f2a</span>
+                <span class="cmtime">刚刚</span>
+                <span class="cmmine">我</span>
+              </div>
+              <p class="cmtext">这片子的后半段真不错，推荐看到最后。</p>
+              <div class="cmops">
+                <button type="button">回复</button>
+                <button type="button" class="cmdel">删除</button>
+              </div>
+              <div class="cmreplies">
+                <div class="cmitem cmreply">
+                  <div class="cmava" style="background:hsl(30 42% 42%)"></div>
+                  <div class="cmbody">
+                    <div class="cmhead">
+                      <span class="cmnick">观众-8c11</span>
+                      <span class="cmtime">2 小时前</span>
+                    </div>
+                    <p class="cmtext">同感，第七集那个转场印象很深。</p>
+                    <div class="cmops"><button type="button">删除</button></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="cmitem">
+            <div class="cmava" style="background:hsl(150 42% 42%)"></div>
+            <div class="cmbody">
+              <div class="cmhead">
+                <span class="cmnick">观众-2d90</span>
+                <span class="cmtime">昨天</span>
+              </div>
+              <p class="cmtext"><span class="cmdeleted">该评论已删除</span></p>
+            </div>
+          </div>
+        </div>
+
+        <div class="cmcompose">
+          <textarea class="cminput" rows="3" placeholder="说点什么…（3–2000 字）"></textarea>
+          <div class="cmcomposerow">
+            <span class="cmcounter">0 / 2000</span>
+            <button type="button" class="pl-solid pl-h-sm">发送</button>
+          </div>
+        </div>
+      </section>
+
+    </div>
+    <div class="note">
+      <b>为什么两段分开：</b>数据来源、能否发言、归属都不一样。混成一个列表用户会分不清哪条能回。<br>
+      <b>为什么 BGM 那半只读：</b>BGM 官方 API 的 47 个路径里，写操作只有收藏/目录/搜索，没有发评论接口。网页端发吐槽走私有接口 + CSRF，不在开放 API 授权范围内。
+    </div>
+  </div>
+</body>
+</html>

@@ -9,6 +9,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { MessageSquare as IcoMsgL, Send as IcoSendL, Trash2 as IcoTrashL, UserRound as IcoUserL } from "lucide-react";
+import { CommentsTab } from "./CommentsTab";
+import type { BgmComment } from "../../../types";
 
 type Reply = {
   id: string;
@@ -29,6 +31,23 @@ type Props = {
   mediaType: "movie" | "tv" | null;
   tmdbId: number | null;
   title: string;
+  /**
+   * [lc-2333] Bangumi 吐槽（只读）。
+   *
+   * 为什么是只读：**BGM 官方 API 没有发表评论的接口**（完整 spec 47 个路径里，
+   * 写操作只有收藏/目录/搜索，没有任何 POST .../comments）。网页端发吐槽走私有
+   * 接口 + CSRF + 会话 Cookie，不在开放 API 授权范围内，复刻会违反服务条款且
+   * 随时可能失效。所以 BGM 那一半只展示、不发言；发言统一走我们自建的服务。
+   *
+   * 为 null 表示这部作品没有 BGM 条目（或还没探测完），此时不显示该段。
+   */
+  bgmComments?: BgmComment[] | null;
+  bgmCommentsBusy?: boolean;
+  bgmCommentsDone?: boolean;
+  bgmCommentsErr?: string;
+  bgmCommentsMoreBusy?: boolean;
+  onBgmMore?: () => void;
+  onBgmRetry?: () => void;
 };
 
 /** 确定性头像色：同一个昵称永远同一个颜色，不用存图片。 */
@@ -127,7 +146,18 @@ function CommentRow({
   );
 }
 
-export function CommunityTab({ mediaType, tmdbId, title }: Props) {
+export function CommunityTab({
+  mediaType,
+  tmdbId,
+  title,
+  bgmComments,
+  bgmCommentsBusy,
+  bgmCommentsDone,
+  bgmCommentsErr,
+  bgmCommentsMoreBusy,
+  onBgmMore,
+  onBgmRetry,
+}: Props) {
   const [page, setPage] = useState<Page>({ items: [], nextCursor: null, total: 0 });
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -244,8 +274,41 @@ export function CommunityTab({ mediaType, tmdbId, title }: Props) {
     return <div className="dpanel cmpanel"><div className="empty">这部作品缺少 TMDB 编号，无法关联评论</div></div>;
   }
 
+  const hasBgm = bgmComments !== null && bgmComments !== undefined;
+
   return (
     <div className="dpanel cmpanel">
+      {/* ── 段一：Bangumi 吐槽（只读）────────────────────────────────
+          BGM 官方 API 没有发评论接口（见 Props 注释），所以这一段只展示。
+          有 BGM 条目时才出现；没有就整段不渲染，用户看到的只是「本站讨论」。 */}
+      {hasBgm && (
+        <section className="cmsec">
+          <h3 className="cmsec-t">
+            Bangumi 吐槽
+            <span className="cmsec-hint">来自 Bangumi，只读</span>
+          </h3>
+          <CommentsTab
+            comments={bgmComments ?? []}
+            commentsBusy={!!bgmCommentsBusy}
+            commentsDone={!!bgmCommentsDone}
+            commentsErr={bgmCommentsErr ?? ""}
+            commentsMoreBusy={!!bgmCommentsMoreBusy}
+            retryComments={onBgmRetry ?? (() => {})}
+          />
+          {!bgmCommentsDone && !bgmCommentsBusy && (bgmComments?.length ?? 0) > 0 && onBgmMore && (
+            <button type="button" className="cmmore" onClick={onBgmMore}>
+              加载更多吐槽
+            </button>
+          )}
+        </section>
+      )}
+
+      {/* ── 段二：本站讨论（可发可回复可删）────────────────────────── */}
+      <section className="cmsec">
+        <h3 className="cmsec-t">
+          本站讨论
+          <span className="cmsec-hint">所有用 AniBox 的人都能看到</span>
+        </h3>
       {/* 昵称行：改昵称只影响之后的评论（服务端每条存昵称快照），所以文案要说清 */}
       <div className="cmnickrow">
         <IcoUserL size={13} strokeWidth={2} />
@@ -365,6 +428,7 @@ export function CommunityTab({ mediaType, tmdbId, title }: Props) {
       </div>
 
       {err && <div className="set-warn cmwarn">{err}</div>}
+      </section>
     </div>
   );
 }

@@ -1288,10 +1288,13 @@ export function DetailView({
     };
   }, [tab, reviewsNonce, base.guid, bgmSeasonKey]);
 
-  // [lc-119] 吐槽懒加载（只在切到「吐槽」分段时才开始）：先 bgm_match（结果按 base.guid 落盘缓存），
+  // [lc-119] 吐槽懒加载：先 bgm_match（结果按 base.guid 落盘缓存），
   // 再拉第一页 /p1/.../comments。重试按钮通过 commentsNonce 重新走这段。已有数据则不重复拉。
+  // [lc-2333] 「讨论」页也需要这份数据（它在上方展示「Bangumi 吐槽」只读段），
+  // 所以触发条件从 `tab === "comments"` 放宽到这两个页签 —— 否则进「讨论」页
+  // 永远看不到 BGM 吐槽（空白），因为懒加载从没被触发过。
   useEffect(() => {
-    if (tab !== "comments") return;
+    if (tab !== "comments" && tab !== "community") return;
     if (commentsOffset.current > 0) return; // 已拉到过数据（含翻页）→ 不重拉
     let alive = true;
     (async () => {
@@ -2339,6 +2342,15 @@ export function DetailView({
           mediaType={isMovie ? "movie" : "tv"}
           tmdbId={hasTmdb ? Number(tmdbAnchor.tmdbId) : null}
           title={base.title || ""}
+          /* [lc-2333] BGM 吐槽只读：BGM 官方 API 没有发评论接口，发言统一走自建服务。
+             没有 BGM 条目时传 null，CommunityTab 会整段不渲染。 */
+          bgmComments={hasBgmId ? comments : null}
+          bgmCommentsBusy={commentsBusy}
+          bgmCommentsDone={commentsDone}
+          bgmCommentsErr={commentsErr}
+          bgmCommentsMoreBusy={commentsMoreBusy}
+          onBgmMore={loadMoreComments}
+          onBgmRetry={retryComments}
         />
       )}
     </div>
@@ -2440,6 +2452,15 @@ export function DetailView({
           mediaType={isMovie ? "movie" : "tv"}
           tmdbId={hasTmdb ? Number(tmdbAnchor.tmdbId) : null}
           title={base.title || ""}
+          /* [lc-2333] BGM 吐槽只读：BGM 官方 API 没有发评论接口，发言统一走自建服务。
+             没有 BGM 条目时传 null，CommunityTab 会整段不渲染。 */
+          bgmComments={hasBgmId ? comments : null}
+          bgmCommentsBusy={commentsBusy}
+          bgmCommentsDone={commentsDone}
+          bgmCommentsErr={commentsErr}
+          bgmCommentsMoreBusy={commentsMoreBusy}
+          onBgmMore={loadMoreComments}
+          onBgmRetry={retryComments}
         />
       )}
     </div>

@@ -271,3 +271,40 @@
 .cmwarn {
   margin: 0;
 }
+
+/* ── 分段：Bangumi 吐槽（只读） / 本站讨论（可发）───────────────
+   [lc-2333] 为什么分两段：BGM 官方 API 没有发评论接口，只能读；
+   发言统一走自建服务。两段并列而不是塞进同一个列表 —— 数据来源、能否发言、
+   归属都不同，混在一起用户会分不清「哪条是我能回的」。
+   分段标题用 12px 大写权重词，比正文小一档，靠字重和颜色分主次。 */
+.cmsec {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.cmsec + .cmsec {
+  /* 两段之间一条细线：视觉上明确断开，避免看起来是同一个列表的延续 */
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--line);
+}
+.cmsec-t {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  margin: 0;
+  font-size: var(--fs-ctl);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.cmsec-hint {
+  font-size: var(--fs-cap);
+  font-weight: 400;
+  color: var(--muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cmops button,
+  .cmmore,
+  .cminput {
+    transition: none;
+  }
+}

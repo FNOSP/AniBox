@@ -394,6 +394,11 @@ pub fn write_danmu_config(cfg: &crate::config::Config) -> Result<(), String> {
         // Lua 侧不再读该键，配置桥不再下发。
         "base": base,
         "bases": bases,
+        // [lc-2353] 外部平台弹幕源开关（腾讯/爱奇艺/优酷）：bili-runner 的源描述符表据此门控。
+        // 关掉的源不发起任何请求（不只是不合并）——优酷那两跳取 cna/_m_h5_tk 白耗几百毫秒。
+        "tencentEnabled": cfg.danmu_tencent_enabled,
+        "iqiyiEnabled": cfg.danmu_iqiyi_enabled,
+        "youkuEnabled": cfg.danmu_youku_enabled,
         // 飞牛地址/令牌：系列记忆键解析（play-meta 缺失时的兜底）与自建源无关，仅供桩里的
         // readConfig 兼容主仓库形状；真源仍是 config.json 本身。
         "server": cfg.server,

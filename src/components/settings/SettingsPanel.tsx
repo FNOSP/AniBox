@@ -2889,6 +2889,56 @@ export function SettingsPanel({
                     />
                   </div>
 
+                  {/* ── [lc-2353] 外部平台弹幕源 ── */}
+                  <div className="set-sec">外部平台弹幕源</div>
+                  <div className="set-row set-row-col">
+                    <span className="set-k">腾讯视频</span>
+                    <div className="set-desc">
+                      经 360kan 检索腾讯播放页取 vid，再拉取该集弹幕。与自建源、B 站、
+                      弹弹play 并行叠加，按条目去重合并。
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${settings.danmuTencentEnabled !== false ? " on" : ""}`}
+                      aria-pressed={settings.danmuTencentEnabled !== false}
+                      aria-label="腾讯视频弹幕源"
+                      onClick={() =>
+                        onSettings({ danmuTencentEnabled: settings.danmuTencentEnabled === false })
+                      }
+                    />
+                  </div>
+                  <div className="set-row set-row-col">
+                    <span className="set-k">爱奇艺</span>
+                    <div className="set-desc">
+                      按集检索爱奇艺并拉取该集弹幕。覆盖 B 站没有的国产剧与独播番。
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${settings.danmuIqiyiEnabled !== false ? " on" : ""}`}
+                      aria-pressed={settings.danmuIqiyiEnabled !== false}
+                      aria-label="爱奇艺弹幕源"
+                      onClick={() =>
+                        onSettings({ danmuIqiyiEnabled: settings.danmuIqiyiEnabled === false })
+                      }
+                    />
+                  </div>
+                  <div className="set-row set-row-col">
+                    <span className="set-k">优酷</span>
+                    <div className="set-desc">
+                      优酷没有可用的检索接口，只能按视频 id 拉取，自动播放链路拿不到 id。
+                      开启后仅在手动指定视频时才生效。
+                    </div>
+                    <button
+                      type="button"
+                      className={`set-sw${settings.danmuYoukuEnabled === true ? " on" : ""}`}
+                      aria-pressed={settings.danmuYoukuEnabled === true}
+                      aria-label="优酷弹幕源"
+                      onClick={() =>
+                        onSettings({ danmuYoukuEnabled: settings.danmuYoukuEnabled !== true })
+                      }
+                    />
+                  </div>
+
                   {/* ── [lc-2348] 弹幕屏蔽 ── */}
                   <div className="set-sec">弹幕屏蔽</div>
                   <div className="set-row set-row-col">

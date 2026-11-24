@@ -198,4 +198,7 @@ module.exports = {
     getScriptDir,
     loadCjsModule,
     dandanplayLuaOwned,
+    // [lc-2353] bili-runner 需要读外部平台弹幕源的开关（写在同一份 conf 里）。
+    // 每次调用都重新读盘 —— 设置面板改完立即生效，不用重启 shim。
+    readConf,
 };

@@ -378,13 +378,25 @@ async function runBiliDanmaku(title, ep, out, threshold, season, timeoutMs = 600
      * id        trace 里的标识
      * mod       模块本体（可能为 null = 未随包）
      * modName    报错时显示的模块文件名
+     * enabled    配置开关（设置面板「接口与引擎 → 外部平台弹幕源」）
      * call       (outPath) => Promise<result>；result 需含 { ok, danmaku_count, matched_title }
      */
+    // [lc-2353] 读设置面板的开关（conf 每次重新读盘 → 改完立即生效，不用重启 shim）
+    let danmuConf = {};
+    try { danmuConf = require('./danmu-api-deps.cjs').readConf() || {}; } catch (e) { danmuConf = {}; }
+    // 缺键时按「腾讯/爱奇艺开、优酷关」兜底（与 config.rs 的 serde default 一致），
+    // 避免旧 conf（无这些键）把新源全部关掉。
+    const tencentOn = danmuConf.tencentEnabled !== false;
+    const iqiyiOn = danmuConf.iqiyiEnabled !== false;
+    const youkuOn = danmuConf.youkuEnabled === true;
+
     const SOURCES = [
         {
             id: 'tencent',
             mod: tencent,
             modName: 'tencent-danmaku.cjs',
+            enabled: tencentOn,
+            disabledReason: '腾讯弹幕源已关闭（设置 → 弹幕 → 接口与引擎 → 外部平台弹幕源）',
             // 腾讯：番名 + 季 → 360kan 取 vid → 拉弹幕。无集号概念（一集一个 playlink）
             call: (outPath) => tencent.run(String(title || ''), Number(season) || 0, outPath, budget, ''),
             // 腾讯的 trace 有「视频页有没有」的细分
@@ -394,26 +406,53 @@ async function runBiliDanmaku(title, ep, out, threshold, season, timeoutMs = 600
             id: 'iqiyi',
             mod: iqiyi,
             modName: 'iqiyi-danmaku.cjs',
+            enabled: iqiyiOn,
+            disabledReason: '爱奇艺弹幕源已关闭（设置 → 弹幕 → 接口与引擎 → 外部平台弹幕源）',
             // 爱奇艺：番名 + 季 + **集号** → 搜索取 tvId（单集粒度）→ cmts 拉弹幕。
             // 集号必须传：不传会选到「时长最长」的那一集（实测默认命中第 30 集）。
             call: (outPath) => iqiyi.run(String(title || ''), Number(season) || 0, outPath, budget, '', Number(ep) || 0),
             trace: (r) => buildGenericTrace('iqiyi', r, '爱奇艺', { epMismatch: true }),
         },
     ];
-    // 优酷只在有 vid 时参与（本源没有搜索能力，不猜）
-    if (youkuVid) {
-        SOURCES.push({
-            id: 'youku',
-            mod: youku,
-            modName: 'youku-danmaku.cjs',
-            call: (outPath) => youku.run(String(youkuVid), outPath, budget),
-            trace: (r) => buildGenericTrace('youku', r, '优酷', {}),
-        });
+    // 优酷：既要有开关、又要有 vid（本源没有搜索能力，不猜）
+    if (youkuOn) {
+        if (youkuVid) {
+            SOURCES.push({
+                id: 'youku',
+                mod: youku,
+                modName: 'youku-danmaku.cjs',
+                enabled: true,
+                call: (outPath) => youku.run(String(youkuVid), outPath, budget),
+                trace: (r) => buildGenericTrace('youku', r, '优酷', {}),
+            });
+        }
+        else {
+            SOURCES.push({
+                id: 'youku',
+                mod: null,
+                modName: 'youku-danmaku.cjs',
+                enabled: false,
+                // 这条不是"模块缺失"，而是「本源只能按 vid 拉」——如实说明，别让用户以为坏了
+                disabledReason: '优酷弹幕源已开启，但本源只能按 vid 拉（优酷无可用搜索接口），本次未指定 vid',
+            });
+        }
     }
-
     // ── 并行启动全部外部源 ──
     const pending = [];
     for (const s of SOURCES) {
+        // 开关关掉的源**完全不发起请求**（不是拉回来再丢弃）：
+        // 优酷那两跳取 cna/_m_h5_tk 白耗几百毫秒，用户既然关了就该零成本。
+        if (s.enabled === false) {
+            pending.push({
+                src: s,
+                promise: Promise.resolve({
+                    ok: false,
+                    error: s.disabledReason || `${s.id} 已关闭`,
+                    __disabled: true,
+                }),
+            });
+            continue;
+        }
         if (!s.mod) {
             pending.push({ src: s, promise: Promise.resolve({ ok: false, error: `模块缺失（${s.modName} 未随包）`, __missing: true }) });
             continue;
@@ -454,6 +493,9 @@ async function runBiliDanmaku(title, ep, out, threshold, season, timeoutMs = 600
             trace = buildGenericTrace(item.src.id, res, item.src.id, {});
         }
         if (res && res.__missing) trace = { id: item.src.id, attempted: false, used: false, skippedReason: res.error };
+        // 用户关掉的源：attempted=false（没试过），用 skippedReason 而非 error ——
+        // 这是主动选择不是故障，UI 上不该显示成错误。
+        if (res && res.__disabled) trace = { id: item.src.id, attempted: false, used: false, skippedReason: res.error };
         sources.push(trace);
 
         let lines = [];

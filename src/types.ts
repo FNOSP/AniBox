@@ -572,6 +572,14 @@ export type AppSettings = {
   potplayerPath?: string;
   /** [lc-1561] 自建弹幕接口（danmu_api）开关 —— 对齐主仓库同名设置 */
   danmuApiEnabled: boolean;
+  /** [lc-2353] 腾讯视频弹幕源（360kan 取 vid → dm.video.qq.com）。默认开。
+   *  与自建源/B站/弹弹play 并行叠加，命中即按条目去重合并。 */
+  danmuTencentEnabled?: boolean;
+  /** [lc-2353] 爱奇艺弹幕源（零签名：search.video.iqiyi.com → cmts.iqiyi.com）。默认开。 */
+  danmuIqiyiEnabled?: boolean;
+  /** [lc-2353] 优酷弹幕源（mtop 签名）。默认关：本源只能按 vid 拉，
+   *  自动链路拿不到 vid，开着只会白耗两次握手请求。 */
+  danmuYoukuEnabled?: boolean;
   /** [lc-2090] 更新提醒关闭：true = 完全停止检测更新（启动自动检查 / 12h 复查 / 手动
    *  检查更新全部停用）。关闭动作有二次确认（旧版本问题不予处理）；默认 false。 */
   updateRemindOff?: boolean;

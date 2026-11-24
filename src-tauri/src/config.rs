@@ -177,6 +177,25 @@ pub struct Config {
     pub danmu_dd_app_id: String,
     #[serde(default)]
     pub danmu_dd_app_secret: String,
+    /* ── [lc-2353] 外部平台弹幕源开关（腾讯 / 爱奇艺 / 优酷）──
+       三个平台与「自建源 + B站 + 弹弹play」并行叠加，各自独立开关。
+       实现见 src-tauri/assets/{tencent,iqiyi,youku}-danmaku.cjs。
+
+       默认值取舍：
+         - 腾讯、爱奇艺 **默认开**：两者都能按番名自动搜（360kan / iqiyi 搜索），
+           零配置可用，实测有真实价值（狂飙爱奇艺 18089 条、鬼灭腾讯 39004 条）。
+         - 优酷 **默认关**：它没有可用搜索接口，只能按 vid 拉，
+           自动链路永远拿不到 vid → 开着只会每次多两跳无用 HTTP（取 cna/_m_h5_tk）。
+           只有显式指定 vid 的场景才需要它。 */
+    /// 腾讯视频弹幕源（360kan 取 vid → dm.video.qq.com）
+    #[serde(default = "default_true")]
+    pub danmu_tencent_enabled: bool,
+    /// 爱奇艺弹幕源（search.video.iqiyi.com → cmts.iqiyi.com，零签名）
+    #[serde(default = "default_true")]
+    pub danmu_iqiyi_enabled: bool,
+    /// 优酷弹幕源（mtop 签名；**仅按 vid 拉，无搜索**，故默认关闭）
+    #[serde(default)]
+    pub danmu_youku_enabled: bool,
     // [lc-2056] danmu_dd_fallback_below（兜底阈值）已随 [lc-2166]「三源全拉」退役删除：
     // 弹弹play 恒拉叠加，不再有「主源少于 N 条才兜底」的判定。旧 config.json 里残留的
     // 该键无 deny_unknown_fields，serde 反序列化时静默忽略。
@@ -444,6 +463,10 @@ impl Default for Config {
             danmu_api_bases: Vec::new(),
             danmu_dd_app_id: String::new(),
             danmu_dd_app_secret: String::new(),
+            // [lc-2353] 外部平台弹幕源：腾讯/爱奇艺默认开（能按番名搜），优酷默认关（只能按 vid）
+            danmu_tencent_enabled: true,
+            danmu_iqiyi_enabled: true,
+            danmu_youku_enabled: false,
             sub_assrt_token: String::new(),
             sub_osub_key: String::new(),
             acg_user: String::new(),

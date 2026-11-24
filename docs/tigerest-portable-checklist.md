@@ -1,7 +1,7 @@
 # Tigerest-Theater 可移植清单
 
 > 源仓库：`D:\GitHub\播放器\Tigerest-Theater`（v3.0.0，2026-11-19，浅克隆）
-> 调研日期：2026-11-23
+> 调研日期：2026-11-23 ／ 落地日期：2026-11-24
 > 结论口径：**每一项都写明「我们已有什么 / 还差什么」**，不把已有的当缺的。
 
 ## 0. 许可红线（先看这条）
@@ -47,117 +47,84 @@
 
 ---
 
-## 2. 值得做（按价值排序）
+## 2. 已落地（2026-11-24）
 
-### 2.1 着色器每帧耗时实测 —— 高价值，成本低 ⭐ 推荐下一项
-
-| | |
-|---|---|
-| 他们的文件 | `tools/measure_mpv_shaders.py` + `resources/mpvconf/shader-timings.json` |
-| 我们现状 | `src/lib/shaderGuide.ts` 的性能列是**手写档位**（低/中/高/极高），无任何一个数字 |
-| 差距 | 用户选着色器时看到的是「开销：高」这种主观标签，不知道自己机器上到底多少 ms |
-
-**做法**（可完整重写，只借思路）：
-- 起一个可见 mpv 窗口，播合成 4:2:0 测试图（放大类用 1066×600 源 1.8× 放大到 1920×1080，缩小类用 3840×2160）
-- 等每个渲染 pass 累计 ≥120 帧的计时样本，取**最近 48 帧的中位数**求和（避开首帧编译抖动）
-- 减去「不加着色器」的基线 → 得到该着色器的净 GPU 耗时
-- 写 JSON，UI 显示真实 ms
-
-**关键细节**（他们踩过/写明的）：
-- 用 `vo-passes` 的 `fresh` 与 `redraw` 两组，分别汇总
-- `//!WHEN` 条件在当前缩放下不成立的 pass 要跳过（否则给 0）
-- 他们测的是 M4 Pro / macOS，**我们不能直接抄数字**，必须在本机自测
-- 1 ms 以下的差异受显卡降频影响，不能用来排序
-
-**我们已有的可复用基础**：`third_party/.../scripts/stats.lua` 是 mpv-stats 汉化版，里面已有 `vo-passes` 读取逻辑可参考写法（但不要依赖它，它是交互式面板）。
-
----
-
-### 2.2 mpv.conf 编辑器（用户可直接改配置 + 一键交给 AI）—— 高价值，成本高
+### 2.1 着色器每帧耗时实测 ✅ lc-2341
 
 | | |
 |---|---|
-| 他们的文件 | `native/mpvConfEditor.js`（55KB）、`src/player/MpvConfDocument.cpp`（41KB，纯文本逻辑）、`MpvConfEditor.cpp` |
-| 我们现状 | **完全没有**。`mpv.conf` / `mpv-user.conf` 只能改仓库里那份（打包时随 staging 进去），用户改不了 |
-| 他们做到的程度 | 管理区（只读头尾）+ 用户区 + 锁定键表 + 条件暂停行 + 逐行校验 + 一键「复制给 AI」（生成修改规则 + 完整 conf）+ 恢复默认 + 粘贴时 diff 确认 |
+| 我们的产物 | `tests/measure_mpv_shaders.py`（串行跑 52 个预设，每个 3 次基线取中位数）、`tests/measure_shader_probe.lua`（探针）、`src/data/shader-timings.json`（数据）、`ShaderGuideModal` 性能列 |
+| 做法 | 起 1920×1080 可见窗口播合成 4:2:0 测试图（放大用 1066×600，缩小用 4K），等每个 pass 攒够 120 帧，取最近 48 帧中位数求和，减去同场景基线 |
+| 我们额外做的 | 除了「每帧耗时」，还测 **首帧额外延迟**（`compile_ms`）—— 这才是用户感知的代价 |
 
-**他们的设计骨架（可照搬思路）**：
-- 文件分三段：`head`（软件注入、只读）/ `user`（用户可编辑）/ `tail`（软件注入、只读）
-- 每个配置键有**归属表**：`Free`（可改）/ `Locked`（软件管，如 `vo`/`gpu-api`/`include`）/ `Page`（该去设置页改）
-- 冲突行（如开了 RIFE 时改帧率的滤镜）标黄 + **暂停执行**，不报错
-- 校验靠**运行中 mpv 的选项表**（`snapshot_mpv_options.py` 抓成 JSON），不是硬编码
+**实测推翻了清单原来的假设**（这是本轮最重要的发现）：
 
-**我们的额外优势**：`StatsPanel` 里已有 `shader_preset_table()`（52 个预设）与 `fntv_shader.lua` 的 `PRESETS` 双表，`tests/gen_shader_table.py` 已在保证两边一致 —— 做编辑器时可以直接复用这套一致性机制。
+| 预设 | 每帧耗时 | 首次编译额外等待 |
+|---|---|---|
+| Anime4K Mode A (HQ) | 1.16 ms | +540 ms |
+| FSRCNNX/2x56+SSim+Krig | 0.20 ms | +1.2 s |
+| ArtCNN/16 | 0.85 ms | **+14.6 s** |
+| ArtCNN/32 | 5.76 ms | **+103 s** |
+| CuNNy/4x24 | 2.08 ms | **+15.3 s** |
+| CuNNy/4x32 | 3.60 ms | **+35.8 s** |
+| CuNNy/8x32 | 6.99 ms | **+72.9 s** |
+| AMD FSR / RAVU / CfL / Krig | 0.00~0.10 ms | 测不出差异 |
 
-**风险**：我们有 `mpv-user.conf` 由设置面板自动生成（ICC/渲染预设），编辑器必须把这份也划进「只读管理区」，否则两个写者打架。
+- 52 个预设全部测到（零 null）。RTX 5070 上，除 CuNNy/ArtCNN 大档外**每帧开销全部落在 0.1~2ms**，也就是 60fps 预算（16.7ms）的零头。清单里「开销：高」这类标签在这张卡上严重失真。
+- 真正让用户难受的是**编译**：ArtCNN/16 每帧只多 0.85ms，但点下去要等 14.6 秒；ArtCNN/32 要等 103 秒；CuNNy/8x32 要等 73 秒。原来 UI 里只写「极高」完全没说清这一点。
+- 所以 UI 同时显示两个数，且首次编译用暖色单独标出（`ShaderGuideModal` 的 `.sg-compile`）。
+- **数据只对本机有效**：JSON 里带 `device` + `measured_at`，弹窗底部如实写明「换显卡或分辨率数字会变，只适合同机横向比较」。
 
----
+### 2.2 处理顺序流 ✅ lc-2341
 
-### 2.3 专业模式实时面板（边看边调 + 处理顺序可视化）—— 中高价值，成本中
-
-| | |
-|---|---|
-| 他们的文件 | `native/proMode.js`（126KB）、`resources/mpv/plugins/tigerest_pro.lua`（7KB） |
-| 我们现状 | **有分离的两块**：`fntv_mediainfo.lua`（左上角徽章：硬解/动态范围/编码/分辨率/帧率/码率）+ `stats.lua`（Ctrl+i 完整统计页）+ 玻璃底栏的着色器/插帧弹窗 |
-| 差距 | 没有「一边调一边看」的联动面板；没有「处理顺序」可视化（输入→硬解→滤镜→着色器→缩放→去色带→插帧→输出） |
-
-**最值得先搬的一小块：处理顺序流**（他们 `proMode.js` 的 `renderFlow()`）
+`tools/mpv-scripts/fntv_pipeline.lua` 采集 → 写 `user-data/anibox/pipeline` → modernz 视频详情弹窗读一行。
 
 ```
-输入 1920×1080 → 硬解 d3d11va → RIFE 补帧 → 着色器 ×3 → 缩放 ewa_lanczos → 去色带 → 插帧 → 输出 3840×2160
+640×360 24fps → 软解 → 着色器 2 个 → 缩放 lanczos 2.00x → 去色带 3 → 内置平滑 sphinx → 1280×720
 ```
 
-数据来源全是现成 mpv 属性：`video-params`、`hwdec-current`、`vf`（带 `enabled`）、`glsl-shaders` 计数、`deband`/`interpolation`、`osd-dimensions`。
-**可以直接塞进我们现有的玻璃 UI**（弹窗或详情页），不需要新面板。
+只列出真正发生的环节（没开去色带就不写），不给一串「关」。
 
-**他们的 stats 采集模式（值得学）**：
-- `tigerest_pro.lua` 每 0.5s 采一次，写到 `user-data/tigerest/pro/stats`
-- 面板侧 `observe` 该属性 → 拿 JSON → 渲染
-- **属性全在脚本线程读，UI 线程不等待 mpv**
-- 一次切档会连续改十几个属性 → 用 30ms debounce 合并成一次发布
+**踩到并修掉的三处**：
+1. `video-format` 在合成源上返回 `WRAPPED_AVFRAME`，编码名要从 `track-list[].codec` 取，且 `wrapped_avframe`/`rawvideo` 要过滤掉；
+2. `osd-dimensions` 在裸窗口下报的是「理论占满尺寸」不是真实渲染像素（窗口 1280×720 时它报 1920×1080）→ 改从 `vo-passes` 最后一个 pass 的 w/h 取；
+3. **`expand('~~cache/')` 失败时返回空串，而 `string.find(s, '', 1, true)` 恒等于 1** → 所有着色器都被判成 UI 着色器、计数永远是 0。拿不到 cache 目录时直接不过滤。
 
-这个「Lua 采集 → user-data → 前端 observe」的管线我们已经在用（`user-data/anibox/quality-request`、`user-data/fntv_shader/desc`），直接扩展即可。
+### 2.3 插帧 ResumePrime ✅ lc-2342
 
----
+`fntv_interp.lua` 文件尾追加：空闲 >5s 后恢复 → 立刻重新暂停 → seek 回原位 → 等首帧渲染出来 → 放行。
 
-### 2.4 插帧策略的纯逻辑（模型加载门控 / 空闲恢复回填）—— 中价值，成本低
+- 只在 rife/mvtools/svp 挂载时做（内置平滑没有推理图）
+- 3s 超时无条件放行（不能把用户永久卡在暂停）
+- **自锁防护**：自己写的 `pause=true` 不进「用户暂停」计时 —— 否则每次恢复都会再 prime 一次
+- seek / end-file 时取消在途 prime（否则令牌失效后 pause 永久停在 true）
 
-| | |
-|---|---|
-| 他们的文件 | `src/player/interpolation/InterpolationPolicy.h`（`Eligibility` / `StartupGate` / `ResumePrime`）、`FrameTiming.cpp` |
-| 我们现状 | `fntv_interp.lua` + `enhance.rs` 已有：倍速/HDR/超 4K 让路、`video-sync=audio`、吞吐看门狗回退 MVTools、真机验证 `estimated-vf-fps` 翻倍 |
-| 他们多做的 | ① **StartupGate**：模型加载期冻结音视频时钟（用户暂停意图与准备暂停分开记）；② **ResumePrime**：空闲 >5s 后恢复，先暂停 → seek 回当前位置 → 等首帧就绪再放（TRT 图闲置会掉 10-25 帧）；③ **FrameTiming**：播放卡顿造成的长帧**不算可变帧率** |
+验证：`tests/verify_resume_prime_2338.lua`（vm 式抽段 + 假 mp 桩），8/8 通过；**删掉实现后测试直接报错**（双向对照已做）。
 
-**可行性**：这三条是纯算法，30~50 行 Rust/Lua 各一份。①③ 我们已有类似效果（看门狗），② 我们**没有**（RIFE 长时间暂停后恢复会掉帧）。
+### 2.4 去色带参数 A/B ✅ lc-2343
 
----
+改用 Tigerest 动漫档 `iterations=3 / threshold=48 / range=18 / grain=6`（纯取值，不受许可限制）。
 
-### 2.5 三档 profile 参数 A/B 参考 —— 低价值，成本极低
+本机实测（RTX 5070，其余条件不变）：
 
-他们 `mpv.default.conf` 的三档与我们 `fntv_shader.lua` 的预设可以对照：
-
-| 档 | 他们 | 我们 |
+| | 1080p 输出 | 4K 输出 |
 |---|---|---|
-| 默认（动漫） | `SSimDownscaler + KrigBilateral + ravu_zoom_ar_r3` | `Anime4K Mode A HQ`（`aq_hq_a`：`Clamp_Highlights + Restore_CNN_VL + Upscale_CNN_x2_VL + AutoDownscalePre_x2/x4 + Upscale_CNN_x2_M`） |
-| 真人 | `SSimDownscaler + ravu_zoom_ar_r3`（同链去 Krig） | `fsrcnnx_2/8/16/56` 四档（FSRCNNX + 可选 SSim + KrigBilateral，自带色度放大） |
-| 激进测试 | Anime4K 完整链（`SSim + Restore_CNN_UL + Upscale_CNN_x2_UL + Thin_HQ`） | `aq_hq_aa`（Mode A+A 二次重建） |
+| 原 `iterations=2` | 0.410 ms | 1.995 ms |
+| 新 `3/48/18/6` | 0.418 ms | — |
+| 最激进 `iterations=4` | 0.425 ms | 2.194 ms |
 
-**结论**：我们预设更多（51 个 vs 3 个），不需要照搬。但他们的**去色带参数**值得 A/B：
-
-| | 公共基础 | 默认（动漫）档 |
-|---|---|---|
-| 他们 | `iterations=4 / threshold=48 / range=18 / grain=6` | `3 / 24 / 12 / 12` |
-| 我们 | `deband-iterations=2`（其余走 mpv 默认） | — |
-
-我们的值明显更保守。**可试动漫档用他们的 `3/24/12/12` 看天空/暗部色带是否改善** —— 这是纯取值，不涉及许可。
+从最保守到最激进只差 8μs~0.2ms —— **成本可忽略**，而默认 2 次迭代在天空/暗部留下的色带是能看见的。所以直接采用更激进的档。
 
 ---
 
-## 3. 明确不做
+## 3. 明确不做 / 未实装
 
 | 项 | 原因 |
 |---|---|
-| **NVIDIA VFG 帧生成** | 要 NVIDIA `nvidia-vfx` wheel（436MB，私有 runtime），包内 +约 200MB，还跑在他们的私有 VapourSynth 运行时上。分发成本与工程量都不划算；我们已有 RIFE / MVTools / SVP 三档 |
+| **VFR 稳健帧率**（原计划 lc-2339） | **写完自证是 no-op**：只要 `container-fps > 0`，无论 `estimated-vf-fps` 是多少，返回值恒等于 `container`，等于什么都没改。真正修口径要 mpv 逐帧 pts 差分，而 `fntv_aq` 的 bpppf 只用来开关去色带、不是精确预算 —— 成本远超收益。已在 `patch-anibox-mpv.mjs` 里写明，避免后来者重复走 |
+| **mpv.conf 编辑器** | 他们 96KB 代码 + 一整套校验；我们还要处理 `mpv-user.conf` 的双写者冲突。工作量超出本轮，单独排期 |
+| **专业模式实时面板** | 只搬了其中「处理顺序」这一小块（价值最高、数据全现成）。完整的边看边调面板没有明确需求 |
+| **NVIDIA VFG 帧生成** | 要 NVIDIA `nvidia-vfx` wheel（436MB，私有 runtime），包内 +约 200MB，还跑在他们的私有 VapourSynth 运行时上。我们已有 RIFE / MVTools / SVP 三档 |
 | QtWebEngine fence patch | 他们治的是 QtWebEngine 共享纹理花屏，我们不用 QtWebEngine |
 | Emby / Jellyfin 后端对接 | 我们是飞牛影视客户端 |
 | 一起看 / 公共评论 / 弹幕共享映射 | 都是他们自建服务端，与我们的产品方向无关 |
@@ -178,10 +145,11 @@
 
 ## 5. 行动建议
 
-**下一项做 2.1（着色器耗时实测）** —— 成本最低、收益最直接：现有 UI 里 52 个预设的「开销」标签会从主观变成实测 ms，用户选档位时第一次有真实依据。
+本轮（2026-11-24）已把原清单里价值最高的四项做完：**2.1 耗时实测、2.3 处理顺序流、2.4 ResumePrime、2.5 去色带参数**。
 
-我们随包 **57 个 `.glsl`**（他们 87 个，差在 Anime4K 全集与 ArtCNN 变体）。每个约 20s（等 120 帧样本 + 编译），**一次连续跑约 20 分钟**。跑法要遵守本机纪律：串行、不并发、跑完 `tasklist` 确认无残留 mpv。
+**下一项建议：mpv.conf 编辑器**（原 2.2）—— 这是剩下唯一的高价值项，也是最大的坑（他们 96KB 代码 + 一整套校验）。开工前必须先定两件事：
 
-**2.3 的「处理顺序流」** 可以顺手做，数据全现成、不需要新面板。
+1. `mpv-user.conf` 的归属：现在它既是我们随包发的（渲染预设/音频响度托管块），又写着「由设置面板自动生成」的注释 —— 实际上没有任何代码在生成它。做编辑器前必须先把这层关系说清，否则两个写者打架。
+2. 校验表来源：他们用 `snapshot_mpv_options.py` 从运行中 mpv 抓选项表。我们可以照做（我们已经在 `tests/gen_shader_table.py` 上有同源一致性机制可复用）。
 
-**2.2 的 mpv.conf 编辑器** 是最大的坑（他们用了 96KB 代码 + 一整套校验），要单独排期。
+**不要再做的事**：VFR 稳健帧率（`fntv_aq` 的 bpppf 只用于开关去色带，改口径没有收益，已是 no-op 状态）、完整专业模式面板（没有明确需求）。

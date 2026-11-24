@@ -1,15 +1,16 @@
-/* [lc-2355] Pixiv 图库页 —— 侧边栏入口（lc-2357 由「画廊」更名为「Pixiv」）。
+/* [lc-2355/2363] Pixiv 图库页 —— 侧边栏「Pixiv」入口。
  *
- * 版式对照 AniCh 1.5.27 的截图（用户提供的安装包版本）：
- *   · 顶栏：「搜索图片」输入框（横贯整行，浅灰底）
- *   · 页签行：标签 / 综合 / 插画 / COSPLAY（选中项加粗 + 主题色下划线）
+ * 版式对照 AniCh 1.5.27 的截图：
+ *   · 顶栏：「搜索图片」输入框（横贯整行）
+ *   · 页签行：Pixiv / 本地（选中项加粗 + 主题色下划线）
  *   · 图片墙：5 列等高瀑布流（卡片 192px、间距 7px，实测截图 2014x1394 @2x）
- *   · 卡片：圆角 7、底部黑色渐变压一行标题、右上角半透明角标
+ *   · 卡片：圆角 7、底部黑色渐变压标题、右上角半透明角标
  *
- * 数据源：safebooru（AniCh 自家社区流后端已死，见 lc-2349 调研）。
- * **诚实标注差异**：safebooru 是单图库，没有「9P 图集」概念，也没有中文标题。
- * 所以角标显示「AI」+ 分辨率（该源真实能给的信息），底部压 tag 串而非标题。
- * 不硬造原版没有的数据。
+ * 数据源：**只有 Pixiv**（用户明确要求去掉 safebooru 与 COSPLAY 源）。
+ *   · Pixiv 排行/搜索/详情 —— 实测无需登录即可用（ranking.php / ajax/* 直连 200）
+ *   · 本地 —— 本机图片扫描（离线）
+ *
+ * 角标：「NP」= 多图作品的张数（Pixiv 的 pageCount，**这就是原版「9P」的来源**）。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -19,23 +20,10 @@ import {
   Search as IcoSearchL,
   X as IcoXL,
 } from "lucide-react";
-import { imgUrl } from "../../lib/images";
 
-/** safebooru 条目（后端 map_post 已裁掉原始 24 字段里的冗余项） */
-type OnlineItem = {
-  id: number;
-  w: number;
-  h: number;
-  thumb: string;
-  full: string;
-  tags: string;
-  score: number;
-  ai: boolean;
-};
+/** 本地图片条目（后端 gallery_local 产出） */
 type LocalItem = { name: string; path: string; size: number; mtime: number };
-type OnlineResp = { items: OnlineItem[]; page: number; hasMore: boolean };
 type LocalResp = { items: LocalItem[]; dirsScanned: string[]; truncated: boolean; max: number };
-type TagItem = { tag: string; count: number };
 /** [lc-2356] Pixiv 条目（后端 pixiv_ranking / pixiv_search 归一化后） */
 type PixivItem = {
   id: number;
@@ -57,18 +45,12 @@ type PixivResp = {
   page: number;
   hasMore: boolean;
   total?: number;
-  cosplayUnsupported?: boolean;
 };
-type TagResp = { items: TagItem[]; fromAutocomplete: boolean };
 
 /** 四个图流分区（对齐原版页签顺序）+ 本地 */
-type Section = "tags" | "all" | "illust" | "cosplay" | "pixiv" | "local";
+type Section = "pixiv" | "local";
 
 const SECTIONS: { key: Section; label: string }[] = [
-  { key: "tags", label: "标签" },
-  { key: "all", label: "综合" },
-  { key: "illust", label: "插画" },
-  { key: "cosplay", label: "COSPLAY" },
   { key: "pixiv", label: "Pixiv" },
 ];
 
@@ -101,39 +83,21 @@ function columnCount(containerWidth: number): number {
   return Math.max(2, Math.floor(containerWidth / 199));
 }
 
-/** 卡片底部标题：safebooru 只有 tag 串，取前几个主要 tag 拼成可读摘要。 */
-function tagSummary(tags: string, max = 3): string {
-  const skip = new Set(["rating_general", "highres", "absurdres", "commentary", "translated"]);
-  const parts = tags.split(/\s+/).filter((t) => t && !skip.has(t));
-  return parts.slice(0, max).join(" · ").replace(/_/g, " ");
-}
-
 export function GalleryPage({ onBack }: { onBack: () => void }) {
-  const [section, setSection] = useState<Section>("cosplay");
-
-  /* ── 图流（综合/插画/COSPLAY 共用一套分页状态，切分区时重置）── */
-  const [items, setItems] = useState<OnlineItem[]>([]);
-  const [page, setPage] = useState(0);
-  const [hasMore, setHasMore] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const [appliedTag, setAppliedTag] = useState("");
+  const [section, setSection] = useState<Section>("pixiv");
 
   /* ── 搜索框（顶栏）── */
   const [query, setQuery] = useState("");
 
-  /* ── Pixiv 分区（独立分页状态：它的接口与 safebooru 完全不同）── */
+  /** 已应用的搜索词（Pixiv 搜索模式；空 = 走排行） */
+  const [appliedTag, setAppliedTag] = useState("");
+
+  /* ── Pixiv 分区 ── */
   const [pxItems, setPxItems] = useState<PixivItem[]>([]);
   const [pxPage, setPxPage] = useState(1);
   const [pxMore, setPxMore] = useState(true);
   const [pxBusy, setPxBusy] = useState(false);
   const [pxErr, setPxErr] = useState("");
-  const [pxNote, setPxNote] = useState("");
-
-  /* ── 标签分区 ── */
-  const [tagItems, setTagItems] = useState<TagItem[]>([]);
-  const [tagBusy, setTagBusy] = useState(false);
-  const [tagErr, setTagErr] = useState("");
 
   /* ── 本地分区 ── */
   const [localItems, setLocalItems] = useState<LocalItem[]>([]);
@@ -168,46 +132,10 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
     return () => ro.disconnect();
   }, [section]);
 
-  const loadFeed = useCallback(
-    async (sec: Section, p: number, tag: string, append: boolean) => {
-      setBusy(true);
-      setErr("");
-      try {
-        const r = await invoke<OnlineResp>("gallery_online", {
-          page: p,
-          tags: tag || null,
-          section: sec,
-        });
-        setItems((prev) => (append ? [...prev, ...r.items] : r.items));
-        setPage(r.page);
-        setHasMore(r.hasMore);
-      } catch (e) {
-        setErr(String(e));
-      } finally {
-        setBusy(false);
-      }
-    },
-    []
-  );
-
-  const loadTags = useCallback(async (prefix: string) => {
-    setTagBusy(true);
-    setTagErr("");
-    try {
-      const r = await invoke<TagResp>("gallery_tags", { q: prefix || null });
-      setTagItems(r.items);
-    } catch (e) {
-      setTagErr(String(e));
-    } finally {
-      setTagBusy(false);
-    }
-  }, []);
-
   /** Pixiv 排行/搜索。`kw` 非空 → 走搜索，否则走排行。 */
   const loadPixiv = useCallback(async (p: number, kw: string, append: boolean) => {
     setPxBusy(true);
     setPxErr("");
-    setPxNote("");
     try {
       const r = kw
         ? await invoke<PixivResp>("pixiv_search", { keyword: kw, page: p })
@@ -215,7 +143,6 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
       setPxItems((prev) => (append ? [...prev, ...r.items] : r.items));
       setPxPage(r.page);
       setPxMore(r.hasMore);
-      if (r.cosplayUnsupported) setPxNote("Pixiv 排行没有 COSPLAY 维度，这里显示的是日榜");
     } catch (e) {
       setPxErr(String(e));
     } finally {
@@ -247,14 +174,10 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
 
     if (section === "local") {
       if (localItems.length === 0) void loadLocal("");
-    } else if (section === "tags") {
-      void loadTags("");
-    } else if (section === "pixiv") {
-      void loadPixiv(1, appliedTag, false);
     } else {
-      void loadFeed(section, 0, appliedTag, false);
+      void loadPixiv(1, appliedTag, false);
     }
-  }, [section, appliedTag, loadFeed, loadTags, loadLocal, loadPixiv, localItems.length]);
+  }, [section, appliedTag, loadLocal, loadPixiv, localItems.length]);
 
   // [lc-2356] 打开新预览时重置多图索引（否则从上一个作品的第 3 张开始）
   useEffect(() => {
@@ -271,29 +194,14 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [preview]);
 
-  /** 搜索框提交：有分区是「标签」→ 联想；否则按 tag 过滤图流。 */
+  /** 顶栏搜索：空词回排行，有词走 Pixiv 搜索。 */
   const submitSearch = () => {
     const q = query.trim();
-    if (section === "tags") {
-      void loadTags(q);
-      return;
-    }
     setAppliedTag(q);
-    lastLoad.current = "";  // 强制重拉
-    if (section === "pixiv") void loadPixiv(1, q, false);
-    else void loadFeed(section, 0, q, false);
+    lastLoad.current = ""; // 强制重拉
+    void loadPixiv(1, q, false);
   };
 
-  /** 点标签分区里的某个 tag → 跳到「综合」并带上该 tag 过滤（原版也是这个语义）。 */
-  const pickTag = (tag: string) => {
-    setQuery(tag);
-    setAppliedTag(tag);
-    setSection("all");
-    lastLoad.current = "";
-    void loadFeed("all", 0, tag, false);
-  };
-
-  const isFeed = section === "all" || section === "illust" || section === "cosplay";
   const isPixiv = section === "pixiv";
 
   return (
@@ -304,7 +212,7 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
           <IcoSearchL size={15} strokeWidth={2} className="gal-topbar-ico" />
           <input
             className="gal-topbar-input"
-            placeholder={section === "tags" ? "搜索标签" : "搜索图片"}
+            placeholder="搜索 Pixiv 作品"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -318,13 +226,9 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
               aria-label="清除"
               onClick={() => {
                 setQuery("");
-                if (section !== "tags") {
-                  setAppliedTag("");
-                  lastLoad.current = "";
-                  void loadFeed(section, 0, "", false);
-                } else {
-                  void loadTags("");
-                }
+                setAppliedTag("");
+                lastLoad.current = "";
+                void loadPixiv(1, "", false);
               }}
             >
               <IcoXL size={14} strokeWidth={2} />
@@ -336,7 +240,7 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
         </button>
       </div>
 
-      {/* ── 页签行：标签 / 综合 / 插画 / COSPLAY ── */}
+      {/* ── 页签行：Pixiv / 本地 ── */}
       <div className="gal-tabs" role="tablist">
         {SECTIONS.map((s) => (
           <button
@@ -363,85 +267,13 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
         >
           <IcoFolderL size={12} strokeWidth={2} /> {LOCAL_SECTION.label}
         </button>
-        {appliedTag && isFeed && <span className="gal-filter-chip">{appliedTag}</span>}
+        {appliedTag && <span className="gal-filter-chip">{appliedTag}</span>}
       </div>
 
       {/* ── 内容区 ── */}
       <div className="gal-body" ref={gridRef}>
-        {section === "tags" && (
-          <div className="gal-taglist">
-            {tagBusy && <div className="gal-more">加载中…</div>}
-            {tagErr && <div className="gal-err">加载失败：{tagErr}</div>}
-            {!tagBusy &&
-              tagItems.map((t) => (
-                <button key={t.tag} type="button" className="gal-tagchip" onClick={() => pickTag(t.tag)}>
-                  <span className="gal-tagchip-name">{t.tag.replace(/_/g, " ")}</span>
-                  {t.count > 0 && <span className="gal-tagchip-count">{t.count.toLocaleString()}</span>}
-                </button>
-              ))}
-            {!tagBusy && !tagErr && tagItems.length === 0 && (
-              <div className="gal-empty">没有匹配「{query}」的标签</div>
-            )}
-          </div>
-        )}
-
-        {isFeed && (
-          <>
-            {err && <div className="gal-err">加载失败：{err}</div>}
-            {items.length > 0 && (
-              <div className="gal-grid">
-                {splitColumns(items, cols, (it) => (it.w && it.h ? it.w / it.h : 0.75)).map((col, ci) => (
-                  <div className="gal-col" key={ci}>
-                    {col.map((it) => (
-                      <button
-                        type="button"
-                        key={it.id}
-                        className="gal-card"
-                        onClick={() =>
-                          setPreview({
-                            src: imgUrl(it.full),
-                            label: tagSummary(it.tags, 4) || `#${it.id}`,
-                            sub: `${it.w}×${it.h}${it.score > 0 ? ` · ★${it.score}` : ""}`,
-                          })
-                        }
-                      >
-                        <img src={imgUrl(it.thumb)} alt="" loading="lazy" draggable={false} />
-                        <div className="gal-card-foot">
-                          <span className="gal-card-title">{tagSummary(it.tags)}</span>
-                        </div>
-                        <div className="gal-card-badges">
-                          {it.ai && <span className="gal-badge">AI</span>}
-                          {it.w > 0 && (
-                            <span className="gal-badge">
-                              {it.w}×{it.h}
-                            </span>
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            )}
-            {busy && <div className="gal-more">加载中…</div>}
-            {!busy && items.length === 0 && !err && (
-              <div className="gal-empty">{appliedTag ? `没有匹配「${appliedTag}」的图片` : "暂无图片"}</div>
-            )}
-            {!busy && hasMore && items.length > 0 && (
-              <button
-                type="button"
-                className="gal-more-btn"
-                onClick={() => void loadFeed(section, page + 1, appliedTag, true)}
-              >
-                加载更多
-              </button>
-            )}
-          </>
-        )}
-
         {isPixiv && (
           <>
-            {pxNote && <div className="gal-note">{pxNote}</div>}
             {/* [lc-2361] Pixiv API 不可达时给「可行动的提示」而不是裸错误。
                 实测本机对 www.pixiv.net 的 TCP 443 会在 TLS 握手阶段被重置
                 （不只是 DNS 污染），所以 Pixiv 分区在无代理环境下拿不到数据。

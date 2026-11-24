@@ -52,7 +52,7 @@ export function Sidebar({
   onOpenCat: (cat: { key: string; types: string[] }) => void;
   /** [lc-1907] 打开 JavHub 页（番号刮削媒体库） */
   onOpenJavHub: () => void;
-  /** [lc-2354/2357] 打开 Pixiv 图库页（Pixiv 排行/搜索 + safebooru + 本地图片） */
+  /** [lc-2354/2357/2363] 打开 Pixiv 图库页（Pixiv 排行/搜索 + 本地图片） */
   onOpenGallery: () => void;
   /** [lc-1779] 打开 115 网盘页（扫码登录 + 文件浏览 + 直链/转码播放） */
   onOpenCloud115: () => void;

@@ -210,6 +210,18 @@ pub struct Config {
     /// **只存本机 config.json，绝不入库、绝不写日志、绝不回显**。
     #[serde(default)]
     pub pixiv_cookie: String,
+    /// [lc-2362] Pixiv 访问代理（**只给 pixiv.rs 用**，不影响其它网络请求）。
+    ///
+    /// 背景：实测本机到 `www.pixiv.net` 的 TCP 443 在 **TLS 握手阶段被 RST**
+    /// （不只是 DNS 污染 —— 硬填真实 Cloudflare IP、不带 SNI 都照样 RST），
+    /// 而 `UDP 53` 也不通导致原项目用的 QUIC 路线（Cronet）物理不可用。
+    /// **唯一能通的路径是代理**。
+    ///
+    /// 格式：`http://127.0.0.1:端口` 或 `socks5://127.0.0.1:端口`（也支持带 `user:pass@`）。
+    /// 留空 = 不启用（此时读 `HTTPS_PROXY` 环境变量兜底）。
+    /// 只存本机 config.json，绝不入库、绝不写日志明文（见 `mask_proxy`）。
+    #[serde(default)]
+    pub pixiv_proxy: String,
     // [lc-2056] danmu_dd_fallback_below（兜底阈值）已随 [lc-2166]「三源全拉」退役删除：
     // 弹弹play 恒拉叠加，不再有「主源少于 N 条才兜底」的判定。旧 config.json 里残留的
     // 该键无 deny_unknown_fields，serde 反序列化时静默忽略。
@@ -482,6 +494,7 @@ impl Default for Config {
             danmu_iqiyi_enabled: true,
             danmu_youku_enabled: false,
             pixiv_cookie: String::new(),
+            pixiv_proxy: String::new(),
             sub_assrt_token: String::new(),
             sub_osub_key: String::new(),
             acg_user: String::new(),

@@ -584,6 +584,9 @@ export type AppSettings = {
    *  留空 = 排行/搜索/详情照常可用（无需登录）；填写 = 额外解锁「关注新作」。
    *  **只存本机，绝不入库、绝不回显**。 */
   pixivCookie?: string;
+  /** [lc-2362] Pixiv 访问代理（只给 pixiv 用，不影响其它请求）。
+   *  格式 `http://127.0.0.1:端口` 或 `socks5://...`。留空 = 不启用。 */
+  pixivProxy?: string;
   /** [lc-2090] 更新提醒关闭：true = 完全停止检测更新（启动自动检查 / 12h 复查 / 手动
    *  检查更新全部停用）。关闭动作有二次确认（旧版本问题不予处理）；默认 false。 */
   updateRemindOff?: boolean;

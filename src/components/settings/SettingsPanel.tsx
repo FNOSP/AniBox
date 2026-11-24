@@ -1013,6 +1013,12 @@ export function SettingsPanel({
   /* [lc-2358] Pixiv 登录凭据（每用户自带 cookie；留空则只用无需登录的功能） */
   const [pixivCookie, setPixivCookie] = useState(() => settings.pixivCookie ?? "");
   const [pixivNote, setPixivNote] = useState("");
+  /* [lc-2362] Pixiv 专用代理（只影响 pixiv 请求） */
+  const [pixivProxy, setPixivProxy] = useState(() => settings.pixivProxy ?? "");
+  const [pixivTestBusy, setPixivTestBusy] = useState(false);
+  const [pixivTestResult, setPixivTestResult] = useState<{
+    ok: boolean; ms: number; items?: number; error?: string; via: string; proxy: string;
+  } | null>(null);
   const [dmTesting, setDmTesting] = useState(false);
 
   /* [lc-1780] 弹弹play 兼容源（外置 danmaku-api-sources.json）：mpv 侧 dandanplay.lua
@@ -2947,6 +2953,67 @@ export function SettingsPanel({
                       </button>
                     </div>
                     {pixivNote && <div className="set-note">{pixivNote}</div>}
+                  </div>
+
+                  <div className="set-row set-row-col">
+                    <span className="set-k">访问代理</span>
+                    <div className="set-desc">
+                      本机到 pixiv 的连接可能在 TLS 握手阶段被中断，此时需要代理才能加载排行与搜索。
+                      图片不需要代理（走自建镜像）。格式：http://127.0.0.1:端口 或 socks5://…
+                      留空则不启用。
+                    </div>
+                    <input
+                      className="set-input"
+                      placeholder="http://127.0.0.1:7890"
+                      value={pixivProxy}
+                      disabled={busy}
+                      onChange={(e) => setPixivProxy(e.target.value)}
+                      onBlur={() => {
+                        const v = pixivProxy.trim();
+                        if (v !== (settings.pixivProxy ?? "")) {
+                          onSettings({ pixivProxy: v });
+                        }
+                      }}
+                    />
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <button
+                        className="set-btn"
+                        disabled={pixivTestBusy}
+                        onClick={async () => {
+                          setPixivTestBusy(true);
+                          setPixivTestResult(null);
+                          try {
+                            const r = await invoke<{
+                              ok: boolean; ms: number; items?: number; error?: string; via: string; proxy: string;
+                            }>("pixiv_test", { proxyOverride: pixivProxy.trim() || null });
+                            setPixivTestResult(r);
+                          } catch (e) {
+                            setPixivTestResult({
+                              ok: false, ms: 0, error: String(e), via: "未知", proxy: "",
+                            });
+                          } finally {
+                            setPixivTestBusy(false);
+                          }
+                        }}
+                      >
+                        {pixivTestBusy ? "测试中…" : "测试连通性"}
+                      </button>
+                      {pixivTestResult && (
+                        <span
+                          className="set-desc"
+                          style={{ color: pixivTestResult.ok ? "var(--accent)" : "var(--danger)" }}
+                        >
+                          {pixivTestResult.ok
+                            ? `✅ 通（${pixivTestResult.via}，${pixivTestResult.ms}ms，${pixivTestResult.items ?? 0} 条）`
+                            : `❌ 不通（${pixivTestResult.via}，${pixivTestResult.ms}ms）`}
+                        </span>
+                      )}
+                    </div>
+                    {pixivTestResult && !pixivTestResult.ok && pixivTestResult.error && (
+                      <div className="set-desc" style={{ color: "var(--muted)", wordBreak: "break-all" }}>
+                        {pixivTestResult.error}
+                      </div>
+                    )}
                   </div>
 
                   {/* ── [lc-2353] 外部平台弹幕源 ── */}

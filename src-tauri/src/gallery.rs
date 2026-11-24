@@ -1,51 +1,26 @@
-//! [lc-2354] 画廊：外网二次元图库（safebooru）+ 本地图片扫描。
+//! [lc-2363] 图库的**本地图片扫描** + 通用工具。
 //!
-//! ## 为什么是 safebooru
+//! ## 现在只服务 Pixiv 图库页的「本地」分区
 //!
-//! AniCh 的画廊本质是「社区帖子流 → 瀑布流图片」（`home/views/artwork.dart` 与 `cosplay.dart`，
-//! 数据来自它自己的 `/latest?type=artwork|cosplay` protobuf 接口）。**它后端已死**（三家域名全
-//! 不可达，见 [[anich-research]]），所以照抄接口没有意义。
+//! 早前这里还有 safebooru（第三方图库）的排行/搜索/tag 联想，用户明确要求
+//! 「cos 和之前那个源都不要，只要 pixiv」后**已全部删除**——包括前端的三个分区
+//! 与后端 `gallery_online` / `gallery_tags` 两个命令。
 //!
-//! 实测可用的替代（2026-11-24）：
-//!   - ✅ **safebooru.org**：`page=dapi&s=post&q=index&json=1` 零认证、分页正常
-//!     （`pid` 递增、id 递减）、字段齐全（`preview_url`/`sample_url`/`file_url`/`width`/`height`/`tags`）
-//!   - ❌ konachan / yande.re / danbooru / gelbooru：全部超时（本机网络下不可达）
+//! 保留的部分：
+//!   · `gallery_local`：扫本机图片缓存（`app_data_dir/cache/img`）+ 用户指定目录。
+//!     **只读，绝不改名/移动/删除**。
+//!   · `read_local_image`：供 fntvimg 的 `/__gallery/` 分支读盘。
+//!   · `urlencode_public`：`pixiv.rs` 复用的 URL 编码（避免两处各写一份）。
 //!
-//! safebooru 只收录 **safe** 分级（这是它存在的意义，与 danbooru 的区别），
-//! 但仍额外传 `rating:general` 兜底（部分老图 rating 字段为空）。
+//! ## 为什么本地分区要有独立命令而不是复用 fntvimg
 //!
-//! ## 两个 tab 的数据来源
-//!
-//! 1. **图库**（外网）：safebooru API 直连，分**四个分区**（对齐 AniCh 1.5.27 的
-//!    「标签 / 综合 / 插画 / COSPLAY」页签）：
-//!      · 标签    = tag 联想列表（`autocomplete.php?q=`）+ 点 tag 看该 tag 的图
-//!      · 综合    = 全站高分（`rating:general sort:score`）
-//!      · 插画    = `illustration rating:general`
-//!      · COSPLAY = `cosplay rating:general`
-//! 2. **本地**：扫本机图片缓存目录（`app_data_dir/cache/img`，即 fntvimg 落盘的那批）
-//!    + 用户可指定的额外目录。**只读，绝不改名/移动/删除**。
-//!
-//! ## 与原版的本质差异（如实记录，不假装一样）
-//!
-//! AniCh 卡片有「**9P**」角标 = 一次上传 9 张图的**图集**，还有中文标题。
-//! safebooru 是**单图库**：每张图独立、没有图集概念、标题只有英文 tag 串。
-//! 所以我们的卡片：
-//!   · 右上角 `AI` 角标 —— safebooru 有 `ai-generated` tag 可判
-//!   · 第二个角标给**分辨率**（如 `2057×2765`），这是该源真实能提供的信息
-//!   · 底部渐变压一层 **tag 串**（原作那里是中文标题）
-//! 不硬造「9P」—— 没有的数据不能编。
-//!
-//! ## 为什么本地 tab 要有独立命令而不是复用 fntvimg
-//!
-//! fntvimg 是「按已知路径取单张图」的代理；画廊需要的是「先列出有哪些图、各自宽高多少」。
-//! 两者职责不同（一个取内容、一个列举），混在一起会让 fntvimg 的缓存语义变复杂。
-//! 但**显示仍走 fntvimg**（新增 `/__local/<绝对路径>` 分支），避免前端直接碰文件系统。
+//! fntvimg 是「按已知路径取单张图」的代理；本地分区需要的是「先列出有哪些图、
+//! 各自多大」。两者职责不同（一个取内容、一个列举）。但**显示仍走 fntvimg**
+//! （`/__gallery/` 分支），避免前端直接碰文件系统。
 
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
-/// safebooru 单页最大条数（API 上限 1000，取 40 控制首屏体积与响应时间）。
-const PAGE_LIMIT: usize = 40;
 /// 本地扫描的单目录最多返回条数（防用户指定超大目录把 UI 卡死）。
 const LOCAL_MAX: usize = 500;
 /// 认作图片的扩展名（与小写后比较）。
@@ -53,146 +28,6 @@ const IMG_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif", "bmp", "avif"];
 /// 跳过小于此字节数的文件（图标/占位图，画廊里没意义）。
 const MIN_BYTES: u64 = 12 * 1024;
 
-fn is_image(path: &Path) -> bool {
-    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
-        return false;
-    };
-    let ext = ext.to_ascii_lowercase();
-    IMG_EXTS.contains(&ext.as_str())
-}
-
-/// 解析 safebooru 响应为前端要的扁平结构。
-///
-/// 只保留画廊真正用得上的字段 —— 原始条目有 24 个字段（`directory`/`hash`/`owner`/
-/// `parent_id`/`change`/`has_notes`…），全透传会让 IPC 载荷翻几倍且前端一个都不读。
-fn map_post(p: &Value) -> Option<Value> {
-    let id = p.get("id")?.as_i64()?;
-    let preview = p.get("preview_url").and_then(|v| v.as_str()).unwrap_or("");
-    let sample = p.get("sample_url").and_then(|v| v.as_str()).unwrap_or("");
-    let file = p.get("file_url").and_then(|v| v.as_str()).unwrap_or("");
-    // 至少要有一张能显示的图
-    let thumb = if !preview.is_empty() { preview } else if !sample.is_empty() { sample } else { file };
-    if thumb.is_empty() {
-        return None;
-    }
-    // 原图：优先 file_url；safebooru 的 file_url 是完整 URL，但极老的条目可能是裸文件名
-    // （字段里另有 directory/hash/image 三个碎片）。裸名拼不出来就退回 sample。
-    let full = if file.starts_with("http") {
-        file.to_string()
-    } else if sample.starts_with("http") {
-        sample.to_string()
-    } else {
-        thumb.to_string()
-    };
-    let w = p.get("width").and_then(|v| v.as_i64()).unwrap_or(0);
-    let h = p.get("height").and_then(|v| v.as_i64()).unwrap_or(0);
-    let tags = p.get("tags").and_then(|v| v.as_str()).unwrap_or("");
-    // AI 图判定：safebooru 用 `ai-generated` tag 标注。做子串判（tag 分隔是空格，
-    // 用 contains 会误命中 `ai-generated_edit` 之类的变体 —— 那也算 AI，可接受）。
-    let ai = tags.contains("ai-generated") || tags.contains("ai_generated");
-    Some(json!({
-        "id": id,
-        // 瀑布流按宽高比排版；0 表示未知（前端退化为固定比例）
-        "w": w,
-        "h": h,
-        "thumb": thumb,
-        "full": full,
-        "tags": tags,
-        "score": p.get("score").and_then(|v| v.as_i64()).unwrap_or(0),
-        "ai": ai,
-    }))
-}
-
-/// [lc-2355] 图库分区 → 对应 safebooru 查询 tag。
-///
-/// 对齐 AniCh 1.5.27 的四个页签（标签/综合/插画/COSPLAY）。「标签」不是图流分区，
-/// 它走 `gallery_tags`（联想列表）+ 选中后按 `tags=该标签` 拉图，所以这里只列三个图流。
-///
-/// 取值原则：**只写实测能拉到内容的 tag**（空结果会让用户以为坏了）。
-fn section_tags(section: &str) -> &'static str {
-    match section {
-        // 插画：safebooru 的 illustration tag（实测有内容）
-        "illust" => "illustration",
-        // COSPLAY：真实 cosplay 照片（safebooru 有大量真人 cosplay 上传）
-        "cosplay" => "cosplay",
-        // 综合 = 全站（不加 tag）
-        _ => "",
-    }
-}
-
-/// 拉一页外网图库。
-///
-/// `page` 从 0 开始（safebooru 的 `pid` 语义就是 0 基）。
-/// `section` 为分区（`""`/`all` = 综合、`illust` = 插画、`cosplay` = COSPLAY）。
-/// `tags` 为用户额外输入的 tag，**追加**在分区 tag 之后（不是替换）。
-#[tauri::command]
-pub async fn gallery_online(
-    page: Option<u32>,
-    tags: Option<String>,
-    section: Option<String>,
-) -> Result<Value, String> {
-    let pid = page.unwrap_or(0);
-    let user_tags = tags.unwrap_or_default();
-    let user_tags = user_tags.trim();
-    let sec = section.unwrap_or_default();
-    let sec_tag = section_tags(sec.trim());
-
-    // 安全兜底 + 排序。
-    //
-    // [lc-2354 实测坑] 排序语法是 **`sort:score`** 不是 `order:score` ——
-    // safebooru 对不认识的 meta-tag 不报错，而是**静默返回空 body**（HTTP 200 + 0 字节）。
-    // 写成 `order:score` 会让接口「看起来正常但一张图都没有」，极难排查。
-    let mut parts: Vec<&str> = vec!["rating:general", "sort:score"];
-    if !sec_tag.is_empty() {
-        parts.push(sec_tag);
-    }
-    if !user_tags.is_empty() {
-        parts.push(user_tags);
-    }
-    let tag_q = parts.join(" ");
-
-    let url = format!(
-        "https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1&limit={}&pid={}&tags={}",
-        PAGE_LIMIT,
-        pid,
-        urlencode(&tag_q)
-    );
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .user_agent("AniBox/1.0 (gallery)")
-        .build()
-        .map_err(|e| format!("HTTP 客户端构建失败: {e}"))?;
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("图库请求失败（网络不通或站点不可达）: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("图库返回 HTTP {}", resp.status()));
-    }
-    let text = resp.text().await.map_err(|e| format!("读取响应失败: {e}"))?;
-
-    // safebooru 在「无结果」时返回空 body 或 `[]`，都不是错误
-    let text = text.trim();
-    if text.is_empty() {
-        return Ok(json!({ "items": [], "page": pid, "hasMore": false }));
-    }
-    let arr: Vec<Value> = serde_json::from_str(text).map_err(|e| {
-        // 站点返回 HTML（维护页/风控页）时给出可读提示，而不是裸 JSON 错误
-        format!("图库响应非 JSON（可能站点维护或限流）: {e}")
-    })?;
-    let items: Vec<Value> = arr.iter().filter_map(map_post).collect();
-    let has_more = arr.len() >= PAGE_LIMIT;
-    Ok(json!({
-        "items": items,
-        "page": pid,
-        "hasMore": has_more,
-    }))
-}
-
-/// 极简 URL 编码（只处理 tag 里可能出现的字符：空格、冒号、括号、点、下划线）。
-/// 不引入额外依赖 —— 这些 tag 的字符集很小，且我们只拼查询串的一个值。
 pub(crate) fn urlencode_public(s: &str) -> String {
     urlencode(s)
 }
@@ -212,6 +47,13 @@ fn urlencode(s: &str) -> String {
 }
 
 /// 本地图片扫描结果条目。
+fn is_image(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    IMG_EXTS.contains(&ext.to_ascii_lowercase().as_str())
+}
+
 fn map_local(path: &Path, meta: &std::fs::Metadata) -> Option<Value> {
     let name = path.file_name()?.to_str()?.to_string();
     let size = meta.len();
@@ -314,83 +156,6 @@ pub async fn gallery_local(
     }))
 }
 
-/// [lc-2355] tag 联想（「标签」分区 + 搜索框下拉）。
-///
-/// safebooru 的 `autocomplete.php?q=<前缀>` 返回：
-/// ```json
-/// [{"label":"cosplay (99372)","value":"cosplay"}, ...]
-/// ```
-/// 我们只取 `value`（真 tag 名）与 `label` 里的计数，拼成前端直接可用的结构。
-///
-/// 为什么不用 `dapi&s=tag&q=index`：那个返回 **XML**（要额外解析），
-/// 且不支持前缀过滤（只能全量分页）。autocomplete 更贴合「输入即联想」。
-#[tauri::command]
-pub async fn gallery_tags(q: Option<String>) -> Result<Value, String> {
-    let prefix = q.unwrap_or_default();
-    let prefix = prefix.trim();
-    if prefix.is_empty() {
-        // 空输入时给一批常用 tag 当「热门标签」入口（实测这些都有大量内容）
-        return Ok(json!({
-            "items": [
-                {"tag": "cosplay", "count": -1},
-                {"tag": "illustration", "count": -1},
-                {"tag": "landscape", "count": -1},
-                {"tag": "swimsuit", "count": -1},
-                {"tag": "kimono", "count": -1},
-                {"tag": "uniform", "count": -1},
-                {"tag": "1girl", "count": -1},
-                {"tag": "ai-generated", "count": -1}
-            ],
-            "fromAutocomplete": false,
-        }));
-    }
-
-    let url = format!(
-        "https://safebooru.org/autocomplete.php?q={}",
-        urlencode(prefix)
-    );
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(12))
-        .user_agent("AniBox/1.0 (gallery)")
-        .build()
-        .map_err(|e| format!("HTTP 客户端构建失败: {e}"))?;
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("tag 联想请求失败: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("tag 联想 HTTP {}", resp.status()));
-    }
-    let text = resp.text().await.map_err(|e| format!("读取响应失败: {e}"))?;
-    let text = text.trim();
-    if text.is_empty() {
-        return Ok(json!({ "items": [], "fromAutocomplete": true }));
-    }
-    let arr: Vec<Value> = serde_json::from_str(text).map_err(|e| {
-        format!("tag 联想响应非 JSON（可能站点维护或限流）: {e}")
-    })?;
-
-    let mut items: Vec<Value> = Vec::new();
-    for it in arr {
-        let value = it.get("value").and_then(|v| v.as_str()).unwrap_or("");
-        if value.is_empty() {
-            continue;
-        }
-        // label 形如 "cosplay (99372)" —— 从右括号前抠出计数
-        let label = it.get("label").and_then(|v| v.as_str()).unwrap_or("");
-        let count = label
-            .rsplit_once('(')
-            .and_then(|(_, tail)| tail.trim_end_matches(')').trim().parse::<i64>().ok())
-            .unwrap_or(-1);
-        items.push(json!({ "tag": value, "count": count }));
-        if items.len() >= 30 {
-            break;
-        }
-    }
-    Ok(json!({ "items": items, "fromAutocomplete": true }))
-}
-
 /// 读本地图片原始字节（供 fntvimg 的 `/__local/` 分支调用）。
 ///
 /// **安全约束**：只允许读图片扩展名的文件，且路径必须是绝对路径。
@@ -442,42 +207,8 @@ mod tests {
         assert_eq!(urlencode("ok-_.~"), "ok-_.~");
     }
 
-    #[test]
-    fn map_post_picks_thumb_and_full() {
-        let p = json!({
-            "id": 123,
-            "preview_url": "https://x/p.jpg",
-            "sample_url": "https://x/s.jpg",
-            "file_url": "https://x/f.jpg",
-            "width": 1000, "height": 1500,
-            "tags": "a b", "score": 7
-        });
-        let m = map_post(&p).unwrap();
-        assert_eq!(m["thumb"], "https://x/p.jpg");
-        assert_eq!(m["full"], "https://x/f.jpg");
-        assert_eq!(m["w"], 1000);
-        assert_eq!(m["h"], 1500);
-    }
 
-    #[test]
-    fn map_post_falls_back_when_file_url_is_bare() {
-        // 老条目的 file_url 可能是裸文件名 —— 退回 sample 而不是拼出坏 URL
-        let p = json!({
-            "id": 1,
-            "preview_url": "https://x/p.jpg",
-            "sample_url": "https://x/s.jpg",
-            "file_url": "abc123.jpg",
-            "width": 1, "height": 1
-        });
-        let m = map_post(&p).unwrap();
-        assert_eq!(m["full"], "https://x/s.jpg");
-    }
 
-    #[test]
-    fn map_post_rejects_entry_without_any_image() {
-        let p = json!({ "id": 1, "preview_url": "", "sample_url": "", "file_url": "" });
-        assert!(map_post(&p).is_none());
-    }
 
     #[test]
     fn read_local_image_rejects_non_image_and_relative() {

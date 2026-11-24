@@ -156,7 +156,12 @@ async fn resolve_via_doh(host: &str) -> Vec<String> {
 /// 需要钉 IP 的 Pixiv 域名（API + 网页 ajax + oauth）。
 const PIXIV_HOSTS: &[&str] = &["www.pixiv.net", "app-api.pixiv.net", "oauth.secure.pixiv.net"];
 
-async fn client() -> Result<reqwest::Client, String> {
+/// 构建 HTTP 客户端。
+///
+/// `proxy_cfg` 来自 config 的 `pixiv_proxy`（用户在设置面板填的）。
+/// 优先级：**config 显式配置 > HTTPS_PROXY 环境变量**。
+/// 用户既然在面板里填了，就该以面板为准（环境变量可能是给别的东西用的）。
+async fn client(proxy_cfg: Option<&str>) -> Result<reqwest::Client, String> {
     let mut b = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
         .user_agent(
@@ -187,13 +192,20 @@ async fn client() -> Result<reqwest::Client, String> {
 
     // ② 代理支持：读标准环境变量。有代理时它优先于 resolve
     //    （代理负责最终连接，DNS 由代理端解析）。
-    let proxy_url = std::env::var("HTTPS_PROXY")
-        .or_else(|_| std::env::var("https_proxy"))
-        .or_else(|_| std::env::var("ALL_PROXY"))
-        .or_else(|_| std::env::var("all_proxy"))
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
+    // 代理优先级：config（用户在设置面板填的）> 环境变量
+    let proxy_from_cfg = proxy_cfg
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string);
+    let proxy_url = proxy_from_cfg.or_else(|| {
+        std::env::var("HTTPS_PROXY")
+            .or_else(|_| std::env::var("https_proxy"))
+            .or_else(|_| std::env::var("ALL_PROXY"))
+            .or_else(|_| std::env::var("all_proxy"))
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    });
     if let Some(p) = proxy_url {
         // 代理地址非法时不静默忽略 —— 否则用户以为配了代理却没生效
         let proxy = reqwest::Proxy::all(&p).map_err(|e| format!("代理地址非法（{p}）: {e}"))?;
@@ -227,8 +239,8 @@ fn web_headers() -> reqwest::header::HeaderMap {
 }
 
 /// 拉一段 JSON（自动跳过 pixiv 的 `{"error":true}` 业务错误）。
-async fn get_json(url: &str) -> Result<Value, String> {
-    get_json_with_cookie(url, None).await
+async fn get_json(url: &str, proxy: Option<&str>) -> Result<Value, String> {
+    get_json_with_cookie(url, None, proxy).await
 }
 
 /// 带用户 cookie 的请求（登录态接口用）。
@@ -256,11 +268,15 @@ fn api_candidates(url: &str) -> Vec<String> {
     out
 }
 
-async fn get_json_with_cookie(url: &str, cookie: Option<&str>) -> Result<Value, String> {
+async fn get_json_with_cookie(
+    url: &str,
+    cookie: Option<&str>,
+    proxy: Option<&str>,
+) -> Result<Value, String> {
     let candidates = api_candidates(url);
     let mut last_err = String::new();
     for (i, u) in candidates.iter().enumerate() {
-        match get_json_once(u, cookie).await {
+        match get_json_once(u, cookie, proxy).await {
             Ok(v) => {
                 if i > 0 {
                     crate::libmpv::trace(&format!("[pixiv] 已回退到第 {} 个候选端点", i + 1));
@@ -276,8 +292,12 @@ async fn get_json_with_cookie(url: &str, cookie: Option<&str>) -> Result<Value, 
     Err(last_err)
 }
 
-async fn get_json_once(url: &str, cookie: Option<&str>) -> Result<Value, String> {
-    let mut req = client().await?.get(url).headers(web_headers());
+async fn get_json_once(
+    url: &str,
+    cookie: Option<&str>,
+    proxy: Option<&str>,
+) -> Result<Value, String> {
+    let mut req = client(proxy).await?.get(url).headers(web_headers());
     // 只在有非空 cookie 时附加，且走 header（不经 URL，避免落进访问日志）
     if let Some(c) = cookie.map(str::trim).filter(|s| !s.is_empty()) {
         match reqwest::header::HeaderValue::from_str(c) {
@@ -407,10 +427,12 @@ fn mode_for_section(section: &str) -> &'static str {
 /// `tag` 可选：pixiv 的 ranking.php 支持 `&tag=` 过滤（实测可用）。
 #[tauri::command]
 pub async fn pixiv_ranking(
+    state: tauri::State<'_, crate::AppState>,
     page: Option<u32>,
     section: Option<String>,
     tag: Option<String>,
 ) -> Result<Value, String> {
+    let proxy = state.config.read().await.pixiv_proxy.clone();
     let p = page.unwrap_or(1).max(1);
     let sec = section.unwrap_or_default();
     let mode = mode_for_section(&sec);
@@ -420,7 +442,7 @@ pub async fn pixiv_ranking(
         url.push_str(&crate::gallery::urlencode_public(t));
     }
 
-    let v = get_json(&url).await?;
+    let v = get_json(&url, Some(proxy.as_str())).await?;
     let items: Vec<Value> = v
         .get("contents")
         .and_then(|c| c.as_array())
@@ -446,7 +468,12 @@ pub async fn pixiv_ranking(
 /// 实测 `ajax/search/illustrations/<kw>` 直连可用（77KB）。关键词要 URL 编码。
 /// 返回体里 `body.illustManga.data[]` 是条目列表。
 #[tauri::command]
-pub async fn pixiv_search(keyword: String, page: Option<u32>) -> Result<Value, String> {
+pub async fn pixiv_search(
+    state: tauri::State<'_, crate::AppState>,
+    keyword: String,
+    page: Option<u32>,
+) -> Result<Value, String> {
+    let proxy = state.config.read().await.pixiv_proxy.clone();
     let kw = keyword.trim();
     if kw.is_empty() {
         return Ok(json!({ "items": [], "page": 1, "hasMore": false }));
@@ -459,7 +486,7 @@ pub async fn pixiv_search(keyword: String, page: Option<u32>) -> Result<Value, S
     // [lc-2356 实测坑 2] 数据路径是 `body.illust.data`，**不是** `body.illustManga.data`
     //   （`illustManga` 是 app-api 那边的键名，网页 ajax 用的是 `illust`）。
     let url = format!("{WEB_BASE}/ajax/search/illustrations/{enc}?word={enc}&p={p}");
-    let v = get_json(&url).await?;
+    let v = get_json(&url, Some(proxy.as_str())).await?;
     let data = v
         .pointer("/body/illust/data")
         .and_then(|d| d.as_array())
@@ -514,12 +541,16 @@ pub async fn pixiv_search(keyword: String, page: Option<u32>) -> Result<Value, S
 ///
 /// `pageCount` 张图各自把 `urls.original` 的 `_p0` 换成 `_pN`。
 #[tauri::command]
-pub async fn pixiv_detail(id: i64) -> Result<Value, String> {
+pub async fn pixiv_detail(
+    state: tauri::State<'_, crate::AppState>,
+    id: i64,
+) -> Result<Value, String> {
+    let proxy = state.config.read().await.pixiv_proxy.clone();
     if id <= 0 {
         return Err("作品 id 非法".into());
     }
     let url = format!("{WEB_BASE}/ajax/illust/{id}");
-    let v = get_json(&url).await?;
+    let v = get_json(&url, Some(proxy.as_str())).await?;
     let b = v.get("body").ok_or("Pixiv 详情响应缺少 body")?;
     let pages = b.get("pageCount").and_then(|x| x.as_i64()).unwrap_or(1).max(1);
     let orig = b
@@ -601,12 +632,13 @@ pub async fn pixiv_following(
 ) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let cookie = cfg.pixiv_cookie.trim().to_string();
+    let proxy = cfg.pixiv_proxy.clone();
     if cookie.is_empty() {
         return Err("关注新作需要登录。请在设置 → 图库 → Pixiv 登录 里粘贴你的 Pixiv Cookie。".into());
     }
     let p = page.unwrap_or(1).max(1);
     let url = format!("{WEB_BASE}/ajax/follow_latest/illust?mode=all&p={p}&lang=zh");
-    let v = get_json_with_cookie(&url, Some(&cookie)).await?;
+    let v = get_json_with_cookie(&url, Some(&cookie), Some(proxy.as_str())).await?;
     // 实测结构：body.thumbnails.illust[]（不是 body.illust.data）
     let thumbs = v
         .pointer("/body/thumbnails/illust")
@@ -769,6 +801,53 @@ pub async fn pixiv_login_window(
     });
 
     Ok(json!({ "ok": true, "hint": "已打开登录窗口，登录成功会自动保存并关闭" }))
+}
+
+/// [lc-2362] 测试 Pixiv 连通性（用指定的代理，或已保存的代理）。
+///
+/// 为什么要有这个命令：用户填完代理不知道有没有生效，切到画廊看列表才知道 ——
+/// 中间还要等一次加载。这里直接打一次最轻的请求（ranking 第一页）返回结果，
+/// 面板上立刻能看到「通/不通 + 原因」。
+///
+/// `proxy_override` 让用户在**保存前**先测（面板输入框的当前值），
+/// 不传则用 config 里已保存的。
+#[tauri::command]
+pub async fn pixiv_test(
+    state: tauri::State<'_, crate::AppState>,
+    proxy_override: Option<String>,
+) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    let proxy = proxy_override
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| cfg.pixiv_proxy.clone());
+
+    let url = format!("{WEB_BASE}/ranking.php?mode=daily&format=json&p=1");
+    let started = std::time::Instant::now();
+    match get_json(&url, Some(proxy.as_str())).await {
+        Ok(v) => {
+            let n = v
+                .get("contents")
+                .and_then(|c| c.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            Ok(json!({
+                "ok": true,
+                "ms": started.elapsed().as_millis(),
+                "items": n,
+                "via": if proxy.is_empty() { "直连" } else { "代理" },
+                // 代理地址脱敏后回显，让用户确认用的是哪个
+                "proxy": if proxy.is_empty() { String::new() } else { mask_proxy(&proxy) },
+            }))
+        }
+        Err(e) => Ok(json!({
+            "ok": false,
+            "ms": started.elapsed().as_millis(),
+            "error": e,
+            "via": if proxy.is_empty() { "直连" } else { "代理" },
+            "proxy": if proxy.is_empty() { String::new() } else { mask_proxy(&proxy) },
+        })),
+    }
 }
 
 /// [lc-2358] 清除已保存的 Pixiv 登录凭据。

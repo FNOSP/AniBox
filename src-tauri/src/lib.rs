@@ -4777,9 +4777,7 @@ pub fn run() {
             danmaku_filter::danmaku_filter_set,
             danmaku_filter::danmaku_filter_count,
             // [lc-2354] 画廊：外网图库分页拉取 + 本地图片列举（显示走 fntvimg 的 /__gallery/）
-            gallery::gallery_online,
             gallery::gallery_local,
-            gallery::gallery_tags,
             // [lc-2356] Pixiv：排行/搜索（都不需登录）+ 详情（含多图 URL，供图集浏览）
             pixiv::pixiv_ranking,
             pixiv::pixiv_search,
@@ -4787,6 +4785,8 @@ pub fn run() {
             pixiv::pixiv_auth_status,
             pixiv::pixiv_following,
             pixiv::pixiv_login_window,
+            // [lc-2362] 测试代理/直连是否通（面板上立刻看到结果，不用切页面等加载）
+            pixiv::pixiv_test,
             pixiv::pixiv_logout,
             subtitle_sources::subtitle_sources_get,
             subtitle_sources::subtitle_sources_set,

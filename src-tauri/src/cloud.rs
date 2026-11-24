@@ -613,8 +613,10 @@ pub async fn cloud_sources_status(
         }
     }
     let webdav = !crate::webdav::load_accounts().is_empty();
-    let any = fnos || !clouds.is_empty() || webdav;
-    Ok(json!({ "fnos": fnos, "clouds": clouds, "webdav": webdav, "any": any }))
+    // [lc-2345] Emby / Jellyfin 也算一个可用来源：配过账号就不该被飞牛会话挡在登录页。
+    let media_server = crate::emby::any_account();
+    let any = fnos || !clouds.is_empty() || webdav || media_server;
+    Ok(json!({ "fnos": fnos, "clouds": clouds, "webdav": webdav, "mediaServer": media_server, "any": any }))
 }
 
 #[tauri::command]

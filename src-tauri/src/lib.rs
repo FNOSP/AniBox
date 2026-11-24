@@ -27,6 +27,8 @@ mod duanju;
 mod duanju_danmaku;
 // [lc-1811] WebDAV 媒体源（多账号 + PROPFIND 浏览 + Basic Auth 播放 + 随片字幕）
 mod webdav;
+// [lc-2345] Emby / Jellyfin 媒体服务器（API 同源，一份实现两种服务）
+mod emby;
 // [lc-1820] AI 增强可选组件（RIFE Vulkan 运行时：软件内下载/状态/删除）
 mod enhance;
 mod rtx;
@@ -4752,6 +4754,13 @@ pub fn run() {
             webdav::webdav_account_del,
             webdav::webdav_list,
             webdav::webdav_play,
+            // [lc-2345] Emby / Jellyfin 媒体服务器
+            emby::media_server_accounts,
+            emby::media_server_login,
+            emby::media_server_del,
+            emby::media_server_views,
+            emby::media_server_list,
+            emby::media_server_play,
             danmaku_sources::danmaku_sources_get,
             danmaku_sources::danmaku_sources_set,
             subtitle_sources::subtitle_sources_get,

@@ -55,6 +55,21 @@ type ScanResp = { ok: boolean; count: number; movies: number; episodes: number; 
 type LibGroup = { key: string; title: string; year: number; meta?: CloudMeta; files: CloudLibItem[] };
 type Crumb = { fid: string; name: string };
 type WebdavAccount = { id: string; name: string; url: string; username: string };
+/** [lc-2345] Emby / Jellyfin 媒体服务器账号（同一份后端实现，按 kind 区分） */
+type MediaServerAccount = {
+  id: string;
+  kind: "emby" | "jellyfin";
+  label: string;
+  name: string;
+  url: string;
+  username: string;
+  /** [lc-2345] 跳过 HTTPS 证书校验（自建服务器常用自签证书） */
+  insecure?: boolean;
+};
+/** [lc-2345] 媒体服务器条目：比网盘多两个字段
+    - itemType：Series/Season/Episode 要按类型走不同的子接口（剧集→季→集）
+    - episodeLabel：S01E02（服务端 Name 常常只有「第 1 集」） */
+type MediaEntry = Entry & { itemType?: string; episodeLabel?: string };
 
 /** [lc-1811] 播放档能力矩阵（server=服务端转码；local=本地 ffmpeg）
     [lc-2230] 光鸭无服务端转码（只有签名直链），走直链/本地转码档 */
@@ -156,6 +171,18 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
   const [wdAccounts, setWdAccounts] = useState<WebdavAccount[]>([]);
   const [wdActive, setWdActive] = useState<string | null>(null);
   const [wdForm, setWdForm] = useState<{ name: string; url: string; user: string; pass: string } | null>(null);
+  // [lc-2345] Emby / Jellyfin：active 用 "emby" / "jellyfin"，具体连哪个账号由 msActive 决定。
+  // 两者共用同一份 UI 与后端，只是 kind 不同 —— 不复制两套表单。
+  const [msAccounts, setMsAccounts] = useState<MediaServerAccount[]>([]);
+  const [msActive, setMsActive] = useState<string | null>(null);
+  const [msForm, setMsForm] = useState<{
+    kind: "emby" | "jellyfin";
+    name: string;
+    url: string;
+    user: string;
+    pass: string;
+    insecure: boolean;
+  } | null>(null);
   // [lc-1890] 网盘媒体库：把当前目录加入媒体库并扫描（cloud_library）
   const [libNote, setLibNote] = useState("");
   const [libBusy, setLibBusy] = useState(false);
@@ -167,7 +194,9 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
   const alive = useRef(true);
   const cur = providers.find((p) => p.id === active);
   const isWebdav = active === "webdav";
-  const logged = isWebdav ? !!wdActive : !!cur?.logged;
+  /** [lc-2345] 当前是不是 Emby / Jellyfin 面板（两者共用一套 UI） */
+  const isMediaServer = active === "emby" || active === "jellyfin";
+  const logged = isWebdav ? !!wdActive : isMediaServer ? !!msActive : !!cur?.logged;
 
   const refreshProviders = useCallback(async (): Promise<ProviderInfo[]> => {
     const r = await invoke<ProviderInfo[]>("cloud_providers");
@@ -217,6 +246,59 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
       return [];
     }
   }, []);
+
+  /* [lc-2345] Emby / Jellyfin ──────────────────────────────────────────────
+     列目录有两种入口形状：
+       · 刚连上账号 → media_server_views（列用户的媒体库）
+       · 进目录     → media_server_list（ParentId + itemType）
+     剧集是「两跳」结构（Series → Season → Episode），itemType 必须一路带着走，
+     否则后端无法判断该用 /Shows/{id}/Seasons 还是通用的 Items?ParentId=。 */
+  const loadMsAccounts = useCallback(async () => {
+    try {
+      const r = await invoke<MediaServerAccount[]>("media_server_accounts");
+      if (alive.current) setMsAccounts(r);
+      return r;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const loadMsViews = useCallback(async (accountId: string) => {
+    setLoading(true);
+    setErr("");
+    try {
+      const r = await invoke<ListResp>("media_server_views", { id: accountId });
+      if (!alive.current) return;
+      setItems(r.items);
+      setCursor(r.nextCursor || "");
+    } catch (e) {
+      if (alive.current) setErr(String(e));
+    } finally {
+      if (alive.current) setLoading(false);
+    }
+  }, []);
+
+  const loadMsList = useCallback(
+    async (accountId: string, parentId: string, itemType: string) => {
+      setLoading(true);
+      setErr("");
+      try {
+        const r = await invoke<ListResp>("media_server_list", {
+          id: accountId,
+          parentId: parentId || null,
+          itemType: itemType || null,
+        });
+        if (!alive.current) return;
+        setItems(r.items);
+        setCursor(r.nextCursor || "");
+      } catch (e) {
+        if (alive.current) setErr(String(e));
+      } finally {
+        if (alive.current) setLoading(false);
+      }
+    },
+    [],
+  );
 
   // [lc-1902] 扫码登录统一走 useCloudQrLogin（串行轮询 + 到点自动换码 + 有上限的重试）
   // [lc-1903] 确认后**不要立刻**取目录：上游发放凭据有几百毫秒~数秒延迟，刚确认就 list
@@ -273,6 +355,7 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
       })
       .catch((e) => alive.current && setErr(String(e)));
     loadWdAccounts();
+    loadMsAccounts();
     invoke<{ available: boolean }>("cloud_ffmpeg_available")
       .then((r) => alive.current && setFfmpegOk(r.available))
       .catch(() => alive.current && setFfmpegOk(false));
@@ -301,6 +384,14 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
       if (wdActive) void loadWebdav(wdActive, "", true);
       return;
     }
+    // [lc-2345] Emby / Jellyfin：切到该 tab 时优先连该类型上次/第一个账号
+    if (id === "emby" || id === "jellyfin") {
+      const mine = msAccounts.filter((a) => a.kind === id);
+      const pick = mine[0]?.id ?? null;
+      setMsActive(pick);
+      if (pick) void loadMsViews(pick);
+      return;
+    }
     const p = providers.find((x) => x.id === id);
     if (p?.logged) void loadList("", "", true, id);
     else void startQr(id);
@@ -311,15 +402,23 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
     setCrumbs((prev) => [...prev, { fid: nav, name: e.name }]);
     setRenaming(null);
     if (isWebdav) void loadWebdav(wdActive!, e.path || nav, true);
-    else void loadList(nav, "", true, active);
+    else if (isMediaServer) {
+      const me = e as MediaEntry;
+      void loadMsList(msActive!, nav, me.itemType ?? "");
+    } else void loadList(nav, "", true, active);
   };
 
   const jumpCrumb = (i: number) => {
     const next = crumbs.slice(0, i + 1);
     setCrumbs(next);
     setRenaming(null);
-    if (isWebdav) void loadWebdav(wdActive!, next[next.length - 1].fid, true);
-    else void loadList(next[next.length - 1].fid, "", true, active);
+    const target = next[next.length - 1];
+    if (isWebdav) void loadWebdav(wdActive!, target.fid, true);
+    else if (isMediaServer) {
+      // 面包屑上没存 itemType；回到库根用 views，其余按通用 Items 列
+      if (target.fid) void loadMsList(msActive!, target.fid, "");
+      else void loadMsViews(msActive!);
+    } else void loadList(target.fid, "", true, active);
   };
 
   const play = async (e: Entry) => {
@@ -327,6 +426,8 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
     try {
       if (isWebdav) {
         await invoke("webdav_play", { accountId: wdActive, url: e.fileId, name: e.name });
+      } else if (isMediaServer) {
+        await invoke("media_server_play", { id: msActive, itemId: e.fileId, name: e.name });
       } else {
         await invoke("cloud_play", { provider: active, fileId: e.fileId, name: e.name, mode: mode || null });
       }
@@ -339,6 +440,13 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
     qrLogin.stop();
     if (isWebdav) {
       setWdActive(null);
+      setItems([]);
+      setCrumbs([{ fid: "", name: "根目录" }]);
+      return;
+    }
+    if (isMediaServer) {
+      // [lc-2345] 断开 = 回到该类型的账号列表（不删配置），与 WebDAV 同语义
+      setMsActive(null);
       setItems([]);
       setCrumbs([{ fid: "", name: "根目录" }]);
       return;
@@ -394,6 +502,49 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
     }
   };
 
+  /* [lc-2345] Emby / Jellyfin 账号操作（与 WebDAV 同构：连接 / 添加 / 删除） */
+  const connectMsAccount = async (id: string) => {
+    setMsActive(id);
+    setCrumbs([{ fid: "", name: "根目录" }]);
+    await loadMsViews(id);
+  };
+
+  const addMsAccount = async () => {
+    if (!msForm) return;
+    setErr("");
+    try {
+      const r = await invoke<{ id: string }>("media_server_login", {
+        kind: msForm.kind,
+        name: msForm.name,
+        url: msForm.url,
+        username: msForm.user,
+        password: msForm.pass,
+        insecure: msForm.insecure,
+      });
+      setMsForm(null);
+      await loadMsAccounts();
+      if (r?.id) {
+        // 登录接口成功即代表凭据可用，直接进媒体库列表（省一次点击）
+        await connectMsAccount(r.id);
+      }
+    } catch (ex) {
+      setErr(String(ex));
+    }
+  };
+
+  const delMsAccount = async (id: string) => {
+    await invoke("media_server_del", { id }).catch(() => {});
+    const list = await loadMsAccounts();
+    if (msActive === id) {
+      const mine = list.filter((a) => a.kind === active);
+      const pick = mine[0]?.id ?? null;
+      setMsActive(pick);
+      setItems([]);
+      setCrumbs([{ fid: "", name: "根目录" }]);
+      if (pick) void loadMsViews(pick);
+    }
+  };
+
   // [lc-1892] 拉取媒体库索引并按 (类型|标题) 分组；文件按 季/集 排序
   const openLibView = useCallback(async () => {
     setErr("");
@@ -446,7 +597,8 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
 
   // [lc-1890] 把当前所在目录加入媒体库并扫描（追加根，不覆盖已选根）
   const addRootAndScan = async () => {
-    if (isWebdav || libBusy) return;
+    // 媒体服务器（lc-2345）没有 cloud_library 索引：它的媒体库由服务端提供，不参与我们扫描
+    if (isWebdav || isMediaServer || libBusy) return;
     const last = crumbs[crumbs.length - 1];
     setLibBusy(true);
     setLibNote("正在扫描入库…");
@@ -479,8 +631,10 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
     }
   };
 
-  const showServerHls = !isWebdav && SERVER_HLS.has(active);
-  const showLocalHls = !showServerHls && ffmpegOk === true && active !== "115";
+  // [lc-2345] 媒体服务器不参与我们的转码档：取流是 static=true 原样发文件，
+  // 服务端转码要走它们的 /Videos/{id}/master.m3u8，本版不做（如实不显示该档）。
+  const showServerHls = !isWebdav && !isMediaServer && SERVER_HLS.has(active);
+  const showLocalHls = !showServerHls && !isMediaServer && ffmpegOk === true && active !== "115";
 
   /* 返回首页：整页交叉淡入淡出（与 JavHub 同款；系统减动效时直接切） */
   const handleBack = () => {
@@ -511,6 +665,24 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
           WebDAV
           <span className={`c115-dot${wdActive ? " ok" : ""}`} title={wdActive ? "已连接" : "未连接"} />
         </button>
+        {/* [lc-2345] Emby / Jellyfin：与 WebDAV 并列的两种「直连型」来源。
+            它们不是网盘，所以不参与扫码/续签/转码那套逻辑，走自己的账号+浏览链路。 */}
+        {(["emby", "jellyfin"] as const).map((k) => {
+          const mine = msAccounts.filter((a) => a.kind === k);
+          const on = active === k && !!msActive;
+          return (
+            <button
+              key={k}
+              type="button"
+              className={`libf-open${on ? " on" : ""}`}
+              onClick={() => switchProvider(k)}
+              title={mine.length ? `已配置 ${mine.length} 个账号` : "未配置，点击添加"}
+            >
+              {k === "emby" ? "Emby" : "Jellyfin"}
+              <span className={`c115-dot${mine.length > 0 ? " ok" : ""}`} title={mine.length > 0 ? "已配置" : "未配置"} />
+            </button>
+          );
+        })}
         {providers.map((p) => (
           <button
             key={p.id}
@@ -525,16 +697,30 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
         ))}
       </div>
 
-      <div className="c115-view" key={isWebdav ? `wd-${wdActive}` : active}>
+      <div className="c115-view" key={isWebdav ? `wd-${wdActive}` : isMediaServer ? `${active}-${msActive}` : active}>
 
       {/* 工具行：用户/退出（左）+ 播放档（右） */}
       {logged && (
         <div className="c115-bar">
-          {!isWebdav && cur && (
+          {!isWebdav && !isMediaServer && cur && (
             <>
               <span className="c115-user">{cur.userName ? `已登录：${cur.userName}` : "已登录"}</span>
               <button className="c115-mini" onClick={logout} title="退出登录（清除本机凭据）">
                 <IcoLogoutL size={13} strokeWidth={2} /> 退出
+              </button>
+            </>
+          )}
+          {/* [lc-2345] 媒体服务器：显示当前账号名（用户要能确认连的是哪台机器） */}
+          {isMediaServer && msActive && (
+            <>
+              <span className="c115-user">
+                {(() => {
+                  const a = msAccounts.find((x) => x.id === msActive);
+                  return a ? `${a.label} · ${a.name}` : "已连接";
+                })()}
+              </span>
+              <button className="c115-mini" onClick={logout} title="断开当前账号（不删除配置）">
+                <IcoLogoutL size={13} strokeWidth={2} /> 断开
               </button>
             </>
           )}
@@ -561,8 +747,10 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
               )}
             </div>
           )}
-          {/* [lc-1890] 网盘媒体库：当前目录加入媒体库并扫描（识别标题/季集，为刮削与详情页打底） */}
-          {!isWebdav && (
+          {/* [lc-1890] 网盘媒体库：当前目录加入媒体库并扫描（识别标题/季集，为刮削与详情页打底）
+              [lc-2345] 媒体服务器不参与：它自己的媒体库结构（库/剧/季/集）已经由服务端提供，
+              再走一遍我们的扫描+刮削只会做出第二份索引，与 Emby 数据打架。 */}
+          {!isWebdav && !isMediaServer && (
             <button
               className="c115-mini"
               disabled={libBusy}
@@ -572,7 +760,7 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
               {libBusy ? "扫描中…" : scanResumable ? "继续扫描" : "加入媒体库"}
             </button>
           )}
-          {!isWebdav && (
+          {!isWebdav && !isMediaServer && (
             <button
               className="c115-mini"
               title="按标题浏览已入库的影片（带 TMDB 海报），点击播第一集"
@@ -638,8 +826,107 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
+      {/* [lc-2345] Emby / Jellyfin：账号管理（未连接时）。
+          与 WebDAV 同一套交互（账号列表 → 表单 → 验证并保存），但登录必须真的
+          打一次 /Users/AuthenticateByName —— 这两个服务的密码不是用来拼 Basic Auth 的，
+          拿不到 AccessToken 就什么都做不了，所以「保存 = 已经验证过」。 */}
+      {isMediaServer && !msActive && (
+        <div className="c115-login">
+          <div className="c115-wdlist">
+            {msAccounts
+              .filter((a) => a.kind === active)
+              .map((a) => (
+                <div key={a.id} className="c115-wdrow">
+                  <button type="button" className="c115-wdpick" onClick={() => void connectMsAccount(a.id)}>
+                    <span className="c115-wdname">{a.name}</span>
+                    <span className="c115-wdurl">
+                      {a.url} · {a.username}
+                    </span>
+                  </button>
+                  <button className="c115-mini danger" title="删除账号" onClick={() => void delMsAccount(a.id)}>
+                    <IcoTrashL size={13} strokeWidth={2} />
+                  </button>
+                </div>
+              ))}
+            {msAccounts.filter((a) => a.kind === active).length === 0 && (
+              <>
+                <p className="c115-login-title">还没有{active === "emby" ? " Emby " : " Jellyfin "}账号</p>
+                <p className="hint">
+                  填服务器地址（如 <code>http://192.168.1.10:8096</code>）与账号密码，验证通过后即可浏览媒体库
+                </p>
+              </>
+            )}
+          </div>
+          {msForm && msForm.kind === active ? (
+            <div className="c115-wdform">
+              <input
+                placeholder="名称（如：家里 Emby，可留空）"
+                value={msForm.name}
+                onChange={(e) => setMsForm({ ...msForm, name: e.target.value })}
+              />
+              <input
+                placeholder={active === "emby" ? "地址 http://主机:8096" : "地址 http://主机:8096/jellyfin 视部署而定"}
+                value={msForm.url}
+                onChange={(e) => setMsForm({ ...msForm, url: e.target.value })}
+              />
+              <input
+                placeholder="用户名"
+                value={msForm.user}
+                onChange={(e) => setMsForm({ ...msForm, user: e.target.value })}
+              />
+              <input
+                placeholder="密码"
+                type="password"
+                value={msForm.pass}
+                onChange={(e) => setMsForm({ ...msForm, pass: e.target.value })}
+              />
+              {/* [lc-2345] 自签证书：API 侧一直宽容，但取流是 mpv 直连，
+                  它会校验证书。不给这个开关就是「能登录能浏览、点播放报错」。 */}
+              <label className="c115-dim" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={msForm.insecure}
+                  onChange={(e) => setMsForm({ ...msForm, insecure: e.target.checked })}
+                />
+                跳过 HTTPS 证书校验（自签证书 / 内网部署勾选）
+              </label>
+              <div className="c115-wdform-btns">
+                <button className="c115-mini" onClick={() => void addMsAccount()}>
+                  登录并保存
+                </button>
+                <button className="c115-mini" onClick={() => setMsForm(null)}>
+                  取消
+                </button>
+              </div>
+              <p className="c115-dim">
+                地址不带尾斜杠；自签 HTTPS 证书也可用。登录会真实请求一次服务器，失败会直接显示原因。
+              </p>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                className="c115-mini"
+                onClick={() =>
+                  setMsForm({
+                    kind: active === "jellyfin" ? "jellyfin" : "emby",
+                    name: "",
+                    url: "",
+                    user: "",
+                    pass: "",
+                    insecure: false,
+                  })
+                }
+              >
+                <IcoPlusL size={13} strokeWidth={2} /> 添加{active === "emby" ? " Emby " : " Jellyfin "}账号
+              </button>
+            </div>
+          )}
+          <p className="c115-dim">密码与 AccessToken 用本机 AES-256-GCM 加密存储（enc:v1），不会上传到任何服务器。</p>
+        </div>
+      )}
+
       {/* 扫码登录（网盘厂商） */}
-      {providers.length > 0 && !isWebdav && !logged && (
+      {providers.length > 0 && !isWebdav && !isMediaServer && !logged && (
         <div className="c115-login">
           {qrLogin.image ? (
             <>
@@ -750,7 +1037,7 @@ export function CloudPanel({ onBack }: { onBack: () => void }) {
               <p>空目录（或没有可播放的媒体文件）</p>
             </div>
           )}
-          {cursor && !loading && !isWebdav && (
+          {cursor && !loading && !isWebdav && !isMediaServer && (
             <button className="c115-more" onClick={() => loadList(crumbs[crumbs.length - 1].fid, cursor, false, active)}>
               加载更多
             </button>

@@ -182,6 +182,8 @@ function collect() {
     'patch-fntv-mpv.mjs',
     'patch-uosc-gate.mjs',
     'patch-modernz-contrast.mjs',
+    // [lc-2341/2338] 处理顺序流（modernz 详情弹窗一行）+ 插帧 ResumePrime
+    'patch-anibox-mpv.mjs',
   ];
   if (IS_WIN) patchTools.push('patch-mpv-icon.mjs');
   for (const tool of patchTools) {

@@ -66,6 +66,18 @@ const NODE_FILES: &[(&str, &str)] = &[
         "anibox-tencent-danmaku.cjs",
         include_str!("../assets/tencent-danmaku.cjs"),
     ),
+    // [lc-2350] 爱奇艺弹幕源（第五源）：search.video.iqiyi.com 搜索取 tvId（单集粒度）
+    // → cmts.iqiyi.com 拉 zlib 压缩 XML。**全程无签名无登录**。
+    (
+        "anibox-iqiyi-danmaku.cjs",
+        include_str!("../assets/iqiyi-danmaku.cjs"),
+    ),
+    // [lc-2351] 优酷弹幕源（第六源）：cna + _m_h5_tk + MD5 签名 → mopen.youku.danmu.list。
+    // **本源只能按 vid 拉**（优酷搜索需额外签名，未实现），只在调用方给 vid 时参与。
+    (
+        "anibox-youku-danmaku.cjs",
+        include_str!("../assets/youku-danmaku.cjs"),
+    ),
     // 上述两者的环境桩（electron/logger/fn_config/proxyAgent + 脚本目录通道）
     (
         "anibox-danmu-deps.cjs",
@@ -114,6 +126,9 @@ fn rewrite_requires(src: &str) -> String {
         .replace("./danmu-api-deps.cjs", "./anibox-danmu-deps.cjs")
         // [lc-2347] 腾讯源：落盘名为 anibox-tencent-danmaku.cjs，runner 里的 require 也要跟着改
         .replace("./tencent-danmaku.cjs", "./anibox-tencent-danmaku.cjs")
+        // [lc-2350/2351] 爱奇艺、优酷源同理
+        .replace("./iqiyi-danmaku.cjs", "./anibox-iqiyi-danmaku.cjs")
+        .replace("./youku-danmaku.cjs", "./anibox-youku-danmaku.cjs")
 }
 
 /// 落盘全部 Node 源码（内容变化的文件才重写），返回 shim 主文件路径。

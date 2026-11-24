@@ -84,12 +84,51 @@ function jget(urlStr, headers, timeoutMs) {
 const _FILLER = ['高清', '1080p', '720p', '480p', '4k', '合集', '全集', '更新', '熟肉', '生肉',
     '国语', '日语', '中字', '双语', '中配', '粤配', 'tv版', '完整版', '未删减', '蓝光', 'bd'];
 
+/**
+ * 剥掉「第N集 / 第N话 / EP12 / 尾部数字」这类**集数后缀**再比相似度。
+ * [lc-2350 回填] 长度比例惩罚会把「狂飙」vs「狂飙第1集」压到 0.57 ——
+ * 明明是同一部片，集数后缀让长度比变成 2.4。集数后缀是平台侧的正常差异
+ * （爱奇艺/优酷搜索结果是「片名第1集」粒度），不该被罚。
+ */
+function stripEpisodeSuffix(s) {
+    let t = String(s || '');
+    // 形态 2：集号在中间 + 后面跟副标题（「鬼灭之刃柱训练篇第1集 众柱训练会议」）
+    // -> 从集号处截断。限定后随空白或结束，避免误伤「第一集就结婚」这类真片名。
+    const mid = t.match(/^(.*?)第\s*[\d一二三四五六七八九十]+\s*[集话期回](\s|$)/);
+    if (mid && mid[1].trim()) {
+        return mid[1].trim();
+    }
+    // 形态 1：集号在末尾（「狂飙第1集」）
+    const patterns = [
+        /第\s*\d+\s*[集话期回]$/,
+        /第\s*[一二三四五六七八九十]+\s*[集话期回]$/,
+        /[Ee][Pp]?\s*\d+$/,
+        /\s+\d+$/,
+    ];
+    for (const re of patterns) {
+        const next = t.replace(re, '').trim();
+        if (next && next !== t) t = next;
+    }
+    return t;
+}
+
+/** 剥掉季号后缀（第N季/Season N），用于判断「是否只差季号」。 */
+function stripSeasonSuffix(s) {
+    return String(s || '').replace(/\s*第\s*[\d一二三四五六七八九十]+\s*[季部期]\s*$/, '')
+        .replace(/\s*[Ss]eason\s*\d+\s*$/, '').trim();
+}
+
 function normTitle(t) {
     let s = String(t || '').toLowerCase();
-    s = s.replace(/<[^>]+>/g, '');           // 360kan 标题带 <b> 高亮
+    s = s.replace(/<[^>]+>/g, '');
     for (const f of _FILLER) s = s.split(f).join('');
-    s = s.replace(/[\s\-_—–·・:：!！?？,，.。'"“”‘’()（）\[\]【】]/g, '');
+    s = s.replace(/[\s\-_—–·・:：!！?？,，.。'”“”''()（）\[\]【】]/g, '');
     return s;
+}
+
+/** 归一化（剥集数后缀后清洗）。季号保留——季号决定选哪一季条目。 */
+function normTitleForMatch(t) {
+    return normTitle(stripEpisodeSuffix(String(t || '').replace(/<[^>]+>/g, '').trim()));
 }
 
 function lcsRatio(a, b) {
@@ -117,10 +156,13 @@ function lcsRatio(a, b) {
  *   实际是 B 级恶搞片（实测拉到 1821 条无关弹幕）。长度比 >1.8 时按比例打折。
  */
 function titleSim(a, b) {
-    const x = normTitle(a), y = normTitle(b);
+    const x = normTitleForMatch(a), y = normTitleForMatch(b);
     if (!x || !y) return 0;
     if (x === y) return 1;
-    // 长度比例惩罚：短串被长串吞掉不等于同片
+    // [lc-2350 回填] 只差季号 → 同类作品的不同季，给高分让调用方的季命中排序去区分
+    const xs = normTitleForMatch(stripSeasonSuffix(String(a || '').replace(/<[^>]+>/g, '')));
+    const ys = normTitleForMatch(stripSeasonSuffix(String(b || '').replace(/<[^>]+>/g, '')));
+    if (xs && ys && xs === ys) return 0.9;
     const long = Math.max(x.length, y.length);
     const short = Math.min(x.length, y.length);
     const lenRatio = short > 0 ? long / short : Infinity;

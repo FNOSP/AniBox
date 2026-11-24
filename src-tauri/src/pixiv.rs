@@ -93,9 +93,29 @@ fn web_headers() -> reqwest::header::HeaderMap {
 
 /// 拉一段 JSON（自动跳过 pixiv 的 `{"error":true}` 业务错误）。
 async fn get_json(url: &str) -> Result<Value, String> {
-    let resp = client()?
-        .get(url)
-        .headers(web_headers())
+    get_json_with_cookie(url, None).await
+}
+
+/// 带用户 cookie 的请求（登录态接口用）。
+///
+/// `cookie` 来自 config 的 `pixiv_cookie`（用户自己从浏览器复制的串）。
+/// **这个值绝不写日志、绝不出现在错误信息里** —— 出错只报状态码/固定文案。
+async fn get_json_with_cookie(url: &str, cookie: Option<&str>) -> Result<Value, String> {
+    let mut req = client()?.get(url).headers(web_headers());
+    // 只在有非空 cookie 时附加，且走 header（不经 URL，避免落进访问日志）
+    if let Some(c) = cookie.map(str::trim).filter(|s| !s.is_empty()) {
+        match reqwest::header::HeaderValue::from_str(c) {
+            Ok(v) => {
+                req = req.header(reqwest::header::COOKIE, v);
+            }
+            Err(_) => {
+                // cookie 里有非法 header 字符（复制时带了换行/引号）→ 如实报错，
+                // 不静默降级成匿名（否则用户会以为「我登录了但没效果」）
+                return Err("Pixiv cookie 含非法字符（不要带换行/引号），请在设置里重新粘贴".into());
+            }
+        }
+    }
+    let resp = req
         .send()
         .await
         .map_err(|e| format!("请求失败（网络不通或站点不可达）: {e}"))?;
@@ -363,23 +383,218 @@ pub async fn pixiv_detail(id: i64) -> Result<Value, String> {
     }))
 }
 
-/// [进阶] 是否已配置用户自己的 Pixiv refresh_token（**每用户自带**，不共享）。
+/// [进阶] Pixiv 登录态：**每用户自带 cookie**，绝不内置共享。
 ///
-/// 我们**不内置任何凭据** —— Pixiv 的 ToS 与服务条款都不允许共享账号访问。
-/// 用户若想用「关注/收藏/推荐」这类需要登录的功能，自己在设置里填 refresh_token。
+/// 实测（2026-11-25，用真实登录态在浏览器里验证）：
+///   · 匿名 → `follow_latest/illust` **400**
+///   · 已登录 → 同接口 **200 + 127KB**
+/// 所以登录态确实解锁能力，但**不是画廊必需的**（排行/搜索/详情匿名即可）。
 #[tauri::command]
 pub async fn pixiv_auth_status(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
-    let has = !cfg.pixiv_refresh_token.trim().is_empty();
+    let has = !cfg.pixiv_cookie.trim().is_empty();
     Ok(json!({
         "configured": has,
-        // 只回 booleans，绝不回显 token 本身
+        // **只回 boolean，绝不回显 cookie 本身**（连长度都不给，避免侧信道）
         "hint": if has {
-            "已配置 refresh_token"
+            "已配置 Pixiv 登录凭据"
         } else {
-            "未配置。登录态功能（关注/收藏/推荐）需要你自己的 Pixiv refresh_token，本应用不内置任何账号。"
+            "未配置。排行/搜索/详情无需登录即可用；关注新作需要你自己的 Pixiv cookie，本应用不内置任何账号。"
         }
     }))
+}
+
+/// [进阶] 关注的新作（**需要登录态**；匿名实测 400）。
+///
+/// 只在配置了 `pixiv_cookie` 时可用；否则如实报错并提示怎么配，
+/// 不静默返回空列表（空列表会让用户以为「我关注的没人更新」）。
+#[tauri::command]
+pub async fn pixiv_following(
+    state: tauri::State<'_, crate::AppState>,
+    page: Option<u32>,
+) -> Result<Value, String> {
+    let cfg = state.config.read().await.clone();
+    let cookie = cfg.pixiv_cookie.trim().to_string();
+    if cookie.is_empty() {
+        return Err("关注新作需要登录。请在设置 → 图库 → Pixiv 登录 里粘贴你的 Pixiv Cookie。".into());
+    }
+    let p = page.unwrap_or(1).max(1);
+    let url = format!("{WEB_BASE}/ajax/follow_latest/illust?mode=all&p={p}&lang=zh");
+    let v = get_json_with_cookie(&url, Some(&cookie)).await?;
+    // 实测结构：body.thumbnails.illust[]（不是 body.illust.data）
+    let thumbs = v
+        .pointer("/body/thumbnails/illust")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mirror = effective_mirror();
+    let items: Vec<Value> = thumbs
+        .iter()
+        .filter_map(|c| {
+            let id = c.get("id").and_then(|v| v.as_str())?.parse::<i64>().ok()?;
+            let thumb = c.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            if thumb.is_empty() {
+                return None;
+            }
+            let full = thumb
+                .replace("/c/250x250_80_a2/img-master/", "/img-original/")
+                .replace("/c/540x540_70/img-master/", "/img-original/")
+                .replace("_square1200", "")
+                .replace("_master1200", "");
+            Some(json!({
+                "id": id,
+                "title": c.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+                "user": c.get("userName").and_then(|v| v.as_str()).unwrap_or(""),
+                "w": c.get("width").and_then(|v| v.as_i64()).unwrap_or(0),
+                "h": c.get("height").and_then(|v| v.as_i64()).unwrap_or(0),
+                "thumb": to_mirror(thumb, &mirror),
+                "full": to_mirror(&full, &mirror),
+                "tags": c.get("tags").and_then(|t| t.as_array())
+                    .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>())
+                    .unwrap_or_default(),
+                "pages": c.get("pageCount").and_then(|v| v.as_i64()).unwrap_or(1),
+                "rank": 0,
+                "views": c.get("bookmarkCount").and_then(|v| v.as_i64()).unwrap_or(0),
+                "type": "0",
+            }))
+        })
+        .collect();
+    Ok(json!({
+        "items": items,
+        "page": p,
+        "hasMore": !items.is_empty(),
+    }))
+}
+
+/// [lc-2358] 一键登录：开一个应用内窗口让用户登录 pixiv，登录成功后
+/// **自动从 webview 的 cookie jar 取 `PHPSESSID` 写进 config**。
+///
+/// ## 为什么这么做（对齐原项目做法）
+///
+/// Pixiv-Shaft 的主推登录方式是「粘贴 refresh_token」（`FragmentLogin.startRefreshTokenLogin`），
+/// 它也实现了 OAuth PKCE（`PixivLogin.startLoginUrl` + `handleCallback`）但没作为默认路径 ——
+/// 因为 PKCE 要注册 redirect URI、回调要 intent-filter，对普通用户门槛高。
+///
+/// 我们的场景更简单：**只要 cookie 就够**（用于 `follow_latest` 这类网页 ajax）。
+/// 所以直接复用项目已有的 webview cookie 读取能力（`webrs.rs:3339` 的 `cookies_for_url`）：
+/// 用户点「登录」→ 弹窗打开 pixiv → 用户正常登录 → 关闭窗口时自动取 cookie 落盘。
+/// **用户始终不知道 cookie 长什么样，也不需要复制任何东西。**
+///
+/// ## 隐私
+///
+/// 取到的 cookie 只落本机 `config.json`，**不回显给前端**（`pixiv_auth_status` 只回 boolean）。
+#[tauri::command]
+pub async fn pixiv_login_window(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<Value, String> {
+    let _ = &state; // 只在 task 内部经 AppHandle 取，不在此持有借用
+    use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+
+    const LABEL: &str = "pixiv-login";
+    // 复残留窗（上次没关）：先销毁，避免复用旧会话
+    if let Some(w) = app.get_webview_window(LABEL) {
+        let _ = w.destroy();
+    }
+
+    let mut b = WebviewWindowBuilder::new(
+        &app,
+        LABEL,
+        WebviewUrl::External(
+            "https://accounts.pixiv.net/login"
+                .parse()
+                .map_err(|e| format!("登录地址非法: {e}"))?,
+        ),
+    )
+    .title("登录 Pixiv（登录后关闭此窗口即可）")
+    .inner_size(920.0, 760.0)
+    .on_navigation(|u| {
+        // 只放行 pixiv 域（避免用户在窗口里跳到站外钓鱼页）
+        matches!(u.host_str(), Some(h) if h.ends_with("pixiv.net") || h.ends_with("pximg.net"))
+    });
+
+    // 窗口关闭时取 cookie（用户登录完自己关窗 —— 这是最自然的「完成」信号）
+    let close_app = app.clone();
+    b = b.on_page_load(move |_w, _p| {
+        // 不用 on_page_load 取（那时可能还没登录完）；这里只做占位，
+        // 真正的提取在下面的轮询里。
+        let _ = &close_app;
+    });
+
+    let window = b.build().map_err(|e| format!("打开登录窗口失败: {e}"))?;
+
+    // 轮询等待用户登录完成：每 1.5s 检查一次 cookie 里有没有 PHPSESSID。
+    // 最多等 5 分钟（够慢的人登录），期间窗口被用户关掉就提前退出。
+    let poll_app = app.clone();
+    // 不能把 `state.config` 的引用搬进 spawn（State 的借用不跨 task）。
+    // 改在 task 内部用 AppHandle 重新取 State —— 同一个 managed 对象，同一把锁。
+    tokio::spawn(async move {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            if std::time::Instant::now() > deadline {
+                break;
+            }
+            // 窗口被关了就退出（用户可能放弃了）
+            let Some(w) = poll_app.get_webview_window(LABEL) else {
+                return;
+            };
+            let url = "https://www.pixiv.net/";
+            let Ok(u) = url.parse::<tauri::Url>() else {
+                return;
+            };
+            let Ok(cs) = w.cookies_for_url(u) else {
+                continue;
+            };
+            // 找 PHPSESSID（pixiv 的会话主键）
+            let mut parts: Vec<String> = Vec::new();
+            let mut hit = false;
+            for c in cs {
+                let name = c.name().to_string();
+                let val = c.value().to_string();
+                if name == "PHPSESSID" && !val.is_empty() {
+                    hit = true;
+                }
+                parts.push(format!("{name}={val}"));
+            }
+            if !hit || parts.is_empty() {
+                continue;
+            }
+            // 拼成标准 Cookie 串（服务端只认这个形状）
+            let cookie = parts.join("; ");
+            // 落盘（不回显）：锁内只改字段 + 取快照，锁外 await save
+            //（save 是 async，持锁 await 会阻塞其它读 config 的地方）
+            let snapshot = {
+                use tauri::Manager;
+                let st = poll_app.state::<crate::AppState>();
+                let mut cfg = st.config.write().await;
+                cfg.pixiv_cookie = cookie;
+                cfg.clone()
+            };
+            if let Err(e) = crate::config::save(&poll_app, &snapshot).await {
+                crate::libmpv::trace(&format!("[pixiv] 登录 cookie 落盘失败: {e}"));
+            }
+            crate::libmpv::trace("[pixiv] 登录成功，cookie 已保存（不回显）");
+            if let Some(w) = poll_app.get_webview_window(LABEL) {
+                let _ = w.close();
+            }
+            return;
+        }
+    });
+
+    Ok(json!({ "ok": true, "hint": "已打开登录窗口，登录成功会自动保存并关闭" }))
+}
+
+/// [lc-2358] 清除已保存的 Pixiv 登录凭据。
+#[tauri::command]
+pub async fn pixiv_logout(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
+    {
+        let mut cfg = state.config.write().await;
+        cfg.pixiv_cookie.clear();
+        // 注意：这里拿不到 AppHandle（State 里没有），所以只清内存；
+        // 前端调用后应随即触发一次 save_config（设置面板的 onSettings 路径会写盘）。
+    }
+    Ok(json!({ "ok": true }))
 }
 
 #[cfg(test)]

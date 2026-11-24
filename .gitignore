@@ -54,6 +54,8 @@ vite.config.d.ts
 /stats-server/
 /iptv-mirror/
 /inbox-mirror/
+# [lc-2358] Pixiv 图片镜像（与 tmdb/bgm 同一套 Cloudflare Worker 脚手架）
+/pixiv-mirror/
 /RELEASE.md
 /release.cmd
 .release-dryrun.cmd

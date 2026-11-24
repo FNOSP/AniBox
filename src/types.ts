@@ -580,6 +580,10 @@ export type AppSettings = {
   /** [lc-2353] 优酷弹幕源（mtop 签名）。默认关：本源只能按 vid 拉，
    *  自动链路拿不到 vid，开着只会白耗两次握手请求。 */
   danmuYoukuEnabled?: boolean;
+  /** [lc-2356/2358] Pixiv 登录凭据（**每用户自带**的浏览器 cookie 串）。
+   *  留空 = 排行/搜索/详情照常可用（无需登录）；填写 = 额外解锁「关注新作」。
+   *  **只存本机，绝不入库、绝不回显**。 */
+  pixivCookie?: string;
   /** [lc-2090] 更新提醒关闭：true = 完全停止检测更新（启动自动检查 / 12h 复查 / 手动
    *  检查更新全部停用）。关闭动作有二次确认（旧版本问题不予处理）；默认 false。 */
   updateRemindOff?: boolean;

@@ -1010,6 +1010,9 @@ export function SettingsPanel({
     () => (settings.danmuApiBases || []).join("\n"),
   );
   const [dmNote, setDmNote] = useState("");
+  /* [lc-2358] Pixiv 登录凭据（每用户自带 cookie；留空则只用无需登录的功能） */
+  const [pixivCookie, setPixivCookie] = useState(() => settings.pixivCookie ?? "");
+  const [pixivNote, setPixivNote] = useState("");
   const [dmTesting, setDmTesting] = useState(false);
 
   /* [lc-1780] 弹弹play 兼容源（外置 danmaku-api-sources.json）：mpv 侧 dandanplay.lua
@@ -2887,6 +2890,63 @@ export function SettingsPanel({
                         saveDanmu(settings.danmuApiEnabled, dmBases, v as "node" | "rust")
                       }
                     />
+                  </div>
+
+                  {/* ── [lc-2358] Pixiv 登录（可选）──
+                      排行/搜索/详情**无需登录**即可用；这里只解锁「关注新作」。
+                      凭据形态是浏览器 cookie（不是 OAuth），用户从 F12 复制即可。
+                      **只存本机 config.json，绝不入库、绝不回显**。 */}
+                  <div className="set-sec">Pixiv 登录（可选）</div>
+                  <div className="set-row set-row-col">
+                    <span className="set-k">登录凭据</span>
+                    <div className="set-desc">
+                      排行、搜索、详情无需登录即可浏览。关注新作需要你自己的 Pixiv 登录状态。
+                      在浏览器登录 pixiv 后，从开发者工具 → Application → Cookies 复制整段
+                      Cookie 粘到下面。仅保存在本机，不会上传也不会写进日志。
+                    </div>
+                    <input
+                      className="set-input"
+                      type="password"
+                      placeholder="粘贴 Cookies（含 PHPSESSID=… 的整段）"
+                      value={pixivCookie}
+                      disabled={busy}
+                      onChange={(e) => setPixivCookie(e.target.value)}
+                      onBlur={() => {
+                        const v = pixivCookie.trim();
+                        if (v !== (settings.pixivCookie ?? "")) {
+                          onSettings({ pixivCookie: v });
+                        }
+                      }}
+                    />
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        className="set-btn"
+                        onClick={async () => {
+                          try {
+                            const r = await invoke<{ ok: boolean; hint: string }>("pixiv_login_window");
+                            setPixivNote(r.hint || "已打开登录窗口");
+                          } catch (e) {
+                            setPixivNote(String(e));
+                          }
+                        }}
+                      >
+                        一键登录（推荐）
+                      </button>
+                      <button
+                        className="set-btn"
+                        disabled={!settings.pixivCookie}
+                        onClick={() => {
+                          void invoke("pixiv_logout").then(() => {
+                            setPixivCookie("");
+                            onSettings({ pixivCookie: "" });
+                            setPixivNote("已退出");
+                          });
+                        }}
+                      >
+                        退出
+                      </button>
+                    </div>
+                    {pixivNote && <div className="set-note">{pixivNote}</div>}
                   </div>
 
                   {/* ── [lc-2353] 外部平台弹幕源 ── */}

@@ -100,6 +100,8 @@ mod update;
 // [lc-1663] 匿名使用统计（心跳上报，移植自旧项目 usageStats.ts）
 mod usage_stats;
 mod watched;
+// [lc-2336] TVBox 配置导入：单链接 → 抽苹果CMS 采集源 + 直播源（csp/jar 源如实跳过）
+mod tvbox;
 mod webrs;
 // [lc-1747] webrs 常驻隐藏 WebView 单例服务（嗅探 / 反爬验证共用基建）
 mod webrs_webview;
@@ -4513,6 +4515,8 @@ pub fn run() {
             iptv::iptv_channels_get,
             iptv::iptv_play,
             iptv::iptv_sources_test,
+            // [lc-2336] TVBox 配置导入（单链接 → 苹果CMS 采集源 + 直播源；csp/jar 源如实跳过）
+            tvbox::tvbox_import,
             // [lc-1582] AniList 官方 API：当日放送表（补 BGM 缺的「几点更新」→ 右栏行的「第 N 话 · HH:MM」）
             anilist::anilist_day_schedule,
             // [lc-1589] AniList：往季番表（「总表查询」弹窗：选年份+季度看该季列表）

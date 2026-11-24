@@ -1545,7 +1545,7 @@ function App() {
               <JavHubPage onBack={goHome} />
             </div>
           )}
-          {/* [lc-2354] 画廊页：外网图库（safebooru）+ 本地图片，两 tab 瀑布流。 */}
+          {/* [lc-2354/2356/2357] Pixiv 图库页：Pixiv 排行/搜索 + safebooru 图库 + 本地图片。 */}
           {view === "gallery" && (
             <div className="view-pane active view-in">
               <GalleryPage onBack={goHome} />

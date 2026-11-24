@@ -52,7 +52,7 @@ export function Sidebar({
   onOpenCat: (cat: { key: string; types: string[] }) => void;
   /** [lc-1907] 打开 JavHub 页（番号刮削媒体库） */
   onOpenJavHub: () => void;
-  /** [lc-2354] 打开画廊页（外网图库 + 本地图片，两 tab 瀑布流） */
+  /** [lc-2354/2357] 打开 Pixiv 图库页（Pixiv 排行/搜索 + safebooru + 本地图片） */
   onOpenGallery: () => void;
   /** [lc-1779] 打开 115 网盘页（扫码登录 + 文件浏览 + 直链/转码播放） */
   onOpenCloud115: () => void;
@@ -121,6 +121,14 @@ export function Sidebar({
         收藏
         <span className="side-count">{favTotal ?? ""}</span>
       </div>
+      {/* [lc-2357] Pixiv 图库（外网排行/搜索 + 本机图片墙），点开看大图。
+          位置按用户要求放在「收藏」正下方 —— 图库是高频浏览入口，仅次于收藏。 */}
+      <div className={`side-item ${activeGuid === "_gallery" ? "active" : ""}`} onClick={onOpenGallery}>
+        <span className="side-ico">
+          <IcoImageL size={15} strokeWidth={1.8} />
+        </span>{" "}
+        Pixiv
+      </div>
       {/* [lc-1907] JavHub：番号识别 + 番号刮削的条目页（扫描分流结果都在这） */}
       <div className={`side-item ${activeGuid === "_javhub" ? "active" : ""}`} onClick={onOpenJavHub}>
         <span className="side-ico">
@@ -128,13 +136,6 @@ export function Sidebar({
         </span>{" "}
         JavHub
         <span className="side-devtag">开发中</span>
-      </div>
-      {/* [lc-2354] 画廊：外网二次元图库 + 本机图片墙（两 tab），点开看大图 */}
-      <div className={`side-item ${activeGuid === "_gallery" ? "active" : ""}`} onClick={onOpenGallery}>
-        <span className="side-ico">
-          <IcoImageL size={15} strokeWidth={1.8} />
-        </span>{" "}
-        画廊
       </div>
       {/* [lc-1779] 115 网盘：扫码登录后浏览/播放网盘媒体（直链或服务端转码） */}
       <div className={`side-item ${activeGuid === "_cloud115" ? "active" : ""}`} onClick={onOpenCloud115}>

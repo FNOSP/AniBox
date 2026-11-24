@@ -21,6 +21,51 @@ export type GuideGroup = {
 /** 性能等级 → 颜色（Radix Colors 语义色，见弹窗组件映射） */
 export const PERF_LEVELS = ["低", "中", "高", "极高"] as const;
 
+/* [lc-2341] 实测每帧 GPU 耗时（tests/measure_mpv_shaders.py 在本机跑出来的
+   src/data/shader-timings.json）。作用：把「开销：高」这类主观标签换成真实 ms，
+   用户选档位时第一次有自己机器上的数字依据。
+
+   注意三条口径（与测量脚本一致，别让 UI 说得比数据多）：
+   · 数值 = 该预设每帧 GPU 渲染耗时 **减去不加着色器的基线**，不是绝对耗时；
+   · 只有放大场景（1066×600 → 1920×1080 窗口）与缩小场景（4K 源）两种画面，
+     换分辨率/换片源数字会变，它是「同一台机器上横向比较」用的；
+   · 数据针对测量那台机器的显卡，别的卡不通用 —— 所以 panel 里带上 device 名。 */
+export type ShaderTimings = {
+  device: string;
+  measured_at: string;
+  baseline_ms: Record<string, number>;
+  baseline_first_ms?: Record<string, number>;
+  results: Record<string, number | null>;
+  compile_ms?: Record<string, number | null>;
+};
+
+/** 取某个预设的实测耗时（ms）；没测到返回 null，UI 回落显示档位标签。 */
+export function timingOf(timings: ShaderTimings | null, key: string): number | null {
+  if (!timings) return null;
+  const v = timings.results[key];
+  return typeof v === "number" && v >= 0 ? v : null;
+}
+
+/** 首次编译/初始化的额外卡顿（ms）；null = 未测到。
+ *
+ * 这个数与 timingOf 回答的是两个不同问题，不能合并：
+ *   timingOf  → 稳态每帧开销，决定「播起来会不会掉帧」；
+ *   compileOf → 切换/起播时着色器编译的一次性卡顿，决定「点下去要等多久」。
+ * 实测 ArtCNN 系列每帧只多 0.9ms，但首帧要多等 14 秒 —— 只看前一个数会
+ * 让人误以为它跟 CuNNy 一样轻。 */
+export function compileOf(timings: ShaderTimings | null, key: string): number | null {
+  if (!timings?.compile_ms) return null;
+  const v = timings.compile_ms[key];
+  return typeof v === "number" && v > 0 ? v : null;
+}
+
+/** 一行说明：`1.16 ms/帧`（无数据时给空串，调用方不显示） */
+export function timingNote(timings: ShaderTimings | null, key: string): string {
+  const ms = timingOf(timings, key);
+  if (ms === null) return "";
+  return `${ms < 10 ? ms.toFixed(2) : ms.toFixed(1)} ms/帧`;
+}
+
 export const ANIME_GUIDE: GuideGroup = {
   id: "anime",
   title: "动漫",

@@ -10,8 +10,12 @@ import {
   LIVE_GUIDE,
   SERIES_GROUPS,
   SWITCH_GROUP,
+  compileOf,
+  timingOf,
   type GuideRow,
+  type ShaderTimings,
 } from "../../lib/shaderGuide";
+import timingsJson from "../../data/shader-timings.json";
 
 const PERF_COLOR: Record<string, string> = {
   低: "var(--green-9, #30a46c)",
@@ -28,6 +32,31 @@ function perfColor(p: string): string {
   return "var(--gray-9, #8b8d98)";
 }
 
+/** 本机实测值（ms/帧）：整行取所涉预设的最小~最大；都没测到就走档位标签。 */
+function rowTiming(row: GuideRow): string | null {
+  const vals = (row.chips ?? [])
+    .map((c) => timingOf(TIMINGS, c.key))
+    .filter((v): v is number => v !== null);
+  if (vals.length === 0) return null;
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  // 1ms 以下的差异受显卡降频影响，不值得展示成区间（口径同测量脚本）
+  if (hi - lo < 0.5) return `${lo.toFixed(2)} ms`;
+  return `${lo.toFixed(2)}~${hi.toFixed(2)} ms`;
+}
+
+/** 首次编译卡顿（秒）：只有超过 1s 才值得单独写一行 —— 否则用户只看每帧成本就够了。 */
+function rowCompile(row: GuideRow): string | null {
+  const vals = (row.chips ?? [])
+    .map((c) => compileOf(TIMINGS, c.key))
+    .filter((v): v is number => v !== null);
+  if (vals.length === 0) return null;
+  const lo = Math.min(...vals) / 1000;
+  const hi = Math.max(...vals) / 1000;
+  if (hi < 1) return null;
+  return hi - lo < 0.5 ? `首次 +${hi.toFixed(1)}s` : `首次 +${lo.toFixed(1)}~${hi.toFixed(1)}s`;
+}
+
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -38,6 +67,8 @@ type Props = {
   /** 单开关 toggle 完成（含新链）回调 */
   onChainChange: (chain: string) => void;
 };
+
+const TIMINGS = timingsJson as unknown as ShaderTimings;
 
 export function ShaderGuideModal({ open, onClose, onApply, chain, onChainChange }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
@@ -121,7 +152,21 @@ export function ShaderGuideModal({ open, onClose, onApply, chain, onChainChange 
               {r.note ? <div className="sg-note">{r.note}</div> : null}
             </td>
             <td className="sg-func">{r.func ?? renderChips(r, false) ?? "—"}</td>
-            <td><span className="sg-perf" style={{ color: perfColor(r.perf) }}>{r.perf}</span></td>
+            <td>
+              <span className="sg-perf" style={{ color: perfColor(r.perf) }}>{r.perf}</span>
+              {(() => {
+                const t = rowTiming(r);
+                const c = rowCompile(r);
+                if (!t && !c) return null;
+                return (
+                  <div className="sg-note sg-ms">
+                    {t}
+                    {t && c ? " · " : ""}
+                    {c ? <span className="sg-compile">{c}</span> : null}
+                  </div>
+                );
+              })()}
+            </td>
             <td>{r.chips ? renderChips(r, toggle) : <span className="sg-note">—</span>}</td>
           </tr>
         ))}
@@ -174,6 +219,11 @@ export function ShaderGuideModal({ open, onClose, onApply, chain, onChainChange 
             {GUIDE_TIPS.map((t, i) => (
               <div key={i} className="sg-tip">{t}</div>
             ))}
+            <div className="sg-tip sg-note">
+              毫秒数来自本机实测（{TIMINGS.device}，{TIMINGS.measured_at}）：每帧 GPU 渲染耗时减去
+              不加着色器的基线，1.8× 放大合成画面；「首次」是切换时着色器编译的额外等待。
+              换显卡或分辨率数字会变，只适合同机横向比较。
+            </div>
           </div>
           {tip && <div className="sg-status">{tip}</div>}
         </div>

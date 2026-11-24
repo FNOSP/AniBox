@@ -1226,6 +1226,10 @@
 .sg-scene { color: var(--text-strong); }
 .sg-func { color: var(--muted); }
 .sg-note { font-size: var(--fs-cap); color: var(--muted); margin-top: 2px; }
+/* [lc-2341] 实测毫秒：等宽数字，避免各行 ms 位数不同时右边缘跳动 */
+.sg-ms { font-variant-numeric: tabular-nums; }
+/* 首次编译耗时（一次性卡顿）：用暖色提醒，和稳态每帧开销区分开 */
+.sg-compile { color: var(--orange-9, #f76b15); }
 .sg-perf { font-weight: 600; white-space: nowrap; }
 .sg-chip {
   border: 1px solid var(--line-strong);

@@ -895,29 +895,14 @@ impl MpvSession {
         // ── [lc-1907] mpv 窗口 owner 收编（原型 v1，仅 Windows）：IPC 连上 = mpv 已就绪，
         // 后台异步收编，不阻塞 launch（失败只 trace，行为退化为独立窗口）。
         // pid 在下方被 move 进 pid_slot，这里先取值（Option<u32> 是 Copy）。
+        //
+        // [lc-2334] 窗口/任务栏图标**不在这里设**。运行时对 mpv 窗口发 WM_SETICON 只会
+        // 写窗口自己的图标槽，而 mpv 窗口类自带图标（GCLP_HICON，取自 exe 资源的
+        // IDI_ICON1 组），Win11 任务栏按钮取的是类图标 —— 所以那条路日志显示"设成功"
+        // 但任务栏纹丝不动。图标改由构建期 tools/patch-mpv-icon.mjs 写进 mpv.exe
+        // 自身资源，运行时无需任何动作。
         #[cfg(target_os = "windows")]
         {
-            // [lc-2334] 换窗口图标：mpv 没有 --icon 选项，只能从 Windows 层面 WM_SETICON。
-            // **不放在 adopt_window_owner 里面** —— 那条受 config.mpv_window_owner 门控
-            // （默认 false），图标是所有人都该有的，不该跟着那个实验开关走。
-            //
-            // 时机：窗口要等 mpv 建出来才存在，所以重试几次（首次启动偶有延迟）。
-            // 实测（pwsh 独立探针）设完之后不会被 mpv 覆盖：设进去 → 读回一致 →
-            // 连续 6 秒不变。所以「设一次成功即止」就够，不需要持续补设。
-            let app2 = app.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Some(pid) = pid {
-                    for attempt in 0..10u32 {
-                        if crate::mpvwin::apply_icon_to_mpv(pid) {
-                            break;
-                        }
-                        if attempt == 9 {
-                            crate::libmpv::trace("[lc-2334] 设图标：多次重试后仍失败，放弃（不影响播放）");
-                        }
-                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                    }
-                }
-            });
             let app2 = app.clone();
             tauri::async_runtime::spawn(async move {
                 if let Some(pid) = pid {

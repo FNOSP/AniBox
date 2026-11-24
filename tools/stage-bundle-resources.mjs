@@ -175,7 +175,16 @@ function collect() {
 
   // 2) 上游 mpv 脚本的构建期补丁（third_party 不入库，CI 每次拉新包覆盖，
   //    所以修复必须在这里重新打一次，不能只改本地文件）。
-  for (const tool of ['patch-fntv-mpv.mjs', 'patch-uosc-gate.mjs', 'patch-modernz-contrast.mjs']) {
+  //    [lc-2334] patch-mpv-icon.mjs 也在这组里：它改写 mpv.exe 自身资源段里的
+  //    图标位图（运行时跨进程 WM_SETICON 对 Win11 任务栏无效），所以必须在
+  //    下面复制到 bundle-resources 之前完成。
+  const patchTools = [
+    'patch-fntv-mpv.mjs',
+    'patch-uosc-gate.mjs',
+    'patch-modernz-contrast.mjs',
+  ];
+  if (IS_WIN) patchTools.push('patch-mpv-icon.mjs');
+  for (const tool of patchTools) {
     const p = path.join(ROOT, 'tools', tool);
     if (!fs.existsSync(p)) continue;
     try {

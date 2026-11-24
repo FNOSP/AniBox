@@ -65,6 +65,11 @@ const electron_1 = { app: electron_1_app };
 const logger_1 = { default: require("./danmu-api-deps.cjs").logger };
 const danmuApi = __importStar(require("./danmu-api.cjs"));
 const dandanplay = require("./danmu-api-deps.cjs").dandanplayLuaOwned;
+// [lc-2347] 腾讯视频弹幕源（第四源）：360kan 取 vid → dm.video.qq.com 拉取。
+// 独立模块（tencent-danmaku.cjs），不掺进本文件，保持与 danmu-api 同等的模块边界。
+// 加载失败不阻断主链路（缺这个文件时三源照常工作，trace 里如实标 skipped）。
+let tencent = null;
+try { tencent = require("./tencent-danmaku.cjs"); } catch (e) { tencent = null; }
 const log = logger_1.default.component('biliRunner');
 let cachedModule = null;
 let logSinkBound = false;
@@ -179,7 +184,7 @@ async function runBiliChain(title, ep, out, threshold, season, timeoutMs = 60000
         return { ok: false, error: String(e?.message || e) };
     }
 }
-async function runBiliDanmaku(title, ep, out, threshold, season, timeoutMs = 60000, allowBiliFallback = true, epTitle = '', seriesKey = '', altTitle = '') {
+async function runBiliDanmakuInner(title, ep, out, threshold, season, timeoutMs = 60000, allowBiliFallback = true, epTitle = '', seriesKey = '', altTitle = '') {
     // [lc-1226] 逐源记录本次尝试结果，随结果回传给两处「弹幕详情」面板，
     // 让用户看到三个来源各自是被跳过、试过没中、还是提供了最终弹幕。
     const traces = [];
@@ -325,6 +330,140 @@ async function runBiliDanmaku(title, ep, out, threshold, season, timeoutMs = 600
         return { ok: false, error: String(e?.message || e), sources: traces };
     }
 }
+
+// ===================== [lc-2347] 腾讯视频弹幕（第四源）合并 =====================
+/**
+ * 在三源（自建 danmu_api / 内置 B站 / 弹弹play-Lua 侧）链路**之后**再叠加腾讯弹幕。
+ *
+ * 为什么放在外层包装而不是插进 runBiliDanmakuInner 的 6 个 return：
+ *   Inner 有 6 条返回路径（自建源命中+合并成功 / 自建源命中+合并失败 / 自建源命中+未合并 /
+ *   纯 B站 / B站+弹弹play / 异常），逐条插入既易漏又会让每条 return 各写一份合并代码。
+ *   包一层只写一次，所有路径统一受益。
+ *
+ * 语义（对齐 lc-2166「三源恒拉」）：
+ *   - 与主链路**并行**启动（腾讯链路含 360kan 搜索 + 多段拉取，串行会让首屏多等 2~10s）。
+ *   - 并行而非依赖：任何一方失败都不影响另一方已写出的 XML。
+ *   - 主链路 ok、腾讯 ok → 条目级去重合并（同 p 同文本视为同一条）。
+ *   - 主链路失败、腾讯 ok → 腾讯弹幕成为唯一结果（ok:true）——这正是「B站没版权但腾讯有」的场景。
+ *   - 两方都失败 → 保留主链路原本的失败原因（腾讯的失败作为 trace 附注，不覆盖主因）。
+ */
+async function runBiliDanmaku(title, ep, out, threshold, season, timeoutMs = 60000, allowBiliFallback = true, epTitle = '', seriesKey = '', altTitle = '') {
+    if (!tencent) {
+        // 模块缺失：如实标注，行为与加此源之前完全一致
+        const r = await runBiliDanmakuInner(title, ep, out, threshold, season, timeoutMs, allowBiliFallback, epTitle, seriesKey, altTitle);
+        if (r && r.sources) {
+            r.sources.push({ id: 'tencent', attempted: false, used: false, skippedReason: '腾讯弹幕模块缺失（tencent-danmaku.cjs 未随包）' });
+        }
+        return r;
+    }
+
+    // 腾讯写临时文件：主链路的 out 不受影响，成败由最终合并决定
+    const tcOut = out + '.tencent.tmp.xml';
+    const tcBudget = Math.min(120000, Math.max(30000, timeoutMs));
+    const tcPromise = tencent
+        .run(String(title || ''), Number(season) || 0, tcOut, tcBudget, '')
+        .catch((e) => ({ ok: false, error: '腾讯链路异常: ' + String((e && e.message) || e) }));
+
+    let mainRes;
+    try {
+        mainRes = await runBiliDanmakuInner(title, ep, out, threshold, season, timeoutMs, allowBiliFallback, epTitle, seriesKey, altTitle);
+    }
+    catch (e) {
+        mainRes = { ok: false, error: '主链路异常: ' + String((e && e.message) || e), sources: [] };
+    }
+
+    let tcRes;
+    try {
+        tcRes = await tcPromise;
+    }
+    catch (e) {
+        tcRes = { ok: false, error: '腾讯链路异常: ' + String((e && e.message) || e) };
+    }
+
+    const sources = Array.isArray(mainRes && mainRes.sources) ? mainRes.sources.slice() : [];
+    const tcTrace = buildTencentTrace(tcRes);
+
+    // 腾讯没拿到任何东西 → 原样返回主链路结果（只多一条 trace）
+    if (!tcRes || !tcRes.ok) {
+        sources.push(tcTrace);
+        if (mainRes && mainRes.ok) return { ...mainRes, sources: sources };
+        // 主链路也失败：把腾讯的失败原因作为附注（不覆盖主因）
+        return { ...(mainRes || { ok: false, error: '未知错误' }), sources: sources };
+    }
+
+    // 腾讯拿到了 → 读它的条目
+    const tcLines = readDanmakuLines(tcOut);
+    if (!tcLines.length) {
+        sources.push({ ...tcTrace, used: false, error: '腾讯 XML 读空（已拉到数据但写入为空）' });
+        if (mainRes && mainRes.ok) return { ...mainRes, sources: sources };
+        return { ...(mainRes || { ok: false, error: '未知错误' }), sources: sources };
+    }
+
+    if (mainRes && mainRes.ok) {
+        // 双源成功：条目级去重合并（主链路已写 out，读出后与腾讯条目合并回写）
+        const mainLines = readDanmakuLines(out);
+        const mergedCount = writeMergedDanmakuXml(out, [...mainLines, ...tcLines]);
+        try { fs.unlinkSync(tcOut); } catch (_) { /* 清理失败无害 */ }
+        log.info(`[biliRunner] 腾讯叠加：主链路 ${mainLines.length} 条 + 腾讯 ${tcLines.length} 条 → 合并去重后 ${mergedCount} 条`);
+        sources.push({ ...tcTrace, used: true, count: tcLines.length });
+        return {
+            ...mainRes,
+            danmaku_count: mergedCount,
+            source: (mainRes.source ? mainRes.source + '+tencent' : 'tencent'),
+            tencent_count: tcLines.length,
+            sources: sources,
+        };
+    }
+
+    // 主链路失败但腾讯成功：腾讯弹幕就是唯一结果（典型：B站无版权、腾讯有）
+    try {
+        // 腾讯的 XML 已是最终格式，直接搬到 out
+        fs.mkdirSync(path.dirname(out) || '.', { recursive: true });
+        fs.writeFileSync(out, ['<?xml version="1.0" encoding="UTF-8"?>', '<danmaku>', ...tcLines, '</danmaku>'].join('\n') + '\n', 'utf8');
+        fs.unlinkSync(tcOut);
+    }
+    catch (e) {
+        sources.push({ ...tcTrace, used: false, error: '腾讯弹幕转存失败: ' + String((e && e.message) || e) });
+        return { ...(mainRes || { ok: false, error: '未知错误' }), sources: sources };
+    }
+    log.info(`[biliRunner] 主链路失败(${(mainRes && mainRes.error) || '未知'})，仅用腾讯弹幕 ${tcLines.length} 条`);
+    sources.push({ ...tcTrace, used: true, count: tcLines.length });
+    return {
+        ok: true,
+        title: title,
+        matched_title: tcRes.matched_title || title,
+        danmaku_count: tcLines.length,
+        source: 'tencent',
+        vid: tcRes.vid || null,
+        tencent_count: tcLines.length,
+        // 主链路的失败原因保留在 sources 里，不丢失
+        error: undefined,
+        sources: sources,
+    };
+}
+
+/** 把腾讯链路结果转成统一的 trace 条目（与 danmu_api/bilibili/dandanplay 同形状）。 */
+function buildTencentTrace(tcRes) {
+    if (!tcRes) return { id: 'tencent', attempted: true, used: false, error: '腾讯链路无返回' };
+    if (tcRes.ok) {
+        return {
+            id: 'tencent',
+            attempted: true,
+            used: true,
+            detail: tcRes.matched_title ? `命中《${tcRes.matched_title}》` : '腾讯匹配成功',
+            count: tcRes.danmaku_count || 0,
+        };
+    }
+    // 失败细分：视频页都没找到 vs 找到了但没弹幕
+    if (tcRes.video_found === false) {
+        return { id: 'tencent', attempted: true, used: false, error: tcRes.error || '腾讯无此片（360kan 无播放页）' };
+    }
+    if (tcRes.video_found === true) {
+        return { id: 'tencent', attempted: true, used: false, error: tcRes.error || '腾讯播放页有但无弹幕数据' };
+    }
+    return { id: 'tencent', attempted: true, used: false, error: tcRes.error || '腾讯未命中' };
+}
+
 /** 仅供测试/诊断：强制下次重新加载模块（例如脚本目录变化后）。 */
 function resetBiliModule() {
     cachedModule = null;

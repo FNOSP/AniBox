@@ -60,6 +60,12 @@ const NODE_FILES: &[(&str, &str)] = &[
         "anibox-bili-runner.cjs",
         include_str!("../assets/bili-runner.cjs"),
     ),
+    // [lc-2347] 腾讯视频弹幕源（第四源）：360kan 取 vid → dm.video.qq.com 拉取。
+    // bili-runner 以 `require("./tencent-danmaku.cjs")` 加载，必须与它落盘在同目录。
+    (
+        "anibox-tencent-danmaku.cjs",
+        include_str!("../assets/tencent-danmaku.cjs"),
+    ),
     // 上述两者的环境桩（electron/logger/fn_config/proxyAgent + 脚本目录通道）
     (
         "anibox-danmu-deps.cjs",
@@ -106,6 +112,8 @@ fn rewrite_requires(src: &str) -> String {
     src.replace("./danmu-api.cjs", "./anibox-danmu-api.cjs")
         .replace("./bili-runner.cjs", "./anibox-bili-runner.cjs")
         .replace("./danmu-api-deps.cjs", "./anibox-danmu-deps.cjs")
+        // [lc-2347] 腾讯源：落盘名为 anibox-tencent-danmaku.cjs，runner 里的 require 也要跟着改
+        .replace("./tencent-danmaku.cjs", "./anibox-tencent-danmaku.cjs")
 }
 
 /// 落盘全部 Node 源码（内容变化的文件才重写），返回 shim 主文件路径。

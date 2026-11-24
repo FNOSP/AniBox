@@ -75,7 +75,7 @@ const SKIP_DIRS = new Set([
  * 便携兜底在 portable_config 根目录）。它绝不能进安装包，否则升级会覆盖用户选择。
  */
 const SKIP_FILE_RE =
-  /(\.bak($|[.\-_])|\.log$|^anibox-shaders\.conf$|^bili_cookie\.txt$|^bili_cookie_status\.json$|^danmaku_source_cache\.json$|^danmaku-history\.json$|^recent\.json$|^persistent_config\.json$)/i;
+  /(\.bak($|[.\-_])|\.log$|^anibox-shaders\.conf$|^bili_cookie\.txt$|^bili_cookie_status\.json$|^danmaku_source_cache\.json$|^danmaku-history\.json$|^danmaku_blacklist\.txt$|^recent\.json$|^persistent_config\.json$)/i;
 
 function fail(msg) {
   console.error(`[stage-resources] ${msg}`);

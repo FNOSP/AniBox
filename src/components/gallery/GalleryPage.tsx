@@ -442,7 +442,42 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
         {isPixiv && (
           <>
             {pxNote && <div className="gal-note">{pxNote}</div>}
-            {pxErr && <div className="gal-err">加载失败：{pxErr}</div>}
+            {/* [lc-2361] Pixiv API 不可达时给「可行动的提示」而不是裸错误。
+                实测本机对 www.pixiv.net 的 TCP 443 会在 TLS 握手阶段被重置
+                （不只是 DNS 污染），所以 Pixiv 分区在无代理环境下拿不到数据。
+                这里如实说明原因 + 给出两条出路，而不是让用户看着「加载失败」。 */}
+            {pxErr && (
+              <div className="gal-unreachable">
+                <div className="gal-unreachable-t">Pixiv 当前无法访问</div>
+                <div className="gal-unreachable-d">
+                  本机到 pixiv 的连接在 TLS 握手阶段被中断（不只是 DNS 污染）。
+                  图片仍可通过自建镜像正常显示，但排行与搜索需要能连上 pixiv 的网络。
+                </div>
+                <div className="gal-unreachable-actions">
+                  <button
+                    type="button"
+                    className="gal-more-btn"
+                    onClick={() => {
+                      lastLoad.current = "";
+                      void loadPixiv(1, appliedTag, false);
+                    }}
+                  >
+                    重试
+                  </button>
+                  <button
+                    type="button"
+                    className="gal-more-btn"
+                    onClick={() => setSection("local")}
+                  >
+                    看本地图片
+                  </button>
+                </div>
+                <details className="gal-unreachable-detail">
+                  <summary>技术详情</summary>
+                  <code>{pxErr}</code>
+                </details>
+              </div>
+            )}
             {pxItems.length > 0 && (
               <div className="gal-grid">
                 {splitColumns(pxItems, cols, (it) => (it.w && it.h ? it.w / it.h : 0.75)).map((col, ci) => (

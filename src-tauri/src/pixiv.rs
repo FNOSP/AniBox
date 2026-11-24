@@ -51,6 +51,17 @@ use serde_json::{json, Value};
 
 /// Pixiv 网页站（`ranking.php` / `ajax/*` 都在这，实测直连可用）。
 const WEB_BASE: &str = "https://www.pixiv.net";
+/// [lc-2360] 自建镜像的 API 反代前缀。
+///
+/// **实测结论（2026-11-25）：这条路被 Pixiv 的 Cloudflare WAF 挡了** ——
+/// Worker 出口打 `www.pixiv.net` 会收到 `403` + `challenge-platform` 人机验证页
+/// （374KB），说明 pixiv 对机房 IP 有额外校验。
+///
+/// 之所以仍然保留：① 图片反代完全正常（`i.pximg.net` 无反爬，实测 761KB 真 JPEG）；
+/// ② 万一哪天 WAF 放宽、或换成非 CF 机房的中转，改一个常量就能启用；
+/// ③ 本机 DNS 污染时它是**唯一**可能通的路（见下方 `api_candidates`）。
+const API_MIRROR_PREFIX: &str = "/pixiv-api/";
+
 /// 图片镜像候选（按优先级）。
 ///
 /// **第一个是自建镜像**（`tools/pixiv-mirror.js`，部署为 `pixiv.690075.xyz`），
@@ -70,15 +81,139 @@ pub const IMG_MIRRORS: &[&str] = &[
 /// 公共镜像兜底列表（自建不可用时前端可据此换源）。
 pub const IMG_MIRRORS_FALLBACK: &[&str] = &["i.pixiv.re", "i.pixiv.cat", "i.pixiv.nl"];
 
-fn client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+/// [lc-2361] Pixiv 的硬编码 fallback IP —— **照抄 Pixiv-Shaft 的 `CronetInterceptor`**。
+///
+/// 实测（2026-11-25）本机 `www.pixiv.net` 的 DNS 稳定解析到 `31.13.96.208`
+/// （**Facebook 的 IP 段**，典型污染），且不同 DoH 源互相矛盾：
+///   系统 DNS → 31.13.96.208(FB) ｜ 阿里 DoH → 108.160.167.158(Dropbox) ｜
+///   腾讯 DoH → 172.64.145.17 / 104.18.42.239（**Cloudflare，真实**）
+///
+/// 原项目三层方案：DoH 解析 → 硬编码 IP → Cronet(QUIC)。这里移植前两层
+/// （Rust 侧没有易用的 QUIC 客户端）。
+///
+/// **如实说明**：本机实测这些 IP 的 TCP 443 仍然 `Connection was reset`
+/// （TLS 层阻断，与 IP 对不对无关）。所以单靠钉 IP 在这台机器上不够 ——
+/// 必须靠代理。代码保留是因为换网络就生效，且这是原项目的标准做法。
+const PIXIV_CF_IPS: &[&str] = &["104.18.42.239", "172.64.145.17"];
+
+/// [lc-2361] DoH 查询域名真实 IP（照抄 Pixiv-Shaft 的 `CloudFlareDNSService`）。
+///
+/// 原项目用三个 DoH 端点依次重试（`1.0.0.1` / `185.222.222.222` / `223.5.5.5`）。
+/// 这里保留同样的多源思路，但**只用国内可达的**：
+///   · `223.5.5.5`（阿里）—— 实测本机可通
+///   · `1.0.0.1`（Cloudflare）—— 本机实测超时，仍保留作最后兜底
+///
+/// 返回 A 记录列表（只取 type=1）。失败返回空，调用方回退到 `PIXIV_CF_IPS`。
+///
+/// **注意**：实测不同 DoH 源给出的结果互相矛盾（阿里给 Dropbox 段、腾讯给 CF 段），
+/// 只有腾讯 DoH 的 `172.64.x`/`104.18.x` 与 Pixiv-Shaft 硬编码的一致。
+/// 所以这个函数的结果**不能盲信** —— 调用方应先试硬编码 IP（已验证过的那批）。
+async fn resolve_via_doh(host: &str) -> Vec<String> {
+    const DOH_ENDPOINTS: &[&str] = &[
+        "https://223.5.5.5/resolve",       // 阿里（国内可达优先）
+        "https://1.0.0.1/dns-query",       // Cloudflare（兜底）
+    ];
+    for ep in DOH_ENDPOINTS {
+        let url = format!("{ep}?name={host}&type=A");
+        let Ok(cli) = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+        else {
+            continue;
+        };
+        let Ok(resp) = cli
+            .get(&url)
+            .header("accept", "application/dns-json")
+            .send()
+            .await
+        else {
+            continue;
+        };
+        if !resp.status().is_success() {
+            continue;
+        }
+        let Ok(j) = resp.json::<Value>().await else {
+            continue;
+        };
+        let ips: Vec<String> = j
+            .get("Answer")
+            .and_then(|a| a.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter(|x| x.get("type").and_then(|t| t.as_i64()) == Some(1))
+                    .filter_map(|x| x.get("data").and_then(|d| d.as_str()).map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !ips.is_empty() {
+            crate::libmpv::trace(&format!("[pixiv] DoH({ep}) {host} → {}", ips.join(",")));
+            return ips;
+        }
+    }
+    Vec::new()
+}
+
+/// 需要钉 IP 的 Pixiv 域名（API + 网页 ajax + oauth）。
+const PIXIV_HOSTS: &[&str] = &["www.pixiv.net", "app-api.pixiv.net", "oauth.secure.pixiv.net"];
+
+async fn client() -> Result<reqwest::Client, String> {
+    let mut b = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
         .user_agent(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
              (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        )
-        .build()
+        );
+
+    // ① DNS 钉死：先试 DoH 拿当前真实 IP，失败回退硬编码列表。
+    //
+    //   **顺序很重要 —— 硬编码优先**：那两个 IP 是从 Pixiv-Shaft 抄的、与我们自己
+    //   用腾讯 DoH 查到的一致（`172.64.x` / `104.18.x` 是 Cloudflare 段）；
+    //   而实测阿里 DoH 会给 Dropbox 段（108.160.167.158）—— 污染不止一层。
+    //   所以 DoH 只作**补充**，且只采信 Cloudflare 段的结果。
+    let mut ips: Vec<String> = PIXIV_CF_IPS.iter().map(|s| s.to_string()).collect();
+    for extra in resolve_via_doh("www.pixiv.net").await {
+        let is_cf = extra.starts_with("104.1") || extra.starts_with("172.6");
+        if is_cf && !ips.contains(&extra) {
+            ips.push(extra);
+        }
+    }
+    for host in PIXIV_HOSTS {
+        for ip in &ips {
+            if let Ok(addr) = format!("{ip}:443").parse::<std::net::SocketAddr>() {
+                b = b.resolve(host, addr);
+            }
+        }
+    }
+
+    // ② 代理支持：读标准环境变量。有代理时它优先于 resolve
+    //    （代理负责最终连接，DNS 由代理端解析）。
+    let proxy_url = std::env::var("HTTPS_PROXY")
+        .or_else(|_| std::env::var("https_proxy"))
+        .or_else(|_| std::env::var("ALL_PROXY"))
+        .or_else(|_| std::env::var("all_proxy"))
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    if let Some(p) = proxy_url {
+        // 代理地址非法时不静默忽略 —— 否则用户以为配了代理却没生效
+        let proxy = reqwest::Proxy::all(&p).map_err(|e| format!("代理地址非法（{p}）: {e}"))?;
+        b = b.proxy(proxy);
+        crate::libmpv::trace(&format!("[pixiv] 使用代理: {}", mask_proxy(&p)));
+    }
+
+    b.build()
         .map_err(|e| format!("HTTP 客户端构建失败: {e}"))
+}
+
+/// 代理地址脱敏（只留 scheme://host:port，去掉可能的 `user:pass@`）。
+fn mask_proxy(p: &str) -> String {
+    if let Some(at) = p.rfind('@') {
+        let scheme_end = p.find("://").map(|i| i + 3).unwrap_or(0);
+        if at > scheme_end {
+            return format!("{}***@{}", &p[..scheme_end], &p[at + 1..]);
+        }
+    }
+    p.to_string()
 }
 
 /// 网页站的请求头：必须带 Referer（pixiv 对 ajax 有来源校验），否则 403。
@@ -100,8 +235,49 @@ async fn get_json(url: &str) -> Result<Value, String> {
 ///
 /// `cookie` 来自 config 的 `pixiv_cookie`（用户自己从浏览器复制的串）。
 /// **这个值绝不写日志、绝不出现在错误信息里** —— 出错只报状态码/固定文案。
+/// 生成 API 请求的候选 URL 列表（按优先级）。
+///
+/// [lc-2360] 为什么要多候选：本机 `www.pixiv.net` 的 DNS 会被污染成 Facebook 的
+/// `31.13.96.x`（实测**稳定复现**，不是偶发），请求直接超时。此时有两条备选：
+///   1. 自建镜像的 `/pixiv-api/` 前缀（Cloudflare 出口解析干净，但可能撞 pixiv WAF）
+///   2. 公共图片镜像域（它们只反代图片，不能用于 API）
+/// 只有第 1 条对 API 有效，所以候选是「镜像 → 直连」两条，谁通就用谁。
+fn api_candidates(url: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    // 镜像候选：https://pixiv.690075.xyz/pixiv-api/<rest>
+    if let Some(rest) = url.strip_prefix("https://www.pixiv.net/") {
+        out.push(format!(
+            "https://{}{}{}",
+            IMG_MIRRORS[0], API_MIRROR_PREFIX, rest
+        ));
+    }
+    // 直连兜底（DNS 干净的环境下这条路最快）
+    out.push(url.to_string());
+    out
+}
+
 async fn get_json_with_cookie(url: &str, cookie: Option<&str>) -> Result<Value, String> {
-    let mut req = client()?.get(url).headers(web_headers());
+    let candidates = api_candidates(url);
+    let mut last_err = String::new();
+    for (i, u) in candidates.iter().enumerate() {
+        match get_json_once(u, cookie).await {
+            Ok(v) => {
+                if i > 0 {
+                    crate::libmpv::trace(&format!("[pixiv] 已回退到第 {} 个候选端点", i + 1));
+                }
+                return Ok(v);
+            }
+            Err(e) => {
+                crate::libmpv::trace(&format!("[pixiv] 候选端点 {} 失败: {e}", i + 1));
+                last_err = e;
+            }
+        }
+    }
+    Err(last_err)
+}
+
+async fn get_json_once(url: &str, cookie: Option<&str>) -> Result<Value, String> {
+    let mut req = client().await?.get(url).headers(web_headers());
     // 只在有非空 cookie 时附加，且走 header（不经 URL，避免落进访问日志）
     if let Some(c) = cookie.map(str::trim).filter(|s| !s.is_empty()) {
         match reqwest::header::HeaderValue::from_str(c) {
@@ -125,8 +301,18 @@ async fn get_json_with_cookie(url: &str, cookie: Option<&str>) -> Result<Value, 
     }
     let text = resp.text().await.map_err(|e| format!("读取响应失败: {e}"))?;
     // ranking.php 在「mode 非法」时返回 HTML 而不是 JSON
-    let v: Value = serde_json::from_str(&text)
-        .map_err(|_| "Pixiv 响应不是 JSON（mode 可能非法，或站点改版/限流）".to_string())?;
+    let v: Value = serde_json::from_str(&text).map_err(|_| {
+        // [lc-2360] 区分「WAF 拦截」与「普通非 JSON」：前者是 403 + 人机验证页，
+        // 后者多半是 mode 写错。混在一起报「不是 JSON」会让用户完全不知道怎么修。
+        if status.as_u16() == 403 && text.contains("challenge-platform") {
+            "Pixiv 拒绝了本机请求（Cloudflare 人机验证，通常因为出口 IP 是机房/被风控）。             可在设置里配置代理，或改用其他网络。"
+                .to_string()
+        } else if status.as_u16() == 403 {
+            "Pixiv 返回 403（可能触发了访问限制，稍后再试或换网络）".to_string()
+        } else {
+            format!("Pixiv 响应不是 JSON（HTTP {}，可能 mode 非法或站点改版）", status.as_u16())
+        }
+    })?;
     // ajax/* 的响应包成 {error, message, body}
     if v.get("error").and_then(|e| e.as_bool()) == Some(true) {
         let msg = v.get("message").and_then(|m| m.as_str()).unwrap_or("未知错误");

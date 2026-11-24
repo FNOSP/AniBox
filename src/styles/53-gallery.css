@@ -419,6 +419,44 @@
   background: rgb(255 255 255 / 0.26);
 }
 
+/* [lc-2356] 多图作品的左右切换键（原版「9P」那种图集） */
+.gal-lb-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 64px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: rgb(255 255 255 / 0.12);
+  color: #fff;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 140ms ease-out, opacity 140ms ease-out;
+}
+
+.gal-lb-nav:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.24);
+}
+
+.gal-lb-nav:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.gal-lb-nav.left { left: 16px; }
+.gal-lb-nav.right { right: 16px; }
+
+/* 提示行（如「Pixiv 排行没有 COSPLAY 维度」） */
+.gal-note {
+  padding: 0 0 6px;
+  font-size: var(--fs-cap);
+  color: var(--muted);
+}
+
 @keyframes gal-lb-in {
   from { opacity: 0; }
   to { opacity: 1; }

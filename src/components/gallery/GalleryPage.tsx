@@ -36,16 +36,40 @@ type LocalItem = { name: string; path: string; size: number; mtime: number };
 type OnlineResp = { items: OnlineItem[]; page: number; hasMore: boolean };
 type LocalResp = { items: LocalItem[]; dirsScanned: string[]; truncated: boolean; max: number };
 type TagItem = { tag: string; count: number };
+/** [lc-2356] Pixiv 条目（后端 pixiv_ranking / pixiv_search 归一化后） */
+type PixivItem = {
+  id: number;
+  title: string;
+  user: string;
+  w: number;
+  h: number;
+  thumb: string;
+  full: string;
+  tags: string[];
+  /** 多图张数 —— 这就是原版「9P」角标的来源 */
+  pages: number;
+  rank: number;
+  views: number;
+  type: string;
+};
+type PixivResp = {
+  items: PixivItem[];
+  page: number;
+  hasMore: boolean;
+  total?: number;
+  cosplayUnsupported?: boolean;
+};
 type TagResp = { items: TagItem[]; fromAutocomplete: boolean };
 
 /** 四个图流分区（对齐原版页签顺序）+ 本地 */
-type Section = "tags" | "all" | "illust" | "cosplay" | "local";
+type Section = "tags" | "all" | "illust" | "cosplay" | "pixiv" | "local";
 
 const SECTIONS: { key: Section; label: string }[] = [
   { key: "tags", label: "标签" },
   { key: "all", label: "综合" },
   { key: "illust", label: "插画" },
   { key: "cosplay", label: "COSPLAY" },
+  { key: "pixiv", label: "Pixiv" },
 ];
 
 const LOCAL_SECTION: { key: Section; label: string } = { key: "local", label: "本地" };
@@ -98,6 +122,14 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
   /* ── 搜索框（顶栏）── */
   const [query, setQuery] = useState("");
 
+  /* ── Pixiv 分区（独立分页状态：它的接口与 safebooru 完全不同）── */
+  const [pxItems, setPxItems] = useState<PixivItem[]>([]);
+  const [pxPage, setPxPage] = useState(1);
+  const [pxMore, setPxMore] = useState(true);
+  const [pxBusy, setPxBusy] = useState(false);
+  const [pxErr, setPxErr] = useState("");
+  const [pxNote, setPxNote] = useState("");
+
   /* ── 标签分区 ── */
   const [tagItems, setTagItems] = useState<TagItem[]>([]);
   const [tagBusy, setTagBusy] = useState(false);
@@ -112,7 +144,15 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
   const [localDir, setLocalDir] = useState("");
 
   /* ── 预览 ── */
-  const [preview, setPreview] = useState<{ src: string; label: string; sub?: string } | null>(null);
+  const [preview, setPreview] = useState<{
+    src: string;
+    label: string;
+    sub?: string;
+    /** [lc-2356] 多图作品：全部图片 URL，预览里可用左右切换 */
+    gallery?: string[];
+  } | null>(null);
+  /** 预览里的当前图索引（多图作品切换用） */
+  const [previewIdx, setPreviewIdx] = useState(0);
 
   /* ── 列数（按容器宽自适应）── */
   const gridRef = useRef<HTMLDivElement | null>(null);
@@ -163,6 +203,26 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
     }
   }, []);
 
+  /** Pixiv 排行/搜索。`kw` 非空 → 走搜索，否则走排行。 */
+  const loadPixiv = useCallback(async (p: number, kw: string, append: boolean) => {
+    setPxBusy(true);
+    setPxErr("");
+    setPxNote("");
+    try {
+      const r = kw
+        ? await invoke<PixivResp>("pixiv_search", { keyword: kw, page: p })
+        : await invoke<PixivResp>("pixiv_ranking", { page: p, section: "all", tag: null });
+      setPxItems((prev) => (append ? [...prev, ...r.items] : r.items));
+      setPxPage(r.page);
+      setPxMore(r.hasMore);
+      if (r.cosplayUnsupported) setPxNote("Pixiv 排行没有 COSPLAY 维度，这里显示的是日榜");
+    } catch (e) {
+      setPxErr(String(e));
+    } finally {
+      setPxBusy(false);
+    }
+  }, []);
+
   const loadLocal = useCallback(async (dir: string) => {
     setLocalBusy(true);
     setLocalErr("");
@@ -189,10 +249,17 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
       if (localItems.length === 0) void loadLocal("");
     } else if (section === "tags") {
       void loadTags("");
+    } else if (section === "pixiv") {
+      void loadPixiv(1, appliedTag, false);
     } else {
       void loadFeed(section, 0, appliedTag, false);
     }
-  }, [section, appliedTag, loadFeed, loadTags, loadLocal, localItems.length]);
+  }, [section, appliedTag, loadFeed, loadTags, loadLocal, loadPixiv, localItems.length]);
+
+  // [lc-2356] 打开新预览时重置多图索引（否则从上一个作品的第 3 张开始）
+  useEffect(() => {
+    setPreviewIdx(0);
+  }, [preview?.label, preview?.gallery]);
 
   // Esc 关预览
   useEffect(() => {
@@ -213,7 +280,8 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
     }
     setAppliedTag(q);
     lastLoad.current = "";  // 强制重拉
-    void loadFeed(section, 0, q, false);
+    if (section === "pixiv") void loadPixiv(1, q, false);
+    else void loadFeed(section, 0, q, false);
   };
 
   /** 点标签分区里的某个 tag → 跳到「综合」并带上该 tag 过滤（原版也是这个语义）。 */
@@ -226,6 +294,7 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
   };
 
   const isFeed = section === "all" || section === "illust" || section === "cosplay";
+  const isPixiv = section === "pixiv";
 
   return (
     <main className="content lib-root gal-page">
@@ -370,6 +439,69 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
           </>
         )}
 
+        {isPixiv && (
+          <>
+            {pxNote && <div className="gal-note">{pxNote}</div>}
+            {pxErr && <div className="gal-err">加载失败：{pxErr}</div>}
+            {pxItems.length > 0 && (
+              <div className="gal-grid">
+                {splitColumns(pxItems, cols, (it) => (it.w && it.h ? it.w / it.h : 0.75)).map((col, ci) => (
+                  <div className="gal-col" key={ci}>
+                    {col.map((it) => (
+                      <button
+                        type="button"
+                        key={it.id}
+                        className="gal-card"
+                        onClick={async () => {
+                          // 点开先拉详情拿全部图片 URL（多图作品要 p0..pN）
+                          try {
+                            const d = await invoke<{ images: string[]; title: string; user: string; pages: number }>(
+                              "pixiv_detail",
+                              { id: it.id },
+                            );
+                            setPreview({
+                              src: d.images[0] || it.full,
+                              label: d.title || it.title,
+                              sub: `${d.user}${d.pages > 1 ? ` · ${d.pages} 张` : ""}`,
+                              gallery: d.images,
+                            });
+                          } catch {
+                            // 详情失败就退回单图（不打断浏览）
+                            setPreview({ src: it.full, label: it.title, sub: it.user });
+                          }
+                        }}
+                      >
+                        <img src={it.thumb} alt="" loading="lazy" draggable={false} />
+                        <div className="gal-card-foot">
+                          <span className="gal-card-title">{it.title || it.tags[0] || `#${it.id}`}</span>
+                        </div>
+                        <div className="gal-card-badges">
+                          {/* 「9P」= 多图张数（pixiv 的 pageCount），原版同款语义 */}
+                          {it.pages > 1 && <span className="gal-badge">{it.pages}P</span>}
+                          {it.rank > 0 && it.rank <= 100 && <span className="gal-badge">#{it.rank}</span>}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+            {pxBusy && <div className="gal-more">加载中…</div>}
+            {!pxBusy && pxItems.length === 0 && !pxErr && (
+              <div className="gal-empty">{appliedTag ? `没有匹配「${appliedTag}」的作品` : "暂无作品"}</div>
+            )}
+            {!pxBusy && pxMore && pxItems.length > 0 && (
+              <button
+                type="button"
+                className="gal-more-btn"
+                onClick={() => void loadPixiv(pxPage + 1, appliedTag, true)}
+              >
+                加载更多
+              </button>
+            )}
+          </>
+        )}
+
         {section === "local" && (
           <>
             <div className="gal-local-bar">
@@ -426,10 +558,47 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
           <button type="button" className="gal-lightbox-x" onClick={() => setPreview(null)} aria-label="关闭">
             <IcoXL size={18} strokeWidth={2} />
           </button>
-          <img src={preview.src} alt={preview.label} onClick={(e) => e.stopPropagation()} draggable={false} />
+          {/* [lc-2356] 多图作品（原版「9P」那种）左右切换：点图左半/右半翻页 */}
+          {preview.gallery && preview.gallery.length > 1 && (
+            <>
+              <button
+                type="button"
+                className="gal-lb-nav left"
+                aria-label="上一张"
+                disabled={previewIdx <= 0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPreviewIdx((i) => Math.max(0, i - 1));
+                }}
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                className="gal-lb-nav right"
+                aria-label="下一张"
+                disabled={previewIdx >= preview.gallery.length - 1}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPreviewIdx((i) => Math.min(preview.gallery!.length - 1, i + 1));
+                }}
+              >
+                ›
+              </button>
+            </>
+          )}
+          <img
+            src={(preview.gallery && preview.gallery[previewIdx]) || preview.src}
+            alt={preview.label}
+            onClick={(e) => e.stopPropagation()}
+            draggable={false}
+          />
           <div className="gal-lightbox-cap">
             {preview.label}
             {preview.sub ? ` · ${preview.sub}` : ""}
+            {preview.gallery && preview.gallery.length > 1
+              ? ` · ${previewIdx + 1}/${preview.gallery.length}`
+              : ""}
           </div>
         </div>
       )}

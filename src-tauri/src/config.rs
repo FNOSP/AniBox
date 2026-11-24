@@ -196,6 +196,12 @@ pub struct Config {
     /// 优酷弹幕源（mtop 签名；**仅按 vid 拉，无搜索**，故默认关闭）
     #[serde(default)]
     pub danmu_youku_enabled: bool,
+    /// [lc-2356] Pixiv refresh_token（**每用户自带**，绝不内置共享）。
+    /// 留空 = 只用不登录可用的排行/搜索/详情（已覆盖画廊全部需求）；
+    /// 填写 = 额外解锁关注/收藏/推荐等登录态功能。
+    /// 只存本机 config.json，绝不入库、绝不写日志。
+    #[serde(default)]
+    pub pixiv_refresh_token: String,
     // [lc-2056] danmu_dd_fallback_below（兜底阈值）已随 [lc-2166]「三源全拉」退役删除：
     // 弹弹play 恒拉叠加，不再有「主源少于 N 条才兜底」的判定。旧 config.json 里残留的
     // 该键无 deny_unknown_fields，serde 反序列化时静默忽略。
@@ -467,6 +473,7 @@ impl Default for Config {
             danmu_tencent_enabled: true,
             danmu_iqiyi_enabled: true,
             danmu_youku_enabled: false,
+            pixiv_refresh_token: String::new(),
             sub_assrt_token: String::new(),
             sub_osub_key: String::new(),
             acg_user: String::new(),

@@ -53,6 +53,9 @@ mod danmaku_sources;
 mod danmaku_filter;
 // [lc-2354] 画廊：外网二次元图库（safebooru）+ 本地图片扫描。侧边栏「画廊」页的数据源。
 mod gallery;
+// [lc-2356] Pixiv 图库源：排行/搜索/详情**不需要登录**（实测 www.pixiv.net 的
+// ranking.php 与 ajax/* 直连可用）；登录态功能由每用户自带 refresh_token 解锁。
+mod pixiv;
 pub mod subtitle_sources;
 mod subtitle_memory;
 mod disk_cache;
@@ -4777,6 +4780,11 @@ pub fn run() {
             gallery::gallery_online,
             gallery::gallery_local,
             gallery::gallery_tags,
+            // [lc-2356] Pixiv：排行/搜索（都不需登录）+ 详情（含多图 URL，供图集浏览）
+            pixiv::pixiv_ranking,
+            pixiv::pixiv_search,
+            pixiv::pixiv_detail,
+            pixiv::pixiv_auth_status,
             subtitle_sources::subtitle_sources_get,
             subtitle_sources::subtitle_sources_set,
             subtitle_sources::subtitle_search,

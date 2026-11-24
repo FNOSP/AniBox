@@ -193,6 +193,10 @@ pub async fn gallery_online(
 
 /// 极简 URL 编码（只处理 tag 里可能出现的字符：空格、冒号、括号、点、下划线）。
 /// 不引入额外依赖 —— 这些 tag 的字符集很小，且我们只拼查询串的一个值。
+pub(crate) fn urlencode_public(s: &str) -> String {
+    urlencode(s)
+}
+
 fn urlencode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
     for b in s.bytes() {

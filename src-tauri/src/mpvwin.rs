@@ -19,7 +19,8 @@ use std::sync::Mutex;
 use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetWindowRect, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
-    SetWindowLongPtrW, SetWindowPos, GWLP_HWNDPARENT, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+    SendMessageW, SetWindowLongPtrW, SetWindowPos, GWLP_HWNDPARENT, ICON_BIG, ICON_SMALL,
+    SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, WM_SETICON,
 };
 
 /// 当前已收编的 mpv 顶层窗口（isize，全仓 HWND 约定；None = 未收编 / 已失效清理）。
@@ -112,6 +113,87 @@ pub fn get_hwnd() -> Option<isize> {
 /// 按位移差平移 mpv 窗口（物理像素）。窗口已失效（IsWindow 为假）时静默清槽。
 /// 用 GetWindowRect 取当前位置 + SWP_NOSIZE：SetWindowPos 的 x/y 是**绝对坐标**，
 /// 所以"跟随"= 当前位置 + 位移差，而不是把位移差直接当坐标传。
+// ───────────────────────── 窗口图标 ─────────────────────────
+
+/// [lc-2334] 把 mpv 窗口的图标换成 AniBox 自己的。
+///
+/// 为什么要在 Windows 层面做：mpv **没有** `--icon` 之类的选项（`--list-options` 里
+/// 没有任何 icon 项），它的窗口图标取自 exe 资源。所以从我们的 exe 里把图标取出来，
+/// 用 `WM_SETICON` 塞给 mpv 的窗口。
+///
+/// 两个尺寸都要设：
+///   · `ICON_BIG`   —— Alt+Tab 切换器、窗口预览
+///   · `ICON_SMALL` —— 标题栏左上角、任务栏
+/// 只设一个的话另一个位置还是 mpv 原本的图标。
+///
+/// 句柄归窗口所有 —— mpv 退出时系统会随窗口一起释放，所以这里**不**调用 DestroyIcon
+/// （提前销毁会让窗口在下次重绘时拿到失效句柄，表现为图标变白块）。
+pub fn set_window_icon(hwnd: isize) -> Result<(), String> {
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{LoadImageW, IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED};
+
+    if hwnd == 0 || unsafe { IsWindow(hwnd as HWND) } == 0 {
+        return Err("mpv 窗口无效".into());
+    }
+    let hinst = unsafe { GetModuleHandleW(std::ptr::null()) };
+    if hinst.is_null() {
+        return Err("取模块句柄失败".into());
+    }
+
+    // ⚠️ 必须用**图标组**的 id（32512 = IDI_APPLICATION），不是 1。
+    // 实测本仓 exe 的资源树（tools 里那段解析器）：
+    //   TYPE 3 (ICON)   id 1..7  —— 七张单独的位图（16/24/32/48/64/128/256）
+    //   TYPE 14 (GROUP_ICON) id **32512** —— 指向上面七张的「图标组」
+    // 用 id=1 拿到的是**那一张 16×16**，而不是整套；WM_SETICON 给大图标位时
+    // 系统会把它拉伸，Alt+Tab 里就糊成一片。32512 让系统按需要挑尺寸。
+    const ICON_GROUP_ID: usize = 32512;
+
+    let load = |size: i32| unsafe {
+        LoadImageW(
+            hinst,
+            ICON_GROUP_ID as *const u16, // MAKEINTRESOURCE(32512)
+            IMAGE_ICON,
+            size,
+            size,
+            LR_SHARED | LR_DEFAULTSIZE,
+        )
+    };
+    // 显式给尺寸：LR_DEFAULTSIZE 在某些 DPI 下会取错，直接指定更稳。
+    let big = load(32);
+    let small = load(16);
+    if big.is_null() && small.is_null() {
+        return Err("exe 资源里没有图标组（构建时未注入 icon.ico？）".into());
+    }
+    unsafe {
+        let w = hwnd as HWND;
+        if !big.is_null() {
+            SendMessageW(w, WM_SETICON, ICON_BIG as usize, big as isize);
+        }
+        if !small.is_null() {
+            SendMessageW(w, WM_SETICON, ICON_SMALL as usize, small as isize);
+        }
+    }
+    Ok(())
+}
+
+/// 按 PID 找窗口并设图标（幂等、失败只 trace —— 图标不该成为播放的阻塞项）。
+pub fn apply_icon_to_mpv(pid: u32) -> bool {
+    let Some(hwnd) = find_mpv_hwnd(pid) else {
+        crate::libmpv::trace("[lc-2334] 设图标：找不到 mpv 窗口");
+        return false;
+    };
+    match set_window_icon(hwnd) {
+        Ok(()) => {
+            crate::libmpv::trace("[lc-2334] 已把 AniBox 图标设到 mpv 窗口");
+            true
+        }
+        Err(e) => {
+            crate::libmpv::trace(&format!("[lc-2334] 设图标失败：{e}"));
+            false
+        }
+    }
+}
+
 pub fn follow_move(mpv_hwnd: isize, dx: i32, dy: i32) {
     if dx == 0 && dy == 0 {
         return;

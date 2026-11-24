@@ -129,40 +129,57 @@ pub fn get_hwnd() -> Option<isize> {
 /// 句柄归窗口所有 —— mpv 退出时系统会随窗口一起释放，所以这里**不**调用 DestroyIcon
 /// （提前销毁会让窗口在下次重绘时拿到失效句柄，表现为图标变白块）。
 pub fn set_window_icon(hwnd: isize) -> Result<(), String> {
-    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{LoadImageW, IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED};
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{LoadImageW, IMAGE_ICON, LR_SHARED};
 
     if hwnd == 0 || unsafe { IsWindow(hwnd as HWND) } == 0 {
         return Err("mpv 窗口无效".into());
     }
-    let hinst = unsafe { GetModuleHandleW(std::ptr::null()) };
-    if hinst.is_null() {
-        return Err("取模块句柄失败".into());
+
+    // 取**本进程主模块**作资源来源。
+    //
+    // 这里刻意不只用 `GetModuleHandleW(null)`：它的语义是「当前进程的主模块」，
+    // 理论上等于自己，但实测对比发现 `LoadImage(0, 32512)` 在**别的宿主进程**里
+    // 拿到的是那个宿主的图标（pwsh 里测到 65579 = pwsh 自己的图标），说明 0 会被
+    // 解释成「当前进程的 exe」而非我们想要的模块。为了让资源来源毫无歧义，
+    // 先拿到自己的 exe 完整路径，再用 LoadLibraryEx(LOAD_LIBRARY_AS_DATAFILE)
+    // 显式打开它 —— 这样加载的一定是 AniBox 自己的图标。
+    //
+    // 为什么用 LOAD_LIBRARY_AS_DATAFILE：只读资源、不执行也不初始化 DLL 入口，
+    // 而且**不会**影响已经在跑的主模块。
+    let mut path = [0u16; 512];
+    let n = unsafe { GetModuleFileNameW(std::ptr::null_mut(), path.as_mut_ptr(), path.len() as u32) };
+    let work_dir = if n > 0 { Some(&path[..n as usize]) } else { None };
+
+    let module = unsafe {
+        use windows_sys::Win32::System::LibraryLoader::LoadLibraryExW;
+        const LOAD_LIBRARY_AS_DATAFILE: u32 = 0x0000_0002;
+        match work_dir {
+            Some(p) => LoadLibraryExW(p.as_ptr(), std::ptr::null_mut(), LOAD_LIBRARY_AS_DATAFILE),
+            None => GetModuleHandleW(std::ptr::null()),
+        }
+    };
+    if module.is_null() {
+        return Err("打不开本进程 exe 的资源".into());
     }
 
-    // ⚠️ 必须用**图标组**的 id（32512 = IDI_APPLICATION），不是 1。
-    // 实测本仓 exe 的资源树（tools 里那段解析器）：
-    //   TYPE 3 (ICON)   id 1..7  —— 七张单独的位图（16/24/32/48/64/128/256）
-    //   TYPE 14 (GROUP_ICON) id **32512** —— 指向上面七张的「图标组」
-    // 用 id=1 拿到的是**那一张 16×16**，而不是整套；WM_SETICON 给大图标位时
-    // 系统会把它拉伸，Alt+Tab 里就糊成一片。32512 让系统按需要挑尺寸。
+    // ⚠️ 必须用**图标组** id 32512（IDI_APPLICATION），不是 1。
+    // 本仓 exe 的资源树（自写 PE 解析器实测）：
+    //   TYPE 3  (ICON)        id 1..7     七张单张位图（16/24/32/48/64/128/256）
+    //   TYPE 14 (GROUP_ICON)  id 32512    指向上面七张的「图标组」
+    // 用 id=1 只能拿到那张 16×16，WM_SETICON 给大图标位时系统会拉伸 → Alt+Tab 糊。
     const ICON_GROUP_ID: usize = 32512;
 
     let load = |size: i32| unsafe {
-        LoadImageW(
-            hinst,
-            ICON_GROUP_ID as *const u16, // MAKEINTRESOURCE(32512)
-            IMAGE_ICON,
-            size,
-            size,
-            LR_SHARED | LR_DEFAULTSIZE,
-        )
+        LoadImageW(module, ICON_GROUP_ID as *const u16, IMAGE_ICON, size, size, LR_SHARED)
     };
-    // 显式给尺寸：LR_DEFAULTSIZE 在某些 DPI 下会取错，直接指定更稳。
     let big = load(32);
     let small = load(16);
+    crate::libmpv::trace(&format!(
+        "[lc-2334] 图标加载 module={module:?} big={big:?} small={small:?}"
+    ));
     if big.is_null() && small.is_null() {
-        return Err("exe 资源里没有图标组（构建时未注入 icon.ico？）".into());
+        return Err("exe 资源里没有图标组".into());
     }
     unsafe {
         let w = hwnd as HWND;
@@ -176,6 +193,15 @@ pub fn set_window_icon(hwnd: isize) -> Result<(), String> {
     Ok(())
 }
 
+/// 读回窗口当前的大图标句柄（0 = 未设置）。用于校验我们设的有没有被覆盖。
+pub fn read_big_icon(hwnd: isize) -> isize {
+    use windows_sys::Win32::UI::WindowsAndMessaging::WM_GETICON;
+    if hwnd == 0 || unsafe { IsWindow(hwnd as HWND) } == 0 {
+        return 0;
+    }
+    unsafe { SendMessageW(hwnd as HWND, WM_GETICON, ICON_BIG as usize, 0) as isize }
+}
+
 /// 按 PID 找窗口并设图标（幂等、失败只 trace —— 图标不该成为播放的阻塞项）。
 pub fn apply_icon_to_mpv(pid: u32) -> bool {
     let Some(hwnd) = find_mpv_hwnd(pid) else {
@@ -184,7 +210,10 @@ pub fn apply_icon_to_mpv(pid: u32) -> bool {
     };
     match set_window_icon(hwnd) {
         Ok(()) => {
-            crate::libmpv::trace("[lc-2334] 已把 AniBox 图标设到 mpv 窗口");
+            let back = read_big_icon(hwnd);
+            crate::libmpv::trace(&format!(
+                "[lc-2334] 已设图标 hwnd=0x{hwnd:x}，读回={back}（非 0 = 生效）"
+            ));
             true
         }
         Err(e) => {

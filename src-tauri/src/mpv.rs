@@ -900,8 +900,10 @@ impl MpvSession {
             // [lc-2334] 换窗口图标：mpv 没有 --icon 选项，只能从 Windows 层面 WM_SETICON。
             // **不放在 adopt_window_owner 里面** —— 那条受 config.mpv_window_owner 门控
             // （默认 false），图标是所有人都该有的，不该跟着那个实验开关走。
-            // 用独立任务 + 重试：窗口要等 mpv 建出来才存在，IPC 连上时通常已就绪，
-            // 但首次启动偶有延迟，所以给几次机会。
+            //
+            // 时机：窗口要等 mpv 建出来才存在，所以重试几次（首次启动偶有延迟）。
+            // 实测（pwsh 独立探针）设完之后不会被 mpv 覆盖：设进去 → 读回一致 →
+            // 连续 6 秒不变。所以「设一次成功即止」就够，不需要持续补设。
             let app2 = app.clone();
             tauri::async_runtime::spawn(async move {
                 if let Some(pid) = pid {

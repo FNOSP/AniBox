@@ -358,6 +358,26 @@ async function main() {
 
   console.log(`采集 ${urls.length} 个 TVBox 配置…`);
   const cands = new Map();
+
+  // 现有内置源也进候选池：`--write` 会整体重写 builtin_maccms.json，若不带上已内置的
+  // 源，那些「不在任何公开配置里、但实测还活着」的源（如 ffzy5/360zy）会被冲掉。
+  // 它们会重新走一遍筛活 —— 死了自然淘汰，活着就保留。
+  if (fs.existsSync(OUT_JSON)) {
+    let existing = [];
+    try {
+      existing = JSON.parse(fs.readFileSync(OUT_JSON, 'utf8'));
+    } catch {
+      existing = [];
+    }
+    for (const r of existing) {
+      const api = r?.searchApiConfig?.request?.url;
+      if (!isMaccmsApi(api)) continue;
+      const k = api.toLowerCase().replace(/\/+$/, '');
+      if (!cands.has(k)) cands.set(k, { name: r.name || hostOf(api), api, referer: '', from: '现有内置源' });
+    }
+    if (cands.size) console.log(`  （并入现有内置源 ${cands.size} 条一起复核）`);
+  }
+
   for (const url of urls) {
     const r = await fetchConfig(url);
     if (r.status < 200 || r.status >= 300) {
@@ -410,6 +430,19 @@ async function main() {
   if (ok.length === 0) {
     console.error('\n没有可用源，拒绝写入（避免把内置源清空）');
     process.exit(1);
+  }
+  // 写前把「将被移除的现有源」列出来，避免静默丢源
+  let prev = [];
+  try {
+    prev = JSON.parse(fs.readFileSync(OUT_JSON, 'utf8'));
+  } catch {
+    prev = [];
+  }
+  const keep = new Set(ok.map((r) => r.api.toLowerCase().replace(/\/+$/, '')));
+  const dropped = prev.filter((r) => !keep.has(String(r?.searchApiConfig?.request?.url || '').toLowerCase().replace(/\/+$/, '')));
+  if (dropped.length) {
+    console.log(`\n将从内置源移除 ${dropped.length} 条（本次筛活未通过）：`);
+    dropped.forEach((r) => console.log(`  - ${r.name} :: ${r.searchApiConfig?.request?.url}`));
   }
   const rules = ok.map((r) => ruleOf(r.name, r.api));
   fs.writeFileSync(OUT_JSON, JSON.stringify(rules, null, 2) + '\n');

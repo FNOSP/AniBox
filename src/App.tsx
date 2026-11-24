@@ -27,6 +27,7 @@ import { PersonPage } from "./components/person/PersonPage";
 // [lc-1810] 多云盘资源库面板（7 家网盘：扫码登录 + 文件浏览 + 直链播放；115 含服务端转码）
 import { CloudPanel } from "./components/cloud115/CloudPanel";
 import { JavHubPage } from "./components/javhub/JavHubPage";
+import { GalleryPage } from "./components/gallery/GalleryPage";
 import { FeedbackPanel } from "./components/feedback/FeedbackPanel";
 import { DisclaimerModal } from "./components/disclaimer/DisclaimerModal";
 import { DISCLAIMER_ACK_KEY } from "./components/disclaimer/DisclaimerText";
@@ -71,7 +72,7 @@ function normalizeLaunchPage(v: unknown): AppSettings["launchPage"] {
 
 function App() {
   // [lc-1615] 新增 "history"（观影记录页；侧栏快捷操作卡入口）
-  const [view, setView] = useState<"login" | "home" | "discover" | "lib" | "detail" | "history" | "person" | "javhub" | "cloud115">("login");
+  const [view, setView] = useState<"login" | "home" | "discover" | "lib" | "detail" | "history" | "person" | "javhub" | "cloud115" | "gallery">("login");
   // [lc-123] 「页」= 顶栏胶囊的两个面（首页/发现）。与 view 分开：在库里/详情页时胶囊仍要
   // 记住用户是从哪一页进去的（发现页点条目进 Bangumi 详情，左上角应仍显示「发现」）。
   const [page, setPage] = useState<"home" | "discover">("home");
@@ -1382,7 +1383,19 @@ function App() {
         <Sidebar
           rootRef={sidebarRef}
           // [lc-1615] history 页没有任何侧栏项应高亮（"_history" 不匹配首页/收藏/分类）
-          activeGuid={view === "home" ? null : view === "history" ? "_history" : activeLib?.guid ?? null}
+          activeGuid={
+            view === "home"
+              ? null
+              : view === "history"
+                ? "_history"
+                : view === "javhub"
+                  ? "_javhub"
+                  : view === "cloud115"
+                    ? "_cloud115"
+                    : view === "gallery"
+                      ? "_gallery"
+                      : activeLib?.guid ?? null
+          }
           collapsed={!sidebarOpen}
           // [lc-1623] 游客态（飞牛未登录/已退出）不显示飞牛用户名 —— 底栏如实显示「未登录」，
           //   与首页/媒体库那类飞牛依赖区的提示口径一致（不误伤）。
@@ -1431,6 +1444,10 @@ function App() {
           onOpenCloud115={() => {
             closeSidebar();
             setView("cloud115");
+          }}
+          onOpenGallery={() => {
+            closeSidebar();
+            setView("gallery");
           }}
         />
         <div className="view-stack">
@@ -1526,6 +1543,12 @@ function App() {
           {view === "javhub" && (
             <div className="view-pane active view-in">
               <JavHubPage onBack={goHome} />
+            </div>
+          )}
+          {/* [lc-2354] 画廊页：外网图库（safebooru）+ 本地图片，两 tab 瀑布流。 */}
+          {view === "gallery" && (
+            <div className="view-pane active view-in">
+              <GalleryPage onBack={goHome} />
             </div>
           )}
           {/* [lc-1810] 多云盘资源库页：与观影记录同款条件挂载（view-in 转场），返回走 goHome。 */}

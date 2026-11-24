@@ -70,3 +70,6 @@
 
 /* [lc-2332] 公共评论（作品级，自建服务） */
 @import "./52-community.css";
+
+/* [lc-2354] 画廊页（瀑布流 + 大图预览） */
+@import "./53-gallery.css";

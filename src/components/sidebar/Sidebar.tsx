@@ -2,7 +2,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { IcoFolder, IcoGrid, IcoHome, IcoLive, IcoMovie, IcoStar, IcoTv } from "../../icons";
-import { Clapperboard as IcoJavHubL, Clock as IcoClockL, Cloud as IcoCloudL, MessageSquare as IcoMsgL, Settings as IcoGearL } from "lucide-react";
+import { Clapperboard as IcoJavHubL, Clock as IcoClockL, Cloud as IcoCloudL, Image as IcoImageL, MessageSquare as IcoMsgL, Settings as IcoGearL } from "lucide-react";
 
 
 export const SIDEBAR_CATS = [
@@ -31,6 +31,7 @@ export function Sidebar({
   onOpenCat,
   onOpenJavHub,
   onOpenCloud115,
+  onOpenGallery,
   onHome,
   onOpenSettings,
   onOpenAccount,
@@ -51,6 +52,8 @@ export function Sidebar({
   onOpenCat: (cat: { key: string; types: string[] }) => void;
   /** [lc-1907] 打开 JavHub 页（番号刮削媒体库） */
   onOpenJavHub: () => void;
+  /** [lc-2354] 打开画廊页（外网图库 + 本地图片，两 tab 瀑布流） */
+  onOpenGallery: () => void;
   /** [lc-1779] 打开 115 网盘页（扫码登录 + 文件浏览 + 直链/转码播放） */
   onOpenCloud115: () => void;
   onHome: () => void;
@@ -125,6 +128,13 @@ export function Sidebar({
         </span>{" "}
         JavHub
         <span className="side-devtag">开发中</span>
+      </div>
+      {/* [lc-2354] 画廊：外网二次元图库 + 本机图片墙（两 tab），点开看大图 */}
+      <div className={`side-item ${activeGuid === "_gallery" ? "active" : ""}`} onClick={onOpenGallery}>
+        <span className="side-ico">
+          <IcoImageL size={15} strokeWidth={1.8} />
+        </span>{" "}
+        画廊
       </div>
       {/* [lc-1779] 115 网盘：扫码登录后浏览/播放网盘媒体（直链或服务端转码） */}
       <div className={`side-item ${activeGuid === "_cloud115" ? "active" : ""}`} onClick={onOpenCloud115}>

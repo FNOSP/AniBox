@@ -1,0 +1,249 @@
+/* [lc-2354] 画廊页样式。
+   瀑布流用「CSS 多列容器 → 手分列」的混合：列由 JS 按累积高度分配（等比、不裁剪），
+   这里只负责列宽/间距/卡片形态。颜色一律走主题变量（不写死底色，深色主题自动跟随）。
+   字号只用 3 种：--fs-cap（说明）、--fs-ctl（正文）、以及 score 小徽标用 11px。 */
+
+.gal-page {
+  /* 让内容区自己滚动（与 jvh-page / 媒体库页一致），页头不跟着滚 */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ── 顶部搜索行（图库=标签搜索 / 本地=目录输入）── */
+.gal-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3) 0;
+}
+
+.gal-search-ico {
+  position: absolute;
+  left: calc(var(--sp-3) + var(--sp-2));
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.gal-search-in {
+  flex: 1;
+  padding-left: 30px; /* 给左侧图标让位（光学对齐：图标 14px + 8px 间距 + 8px 内边） */
+}
+
+.gal-search-clear {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.gal-search-clear:hover {
+  color: var(--text-2);
+}
+
+.gal-search-btn {
+  flex: 0 0 auto;
+  padding: 0 var(--sp-3);
+  height: 28px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-strong);
+  font-family: inherit;
+  font-size: var(--fs-ctl);
+  cursor: pointer;
+  transition: border-color 140ms ease-out, color 140ms ease-out;
+}
+
+.gal-search-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── 瀑布流 ── */
+.gal-grid {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+}
+
+.gal-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.gal-card {
+  position: relative;
+  display: block;
+  padding: 0;
+  border: 0;
+  /* --bg-2 是项目真实的背景层变量（浅色=浅灰 / 深色=深灰，随主题切换）。
+     不要写 var(--surface-2) —— 那个名字不存在，会让卡片底色变透明、深色主题下与页面糊在一起。 */
+  background: var(--bg-2);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  cursor: pointer;
+  /* 图片加载后撑开高度：给个最小占位避免布局跳得太厉害 */
+  min-height: 60px;
+}
+
+.gal-card img {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* 不裁剪：用户明确要求「图片不裁剪」，等比显示 */
+  object-fit: contain;
+  transition: opacity 160ms ease-out;
+}
+
+.gal-card:hover img {
+  opacity: 0.88;
+}
+
+.gal-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.gal-score {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  /* 浮在图片上的小徽标：半透明深底 + 白字，深浅主题都可读（与 poster 卡片徽标同思路） */
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  backdrop-filter: blur(4px);
+}
+
+/* ── 状态行 / 分页 ── */
+.gal-more,
+.gal-empty,
+.gal-err,
+.gal-dirs {
+  padding: var(--sp-3);
+  text-align: center;
+  font-size: var(--fs-cap);
+  color: var(--muted);
+}
+
+.gal-err {
+  color: var(--danger);
+}
+
+.gal-dirs {
+  text-align: left;
+  padding: var(--sp-2) var(--sp-3) 0;
+  word-break: break-all;
+}
+
+.gal-more-btn {
+  align-self: center;
+  margin: 0 0 var(--sp-4);
+  padding: 0 var(--sp-4);
+  height: 30px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-strong);
+  font-family: inherit;
+  font-size: var(--fs-ctl);
+  cursor: pointer;
+  transition: border-color 140ms ease-out, color 140ms ease-out;
+}
+
+.gal-more-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── 大图预览浮层 ── */
+.gal-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: 40px;
+  background: rgb(0 0 0 / 0.82);
+  backdrop-filter: blur(6px);
+  /* 进入 ease-out 250ms（项目动画规范） */
+  animation: gal-lb-in 250ms ease-out both;
+}
+
+.gal-lightbox img {
+  max-width: 100%;
+  max-height: calc(100% - 48px);
+  /* 不裁剪、保持完整比例 */
+  object-fit: contain;
+  border-radius: var(--r-md);
+  box-shadow: 0 12px 48px rgb(0 0 0 / 0.5);
+}
+
+.gal-lightbox-cap {
+  max-width: min(720px, 90%);
+  text-align: center;
+  font-size: var(--fs-cap);
+  color: rgb(255 255 255 / 0.72);
+  word-break: break-all;
+}
+
+.gal-lightbox-x {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.14);
+  color: #fff;
+  cursor: pointer;
+  transition: background 140ms ease-out;
+}
+
+.gal-lightbox-x:hover {
+  background: rgb(255 255 255 / 0.26);
+}
+
+@keyframes gal-lb-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 减少动效偏好：关掉浮层淡入 */
+@media (prefers-reduced-motion: reduce) {
+  .gal-lightbox {
+    animation: none;
+  }
+  .gal-card img,
+  .gal-card,
+  .gal-search-btn,
+  .gal-more-btn {
+    transition: none;
+  }
+}

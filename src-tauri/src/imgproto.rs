@@ -73,6 +73,8 @@ enum Target {
     Public { key: String, url: String },
     /// [library-cover] 本机自定义封面副本（app_data_dir/library-covers/<文件名>）
     Local(String),
+    /// [lc-2354] 画廊本地图片：任意绝对路径（由 gallery.rs::read_local_image 校验并读取）
+    Gallery(String),
 }
 
 /// [lc-1569] BGM 图片的取图 URL：有镜像密钥 → 自建镜像 `/img/*`（签名轨，与 API 同密钥）；
@@ -99,8 +101,34 @@ fn safe_rel(rel: &str) -> bool {
         && !rel.chars().any(|c| c.is_control())
 }
 
-fn resolve_target(path: &str) -> Result<Target, (u16, String)> {
-    if path.is_empty() || path == "/" {
+/// [lc-2354] 百分号解码（只用于 `/__gallery/` 分支）。
+///
+/// 为什么不用 `urlencoding` crate：项目当前没这个依赖，而为了一处解码引入一个
+/// crate 不划算 — 逻辑就是「`%XX` → 字节，其余原样」，20 行够用。
+///
+/// 关键：**先按字节拼再整体 UTF-8 解**。逐段 `char` 解码会把中文（3 字节 %E4%B8%AD）
+/// 拼成三个乱码字符。
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn resolve_target(path: &str) -> Result<Target, (u16, String)> {    if path.is_empty() || path == "/" {
         return Err((400, "missing path".into()));
     }
     if let Some(rest) = path.strip_prefix("/__dj/") {
@@ -138,6 +166,19 @@ fn resolve_target(path: &str) -> Result<Target, (u16, String)> {
             return Err((400, "bad cover path".into()));
         }
         return Ok(Target::Local(rest.to_string()));
+    }
+    if let Some(rest) = path.strip_prefix("/__gallery/") {
+        // [lc-2354] 画廊「本地」tab：任意绝对路径的图片。
+        // 与 /__cover/ 的区别：封面是 app_data_dir 下受控的单段文件名；画廊要显示用户
+        // 指定目录里的真实绝对路径 → 必须独立分支，不能复用 Local（read_cover 会把它
+        // 当 library-covers 下的文件名去拼，必然 404）。
+        // 客户端把绝对路径整体 encodeURIComponent 后拼在 /__gallery/ 后面，这里解码还原
+        //（Windows 盘符冒号、反斜杠、空格、中文都要解）。
+        let decoded = percent_decode(rest);
+        if decoded.is_empty() {
+            return Err((400, "bad gallery path".into()));
+        }
+        return Ok(Target::Gallery(decoded));
     }
     if let Some(rest) = path.strip_prefix("/__bgm/") {
         if !safe_rel(rest) {
@@ -386,6 +427,20 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
             };
         }
         Target::Nas(p) => (format!("img:nas:{p}"), p),
+        Target::Gallery(abs) => {
+            // [lc-2354] 画廊本地图片：直接读盘，不走 NAS / 不走网络。
+            // 长缓存：用户库里的图不会变（路径作为 URL 的一部分，改了路径就是新 URL）。
+            return match crate::gallery::read_local_image(&abs) {
+                Ok((bytes, ct)) => Response::builder()
+                    .status(200)
+                    .header("Content-Type", ct)
+                    .header("Cache-Control", "max-age=86400")
+                    .header("Access-Control-Allow-Origin", "*")
+                    .body(bytes)
+                    .unwrap_or_else(|_| Response::builder().status(500).body(Vec::new()).unwrap()),
+                Err(e) => plain(404, &format!("gallery image: {e}")),
+            };
+        }
     };
 
     let cfg = app.state::<AppState>().config.read().await.clone();

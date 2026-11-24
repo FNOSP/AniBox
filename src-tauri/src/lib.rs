@@ -51,6 +51,8 @@ mod danmaku_sources;
 // [lc-2348] 弹幕屏蔽（类型 + 屏蔽词）读写：桌面端首个真实编辑入口，
 // 写 danmaku_block_types.json / danmaku_blacklist.txt 并热通知 Lua 重载。
 mod danmaku_filter;
+// [lc-2354] 画廊：外网二次元图库（safebooru）+ 本地图片扫描。侧边栏「画廊」页的数据源。
+mod gallery;
 pub mod subtitle_sources;
 mod subtitle_memory;
 mod disk_cache;
@@ -4771,6 +4773,9 @@ pub fn run() {
             danmaku_filter::danmaku_filter_get,
             danmaku_filter::danmaku_filter_set,
             danmaku_filter::danmaku_filter_count,
+            // [lc-2354] 画廊：外网图库分页拉取 + 本地图片列举（显示走 fntvimg 的 /__gallery/）
+            gallery::gallery_online,
+            gallery::gallery_local,
             subtitle_sources::subtitle_sources_get,
             subtitle_sources::subtitle_sources_set,
             subtitle_sources::subtitle_search,

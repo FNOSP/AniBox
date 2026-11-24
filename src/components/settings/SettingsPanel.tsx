@@ -1131,12 +1131,86 @@ export function SettingsPanel({
   const [diagError, setDiagError] = useState("");
   const [diagCopied, setDiagCopied] = useState(false);
 
+  /* [lc-2348] 弹幕屏蔽：类型（top/bottom/scroll/reverse/advanced/color）+ 屏蔽词。
+     真源是 uosc_danmaku 目录下的两个文件（MPV 侧 parse.lua 直接读，Ctrl+K 快捷键菜单
+     写的是同一个 danmaku_block_types.json），这里不另立配置项，只做文件的读写入口。
+     注意屏蔽词是 **Lua pattern** 不是正则：`%d` 而非 `\d`，不支持 `\b`/`(?=)`/`{n,m}`。 */
+  type FilterState = {
+    blockTypes: string[];
+    availableTypes: string[];
+    blacklist: string[];
+  };
+  const BLOCK_TYPE_LABELS: Record<string, string> = {
+    scroll: "滚动弹幕",
+    top: "顶部弹幕",
+    bottom: "底部弹幕",
+    reverse: "逆向弹幕",
+    advanced: "高级弹幕",
+    color: "彩色弹幕",
+  };
+  const [filterState, setFilterState] = useState<FilterState | null>(null);
+  const [filterText, setFilterText] = useState("");
+  const [filterNote, setFilterNote] = useState("");
+  const [filterBusy, setFilterBusy] = useState(false);
+
+  const loadFilter = async () => {
+    try {
+      const r = await invoke<FilterState & { ok: boolean }>("danmaku_filter_get");
+      setFilterState({
+        blockTypes: r.blockTypes ?? [],
+        availableTypes: r.availableTypes ?? [],
+        blacklist: r.blacklist ?? [],
+      });
+      setFilterText((r.blacklist ?? []).join("\n"));
+    } catch (e) {
+      setFilterNote(`读取失败：${String(e)}`);
+    }
+  };
+
+  const saveFilter = async (patch: { blockTypes?: string[]; blacklist?: string }) => {
+    setFilterBusy(true);
+    setFilterNote("");
+    try {
+      const r = await invoke<{ ok: boolean; blockTypes: string[]; blacklist: string[] }>(
+        "danmaku_filter_set",
+        patch,
+      );
+      setFilterState((prev) =>
+        prev
+          ? { ...prev, blockTypes: r.blockTypes ?? [], blacklist: r.blacklist ?? [] }
+          : prev,
+      );
+      setFilterNote("已保存，下次加载弹幕时生效");
+    } catch (e) {
+      setFilterNote(`保存失败：${String(e)}`);
+    } finally {
+      setFilterBusy(false);
+    }
+  };
+
+  const toggleBlockType = (key: string) => {
+    if (!filterState) return;
+    const has = filterState.blockTypes.includes(key);
+    const next = has
+      ? filterState.blockTypes.filter((k) => k !== key)
+      : [...filterState.blockTypes, key];
+    void saveFilter({ blockTypes: next });
+  };
+
   const parseBases = (text: string) =>
     text
       .split(/[\n;；]/)
       .map((s) => s.trim().replace(/\/+$/, ""))
       .filter(Boolean)
       .slice(0, 4);
+
+  // [lc-2348] 弹幕屏蔽只在「弹幕」页签可见，进该页时按需加载（不必应用启动就读文件）
+  const filterLoaded = useRef(false);
+  useEffect(() => {
+    if (tab !== "danmu" || filterLoaded.current) return;
+    filterLoaded.current = true;
+    void loadFilter();
+  }, [tab]);
 
   /** 统一提交弹幕相关设置（开关/地址/引擎都走这一条路径，不新增独立保存按钮）。
    *  engine 缺省 = 保留当前值（旧缓存可能没有该字段 → 回退 "node"）。 */
@@ -2814,6 +2888,59 @@ export function SettingsPanel({
                       }
                     />
                   </div>
+
+                  {/* ── [lc-2348] 弹幕屏蔽 ── */}
+                  <div className="set-sec">弹幕屏蔽</div>
+                  <div className="set-row set-row-col">
+                    <span className="set-k">屏蔽类型</span>
+                    <div className="set-desc">
+                      勾选的类型在加载时整类丢弃。与 MPV 侧 Ctrl+K 快捷键菜单写同一份文件。
+                    </div>
+                    <div className="set-chips">
+                      {(filterState?.availableTypes ?? []).map((key) => {
+                        const on = (filterState?.blockTypes ?? []).includes(key);
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            className={`set-chip${on ? " on" : ""}`}
+                            aria-pressed={on}
+                            disabled={filterBusy || !filterState}
+                            onClick={() => toggleBlockType(key)}
+                          >
+                            {BLOCK_TYPE_LABELS[key] ?? key}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="set-row set-row-col">
+                    <span className="set-k">屏蔽词</span>
+                    <textarea
+                      className="set-ta"
+                      rows={5}
+                      placeholder={"每行一条，按 Lua pattern 匹配\n例如：\n广告\n%d+集\n%s*第%s*%d+%s*集"}
+                      value={filterText}
+                      disabled={filterBusy || !filterState}
+                      onChange={(e) => setFilterText(e.target.value)}
+                      onBlur={() => {
+                        const next = filterText.trim();
+                        const cur = (filterState?.blacklist ?? []).join("\n");
+                        if (next !== cur) void saveFilter({ blacklist: filterText });
+                      }}
+                    />
+                    <div className="set-desc">
+                      用 Lua pattern 而非正则：数字写 <code>%d</code>、空白写 <code>%s</code>、
+                      任意字符写 <code>.</code>、重复写 <code>+</code> / <code>*</code>。
+                      不支持 <code>\b</code>、<code>(?=)</code>、<code>{"{n,m}"}</code>。
+                      失去焦点时自动保存，下次加载弹幕生效。
+                    </div>
+                  </div>
+                  {filterNote && (
+                    <div className="set-row">
+                      <span className="set-desc">{filterNote}</span>
+                    </div>
+                  )}
 
                 </>
               )}

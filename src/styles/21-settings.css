@@ -879,6 +879,45 @@
   word-break: break-word;
 }
 
+/* ── [lc-2348] 弹幕屏蔽类型多选 chips ──
+   视觉取 .libf-chip 的克制基线（无底色、低透明、选中才提亮），但这里是**多选开关**
+   而非单选导航，所以选中态加 1px accent 描边 —— 只变字色在多选场景下看不出「已开」。
+   尺寸沿用设置页 --fs-ctl / --r-sm，不引入第 4 种字号。 */
+.set-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin-top: var(--sp-1);
+}
+.set-chip {
+  box-sizing: border-box;
+  border: 1px solid var(--line-strong);
+  background: none;
+  padding: 0 var(--sp-3);
+  font-family: inherit;
+  font-size: var(--fs-ctl);
+  line-height: 24px;
+  /* 用 --text-strong：设置页正文统一用这套；--ink 在全仓 CSS 里未定义
+     （47-libfilters.css 的 .libf-chip 引用了它但落空，是既有问题，不在此处跟风） */
+  color: var(--text-strong);
+  opacity: 0.8;
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  transition: opacity 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out;
+}
+.set-chip:hover:not(:disabled) {
+  opacity: 1;
+}
+.set-chip.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  opacity: 1;
+}
+.set-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* ── 手柄设置 ──
    沿用 .set-row / .set-k / .set-desc / .set-btn / .set-sw 的尺寸与变量；
    仅新增连接状态点、滑杆与固定按键表，深浅主题自动跟随。 */

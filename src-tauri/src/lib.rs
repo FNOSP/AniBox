@@ -48,6 +48,9 @@ mod config;
 mod danmaku;
 mod danmaku_shim;
 mod danmaku_sources;
+// [lc-2348] 弹幕屏蔽（类型 + 屏蔽词）读写：桌面端首个真实编辑入口，
+// 写 danmaku_block_types.json / danmaku_blacklist.txt 并热通知 Lua 重载。
+mod danmaku_filter;
 pub mod subtitle_sources;
 mod subtitle_memory;
 mod disk_cache;
@@ -4763,6 +4766,11 @@ pub fn run() {
             emby::media_server_play,
             danmaku_sources::danmaku_sources_get,
             danmaku_sources::danmaku_sources_set,
+            // [lc-2348] 弹幕屏蔽：类型（top/bottom/scroll/reverse/advanced/color）+ 屏蔽词
+            // （每行一条 Lua pattern）。写盘后 script-message 热通知运行中的会话。
+            danmaku_filter::danmaku_filter_get,
+            danmaku_filter::danmaku_filter_set,
+            danmaku_filter::danmaku_filter_count,
             subtitle_sources::subtitle_sources_get,
             subtitle_sources::subtitle_sources_set,
             subtitle_sources::subtitle_search,

@@ -1545,8 +1545,9 @@ function App() {
               <JavHubPage onBack={goHome} />
             </div>
           )}
-          {/* [lc-2354/2356/2363] Pixiv 图库页：Pixiv 排行/搜索 + 本地图片。 */}
-          {view === "gallery" && (
+          {/* [lc-2364] Pixiv 图库页**已搁置隐藏**（同 Sidebar 的入口）。
+              保留挂载代码：把下面的 `false &&` 去掉即可恢复。 */}
+          {false && view === "gallery" && (
             <div className="view-pane active view-in">
               <GalleryPage onBack={goHome} />
             </div>

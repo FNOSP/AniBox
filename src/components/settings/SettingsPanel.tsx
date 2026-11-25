@@ -2898,6 +2898,9 @@ export function SettingsPanel({
                     />
                   </div>
 
+                  {/* ── [lc-2364] Pixiv 相关设置**已随图库页一起搁置隐藏**。
+                      保留代码：去掉下面这行的 `false &&` 即可恢复（注意要包一层表达式容器）。 ── */}
+                  <div style={{ display: "none" }}>
                   {/* ── [lc-2358] Pixiv 登录（可选）──
                       排行/搜索/详情**无需登录**即可用；这里只解锁「关注新作」。
                       凭据形态是浏览器 cookie（不是 OAuth），用户从 F12 复制即可。
@@ -3016,6 +3019,7 @@ export function SettingsPanel({
                     )}
                   </div>
 
+                  </div>
                   {/* ── [lc-2353] 外部平台弹幕源 ── */}
                   <div className="set-sec">外部平台弹幕源</div>
                   <div className="set-row set-row-col">

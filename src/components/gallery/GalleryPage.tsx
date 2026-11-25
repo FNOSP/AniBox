@@ -89,6 +89,9 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
   /* ── 搜索框（顶栏）── */
   const [query, setQuery] = useState("");
 
+  /** [lc-2364] 是否配了代理（没配就不发那个必然失败的请求） */
+  const [proxyOk, setProxyOk] = useState<boolean | null>(null);
+
   /** 已应用的搜索词（Pixiv 搜索模式；空 = 走排行） */
   const [appliedTag, setAppliedTag] = useState("");
 
@@ -174,9 +177,23 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
 
     if (section === "local") {
       if (localItems.length === 0) void loadLocal("");
-    } else {
-      void loadPixiv(1, appliedTag, false);
+      return;
     }
+    // [lc-2364] Pixiv：先问后端「有没有配代理」。
+    // 实测本机到 www.pixiv.net 的 TCP 443 在 TLS 握手被 RST、QUIC 也不通，
+    // **没代理时发请求只会得到一个必然失败的报错** —— 不如在这里拦住，
+    // 直接给「去设置里填代理」的提示。
+    void (async () => {
+      let ok = false;
+      try {
+        const st = await invoke<{ proxyConfigured?: boolean }>("pixiv_auth_status");
+        ok = !!st.proxyConfigured;
+      } catch {
+        ok = false;
+      }
+      setProxyOk(ok);
+      if (ok) void loadPixiv(1, appliedTag, false);
+    })();
   }, [section, appliedTag, loadLocal, loadPixiv, localItems.length]);
 
   // [lc-2356] 打开新预览时重置多图索引（否则从上一个作品的第 3 张开始）
@@ -278,7 +295,18 @@ export function GalleryPage({ onBack }: { onBack: () => void }) {
                 实测本机对 www.pixiv.net 的 TCP 443 会在 TLS 握手阶段被重置
                 （不只是 DNS 污染），所以 Pixiv 分区在无代理环境下拿不到数据。
                 这里如实说明原因 + 给出两条出路，而不是让用户看着「加载失败」。 */}
-            {pxErr && (
+            {/* [lc-2364] 没配代理：不发请求，直接给可行动指引 */}
+            {proxyOk === false && pxItems.length === 0 && (
+              <div className="gal-unreachable">
+                <div className="gal-unreachable-t">Pixiv 需要代理</div>
+                <div className="gal-unreachable-d">
+                  本机到 pixiv 的连接在 TLS 握手阶段被中断，且 QUIC 也不可用。
+                  在设置里填好代理地址后即可加载排行与搜索。
+                  图片不需要代理（走自建镜像）。
+                </div>
+              </div>
+            )}
+            {proxyOk !== false && pxErr && (
               <div className="gal-unreachable">
                 <div className="gal-unreachable-t">Pixiv 当前无法访问</div>
                 <div className="gal-unreachable-d">

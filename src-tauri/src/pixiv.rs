@@ -610,8 +610,17 @@ pub async fn pixiv_detail(
 pub async fn pixiv_auth_status(state: tauri::State<'_, crate::AppState>) -> Result<Value, String> {
     let cfg = state.config.read().await.clone();
     let has = !cfg.pixiv_cookie.trim().is_empty();
+    // [lc-2364] 顺带回「有没有配代理」——前端据此决定**要不要真的发那个请求**。
+    // 本机实测（2026-11-25）：www.pixiv.net 的 TCP 443 在 TLS 握手被 RST、
+    // QUIC 也 ERR_QUIC_PROTOCOL_ERROR（Chrome 验证），除代理外无通路。
+    // 没配代理时直接发请求只会得到一个必然失败的报错，不如在 UI 层拦住。
+    let proxy_configured = !cfg.pixiv_proxy.trim().is_empty()
+        || ["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"]
+            .iter()
+            .any(|k| std::env::var(k).map(|v| !v.trim().is_empty()).unwrap_or(false));
     Ok(json!({
         "configured": has,
+        "proxyConfigured": proxy_configured,
         // **只回 boolean，绝不回显 cookie 本身**（连长度都不给，避免侧信道）
         "hint": if has {
             "已配置 Pixiv 登录凭据"

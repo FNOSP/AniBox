@@ -121,14 +121,21 @@ export function Sidebar({
         收藏
         <span className="side-count">{favTotal ?? ""}</span>
       </div>
-      {/* [lc-2357] Pixiv 图库（外网排行/搜索 + 本机图片墙），点开看大图。
-          位置按用户要求放在「收藏」正下方 —— 图库是高频浏览入口，仅次于收藏。 */}
-      <div className={`side-item ${activeGuid === "_gallery" ? "active" : ""}`} onClick={onOpenGallery}>
-        <span className="side-ico">
-          <IcoImageL size={15} strokeWidth={1.8} />
-        </span>{" "}
-        Pixiv
-      </div>
+      {/* [lc-2364] Pixiv 图库入口**已隐藏**（用户要求搁置）。
+          搁置原因（实测，不是猜测）：本机到 www.pixiv.net 的 TCP 443 在 TLS 握手
+          阶段被 RST、QUIC 也 ERR_QUIC_PROTOCOL_ERROR（Chrome 验证），
+          原项目 Pixiv-Shaft 靠 Cronet(QUIC) 绕过，这条路在 Rust 侧无法复用。
+          **代码全部保留**（pixiv.rs / GalleryPage / 自建镜像 pixiv.690075.xyz），
+          要恢复只需把下面这段的 `false &&` 去掉。
+          图片走自建镜像本是通的（200/761KB 真 JPEG），卡的是 API。 */}
+      {false && (
+        <div className={`side-item ${activeGuid === "_gallery" ? "active" : ""}`} onClick={onOpenGallery}>
+          <span className="side-ico">
+            <IcoImageL size={15} strokeWidth={1.8} />
+          </span>{" "}
+          Pixiv
+        </div>
+      )}
       {/* [lc-1907] JavHub：番号识别 + 番号刮削的条目页（扫描分流结果都在这） */}
       <div className={`side-item ${activeGuid === "_javhub" ? "active" : ""}`} onClick={onOpenJavHub}>
         <span className="side-ico">

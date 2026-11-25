@@ -2052,8 +2052,14 @@ struct PlayResolution {
     /// [lc-1631] 条目总时长（ms；0 = 未知）。play/info 的 item.duration（秒）折算，
     /// 年度报告按「进度 × 总时长」折算观看量时需要。
     duration_ms: u64,
-    /// [lc-1841] 服务端续播点（play/info item.ts，秒；0 = 无进度）。mpv 的 watch-later
-    /// 在 Windows 强杀退出时会丢，起播用它兜底（详情页进度条与实际起播终于同源）。
+    /// [lc-2365] 服务端续播点（`play/info` **顶层** `ts`，秒；0 = 无进度）。mpv 的
+    /// watch-later 在 Windows 强杀退出时会丢，起播用它兜底（详情页进度条与实际起播同源）。
+    ///
+    /// 层级必须是**顶层**：飞牛 `play/info` 的进度字段叫 `ts`，在 `data` 顶层；
+    /// `data.item` 里对应用途的字段叫 `watched_ts`（见参考实现
+    /// `Fntv-Plus/src/modules/fn_api/types.ts` 的 `PlayInfo.ts` 与 `item.watched_ts`）。
+    /// lc-1841 当年误读 `item.ts`（该字段不存在）→ 续播点恒为 0，只剩 watch-later 一层，
+    /// 而 watch-later 会随后端直链 URL（含 token/签名）变化而失配 → 每次重装/换链都从头播。
     pos_secs: f64,
     /// [live] 电视直播直链（`play/info.live_channels[].path`）。
     ///
@@ -2097,6 +2103,33 @@ fn pick_live_channel(info: &Value) -> Option<(String, Option<String>)> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
     Some((path, name))
+}
+
+/// [lc-2365] 从 `play/info` 响应解析**服务端续播点**（秒）。
+///
+/// 字段层级由参考实现实测确定（`Fntv-Plus/src/modules/fn_api/types.ts`）：
+///   · 进度字段是响应**顶层**的 `ts`（`PlayInfo.ts`，注释「播放进度时间戳（秒）」）；
+///   · `data.item` 里同用途的字段叫 `watched_ts`（`PlayInfo.item.watched_ts`）——
+///     **`item` 里没有 `ts`**。lc-1841 当年读的是 `item.ts`，所以续播点恒为 0，
+///     只剩 mpv 本地 watch-later 一层；而 watch-later 的键含代理直链整条 URL
+///     （token/端口/sourceIndex 都在 query 里），换机重装/换链后即失配 → 「每次从 0 开始」。
+///
+/// 取值顺序：顶层 `ts` → 顶层 `watched_ts` → `item.watched_ts`。
+/// 兼容字符串数字（个别版本把秒数写成 `"1234"`）；负数/非法一律按 0（= 无进度）。
+fn play_secs_from_play_info(info: &Value) -> f64 {
+    fn num_at(v: Option<&Value>) -> i64 {
+        let Some(v) = v else { return 0 };
+        v.as_i64()
+            .or_else(|| v.as_f64().map(|f| f as i64))
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
+            .unwrap_or(0)
+    }
+    let it = info.get("item");
+    let p = num_at(info.get("ts"))
+        .max(0)
+        .max(num_at(info.get("watched_ts")))
+        .max(num_at(it.and_then(|i| i.get("watched_ts"))));
+    p as f64
 }
 
 /// [lc-105] 解析「真正要拉流的 guid」：`POST /v/api/v1/play/info {item_guid}` → 取回 `data.guid`
@@ -2278,8 +2311,8 @@ async fn resolve_play_guid(
             // [lc-1631] 总时长（秒 → 毫秒）：年度报告折算观看量的依据。
             let dur_sec = get_n("duration");
             let duration_ms = if dur_sec > 0 { (dur_sec as u64) * 1000 } else { 0 };
-            // [lc-1841] 服务端续播点（item.ts，秒；get_n 返回整数秒，转 f64）
-            let pos_secs = get_n("ts") as f64;
+            // [lc-2365] 服务端续播点（顶层 `ts`，秒）。层级见 `PlayResolution::pos_secs` 的注释。
+            let pos_secs = play_secs_from_play_info(&info);
             let (media_guid, video_guid, audio_guid, subtitle_guid) = (
                 top_s("media_guid"),
                 top_s("video_guid"),
@@ -2782,10 +2815,15 @@ async fn play_item(
     let (kind, _player_path) = player::resolve_player(&cfg)?;
     let mut entries: Vec<PlaylistEntry> = Vec::new();
     let mut start_index = 0usize;
-    // [lc-1841] 起播集续播点：episode/list 的 ts 字段（与详情页进度条同源）；电影/拉取
-    // 失败回退 play/info 的 pos_secs。仅服务端进度兜底——本地 watch-later 仍在时 mpv
-    // 加载时会优先恢复它，两层互补。
+    // [lc-1841/lc-2365] 起播集续播点，**优先级照参考实现**
+    // （`Fntv-Plus/src/main/handlers/plugins/media.ts` 的「续播修复」段）：
+    //   ① `play/info` 顶层 `ts` —— 被点击集的真实进度（服务端只在这里回填）；
+    //   ② `episode/list` 每集的 `ts` —— 往往没回填（只有 watched 标记），仅作兜底；
+    // 顺序反过来的话，列表里那条陈旧值会顶掉真实进度。
     let mut resume_secs = 0.0f64;
+    if !is_live {
+        resume_secs = res.pos_secs;
+    }
     if res.kind == "Episode" && !res.parent_guid.is_empty() {
         match season_episode_values(&cfg, &res.parent_guid).await {
             Ok(list) if list.len() > 1 => {
@@ -2799,8 +2837,7 @@ async fn play_item(
                     if g.is_empty() {
                         continue;
                     }
-                    // [lc-1841] 记起播集的服务端进度（play/info 与 episode/list 的 guid
-                    // 通常一致，两者任一命中即可——与下方 start_index 定位同规则）
+                    // [lc-2365] 只在①取不到时才用列表里的 ts（见上方优先级说明）
                     if resume_secs <= 0.0 && (g == res.play_guid || g == guid) {
                         resume_secs = ep.get("ts").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     }
@@ -2901,8 +2938,10 @@ async fn play_item(
         }
     }
     let multi = entries.len() > 1;
-    // [lc-1841] 电影 / 整季列表没拉到：回退 play/info 的服务端进度
-    if !is_live && resume_secs <= 0.0 {
+    // [lc-2365] 走到这里说明整季列表没命中起播集（或本来就不是剧集）：resume_secs 已在
+    // 上面用 `play/info` 顶层 ts 预置为本集进度，这里只兜「电影 / 单人视频」那条路径
+    // ——它同样走 res.pos_secs，所以此处不再重复赋值，只保留一句可查的 trace。
+    if !is_live && resume_secs <= 0.0 && res.pos_secs > 0.0 {
         resume_secs = res.pos_secs;
     }
 
@@ -4922,6 +4961,41 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    /// [lc-2365] 哨兵：`play/info` 的续播点在**顶层 `ts`**，不在 `item.ts`。
+    /// 反例（读 `item.ts`）必须为 0 —— 这正是 lc-1841~4.4.0 的线上缺陷：
+    /// 服务端进度恒 0 → 只剩 watch-later 一层 → 重装/换链后「每次都从 0 开始」。
+    #[test]
+    fn play_secs_reads_top_level_ts_not_item_ts() {
+        use serde_json::json;
+        // 真实形状：进度在顶层 ts，item 里放 watched_ts（没有 ts）
+        let real = json!({
+            "guid": "ep1",
+            "ts": 734,
+            "type": "Episode",
+            "item": { "guid": "ep1", "watched_ts": 734, "duration": 1440 }
+        });
+        assert_eq!(super::play_secs_from_play_info(&real), 734.0);
+
+        // 关键反例：item 里塞 ts（lc-1841 的误读口径）不得被当作顶层进度
+        let only_item_ts = json!({ "item": { "ts": 500 } });
+        assert_eq!(
+            super::play_secs_from_play_info(&only_item_ts),
+            0.0,
+            "item.ts 不是飞牛字段，读它会静默恒 0"
+        );
+
+        // 顶层缺 ts → 退 watched_ts（顶层优先于 item）
+        let watched = json!({ "watched_ts": 120, "item": { "watched_ts": 60 } });
+        assert_eq!(super::play_secs_from_play_info(&watched), 120.0);
+        // 只有 item.watched_ts 时也能取到
+        let item_only = json!({ "item": { "watched_ts": 61 } });
+        assert_eq!(super::play_secs_from_play_info(&item_only), 61.0);
+        // 字符串数字兼容 + 负数按 0 + 空响应不炸
+        assert_eq!(super::play_secs_from_play_info(&json!({ "ts": "88" })), 88.0);
+        assert_eq!(super::play_secs_from_play_info(&json!({ "ts": -5 })), 0.0);
+        assert_eq!(super::play_secs_from_play_info(&json!({})), 0.0);
+    }
+
     /// [lc-2121] 登录失败文案：-15 必须说清「先核对密码 + 不要连点」，并附原文错误码；
     /// 不能再出现旧版那种把「密码错」与「被锁」混在一句里的模糊说法。
     #[test]

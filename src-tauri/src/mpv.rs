@@ -749,6 +749,25 @@ impl MpvSession {
         // [lc-1559] 启动即加载（可选）：命令行直接带 M3U8/URL ⇒ 无 idle 空窗，
         // 不依赖 IPC（启动头几秒 IPC 命令会卡，见 lib.rs lc-1559 注释）。
         let mut args = args.to_vec();
+        // [lc-2365] 续播存档固定放**应用数据目录**，不再用安装目录下的
+        // `portable_config/watch_later`。
+        //
+        // 为什么必须搬：mpv 默认把 watch-later 写在自己的配置目录里，而随包 mpv 的
+        // 配置目录是**安装目录内**的 `third_party/fntv-mpv/portable_config`。卸载/
+        // 覆盖安装会连同该目录一起清掉 → 续播点全丢（用户实测「重装后每次都从 0 开始」）。
+        // 用户数据目录与 tauri identifier 同源，卸载默认保留（只有安装器里勾选
+        // 「删除应用数据」才会清），符合「播放进度属于用户数据」的语义。
+        //
+        // 目录**必须预先创建**：mpv 不会自己建父目录，写不进去只会打一行
+        // `Can't save state to …` 然后静默放弃（随包 mpv v0.41 实测）。
+        {
+            let dir = crate::fnos_progress::watch_later_dir(&app);
+            let _ = std::fs::create_dir_all(&dir);
+            args.push(format!("--watch-later-dir={}", dir.to_string_lossy()));
+            // 老版本把续播点存在安装目录里：首次运行把它们迁移过来，否则老用户升级后
+            // 仍会觉得「续播没了」。只补缺失文件、绝不覆盖已有（跨版本安全）。
+            crate::fnos_progress::migrate_legacy_watch_later(&app, &dir);
+        }
         // [lc-2053] 启动窗口 = 主窗物理宽度 × 16:9 反推高度：和软件差不多大，
         // 且 16:9 片源正好铺满不留上下黑边。装不进工作区时 window_size_for 收边。
         if let Some(geo) = startup_geometry(&app, vertical) {

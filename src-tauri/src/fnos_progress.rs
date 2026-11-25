@@ -281,6 +281,61 @@ fn pending_path(app: &AppHandle) -> Option<PathBuf> {
         .map(|d| d.join("progress-pending.json"))
 }
 
+/// [lc-2365] mpv 续播存档目录（`--watch-later-dir` 用），固定落在**应用数据目录**。
+///
+/// 为什么不放在安装目录：mpv 默认的 `watch_later` 在随包 `portable_config/` 下，
+/// 而那是**安装目录**的一部分 —— 卸载/覆盖安装会被清掉，续播点随之全丢
+/// （用户实测：「重装了一下，再打开都从 0 开始」）。挪到用户数据目录后，
+/// 重装/升级不再影响续播，只有显式勾选「删除应用数据」才会清空（符合用户预期）。
+///
+/// 取不到 app_data_dir 时回落到临时目录下的固定子目录（仍好过安装目录：
+/// 至少跨版本存在，且不会污染程序文件）。
+pub fn watch_later_dir(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_data_dir()
+        .map(|d| d.join("mpv-watch-later"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("anibox-mpv-watch-later"))
+}
+
+/// [lc-2365] 把老版本存在**安装目录**里的 watch-later 一次性搬到新目录。
+///
+/// 老路径 = 随包 mpv 的 `portable_config/watch_later`（`config::mpv_portable_config_dir`）。
+/// 规则与 `config::copy_dir_missing` 一致：**只补缺失文件，绝不覆盖**——新目录里的
+/// 记录更新（用户已经开始用新位置了），老文件只可能是更早的快照。
+/// 失败静默（读不到/无权限都只是没迁移，不影响启动）。
+pub fn migrate_legacy_watch_later(app: &AppHandle, dst: &std::path::Path) {
+    let Some(base) = crate::config::mpv_portable_config_dir(app) else {
+        return;
+    };
+    let src = base.join("watch_later");
+    if !src.is_dir() || src == dst {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(&src) else { return };
+    let mut copied = 0usize;
+    for ent in entries.flatten() {
+        let from = ent.path();
+        if !from.is_file() {
+            continue;
+        }
+        let Some(name) = from.file_name() else { continue };
+        let to = dst.join(name);
+        if to.exists() {
+            continue; // 新目录已有更新记录 → 不覆盖
+        }
+        if std::fs::copy(&from, &to).is_ok() {
+            copied += 1;
+        }
+    }
+    if copied > 0 {
+        crate::libmpv::trace(&format!(
+            "[lc-2365] 续播存档迁移：{} 个条目从安装目录搬到 {}",
+            copied,
+            dst.display()
+        ));
+    }
+}
+
 /// 原子写快照（先写 .tmp 再 rename，避免强杀瞬间留下半截 JSON）。
 fn persist(app: &AppHandle, t: &Tracker) {
     if t.series_guid.is_empty() || t.pos_ms == 0 {

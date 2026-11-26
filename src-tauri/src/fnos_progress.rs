@@ -183,6 +183,9 @@ struct Tracker {
     /// speed 事件回声：套用动作本身会让 mpv 回发一条 speed 事件，若不过滤，
     /// 「key 查漏→套用 1.0」的回声会把 1.0 写进记录，**永久覆盖**用户设过的值。
     applied_speed: Option<f64>,
+    /// [lc-2366] 本次播放是否已经收到过 speed 事件（用于吃掉 mpv 启动时那次初始回抛）。
+    /// 那条回抛值恒为 mpv 的当前值（通常是 1.0），不是用户选择，绝不能写进按剧记录。
+    speed_primed: bool,
     /// 上次写 pending 文件的时间（仅内存，不参与上报语义）
     last_persist: Option<Instant>,
 }
@@ -214,6 +217,25 @@ pub fn is_applied_speed(v: f64) -> bool {
         if let Some(a) = t.applied_speed {
             return (a - v).abs() < 0.001;
         }
+    }
+    false
+}
+
+/// [lc-2366] 标记「收到过一次 speed 事件」，返回**此前**是否已经标记过。
+///
+/// 为什么需要：mpv 进程一起来，`observe_property("speed")` 会立刻回抛一次初始值 1.0。
+/// 那一条**不是用户调速**，但旧逻辑（只判回声）会把它当成用户选择写进按剧记录，
+/// 把该剧上次设的 1.25 静默覆盖成 1.0 —— 之后每集都按 1.0 套用，
+/// 就是用户报的「切下个视频又变回原 1 倍速」（`playback-speed.json` 里
+/// 一堆 `1.0` 记录就是被这条初始回抛写坏的）。
+///
+/// 返回 false = 这是本次播放**第一条** speed 事件（初始回抛）→ 调用方不要记；
+/// 返回 true = 已经过了初始那一条，之后的变化都算真实变化（用户调速或我们的回声）。
+pub fn mark_speed_seen() -> bool {
+    if let Ok(mut t) = tracker().lock() {
+        let seen = t.speed_primed;
+        t.speed_primed = true;
+        return seen;
     }
     false
 }
@@ -382,6 +404,8 @@ pub fn begin_with_speed_key(series_guid: &str, item_guid: &str, speed_key: &str)
             dur_ms: 0,
             speed: 1.0,
             applied_speed: None,
+            // [lc-2366] 每次起播重置：新 mpv 会话的第一条 speed 事件是初始回抛
+            speed_primed: false,
             last_persist: None,
         };
     }

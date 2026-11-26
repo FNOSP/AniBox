@@ -1333,12 +1333,21 @@ impl MpvSession {
                                 v.get("data").unwrap_or(&Value::Null),
                             ) {
                                 crate::fnos_progress::set_speed(d);
-                                // [lc-1845] 回声不回写：值==刚主动套用的值时，这条事件
-                                // 是我们 set 出来的（不代表用户选择），跳过 record_speed。
-                                let echo = crate::fnos_progress::is_applied_speed(d);
+                                // [lc-2366] 只记**用户**调速，两层过滤：
+                                //  ① 每条 speed 观察流的第一条是 mpv 启动时的初始回抛（1.0），
+                                //     绝不是用户选择 —— 旧逻辑把它写进按剧记录，把该剧上次设的
+                                //     1.25 覆盖成 1.0，于是「切下个视频又变回原 1 倍速」。
+                                //     `mark_speed_seen` 返回 false 就是这一条，直接跳过。
+                                //  ② 值等于我们刚 set 出去的值 → 回声，同样不记。
                                 let key = crate::fnos_progress::current_speed_key();
-                                if !echo && !key.is_empty() {
+                                if !key.is_empty()
+                                    && crate::fnos_progress::mark_speed_seen()
+                                    && !crate::fnos_progress::is_applied_speed(d)
+                                {
                                     crate::playback_speed::record_speed(&app2, &key, d);
+                                    // 记录后把「已套用值」同步成新值：否则用户从 1.5 调回 1.0
+                                    // 会被下一条事件误判成回声而漏记。
+                                    crate::fnos_progress::set_applied_speed(d);
                                 }
                             }
                         }

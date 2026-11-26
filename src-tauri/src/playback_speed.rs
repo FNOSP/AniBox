@@ -156,18 +156,31 @@ pub fn record_speed(app: &AppHandle, series_key: &str, speed: f64) {
     let generation = {
         let Ok(mut st) = store().lock() else { return };
         ensure_loaded(app, &mut st);
-        // 1.0 = 默认值：没有记录时**不落盘**（否则每部剧都会写一条无意义的 1.0）。
-        // 但如果该剧已有记录（用户从 2.0 调回 1.0），必须覆盖，否则下次仍恢复 2.0。
-        if (speed - DEFAULT_SPEED).abs() < 0.001 && !st.map.contains_key(key) {
-            return;
+        // 1.0 = 默认值：**不落盘**，并且把已有记录删掉。
+        //
+        // [lc-2366] 为什么连「已有记录」也删：1.0 与「没有记录」在播放侧语义完全等价
+        // （`speed_for` 查不到就回落 1.0），存一条 1.0 不带来任何信息，却把
+        // 「这部剧曾被 bug 写成 1.0」这种坏状态固化了 —— 用户下次进来以为有记录、
+        // 实际是原速，没法区分「真没调过」和「调过但被写坏」。
+        // 删掉后该剧等同「从未设置」，行为与旧预期一致，也顺手清掉历史脏数据。
+        if (speed - DEFAULT_SPEED).abs() < 0.001 {
+            if st.map.remove(key).is_some() {
+                st.dirty = true;
+                st.last_note = Some(Instant::now());
+                st.generation = st.generation.wrapping_add(1);
+                st.generation
+            } else {
+                return;
+            }
+        } else {
+            if !upsert(&mut st.map, key, speed) {
+                return;
+            }
+            st.dirty = true;
+            st.last_note = Some(Instant::now());
+            st.generation = st.generation.wrapping_add(1);
+            st.generation
         }
-        if !upsert(&mut st.map, key, speed) {
-            return;
-        }
-        st.dirty = true;
-        st.last_note = Some(Instant::now());
-        st.generation = st.generation.wrapping_add(1);
-        st.generation
     };
     let app = app.clone();
     std::thread::spawn(move || {
@@ -281,6 +294,19 @@ mod tests {
         assert!(is_series_key("bgm:678"));
         assert!(is_series_key("title:某部番"));
         assert!(is_series_key("guid:abc123"));
+    }
+
+    /// [lc-2366] 1.0 不落盘、且要把已有记录清掉（等同「从未设置」，顺手清历史脏数据）。
+    #[test]
+    fn default_speed_removes_record_instead_of_storing_it() {
+        let mut map: HashMap<String, f64> = HashMap::new();
+        assert!(upsert(&mut map, "parent:a", 1.25));
+        assert_eq!(lookup(&map, "parent:a"), Some(1.25));
+        // 模拟 record_speed 的 1.0 分支：删记录
+        assert_eq!(map.remove("parent:a"), Some(1.25));
+        // 删除后语义 = 没有记录（播放侧回落 1.0，与存一条 1.0 等价但更干净）
+        assert_eq!(lookup(&map, "parent:a"), None);
+        assert!(!map.contains_key("parent:a"));
     }
 
     #[test]

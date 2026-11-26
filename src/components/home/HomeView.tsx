@@ -8,6 +8,7 @@ import { ScrollRow } from "../common/ScrollRow";
 import { CarouselView } from "./CarouselView";
 import { PolarisHero } from "./PolarisHero";
 import { pick } from "../../lib/format";
+import type { HeroMeta } from "../../lib/heroMeta";
 import { imgUrl, pickLargestImg } from "../../lib/images";
 import { loadCustomCovers, resetLibraryCover, resolveDefaultCover, uploadLibraryCover } from "../../lib/libCovers";
 import { ChromeTone, Lib, MediaItem, PlayItem, PlayTarget } from "../../types";
@@ -24,6 +25,7 @@ export function HomeView({
   carousel,
   carouselBds,
   carouselLogos,
+  carouselMeta,
   carouselLogoOn,
   carouselStyle,
   launchPage,
@@ -43,6 +45,9 @@ export function HomeView({
   carousel: MediaItem[];
   carouselBds: Record<string, string>;
   carouselLogos: Record<string, string>;
+  /** [lc-2390] hero 标签行的 TMDB 补充数据（guid → 题材/状态/集数/评分）。
+   *  缺项 = 该项不显示；飞牛条目本体的年份/评分始终兜底。 */
+  carouselMeta: Record<string, HeroMeta>;
   /** [lc-1438] 「轮播透明标题」开关：关时传空表让 CarouselView 走文字标题。
    *  不在这里过滤数据（数据留着，下次打开开关无需重拉）。 */
   carouselLogoOn: boolean;
@@ -437,6 +442,7 @@ export function HomeView({
               items={carousel}
               bds={carouselBds}
               logos={carouselLogos}
+              meta={carouselMeta}
               onPlay={onPlay}
               onDetail={onOpenItem}
               onTone={onHeroTone}

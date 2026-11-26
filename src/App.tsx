@@ -54,6 +54,7 @@ import {
   userFacingError,
 } from "./lib/errors";
 import { pick } from "./lib/format";
+import { tmdbHeroMeta, MAX_GENRES, type HeroMeta } from "./lib/heroMeta";
 import { bgmImg, pickImgStr, pickLargestImg, tmdbImg } from "./lib/images";
 import { DUR, prefersReducedMotion } from "./lib/motion";
 import { DEFAULT_SETTINGS, readThemeSoundPrefs, writeThemeSoundPrefs } from "./lib/settings";
@@ -81,6 +82,9 @@ function App() {
   const [carousel, setCarousel] = useState<MediaItem[]>([]);
   const [carouselBds, setCarouselBds] = useState<Record<string, string>>({});
   const [carouselLogos, setCarouselLogos] = useState<Record<string, string>>({});
+  // [lc-2390] 首页 hero 标签行的补充数据（guid → 年份/题材/状态/集数/评分）。
+  //   TMDB 拉到后填，取不到就空着 —— 组件此时只用飞牛条目本体（年份 + 评分）。
+  const [carouselMeta, setCarouselMeta] = useState<Record<string, HeroMeta>>({});
   const [libRows, setLibRows] = useState<{ lib: Lib; items: MediaItem[]; total: number }[]>([]);
   // 首页不展示的媒体库（仅影响首页媒体库条与按库横排；localStorage 持久化）
   const [hiddenLibs, setHiddenLibs] = useState<string[]>(() => {
@@ -577,6 +581,9 @@ function App() {
       setLibs(libsArr);
       setContinueList(contArr);
       setCarousel(carList);
+      // [lc-2390] 换了一批轮播条目 → 上一批的 TMDB 标签数据必须丢掉，
+      //   否则同一 guid 重进时会短暂显示旧剧的状态/集数（数据面不串）
+      setCarouselMeta({});
       setLibRows(libsArr.map((l) => ({ lib: l, items: [], total: 0 })));
       setPage("home");
       setView("home");
@@ -671,19 +678,25 @@ function App() {
                 path: String(d?.heroBackdrop ?? ""),
                 logo: String(d?.titleLogo ?? ""),
                 logoAlt: String(d?.titleLogoAlt ?? ""),
+                // [lc-2390] 顺手取标签行数据（同一个响应，零额外请求）
+                meta: tmdbHeroMeta(d),
               }))
           )
         ).then((trs) => {
           const hi: Record<string, string> = {};
           const logos: Record<string, string> = {};
+          // [lc-2390] 只有真的解析出内容才进表 —— 空对象会把飞牛的年份/评分也顶成空
+          const metas: Record<string, HeroMeta> = {};
           for (const t of trs) {
             if (t.status !== "fulfilled") continue;
             if (t.value.path) hi[t.value.guid] = t.value.path;
             // [lc-2385] 主 logo 没有时用 alt（另一语种那张）兜住 —— 中文版常是白字，
-            // 但「有张别的」总比退成文字标题好（用户要求：至少要有，而不是为空）。
+            //   但「有张别的」总比退成文字标题好（用户要求：至少要有，而不是为空）。
             const lg = t.value.logo || t.value.logoAlt;
             if (lg) logos[t.value.guid] = lg;
+            if (Object.keys(t.value.meta).length) metas[t.value.guid] = t.value.meta;
           }
+          if (Object.keys(metas).length) setCarouselMeta((prev) => ({ ...prev, ...metas }));
           if (Object.keys(hi).length) {
             setCarouselBds((prev) => {
               const next = { ...prev };
@@ -782,6 +795,8 @@ function App() {
 
       const items: MediaItem[] = [];
       const bds: Record<string, string> = {};
+      // [lc-2390] 游客首页的标签行数据：discover 只给题材（genres），没有状态/集数
+      const guestMeta: Record<string, HeroMeta> = {};
       // [lc-1604] 两半共用 `guest-tmdb-{id}` 作 guid：同一部动画也可能同时进周热门，
       // 用 Set 记已用 id，只保留先出现的（番剧半边在前）。
       const used = new Set<number>();
@@ -804,6 +819,7 @@ function App() {
             release_date: it.date || (it.year ? `${it.year}-01-01` : ""),
           });
           if (it.backdropPath) bds[guid] = tmdbImg(it.backdropPath, "original");
+          if (it.genres?.length) guestMeta[guid] = { genres: it.genres.slice(0, MAX_GENRES) };
         }
       }
 
@@ -825,6 +841,7 @@ function App() {
             release_date: it.date || (it.year ? `${it.year}-01-01` : ""),
           });
           if (it.backdropPath) bds[guid] = tmdbImg(it.backdropPath, "original");
+          if (it.genres?.length) guestMeta[guid] = { genres: it.genres.slice(0, MAX_GENRES) };
         }
       }
 
@@ -833,6 +850,10 @@ function App() {
       setCarousel(items);
       setCarouselBds(bds);
       setCarouselLogos({});
+      // [lc-2390] 游客只填题材：discover 端点**不带 status / last_episode_to_air**
+      //   （见 types.ts 的 TmdbDiscoverItem 注释），拿不到就不编 —— 状态与集数两项
+      //   在游客首页不出现，标签行退成「年份 · 题材 · 评分」，这比编一个「连载中」诚实。
+      setCarouselMeta(guestMeta);
       setLibRows([]);
       setSum({});
       setPage("home");
@@ -1031,6 +1052,9 @@ function App() {
             carousel,
             carouselBds,
             carouselLogos,
+            // [lc-2390] 标签行数据一并快照：否则 30 分钟内重启会先退成「年份 · 剧集」，
+            //   再等 TMDB 回来才补上题材/状态/集数（视觉上闪一下）。
+            carouselMeta,
             sum,
             favTotal,
             libRows,
@@ -1042,7 +1066,7 @@ function App() {
     }, 1500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, libs, continueList, carousel, carouselBds, carouselLogos, sum, favTotal, libRows]);
+  }, [view, libs, continueList, carousel, carouselBds, carouselLogos, carouselMeta, sum, favTotal, libRows]);
 
   // [lc-118] 首页轮播的「开始播放」= **直接拉起独立 mpv 窗口**（与详情页同一个入口）。
   const [playMsg, setPlayMsg] = useState("");
@@ -1287,6 +1311,10 @@ function App() {
             setCarousel(c.carousel);
             setCarouselBds(c.carouselBds ?? {});
             setCarouselLogos(c.carouselLogos ?? {});
+            // [lc-2390] 标签行数据：老快照没有这个键 → 空表，退回飞牛口径（年份 + 评分）
+            setCarouselMeta(
+              c.carouselMeta && typeof c.carouselMeta === "object" ? c.carouselMeta : {},
+            );
             setSum(c.sum ?? {});
             setFavTotal(typeof c.favTotal === "number" ? c.favTotal : 0);
             // [lc-1660] 快照里的 favTotal 可能是旧的（甚至 0）：恢复后立刻回源刷新，
@@ -1508,6 +1536,8 @@ function App() {
                 carousel={carousel}
                 carouselBds={carouselBds}
                 carouselLogos={carouselLogos}
+                // [lc-2390] 标签行的 TMDB 补充数据（guid → 题材/状态/集数/评分）
+                carouselMeta={carouselMeta}
                 carouselLogoOn={settings.carouselLogo}
                 // [lc-2372] 首页轮播样式：misty（原有横滑，默认）/ spotlight（Polaris 放映厅）
                 carouselStyle={settings.carouselStyle ?? "misty"}
@@ -1756,6 +1786,7 @@ function App() {
             setCarousel([]);
             setCarouselBds({});
             setCarouselLogos({});
+            setCarouselMeta({});
             setLibRows([]);
             setLibs([]);
             setContinueList([]);

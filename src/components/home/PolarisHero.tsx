@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { sampleChromeTone } from "../../lib/chrome";
+import { heroMetaSegments, resolveHeroMeta, type HeroMeta } from "../../lib/heroMeta";
 import { imgUrl } from "../../lib/images";
 import { prefersReducedMotion } from "../../lib/motion";
 import { ChromeTone, MediaItem, PlayTarget } from "../../types";
@@ -43,6 +44,7 @@ export function PolarisHero({
   items,
   bds,
   logos,
+  meta,
   onPlay,
   onDetail,
   onTone,
@@ -50,6 +52,8 @@ export function PolarisHero({
   items: MediaItem[];
   bds: Record<string, string>;
   logos: Record<string, string>;
+  /** [lc-2390] 标签行的 TMDB 补充数据（题材/状态/集数）；缺项不显示，飞牛本体兜底年份+评分 */
+  meta?: Record<string, HeroMeta>;
   onPlay: (t: PlayTarget) => void;
   onDetail: (item: MediaItem) => void;
   /** 顶栏自适应反色：与 Misty 版同口径，取当前这张 hero 图采样 */
@@ -145,10 +149,9 @@ export function PolarisHero({
 
   if (n === 0) return null;
 
-  const yearOf = (it: MediaItem) => String(it.release_date || it.air_date || "").slice(0, 4);
-  const typeOf = (it: MediaItem) => ((it.type || "").toLowerCase() === "movie" ? "电影" : "剧集");
-  const ratingOf = (it: MediaItem) =>
-    it.vote_average && it.vote_average !== "0" ? Number(it.vote_average).toFixed(1) : "";
+  // [lc-2390] 标签行：年份 / 标签 / 状态（已完结·连载中）/ 集数（全 N 集·更新至 N 集）/ 评分。
+  //   顺序是用户指定的，分段逻辑与各段的取值口径都在 lib/heroMeta.ts（纯函数、可离线断言）。
+  const segments = heroMetaSegments(resolveHeroMeta(activeItem, meta?.[activeItem.guid]));
 
   const reduced = prefersReducedMotion();
 
@@ -180,15 +183,12 @@ export function PolarisHero({
           )}
         </div>
         <div className="polaris-hero-meta">
-          <span>{yearOf(activeItem) || "-"}</span>
-          <span className="polaris-hero-dot-sep" />
-          <span>{typeOf(activeItem)}</span>
-          {ratingOf(activeItem) ? (
-            <>
-              <span className="polaris-hero-dot-sep" />
-              <span className="polaris-hero-rating">★ {ratingOf(activeItem)}</span>
-            </>
-          ) : null}
+          {segments.map((s, i) => (
+            <span key={`${s.text}#${i}`} className="polaris-hero-meta-row">
+              {i > 0 && <span className="polaris-hero-dot-sep" aria-hidden="true" />}
+              <span className={s.kind === "rating" ? "polaris-hero-rating" : undefined}>{s.text}</span>
+            </span>
+          ))}
         </div>
         {activeItem.overview ? (
           <div className="polaris-hero-overview">{activeItem.overview}</div>

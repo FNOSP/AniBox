@@ -1,0 +1,533 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   [lc-2372] 首页轮播「放映厅」样式 —— Polaris Player 5.2.8 首页 Hero 还原
+
+   来源：`Polaris Player_5.2.8_x64-setup.exe` → Tauri 内嵌资源
+        `styles/main.css`（#pwHomePage 作用域）+ `js/core/09-poster-wall.js`
+        （`_0x534a8a` 渲染 / `_0x50ae63` 自动轮播 / `_0x5a6dc3` 缩略图选择器）。
+   下文凡标「Polaris @行号」的，都是 extracted main.css 的原始行号，便于逐条核对。
+
+   启用条件：设置项 `carouselStyle = "spotlight"`（默认 "misty"，即原有横滑样式）。
+   两套样式**互不影响**：本文件所有选择器都以 `.polaris-hero` 为根，
+   12-carousel.css 的 `.mist-*` 一个都不改动。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.polaris-hero {
+  /* 由组件注入：--polaris-bg-in / --polaris-copy-in / --polaris-copy-stagger /
+     --polaris-cycle（见 PolarisHero.tsx 的 CSS_VARS） */
+  position: relative;
+  /* Polaris #pwHomePage .pw-home-first-screen：满一屏，最小 720px（main.css:31787） */
+  height: 100vh;
+  min-height: 720px;
+  overflow: hidden;
+  background: #050505;
+  isolation: isolate;
+  /* 贴边：抵消 .home-full 的 --home-pad（与 .mist-banner 同一手法） */
+  margin-left: calc(-1 * var(--home-pad));
+  margin-right: calc(-1 * var(--home-pad));
+  width: calc(100% + 2 * var(--home-pad));
+}
+
+/* ── 背景双层（交叉淡入）────────────────────────────────────────────────
+   Polaris 用 `_pwHeroH1Fx` 造一个克隆层 A/B 翻转 + `pwH1BgIn/BgOut` 关键帧
+   （main.css:33869-33880）。这里用同样的双缓冲，但交给 CSS 类驱动。 */
+.polaris-hero-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background-size: cover;
+  /* Polaris main.css:31834 background-position: center 24% */
+  background-position: center 24%;
+  background-repeat: no-repeat;
+  /* Polaris main.css:31838 transform: scale(1.02) —— 常驻轻微放大，遮掩边缘 */
+  transform: scale(1.02);
+  opacity: 0;
+  will-change: opacity;
+}
+.polaris-hero-bg.is-empty {
+  opacity: 0;
+}
+/* 进场层：pwH1BgIn 1.15s cubic-bezier(0.24,0.7,0.14,1)
+   （main.css:33881 @keyframes pwH1BgIn / pwH1BgInHome） */
+.polaris-hero-bg[data-front="1"] {
+  animation: polarisBgInHome var(--polaris-bg-in) cubic-bezier(0.24, 0.7, 0.14, 1) both;
+}
+/* 退场层：pwH1BgOut 0.62s cubic-bezier(0.4,0,0.6,1)（main.css:33883） */
+.polaris-hero-bg[data-front="0"]:not(.is-empty) {
+  animation: polarisBgOutHome 620ms cubic-bezier(0.4, 0, 0.6, 1) both;
+}
+@keyframes polarisBgInHome {
+  from {
+    opacity: 0;
+    /* Polaris pwH1BgInHome：from scale(1.0761) → to scale(1.02) */
+    transform: scale(1.0761);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1.02);
+  }
+}
+@keyframes polarisBgOutHome {
+  from {
+    opacity: 1;
+    transform: scale(1.02);
+  }
+  to {
+    opacity: 0;
+    /* Polaris pwH1BgOutHome：to scale(1.0322) */
+    transform: scale(1.0322);
+  }
+}
+
+/* 背景上的暗角（Polaris main.css:31843 .pw-spotlight-bg::before） */
+.polaris-hero-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 90% 90% at 50% 50%,
+    rgba(0, 0, 0, 0) 0%,
+    rgba(0, 0, 0, 0) 60%,
+    rgba(0, 0, 0, 0.18) 100%
+  );
+  pointer-events: none;
+}
+
+/* ── 两侧/底部渐变遮罩（main.css:31848-31870）────────────────────────── */
+.polaris-hero-shade-left,
+.polaris-hero-shade-bottom {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.polaris-hero-shade-left {
+  z-index: 2;
+  background: linear-gradient(
+    to right,
+    rgba(0, 0, 0, 0.35) 0%,
+    rgba(0, 0, 0, 0.12) 20%,
+    rgba(0, 0, 0, 0.02) 40%,
+    rgba(0, 0, 0, 0) 55%
+  );
+}
+/* 底部是一条「中间最暗、两端透明」的带状阴影，让文字块浮起来又不压死画面 */
+.polaris-hero-shade-bottom {
+  z-index: 3;
+  background: linear-gradient(
+    to top,
+    rgba(10, 10, 14, 0) 0%,
+    rgba(10, 10, 14, 0) 17%,
+    rgba(0, 0, 0, 0.18) 22%,
+    rgba(0, 0, 0, 0.4) 28%,
+    rgba(0, 0, 0, 0.3) 38%,
+    rgba(0, 0, 0, 0.1) 50%,
+    rgba(0, 0, 0, 0) 62%
+  );
+}
+
+/* ── 居中信息块（main.css:31872-31960）──────────────────────────────────
+   Polaris 把标题/元信息/简介/按钮整体居中，锚在距底 clamp(180px,20vh,260px)。 */
+.polaris-hero-content {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(180px, 20vh, 260px);
+  transform: translateX(-50%);
+  max-width: min(780px, 60vw);
+  width: auto;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  z-index: 10;
+}
+
+/* 文案逐行入场：pwH1CopyIn 0.62s cubic-bezier(0.22,0.9,0.24,1) + 110ms 错峰
+   （main.css:33900-33924）。注意 Polaris 是 5 档（0.10/0.16/0.22/0.28/0.34s），
+   我们这里只有 4 个子块，按同样的 110ms 步进即可。 */
+.polaris-hero-content > * {
+  animation: polarisCopyIn var(--polaris-copy-in) cubic-bezier(0.22, 0.9, 0.24, 1) both;
+}
+.polaris-hero-content > *:nth-child(1) {
+  animation-delay: 100ms;
+}
+.polaris-hero-content > *:nth-child(2) {
+  animation-delay: calc(100ms + var(--polaris-copy-stagger));
+}
+.polaris-hero-content > *:nth-child(3) {
+  animation-delay: calc(100ms + var(--polaris-copy-stagger) * 2);
+}
+.polaris-hero-content > *:nth-child(4) {
+  animation-delay: calc(100ms + var(--polaris-copy-stagger) * 3);
+}
+@keyframes polarisCopyIn {
+  from {
+    opacity: 0;
+    transform: translateY(22px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 标题容器：Polaris main.css:31898 min-height:0; margin-bottom:14px; order:1 */
+.polaris-hero-title-wrap {
+  min-height: 0;
+  margin-bottom: 14px;
+  order: 1;
+}
+/* 大标题：main.css:31904 clamp(46px,4.2vw,84px) / 900 / line-height .9 */
+.polaris-hero-title {
+  font-family: "SF Pro Display", Impact, sans-serif;
+  font-size: clamp(46px, 4.2vw, 84px);
+  font-weight: 900;
+  line-height: 0.9;
+  letter-spacing: 0;
+  color: #fff;
+  margin: 0;
+  text-shadow: 0 4px 22px rgba(0, 0, 0, 0.58), 0 1px 2px rgba(0, 0, 0, 0.42);
+  white-space: pre-line;
+}
+/* 透明 Logo 替换文字标题（main.css:31928-31945） */
+.polaris-hero-logo {
+  display: block;
+  max-width: clamp(220px, 24vw, 440px);
+  max-height: 14vh;
+  margin: 0 auto 16px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 5px 22px rgba(0, 0, 0, 0.64));
+  user-select: none;
+}
+.polaris-hero-logo:hover {
+  transform: scale(1.04);
+  filter: drop-shadow(0 6px 42px rgba(255, 255, 255, 0.35));
+  transition: transform 0.3s ease, filter 0.3s ease;
+}
+/* 有 logo 时标题文字让位（Polaris 的 .has-logo 语义） */
+.polaris-hero-title-wrap.has-logo .polaris-hero-title {
+  display: none;
+}
+
+/* 元信息行：main.css:31932 —— 居中、gap 8px、13~16px、白 82% */
+.polaris-hero-meta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: clamp(13px, 0.8vw, 16px);
+  color: rgba(255, 255, 255, 0.82);
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  margin-bottom: 14px;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.65);
+  order: 2;
+}
+/* Polaris .pw-meta-dot：4px 圆点分隔（main.css:8747） */
+.polaris-hero-dot-sep {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.4);
+  flex-shrink: 0;
+}
+.polaris-hero-rating {
+  color: #f5c518;
+}
+
+/* 简介：main.css:31946 clamp(14px,0.9vw,18px) / 行高 1.45 / 两行截断 / 最大 85% */
+.polaris-hero-overview {
+  font-size: clamp(14px, 0.9vw, 18px);
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.72);
+  margin: 0 0 24px;
+  max-width: 85%;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.72), 0 1px 2px rgba(0, 0, 0, 0.7);
+  order: 3;
+}
+
+/* 按钮行：main.css:31960 */
+.polaris-hero-btns {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  order: 4;
+}
+
+/* 主按钮「播放」：main.css:31968 —— 白底黑字胶囊 + 弹性放大 */
+.polaris-hero-play {
+  background: #f2f2f2;
+  color: #000;
+  border: none;
+  border-radius: 9999px;
+  padding: 11px 28px;
+  min-height: 50px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  font-size: clamp(18px, 1.05vw, 21px);
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.35s ease,
+    background 0.25s ease;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28), 0 1px 3px rgba(0, 0, 0, 0.16);
+}
+.polaris-hero-play:hover {
+  background: #fff;
+  transform: scale(1.08);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.38), 0 0 36px rgba(255, 255, 255, 0.45);
+}
+.polaris-hero-play:active {
+  transform: scale(0.98);
+}
+
+/* 圆形图标按钮：main.css:31990 —— 半透明白 + 内高光 + 同款弹性 */
+.polaris-hero-icon-btn {
+  width: clamp(44px, 2.7vw, 54px);
+  height: clamp(44px, 2.7vw, 54px);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.24);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  cursor: pointer;
+  transition:
+    transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.35s ease,
+    background 0.25s ease,
+    border-color 0.25s ease;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.polaris-hero-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.28);
+  transform: scale(1.08);
+  border-color: rgba(255, 255, 255, 0.4);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+.polaris-hero-icon-btn:active {
+  transform: scale(0.94);
+}
+.polaris-hero-icon-btn svg {
+  width: 1.4vw;
+  height: 1.4vw;
+  max-width: 22px;
+  max-height: 22px;
+  stroke: currentColor;
+  stroke-width: 3;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ── 右侧竖排进度点（main.css:32042-32120）──────────────────────────────
+   Polaris 首页把圆点从横排改成右侧竖排，当前项从 8×8 拉长成 8×24 并带
+   一条自下而上、6s 走完的填充条（--pw-hero-cycle）。 */
+.polaris-hero-dots {
+  position: absolute;
+  right: clamp(24px, 2.4vw, 48px);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  z-index: 10;
+}
+.polaris-hero-dot {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: none;
+  background: rgba(255, 255, 255, 0.42);
+  border-radius: 4px;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition:
+    width 0.34s cubic-bezier(0.22, 1, 0.36, 1),
+    height 0.34s cubic-bezier(0.22, 1, 0.36, 1),
+    background 0.25s ease,
+    box-shadow 0.25s ease;
+}
+.polaris-hero-dot:hover {
+  background: rgba(255, 255, 255, 0.7);
+}
+/* 当前项：8×24 的槽，底色转半透明，让填充条盖在上面 */
+.polaris-hero-dot.is-active {
+  position: relative;
+  overflow: hidden;
+  width: 8px;
+  height: 24px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.35);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5), 0 0 10px rgba(255, 255, 255, 0.4);
+}
+/* 填充条：scaleY 0→1，steps(48) 让它在 6s 内呈"格数推进"的计时器观感 */
+.polaris-hero-dot.is-active::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: #fff;
+  transform: scaleY(0);
+  transform-origin: center bottom;
+  animation: polarisDotFill var(--polaris-cycle, 6s) steps(48) forwards;
+}
+@keyframes polarisDotFill {
+  to {
+    transform: scaleY(1);
+  }
+}
+
+.polaris-hero-dots.is-hidden {
+  /* Polaris .pw-hero-dots-hidden（main.css:8911）：选择器弹出时圆点淡出，
+     但仍留在原位承接鼠标，离开时交给同一个宽限定时器收起 */
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+/* ── 悬停缩略图选择器（main.css:8895-8925）─────────────────────────────
+   Polaris：196px 宽、16:9 小卡、右侧 3D 翻转入场（rotateY(-16deg)），
+   离场 240ms 宽限；逐张标题或 Logo 压在下缘。
+   它的 JS 把选择器的右缘对齐到圆点右缘（`right = innerWidth - dotsRect.right`），
+   在满幅 hero 里等价于跟圆点同一个 right 偏移，所以直接用 absolute 定位。 */
+.polaris-hero-picker {
+  position: absolute;
+  z-index: 12;
+  right: clamp(24px, 2.4vw, 48px);
+  top: 50%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+  width: 196px;
+  max-height: min(70vh, 620px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  opacity: 0;
+  pointer-events: none;
+  /* Polaris 的入场：右侧 3D 翻转 + 淡入 */
+  transform: translateY(-50%) perspective(1200px) rotateY(-16deg) translateX(16px) scale(0.96);
+  transform-origin: right center;
+  transition:
+    opacity 0.26s ease,
+    transform 0.36s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.polaris-hero-picker::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.polaris-hero-picker.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%) perspective(1200px) rotateY(-16deg) translateX(0) scale(1);
+}
+.polaris-hero-pick {
+  position: relative;
+  width: 196px;
+  aspect-ratio: 16 / 9;
+  border-radius: 14px;
+  overflow: hidden;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  opacity: 0.5;
+  transform: scale(0.96);
+  transition:
+    opacity 0.28s ease,
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.polaris-hero-pick:hover {
+  opacity: 1;
+  transform: scale(1.03);
+}
+.polaris-hero-pick.is-active {
+  opacity: 1;
+  transform: scale(1);
+}
+.polaris-hero-pick > img:not(.pick-logo),
+.polaris-hero-pick > .noart {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.polaris-hero-pick > .noart {
+  background: rgba(255, 255, 255, 0.08);
+}
+.polaris-hero-pick > .grad {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.82) 0%,
+    rgba(0, 0, 0, 0.1) 55%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+.polaris-hero-pick > .pick-title {
+  position: absolute;
+  left: 9px;
+  right: 9px;
+  bottom: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+.polaris-hero-pick > .pick-logo {
+  position: absolute;
+  left: 9px;
+  bottom: 7px;
+  max-height: 32%;
+  max-width: 66%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  object-position: left bottom;
+  filter: drop-shadow(0 1px 5px rgba(0, 0, 0, 0.7));
+  pointer-events: none;
+}
+
+/* ── 减弱动态效果 ───────────────────────────────────────────────────────
+   Polaris 在 prefers-reduced-motion 下关掉背景/文案/圆点动画（main.css:32117、
+   33941-33946）。这里保持一致，且填充条直接显示为满格（信息状态不能丢）。 */
+.polaris-hero.no-motion .polaris-hero-bg[data-front="1"],
+.polaris-hero.no-motion .polaris-hero-bg[data-front="0"]:not(.is-empty),
+.polaris-hero.no-motion .polaris-hero-content > *,
+.polaris-hero.no-motion .polaris-hero-dot.is-active::after {
+  animation: none;
+}
+.polaris-hero.no-motion .polaris-hero-bg[data-front="1"] {
+  opacity: 1;
+}
+.polaris-hero.no-motion .polaris-hero-dot.is-active::after {
+  transform: scaleY(1);
+}
+.polaris-hero.no-motion .polaris-hero-picker {
+  transition: opacity 0.15s linear;
+  transform: translateY(-50%);
+}
+.polaris-hero.no-motion .polaris-hero-picker.is-open {
+  transform: translateY(-50%);
+}

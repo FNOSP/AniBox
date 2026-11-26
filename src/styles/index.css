@@ -73,3 +73,6 @@
 
 /* [lc-2354] 画廊页（瀑布流 + 大图预览） */
 @import "./53-gallery.css";
+
+/* [lc-2372] 首页轮播「放映厅」样式（Polaris 还原；carouselStyle = spotlight 时生效） */
+@import "./54-polaris-hero.css";

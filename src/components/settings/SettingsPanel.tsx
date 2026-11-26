@@ -2077,6 +2077,26 @@ export function SettingsPanel({
                   </div>
                   <div className="set-row">
                     <div>
+                      <span className="set-k">首页轮播样式</span>
+                      <div className="set-desc">
+                        横滑：整屏海报左右滑动。放映厅：背景淡入切换，信息居中，右侧竖排进度点。
+                      </div>
+                    </div>
+                    <SetSelect
+                      label="首页轮播样式"
+                      value={settings.carouselStyle ?? "misty"}
+                      disabled={busy}
+                      options={[
+                        { value: "misty", label: "横滑（默认）" },
+                        { value: "spotlight", label: "放映厅" },
+                      ]}
+                      onChange={(v) =>
+                        onSettings({ carouselStyle: v as AppSettings["carouselStyle"] })
+                      }
+                    />
+                  </div>
+                  <div className="set-row">
+                    <div>
                       <span className="set-k">轮播透明标题</span>
                       <div className="set-desc">首页轮播用影片透明 Logo 代替文字标题（无 Logo 时自动用文字）</div>
                     </div>

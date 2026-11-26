@@ -551,6 +551,9 @@ export type AppSettings = {
   /** [lc-2247/lc-2293] 电影详情页版式："editorial"（双栏杂志风，默认）| "classic"（满幅头图旧版）。
    *  只对电影生效，剧集详情页不受影响。 */
   movieDetailStyle?: "classic" | "editorial";
+  /** [lc-2372] 首页轮播样式："misty"（横滑满屏海报，原有，默认）| "spotlight"（放映厅：
+   *  背景交叉淡入 + 居中信息块 + 右侧竖排进度点；复刻 Polaris Player 首页 Hero）。 */
+  carouselStyle?: "misty" | "spotlight";
   launchPage: "home" | "discover";
   autoLogin: boolean;
   /** [player] 播放器选择（默认 mpv = 随包自带）。后端始终返回，旧缓存可能缺省。 */

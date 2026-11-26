@@ -1475,6 +1475,8 @@ function App() {
                 carouselBds={carouselBds}
                 carouselLogos={carouselLogos}
                 carouselLogoOn={settings.carouselLogo}
+                // [lc-2372] 首页轮播样式：misty（原有横滑，默认）/ spotlight（Polaris 放映厅）
+                carouselStyle={settings.carouselStyle ?? "misty"}
                 // 旧 HomeView 的 launchPage 只用于「继续观看」自动滚动，该选项已移除；
                 // 启动落点改由 App 的 applyLaunchPage 直接切页，这里固定 home 以不改 HomeView。
                 launchPage="home"

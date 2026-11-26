@@ -6,6 +6,7 @@ import { PosterCard } from "../common/PosterCard";
 import { PlayGlyph } from "../common/PlayGlyph";
 import { ScrollRow } from "../common/ScrollRow";
 import { CarouselView } from "./CarouselView";
+import { PolarisHero } from "./PolarisHero";
 import { pick } from "../../lib/format";
 import { imgUrl, pickLargestImg } from "../../lib/images";
 import { loadCustomCovers, resetLibraryCover, resolveDefaultCover, uploadLibraryCover } from "../../lib/libCovers";
@@ -24,6 +25,7 @@ export function HomeView({
   carouselBds,
   carouselLogos,
   carouselLogoOn,
+  carouselStyle,
   launchPage,
   libRows,
   onOpenLib,
@@ -44,6 +46,8 @@ export function HomeView({
   /** [lc-1438] 「轮播透明标题」开关：关时传空表让 CarouselView 走文字标题。
    *  不在这里过滤数据（数据留着，下次打开开关无需重拉）。 */
   carouselLogoOn: boolean;
+  /** [lc-2372] 首页轮播样式："misty"（横滑，原有）| "spotlight"（Polaris 放映厅） */
+  carouselStyle: "misty" | "spotlight";
   /** [lc-1439] 启动页设置：`"continue"` = 首页加载后自动滚到「继续观看」 */
   launchPage: "home" | "continue";
   libRows: { lib: Lib; items: MediaItem[]; total: number }[];
@@ -198,14 +202,27 @@ export function HomeView({
     <main className={`content home-full${bareHome ? " home-bare" : ""}`} ref={homeRef}>
       {/* 全屏 hero 轮播 + 底部媒体库条（Emby 布局） */}
       <div className="hero-zone">
-        <CarouselView
-          items={carousel}
-          bds={carouselBds}
-          logos={carouselLogoOn ? carouselLogos : {}}
-          onPlay={onPlay}
-          onDetail={onOpenItem}
-          onTone={onHeroTone}
-        />
+        {/* [lc-2372] 两套轮播样式二选一：misty = 原有横滑（默认，行为不变），
+            spotlight = Polaris 放映厅样式（背景交叉淡入 + 居中信息块 + 右侧竖排点）。 */}
+        {carouselStyle === "spotlight" ? (
+          <PolarisHero
+            items={carousel}
+            bds={carouselBds}
+            logos={carouselLogoOn ? carouselLogos : {}}
+            onPlay={onPlay}
+            onDetail={onOpenItem}
+            onTone={onHeroTone}
+          />
+        ) : (
+          <CarouselView
+            items={carousel}
+            bds={carouselBds}
+            logos={carouselLogoOn ? carouselLogos : {}}
+            onPlay={onPlay}
+            onDetail={onOpenItem}
+            onTone={onHeroTone}
+          />
+        )}
         {/* [lc-2047] 一个库都没有（游客态）时整条不渲染：否则会浮着一个孤零零的
             「管理」胶囊压在 hero 上；有库但全被隐藏时仍然渲染（要靠它把库勾回来）。 */}
         {libs.length > 0 && (

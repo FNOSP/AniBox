@@ -1270,6 +1270,45 @@ fn pick_hero_path(d: &Value, list_key: &str, single_key: &str) -> String {
         .unwrap_or_else(|| s(single_key))
 }
 
+/// [lc-2390] **已播出集数**（整部剧累计）—— 首页 hero 标签「更新至 N 集」用。
+///
+/// 为什么不直接用 `number_of_episodes`：那是**全剧总集数**（含尚未播出的），
+/// 连载中的番拿它显示会把没播的说成已播，正好与「更新至」的语义相反。
+/// 为什么不只取 `last_episode_to_air.episode_number`：那是**本季**集号，
+/// 多季剧（第 2 季第 3 集）会显示成「更新至 3 集」，比实际少一整季。
+///
+/// 口径：`last_episode_to_air.season_number` 之前**各正季**（season_number ≥ 1，
+/// 特别篇 0 不计）的 `episode_count` 之和 ＋ 最新那集的集号。
+/// 拿不到 `last_episode_to_air`（未开播/电影）→ 0，前端此时不显示集数标签。
+fn aired_episodes(d: &Value) -> i64 {
+    let last = match d.get("last_episode_to_air") {
+        Some(v) if !v.is_null() => v,
+        _ => return 0,
+    };
+    let last_season = last.get("season_number").and_then(|v| v.as_i64()).unwrap_or(0);
+    let last_ep = last.get("episode_number").and_then(|v| v.as_i64()).unwrap_or(0);
+    if last_season <= 0 || last_ep <= 0 {
+        return 0;
+    }
+    let before: i64 = d
+        .get("seasons")
+        .and_then(|s| s.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| {
+                    let n = s.get("season_number").and_then(|v| v.as_i64()).unwrap_or(0);
+                    // 特别篇（0）不计入正片集数；最新季及之后也不计（后者靠 last_ep 表示）
+                    if n <= 0 || n >= last_season {
+                        return None;
+                    }
+                    s.get("episode_count").and_then(|v| v.as_i64())
+                })
+                .sum()
+        })
+        .unwrap_or(0);
+    before + last_ep
+}
+
 /// [lc-2385] 从 `images.logos` 里挑标题 Logo，返回 `(primary, alt)`。
 ///
 /// 排序口径（沿用 lc-2247 的原始设计，本函数只是把它抽出来）：
@@ -1547,6 +1586,9 @@ pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
         "status": s("status"),
         "seasons": d.get("number_of_seasons").and_then(|v| v.as_i64()).unwrap_or(0),
         "episodes": d.get("number_of_episodes").and_then(|v| v.as_i64()).unwrap_or(0),
+        // [lc-2390] 已播出集数（整部剧累计，不含未播）：首页 hero 标签「更新至 N 集」用。
+        //   0 = 未开播/拿不到 last_episode_to_air，前端据此不显示集数标签。
+        "airedEpisodes": if mt == "tv" { aired_episodes(&d) } else { 0 },
         "rating": d.get("vote_average").and_then(|v| v.as_f64()).unwrap_or(0.0),
         "votes": d.get("vote_count").and_then(|v| v.as_i64()).unwrap_or(0),
         "popularity": d.get("popularity").and_then(|v| v.as_f64()).unwrap_or(0.0),
@@ -2336,7 +2378,10 @@ fn parse_ymd(s: &str) -> Option<(i64, u32, u32)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{auth_params, get_json, pick_hero_path, pick_title_logos, quarter_bounds, today_ymd, DEFAULT_ENDPOINTS};
+    use super::{
+        aired_episodes, auth_params, get_json, pick_hero_path, pick_title_logos, quarter_bounds, today_ymd,
+        DEFAULT_ENDPOINTS,
+    };
     use serde_json::json;
 
     /// [lc-1433] 高清图挑选规则（**离线、零网络**）：必须按**面积**挑最大，而不是取首位。
@@ -2429,6 +2474,44 @@ mod tests {
             {"file_path": "/zh-big.png", "iso_639_1": "zh", "width": 800, "height": 160}
         ]}});
         assert_eq!(pick_title_logos(&d).0, "/zh-big.png");
+    }
+
+    /// [lc-2390] **已播出集数**口径：多季要累加前面各季，绝不只取本季集号。
+    /// 这条是「更新至 N 集」的全部正确性来源，必须离线钉死（真机验证要联网 + 密钥）。
+    #[test]
+    fn aired_episodes_accumulates_previous_seasons() {
+        // 单季连载中：第 1 季播到第 7 集 → 7（不是总集数 12）
+        let d = json!({
+            "number_of_episodes": 12,
+            "seasons": [{"season_number": 1, "episode_count": 12}],
+            "last_episode_to_air": {"season_number": 1, "episode_number": 7}
+        });
+        assert_eq!(aired_episodes(&d), 7, "连载中应报已播集数，而不是全剧总集数");
+
+        // 多季：第 1 季 12 集已完结 + 第 2 季播到第 3 集 → 15（只取 3 是本季口径，错）
+        let d = json!({
+            "seasons": [
+                {"season_number": 1, "episode_count": 12},
+                {"season_number": 2, "episode_count": 12}
+            ],
+            "last_episode_to_air": {"season_number": 2, "episode_number": 3}
+        });
+        assert_eq!(aired_episodes(&d), 15);
+
+        // 特别篇（season_number 0）不计入正片累计
+        let d = json!({
+            "seasons": [
+                {"season_number": 0, "episode_count": 3},
+                {"season_number": 1, "episode_count": 13}
+            ],
+            "last_episode_to_air": {"season_number": 2, "episode_number": 2}
+        });
+        assert_eq!(aired_episodes(&d), 15, "特别篇不应算进正片集数");
+
+        // 未开播 / 电影 / 字段缺失 → 0（前端据此不显示集数标签，绝不显示「更新至 0 集」）
+        assert_eq!(aired_episodes(&json!({"last_episode_to_air": null})), 0);
+        assert_eq!(aired_episodes(&json!({})), 0);
+        assert_eq!(aired_episodes(&json!({"last_episode_to_air": {"season_number": 1}})), 0);
     }
 
     /// [lc-2385] 没有中文 logo 时**必须退回其它语种**，绝不能返回空（「至少要有」）。

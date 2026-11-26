@@ -454,12 +454,20 @@
   display: none;
 }
 
-/* 元信息行：main.css:31932 —— 居中、gap 8px、13~16px、白 82% */
+/* 元信息行：main.css:31932 —— 居中、gap 8px、13~16px、白 82%
+   [lc-2390] 标签行由 2 项扩到 5 项（年份/标签/状态/集数/评分）。加 flex-wrap 的
+   实测依据（1600/1280/900/760/600 五档下 wrap 与 nowrap **完全一致**，都单行不溢出；
+   只有窄到 520/440/380/320 才见差别）：
+     · nowrap 时标签行横向撑出信息块 13 / 37 / 55 / 73 px（两侧文字被裁掉）；
+     · wrap 时折成 2 行、右溢 ≤ 0。
+   max-width:100% 与之配套：换行只能发生在信息块自己的宽度内。 */
 .polaris-hero-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 8px;
+  row-gap: 6px;
   font-size: clamp(13px, 0.8vw, 16px);
   color: rgba(255, 255, 255, 0.82);
   font-weight: 500;
@@ -467,6 +475,14 @@
   margin-bottom: 14px;
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.65);
   order: 2;
+  max-width: 100%;
+}
+/* 每段 =「圆点 + 文本」一个不可分单元：换行时圆点不会被孤零零留在行尾/行首 */
+.polaris-hero-meta-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
 }
 /* Polaris .pw-meta-dot：4px 圆点分隔（main.css:8747） */
 .polaris-hero-dot-sep {

@@ -27,6 +27,86 @@
   width: calc(100% + 2 * var(--home-pad));
 }
 
+/* ── 首屏布局：继续观看叠在 hero 底部 + 媒体库下沉 ──────────────────────
+   [lc-2377] 对照 Polaris 首页首屏：
+     · `#pwHomePage .pw-content-area` 绝对定位在首屏下缘
+       `bottom: clamp(34px,5.4vh,70px)`（main.css:30678-30688），里面放「继续观看」横排；
+     · 首屏信息块 meanwhile 被抬到 `bottom: clamp(180px,20vh,260px)` 避让（见下方
+       .home-spotlight .polaris-hero-content）；
+     · 媒体库（对应它的「正在追剧 / 热门影片」）留在首屏之外的下方滚动区。
+   本文件只改「新样式」这一条链路：所有规则都挂在 .home-spotlight 下，
+   .mist-* 与老样式的位置一行不动。 */
+
+/* hero 底部要留出继续观看那一层的高度，否则它们会压在海报信息块上。
+   值取 Polaris 的避让区间上抬：信息块原来 bottom 260px 上限，加了继续观看后
+   再抬 ~90px，保证两块之间始终有气口。 */
+.home-spotlight .polaris-hero-content {
+  bottom: clamp(240px, 28vh, 340px);
+}
+
+/* 首屏舞台：只包 hero + 继续观看，高度恒等于 hero 本身。
+   继续观看绝对定位贴它的底边 ⇒ 基准永远是首屏底边，不会被下面的媒体库条带偏。 */
+.home-spotlight .hero-stage {
+  position: relative;
+}
+
+/* 继续观看：绝对定位贴首屏下缘，与 Polaris `.pw-content-area` 同一条基准。
+   定位祖先是上面的 .hero-stage（高度 = hero）。 */
+.home-spotlight .home-sec-hero {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: clamp(28px, 5.4vh, 64px);
+  z-index: 30;
+  margin: 0;
+  padding: 0 var(--home-pad);
+  /* 只有卡片可点：这一层横跨整个 hero 下缘，整层可点会挡住海报 */
+  pointer-events: none;
+}
+.home-spotlight .home-sec-hero > * {
+  pointer-events: auto;
+}
+/* 首屏内的区块标题：白字 + 轻投影（底图是海报，深色字看不清） */
+.home-spotlight .home-sec-hero .section-head h3 {
+  color: #fff;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+}
+/* 卡片下的文字同理 */
+.home-spotlight .home-sec-hero .card-title {
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
+}
+.home-spotlight .home-sec-hero .card-sub {
+  color: rgba(255, 255, 255, 0.62);
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.7);
+}
+/* 横排在首屏里不需要底部留白（它下面就是首屏底边）。ScrollRow 的根是 .srow，
+   横向轨道是 .hscroll（见 components/common/ScrollRow.tsx:74/80）。 */
+.home-spotlight .home-sec-hero .srow {
+  padding-bottom: 0;
+}
+
+/* 媒体库条下沉后的形态：静态流式区块，不再是绝对定位的浮层。
+   `.lib-strip` 的绝对定位只对老样式（浮在 hero 底部）成立，这里覆盖回来。
+   它与 hero 同处 .hero-zone 内 —— 改成 static 后自然排在 hero 之后，
+   正好是 Polaris「媒体库不进首屏」的形态，不需要挪动 DOM 层级。 */
+.lib-strip.lib-strip-detached {
+  position: static;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  z-index: auto;
+  /* Polaris 首屏之后的区块有上间距；30px 与 .home-sec 的上间距同档，
+     避免媒体库条直接贴住首屏底边。 */
+  margin: 30px 0 8px;
+  padding-bottom: 4px;
+}
+
+/* 裸首页（游客态）：只有 hero，没有继续观看也没有媒体库 —— 保持原样不额外加高 */
+.home-spotlight.home-bare .polaris-hero {
+  min-height: 100vh;
+}
+
 /* ── 背景双层（交叉淡入）────────────────────────────────────────────────
    Polaris 用 `_pwHeroH1Fx` 造一个克隆层 A/B 翻转 + `pwH1BgIn/BgOut` 关键帧
    （main.css:33869-33880）。这里用同样的双缓冲，但交给 CSS 类驱动。 */

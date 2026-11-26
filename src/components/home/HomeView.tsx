@@ -198,135 +198,15 @@ export function HomeView({
     }
   };
 
-  return (
-    <main className={`content home-full${bareHome ? " home-bare" : ""}`} ref={homeRef}>
-      {/* 全屏 hero 轮播 + 底部媒体库条（Emby 布局） */}
-      <div className="hero-zone">
-        {/* [lc-2372] 两套轮播样式二选一：misty = 原有横滑（默认，行为不变），
-            spotlight = Polaris 放映厅样式（背景交叉淡入 + 居中信息块 + 右侧竖排点）。 */}
-        {carouselStyle === "spotlight" ? (
-          <PolarisHero
-            items={carousel}
-            bds={carouselBds}
-            logos={carouselLogoOn ? carouselLogos : {}}
-            onPlay={onPlay}
-            onDetail={onOpenItem}
-            onTone={onHeroTone}
-          />
-        ) : (
-          <CarouselView
-            items={carousel}
-            bds={carouselBds}
-            logos={carouselLogoOn ? carouselLogos : {}}
-            onPlay={onPlay}
-            onDetail={onOpenItem}
-            onTone={onHeroTone}
-          />
-        )}
-        {/* [lc-2047] 一个库都没有（游客态）时整条不渲染：否则会浮着一个孤零零的
-            「管理」胶囊压在 hero 上；有库但全被隐藏时仍然渲染（要靠它把库勾回来）。 */}
-        {libs.length > 0 && (
-          <div className="lib-strip">
-            {shownLibs.map((lib) => {
-              // [library-cover] 优先级：自定义封面 → 最新条目横图 → 库自带横图 → 库海报。
-              const cover =
-                customCovers[lib.guid] ||
-                defaultCovers[lib.guid] ||
-                pickLargestImg(lib.backdrops) ||
-                (lib.posters && lib.posters[0]) ||
-                "";
-              return (
-                <div key={lib.guid} className="lib-strip-card" onClick={() => onOpenLib(lib)}>
-                  <div className="lsc-bg">
-                    {cover ? (
-                      <img src={imgUrl(cover)} loading="lazy" alt={lib.title} />
-                    ) : (
-                      <div className="poster-empty"><IcoClapL size={22} strokeWidth={1.8} /></div>
-                    )}
-                  </div>
-                  <div className="lsc-shade" />
-                  <div className="lsc-title">{lib.title}</div>
-                  <div className="lsc-cat">{lib.category}</div>
-                  <button
-                    type="button"
-                    className="lsc-cover"
-                    title={coverBusy === lib.guid ? "上传中…" : "更换封面"}
-                    disabled={coverBusy === lib.guid}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      pickCover(lib.guid);
-                    }}
-                  >
-                    <IcoImagePlusL size={13} strokeWidth={1.8} />
-                  </button>
-                  {customCovers[lib.guid] && (
-                    <button
-                      type="button"
-                      className="lsc-cover lsc-cover-reset"
-                      title="恢复默认封面"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void restoreDefaultCover(lib.guid);
-                      }}
-                    >
-                      <IcoRotateL size={13} strokeWidth={1.8} />
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="lsc-hide"
-                    title="首页不展示该库"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onToggleHiddenLib(lib.guid);
-                    }}
-                  >
-                    <IcoXL size={13} strokeWidth={1.8} />
-                  </button>
-                </div>
-              );
-            })}
-            <div
-              className={`lsc-manage ${shownLibs.length === 0 ? "always" : ""}`}
-              title="管理首页媒体库展示"
-              onClick={() => setManageOpen((v) => !v)}
-            >
-              <IcoGearL size={15} strokeWidth={1.8} /> 管理
-            </div>
-          </div>
-        )}
-        {/* [library-cover] 隐藏的文件选择器：卡片上的「更换封面」按钮触发 */}
-        <input
-          ref={coverInputRef}
-          type="file"
-          accept="image/*"
-          style={{ display: "none" }}
-          onChange={onCoverFile}
-        />
-        {manageOpen && (
-          <>
-            <div className="lsc-pop-mask" onClick={() => setManageOpen(false)} />
-            <div className="lsc-pop">
-              <div className="lsc-pop-head">首页媒体库展示</div>
-              {libs.map((lib) => (
-                <label key={lib.guid} className="lsc-pop-row">
-                  <input
-                    type="checkbox"
-                    checked={!hiddenLibs.includes(lib.guid)}
-                    onChange={() => onToggleHiddenLib(lib.guid)}
-                  />
-                  <span>{lib.title}</span>
-                  <span className="lsc-pop-cat">{lib.category}</span>
-                </label>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* 继续观看 */}
-      {continueList.length > 0 && (
-        <section className="home-sec">
+  /** [lc-2377] 「继续观看」区块。两种轮播样式位置不同：
+   *  · heroMode = true  —— 叠在 hero 首屏底部（Polaris 的 .pw-content-area 形态），
+   *    自身由 CSS 绝对定位吸附到 hero 底边，所以调用点必须在 .hero-zone 内部。
+   *  · heroMode = false —— 常规流式区块，紧跟 hero 之后（原有位置，行为不变）。
+   */
+  const continueSection = (heroMode: boolean) => {
+    if (continueList.length === 0) return null;
+    return (
+      <section className={`home-sec${heroMode ? " home-sec-hero" : ""}`}>
           <div className="section-head">
             <h3>继续观看</h3>
           </div>
@@ -439,8 +319,159 @@ export function HomeView({
               );
             })}
           </ScrollRow>
-        </section>
-      )}
+      </section>
+    );
+  };
+
+  return (
+    <main
+      className={`content home-full${bareHome ? " home-bare" : ""}${
+        carouselStyle === "spotlight" ? " home-spotlight" : ""
+      }`}
+      ref={homeRef}
+    >
+      {/* 全屏 hero 轮播 + 底部媒体库条（Emby 布局） */}
+      <div className="hero-zone">
+        {/* [lc-2372] 两套轮播样式二选一：misty = 原有横滑（默认，行为不变），
+            spotlight = Polaris 放映厅样式（背景交叉淡入 + 居中信息块 + 右侧竖排点）。
+            [lc-2377] 新样式标题**默认走 Logo**（Polaris 的 Hero 就是「有 logo 用 logo，
+            没有才退回文字」），不受「轮播透明标题」开关影响 —— 那个开关是给原横滑样式
+            的选项，两套样式各按自己的默认走。 */}
+        {carouselStyle === "spotlight" ? (
+          /* [lc-2377] 首屏舞台：把 hero 与「继续观看」包在一起，形成一个**只含首屏高度**
+             的定位上下文。为什么必须单独包一层：继续观看是绝对定位、贴首屏底边的，
+             如果它的定位祖先直接用 .hero-zone，那么同在 .hero-zone 里的媒体库条
+             （新样式下是 static 流式块）会把 .hero-zone 撑高，`bottom` 基准就跟着
+             下移，继续观看会被顶到首屏之外（实测 -109px）。包一层后基准恒等于 hero 高度。 */
+          <div className="hero-stage">
+            <PolarisHero
+              items={carousel}
+              bds={carouselBds}
+              logos={carouselLogos}
+              onPlay={onPlay}
+              onDetail={onOpenItem}
+              onTone={onHeroTone}
+            />
+            {continueSection(true)}
+          </div>
+        ) : (
+          <CarouselView
+            items={carousel}
+            bds={carouselBds}
+            logos={carouselLogoOn ? carouselLogos : {}}
+            onPlay={onPlay}
+            onDetail={onOpenItem}
+            onTone={onHeroTone}
+          />
+        )}
+        {/* [lc-2047] 一个库都没有（游客态）时整条不渲染：否则会浮着一个孤零零的
+            「管理」胶囊压在 hero 上；有库但全被隐藏时仍然渲染（要靠它把库勾回来）。
+            [lc-2377] 新样式给它加 `.lib-strip-detached`：CSS 把它从「浮在 hero 底部」
+            改成「hero 之后的静态区块」（position/bottom/z-index 全部归零），
+            这样不必挪动 DOM 层级（它和 hero 同处 hero-zone 内，改成 static 后
+            自然排在 hero 之后，就是 Polaris「媒体库不进首屏」的形态）。 */}
+        {libs.length > 0 && (
+          <div className={`lib-strip${carouselStyle === "spotlight" ? " lib-strip-detached" : ""}`}>
+            {shownLibs.map((lib) => {
+              // [library-cover] 优先级：自定义封面 → 最新条目横图 → 库自带横图 → 库海报。
+              const cover =
+                customCovers[lib.guid] ||
+                defaultCovers[lib.guid] ||
+                pickLargestImg(lib.backdrops) ||
+                (lib.posters && lib.posters[0]) ||
+                "";
+              return (
+                <div key={lib.guid} className="lib-strip-card" onClick={() => onOpenLib(lib)}>
+                  <div className="lsc-bg">
+                    {cover ? (
+                      <img src={imgUrl(cover)} loading="lazy" alt={lib.title} />
+                    ) : (
+                      <div className="poster-empty"><IcoClapL size={22} strokeWidth={1.8} /></div>
+                    )}
+                  </div>
+                  <div className="lsc-shade" />
+                  <div className="lsc-title">{lib.title}</div>
+                  <div className="lsc-cat">{lib.category}</div>
+                  <button
+                    type="button"
+                    className="lsc-cover"
+                    title={coverBusy === lib.guid ? "上传中…" : "更换封面"}
+                    disabled={coverBusy === lib.guid}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      pickCover(lib.guid);
+                    }}
+                  >
+                    <IcoImagePlusL size={13} strokeWidth={1.8} />
+                  </button>
+                  {customCovers[lib.guid] && (
+                    <button
+                      type="button"
+                      className="lsc-cover lsc-cover-reset"
+                      title="恢复默认封面"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void restoreDefaultCover(lib.guid);
+                      }}
+                    >
+                      <IcoRotateL size={13} strokeWidth={1.8} />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="lsc-hide"
+                    title="首页不展示该库"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleHiddenLib(lib.guid);
+                    }}
+                  >
+                    <IcoXL size={13} strokeWidth={1.8} />
+                  </button>
+                </div>
+              );
+            })}
+            <div
+              className={`lsc-manage ${shownLibs.length === 0 ? "always" : ""}`}
+              title="管理首页媒体库展示"
+              onClick={() => setManageOpen((v) => !v)}
+            >
+              <IcoGearL size={15} strokeWidth={1.8} /> 管理
+            </div>
+          </div>
+        )}
+        {/* [library-cover] 隐藏的文件选择器：卡片上的「更换封面」按钮触发 */}
+        <input
+          ref={coverInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: "none" }}
+          onChange={onCoverFile}
+        />
+        {manageOpen && (
+          <>
+            <div className="lsc-pop-mask" onClick={() => setManageOpen(false)} />
+            <div className="lsc-pop">
+              <div className="lsc-pop-head">首页媒体库展示</div>
+              {libs.map((lib) => (
+                <label key={lib.guid} className="lsc-pop-row">
+                  <input
+                    type="checkbox"
+                    checked={!hiddenLibs.includes(lib.guid)}
+                    onChange={() => onToggleHiddenLib(lib.guid)}
+                  />
+                  <span>{lib.title}</span>
+                  <span className="lsc-pop-cat">{lib.category}</span>
+                </label>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* [lc-2377] 原有样式（misty）：继续观看紧跟 hero 之后，位置与加入新样式前完全一致。
+          新样式的那一份已叠进首屏底部（上面 spotlight 分支里的 continueSection(true)）。 */}
+      {carouselStyle !== "spotlight" && continueSection(false)}
 
       {/* 按库顺序的剧集横排（隐藏的库不展示） */}
       {libRows

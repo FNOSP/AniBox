@@ -213,49 +213,26 @@
   gap: clamp(14px, 1.2vw, 24px);
 }
 
-/* ── [lc-2386] 第二屏：媒体库条 + 滚动吸附 ────────────────────────────────
-   用户要求：媒体库恢复显示，作为**第二屏的第一条**，并做滚动吸附。
+/* ── [lc-2388] 首屏之后的媒体库条（**不做滚动吸附**）─────────────────────
+   历史：lc-2386 加过 scroll-snap，lc-2387 去掉「独占一屏」，lc-2388 用户明确
+   「不弄吸附了」⇒ 这里把 snap 相关规则全部移除，只保留布局。
 
-   为什么需要吸附：首屏是 100vh 的 hero，往下滚一点点就会看到「继续观看叠在
-   首屏底部 + 媒体库条'] 各露出一小部分」的尴尬中间态。加 scroll-snap 后，
-   要么停在首屏（完整 hero），要么直接吸附到第二屏顶部（媒体库条对齐视口顶），
-   中间态不会停留。
-
-   实现要点：
-     · 吸附容器必须是**真正的滚动容器** = `.content.home-full`（它有
-       overflow-y:auto，见 06-content.css:9）；在子元素上写 scroll-snap-type 无效。
-     · 每个吸附点（首屏 & 第二屏）要 `scroll-snap-align: start` + `scroll-snap-stop: always`
-       —— 后者防止快滑时一帧跨过多屏。
-     · 第二屏高度取 `100vh - 顶栏`，否则「第二屏顶部对齐」后底部会差一截。 */
-.home-spotlight {
-  scroll-snap-type: y proximity;
-  /* 吸附动画由浏览器按惯性处理；proximity 而不是 mandatory：内容比两屏长得多，
-     mandatory 会在每次滚到任意位置都强行回弹，反而碍事。 */
-}
-/* 首屏：hero 本身就是一个吸附点 */
-.home-spotlight .hero-stage {
-  scroll-snap-align: start;
-  scroll-snap-stop: always;
-}
-/* [lc-2387] 媒体库条区块：插在**第一个库横排的标题之前**，高度由内容决定。
-   上一版给它 min-height:100vh，而媒体库往往只有两三张卡 ⇒ 一大片纯黑
-   （用户截图报障「这一块黑的几个意思」）。 */
+   布局要求（用户）：媒体库条插在第一个库横排之前，标题与下方「番剧」等区块
+   完全一致（同字号、同颜色、同上下间距），并与第一个库横排之间留出合理间隔。 */
 .home-spotlight .lib-screen {
-  /* 它已经在 .home-sec（有 30px 上间距）内部，这里只补内部气口 */
-  margin-bottom: 22px;
-  /* 仍是吸附点：滚到这里停稳时，「媒体库 + 第一个库横排」一起进视野 */
-  scroll-snap-align: start;
+  /* 与 .home-sec 的区块节奏对齐：上下各 26/16 的默认节奏已经在 .section-head 里，
+     这里只负责「媒体库区块」与「下方第一个库横排」之间的气口 */
+  margin: 0 0 30px;
 }
-/* 区块标题与下方各库横排保持一致 */
+/* 标题：**完全复用**下方各库横排的样式（不覆盖 font-size/color），
+   只把默认的上间距归零 —— 它已经在首屏之后，不需要再来一次区块间距。
+   ⚠ 特异性：下方 `.home-sec .section-head` 是 (0,2,0)，本规则 (0,3,0) 高于它，
+   所以能覆盖其 margin；但**不覆盖**字号/颜色/字重 —— 那三样要跟「番剧」完全一致。 */
 .home-spotlight .lib-screen .section-head {
-  margin: 0 0 14px;
+  margin: 0 0 16px;
   padding: 0;
 }
-.home-spotlight .lib-screen .section-head h3 {
-  font-size: clamp(16px, 1.15vw, 20px);
-  color: #fff;
-}
-/* 媒体库条本身：从「绝对定位浮层」改成这一屏里的正常流 */
+/* 媒体库条本身：从「绝对定位浮层」改成正常流 */
 .home-spotlight .lib-strip.lib-strip-block {
   /* 覆盖 `.lib-strip` 的绝对定位（那是老样式浮在 hero 底部的形态） */
   position: static;
@@ -267,9 +244,26 @@
   padding: 0;
   width: auto;
 }
-/* 第二屏里的媒体库卡片保持原有尺寸（这里只调整容器的布局角色） */
+/* 媒体库卡片保持原有尺寸（这里只调整容器的布局角色） */
 .home-spotlight .lib-strip.lib-strip-block .lib-strip-card {
   flex: 0 0 auto;
+}
+/* [lc-2389] 「管理」胶囊的反色：`.lsc-manage` 原本是给**压在暗色 hero 图上**的
+   浮层设计的（白字 + 白虚线边 + 5% 白底，见 13-home-layout.css:169-195）。
+   但新样式的媒体库条在浅色内容区里，白字白边直接糊成一片（用户报「反色不对」）。
+   这里换成主题变量：边框用 --line-strong、文字用 --muted、底用 --ph-bg，
+   与页面里其它次要按钮同色系；悬停时提亮到主文字色。 */
+.home-spotlight .lib-strip.lib-strip-block .lsc-manage {
+  border-color: var(--line-strong);
+  background: var(--ph-bg);
+  /* 用 --text 而不是 --muted：--muted 在浅色主题下与 --ph-bg 的对比度只有 2.5
+     （实测，低于 3），仍然发灰不好读。--text 两套主题都够清晰。 */
+  color: var(--text);
+}
+.home-spotlight .lib-strip.lib-strip-block .lsc-manage:hover {
+  color: var(--text);
+  background: var(--hover-strong);
+  border-color: rgb(var(--accent-rgb) / 0.45);
 }
 
 /* 裸首页（游客态）：只有 hero，没有继续观看也没有媒体库 —— 保持原样不额外加高 */

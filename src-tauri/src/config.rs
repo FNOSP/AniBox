@@ -136,6 +136,11 @@ pub struct Config {
     /// 目前只对**电影**生效，剧集详情页不受影响。纯前端开关，存这里以便重启保持。
     #[serde(default = "default_movie_detail_style")]
     pub movie_detail_style: String,
+    /// [lc-2372] 首页轮播样式："misty"（横滑满屏海报，默认，与加入前行为一致）|
+    /// "spotlight"（放映厅：背景交叉淡入 + 居中信息块 + 右侧竖排进度点；复刻 Polaris）。
+    /// 纯前端开关，存这里以便重启保持。
+    #[serde(default = "default_carousel_style")]
+    pub carousel_style: String,
     /// 启动页："home"（首页，默认）| "discover"（发现页）
     /// 历史取值 "continue" 已移除；老 config 读到后由前端归一为 home。
     #[serde(default = "default_launch_page")]
@@ -387,6 +392,12 @@ fn default_movie_detail_style() -> String {
     "editorial".into()
 }
 
+/// [lc-2372] 首页轮播样式默认值 = "misty"。
+/// 它是加入本设置项之前的唯一形态，保持默认即"老用户升级后画面零变化"。
+fn default_carousel_style() -> String {
+    "misty".into()
+}
+
 fn default_true() -> bool {
     true
 }
@@ -479,6 +490,7 @@ impl Default for Config {
             perf_mode: false,
             carousel_logo: true,
             movie_detail_style: default_movie_detail_style(),
+            carousel_style: default_carousel_style(),
             launch_page: default_launch_page(),
             bgm_token: String::new(),
             bgm_remember: true,
@@ -1311,6 +1323,20 @@ mod tests {
     #[test]
     fn default_movie_detail_style_is_editorial() {
         assert_eq!(default_movie_detail_style(), "editorial");
+    }
+
+    /// [lc-2372] 默认首页轮播样式 = misty：新增 spotlight 不改变老用户画面。
+    #[test]
+    fn default_carousel_style_is_misty() {
+        assert_eq!(default_carousel_style(), "misty");
+    }
+
+    /// [lc-2372] 老 config.json 没有 carouselStyle 键时必须能反序列化成默认值
+    /// （serde default 生效），否则升级后读配置直接失败。
+    #[test]
+    fn carousel_style_defaults_when_missing() {
+        let cfg: Config = serde_json::from_str("{}").expect("空对象应能反序列化");
+        assert_eq!(cfg.carousel_style, "misty");
     }
 
     /// [lc-2178] 皮肤值归一：clear 保留，其余非法值回落 uosc。

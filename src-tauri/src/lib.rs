@@ -257,6 +257,8 @@ async fn save_config(app: AppHandle, state: State<'_, AppState>, config: Config)
         // [lc-2293] 电影详情页版式同样只由 set_settings 修改（lc-2247 加入时漏了这条，
         // 登录页旧快照回写会把用户手选的 classic 冲回默认值）
         config.movie_detail_style = cur.movie_detail_style.clone();
+        // [lc-2372] 首页轮播样式同样只由 set_settings 修改（同上：防登录页旧快照冲掉手选值）
+        config.carousel_style = cur.carousel_style.clone();
         config.launch_page = cur.launch_page.clone();
         config.player_kind = cur.player_kind.clone();
         config.potplayer_path = cur.potplayer_path.clone();
@@ -3560,6 +3562,15 @@ async fn set_settings(
         }
         cfg.movie_detail_style = s.to_string();
     }
+    // [lc-2372] 首页轮播样式：misty（横滑，默认）| spotlight（Polaris 放映厅）。
+    // 同口径：非法值报错，不静默回落。
+    if let Some(v) = arg.get("carouselStyle") {
+        let s = v.as_str().unwrap_or("");
+        if !matches!(s, "misty" | "spotlight") {
+            return Err(format!("carouselStyle 非法：{s}（只允许 misty/spotlight）"));
+        }
+        cfg.carousel_style = s.to_string();
+    }
     if let Some(v) = arg.get("launchPage") {
         let s = v.as_str().unwrap_or("");
         // "continue" 为已移除的历史取值：老 config 仍可读取（前端归一为 home），但不再接受写入
@@ -3767,6 +3778,8 @@ async fn set_settings(
         "perfMode": cfg.perf_mode,
         "carouselLogo": cfg.carousel_logo,
         "movieDetailStyle": cfg.movie_detail_style,
+        // [lc-2372] 首页轮播样式：misty（横滑，默认）/ spotlight（Polaris 放映厅）
+        "carouselStyle": cfg.carousel_style,
         "launchPage": cfg.launch_page,
         "autoLogin": cfg.auto_login,
         "playerKind": cfg.player_kind,

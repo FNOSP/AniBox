@@ -323,14 +323,13 @@ export function HomeView({
     );
   };
 
-  /** [lc-2382] 首页媒体库条。
-   *  · floating=true  —— 浮在 hero 底部（老样式 Emby 布局，行为不变）
-   *  · floating=false —— 首屏之外的独立区块（新样式；Polaris 的媒体库在首屏之下）
+  /** [lc-2383] 首页媒体库条（只给老样式用，浮在 hero 底部）。
+   *  新样式（spotlight）**不显示媒体库条** —— 用户明确要求。
    */
-  const libStrip = (floating: boolean) => {
+  const libStrip = () => {
     if (libs.length === 0) return null;
     return (
-      <div className={`lib-strip${floating ? "" : " lib-strip-detached"}`}>
+      <div className="lib-strip">
             {shownLibs.map((lib) => {
               // [library-cover] 优先级：自定义封面 → 最新条目横图 → 库自带横图 → 库海报。
               const cover =
@@ -443,9 +442,9 @@ export function HomeView({
         )}
         {/* [lc-2047] 一个库都没有（游客态）时整条不渲染：否则会浮着一个孤零零的
             「管理」胶囊压在 hero 上；有库但全被隐藏时仍然渲染（要靠它把库勾回来）。
-            [lc-2382] 新样式**不在这里渲染**：它下沉到继续观看之后
-            （见 hero-zone 外面的 {libStrip(false)}），与 Polaris 一致。
-            老样式仍浮在 hero 底部（Emby 布局，行为不变）。 */}
+            [lc-2383] 只在老样式（misty）下渲染 —— 新样式（spotlight）不显示媒体库条
+            （用户明确要求），所以这里是条件调用，而不是给 libStrip 加参数。 */}
+        {carouselStyle !== "spotlight" && libStrip()}
         {/* [library-cover] 隐藏的文件选择器：卡片上的「更换封面」按钮触发 */}
         <input
           ref={coverInputRef}
@@ -479,9 +478,6 @@ export function HomeView({
           新样式的那一份已叠进首屏（上面 spotlight 分支里的 continueSection(true)，
           对应 Polaris `.pw-content-area` 绝对定位在首屏下缘）。 */}
       {carouselStyle !== "spotlight" && continueSection(false)}
-
-      {/* [lc-2382] 新样式：媒体库条下沉到首屏之外，排在继续观看之后 */}
-      {carouselStyle === "spotlight" && libStrip(false)}
 
       {/* 按库顺序的剧集横排（隐藏的库不展示） */}
       {libRows

@@ -414,11 +414,39 @@
   }
 }
 
-/* 标题容器：Polaris main.css:31898 min-height:0; margin-bottom:14px; order:1 */
+/* 标题容器：Polaris main.css:31898 min-height:0; margin-bottom:14px; order:1
+   [lc-2392] 元素从 div 换成 button（点标题/Logo 直达详情页），必须把原生按钮的
+   外观清掉，否则画面会变：
+     · background  —— 按钮默认有 rgba(0,0,0,0.04) 灰底，logo 底下会垫一块（实测）
+     · padding     —— 默认 8px 16px，容器从 384×126 涨到 416×142、下方内容整体位移（实测）
+     · border      —— 默认 2px outset
+     · cursor      —— 默认 default，看不出可点
+   字体那几项（font/color）留着是为了「将来往按钮里塞裸文本」时不会突然变成
+   13.33px Arial —— 当前两个分支分别是 <img> 与 <h1>，二者都自带完整字体样式，
+   所以删掉 font: inherit 现在的渲染**没有区别**（已用变异测试确认）。
+   保留它是廉价保险，不是当前渲染的成因。 */
 .polaris-hero-title-wrap {
   min-height: 0;
   margin-bottom: 14px;
   order: 1;
+  /* 原生按钮外观归零 */
+  display: block;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: center;
+  cursor: pointer;
+  /* 触屏/手柄：点按不出现蓝色高亮块（桌面 WebView2 也生效） */
+  -webkit-tap-highlight-color: transparent;
+}
+/* 键盘/手柄焦点环：给个柔和白圈，与页面其它按钮的 focus-visible 同风格。
+   只在键盘/手柄导航时出现，鼠标点击不显示（:focus-visible 的默认语义）。 */
+.polaris-hero-title-wrap:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85), 0 6px 28px rgba(0, 0, 0, 0.45);
+  border-radius: 18px;
 }
 /* 大标题：main.css:31904 clamp(46px,4.2vw,84px) / 900 / line-height .9 */
 .polaris-hero-title {

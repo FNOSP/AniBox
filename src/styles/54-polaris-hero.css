@@ -213,6 +213,71 @@
   gap: clamp(14px, 1.2vw, 24px);
 }
 
+/* ── [lc-2386] 第二屏：媒体库条 + 滚动吸附 ────────────────────────────────
+   用户要求：媒体库恢复显示，作为**第二屏的第一条**，并做滚动吸附。
+
+   为什么需要吸附：首屏是 100vh 的 hero，往下滚一点点就会看到「继续观看叠在
+   首屏底部 + 媒体库条'] 各露出一小部分」的尴尬中间态。加 scroll-snap 后，
+   要么停在首屏（完整 hero），要么直接吸附到第二屏顶部（媒体库条对齐视口顶），
+   中间态不会停留。
+
+   实现要点：
+     · 吸附容器必须是**真正的滚动容器** = `.content.home-full`（它有
+       overflow-y:auto，见 06-content.css:9）；在子元素上写 scroll-snap-type 无效。
+     · 每个吸附点（首屏 & 第二屏）要 `scroll-snap-align: start` + `scroll-snap-stop: always`
+       —— 后者防止快滑时一帧跨过多屏。
+     · 第二屏高度取 `100vh - 顶栏`，否则「第二屏顶部对齐」后底部会差一截。 */
+.home-spotlight {
+  scroll-snap-type: y proximity;
+  /* 吸附动画由浏览器按惯性处理；proximity 而不是 mandatory：内容比两屏长得多，
+     mandatory 会在每次滚到任意位置都强行回弹，反而碍事。 */
+}
+/* 首屏：hero 本身就是一个吸附点 */
+.home-spotlight .hero-stage {
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+/* 第二屏：媒体库条作为这一屏的第一个区块 */
+.home-spotlight .lib-screen {
+  /* 一屏高（扣掉顶栏 ~40px，避免底部差一截） */
+  min-height: calc(100vh - 40px);
+  box-sizing: border-box;
+  /* 通栏：抵消 .home-full 的 --home-pad */
+  margin-left: calc(-1 * var(--home-pad));
+  margin-right: calc(-1 * var(--home-pad));
+  width: calc(100% + 2 * var(--home-pad));
+  padding: 24px var(--home-pad) 12px;
+  background: #050505;
+  /* 这一条是吸附点 */
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+/* 第二屏里的媒体库标题与下方各库横排一致 */
+.home-spotlight .lib-screen .section-head {
+  margin: 0 0 14px;
+  padding: 0;
+}
+.home-spotlight .lib-screen .section-head h3 {
+  font-size: clamp(16px, 1.15vw, 20px);
+  color: #fff;
+}
+/* 媒体库条本身：从「绝对定位浮层」改成这一屏里的正常流 */
+.home-spotlight .lib-strip.lib-strip-block {
+  /* 覆盖 `.lib-strip` 的绝对定位（那是老样式浮在 hero 底部的形态） */
+  position: static;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  z-index: auto;
+  margin: 0;
+  padding: 0;
+  width: auto;
+}
+/* 第二屏里的媒体库卡片保持原有尺寸（这里只调整容器的布局角色） */
+.home-spotlight .lib-strip.lib-strip-block .lib-strip-card {
+  flex: 0 0 auto;
+}
+
 /* 裸首页（游客态）：只有 hero，没有继续观看也没有媒体库 —— 保持原样不额外加高 */
 .home-spotlight.home-bare .polaris-hero {
   min-height: 100vh;

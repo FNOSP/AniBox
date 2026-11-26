@@ -323,13 +323,15 @@ export function HomeView({
     );
   };
 
-  /** [lc-2383] 首页媒体库条（只给老样式用，浮在 hero 底部）。
-   *  新样式（spotlight）**不显示媒体库条** —— 用户明确要求。
+    /** [lc-2386] 首页媒体库条。
+   *  · floating=true  —— 浮在 hero 底部（老样式 Emby 布局，行为不变）
+   *  · floating=false —— **第二屏的第一个区块**（新样式）：外层包一屏高，
+   *    带「媒体库」区块标题，并作为 scroll-snap 的吸附点。
    */
-  const libStrip = () => {
+  const libStrip = (floating = true) => {
     if (libs.length === 0) return null;
-    return (
-      <div className="lib-strip">
+    const strip = (
+      <div className={`lib-strip${floating ? "" : " lib-strip-block"}`}>
             {shownLibs.map((lib) => {
               // [library-cover] 优先级：自定义封面 → 最新条目横图 → 库自带横图 → 库海报。
               const cover =
@@ -397,6 +399,17 @@ export function HomeView({
               <IcoGearL size={15} strokeWidth={1.8} /> 管理
             </div>
       </div>
+    );
+    // [lc-2386] 新样式：外面再包一层「一屏」，让媒体库条成为第二屏的第一个区块，
+    // 并在这一层上挂 scroll-snap 吸附点与「媒体库」区块标题。
+    if (floating) return strip;
+    return (
+      <section className="lib-screen">
+        <div className="section-head">
+          <h3>媒体库</h3>
+        </div>
+        {strip}
+      </section>
     );
   };
 
@@ -478,6 +491,11 @@ export function HomeView({
           新样式的那一份已叠进首屏（上面 spotlight 分支里的 continueSection(true)，
           对应 Polaris `.pw-content-area` 绝对定位在首屏下缘）。 */}
       {carouselStyle !== "spotlight" && continueSection(false)}
+
+      {/* [lc-2386] 新样式：媒体库条恢复显示，作为**第二屏的第一条**
+          （用户要求）。配合下方 .home-spotlight 的 scroll-snap 设置，
+          滚动时这一屏会吸附到视口顶部。 */}
+      {carouselStyle === "spotlight" && libStrip(false)}
 
       {/* 按库顺序的剧集横排（隐藏的库不展示） */}
       {libRows

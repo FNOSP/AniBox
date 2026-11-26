@@ -97,9 +97,19 @@
      进度条 height 3px。 */
 .home-spotlight .home-sec-hero .hscroll .card,
 .home-spotlight .home-sec-hero .hscroll .continue-card {
-  min-width: clamp(244px, 17.5vw, 336px);
-  width: clamp(244px, 17.5vw, 336px);
-  flex: 0 0 clamp(244px, 17.5vw, 336px);
+  /* [lc-2384] 一屏**正好完整展示 5 张卡**（用户要求：不切割、左右留白相等）。
+     原来是固定 clamp 宽度（280px@1600），5 张 + 间隙 > 可用宽度 ⇒ 第 5 张被裁。
+
+     做法：用「基准宽 = 可用宽度的 1/5」而不是等分 flex-grow ——
+       · 刚好 5 张：5 × (100% - 4×gap)/5 + 4×gap = 100%，正好铺满、左右留白相等；
+       · 少于 5 张：每张仍是 1/5 宽（不会拉得过宽），左对齐、右侧自然留白；
+       · 多于 5 张：每张保持 1/5 宽，整行溢出 ⇒ ScrollRow 的 overflow-x:auto 横向滚动，
+         不会被压扁。
+     用 flex-grow 均分做不到第 3 条（7 张会被各压到 1/7），所以改用 flex-basis。 */
+  min-width: 0;
+  width: auto;
+  flex: 0 0 calc((100% - 4 * clamp(14px, 1.2vw, 24px)) / 5);
+  max-width: 336px;
 }
 .home-spotlight .home-sec-hero .continue-card {
   position: relative;
@@ -193,16 +203,15 @@
   left: auto;
   bottom: auto;
 }
-/* 行内不需要额外底部留白（Polaris `.pw-continue-list` 的 padding 由外层给） */
+/* 行内不需要额外底部留白（Polaris `.pw-continue-list` 的 padding 由外层给）。
+   卡片间距用 Polaris `.pw-continue-list` 的 gap: clamp(14px,1.2vw,24px)。 */
 .home-spotlight .home-sec-hero .srow,
 .home-spotlight .home-sec-hero .hscroll {
   padding-bottom: 0;
 }
-
-/* 媒体库条下沉后的形态：静态流式区块，不再是绝对定位的浮层。
-   `.lib-strip` 的绝对定位只对老样式（浮在 hero 底部）成立，这里覆盖回来。
-   它与 hero 同处 .hero-zone 内 —— 改成 static 后自然排在 hero 之后，
-   正好是 Polaris「媒体库不进首屏」的形态，不需要挪动 DOM 层级。 */
+.home-spotlight .home-sec-hero .hscroll {
+  gap: clamp(14px, 1.2vw, 24px);
+}
 
 /* 裸首页（游客态）：只有 hero，没有继续观看也没有媒体库 —— 保持原样不额外加高 */
 .home-spotlight.home-bare .polaris-hero {

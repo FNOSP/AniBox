@@ -228,11 +228,14 @@
   position: absolute;
   left: 50%;
   top: 50%;
-  /* 悬停放大要带位移，否则 translate 会被 scale 覆盖掉 */
+  /* [lc-2370] 居中只放 transform，缩放走独立 `scale`（见 11-controls.css 的
+     button:active 注释）：以前 hover 把 scale 塞进 transform，加上全局
+     button:active 的 transform:scale 覆盖，按下会丢掉居中 → 按钮跳位 → 点击落空。
+     另一好处：scale 与 transform 可各自独立过渡，不会互相打断。 */
   transform: translate(-50%, -50%);
 }
 .pa-play:hover {
-  transform: translate(-50%, -50%) scale(1.05);
+  scale: 1.05;
 }
 .pa-row {
   position: absolute;

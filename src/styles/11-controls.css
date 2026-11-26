@@ -37,13 +37,24 @@ button {
   padding: var(--sp-2) var(--sp-4);
   font-size: var(--fs-ctl);
   cursor: pointer;
-  transition: background var(--dur-tap), transform var(--dur-tap);
+  /* [lc-2370] 按压反馈用独立 `scale` 属性（见下方 button:active 注释），
+     过渡里也要带上 scale，否则按下没有过渡、显得生硬。 */
+  transition: background var(--dur-tap), transform var(--dur-tap), scale var(--dur-tap);
 }
 button:hover {
   background: var(--hover-strong);
 }
+/* [lc-2370] 用独立 `scale` 属性，**不要**写 `transform: scale()`。
+   血训（用户报「点继续观看的播放按钮却进了详情页」）：
+   很多按钮靠 `transform: translate(-50%,-50%)` 绝对居中（继续观看的圆钮、
+   海报卡的圆钮等）。这条全局规则特异性 (0,0,1,1)，会覆盖掉它们写在
+   class 上的居中 transform（若那边没写 :active 片段就完全兜不住）——
+   按下瞬间按钮丢掉居中、向右下跳半个身位；真人 down/up 间隔 80~200ms 跨过这次跳动，
+   抬起时指针已在按钮外 ⇒ 浏览器按「down/up 共同祖先」派发 click ⇒ 落到卡片 ⇒ 进详情。
+   瞬时测试（elementFromPoint / 单次 click）测不出来，只有「按下→停留→抬起」能复现。
+   改用 scale 后：居中恒由 transform 负责、缩放恒由 scale 负责，互不覆盖。 */
 button:active {
-  transform: scale(0.97);
+  scale: 0.97;
 }
 .err {
   background: var(--err-bg);

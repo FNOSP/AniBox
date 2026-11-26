@@ -68,8 +68,18 @@
     inset 0 0 0 1px rgba(255, 255, 255, 0.7),
     0 6px 18px rgb(var(--shadow-rgb) / 0.24);
 }
+/* [lc-2370] 用**独立的 `scale` 属性**做按压缩放，不要写 `transform: scale()`。
+   血训（用户报「点播放却进了详情」，复现位移 21px）：
+   圆钮很多是「绝对定位 + transform:translate(-50%,-50%)」居中的（`.continue-play`
+   `.pa-play` 等）。`.pl-circle:active` 与 `.continue-play:active` 特异性完全相同
+   （0,0,2,0），而本表在 index.css 里加载更晚 ⇒ `transform: scale(.94)` 把居中位移
+   **整个覆盖**，按下瞬间圆钮向右下跳半个身位（38px → 19px）。
+   真人点击 down/up 间隔常 80~200ms，跨过这 165ms 过渡；抬起时指针已在按钮外，
+   浏览器按「down 与 up 的共同祖先」派发 click ⇒ 落到 .continue-card ⇒ 进详情页。
+   瞬时测试（elementFromPoint / page.click）测不出来，只有「按下→停留→抬起」能复现。
+   `scale` 是独立属性，与 `transform` 叠加而非覆盖，居中不受影响。 */
 .pl-circle:active {
-  transform: scale(0.94);
+  scale: 0.94;
 }
 .pl-circle:disabled {
   opacity: 0.5;

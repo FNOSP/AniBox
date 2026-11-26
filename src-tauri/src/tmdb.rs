@@ -1270,6 +1270,46 @@ fn pick_hero_path(d: &Value, list_key: &str, single_key: &str) -> String {
         .unwrap_or_else(|| s(single_key))
 }
 
+/// [lc-2385] 从 `images.logos` 里挑标题 Logo，返回 `(primary, alt)`。
+///
+/// 排序口径（沿用 lc-2247 的原始设计，本函数只是把它抽出来）：
+///   **中文优先 → 面积大优先 → vote_average 高优先**。
+///   · `primary`：观众看得懂的那张（中文有就用中文）；
+///   · `alt`：语种与 primary **不同**的一张，供详情页「中文版是白字、当前浅色主题」兜底。
+///
+/// 抽成独立函数是为了能**离线单测**：原来内联在 `tmdb_show_details` 的流程里，
+/// 没有任何测试覆盖 —— 而「TMDB 有 logo 但前端拿到空」正是用户报过的问题类型。
+fn pick_title_logos(d: &Value) -> (String, String) {
+    let mut ranked: Vec<(bool, i64, f64, String)> = Vec::new();
+    if let Some(arr) = d.pointer("/images/logos").and_then(|v| v.as_array()) {
+        for l in arr {
+            let p = l.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+            if p.is_empty() {
+                continue;
+            }
+            let is_zh = l.get("iso_639_1").and_then(|v| v.as_str()) == Some("zh");
+            let w = l.get("width").and_then(|v| v.as_i64()).unwrap_or(0);
+            let h = l.get("height").and_then(|v| v.as_i64()).unwrap_or(0);
+            let vote = l.get("vote_average").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            ranked.push((is_zh, w * h, vote, p.to_string()));
+        }
+    }
+    // 中文在前 → 面积降序 → 票数降序
+    ranked.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then(b.1.cmp(&a.1))
+            .then(b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal))
+    });
+    let primary = ranked.first().map(|x| x.3.clone()).unwrap_or_default();
+    let primary_is_zh = ranked.first().map(|x| x.0).unwrap_or(false);
+    let alt = ranked
+        .iter()
+        .find(|x| x.0 != primary_is_zh)
+        .map(|x| x.3.clone())
+        .unwrap_or_default();
+    (primary, alt)
+}
+
 #[tauri::command]
 pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
     let mt = if arg.get("mediaType").and_then(|v| v.as_str()) == Some("movie") {
@@ -1353,37 +1393,9 @@ pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
     //   · 另外保留一张英文/其它语言的，供「中文版是白字、当前是浅色主题」时兜底。
     //   实测该片的 zh logo 是白色字（430×71），直接放浅底上等于隐形，所以两种都要给前端。
     //   排序口径：中文优先 → 面积大优先 → vote_average 高优先。
-    let (title_logo, title_logo_alt) = {
-        let mut ranked: Vec<(bool, i64, f64, String)> = Vec::new();
-        if let Some(arr) = d.pointer("/images/logos").and_then(|v| v.as_array()) {
-            for l in arr {
-                let p = l.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
-                if p.is_empty() {
-                    continue;
-                }
-                let is_zh = l.get("iso_639_1").and_then(|v| v.as_str()) == Some("zh");
-                let w = l.get("width").and_then(|v| v.as_i64()).unwrap_or(0);
-                let h = l.get("height").and_then(|v| v.as_i64()).unwrap_or(0);
-                let vote = l.get("vote_average").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                ranked.push((is_zh, w * h, vote, p.to_string()));
-            }
-        }
-        // 中文在前 → 面积降序 → 票数降序
-        ranked.sort_by(|a, b| {
-            b.0.cmp(&a.0)
-                .then(b.1.cmp(&a.1))
-                .then(b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal))
-        });
-        let primary = ranked.first().map(|x| x.3.clone()).unwrap_or_default();
-        // 备选：挑**语种与 primary 不同**的第一张（中文版是白字时，切英文那张兜底）。
-        let primary_is_zh = ranked.first().map(|x| x.0).unwrap_or(false);
-        let alt = ranked
-            .iter()
-            .find(|x| x.0 != primary_is_zh)
-            .map(|x| x.3.clone())
-            .unwrap_or_default();
-        (primary, alt)
-    };
+    //   [lc-2385] 抽成独立函数 `pick_title_logos` 便于单测（原来内联在详情流程里，
+    //   挑错了只能靠真机看；而"没 logo 就空白"正是用户报的那个问题的同类）。
+    let (title_logo, title_logo_alt) = pick_title_logos(&d);
 
     // [lc-2247] 地区 / 语言（纯展示）：origin_country 取首个国家代码，original_language 原样给。
     let origin_country = d
@@ -2324,7 +2336,7 @@ fn parse_ymd(s: &str) -> Option<(i64, u32, u32)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{auth_params, get_json, pick_hero_path, quarter_bounds, today_ymd, DEFAULT_ENDPOINTS};
+    use super::{auth_params, get_json, pick_hero_path, pick_title_logos, quarter_bounds, today_ymd, DEFAULT_ENDPOINTS};
     use serde_json::json;
 
     /// [lc-1433] 高清图挑选规则（**离线、零网络**）：必须按**面积**挑最大，而不是取首位。
@@ -2394,6 +2406,53 @@ mod tests {
             ]}
         });
         assert_eq!(pick_hero_path(&d, "backdrops", "backdrop_path"), "/has-dims.jpg");
+    }
+
+    /// [lc-2385] 标题 Logo 挑选：**至少要有，不能为空**（用户明确要求）。
+    /// 起因：「冷淡的佐藤同学只对我撒娇」TMDB 明明有 logo，轮播却退成文字标题 ——
+    /// 因为原实现只认飞牛自带的 logos 字段，飞牛没有就永久空白、没有任何兜底。
+    #[test]
+    fn title_logo_prefers_zh_then_area() {
+        // 中文优先：即使英文那张更大，也选中文
+        let d = json!({"images": {"logos": [
+            {"file_path": "/en-big.png", "iso_639_1": "en", "width": 2000, "height": 400},
+            {"file_path": "/zh-small.png", "iso_639_1": "zh", "width": 430, "height": 71}
+        ]}});
+        let (primary, alt) = pick_title_logos(&d);
+        assert_eq!(primary, "/zh-small.png");
+        // alt 必须与 primary **语种不同**（供「中文版是白字、浅色主题」时兜底）
+        assert_eq!(alt, "/en-big.png");
+
+        // 同语种内按面积挑最大（把大的放后面，取首位的错误实现会失败）
+        let d = json!({"images": {"logos": [
+            {"file_path": "/zh-small.png", "iso_639_1": "zh", "width": 100, "height": 20},
+            {"file_path": "/zh-big.png", "iso_639_1": "zh", "width": 800, "height": 160}
+        ]}});
+        assert_eq!(pick_title_logos(&d).0, "/zh-big.png");
+    }
+
+    /// [lc-2385] 没有中文 logo 时**必须退回其它语种**，绝不能返回空（「至少要有」）。
+    #[test]
+    fn title_logo_falls_back_to_other_language() {
+        // 只有英文 → primary 就用英文，不能是空串
+        let d = json!({"images": {"logos": [
+            {"file_path": "/only-en.png", "iso_639_1": "en", "width": 500, "height": 100}
+        ]}});
+        let (primary, _alt) = pick_title_logos(&d);
+        assert_eq!(primary, "/only-en.png", "只有非中文 logo 时也必须返回它，不能为空");
+
+        // 真正没有任何 logo 时才空串（此时前端回退文字标题，是正确的降级）
+        let d = json!({"images": {"logos": []}});
+        assert_eq!(pick_title_logos(&d).0, "");
+        let d = json!({});
+        assert_eq!(pick_title_logos(&d).0, "");
+
+        // 空 file_path 的项必须被跳过，不能当成有效 logo
+        let d = json!({"images": {"logos": [
+            {"file_path": "", "iso_639_1": "zh", "width": 999, "height": 999},
+            {"file_path": "/real.png", "iso_639_1": "en", "width": 10, "height": 10}
+        ]}});
+        assert_eq!(pick_title_logos(&d).0, "/real.png");
     }
 
     /// 回退判定（不触网）：人物接口仅「镜像 404」允许回退直连；401/403 等明确拒绝不直连。

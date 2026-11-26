@@ -654,22 +654,56 @@ function App() {
         //   定位靠锚点优先（trim_id=tm*/tt*、tmdbId、imdbId），没有才标题搜索 —— 与详情页
         //   完全同一条链路（tmdb_show_details），命中同一份落盘缓存，所以这里几乎零额外成本。
         //   失败（TMDB 没匹配上/没图）就**保留飞牛那张**，绝不出现空 hero。
+        //
+        //   [lc-2385] 元数据口径（用户明确）：**条目本体仍来自飞牛**（点播放/点详情
+        //   都是原来的飞牛链路，压根不换），但**元数据换成我们自建 TMDB 的**。
+        //   加载顺序：先用飞牛能给的（保证首屏不空）→ 我们拉到之后覆盖。
+        //   现在补的是标题 Logo（`titleLogo`，Rust 侧从 `images.logos` 按
+        //   「中文优先 → 面积大 → 票数高」挑好的那张，见 tmdb.rs 的 pick_title_logos）。
+        //   为什么必须补：飞牛的 `logos` 字段**经常是空的**（用户报「冷淡的佐藤同学
+        //   只对我撒娇」TMDB 明明有 logo，但轮播退成了文字标题），原实现只认飞牛那一份、
+        //   没有任何兜底。
         void Promise.allSettled(
           fb.map(({ guid, arg }) =>
             invoke<Record<string, unknown>>("tmdb_show_details", { arg })
-              .then((d) => ({ guid, path: String(d?.heroBackdrop ?? "") }))
+              .then((d) => ({
+                guid,
+                path: String(d?.heroBackdrop ?? ""),
+                logo: String(d?.titleLogo ?? ""),
+                logoAlt: String(d?.titleLogoAlt ?? ""),
+              }))
           )
         ).then((trs) => {
           const hi: Record<string, string> = {};
+          const logos: Record<string, string> = {};
           for (const t of trs) {
-            if (t.status === "fulfilled" && t.value.path) hi[t.value.guid] = t.value.path;
+            if (t.status !== "fulfilled") continue;
+            if (t.value.path) hi[t.value.guid] = t.value.path;
+            // [lc-2385] 主 logo 没有时用 alt（另一语种那张）兜住 —— 中文版常是白字，
+            // 但「有张别的」总比退成文字标题好（用户要求：至少要有，而不是为空）。
+            const lg = t.value.logo || t.value.logoAlt;
+            if (lg) logos[t.value.guid] = lg;
           }
-          if (!Object.keys(hi).length) return;
-          setCarouselBds((prev) => {
-            const next = { ...prev };
-            for (const [guid, path] of Object.entries(hi)) next[guid] = tmdbImg(path, "original");
-            return next;
-          });
+          if (Object.keys(hi).length) {
+            setCarouselBds((prev) => {
+              const next = { ...prev };
+              for (const [guid, path] of Object.entries(hi)) next[guid] = tmdbImg(path, "original");
+              return next;
+            });
+          }
+          if (Object.keys(logos).length) {
+            setCarouselLogos((prev) => {
+              const next = { ...prev };
+              for (const [guid, path] of Object.entries(logos)) {
+                // [lc-2385] 口径：**我们的 TMDB 覆盖飞牛的**（用户明确「我们的数据拉来后
+                // 换成我们的元数据」）。拉不到时才保留飞牛那份（上面已 setCarouselLogos）。
+                // 档位取 w500 而不是 original：logo 是透明 PNG，原图常有 2000px 宽，
+                // w500 足够清晰且省流量。
+                next[guid] = tmdbImg(path, "w500");
+              }
+              return next;
+            });
+          }
         });
       });
 

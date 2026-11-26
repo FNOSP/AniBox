@@ -25,27 +25,37 @@
   top: calc(var(--srow-img-h, 160px) / 2);
   transform: translateY(-50%);
   z-index: 6;
-  /* [lc-1410] 尺寸/字号/投影**逐项对齐海报轮播的 .mist-nav**（用户要求"和轮播海报的一样大"）：
-     54×88 的点击区、font-size 52 的字形、同款单层投影。 */
-  width: 54px;
-  height: 88px;
+  /* [lc-2378] 尺寸/图标/投影**逐项照 Polaris 首页轨道箭头**（main.css:31611-31656）：
+     44×64 点击区、12px 圆角、38×38 的 SVG 雪佛龙、双层 drop-shadow。
+     原来那套是 54×88 + 文字字形（`‹`/`›`）+ 单层 text-shadow，用户反馈
+     「左右的雪佛兰切换按钮不明显」—— 字符笔画太细，压在亮海报上几乎看不见。
+     Polaris 改用粗描边 SVG（stroke-width 2.6）+ 双投影，任何底图上都立得住。 */
+  width: 44px;
+  height: 64px;
   padding: 0;
   border: 0;
-  border-radius: 0;
+  border-radius: 12px;
   background: none;
   backdrop-filter: none;
   box-shadow: none;
   outline: none;
-  color: rgba(255, 255, 255, 0.78);
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
-  font-family: inherit;
-  font-size: var(--fs-hero);
-  font-weight: 400;
-  line-height: 1;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   opacity: 0;
   pointer-events: none; /* 默认不可点：避免"看不见却点得到"的误触 */
-  transition: opacity var(--dur-page) ease, color var(--dur-move) ease, text-shadow var(--dur-move) ease, transform var(--dur-tap) ease;
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+/* 图标本体：Polaris 用双层 drop-shadow（大范围柔光 + 2px 贴边勾勒）。
+   原来靠 text-shadow 立住字符，换成 SVG 后投影要挂在 svg 上。 */
+.srow-nav svg {
+  width: 38px;
+  height: 38px;
+  display: block;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 2px rgba(0, 0, 0, 0.35));
 }
 /* ⚠ 必须显式兜住 hover/active：全局 button:hover 会铺一层底色、:active 有 scale(.97)，
    特异性高于单类选择器（同 lc-1402 的 padding 坑），不复位就会又冒出个方块底色。 */
@@ -53,6 +63,9 @@
   background: none;
   border: 0;
   color: #fff;
+  /* [lc-2378] 悬停放大 1.12（Polaris `.pw-track-arrow:hover` 同款），
+     translateY 必须保留，否则会跳一下 */
+  transform: translateY(-50%) scale(1.12);
 }
 .srow-nav.is-on {
   opacity: 1;
@@ -61,7 +74,7 @@
 .srow-nav:active {
   background: none;
   color: #fff;
-  transform: translateY(-50%) scale(0.92); /* translateY 必须保留，否则会跳一下 */
+  transform: translateY(-50%) scale(0.94); /* 与 Polaris 入场初始 scale 同档 */
 }
 .srow-nav:focus-visible {
   outline: none;
@@ -72,13 +85,13 @@
   opacity: 0 !important;
   pointer-events: none;
 }
-/* 两侧位置：略微压进内容一点（不是贴死边），且不挡住首/末卡片的点击区太多 */
-/* 尺寸放大到 54px 宽后，两侧留 6px（轮播是 12px，但首页横排两端本就有内容边距） */
+/* 两侧位置：[lc-2378] 改为贴 0（Polaris `.pw-track-arrow-left/right` 就是 left:0 / right:0）。
+   原来是 54px 宽时留 6px，现在 44px 宽、贴边更贴近 Polaris 的观感。 */
 .srow-prev {
-  left: 6px;
+  left: 0;
 }
 .srow-next {
-  right: 6px;
+  right: 0;
 }
 
 /* 少动效偏好：去掉过渡（显隐仍是瞬时的，功能不受影响） */

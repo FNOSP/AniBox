@@ -82,6 +82,9 @@ export function ScrollRow({
       >
         {center ? <div className="srow-track">{children}</div> : children}
       </div>
+      {/* [lc-2378] 箭头图标照 Polaris 首页轨道箭头（main.css:31611-31656）：
+          38×38 的粗描边雪佛龙 SVG，而不是文字字形 —— 原来用 `‹`/`›` 字符，
+          字重太细、压在亮海报上几乎看不见（用户反馈「不明显」）。 */}
       <button
         type="button"
         className={`srow-nav srow-prev${hover && !atStart ? " is-on" : ""}`}
@@ -91,7 +94,17 @@ export function ScrollRow({
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => page(-1)}
       >
-        ‹
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <polyline points="15 4 7 12 15 20" />
+        </svg>
       </button>
       <button
         type="button"
@@ -102,7 +115,17 @@ export function ScrollRow({
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => page(1)}
       >
-        ›
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <polyline points="9 4 17 12 9 20" />
+        </svg>
       </button>
     </div>
   );

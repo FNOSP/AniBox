@@ -79,6 +79,10 @@ export type MediaItem = {
   number_of_seasons?: number;
   local_number_of_episodes?: number;
   local_number_of_seasons?: number;
+  /** [lc-2390] 飞牛自带的制作状态（实测「Returning Series / Ended / Released」，
+   *  与 TMDB 同名同值）。首页 hero 标签行用它判「连载中 / 已完结」——
+   *  **比 TMDB 那份更新**：实测某番 TMDB 只到 S1E2，飞牛库里已有 7 集。 */
+  status?: string;
   /** [lc-1713] 入库时间（秒级时间戳或日期串），媒体库卡片「最近更新」用 */
   create_time?: number | string;
   media_stream?: unknown;

@@ -62,7 +62,13 @@ const num = (v: unknown): number => {
 /**
  * TMDB `tmdb_show_details` 载荷 → 标签行的补充数据（纯函数，零副作用）。
  *
- * 集数口径（这里是最容易写错的地方，两条都踩过）：
+ * ⚠ [lc-2390 修正] **状态与集数以飞牛为准，TMDB 只补题材**（见 resolveHeroMeta）。
+ *   原因（用户实测报障）：TMDB 的剧集进度是社区投稿维护，**会滞后**。实测
+ *   「冷淡的佐藤同学」TMDB 只到 S1E2（2026-10-13），而飞牛库里已有 7 集、最新 11-18；
+ *   拿 TMDB 算「更新至」会比详情页的「已入库 7 / 12 集」少 5 集，用户一眼就看出对不上。
+ *   所以本函数产出的 status/episodes/rating 现在只作**兜底**（飞牛字段缺失时才用）。
+ *
+ * TMDB 侧的集数口径（兜底时用）：
  *   · **已完结** → `全 N 集`，N 取 `episodes`（number_of_episodes，全剧总集数）；
  *   · **连载中** → `更新至 N 集`，N 取 `airedEpisodes`（Rust 侧按
  *     `last_episode_to_air` 累加前面各季算出，见 tmdb.rs::aired_episodes）。
@@ -104,22 +110,89 @@ export function tmdbHeroMeta(d: Record<string, unknown> | null | undefined): Her
 }
 
 /**
- * 合成最终展示值：飞牛条目本体打底，TMDB 那份覆盖（缺的字段各自回落）。
+ * 飞牛条目本体 → 状态与集数（**首选口径**，与详情页「已入库 X / Y 集」同源）。
  *
- * 为什么打底用飞牛：TMDB 请求是异步的（且可能失败/被限流），首屏不能等它 ——
- * 年份与评分飞牛本来就有，先用着；题材/状态/集数只有 TMDB 有，到了再补。
+ * 为什么以飞牛为准（用户实测报障）：英雄标签原来用 TMDB 的 `last_episode_to_air`
+ * 算「更新至」，而 TMDB 的剧集进度是社区投稿、**会滞后**。实测「冷淡的佐藤同学」
+ * TMDB 只到 S1E2（10-13），飞牛库里已有 7 集（最新 11-18）—— 于是 hero 写「更新至 2 集」
+ * 而详情页写着「已入库 7 / 12 集」，同一个界面两个数字互相矛盾。
+ * 详情页那个数字读的就是本函数用的 `local_number_of_episodes`，同源即一致。
+ *
+ * ⚠ **两个集数字段不同级**（探针实测，2026-11-26）：
+ *   · `local_number_of_episodes` = **当前季**已入库集数；
+ *   · `number_of_episodes`       = **全剧**总集数。
+ *   多季番会因此出现 local < total 甚至差很多（「药屋少女的呢喃」第 3 季：local=7、total=60）。
+ *   所以多季条目必须**带上季号**（`第 3 季 · 更新至 7 集`），否则用户会读成「全剧只更新到 7 集」。
+ *   单季条目（season_number ≤ 1 且只有一季）才用裸文案。
+ *
+ * 口径：
+ *   · 连载中 → `更新至 {local} 集`（= 用户当前能看的集数）；
+ *   · 已完结 → `全 {total} 集`；
+ *   · 两个数字都没有 → 不产出（不显示），绝不显示「更新至 0 集」。
+ */
+export function fnosHeroMeta(it: MediaItem): HeroMeta {
+  const isMovie = (it.type || "").toLowerCase() === "movie";
+  const out: HeroMeta = {};
+  if (isMovie) return out;
+
+  const status = TV_STATUS[str(it.status)] ?? "";
+  if (status) out.status = status;
+
+  // [lc-1727] 与海报卡/详情页同一套回退：local_* 优先，缺失才用 number_*
+  const local = Math.max(num(it.local_number_of_episodes), 0); // 当前季已入库
+  const total = Math.max(num(it.number_of_episodes), 0); // 全剧总集数
+  const seasonNo = num(it.season_number);
+  const seasonCount = Math.max(num(it.local_number_of_seasons), num(it.number_of_seasons), 0);
+
+  // 多季判定：季号 > 1，或本地有多季 —— 此时 local 与 total 不同级，必须标季号
+  const multiSeason = seasonNo > 1 || seasonCount > 1;
+  const seasonTag =
+    multiSeason && seasonNo > 0 ? `第 ${seasonNo} 季 · ` : "";
+
+  if (status === "已完结") {
+    // 已完结优先报全剧总集数（那才是「全 N 集」的语义）；缺 total 才退到本季已入库
+    const n = total > 0 ? total : local;
+    if (n > 0) out.episodes = `全 ${n} 集`;
+  } else if (status === "连载中") {
+    if (local > 0) out.episodes = `${seasonTag}更新至 ${local} 集`;
+  } else if (local > 0 && total > local) {
+    // 状态缺失（老 NAS / 部分库）：已入库 < 总集数 ⇒ 在连载
+    out.episodes = `${seasonTag}更新至 ${local} 集`;
+  } else if (total > 0) {
+    out.episodes = `全 ${total} 集`;
+  } else if (local > 0) {
+    out.episodes = `${seasonTag}全 ${local} 集`;
+  }
+
+  return out;
+}
+
+/**
+ * 合成最终展示值。**优先级：飞牛本体（状态/集数）→ TMDB 兜底（仅飞牛缺该字段时）。**
+ *
+ * 为什么这条顺序不能反：TMDB 的剧集进度是社区投稿，实测会滞后（某番 TMDB 停在
+ * S1E2 而库里已有 7 集）。用它覆盖飞牛会让标签与详情页对不上 —— 用户已报障。
+ * 题材则相反：飞牛 item/list 不带 genres，只有 TMDB 有，所以那一项永远是 TMDB 补的。
  */
 export function resolveHeroMeta(it: MediaItem, patch?: HeroMeta): HeroMeta {
   const isMovie = (it.type || "").toLowerCase() === "movie";
   const out: HeroMeta = { kind: isMovie ? "电影" : "剧集" };
 
+  // 年份：TMDB 优先（与 lc-2385「元数据换成我们自建 TMDB」一致）。
+  //   年份不存在"滞后"问题（一部剧的首播年不会变），所以不必像状态/集数那样反过来。
   const year = patch?.year || str(it.release_date || it.air_date).slice(0, 4);
   if (/^\d{4}$/.test(year)) out.year = year;
 
   if (patch?.genres?.length) out.genres = patch.genres.slice(0, MAX_GENRES);
-  if (patch?.status) out.status = patch.status;
-  if (patch?.episodes) out.episodes = patch.episodes;
 
+  // 状态/集数：飞牛优先，TMDB 只补空
+  const fnos = fnosHeroMeta(it);
+  const status = fnos.status || patch?.status;
+  if (status) out.status = status;
+  const episodes = fnos.episodes || patch?.episodes;
+  if (episodes) out.episodes = episodes;
+
+  // 评分：TMDB 覆盖飞牛（与 lc-2385 的元数据口径一致，且 TMDB 分数更准）
   const raw = str(it.vote_average);
   const rating =
     patch?.rating || (raw && raw !== "0" && num(raw) > 0 ? num(raw).toFixed(1) : "");

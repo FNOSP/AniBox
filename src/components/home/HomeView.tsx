@@ -318,6 +318,12 @@ export function HomeView({
               .filter((raw) => String(pick(raw, ["type"]) ?? "") !== "LiveChannel")
               .map((raw) => {
               const guid = String(pick(raw, ["guid"]) ?? "");
+              // [lc-2368] 播放按钮必须用**条目自己的集 guid**：后端为让卡片点进详情
+              // 把条目改写成了剧级形态（guid=剧、type=TV），而 `play/info` 对 TV 会回
+              // 「没有可播放的具体媒体」→ 点播放不是报错就是退回详情。
+              // 后端改写时把原始 guid 留在 `playGuid`，这里优先用它；老数据没有该字段时
+              // 退回 guid（电影条目本来就没被改写，两者相同）。
+              const playGuid = String(pick(raw, ["playGuid", "play_guid"]) ?? "") || guid;
               const rawTitle = stripDecor(String(pick(raw, ["title"]) ?? ""));
               const tvTitle = stripDecor(String(pick(raw, ["tv_title", "tvTitle"]) ?? ""));
               const type = String(pick(raw, ["type"]) ?? "");
@@ -388,7 +394,7 @@ export function HomeView({
                       aria-label="直接播放"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onPlay({ guid, title: rawTitle || mainTitle, tvTitle });
+                        onPlay({ guid: playGuid, title: rawTitle || mainTitle, tvTitle });
                       }}
                     >
                       <PlayGlyph size={16} />

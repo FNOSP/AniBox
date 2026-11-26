@@ -811,11 +811,26 @@ async fn get_continue_watching(state: State<'_, AppState>) -> Result<Value, Stri
         // [lc-1774] 富化出剧 guid 后**直接改写条目**为剧级形态（guid=剧、type=TV）：
         // 前端卡片原样透传即可，不再依赖它自己挑 guid 字段（挑错就是 Season 1 / 错剧）。
         // 保留 season/episode 号供详情页定位；电影条目（type=Movie/Video）不动。
+        //
+        // [lc-2368] **改写前先把原始条目 guid 存进 `playGuid`**：卡片中间的播放按钮
+        // 必须用它续播，不能用剧级 guid —— `play/info` 对 TV/Season 会直接回
+        // 「没有可播放的具体媒体」（lib.rs 的 resolve_play_guid），于是「点播放」要么
+        // 报错、要么前端退回详情页，看起来就像"点播放进了详情"。
+        // guid 仍改写成剧级（卡片点击进详情要用它），两个用途分开。
         for it in list.iter_mut() {
             let t = it.get("type").and_then(|x| x.as_str()).unwrap_or("");
             if t == "Episode" || t == "Season" {
-                let series = it.get("seriesGuid").and_then(|x| x.as_str()).unwrap_or("");
+                // 先把要用的字段全部读成 owned 值，再改 it（否则借用冲突）。
+                let series = it
+                    .get("seriesGuid")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 if !series.is_empty() {
+                    let original = it.get("guid").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    if !original.is_empty() {
+                        it["playGuid"] = json!(original);
+                    }
                     it["guid"] = json!(series);
                     it["type"] = json!("TV");
                 }

@@ -323,55 +323,14 @@ export function HomeView({
     );
   };
 
-  return (
-    <main
-      className={`content home-full${bareHome ? " home-bare" : ""}${
-        carouselStyle === "spotlight" ? " home-spotlight" : ""
-      }`}
-      ref={homeRef}
-    >
-      {/* 全屏 hero 轮播 + 底部媒体库条（Emby 布局） */}
-      <div className="hero-zone">
-        {/* [lc-2372] 两套轮播样式二选一：misty = 原有横滑（默认，行为不变），
-            spotlight = Polaris 放映厅样式（背景交叉淡入 + 居中信息块 + 右侧竖排点）。
-            [lc-2377] 新样式标题**默认走 Logo**（Polaris 的 Hero 就是「有 logo 用 logo，
-            没有才退回文字」），不受「轮播透明标题」开关影响 —— 那个开关是给原横滑样式
-            的选项，两套样式各按自己的默认走。 */}
-        {carouselStyle === "spotlight" ? (
-          /* [lc-2377] 首屏舞台：把 hero 与「继续观看」包在一起，形成一个**只含首屏高度**
-             的定位上下文。为什么必须单独包一层：继续观看是绝对定位、贴首屏底边的，
-             如果它的定位祖先直接用 .hero-zone，那么同在 .hero-zone 里的媒体库条
-             （新样式下是 static 流式块）会把 .hero-zone 撑高，`bottom` 基准就跟着
-             下移，继续观看会被顶到首屏之外（实测 -109px）。包一层后基准恒等于 hero 高度。 */
-          <div className="hero-stage">
-            <PolarisHero
-              items={carousel}
-              bds={carouselBds}
-              logos={carouselLogos}
-              onPlay={onPlay}
-              onDetail={onOpenItem}
-              onTone={onHeroTone}
-            />
-            {continueSection(true)}
-          </div>
-        ) : (
-          <CarouselView
-            items={carousel}
-            bds={carouselBds}
-            logos={carouselLogoOn ? carouselLogos : {}}
-            onPlay={onPlay}
-            onDetail={onOpenItem}
-            onTone={onHeroTone}
-          />
-        )}
-        {/* [lc-2047] 一个库都没有（游客态）时整条不渲染：否则会浮着一个孤零零的
-            「管理」胶囊压在 hero 上；有库但全被隐藏时仍然渲染（要靠它把库勾回来）。
-            [lc-2377] 新样式给它加 `.lib-strip-detached`：CSS 把它从「浮在 hero 底部」
-            改成「hero 之后的静态区块」（position/bottom/z-index 全部归零），
-            这样不必挪动 DOM 层级（它和 hero 同处 hero-zone 内，改成 static 后
-            自然排在 hero 之后，就是 Polaris「媒体库不进首屏」的形态）。 */}
-        {libs.length > 0 && (
-          <div className={`lib-strip${carouselStyle === "spotlight" ? " lib-strip-detached" : ""}`}>
+  /** [lc-2382] 首页媒体库条。
+   *  · floating=true  —— 浮在 hero 底部（老样式 Emby 布局，行为不变）
+   *  · floating=false —— 首屏之外的独立区块（新样式；Polaris 的媒体库在首屏之下）
+   */
+  const libStrip = (floating: boolean) => {
+    if (libs.length === 0) return null;
+    return (
+      <div className={`lib-strip${floating ? "" : " lib-strip-detached"}`}>
             {shownLibs.map((lib) => {
               // [library-cover] 优先级：自定义封面 → 最新条目横图 → 库自带横图 → 库海报。
               const cover =
@@ -438,8 +397,55 @@ export function HomeView({
             >
               <IcoGearL size={15} strokeWidth={1.8} /> 管理
             </div>
+      </div>
+    );
+  };
+
+  return (
+    <main
+      className={`content home-full${bareHome ? " home-bare" : ""}${
+        carouselStyle === "spotlight" ? " home-spotlight" : ""
+      }`}
+      ref={homeRef}
+    >
+      {/* 全屏 hero 轮播 + 底部媒体库条（Emby 布局） */}
+      <div className="hero-zone">
+        {/* [lc-2372] 两套轮播样式二选一：misty = 原有横滑（默认，行为不变），
+            spotlight = Polaris 放映厅样式（背景交叉淡入 + 居中信息块 + 右侧竖排点）。
+            [lc-2377] 新样式标题**默认走 Logo**（Polaris 的 Hero 就是「有 logo 用 logo，
+            没有才退回文字」），不受「轮播透明标题」开关影响 —— 那个开关是给原横滑样式
+            的选项，两套样式各按自己的默认走。 */}
+        {carouselStyle === "spotlight" ? (
+          /* [lc-2382] 照 Polaris 源码：继续观看是首屏内的绝对定位层
+             （`.pw-content-area`，main.css:30678 `bottom: clamp(34px,5.4vh,70px)`），
+             所以必须渲染在 hero 的定位上下文里。包一层 `.hero-stage` 提供该上下文
+             （高度 = hero，不裁剪内容）。 */
+          <div className="hero-stage">
+            <PolarisHero
+              items={carousel}
+              bds={carouselBds}
+              logos={carouselLogos}
+              onPlay={onPlay}
+              onDetail={onOpenItem}
+              onTone={onHeroTone}
+            />
+            {continueSection(true)}
           </div>
+        ) : (
+          <CarouselView
+            items={carousel}
+            bds={carouselBds}
+            logos={carouselLogoOn ? carouselLogos : {}}
+            onPlay={onPlay}
+            onDetail={onOpenItem}
+            onTone={onHeroTone}
+          />
         )}
+        {/* [lc-2047] 一个库都没有（游客态）时整条不渲染：否则会浮着一个孤零零的
+            「管理」胶囊压在 hero 上；有库但全被隐藏时仍然渲染（要靠它把库勾回来）。
+            [lc-2382] 新样式**不在这里渲染**：它下沉到继续观看之后
+            （见 hero-zone 外面的 {libStrip(false)}），与 Polaris 一致。
+            老样式仍浮在 hero 底部（Emby 布局，行为不变）。 */}
         {/* [library-cover] 隐藏的文件选择器：卡片上的「更换封面」按钮触发 */}
         <input
           ref={coverInputRef}
@@ -469,9 +475,13 @@ export function HomeView({
         )}
       </div>
 
-      {/* [lc-2377] 原有样式（misty）：继续观看紧跟 hero 之后，位置与加入新样式前完全一致。
-          新样式的那一份已叠进首屏底部（上面 spotlight 分支里的 continueSection(true)）。 */}
+      {/* [lc-2382] 老样式：继续观看紧跟 hero 之后（与加入新样式前位置一致）。
+          新样式的那一份已叠进首屏（上面 spotlight 分支里的 continueSection(true)，
+          对应 Polaris `.pw-content-area` 绝对定位在首屏下缘）。 */}
       {carouselStyle !== "spotlight" && continueSection(false)}
+
+      {/* [lc-2382] 新样式：媒体库条下沉到首屏之外，排在继续观看之后 */}
+      {carouselStyle === "spotlight" && libStrip(false)}
 
       {/* 按库顺序的剧集横排（隐藏的库不展示） */}
       {libRows

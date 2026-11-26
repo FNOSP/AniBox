@@ -21,10 +21,11 @@
   overflow: hidden;
   background: #050505;
   isolation: isolate;
-  /* 贴边：抵消 .home-full 的 --home-pad（与 .mist-banner 同一手法） */
-  margin-left: calc(-1 * var(--home-pad));
-  margin-right: calc(-1 * var(--home-pad));
-  width: calc(100% + 2 * var(--home-pad));
+  /* [lc-2379] **不再**自己做通栏负边距：通栏职责已上移到 .hero-stage。
+     原因：hero-stage 为裁掉溢出内容需要 overflow:hidden，而负边距一旦被它裁掉，
+     左右就各露出 26px 的白底（用户报「两边白边」的根因），继续观看也会被裁成一半。
+     现在 hero 只负责填满 stage（宽 100%），通栏由 stage 自己贴边实现。 */
+  width: 100%;
 }
 
 /* ── 首屏布局：继续观看叠在 hero 底部 + 媒体库下沉 ──────────────────────
@@ -37,57 +38,49 @@
    本文件只改「新样式」这一条链路：所有规则都挂在 .home-spotlight 下，
    .mist-* 与老样式的位置一行不动。 */
 
-/* hero 底部要给继续观看露出的那一小截让位（约 120px），信息块不再需要抬高太多。
-   [lc-2378] 继续观看改成「只露一小截」后，占用高度从整行降到 120px，
-   信息块相应回落到接近 Polaris 原值（原值 clamp(180px,20vh,260px)），
-   只多留一点气口避免文字压到露出的卡片上。 */
+/* [lc-2379] 信息块让位：继续观看恢复成完整显示（Polaris 原形态），
+   它占的高度回到整行 ~200px，所以信息块按 Polaris 的做法抬到
+   clamp(180px, 20vh, 260px) 之上再留一档气口，避免文字压到卡片上。
+   实测 1600×900 视口下取到 252px，正好在继续观看上方留出约 50px 间隙。 */
 .home-spotlight .polaris-hero-content {
-  bottom: clamp(190px, 22vh, 280px);
+  bottom: clamp(240px, 28vh, 340px);
 }
 
-/* 首屏舞台：只包 hero + 继续观看，高度恒等于 hero 本身。
-   继续观看绝对定位贴它的底边 ⇒ 基准永远是首屏底边，不会被下面的媒体库条带偏。
-   [lc-2378] 加了 overflow: hidden —— 继续观看要「只露出一小截」，
-   超出的部分必须由首屏底边裁掉（Polaris 的 .pw-home-first-screen 也是 overflow:hidden）。 */
+/* 首屏舞台：只包 hero + 继续观看，高度恒等于 hero 本身，由它负责**通栏**。
+   [lc-2379] 这里**不能**加 overflow:hidden：
+     ① hero 内部（背景双层/遮罩/信息块）的裁剪由 .polaris-hero 自己的 overflow:hidden 负责；
+     ② 继续观看是 hero 的兄弟节点，若在 stage 上裁剪，行高一旦超出预留起伏
+        就会被切掉半截（上一版「两边白边 + 继续观看被切开」正是把通栏负边距
+        留在了 hero 上、又给 stage 加了裁剪）。stage 只做定位与通栏，不裁内容。 */
 .home-spotlight .hero-stage {
   position: relative;
-  overflow: hidden;
+  margin-left: calc(-1 * var(--home-pad));
+  margin-right: calc(-1 * var(--home-pad));
+  width: calc(100% + 2 * var(--home-pad));
 }
 
-/* 继续观看：与 Polaris `.pw-content-area` 同一条基准（首屏下缘），
-   定位祖先是上面的 .hero-stage（高度 = hero）。
-
-   [lc-2378] 用户要求「只露出一小截，提示还有内容」：
-   把整层往下推，让卡片大半压到首屏之外，只留标题 + 卡片上部一条可见。
-   用 translateY(calc(100% - Npx)) 而不是写死负 bottom —— 百分比是相对**自身高度**，
-   所以「无论这一行多高，永远只露 N 像素」，卡片尺寸/条目数量变化都不会失准。 */
+/* 继续观看：照 Polaris `.pw-content-area` 完全一样 —— 绝对定位贴首屏下缘、
+   `overflow: visible`、**完整显示不裁切**（main.css:30678-30688）。
+   [lc-2379] 上一版把它裁成「只露一小截」是错的：Polaris 这里就是整行完整显示，
+   裁切会让卡片只剩半截、标题信息全丢（用户报「继续观看被切开」）。 */
 .home-spotlight .home-sec-hero {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
-  /* 露出的高度：标题行(~38px) + 卡片上部 82px ≈ 120px */
-  transform: translateY(calc(100% - 120px));
+  /* Polaris 原值：bottom: clamp(34px, 5.4vh, 70px) */
+  bottom: clamp(34px, 5.4vh, 70px);
   z-index: 30;
   margin: 0;
   padding: 0 var(--home-pad);
+  background: transparent;
+  overflow: visible;
   /* 只有卡片可点：这一层横跨整个 hero 下缘，整层可点会挡住海报 */
   pointer-events: none;
 }
 .home-spotlight .home-sec-hero > * {
   pointer-events: auto;
 }
-/* 露出的那一截贴着首屏底边，底部补一点渐变让裁切边不显得生硬 */
-.home-spotlight .home-sec-hero::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.06);
-  pointer-events: none;
-}
+
 /* 首屏内的区块标题：白字 + 轻投影（底图是海报，深色字看不清） */
 .home-spotlight .home-sec-hero .section-head h3 {
   color: #fff;

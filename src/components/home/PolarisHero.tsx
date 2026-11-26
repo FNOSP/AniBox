@@ -170,7 +170,18 @@ export function PolarisHero({
       <div className="polaris-hero-shade-bottom" aria-hidden="true" />
 
       <div className="polaris-hero-content" key={copyKey}>
-        <div className={`polaris-hero-title-wrap${logos[activeItem.guid] ? " has-logo" : ""}`}>
+        {/* [lc-2392] 标题/Logo 可点，直达该条详情页（用户要求）。
+            用原生 button 而不是 div+onClick：手柄焦点导航（lib/focusNav.ts）已经把
+            `button` 列为候选并支持 A 键激活，div 还得额外补 role/tabIndex/键盘事件。
+            结构上 button 是 `display: block` 的容器，logo 与文字标题两个分支都放进同一个
+            按钮里 —— 点击区域随内容自适应，不需要另加 padding。 */}
+        <button
+          type="button"
+          className={`polaris-hero-title-wrap${logos[activeItem.guid] ? " has-logo" : ""}`}
+          title="查看详情"
+          aria-label={`查看「${activeItem.title}」详情`}
+          onClick={() => onDetail(activeItem)}
+        >
           {logos[activeItem.guid] ? (
             <img
               className="polaris-hero-logo"
@@ -181,7 +192,7 @@ export function PolarisHero({
           ) : (
             <h1 className="polaris-hero-title">{activeItem.title}</h1>
           )}
-        </div>
+        </button>
         <div className="polaris-hero-meta">
           {segments.map((s, i) => (
             <span key={`${s.text}#${i}`} className="polaris-hero-meta-row">

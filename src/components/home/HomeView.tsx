@@ -400,8 +400,8 @@ export function HomeView({
             </div>
       </div>
     );
-    // [lc-2386] 新样式：外面再包一层「一屏」，让媒体库条成为第二屏的第一个区块，
-    // 并在这一层上挂 scroll-snap 吸附点与「媒体库」区块标题。
+    // [lc-2387] 新样式：外面只包一层薄壳（带「媒体库」标题 + 吸附点），
+    // **不再独占一屏** —— 它插在第一个库横排的标题之前，高度由内容决定。
     if (floating) return strip;
     return (
       <section className="lib-screen">
@@ -492,17 +492,19 @@ export function HomeView({
           对应 Polaris `.pw-content-area` 绝对定位在首屏下缘）。 */}
       {carouselStyle !== "spotlight" && continueSection(false)}
 
-      {/* [lc-2386] 新样式：媒体库条恢复显示，作为**第二屏的第一条**
-          （用户要求）。配合下方 .home-spotlight 的 scroll-snap 设置，
-          滚动时这一屏会吸附到视口顶部。 */}
-      {carouselStyle === "spotlight" && libStrip(false)}
+      {/* [lc-2387] 新样式的媒体库条**不再单独占一块**：它被渲染进第一个
+          媒体库横排（下方 libRows 的第一项）的 section 内部、紧接在库标题之前
+          （用户要求「直接加到第一个具体媒体库前」）。
+          上一版给它包了一屏高，而媒体库往往只有两三张卡 ⇒ 一大片纯黑。 */}
 
       {/* 按库顺序的剧集横排（隐藏的库不展示） */}
       {libRows
         .filter(({ lib }) => !hiddenLibs.includes(lib.guid))
-        .map(({ lib, items, total }) =>
+        .map(({ lib, items, total }, rowIdx) =>
         items.length > 0 ? (
           <section className="home-sec" key={lib.guid}>
+            {/* [lc-2387] 新样式：媒体库条插在**第一个**库横排的标题之前 */}
+            {carouselStyle === "spotlight" && rowIdx === 0 && libStrip(false)}
             <div className="section-head">
               <h3>{lib.title}</h3>
               {/* [lc-1773] 库总数用服务端 total（分页后 items 恒为首页 60 条，

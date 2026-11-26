@@ -237,22 +237,16 @@
   scroll-snap-align: start;
   scroll-snap-stop: always;
 }
-/* 第二屏：媒体库条作为这一屏的第一个区块 */
+/* [lc-2387] 媒体库条区块：插在**第一个库横排的标题之前**，高度由内容决定。
+   上一版给它 min-height:100vh，而媒体库往往只有两三张卡 ⇒ 一大片纯黑
+   （用户截图报障「这一块黑的几个意思」）。 */
 .home-spotlight .lib-screen {
-  /* 一屏高（扣掉顶栏 ~40px，避免底部差一截） */
-  min-height: calc(100vh - 40px);
-  box-sizing: border-box;
-  /* 通栏：抵消 .home-full 的 --home-pad */
-  margin-left: calc(-1 * var(--home-pad));
-  margin-right: calc(-1 * var(--home-pad));
-  width: calc(100% + 2 * var(--home-pad));
-  padding: 24px var(--home-pad) 12px;
-  background: #050505;
-  /* 这一条是吸附点 */
+  /* 它已经在 .home-sec（有 30px 上间距）内部，这里只补内部气口 */
+  margin-bottom: 22px;
+  /* 仍是吸附点：滚到这里停稳时，「媒体库 + 第一个库横排」一起进视野 */
   scroll-snap-align: start;
-  scroll-snap-stop: always;
 }
-/* 第二屏里的媒体库标题与下方各库横排一致 */
+/* 区块标题与下方各库横排保持一致 */
 .home-spotlight .lib-screen .section-head {
   margin: 0 0 14px;
   padding: 0;

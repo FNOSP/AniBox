@@ -3586,6 +3586,10 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         "exitMode": cfg.exit_mode,
         "perfMode": cfg.perf_mode,
         "carouselLogo": cfg.carousel_logo,
+        // [lc-2423] 首页轮播样式：misty（默认）/ spotlight（放映厅）
+        //   ⚠ 之前 set_settings 的返回体有它、get_settings 漏了 → 启动时读不到，
+        //   界面回落成 localStorage/默认的 misty（用户报「打开又变回原海报样式」）。
+        "carouselStyle": cfg.carousel_style,
         "movieDetailStyle": cfg.movie_detail_style,
         // [lc-2396] 详情页版式：original（原有，默认）/ polaris（复刻 Polaris 全屏详情页，剧集电影共用）
         "detailStyle": cfg.detail_style,
@@ -5121,6 +5125,71 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    /// [lc-2423] `get_settings` 必须返回 `set_settings` 能写的**每一个**键。
+    ///
+    /// 起因（用户报「设置里那个是摆设吗 / 打开又变回原海报样式」）：
+    /// `set_settings` 的返回体有 `carouselStyle`，但 `get_settings` 漏了它。
+    /// 结果：设置当下生效（用的 set 的返回值），**重启后读不到** → 回落到
+    /// localStorage 或默认值 → 用户看到"设置没保存"。
+    ///
+    /// 这条断言从源码里抓两边的 `"...": cfg.xxx` 键名做集合比较 ——
+    /// 以后任何人新增一个设置项只接了其中一边，这里会立刻红。
+    #[test]
+    fn get_settings_covers_every_set_settings_key() {
+        let src = include_str!("lib.rs");
+        let get_i = src.find("async fn get_settings").expect("get_settings 必须存在");
+        let set_i = src.find("async fn set_settings").expect("set_settings 必须存在");
+        // get_settings 块 = 从它的定义到 set_settings 定义（两者相邻，顺序固定）
+        let get_block = &src[get_i..set_i];
+        // set_settings 块 = 从它到下一个顶层 fn（用测试模块的 cfg 标记兜底）
+        let set_end = src[set_i..]
+            .find("#[cfg(test)]")
+            .map(|o| set_i + o)
+            .unwrap_or(src.len());
+        let set_block = &src[set_i..set_end];
+
+        let keys_of = |b: &str| -> std::collections::BTreeSet<String> {
+            let mut out = std::collections::BTreeSet::new();
+            let bytes = b.as_bytes();
+            let mut i = 0;
+            // 手写扫描：找 `"key": cfg.` 形态（避免引入 regex 依赖）
+            while let Some(q) = b[i..].find("\": cfg.") {
+                let at = i + q;
+                // 向前找键名起始引号
+                if let Some(open) = b[..at].rfind('"') {
+                    let key = &b[open + 1..at];
+                    if !key.is_empty()
+                        && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    {
+                        out.insert(key.to_string());
+                    }
+                }
+                i = at + 6;
+                if i >= bytes.len() {
+                    break;
+                }
+            }
+            out
+        };
+
+        let get_keys = keys_of(get_block);
+        let set_keys = keys_of(set_block);
+        assert!(!get_keys.is_empty(), "没解析到 get_settings 的键（扫描逻辑坏了）");
+        assert!(!set_keys.is_empty(), "没解析到 set_settings 的键（扫描逻辑坏了）");
+
+        let missing: Vec<_> = set_keys.difference(&get_keys).cloned().collect();
+        assert!(
+            missing.is_empty(),
+            "get_settings 缺少这些键（会导致重启后设置读不回来）：{missing:?}"
+        );
+        // 反向也守一下：get 里有、set 里没有的多半是遗忘（允许，但要有意识地加白名单）
+        let extra: Vec<_> = get_keys.difference(&set_keys).cloned().collect();
+        assert!(
+            extra.is_empty(),
+            "get_settings 多出这些键（set_settings 写不到，需确认是否故意只读）：{extra:?}"
+        );
+    }
+
     /// [lc-2365] 哨兵：`play/info` 的续播点在**顶层 `ts`**，不在 `item.ts`。
     /// 反例（读 `item.ts`）必须为 0 —— 这正是 lc-1841~4.4.0 的线上缺陷：
     /// 服务端进度恒 0 → 只剩 watch-later 一层 → 重装/换链后「每次都从 0 开始」。

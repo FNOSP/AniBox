@@ -188,6 +188,12 @@ export function PolarisArtwork({ pools, picks, defaults, onSave, onApplied }: Pr
           const src = isLocal(p) ? artworkUrl(p) : tmdbImg(p, "w780");
           const isPicked = !!picked && isLocal(p);
           const isDefault = !picked && !!defaultPath && p === defaultPath;
+          /* [lc-2421] src 为空就不渲染这张卡。
+             用户截图里那个空白框就是 `<img src="">`：偏好图放首位，
+             但 artworkUrl 解析失败返回空串（旧版 URL 形态在 Windows 上加载不到、
+             或路径不含 <64hex> 段），于是画出一个什么也没有的框。
+             宁可不显示，也不要一个空框 —— 空框会被误读成"图坏了"。 */
+          if (!src) return null;
           return (
             <button
               key={`${role}-${p}-${i}`}
@@ -215,7 +221,16 @@ export function PolarisArtwork({ pools, picks, defaults, onSave, onApplied }: Pr
             onIndex={setViewerAt}
             onClose={() => setViewerAt(null)}
             onSave={save}
-            toSrc={(p) => (p === picked ? artworkUrl(p) : tmdbImg(p, "original"))}
+            toSrc={(p) => {
+              /* [lc-2421] 偏好图解析失败时不要给空 src（会画成裂图框）。
+                 退回到这张卡在候选池里的 TMDB 原图 —— 用户至少能看到图。 */
+              if (p === picked) {
+                const u = artworkUrl(p);
+                if (u) return u;
+                return tmdbImg(p, "original");
+              }
+              return tmdbImg(p, "original");
+            }}
           />,
           document.body,
         )}

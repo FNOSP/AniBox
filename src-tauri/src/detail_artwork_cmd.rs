@@ -261,15 +261,25 @@ use tauri::http::{Request, Response};
 pub async fn handle_request(app: tauri::AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     let not_found = || Response::builder().status(404).body(Vec::new()).unwrap_or_else(|_| Response::new(Vec::new()));
 
-    /* [lc-2419] 取 `uri().path()` 而不是 `to_string()` 再手工 strip：
-       自定义协议在不同平台被 Tauri 转成不同形态
-       （`artwork://preferred/<id>/<role>`、`http://artwork.localhost/<id>/<role>`），
-       但**路径部分始终是 `/<id>/<role>`**。与 fntvimg 的取法保持一致。
-       之前用 to_string + strip_prefix 在 Windows 形态下拿到的串含 scheme/host，
-       解析不稳定（实测表现为首帧能画出、随后裂图）。
-       形如 /<64hex>/<role>，与源实现正则 `^\/([a-f0-9]{64})\/(poster|backdrop|logo)$` 对齐。 */
+    /* [lc-2419/2421] 取 `uri().path()` 而不是 `to_string()` 再手工 strip。
+       自定义协议在两端形态不同（与 fntvimg 一致，见 imgproto.rs 顶部注释）：
+         · Windows：`http://artwork.localhost/<id>/<role>`  ← 前端在 Windows 必须用这个
+         · 其它：  `artwork://localhost/<id>/<role>`
+       两种形态下 `uri().path()` 都是 `/<id>/<role>`，所以这里只需要解析路径。
+       ⚠ [lc-2421] 前端之前拼的是 `artwork://preferred/...` —— Windows 上
+       WebView2 不把 `scheme://host/` 路由到自定义协议处理器（只认
+       `http://<scheme>.localhost/`），于是偏好图加载失败、表现为裂图。
+       修复在前端；这里做成对两种形态都健壮（也接受多余的 host 段，见下面的过滤）。 */
     let path = request.uri().path().to_string();
-    let parts: Vec<&str> = path.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
+    let mut parts: Vec<&str> = path
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    // 容错：`artwork://preferred/<id>/<role>` 形态（旧版前端/手工调试）多一个 host 段
+    if parts.len() == 3 && (parts[0] == "preferred" || parts[0] == "localhost") {
+        parts.remove(0);
+    }
     if parts.len() != 2 {
         return not_found();
     }

@@ -63,7 +63,18 @@ export function artworkUrl(localPath: string, mtimeSec?: number): string {
   const m = /\/([a-f0-9]{64})\/(poster|backdrop|logo)\.webp$/i.exec(p);
   if (!m) return "";
   const v = mtimeSec ?? 0;
-  return `artwork://preferred/${m[1].toLowerCase()}/${m[2].toLowerCase()}${v ? `?v=${v}` : ""}`;
+  const path = `/${m[1].toLowerCase()}/${m[2].toLowerCase()}${v ? `?v=${v}` : ""}`;
+  /* [lc-2421] 必须按平台分成两种形态 —— 与 `imgUrl()` / `imgproto.rs` 顶部注释同口径：
+       · Windows：`http://artwork.localhost/<path>`
+       · 其它：  `artwork://localhost/<path>`
+     **不能写成 `artwork://preferred/...`**：Windows 上 WebView2 只认
+     `http://<scheme>.localhost/` 这种形态，`scheme://host/` 不会路由到自定义协议处理器
+     → 图片加载失败 → 用户看到的就是"设为偏好后变成裂图"
+     （截图里首张空白框、后面几张正常，正是偏好图放首位但加载不到）。
+     这跟 fntvimg 用 `http://fntvimg.localhost` 是同一个原因，不是我可选的风格。 */
+  const isWin =
+    typeof navigator !== "undefined" && navigator.userAgent.includes("Windows");
+  return isWin ? `http://artwork.localhost${path}` : `artwork://localhost${path}`;
 }
 
 /** 读已存偏好（对应源 `window.wwPlayer.readDetailArtwork`）。 */

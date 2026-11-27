@@ -1975,6 +1975,26 @@ async fn get_media_versions(state: State<'_, AppState>, guid: String) -> Result<
                 "is_bluray": s.get("is_bluray").and_then(|v| v.as_bool()).unwrap_or(false),
                 // 与 FlyNarwhal `VideoStream.isNotExist` 同口径（ext1 == -1 为 STRM 等占位流）
                 "is_not_exist": num_of(s, "ext1") == -1,
+                // [lc-2396] Polaris 详情页「技术规格」区需要的额外字段（纯追加，老消费者不受影响）。
+                // 上游 stream/list 的 video_streams 本身就带这些；字段名先按 fnOS web 前端实际
+                // 读取的名字（codec_name / frame_rate / profile / color_* / channels），
+                // 再补几个常见别名做探测 —— 取不到就是空/0，前端那一格显示「—」。
+                "profile": str_of(s, "profile"),
+                "color_primaries": str_of(s, "color_primaries"),
+                "color_space": str_of(s, "color_space"),
+                "color_transfer": str_of(s, "color_transfer"),
+                "color_range": str_of(s, "color_range"),
+                // 帧率：上游既可能是数字 "24" 也可能是 "23.976" 字符串，
+                // 还可能是 {fps_num, fps_den} 对象，统一折算成 f64（取不到 = 0）。
+                "frame_rate": s.get("frame_rate").and_then(|v| {
+                    v.as_f64()
+                        .or_else(|| v.as_str().and_then(|x| x.trim().parse::<f64>().ok()))
+                        .or_else(|| {
+                            let n = v.get("fps_num").and_then(|x| x.as_f64()).unwrap_or(0.0);
+                            let d = v.get("fps_den").and_then(|x| x.as_f64()).unwrap_or(0.0);
+                            if n > 0.0 && d > 0.0 { Some(n / d) } else { None }
+                        })
+                }).unwrap_or(0.0),
             })
         })
         .filter(|v| v.get("media_guid").and_then(|x| x.as_str()).map(|s| !s.is_empty()).unwrap_or(false))
@@ -1997,9 +2017,93 @@ async fn get_media_versions(state: State<'_, AppState>, guid: String) -> Result<
                 .map(|s| s.trim().to_string())
         })
         .unwrap_or_default();
+    /// [lc-2396] 技术规格区用的**当前版本附加信息**：音频流摘要 + 字幕流数量 + 容器格式。
+    /// 全部来自同一次 `stream/list` 响应的 `audio_streams` / `subtitle_streams` / `files[]`，
+    /// 不额外发请求。取不到的项留空，前端那一格显示「—」（不编数字）。
+    let media_specs = {
+        // 音频流：优先挑 play/info 记住的 audio_guid；没有就取第一条。
+        let audio_arr = data
+            .get("audio_streams")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let sub_count = data
+            .get("subtitle_streams")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        // 容器格式：优先 files[].container / ext，其次从文件名后缀取。
+        let container = data
+            .get("files")
+            .and_then(|v| v.as_array())
+            .and_then(|files| {
+                files.iter().find_map(|f| {
+                    ["container", "format", "ext"]
+                        .iter()
+                        .find_map(|k| {
+                            f.get(*k)
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                        })
+                        .or_else(|| {
+                            let name = str_of(f, "file_name");
+                            name.rsplit_once('.')
+                                .map(|(_, ext)| ext.trim().to_uppercase())
+                                .filter(|e| !e.is_empty() && e.len() <= 5)
+                        })
+                })
+            })
+            .unwrap_or_default();
+        let audio: Vec<Value> = audio_arr
+            .iter()
+            .map(|a| {
+                json!({
+                    "guid": str_of(a, "guid"),
+                    "codec_name": str_of(a, "codec_name"),
+                    "language": str_of(a, "language"),
+                    "title": str_of(a, "title"),
+                    // 声道数（上游 `channels`；fnOS web 前端也读这个名字）
+                    "channels": num_of(a, "channels"),
+                    "bit_rate": num_of(a, "bit_rate").max(num_of(a, "bps")),
+                    "sample_rate": num_of(a, "sample_rate"),
+                    "is_default": num_of(a, "is_default"),
+                })
+            })
+            .filter(|v| {
+                v.get("guid").and_then(|x| x.as_str()).map(|s| !s.is_empty()).unwrap_or(false)
+                    || v.get("codec_name").and_then(|x| x.as_str()).map(|s| !s.is_empty()).unwrap_or(false)
+            })
+            .collect();
+        // 记住的音频轨：play/info 的 audio_guid（失败不影响主流程，交给前端取第一条）。
+        let selected_audio_guid = client
+            .call(
+                &cfg.server,
+                "/v/api/v1/play/info",
+                "POST",
+                &cfg.token,
+                Some(json!({ "item_guid": guid })),
+            )
+            .await
+            .ok()
+            .and_then(|p| {
+                p.get("audio_guid")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+            })
+            .unwrap_or_default();
+        json!({
+            "audio_streams": audio,
+            "selected_audio_guid": selected_audio_guid,
+            "subtitle_count": sub_count,
+            "container": container,
+        })
+    };
     Ok(json!({
         "versions": versions,
         "selected_media_guid": selected_media_guid,
+        // [lc-2396] Polaris 详情页技术规格区（纯追加字段；老调用方忽略即可）
+        "specs": media_specs,
     }))
 }
 
@@ -3481,6 +3585,8 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Value, String> {
         "perfMode": cfg.perf_mode,
         "carouselLogo": cfg.carousel_logo,
         "movieDetailStyle": cfg.movie_detail_style,
+        // [lc-2396] 详情页版式：original（原有，默认）/ polaris（复刻 Polaris 全屏详情页，剧集电影共用）
+        "detailStyle": cfg.detail_style,
         "launchPage": cfg.launch_page,
         "autoLogin": cfg.auto_login,
         // [player] 播放器选择（默认自带 mpv；potplayer 路径空 = 自动探测）
@@ -3570,6 +3676,15 @@ async fn set_settings(
             return Err(format!("carouselStyle 非法：{s}（只允许 misty/spotlight）"));
         }
         cfg.carousel_style = s.to_string();
+    }
+    // [lc-2396] 详情页版式：original（原有，默认）| polaris（复刻 Polaris 全屏详情页）。
+    // 同口径：非法值报错，不静默回落。
+    if let Some(v) = arg.get("detailStyle") {
+        let s = v.as_str().unwrap_or("");
+        if !matches!(s, "original" | "polaris") {
+            return Err(format!("detailStyle 非法：{s}（只允许 original/polaris）"));
+        }
+        cfg.detail_style = s.to_string();
     }
     if let Some(v) = arg.get("launchPage") {
         let s = v.as_str().unwrap_or("");
@@ -3780,6 +3895,8 @@ async fn set_settings(
         "movieDetailStyle": cfg.movie_detail_style,
         // [lc-2372] 首页轮播样式：misty（横滑，默认）/ spotlight（Polaris 放映厅）
         "carouselStyle": cfg.carousel_style,
+        // [lc-2396] 详情页版式：original（原有，默认）/ polaris（Polaris 全屏详情页）
+        "detailStyle": cfg.detail_style,
         "launchPage": cfg.launch_page,
         "autoLogin": cfg.auto_login,
         "playerKind": cfg.player_kind,

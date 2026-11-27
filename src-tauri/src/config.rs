@@ -141,6 +141,11 @@ pub struct Config {
     /// 纯前端开关，存这里以便重启保持。
     #[serde(default = "default_carousel_style")]
     pub carousel_style: String,
+    /// [lc-2396] 详情页版式（剧集与电影共用）："original"（原有版式，默认，行为一字未改）|
+    /// "polaris"（全屏遮罩 + Ken Burns 背景 + 玻璃控制台；复刻 Polaris Player 5.2.8 详情页）。
+    /// 纯前端开关，存这里以便重启保持。
+    #[serde(default = "default_detail_style")]
+    pub detail_style: String,
     /// 启动页："home"（首页，默认）| "discover"（发现页）
     /// 历史取值 "continue" 已移除；老 config 读到后由前端归一为 home。
     #[serde(default = "default_launch_page")]
@@ -398,6 +403,13 @@ fn default_carousel_style() -> String {
     "misty".into()
 }
 
+/// [lc-2396] 详情页版式默认值 = "original"。
+/// 与 lc-2372 同口径：新样式是**并列新增**，默认仍走原有版式，
+/// 老用户升级后详情页一行像素都不变。
+fn default_detail_style() -> String {
+    "original".into()
+}
+
 fn default_true() -> bool {
     true
 }
@@ -491,6 +503,7 @@ impl Default for Config {
             carousel_logo: true,
             movie_detail_style: default_movie_detail_style(),
             carousel_style: default_carousel_style(),
+            detail_style: default_detail_style(),
             launch_page: default_launch_page(),
             bgm_token: String::new(),
             bgm_remember: true,
@@ -1331,12 +1344,25 @@ mod tests {
         assert_eq!(default_carousel_style(), "misty");
     }
 
+    /// [lc-2396] 默认详情页版式 = original：新增 polaris 不改变老用户画面。
+    #[test]
+    fn default_detail_style_is_original() {
+        assert_eq!(default_detail_style(), "original");
+    }
+
     /// [lc-2372] 老 config.json 没有 carouselStyle 键时必须能反序列化成默认值
     /// （serde default 生效），否则升级后读配置直接失败。
     #[test]
     fn carousel_style_defaults_when_missing() {
         let cfg: Config = serde_json::from_str("{}").expect("空对象应能反序列化");
         assert_eq!(cfg.carousel_style, "misty");
+    }
+
+    /// [lc-2396] 老 config.json 没有 detailStyle 键时必须能反序列化成 original。
+    #[test]
+    fn detail_style_defaults_when_missing() {
+        let cfg: Config = serde_json::from_str("{}").expect("空对象应能反序列化");
+        assert_eq!(cfg.detail_style, "original");
     }
 
     /// [lc-2178] 皮肤值归一：clear 保留，其余非法值回落 uosc。

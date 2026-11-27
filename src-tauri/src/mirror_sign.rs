@@ -103,6 +103,59 @@ pub fn truncate(s: &str, n: usize) -> String {
     if t.len() < s.len() { format!("{t}…") } else { t }
 }
 
+/// [lc-2415] 端点熔断：某端点**连接失败/超时**后，接下来一段时间内直接跳过它。
+///
+/// 起因（实测日志）：默认端点列表里第二位 `fntv-bgm-mirror.122983191.workers.dev`
+/// 在家用网络上 DNS 被污染（解析到 2a03:2880:f10d:183:face:b00c:0:25de，Facebook 段），
+/// 每次请求都要白等满 12 秒超时才切到下一个端点。一次「打开吐槽」要跨 2 个端点，
+/// 实测单次请求耗时 6 秒，其中一半以上纯粹浪费在一个**永远不可能成功**的地址上。
+///
+/// 只对**连接层失败**（DNS/连接/超时）计数，不对 HTTP 状态码计数：
+/// 502/429 说明端点可达、只是上游有问题，换端点依然值得试，不能熔断。
+/// 恢复方式：冷却期到点后自动重新尝试，成功即清除记录（无需重启）。
+pub fn mark_endpoint_down(endpoint: &str) {
+    down_until().lock().unwrap_or_else(|e| e.into_inner()).insert(endpoint.to_string(), now_secs() + ENDPOINT_COOLDOWN_SECS);
+}
+
+/// 端点是否处于熔断冷却期。
+pub fn endpoint_is_down(endpoint: &str) -> bool {
+    let mut m = down_until().lock().unwrap_or_else(|e| e.into_inner());
+    match m.get(endpoint) {
+        Some(&t) if t > now_secs() => true,
+        Some(_) => {
+            m.remove(endpoint); // 冷却结束，顺手清理
+            false
+        }
+        None => false,
+    }
+}
+
+/// 端点恢复正常 → 清掉熔断记录。
+pub fn mark_endpoint_up(endpoint: &str) {
+    down_until().lock().unwrap_or_else(|e| e.into_inner()).remove(endpoint);
+}
+
+fn down_until() -> &'static std::sync::Mutex<std::collections::HashMap<String, u64>> {
+    static M: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> =
+        std::sync::OnceLock::new();
+    M.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// 熔断冷却时长：短到能自愈（上游/网络恢复后 1 分钟内重新试），
+/// 长到能覆盖"一次打开详情页连续发好几个请求"的场景。
+const ENDPOINT_COOLDOWN_SECS: u64 = 60;
+
+/// [lc-2415] 可用端点（已剔除熔断中的）。全被熔断时**兜底返回原列表**：
+/// 宁可白等一次，也不能因为熔断记录导致一个端点都不试（那就真的什么都发不出去了）。
+pub fn healthy_endpoints(all: Vec<String>) -> Vec<String> {
+    let alive: Vec<String> = all.iter().filter(|e| !endpoint_is_down(e)).cloned().collect();
+    if alive.is_empty() {
+        all
+    } else {
+        alive
+    }
+}
+
 /// 401 家族的错误文案：把「本应用的密钥问题」与「镜像/上游问题」区分开。
 /// `secret_env` 是调用方对应的环境变量名（bgm/tmdb 密钥独立，报错要指对人）。
 /// 判断镜像返回的 401 是不是**签名侧**错误（密钥四兄弟）。

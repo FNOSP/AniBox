@@ -298,7 +298,10 @@ async fn mirror_call_full(
             .map(|v| crate::tmdb::MirrorGet::Fresh(v, None));
     };
     let mut last_err = String::new();
-    for ep in endpoints() {
+    // [lc-2415] 跳过熔断中的端点：连接层失败过的地址（如 DNS 被污染的 workers.dev）
+    // 在冷却期内不再白等超时。502/429 不熔断 —— 端点可达，换它没意义但复用有价值。
+    let eps = mirror_sign::healthy_endpoints(endpoints());
+    for ep in eps {
         let url = format!("{ep}{path_with_query}");
         let mut rb = if method == "POST" {
             http().post(&url)
@@ -323,9 +326,13 @@ async fn mirror_call_full(
             Err(e) => {
                 last_err = format!("{ep} 连接失败/超时: {e}");
                 crate::libmpv::trace(&format!("[bgm] {method} {path_with_query} → {ep} 连接失败: {e}"));
+                // [lc-2415] 连接层失败 → 熔断该端点（HTTP 状态码不熔断，见 healthy_endpoints 注释）
+                mirror_sign::mark_endpoint_down(&ep);
                 continue; // 连接错误/超时 → 切下一个端点
             }
         };
+        // 端点已响应（哪怕是 502）→ 它不是"不可达"，解除熔断记录
+        mirror_sign::mark_endpoint_up(&ep);
         let status = resp.status().as_u16();
         let cache_hdr = resp
             .headers()

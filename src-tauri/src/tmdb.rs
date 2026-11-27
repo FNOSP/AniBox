@@ -295,7 +295,12 @@ async fn mirror_get_full(
         ));
     };
     let mut last_err = String::new();
-    for ep in mirror_sign::resolve_endpoints("FNTV_TMDB_ENDPOINT", DEFAULT_ENDPOINTS) {
+    // [lc-2415] 同 bgm.rs：跳过熔断中的端点（连接层失败过的地址在冷却期内不再白等超时）
+    let eps = mirror_sign::healthy_endpoints(mirror_sign::resolve_endpoints(
+        "FNTV_TMDB_ENDPOINT",
+        DEFAULT_ENDPOINTS,
+    ));
+    for ep in eps {
         let url_str = format!("{ep}{path_with_query}");
         let url = match reqwest::Url::parse(&url_str) {
             Ok(u) => u,
@@ -321,9 +326,11 @@ async fn mirror_get_full(
             Err(e) => {
                 last_err = format!("{ep} 连接失败/超时: {e}");
                 crate::libmpv::trace(&format!("[tmdb] GET {path_with_query} → {ep} 连接失败: {e}"));
+                mirror_sign::mark_endpoint_down(&ep); // [lc-2415] 连接层失败 → 熔断
                 continue; // 连接错误/超时 → 切下一个端点
             }
         };
+        mirror_sign::mark_endpoint_up(&ep); // [lc-2415] 端点已响应 → 解除熔断
         let status = resp.status().as_u16();
         let cache_hdr = resp
             .headers()

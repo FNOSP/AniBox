@@ -84,21 +84,41 @@ export function PolarisEpisodes({ m }: { m: PolarisModel }) {
             </div>
           )}
         </div>
+
+        {/* [lc-2400] 翻页圆钮：从「雪佛兰箭头挂轨道两侧」改成**右上角一对圆形按钮**
+            （用户指定：原来那种去掉，改成图片样式，位置放到头部右边 —— 也就是上一版
+            季/集摘要腾出来的那个位置）。
+            可用态仍由 useRailArrows 判定：到头置灰且不可点，不是隐藏 ——
+            隐藏会让整行在滚动时左右跳动。 */}
+        <div className="pdt-ep-nav">
+          <button
+            type="button"
+            className="pdt-ep-nav-btn"
+            onClick={() => scrollBy(-1)}
+            disabled={atStart}
+            aria-label="向左浏览剧集"
+            title="上一页"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <polyline points="15 6 9 12 15 18" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="pdt-ep-nav-btn"
+            onClick={() => scrollBy(1)}
+            disabled={atEnd}
+            aria-label="向右浏览剧集"
+            title="下一页"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <polyline points="9 6 15 12 9 18" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div className="pdt-episodes-rail">
-          <button
-            type="button"
-            className={`pdt-rail-arrow left${atStart ? " disabled" : ""}`}
-            onClick={() => scrollBy(-1)}
-            aria-label="向左浏览剧集"
-            tabIndex={atStart ? -1 : 0}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <polyline points="15 6 9 12 15 18" />
-            </svg>
-          </button>
-
           <div
             className="pdt-episodes-scroller"
             ref={scrollerRef}
@@ -223,18 +243,6 @@ export function PolarisEpisodes({ m }: { m: PolarisModel }) {
                   );
                 })}
           </div>
-
-          <button
-            type="button"
-            className={`pdt-rail-arrow right${atEnd ? " disabled" : ""}`}
-            onClick={() => scrollBy(1)}
-            aria-label="向右浏览剧集"
-            tabIndex={atEnd ? -1 : 0}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <polyline points="9 6 15 12 9 18" />
-            </svg>
-          </button>
         </div>
 
       {/* 空态：与 Polaris `.pw-episodes-empty` 同文案口径（padding 40px 20px / 40% 白） */}

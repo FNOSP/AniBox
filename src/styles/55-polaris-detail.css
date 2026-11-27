@@ -842,9 +842,11 @@ html:not(.perf) .pdt-close {
 .pdt-episodes {
   margin: 20px 0;
 }
-/* [lc-2399] 头部改为**单侧左对齐**：摘要在「选集」右边（用户要求），右端不再有内容。
-   原来 `justify-content: space-between` 是靠右端那块撑出来的两端对齐，右端空了之后
-   那条件就只剩"标题贴左"，语义上不再成立 —— 显式关掉，避免以后有人加元素时被拽到右边。 */
+/* [lc-2399] 头部左对齐：摘要在「选集」右边（用户要求）。
+   [lc-2400] 右端重新有内容了（翻页圆钮），但**不用 space-between** ——
+     那样右端按钮会被拉到整行最右，而左组（标题+摘要+季胶囊）在窄窗换行时
+     两者会互相挤。改用「左组 flex:1 + 右组 flex:0」：左组自己占满剩余宽度、
+     内部左对齐，右组始终贴右。行为比 space-between 稳定。 */
 .pdt-episodes-head {
   display: flex;
   justify-content: flex-start;
@@ -859,7 +861,68 @@ html:not(.perf) .pdt-close {
   align-items: center;
   gap: 12px;
   min-width: 0;
+  flex: 1 1 auto;
   flex-wrap: wrap;
+}
+
+/* ── 翻页圆钮（[lc-2400] 用户指定：去掉轨道两侧的雪佛兰箭头，改成图片里的圆形按钮，
+      位置放到头部右边 —— 也就是上一版季/集摘要腾出来的位置）────────────────────
+
+   尺寸按用户图片的比例取：圆 36px、图标约 14px、白底、极淡描边、柔和投影。
+   原来那套（44×64 无底 + 38px svg + 双层 drop-shadow 挂轨道外 −62px）整体废弃。 */
+.pdt-ep-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+.pdt-ep-nav-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 50%;
+  /* 白底 + 轻微上浮的实心感：截图里是两个几乎纯白的圆，靠描边和投影分离背景 */
+  background: rgba(255, 255, 255, 0.9);
+  color: #1c1c1e;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  transition:
+    background 0.18s ease,
+    transform 0.18s cubic-bezier(0.25, 1, 0.5, 1),
+    opacity 0.18s ease;
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+}
+.pdt-ep-nav-btn svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  pointer-events: none;
+}
+.pdt-ep-nav-btn:hover:not(:disabled) {
+  background: #fff;
+  transform: scale(1.06);
+}
+.pdt-ep-nav-btn:active:not(:disabled) {
+  transform: scale(0.94);
+  transition-duration: 0.1s;
+}
+/* 到头：置灰但仍占位（隐藏会让整行在滚动时左右跳动） */
+.pdt-ep-nav-btn:disabled {
+  opacity: 0.28;
+  cursor: default;
+  box-shadow: none;
+}
+/* 性能模式：去掉模糊与投影 */
+html.perf .pdt-ep-nav-btn {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
 }
 /* 季选择胶囊：Polaris 是服务器下拉（`.pw-detail-server-btn` 12px / 白 8% 底）。
    这里铺开成胶囊行，视觉取同一档参数。 */
@@ -904,7 +967,11 @@ html:not(.perf) .pdt-close {
   margin-left: -4px;
 }
 
-/* 轨道容器（Polaris @7146）：position relative + display flow-root（包住浮动的箭头） */
+/* 轨道容器（Polaris @7146）：position relative + display flow-root
+   [lc-2400] **选集区不再用它了** —— 翻页箭头已移到头部右侧的圆钮（.pdt-ep-nav），
+   这个容器只剩剧照/主演/推荐三条横排还在用（.pdt-rail，箭头仍挂两侧）。
+   保留 `.pdt-episodes-rail` 这条选择器只是为了不让 DOM 里的类名悬空（它现在
+   不含箭头，实际等价于一个普通块）。 */
 .pdt-episodes-rail,
 .pdt-rail {
   position: relative;

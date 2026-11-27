@@ -191,7 +191,7 @@
 
 /* ── 按钮 ─────────────────────────────────────────────────────────
    等宽两槽（flex:1），图标居中；文字只留 aria/title。 */
-.nav-cap-l {
+button.nav-cap-l {
   position: relative;
   z-index: 2;
   flex: 1;
@@ -199,6 +199,12 @@
   place-items: center;
   padding: 0;
   border: none;
+  /* [lc-2436] 必须用 `button.nav-cap-l` 提特异性（0,1,1）压过全局
+     `button:hover { background: var(--hover-strong) }`。
+     血训：`.nav-cap-l`（0,1,0）斗不过 `button:hover`（0,1,1），
+     鼠标一悬停，全局规则就把按钮背景从 transparent 改成 rgba(0,0,0,.08) ——
+     在胶囊里表现为一条 48×18 的深色矩形"长条"（用户报的"长条阴影"，
+     而且还是"鼠标放上去才显示"）。同理 :hover 也要一并压住。 */
   background: transparent;
   color: rgba(255, 255, 255, 0.82);
   font-family: inherit;
@@ -213,8 +219,10 @@
 }
 
 /* 选中态：原版是 accentColor tint（浅色 0x0088FF / 深色 0x0091FF）。
-   我们把滑块做成中性玻璃，所以图标只提对比、不引入第二个色相。 */
+   我们把滑块做成中性玻璃，所以图标只提对比、不引入第二个色相。
+   同样要压住全局 button 背景（见上一条注释），保持透明。 */
 .nav-cap-l.on {
+  background: transparent;
   color: #fff;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 }
@@ -224,15 +232,20 @@
   text-shadow: none;
 }
 
-.nav-cap-l:hover {
+/* 悬停只改图标颜色，背景必须保持透明（否则全局 button:hover 会塞一块深色） */
+button.nav-cap-l:hover,
+button.nav-cap-l:active {
+  background: transparent;
   color: #fff;
 }
 
-[data-theme="light"] .nav-cap-l:hover {
+[data-theme="light"] button.nav-cap-l:hover,
+[data-theme="light"] button.nav-cap-l:active {
+  background: transparent;
   color: #000;
 }
 
-.nav-cap-l:focus-visible {
+button.nav-cap-l:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
   border-radius: var(--r-full);

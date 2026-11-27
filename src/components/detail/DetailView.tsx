@@ -2638,11 +2638,15 @@ export function DetailView({
             versions: mediaVersions,
             versionsGuid: versionGuid,
             selectedMediaGuid,
-            onVersionChange: (mg) => selectVersion(base.guid, mg),
+            onVersionChange: (mg) => selectVersion(versionGuid, mg),
+            /* [lc-2407] 不要再判 `versionGuid === base.guid`：
+               剧集页的 versionGuid 是**续播目标集/第一集的 guid**，与 base.guid（剧集本身）
+               永远不相等 → 该三元恒为 ""，路径恒空、只剩文件名兜底（用户实测：显示的还是文件名）。
+               直接按 selectedMediaGuid 在 mediaVersions 里查即可 —— mediaVersions 本身就是
+               为 versionTargetGuid 拉的那一批，selectedMediaGuid 也来自同一批，
+               两者天然同源，不需要再拿条目标识做二次确认。 */
             filePath:
-              versionGuid === base.guid
-                ? mediaVersions.find((v) => v.media_guid === selectedMediaGuid)?.file_path || ""
-                : "",
+              mediaVersions.find((v) => v.media_guid === selectedMediaGuid)?.file_path || "",
             specs: mediaSpecs,
             stills: movieStills.length > 0
               ? movieStills
@@ -2754,12 +2758,11 @@ export function DetailView({
               : undefined
           }
           selectedVersion={versionGuid === base.guid ? selectedMediaGuid : undefined}
-          onVersionChange={(mg) => selectVersion(base.guid, mg)}
-          /* [lc-2273] 文件位置行：当前选中版本的完整路径（上游没给 = 不渲染） */
+          onVersionChange={(mg) => selectVersion(versionGuid, mg)}
+          /* [lc-2273] 文件位置行：当前选中版本的完整路径（上游没给 = 不渲染）
+             [lc-2407] 同样去掉 `versionGuid === base.guid` 判定（理由见 polaris 分支处注释） */
           filePath={
-            versionGuid === base.guid
-              ? mediaVersions.find((v) => v.media_guid === selectedMediaGuid)?.file_path || ""
-              : ""
+            mediaVersions.find((v) => v.media_guid === selectedMediaGuid)?.file_path || ""
           }
           /* [lc-2252] 标签条/标签体渲染在左栏简介位（经典版同款交互） */
           tabsNav={tabsNavEl}
@@ -2821,7 +2824,7 @@ export function DetailView({
               : undefined
           }
           selectedVersion={versionGuid === base.guid ? selectedMediaGuid : undefined}
-          onVersionChange={(mg) => selectVersion(base.guid, mg)}
+          onVersionChange={(mg) => selectVersion(versionGuid, mg)}
         />
       )}
 

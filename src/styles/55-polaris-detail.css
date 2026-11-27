@@ -1727,9 +1727,14 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
 
 /* ── [lc-2406] 资源详情行（完整路径）────────────────────────────────────────
    位置：原来展开按钮的地方（规格网格下方）。
-   对照用户给的第二张图：透明底、无边框、无圆角、无投影 —— **不是玻璃板**，
-   就是一行裸文字。所以这里一条 background / box-shadow / border-radius 都不给，
-   与上面四个玻璃方块形成"信息层级更低"的对比，正好符合它作为辅助信息的位置。
+   对照用户给的第二张图：标签与路径同一行、**完整路径**、行尾一个 ›。
+
+   [lc-2407] 用户纠正：「那个长条底加回来」—— 上一版我把玻璃底去掉了（读图二时
+   判断成裸文字行），实际用户要的是**保留原来的玻璃长条底色**，只是内容换成完整路径。
+   所以这里加回与四个规格方块同一套玻璃板配方（`main.css:7005`）：
+   50% 白底 + inset 0.7px 高光 + inset 0.7px 黑 10% 描边 + 0 14px 30px 投影
+   + blur(20px) saturate(1.7)，圆角 14、内边距与 .pdt-spec-group 同档（24px 28px）。
+   这样它和上面四个方块读起来是同一组玻璃元素，而不是一块"掉在地上的裸字"。
 
    排版：标签与路径同一行（baseline 对齐），行尾一个 › 指向右侧。
    路径按 `/` 拆段渲染（.pdt-path-seg），段整体不可拆、换行只发生在段间 ——
@@ -1741,22 +1746,32 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
   align-items: baseline;
   gap: 16px;
   margin-top: 20px;
-  padding: 0 2px;
+  padding: 20px 28px;
   min-width: 0;
+  box-sizing: border-box;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow:
+    inset 0 0.7px 0 rgba(255, 255, 255, 0.9),
+    inset 0 0 0 0.7px rgba(0, 0, 0, 0.1),
+    0 14px 30px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(20px) saturate(1.7) brightness(1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.7) brightness(1);
 }
-/* 标签：13px / 600 / 白 55%（深底上的辅助信息，比规格组头再弱一档） */
+/* 标签：13px / 600 / **黑 55%**（[lc-2407] 玻璃底是半透明白，深色字才读得清；
+   原来写白 55% 是给"深底裸文字"配的，加到玻璃上会淡到看不见） */
 .pdt-filepath-row-k {
   font-size: 13px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.55);
+  color: rgba(0, 0, 0, 0.55);
   letter-spacing: 0.6px;
   white-space: nowrap;
 }
-/* 路径主体：13px / 等宽 / 白 78%；两行封顶，段间换行 */
+/* 路径主体：13px / 等宽 / **黑 88%**（同上，玻璃底上要用深色字）；两行封顶、段间换行 */
 .pdt-filepath-row-v {
   font-size: 13px;
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-  color: rgba(255, 255, 255, 0.78);
+  color: rgba(0, 0, 0, 0.88);
   line-height: 1.5;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -1772,12 +1787,13 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
      多一个空格会让路径看起来有间隙 */
   margin: 0;
 }
-/* 行尾 › ：纯装饰（图二里有），比路径再弱一档 */
+/* 行尾 › ：纯装饰（图二里有），比路径再弱一档
+   [lc-2407] 玻璃底上是深色字，所以这里也用黑（原 白 30% 在白底上等于消失） */
 .pdt-filepath-row-chev {
   display: flex;
   align-items: center;
   align-self: center;
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(0, 0, 0, 0.3);
 }
 .pdt-filepath-row-chev svg {
   width: 14px;

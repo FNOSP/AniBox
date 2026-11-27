@@ -176,15 +176,15 @@ export function PolarisEpisodes({ m }: { m: PolarisModel }) {
                             <i style={{ width: `${pct}%` }} />
                           </span>
                         )}
-                        {/* 已看完勾：四层玻璃球，回弹入场（Polaris .pw-episode-played-check） */}
-                        <span className="pdt-ep-check" aria-hidden="true">
-                          <IcoCheckL size={14} strokeWidth={3.2} />
-                        </span>
-                        {/* 手动「已看」开关：常显在左下，与勾标分工不同
-                            （勾标=状态指示，此键=可点的开关，写飞牛 watched） */}
+                        {/* [lc-2398] 「已看」标记 —— **唯一入口**（用户要求：两个对勾只留一个）。
+                            改前有两套：这里有只读的状态指示圆钮、左下角另有一个可点的开关，
+                            两者视觉重复，且左下角那个还压住了「24m」时长角标（截图实锤）。
+                            现在合成一个：右上角圆钮直接就是开关（写飞牛 watched），
+                            已看 = 亮起实心；未看 = 暗态描边，悬停才明显。
+                            stopPropagation 防止点标记时误触播放。 */}
                         <button
                           type="button"
-                          className={`pdt-ep-mark${seen ? " on" : ""}`}
+                          className={`pdt-ep-check${seen ? " on" : ""}`}
                           title={seen ? "已看（点击取消标记）" : "标记为已看"}
                           aria-pressed={seen}
                           onClick={(e) => {
@@ -192,7 +192,7 @@ export function PolarisEpisodes({ m }: { m: PolarisModel }) {
                             m.onToggleEpWatched(ep, seen);
                           }}
                         >
-                          <IcoCheckL size={11} strokeWidth={2.6} />
+                          <IcoCheckL size={14} strokeWidth={3.2} />
                         </button>
                         {m.onEpMeta && (
                           <button

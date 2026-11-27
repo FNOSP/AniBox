@@ -3,6 +3,7 @@ import { BgmListSkeleton } from "../BgmListSkeleton";
 import { AvatarSafe } from "../../common/AvatarSafe";
 import { bgmImg } from "../../../lib/images";
 import { fmtBgmTime } from "../../../lib/format";
+import { friendlyUpstreamMessage } from "../../../lib/upstreamError";
 import { BgmComment } from "../../../types";
 import { Star as IcoStarL } from "lucide-react";
 
@@ -21,8 +22,13 @@ export function CommentsTab({ comments, commentsBusy, commentsDone, commentsErr,
         {commentsBusy && comments.length === 0 && !commentsErr && <BgmListSkeleton />}
         {commentsErr && (
           <div className="bgmc-state">
-            <div className="bgmc-state-t">吐槽加载失败</div>
-            <div className="bgmc-state-d">{commentsErr}</div>
+            {/* [lc-2415] 以前这里直接把后端错误链原样铺开（含端点域名、
+                `error sending request for url (...)` 全串），对用户没有可操作性。
+                现在只说结论 + 该做什么；原始文本保留在 title 上，排查时仍可拿到。 */}
+            <div className="bgmc-state-t">{friendlyUpstreamMessage(commentsErr).title}</div>
+            <div className="bgmc-state-d" title={commentsErr}>
+              {friendlyUpstreamMessage(commentsErr).hint}
+            </div>
             <button className="bgmc-retry" onClick={retryComments}>
               重试
             </button>

@@ -1,6 +1,7 @@
 /* [lc-1536] 从 DetailView 拆出的标签页（纯搬移，逻辑与注释未改动）。 */
 import { BgmListSkeleton } from "../BgmListSkeleton";
 import { bgmImg } from "../../../lib/images";
+import { friendlyUpstreamMessage } from "../../../lib/upstreamError";
 import { fmtBgmTime } from "../../../lib/format";
 import { BgmReview } from "../../../types";
 import { MessageSquare as IcoMsgL } from "lucide-react";
@@ -21,8 +22,12 @@ export function ReviewsTab({ loadMoreReviews, retryReviews, reviews, reviewsBusy
         {reviewsBusy && reviews.length === 0 && !reviewsErr && <BgmListSkeleton />}
         {reviewsErr && (
           <div className="bgmc-state">
-            <div className="bgmc-state-t">评论加载失败</div>
-            <div className="bgmc-state-d">{reviewsErr}</div>
+            {/* [lc-2415] 同吐槽页：技术错误链不直接甩给用户，只给结论与建议；
+                原始文本留在 title 上供排查。 */}
+            <div className="bgmc-state-t">{friendlyUpstreamMessage(reviewsErr).title}</div>
+            <div className="bgmc-state-d" title={reviewsErr}>
+              {friendlyUpstreamMessage(reviewsErr).hint}
+            </div>
             <button className="bgmc-retry" onClick={retryReviews}>
               重试
             </button>

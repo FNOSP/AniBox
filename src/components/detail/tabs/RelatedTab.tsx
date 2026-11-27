@@ -3,6 +3,7 @@ import { Film as IcoFilmL } from "lucide-react";
 import { BgmListSkeleton } from "../BgmListSkeleton";
 import { ScrollRow } from "../../common/ScrollRow";
 import { bgmImg, tmdbImg } from "../../../lib/images";
+import { friendlyUpstreamMessage } from "../../../lib/upstreamError";
 import { BgmRelated } from "../../../types";
 
 /** [lc-1658] TMDB 推荐条目（后端 tmdb_show_details 的 recommendations 映射）。
@@ -113,8 +114,11 @@ export function RelatedTab({
           <BgmListSkeleton />
         ) : relatedErr ? (
           <div className="bgmc-state">
-            <div className="bgmc-state-t">关联条目加载失败</div>
-            <div className="bgmc-state-d">{relatedErr}</div>
+            {/* [lc-2415] 与吐槽/评论页一致：只给结论与建议，原始错误链留在 title */}
+            <div className="bgmc-state-t">{friendlyUpstreamMessage(relatedErr).title}</div>
+            <div className="bgmc-state-d" title={relatedErr}>
+              {friendlyUpstreamMessage(relatedErr).hint}
+            </div>
             <button className="bgmc-retry" onClick={retryRelated}>
               重试
             </button>

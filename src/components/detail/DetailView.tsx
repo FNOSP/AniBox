@@ -2628,6 +2628,13 @@ export function DetailView({
                 : currentStillMap[num]
                   ? imgUrl(tmdbImg(currentStillMap[num], "w300"))
                   : episodeThumbFallback,
+            /* [lc-2397] 单集简介：飞牛 ep.overview → Bangumi 该集 desc 兜底。
+               与经典版选集列表（.dv2e-desc）完全同一口径 —— bgmEpByNum 已按集号对齐，
+               且只在 BGM 命中当前季时才有值（bgmMappingAllowed），不会串季。 */
+            epDesc: (ep, num) => {
+              const bgmEp = bgmEpByNum.get(num);
+              return String(ep.overview || bgmEp?.desc || "").trim();
+            },
             versions: mediaVersions,
             versionsGuid: versionGuid,
             selectedMediaGuid,

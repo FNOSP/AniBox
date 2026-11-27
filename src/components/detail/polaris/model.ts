@@ -80,6 +80,9 @@ export type PolarisModel = {
   onToggleEpWatched: (ep: Episode, current: boolean) => void;
   /** 单集缩略图（含 TMDB 剧照兜底链，DetailView 已算好） */
   epThumb: (ep: Episode, num: number) => string;
+  /** 单集简介（飞牛 ep.overview → Bangumi 该集 desc 兜底，DetailView 已按集号对齐算好）。
+   *  卡片图下方标题下面的那一段，空则整段不渲染。 */
+  epDesc: (ep: Episode, num: number) => string;
 
   /* ── 版本 ── */
   versions: MediaVersion[];

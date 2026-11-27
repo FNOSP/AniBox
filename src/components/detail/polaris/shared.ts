@@ -124,3 +124,17 @@ export function fmtChannels(ch?: number): string {
 export function epLabel(num: number): string {
   return `第 ${num} 集`;
 }
+
+/** 秒 → 图上角标用的**极短**时长（`24m` / `1h24m`）。
+ *  为什么不复用 `fmtDur`：那个返回「24 分钟」（中文全称），而图上角标是压在剧照上的
+ *  浮字，宽一点就会盖住画面。Polaris 源码（strings.json idx 12a0 一带）与用户给的
+ *  截图用的都是 `24m` 这种紧凑写法，这里特意分开一个函数，两个消费点互不影响。 */
+export function epDurationBadge(sec?: number | null): string {
+  const s = Number(sec ?? 0);
+  if (!s || !isFinite(s) || s <= 0) return "";
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const rest = m % 60;
+  return rest > 0 ? `${h}h${rest}m` : `${h}h`;
+}

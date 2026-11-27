@@ -17,7 +17,7 @@
 import { useEffect, useRef } from "react";
 import { Check as IcoCheckL } from "lucide-react";
 import { useRailArrows } from "./RailArrows";
-import { epLabel, progressPct } from "./shared";
+import { epDurationBadge, epLabel, progressPct } from "./shared";
 import type { PolarisModel } from "./model";
 
 export function PolarisEpisodes({ m }: { m: PolarisModel }) {
@@ -125,6 +125,18 @@ export function PolarisEpisodes({ m }: { m: PolarisModel }) {
                   const resumed =
                     !!m.resumeTarget && m.resumeTarget.guid === ep.guid && pct > 0 && pct < 100;
                   const thumb = m.epThumb(ep, num);
+                  /* [lc-2397] 图外标题两段（对照截图「S1E1 - 自动贩卖机，移动吧」的形态）：
+                       epNoLabel = S1E1（季号取本集自带，缺省用当前季）
+                       epTitle   = 集名；没有集名时退回「第 N 集」，不留空行 */
+                  const seasonNo =
+                    Number(ep.season_number ?? m.seasons[m.seasonIdx]?.season_number ?? m.seasonIdx + 1) || 1;
+                  const epNoLabel = `S${seasonNo}E${num}`;
+                  const epTitle =
+                    String(ep.title ?? "").trim() || `第 ${num} 集`;
+                  /* 图上角标：首播日期（左上）与时长（左下），与截图一致；取不到就不渲染 */
+                  const airDate = String(ep.air_date ?? "").trim().slice(0, 10);
+                  const durText = epDurationBadge(ep.duration);
+                  const desc = m.epDesc(ep, num);
                   return (
                     <div
                       key={ep.guid}
@@ -148,13 +160,10 @@ export function PolarisEpisodes({ m }: { m: PolarisModel }) {
                         ) : (
                           <div className="pdt-ep-img pdt-ep-empty" aria-hidden="true" />
                         )}
-                        {/* 底部渐变 + 集号/集名（Polaris .pw-episode-overlay） */}
-                        <div className="pdt-ep-overlay">
-                          <span className="pdt-ep-num">{epLabel(num).toUpperCase()}</span>
-                          <span className="pdt-ep-name">
-                            {String(ep.title ?? "").trim() || `第 ${num} 集`}
-                          </span>
-                        </div>
+                        {/* [lc-2397] 图上角标：左上首播日期、左下时长（与截图的浮字位置一致），
+                            集号与集名挪到图外下方（图内只保留这两条不会挤占画面的小字）。 */}
+                        {airDate && <span className="pdt-ep-date">{airDate}</span>}
+                        {durText && <span className="pdt-ep-dur">{durText}</span>}
                         {/* 中央播放钮：hover 才显（Polaris .pw-play-indicator） */}
                         <span className="pdt-ep-play" aria-hidden="true">
                           <svg viewBox="0 0 24 24" fill="currentColor">
@@ -198,6 +207,16 @@ export function PolarisEpisodes({ m }: { m: PolarisModel }) {
                             ⋯
                           </button>
                         )}
+                      </div>
+
+                      {/* ── 图外下方：集号 + 集名 / 简介（[lc-2397] 用户指定版式，
+                             对照截图：封面在上，下面为标题和简介） ── */}
+                      <div className="pdt-ep-body">
+                        <div className="pdt-ep-line">
+                          <span className="pdt-ep-no">{epNoLabel}</span>
+                          <span className="pdt-ep-title">{epTitle}</span>
+                        </div>
+                        {desc && <p className="pdt-ep-desc">{desc}</p>}
                       </div>
                     </div>
                   );

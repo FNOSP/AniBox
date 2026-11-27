@@ -965,19 +965,20 @@ html:not(.perf) .pdt-close {
 .pdt-episodes-scroller::-webkit-scrollbar,
 .pdt-rail-scroller::-webkit-scrollbar { display: none; }
 
-/* 剧集卡（Polaris @8124）：
-     flex 0 0 clamp(260px,19.8vw,380px) / radius clamp(16px,1.23vw,24px) / --pw-elev 三层阴影 */
+/* 剧集卡（Polaris @8124 + [lc-2397] 版式改造）：
+     flex 0 0 clamp(260px,19.8vw,380px) / radius clamp(16px,1.23vw,24px)
+   [lc-2397] 卡片从「图上叠字」改成**纵向两段**：封面在上、标题与简介在图外下方
+     （用户指定的版式，对照其截图）。阴影从卡片移到图块上 —— 文字区没有底，
+     阴影留在卡片上会在下方凭空多出一圈暗边。 */
 .pdt-ep-card {
   flex: 0 0 clamp(260px, 19.8vw, 380px);
   width: clamp(260px, 19.8vw, 380px);
   cursor: pointer;
   position: relative;
   z-index: 1;
+  display: flex;
+  flex-direction: column;
   border-radius: clamp(16px, 1.23vw, 24px);
-  box-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.32),
-    0 6px 14px rgba(0, 0, 0, 0.36),
-    0 12px 24px rgba(0, 0, 0, 0.28);
 }
 @media (max-width: 980px) {
   .pdt-ep-card {
@@ -986,7 +987,8 @@ html:not(.perf) .pdt-close {
   }
 }
 /* 缩略图容器（Polaris @8140）：aspect-ratio **16 / 9.2** / overflow hidden /
-   兜底底色 linear-gradient(145deg, #2a2a2a, #1a1a1a) */
+   兜底底色 linear-gradient(145deg, #2a2a2a, #1a1a1a)
+   [lc-2397] 三层阴影（--pw-elev）挪到这里：它属于"图"，不属于整张卡。 */
 .pdt-ep-thumb {
   width: 100%;
   aspect-ratio: 16 / 9.2;
@@ -995,7 +997,10 @@ html:not(.perf) .pdt-close {
   position: relative;
   background: linear-gradient(145deg, #2a2a2a, #1a1a1a);
   border: none;
-  box-shadow: none;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.32),
+    0 6px 14px rgba(0, 0, 0, 0.36),
+    0 12px 24px rgba(0, 0, 0, 0.28);
 }
 .pdt-ep-img {
   width: 100%;
@@ -1012,53 +1017,78 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
 
 /* 底部渐变叠层（Polaris @8205 `.pw-episode-overlay`）：
      linear-gradient(to top, black.9 → black.4 40% → black.1 70% → transparent)
-     flex column / justify-content flex-end / padding 14px / pointer-events none
-   `::before` 平时压一层 4% 黑，hover 撤掉（@8220） */
-.pdt-ep-overlay {
+/* ── 图上角标（[lc-2397] 用户版式：集号/集名移到图外，图内只留日期与时长） ──
+   对照截图：左上「2023/7/5」、左下「24m」，都是压在图上的小字浮标。
+   共用一套浮标语言（半透明黑底 + 模糊 + 圆角），保证两张角标视觉同重。 */
+.pdt-ep-date,
+.pdt-ep-dur {
   position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    to top,
-    rgba(0, 0, 0, 0.9) 0%,
-    rgba(0, 0, 0, 0.4) 40%,
-    rgba(0, 0, 0, 0.1) 70%,
-    transparent 100%
-  );
+  z-index: 4;
+  padding: 3px 8px;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.42);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  line-height: 1.25;
+  pointer-events: none;
+  backdrop-filter: blur(10px) saturate(130%);
+  -webkit-backdrop-filter: blur(10px) saturate(130%);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+.pdt-ep-date {
+  top: 10px;
+  left: 10px;
+}
+.pdt-ep-dur {
+  left: 10px;
+  bottom: 10px;
+}
+
+/* ── 图外文字区（[lc-2397]：封面在上，下面为标题和简介） ────────────────────
+   行高与间距按截图的呼吸走：标题紧贴图下方 10px，简介再隔 4px。
+   文字区**没有底**（截图中卡片是"图 + 裸文字"），所以不加背景、不加内边距左右，
+   与图块左边缘严格对齐（padding 0）。 */
+.pdt-ep-body {
+  padding: 10px 2px 0;
+  min-width: 0;
+}
+/* 标题行：S1E1 - 集名。集号用弱色，集名单行省略 —— 与截图一致（号在前、名在后） */
+.pdt-ep-line {
   display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  padding: 14px;
-  pointer-events: none;
-  isolation: isolate;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
 }
-.pdt-ep-overlay::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background: rgba(0, 0, 0, 0.04);
-  pointer-events: none;
-  transition: opacity 0.2s ease;
-}
-.pdt-ep-card:hover .pdt-ep-overlay::before { opacity: 0; }
-/* 集号（Polaris @8232）：10px / 700 / 白 50% / 0.5px 字距 / 大写 */
-.pdt-ep-num {
-  font-size: 10px;
+.pdt-ep-no {
+  flex: 0 0 auto;
+  font-size: 14px;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.5);
-  margin-bottom: 3px;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: 0.3px;
 }
-/* 集名（Polaris @8240）：clamp(14px,0.9vw,16px) / 600 / 单行省略 / 文字阴影 */
-.pdt-ep-name {
+.pdt-ep-title {
   font-size: clamp(14px, 0.9vw, 16px);
   font-weight: 600;
   color: #fff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+  min-width: 0;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.35);
+}
+/* 简介：截图上是两行、超出省略（多行 clamp 比单行省略信息量更大，也不撑高卡片） */
+.pdt-ep-desc {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.5);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  /* 与 .pdt-ep-title 同一左边界；两行高度固定，卡片高度因此整齐 */
 }
 
 /* 中央播放钮（Polaris @8251 `.pw-play-indicator`）：

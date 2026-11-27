@@ -50,8 +50,6 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.14);
   -webkit-user-select: none;
   user-select: none;
-  touch-action: none; /* 指针拖拽期间禁止滚动接管 */
-  cursor: grab;
 }
 
 /* 浅色主题下的兜底底（深玻璃在浅色页面上发灰） */
@@ -63,10 +61,6 @@
   box-shadow:
     0 8px 24px rgba(0, 0, 0, 0.1),
     inset 0 1px 0 rgba(255, 255, 255, 0.5);
-}
-
-.nav-cap:active {
-  cursor: grabbing;
 }
 
 /* ── 玻璃层：真折射 + 模糊 ────────────────────────────────────────
@@ -148,9 +142,11 @@
      完整药丸（左右都圆），但 10% 白的边缘对比度太低，视觉上会读成"右边是方的"。
      提到 18% 并加一层柔和外描边，让药丸轮廓清晰可辨；
      液质感仍由面板那层折射 + 内高光提供。 */
+  /* [lc-2434] **不要外投影**：低对比的浅色玻璃上，`0 3px 10px` 会在药丸右侧
+     拖出一条细长的暗带（用户报的"长条阴影"）。选中块只需要内高光 + 内描边
+     交代边界，投影交给面板那一层承担。 */
   background: rgba(255, 255, 255, 0.18);
   box-shadow:
-    0 3px 10px rgba(0, 0, 0, 0.22),
     inset 0 1px 0 rgba(255, 255, 255, 0.55),
     inset 0 0 0 1px rgba(255, 255, 255, 0.16);
 }
@@ -158,7 +154,6 @@
 [data-theme="light"] .nav-cap-ind i {
   background: rgba(0, 0, 0, 0.1);
   box-shadow:
-    0 3px 10px rgba(0, 0, 0, 0.12),
     inset 0 1px 0 rgba(255, 255, 255, 0.9),
     inset 0 0 0 1px rgba(0, 0, 0, 0.06);
 }

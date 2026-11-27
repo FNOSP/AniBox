@@ -132,6 +132,26 @@ pub async fn detect_fn_os_port(raw: &str) -> Option<u16> {
     candidates.iter().copied().find(|p| hit.contains(p))
 }
 
+/* ─────────────────── [lc-2427] macOS 本地网络权限提示 ───────────────────
+ * 背景：macOS 15 Sequoia 起，**访问局域网地址的对外 TCP 连接**纳入本地网络隐私管辖
+ * （Apple TN3179）。未获授权时系统直接拦掉连接 → reqwest 报 `is_connect()` 失败。
+ * 后果：用户看到的是「确认 NAS 地址与端口 / 防火墙放行」，去查地址、端口、防火墙，
+ * 而真正要动的是「系统设置 → 隐私与安全性 → 本地网络」里给 AniBox 打勾。
+ *
+ * 实测症状：同一账号同一地址在 Sonoma 正常，升级到 Sequoia 后立刻登录不上。
+ * 这是唯一能解释「升级即坏、回退即好」的机制，故在连接类错误后面追加该提示。
+ *
+ * 只在 macOS 追加：Windows / Linux 没有这套机制，多一句会误导用户。
+ * 用 `cfg!` 而非 `#[cfg]`，保证非 macOS 也编译这段（避免 dead_code 告警差异）。
+ */
+pub(crate) fn local_network_denied_hint() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "。macOS 15+ 还需在「系统设置 → 隐私与安全性 → 本地网络」允许 AniBox（系统升级后该授权可能失效）"
+    } else {
+        ""
+    }
+}
+
 pub struct FnClient {
     /// [nas-subtitle] pub(crate)：字幕下载（/subtitle/dl 返回二进制）要复用同一套
     /// 客户端（默认头 x-trim-client / 超时 / 自签证书放行），call() 只回 JSON 不够用。
@@ -437,9 +457,15 @@ impl FnClient {
             if e.is_builder() {
                 "服务器地址格式无效。示例：http://192.168.31.170:18888 或 100.66.1.2:18888（英文冒号；不带端口时默认 80）".to_string()
             } else if e.is_connect() {
-                "无法连接服务器：请确认 NAS 地址与端口、本机与 NAS 网络互通（Tailscale 需已连接）、防火墙放行".to_string()
+                format!(
+                    "无法连接服务器：请确认 NAS 地址与端口、本机与 NAS 网络互通（Tailscale 需已连接）、防火墙放行{}",
+                    local_network_denied_hint()
+                )
             } else if e.is_timeout() {
-                "连接超时：网络不可达或 NAS 未响应".to_string()
+                format!(
+                    "连接超时：网络不可达或 NAS 未响应{}",
+                    local_network_denied_hint()
+                )
             } else {
                 format!("网络错误: {}", e)
             }
@@ -520,6 +546,28 @@ impl FnClient {
 #[cfg(test)]
 mod lc1993_tests {
     use super::*;
+
+    // [lc-2427] macOS 本地网络权限提示：按平台开关，双向锚定。
+    #[test]
+    fn local_network_hint_only_on_macos() {
+        let hint = local_network_denied_hint();
+        if cfg!(target_os = "macos") {
+            assert!(hint.contains("本地网络"), "macOS 必须提示本地网络权限：{hint}");
+            assert!(hint.contains("隐私与安全性"), "macOS 必须给出系统设置路径：{hint}");
+            assert!(hint.starts_with('。'), "必须以句号开头以便直接拼在提示后：{hint}");
+        } else {
+            assert!(hint.is_empty(), "非 macOS 不得追加该提示（会误导用户）：{hint}");
+        }
+    }
+
+    // [lc-2427] 拼接后的错误串形态：连接类错误必须保留原有诊断信息，且 hint 只出现一次。
+    #[test]
+    fn connect_error_message_appends_hint_once() {
+        let msg = format!("无法连接服务器：请确认 NAS 地址与端口{}", local_network_denied_hint());
+        assert!(msg.starts_with("无法连接服务器"), "原有文案不能被替换：{msg}");
+        assert!(msg.contains("NAS 地址与端口"), "原有诊断信息必须保留：{msg}");
+        assert_eq!(msg.matches("本地网络").count(), if cfg!(target_os = "macos") { 1 } else { 0 });
+    }
 
     // [lc-1993] 会话失效归类：双向验证 —— 会话类必须命中，其它业务码必须保持原样上抛。
     #[test]

@@ -85,9 +85,15 @@ pub async fn establish(base_url: &str, access_code: &str) -> Result<String, Acce
         }
         let resp = req.send().await.map_err(|e| {
                 if e.is_timeout() {
-                    network("访问码验证请求超时")
+                    network(format!(
+                        "访问码验证请求超时{}",
+                        crate::fnapi::local_network_denied_hint()
+                    ))
                 } else if e.is_connect() {
-                    network("无法连接到访问码验证服务")
+                    network(format!(
+                        "无法连接到访问码验证服务{}",
+                        crate::fnapi::local_network_denied_hint()
+                    ))
                 } else {
                     network(format!("访问码验证请求失败: {e}"))
                 }

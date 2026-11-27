@@ -10,6 +10,13 @@
  *
  * 与原有实现的关系：数据全部来自 DetailView 已取好的 mediaVersions（同一批 video_streams），
  * 只是从「一排小胶囊」换成 Polaris 的资源卡。选择逻辑（写本地记忆 + 更新选中）完全复用。
+ *
+ * [lc-2402] **单版本时整块不渲染**（用户要求：这个版本区块去掉）。
+ *   理由：只有一个文件时它写的东西（1080P SDR / 337 MB · h264 · 8bit）在下方技术规格区
+ *   已经逐项列过一遍（分辨率 / 编码 / 位深 / 文件大小），纯冗余，还占掉控制台首屏一大块高度。
+ *   但**多版本时必须保留** —— 那是唯一的切换入口，删了就没法选版本。
+ *   所以判断条件是 `versions.length > 1`，不是无脑删掉整个组件。
+ *   单版本时「文件位置」行仍然显示（它有独立价值：文件到底在哪），由下面的 solo 分支单独渲染。
  */
 import { MediaVersion } from "../../../types";
 import { versionLabels, versionMeta } from "./shared";
@@ -27,6 +34,17 @@ export function PolarisVersions({
   filePath?: string;
 }) {
   if (versions.length === 0) return null;
+
+  /* [lc-2402] 单版本：不画版本块，只留文件位置（若有）。 */
+  if (versions.length === 1) {
+    return filePath ? (
+      <div className="pdt-filepath pdt-filepath-solo" title={filePath}>
+        <span className="pdt-filepath-k">文件位置</span>
+        <span className="pdt-filepath-v">{filePath}</span>
+      </div>
+    ) : null;
+  }
+
   const labels = versionLabels(versions);
 
   return (

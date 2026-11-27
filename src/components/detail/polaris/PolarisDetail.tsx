@@ -36,15 +36,14 @@ import { PolarisHero } from "./PolarisHero";
 import { PolarisEpisodes } from "./PolarisEpisodes";
 import { PolarisVersions } from "./PolarisVersions";
 import { PolarisSpecs } from "./PolarisSpecs";
-import { PolarisCast, PolarisRecommendations, PolarisStills } from "./PolarisRails";
+import { PolarisCast, PolarisRecommendations } from "./PolarisRails";
+import { PolarisArtwork } from "./PolarisArtwork";
 import type { PolarisModel } from "./model";
 
 export function PolarisDetail({
   m,
-  onZoom,
 }: {
   m: PolarisModel;
-  onZoom?: (path: string) => void;
 }) {
   /** 背景图淡入：图 onLoad 后才加 .is-loaded（Polaris 同款，避免半透明底图闪一下）。
    *
@@ -147,7 +146,15 @@ export function PolarisDetail({
             <PolarisSpecs version={selectedVersion} specs={m.specs} filePath={m.filePath} />
 
             {/* 剧照横排 */}
-            <PolarisStills stills={m.stills} onZoom={onZoom} />
+            {/* [lc-2417] 剧照横排升级为「艺术图」选择器（照 WWPlayer 1.3.20）：
+                三段分类（海报/剧照/Logo）+ 横排 + 点图全屏 + 设为偏好/恢复默认 */}
+            <PolarisArtwork
+              pools={m.imagePools}
+              picks={m.artworkPicks}
+              defaults={m.artworkDefaults}
+              onSave={m.onSaveArtwork}
+              onApplied={m.onArtworkApplied}
+            />
 
             {/* 主演横排 */}
             <PolarisCast

@@ -42,6 +42,13 @@ import { fmtDur, pick } from "../../lib/format";
 import { loadWatchedOverrides, setWatchedOverride } from "../../lib/watched";
 import { bgmImg, imgUrl, pickLargestImg, tmdbImg } from "../../lib/images";
 import { DUR, prefersReducedMotion } from "../../lib/motion";
+import {
+  artworkOwner,
+  artworkUrl,
+  readDetailArtwork,
+  setDetailArtwork,
+  type ArtworkRole,
+} from "../../lib/detailArtwork";
 import { useRefresh } from "../../hooks/useRefresh";
 import { BgmCharacter, BgmComment, BgmEpisodeRow, BgmMatch, BgmPerson, BgmRelated, BgmReview, BgmTag, Episode, MediaItem, MediaSpecs, MediaVersion, PersonTarget, PlayItem, Season, TmdbCreditPerson, TmdbCredits } from "../../types";
 
@@ -2119,6 +2126,55 @@ export function DetailView({
      [lc-2396] 同一次响应还带回 specs（音频流/字幕数/容器）——Polaris 版式的技术规格区用，
      **不额外发请求**；写进 state 供组件读。 */
   const [mediaSpecs, setMediaSpecs] = useState<MediaSpecs | null>(null);
+
+  /* [lc-2417] 图片偏好（艺术图选择器）——照 WWPlayer 的 detailArtworkStore。
+     owner 串由 tmdbId + 媒体类型组成（源实现用 sourceServerId/libraryId/embyId，
+     本项目没有那套概念，用 TMDB 身份最稳定：同一部剧的所有集共用一个 owner）。
+     picks 存的是本地文件绝对路径（后端已按 role 落成 webp）。 */
+  const [artworkPicks, setArtworkPicks] = useState<Partial<Record<ArtworkRole, string>>>({});
+  /** 重读偏好用的计数器（保存失败/外部改动时 bump 一次即可重新拉） */
+  const [artworkTick, setArtworkTick] = useState(0);
+  /** 偏好变化后真正生效的图（供首屏背景/海报/Logo 使用）；null = 用默认 */
+  const [artworkApplied, setArtworkApplied] = useState<Partial<Record<ArtworkRole, string | null>>>({});
+  const artworkOwnerStr = (() => {
+    const id = Number((tmdb ?? {}).tmdbId ?? 0) || 0;
+    if (!id) return "";
+    return artworkOwner(id, isSeries ? "tv" : "movie");
+  })();
+  useEffect(() => {
+    if (!artworkOwnerStr) return;
+    let alive = true;
+    readDetailArtwork(artworkOwnerStr)
+      .then((p) => {
+        if (alive) setArtworkPicks(p);
+      })
+      .catch((e) => {
+        // 读不到偏好不影响详情页可用性（默认图照常显示），只记日志
+        console.warn("[detail:artwork:preferences]", e);
+        if (alive) setArtworkPicks({});
+      });
+    return () => {
+      alive = false;
+    };
+  }, [artworkOwnerStr, artworkTick]);
+
+  /** 设为偏好 / 恢复默认。src === null → 恢复默认。
+      对应源实现 `window.wwPlayer.setDetailArtwork({owner, role, src})`。 */
+  const saveArtwork = useCallback(
+    async (role: ArtworkRole, src: string | null) => {
+      if (!artworkOwnerStr) throw new Error("当前条目还没有 TMDB 匹配，无法保存图片偏好");
+      const localPath = await setDetailArtwork(artworkOwnerStr, role, src);
+      setArtworkPicks((prev) => {
+        const next = { ...prev };
+        if (localPath) next[role] = localPath;
+        else delete next[role];
+        return next;
+      });
+      // 让加载 effect 重跑一次：以磁盘为准再校一遍（保存与读取口径必须一致）
+      setArtworkTick((t) => t + 1);
+    },
+    [artworkOwnerStr],
+  );
   const fetchMediaVersions = useCallback(async (guid: string) => {
     const cached = versionCacheRef.current.get(guid);
     if (cached) return cached;
@@ -2544,6 +2600,21 @@ export function DetailView({
       <div className="pdt-tabs-card">{renderEditorialTabsBody(tab)}</div>
     </div>
   );
+  /* [lc-2417] 图片偏好生效：用户「设为偏好」后，首屏背景 / 海报 / Logo 换成选中的那张。
+     优先级与源实现 `f(e, t)` 一致：偏好图 → 默认最佳值 → 空。
+     用的是本地 webp（`artwork://` 协议），不是 TMDB 原图 —— 偏好就是为了"离线也用这张"。
+     `artworkApplied` 存的是刚保存的绝对路径（保存成功立即生效，不必等重读）；
+     `artworkPicks` 是已落盘的（页面加载时读到的）。 */
+  const artUrlOf = (p?: string | null) => {
+    const v = String(p ?? "").trim();
+    if (!v) return "";
+    return artworkUrl(v) || v;
+  };
+  const prefPoster = artUrlOf(artworkApplied.poster ?? artworkPicks.poster);
+  const prefBackdrop = artUrlOf(artworkApplied.backdrop ?? artworkPicks.backdrop);
+  const prefLogo = artUrlOf(artworkApplied.logo ?? artworkPicks.logo);
+
+
 
   return (
     <main
@@ -2635,10 +2706,11 @@ export function DetailView({
             isSeries,
             isMovie,
             noFnOS,
-            backdrop: movieBackdrop,
-            poster,
-            logoLight: tmdbHeroLogoLight,
-            logoDark: tmdbHeroLogoDark,
+            /* [lc-2417] 偏好优先（源实现 `t.backdrop || e.detailBackdrop || e.backdrop`） */
+            backdrop: prefBackdrop || movieBackdrop,
+            poster: prefPoster || poster,
+            logoLight: prefLogo || tmdbHeroLogoLight,
+            logoDark: prefLogo || tmdbHeroLogoDark,
             rating: ratingScore,
             votes: ratingTotal,
             year: String(pick(tmdb ?? {}, ["year"]) ?? "").trim(),
@@ -2701,19 +2773,30 @@ export function DetailView({
             filePath:
               mediaVersions.find((v) => v.media_guid === selectedMediaGuid)?.file_path || "",
             specs: mediaSpecs,
-            /* [lc-2410] 剧照横排用 `backdrops`（完整剧照集），**不是** `stills4k`。
-               原因：`stills4k` 是 [lc-1655] 为「电影全屏轮播」筛的 —— 只留
-               width ≥ 3840 的原图、取前 6 张。实测某部番只有 2 张够 4K，
-               于是剧照横排只剩 2 张（用户截图：「剧照少很多」）。
-               Polaris 原项目的剧照横排是完整列表、不按分辨率过滤（它拿的就是
-               TMDB images.backdrops 全量），所以这里改成 backdrops 优先，
-               只有 backdrops 缺失时才退回 stills4k。 */
-            stills: (() => {
-              const bd = Array.isArray(tmdb?.backdrops)
-                ? (tmdb!.backdrops as unknown[]).map((p) => String(p ?? "")).filter(Boolean)
+            /* [lc-2417] 艺术图选择器的三套候选池（照 WWPlayer 的 poster/backdrop/logo）。
+               `imagePools` 来自后端新增字段：artPool / posterPool / logoPool，
+               都按面积降序排好。
+               ⚠ 兼容旧后端：若 imagePools 缺失（老构建/缓存旧响应），
+               用 `backdrops` 兜底到 artPool，避免整块消失。 */
+            imagePools: (() => {
+              const ip = (tmdb ?? {}).imagePools as
+                | { artPool?: string[]; posterPool?: string[]; logoPool?: { path: string; lang?: string }[] }
+                | undefined;
+              if (ip) return ip;
+              const bd = Array.isArray((tmdb ?? {}).backdrops)
+                ? ((tmdb ?? {}).backdrops as unknown[]).map((p) => String(p ?? "")).filter(Boolean)
                 : [];
-              return bd.length > 0 ? bd : movieStills;
+              return { artPool: bd.length > 0 ? bd : movieStills };
             })(),
+            artworkPicks,
+            artworkDefaults: {
+              poster: String((tmdb ?? {}).heroPoster ?? "") || undefined,
+              backdrop: String((tmdb ?? {}).heroBackdrop ?? "") || undefined,
+              logo: String((tmdb ?? {}).titleLogo ?? "") || undefined,
+            },
+            onSaveArtwork: saveArtwork,
+            onArtworkApplied: (role, path) =>
+              setArtworkApplied((prev) => ({ ...prev, [role]: path })),
             cast: castResolved,
             crew,
             recommendations: tmdbRecs,
@@ -2756,7 +2839,6 @@ export function DetailView({
               episodeNumber: Number(pick(data ?? {}, ["episode_number", "episodeNumber"]) ?? 0) || 0,
             },
           }}
-          onZoom={setZoom}
         />
       )}
 

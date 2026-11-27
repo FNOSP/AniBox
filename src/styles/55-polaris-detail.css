@@ -2419,3 +2419,257 @@ html.perf .pdt-rec-card:hover .pdt-rec-img,
 html.perf .pdt-c-unit.clickable:hover {
   transform: none;
 }
+
+/* ── [lc-2417] 艺术图选择器 ────────────────────────────────────────────────
+   照 WWPlayer 1.3.20 `App-CkjaZB73.css` 的实际值复刻（源选择器 → 本文件选择器）：
+     .art-rail                        → .pdt-art-rail
+       gap:18px; display:flex; overflow:visible(由 .pdt-* 覆盖层给滚动); 隐藏滚动条
+     .art-card                        → .pdt-art-card     flex:0 0 300px
+     .art-card img                    → aspect-ratio 16/9; object-fit cover; radius
+     .art-card-poster                 → flex-basis:112px; img 2/3 + contain
+     .art-card-logo img               → object-fit:contain
+     .art-card:hover img              → translateY(-2px)
+     .art-card[aria-pressed=true]     → outline 2px; outline-offset:-2px
+     .artwork-command                 → radius-full; padding 6px 14px
+     .artwork-viewer-indicator        → 28x28 圆钮; font-size 12px
+   配色：本区块在影院版式的深色画布上，沿用该版式的白玻璃语言
+   （与 .pdt-spec-group / .pdt-tabs-card 同族），不引入源项目的 --glass-* 变量。 */
+
+/* 工具栏：标题 + 分类胶囊 + 箭头，一行放不下时分类可横滚（源 .artwork-categories flex-wrap:wrap） */
+.pdt-artwork { margin-top: 48px; }
+.pdt-artwork-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  /* 源 .artwork-toolbar > .section-title-wrap { flex:none }
+         .artwork-toolbar > .artwork-categories { flex-wrap:nowrap; flex:1; min-width:0 } */
+}
+.pdt-artwork-toolbar > .pdt-heading { flex: none; }
+.pdt-artwork-cats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.pdt-artwork-arrows { display: flex; gap: 8px; flex: none; }
+
+/* 分类胶囊（源 .artwork-command） */
+.pdt-artwork-cmd {
+  flex: none;
+  white-space: nowrap;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.86);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+}
+.pdt-artwork-cmd:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.pdt-artwork-cmd[aria-pressed="true"] {
+  /* 源：aria-pressed=true 用 interaction-active-fill（实心高亮） */
+  color: #000;
+  background: rgba(255, 255, 255, 0.95);
+  border-color: transparent;
+  font-weight: 600;
+}
+.pdt-artwork-cmd:disabled { opacity: 0.5; cursor: default; }
+
+/* 横排（源 .art-rail） */
+.pdt-art-rail {
+  display: flex;
+  gap: 18px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: none;
+  /* 与其它横排一致：padding + 负 margin 抵消，让卡片贴齐内容边缘 */
+  padding: 20px 40px;
+  margin: -20px -40px;
+  margin-top: 0;
+  padding-top: 0;
+}
+.pdt-art-rail::-webkit-scrollbar { display: none; }
+
+/* 卡片（源 .art-card） */
+.pdt-art-card {
+  flex: 0 0 300px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: transform 0.22s cubic-bezier(0.25, 1, 0.5, 1);
+}
+.pdt-art-card img {
+  display: block;
+  width: 100%;
+  /* 源：aspect-ratio 16/9 + object-fit cover（剧照/艺术图是横图） */
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+  transition: transform 0.22s cubic-bezier(0.25, 1, 0.5, 1), box-shadow 0.22s ease;
+}
+/* 源 .art-card:hover img → translateY(-2px) */
+.pdt-art-card:hover img,
+.pdt-art-card:focus-visible img {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.34);
+}
+/* 源 .art-card-poster → flex-basis 112px；img 2/3 + contain */
+.pdt-art-card-poster { flex-basis: 112px; }
+.pdt-art-card-poster img {
+  aspect-ratio: 2 / 3;
+  object-fit: contain;
+}
+/* 源 .art-card-logo img → contain（横长条 logo，留白即可） */
+.pdt-art-card-logo img {
+  aspect-ratio: auto;
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.06);
+  min-height: 64px;
+  max-height: 112px;
+}
+/* 源 .art-card[aria-pressed=true] → outline 2px, offset -2px */
+.pdt-art-card[aria-pressed="true"] img {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: -2px;
+  border-radius: 12px;
+}
+.pdt-art-card:focus-visible { outline: none; }
+
+/* ── 全屏查看器（源 .modal-backdrop.artwork-viewer-backdrop） ── */
+.pdt-artwork-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(16px, 3vw, 40px);
+  background: rgba(0, 0, 0, 0.82);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  animation: pdtArtworkIn 0.25s ease-out both;
+}
+.pdt-artwork-backdrop.is-closing { animation: pdtArtworkOut 0.2s ease-in both; }
+@keyframes pdtArtworkIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes pdtArtworkOut { from { opacity: 1 } to { opacity: 0 } }
+
+/* 大图（源 .artwork-viewer-image）：
+   max-block-size: calc(100vh - 164px)（给底部操作区留位置） */
+.pdt-artwork-viewer-img {
+  max-width: calc(100vw - clamp(64px, 12vw, 160px));
+  max-height: calc(100vh - 164px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* 关闭钮（源 .artwork-viewer-close small-round） */
+.pdt-artwork-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+.pdt-artwork-close:hover {
+  background: #fff;
+  color: #000;
+}
+
+/* 底部操作（源 .artwork-viewer-actions：absolute; bottom:60px; 居中） */
+.pdt-artwork-actions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 60px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  z-index: 1;
+}
+.pdt-artwork-status {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+/* 数字指示器（源 .artwork-viewer-indicator：28x28，12px 字） */
+.pdt-artwork-indicators {
+  position: absolute;
+  left: 50%;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  padding: 2px;
+  max-width: min(560px, calc(100vw - 32px));
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  z-index: 1;
+}
+.pdt-artwork-indicators::-webkit-scrollbar { display: none; }
+.pdt-artwork-indicator {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.94);
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+}
+.pdt-artwork-indicator:hover { background: rgba(255, 255, 255, 0.22); }
+.pdt-artwork-indicator.is-active {
+  color: #fff;
+  background: #0a84ff;
+  border-color: #0a84ff;
+}
+.pdt-artwork-indicator:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.8);
+  outline-offset: 1px;
+}
+
+/* 窄屏：卡片缩窄（源在 .art-card 上没做断点，这里补一条防止一屏只看到一张） */
+@media (max-width: 1100px) {
+  .pdt-art-card { flex-basis: 240px; }
+  .pdt-art-card-poster { flex-basis: 96px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pdt-artwork-backdrop,
+  .pdt-artwork-backdrop.is-closing { animation-duration: 1ms; }
+  .pdt-art-card,
+  .pdt-art-card img { transition: none; }
+}

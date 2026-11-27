@@ -21,6 +21,8 @@ import type {
   TmdbCreditPerson,
 } from "../../../types";
 import type { TmdbRecommendation } from "../tabs/RelatedTab";
+import type { ImagePools } from "./PolarisArtwork";
+import type { ArtworkRole } from "../../../lib/detailArtwork";
 
 /** 一部作品在 Polaris 版式下需要的全部展示数据。 */
 export type PolarisModel = {
@@ -95,8 +97,18 @@ export type PolarisModel = {
   specs: MediaSpecs | null;
 
   /* ── 次级内容 ── */
-  /** 剧照（TMDB file_path，前端自己拼 size） */
-  stills: string[];
+  /** [lc-2417] 艺术图选择器的三套候选池（TMDB file_path，前端自己拼 size）。
+   *  artPool = images.backdrops（「剧照」那一栏用）、posterPool = images.posters、
+   *  logoPool = images.logos（带 lang）。三者都按面积降序，后端已排好。 */
+  imagePools: ImagePools;
+  /** [lc-2417] 已存图片偏好：role → 本地文件绝对路径（空 = 用默认） */
+  artworkPicks: Partial<Record<ArtworkRole, string>>;
+  /** [lc-2417] 未设偏好时各角色"默认展示"的那张（用于高亮当前生效项） */
+  artworkDefaults: Partial<Record<ArtworkRole, string>>;
+  /** [lc-2417] 设为偏好 / 恢复默认。null → 恢复默认 */
+  onSaveArtwork: (role: ArtworkRole, src: string | null) => Promise<void>;
+  /** [lc-2417] 偏好变化后通知父级（父级据此换背景 / 海报 / Logo） */
+  onArtworkApplied?: (role: ArtworkRole, path: string | null) => void;
   cast: TmdbCreditPerson[];
   /** 主创（导演/编剧/音乐…） */
   crew: TmdbCreditPerson[];

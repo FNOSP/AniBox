@@ -1,7 +1,7 @@
 /* [lc-1535] 从 App.tsx 拆出（纯搬移，逻辑与注释未改动）。 */
 import { type UIEvent, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { createPortal } from "react-dom";
 import {
   Check as IcoCheckL,
@@ -2172,6 +2172,11 @@ export function DetailView({
       });
       // 让加载 effect 重跑一次：以磁盘为准再校一遍（保存与读取口径必须一致）
       setArtworkTick((t) => t + 1);
+      /* [lc-2420] 广播一次：首页轮播也要跟着换图。
+         用户报「首页轮播图都设置成新的，怎么打开还是旧的，要手动再切换一次」——
+         首页的偏好是 App 层单独读的（按 owner 批量），详情页改完必须通知它重读，
+         否则要等下一次 carousel 变化才生效。 */
+      void emit("artwork://prefs-changed", { owner: artworkOwnerStr, role, path: localPath });
       /* [lc-2419] 返回**本地文件路径**：调用方要用它做展示源。
          返回 src（TMDB 路径）会让 <img src="/abc.jpg"> 解析成应用自身地址 → 裂图。 */
       return localPath;

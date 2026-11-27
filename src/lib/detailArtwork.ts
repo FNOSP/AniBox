@@ -86,3 +86,36 @@ export async function setDetailArtwork(
 ): Promise<string> {
   return invoke<string>("set_detail_artwork", { owner, role, src });
 }
+
+/** [lc-2420] 批量读偏好（首页轮播一次要显示 8+ 部片子，逐个 invoke 太慢）。
+ *  返回 { owner: { role: 本地绝对路径 } }，没有偏好的 owner 不出现。
+ *  对应后端 `read_detail_artwork_batch`。 */
+export async function readDetailArtworkBatch(
+  owners: string[],
+): Promise<Record<string, Partial<Record<ArtworkRole, string>>>> {
+  if (owners.length === 0) return {};
+  const raw = await invoke<Record<string, Record<string, string>>>("read_detail_artwork_batch", {
+    owners,
+  });
+  const out: Record<string, Partial<Record<ArtworkRole, string>>> = {};
+  for (const [owner, roles] of Object.entries(raw ?? {})) {
+    const m: Partial<Record<ArtworkRole, string>> = {};
+    for (const role of ARTWORK_ROLES) {
+      const p = roles?.[role];
+      if (p) m[role] = p;
+    }
+    if (Object.keys(m).length > 0) out[owner] = m;
+  }
+  return out;
+}
+
+/** [lc-2420] 把首页条目映射成 owner 串（与详情页 `artworkOwner` 同一套口径）。
+ *  `trim_id` 是 TMDB 的数字 id（飞牛已匹配到 TMDB 时才有）；没有就返回空串，
+ *  表示"这条片子不参与偏好覆盖"（不是所有首页条目都匹配过 TMDB）。 */
+export function ownerFromMedia(item: { tmdb_id?: number | string }, isSeries: boolean): string {
+  /* `MediaItem` 上只有 `tmdb_id`（`trim_id` 在 Season 上，别混）。
+     没有它 = 这条片子没匹配过 TMDB，不参与偏好覆盖（返回空串）。 */
+  const id = String(item.tmdb_id ?? "").trim();
+  if (!id || !/^\d+$/.test(id)) return "";
+  return artworkOwner(id, isSeries ? "tv" : "movie");
+}

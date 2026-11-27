@@ -4745,6 +4745,7 @@ pub fn run() {
             // [lc-2417] 详情页「图片偏好」（照 WWPlayer 的 detailArtworkStore）
             detail_artwork_cmd::read_detail_artwork,
             detail_artwork_cmd::set_detail_artwork,
+            detail_artwork_cmd::read_detail_artwork_batch,
             // [lc-1412] 评论（长影评，/p1/.../reviews）：与「吐槽」分开的两个数据源
             bgm::bgm_reviews,
             // [lc-1401] 关联条目（详情页「关联条目」标签页：片头曲/原声集/游戏/画集…按关系分组）

@@ -288,3 +288,39 @@ pub async fn handle_request(app: tauri::AppHandle, request: Request<Vec<u8>>) ->
         .body(bytes)
         .unwrap_or_else(|_| not_found())
 }
+
+/// [lc-2420] 批量读偏好：首页轮播一次要显示 8+ 部片子，逐个 invoke 太慢
+/// （每个都过一次 IPC + 磁盘 stat）。
+///
+/// 入参 `owners` 是 owner 串数组（前端用 `artworkOwner()` 生成，与详情页同一套），
+/// 返回 `{ owner: { role: 绝对路径 } }`（没有偏好的 owner 不出现在结果里）。
+///
+/// ⚠ 为什么要按 owner 批量而不是按 guid：owner 是前端算的（`["tmdb","tv",206630]`），
+/// 后端不认识 guid ↔ tmdb 的映射关系，也不该认识（那是 tmdb.rs 的职责）。
+/// 由前端把 carousel 条目映射成 owner 串再一起问，职责最干净。
+#[tauri::command]
+pub async fn read_detail_artwork_batch(
+    app: tauri::AppHandle,
+    owners: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    let dir = store_dir(&app)?;
+    let mut out = serde_json::Map::new();
+    for owner in owners {
+        // 单个 owner 出错（如超长/空串）不该让整批失败
+        let Ok(picks) = detail_artwork::read_picks(&dir, &owner) else {
+            continue;
+        };
+        if picks.is_empty() {
+            continue;
+        }
+        let mut m = serde_json::Map::new();
+        for (role, path) in picks {
+            m.insert(
+                role,
+                serde_json::Value::String(path.to_string_lossy().to_string()),
+            );
+        }
+        out.insert(owner, serde_json::Value::Object(m));
+    }
+    Ok(serde_json::Value::Object(out))
+}

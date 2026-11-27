@@ -38,6 +38,7 @@ import { NavCapsule } from "./components/shell/NavCapsule";
 import { TitleBar } from "./components/shell/TitleBar";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { useDelayedUnmount } from "./hooks/useDelayedUnmount";
+import { ownerFromMedia, readDetailArtworkBatch, artworkUrl as artUrl } from "./lib/detailArtwork";
 import { useGamepad } from "./hooks/useGamepad";
 import { useFeedbackUnread } from "./hooks/useFeedbackUnread";
 import { usePlaybackProgress } from "./hooks/usePlaybackProgress";
@@ -82,6 +83,15 @@ function App() {
   const [carousel, setCarousel] = useState<MediaItem[]>([]);
   const [carouselBds, setCarouselBds] = useState<Record<string, string>>({});
   const [carouselLogos, setCarouselLogos] = useState<Record<string, string>>({});
+  /* [lc-2420] 首页图片偏好：用户在详情页「设为偏好」选的图，首页轮播也要用它。
+     原来偏好只作用于详情页，首页照旧读 carouselBds → 用户看到「设了新的打开还是旧的」。
+     这里按 owner 批量读一次（8+ 部片子一次 IPC），渲染前叠加到 bds/logos 上。
+     ⚠ 不能改 carouselBds 本身：那里面是 TMDB/飞牛的默认图，偏好一旦取消要能回退。 */
+  /** [lc-2420] 偏好变更计数：详情页保存后 bump，触发首页重读 */
+  const [artPrefsTick, setArtPrefsTick] = useState(0);
+  const [homeArtPicks, setHomeArtPicks] = useState<
+    Record<string, { backdrop?: string; poster?: string; logo?: string }>
+  >({});
   // [lc-2390] 首页 hero 标签行的补充数据（guid → 年份/题材/状态/集数/评分）。
   //   TMDB 拉到后填，取不到就空着 —— 组件此时只用飞牛条目本体（年份 + 评分）。
   const [carouselMeta, setCarouselMeta] = useState<Record<string, HeroMeta>>({});
@@ -865,6 +875,52 @@ function App() {
     }
   }, []);
 
+  /* [lc-2420] 首页图片偏好：carousel 变化后按 owner 批量读一次。
+     用户报「首页轮播图都设置成新的，怎么打开还是旧的，要手动再切换一次」——
+     根因是偏好只作用于详情页，首页轮播照旧读 carouselBds/carouselLogos（默认图）。
+     这里读到的偏好会在下面叠加到传给 HomeView 的图上（不改原 state，取消偏好可回退）。 */
+  useEffect(() => {
+    const pairs: { guid: string; owner: string }[] = [];
+    for (const it of carousel) {
+      const owner = ownerFromMedia({ tmdb_id: it.tmdb_id }, it.type !== "movie");
+      if (owner) pairs.push({ guid: it.guid, owner });
+    }
+    if (pairs.length === 0) {
+      setHomeArtPicks({});
+      return;
+    }
+    let alive = true;
+    readDetailArtworkBatch(pairs.map((p) => p.owner))
+      .then((byOwner) => {
+        if (!alive) return;
+        const next: Record<string, { backdrop?: string; poster?: string; logo?: string }> = {};
+        for (const { guid, owner } of pairs) {
+          const picks = byOwner[owner];
+          if (!picks) continue;
+          next[guid] = picks;
+        }
+        setHomeArtPicks(next);
+      })
+      .catch(() => {
+        /* 读不到偏好不影响首页（默认图照常显示） */
+        if (alive) setHomeArtPicks({});
+      });
+    return () => {
+      alive = false;
+    };
+  }, [carousel, artPrefsTick]);
+
+  /* [lc-2420] 详情页改完偏好 → 首页立刻重读（不等下一次 carousel 变化）。
+     没有这个监听，用户设完偏好切回首页看到的还是旧图
+     （「要手动再切换一次」就是它）。 */
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    void listen("artwork://prefs-changed", () => setArtPrefsTick((n) => n + 1)).then((f) => {
+      un = f;
+    });
+    return () => un?.();
+  }, []);
+
   // [lc-1640] 顶栏 ⟳：按**当前视图**强制刷新该页数据（原先写死只重拉首页）。
   //   · home：loadHome / loadGuestHome 本身就是强制重拉（get_media_libs 等命令无 Rust 缓存，
   //     每次都直连飞牛；游客链走 tmdb_discover，同样无本地 TTL 命中问题）——直接调用。
@@ -1424,6 +1480,40 @@ function App() {
   } else {
     // 首页常驻挂载：切到库/详情只隐藏不卸载（图片零重请求、滚动位置保留）
     const homeReady = carousel.length > 0;
+    /* [lc-2420] 把图片偏好叠加到首页轮播的图上（用户报「设了新的打开还是旧的」）。
+       · backdrop 偏好 → 该条目的 hero 横图
+       · poster 偏好   → 没有横图时的兜底（与详情页 `t.backdrop || e.backdrop` 同序）
+       · logo 偏好     → 标题 Logo（没设偏好则用本地那份）
+       只读派生、不改 state：取消偏好（恢复默认）后自动回落到默认图。
+       本地文件用 artwork:// 协议（artUrl 把绝对路径转成协议 URL）。 */
+    const overlayArt = (guid: string, role: "backdrop" | "poster" | "logo") => {
+      const p = homeArtPicks[guid]?.[role];
+      return p ? artUrl(p) : "";
+    };
+    const carouselBdsWithPrefs: Record<string, string> = (() => {
+      let changed = false;
+      const out: Record<string, string> = { ...carouselBds };
+      for (const it of carousel) {
+        const pref = overlayArt(it.guid, "backdrop") || overlayArt(it.guid, "poster");
+        if (pref) {
+          out[it.guid] = pref;
+          changed = true;
+        }
+      }
+      return changed ? out : carouselBds;
+    })();
+    const carouselLogosWithPrefs: Record<string, string> = (() => {
+      let changed = false;
+      const out: Record<string, string> = { ...carouselLogos };
+      for (const it of carousel) {
+        const pref = overlayArt(it.guid, "logo");
+        if (pref) {
+          out[it.guid] = pref;
+          changed = true;
+        }
+      }
+      return changed ? out : carouselLogos;
+    })();
     body = (
       <div className="main-row">
         {/* [lc-1427] 侧栏改为覆盖式浮层后的配套交互：展开时铺一层**透明遮罩**，
@@ -1534,8 +1624,8 @@ function App() {
                 libs={libs}
                 continueList={continueList}
                 carousel={carousel}
-                carouselBds={carouselBds}
-                carouselLogos={carouselLogos}
+                carouselBds={carouselBdsWithPrefs}
+                carouselLogos={carouselLogosWithPrefs}
                 // [lc-2390] 标签行的 TMDB 补充数据（guid → 题材/状态/集数/评分）
                 carouselMeta={carouselMeta}
                 carouselLogoOn={settings.carouselLogo}

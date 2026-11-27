@@ -1485,6 +1485,74 @@ pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
         .map(|(_, p)| p)
         .collect();
 
+    // [lc-2417] 「图片偏好」候选池：艺术图 / 海报 / Logo 三套**全量** file_path。
+    //   起因（用户要求）：剧照区升级为可切换的艺术图选择器，三套资源都要能逐张点选、
+    //   点中后「设为偏好」替换对应模块。原来只给前端 `heroPoster`（一张）与
+    //   `titleLogo`/`titleLogoAlt`（两张），没法做多选一。
+    //   排序：面积降序（大图优先，用户先看到最好的）；语种信息留给前端做 Logo 标记。
+    //   `logos` 带 `iso_639_1`：中文（zh）优先排前面，与 pick_title_logos 的口径一致。
+    let pool_paths = |key: &str| -> Vec<Value> {
+        let mut ranked: Vec<(i64, String)> = d
+            .pointer(&format!("/images/{key}"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|it| {
+                        let p = it
+                            .get("file_path")
+                            .and_then(|v| v.as_str())
+                            .filter(|p| !p.is_empty())?;
+                        let w = it.get("width").and_then(|v| v.as_i64()).unwrap_or(0);
+                        let h = it.get("height").and_then(|v| v.as_i64()).unwrap_or(0);
+                        Some((w * h, p.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        ranked.sort_by(|a, b| b.0.cmp(&a.0));
+        ranked
+            .into_iter()
+            .map(|(_, p)| Value::String(p))
+            .collect::<Vec<Value>>()
+    };
+    let poster_pool = pool_paths("posters");
+    // Logo 需要语种：单独处理（zh 优先 → 面积降序），输出 {path, lang} 供前端筛选/标记
+    let mut logo_ranked: Vec<(bool, i64, String, String)> = d
+        .pointer("/images/logos")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|it| {
+                    let p = it
+                        .get("file_path")
+                        .and_then(|v| v.as_str())
+                        .filter(|p| !p.is_empty())?;
+                    let w = it.get("width").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let h = it.get("height").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let lang = it
+                        .get("iso_639_1")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    Some((lang == "zh", w * h, p.to_string(), lang))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    logo_ranked.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+    let logo_pool: Vec<Value> = logo_ranked
+        .into_iter()
+        .map(|(_, _, path, lang)| serde_json::json!({ "path": path, "lang": lang }))
+        .collect();
+    /* [lc-2417] ⚠ 必须在 `json!` 宏**外面**把三个池装成一个 serde_json::Value：
+      下方那个 `Ok(json!({...}))` 是几十个字段的巨型字面量，直接把 Vec 塞进去会触发
+      宏的递归上限（`recursion limit reached while expanding json_internal!`，实测踩到）。
+       用 map! 预组装后，宏里只嵌一个标识符，展开深度立刻降下来。 */
+    let mut image_pools = serde_json::Map::new();
+    image_pools.insert("artPool".to_string(), Value::Array(backdrops.iter().cloned().map(Value::String).collect()));
+    image_pools.insert("posterPool".to_string(), Value::Array(poster_pool));
+    image_pools.insert("logoPool".to_string(), Value::Array(logo_pool));
+
     // 相似剧集（recommendations）
     let recommendations: Vec<Value> = d
         .pointer("/recommendations/results")
@@ -1616,6 +1684,14 @@ pub async fn tmdb_show_details(arg: Value) -> Result<Value, String> {
         //   titleLogoAlt = 另一语种那张（中文版常是白字，浅色主题下用 alt 兜底）。
         "titleLogo": title_logo,
         "titleLogoAlt": title_logo_alt,
+        // [lc-2417] 「图片偏好」候选池（全量 file_path，面积降序）。
+        //   artPool = images.backdrops（艺术图/剧照同源，详情页背景也是这套）；
+        //   posterPool = images.posters；
+        //   logoPool = images.logos，元素是 {path, lang}（zh 优先排序，lang 供前端标记）。
+        //   与上面的 heroBackdrop/heroPoster/titleLogo 并存：那几个是"默认挑好的最佳值"，
+        //   这几个是"给用户挑的候选集"，语义不同，不要合并。
+        //   ⚠ 值在宏外预组装（见 image_pools 注释）：直接内联会撞 json! 的递归上限。
+        "imagePools": Value::Object(image_pools),
         // [lc-2247] 地区与语言（原始代码，如 "JP" / "ja"），前端映射成中文展示。
         "originCountry": origin_country,
         "originalLanguage": original_language,

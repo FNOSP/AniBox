@@ -236,8 +236,10 @@ $f.Controls.Add($tbLog)
 function Log-Line($m) {
     if ($tbLog.TextLength -gt 400000) { $tbLog.Text = $tbLog.Text.Substring(200000) }  # 防无限增长
     $tbLog.AppendText("$m`r`n")
-    $tbLog.SelectionStart = $tbLog.TextLength
-    $tbLog.ScrollToCaret()
+    if ($f.WindowState -ne 'Minimized') {   # 最小化时滚动无意义，跳过省 UI 负担
+        $tbLog.SelectionStart = $tbLog.TextLength
+        $tbLog.ScrollToCaret()
+    }
     [System.Windows.Forms.Application]::DoEvents()
 }
 function Set-Step([string]$text, [int]$pct) {
@@ -250,14 +252,24 @@ function Set-Step([string]$text, [int]$pct) {
     [System.Windows.Forms.Application]::DoEvents()
 }
 
+# [lc-2440] 统一弹窗出口：必须带 owner 并先还原最小化的主窗。此前全部用无 owner 的
+# MessageBox.Show —— 构建结束（成功/失败弹窗）时若主窗正最小化：弹窗不进任务栏、
+# 被模态禁用的主窗挡在后面，点任务栏恢复主窗只见一张灰死不响应的窗（弹窗藏在其后），
+# 表现为「GUI 隐藏后点不开」。
+function Show-Msg($msg) {
+    if ($f.WindowState -eq 'Minimized') { $f.WindowState = 'Normal' }
+    [void]$f.Activate()
+    [void][System.Windows.Forms.MessageBox]::Show($f, $msg, 'AniBox 打包')
+}
+
 $btnBuild.Add_Click({
     $ver = $tbVer.Text.Trim()
     if ($ver -notmatch '^\d+(\.\d+){1,3}$') {
-        [void][System.Windows.Forms.MessageBox]::Show("版本号格式：数字点分（如 4.1.0）", 'AniBox 打包')
+        Show-Msg "版本号格式：数字点分（如 4.1.0）"
         return
     }
     $out = $tbOut.Text.Trim()
-    if (-not $out) { [void][System.Windows.Forms.MessageBox]::Show('出包位置不能为空'); return }
+    if (-not $out) { Show-Msg '出包位置不能为空'; return }
     $btnBuild.Enabled = $false
     $tbLog.Clear()
     $swAll = [System.Diagnostics.Stopwatch]::StartNew()
@@ -355,7 +367,7 @@ $btnBuild.Add_Click({
         if ($proc.ExitCode -ne 0) {
             Set-Step '构建失败' 100
             Log-Line "构建失败（code $($proc.ExitCode)，详见上方日志）"
-            [void][System.Windows.Forms.MessageBox]::Show('构建失败，详见日志区', 'AniBox 打包')
+            Show-Msg '构建失败，详见日志区'
             return
         }
         Set-Step '③ 收集安装包…' 90
@@ -388,11 +400,11 @@ $btnBuild.Add_Click({
         if (Test-Path -LiteralPath $errLog) { Remove-Item -LiteralPath $errLog -Force -ErrorAction SilentlyContinue }
         $state.OutDir = $out; $state.Overwrite = [bool]$cbOver.Checked; $state.LastVersion = $ver
         Save-State
-        [void][System.Windows.Forms.MessageBox]::Show("打包完成`n$dest", 'AniBox 打包')
+        Show-Msg "打包完成`n$dest"
     } catch {
         Set-Step '异常' 100
         Log-Line "异常：$($_.Exception.Message)"
-        [void][System.Windows.Forms.MessageBox]::Show("打包异常：$($_.Exception.Message)", 'AniBox 打包')
+        Show-Msg "打包异常：$($_.Exception.Message)"
     } finally {
         $btnBuild.Enabled = $true
     }

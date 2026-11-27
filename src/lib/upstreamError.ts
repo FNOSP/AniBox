@@ -42,9 +42,12 @@ export function classifyUpstreamError(raw: string): UpstreamFault {
 export function friendlyUpstreamMessage(raw: string): { title: string; hint: string } {
   switch (classifyUpstreamError(raw)) {
     case "upstream-5xx":
+      /* [lc-2422] 实测这类故障可能持续很久（2026-11-27 那轮 bgm 镜像 /p1 上游
+         挂了 ≥4 小时，期间只有旧缓存能读）。原来说"通常会自行恢复"过于乐观，
+         用户会反复重试。改成说明"能读到的是旧内容"这个可观察事实。 */
       return {
-        title: "服务暂时不可用",
-        hint: "数据源的接口出错，通常会自行恢复。稍后重试即可。",
+        title: "数据源的接口出错",
+        hint: "已加载到的可能是较早的内容，未缓存的条目暂时读不到。稍后重试。",
       };
     case "mirror-down":
       return {

@@ -298,6 +298,14 @@ async fn mirror_call_full(
             .map(|v| crate::tmdb::MirrorGet::Fresh(v, None));
     };
     let mut last_err = String::new();
+    /* [lc-2422] 收集**每个**端点的失败原因，而不是只留最后一个。
+       起因（用户报「bgm 的镜像怎么回事 / 连接数据源失败」）：
+       端点 1 返回 502（上游回源挂了），端点 2 连接超时（DNS 被污染）。
+       原来 last_err 被后者覆盖，最终文案只剩"连接失败" →
+       前端分类成 mirror-down（网络问题），把用户引向错误方向
+       （实际是镜像上游故障，网络没问题）。
+       现在：5xx 类原因优先保留（它更能说明是服务端问题），连接类只作补充。 */
+    let mut errs: Vec<String> = Vec::new();
     // [lc-2415] 跳过熔断中的端点：连接层失败过的地址（如 DNS 被污染的 workers.dev）
     // 在冷却期内不再白等超时。502/429 不熔断 —— 端点可达，换它没意义但复用有价值。
     let eps = mirror_sign::healthy_endpoints(endpoints());
@@ -325,6 +333,7 @@ async fn mirror_call_full(
             Ok(r) => r,
             Err(e) => {
                 last_err = format!("{ep} 连接失败/超时: {e}");
+                errs.push(format!("{ep} 连接失败/超时"));
                 crate::libmpv::trace(&format!("[bgm] {method} {path_with_query} → {ep} 连接失败: {e}"));
                 // [lc-2415] 连接层失败 → 熔断该端点（HTTP 状态码不熔断，见 healthy_endpoints 注释）
                 mirror_sign::mark_endpoint_down(&ep);
@@ -378,10 +387,12 @@ async fn mirror_call_full(
         if status == 429 {
             // 上游限流：主址与 workers.dev 是同一 worker，限流状态一致，换端点无意义 → 立即降级
             last_err = format!("{ep} HTTP 429: {}", truncate(&text, 160));
+            errs.push(format!("{ep} HTTP 429"));
             break;
         }
         if status >= 500 {
             last_err = format!("{ep} HTTP {status}: {}", truncate(&text, 160));
+            errs.push(format!("{ep} HTTP {status}"));
             continue; // 5xx → 切下一个端点
         }
         // 4xx：确定性拒绝（签名/路由/上游 404）——换端点或直连结果相同，**不降级**，原样报错。
@@ -395,10 +406,21 @@ async fn mirror_call_full(
     }
     // 端点全部不可用（连接错误/超时/5xx）或 429 → 降级直连官方域（免凭证）
     crate::libmpv::trace(&format!("[bgm] 镜像不可用，降级直连（免凭证）：{last_err}"));
+    /* [lc-2422] 组文案时把 5xx 类原因排前面：它说明「服务端坏了」，
+       比"N 个端点连接超时"更能定位。前端按出现顺序分类，见 lib/upstreamError.ts。 */
+    let summary = {
+        let mut ordered: Vec<&String> = errs.iter().filter(|e| e.contains("HTTP 5") || e.contains("429")).collect();
+        ordered.extend(errs.iter().filter(|e| !e.contains("HTTP 5") && !e.contains("429")));
+        if ordered.is_empty() {
+            last_err.clone()
+        } else {
+            ordered.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("；")
+        }
+    };
     direct_call(method, path_with_query, body_text, extra)
         .await
         .map(|v| crate::tmdb::MirrorGet::Fresh(v, None)) // 降级直连不带条件头
-        .map_err(|e| format!("所有镜像端点均失败（最后：{last_err}）；降级直连也失败：{e}"))
+        .map_err(|e| format!("所有镜像端点均失败（{summary}）；降级直连也失败：{e}"))
 }
 
 /// 降级直连 Bangumi 官方域（**免凭证**：Bangumi API 不需要任何 key，镜像只是防滥用+缓存层）。
@@ -1630,6 +1652,31 @@ mod tests {
         assert_eq!(out["images"]["grid"], "", "缺省键补空串");
         assert_eq!(out["career"].as_array().unwrap().len(), 2);
         assert_eq!(out["works"].as_array().unwrap().len(), 0, "works 恒为空");
+    }
+
+    /// [lc-2422] 端点失败文案的排序：5xx 必须排在连接失败之前。
+    ///
+    /// 起因（用户报「bgm 的镜像怎么回事 / 连接数据源失败」）：
+    /// 端点 1 返回 502（镜像上游回源挂了）、端点 2 连接超时（DNS 污染）。
+    /// 原来只留"最后一个"错误 → 文案只剩"连接失败" → 前端分类成网络问题，
+    /// 把用户引向错误方向（实际网络没问题，是服务端坏了）。
+    #[test]
+    fn endpoint_error_summary_puts_5xx_first() {
+        let errs = vec![
+            "https://a.example 连接失败/超时".to_string(),
+            "https://b.example HTTP 502".to_string(),
+        ];
+        let mut ordered: Vec<&String> = errs
+            .iter()
+            .filter(|e| e.contains("HTTP 5") || e.contains("429"))
+            .collect();
+        ordered.extend(errs.iter().filter(|e| !e.contains("HTTP 5") && !e.contains("429")));
+        let summary = ordered.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("；");
+        assert!(
+            summary.starts_with("https://b.example HTTP 502"),
+            "5xx 必须排在最前（前端按顺序分类）：{summary}"
+        );
+        assert!(summary.contains("连接失败"), "连接类信息不能丢：{summary}");
     }
 
     /// 回退判定（不触网）：人物接口仅「镜像 404」允许回退直连；401/403 等明确拒绝不直连。

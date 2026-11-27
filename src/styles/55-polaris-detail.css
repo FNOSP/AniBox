@@ -151,8 +151,8 @@
     scale 0.25s cubic-bezier(0.25, 1, 0.5, 1);
 }
 html:not(.perf) .pdt-close {
-  backdrop-filter: blur(20px) saturate(110%);
   -webkit-backdrop-filter: blur(20px) saturate(110%);
+  backdrop-filter: blur(20px) saturate(110%);
 }
 /* Polaris @5152：hover 整个翻成白色 + 黑色图标（强对比反色交互） */
 .pdt-close:is(:hover, :focus-visible) {
@@ -363,8 +363,8 @@ html:not(.perf) .pdt-close {
   color: rgba(255, 255, 255, 0.9);
   background: rgba(255, 255, 255, 0.14);
   border: 0.5px solid rgba(255, 255, 255, 0.22);
-  backdrop-filter: blur(12px) saturate(140%);
   -webkit-backdrop-filter: blur(12px) saturate(140%);
+  backdrop-filter: blur(12px) saturate(140%);
 }
 .pdt-state.airing {
   color: #7ee0a8;
@@ -535,8 +535,12 @@ html:not(.perf) .pdt-close {
   flex-shrink: 0;
   isolation: isolate;
   transition: transform 0.25s cubic-bezier(0.25, 1, 0.5, 1), background 0.2s;
-  backdrop-filter: blur(20px) saturate(1.7) brightness(1);
-  -webkit-backdrop-filter: blur(20px) saturate(1.7) brightness(1);
+  /* [lc-2413] 顺序不能反：压缩器去重时保留「同名属性的最后一条」，
+     `-webkit-` 必须写在标准属性**前面**，否则标准那条被吃掉、只剩前缀版
+     （Chrome/WebView2 不认 `-webkit-backdrop-filter`，computed 直接是 none）。
+     `brightness(1)` 也删掉：恒等变换无作用，但会被压成非法的 `brightness()`。 */
+  -webkit-backdrop-filter: blur(20px) saturate(1.7);
+  backdrop-filter: blur(20px) saturate(1.7);
 }
 /* 三层阴影放在伪元素上（不占布局、也不被 overflow 裁掉） */
 .pdt-icon-btn::before {
@@ -591,8 +595,8 @@ html:not(.perf) .pdt-close {
   pointer-events: none;
   background: rgba(10, 10, 14, 0.55);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.015 0'/%3E%3C/filter%3E%3Crect width='128' height='128' filter='url(%23n)'/%3E%3C/svg%3E");
-  backdrop-filter: blur(24px) saturate(180%) brightness(0.85);
   -webkit-backdrop-filter: blur(24px) saturate(180%) brightness(0.85);
+  backdrop-filter: blur(24px) saturate(180%) brightness(0.85);
   -webkit-mask-image: linear-gradient(to bottom,
     rgba(0,0,0,0)      0px,
     rgba(0,0,0,0.0016) 10px,
@@ -652,8 +656,8 @@ html:not(.perf) .pdt-close {
 }
 .pdt-glass-stair1 {
   height: 100px;
-  backdrop-filter: blur(2px);
   -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
   -webkit-mask-image: linear-gradient(to bottom,
     rgba(0,0,0,0) 0px, rgba(0,0,0,1) 14px, rgba(0,0,0,1) 70px, rgba(0,0,0,0) 100px);
   mask-image: linear-gradient(to bottom,
@@ -661,8 +665,8 @@ html:not(.perf) .pdt-close {
 }
 .pdt-glass-stair2 {
   height: 140px;
-  backdrop-filter: blur(5px);
   -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px);
   -webkit-mask-image: linear-gradient(to bottom,
     rgba(0,0,0,0) 30px, rgba(0,0,0,1) 55px, rgba(0,0,0,1) 110px, rgba(0,0,0,0) 140px);
   mask-image: linear-gradient(to bottom,
@@ -679,8 +683,8 @@ html:not(.perf) .pdt-close {
   z-index: -1;
   pointer-events: none;
   background: transparent;
-  backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
   -webkit-mask-image: linear-gradient(to bottom,
     rgba(0,0,0,0) 70px, rgba(0,0,0,1) 95px, rgba(0,0,0,1) 150px, rgba(0,0,0,0) 180px);
   mask-image: linear-gradient(to bottom,
@@ -756,8 +760,12 @@ html:not(.perf) .pdt-close {
   background: rgba(255, 255, 255, 0.5);
   color: rgba(0, 0, 0, 0.85);
   box-shadow: inset 0 0.7px 0 rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(20px) saturate(1.7) brightness(1);
-  -webkit-backdrop-filter: blur(20px) saturate(1.7) brightness(1);
+  /* [lc-2413] 顺序不能反：压缩器去重时保留「同名属性的最后一条」，
+     `-webkit-` 必须写在标准属性**前面**，否则标准那条被吃掉、只剩前缀版
+     （Chrome/WebView2 不认 `-webkit-backdrop-filter`，computed 直接是 none）。
+     `brightness(1)` 也删掉：恒等变换无作用，但会被压成非法的 `brightness()`。 */
+  -webkit-backdrop-filter: blur(20px) saturate(1.7);
+  backdrop-filter: blur(20px) saturate(1.7);
   cursor: pointer;
   text-align: left;
   position: relative;
@@ -896,8 +904,8 @@ html:not(.perf) .pdt-close {
     background 0.18s ease,
     transform 0.18s cubic-bezier(0.25, 1, 0.5, 1),
     opacity 0.18s ease;
-  backdrop-filter: blur(12px) saturate(140%);
   -webkit-backdrop-filter: blur(12px) saturate(140%);
+  backdrop-filter: blur(12px) saturate(140%);
 }
 .pdt-ep-nav-btn svg {
   width: 14px;
@@ -928,8 +936,8 @@ html:not(.perf) .pdt-close {
 }
 /* 性能模式：去掉模糊与投影 */
 html.perf .pdt-ep-nav-btn {
-  backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   box-shadow: none;
 }
 
@@ -1176,8 +1184,8 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
   letter-spacing: 0.2px;
   line-height: 1.25;
   pointer-events: none;
-  backdrop-filter: blur(10px) saturate(130%);
   -webkit-backdrop-filter: blur(10px) saturate(130%);
+  backdrop-filter: blur(10px) saturate(130%);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
 }
 .pdt-ep-date {
@@ -1317,8 +1325,8 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
   cursor: pointer;
   z-index: 6;
   opacity: 1;
-  backdrop-filter: blur(10px) saturate(130%);
   -webkit-backdrop-filter: blur(10px) saturate(130%);
+  backdrop-filter: blur(10px) saturate(130%);
   filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.35));
   transition:
     background 0.2s ease,
@@ -1376,8 +1384,8 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
   padding: 0;
   opacity: 0;
   transition: opacity 0.2s, background 0.2s;
-  backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
 }
 .pdt-ep-card:hover .pdt-ep-meta { opacity: 1; }
 .pdt-ep-meta:hover { background: rgba(0, 0, 0, 0.62); color: #fff; }
@@ -1646,8 +1654,12 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
     inset 0 0.7px 0 rgba(255, 255, 255, 0.9),
     inset 0 0 0 0.7px rgba(0, 0, 0, 0.1),
     0 14px 30px rgba(0, 0, 0, 0.18);
-  backdrop-filter: blur(20px) saturate(1.7) brightness(1);
-  -webkit-backdrop-filter: blur(20px) saturate(1.7) brightness(1);
+  /* [lc-2413] 顺序不能反：压缩器去重时保留「同名属性的最后一条」，
+     `-webkit-` 必须写在标准属性**前面**，否则标准那条被吃掉、只剩前缀版
+     （Chrome/WebView2 不认 `-webkit-backdrop-filter`，computed 直接是 none）。
+     `brightness(1)` 也删掉：恒等变换无作用，但会被压成非法的 `brightness()`。 */
+  -webkit-backdrop-filter: blur(20px) saturate(1.7);
+  backdrop-filter: blur(20px) saturate(1.7);
   transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1), background 0.2s;
 }
 .pdt-spec-group:hover {
@@ -1728,8 +1740,12 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
     inset 0 0.7px 0 rgba(255, 255, 255, 0.9),
     inset 0 0 0 0.7px rgba(0, 0, 0, 0.1),
     0 14px 30px rgba(0, 0, 0, 0.18);
-  backdrop-filter: blur(20px) saturate(1.7) brightness(1);
-  -webkit-backdrop-filter: blur(20px) saturate(1.7) brightness(1);
+  /* [lc-2413] 顺序不能反：压缩器去重时保留「同名属性的最后一条」，
+     `-webkit-` 必须写在标准属性**前面**，否则标准那条被吃掉、只剩前缀版
+     （Chrome/WebView2 不认 `-webkit-backdrop-filter`，computed 直接是 none）。
+     `brightness(1)` 也删掉：恒等变换无作用，但会被压成非法的 `brightness()`。 */
+  -webkit-backdrop-filter: blur(20px) saturate(1.7);
+  backdrop-filter: blur(20px) saturate(1.7);
 }
 /* 标签：13px / 600 / **黑 55%**（[lc-2407] 玻璃底是半透明白，深色字才读得清；
    原来写白 55% 是给"深底裸文字"配的，加到玻璃上会淡到看不见） */
@@ -2089,8 +2105,61 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
   color: #fff;
 }
 
+/* ── [lc-2413] 影院版式标签体的玻璃容器包裹 ──────────────────────────────────
+   用户给的第二个参考图：内容不是裸压在玻璃控制台上，而是**每块都躺在一张
+   圆角半透明白底的卡片里**（与上面四个规格方块、资源详情行同一套玻璃语言）。
+
+   结构（由 TSX 的 renderPdtTabsBody 给出）：
+     .pdt-tabs-body      外层，负责高度与滚动（不画底）
+       └ .pdt-tabs-card  玻璃板：50% 白底 + inset 高光 + 双层投影 + blur/saturate
+           └ .dv2-body   面板内容（沿用 renderEditorialTabsBody）
+
+   为什么滚动放在外层而不是卡片上：卡片要能"包住"内容并留内边距，
+   滚动条若在卡片内会切掉内边距的右侧视觉；放外层则卡片整体随内容滚动，
+   滚动条贴在卡片外沿，与下方规格区的滚动手感一致。 */
+.pdt-tabs-body {
+  margin-top: 14px;
+  height: min(560px, 62vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  /* 给滚动条留出空间，不让它压住卡片右边缘 */
+  padding-right: 8px;
+  margin-right: -8px;
+}
+.pdt-tabs-body::-webkit-scrollbar { width: 8px; }
+.pdt-tabs-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+}
+.pdt-tabs-body::-webkit-scrollbar-track { background: transparent; }
+
+.pdt-tabs-card {
+  padding: 24px 28px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow:
+    inset 0 0.7px 0 rgba(255, 255, 255, 0.9),
+    inset 0 0 0 0.7px rgba(0, 0, 0, 0.1),
+    0 14px 30px rgba(0, 0, 0, 0.18);
+  /* [lc-2413] 不写 `brightness(1)`：它是恒等变换、无视觉作用，但**压缩器会把它
+     优化成 `brightness()`**（空参数），那是无效语法 —— 整条 backdrop-filter
+     会被浏览器丢弃，实测 computed 值变成 `none`，卡片就没有背景模糊了。
+     这类"语义等价但语法非法"的压缩结果不会报错，只能靠 computed 值发现。 */
+  -webkit-backdrop-filter: blur(20px) saturate(1.7);
+  backdrop-filter: blur(20px) saturate(1.7);
+  /* 卡片自己不再滚（滚动在外层），高度由内容决定 */
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
 /* 标签体：Polaris 控制台里没有卡片底（内容直接压在玻璃上），
-   高 560px 给一个稳定视口（比经典版矮 —— 它在长页里只是中段一块）。 */
+   高 560px 给一个稳定视口（比经典版矮 —— 它在长页里只是中段一块）。
+   [lc-2413] **这段原来整套是"白字压在深底"的配色**；现在影院版式的标签体已经
+   包进半透明白玻璃卡片（.pdt-tabs-card），白字在那上面等于消失。
+   整套改成深色口径，与 .pdt-spec-group / .pdt-filepath-row 同一套。
+   仍然保留"是否在卡片内"的区分：直接挂在 .pdt-tabs 下（无卡片）时用旧的白字，
+   嵌在 .pdt-tabs-card 里时用深色 —— 这样两条路径都对。 */
 .pdt-tabs .dv2-body {
   margin-top: 14px;
   height: min(560px, 62vh);
@@ -2146,6 +2215,58 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
 }
 .pdt-tabs .dextra-v {
   color: rgba(255, 255, 255, 0.8);
+}
+
+/* ── [lc-2413] 卡片内的深色覆盖（必须写在上面那一组**之后**）───────────────
+   上面那组白字规则的选择器是 `.pdt-tabs X`（特异性 0,2,0/0,2,1），
+   而卡片内的元素同时命中 `.pdt-tabs .pdt-tabs-card X`（0,3,x）——
+   特异性更高，所以只要写在后面就一定能盖住，不需要 !important。
+   **顺序是关键**：把这段写在白字那组前面会被反盖回去（第一次就踩了这个坑，
+   实测文字仍是白 0.82、面板仍叠着白 0.06 的底）。 */
+.pdt-tabs .pdt-tabs-card .dv2-body {
+  height: auto;
+  margin-top: 0;
+  overflow: visible;
+  padding-right: 0;
+  margin-right: 0;
+  color: rgba(0, 0, 0, 0.85);
+}
+.pdt-tabs .pdt-tabs-card .dpanel,
+.pdt-tabs .pdt-tabs-card .dpanel-single,
+.pdt-tabs .pdt-tabs-card .tmdb-sec,
+.pdt-tabs .pdt-tabs-card .dmore {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+.pdt-tabs .pdt-tabs-card .tmdb-sec-t,
+.pdt-tabs .pdt-tabs-card .dsec-t,
+.pdt-tabs .pdt-tabs-card .mved-ov-t {
+  color: rgba(0, 0, 0, 0.5);
+}
+.pdt-tabs .pdt-tabs-card .dfold,
+.pdt-tabs .pdt-tabs-card .mved-lead,
+.pdt-tabs .pdt-tabs-card .dtext {
+  color: rgba(0, 0, 0, 0.82);
+}
+.pdt-tabs .pdt-tabs-card .dtag,
+.pdt-tabs .pdt-tabs-card .mved-tag {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.1);
+  color: rgba(0, 0, 0, 0.72);
+}
+.pdt-tabs .pdt-tabs-card .empty,
+.pdt-tabs .pdt-tabs-card .dempty {
+  color: rgba(0, 0, 0, 0.45);
+}
+.pdt-tabs .pdt-tabs-card .dextra-row {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+.pdt-tabs .pdt-tabs-card .dextra-k {
+  color: rgba(0, 0, 0, 0.45);
+}
+.pdt-tabs .pdt-tabs-card .dextra-v {
+  color: rgba(0, 0, 0, 0.8);
 }
 
 /* ══════════ 响应式（对齐 Polaris 自己的断点）══════════════════════════════
@@ -2220,8 +2341,8 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
    `body.ui-mode-performance` 同语义，也与本项目 lc-1437 的降级口径一致。 */
 html.perf .pdt-backdrop-img.is-loaded { animation: none; }
 html.perf .pdt-console::before {
-  backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 html.perf .pdt-glass-stair1,
 html.perf .pdt-glass-stair2,
@@ -2231,8 +2352,8 @@ html.perf .pdt-console::after {
 html.perf .pdt-icon-btn,
 html.perf .pdt-spec-group,
 html.perf .pdt-source-card {
-  backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 html.perf .pdt-ep-card:hover .pdt-ep-img,
 html.perf .pdt-rec-card:hover .pdt-rec-img,

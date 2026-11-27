@@ -2270,8 +2270,15 @@ export function DetailView({
      更多和角色删掉」）。**只过滤 polaris**，不动 tabIds 本身 —— 原版式仍然需要这两页，
      所以做成"给 polaris 一份专属的标签列表"，而不是从全局 tabIds 里删。
      面板体不用动：editorialTabsBody 按 activeTab 条件渲染，标签没了就永远激活不到。 */
-  const pdtTabIds = tabIds.filter((id) => id !== "more" && id !== "extra");
-  const pdtActiveTab = pdtTabIds.includes(activeTab) ? activeTab : "overview";
+  /* [lc-2413] 影院版式只保留「评论 / 吐槽 / 关联」三页（用户：「详情也去掉，
+     剩下三个样式重新做」）。overview 也一并过滤掉 —— 简介已经在首屏 hero 里完整展示，
+     这一页在影院版式下纯重复。
+     注意：过滤后**没有 overview 兜底了**，所以归一化的兜底值是第一个剩余项
+     （评论），不能写死 "overview"，否则 activeTab 会永远落在一个不在列表里的值。 */
+  const pdtTabIds = tabIds.filter(
+    (id) => id !== "overview" && id !== "more" && id !== "extra",
+  );
+  const pdtActiveTab = pdtTabIds.includes(activeTab) ? activeTab : (pdtTabIds[0] ?? "");
   const pdtTabsNavEl = (
     <nav className="dseg dv2-seg" role="tablist">
       {pdtTabIds.map((id) => (
@@ -2524,6 +2531,20 @@ export function DetailView({
     </div>
   );
 
+  /* [lc-2413] 影院版式的标签体：与上面那份一样的面板内容，但**整体包在一层玻璃容器里**
+     （用户给的第二个参考图：每块内容都躺在一张圆角半透明白底的卡片里，
+     而不是裸文字直接压在玻璃控制台上）。
+
+     为什么不给 renderEditorialTabsBody 加个参数：两份的**外层结构**不同
+     （这份多一层 `.pdt-tabs-card` 包裹 + 滚动落在内层），
+     强行合并会让 editorial 那份多出无用分支。共用的是里面的面板内容，
+     所以这里复用它并把结果放进包裹层 —— 面板逻辑仍然只有一份。 */
+  const renderPdtTabsBody = (tab: string) => (
+    <div className="pdt-tabs-body">
+      <div className="pdt-tabs-card">{renderEditorialTabsBody(tab)}</div>
+    </div>
+  );
+
   return (
     <main
       /* [lc-2396] 影院版式追加 `pdt-detail` 类：把 main 自身的内边距/滚动/背景让位给
@@ -2698,7 +2719,7 @@ export function DetailView({
             recommendations: tmdbRecs,
             tags: bgmTags,
             tabsNav: pdtTabsNavEl,
-            tabsBody: renderEditorialTabsBody(pdtActiveTab),
+            tabsBody: renderPdtTabsBody(pdtActiveTab),
             /* [lc-2412] activeTab 也要归一：若用户上次停在「角色/更多」，切到影院版式后
                那个页签已经不存在了，传原值会让 tabsBody 渲染一个没有对应按钮的面板。 */
             activeTab: pdtActiveTab,

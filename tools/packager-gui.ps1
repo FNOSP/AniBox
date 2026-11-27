@@ -17,6 +17,14 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+# [lc-2443] 直接 `pwsh -File` 运行时藏掉 console（打包GUI.cmd 的 start -WindowStyle
+# Hidden 已藏，此处兜底直接运行场景；SW_HIDE 只作用于 console，WinForms 窗口不受影响）。
+Add-Type -Name U32 -Namespace Native -MemberDefinition '
+[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);'
+$consoleH = [Native.U32]::GetConsoleWindow()
+if ($consoleH -ne [IntPtr]::Zero) { [Native.U32]::ShowWindow($consoleH, 0) | Out-Null }   # 0 = SW_HIDE
+
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $StateFile = Join-Path $env:APPDATA 'com.anibox.app\packager-gui.json'
 
@@ -24,6 +32,7 @@ $StateFile = Join-Path $env:APPDATA 'com.anibox.app\packager-gui.json'
 $C_BG      = [System.Drawing.Color]::FromArgb(244, 246, 251)   # 窗口底
 $C_CARD    = [System.Drawing.Color]::FromArgb(252, 253, 255)   # 卡片
 $C_LINE    = [System.Drawing.Color]::FromArgb(224, 229, 240)   # 卡片描边
+$C_TRACK   = [System.Drawing.Color]::FromArgb(210, 217, 233)   # 进度条轨道（比描边深一档，静止时也可辨）
 $C_ACCENT  = [System.Drawing.Color]::FromArgb(108, 155, 255)   # #6c9bff
 $C_ACCENT2 = [System.Drawing.Color]::FromArgb(143, 108, 255)   # #8f6cff
 $C_ACCENT_DK = [System.Drawing.Color]::FromArgb(90, 138, 240)  # hover 深
@@ -97,8 +106,9 @@ function Set-FlatButton($btn, [System.Drawing.Color]$bg, [System.Drawing.Color]$
 $f = New-Object System.Windows.Forms.Form
 $f.Text = 'AniBox 打包'
 $f.Font = $F_MAIN
-$f.Size = New-Object System.Drawing.Size(640, 680)
-$f.MinimumSize = New-Object System.Drawing.Size(640, 620)
+$f.Size = New-Object System.Drawing.Size(640, 700)
+$f.MinimumSize = New-Object System.Drawing.Size(640, 660)
+try { $f.Icon = New-Object System.Drawing.Icon((Join-Path $RepoRoot 'src-tauri/icons/icon.ico')) } catch {}
 $f.StartPosition = 'CenterScreen'
 $f.BackColor = $C_BG
 $f.FormBorderStyle = 'Sizable'
@@ -133,14 +143,15 @@ $lbTitle.Location = New-Object System.Drawing.Point(72, 18)
 $lbTitle.AutoSize = $true
 $f.Controls.Add($lbTitle)
 $lbSub = New-Object System.Windows.Forms.Label
-$lbSub.Text = "本地构建 · 密钥注入 · 当前版本 $curVersion"
+$lbSub.Text = "本地构建，自动注入密钥"
 $lbSub.ForeColor = $C_MUTED
 $lbSub.Location = New-Object System.Drawing.Point(74, 58)
 $lbSub.AutoSize = $true
 $f.Controls.Add($lbSub)
 
 # ── 输入卡片 ──
-$card = New-Card 20 74 (($f.ClientSize.Width - 40)) 132
+$card = New-Card 20 86 (($f.ClientSize.Width - 40)) 132
+$card.Anchor = 'Top,Left,Right'   # 窗口拉伸时卡片跟随变宽
 $f.Controls.Add($card)
 
 $lb1 = New-Object System.Windows.Forms.Label
@@ -158,26 +169,29 @@ $lbCur.Location = New-Object System.Drawing.Point(252, 21); $lbCur.AutoSize = $t
 $card.Controls.Add($lbCur)
 
 $cbOver = New-Object System.Windows.Forms.CheckBox
-$cbOver.Text = '覆盖同名安装包（不勾 = 自动加时间戳后缀）'
-$cbOver.Location = New-Object System.Drawing.Point(18, 52)
+$cbOver.Text = '覆盖同名安装包，否则自动加时间戳后缀'
+$cbOver.Location = New-Object System.Drawing.Point(18, 54)
 $cbOver.AutoSize = $true; $cbOver.ForeColor = $C_TEXT
 $cbOver.Checked = [bool]$state.Overwrite
 $card.Controls.Add($cbOver)
 
 $lb2 = New-Object System.Windows.Forms.Label
-$lb2.Text = '出包位置'; $lb2.Location = New-Object System.Drawing.Point(18, 88); $lb2.AutoSize = $true; $lb2.ForeColor = $C_TEXT
+$lb2.Text = '出包位置'; $lb2.Location = New-Object System.Drawing.Point(18, 92); $lb2.AutoSize = $true; $lb2.ForeColor = $C_TEXT
 $card.Controls.Add($lb2)
 $tbOut = New-Object System.Windows.Forms.TextBox
-$tbOut.Location = New-Object System.Drawing.Point(90, 84)
+$tbOut.Location = New-Object System.Drawing.Point(90, 88)
 $tbOut.Size = New-Object System.Drawing.Size(330, 26)
 $tbOut.Font = $F_MAIN
+$tbOut.Anchor = 'Top,Left,Right'   # 卡片变宽时输入框跟随
 $tbOut.Text = $state.OutDir
 $card.Controls.Add($tbOut)
 $btnPick = New-Object System.Windows.Forms.Button
 $btnPick.Text = '浏览…'
-$btnPick.Location = New-Object System.Drawing.Point(430, 82)
+$btnPick.Location = New-Object System.Drawing.Point(430, 86)
 $btnPick.Size = New-Object System.Drawing.Size(78, 30)
-Set-FlatButton $btnPick $C_CARD $C_ACCENT $C_BG
+$btnPick.Anchor = 'Top,Right'
+# [lc-2443] 底色改用窗口底色：原 C_CARD 与卡片同色，按钮视觉上"消失"
+Set-FlatButton $btnPick $C_BG $C_ACCENT $C_LINE
 $card.Controls.Add($btnPick)
 $btnPick.Add_Click({
     $fb = New-Object System.Windows.Forms.FolderBrowserDialog
@@ -188,7 +202,7 @@ $btnPick.Add_Click({
 # ── 操作行：开始打包 + 步骤进度 ──
 $btnBuild = New-Object System.Windows.Forms.Button
 $btnBuild.Text = '开始打包'
-$btnBuild.Location = New-Object System.Drawing.Point(20, 224)
+$btnBuild.Location = New-Object System.Drawing.Point(20, 238)
 $btnBuild.Size = New-Object System.Drawing.Size(132, 40)
 Set-FlatButton $btnBuild $C_ACCENT ([System.Drawing.Color]::White) $C_ACCENT_DK
 $f.Controls.Add($btnBuild)
@@ -196,29 +210,45 @@ $f.Controls.Add($btnBuild)
 $lbStep = New-Object System.Windows.Forms.Label
 $lbStep.Text = '就绪'
 $lbStep.ForeColor = $C_MUTED
-$lbStep.Location = New-Object System.Drawing.Point(168, 230)
+$lbStep.Location = New-Object System.Drawing.Point(168, 245)
 $lbStep.AutoSize = $true
 $f.Controls.Add($lbStep)
 $lbElapsed = New-Object System.Windows.Forms.Label
 $lbElapsed.Text = ''
 $lbElapsed.ForeColor = $C_MUTED
-$lbElapsed.Location = New-Object System.Drawing.Point(168, 250)
+$lbElapsed.Location = New-Object System.Drawing.Point(168, 266)
 $lbElapsed.AutoSize = $true
 $f.Controls.Add($lbElapsed)
 
-$pb = New-Object System.Windows.Forms.ProgressBar
-$pb.Location = New-Object System.Drawing.Point(($f.ClientSize.Width - 240), 234)
-$pb.Size = New-Object System.Drawing.Size(220, 18)
-$pb.Style = 'Continuous'
-$pb.Value = 0
-$pb.Anchor = 'Top,Right'
-$f.Controls.Add($pb)
+# [lc-2443] 自绘圆角进度条：系统 ProgressBar 的绿色与品牌蓝紫脱节且 WinForms 无法改色。
+# Panel + Paint 画圆角轨道（C_LINE）与纯色填充（C_ACCENT），值由 $script:pbarValue 驱动。
+$script:pbarValue = 0
+$pbar = New-Object System.Windows.Forms.Panel
+$pbar.Location = New-Object System.Drawing.Point(($f.ClientSize.Width - 240), 244)
+$pbar.Size = New-Object System.Drawing.Size(220, 16)
+$pbar.BackColor = $C_BG
+$pbar.Anchor = 'Top,Right'
+$pbar.Add_Paint({
+    param($sender, $e)
+    try {
+        $g = $e.Graphics
+        $g.SmoothingMode = 'AntiAlias'
+        $w = $sender.Width; $h = $sender.Height
+        $r = [Math]::Floor($h / 2)
+        $g.FillPath((New-Object System.Drawing.SolidBrush($script:C_TRACK)), (New-RoundPath $w $h $r))
+        if ($script:pbarValue -gt 0) {
+            $fw = [Math]::Max($h, [int]($w * $script:pbarValue / 100))
+            $g.FillPath((New-Object System.Drawing.SolidBrush($script:C_ACCENT)), (New-RoundPath $fw $h $r))
+        }
+    } catch {}
+})
+$f.Controls.Add($pbar)
 
 # ── 日志区（终端风，窗口拉伸时跟随） ──
 $lbLogTitle = New-Object System.Windows.Forms.Label
-$lbLogTitle.Text = '构建日志（实时）'
+$lbLogTitle.Text = '构建日志'
 $lbLogTitle.ForeColor = $C_MUTED
-$lbLogTitle.Location = New-Object System.Drawing.Point(22, 282)
+$lbLogTitle.Location = New-Object System.Drawing.Point(20, 302)
 $lbLogTitle.AutoSize = $true
 $f.Controls.Add($lbLogTitle)
 $tbLog = New-Object System.Windows.Forms.TextBox
@@ -228,8 +258,8 @@ $tbLog.BackColor = $C_TERM_BG
 $tbLog.ForeColor = $C_TERM_FG
 $tbLog.Font = $F_MONO
 $tbLog.BorderStyle = 'None'
-$tbLog.Location = New-Object System.Drawing.Point(20, 304)
-$tbLog.Size = New-Object System.Drawing.Size(($f.ClientSize.Width - 40), ($f.ClientSize.Height - 328))
+$tbLog.Location = New-Object System.Drawing.Point(20, 324)
+$tbLog.Size = New-Object System.Drawing.Size(($f.ClientSize.Width - 40), ($f.ClientSize.Height - 352))
 $tbLog.Anchor = 'Top,Bottom,Left,Right'
 $f.Controls.Add($tbLog)
 
@@ -245,11 +275,10 @@ function Log-Line($m) {
 }
 function Set-Step([string]$text, [int]$pct) {
     $lbStep.Text = $text
-    if ($pct -lt 0) {
-        $pb.Style = 'Marquee'; $pb.MarqueeAnimationSpeed = 25   # 构建中不确定进度
-    } else {
-        $pb.Style = 'Continuous'; $pb.Value = [Math]::Min(100, [Math]::Max(0, $pct))
-    }
+    # [lc-2443] 自绘进度条：更新 $script:pbarValue + Invalidate 重画（无 Marquee，
+    # 构建段由 Update-ProgressFromLine 按输出实时推进）
+    $script:pbarValue = [Math]::Min(100, [Math]::Max(0, $pct))
+    $pbar.Invalidate()
     [System.Windows.Forms.Application]::DoEvents()
 }
 
@@ -278,7 +307,7 @@ function Update-ProgressFromLine([string]$line) {
     if ($line -match 'transforming')         { Set-Step '② 前端 vite 编译中…' 10;        return }
     if ($line -match 'built in \d')          { Set-Step '② 前端完成，cargo 编译中…' 14;  return }
     if ($line -match '构建尝试 \d+ / \d+')   { Set-Step '② cargo 编译中…' 16;            return }
-    if ($line -match '^\s*Compiling\s')      { if ($pb.Value -lt 16) { Set-Step '② cargo 编译中…' 16 }; return }
+    if ($line -match '^\s*Compiling\s')      { if ($script:pbarValue -lt 16) { Set-Step '② cargo 编译中…' 16 }; return }
     if ($line -match '^\s*Finished\s')       { Set-Step '② cargo 完成，打包安装器…' 80;  return }
     if ($line -match 'Bundling\s+\S+\.exe')  { Set-Step '② tauri 生成 NSIS 安装包…' 84;  return }
     if ($line -match '构建成功')             { Set-Step '② 构建成功，校验产物…' 88;      return }
@@ -365,7 +394,7 @@ $btnBuild.Add_Click({
                         }
                     }
                 } catch {}
-                $lbElapsed.Text = ("已输出 {0} 行 · 用时 {1:mm\:ss}" -f $lineCount, $swAll.Elapsed)
+                $lbElapsed.Text = ("已输出 {0} 行，用时 {1:mm\:ss}" -f $lineCount, $swAll.Elapsed)
                 [System.Windows.Forms.Application]::DoEvents()
             }
         }
@@ -417,7 +446,7 @@ $btnBuild.Add_Click({
         $mb = [math]::Round((Get-Item -LiteralPath $dest).Length / 1MB, 2)
         Set-Step '④ 完成' 100
         Log-Line "4/4 完成：$dest"
-        Log-Line ("大小 {0} MB · SHA-256 {1}" -f $mb, $sha)
+        Log-Line ("大小 {0} MB，SHA-256 {1}" -f $mb, $sha)
         Log-Line ("总用时 {0:mm\:ss}" -f $swAll.Elapsed)
 
         if (Test-Path -LiteralPath $errLog) { Remove-Item -LiteralPath $errLog -Force -ErrorAction SilentlyContinue }

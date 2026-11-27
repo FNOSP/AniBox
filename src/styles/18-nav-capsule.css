@@ -1,14 +1,19 @@
-/* ═══════════════════ [lc-123-rev2] 内容区顶部「首页 | 发现」**浮层**胶囊 ═══════════════════
-   自己动手改的第一版是"占一行的胶囊行"（.navbar 有 height/padding-top），实机截图里它把首页 hero
-   顶下来一条白带 —— 用户否掉：胶囊**不占任何布局高度**，直接浮在内容区顶部（盖在海报上）。
-   (1) .navbar 只做定位壳：absolute 居中在 .view-stack（侧栏右侧的内容区）里，
-      top = 顶栏 40px + 12px 间隙；z-index 40：高于首页 hero 内部图层（.lib-strip 20 / .mist-nav 6）、
-      低于 .titlebar(50) —— 永不抢顶栏的拖拽与窗口按钮。
-   (2) 浮在图上是"任何底色都要看得清"：深玻璃底 + backdrop-filter 模糊 + 细描边 + 浅色字
-      （选中态仍用现有 --accent-grad）。
-   (3) 紧凑尺寸：容器 padding 3px / 标签 6px 22px / 字号 13px ⇒ 整宽 ≈150px（不抢海报视觉）。
-   顶栏整条是拖拽区（data-tauri-drag-region）：胶囊**必须** no-drag，否则点它只会拖窗口。
-   浮层自己 pointer-events:none（不拦下方海报的点击/悬停），点击权只收回到 .nav-cap 上。 */
+/* ═══════════════════ [lc-2431] 内容区顶部「首页 | 发现」**液态玻璃** tab 栏 ═══════════════════
+   效果来源：CoolApk 16.7.4 底栏 → https://github.com/Kyant0/AndroidLiquidGlass
+   （Apache-2.0）。它是 AGSL RuntimeShader 做的**真折射**：
+     · 面板 lens(24, 24)：整条栏是一块圆角透镜，边缘把背景向内吸；
+     · 滑块 lens(10, 14, dispersion)：按下才长出来，带 7 采样色散；
+     · 高光用 SDF 梯度 · 45° 法线（不是普通 linear-gradient）；
+     · 动效是 Compose spring（位置 1.0/1000，形变 0.6·0.7/250）。
+   Web 侧等效实现：SDF 位移图 → <feImage> + <feDisplacementMap> → backdrop-filter: url(#id)。
+   真折射能力已实测（tests/probe_lens_visual_2431.cjs 截图：条纹在边缘被弯曲放大）。
+
+   定位沿用旧版（lc-123-rev2）：.navbar 是绝对定位浮层，不占布局高度；
+   top:44px 让开栏头第一行（lc-2212）。浮层 pointer-events:none，
+   点击权只收回到 .nav-cap（不拦下方海报）。
+
+   ⚠ 旧版 `.nav-cap` 的深玻璃底 + 白滑块（lc-2111 苹果分段控件）已整体替换。
+   保留 `.nav-cap` / `.nav-cap-l` 类名：focusNav.ts 的手柄焦点选择器按类名命中。 */
 
 .navbar {
   position: absolute;
@@ -22,108 +27,223 @@
   pointer-events: none;
 }
 
+/* ── 栏体 ─────────────────────────────────────────────────────────
+   不能在这里写 overflow:hidden —— 它会把 backdrop-filter 的采样区域一起裁掉
+   （边缘出现硬切）。滑块放大后的裁切交给 .nav-cap-thumb 自己的 border-radius。 */
 .nav-cap {
-  position: relative; /* [lc-123-rev6] 滑动指示器的定位基座 */
+  position: relative;
   display: flex;
-  gap: 0; /* 等宽两槽：指示器宽度 = 50%，靠 translateX(0|100%) 搬家 */
-  padding: var(--sp-1);
+  align-items: center;
+  /* 定宽：两个槽各 48px + 左右 4px padding = 104px。
+     旧版由按钮的 width:44px 撑开，这版按钮改 flex:1 后没有固有宽度，
+     容器会塌到 44px（实测过），所以这里必须给明确宽度。 */
+  width: 104px;
+  height: 40px;
+  padding: 4px;
   border-radius: var(--r-full);
-  /* [lc-2111] 苹果分段控件（UISegmentedControl / macOS picker）的做法：
-     深半透明中性底 + 内部白色滑块。底色无彩，滑动片是白色 90% 不透明。
-     微光靠 inset 顶部高光 + 大范围低 alpha 外阴影（苹果不用彩色发光）。 */
-  background: rgba(30, 30, 32, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(20px) saturate(1.8);
-  -webkit-backdrop-filter: blur(20px) saturate(1.8);
-  -webkit-app-region: no-drag; /* ← 保险丝：胶囊永远不参与窗口拖拽 */
-  pointer-events: auto; /* 父层 .navbar 是 none，这里把点击收回 */
+  -webkit-app-region: no-drag; /* 顶栏整条是拖拽区，胶囊必须不参与拖窗 */
+  pointer-events: auto;
+  /* 兜底外观：透镜不可用时（旧内核 / reduce-motion）仍然是一块像样的玻璃 */
+  background: rgba(28, 28, 30, 0.42);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: none; /* 指针拖拽期间禁止滚动接管 */
+  cursor: grab;
 }
 
-/* [lc-123-rev6] 「水滴」滑动指示器：绝对定位在等宽槽位上，translateX(0|100%) 在两槽间搬家。
-   缓动 var(--ease-spring) 是**带过冲**的曲线（黏滞回弹手感）；
-   切换瞬间内部 i 的 scaleX(.92)→1（140ms）＝"水滴"味（两个不同 animation-name 保证每次都重放）。 */
-.nav-cap-ind {
+/* 浅色主题下的兜底底（深玻璃在浅色页面上发灰） */
+/* 浅色主题：外框底比玻璃层更淡 —— 原版浅色 containerColor 是 0xFAFAFA @40%，
+   但在浅色页面上这层白会把折射整片压平（实测出图几乎全白）。这里降到 @16%，
+   让下方的折射可见；玻璃层自己还有一层白 @40%（见 .nav-cap-glass）。 */
+[data-theme="light"] .nav-cap {
+  background: rgba(236, 236, 240, 0.18);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.nav-cap:active {
+  cursor: grabbing;
+}
+
+/* ── 玻璃层：真折射 + 模糊 ────────────────────────────────────────
+   面板折射参数照抄原版 lens(24dp, 24dp)：refractionHeight = refractionAmount = 24。
+   saturate(1.5) 对应原版 vibrancy() 的 saturation 1.5。 */
+.nav-cap-glass {
   position: absolute;
-  left: 3px;
-  top: 3px;
-  bottom: 3px;
-  width: calc((100% - 6px) / 2);
+  inset: 0;
+  border-radius: inherit;
   pointer-events: none;
-  transform: translateX(0);
-  transition: transform var(--dur-page) var(--ease-spring);
+  z-index: 0;
+  /* 滤镜顺序是**语义**的，不是随意的：CSS 按从左到右执行。
+     原版 Compose 的链是 vibrancy() → blur() → lens()（BackdropEffectScope 每调用一次就
+     把上一次的 renderEffect 包一层，lens 的 "content" 输入拿到的是"已模糊+已饱和"的图）。
+     所以这里必须是 saturate → blur → url(lens)：
+       写反成 url(lens) blur(8px) 时，blur 会把折射位移整个抹平 —— 实测差异巨大
+       （tests/artifacts/probe_lens_vs_blur_2431.png：反序 = 平整灰面，正序 = 真透镜）。 */
+  backdrop-filter: saturate(1.5) blur(8px) url(#anibox-lens-panel);
+  -webkit-backdrop-filter: saturate(1.5) blur(8px) url(#anibox-lens-panel);
+  /* 原版 onDrawSurface: containerColor —— 深色 0x121212 @40%，浅色 0xFAFAFA @40% */
+  background: rgba(18, 18, 18, 0.4);
+  /* 顶部高光 ≈ Highlight.Default：SDF 梯度 · 45° 法线，白色 50%，
+     CSS 没有 SDF 高光，inset 阴影是最接近的一档。 */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+/* 浅色玻璃层同样降到 @22%（原版 40%）：白色压得太实会盖掉折射条纹 */
+[data-theme="light"] .nav-cap-glass {
+  /* 叠一层中性灰而不是纯白：折射会把背景的色相带进来（红色条纹 → 整片发粉），
+     中性灰在视觉上把色偏压下去、又不遮掉折射结构。 */
+  background: rgba(236, 236, 240, 0.34);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+/* 透镜不可用（旧内核 / reduce-motion）→ 退回纯模糊玻璃 */
+.nav-cap.nav-cap-plain .nav-cap-glass {
+  backdrop-filter: blur(20px) saturate(1.8);
+  -webkit-backdrop-filter: blur(20px) saturate(1.8);
+}
+
+/* ── 滑块轨道 ─────────────────────────────────────────────────────
+   --lx        滑块横向位移（槽位宽 × 连续索引）
+   --lpress    按压进度 0..1
+   --lscaleX/Y 形变（含速度挤压）
+   全部由 JS 的 rAF 每帧写入，**不经过 React state**。 */
+.nav-cap-track {
+  --lx: 0px;
+  --lpress: 0;
+  --lscaleX: 1;
+  --lscaleY: 1;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  height: 100%;
+  flex: 1;
+}
+
+/* 滑块：宽 = 一槽（容器去掉左右 4px 内缩后的一半）。 */
+.nav-cap-thumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 50%;
+  height: 100%;
+  transform: translateX(var(--lx)) scaleX(var(--lscaleX)) scaleY(var(--lscaleY));
+  transform-origin: center center;
+  pointer-events: none;
   will-change: transform;
 }
 
-.nav-cap[data-side="discover"] .nav-cap-ind {
-  transform: translateX(100%);
-}
-
-.nav-cap-ind i {
-  display: block;
-  width: 100%;
-  height: 100%;
+/* 滑块本体 —— **静止态没有任何玻璃效果**，这是原版行为，不是省事：
+   LiquidBottomTabs.kt 里滑块的 effects 是 `lens(10dp*progress, 14dp*progress)`，
+   highlight 是 `Highlight.Default.copy(alpha = progress)`，
+   shadow 是 `Shadow(alpha = progress)`，innerShadow 是 `InnerShadow(radius = 8dp*progress, alpha = progress)`，
+   onDrawSurface 先画 `白 10% @alpha(1-progress)` 再画 `黑 3% @alpha(progress)`。
+   progress = pressProgress，静止时为 0 ⇒ 折射/高光/阴影**全部为零**，只剩那层 白 10%。
+   所以静止态就是一枚很淡的白色药丸；液态效果全部在"按下那一刻长出来"，
+   这正是它看起来"活"的原因 —— 常驻透镜反而会把它变成一块普通的毛玻璃。 */
+.nav-cap-thumb-lens {
+  position: absolute;
+  inset: 0;
   border-radius: var(--r-full);
-  /* [lc-2111] 白色滑块 = 苹果分段控件的选中片：白色 92% + 柔和投影，
-     压深色字。浮在任何海报上都清晰，且完全不引入色相。 */
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.1);
+  transition:
+    background var(--dur-tap) var(--ease),
+    box-shadow var(--dur-tap) var(--ease);
 }
 
-.nav-cap[data-side="home"] .nav-cap-ind i {
-  animation: navBlobHome var(--dur-tap) ease-out;
+[data-theme="light"] .nav-cap-thumb-lens {
+  background: rgba(0, 0, 0, 0.1);
 }
 
-.nav-cap[data-side="discover"] .nav-cap-ind i {
-  animation: navBlobDiscover var(--dur-tap) ease-out;
+/* 按压：折射滤镜长出来（原版 progress 驱动 lens 0→满；浏览器侧改不了 scale，
+   所以走预生成的"按下"滤镜 —— 两者在满进度时参数完全一致：lens(10, 14) 带色散）。
+   同时：底色换成 黑 3%（"变透"）、阴影与内阴影出现（InnerShadow radius 8dp）。 */
+.nav-cap[data-pressed="on"] .nav-cap-thumb-lens {
+  /* 顺序同面板：先饱和再折射（原版 vibrancy → lens） */
+  backdrop-filter: saturate(1.4) url(#anibox-lens-thumb-press);
+  -webkit-backdrop-filter: saturate(1.4) url(#anibox-lens-thumb-press);
+  background: rgba(0, 0, 0, 0.03);
+  box-shadow:
+    0 3px 10px rgba(0, 0, 0, 0.18),
+    inset 0 -2px 6px rgba(0, 0, 0, 0.18);
 }
 
-@keyframes navBlobHome {
-  from {
-    transform: scaleX(0.92);
-  }
-  to {
-    transform: scaleX(1);
-  }
+/* 滑块高光（原版 Highlight.Default 随按下出现）：45° 柔和白色斜光 */
+.nav-cap-thumb-spec {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: var(--lpress);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.55) 0%,
+    rgba(255, 255, 255, 0.1) 38%,
+    rgba(255, 255, 255, 0) 62%
+  );
+  mix-blend-mode: plus-lighter;
 }
 
-@keyframes navBlobDiscover {
-  from {
-    transform: scaleX(0.92);
-  }
-  to {
-    transform: scaleX(1);
-  }
-}
-
-/* 图标按钮：等宽槽位 + 足量点击热区（约 40×30，别做成 24×24 那么难点）；文字没了靠 aria-label/title */
+/* ── 按钮 ─────────────────────────────────────────────────────────
+   等宽两槽（flex:1），图标居中；文字只留 aria/title。 */
 .nav-cap-l {
   position: relative;
-  z-index: 1; /* 压在指示器之上（图标与文字始终可见） */
+  z-index: 2;
+  flex: 1;
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 30px;
   padding: 0;
   border: none;
-  border-radius: var(--r-full);
   background: transparent;
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(255, 255, 255, 0.82);
+  font-family: inherit;
   font-size: var(--fs-ctl);
   font-weight: 600;
-  font-family: inherit;
   cursor: pointer;
-  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
-  transition: color var(--dur-tap);
+  transition: color var(--dur-tap) var(--ease);
 }
 
-.nav-ico {
-  display: block;
+[data-theme="light"] .nav-cap-l {
+  color: rgba(0, 0, 0, 0.68);
 }
 
-/* 切到新槽时图标轻微缩放（1 → .92 → 1）：只给"刚选中"的那个按钮挂，天然按切换重放 */
-.nav-cap-l.on .nav-ico {
-  animation: navIconPop var(--dur-tap) ease-out;
+/* 选中态：原版是 accentColor tint（浅色 0x0088FF / 深色 0x0091FF）。
+   我们把滑块做成中性玻璃，所以图标只提对比、不引入第二个色相。 */
+.nav-cap-l.on {
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="light"] .nav-cap-l.on {
+  color: #000;
+  text-shadow: none;
+}
+
+.nav-cap-l:hover {
+  color: #fff;
+}
+
+[data-theme="light"] .nav-cap-l:hover {
+  color: #000;
+}
+
+.nav-cap-l:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: var(--r-full);
+}
+
+/* 图标在切换时轻微缩放（保留旧版 navIconPop 的手感，缩短到 tap 档） */
+.nav-cap-l.on svg {
+  animation: navIconPop var(--dur-tap) var(--ease-enter);
 }
 
 @keyframes navIconPop {
@@ -135,40 +255,26 @@
   }
 }
 
-.nav-cap-l:hover {
-  color: #fff;
-}
-
-/* 高亮交给滑动指示器：选中按钮自己不再画底（否则和指示器叠成两层）。
-   [lc-2110] 指示器现在是**白底**，选中图标的文字色必须翻成深色才看得见。 */
-.nav-cap-l.on {
-  background: transparent;
-  color: #241a12;
-  box-shadow: none;
-  text-shadow: none;
-}
-
-/* [lc-123-rev6] 三处动效的 reduced-motion 守卫（(2)(3)(4)；JS 侧另有 prefersReducedMotion() 守卫）：
-   瞬时切换、不缩放、不位移。 */
+/* ── 无障碍：减少动效 ─────────────────────────────────────────────
+   JS 侧已把弹簧全部落位（snapChannel），这里再关掉 CSS 过渡，双保险。 */
 @media (prefers-reduced-motion: reduce) {
-  .nav-cap-ind {
+  .nav-cap-l,
+  .nav-cap-thumb,
+  .nav-cap-thumb-lens {
     transition: none;
   }
-  .nav-cap[data-side="home"] .nav-cap-ind i,
-  .nav-cap[data-side="discover"] .nav-cap-ind i,
-  .nav-cap-l.on .nav-ico,
-  .view-pane.anim-to-discover,
-  .view-pane.anim-to-home,
-  .theme-veil {
+  .nav-cap-l.on svg {
     animation: none;
+  }
+  .nav-cap-thumb {
+    transform: translateX(var(--lx));
   }
 }
 
-/* 左上角的"当前页"字样（首页/发现）——顶栏左侧现在只剩它（+侧栏/刷新/主题按钮） */
+/* 左上角的"当前页"字样（顶栏左侧现在只剩它 + 侧栏/刷新/主题按钮） */
 .tb-crumb {
   font-size: var(--fs-ctl);
   font-weight: 600;
   color: var(--text);
   padding-left: 2px;
 }
-

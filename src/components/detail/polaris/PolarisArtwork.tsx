@@ -75,10 +75,14 @@ type Props = {
   picks: Partial<Record<ArtworkRole, string>>;
   /** 当前展示用的默认图（未设偏好时高亮它） */
   defaults: Partial<Record<ArtworkRole, string>>;
-  /** 设为偏好 / 恢复默认。null → 恢复默认 */
-  onSave: (role: ArtworkRole, src: string | null) => Promise<void>;
-  /** 被替换的模块图（供父级真正应用） */
-  onApplied?: (role: ArtworkRole, path: string | null) => void;
+  /** 设为偏好 / 恢复默认。null → 恢复默认。
+      返回**保存后的本地文件路径**（恢复默认时为空串）。 */
+  onSave: (role: ArtworkRole, src: string | null) => Promise<string>;
+  /** 偏好已生效：path 是**本地文件路径**（不是 TMDB 路径）。
+      父级拿它拼 artwork:// 协议换背景/海报/Logo。
+      ⚠ [lc-2419] 以前这里传的是 src（TMDB 路径），父级直接当 <img src> 用
+      → 浏览器把 `/abc.jpg` 当应用自身地址请求 → 裂图。 */
+  onApplied?: (role: ArtworkRole, localPath: string | null) => void;
 };
 
 export function PolarisArtwork({ pools, picks, defaults, onSave, onApplied }: Props) {
@@ -123,8 +127,10 @@ export function PolarisArtwork({ pools, picks, defaults, onSave, onApplied }: Pr
     setSaving(true);
     setStatus("");
     try {
-      await onSave(role, src);
-      onApplied?.(role, src);
+      const localPath = await onSave(role, src);
+      /* [lc-2419] 只把**本地文件路径**交给父级。
+         传 src（TMDB 路径）会让 `/abc.jpg` 被当成应用自身地址 → 裂图。 */
+      onApplied?.(role, localPath || null);
     } catch (e) {
       setStatus(String(e));
     } finally {

@@ -106,7 +106,10 @@ export type PolarisModel = {
   /** [lc-2417] 未设偏好时各角色"默认展示"的那张（用于高亮当前生效项） */
   artworkDefaults: Partial<Record<ArtworkRole, string>>;
   /** [lc-2417] 设为偏好 / 恢复默认。null → 恢复默认 */
-  onSaveArtwork: (role: ArtworkRole, src: string | null) => Promise<void>;
+  /** [lc-2419] 返回**保存后的本地文件路径**（恢复默认时为空串）。
+      调用方必须用这个返回值去更新展示 —— 不能拿 src（那是 TMDB 路径，
+      `/abc.jpg` 直接当 <img src> 会解析成应用自身地址 → 裂图）。 */
+  onSaveArtwork: (role: ArtworkRole, src: string | null) => Promise<string>;
   /** [lc-2417] 偏好变化后通知父级（父级据此换背景 / 海报 / Logo） */
   onArtworkApplied?: (role: ArtworkRole, path: string | null) => void;
   cast: TmdbCreditPerson[];

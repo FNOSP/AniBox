@@ -2172,6 +2172,9 @@ export function DetailView({
       });
       // 让加载 effect 重跑一次：以磁盘为准再校一遍（保存与读取口径必须一致）
       setArtworkTick((t) => t + 1);
+      /* [lc-2419] 返回**本地文件路径**：调用方要用它做展示源。
+         返回 src（TMDB 路径）会让 <img src="/abc.jpg"> 解析成应用自身地址 → 裂图。 */
+      return localPath;
     },
     [artworkOwnerStr],
   );

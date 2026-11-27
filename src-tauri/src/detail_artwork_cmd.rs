@@ -261,13 +261,15 @@ use tauri::http::{Request, Response};
 pub async fn handle_request(app: tauri::AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     let not_found = || Response::builder().status(404).body(Vec::new()).unwrap_or_else(|_| Response::new(Vec::new()));
 
-    // 路径形如 /<64hex>/<role>；与源实现的正则 `^\/([a-f0-9]{64})\/(poster|backdrop|logo)$` 对齐
-    let uri = request.uri().to_string();
-    let path = uri.split('?').next().unwrap_or("");
-    let path = path.strip_prefix("artwork://").unwrap_or(path);
-    // artwork://preferred/<id>/<role> → host=preferred，path=/<id>/<role>
-    let path = path.strip_prefix("preferred").unwrap_or(path);
-    let parts: Vec<&str> = path.trim_matches('/').split('/').collect();
+    /* [lc-2419] 取 `uri().path()` 而不是 `to_string()` 再手工 strip：
+       自定义协议在不同平台被 Tauri 转成不同形态
+       （`artwork://preferred/<id>/<role>`、`http://artwork.localhost/<id>/<role>`），
+       但**路径部分始终是 `/<id>/<role>`**。与 fntvimg 的取法保持一致。
+       之前用 to_string + strip_prefix 在 Windows 形态下拿到的串含 scheme/host，
+       解析不稳定（实测表现为首帧能画出、随后裂图）。
+       形如 /<64hex>/<role>，与源实现正则 `^\/([a-f0-9]{64})\/(poster|backdrop|logo)$` 对齐。 */
+    let path = request.uri().path().to_string();
+    let parts: Vec<&str> = path.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
     if parts.len() != 2 {
         return not_found();
     }

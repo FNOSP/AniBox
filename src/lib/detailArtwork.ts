@@ -50,10 +50,17 @@ export type ArtworkPicks = Partial<Record<ArtworkRole, string>>;
  *  协议：`artwork://preferred/<sha256(owner)>/<role>?v=<mtime>`
  *  与源实现的 `ww-image://preferred-artwork/<id>/<role>?v=mtimeNs` 同构。 */
 export function artworkUrl(localPath: string, mtimeSec?: number): string {
-  const p = String(localPath ?? "").trim();
-  if (!p) return "";
+  const raw = String(localPath ?? "").trim();
+  if (!raw) return "";
+  /* [lc-2419] 先把反斜杠统一成正斜杠再匹配。
+     为什么不直接写 `[\\/]`：那个字符类在多层转义（TS 源码 → 打包 → 运行时
+     → 测试脚本）里极易被吃成 `[\/]`（只剩斜杠），于是 **Windows 路径全部匹配失败**，
+     函数返回空串、调用方回退成裸路径 → `<img src="C:\...">` 被当应用自身地址 → 裂图。
+     这正是用户看到的「能打开显示，一下子又变成裂图」。
+     统一分隔符后只用 `/` 匹配，与转义无关，行为确定。 */
+  const p = raw.replace(/\\/g, "/");
   // 路径形如 .../detail-artwork/<64hex>/<role>.webp
-  const m = /([a-f0-9]{64})[\\/](poster|backdrop|logo)\.webp$/i.exec(p);
+  const m = /\/([a-f0-9]{64})\/(poster|backdrop|logo)\.webp$/i.exec(p);
   if (!m) return "";
   const v = mtimeSec ?? 0;
   return `artwork://preferred/${m[1].toLowerCase()}/${m[2].toLowerCase()}${v ? `?v=${v}` : ""}`;

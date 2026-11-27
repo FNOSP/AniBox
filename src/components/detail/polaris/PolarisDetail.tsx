@@ -143,8 +143,9 @@ export function PolarisDetail({
             {/* 剧集横排（剧集限定） */}
             <PolarisEpisodes m={m} />
 
-            {/* 技术规格 4 列玻璃网格 + 展开区 */}
-            <PolarisSpecs version={selectedVersion} specs={m.specs} />
+            {/* [lc-2405] 文件位置条（取代原 4 列规格网格 + 展开区；用户要求只留长条，
+                内容改为文件位置） */}
+            <PolarisSpecs version={selectedVersion} filePath={m.filePath} />
 
             {/* 剧照横排 */}
             <PolarisStills stills={m.stills} onZoom={onZoom} />

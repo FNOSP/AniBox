@@ -87,39 +87,6 @@ export function versionMeta(v: MediaVersion): string {
   return [size, codec, depth > 0 ? `${depth}bit` : ""].filter(Boolean).join(" · ");
 }
 
-/** 字节数 → 人类可读（GB/MB）。规格区的「文件大小」格用它。 */
-export function fmtBytes(bytes: number): string {
-  if (!bytes || bytes <= 0) return "";
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
-  if (bytes >= 1024 ** 2) return `${Math.round(bytes / 1024 ** 2)} MB`;
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-}
-
-/** bps → 人类可读码率（Mbps / Kbps）。0 = 上游没给，返回空串。 */
-export function fmtBitrate(bps: number): string {
-  if (!bps || bps <= 0) return "";
-  if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`;
-  return `${Math.round(bps / 1000)} Kbps`;
-}
-
-/** 帧率 → 展示串（整数不带小数、非整数保留三位）。0 = 没给，返回空串。 */
-export function fmtFrameRate(fps: number): string {
-  if (!fps || fps <= 0) return "";
-  return Number.isInteger(fps) ? `${fps} fps` : `${fps.toFixed(3)} fps`;
-}
-
-/** 声道数 → 展示串（2 → 2.0、6 → 5.1、8 → 7.1）。与 fnOS web 前端同口径。 */
-export function fmtChannels(ch?: number): string {
-  const n = Number(ch ?? 0);
-  if (!n || n <= 0) return "";
-  if (n === 1) return "1.0";
-  if (n === 2) return "2.0";
-  if (n === 6) return "5.1";
-  if (n === 8) return "7.1";
-  if (n === 4) return "4.0";
-  return `${n} ch`;
-}
-
 /** 集号 → 展示文本（polaris 版固定「第 N 集」；短标题用于卡片角标）。 */
 export function epLabel(num: number): string {
   return `第 ${num} 集`;

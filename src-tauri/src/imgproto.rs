@@ -26,7 +26,8 @@ use crate::disk_cache;
 use crate::AppState;
 
 /// TMDB 图片域（镜像反代 image.tmdb.org；**免签名**，见 tmdb-mirror worker.js 注释）
-const TMDB_IMG_BASE: &str = "https://tmdb.690075.xyz";
+/// [lc-2418] pub：detail_artwork_cmd 拼「图片偏好」的下载地址时复用同一个基址
+pub const TMDB_IMG_BASE: &str = "https://tmdb.690075.xyz";
 /// Bangumi 图片域（直连 —— 仅作无密钥时的退路；[lc-1569] 客户端侧已被 DNS 污染，正常走镜像）
 const BGM_IMG_BASE: &str = "https://lain.bgm.tv";
 /// [lc-1569] BGM 图片镜像（自建，签名轨）：`/img/*` → lain.bgm.tv，边缘缓存 30 天

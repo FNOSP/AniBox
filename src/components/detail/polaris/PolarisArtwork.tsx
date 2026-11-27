@@ -104,11 +104,22 @@ export function PolarisArtwork({ pools, picks, defaults, onSave, onApplied }: Pr
   if (display.length === 0 && !picked) return null;
 
   const isLocal = (p: string) => p === picked;
+  /** 是否是 TMDB 的 file_path（可交给后端下载的那种）。
+      本地偏好路径（.../detail-artwork/<hex>/<role>.webp）与代理 URL 都不算。 */
+  const isTmdbPath = (p: string) => /^\/[^:]*\.(jpe?g|png|webp|avif)$/i.test(String(p ?? ""));
 
   const openViewer = (i: number) => setViewerAt(i);
 
   const save = async (src: string | null) => {
     if (saving) return;
+    /* [lc-2418] `src === null` 是"恢复默认"，放行；
+       否则必须是 **TMDB file_path**（形如 /abc.jpg）。
+       绝不能把 display 首项（已存偏好的本地绝对路径）再传回后端 ——
+       那会被 resolve_source 判成"不支持的艺术图来源"，正是用户报的这个错。 */
+    if (src !== null && !isTmdbPath(src)) {
+      setStatus("只能把 TMDB 的图设为偏好");
+      return;
+    }
     setSaving(true);
     setStatus("");
     try {

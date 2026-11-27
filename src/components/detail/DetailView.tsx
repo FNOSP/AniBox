@@ -31,6 +31,8 @@ import { PlayGlyph, PlayingGlyph } from "../common/PlayGlyph";
 // [lc-1652] 电影详情页「沉浸式」版式（用户样板）
 import { MovieHero } from "./MovieHero";
 import { MovieHeroEditorial } from "./MovieHeroEditorial";
+// [lc-2396] Polaris 版式（剧集/电影共用）：设置项 detailStyle = "polaris" 时整页由它渲染
+import { PolarisDetail } from "./polaris/PolarisDetail";
 // [lc-1747] 在线播放恢复挂载（lc-1627 曾因功能搁置而注释，配套 Rust 加固已就位）。
 import { WebrsPanel } from "../webrs/WebrsPanel";
 // [lc-1783] 应用内下载字幕弹窗（迅雷/assrt/OpenSubtitles 扇出，下载自动挂载）
@@ -41,7 +43,7 @@ import { loadWatchedOverrides, setWatchedOverride } from "../../lib/watched";
 import { bgmImg, imgUrl, pickLargestImg, tmdbImg } from "../../lib/images";
 import { DUR, prefersReducedMotion } from "../../lib/motion";
 import { useRefresh } from "../../hooks/useRefresh";
-import { BgmCharacter, BgmComment, BgmEpisodeRow, BgmMatch, BgmPerson, BgmRelated, BgmReview, BgmTag, Episode, MediaItem, MediaVersion, PersonTarget, PlayItem, Season, TmdbCreditPerson, TmdbCredits } from "../../types";
+import { BgmCharacter, BgmComment, BgmEpisodeRow, BgmMatch, BgmPerson, BgmRelated, BgmReview, BgmTag, Episode, MediaItem, MediaSpecs, MediaVersion, PersonTarget, PlayItem, Season, TmdbCreditPerson, TmdbCredits } from "../../types";
 
 
 /* ══════════════════ 选集显示样式（用户可切换，localStorage 持久化） ══════════════════
@@ -409,6 +411,7 @@ export function DetailView({
   continueList = [],
   webrsOn = false,
   movieDetailStyle = "editorial",
+  detailStyle = "original",
 }: {
   base: MediaItem;
   onBack: () => void;
@@ -423,8 +426,12 @@ export function DetailView({
   webrsOn?: boolean;
   /** [lc-2247/lc-2293] 电影详情页版式（App 的 settings.movieDetailStyle）：
    *  "editorial" = 双栏杂志风（默认）| "classic" = 满幅头图旧版。
-   *  **只影响电影**，剧集详情页不受影响。 */
+   *  **只影响电影**，剧集详情页不受影响（detailStyle = polaris 时整页由它接管，本项不生效）。 */
   movieDetailStyle?: "classic" | "editorial";
+  /** [lc-2396] 详情页版式（App 的 settings.detailStyle，**剧集与电影共用**）：
+   *  "original" = 原有版式（默认，行为一字未改）| "polaris" = Polaris 全屏详情页。
+   *  走 polaris 时下面几条原始渲染分支全部让位（见 return 里的分支条件）。 */
+  detailStyle?: "original" | "polaris";
 }) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
@@ -1732,6 +1739,21 @@ export function DetailView({
     : [];
   // 片长：飞牛详情 duration 是秒
   const runtimeMin = Math.round(Number(pick(data ?? {}, ["duration"]) ?? 0) / 60) || 0;
+  /* [lc-2396] Polaris 版式的首屏标题 Logo（TMDB images.logos，后端 [lc-2247] 已按
+     「中文优先 + 面积最大」挑好）：primary 给深色主题（白字）、alt 给浅色主题（深字）。
+     与 MovieHeroEditorial 的 pickLogos 同口径 —— 取不到就是空串，组件回退文字标题。 */
+  const tmdbHeroLogoLight = (() => {
+    const a = String(tmdb?.titleLogoAlt ?? "").trim();
+    const p = String(tmdb?.titleLogo ?? "").trim();
+    const pick1 = a.startsWith("/") ? a : p.startsWith("/") ? p : "";
+    return pick1 ? tmdbImg(pick1, "w500") : "";
+  })();
+  const tmdbHeroLogoDark = (() => {
+    const a = String(tmdb?.titleLogoAlt ?? "").trim();
+    const p = String(tmdb?.titleLogo ?? "").trim();
+    const pick1 = p.startsWith("/") ? p : a.startsWith("/") ? a : "";
+    return pick1 ? tmdbImg(pick1, "w500") : "";
+  })();
   // [lc-1408] 原「年份 / 季数 / 集数 / 类型 / 评分 / 播放按钮」那组派生值随红框一起删掉了
   //   （用户定稿：那块的原有内容全部不要，改放标签与简介）。播放按钮挪到海报上，仍用 resumeAt。
   const tmdbGenres: string[] = Array.isArray(tmdb?.genres)
@@ -2096,16 +2118,20 @@ export function DetailView({
   const [playingGuid, setPlayingGuid] = useState<string | null>(null);
 
   /* [版本] 取某条目/集的版本列表（带内存缓存）：调 Rust `get_media_versions`，
-     返回 video_streams + play/info 记住的 media_guid（与 FlyNarwhal 同口径）。 */
+     返回 video_streams + play/info 记住的 media_guid（与 FlyNarwhal 同口径）。
+     [lc-2396] 同一次响应还带回 specs（音频流/字幕数/容器）——Polaris 版式的技术规格区用，
+     **不额外发请求**；写进 state 供组件读。 */
+  const [mediaSpecs, setMediaSpecs] = useState<MediaSpecs | null>(null);
   const fetchMediaVersions = useCallback(async (guid: string) => {
     const cached = versionCacheRef.current.get(guid);
     if (cached) return cached;
-    const r = await invoke<{ versions?: MediaVersion[]; selected_media_guid?: string }>(
+    const r = await invoke<{ versions?: MediaVersion[]; selected_media_guid?: string; specs?: MediaSpecs }>(
       "get_media_versions",
       { guid },
     );
     const versions = (r?.versions ?? []).filter((v) => v && v.media_guid);
     const selected = chooseMediaVersion(guid, versions, r?.selected_media_guid);
+    if (r?.specs) setMediaSpecs(r.specs);
     const out = { versions, selected };
     versionCacheRef.current.set(guid, out);
     return out;
@@ -2531,12 +2557,131 @@ export function DetailView({
           ⚠ 只包住"两栏主体"—— 返回键与标题（rail）是从 base 直接来的，不需要等网络。 */}
       {!dataReady && !err && <DetailSkeleton />}
 
+      {/* [lc-2396] 影院版式（Polaris）：剧集与电影**共用同一套**，由设置项 detailStyle 切换。
+          走这里时下面所有原有版式分支（editorial / classic / 两栏 .dv2）全部让位 ——
+          它们本来是并列的 if，现在都加上 `detailStyle === "original"` 的前提。
+          数据与回调全部复用本组件顶层的派生值/状态，**不额外发任何请求**
+          （唯一新增的是 get_media_versions 里同响应自带的 specs 字段，已在原调用里取回）。 */}
+      {dataReady && detailStyle === "polaris" && (
+        <PolarisDetail
+          m={{
+            base,
+            title,
+            originalTitle,
+            isSeries,
+            isMovie,
+            noFnOS,
+            backdrop: movieBackdrop,
+            poster,
+            logoLight: tmdbHeroLogoLight,
+            logoDark: tmdbHeroLogoDark,
+            rating: ratingScore,
+            votes: ratingTotal,
+            year: String(pick(tmdb ?? {}, ["year"]) ?? "").trim(),
+            runtimeMin,
+            genres,
+            overview,
+            releaseDate:
+              String(pick(tmdb ?? {}, ["airDate"]) ?? "").trim() ||
+              String(base.release_date ?? "").trim(),
+            seasons,
+            seasonIdx,
+            episodes,
+            epsLoading,
+            onSeasonChange: (idx) => {
+              autoLocateRef.current.userTouched = true;
+              setSeasonIdx(idx);
+            },
+            seasonLibraryTotal,
+            seriesFinished,
+            lastAir,
+            seasonEpInfo,
+            playing,
+            playingGuid,
+            onPlay: startPlay,
+            onPlayEpisode: (guid) => void playEpisode(guid),
+            resumeTarget,
+            resumePct,
+            isEpSeen: (ep) => {
+              const pct =
+                ep.ts && ep.duration && ep.duration > 0 ? Math.min(100, (ep.ts / ep.duration) * 100) : 0;
+              return (
+                epWatchedManual[ep.guid] ??
+                (localWatched.has(ep.guid) || Number(ep.watched) === 1 || pct >= 80)
+              );
+            },
+            onToggleEpWatched: (ep, current) => void toggleEpWatched(ep, current),
+            epThumb: (ep, num) =>
+              ep.poster
+                ? imgUrl(ep.poster)
+                : currentStillMap[num]
+                  ? imgUrl(tmdbImg(currentStillMap[num], "w300"))
+                  : episodeThumbFallback,
+            versions: mediaVersions,
+            versionsGuid: versionGuid,
+            selectedMediaGuid,
+            onVersionChange: (mg) => selectVersion(base.guid, mg),
+            filePath:
+              versionGuid === base.guid
+                ? mediaVersions.find((v) => v.media_guid === selectedMediaGuid)?.file_path || ""
+                : "",
+            specs: mediaSpecs,
+            stills: movieStills.length > 0
+              ? movieStills
+              : Array.isArray(tmdb?.backdrops)
+                ? (tmdb!.backdrops as unknown[]).map((p) => String(p ?? "")).filter(Boolean)
+                : [],
+            cast: castResolved,
+            crew,
+            recommendations: tmdbRecs,
+            tags: bgmTags,
+            tabsNav: tabsNavEl,
+            tabsBody: editorialTabsBody,
+            activeTab,
+            onBack,
+            onOpenPerson,
+            onOpenTmdb,
+            onMeta: noFnOS
+              ? undefined
+              : () =>
+                  setMetaTarget({
+                    guid: base.guid,
+                    title: title || base.title,
+                    type: isSeries ? "TV" : "Movie",
+                    seriesGuid: base.guid,
+                  }),
+            onEpMeta: (ep, num) =>
+              setMetaTarget({
+                guid: ep.guid,
+                title: `第 ${num} 集${ep.title ? `. ${ep.title}` : ""}`,
+                type: "TV",
+                seriesGuid: base.guid,
+                seasonNumber: ep.season_number,
+                episodeNumber: ep.episode_number ?? num,
+                isEpisode: true,
+              }),
+            onSubtitle: () => setSubPickerOpen(true),
+            favItem: {
+              guid: base.guid,
+              title,
+              tvTitle: String(pick(data ?? {}, ["tv_title", "tvTitle"]) ?? "").trim(),
+              poster: String(poster ?? ""),
+              type: String(pick(data ?? {}, ["type"]) ?? base.type ?? ""),
+              seasonNumber: Number(pick(data ?? {}, ["season_number", "seasonNumber"]) ?? 0) || 0,
+              episodeNumber: Number(pick(data ?? {}, ["episode_number", "episodeNumber"]) ?? 0) || 0,
+            },
+          }}
+          onZoom={setZoom}
+        />
+      )}
+
       {/* [lc-1652] 电影：沉浸式头图 + 简介/演职员 + 剧照（用户样板）
           [lc-2247] 按设置项 movieDetailStyle 在两种版式间切换：
             editorial = 双栏杂志风（默认，大标题 + 层叠海报）
             classic   = 满幅头图（lc-1652 那套）
-          **只对电影生效**，剧集详情页下面那条分支不受影响。 */}
-      {dataReady && isMovie && movieDetailStyle === "editorial" && (
+          **只对电影生效**，剧集详情页下面那条分支不受影响。
+          [lc-2396] detailStyle = polaris 时本分支让位（上面那条接管）。 */}
+      {dataReady && detailStyle === "original" && isMovie && movieDetailStyle === "editorial" && (
         <MovieHeroEditorial
           title={title}
           originalTitle={originalTitle}
@@ -2608,7 +2753,7 @@ export function DetailView({
         />
       )}
 
-      {dataReady && isMovie && movieDetailStyle !== "editorial" && (
+      {dataReady && detailStyle === "original" && isMovie && movieDetailStyle !== "editorial" && (
         <MovieHero
           title={title}
           originalTitle={originalTitle}
@@ -2664,8 +2809,9 @@ export function DetailView({
 
       {/* ══ 两栏主体（用户版式）══
           [lc-2252] 杂志风（editorial）电影**不渲染本区**——标签条/标签体已挪到左栏简介位
-          （MovieHeroEditorial 的 tabsNav/tabsBody）；剧集与经典版电影照旧。 */}
-      {dataReady && !(isMovie && movieDetailStyle === "editorial") && (
+          （MovieHeroEditorial 的 tabsNav/tabsBody）；剧集与经典版电影照旧。
+          [lc-2396] detailStyle = polaris 时本区也让位（影院版式自己排全部内容）。 */}
+      {dataReady && detailStyle === "original" && !(isMovie && movieDetailStyle === "editorial") && (
       <div className={`dv2${isMovie ? " dv2-movie" : ""}`}>
         {/* ── 左列：封面 / 标签框 / 简介框 / 标签页 / 内容 ── */}
         <div className="dv2-left">

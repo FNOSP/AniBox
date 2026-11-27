@@ -1,0 +1,1811 @@
+/* ══════════════════════════════════════════════════════════════════════════════
+   [lc-2396] 详情页「影院」版式 —— Polaris Player 5.2.8 详情页还原
+
+   来源：`Polaris Player_5.2.8_x64-setup.exe` 解包后的
+        `web/index.html:1570-1920`（详情 overlay 的 DOM）+ `web/styles/main.css`。
+   下文凡标「Polaris @行号」的都是 extracted main.css 的原始行号，便于逐条核对。
+
+   启用条件：设置项 `detailStyle = "polaris"`（默认 "original"，即原有版式）。
+   两套版式**互不影响**：本文件所有选择器都以 `.pdt` 为根（`pdt` = polaris detail），
+   原有 `.dv2-*` / `.mved-*` / `.mv-*` 一条规则都不改动。
+
+   ── 与 Polaris 原版的有意差异（唯一清单，其余一律照抄）────────────────────────
+   ① 覆盖层：Polaris 是 `position: absolute; inset: 0`（它整个 app 就是一个窗口）；
+      AniBox 有 40px 悬浮标题栏与侧栏浮层，所以这里同样 absolute 铺满 `.view-pane`，
+      但返回键上移到避开标题栏的位置（top 54px = 标题栏 40 + 14，与 .dv2-rail 同基准）。
+   ② 首屏让位：Polaris 是 `calc(100vh - 180px)`（它没有顶栏）；这里改用
+      `calc(100vh - 180px - 40px)`，把标题栏那 40px 让出来，语义一致。
+   ③ 分隔符：Polaris 元信息行用「·」分隔；项目规范禁止（AGENTS.md UI 第 1 条），
+      改用「/」，字号/颜色/间距不变。
+   ④ 字体：Polaris 用随包的两个品牌字体（PolarisNavFZ / PolarisCWSC，17MB + 2.8MB，
+      版权归其作者）。这里落到系统字体栈（PingFang / 微软雅黑 / 系统 UI），
+      **字号、字重、字距全部照抄原值**（中文标题仍是 500 字重 + 1.5px 正字距）。
+   ⑤ 剧集卡的「追剧模式 / 集数区间选择器 / 集数跳转输入框 / 虚拟（同目录）剧集」是
+      Polaris 独有的播放链路功能，AniBox 没有对应概念 —— 不搬（避免做了点不动的按钮）。
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── 根容器：覆盖层 ──────────────────────────────────────────────────────────
+   Polaris @5046 `.pw-detail-overlay`：inset 0 / background #000 / overflow hidden
+   Polaris @5058 `.active`：animation pwPageEnter 1.31s cb(.32,.72,0,1)（只做 opacity 0→1） */
+.pdt {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  overflow: hidden;
+  background: #000;
+  animation: pdt-page-enter 1.31s cubic-bezier(0.32, 0.72, 0, 1);
+  /* 详情页恒为深色底（背景大图 + 黑），不受应用主题影响 —— 与 Polaris 一致 */
+  color-scheme: dark;
+  isolation: isolate;
+}
+@keyframes pdt-page-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ── 背景层（固定不滚）─────────────────────────────────────────────────────
+   Polaris @5076 `.pw-detail-backdrop-fixed`：
+     inset 0 / z-index 0 / pointer-events none / overflow hidden / contain layout paint style */
+.pdt-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  contain: layout paint style;
+}
+
+/* Polaris @5084 `.pw-detail-backdrop-img`：
+   初始 opacity 0 + scale(1.1)，`.is-loaded` → opacity .82 + saturate(1.08) contrast(1.03)
+   + ken-burns 40s ease-in-out infinite alternate */
+.pdt-backdrop-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center center;
+  opacity: 0;
+  transform: scale(1.1);
+  will-change: transform, opacity;
+  transition: transform 0.1s linear, opacity 0.35s ease;
+}
+.pdt-backdrop-img.is-loaded {
+  opacity: 0.82;
+  filter: saturate(1.08) contrast(1.03);
+  animation: pdt-ken-burns 40s ease-in-out infinite alternate;
+}
+/* Polaris @5103 ken-burns：scale 1.10→1.12、translate 0→(-1.5%,-1%)（几乎不可察觉的呼吸） */
+@keyframes pdt-ken-burns {
+  0% { transform: scale(1.1) translate(0%, 0%); }
+  100% { transform: scale(1.12) translate(-1.5%, -1%); }
+}
+/* Polaris @5107：滚动时暂停动画（省 GPU，也避免 transform 与滚动合成打架） */
+.pdt.is-scrolling .pdt-backdrop-img {
+  animation-play-state: paused !important;
+}
+
+/* Polaris @5110 `.pw-detail-backdrop-gradient`：**十段式**渐变，40% 前全透明，
+   50%→100% 八档渐进到 #0a0a0e 实色（分段越多过渡越像"雾"而不是"带"） */
+.pdt-backdrop-gradient {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(10, 10, 14, 0) 0%,
+    rgba(10, 10, 14, 0) 40%,
+    rgba(10, 10, 14, 0.12) 50%,
+    rgba(10, 10, 14, 0.26) 60%,
+    rgba(10, 10, 14, 0.44) 68%,
+    rgba(10, 10, 14, 0.6) 76%,
+    rgba(10, 10, 14, 0.74) 84%,
+    rgba(10, 10, 14, 0.88) 92%,
+    rgba(10, 10, 14, 0.96) 97%,
+    rgba(10, 10, 14, 1) 100%
+  );
+}
+
+/* ── 返回胶囊 ────────────────────────────────────────────────────────────────
+   Polaris @5130 `.pw-detail-close`：44~54 × 40 / radius 999 / bg rgba(0,0,0,.16)
+   + blur(20px) saturate(110%)；hover 整体反白、图标 20px stroke 4。
+   差异①：top 由 48 改 54（避开 40px 悬浮标题栏，与 .dv2-rail 的返回键同一基准）。 */
+.pdt-close {
+  position: absolute;
+  /* Polaris 原值 top: 48px; left: 48px —— 见差异① */
+  top: 54px;
+  left: 48px;
+  width: clamp(44px, 2.7vw, 54px);
+  height: 40px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.16);
+  color: rgba(255, 255, 255, 0.95);
+  cursor: pointer;
+  z-index: 100;
+  isolation: isolate;
+  /* Polaris @5141：性能模式下不做 backdrop-filter（html.fx-lite）；本项目对应 html.perf */
+  transition:
+    background 0.25s cubic-bezier(0.25, 1, 0.5, 1),
+    border-color 0.25s cubic-bezier(0.25, 1, 0.5, 1),
+    color 0.25s cubic-bezier(0.25, 1, 0.5, 1),
+    scale 0.25s cubic-bezier(0.25, 1, 0.5, 1);
+}
+html:not(.perf) .pdt-close {
+  backdrop-filter: blur(20px) saturate(110%);
+  -webkit-backdrop-filter: blur(20px) saturate(110%);
+}
+/* Polaris @5152：hover 整个翻成白色 + 黑色图标（强对比反色交互） */
+.pdt-close:is(:hover, :focus-visible) {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: transparent;
+  color: #1a1a1a;
+  scale: 1.03;
+}
+.pdt-close:active {
+  scale: 0.96;
+  transition-duration: 0.12s;
+}
+/* Polaris @5172：svg 20×20 / stroke-width 4 / fill none；
+   translateX(-3.5%) 是**光学居中**（‹ 形状视觉重心偏左，要往左挪一点才看起来居中） */
+.pdt-close svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke-width: 4;
+  transform: translateX(-3.5%);
+}
+
+/* ── 滚动容器 ────────────────────────────────────────────────────────────────
+   Polaris @5187 `.pw-detail-scroll-container`：inset 0 / overflow-y auto /
+   scroll-behavior smooth / padding-bottom 100px / 滚动条彻底隐藏 */
+.pdt-scroll {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+  padding-bottom: 100px;
+  /* [lc-2122 同源] 滚动条不压内容：留出稳定沟槽，宽屏下内容不会因出现滚动条而横跳 */
+  scrollbar-gutter: stable;
+}
+.pdt-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* ══════════ 首屏 ══════════════════════════════════════════════════════════
+   Polaris @5201 `.pw-detail-hero-section`：
+     min-height: calc(100vh - 180px) / flex column / justify-content: flex-end /
+     padding: 0 clamp(40px,4.17vw,80px) 18px / position relative / z-index 1
+   差异②：再减 40px 让开悬浮标题栏。
+   `calc(100vh - 180px)` 的 180px 是「让玻璃控制台露一小截」，提示还有内容可滚 ——
+   这是很关键的排版决定，不能改。 */
+.pdt-hero {
+  min-height: calc(100vh - 220px);
+  min-height: calc(100vh - 180px - 40px);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 0 clamp(40px, 4.17vw, 80px) 18px;
+  position: relative;
+  z-index: 1;
+}
+
+/* Polaris @5211 `.pw-detail-hero-lockup`：flex / align-items flex-end / gap 50px
+   + 入场 pwDetailFadeUp 1.2s cb(.19,1,.22,1) 延迟 .2s（from translateY(30px) opacity 0） */
+.pdt-hero-lockup {
+  display: flex;
+  align-items: flex-end;
+  gap: 50px;
+  animation: pdt-fade-up 1.2s cubic-bezier(0.19, 1, 0.22, 1) 0.2s forwards;
+  opacity: 0;
+  transform: translateY(30px);
+}
+@keyframes pdt-fade-up {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Polaris @5221 `.pw-detail-poster-container-3d` 是 **display: none !important** ——
+   5.2.8 首屏是纯文字版式（背景大图 + 左下角文字块），没有海报卡片。
+   这里保留同名占位元素以对照源码结构，同样不渲染。 */
+.pdt-poster-slot {
+  display: none !important;
+}
+
+/* Polaris @5532 `.pw-detail-hero-info`：flex 1（吃满剩余宽度） */
+.pdt-hero-info {
+  flex: 1;
+  min-width: 0;
+  padding-bottom: 0;
+}
+
+/* ── 标题区（logo / 文字互斥）───────────────────────────────────────────────
+   Polaris @5565 `.pw-detail-title-container`：min-height 100px + padding-top 15px +
+   overflow visible（**预留固定高度，避免 logo 加载完成后下方内容跳一下**） */
+.pdt-title-wrap {
+  min-height: 100px;
+  padding-top: 15px;
+  overflow: visible;
+  position: relative;
+  z-index: 25;
+}
+.pdt-title-wrap .pdt-title { display: block; }
+.pdt-title-wrap.has-logo .pdt-title { display: none; }
+
+/* Polaris @5554 `.pw-detail-logo`：max 340×120 / contain / margin-bottom 20px /
+   drop-shadow(0 4px 12px rgba(0,0,0,.6))。两张按主题互斥。 */
+.pdt-logo {
+  max-width: 340px;
+  max-height: 120px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  margin-bottom: 20px;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.6));
+}
+/* 浅色主题用 alt（通常是英文深色版）、深色主题用 primary（中文白版）——
+   与 MovieHeroEditorial 的 .mved-logo-* 同一口径。
+   ⚠ 详情页恒为深色底（背景大图），所以这里**固定显示白字版**（primary），
+     不跟应用主题走 —— Polaris 也是这么做的（它没有浅色详情页）。 */
+.pdt-logo-light { display: none; }
+.pdt-logo-dark { display: block; }
+/* 只有一张 logo 时（没有 dark 版），把 light 反色显示，避免白底图压在白背景上看不见 */
+.pdt-title-wrap:not(:has(.pdt-logo-dark)) .pdt-logo-light {
+  display: block;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.6)) invert(1) brightness(1.6);
+}
+.pdt-title-wrap:not(:has(.pdt-logo-dark)) .pdt-logo-dark { display: none; }
+
+/* Polaris @5538 `.pw-detail-title`：clamp(43px,3.44vw,66px) / line-height .95 /
+   letter-spacing -2px / 渐变文字（#fff 30% → 70% 白，右下更淡）+ text-shadow。
+   Polaris @33979 覆写：**中文必须 500 字重 + 1.5px 正字距**（原 -2px/800 会让中文糊成一坨）。
+   这里直接取覆写后的终值（这是 Polaris 的实际渲染结果）。 */
+.pdt-title {
+  font-family: "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Source Han Sans SC", system-ui, sans-serif;
+  font-synthesis: none;
+  font-size: clamp(43px, 3.44vw, 66px);
+  font-weight: 500;
+  line-height: 0.95;
+  letter-spacing: 1.5px;
+  margin: 0 0 20px;
+  background: linear-gradient(to bottom right, #fff 30%, rgba(255, 255, 255, 0.7));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+  width: fit-content;
+  max-width: 100%;
+}
+.pdt-title-season {
+  font-size: 0.56em;
+  letter-spacing: 1px;
+}
+
+/* 原名（原始语言标题）：Polaris 没有这一行，但 AniBox 的详情页一直有 ——
+   放在标题下方、与元信息同档颜色，不抢视觉。 */
+.pdt-original {
+  font-size: 15px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.45);
+  margin: -12px 0 16px;
+  letter-spacing: 0.5px;
+}
+
+/* ── 元信息行 ────────────────────────────────────────────────────────────────
+   Polaris @5961 `.pw-detail-meta`：flex / align-items center / gap 16px / 16px /
+   font-weight 600 / rgba(255,255,255,.6) / margin-bottom 20px
+   `.pw-detail-rating .score`：16px / 700 / 纯白（这行里唯一的视觉焦点） */
+.pdt-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 20px;
+}
+.pdt-meta-item {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.6);
+}
+.pdt-rating {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+/* Polaris @5974：TMDB 标 18px 高（原版是内联 base64 SVG） */
+.pdt-tmdb-logo {
+  height: 18px;
+  width: auto;
+  display: block;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.82);
+}
+.pdt-score {
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+}
+
+/* 状态胶囊：Polaris 没有这个元素（它的连载状态在类型标签里）。
+   这里沿用 AniBox 详情页的状态语义，但按 Polaris 的玻璃胶囊语言重画。 */
+.pdt-state {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.14);
+  border: 0.5px solid rgba(255, 255, 255, 0.22);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+}
+.pdt-state.airing {
+  color: #7ee0a8;
+  background: rgba(52, 199, 120, 0.16);
+  border-color: rgba(52, 199, 120, 0.3);
+}
+.pdt-state.done {
+  color: rgba(255, 255, 255, 0.62);
+}
+
+/* ── 简介（3 行折叠 + 展开圆钮）───────────────────────────────────────────
+   Polaris @6034 `.pw-detail-overview`：
+     clamp(13px,0.94vw,18px) / line-height 1.6 / rgba(255,255,255,.85) /
+     max-width 800px / text-shadow(0 2px 4px black.5)
+   @6043 `.pw-detail-overview-container`：max-width 800px / margin-bottom 20px
+   `.collapsed`：-webkit-line-clamp 3
+   @6057 `.pw-detail-overview-toggle`：28px 圆形 / margin-left auto 靠右 / 白 22% 底 */
+.pdt-overview-wrap {
+  max-width: 800px;
+  margin-bottom: 20px;
+  position: relative;
+}
+.pdt-overview {
+  font-size: clamp(13px, 0.94vw, 18px);
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.85);
+  margin: 0;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.pdt-overview.expanded {
+  display: block;
+  overflow: visible;
+}
+.pdt-overview-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  margin-top: 8px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  position: relative;
+  z-index: 51;
+  transition: background 0.2s, color 0.2s;
+}
+.pdt-overview-toggle:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.3);
+}
+.pdt-overview-toggle svg {
+  transition: transform 0.2s;
+}
+.pdt-overview-toggle.expanded svg {
+  transform: rotate(180deg);
+}
+
+/* ── 动作区 ──────────────────────────────────────────────────────────────────
+   Polaris @6096 `.pw-detail-actions`：flex / gap clamp(12px,1.04vw,20px) / align-items center */
+
+/* 播放药丸（Polaris @6166 `.ios-play-btn` + @6186 `.pw-detail-play-solid`）：
+     radius 9999 / padding 9px 26px 9px 10px（**左比右小**：左边是圆形图标，
+     圆的最外沿本身有视觉留白，padding 给小一点才光学居中）
+     bg #f2f2f2 / 两层投影 / hover → #fff / active scale(.96)
+     icon-circle 30px / svg 22px / title 16px-600 / subtitle 12px-500 rgba(0,0,0,.6)
+     进度条 3px 贴圆角底边 */
+.pdt-actions {
+  display: flex;
+  gap: clamp(12px, 1.04vw, 20px);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.pdt-play {
+  position: relative;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 26px 9px 10px;
+  border: none;
+  border-radius: 9999px;
+  background: #f2f2f2;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28), 0 1px 3px rgba(0, 0, 0, 0.16);
+  cursor: pointer;
+  overflow: hidden;
+  transition: all 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+  font-family: "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+.pdt-play:hover { background: #fff; transform: scale(1.03); }
+.pdt-play:active { transform: scale(0.96); opacity: 0.85; transition: all 0.1s ease-out; }
+.pdt-play:disabled { opacity: 0.5; cursor: default; transform: none; }
+.pdt-play-circle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: transparent;
+  color: #000;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+.pdt-play-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  position: relative;
+  z-index: 1;
+}
+.pdt-play-title {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: #000;
+}
+.pdt-play-sub {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: rgba(0, 0, 0, 0.6);
+}
+/* Polaris @6135 `.pw-detail-play-progress`：3px 贴按钮底边，fill 是 black 12% */
+.pdt-play-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: transparent;
+  z-index: 0;
+}
+.pdt-play-progress i {
+  display: block;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.12);
+  transition: width 0.3s ease;
+}
+
+/* 图标键（Polaris @6309 `.pw-detail-btn-icon`）：
+     **横向胶囊**（宽 54~71、高 38~48，不是圆形）+ 白玻璃 scrim .5 + blur(20px) saturate(1.7)
+     三层阴影（inset 顶高光 .7px 白 .9 / inset 内描边 .7px 黑 .10 / 外投影 0 14px 30px）
+     hover scrim .58 + scale(1.1)；active scale(0.9) */
+.pdt-icon-btn {
+  position: relative;
+  width: clamp(54px, 3.7vw, 71px);
+  height: clamp(38px, 2.5vw, 48px);
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.5);
+  color: rgba(0, 0, 0, 0.88);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  isolation: isolate;
+  transition: transform 0.25s cubic-bezier(0.25, 1, 0.5, 1), background 0.2s;
+  backdrop-filter: blur(20px) saturate(1.7) brightness(1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.7) brightness(1);
+}
+/* 三层阴影放在伪元素上（不占布局、也不被 overflow 裁掉） */
+.pdt-icon-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1;
+  box-shadow:
+    inset 0 0.7px 0 rgba(255, 255, 255, 0.9),
+    inset 0 0 0 0.7px rgba(0, 0, 0, 0.1),
+    0 14px 30px rgba(0, 0, 0, 0.18);
+}
+.pdt-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.58);
+  transform: scale(1.1);
+}
+.pdt-icon-btn:active { transform: scale(0.9); }
+.pdt-icon-btn:disabled { opacity: 0.55; cursor: default; transform: none; }
+/* Polaris @6348：收藏态图标是系统红 #ff3b30 + 实心 */
+.pdt-icon-btn.is-fav > svg { color: #ff3b30; }
+
+/* ══════════ 玻璃控制台 ═══════════════════════════════════════════════════
+   Polaris @6395 `.pw-detail-console-section`：padding 40px 80px / position relative
+   @6405 `.pw-detail-console-inner`：入场 pwDetailFadeUp 1.2s cb(.19,1,.22,1) **延迟 .6s**
+     （比首屏 lockup 的 .2s 更晚，形成层次） */
+.pdt-console {
+  padding: 40px 80px;
+  position: relative;
+}
+.pdt-console-inner {
+  opacity: 0;
+  transform: translateY(40px);
+  animation: pdt-fade-up 1.2s cubic-bezier(0.19, 1, 0.22, 1) 0.6s forwards;
+}
+
+/* 主体模糊层（Polaris @6409 `::before`）—— 三个手法叠在一起：
+   ① 半透明深色底 rgba(10,10,14,.55)（不是纯黑）
+   ② 噪点：内联 SVG feTurbulence(baseFrequency .9 / numOctaves 2) 经 feColorMatrix
+      压到 **alpha .015** 的白噪点、128×128 平铺（让玻璃"有材质"而不是"糊了一片"）
+   ③ blur(24px) saturate(180%) brightness(.85)（大半径模糊 + 强提饱和 + 压暗）
+   再加 **19 段** mask 让玻璃层顶部完全无缝融进背景图（数字是按 smoothstep 采样的，不是随手填） */
+.pdt-console::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: -100px;
+  z-index: -1;
+  pointer-events: none;
+  background: rgba(10, 10, 14, 0.55);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.015 0'/%3E%3C/filter%3E%3Crect width='128' height='128' filter='url(%23n)'/%3E%3C/svg%3E");
+  backdrop-filter: blur(24px) saturate(180%) brightness(0.85);
+  -webkit-backdrop-filter: blur(24px) saturate(180%) brightness(0.85);
+  -webkit-mask-image: linear-gradient(to bottom,
+    rgba(0,0,0,0)      0px,
+    rgba(0,0,0,0.0016) 10px,
+    rgba(0,0,0,0.0115) 20px,
+    rgba(0,0,0,0.0355) 30px,
+    rgba(0,0,0,0.0764) 40px,
+    rgba(0,0,0,0.1350) 50px,
+    rgba(0,0,0,0.2099) 60px,
+    rgba(0,0,0,0.2984) 70px,
+    rgba(0,0,0,0.3967) 80px,
+    rgba(0,0,0,0.5)    90px,
+    rgba(0,0,0,0.6033) 100px,
+    rgba(0,0,0,0.7016) 110px,
+    rgba(0,0,0,0.7901) 120px,
+    rgba(0,0,0,0.8650) 130px,
+    rgba(0,0,0,0.9236) 140px,
+    rgba(0,0,0,0.9645) 150px,
+    rgba(0,0,0,0.9885) 160px,
+    rgba(0,0,0,0.9984) 170px,
+    rgba(0,0,0,1)      180px,
+    rgba(0,0,0,1)      100%);
+  mask-image: linear-gradient(to bottom,
+    rgba(0,0,0,0)      0px,
+    rgba(0,0,0,0.0016) 10px,
+    rgba(0,0,0,0.0115) 20px,
+    rgba(0,0,0,0.0355) 30px,
+    rgba(0,0,0,0.0764) 40px,
+    rgba(0,0,0,0.1350) 50px,
+    rgba(0,0,0,0.2099) 60px,
+    rgba(0,0,0,0.2984) 70px,
+    rgba(0,0,0,0.3967) 80px,
+    rgba(0,0,0,0.5)    90px,
+    rgba(0,0,0,0.6033) 100px,
+    rgba(0,0,0,0.7016) 110px,
+    rgba(0,0,0,0.7901) 120px,
+    rgba(0,0,0,0.8650) 130px,
+    rgba(0,0,0,0.9236) 140px,
+    rgba(0,0,0,0.9645) 150px,
+    rgba(0,0,0,0.9885) 160px,
+    rgba(0,0,0,0.9984) 170px,
+    rgba(0,0,0,1)      180px,
+    rgba(0,0,0,1)      100%);
+}
+
+/* 三级渐进模糊（Polaris @6468 / @6490 / @6512）——
+   不做一次 24px 大模糊，而是 2px → 5px → 10px 三层叠加，
+   模糊强度随滚动方向逐级递增，视觉上像景深从远到近；每层都用 mask 让两端淡入淡出。 */
+.pdt-glass-stair1,
+.pdt-glass-stair2 {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: transparent;
+}
+.pdt-glass-stair1 {
+  height: 100px;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  -webkit-mask-image: linear-gradient(to bottom,
+    rgba(0,0,0,0) 0px, rgba(0,0,0,1) 14px, rgba(0,0,0,1) 70px, rgba(0,0,0,0) 100px);
+  mask-image: linear-gradient(to bottom,
+    rgba(0,0,0,0) 0px, rgba(0,0,0,1) 14px, rgba(0,0,0,1) 70px, rgba(0,0,0,0) 100px);
+}
+.pdt-glass-stair2 {
+  height: 140px;
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  -webkit-mask-image: linear-gradient(to bottom,
+    rgba(0,0,0,0) 30px, rgba(0,0,0,1) 55px, rgba(0,0,0,1) 110px, rgba(0,0,0,0) 140px);
+  mask-image: linear-gradient(to bottom,
+    rgba(0,0,0,0) 30px, rgba(0,0,0,1) 55px, rgba(0,0,0,1) 110px, rgba(0,0,0,0) 140px);
+}
+/* 第三级（Polaris 的 ::after，blur 10px / 180px 高） */
+.pdt-console::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 180px;
+  z-index: -1;
+  pointer-events: none;
+  background: transparent;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  -webkit-mask-image: linear-gradient(to bottom,
+    rgba(0,0,0,0) 70px, rgba(0,0,0,1) 95px, rgba(0,0,0,1) 150px, rgba(0,0,0,0) 180px);
+  mask-image: linear-gradient(to bottom,
+    rgba(0,0,0,0) 70px, rgba(0,0,0,1) 95px, rgba(0,0,0,1) 150px, rgba(0,0,0,0) 180px);
+}
+
+/* ── 区块标题 ────────────────────────────────────────────────────────────────
+   Polaris @7432 `.pw-detail-heading-title`（主区块标题，与首页 .pw-section-title 同规格）：
+     17px / 500 / 1.5px 字距 / rgba(235,235,245,.6)
+   Polaris @6536 `.pw-detail-section-header`（小标签）：
+     13px / 700 / rgba(255,255,255,.4) / 1px 字距 / margin-bottom 20px */
+.pdt-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  font-synthesis: none;
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: 1.5px;
+  color: rgba(235, 235, 245, 0.6);
+  white-space: nowrap;
+}
+.pdt-section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.pdt-section-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.4);
+  letter-spacing: 1px;
+}
+.pdt-section-hint {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.28);
+  letter-spacing: 0.4px;
+}
+
+/* ══════════ 版本条（资源卡横排）════════════════════════════════════════════
+   Polaris @6548 `.pw-detail-source-scroller`：flex / gap 16 / padding 20px 20px 40px /
+   margin -20px -20px 0 / scroll-snap-type: x mandatory（详情页唯一保留吸附的横排）
+   卡片（@6826 最终形态 + @6642 尺寸）：
+     白玻璃 scrim .5 / radius 14 / inset 0 .7px 白高光 / min 160 max 240 / padding 14 16 /
+     文字 rgba(0,0,0,.85)（**深色字**，因为底是 50% 白玻璃）/ hover .58 / active .66 */
+.pdt-source-scroller {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  padding: 20px 20px 40px;
+  margin: -20px -20px 0;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+.pdt-source-scroller::-webkit-scrollbar { display: none; }
+
+.pdt-source-card {
+  flex: 0 0 auto;
+  min-width: 160px;
+  max-width: 240px;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 14px 16px;
+  border: none;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.5);
+  color: rgba(0, 0, 0, 0.85);
+  box-shadow: inset 0 0.7px 0 rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(20px) saturate(1.7) brightness(1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.7) brightness(1);
+  cursor: pointer;
+  text-align: left;
+  position: relative;
+  transition: background 0.2s, box-shadow 0.2s;
+}
+.pdt-source-card:hover {
+  background: rgba(255, 255, 255, 0.58);
+  box-shadow: inset 0 0.7px 0 rgba(255, 255, 255, 0.7);
+}
+.pdt-source-card.active {
+  background: rgba(255, 255, 255, 0.66);
+  box-shadow: inset 0 0.7px 0 rgba(255, 255, 255, 0.85);
+  color: rgba(0, 0, 0, 0.9);
+}
+/* 卡内文字（Polaris @6845）：分辨率标签 14px/700、信息行 13px/60% 黑 */
+.pdt-source-tag {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.pdt-source-info {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(0, 0, 0, 0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+/* HDR 小徽标（Polaris @6764 `.pw-detail-hdr-tag`）：11px/600 / 琥珀色 / 底 15% */
+.pdt-source-hdr {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #8a5a00;
+  background: rgba(255, 190, 0, 0.22);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.pdt-source-warn {
+  font-size: 11px;
+  font-weight: 600;
+  color: #b3261e;
+  background: rgba(179, 38, 30, 0.12);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* 文件位置行：Polaris 没有这一行（它的路径打在资源卡里）；
+   沿用 editorial 版式的语义，按玻璃控制台的深色文字语言画（此处底是暗玻璃，所以是浅色字）。 */
+.pdt-filepath {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin: -24px 0 8px;
+  font-size: 12px;
+  min-width: 0;
+}
+.pdt-filepath-k {
+  flex: 0 0 auto;
+  color: rgba(255, 255, 255, 0.36);
+  letter-spacing: 0.6px;
+}
+.pdt-filepath-v {
+  color: rgba(255, 255, 255, 0.6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* ══════════ 剧集横排 ══════════════════════════════════════════════════════
+   Polaris @7124 `.pw-episodes-section`：margin 20px 0
+   `.pw-episodes-section-header`：flex space-between / margin-bottom 16px / wrap / gap 12px */
+.pdt-episodes {
+  margin: 20px 0;
+}
+.pdt-episodes-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.pdt-episodes-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.pdt-episodes-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* 季选择胶囊：Polaris 是服务器下拉（`.pw-detail-server-btn` 12px / 白 8% 底）。
+   这里铺开成胶囊行，视觉取同一档参数。 */
+.pdt-season-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pdt-season-pill {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.pdt-season-pill:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+/* Polaris @7360 `.pw-server-pill.active`：白 95% 底 + 黑字 + 600（不是彩色） */
+.pdt-season-pill.active {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: transparent;
+  color: #000;
+  font-weight: 600;
+}
+.pdt-episodes-meta {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  letter-spacing: 0.3px;
+}
+
+/* 轨道容器（Polaris @7146）：position relative + display flow-root（包住浮动的箭头） */
+.pdt-episodes-rail,
+.pdt-rail {
+  position: relative;
+  display: flow-root;
+  margin: -20px 0;
+}
+
+/* 箭头（Polaris @7150）：44×64 / radius 12 / 无底无框 / opacity 0（容器 hover 才显）/
+   svg 38px + 双层 drop-shadow / hover scale 1.12 / 到头 opacity .2
+   定位：left/right −62px 挂在**容器外面**（console 左右 80px padding，外面还有空间） */
+.pdt-rail-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 64px;
+  border: none;
+  border-radius: 12px;
+  background: none;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 50;
+  opacity: 0;
+  transition: opacity 0.3s, transform 0.2s;
+}
+.pdt-rail-arrow svg {
+  width: 38px;
+  height: 38px;
+  display: block;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 2px rgba(0, 0, 0, 0.35));
+}
+.pdt-episodes-rail:hover .pdt-rail-arrow,
+.pdt-rail:hover .pdt-rail-arrow {
+  opacity: 1;
+}
+.pdt-rail-arrow:hover {
+  transform: translateY(-50%) scale(1.12);
+}
+.pdt-rail-arrow.left { left: -62px; }
+.pdt-rail-arrow.right { right: -62px; }
+.pdt-rail-arrow.disabled {
+  opacity: 0.2 !important;
+  pointer-events: none;
+}
+
+/* 滚动条（Polaris @8052）：flex / gap clamp(18px,1.2vw,24px) /
+   padding 20px 40px 48px / margin 0 -40px -28px / 隐藏滚动条 */
+.pdt-episodes-scroller,
+.pdt-rail-scroller {
+  display: flex;
+  gap: clamp(18px, 1.2vw, 24px);
+  overflow-x: auto;
+  padding: 20px 40px 48px;
+  margin: 0 -40px -28px;
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+}
+.pdt-episodes-scroller::-webkit-scrollbar,
+.pdt-rail-scroller::-webkit-scrollbar { display: none; }
+
+/* 剧集卡（Polaris @8124）：
+     flex 0 0 clamp(260px,19.8vw,380px) / radius clamp(16px,1.23vw,24px) / --pw-elev 三层阴影 */
+.pdt-ep-card {
+  flex: 0 0 clamp(260px, 19.8vw, 380px);
+  width: clamp(260px, 19.8vw, 380px);
+  cursor: pointer;
+  position: relative;
+  z-index: 1;
+  border-radius: clamp(16px, 1.23vw, 24px);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.32),
+    0 6px 14px rgba(0, 0, 0, 0.36),
+    0 12px 24px rgba(0, 0, 0, 0.28);
+}
+@media (max-width: 980px) {
+  .pdt-ep-card {
+    flex-basis: 240px;
+    width: 240px;
+  }
+}
+/* 缩略图容器（Polaris @8140）：aspect-ratio **16 / 9.2** / overflow hidden /
+   兜底底色 linear-gradient(145deg, #2a2a2a, #1a1a1a) */
+.pdt-ep-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9.2;
+  border-radius: clamp(16px, 1.23vw, 24px);
+  overflow: hidden;
+  position: relative;
+  background: linear-gradient(145deg, #2a2a2a, #1a1a1a);
+  border: none;
+  box-shadow: none;
+}
+.pdt-ep-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.2s ease;
+  transform-origin: center center;
+}
+/* Polaris @8160：hover **只缩图** scale(1.07)，卡片本身不缩放 */
+.pdt-ep-card:hover .pdt-ep-img { transform: scale(1.07); }
+/* 性能模式总开关（Polaris `body.ui-mode-performance` → 本项目 html.perf） */
+html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
+
+/* 底部渐变叠层（Polaris @8205 `.pw-episode-overlay`）：
+     linear-gradient(to top, black.9 → black.4 40% → black.1 70% → transparent)
+     flex column / justify-content flex-end / padding 14px / pointer-events none
+   `::before` 平时压一层 4% 黑，hover 撤掉（@8220） */
+.pdt-ep-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.9) 0%,
+    rgba(0, 0, 0, 0.4) 40%,
+    rgba(0, 0, 0, 0.1) 70%,
+    transparent 100%
+  );
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 14px;
+  pointer-events: none;
+  isolation: isolate;
+}
+.pdt-ep-overlay::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: rgba(0, 0, 0, 0.04);
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.pdt-ep-card:hover .pdt-ep-overlay::before { opacity: 0; }
+/* 集号（Polaris @8232）：10px / 700 / 白 50% / 0.5px 字距 / 大写 */
+.pdt-ep-num {
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 3px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+/* 集名（Polaris @8240）：clamp(14px,0.9vw,16px) / 600 / 单行省略 / 文字阴影 */
+.pdt-ep-name {
+  font-size: clamp(14px, 0.9vw, 16px);
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* 中央播放钮（Polaris @8251 `.pw-play-indicator`）：
+   48px 白圆 / 从 scale(.6) 弹到 1 / hover 才出现 / box-shadow 0 8px 16px black.4 */
+.pdt-ep-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.6);
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #fff;
+  color: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  z-index: 6;
+}
+.pdt-ep-play svg {
+  width: 20px;
+  height: 20px;
+}
+.pdt-ep-card:hover .pdt-ep-play {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+/* 进度条（Polaris @8169）：**5px** / 白 85% / 外发光 + 内超高光 /
+   border-radius 0 3px 3px 0（左端贴卡片左边，所以只有右端圆角） */
+.pdt-ep-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 5px;
+  z-index: 5;
+  background: transparent;
+}
+.pdt-ep-progress i {
+  display: block;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.35), inset 0 0.5px 0 rgba(255, 255, 255, 0.5);
+  border-radius: 0 3px 3px 0;
+  transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 正在看（Polaris @8185）：2px 白描边 + 16px 白泛光（**不改背景**） */
+.pdt-ep-card.watching .pdt-ep-thumb {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.65), 0 0 16px rgba(255, 255, 255, 0.18);
+}
+
+/* 已看完勾（Polaris @8298）：26px 玻璃球 + **四层 box-shadow**
+   （内上高光 .55 / 内下暗边 .10 / 外投影 black.28 / 外半像素描边 white.12）
+   + cb(.34,1.56,.64,1) 过冲回弹 0.28s */
+.pdt-ep-check {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.42) 0%, rgba(255, 255, 255, 0.22) 100%);
+  border: 0.5px solid rgba(255, 255, 255, 0.45);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.1),
+    0 2px 8px rgba(0, 0, 0, 0.28),
+    0 0 0 0.5px rgba(255, 255, 255, 0.12);
+  color: #fff;
+  z-index: 6;
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity 0.28s cubic-bezier(0.34, 1.56, 0.64, 1),
+    transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+  pointer-events: none;
+  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.35));
+}
+.pdt-ep-card.played .pdt-ep-check {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* 手动「已看」开关：Polaris 没有（它的勾是状态指示，靠追剧模式写入）。
+   这里给一个可点的开关，尺寸/位置避开右上角的勾标与 ⋯。
+   AniBox 的既有功能（lc-1832），极性版式必须保留 —— 否则用户没法手动补标。 */
+.pdt-ep-mark {
+  position: absolute;
+  left: 10px;
+  bottom: 12px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.34);
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  z-index: 7;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.2s, background 0.2s, color 0.2s;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.pdt-ep-card:hover .pdt-ep-mark,
+.pdt-ep-mark.on { opacity: 1; }
+.pdt-ep-mark.on {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: transparent;
+  color: #111;
+}
+
+/* 单集元数据入口：Polaris 的右键菜单（我们做成常显的小 ⋯，hover 才亮） */
+.pdt-ep-meta {
+  position: absolute;
+  top: 10px;
+  right: 44px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.4);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 7;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.2s, background 0.2s;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.pdt-ep-card:hover .pdt-ep-meta { opacity: 1; }
+.pdt-ep-meta:hover { background: rgba(0, 0, 0, 0.62); color: #fff; }
+
+/* 骨架（加载中）：与 Polaris 的 shimmer 同参数 */
+.pdt-ep-card-sk { pointer-events: none; }
+.pdt-ep-card-sk .pdt-ep-thumb {
+  background: linear-gradient(90deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.09) 50%,
+    rgba(255, 255, 255, 0.04) 100%);
+  background-size: 200% 100%;
+  animation: pdt-shimmer 2.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+@keyframes pdt-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* 空态（Polaris @8320 `.pw-episodes-empty`）：padding 40px 20px / 白 40% / 居中 */
+.pdt-episodes-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 14px;
+  text-align: center;
+  width: 100%;
+}
+
+/* ══════════ 技术规格（4 列玻璃网格）════════════════════════════════════════
+   Polaris @6878 `.pw-detail-info-panel`：margin-top 48px / 背景阴影模糊全 none
+   @6885 `-specs-grid`：repeat(4,1fr) / gap 20 / align-items stretch
+   @6891 `-spec-group`：flex column / justify-content center / gap 8 / padding 24px 28px
+   @7005 玻璃板三层阴影 + radius 14 */
+.pdt-specs {
+  margin-top: 48px;
+}
+.pdt-specs-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+  align-items: stretch;
+}
+.pdt-spec-group {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 28px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow:
+    inset 0 0.7px 0 rgba(255, 255, 255, 0.9),
+    inset 0 0 0 0.7px rgba(0, 0, 0, 0.1),
+    0 14px 30px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(20px) saturate(1.7) brightness(1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.7) brightness(1);
+  transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1), background 0.2s;
+}
+.pdt-spec-group:hover {
+  background: rgba(255, 255, 255, 0.58);
+  transform: translateY(-2px);
+}
+/* 组头（Polaris @6912）：13px / 700 / 大写 / 1px 字距 / 黑 55% */
+.pdt-spec-head {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.55);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* 值（Polaris @6924）：20px / 600 / 黑 88% / 0.2px 字距 */
+.pdt-spec-val {
+  font-size: 20px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.88);
+  letter-spacing: 0.2px;
+  line-height: 1.2;
+}
+/* 标签（Polaris @6932）：13px / 500 / 黑 55% */
+.pdt-spec-lbl {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(0, 0, 0, 0.55);
+}
+/* 技术徽标（Polaris @6940）：10px / 700 / 黑 75% / 黑 10% 底 / radius 4 */
+.pdt-tech-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.75);
+  background: rgba(0, 0, 0, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-top: 4px;
+  align-self: flex-start;
+}
+.pdt-spec-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 展开按钮（Polaris @6953）：**整块宽度都是按钮**，里面只有一个 38px 下箭头
+   （箭头用与横排导航同一套双层 drop-shadow —— 视觉统一） */
+.pdt-expand-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin-top: 20px;
+  min-height: 52px;
+  padding: 7px 20px;
+  border: none;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.5);
+  color: #fff;
+  cursor: pointer;
+  box-shadow:
+    inset 0 0.7px 0 rgba(255, 255, 255, 0.9),
+    inset 0 0 0 0.7px rgba(0, 0, 0, 0.1),
+    0 14px 30px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(20px) saturate(1.7) brightness(1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.7) brightness(1);
+  transition: background 0.18s ease;
+}
+.pdt-expand-btn:hover { background: rgba(255, 255, 255, 0.58); }
+.pdt-expand-icon {
+  display: block;
+  pointer-events: none;
+  color: rgba(0, 0, 0, 0.7);
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 2px rgba(0, 0, 0, 0.35));
+  transition: transform 0.3s ease;
+  transform-origin: center;
+}
+.pdt-expand-btn.expanded .pdt-expand-icon { transform: rotate(180deg); }
+
+/* 展开区（Polaris @6984）：max-height 0 → 800px + cb(.25,1,.5,1)
+   （不用 height:auto —— 没法过渡；800px 是权衡：太小会裁，太大过渡会"前快后慢"） */
+.pdt-expanded-area {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  margin-top: 0;
+  transition:
+    max-height 0.4s cubic-bezier(0.25, 1, 0.5, 1),
+    opacity 0.3s ease,
+    margin 0.3s ease;
+}
+.pdt-expanded-area.show {
+  max-height: 800px;
+  opacity: 1;
+  margin-top: 20px;
+}
+.pdt-expanded-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+@media screen and (max-width: 900px) {
+  .pdt-expanded-grid { grid-template-columns: 1fr; }
+}
+.pdt-expanded-section {
+  padding: 20px 24px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow:
+    inset 0 0.7px 0 rgba(255, 255, 255, 0.9),
+    inset 0 0 0 0.7px rgba(0, 0, 0, 0.1),
+    0 14px 30px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(20px) saturate(1.7) brightness(1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.7) brightness(1);
+}
+.pdt-expanded-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.55);
+  letter-spacing: 1px;
+  margin-bottom: 12px;
+}
+.pdt-expanded-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* 行（Polaris @7044）：两端对齐 / 13px / 标签黑 55% / 值黑 88% 右对齐 */
+.pdt-expanded-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  font-size: 13px;
+}
+.pdt-expanded-label {
+  color: rgba(0, 0, 0, 0.55);
+  font-weight: 500;
+  flex: 0 0 auto;
+}
+.pdt-expanded-value {
+  color: rgba(0, 0, 0, 0.88);
+  font-weight: 500;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ══════════ 剧照 / 主演 / 推荐 三条次级横排 ═══════════════════════════════ */
+.pdt-stills { margin-top: 40px; }
+.pdt-cast { margin-top: 40px; }
+.pdt-recs { margin-top: 40px; }
+
+/* 剧照滚动条（Polaris @8364）：flex / gap 16 / padding 24px 40px / margin -24px -40px /
+   **overscroll-behavior-inline: contain**（横向滚到底不会带着页面一起滚） */
+.pdt-stills-scroller {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  overflow-x: auto;
+  overflow-y: visible;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  padding: 24px 40px;
+  margin: -24px -40px;
+  overscroll-behavior-inline: contain;
+}
+.pdt-stills-scroller::-webkit-scrollbar { display: none; }
+
+/* 剧照卡（Polaris @17714）：clamp(260px,19.8vw,380px) / aspect-ratio 16/9.2 /
+   radius 14 / overflow hidden / 底色白 8% */
+.pdt-still-card {
+  flex: 0 0 clamp(260px, 19.8vw, 380px);
+  width: clamp(260px, 19.8vw, 380px);
+  aspect-ratio: 16 / 9.2;
+  border: none;
+  padding: 0;
+  border-radius: 14px;
+  overflow: hidden;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.08);
+  position: relative;
+  isolation: isolate;
+  transition: transform 0.42s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.42s ease, filter 0.42s ease;
+}
+.pdt-still-card:hover {
+  transform: translateY(-3px) scale(1.02);
+}
+@media (max-width: 980px) {
+  .pdt-still-card {
+    flex-basis: 240px;
+    width: 240px;
+  }
+}
+/* 图片（Polaris @8376）：object-fit cover / pointer-events none /
+   透明度 0→1（0.32s）淡入 */
+.pdt-still-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  object-position: center;
+  pointer-events: none;
+}
+
+/* 主演滚动条（Polaris @8407）：flex / gap 20 / padding 20px 40px / margin -20px -40px */
+.pdt-cast-scroller {
+  display: flex;
+  gap: 20px;
+  overflow-x: auto;
+  overflow-y: visible;
+  padding: 20px 40px;
+  margin: -20px -40px;
+  scrollbar-width: none;
+  align-items: flex-start;
+}
+.pdt-cast-scroller::-webkit-scrollbar { display: none; }
+
+/* 演员单元（Polaris @8420）：80px 宽竖排 / gap 8 */
+.pdt-c-unit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 80px;
+  flex-shrink: 0;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  transition: transform 0.2s;
+}
+/* hover scale(1.15) —— 比卡片的 1.07 激进得多（头像小，需要更明显的反馈） */
+.pdt-c-unit.clickable:hover {
+  transform: scale(1.15);
+  z-index: 10;
+}
+.pdt-c-unit:disabled { cursor: default; }
+
+/* 头像（Polaris @8426）：80px 正圆 / cover / 1px 白 8% 边 / 两层阴影 */
+.pdt-c-img {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: center top;
+  background: linear-gradient(145deg, #2a2a2a, #1a1a1a);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: all 0.25s cubic-bezier(0.25, 1, 0.5, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.5);
+}
+.pdt-c-unit:hover .pdt-c-img {
+  border-color: rgba(255, 255, 255, 0.3);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+/* 名字（Polaris @8448）：12px / 白 / 居中 / opacity .8 */
+.pdt-c-name {
+  font-size: 12px;
+  color: #fff;
+  text-align: center;
+  line-height: 1.2;
+  opacity: 0.8;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 角色名：Polaris 没有这一行，但演员页的语义需要它区分同名演员 —— 比名字再弱一档 */
+.pdt-c-char {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.42);
+  text-align: center;
+  line-height: 1.2;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: -4px;
+}
+
+/* 推荐滚动条（Polaris @8533 的 .pw-detail-horizontal-rail，取同档 padding/gap） */
+.pdt-recs-scroller {
+  display: flex;
+  gap: 20px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 20px 40px;
+  margin: -20px -40px;
+  scroll-behavior: smooth;
+  overscroll-behavior-inline: contain;
+}
+.pdt-recs-scroller::-webkit-scrollbar { display: none; }
+
+/* 推荐卡（Polaris @8533）：flex 0 0 280px / aspect-ratio **16/9**（不是 16/9.2，
+   推荐卡没有底部文字条）/ radius 12，内部 inner radius 14 + --pw-elev
+   动效比别处慢：0.5s cb(.16,1,.3,1)（"看完了顺便看看"的次要内容，慢一点显得从容） */
+.pdt-rec-card {
+  flex: 0 0 280px;
+  width: 280px;
+  aspect-ratio: 16 / 9;
+  border: none;
+  padding: 0;
+  background: none;
+  border-radius: 12px;
+  position: relative;
+  cursor: pointer;
+  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 1;
+}
+.pdt-rec-card:hover { z-index: 50; }
+.pdt-rec-card:disabled { cursor: default; }
+.pdt-rec-inner {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 14px;
+  overflow: hidden;
+  position: relative;
+  background: #222;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.32),
+    0 6px 14px rgba(0, 0, 0, 0.36),
+    0 12px 24px rgba(0, 0, 0, 0.28);
+}
+.pdt-rec-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  background: #222;
+  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: center center;
+}
+.pdt-rec-card:hover .pdt-rec-img { transform: scale(1.07); }
+/* 浮层（Polaris @8568）：底部黑 80% 渐变 / 常态 opacity 0，hover 显示 */
+.pdt-rec-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.8), transparent 60%);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 12px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  z-index: 2;
+}
+.pdt-rec-card:hover .pdt-rec-overlay { opacity: 1; }
+.pdt-rec-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.pdt-rec-sub {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+/* ══════════ 详情标签页（复用 DetailView 的七个面板）══════════════════════
+   这里只把原有 `.dseg.dv2-seg` / `.dbody.dv2-body` 的浅色外观改成
+   Polaris 玻璃控制台的深色语言（**不改结构与行为**：面板本身一行不动）。
+   参考 Polaris 的 `.pw-detail-section-header` 与玻璃胶囊。 */
+.pdt-tabs {
+  margin-top: 48px;
+}
+.pdt-tabs .dv2-seg {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  padding: 4px;
+}
+.pdt-tabs .dv2-seg .dseg-btn {
+  color: rgba(255, 255, 255, 0.62);
+  background: transparent;
+  border-radius: 10px;
+  transition: background 0.2s, color 0.2s;
+}
+.pdt-tabs .dv2-seg .dseg-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.9);
+}
+/* 选中态：Polaris 的 `.pw-server-pill.active` 是白底黑字（不用彩色填充） */
+.pdt-tabs .dv2-seg .dseg-btn.active {
+  background: rgba(255, 255, 255, 0.95);
+  color: #000;
+  font-weight: 600;
+}
+.pdt-tabs .dv2-seg .dseg-btn::after { display: none; }
+/* Switch 键：与其它标签同尺寸，选中时用系统蓝提示"右列已切在线搜索" */
+.pdt-tabs .dv2-seg .dv2-switch.switch-on {
+  background: rgba(10, 132, 255, 0.9);
+  color: #fff;
+}
+
+/* 标签体：Polaris 控制台里没有卡片底（内容直接压在玻璃上），
+   高 560px 给一个稳定视口（比经典版矮 —— 它在长页里只是中段一块）。 */
+.pdt-tabs .dv2-body {
+  margin-top: 14px;
+  height: min(560px, 62vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 8px;
+  margin-right: -8px;
+  scrollbar-gutter: stable;
+  color: rgba(255, 255, 255, 0.85);
+}
+.pdt-tabs .dv2-body::-webkit-scrollbar { width: 8px; }
+.pdt-tabs .dv2-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+}
+.pdt-tabs .dv2-body::-webkit-scrollbar-track { background: transparent; }
+
+/* 面板内的深色化（`.dpanel` / `.tmdb-sec` / `.dsec` 等在经典版是浅色卡片）。
+   只在本容器内生效 —— 作用域限制在 `.pdt-tabs`，绝不会溢出到别的页面。 */
+.pdt-tabs .dpanel,
+.pdt-tabs .dpanel-single,
+.pdt-tabs .tmdb-sec,
+.pdt-tabs .dmore {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+}
+.pdt-tabs .tmdb-sec-t,
+.pdt-tabs .dsec-t,
+.pdt-tabs .mved-ov-t {
+  color: rgba(255, 255, 255, 0.5);
+}
+.pdt-tabs .dfold,
+.pdt-tabs .mved-lead,
+.pdt-tabs .dtext {
+  color: rgba(255, 255, 255, 0.82);
+}
+.pdt-tabs .dtag,
+.pdt-tabs .mved-tag {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.78);
+}
+.pdt-tabs .empty {
+  color: rgba(255, 255, 255, 0.4);
+}
+/* 「更多」里的技术行（键值对）与展开区同一套深色语义 */
+.pdt-tabs .dextra-row {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+.pdt-tabs .dextra-k {
+  color: rgba(255, 255, 255, 0.45);
+}
+.pdt-tabs .dextra-v {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* ══════════ 响应式（对齐 Polaris 自己的断点）══════════════════════════════
+   Polaris 的窄屏处理：资源卡 768px 收窄（@6810）、剧集卡 980px 收 240px（@8130）、
+   展开区 900px 单列（@7115）。这里再补一条全局的栅格降级。 */
+@media (max-width: 1400px) {
+  .pdt-console { padding: 40px 60px; }
+  .pdt-specs-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 1100px) {
+  .pdt-console { padding: 32px 40px; }
+  .pdt-rail-arrow.left { left: -44px; }
+  .pdt-rail-arrow.right { right: -44px; }
+}
+@media (max-width: 900px) {
+  .pdt-hero {
+    padding: 0 24px 18px;
+    min-height: calc(100vh - 140px);
+  }
+  .pdt-console { padding: 24px 24px 40px; }
+  .pdt-title { font-size: clamp(32px, 8vw, 48px); letter-spacing: 1px; }
+  .pdt-logo { max-width: 260px; max-height: 90px; }
+  .pdt-specs-grid { grid-template-columns: 1fr; }
+  .pdt-spec-group { padding: 18px 20px; }
+  .pdt-episodes-scroller { padding: 20px 8px 40px; margin: 0 -8px -20px; }
+  .pdt-stills-scroller,
+  .pdt-cast-scroller,
+  .pdt-recs-scroller { padding: 20px 8px; margin: -20px -8px; }
+  /* 窄屏箭头挂在容器外会被裁 → 收到容器内侧 */
+  .pdt-rail-arrow.left { left: 0; }
+  .pdt-rail-arrow.right { right: 0; }
+  .pdt-source-scroller { padding: 16px 8px 32px; margin: -16px -8px 0; }
+  .pdt-filepath { margin-top: -18px; }
+  .pdt-close { top: 50px; left: 20px; }
+  .pdt-tabs .dv2-body { height: min(480px, 58vh); }
+}
+@media (max-width: 640px) {
+  .pdt-actions { gap: 10px; }
+  .pdt-play { padding: 8px 20px 8px 8px; gap: 10px; }
+  .pdt-icon-btn { width: 48px; height: 40px; }
+  .pdt-meta { gap: 10px; font-size: 14px; }
+  .pdt-meta-item { font-size: 14px; }
+}
+
+/* ══════════ 无障碍 / 性能模式 ══════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  .pdt,
+  .pdt-hero-lockup,
+  .pdt-console-inner {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  .pdt-backdrop-img.is-loaded { animation: none; }
+  .pdt-play,
+  .pdt-icon-btn,
+  .pdt-ep-img,
+  .pdt-rec-img,
+  .pdt-c-unit,
+  .pdt-still-card {
+    transition: none;
+  }
+  .pdt-ep-card:hover .pdt-ep-img,
+  .pdt-rec-card:hover .pdt-rec-img { transform: none; }
+}
+/* 性能模式（html.perf）：关掉所有口糊滤镜与 Ken Burns —— 与 Polaris 的
+   `body.ui-mode-performance` 同语义，也与本项目 lc-1437 的降级口径一致。 */
+html.perf .pdt-backdrop-img.is-loaded { animation: none; }
+html.perf .pdt-console::before {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+html.perf .pdt-glass-stair1,
+html.perf .pdt-glass-stair2,
+html.perf .pdt-console::after {
+  display: none;
+}
+html.perf .pdt-icon-btn,
+html.perf .pdt-spec-group,
+html.perf .pdt-expand-btn,
+html.perf .pdt-expanded-section,
+html.perf .pdt-source-card {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+html.perf .pdt-ep-card:hover .pdt-ep-img,
+html.perf .pdt-rec-card:hover .pdt-rec-img,
+html.perf .pdt-c-unit.clickable:hover {
+  transform: none;
+}

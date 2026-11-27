@@ -76,3 +76,8 @@
 
 /* [lc-2372] 首页轮播「放映厅」样式（Polaris 还原；carouselStyle = spotlight 时生效） */
 @import "./54-polaris-hero.css";
+
+/* [lc-2396] 详情页「影院」版式（Polaris 还原；detailStyle = polaris 时生效，剧集/电影共用）
+   ⚠ 必须放在 51-play-controls.css 之后 —— 那条统一覆盖播放按钮，本文件要能覆写它
+     （所有选择器都以 .pdt 为根，作用域严格限制在影院版式内）。 */
+@import "./55-polaris-detail.css";

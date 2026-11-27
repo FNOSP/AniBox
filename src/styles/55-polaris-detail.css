@@ -813,38 +813,10 @@ html:not(.perf) .pdt-close {
   border-radius: 4px;
 }
 
-/* 文件位置行：Polaris 没有这一行（它的路径打在资源卡里）；
-   沿用 editorial 版式的语义，按玻璃控制台的深色文字语言画（此处底是暗玻璃，所以是浅色字）。 */
-.pdt-filepath {
-  display: flex;
-  gap: 10px;
-  align-items: baseline;
-  margin: -24px 0 8px;
-  font-size: 12px;
-  min-width: 0;
-}
-.pdt-filepath-k {
-  flex: 0 0 auto;
-  color: rgba(255, 255, 255, 0.36);
-  letter-spacing: 0.6px;
-}
-.pdt-filepath-v {
-  color: rgba(255, 255, 255, 0.6);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-/* [lc-2402] 单版本时版本块整块不渲染，文件位置行就成了控制台第一个元素。
-   原来那个 `margin: -24px 0 8px` 是为了抵消资源卡下方 40px 的 scroller padding
-   （`padding 20px 20px 40px` 的底部气口 + `margin -20px -20px 0`）——
-   现在上方没有版本卡了，负边距会把这一行顶到控制台上沿外面，与控制台 40px 的内边距打架。
-   归零后它自己带一点下方间距，接住「选集」标题。 */
-.pdt-filepath-solo {
-  margin: 0 0 4px;
-  /* 单版本时它是控制台首个可见行，字号给到与「文件位置」标签同一档（12px），
-     不额外放大 —— 这行是辅助信息，不该抢「选集」标题的位置 */
-}
+/* [lc-2408] 选集上方的「文件位置」行已删除（用户：这里的资源详情去掉，下面已经有了）。
+   原本这里有三条规则 .pdt-filepath / -k / -v / -solo —— 连同一个 900px 断点里的
+   `.pdt-filepath { margin-top: -18px }` 一起清掉了。
+   路径现在只在下方 .pdt-filepath-row（玻璃长条里的「资源详情」）显示一处。 */
 
 /* ══════════ 剧集横排 ══════════════════════════════════════════════════════
    Polaris @7124 `.pw-episodes-section`：margin 20px 0
@@ -2164,7 +2136,6 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
   .pdt-rail-arrow.left { left: 0; }
   .pdt-rail-arrow.right { right: 0; }
   .pdt-source-scroller { padding: 16px 8px 32px; margin: -16px -8px 0; }
-  .pdt-filepath { margin-top: -18px; }
   .pdt-close { top: 50px; left: 20px; }
   .pdt-tabs .dv2-body { height: min(480px, 58vh); }
 }

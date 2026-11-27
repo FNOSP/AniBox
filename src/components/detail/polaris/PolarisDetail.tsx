@@ -132,12 +132,12 @@ export function PolarisDetail({
           <div className="pdt-glass-stair2" aria-hidden="true" />
 
           <div className="pdt-console-inner">
-            {/* 版本条（原 Polaris 的「版本选择」+ 资源卡横排；这里放 video_streams） */}
+            {/* 版本条（原 Polaris 的「版本选择」+ 资源卡横排；这里放 video_streams）
+                [lc-2408] 不再传 filePath —— 选集上方那条路径已删（下方资源详情已有） */}
             <PolarisVersions
               versions={m.versions}
               selected={m.selectedMediaGuid}
               onSelect={(mg) => m.onVersionChange(mg)}
-              filePath={m.filePath}
             />
 
             {/* 剧集横排（剧集限定） */}

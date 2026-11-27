@@ -16,7 +16,13 @@
  *   已经逐项列过一遍（分辨率 / 编码 / 位深 / 文件大小），纯冗余，还占掉控制台首屏一大块高度。
  *   但**多版本时必须保留** —— 那是唯一的切换入口，删了就没法选版本。
  *   所以判断条件是 `versions.length > 1`，不是无脑删掉整个组件。
- *   单版本时「文件位置」行仍然显示（它有独立价值：文件到底在哪），由下面的 solo 分支单独渲染。
+ *
+ * [lc-2408] **本条不再渲染「文件位置 / 资源详情」**（用户截图指出：选集上方那条红框
+ *   里的路径要去掉，「下面已经有了」）。下方 `PolarisSpecs` 里的
+ *   `<PolarisFilePath>` 已经显示完整路径，这里是同一份数据的第二次呈现 ——
+ *   删掉上方那条，路径只保留下方一处。
+ *   （lc-2402 曾让单版本时只渲染这条路径行，现在连它也不要了：
+ *    单版本 = 什么都不渲染。）
  */
 import { MediaVersion } from "../../../types";
 import { versionLabels, versionMeta } from "./shared";
@@ -25,25 +31,13 @@ export function PolarisVersions({
   versions,
   selected,
   onSelect,
-  filePath,
 }: {
   versions: MediaVersion[];
   selected: string;
   onSelect: (mediaGuid: string) => void;
-  /** 当前选中版本的完整路径（空则不渲染该行） */
-  filePath?: string;
 }) {
-  if (versions.length === 0) return null;
-
-  /* [lc-2402] 单版本：不画版本块，只留文件位置（若有）。 */
-  if (versions.length === 1) {
-    return filePath ? (
-      <div className="pdt-filepath pdt-filepath-solo" title={filePath}>
-        <span className="pdt-filepath-k">文件位置</span>
-        <span className="pdt-filepath-v">{filePath}</span>
-      </div>
-    ) : null;
-  }
+  /* [lc-2402] 单版本：整块不渲染（[lc-2408] 原这里还有一行文件位置，也已去掉）。 */
+  if (versions.length <= 1) return null;
 
   const labels = versionLabels(versions);
 
@@ -79,12 +73,6 @@ export function PolarisVersions({
           );
         })}
       </div>
-      {filePath && (
-        <div className="pdt-filepath" title={filePath}>
-          <span className="pdt-filepath-k">文件位置</span>
-          <span className="pdt-filepath-v">{filePath}</span>
-        </div>
-      )}
     </>
   );
 }

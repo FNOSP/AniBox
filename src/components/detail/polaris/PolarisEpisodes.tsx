@@ -83,14 +83,19 @@ export function PolarisEpisodes({ m }: { m: PolarisModel }) {
   const heading = m.noFnOS ? "剧集" : "选集";
 
   /* [lc-2404] 选集是不是控制台的**第一个可见区块**？
-     控制台里的顺序是「版本块 / 文件位置 → 选集 → 技术规格 → …」。
-     版本块只在多版本时渲染（lc-2402），文件位置行只在有路径时渲染；
-     两者都不存在时选集就是首块，它上方的三份竖向留白
-     （hero padding-bottom 18 + console padding-top 40 + 自己的 margin-top 20 = 106px）
-     比下方的选集→规格间距（48px）大一倍多，需要把重复的那 20px 去掉。
-     不用 CSS `:first-child`：那按 DOM 位置判，而版本块/路径行是否渲染取决于数据 ——
-     多版本时选集前面有内容，本该保留 margin，交给 TSX 判更准。 */
-  const isFirstBlock = m.versions.length <= 1 && !m.filePath;
+     控制台里的顺序是「版本块 → 选集 → 技术规格 → …」。
+     版本块只在多版本时渲染（lc-2402），它不存在时选集就是首块；
+     首块上方的三份竖向留白（hero padding-bottom 18 + console padding-top 40 +
+     自己的 margin-top 20 = 106px）比下方的选集→规格间距大一倍多，要去掉重复的那份。
+     不用 CSS `:first-child`：那按 DOM 位置判，而版本块是否渲染取决于数据 ——
+     多版本时选集前面有内容，本该保留 margin，交给 TSX 判更准。
+
+     [lc-2408] 条件里原来还有 `&& !m.filePath` —— 因为当时单版本会渲染一条
+     「文件位置」行，有路径时选集不算首块。**那条行已经删了**（用户：这里的资源详情去掉），
+     所以这个附加条件已经失效：有路径时它会把 isFirstBlock 判成 false，
+     于是 -10px 不生效、选集上方多留 20px 空白（用户：「多出来的位置也要去掉」）。
+     现在只按版本块数量判断。 */
+  const isFirstBlock = m.versions.length <= 1;
 
   return (
     <section className={`pdt-episodes${isFirstBlock ? " pdt-episodes-first" : ""}`} aria-label={heading}>

@@ -45,9 +45,10 @@
   pointer-events: auto;
   /* 兜底外观：透镜不可用时（旧内核 / reduce-motion）仍然是一块像样的玻璃 */
   background: rgba(28, 28, 30, 0.42);
-  box-shadow:
-    0 8px 24px rgba(0, 0, 0, 0.26),
-    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  /* [lc-2435] **不加外投影**：`0 8px 24px` 会在胶囊下沿铺一条贯穿整宽的暗带
+     （实测底缘下方 2~8px 从 231 压到 216，跨满 104px 全宽），
+     在浅色玻璃上就是用户看到的"长条阴影"。边界靠玻璃层的内高光 + 内描边交代。 */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
   -webkit-user-select: none;
   user-select: none;
 }
@@ -58,9 +59,7 @@
    让下方的折射可见；玻璃层自己还有一层白 @40%（见 .nav-cap-glass）。 */
 [data-theme="light"] .nav-cap {
   background: rgba(236, 236, 240, 0.18);
-  box-shadow:
-    0 8px 24px rgba(0, 0, 0, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 
 /* ── 玻璃层：真折射 + 模糊 ────────────────────────────────────────

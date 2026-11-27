@@ -842,25 +842,24 @@ html:not(.perf) .pdt-close {
 .pdt-episodes {
   margin: 20px 0;
 }
+/* [lc-2399] 头部改为**单侧左对齐**：摘要在「选集」右边（用户要求），右端不再有内容。
+   原来 `justify-content: space-between` 是靠右端那块撑出来的两端对齐，右端空了之后
+   那条件就只剩"标题贴左"，语义上不再成立 —— 显式关掉，避免以后有人加元素时被拽到右边。 */
 .pdt-episodes-head {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
   margin-bottom: 16px;
   flex-wrap: wrap;
   gap: 12px;
 }
+/* 标题 + 摘要 + 季胶囊全部挤在左侧一行；gap 12 与 Polaris @7124 的 section-header 同档 */
 .pdt-episodes-left {
   display: flex;
   align-items: center;
   gap: 12px;
   min-width: 0;
   flex-wrap: wrap;
-}
-.pdt-episodes-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 /* 季选择胶囊：Polaris 是服务器下拉（`.pw-detail-server-btn` 12px / 白 8% 底）。
    这里铺开成胶囊行，视觉取同一档参数。 */
@@ -894,10 +893,15 @@ html:not(.perf) .pdt-close {
   color: #000;
   font-weight: 600;
 }
+/* 季/集摘要（「第 1 季 · 共 8 集 · 无缺失」）—— [lc-2399] 现在紧跟「选集」标题。
+   它是标题的补充说明，不是独立控件：字号比标题（17px）小一档、颜色更弱，
+   并**向左收一点**（margin-left -4px）：标题字距 1.5px 自带视觉留白，
+   按 12px 的 gap 排会显得离得太远。 */
 .pdt-episodes-meta {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.4);
   letter-spacing: 0.3px;
+  margin-left: -4px;
 }
 
 /* 轨道容器（Polaris @7146）：position relative + display flow-root（包住浮动的箭头） */

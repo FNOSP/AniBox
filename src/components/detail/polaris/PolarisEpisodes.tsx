@@ -54,6 +54,14 @@ export function PolarisEpisodes({ m }: { m: PolarisModel }) {
       <div className="pdt-episodes-head">
         <div className="pdt-episodes-left">
           <span className="pdt-heading">{heading}</span>
+          {/* [lc-2399] 季/集数摘要（「第 1 季 · 共 8 集 · 无缺失」）从右端挪到「选集」右边
+              （用户要求）。它描述的是**当前这一季**的内容，紧贴标题读起来才成立；
+              原来甩到整行最右端，隔着几百像素和标题分家，扫视时对不上。 */}
+          {m.seasonEpInfo && (
+            <span className="pdt-episodes-meta" title={m.seasonEpInfo.title || undefined}>
+              {m.seasonEpInfo.text}
+            </span>
+          )}
           {/* 季选择胶囊：只有多季才出现（Polaris 是服务器下拉，我们这里换季直接铺开更少一次点击） */}
           {m.seasons.length > 1 && (
             <div className="pdt-season-pills" role="group" aria-label="选择季">
@@ -74,13 +82,6 @@ export function PolarisEpisodes({ m }: { m: PolarisModel }) {
                 );
               })}
             </div>
-          )}
-        </div>
-        <div className="pdt-episodes-right">
-          {m.seasonEpInfo && (
-            <span className="pdt-episodes-meta" title={m.seasonEpInfo.title || undefined}>
-              {m.seasonEpInfo.text}
-            </span>
           )}
         </div>
       </div>

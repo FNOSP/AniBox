@@ -236,6 +236,7 @@ $f.Controls.Add($tbLog)
 function Log-Line($m) {
     if ($tbLog.TextLength -gt 400000) { $tbLog.Text = $tbLog.Text.Substring(200000) }  # 防无限增长
     $tbLog.AppendText("$m`r`n")
+    Update-ProgressFromLine $m   # [lc-2441] 从构建输出行解析阶段，实时推进进度条
     if ($f.WindowState -ne 'Minimized') {   # 最小化时滚动无意义，跳过省 UI 负担
         $tbLog.SelectionStart = $tbLog.TextLength
         $tbLog.ScrollToCaret()
@@ -260,6 +261,28 @@ function Show-Msg($msg) {
     if ($f.WindowState -eq 'Minimized') { $f.WindowState = 'Normal' }
     [void]$f.Activate()
     [void][System.Windows.Forms.MessageBox]::Show($f, $msg, 'AniBox 打包')
+}
+
+# [lc-2441] 构建期实时进度：此前 ② 构建段是 Marquee 不确定进度，在 DoEvents 泵下视觉上
+# 「停住不动」，结束直接跳 100%。改为解析构建输出行推进 Continuous 进度条：
+#   - cargo 新版 stderr 实时行 `Building [=====>   ] 500/831 crates`（\r 刷新，errlog
+#     回放已按 \r 拆行进 Log-Line）→ 16~78 线性映射；
+#   - vite / tauri / NSIS 里程碑走 stdout。区间：② 构建 9→88，③ 收集 90，④ 完成 100。
+# 未匹配的行原样跳过；失败/重试按输出自然回落，不做人工平滑。
+function Update-ProgressFromLine([string]$line) {
+    if ($line -match 'Building\s*\[[^\]]*\]\s*(\d+)\s*/\s*(\d+)') {
+        $pct = 16 + [int](62 * [double]$Matches[1] / [double]$Matches[2])
+        Set-Step ("② 构建 cargo {0}/{1} crates…" -f $Matches[1], $Matches[2]) $pct
+        return
+    }
+    if ($line -match 'transforming')         { Set-Step '② 前端 vite 编译中…' 10;        return }
+    if ($line -match 'built in \d')          { Set-Step '② 前端完成，cargo 编译中…' 14;  return }
+    if ($line -match '构建尝试 \d+ / \d+')   { Set-Step '② cargo 编译中…' 16;            return }
+    if ($line -match '^\s*Compiling\s')      { if ($pb.Value -lt 16) { Set-Step '② cargo 编译中…' 16 }; return }
+    if ($line -match '^\s*Finished\s')       { Set-Step '② cargo 完成，打包安装器…' 80;  return }
+    if ($line -match 'Bundling\s+\S+\.exe')  { Set-Step '② tauri 生成 NSIS 安装包…' 84;  return }
+    if ($line -match '构建成功')             { Set-Step '② 构建成功，校验产物…' 88;      return }
+    if ($line -match '步骤 4/4')             { Set-Step '③ 收集安装包…' 90;              return }
 }
 
 $btnBuild.Add_Click({
@@ -290,7 +313,7 @@ $btnBuild.Add_Click({
             Log-Line "1/4 版本与 tauri.conf.json 一致（$ver），跳过改写"
         }
 
-        Set-Step '② 构建（cargo + tauri + NSIS）…' -1
+        Set-Step '② 构建（vite → cargo → NSIS）…' 9
         Log-Line "2/4 运行 tools\build-installer.ps1（密钥注入+重试+SHA-256）…"
         # [lc-1814] 死锁修法：stderr 用 cmd /c … 2>文件 在 OS 层落盘（cargo 编译行全走
         # stderr，管道版必互等死锁）；stdout 单管道异步读。构建中**增量回放** errlog

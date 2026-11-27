@@ -2269,6 +2269,51 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
   color: rgba(0, 0, 0, 0.8);
 }
 
+/* ── [lc-2414] 关联条目：封面不裁切 + 深色文字 ──────────────────────────────
+   用户报「怎么中间两个封面是裁切的」：片头曲 / 原声集 / 衍生 这几列装的是
+   **Bangumi 音乐条目（type=3）**，封面是正方形（专辑封面 1:1），
+   而 `.drel-cv` 是写死的 `aspect-ratio: 2/3` + `object-fit: cover` —— 竖框塞方图
+   等于左右各切掉约 1/4，封面上的字直接被裁断。书籍（type=1）和动画（type=2）
+   的封面本身接近竖版海报，所以那几列看着正常。
+
+   修法：框保持 2/3 不变（分栏要整齐，不能按内容抖动），图片改 `contain` 完整显示，
+   留白落在与占位图同色的底上 —— 与「图片不裁剪」的既有约定一致。
+   只在影院版式的玻璃卡里生效，经典版式保持原样。 */
+.pdt-tabs .pdt-tabs-card .drel-cv img {
+  object-fit: contain;
+}
+/* 列头与卡名原来是 `var(--text-strong)` / `var(--text-2)`，跟应用主题走：
+   深色主题下等于**白字压在白色玻璃卡上**，一个字都看不见。改用深色口径。 */
+.pdt-tabs .pdt-tabs-card .drel-col-h {
+  color: rgba(0, 0, 0, 0.85);
+}
+.pdt-tabs .pdt-tabs-card .drel-col-n {
+  color: rgba(0, 0, 0, 0.42);
+}
+.pdt-tabs .pdt-tabs-card .drel-nm {
+  color: rgba(0, 0, 0, 0.7);
+}
+/* 封面框的底与描边同样跟主题（--ph-bg / --line），在白卡上会发灰发白。
+   换成中性深色，让留白处像"胶片底"而不是脏斑。 */
+.pdt-tabs .pdt-tabs-card .drel-cv {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+.pdt-tabs .pdt-tabs-card .drel-col {
+  border-right-color: rgba(0, 0, 0, 0.1);
+}
+.pdt-tabs .pdt-tabs-card .drel-card:hover .drel-cv {
+  border-color: rgba(0, 0, 0, 0.26);
+}
+/* TMDB 兜底卡片（横版 16:9）同理：标题颜色也是主题变量 */
+.pdt-tabs .pdt-tabs-card .drel-tmdb-nm {
+  color: rgba(0, 0, 0, 0.85);
+}
+.pdt-tabs .pdt-tabs-card .drel-tmdb-cv {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
 /* ══════════ 响应式（对齐 Polaris 自己的断点）══════════════════════════════
    Polaris 的窄屏处理：资源卡 768px 收窄（@6810）、剧集卡 980px 收 240px（@8130）、
    展开区 900px 单列（@7115）。这里再补一条全局的栅格降级。 */

@@ -26,7 +26,25 @@
 
 /* ── 根容器：覆盖层 ──────────────────────────────────────────────────────────
    Polaris @5046 `.pw-detail-overlay`：inset 0 / background #000 / overflow hidden
-   Polaris @5058 `.active`：animation pwPageEnter 1.31s cb(.32,.72,0,1)（只做 opacity 0→1） */
+   Polaris @5058 `.active`：animation pwPageEnter 1.31s cb(.32,.72,0,1)（只做 opacity 0→1）
+
+   ⚠ 宿主容器（main.detail-full）：`.content` 自带 `padding: 32px 24px 28px` +
+   `overflow-y: auto`，两样都必须让位，否则会出现：
+     · 覆盖层被内边距推离视口边缘（inset 0 只到 padding 内沿，露出白边）
+     · 外层 main 与内层 .pdt-scroll **双滚动**（滚轮先滚外层，页面像卡住）
+   所以 main 在 polaris 下追加 `.pdt-detail` 类（见 DetailView 的 className 分支），
+   这里把它的 padding / 滚动 / 背景全部归零。`original` 下这个类不存在，
+   老路径一行都不受影响。 */
+.detail-full.pdt-detail {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  background: #000;
+  /* 覆盖层要 relative 定位在 main 之内：.view-pane 是 flex 容器但没有 position，
+     不加这条 `.pdt` 的 inset:0 会跑到 .view-stack 上（跨过标题栏基线）。 */
+  position: relative;
+}
+
 .pdt {
   position: absolute;
   inset: 0;

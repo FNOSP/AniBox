@@ -2494,8 +2494,19 @@ export function DetailView({
 
   return (
     <main
+      /* [lc-2396] 影院版式追加 `pdt-detail` 类：把 main 自身的内边距/滚动/背景让位给
+         `.pdt` 覆盖层（见 55-polaris-detail.css 末端）。original 下不追加，类名与
+         改动前逐字符相同 —— 这是「原有不变」的隔离保证。
+         电影的两个版式类（mved-detail / mv-detail）在 polaris 下不再追加：
+         它们只对原版式的电影分支有意义，混进来会带进 padding:0 / overflow:auto。 */
       className={`content detail-full${
-        isMovie ? (movieDetailStyle === "editorial" ? " mved-detail" : " mv-detail") : ""
+        detailStyle === "polaris"
+          ? " pdt-detail"
+          : isMovie
+            ? movieDetailStyle === "editorial"
+              ? " mved-detail"
+              : " mv-detail"
+            : ""
       }`}
     >
       {/* [lc-1401] 详情页按**用户定稿版式**重排（两栏）：

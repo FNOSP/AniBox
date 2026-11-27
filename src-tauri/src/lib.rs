@@ -34,6 +34,8 @@ mod enhance;
 mod rtx;
 // [lc-2332] 公共评论（作品级）：服务端 inbox.690075.xyz，协议见 docs/community-comments-api.md
 mod community;
+// [lc-2402] 社区 v2 账号（邮箱+密码 / 邮箱验证码 / 设备会话）：协议见 docs/community-v2-design.md
+mod community_auth;
 // [lc-2244] 组件包进程内解压：原先外调 pwsh Expand-Archive，而 pwsh 不是 Windows
 // 自带组件 —— 干净机器上报「启动解压失败: program not found」，下载必然失败。
 mod zip_extract;
@@ -4960,6 +4962,17 @@ pub fn run() {
             community::community_delete,
             community::community_mine,
             community::community_set_nick,
+            // [lc-2402] 社区 v2 账号（design §4.1–4.3）
+            community_auth::community_v2_register,
+            community_auth::community_v2_resend,
+            community_auth::community_v2_verify,
+            community_auth::community_v2_login,
+            community_auth::community_v2_logout,
+            community_auth::community_v2_session,
+            community_auth::community_v2_set_nick,
+            community_auth::community_v2_devices,
+            community_auth::community_v2_revoke_device,
+            community_auth::community_v2_revoke_others,
             webdav::webdav_accounts,
             webdav::webdav_account_add,
             webdav::webdav_account_del,

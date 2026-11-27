@@ -29,6 +29,17 @@ pub fn is_encrypted_access_code(value: &str) -> bool {
     value.starts_with(ACCESS_CODE_ENC_PREFIX)
 }
 
+/// 通用 seal：任意本地敏感串 → `enc:v1:<base64(nonce||ct)>`（与访问码同一密钥/格式）。
+/// [lc-2402] 社区 v2 的会话 token 落盘走这里；空串保持空串、已带前缀原样返回。
+pub fn seal(plain: &str) -> String {
+    encrypt_access_code(plain)
+}
+
+/// 通用 unseal：`enc:v1:` 密文 → 明文；无前缀按旧明文原样返回；损坏返回空串。
+pub fn unseal(stored: &str) -> String {
+    decrypt_access_code(stored)
+}
+
 /// 加密访问码。空串保持空串（表示未设置）；已带前缀的值原样返回（避免重复加密）。
 pub fn encrypt_access_code(plain: &str) -> String {
     use aes_gcm::aead::{Aead, KeyInit};

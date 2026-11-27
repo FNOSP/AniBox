@@ -2,7 +2,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { IcoFolder, IcoGrid, IcoHome, IcoLive, IcoMovie, IcoStar, IcoTv } from "../../icons";
-import { Clapperboard as IcoJavHubL, Clock as IcoClockL, Cloud as IcoCloudL, Image as IcoImageL, MessageSquare as IcoMsgL, Settings as IcoGearL } from "lucide-react";
+import { Clapperboard as IcoJavHubL, Clock as IcoClockL, Cloud as IcoCloudL, Image as IcoImageL, MessageSquare as IcoMsgL, Settings as IcoGearL, Users as IcoUsersL } from "lucide-react";
 
 
 export const SIDEBAR_CATS = [
@@ -32,6 +32,7 @@ export function Sidebar({
   onOpenJavHub,
   onOpenCloud115,
   onOpenGallery,
+  onOpenCommunity,
   onHome,
   onOpenSettings,
   onOpenAccount,
@@ -54,6 +55,8 @@ export function Sidebar({
   onOpenJavHub: () => void;
   /** [lc-2354/2357/2363] 打开 Pixiv 图库页（Pixiv 排行/搜索 + 本地图片） */
   onOpenGallery: () => void;
+  /** [lc-2402] 打开社区页（账号/设备管理；P3 起信息流/通知） */
+  onOpenCommunity: () => void;
   /** [lc-1779] 打开 115 网盘页（扫码登录 + 文件浏览 + 直链/转码播放） */
   onOpenCloud115: () => void;
   onHome: () => void;
@@ -120,6 +123,13 @@ export function Sidebar({
         </span>{" "}
         收藏
         <span className="side-count">{favTotal ?? ""}</span>
+      </div>
+      {/* [lc-2402] 社区一级入口（登录/注册 → 信息流；P3 起通知角标） */}
+      <div className={`side-item ${activeGuid === "_community" ? "active" : ""}`} onClick={onOpenCommunity}>
+        <span className="side-ico">
+          <IcoUsersL size={15} strokeWidth={1.8} />
+        </span>{" "}
+        社区
       </div>
       {/* [lc-2364] Pixiv 图库入口**已隐藏**（用户要求搁置）。
           搁置原因（实测，不是猜测）：本机到 www.pixiv.net 的 TCP 443 在 TLS 握手

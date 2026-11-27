@@ -32,7 +32,8 @@ const DEVICE_SALT: &str = "anibox-community-v1:";
 const LIST_TIMEOUT_MS: u64 = 8000;
 const WRITE_TIMEOUT_MS: u64 = 12000;
 
-fn http() -> &'static reqwest::Client {
+/// [lc-2402] community_auth 复用同一 HTTP 客户端（连接池/超时口径一致）。
+pub(crate) fn http() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
@@ -70,7 +71,8 @@ fn fallback_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 /// 取设备码。机器标识可用时随时可再算；不可用时用落盘的随机值。
 ///
 /// 为什么不能每次都现算随机值：那样重装/重启就换身份，用户的历史评论全部找不到。
-fn device_id(app: &tauri::AppHandle) -> String {
+/// [lc-2402] v2 设备码与 v1 同源同盐（设计如此：一台物理机一个码；v2 用它做设备绑定与封禁）。
+pub(crate) fn device_id(app: &tauri::AppHandle) -> String {
     let raw = crate::usage_stats::machine_raw_id_pub();
     if !raw.trim().is_empty() {
         return derive_device_id(&raw);
@@ -225,7 +227,8 @@ fn build(
     }
 }
 
-fn base_url() -> &'static str {
+/// [lc-2402] v2 与 v1 同一服务根（inbox.690075.xyz）。
+pub(crate) fn base_url() -> &'static str {
     DEFAULT_BASE
 }
 

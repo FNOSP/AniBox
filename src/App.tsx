@@ -28,6 +28,7 @@ import { PersonPage } from "./components/person/PersonPage";
 import { CloudPanel } from "./components/cloud115/CloudPanel";
 import { JavHubPage } from "./components/javhub/JavHubPage";
 import { GalleryPage } from "./components/gallery/GalleryPage";
+import { CommunityPage } from "./components/community/CommunityPage";
 import { FeedbackPanel } from "./components/feedback/FeedbackPanel";
 import { DisclaimerModal } from "./components/disclaimer/DisclaimerModal";
 import { DISCLAIMER_ACK_KEY } from "./components/disclaimer/DisclaimerText";
@@ -74,7 +75,8 @@ function normalizeLaunchPage(v: unknown): AppSettings["launchPage"] {
 
 function App() {
   // [lc-1615] 新增 "history"（观影记录页；侧栏快捷操作卡入口）
-  const [view, setView] = useState<"login" | "home" | "discover" | "lib" | "detail" | "history" | "person" | "javhub" | "cloud115" | "gallery">("login");
+  // [lc-2402] 新增 "community"（社区页：账号/设备管理；侧栏一级入口）
+  const [view, setView] = useState<"login" | "home" | "discover" | "lib" | "detail" | "history" | "person" | "javhub" | "cloud115" | "gallery" | "community">("login");
   // [lc-123] 「页」= 顶栏胶囊的两个面（首页/发现）。与 view 分开：在库里/详情页时胶囊仍要
   // 记住用户是从哪一页进去的（发现页点条目进 Bangumi 详情，左上角应仍显示「发现」）。
   const [page, setPage] = useState<"home" | "discover">("home");
@@ -1546,7 +1548,9 @@ function App() {
                     ? "_cloud115"
                     : view === "gallery"
                       ? "_gallery"
-                      : activeLib?.guid ?? null
+                      : view === "community"
+                        ? "_community"
+                        : activeLib?.guid ?? null
           }
           collapsed={!sidebarOpen}
           // [lc-1623] 游客态（飞牛未登录/已退出）不显示飞牛用户名 —— 底栏如实显示「未登录」，
@@ -1600,6 +1604,10 @@ function App() {
           onOpenGallery={() => {
             closeSidebar();
             setView("gallery");
+          }}
+          onOpenCommunity={() => {
+            closeSidebar();
+            setView("community");
           }}
         />
         <div className="view-stack">
@@ -1712,6 +1720,12 @@ function App() {
           {view === "cloud115" && (
             <div className="view-pane active view-in">
               <CloudPanel onBack={goHome} />
+            </div>
+          )}
+          {/* [lc-2402] 社区页：与 JavHub/云盘同款条件挂载（view-in 转场），返回走 goHome。 */}
+          {view === "community" && (
+            <div className="view-pane active view-in">
+              <CommunityPage onBack={goHome} />
             </div>
           )}
           {/* [lc-1513] 详情/库页：进入播 view-in；返回时（view 切走）先播 view-out

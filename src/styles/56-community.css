@@ -1,0 +1,337 @@
+/* ═══════════════════════════════════════════════════════════════
+   [lc-2402] 社区 v2（P1：账号 + 设备管理）
+
+   前缀 cv2-（52-community.css 的 cm* 是作品评论，不冲突）。文件序号 56：
+   55 被 lc-2396 的影院详情版式占用。
+   视觉沿用既有语言：卡片浅描边 + bg-2、圆角统一、12/13px 字号；
+   交互过渡 hover 140ms / 进入 ease-out 250ms；支持 prefers-reduced-motion。
+   页头复用原生 .page-head；按钮复用 .pl-solid / .cmlink；警示复用 .set-warn。
+   设备行信息结构按用户截图逐项还原（系统·分辨率·缩放 / IP 网段·标识·最后活跃）。
+   ═══════════════════════════════════════════════════════════════ */
+
+.cv2-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.cv2-center {
+  display: flex;
+  justify-content: center;
+  padding-top: 6vh;
+}
+
+.cv2-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  max-width: 560px;
+  width: 100%;
+}
+
+/* ── 卡片底 ─────────────────────────────────────────────────── */
+.cv2-card {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.cv2-card-title {
+  margin: 0;
+  font-size: var(--fs-ctl);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+/* ── 登录/注册面板 ─────────────────────────────────────────── */
+.cv2-auth {
+  width: min(400px, 100%);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  animation: cv2-in 250ms ease-out;
+}
+@keyframes cv2-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.cv2-auth-switch {
+  display: flex;
+  gap: var(--sp-1);
+  background: var(--input-bg);
+  border-radius: var(--r-sm);
+  padding: 3px;
+}
+.cv2-auth-switch button {
+  flex: 1;
+  height: 28px;
+  border: none;
+  border-radius: calc(var(--r-sm) - 2px);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-cap);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+.cv2-auth-switch button.on {
+  background: var(--bg-2);
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.cv2-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.cv2-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.cv2-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-cap);
+  color: var(--muted);
+}
+.cv2-input {
+  height: 34px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--input-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-cap);
+  outline: none;
+  transition: border-color 140ms ease;
+}
+.cv2-input:focus {
+  border-color: rgb(var(--accent-rgb) / 0.65);
+}
+.cv2-code {
+  letter-spacing: 6px;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 600;
+}
+.cv2-code-hint {
+  font-size: var(--fs-cap);
+  color: var(--muted);
+  line-height: 1.6;
+  text-align: center;
+}
+.cv2-code-hint b {
+  color: var(--text-strong);
+}
+.cv2-resend {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  font-size: var(--fs-cap);
+}
+.cv2-resend-wait {
+  color: var(--muted);
+}
+
+/* 隐私告知（注册表单内；可滚动，不撑爆卡片） */
+.cv2-agree {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-cap);
+  color: var(--text);
+  cursor: pointer;
+}
+.cv2-agree input {
+  accent-color: rgb(var(--accent-rgb));
+}
+.cv2-privacy {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--muted);
+  white-space: pre-line;
+  max-height: 128px;
+  overflow: auto;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--input-bg);
+}
+
+/* ── 账号卡 ─────────────────────────────────────────────────── */
+.cv2-acct {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.cv2-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgb(var(--accent-rgb) / 0.22);
+  color: var(--text-strong);
+  font-weight: 700;
+  flex: none;
+}
+.cv2-acct-main {
+  flex: 1;
+  min-width: 0;
+}
+.cv2-acct-name {
+  font-size: var(--fs-ctl);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.cv2-acct-mail {
+  font-size: var(--fs-cap);
+  color: var(--muted);
+}
+.cv2-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-cap);
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+.cv2-btn-ghost:hover {
+  border-color: rgb(var(--accent-rgb) / 0.65);
+  color: var(--text-strong);
+}
+
+/* ── 设备管理（信息结构照用户截图）───────────────────────── */
+.cv2-dev-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.cv2-dev-sub {
+  font-size: var(--fs-cap);
+  color: var(--muted);
+}
+.cv2-dev-others {
+  margin-left: auto;
+}
+.cv2-dev-list {
+  display: flex;
+  flex-direction: column;
+}
+.cv2-dev-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) 0;
+  border-top: 1px solid var(--line);
+}
+.cv2-dev-row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+.cv2-dev-ico {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-sm);
+  display: grid;
+  place-items: center;
+  background: rgb(var(--accent-rgb) / 0.1);
+  color: var(--text-strong);
+  flex: none;
+}
+.cv2-dev-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.cv2-dev-line1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-cap);
+  color: var(--text);
+  font-weight: 600;
+}
+.cv2-dev-line2 {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  font-size: 12px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.cv2-dev-sep {
+  color: var(--muted);
+  opacity: 0.7;
+}
+.cv2-dev-self {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-strong);
+  background: rgb(var(--accent-rgb) / 0.16);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.cv2-dev-out {
+  flex: none;
+}
+.cv2-dev-empty {
+  font-size: var(--fs-cap);
+  color: var(--muted);
+}
+
+/* 管理员标（P4 起管理台入口挂在页头；P1 只显示身份） */
+.cv2-admin-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgb(var(--accent-rgb));
+  background: rgb(var(--accent-rgb) / 0.12);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+
+.cv2-warn {
+  margin-top: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cv2-auth {
+    animation: none;
+  }
+  .cv2-auth-switch button,
+  .cv2-input,
+  .cv2-btn-ghost {
+    transition: none;
+  }
+}

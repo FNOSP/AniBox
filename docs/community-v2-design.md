@@ -390,10 +390,10 @@ POST /v2/auth/login { email, password, device: { code, os, screen, scale } }
 | R2 公开桶 | `[[r2_buckets]]` | `R2_PUBLIC` |
 | R2 私有桶 | `[[r2_buckets]]` | `R2_PRIVATE` |
 | 邮件 | `[[send_email]]` | `EMAIL` |
-| 执行上下文 | — | `ctx`（从 `fetch(request, env, ctx)` 传入） |
+| 执行上下文 | — | `ctx`（未用：touchDevice 已内置节流，直接 await） |
 
 ```js
-async function requireAuth(request, env, ctx) {
+async function requireAuth(request, env) {
   const tok = bearerToken(request);
   if (!tok) throw httpErr(401, 'UNAUTHORIZED', '请先登录');
   const dev = await env.DB.prepare(
@@ -414,8 +414,9 @@ async function requireAuth(request, env, ctx) {
     .map((s) => s.trim()).filter(Boolean);
   const role = admins.includes(acc.email.toLowerCase()) ? 'admin' : 'user';
 
-  // 静默更新最后活跃（内部有 5 分钟节流，见 §5.2.1）
-  ctx.waitUntil(touchDevice(env, dev.id));
+  // 最后活跃：直接 await（touchDevice 内部 5 分钟节流，命中节流时是空 UPDATE）。
+  // 实测不需要 ctx.waitUntil —— 节流后的 UPDATE 成本可忽略，少一层回调更好测。
+  await touchDevice(env, dev.id);
 
   return { acc, dev, role, muted: acc.mute_until > Date.now() || acc.status === 'muted' };
 }
@@ -446,8 +447,8 @@ workers_dev = true
 routes = [{ pattern = "inbox.690075.xyz", custom_domain = true }]
 
 [[d1_databases]]
-binding = "DB"                     # 新版 schema-v2 用 DB；v1 段仍叫 COMMENT_DB，两者可指向同一库
-database_name = "anibox-community-v2"
+binding = "DB"                     # v1 的 COMMENT_DB 已统一改名 DB（同库双名会写错库）
+database_name = "anibox-comments"  # 沿用 v1 现有库（保住 v1 评论数据）；已有库跑一次 migrate-v1-to-v2.sql
 database_id = "REPLACE_WITH_REAL_D1_ID"
 
 [[r2_buckets]]
@@ -525,7 +526,7 @@ Base：`https://inbox.690075.xyz`
 |---|---|---|---|
 | POST | `/v2/auth/register` | `{email,password,nick}` | `{pendingId,cooldownSec,maskedEmail}` |
 | POST | `/v2/auth/resend` | `{pendingId}` | `{cooldownSec}` |
-| POST | `/v2/auth/verify` | `{pendingId,code}` | `{accountId,token,nick,nickSuffix,role}` |
+| POST | `/v2/auth/verify` | `{pendingId,code,device}`（device 与 login 同构 —— **首次会话在验证时建立**，token 此时签发） | `{accountId,token,nick,nickSuffix,role}` |
 | POST | `/v2/auth/login` | `{email,password,device}` | `{accountId,token,nick,nickSuffix,role}` |
 | POST | `/v2/auth/logout` | —（带 token） | `{ok:true}` |
 
@@ -1374,10 +1375,10 @@ const LIMITS = {
 ## 13. 部署清单（一次性）
 
 ```bash
-# ① D1
-npx wrangler d1 create anibox-community-v2        # 把 database_id 填进 wrangler.toml
-npx wrangler d1 execute anibox-community-v2 --file=./schema-v2.sql --remote
-# v1 老库的 comments 表在同一实例则执行 ALTER（见 §2.1 尾部）
+# ① D1（**沿用现有 anibox-comments 库**，保住 v1 评论数据 —— 不新建库）
+npx wrangler d1 execute anibox-comments --file=./schema-v2.sql --remote   # v2 表 IF NOT EXISTS 新建、v1 表 no-op
+npx wrangler d1 execute anibox-comments --file=./migrate-v1-to-v2.sql --remote  # 只跑一次：comments 补三列
+# （仅当从零重建时才 d1 create；全新库只跑 schema-v2.sql，migrate 不要跑 —— ALTER 会报重复列）
 
 # ② R2
 npx wrangler r2 bucket create anibox-public

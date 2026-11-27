@@ -81,3 +81,7 @@
    ⚠ 必须放在 51-play-controls.css 之后 —— 那条统一覆盖播放按钮，本文件要能覆写它
      （所有选择器都以 .pdt 为根，作用域严格限制在影院版式内）。 */
 @import "./55-polaris-detail.css";
+
+/* [lc-2402] 社区 v2（账号 + 设备管理；前缀 cv2-，页面级引入为 CommunityPage.tsx，
+   这里兜底保证弹层/portal 场景也有样式） */
+@import "./56-community.css";

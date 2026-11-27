@@ -35,6 +35,15 @@ import {
 import { fmtSize } from "../../lib/format";
 import { DUR } from "../../lib/motion";
 import type { FbListItem, FbUnreadInfo } from "../../lib/feedbackUnread";
+import {
+  fetchSession,
+  feedbackImageData,
+  uploadImage,
+  type CommunitySession,
+  type Fb2Item,
+  type PreparedImage,
+} from "../../lib/community";
+import { FeedbackImages } from "./FeedbackImages";
 
 /** feedback_thread 的 ticket 段（服务端冻结字段） */
 type FbTicket = {
@@ -49,7 +58,7 @@ type FbTicket = {
   arch: string;
 };
 
-type FbMsg = { ts: number; role: string; text: string };
+type FbMsg = { ts: number; role: string; text: string; imageIds?: string[] };
 type FbThread = { ok: boolean; ticket: FbTicket; messages: FbMsg[] };
 
 /** feedback_log_info（Rust 侧返回的日志路径/大小；mpv 日志不存在时 mpvExists=false） */
@@ -138,8 +147,9 @@ function fmtTs(ts: number | null | undefined): string {
 }
 
 /** 消息气泡：头像（我 / 官）+ 角色与时间行 + 正文。
-    头像用文字而非图片：无额外资源、深浅主题都靠 token 取色。 */
-function MsgBubble({ role, ts, text }: { role: string; ts: number; text: string }) {
+    头像用文字而非图片：无额外资源、深浅主题都靠 token 取色。
+    [lc-2442] v2 消息可带附图（imageIds）→ 懒加载 dataUrl（私有图带鉴权取回）。 */
+function MsgBubble({ role, ts, text, imageIds }: { role: string; ts: number; text: string; imageIds?: string[] }) {
   const admin = role === "admin";
   return (
     <div className={`fbx-msg ${admin ? "admin" : "user"}`}>
@@ -152,7 +162,46 @@ function MsgBubble({ role, ts, text }: { role: string; ts: number; text: string 
           <span className="fbx-msg-time">{fmtTs(ts)}</span>
         </div>
         <div className="fbx-msg-txt">{text}</div>
+        {imageIds && imageIds.length > 0 && <TicketMsgImages ids={imageIds} />}
       </div>
+    </div>
+  );
+}
+
+/** 消息附图（懒加载：进入视口/挂载后逐张取 dataUrl；失败显示占位） */
+function TicketMsgImages({ ids }: { ids: string[] }) {
+  const [urls, setUrls] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let alive = true;
+    for (const id of ids) {
+      if (urls[id]) continue;
+      feedbackImageData(id)
+        .then((r) => {
+          if (alive) setUrls((prev) => ({ ...prev, [id]: r.dataUrl }));
+        })
+        .catch(() => {
+          if (alive) setUrls((prev) => ({ ...prev, [id]: "" }));
+        });
+    }
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ids.join(",")]);
+  if (ids.length === 0) return null;
+  return (
+    <div className="fbx-msg-imgs">
+      {ids.map((id) =>
+        urls[id] ? (
+          <img key={id} className="fbx-msg-img" src={urls[id]} alt="附图" />
+        ) : urls[id] === "" ? (
+          <span key={id} className="fbx-msg-img lost">
+            图已过期
+          </span>
+        ) : (
+          <span key={id} className="fbx-msg-img ph" aria-hidden="true" />
+        ),
+      )}
     </div>
   );
 }
@@ -219,6 +268,11 @@ export function FeedbackPanel({
   const [includeLog, setIncludeLog] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [submitErr, setSubmitErr] = useState("");
+  // [lc-2442] v2 反馈（随社区账号；附图私有桶）—— 未登录社区时提交仍走 v1 匿名工单
+  const [cSession, setCSession] = useState<CommunitySession | null | "loading">("loading");
+  const [attached, setAttached] = useState<PreparedImage[]>([]);
+  const [v2Items, setV2Items] = useState<Fb2Item[] | null>(null);
+  const [v2Err, setV2Err] = useState("");
   // 会话（反馈分区的详情层）
   const [threadOpen, setThreadOpen] = useState(false);
   const [threadId, setThreadId] = useState("");
@@ -338,6 +392,30 @@ export function FeedbackPanel({
     }
   }, [section, fbTab, threadOpen, items, refreshList]);
 
+  // [lc-2442] 面板打开：查社区登录态；已登录则拉 v2 工单列表（与 v1 列表并列展示）
+  const loadV2Items = useCallback(async () => {
+    try {
+      const r = await invoke<{ items: Fb2Item[] }>("feedback_mine_v2");
+      setV2Items(r?.items ?? []);
+      setV2Err("");
+    } catch (e) {
+      setV2Err(String(e));
+      setV2Items(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    void fetchSession().then((s) => {
+      if (!alive) return;
+      setCSession(s);
+      if (s) void loadV2Items();
+    });
+    return () => {
+      alive = false;
+    };
+  }, [loadV2Items]);
+
   // 面板打开即取日志信息（新建视图的“当前日志”提示也要用）
   useEffect(() => {
     void loadLogInfo();
@@ -357,7 +435,10 @@ export function FeedbackPanel({
   const loadThread = useCallback(
     async (id: string) => {
       try {
-        const t = await invoke<FbThread>("feedback_thread", { id });
+        // [lc-2442] v2 工单（fb_ 前缀）走社区账号通道；返回形状与 v1 同构，前端组件零改动
+        const t = await (id.startsWith("fb_")
+          ? invoke<FbThread>("feedback_thread_v2", { id })
+          : invoke<FbThread>("feedback_thread", { id }));
         setThread(t);
         setThreadErr("");
         // [lc-1701] 会话已展开 = 该工单已读：推进本地快照（状态 + 最后消息时间），
@@ -412,6 +493,28 @@ export function FeedbackPanel({
     setSubmitting(true);
     setSubmitErr("");
     try {
+      // [lc-2442] 登录社区账号 → 走 v2（工单随账号、可附图）；未登录 → 原 v1 匿名工单
+      if (cSession && cSession !== "loading") {
+        // 先传图（scope=feedback 私有桶），任一张失败即中止（正文不发出，避免「有文没图」）
+        const imageIds: string[] = [];
+        for (const img of attached) {
+          const up = await uploadImage(img.preparedId, "feedback");
+          imageIds.push(up.id);
+        }
+        const r = await invoke<{ id: string }>("feedback_submit_v2", {
+          message: text,
+          contact: contact.trim() || undefined,
+          includeLog,
+          page: page || undefined,
+          imageIds: imageIds.length > 0 ? imageIds : undefined,
+        });
+        setMsg("");
+        setContact("");
+        setAttached([]);
+        void loadV2Items();
+        openThread(r.id); // v2 工单会话（loadThread 按 fb_ 前缀分流）
+        return;
+      }
       const r = await invoke<{ id: string }>("feedback_submit", {
         message: text,
         contact: contact.trim() || undefined,
@@ -435,7 +538,12 @@ export function FeedbackPanel({
     setSending(true);
     setThreadErr("");
     try {
-      await invoke("feedback_reply", { id: threadId, text });
+      // [lc-2442] v2 工单回复走社区通道
+      if (threadId.startsWith("fb_")) {
+        await invoke("feedback_reply_v2", { id: threadId, text });
+      } else {
+        await invoke("feedback_reply", { id: threadId, text });
+      }
       setReply("");
       // 乐观追加（随后 refetch 校正；refetch 失败也不至于「发了看不到」）
       setThread((prev) =>
@@ -643,6 +751,52 @@ export function FeedbackPanel({
 
               {fbTab === "tickets" ? (
                 <>
+                  {/* [lc-2442] 社区账号工单（v2；登录后出现，与旧匿名工单并列、fb_ 前缀可区分） */}
+                  {cSession && cSession !== "loading" && (
+                    <div className="fbx-v2wrap">
+                      <div className="fbx-v2head">
+                        <span className="fbx-chip">社区账号工单</span>
+                        <button className="fbx-linkbtn" onClick={() => void loadV2Items()}>
+                          刷新
+                        </button>
+                      </div>
+                      {v2Err && (
+                        <div className="fbx-note err" role="alert">
+                          <span>{v2Err}</span>
+                          <button className="fbx-linkbtn" onClick={() => void loadV2Items()}>
+                            重试
+                          </button>
+                        </div>
+                      )}
+                      {v2Items && v2Items.length === 0 && (
+                        <p className="fbx-v2empty">登录后提交的工单会显示在这里（可附图）</p>
+                      )}
+                      {v2Items && v2Items.length > 0 && (
+                        <div className="fbx-list">
+                          {v2Items.map((it) => (
+                            <button
+                              key={it.id}
+                              className="fbx-row"
+                              onClick={() => openThread(it.id)}
+                              aria-label={it.title || "无标题工单"}
+                            >
+                              <span className="fbx-row-main">
+                                <span className="fbx-row-title">{it.title || "（无标题）"}</span>
+                                <span className="fbx-row-metatext">
+                                  提交 {fmtTs(it.createdAt)}
+                                  {it.updatedAt > it.createdAt ? ` · 最后更新 ${fmtTs(it.updatedAt)}` : ""}
+                                  {it.imageCount > 0 ? ` · ${it.imageCount} 张附图` : ""}
+                                </span>
+                              </span>
+                              <span className={`fbx-badge ${badgeCls(it.status)}`}>
+                                {statusText(it.status)}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {listErr && items && items.length > 0 && (
                     <div className="fbx-note err" role="alert">
                       <span>{listErr}</span>
@@ -750,6 +904,11 @@ export function FeedbackPanel({
                         placeholder="描述你遇到的问题或建议（越具体越好）…"
                       />
                       <div className="fbx-count">{msg.trim().length} 字</div>
+
+                      {/* [lc-2442] 附图（社区账号登录后出现；私有桶，仅本人与管理员可见） */}
+                      {cSession && cSession !== "loading" && (
+                        <FeedbackImages images={attached} onChange={setAttached} />
+                      )}
 
                       <label className="fbx-k" htmlFor="fbx-contact">
                         联系方式
@@ -896,7 +1055,7 @@ export function FeedbackPanel({
                   <>
                     <MsgBubble role="user" ts={thread.ticket.ts} text={thread.ticket.message} />
                     {msgs.map((m, i) => (
-                      <MsgBubble key={`${m.ts}-${i}`} role={m.role} ts={m.ts} text={m.text} />
+                      <MsgBubble key={`${m.ts}-${i}`} role={m.role} ts={m.ts} text={m.text} imageIds={m.imageIds} />
                     ))}
                     {msgs.length === 0 && (
                       <p className="fbx-thread-empty">

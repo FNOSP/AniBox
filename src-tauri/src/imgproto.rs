@@ -32,6 +32,8 @@ pub const TMDB_IMG_BASE: &str = "https://tmdb.690075.xyz";
 const BGM_IMG_BASE: &str = "https://lain.bgm.tv";
 /// [lc-1569] BGM 图片镜像（自建，签名轨）：`/img/*` → lain.bgm.tv，边缘缓存 30 天
 const BGM_MIRROR_BASE: &str = "https://bgm.690075.xyz";
+/// [lc-2442] 社区图公开域（anibox-public 自定义域；c/=full t/=thumb，30 天生命周期）
+const CM_IMG_BASE: &str = "https://img.690075.xyz";
 
 fn http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -159,6 +161,18 @@ fn resolve_target(path: &str) -> Result<Target, (u16, String)> {    if path.is_e
         return Ok(Target::Public {
             key: format!("img:tmdb:{rest}"),
             url: format!("{TMDB_IMG_BASE}/img/{rest}"),
+        });
+    }
+    if let Some(rest) = path.strip_prefix("/__cm/") {
+        // [lc-2442] 社区图（img.690075.xyz 公开桶 c/ t/）：必须走本代理 —— 否则
+        // <img> 直连外部 HTTP 图完全绕开 disk_cache，30 天后云端删了本地什么都没有。
+        // rest 形如 "c/img_x.jpg" / "t/img_x.jpg"；私有图（f/）不走这里（raw 端点带鉴权）。
+        if !safe_rel(rest) {
+            return Err((400, "bad community path".into()));
+        }
+        return Ok(Target::Public {
+            key: format!("img:cm:{rest}"),
+            url: format!("{CM_IMG_BASE}/{rest}"),
         });
     }
     if let Some(rest) = path.strip_prefix("/__cover/") {
@@ -585,7 +599,7 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
 
 #[cfg(test)]
 mod tests {
-    use super::{bgm_img_url, fetch_public_image, public_client, resolve_target, BGM_IMG_BASE, BGM_MIRROR_BASE, TMDB_IMG_BASE};
+    use super::{bgm_img_url, fetch_public_image, public_client, resolve_target, BGM_IMG_BASE, BGM_MIRROR_BASE, CM_IMG_BASE, TMDB_IMG_BASE};
 
     /// [lc-2109] 混淆封面解码：XOR 路径（剧果实测）与「已经是图片则不解」两条。
     #[test]
@@ -704,6 +718,14 @@ mod tests {
         assert!(resolve_target("/__tmdb/../secret").is_err(), "必须拒绝 ..");
         assert!(resolve_target("/__tmdb/a//b.jpg").is_err(), "必须拒绝空段");
         assert!(resolve_target("/").is_err());
+        // [lc-2442] 社区图分支：key 带分组段 img:cm:（disk_cache 子限额用），URL 走公开域
+        match resolve_target("/__cm/c/img_ABCDEFGHIJKLMNOPQRSTUVWXYZ1.jpg").expect("应解析") {
+            Target::Public { key, url } => {
+                assert_eq!(key, "img:cm:c/img_ABCDEFGHIJKLMNOPQRSTUVWXYZ1.jpg");
+                assert_eq!(url, format!("{CM_IMG_BASE}/c/img_ABCDEFGHIJKLMNOPQRSTUVWXYZ1.jpg"));            }
+            _ => panic!("应是 Public 目标"),
+        }
+        assert!(resolve_target("/__cm/../f/secret.jpg").is_err(), "社区分支同样拒绝 ..");
     }
 
     /// [lc-1569] BGM 图片两分支（纯函数、不依赖环境）：有密钥 → 镜像 `/img/*`；无 → 直连。

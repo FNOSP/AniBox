@@ -31,7 +31,7 @@ tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "process", "fs"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart"] }
 # [lc-1811] 云盘续签代理：bytes_stream 流式转发（futures-util 是 reqwest stream 的传递依赖，显式声明零新增）
 futures-util = { version = "0.3", default-features = false }
 md5 = "0.7"
@@ -43,7 +43,9 @@ sha1 = "0.10"
 sha2 = "0.10"
 base64 = "0.22"
 # [lc-2081] 短剧封面 HEIC→JPEG 转码的编码端（解码走随包 libde265 DLL，见 heic.rs）
-image = { version = "0.25", default-features = false, features = ["jpeg", "webp", "png"] }
+# [lc-2442] 社区图片上传：+gif/bmp/tiff（解码用户上传的动图/位图；AVIF 明确不支持，
+#   引它要加 C 依赖 ravif）。webp/png/jpeg 此前已有。
+image = { version = "0.25", default-features = false, features = ["jpeg", "webp", "png", "gif", "bmp", "tiff"] }
 # [访问码加密] config.json 的 access_code 落盘为 AES-256-GCM 密文（enc:v1:<base64>）。
 # 只新增 aes-gcm 一个 crate（aes/ghash/aead 均为轻量纯 Rust 实现），不引入重型依赖。
 aes-gcm = "0.10"

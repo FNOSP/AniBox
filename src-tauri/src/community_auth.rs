@@ -91,7 +91,7 @@ fn public_session(s: &StoredSession) -> Value {
 
 // ───────────────────────── HTTP ─────────────────────────
 
-fn net_err(e: &reqwest::Error) -> String {
+pub(crate) fn net_err(e: &reqwest::Error) -> String {
     if e.is_timeout() {
         "社区服务响应超时，请稍后重试".into()
     } else if e.is_connect() {
@@ -102,7 +102,7 @@ fn net_err(e: &reqwest::Error) -> String {
 }
 
 /// v2 统一响应：成功取 `data`；失败取 `error.message`（服务端已是给人看的中文）。
-async fn parse_v2(resp: reqwest::Response) -> Result<Value, String> {
+pub(crate) async fn parse_v2(resp: reqwest::Response) -> Result<Value, String> {
     let status = resp.status();
     let text = resp.text().await.map_err(|e| format!("读取响应失败：{e}"))?;
     let v: Value = serde_json::from_str(&text)
@@ -130,7 +130,7 @@ async fn v2_post(path: &str, payload: &Value, timeout_ms: u64) -> Result<Value, 
 }
 
 /// 带 Bearer 的请求构造器；未登录返回 Err。
-fn authed(app: &AppHandle, rb: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder, String> {
+pub(crate) fn authed(app: &AppHandle, rb: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder, String> {
     let s = read_session(app).ok_or_else(|| "未登录".to_string())?;
     Ok(rb.bearer_auth(crate::config::unseal(&s.token_enc)))
 }

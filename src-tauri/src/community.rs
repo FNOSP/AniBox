@@ -71,6 +71,27 @@ fn fallback_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 /// 取设备码。机器标识可用时随时可再算；不可用时用落盘的随机值。
 ///
 /// 为什么不能每次都现算随机值：那样重装/重启就换身份，用户的历史评论全部找不到。
+/// [lc-2442] 本地暂存/引用 id：img_ + 26 位标准 base32（与 worker.js 的 newId 同形状）。
+pub fn new_img_id() -> String {
+    const B32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let bytes: [u8; 16] = rand::random();
+    let mut val: u32 = 0;
+    let mut bits: u8 = 0;
+    let mut out = String::from("img_");
+    for &b in &bytes {
+        val = (val << 8) | b as u32;
+        bits += 8;
+        while bits >= 5 {
+            out.push(B32[((val >> (bits - 5)) & 31) as usize] as char);
+            bits -= 5;
+        }
+    }
+    if bits > 0 {
+        out.push(B32[((val << (5 - bits)) & 31) as usize] as char);
+    }
+    out
+}
+
 /// [lc-2402] v2 设备码与 v1 同源同盐（设计如此：一台物理机一个码；v2 用它做设备绑定与封禁）。
 pub(crate) fn device_id(app: &tauri::AppHandle) -> String {
     let raw = crate::usage_stats::machine_raw_id_pub();

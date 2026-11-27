@@ -81,3 +81,52 @@ export const fetchDevices = () => invoke<CommunityDevice[]>("community_v2_device
 export const revokeDevice = (id: string) => invoke("community_v2_revoke_device", { id });
 
 export const revokeOtherDevices = () => invoke("community_v2_revoke_others");
+
+/* ── 图片（P2，lc-2442）────────────────────────────── */
+
+/** community_prepare_image 返回（压缩完成后暂存于 Rust 侧，凭 preparedId 上传） */
+export type PreparedImage = {
+  preparedId: string;
+  originalBytes: number;
+  finalBytes: number;
+  w: number;
+  h: number;
+  /** 原始格式名 jpeg|gif|heic|png|webp|bmp|tiff */
+  fmt: string;
+  /** data:image/jpeg;base64 预览（400px） */
+  preview: string;
+};
+
+export const prepareImage = (path: string) => invoke<PreparedImage>("community_prepare_image", { path });
+
+export type UploadedImage = {
+  id: string;
+  url: string | null;
+  thumbUrl: string | null;
+  w: number;
+  h: number;
+  bytes: number;
+  fmt: string;
+};
+
+export const uploadImage = (preparedId: string, scope: "post" | "feedback") =>
+  invoke<UploadedImage>("community_upload_image", { preparedId, scope });
+
+export const discardPrepared = (preparedId: string) =>
+  invoke("community_discard_prepared", { preparedId });
+
+/** 私有图（反馈图）→ data URL（<img src> 直显；需 owner/管理员） */
+export const feedbackImageData = (id: string) =>
+  invoke<{ dataUrl: string; ct: string }>("community_feedback_image_data", { id });
+
+/* ── v2 反馈（P2，lc-2442）────────────────────────── */
+
+/** feedback_mine_v2 的单行 */
+export type Fb2Item = {
+  id: string;
+  title: string;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+  imageCount: number;
+};

@@ -282,6 +282,35 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_notif ON notifications(account_id, created_at DESC);
 
+-- ═══════════════════ 反馈（[lc-2442 补] §4.6 端点对应的表，P2 施工时补入）═══════════════════
+-- 工单随社区账号；附图走 R2 私有桶 f/（90 天生命周期）；会话返回形状与旧 v1 同构。
+CREATE TABLE IF NOT EXISTS feedback_tickets (
+  id         TEXT PRIMARY KEY,                    -- 'fb_' + uuid
+  account_id TEXT NOT NULL,
+  message    TEXT NOT NULL,                       -- 1–4000 字
+  contact    TEXT,
+  log        TEXT,                                -- 脱敏日志尾部（≤2MB 文本）
+  page       TEXT,
+  aid        TEXT,
+  v          TEXT NOT NULL DEFAULT '',
+  os         TEXT NOT NULL DEFAULT '',
+  arch       TEXT NOT NULL DEFAULT '',
+  status     TEXT NOT NULL DEFAULT 'open',        -- open | confirmed | progress | resolved | closed
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fb_acct ON feedback_tickets(account_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS feedback_messages (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticket_id  TEXT NOT NULL REFERENCES feedback_tickets(id) ON DELETE CASCADE,
+  role       TEXT NOT NULL,                       -- user | admin
+  text       TEXT NOT NULL,
+  image_ids  TEXT NOT NULL DEFAULT '[]',          -- JSON 数组
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fbm_ticket ON feedback_messages(ticket_id, created_at ASC);
+
 -- ═══════════════════ 审计（B 方案：全量正文快照，90 天）═══════════════════
 CREATE TABLE IF NOT EXISTS audit_log (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -853,11 +882,28 @@ reqwest = { version = "0.12", default-features = false,
             features = ["json", "rustls-tls", "stream", "multipart"] }
 
 # 多格式解码（AVIF 明确不开：会引入 C 依赖 ravif）
+# [lc-2442 勘误] 项目在 lc-1811 前后已为 image 开过 jpeg/webp/png（heic.rs 等在用），
+# 实际只需补 gif/bmp/tiff —— 体积影响同量级。
 image = { version = "0.25", default-features = false,
           features = ["jpeg", "png", "webp", "gif", "bmp", "tiff"] }
 ```
 
 体积影响：png ≈ +40KB、webp ≈ +60KB、gif ≈ +30KB、bmp/tiff 可忽略。
+
+### 6.2.1 [lc-2442 施工补正] 服务端图片对象的三个硬约束（写代码前必读）
+
+这三条是 P2 实测抓出来的，服务端实现与任何自建实现都必须遵守：
+
+1. **R2 `put` 必须带 `httpMetadata.contentType`**：R2 缺省回 `application/octet-stream`，
+   浏览器 `<img>` 对非 `image/*` 一律拒渲染（imgproto.rs lc-2091 同款教训）——
+   不带 contentType 等于公开域全裂图。
+2. **GIF 对象键用 `.gif` 后缀**（JPEG 用 `.jpg`）：键名要诚实，调试时一眼分辨格式；
+   content-type 由 fmt 决定，但键后缀不说谎能省掉所有「为什么这张是乱码」的排查。
+3. **`image` 0.25 的 `ImageDecoder` 没有 `decode()` 方法**：正确路径是
+   `into_decoder() → orientation()/dimensions() → DynamicImage::from_decoder(decoder)`
+   （from_decoder by value，内部自己 read_image）。网上大量旧教程的
+   `decoder.decode()` 写法在 0.25 编译不过。
+
 
 ### 6.3 token 落盘
 
@@ -1424,3 +1470,5 @@ npx wrangler deploy
 | 日期 | 内容 |
 |---|---|
 | 2026-11-27 | 初版：定稿账号（邮箱+密码+设备）、图片（多格式/1MB/30 天/2GB 兜底）、社区（文字永久）、举报、管理员、90 天审计 |
+| 2026-11-28 | P1 施工（lc-2441）：verify 补 device 参数；部署沿用现有库 + migrate-v1-to-v2.sql；requireAuth 免 ctx |
+| 2026-11-28 | P2 施工（lc-2442）：schema 补 feedback_tickets/messages（§4.6 端点原本没有表）；§6.2.1 服务端图片三硬约束（R2 contentType / GIF 键后缀 / ImageDecoder 无 decode）；Cargo 勘误（webp/png 原已开启） |

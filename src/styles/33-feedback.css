@@ -1483,3 +1483,150 @@ a.fbx-btn {
     animation-duration: 1.6s;
   }
 }
+
+/* ═════════ [lc-2442] 反馈附图（FeedbackImages）+ v2 工单段 + 会话附图 ═════════ */
+
+.fb2imgs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 2px;
+}
+.fb2imgs-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.fb2imgs-card {
+  position: relative;
+  width: 96px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-2);
+  flex: none;
+}
+.fb2imgs-thumb {
+  display: block;
+  width: 96px;
+  height: 64px;
+  object-fit: cover;
+  background: var(--input-bg);
+}
+.fb2imgs-thumb.ph {
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+.fb2imgs-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 6px 5px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.fb2imgs-shrink {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+.fb2imgs-x {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+.fb2imgs-x:hover {
+  background: rgba(0, 0, 0, 0.78);
+}
+.fb2imgs-add {
+  width: 96px;
+  height: 92px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  flex: none;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+.fb2imgs-add:hover {
+  border-color: rgb(var(--accent-rgb) / 0.65);
+  color: var(--text-strong);
+}
+.fb2imgs-err {
+  margin: 0;
+  font-size: 12px;
+  color: #e5484d;
+}
+
+/* 工单列表：社区账号工单段（v2） */
+.fbx-v2wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.fbx-v2head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fbx-v2empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 会话消息附图 */
+.fbx-msg-imgs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.fbx-msg-img {
+  width: 128px;
+  height: 86px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  cursor: default;
+}
+.fbx-msg-img.ph {
+  background: var(--input-bg);
+}
+.fbx-msg-img.lost {
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--input-bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fb2imgs-x,
+  .fb2imgs-add {
+    transition: none;
+  }
+}

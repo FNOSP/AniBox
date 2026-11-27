@@ -36,6 +36,8 @@ mod rtx;
 mod community;
 // [lc-2402] 社区 v2 账号（邮箱+密码 / 邮箱验证码 / 设备会话）：协议见 docs/community-v2-design.md
 mod community_auth;
+// [lc-2442] 社区图片管线（压缩/暂存/上传）：协议见 docs/community-v2-design.md §4.4/§6.5
+mod community_images;
 // [lc-2244] 组件包进程内解压：原先外调 pwsh Expand-Archive，而 pwsh 不是 Windows
 // 自带组件 —— 干净机器上报「启动解压失败: program not found」，下载必然失败。
 mod zip_extract;
@@ -4973,6 +4975,16 @@ pub fn run() {
             community_auth::community_v2_devices,
             community_auth::community_v2_revoke_device,
             community_auth::community_v2_revoke_others,
+            // [lc-2442] 社区图片管线
+            community_images::community_prepare_image,
+            community_images::community_upload_image,
+            community_images::community_discard_prepared,
+            community_images::community_feedback_image_data,
+            // [lc-2442] v2 反馈（随社区账号；附图）
+            feedback::feedback_submit_v2,
+            feedback::feedback_mine_v2,
+            feedback::feedback_thread_v2,
+            feedback::feedback_reply_v2,
             webdav::webdav_accounts,
             webdav::webdav_account_add,
             webdav::webdav_account_del,

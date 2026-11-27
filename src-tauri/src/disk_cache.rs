@@ -42,6 +42,52 @@ const EVICT_TARGET_PERCENT: u64 = 90;
 const META_SUFFIX: &str = ".meta";
 const DATA_SUFFIX: &str = ".bin";
 
+// ── [lc-2442] 分组限额（design §7.9）────────────────────────────────
+// 社区图是最不该长期缓存的一类（云端 30 天就没了），却可能把海报挤出缓存 →
+// 给 img:cm: 前缀单独 256MB 子限额，超出只淘汰社区图，绝不动海报。
+/// 分组 = key 的第二个冒号段：'img:cm:x' → "cm"；'img:tmdb:x' → "tmdb"；无段 → "misc"
+const GROUP_LIMIT_MB: &[(&str, u64)] = &[("cm", 256)];
+/// 社区图写盘失败熔断：连续 3 次 → 10 分钟内只走内存层（磁盘满/杀软拦截时
+/// 每张图都会重下，熔断至少省掉无谓 IO；日志照打，排查有据）。
+const BREAK_FAIL_TIMES: u64 = 3;
+const BREAK_DURATION_MS: u64 = 10 * 60 * 1000;
+static BREAK_FAIL_COUNT: AtomicU64 = AtomicU64::new(0);
+static BREAK_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
+
+fn group_of(key: &str) -> &str {
+    let mut it = key.split(':');
+    it.next(); // "img" / "json"
+    it.next().unwrap_or("misc")
+}
+
+fn group_limit_bytes(group: &str) -> Option<u64> {
+    GROUP_LIMIT_MB
+        .iter()
+        .find(|(g, _)| *g == group)
+        .map(|(_, mb)| mb.saturating_mul(1024 * 1024))
+}
+
+fn note_write_failure(key: &str) {
+    if !key.starts_with("img:cm:") {
+        return; // 熔断只护社区图（全局熔断会让海报反复打 NAS）
+    }
+    let n = BREAK_FAIL_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    if n >= BREAK_FAIL_TIMES {
+        BREAK_UNTIL_MS.store(now_secs() as u64 * 1000 + BREAK_DURATION_MS, Ordering::Relaxed);
+        crate::libmpv::trace(&format!("[cache] 社区图写盘连续失败 {n} 次 → 熔断 10 分钟（只走内存层）"));
+    }
+}
+
+fn note_write_success() {
+    BREAK_FAIL_COUNT.store(0, Ordering::Relaxed);
+}
+
+/// 熔断中 = 只走内存层（true）
+fn disk_broken(key: &str) -> bool {
+    key.starts_with("img:cm:")
+        && BREAK_UNTIL_MS.load(Ordering::Relaxed) > now_secs() as u64 * 1000
+}
+
 /// 内存层条目
 struct MemEntry {
     ct: String,
@@ -283,6 +329,10 @@ pub fn put(key: &str, ct: &str, bytes: &[u8]) {
 /// [lc-123-rev5] 写入并**记下上游 ETag**（key 不变，meta 里多一个 `etag` 字段）。
 pub fn put_full(key: &str, ct: &str, bytes: &[u8], etag: Option<&str>) {
     put_mem(key.to_string(), ct.to_string(), bytes.to_vec());
+    // [lc-2442] 社区图熔断中：只走内存层，不再反复撞坏盘
+    if disk_broken(key) {
+        return;
+    }
     let Some((path, meta_path)) = with_store(|s| {
         let (p, m) = entry_paths(&s.root, key);
         ensure_dir(&p);
@@ -290,9 +340,13 @@ pub fn put_full(key: &str, ct: &str, bytes: &[u8], etag: Option<&str>) {
     }) else {
         return;
     };
-    if std::fs::write(&path, bytes).is_err() {
+    // [lc-2442] 写失败不再静默：打 trace（含 errno）+ 计数熔断（§7.9 隐患二）
+    if let Err(e) = std::fs::write(&path, bytes) {
+        crate::libmpv::trace(&format!("[cache] 写盘失败 {key}: {e}（本次仅内存层有效）"));
+        note_write_failure(key);
         return;
     }
+    note_write_success();
     let now = now_secs();
     let created = now;
     let size = bytes.len() as u64;
@@ -321,6 +375,11 @@ pub fn put_full(key: &str, ct: &str, bytes: &[u8], etag: Option<&str>) {
         s.total = s.total.saturating_sub(old.map(|o| o.size).unwrap_or(0)) + size;
     });
     // ③ 写入后按上限淘汰（超限才动，正常路径这里是一次原子读 + 比较）
+    // [lc-2442] 先按组限额（社区图 256MB 独立池，超出只淘社区图），再全局 LRU
+    let g = group_of(key);
+    if let Some(cap) = group_limit_bytes(g) {
+        enforce_group_limit(g, cap, Some(key));
+    }
     enforce_limit(Some(key));
 }
 
@@ -346,6 +405,49 @@ fn put_mem(key: String, ct: String, bytes: Vec<u8>) {
             }
         }
     });
+}
+
+/// [lc-2442] 组内 LRU：组占用超 cap → 淘到 cap 的 90%；与 enforce_limit 同构但只动本组条目。
+fn enforce_group_limit(group: &str, cap_bytes: u64, just_written: Option<&str>) {
+    let mut removed = 0usize;
+    with_store(|s| {
+        let mut group_total = 0u64;
+        let mut keys: Vec<(String, u64)> = Vec::new();
+        for (k, e) in s.index.iter() {
+            if group_of(k) != group {
+                continue;
+            }
+            group_total += e.size;
+            keys.push((k.clone(), e.accessed));
+        }
+        if group_total <= cap_bytes {
+            return;
+        }
+        let target = cap_bytes * EVICT_TARGET_PERCENT / 100;
+        keys.sort_by_key(|(_, a)| *a);
+        for (k, _) in keys {
+            if group_total <= target {
+                break;
+            }
+            if Some(k.as_str()) == just_written {
+                continue;
+            }
+            if let Some(e) = s.index.remove(&k) {
+                let _ = std::fs::remove_file(&e.path);
+                let (_, meta) = entry_paths(&s.root, &k);
+                let _ = std::fs::remove_file(meta);
+                s.total = s.total.saturating_sub(e.size);
+                if let Some(m) = s.mem.remove(&k) {
+                    s.mem_bytes = s.mem_bytes.saturating_sub(m.bytes.len() as u64);
+                }
+                group_total = group_total.saturating_sub(e.size);
+                removed += 1;
+            }
+        }
+    });
+    if removed > 0 {
+        crate::libmpv::trace(&format!("[cache] 组「{group}」超子限额，LRU 淘汰 {removed} 条"));
+    }
 }
 
 /// LRU 淘汰：超上限 → 按最后访问时间升序删到上限的 90%；**磁盘条目被删时内存副本同步删掉**。

@@ -1007,6 +1007,114 @@ pub async fn feedback_export_diagnostics(
     Ok(json!({ "path": path.to_string_lossy(), "dir": dir.to_string_lossy() }))
 }
 
+// ───────────────────────── v2 反馈（[lc-2442] 随社区账号；附图走 R2 私有桶） ─────────────────────────
+// 与 v1（stats.690075.xyz 工单制）并存：旧工单只读展示、自然消亡；新工单落
+// inbox.690075.xyz /v2/feedback，按社区账号归属（换设备不丢）。日志附件的
+// 脱敏/环境块与 v1 完全同一条管线（read_log_tail + env_block + redact）。
+
+/// 提交 v2 工单（message / contact / log / page / imageIds）。需社区登录。
+#[tauri::command]
+pub async fn feedback_submit_v2(
+    app: AppHandle,
+    message: String,
+    contact: Option<String>,
+    include_log: bool,
+    page: Option<String>,
+    image_ids: Option<Vec<String>>,
+) -> Result<Value, String> {
+    let message = message.trim().to_string();
+    if message.is_empty() {
+        return Err("反馈内容不能为空".into());
+    }
+    let mut log_field: Option<String> = None;
+    if include_log {
+        if let Some(raw) = read_log_tail() {
+            log_field = Some(format!("{}\n{}", env_block(page.as_deref()), redact(&raw)));
+        }
+    }
+    let mut body = json!({
+        "message": message,
+        "v": env!("CARGO_PKG_VERSION"),
+        "os": os_label(),
+        "arch": arch_label(),
+    });
+    if let Some(c) = contact.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        body["contact"] = json!(c);
+    }
+    if let Some(p) = page.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        body["page"] = json!(p);
+    }
+    if let Some(l) = &log_field {
+        body["log"] = json!(l);
+    }
+    if let Some(ids) = image_ids.filter(|v| !v.is_empty()) {
+        body["imageIds"] = json!(ids);
+    }
+    let rb = crate::community_auth::authed(
+        &app,
+        crate::community::http()
+            .post(format!("{}/v2/feedback", crate::community::base_url()))
+            .timeout(Duration::from_secs(20)),
+    )?;
+    let resp = rb.json(&body).send().await.map_err(|e| net_err(&e))?;
+    crate::community_auth::parse_v2(resp).await
+}
+
+/// v2 工单列表（本账号，最近 50 条）。
+#[tauri::command]
+pub async fn feedback_mine_v2(app: AppHandle) -> Result<Value, String> {
+    let rb = crate::community_auth::authed(
+        &app,
+        crate::community::http()
+            .get(format!("{}/v2/feedback/mine", crate::community::base_url()))
+            .timeout(Duration::from_secs(TIMEOUT_SECS)),
+    )?;
+    let resp = rb.send().await.map_err(|e| net_err(&e))?;
+    crate::community_auth::parse_v2(resp).await
+}
+
+/// v2 工单会话（返回形状与 v1 feedback_thread 同构：{ ticket, messages }）。
+#[tauri::command]
+pub async fn feedback_thread_v2(app: AppHandle, id: String) -> Result<Value, String> {
+    let id = id.trim().to_string();
+    if !id.starts_with("fb_") {
+        return Err("工单号不合法".into());
+    }
+    let rb = crate::community_auth::authed(
+        &app,
+        crate::community::http()
+            .get(format!("{}/v2/feedback/{}", crate::community::base_url(), id))
+            .timeout(Duration::from_secs(TIMEOUT_SECS)),
+    )?;
+    let resp = rb.send().await.map_err(|e| net_err(&e))?;
+    crate::community_auth::parse_v2(resp).await
+}
+
+/// v2 工单追加回复。
+#[tauri::command]
+pub async fn feedback_reply_v2(app: AppHandle, id: String, text: String) -> Result<Value, String> {
+    let id = id.trim().to_string();
+    if !id.starts_with("fb_") {
+        return Err("工单号不合法".into());
+    }
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("回复内容不能为空".into());
+    }
+    let rb = crate::community_auth::authed(
+        &app,
+        crate::community::http()
+            .post(format!("{}/v2/feedback/{}/reply", crate::community::base_url(), id))
+            .timeout(Duration::from_secs(20)),
+    )?;
+    let resp = rb
+        .json(&json!({ "text": text }))
+        .send()
+        .await
+        .map_err(|e| net_err(&e))?;
+    crate::community_auth::parse_v2(resp).await
+}
+
 // ───────────────────────── 测试 ─────────────────────────
 
 #[cfg(test)]

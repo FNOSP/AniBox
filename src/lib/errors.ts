@@ -68,13 +68,23 @@ export function isAuthExpired(raw: unknown): boolean {
   return classifyError(raw) === "auth-expired";
 }
 
+/* [lc-2427] macOS 15+ 本地网络权限提示。后端（fnapi / access_code）只在 macOS 拼上这段，
+   这里识别它并**保留**，否则下面的 `friendlyNetwork` 会把连接类错误统一压成
+   「无法连接服务器，请确认 NAS 地址与网络连接」，用户就永远看不到真正该改的那个开关。
+   文案与 `src-tauri/src/fnapi.rs::local_network_denied_hint` 保持一致。 */
+const LOCAL_NETWORK_HINT = /本地网络/;
+const LOCAL_NETWORK_TIP = "macOS 15+ 还需在「系统设置 → 隐私与安全性 → 本地网络」允许 AniBox";
+
 function friendlyNetwork(text: string): string {
+  const macTip = LOCAL_NETWORK_HINT.test(text) ? `。${LOCAL_NETWORK_TIP}` : "";
   if (/服务器地址格式无效/.test(text)) return "服务器地址格式无效，请检查填写";
   if (/访问码会话重建失败/.test(text)) return "访问码会话重建失败，请在登录页重新填写访问码";
   if (/无法连接服务器|econnrefused|connection refused/i.test(text)) {
-    return "无法连接服务器，请确认 NAS 地址与网络连接";
+    return `无法连接服务器，请确认 NAS 地址与网络连接${macTip}`;
   }
-  if (/连接超时|timeout|etimedout/i.test(text)) return "连接超时，网络不可达或 NAS 未响应";
+  if (/连接超时|timeout|etimedout/i.test(text)) {
+    return `连接超时，网络不可达或 NAS 未响应${macTip}`;
+  }
   return "网络连接异常，请检查网络后重试";
 }
 

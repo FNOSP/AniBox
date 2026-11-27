@@ -79,6 +79,7 @@ export function upsertLensFilter(spec: LensFilterSpec): boolean {
   return true;
 }
 
+
 /** 运行时能力探测：不支持 SVG 滤镜折射时走降级外观 */
 export function supportsBackdropFilterUrl(): boolean {
   if (typeof CSS === "undefined" || !CSS.supports) return false;

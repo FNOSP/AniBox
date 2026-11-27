@@ -29,7 +29,7 @@
 
 /* ── 栏体 ─────────────────────────────────────────────────────────
    不能在这里写 overflow:hidden —— 它会把 backdrop-filter 的采样区域一起裁掉
-   （边缘出现硬切）。滑块放大后的裁切交给 .nav-cap-thumb 自己的 border-radius。 */
+   （边缘出现硬切）。滑块/指示器自己有 border-radius，不需要容器裁切。 */
 .nav-cap {
   position: relative;
   display: flex;
@@ -111,85 +111,88 @@
   -webkit-backdrop-filter: blur(20px) saturate(1.8);
 }
 
-/* ── 滑块轨道 ─────────────────────────────────────────────────────
-   --lx        滑块横向位移（槽位宽 × 连续索引）
-   --lpress    按压进度 0..1
-   --lscaleX/Y 形变（含速度挤压）
-   全部由 JS 的 rAF 每帧写入，**不经过 React state**。 */
-.nav-cap-track {
-  --lx: 0px;
-  --lpress: 0;
-  --lscaleX: 1;
-  --lscaleY: 1;
-  position: relative;
-  z-index: 1;
-  display: flex;
-  height: 100%;
-  flex: 1;
-}
+/* ── 滑块（指示器）───────────────────────────────────────────────
+   [lc-2433] 动画回到 lc-123-rev6 那一套（用户明确要求）：绝对定位在等宽槽位上，
+   translateX(0|100%) 在两槽间搬家，缓动 --ease-spring（带过冲）+ --dur-page = "水滴"黏滞感。
+   液态玻璃视觉保留（玻璃层 + 滑块本体），但**去掉了弹簧状态机 / 拖拽 / 按压鼓包**。
 
-/* 滑块：宽 = 一槽（容器去掉左右 4px 内缩后的一半）。 */
-.nav-cap-thumb {
+   结构：.nav-cap-ind（定位 + 位移） > i（视觉 + 切换重放缩放）。
+   两槽等宽：宽度 calc((100% - 8px) / 2)（100% 是栏内宽 96 − 左右 padding 8）。 */
+.nav-cap-ind {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 50%;
-  height: 100%;
-  transform: translateX(var(--lx)) scaleX(var(--lscaleX)) scaleY(var(--lscaleY));
-  transform-origin: center center;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc((100% - 8px) / 2);
+  z-index: 1;
   pointer-events: none;
+  transform: translateX(0);
+  transition: transform var(--dur-page) var(--ease-spring);
   will-change: transform;
 }
 
-/* 滑块本体 —— **静止态没有任何玻璃效果**，这是原版行为，不是省事：
-   LiquidBottomTabs.kt 里滑块的 effects 是 `lens(10dp*progress, 14dp*progress)`，
-   highlight 是 `Highlight.Default.copy(alpha = progress)`，
-   shadow 是 `Shadow(alpha = progress)`，innerShadow 是 `InnerShadow(radius = 8dp*progress, alpha = progress)`，
-   onDrawSurface 先画 `白 10% @alpha(1-progress)` 再画 `黑 3% @alpha(progress)`。
-   progress = pressProgress，静止时为 0 ⇒ 折射/高光/阴影**全部为零**，只剩那层 白 10%。
-   所以静止态就是一枚很淡的白色药丸；液态效果全部在"按下那一刻长出来"，
-   这正是它看起来"活"的原因 —— 常驻透镜反而会把它变成一块普通的毛玻璃。 */
-.nav-cap-thumb-lens {
-  position: absolute;
-  inset: 0;
+.nav-cap[data-side="discover"] .nav-cap-ind {
+  transform: translateX(100%);
+}
+
+/* 滑块本体 = 液态玻璃药丸。
+   静止态不叠折射（原版 Kyant 的滑块 lens 由 pressProgress 驱动，静止时恒为 0）：
+   液态观感由面板那层常驻折射提供，滑块只做"半透明白药丸 + 柔和高光"。 */
+.nav-cap-ind i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  position: relative;
   border-radius: var(--r-full);
-  background: rgba(255, 255, 255, 0.1);
-  transition:
-    background var(--dur-tap) var(--ease),
-    box-shadow var(--dur-tap) var(--ease);
-}
-
-[data-theme="light"] .nav-cap-thumb-lens {
-  background: rgba(0, 0, 0, 0.1);
-}
-
-/* 按压：折射滤镜长出来（原版 progress 驱动 lens 0→满；浏览器侧改不了 scale，
-   所以走预生成的"按下"滤镜 —— 两者在满进度时参数完全一致：lens(10, 14) 带色散）。
-   同时：底色换成 黑 3%（"变透"）、阴影与内阴影出现（InnerShadow radius 8dp）。 */
-.nav-cap[data-pressed="on"] .nav-cap-thumb-lens {
-  /* 顺序同面板：先饱和再折射（原版 vibrancy → lens） */
-  backdrop-filter: saturate(1.4) url(#anibox-lens-thumb-press);
-  -webkit-backdrop-filter: saturate(1.4) url(#anibox-lens-thumb-press);
-  background: rgba(0, 0, 0, 0.03);
+  /* [lc-2433] 白色 10% 在深色玻璃上几乎看不见边界 —— 实测填纯色验证过形状本身是
+     完整药丸（左右都圆），但 10% 白的边缘对比度太低，视觉上会读成"右边是方的"。
+     提到 18% 并加一层柔和外描边，让药丸轮廓清晰可辨；
+     液质感仍由面板那层折射 + 内高光提供。 */
+  background: rgba(255, 255, 255, 0.18);
   box-shadow:
-    0 3px 10px rgba(0, 0, 0, 0.18),
-    inset 0 -2px 6px rgba(0, 0, 0, 0.18);
+    0 3px 10px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16);
 }
 
-/* 滑块高光（原版 Highlight.Default 随按下出现）：45° 柔和白色斜光 */
-.nav-cap-thumb-spec {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  opacity: var(--lpress);
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.55) 0%,
-    rgba(255, 255, 255, 0.1) 38%,
-    rgba(255, 255, 255, 0) 62%
-  );
-  mix-blend-mode: plus-lighter;
+[data-theme="light"] .nav-cap-ind i {
+  background: rgba(0, 0, 0, 0.1);
+  box-shadow:
+    0 3px 10px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+
+/* [lc-2433] 这里**不用 scaleX 缩放**，与 lc-123-rev6 有一处必要偏离：
+   原版 i 没有 border-radius（白底靠容器视觉），横向压扁看不出来；
+   我们这层是圆角药丸，非等比缩放会把两端圆头压成直边 —— 动画途中看起来像方块
+   （实测 t≈35ms 截图两端出现直边）。液态玻璃的形状本身就是签名，
+   宁可少这一下"黏滞"，也不能让它在切换途中变方。
+   animation 名保留（关键帧为空）以便日后回调，同时保证每次切换都重放。 */
+.nav-cap[data-side="home"] .nav-cap-ind i {
+  animation: navBlobHome var(--dur-tap) var(--ease-enter);
+}
+
+.nav-cap[data-side="discover"] .nav-cap-ind i {
+  animation: navBlobDiscover var(--dur-tap) var(--ease-enter);
+}
+
+@keyframes navBlobHome {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes navBlobDiscover {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(1);
+  }
 }
 
 /* ── 按钮 ─────────────────────────────────────────────────────────
@@ -256,18 +259,15 @@
 }
 
 /* ── 无障碍：减少动效 ─────────────────────────────────────────────
-   JS 侧已把弹簧全部落位（snapChannel），这里再关掉 CSS 过渡，双保险。 */
+   瞬时切换、不缩放、不复位（与 lc-123-rev6 的守卫一致）。 */
 @media (prefers-reduced-motion: reduce) {
-  .nav-cap-l,
-  .nav-cap-thumb,
-  .nav-cap-thumb-lens {
+  .nav-cap-ind {
     transition: none;
   }
+  .nav-cap[data-side="home"] .nav-cap-ind i,
+  .nav-cap[data-side="discover"] .nav-cap-ind i,
   .nav-cap-l.on svg {
     animation: none;
-  }
-  .nav-cap-thumb {
-    transform: translateX(var(--lx));
   }
 }
 

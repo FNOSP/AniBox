@@ -6,6 +6,28 @@
 
   function send(m) { if (host) host.postMessage(JSON.stringify(m)); }
 
+  /* ── 视口自适应（[lc-2426] 安装器缩放防护）──
+     页面按 780×520 设计稿绝对定位排版。WPF 与 WebView2 对 DPI 的认知可能不一致
+     （用户 2K@125% 实测：窗口物理 780×520，Chromium 却按 125% 光栅化 → CSS 视口
+     只有 624×416），此时 min-width + overflow:hidden 会把第三张特性卡和整行底部
+     按钮直接剪掉。这里按实测视口加等比缩放下限：视口小于设计稿就整体缩放，绝不裁切。
+     C# 侧还会先尝试把窗口放大到 CSS 视口够用（SetupUi.EnsureDesignViewport），
+     正常情况那里已修好，此处 z≈1 只是兜底。 */
+  var DESIGN_W = 780, DESIGN_H = 520;
+  function fitStage() {
+    var el = document.documentElement;
+    /* zoom 必须清零后再测：zoom 生效时 innerWidth 是「CSS 视口 ÷ zoom」，
+       不清零会让重复调用不断叠乘把自己缩到看不见。 */
+    el.style.zoom = '';
+    var vw = el.clientWidth || window.innerWidth;
+    var vh = el.clientHeight || window.innerHeight;
+    if (!vw || !vh) return;
+    var z = Math.min(vw / DESIGN_W, vh / DESIGN_H);
+    if (z < 0.999) el.style.zoom = z.toFixed(4);
+  }
+  fitStage();
+  window.addEventListener('resize', fitStage);
+
   /* ── Toast ── */
   var toastTimer = null;
   function toast(msg) {

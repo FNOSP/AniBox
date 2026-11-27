@@ -7,6 +7,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
@@ -21,6 +22,38 @@ internal static class Dwm {
     public static extern int SetWindowLong(IntPtr hwnd, int index, int value);
     [DllImport("user32.dll")]
     public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")]
+    public static extern bool GetWindowRect(IntPtr hwnd, out RECT r);
+    [DllImport("user32.dll")]
+    static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll")]
+    static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO mi);
+    [DllImport("user32.dll")]
+    public static extern int GetDpiForSystem();
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int Left, Top, Right, Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct MONITORINFO {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
+    // [lc-2426] 取窗口所在显示器的工作区(物理像素)。缩放自愈要判断放大后会不会
+    // 超出屏幕, 用物理像素比较才能绕开 WPF 与 WebView2 那套互相矛盾的 DPI 认知。
+    public static bool TryGetWorkArea(IntPtr hwnd, out RECT work) {
+        work = default(RECT);
+        try {
+            var mi = new MONITORINFO { cbSize = Marshal.SizeOf(typeof(MONITORINFO)) };
+            var mon = MonitorFromWindow(hwnd, 2 /*MONITOR_DEFAULTTONEAREST*/);
+            if (mon == IntPtr.Zero || !GetMonitorInfo(mon, ref mi)) return false;
+            work = mi.rcWork;
+            return true;
+        } catch { return false; }
+    }
 }
 
 // 读取子进程累计写入字节数(GetProcessIoCounters)。
@@ -537,6 +570,8 @@ namespace AniBoxSetupUi {
                 + (m.ContainsKey("x") ? " at=" + m["x"] + "," + m["y"] + " t=" + (m.ContainsKey("t") ? m["t"] : "") : ""));
             switch (type) {
                 case "ready":
+                    // [lc-2426] 页面已就绪：先核对 CSS 视口够不够 780×520，不够就放大窗口
+                    EnsureDesignViewport();
                     if (_uninstallMode) {
                         Post(MiniJson.Obj("type", "meta", "mode", "uninstall",
                             "version", _version, "installed", _version,
@@ -663,6 +698,125 @@ namespace AniBoxSetupUi {
 
         void Post(string json) {
             if (_wv != null && _wv.CoreWebView2 != null) _wv.CoreWebView2.PostWebMessageAsJson(json);
+        }
+
+        // ── [lc-2426] 缩放自愈: 让窗口物理尺寸与 WebView2 的 CSS 视口对齐 ──
+        // 症状(用户 2K@125% 实拍): 第三张特性卡在窗口右缘被切断、底部「开始安装」
+        // 整行不见, 而 y316 的状态条刚好可见 —— 说明页面按 780×520 排版, CSS 视口
+        // 却只有 624×416 = 780/1.25。也就是 WPF 按 96dpi 给了 780×520 物理尺寸,
+        // Chromium 仍按 125% 光栅化。lc-1766 只把 manifest 改 System aware, 但当
+        // 两套 DPI 认知不一致时这条路并不成立。
+        // 修法: 不猜 DPI, 直接读页面报上来的真实 CSS 视口, 按需要的比例放大窗口
+        // 物理像素。放大后 Chromium 的 CSS 视口随之变大, 若仍不够会再来一轮,
+        // 最多 3 轮收敛; 全程不依赖任何 DPI 假设。
+        const int DesignW = 780, DesignH = 520;
+        int _fitRounds;
+
+        // 诊断开关（仅调试用）: --force-phys=780x520 在测量前把窗口物理尺寸压到指定值,
+        // 用来在「DPI 认知本来就一致」的机器上也能真跑一遍放大链路
+        // （例如 150% 机器压到 780×520 物理 → CSS 视口只剩 520×347 → 必须放大）。
+        void ApplyForcePhys() {
+            string spec = Args.Get(_launchArgs, "force-phys", "");
+            if (string.IsNullOrEmpty(spec)) return;
+            try {
+                var parts = spec.Split('x', 'X');
+                if (parts.Length != 2) return;
+                int w, h;
+                if (!int.TryParse(parts[0], out w) || !int.TryParse(parts[1], out h)) return;
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(_win).Handle;
+                Dwm.RECT wr;
+                Dwm.GetWindowRect(hwnd, out wr);
+                const uint SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
+                Dwm.SetWindowPos(hwnd, IntPtr.Zero, wr.Left, wr.Top, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+                Log("fit: --force-phys imposed " + w + "x" + h + " (debug)");
+            } catch (Exception ex) { Log("fit: force-phys failed: " + ex.Message); }
+        }
+
+        void EnsureDesignViewport() {
+            if (_fitRounds >= 3 || _win == null) return;
+            var c = _wv != null ? _wv.CoreWebView2 : null;
+            if (c == null) return;
+            _fitRounds++;
+            if (_fitRounds == 1) ApplyForcePhys();   // 只在第一轮前干预, 后续轮次测真实值
+            try {
+                // 页面侧 CSS 视口（含 zoom 后的有效值由 JS 自行处理，这里只要原始量）
+                string js = "(function(){return JSON.stringify({w:window.innerWidth,h:window.innerHeight,dpr:window.devicePixelRatio||1});})()";
+                var t = c.ExecuteScriptAsync(js);
+                t.ContinueWith(task => {
+                    if (task.Status != TaskStatus.RanToCompletion || task.Result == null) return;
+                    var m = MiniJson.Parse(UnwrapJsString(task.Result));
+                    string sw, sh;
+                    if (!m.TryGetValue("w", out sw) || !m.TryGetValue("h", out sh)) return;
+                    double cssW, cssH;
+                    if (!double.TryParse(sw, out cssW) || !double.TryParse(sh, out cssH)) return;
+                    if (cssW <= 0 || cssH <= 0) return;
+                    if (cssW >= DesignW && cssH >= DesignH) {
+                        Log("fit: css viewport " + cssW + "x" + cssH + " already ok (round " + _fitRounds + ")");
+                        return;
+                    }
+                    // 需要放大 = 设计稿 / 当前 CSS 视口
+                    double needW = DesignW / cssW, needH = DesignH / cssH;
+                    Dispatcher.BeginInvoke(new Action(() => GrowWindowForViewport(needW, needH, cssW, cssH)));
+                });
+            } catch (Exception ex) { Log("fit script: " + ex.Message); }
+        }
+
+        static string UnwrapJsString(string s) {
+            if (string.IsNullOrEmpty(s)) return "";
+            s = s.Trim();
+            // ExecuteScriptAsync 返回值是 JSON 字面量：字符串结果会带外层引号并转义
+            if (s.Length >= 2 && s[0] == '"' && s[s.Length - 1] == '"') {
+                s = s.Substring(1, s.Length - 2);
+                s = s.Replace("\\\"", "\"").Replace("\\\\", "\\");
+            }
+            return s;
+        }
+
+        void GrowWindowForViewport(double needW, double needH, double cssW, double cssH) {
+            try {
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(_win).Handle;
+                Dwm.RECT wr, work;
+                if (!Dwm.GetWindowRect(hwnd, out wr)) return;
+                int physW = wr.Right - wr.Left, physH = wr.Bottom - wr.Top;
+                // 用窗口**自身**的 DPI 换算 DIP，不能用 GetDpiForSystem：多屏下窗口在副屏时
+                // 系统 DPI 与窗口 DPI 不是一个值，换算错了会把窗口尺寸又设回去。
+                double winDpi = 1.0;
+                try { winDpi = System.Windows.Media.VisualTreeHelper.GetDpi(_win).DpiScaleX; } catch { }
+
+                // 目标物理尺寸：按比例放大，并保证不超过显示器工作区
+                int wantW = (int)Math.Ceiling(physW * needW);
+                int wantH = (int)Math.Ceiling(physH * needH);
+                bool hasWork = Dwm.TryGetWorkArea(hwnd, out work);
+                if (hasWork) {
+                    int availW = work.Right - work.Left, availH = work.Bottom - work.Top;
+                    if (wantW > availW) wantW = availW;
+                    if (wantH > availH) wantH = availH;
+                }
+                if (wantW <= physW && wantH <= physH) {
+                    Log("fit: cannot grow further (phys " + physW + "x" + physH +
+                        " work=" + (hasWork ? (work.Right - work.Left) + "x" + (work.Bottom - work.Top) : "?") +
+                        " need=" + needW.ToString("0.000") + "x" + needH.ToString("0.000") + ")");
+                    return;
+                }
+                // 居中重摆：用物理像素绝对定位，绕开 WPF 的 DIP 换算
+                int x = hasWork ? work.Left + Math.Max(0, ((work.Right - work.Left) - wantW) / 2) : wr.Left;
+                int y = hasWork ? work.Top + Math.Max(0, ((work.Bottom - work.Top) - wantH) / 2) : wr.Top;
+                const uint SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
+                Dwm.SetWindowPos(hwnd, IntPtr.Zero, x, y, wantW, wantH, SWP_NOZORDER | SWP_NOACTIVATE);
+                // 同步 WPF 的 Width/Height（DIP），否则 WPF 下次布局会按旧值把窗口压回去
+                _win.Width = wantW / winDpi;
+                _win.Height = wantH / winDpi;
+                Log("fit: css=" + cssW + "x" + cssH + " need=" + needW.ToString("0.000") + "x" +
+                    needH.ToString("0.000") + " phys " + physW + "x" + physH + " -> " + wantW + "x" + wantH +
+                    " (winDpi=" + winDpi.ToString("0.00") + " sysDpi=" + Dwm.GetDpiForSystem() +
+                    " cssNeeded=" + DesignW + "x" + DesignH + ", round " + _fitRounds + ")");
+                // 窗口变大后重新量一次，必要时再放一轮
+                Dispatcher.BeginInvoke(new Action(() => {
+                    var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
+                    timer.Tick += (s2, e2) => { timer.Stop(); EnsureDesignViewport(); };
+                    timer.Start();
+                }), DispatcherPriority.Background);
+            } catch (Exception ex) { Log("fit grow: " + ex.Message); }
         }
 
         void StartInstall(string mode) {

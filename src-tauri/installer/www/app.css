@@ -4,9 +4,12 @@
 /* hidden 属性必须赢过任何 display 声明(许可弹层曾是 display:flex, 压掉 hidden
    后变成看不见的全屏点击拦截层 —— 全部按钮点不动的元凶之一, 勿删) */
 [hidden] { display: none !important; }
-/* [lc-1762] 缩放防御：视口按 100% 铺满（min 兜住设计稿尺寸），WebView2 视口与
-   设计尺寸不一致的 DPI/多屏场景不再留白或裁切；布局锚点自动跟随实际视口。 */
-html, body { width: 100%; height: 100%; min-width: 780px; min-height: 520px; overflow: hidden; }
+/* [lc-1762] 缩放防御：视口按 100% 铺满，布局锚点自动跟随实际视口。
+   [lc-2426] 必须去掉 min-width/min-height：它们配合 overflow:hidden 会在视口小于
+   设计稿时**按 780×520 排版再把右侧与底部剪掉**（用户 2K@125% 实测：第三张特性卡
+   被右缘切断、整行底部按钮消失）。改为由 app.js 的 fitStage() 做等比缩放兜底，
+   C# 侧 EnsureDesignViewport() 还会先把窗口放大到 CSS 视口够用。 */
+html, body { width: 100%; height: 100%; overflow: hidden; }
 body { font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif; background: #f6f9ff; }
 
 /* ── 舞台: 淡蓝渐变 + 柔焦光斑 + 噪点 ── */

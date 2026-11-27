@@ -8,14 +8,16 @@
     根治 `tauri build` 偶发 "os error 32 / 另一个程序正在使用此文件" 的问题：
 
     1. 从 secrets/ 读取并注入构建期密钥（已设置的保留，绝不打印值）。
-    2. 构建前只清理「构建工具」残留进程（cargo / rustc / makensis / link）。
-       anibox.exe 属于用户软件，默认不结束；检测到只提示关闭，需显式 -StopApp 才会结束。
-    3. 失败且属于文件占用类错误时，等待并清理后重试，最多 3 次；其它错误立即失败。
+    2. 构建前清理残留进程：anibox.exe（打包期间它会锁住构建产物，
+       [用户要求 2026-11-27] 检测到直接自动结束，不再提示人工关闭）+ 构建工具
+       残留（cargo / rustc / makensis / link）。
+    3. 失败时自动清理残留进程后重试，最多 3 次；占用类错误必重试，
+       其它错误若连续两次文本相同（确定性错误）才放弃。
     4. 成功后把 NSIS 安装包复制到 release/，打印路径、大小、SHA-256。
     5. 全程追加写入 release/build.log（带时间戳，不覆盖历史）。
 
 .PARAMETER StopApp
-    允许脚本结束正在运行的 anibox.exe（默认不结束，只提示）。
+    已废弃（保留兼容 GUI 旧调用）：现在默认就会自动结束 anibox.exe。
 
 .PARAMETER MaxAttempts
     最大构建尝试次数，默认 3。
@@ -156,27 +158,24 @@ function Stop-BuildToolProcesses {
 }
 
 function Assert-AppNotRunning {
-    # anibox.exe 是用户软件，默认绝不自动结束。
+    # [用户要求 2026-11-27] 打包期间 anibox.exe 会锁住构建产物：检测到直接自动
+    # 结束，不再要求人工关闭（此前「检测到只提示」的策略已废弃）。
     $app = @(Get-Process -Name 'anibox' -ErrorAction SilentlyContinue)
     if ($app.Count -eq 0) {
         return
     }
     $pids = ($app | ForEach-Object { $_.Id }) -join ', '
-    if ($StopApp) {
-        Write-Log "检测到 anibox.exe (PID $pids)，已指定 -StopApp，正在结束它。" 'WARN'
-        $app | Stop-Process -Force
-        Start-Sleep -Seconds 2
-        return
-    }
-    Write-Log "检测到 anibox.exe 正在运行 (PID $pids)，它会锁住 src-tauri\target 下的构建产物。" 'ERROR'
-    Write-Log "请先关闭 AniBox 后重新运行；或重新运行并加 -StopApp 让脚本结束它。" 'ERROR'
-    throw 'AniBox 正在运行：请关闭它，或使用 -StopApp。'
+    Write-Log "检测到 anibox.exe (PID $pids) 正在运行，会锁住 src-tauri\target 构建产物，自动结束。" 'WARN'
+    $app | Stop-Process -Force
+    Start-Sleep -Seconds 2
 }
 
 # --------------------------------------------------------------- build logic
 $RetryablePatterns = @(
     'os error 32',
+    'os error 5',
     '另一个程序正在使用此文件',
+    '拒绝访问',
     'Access is denied'
 )
 
@@ -229,10 +228,12 @@ Write-Log '命令：npm run tauri build -- --bundles nsis'
 
 $buildSucceeded = $false
 $attempt        = 0
+$lastErrorText  = ''
 
 while ($attempt -lt $MaxAttempts -and -not $buildSucceeded) {
     $attempt++
     Write-Section "构建尝试 $attempt / $MaxAttempts"
+    Assert-AppNotRunning
     Stop-BuildToolProcesses -Reason "第 $attempt 次构建前清理"
 
     $attemptStart = Get-Date
@@ -255,14 +256,27 @@ while ($attempt -lt $MaxAttempts -and -not $buildSucceeded) {
 
     Write-Log "第 $attempt 次构建失败（exit $exitCode），用时 $([int]$elapsed.TotalSeconds) 秒。" 'ERROR'
 
-    if (-not (Test-RetryableError $text)) {
-        Write-Log '非文件占用类错误，立即失败，不重试。' 'ERROR'
+    # [用户要求 2026-11-27] 失败一律自动清理残留进程后重试，不再按错误类别「立即失败」；
+    # 唯一例外是连续两次错误文本完全相同且非占用类 —— 那是确定性错误（如代码 bug），
+    # 重试不会好，及时停下。
+    $retryable  = Test-RetryableError $text
+    $deterministic = (-not $retryable) -and ($text -eq $lastErrorText)
+    $lastErrorText = $text
+
+    if ($deterministic) {
+        Write-Log '连续两次相同且非占用类错误，判定为确定性错误，不再重试。' 'ERROR'
         break
     }
 
     if ($attempt -lt $MaxAttempts) {
-        Write-Log "检测到文件占用类错误，等待 $RetryDelaySeconds 秒后清理构建工具残留并重试。" 'WARN'
+        if ($retryable) {
+            Write-Log "检测到文件占用类错误，等待 $RetryDelaySeconds 秒后自动清理残留进程并重试。" 'WARN'
+        }
+        else {
+            Write-Log "非占用类错误，仍自动清理残留进程并重试（最多 $MaxAttempts 次）。" 'WARN'
+        }
         Start-Sleep -Seconds $RetryDelaySeconds
+        Assert-AppNotRunning
         Stop-BuildToolProcesses -Reason "第 $attempt 次失败后重试清理"
     }
 }

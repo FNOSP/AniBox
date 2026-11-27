@@ -45,7 +45,6 @@ import { DUR, prefersReducedMotion } from "../../lib/motion";
 import { useRefresh } from "../../hooks/useRefresh";
 import { BgmCharacter, BgmComment, BgmEpisodeRow, BgmMatch, BgmPerson, BgmRelated, BgmReview, BgmTag, Episode, MediaItem, MediaSpecs, MediaVersion, PersonTarget, PlayItem, Season, TmdbCreditPerson, TmdbCredits } from "../../types";
 
-
 /* ══════════════════ 选集显示样式（用户可切换，localStorage 持久化） ══════════════════
    · num = 纯数字（1 2 3）
    · ep  = 第 N 集（默认）
@@ -401,7 +400,6 @@ function looksLikeSeason(name: string, n: number): boolean {
   if (s.includes(`${n}nd season`) || s.includes(`${n}rd season`) || s.includes(`${n}th season`)) return true;
   return false;
 }
-
 
 export function DetailView({
   base,
@@ -2111,7 +2109,6 @@ export function DetailView({
     }
   }, [episodes, bgm]);
 
-
   // [lc-106] 独立 mpv 窗口模式：点播放直接拉起独立 mpv（与主仓库一致），页面留在详情页
   const [playNote, setPlayNote] = useState("");
   const [playing, setPlaying] = useState(false);
@@ -2269,6 +2266,28 @@ export function DetailView({
   /* [lc-2257] 杂志风左栏 overview 的补充数据：关键词 / 别名（TMDB 现成字段） */
   const editorialKeywords = Array.isArray(tmdb?.keywords) ? (tmdb.keywords as string[]) : [];
   const editorialAliases = Array.isArray(tmdb?.aliases) ? (tmdb.aliases as string[]) : [];
+  /* [lc-2412] 影院版式（polaris）不显示「角色」与「更多」两页（用户要求「这个模式下详情，
+     更多和角色删掉」）。**只过滤 polaris**，不动 tabIds 本身 —— 原版式仍然需要这两页，
+     所以做成"给 polaris 一份专属的标签列表"，而不是从全局 tabIds 里删。
+     面板体不用动：editorialTabsBody 按 activeTab 条件渲染，标签没了就永远激活不到。 */
+  const pdtTabIds = tabIds.filter((id) => id !== "more" && id !== "extra");
+  const pdtActiveTab = pdtTabIds.includes(activeTab) ? activeTab : "overview";
+  const pdtTabsNavEl = (
+    <nav className="dseg dv2-seg" role="tablist">
+      {pdtTabIds.map((id) => (
+        <button
+          key={id}
+          role="tab"
+          aria-selected={pdtActiveTab === id}
+          className={`dseg-btn${pdtActiveTab === id ? " active" : ""}`}
+          onClick={() => setTab(id)}
+        >
+          {TAB_LABEL[id]}
+        </button>
+      ))}
+    </nav>
+  );
+
   const tabsNavEl = (
     <nav className="dseg dv2-seg" role="tablist">
       {tabIds.map((id) => (
@@ -2382,14 +2401,27 @@ export function DetailView({
     </div>
   );
   /* 杂志风左栏的标签体：overview = 纯简介（标签已在数据格、剧照在层叠海报，不重复）；
-     其余面板与经典版完全一致。bodyRef 复用 —— 两个分支互斥挂载，ref 不会冲突。 */
-  const editorialTabsBody = (
+     其余面板与经典版完全一致。bodyRef 复用 —— 两个分支互斥挂载，ref 不会冲突。
+
+     [lc-2412] 改成接受 tab 参数：影院版式（polaris）裁掉了「角色/更多」两页，
+     它的 activeTab 要用归一化后的 pdtActiveTab；editorial 版式仍用原始 activeTab。
+     不做成参数的话，传 pdtActiveTab 只影响外层 `activeTab` 字段，
+     面板体自己仍按原始 activeTab 渲染 —— 「角色」页签没了但面板还在。 */
+  
+  /* 杂志风左栏的标签体：overview = 纯简介（标签已在数据格、剧照在层叠海报，不重复）；
+     其余面板与经典版完全一致。bodyRef 复用 —— 两个分支互斥挂载，ref 不会冲突。
+
+     [lc-2412] 改成接受 tab 参数：影院版式（polaris）裁掉了「角色/更多」两页，
+     它的 activeTab 要用归一化后的 pdtActiveTab；editorial 版式仍用原始 activeTab。
+     不做成参数的话，传 pdtActiveTab 只影响外层 `activeTab` 字段，
+     面板体自己仍按原始 activeTab 渲染 —— 「角色」页签没了但面板还在。 */
+  const renderEditorialTabsBody = (tab: string) => (
     <div
       ref={bodyRef}
       className={`dbody dv2-body mved-tabbody${tabAnim ? " view-in" : ""}`}
       onScroll={onDetailScroll}
     >
-      {activeTab === "overview" && (
+      {tab === "overview" && (
         <div className="dpanel mved-overview">
           {overview ? (
             <p className="mved-lead">{overview}</p>
@@ -2417,7 +2449,7 @@ export function DetailView({
           )}
         </div>
       )}
-      {activeTab === "related" && (
+      {tab === "related" && (
         <RelatedTab
           related={related}
           relatedGroups={relatedGroups}
@@ -2430,7 +2462,7 @@ export function DetailView({
           onOpenTmdb={onOpenTmdb}
         />
       )}
-      {activeTab === "more" && (
+      {tab === "more" && (
         <CastTab
           cast={castResolved}
           castFrom={castFrom}
@@ -2451,8 +2483,8 @@ export function DetailView({
           onOpenPerson={onOpenPerson}
         />
       )}
-      {activeTab === "extra" && <ExtraTab tmdb={tmdb} tmdbDone={tmdbDone} />}
-      {activeTab === "reviews" && (
+      {tab === "extra" && <ExtraTab tmdb={tmdb} tmdbDone={tmdbDone} />}
+      {tab === "reviews" && (
         <ReviewsTab
           loadMoreReviews={loadMoreReviews}
           retryReviews={retryReviews}
@@ -2463,7 +2495,7 @@ export function DetailView({
           reviewsMoreBusy={reviewsMoreBusy}
         />
       )}
-      {activeTab === "comments" && (
+      {tab === "comments" && (
         <CommentsTab
           comments={comments}
           commentsBusy={commentsBusy}
@@ -2473,7 +2505,7 @@ export function DetailView({
           retryComments={retryComments}
         />
       )}
-      {activeTab === "community" && (
+      {tab === "community" && (
         <CommunityTab
           mediaType={isMovie ? "movie" : "tv"}
           tmdbId={hasTmdb ? Number(tmdbAnchor.tmdbId) : null}
@@ -2665,9 +2697,11 @@ export function DetailView({
             crew,
             recommendations: tmdbRecs,
             tags: bgmTags,
-            tabsNav: tabsNavEl,
-            tabsBody: editorialTabsBody,
-            activeTab,
+            tabsNav: pdtTabsNavEl,
+            tabsBody: renderEditorialTabsBody(pdtActiveTab),
+            /* [lc-2412] activeTab 也要归一：若用户上次停在「角色/更多」，切到影院版式后
+               那个页签已经不存在了，传原值会让 tabsBody 渲染一个没有对应按钮的面板。 */
+            activeTab: pdtActiveTab,
             onBack,
             onOpenPerson,
             onOpenTmdb,
@@ -2774,7 +2808,7 @@ export function DetailView({
           }
           /* [lc-2252] 标签条/标签体渲染在左栏简介位（经典版同款交互） */
           tabsNav={tabsNavEl}
-          tabsBody={editorialTabsBody}
+          tabsBody={renderEditorialTabsBody(activeTab)}
           /* [lc-2255] 主创信息块的数据源 */
           crew={crew}
           /* [lc-2258] kicker 第二段从条目类型动态取（之前硬编码「动画长片」） */
@@ -3495,7 +3529,6 @@ export function DetailView({
     </main>
   );
 }
-
 
 /* ────────────────────────── TMDB 扩展信息（剧照） ──────────────────────────
    剧照/头像走 fntvimg 代理的 TMDB 图片域（Rust 反代镜像 + **落盘三级缓存**，见 tmdbImg() 与 imgproto.rs）。

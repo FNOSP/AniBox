@@ -904,6 +904,13 @@ html:not(.perf) .pdt-close {
   display: block;
   pointer-events: none;
 }
+/* 视图切换键的图标：用户给的原始 viewBox 是 1024×1024、图形本身偏宽
+   （实占约 846×676），按 14px 正方形排会上下留出空白显得偏小，
+   所以单独给 15×15 并让它按比例居中铺满。 */
+.pdt-ep-nav-btn.pdt-ep-view-btn svg {
+  width: 15px;
+  height: 15px;
+}
 .pdt-ep-nav-btn:hover:not(:disabled) {
   background: #fff;
   transform: scale(1.06);
@@ -923,6 +930,20 @@ html.perf .pdt-ep-nav-btn {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   box-shadow: none;
+}
+
+/* ── [lc-2401] 视图切换键的「已切换」态 ──────────────────────────────────────
+   它与两个翻页键同尺寸同底色（36px 白圆），所以不能靠"变成另一个颜色"来标状态
+   （会破坏这一组的一致性）。改成**白底上压一圈深色内环** —— 物理世界里按钮被
+   按进去的样子，与翻页键的纯白平面区分得开，又不引入新的颜色。
+   图标本身是双向箭头，指向不表达"当前是哪一种"，状态只能靠这个内环 + tooltip。 */
+.pdt-ep-view-btn[aria-pressed="true"] {
+  box-shadow:
+    inset 0 0 0 2px rgba(28, 28, 30, 0.55),
+    0 2px 8px rgba(0, 0, 0, 0.18);
+}
+html.perf .pdt-ep-view-btn[aria-pressed="true"] {
+  box-shadow: inset 0 0 0 2px rgba(28, 28, 30, 0.55);
 }
 /* 季选择胶囊：Polaris 是服务器下拉（`.pw-detail-server-btn` 12px / 白 8% 底）。
    这里铺开成胶囊行，视觉取同一档参数。 */
@@ -1309,6 +1330,217 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
 }
 .pdt-ep-card:hover .pdt-ep-meta { opacity: 1; }
 .pdt-ep-meta:hover { background: rgba(0, 0, 0, 0.62); color: #fff; }
+
+/* ══════════ [lc-2401] 纯数字网格（选集第二种形态）══════════════════════════
+   用户要求：点切换键把下面的剧集卡换成「纯数字显示」，样式要统一原风格。
+
+   参数来源与取舍：
+     · 布局取原版式 `.dv2e-grid`（22-detail-v2.css:781）—— auto-fill / minmax 64px /
+       gap 8px / 方块 1:1 / 集号居中，这套已经在老版式里被验证过能一屏看全一季。
+     · 配色**不能**照搬 .dv2e-cell 那套 token（--bg-3 / --line / --text-strong）：
+       详情页恒为深色底（.pdt 有 color-scheme: dark），而 token 跟着**应用主题**走 ——
+       浅色主题下 --bg-3 是 rgba(255,255,255,.9)、--text-strong 是近黑，
+       落在黑背景上会出现一片白方块 + 黑字，和影院版式完全脱节。
+       所以这里改用影院版自己的深色口径（白 8% 底 / 白 14% 描边 / 白字），
+       与 .pdt-season-pill、.pdt-source-card 同一档。
+     · 正在看 = 白底黑字（与季胶囊 .active、播放药丸同一套"反白"语言，
+       而不是老版式的 accent 渐变 —— 影院版式里从不出现强调色）。
+     · 已看 = 弱化（白 40% 字 + 更淡的底），进度 = 底部 3px 白条（老版式同规格）。
+   网格态没有横向滚动，所以头部两个翻页键会置灰（见 TSX 的 disabled 条件）。 */
+.pdt-ep-grid-wrap {
+  /* 横向**不加**内边距：相邻的横排 scroller 是 `padding 0 40px + margin 0 -40px`，
+     净偏移为 0（卡片左边缘正好落在控制台内容区左边缘，与「选集」标题对齐）。
+     这里给 40px 就会比卡片缩进多出 40px，两态切换时整块内容会左右跳。 */
+  padding: 4px 0 8px;
+  margin: 0;
+}
+.pdt-ep-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 8px;
+}
+.pdt-ep-cell {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.92);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  user-select: none;
+  overflow: hidden;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s cubic-bezier(0.25, 1, 0.5, 1);
+}
+.pdt-ep-cell:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.26);
+}
+.pdt-ep-cell:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.7);
+  outline-offset: 2px;
+}
+/* 正在看：反白（与 .pdt-season-pill.active 的「白底黑字」同一语言） */
+.pdt-ep-cell.playing {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: transparent;
+  color: #000;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+}
+/* 已看：弱化，但仍可点（不是禁用） */
+.pdt-ep-cell.seen:not(.playing) {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.4);
+}
+.pdt-ep-cell-no {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.15;
+  text-align: center;
+}
+
+/* 已看开关（与卡片态 .pdt-ep-check 同语义，缩到 18px 适配方块）：
+   已看(.on) 常显白球；未看隐身，hover/键盘聚焦才浮现半透明勾 ——
+   方块只有 64px，常显会盖住集号。 */
+.pdt-ep-cell-mark {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.62);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease;
+}
+.pdt-ep-cell-mark.on {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.92);
+  color: #111;
+}
+.pdt-ep-cell:hover .pdt-ep-cell-mark,
+.pdt-ep-cell:focus-within .pdt-ep-cell-mark {
+  opacity: 0.85;
+}
+.pdt-ep-cell-mark:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+}
+/* 正在看（白底）上反色，否则白球贴白底看不见 */
+.pdt-ep-cell.playing .pdt-ep-cell-mark {
+  color: rgba(0, 0, 0, 0.6);
+}
+.pdt-ep-cell.playing .pdt-ep-cell-mark.on {
+  background: #111;
+  color: #fff;
+}
+.pdt-ep-cell.playing .pdt-ep-cell-mark:hover {
+  background: rgba(0, 0, 0, 0.18);
+  color: #000;
+}
+
+/* 单集元数据入口：hover/聚焦才出现（与卡片态的 ⋯ 一致） */
+.pdt-ep-cell-meta {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease;
+}
+.pdt-ep-cell:hover .pdt-ep-cell-meta,
+.pdt-ep-cell:focus-within .pdt-ep-cell-meta {
+  opacity: 1;
+}
+.pdt-ep-cell-meta:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+.pdt-ep-cell.playing .pdt-ep-cell-meta {
+  color: rgba(0, 0, 0, 0.55);
+}
+.pdt-ep-cell.playing .pdt-ep-cell-meta:hover {
+  background: rgba(0, 0, 0, 0.12);
+  color: #000;
+}
+
+/* 进度：底部 3px 细条（与老版式 .dv2e-cell-prog 同规格） */
+.pdt-ep-cell-prog {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.pdt-ep-cell-prog i {
+  display: block;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.8);
+  transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.pdt-ep-cell.playing .pdt-ep-cell-prog {
+  background: rgba(0, 0, 0, 0.12);
+}
+.pdt-ep-cell.playing .pdt-ep-cell-prog i {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+/* 网格骨架（加载中）：与卡片骨架同一个 shimmer，方块形态 */
+.pdt-ep-cell-sk {
+  pointer-events: none;
+  border-color: transparent;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.09) 50%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+  background-size: 200% 100%;
+  animation: pdt-shimmer 2.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
 
 /* 骨架（加载中）：与 Polaris 的 shimmer 同参数 */
 .pdt-ep-card-sk { pointer-events: none; }
@@ -1862,6 +2094,9 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
   .pdt-specs-grid { grid-template-columns: 1fr; }
   .pdt-spec-group { padding: 18px 20px; }
   .pdt-episodes-scroller { padding: 20px 8px 40px; margin: 0 -8px -20px; }
+  /* [lc-2401] 网格横向内边距本来就是 0（对齐 scroller 的净偏移），窄屏不用改；
+     这里只收上下的气口，与卡片态一致。 */
+  .pdt-ep-grid-wrap { padding: 4px 0 8px; }
   .pdt-stills-scroller,
   .pdt-cast-scroller,
   .pdt-recs-scroller { padding: 20px 8px; margin: -20px -8px; }
@@ -1894,6 +2129,9 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
   .pdt-play,
   .pdt-icon-btn,
   .pdt-ep-img,
+  .pdt-ep-cell,
+  .pdt-ep-cell-mark,
+  .pdt-ep-cell-meta,
   .pdt-rec-img,
   .pdt-c-unit,
   .pdt-still-card {

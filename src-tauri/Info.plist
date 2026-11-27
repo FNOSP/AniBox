@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      [lc-2427] macOS 本地网络权限用途说明。
+
+      背景：macOS 15 Sequoia 起「连接局域网地址」被纳入隐私管辖（TN3179）——
+      AniBox 用 reqwest 直连 NAS 的 http://<私网 IP>:<端口> 属于「outgoing TCP to a
+      local network address」，未获授权时**连接被系统拦掉**，表现为 reqwest 的
+      is_connect() 失败，弹的却是「请确认 NAS 地址与端口 / 防火墙放行」这类网络提示。
+      实测用户反馈：Sonoma 下同一账号同一地址可登录，升级系统后立刻无法登录。
+
+      Tauri 默认 Info.plist 不含该键（bundler 只写 CFBundle* / LS* / NSHighResolutionCapable），
+      而本应用是 ad-hoc 签名的 GUI App（非 launchd 守护进程、非 root、非终端子进程），
+      没有 TN3179 里的任何自动豁免，因此必须显式声明。
+
+      合并方式：tauri-cli 会自动读取与 tauri.conf.json 同目录的 Info.plist，
+      按「顶层键覆盖」合并进默认 plist（见 tauri-cli interface/rust.rs 的 merge_plist），
+      不需要在 tauri.*.conf.json 里额外配置 infoPlist。
+    -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>AniBox 需要访问本地网络，以连接你在局域网内的飞牛 NAS（fnOS）服务器，用于浏览媒体库与播放视频。</string>
+</dict>
+</plist>

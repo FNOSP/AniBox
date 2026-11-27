@@ -367,7 +367,30 @@ async fn proxy_public(app: AppHandle, key: &str, url: &str) -> Response<Vec<u8>>
 
 /// [lc-1569] 免鉴权图片的**网络抓取**（不含磁盘缓存；拆出来让 live 测试能直击网络）。
 /// 镜像 URL（bgm.690075.xyz/img/*）自动挂准入三件套；直连 URL（lain.bgm.tv / TMDB 镜像）原样发。
+///
+/// [lc-2411] **5xx 退避重试**（1 次 / 600ms）。起因：用户报「剧照图片怎么裂开」。
+///   日志实测 `tmdb.690075.xyz` 对同一批路径会**间歇性回 502** ——
+///   连续 5 个 w780 全 502，紧接着同一批又全部 200；单独 curl 复测也全是 200。
+///   属于上游 CDN 回源抖动，隔几百毫秒重试一次基本都能成。
+///   原来只有 NAS 分支有 busy 限流重试（lc-1765），TMDB / BGM 这条公共路径完全没有 ——
+///   一次抖动就永久裂到用户重开页面（失败不写盘，但这一轮渲染已经裂了）。
+///   只重试 502（缓存层映射后只剩它代表"上游 5xx / 网络错误"；4xx 映射成原码，不重试）。
 async fn fetch_public_image(url: &str) -> Result<(String, Vec<u8>), (u16, String)> {
+    match fetch_public_image_once(url).await {
+        Ok(v) => Ok(v),
+        Err((status, msg)) => {
+            if status != 502 {
+                return Err((status, msg));
+            }
+            crate::libmpv::trace(&format!("[img] 上游 5xx，600ms 后重试一次: {msg}"));
+            tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+            fetch_public_image_once(url).await
+        }
+    }
+}
+
+/// 单次抓取（不含重试外壳，由 `fetch_public_image` 调用 ≥1 次）。
+async fn fetch_public_image_once(url: &str) -> Result<(String, Vec<u8>), (u16, String)> {
     let mut rb = public_client().get(url).header("accept", "image/*,*/*");
     if url.starts_with(BGM_MIRROR_BASE) {
         if let Some(secret) = bgm_secret() {

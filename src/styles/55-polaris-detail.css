@@ -1788,6 +1788,24 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
 .pdt-stills { margin-top: 40px; }
 .pdt-cast { margin-top: 40px; }
 .pdt-recs { margin-top: 40px; }
+/* [lc-2411] 标题与下方卡片之间要有可见间距（用户：「标题和下面卡片要加距离」）。
+   **为什么原来贴在一起（实测 0px）**：横排 scroller 用了 Polaris 的
+   `padding: 24px 40px + margin: -24px -40px` —— 上下内边距与负边距互相抵消，
+   净位移为 0。而 `.pdt-section-head` 的 `margin-bottom: 20px` 正好落进这个
+   被抵消掉的区间里，于是标题与卡片严丝合缝贴住。
+   Polaris 原版也是这套值，它没暴露是因为它的 section-header 与 scroller 之间
+   多一层 `-rail-container` 包装（不受负边距影响）；我们省掉了那层直接相邻，
+   负边距就把 margin 吃掉了。
+
+   修法：把 `.pdt-section-head` 的 20px 之外**再加上被抵消的量**
+   （剧照 24、主演 20、推荐 24），让净可见间距回到 20px。
+   只加在这三条次级横排内（`:is()` 收窄），不动版本条那处 —— 版本条的
+   scroller 负边距是 `-20px -20px 0`（底边为 0），本来就没有这个问题。 */
+.pdt-stills > .pdt-section-head,
+.pdt-cast > .pdt-section-head,
+.pdt-recs > .pdt-section-head {
+  margin-bottom: 40px; /* 20（设计意图）+ 20/24（被负边距吃掉的部分）取整为 40 */
+}
 
 /* 剧照滚动条（Polaris @8364）：flex / gap 16 / padding 24px 40px / margin -24px -40px /
    **overscroll-behavior-inline: contain**（横向滚到底不会带着页面一起滚） */

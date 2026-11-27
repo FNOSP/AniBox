@@ -1067,6 +1067,56 @@ html.perf .pdt-ep-view-btn[aria-pressed="true"] {
 .pdt-episodes-scroller::-webkit-scrollbar,
 .pdt-rail-scroller::-webkit-scrollbar { display: none; }
 
+/* ── [lc-2403] 横排边缘渐隐（用户要求：卡片不要直接截断）─────────────────────
+   问题：`overflow-x: auto` 把滚出去的卡片一刀切在容器边上，硬边很难看，
+   也分不清"这里结束了"还是"后面还有"。
+
+   Polaris 的做法是固定百分比（@27600 `linear-gradient(to right, transparent 0%,
+   black 10%, black 90%, transparent 100%)`）—— **这里不照搬**：
+   我们的 scroller 带 `margin: 0 -40px` 负边距补偿，容器比内容列宽出 80px，
+   固定 10% 在 1600px 上就是 160px，会淡掉将近半张卡。
+
+   改成两层：
+   ① **宽度用固定像素**（`--pdt-fade`），与容器宽度无关，宽屏窄屏观感一致；
+   ② **方向按实际滚动位置给**（data-fade，由 useRailArrows 算）：
+        none（两侧都到头 / 内容不足一屏）→ 不加 mask，卡片保持完整
+        end（在开头，右边还有）        → 只淡右边
+        start（滚到底，左边还有）      → 只淡左边
+        both                            → 两侧都淡
+      只在"确实还有内容"的那一侧淡出 —— 否则首尾卡会凭空缺一块，像渲染坏了。
+
+   渐隐起点落在容器边缘：scroller 的 40px 内边距让卡片静止位比容器边缘内缩 40px，
+   所以 --pdt-fade 里有 40px 是"空走"，真正吃到卡片上的部分从 40px 之后开始。
+   96px 里约 56px 落在卡面上，够成一道柔边又不至于把卡吃掉。 */
+.pdt-episodes-scroller {
+  --pdt-fade: 96px;
+}
+.pdt-episodes-scroller[data-fade="end"] {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--pdt-fade)), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - var(--pdt-fade)), transparent 100%);
+}
+.pdt-episodes-scroller[data-fade="start"] {
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 var(--pdt-fade));
+  mask-image: linear-gradient(to right, transparent 0%, #000 var(--pdt-fade));
+}
+.pdt-episodes-scroller[data-fade="both"] {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    #000 var(--pdt-fade),
+    #000 calc(100% - var(--pdt-fade)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    #000 var(--pdt-fade),
+    #000 calc(100% - var(--pdt-fade)),
+    transparent 100%
+  );
+}
+/* data-fade="none"：无规则 —— 不加 mask，卡片边缘保持干净（内容不足一屏的常见情况） */
+
 /* 剧集卡（Polaris @8124 + [lc-2397] 版式改造）：
      flex 0 0 clamp(260px,19.8vw,380px) / radius clamp(16px,1.23vw,24px)
    [lc-2397] 卡片从「图上叠字」改成**纵向两段**：封面在上、标题与简介在图外下方

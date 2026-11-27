@@ -13,10 +13,22 @@ import { useCallback, useEffect, useState, type RefObject } from "react";
 /** 判定容差（亚像素布局下 scrollLeft 常带小数，差 1px 内视为到头）。 */
 const EDGE = 2;
 
+/** [lc-2403] 边缘渐隐方向 —— 「哪一侧还有滚出去的内容」。
+ *   · none  = 两侧都到头（含内容不足一屏）→ **完全不淡出**
+ *   · start = 只有左侧还有（已滚到底）→ 左侧淡出
+ *   · end   = 只有右侧还有（在开头）→ 右侧淡出
+ *   · both  = 两侧都有 → 两侧淡出
+ *
+ * 为什么不固定「两端都淡」：内容不足一屏时也淡，首尾两张卡会凭空缺一块，
+ * 看起来像渲染坏了。渐隐只该表达「这边还有，可以滚」。
+ * 也不照抄 Polaris @27600 的固定 10%/90%：我们的 scroller 带 40px 负边距补偿，
+ * 固定百分比在宽屏上会淡掉将近半张卡。这里改成按**实际到头状态**着色。 */
+export type RailFade = "none" | "start" | "end" | "both";
+
 export function useRailArrows(
   ref: RefObject<HTMLElement | null>,
   deps: unknown[] = [],
-): { atStart: boolean; atEnd: boolean; scrollBy: (dir: -1 | 1) => void } {
+): { atStart: boolean; atEnd: boolean; scrollBy: (dir: -1 | 1) => void; fade: RailFade } {
   const [atStart, setAtStart] = useState(true);
   const [atEnd, setAtEnd] = useState(true);
 
@@ -57,5 +69,15 @@ export function useRailArrows(
     [ref],
   );
 
-  return { atStart, atEnd, scrollBy };
+  /* [lc-2403] 渐隐方向由「还没到头的那一侧」决定 */
+  const fade: RailFade =
+    atStart && atEnd
+      ? "none"
+      : atStart
+        ? "end"
+        : atEnd
+          ? "start"
+          : "both";
+
+  return { atStart, atEnd, scrollBy, fade };
 }

@@ -43,7 +43,7 @@ export function PolarisEpisodes({ m }: { m: PolarisModel }) {
   const [view, setView] = useState<PdtEpView>(readPdtEpView);
   /* 切换时视图容器会被换掉（横排 scroller ↔ 网格），拖到 deps 里让 RailArrows
      重新挂监听 —— 否则它听的是已经 unmount 的旧节点，atStart/atEnd 永远是旧值。 */
-  const { atStart, atEnd, scrollBy } = useRailArrows(scrollerRef, [
+  const { atStart, atEnd, scrollBy, fade } = useRailArrows(scrollerRef, [
     m.episodes.length,
     m.seasonIdx,
     view,
@@ -249,6 +249,10 @@ export function PolarisEpisodes({ m }: { m: PolarisModel }) {
           <div
             className="pdt-episodes-scroller"
             ref={scrollerRef}
+            /* [lc-2403] 边缘渐隐：哪一侧还有内容就淡哪一侧（用户要求「不要直接截断」）。
+               方向由 useRailArrows 的 fade 给出；两侧都到头时 fade="none"，
+               卡片保持完整 —— 否则首尾卡会凭空缺一块。 */
+            data-fade={fade}
             onWheel={() => {
               touchedRef.current = true;
             }}

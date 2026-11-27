@@ -854,7 +854,7 @@ html:not(.perf) .pdt-close {
 }
 /* [lc-2404] 选集是控制台的**第一个**区块时，上方三份竖向留白叠加：
      hero padding-bottom 18 + console padding-top 40 + 选集 margin-top 20 = 106px，
-   而下方「选集→文件位置条」只有 48px（`.pdt-filebar` 的 margin-top）——
+   而下方「选集→技术规格」只有 48px（`.pdt-specs` 的 margin-top）——
    上下差一倍多（用户截图指出第一块红框间距太大，要求做成上下一致）。
 
    实测目标：下侧 48px 是硬基准（规格块的 margin-top，也是全站其他区块的呼吸量）。
@@ -868,7 +868,7 @@ html:not(.perf) .pdt-close {
    （多版本、有路径时），那时选集不是首块、本该保留正常 margin。
    由 TSX 按数据显式给 `.pdt-episodes-first`，比 DOM 位置判得准。 */
 .pdt-episodes.pdt-episodes-first {
-  margin-top: -38px;
+  margin-top: -10px;
 }
 /* [lc-2399] 头部左对齐：摘要在「选集」右边（用户要求）。
    [lc-2400] 右端重新有内容了（翻页圆钮），但**不用 space-between** ——
@@ -1647,31 +1647,26 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
   width: 100%;
 }
 
-/* ══════════ 文件位置条（[lc-2405] 取代原「技术规格 4 列网格 + 展开区」）══════
-   用户要求（截图是展开后的「视频」「音频」两个大块）：
-     「下面的两个大块去掉，长条的展开去掉，保留长条，内容信息改为显示文件位置」
-   —— 4 列规格网格与展开区全部删除，只留原来那条玻璃长条，内容换成当前版本的文件路径。
-
-   为什么删得掉：4 列网格里的信息（分辨率 / 编码 / 位深 / 大小 / 音频 / 容器）
-   在选集上方的版本卡和播放器自己的轨道信息里都有；展开区 12 行里近一半是
-   「—」（截图里帧率 / 基色 / 色彩空间 / 转移特性全空），排成两栏表格
-   反而稀释了真正有值的那几行。而**文件位置在别处完全看不到** ——
-   排查「这集读的到底是哪个文件」时必须能查到，所以它最值得占这条长条。
-
-   视觉沿用原长条的玻璃板配方（`main.css:7005`：50% 白底 + inset 0.7px 高光 +
-   inset 0.7px 黑 10% 描边 + 0 14px 30px 投影 + blur(20px) saturate(1.7)），
-   高度也沿用 min-height 52 + radius 14，位置不变 —— 用户看到的是"同一条长条，
-   内容变了"，不是"换了个控件"。
-   **用 div 而非 button**：它不再可点，长得像按钮却点不动比普通信息条更误导。 */
-.pdt-filebar {
+/* ══════════ 技术规格（4 列玻璃网格）════════════════════════════════════════
+   Polaris @6878 `.pw-detail-info-panel`：margin-top 48px / 背景阴影模糊全 none
+   @6885 `-specs-grid`：repeat(4,1fr) / gap 20 / align-items stretch
+   @6891 `-spec-group`：flex column / justify-content center / gap 8 / padding 24px 28px
+   @7005 玻璃板三层阴影 + radius 14 */
+.pdt-specs {
+  margin-top: 48px;
+}
+.pdt-specs-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+  align-items: stretch;
+}
+.pdt-spec-group {
   display: flex;
-  align-items: center;
-  gap: 16px;
-  width: 100%;
-  margin-top: 20px;
-  min-height: 52px;
-  padding: 14px 24px;
-  box-sizing: border-box;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 28px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.5);
   box-shadow:
@@ -1680,36 +1675,123 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
     0 14px 30px rgba(0, 0, 0, 0.18);
   backdrop-filter: blur(20px) saturate(1.7) brightness(1);
   -webkit-backdrop-filter: blur(20px) saturate(1.7) brightness(1);
+  transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1), background 0.2s;
 }
-/* 标签：13px/700/黑 55%（沿用原规格组头的档位，长条里读起来是同一套语言） */
-.pdt-filebar-k {
-  flex: 0 0 auto;
+.pdt-spec-group:hover {
+  background: rgba(255, 255, 255, 0.58);
+  transform: translateY(-2px);
+}
+/* 组头（Polaris @6912）：13px / 700 / 大写 / 1px 字距 / 黑 55% */
+.pdt-spec-head {
   font-size: 13px;
   font-weight: 700;
   color: rgba(0, 0, 0, 0.55);
+  text-transform: uppercase;
   letter-spacing: 1px;
-  white-space: nowrap;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-/* 路径：13px/500/黑 88% + 等宽数字；单行省略（路径通常很长，不能撑破长条） */
-.pdt-filebar-v {
-  flex: 1 1 auto;
-  min-width: 0;
+/* 值（Polaris @6924）：20px / 600 / 黑 88% / 0.2px 字距 */
+.pdt-spec-val {
+  font-size: 20px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.88);
+  letter-spacing: 0.2px;
+  line-height: 1.2;
+}
+/* 标签（Polaris @6932）：13px / 500 / 黑 55% */
+.pdt-spec-lbl {
   font-size: 13px;
   font-weight: 500;
-  color: rgba(0, 0, 0, 0.88);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  /* 路径里斜杠/下划线多，等宽排更整齐；中文路径也能正常显示（font-variant 只作用于数字） */
-  font-variant-numeric: tabular-nums;
+  color: rgba(0, 0, 0, 0.55);
 }
-@media screen and (max-width: 640px) {
-  /* 窄屏：标签与路径改成上下两行（长路径横排放不下，挤成一坨不如换行） */
-  .pdt-filebar {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 4px;
-    padding: 12px 18px;
+/* 技术徽标（Polaris @6940）：10px / 700 / 黑 75% / 黑 10% 底 / radius 4 */
+.pdt-tech-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.75);
+  background: rgba(0, 0, 0, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-top: 4px;
+  align-self: flex-start;
+}
+.pdt-spec-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ── [lc-2406] 资源详情行（完整路径）────────────────────────────────────────
+   位置：原来展开按钮的地方（规格网格下方）。
+   对照用户给的第二张图：透明底、无边框、无圆角、无投影 —— **不是玻璃板**，
+   就是一行裸文字。所以这里一条 background / box-shadow / border-radius 都不给，
+   与上面四个玻璃方块形成"信息层级更低"的对比，正好符合它作为辅助信息的位置。
+
+   排版：标签与路径同一行（baseline 对齐），行尾一个 › 指向右侧。
+   路径按 `/` 拆段渲染（.pdt-path-seg），段整体不可拆、换行只发生在段间 ——
+   与 `.mved-file-path`（lc-2275/2276）同一套做法，理由写在 PolarisFilePath.tsx 里。
+   最多两行，超出省略；完整路径始终在 title 里，悬停可看。 */
+.pdt-filepath-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 16px;
+  margin-top: 20px;
+  padding: 0 2px;
+  min-width: 0;
+}
+/* 标签：13px / 600 / 白 55%（深底上的辅助信息，比规格组头再弱一档） */
+.pdt-filepath-row-k {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: 0.6px;
+  white-space: nowrap;
+}
+/* 路径主体：13px / 等宽 / 白 78%；两行封顶，段间换行 */
+.pdt-filepath-row-v {
+  font-size: 13px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color: rgba(255, 255, 255, 0.78);
+  line-height: 1.5;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* 路径段：整体不可拆（换行只发生在段间） */
+.pdt-path-seg {
+  display: inline-block;
+  /* inline-block 之间默认有空白间隙，路径里不能有 —— 段本身已带前导 `/`，
+     多一个空格会让路径看起来有间隙 */
+  margin: 0;
+}
+/* 行尾 › ：纯装饰（图二里有），比路径再弱一档 */
+.pdt-filepath-row-chev {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  color: rgba(255, 255, 255, 0.3);
+}
+.pdt-filepath-row-chev svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+@media screen and (max-width: 900px) {
+  /* 窄屏：标签单独一行，路径占满（长路径横排放不下） */
+  .pdt-filepath-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 4px;
+  }
+  .pdt-filepath-row-k {
+    grid-column: 1 / -1;
   }
 }
 
@@ -2038,6 +2120,7 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
    展开区 900px 单列（@7115）。这里再补一条全局的栅格降级。 */
 @media (max-width: 1400px) {
   .pdt-console { padding: 40px 60px; }
+  .pdt-specs-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 1100px) {
   .pdt-console { padding: 32px 40px; }
@@ -2051,6 +2134,8 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
   }
   .pdt-console { padding: 24px 24px 40px; }
   .pdt-title { font-size: clamp(32px, 8vw, 48px); letter-spacing: 1px; }
+  .pdt-specs-grid { grid-template-columns: 1fr; }
+  .pdt-spec-group { padding: 18px 20px; }
   .pdt-logo { max-width: 260px; max-height: 90px; }
   .pdt-episodes-scroller { padding: 20px 8px 40px; margin: 0 -8px -20px; }
   /* [lc-2401] 网格横向内边距本来就是 0（对齐 scroller 的净偏移），窄屏不用改；
@@ -2112,7 +2197,7 @@ html.perf .pdt-console::after {
   display: none;
 }
 html.perf .pdt-icon-btn,
-html.perf .pdt-filebar,
+html.perf .pdt-spec-group,
 html.perf .pdt-source-card {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;

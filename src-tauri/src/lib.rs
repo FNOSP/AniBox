@@ -48,6 +48,8 @@ mod config;
 mod danmaku;
 mod danmaku_shim;
 mod danmaku_sources;
+mod detail_artwork;
+mod detail_artwork_cmd;
 // [lc-2348] 弹幕屏蔽（类型 + 屏蔽词）读写：桌面端首个真实编辑入口，
 // 写 danmaku_block_types.json / danmaku_blacklist.txt 并热通知 Lua 重载。
 mod danmaku_filter;
@@ -4497,6 +4499,15 @@ pub fn run() {
                 responder.respond(response);
             });
         })
+        // [lc-2417] 图片偏好协议：只读、只认已存偏好文件（照 WWPlayer 的 ww-image:// 语义）。
+        // 路径 artwork://preferred/<sha256(owner)>/<role>?v=<mtime>
+        .register_asynchronous_uri_scheme_protocol("artwork", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let response = detail_artwork_cmd::handle_request(app, request).await;
+                responder.respond(response);
+            });
+        })
         // [update] 前端资源覆盖层协议：补丁目录优先，缺失回退内嵌资源（见 update.rs）
         .register_asynchronous_uri_scheme_protocol("fntvweb", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
@@ -4731,6 +4742,9 @@ pub fn run() {
             bgm::bgm_person,
             bgm::bgm_person_works,
             bgm::bgm_comments,
+            // [lc-2417] 详情页「图片偏好」（照 WWPlayer 的 detailArtworkStore）
+            detail_artwork_cmd::read_detail_artwork,
+            detail_artwork_cmd::set_detail_artwork,
             // [lc-1412] 评论（长影评，/p1/.../reviews）：与「吐槽」分开的两个数据源
             bgm::bgm_reviews,
             // [lc-1401] 关联条目（详情页「关联条目」标签页：片头曲/原声集/游戏/画集…按关系分组）

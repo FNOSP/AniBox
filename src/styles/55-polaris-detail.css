@@ -852,6 +852,24 @@ html:not(.perf) .pdt-close {
 .pdt-episodes {
   margin: 20px 0;
 }
+/* [lc-2404] 选集是控制台的**第一个**区块时，上方三份竖向留白叠加：
+     hero padding-bottom 18 + console padding-top 40 + 选集 margin-top 20 = 106px，
+   而下方「选集→规格」只有 48px（`.pdt-specs` 的 margin-top）——
+   上下差一倍多（用户截图指出第一块红框间距太大，要求做成上下一致）。
+
+   实测目标：下侧 48px 是硬基准（规格块的 margin-top，也是全站其他区块的呼吸量）。
+   上侧要凑到同一个量：18 + 40 = 58 已经超出，所以先把 margin-top 归零、
+   再用负 -10px 把 58 拉到 48。
+   **为什么是负边距而不是减 console 的 padding-top**：console 的 40px 上内边距
+   是 Polaris 原值（@6395），全站所有区块共用；动它会连带改掉「版本块→选集」
+   「选集→规格」等每一处间距。只惩罚"选集恰好是首块"这一种情况，
+   影响面最小。
+   为什么不用 `:first-child`：控制台里选集前面可能还有版本块 / 文件位置行
+   （多版本、有路径时），那时选集不是首块、本该保留正常 margin。
+   由 TSX 按数据显式给 `.pdt-episodes-first`，比 DOM 位置判得准。 */
+.pdt-episodes.pdt-episodes-first {
+  margin-top: -10px;
+}
 /* [lc-2399] 头部左对齐：摘要在「选集」右边（用户要求）。
    [lc-2400] 右端重新有内容了（翻页圆钮），但**不用 space-between** ——
      那样右端按钮会被拉到整行最右，而左组（标题+摘要+季胶囊）在窄窗换行时

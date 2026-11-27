@@ -82,8 +82,18 @@ export function PolarisEpisodes({ m }: { m: PolarisModel }) {
 
   const heading = m.noFnOS ? "剧集" : "选集";
 
+  /* [lc-2404] 选集是不是控制台的**第一个可见区块**？
+     控制台里的顺序是「版本块 / 文件位置 → 选集 → 技术规格 → …」。
+     版本块只在多版本时渲染（lc-2402），文件位置行只在有路径时渲染；
+     两者都不存在时选集就是首块，它上方的三份竖向留白
+     （hero padding-bottom 18 + console padding-top 40 + 自己的 margin-top 20 = 106px）
+     比下方的选集→规格间距（48px）大一倍多，需要把重复的那 20px 去掉。
+     不用 CSS `:first-child`：那按 DOM 位置判，而版本块/路径行是否渲染取决于数据 ——
+     多版本时选集前面有内容，本该保留 margin，交给 TSX 判更准。 */
+  const isFirstBlock = m.versions.length <= 1 && !m.filePath;
+
   return (
-    <section className="pdt-episodes" aria-label={heading}>
+    <section className={`pdt-episodes${isFirstBlock ? " pdt-episodes-first" : ""}`} aria-label={heading}>
       <div className="pdt-episodes-head">
         <div className="pdt-episodes-left">
           <span className="pdt-heading">{heading}</span>

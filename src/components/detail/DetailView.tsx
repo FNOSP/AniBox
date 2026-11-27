@@ -2648,11 +2648,19 @@ export function DetailView({
             filePath:
               mediaVersions.find((v) => v.media_guid === selectedMediaGuid)?.file_path || "",
             specs: mediaSpecs,
-            stills: movieStills.length > 0
-              ? movieStills
-              : Array.isArray(tmdb?.backdrops)
+            /* [lc-2410] 剧照横排用 `backdrops`（完整剧照集），**不是** `stills4k`。
+               原因：`stills4k` 是 [lc-1655] 为「电影全屏轮播」筛的 —— 只留
+               width ≥ 3840 的原图、取前 6 张。实测某部番只有 2 张够 4K，
+               于是剧照横排只剩 2 张（用户截图：「剧照少很多」）。
+               Polaris 原项目的剧照横排是完整列表、不按分辨率过滤（它拿的就是
+               TMDB images.backdrops 全量），所以这里改成 backdrops 优先，
+               只有 backdrops 缺失时才退回 stills4k。 */
+            stills: (() => {
+              const bd = Array.isArray(tmdb?.backdrops)
                 ? (tmdb!.backdrops as unknown[]).map((p) => String(p ?? "")).filter(Boolean)
-                : [],
+                : [];
+              return bd.length > 0 ? bd : movieStills;
+            })(),
             cast: castResolved,
             crew,
             recommendations: tmdbRecs,

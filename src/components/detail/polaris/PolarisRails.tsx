@@ -19,7 +19,7 @@
  *   · `.pw-detail-rec-card`   flex 0 0 280px、aspect-ratio 16/9、radius 12
  *   · 动效比别处慢：0.5s cb(.16,1,.3,1)；hover 只缩图 1.07、浮层淡入
  */
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { useRailArrows } from "./RailArrows";
 import { imgUrl, tmdbImg } from "../../../lib/images";
 import type { TmdbCreditPerson } from "../../../types";
@@ -68,6 +68,52 @@ function Rail({
   );
 }
 
+/** 单张剧照卡（[lc-2410]）。
+ *
+ * 带 `is-loading` → `is-loaded` 生命周期，照抄 Polaris
+ * `.pw-detail-still-card.is-loading / .is-loaded`：
+ *   · is-loading：斜向 shimmer 骨架（CSS `::before`）
+ *   · is-loaded ：图片 opacity 0 → 1 淡入（0.32s）
+ * 为什么需要：剧照走 fntvimg 代理 + 磁盘缓存，有的图瞬间解码、有的一秒多。
+ * 不加状态时慢图会先露出「画了一半的图」贴在白 8% 底上，看起来像图裂了。
+ *
+ * 状态放在**每张卡自己**的 useState 里，而不是父级一个 Set：
+ * 共享状态会让任意一张图加载完就触发整排重渲染（20 张 = 20 次全量 diff）。
+ */
+function StillCard({ path, onZoom }: { path: string; onZoom?: (p: string) => void }) {
+  const [loaded, setLoaded] = useState(false);
+  /* 已缓存的图（fntvimg 磁盘缓存命中）在 React 挂上 onLoad 之前就已经解码完，
+     onLoad 不会再触发 → 永远停在 opacity:0，卡片只剩骨架底（空框）。
+     所以挂 ref 时检查 complete/naturalWidth 补一次状态。
+     这与 [lc-2396] 首屏背景图那个竞态是同一类问题（那边是 useEffect 重置标志，
+     这边是漏了"已经加载完"这个入口）。 */
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  return (
+    <button
+      type="button"
+      className={`pdt-still-card${loaded ? " is-loaded" : " is-loading"}`}
+      title="点击查看原图"
+      onClick={() => onZoom?.(path)}
+    >
+      <img
+        ref={(el) => {
+          imgRef.current = el;
+          /* 挂载瞬间就补检一次：缓存命中的图此时已经把图片解好了，
+             onLoad 不会再触发，不补检就永远停在 opacity:0（空框）。 */
+          if (el && el.complete && el.naturalWidth > 0) setLoaded(true);
+        }}
+        className="pdt-still-img"
+        src={path.startsWith("http") ? path : tmdbImg(path, "w780")}
+        loading="lazy"
+        alt=""
+        draggable={false}
+        onLoad={() => setLoaded(true)}
+        onError={() => setLoaded(true)}
+      />
+    </button>
+  );
+}
+
 /** 剧照横排：`stills` 是 TMDB file_path（形如 /abc.jpg）。 */
 export function PolarisStills({
   stills,
@@ -87,21 +133,7 @@ export function PolarisStills({
         {(ref) => (
           <div className="pdt-stills-scroller" ref={ref}>
             {stills.map((p) => (
-              <button
-                type="button"
-                className="pdt-still-card"
-                key={p}
-                title="点击查看原图"
-                onClick={() => onZoom?.(p)}
-              >
-                <img
-                  className="pdt-still-img"
-                  src={p.startsWith("http") ? p : tmdbImg(p, "w780")}
-                  loading="lazy"
-                  alt=""
-                  draggable={false}
-                />
-              </button>
+              <StillCard key={p} path={p} onZoom={onZoom} />
             ))}
           </div>
         )}
@@ -127,7 +159,11 @@ export function PolarisCast({
       </div>
       <Rail boxClass="pdt-cast-scroller" ariaLabel="主演" deps={[list.length]}>
         {(ref) => (
-          <div className="pdt-cast-row" ref={ref}>
+          /* [lc-2410] 类名必须是 `pdt-cast-scroller`（CSS 只定义了这个）。
+             原来写的是 `pdt-cast-row`（Polaris 原类的名字），而我们自己的 CSS 里
+             没有这个选择器 → 这个 div 拿不到 display:flex / gap:20 / overflow-x:auto，
+             演员就被排成了竖列（用户截图实锤）。 */
+          <div className="pdt-cast-scroller" ref={ref}>
             {list.map((c, i) => {
               const raw = String(c.profile ?? "").trim();
               // profile 有两种形态：TMDB 相对路径（/xx.jpg）与完整代理 URL（见 DetailView 的 castResolved）

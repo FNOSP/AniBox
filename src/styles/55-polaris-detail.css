@@ -1805,8 +1805,10 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
 }
 .pdt-stills-scroller::-webkit-scrollbar { display: none; }
 
-/* 剧照卡（Polaris @17714）：clamp(260px,19.8vw,380px) / aspect-ratio 16/9.2 /
-   radius 14 / overflow hidden / 底色白 8% */
+/* 剧照卡（Polaris @17714 精确值）：
+     flex 0 0 clamp(260px,19.8vw,380px) / width 同 / aspect-ratio **16/9.2** /
+     radius 14 / overflow hidden / cursor pointer / background 白 8% /
+     transition transform .42s cb(.16,1,.3,1), box-shadow .42s ease, filter .42s ease */
 .pdt-still-card {
   flex: 0 0 clamp(260px, 19.8vw, 380px);
   width: clamp(260px, 19.8vw, 380px);
@@ -1821,8 +1823,12 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
   isolation: isolate;
   transition: transform 0.42s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.42s ease, filter 0.42s ease;
 }
+/* [lc-2410] hover 照抄 Polaris @17742：**scale(1.045) + 提亮提对比**，
+   不是上一版的 translateY(-3px) scale(1.02)（那是我自己发挥的，原项目没有位移）。 */
 .pdt-still-card:hover {
-  transform: translateY(-3px) scale(1.02);
+  transform: scale(1.045);
+  filter: brightness(1.04) contrast(1.04);
+  z-index: 20;
 }
 @media (max-width: 980px) {
   .pdt-still-card {
@@ -1830,8 +1836,10 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
     width: 240px;
   }
 }
-/* 图片（Polaris @8376）：object-fit cover / pointer-events none /
-   透明度 0→1（0.32s）淡入 */
+/* 图片（Polaris @8376）：object-fit cover / object-position **center** /
+   pointer-events none / **opacity 0 → 1（0.32s ease）**，由卡片的 .is-loaded 触发。
+   [lc-2410] 这条淡入是原项目的实际行为（图片解码完才显示，避免半张图闪）；
+   上一版只写了 object-fit，漏了 opacity 过渡，图片会硬切出现。 */
 .pdt-still-img {
   position: absolute;
   inset: 0;
@@ -1841,6 +1849,24 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
   object-fit: cover;
   object-position: center;
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.32s ease;
+}
+.pdt-still-card.is-loaded .pdt-still-img {
+  opacity: 1;
+}
+/* 加载中骨架（Polaris @8389 `.pw-detail-still-card.is-loading::before`）：
+   斜向 shimmer + 白 8% 底，2.8s 循环 —— 与剧集卡骨架同一套节奏 */
+.pdt-still-card.is-loading::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.05) 50%, transparent 100%),
+    rgba(255, 255, 255, 0.08);
+  background-size: 200% 100%, 100% 100%;
+  animation: pdt-shimmer 2.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
 /* 主演滚动条（Polaris @8407）：flex / gap 20 / padding 20px 40px / margin -20px -40px */

@@ -2269,18 +2269,36 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
   color: rgba(0, 0, 0, 0.8);
 }
 
-/* ── [lc-2414] 关联条目：封面不裁切 + 深色文字 ──────────────────────────────
-   用户报「怎么中间两个封面是裁切的」：片头曲 / 原声集 / 衍生 这几列装的是
-   **Bangumi 音乐条目（type=3）**，封面是正方形（专辑封面 1:1），
-   而 `.drel-cv` 是写死的 `aspect-ratio: 2/3` + `object-fit: cover` —— 竖框塞方图
-   等于左右各切掉约 1/4，封面上的字直接被裁断。书籍（type=1）和动画（type=2）
-   的封面本身接近竖版海报，所以那几列看着正常。
+/* ── [lc-2416] 关联条目：封面框**跟着图片自身比例走**（不锁死竖版）──────────────
+   用户：「封面是横的就弄横着的，不锁死竖的样式」。
 
-   修法：框保持 2/3 不变（分栏要整齐，不能按内容抖动），图片改 `contain` 完整显示，
-   留白落在与占位图同色的底上 —— 与「图片不裁剪」的既有约定一致。
-   只在影院版式的玻璃卡里生效，经典版式保持原样。 */
+   上一轮（lc-2414）的做法是框保持 2/3、图片 contain，结果方图上下留白、
+   横图更惨（框里只剩一条）。留白是"不裁切"的妥协，但用户要的不是不裁切，
+   是**框形跟内容一致**。
+
+   现在：`.drel-cv` 取消固定比例，高度由 `<img>` 撑开（width:100% + height:auto），
+   图片多高的比例、框就是什么比例。竖版海报仍是 132×198 的观感（图片自己就是 2:3），
+   方图变成 132×132，横图变成 132×74 —— 都不裁、不留白。
+   代价是一列里卡片高度不再整齐，这是"不锁死"的必然结果，用户明确要这个。
+
+   `:not(:has(img))` 那条是兜底：没封面时（渲染 .poster-empty 占位）没有图片可跟随，
+   仍给 2:3 竖版占位，免得高度塌成 0。`:has` 在 WebView2（Chromium 105+）可用；
+   万一不支持，退化成"占位块高度 0"，不影响有封面的正常路径。
+
+   只在影院版式的玻璃卡里生效，经典版式保持原样（那边仍是 2/3 + cover）。 */
+.pdt-tabs .pdt-tabs-card .drel-cv {
+  aspect-ratio: auto;
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+.pdt-tabs .pdt-tabs-card .drel-cv:not(:has(img)) {
+  aspect-ratio: 2 / 3;
+}
 .pdt-tabs .pdt-tabs-card .drel-cv img {
-  object-fit: contain;
+  width: 100%;
+  height: auto; /* 高度由图片自身比例决定 —— 这就是"不锁死"的实现方式 */
+  object-fit: contain; /* 框与图同比例时它等于铺满；保留是为了异常尺寸下仍不裁切 */
+  display: block;
 }
 /* 列头与卡名原来是 `var(--text-strong)` / `var(--text-2)`，跟应用主题走：
    深色主题下等于**白字压在白色玻璃卡上**，一个字都看不见。改用深色口径。 */
@@ -2294,11 +2312,7 @@ html.perf .pdt-ep-card:hover .pdt-ep-img { transform: none !important; }
   color: rgba(0, 0, 0, 0.7);
 }
 /* 封面框的底与描边同样跟主题（--ph-bg / --line），在白卡上会发灰发白。
-   换成中性深色，让留白处像"胶片底"而不是脏斑。 */
-.pdt-tabs .pdt-tabs-card .drel-cv {
-  background: rgba(0, 0, 0, 0.06);
-  border-color: rgba(0, 0, 0, 0.1);
-}
+   换成中性深色。（底/描边的具体值已并入上面 lc-2416 那条 .drel-cv 规则） */
 .pdt-tabs .pdt-tabs-card .drel-col {
   border-right-color: rgba(0, 0, 0, 0.1);
 }

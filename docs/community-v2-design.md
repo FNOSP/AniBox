@@ -218,8 +218,9 @@ CREATE INDEX IF NOT EXISTS idx_img_live  ON images(created_at ASC) WHERE deleted
 -- ═══════════════════ 社区内容 ═══════════════════
 -- 文字永久保存。tmdb_id 是唯一跨服务器稳定的作品键（同 v1）。
 CREATE TABLE IF NOT EXISTS posts (
-  id           TEXT PRIMARY KEY,                   -- 'p_' + 26 位 base32
+  id           TEXT PRIMARY KEY,                   -- 'p_' + 26 位 base32（= clientRequestId，幂等）
   account_id   TEXT NOT NULL,
+  author_nick  TEXT NOT NULL DEFAULT '',           -- [lc-2445 补] 昵称快照：「改名只影响之后的发言」对帖子的兑现（光靠 accounts.nick 当前值会违反承诺）
   media_type   TEXT NOT NULL,                      -- movie | tv
   tmdb_id      INTEGER NOT NULL,
   work_title   TEXT NOT NULL DEFAULT '',           -- 冗余，便于后台排查（不是键）
@@ -422,7 +423,7 @@ POST /v2/auth/login { email, password, device: { code, os, screen, scale } }
 | 执行上下文 | — | `ctx`（未用：touchDevice 已内置节流，直接 await） |
 
 ```js
-async function requireAuth(request, env) {
+async function requireAuth(request, env, opts = {}) {  // opts.readOk：banned 放行（sess.banned=true，写接口再 403）——「读接口不拦封禁」的实现
   const tok = bearerToken(request);
   if (!tok) throw httpErr(401, 'UNAUTHORIZED', '请先登录');
   const dev = await env.DB.prepare(
@@ -614,8 +615,8 @@ const ALLOWED_CT = new Set(['image/jpeg','image/gif']);
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/v2/posts` | `{mediaType,tmdbId,workTitle,score,title,body,imageIds}` |
-| GET | `/v2/feed?sort=new\|hot&cursor=&limit=` | 信息流（`hidden=0 AND deleted_at IS NULL`） |
+| POST | `/v2/posts` | `{mediaType,tmdbId,workTitle,score,title,body,imageIds,clientRequestId}`（UUID 作 id，同 id 重发返回原帖——与 v1 comments 同口径） |
+| GET | `/v2/feed?sort=new\|hot&cursor=&limit=` | 信息流。**hot 的 P3 实现 = 置顶优先 + 新到旧**（点赞/评论数热度算法 P4 再加，不假装有）；文字不过滤时间（永久），30 天只是图片生命周期 |
 | GET | `/v2/works/:mediaType/:tmdbId` | 作品聚合：`{score,count,ratingDist,posts,comments}` |
 | GET | `/v2/posts/:id` | 单帖 + 全部评论 |
 | DELETE | `/v2/posts/:id` | 删自己的 |
@@ -1471,4 +1472,5 @@ npx wrangler deploy
 |---|---|
 | 2026-11-27 | 初版：定稿账号（邮箱+密码+设备）、图片（多格式/1MB/30 天/2GB 兜底）、社区（文字永久）、举报、管理员、90 天审计 |
 | 2026-11-28 | P1 施工（lc-2441）：verify 补 device 参数；部署沿用现有库 + migrate-v1-to-v2.sql；requireAuth 免 ctx |
+| 2026-11-28 | P3 施工（lc-2445）：posts 加 author_nick 快照列；/v2/posts 幂等（clientRequestId）；requireAuth readOk 语义；hot=P3 置顶+新到旧；**limit 解析坑**：`Number(null)=0` 不是 NaN——「无 limit 参数」会走 isInteger 分支被 clamp 成 1（feed/mine/notifications 三处中招，照 v1 readLimit 口径修复） |
 | 2026-11-28 | P2 施工（lc-2442）：schema 补 feedback_tickets/messages（§4.6 端点原本没有表）；§6.2.1 服务端图片三硬约束（R2 contentType / GIF 键后缀 / ImageDecoder 无 decode）；Cargo 勘误（webp/png 原已开启） |

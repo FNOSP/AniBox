@@ -9,6 +9,8 @@
         + 我的 5 星评分/评语（持久化到 Rust 侧 ratings.json）+ 播放记录 sessions。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Share2 as IcoShare } from "lucide-react";
+import { createPost, fetchSession, type CommunitySession } from "../../lib/community";
 import {
   CalendarDays as IcoCalL,
   Clock as IcoClockL,
@@ -946,6 +948,40 @@ function HistoryDetail({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // [lc-2445] 分享到社区：登录社区账号 + 作品有 tmdbId 才可用；
+  // 用浮层当前的评分/评语直接发帖（无评论时给一句默认文案，正文至少 3 字）。
+  const [cSession, setCSession] = useState<CommunitySession | null>(null);
+  const [sharing, setSharing] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void fetchSession().then((v) => {
+      if (alive) setCSession(v);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const shareToCommunity = async () => {
+    if (!cSession || !it.tmdbId || sharing) return;
+    setSharing(true);
+    try {
+      const text = review.trim() || `看了《${it.title || "这部作品"}》`;
+      await createPost({
+        mediaType: it.type === "Movie" ? "movie" : "tv",
+        tmdbId: Number(it.tmdbId),
+        workTitle: it.title || "",
+        score: score > 0 ? score : null,
+        body: text,
+      });
+      onNote("已分享到社区");
+    } catch (e) {
+      onNote(`分享失败：${String(e)}`);
+    } finally {
+      setSharing(false);
+    }
+  };
+
   const save = async () => {
     setSaving(true);
     try {
@@ -1068,6 +1104,13 @@ function HistoryDetail({
             <button className="hist-btn primary" onClick={() => void save()} disabled={saving}>
               {saving ? "保存中…" : "保存我的评价"}
             </button>
+            {/* [lc-2445] 分享到社区（登录社区账号 + 作品有 TMDB 编号才可用） */}
+            {cSession && it.tmdbId && (
+              <button className="hist-btn ghost" onClick={() => void shareToCommunity()} disabled={sharing}>
+                <IcoShare size={13} strokeWidth={2} aria-hidden="true" />
+                {sharing ? "分享中…" : "分享到社区"}
+              </button>
+            )}
             <button className="hist-btn ghost" onClick={onViewDetail}>
               查看详情
             </button>

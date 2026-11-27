@@ -33,6 +33,7 @@ export function Sidebar({
   onOpenCloud115,
   onOpenGallery,
   onOpenCommunity,
+  communityUnread = 0,
   onHome,
   onOpenSettings,
   onOpenAccount,
@@ -57,6 +58,8 @@ export function Sidebar({
   onOpenGallery: () => void;
   /** [lc-2402] 打开社区页（账号/设备管理；P3 起信息流/通知） */
   onOpenCommunity: () => void;
+  /** [lc-2445] 未读通知数（>0 时「社区」入口显示角标） */
+  communityUnread?: number;
   /** [lc-1779] 打开 115 网盘页（扫码登录 + 文件浏览 + 直链/转码播放） */
   onOpenCloud115: () => void;
   onHome: () => void;
@@ -124,12 +127,17 @@ export function Sidebar({
         收藏
         <span className="side-count">{favTotal ?? ""}</span>
       </div>
-      {/* [lc-2402] 社区一级入口（登录/注册 → 信息流；P3 起通知角标） */}
+      {/* [lc-2402] 社区一级入口（登录/注册 → 信息流；[lc-2445] 通知角标） */}
       <div className={`side-item ${activeGuid === "_community" ? "active" : ""}`} onClick={onOpenCommunity}>
         <span className="side-ico">
           <IcoUsersL size={15} strokeWidth={1.8} />
         </span>{" "}
         社区
+        {communityUnread > 0 && (
+          <span className="sa-badge" aria-label={`${communityUnread} 条未读通知`}>
+            {communityUnread > 99 ? "99+" : communityUnread}
+          </span>
+        )}
       </div>
       {/* [lc-2364] Pixiv 图库入口**已隐藏**（用户要求搁置）。
           搁置原因（实测，不是猜测）：本机到 www.pixiv.net 的 TCP 443 在 TLS 握手

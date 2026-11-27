@@ -42,6 +42,7 @@ import { useDelayedUnmount } from "./hooks/useDelayedUnmount";
 import { ownerFromMedia, readDetailArtworkBatch, artworkUrl as artUrl } from "./lib/detailArtwork";
 import { useGamepad } from "./hooks/useGamepad";
 import { useFeedbackUnread } from "./hooks/useFeedbackUnread";
+import { useCommunityUnread } from "./hooks/useCommunityUnread";
 import { usePlaybackProgress } from "./hooks/usePlaybackProgress";
 import { RefreshContext } from "./hooks/useRefresh";
 import { focusNav } from "./lib/focusNav";
@@ -1041,6 +1042,8 @@ function App() {
      列表同时作为反馈面板的数据源，避免面板与角标各拉一次。
      打开面板即确认（侧栏角标清零），行内「有新回复」标记保留到点开该工单。 */
   const fb = useFeedbackUnread(feedbackOpen);
+  // [lc-2445] 社区通知角标（180s 轮询；未登录/未部署静默为 0）
+  const cUnread = useCommunityUnread();
   useEffect(() => {
     if (feedbackOpen) fb.ackPanel();
   }, [feedbackOpen, fb.items, fb.ackPanel]);
@@ -1561,6 +1564,8 @@ function App() {
           favTotal={favTotal}
           // [lc-1701] 未读工单数 → 侧栏「反馈」按钮红点角标
           feedbackUnread={fb.badge}
+          // [lc-2445] 未读通知数 → 侧栏「社区」入口角标（180s 轮询）
+          communityUnread={cUnread}
           // [lc-1653] 每个入口先收起侧栏，再执行原回调（导航/开面板）。
           onOpenFav={() => {
             closeSidebar();

@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { MessageSquare as IcoMsgL, Send as IcoSendL, Trash2 as IcoTrashL, UserRound as IcoUserL } from "lucide-react";
+import { communityTagOf, fetchSession, postComment, type CommunitySession } from "../../../lib/community";
 import { CommentsTab } from "./CommentsTab";
 import type { BgmComment } from "../../../types";
 
@@ -270,6 +271,38 @@ export function CommunityTab({
     }
   };
 
+  /** [lc-2445] 社区账号会话（登录后显示短评输入框；未登录保持 v1 只读浏览） */
+  const [cSession, setCSession] = useState<CommunitySession | null>(null);
+  const [cDraft, setCDraft] = useState("");
+  const [cBusy, setCBusy] = useState(false);
+  const [cErr, setCErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    void fetchSession().then((s) => {
+      if (alive) setCSession(s);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const sendComment = async () => {
+    const text = cDraft.trim();
+    if (!cSession || !mediaType || !tmdbId || text.length < 3 || cBusy) return;
+    setCBusy(true);
+    setCErr("");
+    try {
+      await postComment({ mediaType, tmdbId, workTitle: title, body: text });
+      setCDraft("");
+      await load(0); // 复用既有评论刷新（v1/v2 同表，重拉即可见）
+    } catch (e) {
+      setCErr(String(e));
+    } finally {
+      setCBusy(false);
+    }
+  };
+
   if (!enabled) {
     return <div className="dpanel cmpanel"><div className="empty">这部作品缺少 TMDB 编号，无法关联评论</div></div>;
   }
@@ -309,6 +342,41 @@ export function CommunityTab({
           本站讨论
           <span className="cmsec-hint">所有用 AniBox 的人都能看到</span>
         </h3>
+        {/* [lc-2445] 短评输入（登录社区账号后出现；v2 账号体系，回复可通知对方） */}
+        {cSession && (
+          <div className="cmcompose cmv2compose">
+            <div className="cmreplyto">
+              以 <b>{communityTagOf(cSession)}</b> 发短评
+            </div>
+            <textarea
+              className="cminput"
+              value={cDraft}
+              maxLength={2000}
+              rows={2}
+              onChange={(e) => setCDraft(e.target.value)}
+              placeholder="写短评…（3–2000 字，Ctrl+Enter 发送）"
+              onKeyDown={(e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                  e.preventDefault();
+                  void sendComment();
+                }
+              }}
+            />
+            <div className="cmcomposerow">
+              <span className="cmcounter">{cDraft.trim().length} / 2000</span>
+              <button
+                type="button"
+                className="pl-solid pl-h-sm"
+                disabled={cBusy || cDraft.trim().length < 3}
+                onClick={() => void sendComment()}
+              >
+                <IcoSendL size={13} strokeWidth={2} />
+                {cBusy ? "发送中…" : "发送"}
+              </button>
+            </div>
+            {cErr && <div className="set-warn cmwarn">{cErr}</div>}
+          </div>
+        )}
       {/* 昵称行：改昵称只影响之后的评论（服务端每条存昵称快照），所以文案要说清 */}
       <div className="cmnickrow">
         <IcoUserL size={13} strokeWidth={2} />

@@ -38,6 +38,8 @@ mod community;
 mod community_auth;
 // [lc-2442] 社区图片管线（压缩/暂存/上传）：协议见 docs/community-v2-design.md §4.4/§6.5
 mod community_images;
+// [lc-2445] 社区 v2 内容（发帖/信息流/作品聚合/评论/通知）：协议见 §4.5
+mod community_content;
 // [lc-2244] 组件包进程内解压：原先外调 pwsh Expand-Archive，而 pwsh 不是 Windows
 // 自带组件 —— 干净机器上报「启动解压失败: program not found」，下载必然失败。
 mod zip_extract;
@@ -4980,6 +4982,16 @@ pub fn run() {
             community_images::community_upload_image,
             community_images::community_discard_prepared,
             community_images::community_feedback_image_data,
+            // [lc-2445] 社区 v2 内容
+            community_content::community_v2_post,
+            community_content::community_v2_feed,
+            community_content::community_v2_work,
+            community_content::community_v2_post_detail,
+            community_content::community_v2_delete_post,
+            community_content::community_v2_comment,
+            community_content::community_v2_mine_posts,
+            community_content::community_v2_notifications,
+            community_content::community_v2_read_notifications,
             // [lc-2442] v2 反馈（随社区账号；附图）
             feedback::feedback_submit_v2,
             feedback::feedback_mine_v2,

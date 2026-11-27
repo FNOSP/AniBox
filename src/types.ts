@@ -181,6 +181,43 @@ export type MediaVersion = {
   file_size?: number;
   /** [lc-2273] 文件完整路径（上游没给就是空串）。editorial 详情页「文件位置」行用。 */
   file_path?: string;
+  /* ── [lc-2396] Polaris 详情页「技术规格」区（纯追加；上游没给就是空/0，前端显示「—」）── */
+  /** 视频编码 profile（如 High / Main 10） */
+  profile?: string;
+  /** 基色（如 bt709 / bt2020） */
+  color_primaries?: string;
+  /** 色彩空间（如 bt709 / bt2020nc） */
+  color_space?: string;
+  /** 转移特性（如 smpte2084 / arib-std-b67） */
+  color_transfer?: string;
+  /** 色彩范围（如 tv / pc） */
+  color_range?: string;
+  /** 帧率（已折算成数字；0 = 上游没给） */
+  frame_rate?: number;
+};
+
+/** [lc-2396] `get_media_versions` 的附加规格信息（与 versions 同一次 stream/list 响应，
+ *  不额外发请求）：Polaris 详情页「技术规格」4 列网格 + 展开区用它。 */
+export type MediaSpecs = {
+  audio_streams?: {
+    guid?: string;
+    codec_name?: string;
+    language?: string;
+    title?: string;
+    /** 声道数（上游 channels） */
+    channels?: number;
+    /** 码率（bps） */
+    bit_rate?: number;
+    /** 采样率（Hz） */
+    sample_rate?: number;
+    is_default?: number;
+  }[];
+  /** play/info 记住的音频轨 guid（前端优先选它，其次第一条） */
+  selected_audio_guid?: string;
+  /** 字幕流条数 */
+  subtitle_count?: number;
+  /** 容器格式（如 MKV / MP4；取不到为空串） */
+  container?: string;
 };
 
 
@@ -558,6 +595,11 @@ export type AppSettings = {
   /** [lc-2372] 首页轮播样式："misty"（横滑满屏海报，原有，默认）| "spotlight"（放映厅：
    *  背景交叉淡入 + 居中信息块 + 右侧竖排进度点；复刻 Polaris Player 首页 Hero）。 */
   carouselStyle?: "misty" | "spotlight";
+  /** [lc-2396] 详情页版式（**剧集与电影共用**）："original"（原有版式，默认，行为一字未改）|
+   *  "polaris"（全屏遮罩 + Ken Burns 背景 + 玻璃控制台；复刻 Polaris Player 5.2.8 详情页）。
+   *  与 movieDetailStyle 的关系：polaris 生效时它接管整个详情页（电影/剧集都走同一套），
+   *  movieDetailStyle 只在 original 下决定电影用 classic 还是 editorial。 */
+  detailStyle?: "original" | "polaris";
   launchPage: "home" | "discover";
   autoLogin: boolean;
   /** [player] 播放器选择（默认 mpv = 随包自带）。后端始终返回，旧缓存可能缺省。 */

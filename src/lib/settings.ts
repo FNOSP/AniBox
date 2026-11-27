@@ -11,6 +11,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // [lc-2372] 首页轮播样式默认 misty：原有横滑版式，行为一字未改。
   //   spotlight = 新增的 Polaris「放映厅」样式，由用户在设置里切换。
   carouselStyle: "misty",
+  // [lc-2396] 详情页版式默认 original：原有版式（剧集两栏 / 电影 editorial|classic），
+  //   polaris = 新增的 Polaris 全屏详情页，剧集与电影共用同一套，由用户切换。
+  detailStyle: "original",
   launchPage: "home",
   autoLogin: false,
   // [lc-1561] 自建弹幕接口默认开启：地址留空即用随包内置源（本地 danmu_api）

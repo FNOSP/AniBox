@@ -15,11 +15,14 @@
  *   右栏  层叠海报轮播 + 播放/收藏/元数据 + 版本条 + 主创 + 配音
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { Star as IcoStarL } from "lucide-react";
 import { PlayGlyph } from "../common/PlayGlyph";
 import { imgUrl, tmdbImg } from "../../lib/images";
 import { prefersReducedMotion } from "../../lib/motion";
+// [lc-2396] 国家/语言/状态 → 中文映射提到 lib/region.ts（Polaris 详情页共用同一份，
+//   两处各存一份必然漂移）。映射表内容与搬移前完全一致。
+import { STATUS_CN, regionText } from "../../lib/region";
+import { useFavorite } from "./useFavorite";
 import { TmdbCreditPerson } from "../../types";
 
 /** 数据格里的一项：大数字 + 小标签。 */
@@ -83,57 +86,8 @@ function pickLogos(tmdb: Record<string, unknown> | null): { light: string; dark:
   return { light: ok(a) || ok(p), dark: ok(p) || ok(a) };
 }
 
-/** 国家代码 → 中文名（够用即可，未收录的原样显示）。 */
-const COUNTRY_CN: Record<string, string> = {
-  JP: "日本",
-  CN: "中国",
-  HK: "中国香港",
-  TW: "中国台湾",
-  KR: "韩国",
-  US: "美国",
-  GB: "英国",
-  FR: "法国",
-  DE: "德国",
-  CA: "加拿大",
-  AU: "澳大利亚",
-  IN: "印度",
-  TH: "泰国",
-  SG: "新加坡",
-};
-
-/** 语言代码 → 中文名。 */
-const LANG_CN: Record<string, string> = {
-  ja: "日语",
-  zh: "中文",
-  cn: "粤语",
-  en: "英语",
-  ko: "韩语",
-  fr: "法语",
-  de: "德语",
-  es: "西班牙语",
-  th: "泰语",
-};
-
-/** 制作状态 → 中文（[lc-2257] 数据区补充小字用）。 */
-const STATUS_CN: Record<string, string> = {
-  Released: "已上映",
-  "Post Production": "后期制作",
-  "In Production": "制作中",
-  Planned: "计划中",
-  Rumored: "传闻中",
-  Canceled: "已取消",
-};
-
-/** 拼「国家 · 语言」展示串；两者都空则返回空串（前端此时不显示该数据格）。 */
-function regionText(country?: string, language?: string): string {
-  const c = (country ?? "").trim().toUpperCase();
-  const l = (language ?? "").trim().toLowerCase();
-  const cn = c ? COUNTRY_CN[c] ?? c : "";
-  const ln = l ? LANG_CN[l] ?? l : "";
-  return [cn, ln].filter(Boolean).join(" · ");
-}
-
-/** 数据格的构造：缺项的条目自动跳过（不占位、不留空 label）。 */function buildStats(
+/** 数据格的构造：缺项的条目自动跳过（不占位、不留空 label）。 */
+function buildStats(
   rating: number | null,
   votes: number,
   runtimeMin: number,
@@ -209,35 +163,9 @@ export function MovieHeroEditorial({
   tabsNav,
   tabsBody,
 }: Props) {
-  const favGuid = String((favItem?.guid as string) ?? "").trim();
-  const [fav, setFav] = useState(false);
-  const [favBusy, setFavBusy] = useState(false);
-  const [note, setNote] = useState("");
-
-  useEffect(() => {
-    if (!favGuid) return;
-    let alive = true;
-    invoke<boolean>("favorite_get", { guid: favGuid })
-      .then((v) => alive && setFav(!!v))
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [favGuid]);
-
-  const toggleFav = () => {
-    if (!favGuid || favBusy) return;
-    setFavBusy(true);
-    invoke<{ favorited?: boolean }>("favorite_toggle", { item: favItem })
-      .then((r) => {
-        const on = !!r?.favorited;
-        setFav(on);
-        setNote(on ? "已收藏，可在侧边栏「收藏」里找到" : "已取消收藏");
-        window.dispatchEvent(new Event("anibox-favorites-changed"));
-      })
-      .catch((e) => setNote(String(e)))
-      .finally(() => setFavBusy(false));
-  };
+  /* [lc-2396] 收藏状态/写盘提到 useFavorite（Polaris 详情页共用同一实现）：
+     本组件内的调用点与变量名保持不变，行为与搬移前一致。 */
+  const { fav, favGuid, busy: favBusy, note, toggle: toggleFav } = useFavorite(favItem);
 
   /* ── 层叠海报：backdrop / 海报 / 剧照 一起去重后叠放 ──
      经典版用同一批图做背景轮播，这里改成卡片层叠（位置 0/1/2，其余隐藏）。 */

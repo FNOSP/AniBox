@@ -2054,18 +2054,41 @@ export function SettingsPanel({
               {tab === "general" && (
                 <>
                   <div className="set-sec">界面</div>
-                  {/* [lc-2247] 电影详情页版式：目前只对电影生效（剧集详情页继续用原版式）。 */}
+                  {/* [lc-2396] 详情页版式（剧集与电影共用）：original = 原有版式（默认，行为不变），
+                      polaris = 复刻 Polaris Player 5.2.8 全屏详情页。 */}
+                  <div className="set-row">
+                    <div>
+                      <span className="set-k">详情页版式</span>
+                      <div className="set-desc">
+                        原版：现有剧集两栏、电影杂志风。影院：全屏背景大图配玻璃控制台，剧集与电影共用。
+                      </div>
+                    </div>
+                    <SetSelect
+                      label="详情页版式"
+                      value={settings.detailStyle ?? "original"}
+                      disabled={busy}
+                      options={[
+                        { value: "original", label: "原版（默认）" },
+                        { value: "polaris", label: "影院" },
+                      ]}
+                      onChange={(v) => onSettings({ detailStyle: v as AppSettings["detailStyle"] })}
+                    />
+                  </div>
+                  {/* [lc-2247] 电影详情页版式：目前只对电影生效（剧集详情页继续用原版式）。
+                      [lc-2396] 详情页版式选了「影院」时本项不生效（polaris 接管整个详情页）。 */}
                   <div className="set-row">
                     <div>
                       <span className="set-k">电影详情页版式</span>
                       <div className="set-desc">
-                        杂志：左标题右海报双栏，标题为艺术字。经典：满幅头图铺满首屏。
+                        {settings.detailStyle === "polaris"
+                          ? "当前由「详情页版式 · 影院」接管，本项不生效。"
+                          : "杂志：左标题右海报双栏，标题为艺术字。经典：满幅头图铺满首屏。"}
                       </div>
                     </div>
                     <SetSelect
                       label="电影详情页版式"
                       value={settings.movieDetailStyle ?? "editorial"}
-                      disabled={busy}
+                      disabled={busy || settings.detailStyle === "polaris"}
                       options={[
                         { value: "editorial", label: "杂志（双栏，默认）" },
                         { value: "classic", label: "经典（满幅头图）" },

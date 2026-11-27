@@ -1636,6 +1636,8 @@ function App() {
                 continueList={continueList}
                 webrsOn={!!settings.webrsPanelEnabled}
                 movieDetailStyle={settings.movieDetailStyle ?? "editorial"}
+                /* [lc-2396] 详情页版式（剧集/电影共用）：original（原有，默认）| polaris（Polaris 全屏详情页） */
+                detailStyle={settings.detailStyle ?? "original"}
                 onOpenTmdb={openTmdbRecommendation}
                 onOpenPerson={openPerson}
                 onBack={() => {

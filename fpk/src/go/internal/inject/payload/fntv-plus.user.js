@@ -1981,10 +1981,10 @@ try{if(typeof window!=='undefined'){if(typeof window.require==='undefined'){wind
     "\u8BFB\u53D6\u98DE\u725B\u300C\u5DF2\u89C2\u770B\u300D\u5217\u8868\uFF0C\u6279\u91CF\u6807\u8BB0\u5230\u8C46\u74E3\uFF08\u5DF2\u6807\u8BB0\u7684\u4F1A\u8DF3\u8FC7\uFF0C\u4E0D\u91CD\u590D\u6253\uFF09\u3002": 'Read the fnOS "watched" list and batch-mark to Douban (already-marked items are skipped).',
     "\u6B63\u5728\u626B\u63CF\u98DE\u725B\u300C\u5DF2\u89C2\u770B\u300D\u5217\u8868\u2026\uFF08\u9700\u52A0\u8F7D\u5217\u8868\u9875\uFF0C\u7EA6 10 \u79D2\uFF09": 'Scanning fnOS "watched" list\u2026 (loads the list page, ~10s)',
     "\u81EA\u52A8\u540C\u6B65\u95F4\u9694(\u5206\u949F, 0=\u5173\u95ED):": "Auto-sync interval (min, 0=off):",
-    "\u628A\u89C2\u5F71\u8BB0\u5F55\uFF08\u770B\u5B8C\u7684\u7535\u5F71 / \u5DF2\u770B\u7684\u5267\u96C6\u96C6\u6570\uFF09\u540C\u6B65\u5230 trakt.tv \u5386\u53F2\u3002\u9700\u8981\u5728 Trakt \u5E94\u7528\u7BA1\u7406\u9875(trakt.tv/oauth/applications)\u6CE8\u518C\u5E94\u7528\uFF0C\u628A Client ID \u4E0E Secret \u586B\u5230\u8FD9\u91CC\uFF0C\u518D\u70B9\u300C\u8FDE\u63A5 Trakt\u300D\u5B8C\u6210\u8BBE\u5907\u6388\u6743\u3002": 'Sync watch history (finished movies / watched episodes) to trakt.tv. Register an app at trakt.tv/oauth/applications, paste Client ID & Secret, then click "Connect Trakt".',
+    "\u628A\u89C2\u5F71\u8BB0\u5F55\uFF08\u770B\u5B8C\u7684\u7535\u5F71 / \u5DF2\u770B\u7684\u5267\u96C6\u96C6\u6570\uFF09\u540C\u6B65\u5230 trakt.tv \u5386\u53F2\u3002\u9700\u5728 Trakt \u5E94\u7528\u7BA1\u7406\u9875(app.trakt.tv/settings/apps/api)\u6CE8\u518C\u5E94\u7528\uFF08\u9996\u6B21\u9700\u5148\u7ED1\u5B9A GitHub \u8D26\u53F7\uFF09\uFF0C\u628A Client ID \u586B\u5230\u8FD9\u91CC\u5373\u53EF\u8FDE\u63A5\uFF1BClient Secret \u73B0\u4E3A\u53EF\u9009\u9879\uFF08\u65B0\u5E94\u7528\u9ED8\u8BA4\u4E0D\u53D1\u653E\uFF09\u3002": "Sync watch history (finished movies / watched episodes) to trakt.tv. Register an app at app.trakt.tv/settings/apps/api (a verified GitHub account must be linked first), paste the Client ID and connect; Client Secret is now optional (new apps no longer get one by default).",
     "\u51ED\u8BC1\u5DF2\u4FDD\u5B58\uFF0C\u5C1A\u672A\u8FDE\u63A5\u3002": "Credentials saved, not connected.",
     "\u672A\u914D\u7F6E\u3002": "Not configured.",
-    "Client ID \u4E0E Secret \u5747\u5FC5\u586B\uFF08\u6E05\u9664\u8BF7\u7528\u300C\u6E05\u9664\u51ED\u8BC1\u300D\uFF09\u3002": 'Both Client ID and Secret are required (use "Clear credentials" to remove).',
+    "Client ID \u5FC5\u586B\uFF08Secret \u4E3A\u53EF\u9009\uFF0C\u7559\u7A7A\u5373\u53EF\uFF09\u3002": "Client ID is required (Secret is optional \u2014 leave it empty).",
     "\u64AD\u653E\u65F6\u5B9E\u65F6\u6253\u70B9\u5230 Trakt\uFF08\u5F00\u59CB/\u6682\u505C/\u770B\u5B8C\u226580% \u81EA\u52A8\u8BB0\u5F55\uFF09\uFF0C\u9700\u5148\u8FDE\u63A5 Trakt\u3002": "Scrobble to Trakt while playing (start / pause / \u226580% watched). Connect Trakt first.",
     "\u6B63\u5728\u83B7\u53D6\u8BBE\u5907\u7801\u2026": "Fetching device code\u2026",
     "1. \u6253\u5F00\u6388\u6743\u9875\uFF1A": "1. Open the auth page:",
@@ -19087,7 +19087,7 @@ html.fntv-boot-hide #root{visibility:hidden}
       const traBody = secTrakt.body;
       const traHint = document.createElement("div");
       traHint.style.cssText = "font-size:10.5px;color:var(--fnos-ui-sec);padding:0 6px 6px;line-height:1.5;";
-      traHint.textContent = t("\u628A\u89C2\u5F71\u8BB0\u5F55\uFF08\u770B\u5B8C\u7684\u7535\u5F71 / \u5DF2\u770B\u7684\u5267\u96C6\u96C6\u6570\uFF09\u540C\u6B65\u5230 trakt.tv \u5386\u53F2\u3002\u9700\u8981\u5728 Trakt \u5E94\u7528\u7BA1\u7406\u9875(trakt.tv/oauth/applications)\u6CE8\u518C\u5E94\u7528\uFF0C\u628A Client ID \u4E0E Secret \u586B\u5230\u8FD9\u91CC\uFF0C\u518D\u70B9\u300C\u8FDE\u63A5 Trakt\u300D\u5B8C\u6210\u8BBE\u5907\u6388\u6743\u3002");
+      traHint.textContent = t("\u628A\u89C2\u5F71\u8BB0\u5F55\uFF08\u770B\u5B8C\u7684\u7535\u5F71 / \u5DF2\u770B\u7684\u5267\u96C6\u96C6\u6570\uFF09\u540C\u6B65\u5230 trakt.tv \u5386\u53F2\u3002\u9700\u5728 Trakt \u5E94\u7528\u7BA1\u7406\u9875(app.trakt.tv/settings/apps/api)\u6CE8\u518C\u5E94\u7528\uFF08\u9996\u6B21\u9700\u5148\u7ED1\u5B9A GitHub \u8D26\u53F7\uFF09\uFF0C\u628A Client ID \u586B\u5230\u8FD9\u91CC\u5373\u53EF\u8FDE\u63A5\uFF1BClient Secret \u73B0\u4E3A\u53EF\u9009\u9879\uFF08\u65B0\u5E94\u7528\u9ED8\u8BA4\u4E0D\u53D1\u653E\uFF09\u3002");
       traBody.appendChild(traHint);
       const maskTra = (t2) => "*".repeat(Math.max(0, t2.length));
       let traRealId = "";
@@ -19106,7 +19106,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         return inp;
       };
       const traIdInput = mkTraInput("Client ID\uFF08Trakt \u5E94\u7528\u8BBE\u7F6E\u9875\u83B7\u53D6\uFF09");
-      const traSecretInput = mkTraInput("Client Secret\uFF08\u4E0E ID \u540C\u9875\uFF0C\u52FF\u5916\u4F20\uFF09");
+      const traSecretInput = mkTraInput("Client Secret\uFF08\u53EF\u9009\uFF0C\u65B0\u5E94\u7528\u9ED8\u8BA4\u4E0D\u53D1\u653E\uFF09");
       const traBlurMask = (inp, real) => {
         if (inp.value.trim() === "" && real) {
           inp.value = maskTra(real);
@@ -19145,8 +19145,8 @@ html.fntv-boot-hide #root{visibility:hidden}
         e.stopPropagation();
         const id = traIdInput.value.trim();
         const sec = traSecretInput.value.trim();
-        if (!id || !sec) {
-          traStatus.textContent = t("Client ID \u4E0E Secret \u5747\u5FC5\u586B\uFF08\u6E05\u9664\u8BF7\u7528\u300C\u6E05\u9664\u51ED\u8BC1\u300D\uFF09\u3002");
+        if (!id) {
+          traStatus.textContent = t("Client ID \u5FC5\u586B\uFF08Secret \u4E3A\u53EF\u9009\uFF0C\u7559\u7A7A\u5373\u53EF\uFF09\u3002");
           traStatus.style.color = "var(--fnos-ui-warn)";
           return;
         }
@@ -19938,7 +19938,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         ipcRenderer.once("version-info", (_e, info) => {
           if (!info || !info.version) return;
           const ver = String(info.version).replace(/-web$/, "");
-          const bt = "2026-11-23 21:52" ? " (2026-11-23 21:52)" : "";
+          const bt = "2026-11-28 14:46" ? " (2026-11-28 14:46)" : "";
           aboutVer.textContent = "\u7248\u672C\uFF1Av" + ver + bt;
         });
       } catch (_) {

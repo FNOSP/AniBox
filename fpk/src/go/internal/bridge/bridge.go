@@ -590,16 +590,22 @@ func (b *Bridge) traktReq(method, path string, body any) (int, map[string]any, e
 }
 
 // traktRefreshToken 用 refresh_token 换新 token 并持久化。
+// [lc-2449] Trakt 已把 Client Secret 标记为弃用（新应用默认不发 Secret），
+// 刷新仅凭 client_id 即可；仅当用户仍填了 Secret 才附带。
 func (b *Bridge) traktRefreshToken() bool {
 	rt := b.traktRefresh()
-	id, sec := b.traktClientID(), b.traktSecret()
-	if rt == "" || id == "" || sec == "" {
+	id := b.traktClientID()
+	if rt == "" || id == "" {
 		return false
 	}
-	body, _ := json.Marshal(map[string]any{
-		"refresh_token": rt, "client_id": id, "client_secret": sec,
+	payload := map[string]any{
+		"refresh_token": rt, "client_id": id,
 		"redirect_uri": "urn:ietf:wg:oauth:2.0:oob", "grant_type": "refresh_token",
-	})
+	}
+	if sec := b.traktSecret(); sec != "" {
+		payload["client_secret"] = sec
+	}
+	body, _ := json.Marshal(payload)
 	resp, err := b.client.Post(traktAuth+"/oauth/token", "application/json", strings.NewReader(string(body)))
 	if err != nil {
 		return false
@@ -628,7 +634,7 @@ func (b *Bridge) traktCredsHandler() http.HandlerFunc {
 			id, tk := b.traktClientID(), b.traktToken()
 			// [v1.2.0] 返回明文（管理页同源可信，对齐桌面 get-credentials 回填语义）
 			writeJSON(w, http.StatusOK, map[string]any{
-				"configured":   id != "" && b.traktSecret() != "",
+				"configured":   id != "",
 				"connected":    tk != "",
 				"clientId":     id,
 				"clientSecret": b.traktSecret(),
@@ -643,12 +649,13 @@ func (b *Bridge) traktCredsHandler() http.HandlerFunc {
 				writeErr(w, http.StatusBadRequest, "bad json")
 				return
 			}
-			id := strings.TrimSpace(req.ClientID)
-			sec := strings.TrimSpace(req.ClientSecret)
-			if id == "" || sec == "" {
-				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Client ID 与 Secret 均必填"})
-				return
-			}
+		id := strings.TrimSpace(req.ClientID)
+		sec := strings.TrimSpace(req.ClientSecret)
+		// [lc-2449] 新政策下 Secret 不再默认发放，仅 Client ID 必填（设备授权无需 Secret）。
+		if id == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Client ID 必填（Secret 现为可选，新应用默认不发放）"})
+			return
+		}
 			// 换了应用（token 与 app 绑定）则丢弃旧 token
 			if b.traktClientID() != "" && b.traktClientID() != id {
 				_ = b.cfg.SetSetting("trakt_access_token", "")
@@ -668,7 +675,7 @@ func (b *Bridge) traktStatusHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, tk := b.traktClientID(), b.traktToken()
 		writeJSON(w, http.StatusOK, map[string]any{
-			"configured": id != "" && b.traktSecret() != "",
+			"configured": id != "",
 			"connected":  tk != "",
 			"expiresAt":  toInt64(b.traktExpiresAt()),
 		})
@@ -676,10 +683,11 @@ func (b *Bridge) traktStatusHandler() http.HandlerFunc {
 }
 
 // traktDeviceStart 用已存凭证向 auth.trakt.tv 申请设备码（返回原文给页面展示）。
+// [lc-2449] 设备码仅需 Client ID（Trakt OpenAPI：POST /oauth/device/code required=[client_id]）。
 func (b *Bridge) traktDeviceStart(w http.ResponseWriter, r *http.Request) {
 	id := b.traktClientID()
-	if id == "" || b.traktSecret() == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "请先填写 Trakt Client ID 与 Secret"})
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "请先填写 Trakt Client ID"})
 		return
 	}
 	body, _ := json.Marshal(map[string]any{"client_id": id})
@@ -705,7 +713,12 @@ func (b *Bridge) traktDeviceCancel(w http.ResponseWriter, r *http.Request) {
 // traktDisconnect 吊销 token 并清空凭证。
 func (b *Bridge) traktDisconnect(w http.ResponseWriter, r *http.Request) {
 	if tk := b.traktToken(); tk != "" {
-		body, _ := json.Marshal(map[string]any{"access_token": tk, "client_id": b.traktClientID(), "client_secret": b.traktSecret()})
+		// [lc-2449] OpenAPI：/oauth/revoke required=[token, client_id]，client_secret 已弃用。
+		revokePayload := map[string]any{"access_token": tk, "client_id": b.traktClientID()}
+		if sec := b.traktSecret(); sec != "" {
+			revokePayload["client_secret"] = sec
+		}
+		body, _ := json.Marshal(revokePayload)
 		resp, err := b.client.Post(traktAuth+"/oauth/revoke", "application/json", strings.NewReader(string(body)))
 		if err == nil {
 			_ = resp.Body.Close()
@@ -735,11 +748,16 @@ func (b *Bridge) traktDeviceTokenPoll(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(io.LimitReader(r.Body, 16*1024)).Decode(&req)
 	id, sec := b.traktClientID(), b.traktSecret()
-	if id == "" || sec == "" || req.DeviceCode == "" {
+	// [lc-2449] OpenAPI：POST /oauth/device/token required=[code, client_id]，client_secret 已弃用。
+	if id == "" || req.DeviceCode == "" {
 		writeJSON(w, http.StatusOK, map[string]any{"error": "缺少凭据或设备码"})
 		return
 	}
-	body, _ := json.Marshal(map[string]any{"code": req.DeviceCode, "client_id": id, "client_secret": sec})
+	tokenPayload := map[string]any{"code": req.DeviceCode, "client_id": id}
+	if sec != "" {
+		tokenPayload["client_secret"] = sec
+	}
+	body, _ := json.Marshal(tokenPayload)
 	resp, err := b.client.Post(traktAuth+"/oauth/device/token", "application/json", strings.NewReader(string(body)))
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"error": err.Error()})

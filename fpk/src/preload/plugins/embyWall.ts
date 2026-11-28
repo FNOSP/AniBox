@@ -1611,7 +1611,7 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     const traBody = secTrakt.body;
     const traHint = document.createElement('div');
     traHint.style.cssText = 'font-size:10.5px;color:var(--fnos-ui-sec);padding:0 6px 6px;line-height:1.5;';
-    traHint.textContent = t('把观影记录（看完的电影 / 已看的剧集集数）同步到 trakt.tv 历史。需要在 Trakt 应用管理页(trakt.tv/oauth/applications)注册应用，把 Client ID 与 Secret 填到这里，再点「连接 Trakt」完成设备授权。');
+    traHint.textContent = t('把观影记录（看完的电影 / 已看的剧集集数）同步到 trakt.tv 历史。需在 Trakt 应用管理页(app.trakt.tv/settings/apps/api)注册应用（首次需先绑定 GitHub 账号），把 Client ID 填到这里即可连接；Client Secret 现为可选项（新应用默认不发放）。');
     traBody.appendChild(traHint);
 
     // 凭证（掩码输入，交互同 Bangumi token / 弹弹play 凭证）
@@ -1629,7 +1629,7 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
       return inp;
     };
     const traIdInput = mkTraInput('Client ID（Trakt 应用设置页获取）');
-    const traSecretInput = mkTraInput('Client Secret（与 ID 同页，勿外传）');
+    const traSecretInput = mkTraInput('Client Secret（可选，新应用默认不发放）');
     const traBlurMask = (inp: HTMLInputElement, real: string): void => {
       if (inp.value.trim() === '' && real) { inp.value = maskTra(real); inp.readOnly = true; }
     };
@@ -1668,8 +1668,8 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
       e.stopPropagation();
       const id = traIdInput.value.trim();
       const sec = traSecretInput.value.trim();
-      if (!id || !sec) {
-        traStatus.textContent = t('Client ID 与 Secret 均必填（清除请用「清除凭证」）。');
+      if (!id) {
+        traStatus.textContent = t('Client ID 必填（Secret 为可选，留空即可）。');
         traStatus.style.color = 'var(--fnos-ui-warn)';
         return;
       }

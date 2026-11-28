@@ -537,10 +537,11 @@ const traktAPI = "https://api.trakt.tv"
 const apiBaseTMDB = "https://api.themoviedb.org/3"
 const traktAuth = "https://auth.trakt.tv"
 
-// traktBuiltinClientID AniBox 官方应用（Trakt 开发者后台 App ID 279494，Development 档）。
+// traktBuiltinClientID AniBox 官方应用（Trakt 开发者后台 Production App ID 279547，
+// 2026-11-28 审核即批；沙盒 Development App 279494 不用于发布）。
 // Client ID 是公开标识符（每个 API 请求头都会携带），设备授权仅需它，无需 Secret（PKCE 口径不发放）。
 // 用户在设置页自填凭证时优先于内置。
-const traktBuiltinClientID = "EK8sVJlBnP49WmBNV0BX6AbsYjlcQct7gAgLRBicfhc"
+const traktBuiltinClientID = "T6sdwAyHzJGBOZNMiyfrb_7sTy2bRCuXhQdl1YMA-wE"
 
 func (b *Bridge) traktClientID() string {
 	if id := getSetting(b.cfg, "trakt_client_id"); id != "" {

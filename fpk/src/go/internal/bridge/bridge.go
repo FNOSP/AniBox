@@ -923,10 +923,17 @@ func (b *Bridge) traktSyncWatched(w http.ResponseWriter, r *http.Request) {
 	data, _ := list["data"].(map[string]any)
 	rawItems, _ := data["list"].([]any)
 	movies, shows := []any{}, []any{}
+	noIDMovies, noIDShows := 0, 0
 	for _, raw := range rawItems {
 		it, _ := raw.(map[string]any)
 		tmdbID := trimToTmdb(fmt.Sprintf("%v", it["trim_id"]))
 		if tmdbID <= 0 {
+			// [lc-2453] 未识别（trim_id 解析失败）分类型计数，供前端「标题搜索未命中」展示
+			if fmt.Sprintf("%v", it["type"]) == "Movie" {
+				noIDMovies++
+			} else {
+				noIDShows++
+			}
 			continue
 		}
 		if fmt.Sprintf("%v", it["type"]) == "Episode" {
@@ -938,14 +945,30 @@ func (b *Bridge) traktSyncWatched(w http.ResponseWriter, r *http.Request) {
 			shows = append(shows, map[string]any{"ids": map[string]any{"tmdb": tmdbID}})
 		}
 	}
-	st, _, err := b.traktReq(http.MethodPost, "/sync/history", map[string]any{"movies": movies, "shows": shows})
+	st, out, err := b.traktReq(http.MethodPost, "/sync/history", map[string]any{"movies": movies, "shows": shows})
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "message": err.Error()})
 		return
 	}
+	// [lc-2453] 解析 Trakt /sync/history 响应（added/not_found）——之前丢弃响应体，
+	// 前端读 addedMovies/addedEpisodes/notFound 恒为 0（显示 bug，实际提交是成功的）。
+	addedMovies, addedEpisodes, notFound := 0, 0, 0
+	if added, ok := out["added"].(map[string]any); ok {
+		addedMovies = int(toInt64(added["movies"]))
+		addedEpisodes = int(toInt64(added["episodes"]))
+	}
+	if nf, ok := out["not_found"].(map[string]any); ok {
+		for _, key := range []string{"movies", "shows", "seasons", "episodes"} {
+			if arr, ok := nf[key].([]any); ok {
+				notFound += len(arr)
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": st < 400, "code": st,
 		"movies": len(movies), "shows": len(shows),
+		"addedMovies": addedMovies, "addedEpisodes": addedEpisodes,
+		"notFound": notFound, "noIdMovies": noIDMovies, "noIdShows": noIDShows,
 		"message": fmt.Sprintf("已提交 %d 部电影 / %d 部剧集", len(movies), len(shows)),
 	})
 }

@@ -1833,7 +1833,7 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
           return;
         }
         traSyncResult.textContent = '同步完成：新增电影 ' + (r.addedMovies || 0) + ' 部 / 剧集集数 ' + (r.addedEpisodes || 0)
-          + ' 条，未识别 ' + (r.notFound || 0) + (r.noIdMovies || r.noIdShows ? '（标题搜索未命中 ' + (r.noIdMovies || 0) + ' 部电影 / ' + (r.noIdShows || 0) + ' 部剧）' : '');
+          + ' 条，未识别 ' + (r.notFound || 0) + (r.noIdMovies || r.noIdShows ? '（库里未识别跳过 ' + (r.noIdMovies || 0) + ' 部电影 / ' + (r.noIdShows || 0) + ' 部剧）' : '');
         traSyncResult.style.color = 'var(--fnos-ui-ok)';
       }).catch((err) => { traSyncResult.textContent = '同步失败: ' + (err && err.message ? err.message : err); traSyncResult.style.color = 'var(--fnos-ui-warn)'; });
     });

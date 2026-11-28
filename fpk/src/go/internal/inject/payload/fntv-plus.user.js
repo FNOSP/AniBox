@@ -19332,7 +19332,7 @@ html.fntv-boot-hide #root{visibility:hidden}
             traSyncResult.style.color = "var(--fnos-ui-warn)";
             return;
           }
-          traSyncResult.textContent = "\u540C\u6B65\u5B8C\u6210\uFF1A\u65B0\u589E\u7535\u5F71 " + (r.addedMovies || 0) + " \u90E8 / \u5267\u96C6\u96C6\u6570 " + (r.addedEpisodes || 0) + " \u6761\uFF0C\u672A\u8BC6\u522B " + (r.notFound || 0) + (r.noIdMovies || r.noIdShows ? "\uFF08\u6807\u9898\u641C\u7D22\u672A\u547D\u4E2D " + (r.noIdMovies || 0) + " \u90E8\u7535\u5F71 / " + (r.noIdShows || 0) + " \u90E8\u5267\uFF09" : "");
+          traSyncResult.textContent = "\u540C\u6B65\u5B8C\u6210\uFF1A\u65B0\u589E\u7535\u5F71 " + (r.addedMovies || 0) + " \u90E8 / \u5267\u96C6\u96C6\u6570 " + (r.addedEpisodes || 0) + " \u6761\uFF0C\u672A\u8BC6\u522B " + (r.notFound || 0) + (r.noIdMovies || r.noIdShows ? "\uFF08\u5E93\u91CC\u672A\u8BC6\u522B\u8DF3\u8FC7 " + (r.noIdMovies || 0) + " \u90E8\u7535\u5F71 / " + (r.noIdShows || 0) + " \u90E8\u5267\uFF09" : "");
           traSyncResult.style.color = "var(--fnos-ui-ok)";
         }).catch((err) => {
           traSyncResult.textContent = "\u540C\u6B65\u5931\u8D25: " + (err && err.message ? err.message : err);
@@ -19964,7 +19964,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         ipcRenderer.once("version-info", (_e, info) => {
           if (!info || !info.version) return;
           const ver = String(info.version).replace(/-web$/, "");
-          const bt = "2026-11-28 15:28" ? " (2026-11-28 15:28)" : "";
+          const bt = "2026-11-28 16:32" ? " (2026-11-28 16:32)" : "";
           aboutVer.textContent = "\u7248\u672C\uFF1Av" + ver + bt;
         });
       } catch (_) {

@@ -1472,6 +1472,7 @@ npx wrangler deploy
 |---|---|
 | 2026-11-27 | 初版：定稿账号（邮箱+密码+设备）、图片（多格式/1MB/30 天/2GB 兜底）、社区（文字永久）、举报、管理员、90 天审计 |
 | 2026-11-28 | P1 施工（lc-2441）：verify 补 device 参数；部署沿用现有库 + migrate-v1-to-v2.sql；requireAuth 免 ctx |
+| 2026-11-28 | 部署收尾（lc-2446 补）：Email Routing API enable → status=ready（DNS 自动写入）；R2 生命周期三条经 `wrangler r2 bucket lifecycle add --expire-days` 落库（v4 API /lifecycle 端点校验刁钻，CLI 子命令是正解）；R2 自定义域 img.690075.xyz 绑定成功（实测 200/image/jpeg）；destination address 122983191@qq.com 自动验证通过；真实验证码邮件已发到 QQ 邮箱（发件人 noreply@690075.xyz）；唯一遗留 = Workers Paid 订阅缺失（billing subscriptions 为空）→ Email Sending 只能发 verified 地址，任意用户注册需购买 Workers Paid $5/月（E_RECIPIENT_NOT_ALLOWED 实证） |
 | 2026-11-28 | P4 施工+部署（lc-2446）：comments 加 retracted_at/by 列（migrate 同步 5 条 ALTER）；admin 路由实装（/handle 段——文档先于实现，路由初次漏写该段被测试抓出）；**真实部署完成**：D1 anibox-comments（全新库，无需 migrate）+ R2 anibox-public/private + KV MAP_KV + secrets（ADMIN_EMAILS/INBOX_TOKEN）+ wrangler deploy，health v2 验证通过；待用户 dashboard 手动：① Email Sending 开启（SPF/DKIM/DMARC）② R2 生命周期三条规则 ③ R2 公开桶绑 img.690075.xyz 自定义域 |
 | 2026-11-28 | P3 施工（lc-2445）：posts 加 author_nick 快照列；/v2/posts 幂等（clientRequestId）；requireAuth readOk 语义；hot=P3 置顶+新到旧；**limit 解析坑**：`Number(null)=0` 不是 NaN——「无 limit 参数」会走 isInteger 分支被 clamp 成 1（feed/mine/notifications 三处中招，照 v1 readLimit 口径修复） |
 | 2026-11-28 | P2 施工（lc-2442）：schema 补 feedback_tickets/messages（§4.6 端点原本没有表）；§6.2.1 服务端图片三硬约束（R2 contentType / GIF 键后缀 / ImageDecoder 无 decode）；Cargo 勘误（webp/png 原已开启） |

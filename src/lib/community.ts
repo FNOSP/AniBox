@@ -17,6 +17,8 @@ export type CommunitySession = {
   nick: string;
   nickSuffix: string;
   role: CommunityRole;
+  /** 认证徽章：admin = 页头显示认证标 */
+  badge?: CommunityRole;
   deviceId: string;
 };
 
@@ -26,6 +28,7 @@ export type CommunityMe = {
   email: string;
   nick: string;
   nickSuffix: string;
+  badge?: CommunityRole;
   role: CommunityRole;
   status: string;
   banned?: boolean;
@@ -53,8 +56,9 @@ export type CommunityDevice = {
   current: boolean;
 };
 
-/** 显示名：重名时用 4 位后缀区分（小明 @a3f2） */
-export function communityTagOf(s: { nick: string; nickSuffix?: string }): string {
+/** 显示名：重名时用 4 位后缀区分（小明 @a3f2）；认证账号（badge=admin）免后缀 */
+export function communityTagOf(s: { nick: string; nickSuffix?: string; badge?: string }): string {
+  if (s.badge === "admin") return s.nick;
   return s.nickSuffix ? `${s.nick} @${s.nickSuffix}` : s.nick;
 }
 
@@ -160,6 +164,10 @@ export type CommunityPostImage = {
 export type CommunityPost = {
   id: string;
   nick: string;
+  /** 作者昵称后缀快照（admin 账号为空串 = 免 @） */
+  nickSuffix?: string;
+  /** 作者徽章：admin = 认证 */
+  badge?: CommunityRole;
   /** 板块：talk=交流讨论（绑作品）| feedback=反馈建议（软件建议公开帖） */
   board: "talk" | "feedback";
   mediaType: "movie" | "tv";
@@ -183,6 +191,8 @@ export type CommunityComment2 = {
   parentId: string | null;
   rootId: string | null;
   nick: string;
+  nickSuffix?: string;
+  badge?: CommunityRole;
   body: string | null;
   deleted: boolean;
   createdAt: number;

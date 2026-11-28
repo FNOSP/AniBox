@@ -39,6 +39,9 @@ struct StoredSession {
     nick: String,
     #[serde(default)]
     nick_suffix: String,
+    /// [lc-2448] 认证徽章快照（admin）
+    #[serde(default)]
+    badge: String,
     #[serde(default)]
     role: String,
     /// seal(token)；明文只在内存
@@ -84,6 +87,7 @@ fn public_session(s: &StoredSession) -> Value {
         "email": s.email_masked,
         "nick": s.nick,
         "nickSuffix": s.nick_suffix,
+        "badge": s.badge,
         "role": s.role,
         "deviceId": s.device_id,
     })
@@ -214,6 +218,11 @@ async fn store_session(
             .and_then(|x| x.as_str())
             .unwrap_or("user")
             .to_string(),
+        badge: data
+            .get("role")
+            .and_then(|x| x.as_str())
+            .unwrap_or("user")
+            .to_string(),
         token_enc: crate::config::seal(&token),
         device_id: String::new(),
     };
@@ -225,6 +234,9 @@ async fn store_session(
             .and_then(|x| x.as_str())
             .unwrap_or_default()
             .to_string();
+        if let Some(b) = me.get("badge").and_then(|x| x.as_str()) {
+            s.badge = b.to_string();
+        }
         if s.nick.is_empty() {
             s.nick = me.get("nick").and_then(|x| x.as_str()).unwrap_or_default().to_string();
         }
@@ -356,6 +368,7 @@ mod tests {
             nick: "小明".into(),
             nick_suffix: "e155".into(),
             role: "user".into(),
+            badge: "user".into(),
             token_enc: "enc:v1:xxx".into(),
             device_id: "d_1".into(),
         };
@@ -394,6 +407,7 @@ mod tests {
             nick: "小明".into(),
             nick_suffix: "e155".into(),
             role: "admin".into(),
+            badge: "admin".into(),
             token_enc: "enc:v1:secret".into(),
             device_id: "d_1".into(),
         };

@@ -121,7 +121,8 @@ export function PostCard({
   return (
     <article className={`cv2-post${post.deleted ? " deleted" : ""}`}>
       <div className="cv2-post-head">
-        <span className="cv2-post-nick">{communityTagOf({ nick: post.nick })}</span>
+        <span className="cv2-post-nick">{communityTagOf({ nick: post.nick, nickSuffix: post.nickSuffix, badge: post.badge })}</span>
+        {post.badge === "admin" && <span className="cv2-badge-admin">认证</span>}
         <span className="cv2-post-time">{fmtTime(post.createdAt)}</span>
         {post.deleted && <span className="cv2-post-flag">已删除</span>}
         {post.retracted && !post.deleted && <span className="cv2-post-flag">已撤回</span>}

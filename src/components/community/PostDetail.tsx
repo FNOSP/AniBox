@@ -123,7 +123,7 @@ export function PostDetail({
             <h4 className="cv2-cmsec-t">短评（{data.comments.length}）</h4>
             {replyTo && (
               <div className="cv2-replyto">
-                回复 <b>{communityTagOf({ nick: replyTo.nick })}</b>
+                回复 <b>{communityTagOf({ nick: replyTo.nick, nickSuffix: replyTo.nickSuffix, badge: replyTo.badge })}</b>
                 <button type="button" onClick={() => setReplyTo(null)}>
                   取消
                 </button>
@@ -152,7 +152,8 @@ export function PostDetail({
               {data.comments.map((c) => (
                 <div className="cv2-cm-item" key={c.id}>
                   <div className="cv2-cm-head">
-                    <span className="cv2-post-nick">{communityTagOf({ nick: c.nick })}</span>
+                    <span className="cv2-post-nick">{communityTagOf({ nick: c.nick, nickSuffix: c.nickSuffix, badge: c.badge })}</span>
+                    {c.badge === "admin" && <span className="cv2-badge-admin">认证</span>}
                     <span className="cv2-post-time">{fmtTime(c.createdAt)}</span>
                     {c.mine && <span className="cv2-post-flag me">我</span>}
                     {!c.deleted && (

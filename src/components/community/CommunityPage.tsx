@@ -220,7 +220,8 @@ export function CommunityPage({ onBack }: { onBack: () => void }) {
 
   const banned = "banned" in session && (session as CommunitySession & { banned?: boolean }).banned;
   const sess = session as CommunitySession & { banned?: boolean };
-  const isAdmin = sess.role === "admin";
+  const isAdmin = sess.role === "admin" || me?.badge === "admin";
+  const isAdminBadge = sess.badge === "admin" || me?.badge === "admin";
   const isBoard = tab === "talk" || tab === "feedback";
 
   return (
@@ -229,9 +230,9 @@ export function CommunityPage({ onBack }: { onBack: () => void }) {
         <button className="back" onClick={onBack}>‹</button>
         <h3>社区</h3>
         <span className="muted">{communityTagOf(sess)}</span>
-        {isAdmin && (
-          <span className="cv2-admin-tag" title="管理员">
-            <IcoShield size={12} strokeWidth={2} /> 管理员
+        {isAdminBadge && (
+          <span className="cv2-admin-tag" title="认证账号">
+            <IcoShield size={12} strokeWidth={2} /> 认证
           </span>
         )}
       </div>
@@ -295,7 +296,14 @@ export function CommunityPage({ onBack }: { onBack: () => void }) {
                     {me.nick.slice(0, 1).toUpperCase() || "?"}
                   </span>
                   <div className="cv2-acct-main">
-                    <div className="cv2-acct-name">{communityTagOf(me)}</div>
+                    <div className="cv2-acct-name">
+                      {communityTagOf(me)}
+                      {me.badge === "admin" && (
+                        <span className="cv2-admin-tag" title="认证账号">
+                          <IcoShield size={12} strokeWidth={2} /> 认证
+                        </span>
+                      )}
+                    </div>
                     <div className="cv2-acct-mail">{me.email}</div>
                     <div className="cv2-acct-stats">
                       发帖 {me.stats.posts} · 短评 {me.stats.comments} · 注册于 {fmtDate(me.createdAt)}

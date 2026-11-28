@@ -46,9 +46,10 @@ const IPC_PEEK_IDLE_MS: u64 = 8;
 /// 返回 `None` = 管道已断开（mpv 退出）；`Some(0)` = 暂时没数据（调用方稍后再问）。
 /// Windows 走 `PeekNamedPipe`（不动数据、不产生挂起 I/O）；其它平台恒返回
 /// `Some(1)`，让读线程退回阻塞读（Unix socket 无此串行化问题）。
+// [lc-2456] 泛型参数适配两平台的 IpcStream：Windows 是命名管道 File，
+// Linux/macOS 是 UnixStream —— 两者都支持 Read，门控读的语义各平台自洽。
 #[cfg(target_os = "windows")]
-fn peek_available(file: &std::fs::File) -> Option<usize> {
-    use std::os::windows::io::AsRawHandle;
+fn peek_available<S: std::os::windows::io::AsRawHandle>(file: &S) -> Option<usize> {
     use windows_sys::Win32::System::Pipes::PeekNamedPipe;
     let mut avail: u32 = 0;
     let ok = unsafe {
@@ -69,7 +70,7 @@ fn peek_available(file: &std::fs::File) -> Option<usize> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn peek_available(_file: &std::fs::File) -> Option<usize> {
+fn peek_available<S>(_file: &S) -> Option<usize> {
     Some(1) // 非 Windows：没有句柄串行化问题，直接阻塞读
 }
 
@@ -99,15 +100,31 @@ fn write_from_reader(tx: &Arc<Mutex<Option<IpcStream>>>, line: &str) {
 /// 这是修掉「同步管道句柄上挂起读阻塞同句柄写」的关键（见 `IPC_PEEK_GATE`）。
 ///
 /// 退出条件：`PeekNamedPipe` 报管道断开（mpv 退出）或读到 0 字节 → 迭代结束。
-struct GatedLines {
-    file: std::fs::File,
+///
+/// 平台门控约束：Windows 上要求能取原始句柄（PeekNamedPipe 用），其它平台只需 Read+Send。
+/// [lc-2456] 用 cfg 门控的辅助 trait 让 GatedLines 的各 impl 共用一份 bound，
+/// 不必按平台复制整个实现体。
+#[cfg(target_os = "windows")]
+trait GatePeek: std::io::Read + Send + std::os::windows::io::AsRawHandle {}
+#[cfg(target_os = "windows")]
+impl<T: std::io::Read + Send + std::os::windows::io::AsRawHandle> GatePeek for T {}
+
+#[cfg(not(target_os = "windows"))]
+trait GatePeek: std::io::Read + Send {}
+#[cfg(not(target_os = "windows"))]
+impl<T: std::io::Read + Send> GatePeek for T {}
+
+/// [lc-2456] `S` 适配两平台的 `IpcStream`（Windows=`File`、Linux/macOS=`UnixStream`），
+/// 原先写死 `std::fs::File` 导致 unix 分支 E0308 编译失败（CI 挂、本地 Windows 构建看不见）。
+struct GatedLines<S: GatePeek> {
+    file: S,
     buf: Vec<u8>,
     /// 已从管道读入但还没凑成完整行的原始字节（跨次拼接）。
     carry: Vec<u8>,
 }
 
-impl GatedLines {
-    fn new(file: std::fs::File) -> Self {
+impl<S: GatePeek> GatedLines<S> {
+    fn new(file: S) -> Self {
         GatedLines {
             file,
             buf: vec![0u8; 64 * 1024],
@@ -129,11 +146,10 @@ impl GatedLines {
     }
 }
 
-impl Iterator for GatedLines {
+impl<S: GatePeek> Iterator for GatedLines<S> {
     type Item = std::io::Result<String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        use std::io::Read;
         loop {
             if let Some(line) = self.take_line() {
                 return Some(Ok(line));

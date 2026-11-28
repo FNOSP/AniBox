@@ -4,13 +4,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft as IcoBack, Send as IcoSend, Star as IcoStar } from "lucide-react";
 import {
+  adminRetractComment,
   fetchPostDetail,
+  fetchSession,
   postComment,
   communityTagOf,
   type CommunityComment2,
   type CommunityPostDetail,
+  type CommunitySession,
 } from "../../lib/community";
 import { PostCard } from "./PostCard";
+import { ReportDialog } from "./ReportDialog";
 
 function fmtTime(ms: number): string {
   const diff = Date.now() - ms;
@@ -34,6 +38,20 @@ export function PostDetail({
   const [draft, setDraft] = useState("");
   const [replyTo, setReplyTo] = useState<CommunityComment2 | null>(null);
   const [busy, setBusy] = useState(false);
+  // [lc-2446] 举报/管理：session 提供 canReport（登录）与 isAdmin
+  const [session, setSession] = useState<CommunitySession | null>(null);
+  const [reportTarget, setReportTarget] = useState<CommunityComment2 | null>(null);
+  const [cmBusyId, setCmBusyId] = useState("");
+  useEffect(() => {
+    let alive = true;
+    void fetchSession().then((v) => {
+      if (alive) setSession(v);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const isAdmin = session?.role === "admin";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -99,7 +117,7 @@ export function PostDetail({
 
       {data && (
         <>
-          <PostCard post={data.post} />
+          <PostCard post={data.post} canReport={!!session && !data.post.mine} isAdmin={isAdmin} onChanged={() => void load()} />
 
           <div className="cv2-cmsec">
             <h4 className="cv2-cmsec-t">短评（{data.comments.length}）</h4>
@@ -146,6 +164,27 @@ export function PostDetail({
                         回复
                       </button>
                     )}
+                    {/* [lc-2446] 举报（登录用户）/ 管理（admin 撤回=软删占位） */}
+                    {session && !c.deleted && !c.mine && (
+                      <button type="button" className="cmlink" onClick={() => setReportTarget(c)}>
+                        举报
+                      </button>
+                    )}
+                    {isAdmin && !c.deleted && (
+                      <button
+                        type="button"
+                        className="cmlink cv2-post-adminact danger"
+                        onClick={() => {
+                          setCmBusyId(c.id);
+                          void adminRetractComment(c.id, "违规内容")
+                            .then(() => load())
+                            .finally(() => setCmBusyId(""));
+                        }}
+                        disabled={cmBusyId === c.id}
+                      >
+                        撤回
+                      </button>
+                    )}
                   </div>
                   <p className="cv2-cm-body">
                     {c.deleted ? <span className="cv2-cm-deleted">该评论已删除</span> : c.body}
@@ -156,6 +195,9 @@ export function PostDetail({
             </div>
           </div>
         </>
+      )}
+      {reportTarget && (
+        <ReportDialog kind="comment" refId={reportTarget.id} onClose={() => setReportTarget(null)} />
       )}
     </div>
   );

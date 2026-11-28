@@ -16,13 +16,14 @@ import {
   type CommunityPost,
   type CommunitySession,
 } from "../../lib/community";
+import { AdminPanel } from "./AdminPanel";
 import { AuthPanel } from "./AuthPanel";
 import { DeviceManager } from "./DeviceManager";
 import { PostCard } from "./PostCard";
 import { PostComposer } from "./PostComposer";
 import { PostDetail } from "./PostDetail";
 
-type Tab = "feed" | "mine" | "notifications";
+type Tab = "feed" | "mine" | "notifications" | "admin";
 type LoadState = "loading" | CommunitySession | null;
 
 function fmtRel(ms: number): string {
@@ -72,6 +73,7 @@ export function CommunityPage({ onBack }: { onBack: () => void }) {
       if (!session || session === "loading") return;
       setFeedErr("");
       if (cursor === 0) setPosts(null);
+      if (tab === "admin") return; // 管理台自己拉数据
       try {
         const r =
           tab === "feed"
@@ -92,6 +94,7 @@ export function CommunityPage({ onBack }: { onBack: () => void }) {
   // tab 切换 / 会话就绪 → 拉对应列表
   useEffect(() => {
     if (!session || session === "loading") return;
+    if (tab === "admin") return;
     if (tab === "notifications") {
       void fetchNotifications(0)
         .then((r) => {
@@ -182,6 +185,7 @@ export function CommunityPage({ onBack }: { onBack: () => void }) {
 
   const banned = "banned" in session && (session as CommunitySession & { banned?: boolean }).banned;
   const s = session as CommunitySession & { banned?: boolean };
+  const isAdmin = s.role === "admin";
 
   return (
     <main className="content lib-root cv2-page">
@@ -208,6 +212,11 @@ export function CommunityPage({ onBack }: { onBack: () => void }) {
               <IcoBell size={13} strokeWidth={2} aria-hidden="true" /> 通知
               {notifUnread > 0 && <span className="cv2-tab-badge">{notifUnread > 99 ? "99+" : notifUnread}</span>}
             </button>
+            {isAdmin && (
+              <button type="button" className={tab === "admin" ? "on" : ""} onClick={() => setTab("admin")}>
+                管理台
+              </button>
+            )}
           </div>
 
           {tab === "feed" && !composing && !banned && (
@@ -230,7 +239,9 @@ export function CommunityPage({ onBack }: { onBack: () => void }) {
 
           {err && <div className="set-warn cv2-warn">{err}</div>}
 
-          {tab === "notifications" ? (
+          {tab === "admin" ? (
+            <AdminPanel />
+          ) : tab === "notifications" ? (
             <div className="cv2-notif">
               {(notifs ?? []).length > 0 && notifUnread > 0 && (
                 <button type="button" className="cmlink cv2-notif-readall" onClick={() => void readAll()}>
@@ -262,7 +273,15 @@ export function CommunityPage({ onBack }: { onBack: () => void }) {
               <div className="cv2-post-list">
                 {(posts ?? []).map((p) => (
                   <div key={p.id} onClick={() => !p.deleted && setDetailId(p.id)} role="presentation">
-                    <PostCard post={p} onDelete={tab === "mine" ? (x) => void remove(x) : undefined} />
+                    <PostCard
+                      post={p}
+                      onDelete={tab === "mine" ? (x) => void remove(x) : undefined}
+                      canReport={!p.mine}
+                      isAdmin={isAdmin}
+                      onChanged={(updated) =>
+                        setPosts((prev) => prev?.map((x) => (x.id === updated.id ? updated : x)) ?? prev)
+                      }
+                    />
                   </div>
                 ))}
                 {posts === null && !feedErr && <div className="empty">加载中…</div>}

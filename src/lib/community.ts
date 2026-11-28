@@ -276,3 +276,104 @@ export const fetchNotifications = (cursor: number = 0) =>
 
 export const readNotifications = (args: { ids?: number[]; all?: boolean }) =>
   invoke("community_v2_read_notifications", { ids: args.ids, all: args.all });
+
+/* ── P4：举报 + 管理（lc-2446）──────────────────────────── */
+
+export const REPORT_REASONS = [
+  { key: "spam", label: "垃圾广告" },
+  { key: "abuse", label: "辱骂攻击" },
+  { key: "porn", label: "色情低俗" },
+  { key: "illegal", label: "违法信息" },
+  { key: "other", label: "其他" },
+] as const;
+
+export type CommunityReport = {
+  id: string;
+  kind: string;
+  refId: string;
+  reason: string;
+  detail: string | null;
+  reporterId: string;
+  status: string;
+  excerpt: string | null;
+  createdAt: number;
+  handleNote: string | null;
+};
+
+export type CommunityAuditRow = {
+  id: number;
+  ts: number;
+  actorId: string | null;
+  actorNick: string | null;
+  actorDev: string | null;
+  ipNet: string;
+  action: string;
+  targetKind: string | null;
+  targetId: string | null;
+  bodySnap: string | null;
+  detail: string | null;
+};
+
+export type CommunityStats = {
+  users: number;
+  posts: number;
+  comments: number;
+  images: number;
+  openReports: number;
+  storageUsed: number;
+  storageCap: number;
+};
+
+export const submitReport = (args: { kind: string; refId: string; reason: string; detail?: string }) =>
+  invoke<{ id: string; autoHidden: boolean }>("community_v2_report", {
+    kind: args.kind,
+    refId: args.refId,
+    reason: args.reason,
+    detail: args.detail ?? "",
+  });
+
+export const adminReports = (status: string, cursor: number = 0) =>
+  invoke<{ items: CommunityReport[]; nextCursor: number | null }>("community_admin_reports", { status, cursor });
+
+export const adminReportHandle = (id: string, action: "resolve" | "reject", note?: string) =>
+  invoke<{ id: string; status: string }>("community_admin_report_handle", { id, action, note: note ?? "" });
+
+export const adminRetractPost = (id: string, reason?: string) =>
+  invoke<{ id: string; retracted: boolean }>("community_admin_retract_post", { id, reason: reason ?? "" });
+
+export const adminUnretractPost = (id: string) =>
+  invoke<{ id: string; retracted: boolean }>("community_admin_unretract_post", { id });
+
+export const adminDeletePost = (id: string, reason?: string) =>
+  invoke<{ id: string; deleted: boolean }>("community_admin_delete_post", { id, reason: reason ?? "" });
+
+export const adminRetractComment = (id: string, reason?: string) =>
+  invoke("community_admin_retract_comment", { id, reason: reason ?? "" });
+
+export const adminDeleteComment = (id: string, reason?: string) =>
+  invoke("community_admin_delete_comment", { id, reason: reason ?? "" });
+
+export const adminDeleteImage = (id: string, reason?: string) =>
+  invoke("community_admin_delete_image", { id, reason: reason ?? "" });
+
+export const adminBanAccount = (id: string, reason?: string) =>
+  invoke<{ id: string; status: string }>("community_admin_ban_account", { id, reason: reason ?? "" });
+
+export const adminUnbanAccount = (id: string) =>
+  invoke<{ id: string; status: string }>("community_admin_unban_account", { id });
+
+export const adminMuteAccount = (id: string, minutes: number, reason?: string) =>
+  invoke<{ id: string; status: string }>("community_admin_mute_account", { id, minutes, reason: reason ?? "" });
+
+export const adminBanDevice = (deviceCode: string, reason?: string) =>
+  invoke<{ deviceCode: string; banned: boolean }>("community_admin_ban_device", { deviceCode, reason: reason ?? "" });
+
+export const adminAudit = (args: { actorId?: string; deviceCode?: string; action?: string; cursor?: number }) =>
+  invoke<{ items: CommunityAuditRow[]; total: number; nextCursor: number | null }>("community_admin_audit", {
+    actorId: args.actorId,
+    deviceCode: args.deviceCode,
+    action: args.action,
+    cursor: args.cursor ?? 0,
+  });
+
+export const adminStats = () => invoke<CommunityStats>("community_admin_stats");

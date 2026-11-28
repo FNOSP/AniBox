@@ -40,6 +40,8 @@ mod community_auth;
 mod community_images;
 // [lc-2445] 社区 v2 内容（发帖/信息流/作品聚合/评论/通知）：协议见 §4.5
 mod community_content;
+// [lc-2446] 社区 v2 P4：举报 + 管理（仅 role=admin；服务端 requireAdmin 二次校验）
+mod community_admin;
 // [lc-2244] 组件包进程内解压：原先外调 pwsh Expand-Archive，而 pwsh 不是 Windows
 // 自带组件 —— 干净机器上报「启动解压失败: program not found」，下载必然失败。
 mod zip_extract;
@@ -4992,6 +4994,22 @@ pub fn run() {
             community_content::community_v2_mine_posts,
             community_content::community_v2_notifications,
             community_content::community_v2_read_notifications,
+            // [lc-2446] 社区 v2 P4：举报 + 管理
+            community_admin::community_v2_report,
+            community_admin::community_admin_reports,
+            community_admin::community_admin_report_handle,
+            community_admin::community_admin_retract_post,
+            community_admin::community_admin_unretract_post,
+            community_admin::community_admin_delete_post,
+            community_admin::community_admin_retract_comment,
+            community_admin::community_admin_delete_comment,
+            community_admin::community_admin_delete_image,
+            community_admin::community_admin_ban_account,
+            community_admin::community_admin_unban_account,
+            community_admin::community_admin_mute_account,
+            community_admin::community_admin_ban_device,
+            community_admin::community_admin_audit,
+            community_admin::community_admin_stats,
             // [lc-2442] v2 反馈（随社区账号；附图）
             feedback::feedback_submit_v2,
             feedback::feedback_mine_v2,

@@ -1981,9 +1981,11 @@ try{if(typeof window!=='undefined'){if(typeof window.require==='undefined'){wind
     "\u8BFB\u53D6\u98DE\u725B\u300C\u5DF2\u89C2\u770B\u300D\u5217\u8868\uFF0C\u6279\u91CF\u6807\u8BB0\u5230\u8C46\u74E3\uFF08\u5DF2\u6807\u8BB0\u7684\u4F1A\u8DF3\u8FC7\uFF0C\u4E0D\u91CD\u590D\u6253\uFF09\u3002": 'Read the fnOS "watched" list and batch-mark to Douban (already-marked items are skipped).',
     "\u6B63\u5728\u626B\u63CF\u98DE\u725B\u300C\u5DF2\u89C2\u770B\u300D\u5217\u8868\u2026\uFF08\u9700\u52A0\u8F7D\u5217\u8868\u9875\uFF0C\u7EA6 10 \u79D2\uFF09": 'Scanning fnOS "watched" list\u2026 (loads the list page, ~10s)',
     "\u81EA\u52A8\u540C\u6B65\u95F4\u9694(\u5206\u949F, 0=\u5173\u95ED):": "Auto-sync interval (min, 0=off):",
-    "\u628A\u89C2\u5F71\u8BB0\u5F55\uFF08\u770B\u5B8C\u7684\u7535\u5F71 / \u5DF2\u770B\u7684\u5267\u96C6\u96C6\u6570\uFF09\u540C\u6B65\u5230 trakt.tv \u5386\u53F2\u3002\u9700\u5728 Trakt \u5E94\u7528\u7BA1\u7406\u9875(app.trakt.tv/settings/apps/api)\u6CE8\u518C\u5E94\u7528\uFF08\u9996\u6B21\u9700\u5148\u7ED1\u5B9A GitHub \u8D26\u53F7\uFF09\uFF0C\u628A Client ID \u586B\u5230\u8FD9\u91CC\u5373\u53EF\u8FDE\u63A5\uFF1BClient Secret \u73B0\u4E3A\u53EF\u9009\u9879\uFF08\u65B0\u5E94\u7528\u9ED8\u8BA4\u4E0D\u53D1\u653E\uFF09\u3002": "Sync watch history (finished movies / watched episodes) to trakt.tv. Register an app at app.trakt.tv/settings/apps/api (a verified GitHub account must be linked first), paste the Client ID and connect; Client Secret is now optional (new apps no longer get one by default).",
-    "\u51ED\u8BC1\u5DF2\u4FDD\u5B58\uFF0C\u5C1A\u672A\u8FDE\u63A5\u3002": "Credentials saved, not connected.",
-    "\u672A\u914D\u7F6E\u3002": "Not configured.",
+    "\u5DF2\u5185\u7F6E AniBox \u5B98\u65B9\u5E94\u7528\u51ED\u8BC1\uFF0C\u65E0\u9700\u6CE8\u518C\u7533\u8BF7\u3002\u70B9\u300C\u8FDE\u63A5 Trakt\u300D\uFF0C\u6D4F\u89C8\u5668\u6253\u5F00 Trakt \u6388\u6743\u9875\u5E76\u8F93\u5165\u6388\u6743\u7801\u5373\u53EF\u5B8C\u6210\u7ED1\u5B9A\uFF0C\u6B64\u540E\u89C2\u5F71\u8BB0\u5F55\u4E0E\u64AD\u653E\u8FDB\u5EA6\u81EA\u52A8\u540C\u6B65\u5230\u4F60\u7684 Trakt \u5386\u53F2\u3002": 'The official AniBox app credentials are built in \u2014 no registration needed. Click "Connect Trakt", open the Trakt authorization page in your browser and enter the code to link; your watch history and playback progress will sync to Trakt automatically afterwards.',
+    "AniBox \u4F7F\u7528 Trakt \u670D\u52A1\u4F46\u4E0D\u53D7 Trakt \u8BA4\u53EF\u6216\u8BA4\u8BC1\uFF08not endorsed or certified by Trakt\uFF09\u3002": "AniBox uses Trakt but is not endorsed or certified by Trakt.",
+    "\u5DF2\u8FDE\u63A5 Trakt": "Connected to Trakt",
+    "\u5DF2\u4FDD\u5B58\u81EA\u586B\u51ED\u8BC1\uFF0C\u5C1A\u672A\u8FDE\u63A5\u3002": "Custom credentials saved, not connected yet.",
+    "\u672A\u8FDE\u63A5\u3002": "Not connected.",
     "Client ID \u5FC5\u586B\uFF08Secret \u4E3A\u53EF\u9009\uFF0C\u7559\u7A7A\u5373\u53EF\uFF09\u3002": "Client ID is required (Secret is optional \u2014 leave it empty).",
     "\u64AD\u653E\u65F6\u5B9E\u65F6\u6253\u70B9\u5230 Trakt\uFF08\u5F00\u59CB/\u6682\u505C/\u770B\u5B8C\u226580% \u81EA\u52A8\u8BB0\u5F55\uFF09\uFF0C\u9700\u5148\u8FDE\u63A5 Trakt\u3002": "Scrobble to Trakt while playing (start / pause / \u226580% watched). Connect Trakt first.",
     "\u6B63\u5728\u83B7\u53D6\u8BBE\u5907\u7801\u2026": "Fetching device code\u2026",
@@ -19087,11 +19089,16 @@ html.fntv-boot-hide #root{visibility:hidden}
       const traBody = secTrakt.body;
       const traHint = document.createElement("div");
       traHint.style.cssText = "font-size:10.5px;color:var(--fnos-ui-sec);padding:0 6px 6px;line-height:1.5;";
-      traHint.textContent = t("\u628A\u89C2\u5F71\u8BB0\u5F55\uFF08\u770B\u5B8C\u7684\u7535\u5F71 / \u5DF2\u770B\u7684\u5267\u96C6\u96C6\u6570\uFF09\u540C\u6B65\u5230 trakt.tv \u5386\u53F2\u3002\u9700\u5728 Trakt \u5E94\u7528\u7BA1\u7406\u9875(app.trakt.tv/settings/apps/api)\u6CE8\u518C\u5E94\u7528\uFF08\u9996\u6B21\u9700\u5148\u7ED1\u5B9A GitHub \u8D26\u53F7\uFF09\uFF0C\u628A Client ID \u586B\u5230\u8FD9\u91CC\u5373\u53EF\u8FDE\u63A5\uFF1BClient Secret \u73B0\u4E3A\u53EF\u9009\u9879\uFF08\u65B0\u5E94\u7528\u9ED8\u8BA4\u4E0D\u53D1\u653E\uFF09\u3002");
+      traHint.textContent = t("\u5DF2\u5185\u7F6E AniBox \u5B98\u65B9\u5E94\u7528\u51ED\u8BC1\uFF0C\u65E0\u9700\u6CE8\u518C\u7533\u8BF7\u3002\u70B9\u300C\u8FDE\u63A5 Trakt\u300D\uFF0C\u6D4F\u89C8\u5668\u6253\u5F00 Trakt \u6388\u6743\u9875\u5E76\u8F93\u5165\u6388\u6743\u7801\u5373\u53EF\u5B8C\u6210\u7ED1\u5B9A\uFF0C\u6B64\u540E\u89C2\u5F71\u8BB0\u5F55\u4E0E\u64AD\u653E\u8FDB\u5EA6\u81EA\u52A8\u540C\u6B65\u5230\u4F60\u7684 Trakt \u5386\u53F2\u3002");
       traBody.appendChild(traHint);
+      const traDisclaimer = document.createElement("div");
+      traDisclaimer.style.cssText = "font-size:10px;color:var(--fnos-ui-muted2,#5a6480);padding:0 6px 6px;line-height:1.4;";
+      traDisclaimer.textContent = t("AniBox \u4F7F\u7528 Trakt \u670D\u52A1\u4F46\u4E0D\u53D7 Trakt \u8BA4\u53EF\u6216\u8BA4\u8BC1\uFF08not endorsed or certified by Trakt\uFF09\u3002");
+      traBody.appendChild(traDisclaimer);
       const maskTra = (t2) => "*".repeat(Math.max(0, t2.length));
       let traRealId = "";
       let traRealSecret = "";
+      let traClientSource = "builtin";
       const mkTraInput = (placeholder) => {
         const inp = document.createElement("input");
         inp.type = "text";
@@ -19105,8 +19112,8 @@ html.fntv-boot-hide #root{visibility:hidden}
         });
         return inp;
       };
-      const traIdInput = mkTraInput("Client ID\uFF08Trakt \u5E94\u7528\u8BBE\u7F6E\u9875\u83B7\u53D6\uFF09");
-      const traSecretInput = mkTraInput("Client Secret\uFF08\u53EF\u9009\uFF0C\u65B0\u5E94\u7528\u9ED8\u8BA4\u4E0D\u53D1\u653E\uFF09");
+      const traIdInput = mkTraInput("Client ID\uFF08\u4EC5\u5728\u4F7F\u7528\u81EA\u5DF1\u7684\u5E94\u7528\u65F6\u586B\u5199\uFF09");
+      const traSecretInput = mkTraInput("Client Secret\uFF08\u53EF\u9009\uFF0C\u4EC5\u8001\u5E94\u7528\u624D\u6709\uFF09");
       const traBlurMask = (inp, real) => {
         if (inp.value.trim() === "" && real) {
           inp.value = maskTra(real);
@@ -19115,29 +19122,47 @@ html.fntv-boot-hide #root{visibility:hidden}
       };
       traIdInput.addEventListener("blur", () => traBlurMask(traIdInput, traRealId));
       traSecretInput.addEventListener("blur", () => traBlurMask(traSecretInput, traRealSecret));
-      traBody.appendChild(traIdInput);
-      traBody.appendChild(traSecretInput);
+      const traCredBox = document.createElement("div");
+      traCredBox.style.cssText = "display:none;";
+      traCredBox.appendChild(traIdInput);
+      traCredBox.appendChild(traSecretInput);
       const traBtnRow1 = document.createElement("div");
       traBtnRow1.style.cssText = "display:flex;gap:6px;";
       const traSaveBtn = mkBtn2("\u4FDD\u5B58\u51ED\u8BC1", true);
-      const traClearBtn = mkBtn2("\u6E05\u9664\u51ED\u8BC1", true);
+      const traClearBtn = mkBtn2("\u6062\u590D\u5185\u7F6E\u51ED\u8BC1", true);
       traBtnRow1.appendChild(traSaveBtn);
       traBtnRow1.appendChild(traClearBtn);
-      traBody.appendChild(traBtnRow1);
+      traCredBox.appendChild(traBtnRow1);
+      traBody.appendChild(traCredBox);
+      let traAdvOpen = false;
+      const traAdvBtn = mkBtn2("\u4F7F\u7528\u81EA\u5DF1\u7684\u5E94\u7528", true);
+      traAdvBtn.style.marginTop = "6px";
+      traAdvBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        traAdvOpen = !traAdvOpen;
+        traCredBox.style.display = traAdvOpen ? "block" : "none";
+        traAdvBtn.textContent = traAdvOpen ? "\u6536\u8D77" : "\u4F7F\u7528\u81EA\u5DF1\u7684\u5E94\u7528";
+      });
+      traBody.appendChild(traAdvBtn);
       const traStatus = document.createElement("div");
       traStatus.style.cssText = "font-size:10.5px;color:var(--fnos-ui-sub);margin-top:6px;min-height:14px;line-height:1.5;";
       traBody.appendChild(traStatus);
       const traRefreshStatus = async () => {
-        const st = await ipcRenderer.invoke("trakt:get-status").catch(() => null);
+        const st = await ipcRenderer.invoke("trakt:get-credentials").catch(() => null);
+        traClientSource = st && st.clientSource === "custom" ? "custom" : "builtin";
+        const custom = traClientSource === "custom";
+        traCredBox.style.display = custom || traAdvOpen ? "block" : "none";
+        traAdvBtn.style.display = custom ? "none" : "";
+        if (custom) traAdvBtn.textContent = "\u6536\u8D77";
         if (st && st.connected) {
           const exp = st.expiresAt ? "\uFF0C\u6709\u6548\u671F\u81F3 " + new Date(st.expiresAt).toLocaleDateString() : "";
-          traStatus.textContent = "\u5DF2\u8FDE\u63A5 Trakt" + exp;
+          traStatus.textContent = (custom ? "\u5DF2\u8FDE\u63A5 Trakt\uFF08\u81EA\u7528\u51ED\u8BC1\uFF09" : t("\u5DF2\u8FDE\u63A5 Trakt")) + exp;
           traStatus.style.color = "var(--fnos-ui-ok)";
-        } else if (st && st.configured) {
-          traStatus.textContent = t("\u51ED\u8BC1\u5DF2\u4FDD\u5B58\uFF0C\u5C1A\u672A\u8FDE\u63A5\u3002");
+        } else if (custom) {
+          traStatus.textContent = t("\u5DF2\u4FDD\u5B58\u81EA\u586B\u51ED\u8BC1\uFF0C\u5C1A\u672A\u8FDE\u63A5\u3002");
           traStatus.style.color = "var(--fnos-ui-sub)";
         } else {
-          traStatus.textContent = t("\u672A\u914D\u7F6E\u3002");
+          traStatus.textContent = t("\u672A\u8FDE\u63A5\u3002");
           traStatus.style.color = "var(--fnos-ui-sub)";
         }
       };
@@ -19173,6 +19198,7 @@ html.fntv-boot-hide #root{visibility:hidden}
           traIdInput.readOnly = false;
           traSecretInput.value = "";
           traSecretInput.readOnly = false;
+          traAdvOpen = false;
           void traRefreshStatus();
         }).catch(() => {
         });
@@ -19314,7 +19340,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         });
       });
       ipcRenderer.invoke("trakt:get-credentials").then((r) => {
-        if (r && r.configured) {
+        if (r && r.clientSource === "custom") {
           traRealId = r.clientId || "";
           traRealSecret = r.clientSecret || "";
           traIdInput.value = maskTra(traRealId);
@@ -19938,7 +19964,7 @@ html.fntv-boot-hide #root{visibility:hidden}
         ipcRenderer.once("version-info", (_e, info) => {
           if (!info || !info.version) return;
           const ver = String(info.version).replace(/-web$/, "");
-          const bt = "2026-11-28 14:46" ? " (2026-11-28 14:46)" : "";
+          const bt = "2026-11-28 15:08" ? " (2026-11-28 15:08)" : "";
           aboutVer.textContent = "\u7248\u672C\uFF1Av" + ver + bt;
         });
       } catch (_) {

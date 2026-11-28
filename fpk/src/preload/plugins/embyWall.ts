@@ -1611,13 +1611,19 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     const traBody = secTrakt.body;
     const traHint = document.createElement('div');
     traHint.style.cssText = 'font-size:10.5px;color:var(--fnos-ui-sec);padding:0 6px 6px;line-height:1.5;';
-    traHint.textContent = t('把观影记录（看完的电影 / 已看的剧集集数）同步到 trakt.tv 历史。需在 Trakt 应用管理页(app.trakt.tv/settings/apps/api)注册应用（首次需先绑定 GitHub 账号），把 Client ID 填到这里即可连接；Client Secret 现为可选项（新应用默认不发放）。');
+    traHint.textContent = t('已内置 AniBox 官方应用凭证，无需注册申请。点「连接 Trakt」，浏览器打开 Trakt 授权页并输入授权码即可完成绑定，此后观影记录与播放进度自动同步到你的 Trakt 历史。');
     traBody.appendChild(traHint);
+    // [lc-2451] Trakt 非背书声明（官方 API 使用要求，Production 清单项）
+    const traDisclaimer = document.createElement('div');
+    traDisclaimer.style.cssText = 'font-size:10px;color:var(--fnos-ui-muted2,#5a6480);padding:0 6px 6px;line-height:1.4;';
+    traDisclaimer.textContent = t('AniBox 使用 Trakt 服务但不受 Trakt 认可或认证（not endorsed or certified by Trakt）。');
+    traBody.appendChild(traDisclaimer);
 
     // 凭证（掩码输入，交互同 Bangumi token / 弹弹play 凭证）
     const maskTra = (t: string): string => '*'.repeat(Math.max(0, t.length));
     let traRealId = '';
     let traRealSecret = '';
+    let traClientSource = 'builtin';
     const mkTraInput = (placeholder: string): HTMLInputElement => {
       const inp = document.createElement('input');
       inp.type = 'text';
@@ -1628,38 +1634,60 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
       inp.addEventListener('focus', () => { if (inp.readOnly) { inp.readOnly = false; inp.value = ''; } });
       return inp;
     };
-    const traIdInput = mkTraInput('Client ID（Trakt 应用设置页获取）');
-    const traSecretInput = mkTraInput('Client Secret（可选，新应用默认不发放）');
+    const traIdInput = mkTraInput('Client ID（仅在使用自己的应用时填写）');
+    const traSecretInput = mkTraInput('Client Secret（可选，仅老应用才有）');
     const traBlurMask = (inp: HTMLInputElement, real: string): void => {
       if (inp.value.trim() === '' && real) { inp.value = maskTra(real); inp.readOnly = true; }
     };
     traIdInput.addEventListener('blur', () => traBlurMask(traIdInput, traRealId));
     traSecretInput.addEventListener('blur', () => traBlurMask(traSecretInput, traRealSecret));
-    traBody.appendChild(traIdInput);
-    traBody.appendChild(traSecretInput);
+    // [lc-2451] 自填凭证收纳进高级区：内置官方凭证时隐藏
+    const traCredBox = document.createElement('div');
+    traCredBox.style.cssText = 'display:none;';
+    traCredBox.appendChild(traIdInput);
+    traCredBox.appendChild(traSecretInput);
 
     const traBtnRow1 = document.createElement('div');
     traBtnRow1.style.cssText = 'display:flex;gap:6px;';
     const traSaveBtn = mkBtn('保存凭证', true);
-    const traClearBtn = mkBtn('清除凭证', true);
+    const traClearBtn = mkBtn('恢复内置凭证', true);
     traBtnRow1.appendChild(traSaveBtn); traBtnRow1.appendChild(traClearBtn);
-    traBody.appendChild(traBtnRow1);
+    traCredBox.appendChild(traBtnRow1);
+    traBody.appendChild(traCredBox);
+
+    // 高级入口：展开自填凭证区（当前为自填时隐藏，改由凭证区常驻）
+    let traAdvOpen = false;
+    const traAdvBtn = mkBtn('使用自己的应用', true);
+    traAdvBtn.style.marginTop = '6px';
+    traAdvBtn.addEventListener('click', (e: Event) => {
+      e.stopPropagation();
+      traAdvOpen = !traAdvOpen;
+      traCredBox.style.display = traAdvOpen ? 'block' : 'none';
+      traAdvBtn.textContent = traAdvOpen ? '收起' : '使用自己的应用';
+    });
+    traBody.appendChild(traAdvBtn);
 
     const traStatus = document.createElement('div');
     traStatus.style.cssText = 'font-size:10.5px;color:var(--fnos-ui-sub);margin-top:6px;min-height:14px;line-height:1.5;';
     traBody.appendChild(traStatus);
 
     const traRefreshStatus = async (): Promise<void> => {
-      const st: any = await ipcRenderer.invoke('trakt:get-status').catch(() => null);
+      const st: any = await ipcRenderer.invoke('trakt:get-credentials').catch(() => null);
+      // [lc-2451] 凭证来源感知：custom=自填（凭证区常驻、可恢复内置）；builtin=内置官方凭证
+      traClientSource = st && st.clientSource === 'custom' ? 'custom' : 'builtin';
+      const custom = traClientSource === 'custom';
+      traCredBox.style.display = custom || traAdvOpen ? 'block' : 'none';
+      traAdvBtn.style.display = custom ? 'none' : '';
+      if (custom) traAdvBtn.textContent = '收起';
       if (st && st.connected) {
         const exp = st.expiresAt ? '，有效期至 ' + new Date(st.expiresAt).toLocaleDateString() : '';
-        traStatus.textContent = '已连接 Trakt' + exp;
+        traStatus.textContent = (custom ? '已连接 Trakt（自用凭证）' : t('已连接 Trakt')) + exp;
         traStatus.style.color = 'var(--fnos-ui-ok)';
-      } else if (st && st.configured) {
-        traStatus.textContent = t('凭证已保存，尚未连接。');
+      } else if (custom) {
+        traStatus.textContent = t('已保存自填凭证，尚未连接。');
         traStatus.style.color = 'var(--fnos-ui-sub)';
       } else {
-        traStatus.textContent = t('未配置。');
+        traStatus.textContent = t('未连接。');
         traStatus.style.color = 'var(--fnos-ui-sub)';
       }
     };
@@ -1685,10 +1713,12 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
     });
     traClearBtn.addEventListener('click', (e: Event) => {
       e.stopPropagation();
+      // [lc-2451] 清空自填凭证并回退内置官方凭证（token 一并清除，下次连接重新授权）
       ipcRenderer.invoke('trakt:clear-credentials').then(() => {
         traRealId = ''; traRealSecret = '';
         traIdInput.value = ''; traIdInput.readOnly = false;
         traSecretInput.value = ''; traSecretInput.readOnly = false;
+        traAdvOpen = false;
         void traRefreshStatus();
       }).catch(() => {});
     });
@@ -1807,9 +1837,9 @@ btn.style.cssText = 'box-sizing:border-box;width:100%;padding:10px 12px;border-r
         traSyncResult.style.color = 'var(--fnos-ui-ok)';
       }).catch((err) => { traSyncResult.textContent = '同步失败: ' + (err && err.message ? err.message : err); traSyncResult.style.color = 'var(--fnos-ui-warn)'; });
     });
-    // 回填凭证掩码与状态
+    // 回填凭证掩码与状态（[lc-2451] 仅自填凭证回填掩码；内置凭证输入区保持空）
     ipcRenderer.invoke('trakt:get-credentials').then((r: any) => {
-      if (r && r.configured) {
+      if (r && r.clientSource === 'custom') {
         traRealId = r.clientId || ''; traRealSecret = r.clientSecret || '';
         traIdInput.value = maskTra(traRealId); traIdInput.readOnly = true;
         traSecretInput.value = maskTra(traRealSecret); traSecretInput.readOnly = true;

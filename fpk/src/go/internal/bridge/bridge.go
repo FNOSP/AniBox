@@ -537,7 +537,17 @@ const traktAPI = "https://api.trakt.tv"
 const apiBaseTMDB = "https://api.themoviedb.org/3"
 const traktAuth = "https://auth.trakt.tv"
 
-func (b *Bridge) traktClientID() string  { return getSetting(b.cfg, "trakt_client_id") }
+// traktBuiltinClientID AniBox 官方应用（Trakt 开发者后台 App ID 279494，Development 档）。
+// Client ID 是公开标识符（每个 API 请求头都会携带），设备授权仅需它，无需 Secret（PKCE 口径不发放）。
+// 用户在设置页自填凭证时优先于内置。
+const traktBuiltinClientID = "EK8sVJlBnP49WmBNV0BX6AbsYjlcQct7gAgLRBicfhc"
+
+func (b *Bridge) traktClientID() string {
+	if id := getSetting(b.cfg, "trakt_client_id"); id != "" {
+		return id
+	}
+	return traktBuiltinClientID
+}
 func (b *Bridge) traktSecret() string    { return getSetting(b.cfg, "trakt_client_secret") }
 func (b *Bridge) traktToken() string     { return getSetting(b.cfg, "trakt_access_token") }
 func (b *Bridge) traktRefresh() string   { return getSetting(b.cfg, "trakt_refresh_token") }
@@ -634,10 +644,11 @@ func (b *Bridge) traktCredsHandler() http.HandlerFunc {
 			id, tk := b.traktClientID(), b.traktToken()
 			// [v1.2.0] 返回明文（管理页同源可信，对齐桌面 get-credentials 回填语义）
 			writeJSON(w, http.StatusOK, map[string]any{
-				"configured":   id != "",
+				"configured":   true,
 				"connected":    tk != "",
 				"clientId":     id,
 				"clientSecret": b.traktSecret(),
+				"clientSource": traktClientSource(id),
 				"expiresAt":    toInt64(b.traktExpiresAt()),
 			})
 		case http.MethodPost:
@@ -671,13 +682,22 @@ func (b *Bridge) traktCredsHandler() http.HandlerFunc {
 	}
 }
 
+// traktClientSource 当前生效凭证来源：用户自填返回 custom，否则 builtin（内置官方应用）。
+func traktClientSource(id string) string {
+	if id != "" && id != traktBuiltinClientID {
+		return "custom"
+	}
+	return "builtin"
+}
+
 func (b *Bridge) traktStatusHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, tk := b.traktClientID(), b.traktToken()
 		writeJSON(w, http.StatusOK, map[string]any{
-			"configured": id != "",
-			"connected":  tk != "",
-			"expiresAt":  toInt64(b.traktExpiresAt()),
+			"configured":   true,
+			"connected":    tk != "",
+			"clientSource": traktClientSource(id),
+			"expiresAt":    toInt64(b.traktExpiresAt()),
 		})
 	}
 }
@@ -731,6 +751,7 @@ func (b *Bridge) traktDisconnect(w http.ResponseWriter, r *http.Request) {
 }
 
 // traktClearCreds [v1.2.0] 清空 Trakt 凭据（网页版 trakt:clear-credentials）。
+// [lc-2451] 内置官方凭证后，清空自填凭证即回退内置（token 一并清除，下次连接重新授权）。
 func (b *Bridge) traktClearCreds(w http.ResponseWriter, r *http.Request) {
 	_ = b.cfg.SetSetting("trakt_client_id", "")
 	_ = b.cfg.SetSetting("trakt_client_secret", "")

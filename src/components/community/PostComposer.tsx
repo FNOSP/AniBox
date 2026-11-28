@@ -25,10 +25,13 @@ type SearchItem = {
 type SearchResp = { items?: SearchItem[] };
 
 export function PostComposer({
+  board = "talk",
   initial,
   onPosted,
   onCancel,
 }: {
+  /** 板块：talk=交流讨论（绑作品+评分）| feedback=反馈建议（纯文字+附图） */
+  board?: "talk" | "feedback";
   /** 从详情页带过来的预填（tmdbId 已定位，跳过搜索） */
   initial?: {
     mediaType: "movie" | "tv";
@@ -86,7 +89,7 @@ export function PostComposer({
   const submit = async () => {
     const text = body.trim();
     if (busy) return;
-    if (!picked) {
+    if (board === "talk" && !picked) {
       setErr("先搜索并选择作品");
       return;
     }
@@ -104,10 +107,11 @@ export function PostComposer({
         imageIds.push(up.id);
       }
       const r = await createPost({
-        mediaType,
-        tmdbId: picked.tmdbId,
-        workTitle: picked.workTitle,
-        score: score ?? null,
+        board,
+        mediaType: picked ? mediaType : mediaType,
+        tmdbId: picked?.tmdbId ?? 0,
+        workTitle: picked?.workTitle ?? "",
+        score: board === "talk" ? (score ?? null) : null,
         body: text,
         imageIds,
       });
@@ -124,7 +128,7 @@ export function PostComposer({
 
   return (
     <div className="cv2-composer">
-      {!picked ? (
+      {board === "talk" && !picked ? (
         <>
           <div className="cv2-composer-mt">
             {(["tv", "movie"] as const).map((mt) => (
@@ -170,7 +174,7 @@ export function PostComposer({
             </div>
           )}
         </>
-      ) : (
+      ) : board === "talk" && picked ? (
         <div className="cv2-composer-picked">
           <span className="cv2-work-chip">{mediaType === "movie" ? "电影" : "剧集"}</span>
           <b>{picked.workTitle}</b>
@@ -180,8 +184,9 @@ export function PostComposer({
             </button>
           )}
         </div>
-      )}
+      ) : null}
 
+      {board === "talk" && (
       <div className="cv2-composer-stars">
         {[1, 2, 3, 4, 5].map((i) => (
           <button
@@ -196,6 +201,7 @@ export function PostComposer({
         ))}
         <span className="cv2-composer-starh">{score ? `${score} 星` : "不打分也可以"}</span>
       </div>
+      )}
 
       <textarea
         className="cv2-input cv2-ta"

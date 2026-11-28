@@ -163,6 +163,11 @@ export function PostCard({
           )}
         </span>
       </div>
+      {post.board === "feedback" && (
+        <div className="cv2-post-work">
+          <span className="cv2-work-chip cv2-work-chip-fb">反馈建议</span>
+        </div>
+      )}
       {post.workTitle && (
         <div className="cv2-post-work">
           <span className="cv2-work-chip">{post.mediaType === "movie" ? "电影" : "剧集"}</span>

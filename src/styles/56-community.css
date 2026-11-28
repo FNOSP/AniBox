@@ -819,3 +819,100 @@
     transition: none;
   }
 }
+
+/* ═════════ [lc-2447] 个人中心 / 板块 / 举报弹窗 ═════════ */
+
+.cv2-me {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.cv2-acct-stats {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.cv2-nickedit {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.cv2-nickedit .cv2-input {
+  flex: 1;
+}
+
+.cv2-work-chip-fb {
+  background: rgb(245 165 36 / 0.16);
+  color: #d97706;
+}
+
+/* 举报弹窗 */
+.cv2-rpt-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.45);
+  display: grid;
+  place-items: center;
+}
+.cv2-rpt {
+  width: min(360px, 92vw);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  animation: cv2-in 200ms ease-out;
+}
+.cv2-rpt-t {
+  margin: 0;
+  font-size: var(--fs-ctl);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.cv2-rpt-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.cv2-rpt-reason {
+  height: 28px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-cap);
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+}
+.cv2-rpt-reason.on {
+  border-color: rgb(var(--accent-rgb) / 0.65);
+  color: var(--text-strong);
+  background: rgb(var(--accent-rgb) / 0.1);
+}
+.cv2-rpt-done {
+  margin: 0;
+  font-size: var(--fs-cap);
+  color: var(--text);
+}
+.cv2-rpt-ok {
+  align-self: center;
+}
+.cv2-rpt .cv2-composer-ft {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cv2-rpt {
+    animation: none;
+  }
+  .cv2-rpt-reason {
+    transition: none;
+  }
+}

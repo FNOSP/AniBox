@@ -968,6 +968,7 @@ function HistoryDetail({
     try {
       const text = review.trim() || `看了《${it.title || "这部作品"}》`;
       await createPost({
+        board: "talk",
         mediaType: it.type === "Movie" ? "movie" : "tv",
         tmdbId: Number(it.tmdbId),
         workTitle: it.title || "",

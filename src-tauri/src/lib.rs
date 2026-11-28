@@ -4994,6 +4994,7 @@ pub fn run() {
             community_content::community_v2_mine_posts,
             community_content::community_v2_notifications,
             community_content::community_v2_read_notifications,
+            community_content::community_v2_me,
             // [lc-2446] 社区 v2 P4：举报 + 管理
             community_admin::community_v2_report,
             community_admin::community_admin_reports,

@@ -57,6 +57,7 @@ fn uuid_or_err(s: &str) -> Result<String, String> {
 #[tauri::command]
 pub async fn community_v2_post(
     app: tauri::AppHandle,
+    board: Option<String>,
     media_type: String,
     tmdb_id: i64,
     work_title: String,
@@ -66,6 +67,10 @@ pub async fn community_v2_post(
     image_ids: Option<Vec<String>>,
     client_request_id: String,
 ) -> Result<Value, String> {
+    let board_v = board.map(|b| b.trim().to_string()).unwrap_or_else(|| "talk".into());
+    if board_v != "talk" && board_v != "feedback" {
+        return Err("board 需 talk|feedback".into());
+    }
     let client_request_id = uuid_or_err(&client_request_id)?;
     let text = body.trim().to_string();
     if text.chars().count() < 3 {
@@ -75,6 +80,7 @@ pub async fn community_v2_post(
         return Err("正文最多 5000 字".into());
     }
     let payload = json!({
+        "board": board_v,
         "mediaType": media_type.trim(),
         "tmdbId": tmdb_id,
         "workTitle": work_title.trim(),
@@ -89,10 +95,19 @@ pub async fn community_v2_post(
 
 /// 信息流（sort: new|hot）。
 #[tauri::command]
-pub async fn community_v2_feed(app: tauri::AppHandle, sort: String, cursor: Option<i64>) -> Result<Value, String> {
+pub async fn community_v2_feed(
+    app: tauri::AppHandle,
+    sort: String,
+    board: Option<String>,
+    cursor: Option<i64>,
+) -> Result<Value, String> {
     let s = if sort.trim() == "hot" { "hot" } else { "new" };
     let cursor = cursor.unwrap_or(0).max(0);
-    get_authed(&app, &format!("/v2/feed?sort={s}&cursor={cursor}&limit=10")).await
+    let mut qs = format!("sort={s}&cursor={cursor}&limit=10");
+    if let Some(b) = board.map(|b| b.trim().to_string()).filter(|b| b == "talk" || b == "feedback") {
+        qs.push_str(&format!("&board={b}"));
+    }
+    get_authed(&app, &format!("/v2/feed?{qs}")).await
 }
 
 /// 作品聚合（AniBox 评分 + 最近帖子 + 作品短评）。
@@ -162,9 +177,23 @@ pub async fn community_v2_comment(
 
 /// 我的发言（永久可翻；含已删除标记）。
 #[tauri::command]
-pub async fn community_v2_mine_posts(app: tauri::AppHandle, cursor: Option<i64>) -> Result<Value, String> {
+pub async fn community_v2_mine_posts(
+    app: tauri::AppHandle,
+    board: Option<String>,
+    cursor: Option<i64>,
+) -> Result<Value, String> {
     let cursor = cursor.unwrap_or(0).max(0);
-    get_authed(&app, &format!("/v2/mine/posts?cursor={cursor}&limit=10")).await
+    let mut qs = format!("cursor={cursor}&limit=10");
+    if let Some(b) = board.map(|b| b.trim().to_string()).filter(|b| b == "talk" || b == "feedback") {
+        qs.push_str(&format!("&board={b}"));
+    }
+    get_authed(&app, &format!("/v2/mine/posts?{qs}")).await
+}
+
+/// 个人中心：账号信息 + 发言/评论统计（design §4.2 stats）。
+#[tauri::command]
+pub async fn community_v2_me(app: tauri::AppHandle) -> Result<Value, String> {
+    get_authed(&app, "/v2/account/me").await
 }
 
 /// 通知列表（含 unread 计数）。

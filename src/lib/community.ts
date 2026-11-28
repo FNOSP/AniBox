@@ -20,6 +20,19 @@ export type CommunitySession = {
   deviceId: string;
 };
 
+/** community_v2_me 返回（个人中心：含 stats 与封禁态） */
+export type CommunityMe = {
+  id: string;
+  email: string;
+  nick: string;
+  nickSuffix: string;
+  role: CommunityRole;
+  status: string;
+  banned?: boolean;
+  createdAt: number;
+  stats: { posts: number; comments: number };
+};
+
 /** community_v2_register 返回 */
 export type CommunityPendingReg = {
   pendingId: string;
@@ -147,6 +160,8 @@ export type CommunityPostImage = {
 export type CommunityPost = {
   id: string;
   nick: string;
+  /** 板块：talk=交流讨论（绑作品）| feedback=反馈建议（软件建议公开帖） */
+  board: "talk" | "feedback";
   mediaType: "movie" | "tv";
   tmdbId: number;
   workTitle: string;
@@ -218,9 +233,10 @@ export function newRequestId(): string {
 
 export const createPost = (
   args: {
-    mediaType: "movie" | "tv";
-    tmdbId: number;
-    workTitle: string;
+    board: "talk" | "feedback";
+    mediaType?: "movie" | "tv";
+    tmdbId?: number;
+    workTitle?: string;
     score?: number | null;
     title?: string;
     body: string;
@@ -228,9 +244,10 @@ export const createPost = (
   },
 ) =>
   invoke<{ post: CommunityPost; replayed: boolean }>("community_v2_post", {
-    mediaType: args.mediaType,
-    tmdbId: args.tmdbId,
-    workTitle: args.workTitle,
+    board: args.board,
+    mediaType: args.mediaType ?? "tv",
+    tmdbId: args.tmdbId ?? 0,
+    workTitle: args.workTitle ?? "",
     score: args.score ?? null,
     title: args.title ?? "",
     body: args.body,
@@ -238,8 +255,8 @@ export const createPost = (
     clientRequestId: newRequestId(),
   });
 
-export const fetchFeed = (sort: "new" | "hot", cursor: number = 0) =>
-  invoke<{ items: CommunityPost[]; nextCursor: number | null }>("community_v2_feed", { sort, cursor });
+export const fetchFeed = (sort: "new" | "hot", board: "talk" | "feedback" | null, cursor: number = 0) =>
+  invoke<{ items: CommunityPost[]; nextCursor: number | null }>("community_v2_feed", { sort, board, cursor });
 
 export const fetchWorkAgg = (mediaType: string, tmdbId: number) =>
   invoke<CommunityWorkAgg>("community_v2_work", { mediaType, tmdbId });
@@ -265,8 +282,10 @@ export const postComment = (args: {
     parentId: args.parentId ?? null,
   });
 
-export const fetchMinePosts = (cursor: number = 0) =>
-  invoke<{ items: CommunityPost[]; nextCursor: number | null }>("community_v2_mine_posts", { cursor });
+export const fetchMinePosts = (board: "talk" | "feedback" | null, cursor: number = 0) =>
+  invoke<{ items: CommunityPost[]; nextCursor: number | null }>("community_v2_mine_posts", { board, cursor });
+
+export const fetchMe = () => invoke<CommunityMe>("community_v2_me");
 
 export const fetchNotifications = (cursor: number = 0) =>
   invoke<{ items: CommunityNotification[]; unread: number; nextCursor: number | null }>(

@@ -776,6 +776,8 @@ A：`%APPDATA%\com.anibox.app\` 下的 `config.json`、`cache/`、`history.json`
 
 > 弹幕数据来自弹弹play 开放平台，遵循其开放 API 条款与署名要求。
 
+> **Trakt 声明**：AniBox uses Trakt but is not endorsed or certified by Trakt.（AniBox 使用 Trakt 服务，但不受 Trakt 认可或认证。）数据流向与隐私说明见 [PRIVACY.md](PRIVACY.md)。
+
 ---
 
 ## <img src="https://api.iconify.design/mdi/file-document-outline.svg?color=%236c9bff" width="16" height="16" alt="" style="vertical-align:-2px" /> 许可证
